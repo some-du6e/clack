@@ -22,11 +22,25 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/emoji"
 )
 
-// Embolden is the outline stroke (dp) added to every glyph. Chrome renders
-// Lato visibly heavier than Gio's linear-coverage rasterizer; a hairline
-// stroke of the outline matches it. richview.Style.Embolden uses the same
-// value so message bodies and chrome text agree.
+// Embolden is the outline stroke (dp) added to dark glyphs. Gio blends
+// glyph coverage in linear light, which renders dark-on-light text thinner
+// and light-on-dark text heavier than Chrome's gamma-corrected text. A
+// hairline stroke fixes dark text; light text needs none. EmboldenFor
+// scales it by the text color; richview's Style.Embolden uses the same rule.
 const Embolden = 0.3
+
+// EmboldenFor is the Embolden stroke for text of color c: full for dark
+// text, fading to none for light text (light-on-dark is already heavy).
+func EmboldenFor(c color.NRGBA) float32 {
+	y := (0.299*float32(c.R) + 0.587*float32(c.G) + 0.114*float32(c.B)) / 255
+	switch {
+	case y <= 0.35:
+		return Embolden
+	case y >= 0.6:
+		return 0
+	}
+	return Embolden * (0.6 - y) / 0.25
+}
 
 // LabelOpts describes a run of label text for Text / DrawText.
 type LabelOpts struct {
@@ -67,7 +81,7 @@ func DrawText(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string) layo
 	if t := ForShaper(sh); t != nil {
 		return t.Text(gtx, o, txt)
 	}
-	return drawText(gtx, sh, o, CleanText(txt), Embolden)
+	return drawText(gtx, sh, o, CleanText(txt), EmboldenFor(o.Color))
 }
 
 // Text draws txt with Slack-matching rendering. Single-line text containing
@@ -80,7 +94,7 @@ func (t *Theme) Text(gtx layout.Context, o LabelOpts, txt string) layout.Dimensi
 			return t.textWithEmoji(gtx, o, segs)
 		}
 	}
-	return drawText(gtx, t.Shaper, o, txt, Embolden)
+	return drawText(gtx, t.Shaper, o, txt, EmboldenFor(o.Color))
 }
 
 // EmojiURL is the CDN image for an emoji image stem in the theme's style.
@@ -116,7 +130,7 @@ func (t *Theme) textWithEmoji(gtx layout.Context, o LabelOpts, segs []segment) l
 				m := op.Record(gtx.Ops)
 				g := gtx
 				g.Constraints = layout.Constraints{Max: image.Pt(maxW-x, gtx.Constraints.Max.Y)}
-				d := drawText(g, t.Shaper, LabelOpts{Font: o.Font, Size: o.Size, LineHeight: o.LineHeight, MaxLines: 1, Color: o.Color}, "…", Embolden)
+				d := drawText(g, t.Shaper, LabelOpts{Font: o.Font, Size: o.Size, LineHeight: o.LineHeight, MaxLines: 1, Color: o.Color}, "…", EmboldenFor(o.Color))
 				ps = append(ps, placed{call: m.Stop(), x: x, w: d.Size.X, h: d.Size.Y, bl: d.Size.Y - d.Baseline})
 				break
 			}
@@ -129,7 +143,7 @@ func (t *Theme) textWithEmoji(gtx layout.Context, o LabelOpts, segs []segment) l
 		g.Constraints = layout.Constraints{Max: image.Pt(maxW-x, gtx.Constraints.Max.Y)}
 		lo := o
 		lo.MaxLines = 1
-		d := drawText(g, t.Shaper, lo, s.text, Embolden)
+		d := drawText(g, t.Shaper, lo, s.text, EmboldenFor(o.Color))
 		ps = append(ps, placed{call: m.Stop(), x: x, w: d.Size.X, h: d.Size.Y, bl: d.Size.Y - d.Baseline})
 		if a := d.Size.Y - d.Baseline; a > asc {
 			asc = a
