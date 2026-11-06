@@ -102,7 +102,8 @@ type ChannelDetails struct {
 	inviteDeb  debounce
 	inviteRes  async[[]core.User]
 	inviteOp   async[bool]
-	inviteUser string // user being added
+	inviteUser string           // user being added
+	dmOp       async[core.Conv] // AddToDM (DMs: opens the bigger group DM)
 	added      map[string]bool
 	editName   widget.Clickable
 
@@ -454,9 +455,12 @@ func (d *ChannelDetails) update(gtx C) {
 		}
 	}
 	if d.addPeople.Clicked(gtx) {
-		// 1:1 and group DMs: Slack starts a new group conversation, which
-		// core can't do yet.
-		d.h.Toast("Adding people to a direct message isn’t supported yet")
+		// 1:1 and group DMs: like Slack, adding people opens the group DM of
+		// everyone involved (a new conversation, core.AddToDM).
+		d.inviting = !d.inviting
+		if d.inviting {
+			gtx.Execute(key.FocusCmd{Tag: &d.inviteQ.ed})
+		}
 	}
 	d.updateWrites(gtx, inf, loaded)
 
@@ -975,9 +979,17 @@ func (d *ChannelDetails) aboutItems(inf core.ChannelDetails) []W {
 	switch cdGroup(d.kind) {
 	case "im":
 		items = []W{cdGap(16), d.cdCard(topic), cdGap(16), d.cdCard(func(gtx C) D { return d.localTimeField(gtx, inf) })}
-		items = append(items, cdGap(16), d.cdCard(d.addPeopleField), cdGap(16), d.cdCard(d.emailsField))
+		items = append(items, cdGap(16), d.cdCard(d.addPeopleField))
+		if d.inviting {
+			items = append(items, cdGap(8), func(gtx C) D { return d.invitePanel(gtx, d.dmMembers(cv)) })
+		}
+		items = append(items, cdGap(16), d.cdCard(d.emailsField))
 	case "mpim":
-		items = []W{cdGap(16), d.cdCard(topic), cdGap(16), d.cdCard(d.addPeopleField), cdGap(16), d.cdCard(d.emailsField)}
+		items = []W{cdGap(16), d.cdCard(topic), cdGap(16), d.cdCard(d.addPeopleField)}
+		if d.inviting {
+			items = append(items, cdGap(8), func(gtx C) D { return d.invitePanel(gtx, d.dmMembers(cv)) })
+		}
+		items = append(items, cdGap(16), d.cdCard(d.emailsField))
 	default:
 		rows := []W{topic, func(gtx C) D { return d.purposeField(gtx, cv) }}
 		if mgr := d.managerIDs(); len(mgr) > 0 {
@@ -1806,7 +1818,20 @@ func (d *ChannelDetails) updateWrites(gtx C, inf core.ChannelDetails, loaded boo
 			d.inviteRes.load(d.h, true, func(ctx context.Context) ([]core.User, error) { return c.SearchUsers(ctx, dq, 8) })
 		}
 	}
-	if d.inviteUser != "" {
+	if d.inviteUser != "" && cdGroup(d.kind) != "channel" {
+		if conv, done, err := d.dmOp.get(); done {
+			uid := d.inviteUser
+			d.inviteUser = ""
+			if err != nil {
+				d.h.Toast("Couldn’t add " + d.userName(uid) + ": " + cdErr(err))
+			} else if conv.ID != "" {
+				d.inviting = false
+				d.closed = true
+				d.h.Navigate("c/" + conv.ID)
+			}
+		}
+	}
+	if d.inviteUser != "" && cdGroup(d.kind) == "channel" {
 		if _, done, err := d.inviteOp.get(); done {
 			uid := d.inviteUser
 			d.inviteUser = ""
@@ -1905,7 +1930,11 @@ func (d *ChannelDetails) inviteRow(gtx C, u core.User, member bool) D {
 	if c.Clicked(gtx) && !member && d.inviteUser == "" {
 		cl, id, uid := d.h.Core(), d.id, u.ID
 		d.inviteUser = uid
-		d.inviteOp.load(d.h, false, func(ctx context.Context) (bool, error) { return true, cl.Invite(ctx, id, uid) })
+		if cdGroup(d.kind) == "channel" {
+			d.inviteOp.load(d.h, false, func(ctx context.Context) (bool, error) { return true, cl.Invite(ctx, id, uid) })
+		} else {
+			d.dmOp.load(d.h, false, func(ctx context.Context) (core.Conv, error) { return cl.AddToDM(ctx, id, uid) })
+		}
 	}
 	return layout.Inset{Top: 8}.Layout(gtx, func(gtx C) D {
 		return row(gtx, layout.Middle,
@@ -1978,4 +2007,20 @@ func cdErr(err error) string {
 		return "they’re already in the channel"
 	}
 	return dirErr(err)
+}
+
+// dmMembers lists a DM's participants (the viewer, the partner, or the
+// group DM's members) for the Add people panel's "already here" marks.
+func (d *ChannelDetails) dmMembers(cv core.Conv) []core.User {
+	ids := append([]string{d.selfID()}, cv.Members...)
+	if cv.User != "" {
+		ids = append(ids, cv.User)
+	}
+	out := make([]core.User, 0, len(ids))
+	for _, id := range ids {
+		if u, ok := d.user(id); ok {
+			out = append(out, u)
+		}
+	}
+	return out
 }
