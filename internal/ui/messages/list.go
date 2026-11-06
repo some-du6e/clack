@@ -731,7 +731,7 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 	// hover toolbar
 	s.tbFor = -1
 	if s.hoverIdx >= 0 && s.hoverIdx < len(s.items) && s.items[s.hoverIdx].kind == itMsg {
-		if r := s.rows[s.items[s.hoverIdx].key]; r != nil && !s.sel.dragging&& r.edit == nil && len(s.items[s.hoverIdx].group) == 0 && !r.m.Pending && !r.m.Failed {
+		if r := s.rows[s.items[s.hoverIdx].key]; r != nil && !s.sel.dragging && r.edit == nil && len(s.items[s.hoverIdx].group) == 0 && !r.m.Pending && !r.m.Failed {
 			s.toolbar(gtx, h, rc, r, s.hoverIdx, size)
 		}
 	}
