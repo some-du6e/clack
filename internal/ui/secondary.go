@@ -50,8 +50,15 @@ func (a *App) OpenThread(channel, ts string) {
 	a.Invalidate()
 }
 
-// OpenDetails shows channel details in the secondary pane.
+// openDetails, when set by a feature package, shows channel details its own
+// way (ui-views draws a modal dialog) and reports true.
+var openDetails func(a *App, ch string) bool
+
+// OpenDetails shows channel details (modal from ui-views, else the pane).
 func (a *App) OpenDetails(channel string) {
+	if openDetails != nil && openDetails(a, channel) {
+		return
+	}
 	a.secondary = secondaryState{kind: secDetails, channel: channel, width: a.secondary.width}
 	a.secondary.view = a.mountDetails(channel)
 	a.Invalidate()

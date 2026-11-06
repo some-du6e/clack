@@ -88,6 +88,9 @@ func main() {
 	} else {
 		a.SetLogin(login)
 	}
+	if os.Getenv("YOLOSLACK_TIMING") != "" {
+		log.Printf("timing: main ready: %v", time.Since(started).Round(100*time.Microsecond))
+	}
 	go func() {
 		if err := a.Run(); err != nil {
 			log.Fatal(err)

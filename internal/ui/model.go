@@ -1,5 +1,7 @@
 package ui
 
+import "github.com/some-du6e/yoloslackgoclient/internal/richtext"
+
 // model is the shell's view of the workspace, rebuilt from core snapshots
 // and events (never per frame).
 type model struct {
@@ -30,8 +32,9 @@ type sbSection struct {
 }
 
 type convInfo struct {
-	ID, Name, Kind string // channel | private | im | mpim | app
-	User           string // im partner
+	TopicSpans     []richtext.Span // first line of the parsed topic
+	ID, Name, Kind string          // channel | private | im | mpim | app
+	User           string          // im partner
 	Avatar         string
 	Topic          string
 	NumMembers     int
