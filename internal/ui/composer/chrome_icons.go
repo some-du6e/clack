@@ -65,7 +65,7 @@ func crIconUnderline(gtx layout.Context, px int, col color.NRGBA) {
 	q.l(13.75, 3.75)
 	q.m(5, 16.5)
 	q.l(15, 16.5)
-	q.stroke(gtx, 1.5, col)
+	q.stroke(gtx, 1.75, col)
 }
 
 // crIconPilcrow: ¶ with a filled bowl and two stems.
@@ -86,7 +86,7 @@ func crIconPilcrow(gtx layout.Context, px int, col color.NRGBA) {
 	q.l(14, 16.5)
 	q.m(9.5, 3.75)
 	q.l(15.5, 3.75)
-	q.stroke(gtx, 1.5, col)
+	q.stroke(gtx, 1.75, col)
 }
 
 // crIconDivider: a full-width rule between the top and bottom halves of a
@@ -108,7 +108,7 @@ func crIconDivider(gtx layout.Context, px int, col color.NRGBA) {
 	q.l(14.5, 16.25)
 	q.c(15.05, 16.25, 15.5, 15.8, 15.5, 15.25)
 	q.l(15.5, 13.25)
-	q.stroke(gtx, 1.5, col)
+	q.stroke(gtx, 1.75, col)
 }
 
 // crIconAa: the "Show formatting" glyph, a capital and a small a, with an
@@ -130,19 +130,19 @@ func crIconAa(gtx layout.Context, px int, col color.NRGBA, underline bool) {
 	q.c(13.5, 8.75, 14.3, 8.4, 15.25, 8.4)
 	q.c(16.75, 8.4, 17.75, 9.3, 17.75, 10.8)
 	q.l(17.75, 11.75)
-	q.stroke(gtx, 1.5, col)
+	q.stroke(gtx, 1.75, col)
 	q.begin(gtx, px, 20)
 	q.m(17.75, 11.6)
 	q.l(15.4, 11.6)
 	q.c(13.7, 11.6, 12.6, 12.35, 12.6, 13.4)
 	q.c(12.6, 14.45, 13.45, 15.15, 14.7, 15.15)
 	q.c(16.2, 15.15, 17.75, 14.2, 17.75, 12.6)
-	q.stroke(gtx, 1.5, col)
+	q.stroke(gtx, 1.75, col)
 	if underline {
 		q.begin(gtx, px, 20)
 		q.m(1, 18.25)
 		q.l(19, 18.25)
-		q.stroke(gtx, 1.5, col)
+		q.stroke(gtx, 1.75, col)
 	}
 }
 

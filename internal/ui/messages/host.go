@@ -35,6 +35,7 @@ type PointerHost interface {
 type styleEntry struct {
 	st   *richview.Style
 	dark bool
+	init bool
 }
 
 var (
@@ -56,10 +57,13 @@ func styleFor(h Host) *richview.Style {
 		styles[th.Shaper] = e
 	}
 	stylesMu.Unlock()
-	if th.Dark != e.dark {
-		e.dark = th.Dark
+	if th.Dark != e.dark || !e.init {
+		e.dark, e.init = th.Dark, true
+		// theme.EmboldenFor: dark text needs the stroke, light text doesn't
+		e.st.Embolden = theme.EmboldenFor(theme.LightPalette.Fg)
 		if th.Dark {
 			e.st.SetPalette(richview.DarkPalette())
+			e.st.Embolden = theme.EmboldenFor(theme.DarkPalette.Fg)
 		} else {
 			e.st.SetPalette(richview.LightPalette())
 		}

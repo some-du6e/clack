@@ -3,8 +3,10 @@ package ui
 import (
 	"image"
 
+	"gioui.org/io/event"
 	"gioui.org/layout"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -18,6 +20,14 @@ var (
 	mkDetails     func(a *App, ch string) View
 	mkProfile     func(a *App, user string) View
 	mkPage        func(a *App, r Route) View
+	// installHooks sets feature packages' callback hooks (once, in Run).
+	installHooks func(a *App)
+	// onWindow runs once the window exists; onEvent sees every window event.
+	onWindow func(a *App)
+	onEvent  func(e event.Event)
+	mkModal  func(a *App, title string, body layout.Widget, done func()) Overlay
+	// mkEditComposer opens an edit composer for one of the viewer's messages.
+	mkEditComposer func(a *App, m core.Message, onDone func()) composerView
 )
 
 func (a *App) mountChannel(ch string) View {
@@ -27,7 +37,13 @@ func (a *App) mountChannel(ch string) View {
 	return &placeholder{a: a, text: "Messages (ui-messages)"}
 }
 
+// mountThread is the secondary-pane thread: the thread list with its
+// composer, on a floating card.
 func (a *App) mountThread(ch, ts string) View {
+	return &threadPane{a: a, ch: ch, ts: ts}
+}
+
+func (a *App) mountThreadList(ch, ts string) View {
 	if mkThreadView != nil {
 		return mkThreadView(a, ch, ts)
 	}
@@ -111,6 +127,12 @@ func (p *paneStub) Layout(gtx layout.Context) layout.Dimensions {
 // composerStub reserves the composer's space with Slack's outline.
 type composerStub struct{ a *App }
 
+func (s *composerStub) SetOrigin(image.Point) {}
+func (s *composerStub) SetOnEditLast(func())  {}
+func (s *composerStub) Done() bool            { return false }
+func (s *composerStub) Focus()                {}
+func (s *composerStub) Close()                {}
+
 func (s *composerStub) Layout(gtx layout.Context) layout.Dimensions {
 	w := gtx.Constraints.Max.X
 	c := &s.a.th.C
@@ -170,4 +192,15 @@ func (a *App) openSearch(q string) {
 		return
 	}
 	a.Toast("Search arrives with ui-popups")
+}
+
+// threadPane draws a thread (list + composer) in the secondary pane.
+type threadPane struct {
+	a      *App
+	ch, ts string
+}
+
+func (p *threadPane) Layout(gtx layout.Context) layout.Dimensions {
+	c := p.a.convoFor(p.ch, p.ts)
+	return p.a.layoutConvo(gtx, c, p.a.secondaryOrigin)
 }

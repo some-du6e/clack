@@ -13,7 +13,6 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/text"
 	"gioui.org/unit"
-	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
@@ -186,14 +185,12 @@ func label(gtx layout.Context, th *theme.Theme, s textStyle, txt string) layout.
 	if s.italic {
 		f.Style = font.Italic
 	}
-	l := widget.Label{MaxLines: s.maxLines, LineHeight: unit.Sp(s.lineH)}
-	if s.maxLines == 0 {
-		l.MaxLines = 1
+	n := s.maxLines
+	if n == 0 {
+		n = 1
 	}
-	m := op.Record(gtx.Ops)
-	paint.ColorOp{Color: s.col}.Add(gtx.Ops)
-	mat := m.Stop()
-	return l.Layout(gtx, th.Shaper, f, unit.Sp(s.size), txt, mat)
+	// shared renderer: Embolden, emoji images, ignorable-codepoint cleanup
+	return th.Text(gtx, theme.LabelOpts{Font: f, Size: unit.Sp(s.size), LineHeight: unit.Sp(s.lineH), MaxLines: n, Color: s.col}, txt)
 }
 
 // measure returns the width of single-line text.
