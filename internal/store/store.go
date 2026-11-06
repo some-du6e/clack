@@ -8,7 +8,6 @@ package store
 
 import (
 	"encoding/json"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -94,6 +93,20 @@ type Prefs struct {
 	FrequentEmoji     []string `json:"frequent_emoji,omitempty"`
 	Muted             []string `json:"muted"`
 	HideInactiveConvs bool     `json:"hide_inactive"`
+	// Notifications: global defaults and per-conversation overrides
+	// (users.prefs.get all_notifications_prefs).
+	GlobalDesktop string                   `json:"global_desktop,omitempty"` // everything | mentions_dms | nothing
+	GlobalMobile  string                   `json:"global_mobile,omitempty"`
+	ChannelNotify map[string]ChannelNotify `json:"channel_notify,omitempty"`
+}
+
+// ChannelNotify is a conversation's notification override.
+type ChannelNotify struct {
+	Desktop           string `json:"desktop,omitempty"` // everything | mentions_dms | nothing | default
+	Mobile            string `json:"mobile,omitempty"`
+	Muted             bool   `json:"muted,omitempty"`
+	FollowAllThreads  bool   `json:"follow_all_threads,omitempty"`
+	SuppressAtChannel bool   `json:"suppress_at_channel,omitempty"`
 }
 
 // ParsePrefs extracts Prefs (and the muted set) from users.prefs.get.
@@ -166,17 +179,34 @@ func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
 	if s := str("all_notifications_prefs"); s != "" {
 		var n struct {
 			Channels map[string]struct {
-				Muted bool `json:"muted"`
+				Desktop           string          `json:"desktop"`
+				Mobile            string          `json:"mobile"`
+				Muted             json.RawMessage `json:"muted"`
+				FollowAllThreads  json.RawMessage `json:"follow_all_threads"`
+				SuppressAtChannel json.RawMessage `json:"suppress_at_channel"`
 			} `json:"channels"`
+			Global map[string]json.RawMessage `json:"global"`
 		}
 		if json.Unmarshal([]byte(s), &n) == nil {
+			truthy := func(r json.RawMessage) bool {
+				v := strings.Trim(string(r), `"`)
+				return v == "true" || v == "1"
+			}
+			p.ChannelNotify = map[string]ChannelNotify{}
 			for id, c := range n.Channels {
-				if c.Muted {
+				cn := ChannelNotify{Desktop: c.Desktop, Mobile: c.Mobile, Muted: truthy(c.Muted),
+					FollowAllThreads: truthy(c.FollowAllThreads), SuppressAtChannel: truthy(c.SuppressAtChannel)}
+				p.ChannelNotify[id] = cn
+				if cn.Muted {
 					muted[id] = true
 				} else {
 					delete(muted, id)
 				}
 			}
+			var gd, gm string
+			_ = json.Unmarshal(n.Global["global_desktop"], &gd)
+			_ = json.Unmarshal(n.Global["global_mobile"], &gm)
+			p.GlobalDesktop, p.GlobalMobile = gd, gm
 		}
 	}
 	p.Muted = make([]string, 0, len(muted))
@@ -270,7 +300,7 @@ func DisplayName(u *slack.User) string {
 	return u.Name
 }
 
-// ---- render.Resolver ----
+// ---- richtext.Resolver ----
 
 func (s *Store) UserName(id string) string {
 	u, _ := s.User(id)
@@ -308,16 +338,6 @@ func (s *Store) Emoji(name string) (string, string, bool) {
 	style := s.EmojiStyle
 	s.mu.RUnlock()
 	return s.CustomEmoji.Resolve(name, style)
-}
-
-// Proxy rewrites authenticated Slack file URLs to the local web proxy. It
-// only exists for the legacy HTML renderer (internal/render) and goes away
-// with it; native code fetches such URLs through core.Fetch.
-func (s *Store) Proxy(u string) string {
-	if strings.HasPrefix(u, "https://files.slack.com/") || strings.Contains(u, ".slack.com/files") {
-		return "/file?u=" + url.QueryEscape(u)
-	}
-	return u
 }
 
 func (s *Store) SelfID() string {

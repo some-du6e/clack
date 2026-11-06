@@ -424,6 +424,43 @@ func (e *Editor) ToggleBlock(k BlockKind) {
 	e.commit()
 }
 
+// SetBlock sets the selection's lines to k unconditionally (the ¶ menu picks
+// Paragraph or a heading like a radio group, so it never toggles back).
+func (e *Editor) SetBlock(k BlockKind) {
+	e.init()
+	l0, l1 := e.selLines()
+	e.begin(edOther, false)
+	e.doc.SetLineKind(l0, l1, k)
+	e.commit()
+}
+
+// InsertDivider inserts a divider on its own line at the caret and leaves the
+// caret on a fresh paragraph line below it, like Slack's divider button.
+func (e *Editor) InsertDivider() {
+	e.init()
+	d := e.doc
+	lo, hi := e.sel()
+	e.begin(edOther, true)
+	d.Delete(lo, hi)
+	line := d.LineOf(lo)
+	if d.LineStart(line) == d.LineEnd(line) {
+		// Reuse the empty caret line as the divider; add a paragraph after.
+		d.Lines[line] = Line{Kind: Divider}
+		pos := d.Insert(lo, "\n", Attr{})
+		d.Lines[line+1] = Line{}
+		e.anchor, e.caret = pos, pos
+	} else {
+		// Split the line: the divider sits on its own line between the two
+		// halves, and the caret moves onto the (tail) paragraph below.
+		pos := d.Insert(lo, "\n\n", Attr{})
+		d.Lines[line+1] = Line{Kind: Divider}
+		d.Lines[line+2] = Line{}
+		e.anchor, e.caret = pos, pos
+	}
+	e.lastSpace = true
+	e.commit()
+}
+
 // SetLink replaces the selection with text linked to url, or links the
 // selection if text is the selected text. With a collapsed caret inside a
 // link, that link is edited. An empty url removes the link; an empty text
@@ -617,6 +654,10 @@ func (e *Editor) typeAt(lo, hi int, s string) {
 		brk = true
 	}
 	e.begin(edTyping, brk)
+	// A divider holds no text; typing on it turns it back into a paragraph.
+	if ln := d.LineOf(lo); ln < len(d.Lines) && d.Lines[ln].Kind == Divider {
+		d.Lines[ln] = Line{}
+	}
 	d.Delete(lo, hi)
 	end := d.Insert(lo, s, a)
 	e.anchor, e.caret = end, end

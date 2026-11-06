@@ -101,31 +101,44 @@ func unicodeText(uni string) string {
 }
 
 // Custom holds a workspace's custom emoji (name -> url or "alias:name").
+// It is copy-on-write: writers build a new map and swap it in, so a map
+// returned by Snapshot is never mutated afterwards and may be iterated
+// without locks while emoji_changed events arrive.
 type Custom struct {
 	mu sync.RWMutex
 	m  map[string]string
 }
 
+// Set replaces the whole map; the caller must not modify m afterwards.
 func (c *Custom) Set(m map[string]string) {
 	c.mu.Lock()
 	c.m = m
 	c.mu.Unlock()
 }
 
+func (c *Custom) clone(extra int) map[string]string {
+	n := make(map[string]string, len(c.m)+extra)
+	for k, v := range c.m {
+		n[k] = v
+	}
+	return n
+}
+
 func (c *Custom) Put(name, v string) {
 	c.mu.Lock()
-	if c.m == nil {
-		c.m = map[string]string{}
-	}
-	c.m[name] = v
+	n := c.clone(1)
+	n[name] = v
+	c.m = n
 	c.mu.Unlock()
 }
 
 func (c *Custom) Remove(names ...string) {
 	c.mu.Lock()
-	for _, n := range names {
-		delete(c.m, n)
+	n := c.clone(0)
+	for _, name := range names {
+		delete(n, name)
 	}
+	c.m = n
 	c.mu.Unlock()
 }
 
@@ -135,7 +148,8 @@ func (c *Custom) Len() int {
 	return len(c.m)
 }
 
-// Snapshot returns the underlying map (callers must not mutate it).
+// Snapshot returns the current map. It is immutable (copy-on-write): safe
+// to read and iterate concurrently, but callers must not modify it.
 func (c *Custom) Snapshot() map[string]string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

@@ -35,7 +35,17 @@ const (
 	Ordered
 	Quote
 	CodeBlock
+	// Header1/2/3 (Slack's Big/Medium/Small heading) and Divider are
+	// single-line kinds: never grouped and never indented. Appended after
+	// CodeBlock so the earlier constants keep their values.
+	Header1
+	Header2
+	Header3
+	Divider
 )
+
+// isHeading reports whether k is one of the heading kinds.
+func isHeading(k BlockKind) bool { return k == Header1 || k == Header2 || k == Header3 }
 
 // AtomKind is the kind of an inline object.
 type AtomKind uint8

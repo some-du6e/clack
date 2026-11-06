@@ -44,21 +44,86 @@ const (
 	dmsInsetX   unit.Dp = 8 // header button and search input side inset
 )
 
-// Aubergine sidebar colors from the spec (the DM list sits on the chrome).
-var (
-	dmsChrome    = rgb(0x3f0e40)    // flat stand-in for the chrome gradient
-	dmsTint      = argb(0x14f9edff) // hover / selected row (#f9edff@.08)
-	dmsRule      = argb(0x38f9edff) // row border, input border (@.22)
-	dmsInputBg   = argb(0x1cf9edff) // "Find a DM…" fill (@.11)
-	dmsSoft      = argb(0xe6f6e4ff) // labels, icons, placeholder (#f6e4ff@.9)
-	dmsPreview   = argb(0xe6ffffff) // read preview (white@.9)
-	dmsTimeC     = argb(0xb3f6e4ff) // timestamps (#f6e4ff@.7)
-	dmsWhite     = rgb(0xffffff)
-	dmsGreen     = rgb(0x20a271)
-	dmsPillBg    = rgb(0xeabdfb)
-	dmsPillFg    = rgb(0x39063a)
-	dmsSkelColor = argb(0x1af9edff)
-)
+// dmsPal holds the themed column's colors. Light values are the spec's
+// Aubergine measurements; dark follows the shell's dark chrome palette
+// (theme.DarkPalette), so the list matches the sidebar beside it.
+type dmsPal struct {
+	chrome  color.NRGBA // flat stand-in for the chrome gradient
+	tint    color.NRGBA // hover / selected row (#f9edff@.08)
+	rule    color.NRGBA // row border, input border (@.22)
+	inputBg color.NRGBA // "Find a DM…" fill (@.11)
+	soft    color.NRGBA // labels, icons, placeholder (#f6e4ff@.9)
+	preview color.NRGBA // read preview (white@.9)
+	time    color.NRGBA // timestamps (#f6e4ff@.7)
+	white   color.NRGBA // names, unread text
+	green   color.NRGBA
+	pillBg  color.NRGBA
+	pillFg  color.NRGBA
+	skel    color.NRGBA
+	caret   color.NRGBA // input selection
+}
+
+var dmsLight = dmsPal{
+	chrome:  rgb(0x3f0e40),
+	tint:    argb(0x14f9edff),
+	rule:    argb(0x38f9edff),
+	inputBg: argb(0x1cf9edff),
+	soft:    argb(0xe6f6e4ff),
+	preview: argb(0xe6ffffff),
+	time:    argb(0xb3f6e4ff),
+	white:   rgb(0xffffff),
+	green:   rgb(0x20a271),
+	pillBg:  rgb(0xeabdfb),
+	pillFg:  rgb(0x39063a),
+	skel:    argb(0x1af9edff),
+	caret:   argb(0x66f9edff),
+}
+
+var dmsDark = dmsPal{
+	chrome:  rgb(0x251627), // between DarkPalette.ChromeA and ChromeB
+	tint:    argb(0x14f9edff),
+	rule:    argb(0x1affffff),
+	inputBg: argb(0x14f9edff),
+	soft:    argb(0xccf6e4ff),
+	preview: argb(0xb3ffffff),
+	time:    argb(0x99f6e4ff),
+	white:   rgb(0xffffff),
+	green:   rgb(0x20a271),
+	pillBg:  rgb(0xeabdfb),
+	pillFg:  rgb(0x39063a),
+	skel:    argb(0x14f9edff),
+	caret:   argb(0x4df9edff),
+}
+
+// dmsColors picks the palette for the current theme (call after frame).
+// Gio blends in linear RGB, so every translucent token is flattened in
+// sRGB (flatten) over the opaque column color: the chrome with the
+// shell's sidebar tint on top. Rows then draw opaque colors only.
+func (d *DMs) dmsColors() {
+	d.c = dmsLight
+	if d.th == nil {
+		return
+	}
+	if d.th.Dark {
+		d.c = dmsDark
+	}
+	if b := d.th.C.Badge; b.A > 0 {
+		d.c.pillBg, d.c.pillFg = b, d.th.C.BadgeText
+	}
+	if g := d.th.C.Presence; g.A > 0 {
+		d.c.green = g
+	}
+	if c := &d.th.C; c.ChromeA.A > 0 {
+		d.c.chrome = theme.Mix(c.ChromeA, c.ChromeB, 0.5) // flat mid of the gradient
+	}
+	if sb := d.th.C.SidebarBg; sb.A > 0 {
+		d.c.chrome = flatten(sb, d.c.chrome)
+	}
+	base := d.c.chrome
+	for _, c := range []*color.NRGBA{&d.c.tint, &d.c.rule, &d.c.inputBg, &d.c.soft, &d.c.preview, &d.c.time, &d.c.skel} {
+		*c = flatten(*c, base)
+	}
+}
 
 type dmsResult struct {
 	page   core.DMPage
@@ -99,6 +164,7 @@ type dmsRow struct {
 // DMs is the Direct messages tab.
 type DMs struct {
 	base
+	c dmsPal // per-frame colors (dmsColors)
 
 	first  async[dmsResult]
 	more   async[dmsResult]
@@ -128,6 +194,7 @@ type DMs struct {
 	retry   widget.Clickable
 
 	dirty   bool
+	autoSel bool // the newest DM was considered for auto-selection
 	lastQ   string
 	lastUnr bool
 
@@ -159,6 +226,7 @@ func (d *DMs) Selected() string { return d.sel }
 // conversation in the white pane beside it.
 func (d *DMs) Layout(gtx C) D {
 	d.frame()
+	d.dmsColors()
 	size := gtx.Constraints.Max
 	lw := int(float32(size.X) * dmsPaneFrac)
 	lw = max(min(lw, gtx.Dp(dmsPaneMax)), gtx.Dp(dmsPaneMin))
@@ -166,10 +234,8 @@ func (d *DMs) Layout(gtx C) D {
 	gtx.Constraints = layout.Exact(size)
 	return row(gtx, layout.Start,
 		layout.Rigid(func(gtx C) D {
-			// The list is translucent over the chrome; paint a flat chrome
-			// color when hosted as a full page.
-			fill(gtx, image.Rect(0, 0, lw, size.Y), dmsChrome)
-			fill(gtx, image.Rect(0, 0, lw, size.Y), d.sideBg())
+			// The column color: the chrome with the sidebar tint, flattened.
+			fill(gtx, image.Rect(0, 0, lw, size.Y), d.c.chrome)
 			return fixed(gtx, image.Pt(lw, size.Y), d.LayoutList)
 		}),
 		layout.Flexed(1, func(gtx C) D {
@@ -184,6 +250,7 @@ func (d *DMs) Layout(gtx C) D {
 // no background so the shell can host it on its themed sidebar.
 func (d *DMs) LayoutList(gtx C) D {
 	d.frame()
+	d.dmsColors()
 	d.update(gtx)
 	size := gtx.Constraints.Max
 	gtx.Constraints = layout.Exact(size)
@@ -217,29 +284,13 @@ func (d *DMs) layoutPane(gtx C) D {
 		"Pick a conversation from the list, or use Find a DM to start one.", nil, "")
 }
 
-func (d *DMs) sideBg() color.NRGBA {
-	if d.th != nil && d.th.C.SidebarBg.A > 0 {
-		return d.th.C.SidebarBg
-	}
-	return argb(0x1cf9edff)
-}
-
-// ringColor approximates the opaque sidebar color under a row, for the
-// presence ring and the group-avatar cutout.
+// ringColor is the opaque color under a row, for the presence ring and
+// the group-avatar cutout.
 func (d *DMs) ringColor(tinted bool) color.NRGBA {
-	c := dmsOver(dmsChrome, d.sideBg())
 	if tinted {
-		c = dmsOver(c, dmsTint)
+		return d.c.tint
 	}
-	return c
-}
-
-func dmsOver(bg, fg color.NRGBA) color.NRGBA {
-	top := fg
-	top.A = 0xff
-	out := theme.Mix(bg, top, float32(fg.A)/255)
-	out.A = 0xff
-	return out
+	return d.c.chrome
 }
 
 // ---- header and filter ----
@@ -254,9 +305,9 @@ func (d *DMs) layoutHeader(gtx C) D {
 				layout.Flexed(1, func(gtx C) D {
 					return layout.Inset{Left: 8, Right: 8, Top: 4, Bottom: 4}.Layout(gtx, func(gtx C) D {
 						return row(gtx, layout.Middle,
-							layout.Rigid(func(gtx C) D { return d.label(gtx, 18, wBlack, dmsWhite, "Direct messages") }),
+							layout.Rigid(func(gtx C) D { return d.label(gtx, 18, wBlack, d.c.white, "Direct messages") }),
 							hgap(4),
-							layout.Rigid(func(gtx C) D { return d.icon(gtx, "caret-down", 16, dmsWhite) }),
+							layout.Rigid(func(gtx C) D { return d.icon(gtx, "caret-down", 16, d.c.white) }),
 						)
 					})
 				}),
@@ -267,11 +318,11 @@ func (d *DMs) layoutHeader(gtx C) D {
 						pointerCursor(gtx)
 						s := gtx.Dp(28)
 						if d.compose.Hovered() {
-							rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(8), dmsTint)
+							rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(8), d.c.tint)
 						}
 						g := gtx
 						g.Constraints = layout.Exact(image.Pt(s, s))
-						layout.Center.Layout(g, func(gtx C) D { return d.icon(gtx, "compose", 20, dmsSoft) })
+						layout.Center.Layout(g, func(gtx C) D { return d.icon(gtx, "compose", 20, d.c.soft) })
 						return D{Size: image.Pt(s, s)}
 					})
 				}),
@@ -286,18 +337,18 @@ func (d *DMs) layoutUnreads(gtx C) D {
 	return d.unreads.Layout(gtx, func(gtx C) D {
 		pointerCursor(gtx)
 		return row(gtx, layout.Middle,
-			layout.Rigid(func(gtx C) D { return d.label(gtx, 12, wBold, dmsSoft, "Unreads") }),
+			layout.Rigid(func(gtx C) D { return d.label(gtx, 12, wBold, d.c.soft, "Unreads") }),
 			hgap(8),
 			layout.Rigid(func(gtx C) D {
 				w, h := gtx.Dp(28), gtx.Dp(18)
 				r := image.Rect(0, 0, w, h)
 				k, in := gtx.Dp(12), gtx.Dp(3)
-				knob := dmsSoft
+				knob := d.c.soft
 				if d.unreads.Value {
-					rrect(gtx, r, h/2, dmsSoft)
-					knob = dmsPillFg
+					rrect(gtx, r, h/2, d.c.soft)
+					knob = d.c.pillFg
 				} else {
-					border(gtx, r, h/2, max(1, gtx.Dp(1)), dmsSoft)
+					border(gtx, r, h/2, max(1, gtx.Dp(1)), d.c.soft)
 				}
 				x := in
 				if d.unreads.Value {
@@ -317,17 +368,17 @@ func (d *DMs) layoutFind(gtx C) D {
 	w, h := gtx.Constraints.Max.X, gtx.Dp(dmsSearchH)
 	r := image.Rect(0, 0, w, h)
 	rad := gtx.Dp(8)
-	rrect(gtx, r, rad, dmsInputBg)
-	bc := dmsRule
+	rrect(gtx, r, rad, d.c.inputBg)
+	bc := d.c.rule
 	if gtx.Focused(&s.ed) {
-		bc = dmsSoft
+		bc = d.c.soft
 	}
 	border(gtx, r, rad, max(1, gtx.Dp(1)), bc)
 	g := gtx
 	g.Constraints = layout.Exact(image.Pt(w, h))
 	layout.Inset{Left: 8, Right: 8}.Layout(g, func(gtx C) D {
 		return row(gtx, layout.Middle,
-			layout.Rigid(func(gtx C) D { return d.icon(gtx, "filter", 16, dmsSoft) }),
+			layout.Rigid(func(gtx C) D { return d.icon(gtx, "filter", 16, d.c.soft) }),
 			hgap(8),
 			layout.Flexed(1, func(gtx C) D {
 				gtx.Constraints.Min.X = gtx.Constraints.Max.X
@@ -336,10 +387,13 @@ func (d *DMs) layoutFind(gtx C) D {
 						if s.ed.Len() > 0 {
 							return D{}
 						}
-						return d.label(gtx, 13, wReg, dmsSoft, s.ph)
+						return d.label(gtx, 13, wReg, d.c.soft, s.ph)
 					}),
 					layout.Stacked(func(gtx C) D {
-						return d.th.Editor(gtx, &s.ed, 13, dmsWhite, argb(0x66f9edff))
+						// Stack resets Min; an empty editor would be only
+						// as wide as its caret and miss clicks.
+						gtx.Constraints.Min.X = gtx.Constraints.Max.X
+						return d.th.Editor(gtx, &s.ed, 13, d.c.white, d.c.caret)
 					}),
 				)
 			}),
@@ -421,10 +475,15 @@ func (d *DMs) update(gtx C) {
 	}
 	d.keys(gtx)
 
-	// With Panes the right side always shows a conversation.
-	if d.sel == "" && len(d.items) > 0 {
+	// With Panes, Slack opens the newest DM on the right. Showing a
+	// conversation marks it read, so only do that when the newest DM has
+	// nothing unread; otherwise wait for the user to pick one.
+	if d.sel == "" && !d.autoSel && len(d.items) > 0 {
 		if _, ok := d.h.(Panes); ok {
-			d.sel = d.items[0].Channel
+			d.autoSel = true
+			if !dmsUnread(&d.items[0]) {
+				d.sel = d.items[0].Channel
+			}
 		}
 	}
 }
@@ -569,6 +628,14 @@ func (d *DMs) mergeFirst(p core.DMPage) {
 		dmsSort(out)
 	} else {
 		d.next, d.pages, d.moreTried = p.Next, 1, ""
+	}
+	// A DM opened from Find a DM may not be in the server's recent list
+	// yet (an empty self-DM never is); keep the selected one listed.
+	if d.sel != "" && !seen[d.sel] {
+		if i, ok := d.index[d.sel]; ok {
+			out = append(out, d.items[i])
+			dmsSort(out)
+		}
 	}
 	d.items = out
 	d.changed()
@@ -876,7 +943,7 @@ func (d *DMs) layoutRows(gtx C) D {
 			return d.dmRow(gtx, &d.items[e.dm])
 		case e.head != "":
 			return layout.Inset{Top: 16, Bottom: 4, Left: dmsPad, Right: dmsPad}.Layout(gtx, func(gtx C) D {
-				return d.label(gtx, 13, wBold, dmsSoft, e.head)
+				return d.label(gtx, 13, wBold, d.c.soft, e.head)
 			})
 		default:
 			return d.personRow(gtx, e.user)
@@ -913,13 +980,13 @@ func (d *DMs) dmRow(gtx C, dm *core.DM) D {
 			txt = "You: " + txt
 		}
 	}
-	prevC := dmsPreview
+	prevC := d.c.preview
 	if unread {
-		prevC = dmsWhite
+		prevC = d.c.white
 	}
 	bg := color.NRGBA{}
 	if sel {
-		bg = dmsTint
+		bg = d.c.tint
 	}
 
 	var bar W
@@ -935,7 +1002,7 @@ func (d *DMs) dmRow(gtx C, dm *core.DM) D {
 		}
 	}
 
-	return d.dlHoverRow(gtx, &r.dlRowState, dlRowOpts{Bg: bg, HoverBg: dmsTint, Rule: dmsRule, Bar: bar, BarTop: 4, BarRight: 12, Content: func(gtx C) D {
+	return d.dlHoverRow(gtx, &r.dlRowState, dlRowOpts{Bg: bg, HoverBg: d.c.tint, Rule: d.c.rule, Bar: bar, BarTop: 4, BarRight: 12, Content: func(gtx C) D {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 		return layout.UniformInset(dmsPad).Layout(gtx, func(gtx C) D {
 			align := layout.Start
@@ -992,16 +1059,17 @@ func (d *DMs) nameLine(gtx C, name string, isSelf bool, statusURL, when string) 
 		layout.Flexed(1, func(gtx C) D {
 			gtx.Constraints.Min.X = 0
 			nameMax := max(0, gtx.Constraints.Max.X-youW-emW)
-			return row(gtx, layout.Middle,
+			full := gtx.Constraints.Max.X
+			dims := row(gtx, layout.Middle,
 				layout.Rigid(func(gtx C) D {
 					gtx.Constraints.Max.X = nameMax
-					return d.para(gtx, dmsNameSize, dmsLine, wBold, dmsWhite, 1, name)
+					return d.para(gtx, dmsNameSize, dmsLine, wBold, d.c.white, 1, name)
 				}),
 				layout.Rigid(func(gtx C) D {
 					if !isSelf {
 						return D{}
 					}
-					return d.para(gtx, dmsNameSize, dmsLine, wReg, dmsWhite, 1, " (you)")
+					return d.para(gtx, dmsNameSize, dmsLine, wReg, d.c.white, 1, " (you)")
 				}),
 				layout.Rigid(func(gtx C) D {
 					if statusURL == "" {
@@ -1010,12 +1078,15 @@ func (d *DMs) nameLine(gtx C, name string, isSelf bool, statusURL, when string) 
 					return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return d.emojiImg(gtx, statusURL, 16) })
 				}),
 			)
+			// Fill the flexed space so the time lands at the right edge.
+			dims.Size.X = full
+			return dims
 		}),
 		layout.Rigid(func(gtx C) D {
 			if when == "" {
 				return D{}
 			}
-			return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return d.label(gtx, dmsTimeSize, wReg, dmsTimeC, when) })
+			return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return d.label(gtx, dmsTimeSize, wReg, d.c.time, when) })
 		}),
 	)
 }
@@ -1067,10 +1138,10 @@ func (d *DMs) presenceBadge(gtx C, c image.Point, presence string, ring color.NR
 	theme.Circle(gtx, c, gtx.Dp(14), ring)
 	dot := gtx.Dp(9)
 	if presence == "active" {
-		theme.Circle(gtx, c, dot, dmsGreen)
+		theme.Circle(gtx, c, dot, d.c.green)
 		return
 	}
-	theme.Circle(gtx, c, dot, dmsSoft)
+	theme.Circle(gtx, c, dot, d.c.soft)
 	theme.Circle(gtx, c, dot-2*gtx.Dp(1.5), ring)
 }
 
@@ -1083,10 +1154,10 @@ func (d *DMs) dmsPill(gtx C, n int) D {
 	tw := d.th.Measure(gtx, 12, wBold, s)
 	h := gtx.Dp(20)
 	w := max(gtx.Dp(22), tw+gtx.Dp(16))
-	rrect(gtx, image.Rect(0, 0, w, h), h/2, dmsPillBg)
+	rrect(gtx, image.Rect(0, 0, w, h), h/2, d.c.pillBg)
 	g := gtx
 	g.Constraints = layout.Exact(image.Pt(w, h))
-	layout.Center.Layout(g, func(gtx C) D { return d.label(gtx, 12, wBold, dmsPillFg, s) })
+	layout.Center.Layout(g, func(gtx C) D { return d.label(gtx, 12, wBold, d.c.pillFg, s) })
 	return D{Size: image.Pt(w, h)}
 }
 
@@ -1112,13 +1183,13 @@ func (d *DMs) personRow(gtx C, u core.User) D {
 				layout.Flexed(1, func(gtx C) D {
 					return col(gtx,
 						layout.Rigid(func(gtx C) D {
-							return d.para(gtx, dmsNameSize, dmsLine, wBold, dmsWhite, 1, displayName(u))
+							return d.para(gtx, dmsNameSize, dmsLine, wBold, d.c.white, 1, displayName(u))
 						}),
 						layout.Rigid(func(gtx C) D {
 							if sub == "" {
 								return D{}
 							}
-							return d.label(gtx, 13, wReg, dmsTimeC, sub)
+							return d.label(gtx, 13, wReg, d.c.time, sub)
 						}),
 					)
 				}),
@@ -1126,11 +1197,11 @@ func (d *DMs) personRow(gtx C, u core.User) D {
 		})
 		call := m.Stop()
 		if c.Hovered() {
-			fill(gtx, image.Rectangle{Max: dims.Size}, dmsTint)
+			fill(gtx, image.Rectangle{Max: dims.Size}, d.c.tint)
 		}
 		call.Add(gtx.Ops)
 		hl := max(1, gtx.Dp(1))
-		fill(gtx, image.Rect(0, dims.Size.Y, dims.Size.X, dims.Size.Y+hl), dmsRule)
+		fill(gtx, image.Rect(0, dims.Size.Y, dims.Size.X, dims.Size.Y+hl), d.c.rule)
 		return D{Size: image.Pt(dims.Size.X, dims.Size.Y+hl)}
 	})
 }
@@ -1141,10 +1212,10 @@ func (d *DMs) notice(gtx C, title, body string, btn *widget.Clickable, btnLabel 
 	return layout.Inset{Top: 32, Left: 24, Right: 24}.Layout(gtx, func(gtx C) D {
 		return layout.N.Layout(gtx, func(gtx C) D {
 			return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
-				layout.Rigid(func(gtx C) D { return d.centered(gtx, 15, wBold, dmsWhite, title) }),
+				layout.Rigid(func(gtx C) D { return d.centered(gtx, 15, wBold, d.c.white, title) }),
 				vgap(4),
 				layout.Rigid(func(gtx C) D {
-					return d.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: dmsSoft, Align: text.Middle}, body)
+					return d.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: d.c.soft, Align: text.Middle}, body)
 				}),
 				layout.Rigid(func(gtx C) D {
 					if btn == nil {
@@ -1153,9 +1224,9 @@ func (d *DMs) notice(gtx C, title, body string, btn *widget.Clickable, btnLabel 
 					return layout.Inset{Top: 12}.Layout(gtx, func(gtx C) D {
 						return btn.Layout(gtx, func(gtx C) D {
 							pointerCursor(gtx)
-							ld := d.label(gtx, 13, wBold, dmsWhite, btnLabel)
+							ld := d.label(gtx, 13, wBold, d.c.white, btnLabel)
 							if btn.Hovered() {
-								fill(gtx, image.Rect(0, ld.Size.Y-gtx.Dp(1), ld.Size.X, ld.Size.Y), dmsWhite)
+								fill(gtx, image.Rect(0, ld.Size.Y-gtx.Dp(1), ld.Size.X, ld.Size.Y), d.c.white)
 							}
 							return ld
 						})
@@ -1174,12 +1245,12 @@ func (d *DMs) dmsSkeleton(gtx C, rows int) D {
 			return layout.UniformInset(dmsPad).Layout(gtx, func(gtx C) D {
 				w := gtx.Constraints.Max.X
 				a := gtx.Dp(dmsAvatar)
-				rrect(gtx, image.Rect(0, 0, a, a), avatarRadius(gtx, dmsAvatar), dmsSkelColor)
+				rrect(gtx, image.Rect(0, 0, a, a), avatarRadius(gtx, dmsAvatar), d.c.skel)
 				x := a + gtx.Dp(dmsAvGap)
 				w1 := (w - x) * (35 + (i*17)%30) / 100
 				w2 := (w - x) * (55 + (i*23)%35) / 100
-				rrect(gtx, image.Rect(x, gtx.Dp(4), x+w1, gtx.Dp(16)), gtx.Dp(4), dmsSkelColor)
-				rrect(gtx, image.Rect(x, gtx.Dp(24), x+w2, gtx.Dp(34)), gtx.Dp(4), dmsSkelColor)
+				rrect(gtx, image.Rect(x, gtx.Dp(4), x+w1, gtx.Dp(16)), gtx.Dp(4), d.c.skel)
+				rrect(gtx, image.Rect(x, gtx.Dp(24), x+w2, gtx.Dp(34)), gtx.Dp(4), d.c.skel)
 				return D{Size: image.Pt(w, a)}
 			})
 		}))

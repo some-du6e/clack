@@ -161,28 +161,33 @@ func tlShapeRun(sh *text.Shaper, k tlShapeKey) *tlShape {
 
 // tlMetrics are the layout sizes in pixels for one metric and style.
 type tlMetrics struct {
-	ppem, codePpem fixed.Int26_6
-	lh, preLH      int
-	emoji          int
-	emojiGap       int
-	listIndent     int
-	Dp24, Dp3      int
-	markerGap      int
-	numberGap      int
-	bulletR        int
-	quoteBar       int
-	quoteLeft      int
-	prePad         int
-	preMargin      int
-	preRadius      int
-	border         int
-	codePadX       int
-	codeRadius     int
-	pillPadX       int
-	pillRadius     int
-	newlineW       int
-	caretW         int
-	deco           int // underline/strike thickness
+	ppem, codePpem         fixed.Int26_6
+	h1Ppem, h2Ppem, h3Ppem fixed.Int26_6
+	lh, preLH              int
+	h1LH, headLH           int // heading line heights (h2 and h3 share headLH)
+	headMargin             int // heading bottom margin
+	dividerBox             int // the divider line box height
+	dividerThick           int // the divider rule thickness
+	emoji                  int
+	emojiGap               int
+	listIndent             int
+	Dp24, Dp3              int
+	markerGap              int
+	numberGap              int
+	bulletR                int
+	quoteBar               int
+	quoteLeft              int
+	prePad                 int
+	preMargin              int
+	preRadius              int
+	border                 int
+	codePadX               int
+	codeRadius             int
+	pillPadX               int
+	pillRadius             int
+	newlineW               int
+	caretW                 int
+	deco                   int // underline/strike thickness
 }
 
 func tlMakeMetrics(m unit.Metric, st *EditorStyle) tlMetrics {
@@ -200,31 +205,40 @@ func tlMakeMetrics(m unit.Metric, st *EditorStyle) tlMetrics {
 	}
 	px1 := max(m.Dp(1), 1)
 	return tlMetrics{
-		ppem:       fixed.I(m.Sp(ts)),
-		codePpem:   fixed.I(m.Sp(ts * 0.8)),
-		lh:         max(m.Sp(lh), 1),
-		preLH:      max(m.Sp(lh*18/22), 1),
-		emoji:      m.Dp(es),
-		emojiGap:   px1,
-		listIndent: m.Dp(28),
-		Dp24:       m.Dp(24),
-		Dp3:        m.Dp(3),
-		markerGap:  m.Dp(15),
-		numberGap:  m.Dp(7),
-		bulletR:    max(m.Dp(3), 2),
-		quoteBar:   m.Dp(4),
-		quoteLeft:  m.Dp(16),
-		prePad:     m.Dp(8),
-		preMargin:  m.Dp(4),
-		preRadius:  m.Dp(4),
-		border:     px1,
-		codePadX:   m.Dp(3),
-		codeRadius: m.Dp(3),
-		pillPadX:   m.Dp(2),
-		pillRadius: m.Dp(3),
-		newlineW:   m.Dp(4),
-		caretW:     px1,
-		deco:       px1,
+		ppem:     fixed.I(m.Sp(ts)),
+		codePpem: fixed.I(m.Sp(ts * 0.8)),
+		// Headings scale off the base text size: h1 18/15, h2 and h3 15/15.
+		h1Ppem:       fixed.I(m.Sp(ts * 18 / 15)),
+		h2Ppem:       fixed.I(m.Sp(ts)),
+		h3Ppem:       fixed.I(m.Sp(ts)),
+		lh:           max(m.Sp(lh), 1),
+		preLH:        max(m.Sp(lh*18/22), 1),
+		h1LH:         max(m.Sp(ts*24/15), 1),
+		headLH:       max(m.Sp(ts*22/15), 1),
+		headMargin:   max(m.Sp(ts*4/15), 1),
+		dividerBox:   max(m.Sp(ts*12/15), 1),
+		dividerThick: px1,
+		emoji:        m.Dp(es),
+		emojiGap:     px1,
+		listIndent:   m.Dp(28),
+		Dp24:         m.Dp(24),
+		Dp3:          m.Dp(3),
+		markerGap:    m.Dp(15),
+		numberGap:    m.Dp(7),
+		bulletR:      max(m.Dp(3), 2),
+		quoteBar:     m.Dp(4),
+		quoteLeft:    m.Dp(16),
+		prePad:       m.Dp(8),
+		preMargin:    m.Dp(4),
+		preRadius:    m.Dp(4),
+		border:       px1,
+		codePadX:     m.Dp(3),
+		codeRadius:   m.Dp(3),
+		pillPadX:     m.Dp(2),
+		pillRadius:   m.Dp(3),
+		newlineW:     m.Dp(4),
+		caretW:       px1,
+		deco:         px1,
 	}
 }
 
@@ -241,6 +255,28 @@ func tlFont(s Style, mono bool) font.Font {
 		f.Style = font.Italic
 	}
 	return f
+}
+
+// tlHeadFont is the face for a heading line: Big and Medium are Black (900),
+// Small is Bold (700). Inline styles are ignored (headings are plain).
+func tlHeadFont(k BlockKind) font.Font {
+	f := font.Font{Typeface: Lato, Weight: font.Black}
+	if k == Header3 {
+		f.Weight = font.Bold
+	}
+	return f
+}
+
+// headPpem is the shaped size of a heading line.
+func headPpem(m *tlMetrics, k BlockKind) fixed.Int26_6 {
+	switch k {
+	case Header1:
+		return m.h1Ppem
+	case Header2:
+		return m.h2Ppem
+	default:
+		return m.h3Ppem
+	}
 }
 
 // tlItem is a style run or an atom inside a paragraph.
@@ -333,6 +369,9 @@ type tlLayout struct {
 
 	latoAsc, latoDesc int
 	monoAsc, monoDesc int
+	h1Asc, h1Desc     int
+	h2Asc, h2Desc     int
+	h3Asc, h3Desc     int
 
 	paintOK        bool
 	paintGen       uint64
@@ -360,6 +399,21 @@ func (l *tlLayout) build(d *Doc, st *EditorStyle, sh *text.Shaper, k tlKey) {
 	}
 	if l.monoAsc+l.monoDesc == 0 {
 		l.monoAsc, l.monoDesc = m.codePpem.Ceil(), m.codePpem.Ceil()/4
+	}
+	h1 := l.cache.get(sh, tlShapeKey{font: tlHeadFont(Header1), ppem: m.h1Ppem, loc: k.loc})
+	h2 := l.cache.get(sh, tlShapeKey{font: tlHeadFont(Header2), ppem: m.h2Ppem, loc: k.loc})
+	h3 := l.cache.get(sh, tlShapeKey{font: tlHeadFont(Header3), ppem: m.h3Ppem, loc: k.loc})
+	l.h1Asc, l.h1Desc = h1.ascent.Ceil(), h1.descent.Ceil()
+	l.h2Asc, l.h2Desc = h2.ascent.Ceil(), h2.descent.Ceil()
+	l.h3Asc, l.h3Desc = h3.ascent.Ceil(), h3.descent.Ceil()
+	if l.h1Asc+l.h1Desc == 0 {
+		l.h1Asc, l.h1Desc = m.h1Ppem.Ceil(), m.h1Ppem.Ceil()/4
+	}
+	if l.h2Asc+l.h2Desc == 0 {
+		l.h2Asc, l.h2Desc = m.h2Ppem.Ceil(), m.h2Ppem.Ceil()/4
+	}
+	if l.h3Asc+l.h3Desc == 0 {
+		l.h3Asc, l.h3Desc = m.h3Ppem.Ceil(), m.h3Ppem.Ceil()/4
 	}
 	l.paras = l.paras[:0]
 	l.lines = l.lines[:0]
@@ -405,9 +459,16 @@ func (l *tlLayout) buildPara(d *Doc, p *tlPara, pi int, k tlKey) {
 	if p.kind == CodeBlock {
 		right = m.border + m.prePad
 	}
-	if p.kind == CodeBlock {
+	switch p.kind {
+	case CodeBlock:
 		p.asc, p.desc = l.monoAsc, l.monoDesc
-	} else {
+	case Header1:
+		p.asc, p.desc = l.h1Asc, l.h1Desc
+	case Header2:
+		p.asc, p.desc = l.h2Asc, l.h2Desc
+	case Header3:
+		p.asc, p.desc = l.h3Asc, l.h3Desc
+	default:
 		p.asc, p.desc = l.latoAsc, l.latoDesc
 	}
 	n := p.end - p.start
@@ -431,12 +492,18 @@ func (l *tlLayout) buildPara(d *Doc, p *tlPara, pi int, k tlKey) {
 			r++
 		}
 		mono := p.kind == CodeBlock
-		code := !mono && a.Style&Code != 0
+		head := isHeading(p.kind)
+		code := !mono && !head && a.Style&Code != 0
 		ppem := m.ppem
-		if mono || code {
+		fnt := tlFont(a.Style, mono || code)
+		switch {
+		case head:
+			ppem = headPpem(m, p.kind)
+			fnt = tlHeadFont(p.kind)
+		case mono || code:
 			ppem = m.codePpem
 		}
-		s := l.cache.get(l.sh, tlShapeKey{s: string(d.Runes[q:r]), font: tlFont(a.Style, mono || code), ppem: ppem, loc: k.loc})
+		s := l.cache.get(l.sh, tlShapeKey{s: string(d.Runes[q:r]), font: fnt, ppem: ppem, loc: k.loc})
 		it := tlItem{r0: q, r1: r, x0: x, shape: s, attr: a, code: code}
 		if code {
 			it.padL = fixed.I(m.codePadX)
@@ -586,8 +653,15 @@ func (l *tlLayout) vertical() {
 		for li := p.l0; li < p.l1; li++ {
 			ln := &l.lines[li]
 			h := m.lh
-			if p.kind == CodeBlock {
+			switch p.kind {
+			case CodeBlock:
 				h = m.preLH
+			case Header1:
+				h = m.h1LH
+			case Header2, Header3:
+				h = m.headLH
+			case Divider:
+				h = m.dividerBox
 			}
 			for _, it := range p.items {
 				if it.box > 0 && it.r0 >= ln.a && it.r0 < ln.b {
@@ -610,6 +684,9 @@ func (l *tlLayout) vertical() {
 					})
 				}
 			}
+		}
+		if isHeading(p.kind) {
+			y += m.headMargin // 4px bottom margin below the heading
 		}
 		p.bot = y
 		if p.kind == CodeBlock && !nextCode {
@@ -794,6 +871,10 @@ func (l *tlLayout) paintBG(gtx layout.Context, c tlColors) {
 		}
 		if p.kind == Quote {
 			fillRect(gtx, image.Rect(0, p.top, m.quoteBar, p.bot), c.quoteBar)
+		}
+		if p.kind == Divider {
+			y := p.top + (p.bot-p.top-m.dividerThick)/2
+			fillRect(gtx, image.Rect(0, y, l.width, y+m.dividerThick), c.quoteBar)
 		}
 		for li := p.l0; li < p.l1; li++ {
 			ln := &l.lines[li]
