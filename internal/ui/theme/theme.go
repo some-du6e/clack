@@ -44,6 +44,11 @@ type Theme struct {
 	Dark   bool
 	C      Palette
 	Shaper *text.Shaper
+	// Images, when set (the ui root sets the app's imgcache), lets labels
+	// draw unicode emoji as Slack CDN images.
+	Images EmojiImages
+	// EmojiStyle is Slack's emoji set preference: "apple" (default) or "google".
+	EmojiStyle string
 }
 
 var (
@@ -86,7 +91,7 @@ func Faces() []font.FontFace {
 // Lato lacks (CJK, symbols); Lato is preferred for everything it covers.
 func New(dark bool) *Theme {
 	t := Bare(dark)
-	t.Shaper = NewShaper()
+	t.SetShaper(NewShaper())
 	return t
 }
 
@@ -123,6 +128,16 @@ func Over(fg, bg color.NRGBA) color.NRGBA {
 	l := func(f, b uint8) uint8 { return uint8(float32(f)*a + float32(b)*(1-a) + .5) }
 	return color.NRGBA{R: l(fg.R, bg.R), G: l(fg.G, bg.G), B: l(fg.B, bg.B), A: 0xff}
 }
+
+// OnBg pre-mixes a translucent Slack color over the primary background
+// (what CSS rgba() over white/#1a1d21 looks like in Chrome).
+func (t *Theme) OnBg(c color.NRGBA) color.NRGBA { return Over(c, t.C.Bg) }
+
+// OnHover pre-mixes c over the message-hover background.
+func (t *Theme) OnHover(c color.NRGBA) color.NRGBA { return Over(c, t.C.BgHover) }
+
+// OnRaised pre-mixes c over menus/popovers.
+func (t *Theme) OnRaised(c color.NRGBA) color.NRGBA { return Over(c, t.C.BgRaised) }
 
 // Flatten pre-composites the panel-content colors that Slack defines as
 // translucent over the primary background (borders, code, reactions, …).
@@ -171,8 +186,7 @@ func (t *Theme) Layout(gtx layout.Context, s TextStyle, txt string) layout.Dimen
 	if s.Italic {
 		f.Style = font.Italic
 	}
-	l := widget.Label{MaxLines: s.MaxLines, Alignment: s.Align, LineHeight: s.LineHeight, WrapPolicy: s.Wrap}
-	return l.Layout(gtx, t.Shaper, f, s.Size, txt, Material(gtx, s.Color))
+	return t.Text(gtx, LabelOpts{Font: f, Size: s.Size, LineHeight: s.LineHeight, MaxLines: s.MaxLines, Align: s.Align, Wrap: s.Wrap, Color: s.Color}, txt)
 }
 
 // Label draws single-line text (ellipsized when it overflows).

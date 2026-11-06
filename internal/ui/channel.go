@@ -38,22 +38,10 @@ func (a *App) layoutChannel(gtx layout.Context, ch string) layout.Dimensions {
 	theme.Fill(gtx, image.Rect(0, hh+th-gtx.Dp(1), sz.X, hh+th), c.Border)
 
 	body := image.Rect(0, hh+th, sz.X, sz.Y)
-	comp := a.view(Route("composer/"+ch), func() View { return a.mountComposer(ch, "") })
-	// composer sizes itself; the message list gets the rest.
-	m := op.Record(gtx.Ops)
-	g := gtx
-	g.Constraints = layout.Constraints{Min: image.Pt(sz.X, 0), Max: image.Pt(sz.X, body.Dy()/2)}
-	cd := comp.Layout(g)
-	call := m.Stop()
-	listH := body.Dy() - cd.Size.Y
-	atExact(gtx, body.Min, image.Pt(sz.X, listH), func(gtx layout.Context) layout.Dimensions {
-		defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
-		v := a.view(Route("c/"+ch), func() View { return a.mountChannel(ch) })
-		return v.Layout(gtx)
+	cv := a.convoFor(ch, "")
+	atExact(gtx, body.Min, body.Size(), func(gtx layout.Context) layout.Dimensions {
+		return a.layoutConvo(gtx, cv, a.primaryOrigin.Add(body.Min))
 	})
-	t := op.Offset(image.Pt(0, body.Min.Y+listH)).Push(gtx.Ops)
-	call.Add(gtx.Ops)
-	t.Pop()
 	return layout.Dimensions{Size: sz}
 }
 
@@ -102,8 +90,10 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		right -= gtx.Dp(6)
 	}
 	if clicked(a.clicks.get("hdr.kebab")) {
-		// popups take window coordinates
-		a.openChannelMenu(ch, a.primaryOrigin.Add(image.Pt(kebabX+btn, (h+btn)/2)))
+		// popups take window coordinates; the pointer is on the kebab (this
+		// header is also drawn inside views' panes, where offsets differ)
+		_ = kebabX
+		a.openChannelMenu(ch, a.PointerPos())
 	}
 	if clicked(a.clicks.get("hdr.search")) {
 		a.openSearch("in:<#" + ch + ">")
