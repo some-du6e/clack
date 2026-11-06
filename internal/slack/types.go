@@ -91,6 +91,9 @@ type File struct {
 	Thumb960           string          `json:"thumb_960"`
 	Thumb1024          string          `json:"thumb_1024"`
 	ThumbVideo         string          `json:"thumb_video"`
+	ThumbPDF           string          `json:"thumb_pdf"`
+	ThumbPDFW          int             `json:"thumb_pdf_w"`
+	ThumbPDFH          int             `json:"thumb_pdf_h"`
 	OriginalW          int             `json:"original_w"`
 	OriginalH          int             `json:"original_h"`
 	Thumb360W          int             `json:"thumb_360_w"`

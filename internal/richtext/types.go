@@ -64,6 +64,7 @@ const (
 	AttachmentBlock
 	FileBlock
 	Tombstone
+	Table // Block Kit table: Rows of cells (first row is the header row Slack draws bold)
 )
 
 // Block is one vertical unit of a document.
@@ -81,7 +82,10 @@ type Block struct {
 	Buttons    []Button // Actions block / section button accessory
 	Att        *Attachment
 	File       *File
-	Children   []Block // nested blocks: attachment files; Section text that has quotes/pre (then Spans is nil)
+	Children   []Block    // nested blocks: attachment files; Section text that has quotes/pre (then Spans is nil)
+	Rows       [][][]Span // Table: rows → cells → inline spans (multi-paragraph cells joined by Break)
+	ColAlign   []string   // Table: per-column "left" | "center" | "right" ("" = left)
+	ColWrap    []bool     // Table: per-column is_wrapped
 }
 
 // Image is a remote image reference.
