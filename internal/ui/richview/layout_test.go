@@ -1293,7 +1293,7 @@ func TestLastTextual(t *testing.T) {
 		{[]rt.Block{b(rt.Paragraph), b(rt.Divider)}, 0}, // label goes after the last text
 		{[]rt.Block{b(rt.Quote), b(rt.List)}, 1},
 		{[]rt.Block{b(rt.Section)}, 0},
-		{[]rt.Block{b(rt.Section), b(rt.FileBlock)}, -1},
+		{[]rt.Block{b(rt.Section), b(rt.FileBlock)}, 0},
 		{[]rt.Block{b(rt.Preformatted)}, 0},
 	}
 	for i, c := range cases {

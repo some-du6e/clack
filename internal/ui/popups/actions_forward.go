@@ -22,12 +22,15 @@ import (
 // sidebar's conversations, DMs included; picks become chips), an optional
 // message, a quoted preview, and [Copy link] [Forward]. Forwarding posts
 // the optional note plus the permalink, which Slack unfurls as a shared
-// message.
+// message. Group DMs show Slack's member tile (mpimTile) and are titled
+// and matched by their members' names.
 
 const actFwdMax = 6
 
 type actFwdTarget struct {
 	id, title, lower, kind, avatar string
+	members                        []string // group DMs: every member
+	keys                           []string // extra lowercase match keys (members' real names, handles)
 }
 
 type actFwdChip struct {
@@ -96,6 +99,32 @@ func actFwdTargets(h Host) []actFwdTarget {
 			continue
 		}
 		t := actFwdTarget{id: c.ID, kind: c.Kind, title: convTitle(h, c)}
+		if c.Kind == "mpim" {
+			if t.title == c.Name {
+				if hs := srMpdmNames(c.Name, snap.Self.Handle); len(hs) > 0 {
+					t.title = strings.Join(hs, ", ")
+				}
+			}
+			t.members = c.Members
+			for _, id := range c.Members {
+				if id == snap.Self.ID {
+					continue
+				}
+				u, ok := snap.Users[id]
+				if !ok {
+					u, ok = lookupUser(h, id)
+				}
+				if !ok {
+					continue
+				}
+				if u.RealName != "" && u.RealName != userName(u) {
+					t.keys = append(t.keys, strings.ToLower(u.RealName))
+				}
+				if u.Handle != "" {
+					t.keys = append(t.keys, strings.ToLower(u.Handle))
+				}
+			}
+		}
 		if c.Kind == "im" {
 			u, ok := snap.Users[c.User]
 			if !ok {
@@ -155,6 +184,21 @@ func actFuzzy(s, q string) int {
 	return 200 - minInt(gaps, 199)
 }
 
+// actFwdScore matches a target's title, then its extra keys (a notch
+// lower, so a name match wins); -1 = no match.
+func actFwdScore(t *actFwdTarget, q string) int {
+	sc := actFuzzy(t.lower, q)
+	for _, k := range t.keys {
+		if s2 := actFuzzy(k, q); s2 >= 0 {
+			s2 = maxInt(0, s2-50)
+			if s2 > sc {
+				sc = s2
+			}
+		}
+	}
+	return sc
+}
+
 func actIndexFrom(s, q string, from int) int {
 	if from >= len(s) {
 		return -1
@@ -190,7 +234,7 @@ func (f *actForward) refilter() {
 	var hits []hit
 	for i := range f.all {
 		t := &f.all[i]
-		if sc := actFuzzy(t.lower, q); sc >= 0 && !f.chosen(t.id) {
+		if sc := actFwdScore(t, q); sc >= 0 && !f.chosen(t.id) {
 			hits = append(hits, hit{i, sc})
 		}
 	}
@@ -428,11 +472,16 @@ func (f *actForward) chip(gtx layout.Context, th *theme.Theme, cl *Colors, c *ac
 		tw -= w - maxW
 		w = maxW
 	}
-	rrect(gtx, image.Rect(0, 0, w, ch), dp(gtx, 4), theme.WithAlpha(cl.Link, 0x1f))
+	// opaque tint (sRGB mix) so the group-DM tile's cut-out ring matches
+	chipBg := theme.Mix(cl.Bg, cl.Link, float32(0x1f)/255)
+	rrect(gtx, image.Rect(0, 0, w, ch), dp(gtx, 4), chipBg)
 	x := dp(gtx, 4)
 	at(gtx, image.Pt(x, (ch-iconW)/2), func(gtx layout.Context) layout.Dimensions {
-		if c.t.kind == "im" {
+		switch c.t.kind {
+		case "im":
 			return avatar(gtx, f.h, c.t.avatar, 20)
+		case "mpim":
+			return mpimTile(gtx, f.h, c.t.members, 20, chipBg, false)
 		}
 		at(gtx, image.Pt(dp(gtx, 2), dp(gtx, 2)), func(gtx layout.Context) layout.Dimensions {
 			return icon(gtx, convIcon(c.t.kind), 16, cl.Fg2)
@@ -473,14 +522,19 @@ func (f *actForward) suggestions(gtx layout.Context, th *theme.Theme, cl *Colors
 			gtx.Constraints = layout.Exact(image.Pt(w, rh))
 			return clickBox(gtx, &f.sugg[i], nil, func(gtx layout.Context) layout.Dimensions {
 				fg, fg2 := cl.Fg, cl.Fg2
-				if i == f.sel {
-					fill(gtx, image.Rect(0, 0, w, rh), cl.Highlight)
+				sel, rowBg := i == f.sel, cl.Bg
+				if sel {
+					rowBg = cl.Highlight
+					fill(gtx, image.Rect(0, 0, w, rh), rowBg)
 					fg, fg2 = cl.HighText, cl.HighText
 				}
 				x := dp(gtx, 16)
 				at(gtx, image.Pt(x, (rh-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions {
-					if t.kind == "im" {
+					switch t.kind {
+					case "im":
 						return avatar(gtx, f.h, t.avatar, 20)
+					case "mpim":
+						return mpimTile(gtx, f.h, t.members, 20, rowBg, sel)
 					}
 					at(gtx, image.Pt(dp(gtx, 2), dp(gtx, 2)), func(gtx layout.Context) layout.Dimensions {
 						return icon(gtx, convIcon(t.kind), 16, fg2)

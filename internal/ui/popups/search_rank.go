@@ -143,6 +143,11 @@ type srCand struct {
 	Boost  int    // unread / mention / recent bonus
 	Note   string // display-only secondary text (not matched)
 	Remote bool   // came from a directory search
+	// group DMs: every member (the tile draws the first other one) and
+	// extra match keys (members' real names and handles; their display
+	// names are already in Name).
+	Members []string
+	Keys    []string
 
 	// set by srRank
 	Tier         int
@@ -153,21 +158,57 @@ type srCand struct {
 func srScore(c *srCand, q string) {
 	t, s, e := srMatch(c.Name, q)
 	c.Tier, c.Bold0, c.Bold1 = t, s, e
-	for _, k := range [...]string{c.Alt, c.Handle} {
-		if k == "" {
-			continue
+	srScoreKey(c, c.Alt, q)
+	srScoreKey(c, c.Handle, q)
+	for _, k := range c.Keys {
+		srScoreKey(c, k, q)
+	}
+}
+
+// srScoreKey raises c's tier when the secondary key k matches q better.
+func srScoreKey(c *srCand, k, q string) {
+	if k == "" {
+		return
+	}
+	if t2, _, _ := srMatch(k, q); t2 > c.Tier {
+		// a match on a secondary key ranks a notch lower than the same
+		// match on the name.
+		if t2 > srSubseq {
+			t2--
 		}
-		if t2, _, _ := srMatch(k, q); t2 > c.Tier {
-			// a match on a secondary key ranks a notch lower than the
-			// same match on the name.
-			if t2 > srSubseq {
-				t2--
-			}
-			if t2 > c.Tier {
-				c.Tier, c.Bold0, c.Bold1 = t2, 0, 0
-			}
+		if t2 > c.Tier {
+			c.Tier, c.Bold0, c.Bold1 = t2, 0, 0
 		}
 	}
+}
+
+// srMpdmNames turns a group DM's internal name ("mpdm-ann--bo--cy-1") into
+// its members' handles, the viewer's (self) left out. It is the fallback
+// title for group DMs the sidebar doesn't know (search results).
+func srMpdmNames(name, self string) []string {
+	rest, ok := strings.CutPrefix(name, "mpdm-")
+	if !ok || rest == "" {
+		return nil
+	}
+	if i := strings.LastIndexByte(rest, '-'); i > 0 && i < len(rest)-1 {
+		num := true
+		for _, r := range rest[i+1:] {
+			if r < '0' || r > '9' {
+				num = false
+				break
+			}
+		}
+		if num {
+			rest = rest[:i]
+		}
+	}
+	var out []string
+	for _, h := range strings.Split(rest, "--") {
+		if h = strings.Trim(h, "-"); h != "" && !strings.EqualFold(h, self) {
+			out = append(out, h)
+		}
+	}
+	return out
 }
 
 // srRank returns the candidates matching q, best first: tier (exact >

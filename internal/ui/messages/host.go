@@ -11,27 +11,17 @@ import (
 	"gioui.org/text"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
-// Host is what the messages package needs from the ui root (see
-// docs/NATIVE.md, "Cross-package interface: Host").
+// Host is what the messages package needs from the ui root: the shared
+// Host of docs/NATIVE.md (popups.Host, which composer.Host also is), so the
+// list can open popups' modals and menus and embed the inline edit composer.
 type Host interface {
-	Core() *core.App
-	Theme() *theme.Theme
-	Images() *imgcache.Cache
-	Invalidate()
-	Navigate(route string)
-	OpenThread(channel, ts string)
-	CloseSecondary()
-	OpenEmojiPicker(anchor image.Point, onPick func(name string))
-	OpenProfile(anchor image.Point, userID string)
-	OpenMessageMenu(anchor image.Point, m core.Message)
-	OpenLightbox(img richtext.Image, m core.Message)
-	Toast(text string)
+	popups.Host
 }
 
 // PointerHost is optional: when the Host implements it, popup anchors use

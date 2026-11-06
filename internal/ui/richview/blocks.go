@@ -63,10 +63,7 @@ func lastTextual(bs []richtext.Block) int {
 			if len(bs[i].Children) > 0 {
 				return -1
 			}
-			if i == len(bs)-1 || isTextual(bs[i].Kind) {
-				return i
-			}
-			return -1
+			return i
 		case richtext.Tombstone:
 			return -1
 		default:

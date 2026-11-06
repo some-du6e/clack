@@ -6,8 +6,12 @@ import (
 	"strings"
 	"time"
 
+	"gioui.org/font"
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/op/clip"
 	"gioui.org/unit"
 	"gioui.org/widget"
 
@@ -15,13 +19,24 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
-// "Set a status" modal (status.png empty, status2.png typing): 42px input
-// (radius 8, focus ring 1px #1264a3 + 4px) with a leading emoji button,
-// 18px text, placeholder "What's your status?", clear button when filled.
-// Empty: preset sections (legend 13/700 rgba(29,28,29,.7), rows emoji 20 +
-// **text** — duration 15px). Filled: "Duration" 15/700, a 44px select
-// (radius 8, 18px value, chevron) and "Pause notifications until status is
-// cleared" with a 16px checkbox.
+// "Set a status" modal (status.png, status_auto2.png, ooo.png): 520 wide,
+// at most ~534 tall (header 70, footer 85 with a top border); the WHOLE
+// body scrolls (the input too) under the fixed footer. 42px input (radius
+// 8, focus ring 1px #1264a3 + 4px) with a leading emoji button, 18px text,
+// placeholder "What's your status?", clear button when filled.
+//
+// Empty: sections (legend 13/700 rgba(29,28,29,.7), padding 24 0 8 36 from
+// the modal's left edge), rows 28px: emoji 22 at x=36, **text** 15/700 +
+// " — duration" 15/400 #616061 at x=68; hover highlights the full modal
+// width #1264a3 with white text. "Schedule for later" (Out of office), "For
+// <team>" (team presets, corex cxStatusPresets), "Automatically updates"
+// (calendar).
+//
+// Filled: "Duration" 15/700, a 44px select (radius 8, 18px value,
+// chevron), for "Choose a start and end time…" a #f8f8f8 box (radius 0 0 8
+// 8, starting 28px below the select's top) with Start/End rows of date +
+// time fields, then "Pause notifications until status is cleared". Out of
+// office adds "Automatic reply:" with an editor and a preview.
 
 type actDur int
 
@@ -32,22 +47,97 @@ const (
 	actDur4h
 	actDurToday
 	actDurWeek
-	actDurKeep // keep the current status's expiration
+	actDurKeep   // keep the current status's expiration
+	actDurCustom // Choose a start and end time…
 )
 
-var actDurLabels = [...]string{"Don’t clear", "30 minutes", "1 hour", "4 hours", "Today", "This week", ""}
+var actDurLabels = [...]string{"Don’t clear", "30 minutes", "1 hour", "4 hours", "Today", "This week", "", "Choose a start and end time…"}
+
+// actDurNotes are the preset row suffixes (" — Today"), built once.
+var actDurNotes = func() (n [len(actDurLabels)]string) {
+	for i, l := range actDurLabels {
+		n[i] = " — " + l
+	}
+	return
+}()
 
 type actPreset struct {
 	emoji, text string
 	dur         actDur
 }
 
+// actPresets are Slack's enterprise defaults, used when the workspace has
+// no presets or team.prefs.get fails.
 var actPresets = []actPreset{
 	{"calendar", "In a meeting", actDur1h},
 	{"bus", "Commuting", actDur30m},
 	{"face_with_thermometer", "Out sick", actDurToday},
 	{"palm_tree", "Vacationing", actDurNone},
 	{"house_with_garden", "Working remotely", actDurToday},
+}
+
+// actPresetDur maps a team preset duration code to a duration.
+func actPresetDur(code string) actDur {
+	switch code {
+	case "30_minutes":
+		return actDur30m
+	case "1_hour":
+		return actDur1h
+	case "4_hours":
+		return actDur4h
+	case "all_day", "today":
+		return actDurToday
+	case "this_week":
+		return actDurWeek
+	}
+	return actDurNone // no_expiration and anything unknown
+}
+
+// Team presets, fetched once per process (UI goroutine only).
+var (
+	actPresetCache   []actPreset // nil until loaded
+	actPresetFailed  bool        // last fetch failed: use the defaults
+	actPresetPending bool
+)
+
+// actFetchPresets starts loading the team presets unless cached/in flight.
+func actFetchPresets(h Host) {
+	if actPresetCache != nil || actPresetPending {
+		return
+	}
+	if h.Core() == nil {
+		actPresetFailed = true
+		return
+	}
+	actPresetPending, actPresetFailed = true, false
+	run(h, func(ctx context.Context) ([]cxPreset, error) { return cxStatusPresets(ctx, h) }, func(ps []cxPreset, err error) {
+		actPresetPending = false
+		defer h.Invalidate()
+		if err != nil {
+			actPresetFailed = true
+			return
+		}
+		if len(ps) == 0 {
+			actPresetCache = actPresets
+			return
+		}
+		out := make([]actPreset, 0, len(ps))
+		for _, p := range ps {
+			out = append(out, actPreset{emoji: p.Emoji, text: p.Text, dur: actPresetDur(p.Dur)})
+		}
+		actPresetCache = out
+	})
+}
+
+// actCurrentPresets returns the presets to show (ok false while loading).
+func actCurrentPresets() ([]actPreset, bool) {
+	if actPresetCache != nil {
+		return actPresetCache, true
+	}
+	if actPresetFailed {
+		return actPresets, true
+	}
+	return nil, false
 }
 
 // actStatusExpiry is the status_expiration (unix seconds, 0 = never) for
@@ -85,33 +175,74 @@ func actKeepLabel(exp int64, now time.Time) string {
 	return "Until " + t.Format("Jan ") + ordinal(d1) + " at " + clock(t)
 }
 
+// actRangeDefaults are the Start/End defaults Slack shows: start now
+// (rounded up to the minute), end tomorrow at the next whole hour (2:58 PM
+// → tomorrow 3:00 PM, 3:12 PM → tomorrow 4:00 PM, as in ooo/timepick.png).
+func actRangeDefaults(now time.Time) (start, end time.Time) {
+	return dtCeil(now, 1), dtCeil(now, 60).AddDate(0, 0, 1)
+}
+
+// actOOOReply is the prefilled automatic reply for an out-of-office status
+// ending at end: "I'm out of office until 3:00 PM, Sat, Nov 7."
+func actOOOReply(end time.Time) string {
+	return "I'm out of office until " + clock(end) + ", " + end.Format("Mon, Jan 2") + "."
+}
+
+// actBodyMax caps the scrolling body: 534 max modal - 70 header - 85 footer.
+const actBodyMax = 379
+
 type actStatus struct {
-	h       Host
-	modal   *Modal
-	ed      widget.Editor
-	emoji   string
-	dur     actDur
-	keepExp int64
-	pause   bool
-	had     bool
-	team    string
-	focus   bool // focus the input on the next layout
+	h        Host
+	modal    *Modal
+	ed       widget.Editor
+	emoji    string
+	dur      actDur
+	keepExp  int64
+	pause    bool
+	had      bool
+	forTeam  string // "For Hack Club"
+	focus    bool   // focus the input on the next layout
+	fromMenu bool
+	pill     *actTipPill
 
-	emojiBtn, clearBtn, selBtn, pauseBtn, oooBtn widget.Clickable
-	presetBtn                                    []widget.Clickable
+	presets   []actPreset // nil while loading
+	presetBtn []widget.Clickable
 
-	emojiRect, selRect image.Rectangle // body coords, last layout
+	ooo          bool // Out of office (adds the automatic reply)
+	rangeInit    bool
+	sDay, eDay   dtDate
+	sTime, eTime dtTime
+	reply        widget.Editor
+	replyGen     string // the generated reply (unedited while equal)
+	replyText    string // reply's current text
+	selfName     string
+	selfAv       string
+
+	list layout.List // the scrolling body
+
+	emojiBtn, clearBtn, selBtn, pauseBtn, oooBtn, calBtn widget.Clickable
+
+	emojiRect, selRect image.Rectangle // content coords, last layout
 }
 
 // NewSetStatusModal builds the "Set a status" modal, prefilled with the
 // viewer's current status. Show it with h.ShowOverlay.
-func NewSetStatusModal(h Host) *Modal {
-	s := &actStatus{h: h, dur: actDurToday, focus: true, team: "Hack Club"}
+func NewSetStatusModal(h Host) *Modal { return actNewStatus(h, false) }
+
+// NewSetStatusModalFromMenu is NewSetStatusModal as opened from the user
+// menu: it also shows Slack's "Tip: Open this faster with Ctrl + Shift + Y"
+// pill near the bottom of the window for about 4 s.
+func NewSetStatusModalFromMenu(h Host) *Modal { return actNewStatus(h, true) }
+
+func actNewStatus(h Host, fromMenu bool) *Modal {
+	s := &actStatus{h: h, dur: actDurToday, focus: true, forTeam: "For Hack Club", fromMenu: fromMenu}
 	s.ed.SingleLine = true
 	s.ed.Submit = true
-	s.presetBtn = make([]widget.Clickable, len(actPresets))
+	s.list.Axis = layout.Vertical
+	s.rangeHooks()
 	if a := h.Core(); a != nil {
 		me := a.Self()
+		s.selfName, s.selfAv = userName(me), me.Avatar
 		if me.StatusText != "" || me.StatusEmoji != "" {
 			s.had = true
 			s.ed.SetText(me.StatusText)
@@ -123,9 +254,14 @@ func NewSetStatusModal(h Host) *Modal {
 			}
 		}
 	}
-	if snap, ok := actSnapshot(h); ok && snap.Team.Name != "" {
-		s.team = snap.Team.Name
+	if s.selfName == "" {
+		s.selfName = "You"
 	}
+	if snap, ok := actSnapshot(h); ok && snap.Team.Name != "" {
+		s.forTeam = "For " + snap.Team.Name
+	}
+	actFetchPresets(h)
+	s.takePresets()
 	var btns []*ModalButton
 	if s.had {
 		btns = append(btns, &ModalButton{Label: "Clear Status", Kind: BtnOutline, Do: func() bool {
@@ -135,36 +271,107 @@ func NewSetStatusModal(h Host) *Modal {
 	}
 	btns = append(btns,
 		&ModalButton{Label: "Cancel", Kind: BtnOutline},
-		&ModalButton{Label: "Save", Kind: BtnPrimary, Enabled: s.canSave, Do: func() bool {
-			s.save()
-			return true
-		}},
+		&ModalButton{Label: "Save", Kind: BtnPrimary, Enabled: s.canSave, Do: s.save},
 	)
-	s.modal = NewModal(h, ModalOpts{Title: "Set a status", Body: s.layout, Buttons: btns})
+	s.modal = NewModal(h, ModalOpts{Title: "Set a status", Body: s.layout, Buttons: btns, Border: true})
 	return s.modal
 }
 
+func (s *actStatus) takePresets() {
+	if s.presets != nil {
+		return
+	}
+	if ps, ok := actCurrentPresets(); ok {
+		s.presets = ps
+		s.presetBtn = make([]widget.Clickable, len(ps))
+	}
+}
+
+// rangeHooks wires the Start/End fields (once).
+func (s *actStatus) rangeHooks() {
+	s.sDay.OnChange = func() {
+		s.eDay.Min = s.sDay.Day
+		if s.eDay.Day.Before(s.sDay.Day) {
+			s.eDay.Day = s.sDay.Day
+		}
+		s.rangeChanged()
+	}
+	s.sTime.OnChange = s.rangeChanged
+	s.eDay.OnChange = s.rangeChanged
+	s.eTime.OnChange = s.rangeChanged
+	s.sTime.From = func() int {
+		if now := time.Now(); dtSameDay(s.sDay.Day, now) {
+			return dtMins(now)
+		}
+		return 0
+	}
+	s.eTime.From = func() int {
+		from := 0
+		if now := time.Now(); dtSameDay(s.eDay.Day, now) {
+			from = dtMins(now)
+		}
+		if dtSameDay(s.eDay.Day, s.sDay.Day) && s.sTime.Mins+1 > from {
+			from = s.sTime.Mins + 1
+		}
+		return from
+	}
+}
+
+// setRange resets Start/End to Slack's defaults.
+func (s *actStatus) setRange(now time.Time) {
+	start, end := actRangeDefaults(now)
+	s.sDay.Day, s.sTime.Mins = dtDay(start), dtMins(start)
+	s.eDay.Day, s.eTime.Mins = dtDay(end), dtMins(end)
+	s.sDay.Min, s.eDay.Min = dtDay(now), s.sDay.Day
+	s.rangeInit = true
+	s.rangeChanged()
+}
+
+// rangeChanged keeps an unedited automatic reply in sync with the end.
+func (s *actStatus) rangeChanged() {
+	if s.replyText != s.replyGen {
+		return
+	}
+	gen := actOOOReply(s.endTime())
+	s.reply.SetText(gen)
+	s.replyGen, s.replyText = gen, gen
+}
+
+func (s *actStatus) startTime() time.Time { return dtAt(s.sDay.Day, s.sTime.Mins) }
+func (s *actStatus) endTime() time.Time   { return dtAt(s.eDay.Day, s.eTime.Mins) }
+
 func (s *actStatus) text() string { return strings.TrimSpace(s.ed.Text()) }
 
-func (s *actStatus) canSave() bool { return s.text() != "" || s.emoji != "" || s.had }
+func (s *actStatus) canSave() bool {
+	filled := s.text() != "" || s.emoji != ""
+	if filled && s.dur == actDurCustom {
+		end := s.endTime()
+		return end.After(s.startTime()) && end.After(time.Now())
+	}
+	return filled || s.had
+}
 
 func (s *actStatus) clearStatus() {
 	actDo(s.h, "Status cleared", func(ctx context.Context, a *core.App) error { return a.SetStatus(ctx, "", "", 0) })
 }
 
-func (s *actStatus) save() {
+// save applies the status; false keeps the modal open.
+func (s *actStatus) save() bool {
 	h := s.h
 	txt, emoji := s.text(), s.emoji
 	if txt == "" && emoji == "" {
 		s.clearStatus()
-		return
+		return true
 	}
 	a := h.Core()
 	if a == nil {
 		h.Toast("Not connected yet")
-		return
+		return true
 	}
 	now := time.Now()
+	if s.dur == actDurCustom {
+		return s.saveRange(a, txt, emoji, now)
+	}
 	exp := actStatusExpiry(now, s.dur, s.keepExp)
 	pause := s.pause && exp > now.Unix()
 	mins := 0
@@ -189,11 +396,58 @@ func (s *actStatus) save() {
 		}
 		h.Toast("Status updated")
 	})
+	return true
 }
 
-// win converts a body-local point to window coordinates.
+// saveRange saves a status with a start and end (Out of office / Choose a
+// start and end time…) through cxScheduleStatus.
+func (s *actStatus) saveRange(a *core.App, txt, emoji string, now time.Time) bool {
+	h := s.h
+	start, end := s.startTime(), s.endTime()
+	if !end.After(start) || !end.After(now) {
+		h.Toast("Choose an end time after the start time")
+		return false
+	}
+	later := start.Unix() > now.Unix()+60
+	if later && !cxCanScheduleStatus(h) {
+		h.Toast("Couldn't do that: scheduling a status for later isn't supported yet")
+		return false
+	}
+	pause := s.pause
+	mins := actMinutesUntil(now, end)
+	replied := s.ooo && strings.TrimSpace(s.replyText) != strings.TrimSpace(s.replyGen)
+	run(h, func(ctx context.Context) (struct{}, error) {
+		if err := cxScheduleStatus(ctx, h, txt, emoji, start.Unix(), end.Unix(), now.Unix()); err != nil {
+			return struct{}{}, err
+		}
+		if pause {
+			return struct{}{}, a.SetDND(ctx, mins)
+		}
+		return struct{}{}, nil
+	}, func(_ struct{}, err error) {
+		if err != nil {
+			h.Toast("Couldn't do that: " + errText(err))
+			return
+		}
+		if pause {
+			actDNDUntil = end
+		}
+		switch {
+		case replied:
+			h.Toast("Automatic replies aren't supported yet")
+		case later:
+			h.Toast("Status scheduled")
+		default:
+			h.Toast("Status updated")
+		}
+	})
+	return true
+}
+
+// win converts a content point (x from the modal's left edge, y from the
+// top of the scrolled content) to window coordinates.
 func (s *actStatus) win(gtx layout.Context, p image.Point) image.Point {
-	return s.modal.rect.Min.Add(image.Pt(dp(gtx, 28), dp(gtx, 70))).Add(p)
+	return dtModalOrigin(gtx, s.modal).Add(image.Pt(p.X-dp(gtx, 28), p.Y-s.list.Position.Offset))
 }
 
 func (s *actStatus) durLabel(d actDur) string {
@@ -211,9 +465,19 @@ func (s *actStatus) events(gtx layout.Context) {
 			break
 		}
 		if _, ok := e.(widget.SubmitEvent); ok && s.canSave() {
-			s.save()
-			s.modal.Dismiss()
+			if s.save() {
+				s.modal.Dismiss()
+			}
 			return
+		}
+	}
+	for {
+		e, ok := s.reply.Update(gtx)
+		if !ok {
+			break
+		}
+		if _, ok := e.(widget.ChangeEvent); ok {
+			s.replyText = s.reply.Text()
 		}
 	}
 	if s.emojiBtn.Clicked(gtx) {
@@ -227,23 +491,32 @@ func (s *actStatus) events(gtx layout.Context) {
 	if s.clearBtn.Clicked(gtx) {
 		s.ed.SetText("")
 		s.emoji = ""
-		if s.dur == actDurKeep {
+		if s.dur == actDurKeep || s.dur == actDurCustom {
 			s.dur = actDurToday
 		}
+		s.ooo = false
 		s.focus = true
 	}
 	for i := range s.presetBtn {
 		if s.presetBtn[i].Clicked(gtx) {
-			p := actPresets[i]
+			p := s.presets[i]
 			s.ed.SetText(p.text)
 			n := s.ed.Len()
 			s.ed.SetCaret(n, n)
-			s.emoji, s.dur = p.emoji, p.dur
+			s.emoji, s.dur, s.ooo = p.emoji, p.dur, false
 			s.focus = true
 		}
 	}
 	if s.oooBtn.Clicked(gtx) {
-		h.Toast("Scheduling a status isn't supported yet")
+		s.ed.SetText("Out of office")
+		n := s.ed.Len()
+		s.ed.SetCaret(n, n)
+		s.emoji, s.dur, s.ooo = "no_entry", actDurCustom, true
+		s.setRange(time.Now())
+		s.focus = true
+	}
+	if s.calBtn.Clicked(gtx) {
+		h.Toast("Calendar sync isn't available in yoloslack")
 	}
 	if s.pauseBtn.Clicked(gtx) {
 		s.pause = !s.pause
@@ -259,6 +532,9 @@ func (s *actStatus) openDurations(gtx layout.Context) {
 	pick := func(d actDur) func() {
 		return func() {
 			s.dur = d
+			if d == actDurCustom && !s.rangeInit {
+				s.setRange(time.Now())
+			}
 			s.focus = true
 			h.Invalidate()
 		}
@@ -269,7 +545,7 @@ func (s *actStatus) openDurations(gtx layout.Context) {
 	for d := actDurNone; d <= actDurWeek; d++ {
 		items = append(items, MenuItem{Label: actDurLabels[d], Checked: s.dur == d, Do: pick(d)})
 	}
-	items = append(items, MenuItem{Label: "Choose a start and end time…", Do: actToast(h, "Custom status times aren't supported yet")})
+	items = append(items, MenuItem{Label: actDurLabels[actDurCustom], Checked: s.dur == actDurCustom, Do: pick(actDurCustom)})
 	r := s.selRect
 	wr := image.Rectangle{Min: s.win(gtx, r.Min), Max: s.win(gtx, r.Max)}
 	ppd := gtx.Metric.PxPerDp
@@ -284,64 +560,116 @@ func (s *actStatus) layout(gtx layout.Context) layout.Dimensions {
 	if s.modal.done {
 		return layout.Dimensions{}
 	}
+	if s.fromMenu && s.pill == nil {
+		s.pill = &actTipPill{h: s.h, modal: s.modal}
+		s.h.ShowOverlay(s.pill)
+	}
 	if s.focus {
 		gtx.Execute(key.FocusCmd{Tag: &s.ed})
 		s.focus = false
 	}
 	s.events(gtx)
+	if s.modal.done {
+		return layout.Dimensions{}
+	}
+	s.takePresets()
 	th := s.h.Theme()
 	cl := colorsOf(th)
-	w := gtx.Constraints.Max.X
-	y := 0
-	at(gtx, image.Pt(0, 0), func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints = layout.Constraints{Max: image.Pt(w, dp(gtx, 42))}
+	padX := dp(gtx, 28)
+	bw := gtx.Constraints.Max.X
+	fw := bw + 2*padX // the list spans the full modal width (row hover)
+	maxH := minInt(dp(gtx, actBodyMax), gtx.Constraints.Max.Y)
+	var d layout.Dimensions
+	at(gtx, image.Pt(-padX, 0), func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Constraints{Min: image.Pt(fw, 0), Max: image.Pt(fw, maxH)}
+		d = s.list.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(fw, 1<<20)}
+			return s.content(gtx, th, cl, fw, padX)
+		})
+		return d
+	})
+	off := s.list.Position.Offset
+	if off > 0 { // header edge while scrolled
+		fill(gtx, image.Rect(-padX, 0, bw+padX, 1), cl.Ring)
+	}
+	if total, vis := s.list.Position.Length, d.Size.Y; total > vis && vis > 0 {
+		thumb := maxInt(dp(gtx, 24), vis*vis/total)
+		ty := (vis - thumb) * minInt(off, total-vis) / maxInt(1, total-vis)
+		sw := dp(gtx, 7)
+		x := bw + padX - dp(gtx, 4) - sw
+		rrect(gtx, image.Rect(x, ty, x+sw, ty+thumb), sw/2, theme.WithAlpha(cl.Fg, 0x66))
+	}
+	return layout.Dimensions{Size: image.Pt(bw, d.Size.Y)}
+}
+
+// content draws the body; x=0 is the modal's left edge, fw its width.
+func (s *actStatus) content(gtx layout.Context, th *theme.Theme, cl *Colors, fw, padX int) layout.Dimensions {
+	cw := fw - 2*padX
+	y := dp(gtx, 4)
+	iy := y
+	at(gtx, image.Pt(padX, iy), func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Constraints{Max: image.Pt(cw, dp(gtx, 42))}
 		return s.input(gtx, th, cl)
 	})
+	s.emojiRect = s.emojiRect.Add(image.Pt(padX, iy))
 	y += dp(gtx, 42)
 	if s.ed.Len() == 0 && s.emoji == "" {
-		y += dp(gtx, 16)
-		y += s.legend(gtx, th, cl, y, "Schedule for later")
-		y += s.preset(gtx, th, cl, y, &s.oooBtn, "no_entry", "Out of office", "Set a start and end date")
-		y += dp(gtx, 16)
-		y += s.legend(gtx, th, cl, y, "For "+s.team)
-		for i, p := range actPresets {
-			y += s.preset(gtx, th, cl, y, &s.presetBtn[i], p.emoji, p.text, actDurLabels[p.dur])
+		y += s.legend(gtx, th, cl, padX, y, "Schedule for later")
+		y += s.preset(gtx, th, cl, fw, padX, y, &s.oooBtn, "no_entry", "Out of office", " — Set a start and end date")
+		if s.presets != nil {
+			y += s.legend(gtx, th, cl, padX, y, s.forTeam)
+			for i, p := range s.presets {
+				y += s.preset(gtx, th, cl, fw, padX, y, &s.presetBtn[i], p.emoji, p.text, actDurNotes[p.dur])
+			}
 		}
-		return layout.Dimensions{Size: image.Pt(w, y+dp(gtx, 4))}
+		y += s.legend(gtx, th, cl, padX, y, "Automatically updates")
+		y += s.preset(gtx, th, cl, fw, padX, y, &s.calBtn, "calendar", "In a meeting", " — Based on your Google Calendar")
+		return layout.Dimensions{Size: image.Pt(fw, y+dp(gtx, 4))}
 	}
 	// duration
 	y += dp(gtx, 20)
-	at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
+	at(gtx, image.Pt(padX, y), func(gtx layout.Context) layout.Dimensions {
 		return text(gtx, th, 15, theme.Bold, cl.Fg, "Duration")
 	})
-	y += dp(gtx, 22) + dp(gtx, 8)
+	y += dp(gtx, 30)
 	sh := dp(gtx, 44)
-	s.selRect = image.Rect(0, y, w, y+sh)
-	at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
+	selY := y
+	s.selRect = image.Rect(padX, selY, padX+cw, selY+sh)
+	custom := s.dur == actDurCustom
+	boxTop := selY + dp(gtx, 28)
+	if custom {
+		box := image.Rect(padX, boxTop, padX+cw, boxTop+dp(gtx, 28+28+12+28+12))
+		rrect(gtx, box, dp(gtx, 8), cl.BgAlt)
+		fill(gtx, image.Rect(box.Min.X, box.Min.Y, box.Max.X, box.Min.Y+dp(gtx, 8)), cl.BgAlt)
+	}
+	at(gtx, image.Pt(padX, selY), func(gtx layout.Context) layout.Dimensions {
 		return clickBox(gtx, &s.selBtn, nil, func(gtx layout.Context) layout.Dimensions {
-			r := image.Rect(0, 0, w, sh)
-			border := theme.WithAlpha(cl.Fg, 0x55)
+			r := image.Rect(0, 0, cw, sh)
+			border := dtBorder(th)
 			if s.selBtn.Hovered() {
-				border = theme.WithAlpha(cl.Fg, 0x99)
+				border = cl.Fg2
 			}
 			rrect(gtx, r, dp(gtx, 8), border)
 			rrect(gtx, r.Inset(1), dp(gtx, 8)-1, cl.Bg)
 			at(gtx, image.Pt(dp(gtx, 12), 0), func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, w-dp(gtx, 52)), sh)}
+				gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, cw-dp(gtx, 52)), sh)}
 				return vcenter(gtx, sh, func(gtx layout.Context) layout.Dimensions {
 					return text(gtx, th, 18, theme.Regular, cl.Fg, s.durLabel(s.dur))
 				})
 			})
-			at(gtx, image.Pt(w-dp(gtx, 12+16), (sh-dp(gtx, 16))/2), func(gtx layout.Context) layout.Dimensions {
+			at(gtx, image.Pt(cw-dp(gtx, 12+16), (sh-dp(gtx, 16))/2), func(gtx layout.Context) layout.Dimensions {
 				return icon(gtx, "chevron-down", 16, cl.Fg)
 			})
 			return layout.Dimensions{Size: r.Max}
 		})
 	})
-	y += sh
+	y = selY + sh
+	if custom {
+		y = s.rangeRows(gtx, th, cl, padX, cw, boxTop)
+	}
 	if s.dur != actDurNone {
 		y += dp(gtx, 12)
-		at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
+		at(gtx, image.Pt(padX, y), func(gtx layout.Context) layout.Dimensions {
 			return clickBox(gtx, &s.pauseBtn, nil, func(gtx layout.Context) layout.Dimensions {
 				rh := dp(gtx, 22)
 				actCheckbox(gtx, cl, image.Pt(0, (rh-dp(gtx, 16))/2), s.pause)
@@ -356,7 +684,138 @@ func (s *actStatus) layout(gtx layout.Context) layout.Dimensions {
 		})
 		y += dp(gtx, 22)
 	}
-	return layout.Dimensions{Size: image.Pt(w, y+dp(gtx, 4))}
+	if s.ooo {
+		y += dp(gtx, 16)
+		at(gtx, image.Pt(padX, y), func(gtx layout.Context) layout.Dimensions {
+			return text(gtx, th, 15, theme.Bold, cl.Fg, "Automatic reply:")
+		})
+		y += dp(gtx, 30)
+		y += s.replyBox(gtx, th, cl, padX, y, cw)
+		if p := s.replyPreview(gtx, th, cl, padX, y+dp(gtx, 12), cw); p > 0 {
+			y += dp(gtx, 12) + p
+		}
+	}
+	return layout.Dimensions{Size: image.Pt(fw, y+dp(gtx, 4))}
+}
+
+// rangeRows draws the Start/End rows inside the box at top; returns the
+// box's bottom.
+func (s *actStatus) rangeRows(gtx layout.Context, th *theme.Theme, cl *Colors, x0, cw, top int) int {
+	rh, gap := dp(gtx, 28), dp(gtx, 12)
+	tw, dw := dp(gtx, 116), dp(gtx, 192)
+	tx := x0 + cw - dp(gtx, 12) - tw
+	dx := tx - dp(gtx, 12) - dw
+	if lo := x0 + dp(gtx, 72); dx < lo { // narrow window: shrink the date
+		dx = lo
+		dw = maxInt(dp(gtx, 80), tx-dp(gtx, 12)-dx)
+	}
+	y := top + dp(gtx, 28)
+	for i, lbl := range [2]string{"Start", "End"} {
+		day, tm := &s.sDay, &s.sTime
+		if i == 1 {
+			day, tm = &s.eDay, &s.eTime
+		}
+		at(gtx, image.Pt(x0+dp(gtx, 12), y), func(gtx layout.Context) layout.Dimensions {
+			return vcenter(gtx, rh, func(gtx layout.Context) layout.Dimensions {
+				return text(gtx, th, 15, theme.Bold, cl.Fg, lbl)
+			})
+		})
+		at(gtx, image.Pt(dx, y), func(gtx layout.Context) layout.Dimensions {
+			return day.Layout(gtx, s.h, s.win(gtx, image.Pt(dx, y)), dw, dtSmall)
+		})
+		at(gtx, image.Pt(tx, y), func(gtx layout.Context) layout.Dimensions {
+			return tm.Layout(gtx, s.h, s.win(gtx, image.Pt(tx, y)), tw, dtSmall)
+		})
+		y += rh + gap
+	}
+	return y
+}
+
+// actReplyTools is the reply editor's (inert) formatting toolbar; "" is a
+// separator.
+var actReplyTools = [...]string{"bold", "italic", "strike", "", "link", "list-ordered", "list-bullet", "", "quote", "code", "code-block"}
+
+// replyBox draws the automatic-reply editor (bordered, 36px #f8f8f8
+// toolbar) at (x, y), w wide; returns its height.
+func (s *actStatus) replyBox(gtx layout.Context, th *theme.Theme, cl *Colors, x, y, w int) int {
+	tbH := dp(gtx, 36)
+	px, py := dp(gtx, 12), dp(gtx, 9)
+	iw := maxInt(1, w-2*px)
+	call, d := record(gtx, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Constraints{Min: image.Pt(iw, 0), Max: image.Pt(iw, 1<<20)}
+		return th.Editor(gtx, &s.reply, unit.Sp(15), cl.Fg, theme.WithAlpha(cl.Focus, 0x55))
+	})
+	taH := maxInt(d.Size.Y, dp(gtx, 22)) + 2*py
+	r := image.Rect(x, y, x+w, y+tbH+taH)
+	rad := dp(gtx, 8)
+	if gtx.Focused(&s.reply) {
+		ring := dp(gtx, 4)
+		rrect(gtx, r.Inset(-ring), rad+ring, cl.FocusRing)
+		rrect(gtx, r, rad, cl.Focus)
+	} else {
+		rrect(gtx, r, rad, cl.InputBorder)
+	}
+	rrect(gtx, r.Inset(1), rad-1, cl.Bg)
+	tb := image.Rect(r.Min.X+1, r.Min.Y+1, r.Max.X-1, r.Min.Y+tbH)
+	rrect(gtx, tb, rad-1, cl.BgAlt)
+	fill(gtx, image.Rect(tb.Min.X, tb.Min.Y+rad, tb.Max.X, tb.Max.Y), cl.BgAlt)
+	ix := r.Min.X + dp(gtx, 3)
+	for _, name := range actReplyTools {
+		if name == "" {
+			fill(gtx, image.Rect(ix+dp(gtx, 4), tb.Min.Y+dp(gtx, 9), ix+dp(gtx, 4)+maxInt(1, dp(gtx, 1)), tb.Max.Y-dp(gtx, 9)), cl.Divider)
+			ix += dp(gtx, 8)
+			continue
+		}
+		at(gtx, image.Pt(ix+dp(gtx, 8), r.Min.Y+(tbH-dp(gtx, 16))/2), func(gtx layout.Context) layout.Dimensions {
+			return icon(gtx, name, 16, cl.Subtle)
+		})
+		ix += dp(gtx, 32)
+	}
+	ta := image.Rect(r.Min.X, r.Min.Y+tbH, r.Max.X, r.Max.Y)
+	func() {
+		defer clip.Rect(ta).Push(gtx.Ops).Pop()
+		pointer.CursorText.Add(gtx.Ops)
+	}()
+	macroAt(gtx, call, image.Pt(x+px, ta.Min.Y+py))
+	return r.Dy()
+}
+
+// replyPreview draws how the automatic reply looks to someone who DMs you;
+// returns its height (0 when the reply is empty).
+func (s *actStatus) replyPreview(gtx layout.Context, th *theme.Theme, cl *Colors, x, y, w int) int {
+	reply := strings.TrimSpace(s.replyText)
+	if reply == "" {
+		return 0
+	}
+	pad := dp(gtx, 12)
+	iw := maxInt(1, w-2*pad)
+	call, d := record(loose(gtx, image.Pt(iw, 1<<20)), func(gtx layout.Context) layout.Dimensions {
+		yy := 0
+		at(gtx, image.Pt(0, (dp(gtx, 18)-dp(gtx, 14))/2), func(gtx layout.Context) layout.Dimensions {
+			return icon(gtx, "eye", 14, cl.Muted)
+		})
+		at(gtx, image.Pt(dp(gtx, 20), 0), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, iw-dp(gtx, 20)), dp(gtx, 18))}
+			return text(gtx, th, 13, theme.Regular, cl.Muted, "Automatic reply ∙ Only visible to you")
+		})
+		yy += dp(gtx, 26)
+		at(gtx, image.Pt(0, yy+dp(gtx, 1)), func(gtx layout.Context) layout.Dimensions { return avatar(gtx, s.h, s.selfAv, 20) })
+		tx := dp(gtx, 28)
+		at(gtx, image.Pt(tx, yy), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, iw-tx), dp(gtx, 22))}
+			return text(gtx, th, 15, theme.Black, cl.Fg, s.selfName)
+		})
+		yy += dp(gtx, 24)
+		bc, bd := record(loose(gtx, image.Pt(maxInt(1, iw-tx), 1<<20)), func(gtx layout.Context) layout.Dimensions {
+			return para(gtx, th, 15, 22, theme.Regular, cl.Fg, reply, 4)
+		})
+		macroAt(gtx, bc, image.Pt(tx, yy))
+		return layout.Dimensions{Size: image.Pt(iw, yy+bd.Size.Y)}
+	})
+	ht := d.Size.Y + 2*pad
+	stroke(gtx, image.Rect(x, y, x+w, y+ht), dp(gtx, 8), 1, cl.Ring)
+	macroAt(gtx, call, image.Pt(x+pad, y+pad))
+	return ht
 }
 
 // input draws the 42px status field.
@@ -429,45 +888,50 @@ func (s *actStatus) input(gtx layout.Context, th *theme.Theme, cl *Colors) layou
 	return layout.Dimensions{Size: r.Max}
 }
 
-// legend draws a preset section heading at y and returns its height.
-func (s *actStatus) legend(gtx layout.Context, th *theme.Theme, cl *Colors, y int, label string) int {
-	lh := dp(gtx, 30)
-	at(gtx, image.Pt(dp(gtx, 8), y), func(gtx layout.Context) layout.Dimensions {
-		return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
+// legend draws a section heading at y (padding 24 0 8, text at x=36 from
+// the modal edge) and returns its height.
+func (s *actStatus) legend(gtx layout.Context, th *theme.Theme, cl *Colors, padX, y int, label string) int {
+	at(gtx, image.Pt(padX+dp(gtx, 8), y+dp(gtx, 24)), func(gtx layout.Context) layout.Dimensions {
+		return vcenter(gtx, dp(gtx, 18), func(gtx layout.Context) layout.Dimensions {
 			return text(gtx, th, 13, theme.Bold, theme.WithAlpha(cl.Fg, 0xb3), label)
 		})
 	})
-	return lh
+	return dp(gtx, 24+18+8)
 }
 
-// preset draws one "emoji **text** — duration" row at y; returns its height.
-func (s *actStatus) preset(gtx layout.Context, th *theme.Theme, cl *Colors, y int, btn *widget.Clickable, emoji, label, dur string) int {
-	w := gtx.Constraints.Max.X
+// preset draws one full-width "emoji **text** — note" row at y; returns
+// its height. note includes the leading " — ".
+func (s *actStatus) preset(gtx layout.Context, th *theme.Theme, cl *Colors, fw, padX, y int, btn *widget.Clickable, emoji, label, note string) int {
 	rh := dp(gtx, 28)
 	at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints = layout.Exact(image.Pt(w, rh))
-		return clickBox(gtx, btn, func(gtx layout.Context, sz image.Point, hovered bool) {
-			if hovered {
-				rrect(gtx, image.Rectangle{Max: sz}, dp(gtx, 4), cl.BgHover)
+		gtx.Constraints = layout.Exact(image.Pt(fw, rh))
+		return clickBox(gtx, btn, nil, func(gtx layout.Context) layout.Dimensions {
+			fg, muted := cl.Fg, cl.Muted
+			if btn.Hovered() {
+				fill(gtx, image.Rect(0, 0, fw, rh), cl.Highlight)
+				fg, muted = cl.HighText, cl.HighText
 			}
-		}, func(gtx layout.Context) layout.Dimensions {
-			at(gtx, image.Pt(dp(gtx, 8), (rh-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions {
-				return emojiImage(gtx, s.h, emoji, 20)
+			at(gtx, image.Pt(padX+dp(gtx, 8), (rh-dp(gtx, 22))/2), func(gtx layout.Context) layout.Dimensions {
+				return emojiImage(gtx, s.h, emoji, 22)
 			})
-			x := dp(gtx, 40)
+			x := padX + dp(gtx, 40)
+			right := fw - padX
 			at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, right-x), rh)}
 				return vcenter(gtx, rh, func(gtx layout.Context) layout.Dimensions {
-					return text(gtx, th, 15, theme.Bold, cl.Fg, label)
+					return text(gtx, th, 15, theme.Bold, fg, label)
 				})
 			})
 			x += textW(gtx, th, 15, theme.Bold, label)
-			at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, w-x), rh)}
-				return vcenter(gtx, rh, func(gtx layout.Context) layout.Dimensions {
-					return text(gtx, th, 15, theme.Regular, cl.Muted, " — "+dur)
+			if x < right {
+				at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, right-x), rh)}
+					return vcenter(gtx, rh, func(gtx layout.Context) layout.Dimensions {
+						return text(gtx, th, 15, theme.Regular, muted, note)
+					})
 				})
-			})
-			return layout.Dimensions{Size: image.Pt(w, rh)}
+			}
+			return layout.Dimensions{Size: image.Pt(fw, rh)}
 		})
 	})
 	return rh
@@ -488,4 +952,83 @@ func actCheckbox(gtx layout.Context, cl *Colors, p image.Point, on bool) {
 	}
 	rrect(gtx, r, rad, theme.WithAlpha(cl.Fg, 0x80))
 	rrect(gtx, r.Inset(1), rad-1, cl.Bg)
+}
+
+// ---- "Tip:" hint pill ----
+//
+// Slack's keyboard hint (c-tip): bg rgba(0,0,0,.7), radius 1000, padding
+// 6 16, 15px white with bold segments, centered near the bottom of the
+// window. It is drawn above the modal without taking input and goes away
+// after 4 s or when the modal closes. It never calls stacked(), so the
+// modal under it keeps Escape; if the root dismisses the pill as its
+// topmost overlay (Escape routing), the modal closes with it.
+
+type actTipSeg struct {
+	s string
+	w font.Weight
+}
+
+var actTipSegs = [...]actTipSeg{{"Tip:", theme.Bold}, {"Open this faster with", theme.Regular}, {"Ctrl + Shift + Y", theme.Bold}}
+
+type actTipPill struct {
+	h     Host
+	modal *Modal
+	until time.Time
+	done  bool
+}
+
+func (p *actTipPill) Dismissed() bool { return p.done || p.modal == nil || p.modal.Dismissed() }
+
+// Dismiss closes the pill and the modal it belongs to.
+func (p *actTipPill) Dismiss() {
+	if p.done {
+		return
+	}
+	p.done = true
+	if p.modal != nil {
+		p.modal.Dismiss()
+	}
+}
+
+func (p *actTipPill) Layout(gtx layout.Context) layout.Dimensions {
+	drain()
+	if p.Dismissed() {
+		return layout.Dimensions{}
+	}
+	if p.until.IsZero() {
+		p.until = gtx.Now.Add(4 * time.Second)
+	}
+	if !gtx.Now.Before(p.until) {
+		p.done = true
+		return layout.Dimensions{}
+	}
+	gtx.Execute(op.InvalidateCmd{At: p.until})
+	th := p.h.Theme()
+	win := gtx.Constraints.Max
+	gap := dp(gtx, 4) // a 15px space
+	tw := 0
+	for i, sg := range actTipSegs {
+		if i > 0 {
+			tw += gap
+		}
+		tw += textW(gtx, th, 15, sg.w, sg.s)
+	}
+	px, py := dp(gtx, 16), dp(gtx, 6)
+	hh := dp(gtx, 22) + 2*py
+	w := tw + 2*px
+	// Slack: the pill's top sits 266px above the window bottom (y=634 in a
+	// 900px window), just above the composer; keep it on screen when short.
+	top := maxInt(dp(gtx, 8), win.Y-dp(gtx, 266))
+	r := image.Rect((win.X-w)/2, top, (win.X-w)/2+w, top+hh)
+	rrect(gtx, r, hh/2, rgba(0x000000, .7))
+	x := r.Min.X + px
+	for _, sg := range actTipSegs {
+		at(gtx, image.Pt(x, r.Min.Y), func(gtx layout.Context) layout.Dimensions {
+			return vcenter(gtx, hh, func(gtx layout.Context) layout.Dimensions {
+				return text(gtx, th, 15, sg.w, rgb(0xffffff), sg.s)
+			})
+		})
+		x += textW(gtx, th, 15, sg.w, sg.s) + gap
+	}
+	return layout.Dimensions{}
 }

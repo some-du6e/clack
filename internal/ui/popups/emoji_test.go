@@ -149,6 +149,7 @@ func TestEmojiRank(t *testing.T) {
 func TestEmojiSearchRanking(t *testing.T) {
 	x := epTestIndex(t)
 	var s epSearcher
+	s.setFrecency(nil) // no frecency: tier, then length, then name
 	want := "party,partybox,partygfm,partying,partyowl,party-hen,birthday_party,thirdparty"
 	for _, q := range []string{"party", "PARTY", ":party:", "  Party "} {
 		ids, _ := s.search(x, q, 0)
@@ -174,6 +175,44 @@ func TestEmojiSearchRanking(t *testing.T) {
 	}
 	if ids, _ := s.search(x, "zzz", 0); len(ids) != 0 {
 		t.Errorf("zzz matched %d", len(ids))
+	}
+}
+
+func TestEmojiSearchFrecencyBoost(t *testing.T) {
+	x := epTestIndex(t)
+	var s epSearcher
+	s.setFrecency(map[string]float64{
+		"partyowl":   100,
+		"partying":   400,
+		"thirdparty": 50,
+		"party-hen":  10,
+		"dog":        999, // doesn't match: no effect
+	})
+	// boosted first within each tier (by score), tiers stay ordered
+	want := "party,partying,partyowl,party-hen,partybox,partygfm,birthday_party,thirdparty"
+	ids, _ := s.search(x, "party", 0)
+	if got := strings.Join(epNames(x, ids), ","); got != want {
+		t.Errorf("boosted = %s\nwant %s", got, want)
+	}
+	ids, _ = s.search(x, "party", 2)
+	if got := strings.Join(epNames(x, ids), ","); got != "party,partying" {
+		t.Errorf("boosted limit 2 = %s", got)
+	}
+	// a use recorded under an alias boosts its emoji; scores add up
+	s.setFrecency(map[string]float64{"thumbs": 40, "thumbsup": 40, "tada": 70})
+	ids, rows := s.search(x, "t", 0)
+	names := epNames(x, ids)
+	if len(names) < 2 || names[0] != "+1" || names[1] != "tada" {
+		t.Errorf("t = %v", names)
+	}
+	if len(rows) > 0 && x.sName[rows[0]] != "thumbs" {
+		t.Errorf("+1 matched as %q, want the shorter alias thumbs", x.sName[rows[0]])
+	}
+	// no scores: back to length then name
+	s.setFrecency(nil)
+	ids, _ = s.search(x, "party", 3)
+	if got := strings.Join(epNames(x, ids), ","); got != "party,partybox,partygfm" {
+		t.Errorf("unboosted = %s", got)
 	}
 }
 
@@ -231,13 +270,21 @@ func TestEmojiFrecency(t *testing.T) {
 	}
 }
 
+var epBigWords = []string{"party", "blob", "cat", "parrot", "hackclub", "dino", "orpheus", "yay", "sad", "fast"}
+
+// epBigName is synthetic custom emoji i (every 5th is an alias of i+1).
+func epBigName(i int) string {
+	w := epBigWords
+	return w[i%len(w)] + "_" + w[(i/7)%len(w)] + strconv.Itoa(i)
+}
+
 func epBigCustom(n int) map[string]string {
 	m := make(map[string]string, n)
-	words := []string{"party", "blob", "cat", "parrot", "hackclub", "dino", "orpheus", "yay", "sad", "fast"}
+	w := epBigWords
 	for i := 0; i < n; i++ {
-		name := words[i%len(words)] + "_" + words[(i/7)%len(words)] + strconv.Itoa(i)
+		name := epBigName(i)
 		if i%5 == 0 {
-			m[name] = "alias:" + words[i%len(words)] + "_" + words[(i/7)%len(words)] + strconv.Itoa(i+1)
+			m[name] = "alias:" + w[i%len(w)] + "_" + w[(i/7)%len(w)] + strconv.Itoa(i+1)
 			continue
 		}
 		m[name] = "https://e.test/" + name + ".png"
@@ -251,6 +298,7 @@ func TestEmojiBigIndex(t *testing.T) {
 	}
 	x := epBuild(epParseStd([]byte(epTestStd)), "apple", epBigCustom(65000))
 	var s epSearcher
+	s.setFrecency(map[string]float64{epBigName(21): 80, epBigName(11): 40}) // blob_parrot21, blob_blob11
 	ids, _ := s.search(x, "party", 0)
 	if len(ids) == 0 {
 		t.Fatal("no results")
@@ -261,6 +309,11 @@ func TestEmojiBigIndex(t *testing.T) {
 			t.Fatalf("duplicate result %s", x.names[id])
 		}
 		seen[id] = true
+	}
+	// (search reuses its result slices: ids is stale from here on)
+	blob, _ := s.search(x, "blob", 0)
+	if len(blob) < 3 || x.names[blob[0]] != "blob_parrot21" || x.names[blob[1]] != "blob_blob11" {
+		t.Errorf("boosted first = %v", epNames(x, blob[:minInt(3, len(blob))]))
 	}
 	var lists epLists
 	lists[epGroupCustom] = x.group[epGroupCustom]
@@ -273,6 +326,11 @@ func TestEmojiBigIndex(t *testing.T) {
 func BenchmarkEmojiSearch(b *testing.B) {
 	x := epBuild(epParseStd([]byte(epTestStd)), "apple", epBigCustom(70000))
 	var s epSearcher
+	scores := map[string]float64{}
+	for i := 1; i < 4000; i += 10 {
+		scores[epBigName(i)] = float64(i) // blob_* prefix hits
+	}
+	s.setFrecency(scores)
 	qs := []string{"p", "pa", "par", "part", "party", "party_b"}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
