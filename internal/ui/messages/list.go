@@ -1,0 +1,879 @@
+package messages
+
+import (
+	"context"
+	"image"
+	"io"
+	"strings"
+	"time"
+
+	"gioui.org/f32"
+	"gioui.org/io/clipboard"
+	"gioui.org/io/event"
+	"gioui.org/io/pointer"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/op/clip"
+	"gioui.org/unit"
+	"gioui.org/widget"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+)
+
+type itemKind uint8
+
+const (
+	itMsg itemKind = iota
+	itDay
+	itUnread
+	itIntro
+	itLoading
+	itReplies // thread: "N replies" divider
+	itThreadHead
+)
+
+type item struct {
+	kind   itemKind
+	idx    int // index into snap.msgs (itMsg)
+	day    time.Time
+	header bool
+	key    string
+}
+
+// toolbar buttons
+const (
+	tbQuick0 = iota
+	tbQuick1
+	tbQuick2
+	tbAddReact
+	tbReply
+	tbForward
+	tbSave
+	tbMore
+	tbCount
+)
+
+var tbTips = [tbCount]string{"", "", "", "Find another reaction", "Reply in thread", "Forward message", "Save for later", "More actions"}
+var tbIcons = [tbCount]string{"", "", "", "add-reaction", "reply", "forward-msg", "bookmark", "kebab"}
+
+// defaultQuick are Slack's default quick reactions.
+var defaultQuick = [3]string{"white_check_mark", "eyes", "raised_hands"}
+
+// listState is the per-conversation UI state shared by channel and thread
+// views. It is cached across view instances (UI goroutine only), so
+// switching back to a conversation keeps its rows and scroll position.
+type listState struct {
+	hb     *hub
+	m      *model
+	thread bool
+	ch     string
+	ts     string // thread ts
+
+	snap   snap
+	rows   map[string]*row
+	items  []item
+	built  uint64 // snap.rev items were built from
+	dayKey string // date the items were built on (Today/Yesterday rollover)
+
+	list    layout.List
+	heights []int
+	pos     []int // y of visible items (valid where heights > 0 this frame)
+	visible [2]int
+
+	openLastRead string // the "New" line position, fixed while open
+	opened       bool
+	positioned   bool
+	markedTS     string
+	lastMark     time.Time
+
+	pointer   f32.Point
+	pointerIn bool
+	hoverIdx  int
+
+	tb       [tbCount]widget.Clickable
+	tbRect   image.Rectangle
+	tbFor    int
+	jump     widget.Clickable
+	closeBtn widget.Clickable
+	saved    map[string]bool
+
+	tip     string
+	tipRect image.Rectangle
+	tipItem int
+
+	lastTyping time.Time
+
+	noMark      bool
+	highlight   string
+	highlightAt time.Time
+	pendingJump string
+}
+
+var listCache = map[string]*listState{}
+
+func stateFor(h Host, ch, ts string) *listState {
+	key := ch
+	if ts != "" {
+		key = ch + "/" + ts
+	}
+	if s, ok := listCache[key]; ok {
+		s.hb = hubFor(h)
+		return s
+	}
+	hb := hubFor(h)
+	s := &listState{hb: hb, ch: ch, ts: ts, thread: ts != "", rows: map[string]*row{}, hoverIdx: -1, tbFor: -1, saved: map[string]bool{}}
+	if ts != "" {
+		s.m = hb.threadModel(ch, ts)
+	} else {
+		s.m = hb.channel(ch)
+	}
+	s.list.Axis = layout.Vertical
+	s.list.ScrollToEnd = true
+	if len(listCache) > 2*maxModels {
+		for k := range listCache {
+			delete(listCache, k)
+			break
+		}
+	}
+	listCache[key] = s
+	return s
+}
+
+// sync copies the model and rebuilds items if anything changed.
+func (s *listState) sync(h Host, now time.Time) {
+	if len(s.snap.typing) > 0 && now.Sub(s.lastTyping) > time.Second {
+		s.snap.rev = 0 // re-read to expire typing indicators
+	}
+	changed := s.m.snapshot(&s.snap)
+	if changed {
+		s.lastTyping = now
+		if s.snap.refresh {
+			s.hb.ensureLoaded(s.m)
+		}
+	}
+	if s.snap.loaded && !s.opened {
+		s.opened = true
+		s.openLastRead = s.snap.lastRead
+	}
+	dk := now.Format("2006-01-02")
+	if !changed && s.built == s.snap.rev && dk == s.dayKey && s.items != nil {
+		return
+	}
+	// Scroll anchoring: remember the first visible message and its y.
+	anchorTS, anchorY := "", 0
+	if s.list.Position.BeforeEnd && s.positioned {
+		for i := s.visible[0]; i < s.visible[1] && i < len(s.items); i++ {
+			if s.items[i].kind == itMsg && i < len(s.pos) {
+				anchorTS, anchorY = s.snap.msgs[s.items[i].idx].m.TS, s.pos[i]
+				break
+			}
+		}
+	}
+	s.build(h, now)
+	s.built = s.snap.rev
+	s.dayKey = dk
+	if anchorTS != "" {
+		for i, it := range s.items {
+			if it.kind == itMsg && s.snap.msgs[it.idx].m.TS == anchorTS {
+				s.list.Position.First = i
+				s.list.Position.Offset = -anchorY
+				break
+			}
+		}
+	}
+	if s.pendingJump != "" {
+		for i, it := range s.items {
+			if it.kind == itMsg && s.snap.msgs[it.idx].m.TS == s.pendingJump {
+				s.list.Position = layout.Position{BeforeEnd: true, First: max(0, i-2)}
+				s.positioned = true
+				s.pendingJump = ""
+				break
+			}
+		}
+	}
+	// Refresh rows whose message changed; drop rows of deleted messages.
+	live := make(map[string]bool, len(s.snap.msgs))
+	for i := range s.snap.msgs {
+		e := &s.snap.msgs[i]
+		live[e.m.TS] = true
+		if r, ok := s.rows[e.m.TS]; ok && r.rev != e.rev {
+			r.set(e)
+		}
+	}
+	for ts := range s.rows {
+		if !live[ts] {
+			delete(s.rows, ts)
+		}
+	}
+}
+
+func groupable(a, b *core.Message, ta, tb time.Time) bool {
+	if a.System || b.System || a.Subtype != b.Subtype && (a.Subtype == "bot_message" || b.Subtype == "bot_message") {
+		return false
+	}
+	if a.User != b.User || a.BotID != b.BotID || a.Name != b.Name || a.Avatar != b.Avatar {
+		return false
+	}
+	if b.Broadcast || a.Pinned || b.Pinned {
+		return false
+	}
+	return tb.Sub(ta) < 5*time.Minute && tb.Sub(ta) >= 0
+}
+
+func (s *listState) build(h Host, now time.Time) {
+	s.items = s.items[:0]
+	msgs := s.snap.msgs
+	if !s.thread {
+		if s.snap.older || (s.snap.hasMore && len(msgs) > 0) {
+			s.items = append(s.items, item{kind: itLoading, key: "loading"})
+		} else if s.snap.loaded {
+			s.items = append(s.items, item{kind: itIntro, key: "intro"})
+		}
+	}
+	self := ""
+	if h.Core() != nil {
+		self = h.Core().Self().ID
+	}
+	var prev *core.Message
+	var prevT time.Time
+	unreadPlaced := false
+	for i := range msgs {
+		m := &msgs[i].m
+		t := tsTime(m.TS)
+		header := prev == nil
+		if s.thread {
+			if i == 0 && m.TS == s.ts {
+				s.items = append(s.items, item{kind: itMsg, idx: i, header: true, key: m.TS})
+				n := len(msgs) - 1
+				s.items = append(s.items, item{kind: itReplies, idx: n, key: "replies"})
+				prev, prevT = nil, t
+				continue
+			}
+		} else if prev == nil || !sameDay(t, prevT) {
+			s.items = append(s.items, item{kind: itDay, day: t, key: "d" + m.TS})
+			header = true
+		}
+		if !unreadPlaced && s.openLastRead != "" && tsLess(s.openLastRead, m.TS) && m.User != self && !s.thread {
+			unreadPlaced = true
+			// Only show the line when there is something read above it.
+			if i > 0 || s.snap.hasMore {
+				s.items = append(s.items, item{kind: itUnread, key: "unread"})
+				header = true
+			}
+		}
+		if !header && prev != nil && !groupable(prev, m, prevT, t) {
+			header = true
+		}
+		s.items = append(s.items, item{kind: itMsg, idx: i, header: header, key: m.TS})
+		prev, prevT = m, t
+	}
+	if cap(s.heights) < len(s.items) {
+		s.heights = make([]int, len(s.items), len(s.items)+64)
+		s.pos = make([]int, len(s.items), len(s.items)+64)
+	} else {
+		s.heights = s.heights[:len(s.items)]
+		s.pos = s.pos[:len(s.items)]
+	}
+}
+
+// unreadIndex returns the item index of the "New" line, or -1.
+func (s *listState) unreadIndex() int {
+	for i, it := range s.items {
+		if it.kind == itUnread {
+			return i
+		}
+	}
+	return -1
+}
+
+// layoutList is the common list drawing for channels and threads.
+func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) layout.Dimensions {
+	th := h.Theme()
+	c := colorsFor(th)
+	st := styleFor(h)
+	now := time.Now()
+	s.hb.ensureLoaded(s.m)
+	s.sync(h, now)
+	size := gtx.Constraints.Max
+	fill(gtx.Ops, image.Rectangle{Max: size}, c.Bg)
+
+	// view-level pointer tracking (ancestor of every row)
+	area := clip.Rect(image.Rectangle{Max: size}).Push(gtx.Ops)
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: s, Kinds: pointer.Move | pointer.Drag | pointer.Enter | pointer.Leave | pointer.Cancel})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(pointer.Event); ok {
+			switch e.Kind {
+			case pointer.Leave, pointer.Cancel:
+				s.pointerIn = false
+			default:
+				s.pointerIn = true
+				s.pointer = e.Position
+			}
+		}
+	}
+	event.Op(gtx.Ops, s)
+
+	if !s.snap.loaded && len(s.snap.msgs) == 0 {
+		if s.snap.err != nil {
+			at(gtx, dp(gtx, mt.padX), dp(gtx, 20), func(gtx layout.Context) layout.Dimensions {
+				return label(gtx, th, textStyle{size: 15, col: c.Text2}, "Couldn't load messages: "+s.snap.err.Error())
+			})
+		} else {
+			y := size.Y
+			for i := 0; y > 0; i++ {
+				gg := gtx
+				gg.Constraints = layout.Exact(image.Pt(size.X, dp(gtx, 60)))
+				y -= dp(gtx, 60)
+				at(gtx, 0, y, func(gtx layout.Context) layout.Dimensions { return skeleton(gg, c, i) })
+			}
+		}
+		area.Pop()
+		return layout.Dimensions{Size: size}
+	}
+
+	// first positioning: at the unread line if there are many unread
+	if !s.positioned && s.snap.loaded {
+		s.positioned = true
+		if u := s.unreadIndex(); u >= 0 && len(s.items)-u > 12 {
+			s.list.Position = layout.Position{BeforeEnd: true, First: max(0, u-1)}
+		} else {
+			s.list.Position = layout.Position{}
+		}
+	}
+
+	// hover from last frame's positions
+	s.hoverIdx = -1
+	if s.pointerIn {
+		py := int(s.pointer.Y)
+		if s.tbFor >= 0 && image.Pt(int(s.pointer.X), py).In(s.tbRect) {
+			s.hoverIdx = s.tbFor
+		} else {
+			for i := s.visible[0]; i < s.visible[1] && i < len(s.items); i++ {
+				if s.items[i].kind == itMsg && py >= s.pos[i] && py < s.pos[i]+s.heights[i] {
+					s.hoverIdx = i
+					break
+				}
+			}
+		}
+	}
+
+	for i := range s.heights {
+		s.heights[i] = 0
+	}
+	selfID := ""
+	if h.Core() != nil {
+		selfID = h.Core().Self().ID
+	}
+	rc := rowCtx{h: h, th: th, st: st, c: c, now: now, thread: s.thread, selfID: selfID, usersRev: s.hb.usersRev() + 1,
+		origin:  func(p image.Point) image.Point { return s.anchor(h, origin, p) },
+		onReact: func(r *row, name string, add bool) { s.react(h, r, name, add, selfID) },
+	}
+	s.tip = ""
+	s.list.Layout(gtx, len(s.items), func(gtx layout.Context, i int) layout.Dimensions {
+		d := s.layoutItem(gtx, h, &rc, i)
+		s.heights[i] = d.Size.Y
+		return d
+	})
+
+	// positions of visible items
+	p := s.list.Position
+	y := -p.Offset
+	s.visible = [2]int{p.First, p.First}
+	for i := p.First; i < len(s.items) && y < size.Y; i++ {
+		s.pos[i] = y
+		y += s.heights[i]
+		s.visible[1] = i + 1
+	}
+
+	s.overlays(gtx, h, &rc, size)
+	area.Pop()
+
+	// infinite scroll up
+	if !s.thread && p.First <= 2 && s.snap.hasMore && !s.snap.older && s.snap.loaded {
+		s.hb.loadOlder(s.m)
+	}
+	// mark read at the bottom
+	if !s.thread && !s.noMark && s.snap.loaded && !p.BeforeEnd && len(s.snap.msgs) > 0 {
+		latest := s.snap.msgs[len(s.snap.msgs)-1].m.TS
+		if latest != s.markedTS && (s.snap.lastRead == "" || tsLess(s.snap.lastRead, latest)) && now.Sub(s.lastMark) > 1500*time.Millisecond {
+			s.markedTS, s.lastMark = latest, now
+			if app := h.Core(); app != nil {
+				ch := s.ch
+				go func() {
+					ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+					defer cancel()
+					_, _ = app.Mark(ctx, ch, latest)
+				}()
+			}
+		}
+	}
+	return layout.Dimensions{Size: size}
+}
+
+func (s *listState) anchor(h Host, origin, p image.Point) image.Point {
+	if ph, ok := h.(PointerHost); ok {
+		return ph.PointerPos()
+	}
+	return origin.Add(image.Pt(int(s.pointer.X), int(s.pointer.Y)))
+}
+
+func (s *listState) react(h Host, r *row, name string, add bool, self string) {
+	ts := r.m.TS
+	s.m.mutate(ts, func(m *core.Message) {
+		for i := range m.Reactions {
+			re := &m.Reactions[i]
+			if re.Name != name {
+				continue
+			}
+			if add && !re.Self {
+				re.Self, re.Count = true, re.Count+1
+				re.Users = append(re.Users, self)
+			} else if !add && re.Self {
+				re.Self, re.Count = false, re.Count-1
+				if re.Count <= 0 {
+					m.Reactions = append(m.Reactions[:i], m.Reactions[i+1:]...)
+				}
+			}
+			return
+		}
+		if add {
+			url := ""
+			if h.Core() != nil {
+				url, _, _ = h.Core().Emoji(name)
+			}
+			m.Reactions = append(m.Reactions, core.Reaction{Name: name, Count: 1, Users: []string{self}, URL: url, Self: true})
+		}
+	})
+	app := h.Core()
+	if app == nil {
+		return
+	}
+	ch := s.ch
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if err := app.React(ctx, ch, ts, name, add); err != nil {
+			h.Toast("Couldn't update reaction")
+		}
+	}()
+	h.Invalidate()
+}
+
+func (s *listState) layoutItem(gtx layout.Context, h Host, rc *rowCtx, i int) layout.Dimensions {
+	it := s.items[i]
+	c := rc.c
+	w := gtx.Constraints.Max.X
+	switch it.kind {
+	case itDay:
+		return s.dayDivider(gtx, h, c, it.day, rc.now, w)
+	case itUnread:
+		hh := dp(gtx, mt.unreadH)
+		ly := hh / 2
+		fill(gtx.Ops, image.Rect(0, ly, w, ly+dp(gtx, 1)), c.NewLine)
+		s := textStyle{size: 13, weight: theme.Bold, col: c.NewLine, lineH: 18}
+		sz := measure(gtx, h.Theme(), s, "New")
+		lx := w - dp(gtx, mt.padX) - sz.X - dp(gtx, 8)
+		fill(gtx.Ops, image.Rect(lx-dp(gtx, 4), ly-dp(gtx, 9), w-dp(gtx, mt.padX)+dp(gtx, 4), ly+dp(gtx, 9)), c.Bg)
+		at(gtx, lx, ly-dp(gtx, 9), func(gtx layout.Context) layout.Dimensions { return label(gtx, h.Theme(), s, "New") })
+		return layout.Dimensions{Size: image.Pt(w, hh)}
+	case itLoading:
+		gg := gtx
+		gg.Constraints = layout.Exact(image.Pt(w, dp(gtx, 60)))
+		return skeleton(gg, c, 0)
+	case itIntro:
+		return s.intro(gtx, h, c, w)
+	case itReplies:
+		hh := dp(gtx, 36)
+		n := it.idx
+		txt := "1 reply"
+		if n != 1 {
+			txt = itoa(n) + " replies"
+		}
+		st := textStyle{size: 13, col: c.Text2, lineH: 18}
+		d := at(gtx, dp(gtx, mt.padX), (hh-dp(gtx, 18))/2, func(gtx layout.Context) layout.Dimensions { return label(gtx, h.Theme(), st, txt) })
+		lx := dp(gtx, mt.padX) + d.Size.X + dp(gtx, 8)
+		fill(gtx.Ops, image.Rect(lx, hh/2, w-dp(gtx, mt.padX), hh/2+dp(gtx, 1)), c.PillBorder)
+		return layout.Dimensions{Size: image.Pt(w, hh)}
+	}
+	e := &s.snap.msgs[it.idx]
+	r, ok := s.rows[e.m.TS]
+	if !ok {
+		r = newRow(e)
+		s.rows[e.m.TS] = r
+	}
+	rc.header = it.header
+	rc.hovered = i == s.hoverIdx
+	rc.parent = s.thread && e.m.TS == s.ts
+	rc.highlight = 0
+	if s.highlight == e.m.TS {
+		if el := rc.now.Sub(s.highlightAt); el < 4*time.Second {
+			rc.highlight = 1
+			if el > 2*time.Second {
+				rc.highlight = float32(4*time.Second-el) / float32(2*time.Second)
+			}
+			gtx.Execute(op.InvalidateCmd{})
+		}
+	}
+	gtx.Constraints.Min.X = w
+	d := r.layout(gtx, rc)
+	// hover tooltip for reaction pills
+	if rc.hovered {
+		for k := range r.reacts {
+			if k < len(r.reactRects) && k < len(r.m.Reactions) && r.reacts[k].Hovered() {
+				s.tip = reactionTip(h, &r.m.Reactions[k], rc.selfID)
+				s.tipRect = r.reactRects[k] // row-local; positioned in overlays
+				s.tipItem = i
+			}
+		}
+	}
+	return d
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var b [20]byte
+	i := len(b)
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	for n > 0 {
+		i--
+		b[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		b[i] = '-'
+	}
+	return string(b[i:])
+}
+
+func (s *listState) dayPill(gtx layout.Context, h Host, c *colors, label string, cx, y int) {
+	th := h.Theme()
+	ts := textStyle{size: 13, weight: theme.Bold, col: c.Text, lineH: 18}
+	sz := measure(gtx, th, ts, label)
+	ph := dp(gtx, mt.dayPillH)
+	pw := dp(gtx, 16) + sz.X + dp(gtx, 4) + dp(gtx, 13) + dp(gtx, 8)
+	r := image.Rect(cx-pw/2, y, cx-pw/2+pw, y+ph)
+	shadowCard(gtx.Ops, r, ph/2, dp(gtx, 1), c.Bg, c.PillBorder, c.Shadow)
+	at(gtx, r.Min.X+dp(gtx, 16), y+(ph-dp(gtx, 18))/2, func(gtx layout.Context) layout.Dimensions {
+		return labelText(gtx, th, ts, label)
+	})
+	at(gtx, r.Min.X+dp(gtx, 16)+sz.X+dp(gtx, 4), y+(ph-dp(gtx, 13))/2, func(gtx layout.Context) layout.Dimensions {
+		return icons.Get("chevron-down")(gtx, unit.Dp(13), c.Text)
+	})
+}
+
+// labelText avoids the shadowed name in dayPill.
+func labelText(gtx layout.Context, th *theme.Theme, s textStyle, txt string) layout.Dimensions {
+	return label(gtx, th, s, txt)
+}
+
+func (s *listState) dayDivider(gtx layout.Context, h Host, c *colors, day, now time.Time, w int) layout.Dimensions {
+	hh := dp(gtx, mt.dayH)
+	ly := dp(gtx, 19)
+	fill(gtx.Ops, image.Rect(0, ly, w, ly+dp(gtx, 1)), c.DayLine)
+	s.dayPill(gtx, h, c, dayLabel(day, now), w/2, (hh-dp(gtx, mt.dayPillH))/2)
+	return layout.Dimensions{Size: image.Pt(w, hh)}
+}
+
+func (s *listState) intro(gtx layout.Context, h Host, c *colors, w int) layout.Dimensions {
+	th := h.Theme()
+	name := s.ch
+	kind := ""
+	if app := h.Core(); app != nil {
+		if cv, ok := app.Conv(s.ch); ok {
+			name, kind = cv.Name, cv.Kind
+			if kind == "im" {
+				if u, ok := app.User(cv.User); ok {
+					name = u.Name
+				}
+			}
+		}
+	}
+	title := "#" + name
+	sub := "This is the very beginning of the #" + name + " channel."
+	if kind == "im" || kind == "mpim" {
+		title = name
+		sub = "This conversation is just between you and " + name + "."
+	}
+	px := dp(gtx, mt.padX)
+	y := dp(gtx, 24)
+	d := at(gtx, px, y, func(gtx layout.Context) layout.Dimensions {
+		return label(gtx, th, textStyle{size: 28, weight: theme.Black, col: c.Text, lineH: 36}, title)
+	})
+	y += d.Size.Y + dp(gtx, 8)
+	d = at(gtx, px, y, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Max.X = w - 2*px
+		return label(gtx, th, textStyle{size: 15, col: c.Text2, lineH: 22}, sub)
+	})
+	y += d.Size.Y + dp(gtx, 16)
+	return layout.Dimensions{Size: image.Pt(w, y)}
+}
+
+// overlays draws the hover toolbar, the sticky day pill, tooltips and the
+// jump-to-recent button on top of the list.
+func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.Point) {
+	c := rc.c
+	th := h.Theme()
+	defer clip.Rect(image.Rectangle{Max: size}).Push(gtx.Ops).Pop()
+
+	// sticky day pill
+	if !s.thread {
+		top := s.visible[0]
+		d := -1
+		for i := top; i >= 0 && i < len(s.items); i-- {
+			if s.items[i].kind == itDay {
+				d = i
+				break
+			}
+		}
+		if d >= 0 {
+			pillY := dp(gtx, 6)
+			ownY := s.pos[d] + (dp(gtx, mt.dayH)-dp(gtx, mt.dayPillH))/2
+			if d < s.visible[0] || ownY < pillY {
+				// pushed up by the next day's divider
+				for i := d + 1; i < s.visible[1]; i++ {
+					if s.items[i].kind == itDay {
+						if ny := s.pos[i] - dp(gtx, mt.dayPillH) - dp(gtx, 6); ny < pillY {
+							pillY = ny
+						}
+						break
+					}
+				}
+				s.dayPill(gtx, h, c, dayLabel(s.items[d].day, rc.now), size.X/2, pillY)
+			}
+		}
+	}
+
+	// hover toolbar
+	s.tbFor = -1
+	if s.hoverIdx >= 0 && s.hoverIdx < len(s.items) && s.items[s.hoverIdx].kind == itMsg {
+		e := &s.snap.msgs[s.items[s.hoverIdx].idx]
+		if r := s.rows[e.m.TS]; r != nil && !r.rv.HasSelection() {
+			s.toolbar(gtx, h, rc, r, s.hoverIdx, size)
+		}
+	}
+
+	// reaction tooltip
+	if s.tip != "" && s.tipItem >= s.visible[0] && s.tipItem < s.visible[1] {
+		r := s.tipRect.Add(image.Pt(0, s.pos[s.tipItem]))
+		tooltip(gtx, th, c, s.tip, image.Pt((r.Min.X+r.Max.X)/2, r.Min.Y-dp(gtx, 6)), size)
+	}
+
+	// jump to recent
+	p := s.list.Position
+	if p.BeforeEnd && s.visible[1] < len(s.items)-2 {
+		ts := textStyle{size: 13, weight: theme.Bold, col: c.JumpText, lineH: 18}
+		txt := "Jump to recent"
+		sz := measure(gtx, th, ts, txt)
+		bh := dp(gtx, 32)
+		bw := dp(gtx, 12) + dp(gtx, 16) + dp(gtx, 6) + sz.X + dp(gtx, 14)
+		r := image.Rect((size.X-bw)/2, size.Y-bh-dp(gtx, 16), (size.X-bw)/2+bw, size.Y-dp(gtx, 16))
+		if s.jump.Clicked(gtx) {
+			s.list.Position = layout.Position{}
+			h.Invalidate()
+		}
+		at(gtx, r.Min.X, r.Min.Y, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Exact(r.Size())
+			return s.jump.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				rr := image.Rectangle{Max: r.Size()}
+				bg := c.JumpBg
+				if s.jump.Hovered() {
+					bg.A = 230
+				}
+				shadowCard(gtx.Ops, rr, bh/2, dp(gtx, 1), bg, bg, c.Shadow)
+				at(gtx, dp(gtx, 12), (bh-dp(gtx, 16))/2, func(gtx layout.Context) layout.Dimensions {
+					return icons.Get("arrow-down")(gtx, unit.Dp(16), c.JumpText)
+				})
+				at(gtx, dp(gtx, 34), (bh-dp(gtx, 18))/2, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, ts, txt) })
+				return layout.Dimensions{Size: rr.Size()}
+			})
+		})
+	}
+}
+
+// tooltip draws a dark tooltip centered above anchor (bottom-center).
+func tooltip(gtx layout.Context, th *theme.Theme, c *colors, txt string, anchor image.Point, bounds image.Point) {
+	ts := textStyle{size: 13, weight: theme.Bold, col: c.TooltipText, lineH: 18}
+	maxW := dp(gtx, 260)
+	sz := measure(gtx, th, ts, txt)
+	tw := sz.X
+	if tw > maxW {
+		tw = maxW
+	}
+	pad := dp(gtx, 8)
+	bw, bh := tw+2*pad, dp(gtx, 18)+2*dp(gtx, 6)
+	x := anchor.X - bw/2
+	if x < dp(gtx, 4) {
+		x = dp(gtx, 4)
+	}
+	if x+bw > bounds.X-dp(gtx, 4) {
+		x = bounds.X - dp(gtx, 4) - bw
+	}
+	y := anchor.Y - bh
+	if y < 0 {
+		y = anchor.Y + dp(gtx, 40)
+	}
+	r := image.Rect(x, y, x+bw, y+bh)
+	rrect(gtx.Ops, r, dp(gtx, 6), c.Tooltip)
+	at(gtx, x+pad, y+dp(gtx, 6), func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Max.X = tw
+		return label(gtx, th, ts, txt)
+	})
+}
+
+func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx int, size image.Point) {
+	c := rc.c
+	th := h.Theme()
+	bs := dp(gtx, mt.toolbarBtn)
+	pad := dp(gtx, mt.toolbarPad)
+	n := tbCount
+	sep := dp(gtx, 9)
+	tw := pad*2 + n*bs + sep
+	x := size.X - dp(gtx, mt.toolbarRight) - tw
+	y := s.pos[idx] + dp(gtx, mt.toolbarTop)
+	if y < dp(gtx, 4) {
+		y = dp(gtx, 4)
+	}
+	th2 := bs + 2*pad
+	rect := image.Rect(x, y, x+tw, y+th2)
+	s.tbRect, s.tbFor = rect, idx
+	shadowCard(gtx.Ops, rect, dp(gtx, 8), dp(gtx, 1), c.Bg, c.PillBorder, c.Shadow)
+	app := h.Core()
+	m := r.m
+	bx := x + pad
+	for i := 0; i < n; i++ {
+		if i == tbAddReact {
+			fill(gtx.Ops, image.Rect(bx+sep/2, y+pad+dp(gtx, 6), bx+sep/2+dp(gtx, 1), y+pad+bs-dp(gtx, 6)), c.PillBorder)
+			bx += sep
+		}
+		btn := &s.tb[i]
+		i := i
+		if btn.Clicked(gtx) {
+			anchor := s.anchor(h, image.Point{}, image.Pt(bx, y+th2))
+			switch i {
+			case tbQuick0, tbQuick1, tbQuick2:
+				name := defaultQuick[i]
+				self := false
+				for _, re := range m.Reactions {
+					if re.Name == name && re.Self {
+						self = true
+					}
+				}
+				rc.onReact(r, name, !self)
+			case tbAddReact:
+				rr := r
+				h.OpenEmojiPicker(anchor, func(name string) { rc.onReact(rr, name, true) })
+			case tbReply:
+				h.OpenThread(m.Channel, threadRoot(&m))
+			case tbForward:
+				domain := ""
+				if app != nil {
+					domain = app.Snapshot().Team.Domain
+				}
+				link := permalink(domain, m.Channel, m.TS)
+				gtx.Execute(clipboard.WriteCmd{Type: "application/text", Data: io.NopCloser(strings.NewReader(link))})
+				h.Toast("Link copied to clipboard")
+			case tbSave:
+				saved := s.saved[m.TS]
+				s.saved[m.TS] = !saved
+				if app != nil {
+					ch, ts := m.Channel, m.TS
+					go func() {
+						ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+						defer cancel()
+						var err error
+						if saved {
+							err = app.Unsave(ctx, ch, ts)
+						} else {
+							err = app.Save(ctx, ch, ts, 0)
+						}
+						if err != nil {
+							h.Toast("Couldn't update Later")
+						}
+					}()
+				}
+				if saved {
+					h.Toast("Removed from Later")
+				} else {
+					h.Toast("Saved for later")
+				}
+			case tbMore:
+				h.OpenMessageMenu(anchor, m)
+			}
+		}
+		bxx := bx
+		at(gtx, bxx, y+pad, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Exact(image.Pt(bs, bs))
+			return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				rr := image.Rectangle{Max: image.Pt(bs, bs)}
+				col := c.ToolbarIcon
+				if btn.Hovered() {
+					rrect(gtx.Ops, rr, dp(gtx, 6), c.ToolbarHoverBg)
+					col = c.Text
+				}
+				if i <= tbQuick2 {
+					es := dp(gtx, 20)
+					url := ""
+					if app != nil {
+						url, _, _ = app.Emoji(defaultQuick[i])
+					}
+					if !drawEmoji(gtx, h, url, image.Rect((bs-es)/2, (bs-es)/2, (bs-es)/2+es, (bs-es)/2+es)) {
+						rrect(gtx.Ops, image.Rect((bs-es)/2, (bs-es)/2, (bs-es)/2+es, (bs-es)/2+es), es/2, c.Skeleton)
+					}
+				} else {
+					is := dp(gtx, 18)
+					at(gtx, (bs-is)/2, (bs-is)/2, func(gtx layout.Context) layout.Dimensions {
+						ic := tbIcons[i]
+						if i == tbSave && s.saved[m.TS] {
+							ic = "bookmark-filled"
+						}
+						return icons.Get(ic)(gtx, unit.Dp(18), col)
+					})
+				}
+				return layout.Dimensions{Size: rr.Size()}
+			})
+		})
+		if btn.Hovered() {
+			tip := tbTips[i]
+			if i <= tbQuick2 {
+				tip = "React with :" + defaultQuick[i] + ":"
+			}
+			if i == tbSave && s.saved[m.TS] {
+				tip = "Remove from Later"
+			}
+			s.tip = ""
+			tooltip(gtx, th, c, tip, image.Pt(bxx+bs/2, y-dp(gtx, 4)), size)
+		}
+		bx += bs
+	}
+}
+
+func threadRoot(m *core.Message) string {
+	if m.ThreadTS != "" {
+		return m.ThreadTS
+	}
+	return m.TS
+}
+
+// typingText is Slack's "X is typing…" line.
+func typingText(names []string) string {
+	switch len(names) {
+	case 0:
+		return ""
+	case 1:
+		return names[0] + " is typing…"
+	case 2:
+		return names[0] + " and " + names[1] + " are typing…"
+	}
+	return "Several people are typing…"
+}
