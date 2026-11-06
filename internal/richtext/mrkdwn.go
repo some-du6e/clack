@@ -121,6 +121,9 @@ func literal(r Resolver, s string, st Style) []Span {
 			if end := tokenEnd(s, i); end > 0 {
 				flush()
 				for _, sp := range token(r, s[i+1:end-1]) {
+					if sp.Kind == Text && sp.Text == "" {
+						continue
+					}
 					sp.Style |= st
 					out = append(out, sp)
 				}
