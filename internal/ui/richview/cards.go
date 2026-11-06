@@ -79,8 +79,9 @@ func (l *lay) small(col color.NRGBA) flowStyle {
 
 // ---------- attachments ----------
 
-func (l *lay) attachment(a *richtext.Attachment, x, y, w int) int {
-	if a.IsUnfurl && !a.IsShare {
+func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
+	a := b.Att
+	if a.IsUnfurl && !a.IsShare && len(b.Fields) == 0 && len(b.Buttons) == 0 && len(b.Children) == 0 {
 		return l.unfurl(a, x, y, w)
 	}
 	p := &l.st.Palette
@@ -126,7 +127,11 @@ func (l *lay) attachment(a *richtext.Attachment, x, y, w int) int {
 			ic = l.dp(20)
 			weight = font.Black
 		}
-		row(l.iconRow(a.AuthorIcon, a.AuthorName, cx, cy, cw, ic, weight, 15, p.Text, tg))
+		name := a.AuthorName
+		if a.AuthorSubname != "" {
+			name += "  " + a.AuthorSubname
+		}
+		row(l.iconRow(a.AuthorIcon, name, cx, cy, cw, ic, weight, 15, p.Text, tg))
 	}
 	if len(a.Title) > 0 {
 		fs := l.bodyStyle()
@@ -145,10 +150,22 @@ func (l *lay) attachment(a *richtext.Attachment, x, y, w int) int {
 		row(l.blocks(a.Text, cx, cy, cw, false))
 		l.plainAdd("\n")
 	}
+	if len(b.Fields) > 0 {
+		cy += l.dp(4)
+		row(l.fields(b.Fields, b.FieldShort, cx, cy, cw))
+	}
 	if a.Image != nil {
 		cy += l.dp(6)
 		tg := l.d.addTarget(target{kind: tImage, img: a.Image})
 		row(l.image(a.Image, cx, cy, min(cw, l.dp(360)), l.dp(360), l.dp(8), tg))
+	}
+	if len(b.Children) > 0 {
+		cy += l.dp(4)
+		row(l.blocks(b.Children, cx, cy, cw, false))
+	}
+	if len(b.Buttons) > 0 {
+		cy += l.dp(8)
+		row(l.buttons(b.Buttons, cx, cy, cw))
 	}
 	if len(a.Footer) > 0 || a.TS > 0 || (a.IsShare && a.ShareChannel != "") {
 		cy += l.dp(4)
@@ -293,7 +310,13 @@ func (l *lay) unfurl(a *richtext.Attachment, x, y, w int) int {
 	if a.Image != nil && thumbW == 0 {
 		cy += l.dp(8)
 		tg := l.d.addTarget(target{kind: tImage, img: a.Image})
+		if a.VideoURL != "" {
+			tg = l.d.addTarget(target{kind: tLink, url: a.VideoURL})
+		}
 		cy += l.image(a.Image, cx, cy, cw, l.dp(360), l.dp(8), tg)
+		if a.VideoURL != "" {
+			l.playOverlay(l.d.imgs[len(l.d.imgs)-1].r)
+		}
 	}
 	// service line at the bottom
 	if a.ServiceName != "" {
@@ -431,11 +454,7 @@ func (l *lay) video(f *richtext.File, x, y, w int) int {
 		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: l.dp(8), fill: rgb(0, 0, 0), target: -1})
 		l.d.hits = append(l.d.hits, hit{r: r, t: tg})
 	}
-	c := r.Min.Add(r.Max).Div(2)
-	s := l.dp(24)
-	l.d.boxes = append(l.d.boxes, box{kind: bCircle, r: image.Rect(c.X-s, c.Y-s, c.X+s, c.Y+s), fill: p.PlayBg, target: -1, layer: 1})
-	t := l.dp(9)
-	l.d.boxes = append(l.d.boxes, box{kind: bPlay, r: image.Rect(c.X-t+l.dp(2), c.Y-t, c.X+t+l.dp(2), c.Y+t), fill: p.PlayFg, target: -1, layer: 1})
+	l.playOverlay(r)
 	if f.DurationMS > 0 {
 		fs := l.small(p.PlayFg)
 		fs.size = l.sp(12)
@@ -449,6 +468,16 @@ func (l *lay) video(f *richtext.File, x, y, w int) int {
 	}
 	l.plainAdd(fileName(f))
 	return h
+}
+
+// playOverlay draws the round play button centered on r.
+func (l *lay) playOverlay(r image.Rectangle) {
+	p := &l.st.Palette
+	c := r.Min.Add(r.Max).Div(2)
+	s := l.dp(24)
+	l.d.boxes = append(l.d.boxes, box{kind: bCircle, r: image.Rect(c.X-s, c.Y-s, c.X+s, c.Y+s), fill: p.PlayBg, target: -1, layer: 1})
+	t := l.dp(9)
+	l.d.boxes = append(l.d.boxes, box{kind: bPlay, r: image.Rect(c.X-t+l.dp(2), c.Y-t, c.X+t+l.dp(2), c.Y+t), fill: p.PlayFg, target: -1, layer: 1})
 }
 
 func (l *lay) cardFrame(x, y, w, h int, tg int16) int {

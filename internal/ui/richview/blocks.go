@@ -49,7 +49,7 @@ func (l *lay) gap(prev, cur richtext.BlockKind) int {
 	if isTextual(prev) && isTextual(cur) {
 		return 0
 	}
-	if prev == richtext.File && cur == richtext.File {
+	if prev == richtext.FileBlock && cur == richtext.FileBlock {
 		return l.dp(8)
 	}
 	return l.dp(4)
@@ -64,7 +64,7 @@ func lastTextual(bs []richtext.Block) int {
 				return i
 			}
 			return -1
-		case richtext.Attachment, richtext.File:
+		case richtext.AttachmentBlock, richtext.FileBlock:
 			continue
 		default:
 			return -1
@@ -123,7 +123,7 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 }
 
 func isImageFile(b *richtext.Block) bool {
-	return b.Kind == richtext.File && b.File != nil && b.File.IsImage && b.File.Thumb != nil
+	return b.Kind == richtext.FileBlock && b.File != nil && b.File.IsImage && b.File.Thumb != nil
 }
 
 func (l *lay) block(b *richtext.Block, x, y, w int, edited bool) int {
@@ -212,7 +212,7 @@ func (l *lay) block(b *richtext.Block, x, y, w int, edited bool) int {
 	case richtext.Section:
 		return l.section(b, x, y, w, edited)
 
-	case richtext.Image:
+	case richtext.ImageBlock:
 		if b.Image == nil {
 			return 0
 		}
@@ -229,13 +229,13 @@ func (l *lay) block(b *richtext.Block, x, y, w int, edited bool) int {
 	case richtext.Actions:
 		return l.buttons(b.Buttons, x, y, w)
 
-	case richtext.Attachment:
+	case richtext.AttachmentBlock:
 		if b.Att == nil {
 			return 0
 		}
-		return l.attachment(b.Att, x, y, w)
+		return l.attachment(b, x, y, w)
 
-	case richtext.File:
+	case richtext.FileBlock:
 		if b.File == nil {
 			return 0
 		}
@@ -361,7 +361,7 @@ func (l *lay) context(b *richtext.Block, x, y, w int) int {
 		cx += s + l.dp(6)
 	}
 	for i := range b.Children {
-		if c := &b.Children[i]; c.Kind == richtext.Image && c.Image != nil {
+		if c := &b.Children[i]; c.Kind == richtext.ImageBlock && c.Image != nil {
 			s := l.dp(20)
 			l.image(c.Image, cx, y-l.dp(1), s, s, l.dp(4), -1)
 			cx += s + l.dp(6)
@@ -387,7 +387,9 @@ func (l *lay) section(b *richtext.Block, x, y, w int, edited bool) int {
 		tw = w - accW - l.dp(12)
 	}
 	h := 0
-	if len(b.Spans) > 0 {
+	if len(b.Children) > 0 {
+		h = l.blocks(b.Children, x, y, tw, false)
+	} else if len(b.Spans) > 0 {
 		fs := l.bodyStyle()
 		l.addSpans(b.Spans, &fs)
 		if edited {
@@ -399,25 +401,7 @@ func (l *lay) section(b *richtext.Block, x, y, w int, edited bool) int {
 		if h > 0 {
 			h += l.dp(4)
 		}
-		colW := (tw - l.dp(12)) / 2
-		fy := y + h
-		rowH := 0
-		for i, f := range b.Fields {
-			col := i % 2
-			if col == 0 && i > 0 {
-				fy += rowH + l.dp(4)
-				rowH = 0
-			}
-			fx := x + col*(colW+l.dp(12))
-			fs := l.bodyStyle()
-			l.plainAdd("\n")
-			l.addSpans(f, &fs)
-			fh, _ := l.flow(fx, fy, colW, &fs)
-			if fh > rowH {
-				rowH = fh
-			}
-		}
-		h = fy + rowH - y
+		h += l.fields(b.Fields, nil, x, y+h, tw)
 	}
 	if b.Image != nil {
 		tg := l.d.addTarget(target{kind: tImage, img: b.Image})
@@ -433,6 +417,44 @@ func (l *lay) section(b *richtext.Block, x, y, w int, edited bool) int {
 		}
 	}
 	return y + h - y0
+}
+
+// fields lays out Block Kit / attachment fields in two columns. short (may
+// be nil) marks fields that share a row; nil means all are short.
+func (l *lay) fields(fields [][]richtext.Span, short []bool, x, y, w int) int {
+	colW := (w - l.dp(12)) / 2
+	fy := y
+	rowH := 0
+	col := 0
+	for i, f := range fields {
+		isShort := short == nil || (i < len(short) && short[i])
+		if col == 1 && !isShort {
+			fy += rowH + l.dp(4)
+			rowH, col = 0, 0
+		}
+		fx := x + col*(colW+l.dp(12))
+		fw := colW
+		if !isShort {
+			fw = w
+		}
+		fs := l.bodyStyle()
+		l.plainAdd("\n")
+		l.addSpans(f, &fs)
+		fh, _ := l.flow(fx, fy, fw, &fs)
+		if fh > rowH {
+			rowH = fh
+		}
+		if isShort && col == 0 {
+			col = 1
+		} else {
+			fy += rowH + l.dp(4)
+			rowH, col = 0, 0
+		}
+	}
+	if col == 1 {
+		fy += rowH + l.dp(4)
+	}
+	return fy - l.dp(4) - y
 }
 
 func (l *lay) buttonWidth(bt richtext.Button) int {

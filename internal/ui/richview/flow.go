@@ -325,6 +325,21 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			ep := fs.emoji
 			l.items = append(l.items, item{kind: itImage, face: k, w: float32(ep + 2*l.dp(1)), url: sp.URL, size: ep, deco: -1, target: -1, p0: p0, p1: p1, brk: true, alt: true})
 			continue
+		case richtext.InlineImage:
+			if sp.URL == "" {
+				break
+			}
+			p0, p1 := l.plainAdd(sp.Text)
+			ip := max(fs.emoji, l.dp(16))
+			l.items = append(l.items, item{kind: itImage, face: k, w: float32(ip + 2*l.dp(1)), url: sp.URL, size: ip, deco: -1, target: -1, p0: p0, p1: p1, brk: true})
+			continue
+		case richtext.ColorSwatch:
+			if c := parseColor(sp.Text, color.NRGBA{}); c.A > 0 {
+				sw := l.dp(12)
+				l.decos = append(l.decos, deco{kind: 4, bg: c, border: rgba(0, 0, 0, 0.15), face: k, target: -1, radius: l.dp(3)})
+				l.addPad(float32(sw), int16(len(l.decos)-1), k)
+				l.addPad(l.dpf(4), -1, k)
+			}
 		case richtext.Link:
 			tg = l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true})
 			if st&richtext.Code == 0 {
@@ -589,6 +604,11 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 			bot := bl + fm.desc + dc.padB
 			rr := image.Rect(int(r.x+0.5), int(top+0.5), int(x1+0.5), int(bot+0.5))
 			switch dc.kind {
+			case 4:
+				sw := l.dp(12)
+				cy := int(bl+0.5) - sw + l.dp(1)
+				rr = image.Rect(int(r.x+0.5), cy, int(r.x+0.5)+sw, cy+sw)
+				d.boxes = append(d.boxes, box{kind: bBorder, r: rr, radius: dc.radius, fill: dc.bg, stroke: dc.border, bw: l.dp(1), target: -1})
 			case 2:
 				d.boxes = append(d.boxes, box{kind: bBorder, r: rr, radius: dc.radius, fill: dc.bg, stroke: dc.border, bw: l.dp(1), target: -1})
 			default:
