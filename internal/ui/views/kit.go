@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"gioui.org/font"
+	"gioui.org/io/event"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -1247,4 +1248,94 @@ func clamp01(v float32) float32 {
 		return 1
 	}
 	return v
+}
+
+// ---- dropdown menus ----
+
+// dropdown draws a popover at `at` (relative to the caller's current
+// origin) on top of everything via op.Defer, with an invisible scrim that
+// sets *open = false on an outside click. Popover style per Slack: white,
+// radius 8, padding 8px 0, shadow 0 0 0 1px #1d1c1d21 + 0 4px 12px .12.
+func (b *base) dropdown(gtx C, open *bool, scrim *widget.Clickable, at image.Point, width unit.Dp, content W) {
+	if !*open {
+		return
+	}
+	if scrim.Clicked(gtx) {
+		*open = false
+		return
+	}
+	m := op.Record(gtx.Ops)
+	func() {
+		const far = 1 << 15
+		defer op.Offset(image.Pt(-far, -far)).Push(gtx.Ops).Pop()
+		g := gtx
+		g.Constraints = layout.Exact(image.Pt(2*far, 2*far))
+		scrim.Layout(g, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+	}()
+	func() {
+		defer op.Offset(at).Push(gtx.Ops).Pop()
+		pw := gtx.Dp(width)
+		g := gtx
+		g.Constraints = layout.Constraints{Min: image.Pt(pw, 0), Max: image.Pt(pw, gtx.Dp(600))}
+		rec := op.Record(gtx.Ops)
+		d := layout.Inset{Top: 8, Bottom: 8}.Layout(g, content)
+		call := rec.Stop()
+		r := image.Rectangle{Max: d.Size}
+		rad := gtx.Dp(8)
+		theme.Shadow(gtx, r, rad, gtx.Dp(12), argb(0x1f000000))
+		rrect(gtx, r, rad, b.p.Surface)
+		// a handler on the popover body keeps its clicks off the scrim
+		defer clip.Rect(r).Push(gtx.Ops).Pop()
+		event.Op(gtx.Ops, open)
+		for {
+			if _, ok := gtx.Event(pointer.Filter{Target: open, Kinds: pointer.Press | pointer.Release | pointer.Scroll, ScrollY: pointer.ScrollRange{Min: -1 << 20, Max: 1 << 20}}); !ok {
+				break
+			}
+		}
+		call.Add(gtx.Ops)
+		border(gtx, r, rad, max(1, gtx.Dp(1)), argb(0x211d1c1d))
+	}()
+	op.Defer(gtx.Ops, m.Stop())
+}
+
+// menuItem is a 28px popover row: optional check (✓ in link blue when
+// on), optional 20px icon, 15px label.
+func (b *base) menuItem(gtx C, c *widget.Clickable, icon, label string, checkable, on bool) D {
+	return c.Layout(gtx, func(gtx C) D {
+		pointerCursor(gtx)
+		w, h := gtx.Constraints.Max.X, gtx.Dp(32)
+		if c.Hovered() {
+			fill(gtx, image.Rect(0, 0, w, h), b.p.Hover)
+		}
+		fg := b.p.Text
+		if checkable && on {
+			fg = b.p.Link
+		}
+		g := gtx
+		g.Constraints = layout.Exact(image.Pt(w, h))
+		layout.Inset{Left: 16, Right: 16}.Layout(g, func(gtx C) D {
+			return layout.W.Layout(gtx, func(gtx C) D {
+				return row(gtx, layout.Middle,
+					layout.Rigid(func(gtx C) D {
+						if !checkable {
+							return D{}
+						}
+						s := gtx.Dp(20)
+						if on {
+							b.icon(gtx, "check", 20, b.p.Link)
+						}
+						return D{Size: image.Pt(s+gtx.Dp(8), s)}
+					}),
+					layout.Rigid(func(gtx C) D {
+						if icon == "" {
+							return D{}
+						}
+						return layout.Inset{Right: 8}.Layout(gtx, func(gtx C) D { return b.icon(gtx, icon, 20, fg) })
+					}),
+					layout.Rigid(func(gtx C) D { return b.label(gtx, 15, wReg, fg, label) }),
+				)
+			})
+		})
+		return D{Size: image.Pt(w, h)}
+	})
 }

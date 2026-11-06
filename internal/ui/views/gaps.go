@@ -84,31 +84,32 @@ func (r *rawFile) item() fileItem {
 	return f
 }
 
-// fileTypes maps the Files type filter to files.list `types`.
-var fileTypes = map[string]string{
-	"canvases": "canvas",
-	"lists":    "list",
-	"images":   "images",
-	"pdfs":     "pdfs",
-	"snippets": "snippets",
-	"docs":     "gdocs",
-	"zips":     "zips",
+// fileQuery selects a page of the Files browser.
+type fileQuery struct {
+	Kind  string // "" all, "canvases", "lists"
+	Query string
+	Mine  bool // created by the viewer
+	Page  int
 }
 
-// listFiles pages the workspace files the viewer can see, newest first.
-// kind is "" (all), or a fileTypes key; mine limits to the viewer's files.
-func listFiles(ctx context.Context, a *core.App, kind, query string, mine bool, page int) (filePage, error) {
-	if page < 1 {
-		page = 1
+// serverTypes maps a Files sub-view to files.list `types`.
+var serverTypes = map[string]string{"canvases": "canvas", "lists": "list"}
+
+// listFiles pages the files the viewer can see, newest first. If the
+// server rejects a sub-view's type, it falls back to all files (the view
+// filters client-side).
+func listFiles(ctx context.Context, a *core.App, q fileQuery) (filePage, error) {
+	if q.Page < 1 {
+		q.Page = 1
 	}
-	if strings.TrimSpace(query) != "" {
-		return searchFiles(ctx, a, kind, query, page)
+	if strings.TrimSpace(q.Query) != "" {
+		return searchFiles(ctx, a, q.Kind, q.Query, q.Page)
 	}
-	p := url.Values{"count": {"40"}, "page": {strconv.Itoa(page)}, "show_files_hidden_by_limit": {"true"}}
-	if t := fileTypes[kind]; t != "" {
+	p := url.Values{"count": {"40"}, "page": {strconv.Itoa(q.Page)}, "show_files_hidden_by_limit": {"true"}}
+	if t := serverTypes[q.Kind]; t != "" {
 		p.Set("types", t)
 	}
-	if mine {
+	if q.Mine {
 		p.Set("user", a.Self().ID)
 	}
 	var res struct {
@@ -119,7 +120,12 @@ func listFiles(ctx context.Context, a *core.App, kind, query string, mine bool, 
 			Total int `json:"total"`
 		} `json:"paging"`
 	}
-	if err := a.C.Call(ctx, "files.list", p, &res); err != nil {
+	err := a.C.Call(ctx, "files.list", p, &res)
+	if err != nil && p.Get("types") != "" {
+		p.Del("types")
+		err = a.C.Call(ctx, "files.list", p, &res)
+	}
+	if err != nil {
 		return filePage{}, err
 	}
 	out := filePage{Page: res.Paging.Page, Pages: res.Paging.Pages, Total: res.Paging.Total}
@@ -132,6 +138,21 @@ func listFiles(ctx context.Context, a *core.App, kind, query string, mine bool, 
 	return out, nil
 }
 
+// deletedFiles lists recently deleted files (files.recentlyDeleted).
+func deletedFiles(ctx context.Context, a *core.App) (filePage, error) {
+	var res struct {
+		Files []rawFile `json:"files"`
+	}
+	if err := a.C.Call(ctx, "files.recentlyDeleted", url.Values{}, &res); err != nil {
+		return filePage{}, err
+	}
+	out := filePage{Page: 1, Pages: 1, Total: len(res.Files)}
+	for i := range res.Files {
+		out.Files = append(out.Files, res.Files[i].item())
+	}
+	return out, nil
+}
+
 func searchFiles(ctx context.Context, a *core.App, kind, query string, page int) (filePage, error) {
 	q := query
 	switch kind {
@@ -139,12 +160,6 @@ func searchFiles(ctx context.Context, a *core.App, kind, query string, page int)
 		q += " type:canvases"
 	case "lists":
 		q += " type:lists"
-	case "images":
-		q += " type:images"
-	case "pdfs":
-		q += " type:pdfs"
-	case "snippets":
-		q += " type:snippets"
 	}
 	p := url.Values{"query": {q}, "count": {"40"}, "page": {strconv.Itoa(page)}, "sort": {"timestamp"}, "highlight": {"false"}}
 	var res struct {

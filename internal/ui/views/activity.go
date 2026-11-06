@@ -1162,7 +1162,7 @@ func (v *Activity) rowContent(gtx C, it *core.ActivityItem, d *actDesc, unread b
 					}),
 					layout.Rigid(func(gtx C) D {
 						if it.Msg != nil && !d.invite {
-							return v.msgBody(gtx, it.Msg, false, 2)
+							return v.msgBodyMuted(gtx, it.Msg, false, !it.Unread, 2)
 						}
 						if d.body == "" {
 							return D{}
