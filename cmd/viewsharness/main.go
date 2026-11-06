@@ -130,6 +130,7 @@ func run(w *app.Window, h *host, channel string) error {
 	act := views.NewActivity(h)
 	dms := views.NewDMs(h)
 	later := views.NewLater(h)
+	saved := views.NewSaved(h)
 	files := views.NewFiles(h)
 	threads := views.NewThreads(h)
 	huddles := views.NewHuddles(h)
@@ -140,6 +141,7 @@ func run(w *app.Window, h *host, channel string) error {
 		{name: "activity", w: act.Layout},
 		{name: "dms", w: dms.Layout},
 		{name: "later", w: later.Layout},
+		{name: "saved", w: saved.Layout},
 		{name: "files", w: files.Layout},
 		{name: "threads", w: threads.Layout},
 		{name: "huddles", w: huddles.Layout},

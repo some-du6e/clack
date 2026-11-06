@@ -248,32 +248,35 @@ func (d *DMs) layoutHeader(gtx C) D {
 	gtx.Constraints.Min.Y = gtx.Dp(32)
 	gtx.Constraints.Max.Y = gtx.Dp(32)
 	return layout.Inset{Left: dmsInsetX, Right: dmsInsetX}.Layout(gtx, func(gtx C) D {
-		return row(gtx, layout.Middle,
-			layout.Flexed(1, func(gtx C) D {
-				return layout.Inset{Left: 8, Right: 8, Top: 4, Bottom: 4}.Layout(gtx, func(gtx C) D {
-					return row(gtx, layout.Middle,
-						layout.Rigid(func(gtx C) D { return d.label(gtx, 18, wBlack, dmsWhite, "Direct messages") }),
-						hgap(4),
-						layout.Rigid(func(gtx C) D { return d.icon(gtx, "caret-down", 16, dmsWhite) }),
-					)
-				})
-			}),
-			layout.Rigid(d.layoutUnreads),
-			hgap(6),
-			layout.Rigid(func(gtx C) D {
-				return d.compose.Layout(gtx, func(gtx C) D {
-					pointerCursor(gtx)
-					s := gtx.Dp(28)
-					if d.compose.Hovered() {
-						rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(8), dmsTint)
-					}
-					g := gtx
-					g.Constraints = layout.Exact(image.Pt(s, s))
-					layout.Center.Layout(g, func(gtx C) D { return d.icon(gtx, "compose", 20, dmsSoft) })
-					return D{Size: image.Pt(s, s)}
-				})
-			}),
-		)
+		return layout.W.Layout(gtx, func(gtx C) D {
+			gtx.Constraints.Min.Y = 0
+			return row(gtx, layout.Middle,
+				layout.Flexed(1, func(gtx C) D {
+					return layout.Inset{Left: 8, Right: 8, Top: 4, Bottom: 4}.Layout(gtx, func(gtx C) D {
+						return row(gtx, layout.Middle,
+							layout.Rigid(func(gtx C) D { return d.label(gtx, 18, wBlack, dmsWhite, "Direct messages") }),
+							hgap(4),
+							layout.Rigid(func(gtx C) D { return d.icon(gtx, "caret-down", 16, dmsWhite) }),
+						)
+					})
+				}),
+				layout.Rigid(d.layoutUnreads),
+				hgap(6),
+				layout.Rigid(func(gtx C) D {
+					return d.compose.Layout(gtx, func(gtx C) D {
+						pointerCursor(gtx)
+						s := gtx.Dp(28)
+						if d.compose.Hovered() {
+							rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(8), dmsTint)
+						}
+						g := gtx
+						g.Constraints = layout.Exact(image.Pt(s, s))
+						layout.Center.Layout(g, func(gtx C) D { return d.icon(gtx, "compose", 20, dmsSoft) })
+						return D{Size: image.Pt(s, s)}
+					})
+				}),
+			)
+		})
 	})
 }
 
