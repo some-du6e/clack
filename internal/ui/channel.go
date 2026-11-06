@@ -2,11 +2,15 @@ package ui
 
 import (
 	"image"
+	"image/color"
 	"strings"
 
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+	"gioui.org/unit"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
@@ -57,7 +61,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	sz := gtx.Constraints.Max
 	c := &a.th.C
 	h := sz.Y
-	x := gtx.Dp(16)
+	x := gtx.Dp(18) // Slack: 28px star button at +18, title icon at +54
 	// star
 	starred := conv != nil && conv.Starred
 	star := "star"
@@ -69,9 +73,9 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		if starred {
 			col = c.Warning
 		}
-		return iconButton(gtx, a.clicks.get("hdr.star"), star, 28, 18, col, c.BgHover, 6)
+		return iconButton(gtx, a.clicks.get("hdr.star"), star, 28, 20, col, c.BgHover, 8)
 	})
-	if a.clicks.get("hdr.star").Clicked(gtx) {
+	if clicked(a.clicks.get("hdr.star")) {
 		a.toggleStar(ch)
 	}
 	x += gtx.Dp(32)
@@ -81,9 +85,13 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	right := sz.X - gtx.Dp(14)
 	btn := gtx.Dp(28)
 	y := (h - btn) / 2
+	kebabX := 0
 	for _, k := range []string{"kebab", "search", "bell"} {
 		k := k
 		right -= btn
+		if k == "kebab" {
+			kebabX = right
+		}
 		at(gtx, image.Pt(right, y), image.Pt(btn, btn), func(gtx layout.Context) layout.Dimensions {
 			name := k
 			if k == "bell" && conv != nil && conv.Muted {
@@ -93,13 +101,14 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		})
 		right -= gtx.Dp(6)
 	}
-	if a.clicks.get("hdr.kebab").Clicked(gtx) {
-		a.openChannelMenu(ch, image.Pt(right, h))
+	if clicked(a.clicks.get("hdr.kebab")) {
+		// popups take window coordinates
+		a.openChannelMenu(ch, a.primaryOrigin.Add(image.Pt(kebabX+btn, (h+btn)/2)))
 	}
-	if a.clicks.get("hdr.search").Clicked(gtx) {
+	if clicked(a.clicks.get("hdr.search")) {
 		a.openSearch("in:<#" + ch + ">")
 	}
-	if a.clicks.get("hdr.bell").Clicked(gtx) {
+	if clicked(a.clicks.get("hdr.bell")) {
 		a.openNotifPrefs(ch)
 	}
 
@@ -136,7 +145,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		})
 		return layout.Dimensions{Size: r.Size()}
 	})
-	if a.clicks.get("hdr.huddle").Clicked(gtx) {
+	if clicked(a.clicks.get("hdr.huddle")) {
 		a.Toast("Huddles aren't supported in yoloslack yet")
 	}
 	right -= gtx.Dp(6)
@@ -182,7 +191,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 				return layout.Dimensions{Size: image.Pt(pw, btn)}
 			})
 		})
-		if a.clicks.get("hdr.members").Clicked(gtx) {
+		if clicked(a.clicks.get("hdr.members")) {
 			a.OpenDetails(ch)
 		}
 		right -= gtx.Dp(6)
@@ -245,7 +254,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 			return layout.Dimensions{Size: image.Pt(titleW, th)}
 		})
 	})
-	if a.clicks.get("hdr.title").Clicked(gtx) {
+	if clicked(a.clicks.get("hdr.title")) {
 		a.OpenDetails(ch)
 	}
 	x += titleW + gtx.Dp(14)
@@ -253,12 +262,76 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	// topic (13px muted) in the remaining space.
 	if conv != nil && conv.Topic != "" && right-x > gtx.Dp(40) {
 		at(gtx, image.Pt(x, 0), image.Pt(right-x-gtx.Dp(12), h), func(gtx layout.Context) layout.Dimensions {
-			return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
-				return a.th.Label(gtx, 13, theme.Regular, c.FgMuted, oneLine(conv.Topic))
-			})
+			if len(conv.TopicSpans) == 0 {
+				return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
+					return a.th.Label(gtx, 13, theme.Regular, c.FgMuted, oneLine(conv.Topic))
+				})
+			}
+			return a.inlineSpans(gtx, conv.TopicSpans, 13, c.FgMuted, h)
 		})
 	}
 	return layout.Dimensions{Size: sz}
+}
+
+// inlineSpans draws rich spans on one line (topic, previews): text, links
+// and mentions as labels, emoji as images; ellipsized at the max width.
+func (a *App) inlineSpans(gtx layout.Context, spans []richtext.Span, size unit.Sp, col color.NRGBA, h int) layout.Dimensions {
+	maxW := gtx.Constraints.Max.X
+	x := 0
+	es := gtx.Sp(size * 18 / 13)
+	ell := a.th.Measure(gtx, size, theme.Regular, "…")
+	for _, s := range spans {
+		if s.Kind == richtext.Break {
+			break
+		}
+		if s.Kind == richtext.Emoji && s.URL != "" {
+			if x+es > maxW {
+				break
+			}
+			at(gtx, image.Pt(x, (h-es)/2), image.Pt(es, es), func(gtx layout.Context) layout.Dimensions {
+				if img, ok := a.images.Get(s.URL, es*2); ok {
+					return theme.Image(gtx, img, image.Pt(es, es), 0)
+				}
+				return layout.Dimensions{Size: image.Pt(es, es)}
+			})
+			x += es + gtx.Dp(1)
+			continue
+		}
+		txt := strings.ReplaceAll(s.Text, "\n", " ")
+		if i := strings.IndexByte(txt, '\n'); i >= 0 {
+			txt = txt[:i]
+		}
+		if txt == "" {
+			continue
+		}
+		w := theme.Bold
+		if s.Style&richtext.Bold == 0 {
+			w = theme.Regular
+		}
+		fg := col
+		switch s.Kind {
+		case richtext.Link, richtext.User, richtext.Channel, richtext.Usergroup, richtext.Broadcast:
+			fg = a.th.C.Link
+		}
+		tw := a.th.Measure(gtx, size, w, txt)
+		trunc := x+tw > maxW
+		if trunc {
+			tw = maxW - x - ell
+			if tw <= 0 {
+				break
+			}
+		}
+		at(gtx, image.Pt(x, 0), image.Pt(tw+ell, h), func(gtx layout.Context) layout.Dimensions {
+			return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
+				return a.th.Layout(gtx, theme.TextStyle{Size: size, Weight: w, Italic: s.Style&richtext.Italic != 0, Color: fg, MaxLines: 1}, txt)
+			})
+		})
+		x += tw
+		if trunc {
+			break
+		}
+	}
+	return layout.Dimensions{Size: image.Pt(maxW, h)}
 }
 
 func oneLine(s string) string {
@@ -288,7 +361,7 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 	for i, t := range a.channelTabs(ch) {
 		i, t := i, t
 		lw := a.th.Measure(gtx, 13, theme.Bold, t.label)
-		w := gtx.Dp(8) + gtx.Dp(16) + gtx.Dp(6) + lw + gtx.Dp(8)
+		w := gtx.Dp(8) + gtx.Dp(16) + gtx.Dp(4) + lw + gtx.Dp(8)
 		if x+w > sz.X-gtx.Dp(48) {
 			break
 		}
@@ -309,7 +382,7 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 				at(gtx, image.Pt(gtx.Dp(8), (sz.Y-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
 					return icons.Get(t.icon)(gtx, 16, col)
 				})
-				at(gtx, image.Pt(gtx.Dp(30), 0), image.Pt(lw+2, sz.Y), func(gtx layout.Context) layout.Dimensions {
+				at(gtx, image.Pt(gtx.Dp(28), 0), image.Pt(lw+2, sz.Y), func(gtx layout.Context) layout.Dimensions {
 					return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
 						return a.th.Label(gtx, 13, theme.Bold, col, t.label)
 					})
@@ -317,7 +390,7 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 				return layout.Dimensions{Size: image.Pt(w, sz.Y)}
 			})
 		})
-		if btn.Clicked(gtx) {
+		if clicked(btn) {
 			if a.chTab == nil {
 				a.chTab = map[string]int{}
 			}
@@ -333,7 +406,7 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 	at(gtx, image.Pt(x+gtx.Dp(4), (sz.Y-gtx.Dp(28))/2), image.Pt(gtx.Dp(28), gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
 		return iconButton(gtx, a.clicks.get("tab.add"), "plus", 28, 18, c.FgMuted, c.BgHover, 6)
 	})
-	if a.clicks.get("tab.add").Clicked(gtx) {
+	if clicked(a.clicks.get("tab.add")) {
 		a.Toast("Adding canvases and lists isn't supported yet")
 	}
 	return layout.Dimensions{Size: sz}

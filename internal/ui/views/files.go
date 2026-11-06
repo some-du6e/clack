@@ -2,8 +2,10 @@ package views
 
 import (
 	"context"
+	"html"
 	"image"
 	"image/color"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -262,12 +264,12 @@ func (f *Files) update(gtx C) {
 		f.start()
 	}
 	if p, ok, err := f.data.get(); ok && err == nil && f.page == 0 {
-		f.items = append(f.items[:0], p.Files...)
+		f.items = append(f.items[:0], f.cleanTitles(p.Files)...)
 		f.page, f.pages = max(p.Page, 1), p.Pages
 		f.sortItems()
 	}
 	if p, ok, err := f.more.get(); ok && err == nil && p.Page == f.page+1 {
-		f.items = append(f.items, p.Files...)
+		f.items = append(f.items, f.cleanTitles(p.Files)...)
 		f.page, f.pages = p.Page, p.Pages
 		f.sortItems()
 	}
@@ -435,9 +437,7 @@ func (f *Files) nav_(gtx C) D {
 				})
 			}),
 			layout.Rigid(func(gtx C) D {
-				return layout.Inset{Left: 32, Right: 8, Top: 2}.Layout(gtx, func(gtx C) D {
-					return f.para(gtx, 15, 22, wReg, filesNavText, 0, "Click the ⭐ star on any file to add it here for later.")
-				})
+				return layout.Inset{Left: 32, Right: 8, Top: 2}.Layout(gtx, f.starHint)
 			}),
 		)
 	})
@@ -1057,4 +1057,57 @@ func isSlides(it *fileItem) bool {
 // clipRR pushes a rounded-rect clip with per-corner radii.
 func clipRR(gtx C, r image.Rectangle, nw, ne, se, sw int) clip.Stack {
 	return clip.RRect{Rect: r, NW: nw, NE: ne, SE: se, SW: sw}.Push(gtx.Ops)
+}
+
+var fileMention = regexp.MustCompile(`<([@#!])([A-Z0-9]+)(?:\|([^>]*))?>`)
+
+// cleanTitles unescapes Slack's &lt;&gt;&amp; and resolves <@U…>, <#C…>
+// and <!here> tokens in file titles, the way Slack displays them.
+func (f *Files) cleanTitles(in []fileItem) []fileItem {
+	out := make([]fileItem, len(in))
+	copy(out, in)
+	for i := range out {
+		t := out[i].Title
+		if strings.Contains(t, "<") || strings.Contains(t, "&") {
+			t = fileMention.ReplaceAllStringFunc(t, func(m string) string {
+				sm := fileMention.FindStringSubmatch(m)
+				if sm[3] != "" {
+					return sm[1] + sm[3]
+				}
+				switch sm[1] {
+				case "@":
+					return "@" + f.userName(sm[2])
+				case "#":
+					return f.convTitle(sm[2], nil)
+				}
+				return "@" + strings.ToLower(sm[2])
+			})
+			out[i].Title = html.UnescapeString(t)
+		}
+	}
+	return out
+}
+
+// starHint is "Click the ⭐ star on any file to add it here for later.",
+// with the star drawn as Slack's emoji image (Lato has no emoji glyphs).
+func (f *Files) starHint(gtx C) D {
+	const lead = "Click the "
+	w := f.th.Measure(gtx, 15, wReg, lead)
+	url, _, ok := f.h.Core().Emoji("star")
+	if !ok {
+		return f.para(gtx, 15, 22, wReg, filesNavText, 0, "Click the star on any file to add it here for later.")
+	}
+	// Lay the sentence with spaces reserving the emoji's width, then draw
+	// the emoji over the gap (it sits on the first line).
+	sp := f.th.Measure(gtx, 15, wReg, " ")
+	n := 1
+	if sp > 0 {
+		n = (gtx.Dp(18) + sp - 1) / sp
+	}
+	d := f.para(gtx, 15, 22, wReg, filesNavText, 0, lead+strings.Repeat(" ", n)+"star on any file to add it here for later.")
+	func() {
+		defer opOffset(gtx, image.Pt(w+gtx.Dp(1), gtx.Dp(3))).Pop()
+		f.emojiImg(gtx, url, 16)
+	}()
+	return d
 }

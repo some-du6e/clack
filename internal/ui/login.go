@@ -79,7 +79,7 @@ func (a *App) layoutLogin(gtx layout.Context) {
 		}
 	}
 
-	w, h := gtx.Dp(440), gtx.Dp(400)
+	w, h := gtx.Dp(440), gtx.Dp(424)
 	r := image.Rect((sz.X-w)/2, (sz.Y-h)/2, (sz.X+w)/2, (sz.Y+h)/2)
 	theme.Shadow(gtx, r, gtx.Dp(12), gtx.Dp(12), theme.WithAlpha(lc.PanelShadow, 0x60))
 	theme.RRect(gtx, r, gtx.Dp(12), lc.Bg)
@@ -90,10 +90,10 @@ func (a *App) layoutLogin(gtx layout.Context) {
 		return th.Label(gtx, 28, theme.Black, lc.Fg, "Sign in to Slack")
 	})
 	y += gtx.Dp(44)
-	at(gtx, image.Pt(x, y), image.Pt(cw, gtx.Dp(44)), func(gtx layout.Context) layout.Dimensions {
+	at(gtx, image.Pt(x, y), image.Pt(cw, gtx.Dp(70)), func(gtx layout.Context) layout.Dimensions {
 		return th.Para(gtx, 15, 22, theme.Regular, lc.FgMuted, "yoloslack signs in with your browser session. Copy the d cookie for slack.com from DevTools → Application → Cookies.")
 	})
-	y += gtx.Dp(64)
+	y += gtx.Dp(88)
 	field := func(label string, ed *widget.Editor, hint string) {
 		at(gtx, image.Pt(x, y), image.Pt(cw, gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
 			return th.Label(gtx, 15, theme.Bold, lc.Fg, label)

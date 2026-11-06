@@ -73,16 +73,18 @@ type App struct {
 	images *imgcache.Cache
 	data   *backend // nil until signed in
 
-	router      router
-	clicks      clickables
-	grad        gradient
-	sidebar     sidebarState
-	secondary   secondaryState
-	searchQuery string
-	overlays    []Overlay
-	toast       toastState
-	keys        *shortcuts
-	login       *loginScreen
+	router        router
+	clicks        clickables
+	grad          gradient
+	sidebar       sidebarState
+	secondary     secondaryState
+	searchQuery   string
+	searchPill    image.Rectangle // window coords, for anchoring the search popover
+	primaryOrigin image.Point     // window position of the primary panel
+	overlays      []Overlay
+	toast         toastState
+	keys          *shortcuts
+	login         *loginScreen
 
 	views     map[Route]View // cached primary views (instant switch)
 	viewOrder []Route
@@ -252,6 +254,7 @@ func (a *App) frame(gtx layout.Context) {
 	}
 	ws := image.Rect(railW, navH, sz.X-inset, sz.Y-inset)
 	primary := image.Rect(ws.Min.X+sbW, ws.Min.Y, ws.Max.X, ws.Max.Y)
+	a.primaryOrigin = primary.Min
 
 	// Paint the gradient only where it shows (nav, rail, insets and the
 	// panel's rounded corners): full-window fills are the main per-frame

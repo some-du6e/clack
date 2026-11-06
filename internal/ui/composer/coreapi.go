@@ -31,7 +31,7 @@ func (c coreAPI) edit(ctx context.Context, ch, ts, text string, blocks json.RawM
 	return c.a.Edit(ctx, ch, ts, text, blocks)
 }
 
-func (c coreAPI) typing(ch, threadTS string) { _ = c.a.Typing(ch, threadTS) }
+func (c coreAPI) typing(ch, threadTS string) { c.a.Typing(ch, threadTS) }
 
 func (c coreAPI) upload(ctx context.Context, o core.UploadOpts) ([]core.UploadedFile, error) {
 	return c.a.Upload(ctx, o)
@@ -46,16 +46,31 @@ func (c coreAPI) searchChannels(ctx context.Context, q string) ([]core.ChannelHi
 }
 
 func (c coreAPI) usergroups(ctx context.Context) ([]core.Usergroup, error) {
-	return c.a.Usergroups(ctx, "", 100)
+	return c.a.Usergroups(ctx, "", 0)
 }
 
 func (c coreAPI) members(ctx context.Context, ch string) ([]string, error) {
-	us, _, err := c.a.Members(ctx, ch, "", false)
-	ids := make([]string, 0, len(us))
-	for _, u := range us {
-		ids = append(ids, u.ID)
+	us, err := c.memberUsers(ctx, ch, 500)
+	ids := make([]string, len(us))
+	for i, u := range us {
+		ids[i] = u.ID
 	}
 	return ids, err
+}
+
+// memberUsers pages a conversation's members (people and bots) until max
+// users or the end of the list.
+func (c coreAPI) memberUsers(ctx context.Context, ch string, max int) ([]core.User, error) {
+	var out []core.User
+	marker := ""
+	for {
+		us, next, err := c.a.Members(ctx, ch, marker, false)
+		out = append(out, us...)
+		if err != nil || next == "" || len(us) == 0 || len(out) >= max {
+			return out, err
+		}
+		marker = next
+	}
 }
 
 func (c coreAPI) commands(ctx context.Context) ([]core.Command, error) {

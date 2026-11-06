@@ -5,6 +5,9 @@ import (
 
 	"gioui.org/layout"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/messages"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/views"
@@ -38,6 +41,8 @@ func init() {
 			return views.NewThreads(a)
 		case "directories":
 			return views.NewDirectories(a)
+		case "search":
+			return popups.NewSearchView(a, r.Query())
 		}
 		return nil
 	}
@@ -45,6 +50,19 @@ func init() {
 		a.ShowOverlay(detailsOverlay{views.NewChannelDetails(a, ch)})
 		return true
 	}
+	mkProfile = func(a *App, user string) View { return popups.NewProfileView(a, user) }
+	mkSwitcher = func(a *App) Overlay { return popups.NewQuickSwitcher(a) }
+	mkSearch = func(a *App, q string) Overlay { return popups.NewSearchPopover(a, q, a.searchPill) }
+	mkEmojiPicker = func(a *App, anchor image.Point, onPick func(string)) Overlay {
+		return popups.NewEmojiPickerAt(a, anchor, onPick)
+	}
+	mkProfileCard = func(a *App, anchor image.Point, user string) Overlay { return popups.NewProfileCard(a, anchor, user) }
+	mkMessageMenu = func(a *App, anchor image.Point, m core.Message) Overlay { return popups.NewMessageMenu(a, anchor, m) }
+	mkLightbox = func(a *App, img richtext.Image, m core.Message) Overlay { return popups.NewLightbox(a, img, m) }
+	mkTeamMenu = func(a *App, anchor image.Point) Overlay { return popups.NewTeamMenu(a, anchor) }
+	mkUserMenu = func(a *App, anchor image.Point) Overlay { return popups.NewUserMenu(a, anchor) }
+	mkChannelMenu = func(a *App, anchor image.Point, ch string) Overlay { return popups.NewChannelMenu(a, anchor, ch) }
+	mkStatusModal = func(a *App) Overlay { return popups.NewSetStatusModal(a) }
 	mkMenu = func(a *App, anchor image.Point, items []MenuItem) Overlay {
 		return popups.NewMenu(a, anchor, toPopupItems(items))
 	}

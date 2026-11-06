@@ -9,7 +9,11 @@ import (
 	"time"
 
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/widget"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
 // joinUnsupported is shown when the user tries to start or join a huddle:
@@ -17,8 +21,11 @@ import (
 // doesn't implement.
 const joinUnsupported = "Huddles need Slack's audio/video stack (Amazon Chime), which yoloslack doesn't support yet"
 
-// Huddles lists live huddles (from realtime sh_room_* events) and recent
-// ones. Joining isn't supported; the buttons explain why.
+// Huddles is the Home-sidebar Huddles page: header, the mint hero banner,
+// live huddles (from realtime sh_room_* events), recent huddles
+// (huddles.history), then "Direct messages" suggestion tiles and
+// "Channels" suggestion rows. Every start/join button explains that
+// huddle media isn't supported.
 type Huddles struct {
 	base
 
@@ -26,17 +33,26 @@ type Huddles struct {
 	live map[string]huddleRoom // by room id
 	sub  bool
 
-	recent async[[]huddleRoom]
-	list   widget.List
-	start  widget.Clickable
-	retry  widget.Clickable
-	joins  map[string]*widget.Clickable
-	opens  map[string]*widget.Clickable
+	recent   async[[]huddleRoom]
+	list     widget.List
+	newBtn   widget.Clickable
+	heroBtn  widget.Clickable
+	heroX    widget.Clickable
+	hideHero bool
+	top      widget.Clickable
+	rooms    map[string]*widget.Clickable
+	people   map[string]*widget.Clickable
+	chans    map[string]*widget.Clickable
+
+	sugAt    time.Time
+	sugUsers []string // IM partners by priority
+	sugChans []core.Conv
 }
 
 // NewHuddles builds the Huddles view (route "huddles").
 func NewHuddles(h Host) *Huddles {
-	v := &Huddles{base: newBase(h), live: map[string]huddleRoom{}, joins: map[string]*widget.Clickable{}, opens: map[string]*widget.Clickable{}}
+	v := &Huddles{base: newBase(h), live: map[string]huddleRoom{}, rooms: map[string]*widget.Clickable{},
+		people: map[string]*widget.Clickable{}, chans: map[string]*widget.Clickable{}}
 	v.list.Axis = layout.Vertical
 	return v
 }
@@ -83,140 +99,399 @@ func (v *Huddles) liveRooms() []huddleRoom {
 	return out
 }
 
-func (v *Huddles) clickPair(id string) (*widget.Clickable, *widget.Clickable) {
-	j := v.joins[id]
-	if j == nil {
-		j = new(widget.Clickable)
-		v.joins[id] = j
+// suggestions refreshes the DM/channel suggestions from the sidebar
+// snapshot (highest priority first), at most every 30s.
+func (v *Huddles) suggestions(now time.Time) {
+	if !v.sugAt.IsZero() && now.Sub(v.sugAt) < 30*time.Second {
+		return
 	}
-	o := v.opens[id]
-	if o == nil {
-		o = new(widget.Clickable)
-		v.opens[id] = o
+	v.sugAt = now
+	snap := v.h.Core().Snapshot()
+	convs := append([]core.Conv(nil), snap.Convs...)
+	sort.SliceStable(convs, func(i, j int) bool { return convs[i].Priority > convs[j].Priority })
+	self := snap.Self.ID
+	v.sugUsers, v.sugChans = v.sugUsers[:0], v.sugChans[:0]
+	for _, c := range convs {
+		switch {
+		case c.Kind == "im" && c.User != "" && c.User != self && len(v.sugUsers) < 6:
+			if u, ok := v.user(c.User); ok && (u.IsBot || u.Deleted) {
+				continue
+			}
+			v.sugUsers = append(v.sugUsers, c.User)
+		case (c.Kind == "channel" || c.Kind == "private") && !c.IsArchived && len(v.sugChans) < 5:
+			v.sugChans = append(v.sugChans, c)
+		}
 	}
-	return j, o
 }
+
+func clickIn(m map[string]*widget.Clickable, id string) *widget.Clickable {
+	c := m[id]
+	if c == nil {
+		c = new(widget.Clickable)
+		m[id] = c
+	}
+	return c
+}
+
+func (v *Huddles) update(gtx C) {
+	if !v.recent.started() {
+		a := v.h.Core()
+		v.recent.load(v.h, false, func(ctx context.Context) ([]huddleRoom, error) { return recentHuddles(ctx, a) })
+	}
+	if v.newBtn.Clicked(gtx) || v.heroBtn.Clicked(gtx) {
+		v.h.Toast(joinUnsupported)
+	}
+	if v.heroX.Clicked(gtx) {
+		v.hideHero = true
+	}
+	if v.top.Clicked(gtx) {
+		v.list.Position = layout.Position{}
+	}
+	for _, m := range []map[string]*widget.Clickable{v.rooms, v.people, v.chans} {
+		for _, c := range m {
+			if c.Clicked(gtx) {
+				v.h.Toast(joinUnsupported)
+			}
+		}
+	}
+}
+
+type huddleItem struct {
+	kind      int // see hk* constants
+	r         huddleRoom
+	title, tx string
+	row       int // channel row index (for rounded ends)
+}
+
+const (
+	hkHero = iota
+	hkSection
+	hkRoom
+	hkTiles
+	hkChannel
+	hkPad
+)
 
 // Layout draws the view.
 func (v *Huddles) Layout(gtx C) D {
 	v.frame()
 	v.subscribe()
-	if !v.recent.started() || v.retry.Clicked(gtx) {
-		a := v.h.Core()
-		v.recent.load(v.h, false, func(ctx context.Context) ([]huddleRoom, error) { return recentHuddles(ctx, a) })
-	}
-	if v.start.Clicked(gtx) {
-		v.h.Toast(joinUnsupported)
-	}
-	live := v.liveRooms()
-	recent, loaded, err := v.recent.get()
-	for _, r := range append(append([]huddleRoom(nil), live...), recent...) {
-		j, o := v.clickPair(r.ID)
-		if j.Clicked(gtx) {
-			v.h.Toast(joinUnsupported)
-		}
-		if o.Clicked(gtx) && len(r.Channels) > 0 {
-			v.h.Navigate("c/" + r.Channels[0])
-		}
-	}
+	v.update(gtx)
+	v.suggestions(gtx.Now)
 
-	type item struct {
-		kind int // 0 section title, 1 live, 2 recent, 3 empty text, 4 state
-		r    huddleRoom
-		text string
+	live := v.liveRooms()
+	recent, _, _ := v.recent.get()
+	items := make([]huddleItem, 0, 16)
+	if !v.hideHero {
+		items = append(items, huddleItem{kind: hkHero})
 	}
-	items := make([]item, 0, len(live)+len(recent)+4)
-	items = append(items, item{kind: 0, text: "Active now"})
-	if len(live) == 0 {
-		items = append(items, item{kind: 3, text: "No huddles are happening in your channels right now."})
+	if len(live) > 0 {
+		items = append(items, huddleItem{kind: hkSection, title: "Happening now", tx: "Huddles in your channels and DMs"})
+		for _, r := range live {
+			items = append(items, huddleItem{kind: hkRoom, r: r})
+		}
 	}
-	for _, r := range live {
-		items = append(items, item{kind: 1, r: r})
-	}
-	items = append(items, item{kind: 0, text: "Recent huddles"})
-	switch {
-	case !loaded:
-		items = append(items, item{kind: 4, text: "loading"})
-	case err != nil || len(recent) == 0:
-		items = append(items, item{kind: 3, text: "Huddles you join will show up here."})
-	}
+	var past []huddleRoom
 	for _, r := range recent {
 		if !r.Active {
-			items = append(items, item{kind: 2, r: r})
+			past = append(past, r)
 		}
 	}
+	if len(past) > 0 {
+		items = append(items, huddleItem{kind: hkSection, title: "Recent", tx: "Huddles you were part of"})
+		for _, r := range past {
+			items = append(items, huddleItem{kind: hkRoom, r: r})
+		}
+	}
+	if len(v.sugUsers) > 0 {
+		items = append(items, huddleItem{kind: hkSection, title: "Direct messages", tx: "Talk privately 1:1 with someone"})
+		items = append(items, huddleItem{kind: hkTiles})
+	}
+	if len(v.sugChans) > 0 {
+		items = append(items, huddleItem{kind: hkSection, title: "Channels", tx: "Meet with a whole team, or just let people drop in and out"})
+		for i := range v.sugChans {
+			items = append(items, huddleItem{kind: hkChannel, row: i})
+		}
+	}
+	items = append(items, huddleItem{kind: hkPad})
 
-	return col(gtx,
-		layout.Rigid(func(gtx C) D {
-			return v.header(gtx, "Huddles",
-				layout.Rigid(func(gtx C) D { return v.button(gtx, &v.start, btnOutline, true, "Start a huddle") }),
-			)
-		}),
-		layout.Rigid(func(gtx C) D { return hline(gtx, v.p.Border) }),
+	size := gtx.Constraints.Max
+	fill(gtx, image.Rectangle{Max: size}, v.p.Bg)
+	gtx.Constraints = layout.Exact(size)
+	d := col(gtx,
+		layout.Rigid(v.layoutHeader),
 		layout.Flexed(1, func(gtx C) D {
 			gtx.Constraints.Min = gtx.Constraints.Max
-			return v.scrollList(gtx, &v.list, len(items), func(gtx C, i int) D {
-				it := items[i]
-				switch it.kind {
-				case 0:
-					return layout.Inset{Top: 20, Left: 16, Right: 16, Bottom: 8}.Layout(gtx, func(gtx C) D {
-						return v.label(gtx, 15, wBold, v.p.Text, it.text)
-					})
-				case 3:
-					return layout.Inset{Left: 16, Right: 16, Bottom: 8}.Layout(gtx, func(gtx C) D {
-						return v.para(gtx, 15, 22, wReg, v.p.Muted, 0, it.text)
-					})
-				case 4:
-					return v.skeleton(gtx, 3, 36)
-				}
-				return v.room(gtx, it.r, it.kind == 1)
-			})
+			return v.scrollList(gtx, &v.list, len(items), func(gtx C, i int) D { return v.item(gtx, items[i]) })
 		}),
 	)
+	// Scroll-to-top button once scrolled: a 42px green square, white arrow.
+	if v.list.Position.First > 0 || v.list.Position.Offset > gtx.Dp(200) {
+		s := gtx.Dp(42)
+		st := op.Offset(image.Pt(size.X-s-gtx.Dp(35), size.Y-s-gtx.Dp(24))).Push(gtx.Ops)
+		v.top.Layout(gtx, func(gtx C) D {
+			pointerCursor(gtx)
+			bg := v.p.Green
+			if v.top.Hovered() {
+				bg = v.p.GreenHover
+			}
+			rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(8), bg)
+			g := gtx
+			g.Constraints = layout.Exact(image.Pt(s, s))
+			layout.Center.Layout(g, func(gtx C) D { return v.icon(gtx, "arrow-up", 20, rgb(0xffffff)) })
+			return D{Size: image.Pt(s, s)}
+		})
+		st.Pop()
+	}
+	return d
 }
 
-// room draws one huddle row: a headphones tile (green when live), the
-// conversation, who's there, timing, and Join / View buttons.
-func (v *Huddles) room(gtx C, r huddleRoom, live bool) D {
-	join, open := v.clickPair(r.ID)
-	return layout.Inset{Left: 8, Right: 8}.Layout(gtx, func(gtx C) D {
-		return v.hoverable(gtx, open, false, 8, func(gtx C) D {
-			gtx.Constraints.Min.X = gtx.Constraints.Max.X
-			return layout.Inset{Top: 10, Bottom: 10, Left: 8, Right: 8}.Layout(gtx, func(gtx C) D {
+// layoutHeader: h 49 with a bottom hairline, title 18/24 900 #1d1c1d at a
+// 34px inset, "+ New Huddle" (outline small, radius 4) on the right.
+func (v *Huddles) layoutHeader(gtx C) D {
+	w, h := gtx.Constraints.Max.X, gtx.Dp(49)
+	g := gtx
+	g.Constraints = layout.Exact(image.Pt(w, h))
+	layout.Inset{Left: 34, Right: 36}.Layout(g, func(gtx C) D {
+		return row(gtx, layout.Middle,
+			layout.Flexed(1, func(gtx C) D { return v.label(gtx, 18, wBlack, v.p.Text, "Huddles") }),
+			layout.Rigid(func(gtx C) D { return v.smallOutline(gtx, &v.newBtn, "plus", "New Huddle") }),
+		)
+	})
+	return D{Size: image.Pt(w, h)}
+}
+
+// smallOutline: h 28, padding 0 12px, radius 4, 13px bold, 1px
+// #5e5d60@.45 border, optional 16px icon.
+func (v *Huddles) smallOutline(gtx C, c *widget.Clickable, icon, label string) D {
+	return c.Layout(gtx, func(gtx C) D {
+		pointerCursor(gtx)
+		m := op.Record(gtx.Ops)
+		d := layout.Inset{Left: 12, Right: 12}.Layout(gtx, func(gtx C) D {
+			g := gtx
+			g.Constraints.Min.Y = gtx.Dp(28)
+			return layout.W.Layout(g, func(gtx C) D {
 				return row(gtx, layout.Middle,
 					layout.Rigid(func(gtx C) D {
-						s := gtx.Dp(36)
-						bg := v.p.Track
-						fg := v.p.Sec
-						if live {
-							bg, fg = v.p.Green, rgb(0xffffff)
+						if icon == "" {
+							return D{}
 						}
-						rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(8), bg)
-						g := gtx
-						g.Constraints = layout.Exact(image.Pt(s, s))
-						layout.Center.Layout(g, func(gtx C) D { return v.icon(gtx, "headphones", 20, fg) })
-						return D{Size: image.Pt(s, s)}
+						return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.icon(gtx, icon, 16, v.p.Text) })
 					}),
-					hgap(12),
-					layout.Flexed(1, func(gtx C) D {
-						return col(gtx,
-							layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wBlack, v.p.Text, v.roomTitle(r)) }),
-							vgap(2),
-							layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wReg, v.p.Muted, v.roomMeta(r, live)) }),
-						)
-					}),
-					layout.Rigid(func(gtx C) D { return v.faces(gtx, r) }),
-					hgap(12),
-					layout.Rigid(func(gtx C) D {
-						if live {
-							return v.button(gtx, join, btnPrimary, true, "Join")
-						}
-						return D{}
-					}),
+					layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wBold, v.p.Text, label) }),
 				)
 			})
 		})
+		call := m.Stop()
+		r := image.Rectangle{Max: d.Size}
+		rad := gtx.Dp(4)
+		rrect(gtx, r, rad, v.p.Bg)
+		if c.Hovered() {
+			rrect(gtx, r, rad, v.p.Hover)
+		}
+		border(gtx, r, rad, max(1, gtx.Dp(1)), v.p.BorderStr)
+		call.Add(gtx.Ops)
+		return d
 	})
+}
+
+func (v *Huddles) item(gtx C, it huddleItem) D {
+	switch it.kind {
+	case hkHero:
+		return v.hero(gtx)
+	case hkSection:
+		return layout.Inset{Left: 55, Right: 55, Top: 20, Bottom: 10}.Layout(gtx, func(gtx C) D {
+			return row(gtx, layout.Middle,
+				layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wBold, v.p.Text, it.title) }),
+				layout.Flexed(1, func(gtx C) D { return v.label(gtx, 15, wReg, v.p.Text, " — "+it.tx) }),
+			)
+		})
+	case hkRoom:
+		return layout.Inset{Left: 55, Right: 55}.Layout(gtx, func(gtx C) D { return v.room(gtx, it.r) })
+	case hkTiles:
+		return layout.Inset{Left: 55, Right: 55, Bottom: 10}.Layout(gtx, v.tiles)
+	case hkChannel:
+		return layout.Inset{Left: 55, Right: 55}.Layout(gtx, func(gtx C) D { return v.channelRow(gtx, it.row) })
+	}
+	return D{Size: image.Pt(0, gtx.Dp(80))}
+}
+
+// hero: h 266, bg #e9ffec, hairlines top and bottom, the 22/30 900 title,
+// 15/22 body at 70% and the green "Start a Huddle" button, a drawn huddle
+// window on the right, and a dismiss x.
+func (v *Huddles) hero(gtx C) D {
+	w, h := gtx.Constraints.Max.X, gtx.Dp(266)
+	bg := rgb(0xe9ffec)
+	body := argb(0xb31d1c1d)
+	if v.th.Dark {
+		bg, body = rgb(0x183a26), argb(0xb3d1d2d3)
+	}
+	hair := max(1, gtx.Dp(1))
+	fill(gtx, image.Rect(0, 0, w, h), bg)
+	fill(gtx, image.Rect(0, 0, w, hair), v.p.Border)
+	fill(gtx, image.Rect(0, h-hair, w, h), v.p.Border)
+	illW, illH := gtx.Dp(272), gtx.Dp(196)
+	textW := max(0, min(gtx.Dp(561), w-gtx.Dp(48+44)))
+	func() {
+		defer opOffset(gtx, image.Pt(gtx.Dp(48), gtx.Dp(48))).Pop()
+		g := gtx
+		g.Constraints = layout.Constraints{Max: image.Pt(textW, h-gtx.Dp(96))}
+		col(g,
+			layout.Rigid(func(gtx C) D {
+				return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D {
+					return v.para(gtx, 22, 30, wBlack, v.p.Text, 2, "Instantly connect over audio or video")
+				})
+			}),
+			layout.Rigid(func(gtx C) D {
+				gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(517))
+				return layout.Inset{Bottom: 16}.Layout(gtx, func(gtx C) D {
+					return v.para(gtx, 15, 22, wReg, body, 3, "Talk it out in real time on a huddle, with screen-sharing, expressive reactions and a message thread that automatically saves for later reference.")
+				})
+			}),
+			layout.Rigid(func(gtx C) D { return v.greenButton(gtx, &v.heroBtn, "headphones", "Start a Huddle") }),
+		)
+	}()
+	if w > gtx.Dp(760) {
+		x := min(gtx.Dp(48)+textW+gtx.Dp(20), w-illW-gtx.Dp(56))
+		func() {
+			defer opOffset(gtx, image.Pt(x, (h-illH)/2)).Pop()
+			v.illustration(gtx, image.Pt(illW, illH))
+		}()
+	}
+	func() {
+		s := gtx.Dp(36)
+		defer opOffset(gtx, image.Pt(w-s-gtx.Dp(16), gtx.Dp(17))).Pop()
+		v.iconButton(gtx, &v.heroX, "close", 36, 20, v.p.Sec)
+	}()
+	return D{Size: image.Pt(w, h)}
+}
+
+// greenButton: primary medium, h 36, padding 0 12px, radius 8, 15px bold.
+func (v *Huddles) greenButton(gtx C, c *widget.Clickable, icon, label string) D {
+	return c.Layout(gtx, func(gtx C) D {
+		pointerCursor(gtx)
+		tw := v.th.Measure(gtx, 15, wBold, label)
+		sz := image.Pt(tw+gtx.Dp(24+20+6), gtx.Dp(36))
+		bg := v.p.Green
+		if c.Hovered() {
+			bg = v.p.GreenHover
+		}
+		rrect(gtx, image.Rectangle{Max: sz}, gtx.Dp(8), bg)
+		g := gtx
+		g.Constraints = layout.Exact(sz)
+		layout.Center.Layout(g, func(gtx C) D {
+			return row(gtx, layout.Middle,
+				layout.Rigid(func(gtx C) D { return v.icon(gtx, icon, 20, rgb(0xffffff)) }),
+				hgap(6),
+				layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wBold, rgb(0xffffff), label) }),
+			)
+		})
+		return D{Size: sz}
+	})
+}
+
+// illustration is our own vector drawing (not Slack's artwork): an
+// aubergine huddle window with two participant tiles and a control bar.
+func (v *Huddles) illustration(gtx C, sz image.Point) {
+	rad := gtx.Dp(12)
+	r := image.Rectangle{Max: sz}
+	theme.Shadow(gtx, r, rad, gtx.Dp(10), argb(0x26000000))
+	rrect(gtx, r, rad, rgb(0x4a154b))
+	pad := gtx.Dp(14)
+	tileW := (sz.X - 3*pad) / 2
+	tileH := sz.Y - 2*pad - gtx.Dp(40)
+	ids := []string{v.selfID()}
+	if len(v.sugUsers) > 0 {
+		ids = append(ids, v.sugUsers[0])
+	}
+	for i := 0; i < 2; i++ {
+		x := pad + i*(tileW+pad)
+		tr := image.Rect(x, pad, x+tileW, pad+tileH)
+		tint := rgb(0x611f69)
+		if i == 1 {
+			tint = rgb(0x2b6f8e)
+		}
+		rrect(gtx, tr, gtx.Dp(8), tint)
+		a := gtx.Dp(44)
+		func() {
+			defer opOffset(gtx, image.Pt(tr.Min.X+(tileW-a)/2, tr.Min.Y+(tileH-a)/2)).Pop()
+			if i < len(ids) {
+				u, _ := v.user(ids[i])
+				v.avatar(gtx, u.Avatar, 44)
+			} else {
+				rrect(gtx, image.Rect(0, 0, a, a), gtx.Dp(10), argb(0x40ffffff))
+			}
+		}()
+	}
+	cy := sz.Y - pad - gtx.Dp(14)
+	cx := sz.X/2 - gtx.Dp(40)
+	for i, c := range [...]uint32{0x40ffffff, 0x40ffffff, 0xffe01e5a} {
+		theme.Circle(gtx, image.Pt(cx+i*gtx.Dp(40), cy), gtx.Dp(28), argb(c))
+	}
+}
+
+// room is a live or past huddle: a bordered 12px-radius row with a 36px
+// headphones tile (green when live), title, people + timing, a facepile,
+// and Join for live rooms.
+func (v *Huddles) room(gtx C, r huddleRoom) D {
+	c := clickIn(v.rooms, r.ID)
+	d := c.Layout(gtx, func(gtx C) D {
+		pointerCursor(gtx)
+		m := op.Record(gtx.Ops)
+		d := layout.Inset{Top: 10, Bottom: 10, Left: 12, Right: 12}.Layout(gtx, func(gtx C) D {
+			gtx.Constraints.Min.X = gtx.Constraints.Max.X
+			return row(gtx, layout.Middle,
+				layout.Rigid(func(gtx C) D {
+					s := gtx.Dp(36)
+					bg, fg := argb(0x0f1d1c1d), v.p.Text
+					if r.Active {
+						bg, fg = v.p.Green, rgb(0xffffff)
+					}
+					rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(8), bg)
+					g := gtx
+					g.Constraints = layout.Exact(image.Pt(s, s))
+					layout.Center.Layout(g, func(gtx C) D { return v.icon(gtx, "headphones", 20, fg) })
+					return D{Size: image.Pt(s, s)}
+				}),
+				hgap(8),
+				layout.Flexed(1, func(gtx C) D {
+					return col(gtx,
+						layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wBold, v.p.Text, v.roomTitle(r)) }),
+						layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wReg, v.p.Muted, v.roomMeta(r)) }),
+					)
+				}),
+				layout.Rigid(func(gtx C) D { return v.faces(gtx, r) }),
+				layout.Rigid(func(gtx C) D {
+					if !r.Active {
+						return D{}
+					}
+					// drawn, not a separate clickable: the whole row joins
+					return layout.Inset{Left: 12}.Layout(gtx, func(gtx C) D { return v.joinPill(gtx) })
+				}),
+			)
+		})
+		call := m.Stop()
+		rr := image.Rectangle{Max: d.Size}
+		rrect(gtx, rr, gtx.Dp(12), v.p.Bg)
+		if c.Hovered() {
+			rrect(gtx, rr, gtx.Dp(12), v.p.Hover)
+		}
+		border(gtx, rr, gtx.Dp(12), max(1, gtx.Dp(1)), argb(0x1a000000))
+		call.Add(gtx.Ops)
+		return d
+	})
+	return D{Size: image.Pt(d.Size.X, d.Size.Y+gtx.Dp(8))}
+}
+
+// joinPill draws the small green "Join" button face.
+func (v *Huddles) joinPill(gtx C) D {
+	tw := v.th.Measure(gtx, 13, wBold, "Join")
+	sz := image.Pt(tw+gtx.Dp(24), gtx.Dp(28))
+	rrect(gtx, image.Rectangle{Max: sz}, gtx.Dp(4), v.p.Green)
+	g := gtx
+	g.Constraints = layout.Exact(sz)
+	layout.Center.Layout(g, func(gtx C) D { return v.label(gtx, 13, wBold, rgb(0xffffff), "Join") })
+	return D{Size: sz}
 }
 
 func (v *Huddles) roomTitle(r huddleRoom) string {
@@ -229,25 +504,22 @@ func (v *Huddles) roomTitle(r huddleRoom) string {
 	return "Huddle"
 }
 
-func (v *Huddles) roomMeta(r huddleRoom, live bool) string {
+func (v *Huddles) roomMeta(r huddleRoom) string {
 	people := r.Participants
-	if !live && len(r.History) > 0 {
+	if !r.Active && len(r.History) > 0 {
 		people = r.History
 	}
-	n := len(people)
 	var who string
-	switch {
-	case n == 0:
-		who = ""
+	switch n := len(people); {
 	case n == 1:
 		who = v.userName(people[0])
 	case n == 2:
 		who = v.userName(people[0]) + " and " + v.userName(people[1])
-	default:
+	case n > 2:
 		who = v.userName(people[0]) + " and " + strconv.Itoa(n-1) + " others"
 	}
 	var when string
-	if live {
+	if r.Active {
 		if r.Start > 0 {
 			when = "Started " + agoText(time.Since(unixTime(r.Start)))
 		}
@@ -291,6 +563,161 @@ func (v *Huddles) faces(gtx C, r huddleRoom) D {
 		}()
 	}
 	return D{Size: image.Pt(w, s)}
+}
+
+// tiles: DM suggestions, 3 per row (w 301, h 258, gap 12): a tinted header
+// (h 136) with a facepile of your avatar and theirs (60px), then the name
+// (15px bold) and their status (13px, up to 3 lines).
+func (v *Huddles) tiles(gtx C) D {
+	gap := gtx.Dp(12)
+	tw := min(gtx.Dp(301), (gtx.Constraints.Max.X-2*gap)/3)
+	th := gtx.Dp(258)
+	const cols = 3
+	rows := (len(v.sugUsers) + cols - 1) / cols
+	y := 0
+	for r := 0; r < rows; r++ {
+		for c := 0; c < cols; c++ {
+			i := r*cols + c
+			if i >= len(v.sugUsers) {
+				break
+			}
+			func() {
+				defer opOffset(gtx, image.Pt(c*(tw+gap), y)).Pop()
+				g := gtx
+				g.Constraints = layout.Exact(image.Pt(tw, th))
+				v.tile(g, v.sugUsers[i], image.Pt(tw, th))
+			}()
+		}
+		y += th + gap
+	}
+	return D{Size: image.Pt(gtx.Constraints.Max.X, max(0, y-gap))}
+}
+
+// tileTints stand in for the person's huddle background image.
+var tileTints = [...]uint32{0xd8f5e5, 0xe0e7ff, 0xfde4cf, 0xf3e1f7, 0xd9f1fb, 0xfff2c4}
+
+func (v *Huddles) tile(gtx C, uid string, sz image.Point) D {
+	c := clickIn(v.people, uid)
+	return c.Layout(gtx, func(gtx C) D {
+		pointerCursor(gtx)
+		rad := gtx.Dp(8)
+		r := image.Rectangle{Max: sz}
+		theme.Shadow(gtx, r, rad, gtx.Dp(3), argb(0x14000000))
+		rrect(gtx, r, rad, v.p.Surface)
+		hh := gtx.Dp(136)
+		tint := rgb(tileTints[0])
+		if uid != "" {
+			tint = rgb(tileTints[int(uid[len(uid)-1])%len(tileTints)])
+		}
+		func() {
+			defer clipRR(gtx, image.Rect(0, 0, sz.X, hh), rad, rad, 0, 0).Pop()
+			fill(gtx, image.Rect(0, 0, sz.X, hh), tint)
+		}()
+		a := gtx.Dp(60)
+		overlap := gtx.Dp(8)
+		x0 := (sz.X - (2*a - overlap)) / 2
+		y0 := (hh - a) / 2
+		me, _ := v.user(v.selfID())
+		them, _ := v.user(uid)
+		for i, u := range [...]core.User{me, them} {
+			func() {
+				defer opOffset(gtx, image.Pt(x0+i*(a-overlap), y0)).Pop()
+				ring := gtx.Dp(2)
+				rrect(gtx, image.Rect(-ring, -ring, a+ring, a+ring), gtx.Dp(8)+ring, tint)
+				v.avatar(gtx, u.Avatar, 60)
+			}()
+		}
+		func() {
+			defer opOffset(gtx, image.Pt(gtx.Dp(12), hh+gtx.Dp(12))).Pop()
+			g := gtx
+			g.Constraints = layout.Constraints{Max: image.Pt(sz.X-gtx.Dp(24), max(0, sz.Y-hh-gtx.Dp(20)))}
+			col(g,
+				layout.Rigid(func(gtx C) D {
+					return row(gtx, layout.Middle,
+						layout.Flexed(1, func(gtx C) D { return v.label(gtx, 15, wBold, v.p.Text, displayName(them)) }),
+						layout.Rigid(func(gtx C) D {
+							if them.StatusEmojiURL == "" {
+								return D{}
+							}
+							return layout.Inset{Left: 4}.Layout(gtx, func(gtx C) D { return v.emojiImg(gtx, them.StatusEmojiURL, 16) })
+						}),
+					)
+				}),
+				layout.Rigid(func(gtx C) D {
+					t := them.StatusText
+					if t == "" {
+						t = them.Title
+					}
+					return v.para(gtx, 13, 19, wReg, v.p.Text, 3, t)
+				}),
+			)
+		}()
+		border(gtx, r, rad, max(1, gtx.Dp(1)), argb(0x211d1c1d))
+		if c.Hovered() {
+			rrect(gtx, r, rad, v.p.Hover)
+		}
+		return D{Size: sz}
+	})
+}
+
+// channelRow: bordered list rows h 56, padding 10px 12px, first/last
+// rounded 12; a 36px tile (#1d1c1d@.06, radius 8) with a "#" glyph, then
+// "#name" 15px bold.
+func (v *Huddles) channelRow(gtx C, i int) D {
+	ch := v.sugChans[i]
+	c := clickIn(v.chans, ch.ID)
+	first, last := i == 0, i == len(v.sugChans)-1
+	return c.Layout(gtx, func(gtx C) D {
+		pointerCursor(gtx)
+		w, h := gtx.Constraints.Max.X, gtx.Dp(56)
+		rad := gtx.Dp(12)
+		var top, bot int
+		if first {
+			top = rad
+		}
+		if last {
+			bot = rad
+		}
+		r := image.Rect(0, 0, w, h)
+		px1 := max(1, gtx.Dp(1))
+		func() {
+			defer clipRR(gtx, r, top, top, bot, bot).Pop()
+			fill(gtx, r, argb(0x1a000000))
+			inner := image.Rect(px1, px1, w-px1, h-px1)
+			if !first {
+				inner.Min.Y = 0
+			}
+			innerClip := clipRR(gtx, inner, max(0, top-px1), max(0, top-px1), max(0, bot-px1), max(0, bot-px1))
+			fill(gtx, inner, v.p.Bg)
+			if c.Hovered() {
+				fill(gtx, inner, v.p.Hover)
+			}
+			innerClip.Pop()
+		}()
+		g := gtx
+		g.Constraints = layout.Exact(image.Pt(w, h))
+		layout.Inset{Left: 12, Right: 12}.Layout(g, func(gtx C) D {
+			return layout.W.Layout(gtx, func(gtx C) D {
+				return row(gtx, layout.Middle,
+					layout.Rigid(func(gtx C) D {
+						s := gtx.Dp(36)
+						rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(8), argb(0x0f1d1c1d))
+						gg := gtx
+						gg.Constraints = layout.Exact(image.Pt(s, s))
+						icon := "hash"
+						if ch.Kind == "private" {
+							icon = "lock"
+						}
+						layout.Center.Layout(gg, func(gtx C) D { return v.icon(gtx, icon, 20, v.p.Text) })
+						return D{Size: image.Pt(s, s)}
+					}),
+					hgap(8),
+					layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wBold, v.p.Text, "#"+ch.Name) }),
+				)
+			})
+		})
+		return D{Size: image.Pt(w, h)}
+	})
 }
 
 func agoText(d time.Duration) string {

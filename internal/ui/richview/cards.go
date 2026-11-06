@@ -260,7 +260,83 @@ func (l *lay) iconRow(icon, label string, x, y, w, iconPx int, weight font.Weigh
 }
 
 // unfurl is the 2026 rounded link-preview card with a right-side thumbnail.
+func isVideoUnfurl(a *richtext.Attachment) bool {
+	img := a.Thumb
+	if img == nil {
+		img = a.Image
+	}
+	if img == nil {
+		return false
+	}
+	switch strings.ToLower(a.ServiceName) {
+	case "youtube", "vimeo", "loom", "twitch":
+		return true
+	}
+	return a.VideoURL != ""
+}
+
+// videoCard is the 2026 video unfurl: 358 wide, title and service on top,
+// a 356x200 thumbnail with a play overlay below.
+func (l *lay) videoCard(a *richtext.Attachment, x, y, w int) int {
+	p := &l.st.Palette
+	cw := min(w, l.dp(358))
+	pad := l.dp(12)
+	url := a.VideoURL
+	if url == "" {
+		url = a.TitleLink
+	}
+	if url == "" {
+		url = a.FromURL
+	}
+	cardT := l.d.addTarget(target{kind: tCard, url: url})
+	bi := len(l.d.boxes)
+	l.d.boxes = append(l.d.boxes, box{kind: bBorder, fill: p.Panel, stroke: p.Border, bw: l.dp(1), radius: l.dp(12), target: cardT, hover: p.BorderHover})
+	cy := y + pad
+	if len(a.Title) > 0 {
+		fs := l.bodyStyle()
+		fs.face.Weight = font.Bold
+		fs.col = p.Text
+		fs.lineH = l.dp(18.75)
+		fs.maxLines, fs.ellipsis = 2, true
+		l.addSpansTarget(a.Title, &fs, cardT)
+		h, _ := l.flow(x+pad, cy, cw-2*pad, &fs)
+		cy += h + l.dp(4)
+		l.plainAdd("\n")
+	}
+	if a.ServiceName != "" {
+		fs := l.small(p.CardFooter)
+		fs.lineH = l.dp(16.25)
+		ix := x + pad
+		if a.ServiceIcon != "" {
+			s := l.dp(16)
+			l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(ix, cy, ix+s, cy+s), url: a.ServiceIcon, radii: [4]int{l.dp(4), l.dp(4), l.dp(4), l.dp(4)}, target: -1, px: s})
+			ix += s + l.dp(8)
+		}
+		fs.maxLines, fs.ellipsis, fs.noSelect = 1, true, true
+		h, _ := l.plainFlow(a.ServiceName, ix, cy, x+cw-pad-ix, &fs, -1)
+		cy += max(h, l.dp(16))
+	}
+	cy += pad
+	img := a.Thumb
+	if img == nil {
+		img = a.Image
+	}
+	ih := (cw - 2*l.dp(1)) * 200 / 356
+	rr := l.dp(12) - l.dp(1)
+	ir := image.Rect(x+l.dp(1), cy, x+cw-l.dp(1), cy+ih)
+	l.d.imgs = append(l.d.imgs, imgPrim{r: ir, url: img.URL, radii: [4]int{0, 0, rr, rr}, target: cardT, px: max(ir.Dx(), ir.Dy())})
+	l.playOverlay(ir)
+	cy += ih + l.dp(1)
+	r := image.Rect(x, y, x+cw, cy)
+	l.d.boxes[bi].r = r
+	l.d.hits = append(l.d.hits, hit{r: r, t: cardT})
+	return cy - y
+}
+
 func (l *lay) unfurl(a *richtext.Attachment, x, y, w int) int {
+	if isVideoUnfurl(a) {
+		return l.videoCard(a, x, y, w)
+	}
 	p := &l.st.Palette
 	if w > l.dp(716) {
 		w = l.dp(716)
