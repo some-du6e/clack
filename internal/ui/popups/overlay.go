@@ -265,15 +265,39 @@ func (p *pump) Layout(gtx layout.Context) layout.Dimensions {
 
 func (p *pump) Dismissed() bool { return p.done }
 
-// Dismiss is a no-op: Escape must not cancel pending work. The root removes
-// the pump from its stack anyway, so re-arm it.
+// Dismiss is what the root calls on Escape when the (invisible) pump is the
+// topmost overlay. Escape is meant for the popup the user sees, so forward
+// it to the topmost visible popups overlay, then re-arm a fresh pump if work
+// is still pending (the root drops this one from its stack either way).
 func (p *pump) Dismiss() {
+	if p.done {
+		return
+	}
+	p.done = true
+	for i := len(stackPrev) - 1; i >= 0; i-- {
+		o, ok := stackPrev[i].(interface {
+			Dismissed() bool
+			Dismiss()
+		})
+		if ok && !o.Dismissed() {
+			o.Dismiss()
+			break
+		}
+	}
 	asyncMu.Lock()
 	if pumpLive[p.h] == p {
 		delete(pumpLive, p.h)
 	}
+	pending := inflight > 0 || len(asyncQueue) > 0
+	var np *pump
+	if pending && p.h != nil {
+		np = &pump{h: p.h}
+		pumpLive[p.h] = np
+	}
 	asyncMu.Unlock()
-	p.done = true
+	if np != nil {
+		p.h.ShowOverlay(np)
+	}
 }
 
 // ---- stacking order ----
