@@ -73,18 +73,24 @@ type App struct {
 	images *imgcache.Cache
 	data   *backend // nil until signed in
 
-	router        router
-	clicks        clickables
-	grad          gradient
-	sidebar       sidebarState
-	secondary     secondaryState
-	searchQuery   string
-	searchPill    image.Rectangle // window coords, for anchoring the search popover
-	primaryOrigin image.Point     // window position of the primary panel
-	overlays      []Overlay
-	toast         toastState
-	keys          *shortcuts
-	login         *loginScreen
+	router          router
+	clicks          clickables
+	grad            gradient
+	sidebar         sidebarState
+	secondary       secondaryState
+	searchQuery     string
+	searchPill      image.Rectangle // window coords, for anchoring the search popover
+	primaryOrigin   image.Point     // window position of the primary panel
+	secondaryOrigin image.Point     // window position of the secondary pane
+	convos          map[string]*convo
+	convoOrder      []string
+	ptrTag          int
+	ptrWin          image.Point
+	ptrOK           bool
+	overlays        []Overlay
+	toast           toastState
+	keys            *shortcuts
+	login           *loginScreen
 
 	views     map[Route]View // cached primary views (instant switch)
 	viewOrder []Route
