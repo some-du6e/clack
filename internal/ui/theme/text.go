@@ -316,7 +316,12 @@ func (it *glyphIter) paint(gtx layout.Context, sh *text.Shaper, g text.Glyph, li
 		path := sh.Shape(line)
 		paint.FillShape(gtx.Ops, it.col, clip.Outline{Path: path}.Op())
 		if it.emb > 0 {
-			paint.FillShape(gtx.Ops, it.col, clip.Stroke{Path: path, Width: it.emb}.Op())
+			// Second fill shifted right by the embolden width: thickens
+			// stems like a hairline stroke, without per-frame CPU stroke
+			// tessellation (half the frame cost of clip.Stroke here).
+			e := op.Affine(f32.AffineId().Offset(f32.Pt(it.emb, 0))).Push(gtx.Ops)
+			paint.FillShape(gtx.Ops, it.col, clip.Outline{Path: path}.Op())
+			e.Pop()
 		}
 		if call := sh.Bitmaps(line); call != (op.CallOp{}) {
 			call.Add(gtx.Ops)

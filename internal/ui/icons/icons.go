@@ -43,7 +43,9 @@ const view = 20
 var registry = map[string]*def{}
 
 // s and f build stroked (1.5 units) and filled parts.
-func s(d string) part                { return part{d: d, stroke: 1.5} }
+// 1.75 (not Slack's 1.5): Gio blends in linear light, so thin antialiased
+// strokes read lighter than Chrome's; measured against the real client.
+func s(d string) part                { return part{d: d, stroke: 1.75} }
 func sw(w float32, d string) part    { return part{d: d, stroke: w} }
 func f(d string) part                { return part{d: d} }
 func reg(name string, parts ...part) { registry[name] = &def{parts: parts} }

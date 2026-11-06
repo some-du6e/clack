@@ -18,6 +18,7 @@ const (
 	secThread
 	secDetails
 	secProfile
+	secSplit
 )
 
 // secondaryState is the resizable right-hand pane (thread, channel details,
@@ -70,6 +71,31 @@ func (a *App) OpenUserProfile(userID string) {
 	a.secondary.view = a.mountProfile(userID)
 	a.Invalidate()
 }
+
+// OpenSplit opens a conversation route ("c/<id>" or "c/<id>/t/<ts>") in the
+// right-hand pane next to the current one (Slack's "Open in split view").
+func (a *App) OpenSplit(route string) {
+	r := Route(route)
+	ch := r.Channel()
+	if ch == "" {
+		a.Navigate(route)
+		return
+	}
+	if ts := r.Thread(); ts != "" {
+		a.OpenThread(ch, ts)
+		return
+	}
+	a.secondary = secondaryState{kind: secSplit, channel: ch, width: a.secondary.width}
+	a.secondary.view = &splitPane{a: a, ch: ch}
+	a.Invalidate()
+}
+
+type splitPane struct {
+	a  *App
+	ch string
+}
+
+func (p *splitPane) Layout(gtx layout.Context) layout.Dimensions { return p.a.layoutChannel(gtx, p.ch) }
 
 // CloseSecondary closes the secondary pane.
 func (a *App) CloseSecondary() {
