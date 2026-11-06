@@ -9,15 +9,13 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
-	"gioui.org/unit"
-
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 )
 
-// Category tab glyphs for the emoji picker: simple outline icons on a 20×20
-// grid with 1.5-unit strokes, drawn here (our own shapes, not Slack's
-// assets). Glyph i belongs to category tab i; two extra glyphs are used by
-// the top "Emoji | GIFs" bar.
+// Category tab glyphs for the emoji picker: outline icons on a 20×20 grid
+// with uniform round-capped strokes and filled small details, drawn here
+// from our own geometry (matched by eye to Slack's tab icons). Glyph i
+// belongs to category tab i; two extra glyphs are used by the top
+// "Emoji | GIFs" bar.
 const (
 	epGlyphSearch = iota
 	epGlyphSmiley
@@ -51,7 +49,10 @@ func (e *epPen) cube(a, b, c, d, x, y float32) {
 	e.path.CubeTo(e.pt(a, b), e.pt(c, d), e.pt(x, y))
 }
 
-// stroke paints the current path as a 1.5-unit line.
+// stroke paints the current path as a 1.75-unit line. The shapes are
+// designed for 1.5 units; Gio's linear-space antialiasing makes thin strokes
+// read lighter than a browser's, so we draw them a little heavier.
+// clip.Stroke only does round caps and joins.
 func (e *epPen) stroke() { e.strokeW(1.75) }
 
 func (e *epPen) strokeW(w float32) {
@@ -110,128 +111,191 @@ func (e *epPen) dot(cx, cy, r float32) {
 	e.fill()
 }
 
-// rot returns (x, y) rotated by deg around (10, 10) after offsetting the
-// centered coordinates.
-func epRot(x, y, deg float32) (float32, float32) {
-	sin, cos := math.Sincos(float64(deg) * math.Pi / 180)
-	s, c := float32(sin), float32(cos)
-	return 10 + x*c - y*s, 10 + x*s + y*c
-}
-
-// plane outline, pointing up, centered at the origin.
-var epPlanePts = [...]float32{
-	0, -8, 1.3, -6.6, 1.3, -2.6, 7.6, 1.4, 7.6, 3, 1.3, 1, 1.3, 5, 3.6, 6.8, 3.6, 8, 0, 7,
-	-3.6, 8, -3.6, 6.8, -1.3, 5, -1.3, 1, -7.6, 3, -7.6, 1.4, -1.3, -2.6, -1.3, -6.6,
-}
-
 // emojiGlyph draws glyph kind at size dp in col.
 func emojiGlyph(gtx layout.Context, kind int, size float32, col color.NRGBA) layout.Dimensions {
 	px := dp(gtx, size)
 	dims := layout.Dimensions{Size: image.Pt(px, px)}
-	if kind == epGlyphSearch {
-		return icons.Get("search")(gtx, unit.Dp(size), col)
-	}
 	e := &epPen{gtx: gtx, s: float32(px) / 20, col: col}
 	switch kind {
+	case epGlyphSearch:
+		// magnifier: ring + handle
+		e.begin()
+		e.circle(9, 9, 6.75)
+		e.stroke()
+		e.seg(13.77, 13.77, 17.75, 17.75)
 	case epGlyphSmiley:
 		e.begin()
-		e.circle(10, 10, 7)
+		e.circle(10, 10, 8.25)
 		e.stroke()
+		e.dot(7.5, 8, 1.5)
+		e.dot(12.5, 8, 1.5)
+		// open smile: flat top with rounded corners, curved bottom (filled)
 		e.begin()
-		e.arc(10, 10, 3.9, 30, 150, true)
-		e.stroke()
-		e.dot(7.6, 8.3, 1)
-		e.dot(12.4, 8.3, 1)
+		e.move(7.3, 11.5)
+		e.line(12.7, 11.5)
+		e.arc(12.7, 12.3, .8, 270, 360, false)
+		e.cube(13.5, 13.25, 12.1, 14.95, 10, 14.95)
+		e.cube(7.9, 14.95, 6.5, 13.25, 6.5, 12.3)
+		e.arc(7.3, 12.3, .8, 180, 270, false)
+		e.close()
+		e.fill()
 	case epGlyphLeaf:
+		// leaf tilted 45°: round left/top lobe, pointed tip at the top right
 		e.begin()
-		e.move(4.6, 15.4)
-		e.cube(3.4, 7.6, 8.6, 3.4, 16.2, 3.8)
-		e.cube(16.6, 11.4, 12.4, 16.6, 4.6, 15.4)
+		e.move(5.25, 15.45)
+		e.cube(-.3, 8.7, 6.3, 1.75, 16.6, 3.45)
+		e.line(17.95, 4)
+		e.cube(16, 7.55, 17.1, 9.7, 15.1, 13.5)
+		e.cube(13.1, 17.3, 8.65, 17.55, 5.25, 15.45)
 		e.close()
 		e.stroke()
-		e.seg(3, 17, 11.5, 8.5)
+		// midrib running out into the stem, and two L-shaped veins
+		e.seg(2.25, 17.75, 12.5, 7.5)
+		e.begin()
+		e.move(6.75, 9.75)
+		e.line(6.75, 13.25)
+		e.line(10.25, 13.25)
+		e.move(9.75, 7.75)
+		e.line(9.75, 10.25)
+		e.line(12.25, 10.25)
+		e.stroke()
 	case epGlyphBurger:
+		// top bun dome, its sides running down to the patty
 		e.begin()
-		e.arc(10, 9.2, 6.6, 180, 360, true)
+		e.move(3.25, 10.75)
+		e.line(3.25, 7.6)
+		e.cube(3.25, 4.7, 6, 2.25, 10, 2.25)
+		e.cube(14, 2.25, 16.75, 4.7, 16.75, 7.6)
+		e.line(16.75, 10.75)
+		e.stroke()
+		e.seg(3.25, 8.25, 16.75, 8.25)
+		e.dot(7.25, 5.75, .75)
+		e.dot(10, 5.75, .75)
+		e.dot(12.75, 5.75, .75)
+		// patty pill with a cheese drip hanging from its top edge
+		e.begin()
+		e.move(8.35, 10.75)
+		e.line(3.5, 10.75)
+		e.arc(3.5, 12.5, 1.75, 270, 90, false)
+		e.line(16.5, 14.25)
+		e.arc(16.5, 12.5, 1.75, 90, -90, false)
+		e.line(13.15, 10.75)
+		e.cube(13.15, 12.2, 12.25, 13.25, 10.75, 13.25)
+		e.cube(9.25, 13.25, 8.35, 12.2, 8.35, 10.75)
 		e.close()
 		e.stroke()
-		e.seg(3, 12, 17, 12)
+		// bottom bun
 		e.begin()
-		e.rrect(3.6, 14.4, 16.4, 17.2, 1.3)
+		e.move(3.25, 14.25)
+		e.line(3.25, 15.25)
+		e.arc(5.25, 15.25, 2, 180, 90, false)
+		e.arc(14.75, 15.25, 2, 90, 0, false)
+		e.line(16.75, 14.25)
 		e.stroke()
 	case epGlyphPlane:
+		// airplane flying up-right, one outline mirrored across x+y = 20:
+		// nose, upper wing, tail fins, lower wing, back to the nose
 		e.begin()
-		for i := 0; i < len(epPlanePts); i += 2 {
-			x, y := epRot(epPlanePts[i], epPlanePts[i+1], 45)
-			if i == 0 {
-				e.move(x, y)
-			} else {
-				e.line(x, y)
-			}
-		}
+		e.move(17.45, 2.55)
+		e.cube(17.2, 2.3, 16.25, 1.95, 14.75, 2.8)
+		e.line(12.2, 5.25)
+		e.line(4.65, 3.2)
+		e.cube(3.1, 3, 1.45, 4.55, 2.55, 5.4)
+		e.line(8.9, 8.7)
+		e.line(5.6, 12)
+		e.cube(3.5, 11.6, 1.7, 12.6, 2.4, 13.7)
+		e.cube(2.95, 14.75, 3.4, 13.9, 4.75, 15.25)
+		e.cube(6.1, 16.6, 5.25, 17.05, 6.3, 17.6)
+		e.cube(7.4, 18.3, 8.4, 16.5, 8, 14.4)
+		e.line(11.3, 11.1)
+		e.line(14.6, 17.45)
+		e.cube(15.45, 18.55, 17, 16.9, 16.8, 15.35)
+		e.line(14.75, 7.8)
+		e.line(17.2, 5.25)
+		e.cube(18.05, 3.75, 17.7, 2.8, 17.45, 2.55)
 		e.close()
 		e.stroke()
 	case epGlyphBall:
-		// an american football tilted 45°, with laces
+		// american football tilted 45° with blunt rounded ends
 		e.begin()
-		const a, b = 7.6, 4.4
-		for i := 0; i <= 36; i++ {
-			t := float64(i) * 2 * math.Pi / 36
-			sin, cos := math.Sincos(t)
-			x, y := epRot(a*float32(cos), b*float32(sin), -45)
-			if i == 0 {
-				e.move(x, y)
-			} else {
-				e.line(x, y)
-			}
-		}
+		e.move(17.28, 2.72)
+		e.cube(16.01, 1.44, 9.54, .7, 5.12, 5.12)
+		e.cube(.7, 9.54, 1.44, 16.01, 2.72, 17.28)
+		e.cube(3.99, 18.56, 10.46, 19.3, 14.88, 14.88)
+		e.cube(19.3, 10.46, 18.56, 3.99, 17.28, 2.72)
 		e.close()
 		e.stroke()
-		x0, y0 := epRot(-2.6, 0, -45)
-		x1, y1 := epRot(2.6, 0, -45)
-		e.seg(x0, y0, x1, y1)
-		for _, lx := range [3]float32{-1.4, 0, 1.4} {
-			x0, y0 := epRot(lx, -1.3, -45)
-			x1, y1 := epRot(lx, 1.3, -45)
-			e.seg(x0, y0, x1, y1)
-		}
+		// seams across both ends
+		e.begin()
+		e.move(11.98, 1.94)
+		e.line(18.06, 8.02)
+		e.move(1.94, 11.98)
+		e.line(8.02, 18.06)
+		e.stroke()
+		// laces: a spine with three cross stitches
+		e.begin()
+		e.move(7.98, 12.02)
+		e.line(12.02, 7.98)
+		e.move(6.99, 11.03)
+		e.line(8.97, 13.01)
+		e.move(11.03, 6.99)
+		e.line(13.01, 8.97)
+		e.move(9.01, 9.01)
+		e.line(10.99, 10.99)
+		e.stroke()
 	case epGlyphBulb:
+		// round bulb narrowing into a neck with rounded bottom corners
 		e.begin()
-		e.arc(10, 8, 5.6, 135, 405, true)
-		e.line(12.5, 14)
-		e.line(7.5, 14)
+		e.arc(10, 7, 5.25, 136.6, 403.4, true)
+		e.cube(11.58, 12.97, 12.05, 12.3, 12.05, 13.7)
+		e.line(12.05, 14.15)
+		e.arc(10.95, 14.15, 1.1, 0, 90, false)
+		e.arc(9.05, 14.15, 1.1, 90, 180, false)
+		e.line(7.95, 13.7)
+		e.cube(7.95, 12.3, 8.42, 12.97, 6.19, 10.61)
 		e.close()
 		e.stroke()
-		e.seg(7.5, 16.3, 12.5, 16.3)
-		e.seg(8.6, 18.4, 11.4, 18.4)
+		e.seg(8.75, 18.25, 11.25, 18.25)
 	case epGlyphPeace:
 		e.begin()
-		e.circle(10, 10, 7)
+		e.circle(10, 10, 8.25)
 		e.stroke()
-		e.seg(10, 3, 10, 17)
-		e.seg(10, 10.6, 5.1, 14.9)
-		e.seg(10, 10.6, 14.9, 14.9)
-	case epGlyphFlag:
-		e.seg(5, 2.6, 5, 17.6)
+		e.seg(10, 1.75, 10, 18.25)
 		e.begin()
-		e.move(5, 3.6)
-		e.line(15.6, 3.6)
-		e.line(13, 7.3)
-		e.line(15.6, 11)
-		e.line(5, 11)
-		e.close()
+		e.move(3.69, 15.31)
+		e.line(10, 9)
+		e.line(16.31, 15.31)
+		e.stroke()
+	case epGlyphFlag:
+		// pole and a waving flag (the bottom edge repeats the top wave)
+		e.begin()
+		e.move(3.25, 17.75)
+		e.line(3.25, 2.95)
+		e.cube(11.4, .4, 10.05, 6.35, 16.75, 3.4)
+		e.line(16.75, 13.4)
+		e.cube(10.05, 16.35, 11.4, 10.4, 3.25, 12.95)
 		e.stroke()
 	case epGlyphCustom:
-		// four rounded bars in a pinwheel, each with a dot (Slack-ish mark)
+		// Slack's hash mark: four capsules in a pinwheel, each with a
+		// drop-shaped dot (a circle with one square corner), all filled
+		const r = 1.875
 		e.begin()
-		e.rrect(6.3, 2.5, 8.7, 8.7, 1.2)
-		e.rrect(11.3, 6.3, 17.5, 8.7, 1.2)
-		e.rrect(11.3, 11.3, 13.7, 17.5, 1.2)
-		e.rrect(2.5, 11.3, 8.7, 13.7, 1.2)
-		e.circle(12.5, 3.7, 1.2)
-		e.circle(16.3, 12.5, 1.2)
-		e.circle(7.5, 16.3, 1.2)
-		e.circle(3.7, 7.5, 1.2)
+		e.rrect(10.5, 1, 14.25, 9.5, r)
+		e.rrect(1, 5.75, 9.5, 9.5, r)
+		e.rrect(10.5, 10.5, 19, 14.25, r)
+		e.rrect(5.75, 10.5, 9.5, 19, r)
+		e.arc(7.625, 2.875, r, 90, 360, true)
+		e.line(9.5, 4.75)
+		e.close()
+		e.arc(17.125, 7.625, r, 180, 450, true)
+		e.line(15.25, 9.5)
+		e.close()
+		e.arc(12.375, 17.125, r, 270, 540, true)
+		e.line(10.5, 15.25)
+		e.close()
+		e.arc(2.875, 12.375, r, 0, 270, true)
+		e.line(4.75, 10.5)
+		e.close()
 		e.fill()
 	case epGlyphGif:
 		e.begin()

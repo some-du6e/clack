@@ -70,6 +70,8 @@ type srRow struct {
 	presence string
 	boxed    bool // icon in a bordered tile
 	isAvatar bool
+	mpim     bool     // group DM: draws the member tile
+	members  []string // group DM members (tile)
 
 	// message cards
 	msg   *core.Message
@@ -235,13 +237,26 @@ func (p *SearchPopover) loadSnap(now time.Time) {
 			p.dmOf[cv.User] = cv.ID
 		case "mpim":
 			cd.Name = convTitle(p.h, cv)
+			if cd.Name == cv.Name {
+				// members unknown to the user cache: use the handles in
+				// the internal name ("mpdm-a--b-1")
+				if hs := srMpdmNames(cv.Name, snap.Self.Handle); len(hs) > 0 {
+					cd.Name = strings.Join(hs, ", ")
+				}
+			}
+			cd.Members = cv.Members
+			// members' real names and handles also find the group DM
 			for _, m := range cv.Members {
 				if m == snap.Self.ID {
 					continue
 				}
 				if u, ok := user(m); ok {
-					cd.Avatar = u.Avatar
-					break
+					if u.RealName != "" && u.RealName != userName(u) {
+						cd.Keys = append(cd.Keys, u.RealName)
+					}
+					if u.Handle != "" {
+						cd.Keys = append(cd.Keys, u.Handle)
+					}
 				}
 			}
 		}
@@ -308,8 +323,8 @@ func (p *SearchPopover) candRow(c srCand, typing bool) srRow {
 		r.alt = c.Note
 	default:
 		r.kind = srRConv
-		if c.ConvK == "mpim" && c.Avatar != "" {
-			r.avatar, r.isAvatar = c.Avatar, true
+		if c.ConvK == "mpim" {
+			r.mpim, r.members = true, c.Members
 		} else {
 			r.icon = convIcon(c.ConvK)
 		}
@@ -992,6 +1007,14 @@ func (p *SearchPopover) row(gtx layout.Context, th *theme.Theme, cl *Colors, i, 
 		box := dp(gtx, 24)
 		lx, ly := dp(gtx, 16), (sz.Y-box)/2
 		switch {
+		case r.mpim:
+			rowBg := cl.Bg
+			if sel {
+				rowBg = cl.Selected
+			}
+			at(gtx, image.Pt(lx, ly), func(gtx layout.Context) layout.Dimensions {
+				return mpimTile(gtx, p.h, r.members, 24, rowBg, sel)
+			})
 		case r.isAvatar:
 			at(gtx, image.Pt(lx, ly), func(gtx layout.Context) layout.Dimensions {
 				return avatar(gtx, p.h, r.avatar, 24)
@@ -1166,7 +1189,7 @@ func (p *SearchPopover) msgRow(gtx layout.Context, th *theme.Theme, cl *Colors, 
 			})
 		})
 		x += d.Size.X + dp(gtx, 6)
-		srDrawWhere(gtx, th, cl, r.where, x, ly, right, lh)
+		srDrawWhere(gtx, p.h, r.where, x, ly, right, lh, bg)
 		bw := cr.Max.X - dp(gtx, 16) - tx
 		if r.tokW != bw {
 			ell := textW(gtx, th, 15, theme.Regular, " …")
@@ -1215,9 +1238,11 @@ func srAuthor(h Host, m *core.Message) (string, string) {
 	return name, av
 }
 
-// srWhere is a result's location label: "Thread in" + icon + name.
+// srWhere is a result's location label: "Thread in" + icon + name. Group
+// DMs show a facepile of the other members before their names.
 type srWhere struct {
 	pre, icon, name string
+	members         []string
 }
 
 func srWhereOf(h Host, refs map[string]core.ConvRef, m *core.Message) srWhere {
@@ -1235,9 +1260,25 @@ func srWhereOf(h Host, refs map[string]core.ConvRef, m *core.Message) srWhere {
 		}
 	case "mpim":
 		w.name = "Group message"
-		if h.Core() != nil {
-			if c, ok := h.Core().Conv(m.Channel); ok {
-				w.name = convTitle(h, c)
+		raw := ref.Name
+		if a := h.Core(); a != nil {
+			if c, ok := a.Conv(m.Channel); ok {
+				w.members = mpimOthers(h, c.Members)
+				if t := convTitle(h, c); t != c.Name {
+					w.name = t
+				}
+				if raw == "" {
+					raw = c.Name
+				}
+			}
+		}
+		if w.name == "Group message" {
+			self := ""
+			if a := h.Core(); a != nil {
+				self = a.Self().Handle
+			}
+			if hs := srMpdmNames(raw, self); len(hs) > 0 {
+				w.name = strings.Join(hs, ", ")
 			}
 		}
 	default:
@@ -1254,8 +1295,10 @@ func srWhereOf(h Host, refs map[string]core.ConvRef, m *core.Message) srWhere {
 }
 
 // srDrawWhere draws a location label at (x, y) in a band of height h,
-// clipped at right.
-func srDrawWhere(gtx layout.Context, th *theme.Theme, cl *Colors, w srWhere, x, y, right, h int) {
+// clipped at right. bg is the background behind it (facepile rings).
+func srDrawWhere(gtx layout.Context, hst Host, w srWhere, x, y, right, h int, bg color.NRGBA) {
+	th := hst.Theme()
+	cl := colorsOf(th)
 	if w.pre != "" && x < right {
 		d := at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(right-x, h)}
@@ -1271,6 +1314,13 @@ func srDrawWhere(gtx layout.Context, th *theme.Theme, cl *Colors, w srWhere, x, 
 			return icon(gtx, w.icon, 12, cl.Fg3)
 		})
 		x += is + dp(gtx, 2)
+	}
+	if len(w.members) > 0 && x+dp(gtx, 20) < right {
+		fs := float32(16)
+		d := at(gtx, image.Pt(x+dp(gtx, 2), y+(h-dp(gtx, fs))/2), func(gtx layout.Context) layout.Dimensions {
+			return facepile(gtx, hst, w.members, fs, 3, bg)
+		})
+		x += dp(gtx, 2) + d.Size.X + dp(gtx, 6)
 	}
 	if x < right {
 		at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {

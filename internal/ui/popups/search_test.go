@@ -104,6 +104,57 @@ func TestSearchRankSecondaryKeys(t *testing.T) {
 	}
 }
 
+func TestSearchRankGroupDMMembers(t *testing.T) {
+	cands := []srCand{
+		{Kind: srKConv, ID: "G1", ConvK: "mpim", Name: "ann, bo, cy", Members: []string{"U0", "U1", "U2", "U3"},
+			Keys: []string{"Robert Stone", "bo.s"}},
+		{Kind: srKConv, ID: "C1", ConvK: "channel", Name: "boats"},
+		{Kind: srKUser, ID: "U2", Name: "bo"},
+	}
+	// a later member's name is a word start in the title, and bolds there
+	r := srRank(cands, "bo", 0, false)
+	if got := srTestNames(r); !reflect.DeepEqual(got, []string{"bo", "boats", "ann, bo, cy"}) {
+		t.Fatalf("rank = %v", got)
+	}
+	if g := r[2]; g.Name[g.Bold0:g.Bold1] != "bo" {
+		t.Fatalf("bold = %q", g.Name[g.Bold0:g.Bold1])
+	}
+	// members' real names and handles find the group DM, without bolding
+	for _, q := range []string{"rob", "stone", "bo.s"} {
+		r := srRank(cands, q, 0, false)
+		if len(r) == 0 || r[0].ID != "G1" || r[0].Bold0 != r[0].Bold1 {
+			t.Fatalf("%q: %v", q, srTestNames(r))
+		}
+	}
+	// a name match beats the same match on a member key
+	r = srRank([]srCand{
+		{ID: "G1", ConvK: "mpim", Name: "ann, cy", Keys: []string{"dev"}},
+		{ID: "C1", Name: "dev"},
+	}, "dev", 0, false)
+	if r[0].ID != "C1" || r[1].ID != "G1" {
+		t.Fatalf("key tier: %v", srTestNames(r))
+	}
+}
+
+func TestSearchMpdmNames(t *testing.T) {
+	cases := []struct {
+		name, self string
+		want       []string
+	}{
+		{"mpdm-ann--bo--cy-1", "bo", []string{"ann", "cy"}},
+		{"mpdm-ann--bo-12", "", []string{"ann", "bo"}},
+		{"mpdm-ann-lee--bo-1", "BO", []string{"ann-lee"}},
+		{"mpdm-ann--bo", "", []string{"ann", "bo"}},
+		{"general", "", nil},
+		{"mpdm-", "", nil},
+	}
+	for _, c := range cases {
+		if got := srMpdmNames(c.name, c.self); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("srMpdmNames(%q, %q) = %q, want %q", c.name, c.self, got, c.want)
+		}
+	}
+}
+
 func TestSearchRankLimitAndKeepAll(t *testing.T) {
 	cands := []srCand{{ID: "1", Name: "alpha"}, {ID: "2", Name: "beta"}, {ID: "3", Name: "alpine"}}
 	if r := srRank(cands, "al", 1, false); len(r) != 1 || r[0].Name != "alpha" {
