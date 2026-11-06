@@ -105,8 +105,12 @@ type notifyPref struct {
 
 func (a *App) setNotifications(ctx context.Context, ch string, prefs []notifyPref) error {
 	b, _ := json.Marshal(prefs)
+	sync := false // like the web client: sync only when a synced pref (desktop/mobile) changes
+	for _, p := range prefs {
+		sync = sync || p.Sync
+	}
 	err := a.C.Call(ctx, "users.prefs.setNotifications", url.Values{"global": {"false"}, "channel_ids": {ch},
-		"prefs": {string(b)}, "sync": {"true"}}, nil)
+		"prefs": {string(b)}, "sync": {strconv.FormatBool(sync)}}, nil)
 	if err != nil {
 		return err
 	}
@@ -239,7 +243,7 @@ func (a *App) loadSaved(ctx context.Context) error {
 	for _, f := range []string{SavedFilterSaved, SavedFilterTodos} {
 		cursor := ""
 		for page := 0; page < 10; page++ {
-			p := url.Values{"limit": {"100"}, "filter": {f}}
+			p := url.Values{"limit": {"50"}, "filter": {f}}
 			if cursor != "" {
 				p.Set("cursor", cursor)
 			}
