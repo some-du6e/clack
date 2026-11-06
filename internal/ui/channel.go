@@ -85,9 +85,13 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	right := sz.X - gtx.Dp(14)
 	btn := gtx.Dp(28)
 	y := (h - btn) / 2
+	kebabX := 0
 	for _, k := range []string{"kebab", "search", "bell"} {
 		k := k
 		right -= btn
+		if k == "kebab" {
+			kebabX = right
+		}
 		at(gtx, image.Pt(right, y), image.Pt(btn, btn), func(gtx layout.Context) layout.Dimensions {
 			name := k
 			if k == "bell" && conv != nil && conv.Muted {
@@ -98,7 +102,8 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		right -= gtx.Dp(6)
 	}
 	if clicked(a.clicks.get("hdr.kebab")) {
-		a.openChannelMenu(ch, image.Pt(right, h))
+		// popups take window coordinates
+		a.openChannelMenu(ch, a.primaryOrigin.Add(image.Pt(kebabX+btn, (h+btn)/2)))
 	}
 	if clicked(a.clicks.get("hdr.search")) {
 		a.openSearch("in:<#" + ch + ">")

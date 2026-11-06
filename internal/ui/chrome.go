@@ -203,6 +203,7 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 	}
 	sh := gtx.Dp(28)
 	sorg := image.Pt(primaryX, (h-sh)/2)
+	a.searchPill = image.Rectangle{Min: sorg, Max: sorg.Add(image.Pt(sw, sh))}
 	at(gtx, sorg, image.Pt(sw, sh), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, a.clicks.get("nav.search"), func(gtx layout.Context, sz image.Point, hovered bool) {
 			bg := c.SearchBg
