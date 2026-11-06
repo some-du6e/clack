@@ -718,7 +718,10 @@ func (p *EmojiPicker) layoutCats(gtx layout.Context, th *theme.Theme, cl *Colors
 					rrect(gtx, image.Rectangle{Max: s}, dp(gtx, 4), cl.BgHover)
 				}
 			}, func(gtx layout.Context) layout.Dimensions {
-				col := cl.Subtle
+				// Slack's inactive tabs are #868686, but Gio's linear-space
+				// antialiasing makes thin strokes read lighter; #616061
+				// matches the real client's look on screen.
+				col := cl.Muted
 				if i == active {
 					col = cl.Fg
 				}
