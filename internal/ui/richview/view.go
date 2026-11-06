@@ -385,7 +385,9 @@ func (v *View) paintSelection(gtx layout.Context, st *Style) {
 		if b >= f.p1 && i+1 < len(fr) && fr[i+1].line == f.line && fr[i+1].p0 < b && fr[i+1].x > x1 {
 			x1 = fr[i+1].x
 		}
-		r := image.Rect(int(x0), f.top, int(x1+0.999), f.bot)
+		// Round both edges the same way so adjacent rects never overlap
+		// (overlapping translucent fills show as darker seams).
+		r := image.Rect(int(x0+0.5), f.top, int(x1+0.5), f.bot)
 		paint.FillShape(gtx.Ops, col, clip.Rect(r).Op())
 	}
 }
