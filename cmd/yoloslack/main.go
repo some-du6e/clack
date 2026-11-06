@@ -71,23 +71,7 @@ func main() {
 		})
 		a.Attach(svc, cacheDir)
 	}
-	if err == nil {
-		connect(creds)
-	} else {
-		login := func(workspace, cookie string) error {
-			c, err := slack.Login(context.Background(), workspace, cookie)
-			if err != nil {
-				return err
-			}
-			if err := writeCreds(*credsPath, c); err != nil {
-				return err
-			}
-			a.Post(func() { connect(c) })
-			return nil
-		}
-		a.SetLogin(login)
-	}
-	a.SetLoginHandler(func(workspace, cookie string) error {
+	login := func(workspace, cookie string) error {
 		c, err := slack.Login(context.Background(), workspace, cookie)
 		if err != nil {
 			return err
@@ -97,7 +81,13 @@ func main() {
 		}
 		a.Post(func() { connect(c) })
 		return nil
-	})
+	}
+	if err == nil {
+		connect(creds)
+		a.SetLoginHandler(login) // for "Sign out" → sign back in
+	} else {
+		a.SetLogin(login)
+	}
 	go func() {
 		if err := a.Run(); err != nil {
 			log.Fatal(err)
