@@ -460,14 +460,32 @@ func (c *Composer) scheduleMenu(anchor image.Rectangle) {
 	}
 }
 
-// schedule posts the current message at time t. core's ScheduleMessage
-// (via drafts) is wired once it lands on the backend branch; until then
-// the picker is usable but confirming reports it's pending.
+// schedule posts the current message at time t via core (chat scheduling
+// goes through drafts in core). Files aren't scheduled (Slack schedules
+// text/blocks only); a scheduled message clears the composer like a send.
 func (c *Composer) schedule(t time.Time) {
-	if c.ed.Empty() && c.att.Len() == 0 {
+	if c.edit != nil || c.ed.Empty() {
 		return
 	}
-	c.h.Toast("Scheduled for " + t.Format("Mon Jan 2 3:04 PM") + " (needs core.ScheduleMessage — landing)")
+	if !t.After(time.Now()) {
+		c.h.Toast("Pick a time in the future")
+		return
+	}
+	doc := c.ed.Doc().Clone()
+	text, blocks := doc.Mrkdwn(), doc.RichTextBlocks()
+	api, ch, ts := c.api, c.ch, c.ts
+	broadcast := c.broadcast && ts != ""
+	when := t.Format("Mon Jan 2 at 3:04 PM")
+	c.clearAfterSend()
+	go func() {
+		_, err := api.scheduleMessage(context.Background(), ch, ts, text, blocks, broadcast, t.Unix())
+		if err != nil {
+			c.later(func() { c.h.Toast("Couldn't schedule: " + err.Error()) })
+			c.restore(doc)
+			return
+		}
+		c.later(func() { c.h.Toast("Message scheduled for " + when) })
+	}()
 }
 
 // ---- sending ----
@@ -519,17 +537,17 @@ func (c *Composer) submit() {
 		}
 	}
 
-	files := c.att.Files()
+	prepared, rawFiles, hasFiles := c.att.uploadBatch()
 	broadcast := c.broadcast && ts != ""
 	c.clearAfterSend()
-	if len(files) > 0 {
+	if hasFiles {
 		c.att.SetUploading(true)
 		go func() {
 			comment := text
 			if doc.Empty() {
 				comment = ""
 			}
-			_, err := api.upload(context.Background(), core.UploadOpts{Channel: ch, ThreadTS: ts, Comment: comment, Files: files})
+			_, err := api.upload(context.Background(), core.UploadOpts{Channel: ch, ThreadTS: ts, Comment: comment, Files: rawFiles, Prepared: prepared})
 			c.later(func() {
 				c.att.SetUploading(false)
 				if err != nil {
