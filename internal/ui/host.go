@@ -221,7 +221,7 @@ func pageTitle(r Route) string {
 	case "dms":
 		return "DMs"
 	case "later":
-		return "Later"
+		return "To-dos"
 	case "files":
 		return "Files"
 	case "threads":
@@ -234,6 +234,8 @@ func pageTitle(r Route) string {
 		return "Directories"
 	case "search":
 		return "Search"
+	case "saved":
+		return "Saved"
 	case "unreads":
 		return "All unreads"
 	}

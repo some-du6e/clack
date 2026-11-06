@@ -43,6 +43,9 @@ type ModalOpts struct {
 	OnClose      func()
 	// NoClose hides the header close button.
 	NoClose bool
+	// PadX and HeadH override the side padding (default 28) and header
+	// height (default 70) in dp; Slack's link dialog uses 24 / 68.
+	PadX, HeadH float32
 }
 
 // Modal is a centered dialog over a dimmed backdrop.
@@ -87,6 +90,7 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 	th := m.h.Theme()
 	cl := colorsOf(th)
 	win := gtx.Constraints.Max
+	gtx.Constraints.Min = image.Point{} // robust to roots passing Exact constraints
 	if !m.focus {
 		gtx.Execute(key.FocusCmd{Tag: m})
 		m.focus = true
@@ -152,7 +156,13 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 		w = mw
 	}
 	padX := dp(gtx, 28)
+	if m.o.PadX > 0 {
+		padX = dp(gtx, m.o.PadX)
+	}
 	headH := dp(gtx, 70)
+	if m.o.HeadH > 0 {
+		headH = dp(gtx, m.o.HeadH)
+	}
 	footPad := dp(gtx, 20)
 	if m.o.Border {
 		footPad = dp(gtx, 24)
@@ -190,12 +200,12 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 	keyTarget(gtx, m, m.rect)
 
 	// header
-	at(gtx, pos.Add(image.Pt(padX, dp(gtx, 20))), func(gtx layout.Context) layout.Dimensions {
+	at(gtx, pos.Add(image.Pt(padX, (headH-dp(gtx, 30))/2)), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(w-padX-dp(gtx, 64), dp(gtx, 30))}
 		return para(gtx, th, 22, 30, theme.Black, cl.Fg, m.o.Title, 1)
 	})
 	if !m.o.NoClose {
-		at(gtx, pos.Add(image.Pt(w-dp(gtx, 20)-dp(gtx, 36), dp(gtx, 17))), func(gtx layout.Context) layout.Dimensions {
+		at(gtx, pos.Add(image.Pt(w-dp(gtx, 20)-dp(gtx, 36), (headH-dp(gtx, 36))/2)), func(gtx layout.Context) layout.Dimensions {
 			return iconButton(gtx, &m.close, "close", 36, 20, cl.Fg2, cl.BgHover, 8)
 		})
 	}

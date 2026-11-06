@@ -16,9 +16,22 @@ type coreAPI struct{ a *core.App }
 func (c coreAPI) self() core.User                         { return c.a.Self() }
 func (c coreAPI) user(id string) (core.User, bool)        { return c.a.User(id) }
 func (c coreAPI) users(ids []string) map[string]core.User { return c.a.Users(ids) }
-func (c coreAPI) conv(id string) (core.Conv, bool)        { return c.a.Conv(id) }
-func (c coreAPI) snapshot() core.Snapshot                 { return c.a.Snapshot() }
-func (c coreAPI) customEmoji() map[string]string          { return c.a.CustomEmoji() }
+func (c coreAPI) subscribePresence(ids []string)          { c.a.SubscribePresence(ids) }
+
+// conv returns the conversation, falling back to the store's name for
+// channels that aren't in the sidebar.
+func (c coreAPI) conv(id string) (core.Conv, bool) {
+	if cv, ok := c.a.Conv(id); ok {
+		return cv, true
+	}
+	r := c.a.ConvRef(id)
+	if r.Name == "" {
+		return core.Conv{}, false
+	}
+	return core.Conv{ID: r.ID, Name: r.Name, Kind: r.Kind, User: r.User}, true
+}
+func (c coreAPI) snapshot() core.Snapshot        { return c.a.Snapshot() }
+func (c coreAPI) customEmoji() map[string]string { return c.a.CustomEmoji() }
 func (c coreAPI) emoji(name string) (url, text string, ok bool) {
 	return c.a.Emoji(name)
 }
@@ -35,6 +48,14 @@ func (c coreAPI) typing(ch, threadTS string) { c.a.Typing(ch, threadTS) }
 
 func (c coreAPI) upload(ctx context.Context, o core.UploadOpts) ([]core.UploadedFile, error) {
 	return c.a.Upload(ctx, o)
+}
+
+func (c coreAPI) prepareUpload(ctx context.Context, f core.UploadFile, progress func(sent, total int64)) (core.PreparedUpload, error) {
+	return c.a.PrepareUpload(ctx, f, progress)
+}
+
+func (c coreAPI) scheduleMessage(ctx context.Context, ch, threadTS, text string, blocks json.RawMessage, broadcast bool, postAt int64) (core.ScheduledMessage, error) {
+	return c.a.ScheduleMessage(ctx, core.SendOpts{Channel: ch, ThreadTS: threadTS, Text: text, Blocks: blocks, Broadcast: broadcast}, postAt)
 }
 
 func (c coreAPI) searchUsers(ctx context.Context, q string) ([]core.User, error) {

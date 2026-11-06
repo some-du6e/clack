@@ -11,13 +11,19 @@ package popups
 // padding 16 12 12 16, avatar 36 radius 8, name 15/900 + "# channel" or
 // "Thread in # channel" 13px #5e5d60, time right 13px, body 15px on one
 // line ("… Show more" when longer), term highlight rgba(255,198,0,.18),
-// hover bg #f8f8f8.
+// hover bg #f8f8f8. Hovering a card floats Slack's action bar at its
+// top-right corner (search_hover.png): 104x40, white, radius 12, 1px ring
+// rgba(29,28,29,.13) + 0 1px 3px rgba(0,0,0,.08), padding 4, three 32px
+// buttons (radius 8, 18px #616061 icons, hover #f8f8f8) with tooltips:
+// Forward message…, Open in home, More actions (search_more.png menu).
+// Search results have no react / reply buttons.
 
 import (
 	"context"
 	"image"
 	"image/color"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -208,7 +214,16 @@ type srCard struct {
 	tokExp             bool
 	over               bool
 	lines              int
+
+	// hover action bar
+	bar, fwd, jump, kebab    widget.Clickable
+	tipFwd, tipJump, tipMore TipState
+	kebabR                   image.Rectangle // card coords, last frame
+	h                        int             // laid-out height incl. the gap below
 }
+
+// srBarShadow is the action bar's 0 1px 3px rgba(0,0,0,.08) on white.
+var srBarShadow = linearAlpha(rgba(0x000000, .08), rgb(0xffffff))
 
 // SearchView is the full search results page.
 type SearchView struct {
@@ -245,6 +260,10 @@ type SearchView struct {
 	btns   []widget.Clickable
 	listY  int
 	rowH   int
+
+	cardX    int // cards' left edge (view coords), last frame
+	menuCard int // card whose More actions menu is open (-1 none)
+	menuSeq  int
 }
 
 // NewSearchView builds the results page for query (as passed in the
@@ -257,7 +276,7 @@ func NewSearchView(h Host, query string) *SearchView {
 	}
 	query = strings.TrimSpace(query)
 	srRecordQuery(query)
-	v := &SearchView{h: h, q: srParse(query), sortBy: "score"}
+	v := &SearchView{h: h, q: srParse(query), sortBy: "score", menuCard: -1}
 	v.list.Axis = layout.Vertical
 	return v
 }
@@ -299,6 +318,7 @@ func (v *SearchView) reset() {
 	v.total, v.page, v.pages = 0, 0, 0
 	v.chans, v.people = nil, nil
 	v.err = ""
+	v.menuCard = -1
 	v.list.Position = layout.Position{}
 }
 
@@ -673,9 +693,17 @@ func (v *SearchView) handle(gtx layout.Context) {
 				RecordRecentConversation(m.Channel)
 				v.h.Navigate("c/" + m.Channel + "/t/" + ts)
 			}
-			if c.click.Clicked(gtx) {
+			// card body and "Open in home" both jump to the message
+			body, jump := c.click.Clicked(gtx), c.jump.Clicked(gtx)
+			if body || jump {
 				RecordRecentConversation(v.msgs[i].Channel)
 				v.h.Navigate(msgRoute(v.msgs[i]))
+			}
+			if c.fwd.Clicked(gtx) {
+				v.h.ShowOverlay(NewForwardModal(v.h, v.msgs[i]))
+			}
+			if c.kebab.Clicked(gtx) {
+				v.resultMenu(gtx, i)
 			}
 		}
 	case srTabChannels:
@@ -807,6 +835,7 @@ func (v *SearchView) Layout(gtx layout.Context) layout.Dimensions {
 		top = dp(gtx, 126)
 	}
 	v.listY = top
+	v.cardX = px
 	lsz := image.Pt(sz.X, maxInt(0, sz.Y-top))
 	at(gtx, image.Pt(0, top), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Exact(lsz)
@@ -958,7 +987,8 @@ func (v *SearchView) results(gtx layout.Context, th *theme.Theme, cl *Colors, px
 		d := v.list.Layout(gtx, len(v.cards), func(gtx layout.Context, i int) layout.Dimensions {
 			return at(gtx, image.Pt(px, 0), func(gtx layout.Context) layout.Dimensions {
 				d := v.card(gtx, th, cl, i, cw)
-				return layout.Dimensions{Size: image.Pt(px+cw, d.Size.Y+dp(gtx, 8))}
+				v.cards[i].h = d.Size.Y + dp(gtx, 8)
+				return layout.Dimensions{Size: image.Pt(px+cw, v.cards[i].h)}
 			})
 		})
 		if !v.loading && v.page < v.pages && v.list.Position.First+v.list.Position.Count >= len(v.cards)-3 {
@@ -1033,8 +1063,10 @@ func (v *SearchView) card(gtx layout.Context, th *theme.Theme, cl *Colors, i, w 
 	sz := image.Pt(w, h)
 	r := image.Rectangle{Max: sz}
 	rad := dp(gtx, 12)
+	hovered := c.click.Hovered() || c.more.Hovered() || c.chip.Hovered() || c.bar.Hovered() ||
+		c.fwd.Hovered() || c.jump.Hovered() || c.kebab.Hovered() || v.menuCard == i
 	bg := cl.Bg
-	if c.click.Hovered() || c.more.Hovered() || c.chip.Hovered() {
+	if hovered {
 		bg = cl.BgHover
 	}
 	rrect(gtx, r, rad, cl.Divider)
@@ -1068,7 +1100,7 @@ func (v *SearchView) card(gtx layout.Context, th *theme.Theme, cl *Colors, i, w 
 			return text(gtx, th, 15, theme.Black, cl.Fg, c.name)
 		})
 	})
-	srDrawWhere(gtx, th, cl, c.where, tx+d.Size.X+dp(gtx, 4), padT, right, nameH)
+	srDrawWhere(gtx, v.h, c.where, tx+d.Size.X+dp(gtx, 4), padT, right, nameH, bg)
 	at(gtx, image.Pt(tx, bodyY), func(gtx layout.Context) layout.Dimensions {
 		srDrawToks(gtx, th, cl, c.toks, lh, cl.Fg)
 		return layout.Dimensions{}
@@ -1100,7 +1132,149 @@ func (v *SearchView) card(gtx layout.Context, th *theme.Theme, cl *Colors, i, w 
 			return v.replyChip(gtx, th, cl, &c.chip, m.ReplyCount)
 		})
 	}
+	if hovered {
+		v.hoverBar(gtx, th, cl, c, w)
+	} else {
+		c.tipFwd, c.tipJump, c.tipMore = TipState{}, TipState{}, TipState{}
+	}
 	return layout.Dimensions{Size: sz}
+}
+
+// hoverBar draws the floating action bar at the top-right of a card of
+// width w. It is laid out after the card's content and click target, so
+// its clicks never reach the card (which would open the message).
+func (v *SearchView) hoverBar(gtx layout.Context, th *theme.Theme, cl *Colors, c *srCard, w int) {
+	bw, bh := dp(gtx, 104), dp(gtx, 40)
+	r := image.Rect(w-bw, 0, w, bh)
+	rad := dp(gtx, 12)
+	sh := srBarShadow
+	if th != nil && th.Dark {
+		sh = cl.Shadow
+	}
+	softShadow(gtx, r, rad, dp(gtx, 1), dp(gtx, 3), sh)
+	rrect(gtx, r, rad, cl.Ring)
+	rrect(gtx, r.Inset(1), rad-1, cl.Bg)
+	// the bar's own area swallows presses between the buttons
+	at(gtx, r.Min, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Exact(r.Size())
+		return c.bar.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Dimensions{Size: r.Size()}
+		})
+	})
+	pad, btn := dp(gtx, 4), dp(gtx, 32)
+	x := r.Min.X + pad
+	c.kebabR = image.Rect(x+2*btn, r.Min.Y+pad, x+3*btn, r.Min.Y+pad+btn)
+	for _, b := range [...]struct {
+		click       *widget.Clickable
+		tip         *TipState
+		icon, label string
+	}{
+		{&c.fwd, &c.tipFwd, "forward-msg", "Forward message…"},
+		{&c.jump, &c.tipJump, "external", "Open in home"},
+		{&c.kebab, &c.tipMore, "kebab", "More actions"},
+	} {
+		at(gtx, image.Pt(x, r.Min.Y+pad), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Min = image.Point{}
+			d := iconButton(gtx, b.click, b.icon, 32, 18, cl.Muted, cl.BgHover, 8)
+			Tooltip(gtx, th, b.tip, b.click.Hovered(), d.Size, Above, b.label, "")
+			return d
+		})
+		x += btn
+	}
+}
+
+// cardY is card i's top in view coordinates (from last frame's layout).
+func (v *SearchView) cardY(i int) (int, bool) {
+	first := v.list.Position.First
+	if i < first || i >= len(v.cards) {
+		return 0, false
+	}
+	y := v.listY - v.list.Position.Offset
+	for k := first; k < i; k++ {
+		y += v.cards[k].h
+	}
+	return y, true
+}
+
+// resultMenu opens the More actions menu of result i next to its kebab:
+// first row level with the button, clamped into the window (Slack lets it
+// overlap the button rather than flip to the far side); near the bottom it
+// opens upwards with its last row level with the button.
+func (v *SearchView) resultMenu(gtx layout.Context, i int) {
+	y, ok := v.cardY(i)
+	if !ok {
+		return
+	}
+	k := v.win(gtx, v.cards[i].kebabR.Add(image.Pt(v.cardX, y)))
+	pad := dp(gtx, 12)
+	// place() reads Max.Y for "below" and Min.Y for "above".
+	a := image.Rectangle{Min: image.Pt(k.Max.X, k.Max.Y+pad), Max: image.Pt(k.Max.X, k.Min.Y-pad)}
+	v.menuSeq++
+	seq := v.menuSeq
+	v.menuCard = i
+	v.h.ShowOverlay(NewMenuOpts(v.h, srResultItems(v.h, v.msgs[i]), MenuOpts{Anchor: a, OnClose: func() {
+		if v.menuSeq == seq {
+			v.menuCard = -1
+		}
+	}}))
+}
+
+// srResultItems is a search result's More actions menu (search_more.png):
+// Add to saved | Add a reminder ▸ | reply notifications | sep | Copy link |
+// Copy message | sep | Connect to apps ▸.
+func srResultItems(h Host, m core.Message) []MenuItem {
+	ch, ts := m.Channel, m.TS
+	root := m.ThreadTS
+	if root == "" {
+		root = ts
+	}
+	self := actSelfID(h)
+	link := m.Permalink
+	if link == "" {
+		link = permalink(h, ch, ts, m.ThreadTS)
+	}
+	remind := func(kind int) func() {
+		return func() {
+			due := actReminderDue(time.Now(), kind).Unix()
+			actDo(h, "Reminder set", func(ctx context.Context, a *core.App) error { return a.Save(ctx, ch, ts, due) })
+		}
+	}
+	// authors and repliers follow a thread by default
+	follow := MenuItem{Label: "Get notified about new replies", Icon: "bell", Do: func() {
+		actDo(h, "You'll be notified about new replies", func(ctx context.Context, a *core.App) error {
+			return a.SubscribeThread(ctx, ch, root, true)
+		})
+	}}
+	if self != "" && (m.User == self || slices.Contains(m.ReplyUsers, self)) {
+		follow = MenuItem{Label: "Turn off notifications for replies", Icon: "bell-off", Do: func() {
+			actDo(h, "You won't be notified about new replies", func(ctx context.Context, a *core.App) error {
+				return a.SubscribeThread(ctx, ch, root, false)
+			})
+		}}
+	}
+	return []MenuItem{
+		{Label: "Add to saved", Icon: "bookmark-add", Hint: "Ctrl+Shift+S", Do: func() {
+			actDo(h, "Saved for later", func(ctx context.Context, a *core.App) error { return a.Save(ctx, ch, ts, 0) })
+		}},
+		{Label: "Add a reminder", Icon: "remind", Sub: []MenuItem{
+			{Label: "In 30 mins", Do: remind(actRem30m)},
+			{Label: "In 1 hour", Do: remind(actRem1h)},
+			{Label: "In 3 hours", Do: remind(actRem3h)},
+			{Label: "Tomorrow at 9:00 AM", Do: remind(actRemTomorrow)},
+			{Label: "Monday at 9:00 AM", Do: remind(actRemMonday)},
+		}},
+		follow,
+		Sep(),
+		{Label: "Copy link", Icon: "link", Hint: "L", DoCtx: func(gtx layout.Context) {
+			copyText(gtx, link)
+			h.Toast("Link copied")
+		}},
+		{Label: "Copy message", Icon: "text-format", Hint: "Ctrl+C", DoCtx: func(gtx layout.Context) {
+			copyText(gtx, actMsgText(m))
+		}},
+		Sep(),
+		{Label: "Connect to apps", Sub: []MenuItem{{Label: "No apps", Disabled: true}}},
+	}
 }
 
 func (v *SearchView) replyChip(gtx layout.Context, th *theme.Theme, cl *Colors, c *widget.Clickable, n int) layout.Dimensions {

@@ -86,6 +86,10 @@ func rtLines(d *Doc) []rtSpan {
 }
 
 func rtBlank(d *Doc, s rtSpan) bool {
+	// A divider or heading line is real content even with no runes.
+	if s.line.Kind == Divider || isHeading(s.line.Kind) {
+		return false
+	}
 	for i := s.start; i < s.end; i++ {
 		if d.Attrs[i].Atom != nil || !unicode.IsSpace(d.Runes[i]) {
 			return false
@@ -163,6 +167,24 @@ type rtOutBlock struct {
 	Type     string `json:"type"`
 	BlockID  string `json:"block_id"`
 	Elements []any  `json:"elements"`
+}
+
+type rtOutHeaderText struct {
+	Type  string `json:"type"`
+	Text  string `json:"text"`
+	Emoji bool   `json:"emoji"`
+}
+
+type rtOutHeader struct {
+	Type    string          `json:"type"`
+	BlockID string          `json:"block_id"`
+	Text    rtOutHeaderText `json:"text"`
+	Level   int             `json:"level"`
+}
+
+type rtOutDivider struct {
+	Type    string `json:"type"`
+	BlockID string `json:"block_id"`
 }
 
 type rtOutSection struct { // rich_text_section and rich_text_quote
@@ -247,13 +269,56 @@ func rtStyleOut(s Style) *rtOutStyle {
 }
 
 // RichTextBlocks returns the `blocks` param for chat.postMessage and
-// chat.update: one rich_text block, as Slack's web client builds it. It
-// returns nil for a document with no content.
+// chat.update, shaped like Slack's web client builds it: a top-level array
+// mixing rich_text blocks (runs of paragraphs, lists, quotes and code) with
+// header blocks (one per heading line) and divider blocks. It returns nil
+// for a document with no content.
 func (d *Doc) RichTextBlocks() json.RawMessage {
 	ls := rtLines(d)
 	if len(ls) == 0 {
 		return nil
 	}
+	var out []any
+	var run []rtSpan // the current run of rich_text (non-heading/divider) lines
+	flush := func() {
+		if len(run) == 0 {
+			return
+		}
+		out = append(out, rtOutBlock{Type: "rich_text", BlockID: newBlockID(), Elements: d.rtElements(run)})
+		run = run[:0]
+	}
+	for _, s := range ls {
+		switch {
+		case isHeading(s.line.Kind):
+			flush()
+			level := 1
+			switch s.line.Kind {
+			case Header2:
+				level = 2
+			case Header3:
+				level = 3
+			}
+			out = append(out, rtOutHeader{
+				Type:    "header",
+				BlockID: newBlockID(),
+				Text:    rtOutHeaderText{Type: "plain_text", Text: d.rtPlain(s.start, s.end), Emoji: true},
+				Level:   level,
+			})
+		case s.line.Kind == Divider:
+			flush()
+			out = append(out, rtOutDivider{Type: "divider", BlockID: newBlockID()})
+		default:
+			run = append(run, s)
+		}
+	}
+	flush()
+	return rtMarshal(out)
+}
+
+// rtElements builds the inline elements of one rich_text block from a run of
+// consecutive non-heading, non-divider lines (grouped into sections, lists,
+// quotes and code blocks).
+func (d *Doc) rtElements(ls []rtSpan) []any {
 	els := []any{}
 	var cnt rtCounter
 	prevList := false
@@ -296,7 +361,7 @@ func (d *Doc) RichTextBlocks() json.RawMessage {
 		}
 		prevList = rtIsList(g.line.Kind)
 	}
-	return rtMarshal([]rtOutBlock{{Type: "rich_text", BlockID: newBlockID(), Elements: els}})
+	return els
 }
 
 func rtMarshal(v any) json.RawMessage {
@@ -562,6 +627,10 @@ func rtIsAutoLink(text, url string) bool {
 // ---------------------------------------------------------------------------
 // mrkdwn writer
 
+// rtDividerMrkdwn is the fallback-text rendering of a divider: ten box-drawing
+// horizontal rules on their own line.
+const rtDividerMrkdwn = "──────────"
+
 // Mrkdwn returns the fallback `text` of the message in Slack mrkdwn.
 // Underline has no mrkdwn form and is dropped.
 func (d *Doc) Mrkdwn() string {
@@ -571,6 +640,19 @@ func (d *Doc) Mrkdwn() string {
 	prevList := false
 	for _, g := range rtGroups(ls) {
 		switch g.line.Kind {
+		case Header1, Header2, Header3:
+			// A heading's notification text is its plain text, bolded.
+			for _, s := range g.lines {
+				if t := rtEscape(d.rtPlain(s.start, s.end)); t != "" {
+					out = append(out, "*"+t+"*")
+				} else {
+					out = append(out, "")
+				}
+			}
+		case Divider:
+			for range g.lines {
+				out = append(out, rtDividerMrkdwn)
+			}
 		case CodeBlock:
 			out = append(out, "```")
 			for _, s := range g.lines {
@@ -776,6 +858,9 @@ func (b *rtBuilder) blankLines(l Line, n int) {
 func (b *rtBuilder) done() *Doc {
 	d := b.d
 	for len(d.Lines) > 1 {
+		if k := d.Lines[0].Kind; k == Divider || isHeading(k) {
+			break
+		}
 		end := 0
 		for end < len(d.Runes) && d.Runes[end] != '\n' {
 			end++
@@ -788,6 +873,9 @@ func (b *rtBuilder) done() *Doc {
 		d.Lines = d.Lines[1:]
 	}
 	for len(d.Lines) > 1 {
+		if k := d.Lines[len(d.Lines)-1].Kind; k == Divider || isHeading(k) {
+			break
+		}
 		start := len(d.Runes)
 		for start > 0 && d.Runes[start-1] != '\n' {
 			start--
@@ -850,8 +938,13 @@ func DocFromRichtext(blocks []richtext.Block) *Doc {
 	b := rtNewBuilder()
 	for _, bl := range blocks {
 		switch bl.Kind {
-		case richtext.Paragraph, richtext.Section, richtext.Header:
+		case richtext.Paragraph, richtext.Section:
 			b.rtSpans(Line{Kind: Para}, bl.Spans, false)
+		case richtext.Header:
+			// richtext.Block carries no heading level; map to Big heading.
+			b.rtSpans(Line{Kind: Header1}, bl.Spans, false)
+		case richtext.Divider:
+			b.line(Line{Kind: Divider})
 		case richtext.Quote:
 			b.rtSpans(Line{Kind: Quote}, bl.Spans, false)
 		case richtext.Preformatted:
@@ -981,6 +1074,7 @@ type rtIn struct {
 	SkinTone    int             `json:"skin_tone"`
 	Range       string          `json:"range"`
 	Indent      int             `json:"indent"`
+	Level       int             `json:"level"` // header block level 1/2/3
 	Timestamp   json.RawMessage `json:"timestamp"`
 	Fallback    string          `json:"fallback"`
 	Value       string          `json:"value"`
@@ -1055,7 +1149,24 @@ func DocFromBlocksJSON(raw json.RawMessage, r AtomResolver) (*Doc, error) {
 	}
 	b := rtNewBuilder()
 	for _, bl := range bs {
-		if bl.Type != "rich_text" {
+		switch bl.Type {
+		case "header":
+			k := Header1
+			switch bl.Level {
+			case 2:
+				k = Header2
+			case 3:
+				k = Header3
+			}
+			b.line(Line{Kind: k})
+			b.text(bl.text(), Attr{})
+			continue
+		case "divider":
+			b.line(Line{Kind: Divider})
+			continue
+		case "rich_text":
+			// handled below
+		default:
 			continue
 		}
 		for i := range bl.Elements {

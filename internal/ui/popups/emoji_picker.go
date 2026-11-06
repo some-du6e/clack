@@ -174,6 +174,12 @@ type EmojiPicker struct {
 	prevID    int32
 	prevName  string
 	prevAlias string
+
+	// GIFs tab (emoji_gif.go)
+	gifMode      bool
+	gif          gifPanel
+	onGif        func(g Gif)
+	gifCh, gifTS string
 }
 
 // NewEmojiPicker opens the picker near the bottom center of the window.
@@ -615,6 +621,21 @@ func (p *EmojiPicker) Layout(gtx layout.Context) layout.Dimensions {
 	epCard(gtx, cl, th.Dark, p.rect, rad)
 	p.block.Layout(gtx, p.rect)
 
+	for i := range p.topTabs {
+		if p.topTabs[i].Clicked(gtx) {
+			p.setGifMode(i == 1)
+		}
+	}
+	if p.gifMode {
+		t := op.Offset(pos).Push(gtx.Ops)
+		cs := clipRRect(gtx, image.Rectangle{Max: sz}, rad)
+		p.layoutTop(gtx, th, cl, sz.X)
+		p.layoutGif(gtx, th, cl, sz)
+		cs.Pop()
+		t.Pop()
+		return layout.Dimensions{Size: win}
+	}
+
 	p.ensureRows(gtx)
 	p.keys(gtx)
 	if p.done {
@@ -664,16 +685,17 @@ func (p *EmojiPicker) layoutTop(gtx layout.Context, th *theme.Theme, cl *Colors,
 	fill(gtx, image.Rect(0, hh-maxInt(1, dp(gtx, 1)), w, hh), cl.Selected)
 	half := w / 2
 	for i := 0; i < 2; i++ {
-		if p.topTabs[i].Clicked(gtx) && i == 1 {
-			p.h.Toast("GIFs aren't supported yet")
-		}
 		x0, tw := 0, half
 		if i == 1 {
 			x0, tw = half, w-half
 		}
-		label, glyph, col := "Emoji", epGlyphEmojiTab, cl.Fg
+		active := (i == 1) == p.gifMode
+		label, col := "Emoji", cl.Fg2
 		if i == 1 {
-			label, glyph, col = "GIFs", epGlyphGif, cl.Fg2
+			label = "GIFs"
+		}
+		if active {
+			col = cl.Fg
 		}
 		at(gtx, image.Pt(x0, 0), func(gtx layout.Context) layout.Dimensions {
 			return clickBox(gtx, &p.topTabs[i], nil, func(gtx layout.Context) layout.Dimensions {
@@ -681,14 +703,14 @@ func (p *EmojiPicker) layoutTop(gtx layout.Context, th *theme.Theme, cl *Colors,
 				ig := dp(gtx, 20)
 				x := (tw - (ig + dp(gtx, 6) + lw)) / 2
 				at(gtx, image.Pt(x, (hh-ig)/2), func(gtx layout.Context) layout.Dimensions {
-					return emojiGlyph(gtx, glyph, 20, col)
+					return gifTabIcon(gtx, i, active, col)
 				})
 				at(gtx, image.Pt(x+ig+dp(gtx, 6), 0), func(gtx layout.Context) layout.Dimensions {
 					return vcenter(loose(gtx, image.Pt(lw+1, hh)), hh, func(gtx layout.Context) layout.Dimensions {
 						return text(gtx, th, 15, theme.Bold, col, label)
 					})
 				})
-				if i == 0 {
+				if active {
 					fill(gtx, image.Rect(0, hh-dp(gtx, 2), tw, hh), cl.Aubergine)
 				}
 				return layout.Dimensions{Size: image.Pt(tw, hh)}
@@ -718,7 +740,10 @@ func (p *EmojiPicker) layoutCats(gtx layout.Context, th *theme.Theme, cl *Colors
 					rrect(gtx, image.Rectangle{Max: s}, dp(gtx, 4), cl.BgHover)
 				}
 			}, func(gtx layout.Context) layout.Dimensions {
-				col := cl.Subtle
+				// Slack's inactive tabs are #868686, but Gio's linear-space
+				// antialiasing makes thin strokes read lighter; #616061
+				// matches the real client's look on screen.
+				col := cl.Muted
 				if i == active {
 					col = cl.Fg
 				}
@@ -967,7 +992,9 @@ func (p *EmojiPicker) layoutFooter(gtx layout.Context, th *theme.Theme, cl *Colo
 	if !ok {
 		p.prevID = -1
 		if p.addBtn.Clicked(gtx) {
-			p.h.Toast("Adding emoji isn't supported yet")
+			p.Dismiss()
+			p.h.ShowOverlay(NewAddEmojiModal(p.h))
+			return
 		}
 		at(gtx, image.Pt(dp(gtx, 14), (h-dp(gtx, 28))/2), func(gtx layout.Context) layout.Dimensions {
 			return Button(gtx, th, &p.addBtn, BtnOutline, BtnSmall, "Add Emoji", "", 85)

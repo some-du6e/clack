@@ -80,37 +80,33 @@ func dayLabel(t, now time.Time) string {
 	return s
 }
 
-// ago is "Last reply …" text: "just now", "5 minutes ago", "today at
-// 3:04 PM", "yesterday at …", "Nov 3rd at …".
+// ago is the "Last reply …" text, as Slack writes it (measured live):
+// "today at 3:23 PM", "yesterday at 9:05 AM", then "N days ago",
+// "N months ago", "N years ago".
 func ago(t, now time.Time) string {
-	d := now.Sub(t)
-	switch {
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		n := int(d / time.Minute)
-		if n == 1 {
-			return "1 minute ago"
-		}
-		return strconv.Itoa(n) + " minutes ago"
-	case sameDay(t, now):
-		n := int(d / time.Hour)
-		if n == 1 {
-			return "1 hour ago"
-		}
-		return strconv.Itoa(n) + " hours ago"
-	case sameDay(t, now.AddDate(0, 0, -1)):
+	if sameDay(t, now) || t.After(now) {
+		return "today at " + clock(t)
+	}
+	if sameDay(t, now.AddDate(0, 0, -1)) {
 		return "yesterday at " + clock(t)
 	}
-	n := int(d / (24 * time.Hour))
-	if n < 7 {
-		return strconv.Itoa(n) + " days ago"
+	days := int(now.Sub(t) / (24 * time.Hour))
+	if days < 2 {
+		days = 2
 	}
-	s := t.Format("Jan 2") + ordinal(t.Day())
-	if t.Year() != now.Year() {
-		s += t.Format(", 2006")
+	plural := func(n int, unit string) string {
+		if n == 1 {
+			return "1 " + unit + " ago"
+		}
+		return strconv.Itoa(n) + " " + unit + "s ago"
 	}
-	return s
+	switch {
+	case days < 30:
+		return plural(days, "day")
+	case days < 365:
+		return plural(days/30, "month")
+	}
+	return plural(days/365, "year")
 }
 
 // slackLink recognizes links to Slack messages and channels

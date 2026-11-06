@@ -250,6 +250,10 @@ func (e *Editor) newline() {
 		e.anchor, e.caret = lo, lo
 	} else {
 		pos := d.Insert(lo, "\n", Attr{})
+		// Headings and dividers don't continue: the new line is a paragraph.
+		if k := d.Lines[line].Kind; isHeading(k) || k == Divider {
+			d.Lines[line+1] = Line{}
+		}
 		e.anchor, e.caret = pos, pos
 	}
 	e.lastSpace = true

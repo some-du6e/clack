@@ -4,7 +4,6 @@ import (
 	"image"
 	"image/color"
 	"io"
-	"math"
 	"strings"
 
 	"gioui.org/f32"
@@ -286,11 +285,13 @@ func clipRRect(gtx layout.Context, r image.Rectangle, radius int) clip.Stack {
 
 // text draws one ellipsized line.
 func text(gtx layout.Context, th *theme.Theme, size float32, w font.Weight, c color.NRGBA, s string) layout.Dimensions {
+	gtx.Constraints.Min = image.Point{} // labels take their natural size
 	return th.Label(gtx, unit.Sp(size), w, c, s)
 }
 
 // para draws wrapping text.
 func para(gtx layout.Context, th *theme.Theme, size, lh float32, w font.Weight, c color.NRGBA, s string, maxLines int) layout.Dimensions {
+	gtx.Constraints.Min = image.Point{}
 	return th.Layout(gtx, theme.TextStyle{Size: unit.Sp(size), Weight: w, Color: c, LineHeight: unit.Sp(lh), MaxLines: maxLines}, s)
 }
 
@@ -552,39 +553,8 @@ func pt(x, y float32) f32.Point { return f32.Point{X: x, Y: y} }
 // instead of Slack's 96). linearAlpha returns c with its alpha adjusted so
 // that Gio's linear blend over bg produces the same pixel CSS would.
 
-func srgbToLinear(v uint8) float64 {
-	c := float64(v) / 255
-	if c <= 0.04045 {
-		return c / 12.92
-	}
-	return math.Pow((c+0.055)/1.055, 2.4)
-}
-
-func linearAlpha(c, bg color.NRGBA) color.NRGBA {
-	if c.A == 0 || c.A == 255 {
-		return c
-	}
-	a := float64(c.A) / 255
-	best, bestD := a, 0.0
-	for _, ch := range [][2]uint8{{c.R, bg.R}, {c.G, bg.G}, {c.B, bg.B}} {
-		lc, lb := srgbToLinear(ch[0]), srgbToLinear(ch[1])
-		d := math.Abs(lc - lb)
-		if d < 1e-3 || d <= bestD {
-			continue
-		}
-		want := float64(ch[0])*a + float64(ch[1])*(1-a)
-		lw := srgbToLinear(uint8(math.Round(want)))
-		best, bestD = (lw-lb)/(lc-lb), d
-	}
-	if best < 0 {
-		best = 0
-	}
-	if best > 1 {
-		best = 1
-	}
-	c.A = uint8(math.Round(best * 255))
-	return c
-}
+// linearAlpha is theme.LinearAlpha (moved into theme by ui-shell).
+func linearAlpha(c, bg color.NRGBA) color.NRGBA { return theme.LinearAlpha(c, bg) }
 
 func init() {
 	for _, p := range []struct {

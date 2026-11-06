@@ -40,7 +40,10 @@ func TestDetectTrigger(t *testing.T) {
 		{"x /rem", -1, false, 0, "", 0},
 		{"/remind me", -1, false, 0, "", 0},
 		{"line\n@a", -1, true, acUser, "a", 5},
-		{"@a b", -1, false, 0, "", 0},
+		{"@a b", -1, true, acUser, "a b", 0}, // mentions may contain spaces ("Karim Hacker")
+		{"@kar hac", -1, true, acUser, "kar hac", 0},
+		{"@a  b", -1, false, 0, "", 0}, // double space ends the mention
+		{"word @a b", -1, true, acUser, "a b", 5},
 		{"@kar,", -1, false, 0, "", 0},
 	}
 	for _, c := range cases {
