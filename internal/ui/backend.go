@@ -30,6 +30,7 @@ type backend struct {
 
 	selfID string
 	domain string
+	teamID string
 
 	tabCache  map[string][]chTab
 	bookmarks map[string][]core.Bookmark
@@ -148,6 +149,7 @@ func (b *backend) apply(a *App, s core.Snapshot) {
 	m := &b.m
 	b.selfID = s.Self.ID
 	b.domain = s.Team.Domain
+	b.teamID = s.Team.ID
 	m.TeamName = s.Team.Name
 	m.TeamIcon = s.Team.Icon
 	m.SelfID = s.Self.ID
@@ -396,24 +398,30 @@ func (b *backend) opened(ch string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(b.ctx, 20*time.Second)
 		defer cancel()
+		// Slack's tab bar (core.Tabs: canvases, lists, bookmarks, files…).
 		var tabs []chTab
-		bms, err := b.core.Bookmarks(ctx, ch)
+		var bms []core.Bookmark
+		ts, err := b.core.Tabs(ctx, ch)
 		if err != nil {
-			log.Printf("ui: bookmarks %s: %v", ch, err)
-		} else {
-			log.Printf("ui: bookmarks %s: %d", ch, len(bms))
+			log.Printf("ui: tabs %s: %v", ch, err)
 		}
-		if err == nil {
-			for _, bm := range bms {
-				if bm.ParentID != "" || bm.Title == "" {
-					continue
-				}
-				icon := "link"
-				if bm.Type == "canvas" || strings.Contains(bm.Link, "/docs/") {
-					icon = "canvas"
-				}
-				tabs = append(tabs, chTab{key: "bm:" + bm.ID, label: bm.Title, icon: icon})
+		for _, t := range ts {
+			if t.Type == "messages" {
+				continue
 			}
+			label := t.Title
+			if label == "" {
+				label = t.Label
+			}
+			icon := tabIcon(t.Type)
+			if t.Deleted {
+				icon = "trash"
+			}
+			if label == "" {
+				continue
+			}
+			tabs = append(tabs, chTab{key: "tab:" + t.ID, label: label, icon: icon, fileID: t.FileID})
+			bms = append(bms, t.Bookmarks...)
 		}
 		var members []string
 		info, ierr := b.core.ChannelInfo(ctx, ch)
@@ -459,6 +467,48 @@ func (b *backend) opened(ch string) {
 }
 
 func (b *backend) tabs(ch string) []chTab { return b.tabCache[ch] }
+
+func tabIcon(typ string) string {
+	switch typ {
+	case "canvas", "channel_canvas":
+		return "canvas"
+	case "list":
+		return "list-view"
+	case "bookmarks", "folder":
+		return "bookmark"
+	case "files":
+		return "files"
+	case "workflows":
+		return "workflow"
+	}
+	return "canvas"
+}
+
+// openTab opens a channel tab. Canvases and lists open in the browser
+// (no native canvas editor yet); the Bookmarks tab lists its links.
+func (b *backend) openTab(ch, key string) {
+	for _, t := range b.tabCache[ch] {
+		if t.key != key {
+			continue
+		}
+		if t.icon == "bookmark" && len(b.bookmarks[ch]) > 0 && b.app != nil {
+			var items []MenuItem
+			for _, bm := range b.bookmarks[ch] {
+				bm := bm
+				items = append(items, MenuItem{Label: bm.Title, Icon: "link", Do: func() { openURL(bm.Link) }})
+			}
+			b.app.menu(b.app.PointerPos(), items)
+			return
+		}
+		if t.fileID != "" && b.domain != "" {
+			openURL("https://" + b.domain + ".slack.com/docs/" + b.teamID + "/" + t.fileID)
+			return
+		}
+	}
+	if b.app != nil {
+		b.app.Toast("This tab opens in Slack")
+	}
+}
 
 func (b *backend) avatar(id string) string {
 	b.avMu.Lock()

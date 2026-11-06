@@ -330,10 +330,11 @@ func oneLine(s string) string {
 
 type chTab struct {
 	key, label, icon string
+	fileID           string
 }
 
 func (a *App) channelTabs(ch string) []chTab {
-	tabs := []chTab{{"messages", "Messages", "threads"}}
+	tabs := []chTab{{key: "messages", label: "Messages", icon: "threads"}}
 	if a.data != nil {
 		tabs = append(tabs, a.data.tabs(ch)...)
 	}
