@@ -209,6 +209,14 @@ type Directories struct {
 	menuID  string // channel whose Join/Leave caret menu is open
 	rowMenu dirDropdown
 	purp    map[string]string // plainPurpose cache
+	// Channel filters: scope (All / My channels: the viewer's channels
+	// from the client snapshot) and type (client-side over the loaded
+	// browse pages; Load more fetches further pages while filtering).
+	chanScope dirDropdown
+	chanType  dirDropdown
+	moreChans widget.Clickable
+	typeKey   dirSortKey
+	typeList  []core.ChannelHit
 
 	groups    async[[]core.Usergroup]
 	groupsQ   string
@@ -232,6 +240,8 @@ func NewDirectories(h Host) *Directories {
 		wantFocus: 3,
 	}
 	d.rowMenu.sel = -1
+	d.chanScope.labels = dirScopeLabels
+	d.chanType.labels = dirTypeLabels
 	for i := range d.srch {
 		d.srch[i] = newSearch(dirPlaceholders[i])
 		d.sorts[i].labels = dirSortLabels[i]
@@ -255,6 +265,7 @@ func (d *Directories) closeMenus() {
 		d.sorts[i].open = false
 	}
 	d.menuID, d.rowMenu.open, d.confirm = "", false, ""
+	d.chanScope.open, d.chanType.open = false, false
 }
 
 // Layout draws the view, filling the constraints.
@@ -344,6 +355,16 @@ func (d *Directories) update(gtx C) {
 	if d.sorts[t].update(gtx) && t == dirTabChannels {
 		d.load(t, q)
 	}
+	if t == dirTabChannels {
+		if d.chanScope.update(gtx) {
+			d.chanType.open = false
+			d.load(t, q)
+		}
+		if d.chanType.update(gtx) {
+			d.chanScope.open = false
+			d.chanL.Position = layout.Position{}
+		}
+	}
 	if d.action[t].Clicked(gtx) || d.heroBtn[t].Clicked(gtx) {
 		d.h.Toast(cdUnsupported)
 	}
@@ -368,7 +389,11 @@ func (d *Directories) load(tab int, q string) {
 		})
 	case dirTabChannels:
 		d.chanL.Position = layout.Position{}
-		d.loadChannels(q, 1)
+		if d.chanScope.sel == 1 {
+			d.loadMyChannels(q)
+		} else {
+			d.loadChannels(q, 1)
+		}
 	case dirTabGroups:
 		d.groupsQ = q
 		d.groupL.Position = layout.Position{}
@@ -409,6 +434,67 @@ func (d *Directories) loadChannels(q string, page int) {
 		}
 		return dirChans{list: append(prev, res.Channels...), total: res.Total, page: res.Page, pages: res.Pages, q: q}, nil
 	})
+}
+
+// loadMyChannels lists the viewer's channels from the client snapshot
+// (the "My channels" scope), matching q by name and sorted like browse.
+func (d *Directories) loadMyChannels(q string) {
+	c := d.h.Core()
+	sk := dirChanSortKeys[min(d.sorts[dirTabChannels].sel, len(dirChanSortKeys)-1)]
+	d.chans.load(d.h, false, func(ctx context.Context) (dirChans, error) {
+		lq := strings.ToLower(strings.TrimPrefix(q, "#"))
+		var out []core.ChannelHit
+		for _, cv := range c.Snapshot().Convs {
+			if cv.Kind != "channel" && cv.Kind != "private" {
+				continue
+			}
+			if lq != "" && !strings.Contains(strings.ToLower(cv.Name), lq) {
+				continue
+			}
+			out = append(out, core.ChannelHit{ID: cv.ID, Name: cv.Name, Kind: cv.Kind, IsMember: true, IsArchived: cv.IsArchived,
+				NumMembers: cv.NumMembers, Purpose: cv.Purpose, Topic: cv.Topic, Created: cv.Created})
+		}
+		sort.SliceStable(out, func(i, j int) bool {
+			a, b := out[i], out[j]
+			switch sk {
+			case "members":
+				if a.NumMembers != b.NumMembers {
+					return a.NumMembers > b.NumMembers
+				}
+			case "created":
+				if a.Created != b.Created {
+					return a.Created > b.Created
+				}
+			}
+			return strings.ToLower(a.Name) < strings.ToLower(b.Name)
+		})
+		return dirChans{list: out, total: len(out), page: 1, pages: 1, q: q}, nil
+	})
+}
+
+// typeFiltered applies the channel type filter to the loaded hits
+// (membership overrides don't affect it), cached per list and selection.
+func (d *Directories) typeFiltered(list []core.ChannelHit) []core.ChannelHit {
+	sel := d.chanType.sel
+	if sel == 0 || len(list) == 0 {
+		return list
+	}
+	k := dirSortKey{n: len(list), first: &list[0], sel: sel}
+	if k == d.typeKey {
+		return d.typeList
+	}
+	out := make([]core.ChannelHit, 0, len(list))
+	for _, h := range list {
+		switch {
+		case sel == 1 && (h.Kind == "private" || h.IsArchived),
+			sel == 2 && (h.Kind != "private" || h.IsArchived),
+			sel == 3 && !h.IsArchived:
+			continue
+		}
+		out = append(out, h)
+	}
+	d.typeKey, d.typeList = k, out
+	return out
 }
 
 // startJoin joins or leaves optimistically; pollOps reverts on failure.
@@ -635,7 +721,19 @@ func (d *Directories) filterBar(gtx C, t int) D {
 	return layout.Inset{Left: dirPad, Right: dirPad, Bottom: 16}.Layout(gtx, func(gtx C) D {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 		ch := make([]layout.FlexChild, 0, 2*len(dirFilters[t])+2)
-		for _, f := range dirFilters[t] {
+		for i, f := range dirFilters[t] {
+			if dd := d.filterMenu(t, i); dd != nil {
+				ch = append(ch,
+					layout.Rigid(func(gtx C) D {
+						dims := dirFilterBtn(&d.base, gtx, &dd.btn, f.icon, dd.labels[min(dd.sel, len(dd.labels)-1)], f.caret)
+						if dd.open {
+							dd.menu(&d.base, gtx, dims.Size, false)
+						}
+						return dims
+					}),
+					hgap(8))
+				continue
+			}
 			c := dirClick(d.fclk, dirTabLabels[t]+"/"+f.label)
 			if c.Clicked(gtx) {
 				d.h.Toast(cdUnsupported)
@@ -657,6 +755,26 @@ func (d *Directories) filterBar(gtx C, t int) D {
 		return row(gtx, layout.Middle, ch...)
 	})
 }
+
+// filterMenu returns the dropdown behind filter button i of tab t, or nil
+// for filters core can't apply yet.
+func (d *Directories) filterMenu(t, i int) *dirDropdown {
+	if t != dirTabChannels {
+		return nil
+	}
+	switch i {
+	case 0:
+		return &d.chanScope
+	case 1:
+		return &d.chanType
+	}
+	return nil
+}
+
+var (
+	dirScopeLabels = []string{"All channels", "My channels"}
+	dirTypeLabels  = []string{"Any channel type", "Public channels", "Private channels", "Archived channels"}
+)
 
 // dirFilterBtn: h 28, radius 8, white, 1px hairline, 13px bold label with
 // an optional leading icon and trailing 16px caret.
@@ -920,9 +1038,16 @@ func dirListState(gtx C, w W) D {
 func (d *Directories) chansTab(gtx C) D {
 	st, loaded, err := d.chans.get()
 	head := d.heads(dirTabChannels)
-	n := len(st.list)
+	list := d.typeFiltered(st.list)
+	n := len(list)
 	busy := d.chans.busy()
-	if p := d.chanL.Position; loaded && err == nil && !busy && st.page < st.pages && p.First+p.Count >= len(head)+n-5 {
+	filtering := d.chanType.sel != 0
+	more := loaded && err == nil && !busy && st.page < st.pages
+	if p := d.chanL.Position; more && !filtering && p.First+p.Count >= len(head)+n-5 {
+		d.loadChannels(st.q, st.page+1)
+		busy = true
+	}
+	if d.moreChans.Clicked(gtx) && more {
 		d.loadChannels(st.q, st.page+1)
 		busy = true
 	}
@@ -935,9 +1060,16 @@ func (d *Directories) chansTab(gtx C) D {
 		i -= len(head)
 		switch {
 		case i == body:
-			if busy && n > 0 {
+			if busy && (n > 0 || filtering) && loaded {
 				return layout.Inset{Top: 12, Bottom: 24}.Layout(gtx, func(gtx C) D {
 					return d.centered(gtx, 13, wReg, d.p.Muted, "Loading more channels…")
+				})
+			}
+			if filtering && more {
+				// Filtering is client-side: offer the next browse page
+				// instead of paging through the whole directory.
+				return layout.Inset{Top: 12, Bottom: 24}.Layout(gtx, func(gtx C) D {
+					return layout.Center.Layout(gtx, func(gtx C) D { return d.button(gtx, &d.moreChans, btnOutline, true, "Load more channels") })
 				})
 			}
 			return D{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(24))}
@@ -949,6 +1081,13 @@ func (d *Directories) chansTab(gtx C) D {
 			}
 			return dirListState(gtx, func(gtx C) D { return d.errorState(gtx, err, &d.retry) })
 		case n == 0:
+			if filtering || d.chanScope.sel == 1 {
+				body := "No channels on the loaded pages match this filter."
+				if d.chanScope.sel == 1 && !filtering {
+					body = "You haven’t joined any channels that match."
+				}
+				return dirListState(gtx, func(gtx C) D { return d.emptyState(gtx, "hash", "No matching channels", body, nil, "") })
+			}
 			if st.q == "" {
 				return dirListState(gtx, func(gtx C) D {
 					return d.emptyState(gtx, "hash", "No channels", "There aren’t any channels to browse yet.", nil, "")
@@ -959,7 +1098,7 @@ func (d *Directories) chansTab(gtx C) D {
 			})
 		}
 		return layout.Inset{Left: dirPad, Right: dirPad}.Layout(gtx, func(gtx C) D {
-			return d.chanRow(gtx, st.list[i], i == 0, i == n-1)
+			return d.chanRow(gtx, list[i], i == 0, i == n-1)
 		})
 	})
 }
