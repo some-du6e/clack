@@ -339,3 +339,12 @@ func tss(ms []slack.Message) string {
 	}
 	return strings.Join(out, ",")
 }
+
+func TestCommandsAppInfo(t *testing.T) {
+	a, f := testApp(t)
+	f.reply["commands.list"] = `{"ok":true,"commands":{"/give":{"name":"/give","type":"app","app":"A1","app_name":"Giver","icons":{"image_36":"https://a.example/36.png","image_72":"https://a.example/72.png","image_default":true}},"/me":{"name":"/me","type":"core"}}}`
+	cs, err := a.Commands(context.Background(), "")
+	if err != nil || len(cs) != 2 || cs[0].Name != "/give" || cs[0].AppName != "Giver" || cs[0].IconURL != "https://a.example/72.png" || cs[1].IconURL != "" {
+		t.Errorf("commands: %+v %v", cs, err)
+	}
+}

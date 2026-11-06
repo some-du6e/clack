@@ -359,6 +359,7 @@ type DraftOpts struct {
 	Text                  string
 	Blocks                json.RawMessage
 	FileIDs               []string
+	DateScheduled         int64 // set when editing a scheduled draft (keeps it scheduled)
 }
 
 // ScheduledMessage is a message waiting to be posted at PostAt (unix s).
@@ -384,6 +385,8 @@ type DMPage struct {
 
 type Command struct {
 	Name, Desc, Usage, Type, AppID string
+	AppName                        string // app commands: the app's display name
+	IconURL                        string // app commands: the app's icon (Slack CDN)
 }
 
 type CommandOpts struct {
