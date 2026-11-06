@@ -201,17 +201,23 @@ const (
 )
 
 // label draws one ellipsized line.
+// Text helpers drop the minimum height: Flex passes its cross-axis minimum
+// to children, and a stretched label would draw top-aligned instead of
+// being centered by the parent's alignment.
 func (b *base) label(gtx C, size unit.Sp, w font.Weight, col color.NRGBA, s string) D {
+	gtx.Constraints.Min.Y = 0
 	return b.th.Label(gtx, size, w, col, s)
 }
 
 // para draws wrapping text, at most maxLines lines (0 = unlimited).
 func (b *base) para(gtx C, size, lh unit.Sp, w font.Weight, col color.NRGBA, maxLines int, s string) D {
+	gtx.Constraints.Min.Y = 0
 	return b.th.Layout(gtx, theme.TextStyle{Size: size, Weight: w, Color: col, MaxLines: maxLines, LineHeight: lh}, s)
 }
 
 // centered draws one line centered in the available width.
 func (b *base) centered(gtx C, size unit.Sp, w font.Weight, col color.NRGBA, s string) D {
+	gtx.Constraints.Min.Y = 0
 	return b.th.Layout(gtx, theme.TextStyle{Size: size, Weight: w, Color: col, Align: text.Middle}, s)
 }
 
