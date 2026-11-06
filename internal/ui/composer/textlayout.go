@@ -166,6 +166,7 @@ type tlMetrics struct {
 	emoji          int
 	emojiGap       int
 	listIndent     int
+	Dp24, Dp3      int
 	markerGap      int
 	numberGap      int
 	bulletR        int
@@ -205,10 +206,12 @@ func tlMakeMetrics(m unit.Metric, st *EditorStyle) tlMetrics {
 		preLH:      max(m.Sp(lh*18/22), 1),
 		emoji:      m.Dp(es),
 		emojiGap:   px1,
-		listIndent: m.Dp(24),
-		markerGap:  m.Dp(11),
-		numberGap:  m.Dp(5),
-		bulletR:    max(m.Dp(2.5), 2),
+		listIndent: m.Dp(28),
+		Dp24:       m.Dp(24),
+		Dp3:        m.Dp(3),
+		markerGap:  m.Dp(15),
+		numberGap:  m.Dp(7),
+		bulletR:    max(m.Dp(3), 2),
 		quoteBar:   m.Dp(4),
 		quoteLeft:  m.Dp(16),
 		prePad:     m.Dp(8),
@@ -392,7 +395,7 @@ func (l *tlLayout) buildPara(d *Doc, p *tlPara, pi int, k tlKey) {
 	m := &l.m
 	switch p.kind {
 	case Bullet, Ordered:
-		p.left = m.listIndent * (min(max(p.indent, 0), 8) + 1)
+		p.left = tlListLeft(m, p.indent)
 	case Quote:
 		p.left = m.quoteLeft
 	case CodeBlock:
@@ -944,7 +947,12 @@ func (l *tlLayout) paintMarker(gtx layout.Context, p *tlPara, ln *tlLine, col co
 	if len(s.glyphs) == 0 {
 		return
 	}
-	x := float32(p.left-m.numberGap) - float32(s.width)/64 + float32(s.glyphs[0].X)/64
+	// Slack: a 24px marker box ending 3px before the text; decimal and
+	// alpha markers are left-aligned in it, roman ones right-aligned.
+	x := float32(p.left-m.Dp24-m.Dp3) + float32(s.glyphs[0].X)/64
+	if p.indent%3 == 2 {
+		x = float32(p.left-m.numberGap) - float32(s.width)/64 + float32(s.glyphs[0].X)/64
+	}
 	tlPaintGlyphs(gtx, l.sh, s.glyphs, f32.Pt(x, float32(ln.base)), col)
 }
 
@@ -1038,4 +1046,17 @@ func (l *tlLayout) paintPlaceholder(gtx layout.Context, txt string, col color.NR
 	}
 	x := float32(p.left) + float32(s.glyphs[0].X)/64
 	tlPaintGlyphs(gtx, l.sh, s.glyphs, f32.Pt(x, float32(l.lines[0].base)), col)
+}
+
+// tlListLeft is the text x of a list item: Slack indents 26, 56, 84, 112,
+// then 28 per level.
+func tlListLeft(m *tlMetrics, indent int) int {
+	indent = min(max(indent, 0), 8)
+	switch indent {
+	case 0:
+		return m.Dp24 + m.Dp3*2/3
+	case 1:
+		return m.listIndent * 2
+	}
+	return m.listIndent * (indent + 1)
 }
