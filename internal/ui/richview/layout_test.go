@@ -1166,7 +1166,7 @@ func TestGenericFileCard(t *testing.T) {
 	v := layoutAt(st, doc(fileBlock(f)), Options{}, 600)
 	d := &v.d
 	cards := boxesOf(d, bBorder)
-	if len(cards) != 1 ||cards[0].r != image.Rect(0, 0, 426, 62) {
+	if len(cards) != 1 || cards[0].r != image.Rect(0, 0, 426, 62) {
 		t.Fatalf("card %+v", cards)
 	}
 	var icon *box
@@ -1234,7 +1234,7 @@ func TestMutedAndCompact(t *testing.T) {
 		t.Errorf("muted color %v", f.col)
 	}
 	v = layoutAt(st, doc(para(txt("short preview"))), Options{Compact: true}, 400)
-	if f := findFrag(t, &v.d, "short");f.size != 13 || f.bot-f.top != 20 {
+	if f := findFrag(t, &v.d, "short"); f.size != 13 || f.bot-f.top != 20 {
 		t.Errorf("compact size %d line %d", f.size, f.bot-f.top)
 	}
 }
