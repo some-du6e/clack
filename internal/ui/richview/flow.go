@@ -568,8 +568,9 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 					if it.deco >= 0 {
 						decoRuns = append(decoRuns, placed{item: q, frag: len(d.frags), x: float32(x0) + x, w: head.adv, line: len(d.lines), decoI: it.deco})
 					}
-					emit(it, head, head.adv, p0, p0+int32(nb))
-					p0 += int32(nb)
+					p1 := min(p0+int32(nb), it.p1) // labels without plain text keep empty ranges
+					emit(it, head, head.adv, p0, p1)
+					p0 = p1
 					sh = tail
 					if sh != nil {
 						finishLine()

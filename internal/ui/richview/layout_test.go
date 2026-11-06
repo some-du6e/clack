@@ -271,8 +271,8 @@ func TestHardBreaks(t *testing.T) {
 	if n := len(v.d.lines); n != 3 {
 		t.Fatalf("%d lines, want 3", n)
 	}
-	if v.d.size.Y != 66 {
-		t.Errorf("height %d, want 66", v.d.size.Y)
+	if v.d.size.Y != 52 {
+		t.Errorf("height %d, want 52 (an empty line is 8px)", v.d.size.Y)
 	}
 	if string(v.d.plain) != "a\n\nb" {
 		t.Errorf("plain = %q", v.d.plain)
@@ -626,12 +626,12 @@ func TestHeader(t *testing.T) {
 	st := newTestStyle()
 	v := layoutAt(st, doc(rt.Block{Kind: rt.Header, Spans: []rt.Span{txt("Big title")}}), Options{}, 400)
 	for _, s := range []string{"Big", "title"} {
-		if f := findFrag(t, &v.d, s); f.size != 18 {
-			t.Errorf("header frag %q size %d, want 18", s, f.size)
+		if f := findFrag(t, &v.d, s); f.size != 15 {
+			t.Errorf("header frag %q size %d, want 15", s, f.size)
 		}
 	}
-	if v.d.size.Y != 26 {
-		t.Errorf("header height %d, want 26 (24 line + 2)", v.d.size.Y)
+	if v.d.size.Y != 22 {
+		t.Errorf("header height %d, want 22", v.d.size.Y)
 	}
 	body := layoutAt(st, doc(para(txt("Big title"))), Options{}, 400)
 	if findFrag(t, &v.d, "title").w <= findFrag(t, &body.d, "title").w {
@@ -895,8 +895,8 @@ func TestUnfurlCard(t *testing.T) {
 	if card == nil {
 		t.Fatalf("no rounded card; boxes %+v", d.boxes)
 	}
-	if card.r.Min != (image.Point{}) || card.r.Dx() != 660 {
-		t.Errorf("card %v, want width capped at 660", card.r)
+	if card.r.Min != (image.Point{}) || card.r.Dx() != 716 {
+		t.Errorf("card %v, want width capped at 716", card.r)
 	}
 	if card.r.Dy() < 84 {
 		t.Errorf("card height %d < 84 with a thumbnail", card.r.Dy())
@@ -911,7 +911,7 @@ func TestUnfurlCard(t *testing.T) {
 		t.Fatalf("%d imgs, want the thumbnail", len(d.imgs))
 	}
 	th := d.imgs[0]
-	if th.url != att.Thumb.URL || th.r.Max.X != card.r.Max.X-1 || th.r.Min.X != card.r.Max.X-108 {
+	if th.url != att.Thumb.URL || th.r.Max.X != card.r.Max.X-1 || th.r.Min.X != card.r.Max.X-106 {
 		t.Errorf("thumbnail %v not on the right edge of %v", th.r, card.r)
 	}
 	if th.radii[0] != 0 || th.radii[3] != 0 || th.radii[1] == 0 {
@@ -1166,7 +1166,7 @@ func TestGenericFileCard(t *testing.T) {
 	v := layoutAt(st, doc(fileBlock(f)), Options{}, 600)
 	d := &v.d
 	cards := boxesOf(d, bBorder)
-	if len(cards) != 1 || cards[0].r != image.Rect(0, 0, 426, 64) {
+	if len(cards) != 1 ||cards[0].r != image.Rect(0, 0, 426, 62) {
 		t.Fatalf("card %+v", cards)
 	}
 	var icon *box
@@ -1230,11 +1230,11 @@ func TestTombstone(t *testing.T) {
 func TestMutedAndCompact(t *testing.T) {
 	st := newTestStyle()
 	v := layoutAt(st, doc(para(txt("joined the channel"))), Options{Muted: true}, 400)
-	if f := findFrag(t, &v.d, "joined"); f.col != st.Palette.Text2 {
+	if f := findFrag(t, &v.d, "joined"); f.col != st.Palette.Text3 {
 		t.Errorf("muted color %v", f.col)
 	}
 	v = layoutAt(st, doc(para(txt("short preview"))), Options{Compact: true}, 400)
-	if f := findFrag(t, &v.d, "short"); f.size != 13 || f.bot-f.top != 18 {
+	if f := findFrag(t, &v.d, "short");f.size != 13 || f.bot-f.top != 20 {
 		t.Errorf("compact size %d line %d", f.size, f.bot-f.top)
 	}
 }
@@ -1248,7 +1248,7 @@ func TestEditedLabel(t *testing.T) {
 	if ed.line != hello.line || ed.x <= hello.x+hello.w {
 		t.Errorf("(edited) not after the text on the same line")
 	}
-	if ed.col != st.Palette.Text2 || ed.size != 13 {
+	if ed.col != st.Palette.Edited || ed.size != 13 {
 		t.Errorf("(edited) color %v size %d", ed.col, ed.size)
 	}
 	if ed.p0 != ed.p1 {
