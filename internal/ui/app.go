@@ -25,8 +25,10 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
-// Overlay is anything drawn above the shell (popups.Overlay satisfies it).
-type Overlay interface {
+// Overlay is anything drawn above the shell. An alias of an unnamed
+// interface (like popups.Overlay) so ShowOverlay's signature is identical
+// across every package's Host interface.
+type Overlay = interface {
 	Layout(gtx layout.Context) layout.Dimensions
 	Dismissed() bool
 }
