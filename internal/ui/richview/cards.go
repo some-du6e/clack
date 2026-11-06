@@ -392,12 +392,16 @@ func fileName(f *richtext.File) string {
 func (l *lay) file(f *richtext.File, x, y, w int) int {
 	switch {
 	case f.IsImage && f.Thumb != nil:
+		nh := l.fileNameRow(f, x, y, w)
 		tg := l.d.addTarget(target{kind: tFile, file: f})
-		h := l.image(f.Thumb, x, y, min(w, l.dp(360)), l.dp(360), l.dp(8), tg)
-		last := l.d.imgs[len(l.d.imgs)-1].r
-		l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: last, radius: l.dp(8), stroke: rgba(0, 0, 0, 0.1), bw: l.dp(1), target: -1, layer: 1})
-		l.plainAdd(fileName(f))
-		return h
+		iw, ih := fitSize(f.Thumb.W, f.Thumb.H, w, l.dp(360), l)
+		bh := max(ih, l.dp(108))
+		r := image.Rect(x, y+nh, x+iw, y+nh+bh)
+		rad := l.dp(8)
+		l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: f.Thumb.URL, radii: [4]int{rad, rad, rad, rad}, target: tg, px: max(iw, ih), fit: bh != ih})
+		l.d.hits = append(l.d.hits, hit{r: r, t: tg})
+		l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: r, radius: rad, stroke: l.st.Palette.Border, bw: l.dp(1), target: -1, layer: 1})
+		return nh + bh
 	case f.IsVideo:
 		return l.video(f, x, y, w)
 	case f.IsAudio:
@@ -406,6 +410,23 @@ func (l *lay) file(f *richtext.File, x, y, w int) int {
 		return l.snippet(f, x, y, w)
 	}
 	return l.genericFile(f, x, y, w)
+}
+
+// fileNameRow is the "name.png ▾" line above image and video files.
+func (l *lay) fileNameRow(f *richtext.File, x, y, w int) int {
+	p := &l.st.Palette
+	fs := l.small(p.Text)
+	fs.col.A = uint8(float32(fs.col.A) * 0.7)
+	fs.lineH = l.dp(22)
+	fs.maxLines, fs.ellipsis = 1, true
+	name := fileName(f)
+	k := l.faceFor(fs.face, fs.size, 0)
+	nw := min(int(l.measure(name, k)+0.999), w-l.dp(28))
+	l.plainFlow(name, x, y, nw+l.dp(2), &fs, -1)
+	cx := x + nw + l.dp(4) + l.dp(10)
+	cy := y + l.dp(11)
+	l.d.boxes = append(l.d.boxes, box{kind: bCaret, r: image.Rect(cx-l.dp(4), cy-l.dp(2), cx+l.dp(4), cy+l.dp(3)), fill: p.Text3, target: -1})
+	return l.dp(26)
 }
 
 // gallery lays out several image files as square tiles.
@@ -447,6 +468,8 @@ func (l *lay) gallery(files []*richtext.File, x, y, w int) int {
 
 func (l *lay) video(f *richtext.File, x, y, w int) int {
 	p := &l.st.Palette
+	nh := l.fileNameRow(f, x, y, w)
+	y += nh
 	tg := l.d.addTarget(target{kind: tFile, file: f})
 	var h int
 	var r image.Rectangle
@@ -471,8 +494,7 @@ func (l *lay) video(f *richtext.File, x, y, w int) int {
 		fs.noSelect = true
 		l.plainFlow(txt, br.Min.X+l.dp(6), br.Min.Y, tw, &fs, -1)
 	}
-	l.plainAdd(fileName(f))
-	return h
+	return nh + h
 }
 
 // playOverlay draws the round play button centered on r.

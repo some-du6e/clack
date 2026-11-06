@@ -118,6 +118,15 @@ func drawBox(ops *op.Ops, b *box) {
 		p.LineTo(f32.Pt(r.x0, r.y1))
 		p.Close()
 		paint.FillShape(ops, b.fill, clip.Outline{Path: p.End()}.Op())
+	case bCaret:
+		var p clip.Path
+		p.Begin(ops)
+		r := fr(b.r)
+		p.MoveTo(f32.Pt(r.x0, r.y0))
+		p.LineTo(f32.Pt(r.x1, r.y0))
+		p.LineTo(f32.Pt((r.x0+r.x1)/2, r.y1))
+		p.Close()
+		paint.FillShape(ops, b.fill, clip.Outline{Path: p.End()}.Op())
 	case bChevron:
 		var p clip.Path
 		p.Begin(ops)

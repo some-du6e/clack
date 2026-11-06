@@ -943,8 +943,8 @@ func TestFileImage(t *testing.T) {
 		t.Fatalf("%d imgs", len(v.d.imgs))
 	}
 	im := v.d.imgs[0]
-	if im.r != image.Rect(0, 0, 360, 180) {
-		t.Errorf("image %v, want 360x180 (fit, aspect kept)", im.r)
+	if im.r != image.Rect(0, 26, 600, 326) {
+		t.Errorf("image %v, want 600x300 below the name row (fit, aspect kept)", im.r)
 	}
 	if im.target < 0 || v.d.targets[im.target].kind != tFile || v.d.targets[im.target].file != f {
 		t.Errorf("image target %d", im.target)

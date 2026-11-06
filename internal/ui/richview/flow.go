@@ -51,6 +51,7 @@ const (
 	bSquare // small filled square
 	bPlay   // play triangle
 	bChevron
+	bCaret // small filled down-pointing triangle
 )
 
 type box struct {
@@ -73,7 +74,8 @@ type imgPrim struct {
 	url    string
 	radii  [4]int // NW NE SE SW
 	target int16
-	px     int // requested decode size
+	px     int  // requested decode size
+	fit    bool // contain (letterbox) instead of cover
 }
 
 type targetKind uint8
@@ -277,6 +279,10 @@ func (l *lay) addText(s string, fs *flowStyle, k faceKey, col color.NRGBA, st ri
 		case isCJK(r):
 			flush(i)
 			start = i
+			flush(i + sz)
+			l.items[len(l.items)-1].brk = true
+		case r == '-' && start >= 0 && i+1 < len(s) && s[i+1] != '-' && s[i+1] != ' ':
+			// Browsers may break after a hyphen inside a word.
 			flush(i + sz)
 			l.items[len(l.items)-1].brk = true
 		default:
