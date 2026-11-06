@@ -132,13 +132,17 @@ func (a *App) Mute(ctx context.Context, ch string, muted bool) error {
 
 // SetNotifyPrefs writes a conversation's notification override. Desktop
 // and Mobile: everything | mentions_dms | nothing ("" leaves them alone).
+// Verified: with sync=true Slack makes mobile follow desktop and rejects an
+// explicit mobile value (cannot_sync), so a mobile level equal to desktop
+// (or unset) is sent synced, and a different one unsynced.
 func (a *App) SetNotifyPrefs(ctx context.Context, ch string, n ChannelNotify) error {
 	var ps []notifyPref
+	synced := n.Desktop != "" && (n.Mobile == "" || n.Mobile == n.Desktop)
 	if n.Desktop != "" {
-		ps = append(ps, notifyPref{Name: "desktop", Value: n.Desktop, Sync: true})
+		ps = append(ps, notifyPref{Name: "desktop", Value: n.Desktop, Sync: synced})
 	}
-	if n.Mobile != "" {
-		ps = append(ps, notifyPref{Name: "mobile", Value: n.Mobile, Sync: true})
+	if n.Mobile != "" && !synced {
+		ps = append(ps, notifyPref{Name: "mobile", Value: n.Mobile})
 	}
 	ps = append(ps,
 		notifyPref{Name: "follow_all_threads", Value: strconv.FormatBool(n.FollowAllThreads)},
