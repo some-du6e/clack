@@ -2,6 +2,7 @@ package popups
 
 import (
 	"image"
+	"image/color"
 	"strconv"
 	"strings"
 	"sync"
@@ -293,11 +294,139 @@ func containImage(gtx layout.Context, img paint.ImageOp, sz image.Point) layout.
 	return layout.Dimensions{Size: sz}
 }
 
-// msgRoute is the Navigate route for a message (thread replies open the
-// thread).
+// msgRoute is the Navigate route that jumps to a message: "c/<id>/m/<ts>"
+// scrolls to and flashes it (ChannelView.Highlight); thread replies open
+// their thread ("c/<id>/t/<root>"), per docs/NATIVE.md.
 func msgRoute(m core.Message) string {
 	if m.ThreadTS != "" && m.ThreadTS != m.TS {
 		return "c/" + m.Channel + "/t/" + m.ThreadTS
 	}
-	return "c/" + m.Channel
+	if m.TS == "" {
+		return "c/" + m.Channel
+	}
+	return "c/" + m.Channel + "/m/" + m.TS
+}
+
+// ---- group DM tile and facepiles ----
+//
+// Measured from Slack's CSS (c-small_mpim_entity__mpim_avatars, search
+// autocomplete variant): a box of 24 (search rows) holding the first other
+// member's avatar (20px, radius 4) at the top-left, and a 16px member-count
+// chip (radius 4, 11px/700, #454447 on white) at (8,8) cut out of the avatar
+// by a 2px ring in the row background. Selected rows draw the chip dark
+// (#1d1c1d) with white text.
+
+// mpimOthers returns the members of a group DM other than the viewer.
+func mpimOthers(h Host, members []string) []string {
+	self := ""
+	if h.Core() != nil {
+		self = h.Core().Self().ID
+	}
+	out := make([]string, 0, len(members))
+	for _, id := range members {
+		if id != self {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// mpimTile draws Slack's group-DM icon at the origin in a box of size dp
+// (24 in search/switcher rows, 20 in compact pickers). rowBg is the colour
+// behind the row (for the cut-out ring); selected darkens the chip.
+func mpimTile(gtx layout.Context, h Host, members []string, size float32, rowBg color.NRGBA, selected bool) layout.Dimensions {
+	th := h.Theme()
+	cl := colorsOf(th)
+	others := mpimOthers(h, members)
+	box := dp(gtx, size)
+	av := size * 20 / 24
+	url := ""
+	if len(others) > 0 {
+		if u, ok := lookupUser(h, others[0]); ok {
+			url = u.Avatar
+		}
+	}
+	avPx := dp(gtx, av)
+	if url != "" {
+		if img, ok := h.Images().Get(url, avPx); ok {
+			theme.Image(gtx, img, image.Pt(avPx, avPx), dp(gtx, 4))
+		} else {
+			rrect(gtx, image.Rect(0, 0, avPx, avPx), dp(gtx, 4), cl.Selected)
+		}
+	} else {
+		rrect(gtx, image.Rect(0, 0, avPx, avPx), dp(gtx, 4), cl.Selected)
+	}
+	chip := dp(gtx, size*16/24)
+	off := box - chip
+	r := image.Rect(off, off, off+chip, off+chip)
+	ring := dp(gtx, 2)
+	rrect(gtx, r.Inset(-ring), dp(gtx, 4)+ring, rowBg)
+	bg, fg := cl.Bg, cl.Fg2
+	if selected {
+		bg, fg = cl.Fg, cl.Bg
+	}
+	rrect(gtx, r, dp(gtx, 4), bg)
+	if !selected {
+		stroke(gtx, r, dp(gtx, 4), 1, cl.Ring)
+	}
+	n := strconv.Itoa(maxInt(1, len(others)))
+	fs := float32(11) * size / 24
+	if fs < 9 {
+		fs = 9
+	}
+	tw := textW(gtx, th, fs, theme.Bold, n)
+	at(gtx, image.Pt(off+(chip-tw)/2, off), func(gtx layout.Context) layout.Dimensions {
+		return vcenter(gtx, chip, func(gtx layout.Context) layout.Dimensions {
+			return text(gtx, th, fs, theme.Bold, fg, n)
+		})
+	})
+	return layout.Dimensions{Size: image.Pt(box, box)}
+}
+
+// facepile draws up to max overlapping avatars (Slack's facepileAvatar:
+// radius 6, 2px ring in rowBg, -4px overlap) of size dp; extra members
+// show as a "+N" chip. Returns the width used.
+func facepile(gtx layout.Context, h Host, ids []string, size float32, max int, rowBg color.NRGBA) layout.Dimensions {
+	th := h.Theme()
+	cl := colorsOf(th)
+	px := dp(gtx, size)
+	step := px - dp(gtx, 4)
+	ring := dp(gtx, 2)
+	n := len(ids)
+	if n > max {
+		n = max
+	}
+	x := 0
+	for i := 0; i < n; i++ {
+		u, _ := lookupUser(h, ids[i])
+		r := image.Rect(x, 0, x+px, px)
+		rrect(gtx, r.Inset(-ring), dp(gtx, 6)+ring, rowBg)
+		at(gtx, r.Min, func(gtx layout.Context) layout.Dimensions {
+			if u.Avatar != "" {
+				if img, ok := h.Images().Get(u.Avatar, px); ok {
+					return theme.Image(gtx, img, image.Pt(px, px), dp(gtx, 6))
+				}
+			}
+			rrect(gtx, image.Rect(0, 0, px, px), dp(gtx, 6), cl.Selected)
+			return layout.Dimensions{Size: image.Pt(px, px)}
+		})
+		x += step
+	}
+	if extra := len(ids) - n; extra > 0 {
+		s := "+" + strconv.Itoa(extra)
+		tw := textW(gtx, th, 12, theme.Bold, s)
+		w := maxInt(px, tw+dp(gtx, 8))
+		r := image.Rect(x, 0, x+w, px)
+		rrect(gtx, r.Inset(-ring), dp(gtx, 6)+ring, rowBg)
+		rrect(gtx, r, dp(gtx, 6), cl.Selected)
+		at(gtx, image.Pt(x+(w-tw)/2, 0), func(gtx layout.Context) layout.Dimensions {
+			return vcenter(gtx, px, func(gtx layout.Context) layout.Dimensions {
+				return text(gtx, th, 12, theme.Bold, cl.Fg2, s)
+			})
+		})
+		x += w
+	} else if n > 0 {
+		x += px - step
+	}
+	return layout.Dimensions{Size: image.Pt(x, px)}
 }
