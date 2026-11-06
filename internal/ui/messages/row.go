@@ -198,6 +198,12 @@ func (r *row) layout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	if rc.header {
 		// avatar
 		ar := image.Rectangle{Min: image.Pt(padX, y+dp(gtx, 4)), Max: image.Pt(padX+dp(gtx, mt.avatar), y+dp(gtx, 4)+dp(gtx, mt.avatar))}
+		// Clicked before Layout: Clickable.Layout consumes pending clicks.
+		if r.avatarBtn.Clicked(gtx) || r.nameBtn.Clicked(gtx) {
+			if m.User != "" {
+				rc.h.OpenProfile(rc.origin(image.Pt(cx, y+dp(gtx, 22))), m.User)
+			}
+		}
 
 		at(gtx, ar.Min.X, ar.Min.Y, func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Exact(ar.Size())
@@ -206,11 +212,6 @@ func (r *row) layout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 				return layout.Dimensions{Size: ar.Size()}
 			})
 		})
-		if r.avatarBtn.Clicked(gtx) || r.nameBtn.Clicked(gtx) {
-			if m.User != "" {
-				rc.h.OpenProfile(rc.origin(image.Pt(cx, y+dp(gtx, 22))), m.User)
-			}
-		}
 		y += r.nameLine(gtx, rc, cx, y, cw)
 	} else if rc.hovered {
 		// hover timestamp in the gutter, right-aligned to the avatar column
@@ -331,16 +332,16 @@ func (r *row) failedLine(gtx layout.Context, rc *rowCtx, x, y int) int {
 		})
 		xx += d.Size.X
 	}
-	link(&r.retryBtn, "Retry")
-	d = at(gtx, xx, y+dp(gtx, 2), func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, s, " · ") })
-	xx += d.Size.X
-	link(&r.discardBtn, "Delete")
 	if r.retryBtn.Clicked(gtx) && rc.onRetry != nil {
 		rc.onRetry(r)
 	}
 	if r.discardBtn.Clicked(gtx) && rc.onDiscard != nil {
 		rc.onDiscard(r)
 	}
+	link(&r.retryBtn, "Retry")
+	d = at(gtx, xx, y+dp(gtx, 2), func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, s, " · ") })
+	xx += d.Size.X
+	link(&r.discardBtn, "Delete")
 	return lh + dp(gtx, 4)
 }
 
@@ -474,15 +475,15 @@ func (r *row) broadcastLine(gtx layout.Context, rc *rowCtx, x, y int) int {
 	h := dp(gtx, 18)
 	s := textStyle{size: 13, col: c.Text2, lineH: 18}
 	pre := "replied to a thread: "
+	if r.broadcastBtn.Clicked(gtx) {
+		rc.h.OpenThread(r.m.Channel, r.m.ThreadTS)
+	}
 	pd := at(gtx, x, y+dp(gtx, 4), func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, s, pre) })
 	at(gtx, x+pd.Size.X, y+dp(gtx, 4), func(gtx layout.Context) layout.Dimensions {
 		return r.broadcastBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return label(gtx, rc.th, textStyle{size: 13, col: c.Link, lineH: 18}, "View thread")
 		})
 	})
-	if r.broadcastBtn.Clicked(gtx) {
-		rc.h.OpenThread(r.m.Channel, r.m.ThreadTS)
-	}
 	return h + dp(gtx, 4)
 }
 
@@ -565,6 +566,14 @@ func (r *row) reactions(gtx layout.Context, rc *rowCtx, x, y, w int) int {
 		cy += ph + gap
 	}
 	r.addRect = image.Rect(cx, cy, cx+aw, cy+ph)
+	if r.addReact.Clicked(gtx) {
+		rr := r
+		rc.h.OpenEmojiPicker(rc.origin(image.Pt(cx, cy)), func(name string) {
+			if rc.onReact != nil {
+				rc.onReact(rr, name, true)
+			}
+		})
+	}
 	if rc.hovered {
 		at(gtx, cx, cy, func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Exact(r.addRect.Size())
@@ -583,14 +592,6 @@ func (r *row) reactions(gtx layout.Context, rc *rowCtx, x, y, w int) int {
 				})
 				return layout.Dimensions{Size: rr.Size()}
 			})
-		})
-	}
-	if r.addReact.Clicked(gtx) {
-		rr := r
-		rc.h.OpenEmojiPicker(rc.origin(image.Pt(cx, cy)), func(name string) {
-			if rc.onReact != nil {
-				rc.onReact(rr, name, true)
-			}
 		})
 	}
 	return cy + ph - y
