@@ -2,11 +2,15 @@ package ui
 
 import (
 	"image"
+	"image/color"
 	"strings"
 
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+	"gioui.org/unit"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
@@ -253,12 +257,76 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	// topic (13px muted) in the remaining space.
 	if conv != nil && conv.Topic != "" && right-x > gtx.Dp(40) {
 		at(gtx, image.Pt(x, 0), image.Pt(right-x-gtx.Dp(12), h), func(gtx layout.Context) layout.Dimensions {
-			return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
-				return a.th.Label(gtx, 13, theme.Regular, c.FgMuted, oneLine(conv.Topic))
-			})
+			if len(conv.TopicSpans) == 0 {
+				return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
+					return a.th.Label(gtx, 13, theme.Regular, c.FgMuted, oneLine(conv.Topic))
+				})
+			}
+			return a.inlineSpans(gtx, conv.TopicSpans, 13, c.FgMuted, h)
 		})
 	}
 	return layout.Dimensions{Size: sz}
+}
+
+// inlineSpans draws rich spans on one line (topic, previews): text, links
+// and mentions as labels, emoji as images; ellipsized at the max width.
+func (a *App) inlineSpans(gtx layout.Context, spans []richtext.Span, size unit.Sp, col color.NRGBA, h int) layout.Dimensions {
+	maxW := gtx.Constraints.Max.X
+	x := 0
+	es := gtx.Sp(size * 18 / 13)
+	ell := a.th.Measure(gtx, size, theme.Regular, "…")
+	for _, s := range spans {
+		if s.Kind == richtext.Break {
+			break
+		}
+		if s.Kind == richtext.Emoji && s.URL != "" {
+			if x+es > maxW {
+				break
+			}
+			at(gtx, image.Pt(x, (h-es)/2), image.Pt(es, es), func(gtx layout.Context) layout.Dimensions {
+				if img, ok := a.images.Get(s.URL, es*2); ok {
+					return theme.Image(gtx, img, image.Pt(es, es), 0)
+				}
+				return layout.Dimensions{Size: image.Pt(es, es)}
+			})
+			x += es + gtx.Dp(1)
+			continue
+		}
+		txt := strings.ReplaceAll(s.Text, "\n", " ")
+		if i := strings.IndexByte(txt, '\n'); i >= 0 {
+			txt = txt[:i]
+		}
+		if txt == "" {
+			continue
+		}
+		w := theme.Bold
+		if s.Style&richtext.Bold == 0 {
+			w = theme.Regular
+		}
+		fg := col
+		switch s.Kind {
+		case richtext.Link, richtext.User, richtext.Channel, richtext.Usergroup, richtext.Broadcast:
+			fg = a.th.C.Link
+		}
+		tw := a.th.Measure(gtx, size, w, txt)
+		trunc := x+tw > maxW
+		if trunc {
+			tw = maxW - x - ell
+			if tw <= 0 {
+				break
+			}
+		}
+		at(gtx, image.Pt(x, 0), image.Pt(tw+ell, h), func(gtx layout.Context) layout.Dimensions {
+			return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
+				return a.th.Layout(gtx, theme.TextStyle{Size: size, Weight: w, Italic: s.Style&richtext.Italic != 0, Color: fg, MaxLines: 1}, txt)
+			})
+		})
+		x += tw
+		if trunc {
+			break
+		}
+	}
+	return layout.Dimensions{Size: image.Pt(maxW, h)}
 }
 
 func oneLine(s string) string {

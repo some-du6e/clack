@@ -104,6 +104,8 @@ func (b *backend) start(a *App) {
 			b.booted = time.Now()
 			if a.router.Current() == "" {
 				a.openDefault()
+			} else if ch := a.router.Current().Channel(); ch != "" {
+				b.opened(ch) // restored route: fetch tabs + facepile
 			}
 			b.saveCache()
 		})
@@ -160,7 +162,7 @@ func (b *backend) apply(a *App, s core.Snapshot) {
 			continue
 		}
 		ci := &convInfo{ID: c.ID, Name: c.Name, Kind: c.Kind, User: c.User, Topic: c.Topic,
-			NumMembers: c.NumMembers, Members: c.Members, Muted: c.Muted}
+			NumMembers: c.NumMembers, Members: c.Members, Muted: c.Muted, TopicSpans: firstSpans(c.TopicDoc)}
 		if old := m.Convs[c.ID]; old != nil && ci.NumMembers == 0 {
 			ci.NumMembers = old.NumMembers
 			if len(ci.Members) == 0 {
@@ -210,6 +212,16 @@ func (b *backend) apply(a *App, s core.Snapshot) {
 	b.recount()
 	m.version++
 	a.Invalidate()
+}
+
+// firstSpans returns the inline spans of a parsed text's first block.
+func firstSpans(bs []richtext.Block) []richtext.Span {
+	for _, b := range bs {
+		if len(b.Spans) > 0 {
+			return b.Spans
+		}
+	}
+	return nil
 }
 
 func defaultSectionName(t string) string {
@@ -431,6 +443,7 @@ func (b *backend) opened(ch string) {
 				}
 				if ierr == nil && info.Conv.Topic != "" {
 					c.Topic = info.Conv.Topic
+					c.TopicSpans = firstSpans(info.Conv.TopicDoc)
 				}
 			}
 			a.Invalidate()
