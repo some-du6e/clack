@@ -242,7 +242,7 @@ func drawOverlays(gtx layout.Context, h *host) {
 	live := ovs[:0]
 	for _, o := range ovs {
 		g := gtx
-		g.Constraints = layout.Exact(gtx.Constraints.Max)
+		g.Constraints = layout.Constraints{Max: gtx.Constraints.Max} // like the ui root
 		o.Layout(g)
 		if !o.Dismissed() {
 			live = append(live, o)

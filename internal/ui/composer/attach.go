@@ -488,7 +488,7 @@ func attOneDecimal(f float64) string {
 // window coordinates.
 func (a *attachments) Menu(anchor image.Rectangle) {
 	items := []popups.MenuItem{
-		{Label: "Upload from your computer", Icon: "upload", Hint: "Ctrl+U", Do: a.Pick},
+		{Label: "Upload from your computer", Icon: "upload", Do: a.Pick},
 	}
 	if attClipboardSupported() {
 		items = append(items, popups.MenuItem{Label: "Paste image from clipboard", Icon: "image", Do: func() { a.pasteImage(true) }})
