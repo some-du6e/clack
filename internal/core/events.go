@@ -200,6 +200,19 @@ func (a *App) handle(ev slack.Event) {
 			}
 			a.S.Unlock()
 		}
+	case "saved_added", "saved_updated", "saved_deleted":
+		a.onSavedEvent(ctx, ev.Type, ev.Raw)
+	case "draft_create", "draft_update", "draft_delete", "draft_send":
+		a.onDraftEvent(ev.Type, ev.Raw)
+	case "activity":
+		a.onActivityEvent(ctx, ev.Raw)
+	case "bookmark_added", "bookmark_removed", "channel_updated", "channel_tab_added", "channel_tab_removed":
+		// the channel tab bar changed: the UI re-reads Tabs / Bookmarks
+		a.emit(Event{Type: "tabs", Channel: ch, Name: ev.Type, Raw: ev.Raw})
+	case "thread_subscribed", "thread_unsubscribed":
+		a.onThreadSubscription(ev.Raw, ev.Type == "thread_subscribed")
+	case "star_added", "star_removed":
+		a.onStarEvent(ev.Raw, ev.Type == "star_added")
 	default:
 		if strings.HasPrefix(ev.Type, "sh_") || ev.Type == "huddle_invite" {
 			a.emit(Event{Type: "huddle", Name: ev.Type, Channel: ch, Raw: ev.Raw})
@@ -309,23 +322,22 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	}
 	a.EnsureUsers(ctx, referencedUsers([]slack.Message{m}))
 	isReply := m.ThreadTS != "" && m.ThreadTS != m.TS
+	// Echo of our own optimistic send: swap the pending row instead of
+	// announcing a second message.
+	if a.confirmPending(ch, &m) {
+		if isTopLevel(&m) {
+			a.S.NoteMessage(ch, &m, false)
+		}
+		return
+	}
+	if a.wasConfirmed(&m) { // late echo after the API reply confirmed it
+		a.putLocal(ch, m)
+		a.emitUpdate(ch, &m)
+		return
+	}
 	if isReply {
 		a.S.AddReply(ch, m)
-		// bump the parent's reply metadata locally (message_replied may lag)
-		if upd, ok := a.S.Mutate(ch, m.ThreadTS, func(x *slack.Message) {
-			x.ReplyCount++
-			x.LatestReply = m.TS
-			for _, u := range x.ReplyUsers {
-				if u == m.User {
-					return
-				}
-			}
-			if m.User != "" {
-				x.ReplyUsers = append(x.ReplyUsers, m.User)
-			}
-		}); ok {
-			a.emitUpdate(ch, &upd)
-		}
+		a.bumpParent(ch, &m) // message_replied may lag
 	}
 	if !isReply || m.Subtype == "thread_broadcast" {
 		a.S.Upsert(ch, m)

@@ -26,10 +26,11 @@ type fakeSlack struct {
 	calls []string     // method names
 	forms []url.Values // their params
 	reply map[string]string
+	hooks map[string]func(url.Values) // run before replying (e.g. inject a realtime echo)
 }
 
 func newFake(t *testing.T) *fakeSlack {
-	f := &fakeSlack{reply: map[string]string{}}
+	f := &fakeSlack{reply: map[string]string{}, hooks: map[string]func(url.Values){}}
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		method := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
@@ -37,7 +38,11 @@ func newFake(t *testing.T) *fakeSlack {
 		f.calls = append(f.calls, method)
 		f.forms = append(f.forms, r.PostForm)
 		body, ok := f.reply[method]
+		hook := f.hooks[method]
 		f.mu.Unlock()
+		if hook != nil {
+			hook(r.PostForm)
+		}
 		if !ok {
 			body = `{"ok":false,"error":"not_in_test"}`
 		}
