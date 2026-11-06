@@ -86,8 +86,8 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 	}
 	p := &l.st.Palette
 	y0 := y
-	if w > l.dp(700) {
-		w = l.dp(700)
+	if w > l.dp(600) {
+		w = l.dp(600)
 	}
 	if len(a.Pretext) > 0 {
 		fs := l.bodyStyle()
@@ -98,13 +98,13 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 	}
 	bar := l.dp(4)
 	bi := len(l.d.boxes)
-	barCol := parseColor(a.Color, p.QuoteBar)
+	barCol := parseColor(a.Color, p.Placeholder)
 	l.d.boxes = append(l.d.boxes, box{kind: bFill, fill: barCol, radius: l.dp(8), target: -1})
 	cx := x + bar + l.dp(12)
 	cw := x + w - cx
 	thumbW := 0
 	if a.Thumb != nil && a.Image == nil {
-		thumbW = l.dp(75)
+		thumbW = l.dp(80)
 		cw -= thumbW + l.dp(12)
 	}
 	cy := y
@@ -262,8 +262,8 @@ func (l *lay) iconRow(icon, label string, x, y, w, iconPx int, weight font.Weigh
 // unfurl is the 2026 rounded link-preview card with a right-side thumbnail.
 func (l *lay) unfurl(a *richtext.Attachment, x, y, w int) int {
 	p := &l.st.Palette
-	if w > l.dp(660) {
-		w = l.dp(660)
+	if w > l.dp(716) {
+		w = l.dp(716)
 	}
 	pad := l.dp(12)
 	bi := len(l.d.boxes)
@@ -275,7 +275,7 @@ func (l *lay) unfurl(a *richtext.Attachment, x, y, w int) int {
 	l.d.boxes = append(l.d.boxes, box{kind: bBorder, fill: p.Panel, stroke: p.Border, bw: l.dp(1), radius: l.dp(12), target: cardT, hover: p.BorderHover})
 	thumbW := 0
 	if a.Thumb != nil || (a.Image != nil && a.Image.W > 0 && a.Image.W < 300) {
-		thumbW = l.dp(108)
+		thumbW = l.dp(106)
 	}
 	cx := x + pad
 	cw := w - 2*pad - thumbW
@@ -285,15 +285,16 @@ func (l *lay) unfurl(a *richtext.Attachment, x, y, w int) int {
 		fs.face.Weight = font.Bold
 		fs.col = p.Text
 		fs.maxLines, fs.ellipsis = 2, true
-		var tg int16 = cardT
-		l.addSpansTarget(a.Title, &fs, tg)
+		fs.lineH = l.dp(18.75)
+		l.addSpansTarget(a.Title, &fs, cardT)
 		h, _ := l.flow(cx, cy, cw, &fs)
-		cy += h
+		cy += h + l.dp(4)
 		l.plainAdd("\n")
 	}
 	if len(a.Text) > 0 {
-		fs := l.small(p.Text)
-		fs.maxLines, fs.ellipsis = 3, true
+		fs := l.small(p.CardText)
+		fs.lineH = l.dp(16.25)
+		fs.maxLines, fs.ellipsis = 2, true
 		for i := range a.Text {
 			if i > 0 {
 				l.addText(" ", &fs, l.faceFor(fs.face, fs.size, 0), fs.col, 0, -1, -1)
@@ -321,21 +322,22 @@ func (l *lay) unfurl(a *richtext.Attachment, x, y, w int) int {
 	// service line at the bottom
 	if a.ServiceName != "" {
 		cy += l.dp(4)
-		fs := l.small(p.Text2)
+		fs := l.small(p.CardFooter)
+		fs.lineH = l.dp(16.25)
 		ix := cx
 		if a.ServiceIcon != "" {
 			s := l.dp(16)
-			l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(ix, cy+1, ix+s, cy+1+s), url: a.ServiceIcon, radii: [4]int{l.dp(3), l.dp(3), l.dp(3), l.dp(3)}, target: -1, px: s})
-			ix += s + l.dp(6)
+			l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(ix, cy, ix+s, cy+s), url: a.ServiceIcon, radii: [4]int{l.dp(4), l.dp(4), l.dp(4), l.dp(4)}, target: -1, px: s})
+			ix += s + l.dp(8)
 		}
 		fs.maxLines, fs.ellipsis = 1, true
 		h, _ := l.plainFlow(a.ServiceName, ix, cy, cx+cw-ix, &fs, -1)
-		cy += max(h, l.dp(18))
+		cy += max(h, l.dp(16))
 	}
 	cy += pad
 	h := cy - y
-	if thumbW > 0 && h < l.dp(84) {
-		h = l.dp(84)
+	if thumbW > 0 && h < l.dp(106) {
+		h = l.dp(106)
 	}
 	r := image.Rect(x, y, x+w, y+h)
 	l.d.boxes[bi].r = r
@@ -408,7 +410,7 @@ func (l *lay) file(f *richtext.File, x, y, w int) int {
 
 // gallery lays out several image files as square tiles.
 func (l *lay) gallery(files []*richtext.File, x, y, w int) int {
-	gap := l.dp(4)
+	gap := l.dp(8)
 	n := len(files)
 	tile := l.dp(180)
 	if n == 2 {
@@ -416,6 +418,9 @@ func (l *lay) gallery(files []*richtext.File, x, y, w int) int {
 	}
 	if tile*2+gap > w {
 		tile = (w - gap) / 2
+	}
+	if tile < 1 {
+		tile = 1
 	}
 	cx, cy := x, y
 	for i, f := range files {
@@ -519,13 +524,13 @@ func (l *lay) audio(f *richtext.File, x, y, w int) int {
 
 func (l *lay) fileIcon(f *richtext.File, x, y, s int) {
 	p := &l.st.Palette
-	bg := p.FileIconBg
+	bg, fg := p.FileIconBg, p.FileIconText
 	label := strings.ToUpper(f.Type)
 	switch strings.ToLower(f.Type) {
 	case "pdf":
-		bg = p.FileIconPDF
+		bg, fg = p.FileIconPDF, rgb(255, 255, 255)
 	case "zip", "gzip", "tar", "rar", "7z":
-		bg = p.FileIconZip
+		bg, fg = p.FileIconZip, rgb(255, 255, 255)
 	}
 	if len(label) > 4 {
 		label = label[:4]
@@ -535,7 +540,7 @@ func (l *lay) fileIcon(f *richtext.File, x, y, s int) {
 	}
 	r := image.Rect(x, y, x+s, y+s)
 	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: l.dp(8), fill: bg, target: -1})
-	fs := flowStyle{face: font.Font{Typeface: l.st.Face, Weight: font.Black}, size: l.sp(10), lineH: l.dp(12), col: p.FileIconText, emoji: l.dp(12), maxLines: 1, noSelect: true}
+	fs := flowStyle{face: font.Font{Typeface: l.st.Face, Weight: font.Black}, size: l.sp(10), lineH: l.dp(12), col: fg, emoji: l.dp(12), maxLines: 1, noSelect: true}
 	k := l.faceFor(fs.face, fs.size, 0)
 	tw := int(l.measure(label, k) + 0.5)
 	l.plainFlow(label, x+(s-tw)/2, y+(s-fs.lineH)/2, s, &fs, -1)
@@ -545,16 +550,17 @@ func (l *lay) genericFile(f *richtext.File, x, y, w int) int {
 	p := &l.st.Palette
 	cw := min(w, l.dp(426))
 	pad := l.dp(12)
-	ic := l.dp(40)
-	h := ic + 2*pad
+	ic := l.dp(36)
+	h := ic + 2*pad + l.dp(2)
 	tg := l.d.addTarget(target{kind: tFile, file: f})
 	l.cardFrame(x, y, cw, h, tg)
 	l.fileIcon(f, x+pad, y+pad, ic)
 	tx := x + pad + ic + pad
 	fs := l.bodyStyle()
 	fs.face.Weight = font.Bold
+	fs.size, fs.lineH = l.sp(16), l.dp(20)
 	fs.maxLines, fs.ellipsis = 1, true
-	l.plainFlow(fileName(f), tx, y+pad, x+cw-tx-pad, &fs, tg)
+	l.plainFlow(fileName(f), tx, y+pad-l.dp(1), x+cw-tx-pad, &fs, tg)
 	meta := f.PrettyType
 	if meta == "" {
 		meta = strings.ToUpper(f.Type)
@@ -567,7 +573,7 @@ func (l *lay) genericFile(f *richtext.File, x, y, w int) int {
 	}
 	ms := l.small(p.Text2)
 	ms.maxLines, ms.ellipsis, ms.noSelect = 1, true, true
-	l.plainFlow(meta, tx, y+pad+l.dp(22), x+cw-tx-pad, &ms, -1)
+	l.plainFlow(meta, tx, y+pad+l.dp(20), x+cw-tx-pad, &ms, -1)
 	return h
 }
 

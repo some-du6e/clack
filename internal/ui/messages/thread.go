@@ -59,8 +59,8 @@ func (v *ThreadView) Layout(gtx layout.Context) layout.Dimensions {
 
 func (v *ThreadView) header(gtx layout.Context, th *theme.Theme, c *colors, w, hh int) {
 	px := dp(gtx, 16)
-	tsT := textStyle{size: 18, weight: theme.Black, col: c.Text, lineH: 24}
-	d := at(gtx, px, (hh-dp(gtx, 24))/2, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, tsT, "Thread") })
+	tsT := textStyle{size: 15, weight: theme.Black, col: c.Text, lineH: 22}
+	d := at(gtx, px, (hh-dp(gtx, 22))/2, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, tsT, "Thread") })
 	name := ""
 	if app := v.h.Core(); app != nil {
 		if cv, ok := app.Conv(v.ch); ok {
@@ -83,7 +83,7 @@ func (v *ThreadView) header(gtx layout.Context, th *theme.Theme, c *colors, w, h
 		})
 	}
 	// close button
-	bs := dp(gtx, 32)
+	bs := dp(gtx, 28)
 	if v.s.closeBtn.Clicked(gtx) {
 		v.h.CloseSecondary()
 	}
@@ -91,14 +91,13 @@ func (v *ThreadView) header(gtx layout.Context, th *theme.Theme, c *colors, w, h
 		gtx.Constraints = layout.Exact(image.Pt(bs, bs))
 		return v.s.closeBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			if v.s.closeBtn.Hovered() {
-				rrect(gtx.Ops, image.Rectangle{Max: image.Pt(bs, bs)}, dp(gtx, 6), c.CloseHover)
+				rrect(gtx.Ops, image.Rectangle{Max: image.Pt(bs, bs)}, dp(gtx, 8), c.CloseHover)
 			}
-			is := dp(gtx, 18)
+			is := dp(gtx, 20)
 			at(gtx, (bs-is)/2, (bs-is)/2, func(gtx layout.Context) layout.Dimensions {
-				return icons.Get("close")(gtx, unit.Dp(18), c.Text2)
+				return icons.Get("close")(gtx, unit.Dp(20), c.Text3)
 			})
 			return layout.Dimensions{Size: image.Pt(bs, bs)}
 		})
 	})
-	fill(gtx.Ops, image.Rect(0, hh-dp(gtx, 1), w, hh), c.HeaderBorder)
 }

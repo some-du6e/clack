@@ -472,14 +472,14 @@ func (s *listState) layoutItem(gtx layout.Context, h Host, rc *rowCtx, i int) la
 	case itDay:
 		return s.dayDivider(gtx, h, c, it.day, rc.now, w)
 	case itUnread:
-		hh := dp(gtx, mt.unreadH)
-		ly := hh / 2
-		fill(gtx.Ops, image.Rect(0, ly, w, ly+dp(gtx, 1)), c.NewLine)
-		s := textStyle{size: 13, weight: theme.Bold, col: c.NewLine, lineH: 18}
+		// Slack's divider is 0 tall: a 1px line with "New" centered on it at
+		// the right end (padding 0 4, margin-right 15).
+		hh := dp(gtx, 1)
+		s := textStyle{size: 13, weight: theme.Bold, col: c.NewLine, lineH: 19.5}
 		sz := measure(gtx, h.Theme(), s, "New")
-		lx := w - dp(gtx, mt.padX) - sz.X - dp(gtx, 8)
-		fill(gtx.Ops, image.Rect(lx-dp(gtx, 4), ly-dp(gtx, 9), w-dp(gtx, mt.padX)+dp(gtx, 4), ly+dp(gtx, 9)), c.Bg)
-		at(gtx, lx, ly-dp(gtx, 9), func(gtx layout.Context) layout.Dimensions { return label(gtx, h.Theme(), s, "New") })
+		lx := w - dp(gtx, 15) - dp(gtx, 4) - sz.X
+		fill(gtx.Ops, image.Rect(0, 0, lx-dp(gtx, 4), hh), c.NewLine)
+		at(gtx, lx, -dp(gtx, 10), func(gtx layout.Context) layout.Dimensions { return label(gtx, h.Theme(), s, "New") })
 		return layout.Dimensions{Size: image.Pt(w, hh)}
 	case itLoading:
 		gg := gtx
@@ -488,16 +488,17 @@ func (s *listState) layoutItem(gtx layout.Context, h Host, rc *rowCtx, i int) la
 	case itIntro:
 		return s.intro(gtx, h, c, w)
 	case itReplies:
-		hh := dp(gtx, 36)
+		// 18 tall, margin 4 0, padding-left 16; count then a hairline.
+		hh := dp(gtx, 26)
 		n := it.idx
 		txt := "1 reply"
 		if n != 1 {
 			txt = itoa(n) + " replies"
 		}
-		st := textStyle{size: 13, col: c.Text2, lineH: 18}
-		d := at(gtx, dp(gtx, mt.padX), (hh-dp(gtx, 18))/2, func(gtx layout.Context) layout.Dimensions { return label(gtx, h.Theme(), st, txt) })
-		lx := dp(gtx, mt.padX) + d.Size.X + dp(gtx, 8)
-		fill(gtx.Ops, image.Rect(lx, hh/2, w-dp(gtx, mt.padX), hh/2+dp(gtx, 1)), c.PillBorder)
+		st := textStyle{size: 13, col: c.Muted70, lineH: 18}
+		d := at(gtx, dp(gtx, 16), dp(gtx, 4), func(gtx layout.Context) layout.Dimensions { return label(gtx, h.Theme(), st, txt) })
+		lx := dp(gtx, 16) + d.Size.X + dp(gtx, 12)
+		fill(gtx.Ops, image.Rect(lx, dp(gtx, 13), w-dp(gtx, 16), dp(gtx, 14)), c.PillBorder)
 		return layout.Dimensions{Size: image.Pt(w, hh)}
 	}
 	e := &s.snap.msgs[it.idx]
@@ -637,13 +638,13 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 			}
 		}
 		if d >= 0 {
-			pillY := dp(gtx, 6)
+			pillY := dp(gtx, 14)
 			ownY := s.pos[d] + (dp(gtx, mt.dayH)-dp(gtx, mt.dayPillH))/2
 			if d < s.visible[0] || ownY < pillY {
 				// pushed up by the next day's divider
 				for i := d + 1; i < s.visible[1]; i++ {
 					if s.items[i].kind == itDay {
-						if ny := s.pos[i] - dp(gtx, mt.dayPillH) - dp(gtx, 6); ny < pillY {
+						if ny := s.pos[i] + (dp(gtx, mt.dayH)-dp(gtx, mt.dayPillH))/2 - dp(gtx, mt.dayPillH) - dp(gtx, 6); ny < pillY {
 							pillY = ny
 						}
 						break
@@ -675,8 +676,8 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 		ts := textStyle{size: 13, weight: theme.Bold, col: c.JumpText, lineH: 18}
 		txt := "Jump to recent"
 		sz := measure(gtx, th, ts, txt)
-		bh := dp(gtx, 32)
-		bw := dp(gtx, 12) + dp(gtx, 16) + dp(gtx, 6) + sz.X + dp(gtx, 14)
+		bh := dp(gtx, 28)
+		bw := dp(gtx, 8) + dp(gtx, 16) + dp(gtx, 4) + sz.X + dp(gtx, 16)
 		r := image.Rect((size.X-bw)/2, size.Y-bh-dp(gtx, 16), (size.X-bw)/2+bw, size.Y-dp(gtx, 16))
 		if s.jump.Clicked(gtx) {
 			s.list.Position = layout.Position{}
@@ -690,11 +691,11 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 				if s.jump.Hovered() {
 					bg.A = 230
 				}
-				shadowCard(gtx.Ops, rr, bh/2, dp(gtx, 1), bg, bg, c.Shadow)
-				at(gtx, dp(gtx, 12), (bh-dp(gtx, 16))/2, func(gtx layout.Context) layout.Dimensions {
+				rrect(gtx.Ops, rr, bh/2, bg)
+				at(gtx, dp(gtx, 8), (bh-dp(gtx, 16))/2, func(gtx layout.Context) layout.Dimensions {
 					return icons.Get("arrow-down")(gtx, unit.Dp(16), c.JumpText)
 				})
-				at(gtx, dp(gtx, 34), (bh-dp(gtx, 18))/2, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, ts, txt) })
+				at(gtx, dp(gtx, 28), (bh-dp(gtx, 18))/2, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, ts, txt) })
 				return layout.Dimensions{Size: rr.Size()}
 			})
 		})
@@ -740,14 +741,18 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 	sep := dp(gtx, 9)
 	tw := pad*2 + n*bs + sep
 	x := size.X - dp(gtx, mt.toolbarRight) - tw
-	y := s.pos[idx] + dp(gtx, mt.toolbarTop)
+	top := mt.toolbarTop
+	if !s.items[idx].header {
+		top = -28
+	}
+	y := s.pos[idx] + dp(gtx, top)
 	if y < dp(gtx, 4) {
 		y = dp(gtx, 4)
 	}
 	th2 := bs + 2*pad
 	rect := image.Rect(x, y, x+tw, y+th2)
 	s.tbRect, s.tbFor = rect, idx
-	shadowCard(gtx.Ops, rect, dp(gtx, 8), dp(gtx, 1), c.Bg, c.PillBorder, c.Shadow)
+	shadowCard(gtx.Ops, rect, dp(gtx, 12), dp(gtx, 1), c.Bg, c.PillBorder, c.Shadow)
 	app := h.Core()
 	m := r.m
 	bx := x + pad
@@ -817,9 +822,11 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 			return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				rr := image.Rectangle{Max: image.Pt(bs, bs)}
 				col := c.ToolbarIcon
+				isz := float32(18)
 				if btn.Hovered() {
-					rrect(gtx.Ops, rr, dp(gtx, 6), c.ToolbarHoverBg)
+					rrect(gtx.Ops, rr, dp(gtx, 8), c.ToolbarHoverBg)
 					col = c.Text
+					isz = 21.6 // Slack scales the icon 1.2x on hover
 				}
 				if i <= tbQuick2 {
 					es := dp(gtx, 20)
@@ -831,13 +838,13 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 						rrect(gtx.Ops, image.Rect((bs-es)/2, (bs-es)/2, (bs-es)/2+es, (bs-es)/2+es), es/2, c.Skeleton)
 					}
 				} else {
-					is := dp(gtx, 18)
+					is := dp(gtx, isz)
 					at(gtx, (bs-is)/2, (bs-is)/2, func(gtx layout.Context) layout.Dimensions {
 						ic := tbIcons[i]
 						if i == tbSave && s.saved[m.TS] {
 							ic = "bookmark-filled"
 						}
-						return icons.Get(ic)(gtx, unit.Dp(18), col)
+						return icons.Get(ic)(gtx, unit.Dp(isz), col)
 					})
 				}
 				return layout.Dimensions{Size: rr.Size()}
