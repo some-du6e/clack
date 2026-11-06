@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"strings"
 
 	"gioui.org/f32"
 	"gioui.org/layout"
@@ -254,8 +255,8 @@ var railTabs = []railTab{
 	{"dms", "DMs", "dms"},
 	{"activity", "Activity", "activity"},
 	{"files", "Files", "files"},
-	{"later", "Later", "later"},
-	{"more", "More", "more"},
+	{"later", "To-dos", "check-circle"},
+	{"more", "Agents & tools", "agents"},
 }
 
 func (a *App) layoutRail(gtx layout.Context, top, height int) {
@@ -278,6 +279,10 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 		t := t
 		btn := a.clicks.get("rail." + t.key)
 		th := gtx.Dp(68)
+		lines := strings.SplitN(strings.Replace(t.label, " & ", "\n& ", 1), "\n", 2)
+		if len(lines) == 2 {
+			th = gtx.Dp(80) // Slack wraps "Agents & tools" onto two lines
+		}
 		org := image.Pt(gtx.Dp(9), y)
 		at(gtx, org, image.Pt(gtx.Dp(52), th), func(gtx layout.Context) layout.Dimensions {
 			return clickArea(gtx, btn, nil, func(gtx layout.Context) layout.Dimensions {
@@ -296,10 +301,13 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 					return icons.Get(name)(gtx, 20, c.ChromeText)
 				})
 				// label 700 11px/12px, centered under the tile.
-				lw := a.th.Measure(gtx, 11, theme.Bold, t.label)
-				at(gtx, image.Pt((gtx.Dp(52)-lw)/2, gtx.Dp(48)), image.Pt(lw+2, gtx.Dp(14)), func(gtx layout.Context) layout.Dimensions {
-					return a.th.Label(gtx, 11, theme.Bold, c.ChromeText, t.label)
-				})
+				for li, ln := range lines {
+					ln := ln
+					lw := a.th.Measure(gtx, 11, theme.Bold, ln)
+					at(gtx, image.Pt((gtx.Dp(52)-lw)/2, gtx.Dp(48)+li*gtx.Dp(12)), image.Pt(lw+2, gtx.Dp(14)), func(gtx layout.Context) layout.Dimensions {
+						return a.th.Label(gtx, 11, theme.Bold, c.ChromeText, ln)
+					})
+				}
 				// unread badge / dot on the tile's top-right corner.
 				if n, dot := a.railBadge(t.key); n > 0 {
 					at(gtx, image.Pt(tile.Max.X-gtx.Dp(10), tile.Min.Y-gtx.Dp(5)), image.Pt(gtx.Dp(40), gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {

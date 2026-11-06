@@ -12,7 +12,8 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/text"
 	"gioui.org/unit"
-	"gioui.org/widget"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
 // Small drawing helpers shared by every file in the package. Sizes are in
@@ -136,14 +137,8 @@ func (s textStyle) font() font.Font {
 
 // label lays out one string.
 func label(gtx layout.Context, sh *text.Shaper, s textStyle, txt string) layout.Dimensions {
-	m := op.Record(gtx.Ops)
-	paint.ColorOp{Color: s.Color}.Add(gtx.Ops)
-	mat := m.Stop()
-	l := widget.Label{MaxLines: s.MaxLines, Alignment: s.Align, LineHeight: s.LineHeight}
-	if s.MaxLines > 0 {
-		l.Truncator = "…"
-	}
-	return l.Layout(gtx, sh, s.font(), s.Size, txt, mat)
+	// shared renderer (theme.DrawText): Embolden, emoji images, cleanup
+	return theme.DrawText(gtx, sh, theme.LabelOpts{Font: s.font(), Size: s.Size, LineHeight: s.LineHeight, MaxLines: s.MaxLines, Align: s.Align, Color: s.Color}, txt)
 }
 
 // offset runs w translated by (x, y) pixels.

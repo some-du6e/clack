@@ -17,6 +17,8 @@ type prefs struct {
 	LastChannel   string   `json:"last_channel,omitempty"`
 	Notifications *bool    `json:"notifications,omitempty"`
 	Collapsed     []string `json:"collapsed,omitempty"`
+	EmojiStyle    string   `json:"emoji_style,omitempty"`
+	SidebarHidden bool     `json:"sidebar_hidden,omitempty"`
 }
 
 func (a *App) prefsPath() string {
@@ -54,6 +56,8 @@ func (a *App) loadPrefs() {
 		}
 	}
 	a.lastChannel = a.prefs.LastChannel
+	a.th.EmojiStyle = a.prefs.EmojiStyle
+	a.sidebar.hidden = a.prefs.SidebarHidden
 	if a.prefs.Route != "" {
 		a.router.Push(Route(a.prefs.Route))
 	}
@@ -71,6 +75,7 @@ func (a *App) savePrefs() {
 	a.prefs.SecondaryW = a.secondary.width
 	a.prefs.Route = string(a.router.Current())
 	a.prefs.LastChannel = a.lastChannel
+	a.prefs.SidebarHidden = a.sidebar.hidden
 	a.prefs.Collapsed = a.prefs.Collapsed[:0]
 	for id, c := range a.sidebar.collapsed {
 		if c {

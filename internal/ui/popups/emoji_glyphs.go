@@ -52,7 +52,7 @@ func (e *epPen) cube(a, b, c, d, x, y float32) {
 }
 
 // stroke paints the current path as a 1.5-unit line.
-func (e *epPen) stroke() { e.strokeW(1.5) }
+func (e *epPen) stroke() { e.strokeW(1.75) }
 
 func (e *epPen) strokeW(w float32) {
 	paint.FillShape(e.gtx.Ops, e.col, clip.Stroke{Path: e.path.End(), Width: w * e.s}.Op())

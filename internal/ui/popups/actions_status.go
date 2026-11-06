@@ -398,7 +398,17 @@ func (s *actStatus) input(gtx layout.Context, th *theme.Theme, cl *Colors) layou
 	if filled {
 		cp := image.Pt(w-dp(gtx, 7)-bs, (hh-bs)/2)
 		at(gtx, cp, func(gtx layout.Context) layout.Dimensions {
-			return iconButton(gtx, &s.clearBtn, "x-circle", 28, 20, cl.Fg, cl.BgHover, 4)
+			// Slack: a filled dark circle with a white ×.
+			return clickBox(gtx, &s.clearBtn, nil, func(gtx layout.Context) layout.Dimensions {
+				d := dp(gtx, 18)
+				o := (bs - d) / 2
+				rrect(gtx, image.Rect(o, o, o+d, o+d), d/2, cl.Fg)
+				is := dp(gtx, 12)
+				at(gtx, image.Pt((bs-is)/2, (bs-is)/2), func(gtx layout.Context) layout.Dimensions {
+					return icon(gtx, "close-small", 12, cl.Bg)
+				})
+				return layout.Dimensions{Size: image.Pt(bs, bs)}
+			})
 		})
 		right = cp.X - dp(gtx, 4)
 	}
