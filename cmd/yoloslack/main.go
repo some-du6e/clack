@@ -39,7 +39,7 @@ func main() {
 	credsPath := flag.String("creds", filepath.Join(configDir(), "creds.json"), "credentials file")
 	dark := flag.Bool("dark", false, "start in dark mode (overridden by the saved preference)")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: yoloslack [flags]\n       yoloslack login [workspace]   (store credentials from a d cookie)\n\n")
+		fmt.Fprintf(os.Stderr, "usage: clack [flags]\n       clack login [workspace]   (store credentials from a d cookie)\n\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -114,7 +114,7 @@ func httpFetch(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "yoloslack/0.1")
+	req.Header.Set("User-Agent", "clack/0.1")
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err

@@ -25,6 +25,11 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
+// AppName is the user-visible product name (Karim picked "Clack" on
+// 2026-11-06). The module path, binary, config dir and CI artifact names
+// still say yoloslack until a coordinated rename.
+const AppName = "Clack"
+
 // Overlay is anything drawn above the shell. An alias of an unnamed
 // interface (like popups.Overlay) so ShowOverlay's signature is identical
 // across every package's Host interface.
@@ -169,7 +174,7 @@ func (a *App) Run() error {
 	a.timing("run", a.opts.Started)
 	a.win = new(app.Window)
 	a.win.Option(
-		app.Title("yoloslack"),
+		app.Title(AppName),
 		app.Size(1440, 900),
 		app.MinSize(800, 500),
 	)

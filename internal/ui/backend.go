@@ -497,7 +497,7 @@ func (b *backend) togglePresence() {
 
 func (b *backend) setMuted(ch string, muted bool) {
 	if b.app != nil {
-		b.app.Toast("Muting from yoloslack isn't supported yet")
+		b.app.Toast("Muting from " + AppName + " isn't supported yet")
 	}
 }
 
@@ -520,7 +520,7 @@ func (b *backend) openBookmark(ch, id string) {
 
 func (b *backend) toggleStar(ch string) {
 	if b.app != nil {
-		b.app.Toast("Starring from yoloslack isn't supported yet")
+		b.app.Toast("Starring from " + AppName + " isn't supported yet")
 	}
 }
 
