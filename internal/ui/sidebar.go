@@ -158,7 +158,7 @@ func (a *App) layoutSidebar(gtx layout.Context) layout.Dimensions {
 			return layout.Dimensions{Size: image.Pt(nameW+gtx.Dp(34), h)}
 		})
 	})
-	if a.clicks.get("sb.team").Clicked(gtx) {
+	if clicked(a.clicks.get("sb.team")) {
 		a.openTeamMenu(image.Pt(gtx.Dp(theme.RailW)+gtx.Dp(16), gtx.Dp(theme.TopNavH)+gtx.Dp(42)))
 	}
 	for i, b := range []string{"compose", "settings"} {
@@ -167,10 +167,10 @@ func (a *App) layoutSidebar(gtx layout.Context) layout.Dimensions {
 			return iconButton(gtx, a.clicks.get("sb."+b), b, 28, 20, c.SidebarTextUnread, c.SidebarHover, 6)
 		})
 	}
-	if a.clicks.get("sb.compose").Clicked(gtx) {
+	if clicked(a.clicks.get("sb.compose")) {
 		a.compose()
 	}
-	if a.clicks.get("sb.settings").Clicked(gtx) {
+	if clicked(a.clicks.get("sb.settings")) {
 		a.openPrefs()
 	}
 
@@ -198,7 +198,7 @@ func (a *App) layoutSidebar(gtx layout.Context) layout.Dimensions {
 			return layout.Dimensions{Size: image.Pt(w, fh)}
 		})
 	})
-	if a.clicks.get("sb.find").Clicked(gtx) {
+	if clicked(a.clicks.get("sb.find")) {
 		a.openSwitcher()
 	}
 
@@ -353,7 +353,7 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 			return layout.Dimensions{Size: image.Pt(rw, rowH)}
 		})
 	})
-	if btn.Clicked(gtx) {
+	if clicked(btn) {
 		switch r.kind {
 		case sbLink:
 			a.Navigate(r.key)

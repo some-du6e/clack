@@ -178,7 +178,7 @@ func (m *shellMenu) Layout(gtx layout.Context) layout.Dimensions {
 				return layout.Dimensions{Size: image.Pt(w, itemH)}
 			})
 		})
-		if btn.Clicked(gtx) && !it.Disabled {
+		if clicked(btn) && !it.Disabled {
 			m.done = true
 			if it.Do != nil {
 				it.Do()

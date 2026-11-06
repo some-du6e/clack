@@ -75,7 +75,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		}
 		return iconButton(gtx, a.clicks.get("hdr.star"), star, 28, 18, col, c.BgHover, 6)
 	})
-	if a.clicks.get("hdr.star").Clicked(gtx) {
+	if clicked(a.clicks.get("hdr.star")) {
 		a.toggleStar(ch)
 	}
 	x += gtx.Dp(32)
@@ -97,13 +97,13 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		})
 		right -= gtx.Dp(6)
 	}
-	if a.clicks.get("hdr.kebab").Clicked(gtx) {
+	if clicked(a.clicks.get("hdr.kebab")) {
 		a.openChannelMenu(ch, image.Pt(right, h))
 	}
-	if a.clicks.get("hdr.search").Clicked(gtx) {
+	if clicked(a.clicks.get("hdr.search")) {
 		a.openSearch("in:<#" + ch + ">")
 	}
-	if a.clicks.get("hdr.bell").Clicked(gtx) {
+	if clicked(a.clicks.get("hdr.bell")) {
 		a.openNotifPrefs(ch)
 	}
 
@@ -140,7 +140,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		})
 		return layout.Dimensions{Size: r.Size()}
 	})
-	if a.clicks.get("hdr.huddle").Clicked(gtx) {
+	if clicked(a.clicks.get("hdr.huddle")) {
 		a.Toast("Huddles aren't supported in yoloslack yet")
 	}
 	right -= gtx.Dp(6)
@@ -186,7 +186,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 				return layout.Dimensions{Size: image.Pt(pw, btn)}
 			})
 		})
-		if a.clicks.get("hdr.members").Clicked(gtx) {
+		if clicked(a.clicks.get("hdr.members")) {
 			a.OpenDetails(ch)
 		}
 		right -= gtx.Dp(6)
@@ -249,7 +249,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 			return layout.Dimensions{Size: image.Pt(titleW, th)}
 		})
 	})
-	if a.clicks.get("hdr.title").Clicked(gtx) {
+	if clicked(a.clicks.get("hdr.title")) {
 		a.OpenDetails(ch)
 	}
 	x += titleW + gtx.Dp(14)
@@ -385,7 +385,7 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 				return layout.Dimensions{Size: image.Pt(w, sz.Y)}
 			})
 		})
-		if btn.Clicked(gtx) {
+		if clicked(btn) {
 			if a.chTab == nil {
 				a.chTab = map[string]int{}
 			}
@@ -401,7 +401,7 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 	at(gtx, image.Pt(x+gtx.Dp(4), (sz.Y-gtx.Dp(28))/2), image.Pt(gtx.Dp(28), gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
 		return iconButton(gtx, a.clicks.get("tab.add"), "plus", 28, 18, c.FgMuted, c.BgHover, 6)
 	})
-	if a.clicks.get("tab.add").Clicked(gtx) {
+	if clicked(a.clicks.get("tab.add")) {
 		a.Toast("Adding canvases and lists isn't supported yet")
 	}
 	return layout.Dimensions{Size: sz}
