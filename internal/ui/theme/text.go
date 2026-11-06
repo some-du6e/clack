@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"image"
 	"image/color"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,6 +33,9 @@ const Embolden = 0.3
 // EmboldenFor is the Embolden stroke for text of color c: full for dark
 // text, fading to none for light text (light-on-dark is already heavy).
 func EmboldenFor(c color.NRGBA) float32 {
+	if noEmbolden {
+		return 0
+	}
 	y := (0.299*float32(c.R) + 0.587*float32(c.G) + 0.114*float32(c.B)) / 255
 	switch {
 	case y <= 0.35:
@@ -57,6 +61,9 @@ type LabelOpts struct {
 type EmojiImages interface {
 	Get(url string, sizePx int) (paint.ImageOp, bool)
 }
+
+// noEmbolden (YOLOSLACK_NOEMBOLDEN=1) disables the stroke, for A/B timing.
+var noEmbolden = os.Getenv("YOLOSLACK_NOEMBOLDEN") != ""
 
 var shaperThemes sync.Map // *text.Shaper -> *Theme
 
