@@ -196,7 +196,7 @@ func main() {
 					im.Proxy = true
 					return im, msgs[i], true
 				}
-				if bl.Kind == richtext.Image && bl.Image != nil {
+				if bl.Kind == richtext.ImageBlock && bl.Image != nil {
 					return *bl.Image, msgs[i], true
 				}
 			}
