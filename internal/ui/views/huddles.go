@@ -2,6 +2,7 @@ package views
 
 import (
 	"context"
+	"encoding/json"
 	"image"
 	"sort"
 	"strconv"
@@ -15,6 +16,45 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
+
+// huddleRoom is an active or past huddle.
+type huddleRoom = core.Huddle
+
+// rawRoom is the room object carried by sh_room_* realtime events, which
+// core forwards raw (Event.Raw).
+type rawRoom struct {
+	ID                 string   `json:"id"`
+	Name               string   `json:"name"`
+	CreatedBy          string   `json:"created_by"`
+	DateStart          int64    `json:"date_start"`
+	DateEnd            int64    `json:"date_end"`
+	Participants       []string `json:"participants"`
+	ParticipantHistory []string `json:"participant_history"`
+	Channels           []string `json:"channels"`
+	IsDMCall           bool     `json:"is_dm_call"`
+	HasEnded           bool     `json:"has_ended"`
+}
+
+// roomFromEvent decodes the room of an sh_room_* event.
+func roomFromEvent(raw json.RawMessage) (huddleRoom, bool) {
+	var ev struct {
+		Room   *rawRoom `json:"room"`
+		Huddle *rawRoom `json:"huddle"`
+	}
+	if json.Unmarshal(raw, &ev) != nil {
+		return huddleRoom{}, false
+	}
+	r := ev.Room
+	if r == nil {
+		r = ev.Huddle
+	}
+	if r == nil || r.ID == "" {
+		return huddleRoom{}, false
+	}
+	return huddleRoom{ID: r.ID, Name: r.Name, CreatedBy: r.CreatedBy, Channels: r.Channels,
+		Participants: r.Participants, History: r.ParticipantHistory, Start: r.DateStart, End: r.DateEnd,
+		Active: r.DateEnd == 0 && !r.HasEnded && len(r.Participants) > 0, DM: r.IsDMCall}, true
+}
 
 // joinUnsupported is shown when the user tries to start or join a huddle:
 // huddle audio/video runs on Amazon Chime media servers that yoloslack
@@ -136,7 +176,20 @@ func clickIn(m map[string]*widget.Clickable, id string) *widget.Clickable {
 func (v *Huddles) update(gtx C) {
 	if !v.recent.started() {
 		a := v.h.Core()
-		v.recent.load(v.h, false, func(ctx context.Context) ([]huddleRoom, error) { return recentHuddles(ctx, a) })
+		v.recent.load(v.h, false, func(ctx context.Context) ([]huddleRoom, error) {
+			// seed live rooms (edge huddles/list), then the history
+			if live, err := a.ActiveHuddles(ctx); err == nil {
+				v.mu.Lock()
+				for _, r := range live {
+					if r.Active {
+						v.live[r.ID] = r
+					}
+				}
+				v.mu.Unlock()
+			}
+			rooms, _, err := a.HuddleHistory(ctx, "")
+			return rooms, err
+		})
 	}
 	if v.newBtn.Clicked(gtx) || v.heroBtn.Clicked(gtx) {
 		v.h.Toast(joinUnsupported)

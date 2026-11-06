@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/core"
 )
 
 func TestTSTime(t *testing.T) {
@@ -78,9 +80,9 @@ func TestRoomFromEvent(t *testing.T) {
 }
 
 func TestFileKinds(t *testing.T) {
-	canvas := fileItem{Filetype: "quip", PrettyType: "Canvas"}
-	list := fileItem{Filetype: "list"}
-	img := fileItem{Mime: "image/png"}
+	canvas := fileItem{core.File{Filetype: "quip", PrettyType: "Canvas"}}
+	list := fileItem{core.File{Filetype: "list"}}
+	img := fileItem{core.File{Mime: "image/png"}}
 	if !canvas.isCanvas() || canvas.isList() || !list.isList() || !img.isImage() {
 		t.Fatal("file kind predicates")
 	}
