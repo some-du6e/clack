@@ -431,7 +431,7 @@ func (e *Editor) ToggleBlock(k BlockKind) {
 func (e *Editor) SetLink(txt, url string) {
 	e.init()
 	d := e.doc
-	lo, hi := e.LinkAt()
+	lo, hi, _ := e.LinkAt()
 	e.begin(edOther, false)
 	if url == "" {
 		d.SetLink(lo, hi, "")
