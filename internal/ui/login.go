@@ -91,7 +91,7 @@ func (a *App) layoutLogin(gtx layout.Context) {
 	})
 	y += gtx.Dp(44)
 	at(gtx, image.Pt(x, y), image.Pt(cw, gtx.Dp(70)), func(gtx layout.Context) layout.Dimensions {
-		return th.Para(gtx, 15, 22, theme.Regular, lc.FgMuted, "yoloslack signs in with your browser session. Copy the d cookie for slack.com from DevTools → Application → Cookies.")
+		return th.Para(gtx, 15, 22, theme.Regular, lc.FgMuted, AppName+" signs in with your browser session. Copy the d cookie for slack.com from DevTools → Application → Cookies.")
 	})
 	y += gtx.Dp(88)
 	field := func(label string, ed *widget.Editor, hint string) {

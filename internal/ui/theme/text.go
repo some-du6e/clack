@@ -224,7 +224,7 @@ func drawText(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string, emb 
 	m := op.Record(gtx.Ops)
 	viewport := image.Rectangle{Max: cs.Max}
 	it := glyphIter{viewport: viewport, maxLines: o.MaxLines, col: o.Color, emb: emb * gtx.Metric.PxPerDp}
-	var glyphs [32]text.Glyph
+	var glyphs [512]text.Glyph // one batch per line in practice (see paint)
 	line := glyphs[:0]
 	for g, ok := sh.NextGlyph(); ok; g, ok = sh.NextGlyph() {
 		var ok bool

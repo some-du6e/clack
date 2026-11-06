@@ -781,7 +781,8 @@ func (a *App) Commands(ctx context.Context, query string) ([]Command, error) {
 	out := make([]Command, 0, len(cmds))
 	for _, c := range cmds {
 		if needle == "" || strings.Contains(strings.ToLower(c.Name), needle) {
-			out = append(out, Command{Name: c.Name, Desc: c.Desc, Usage: c.Usage, Type: c.Type, AppID: c.AppID})
+			out = append(out, Command{Name: c.Name, Desc: c.Desc, Usage: c.Usage, Type: c.Type, AppID: c.AppID,
+				AppName: c.AppName, IconURL: c.IconURL()})
 		}
 	}
 	return out, nil

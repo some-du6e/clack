@@ -317,6 +317,41 @@ func (a *App) OpenDM(ctx context.Context, users ...string) (Conv, error) {
 	return v, nil
 }
 
+// AddToDM adds people to a DM or group DM. Like Slack, this opens the
+// group DM of everyone involved (a new conversation; history is not
+// shared) and adds it to the sidebar.
+func (a *App) AddToDM(ctx context.Context, ch string, users ...string) (Conv, error) {
+	c, ok := a.S.Conv(ch)
+	if !ok || !(c.IsIM || c.IsMPIM) {
+		return Conv{}, errors.New("core: AddToDM needs a DM or group DM")
+	}
+	members := append([]string(nil), c.Members...)
+	if c.IsIM {
+		members = []string{c.User}
+	} else if len(members) == 0 {
+		us, _, err := a.C.ChannelMembers(ctx, ch, "", 100, false)
+		if err != nil {
+			return Conv{}, err
+		}
+		for _, u := range us {
+			members = append(members, u.ID)
+		}
+	}
+	self := a.S.SelfID()
+	seen := map[string]bool{self: true}
+	var all []string
+	for _, u := range append(members, users...) {
+		if u != "" && !seen[u] {
+			seen[u] = true
+			all = append(all, u)
+		}
+	}
+	if len(all) > 8 {
+		return Conv{}, errors.New("core: a group DM holds at most 9 people")
+	}
+	return a.OpenDM(ctx, all...)
+}
+
 // SetStatus sets the viewer's custom status (empty text and emoji clear it).
 func (a *App) SetStatus(ctx context.Context, text, emoji string, expiration int64) error {
 	if emoji != "" && !strings.HasPrefix(emoji, ":") {

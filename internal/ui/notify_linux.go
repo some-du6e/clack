@@ -28,8 +28,8 @@ func (n *dbusNotifier) Notify(title, body string) error {
 	defer n.mu.Unlock()
 	obj := n.conn.Object("org.freedesktop.Notifications", "/org/freedesktop/Notifications")
 	call := obj.Call("org.freedesktop.Notifications.Notify", 0,
-		"yoloslack", uint32(0), "", title, body, []string{}, map[string]dbus.Variant{
-			"desktop-entry": dbus.MakeVariant("yoloslack"),
+		AppName, uint32(0), "", title, body, []string{}, map[string]dbus.Variant{
+			"desktop-entry": dbus.MakeVariant("clack"),
 		}, int32(6000))
 	if call.Err != nil {
 		return call.Err

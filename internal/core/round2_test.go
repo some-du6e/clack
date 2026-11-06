@@ -339,3 +339,54 @@ func tss(ms []slack.Message) string {
 	}
 	return strings.Join(out, ",")
 }
+
+func TestCommandsAppInfo(t *testing.T) {
+	a, f := testApp(t)
+	f.reply["commands.list"] = `{"ok":true,"commands":{"/give":{"name":"/give","type":"app","app":"A1","app_name":"Giver","icons":{"image_36":"https://a.example/36.png","image_72":"https://a.example/72.png","image_default":true}},"/me":{"name":"/me","type":"core"}}}`
+	cs, err := a.Commands(context.Background(), "")
+	if err != nil || len(cs) != 2 || cs[0].Name != "/give" || cs[0].AppName != "Giver" || cs[0].IconURL != "https://a.example/72.png" || cs[1].IconURL != "" {
+		t.Errorf("commands: %+v %v", cs, err)
+	}
+}
+
+func TestSetNotifyPrefsSyncRule(t *testing.T) {
+	a, f := testApp(t)
+	f.reply["users.prefs.setNotifications"] = `{"ok":true}`
+	f.reply["users.prefs.get"] = `{"ok":true,"prefs":{}}`
+	ctx := context.Background()
+	_ = a.SetNotifyPrefs(ctx, "C1", ChannelNotify{Desktop: "everything"})
+	p := f.last("users.prefs.setNotifications")
+	if p.Get("sync") != "true" || strings.Contains(p.Get("prefs"), `"mobile"`) || !strings.Contains(p.Get("prefs"), `"name":"desktop","value":"everything","sync":true`) {
+		t.Errorf("synced: %v", p)
+	}
+	_ = a.SetNotifyPrefs(ctx, "C1", ChannelNotify{Desktop: "everything", Mobile: "nothing"})
+	p = f.last("users.prefs.setNotifications")
+	if p.Get("sync") != "false" || !strings.Contains(p.Get("prefs"), `"name":"mobile","value":"nothing"`) || strings.Contains(p.Get("prefs"), `"sync":true`) {
+		t.Errorf("unsynced: %v", p)
+	}
+}
+
+func TestJoinedBrowseSortsByName(t *testing.T) {
+	p := channelBrowseParams(ChannelBrowseOpts{Membership: "joined"})
+	if p.Get("search_only_my_channels") != "true" || p.Get("sort") != "name" {
+		t.Errorf("joined params: %v", p)
+	}
+	if p := channelBrowseParams(ChannelBrowseOpts{Membership: "joined", Sort: "member_count", Desc: true}); p.Get("sort") != "member_count" {
+		t.Errorf("explicit sort overridden: %v", p)
+	}
+}
+
+func TestAddToDM(t *testing.T) {
+	a, f := testApp(t)
+	f.reply["conversations.open"] = `{"ok":true,"channel":{"id":"G9","is_mpim":true,"members":["USELF","U1","U2"]}}`
+	c, err := a.AddToDM(context.Background(), "D1", "U2", "USELF")
+	if err != nil || c.ID != "G9" || c.Kind != "mpim" {
+		t.Fatalf("AddToDM: %+v %v", c, err)
+	}
+	if got := f.last("conversations.open").Get("users"); got != "U1,U2" {
+		t.Errorf("opened with %q", got)
+	}
+	if _, err := a.AddToDM(context.Background(), "C1", "U2"); err == nil {
+		t.Error("AddToDM on a channel should fail")
+	}
+}

@@ -148,7 +148,7 @@ func (a *App) teamName() string {
 	if n := a.model().TeamName; n != "" {
 		return n
 	}
-	return "yoloslack"
+	return AppName
 }
 
 func (a *App) teamIconURL() string { return a.model().TeamIcon }
@@ -193,7 +193,7 @@ func (a *App) windowTitle() string {
 			b.WriteString(" new items")
 		}
 	}
-	b.WriteString(" - yoloslack")
+	b.WriteString(" - " + AppName)
 	return b.String()
 }
 
