@@ -173,11 +173,45 @@ var darkPal = pal{
 	Page:        rgb(0x1a1d21),
 }
 
+// Gio composites in linear RGB while browsers blend in sRGB, so a
+// translucent token (Slack's #5e5d60@.13 hairlines, #454447@.06 hovers)
+// would come out lighter/stronger than in Slack. palOf therefore returns
+// the palette with those tokens pre-flattened over Bg in sRGB. Overlay
+// (the modal scrim) and Mention stay translucent.
+var (
+	flatOnce            sync.Once
+	flatLight, flatDark pal
+)
+
 func palOf(th *theme.Theme) *pal {
+	flatOnce.Do(func() {
+		flatLight, flatDark = flatPal(lightPal), flatPal(darkPal)
+	})
 	if th != nil && th.Dark {
-		return &darkPal
+		return &flatDark
 	}
-	return &lightPal
+	return &flatLight
+}
+
+func flatPal(p pal) pal {
+	for _, c := range []*color.NRGBA{&p.Border, &p.BorderStr, &p.Hover, &p.SelMuted, &p.Focus, &p.Chip,
+		&p.TabHover, &p.Pressed, &p.CardLine, &p.SegLine, &p.Ring} {
+		*c = flatten(*c, p.Bg)
+	}
+	return p
+}
+
+// flatten composites c over the opaque base in sRGB (like a browser) and
+// returns an opaque color. Use it for any translucent literal drawn over a
+// known background.
+func flatten(c, base color.NRGBA) color.NRGBA {
+	if c.A == 0xff {
+		return c
+	}
+	o := c
+	o.A = 0xff
+	base.A = 0xff
+	return theme.Mix(base, o, float32(c.A)/255)
 }
 
 func rgb(v uint32) color.NRGBA {

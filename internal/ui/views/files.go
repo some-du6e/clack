@@ -371,10 +371,15 @@ func (f *Files) nav_(gtx C) D {
 	if f.th.Dark {
 		chrome = rgb(0x1a1d21)
 	}
-	fill(gtx, image.Rectangle{Max: size}, chrome)
+	// opaque sRGB-flattened colors (see flatten): the sidebar tint, text,
+	// hover and rules sit on the aubergine chrome.
 	if f.th.C.SidebarBg.A > 0 {
-		fill(gtx, image.Rectangle{Max: size}, f.th.C.SidebarBg)
+		chrome = flatten(f.th.C.SidebarBg, chrome)
 	}
+	navText := flatten(filesNavText, chrome)
+	navHover := flatten(filesNavHover, chrome)
+	navRule := flatten(filesNavRule, chrome)
+	fill(gtx, image.Rectangle{Max: size}, chrome)
 	gtx.Constraints = layout.Exact(size)
 	navItem := func(i int) layout.FlexChild {
 		return layout.Rigid(func(gtx C) D {
@@ -383,13 +388,13 @@ func (f *Files) nav_(gtx C) D {
 				pointerCursor(gtx)
 				w, h := gtx.Constraints.Max.X, gtx.Dp(28)
 				sel := f.nav == i
-				fg := filesNavText
+				fg := navText
 				switch {
 				case sel:
 					rrect(gtx, image.Rect(0, 0, w, h), gtx.Dp(4), filesNavSelBg)
 					fg = filesNavSelFg
 				case c.Hovered():
-					rrect(gtx, image.Rect(0, 0, w, h), gtx.Dp(4), filesNavHover)
+					rrect(gtx, image.Rect(0, 0, w, h), gtx.Dp(4), navHover)
 				}
 				g := gtx
 				g.Constraints = layout.Exact(image.Pt(w, h))
@@ -407,7 +412,7 @@ func (f *Files) nav_(gtx C) D {
 		})
 	}
 	rule := layout.Rigid(func(gtx C) D {
-		return layout.Inset{Top: 12, Bottom: 12}.Layout(gtx, func(gtx C) D { return hline(gtx, filesNavRule) })
+		return layout.Inset{Top: 12, Bottom: 12}.Layout(gtx, func(gtx C) D { return hline(gtx, navRule) })
 	})
 	return layout.Inset{Left: 8, Right: 8}.Layout(gtx, func(gtx C) D {
 		return col(gtx,
@@ -417,9 +422,9 @@ func (f *Files) nav_(gtx C) D {
 				return layout.Inset{Top: 12, Bottom: 12, Left: 8}.Layout(g, func(gtx C) D {
 					return row(gtx, layout.Middle,
 						layout.Flexed(1, func(gtx C) D { return f.label(gtx, 18, wBlack, rgb(0xffffff), "Files") }),
-						layout.Rigid(func(gtx C) D { return f.iconButton(gtx, &f.gear, "settings", 28, 20, filesNavText) }),
+						layout.Rigid(func(gtx C) D { return f.iconButton(gtx, &f.gear, "settings", 28, 20, navText) }),
 						hgap(4),
-						layout.Rigid(func(gtx C) D { return f.iconButton(gtx, &f.plus, "plus", 28, 20, filesNavText) }),
+						layout.Rigid(func(gtx C) D { return f.iconButton(gtx, &f.plus, "plus", 28, 20, navText) }),
 					)
 				})
 			}),
@@ -433,9 +438,9 @@ func (f *Files) nav_(gtx C) D {
 				return layout.Inset{Left: 8}.Layout(g, func(gtx C) D {
 					return layout.W.Layout(gtx, func(gtx C) D {
 						return row(gtx, layout.Middle,
-							layout.Rigid(func(gtx C) D { return f.icon(gtx, "star", 16, filesNavText) }),
+							layout.Rigid(func(gtx C) D { return f.icon(gtx, "star", 16, navText) }),
 							hgap(8),
-							layout.Rigid(func(gtx C) D { return f.label(gtx, 15, wReg, filesNavText, "Starred") }),
+							layout.Rigid(func(gtx C) D { return f.label(gtx, 15, wReg, navText, "Starred") }),
 						)
 					})
 				})
