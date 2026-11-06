@@ -286,7 +286,13 @@ func (a *App) frame(gtx layout.Context) {
 		a.grad.draw(gtx, sz, image.Point{}, clip.Rect(r).Op(), a.th.C.ChromeA, a.th.C.ChromeB)
 	}
 
-	a.layoutTopNav(gtx, primary.Min.X, sz.X)
+	// The top nav stays where the Home layout puts it, even on pages that
+	// hide the sidebar (Files, DMs, Activity, To-dos), like Slack.
+	navX := primary.Min.X
+	if !a.sidebar.hidden {
+		navX = ws.Min.X + gtx.Dp(unit.Dp(a.sidebar.width))
+	}
+	a.layoutTopNav(gtx, navX, sz.X)
 	a.layoutRail(gtx, navH, sz.Y-navH)
 
 	// workspace: sidebar (translucent) + primary panel, one rounded unit
