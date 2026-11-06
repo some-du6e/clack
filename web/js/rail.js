@@ -3,6 +3,7 @@ import { esc, avatarFor, throttleRAF } from './util.js';
 import { icon } from './icons.js';
 import { state, on, emit } from './state.js';
 import { navigate, ext } from './app.js';
+import { isAppDM } from './sidebar.js';
 
 let root;
 
@@ -28,7 +29,7 @@ function counts() {
   for (const [id, c] of state.counts) {
     const cv = state.convs.get(id);
     if (!cv) continue;
-    if (cv.kind === 'im' || cv.kind === 'mpim') { if (c.unread || c.mentions) dms += Math.max(1, c.mentions || 0); }
+    if (cv.kind === 'im' || cv.kind === 'mpim') { if (isAppDM(cv)) continue; if (c.unread || c.mentions) dms += Math.max(1, c.mentions || 0); }
     else { mentions += c.mentions || 0; if (c.unread) homeUnread = true; }
   }
   return { dms, mentions, homeUnread };

@@ -9,6 +9,7 @@ import { ext, navigate, openThread, openSecondary, viewCtx } from './app.js';
 
 const MAX_LIVE_VIEWS = 10;
 const views = new Map(); // channel id -> ChannelView (LRU: most recent last)
+const extrasCache = new Map(); // channel id -> {at, data: {memberIds, tabs, bookmarks, pins}}
 let current = null;
 
 // ---------------------------------------------------------------- data
@@ -139,18 +140,20 @@ ${members}
 
   facepileHTML(c) {
     const ids = (this.memberIds || (c.kind === 'mpim' ? c.members : null) || []).filter((x) => x).slice(0, 3);
-    const n = c.num_members || (c.members ? c.members.length : 0);
+    const n = this.humanCount || this.numMembers || c.num_members || (c.members ? c.members.length : 0);
     const faces = ids.map((id) => `<span class="p-avatar_stack__avatar"><img src="${esc(avatarFor(user(id) || { user: id }))}" alt=""></span>`).join('');
     return `<button class="p-avatar_stack--details" data-hact="members" data-tip="View all members of this channel"><span class="p-avatar_stack__stack__avatars">${faces}</span><span class="p-avatar_stack__count">${n || ''}</span></button>`;
   }
 
   tabsHTML(c) {
     const tabs = [`<button class="p-view_tab p-view_tab--active" data-hact="tab-messages">${icon('messages', 16)}<span>Messages</span></button>`];
-    for (const b of this.bookmarks || []) {
-      const iconHTML = b.icon_url ? `<img class="p-view_tab__favicon" src="${esc(b.icon_url)}" alt="">` : icon(b.type === 'canvas' ? 'canvas' : (b.type === 'folder' ? 'folder' : 'link'), 16);
-      tabs.push(`<button class="p-view_tab" data-hact="bookmark" data-url="${esc(b.link || '')}" data-tip="${esc(b.link || b.title)}">${iconHTML}<span>${esc(b.title || b.link)}</span></button>`);
+    for (const t of this.tabs || []) {
+      tabs.push(`<button class="p-view_tab" data-hact="tab-link" data-url="${esc(t.url || '')}" data-tip="${esc(t.title)}">${icon(t.type === 'list' ? 'list' : t.type === 'deleted' ? 'trash' : 'canvas', 16)}<span>${esc(t.title)}</span></button>`);
     }
-    if (this.pinCount) tabs.push(`<button class="p-view_tab" data-hact="pins">${icon('pin', 16)}<span>Pins</span><span class="p-view_tab__count">${this.pinCount}</span></button>`);
+    for (const b of this.bookmarks || []) {
+      const iconHTML = b.icon_url ? `<img class="p-view_tab__favicon" src="${esc(b.icon_url)}" alt="">` : icon(b.type === 'folder' ? 'folder' : 'link', 16);
+      tabs.push(`<button class="p-view_tab" data-hact="tab-link" data-url="${esc(b.link || '')}" data-tip="${esc(b.link || b.title)}">${iconHTML}<span>${esc(b.title || b.link)}</span></button>`);
+    }
     tabs.push(`<button class="p-view_tab__add" data-hact="add-tab" data-tip="Add a tab">${icon('plusSmall', 16)}</button>`);
     return `<div class="p-view_tabs" role="tablist">${tabs.join('')}</div>`;
   }
@@ -158,16 +161,34 @@ ${members}
   async loadHeaderExtras() {
     const c = this.conv;
     if (!c) return;
+    const cached = extrasCache.get(this.id);
+    if (cached && Date.now() - cached.at < 300000) { Object.assign(this, cached.data); this.renderHeader(); return; }
+    const data = {};
     const jobs = [];
     if (c.kind !== 'im') {
-      jobs.push(api.call('conversations.members', { channel: this.id, limit: '8' }).then((r) => {
-        this.memberIds = (r.members || []).filter((id) => id !== state.self?.id).concat(r.members?.includes(state.self?.id) ? [state.self.id] : []);
-        return ensureUsers(this.memberIds.slice(0, 3));
+      // Slack's header count leaves out bots, so small channels get counted client-side.
+      const small = (c.num_members || 0) <= 500;
+      jobs.push(api.call('conversations.members', { channel: this.id, limit: small ? '500' : '20' }).then(async (r) => {
+        const ids = (r.members || []);
+        if (small) await ensureUsers(ids); else await ensureUsers(ids.slice(0, 20));
+        const humans = ids.filter((id) => { const u = user(id); return u && !u.is_bot && !u.deleted; });
+        data.memberIds = humans.filter((id) => id !== state.self?.id).concat(humans.includes(state.self?.id) ? [state.self.id] : []);
+        if (small && !r.response_metadata?.next_cursor) data.humanCount = humans.length;
       }).catch(() => {}));
     }
-    jobs.push(api.call('bookmarks.list', { channel_id: this.id }).then((r) => { this.bookmarks = (r.bookmarks || []).slice(0, 12); }).catch(() => {}));
-    jobs.push(api.call('pins.list', { channel: this.id }).then((r) => { this.pins = r.items || []; this.pinCount = this.pins.length; }).catch(() => {}));
+    // channel tabs (canvases, lists) live in conversations.info properties.tabs
+    jobs.push(api.call('conversations.info', { channel: this.id, include_num_members: 'true' }).then(async (r) => {
+      if (r.channel?.num_members) { data.numMembers = r.channel.num_members; }
+      const tabs = (r.channel?.properties?.tabs || []).filter((t) => !t.is_disabled && t.data?.file_id && (t.type === 'canvas' || t.type === 'list'));
+      data.tabs = (await Promise.all(tabs.slice(0, 10).map((t) => api.call('files.info', { file: t.data.file_id }).then((f) => ({
+        type: t.type, title: t.label || f.file?.title || f.file?.name || (t.type === 'list' ? 'List' : 'Canvas'), url: f.file?.permalink || '',
+      })).catch(() => ({ type: 'deleted', title: 'Deleted file', url: '' }))))).filter(Boolean);
+    }).catch(() => {}));
+    jobs.push(api.call('bookmarks.list', { channel_id: this.id }).then((r) => { data.bookmarks = (r.bookmarks || []).filter((b) => b.type === 'link' && b.link).slice(0, 12); }).catch(() => {}));
+    jobs.push(api.call('pins.list', { channel: this.id }).then((r) => { data.pins = r.items || []; data.pinCount = data.pins.length; }).catch(() => {}));
     await Promise.all(jobs);
+    extrasCache.set(this.id, { at: Date.now(), data });
+    Object.assign(this, data);
     this.renderHeader();
   }
 
@@ -191,7 +212,7 @@ ${members}
       case 'more': if (ext.menus?.channelMenu) ext.menus.channelMenu(el, c); else channelMenuFallback(el, c); break;
       case 'huddle': case 'huddle-menu': ext.popups?.toast?.('Huddles aren’t supported in yoloslack yet'); break;
       case 'notifications': ext.popups?.openMenu?.(el, [{ label: 'Notifications' , hint: '' }, 'sep', { label: 'All new posts' }, { label: 'Mentions', hint: '' }, { label: 'Nothing' }, 'sep', { label: 'Mute channel' }]); break;
-      case 'bookmark': if (el.dataset.url) window.open(el.dataset.url, '_blank', 'noopener'); break;
+      case 'tab-link': if (el.dataset.url) window.open(el.dataset.url, '_blank', 'noopener'); break;
       case 'pins': this.showPins(); break;
       case 'add-tab': ext.popups?.toast?.('Adding tabs isn’t supported yet'); break;
       default: break;

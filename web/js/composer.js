@@ -345,6 +345,7 @@ const TOOLBAR = [
   ['italic', 'italic', `Italic (${MOD}I)`],
   ['underline', 'underline', `Underline (${MOD}U)`],
   ['strike', 'strike', `Strikethrough (${MOD}Shift X)`],
+  ['style', 'paragraph', 'Text style', true],
   'sep',
   ['link', 'link', `Link (${MOD}Shift U)`],
   ['ol', 'ol', `Ordered list (${MOD}Shift 7)`],
@@ -380,7 +381,7 @@ export class Composer {
   template() {
     const o = this.opts;
     const edit = o.mode === 'edit';
-    const tb = TOOLBAR.map((t) => t === 'sep' ? '<span class="p-composer__separator"></span>' : `<button class="c-wysiwyg_container__button" type="button" data-fmt="${t[0]}" aria-label="${esc(t[2])}" data-tip="${esc(t[2])}">${icon(t[1], 18)}</button>`).join('');
+    const tb = TOOLBAR.map((t) => t === 'sep' ? '<span class="p-composer__separator"></span>' : `<button class="c-wysiwyg_container__button${t[3] ? ' c-wysiwyg_container__button--wide' : ''}" type="button" data-fmt="${t[0]}" aria-label="${esc(t[2])}" data-tip="${esc(t[2])}">${icon(t[1], 18)}${t[3] ? icon('chevronDown', 18, 'c-wysiwyg_container__button_caret') : ''}</button>`).join('');
     const hidden = !edit && !state.prefs.showFormatting;
     return `<div class="p-message_pane_input${edit ? ' p-message_pane_input--edit' : ''}">
 <div class="c-wysiwyg_container${hidden ? ' c-wysiwyg_container--no_formatting' : ''}">
@@ -613,6 +614,18 @@ ${edit ? '' : `<div class="p-notification_bar"><div class="p-notification_bar__s
       }
       case 'code': this.wrapInline('code'); break;
       case 'link': this.insertLink(); break;
+      case 'style': {
+        const b = this.el.querySelector('[data-fmt=style]');
+        const pick = (k) => () => { this.editor.focus(); if (k === 'p') document.execCommand('formatBlock', false, 'p'); else this.format(k); };
+        ext.popups?.openMenu?.(b, [
+          { label: 'Normal text', onClick: pick('p') },
+          { label: 'Bulleted list', hint: `${MOD}Shift 8`, onClick: pick('ul') },
+          { label: 'Numbered list', hint: `${MOD}Shift 7`, onClick: pick('ol') },
+          { label: 'Quote', hint: `${MOD}Shift 9`, onClick: pick('quote') },
+          { label: 'Code block', hint: `${MOD}Alt Shift C`, onClick: pick('codeblock') },
+        ]);
+        return;
+      }
       default: break;
     }
     this.refresh();

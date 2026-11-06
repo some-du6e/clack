@@ -210,7 +210,7 @@ body.is-resizing * { pointer-events: none; }
 .p-view_header__truncated_text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .p-view_header__avatar { width: 24px; height: 24px; border-radius: 6px; margin-right: 8px; flex: none; }
 .p-view_header__status { width: 18px; height: 18px; margin-left: 6px; }
-.p-view_header__topic_container { flex: 1 1 0; min-width: 0; display: flex; justify-content: center; margin-right: 8px; }
+.p-view_header__topic_container { flex: 1 1 0; min-width: 0; display: flex; margin: 0 8px 0 8px; }
 .p-view_header__topic { color: rgb(69, 68, 71); font-size: 13px; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; min-width: 0; }
 .p-view_header__topic .c-emoji { width: 16px; height: 16px; margin: 0 1px; vertical-align: -3px; }
 .p-view_header__topic a { pointer-events: none; color: inherit; }
@@ -276,6 +276,9 @@ body.is-resizing * { pointer-events: none; }
 .c-wysiwyg_container__button { width: 28px; height: 28px; padding: 2px; margin: 2px 2px 0 0; display: flex; align-items: center; justify-content: center; border-radius: 4px; color: var(--text-icon); flex: none; }
 .c-wysiwyg_container__formatting .c-wysiwyg_container__button { margin: 2px 4px 0 0; }
 .c-wysiwyg_container__button svg { width: 18px; height: 18px; }
+.c-wysiwyg_container__button--wide { width: 44px; padding: 0 4px; }
+.c-wysiwyg_container__button--wide .c-wysiwyg_container__button_caret { width: 20px; height: 20px; margin-left: -2px; }
+.c-wysiwyg_container__button[data-act=toggle-format] svg { width: 20px; height: 20px; }
 .c-wysiwyg_container__button:hover { background: rgba(29, 28, 29, 0.06); color: var(--text); }
 .c-wysiwyg_container__button--active { background: rgba(29, 28, 29, 0.13); color: var(--text); }
 .p-composer__separator { width: 1px; height: 20px; margin: 2px 4px 0 0; border-left: 1px solid rgba(94, 93, 96, 0.13); flex: none; }

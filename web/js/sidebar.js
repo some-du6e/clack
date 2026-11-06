@@ -16,7 +16,7 @@ const STATIC = [
   { route: '#/directories', label: 'Directories', icon: 'directories' },
 ];
 
-const SECTION_ICON = { stars: 'star', channels: 'hash', direct_messages: 'dms', apps: 'apps', standard: 'folder', recent_apps: 'apps' };
+const SECTION_ICON = { stars: 'star', channels: 'hashBox', direct_messages: 'bubble', apps: 'appsDots', standard: 'folder', recent_apps: 'appsDots' };
 
 export function mountSidebar(el) {
   root = el;
@@ -73,11 +73,12 @@ function rowHTML(c, opts = {}) {
   let iconHTML, extra = '';
   if (c.kind === 'im') {
     const u = user(c.user);
-    const pres = u?.presence === 'active' ? ' c-presence--active' : '';
-    const bot = u?.is_bot || c.user === 'USLACKBOT';
-    iconHTML = `<span class="p-channel_sidebar__user_avatar"><img src="${esc(avatarFor(u || { user: c.user }))}" alt="" loading="lazy">${bot && !u?.presence ? '' : `<span class="c-presence${pres}"></span>`}</span>`;
+    const self = c.user === state.self?.id;
+    const pres = u?.presence === 'active' || self ? ' c-presence--active' : '';
+    const bot = isAppDM(c);
+    iconHTML = `<span class="p-channel_sidebar__user_avatar"><img src="${esc(avatarFor(u || { user: c.user }))}" alt="" loading="lazy">${bot ? '' : `<span class="c-presence${pres}"></span>`}</span>`;
     if (c.user === state.self?.id) extra = '<span class="p-channel_sidebar__member_label">you</span>';
-    if (u && u.presence !== 'active') cls.push('p-channel_sidebar__channel--away');
+    if (!pres && !bot) cls.push('p-channel_sidebar__channel--away');
   } else if (c.kind === 'mpim') {
     const n = (c.members || []).filter((id) => id !== state.self?.id).length;
     iconHTML = `<span class="p-channel_sidebar__channel_icon_prefix p-channel_sidebar__mpim_count">${n || ''}</span>`;
@@ -86,6 +87,34 @@ function rowHTML(c, opts = {}) {
   }
   const badge = mentions && !sel ? `<span class="p-channel_sidebar__badge">${mentions}</span>` : '';
   return `<div class="${cls.join(' ')}" data-id="${esc(c.id)}" role="treeitem" tabindex="-1">${iconHTML}<span class="p-channel_sidebar__name"><span>${esc(convName(c))}</span>${extra}</span>${badge}</div>`;
+}
+
+export function isAppDM(c) {
+  if (!c || c.kind !== 'im') return false;
+  if (c.user === 'USLACK' || c.user === 'USLACKBOT') return true;
+  return !!user(c.user)?.is_bot;
+}
+
+function hasActivity(id) {
+  const c = state.counts.get(id);
+  return !!(c && ((c.latest && !/^0+\.0+$/.test(c.latest)) || c.unread || c.mentions));
+}
+
+// effectiveSections moves app DMs into Apps (the way Slack files them) and hides idle app DMs.
+function effectiveSections() {
+  const apps = state.sections.find((s) => s.type === 'apps');
+  const moved = [];
+  const out = state.sections.map((s) => {
+    if (s.type !== 'direct_messages' || !apps) return s;
+    const keep = [];
+    for (const id of s.channels) (isAppDM(conv(id)) ? moved : keep).push(id);
+    return { ...s, channels: keep };
+  });
+  return out.map((s) => {
+    if (s !== apps && s.id !== apps?.id) return s;
+    const ids = [...new Set([...moved, ...s.channels])].filter((id) => hasActivity(id) || id === selectedId());
+    return { ...s, channels: ids };
+  });
 }
 
 function sectionHTML(s) {
@@ -122,7 +151,7 @@ function render() {
   const route = state.current.route;
   const statics = STATIC.map((s) => `<div class="p-channel_sidebar__link${route.startsWith(s.route) ? ' p-channel_sidebar__link--selected' : ''}" data-route="${s.route}">${'<span class="p-channel_sidebar__link__icon">' + icon(s.icon, 16) + '</span>'}<span class="p-channel_sidebar__name">${esc(s.label)}</span></div>`).join('');
   const scroll = listEl.scrollTop;
-  listEl.innerHTML = `<div class="p-channel_sidebar__static_list">${statics}</div><div class="p-channel_sidebar__divider"></div>${state.sections.map(sectionHTML).join('')}`;
+  listEl.innerHTML = `<div class="p-channel_sidebar__static_list">${statics}</div><div class="p-channel_sidebar__divider"></div>${effectiveSections().map(sectionHTML).join('')}`;
   listEl.scrollTop = scroll;
 }
 
