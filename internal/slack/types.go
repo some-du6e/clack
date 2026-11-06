@@ -26,6 +26,7 @@ type Message struct {
 	Icons          *Icons          `json:"icons,omitempty"`
 	BotProfile     *BotProfile     `json:"bot_profile,omitempty"`
 	PinnedTo       []string        `json:"pinned_to,omitempty"`
+	PinnedInfo     *PinnedInfo     `json:"pinned_info,omitempty"`
 	ClientMsgID    string          `json:"client_msg_id,omitempty"`
 	Hidden         bool            `json:"hidden,omitempty"`
 	Root           *Message        `json:"root,omitempty"` // thread_broadcast
@@ -35,6 +36,13 @@ type Message struct {
 	Room           json.RawMessage `json:"room,omitempty"` // huddles
 	Channel        string          `json:"channel,omitempty"`
 	Inviter        string          `json:"inviter,omitempty"`
+}
+
+// PinnedInfo says who pinned a message (history / messages.list).
+type PinnedInfo struct {
+	Channel  string `json:"channel"`
+	PinnedBy string `json:"pinned_by"`
+	PinnedTS int64  `json:"pinned_ts"`
 }
 
 type Edited struct {
@@ -176,6 +184,7 @@ type User struct {
 
 type Profile struct {
 	Title              string          `json:"title,omitempty"`
+	Email              string          `json:"email,omitempty"` // only visible for self on Hack Club
 	Phone              string          `json:"phone,omitempty"`
 	RealName           string          `json:"real_name,omitempty"`
 	DisplayName        string          `json:"display_name,omitempty"`

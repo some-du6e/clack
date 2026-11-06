@@ -23,9 +23,14 @@ type Message struct {
 	ThreadTS, LatestReply    string
 	EditedTS                 string
 	Permalink                string // set on search results
+	ClientMsgID              string
+	PinnedBy                 string // who pinned it (when Pinned)
 	IsBot, Edited, Pinned    bool
 	Broadcast, System        bool // System: join/leave/topic… drawn compactly
-	Pending                  bool // optimistic local send not yet confirmed
+	Pending                  bool // optimistic local send not yet confirmed (TS is local)
+	Failed                   bool // optimistic send failed: offer Resend / DiscardPending
+	Saved                    bool // in the viewer's Saved / To-dos
+	FollowingThread          bool // the viewer follows this thread (root messages)
 	ReplyCount               int
 	ReplyUsers               []string
 	Reactions                []Reaction
@@ -46,6 +51,7 @@ type User struct {
 	ID, Name, RealName, Handle       string // Name: display name as Slack shows it
 	Avatar, Avatar192, Avatar512     string
 	Title, Pronouns                  string
+	Email                            string // only when Slack shows it (Hack Club: the viewer's own)
 	StatusText, StatusEmoji          string
 	StatusEmojiURL                   string
 	StatusExp                        int64
@@ -75,6 +81,7 @@ type Conv struct {
 	Creator    string
 	Priority   float64
 	Muted      bool
+	Starred    bool
 }
 
 // ConvRef describes a conversation that may not be in the sidebar
@@ -159,7 +166,15 @@ type Event struct {
 	Presence  string // presence: active | away
 	Users     []string
 	Prefs     *Prefs
-	Raw       json.RawMessage
+	// sent: the confirmed message replaces the local pending row whose TS
+	// is ReplacesTS. message/sent/update/delete of own sends carry ClientMsgID.
+	ReplacesTS  string
+	ClientMsgID string
+	ID          string        // draft id (draft), activity key (activity)
+	Draft       *Draft        // draft: create | update | send
+	Saved       *SavedItem    // saved: add | update | delete
+	Activity    *ActivityItem // activity: updated item (hydrated when possible)
+	Raw         json.RawMessage
 }
 
 // SendOpts are the options for Send.
@@ -172,7 +187,15 @@ type SendOpts struct {
 // UploadOpts share one or more files (held in memory, never spooled to disk).
 type UploadOpts struct {
 	Channel, ThreadTS, Comment string
-	Files                      []UploadFile
+	Files                      []UploadFile     // uploaded now
+	Prepared                   []PreparedUpload // uploaded earlier with PrepareUpload
+	Progress                   func(sent, total int64)
+}
+
+// PreparedUpload is a file uploaded with PrepareUpload but not yet shared.
+type PreparedUpload struct {
+	ID, Name, Title string
+	Size            int64
 }
 
 type UploadFile struct {
@@ -231,6 +254,7 @@ type Bookmark struct {
 // ChannelDetails is the channel-details view.
 type ChannelDetails struct {
 	Conv                     Conv
+	Managers                 []string // channel managers ("Managed by")
 	IsMember                 bool
 	IsOrgShared, IsExtShared bool
 	LastRead                 string
@@ -241,11 +265,12 @@ type ChannelDetails struct {
 }
 
 type ActivityOpts struct {
-	View   string // all | mentions | threads | reactions | invites | apps
-	Types  string // explicit activity.feed types (overrides View)
-	Unread bool
-	Cursor string
-	Limit  int
+	View     string // all | mentions | threads | reactions | invites | apps
+	Types    string // explicit activity.feed types (overrides View)
+	Unread   bool
+	Archived bool // cleared items instead of the inbox
+	Cursor   string
+	Limit    int
 }
 
 type ActivityItem struct {
@@ -286,10 +311,13 @@ type ThreadsPage struct {
 }
 
 type SavedItem struct {
-	ItemID, ItemType, Channel, TS, State string
-	DateCreated, DateDue, DateCompleted  int64
-	Archived                             bool
-	Msg                                  *Message
+	ItemID, ItemType, Channel, TS       string
+	State                               string // todo_state if set, else state (legacy)
+	TodoState                           string // to_do | saved | completed
+	Progress                            string // in_progress | completed | archived …
+	DateCreated, DateDue, DateCompleted int64
+	Archived                            bool
+	Msg                                 *Message
 }
 
 type SavedPage struct {
@@ -305,16 +333,41 @@ type SavedUpdate struct {
 	DateDue             *int64
 }
 
+// Draft is a server-side draft (synced across clients). DateScheduled > 0
+// makes it a scheduled message.
 type Draft struct {
 	ID, Channel, ThreadTS string
-	Users                 []string
+	ClientMsgID           string
+	Users                 []string // DM / group DM destination without a channel yet
 	Broadcast             bool
+	Text                  string // plain text of Doc
 	Doc                   richtext.Doc
 	Blocks                json.RawMessage
 	DateCreated           int64
 	DateScheduled         int64
 	LastUpdated           string
 	Files                 int
+	FileIDs               []string
+}
+
+// DraftOpts create (ID == "") or update a draft. Without Blocks, Text is
+// stored as one plain rich_text section.
+type DraftOpts struct {
+	ID, Channel, ThreadTS string
+	Users                 []string
+	Broadcast             bool
+	Text                  string
+	Blocks                json.RawMessage
+	FileIDs               []string
+}
+
+// ScheduledMessage is a message waiting to be posted at PostAt (unix s).
+type ScheduledMessage struct {
+	ID, Channel, ThreadTS string
+	PostAt, DateCreated   int64
+	Text                  string
+	Doc                   richtext.Doc
+	Blocks                json.RawMessage
 }
 
 type DM struct {

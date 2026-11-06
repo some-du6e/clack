@@ -38,6 +38,12 @@ type App struct {
 	cmdAt       time.Time
 
 	files *fileCache
+
+	pending map[string]*pendingSend // client_msg_id -> optimistic send
+	saved   map[string]bool         // "channel/ts" of saved / to-do messages
+	starred map[string]bool         // starred conversation ids (stars.list)
+	starsOK bool                    // starred was loaded
+	memberN map[string]int          // conversation -> people count (edge users/counts)
 }
 
 type call struct {
@@ -48,7 +54,8 @@ type call struct {
 // New builds the service. Call Boot before using it.
 func New(c *slack.Client, s *store.Store) *App {
 	a := &App{C: c, S: s, ready: make(chan struct{}), inflight: map[string]*call{}, subs: map[*sub]struct{}{},
-		presSeen: map[string]time.Time{}, files: newFileCache(256 << 20)}
+		presSeen: map[string]time.Time{}, files: newFileCache(256 << 20), pending: map[string]*pendingSend{},
+		saved: map[string]bool{}, starred: map[string]bool{}, memberN: map[string]int{}}
 	if s.SelfID() == "" {
 		s.Lock()
 		s.Self.ID = c.Creds.UserID
@@ -264,6 +271,7 @@ func (a *App) Boot(ctx context.Context) error {
 	go a.RTM.Run(context.Background())
 	go a.pump()
 	go a.prefetch(context.Background())
+	go a.loadExtras(context.Background()) // starred + saved sets
 	go func() {
 		t := time.NewTicker(5 * time.Minute)
 		defer t.Stop()
@@ -502,7 +510,7 @@ func (a *App) userOf(u *slack.User) User {
 	v := User{
 		ID: u.ID, Name: store.DisplayName(u), RealName: strings.TrimSpace(u.Profile.RealName), Handle: u.Name,
 		Avatar: avatarURL(u, 72), Avatar192: avatarURL(u, 192), Avatar512: avatarURL(u, 512),
-		Title: u.Profile.Title, Pronouns: u.Profile.Pronouns, StatusText: u.Profile.StatusText,
+		Title: u.Profile.Title, Pronouns: u.Profile.Pronouns, Email: u.Profile.Email, StatusText: u.Profile.StatusText,
 		StatusEmoji: u.Profile.StatusEmoji, StatusExp: u.Profile.StatusExpiration, TZ: u.TZ, TZOffset: u.TZOffset,
 		TZLabel: u.TZLabel, IsBot: u.IsBot || u.ID == "USLACKBOT", Deleted: u.Deleted, IsAdmin: u.IsAdmin,
 		IsOwner: u.IsOwner, Guest: u.IsRestricted || u.IsUltraRestricted, Color: u.Color,
@@ -588,6 +596,12 @@ func (a *App) conv(c *slack.Conversation) Conv {
 	a.S.RLock()
 	v.Muted = a.S.Muted[c.ID]
 	a.S.RUnlock()
+	a.mu.Lock()
+	if n, ok := a.memberN[c.ID]; ok {
+		v.NumMembers = n // people, as Slack's header counts them (no bots/apps)
+	}
+	v.Starred = a.starred[c.ID]
+	a.mu.Unlock()
 	return v
 }
 
@@ -651,6 +665,16 @@ func (a *App) message(ch string, m *slack.Message) Message {
 	if m.Edited != nil {
 		v.EditedTS = m.Edited.TS
 	}
+	v.ClientMsgID = m.ClientMsgID
+	v.Pending, v.Failed = a.pendingState(m)
+	if m.PinnedInfo != nil {
+		v.PinnedBy = m.PinnedInfo.PinnedBy
+		v.Pinned = true
+	}
+	v.FollowingThread = m.Subscribed
+	a.mu.Lock()
+	v.Saved = a.saved[v.Channel+"/"+m.TS]
+	a.mu.Unlock()
 	if m.Subtype == "bot_message" || (m.BotID != "" && m.User == "") || m.DisplayAsBot {
 		v.IsBot = true
 	}
@@ -766,6 +790,17 @@ func (a *App) sections(convs []Conv) []Section {
 	assigned := map[string]bool{}
 	var out []Section
 	chIdx, dmIdx := -1, -1
+	a.mu.Lock()
+	var starred []string
+	for id := range a.starred {
+		starred = append(starred, id)
+	}
+	a.mu.Unlock()
+	names := map[string]string{}
+	for _, c := range convs {
+		names[c.ID] = strings.ToLower(c.Name)
+	}
+	sort.Slice(starred, func(i, j int) bool { return names[starred[i]] < names[starred[j]] })
 	for _, s := range ordered {
 		switch s.Type {
 		case "salesforce_records", "slack_connect", "temporary_channels", "agents", "recent_apps":
@@ -774,7 +809,14 @@ func (a *App) sections(convs []Conv) []Section {
 			}
 		}
 		sv := Section{ID: s.ID, Name: s.Name, Type: s.Type, Emoji: s.Emoji, Channels: []string{}}
-		for _, id := range s.ChannelIDsPage.ChannelIDs {
+		ids := s.ChannelIDsPage.ChannelIDs
+		if s.Type == "stars" { // starred membership comes from stars.list
+			ids = append(append([]string(nil), ids...), starred...)
+		}
+		for _, id := range ids {
+			if s.Type == "direct_messages" && a.isAppDM(id) {
+				continue // Slack lists bot/app DMs under Apps
+			}
 			if _, ok := a.S.Conv(id); ok && !assigned[id] {
 				sv.Channels = append(sv.Channels, id)
 				assigned[id] = true
@@ -813,7 +855,7 @@ func (a *App) sections(convs []Conv) []Section {
 		}
 		switch c.Kind {
 		case "im", "mpim":
-			if u, ok := a.S.User(c.User); ok && (u.IsBot || u.ID == "USLACKBOT") && c.Kind == "im" {
+			if a.isAppDM(c.ID) {
 				apps = append(apps, c.ID)
 			} else {
 				out[dmIdx].Channels = append(out[dmIdx].Channels, c.ID)
@@ -822,10 +864,6 @@ func (a *App) sections(convs []Conv) []Section {
 			out[chIdx].Channels = append(out[chIdx].Channels, c.ID)
 		}
 	}
-	names := map[string]string{}
-	for _, c := range convs {
-		names[c.ID] = strings.ToLower(c.Name)
-	}
 	sort.SliceStable(out[chIdx].Channels, func(i, j int) bool {
 		return names[out[chIdx].Channels[i]] < names[out[chIdx].Channels[j]]
 	})
@@ -833,6 +871,21 @@ func (a *App) sections(convs []Conv) []Section {
 		out = append(out, Section{ID: "apps", Name: "Apps", Type: "apps", Channels: apps})
 	}
 	return out
+}
+
+// isAppDM reports whether ch is a DM with Slackbot, the "Slack" system
+// bot or an app (these sort under Apps, as in Slack).
+func (a *App) isAppDM(ch string) bool {
+	c, ok := a.S.Conv(ch)
+	if !ok || !c.IsIM {
+		return false
+	}
+	switch c.User {
+	case "USLACKBOT", "USLACK":
+		return true
+	}
+	u, ok := a.S.User(c.User)
+	return ok && (u.IsBot || u.IsAppUser || u.Profile.BotID != "" || u.Profile.APIAppID != "")
 }
 
 // ---- presence ----
