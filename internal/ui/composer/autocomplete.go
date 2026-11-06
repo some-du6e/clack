@@ -385,7 +385,7 @@ func mentionTrigger(d *Doc, caret int) (acTrigger, bool) {
 			// @ must be at a word boundary (line start or after a space).
 			if i-1 > lineStart {
 				p := d.Runes[i-2]
-				if p != ' ' && p != '\t' && p != ' ' {
+				if p != ' ' && p != '\t' && p != '\u00a0' {
 					break
 				}
 			}
