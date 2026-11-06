@@ -57,10 +57,12 @@ func (v *ChannelView) ScrollToBottom() { v.s.list.Position = layout.Position{} }
 // AtBottom reports whether the newest message is visible.
 func (v *ChannelView) AtBottom() bool { return !v.s.list.Position.BeforeEnd }
 
-// Highlight scrolls to ts and flashes it (permalinks, search results).
+// Highlight scrolls to ts and flashes it (permalinks, search results,
+// route "c/<id>/m/<ts>"). Older messages are paged in until ts is loaded.
 func (v *ChannelView) Highlight(ts string) {
 	v.s.highlight, v.s.highlightAt = ts, time.Now()
 	v.s.positioned = true
+	v.s.jumpPages = 0
 	for i, it := range v.s.items {
 		if it.kind == itMsg && v.s.snap.msgs[it.idx].m.TS == ts {
 			v.s.list.Position = layout.Position{BeforeEnd: true, First: max(0, i-2)}

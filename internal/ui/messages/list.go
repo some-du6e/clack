@@ -103,6 +103,7 @@ type listState struct {
 	lastTyping time.Time
 
 	noMark      bool
+	jumpPages   int
 	origin      image.Point // view origin in window coordinates
 	lastOlder   time.Time
 	highlight   string
@@ -192,6 +193,7 @@ func (s *listState) sync(h Host, now time.Time) {
 				s.list.Position = layout.Position{BeforeEnd: true, First: max(0, i-2)}
 				s.positioned = true
 				s.pendingJump = ""
+				s.highlightAt = now
 				break
 			}
 		}
@@ -425,6 +427,17 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	s.layoutScrollbar(gtx, c, size, now)
 	area.Pop()
 
+	// jumping to a message older than what's loaded: page back until found
+	// (bounded), then sync() positions on it.
+	if s.pendingJump != "" && !s.thread && s.snap.loaded && !s.snap.older {
+		if s.snap.hasMore && len(s.snap.msgs) > 0 && tsLess(s.pendingJump, s.snap.msgs[0].m.TS) && s.jumpPages < 20 && now.Sub(s.lastOlder) > 300*time.Millisecond {
+			s.jumpPages++
+			s.lastOlder = now
+			s.hb.loadOlder(s.m)
+		} else if !s.snap.hasMore || s.jumpPages >= 20 {
+			s.pendingJump = "" // not in this conversation (or too far back)
+		}
+	}
 	// infinite scroll up
 	if !s.thread && p.First <= 2 && s.snap.hasMore && !s.snap.older && s.snap.loaded && now.Sub(s.lastOlder) > time.Second {
 		s.lastOlder = now

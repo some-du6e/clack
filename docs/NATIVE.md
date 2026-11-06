@@ -134,7 +134,7 @@ type Event struct {
 To avoid import cycles, every feature package defines the small interface it needs **in its own package** (e.g. `messages.Host`). The `internal/ui` root implements all of them on one `*ui.App`. Shared things every Host offers (use these exact names so one implementation satisfies all):
 ```go
 Core() *core.App; Theme() *theme.Theme; Images() *imgcache.Cache; Invalidate()
-Navigate(route string)            // "c/<id>", "c/<id>/t/<ts>", "activity", "dms", "later", "files", "threads", "huddles", "drafts", "directories", "search?q="
+Navigate(route string)            // "c/<id>", "c/<id>/t/<ts>" (open thread), "c/<id>/m/<ts>" (scroll to + flash a message: ChannelView.Highlight(ts); a reply in a thread is "c/<id>/t/<root>" plus Highlight on the ThreadView later), "activity", "dms", "later", "files", "threads", "huddles", "drafts", "directories", "search?q="
 OpenThread(channel, ts string); CloseSecondary()
 ShowOverlay(o Overlay)            // popups.Overlay (interface below) — ui root renders the overlay stack on top
 OpenEmojiPicker(anchor image.Point, onPick func(name string))
