@@ -153,8 +153,8 @@ func (v *Huddles) suggestions(now time.Time) {
 	v.sugUsers, v.sugChans = v.sugUsers[:0], v.sugChans[:0]
 	for _, c := range convs {
 		switch {
-		case c.Kind == "im" && c.User != "" && c.User != self && len(v.sugUsers) < 6:
-			if u, ok := v.user(c.User); ok && (u.IsBot || u.Deleted) {
+		case c.Kind == "im" && c.User != "" && c.User != self && c.User != "USLACKBOT" && len(v.sugUsers) < 6:
+			if u, ok := v.user(c.User); !ok || u.IsBot || u.Deleted {
 				continue
 			}
 			v.sugUsers = append(v.sugUsers, c.User)
