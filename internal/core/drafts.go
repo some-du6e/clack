@@ -88,8 +88,10 @@ func textBlocks(text string) json.RawMessage {
 func msNow() string { return strconv.FormatInt(time.Now().UnixMilli(), 10) }
 
 // SaveDraft creates (ID == "") or updates a draft and returns it.
+// Editing a scheduled draft requires its DateScheduled (Slack answers
+// reattaching_not_allowed otherwise); the draft keeps its ID.
 func (a *App) SaveDraft(ctx context.Context, o DraftOpts) (Draft, error) {
-	return a.saveDraft(ctx, o, 0)
+	return a.saveDraft(ctx, o, o.DateScheduled)
 }
 
 func (a *App) saveDraft(ctx context.Context, o DraftOpts, scheduleAt int64) (Draft, error) {

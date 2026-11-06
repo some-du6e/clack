@@ -327,6 +327,7 @@ func (a *App) MoveToTodos(ctx context.Context, ch, ts string, dateDue int64) err
 	p := savedParams(ch, ts)
 	p.Set("todo_state", "to_do")
 	p.Set("date_due", strconv.FormatInt(dateDue, 10))
+	p.Set("mark", "uncompleted") // a completed item would otherwise stay completed
 	return a.C.Call(ctx, "saved.update", p, nil)
 }
 
