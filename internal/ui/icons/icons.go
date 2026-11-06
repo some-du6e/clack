@@ -257,6 +257,7 @@ func init() {
 	reg("bookmark-filled", registry["later-filled"].parts...)
 	reg("saved", registry["later"].parts...)
 	reg("saved-filled", registry["later-filled"].parts...)
+	reg("agents", s(circle(6.25, 6.25, 2.75)), s(circle(13.75, 6.25, 2.75)), s(circle(6.25, 13.75, 2.75)), s("M13.75 10.25 C14.1 12.3 14.95 13.15 17 13.5 C14.95 13.85 14.1 14.7 13.75 16.75 C13.4 14.7 12.55 13.85 10.5 13.5 C12.55 13.15 13.4 12.3 13.75 10.25 Z"))
 	reg("apps", s(rrect(3.5, 3.5, 5, 5, 1.25)), s(rrect(11.5, 3.5, 5, 5, 1.25)), s(rrect(3.5, 11.5, 5, 5, 1.25)), s(rrect(11.5, 11.5, 5, 5, 1.25)))
 
 	// sidebar

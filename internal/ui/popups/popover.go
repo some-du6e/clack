@@ -61,6 +61,7 @@ func (p *Popover) Layout(gtx layout.Context) layout.Dimensions {
 	th := p.h.Theme()
 	cl := colorsOf(th)
 	win := gtx.Constraints.Max
+	gtx.Constraints.Min = image.Point{} // robust to roots passing Exact constraints
 	if !p.focus {
 		gtx.Execute(key.FocusCmd{Tag: p})
 		p.focus = true

@@ -53,7 +53,7 @@ var sbLinks = []sbRow{
 	{kind: sbLink, key: "threads", label: "Threads", icon: "threads"},
 	{kind: sbLink, key: "huddles", label: "Huddles", icon: "huddle"},
 	{kind: sbLink, key: "drafts", label: "Drafts & sent", icon: "drafts"},
-	{kind: sbLink, key: "later", label: "Saved", icon: "saved"},
+	{kind: sbLink, key: "saved", label: "Saved", icon: "saved"},
 	{kind: sbLink, key: "directories", label: "Directories", icon: "directories"},
 }
 

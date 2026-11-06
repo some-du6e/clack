@@ -73,18 +73,24 @@ type App struct {
 	images *imgcache.Cache
 	data   *backend // nil until signed in
 
-	router        router
-	clicks        clickables
-	grad          gradient
-	sidebar       sidebarState
-	secondary     secondaryState
-	searchQuery   string
-	searchPill    image.Rectangle // window coords, for anchoring the search popover
-	primaryOrigin image.Point     // window position of the primary panel
-	overlays      []Overlay
-	toast         toastState
-	keys          *shortcuts
-	login         *loginScreen
+	router          router
+	clicks          clickables
+	grad            gradient
+	sidebar         sidebarState
+	secondary       secondaryState
+	searchQuery     string
+	searchPill      image.Rectangle // window coords, for anchoring the search popover
+	primaryOrigin   image.Point     // window position of the primary panel
+	secondaryOrigin image.Point     // window position of the secondary pane
+	convos          map[string]*convo
+	convoOrder      []string
+	ptrTag          int
+	ptrWin          image.Point
+	ptrOK           bool
+	overlays        []Overlay
+	toast           toastState
+	keys            *shortcuts
+	login           *loginScreen
 
 	views     map[Route]View // cached primary views (instant switch)
 	viewOrder []Route
@@ -169,13 +175,24 @@ func (a *App) Run() error {
 	)
 	if a.images != nil {
 		a.images.SetInvalidate(a.win.Invalidate)
+		a.th.Images = a.images
+	}
+	if installHooks != nil {
+		installHooks(a)
+	}
+	if onWindow != nil {
+		onWindow(a)
 	}
 	if a.data != nil {
 		a.data.start(a)
 	}
 	var ops op.Ops
 	for {
-		switch e := a.win.Event().(type) {
+		ev := a.win.Event()
+		if onEvent != nil {
+			onEvent(ev)
+		}
+		switch e := ev.(type) {
 		case app.DestroyEvent:
 			if a.data != nil {
 				a.data.stop()
@@ -187,7 +204,7 @@ func (a *App) Run() error {
 			t0 := time.Now()
 			if a.th.Shaper == nil {
 				a.timing("first FrameEvent", a.opts.Started)
-				a.th.Shaper = <-a.shaperCh
+				a.th.SetShaper(<-a.shaperCh)
 				a.timing("shaper waited", t0)
 			}
 			a.drain()
@@ -249,7 +266,7 @@ func (a *App) frame(gtx layout.Context) {
 	railW := gtx.Dp(theme.RailW)
 	inset := gtx.Dp(theme.PanelInset)
 	sbW := gtx.Dp(unit.Dp(a.sidebar.width))
-	if a.sidebar.hidden {
+	if a.sidebar.hidden || pageOwnsWorkspace(a.router.Current()) {
 		sbW = 0
 	}
 	ws := image.Rect(railW, navH, sz.X-inset, sz.Y-inset)
@@ -295,6 +312,7 @@ func (a *App) frame(gtx layout.Context) {
 
 	a.layoutOverlays(gtx)
 	a.layoutToast(gtx)
+	a.rootPointer(gtx)
 }
 
 // ---- primary panel ----
@@ -322,7 +340,13 @@ func (a *App) layoutPrimary(gtx layout.Context) layout.Dimensions {
 	})
 	if secW > 0 {
 		x := mainW
+		// Slack 2026 floats the thread/details pane: a soft shadow on its
+		// left edge over the conversation, plus a hairline border.
+		pane := image.Rect(x, 0, sz.X, sz.Y)
+		theme.Shadow(gtx, pane, 0, gtx.Dp(8), theme.WithAlpha(a.th.C.PanelShadow, 0x30))
+		theme.Fill(gtx, pane, a.th.C.Bg)
 		theme.Fill(gtx, image.Rect(x, 0, x+gtx.Dp(1), sz.Y), a.th.C.Border)
+		a.secondaryOrigin = a.primaryOrigin.Add(image.Pt(x+gtx.Dp(1), 0))
 		atExact(gtx, image.Pt(x+gtx.Dp(1), 0), image.Pt(secW-gtx.Dp(1), sz.Y), func(gtx layout.Context) layout.Dimensions {
 			defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
 			return a.layoutSecondary(gtx)
@@ -330,6 +354,16 @@ func (a *App) layoutPrimary(gtx layout.Context) layout.Dimensions {
 		a.layoutSecondaryResize(gtx, x, sz.Y)
 	}
 	return layout.Dimensions{Size: sz}
+}
+
+// pageOwnsWorkspace: Slack hides the Home sidebar on these rail pages; the
+// view draws its own column (Files, DMs list) or uses the full width.
+func pageOwnsWorkspace(r Route) bool {
+	switch r.Page() {
+	case "files", "dms", "activity", "later":
+		return true
+	}
+	return false
 }
 
 // view returns the cached view for route r, creating it with mk.
