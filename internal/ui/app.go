@@ -199,7 +199,7 @@ func (a *App) Run() error {
 			}
 			a.frameStats.add(time.Since(t0), tl.Sub(t0))
 			if !a.switchAt.IsZero() {
-				log.Printf("ui: switch to %s: %v to frame submitted (layout %v)", a.switchTo.Page(), time.Since(a.switchAt).Round(10*time.Microsecond), time.Since(t0).Round(10*time.Microsecond))
+				log.Printf("ui: switch to %s: %v to frame submitted (layout %v, gpu %v)", a.switchTo.Page(), time.Since(a.switchAt).Round(10*time.Microsecond), tl.Sub(t0).Round(10*time.Microsecond), time.Since(tl).Round(10*time.Microsecond))
 				a.switchAt = time.Time{}
 			}
 			if !a.firstPaint {
