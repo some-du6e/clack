@@ -205,8 +205,9 @@ func (r *RTM) SubscribePresence(ids []string) error {
 
 // SubscribeUsers asks for user_change events for the given users (flannel
 // only pushes profile changes for users the client has subscribed to).
-// The gateway rejects large sets ("Too many updated ids: 500").
-const MaxUserSubs = 200
+// MaxUserSubs is the gateway's limit for one user_change subscription
+// (verified: 100 is accepted, 101 is "Too many updated ids").
+const MaxUserSubs = 100
 
 func (r *RTM) SubscribeUsers(ids []string) error {
 	if ids == nil {
