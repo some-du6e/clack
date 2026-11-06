@@ -347,6 +347,17 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 					return a.th.Label(gtx, 15, weight, fg, label)
 				})
 			})
+			if conv != nil && conv.StatusEmoji != "" && nw+gtx.Dp(26) < tw {
+				// status emoji after the name (Slack: 16px, 6px gap)
+				es := gtx.Dp(16)
+				at(gtx, image.Pt(tx+nw+gtx.Dp(6), (rowH-es)/2), image.Pt(es, es), func(gtx layout.Context) layout.Dimensions {
+					if img, ok := a.images.Get(conv.StatusEmoji, es*2); ok {
+						return theme.Image(gtx, img, image.Pt(es, es), 0)
+					}
+					return layout.Dimensions{Size: image.Pt(es, es)}
+				})
+				nw += es + gtx.Dp(6)
+			}
 			if suffix != "" && nw+gtx.Dp(8) < tw {
 				sc := theme.Over(theme.WithAlpha(a.th.C.SidebarText, 0xa3), a.sbBase) // rgba(249,237,255,.6)
 				if sel {

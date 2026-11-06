@@ -172,6 +172,7 @@ func (b *backend) apply(a *App, s core.Snapshot) {
 		if c.Kind == "im" {
 			if u, ok := s.Users[c.User]; ok {
 				ci.Avatar = u.Avatar
+				ci.StatusEmoji = u.StatusEmojiURL
 				ci.Active = u.Presence == "active"
 				ci.Bot = u.IsBot
 				if u.Name != "" {
@@ -329,7 +330,7 @@ func (b *backend) handle(a *App, ev core.Event) {
 			for _, c := range m.Convs {
 				if c.Kind == "im" || c.Kind == "app" {
 					if c.User == ev.User.ID {
-						c.Avatar, c.Name = ev.User.Avatar, ev.User.Name
+						c.Avatar, c.Name, c.StatusEmoji = ev.User.Avatar, ev.User.Name, ev.User.StatusEmojiURL
 					}
 				}
 			}
@@ -419,6 +420,7 @@ func (b *backend) opened(ch string) {
 		conv, _ := b.core.Conv(ch)
 		if conv.Kind == "channel" || conv.Kind == "private" {
 			us, _, merr := b.core.Members(ctx, ch, "", true)
+			log.Printf("ui: members %s: %d err=%v", ch, len(us), merr)
 			if merr == nil {
 				for _, u := range us {
 					if len(members) == 3 {
