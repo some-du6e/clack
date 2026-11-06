@@ -159,6 +159,30 @@ func main() {
 	var chMu sync.Mutex
 	go func() {
 		<-svc.Ready()
+		// read-state probe (ids/ts only, no contents)
+		for i := 0; i < 6; i++ {
+			cnt := svc.Count(chans[0])
+			log.Printf("probe %s last_read=%s latest=%s unread=%v", chans[0], cnt.LastRead, cnt.Latest, cnt.Unread)
+			time.Sleep(4 * time.Second)
+		}
+	}()
+	go func() {
+		<-svc.Ready()
+		if *highlight == "auto-old" {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			p, err := svc.History(ctx, chans[0], "")
+			if err == nil && len(p.Messages) > 0 {
+				p2, err2 := svc.History(ctx, chans[0], p.Messages[0].TS)
+				if err2 == nil && len(p2.Messages) > 10 {
+					*highlight = p2.Messages[10].TS
+				}
+			}
+			cancel()
+			log.Printf("highlight target %s", *highlight)
+		}
+	}()
+	go func() {
+		<-svc.Ready()
 		if *switchTo == "auto" {
 			snap := svc.Snapshot()
 			auto := []string{chans[0]}
