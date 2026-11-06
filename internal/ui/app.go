@@ -209,7 +209,16 @@ func (a *App) Run() error {
 			}
 			a.drain()
 			gtx := app.NewContext(&ops, e)
+			before := a.router.Current()
 			a.frame(gtx)
+			if a.router.Current() != before {
+				// A click navigated mid-frame (after the sidebar/panel split
+				// was computed): lay out again so the new page never shows
+				// one frame with the old layout. Layout is ~2 ms.
+				ops.Reset()
+				gtx = app.NewContext(&ops, e)
+				a.frame(gtx)
+			}
 			tl := time.Now()
 			e.Frame(gtx.Ops)
 			if !a.firstPaint {
