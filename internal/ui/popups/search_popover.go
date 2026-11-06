@@ -291,8 +291,14 @@ func (p *SearchPopover) candRow(c srCand, typing bool) srRow {
 			r.alt = c.Handle
 		}
 		r.boldAll = typing
+		r.presence = "away" // Slack draws the hollow ring until presence is known
 		if u, ok := lookupUser(p.h, c.ID); ok {
-			r.presence = u.Presence
+			if u.Presence != "" {
+				r.presence = u.Presence
+			}
+			if u.IsBot {
+				r.presence = ""
+			}
 			if r.avatar == "" {
 				r.avatar = u.Avatar
 			}
@@ -444,7 +450,7 @@ func (p *SearchPopover) typingRows(rows []srRow, q string, now time.Time) []srRo
 		remote = append(remote, srRank(rc, q, 8, p.rCQ == q)...)
 		sort.SliceStable(remote, func(i, j int) bool { return remote[i].Tier > remote[j].Tier })
 	}
-	sug := srMerge(local, remote, 8, 3)
+	sug := srMerge(local, remote, 5, 2) // Slack: top hit, "Show results", then 4
 	show := srRow{kind: srRShow, id: q, title: q, icon: "search"}
 	if len(sug) == 0 {
 		rows = append(rows, show)

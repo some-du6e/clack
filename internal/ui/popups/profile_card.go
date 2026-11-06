@@ -236,7 +236,11 @@ func (p *ProfileCard) buttons(gtx layout.Context, th *theme.Theme, u core.User, 
 			{c: &p.vipBtn, label: "VIP", lead: "user-plus"},
 		}
 	}
-	d, kr := pfBtnRow(gtx, th, BtnSmall, specs, &p.moreBtn, w, false)
+	kebab := &p.moreBtn
+	if len(specs) > 1 {
+		kebab = nil // Slack's card shows only [Message] [Huddle ▾] [VIP]
+	}
+	d, kr := pfBtnRow(gtx, th, BtnSmall, specs, kebab, w, false)
 	p.moreLocal = kr
 	return d
 }
@@ -415,7 +419,7 @@ func pfNameLine(gtx layout.Context, th *theme.Theme, c *widget.Clickable, u core
 	cl := colorsOf(th)
 	lineH := dp(gtx, lh)
 	name := pfName(u)
-	hasDot := u.Presence != ""
+	hasDot := !u.IsBot // unknown presence draws the hollow ring, like Slack
 	reserve := 0
 	if hasDot {
 		reserve = dp(gtx, dot) + dp(gtx, 6)
@@ -614,6 +618,9 @@ func pfBtnRow(gtx layout.Context, th *theme.Theme, size BtnSize, specs []pfBtnSp
 	var widths [4]int
 	n := minInt(len(specs), len(widths))
 	avail := w - hh - gap*n
+	if kebab == nil {
+		avail = w - gap*(n-1)
+	}
 	sum := 0
 	for i := 0; i < n; i++ {
 		widths[i] = pfBtnNatural(gtx, th, m, specs[i])
@@ -639,6 +646,9 @@ func pfBtnRow(gtx layout.Context, th *theme.Theme, size BtnSize, specs []pfBtnSp
 			return pfBtn(gtx, th, size, s, bw)
 		})
 		x += bw + gap
+	}
+	if kebab == nil {
+		return layout.Dimensions{Size: image.Pt(w, hh)}, image.Rectangle{}
 	}
 	kr := image.Rect(x, 0, x+hh, hh)
 	at(gtx, kr.Min, func(gtx layout.Context) layout.Dimensions {

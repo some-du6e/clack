@@ -122,13 +122,6 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	items = append(items,
 		MenuItem{Label: "Organize", Sub: []MenuItem{pin}},
 		MenuItem{Label: "Forward message…", Do: func() { h.ShowOverlay(NewForwardModal(h, m)) }},
-		MenuItem{Label: "Reply in thread", Do: func() {
-			if o.OnReply != nil {
-				o.OnReply()
-				return
-			}
-			h.OpenThread(ch, root)
-		}},
 		MenuItem{Label: "Connect to apps", Sub: []MenuItem{{Label: "No apps", Disabled: true}}},
 	)
 	if own {
