@@ -17,6 +17,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -86,6 +87,7 @@ func main() {
 	channel := flag.String("channel", "C0B4DEFKFCJ", "channel")
 	thread := flag.String("thread", "", "thread ts: also show a thread composer")
 	dark := flag.Bool("dark", false, "dark theme")
+	unschedule := flag.Bool("unschedule", false, "delete test scheduled messages in the channel, then exit")
 	flag.Parse()
 
 	b, err := os.ReadFile(*credsPath)
@@ -103,6 +105,32 @@ func main() {
 	home, _ := os.UserCacheDir()
 	cacheDir := filepath.Join(home, "yoloslack-composerharness")
 	a := core.New(c, store.New(filepath.Join(cacheDir, "store")))
+
+	if *unschedule {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := a.Boot(ctx); err != nil {
+			log.Printf("boot: %v", err)
+		}
+		ms, err := a.ScheduledMessages(ctx, *channel)
+		if err != nil {
+			log.Fatalf("ScheduledMessages: %v", err)
+		}
+		log.Printf("scheduled messages in %s: %d", *channel, len(ms))
+		for _, m := range ms {
+			test := strings.HasPrefix(m.Text, "[yoloslack test]") || strings.Contains(m.Text, "schedule")
+			log.Printf("  id=%s postAt=%d test=%v", m.ID, m.PostAt, test)
+			if test {
+				if err := a.DeleteScheduled(ctx, m.Channel, m.ID); err != nil {
+					log.Printf("  delete %s: %v", m.ID, err)
+				} else {
+					log.Printf("  deleted %s", m.ID)
+				}
+			}
+		}
+		return
+	}
+
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
