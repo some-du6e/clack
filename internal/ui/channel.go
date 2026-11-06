@@ -64,7 +64,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	if clicked(a.clicks.get("hdr.star")) {
 		a.toggleStar(ch)
 	}
-	x += gtx.Dp(32)
+	x += gtx.Dp(34) // title button at +52
 
 	// right-side controls, laid out right-to-left first so the title can
 	// ellipsize into the remaining space.
@@ -200,13 +200,15 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	}
 	avail := right - x - gtx.Dp(16)
 	nw := a.th.Measure(gtx, 18, theme.Black, name)
+	// Slack (measured): button padding 2px 4px, 18px icon, name 20px after
+	// it, no chevron, title min-width 88px; the topic starts 16px after.
 	iconW := 0
 	if icon != "" {
-		iconW = gtx.Dp(22)
+		iconW = gtx.Dp(20)
 	} else if conv != nil {
 		iconW = gtx.Dp(28)
 	}
-	titleW := iconW + nw + gtx.Dp(26)
+	titleW := max(iconW+nw, gtx.Dp(88)) + gtx.Dp(8)
 	if titleW > avail {
 		nw -= titleW - avail
 		titleW = avail
@@ -236,16 +238,13 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 					return a.th.Label(gtx, 18, theme.Black, c.Fg, name)
 				})
 			})
-			at(gtx, image.Pt(ix+iconW+nw+gtx.Dp(4), (th-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
-				return icons.Get("chevron-down")(gtx, 16, c.Fg)
-			})
 			return layout.Dimensions{Size: image.Pt(titleW, th)}
 		})
 	})
 	if clicked(a.clicks.get("hdr.title")) {
 		a.OpenDetails(ch)
 	}
-	x += titleW + gtx.Dp(14)
+	x += titleW + gtx.Dp(16)
 
 	// topic (13px muted) in the remaining space.
 	if conv != nil && conv.Topic != "" && right-x > gtx.Dp(40) {
