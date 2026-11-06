@@ -279,6 +279,10 @@ func (l *lay) addText(s string, fs *flowStyle, k faceKey, col color.NRGBA, st ri
 			start = i
 			flush(i + sz)
 			l.items[len(l.items)-1].brk = true
+		case r == '-' && start >= 0 && i+1 < len(s) && s[i+1] != '-' && s[i+1] != ' ':
+			// Browsers may break after a hyphen inside a word.
+			flush(i + sz)
+			l.items[len(l.items)-1].brk = true
 		default:
 			if start < 0 {
 				start = i

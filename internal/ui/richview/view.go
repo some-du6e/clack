@@ -317,7 +317,9 @@ func (v *View) record(st *Style) {
 				continue
 			}
 			path, bm := st.pathOf(f.sh)
-			t := op.Affine(f32.AffineId().Offset(f32.Pt(f.x, float32(f.y)))).Push(ops)
+			// Whole-pixel pen positions: Gio's path cache snaps fractional
+			// offsets, which makes word spacing uneven.
+			t := op.Offset(image.Pt(int(f.x+0.5), f.y)).Push(ops)
 			cs := clip.Outline{Path: path}.Op().Push(ops)
 			paint.ColorOp{Color: f.col}.Add(ops)
 			paint.PaintOp{}.Add(ops)
