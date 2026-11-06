@@ -256,15 +256,22 @@ func (t *Theme) Placeholder(gtx layout.Context, size image.Point, radius int) la
 	return layout.Dimensions{Size: size}
 }
 
-// Shadow draws a soft drop shadow under r (a few stacked translucent rrects;
-// cheap and close to Slack's box-shadow).
+// Shadow draws a soft drop shadow around r as concentric 1px rings of
+// decreasing alpha (cheap: only the perimeter is touched, which matters on
+// software GL). The area under r itself is not painted; draw r on top.
 func Shadow(gtx layout.Context, r image.Rectangle, radius int, spread int, c color.NRGBA) {
-	for i := spread; i >= 1; i-- {
-		a := uint8(int(c.A) / spread)
+	if spread < 1 {
+		return
+	}
+	for i := 1; i <= spread; i++ {
+		// quadratic falloff approximates a gaussian blur's tail
+		f := float32(spread-i+1) / float32(spread)
+		a := uint8(float32(c.A) * f * f)
 		if a == 0 {
-			a = 1
+			continue
 		}
-		RRect(gtx, r.Inset(-i).Add(image.Pt(0, i/2)), radius+i, color.NRGBA{R: c.R, G: c.G, B: c.B, A: a})
+		rr := clip.UniformRRect(r.Inset(-i), radius+i)
+		paint.FillShape(gtx.Ops, color.NRGBA{R: c.R, G: c.G, B: c.B, A: a}, clip.Stroke{Path: rr.Path(gtx.Ops), Width: 1.5}.Op())
 	}
 }
 

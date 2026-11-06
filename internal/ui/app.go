@@ -195,7 +195,7 @@ func (a *App) Run() error {
 				a.timing("first layout", t0)
 				a.timing("first GPU submit", tl)
 			}
-			a.frameStats.add(time.Since(t0))
+			a.frameStats.add(time.Since(t0), tl.Sub(t0))
 			if !a.switchAt.IsZero() {
 				log.Printf("ui: switch to %s: %v to frame submitted (layout %v)", a.switchTo.Page(), time.Since(a.switchAt).Round(10*time.Microsecond), time.Since(t0).Round(10*time.Microsecond))
 				a.switchAt = time.Time{}
@@ -231,9 +231,9 @@ func (a *App) frame(gtx layout.Context) {
 	sz := gtx.Constraints.Max
 	a.pxPerDp = gtx.Metric.PxPerDp
 	a.winSize = sz
-	a.grad.layout(gtx, a.th.C.ChromeA, a.th.C.ChromeB)
 
 	if a.login != nil {
+		a.grad.layout(gtx, a.th.C.ChromeA, a.th.C.ChromeB)
 		a.layoutLogin(gtx)
 		return
 	}
@@ -251,12 +251,24 @@ func (a *App) frame(gtx layout.Context) {
 	ws := image.Rect(railW, navH, sz.X-inset, sz.Y-inset)
 	primary := image.Rect(ws.Min.X+sbW, ws.Min.Y, ws.Max.X, ws.Max.Y)
 
+	// Paint the gradient only where it shows (nav, rail, insets and the
+	// panel's rounded corners): full-window fills are the main per-frame
+	// cost on software GL.
+	rad := gtx.Dp(theme.PanelRadius)
+	for _, r := range []image.Rectangle{
+		image.Rect(0, 0, sz.X, navH+rad),
+		image.Rect(0, navH, railW+rad, sz.Y),
+		image.Rect(ws.Max.X-rad, navH, sz.X, sz.Y),
+		image.Rect(railW, ws.Max.Y-rad, sz.X, sz.Y),
+	} {
+		a.grad.draw(gtx, sz, image.Point{}, clip.Rect(r).Op(), a.th.C.ChromeA, a.th.C.ChromeB)
+	}
+
 	a.layoutTopNav(gtx, primary.Min.X, sz.X)
 	a.layoutRail(gtx, navH, sz.Y-navH)
 
 	// workspace: sidebar (translucent) + primary panel, one rounded unit
 	// with Slack's soft shadow (-4px -4px 16px rgba(0,0,0,.09)).
-	rad := gtx.Dp(theme.PanelRadius)
 	theme.Shadow(gtx, ws.Add(image.Pt(-gtx.Dp(2), -gtx.Dp(2))), rad, gtx.Dp(8), a.th.C.PanelShadow)
 	if sbW > 0 {
 		sb := image.Rect(ws.Min.X, ws.Min.Y, primary.Min.X, ws.Max.Y)
@@ -411,20 +423,23 @@ func (a *App) layoutToast(gtx layout.Context) {
 // ---- frame stats (for the speed report) ----
 
 type frameStats struct {
-	n     int
-	total time.Duration
-	max   time.Duration
-	last  time.Time
+	n      int
+	total  time.Duration
+	layout time.Duration
+	max    time.Duration
+	last   time.Time
 }
 
-func (s *frameStats) add(d time.Duration) {
+func (s *frameStats) add(d, layout time.Duration) {
 	s.n++
 	s.total += d
+	s.layout += layout
 	if d > s.max {
 		s.max = d
 	}
 	if os.Getenv("YOLOSLACK_FRAMESTATS") != "" && time.Since(s.last) > 5*time.Second && s.n > 0 {
-		log.Printf("ui: %d frames, avg %v, max %v", s.n, (s.total / time.Duration(s.n)).Round(10*time.Microsecond), s.max.Round(10*time.Microsecond))
+		n := time.Duration(s.n)
+		log.Printf("ui: %d frames, avg %v (layout %v), max %v", s.n, (s.total / n).Round(10*time.Microsecond), (s.layout / n).Round(10*time.Microsecond), s.max.Round(10*time.Microsecond))
 		s.last = time.Now()
 		*s = frameStats{last: s.last}
 	}
