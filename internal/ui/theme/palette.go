@@ -69,6 +69,9 @@ type Palette struct {
 	ScrollThumb        color.NRGBA
 }
 
+// SearchTint is the extra rgba(131,56,138,.08) layer on Slack's search pill.
+var SearchTint = rgba(0x83388a, 0x14)
+
 func rgb(v uint32) color.NRGBA {
 	return color.NRGBA{R: uint8(v >> 16), G: uint8(v >> 8), B: uint8(v), A: 0xff}
 }
