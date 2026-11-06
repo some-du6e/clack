@@ -31,30 +31,35 @@ func (c coreAPI) edit(ctx context.Context, ch, ts, text string, blocks json.RawM
 	return c.a.Edit(ctx, ch, ts, text, blocks)
 }
 
-func (c coreAPI) typing(ch, threadTS string) { c.a.Typing(ch, threadTS) }
+func (c coreAPI) typing(ch, threadTS string) { _ = c.a.Typing(ch, threadTS) }
 
 func (c coreAPI) upload(ctx context.Context, o core.UploadOpts) ([]core.UploadedFile, error) {
 	return c.a.Upload(ctx, o)
 }
 
 func (c coreAPI) searchUsers(ctx context.Context, q string) ([]core.User, error) {
-	return c.a.SearchUsers(ctx, q)
+	return c.a.SearchUsers(ctx, q, 20)
 }
 
 func (c coreAPI) searchChannels(ctx context.Context, q string) ([]core.ChannelHit, error) {
-	return c.a.SearchChannels(ctx, q)
+	return c.a.SearchChannels(ctx, q, 20)
 }
 
 func (c coreAPI) usergroups(ctx context.Context) ([]core.Usergroup, error) {
-	return c.a.Usergroups(ctx)
+	return c.a.Usergroups(ctx, "", 100)
 }
 
 func (c coreAPI) members(ctx context.Context, ch string) ([]string, error) {
-	return c.a.Members(ctx, ch)
+	us, _, err := c.a.Members(ctx, ch, "", false)
+	ids := make([]string, 0, len(us))
+	for _, u := range us {
+		ids = append(ids, u.ID)
+	}
+	return ids, err
 }
 
 func (c coreAPI) commands(ctx context.Context) ([]core.Command, error) {
-	return c.a.Commands(ctx)
+	return c.a.Commands(ctx, "")
 }
 
 func (c coreAPI) command(ctx context.Context, o core.CommandOpts) (core.CommandResult, error) {
