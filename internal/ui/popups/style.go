@@ -286,11 +286,13 @@ func clipRRect(gtx layout.Context, r image.Rectangle, radius int) clip.Stack {
 
 // text draws one ellipsized line.
 func text(gtx layout.Context, th *theme.Theme, size float32, w font.Weight, c color.NRGBA, s string) layout.Dimensions {
+	gtx.Constraints.Min = image.Point{} // labels take their natural size
 	return th.Label(gtx, unit.Sp(size), w, c, s)
 }
 
 // para draws wrapping text.
 func para(gtx layout.Context, th *theme.Theme, size, lh float32, w font.Weight, c color.NRGBA, s string, maxLines int) layout.Dimensions {
+	gtx.Constraints.Min = image.Point{}
 	return th.Layout(gtx, theme.TextStyle{Size: unit.Sp(size), Weight: w, Color: c, LineHeight: unit.Sp(lh), MaxLines: maxLines}, s)
 }
 

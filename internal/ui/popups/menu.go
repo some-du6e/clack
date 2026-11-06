@@ -273,6 +273,7 @@ func (m *Menu) Layout(gtx layout.Context) layout.Dimensions {
 		return layout.Dimensions{}
 	}
 	win := gtx.Constraints.Max
+	gtx.Constraints.Min = image.Point{} // robust to roots passing Exact constraints
 	if m.parent == nil {
 		stacked(gtx, m)
 		if !m.focus {
