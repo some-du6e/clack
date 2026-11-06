@@ -223,7 +223,7 @@ func (v *ProfileView) body(gtx layout.Context, th *theme.Theme, cl *Colors, u co
 	}
 
 	// presence
-	if u.Presence != "" {
+	if !u.IsBot { // unknown presence reads as Away, like Slack
 		label := "Away"
 		if u.Presence == "active" {
 			label = "Active"
