@@ -982,6 +982,10 @@ func (s *listState) editLast(h Host) bool {
 func (s *listState) scrollTo(ts string) {
 	for i, it := range s.items {
 		if it.kind == itMsg && it.key == ts {
+			if i == len(s.items)-1 {
+				s.list.Position = layout.Position{} // newest: stay anchored at the bottom
+				return
+			}
 			if i >= s.visible[0] && i < s.visible[1]-1 {
 				return
 			}

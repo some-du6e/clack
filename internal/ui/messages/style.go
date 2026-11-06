@@ -3,6 +3,7 @@ package messages
 import (
 	"image"
 	"image/color"
+	"sync"
 
 	"gioui.org/f32"
 	"gioui.org/font"
@@ -81,10 +82,32 @@ var darkColors = colors{
 }
 
 func colorsFor(th *theme.Theme) *colors {
+	flatOnce.Do(func() {
+		lightFlat, darkFlat = flatten(lightColors), flatten(darkColors)
+	})
 	if th.Dark {
-		return &darkColors
+		return &darkFlat
 	}
-	return &lightColors
+	return &lightFlat
+}
+
+var (
+	flatOnce            sync.Once
+	lightFlat, darkFlat colors
+)
+
+// flatten pre-blends the translucent row/pill fills over the pane color in
+// sRGB, the way browsers composite CSS rgba(). Gio blends in linear light,
+// which makes e.g. rgba(242,199,68,.1) on the dark pane look far brighter
+// than Slack's.
+func flatten(c colors) colors {
+	bg := c.Bg
+	for _, p := range []*color.NRGBA{&c.Hover, &c.Pinned, &c.PinnedHover, &c.Highlight, &c.Editing,
+		&c.BadgeBg, &c.ReactBg, &c.ReactSelfBg, &c.ReactSelfHoverBg, &c.ToolbarHoverBg, &c.CloseHover,
+		&c.DayLine, &c.PillBorder, &c.ThreadBorder, &c.HeaderBorder, &c.BorderStrong, &c.ReactHoverBorder, &c.Muted70} {
+		*p = richview.Over(*p, bg)
+	}
+	return c
 }
 
 // metrics are the row geometry in dp, measured from the 2026 client.
