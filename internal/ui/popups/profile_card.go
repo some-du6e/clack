@@ -157,14 +157,17 @@ func (p *ProfileCard) content(gtx layout.Context, th *theme.Theme, cl *Colors, u
 	} else {
 		rrect(gtx, image.Rect(pad, pad, pad+av, pad+av), dp(gtx, 12), cl.Selected)
 	}
-	cd := at(gtx, image.Pt(colX, pad), func(gtx layout.Context) layout.Dimensions {
+	// Slack's text column has margin: -4px 0 (it starts 4px above the
+	// avatar and may hang 4px below it).
+	m4 := dp(gtx, 4)
+	cd := at(gtx, image.Pt(colX, pad-m4), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(colW, 1<<20)}
 		if !ok {
 			return pfSkeleton(gtx, th, cl, p.missing, p.id, colW)
 		}
 		return p.column(gtx, th, cl, u, colW)
 	})
-	y := pad + maxInt(av, cd.Size.Y) + pad
+	y := pad + maxInt(av, cd.Size.Y-2*m4) + pad
 
 	// secondary block
 	fill(gtx, image.Rect(0, y, w, y+1), cl.Ring)
