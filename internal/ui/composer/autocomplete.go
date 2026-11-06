@@ -697,6 +697,18 @@ func userName(u core.User) string {
 // userTier rates how well q (lowercase) matches u.
 func userTier(q string, u core.User) int {
 	name, handle, real := strings.ToLower(userName(u)), strings.ToLower(u.Handle), strings.ToLower(u.RealName)
+	// A trailing space ("@karim ", before the surname) shouldn't drop the
+	// match; multi-token queries match word-prefixes across name+real+handle.
+	q = strings.TrimRight(q, " ")
+	if strings.Contains(q, " ") {
+		if allWordsPrefix(name+" "+real+" "+handle, q) {
+			return tierWord
+		}
+		if strings.Contains(name+" "+real, q) {
+			return tierSub
+		}
+		return tierNone
+	}
 	switch {
 	case q == "":
 		return tierPrefix
