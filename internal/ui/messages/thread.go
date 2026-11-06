@@ -35,6 +35,12 @@ func NewThreadView(h Host, ch, ts string) *ThreadView {
 func (v *ThreadView) Channel() string { return v.ch }
 func (v *ThreadView) TS() string      { return v.ts }
 
+// EditLast edits the viewer's most recent reply (composer.OnEditLast).
+func (v *ThreadView) EditLast() bool { return v.s.editLast(v.h) }
+
+// Edit starts inline editing of message ts.
+func (v *ThreadView) Edit(ts string) { v.s.startEdit(v.h, ts) }
+
 // Typing returns the "X is typing…" text for this thread.
 func (v *ThreadView) Typing() string { return typingText(v.s.snap.typing) }
 

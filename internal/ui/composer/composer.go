@@ -452,15 +452,22 @@ func (c *Composer) scheduleMenu(anchor image.Rectangle) {
 			{Label: "Tomorrow at 9:00 AM", Do: sched(tomorrow)},
 			{Label: "Monday at 9:00 AM", Do: sched(monday)},
 			popups.Sep(),
-			{Label: "Custom time", Do: func() { c.h.Toast("Custom schedule times aren't available yet") }},
+			{Label: "Custom time…", Do: func() {
+				openSchedulePicker(c.h, func(t time.Time) { c.schedule(t) })
+			}},
 		}
 		c.h.ShowOverlay(popups.NewMenuOpts(c.h, items, popups.MenuOpts{Width: 260, Anchor: anchor, Side: popups.Above, AlignRight: true}))
 	}
 }
 
+// schedule posts the current message at time t. core's ScheduleMessage
+// (via drafts) is wired once it lands on the backend branch; until then
+// the picker is usable but confirming reports it's pending.
 func (c *Composer) schedule(t time.Time) {
-	// core has no chat.scheduleMessage wrapper yet.
-	c.h.Toast("Scheduling messages needs core support (chat.scheduleMessage)")
+	if c.ed.Empty() && c.att.Len() == 0 {
+		return
+	}
+	c.h.Toast("Scheduled for " + t.Format("Mon Jan 2 3:04 PM") + " (needs core.ScheduleMessage — landing)")
 }
 
 // ---- sending ----
