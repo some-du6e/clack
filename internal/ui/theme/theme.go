@@ -85,9 +85,23 @@ func Faces() []font.FontFace {
 // New builds a theme. System fonts stay enabled as a fallback for scripts
 // Lato lacks (CJK, symbols); Lato is preferred for everything it covers.
 func New(dark bool) *Theme {
-	t := &Theme{Shaper: text.NewShaper(text.WithCollection(Faces()))}
+	t := Bare(dark)
+	t.Shaper = NewShaper()
+	return t
+}
+
+// Bare returns a theme without a shaper (set Shaper before drawing text).
+// Lets the app build the shaper concurrently with window creation.
+func Bare(dark bool) *Theme {
+	t := &Theme{}
 	t.SetDark(dark)
 	return t
+}
+
+// NewShaper parses the embedded Lato faces and loads the system font index
+// (fallback for scripts Lato lacks). Safe to call from any goroutine.
+func NewShaper() *text.Shaper {
+	return text.NewShaper(text.WithCollection(Faces()))
 }
 
 // SetDark switches palettes.
