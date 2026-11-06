@@ -64,64 +64,97 @@ type pal struct {
 	Mention     color.NRGBA // @mention highlight bg
 	Yellow      color.NRGBA
 	TabLine     color.NRGBA
+	Sec         color.NRGBA // secondary text, unselected tabs, icon buttons (#454447)
+	TitleText   color.NRGBA // view titles (theme content, #39063a)
+	Accent      color.NRGBA // theme accent: tab underline, unread dots/badges (#83388a)
+	AccentText  color.NRGBA // text on Accent (#f9edff)
+	ReadFill    color.NRGBA // read rows (#f8f8f8)
+	Track       color.NRGBA // segmented-control track, placeholders (#eaeaea)
+	PillOnBg    color.NRGBA // pressed quick filter (#e3f8ff)
+	PillOnFg    color.NRGBA // (#1264a3)
+	TabHover    color.NRGBA // #611f69@.07
+	Pressed     color.NRGBA // pressed overlay #454447@.13
 }
 
+// Light values are Slack's design tokens (--dt_color-*), measured in the
+// web client with the default Aubergine theme.
 var lightPal = pal{
 	Bg:          rgb(0xffffff),
 	Text:        rgb(0x1d1c1d),
-	Muted:       rgb(0x616061),
-	Faint:       rgb(0x868686),
-	Border:      argb(0x211d1c1d),
-	BorderStr:   argb(0x4d1d1c1d),
-	Hover:       rgb(0xf8f8f8),
-	SelBg:       rgb(0x1164a3),
-	SelText:     rgb(0xffffff),
-	SelMuted:    argb(0xccffffff),
+	Muted:       rgb(0x5e5d60),
+	Faint:       rgb(0x7c7a7f),
+	Border:      argb(0x215e5d60),
+	BorderStr:   argb(0x735e5d60),
+	Hover:       argb(0x0f454447),
+	SelBg:       rgb(0xfffae0),
+	SelText:     rgb(0x1d1c1d),
+	SelMuted:    rgb(0x5e5d60),
 	Link:        rgb(0x1264a3),
 	Green:       rgb(0x007a5a),
 	GreenHover:  rgb(0x148567),
-	Red:         rgb(0xe01e5a),
-	Badge:       rgb(0xcd2553),
+	Red:         rgb(0xc01343),
+	Badge:       rgb(0x83388a),
 	Presence:    rgb(0x2bac76),
-	Skel:        rgb(0xeeeeee),
+	Skel:        rgb(0xeaeaea),
 	Focus:       argb(0x4d1d9bd1),
-	Chip:        argb(0x0f1d1c1d),
-	ChipSel:     rgb(0x1d1c1d),
-	ChipSelText: rgb(0xffffff),
+	Chip:        argb(0x0f454447),
+	ChipSel:     rgb(0xe3f8ff),
+	ChipSelText: rgb(0x1264a3),
 	Surface:     rgb(0xffffff),
 	Overlay:     argb(0x99000000),
 	Mention:     argb(0x331d9bd1),
-	Yellow:      rgb(0xfef7da),
-	TabLine:     rgb(0x1d1c1d),
+	Yellow:      rgb(0xfffae0),
+	TabLine:     rgb(0x83388a),
+	Sec:         rgb(0x454447),
+	TitleText:   rgb(0x39063a),
+	Accent:      rgb(0x83388a),
+	AccentText:  rgb(0xf9edff),
+	ReadFill:    rgb(0xf8f8f8),
+	Track:       rgb(0xeaeaea),
+	PillOnBg:    rgb(0xe3f8ff),
+	PillOnFg:    rgb(0x1264a3),
+	TabHover:    argb(0x12611f69),
+	Pressed:     argb(0x21454447),
 }
 
+// Dark values follow Slack's dark mode tokens.
 var darkPal = pal{
 	Bg:          rgb(0x1a1d21),
 	Text:        rgb(0xd1d2d3),
-	Muted:       rgb(0xababad),
-	Faint:       rgb(0x9a9b9e),
+	Muted:       rgb(0x9a9b9e),
+	Faint:       rgb(0x86878a),
 	Border:      argb(0x21e8e8e8),
-	BorderStr:   argb(0x4de8e8e8),
-	Hover:       rgb(0x222529),
-	SelBg:       rgb(0x1164a3),
-	SelText:     rgb(0xffffff),
-	SelMuted:    argb(0xccffffff),
+	BorderStr:   argb(0x73e8e8e8),
+	Hover:       argb(0x0fe8e8e8),
+	SelBg:       rgb(0x2f2c1f),
+	SelText:     rgb(0xd1d2d3),
+	SelMuted:    rgb(0x9a9b9e),
 	Link:        rgb(0x1d9bd1),
 	Green:       rgb(0x007a5a),
 	GreenHover:  rgb(0x148567),
 	Red:         rgb(0xe8677f),
-	Badge:       rgb(0xcd2553),
+	Badge:       rgb(0xb36fb8),
 	Presence:    rgb(0x2bac76),
 	Skel:        rgb(0x2c2d30),
 	Focus:       argb(0x4d1d9bd1),
-	Chip:        argb(0x14e8e8e8),
-	ChipSel:     rgb(0xd1d2d3),
-	ChipSelText: rgb(0x1a1d21),
+	Chip:        argb(0x0fe8e8e8),
+	ChipSel:     rgb(0x0f2c3d),
+	ChipSelText: rgb(0x1d9bd1),
 	Surface:     rgb(0x222529),
 	Overlay:     argb(0x99000000),
 	Mention:     argb(0x331d9bd1),
-	Yellow:      argb(0x26f2c744),
-	TabLine:     rgb(0xd1d2d3),
+	Yellow:      rgb(0x2f2c1f),
+	TabLine:     rgb(0xd7a4dc),
+	Sec:         rgb(0xb9babd),
+	TitleText:   rgb(0xe8e8e8),
+	Accent:      rgb(0xb36fb8),
+	AccentText:  rgb(0xffffff),
+	ReadFill:    rgb(0x1d2024),
+	Track:       rgb(0x2c2d30),
+	PillOnBg:    rgb(0x0f2c3d),
+	PillOnFg:    rgb(0x1d9bd1),
+	TabHover:    argb(0x12e8e8e8),
+	Pressed:     argb(0x21e8e8e8),
 }
 
 func palOf(th *theme.Theme) *pal {
@@ -285,7 +318,7 @@ const (
 func (b *base) button(gtx C, c *widget.Clickable, kind btnKind, small bool, label string) D {
 	hgt, size, padX := unit.Dp(36), unit.Sp(15), unit.Dp(16)
 	if small {
-		hgt, size, padX = 28, 13, 12
+		hgt, size, padX = 28, 13, 8
 	}
 	return c.Layout(gtx, func(gtx C) D {
 		pointerCursor(gtx)
@@ -314,11 +347,10 @@ func (b *base) button(gtx C, c *widget.Clickable, kind btnKind, small bool, labe
 				rrect(gtx, r, rad, b.p.Chip)
 			}
 		default:
-			bg := b.p.Bg
+			rrect(gtx, r, rad, b.p.Bg)
 			if c.Hovered() {
-				bg = b.p.Hover
+				rrect(gtx, r, rad, b.p.Hover)
 			}
-			rrect(gtx, r, rad, bg)
 			border(gtx, r, rad, max(1, gtx.Dp(1)), b.p.BorderStr)
 		}
 		g := gtx
@@ -334,7 +366,7 @@ func (b *base) iconButton(gtx C, c *widget.Clickable, name string, size, iconSiz
 		pointerCursor(gtx)
 		s := gtx.Dp(size)
 		if c.Hovered() {
-			rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(6), b.p.Chip)
+			rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(8), b.p.Hover)
 		}
 		g := gtx
 		g.Constraints = layout.Exact(image.Pt(s, s))
@@ -368,47 +400,59 @@ func (t *tabs) update(gtx C) bool {
 	return changed
 }
 
+// tabStrip draws tabs: padding 9px 8px, 13px/16px bold, no gap,
+// unselected #454447, selected #1d1c1d with a 2px accent underline, hover
+// fill #611f69@.07 with top corners rounded 8px. badges[i] > 0 draws an
+// accent unread dot after the label (dots only, like Slack); icons[i]
+// names an optional 16px icon before the label.
 func (b *base) tabStrip(gtx C, t *tabs, badges []int) D {
-	ch := make([]layout.FlexChild, 0, len(t.Labels)*2)
+	return b.tabStripIcons(gtx, t, nil, badges)
+}
+
+func (b *base) tabStripIcons(gtx C, t *tabs, icons []string, badges []int) D {
+	ch := make([]layout.FlexChild, 0, len(t.Labels))
 	for i := range t.Labels {
 		i := i
 		ch = append(ch, layout.Rigid(func(gtx C) D {
 			return t.clicks[i].Layout(gtx, func(gtx C) D {
 				pointerCursor(gtx)
 				sel := i == t.Sel
-				fg := b.p.Muted
-				if sel || t.clicks[i].Hovered() {
+				fg := b.p.Sec
+				if sel {
 					fg = b.p.Text
 				}
-				d := layout.Inset{Left: 2, Right: 2}.Layout(gtx, func(gtx C) D {
+				m := op.Record(gtx.Ops)
+				d := layout.Inset{Top: 9, Bottom: 8, Left: 8, Right: 8}.Layout(gtx, func(gtx C) D {
 					return row(gtx, layout.Middle,
 						layout.Rigid(func(gtx C) D {
-							g := gtx
-							g.Constraints.Min.Y = gtx.Dp(36)
-							return layout.W.Layout(g, func(gtx C) D {
-								return layout.Inset{Top: 8, Bottom: 8}.Layout(gtx, func(gtx C) D {
-									return b.label(gtx, 13, wBold, fg, t.Labels[i])
-								})
-							})
+							if i >= len(icons) || icons[i] == "" {
+								return D{}
+							}
+							return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return b.icon(gtx, icons[i], 16, fg) })
 						}),
+						layout.Rigid(func(gtx C) D { return b.label(gtx, 13, wBold, fg, t.Labels[i]) }),
 						layout.Rigid(func(gtx C) D {
 							if i >= len(badges) || badges[i] <= 0 {
 								return D{}
 							}
-							return layout.Inset{Left: 6}.Layout(gtx, func(gtx C) D { return b.countBadge(gtx, badges[i]) })
+							return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return b.dot(gtx, 8, b.p.Accent) })
 						}),
 					)
 				})
+				call := m.Stop()
+				if t.clicks[i].Hovered() {
+					r := gtx.Dp(8)
+					rr := clip.RRect{Rect: image.Rectangle{Max: d.Size}, NE: r, NW: r}
+					paint.FillShape(gtx.Ops, b.p.TabHover, rr.Op(gtx.Ops))
+				}
+				call.Add(gtx.Ops)
 				if sel {
 					h := gtx.Dp(2)
-					rrect(gtx, image.Rect(0, d.Size.Y-h, d.Size.X, d.Size.Y), h/2, b.p.TabLine)
+					fill(gtx, image.Rect(0, d.Size.Y-h, d.Size.X, d.Size.Y), b.p.TabLine)
 				}
 				return d
 			})
 		}))
-		if i < len(t.Labels)-1 {
-			ch = append(ch, hgap(20))
-		}
 	}
 	return row(gtx, layout.End, ch...)
 }
@@ -430,17 +474,21 @@ func (b *base) pillRow(gtx C, p *pills) D {
 			return p.clicks[i].Layout(gtx, func(gtx C) D {
 				pointerCursor(gtx)
 				sel := i == p.Sel
-				bg, fg := b.p.Bg, b.p.Text
-				if sel {
-					bg, fg = b.p.ChipSel, b.p.ChipSelText
-				} else if p.clicks[i].Hovered() {
-					bg = b.p.Hover
-				}
+				fg := b.p.Text
 				tw := b.th.Measure(gtx, 13, wBold, p.Labels[i])
-				sz := image.Pt(tw+gtx.Dp(24), gtx.Dp(28))
-				rrect(gtx, image.Rectangle{Max: sz}, gtx.Dp(14), bg)
-				if !sel {
-					border(gtx, image.Rectangle{Max: sz}, gtx.Dp(14), max(1, gtx.Dp(1)), b.p.BorderStr)
+				sz := image.Pt(tw+gtx.Dp(16), gtx.Dp(32))
+				r := image.Rectangle{Max: sz}
+				rad := gtx.Dp(8)
+				if sel {
+					fg = b.p.PillOnFg
+					rrect(gtx, r, rad, b.p.PillOnBg)
+					border(gtx, r, rad, max(1, gtx.Dp(1)), b.p.PillOnFg)
+				} else {
+					rrect(gtx, r, rad, b.p.Bg)
+					if p.clicks[i].Hovered() {
+						rrect(gtx, r, rad, b.p.Hover)
+					}
+					border(gtx, r, rad, max(1, gtx.Dp(1)), b.p.Border)
 				}
 				g := gtx
 				g.Constraints = layout.Exact(sz)
@@ -575,18 +623,14 @@ func (b *base) avatar(gtx C, url string, size unit.Dp) D {
 }
 
 func avatarRadius(gtx C, size unit.Dp) int {
-	switch {
-	case size <= 20:
-		return gtx.Dp(4)
-	case size <= 24:
-		return gtx.Dp(5)
-	case size <= 36:
-		return gtx.Dp(8)
-	case size <= 48:
-		return gtx.Dp(10)
-	default:
-		return gtx.Dp(12)
+	r := float32(size) * 0.22222
+	if r < 4 {
+		r = 4
 	}
+	if r > 12 {
+		r = 12
+	}
+	return gtx.Dp(unit.Dp(r))
 }
 
 // avatarPresence draws an avatar with a presence dot on its bottom-right
@@ -642,19 +686,20 @@ func (b *base) groupAvatar(gtx C, a, c string, size unit.Dp) D {
 	return D{Size: image.Pt(s, s)}
 }
 
-// countBadge draws a red pill with a number (mention counts).
+// countBadge draws Slack's count pill: h 20, padding 0 8px, 10px bold,
+// theme accent background.
 func (b *base) countBadge(gtx C, n int) D {
 	s := strconv.Itoa(n)
 	if n > 99 {
 		s = "99+"
 	}
-	tw := b.th.Measure(gtx, 12, wBold, s)
-	h := gtx.Dp(18)
-	w := max(h, tw+gtx.Dp(12))
+	tw := b.th.Measure(gtx, 10, wBold, s)
+	h := gtx.Dp(20)
+	w := max(gtx.Dp(22), tw+gtx.Dp(16))
 	rrect(gtx, image.Rect(0, 0, w, h), h/2, b.p.Badge)
 	g := gtx
 	g.Constraints = layout.Exact(image.Pt(w, h))
-	layout.Center.Layout(g, func(gtx C) D { return b.label(gtx, 12, wBold, rgb(0xffffff), s) })
+	layout.Center.Layout(g, func(gtx C) D { return b.label(gtx, 10, wBold, b.p.AccentText, s) })
 	return D{Size: image.Pt(w, h)}
 }
 
@@ -667,48 +712,180 @@ func (b *base) dot(gtx C, d unit.Dp, c color.NRGBA) D {
 
 // ---- view chrome ----
 
-// header draws the view title bar: 49px tall (incl. 1px bottom border),
-// 18px black title, right-aligned trailing widgets.
+// header draws a view title row: 16px side insets, the title in 18px/24px
+// black in the theme title color starting 16px from the top, trailing
+// widgets centered on the title line. Height 53 (Slack's Activity header
+// above its tab row); put tabs and a hairline below it.
 func (b *base) header(gtx C, title string, trailing ...layout.FlexChild) D {
-	h := gtx.Dp(49)
 	w := gtx.Constraints.Max.X
+	h := gtx.Dp(53)
 	g := gtx
-	g.Constraints = layout.Exact(image.Pt(w, h))
-	layout.Inset{Left: 20, Right: 16}.Layout(g, func(gtx C) D {
-		ch := []layout.FlexChild{
-			layout.Flexed(1, func(gtx C) D { return b.label(gtx, 18, wBlack, b.p.Text, title) }),
-		}
-		ch = append(ch, trailing...)
-		return row(gtx, layout.Middle, ch...)
-	})
+	g.Constraints = layout.Exact(image.Pt(w, gtx.Dp(28)))
+	func() {
+		defer op.Offset(image.Pt(0, gtx.Dp(14))).Push(gtx.Ops).Pop()
+		layout.Inset{Left: 16, Right: 16}.Layout(g, func(gtx C) D {
+			ch := []layout.FlexChild{
+				layout.Flexed(1, func(gtx C) D { return b.label(gtx, 18, wBlack, b.p.TitleText, title) }),
+			}
+			ch = append(ch, trailing...)
+			return row(gtx, layout.Middle, ch...)
+		})
+	}()
 	return D{Size: image.Pt(w, h)}
 }
 
-// emptyState draws a centered title + body + optional button.
+// emptyState draws Slack's centered empty state: a 32px icon, a 16px/22px
+// bold title, a 15px/22px description (max 372 wide) and an optional link
+// button (15px #1264a3).
 func (b *base) emptyState(gtx C, icon, title, body string, btn *widget.Clickable, btnLabel string) D {
 	return layout.Center.Layout(gtx, func(gtx C) D {
-		gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(420))
+		gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(372))
 		gtx.Constraints.Min.X = 0
 		return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
 			layout.Rigid(func(gtx C) D {
 				if icon == "" {
 					return D{}
 				}
-				return layout.Inset{Bottom: 16}.Layout(gtx, func(gtx C) D { return b.icon(gtx, icon, 48, b.p.Faint) })
+				return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D { return b.icon(gtx, icon, 32, b.p.Muted) })
 			}),
-			layout.Rigid(func(gtx C) D { return b.centered(gtx, 18, wBlack, b.p.Text, title) }),
-			vgap(8),
 			layout.Rigid(func(gtx C) D {
-				return b.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Color: b.p.Muted, Align: text.Middle}, body)
+				return layout.Inset{Bottom: 4}.Layout(gtx, func(gtx C) D { return b.centered(gtx, 16, wBold, b.p.Text, title) })
+			}),
+			layout.Rigid(func(gtx C) D {
+				return b.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Color: b.p.Text, Align: text.Middle}, body)
 			}),
 			layout.Rigid(func(gtx C) D {
 				if btn == nil {
 					return D{}
 				}
-				return layout.Inset{Top: 20}.Layout(gtx, func(gtx C) D { return b.button(gtx, btn, btnOutline, false, btnLabel) })
+				return layout.Inset{Top: 12}.Layout(gtx, func(gtx C) D { return b.linkButton(gtx, btn, 15, btnLabel) })
 			}),
 		)
 	})
+}
+
+// linkButton is a text button in link blue (underlined on hover).
+func (b *base) linkButton(gtx C, c *widget.Clickable, size unit.Sp, label string) D {
+	return c.Layout(gtx, func(gtx C) D {
+		pointerCursor(gtx)
+		d := b.label(gtx, size, wReg, b.p.Link, label)
+		if c.Hovered() {
+			fill(gtx, image.Rect(0, d.Size.Y-gtx.Dp(2), d.Size.X, d.Size.Y-gtx.Dp(1)), b.p.Link)
+		}
+		return d
+	})
+}
+
+// filterButton is the outline quick-filter toggle ("Unreads"): h 32,
+// padding 0 8px, radius 8, 13px bold with a 16px icon; pressed state is
+// #e3f8ff with a #1264a3 border, text and icon.
+func (b *base) filterButton(gtx C, t *toggle, icon, label string) D {
+	return t.Layout(gtx, func(gtx C) D {
+		pointerCursor(gtx)
+		on := t.Value
+		fg := b.p.Text
+		if on {
+			fg = b.p.PillOnFg
+		}
+		m := op.Record(gtx.Ops)
+		d := layout.Inset{Left: 8, Right: 8}.Layout(gtx, func(gtx C) D {
+			g := gtx
+			g.Constraints.Min.Y = gtx.Dp(32)
+			return layout.W.Layout(g, func(gtx C) D {
+				return row(gtx, layout.Middle,
+					layout.Rigid(func(gtx C) D {
+						if icon == "" {
+							return D{}
+						}
+						return layout.Inset{Left: 4, Right: 4}.Layout(gtx, func(gtx C) D { return b.icon(gtx, icon, 16, fg) })
+					}),
+					layout.Rigid(func(gtx C) D {
+						return layout.Inset{Left: 4, Right: 4}.Layout(gtx, func(gtx C) D { return b.label(gtx, 13, wBold, fg, label) })
+					}),
+				)
+			})
+		})
+		call := m.Stop()
+		r := image.Rectangle{Max: d.Size}
+		rad := gtx.Dp(8)
+		if on {
+			rrect(gtx, r, rad, b.p.PillOnBg)
+			border(gtx, r, rad, max(1, gtx.Dp(1)), b.p.PillOnFg)
+		} else {
+			rrect(gtx, r, rad, b.p.Bg)
+			if t.Hovered() {
+				rrect(gtx, r, rad, b.p.Hover)
+			}
+			border(gtx, r, rad, max(1, gtx.Dp(1)), b.p.Border)
+		}
+		call.Add(gtx.Ops)
+		return d
+	})
+}
+
+// outlineIcon is an outline icon button (filter bar): h 32, radius 8,
+// 1px #5e5d60@.13 border, 20px icon; width = 38 or wider with a caret.
+func (b *base) outlineIcon(gtx C, c *widget.Clickable, icon string, caret bool) D {
+	return c.Layout(gtx, func(gtx C) D {
+		pointerCursor(gtx)
+		w := gtx.Dp(38)
+		if caret {
+			w = gtx.Dp(58)
+		}
+		sz := image.Pt(w, gtx.Dp(32))
+		r := image.Rectangle{Max: sz}
+		rad := gtx.Dp(8)
+		rrect(gtx, r, rad, b.p.Bg)
+		if c.Hovered() {
+			rrect(gtx, r, rad, b.p.Hover)
+		}
+		border(gtx, r, rad, max(1, gtx.Dp(1)), b.p.Border)
+		g := gtx
+		g.Constraints = layout.Exact(sz)
+		layout.Center.Layout(g, func(gtx C) D {
+			return row(gtx, layout.Middle,
+				layout.Rigid(func(gtx C) D { return b.icon(gtx, icon, 20, b.p.Sec) }),
+				layout.Rigid(func(gtx C) D {
+					if !caret {
+						return D{}
+					}
+					return b.icon(gtx, "caret-down", 20, b.p.Sec)
+				}),
+			)
+		})
+		return D{Size: sz}
+	})
+}
+
+// segmented draws Slack's two-icon segmented toggle (Detailed/Dense,
+// list/grid): track #eaeaea radius 8, 30x28 segments, the selected one a
+// white thumb with a 1px #5e5d60@.45 border. Returns the clicked index or -1.
+func (b *base) segmented(gtx C, clicks []widget.Clickable, icons []string, sel int) (D, int) {
+	n := len(icons)
+	sw, sh := gtx.Dp(30), gtx.Dp(28)
+	size := image.Pt(sw*n, sh)
+	rrect(gtx, image.Rectangle{Max: size}, gtx.Dp(8), b.p.Track)
+	clicked := -1
+	for i := 0; i < n && i < len(clicks); i++ {
+		if clicks[i].Clicked(gtx) {
+			clicked = i
+		}
+		func() {
+			defer op.Offset(image.Pt(i*sw, 0)).Push(gtx.Ops).Pop()
+			g := gtx
+			g.Constraints = layout.Exact(image.Pt(sw, sh))
+			clicks[i].Layout(g, func(gtx C) D {
+				pointerCursor(gtx)
+				r := image.Rect(0, 0, sw, sh)
+				if i == sel {
+					rrect(gtx, r, gtx.Dp(8), b.p.Bg)
+					border(gtx, r, gtx.Dp(8), max(1, gtx.Dp(1)), b.p.BorderStr)
+				}
+				return layout.Center.Layout(gtx, func(gtx C) D { return b.icon(gtx, icons[i], 18, b.p.Muted) })
+			})
+		}()
+	}
+	return D{Size: size}, clicked
 }
 
 // loading draws a few skeleton rows.
@@ -1005,4 +1182,68 @@ func clipMax(gtx C) clip.Stack {
 	return clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops)
 }
 
-var _ = paint.ColorOp{}
+// themeImage draws img covering size with rounded corners.
+func themeImage(gtx C, img paint.ImageOp, size image.Point, radius int) D {
+	return theme.Image(gtx, img, size, radius)
+}
+
+// opOffset pushes a translation; Pop it when done.
+func opOffset(gtx C, pt image.Point) op.TransformStack { return op.Offset(pt).Push(gtx.Ops) }
+
+// scrollList lays out a vertical virtualized list with Slack's slim
+// overlay scrollbar (8px wide, draggable, shown when content overflows).
+func (b *base) scrollList(gtx C, l *widget.List, n int, el layout.ListElement) D {
+	l.Axis = layout.Vertical
+	d := l.List.Layout(gtx, n, el)
+	if n == 0 {
+		return d
+	}
+	pos := l.Position
+	if pos.Length <= 0 {
+		return d
+	}
+	est := float32(pos.Length) / float32(n)
+	start := clamp01((float32(pos.First)*est + float32(pos.Offset)) / float32(pos.Length))
+	end := clamp01((float32(pos.First+pos.Count)*est + float32(pos.OffsetLast)) / float32(pos.Length))
+	if pos.First == 0 && pos.Offset <= 0 && !l.Position.BeforeEnd {
+		return d
+	}
+	l.Scrollbar.Update(gtx, layout.Vertical, start, end)
+	if delta := l.Scrollbar.ScrollDistance(); delta != 0 {
+		l.List.ScrollBy(delta * float32(n))
+	}
+	h := d.Size.Y
+	w := gtx.Dp(8)
+	x := d.Size.X - w - gtx.Dp(2)
+	track := image.Rect(x, 0, x+w, h)
+	func() {
+		defer clip.Rect(track).Push(gtx.Ops).Pop()
+		l.Scrollbar.AddTrack(gtx.Ops)
+	}()
+	y0, y1 := int(start*float32(h)), int(end*float32(h))
+	if y1-y0 < gtx.Dp(24) {
+		y1 = min(h, y0+gtx.Dp(24))
+	}
+	thumb := image.Rect(x, y0, x+w, y1)
+	func() {
+		defer clip.Rect(thumb).Push(gtx.Ops).Pop()
+		l.Scrollbar.AddIndicator(gtx.Ops)
+		l.Scrollbar.AddDrag(gtx.Ops)
+	}()
+	c := b.p.BorderStr
+	if l.Scrollbar.IndicatorHovered() || l.Scrollbar.Dragging() {
+		c = b.p.Muted
+	}
+	rrect(gtx, thumb, w/2, c)
+	return d
+}
+
+func clamp01(v float32) float32 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
+}

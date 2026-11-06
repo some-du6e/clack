@@ -14,6 +14,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
+	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -32,6 +33,7 @@ type Host interface {
 	CloseSecondary()
 	OpenProfile(anchor image.Point, userID string)
 	OpenMessageMenu(anchor image.Point, m core.Message)
+	OpenLightbox(img richtext.Image, m core.Message)
 	Toast(text string)
 }
 

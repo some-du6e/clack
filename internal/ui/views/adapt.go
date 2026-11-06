@@ -4,7 +4,6 @@ package views
 // one file so contract drift is fixed in one place.
 
 import (
-	"image"
 	"image/color"
 	"strings"
 	"sync"
@@ -15,12 +14,12 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 )
 
 // icon draws a named vector icon from internal/ui/icons.
 func (b *base) icon(gtx C, name string, size unit.Dp, col color.NRGBA) D {
-	s := gtx.Dp(size)
-	return D{Size: image.Pt(s, s)}
+	return icons.Get(name)(gtx, size, col)
 }
 
 // body draws a message document (richview when available) clipped to
