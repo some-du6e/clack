@@ -54,6 +54,21 @@ type Store struct {
 	// ThreadsUnread / ThreadMentions mirror client.counts "threads".
 	ThreadsUnread  bool
 	ThreadMentions int
+	// names of conversations we are not a member of (from search/browse)
+	names map[string]string
+}
+
+// PutName remembers the name of a conversation outside the sidebar.
+func (s *Store) PutName(id, name string) {
+	if id == "" || name == "" {
+		return
+	}
+	s.mu.Lock()
+	if s.names == nil {
+		s.names = map[string]string{}
+	}
+	s.names[id] = name
+	s.mu.Unlock()
 }
 
 // Prefs are the user preferences the UI needs for rendering.
@@ -271,6 +286,9 @@ func (s *Store) ChannelName(id string) string {
 			}
 		}
 		return c.Name
+	}
+	if n, ok := s.names[id]; ok {
+		return n
 	}
 	return id
 }

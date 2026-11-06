@@ -60,6 +60,7 @@ func (a *App) Handler(web fs.FS) http.Handler {
 	mux.HandleFunc("/api/typing", a.hTyping)
 	mux.HandleFunc("/api/call", a.hCall)
 	mux.HandleFunc("/api/render", a.hRender)
+	a.registerMore(mux)
 	mux.HandleFunc("/file", a.hFile)
 	mux.HandleFunc("/ws", a.hWS)
 	return logRequests(mux)
@@ -246,8 +247,9 @@ func (a *App) hBoot(w http.ResponseWriter, r *http.Request) {
 	a.mu.Unlock()
 	writeJSON(w, r, map[string]any{
 		"ok": true, "self": a.userView(a.S.Self.ID), "team": team, "convs": convs,
-		"sections": a.sectionsView(convs), "counts": a.countsView(), "users": a.usersView(ids),
+		"sections": a.sectionsView(convs), "counts": a.countsView(), "threads": a.threadsView(), "users": a.usersView(ids),
 		"connected": connected, "emoji_count": a.S.CustomEmoji.Len(), "enterprise_id": a.C.Creds.EnterpriseID,
+		"prefs": a.prefsView(), "usergroup_count": len(a.S.Groups),
 	})
 }
 
@@ -274,19 +276,16 @@ func (a *App) hHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	var msgs []slack.Message
 	var hasMore bool
+	t0 := time.Now()
+	source := "cache"
+	defer func() {
+		log.Printf("history %s: %s (%s)", ch, time.Since(t0).Round(time.Millisecond), source)
+	}()
 	if before == "" {
 		t := a.S.Timeline(ch)
 		if t == nil || fresh {
-			err := a.once("h:"+ch, func() error {
-				p, err := a.C.History(ctx, ch, slack.HistoryOpts{Limit: 50})
-				if err != nil {
-					return err
-				}
-				a.ensureUsers(ctx, referencedUsers(p.Messages))
-				a.S.SetLatest(ch, p.Messages, p.HasMore)
-				return nil
-			})
-			if err != nil {
+			source = "fetch"
+			if err := a.loadLatest(ctx, ch); err != nil {
 				writeErr(w, err)
 				return
 			}
@@ -296,6 +295,7 @@ func (a *App) hHistory(w http.ResponseWriter, r *http.Request) {
 			msgs, hasMore = t.Msgs, t.HasMore
 		}
 	} else {
+		source = "older"
 		p, err := a.C.History(ctx, ch, slack.HistoryOpts{Latest: before, Limit: 100})
 		if err != nil {
 			writeErr(w, err)
@@ -323,6 +323,7 @@ func (a *App) hHistory(w http.ResponseWriter, r *http.Request) {
 		resp.LastRead = e.LastRead
 	}
 	a.S.RUnlock()
+	a.subscribePresence(referencedUsers(msgs))
 	writeJSON(w, r, resp)
 }
 
@@ -349,6 +350,7 @@ func (a *App) hReplies(w http.ResponseWriter, r *http.Request) {
 		a.S.SetThread(ch, ts, all)
 		msgs, _ = a.S.Thread(ch, ts)
 	}
+	a.subscribePresence(referencedUsers(msgs))
 	writeJSON(w, r, map[string]any{"ok": true, "channel": ch, "ts": ts, "messages": a.threadViews(ch, msgs), "users": a.usersView(referencedUsers(msgs))})
 }
 
@@ -428,20 +430,22 @@ func (a *App) hReact(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMark(w http.ResponseWriter, r *http.Request) {
 	var req struct{ Channel, TS string }
-	if err := decode(r, &req); err != nil {
+	if err := decode(r, &req); err != nil || req.Channel == "" || req.TS == "" {
 		http.Error(w, "bad request", 400)
 		return
 	}
-	a.S.Lock()
-	if c, ok := a.S.Counts[req.Channel]; ok {
-		c.LastRead, c.HasUnreads, c.MentionCount = req.TS, false, 0
-	}
-	a.S.Unlock()
 	if err := a.C.Mark(r.Context(), req.Channel, req.TS); err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, r, map[string]any{"ok": true})
+	// Marking at an earlier ts is "mark unread": the channel stays unread.
+	e := a.S.MarkRead(req.Channel, req.TS)
+	cv := a.countOf(req.Channel)
+	a.Hub.Broadcast(map[string]any{"type": "marked", "channel": req.Channel, "ts": req.TS, "unread": e.HasUnreads, "mentions": e.MentionCount, "count": cv})
+	if e.HasUnreads {
+		a.refreshCountsSoon() // server knows the mention count below the new cursor
+	}
+	writeJSON(w, r, map[string]any{"ok": true, "count": cv})
 }
 
 func (a *App) hTyping(w http.ResponseWriter, r *http.Request) {
@@ -644,6 +648,10 @@ func (a *App) hWS(w http.ResponseWriter, r *http.Request) {
 		c.CloseNow()
 	}()
 	ctx := c.CloseRead(r.Context())
+	a.mu.Lock()
+	hello, _ := json.Marshal(map[string]any{"type": "connection", "connected": a.connected})
+	a.mu.Unlock()
+	out <- hello
 	for {
 		select {
 		case <-ctx.Done():

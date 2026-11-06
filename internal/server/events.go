@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/render"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/yoloslackgoclient/internal/store"
 )
 
 var mentionRe = regexp.MustCompile(`<@([UW][A-Z0-9]+)`)
@@ -41,6 +43,9 @@ func (a *App) handle(ev slack.Event) {
 			ThreadTS string `json:"thread_ts"`
 		}
 		_ = json.Unmarshal(ev.Raw, &e)
+		if e.User == a.S.SelfID() {
+			return
+		}
 		a.ensureUsers(ctx, []string{e.User})
 		a.Hub.Broadcast(map[string]any{"type": "typing", "channel": ch, "user": e.User, "name": a.S.UserName(e.User), "thread_ts": e.ThreadTS})
 	case "channel_marked", "im_marked", "group_marked", "mpim_marked":
@@ -50,14 +55,14 @@ func (a *App) handle(ev slack.Event) {
 			MentionCount int    `json:"mention_count_display"`
 		}
 		_ = json.Unmarshal(ev.Raw, &e)
+		a.S.MarkRead(ch, e.TS)
 		a.S.Lock()
 		if c, ok := a.S.Counts[ch]; ok {
-			c.LastRead = e.TS
 			c.HasUnreads = e.UnreadCount > 0
 			c.MentionCount = e.MentionCount
 		}
 		a.S.Unlock()
-		a.Hub.Broadcast(map[string]any{"type": "marked", "channel": ch, "ts": e.TS, "unread": e.UnreadCount > 0, "mentions": e.MentionCount})
+		a.Hub.Broadcast(map[string]any{"type": "marked", "channel": ch, "ts": e.TS, "unread": e.UnreadCount > 0, "mentions": e.MentionCount, "count": a.countOf(ch)})
 	case "presence_change":
 		var e struct {
 			User     string   `json:"user"`
@@ -72,8 +77,12 @@ func (a *App) handle(ev slack.Event) {
 		a.S.Lock()
 		for _, u := range us {
 			a.S.Presence[u] = e.Presence
+			if usr, ok := a.S.Users[u]; ok {
+				usr.Presence = e.Presence
+			}
 		}
 		a.S.Unlock()
+		a.presenceArrived()
 		a.Hub.Broadcast(map[string]any{"type": "presence", "users": us, "presence": e.Presence})
 	case "user_change", "user_profile_changed":
 		var e struct {
@@ -99,7 +108,16 @@ func (a *App) handle(ev slack.Event) {
 			a.S.CustomEmoji.Remove(e.Names...)
 		}
 		a.Hub.Broadcast(map[string]any{"type": "emoji_changed"})
-	case "channel_joined", "group_joined", "im_created", "mpim_joined", "channel_created", "channel_rename", "group_rename", "channel_unarchive":
+	case "member_joined_channel":
+		var e struct {
+			User string `json:"user"`
+		}
+		_ = json.Unmarshal(ev.Raw, &e)
+		if e.User != a.S.SelfID() {
+			return
+		}
+		fallthrough
+	case "channel_joined", "group_joined", "im_created", "mpim_joined", "channel_created", "channel_rename", "group_rename", "channel_unarchive", "im_open", "mpim_open":
 		var e struct {
 			Channel slack.Conversation `json:"channel"`
 		}
@@ -141,13 +159,43 @@ func (a *App) handle(ev slack.Event) {
 		}
 	case "thread_marked", "update_thread_state", "dnd_updated", "dnd_updated_user", "pref_change", "badge_counts_updated", "channel_sections_upserted", "channel_sections_channels_upserted", "channel_sections_channels_removed", "channel_sections_deleted":
 		a.Hub.Broadcast(map[string]any{"type": ev.Type, "raw": ev.Raw})
-		if ev.Type == "channel_sections_upserted" || ev.Type == "channel_sections_channels_upserted" || ev.Type == "channel_sections_channels_removed" || ev.Type == "channel_sections_deleted" {
-			if secs, err := a.C.Sections(ctx); err == nil {
+		switch ev.Type {
+		case "channel_sections_upserted", "channel_sections_channels_upserted", "channel_sections_channels_removed", "channel_sections_deleted":
+			if secs, err := a.C.SectionsAll(ctx); err == nil {
 				a.S.Lock()
 				a.S.Sections = secs
 				a.S.Unlock()
 				a.Hub.Broadcast(map[string]any{"type": "sidebar_changed"})
 			}
+		case "thread_marked", "update_thread_state", "badge_counts_updated":
+			a.refreshCountsSoon()
+		case "pref_change":
+			if raw, err := a.C.Prefs(ctx); err == nil {
+				a.S.SetPrefs(store.ParsePrefs(raw))
+				a.S.RLock()
+				p := a.S.Prefs
+				a.S.RUnlock()
+				a.Hub.Broadcast(map[string]any{"type": "prefs", "prefs": p})
+			}
+		}
+	case "subteam_created", "subteam_updated", "subteam_members_changed", "subteam_self_added", "subteam_self_removed":
+		var e struct {
+			Subteam slack.Usergroup `json:"subteam"`
+		}
+		_ = json.Unmarshal(ev.Raw, &e)
+		if e.Subteam.ID != "" && e.Subteam.Handle != "" {
+			a.S.Lock()
+			a.S.Usergroups[e.Subteam.ID] = e.Subteam.Handle
+			found := false
+			for i := range a.S.Groups {
+				if a.S.Groups[i].ID == e.Subteam.ID {
+					a.S.Groups[i], found = e.Subteam, true
+				}
+			}
+			if !found {
+				a.S.Groups = append(a.S.Groups, e.Subteam)
+			}
+			a.S.Unlock()
 		}
 	default:
 		if len(ev.Type) > 3 && ev.Type[:3] == "sh_" || ev.Type == "huddle_invite" {
@@ -265,22 +313,13 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	if !isReply || m.Subtype == "thread_broadcast" {
 		a.S.Upsert(ch, m)
 	}
-	a.S.Lock()
-	c, ok := a.S.Counts[ch]
-	if !ok {
-		c = &slack.CountEntry{ID: ch}
-		a.S.Counts[ch] = c
-	}
+	self := a.S.SelfID()
+	mention := mentionsSelf(&m, self)
 	if !isReply || m.Subtype == "thread_broadcast" {
-		c.Latest = m.TS
-		if m.User != a.S.Self.ID {
-			c.HasUnreads = true
-			if mentionsSelf(&m, a.S.Self.ID) {
-				c.MentionCount++
-			}
-		}
+		a.S.NoteMessage(ch, &m, mention)
+	} else if m.User != self {
+		a.refreshCountsSoon() // thread unread state lives server-side
 	}
-	a.S.Unlock()
 	if _, known := a.S.Conv(ch); !known {
 		if cv, err := a.C.ConversationInfo(ctx, ch); err == nil {
 			a.S.PutConv(*cv)
@@ -292,8 +331,8 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	}
 	a.Hub.Broadcast(map[string]any{
 		"type": "message", "channel": ch, "msg": render.Message(a.S, ch, &m),
-		"reply": isReply, "user": a.userView(m.User), "mention": mentionsSelf(&m, a.S.Self.ID),
-		"conv_kind": a.kindOf(ch),
+		"reply": isReply, "user": a.userView(m.User), "mention": mention,
+		"conv_kind": a.kindOf(ch), "count": a.countOf(ch),
 	})
 }
 
@@ -304,11 +343,13 @@ func (a *App) kindOf(ch string) string {
 	return ""
 }
 
+// mentionsSelf reports whether m mentions the viewer directly, via
+// @here, @channel or @everyone. (Usergroup mentions come from client.counts.)
 func mentionsSelf(m *slack.Message, self string) bool {
 	for _, mm := range mentionRe.FindAllStringSubmatch(m.Text, -1) {
 		if mm[1] == self {
 			return true
 		}
 	}
-	return false
+	return strings.Contains(m.Text, "<!here") || strings.Contains(m.Text, "<!channel") || strings.Contains(m.Text, "<!everyone")
 }

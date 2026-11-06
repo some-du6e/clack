@@ -26,6 +26,12 @@ type App struct {
 	connected bool
 	mu        sync.Mutex
 	inflight  map[string]*call
+
+	presSeen    map[string]time.Time // users the UI recently showed (presence subscriptions)
+	presWaiters []chan struct{}
+	countsTimer *time.Timer
+	cmdCache    []slack.Command
+	cmdAt       time.Time
 }
 
 type call struct {
@@ -67,37 +73,59 @@ func (a *App) once(key string, f func() error) error {
 	return c.err
 }
 
-// Boot loads everything the sidebar needs, in parallel.
+// Boot loads everything the sidebar needs, in parallel, and logs how long
+// each part took (timings only, never contents).
 func (a *App) Boot(ctx context.Context) error {
 	defer close(a.ready)
 	t0 := time.Now()
 	a.S.LoadCache()
-	var wg sync.WaitGroup
-	var convs []slack.Conversation
-	var counts *slack.Counts
-	var sections []slack.Section
-	var errConvs error
-	wg.Add(4)
-	go func() {
-		defer wg.Done()
+	tCache := time.Since(t0)
+	var (
+		wg       sync.WaitGroup
+		tmu      sync.Mutex
+		timings  []string
+		convs    []slack.Conversation
+		counts   *slack.Counts
+		sections []slack.Section
+		errConvs error
+	)
+	step := func(name string, f func() error) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s := time.Now()
+			err := f()
+			d := time.Since(s).Round(time.Millisecond)
+			tmu.Lock()
+			if err != nil {
+				timings = append(timings, name+"="+d.String()+"(err)")
+				log.Printf("boot: %s: %v", name, err)
+			} else {
+				timings = append(timings, name+"="+d.String())
+			}
+			tmu.Unlock()
+		}()
+	}
+	step("conversations", func() error {
 		convs, errConvs = a.C.Conversations(ctx)
-	}()
-	go func() {
-		defer wg.Done()
-		var err error
-		if counts, err = a.C.Counts(ctx); err != nil {
-			log.Printf("boot: counts: %v", err)
+		return errConvs
+	})
+	step("counts", func() (err error) {
+		counts, err = a.C.Counts(ctx)
+		return err
+	})
+	step("sections", func() (err error) {
+		sections, err = a.C.SectionsAll(ctx)
+		return err
+	})
+	step("prefs", func() error {
+		raw, err := a.C.Prefs(ctx)
+		if err == nil {
+			a.S.SetPrefs(store.ParsePrefs(raw))
 		}
-	}()
-	go func() {
-		defer wg.Done()
-		var err error
-		if sections, err = a.C.Sections(ctx); err != nil {
-			log.Printf("boot: sections: %v", err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
+		return err
+	})
+	step("team", func() error {
 		var r struct {
 			Team struct {
 				ID     string         `json:"id"`
@@ -106,7 +134,8 @@ func (a *App) Boot(ctx context.Context) error {
 				Icon   map[string]any `json:"icon"`
 			} `json:"team"`
 		}
-		if err := a.C.Call(ctx, "team.info", nil, &r); err == nil {
+		err := a.C.Call(ctx, "team.info", nil, &r)
+		if err == nil {
 			a.S.Lock()
 			a.S.TeamID, a.S.TeamName, a.S.TeamDomain = r.Team.ID, r.Team.Name, r.Team.Domain
 			if s, ok := r.Team.Icon["image_88"].(string); ok {
@@ -114,11 +143,23 @@ func (a *App) Boot(ctx context.Context) error {
 			}
 			a.S.Unlock()
 		}
-	}()
+		return err
+	})
+	if _, ok := a.S.User(a.C.Creds.UserID); !ok {
+		step("self", func() error {
+			a.ensureUsers(ctx, []string{a.C.Creds.UserID})
+			return nil
+		})
+	}
 	if a.S.CustomEmoji.Len() == 0 {
-		a.loadEmoji(ctx) // first run: needed before rendering
+		step("emoji", func() error { return a.loadEmoji(ctx) }) // first run: needed before rendering
 	} else {
 		go a.loadEmoji(context.Background())
+	}
+	if len(a.S.Groups) == 0 {
+		step("usergroups", func() error { return a.loadUsergroups(ctx) })
+	} else {
+		go a.loadUsergroups(context.Background())
 	}
 	wg.Wait()
 	if errConvs != nil {
@@ -140,56 +181,226 @@ func (a *App) Boot(ctx context.Context) error {
 			ids = append(ids, c.User)
 		}
 	}
+	tu := time.Now()
 	a.ensureUsers(ctx, ids)
 	if u, ok := a.S.User(a.C.Creds.UserID); ok {
 		a.S.Lock()
 		a.S.Self = *u
 		a.S.Unlock()
 	}
-	log.Printf("boot: %d conversations, %d sections in %s", len(convs), len(sections), time.Since(t0).Round(time.Millisecond))
+	sort.Strings(timings)
+	log.Printf("boot: ready in %s (cache %s, %s, dm-users=%s); %d conversations, %d sections, %d users, %d emoji",
+		time.Since(t0).Round(time.Millisecond), tCache.Round(time.Millisecond), strings.Join(timings, " "),
+		time.Since(tu).Round(time.Millisecond), len(convs), len(sections), len(a.S.Users), a.S.CustomEmoji.Len())
+	a.RTM.OnHello = a.onHello
 	go a.RTM.Run(context.Background())
 	go a.pump()
+	go a.prefetch(context.Background())
 	go func() {
-		for range time.Tick(5 * time.Minute) {
+		t := time.NewTicker(5 * time.Minute)
+		defer t.Stop()
+		for range t.C {
 			_ = a.S.SaveCache()
 		}
 	}()
 	return nil
 }
 
-func (a *App) loadEmoji(ctx context.Context) {
+// onHello runs after each realtime (re)connect: subscribe to presence and
+// profile changes for the users the UI shows.
+func (a *App) onHello() {
+	ids := a.presenceIDs(nil)
+	if err := a.RTM.SubscribePresence(ids); err != nil {
+		log.Printf("rtm: presence_sub: %v", err)
+	}
+	if err := a.RTM.SubscribeUsers(ids); err != nil {
+		log.Printf("rtm: user subscribe: %v", err)
+	}
+}
+
+// presenceIDs merges add into the subscribed set (self + DM partners +
+// recently visible users, newest first, capped) and returns the full set.
+func (a *App) presenceIDs(add []string) []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.presSeen == nil {
+		a.presSeen = map[string]time.Time{}
+	}
+	now := time.Now()
+	for _, id := range add {
+		if strings.HasPrefix(id, "U") || strings.HasPrefix(id, "W") {
+			a.presSeen[id] = now
+		}
+	}
+	base := map[string]bool{a.C.Creds.UserID: true}
+	a.S.RLock()
+	for _, c := range a.S.Convs {
+		if c.IsIM && c.User != "" {
+			base[c.User] = true
+		}
+	}
+	a.S.RUnlock()
+	type kv struct {
+		id string
+		t  time.Time
+	}
+	var recent []kv
+	for id, t := range a.presSeen {
+		if !base[id] {
+			recent = append(recent, kv{id, t})
+		}
+	}
+	sort.Slice(recent, func(i, j int) bool { return recent[i].t.After(recent[j].t) })
+	const maxSubs = 500
+	out := make([]string, 0, len(base)+len(recent))
+	for id := range base {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	for _, r := range recent {
+		if len(out) >= maxSubs {
+			delete(a.presSeen, r.id)
+			continue
+		}
+		out = append(out, r.id)
+	}
+	return out
+}
+
+// prefetch warms the history of unread conversations in the background so
+// switching to them is instant. Bounded concurrency, capped count.
+func (a *App) prefetch(ctx context.Context) {
+	t0 := time.Now()
+	type cand struct {
+		id     string
+		latest string
+		score  int
+	}
+	var cs []cand
+	a.S.RLock()
+	for id, e := range a.S.Counts {
+		if !e.HasUnreads && e.MentionCount == 0 {
+			continue
+		}
+		if _, ok := a.S.Convs[id]; !ok || a.S.Muted[id] {
+			continue
+		}
+		cs = append(cs, cand{id, e.Latest, e.MentionCount})
+	}
+	a.S.RUnlock()
+	sort.Slice(cs, func(i, j int) bool {
+		if cs[i].score != cs[j].score {
+			return cs[i].score > cs[j].score
+		}
+		return store.TSLess(cs[j].latest, cs[i].latest)
+	})
+	const maxPrefetch = 24
+	if len(cs) > maxPrefetch {
+		cs = cs[:maxPrefetch]
+	}
+	sem := make(chan struct{}, 3)
+	var wg sync.WaitGroup
+	n := 0
+	for _, c := range cs {
+		if a.S.Timeline(c.id) != nil {
+			continue
+		}
+		n++
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(id string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			_ = a.loadLatest(ctx, id)
+		}(c.id)
+	}
+	wg.Wait()
+	if n > 0 {
+		log.Printf("prefetch: %d unread conversations in %s", n, time.Since(t0).Round(time.Millisecond))
+	}
+}
+
+// loadLatest fetches (deduplicated) the newest page of a conversation.
+func (a *App) loadLatest(ctx context.Context, ch string) error {
+	return a.once("h:"+ch, func() error {
+		p, err := a.C.History(ctx, ch, slack.HistoryOpts{Limit: 50})
+		if err != nil {
+			return err
+		}
+		a.ensureUsers(ctx, referencedUsers(p.Messages))
+		a.S.SetLatest(ch, p.Messages, p.HasMore)
+		return nil
+	})
+}
+
+func (a *App) loadUsergroups(ctx context.Context) error {
+	gs, err := a.C.Usergroups(ctx)
+	if err != nil {
+		return err
+	}
+	a.S.SetUsergroups(gs)
+	return nil
+}
+
+func (a *App) loadEmoji(ctx context.Context) error {
 	m, err := a.C.EmojiList(ctx)
 	if err != nil {
 		log.Printf("emoji.list: %v", err)
-		return
+		return err
 	}
 	a.S.CustomEmoji.Set(m)
 	_ = a.S.SaveCache()
+	return nil
 }
 
-// ensureUsers fetches unknown users in one edge round trip.
+// ensureUsers fetches unknown users via the edge cache (parallel batches of 100).
 func (a *App) ensureUsers(ctx context.Context, ids []string) {
 	miss := a.S.MissingUsers(ids)
-	for len(miss) > 0 {
-		n := len(miss)
-		if n > 100 {
-			n = 100
-		}
-		us, err := a.C.UsersInfo(ctx, miss[:n])
-		if err != nil {
-			log.Printf("users/info: %v", err)
-			return
-		}
-		a.S.PutUsers(us)
-		miss = miss[n:]
+	if len(miss) == 0 {
+		return
 	}
+	us, err := a.C.UsersInfoParallel(ctx, miss)
+	if err != nil {
+		log.Printf("users/info: %v", err)
+	}
+	a.S.PutUsers(us)
 }
 
 func (a *App) refreshCounts(ctx context.Context) {
 	if c, err := a.C.Counts(ctx); err == nil {
 		a.S.SetCounts(c)
-		a.Hub.Broadcast(map[string]any{"type": "counts", "counts": a.countsView()})
+		a.Hub.Broadcast(map[string]any{"type": "counts", "counts": a.countsView(), "threads": a.threadsView()})
 	}
+}
+
+// refreshCountsSoon coalesces bursts of events into one client.counts call.
+func (a *App) refreshCountsSoon() {
+	a.mu.Lock()
+	if a.countsTimer != nil {
+		a.mu.Unlock()
+		return
+	}
+	a.countsTimer = time.AfterFunc(1500*time.Millisecond, func() {
+		a.mu.Lock()
+		a.countsTimer = nil
+		a.mu.Unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		a.refreshCounts(ctx)
+	})
+	a.mu.Unlock()
+}
+
+// ThreadsView is the unread state of the Threads view.
+type ThreadsView struct {
+	Unread   bool `json:"unread"`
+	Mentions int  `json:"mentions"`
+}
+
+func (a *App) threadsView() ThreadsView {
+	a.S.RLock()
+	defer a.S.RUnlock()
+	return ThreadsView{Unread: a.S.ThreadsUnread, Mentions: a.S.ThreadMentions}
 }
 
 // referencedUsers collects user ids a message list needs for rendering.
@@ -238,21 +449,23 @@ func (a *App) threadViews(ch string, msgs []slack.Message) []render.View {
 // ---- sidebar view model ----
 
 type ConvView struct {
-	ID         string   `json:"id"`
-	Name       string   `json:"name"`
-	Kind       string   `json:"kind"` // channel | private | im | mpim
-	User       string   `json:"user,omitempty"`
-	Members    []string `json:"members,omitempty"`
-	Topic      string   `json:"topic,omitempty"`
-	TopicHTML  string   `json:"topic_html,omitempty"`
-	Purpose    string   `json:"purpose,omitempty"`
-	NumMembers int      `json:"num_members,omitempty"`
-	IsArchived bool     `json:"is_archived,omitempty"`
-	IsGeneral  bool     `json:"is_general,omitempty"`
-	IsShared   bool     `json:"is_shared,omitempty"`
-	Created    int64    `json:"created,omitempty"`
-	Creator    string   `json:"creator,omitempty"`
-	Priority   float64  `json:"priority,omitempty"`
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Kind        string   `json:"kind"` // channel | private | im | mpim
+	User        string   `json:"user,omitempty"`
+	Members     []string `json:"members,omitempty"`
+	Topic       string   `json:"topic,omitempty"`
+	TopicHTML   string   `json:"topic_html,omitempty"`
+	Purpose     string   `json:"purpose,omitempty"`
+	PurposeHTML string   `json:"purpose_html,omitempty"`
+	Muted       bool     `json:"muted,omitempty"`
+	NumMembers  int      `json:"num_members,omitempty"`
+	IsArchived  bool     `json:"is_archived,omitempty"`
+	IsGeneral   bool     `json:"is_general,omitempty"`
+	IsShared    bool     `json:"is_shared,omitempty"`
+	Created     int64    `json:"created,omitempty"`
+	Creator     string   `json:"creator,omitempty"`
+	Priority    float64  `json:"priority,omitempty"`
 }
 
 func (a *App) convView(c *slack.Conversation) ConvView {
@@ -278,6 +491,9 @@ func (a *App) convView(c *slack.Conversation) ConvView {
 	if c.Purpose != nil {
 		v.Purpose = c.Purpose.Value
 	}
+	a.S.RLock()
+	v.Muted = a.S.Muted[c.ID]
+	a.S.RUnlock()
 	return v
 }
 
@@ -286,6 +502,11 @@ type CountView struct {
 	Latest   string `json:"latest"`
 	Unread   bool   `json:"unread"`
 	Mentions int    `json:"mentions"`
+	Muted    bool   `json:"muted,omitempty"`
+}
+
+func countView(e slack.CountEntry, muted bool) CountView {
+	return CountView{LastRead: e.LastRead, Latest: e.Latest, Unread: e.HasUnreads, Mentions: e.MentionCount, Muted: muted}
 }
 
 func (a *App) countsView() map[string]CountView {
@@ -293,9 +514,17 @@ func (a *App) countsView() map[string]CountView {
 	defer a.S.RUnlock()
 	out := make(map[string]CountView, len(a.S.Counts))
 	for id, e := range a.S.Counts {
-		out[id] = CountView{LastRead: e.LastRead, Latest: e.Latest, Unread: e.HasUnreads, Mentions: e.MentionCount}
+		out[id] = countView(*e, a.S.Muted[id])
 	}
 	return out
+}
+
+func (a *App) countOf(ch string) CountView {
+	e, _ := a.S.Count(ch)
+	a.S.RLock()
+	m := a.S.Muted[ch]
+	a.S.RUnlock()
+	return countView(e, m)
 }
 
 type SectionView struct {
