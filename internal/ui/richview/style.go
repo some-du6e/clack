@@ -145,6 +145,10 @@ type Style struct {
 
 	// Body text size and line height in Sp/Dp (Slack: 15/22).
 	TextSize, LineHeight float32
+	// EmojiURL maps a standard emoji image stem to its URL (the theme's
+	// emoji style); nil uses Slack's apple set.
+	EmojiURL func(stem string) string
+
 	// Embolden strokes glyph outlines with this width (dp) to match the
 	// browser's heavier text rendering; 0 disables it.
 	Embolden float32

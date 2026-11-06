@@ -361,8 +361,9 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 		icon = "user-plus"
 	case "channel_leave", "group_leave":
 		icon = "user"
-	case "channel_topic", "channel_purpose", "group_topic", "group_purpose", "channel_name":
-		icon = "edit"
+	case "channel_topic", "channel_purpose", "group_topic", "group_purpose", "channel_name",
+		"channel_archive", "channel_unarchive", "channel_convert_to_private", "channel_convert_to_public":
+		icon = "hash" // Slack's channel-event glyph
 	case "pinned_item":
 		icon = "pin"
 	}

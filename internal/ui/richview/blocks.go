@@ -158,6 +158,7 @@ func (l *lay) block(b *richtext.Block, x, y, w int, edited bool) int {
 		fs.size = l.sp(12)
 		fs.lineH = l.dp(18)
 		fs.pre = true
+		fs.emoji = l.dp(16)
 		fs.col = p.Text
 		if l.opts.Muted {
 			fs.col = p.Text2

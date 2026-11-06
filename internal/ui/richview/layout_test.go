@@ -2062,3 +2062,33 @@ func TestBugEllipsisDropsLongWord(t *testing.T) {
 		t.Errorf("ellipsis baseline %d != text baseline %d", ell.y, head.y)
 	}
 }
+
+func TestUnicodeEmojiAsImages(t *testing.T) {
+	st := newTestStyle()
+	v := layoutAt(st, doc(rt.Block{Kind: rt.Actions, Buttons: []rt.Button{{Text: "Launch 🚀"}}}), Options{}, 400)
+	var img *frag
+	for i := range v.d.frags {
+		if v.d.frags[i].kind == fImage {
+			img = &v.d.frags[i]
+		}
+	}
+	if img == nil || !strings.Contains(img.url, "1f680") || img.size != 16 {
+		t.Fatalf("button emoji frag %+v", img)
+	}
+	v = layoutAt(st, doc(para(txt("ok 👍🏽 done"))), Options{}, 400)
+	n := 0
+	for i := range v.d.frags {
+		if v.d.frags[i].kind == fImage {
+			n++
+			if !strings.Contains(v.d.frags[i].url, "1f44d") {
+				t.Errorf("thumbs up url %q", v.d.frags[i].url)
+			}
+		}
+	}
+	if n != 1 || string(v.d.plain) != "ok 👍🏽 done" {
+		t.Errorf("%d emoji frags, plain %q", n, v.d.plain)
+	}
+	if segs := splitEmoji("plain text"); segs != nil {
+		t.Errorf("no-emoji text split: %+v", segs)
+	}
+}
