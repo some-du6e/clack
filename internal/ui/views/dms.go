@@ -537,8 +537,8 @@ func (d *DMs) openDM(userID string) {
 	})
 }
 
-// addTodo is the row's "Add to-do" action: it saves the DM's latest
-// message to To-dos (saved.add). Runs only from a user click.
+// addTodo is the row's "Add to-do" action: the DM's latest message becomes a
+// to-do (core.AddTodo). Runs only from a user click.
 func (d *DMs) addTodo(ch string) {
 	i, ok := d.index[ch]
 	if !ok || d.items[i].Latest == nil || d.save.busy() {
@@ -549,7 +549,7 @@ func (d *DMs) addTodo(ch string) {
 	seq := d.seq
 	c := d.h.Core()
 	d.save.load(d.h, false, func(ctx context.Context) (dmsSaved, error) {
-		err := c.Save(ctx, ch, ts, 0)
+		err := c.AddTodo(ctx, ch, ts, 0)
 		return dmsSaved{err: err, seq: seq}, err
 	})
 }

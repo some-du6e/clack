@@ -500,6 +500,10 @@ func (v *Threads) cardFor(t *thrItem, convs map[string]core.ConvRef) *thrCard {
 	}
 	if !c.built {
 		c.name = v.convTitle(t.Channel, convs)
+		if c.name == t.Channel && strings.HasPrefix(t.Channel, "D") {
+			// a DM core doesn't know yet: name it after the other person
+			c.name = v.dmPartner(&t.Root, t.Replies)
+		}
 		c.people = v.people(&t.Root, t.Replies)
 		c.moreText = ""
 		if hidden := t.Root.ReplyCount - len(t.Replies); hidden > 0 {
@@ -822,4 +826,23 @@ func (v *Threads) thrIcons(gtx C, at image.Point, bandH int, names []string, col
 		st.Pop()
 		x += cell
 	}
+}
+
+// dmPartner names a DM thread after its first non-viewer participant.
+func (v *Threads) dmPartner(root *core.Message, replies []core.Message) string {
+	self := v.selfID()
+	if root.User != "" && root.User != self {
+		return v.userName(root.User)
+	}
+	for _, id := range root.ReplyUsers {
+		if id != self {
+			return v.userName(id)
+		}
+	}
+	for i := range replies {
+		if replies[i].User != "" && replies[i].User != self {
+			return v.userName(replies[i].User)
+		}
+	}
+	return "Direct message"
 }
