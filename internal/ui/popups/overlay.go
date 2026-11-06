@@ -55,13 +55,16 @@ func (b *blocker) Layout(gtx layout.Context, r image.Rectangle) {
 }
 
 // keyTarget makes tag focusable (so key.Filter{Focus: tag} works) and
-// registers it over r.
+// registers it over r. The area is pointer pass-through: it exists only for
+// keyboard focus and must never hide the rows/buttons drawn under or before
+// it from the mouse (Gio's hit test stops at the first non-pass area).
 func keyTarget(gtx layout.Context, tag event.Tag, r image.Rectangle) {
 	for {
 		if _, ok := gtx.Event(key.FocusFilter{Target: tag}); !ok {
 			break
 		}
 	}
+	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
 	defer clip.Rect(r).Push(gtx.Ops).Pop()
 	event.Op(gtx.Ops, tag)
 }
