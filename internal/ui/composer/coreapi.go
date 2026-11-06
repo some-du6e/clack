@@ -50,6 +50,14 @@ func (c coreAPI) upload(ctx context.Context, o core.UploadOpts) ([]core.Uploaded
 	return c.a.Upload(ctx, o)
 }
 
+func (c coreAPI) prepareUpload(ctx context.Context, f core.UploadFile, progress func(sent, total int64)) (core.PreparedUpload, error) {
+	return c.a.PrepareUpload(ctx, f, progress)
+}
+
+func (c coreAPI) scheduleMessage(ctx context.Context, ch, threadTS, text string, blocks json.RawMessage, broadcast bool, postAt int64) (core.ScheduledMessage, error) {
+	return c.a.ScheduleMessage(ctx, core.SendOpts{Channel: ch, ThreadTS: threadTS, Text: text, Blocks: blocks, Broadcast: broadcast}, postAt)
+}
+
 func (c coreAPI) searchUsers(ctx context.Context, q string) ([]core.User, error) {
 	return c.a.SearchUsers(ctx, q, 20)
 }
