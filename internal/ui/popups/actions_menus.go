@@ -129,7 +129,14 @@ func NewChannelMenu(h Host, anchor image.Point, convID string) *Menu {
 		MenuItem{Label: "Add a workflow", Do: actToast(h, "Workflows aren't supported in yoloslack")},
 		MenuItem{Label: "Edit settings", Do: actToast(h, "Channel settings aren't supported yet")},
 		Sep(),
-		MenuItem{Label: "Open in split view", Icon: "panel-right", Do: actToast(h, "Split view isn't supported yet")},
+		MenuItem{Label: "Open in split view", Icon: "panel-right", Do: func() {
+			// ui-shell's *ui.App exposes OpenSplit (right-hand pane).
+			if s, ok := h.(interface{ OpenSplit(route string) }); ok {
+				s.OpenSplit("c/" + convID)
+				return
+			}
+			h.Toast("Split view isn't supported yet")
+		}},
 		Sep(),
 		MenuItem{Widget: actLabelRow(h, func() string {
 			if actIsMuted(h, convID) {
