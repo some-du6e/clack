@@ -251,7 +251,8 @@ func main() {
 				gtx := app.NewContext(&ops, e)
 				for {
 					ev, ok := gtx.Event(key.Filter{Name: key.NameTab}, key.Filter{Name: "D", Required: key.ModShortcut},
-						key.Filter{Name: "E", Required: key.ModShortcut}, key.Filter{Name: "J", Required: key.ModShortcut})
+						key.Filter{Name: "E", Required: key.ModShortcut}, key.Filter{Name: "J", Required: key.ModShortcut},
+						key.Filter{Name: "U", Required: key.ModShortcut})
 					if !ok {
 						break
 					}
@@ -270,6 +271,18 @@ func main() {
 						}
 						if ke.Name == "E" {
 							log.Printf("edit last: %v", view.EditLast())
+						}
+						if ke.Name == "U" {
+							// Mark unread from the 4th-newest message (test channel only), then reopen.
+							go func() {
+								ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+								defer cancel()
+								p, err := svc.History(ctx, "C0B4DEFKFCJ", "")
+								if err == nil && len(p.Messages) > 4 {
+									_, err = svc.MarkUnread(ctx, "C0B4DEFKFCJ", p.Messages[len(p.Messages)-4].TS)
+								}
+								log.Printf("mark unread: %v", err)
+							}()
 						}
 						if ke.Name == "J" && *highlight != "" {
 							view.Highlight(*highlight)

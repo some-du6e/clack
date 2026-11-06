@@ -55,7 +55,7 @@ const (
 	tbCount
 )
 
-var tbTips = [tbCount]string{"Add reaction", "Reply in thread", "Forward message", "Add to to-dos", "Add to list", "More actions"}
+var tbTips = [tbCount]string{"Add reaction…", "Reply in thread", "Forward message…", "Add to-do", "Add to list…", "More actions"} // aria-labels of the live 2026 client
 var tbIcons = [tbCount]string{"add-reaction", "reply", "forward-msg", "check", "list-view", "kebab"}
 
 // listState is the per-conversation UI state shared by channel and thread
@@ -265,10 +265,15 @@ func (s *listState) build(h Host, now time.Time) {
 			s.items = append(s.items, item{kind: itDay, day: t, key: "d" + m.TS})
 			header = true
 		}
-		if !unreadPlaced && s.openLastRead != "" && tsLess(s.openLastRead, m.TS) && m.User != self && !s.thread {
+		if !unreadPlaced && s.openLastRead != "" && tsLess(s.openLastRead, m.TS) && !s.thread {
 			unreadPlaced = true
-			// Only show the line when there is something read above it.
-			if i > 0 || s.snap.hasMore {
+			// Only show the line when there is something read above it and
+			// not everything after it is the viewer's own sends.
+			othersAfter := false
+			for k := i; k < len(msgs) && !othersAfter; k++ {
+				othersAfter = msgs[k].m.User != self
+			}
+			if (i > 0 || s.snap.hasMore) && othersAfter {
 				s.items = append(s.items, item{kind: itUnread, key: "unread"})
 				header = true
 			}
@@ -446,9 +451,10 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	// mark read at the bottom
 	if !s.thread && !s.noMark && s.snap.loaded && !p.BeforeEnd && len(s.snap.msgs) > 0 {
 		latest := s.snap.msgs[len(s.snap.msgs)-1].m.TS
-		if latest != s.markedTS && (s.snap.lastRead == "" || tsLess(s.snap.lastRead, latest)) && now.Sub(s.lastMark) > 1500*time.Millisecond {
+		app := h.Core()
+		if latest != s.markedTS && app != nil && tsLess(app.Count(s.ch).LastRead, latest) && now.Sub(s.lastMark) > 1500*time.Millisecond {
 			s.markedTS, s.lastMark = latest, now
-			if app := h.Core(); app != nil {
+			{
 				ch := s.ch
 				go func() {
 					ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)

@@ -28,6 +28,12 @@ type ChannelView struct {
 func NewChannelView(h Host, channelID string) *ChannelView {
 	v := &ChannelView{h: h, ch: channelID, s: stateFor(h, channelID, "")}
 	v.s.hb.ensureLoaded(v.s.m)
+	// Each open places the "New" line at the read cursor as it is now.
+	if app := h.Core(); app != nil {
+		v.s.openLastRead = app.Count(channelID).LastRead
+		v.s.opened = true
+		v.s.built = 0
+	}
 	return v
 }
 
