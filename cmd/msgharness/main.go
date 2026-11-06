@@ -147,12 +147,29 @@ func main() {
 	}()
 
 	chans := []string{*chFlag}
-	if *switchTo != "" {
+	if *switchTo != "" && *switchTo != "auto" {
 		chans = append(chans, strings.Split(*switchTo, ",")...)
 	}
+	var chMu sync.Mutex
 	go func() {
 		<-svc.Ready()
-		for _, ch := range chans[1:] {
+		if *switchTo == "auto" {
+			snap := svc.Snapshot()
+			auto := []string{chans[0]}
+			for _, c := range snap.Convs {
+				if c.Kind == "channel" && c.ID != chans[0] && len(auto) < 7 {
+					auto = append(auto, c.ID)
+				}
+			}
+			chMu.Lock()
+			chans = auto
+			chMu.Unlock()
+			log.Printf("auto channels: %d", len(auto)-1)
+		}
+		chMu.Lock()
+		pre := append([]string(nil), chans[1:]...)
+		chMu.Unlock()
+		for _, ch := range pre {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			_, err := svc.History(ctx, ch, "")
 			cancel()
@@ -189,12 +206,15 @@ func main() {
 						break
 					}
 					if ke, ok := ev.(key.Event); ok && ke.State == key.Press {
+						chMu.Lock()
 						if ke.Name == key.NameTab && len(chans) > 1 {
 							cur = (cur + 1) % len(chans)
 							switchStart = time.Now()
 							// A fresh view each time, like the ui root does.
 							view = mk(chans[cur])
+							log.Printf("now showing channel index %d (%s)", cur, chans[cur])
 						}
+						chMu.Unlock()
 						if ke.Name == "D" {
 							h.th.SetDark(!h.th.Dark)
 						}
@@ -218,7 +238,7 @@ func main() {
 				d := time.Since(t0)
 				if !switchStart.IsZero() {
 					switches.add(d)
-					log.Printf("switch to %s: first layout %s", chans[cur], d)
+					log.Printf("switch: first layout %s", d)
 					switchStart = time.Time{}
 				} else {
 					frames.add(d)

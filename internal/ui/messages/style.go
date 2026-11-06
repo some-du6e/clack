@@ -183,6 +183,7 @@ func measure(gtx layout.Context, th *theme.Theme, s textStyle, txt string) image
 // at runs w at offset (x, y) and returns its dims.
 func at(gtx layout.Context, x, y int, w layout.Widget) layout.Dimensions {
 	t := op.Offset(image.Pt(x, y)).Push(gtx.Ops)
+	gtx.Constraints.Min = image.Point{}
 	d := w(gtx)
 	t.Pop()
 	return d
