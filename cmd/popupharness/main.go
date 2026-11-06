@@ -152,6 +152,16 @@ func main() {
 		<-booted
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
+		snap := a.Snapshot()
+		for id, cnt := range snap.Counts {
+			if cnt.Unread || cnt.Mentions > 0 {
+				_, inSnap := a.Conv(id)
+				log.Printf("debug unread %s mentions=%d muted=%v conv=%v", id, cnt.Mentions, cnt.Muted, inSnap)
+			}
+		}
+		for _, cv := range snap.Convs {
+			log.Printf("debug conv %s kind=%s", cv.ID, cv.Kind)
+		}
 		if p, err := a.History(ctx, *channel, ""); err == nil {
 			h.mu.Lock()
 			msgs = p.Messages
