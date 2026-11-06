@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"io"
+	"math"
 	"strings"
 
 	"gioui.org/f32"
@@ -543,3 +544,57 @@ func field(gtx layout.Context, th *theme.Theme, ed *widget.Editor, placeholder s
 
 // pt is a float point.
 func pt(x, y float32) f32.Point { return f32.Point{X: x, Y: y} }
+
+// ---- sRGB-correct translucency ----
+//
+// CSS blends colors in sRGB space; Gio blends in linear space, which makes
+// every translucent color look lighter (a .7 scrim over white measures 150
+// instead of Slack's 96). linearAlpha returns c with its alpha adjusted so
+// that Gio's linear blend over bg produces the same pixel CSS would.
+
+func srgbToLinear(v uint8) float64 {
+	c := float64(v) / 255
+	if c <= 0.04045 {
+		return c / 12.92
+	}
+	return math.Pow((c+0.055)/1.055, 2.4)
+}
+
+func linearAlpha(c, bg color.NRGBA) color.NRGBA {
+	if c.A == 0 || c.A == 255 {
+		return c
+	}
+	a := float64(c.A) / 255
+	best, bestD := a, 0.0
+	for _, ch := range [][2]uint8{{c.R, bg.R}, {c.G, bg.G}, {c.B, bg.B}} {
+		lc, lb := srgbToLinear(ch[0]), srgbToLinear(ch[1])
+		d := math.Abs(lc - lb)
+		if d < 1e-3 || d <= bestD {
+			continue
+		}
+		want := float64(ch[0])*a + float64(ch[1])*(1-a)
+		lw := srgbToLinear(uint8(math.Round(want)))
+		best, bestD = (lw-lb)/(lc-lb), d
+	}
+	if best < 0 {
+		best = 0
+	}
+	if best > 1 {
+		best = 1
+	}
+	c.A = uint8(math.Round(best * 255))
+	return c
+}
+
+func init() {
+	for _, p := range []struct {
+		c  *Colors
+		bg color.NRGBA
+	}{{&lightColors, rgb(0xffffff)}, {&darkColors, rgb(0x222529)}} {
+		c := p.c
+		for _, f := range []*color.NRGBA{&c.Ring, &c.Divider, &c.Shadow, &c.ModalShadow, &c.Backdrop,
+			&c.BtnBorder, &c.MatchBg, &c.EmojiHover, &c.EmojiSelect, &c.FocusRing, &c.InputBorder, &c.Lightbox} {
+			*f = linearAlpha(*f, p.bg)
+		}
+	}
+}

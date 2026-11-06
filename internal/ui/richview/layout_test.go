@@ -961,7 +961,7 @@ func TestFileImage(t *testing.T) {
 	if string(v.d.plain) != "pic.png" {
 		t.Errorf("plain %q", v.d.plain)
 	}
-	if v.d.size != image.Pt(360, 180) {
+	if v.d.size != image.Pt(600, 326) {
 		t.Errorf("size %v", v.d.size)
 	}
 }
@@ -1043,8 +1043,8 @@ func TestVideoCard(t *testing.T) {
 		t.Fatalf("%d imgs", len(v.d.imgs))
 	}
 	r := v.d.imgs[0].r
-	if r != image.Rect(0, 0, 480, 270) {
-		t.Errorf("video thumb %v, want 480x270", r)
+	if r != image.Rect(0, 26, 480, 296) {
+		t.Errorf("video thumb %v, want 480x270 below the name row", r)
 	}
 	circles, plays := boxesOf(&v.d, bCircle), boxesOf(&v.d, bPlay)
 	if len(circles) != 1 || len(plays) != 1 {
@@ -1053,7 +1053,7 @@ func TestVideoCard(t *testing.T) {
 	if c := circles[0]; c.layer != 1 || rectCenter(c.r) != rectCenter(r) {
 		t.Errorf("play circle %v not centered over %v (layer %d)", c.r, r, c.layer)
 	}
-	if plays[0].layer != 1 || !image.Pt(240, 135).In(plays[0].r) {
+	if plays[0].layer != 1 || !image.Pt(240, 161).In(plays[0].r) {
 		t.Errorf("play triangle %v", plays[0].r)
 	}
 	findFrag(t, &v.d, "1:23")
@@ -1066,7 +1066,7 @@ func TestVideoCard(t *testing.T) {
 	v = layoutAt(st, doc(fileBlock(f2)), Options{}, 600)
 	var ph bool
 	for _, b := range v.d.boxes {
-		if b.kind == bFill && b.r == image.Rect(0, 0, 480, 270) && b.fill == rgb(0, 0, 0) {
+		if b.kind == bFill && b.r == image.Rect(0, 26, 480, 296) && b.fill == rgb(0, 0, 0) {
 			ph = true
 		}
 	}
@@ -1175,11 +1175,11 @@ func TestGenericFileCard(t *testing.T) {
 			icon = &d.boxes[i]
 		}
 	}
-	if icon == nil || icon.r != image.Rect(12, 12, 52, 52) {
+	if icon == nil || icon.r != image.Rect(12, 12, 48, 48) {
 		t.Fatalf("pdf icon %+v", icon)
 	}
 	name := findFrag(t, d, "report.pdf")
-	if name.target != cards[0].target || name.x != 64 {
+	if name.target != cards[0].target || name.x != 60 {
 		t.Errorf("name frag target %d x %.1f", name.target, name.x)
 	}
 	for _, s := range []string{"·", "2", "KB"} {
@@ -1191,7 +1191,7 @@ func TestGenericFileCard(t *testing.T) {
 	icons := func(f *rt.File) (color.NRGBA, []string) {
 		v := layoutAt(st, doc(fileBlock(f)), Options{}, 600)
 		for _, b := range v.d.boxes {
-			if b.kind == bFill && b.r.Dx() == 40 {
+			if b.kind == bFill && b.r.Dx() == 36 {
 				return b.fill, fragStrings(&v.d)
 			}
 		}
@@ -1290,7 +1290,7 @@ func TestLastTextual(t *testing.T) {
 		{[]rt.Block{b(rt.Paragraph)}, 0},
 		{[]rt.Block{b(rt.Paragraph), b(rt.FileBlock)}, 0},
 		{[]rt.Block{b(rt.Paragraph), b(rt.AttachmentBlock), b(rt.FileBlock)}, 0},
-		{[]rt.Block{b(rt.Paragraph), b(rt.Divider)}, -1},
+		{[]rt.Block{b(rt.Paragraph), b(rt.Divider)}, 0}, // label goes after the last text
 		{[]rt.Block{b(rt.Quote), b(rt.List)}, 1},
 		{[]rt.Block{b(rt.Section)}, 0},
 		{[]rt.Block{b(rt.Section), b(rt.FileBlock)}, -1},

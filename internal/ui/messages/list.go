@@ -106,6 +106,7 @@ type listState struct {
 	lastTyping time.Time
 
 	noMark      bool
+	lastOlder   time.Time
 	highlight   string
 	highlightAt time.Time
 	pendingJump string
@@ -166,7 +167,8 @@ func (s *listState) sync(h Host, now time.Time) {
 	if s.list.Position.BeforeEnd && s.positioned {
 		for i := s.visible[0]; i < s.visible[1] && i < len(s.items); i++ {
 			if s.items[i].kind == itMsg && i < len(s.pos) {
-				anchorTS, anchorY = s.snap.msgs[s.items[i].idx].m.TS, s.pos[i]
+				// items still index the previous snapshot; key is the ts
+				anchorTS, anchorY = s.items[i].key, s.pos[i]
 				break
 			}
 		}
@@ -394,7 +396,8 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	area.Pop()
 
 	// infinite scroll up
-	if !s.thread && p.First <= 2 && s.snap.hasMore && !s.snap.older && s.snap.loaded {
+	if !s.thread && p.First <= 2 && s.snap.hasMore && !s.snap.older && s.snap.loaded && now.Sub(s.lastOlder) > time.Second {
+		s.lastOlder = now
 		s.hb.loadOlder(s.m)
 	}
 	// mark read at the bottom

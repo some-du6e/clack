@@ -102,7 +102,7 @@ var LightPalette = Palette{
 	SidebarHover:      rgba(0xf9edff, 0x1a),
 	SidebarActive:     rgb(0xf9edff),
 	SidebarActiveText: rgb(0x39063a),
-	SidebarDivider:    rgba(0xf9edff, 0x1a),
+	SidebarDivider:    rgba(0xf9edff, 0x33),
 	SidebarButton:     rgba(0xf9edff, 0x40),
 
 	Badge:     rgb(0xeabdfb),

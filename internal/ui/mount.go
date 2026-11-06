@@ -126,6 +126,10 @@ func (s *composerStub) Layout(gtx layout.Context) layout.Dimensions {
 // ---- actions that open popups (wired to ui-popups when merged) ----
 
 var (
+	mkTeamMenu    func(a *App, anchor image.Point) Overlay
+	mkUserMenu    func(a *App, anchor image.Point) Overlay
+	mkChannelMenu func(a *App, anchor image.Point, ch string) Overlay
+	mkStatusModal func(a *App) Overlay
 	mkSwitcher    func(a *App) Overlay
 	mkSearch      func(a *App, query string) Overlay
 	mkMenu        func(a *App, anchor image.Point, items []MenuItem) Overlay

@@ -397,6 +397,11 @@ func (b *backend) opened(ch string) {
 		defer cancel()
 		var tabs []chTab
 		bms, err := b.core.Bookmarks(ctx, ch)
+		if err != nil {
+			log.Printf("ui: bookmarks %s: %v", ch, err)
+		} else {
+			log.Printf("ui: bookmarks %s: %d", ch, len(bms))
+		}
 		if err == nil {
 			for _, bm := range bms {
 				if bm.ParentID != "" || bm.Title == "" {

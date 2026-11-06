@@ -327,6 +327,11 @@ func (v *View) record(st *Style) {
 			paint.ColorOp{Color: f.col}.Add(ops)
 			paint.PaintOp{}.Add(ops)
 			cs.Pop()
+			if st.Embolden > 0 {
+				// Browsers render Lato visibly heavier than Gio's linear
+				// coverage; a hairline stroke of the outline matches it.
+				paint.FillShape(ops, f.col, clip.Stroke{Path: path, Width: st.Embolden * v.laidPx}.Op())
+			}
 			if f.sh.color {
 				bm.Add(ops)
 			}
@@ -380,7 +385,9 @@ func (v *View) paintSelection(gtx layout.Context, st *Style) {
 		if b >= f.p1 && i+1 < len(fr) && fr[i+1].line == f.line && fr[i+1].p0 < b && fr[i+1].x > x1 {
 			x1 = fr[i+1].x
 		}
-		r := image.Rect(int(x0), f.top, int(x1+0.999), f.bot)
+		// Round both edges the same way so adjacent rects never overlap
+		// (overlapping translucent fills show as darker seams).
+		r := image.Rect(int(x0+0.5), f.top, int(x1+0.5), f.bot)
 		paint.FillShape(gtx.Ops, col, clip.Rect(r).Op())
 	}
 }

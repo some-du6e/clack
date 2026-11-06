@@ -8,6 +8,10 @@ import (
 // Shell actions: menus and commands reachable from the chrome.
 
 func (a *App) openTeamMenu(anchor image.Point) {
+	if mkTeamMenu != nil {
+		a.ShowOverlay(mkTeamMenu(a, anchor))
+		return
+	}
 	a.menu(anchor, []MenuItem{
 		{Label: a.teamName(), Disabled: true},
 		{Divider: true},
@@ -23,6 +27,10 @@ func (a *App) openTeamMenu(anchor image.Point) {
 }
 
 func (a *App) openSelfMenu(anchor image.Point) {
+	if mkUserMenu != nil {
+		a.ShowOverlay(mkUserMenu(a, anchor))
+		return
+	}
 	m := a.model()
 	away := "Set yourself as away"
 	if !m.SelfActive {
@@ -106,6 +114,10 @@ func (a *App) routeIcon(r Route) string {
 }
 
 func (a *App) openChannelMenu(ch string, anchor image.Point) {
+	if mkChannelMenu != nil {
+		a.ShowOverlay(mkChannelMenu(a, anchor, ch))
+		return
+	}
 	conv := a.model().conv(ch)
 	muted := conv != nil && conv.Muted
 	mute := "Mute conversation"
@@ -132,7 +144,7 @@ func (a *App) openChannelMenu(ch string, anchor image.Point) {
 			}
 		}})
 	}
-	a.menu(image.Pt(anchor.X-a.px(260), anchor.Y+a.px(40)), items)
+	a.menu(image.Pt(anchor.X-a.px(300), anchor.Y+a.px(4)), items)
 }
 
 func (a *App) openNotifPrefs(ch string) {
@@ -206,7 +218,11 @@ func (a *App) copyChannelLink(ch string) {
 }
 
 func (a *App) setStatusPrompt() {
-	a.Toast("Status editing arrives with ui-popups")
+	if mkStatusModal != nil {
+		a.ShowOverlay(mkStatusModal(a))
+		return
+	}
+	a.Toast("Status editing isn't available yet")
 }
 
 func (a *App) signOut() {

@@ -246,15 +246,14 @@ func roomFromMessage(raw json.RawMessage) (huddleRoom, bool) {
 	return r.room(), true
 }
 
-// recentHuddles lists huddles the viewer was part of, newest first, from
-// the huddle_thread messages search finds ("is:huddle" isn't a Slack
-// modifier; huddle threads carry the subtype and a room).
+// recentHuddles lists huddles the viewer was part of, newest first
+// (huddles.history, as Slack's Huddles page calls it).
 func recentHuddles(ctx context.Context, a *core.App) ([]huddleRoom, error) {
 	var res struct {
 		Huddles []rawRoom `json:"huddles"`
 		Rooms   []rawRoom `json:"rooms"`
 	}
-	err := a.C.Call(ctx, "huddles.history", url.Values{"count": {"30"}}, &res)
+	err := a.C.Call(ctx, "huddles.history", url.Values{"limit": {"30"}}, &res)
 	if err != nil {
 		return nil, err
 	}

@@ -181,13 +181,13 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 		})
 		x -= b + gap
 	}
-	if a.clicks.get("nav.back").Clicked(gtx) {
+	if clicked(a.clicks.get("nav.back")) {
 		a.Back()
 	}
-	if a.clicks.get("nav.forward").Clicked(gtx) {
+	if clicked(a.clicks.get("nav.forward")) {
 		a.Forward()
 	}
-	if a.clicks.get("nav.history").Clicked(gtx) {
+	if clicked(a.clicks.get("nav.history")) {
 		a.openHistoryMenu()
 	}
 
@@ -203,6 +203,7 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 	}
 	sh := gtx.Dp(28)
 	sorg := image.Pt(primaryX, (h-sh)/2)
+	a.searchPill = image.Rectangle{Min: sorg, Max: sorg.Add(image.Pt(sw, sh))}
 	at(gtx, sorg, image.Pt(sw, sh), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, a.clicks.get("nav.search"), func(gtx layout.Context, sz image.Point, hovered bool) {
 			bg := c.SearchBg
@@ -228,7 +229,7 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 			return layout.Dimensions{Size: sz}
 		})
 	})
-	if a.clicks.get("nav.search").Clicked(gtx) {
+	if clicked(a.clicks.get("nav.search")) {
 		a.openSearch("")
 	}
 
@@ -237,7 +238,7 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 	at(gtx, horg, image.Pt(b, b), func(gtx layout.Context) layout.Dimensions {
 		return a.chromeButton(gtx, horg, a.clicks.get("nav.help"), "help", 26, 20, c.ChromeText, 4)
 	})
-	if a.clicks.get("nav.help").Clicked(gtx) {
+	if clicked(a.clicks.get("nav.help")) {
 		a.Toast("Keyboard shortcuts: Ctrl+K switch, Ctrl+Shift+A unreads, Alt+↑/↓ channels, Ctrl+. side pane")
 	}
 }
@@ -267,7 +268,7 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 			return a.teamIcon(gtx, ws)
 		})
 	})
-	if a.clicks.get("rail.team").Clicked(gtx) {
+	if clicked(a.clicks.get("rail.team")) {
 		a.Navigate("home")
 	}
 
@@ -310,7 +311,7 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 				return layout.Dimensions{Size: image.Pt(gtx.Dp(52), th)}
 			})
 		})
-		if btn.Clicked(gtx) {
+		if clicked(btn) {
 			a.railClick(t.key)
 		}
 		y += th
@@ -348,10 +349,10 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 		})
 		by += gtx.Dp(52)
 	}
-	if a.clicks.get("rail.new").Clicked(gtx) {
+	if clicked(a.clicks.get("rail.new")) {
 		a.compose()
 	}
-	if a.clicks.get("rail.theme").Clicked(gtx) {
+	if clicked(a.clicks.get("rail.theme")) {
 		a.ToggleDark()
 	}
 	at(gtx, image.Pt(x0, by), image.Pt(cs+gtx.Dp(8), cs+gtx.Dp(8)), func(gtx layout.Context) layout.Dimensions {
@@ -369,7 +370,7 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 			return layout.Dimensions{Size: image.Pt(cs, cs)}
 		})
 	})
-	if a.clicks.get("rail.me").Clicked(gtx) {
+	if clicked(a.clicks.get("rail.me")) {
 		a.openSelfMenu(image.Pt(x0+cs, by))
 	}
 }
