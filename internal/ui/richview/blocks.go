@@ -49,7 +49,7 @@ func (l *lay) gap(prev, cur richtext.BlockKind) int {
 	if isTextual(prev) && isTextual(cur) && prev != richtext.Quote && cur != richtext.Quote {
 		return 0
 	}
-	if prev == richtext.FileBlock && cur == richtext.FileBlock {
+	if prev == richtext.FileBlock || prev == richtext.AttachmentBlock {
 		return l.dp(8)
 	}
 	return l.dp(4)
@@ -67,10 +67,12 @@ func lastTextual(bs []richtext.Block) int {
 				return i
 			}
 			return -1
-		case richtext.AttachmentBlock, richtext.FileBlock:
-			continue
-		default:
+		case richtext.Tombstone:
 			return -1
+		default:
+			// attachments, files, actions, images, context: the label goes
+			// after the last text above them, like Slack.
+			continue
 		}
 	}
 	return -1
