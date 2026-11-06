@@ -170,6 +170,7 @@ type Activity struct {
 	hideRead map[string]bool
 	notes    actNotes
 	patchOn  bool
+	wmu      sync.Mutex // serializes core activity writes
 
 	// undo is the "cleared" snackbar after Clear, with its Undo link.
 	undo struct {
@@ -1186,11 +1187,15 @@ func (v *Activity) actEmpty(gtx C) D {
 				})
 			}),
 			layout.Rigid(func(gtx C) D {
-				return layout.Inset{Bottom: 4}.Layout(gtx, func(gtx C) D { return v.centered(gtx, 16, wBold, v.p.Text, "All caught up") })
+				title := "All caught up"
+				if v.showCleared {
+					title = "No cleared items"
+				}
+				return layout.Inset{Bottom: 4}.Layout(gtx, func(gtx C) D { return v.centered(gtx, 16, wBold, v.p.Text, title) })
 			}),
 			layout.Rigid(func(gtx C) D {
 				return v.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Color: v.p.Text, Align: text.Middle},
-					"Looks like things are quiet for now. When there’s new activity, it’ll be here.")
+					v.emptyBody())
 			}),
 			layout.Rigid(func(gtx C) D {
 				if !filtered {
@@ -1200,6 +1205,15 @@ func (v *Activity) actEmpty(gtx C) D {
 			}),
 		)
 	})
+}
+
+// emptyBody is the empty-state description; the archive's copy is ours
+// (not observed in Slack).
+func (v *Activity) emptyBody() string {
+	if v.showCleared {
+		return "Items you clear from Activity show up here, so you can restore them."
+	}
+	return "Looks like things are quiet for now. When there’s new activity, it’ll be here."
 }
 
 func (v *Activity) footer(gtx C, failed bool) D {
@@ -1404,7 +1418,20 @@ func (v *Activity) unclear(it *core.ActivityItem, key string) {
 	v.dirty = true
 	item := *it
 	v.write("Couldn’t restore the item: ", func(ctx context.Context, c *core.App) error {
-		return c.UnclearActivity(ctx, item)
+		err := c.UnclearActivity(ctx, item)
+		if err == nil {
+			// A refresh may have dropped the row while it was cleared:
+			// reload so a restored inbox row comes back.
+			v.notes.mu.Lock()
+			v.notes.fns = append(v.notes.fns, func() {
+				if !v.showCleared {
+					v.load(actRefresh)
+				}
+			})
+			v.notes.mu.Unlock()
+			v.h.Invalidate()
+		}
+		return err
 	}, func() {
 		if had {
 			v.cleared[key] = prev
@@ -1416,10 +1443,13 @@ func (v *Activity) unclear(it *core.ActivityItem, key string) {
 }
 
 // write runs a core activity write off the UI goroutine; on failure it
-// toasts and runs revert on the UI goroutine.
+// toasts and runs revert on the UI goroutine. Writes run one at a time so
+// Clear then Undo reach Slack in that order.
 func (v *Activity) write(fail string, f func(context.Context, *core.App) error, revert func()) {
 	c := v.h.Core()
 	go func() {
+		v.wmu.Lock()
+		defer v.wmu.Unlock()
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		if err := f(ctx, c); err != nil {
