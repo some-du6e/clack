@@ -54,6 +54,7 @@ const (
 	caSave                         // edit mode
 	caCancel                       // edit mode
 	caParagraph                    // ¶▾ button
+	caDivider                      // divider button: insert a divider line
 )
 
 // chromeAction is something the user did in the chrome.
@@ -148,8 +149,7 @@ var crInfo = [crNumBtn]crBtnInfo{
 	crQuote:     {tip: "Blockquote", keys: "Ctrl+Shift+9", icon: icons.Get("quote"), menuIcon: "quote", kind: caBlock, block: Quote},
 	crCode:      {tip: "Code", keys: "Ctrl+Shift+C", icon: icons.Get("code"), menuIcon: "code", kind: caStyle, style: Code},
 	crCodeBlock: {tip: "Code block", keys: "Ctrl+Alt+Shift+C", icon: icons.Get("code-block"), menuIcon: "code-block", kind: caBlock, block: CodeBlock},
-	// The editor has no divider block yet: the button focuses the editor.
-	crDivider:   {tip: "Divider", menuIcon: "minus", kind: caFocus},
+	crDivider:   {tip: "Divider", menuIcon: "minus", kind: caDivider},
 	crFmtMore:   {tip: "More options", icon: icons.Get("more")},
 	crAttach:    {tip: "Attach", icon: icons.Get("plus"), kind: caAttach},
 	crAa:        {kind: caFormatting},
