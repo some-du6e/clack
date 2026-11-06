@@ -104,6 +104,7 @@ func (s *stats) report(name string) {
 func main() {
 	chFlag := flag.String("ch", "C0B4DEFKFCJ", "channel to show")
 	switchTo := flag.String("switch", "", "comma-separated channels to cycle with Tab (preloaded, read-only previews)")
+	find := flag.String("find", "", "comma-separated public channel names to add to the Tab cycle (read-only previews)")
 	dark := flag.Bool("dark", false, "dark mode")
 	w := flag.Int("w", 1100, "window width (dp)")
 	hgt := flag.Int("h", 800, "window height (dp)")
@@ -165,6 +166,25 @@ func main() {
 			chans = auto
 			chMu.Unlock()
 			log.Printf("auto channels: %d", len(auto)-1)
+		}
+		if *find != "" {
+			for _, name := range strings.Split(*find, ",") {
+				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				hits, err := svc.SearchChannels(ctx, name, 5)
+				cancel()
+				for _, h := range hits {
+					if h.Name == name {
+						chMu.Lock()
+						chans = append(chans, h.ID)
+						chMu.Unlock()
+						log.Printf("found #%s = %s", name, h.ID)
+						break
+					}
+				}
+				if err != nil {
+					log.Printf("find %s: %v", name, err)
+				}
+			}
 		}
 		chMu.Lock()
 		pre := append([]string(nil), chans[1:]...)

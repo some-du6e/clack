@@ -1053,7 +1053,7 @@ func TestVideoCard(t *testing.T) {
 	if c := circles[0]; c.layer != 1 || rectCenter(c.r) != rectCenter(r) {
 		t.Errorf("play circle %v not centered over %v (layer %d)", c.r, r, c.layer)
 	}
-	if plays[0].layer != 1 ||!image.Pt(240, 161).In(plays[0].r) {
+	if plays[0].layer != 1 || !image.Pt(240, 161).In(plays[0].r) {
 		t.Errorf("play triangle %v", plays[0].r)
 	}
 	findFrag(t, &v.d, "1:23")
@@ -1066,7 +1066,7 @@ func TestVideoCard(t *testing.T) {
 	v = layoutAt(st, doc(fileBlock(f2)), Options{}, 600)
 	var ph bool
 	for _, b := range v.d.boxes {
-		if b.kind == bFill &&b.r == image.Rect(0, 26, 480, 296) && b.fill == rgb(0, 0, 0) {
+		if b.kind == bFill && b.r == image.Rect(0, 26, 480, 296) && b.fill == rgb(0, 0, 0) {
 			ph = true
 		}
 	}
@@ -1175,11 +1175,11 @@ func TestGenericFileCard(t *testing.T) {
 			icon = &d.boxes[i]
 		}
 	}
-	if icon == nil ||icon.r != image.Rect(12, 12, 48, 48) {
+	if icon == nil || icon.r != image.Rect(12, 12, 48, 48) {
 		t.Fatalf("pdf icon %+v", icon)
 	}
 	name := findFrag(t, d, "report.pdf")
-	if name.target != cards[0].target ||name.x != 60 {
+	if name.target != cards[0].target || name.x != 60 {
 		t.Errorf("name frag target %d x %.1f", name.target, name.x)
 	}
 	for _, s := range []string{"·", "2", "KB"} {
