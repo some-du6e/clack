@@ -354,37 +354,38 @@ func (c *Client) Commands(ctx context.Context) ([]Command, error) {
 	return out, nil
 }
 
-// UploadFile performs the three-step external upload and shares the file.
+// UploadFile is one file to upload (held in memory).
 type UploadFile struct {
 	Name  string
 	Title string
 	Data  []byte
 }
 
-func (c *Client) Upload(ctx context.Context, channel, threadTS, comment string, files []UploadFile) ([]map[string]string, error) {
-	type done struct {
-		ID    string `json:"id"`
-		Title string `json:"title,omitempty"`
+// PrepareUpload reserves an upload slot (files.getUploadURLExternal) and
+// sends the bytes. The file is not shared until CompleteUpload.
+func (c *Client) PrepareUpload(ctx context.Context, f UploadFile, progress func(sent, total int64)) (string, error) {
+	var r struct {
+		UploadURL string `json:"upload_url"`
+		FileID    string `json:"file_id"`
 	}
-	var shared []done
-	for _, f := range files {
-		var r struct {
-			UploadURL string `json:"upload_url"`
-			FileID    string `json:"file_id"`
-		}
-		if err := c.Call(ctx, "files.getUploadURLExternal", url.Values{"filename": {f.Name}, "length": {strconv.Itoa(len(f.Data))}}, &r); err != nil {
-			return nil, err
-		}
-		if err := c.UploadBytes(ctx, r.UploadURL, f.Name, f.Data); err != nil {
-			return nil, err
-		}
-		t := f.Title
-		if t == "" {
-			t = f.Name
-		}
-		shared = append(shared, done{ID: r.FileID, Title: t})
+	if err := c.Call(ctx, "files.getUploadURLExternal", url.Values{"filename": {f.Name}, "length": {strconv.Itoa(len(f.Data))}}, &r); err != nil {
+		return "", err
 	}
-	b, _ := json.Marshal(shared)
+	if err := c.UploadBytes(ctx, r.UploadURL, f.Name, f.Data, progress); err != nil {
+		return "", err
+	}
+	return r.FileID, nil
+}
+
+// UploadedRef names a prepared file to share.
+type UploadedRef struct {
+	ID    string `json:"id"`
+	Title string `json:"title,omitempty"`
+}
+
+// CompleteUpload shares prepared files (files.completeUploadExternal).
+func (c *Client) CompleteUpload(ctx context.Context, channel, threadTS, comment string, files []UploadedRef) ([]map[string]string, error) {
+	b, _ := json.Marshal(files)
 	p := url.Values{"files": {string(b)}}
 	if channel != "" {
 		p.Set("channel_id", channel)
@@ -410,6 +411,28 @@ func (c *Client) Upload(ctx context.Context, channel, threadTS, comment string, 
 		out = append(out, map[string]string{"id": f.ID, "title": f.Title, "name": f.Name})
 	}
 	return out, nil
+}
+
+// Upload performs the three-step external upload and shares the files.
+func (c *Client) Upload(ctx context.Context, channel, threadTS, comment string, files []UploadFile) ([]map[string]string, error) {
+	var refs []UploadedRef
+	for _, f := range files {
+		id, err := c.PrepareUpload(ctx, f, nil)
+		if err != nil {
+			return nil, err
+		}
+		refs = append(refs, UploadedRef{ID: id, Title: firstNonEmptyS(f.Title, f.Name)})
+	}
+	return c.CompleteUpload(ctx, channel, threadTS, comment, refs)
+}
+
+func firstNonEmptyS(s ...string) string {
+	for _, x := range s {
+		if x != "" {
+			return x
+		}
+	}
+	return ""
 }
 
 // UsersInfoParallel resolves many users via the edge cache in parallel batches.

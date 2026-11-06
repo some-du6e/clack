@@ -37,20 +37,6 @@ func isCode(err error, codes ...string) bool {
 	return false
 }
 
-// Send posts a message. The realtime echo arrives as a "message" event with
-// the same TS; the UI should de-duplicate by TS.
-func (a *App) Send(ctx context.Context, o SendOpts) (Message, error) {
-	if o.Channel == "" {
-		return Message{}, errors.New("core: Send needs a channel")
-	}
-	m, err := a.C.Post(ctx, slack.PostOpts{Channel: o.Channel, Text: o.Text, ThreadTS: o.ThreadTS,
-		Broadcast: o.Broadcast, Blocks: o.Blocks, ClientMsgID: clientMsgID()})
-	if err != nil {
-		return Message{}, err
-	}
-	return a.message(o.Channel, m), nil
-}
-
 // Edit replaces a message's text (and optional blocks).
 func (a *App) Edit(ctx context.Context, ch, ts, text string, blocks json.RawMessage) error {
 	return a.C.Update(ctx, ch, ts, text, blocks)
@@ -71,6 +57,19 @@ func (a *App) React(ctx context.Context, ch, ts, name string, add bool) error {
 // Mark moves the read cursor of ch to ts and returns the new unread state.
 // Marking an earlier ts keeps the conversation unread (see MarkUnread).
 func (a *App) Mark(ctx context.Context, ch, ts string) (Count, error) {
+	if a.isLocalTS(ts) { // a pending local send: mark the newest confirmed message instead
+		if tl := a.S.Timeline(ch); tl != nil {
+			for i := len(tl.Msgs) - 1; i >= 0; i-- {
+				if !a.isLocalTS(tl.Msgs[i].TS) {
+					ts = tl.Msgs[i].TS
+					break
+				}
+			}
+		}
+		if a.isLocalTS(ts) {
+			return a.Count(ch), nil
+		}
+	}
 	if err := a.C.Mark(ctx, ch, ts); err != nil {
 		return a.Count(ch), err
 	}
@@ -125,21 +124,43 @@ func tsBefore(t *store.Timeline, ts string) string {
 // every few seconds while the user types.
 func (a *App) Typing(ch, threadTS string) error { return a.RTM.Typing(ch, threadTS) }
 
-// Upload shares files (held in memory, never written to disk). The message
-// arrives as a realtime "message" event; file stubs are filled in by an
-// "update" once Slack has processed the upload.
+// Upload shares files (held in memory, never written to disk): new Files
+// are uploaded first (o.Progress reports bytes across all of them), then
+// they and any Prepared ones are shared in one files.completeUploadExternal.
+// The message arrives as a realtime "message" event; file stubs are filled
+// in by an "update" once Slack has processed the upload.
 func (a *App) Upload(ctx context.Context, o UploadOpts) ([]UploadedFile, error) {
-	if len(o.Files) == 0 {
+	if len(o.Files) == 0 && len(o.Prepared) == 0 {
 		return nil, errors.New("core: Upload needs a file")
 	}
 	t0 := time.Now()
-	files := make([]slack.UploadFile, 0, len(o.Files))
-	total := 0
-	for _, f := range o.Files {
-		files = append(files, slack.UploadFile{Name: f.Name, Title: f.Title, Data: f.Data})
-		total += len(f.Data)
+	refs := make([]slack.UploadedRef, 0, len(o.Files)+len(o.Prepared))
+	for _, p := range o.Prepared {
+		refs = append(refs, slack.UploadedRef{ID: p.ID, Title: firstNonEmpty(p.Title, p.Name)})
 	}
-	res, err := a.C.Upload(ctx, o.Channel, o.ThreadTS, o.Comment, files)
+	var all, done int64
+	for _, f := range o.Files {
+		all += int64(len(f.Data))
+	}
+	for _, f := range o.Files {
+		var prog func(sent, total int64)
+		if o.Progress != nil {
+			base, size := done, int64(len(f.Data))
+			prog = func(sent, total int64) {
+				if total > 0 {
+					sent = sent * size / total // body bytes -> file bytes
+				}
+				o.Progress(base+sent, all)
+			}
+		}
+		id, err := a.C.PrepareUpload(ctx, slack.UploadFile{Name: f.Name, Title: f.Title, Data: f.Data}, prog)
+		if err != nil {
+			return nil, err
+		}
+		done += int64(len(f.Data))
+		refs = append(refs, slack.UploadedRef{ID: id, Title: firstNonEmpty(f.Title, f.Name)})
+	}
+	res, err := a.C.CompleteUpload(ctx, o.Channel, o.ThreadTS, o.Comment, refs)
 	if err != nil {
 		return nil, err
 	}
@@ -147,8 +168,20 @@ func (a *App) Upload(ctx context.Context, o UploadOpts) ([]UploadedFile, error) 
 	for _, f := range res {
 		out = append(out, UploadedFile{ID: f["id"], Name: f["name"], Title: f["title"]})
 	}
-	log.Printf("upload: %d file(s), %d bytes in %s", len(files), total, time.Since(t0).Round(time.Millisecond))
+	log.Printf("upload: %d file(s), %d new bytes in %s", len(refs), all, time.Since(t0).Round(time.Millisecond))
 	return out, nil
+}
+
+// PrepareUpload uploads a file's bytes as soon as it is attached
+// (files.getUploadURLExternal + upload) without sharing it; pass the result
+// in UploadOpts.Prepared when sending. progress (may be nil) runs on the
+// calling goroutine. Unshared prepared files expire on Slack's side.
+func (a *App) PrepareUpload(ctx context.Context, f UploadFile, progress func(sent, total int64)) (PreparedUpload, error) {
+	id, err := a.C.PrepareUpload(ctx, slack.UploadFile{Name: f.Name, Title: f.Title, Data: f.Data}, progress)
+	if err != nil {
+		return PreparedUpload{}, err
+	}
+	return PreparedUpload{ID: id, Name: f.Name, Title: f.Title, Size: int64(len(f.Data))}, nil
 }
 
 // Pin / Unpin a message.
@@ -307,11 +340,6 @@ func (a *App) SetDND(ctx context.Context, minutes int) error {
 		return a.C.Call(ctx, "dnd.setSnooze", url.Values{"num_minutes": {strconv.Itoa(minutes)}}, nil)
 	}
 	return a.C.Call(ctx, "dnd.endSnooze", nil, nil)
-}
-
-// SetTopic sets a channel topic.
-func (a *App) SetTopic(ctx context.Context, ch, topic string) error {
-	return a.C.Call(ctx, "conversations.setTopic", url.Values{"channel": {ch}, "topic": {topic}}, nil)
 }
 
 // Command runs a slash command. /shrug, /me and /topic are handled
