@@ -124,7 +124,7 @@ func (a *App) model() *model {
 	return &a.data.m
 }
 
-var emptyModel = model{TeamName: "yoloslack", Convs: map[string]*convInfo{}}
+var emptyModel = model{TeamName: AppName, Convs: map[string]*convInfo{}}
 
 // layoutSidebar draws the sidebar header, jump box and scrolling list.
 func (a *App) layoutSidebar(gtx layout.Context) layout.Dimensions {
