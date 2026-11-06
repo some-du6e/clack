@@ -1069,7 +1069,18 @@ func (d *Directories) chansTab(gtx C) D {
 				// Filtering is client-side: offer the next browse page
 				// instead of paging through the whole directory.
 				return layout.Inset{Top: 12, Bottom: 24}.Layout(gtx, func(gtx C) D {
-					return layout.Center.Layout(gtx, func(gtx C) D { return d.button(gtx, &d.moreChans, btnOutline, true, "Load more channels") })
+					gtx.Constraints.Min.X = gtx.Constraints.Max.X
+					return col(gtx,
+						layout.Rigid(func(gtx C) D {
+							return layout.Center.Layout(gtx, func(gtx C) D {
+								return d.button(gtx, &d.moreChans, btnOutline, true, "Load more channels")
+							})
+						}),
+						vgap(8),
+						layout.Rigid(func(gtx C) D {
+							return d.centered(gtx, 13, wReg, d.p.Muted, dirMatches(n)+" in "+humanCount(len(st.list))+" loaded of "+humanCount(st.total)+" channels")
+						}),
+					)
 				})
 			}
 			return D{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(24))}
@@ -1270,19 +1281,27 @@ func (d *Directories) chanMeta(gtx C, ch core.ChannelHit) D {
 		})
 	}
 	var parts []layout.FlexChild
+	add := func(ch ...layout.FlexChild) {
+		if len(parts) > 0 {
+			parts = append(parts, sep())
+		}
+		parts = append(parts, ch...)
+	}
 	switch {
 	case ch.IsArchived:
-		parts = append(parts, layout.Rigid(func(gtx C) D { return d.label(gtx, 13, wReg, d.p.Sec, "Archived") }), sep())
+		add(layout.Rigid(func(gtx C) D { return d.label(gtx, 13, wReg, d.p.Sec, "Archived") }))
 	case ch.IsMember:
-		parts = append(parts,
-			layout.Rigid(func(gtx C) D { return d.icon(gtx, "check", 13, d.joinedColor()) }),
+		add(layout.Rigid(func(gtx C) D { return d.icon(gtx, "check", 13, d.joinedColor()) }),
 			hgap(2),
-			layout.Rigid(func(gtx C) D { return d.label(gtx, 13, wBold, d.joinedColor(), "Joined") }),
-			sep())
+			layout.Rigid(func(gtx C) D { return d.label(gtx, 13, wBold, d.joinedColor(), "Joined") }))
 	}
-	parts = append(parts, layout.Rigid(func(gtx C) D { return d.label(gtx, 13, wReg, d.p.Sec, dirMembers(ch.NumMembers)) }))
+	// The client snapshot (My channels) has no member counts; a channel
+	// never really has 0 members, so 0 means unknown.
+	if ch.NumMembers > 0 {
+		add(layout.Rigid(func(gtx C) D { return d.label(gtx, 13, wReg, d.p.Sec, dirMembers(ch.NumMembers)) }))
+	}
 	if p := d.plainPurpose(ch.Purpose); p != "" {
-		parts = append(parts, sep(), layout.Flexed(1, func(gtx C) D {
+		add(layout.Flexed(1, func(gtx C) D {
 			return dirFill(gtx, func(gtx C) D { return d.label(gtx, 13, wReg, d.p.Sec, p) })
 		}))
 	}
@@ -1376,6 +1395,14 @@ func dirSplitBtn(b *base, gtx C, main, caret *widget.Clickable, label string, me
 		})
 	}
 	return D{Size: image.Pt(mw+cw, h)}
+}
+
+// dirMatches formats "1 match" / "N matches".
+func dirMatches(n int) string {
+	if n == 1 {
+		return "1 match"
+	}
+	return humanCount(n) + " matches"
 }
 
 // dirMembers formats "1 member" / "1,234 members".
