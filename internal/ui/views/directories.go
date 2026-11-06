@@ -565,7 +565,7 @@ func (d *Directories) body(gtx C) D {
 			return layout.Inset{Left: dirPad, Right: dirPad}.Layout(gtx, func(gtx C) D {
 				return row(gtx, layout.Middle,
 					layout.Flexed(1, func(gtx C) D {
-						return dirSearchField(&d.base, gtx, d.srch[t], dirFieldStyle{H: 36, Icon: 20, PadL: 12, Gap: 16, Border: d.p.Border}, &d.clear)
+						return dirSearchField(&d.base, gtx, d.srch[t], dirFieldStyle{H: 36, Icon: 20, PadL: 12, Gap: 16, Border: dirRing(&d.base, d.p.Surface), Over: d.p.ReadFill}, &d.clear)
 					}),
 					hgap(12),
 					layout.Rigid(func(gtx C) D { return d.button(gtx, &d.action[t], btnOutline, false, dirActions[t]) }),
@@ -796,7 +796,7 @@ func (d *Directories) personCard(gtx C, u core.User, w, h int) D {
 		rad := gtx.Dp(8)
 		card := image.Rect(0, 0, w, h)
 		if c.Hovered() {
-			rrect(gtx, card.Add(image.Pt(0, gtx.Dp(1))).Inset(-gtx.Dp(1)), rad+gtx.Dp(1), argb(0x14000000))
+			rrect(gtx, card.Add(image.Pt(0, gtx.Dp(1))).Inset(-gtx.Dp(1)), rad+gtx.Dp(1), flatten(argb(0x14000000), d.p.ReadFill))
 		}
 		rrect(gtx, card, rad, d.p.Surface)
 		func() {
@@ -822,9 +822,9 @@ func (d *Directories) personCard(gtx C, u core.User, w, h int) D {
 			)
 		})
 		if c.Hovered() {
-			rrect(gtx, card, rad, dirHoverTint(d.p))
+			rrect(gtx, card, rad, dirHoverTint(&d.base))
 		}
-		border(gtx, card, rad, max(1, gtx.Dp(1)), dirRing(d.p))
+		border(gtx, card, rad, max(1, gtx.Dp(1)), dirRing(&d.base, d.p.ReadFill))
 		return D{Size: card.Max}
 	})
 }
@@ -889,7 +889,7 @@ func (d *Directories) gridSkeleton(gtx C, cols, cw, gap, cardH int) D {
 					rrect(gtx, image.Rect(x, y, x+(cw-2*x)*(55+(i*13)%30)/100, y+gtx.Dp(12)), gtx.Dp(4), d.p.Skel)
 					y += gtx.Dp(22)
 					rrect(gtx, image.Rect(x, y, x+(cw-2*x)*(35+(i*17)%30)/100, y+gtx.Dp(10)), gtx.Dp(4), d.p.Skel)
-					border(gtx, image.Rect(0, 0, cw, cardH), rad, max(1, gtx.Dp(1)), dirRing(d.p))
+					border(gtx, image.Rect(0, 0, cw, cardH), rad, max(1, gtx.Dp(1)), dirRing(&d.base, d.p.ReadFill))
 					return D{}
 				})
 			}
@@ -1333,26 +1333,31 @@ func dirPresence(b *base, gtx C, presence string) D {
 	return D{Size: image.Pt(s, s)}
 }
 
-// dirListBorder is the bordered-list hairline (#1d1c1d@0.1).
-func dirListBorder(p *pal) color.NRGBA {
-	if p == &darkPal {
-		return p.Border
+// dirRaw picks a raw (unflattened) palette token for the theme, for
+// translucent literals composited over a known background with flatten.
+func dirRaw(b *base, f func(p *pal) color.NRGBA) color.NRGBA {
+	if b.th != nil && b.th.Dark {
+		return f(&darkPal)
 	}
-	return argb(0x1a1d1c1d)
+	return f(&lightPal)
 }
 
-// dirRing is the 1px #1d1c1d@.13 ring of cards, menus and dialogs; the
-// palette hairline in dark mode.
-func dirRing(p *pal) color.NRGBA {
-	if p == &darkPal {
-		return p.Border
-	}
-	return argb(0x211d1c1d)
+// dirListBorder is the bordered-list hairline (#1d1c1d@0.1) over the gray
+// body.
+func dirListBorder(b *base) color.NRGBA {
+	return flatten(dirRaw(b, func(p *pal) color.NRGBA { return p.CardLine }), b.p.ReadFill)
+}
+
+// dirRing is the 1px #1d1c1d@.13 ring of cards and field groups, flattened
+// over the background it is drawn on.
+func dirRing(b *base, over color.NRGBA) color.NRGBA {
+	return flatten(dirRaw(b, func(p *pal) color.NRGBA { return p.Ring }), over)
 }
 
 // dirHoverTint is the card hover overlay (#1d1c1d@.04; white@.04 in dark).
-func dirHoverTint(p *pal) color.NRGBA {
-	if p == &darkPal {
+// It stays translucent: it covers the photo too.
+func dirHoverTint(b *base) color.NRGBA {
+	if b.th != nil && b.th.Dark {
 		return argb(0x0ae8e8e8)
 	}
 	return argb(0x0a1d1c1d)
@@ -1376,10 +1381,10 @@ func dirRowShape(b *base, gtx C, sz image.Point, first, last bool) {
 		rr.SW, rr.SE = r, r
 		sh := rr
 		sh.Rect = rect.Add(image.Pt(0, max(1, gtx.Dp(1))))
-		paint.FillShape(gtx.Ops, argb(0x0f000000), sh.Op(gtx.Ops))
+		paint.FillShape(gtx.Ops, flatten(argb(0x0f000000), b.p.ReadFill), sh.Op(gtx.Ops))
 	}
 	paint.FillShape(gtx.Ops, b.p.Surface, rr.Op(gtx.Ops))
-	paint.FillShape(gtx.Ops, dirListBorder(b.p), clip.Stroke{Path: rr.Path(gtx.Ops), Width: float32(max(1, gtx.Dp(1)))}.Op())
+	paint.FillShape(gtx.Ops, dirListBorder(b), clip.Stroke{Path: rr.Path(gtx.Ops), Width: float32(max(1, gtx.Dp(1)))}.Op())
 }
 
 // dirTabStrip draws Slack's c-tabs: text-width tabs, padding 8px 0 (h 32),
@@ -1431,6 +1436,7 @@ func dirTabStrip(b *base, gtx C, t *tabs, icons, counts []string) D {
 type dirFieldStyle struct {
 	H, Icon, PadL, Gap unit.Dp
 	Border             color.NRGBA
+	Over               color.NRGBA // background under the field (focus ring is flattened over it)
 }
 
 // dirSearchField is a search input: radius 8, white, 1px border, a
@@ -1443,7 +1449,7 @@ func dirSearchField(b *base, gtx C, s *search, st dirFieldStyle, clr *widget.Cli
 	rad := gtx.Dp(8)
 	if gtx.Focused(&s.ed) {
 		ring := gtx.Dp(5)
-		rrect(gtx, r.Inset(-ring), rad+ring, theme.WithAlpha(b.p.Link, 0x4d))
+		rrect(gtx, r.Inset(-ring), rad+ring, flatten(theme.WithAlpha(b.p.Link, 0x4d), st.Over))
 		one := max(1, gtx.Dp(1))
 		rrect(gtx, r.Inset(-one), rad+one, b.p.Link)
 	}
@@ -1630,7 +1636,7 @@ func (dd *dirDropdown) menu(b *base, gtx C, btn image.Point, right bool) {
 		rad := gtx.Dp(8)
 		theme.Shadow(gtx, r, rad, gtx.Dp(12), argb(0x1f000000))
 		rrect(gtx, r, rad, b.p.Surface)
-		border(gtx, r, rad, max(1, gtx.Dp(1)), dirRing(b.p))
+		border(gtx, r, rad, max(1, gtx.Dp(1)), b.p.Ring)
 		g := gtx
 		g.Constraints = layout.Exact(r.Max)
 		dd.panel.Layout(g, func(gtx C) D { return D{Size: r.Max} })

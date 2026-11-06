@@ -525,7 +525,7 @@ func (d *ChannelDetails) Layout(gtx C) D {
 		r := image.Rect(0, 0, dw, dh)
 		rad := gtx.Dp(cdRadius)
 		theme.Shadow(gtx, r, rad, gtx.Dp(24), argb(0x59000000))
-		rrect(gtx, r.Inset(-max(1, gtx.Dp(1))), rad+max(1, gtx.Dp(1)), dirRing(d.p))
+		rrect(gtx, r.Inset(-max(1, gtx.Dp(1))), rad+max(1, gtx.Dp(1)), d.p.Ring)
 		rrect(gtx, r, rad, d.p.Surface)
 		defer clip.UniformRRect(r, rad).Push(gtx.Ops).Pop()
 		g := gtx
@@ -776,7 +776,7 @@ func cdBox(b *base, gtx C, rows ...W) D {
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 	gtx.Constraints.Min.Y = 0
 	rad := gtx.Dp(12)
-	line := dirRing(b.p)
+	line := dirRing(b, b.p.Surface)
 	ch := make([]layout.FlexChild, 0, 2*len(rows))
 	for i, r := range rows {
 		if i > 0 {
@@ -994,7 +994,7 @@ func (d *ChannelDetails) topicEditor(gtx C) D {
 			rad := gtx.Dp(8)
 			if gtx.Focused(&d.topicEd) {
 				ring := gtx.Dp(5)
-				rrect(gtx, r.Inset(-ring), rad+ring, theme.WithAlpha(d.p.Link, 0x4d))
+				rrect(gtx, r.Inset(-ring), rad+ring, flatten(theme.WithAlpha(d.p.Link, 0x4d), d.p.Surface))
 				one := max(1, gtx.Dp(1))
 				rrect(gtx, r.Inset(-one), rad+one, d.p.Link)
 			}
@@ -1059,7 +1059,7 @@ func (d *ChannelDetails) cdTileRow(gtx C, icon string, text W) D {
 	return row(gtx, layout.Middle,
 		layout.Rigid(func(gtx C) D {
 			s := gtx.Dp(36)
-			rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(4), cdTileBg)
+			rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(4), flatten(cdTileBg, d.p.Surface))
 			g := gtx
 			g.Constraints = layout.Exact(image.Pt(s, s))
 			layout.Center.Layout(g, func(gtx C) D { return d.icon(gtx, icon, 20, d.p.Link) })
@@ -1158,14 +1158,14 @@ func (d *ChannelDetails) membersTab(gtx C) D {
 					layout.Rigid(func(gtx C) D {
 						gtx.Constraints.Max.X = min(gtx.Dp(316), max(0, gtx.Constraints.Max.X-gtx.Dp(208)))
 						gtx.Constraints.Min.X = gtx.Constraints.Max.X
-						return dirSearchField(&d.base, gtx, d.find, dirFieldStyle{H: 36, Icon: 16, PadL: 8, Gap: 8, Border: d.p.Faint}, nil)
+						return dirSearchField(&d.base, gtx, d.find, dirFieldStyle{H: 36, Icon: 16, PadL: 8, Gap: 8, Border: d.p.Faint, Over: d.p.Surface}, nil)
 					}),
 					hgap(8),
 					layout.Rigid(func(gtx C) D { return d.memFilter.layoutSelect(&d.base, gtx, 200) }),
 				)
 			})
 			if p := l.Position; p.First > 0 || p.Offset > 0 {
-				fill(gtx, image.Rect(0, dims.Size.Y-max(1, gtx.Dp(1)), gtx.Constraints.Max.X, dims.Size.Y), dirRing(d.p))
+				fill(gtx, image.Rect(0, dims.Size.Y-max(1, gtx.Dp(1)), gtx.Constraints.Max.X, dims.Size.Y), dirRing(&d.base, d.p.Surface))
 			}
 			return dims
 		}),
