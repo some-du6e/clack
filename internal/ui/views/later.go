@@ -82,6 +82,17 @@ func laterCompleted(it *core.SavedItem) bool {
 	return it.TodoState == "completed" || it.DateCompleted > 0 || it.State == "completed" || it.Progress == "completed"
 }
 
+// laterOverdue reports a due date before today (a to-do due earlier
+// today, e.g. one added without a reminder, counts as due today).
+func laterOverdue(it *core.SavedItem) bool {
+	if it.DateDue <= 0 {
+		return false
+	}
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	return unixTime(it.DateDue).Before(today)
+}
+
 // laterIsTodo reports a to-do (in progress or completed).
 func laterIsTodo(it *core.SavedItem) bool {
 	return it.TodoState == "to_do" || it.TodoState == "completed"
@@ -416,6 +427,12 @@ func (s *savedBase) rowActions(gtx C) {
 		case done && laterCompleted(&it):
 			f.items[i].TodoState, f.items[i].DateCompleted, s.dirty = "to_do", 0, true
 			s.write1(it, false, "Moved back to in progress", func(ctx context.Context, c *core.App) error {
+				// MoveToTodos alone leaves the item completed (it sends no
+				// mark=uncompleted), so un-complete it first.
+				no := false
+				if err := c.UpdateSaved(ctx, ch, ts, core.SavedUpdate{Completed: &no}); err != nil {
+					return err
+				}
 				return c.MoveToTodos(ctx, ch, ts, 0)
 			})
 		case done:
@@ -641,7 +658,13 @@ func (s *savedBase) savedChip(gtx C, it *core.SavedItem) D {
 	if it.DateDue <= 0 {
 		return D{}
 	}
-	txt, over := dueText(unixTime(it.DateDue))
+	due := unixTime(it.DateDue)
+	txt, over := dueText(due)
+	if over && !laterOverdue(it) {
+		// Slack stamps a to-do added without a reminder as due "now";
+		// that reads as due today, not overdue.
+		txt, over = "Due today", false
+	}
 	fg, bg := s.p.Sec, s.p.ReadFill
 	if over {
 		fg, bg = rgb(0xc01343), rgb(0xffe8ef)
@@ -1064,7 +1087,6 @@ func laterEach(ctx context.Context, items []core.SavedItem, f func(core.SavedIte
 func (l *Later) rebuild() {
 	l.dirty = false
 	l.view = l.view[:0]
-	now := time.Now()
 	wantIn, wantDone := l.statusWant()
 	anyRem := l.f[todoFOverdue] || l.f[todoFUpcoming] || l.f[todoFNone]
 	keep := func(it *core.SavedItem) bool {
@@ -1077,7 +1099,7 @@ func (l *Later) rebuild() {
 		switch {
 		case it.DateDue == 0:
 			return l.f[todoFNone]
-		case unixTime(it.DateDue).Before(now):
+		case laterOverdue(it):
 			return l.f[todoFOverdue]
 		default:
 			return l.f[todoFUpcoming]
