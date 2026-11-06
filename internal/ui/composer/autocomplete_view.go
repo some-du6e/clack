@@ -387,7 +387,7 @@ func (rc *acRowCtx) member(it acItem) {
 		rc.line(acTextSize, font.Bold, acText, "(you)")
 	}
 	rc.gap(4)
-	if it.Presence != "" && rc.x < rc.right {
+	if it.Kind == acUser && it.Atom != nil && it.Atom.Kind == AtomUser && !it.IsBot && rc.x < rc.right {
 		box := rc.square(acPresBox, 4)
 		drawPresence(gtx, box, it.Presence == "active", rc.sel)
 	}

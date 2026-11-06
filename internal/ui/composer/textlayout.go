@@ -83,6 +83,12 @@ func tlShapeRun(sh *text.Shaper, k tlShapeKey) *tlShape {
 	n := utf8.RuneCountInString(k.s)
 	r := &tlShape{pos: make([]fixed.Int26_6, n+1), stop: make([]bool, n+1)}
 	r.stop[0] = true
+	str := k.s
+	if strings.ContainsRune(str, '\t') {
+		// Tabs have no glyph (they drew as tofu); shape them as spaces so
+		// rune positions stay one-to-one.
+		str = strings.ReplaceAll(str, "\t", " ")
+	}
 	sh.LayoutString(text.Parameters{
 		Font:             k.font,
 		PxPerEm:          k.ppem,
@@ -90,7 +96,7 @@ func tlShapeRun(sh *text.Shaper, k tlShapeKey) *tlShape {
 		Locale:           k.loc,
 		WrapPolicy:       text.WrapWords,
 		DisableSpaceTrim: true,
-	}, k.s)
+	}, str)
 	rn := 0
 	first := 0
 	const big = fixed.Int26_6(1 << 30)

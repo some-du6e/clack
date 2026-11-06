@@ -301,6 +301,7 @@ func (ac *Autocomplete) Update(d *Doc, caret int) {
 	}
 	ac.items = ac.compute(t)
 	ac.itemsVer++
+	ac.watchPresence()
 	ac.itemsFor, ac.itemsGen, ac.itemsOK = t, gen, true
 	// async rows landed: keep the row the user picked selected
 	if selID != "" {
@@ -1148,4 +1149,22 @@ func insertShortest(s []int, i int, names []string, limit int) []int {
 	copy(s[j+1:], s[j:len(s)-1])
 	s[j] = i
 	return s
+}
+
+// watchPresence subscribes to presence for the user rows on screen, so the
+// dots fill in (Slack shows away rings until presence is known).
+func (ac *Autocomplete) watchPresence() {
+	var ids []string
+	for i, it := range ac.items {
+		if i >= 12 {
+			break
+		}
+		if it.Kind == acUser && it.Atom != nil && it.Atom.Kind == AtomUser && !it.IsBot && it.Presence == "" {
+			ids = append(ids, it.ID)
+		}
+	}
+	if len(ids) == 0 || ac.h == nil || ac.h.Core() == nil {
+		return
+	}
+	go coreAPI{ac.h.Core()}.subscribePresence(ids)
 }
