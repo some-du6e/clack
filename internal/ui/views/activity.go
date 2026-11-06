@@ -12,8 +12,10 @@ import (
 	"context"
 	"image"
 	"image/color"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"gioui.org/font"
@@ -26,6 +28,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -160,6 +163,12 @@ type Activity struct {
 	rows     map[string]*actRow
 	override map[string]bool // local read state: true = read, false = unread
 	cleared  map[string]bool
+	// hideRead holds the items already read when an Unreads load started:
+	// Slack's Unreads filter keeps items you read while it's on (until the
+	// filters change or the feed reloads) but doesn't bring back ones read
+	// before.
+	hideRead map[string]bool
+	notes    actNotes
 	vis      []int // indices into the page after client-side filters
 	visN     int
 	dirty    bool
@@ -210,6 +219,7 @@ func (v *Activity) Layout(gtx C) D {
 	if !v.data.started() {
 		v.load(actFresh)
 	}
+	v.notes.drain(v.h)
 	v.update(gtx)
 	v.settle()
 
@@ -225,6 +235,14 @@ func (v *Activity) Layout(gtx C) D {
 
 // update handles input that changes what is loaded or shown.
 func (v *Activity) update(gtx C) {
+	before := v.uiState()
+	defer func() {
+		// Input handled here can change what the rest of this frame (or
+		// the previous one) drew: make sure the change reaches the screen.
+		if v.uiState() != before {
+			gtx.Execute(op.InvalidateCmd{})
+		}
+	}()
 	reload := false
 	if v.tabs.update(gtx) {
 		reload = true
@@ -253,7 +271,7 @@ func (v *Activity) update(gtx C) {
 		page, _, _ := v.data.get()
 		for _, i := range v.vis {
 			if i < len(page.Items) {
-				v.override[actKey(&page.Items[i])] = true
+				v.markRead(&page.Items[i], actKey(&page.Items[i]))
 			}
 		}
 		v.allSel = false
@@ -326,6 +344,19 @@ func (v *Activity) update(gtx C) {
 	} else if v.w.due(gtx, 5*time.Second) && !(v.data.busy() && v.mode == actFresh) {
 		v.load(actRefresh)
 	}
+}
+
+// actUI is the input-driven view state compared around update.
+type actUI struct {
+	menu                                   actMenu
+	sel, search, allSel, dense, unread, cl bool
+	tab, filters                           int
+	starred                                bool
+}
+
+func (v *Activity) uiState() actUI {
+	return actUI{menu: v.menu, sel: v.selOK, search: v.searchOn, allSel: v.allSel, dense: v.dense,
+		unread: v.unread.Value, cl: v.showCleared, tab: v.tabs.Sel, filters: v.filterCount(), starred: v.starred != nil}
 }
 
 func actToggleMenu(cur, m actMenu) actMenu {
@@ -454,7 +485,17 @@ func (v *Activity) load(mode actLoad) {
 		v.failedCursor = ""
 		v.vis = v.vis[:0]
 		v.dirty = true
+		v.hideRead = nil
+		if opts.Unread {
+			v.hideRead = map[string]bool{}
+			for k, read := range v.override {
+				if read {
+					v.hideRead[k] = true
+				}
+			}
+		}
 	}
+	sticky := opts.Unread
 	v.mode, v.paging, v.wasBusy = mode, mode == actMore, true
 	v.data.load(v.h, mode != actFresh, func(ctx context.Context) (core.ActivityPage, error) {
 		if none {
@@ -468,6 +509,10 @@ func (v *Activity) load(mode actLoad) {
 		case actMore:
 			return actAppend(old, p), nil
 		case actRefresh:
+			if sticky {
+				// Unreads: rows already shown stay until the filters change.
+				return actSticky(p, old), nil
+			}
 			return actMerge(p, old), nil
 		}
 		return p, nil
@@ -510,6 +555,47 @@ func actMerge(fresh, old core.ActivityPage) core.ActivityPage {
 		}
 	}
 	return core.ActivityPage{Items: items, Next: old.Next, Convs: actRefs(old.Convs, fresh.Convs)}
+}
+
+// actSticky is the Unreads refresh: the fresh unread page plus every row
+// already loaded (now read or not), newest first.
+func actSticky(fresh, old core.ActivityPage) core.ActivityPage {
+	seen := make(map[string]bool, len(fresh.Items))
+	items := make([]core.ActivityItem, 0, len(old.Items)+len(fresh.Items))
+	for i := range fresh.Items {
+		seen[actKey(&fresh.Items[i])] = true
+		items = append(items, fresh.Items[i])
+	}
+	for i := range old.Items {
+		if !seen[actKey(&old.Items[i])] {
+			items = append(items, old.Items[i])
+		}
+	}
+	sort.SliceStable(items, func(i, j int) bool { return actTSLess(items[j].FeedTS, items[i].FeedTS) })
+	next := fresh.Next
+	if len(old.Items) > len(fresh.Items) {
+		next = old.Next
+	}
+	return core.ActivityPage{Items: items, Next: next, Convs: actRefs(old.Convs, fresh.Convs)}
+}
+
+// actTSLess compares Slack timestamps ("1730000000.123456") numerically.
+func actTSLess(a, b string) bool {
+	as, af, _ := strings.Cut(a, ".")
+	bs, bf, _ := strings.Cut(b, ".")
+	if len(as) != len(bs) {
+		return len(as) < len(bs)
+	}
+	if as != bs {
+		return as < bs
+	}
+	for len(af) < len(bf) {
+		af += "0"
+	}
+	for len(bf) < len(af) {
+		bf += "0"
+	}
+	return af < bf
 }
 
 // actRefs merges conversation refs into a new map (never mutating maps the
@@ -722,6 +808,9 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 		if v.cleared[key] && !v.showCleared {
 			continue
 		}
+		if v.unread.Value && v.hideRead[key] {
+			continue
+		}
 		if dots && v.isUnread(it, key) {
 			v.dots[0] = 1
 			if r.d.dm {
@@ -771,7 +860,9 @@ func (v *Activity) head(gtx C) D {
 		}),
 		layout.Rigid(func(gtx C) D {
 			return layout.Inset{Left: 16, Right: 16}.Layout(gtx, func(gtx C) D {
-				d := v.tabStripIcons(gtx, v.tabs, actTabIcons, v.dots[:])
+				tg := gtx
+				tg.Constraints.Min.X = 0 // natural width: the "+" sits right after the tabs
+				d := v.tabStripIcons(tg, v.tabs, actTabIcons, v.dots[:])
 				x := d.Size.X + gtx.Dp(8)
 				bs := gtx.Dp(24)
 				st := op.Offset(image.Pt(x, (d.Size.Y-bs)/2)).Push(gtx.Ops)
@@ -839,7 +930,7 @@ func (v *Activity) filterBar(gtx C) D {
 	gap := gtx.Dp(8)
 	x := gtx.Dp(16)
 	x += actAt(gtx, x, v.selAllGroup).Size.X + gap
-	x += actAt(gtx, x, func(gtx C) D { return v.filterButton(gtx, &v.unread, "unreads", "Unreads") }).Size.X + gap
+	x += actAt(gtx, x, v.unreadsBtn).Size.X + gap
 	v.filterX = x
 	x += actAt(gtx, x, v.filterMenuBtn).Size.X + gap
 	x += actAt(gtx, x, func(gtx C) D { return v.outlineIcon(gtx, &v.searchBtn, "search", false) }).Size.X + gap
@@ -857,6 +948,19 @@ func (v *Activity) filterBar(gtx C) D {
 		})
 	}
 	return D{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(actBarH))}
+}
+
+// unreadsBtn is the Unreads quick filter; pressed (aria-pressed) it also
+// gets Slack's small lift shadow.
+func (v *Activity) unreadsBtn(gtx C) D {
+	m := op.Record(gtx.Ops)
+	d := v.filterButton(gtx, &v.unread, "unreads", "Unreads")
+	call := m.Stop()
+	if v.unread.Value {
+		theme.Shadow(gtx, image.Rectangle{Max: d.Size}.Add(image.Pt(0, gtx.Dp(1))), gtx.Dp(8), gtx.Dp(2), argb(0x19000000))
+	}
+	call.Add(gtx.Ops)
+	return d
 }
 
 // selAllGroup is the select-all checkbox with its caret: 54x32 outline.
@@ -961,7 +1065,7 @@ func (v *Activity) items(gtx C) D {
 	n := len(v.vis)
 	switch {
 	case !loaded && len(page.Items) == 0:
-		return v.skeleton(gtx, 6, actAvatar)
+		return v.skeleton(gtx, 6, v.avSize())
 	case err != nil && len(page.Items) == 0:
 		return v.errorState(gtx, err, &v.retry)
 	}
@@ -973,7 +1077,7 @@ func (v *Activity) items(gtx C) D {
 			if !v.data.busy() {
 				v.load(actMore)
 			}
-			return v.skeleton(gtx, 6, actAvatar)
+			return v.skeleton(gtx, 6, v.avSize())
 		}
 		return v.actEmpty(gtx)
 	}
@@ -992,6 +1096,13 @@ func (v *Activity) items(gtx C) D {
 		v.load(actMore)
 	}
 	return d
+}
+
+func (v *Activity) avSize() unit.Dp {
+	if v.dense {
+		return actDenseAv
+	}
+	return actAvatar
 }
 
 func (v *Activity) filtered() bool {
@@ -1034,7 +1145,7 @@ func (v *Activity) actEmpty(gtx C) D {
 func (v *Activity) footer(gtx C, failed bool) D {
 	switch {
 	case v.paging:
-		return v.skeleton(gtx, 2, actAvatar)
+		return v.skeleton(gtx, 2, v.avSize())
 	case failed:
 		return layout.Inset{Top: 12, Bottom: 16}.Layout(gtx, func(gtx C) D {
 			return layout.Center.Layout(gtx, func(gtx C) D {
@@ -1059,17 +1170,28 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 	}
 	unread := v.isUnread(it, key)
 	if r.mark.Clicked(gtx) {
-		v.override[key] = unread // unread -> mark read; read -> mark unread
+		if unread {
+			v.markRead(it, key)
+		} else {
+			// Mark as unread stays local: core has no activity mark-unread yet.
+			v.override[key] = false
+			v.dirty = true
+		}
 		unread = !unread
-		v.dirty = true
 	}
 	if r.clear.Clicked(gtx) {
+		// Clear also marks the item read, like Slack. Clearing itself stays
+		// local: core has no activity clear yet.
 		v.cleared[key] = !v.cleared[key]
-		v.override[key] = true
-		v.dirty = true
+		v.markRead(it, key)
 	}
 	if r.more.Clicked(gtx) && it.Msg != nil {
 		v.h.OpenMessageMenu(image.Point{}, *it.Msg)
+	}
+	if v.dirty {
+		// A click above changed rows (or the pane) already drawn this
+		// frame: draw again.
+		gtx.Execute(op.InvalidateCmd{})
 	}
 	sel := v.selOK && v.selKey == key
 	d := r.click.Layout(gtx, func(gtx C) D {
@@ -1086,10 +1208,10 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 		if sel {
 			bg = v.p.SelBg
 		}
-		fill(gtx, rect, bg)
 		if r.click.Hovered() {
-			fill(gtx, rect, v.p.Hover)
+			bg = v.actHover(bg)
 		}
+		fill(gtx, rect, bg)
 		call.Add(gtx.Ops)
 		h := max(1, gtx.Dp(1))
 		fill(gtx, image.Rect(0, dims.Size.Y-h, dims.Size.X, dims.Size.Y), v.p.Border)
@@ -1115,9 +1237,73 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 
 func (v *Activity) choose(it *core.ActivityItem, key string, r *actRow) {
 	v.sel, v.selKey, v.selOK, v.selDesc = *it, key, true, r.d
-	v.override[key] = true
+	v.markRead(it, key)
 	v.prevList.Position = layout.Position{}
 	v.dirty = true
+}
+
+// markRead marks an item read: locally right away, and in Slack through
+// the read cursor it belongs to. Thread items (and mentions in replies)
+// move the thread's cursor (subscriptions.thread.mark); channel and DM
+// messages move the conversation's cursor (conversations.mark), only
+// forward so later unread messages stay unread. Reactions and invitations
+// have no cursor: core has no activity mark-read yet, so they stay local.
+func (v *Activity) markRead(it *core.ActivityItem, key string) {
+	was := v.isUnread(it, key)
+	v.override[key] = true
+	v.dirty = true
+	if !was || it.Channel == "" || it.TS == "" {
+		return
+	}
+	switch it.Type {
+	case "message_reaction", "internal_channel_invite", "external_channel_invite":
+		return
+	}
+	c, ch, ts := v.h.Core(), it.Channel, it.TS
+	if th := actThread(it); th != "" {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			if err := c.MarkThread(ctx, ch, th, ts); err != nil {
+				v.notes.add(v.h, "Couldn’t mark the thread as read: "+friendlyErr(err))
+			}
+		}()
+		return
+	}
+	if !actTSLess(c.Count(ch).LastRead, ts) {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if _, err := c.Mark(ctx, ch, ts); err != nil {
+			v.notes.add(v.h, "Couldn’t mark as read: "+friendlyErr(err))
+		}
+	}()
+}
+
+// actNotes queues toasts from background goroutines; Layout shows them on
+// the UI goroutine (Host.Toast isn't goroutine-safe).
+type actNotes struct {
+	mu   sync.Mutex
+	msgs []string
+}
+
+func (n *actNotes) add(h Host, s string) {
+	n.mu.Lock()
+	n.msgs = append(n.msgs, s)
+	n.mu.Unlock()
+	h.Invalidate()
+}
+
+func (n *actNotes) drain(h Host) {
+	n.mu.Lock()
+	msgs := n.msgs
+	n.msgs = nil
+	n.mu.Unlock()
+	for _, s := range msgs {
+		h.Toast(s)
+	}
 }
 
 func (v *Activity) rowWhen(gtx C, d *actDesc) string {
@@ -1185,33 +1371,68 @@ func (v *Activity) rowContent(gtx C, it *core.ActivityItem, d *actDesc, unread b
 	})
 }
 
-// denseContent is the single-line Dense layout (not measured by the spec;
-// derived from Detailed with Slack's 20px compact avatar).
+// denseContent is Slack's Dense layout: one 22px line per item. The
+// spec didn't measure it (switching saves a Slack pref), so it is derived
+// from the Detailed row: same 16/20 side padding and status column, the
+// 20px compact avatar, the sender (15px, 900 when unread), the context
+// ("Mention in #general", 13px muted with its 16px icon) and the one-line
+// preview, then the time pushed to the right.
 func (v *Activity) denseContent(gtx C, it *core.ActivityItem, d *actDesc, unread bool, nameW font.Weight, nameCol, bodyCol color.NRGBA, when string) D {
 	return layout.Inset{Top: 8, Bottom: 8, Left: 16, Right: 20}.Layout(gtx, func(gtx C) D {
-		return row(gtx, layout.Middle,
+		g := gtx
+		g.Constraints.Min.Y = gtx.Dp(22)
+		full := gtx.Constraints.Max.X
+		return row(g, layout.Middle,
 			layout.Rigid(func(gtx C) D { return v.actAvatarOf(gtx, d, actDenseAv) }),
 			hgap(8),
 			layout.Rigid(func(gtx C) D {
-				gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(200))
+				gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(200), full/4)
 				return v.label(gtx, 15, nameW, nameCol, d.name)
 			}),
-			hgap(8),
-			layout.Flexed(1, func(gtx C) D { return v.label(gtx, 15, wReg, bodyCol, d.prev) }),
 			hgap(8),
 			layout.Rigid(func(gtx C) D {
 				if d.foot == "" {
 					return D{}
 				}
-				gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(240))
-				return v.actFooter(gtx, d)
+				gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(240), full/3)
+				return layout.Inset{Right: 8}.Layout(gtx, func(gtx C) D { return v.actContext(gtx, d) })
 			}),
-			hgap(8),
+			layout.Flexed(1, func(gtx C) D {
+				gtx.Constraints.Min.X = gtx.Constraints.Max.X
+				if it.Msg != nil && !d.invite && !(it.Type == "bot_dm_bundle" && it.Count > 1) && len(it.Msg.Doc.Blocks) > 0 {
+					// The message's first line, drawn like the detailed body
+					// (emoji images, mentions) and clipped to one line.
+					return v.msgBodyMuted(gtx, it.Msg, false, !unread, 1)
+				}
+				return layout.W.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wReg, bodyCol, d.prev) })
+			}),
+			hgap(12),
 			layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wReg, v.p.Muted, when) }),
 			hgap(8),
 			layout.Rigid(func(gtx C) D { return v.actStatus(gtx, it, unread) }),
 		)
 	})
+}
+
+// actContext is the footer as an inline, natural-width label for Dense
+// rows.
+func (v *Activity) actContext(gtx C, d *actDesc) D {
+	w := wReg
+	if d.footBold {
+		w = wBold
+	}
+	return row(gtx, layout.Middle,
+		layout.Rigid(func(gtx C) D {
+			switch {
+			case d.footEmoji != "":
+				return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.emojiImg(gtx, d.footEmoji, 16) })
+			case d.footIcon != "":
+				return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.icon(gtx, d.footIcon, 16, v.p.Muted) })
+			}
+			return D{}
+		}),
+		layout.Rigid(func(gtx C) D { return v.label(gtx, 13, w, v.p.Muted, d.foot) }),
+	)
 }
 
 // actFooter draws the row footer: 16px type icon (or the reaction emoji),
@@ -1457,7 +1678,7 @@ func (v *Activity) popover(gtx C, at image.Point, w, rad unit.Dp, content W) {
 	theme.Shadow(gtx, r, radius, gtx.Dp(12), argb(0x1f000000))
 	rrect(gtx, r, radius, v.p.Surface)
 	call.Add(gtx.Ops)
-	border(gtx, r, radius, max(1, gtx.Dp(1)), argb(0x211d1c1d))
+	border(gtx, r, radius, max(1, gtx.Dp(1)), flatten(actRaw(v.th.Dark).Ring, v.p.Surface))
 }
 
 // actStack lays out n children top to bottom (a tiny non-scrolling list).
@@ -1533,7 +1754,7 @@ func (v *Activity) menuRow(gtx C, c *widget.Clickable, f *actFilter, on bool) D 
 		} else {
 			pointerCursor(gtx)
 			if c.Hovered() {
-				fill(gtx, image.Rect(0, 0, w, h), v.p.Hover)
+				fill(gtx, image.Rect(0, 0, w, h), v.actHover(v.p.Surface))
 			}
 		}
 		g := gtx
@@ -1589,7 +1810,7 @@ func (v *Activity) plusRow(gtx C, c *widget.Clickable, icon, label string, on bo
 		pointerCursor(gtx)
 		w, h := gtx.Constraints.Max.X, gtx.Dp(28)
 		if c.Hovered() {
-			fill(gtx, image.Rect(0, 0, w, h), v.p.Hover)
+			fill(gtx, image.Rect(0, 0, w, h), v.actHover(v.p.Surface))
 		}
 		g := gtx
 		g.Constraints = layout.Exact(image.Pt(w, h))
@@ -1612,6 +1833,21 @@ func (v *Activity) plusRow(gtx C, c *widget.Clickable, icon, label string, on bo
 
 // ---- shared with Threads ----
 
+// actRaw is the unflattened palette: palOf pre-flattens translucent
+// tokens over Bg only, so overlays on other fills (read rows, cards,
+// popovers) flatten the raw token over their own base.
+func actRaw(dark bool) *pal {
+	if dark {
+		return &darkPal
+	}
+	return &lightPal
+}
+
+// actHover is the hover overlay (#454447@.06) flattened over base.
+func (b *base) actHover(base color.NRGBA) color.NRGBA {
+	return flatten(actRaw(b.th.Dark).Hover, base)
+}
+
 // actMsg draws a message the way Slack's message list does: 36px avatar,
 // 15px 900 name, 12px muted time, rich body, reactions. bg (if any) fills
 // the full row width; padX is the horizontal padding.
@@ -1632,7 +1868,7 @@ func (b *base) actMsg(gtx C, m *core.Message, bg color.NRGBA, padX unit.Dp) D {
 								layout.Rigid(func(gtx C) D { return b.label(gtx, 12, wReg, b.p.Muted, actStamp(tsTime(m.TS))) }),
 							)
 						}),
-						layout.Rigid(func(gtx C) D { return b.msgBody(gtx, m, false, 0) }),
+						layout.Rigid(func(gtx C) D { return b.actPaneBody(gtx, m) }),
 						layout.Rigid(func(gtx C) D {
 							if len(m.Reactions) == 0 {
 								return D{}
@@ -1644,6 +1880,19 @@ func (b *base) actMsg(gtx C, m *core.Message, bg color.NRGBA, padX unit.Dp) D {
 			)
 		})
 	})
+}
+
+// actPaneBody draws a message body in the preview pane. It must not share
+// the list row's richview.View (msgBody keys by channel/ts): a View
+// records into its own op.Ops, so laying the same View out twice in one
+// frame at two widths resets the ops the first CallOp points to, and the
+// rest of the frame (footer, later rows, the pane) never paints.
+func (b *base) actPaneBody(gtx C, m *core.Message) D {
+	if len(m.Doc.Blocks) == 0 {
+		return b.body(gtx, m.Doc, m.Text, 0)
+	}
+	ver := m.EditedTS + ":" + strconv.Itoa(len(m.Text)) + ":" + strconv.Itoa(len(m.Doc.Blocks))
+	return b.richDoc(gtx, "pane:"+m.Channel+"/"+m.TS, ver, m.Doc, richview.Options{Edited: m.Edited, Muted: m.System}, 0)
 }
 
 // actReactions lays reaction pills out left to right, wrapping.

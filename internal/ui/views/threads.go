@@ -5,9 +5,13 @@ package views
 // first): a header line outside the card (channel link + participants)
 // and a white card (radius 12, 1px #dddddd) holding the root message,
 // "Show N more replies", the latest replies and an inline composer.
-// The composer is drawn as Slack's (toolbar, "Reply to thread…", "Also
-// send to", footer); clicking it opens the thread pane. Measurements are
-// from /tmp/ui-views-spec/threads.md.
+// Until it's clicked the composer is a cheap picture of Slack's (toolbar,
+// "Reply to thread…", "Also send to", footer); the click swaps in the
+// real composer (internal/ui/composer) for that card. Threads with unread
+// replies get a black-weight channel name and Slack's red "New" line
+// above the first unread reply; opening a thread (its replies link or its
+// reply box) marks it read. Measurements are from
+// /tmp/ui-views-spec/threads.md.
 
 import (
 	"context"
@@ -28,6 +32,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -36,6 +41,8 @@ const (
 	thrMsgPad    unit.Dp = 20          // message row side padding (avatar at card x+21)
 	thrMsgIndent unit.Dp = 20 + 36 + 8 // padding + avatar + gap
 	thrComposerH unit.Dp = 144
+	thrHeadH     unit.Dp = 49
+	thrCompMax   unit.Dp = 360 // the real composer's height cap inside the list
 )
 
 // Composer toolbar and footer icons; "|" is a group separator.
@@ -63,6 +70,9 @@ type thrCard struct {
 	name, people, moreText string
 	also                   string // "Also send to #general"
 	built                  bool
+
+	comp  *composer.Composer // the real reply composer, made on first click
+	compY int                // composer top within the list element (px)
 }
 
 func (c *thrCard) hover(ts string) *gesture.Hover {
@@ -90,11 +100,17 @@ type Threads struct {
 	failedCursor string
 	retry        widget.Clickable
 	retryMore    widget.Clickable
+
+	// read is the local read state: thread key -> latest reply ts marked
+	// read (Slack's view lags behind subscriptions.thread.mark).
+	read  map[string]string
+	sizes map[int]int // list element heights this frame (composer origins)
+	notes actNotes
 }
 
 // NewThreads builds the Threads view; it loads on first Layout.
 func NewThreads(h Host) *Threads {
-	v := &Threads{base: newBase(h), cards: map[string]*thrCard{}}
+	v := &Threads{base: newBase(h), cards: map[string]*thrCard{}, read: map[string]string{}, sizes: map[int]int{}}
 	v.list.Axis = layout.Vertical
 	return v
 }
@@ -106,6 +122,7 @@ func thrMatch(ev core.Event) bool {
 // Layout draws the view.
 func (v *Threads) Layout(gtx C) D {
 	v.frame()
+	v.notes.drain(v.h)
 	v.w.watch(v.h, thrMatch)
 	if !v.data.started() {
 		v.load(actFresh)
@@ -122,7 +139,7 @@ func (v *Threads) Layout(gtx C) D {
 	v.settle()
 
 	size := gtx.Constraints.Max
-	fill(gtx, image.Rectangle{Max: size}, v.p.ReadFill)
+	fill(gtx, image.Rectangle{Max: size}, v.p.Page)
 	layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(v.head),
 		layout.Flexed(1, v.body),
@@ -172,6 +189,11 @@ func (v *Threads) load(mode actLoad) {
 		v.pageCursor = cursor
 	}
 	if mode == actFresh {
+		for _, c := range v.cards {
+			if c.comp != nil {
+				c.comp.Close()
+			}
+		}
 		v.cards = map[string]*thrCard{}
 		v.list.Position = layout.Position{}
 		v.failedCursor = ""
@@ -225,6 +247,46 @@ func thrJoin(a, b thrData) thrData {
 	return thrData{items: items, next: b.next, hasMore: b.hasMore, convs: actRefs(a.convs, b.convs)}
 }
 
+// latest is the newest reply ts shown for a thread (or the root's).
+func (t *thrItem) latest() string {
+	if n := len(t.Replies); n > 0 {
+		return t.Replies[n-1].TS
+	}
+	if t.Root.LatestReply != "" {
+		return t.Root.LatestReply
+	}
+	return t.Root.TS
+}
+
+// unread is the number of unread replies, after local read marks.
+func (v *Threads) unread(t *thrItem) int {
+	if t.UnreadCount <= 0 {
+		return 0
+	}
+	if r, ok := v.read[t.key]; ok && !actTSLess(r, t.latest()) {
+		return 0
+	}
+	return t.UnreadCount
+}
+
+// markRead marks a thread read up to its latest reply: locally at once,
+// then with subscriptions.thread.mark.
+func (v *Threads) markRead(t *thrItem) {
+	if v.unread(t) == 0 {
+		return
+	}
+	ts := t.latest()
+	v.read[t.key] = ts
+	c, ch, root := v.h.Core(), t.Channel, t.Root.TS
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if err := c.MarkThread(ctx, ch, root, ts); err != nil {
+			v.notes.add(v.h, "Couldn’t mark the thread as read: "+friendlyErr(err))
+		}
+	}()
+}
+
 // thrSort puts threads with unread replies first, keeping Slack's order
 // otherwise.
 func thrSort(items []thrItem) {
@@ -246,17 +308,43 @@ func (v *Threads) body(gtx C) D {
 	}
 	failed := v.failedCursor != "" && v.failedCursor == page.next
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
+	clear(v.sizes)
 	d := v.scrollList(gtx, &v.list, n+1, func(gtx C, i int) D {
 		if i >= n {
 			return v.footer(gtx, failed)
 		}
-		return v.thread(gtx, &page.items[i], page.convs)
+		d := v.thread(gtx, &page.items[i], page.convs)
+		v.sizes[i] = d.Size.Y
+		return d
 	})
+	v.placeComposers(gtx, page.items)
 	if page.hasMore && page.next != "" && !failed && !v.data.busy() &&
 		v.list.Position.First+v.list.Position.Count >= n-2 {
 		v.load(actMore)
 	}
 	return d
+}
+
+// placeComposers sets each open composer's window Origin (its menus and
+// the emoji picker anchor to it) from where the list put its card this
+// frame. Gio has no global transform query, so the page's own origin comes
+// from the Host when it offers one, else from the default chrome geometry
+// (rail, top bar and the default sidebar width).
+func (v *Threads) placeComposers(gtx C, items []thrItem) {
+	var org image.Point
+	if o, ok := v.h.(interface{ PrimaryOrigin() image.Point }); ok {
+		org = o.PrimaryOrigin()
+	} else {
+		org = image.Pt(gtx.Dp(theme.RailW+theme.SidebarW), gtx.Dp(theme.TopNavH))
+	}
+	pos := v.list.Position
+	y := gtx.Dp(thrHeadH) - pos.Offset
+	for i := pos.First; i < pos.First+pos.Count && i < len(items); i++ {
+		if c := v.cards[items[i].key]; c != nil && c.comp != nil {
+			c.comp.Origin = org.Add(image.Pt(gtx.Dp(16+4), y+c.compY))
+		}
+		y += v.sizes[i]
+	}
 }
 
 // empty follows the shared Saved/To-dos empty state: illustration, 18px
@@ -377,20 +465,25 @@ func thrTime(t, now time.Time) (s string, next time.Duration) {
 	return actStamp(t), 0
 }
 
-// thrMeta is Slack's #616061 for timestamps and participants.
-func (v *Threads) meta() color.NRGBA {
-	if v.th.Dark {
-		return v.p.Muted
-	}
-	return rgb(0x616061)
-}
+// meta is Slack's #616061 for timestamps and participants.
+func (v *Threads) meta() color.NRGBA { return v.p.Meta }
 
-// thrEdge is the card border (#dddddd per tokens).
+// edge is the card border (#dddddd per tokens; the card hairline over the
+// card surface in dark mode).
 func (v *Threads) edge() color.NRGBA {
 	if v.th.Dark {
-		return v.p.Border
+		return flatten(darkPal.CardLine, v.p.Surface)
 	}
 	return rgb(0xdddddd)
+}
+
+// msgHover is the message hover fill on a card: #f8f8f8 in light mode,
+// the hover overlay over the card surface in dark mode.
+func (v *Threads) msgHover() color.NRGBA {
+	if v.th.Dark {
+		return v.actHover(v.p.Surface)
+	}
+	return v.p.ReadFill
 }
 
 func (v *Threads) cardFor(t *thrItem, convs map[string]core.ConvRef) *thrCard {
@@ -398,6 +491,12 @@ func (v *Threads) cardFor(t *thrItem, convs map[string]core.ConvRef) *thrCard {
 	if c == nil {
 		c = &thrCard{hovers: map[string]*gesture.Hover{}}
 		v.cards[t.key] = c
+	}
+	if c.built && (c.name == t.Channel || c.name == "#"+t.Channel) {
+		// Built before core knew the conversation (early boot): retry.
+		if n := v.convTitle(t.Channel, convs); n != c.name {
+			c.built = false
+		}
 	}
 	if !c.built {
 		c.name = v.convTitle(t.Channel, convs)
@@ -432,19 +531,36 @@ func (v *Threads) thread(gtx C, t *thrItem, convs map[string]core.ConvRef) D {
 	if c.title.Clicked(gtx) {
 		v.h.Navigate("c/" + t.Channel)
 	}
-	if c.more.Clicked(gtx) || c.reply.Clicked(gtx) {
+	if c.more.Clicked(gtx) {
+		gtx.Execute(op.InvalidateCmd{})
+		v.markRead(t)
 		v.h.OpenThread(t.Channel, t.Root.TS)
 	}
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+	if c.reply.Clicked(gtx) {
+		gtx.Execute(op.InvalidateCmd{})
+		v.markRead(t)
+		if ch, ok := v.h.(composer.Host); ok && c.comp == nil {
+			c.comp = composer.New(ch, t.Channel, t.Root.TS)
+			c.comp.Focus()
+		} else if !ok {
+			v.h.OpenThread(t.Channel, t.Root.TS)
+		}
+	}
+	nameW := wBold
+	if v.unread(t) > 0 {
+		nameW = wBlack
+	}
+	headH, cardTop := 0, 0
+	d := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		// Card header: margin 16px 28px 12px 24px, h 40.
 		layout.Rigid(func(gtx C) D {
-			return layout.Inset{Top: 16, Right: 28, Bottom: 12, Left: 24}.Layout(gtx, func(gtx C) D {
+			d := layout.Inset{Top: 16, Right: 28, Bottom: 12, Left: 24}.Layout(gtx, func(gtx C) D {
 				return col(gtx,
 					layout.Rigid(func(gtx C) D {
 						gtx.Constraints.Min.X = 0
 						return c.title.Layout(gtx, func(gtx C) D {
 							pointerCursor(gtx)
-							d := v.para(gtx, 15, 22, wBold, v.p.Text, 1, c.name)
+							d := v.para(gtx, 15, 22, nameW, v.p.Text, 1, c.name)
 							if c.title.Hovered() {
 								fill(gtx, image.Rect(0, d.Size.Y-gtx.Dp(3), d.Size.X, d.Size.Y-gtx.Dp(2)), v.p.Text)
 							}
@@ -461,13 +577,16 @@ func (v *Threads) thread(gtx C, t *thrItem, convs map[string]core.ConvRef) D {
 					}),
 				)
 			})
+			headH = d.Size.Y
+			return d
 		}),
 		// Card: margin 0 16px 8px, radius 12, 1px #dddddd.
 		layout.Rigid(func(gtx C) D {
 			return layout.Inset{Left: 16, Right: 16, Bottom: 8}.Layout(gtx, func(gtx C) D {
 				gtx.Constraints.Min.X = gtx.Constraints.Max.X
 				m := op.Record(gtx.Ops)
-				d := v.card(gtx, c, t)
+				d, compY := v.card(gtx, c, t)
+				cardTop = compY
 				call := m.Stop()
 				r := image.Rectangle{Max: d.Size}
 				rad := gtx.Dp(12)
@@ -481,12 +600,21 @@ func (v *Threads) thread(gtx C, t *thrItem, convs map[string]core.ConvRef) D {
 			})
 		}),
 	)
+	c.compY = headH + cardTop
+	return d
 }
 
-func (v *Threads) card(gtx C, c *thrCard, t *thrItem) D {
-	unreadFrom := len(t.Replies) - t.UnreadCount
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(func(gtx C) D { return v.msg(gtx, c.hover(t.Root.TS), &t.Root, 20, false) }),
+// card lays out the card's segments and returns its size and the top of
+// the reply box within it.
+func (v *Threads) card(gtx C, c *thrCard, t *thrItem) (D, int) {
+	unread := v.unread(t)
+	unreadFrom := len(t.Replies) - unread
+	compH, compBottom := 0, 20
+	if c.comp != nil {
+		compBottom = 0 // the real composer ends with its 24px hint bar
+	}
+	d := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx C) D { return v.msg(gtx, c.hover(t.Root.TS), &t.Root, 20) }),
 		layout.Rigid(func(gtx C) D {
 			if c.moreText == "" {
 				return D{}
@@ -506,23 +634,54 @@ func (v *Threads) card(gtx C, c *thrCard, t *thrItem) D {
 		layout.Rigid(func(gtx C) D {
 			return actStack(gtx, len(t.Replies), func(gtx C, i int) D {
 				m := &t.Replies[i]
-				return v.msg(gtx, c.hover(m.TS), m, 8, i >= unreadFrom)
+				d := v.msg(gtx, c.hover(m.TS), m, 8)
+				if unread > 0 && i == max(unreadFrom, 0) {
+					v.newLine(gtx, d.Size.X)
+				}
+				return d
 			})
 		}),
-		// Last segment: padding-top 8px, then the composer (margin 0 20px).
+		// Last segment: padding-top 8px, then the composer (margin 0 20px;
+		// the real composer brings 16px of its own).
 		layout.Rigid(func(gtx C) D {
-			return layout.Inset{Top: 8, Bottom: 20, Left: 20, Right: 20}.Layout(gtx, func(gtx C) D {
-				return v.composer(gtx, c)
+			if c.comp != nil {
+				d := layout.Inset{Top: 8, Left: 4, Right: 4}.Layout(gtx, func(gtx C) D {
+					gtx.Constraints.Min = image.Point{}
+					gtx.Constraints.Max.Y = gtx.Dp(thrCompMax)
+					return c.comp.Layout(gtx)
+				})
+				compH = d.Size.Y - gtx.Dp(8)
+				return d
+			}
+			d := layout.Inset{Top: 8, Bottom: 20, Left: 20, Right: 20}.Layout(gtx, func(gtx C) D {
+				return v.replyPicture(gtx, c)
 			})
+			compH = d.Size.Y - gtx.Dp(8+20)
+			return d
 		}),
 	)
+	return d, d.Size.Y - compBottom - compH
+}
+
+// newLine is Slack's unread divider drawn over the top edge of the first
+// unread reply: a 1px #e01e5a line with a bold 13px "New" at its right
+// end (padding 0 4px, 15px from the edge), as in the channel view.
+func (v *Threads) newLine(gtx C, w int) {
+	red := v.th.C.NewLine
+	tw := v.th.Measure(gtx, 13, wBold, "New")
+	lx := w - gtx.Dp(15) - gtx.Dp(4) - tw
+	fill(gtx, image.Rect(0, 0, lx-gtx.Dp(4), max(1, gtx.Dp(1))), red)
+	defer op.Offset(image.Pt(lx, -gtx.Dp(9))).Push(gtx.Ops).Pop()
+	g := gtx
+	g.Constraints.Min = image.Point{}
+	v.para(g, 13, 19.5, wBold, red, 1, "New")
 }
 
 // msg is c-message_kit__thread_message: padding top/20px/8px/20px, avatar
 // 36 radius 8, 8px gap, 15px/22px 900 name, 12px/17.6px #616061 time 7px
-// after it, 15px/22px body. Hover paints #f8f8f8. Unread replies (the
-// spec account had none) get the highlighted-message yellow.
-func (v *Threads) msg(gtx C, hv *gesture.Hover, m *core.Message, top unit.Dp, unread bool) D {
+// after it, 15px/22px body. Hover paints #f8f8f8 (the hover overlay in
+// dark mode).
+func (v *Threads) msg(gtx C, hv *gesture.Hover, m *core.Message, top unit.Dp) D {
 	hovered := hv.Update(gtx.Source)
 	name, av := v.authorOf(m)
 	stamp, next := thrTime(tsTime(m.TS), gtx.Now)
@@ -557,14 +716,8 @@ func (v *Threads) msg(gtx C, hv *gesture.Hover, m *core.Message, top unit.Dp, un
 	})
 	call := rec.Stop()
 	r := image.Rectangle{Max: d.Size}
-	switch {
-	case unread && hovered:
-		fill(gtx, r, v.p.Yellow)
-		fill(gtx, r, v.p.Hover)
-	case unread:
-		fill(gtx, r, v.p.Yellow)
-	case hovered:
-		fill(gtx, r, v.p.ReadFill)
+	if hovered {
+		fill(gtx, r, v.msgHover())
 	}
 	call.Add(gtx.Ops)
 	st := clip.Rect(r).Push(gtx.Ops)
@@ -573,12 +726,13 @@ func (v *Threads) msg(gtx C, hv *gesture.Hover, m *core.Message, top unit.Dp, un
 	return d
 }
 
-// composer draws Slack's inline thread composer (h 144, radius 8, 1px
-// #1d1c1d@.13): formatting toolbar with icons at 30% alpha, "Reply to
-// thread…", the "Also send to" checkbox row and the footer with the send
-// button disabled. It is a facade: clicking opens the thread pane, where
-// the real composer lives.
-func (v *Threads) composer(gtx C, c *thrCard) D {
+// replyPicture draws Slack's unfocused inline thread composer (h 144,
+// radius 8, 1px #1d1c1d@.13): formatting toolbar with icons at 30% alpha,
+// "Reply to thread…", the "Also send to" checkbox row and the footer with
+// the send button disabled. It costs nothing per card; a click swaps in
+// the real composer (or opens the thread pane when the Host can't host
+// one).
+func (v *Threads) replyPicture(gtx C, c *thrCard) D {
 	return c.reply.Layout(gtx, func(gtx C) D {
 		pointer.CursorText.Add(gtx.Ops)
 		w, h := gtx.Constraints.Max.X, gtx.Dp(thrComposerH)
@@ -586,8 +740,9 @@ func (v *Threads) composer(gtx C, c *thrCard) D {
 		rad := gtx.Dp(8)
 		edge, faint, soft := argb(0x211d1c1d), argb(0x4d1d1c1d), argb(0xb31d1c1d)
 		if v.th.Dark {
-			edge, faint, soft = v.p.Border, theme.WithAlpha(v.p.Text, 0x4d), v.p.Muted
+			edge, faint, soft = darkPal.Ring, theme.WithAlpha(v.p.Text, 0x4d), v.p.Muted
 		}
+		edge, faint, soft = flatten(edge, v.p.Bg), flatten(faint, v.p.Bg), flatten(soft, v.p.Bg)
 		if c.reply.Hovered() {
 			edge = v.p.BorderStr
 		}
