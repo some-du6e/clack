@@ -95,6 +95,14 @@ func (c *Cache) SetInvalidate(f func()) {
 	c.mu.Unlock()
 }
 
+// SetFetcher replaces the downloader (e.g. once an authenticated session
+// exists for files.slack.com).
+func (c *Cache) SetFetcher(f Fetcher) {
+	c.mu.Lock()
+	c.fetch = f
+	c.mu.Unlock()
+}
+
 // SetLimit sets the memory budget for decoded pixels in bytes.
 func (c *Cache) SetLimit(n int) {
 	c.mu.Lock()
@@ -222,7 +230,10 @@ func (c *Cache) raw(u string) ([]byte, error) {
 	}
 	ctx, cancel := context.WithTimeout(c.ctx, 45*time.Second)
 	defer cancel()
-	b, err := c.fetch(ctx, u)
+	c.mu.Lock()
+	fetch := c.fetch
+	c.mu.Unlock()
+	b, err := fetch(ctx, u)
 	if err != nil {
 		return nil, err
 	}

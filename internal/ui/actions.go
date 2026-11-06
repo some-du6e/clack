@@ -212,7 +212,10 @@ func (a *App) setStatusPrompt() {
 func (a *App) signOut() {
 	if a.data != nil {
 		a.data.signOut()
+		a.data = nil
 	}
+	a.views = map[Route]View{}
+	a.viewOrder = nil
 	a.login = newLoginScreen()
 	a.Invalidate()
 }

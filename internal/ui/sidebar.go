@@ -64,7 +64,7 @@ func sectionIcon(typ string) string {
 		return "hash"
 	case "direct_messages":
 		return "dms"
-	case "recent_apps":
+	case "recent_apps", "apps":
 		return "apps"
 	}
 	return "list-view"
@@ -106,7 +106,7 @@ func (s *sidebarState) rebuild(m *model) {
 			rows = append(rows, sbRow{kind: sbAction, key: "add-channels", label: "Add channels", icon: "channel-plus"})
 		case "direct_messages":
 			rows = append(rows, sbRow{kind: sbAction, key: "browse-people", label: "Browse all people", icon: "user-plus"})
-		case "recent_apps":
+		case "recent_apps", "apps":
 			rows = append(rows, sbRow{kind: sbAction, key: "add-apps", label: "Add apps", icon: "plus-small"})
 		}
 	}
