@@ -455,9 +455,16 @@ func (r *row) reactions(gtx layout.Context, rc *rowCtx, x, y, w int) int {
 				}
 				ex := dp(gtx, 8)
 				er := image.Rect(ex, (ph-es)/2, ex+es, (ph-es)/2+es)
-				if !drawEmoji(gtx, rc.h, re.URL, er) {
+				url, alt := re.URL, ""
+				if url == "" && rc.h.Core() != nil {
+					url, alt, _ = rc.h.Core().Emoji(re.Name)
+				}
+				if !drawEmoji(gtx, rc.h, url, er) {
+					if alt == "" {
+						alt = ":" + re.Name + ":"
+					}
 					at(gtx, ex, 0, func(gtx layout.Context) layout.Dimensions {
-						return label(gtx, rc.th, textStyle{size: 11, col: c.Text2, lineH: 24}, ":"+re.Name+":")
+						return label(gtx, rc.th, textStyle{size: 13, col: c.Text, lineH: 24}, alt)
 					})
 				}
 				at(gtx, ex+es+dp(gtx, 4), (ph-dp(gtx, 16))/2, func(gtx layout.Context) layout.Dimensions {
