@@ -16,9 +16,22 @@ type coreAPI struct{ a *core.App }
 func (c coreAPI) self() core.User                         { return c.a.Self() }
 func (c coreAPI) user(id string) (core.User, bool)        { return c.a.User(id) }
 func (c coreAPI) users(ids []string) map[string]core.User { return c.a.Users(ids) }
-func (c coreAPI) conv(id string) (core.Conv, bool)        { return c.a.Conv(id) }
-func (c coreAPI) snapshot() core.Snapshot                 { return c.a.Snapshot() }
-func (c coreAPI) customEmoji() map[string]string          { return c.a.CustomEmoji() }
+func (c coreAPI) subscribePresence(ids []string)          { c.a.SubscribePresence(ids) }
+
+// conv returns the conversation, falling back to the store's name for
+// channels that aren't in the sidebar.
+func (c coreAPI) conv(id string) (core.Conv, bool) {
+	if cv, ok := c.a.Conv(id); ok {
+		return cv, true
+	}
+	r := c.a.ConvRef(id)
+	if r.Name == "" {
+		return core.Conv{}, false
+	}
+	return core.Conv{ID: r.ID, Name: r.Name, Kind: r.Kind, User: r.User}, true
+}
+func (c coreAPI) snapshot() core.Snapshot        { return c.a.Snapshot() }
+func (c coreAPI) customEmoji() map[string]string { return c.a.CustomEmoji() }
 func (c coreAPI) emoji(name string) (url, text string, ok bool) {
 	return c.a.Emoji(name)
 }

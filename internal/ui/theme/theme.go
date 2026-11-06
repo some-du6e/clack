@@ -9,6 +9,7 @@ package theme
 import (
 	"image"
 	"image/color"
+	"math"
 	"sync"
 
 	"gioui.org/f32"
@@ -44,6 +45,11 @@ type Theme struct {
 	Dark   bool
 	C      Palette
 	Shaper *text.Shaper
+	// Images, when set (the ui root sets the app's imgcache), lets labels
+	// draw unicode emoji as Slack CDN images.
+	Images EmojiImages
+	// EmojiStyle is Slack's emoji set preference: "apple" (default) or "google".
+	EmojiStyle string
 }
 
 var (
@@ -86,7 +92,7 @@ func Faces() []font.FontFace {
 // Lato lacks (CJK, symbols); Lato is preferred for everything it covers.
 func New(dark bool) *Theme {
 	t := Bare(dark)
-	t.Shaper = NewShaper()
+	t.SetShaper(NewShaper())
 	return t
 }
 
@@ -124,6 +130,48 @@ func Over(fg, bg color.NRGBA) color.NRGBA {
 	return color.NRGBA{R: l(fg.R, bg.R), G: l(fg.G, bg.G), B: l(fg.B, bg.B), A: 0xff}
 }
 
+// OnBg pre-mixes a translucent Slack color over the primary background
+// (what CSS rgba() over white/#1a1d21 looks like in Chrome).
+func (t *Theme) OnBg(c color.NRGBA) color.NRGBA { return Over(c, t.C.Bg) }
+
+// OnHover pre-mixes c over the message-hover background.
+func (t *Theme) OnHover(c color.NRGBA) color.NRGBA { return Over(c, t.C.BgHover) }
+
+// OnRaised pre-mixes c over menus/popovers.
+func (t *Theme) OnRaised(c color.NRGBA) color.NRGBA { return Over(c, t.C.BgRaised) }
+
+// LinearAlpha adjusts c's alpha so that Gio's linear-light blend of c over
+// bg lands on the color a browser's sRGB blend produces (translucent colors
+// that must stay translucent: scrims, selection, shadows). From ui-popups.
+func LinearAlpha(c, bg color.NRGBA) color.NRGBA {
+	if c.A == 0 || c.A == 255 {
+		return c
+	}
+	a := float64(c.A) / 255
+	best, bestD := a, 0.0
+	for _, ch := range [][2]uint8{{c.R, bg.R}, {c.G, bg.G}, {c.B, bg.B}} {
+		lc, lb := srgbLin(ch[0]), srgbLin(ch[1])
+		d := math.Abs(lc - lb)
+		if d < 1e-3 || d <= bestD {
+			continue
+		}
+		want := float64(ch[0])*a + float64(ch[1])*(1-a)
+		lw := srgbLin(uint8(math.Round(want)))
+		best, bestD = (lw-lb)/(lc-lb), d
+	}
+	best = math.Max(0, math.Min(1, best))
+	c.A = uint8(math.Round(best * 255))
+	return c
+}
+
+func srgbLin(v uint8) float64 {
+	c := float64(v) / 255
+	if c <= 0.04045 {
+		return c / 12.92
+	}
+	return math.Pow((c+0.055)/1.055, 2.4)
+}
+
 // Flatten pre-composites the panel-content colors that Slack defines as
 // translucent over the primary background (borders, code, reactions, …).
 // Chrome/sidebar colors stay translucent; the shell composites those itself.
@@ -135,6 +183,10 @@ func Flatten(p Palette) Palette {
 			*c = Over(*c, p.Bg)
 		}
 	}
+	// still translucent, alpha corrected for linear blending
+	p.Overlay = LinearAlpha(p.Overlay, p.Bg)
+	p.Selection = LinearAlpha(p.Selection, p.Bg)
+	p.PanelShadow = LinearAlpha(p.PanelShadow, p.Bg)
 	return p
 }
 
@@ -171,8 +223,7 @@ func (t *Theme) Layout(gtx layout.Context, s TextStyle, txt string) layout.Dimen
 	if s.Italic {
 		f.Style = font.Italic
 	}
-	l := widget.Label{MaxLines: s.MaxLines, Alignment: s.Align, LineHeight: s.LineHeight, WrapPolicy: s.Wrap}
-	return l.Layout(gtx, t.Shaper, f, s.Size, txt, Material(gtx, s.Color))
+	return t.Text(gtx, LabelOpts{Font: f, Size: s.Size, LineHeight: s.LineHeight, MaxLines: s.MaxLines, Align: s.Align, Wrap: s.Wrap, Color: s.Color}, txt)
 }
 
 // Label draws single-line text (ellipsized when it overflows).
