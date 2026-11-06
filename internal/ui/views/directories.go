@@ -27,6 +27,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -207,6 +208,7 @@ type Directories struct {
 	confNo  widget.Clickable
 	menuID  string // channel whose Join/Leave caret menu is open
 	rowMenu dirDropdown
+	purp    map[string]string // plainPurpose cache
 
 	groups    async[[]core.Usergroup]
 	groupsQ   string
@@ -445,7 +447,7 @@ func (d *Directories) pollOps() {
 			if !o.join {
 				verb = "leave"
 			}
-			d.h.Toast("Couldn’t " + verb + " #" + o.name + ": " + friendlyErr(err))
+			d.h.Toast("Couldn’t " + verb + " #" + o.name + ": " + dirErr(err))
 		}
 	}
 	for i := len(keep); i < len(d.ops); i++ {
@@ -1001,7 +1003,8 @@ func (d *Directories) chanRow(gtx C, ch core.ChannelHit, first, last bool) D {
 	}
 	pend := d.pendingOp(ch.ID)
 	hover := rc.Hovered() || jb.Hovered() || cb.Hovered()
-	showBtn := (hover || menuOpen || pend != nil) && !ch.IsArchived
+	req := ch.IsMember && d.required(ch.ID)
+	showBtn := (hover || menuOpen || pend != nil) && !ch.IsArchived && !req
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 
 	m := op.Record(gtx.Ops)
@@ -1010,7 +1013,7 @@ func (d *Directories) chanRow(gtx C, ch core.ChannelHit, first, last bool) D {
 			layout.Flexed(1, func(gtx C) D {
 				return dirFill(gtx, func(gtx C) D {
 					return col(gtx,
-						layout.Rigid(func(gtx C) D { return d.chanName(gtx, ch, hover) }),
+						layout.Rigid(func(gtx C) D { return d.chanName(gtx, ch, hover, req) }),
 						vgap(4),
 						layout.Rigid(func(gtx C) D {
 							if confirming {
@@ -1090,7 +1093,7 @@ func (d *Directories) rowMenuUpdate(gtx C, ch core.ChannelHit) {
 	}
 }
 
-func (d *Directories) chanName(gtx C, ch core.ChannelHit, hover bool) D {
+func (d *Directories) chanName(gtx C, ch core.ChannelHit, hover, req bool) D {
 	ic := "hash"
 	if ch.Kind == "private" {
 		ic = "lock"
@@ -1104,6 +1107,12 @@ func (d *Directories) chanName(gtx C, ch core.ChannelHit, hover bool) D {
 				return D{}
 			}
 			return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return d.label(gtx, 13, wReg, d.p.Muted, "View channel") })
+		}),
+		layout.Rigid(func(gtx C) D {
+			if !req {
+				return D{}
+			}
+			return layout.Inset{Left: 24}.Layout(gtx, func(gtx C) D { return d.label(gtx, 13, wReg, d.p.Muted, "Required") })
 		}),
 	)
 }
@@ -1120,18 +1129,70 @@ func (d *Directories) chanMeta(gtx C, ch core.ChannelHit) D {
 		parts = append(parts, layout.Rigid(func(gtx C) D { return d.label(gtx, 13, wReg, d.p.Sec, "Archived") }), sep())
 	case ch.IsMember:
 		parts = append(parts,
-			layout.Rigid(func(gtx C) D { return d.icon(gtx, "check", 13, d.p.Green) }),
+			layout.Rigid(func(gtx C) D { return d.icon(gtx, "check", 13, d.joinedColor()) }),
 			hgap(2),
-			layout.Rigid(func(gtx C) D { return d.label(gtx, 13, wBold, d.p.Green, "Joined") }),
+			layout.Rigid(func(gtx C) D { return d.label(gtx, 13, wBold, d.joinedColor(), "Joined") }),
 			sep())
 	}
 	parts = append(parts, layout.Rigid(func(gtx C) D { return d.label(gtx, 13, wReg, d.p.Sec, dirMembers(ch.NumMembers)) }))
-	if p := oneLine(ch.Purpose); p != "" {
+	if p := d.plainPurpose(ch.Purpose); p != "" {
 		parts = append(parts, sep(), layout.Flexed(1, func(gtx C) D {
 			return dirFill(gtx, func(gtx C) D { return d.label(gtx, 13, wReg, d.p.Sec, p) })
 		}))
 	}
 	return row(gtx, layout.Middle, parts...)
+}
+
+// joinedColor is the "✓ Joined" green (#007a5a; the brighter presence
+// green in dark mode, where #007a5a is unreadable on the dark surface).
+func (d *Directories) joinedColor() color.NRGBA {
+	if d.th.Dark {
+		return d.p.Presence
+	}
+	return d.p.Green
+}
+
+// plainPurpose renders a purpose's mrkdwn (<#C…>, <@U…>, <url|label>) to
+// one plain line, cached by the raw text.
+func (d *Directories) plainPurpose(raw string) string {
+	if !strings.ContainsAny(raw, "<&*_~`") {
+		return oneLine(raw)
+	}
+	if v, ok := d.purp[raw]; ok {
+		return v
+	}
+	if d.purp == nil || len(d.purp) > 2000 {
+		d.purp = map[string]string{}
+	}
+	v := oneLine(richtext.PlainText(richtext.Doc{Blocks: d.h.Core().Mrkdwn(raw)}))
+	if v == "" {
+		v = oneLine(raw)
+	}
+	d.purp[raw] = v
+	return v
+}
+
+// required reports whether a channel can't be left (the default
+// #announcements-style channel); Slack shows "Required" and no button.
+func (d *Directories) required(id string) bool {
+	c, ok := d.h.Core().Conv(id)
+	return ok && c.IsGeneral
+}
+
+// dirErr is a short reason for a failed Join/Leave.
+func dirErr(err error) string {
+	s := err.Error()
+	switch {
+	case strings.Contains(s, "cant_leave_general"):
+		return "it’s the default channel, so everyone stays in it"
+	case strings.Contains(s, "is_archived"):
+		return "the channel is archived"
+	case strings.Contains(s, "restricted_action"), strings.Contains(s, "not_allowed"):
+		return "an admin restricted this"
+	case strings.Contains(s, "channel_not_found"), strings.Contains(s, "method_not_supported_for_channel_type"):
+		return "the channel isn’t available"
+	}
+	return friendlyErr(err)
 }
 
 // dirSplitBtn is the outline medium split button: an 80x36 label part

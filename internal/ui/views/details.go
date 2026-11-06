@@ -446,7 +446,7 @@ func (d *ChannelDetails) update(gtx C) {
 				d.h.Toast("Couldn’t hide this conversation: " + friendlyErr(err))
 			case err != nil:
 				d.confirmLeave = false
-				d.h.Toast("Couldn’t leave #" + name + ": " + friendlyErr(err))
+				d.h.Toast("Couldn’t leave #" + name + ": " + dirErr(err))
 			case dm:
 				d.h.Toast("Conversation hidden")
 				d.closed = true
@@ -470,7 +470,7 @@ func (d *ChannelDetails) update(gtx C) {
 		if _, done, err := d.joinOp.get(); done {
 			d.joinPending = false
 			if err != nil {
-				d.h.Toast("Couldn’t join #" + name + ": " + friendlyErr(err))
+				d.h.Toast("Couldn’t join #" + name + ": " + dirErr(err))
 			} else {
 				d.info.mutate(func(v *core.ChannelDetails) { v.IsMember = true; v.Conv.NumMembers++ })
 				d.h.Toast("You joined #" + name)
@@ -873,7 +873,7 @@ func (d *ChannelDetails) aboutItems(inf core.ChannelDetails) []W {
 		if cv.Creator != "" || cv.Created != 0 {
 			rows = append(rows, func(gtx C) D { return d.createdField(gtx, cv) })
 		}
-		if !cv.IsArchived {
+		if !cv.IsArchived && !(cv.IsGeneral && inf.IsMember) {
 			rows = append(rows, func(gtx C) D { return d.leaveField(gtx, inf) })
 		}
 		items = []W{cdGap(16), d.cdCard(rows...), cdGap(16), d.cdCard(d.emailsField)}
