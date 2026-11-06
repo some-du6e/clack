@@ -169,10 +169,19 @@ type Activity struct {
 	// before.
 	hideRead map[string]bool
 	notes    actNotes
-	vis      []int // indices into the page after client-side filters
-	visN     int
-	dirty    bool
-	w        watcher
+	patchOn  bool
+
+	// undo is the "cleared" snackbar after Clear, with its Undo link.
+	undo struct {
+		item  core.ActivityItem
+		key   string
+		until time.Time
+		btn   widget.Clickable
+	}
+	vis   []int // indices into the page after client-side filters
+	visN  int
+	dirty bool
+	w     watcher
 
 	mode         actLoad
 	wasBusy      bool
@@ -209,17 +218,65 @@ func NewActivity(h Host) *Activity {
 }
 
 func actMatch(ev core.Event) bool {
-	return ev.Type == "message" && (ev.Mention || ev.Reply) || ev.Type == "counts"
+	return ev.Type == "message" && (ev.Mention || ev.Reply) || ev.Type == "counts" || ev.Type == "activity"
+}
+
+// watchItems collects realtime "activity" events that carry an item, so
+// Layout can patch the loaded row (read state from another client, or the
+// echo of our own write) without waiting for the throttled reload.
+func (v *Activity) watchItems() {
+	if v.patchOn {
+		return
+	}
+	v.patchOn = true
+	ch, _ := v.h.Core().Subscribe()
+	go func() {
+		for ev := range ch {
+			if ev.Type != "activity" || ev.Activity == nil {
+				continue
+			}
+			v.notes.mu.Lock()
+			v.notes.items = append(v.notes.items, *ev.Activity)
+			v.notes.mu.Unlock()
+			v.h.Invalidate()
+		}
+	}()
+}
+
+// applyPatches updates loaded rows from realtime activity items: the
+// server's read state replaces any local override for that row.
+func (v *Activity) applyPatches() {
+	v.notes.mu.Lock()
+	items := v.notes.items
+	v.notes.items = nil
+	v.notes.mu.Unlock()
+	if len(items) == 0 {
+		return
+	}
+	v.data.mutate(func(p *core.ActivityPage) {
+		for _, in := range items {
+			key := actKey(&in)
+			for i := range p.Items {
+				if actKey(&p.Items[i]) == key {
+					p.Items[i].Unread = in.Unread
+					delete(v.override, key)
+				}
+			}
+		}
+	})
+	v.dirty = true
 }
 
 // Layout draws the view.
 func (v *Activity) Layout(gtx C) D {
 	v.frame()
 	v.w.watch(v.h, actMatch)
+	v.watchItems()
 	if !v.data.started() {
 		v.load(actFresh)
 	}
 	v.notes.drain(v.h)
+	v.applyPatches()
 	v.update(gtx)
 	v.settle()
 
@@ -229,6 +286,7 @@ func (v *Activity) Layout(gtx C) D {
 		layout.Rigid(v.head),
 		layout.Flexed(1, v.main),
 	)
+	v.undoBar(gtx)
 	v.menus(gtx)
 	return D{Size: size}
 }
@@ -268,12 +326,7 @@ func (v *Activity) update(gtx C) {
 		v.allSel = !v.allSel
 	}
 	if v.markAll.Clicked(gtx) {
-		page, _, _ := v.data.get()
-		for _, i := range v.vis {
-			if i < len(page.Items) {
-				v.markRead(&page.Items[i], actKey(&page.Items[i]))
-			}
-		}
+		v.markAllRead()
 		v.allSel = false
 	}
 	if v.filterBtn.Clicked(gtx) {
@@ -296,7 +349,12 @@ func (v *Activity) update(gtx C) {
 		}
 	}
 	if v.extraC[1].Clicked(gtx) {
-		v.showCleared, v.dirty = !v.showCleared, true
+		// "Cleared items" shows the archive (activity.feed archive_only).
+		v.showCleared, reload = !v.showCleared, true
+	}
+	if v.undo.btn.Clicked(gtx) && !v.undo.until.IsZero() {
+		v.unclear(&v.undo.item, v.undo.key)
+		v.undo.until = time.Time{}
 	}
 	v.extraC[0].Clicked(gtx)
 	v.extraC[2].Clicked(gtx)
@@ -473,7 +531,7 @@ func (v *Activity) settle() {
 func (v *Activity) load(mode actLoad) {
 	c := v.h.Core()
 	types, none := v.types()
-	opts := core.ActivityOpts{View: "all", Types: types, Unread: v.unread.Value, Limit: actLimit}
+	opts := core.ActivityOpts{View: "all", Types: types, Unread: v.unread.Value, Archived: v.showCleared, Limit: actLimit}
 	old, _, _ := v.data.get()
 	if mode == actMore {
 		opts.Cursor = old.Next
@@ -805,7 +863,9 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 		if !r.built {
 			r.d, r.built = v.describe(it, page.Convs), true
 		}
-		if v.cleared[key] && !v.showCleared {
+		// cleared: true = cleared here (hide from the inbox), false =
+		// restored here (hide from the archive).
+		if c, ok := v.cleared[key]; ok && c != v.showCleared {
 			continue
 		}
 		if v.unread.Value && v.hideRead[key] {
@@ -1173,17 +1233,16 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 		if unread {
 			v.markRead(it, key)
 		} else {
-			// Mark as unread stays local: core has no activity mark-unread yet.
-			v.override[key] = false
-			v.dirty = true
+			v.markUnread(it, key)
 		}
 		unread = !unread
 	}
 	if r.clear.Clicked(gtx) {
-		// Clear also marks the item read, like Slack. Clearing itself stays
-		// local: core has no activity clear yet.
-		v.cleared[key] = !v.cleared[key]
-		v.markRead(it, key)
+		if v.showCleared {
+			v.unclear(it, key) // the archive's X restores the item
+		} else {
+			v.clear(it, key)
+		}
 	}
 	if r.more.Clicked(gtx) && it.Msg != nil {
 		v.h.OpenMessageMenu(image.Point{}, *it.Msg)
@@ -1242,51 +1301,190 @@ func (v *Activity) choose(it *core.ActivityItem, key string, r *actRow) {
 	v.dirty = true
 }
 
-// markRead marks an item read: locally right away, and in Slack through
-// the read cursor it belongs to. Thread items (and mentions in replies)
-// move the thread's cursor (subscriptions.thread.mark); channel and DM
-// messages move the conversation's cursor (conversations.mark), only
-// forward so later unread messages stay unread. Reactions and invitations
-// have no cursor: core has no activity mark-read yet, so they stay local.
+// markRead marks an item read: locally right away, then in Slack
+// (activity.markRead). A failed write puts the row back.
 func (v *Activity) markRead(it *core.ActivityItem, key string) {
-	was := v.isUnread(it, key)
-	v.override[key] = true
+	if !v.isUnread(it, key) {
+		return
+	}
+	v.setRead(key, true, *it, "Couldn’t mark as read: ", func(ctx context.Context, c *core.App, item core.ActivityItem) error {
+		return c.MarkActivityRead(ctx, item)
+	})
+}
+
+// markUnread is the hover bar's "Mark as unread" (activity.markUnread).
+func (v *Activity) markUnread(it *core.ActivityItem, key string) {
+	v.setRead(key, false, *it, "Couldn’t mark as unread: ", func(ctx context.Context, c *core.App, item core.ActivityItem) error {
+		return c.MarkActivityUnread(ctx, item)
+	})
+}
+
+func (v *Activity) setRead(key string, read bool, item core.ActivityItem, fail string, write func(context.Context, *core.App, core.ActivityItem) error) {
+	prev, had := v.override[key]
+	v.override[key] = read
 	v.dirty = true
-	if !was || it.Channel == "" || it.TS == "" {
+	v.write(fail, func(ctx context.Context, c *core.App) error { return write(ctx, c, item) }, func() {
+		if had {
+			v.override[key] = prev
+		} else {
+			delete(v.override, key)
+		}
+		v.dirty = true
+	})
+}
+
+// markAllRead is select-all's "Mark as read": the whole inbox at once
+// (activity.markAllRead) when nothing narrows it, else the unread rows
+// shown.
+func (v *Activity) markAllRead() {
+	page, _, _ := v.data.get()
+	var items []core.ActivityItem
+	var keys []string
+	for _, i := range v.vis {
+		if i >= len(page.Items) {
+			continue
+		}
+		it := &page.Items[i]
+		if k := actKey(it); v.isUnread(it, k) {
+			items, keys = append(items, *it), append(keys, k)
+		}
+	}
+	if len(items) == 0 {
 		return
 	}
-	switch it.Type {
-	case "message_reaction", "internal_channel_invite", "external_channel_invite":
-		return
+	prev := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		if r, ok := v.override[k]; ok {
+			prev[k] = r
+		}
+		v.override[k] = true
 	}
-	c, ch, ts := v.h.Core(), it.Channel, it.TS
-	if th := actThread(it); th != "" {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-			defer cancel()
-			if err := c.MarkThread(ctx, ch, th, ts); err != nil {
-				v.notes.add(v.h, "Couldn’t mark the thread as read: "+friendlyErr(err))
+	v.dirty = true
+	all := !v.filtered() && !v.showCleared
+	v.write("Couldn’t mark as read: ", func(ctx context.Context, c *core.App) error {
+		if all {
+			return c.MarkAllActivityRead(ctx, "all")
+		}
+		return c.MarkActivityRead(ctx, items...)
+	}, func() {
+		for _, k := range keys {
+			if r, ok := prev[k]; ok {
+				v.override[k] = r
+			} else {
+				delete(v.override, k)
 			}
-		}()
-		return
+		}
+		v.dirty = true
+	})
+}
+
+// clear archives an item (activity.archive): it leaves the inbox at once
+// and a snackbar offers Undo, like Slack.
+func (v *Activity) clear(it *core.ActivityItem, key string) {
+	v.cleared[key] = true
+	if v.selOK && v.selKey == key {
+		v.selOK = false
 	}
-	if !actTSLess(c.Count(ch).LastRead, ts) {
-		return
-	}
+	v.dirty = true
+	item := *it
+	v.undo.item, v.undo.key, v.undo.until = item, key, time.Now().Add(6*time.Second)
+	v.write("Couldn’t clear the item: ", func(ctx context.Context, c *core.App) error {
+		return c.ClearActivity(ctx, item)
+	}, func() {
+		delete(v.cleared, key)
+		v.undo.until = time.Time{}
+		v.dirty = true
+	})
+}
+
+// unclear restores a cleared item (activity.unarchive).
+func (v *Activity) unclear(it *core.ActivityItem, key string) {
+	prev, had := v.cleared[key]
+	v.cleared[key] = false
+	v.dirty = true
+	item := *it
+	v.write("Couldn’t restore the item: ", func(ctx context.Context, c *core.App) error {
+		return c.UnclearActivity(ctx, item)
+	}, func() {
+		if had {
+			v.cleared[key] = prev
+		} else {
+			delete(v.cleared, key)
+		}
+		v.dirty = true
+	})
+}
+
+// write runs a core activity write off the UI goroutine; on failure it
+// toasts and runs revert on the UI goroutine.
+func (v *Activity) write(fail string, f func(context.Context, *core.App) error, revert func()) {
+	c := v.h.Core()
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		if _, err := c.Mark(ctx, ch, ts); err != nil {
-			v.notes.add(v.h, "Couldn’t mark as read: "+friendlyErr(err))
+		if err := f(ctx, c); err != nil {
+			v.notes.mu.Lock()
+			v.notes.msgs = append(v.notes.msgs, fail+friendlyErr(err))
+			v.notes.fns = append(v.notes.fns, revert)
+			v.notes.mu.Unlock()
+			v.h.Invalidate()
 		}
 	}()
+}
+
+// undoBar is the snackbar after Clear: a dark pill at the bottom center
+// of the list with "Item cleared" and an Undo link, for six seconds.
+func (v *Activity) undoBar(gtx C) {
+	if v.undo.until.IsZero() {
+		return
+	}
+	left := v.undo.until.Sub(gtx.Now)
+	if left <= 0 {
+		v.undo.until = time.Time{}
+		return
+	}
+	gtx.Execute(op.InvalidateCmd{At: v.undo.until})
+	size := gtx.Constraints.Max
+	listW := size.X
+	if v.selOK {
+		listW = size.X / 2
+	}
+	bg, fg, link := rgb(0x1d1c1d), rgb(0xffffff), rgb(0x1d9bd1)
+	if v.th.Dark {
+		bg, fg = rgb(0xe8e8e8), rgb(0x1d1c1d)
+		link = rgb(0x1264a3)
+	}
+	m := op.Record(gtx.Ops)
+	g := gtx
+	g.Constraints.Min = image.Point{}
+	d := layout.Inset{Top: 10, Bottom: 10, Left: 16, Right: 16}.Layout(g, func(gtx C) D {
+		return row(gtx, layout.Middle,
+			layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wReg, fg, "Item cleared") }),
+			hgap(16),
+			layout.Rigid(func(gtx C) D {
+				return v.undo.btn.Layout(gtx, func(gtx C) D {
+					pointerCursor(gtx)
+					return v.label(gtx, 15, wBold, link, "Undo")
+				})
+			}),
+		)
+	})
+	call := m.Stop()
+	at := image.Pt(max(0, (listW-d.Size.X)/2), size.Y-d.Size.Y-gtx.Dp(24))
+	defer op.Offset(at).Push(gtx.Ops).Pop()
+	r := image.Rectangle{Max: d.Size}
+	theme.Shadow(gtx, r, gtx.Dp(8), gtx.Dp(6), argb(0x29000000))
+	rrect(gtx, r, gtx.Dp(8), bg)
+	call.Add(gtx.Ops)
 }
 
 // actNotes queues toasts from background goroutines; Layout shows them on
 // the UI goroutine (Host.Toast isn't goroutine-safe).
 type actNotes struct {
-	mu   sync.Mutex
-	msgs []string
+	mu    sync.Mutex
+	msgs  []string
+	fns   []func()            // reverts of failed writes (Activity)
+	items []core.ActivityItem // realtime activity items (Activity)
 }
 
 func (n *actNotes) add(h Host, s string) {
@@ -1298,9 +1496,12 @@ func (n *actNotes) add(h Host, s string) {
 
 func (n *actNotes) drain(h Host) {
 	n.mu.Lock()
-	msgs := n.msgs
-	n.msgs = nil
+	msgs, fns := n.msgs, n.fns
+	n.msgs, n.fns = nil, nil
 	n.mu.Unlock()
+	for _, f := range fns {
+		f()
+	}
 	for _, s := range msgs {
 		h.Toast(s)
 	}
