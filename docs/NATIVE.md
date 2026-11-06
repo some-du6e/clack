@@ -22,19 +22,21 @@ type Style uint16
 const (Bold Style = 1 << iota; Italic; Strike; Code; Underline; Highlight)
 
 type SpanKind uint8
-const (Text SpanKind = iota; Link; User; Channel; Usergroup; Broadcast /* @here @channel @everyone */; Emoji; Date; Break /* hard line break */)
+const (Text SpanKind = iota; Link; User; Channel; Usergroup; Broadcast /* @here @channel @everyone */; Emoji; Date; Break /* hard line break */;
+	ColorSwatch /* rich_text color: Text is "#RRGGBB", draw a swatch */; InlineImage /* context-block image: URL, Text=alt */)
 
 type Span struct {
 	Kind  SpanKind
-	Text  string // display text, already unescaped and resolved ("@karim", "#general", "here", formatted date)
+	Text  string // display text, already unescaped and resolved ("@karim", "#general", "@here", formatted date); never contains "\n" (lines are split by Break spans)
 	Style Style
 	URL   string // Link: target. Emoji: image URL (custom or Slack CDN standard).
-	ID    string // User/Channel/Usergroup id; Emoji: name (with ::skin-tone-N)
+	ID    string // User/Channel/Usergroup id; Emoji: name (with ::skin-tone-N); Broadcast: here|channel|everyone; Date: unix seconds
 	Self  bool   // User mention of the viewer, or a broadcast (yellow highlight)
 }
 
 type BlockKind uint8
-const (Paragraph BlockKind = iota; Preformatted; Quote; List; Header; Divider; Context; Section; Image; Actions; Attachment; File; Tombstone)
+// ImageBlock/AttachmentBlock/FileBlock: Go can't have a const and a type both named Image/Attachment/File.
+const (Paragraph BlockKind = iota; Preformatted; Quote; List; Header; Divider; Context; Section; ImageBlock; Actions; AttachmentBlock; FileBlock; Tombstone)
 
 type Block struct {
 	Kind     BlockKind
@@ -47,15 +49,22 @@ type Block struct {
 	Buttons  []Button // Actions block / section button accessory
 	Att      *Attachment
 	File     *File
-	Children []Block  // nested blocks (e.g. attachment body)
+	Children []Block  // nested blocks: attachment files; Section text with quotes/pre (then Spans is nil)
 }
+// Preformatted spans carry no Code style (the block itself is monospace). Emoji with URL=="" (unknown to the Resolver
+// but with rich_text unicode) render as text. Tombstone: deleted message/file, Spans hold the notice.
 type Image struct { URL string; Alt string; W, H int; Title string; Proxy bool /* needs the session cookie (files.slack.com) */ }
-type Button struct { Text string; URL string; Style string /* primary|danger|"" */; ActionID, Value, BlockID string }
+type Button struct { Text string; URL string; Style string /* primary|danger|"" */; ActionID, Value, BlockID string
+	Kind string /* button|overflow|select|datepicker|timepicker|datetimepicker|input|checkboxes|radio_buttons */ }
 type Attachment struct {
 	Color string; Pretext []Span; ServiceName, ServiceIcon string; AuthorName, AuthorIcon, AuthorLink string
 	Title []Span; TitleLink string; Text []Block; Footer []Span; FooterIcon string; TS int64
-	Image *Image; Thumb *Image; IsUnfurl bool; IsShare bool; ShareChannel string; FromURL string
+	Image *Image; Thumb *Image; IsUnfurl bool; IsShare bool; ShareChannel string /* name, no "#" */; FromURL string
+	AuthorSubname string; ShareChannelID string; VideoURL string /* video block */
 }
+// Attachment blocks carry fields in Block.Fields/FieldShort (bold title, Break, value), legacy action buttons in
+// Block.Buttons, and attachment files in Block.Children. Video blocks, call blocks and huddle_thread messages are
+// also AttachmentBlocks (ServiceName "Call"/"Huddle"; huddle participants are User spans in Footer).
 type File struct {
 	ID, Name, Title, Mime, Type, PrettyType string; Size int64; URL, Download, Permalink string
 	Thumb *Image /* best thumb for images/videos/pdfs */; IsImage, IsVideo, IsAudio, IsSnippet bool; Preview string; Lines int; DurationMS int
@@ -69,6 +78,8 @@ type Resolver interface {
 func FromMessage(r Resolver, m *slack.Message) Doc   // blocks if rich, else mrkdwn text; plus files and attachments
 func FromMrkdwn(r Resolver, text string) []Block
 func PlainText(d Doc) string                         // for copy, previews, notifications
+// helpers: SpansText([]Span) string; FormatDate(t, "{date_short} at {time}") string (re-render Date spans: ID is unix secs);
+//          SafeURL(u) string; SafeImage(u) string; NeedsProxy(u) bool (files.slack.com etc: fetch via core.Fetch)
 ```
 
 ## `internal/core` contract
