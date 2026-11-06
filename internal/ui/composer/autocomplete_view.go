@@ -111,6 +111,7 @@ func (ac *Autocomplete) Layout(gtx layout.Context, maxWidth int) layout.Dimensio
 	if !ac.Open() {
 		return layout.Dimensions{}
 	}
+	acApplyTheme(ac.h != nil && ac.h.Theme() != nil && ac.h.Theme().Dark)
 	v := &ac.view
 	ac.pointerEvents(gtx)
 	if !ac.Open() { // a click accepted a row
@@ -859,4 +860,26 @@ func drawReturnGlyph(gtx layout.Context, w, h int, col color.NRGBA) {
 		p.LineTo(f32.Pt(fw*0.12, fh*0.62))
 		p.LineTo(f32.Pt(fw*0.38, fh*0.88))
 	}, sw, col)
+}
+
+// acLight is the measured light palette; acApplyTheme swaps the package
+// colors for dark mode (Slack's dark popover tones) and back.
+var acLight = [...]color.NRGBA{acBg, acRing, acPseudoBg, acText, acContext, acHelpText, acHelpBg, acCmdDesc, acPlaceBg, acAway, acChipBg, acChipLine, acTrack, acThumb, acArrow}
+
+var acDarkOn bool
+
+func acApplyTheme(dark bool) {
+	if dark == acDarkOn {
+		return
+	}
+	acDarkOn = dark
+	p := acLight
+	if dark {
+		p = [...]color.NRGBA{
+			rgb(0x222529), argb(0x21e8e8e8), argb(0x0fe8e8e8), rgb(0xd1d2d3), rgb(0xababad), rgb(0xababad),
+			argb(0x0ae8e8e8), argb(0xb3d1d2d3), rgb(0x313338), rgb(0xababad), rgb(0x313338), argb(0x21e8e8e8),
+			rgb(0x2c2d30), rgb(0x5d5e61), rgb(0xababad),
+		}
+	}
+	acBg, acRing, acPseudoBg, acText, acContext, acHelpText, acHelpBg, acCmdDesc, acPlaceBg, acAway, acChipBg, acChipLine, acTrack, acThumb, acArrow = p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10], p[11], p[12], p[13], p[14]
 }
