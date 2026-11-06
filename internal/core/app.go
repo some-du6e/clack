@@ -271,7 +271,8 @@ func (a *App) Boot(ctx context.Context) error {
 	go a.RTM.Run(context.Background())
 	go a.pump()
 	go a.prefetch(context.Background())
-	go a.loadExtras(context.Background()) // starred + saved sets
+	go a.loadExtras(context.Background())  // starred + saved sets
+	go a.resolveLoop(context.Background()) // unresolved channel/user/bot names
 	go func() {
 		t := time.NewTicker(5 * time.Minute)
 		defer t.Stop()
@@ -605,11 +606,14 @@ func (a *App) conv(c *slack.Conversation) Conv {
 	return v
 }
 
-// Conv returns a sidebar conversation.
+// Conv returns a known conversation: the sidebar's, or one resolved
+// earlier with ResolveConv (closed DMs etc.). See Snapshot for the sidebar.
 func (a *App) Conv(id string) (Conv, bool) {
 	c, ok := a.S.Conv(id)
 	if !ok {
-		return Conv{}, false
+		if c, ok = a.S.ExtConv(id); !ok {
+			return Conv{}, false
+		}
 	}
 	return a.conv(c), true
 }
@@ -693,6 +697,18 @@ func (a *App) message(ch string, m *slack.Message) Message {
 			}
 		} else if i := firstNonEmpty(m.Icons.Image72, m.Icons.Image64, m.Icons.Image48, m.Icons.Image36); i != "" {
 			v.Avatar = i
+		}
+	}
+	if v.IsBot && m.BotID != "" && (v.Avatar == "" || v.Name == "") {
+		if b, ok := a.S.Bot(m.BotID); ok {
+			if v.Avatar == "" {
+				v.Avatar = b.Icon
+			}
+			if v.Name == "" {
+				v.Name = b.Name
+			}
+		} else {
+			a.S.NoteMissingBot(m.BotID) // resolved in the background (names event)
 		}
 	}
 	self := a.S.SelfID()
@@ -856,7 +872,9 @@ func (a *App) sections(convs []Conv) []Section {
 		switch c.Kind {
 		case "im", "mpim":
 			if a.isAppDM(c.ID) {
-				apps = append(apps, c.ID)
+				if !a.emptyDM(c.ID) { // Slack hides app DMs that never had a message (e.g. Slackbot)
+					apps = append(apps, c.ID)
+				}
 			} else {
 				out[dmIdx].Channels = append(out[dmIdx].Channels, c.ID)
 			}
@@ -864,9 +882,14 @@ func (a *App) sections(convs []Conv) []Section {
 			out[chIdx].Channels = append(out[chIdx].Channels, c.ID)
 		}
 	}
-	sort.SliceStable(out[chIdx].Channels, func(i, j int) bool {
-		return names[out[chIdx].Channels[i]] < names[out[chIdx].Channels[j]]
-	})
+	// Slack's default sort (verified against the web client): channels, DMs
+	// and apps alphabetically by display name.
+	byName := func(ids []string) {
+		sort.SliceStable(ids, func(i, j int) bool { return names[ids[i]] < names[ids[j]] })
+	}
+	byName(out[chIdx].Channels)
+	byName(out[dmIdx].Channels)
+	byName(apps)
 	if len(apps) > 0 {
 		out = append(out, Section{ID: "apps", Name: "Apps", Type: "apps", Channels: apps})
 	}
@@ -886,6 +909,15 @@ func (a *App) isAppDM(ch string) bool {
 	}
 	u, ok := a.S.User(c.User)
 	return ok && (u.IsBot || u.IsAppUser || u.Profile.BotID != "" || u.Profile.APIAppID != "")
+}
+
+// emptyDM reports whether a DM is known to have no messages at all.
+func (a *App) emptyDM(ch string) bool {
+	e, ok := a.S.Count(ch)
+	if !ok || e.HasUnreads {
+		return false
+	}
+	return e.Latest == "" || strings.Trim(e.Latest, "0.") == ""
 }
 
 // ---- presence ----

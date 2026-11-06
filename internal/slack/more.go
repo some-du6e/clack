@@ -329,11 +329,23 @@ func (c *Client) Prefs(ctx context.Context) (map[string]json.RawMessage, error) 
 
 // Command is a slash command from commands.list.
 type Command struct {
-	Name  string `json:"name"`
-	Desc  string `json:"desc"`
-	Usage string `json:"usage"`
-	Type  string `json:"type"`
-	AppID string `json:"app,omitempty"`
+	Name    string         `json:"name"`
+	Desc    string         `json:"desc"`
+	Usage   string         `json:"usage"`
+	Type    string         `json:"type"`
+	AppID   string         `json:"app,omitempty"`
+	AppName string         `json:"app_name,omitempty"`
+	Icons   map[string]any `json:"icons,omitempty"` // image_32 … image_512 (+ non-string flags)
+}
+
+// IconURL picks the best icon for a ~20-36 px command row.
+func (c *Command) IconURL() string {
+	for _, k := range []string{"image_72", "image_48", "image_64", "image_36", "image_96", "image_128", "image_32", "image_192", "image_512"} {
+		if s, ok := c.Icons[k].(string); ok && s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 func (c *Client) Commands(ctx context.Context) ([]Command, error) {

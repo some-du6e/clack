@@ -7,8 +7,7 @@ package popups
 // falls back to a direct call through core's Slack client. The fallbacks
 // were verified read-only against Hack Club (2026-11): gif.search and
 // gif.featured (enterprise host), team.prefs.get custom_status_presets (team
-// host), users.prefs.get dnd_* working hours. Remove a fallback once its core
-// method exists.
+// host), users.prefs.get dnd_* working hours. Star/mute use core directly.
 
 import (
 	"context"
@@ -17,7 +16,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 )
@@ -31,7 +29,7 @@ func cxApp(h Host) (*core.App, error) {
 	return h.Core(), nil
 }
 
-// ---- star / mute ----
+// ---- star / mute (core.Star / core.Starred / core.Mute) ----
 
 // cxStar stars or unstars a conversation.
 func cxStar(ctx context.Context, h Host, ch string, star bool) error {
@@ -39,16 +37,7 @@ func cxStar(ctx context.Context, h Host, ch string, star bool) error {
 	if err != nil {
 		return err
 	}
-	if s, ok := any(a).(interface {
-		Star(context.Context, string, bool) error
-	}); ok {
-		return s.Star(ctx, ch, star)
-	}
-	m := "stars.remove"
-	if star {
-		m = "stars.add"
-	}
-	return a.C.Call(ctx, m, url.Values{"channel": {ch}}, nil)
+	return a.Star(ctx, ch, star)
 }
 
 // cxMute mutes or unmutes a conversation.
@@ -57,16 +46,7 @@ func cxMute(ctx context.Context, h Host, ch string, mute bool) error {
 	if err != nil {
 		return err
 	}
-	if s, ok := any(a).(interface {
-		Mute(context.Context, string, bool) error
-	}); ok {
-		return s.Mute(ctx, ch, mute)
-	}
-	// verified in the web client: per-channel notification prefs.
-	prefs, _ := json.Marshal([]map[string]string{{"name": "muted", "value": strconv.FormatBool(mute)}})
-	return a.C.Call(ctx, "users.prefs.setNotifications", url.Values{
-		"global": {"false"}, "channel_ids": {ch}, "prefs": {string(prefs)}, "sync": {"false"},
-	}, nil)
+	return a.Mute(ctx, ch, mute)
 }
 
 // cxMuted reports a conversation's muted state as core knows it.
@@ -81,62 +61,21 @@ func cxMuted(h Host, ch string) bool {
 	return false
 }
 
-// starred caches stars.list (team host; verified): channel ids the viewer
-// starred. Refreshed in the background when a channel menu opens.
-var (
-	starMu  sync.Mutex
-	starSet map[string]bool
-)
-
-// cxStarred reports whether ch is starred (from the last stars.list).
+// cxStarred reports whether ch is starred (core keeps the stars.list set).
 func cxStarred(h Host, ch string) bool {
 	a, err := cxApp(h)
-	if err == nil {
-		if s, ok := any(a).(interface{ Starred(string) bool }); ok {
-			return s.Starred(ch)
-		}
-	}
-	starMu.Lock()
-	defer starMu.Unlock()
-	return starSet[ch]
-}
-
-// cxRefreshStars reloads the starred set (call off the UI goroutine).
-func cxRefreshStars(ctx context.Context, h Host) error {
-	a, err := cxApp(h)
 	if err != nil {
-		return err
+		return false
 	}
-	var r struct {
-		Items []struct {
-			Type    string `json:"type"`
-			Channel string `json:"channel"`
-		} `json:"items"`
-	}
-	if err := a.C.Call(ctx, "stars.list", url.Values{"count": {"200"}}, &r); err != nil {
-		return err
-	}
-	set := make(map[string]bool, len(r.Items))
-	for _, it := range r.Items {
-		if it.Channel != "" && (it.Type == "channel" || it.Type == "group" || it.Type == "im") {
-			set[it.Channel] = true
-		}
-	}
-	starMu.Lock()
-	starSet = set
-	starMu.Unlock()
-	return nil
+	return a.Starred(ch)
 }
 
-// cxNoteStar records a successful star/unstar locally.
-func cxNoteStar(ch string, star bool) {
-	starMu.Lock()
-	if starSet == nil {
-		starSet = map[string]bool{}
-	}
-	starSet[ch] = star
-	starMu.Unlock()
-}
+// cxRefreshStars is a no-op kept for callers: core tracks stars itself
+// (stars.list at boot plus star_added / star_removed events).
+func cxRefreshStars(ctx context.Context, h Host) error { return nil }
+
+// cxNoteStar is a no-op: core updates its starred set on success.
+func cxNoteStar(ch string, star bool) {}
 
 // ---- custom emoji ----
 

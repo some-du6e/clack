@@ -231,6 +231,9 @@ func (a *App) Run() error {
 				a.timing("first GPU submit", tl)
 			}
 			a.frameStats.add(time.Since(t0), tl.Sub(t0))
+			if frameLog {
+				log.Printf("frame: layout %.2fms total %.1fms", float64(tl.Sub(t0).Microseconds())/1000, float64(time.Since(t0).Microseconds())/1000)
+			}
 			if !a.switchAt.IsZero() {
 				log.Printf("ui: switch to %s: %v to frame submitted (layout %v, gpu %v)", a.switchTo.Page(), time.Since(a.switchAt).Round(10*time.Microsecond), tl.Sub(t0).Round(10*time.Microsecond), time.Since(tl).Round(10*time.Microsecond))
 				a.switchAt = time.Time{}
@@ -242,6 +245,9 @@ func (a *App) Run() error {
 		}
 	}
 }
+
+// frameLog (YOLOSLACK_FRAMELOG=1) logs every frame's layout/total time.
+var frameLog = os.Getenv("YOLOSLACK_FRAMELOG") != ""
 
 // timing logs a startup/latency measurement when YOLOSLACK_TIMING is set
 // (always for the first frame).
