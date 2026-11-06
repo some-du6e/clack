@@ -327,6 +327,11 @@ func (v *View) record(st *Style) {
 			paint.ColorOp{Color: f.col}.Add(ops)
 			paint.PaintOp{}.Add(ops)
 			cs.Pop()
+			if st.Embolden > 0 {
+				// Browsers render Lato visibly heavier than Gio's linear
+				// coverage; a hairline stroke of the outline matches it.
+				paint.FillShape(ops, f.col, clip.Stroke{Path: path, Width: st.Embolden * v.laidPx}.Op())
+			}
 			if f.sh.color {
 				bm.Add(ops)
 			}

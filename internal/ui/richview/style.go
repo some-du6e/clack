@@ -121,6 +121,9 @@ type Style struct {
 
 	// Body text size and line height in Sp/Dp (Slack: 15/22).
 	TextSize, LineHeight float32
+	// Embolden strokes glyph outlines with this width (dp) to match the
+	// browser's heavier text rendering; 0 disables it.
+	Embolden float32
 
 	gen   uint32 // bumped by SetPalette; Views re-record when it changes
 	words map[wordKey]*shaped
@@ -133,7 +136,7 @@ func NewStyle(sh *text.Shaper, imgs Images, p Palette) *Style {
 		Shaper: sh, Images: imgs, Palette: p,
 		Face:     "Lato",
 		Mono:     "Roboto Mono, Monaco, Menlo, Consolas, \"Courier New\", monospace",
-		TextSize: 15, LineHeight: 22,
+		TextSize: 15, LineHeight: 22, Embolden: 0.3,
 		gen:   1,
 		words: make(map[wordKey]*shaped, 4096),
 		space: make(map[faceKey]spaceMetrics, 16),
