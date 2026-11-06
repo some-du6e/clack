@@ -740,7 +740,7 @@ func (d *Drafts) updateEdit(gtx C) {
 }
 
 // saveEdit writes the editor's document back to the draft (SaveDraft). A
-// scheduled draft keeps its send time.
+// scheduled message keeps its send time.
 func (d *Drafts) saveEdit() {
 	e := d.edit
 	dr := d.findDraft(e.id)
@@ -756,17 +756,27 @@ func (d *Drafts) saveEdit() {
 		Text: doc.Mrkdwn(), Blocks: doc.RichTextBlocks(), FileIDs: dr.FileIDs}
 	at := dr.DateScheduled
 	e.busy = true
+	if at > 0 && dr.Channel != "" {
+		// drafts.update on a scheduled draft without date_scheduled answers
+		// reattaching_not_allowed, so a scheduled message is replaced: the
+		// new text is scheduled for the same time, then the old one goes.
+		old := dr.ID
+		d.remove(old)
+		so := core.SendOpts{Channel: dr.Channel, ThreadTS: dr.ThreadTS, Broadcast: dr.Broadcast, Text: o.Text, Blocks: o.Blocks}
+		d.run(draftsDone{okMsg: "Scheduled message saved", errMsg: "Couldn’t save your scheduled message", unhide: []string{old}},
+			func(ctx context.Context, c *core.App) (*core.Draft, error) {
+				if _, err := c.ScheduleMessage(ctx, so, at); err != nil {
+					return nil, err
+				}
+				return nil, c.DeleteScheduled(ctx, so.Channel, old)
+			})
+		return
+	}
 	d.run(draftsDone{okMsg: "Draft saved", errMsg: "Couldn’t save your draft", closeEdit: dr.ID},
 		func(ctx context.Context, c *core.App) (*core.Draft, error) {
 			nd, err := c.SaveDraft(ctx, o)
 			if err != nil {
 				return nil, err
-			}
-			if at > time.Now().Unix() {
-				if _, err := c.RescheduleMessage(ctx, nd.ID, at); err != nil {
-					return nil, err
-				}
-				nd.DateScheduled = at
 			}
 			return &nd, nil
 		})
@@ -1586,7 +1596,7 @@ func (d *Drafts) draftCard(gtx C, dr *core.Draft, scheduled bool) D {
 			return layout.Inset{Left: draftsMargin, Right: draftsMargin}.Layout(gtx, func(gtx C) D {
 				gtx.Constraints.Min.X = gtx.Constraints.Max.X
 				t := when
-				if r.hovered {
+				if r.hovered || r.pin {
 					t = ""
 				}
 				m := op.Record(gtx.Ops)
