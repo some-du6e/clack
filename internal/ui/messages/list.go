@@ -3,12 +3,10 @@ package messages
 import (
 	"context"
 	"image"
-	"io"
 	"strings"
 	"time"
 
 	"gioui.org/f32"
-	"gioui.org/io/clipboard"
 	"gioui.org/io/event"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
@@ -18,6 +16,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
@@ -42,6 +41,7 @@ type item struct {
 	day    time.Time
 	header bool
 	key    string
+	group  []int // join/leave summary: indices into snap.msgs
 }
 
 // toolbar buttons, in the real 2026 order for this account.
@@ -107,6 +107,8 @@ type listState struct {
 	lastOlder   time.Time
 	highlight   string
 	highlightAt time.Time
+	sel         selection
+	sb          scrollbar
 	pendingJump string
 }
 
@@ -172,6 +174,7 @@ func (s *listState) sync(h Host, now time.Time) {
 		}
 	}
 	s.build(h, now)
+	s.rebuildKeyIdx()
 	s.built = s.snap.rev
 	s.dayKey = dk
 	if anchorTS != "" {
@@ -200,6 +203,11 @@ func (s *listState) sync(h Host, now time.Time) {
 		live[e.m.TS] = true
 		if r, ok := s.rows[e.m.TS]; ok && r.rev != e.rev {
 			r.set(e)
+		}
+	}
+	for _, it := range s.items {
+		if len(it.group) > 0 {
+			live[it.key] = true
 		}
 	}
 	for ts := range s.rows {
@@ -239,7 +247,7 @@ func (s *listState) build(h Host, now time.Time) {
 	var prev *core.Message
 	var prevT time.Time
 	unreadPlaced := false
-	for i := range msgs {
+	for i := 0; i < len(msgs); i++ {
 		m := &msgs[i].m
 		t := tsTime(m.TS)
 		header := prev == nil
@@ -265,6 +273,24 @@ func (s *listState) build(h Host, now time.Time) {
 		}
 		if !header && prev != nil && !groupable(prev, m, prevT, t) {
 			header = true
+		}
+		// Consecutive joins (or leaves) collapse into one summary row.
+		if jk := joinKind(m); jk != 0 && !s.thread {
+			k := i + 1
+			for k < len(msgs) && joinKind(&msgs[k].m) == jk && sameDay(tsTime(msgs[k].m.TS), t) &&
+				(s.openLastRead == "" || tsLess(s.openLastRead, m.TS) == tsLess(s.openLastRead, msgs[k].m.TS)) {
+				k++
+			}
+			if k-i >= 2 {
+				g := make([]int, 0, k-i)
+				for q := i; q < k; q++ {
+					g = append(g, q)
+				}
+				s.items = append(s.items, item{kind: itMsg, idx: k - 1, header: true, key: "g" + m.TS, group: g})
+				i = k - 1
+				prev, prevT = &msgs[i].m, tsTime(msgs[i].m.TS)
+				continue
+			}
 		}
 		s.items = append(s.items, item{kind: itMsg, idx: i, header: header, key: m.TS})
 		prev, prevT = m, t
@@ -302,7 +328,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	// view-level pointer tracking (ancestor of every row)
 	area := clip.Rect(image.Rectangle{Max: size}).Push(gtx.Ops)
 	for {
-		ev, ok := gtx.Event(pointer.Filter{Target: s, Kinds: pointer.Move | pointer.Drag | pointer.Enter | pointer.Leave | pointer.Cancel})
+		ev, ok := gtx.Event(pointer.Filter{Target: s, Kinds: pointer.Move | pointer.Drag | pointer.Press | pointer.Release | pointer.Enter | pointer.Leave | pointer.Cancel})
 		if !ok {
 			break
 		}
@@ -314,8 +340,10 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 				s.pointerIn = true
 				s.pointer = e.Position
 			}
+			s.selPointer(gtx, h, e, size)
 		}
 	}
+	s.selKeys(gtx, h)
 	event.Op(gtx.Ops, s)
 
 	if !s.snap.loaded && len(s.snap.msgs) == 0 {
@@ -394,6 +422,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	}
 
 	s.overlays(gtx, h, &rc, size)
+	s.layoutScrollbar(gtx, c, size, now)
 	area.Pop()
 
 	// infinite scroll up
@@ -506,11 +535,20 @@ func (s *listState) layoutItem(gtx layout.Context, h Host, rc *rowCtx, i int) la
 		return layout.Dimensions{Size: image.Pt(w, hh)}
 	}
 	e := &s.snap.msgs[it.idx]
-	r, ok := s.rows[e.m.TS]
+	if len(it.group) > 0 {
+		ge := s.groupEntry(h, it.group)
+		e = &ge
+	}
+	r, ok := s.rows[it.key]
 	if !ok {
 		r = newRow(e)
-		s.rows[e.m.TS] = r
+		s.rows[it.key] = r
+	} else if len(it.group) > 0 && r.rev != e.rev {
+		r.set(e)
 	}
+	r.rv.External = true
+	sa, sb := s.rowSelection(i, r)
+	r.rv.SetSelection(sa, sb)
 	rc.header = it.header
 	rc.hovered = i == s.hoverIdx && r.edit == nil
 	rc.winOrigin = s.origin.Add(image.Pt(0, s.pos[i]))
@@ -663,8 +701,7 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 	// hover toolbar
 	s.tbFor = -1
 	if s.hoverIdx >= 0 && s.hoverIdx < len(s.items) && s.items[s.hoverIdx].kind == itMsg {
-		e := &s.snap.msgs[s.items[s.hoverIdx].idx]
-		if r := s.rows[e.m.TS]; r != nil && !r.rv.HasSelection() {
+		if r := s.rows[s.items[s.hoverIdx].key]; r != nil && !s.sel.dragging && r.edit == nil && len(s.items[s.hoverIdx].group) == 0 {
 			s.toolbar(gtx, h, rc, r, s.hoverIdx, size)
 		}
 	}
@@ -969,4 +1006,75 @@ func (s *listState) discard(h Host, r *row) {
 	s.m.rev++
 	s.m.mu.Unlock()
 	h.Invalidate()
+}
+
+// joinKind classifies join/leave system messages for rollups (0 = other).
+func joinKind(m *core.Message) int {
+	switch m.Subtype {
+	case "channel_join", "group_join":
+		return 1
+	case "channel_leave", "group_leave":
+		return 2
+	}
+	return 0
+}
+
+// groupEntry builds the summary message for a run of joins or leaves:
+// "A and B have joined the channel", "A, B and N others have joined the
+// channel" (names are member links).
+func (s *listState) groupEntry(h Host, idx []int) entry {
+	msgs := s.snap.msgs
+	last := msgs[idx[len(idx)-1]]
+	var rev uint32 = uint32(len(idx))
+	seen := map[string]bool{}
+	var users []string
+	for _, i := range idx {
+		rev = rev*31 + msgs[i].rev
+		if u := msgs[i].m.User; u != "" && !seen[u] {
+			seen[u] = true
+			users = append(users, u)
+		}
+	}
+	name := func(id string) string {
+		if app := h.Core(); app != nil {
+			if u, ok := app.User(id); ok && u.Name != "" {
+				return u.Name
+			}
+		}
+		return id
+	}
+	var spans []richtext.Span
+	user := func(id string) {
+		spans = append(spans, richtext.Span{Kind: richtext.User, ID: id, Text: "@" + name(id)})
+	}
+	txt := func(t string) { spans = append(spans, richtext.Span{Kind: richtext.Text, Text: t}) }
+	shown := users
+	if len(users) > 3 {
+		shown = users[:2]
+	}
+	for i, id := range shown {
+		switch {
+		case i == 0:
+		case i == len(shown)-1 && len(shown) == len(users):
+			txt(" and ")
+		default:
+			txt(", ")
+		}
+		user(id)
+	}
+	if rest := len(users) - len(shown); rest > 0 {
+		txt(" and " + itoa(rest) + " others")
+	}
+	verb := " have joined the channel"
+	if joinKind(&last.m) == 2 {
+		verb = " have left the channel"
+	}
+	if len(users) == 1 {
+		verb = strings.Replace(verb, "have", "has", 1)
+	}
+	txt(verb)
+	m := last.m
+	m.Reactions = nil
+	m.Doc = richtext.Doc{Blocks: []richtext.Block{{Kind: richtext.Paragraph, Spans: spans}}}
+	return entry{m: m, rev: rev | 1}
 }
