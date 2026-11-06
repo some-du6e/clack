@@ -2,6 +2,7 @@ package composer
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -256,6 +257,95 @@ func btCases() []btCase {
 				`{"type":"text","text":"gone","style":{"strike":true}}]}`,
 			mrkdwn: "x &lt; y &amp; z &gt; w under ~gone~",
 		},
+	}
+}
+
+// TestHeadingDividerBlocks covers the header and divider block types: the
+// mixed top-level array, the plain-text flattening of headings, the mrkdwn
+// fallback and (where lossless) the round trip.
+func TestHeadingDividerBlocks(t *testing.T) {
+	btStubBlockID(t)
+	id := btBlockID
+	hdr := func(level int, text string) string {
+		return `{"type":"header","block_id":"` + id + `","text":{"type":"plain_text","text":"` + text + `","emoji":true},"level":` + strconv.Itoa(level) + `}`
+	}
+	div := `{"type":"divider","block_id":"` + id + `"}`
+	rt := func(els string) string {
+		return `{"type":"rich_text","block_id":"` + id + `","elements":[` + els + `]}`
+	}
+	sect := func(text string) string {
+		return `{"type":"rich_text_section","elements":[{"type":"text","text":"` + text + `"}]}`
+	}
+	cases := []struct {
+		name      string
+		doc       func() *Doc
+		blocks    string
+		mrkdwn    string
+		roundTrip bool
+	}{
+		{
+			name:      "big heading then divider (ground truth)",
+			doc:       func() *Doc { return btNew().kind(Header1, 0).t("Title", 0).nl().kind(Divider, 0).d },
+			blocks:    "[" + hdr(1, "Title") + "," + div + "]",
+			mrkdwn:    "*Title*\n" + rtDividerMrkdwn,
+			roundTrip: true,
+		},
+		{
+			name: "heading divider paragraph",
+			doc: func() *Doc {
+				return btNew().kind(Header1, 0).t("Heading", 0).nl().kind(Divider, 0).nl().kind(Para, 0).t("Body", 0).d
+			},
+			blocks:    "[" + hdr(1, "Heading") + "," + div + "," + rt(sect("Body")) + "]",
+			mrkdwn:    "*Heading*\n" + rtDividerMrkdwn + "\nBody",
+			roundTrip: true,
+		},
+		{
+			name:      "divider between paragraphs",
+			doc:       func() *Doc { return btNew().t("a", 0).nl().kind(Divider, 0).nl().kind(Para, 0).t("b", 0).d },
+			blocks:    "[" + rt(sect("a")) + "," + div + "," + rt(sect("b")) + "]",
+			mrkdwn:    "a\n" + rtDividerMrkdwn + "\nb",
+			roundTrip: true,
+		},
+		{
+			name: "all heading levels",
+			doc: func() *Doc {
+				return btNew().kind(Header1, 0).t("H1", 0).nl().kind(Header2, 0).t("H2", 0).nl().kind(Header3, 0).t("H3", 0).d
+			},
+			blocks:    "[" + hdr(1, "H1") + "," + hdr(2, "H2") + "," + hdr(3, "H3") + "]",
+			mrkdwn:    "*H1*\n*H2*\n*H3*",
+			roundTrip: true,
+		},
+		{
+			name:   "heading flattens atoms",
+			doc:    func() *Doc { return btNew().kind(Header1, 0).t("Hi ", 0).atom(btUser).t(" ", 0).atom(btThumbs).d },
+			blocks: "[" + hdr(1, "Hi @alice \U0001F44D") + "]",
+			mrkdwn: "*Hi @alice \U0001F44D*",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := c.doc().RichTextBlocks()
+			if !json.Valid(got) {
+				t.Fatalf("invalid JSON: %s", got)
+			}
+			if string(got) != c.blocks {
+				t.Errorf("blocks mismatch\n got: %s\nwant: %s", got, c.blocks)
+			}
+			if m := c.doc().Mrkdwn(); m != c.mrkdwn {
+				t.Errorf("mrkdwn mismatch\n got: %q\nwant: %q", m, c.mrkdwn)
+			}
+			if !c.roundTrip {
+				return
+			}
+			back, err := DocFromBlocksJSON(got, nil)
+			if err != nil {
+				t.Fatalf("DocFromBlocksJSON: %v", err)
+			}
+			btSameDoc(t, back, c.doc())
+			if again := string(back.RichTextBlocks()); again != c.blocks {
+				t.Errorf("re-serialized differ\n got: %s\nwant: %s", again, c.blocks)
+			}
+		})
 	}
 }
 
@@ -560,7 +650,7 @@ func TestDocFromRichtext(t *testing.T) {
 		{Kind: richtext.Header, Spans: []richtext.Span{{Kind: richtext.Text, Text: "Title"}}},
 	}
 	d := DocFromRichtext(blocks)
-	wantText := "hello @alice see docs \U0001F44D:parrot:\nline two @here #general on Nov 14 https://example.com/bare\nfirst\nsecond\nquoted\nmore\ncode\nblock\nTitle"
+	wantText := "hello @alice see docs \U0001F44D:parrot:\nline two @here #general on Nov 14 https://example.com/bare\nfirst\nsecond\nquoted\nmore\ncode\nblock\n\nTitle"
 	if got := d.Text(); got != wantText {
 		t.Errorf("text\n got: %q\nwant: %q", got, wantText)
 	}
@@ -569,7 +659,8 @@ func TestDocFromRichtext(t *testing.T) {
 		{Kind: Ordered, Indent: 1}, {Kind: Ordered, Indent: 1},
 		{Kind: Quote}, {Kind: Quote},
 		{Kind: CodeBlock}, {Kind: CodeBlock},
-		{Kind: Para},
+		{Kind: Divider},
+		{Kind: Header1},
 	}
 	if len(d.Lines) != len(wantLines) {
 		t.Fatalf("lines: got %+v, want %+v", d.Lines, wantLines)

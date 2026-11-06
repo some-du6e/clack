@@ -367,18 +367,25 @@ var (
 
 func (f *Files) nav_(gtx C) D {
 	size := gtx.Constraints.Max
+	// The column sits on the theme's chrome gradient (flat mid color) under
+	// the sidebar tint; every translucent sidebar color is flattened over
+	// it in sRGB (see flatten) so it matches the shell's Home sidebar.
+	c := &f.th.C
 	chrome := filesChrome
-	if f.th.Dark {
-		chrome = rgb(0x1a1d21)
+	if c.ChromeA.A > 0 {
+		chrome = theme.Mix(c.ChromeA, c.ChromeB, 0.5)
 	}
-	// opaque sRGB-flattened colors (see flatten): the sidebar tint, text,
-	// hover and rules sit on the aubergine chrome.
-	if f.th.C.SidebarBg.A > 0 {
-		chrome = flatten(f.th.C.SidebarBg, chrome)
+	if c.SidebarBg.A > 0 {
+		chrome = flatten(c.SidebarBg, chrome)
 	}
-	navText := flatten(filesNavText, chrome)
-	navHover := flatten(filesNavHover, chrome)
-	navRule := flatten(filesNavRule, chrome)
+	navText, navHover, navRule := flatten(filesNavText, chrome), flatten(filesNavHover, chrome), flatten(filesNavRule, chrome)
+	navSelBg, navSelFg := filesNavSelBg, filesNavSelFg
+	if c.SidebarText.A > 0 {
+		navText = flatten(c.SidebarText, chrome)
+		navHover = flatten(c.SidebarHover, chrome)
+		navRule = flatten(c.SidebarDivider, chrome)
+		navSelBg, navSelFg = flatten(c.SidebarActive, chrome), c.SidebarActiveText
+	}
 	fill(gtx, image.Rectangle{Max: size}, chrome)
 	gtx.Constraints = layout.Exact(size)
 	navItem := func(i int) layout.FlexChild {
@@ -391,8 +398,8 @@ func (f *Files) nav_(gtx C) D {
 				fg := navText
 				switch {
 				case sel:
-					rrect(gtx, image.Rect(0, 0, w, h), gtx.Dp(4), filesNavSelBg)
-					fg = filesNavSelFg
+					rrect(gtx, image.Rect(0, 0, w, h), gtx.Dp(4), navSelBg)
+					fg = navSelFg
 				case c.Hovered():
 					rrect(gtx, image.Rect(0, 0, w, h), gtx.Dp(4), navHover)
 				}

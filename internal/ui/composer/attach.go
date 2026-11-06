@@ -514,16 +514,20 @@ func (a *attachments) Pick() {
 		defer a.picking.Store(false)
 		e := getExplorer()
 		single := false // the explorer can only pick one file (macOS)
-		if e != nil {
-			rcs, err := e.ChooseFiles()
-			if err == nil {
+		if e != nil && attExplorerUsable() {
+			rcs, err, timedOut := attChooseFiles(e)
+			switch {
+			case timedOut:
+				// The portal never answered; fall back to the in-app picker.
+				log.Printf("composer: native file chooser timed out; using the in-app picker")
+			case err == nil:
 				a.addReaders(rcs)
 				return
-			}
-			if errors.Is(err, explorer.ErrUserDecline) {
+			case errors.Is(err, explorer.ErrUserDecline):
 				return
-			}
-			if single = errors.Is(err, explorer.ErrNotAvailable); !single {
+			case errors.Is(err, explorer.ErrNotAvailable):
+				single = true
+			default:
 				log.Printf("composer: native file chooser: %v", err)
 			}
 		}
@@ -547,6 +551,34 @@ func (a *attachments) Pick() {
 		}
 		a.later(a.openBrowser)
 	}()
+}
+
+// attChooseFiles runs the Gio explorer's multi-file chooser with a watchdog.
+// attExplorerUsable already rules out the common no-portal case; this guards
+// the rarer portal-present-but-wedged setup so the picker can't hang forever.
+// On timeout any late result's readers are drained and closed.
+func attChooseFiles(e *explorer.Explorer) (rcs []io.ReadCloser, err error, timedOut bool) {
+	type result struct {
+		rcs []io.ReadCloser
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		r, err := e.ChooseFiles()
+		ch <- result{r, err}
+	}()
+	select {
+	case r := <-ch:
+		return r.rcs, r.err, false
+	case <-time.After(25 * time.Second):
+		go func() {
+			r := <-ch
+			for _, rc := range r.rcs {
+				rc.Close()
+			}
+		}()
+		return nil, nil, true
+	}
 }
 
 // attPickResult turns a picker command's output into paths. Exit status 1

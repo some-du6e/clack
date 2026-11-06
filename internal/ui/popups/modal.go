@@ -87,6 +87,7 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 	th := m.h.Theme()
 	cl := colorsOf(th)
 	win := gtx.Constraints.Max
+	gtx.Constraints.Min = image.Point{} // robust to roots passing Exact constraints
 	if !m.focus {
 		gtx.Execute(key.FocusCmd{Tag: m})
 		m.focus = true

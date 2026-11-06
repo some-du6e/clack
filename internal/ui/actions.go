@@ -187,16 +187,6 @@ func (a *App) compose() {
 	a.openSwitcher()
 }
 
-func (a *App) openPrefs() {
-	a.menu(image.Pt(a.px(300), a.px(90)), []MenuItem{
-		{Label: "Preferences", Disabled: true},
-		{Divider: true},
-		{Label: map[bool]string{true: "✓ Dark mode", false: "Dark mode"}[a.th.Dark], Icon: "moon", Do: a.ToggleDark},
-		{Label: map[bool]string{true: "✓ Desktop notifications", false: "Desktop notifications"}[a.notifyOn()], Icon: "bell", Do: a.toggleNotify},
-		{Label: map[bool]string{true: "Show sidebar", false: "Hide sidebar"}[a.sidebar.hidden], Icon: "sidebar", Hint: "Ctrl+Shift+D", Do: func() { a.sidebar.hidden = !a.sidebar.hidden }},
-	})
-}
-
 func (a *App) toggleStar(ch string) {
 	if a.data != nil {
 		a.data.toggleStar(ch)
@@ -226,12 +216,16 @@ func (a *App) setStatusPrompt() {
 }
 
 func (a *App) signOut() {
+	if a.opts.SignOut != nil && a.data == nil {
+		a.opts.SignOut() // deletes the stored credentials
+	}
 	if a.data != nil {
 		a.data.signOut()
 		a.data = nil
 	}
 	a.views = map[Route]View{}
 	a.viewOrder = nil
+	a.convos, a.convoOrder = nil, nil
 	a.login = newLoginScreen()
 	a.Invalidate()
 }

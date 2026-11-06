@@ -383,6 +383,9 @@ func (c *Composer) handleActions(gtx layout.Context) {
 			c.finishEdit()
 		case caParagraph:
 			c.paragraphMenu(a.Anchor)
+		case caDivider:
+			c.ed.InsertDivider()
+			c.ed.Focus(gtx)
 		}
 		c.h.Invalidate()
 	}
@@ -415,10 +418,20 @@ func (c *Composer) openLink() {
 }
 
 func (c *Composer) paragraphMenu(anchor image.Rectangle) {
-	// Slack's ¶ menu offers headings, which Slack's rich_text has no
-	// element for in messages; we show Paragraph only, checked.
+	// Slack's ¶ menu: Paragraph and Big/Medium/Small heading, the caret's
+	// current kind checked. Picking one sets the selected lines to it.
+	cur := c.ed.ActiveBlock()
+	item := func(label string, k BlockKind) popups.MenuItem {
+		return popups.MenuItem{Label: label, Checked: cur == k, Do: func() {
+			c.ed.SetBlock(k)
+			c.Focus()
+		}}
+	}
 	items := []popups.MenuItem{
-		{Label: "Paragraph", Checked: true, Do: c.Focus},
+		item("Paragraph", Para),
+		item("Big heading", Header1),
+		item("Medium heading", Header2),
+		item("Small heading", Header3),
 	}
 	c.h.ShowOverlay(popups.NewMenuOpts(c.h, items, popups.MenuOpts{Width: 248, Anchor: anchor, Side: popups.Above}))
 }
