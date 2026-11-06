@@ -54,6 +54,7 @@ func styleFor(h Host) *richview.Style {
 		}
 		e = &styleEntry{st: richview.NewStyle(th.Shaper, imgs, richview.LightPalette())}
 		e.st.Face = theme.Typeface
+		e.st.EmojiURL = th.EmojiURL // unicode emoji in text → the theme's CDN images
 		styles[th.Shaper] = e
 	}
 	stylesMu.Unlock()
