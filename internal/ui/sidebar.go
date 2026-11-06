@@ -128,7 +128,7 @@ var emptyModel = model{TeamName: "yoloslack", Convs: map[string]*convInfo{}}
 // layoutSidebar draws the sidebar header, jump box and scrolling list.
 func (a *App) layoutSidebar(gtx layout.Context) layout.Dimensions {
 	sz := gtx.Constraints.Max
-	c := &a.th.C
+	c := a.sidebarPalette()
 	m := a.model()
 	if a.sidebar.rows == nil || a.sidebar.builtFor != m.version {
 		a.sidebar.rebuild(m)
@@ -179,12 +179,12 @@ func (a *App) layoutSidebar(gtx layout.Context) layout.Dimensions {
 	fh := gtx.Dp(27)
 	at(gtx, image.Pt(gtx.Dp(8), fy), image.Pt(sz.X-gtx.Dp(16), fh), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, a.clicks.get("sb.find"), func(gtx layout.Context, s image.Point, hovered bool) {
-			bg := theme.WithAlpha(c.SidebarText, 0x0d)
+			bg := theme.Over(theme.WithAlpha(a.th.C.SidebarText, 0x0d), a.sbBase)
 			if hovered {
 				bg = c.SidebarHover
 			}
 			theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(6), bg)
-			theme.Border(gtx, image.Rectangle{Max: s}, gtx.Dp(6), gtx.Dp(1), theme.WithAlpha(c.SidebarText, 0x40))
+			theme.Border(gtx, image.Rectangle{Max: s}, gtx.Dp(6), gtx.Dp(1), theme.Over(theme.WithAlpha(a.th.C.SidebarText, 0x40), a.sbBase))
 		}, func(gtx layout.Context) layout.Dimensions {
 			w := gtx.Constraints.Max.X
 			at(gtx, image.Pt(gtx.Dp(8), (fh-gtx.Dp(14))/2), image.Pt(gtx.Dp(14), gtx.Dp(14)), func(gtx layout.Context) layout.Dimensions {
@@ -215,7 +215,7 @@ func (a *App) layoutSidebar(gtx layout.Context) layout.Dimensions {
 }
 
 func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
-	c := &a.th.C
+	c := &a.sbPal
 	w := gtx.Constraints.Max.X
 	rowH := gtx.Dp(theme.SidebarRowH)
 	pad := gtx.Dp(8)
@@ -266,7 +266,7 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 			col = c.SidebarTextUnread
 		}
 		if conv.Muted {
-			col = theme.WithAlpha(col, 0x80)
+			col = theme.Over(theme.WithAlpha(a.th.C.SidebarText, 0x80), a.sbBase)
 		}
 		mentions = conv.Mentions
 		if conv.Self {
@@ -340,9 +340,9 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 				})
 			})
 			if suffix != "" && nw+gtx.Dp(8) < tw {
-				sc := theme.WithAlpha(c.SidebarText, 0x99)
+				sc := theme.Over(theme.WithAlpha(a.th.C.SidebarText, 0xa3), a.sbBase) // rgba(249,237,255,.6)
 				if sel {
-					sc = theme.WithAlpha(c.SidebarActiveText, 0x99)
+					sc = theme.Over(theme.WithAlpha(c.SidebarActiveText, 0x99), c.SidebarActive)
 				}
 				at(gtx, image.Pt(tx+nw+gtx.Dp(6), 0), image.Pt(tw-nw-gtx.Dp(6), rowH), func(gtx layout.Context) layout.Dimensions {
 					return vcenter(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
@@ -372,8 +372,8 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 // presenceDot draws Slack's 12px presence badge: filled green when active,
 // hollow ring when away; ringed with the row background.
 func (a *App) presenceDot(gtx layout.Context, center image.Point, active, sel bool) {
-	c := &a.th.C
-	ring := c.ChromeB
+	c := &a.sbPal
+	ring := a.sbBase
 	if sel {
 		ring = c.SidebarActive
 	}

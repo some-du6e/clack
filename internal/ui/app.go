@@ -6,6 +6,7 @@ package ui
 
 import (
 	"image"
+	"image/color"
 	"log"
 	"os"
 	"sync"
@@ -98,6 +99,9 @@ type App struct {
 	prefsDirty  bool
 	notify      notifier
 	focused     bool
+	winSize     image.Point
+	sbBase      color.NRGBA
+	sbPal       theme.Palette
 	shaperCh    chan *text.Shaper
 	switchAt    time.Time // navigation time, for the channel-switch latency log
 	switchTo    Route
@@ -226,6 +230,7 @@ func (a *App) drain() {
 func (a *App) frame(gtx layout.Context) {
 	sz := gtx.Constraints.Max
 	a.pxPerDp = gtx.Metric.PxPerDp
+	a.winSize = sz
 	a.grad.layout(gtx, a.th.C.ChromeA, a.th.C.ChromeB)
 
 	if a.login != nil {
@@ -255,10 +260,7 @@ func (a *App) frame(gtx layout.Context) {
 	theme.Shadow(gtx, ws.Add(image.Pt(-gtx.Dp(2), -gtx.Dp(2))), rad, gtx.Dp(8), a.th.C.PanelShadow)
 	if sbW > 0 {
 		sb := image.Rect(ws.Min.X, ws.Min.Y, primary.Min.X, ws.Max.Y)
-		func() {
-			defer clip.RRect{Rect: sb, NW: rad, SW: rad}.Push(gtx.Ops).Pop()
-			theme.Fill(gtx, sb, a.th.C.SidebarBg)
-		}()
+		a.grad.draw(gtx, sz, image.Point{}, clip.RRect{Rect: sb, NW: rad, SW: rad}.Op(gtx.Ops), a.th.C.ChromeA, a.th.C.ChromeB, a.th.C.SidebarBg)
 		atExact(gtx, sb.Min, sb.Size(), a.layoutSidebar)
 	}
 	nw, sw := 0, 0

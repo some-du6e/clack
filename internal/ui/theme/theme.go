@@ -108,10 +108,34 @@ func NewShaper() *text.Shaper {
 func (t *Theme) SetDark(dark bool) {
 	t.Dark = dark
 	if dark {
-		t.C = DarkPalette
+		t.C = Flatten(DarkPalette)
 	} else {
-		t.C = LightPalette
+		t.C = Flatten(LightPalette)
 	}
+}
+
+// Over composites fg over an opaque bg in sRGB space, the way browsers (and
+// so Slack) blend. Gio blends in linear light, which makes translucent
+// colors look roughly twice as strong; drawing pre-composited opaque colors
+// keeps us pixel-identical to Slack.
+func Over(fg, bg color.NRGBA) color.NRGBA {
+	a := float32(fg.A) / 255
+	l := func(f, b uint8) uint8 { return uint8(float32(f)*a + float32(b)*(1-a) + .5) }
+	return color.NRGBA{R: l(fg.R, bg.R), G: l(fg.G, bg.G), B: l(fg.B, bg.B), A: 0xff}
+}
+
+// Flatten pre-composites the panel-content colors that Slack defines as
+// translucent over the primary background (borders, code, reactions, …).
+// Chrome/sidebar colors stay translucent; the shell composites those itself.
+func Flatten(p Palette) Palette {
+	for _, c := range []*color.NRGBA{&p.BgHover, &p.BgInset, &p.Border, &p.BorderStrong, &p.Skeleton,
+		&p.MentionBg, &p.SelfMention, &p.Highlight, &p.CodeBg, &p.CodeBorder, &p.PreBg, &p.QuoteBar,
+		&p.Reaction, &p.ReactionSelf, &p.ScrollThumb, &p.FgMuted, &p.FgSubtle} {
+		if c.A != 0xff {
+			*c = Over(*c, p.Bg)
+		}
+	}
+	return p
 }
 
 // Font returns a Lato font of the given weight.
