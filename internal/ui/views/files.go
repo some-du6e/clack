@@ -367,7 +367,11 @@ var (
 
 func (f *Files) nav_(gtx C) D {
 	size := gtx.Constraints.Max
-	fill(gtx, image.Rectangle{Max: size}, filesChrome)
+	chrome := filesChrome
+	if f.th.Dark {
+		chrome = rgb(0x1a1d21)
+	}
+	fill(gtx, image.Rectangle{Max: size}, chrome)
 	if f.th.C.SidebarBg.A > 0 {
 		fill(gtx, image.Rectangle{Max: size}, f.th.C.SidebarBg)
 	}
@@ -445,19 +449,7 @@ func (f *Files) nav_(gtx C) D {
 
 // ---- primary pane ----
 
-var (
-	filesPaneBg   = rgb(0xf8f8f8)
-	filesCardLine = argb(0x1a1d1c1d)
-	filesSegLine  = argb(0x4d1d1c1d)
-	filesMeta     = rgb(0x616061)
-)
-
-func (f *Files) paneBg() color.NRGBA {
-	if f.th.Dark {
-		return rgb(0x1a1d21)
-	}
-	return filesPaneBg
-}
+func (f *Files) paneBg() color.NRGBA { return f.p.Page }
 
 func (f *Files) main(gtx C) D {
 	size := gtx.Constraints.Max
@@ -598,8 +590,8 @@ func (f *Files) searchField(gtx C) D {
 	focused := gtx.Focused(&f.search.ed)
 	rrect(gtx, r, rad, f.p.Bg)
 	if focused {
-		border(gtx, r.Inset(-gtx.Dp(2)), rad+gtx.Dp(2), gtx.Dp(4), argb(0x4d1264a3))
-		border(gtx, r, rad, max(1, gtx.Dp(1)), rgb(0x1264a3))
+		border(gtx, r.Inset(-gtx.Dp(2)), rad+gtx.Dp(2), gtx.Dp(4), theme.WithAlpha(f.p.Link, 0x4d))
+		border(gtx, r, rad, max(1, gtx.Dp(1)), f.p.Link)
 	} else {
 		border(gtx, r, rad, max(1, gtx.Dp(1)), f.p.Border)
 	}
@@ -643,10 +635,14 @@ func (f *Files) templatesHead(gtx C) D {
 					layout.Rigid(func(gtx C) D {
 						tw := f.th.Measure(gtx, 12, wReg, "New")
 						sz := image.Pt(tw+gtx.Dp(8), gtx.Dp(20))
-						rrect(gtx, image.Rectangle{Max: sz}, gtx.Dp(4), rgb(0xf0f3fc))
+						tagBg, tagFg := rgb(0xf0f3fc), rgb(0x112377)
+						if f.th.Dark {
+							tagBg, tagFg = rgb(0x1c2647), rgb(0xc5d1ff)
+						}
+						rrect(gtx, image.Rectangle{Max: sz}, gtx.Dp(4), tagBg)
 						g := gtx
 						g.Constraints = layout.Exact(sz)
-						layout.Center.Layout(g, func(gtx C) D { return f.label(gtx, 12, wReg, rgb(0x112377), "New") })
+						layout.Center.Layout(g, func(gtx C) D { return f.label(gtx, 12, wReg, tagFg, "New") })
 						return D{Size: sz}
 					}),
 				)
@@ -713,18 +709,23 @@ func (f *Files) tile(gtx C, i int, sz image.Point) D {
 		if t.list {
 			tint = rgb(0xfce8b3)
 		}
+		pageC, line0, line1 := rgb(0xffffff), rgb(0xd0d0d0), rgb(0xe8e8e8)
+		if f.th.Dark {
+			tint = theme.Mix(tint, f.p.Surface, 0.8)
+			pageC, line0, line1 = rgb(0x2c2d30), rgb(0x55565a), rgb(0x3d3e42)
+		}
 		func() {
 			defer clipRR(gtx, image.Rect(0, 0, sz.X, ph), rad, rad, 0, 0).Pop()
 			fill(gtx, image.Rect(0, 0, sz.X, ph), tint)
 			page := image.Rect(gtx.Dp(20), gtx.Dp(20), sz.X-gtx.Dp(20), ph+gtx.Dp(8))
 			theme.Shadow(gtx, page, gtx.Dp(8), gtx.Dp(8), argb(0x1a000000))
-			rrect(gtx, page, gtx.Dp(8), rgb(0xffffff))
+			rrect(gtx, page, gtx.Dp(8), pageC)
 			// a few skeleton lines suggesting the template body
 			y := page.Min.Y + gtx.Dp(14)
 			for k, frac := range [...]int{60, 85, 72, 40} {
-				lc := rgb(0xe8e8e8)
+				lc := line1
 				if k == 0 {
-					lc = rgb(0xd0d0d0)
+					lc = line0
 				}
 				x0 := page.Min.X + gtx.Dp(14)
 				rrect(gtx, image.Rect(x0, y, x0+(page.Dx()-gtx.Dp(28))*frac/100, y+gtx.Dp(6)), gtx.Dp(3), lc)
@@ -741,7 +742,7 @@ func (f *Files) tile(gtx C, i int, sz image.Point) D {
 				layout.Rigid(func(gtx C) D { return f.para(gtx, 13, 16, wReg, f.p.Muted, 2, t.desc) }),
 			)
 		}()
-		border(gtx, r, rad, max(1, gtx.Dp(1)), argb(0x211d1c1d))
+		border(gtx, r, rad, max(1, gtx.Dp(1)), f.p.Ring)
 		if c.Hovered() {
 			rrect(gtx, r, rad, f.p.Hover)
 		}
@@ -796,7 +797,7 @@ func (f *Files) filterBar(gtx C) D {
 				if f.filtersBtn.Hovered() {
 					rrect(gtx, r, gtx.Dp(4), f.p.Hover)
 				}
-				border(gtx, r, gtx.Dp(4), max(1, gtx.Dp(1)), filesSegLine)
+				border(gtx, r, gtx.Dp(4), max(1, gtx.Dp(1)), f.p.SegLine)
 				g := gtx
 				g.Constraints = layout.Exact(sz)
 				layout.Center.Layout(g, func(gtx C) D { return f.icon(gtx, "filter-sliders", 18, f.p.Text) })
@@ -852,7 +853,7 @@ func (f *Files) segButton(gtx C, c *widget.Clickable, active bool, icon, label s
 			if c.Hovered() {
 				rrect(gtx, r, rad, f.p.Hover)
 			}
-			border(gtx, r, rad, max(1, gtx.Dp(1)), filesSegLine)
+			border(gtx, r, rad, max(1, gtx.Dp(1)), f.p.SegLine)
 		}
 		call.Add(gtx.Ops)
 		return d
@@ -921,7 +922,7 @@ func (f *Files) card(gtx C, it *fileItem) D {
 				layout.Flexed(1, func(gtx C) D {
 					return col(gtx,
 						layout.Rigid(func(gtx C) D { return f.label(gtx, 15, wBold, f.p.Text, it.title()) }),
-						layout.Rigid(func(gtx C) D { return f.label(gtx, 13, wReg, filesMeta, f.fileMeta(it)) }),
+						layout.Rigid(func(gtx C) D { return f.label(gtx, 13, wReg, f.p.Meta, f.fileMeta(it)) }),
 					)
 				}),
 				layout.Rigid(func(gtx C) D {
@@ -932,8 +933,8 @@ func (f *Files) card(gtx C, it *fileItem) D {
 					return c.owner.Layout(gtx, func(gtx C) D { return f.avatar(gtx, u.Avatar, 20) })
 				}),
 				hgap(4),
-				layout.Rigid(func(gtx C) D { return f.iconButton(gtx, &c.star, "star", 28, 18, filesMeta) }),
-				layout.Rigid(func(gtx C) D { return f.iconButton(gtx, &c.menu, "kebab", 28, 18, filesMeta) }),
+				layout.Rigid(func(gtx C) D { return f.iconButton(gtx, &c.star, "star", 28, 18, f.p.Meta) }),
+				layout.Rigid(func(gtx C) D { return f.iconButton(gtx, &c.menu, "kebab", 28, 18, f.p.Meta) }),
 			)
 		})
 		call := m.Stop()
@@ -941,7 +942,7 @@ func (f *Files) card(gtx C, it *fileItem) D {
 		rad := gtx.Dp(12)
 		rrect(gtx, r, rad, f.p.Surface)
 		call.Add(gtx.Ops)
-		border(gtx, r, rad, max(1, gtx.Dp(1)), filesCardLine)
+		border(gtx, r, rad, max(1, gtx.Dp(1)), f.p.CardLine)
 		return d
 	})
 }

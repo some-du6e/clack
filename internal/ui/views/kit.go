@@ -75,6 +75,11 @@ type pal struct {
 	PillOnFg    color.NRGBA // (#1264a3)
 	TabHover    color.NRGBA // #611f69@.07
 	Pressed     color.NRGBA // pressed overlay #454447@.13
+	CardLine    color.NRGBA // card/list frames (#1d1c1d@.1)
+	SegLine     color.NRGBA // segment button borders (#1d1c1d@.3)
+	Meta        color.NRGBA // metadata text (#616061)
+	Ring        color.NRGBA // popover/tile rings (#1d1c1d@.13)
+	Page        color.NRGBA // gray page background (#f8f8f8)
 }
 
 // Light values are Slack's design tokens (--dt_color-*), measured in the
@@ -116,6 +121,11 @@ var lightPal = pal{
 	PillOnFg:    rgb(0x1264a3),
 	TabHover:    argb(0x12611f69),
 	Pressed:     argb(0x21454447),
+	CardLine:    argb(0x1a1d1c1d),
+	SegLine:     argb(0x4d1d1c1d),
+	Meta:        rgb(0x616061),
+	Ring:        argb(0x211d1c1d),
+	Page:        rgb(0xf8f8f8),
 }
 
 // Dark values follow Slack's dark mode tokens.
@@ -156,6 +166,11 @@ var darkPal = pal{
 	PillOnFg:    rgb(0x1d9bd1),
 	TabHover:    argb(0x12e8e8e8),
 	Pressed:     argb(0x21e8e8e8),
+	CardLine:    argb(0x1ae8e8e8),
+	SegLine:     argb(0x4de8e8e8),
+	Meta:        rgb(0xababad),
+	Ring:        argb(0x21e8e8e8),
+	Page:        rgb(0x1a1d21),
 }
 
 func palOf(th *theme.Theme) *pal {
@@ -585,7 +600,7 @@ func (b *base) searchBox(gtx C, s *search, height unit.Dp) D {
 	rrect(gtx, r, rad, b.p.Bg)
 	if focused {
 		border(gtx, r.Inset(-gtx.Dp(2)), rad+gtx.Dp(2), gtx.Dp(3), b.p.Focus)
-		border(gtx, r, rad, max(1, gtx.Dp(1)), rgb(0x1264a3))
+		border(gtx, r, rad, max(1, gtx.Dp(1)), b.p.Link)
 	} else {
 		border(gtx, r, rad, max(1, gtx.Dp(1)), b.p.BorderStr)
 	}
@@ -1299,7 +1314,7 @@ func (b *base) dropdown(gtx C, open *bool, scrim *widget.Clickable, at image.Poi
 			}
 		}
 		call.Add(gtx.Ops)
-		border(gtx, r, rad, max(1, gtx.Dp(1)), argb(0x211d1c1d))
+		border(gtx, r, rad, max(1, gtx.Dp(1)), b.p.Ring)
 	}()
 	op.Defer(gtx.Ops, m.Stop())
 }

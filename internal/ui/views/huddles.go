@@ -443,7 +443,7 @@ func (v *Huddles) room(gtx C, r huddleRoom) D {
 			return row(gtx, layout.Middle,
 				layout.Rigid(func(gtx C) D {
 					s := gtx.Dp(36)
-					bg, fg := argb(0x0f1d1c1d), v.p.Text
+					bg, fg := v.p.Chip, v.p.Text
 					if r.Active {
 						bg, fg = v.p.Green, rgb(0xffffff)
 					}
@@ -476,7 +476,7 @@ func (v *Huddles) room(gtx C, r huddleRoom) D {
 		if c.Hovered() {
 			rrect(gtx, rr, gtx.Dp(12), v.p.Hover)
 		}
-		border(gtx, rr, gtx.Dp(12), max(1, gtx.Dp(1)), argb(0x1a000000))
+		border(gtx, rr, gtx.Dp(12), max(1, gtx.Dp(1)), v.p.CardLine)
 		call.Add(gtx.Ops)
 		return d
 	})
@@ -609,6 +609,9 @@ func (v *Huddles) tile(gtx C, uid string, sz image.Point) D {
 		if uid != "" {
 			tint = rgb(tileTints[int(uid[len(uid)-1])%len(tileTints)])
 		}
+		if v.th.Dark {
+			tint = theme.Mix(tint, v.p.Surface, 0.8)
+		}
 		func() {
 			defer clipRR(gtx, image.Rect(0, 0, sz.X, hh), rad, rad, 0, 0).Pop()
 			fill(gtx, image.Rect(0, 0, sz.X, hh), tint)
@@ -652,7 +655,7 @@ func (v *Huddles) tile(gtx C, uid string, sz image.Point) D {
 				}),
 			)
 		}()
-		border(gtx, r, rad, max(1, gtx.Dp(1)), argb(0x211d1c1d))
+		border(gtx, r, rad, max(1, gtx.Dp(1)), v.p.Ring)
 		if c.Hovered() {
 			rrect(gtx, r, rad, v.p.Hover)
 		}
@@ -682,7 +685,7 @@ func (v *Huddles) channelRow(gtx C, i int) D {
 		px1 := max(1, gtx.Dp(1))
 		func() {
 			defer clipRR(gtx, r, top, top, bot, bot).Pop()
-			fill(gtx, r, argb(0x1a000000))
+			fill(gtx, r, v.p.CardLine)
 			inner := image.Rect(px1, px1, w-px1, h-px1)
 			if !first {
 				inner.Min.Y = 0
@@ -701,7 +704,7 @@ func (v *Huddles) channelRow(gtx C, i int) D {
 				return row(gtx, layout.Middle,
 					layout.Rigid(func(gtx C) D {
 						s := gtx.Dp(36)
-						rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(8), argb(0x0f1d1c1d))
+						rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(8), v.p.Chip)
 						gg := gtx
 						gg.Constraints = layout.Exact(image.Pt(s, s))
 						icon := "hash"
