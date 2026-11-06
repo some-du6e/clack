@@ -549,7 +549,7 @@ func TestDocFromRichtext(t *testing.T) {
 			{Kind: richtext.Text, Text: " "},
 			{Kind: richtext.Link, Text: "https://example.com/bare", URL: "https://example.com/bare"},
 		}},
-		{Kind: richtext.Image, Image: &richtext.Image{URL: "https://img.example/a.png"}},
+		{Kind: richtext.ImageBlock, Image: &richtext.Image{URL: "https://img.example/a.png"}},
 		{Kind: richtext.List, Ordered: true, Indent: 1, Items: [][]richtext.Span{
 			{{Kind: richtext.Text, Text: "first"}},
 			{{Kind: richtext.Text, Text: "second", Style: richtext.Italic}},
