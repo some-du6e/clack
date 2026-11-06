@@ -244,10 +244,8 @@ func (a *App) loadSaved(ctx context.Context) error {
 				p.Set("cursor", cursor)
 			}
 			var r struct {
-				Items []struct {
-					ItemID, ItemType, TS string
-				} `json:"saved_items"`
-				Meta struct {
+				Items []savedRaw `json:"saved_items"`
+				Meta  struct {
 					NextCursor string `json:"next_cursor"`
 				} `json:"response_metadata"`
 			}
