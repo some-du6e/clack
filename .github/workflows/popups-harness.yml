@@ -1,0 +1,36 @@
+# Temporary (ui-popups): builds cmd/popupharness for fidelity checks.
+# Removed together with cmd/popupharness before ui-popups merges.
+name: popups-harness
+on:
+  push:
+    branches: [ui-popups]
+  workflow_dispatch:
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
+
+jobs:
+  harness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: gofmt
+        run: test -z "$(gofmt -l internal/ui/popups cmd/popupharness | tee /dev/stderr)"
+      - name: vet popups
+        run: go vet ./internal/ui/popups/... ./cmd/popupharness
+      - name: test popups
+        run: go test ./internal/ui/popups/...
+      - name: build
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=1 go build -trimpath -o dist/popupharness ./cmd/popupharness
+      - uses: actions/upload-artifact@v4
+        with:
+          name: popupharness-linux-amd64
+          path: dist/popupharness

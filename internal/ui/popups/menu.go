@@ -404,8 +404,10 @@ func (m *Menu) row(gtx layout.Context, th *theme.Theme, cl *Colors, i int, sz im
 		return layout.Dimensions{Size: sz}
 	}
 	hl := m.sel == i && !it.Disabled
-	gtx.Constraints = layout.Exact(sz)
 	if it.Widget != nil {
+		// widgets get the row width as Max only (Min zero), so nested text
+		// measures its natural size.
+		gtx.Constraints = layout.Constraints{Max: sz}
 		if !m.selectable(i) {
 			return it.Widget(gtx, false)
 		}
@@ -413,6 +415,7 @@ func (m *Menu) row(gtx layout.Context, th *theme.Theme, cl *Colors, i int, sz im
 			return it.Widget(gtx, hl)
 		})
 	}
+	gtx.Constraints = layout.Exact(sz)
 	fg, hint := cl.Fg, cl.Fg3
 	if it.Danger {
 		fg = cl.Danger
@@ -421,6 +424,7 @@ func (m *Menu) row(gtx layout.Context, th *theme.Theme, cl *Colors, i int, sz im
 		fg, hint = cl.Subtle, cl.Subtle
 	}
 	return m.clicks[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min = image.Point{}
 		if hl {
 			bg := cl.Highlight
 			if it.Danger {
