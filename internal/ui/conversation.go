@@ -161,13 +161,25 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 	compH := 0
 	var call op.CallOp
 	if comp != nil {
-		comp.SetOrigin(origin.Add(image.Pt(0, sz.Y-c.compH)))
+		// Edit composers draw just the box: give them the same side and
+		// bottom margins as the normal composer (20px channel, 16px thread).
+		mx, mb := 0, 0
+		if comp == c.edit {
+			mx = gtx.Dp(20)
+			if c.ts != "" {
+				mx = gtx.Dp(16)
+			}
+			mb = gtx.Dp(24)
+		}
+		comp.SetOrigin(origin.Add(image.Pt(mx, sz.Y-c.compH)))
 		m := op.Record(gtx.Ops)
 		g := gtx
-		g.Constraints = layout.Constraints{Min: image.Pt(sz.X, 0), Max: image.Pt(sz.X, sz.Y*6/10)}
+		g.Constraints = layout.Constraints{Min: image.Pt(sz.X-2*mx, 0), Max: image.Pt(sz.X-2*mx, sz.Y*6/10)}
+		st := op.Offset(image.Pt(mx, 0)).Push(gtx.Ops)
 		d := comp.Layout(g)
+		st.Pop()
 		call = m.Stop()
-		compH = d.Size.Y
+		compH = d.Size.Y + mb
 		c.compH = compH
 		top := origin.Add(image.Pt(0, sz.Y-compH))
 		c.compRect = image.Rectangle{Min: top, Max: top.Add(image.Pt(sz.X, compH))}

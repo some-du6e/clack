@@ -55,6 +55,52 @@ type View struct {
 	// Origin, if set by the owner, is added to click anchors so they are in
 	// window coordinates.
 	Origin image.Point
+
+	// External hands text selection to the owner (cross-message selection
+	// in a list): the View still handles clicks and hover but never changes
+	// its selection or takes focus; the owner calls SetSelection.
+	External bool
+}
+
+// OffsetAt maps a point in View coordinates to a plain-text offset (valid
+// after the first Layout).
+func (v *View) OffsetAt(p f32.Point) int32 { return v.offsetAt(p) }
+
+// PlainLen is the length of the selectable plain text.
+func (v *View) PlainLen() int32 { return int32(len(v.d.plain)) }
+
+// TextRange returns plain text [a, b) (clamped).
+func (v *View) TextRange(a, b int32) string {
+	n := int32(len(v.d.plain))
+	a, b = min(max(a, 0), n), min(max(b, 0), n)
+	if a >= b {
+		return ""
+	}
+	return string(v.d.plain[a:b])
+}
+
+// SetSelection sets the selected range (External mode).
+func (v *View) SetSelection(a, b int32) {
+	n := int32(len(v.d.plain))
+	v.selA, v.selB = min(max(a, 0), n), min(max(b, 0), n)
+}
+
+// WordAt returns the word range around off (double-click).
+func (v *View) WordAt(off int32) (int32, int32) {
+	sa, sb := v.selA, v.selB
+	v.selectWord(off)
+	a, b := v.selA, v.selB
+	v.selA, v.selB = sa, sb
+	return a, b
+}
+
+// LineAt returns the line (paragraph) range around off (triple-click).
+func (v *View) LineAt(off int32) (int32, int32) {
+	sa, sb := v.selA, v.selB
+	v.selectLine(off)
+	a, b := v.selA, v.selB
+	v.selA, v.selB = sa, sb
+	return a, b
 }
 
 // New returns a View for doc.
@@ -541,7 +587,7 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 		switch e := ev.(type) {
 		case key.FocusEvent:
 			v.focused = e.Focus
-			if !e.Focus && !v.dragging {
+			if !e.Focus && !v.dragging && !v.External {
 				v.selA, v.selB = 0, 0
 			}
 		case key.Event:
@@ -576,6 +622,11 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 				v.press = v.targetAt(e.Position)
 				v.pressPos = e.Position
 				v.moved = false
+				if v.External {
+					v.dragging = true
+					v.tapCount = 1
+					continue
+				}
 				off := v.offsetAt(e.Position)
 				if e.Time-v.lastTap < 400*time.Millisecond {
 					v.tapCount++
@@ -602,7 +653,7 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 				if d := e.Position.Sub(v.pressPos); d.X*d.X+d.Y*d.Y > 9 {
 					v.moved = true
 				}
-				if v.moved && v.tapCount == 1 {
+				if v.moved && v.tapCount == 1 && !v.External {
 					v.selB = v.offsetAt(e.Position)
 				}
 			case pointer.Release:
@@ -612,7 +663,9 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 					continue
 				}
 				if !v.moved && v.tapCount == 1 {
-					v.selA, v.selB = 0, 0
+					if !v.External {
+						v.selA, v.selB = 0, 0
+					}
 					if t := v.targetAt(e.Position); t >= 0 && t == v.press && h != nil {
 						anchor := image.Pt(int(e.Position.X), int(e.Position.Y)).Add(v.Origin)
 						v.activate(t, anchor, h)

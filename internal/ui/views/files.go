@@ -21,6 +21,26 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
+// fileItem is a core.File with the Files view's display helpers.
+type fileItem struct{ core.File }
+
+func (f *fileItem) title() string {
+	if f.Title != "" {
+		return f.Title
+	}
+	return f.Name
+}
+
+func (f *fileItem) isImage() bool { return f.IsImage || strings.HasPrefix(f.Mime, "image/") }
+
+func (f *fileItem) isCanvas() bool {
+	return f.IsCanvas || f.Filetype == "quip" || f.Filetype == "canvas" || strings.EqualFold(f.PrettyType, "canvas")
+}
+
+func (f *fileItem) isList() bool {
+	return f.IsList || f.Filetype == "list" || strings.EqualFold(f.PrettyType, "list")
+}
+
 // Files is the 2026 Files rail tab: a themed Files sidebar (All files,
 // Canvases, Lists, Deleted, Starred) next to a #f8f8f8 primary pane with
 // search, the Templates strip, segment buttons (All / Created by you /
@@ -64,8 +84,8 @@ type Files struct {
 	filtersBtn widget.Clickable
 
 	retry  widget.Clickable
-	data   async[filePage]
-	more   async[filePage]
+	data   async[core.FilePage]
+	more   async[core.FilePage]
 	items  []fileItem
 	page   int
 	pages  int
@@ -136,11 +156,11 @@ func (f *Files) start() {
 	f.items, f.page, f.pages = f.items[:0], 0, 0
 	a := f.h.Core()
 	if f.kind() == "deleted" {
-		f.data.load(f.h, false, func(ctx context.Context) (filePage, error) { return deletedFiles(ctx, a) })
+		f.data.load(f.h, false, func(ctx context.Context) (core.FilePage, error) { return a.DeletedFiles(ctx) })
 		return
 	}
-	q := fileQuery{Kind: f.kind(), Query: f.query, Mine: f.seg == 1, Page: 1}
-	f.data.load(f.h, false, func(ctx context.Context) (filePage, error) { return listFiles(ctx, a, q) })
+	q := core.FilesOpts{Kind: f.kind(), Query: f.query, Mine: f.seg == 1, SharedWithMe: f.seg == 2, Page: 1}
+	f.data.load(f.h, false, func(ctx context.Context) (core.FilePage, error) { return a.Files(ctx, q) })
 }
 
 func (f *Files) loadMore() {
@@ -148,8 +168,8 @@ func (f *Files) loadMore() {
 		return
 	}
 	a := f.h.Core()
-	q := fileQuery{Kind: f.kind(), Query: f.query, Mine: f.seg == 1, Page: f.page + 1}
-	f.more.load(f.h, false, func(ctx context.Context) (filePage, error) { return listFiles(ctx, a, q) })
+	q := core.FilesOpts{Kind: f.kind(), Query: f.query, Mine: f.seg == 1, SharedWithMe: f.seg == 2, Page: f.page + 1}
+	f.more.load(f.h, false, func(ctx context.Context) (core.FilePage, error) { return a.Files(ctx, q) })
 }
 
 // visible reports whether a loaded file passes the client-side filters.
@@ -178,9 +198,6 @@ func (f *Files) visible(it *fileItem) bool {
 			return false
 		}
 	}
-	if f.seg == 2 && it.User == f.selfID() {
-		return false
-	}
 	return true
 }
 
@@ -203,11 +220,7 @@ func (f *Files) update(gtx C) {
 	}
 	for i := range f.segClicks {
 		if f.segClicks[i].Clicked(gtx) && f.seg != i {
-			// "Created by you" filters server-side; the others client-side.
-			if f.seg == 1 || i == 1 {
-				f.reload = true
-			}
-			f.seg = i
+			f.seg, f.reload = i, true
 		}
 	}
 	if f.gear.Clicked(gtx) {
@@ -367,10 +380,26 @@ var (
 
 func (f *Files) nav_(gtx C) D {
 	size := gtx.Constraints.Max
-	fill(gtx, image.Rectangle{Max: size}, filesChrome)
-	if f.th.C.SidebarBg.A > 0 {
-		fill(gtx, image.Rectangle{Max: size}, f.th.C.SidebarBg)
+	// The column sits on the theme's chrome gradient (flat mid color) under
+	// the sidebar tint; every translucent sidebar color is flattened over
+	// it in sRGB (see flatten) so it matches the shell's Home sidebar.
+	c := &f.th.C
+	chrome := filesChrome
+	if c.ChromeA.A > 0 {
+		chrome = theme.Mix(c.ChromeA, c.ChromeB, 0.5)
 	}
+	if c.SidebarBg.A > 0 {
+		chrome = flatten(c.SidebarBg, chrome)
+	}
+	navText, navHover, navRule := flatten(filesNavText, chrome), flatten(filesNavHover, chrome), flatten(filesNavRule, chrome)
+	navSelBg, navSelFg := filesNavSelBg, filesNavSelFg
+	if c.SidebarText.A > 0 {
+		navText = flatten(c.SidebarText, chrome)
+		navHover = flatten(c.SidebarHover, chrome)
+		navRule = flatten(c.SidebarDivider, chrome)
+		navSelBg, navSelFg = flatten(c.SidebarActive, chrome), c.SidebarActiveText
+	}
+	fill(gtx, image.Rectangle{Max: size}, chrome)
 	gtx.Constraints = layout.Exact(size)
 	navItem := func(i int) layout.FlexChild {
 		return layout.Rigid(func(gtx C) D {
@@ -379,13 +408,13 @@ func (f *Files) nav_(gtx C) D {
 				pointerCursor(gtx)
 				w, h := gtx.Constraints.Max.X, gtx.Dp(28)
 				sel := f.nav == i
-				fg := filesNavText
+				fg := navText
 				switch {
 				case sel:
-					rrect(gtx, image.Rect(0, 0, w, h), gtx.Dp(4), filesNavSelBg)
-					fg = filesNavSelFg
+					rrect(gtx, image.Rect(0, 0, w, h), gtx.Dp(4), navSelBg)
+					fg = navSelFg
 				case c.Hovered():
-					rrect(gtx, image.Rect(0, 0, w, h), gtx.Dp(4), filesNavHover)
+					rrect(gtx, image.Rect(0, 0, w, h), gtx.Dp(4), navHover)
 				}
 				g := gtx
 				g.Constraints = layout.Exact(image.Pt(w, h))
@@ -403,7 +432,7 @@ func (f *Files) nav_(gtx C) D {
 		})
 	}
 	rule := layout.Rigid(func(gtx C) D {
-		return layout.Inset{Top: 12, Bottom: 12}.Layout(gtx, func(gtx C) D { return hline(gtx, filesNavRule) })
+		return layout.Inset{Top: 12, Bottom: 12}.Layout(gtx, func(gtx C) D { return hline(gtx, navRule) })
 	})
 	return layout.Inset{Left: 8, Right: 8}.Layout(gtx, func(gtx C) D {
 		return col(gtx,
@@ -413,9 +442,9 @@ func (f *Files) nav_(gtx C) D {
 				return layout.Inset{Top: 12, Bottom: 12, Left: 8}.Layout(g, func(gtx C) D {
 					return row(gtx, layout.Middle,
 						layout.Flexed(1, func(gtx C) D { return f.label(gtx, 18, wBlack, rgb(0xffffff), "Files") }),
-						layout.Rigid(func(gtx C) D { return f.iconButton(gtx, &f.gear, "settings", 28, 20, filesNavText) }),
+						layout.Rigid(func(gtx C) D { return f.iconButton(gtx, &f.gear, "settings", 28, 20, navText) }),
 						hgap(4),
-						layout.Rigid(func(gtx C) D { return f.iconButton(gtx, &f.plus, "plus", 28, 20, filesNavText) }),
+						layout.Rigid(func(gtx C) D { return f.iconButton(gtx, &f.plus, "plus", 28, 20, navText) }),
 					)
 				})
 			}),
@@ -429,9 +458,9 @@ func (f *Files) nav_(gtx C) D {
 				return layout.Inset{Left: 8}.Layout(g, func(gtx C) D {
 					return layout.W.Layout(gtx, func(gtx C) D {
 						return row(gtx, layout.Middle,
-							layout.Rigid(func(gtx C) D { return f.icon(gtx, "star", 16, filesNavText) }),
+							layout.Rigid(func(gtx C) D { return f.icon(gtx, "star", 16, navText) }),
 							hgap(8),
-							layout.Rigid(func(gtx C) D { return f.label(gtx, 15, wReg, filesNavText, "Starred") }),
+							layout.Rigid(func(gtx C) D { return f.label(gtx, 15, wReg, navText, "Starred") }),
 						)
 					})
 				})
@@ -445,19 +474,7 @@ func (f *Files) nav_(gtx C) D {
 
 // ---- primary pane ----
 
-var (
-	filesPaneBg   = rgb(0xf8f8f8)
-	filesCardLine = argb(0x1a1d1c1d)
-	filesSegLine  = argb(0x4d1d1c1d)
-	filesMeta     = rgb(0x616061)
-)
-
-func (f *Files) paneBg() color.NRGBA {
-	if f.th.Dark {
-		return rgb(0x1a1d21)
-	}
-	return filesPaneBg
-}
+func (f *Files) paneBg() color.NRGBA { return f.p.Page }
 
 func (f *Files) main(gtx C) D {
 	size := gtx.Constraints.Max
@@ -598,8 +615,8 @@ func (f *Files) searchField(gtx C) D {
 	focused := gtx.Focused(&f.search.ed)
 	rrect(gtx, r, rad, f.p.Bg)
 	if focused {
-		border(gtx, r.Inset(-gtx.Dp(2)), rad+gtx.Dp(2), gtx.Dp(4), argb(0x4d1264a3))
-		border(gtx, r, rad, max(1, gtx.Dp(1)), rgb(0x1264a3))
+		border(gtx, r.Inset(-gtx.Dp(2)), rad+gtx.Dp(2), gtx.Dp(4), theme.WithAlpha(f.p.Link, 0x4d))
+		border(gtx, r, rad, max(1, gtx.Dp(1)), f.p.Link)
 	} else {
 		border(gtx, r, rad, max(1, gtx.Dp(1)), f.p.Border)
 	}
@@ -643,10 +660,14 @@ func (f *Files) templatesHead(gtx C) D {
 					layout.Rigid(func(gtx C) D {
 						tw := f.th.Measure(gtx, 12, wReg, "New")
 						sz := image.Pt(tw+gtx.Dp(8), gtx.Dp(20))
-						rrect(gtx, image.Rectangle{Max: sz}, gtx.Dp(4), rgb(0xf0f3fc))
+						tagBg, tagFg := rgb(0xf0f3fc), rgb(0x112377)
+						if f.th.Dark {
+							tagBg, tagFg = rgb(0x1c2647), rgb(0xc5d1ff)
+						}
+						rrect(gtx, image.Rectangle{Max: sz}, gtx.Dp(4), tagBg)
 						g := gtx
 						g.Constraints = layout.Exact(sz)
-						layout.Center.Layout(g, func(gtx C) D { return f.label(gtx, 12, wReg, rgb(0x112377), "New") })
+						layout.Center.Layout(g, func(gtx C) D { return f.label(gtx, 12, wReg, tagFg, "New") })
 						return D{Size: sz}
 					}),
 				)
@@ -713,18 +734,23 @@ func (f *Files) tile(gtx C, i int, sz image.Point) D {
 		if t.list {
 			tint = rgb(0xfce8b3)
 		}
+		pageC, line0, line1 := rgb(0xffffff), rgb(0xd0d0d0), rgb(0xe8e8e8)
+		if f.th.Dark {
+			tint = theme.Mix(tint, f.p.Surface, 0.8)
+			pageC, line0, line1 = rgb(0x2c2d30), rgb(0x55565a), rgb(0x3d3e42)
+		}
 		func() {
 			defer clipRR(gtx, image.Rect(0, 0, sz.X, ph), rad, rad, 0, 0).Pop()
 			fill(gtx, image.Rect(0, 0, sz.X, ph), tint)
 			page := image.Rect(gtx.Dp(20), gtx.Dp(20), sz.X-gtx.Dp(20), ph+gtx.Dp(8))
 			theme.Shadow(gtx, page, gtx.Dp(8), gtx.Dp(8), argb(0x1a000000))
-			rrect(gtx, page, gtx.Dp(8), rgb(0xffffff))
+			rrect(gtx, page, gtx.Dp(8), pageC)
 			// a few skeleton lines suggesting the template body
 			y := page.Min.Y + gtx.Dp(14)
 			for k, frac := range [...]int{60, 85, 72, 40} {
-				lc := rgb(0xe8e8e8)
+				lc := line1
 				if k == 0 {
-					lc = rgb(0xd0d0d0)
+					lc = line0
 				}
 				x0 := page.Min.X + gtx.Dp(14)
 				rrect(gtx, image.Rect(x0, y, x0+(page.Dx()-gtx.Dp(28))*frac/100, y+gtx.Dp(6)), gtx.Dp(3), lc)
@@ -741,7 +767,7 @@ func (f *Files) tile(gtx C, i int, sz image.Point) D {
 				layout.Rigid(func(gtx C) D { return f.para(gtx, 13, 16, wReg, f.p.Muted, 2, t.desc) }),
 			)
 		}()
-		border(gtx, r, rad, max(1, gtx.Dp(1)), argb(0x211d1c1d))
+		border(gtx, r, rad, max(1, gtx.Dp(1)), f.p.Ring)
 		if c.Hovered() {
 			rrect(gtx, r, rad, f.p.Hover)
 		}
@@ -796,7 +822,7 @@ func (f *Files) filterBar(gtx C) D {
 				if f.filtersBtn.Hovered() {
 					rrect(gtx, r, gtx.Dp(4), f.p.Hover)
 				}
-				border(gtx, r, gtx.Dp(4), max(1, gtx.Dp(1)), filesSegLine)
+				border(gtx, r, gtx.Dp(4), max(1, gtx.Dp(1)), f.p.SegLine)
 				g := gtx
 				g.Constraints = layout.Exact(sz)
 				layout.Center.Layout(g, func(gtx C) D { return f.icon(gtx, "filter-sliders", 18, f.p.Text) })
@@ -852,7 +878,7 @@ func (f *Files) segButton(gtx C, c *widget.Clickable, active bool, icon, label s
 			if c.Hovered() {
 				rrect(gtx, r, rad, f.p.Hover)
 			}
-			border(gtx, r, rad, max(1, gtx.Dp(1)), filesSegLine)
+			border(gtx, r, rad, max(1, gtx.Dp(1)), f.p.SegLine)
 		}
 		call.Add(gtx.Ops)
 		return d
@@ -921,7 +947,7 @@ func (f *Files) card(gtx C, it *fileItem) D {
 				layout.Flexed(1, func(gtx C) D {
 					return col(gtx,
 						layout.Rigid(func(gtx C) D { return f.label(gtx, 15, wBold, f.p.Text, it.title()) }),
-						layout.Rigid(func(gtx C) D { return f.label(gtx, 13, wReg, filesMeta, f.fileMeta(it)) }),
+						layout.Rigid(func(gtx C) D { return f.label(gtx, 13, wReg, f.p.Meta, f.fileMeta(it)) }),
 					)
 				}),
 				layout.Rigid(func(gtx C) D {
@@ -932,8 +958,8 @@ func (f *Files) card(gtx C, it *fileItem) D {
 					return c.owner.Layout(gtx, func(gtx C) D { return f.avatar(gtx, u.Avatar, 20) })
 				}),
 				hgap(4),
-				layout.Rigid(func(gtx C) D { return f.iconButton(gtx, &c.star, "star", 28, 18, filesMeta) }),
-				layout.Rigid(func(gtx C) D { return f.iconButton(gtx, &c.menu, "kebab", 28, 18, filesMeta) }),
+				layout.Rigid(func(gtx C) D { return f.iconButton(gtx, &c.star, "star", 28, 18, f.p.Meta) }),
+				layout.Rigid(func(gtx C) D { return f.iconButton(gtx, &c.menu, "kebab", 28, 18, f.p.Meta) }),
 			)
 		})
 		call := m.Stop()
@@ -941,7 +967,7 @@ func (f *Files) card(gtx C, it *fileItem) D {
 		rad := gtx.Dp(12)
 		rrect(gtx, r, rad, f.p.Surface)
 		call.Add(gtx.Ops)
-		border(gtx, r, rad, max(1, gtx.Dp(1)), filesCardLine)
+		border(gtx, r, rad, max(1, gtx.Dp(1)), f.p.CardLine)
 		return d
 	})
 }
@@ -1063,9 +1089,11 @@ var fileMention = regexp.MustCompile(`<([@#!])([A-Z0-9]+)(?:\|([^>]*))?>`)
 
 // cleanTitles unescapes Slack's &lt;&gt;&amp; and resolves <@U…>, <#C…>
 // and <!here> tokens in file titles, the way Slack displays them.
-func (f *Files) cleanTitles(in []fileItem) []fileItem {
+func (f *Files) cleanTitles(in []core.File) []fileItem {
 	out := make([]fileItem, len(in))
-	copy(out, in)
+	for i := range in {
+		out[i] = fileItem{in[i]}
+	}
 	for i := range out {
 		t := out[i].Title
 		if strings.Contains(t, "<") || strings.Contains(t, "&") {

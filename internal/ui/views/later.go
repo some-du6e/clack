@@ -626,7 +626,7 @@ func (s *savedBase) savedChip(gtx C, it *core.SavedItem) D {
 	if over {
 		fg, bg = rgb(0xc01343), rgb(0xffe8ef)
 		if s.th != nil && s.th.Dark {
-			fg, bg = s.p.Red, argb(0x33e01e5a)
+			fg, bg = s.p.Red, flatten(argb(0x33e01e5a), s.p.Bg)
 		}
 	}
 	return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D {
@@ -772,7 +772,7 @@ func (l *Later) update(gtx C) {
 	l.rowActions(gtx)
 
 	if l.addBtn.Clicked(gtx) || l.emptyAdd.Clicked(gtx) {
-		l.h.Toast("Not supported yet")
+		l.h.Toast("Writing your own to-dos needs core support that isn’t there yet; save a message to add it")
 	}
 	toggle := func(m int) {
 		if l.menu == m {
@@ -873,8 +873,27 @@ func (l *Later) cleanUp(i int) {
 				return c.UpdateSaved(ctx, it.Channel, it.TS, core.SavedUpdate{Completed: laterBool(true)})
 			})
 		})
+	case 3: // Remove deleted messages: unsave the tombstones
+		var gone []core.SavedItem
+		for _, f := range l.feeds {
+			for _, it := range f.items {
+				if it.ItemType == "message" && it.Msg == nil && it.Channel != "" && it.TS != "" {
+					gone = append(gone, it)
+				}
+			}
+		}
+		if len(gone) == 0 {
+			l.h.Toast("No deleted messages to remove")
+			return
+		}
+		for j := range gone {
+			l.remove(laterKey(&gone[j]))
+		}
+		l.write("", "Removed "+plural(len(gone), "deleted message"), true, func(ctx context.Context, c *core.App) error {
+			return laterEach(ctx, gone, func(it core.SavedItem) error { return c.Unsave(ctx, it.Channel, it.TS) })
+		})
 	default:
-		l.h.Toast("Not supported yet")
+		l.h.Toast("Clearing to-dos needs core support that isn’t there yet")
 	}
 }
 
@@ -1292,7 +1311,7 @@ func (b *base) todoPopover(gtx C, at image.Point, w unit.Dp, tag *int, content W
 	rad := gtx.Dp(8)
 	theme.Shadow(gtx, r, rad, gtx.Dp(6), argb(0x1f000000))
 	rrect(gtx, r, rad, b.p.Surface)
-	border(gtx, r, rad, max(1, gtx.Dp(1)), argb(0x211d1c1d))
+	border(gtx, r, rad, max(1, gtx.Dp(1)), b.p.Ring)
 	blk := clip.Rect(r).Push(gtx.Ops)
 	event.Op(gtx.Ops, tag)
 	blk.Pop()
@@ -1466,7 +1485,7 @@ func (b *base) dlActionBar(gtx C, btns ...layout.FlexChild) D {
 	rad := gtx.Dp(12)
 	theme.Shadow(gtx, r, rad, gtx.Dp(3), argb(0x14000000))
 	rrect(gtx, r, rad, b.p.Surface)
-	border(gtx, r, rad, max(1, gtx.Dp(1)), argb(0x211d1c1d))
+	border(gtx, r, rad, max(1, gtx.Dp(1)), b.p.Ring)
 	call.Add(gtx.Ops)
 	return d
 }

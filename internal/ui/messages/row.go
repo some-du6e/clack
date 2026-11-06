@@ -14,6 +14,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
@@ -28,12 +29,19 @@ type row struct {
 	rv      *richview.View
 	handler richHandler
 
+	// inline edit composer (nil when not editing)
+	edit                 *composer.Composer
+	bodyRect             image.Rectangle // row-local rect of the message body
+	retryBtn, discardBtn widget.Clickable
+
 	// resolved author (refreshed when users change)
 	uRev      uint64
 	name      string
 	avatar    string
 	statusURL string
 	bot       bool
+
+	needChan bool // body mentions channels not resolved yet
 
 	nameBtn, avatarBtn widget.Clickable
 	threadBtn          widget.Clickable
@@ -61,6 +69,9 @@ type rowCtx struct {
 	selfID    string
 	usersRev  uint64
 	origin    func(image.Point) image.Point
+	winOrigin image.Point // the row's top-left in window coordinates (last frame)
+	onRetry   func(r *row)
+	onDiscard func(r *row)
 	highlight float32 // 0..1 flash for jump targets
 	onReact   func(r *row, name string, add bool)
 }
@@ -81,6 +92,7 @@ func (r *row) set(e *entry) {
 		r.rv.Set(e.m.Doc, opts)
 	}
 	r.uRev = 0
+	r.needChan = blocksNeedChan(e.m.Doc.Blocks)
 	if len(r.reacts) < len(e.m.Reactions) {
 		r.reacts = append(r.reacts, make([]widget.Clickable, len(e.m.Reactions)-len(r.reacts))...)
 	}
@@ -92,6 +104,12 @@ func (r *row) resolve(rc *rowCtx) {
 	}
 	r.uRev = rc.usersRev
 	m := &r.m
+	if r.needChan {
+		doc := m.Doc
+		doc.Blocks = fixChannels(rc.h, doc.Blocks)
+		r.needChan = blocksNeedChan(doc.Blocks)
+		r.rv.Set(doc, richview.Options{Edited: m.Edited, Muted: m.System, Dim: m.Pending})
+	}
 	r.name, r.avatar, r.statusURL, r.bot = m.Name, m.Avatar, "", m.IsBot || (m.BotID != "" && m.User == "")
 	if m.User != "" && rc.h.Core() != nil {
 		if u, ok := rc.h.Core().User(m.User); ok {
@@ -201,14 +219,29 @@ func (r *row) layout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 		at(gtx, padX+dp(gtx, mt.avatar)-sz.X, y, func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, s, ts) })
 	}
 
-	// body
+	// body (or the inline edit composer)
 	r.handler.h, r.handler.m = rc.h, m
 	r.handler.anchor = rc.origin
-	body := at(gtx, cx, y, func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
-		return r.rv.Layout(gtx, rc.st, &r.handler)
-	})
+	var body layout.Dimensions
+	if r.edit != nil {
+		ed := r.edit
+		ed.Origin = rc.winOrigin.Add(image.Pt(cx-dp(gtx, 4), y))
+		body = at(gtx, cx-dp(gtx, 4), y, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(cw+dp(gtx, 4), 1<<20)}
+			return ed.Layout(gtx)
+		})
+		y += dp(gtx, 4)
+	} else {
+		body = at(gtx, cx, y, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
+			return r.rv.Layout(gtx, rc.st, &r.handler)
+		})
+	}
+	r.bodyRect = image.Rectangle{Min: image.Pt(cx, y), Max: image.Pt(cx+body.Size.X, y+body.Size.Y)}
 	y += body.Size.Y
+	if isFailed(m) {
+		y += r.failedLine(gtx, rc, cx, y)
+	}
 	if body.Size.Y == 0 && !rc.header {
 		y += dp(gtx, mt.nameLine)
 	}
@@ -244,6 +277,8 @@ func (r *row) layout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	bg := c.Bg
 	bg.A = 0
 	switch {
+	case r.edit != nil:
+		bg = c.Editing
 	case m.Pinned && rc.hovered:
 		bg = c.PinnedHover
 	case m.Pinned:
@@ -260,6 +295,46 @@ func (r *row) layout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	content.Add(gtx.Ops)
 	r.height = h
 	return layout.Dimensions{Size: size}
+}
+
+// failedLine is "Message failed to send. Retry · Delete" under a failed
+// optimistic send.
+func (r *row) failedLine(gtx layout.Context, rc *rowCtx, x, y int) int {
+	c := rc.c
+	lh := dp(gtx, 20)
+	is := dp(gtx, 14)
+	at(gtx, x, y+(lh-is)/2+dp(gtx, 2), func(gtx layout.Context) layout.Dimensions {
+		return icons.Get("warning")(gtx, unit.Dp(14), c.FailedText)
+	})
+	s := textStyle{size: 13, col: c.FailedText, lineH: 20}
+	xx := x + is + dp(gtx, 4)
+	d := at(gtx, xx, y+dp(gtx, 2), func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, s, "Message failed to send.") })
+	xx += d.Size.X + dp(gtx, 4)
+	link := func(btn *widget.Clickable, txt string) {
+		d := at(gtx, xx, y+dp(gtx, 2), func(gtx layout.Context) layout.Dimensions {
+			return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				ls := textStyle{size: 13, weight: theme.Bold, col: c.Link, lineH: 20}
+				dd := label(gtx, rc.th, ls, txt)
+				if btn.Hovered() {
+					base := dd.Size.Y - dd.Baseline
+					fill(gtx.Ops, image.Rect(0, base+dp(gtx, 1), dd.Size.X, base+dp(gtx, 2)), c.Link)
+				}
+				return dd
+			})
+		})
+		xx += d.Size.X
+	}
+	link(&r.retryBtn, "Retry")
+	d = at(gtx, xx, y+dp(gtx, 2), func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, s, " · ") })
+	xx += d.Size.X
+	link(&r.discardBtn, "Delete")
+	if r.retryBtn.Clicked(gtx) && rc.onRetry != nil {
+		rc.onRetry(r)
+	}
+	if r.discardBtn.Clicked(gtx) && rc.onDiscard != nil {
+		rc.onDiscard(r)
+	}
+	return lh + dp(gtx, 4)
 }
 
 // systemLayout draws join/leave/topic messages: a 16px icon in the

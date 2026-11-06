@@ -383,6 +383,9 @@ func (c *Composer) handleActions(gtx layout.Context) {
 			c.finishEdit()
 		case caParagraph:
 			c.paragraphMenu(a.Anchor)
+		case caDivider:
+			c.ed.InsertDivider()
+			c.ed.Focus(gtx)
 		}
 		c.h.Invalidate()
 	}
@@ -415,10 +418,20 @@ func (c *Composer) openLink() {
 }
 
 func (c *Composer) paragraphMenu(anchor image.Rectangle) {
-	// Slack's ¶ menu offers headings, which Slack's rich_text has no
-	// element for in messages; we show Paragraph only, checked.
+	// Slack's ¶ menu: Paragraph and Big/Medium/Small heading, the caret's
+	// current kind checked. Picking one sets the selected lines to it.
+	cur := c.ed.ActiveBlock()
+	item := func(label string, k BlockKind) popups.MenuItem {
+		return popups.MenuItem{Label: label, Checked: cur == k, Do: func() {
+			c.ed.SetBlock(k)
+			c.Focus()
+		}}
+	}
 	items := []popups.MenuItem{
-		{Label: "Paragraph", Checked: true, Do: c.Focus},
+		item("Paragraph", Para),
+		item("Big heading", Header1),
+		item("Medium heading", Header2),
+		item("Small heading", Header3),
 	}
 	c.h.ShowOverlay(popups.NewMenuOpts(c.h, items, popups.MenuOpts{Width: 248, Anchor: anchor, Side: popups.Above}))
 }
@@ -439,15 +452,40 @@ func (c *Composer) scheduleMenu(anchor image.Rectangle) {
 			{Label: "Tomorrow at 9:00 AM", Do: sched(tomorrow)},
 			{Label: "Monday at 9:00 AM", Do: sched(monday)},
 			popups.Sep(),
-			{Label: "Custom time", Do: func() { c.h.Toast("Custom schedule times aren't available yet") }},
+			{Label: "Custom time…", Do: func() {
+				openSchedulePicker(c.h, func(t time.Time) { c.schedule(t) })
+			}},
 		}
 		c.h.ShowOverlay(popups.NewMenuOpts(c.h, items, popups.MenuOpts{Width: 260, Anchor: anchor, Side: popups.Above, AlignRight: true}))
 	}
 }
 
+// schedule posts the current message at time t via core (chat scheduling
+// goes through drafts in core). Files aren't scheduled (Slack schedules
+// text/blocks only); a scheduled message clears the composer like a send.
 func (c *Composer) schedule(t time.Time) {
-	// core has no chat.scheduleMessage wrapper yet.
-	c.h.Toast("Scheduling messages needs core support (chat.scheduleMessage)")
+	if c.edit != nil || c.ed.Empty() {
+		return
+	}
+	if !t.After(time.Now()) {
+		c.h.Toast("Pick a time in the future")
+		return
+	}
+	doc := c.ed.Doc().Clone()
+	text, blocks := doc.Mrkdwn(), doc.RichTextBlocks()
+	api, ch, ts := c.api, c.ch, c.ts
+	broadcast := c.broadcast && ts != ""
+	when := t.Format("Mon Jan 2 at 3:04 PM")
+	c.clearAfterSend()
+	go func() {
+		_, err := api.scheduleMessage(context.Background(), ch, ts, text, blocks, broadcast, t.Unix())
+		if err != nil {
+			c.later(func() { c.h.Toast("Couldn't schedule: " + err.Error()) })
+			c.restore(doc)
+			return
+		}
+		c.later(func() { c.h.Toast("Message scheduled for " + when) })
+	}()
 }
 
 // ---- sending ----
@@ -499,17 +537,17 @@ func (c *Composer) submit() {
 		}
 	}
 
-	files := c.att.Files()
+	prepared, rawFiles, hasFiles := c.att.uploadBatch()
 	broadcast := c.broadcast && ts != ""
 	c.clearAfterSend()
-	if len(files) > 0 {
+	if hasFiles {
 		c.att.SetUploading(true)
 		go func() {
 			comment := text
 			if doc.Empty() {
 				comment = ""
 			}
-			_, err := api.upload(context.Background(), core.UploadOpts{Channel: ch, ThreadTS: ts, Comment: comment, Files: files})
+			_, err := api.upload(context.Background(), core.UploadOpts{Channel: ch, ThreadTS: ts, Comment: comment, Files: rawFiles, Prepared: prepared})
 			c.later(func() {
 				c.att.SetUploading(false)
 				if err != nil {
