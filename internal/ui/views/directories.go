@@ -388,7 +388,11 @@ func (d *Directories) load(tab int, q string) {
 		d.loadPeople(q, 1)
 	case dirTabChannels:
 		d.chanL.Position = layout.Position{}
-		d.loadChannels(q, 1)
+		if d.chanScope.sel == 1 {
+			d.loadMyChannels(q)
+		} else {
+			d.loadChannels(q, 1)
+		}
 	case dirTabGroups:
 		d.groupsQ = q
 		d.groupL.Position = layout.Position{}
@@ -457,6 +461,53 @@ func dirKnownPeople(c *core.App) []core.User {
 		return strings.ToLower(displayName(out[i])) < strings.ToLower(displayName(out[j]))
 	})
 	return out
+}
+
+// loadMyChannels is the "My channels" scope. search.modules.channels
+// ignores search_only_my_channels (core's Membership "joined" returns
+// every channel), so this lists the viewer's channels from the client
+// snapshot, matching q by name, filtered by type and sorted like browse.
+func (d *Directories) loadMyChannels(q string) {
+	c := d.h.Core()
+	cs := dirChanSorts[min(d.sorts[dirTabChannels].sel, len(dirChanSorts)-1)]
+	typ := dirTypeKeys[min(d.chanType.sel, len(dirTypeKeys)-1)]
+	d.chans.load(d.h, false, func(ctx context.Context) (dirChans, error) {
+		lq := strings.ToLower(strings.TrimPrefix(q, "#"))
+		var out []core.ChannelHit
+		for _, cv := range c.Snapshot().Convs {
+			if cv.Kind != "channel" && cv.Kind != "private" {
+				continue
+			}
+			if lq != "" && !strings.Contains(strings.ToLower(cv.Name), lq) {
+				continue
+			}
+			switch {
+			case typ == "" && cv.IsArchived,
+				typ == "public" && (cv.Kind != "channel" || cv.IsArchived),
+				typ == "private" && (cv.Kind != "private" || cv.IsArchived),
+				typ == "archived" && !cv.IsArchived,
+				typ == "external" && !cv.IsShared:
+				continue
+			}
+			out = append(out, core.ChannelHit{ID: cv.ID, Name: cv.Name, Kind: cv.Kind, IsMember: true, IsArchived: cv.IsArchived,
+				NumMembers: cv.NumMembers, Purpose: cv.Purpose, Topic: cv.Topic, Created: cv.Created})
+		}
+		sort.SliceStable(out, func(i, j int) bool {
+			a, b := out[i], out[j]
+			switch cs.sort {
+			case "member_count":
+				if a.NumMembers != b.NumMembers {
+					return a.NumMembers > b.NumMembers
+				}
+			case "created":
+				if a.Created != b.Created {
+					return a.Created > b.Created
+				}
+			}
+			return strings.ToLower(a.Name) < strings.ToLower(b.Name)
+		})
+		return dirChans{list: out, total: len(out), page: 1, pages: 1, q: q}, nil
+	})
 }
 
 // loadChannels pages the channel directory with the sort, scope and
