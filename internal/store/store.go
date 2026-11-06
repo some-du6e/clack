@@ -8,6 +8,7 @@ package store
 
 import (
 	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,7 +16,6 @@ import (
 	"sync"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/emoji"
-	"github.com/some-du6e/yoloslackgoclient/internal/render"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 )
 
@@ -55,7 +55,8 @@ type Store struct {
 	ThreadsUnread  bool
 	ThreadMentions int
 	// names of conversations we are not a member of (from search/browse)
-	names map[string]string
+	names       map[string]string
+	prefsCached bool
 }
 
 // PutName remembers the name of a conversation outside the sidebar.
@@ -309,8 +310,15 @@ func (s *Store) Emoji(name string) (string, string, bool) {
 	return s.CustomEmoji.Resolve(name, style)
 }
 
-// Proxy rewrites authenticated Slack file URLs to the local proxy.
-func (s *Store) Proxy(u string) string { return render.ProxyURL(u) }
+// Proxy rewrites authenticated Slack file URLs to the local web proxy. It
+// only exists for the legacy HTML renderer (internal/render) and goes away
+// with it; native code fetches such URLs through core.Fetch.
+func (s *Store) Proxy(u string) string {
+	if strings.HasPrefix(u, "https://files.slack.com/") || strings.Contains(u, ".slack.com/files") {
+		return "/file?u=" + url.QueryEscape(u)
+	}
+	return u
+}
 
 func (s *Store) SelfID() string {
 	s.mu.RLock()
@@ -599,6 +607,14 @@ type diskCache struct {
 	Users      []slack.User      `json:"users"`
 	Emoji      map[string]string `json:"emoji"`
 	Usergroups []slack.Usergroup `json:"usergroups,omitempty"`
+	Prefs      *Prefs            `json:"prefs,omitempty"`
+}
+
+// HasCachedPrefs reports whether prefs came from the disk cache.
+func (s *Store) HasCachedPrefs() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.prefsCached
 }
 
 // SetUsergroups installs usergroups (for <!subteam^> names and autocomplete).
@@ -634,6 +650,16 @@ func (s *Store) LoadCache() {
 	if len(d.Usergroups) > 0 {
 		s.SetUsergroups(d.Usergroups)
 	}
+	if d.Prefs != nil {
+		muted := map[string]bool{}
+		for _, id := range d.Prefs.Muted {
+			muted[id] = true
+		}
+		s.SetPrefs(*d.Prefs, muted)
+		s.mu.Lock()
+		s.prefsCached = true
+		s.mu.Unlock()
+	}
 }
 
 func (s *Store) SaveCache() error {
@@ -641,7 +667,8 @@ func (s *Store) SaveCache() error {
 		return nil
 	}
 	s.mu.RLock()
-	d := diskCache{Emoji: s.CustomEmoji.Snapshot(), Usergroups: append([]slack.Usergroup(nil), s.Groups...)}
+	prefs := s.Prefs
+	d := diskCache{Emoji: s.CustomEmoji.Snapshot(), Usergroups: append([]slack.Usergroup(nil), s.Groups...), Prefs: &prefs}
 	for _, u := range s.Users {
 		d.Users = append(d.Users, *u)
 	}
