@@ -99,6 +99,8 @@ type UsergroupOpts struct {
 	Sort  string // "name" (default) | "date_create" | "member_count"
 	Desc  bool
 	Count int // default 50
+	// ExcludeDisabled leaves out disabled groups (Slack's directory shows them).
+	ExcludeDisabled bool
 }
 
 // Tab is one entry of a channel's tab bar, in server order. The UI adds
@@ -538,6 +540,10 @@ func channelBrowseParams(o ChannelBrowseOpts) url.Values {
 	switch o.Membership {
 	case "joined":
 		p.Set("search_only_my_channels", "true")
+		if p.Get("sort") == "recommended" { // recommendations ignore the membership filter (verified)
+			p.Set("sort", "name")
+			p.Set("sort_dir", browseSortDir(o.Desc))
+		}
 	case "other":
 		p.Set("exclude_my_channels", "1")
 	}
@@ -668,7 +674,7 @@ func (a *App) SearchUsergroups(ctx context.Context, o UsergroupOpts) ([]Usergrou
 		count = 50
 	}
 	p := url.Values{"keyword": {strings.TrimPrefix(strings.TrimSpace(o.Query), "@")}, "sort": {sortBy},
-		"sort_dir": {browseSortDir(o.Desc)}, "include_hidden": {"false"}, "include_disabled": {"true"},
+		"sort_dir": {browseSortDir(o.Desc)}, "include_hidden": {"false"}, "include_disabled": {strconv.FormatBool(!o.ExcludeDisabled)},
 		"count": {strconv.Itoa(count)}}
 	var res struct {
 		Usergroups []struct {
