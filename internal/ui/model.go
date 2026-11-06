@@ -49,6 +49,7 @@ type convInfo struct {
 	Starred        bool
 	LastRead       string
 	Latest         string
+	StatusEmoji    string // DM partner's status emoji image (shown after the name)
 }
 
 func (m *model) conv(id string) *convInfo {

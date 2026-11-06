@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 )
 
@@ -23,6 +24,10 @@ type attFakeHost struct {
 	toasts      []string
 	inval       atomic.Int32
 }
+
+// Core returns nil so add()'s upload-at-attach prepare is a no-op in tests
+// (the embedded nil Host would otherwise panic).
+func (h *attFakeHost) Core() *core.App { return nil }
 
 func (h *attFakeHost) Invalidate() { h.inval.Add(1) }
 func (h *attFakeHost) Toast(s string) {

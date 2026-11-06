@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,12 +63,17 @@ func main() {
 		c := slack.New(creds)
 		st := store.New(cacheDir)
 		svc := core.New(c, st)
-		images.SetFetcher(func(ctx context.Context, url string) ([]byte, error) {
-			if imgcache.DiskOK(url) || !strings.Contains(url, "slack") {
-				return httpFetch(ctx, url)
+		images.SetFetcher(func(ctx context.Context, raw string) ([]byte, error) {
+			// slack.com hosts (files.slack.com, …) need the session cookie and
+			// stay in memory; CDNs, Slack's image proxy and unfurl hosts are public.
+			if u, err := url.Parse(raw); err == nil {
+				h := strings.ToLower(u.Hostname())
+				if h == "slack.com" || strings.HasSuffix(h, ".slack.com") {
+					b, _, err := svc.Fetch(ctx, raw)
+					return b, err
+				}
 			}
-			b, _, err := svc.Fetch(ctx, url) // files.slack.com: authenticated, memory only
-			return b, err
+			return httpFetch(ctx, raw)
 		})
 		a.Attach(svc, cacheDir)
 	}

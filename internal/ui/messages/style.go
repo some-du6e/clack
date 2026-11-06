@@ -3,6 +3,7 @@ package messages
 import (
 	"image"
 	"image/color"
+	"sync"
 
 	"gioui.org/f32"
 	"gioui.org/font"
@@ -29,19 +30,20 @@ func rgba(v uint32, a float32) color.NRGBA {
 
 // colors are the message-pane colors measured from the 2026 client.
 type colors struct {
-	Bg, Hover, Text, Text2, Text3        color.NRGBA
-	Edited, PinIcon, Muted70, TimeSystem color.NRGBA
-	Pinned, PinnedHover, Highlight       color.NRGBA
-	BadgeBg, BadgeText                   color.NRGBA
-	ReactBg, ReactHoverBorder            color.NRGBA
-	ReactSelfBg, ReactSelfHoverBg        color.NRGBA
-	ReactSelfBorder, ReactSelfText       color.NRGBA
-	Link, NewLine, DayLine, PillBorder   color.NRGBA
-	Shadow, ToolbarIcon, ToolbarHoverBg  color.NRGBA
-	Tooltip, TooltipText, Skeleton       color.NRGBA
-	ThreadBorder, ThreadBg, JumpBg       color.NRGBA
-	JumpText, FailedText, BorderStrong   color.NRGBA
-	SystemText, HeaderBorder, CloseHover color.NRGBA
+	Bg, Hover, Text, Text2, Text3                     color.NRGBA
+	Edited, PinIcon, Muted70, TimeSystem              color.NRGBA
+	Pinned, PinnedHover, Highlight                    color.NRGBA
+	BadgeBg, BadgeText                                color.NRGBA
+	ReactBg, ReactHoverBorder                         color.NRGBA
+	ReactSelfBg, ReactSelfHoverBg                     color.NRGBA
+	ReactSelfBorder, ReactSelfText                    color.NRGBA
+	Link, NewLine, DayLine, PillBorder                color.NRGBA
+	Shadow, ToolbarIcon, ToolbarHoverBg               color.NRGBA
+	Tooltip, TooltipText, Skeleton                    color.NRGBA
+	ThreadBorder, ThreadBg, JumpBg                    color.NRGBA
+	JumpText, FailedText, BorderStrong                color.NRGBA
+	SystemText, HeaderBorder, CloseHover              color.NRGBA
+	Editing, ScrollThumb, ScrollThumbHover, Selection color.NRGBA
 }
 
 var lightColors = colors{
@@ -57,6 +59,7 @@ var lightColors = colors{
 	Tooltip: rgb(0x1d1c1d), TooltipText: rgb(0xffffff), Skeleton: rgb(0xeaeaea),
 	ThreadBorder: rgba(0x1d1c1d, 0.13), ThreadBg: rgb(0xffffff), JumpBg: rgb(0x1264a3),
 	JumpText: rgb(0xffffff), FailedText: rgb(0xe01e5a), BorderStrong: rgba(0x1d1c1d, 0.3),
+	Editing: rgba(0xf2c744, 0.2), ScrollThumb: rgba(0x1d1c1d, 0.3), ScrollThumbHover: rgba(0x1d1c1d, 0.5), Selection: rgba(0x1d9bd1, 0.3),
 	SystemText: rgb(0x454447), HeaderBorder: rgba(0x1d1c1d, 0.13), CloseHover: rgba(0x1d1c1d, 0.06),
 }
 
@@ -73,14 +76,37 @@ var darkColors = colors{
 	Tooltip: rgb(0xe8e8e8), TooltipText: rgb(0x1a1d21), Skeleton: rgb(0x2c2d30),
 	ThreadBorder: rgba(0xe8e8e8, 0.13), ThreadBg: rgb(0x1a1d21), JumpBg: rgb(0x1d9bd1),
 	JumpText: rgb(0xffffff), FailedText: rgb(0xe01e5a), BorderStrong: rgba(0xe8e8e8, 0.3),
+	Editing: rgba(0xf2c744, 0.14), ScrollThumb: rgba(0xe8e8e8, 0.3), ScrollThumbHover: rgba(0xe8e8e8, 0.5), Selection: rgba(0x1d9bd1, 0.4),
 	SystemText: rgb(0xababad), HeaderBorder: rgba(0xe8e8e8, 0.13), CloseHover: rgba(0xe8e8e8, 0.06),
 }
 
 func colorsFor(th *theme.Theme) *colors {
+	flatOnce.Do(func() {
+		lightFlat, darkFlat = flatten(lightColors), flatten(darkColors)
+	})
 	if th.Dark {
-		return &darkColors
+		return &darkFlat
 	}
-	return &lightColors
+	return &lightFlat
+}
+
+var (
+	flatOnce            sync.Once
+	lightFlat, darkFlat colors
+)
+
+// flatten pre-blends the translucent row/pill fills over the pane color in
+// sRGB, the way browsers composite CSS rgba(). Gio blends in linear light,
+// which makes e.g. rgba(242,199,68,.1) on the dark pane look far brighter
+// than Slack's.
+func flatten(c colors) colors {
+	bg := c.Bg
+	for _, p := range []*color.NRGBA{&c.Hover, &c.Pinned, &c.PinnedHover, &c.Highlight, &c.Editing,
+		&c.BadgeBg, &c.ReactBg, &c.ReactSelfBg, &c.ReactSelfHoverBg, &c.ToolbarHoverBg, &c.CloseHover,
+		&c.DayLine, &c.PillBorder, &c.ThreadBorder, &c.HeaderBorder, &c.BorderStrong, &c.ReactHoverBorder, &c.Muted70} {
+		*p = richview.Over(*p, bg)
+	}
+	return c
 }
 
 // metrics are the row geometry in dp, measured from the 2026 client.

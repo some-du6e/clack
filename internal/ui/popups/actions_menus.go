@@ -98,24 +98,28 @@ func NewChannelMenu(h Host, anchor image.Point, convID string) *Menu {
 			{Label: "Copy conversation ID", DoCtx: actCopy(h, convID, "Conversation ID copied")},
 		}
 	}
-	star := "Star channel"
+	noun := "channel"
 	if dm {
-		star = "Star conversation"
+		noun = "conversation"
 	}
-	mute := "Mute channel"
-	if dm {
-		mute = "Mute conversation"
+	if h.Core() != nil { // labels follow the refreshed stars.list
+		run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, cxRefreshStars(ctx, h) },
+			func(struct{}, error) { h.Invalidate() })
 	}
-	if c.Muted {
-		mute = "Un" + strings.ToLower(mute[:1]) + mute[1:]
-	}
+	starLabel, unstarLabel := "Star "+noun, "Unstar "+noun
+	muteLabel, unmuteLabel := "Mute "+noun, "Unmute "+noun
 	items := []MenuItem{
 		{Label: detailsLabel, Sub: detailSub},
 		{Label: "Copy", Sub: []MenuItem{
 			{Label: "Copy link", DoCtx: actCopy(h, link, "Link copied")},
 			{Label: "Copy name", DoCtx: actCopy(h, name, "Name copied")},
 		}},
-		{Label: star, Do: actToast(h, "Starring isn't supported yet")},
+		{Widget: actLabelRow(h, func() string {
+			if cxStarred(h, convID) {
+				return unstarLabel
+			}
+			return starLabel
+		}), Do: func() { actToggleStar(h, convID, noun) }},
 	}
 	if !dm {
 		items = append(items, MenuItem{Label: "Move channel", Do: actToast(h, "Moving channels between sections isn't supported yet")})
@@ -125,9 +129,21 @@ func NewChannelMenu(h Host, anchor image.Point, convID string) *Menu {
 		MenuItem{Label: "Add a workflow", Do: actToast(h, "Workflows aren't supported in yoloslack")},
 		MenuItem{Label: "Edit settings", Do: actToast(h, "Channel settings aren't supported yet")},
 		Sep(),
-		MenuItem{Label: "Open in split view", Icon: "panel-right", Do: actToast(h, "Split view isn't supported yet")},
+		MenuItem{Label: "Open in split view", Icon: "panel-right", Do: func() {
+			// ui-shell's *ui.App exposes OpenSplit (right-hand pane).
+			if s, ok := h.(interface{ OpenSplit(route string) }); ok {
+				s.OpenSplit("c/" + convID)
+				return
+			}
+			h.Toast("Split view isn't supported yet")
+		}},
 		Sep(),
-		MenuItem{Label: mute, Do: actToast(h, "Muting isn't supported yet")},
+		MenuItem{Widget: actLabelRow(h, func() string {
+			if actIsMuted(h, convID) {
+				return unmuteLabel
+			}
+			return muteLabel
+		}), Do: func() { actToggleMute(h, convID, noun) }},
 	)
 	if dm {
 		items = append(items, MenuItem{Label: "Close conversation", Do: func() { actLeave(h, convID, "Conversation closed") }})
@@ -141,6 +157,81 @@ func NewChannelMenu(h Host, anchor image.Point, convID string) *Menu {
 		}})
 	}
 	return NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(anchor), AlignRight: true})
+}
+
+// actMuteSet remembers mutes done here until core's conversation catches
+// up (UI goroutine only).
+var actMuteSet = map[string]bool{}
+
+func actIsMuted(h Host, ch string) bool {
+	if m, ok := actMuteSet[ch]; ok {
+		return m
+	}
+	return cxMuted(h, ch)
+}
+
+// actToggleStar stars/unstars ch (cxStar, then cxNoteStar on success).
+func actToggleStar(h Host, ch, noun string) {
+	if h.Core() == nil {
+		h.Toast("Not connected yet")
+		return
+	}
+	star := !cxStarred(h, ch)
+	run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, cxStar(ctx, h, ch, star) }, func(_ struct{}, err error) {
+		if err != nil {
+			h.Toast("Couldn't do that: " + errText(err))
+			return
+		}
+		cxNoteStar(ch, star)
+		msg := strings.ToUpper(noun[:1]) + noun[1:] + " unstarred"
+		if star {
+			msg = strings.ToUpper(noun[:1]) + noun[1:] + " starred"
+		}
+		h.Toast(msg)
+	})
+}
+
+// actToggleMute mutes/unmutes ch through cxMute.
+func actToggleMute(h Host, ch, noun string) {
+	if h.Core() == nil {
+		h.Toast("Not connected yet")
+		return
+	}
+	mute := !actIsMuted(h, ch)
+	run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, cxMute(ctx, h, ch, mute) }, func(_ struct{}, err error) {
+		if err != nil {
+			h.Toast("Couldn't do that: " + errText(err))
+			return
+		}
+		actMuteSet[ch] = mute
+		msg := strings.ToUpper(noun[:1]) + noun[1:] + " unmuted"
+		if mute {
+			msg = strings.ToUpper(noun[:1]) + noun[1:] + " muted"
+		}
+		h.Toast(msg)
+	})
+}
+
+// actLabelRow is a plain 28px menu row whose label is read every frame
+// (Star/Unstar flips when stars.list arrives).
+func actLabelRow(h Host, label func() string) func(gtx layout.Context, hl bool) layout.Dimensions {
+	return func(gtx layout.Context, hl bool) layout.Dimensions {
+		th := h.Theme()
+		cl := colorsOf(th)
+		sz := image.Pt(gtx.Constraints.Max.X, dp(gtx, 28))
+		fg := cl.Fg
+		if hl {
+			fill(gtx, image.Rectangle{Max: sz}, cl.Highlight)
+			fg = cl.HighText
+		}
+		at(gtx, image.Pt(dp(gtx, 24), 0), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, sz.X-dp(gtx, 48)), sz.Y)}
+			return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
+				return text(gtx, th, 15, theme.Regular, fg, label())
+			})
+		})
+		return layout.Dimensions{Size: sz}
+	}
 }
 
 func actLeave(h Host, convID, okMsg string) {
@@ -342,22 +433,7 @@ func NewUserMenu(h Host, anchor image.Point) *Menu {
 	}
 
 	snooze := func(minutes func(now time.Time) int) func() {
-		return func() {
-			a := h.Core()
-			if a == nil {
-				h.Toast("Not connected yet")
-				return
-			}
-			n := minutes(time.Now())
-			run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.SetDND(ctx, n) }, func(_ struct{}, err error) {
-				if err != nil {
-					h.Toast("Couldn't do that: " + errText(err))
-					return
-				}
-				actDNDUntil = time.Now().Add(time.Duration(n) * time.Minute)
-				h.Toast("Notifications paused")
-			})
-		}
+		return func() { actSnooze(h, minutes(time.Now())) }
 	}
 	fixed := func(n int) func(time.Time) int { return func(time.Time) int { return n } }
 	var notif []MenuItem
@@ -385,9 +461,9 @@ func NewUserMenu(h Host, anchor image.Point) *Menu {
 		MenuItem{Label: "2 hours", Do: snooze(fixed(120))},
 		MenuItem{Label: "Until tomorrow", Do: snooze(func(now time.Time) int { return actMinutesUntil(now, actTomorrow9(now)) })},
 		MenuItem{Label: "Until next week", Do: snooze(func(now time.Time) int { return actMinutesUntil(now, actNextMonday9(now)) })},
-		MenuItem{Label: "Custom…", Do: actToast(h, "Custom pause times aren't supported yet")},
+		MenuItem{Label: "Custom…", Do: func() { h.ShowOverlay(actNewPauseModal(h)) }},
 		Sep(),
-		MenuItem{Label: "Edit your working hours", Do: actToast(h, "Working hours aren't supported yet")},
+		MenuItem{Label: "Edit your working hours", Do: func() { h.ShowOverlay(NewPreferencesModal(h, "availability")) }},
 		MenuItem{Note: "You can choose to always allow notifications from VIPs in preferences."},
 	)
 	notifState := "On"
@@ -404,7 +480,7 @@ func NewUserMenu(h Host, anchor image.Point) *Menu {
 				}
 				return
 			}
-			h.ShowOverlay(NewSetStatusModal(h))
+			h.ShowOverlay(NewSetStatusModalFromMenu(h))
 		}},
 		presence,
 		{Label: "Notifications", Right: notifState, Sub: notif},
@@ -423,6 +499,77 @@ func NewUserMenu(h Host, anchor image.Point) *Menu {
 	}
 	menu = NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(anchor), Side: Above})
 	return menu
+}
+
+// actSnooze pauses notifications for n minutes (core.SetDND).
+func actSnooze(h Host, n int) {
+	a := h.Core()
+	if a == nil {
+		h.Toast("Not connected yet")
+		return
+	}
+	run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.SetDND(ctx, n) }, func(_ struct{}, err error) {
+		if err != nil {
+			h.Toast("Couldn't do that: " + errText(err))
+			return
+		}
+		actDNDUntil = time.Now().Add(time.Duration(n) * time.Minute)
+		h.Toast("Notifications paused")
+	})
+}
+
+// actNewPauseModal is Slack's "Pause Notifications" dialog (pause.png):
+// 520 wide, "Pause notifications until…" + a full-width 36px date field
+// ("November 6th, 2026", input look), "Time" + a full-width time select,
+// footer with only Save → core.SetDND(minutes until then).
+func actNewPauseModal(h Host) *Modal {
+	now := time.Now()
+	start := dtCeil(now, 60)
+	day := &dtDate{Day: dtDay(start), Min: dtDay(now), Style: dtLong, Plain: true}
+	tm := &dtTime{Mins: dtMins(start), NoIcon: true}
+	tm.From = func() int {
+		if n := time.Now(); dtSameDay(day.Day, n) {
+			return dtMins(n)
+		}
+		return 0
+	}
+	var m *Modal
+	body := func(gtx layout.Context) layout.Dimensions {
+		th := h.Theme()
+		cl := colorsOf(th)
+		org := dtModalOrigin(gtx, m)
+		w := gtx.Constraints.Max.X
+		lbl := func(y int, s string) {
+			at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
+				return vcenter(gtx, dp(gtx, 22), func(gtx layout.Context) layout.Dimensions {
+					return text(gtx, th, 15, theme.Bold, cl.Fg, s)
+				})
+			})
+		}
+		lbl(dp(gtx, 2), "Pause notifications until…")
+		y := dp(gtx, 34)
+		at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
+			return day.Layout(gtx, h, org.Add(image.Pt(0, y)), w, dtLarge)
+		})
+		lbl(dp(gtx, 90), "Time")
+		y = dp(gtx, 120)
+		at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
+			return tm.Layout(gtx, h, org.Add(image.Pt(0, y)), w, dtLarge)
+		})
+		return layout.Dimensions{Size: image.Pt(w, dp(gtx, 176))}
+	}
+	m = NewModal(h, ModalOpts{Title: "Pause Notifications", PadX: 24, HeadH: 66, Body: body, Buttons: []*ModalButton{
+		{Label: "Save", Kind: BtnPrimary, Do: func() bool {
+			until, n := dtAt(day.Day, tm.Mins), time.Now()
+			if !until.After(n) {
+				h.Toast("Choose a time in the future")
+				return false
+			}
+			actSnooze(h, actMinutesUntil(n, until))
+			return true
+		}},
+	}})
+	return m
 }
 
 // actRichRow is a 28px menu row "plain **bold**" with Slack's highlight.

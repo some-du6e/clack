@@ -224,7 +224,7 @@ func drawText(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string, emb 
 	m := op.Record(gtx.Ops)
 	viewport := image.Rectangle{Max: cs.Max}
 	it := glyphIter{viewport: viewport, maxLines: o.MaxLines, col: o.Color, emb: emb * gtx.Metric.PxPerDp}
-	var glyphs [32]text.Glyph
+	var glyphs [512]text.Glyph // one batch per line in practice (see paint)
 	line := glyphs[:0]
 	for g, ok := sh.NextGlyph(); ok; g, ok = sh.NextGlyph() {
 		var ok bool
@@ -319,8 +319,10 @@ func (it *glyphIter) paint(gtx layout.Context, sh *text.Shaper, g text.Glyph, li
 			// Second fill shifted right by the embolden width: thickens
 			// stems like a hairline stroke, without per-frame CPU stroke
 			// tessellation (half the frame cost of clip.Stroke here).
+			// A PathSpec must not be used twice: shape the batch again
+			// (the shaper's path cache makes this cheap).
 			e := op.Affine(f32.AffineId().Offset(f32.Pt(it.emb, 0))).Push(gtx.Ops)
-			paint.FillShape(gtx.Ops, it.col, clip.Outline{Path: path}.Op())
+			paint.FillShape(gtx.Ops, it.col, clip.Outline{Path: sh.Shape(line)}.Op())
 			e.Pop()
 		}
 		if call := sh.Bitmaps(line); call != (op.CallOp{}) {

@@ -103,7 +103,12 @@ type attChip struct {
 
 	// Guarded by attachments.mu.
 	sending   bool
-	batch     int // SetUploading(true) batch that took the file, 0 = none
+	batch     int   // SetUploading(true) batch that took the file, 0 = none
+	preparing bool  // PrepareUpload (byte upload) in flight
+	sent      int64 // bytes uploaded so far (prepare progress)
+	ptotal    int64 // total bytes to upload (slightly > file size)
+	prepared  *core.PreparedUpload
+	prepErr   error
 	thumb     paint.ImageOp
 	thumbPx   int // side of thumb in pixels, 0 = none yet
 	thumbBusy bool
@@ -224,8 +229,10 @@ func (a *attachments) add(name string, data []byte) bool {
 	name = attCleanName(name)
 	a.mu.Lock()
 	err := attCheckAdd(a.pendingLocked(), a.total, int64(len(data)))
+	var c *attChip
 	if err == nil {
-		a.chips = append(a.chips, &attChip{name: name, data: data, kind: attKindOf(name, data)})
+		c = &attChip{name: name, data: data, kind: attKindOf(name, data)}
+		a.chips = append(a.chips, c)
 		a.total += int64(len(data))
 	}
 	a.mu.Unlock()
@@ -233,8 +240,65 @@ func (a *attachments) add(name string, data []byte) bool {
 		a.toast(attRejectText(name, err))
 		return false
 	}
+	go a.prepare(c) // upload the bytes now, like Slack; send just shares them
 	a.h.Invalidate()
 	return true
+}
+
+// prepare uploads a chip's bytes to Slack immediately (getUploadURLExternal
+// + the byte PUT) so sending is instant. Progress drives the chip's bar; a
+// failure falls back to uploading at send time (raw Files).
+func (a *attachments) prepare(c *attChip) {
+	if c == nil || a.h.Core() == nil {
+		return
+	}
+	a.mu.Lock()
+	c.preparing, c.ptotal = true, int64(len(c.data))
+	name, data := c.name, c.data
+	a.mu.Unlock()
+	a.h.Invalidate()
+
+	var last time.Time
+	prog := func(sent, total int64) {
+		a.mu.Lock()
+		c.sent, c.ptotal = sent, total
+		a.mu.Unlock()
+		if now := time.Now(); now.Sub(last) > 40*time.Millisecond || sent >= total {
+			last = now
+			a.h.Invalidate()
+		}
+	}
+	pu, err := coreAPI{a.h.Core()}.prepareUpload(context.Background(), core.UploadFile{Name: name, Title: name, Data: data}, prog)
+	a.mu.Lock()
+	c.preparing = false
+	if err != nil {
+		c.prepErr = err
+	} else {
+		p := pu
+		c.prepared = &p
+	}
+	a.mu.Unlock()
+	a.h.Invalidate()
+}
+
+// uploadBatch returns the files to share on send: PrepareUpload handles (for
+// files whose byte upload finished) plus raw files (for any still preparing
+// or that failed). hasAny is false when there's nothing to send.
+func (a *attachments) uploadBatch() (prepared []core.PreparedUpload, raw []core.UploadFile, hasAny bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, c := range a.chips {
+		if c.sending {
+			continue
+		}
+		hasAny = true
+		if c.prepared != nil {
+			prepared = append(prepared, *c.prepared)
+		} else {
+			raw = append(raw, core.UploadFile{Name: c.name, Title: c.name, Data: c.data})
+		}
+	}
+	return
 }
 
 func (a *attachments) pendingLocked() int {
@@ -802,11 +866,14 @@ func attRun(ctx context.Context, limit int64, name string, args ...string) ([]by
 // ---- chip row ----
 
 type attView struct {
-	c       *attChip
-	thumb   paint.ImageOp
-	thumbPx int
-	sending bool
-	asImage bool
+	c         *attChip
+	thumb     paint.ImageOp
+	thumbPx   int
+	sending   bool
+	preparing bool
+	sent      int64
+	ptotal    int64
+	asImage   bool
 }
 
 // Layout draws the chip row (zero size when empty). The constraints carry
@@ -826,8 +893,9 @@ func (a *attachments) Layout(gtx layout.Context) layout.Dimensions {
 			go a.makeThumb(c, px)
 		}
 		views[i] = attView{c: c, thumb: c.thumb, thumbPx: c.thumbPx, sending: c.sending,
+			preparing: c.preparing, sent: c.sent, ptotal: c.ptotal,
 			asImage: c.kind.Image && !c.thumbBad}
-		anySending = anySending || c.sending
+		anySending = anySending || c.sending || c.preparing
 	}
 	a.mu.Unlock()
 
@@ -882,6 +950,14 @@ func (a *attachments) layoutChip(gtx layout.Context, v attView, sz image.Point) 
 	if v.sending {
 		fillRRect(gtx, r, rad, withAlpha(th.C.Bg, 0x80))
 		attProgress(gtx, th, r)
+	} else if v.preparing {
+		// Determinate bar: bytes are uploaded at attach time (upload-at-attach).
+		fillRRect(gtx, r, rad, withAlpha(th.C.Bg, 0x66))
+		frac := float32(0)
+		if v.ptotal > 0 {
+			frac = float32(v.sent) / float32(v.ptotal)
+		}
+		attProgressFrac(gtx, th, r, frac)
 	}
 	if hovered && !v.sending {
 		d := gtx.Dp(20)
@@ -951,8 +1027,29 @@ func (a *attachments) drawCard(gtx layout.Context, th *theme.Theme, v attView, r
 	})
 }
 
+// attProgressFrac draws a determinate progress bar (0..1) along the chip's
+// bottom, used while the file's bytes upload at attach time.
+func attProgressFrac(gtx layout.Context, th *theme.Theme, r image.Rectangle, frac float32) {
+	in := gtx.Dp(8)
+	h := max(gtx.Dp(4), 2)
+	track := image.Rect(r.Min.X+in, r.Max.Y-in-h, r.Max.X-in, r.Max.Y-in)
+	if track.Dx() <= 0 {
+		return
+	}
+	fillRRect(gtx, track, h/2, withAlpha(th.C.Fg, 0x26))
+	if frac < 0 {
+		frac = 0
+	} else if frac > 1 {
+		frac = 1
+	}
+	w := int(frac * float32(track.Dx()))
+	if w > 0 {
+		fillRRect(gtx, image.Rect(track.Min.X, track.Min.Y, track.Min.X+w, track.Max.Y), h/2, rgb(attBlue))
+	}
+}
+
 // attProgress draws an indeterminate progress bar along the chip's bottom
-// (core.Upload reports no byte progress yet).
+// (the final share has no byte progress).
 func attProgress(gtx layout.Context, th *theme.Theme, r image.Rectangle) {
 	in := gtx.Dp(8)
 	h := max(gtx.Dp(4), 2)

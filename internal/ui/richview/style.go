@@ -69,6 +69,29 @@ func rgba(r, g, b uint8, a float32) color.NRGBA {
 	return color.NRGBA{R: r, G: g, B: b, A: uint8(a*255 + 0.5)}
 }
 
+// Over composites c onto bg in sRGB space like a browser does with CSS
+// rgba(), returning an opaque color. Gio blends in linear light, so
+// translucent fills look lighter (and much brighter on dark) than in Slack.
+func Over(c, bg color.NRGBA) color.NRGBA {
+	if c.A == 255 {
+		return c
+	}
+	a := float32(c.A) / 255
+	mix := func(x, y uint8) uint8 { return uint8(float32(x)*a + float32(y)*(1-a) + 0.5) }
+	return color.NRGBA{R: mix(c.R, bg.R), G: mix(c.G, bg.G), B: mix(c.B, bg.B), A: 255}
+}
+
+// flat pre-composites the palette's translucent fills over the card/pane
+// color (see Over).
+func (p Palette) flat() Palette {
+	for _, c := range []*color.NRGBA{&p.MentionBg, &p.MentionHoverBg, &p.SelfMentionBg, &p.CodeBg, &p.PreBg,
+		&p.Highlight, &p.FileIconBg, &p.Border, &p.BorderHover, &p.QuoteBar, &p.Divider, &p.ButtonBorder,
+		&p.CodeBorder, &p.PreBorder} {
+		*c = Over(*c, p.Panel)
+	}
+	return p
+}
+
 // LightPalette is Slack's light theme.
 func LightPalette() Palette {
 	return Palette{
@@ -88,7 +111,7 @@ func LightPalette() Palette {
 		Danger: rgb(224, 30, 90), DangerText: rgb(255, 255, 255),
 		FileIconBg: rgba(29, 28, 29, 0.04), FileIconPDF: rgb(224, 30, 90), FileIconZip: rgb(97, 96, 97), FileIconText: rgb(97, 96, 97),
 		PlayBg: rgba(0, 0, 0, 0.4), PlayFg: rgb(255, 255, 255),
-	}
+	}.flat()
 }
 
 // DarkPalette is Slack's dark theme.
@@ -107,7 +130,8 @@ func DarkPalette() Palette {
 	p.Divider = rgba(232, 232, 232, 0.13)
 	p.ButtonBorder, p.ButtonHoverBg = rgba(232, 232, 232, 0.3), rgb(34, 37, 41)
 	p.Primary = rgb(0, 122, 90)
-	return p
+	p.Highlight = rgba(242, 199, 68, 0.3)
+	return p.flat()
 }
 
 // Style is shared by every View of one window. It owns the word shaping
