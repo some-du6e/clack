@@ -500,8 +500,15 @@ func (rc *acRowCtx) command(it acItem) {
 	top := gtx.Dp(10)
 	ic := gtx.Dp(acAvatar)
 	icon := image.Rect(rc.x, top+gtx.Dp(4), rc.x+ic, top+gtx.Dp(4)+ic)
-	fillRRect(gtx, icon, gtx.Dp(acAvatarR), acPlaceBg)
-	drawAt(gtx, icon, func(gtx layout.Context, s int) { drawSlashGlyph(gtx, s, acHelpText) })
+	if it.Command != nil && it.Command.IconURL != "" {
+		// App command: the app's icon (placeholder gray while it loads).
+		fillRRect(gtx, icon, gtx.Dp(acAvatarR), acPlaceBg)
+		rc.ac.drawImage(gtx, it.Command.IconURL, icon, gtx.Dp(acAvatarR), acPlaceBg)
+	} else {
+		// Built-in (core) command: the slash glyph.
+		fillRRect(gtx, icon, gtx.Dp(acAvatarR), acPlaceBg)
+		drawAt(gtx, icon, func(gtx layout.Context, s int) { drawSlashGlyph(gtx, s, acHelpText) })
+	}
 	x0 := rc.x + ic + gtx.Dp(8)
 
 	rc.x = x0
@@ -524,10 +531,14 @@ func (rc *acRowCtx) command(it acItem) {
 	}
 }
 
-// cmdSource is the bold lead of a command's description line.
+// cmdSource is the bold lead of a command's description line: "Slack" for
+// built-ins, "App · <AppName>" for app commands (matching Slack).
 func cmdSource(c *core.Command) string {
 	if c == nil || c.Type == "" || c.Type == "core" {
 		return "Slack"
+	}
+	if c.AppName != "" {
+		return "App · " + c.AppName
 	}
 	return "App"
 }

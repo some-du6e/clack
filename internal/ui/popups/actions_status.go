@@ -1016,7 +1016,10 @@ func (p *actTipPill) Layout(gtx layout.Context) layout.Dimensions {
 	px, py := dp(gtx, 16), dp(gtx, 6)
 	hh := dp(gtx, 22) + 2*py
 	w := tw + 2*px
-	r := image.Rect((win.X-w)/2, win.Y-hh-dp(gtx, 28), (win.X-w)/2+w, win.Y-dp(gtx, 28))
+	// Slack: the pill's top sits 266px above the window bottom (y=634 in a
+	// 900px window), just above the composer; keep it on screen when short.
+	top := maxInt(dp(gtx, 8), win.Y-dp(gtx, 266))
+	r := image.Rect((win.X-w)/2, top, (win.X-w)/2+w, top+hh)
 	rrect(gtx, r, hh/2, rgba(0x000000, .7))
 	x := r.Min.X + px
 	for _, sg := range actTipSegs {
