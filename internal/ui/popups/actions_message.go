@@ -97,7 +97,7 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 			{Label: "In 3 hours", Do: remind(actRem3h)},
 			{Label: "Tomorrow at 9:00 AM", Do: remind(actRemTomorrow)},
 			{Label: "Monday at 9:00 AM", Do: remind(actRemMonday)},
-			{Label: "Custom…", Hint: "M", Do: func() { h.Toast("Custom reminder times aren't supported yet") }},
+			{Label: "Custom…", Hint: "M", Do: func() { h.ShowOverlay(actNewReminderModal(h, ch, ts)) }},
 		}},
 		follow,
 		Sep(),
@@ -251,6 +251,65 @@ func actMsgPreview(gtx layout.Context, h Host, m core.Message, boxed bool) layou
 	}
 	macroAt(gtx, call, image.Pt(padL, padY))
 	return layout.Dimensions{Size: image.Pt(w, ht)}
+}
+
+// ---- Reminder (Custom…) modal ----
+
+// actNewReminderModal is Slack's "Reminder" dialog (remind.png): 500 wide,
+// "When" (15/700) + a 256x36 date select, "Time" + a 200x36 time select,
+// Cancel / Save. Save → core.Save(ch, ts, due).
+func actNewReminderModal(h Host, ch, ts string) *Modal {
+	now := time.Now()
+	start := dtCeil(now, 30)
+	day := &dtDate{Day: dtDay(start), Min: dtDay(now)}
+	tm := &dtTime{Mins: dtMins(start)}
+	tm.From = func() int {
+		if n := time.Now(); dtSameDay(day.Day, n) {
+			return dtMins(n)
+		}
+		return 0
+	}
+	var m *Modal
+	body := func(gtx layout.Context) layout.Dimensions {
+		th := h.Theme()
+		cl := colorsOf(th)
+		org := dtModalOrigin(gtx, m)
+		w := gtx.Constraints.Max.X
+		y := 0
+		lbl := func(s string) {
+			at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
+				return vcenter(gtx, dp(gtx, 22), func(gtx layout.Context) layout.Dimensions {
+					return text(gtx, th, 15, theme.Bold, cl.Fg, s)
+				})
+			})
+			y += dp(gtx, 30)
+		}
+		lbl("When")
+		at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
+			return day.Layout(gtx, h, org.Add(image.Pt(0, y)), minInt(dp(gtx, 256), w), dtLarge)
+		})
+		y += dp(gtx, 36)
+		lbl("Time")
+		at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
+			return tm.Layout(gtx, h, org.Add(image.Pt(0, y)), minInt(dp(gtx, 200), w), dtLarge)
+		})
+		y += dp(gtx, 36)
+		return layout.Dimensions{Size: image.Pt(w, y+dp(gtx, 26))}
+	}
+	m = NewModal(h, ModalOpts{Title: "Reminder", Width: 500, Body: body, Buttons: []*ModalButton{
+		{Label: "Cancel", Kind: BtnOutline},
+		{Label: "Save", Kind: BtnPrimary, Do: func() bool {
+			due := dtAt(day.Day, tm.Mins)
+			if !due.After(time.Now()) {
+				h.Toast("Choose a time in the future")
+				return false
+			}
+			dueAt := due.Unix()
+			actDo(h, "Reminder set", func(ctx context.Context, a *core.App) error { return a.Save(ctx, ch, ts, dueAt) })
+			return true
+		}},
+	}})
+	return m
 }
 
 // ---- reminder / snooze time math (pure; tested) ----

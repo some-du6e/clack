@@ -46,6 +46,7 @@ var (
 	epFrec       epFrecencyFile
 	epFrecDirty  bool
 	epFrecSaving bool
+	epFrecVer    uint64 // bumped by every recorded use
 )
 
 // epFrecencyPath is where the file lives ("" disables persistence).
@@ -105,6 +106,7 @@ func RecordEmojiUse(name string) {
 	if len(u.T) > epUseHistory {
 		u.T = append(u.T[:0], u.T[len(u.T)-epUseHistory:]...)
 	}
+	epFrecVer++
 	epFrecMarkDirtyLocked()
 	epFrecMu.Unlock()
 }
@@ -225,6 +227,28 @@ func epTopFrecency(m map[string]*epUse, now time.Time, limit int) []string {
 		out[i] = e.name
 	}
 	return out
+}
+
+// epScored is one emoji name with its frecency score.
+type epScored struct {
+	name  string
+	score float64
+}
+
+// epFrecSnapshot appends every recorded emoji with a positive score at now
+// to dst[:0] and returns it with the store's version (for caching). It
+// costs O(recorded emoji), never O(all emoji).
+func epFrecSnapshot(dst []epScored, now time.Time) ([]epScored, uint64) {
+	dst = dst[:0]
+	epFrecMu.Lock()
+	defer epFrecMu.Unlock()
+	epFrecLoadLocked()
+	for name, u := range epFrec.Emoji {
+		if s := epScore(u, now); s > 0 {
+			dst = append(dst, epScored{name, s})
+		}
+	}
+	return dst, epFrecVer
 }
 
 // FrequentEmoji returns the top 18 emoji by frecency, or Slack's default

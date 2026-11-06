@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/emoji"
 )
@@ -19,7 +20,8 @@ import (
 // to their target as extra names (they are not separate grid cells), broken
 // aliases are dropped. The search table holds every name lowercased and
 // sorted by (length, name), so one linear scan yields each rank bucket
-// already in Slack's order without sorting per keystroke.
+// already in Slack's order; only the handful of frecency-boosted hits
+// are sorted per keystroke.
 
 // Picker groups, in display order.
 const (
@@ -340,14 +342,56 @@ func epRank(name, q string) int {
 }
 
 // epSearcher holds reusable scratch buffers so a keystroke allocates only
-// the result slices.
+// the result slices (and nothing proportional to the emoji count once
+// warm).
 type epSearcher struct {
 	stamp   []uint32
 	best    []uint8
 	gen     uint32
-	buckets [4][]int32 // search table rows
+	buckets [4][]int32 // search table rows, (len, name) order
+	boost   [4][]int32 // rows of emoji with a frecency score, per tier
 	ids     []int32
 	names   []int32 // matched search-table row per result
+
+	// frecency boost: fscore[id] is valid when fstamp[id] == gen
+	fstamp []uint32
+	fscore []float32
+	frec   []epScored
+	frecV  uint64
+	frecAt time.Time
+	fixed  bool // frec was set by setFrecency (tests); don't reload
+}
+
+// epFrecTTL is how long a frecency snapshot is reused (scores age slowly).
+const epFrecTTL = time.Minute
+
+// setFrecency pins the scores used for boosting (name -> score) instead of
+// the persisted frecency store. Used by tests.
+func (s *epSearcher) setFrecency(scores map[string]float64) {
+	s.fixed = true
+	s.frec = s.frec[:0]
+	for n, v := range scores {
+		if v > 0 {
+			s.frec = append(s.frec, epScored{n, v})
+		}
+	}
+}
+
+// loadFrecency refreshes the frecency snapshot when the store changed or
+// it is older than epFrecTTL.
+func (s *epSearcher) loadFrecency() {
+	if s.fixed {
+		return
+	}
+	now := time.Now()
+	epFrecMu.Lock()
+	v := epFrecVer
+	epFrecMu.Unlock()
+	if v == s.frecV && !s.frecAt.IsZero() && now.Sub(s.frecAt) < epFrecTTL {
+		return
+	}
+	s.frec, s.frecV = epFrecSnapshot(s.frec, now)
+	s.frecAt = now
 }
 
 // epNormQuery lowercases and trims a query (":par" -> "par").
@@ -363,6 +407,11 @@ func epNormQuery(q string) string {
 // search returns matching ids (best first, one per emoji) and the
 // search-table row that matched each. The slices are reused by the next
 // call. limit <= 0 means all.
+//
+// Order: rank tier (exact, prefix, word boundary, substring); within a
+// tier, emoji with a frecency score first (highest score first), then
+// shorter names, then alphabetical. The (length, name) order comes free
+// from the presorted search table; only the few frecency hits are sorted.
 func (s *epSearcher) search(x *emojiIndex, q string, limit int) ([]int32, []int32) {
 	s.ids, s.names = s.ids[:0], s.names[:0]
 	q = epNormQuery(q)
@@ -372,18 +421,36 @@ func (s *epSearcher) search(x *emojiIndex, q string, limit int) ([]int32, []int3
 	if len(s.stamp) != len(x.names) {
 		s.stamp = make([]uint32, len(x.names))
 		s.best = make([]uint8, len(x.names))
+		s.fstamp = make([]uint32, len(x.names))
+		s.fscore = make([]float32, len(x.names))
 		s.gen = 0
 	}
 	s.gen++
 	if s.gen == 0 {
 		for i := range s.stamp {
-			s.stamp[i] = 0
+			s.stamp[i], s.fstamp[i] = 0, 0
 		}
 		s.gen = 1
 	}
 	g := s.gen
+
+	s.loadFrecency()
+	boosted := false
+	for _, f := range s.frec {
+		id, ok := x.byName[f.name]
+		if !ok {
+			continue
+		}
+		if s.fstamp[id] != g {
+			s.fstamp[id], s.fscore[id] = g, 0
+		}
+		s.fscore[id] += float32(f.score) // an emoji used under several names
+		boosted = true
+	}
+
 	for r := range s.buckets {
 		s.buckets[r] = s.buckets[r][:0]
+		s.boost[r] = s.boost[r][:0]
 	}
 	for i, name := range x.sLower {
 		if len(name) < len(q) {
@@ -398,23 +465,52 @@ func (s *epSearcher) search(x *emojiIndex, q string, limit int) ([]int32, []int3
 			s.stamp[id] = g
 			s.best[id] = uint8(r)
 		}
-		s.buckets[r] = append(s.buckets[r], int32(i))
+		if boosted && s.fstamp[id] == g {
+			s.boost[r] = append(s.boost[r], int32(i))
+		} else {
+			s.buckets[r] = append(s.buckets[r], int32(i))
+		}
 	}
 	for r := range s.buckets {
-		for _, row := range s.buckets[r] {
-			id := x.sID[row]
-			if s.best[id] != uint8(r) {
-				continue
+		if b := s.boost[r]; len(b) > 0 {
+			// stable insertion sort by score: ties keep (length, name)
+			for i := 1; i < len(b); i++ {
+				row := b[i]
+				sc := s.fscore[x.sID[row]]
+				j := i
+				for j > 0 && s.fscore[x.sID[b[j-1]]] < sc {
+					b[j] = b[j-1]
+					j--
+				}
+				b[j] = row
 			}
-			s.best[id] = 0xff // emitted
-			s.ids = append(s.ids, id)
-			s.names = append(s.names, row)
-			if limit > 0 && len(s.ids) >= limit {
+			if s.emit(x, b, r, limit) {
 				return s.ids, s.names
 			}
 		}
+		if s.emit(x, s.buckets[r], r, limit) {
+			return s.ids, s.names
+		}
 	}
 	return s.ids, s.names
+}
+
+// emit appends the rows of tier r whose emoji ranked best in r (once per
+// emoji) and reports whether limit was reached.
+func (s *epSearcher) emit(x *emojiIndex, rows []int32, r, limit int) bool {
+	for _, row := range rows {
+		id := x.sID[row]
+		if s.best[id] != uint8(r) {
+			continue
+		}
+		s.best[id] = 0xff // emitted
+		s.ids = append(s.ids, id)
+		s.names = append(s.names, row)
+		if limit > 0 && len(s.ids) >= limit {
+			return true
+		}
+	}
+	return false
 }
 
 // ---- index cache ----
@@ -512,7 +608,8 @@ var (
 )
 
 // SearchEmoji returns up to limit emoji matching query with the picker's
-// ranking (exact, prefix by length then name, word boundary, substring).
+// ranking (exact, prefix, word boundary, substring; frecency first within
+// each tier, then length, then name).
 // Name is the matched name (an alias when the alias matched), URL the
 // default-tone image.
 func SearchEmoji(h Host, query string, limit int) []EmojiMatch {
