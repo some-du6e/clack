@@ -61,7 +61,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	sz := gtx.Constraints.Max
 	c := &a.th.C
 	h := sz.Y
-	x := gtx.Dp(16)
+	x := gtx.Dp(18) // Slack: 28px star button at +18, title icon at +54
 	// star
 	starred := conv != nil && conv.Starred
 	star := "star"
@@ -73,7 +73,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		if starred {
 			col = c.Warning
 		}
-		return iconButton(gtx, a.clicks.get("hdr.star"), star, 28, 18, col, c.BgHover, 6)
+		return iconButton(gtx, a.clicks.get("hdr.star"), star, 28, 20, col, c.BgHover, 8)
 	})
 	if clicked(a.clicks.get("hdr.star")) {
 		a.toggleStar(ch)
@@ -356,7 +356,7 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 	for i, t := range a.channelTabs(ch) {
 		i, t := i, t
 		lw := a.th.Measure(gtx, 13, theme.Bold, t.label)
-		w := gtx.Dp(8) + gtx.Dp(16) + gtx.Dp(6) + lw + gtx.Dp(8)
+		w := gtx.Dp(8) + gtx.Dp(16) + gtx.Dp(4) + lw + gtx.Dp(8)
 		if x+w > sz.X-gtx.Dp(48) {
 			break
 		}
@@ -377,7 +377,7 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 				at(gtx, image.Pt(gtx.Dp(8), (sz.Y-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
 					return icons.Get(t.icon)(gtx, 16, col)
 				})
-				at(gtx, image.Pt(gtx.Dp(30), 0), image.Pt(lw+2, sz.Y), func(gtx layout.Context) layout.Dimensions {
+				at(gtx, image.Pt(gtx.Dp(28), 0), image.Pt(lw+2, sz.Y), func(gtx layout.Context) layout.Dimensions {
 					return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
 						return a.th.Label(gtx, 13, theme.Bold, col, t.label)
 					})
