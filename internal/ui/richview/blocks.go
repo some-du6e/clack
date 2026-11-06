@@ -14,11 +14,11 @@ func (l *lay) bodyStyle() flowStyle {
 	p := &l.st.Palette
 	col := p.Text
 	if l.opts.Muted {
-		col = p.Text2
+		col = p.Text3
 	}
 	size, lh := l.st.TextSize, l.st.LineHeight
 	if l.opts.Compact {
-		size, lh = 13, 18
+		size, lh = 13, 19.5
 	}
 	fs := flowStyle{
 		face:  font.Font{Typeface: l.st.Face},
@@ -46,10 +46,10 @@ func isTextual(k richtext.BlockKind) bool {
 
 // gap is the vertical space between two consecutive blocks.
 func (l *lay) gap(prev, cur richtext.BlockKind) int {
-	if isTextual(prev) && isTextual(cur) {
+	if isTextual(prev) && isTextual(cur) && prev != richtext.Quote && cur != richtext.Quote {
 		return 0
 	}
-	if prev == richtext.FileBlock && cur == richtext.FileBlock {
+	if prev == richtext.FileBlock || prev == richtext.AttachmentBlock {
 		return l.dp(8)
 	}
 	return l.dp(4)
@@ -60,14 +60,19 @@ func lastTextual(bs []richtext.Block) int {
 	for i := len(bs) - 1; i >= 0; i-- {
 		switch bs[i].Kind {
 		case richtext.Paragraph, richtext.Quote, richtext.List, richtext.Section, richtext.Header, richtext.Preformatted:
+			if len(bs[i].Children) > 0 {
+				return -1
+			}
 			if i == len(bs)-1 || isTextual(bs[i].Kind) {
 				return i
 			}
 			return -1
-		case richtext.AttachmentBlock, richtext.FileBlock:
-			continue
-		default:
+		case richtext.Tombstone:
 			return -1
+		default:
+			// attachments, files, actions, images, context: the label goes
+			// after the last text above them, like Slack.
+			continue
 		}
 	}
 	return -1
@@ -80,7 +85,7 @@ func (l *lay) addEdited() {
 	l.items = append(l.items, item{kind: itSpace, w: sp.adv, deco: -1, target: -1, p0: int32(len(l.d.plain)), p1: int32(len(l.d.plain))})
 	w := l.st.word(k, "(edited)")
 	n := int32(len(l.d.plain))
-	l.items = append(l.items, item{kind: itWord, sh: w, face: k, w: w.adv, col: p.Text2, deco: -1, target: -1, p0: n, p1: n})
+	l.items = append(l.items, item{kind: itWord, sh: w, face: k, w: w.adv, col: p.Edited, deco: -1, target: -1, p0: n, p1: n})
 }
 
 // blocks lays out bs at (x, y) in width w and returns the height.
@@ -195,11 +200,12 @@ func (l *lay) block(b *richtext.Block, x, y, w int, edited bool) int {
 	case richtext.Header:
 		fs := l.bodyStyle()
 		fs.face.Weight = font.Black
-		fs.size = l.sp(18)
-		fs.lineH = l.dp(24)
 		l.addSpans(b.Spans, &fs)
+		if edited {
+			l.addEdited()
+		}
 		h, _ := l.flow(x, y, w, &fs)
-		return h + l.dp(2)
+		return h
 
 	case richtext.Divider:
 		m := l.dp(8)
@@ -224,7 +230,7 @@ func (l *lay) block(b *richtext.Block, x, y, w int, edited bool) int {
 			h += th + l.dp(4)
 		}
 		tg := l.d.addTarget(target{kind: tImage, img: b.Image})
-		return h + l.image(b.Image, x, y+h, min(w, l.dp(360)), l.dp(360), l.dp(8), tg)
+		return h + l.image(b.Image, x, y+h, min(w, l.dp(360)), l.dp(360), l.dp(4), tg)
 
 	case richtext.Actions:
 		return l.buttons(b.Buttons, x, y, w)
@@ -279,7 +285,7 @@ func toRoman(n int) string {
 func (l *lay) list(b *richtext.Block, x, y, w int, edited bool) int {
 	p := &l.st.Palette
 	y0 := y
-	indentW := l.dp(22)
+	indentW := l.dp(28)
 	cx := x + indentW*(b.Indent+1)
 	if b.Border {
 		cx += l.dp(8)
@@ -323,13 +329,13 @@ func (l *lay) list(b *richtext.Block, x, y, w int, edited bool) int {
 			label += "."
 			k := l.faceFor(fs.face, fs.size, 0)
 			wd := l.st.word(k, label)
-			gapW := l.st.spaceOf(k).adv
+			gapW := l.dpf(8)
 			l.d.frags = append(l.d.frags, frag{kind: fText, x: float32(cx) - gapW - wd.adv, y: baseline, w: wd.adv, size: fs.size, sh: wd, col: fs.col, target: -1, top: y, bot: y + fs.lineH, line: -1, p0: -1, p1: -1})
 		} else {
 			// disc, circle, square by level (Slack cycles every 3).
 			r := l.dpf(2.75)
 			cyf := float32(baseline) - float32(fs.size)*0.32
-			cxf := float32(cx) - l.dpf(12)
+			cxf := float32(cx) - l.dpf(17)
 			rect := image.Rect(int(cxf-r+0.5), int(cyf-r+0.5), int(cxf+r+0.5), int(cyf+r+0.5))
 			kind := bCircle
 			switch b.Indent % 3 {
@@ -353,18 +359,18 @@ func (l *lay) list(b *richtext.Block, x, y, w int, edited bool) int {
 func (l *lay) context(b *richtext.Block, x, y, w int) int {
 	p := &l.st.Palette
 	fs := l.bodyStyle()
-	fs.size, fs.lineH, fs.col, fs.emoji = l.sp(12), l.dp(18), p.Text2, l.dp(16)
+	fs.size, fs.lineH, fs.col, fs.emoji = l.sp(13), l.dp(18), p.Text2, l.dp(16)
 	cx := x
 	if b.Image != nil {
 		s := l.dp(20)
-		l.image(b.Image, cx, y-l.dp(1), s, s, l.dp(4), -1)
-		cx += s + l.dp(6)
+		l.image(b.Image, cx, y-l.dp(1), s, s, l.dp(2), -1)
+		cx += s + l.dp(4)
 	}
 	for i := range b.Children {
 		if c := &b.Children[i]; c.Kind == richtext.ImageBlock && c.Image != nil {
 			s := l.dp(20)
-			l.image(c.Image, cx, y-l.dp(1), s, s, l.dp(4), -1)
-			cx += s + l.dp(6)
+			l.image(c.Image, cx, y-l.dp(1), s, s, l.dp(2), -1)
+			cx += s + l.dp(4)
 		}
 	}
 	l.addSpans(b.Spans, &fs)
@@ -459,7 +465,7 @@ func (l *lay) fields(fields [][]richtext.Span, short []bool, x, y, w int) int {
 
 func (l *lay) buttonWidth(bt richtext.Button) int {
 	k := faceKey{f: font.Font{Typeface: l.st.Face, Weight: font.Bold}, size: fixedPx(l.sp(13))}
-	return int(l.measure(bt.Text, k)+0.999) + 2*l.dp(12)
+	return max(l.dp(56), int(l.measure(bt.Text, k)+0.999)+2*l.dp(8))
 }
 
 // button draws one Block Kit button with its top-left at (x, y).
@@ -473,16 +479,17 @@ func (l *lay) button(bt richtext.Button, x, y int) int {
 	col := p.Text
 	switch bt.Style {
 	case "primary":
-		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: l.dp(8), fill: p.Primary, target: tg})
+		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: l.dp(4), fill: p.Primary, target: tg})
 		col = p.PrimaryText
 	case "danger":
-		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: l.dp(8), fill: p.Danger, target: tg})
+		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: l.dp(4), fill: p.Danger, target: tg})
 		col = p.DangerText
 	default:
-		l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: r, radius: l.dp(8), fill: p.Panel, stroke: p.ButtonBorder, bw: l.dp(1), target: tg, hover: p.ButtonHoverBg})
+		l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: r, radius: l.dp(4), fill: p.Panel, stroke: p.ButtonBorder, bw: l.dp(1), target: tg, hover: p.ButtonHoverBg})
 	}
 	fs := flowStyle{face: font.Font{Typeface: l.st.Face, Weight: font.Bold}, size: l.sp(13), lineH: bh, col: col, emoji: l.dp(16), maxLines: 1, noSelect: true}
-	l.plainFlow(bt.Text, x+l.dp(12), y, bw-2*l.dp(12)+l.dp(2), &fs, -1)
+	tw := int(l.measure(bt.Text, l.faceFor(fs.face, fs.size, 0)) + 0.999)
+	l.plainFlow(bt.Text, x+(bw-tw)/2, y-l.dp(1), tw+l.dp(2), &fs, -1)
 	l.d.hits = append(l.d.hits, hit{r: r, t: tg})
 	return bh
 }

@@ -1,25 +1,629 @@
 package ui
 
-// backend adapts the in-process core service (internal/core) to the shell's
-// model. Until core lands on the ui branch this is an empty stand-in.
+import (
+	"context"
+	"encoding/json"
+	"log"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+)
+
+// backend adapts the in-process core service to the shell's model. Model
+// mutations happen on the UI goroutine only (via App.Post).
 type backend struct {
-	m model
+	core      *core.App
+	cacheFile string // sidebar metadata cache (names/kinds/order only)
+
+	m       model
+	started bool
+	ctx     context.Context
+	cancel  context.CancelFunc
+	unsub   func()
+
+	selfID string
+	domain string
+
+	tabCache  map[string][]chTab
+	bookmarks map[string][]core.Bookmark
+	fetched   map[string]time.Time
+
+	avMu    sync.Mutex
+	avatars map[string]string
+	asked   map[string]bool
+
+	snapMu      sync.Mutex
+	snapPending bool
+
+	booted    time.Time
+	onSignOut func()
+	app       *App
 }
 
-// Attach connects a backend (call before Run, or from Post after login).
-func (a *App) attach(b *backend) { a.data = b }
+// NewBackend wraps a core service. cacheDir holds the UI's sidebar cache.
+func newBackend(c *core.App, cacheDir string) *backend {
+	b := &backend{core: c, tabCache: map[string][]chTab{}, bookmarks: map[string][]core.Bookmark{},
+		fetched: map[string]time.Time{}, avatars: map[string]string{}, asked: map[string]bool{}}
+	if cacheDir != "" {
+		b.cacheFile = filepath.Join(cacheDir, "sidebar.json")
+	}
+	b.m.Convs = map[string]*convInfo{}
+	b.loadCache()
+	return b
+}
 
-func (b *backend) start(a *App)                   {}
-func (b *backend) stop()                          {}
-func (b *backend) opened(ch string)               {}
-func (b *backend) tabs(ch string) []chTab         { return nil }
-func (b *backend) avatar(id string) string        { return "" }
-func (b *backend) togglePresence()                {}
-func (b *backend) setMuted(ch string, muted bool) {}
-func (b *backend) leave(ch string)                {}
-func (b *backend) openBookmark(ch, id string)     {}
-func (b *backend) toggleStar(ch string)           {}
-func (b *backend) markRead(ch string)             {}
-func (b *backend) markAllRead()                   {}
-func (b *backend) permalink(ch, ts string) string { return "" }
-func (b *backend) signOut()                       {}
+// Attach connects the app to core. Call before Run, or after login.
+func (a *App) Attach(c *core.App, cacheDir string) {
+	a.data = newBackend(c, cacheDir)
+	a.data.onSignOut = a.opts.SignOut
+	if a.win != nil && a.login == nil {
+		a.data.start(a)
+	}
+}
+
+// Core returns the core service (Host contract).
+func (a *App) Core() *core.App {
+	if a.data == nil {
+		return nil
+	}
+	return a.data.core
+}
+
+func (b *backend) start(a *App) {
+	if b.started {
+		return
+	}
+	b.started = true
+	b.app = a
+	b.ctx, b.cancel = context.WithCancel(context.Background())
+	ch, unsub := b.core.Subscribe()
+	b.unsub = unsub
+	go func() {
+		for ev := range ch {
+			ev := ev
+			a.Post(func() { b.handle(a, ev) })
+		}
+	}()
+	go func() {
+		t0 := time.Now()
+		if err := b.core.Boot(b.ctx); err != nil {
+			log.Printf("ui: boot: %v", err)
+			a.Post(func() { a.Toast("Couldn't connect to Slack: " + err.Error()) })
+		}
+		snap := b.core.Snapshot()
+		log.Printf("ui: core ready %v after boot start (%d convs)", time.Since(t0).Round(time.Millisecond), len(snap.Convs))
+		a.Post(func() {
+			b.apply(a, snap)
+			b.booted = time.Now()
+			if a.router.Current() == "" {
+				a.openDefault()
+			}
+			b.saveCache()
+		})
+	}()
+}
+
+func (b *backend) stop() {
+	if b.cancel != nil {
+		b.cancel()
+	}
+	if b.unsub != nil {
+		b.unsub()
+	}
+	_ = b.core.Close()
+	b.saveCache()
+}
+
+// resnapshot rebuilds the model off the UI goroutine (sidebar_changed,
+// resync), coalescing bursts.
+func (b *backend) resnapshot(a *App) {
+	b.snapMu.Lock()
+	if b.snapPending {
+		b.snapMu.Unlock()
+		return
+	}
+	b.snapPending = true
+	b.snapMu.Unlock()
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		b.snapMu.Lock()
+		b.snapPending = false
+		b.snapMu.Unlock()
+		snap := b.core.Snapshot()
+		a.Post(func() { b.apply(a, snap) })
+	}()
+}
+
+// apply replaces the model from a snapshot.
+func (b *backend) apply(a *App, s core.Snapshot) {
+	m := &b.m
+	b.selfID = s.Self.ID
+	b.domain = s.Team.Domain
+	m.TeamName = s.Team.Name
+	m.TeamIcon = s.Team.Icon
+	m.SelfID = s.Self.ID
+	m.SelfName = s.Self.Name
+	m.SelfAvatar = s.Self.Avatar
+	m.SelfActive = s.Self.Presence != "away"
+	m.Connected = s.Connected
+	convs := make(map[string]*convInfo, len(s.Convs))
+	for i := range s.Convs {
+		c := &s.Convs[i]
+		if c.IsArchived {
+			continue
+		}
+		ci := &convInfo{ID: c.ID, Name: c.Name, Kind: c.Kind, User: c.User, Topic: c.Topic,
+			NumMembers: c.NumMembers, Members: c.Members, Muted: c.Muted}
+		if old := m.Convs[c.ID]; old != nil && ci.NumMembers == 0 {
+			ci.NumMembers = old.NumMembers
+			if len(ci.Members) == 0 {
+				ci.Members = old.Members
+			}
+		}
+		if c.Kind == "im" {
+			if u, ok := s.Users[c.User]; ok {
+				ci.Avatar = u.Avatar
+				ci.Active = u.Presence == "active"
+				ci.Bot = u.IsBot
+				if u.Name != "" {
+					ci.Name = u.Name
+				}
+			}
+			ci.Self = c.User == s.Self.ID
+			if ci.Bot {
+				ci.Kind = "app"
+			}
+		}
+		if c.Kind == "mpim" {
+			ci.Name = b.mpimName(c, s.Self.ID)
+		}
+		if cnt, ok := s.Counts[c.ID]; ok {
+			ci.Unread, ci.Mentions, ci.LastRead, ci.Latest = cnt.Unread, cnt.Mentions, cnt.LastRead, cnt.Latest
+		}
+		convs[c.ID] = ci
+	}
+	m.Convs = convs
+	m.Sections = m.Sections[:0]
+	for _, sec := range s.Sections {
+		ss := sbSection{ID: sec.ID, Name: sec.Name, Type: sec.Type, Emoji: sec.Emoji}
+		for _, id := range sec.Channels {
+			if c := convs[id]; c != nil {
+				ss.Rows = append(ss.Rows, id)
+				if sec.Type == "stars" {
+					c.Starred = true
+				}
+			}
+		}
+		if ss.Name == "" {
+			ss.Name = defaultSectionName(sec.Type)
+		}
+		m.Sections = append(m.Sections, ss)
+	}
+	m.threadsUnread = s.Threads.Unread
+	b.recount()
+	m.version++
+	a.Invalidate()
+}
+
+func defaultSectionName(t string) string {
+	switch t {
+	case "stars":
+		return "Starred"
+	case "channels":
+		return "Channels"
+	case "direct_messages":
+		return "Direct messages"
+	case "apps", "recent_apps":
+		return "Apps"
+	}
+	return "Section"
+}
+
+func (b *backend) mpimName(c *core.Conv, self string) string {
+	var names []string
+	for _, id := range c.Members {
+		if id == self {
+			continue
+		}
+		if u, ok := b.core.User(id); ok && u.Name != "" {
+			names = append(names, u.Name)
+		}
+	}
+	if len(names) == 0 {
+		return strings.TrimPrefix(c.Name, "mpdm-")
+	}
+	return strings.Join(names, ", ")
+}
+
+// recount derives the rail badges from conv counts.
+func (b *backend) recount() {
+	m := &b.m
+	m.DMCount, m.DMUnread, m.HomeCount, m.HomeUnread, m.ActivityCount = 0, false, 0, false, 0
+	for _, c := range m.Convs {
+		if c.Muted {
+			continue
+		}
+		switch c.Kind {
+		case "im", "mpim", "app":
+			if c.Unread || c.Mentions > 0 {
+				m.DMUnread = true
+				m.DMCount += max(c.Mentions, 1)
+			}
+		default:
+			m.HomeCount += c.Mentions
+			m.ActivityCount += c.Mentions
+			if c.Unread {
+				m.HomeUnread = true
+			}
+		}
+	}
+	m.HomeCount += m.DMCount
+}
+
+// handle applies one realtime event to the model.
+func (b *backend) handle(a *App, ev core.Event) {
+	m := &b.m
+	changed := false
+	switch ev.Type {
+	case "message":
+		if ev.Count != nil {
+			changed = b.setCount(ev.Channel, *ev.Count)
+		}
+		if ev.Msg != nil && ev.Msg.User != b.selfID && !ev.Msg.System {
+			cur := a.router.Current().Channel()
+			c := m.conv(ev.Channel)
+			direct := ev.ConvKind == "im" || ev.ConvKind == "mpim"
+			if (ev.Mention || direct) && (c == nil || !c.Muted) && (cur != ev.Channel || !a.focused) {
+				a.Notify(b.notifyTitle(ev, c), richtext.PlainText(ev.Msg.Doc))
+			}
+		}
+	case "marked", "counts":
+		if ev.Count != nil && ev.Channel != "" {
+			changed = b.setCount(ev.Channel, *ev.Count)
+		} else {
+			cs := b.core.Counts()
+			for id, cnt := range cs {
+				if b.setCount(id, cnt) {
+					changed = true
+				}
+			}
+		}
+	case "presence":
+		for _, c := range m.Convs {
+			if c.Kind == "im" && (c.User == ev.UserID || contains(ev.Users, c.User)) {
+				c.Active = ev.Presence == "active"
+				changed = true
+			}
+		}
+		if ev.UserID == b.selfID || contains(ev.Users, b.selfID) {
+			m.SelfActive = ev.Presence == "active"
+			changed = true
+		}
+	case "user":
+		if ev.User != nil {
+			b.avMu.Lock()
+			b.avatars[ev.User.ID] = ev.User.Avatar
+			b.avMu.Unlock()
+			if ev.User.ID == b.selfID {
+				m.SelfName, m.SelfAvatar = ev.User.Name, ev.User.Avatar
+			}
+			for _, c := range m.Convs {
+				if c.Kind == "im" || c.Kind == "app" {
+					if c.User == ev.User.ID {
+						c.Avatar, c.Name = ev.User.Avatar, ev.User.Name
+					}
+				}
+			}
+			changed = true
+		}
+	case "conv", "conv_removed", "sidebar_changed", "resync":
+		b.resnapshot(a)
+	case "connection":
+		m.Connected = ev.Connected
+		changed = true
+	}
+	if changed {
+		b.recount()
+		m.version++
+		a.Invalidate()
+	}
+}
+
+func (b *backend) setCount(id string, cnt core.Count) bool {
+	c := b.m.conv(id)
+	if c == nil {
+		return false
+	}
+	if c.Unread == cnt.Unread && c.Mentions == cnt.Mentions && c.LastRead == cnt.LastRead && c.Latest == cnt.Latest {
+		return false
+	}
+	c.Unread, c.Mentions, c.LastRead, c.Latest = cnt.Unread, cnt.Mentions, cnt.LastRead, cnt.Latest
+	return true
+}
+
+func (b *backend) notifyTitle(ev core.Event, c *convInfo) string {
+	name := ev.Msg.Name
+	if name == "" {
+		if u, ok := b.core.User(ev.Msg.User); ok {
+			name = u.Name
+		}
+	}
+	if c != nil && (c.Kind == "channel" || c.Kind == "private") {
+		return name + " in #" + c.Name
+	}
+	return name
+}
+
+func contains(s []string, v string) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+// ---- per-channel side data (tabs, facepile) ----
+
+// opened is called when a conversation becomes current: fetch its
+// bookmarks/pins (tabs) and member facepile in the background.
+func (b *backend) opened(ch string) {
+	if t, ok := b.fetched[ch]; ok && time.Since(t) < 2*time.Minute {
+		return
+	}
+	b.fetched[ch] = time.Now()
+	a := b.app
+	go func() {
+		ctx, cancel := context.WithTimeout(b.ctx, 20*time.Second)
+		defer cancel()
+		var tabs []chTab
+		bms, err := b.core.Bookmarks(ctx, ch)
+		if err == nil {
+			for _, bm := range bms {
+				if bm.ParentID != "" || bm.Title == "" {
+					continue
+				}
+				icon := "link"
+				if bm.Type == "canvas" || strings.Contains(bm.Link, "/docs/") {
+					icon = "canvas"
+				}
+				tabs = append(tabs, chTab{key: "bm:" + bm.ID, label: bm.Title, icon: icon})
+			}
+		}
+		var members []string
+		info, ierr := b.core.ChannelInfo(ctx, ch)
+		conv, _ := b.core.Conv(ch)
+		if conv.Kind == "channel" || conv.Kind == "private" {
+			us, _, merr := b.core.Members(ctx, ch, "", true)
+			if merr == nil {
+				for _, u := range us {
+					if len(members) == 3 {
+						break
+					}
+					if u.Avatar != "" && !u.Deleted {
+						members = append(members, u.ID)
+						b.avMu.Lock()
+						b.avatars[u.ID] = u.Avatar
+						b.avMu.Unlock()
+					}
+				}
+			}
+		}
+		if a == nil {
+			return
+		}
+		a.Post(func() {
+			b.tabCache[ch] = tabs
+			b.bookmarks[ch] = bms
+			if c := b.m.conv(ch); c != nil {
+				if ierr == nil && info.Conv.NumMembers > 0 {
+					c.NumMembers = info.Conv.NumMembers
+				}
+				if len(members) > 0 {
+					c.Members = members
+				}
+				if ierr == nil && info.Conv.Topic != "" {
+					c.Topic = info.Conv.Topic
+				}
+			}
+			a.Invalidate()
+		})
+	}()
+}
+
+func (b *backend) tabs(ch string) []chTab { return b.tabCache[ch] }
+
+func (b *backend) avatar(id string) string {
+	b.avMu.Lock()
+	url, ok := b.avatars[id]
+	b.avMu.Unlock()
+	if ok {
+		return url
+	}
+	if u, ok := b.core.User(id); ok {
+		b.avMu.Lock()
+		b.avatars[id] = u.Avatar
+		b.avMu.Unlock()
+		return u.Avatar
+	}
+	b.avMu.Lock()
+	ask := !b.asked[id]
+	b.asked[id] = true
+	b.avMu.Unlock()
+	if ask && b.ctx != nil {
+		go b.core.EnsureUsers(b.ctx, []string{id})
+	}
+	return ""
+}
+
+// ---- writes ----
+
+func (b *backend) togglePresence() {
+	p := "away"
+	if !b.m.SelfActive {
+		p = "auto"
+	}
+	b.m.SelfActive = !b.m.SelfActive
+	b.m.version++
+	go func() { _ = b.core.SetPresence(b.ctx, p) }()
+}
+
+func (b *backend) setMuted(ch string, muted bool) {
+	if b.app != nil {
+		b.app.Toast("Muting from yoloslack isn't supported yet")
+	}
+}
+
+func (b *backend) leave(ch string) {
+	go func() {
+		if err := b.core.Leave(b.ctx, ch); err != nil && b.app != nil {
+			b.app.Post(func() { b.app.Toast("Couldn't leave: " + err.Error()) })
+		}
+	}()
+}
+
+func (b *backend) openBookmark(ch, id string) {
+	for _, bm := range b.bookmarks[ch] {
+		if bm.ID == id && bm.Link != "" {
+			openURL(bm.Link)
+			return
+		}
+	}
+}
+
+func (b *backend) toggleStar(ch string) {
+	if b.app != nil {
+		b.app.Toast("Starring from yoloslack isn't supported yet")
+	}
+}
+
+func (b *backend) markRead(ch string) {
+	c := b.m.conv(ch)
+	if c == nil || (!c.Unread && c.Mentions == 0) || c.Latest == "" {
+		return
+	}
+	ts := c.Latest
+	c.Unread, c.Mentions, c.LastRead = false, 0, ts
+	b.recount()
+	b.m.version++
+	go func() { _, _ = b.core.Mark(b.ctx, ch, ts) }()
+}
+
+func (b *backend) markAllRead() {
+	for id, c := range b.m.Convs {
+		if c.Unread && c.Kind != "im" && c.Kind != "mpim" && c.Kind != "app" {
+			b.markRead(id)
+		}
+	}
+}
+
+func (b *backend) permalink(ch, ts string) string {
+	host := "app.slack.com"
+	if b.domain != "" {
+		host = b.domain + ".slack.com"
+	}
+	u := "https://" + host + "/archives/" + ch
+	if ts != "" {
+		u += "/p" + strings.ReplaceAll(ts, ".", "")
+	}
+	return u
+}
+
+func (b *backend) signOut() {
+	b.stop()
+	if b.onSignOut != nil {
+		b.onSignOut()
+	}
+}
+
+// ---- sidebar cache (metadata only: names, kinds, order, avatars) ----
+
+type sidebarCache struct {
+	TeamName, TeamIcon, Domain   string
+	SelfID, SelfName, SelfAvatar string
+	Sections                     []sbSection
+	Convs                        []cachedConv
+}
+
+type cachedConv struct {
+	ID, Name, Kind, User, Avatar string
+	Self, Bot, Starred           bool
+	Muted                        bool
+	NumMembers                   int
+}
+
+func (b *backend) loadCache() {
+	if b.cacheFile == "" {
+		return
+	}
+	raw, err := os.ReadFile(b.cacheFile)
+	if err != nil {
+		return
+	}
+	var c sidebarCache
+	if json.Unmarshal(raw, &c) != nil {
+		return
+	}
+	m := &b.m
+	m.TeamName, m.TeamIcon, b.domain = c.TeamName, c.TeamIcon, c.Domain
+	m.SelfID, m.SelfName, m.SelfAvatar, m.SelfActive = c.SelfID, c.SelfName, c.SelfAvatar, true
+	b.selfID = c.SelfID
+	m.Sections = c.Sections
+	for _, cc := range c.Convs {
+		m.Convs[cc.ID] = &convInfo{ID: cc.ID, Name: cc.Name, Kind: cc.Kind, User: cc.User, Avatar: cc.Avatar,
+			Self: cc.Self, Bot: cc.Bot, Starred: cc.Starred, Muted: cc.Muted, NumMembers: cc.NumMembers}
+	}
+	m.version++
+}
+
+func (b *backend) saveCache() {
+	if b.cacheFile == "" || len(b.m.Convs) == 0 {
+		return
+	}
+	m := &b.m
+	c := sidebarCache{TeamName: m.TeamName, TeamIcon: m.TeamIcon, Domain: b.domain, SelfID: m.SelfID,
+		SelfName: m.SelfName, SelfAvatar: m.SelfAvatar, Sections: m.Sections}
+	for _, s := range m.Sections {
+		for _, id := range s.Rows {
+			if cv := m.Convs[id]; cv != nil {
+				c.Convs = append(c.Convs, cachedConv{ID: cv.ID, Name: cv.Name, Kind: cv.Kind, User: cv.User,
+					Avatar: cv.Avatar, Self: cv.Self, Bot: cv.Bot, Starred: cv.Starred, Muted: cv.Muted, NumMembers: cv.NumMembers})
+			}
+		}
+	}
+	raw, err := json.Marshal(c)
+	if err != nil {
+		return
+	}
+	go func() {
+		_ = os.MkdirAll(filepath.Dir(b.cacheFile), 0o700)
+		tmp := b.cacheFile + ".tmp"
+		if os.WriteFile(tmp, raw, 0o600) == nil {
+			_ = os.Rename(tmp, b.cacheFile)
+		}
+	}()
+}
+
+// openURL opens a link in the system browser.
+func openURL(u string) {
+	if !strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "mailto:") {
+		return
+	}
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", u)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", u)
+	default:
+		cmd = exec.Command("xdg-open", u)
+	}
+	_ = cmd.Start()
+}

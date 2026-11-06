@@ -17,8 +17,10 @@ import (
 
 	"gioui.org/app"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/yoloslackgoclient/internal/store"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui"
 )
 
@@ -50,20 +52,42 @@ func main() {
 
 	cfg := configDir()
 	images := imgcache.New(httpFetch, filepath.Join(cfg, "cache", "img"), nil)
-	opts := ui.Options{ConfigDir: cfg, Dark: *dark, Started: started}
+	opts := ui.Options{ConfigDir: cfg, Dark: *dark, Started: started,
+		SignOut: func() { _ = os.Remove(*credsPath) }}
 
 	creds, err := readCreds(*credsPath)
-	if err != nil {
-		opts.Login = func(workspace, cookie string) error {
-			c, err := slack.Login(context.Background(), workspace, cookie)
-			if err != nil {
-				return err
-			}
-			return writeCreds(*credsPath, c)
-		}
-	}
 	a := ui.New(opts, images)
-	_ = creds
+	cacheDir := filepath.Join(cfg, "cache")
+	connect := func(creds slack.Creds) {
+		c := slack.New(creds)
+		st := store.New(cacheDir)
+		svc := core.New(c, st)
+		images.SetFetcher(func(ctx context.Context, url string) ([]byte, error) {
+			if imgcache.DiskOK(url) || !strings.Contains(url, "slack") {
+				return httpFetch(ctx, url)
+			}
+			b, _, err := svc.Fetch(ctx, url) // files.slack.com: authenticated, memory only
+			return b, err
+		})
+		a.Attach(svc, cacheDir)
+	}
+	login := func(workspace, cookie string) error {
+		c, err := slack.Login(context.Background(), workspace, cookie)
+		if err != nil {
+			return err
+		}
+		if err := writeCreds(*credsPath, c); err != nil {
+			return err
+		}
+		a.Post(func() { connect(c) })
+		return nil
+	}
+	if err == nil {
+		connect(creds)
+		a.SetLoginHandler(login) // for "Sign out" → sign back in
+	} else {
+		a.SetLogin(login)
+	}
 	go func() {
 		if err := a.Run(); err != nil {
 			log.Fatal(err)

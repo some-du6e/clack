@@ -3,8 +3,11 @@ package ui
 import (
 	"image"
 	"strings"
+	"time"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
+	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -27,7 +30,27 @@ func (a *App) Navigate(route string) {
 	}
 	prev := a.router.Current()
 	a.router.Push(r)
+	a.switchAt, a.switchTo = time.Now(), r
 	a.afterRoute(prev, r)
+}
+
+// openDefault picks the first route after boot: the last channel, else the
+// first sidebar channel.
+func (a *App) openDefault() {
+	m := a.model()
+	if a.lastChannel != "" && m.conv(a.lastChannel) != nil {
+		a.Navigate("c/" + a.lastChannel)
+		return
+	}
+	for _, s := range m.Sections {
+		for _, id := range s.Rows {
+			if c := m.conv(id); c != nil && c.Kind == "channel" {
+				a.Navigate("c/" + id)
+				return
+			}
+		}
+	}
+	a.Navigate("threads")
 }
 
 // Back goes back in history.
@@ -222,4 +245,64 @@ func (a *App) px(dp int) int {
 		return dp
 	}
 	return int(float32(dp)*a.pxPerDp + .5)
+}
+
+// ---- popup entry points (Host contract); ui-popups provides the widgets ----
+
+var (
+	mkProfileCard func(a *App, anchor image.Point, userID string) Overlay
+	mkMessageMenu func(a *App, anchor image.Point, m core.Message) Overlay
+	mkLightbox    func(a *App, img richtext.Image, m core.Message) Overlay
+)
+
+// OpenEmojiPicker opens the emoji picker anchored at anchor.
+func (a *App) OpenEmojiPicker(anchor image.Point, onPick func(name string)) {
+	if mkEmojiPicker != nil {
+		a.ShowOverlay(mkEmojiPicker(a, anchor, onPick))
+		return
+	}
+	a.Toast("Emoji picker arrives with ui-popups")
+}
+
+// OpenProfile opens a user's profile card.
+func (a *App) OpenProfile(anchor image.Point, userID string) {
+	if mkProfileCard != nil {
+		a.ShowOverlay(mkProfileCard(a, anchor, userID))
+		return
+	}
+	a.OpenUserProfile(userID)
+}
+
+// OpenMessageMenu opens the "more actions" menu for a message.
+func (a *App) OpenMessageMenu(anchor image.Point, m core.Message) {
+	if mkMessageMenu != nil {
+		a.ShowOverlay(mkMessageMenu(a, anchor, m))
+		return
+	}
+	a.menu(anchor, []MenuItem{
+		{Label: "Reply in thread", Icon: "threads", Do: func() { a.OpenThread(m.Channel, threadRoot(m)) }},
+		{Label: "Copy link", Icon: "link", Do: func() {
+			if a.data != nil {
+				a.copyText(a.data.permalink(m.Channel, m.TS))
+				a.Toast("Link copied")
+			}
+		}},
+		{Label: "Copy text", Icon: "copy", Do: func() { a.copyText(m.Text) }},
+	})
+}
+
+// OpenLightbox shows an image full-window.
+func (a *App) OpenLightbox(img richtext.Image, m core.Message) {
+	if mkLightbox != nil {
+		a.ShowOverlay(mkLightbox(a, img, m))
+		return
+	}
+	openURL(img.URL)
+}
+
+func threadRoot(m core.Message) string {
+	if m.ThreadTS != "" {
+		return m.ThreadTS
+	}
+	return m.TS
 }

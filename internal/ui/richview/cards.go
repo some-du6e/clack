@@ -86,8 +86,8 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 	}
 	p := &l.st.Palette
 	y0 := y
-	if w > l.dp(700) {
-		w = l.dp(700)
+	if w > l.dp(600) {
+		w = l.dp(600)
 	}
 	if len(a.Pretext) > 0 {
 		fs := l.bodyStyle()
@@ -98,13 +98,13 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 	}
 	bar := l.dp(4)
 	bi := len(l.d.boxes)
-	barCol := parseColor(a.Color, p.QuoteBar)
+	barCol := parseColor(a.Color, p.Placeholder)
 	l.d.boxes = append(l.d.boxes, box{kind: bFill, fill: barCol, radius: l.dp(8), target: -1})
 	cx := x + bar + l.dp(12)
 	cw := x + w - cx
 	thumbW := 0
 	if a.Thumb != nil && a.Image == nil {
-		thumbW = l.dp(75)
+		thumbW = l.dp(80)
 		cw -= thumbW + l.dp(12)
 	}
 	cy := y
@@ -260,10 +260,86 @@ func (l *lay) iconRow(icon, label string, x, y, w, iconPx int, weight font.Weigh
 }
 
 // unfurl is the 2026 rounded link-preview card with a right-side thumbnail.
-func (l *lay) unfurl(a *richtext.Attachment, x, y, w int) int {
+func isVideoUnfurl(a *richtext.Attachment) bool {
+	img := a.Thumb
+	if img == nil {
+		img = a.Image
+	}
+	if img == nil {
+		return false
+	}
+	switch strings.ToLower(a.ServiceName) {
+	case "youtube", "vimeo", "loom", "twitch":
+		return true
+	}
+	return a.VideoURL != ""
+}
+
+// videoCard is the 2026 video unfurl: 358 wide, title and service on top,
+// a 356x200 thumbnail with a play overlay below.
+func (l *lay) videoCard(a *richtext.Attachment, x, y, w int) int {
 	p := &l.st.Palette
-	if w > l.dp(660) {
-		w = l.dp(660)
+	cw := min(w, l.dp(358))
+	pad := l.dp(12)
+	url := a.VideoURL
+	if url == "" {
+		url = a.TitleLink
+	}
+	if url == "" {
+		url = a.FromURL
+	}
+	cardT := l.d.addTarget(target{kind: tCard, url: url})
+	bi := len(l.d.boxes)
+	l.d.boxes = append(l.d.boxes, box{kind: bBorder, fill: p.Panel, stroke: p.Border, bw: l.dp(1), radius: l.dp(12), target: cardT, hover: p.BorderHover})
+	cy := y + pad
+	if len(a.Title) > 0 {
+		fs := l.bodyStyle()
+		fs.face.Weight = font.Bold
+		fs.col = p.Text
+		fs.lineH = l.dp(18.75)
+		fs.maxLines, fs.ellipsis = 2, true
+		l.addSpansTarget(a.Title, &fs, cardT)
+		h, _ := l.flow(x+pad, cy, cw-2*pad, &fs)
+		cy += h + l.dp(4)
+		l.plainAdd("\n")
+	}
+	if a.ServiceName != "" {
+		fs := l.small(p.CardFooter)
+		fs.lineH = l.dp(16.25)
+		ix := x + pad
+		if a.ServiceIcon != "" {
+			s := l.dp(16)
+			l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(ix, cy, ix+s, cy+s), url: a.ServiceIcon, radii: [4]int{l.dp(4), l.dp(4), l.dp(4), l.dp(4)}, target: -1, px: s})
+			ix += s + l.dp(8)
+		}
+		fs.maxLines, fs.ellipsis, fs.noSelect = 1, true, true
+		h, _ := l.plainFlow(a.ServiceName, ix, cy, x+cw-pad-ix, &fs, -1)
+		cy += max(h, l.dp(16))
+	}
+	cy += pad
+	img := a.Thumb
+	if img == nil {
+		img = a.Image
+	}
+	ih := (cw - 2*l.dp(1)) * 200 / 356
+	rr := l.dp(12) - l.dp(1)
+	ir := image.Rect(x+l.dp(1), cy, x+cw-l.dp(1), cy+ih)
+	l.d.imgs = append(l.d.imgs, imgPrim{r: ir, url: img.URL, radii: [4]int{0, 0, rr, rr}, target: cardT, px: max(ir.Dx(), ir.Dy())})
+	l.playOverlay(ir)
+	cy += ih + l.dp(1)
+	r := image.Rect(x, y, x+cw, cy)
+	l.d.boxes[bi].r = r
+	l.d.hits = append(l.d.hits, hit{r: r, t: cardT})
+	return cy - y
+}
+
+func (l *lay) unfurl(a *richtext.Attachment, x, y, w int) int {
+	if isVideoUnfurl(a) {
+		return l.videoCard(a, x, y, w)
+	}
+	p := &l.st.Palette
+	if w > l.dp(716) {
+		w = l.dp(716)
 	}
 	pad := l.dp(12)
 	bi := len(l.d.boxes)
@@ -275,7 +351,7 @@ func (l *lay) unfurl(a *richtext.Attachment, x, y, w int) int {
 	l.d.boxes = append(l.d.boxes, box{kind: bBorder, fill: p.Panel, stroke: p.Border, bw: l.dp(1), radius: l.dp(12), target: cardT, hover: p.BorderHover})
 	thumbW := 0
 	if a.Thumb != nil || (a.Image != nil && a.Image.W > 0 && a.Image.W < 300) {
-		thumbW = l.dp(108)
+		thumbW = l.dp(106)
 	}
 	cx := x + pad
 	cw := w - 2*pad - thumbW
@@ -285,15 +361,16 @@ func (l *lay) unfurl(a *richtext.Attachment, x, y, w int) int {
 		fs.face.Weight = font.Bold
 		fs.col = p.Text
 		fs.maxLines, fs.ellipsis = 2, true
-		var tg int16 = cardT
-		l.addSpansTarget(a.Title, &fs, tg)
+		fs.lineH = l.dp(18.75)
+		l.addSpansTarget(a.Title, &fs, cardT)
 		h, _ := l.flow(cx, cy, cw, &fs)
-		cy += h
+		cy += h + l.dp(4)
 		l.plainAdd("\n")
 	}
 	if len(a.Text) > 0 {
-		fs := l.small(p.Text)
-		fs.maxLines, fs.ellipsis = 3, true
+		fs := l.small(p.CardText)
+		fs.lineH = l.dp(16.25)
+		fs.maxLines, fs.ellipsis = 2, true
 		for i := range a.Text {
 			if i > 0 {
 				l.addText(" ", &fs, l.faceFor(fs.face, fs.size, 0), fs.col, 0, -1, -1)
@@ -321,21 +398,22 @@ func (l *lay) unfurl(a *richtext.Attachment, x, y, w int) int {
 	// service line at the bottom
 	if a.ServiceName != "" {
 		cy += l.dp(4)
-		fs := l.small(p.Text2)
+		fs := l.small(p.CardFooter)
+		fs.lineH = l.dp(16.25)
 		ix := cx
 		if a.ServiceIcon != "" {
 			s := l.dp(16)
-			l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(ix, cy+1, ix+s, cy+1+s), url: a.ServiceIcon, radii: [4]int{l.dp(3), l.dp(3), l.dp(3), l.dp(3)}, target: -1, px: s})
-			ix += s + l.dp(6)
+			l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(ix, cy, ix+s, cy+s), url: a.ServiceIcon, radii: [4]int{l.dp(4), l.dp(4), l.dp(4), l.dp(4)}, target: -1, px: s})
+			ix += s + l.dp(8)
 		}
 		fs.maxLines, fs.ellipsis = 1, true
 		h, _ := l.plainFlow(a.ServiceName, ix, cy, cx+cw-ix, &fs, -1)
-		cy += max(h, l.dp(18))
+		cy += max(h, l.dp(16))
 	}
 	cy += pad
 	h := cy - y
-	if thumbW > 0 && h < l.dp(84) {
-		h = l.dp(84)
+	if thumbW > 0 && h < l.dp(106) {
+		h = l.dp(106)
 	}
 	r := image.Rect(x, y, x+w, y+h)
 	l.d.boxes[bi].r = r
@@ -390,12 +468,16 @@ func fileName(f *richtext.File) string {
 func (l *lay) file(f *richtext.File, x, y, w int) int {
 	switch {
 	case f.IsImage && f.Thumb != nil:
+		nh := l.fileNameRow(f, x, y, w)
 		tg := l.d.addTarget(target{kind: tFile, file: f})
-		h := l.image(f.Thumb, x, y, min(w, l.dp(360)), l.dp(360), l.dp(8), tg)
-		last := l.d.imgs[len(l.d.imgs)-1].r
-		l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: last, radius: l.dp(8), stroke: rgba(0, 0, 0, 0.1), bw: l.dp(1), target: -1, layer: 1})
-		l.plainAdd(fileName(f))
-		return h
+		iw, ih := fitSize(f.Thumb.W, f.Thumb.H, w, l.dp(360), l)
+		bh := max(ih, l.dp(108))
+		r := image.Rect(x, y+nh, x+iw, y+nh+bh)
+		rad := l.dp(8)
+		l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: f.Thumb.URL, radii: [4]int{rad, rad, rad, rad}, target: tg, px: max(iw, ih), fit: bh != ih})
+		l.d.hits = append(l.d.hits, hit{r: r, t: tg})
+		l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: r, radius: rad, stroke: l.st.Palette.Border, bw: l.dp(1), target: -1, layer: 1})
+		return nh + bh
 	case f.IsVideo:
 		return l.video(f, x, y, w)
 	case f.IsAudio:
@@ -406,9 +488,26 @@ func (l *lay) file(f *richtext.File, x, y, w int) int {
 	return l.genericFile(f, x, y, w)
 }
 
+// fileNameRow is the "name.png ▾" line above image and video files.
+func (l *lay) fileNameRow(f *richtext.File, x, y, w int) int {
+	p := &l.st.Palette
+	fs := l.small(p.Text)
+	fs.col.A = uint8(float32(fs.col.A) * 0.7)
+	fs.lineH = l.dp(22)
+	fs.maxLines, fs.ellipsis = 1, true
+	name := fileName(f)
+	k := l.faceFor(fs.face, fs.size, 0)
+	nw := min(int(l.measure(name, k)+0.999), w-l.dp(28))
+	l.plainFlow(name, x, y, nw+l.dp(2), &fs, -1)
+	cx := x + nw + l.dp(4) + l.dp(10)
+	cy := y + l.dp(11)
+	l.d.boxes = append(l.d.boxes, box{kind: bCaret, r: image.Rect(cx-l.dp(4), cy-l.dp(2), cx+l.dp(4), cy+l.dp(3)), fill: p.Text3, target: -1})
+	return l.dp(26)
+}
+
 // gallery lays out several image files as square tiles.
 func (l *lay) gallery(files []*richtext.File, x, y, w int) int {
-	gap := l.dp(4)
+	gap := l.dp(8)
 	n := len(files)
 	tile := l.dp(180)
 	if n == 2 {
@@ -416,6 +515,9 @@ func (l *lay) gallery(files []*richtext.File, x, y, w int) int {
 	}
 	if tile*2+gap > w {
 		tile = (w - gap) / 2
+	}
+	if tile < 1 {
+		tile = 1
 	}
 	cx, cy := x, y
 	for i, f := range files {
@@ -442,6 +544,8 @@ func (l *lay) gallery(files []*richtext.File, x, y, w int) int {
 
 func (l *lay) video(f *richtext.File, x, y, w int) int {
 	p := &l.st.Palette
+	nh := l.fileNameRow(f, x, y, w)
+	y += nh
 	tg := l.d.addTarget(target{kind: tFile, file: f})
 	var h int
 	var r image.Rectangle
@@ -466,8 +570,7 @@ func (l *lay) video(f *richtext.File, x, y, w int) int {
 		fs.noSelect = true
 		l.plainFlow(txt, br.Min.X+l.dp(6), br.Min.Y, tw, &fs, -1)
 	}
-	l.plainAdd(fileName(f))
-	return h
+	return nh + h
 }
 
 // playOverlay draws the round play button centered on r.
@@ -519,13 +622,13 @@ func (l *lay) audio(f *richtext.File, x, y, w int) int {
 
 func (l *lay) fileIcon(f *richtext.File, x, y, s int) {
 	p := &l.st.Palette
-	bg := p.FileIconBg
+	bg, fg := p.FileIconBg, p.FileIconText
 	label := strings.ToUpper(f.Type)
 	switch strings.ToLower(f.Type) {
 	case "pdf":
-		bg = p.FileIconPDF
+		bg, fg = p.FileIconPDF, rgb(255, 255, 255)
 	case "zip", "gzip", "tar", "rar", "7z":
-		bg = p.FileIconZip
+		bg, fg = p.FileIconZip, rgb(255, 255, 255)
 	}
 	if len(label) > 4 {
 		label = label[:4]
@@ -535,7 +638,7 @@ func (l *lay) fileIcon(f *richtext.File, x, y, s int) {
 	}
 	r := image.Rect(x, y, x+s, y+s)
 	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: l.dp(8), fill: bg, target: -1})
-	fs := flowStyle{face: font.Font{Typeface: l.st.Face, Weight: font.Black}, size: l.sp(10), lineH: l.dp(12), col: p.FileIconText, emoji: l.dp(12), maxLines: 1, noSelect: true}
+	fs := flowStyle{face: font.Font{Typeface: l.st.Face, Weight: font.Black}, size: l.sp(10), lineH: l.dp(12), col: fg, emoji: l.dp(12), maxLines: 1, noSelect: true}
 	k := l.faceFor(fs.face, fs.size, 0)
 	tw := int(l.measure(label, k) + 0.5)
 	l.plainFlow(label, x+(s-tw)/2, y+(s-fs.lineH)/2, s, &fs, -1)
@@ -545,16 +648,17 @@ func (l *lay) genericFile(f *richtext.File, x, y, w int) int {
 	p := &l.st.Palette
 	cw := min(w, l.dp(426))
 	pad := l.dp(12)
-	ic := l.dp(40)
-	h := ic + 2*pad
+	ic := l.dp(36)
+	h := ic + 2*pad + l.dp(2)
 	tg := l.d.addTarget(target{kind: tFile, file: f})
 	l.cardFrame(x, y, cw, h, tg)
 	l.fileIcon(f, x+pad, y+pad, ic)
 	tx := x + pad + ic + pad
 	fs := l.bodyStyle()
 	fs.face.Weight = font.Bold
+	fs.size, fs.lineH = l.sp(16), l.dp(20)
 	fs.maxLines, fs.ellipsis = 1, true
-	l.plainFlow(fileName(f), tx, y+pad, x+cw-tx-pad, &fs, tg)
+	l.plainFlow(fileName(f), tx, y+pad-l.dp(1), x+cw-tx-pad, &fs, tg)
 	meta := f.PrettyType
 	if meta == "" {
 		meta = strings.ToUpper(f.Type)
@@ -567,7 +671,7 @@ func (l *lay) genericFile(f *richtext.File, x, y, w int) int {
 	}
 	ms := l.small(p.Text2)
 	ms.maxLines, ms.ellipsis, ms.noSelect = 1, true, true
-	l.plainFlow(meta, tx, y+pad+l.dp(22), x+cw-tx-pad, &ms, -1)
+	l.plainFlow(meta, tx, y+pad+l.dp(20), x+cw-tx-pad, &ms, -1)
 	return h
 }
 

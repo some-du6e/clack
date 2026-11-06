@@ -20,6 +20,8 @@ type model struct {
 	DMCount       int
 	HomeUnread    bool
 	HomeCount     int // mention total shown on Home when not on Home
+
+	threadsUnread bool
 }
 
 type sbSection struct {
@@ -43,6 +45,7 @@ type convInfo struct {
 	Bot            bool
 	Starred        bool
 	LastRead       string
+	Latest         string
 }
 
 func (m *model) conv(id string) *convInfo {

@@ -43,6 +43,22 @@ type Options struct {
 	Login func(workspace, cookie string) error
 	// Started is the process start time, for the startup-latency log.
 	Started time.Time
+	// SignOut forgets the stored credentials.
+	SignOut func()
+}
+
+// SetLogin shows the sign-in screen, calling login on submit.
+func (a *App) SetLogin(login func(workspace, cookie string) error) {
+	a.opts.Login = login
+	a.login = newLoginScreen()
+}
+
+// SetLoginHandler sets the sign-in function used after "Sign out" without
+// showing the screen now.
+func (a *App) SetLoginHandler(login func(workspace, cookie string) error) {
+	if a.opts.Login == nil {
+		a.opts.Login = login
+	}
 }
 
 // App is the whole UI. It implements every feature package's Host.
@@ -80,6 +96,9 @@ type App struct {
 	prefs       prefs
 	prefsDirty  bool
 	notify      notifier
+	focused     bool
+	switchAt    time.Time // navigation time, for the channel-switch latency log
+	switchTo    Route
 }
 
 // New creates the app. Call Run on the UI goroutine (main).
@@ -142,6 +161,8 @@ func (a *App) Run() error {
 				a.data.stop()
 			}
 			return e.Err
+		case app.ConfigEvent:
+			a.focused = e.Config.Focused
 		case app.FrameEvent:
 			t0 := time.Now()
 			a.drain()
@@ -149,6 +170,10 @@ func (a *App) Run() error {
 			a.frame(gtx)
 			e.Frame(gtx.Ops)
 			a.frameStats.add(time.Since(t0))
+			if !a.switchAt.IsZero() {
+				log.Printf("ui: switch to %s: %v to frame submitted (layout %v)", a.switchTo.Page(), time.Since(a.switchAt).Round(10*time.Microsecond), time.Since(t0).Round(10*time.Microsecond))
+				a.switchAt = time.Time{}
+			}
 			if !a.firstPaint {
 				a.firstPaint = true
 				log.Printf("ui: first frame painted %v after start (%d sidebar rows)", time.Since(a.opts.Started).Round(time.Millisecond), a.sidebar.rowCount)
