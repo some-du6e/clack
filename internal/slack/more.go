@@ -14,6 +14,7 @@ import (
 // each section's channel_ids_page cursor so big sections are complete.
 func (c *Client) SectionsAll(ctx context.Context) ([]Section, error) {
 	var all []Section
+	seen := map[string]bool{}
 	cursor := ""
 	for i := 0; i < 20; i++ {
 		p := url.Values{}
@@ -27,8 +28,17 @@ func (c *Client) SectionsAll(ctx context.Context) ([]Section, error) {
 		if err := c.Call(ctx, "users.channelSections.list", p, &r); err != nil {
 			return all, err
 		}
-		all = append(all, r.Sections...)
-		if r.Cursor == "" || r.Cursor == cursor || len(r.Sections) == 0 {
+		added := 0
+		for _, s := range r.Sections {
+			if !seen[s.ID] {
+				seen[s.ID] = true
+				all = append(all, s)
+				added++
+			}
+		}
+		// Slack hands back a cursor even when there is nothing more; stop
+		// as soon as a page brings no new sections.
+		if r.Cursor == "" || r.Cursor == cursor || added == 0 {
 			break
 		}
 		cursor = r.Cursor
@@ -240,8 +250,10 @@ func (c *Client) BrowseChannels(ctx context.Context, query string, page int, sor
 	if page <= 0 {
 		page = 1
 	}
+	// browse + search_context make an empty query list every channel
 	p := url.Values{"module": {"channels"}, "query": {query}, "page": {strconv.Itoa(page)}, "count": {"30"},
-		"extracts": {"0"}, "highlight": {"0"}, "no_user_profile": {"1"}}
+		"extracts": {"0"}, "highlight": {"0"}, "no_user_profile": {"1"}, "browse": {"standard"},
+		"search_context": {"desktop_channel_browser"}}
 	switch sort {
 	case "name":
 		p.Set("sort", "name")
@@ -266,11 +278,15 @@ func (c *Client) BrowseChannels(ctx context.Context, query string, page int, sor
 
 // ChannelMembers pages the members of a channel via the edge directory
 // (conversations.members is enterprise_is_restricted for session tokens).
-func (c *Client) ChannelMembers(ctx context.Context, ch, marker string, count int) ([]User, string, error) {
+func (c *Client) ChannelMembers(ctx context.Context, ch, marker string, count int, peopleOnly bool) ([]User, string, error) {
 	if count <= 0 {
 		count = 100
 	}
-	body := map[string]any{"channels": []string{ch}, "present_first": true, "filter": "everyone", "count": count}
+	filter := "everyone"
+	if peopleOnly {
+		filter = "everyone AND NOT bots AND NOT apps"
+	}
+	body := map[string]any{"channels": []string{ch}, "present_first": true, "filter": filter, "count": count}
 	if marker != "" {
 		body["marker"] = marker
 	}

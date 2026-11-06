@@ -156,11 +156,9 @@ func (a *App) Boot(ctx context.Context) error {
 	} else {
 		go a.loadEmoji(context.Background())
 	}
-	if len(a.S.Groups) == 0 {
-		step("usergroups", func() error { return a.loadUsergroups(ctx) })
-	} else {
-		go a.loadUsergroups(context.Background())
-	}
+	// Usergroups only matter for unlabeled <!subteam^> tokens and autocomplete:
+	// never block boot on them (they are cached on disk after the first run).
+	go a.loadUsergroups(context.Background())
 	wg.Wait()
 	if errConvs != nil {
 		a.bootErr = errConvs
@@ -329,6 +327,11 @@ func (a *App) loadLatest(ctx context.Context, ch string) error {
 		}
 		a.ensureUsers(ctx, referencedUsers(p.Messages))
 		a.S.SetLatest(ch, p.Messages, p.HasMore)
+		for i := range p.Messages {
+			if needsFileInfo(&p.Messages[i]) {
+				go a.fillFiles(ch, p.Messages[i].TS)
+			}
+		}
 		return nil
 	})
 }
@@ -561,8 +564,16 @@ func (a *App) sectionsView(convs []ConvView) []SectionView {
 			break
 		}
 	}
-	if len(ordered) == 0 {
-		ordered = secs
+	// Sections not reachable from the head (broken links) still show, last.
+	visited := map[string]bool{}
+	for _, s := range ordered {
+		visited[s.ID] = true
+	}
+	for _, s := range secs {
+		if !visited[s.ID] {
+			ordered = append(ordered, s)
+			visited[s.ID] = true
+		}
 	}
 	assigned := map[string]bool{}
 	var out []SectionView
@@ -584,10 +595,17 @@ func (a *App) sectionsView(convs []ConvView) []SectionView {
 		switch s.Type {
 		case "channels":
 			chIdx = len(out)
+			if sv.Name == "" {
+				sv.Name = "Channels"
+			}
 		case "direct_messages":
 			dmIdx = len(out)
 		case "stars":
 			sv.Name = "Starred"
+		case "recent_apps":
+			if sv.Name == "" {
+				sv.Name = "Apps"
+			}
 		}
 		out = append(out, sv)
 	}

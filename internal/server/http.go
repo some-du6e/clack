@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
@@ -66,8 +67,32 @@ func (a *App) Handler(web fs.FS) http.Handler {
 	return logRequests(mux)
 }
 
+// hostAllowed rejects requests addressed to a foreign hostname (DNS
+// rebinding: a web page re-pointing its own domain at 127.0.0.1).
+func hostAllowed(r *http.Request) bool {
+	host := r.Host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	switch host {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	}
+	if la, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok {
+		if h, _, err := net.SplitHostPort(la.String()); err == nil && h == host {
+			return true
+		}
+	}
+	return false
+}
+
 func logRequests(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !hostAllowed(r) {
+			http.Error(w, "bad host", http.StatusForbidden)
+			return
+		}
 		// Only accept requests that come from our own origin (prevents other
 		// sites in the browser from driving the API through localhost).
 		if o := r.Header.Get("Origin"); o != "" && r.Method != http.MethodGet {
@@ -278,6 +303,18 @@ func (a *App) hHistory(w http.ResponseWriter, r *http.Request) {
 	var hasMore bool
 	t0 := time.Now()
 	source := "cache"
+	// Fetch full channel info (member count etc.) alongside the history.
+	var infoCh chan *slack.Conversation
+	if c, ok := a.S.Conv(ch); ok && c.NumMembers == 0 && !c.IsIM && before == "" {
+		infoCh = make(chan *slack.Conversation, 1)
+		go func() {
+			full, err := a.C.ConversationInfo(ctx, ch)
+			if err != nil {
+				full = nil
+			}
+			infoCh <- full
+		}()
+	}
 	defer func() {
 		log.Printf("history %s: %s (%s)", ch, time.Since(t0).Round(time.Millisecond), source)
 	}()
@@ -308,13 +345,12 @@ func (a *App) hHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := historyResp{OK: true, Channel: ch, Messages: a.views(ch, msgs), HasMore: hasMore}
 	resp.Users = a.usersView(referencedUsers(msgs))
-	if c, ok := a.S.Conv(ch); ok {
-		if c.NumMembers == 0 && !c.IsIM && before == "" {
-			if full, err := a.C.ConversationInfo(ctx, ch); err == nil {
-				a.S.PutConv(*full)
-				c = full
-			}
+	if infoCh != nil {
+		if full := <-infoCh; full != nil && full.ID != "" {
+			a.S.PutConv(*full)
 		}
+	}
+	if c, ok := a.S.Conv(ch); ok {
 		v := a.convView(c)
 		resp.Conv = &v
 	}

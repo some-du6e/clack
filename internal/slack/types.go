@@ -100,6 +100,7 @@ type File struct {
 	ExternalType       string          `json:"external_type"`
 	AudioWaveSamples   []int           `json:"audio_wave_samples"`
 	Subtype            string          `json:"subtype"`
+	FileAccess         string          `json:"file_access,omitempty"`
 }
 
 type AttachmentField struct {

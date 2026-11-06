@@ -357,7 +357,7 @@ func (a *App) hMembers(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, "channel required")
 		return
 	}
-	us, next, err := a.C.ChannelMembers(r.Context(), ch, q(r, "marker"), qInt(r, "count", 100))
+	us, next, err := a.C.ChannelMembers(r.Context(), ch, q(r, "marker"), qInt(r, "count", 100), q(r, "people") == "1")
 	if err != nil {
 		writeErr(w, err)
 		return

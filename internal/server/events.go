@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -140,11 +141,16 @@ func (a *App) handle(ev slack.Event) {
 		a.Hub.Broadcast(map[string]any{"type": "conv_removed", "channel": ch})
 	case "pin_added", "pin_removed":
 		var e struct {
-			Item struct {
+			ChannelID string `json:"channel_id"`
+			Item      struct {
+				Channel string        `json:"channel"`
 				Message slack.Message `json:"message"`
 			} `json:"item"`
 		}
 		_ = json.Unmarshal(ev.Raw, &e)
+		if ch == "" {
+			ch = firstNonEmpty(e.ChannelID, e.Item.Channel)
+		}
 		if e.Item.Message.TS != "" {
 			m, ok := a.S.Mutate(ch, e.Item.Message.TS, func(m *slack.Message) {
 				if ev.Type == "pin_added" {
@@ -329,6 +335,9 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 			a.Hub.Broadcast(map[string]any{"type": "conv", "conv": a.convView(cv)})
 		}
 	}
+	if needsFileInfo(&m) {
+		go a.fillFiles(ch, m.TS)
+	}
 	a.Hub.Broadcast(map[string]any{
 		"type": "message", "channel": ch, "msg": render.Message(a.S, ch, &m),
 		"reply": isReply, "user": a.userView(m.User), "mention": mention,
@@ -352,4 +361,51 @@ func mentionsSelf(m *slack.Message, self string) bool {
 		}
 	}
 	return strings.Contains(m.Text, "<!here") || strings.Contains(m.Text, "<!channel") || strings.Contains(m.Text, "<!everyone")
+}
+
+// needsFileInfo reports whether a message carries file stubs that must be
+// completed with files.info (fresh uploads arrive as file_access=check_file_info).
+func needsFileInfo(m *slack.Message) bool {
+	for _, f := range m.Files {
+		if f.URLPrivate == "" && f.Mode != "tombstone" && f.Mode != "hidden_by_limit" && f.ID != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// fillFiles completes file stubs of one message and pushes an update.
+func (a *App) fillFiles(ch, ts string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for attempt := 0; attempt < 3; attempt++ {
+		time.Sleep(time.Duration(attempt+1) * 700 * time.Millisecond) // uploads take a moment to process
+		m, ok := a.S.Find(ch, ts)
+		if !ok {
+			return
+		}
+		files := append([]slack.File(nil), m.Files...)
+		done := true
+		for i := range files {
+			if files[i].URLPrivate != "" || files[i].Mode == "tombstone" || files[i].ID == "" {
+				continue
+			}
+			var r struct {
+				File slack.File `json:"file"`
+			}
+			if err := a.C.Call(ctx, "files.info", url.Values{"file": {files[i].ID}}, &r); err == nil && r.File.ID != "" {
+				files[i] = r.File
+			}
+			if files[i].URLPrivate == "" {
+				done = false
+			}
+		}
+		upd, ok := a.S.Mutate(ch, ts, func(x *slack.Message) { x.Files = files })
+		if ok {
+			a.Hub.Broadcast(map[string]any{"type": "update", "channel": ch, "msg": render.Message(a.S, ch, &upd)})
+		}
+		if done {
+			return
+		}
+	}
 }
