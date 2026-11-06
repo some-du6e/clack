@@ -4,17 +4,22 @@ package views
 // one file so contract drift is fixed in one place.
 
 import (
+	"image"
 	"image/color"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"gioui.org/op"
+	"gioui.org/op/clip"
+	"gioui.org/text"
 	"gioui.org/unit"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
 )
 
 // icon draws a named vector icon from internal/ui/icons.
@@ -22,8 +27,8 @@ func (b *base) icon(gtx C, name string, size unit.Dp, col color.NRGBA) D {
 	return icons.Get(name)(gtx, size, col)
 }
 
-// body draws a message document (richview when available) clipped to
-// maxLines (0 = all).
+// body draws a document as plain text (for docs without a message key,
+// e.g. drafts) clipped to maxLines (0 = all). Prefer msgBody for messages.
 func (b *base) body(gtx C, doc richtext.Doc, fallback string, maxLines int) D {
 	t := richtext.PlainText(doc)
 	if strings.TrimSpace(t) == "" {
@@ -199,4 +204,129 @@ func (w *watcher) due(gtx C, minGap time.Duration) bool {
 	}
 	w.stale, w.last = false, gtx.Now
 	return true
+}
+
+// ---- rich message bodies (internal/ui/richview) ----
+
+// One richview.Style per shaper, shared by every view (UI goroutine only).
+var (
+	richStyle  *richview.Style
+	richShaper *text.Shaper
+	richDark   bool
+)
+
+func (b *base) style() *richview.Style {
+	dark := b.th.Dark
+	if richStyle == nil || richShaper != b.th.Shaper {
+		var imgs richview.Images
+		if c := b.h.Images(); c != nil {
+			imgs = c
+		}
+		p := richview.LightPalette()
+		if dark {
+			p = richview.DarkPalette()
+		}
+		richStyle, richShaper, richDark = richview.NewStyle(b.th.Shaper, imgs, p), b.th.Shaper, dark
+	}
+	if dark != richDark {
+		richDark = dark
+		if dark {
+			richStyle.SetPalette(richview.DarkPalette())
+		} else {
+			richStyle.SetPalette(richview.LightPalette())
+		}
+	}
+	return richStyle
+}
+
+type richEntry struct {
+	v   *richview.View
+	ver string
+}
+
+// richCache keeps one richview.View per message for a view.
+type richCache map[string]*richEntry
+
+// msgBody draws a message's document with richview, exactly like the
+// channel view. compact uses 13px/18px text. maxLines > 0 clips the body to
+// that many lines (Slack's 2-3 line previews).
+func (b *base) msgBody(gtx C, m *core.Message, compact bool, maxLines int) D {
+	if m == nil {
+		return D{}
+	}
+	if len(m.Doc.Blocks) == 0 {
+		return b.body(gtx, m.Doc, m.Text, maxLines)
+	}
+	key := m.Channel + "/" + m.TS
+	ver := m.EditedTS + ":" + strconv.Itoa(len(m.Text)) + ":" + strconv.Itoa(len(m.Doc.Blocks))
+	return b.richDoc(gtx, key, ver, m.Doc, richview.Options{Edited: m.Edited, Compact: compact, Muted: m.System}, maxLines)
+}
+
+// richDoc draws any document under a stable key.
+func (b *base) richDoc(gtx C, key, ver string, doc richtext.Doc, o richview.Options, maxLines int) D {
+	if b.rich == nil {
+		b.rich = richCache{}
+	}
+	if len(b.rich) > 3000 {
+		clear(b.rich)
+	}
+	e := b.rich[key]
+	if e == nil {
+		e = &richEntry{v: richview.New(doc, o), ver: ver}
+		b.rich[key] = e
+	} else if e.ver != ver {
+		e.v.Set(doc, o)
+		e.ver = ver
+	} else {
+		e.v.SetOptions(o)
+	}
+	if maxLines <= 0 {
+		return e.v.Layout(gtx, b.style(), hostHandler{b.h})
+	}
+	lh := 22
+	if o.Compact {
+		lh = 18
+	}
+	limit := gtx.Dp(unit.Dp(lh * maxLines))
+	m := op.Record(gtx.Ops)
+	d := e.v.Layout(gtx, b.style(), hostHandler{b.h})
+	call := m.Stop()
+	if d.Size.Y > limit {
+		d.Size.Y = limit
+	}
+	st := clip.Rect{Max: d.Size}.Push(gtx.Ops)
+	call.Add(gtx.Ops)
+	st.Pop()
+	return d
+}
+
+// hostHandler routes richview clicks to the Host.
+type hostHandler struct{ h Host }
+
+func (hh hostHandler) OpenURL(u string) {
+	if o, ok := hh.h.(interface{ OpenURL(string) }); ok {
+		o.OpenURL(u)
+		return
+	}
+	hh.h.Toast(u)
+}
+func (hh hostHandler) OpenUser(id string, at image.Point) { hh.h.OpenProfile(at, id) }
+func (hh hostHandler) OpenChannel(id string)              { hh.h.Navigate("c/" + id) }
+func (hh hostHandler) OpenUsergroup(id string, at image.Point) {
+	hh.h.Toast("User group profiles aren't supported yet")
+}
+func (hh hostHandler) OpenImage(img richtext.Image) { hh.h.OpenLightbox(img, core.Message{}) }
+func (hh hostHandler) OpenFile(f *richtext.File) {
+	if f != nil && f.Thumb != nil && f.IsImage {
+		hh.h.OpenLightbox(*f.Thumb, core.Message{})
+		return
+	}
+	hh.h.Toast("Opening files isn't supported yet")
+}
+func (hh hostHandler) Button(btn richtext.Button) {
+	if btn.URL != "" {
+		hh.OpenURL(btn.URL)
+		return
+	}
+	hh.h.Toast("Interactive buttons aren't supported yet")
 }

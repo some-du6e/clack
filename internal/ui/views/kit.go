@@ -176,12 +176,13 @@ func argb(v uint32) color.NRGBA {
 
 // base is embedded in every view: host access plus per-frame shortcuts.
 type base struct {
-	h  Host
-	th *theme.Theme
-	p  *pal
+	h    Host
+	th   *theme.Theme
+	p    *pal
+	rich richCache
 }
 
-func newBase(h Host) base { return base{h: h} }
+func newBase(h Host) base { return base{h: h, rich: richCache{}} }
 
 // frame refreshes per-frame state; call at the top of Layout.
 func (b *base) frame() {
