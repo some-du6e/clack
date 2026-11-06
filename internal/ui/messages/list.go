@@ -18,7 +18,9 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -42,24 +44,19 @@ type item struct {
 	key    string
 }
 
-// toolbar buttons
+// toolbar buttons, in the real 2026 order for this account.
 const (
-	tbQuick0 = iota
-	tbQuick1
-	tbQuick2
-	tbAddReact
+	tbAddReact = iota
 	tbReply
 	tbForward
-	tbSave
+	tbTodo
+	tbList
 	tbMore
 	tbCount
 )
 
-var tbTips = [tbCount]string{"", "", "", "Find another reaction", "Reply in thread", "Forward message", "Save for later", "More actions"}
-var tbIcons = [tbCount]string{"", "", "", "add-reaction", "reply", "forward-msg", "bookmark", "kebab"}
-
-// defaultQuick are Slack's default quick reactions.
-var defaultQuick = [3]string{"white_check_mark", "eyes", "raised_hands"}
+var tbTips = [tbCount]string{"Add reaction", "Reply in thread", "Forward message", "Add to to-dos", "Add to list", "More actions"}
+var tbIcons = [tbCount]string{"add-reaction", "reply", "forward-msg", "check", "list-view", "kebab"}
 
 // listState is the per-conversation UI state shared by channel and thread
 // views. It is cached across view instances (UI goroutine only), so
@@ -106,6 +103,7 @@ type listState struct {
 	lastTyping time.Time
 
 	noMark      bool
+	origin      image.Point // view origin in window coordinates
 	lastOlder   time.Time
 	highlight   string
 	highlightAt time.Time
@@ -372,9 +370,12 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		selfID = h.Core().Self().ID
 	}
 	rc := rowCtx{h: h, th: th, st: st, c: c, now: now, thread: s.thread, selfID: selfID, usersRev: s.hb.usersRev() + 1,
-		origin:  func(p image.Point) image.Point { return s.anchor(h, origin, p) },
-		onReact: func(r *row, name string, add bool) { s.react(h, r, name, add, selfID) },
+		origin:    func(p image.Point) image.Point { return s.anchor(h, origin, p) },
+		onReact:   func(r *row, name string, add bool) { s.react(h, r, name, add, selfID) },
+		onRetry:   func(r *row) { s.retry(h, r) },
+		onDiscard: func(r *row) { s.discard(h, r) },
 	}
+	s.origin = origin
 	s.tip = ""
 	s.list.Layout(gtx, len(s.items), func(gtx layout.Context, i int) layout.Dimensions {
 		d := s.layoutItem(gtx, h, &rc, i)
@@ -511,7 +512,8 @@ func (s *listState) layoutItem(gtx layout.Context, h Host, rc *rowCtx, i int) la
 		s.rows[e.m.TS] = r
 	}
 	rc.header = it.header
-	rc.hovered = i == s.hoverIdx
+	rc.hovered = i == s.hoverIdx && r.edit == nil
+	rc.winOrigin = s.origin.Add(image.Pt(0, s.pos[i]))
 	rc.parent = s.thread && e.m.TS == s.ts
 	rc.highlight = 0
 	if s.highlight == e.m.TS {
@@ -741,8 +743,7 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 	bs := dp(gtx, mt.toolbarBtn)
 	pad := dp(gtx, mt.toolbarPad)
 	n := tbCount
-	sep := dp(gtx, 9)
-	tw := pad*2 + n*bs + sep
+	tw := pad*2 + n*bs
 	x := size.X - dp(gtx, mt.toolbarRight) - tw
 	top := mt.toolbarTop
 	if !s.items[idx].header {
@@ -760,63 +761,28 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 	m := r.m
 	bx := x + pad
 	for i := 0; i < n; i++ {
-		if i == tbAddReact {
-			fill(gtx.Ops, image.Rect(bx+sep/2, y+pad+dp(gtx, 6), bx+sep/2+dp(gtx, 1), y+pad+bs-dp(gtx, 6)), c.PillBorder)
-			bx += sep
-		}
 		btn := &s.tb[i]
 		i := i
 		if btn.Clicked(gtx) {
 			anchor := s.anchor(h, image.Point{}, image.Pt(bx, y+th2))
 			switch i {
-			case tbQuick0, tbQuick1, tbQuick2:
-				name := defaultQuick[i]
-				self := false
-				for _, re := range m.Reactions {
-					if re.Name == name && re.Self {
-						self = true
-					}
-				}
-				rc.onReact(r, name, !self)
 			case tbAddReact:
 				rr := r
 				h.OpenEmojiPicker(anchor, func(name string) { rc.onReact(rr, name, true) })
 			case tbReply:
 				h.OpenThread(m.Channel, threadRoot(&m))
 			case tbForward:
-				domain := ""
-				if app != nil {
-					domain = app.Snapshot().Team.Domain
-				}
-				link := permalink(domain, m.Channel, m.TS)
-				gtx.Execute(clipboard.WriteCmd{Type: "application/text", Data: io.NopCloser(strings.NewReader(link))})
-				h.Toast("Link copied to clipboard")
-			case tbSave:
-				saved := s.saved[m.TS]
-				s.saved[m.TS] = !saved
-				if app != nil {
-					ch, ts := m.Channel, m.TS
-					go func() {
-						ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-						defer cancel()
-						var err error
-						if saved {
-							err = app.Unsave(ctx, ch, ts)
-						} else {
-							err = app.Save(ctx, ch, ts, 0)
-						}
-						if err != nil {
-							h.Toast("Couldn't update Later")
-						}
-					}()
-				}
-				if saved {
-					h.Toast("Removed from Later")
-				} else {
-					h.Toast("Saved for later")
-				}
+				h.ShowOverlay(popups.NewForwardModal(h, m))
+			case tbTodo:
+				s.toggleSaved(h, app, m)
+			case tbList:
+				h.Toast("Lists aren't supported yet")
 			case tbMore:
-				h.OpenMessageMenu(anchor, m)
+				mm := m
+				h.ShowOverlay(popups.NewMessageMenuOpts(h, anchor, m, popups.MessageMenuOpts{
+					OnEdit:  func() { s.startEdit(h, mm.TS) },
+					OnReply: func() { h.OpenThread(mm.Channel, threadRoot(&mm)) },
+				}))
 			}
 		}
 		bxx := bx
@@ -831,40 +797,53 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 					col = c.Text
 					isz = 21.6 // Slack scales the icon 1.2x on hover
 				}
-				if i <= tbQuick2 {
-					es := dp(gtx, 20)
-					url := ""
-					if app != nil {
-						url, _, _ = app.Emoji(defaultQuick[i])
+				is := dp(gtx, isz)
+				at(gtx, (bs-is)/2, (bs-is)/2, func(gtx layout.Context) layout.Dimensions {
+					ic := tbIcons[i]
+					if i == tbTodo && s.saved[m.TS] {
+						ic = "check-circle"
+						col = c.Link
 					}
-					if !drawEmoji(gtx, h, url, image.Rect((bs-es)/2, (bs-es)/2, (bs-es)/2+es, (bs-es)/2+es)) {
-						rrect(gtx.Ops, image.Rect((bs-es)/2, (bs-es)/2, (bs-es)/2+es, (bs-es)/2+es), es/2, c.Skeleton)
-					}
-				} else {
-					is := dp(gtx, isz)
-					at(gtx, (bs-is)/2, (bs-is)/2, func(gtx layout.Context) layout.Dimensions {
-						ic := tbIcons[i]
-						if i == tbSave && s.saved[m.TS] {
-							ic = "bookmark-filled"
-						}
-						return icons.Get(ic)(gtx, unit.Dp(isz), col)
-					})
-				}
+					return icons.Get(ic)(gtx, unit.Dp(isz), col)
+				})
 				return layout.Dimensions{Size: rr.Size()}
 			})
 		})
 		if btn.Hovered() {
 			tip := tbTips[i]
-			if i <= tbQuick2 {
-				tip = "React with :" + defaultQuick[i] + ":"
-			}
-			if i == tbSave && s.saved[m.TS] {
-				tip = "Remove from Later"
+			if i == tbTodo && s.saved[m.TS] {
+				tip = "Remove from to-dos"
 			}
 			s.tip = ""
 			tooltip(gtx, th, c, tip, image.Pt(bxx+bs/2, y-dp(gtx, 4)), size)
 		}
 		bx += bs
+	}
+}
+
+func (s *listState) toggleSaved(h Host, app *core.App, m core.Message) {
+	saved := s.saved[m.TS]
+	s.saved[m.TS] = !saved
+	if app != nil {
+		ch, ts := m.Channel, m.TS
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			var err error
+			if saved {
+				err = app.Unsave(ctx, ch, ts)
+			} else {
+				err = app.Save(ctx, ch, ts, 0)
+			}
+			if err != nil {
+				h.Toast("Couldn't update your to-dos")
+			}
+		}()
+	}
+	if saved {
+		h.Toast("Removed from to-dos")
+	} else {
+		h.Toast("Added to to-dos")
 	}
 }
 
@@ -886,4 +865,108 @@ func typingText(names []string) string {
 		return names[0] + " and " + names[1] + " are typing…"
 	}
 	return "Several people are typing…"
+}
+
+// startEdit replaces the body of message ts with the inline edit composer.
+func (s *listState) startEdit(h Host, ts string) {
+	r, ok := s.rows[ts]
+	if !ok {
+		i := -1
+		for k := range s.snap.msgs {
+			if s.snap.msgs[k].m.TS == ts {
+				i = k
+			}
+		}
+		if i < 0 {
+			return
+		}
+		r = newRow(&s.snap.msgs[i])
+		s.rows[ts] = r
+	}
+	if r.edit != nil {
+		r.edit.Focus()
+		return
+	}
+	for _, o := range s.rows {
+		if o.edit != nil {
+			o.edit = nil // one inline editor at a time, like Slack
+		}
+	}
+	rr := r
+	r.edit = composer.NewEdit(h, r.m, func() {
+		rr.edit = nil
+		h.Invalidate()
+	})
+	s.scrollTo(ts)
+	h.Invalidate()
+}
+
+// editLast edits the viewer's most recent message in this list.
+func (s *listState) editLast(h Host) bool {
+	app := h.Core()
+	if app == nil {
+		return false
+	}
+	self := app.Self().ID
+	for i := len(s.snap.msgs) - 1; i >= 0; i-- {
+		m := &s.snap.msgs[i].m
+		if m.User == self && !m.System && !m.Pending {
+			if s.thread && m.TS == s.ts && len(s.snap.msgs) > 1 {
+				continue // in a thread, Up edits your last reply first
+			}
+			s.startEdit(h, m.TS)
+			return true
+		}
+	}
+	return false
+}
+
+// scrollTo brings ts into view if it isn't visible.
+func (s *listState) scrollTo(ts string) {
+	for i, it := range s.items {
+		if it.kind == itMsg && it.key == ts {
+			if i >= s.visible[0] && i < s.visible[1]-1 {
+				return
+			}
+			s.list.Position = layout.Position{BeforeEnd: true, First: max(0, i-2)}
+			return
+		}
+	}
+}
+
+func (s *listState) retry(h Host, r *row) {
+	m := r.m
+	markFailed(m.Channel, m.TS, false)
+	s.m.mu.Lock()
+	s.m.remove(m.TS)
+	s.m.rev++
+	s.m.mu.Unlock()
+	app := h.Core()
+	if app == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_, err := app.Send(ctx, core.SendOpts{Channel: m.Channel, Text: m.Text, ThreadTS: m.ThreadTS})
+		if err != nil {
+			mm := m
+			mm.Pending = false
+			s.m.mu.Lock()
+			s.m.upsert(mm)
+			s.m.rev++
+			s.m.mu.Unlock()
+			markFailed(m.Channel, m.TS, true)
+		}
+		h.Invalidate()
+	}()
+}
+
+func (s *listState) discard(h Host, r *row) {
+	markFailed(r.m.Channel, r.m.TS, false)
+	s.m.mu.Lock()
+	s.m.remove(r.m.TS)
+	s.m.rev++
+	s.m.mu.Unlock()
+	h.Invalidate()
 }

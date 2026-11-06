@@ -40,6 +40,14 @@ func (v *ChannelView) Layout(gtx layout.Context) layout.Dimensions {
 	return v.s.layoutList(gtx, v.h, v.Origin)
 }
 
+// EditLast starts inline editing of the viewer's most recent message here
+// (the composer's Up-arrow hook, composer.OnEditLast). It reports whether
+// there was one.
+func (v *ChannelView) EditLast() bool { return v.s.editLast(v.h) }
+
+// Edit starts inline editing of message ts (message menu "Edit message").
+func (v *ChannelView) Edit(ts string) { v.s.startEdit(v.h, ts) }
+
 // Typing returns the "X is typing…" text for this channel ("" if nobody).
 func (v *ChannelView) Typing() string { return typingText(v.s.snap.typing) }
 
