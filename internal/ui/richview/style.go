@@ -42,7 +42,8 @@ type Handler interface {
 // Palette holds every color richview paints with. Defaults are Slack's
 // 2026 light theme; use DarkPalette for dark mode.
 type Palette struct {
-	Text, Text2, Link              color.NRGBA
+	Text, Text2, Text3, Link       color.NRGBA
+	Edited, CardText, CardFooter   color.NRGBA
 	MentionText, MentionBg         color.NRGBA
 	MentionHoverBg                 color.NRGBA
 	SelfMentionText, SelfMentionBg color.NRGBA
@@ -71,28 +72,31 @@ func rgba(r, g, b uint8, a float32) color.NRGBA {
 // LightPalette is Slack's light theme.
 func LightPalette() Palette {
 	return Palette{
-		Text: rgb(29, 28, 29), Text2: rgb(97, 96, 97), Link: rgb(18, 100, 163),
-		MentionText: rgb(18, 100, 163), MentionBg: rgba(29, 155, 209, 0.1), MentionHoverBg: rgba(29, 155, 209, 0.2),
-		SelfMentionText: rgb(29, 28, 29), SelfMentionBg: rgba(255, 199, 0, 0.2),
+		Text: rgb(29, 28, 29), Text2: rgb(97, 96, 97), Text3: rgb(69, 68, 71), Link: rgb(18, 100, 163),
+		Edited: rgb(134, 134, 134), CardText: rgb(69, 68, 71), CardFooter: rgb(94, 93, 96),
+		MentionText: rgb(18, 100, 163), MentionBg: rgba(54, 197, 240, 0.13), MentionHoverBg: rgba(29, 155, 209, 0.2),
+		SelfMentionText: rgb(29, 28, 29), SelfMentionBg: rgba(255, 198, 0, 0.18),
 		CodeText: rgb(192, 19, 67), CodeBg: rgba(29, 28, 29, 0.04), CodeBorder: rgba(29, 28, 29, 0.13),
 		PreBg: rgba(29, 28, 29, 0.04), PreBorder: rgba(29, 28, 29, 0.13),
 		QuoteBar: rgb(221, 221, 221),
-		Border:   rgba(29, 28, 29, 0.13), BorderHover: rgba(29, 28, 29, 0.3),
+		Border:   rgba(94, 93, 96, 0.13), BorderHover: rgba(94, 93, 96, 0.45),
 		Panel: rgb(255, 255, 255), Placeholder: rgb(234, 234, 234),
-		Selection: rgba(29, 155, 209, 0.3), Highlight: rgba(255, 199, 0, 0.3),
-		Divider:      rgba(29, 28, 29, 0.13),
-		ButtonBorder: rgba(29, 28, 29, 0.3), ButtonHoverBg: rgb(248, 248, 248),
+		Selection: rgba(29, 155, 209, 0.3), Highlight: rgba(255, 198, 0, 0.18),
+		Divider:      rgba(94, 93, 96, 0.45),
+		ButtonBorder: rgba(94, 93, 96, 0.45), ButtonHoverBg: rgb(248, 248, 248),
 		Primary: rgb(0, 122, 90), PrimaryText: rgb(255, 255, 255),
 		Danger: rgb(224, 30, 90), DangerText: rgb(255, 255, 255),
-		FileIconBg: rgb(18, 100, 163), FileIconPDF: rgb(224, 30, 90), FileIconZip: rgb(97, 96, 97), FileIconText: rgb(255, 255, 255),
-		PlayBg: rgba(0, 0, 0, 0.6), PlayFg: rgb(255, 255, 255),
+		FileIconBg: rgba(29, 28, 29, 0.04), FileIconPDF: rgb(224, 30, 90), FileIconZip: rgb(97, 96, 97), FileIconText: rgb(97, 96, 97),
+		PlayBg: rgba(0, 0, 0, 0.4), PlayFg: rgb(255, 255, 255),
 	}
 }
 
 // DarkPalette is Slack's dark theme.
 func DarkPalette() Palette {
 	p := LightPalette()
-	p.Text, p.Text2, p.Link = rgb(209, 210, 211), rgb(171, 171, 173), rgb(29, 155, 209)
+	p.Text, p.Text2, p.Text3, p.Link = rgb(209, 210, 211), rgb(171, 171, 173), rgb(209, 210, 211), rgb(29, 155, 209)
+	p.Edited, p.CardText, p.CardFooter = rgb(134, 134, 134), rgb(209, 210, 211), rgb(171, 171, 173)
+	p.FileIconBg, p.FileIconText = rgba(232, 232, 232, 0.06), rgb(171, 171, 173)
 	p.MentionText, p.MentionBg, p.MentionHoverBg = rgb(29, 155, 209), rgba(29, 155, 209, 0.1), rgba(29, 155, 209, 0.2)
 	p.SelfMentionText, p.SelfMentionBg = rgb(232, 232, 232), rgba(242, 199, 68, 0.3)
 	p.CodeText, p.CodeBg, p.CodeBorder = rgb(232, 145, 45), rgba(232, 232, 232, 0.04), rgba(232, 232, 232, 0.13)
@@ -128,7 +132,7 @@ func NewStyle(sh *text.Shaper, imgs Images, p Palette) *Style {
 	return &Style{
 		Shaper: sh, Images: imgs, Palette: p,
 		Face:     "Lato",
-		Mono:     "Monaco, Menlo, Consolas, \"Courier New\", monospace",
+		Mono:     "Roboto Mono, Monaco, Menlo, Consolas, \"Courier New\", monospace",
 		TextSize: 15, LineHeight: 22,
 		gen:   1,
 		words: make(map[wordKey]*shaped, 4096),

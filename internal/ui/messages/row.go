@@ -150,6 +150,16 @@ func (r *row) layout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 		cw = dp(gtx, 80)
 	}
 	m := &r.m
+	if m.System && !rc.parent {
+		return r.systemLayout(gtx, rc)
+	}
+	padTop := mt.padTop
+	if rc.parent {
+		padTop = 20
+	}
+	if rc.thread {
+		cw = w - cx - dp(gtx, 24)
+	}
 
 	// Record content first; the background depends on the height.
 	rec := op.Record(gtx.Ops)
@@ -157,7 +167,7 @@ func (r *row) layout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	if m.Pending {
 		opac = paint.PushOpacity(gtx.Ops, 0.5)
 	}
-	y := dp(gtx, mt.padTop) - dp(gtx, 4)
+	y := dp(gtx, padTop) - dp(gtx, 4)
 
 	if m.Pinned && !rc.thread {
 		y += r.labelLine(gtx, rc, cx, y, "pin", "Pinned")
@@ -169,6 +179,7 @@ func (r *row) layout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	if rc.header {
 		// avatar
 		ar := image.Rectangle{Min: image.Pt(padX, y+dp(gtx, 4)), Max: image.Pt(padX+dp(gtx, mt.avatar), y+dp(gtx, 4)+dp(gtx, mt.avatar))}
+
 		at(gtx, ar.Min.X, ar.Min.Y, func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Exact(ar.Size())
 			return r.avatarBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -216,7 +227,7 @@ func (r *row) layout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	// thread bar
 	if m.ReplyCount > 0 && !rc.thread && (m.ThreadTS == "" || m.ThreadTS == m.TS) {
 		y += r.threadBar(gtx, rc, cx, y, cw)
-		y += dp(gtx, 8)
+		y += dp(gtx, 4)
 	}
 	if m.Pending {
 		opac.Pop()
@@ -225,7 +236,7 @@ func (r *row) layout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 
 	h := y + dp(gtx, mt.padBottom) - dp(gtx, 8)
 	if rc.header {
-		if mh := dp(gtx, mt.padTop) + dp(gtx, mt.avatar) + dp(gtx, mt.padBottom); h < mh {
+		if mh := dp(gtx, padTop) + dp(gtx, mt.avatar) + dp(gtx, mt.padBottom); h < mh {
 			h = mh
 		}
 	}
@@ -249,6 +260,65 @@ func (r *row) layout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	content.Add(gtx.Ops)
 	r.height = h
 	return layout.Dimensions{Size: size}
+}
+
+// systemLayout draws join/leave/topic messages: a 16px icon in the
+// avatar column, 13px text and an inline 12px time.
+func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
+	c := rc.c
+	m := &r.m
+	w := gtx.Constraints.Max.X
+	padX := dp(gtx, mt.padX)
+	cx := dp(gtx, mt.contentX)
+	cw := w - cx - padX - dp(gtx, 20)
+	rec := op.Record(gtx.Ops)
+	icon := "info"
+	switch m.Subtype {
+	case "channel_join", "group_join":
+		icon = "user-plus"
+	case "channel_leave", "group_leave":
+		icon = "user"
+	case "channel_topic", "channel_purpose", "group_topic", "group_purpose", "channel_name":
+		icon = "edit"
+	case "pinned_item":
+		icon = "pin"
+	}
+	is := dp(gtx, 16)
+	at(gtx, padX+dp(gtx, mt.avatar)-is, dp(gtx, 10), func(gtx layout.Context) layout.Dimensions {
+		return icons.Get(icon)(gtx, unit.Dp(16), c.Text3)
+	})
+	r.handler.h, r.handler.m, r.handler.anchor = rc.h, m, rc.origin
+	y := dp(gtx, 8)
+	body := at(gtx, cx, y, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
+		return r.rv.Layout(gtx, rc.st, &r.handler)
+	})
+	ts := clock(tsTime(m.TS))
+	tsS := textStyle{size: 12, col: c.TimeSystem, lineH: 19}
+	tsz := measure(gtx, rc.th, tsS, ts)
+	if body.Size.Y <= dp(gtx, 22) && body.Size.X+dp(gtx, 8)+tsz.X <= cw {
+		at(gtx, cx+body.Size.X+dp(gtx, 8), y+dp(gtx, 1), func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, tsS, ts) })
+		y += max(body.Size.Y, dp(gtx, 20))
+	} else {
+		y += body.Size.Y
+		at(gtx, cx, y, func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, tsS, ts) })
+		y += tsz.Y
+	}
+	if len(m.Reactions) > 0 {
+		y += dp(gtx, 4)
+		y += r.reactions(gtx, rc, cx, y, cw)
+		y += dp(gtx, 4)
+	} else {
+		r.reactRects = r.reactRects[:0]
+	}
+	content := rec.Stop()
+	h := y + dp(gtx, 8)
+	if rc.hovered {
+		fill(gtx.Ops, image.Rect(0, 0, w, h), c.Hover)
+	}
+	content.Add(gtx.Ops)
+	r.height = h
+	return layout.Dimensions{Size: image.Pt(w, h)}
 }
 
 // nameLine draws "Name [APP] [status] 3:04 PM" and returns its height.
@@ -303,15 +373,16 @@ func (r *row) nameLine(gtx layout.Context, rc *rowCtx, x, y, w int) int {
 // labelLine draws a small gray label with an icon above the name ("Pinned").
 func (r *row) labelLine(gtx layout.Context, rc *rowCtx, x, y int, icon, txt string) int {
 	c := rc.c
-	h := dp(gtx, 18)
-	is := dp(gtx, 12)
-	at(gtx, x, y+(h-is)/2+dp(gtx, 4), func(gtx layout.Context) layout.Dimensions {
-		return icons.Get(icon)(gtx, unit.Dp(12), c.Text2)
+	lh := dp(gtx, 19)
+	is := dp(gtx, 14)
+	// icon right-aligned in the 36px gutter box that starts at x=20
+	at(gtx, dp(gtx, 56)-is, y+(lh-is)/2, func(gtx layout.Context) layout.Dimensions {
+		return icons.Get(icon)(gtx, unit.Dp(14), c.PinIcon)
 	})
-	at(gtx, x+is+dp(gtx, 4), y+dp(gtx, 4), func(gtx layout.Context) layout.Dimensions {
-		return label(gtx, rc.th, textStyle{size: 13, col: c.Text2, lineH: 18}, txt)
+	at(gtx, dp(gtx, 64), y, func(gtx layout.Context) layout.Dimensions {
+		return label(gtx, rc.th, textStyle{size: 13, col: c.Muted70, lineH: 19}, txt)
 	})
-	return h + dp(gtx, 4)
+	return dp(gtx, 20)
 }
 
 // broadcastLine draws "replied to a thread: …" for thread replies also sent
@@ -345,16 +416,16 @@ func (r *row) reactions(gtx layout.Context, rc *rowCtx, x, y, w int) int {
 	gap := dp(gtx, mt.reactGap)
 	es := dp(gtx, mt.reactEmoji)
 	cx, cy := x, y
-	countS := textStyle{size: 11, weight: theme.Bold, col: c.Text, lineH: 16}
+	countS := textStyle{size: 12, col: c.Text, lineH: 16}
 	for i := range m.Reactions {
 		re := &m.Reactions[i]
 		cnt := strconv.Itoa(re.Count)
 		cs := countS
 		if re.Self {
-			cs.col = c.ReactSelfText
+			cs.col, cs.weight = c.ReactSelfText, theme.Bold
 		}
 		tw := measure(gtx, rc.th, cs, cnt).X
-		pw := dp(gtx, 6) + es + dp(gtx, 4) + tw + dp(gtx, 8)
+		pw := dp(gtx, 8) + es + dp(gtx, 4) + tw + dp(gtx, 8)
 		if cx > x && cx+pw > x+w {
 			cx = x
 			cy += ph + gap
@@ -378,12 +449,11 @@ func (r *row) reactions(gtx layout.Context, rc *rowCtx, x, y, w int) int {
 					rrect(gtx.Ops, rr, rad, c.ReactSelfBg)
 					border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
 				case hov:
-					rrect(gtx.Ops, rr, rad, c.Bg)
 					border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactHoverBorder)
 				default:
 					rrect(gtx.Ops, rr, rad, c.ReactBg)
 				}
-				ex := dp(gtx, 6)
+				ex := dp(gtx, 8)
 				er := image.Rect(ex, (ph-es)/2, ex+es, (ph-es)/2+es)
 				if !drawEmoji(gtx, rc.h, re.URL, er) {
 					at(gtx, ex, 0, func(gtx layout.Context) layout.Dimensions {
@@ -400,7 +470,7 @@ func (r *row) reactions(gtx layout.Context, rc *rowCtx, x, y, w int) int {
 		cx += pw + gap
 	}
 	// add-reaction button, visible on hover
-	aw := dp(gtx, 32)
+	aw := dp(gtx, 34)
 	if cx > x && cx+aw > x+w {
 		cx = x
 		cy += ph + gap
@@ -411,19 +481,16 @@ func (r *row) reactions(gtx layout.Context, rc *rowCtx, x, y, w int) int {
 			gtx.Constraints = layout.Exact(r.addRect.Size())
 			return r.addReact.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				rr := image.Rectangle{Max: r.addRect.Size()}
+				col := c.Text
 				if r.addReact.Hovered() {
-					rrect(gtx.Ops, rr, ph/2, c.Bg)
 					border(gtx.Ops, rr, ph/2, dp(gtx, 1), c.ReactHoverBorder)
+					col = rgb(0xecb22e)
 				} else {
 					rrect(gtx.Ops, rr, ph/2, c.ReactBg)
 				}
-				is := dp(gtx, 16)
-				col := c.Text2
-				if r.addReact.Hovered() {
-					col = c.Text
-				}
+				is := dp(gtx, 18)
 				at(gtx, (rr.Dx()-is)/2, (rr.Dy()-is)/2, func(gtx layout.Context) layout.Dimensions {
-					return icons.Get("add-reaction")(gtx, unit.Dp(16), col)
+					return icons.Get("add-reaction")(gtx, unit.Dp(18), col)
 				})
 				return layout.Dimensions{Size: rr.Size()}
 			})
@@ -453,16 +520,16 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w int) int {
 	if r.threadBtn.Clicked(gtx) {
 		rc.h.OpenThread(m.Channel, m.TS)
 	}
-	at(gtx, bx, y-dp(gtx, 2), func(gtx layout.Context) layout.Dimensions {
+	at(gtx, bx, y-dp(gtx, 4), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Exact(image.Pt(bw, bh))
 		return r.threadBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			rr := image.Rectangle{Max: image.Pt(bw, bh)}
 			hov := r.threadBtn.Hovered()
 			if hov {
-				rrect(gtx.Ops, rr, dp(gtx, 8), c.ThreadBg)
-				border(gtx.Ops, rr, dp(gtx, 8), dp(gtx, 1), c.ThreadBorder)
+				rrect(gtx.Ops, rr, dp(gtx, 6), c.ThreadBg)
+				border(gtx.Ops, rr, dp(gtx, 6), dp(gtx, 1), c.ThreadBorder)
 			}
-			pad := dp(gtx, 6)
+			pad := dp(gtx, 5)
 			as := dp(gtx, mt.threadAvatar)
 			ax := pad
 			users := m.ReplyUsers
@@ -481,7 +548,7 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w int) int {
 				drawAvatar(gtx, rc.h, url, image.Rect(ax, (bh-as)/2, ax+as, (bh-as)/2+as), c)
 				ax += as + dp(gtx, 4)
 			}
-			ax += dp(gtx, 4)
+			ax += dp(gtx, 3)
 			n := "1 reply"
 			if m.ReplyCount != 1 {
 				n = strconv.Itoa(m.ReplyCount) + " replies"
@@ -502,15 +569,15 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w int) int {
 				return label(gtx, rc.th, textStyle{size: 13, col: c.Text2, lineH: 18}, desc)
 			})
 			if hov {
-				is := dp(gtx, 16)
+				is := dp(gtx, 18)
 				at(gtx, bw-pad-is, (bh-is)/2, func(gtx layout.Context) layout.Dimensions {
-					return icons.Get("chevron-right")(gtx, unit.Dp(16), c.Text2)
+					return icons.Get("chevron-right")(gtx, unit.Dp(18), c.Edited)
 				})
 			}
 			return layout.Dimensions{Size: rr.Size()}
 		})
 	})
-	return bh - dp(gtx, 2)
+	return bh - dp(gtx, 4)
 }
 
 // reactionTip is the tooltip text for a reaction pill.

@@ -251,6 +251,12 @@ type richCache map[string]*richEntry
 // channel view. compact uses 13px/18px text. maxLines > 0 clips the body to
 // that many lines (Slack's 2-3 line previews).
 func (b *base) msgBody(gtx C, m *core.Message, compact bool, maxLines int) D {
+	return b.msgBodyMuted(gtx, m, compact, false, maxLines)
+}
+
+// msgBodyMuted is msgBody with the body in the secondary text color when
+// muted is set (read Activity rows).
+func (b *base) msgBodyMuted(gtx C, m *core.Message, compact, muted bool, maxLines int) D {
 	if m == nil {
 		return D{}
 	}
@@ -259,7 +265,7 @@ func (b *base) msgBody(gtx C, m *core.Message, compact bool, maxLines int) D {
 	}
 	key := m.Channel + "/" + m.TS
 	ver := m.EditedTS + ":" + strconv.Itoa(len(m.Text)) + ":" + strconv.Itoa(len(m.Doc.Blocks))
-	return b.richDoc(gtx, key, ver, m.Doc, richview.Options{Edited: m.Edited, Compact: compact, Muted: m.System}, maxLines)
+	return b.richDoc(gtx, key, ver, m.Doc, richview.Options{Edited: m.Edited, Compact: compact, Muted: m.System || muted}, maxLines)
 }
 
 // richDoc draws any document under a stable key.

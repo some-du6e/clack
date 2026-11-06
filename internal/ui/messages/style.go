@@ -31,6 +31,7 @@ func rgba(v uint32, a float32) color.NRGBA {
 // colors are the message-pane colors measured from the 2026 client.
 type colors struct {
 	Bg, Hover, Text, Text2, Text3        color.NRGBA
+	Edited, PinIcon, Muted70, TimeSystem color.NRGBA
 	Pinned, PinnedHover, Highlight       color.NRGBA
 	BadgeBg, BadgeText                   color.NRGBA
 	ReactBg, ReactHoverBorder            color.NRGBA
@@ -46,21 +47,23 @@ type colors struct {
 
 var lightColors = colors{
 	Bg: rgb(0xffffff), Hover: rgb(0xf8f8f8), Text: rgb(0x1d1c1d), Text2: rgb(0x616061), Text3: rgb(0x454447),
-	Pinned: rgb(0xfef9ec), PinnedHover: rgb(0xfcf4de), Highlight: rgb(0xfef9ec),
-	BadgeBg: rgba(0x1d1c1d, 0.13), BadgeText: rgba(0x1d1c1d, 0.7),
-	ReactBg: rgba(0x1d1c1d, 0.06), ReactHoverBorder: rgba(0x1d1c1d, 0.3),
-	ReactSelfBg: rgba(0x1d9bd1, 0.1), ReactSelfHoverBg: rgba(0x1d9bd1, 0.2),
-	ReactSelfBorder: rgb(0x1d9bd1), ReactSelfText: rgb(0x1264a3),
+	Edited: rgb(0x868686), PinIcon: rgb(0xe8912d), Muted70: rgba(0x1d1c1d, 0.7), TimeSystem: rgb(0x5e5d60),
+	Pinned: rgba(0xf2c744, 0.1), PinnedHover: rgba(0xf2c744, 0.14), Highlight: rgba(0xf2c744, 0.2),
+	BadgeBg: rgba(0x1d1c1d, 0.06), BadgeText: rgb(0x454447),
+	ReactBg: rgba(0x1d1c1d, 0.06), ReactHoverBorder: rgb(0x7c7a7f),
+	ReactSelfBg: rgb(0xe3f8ff), ReactSelfHoverBg: rgb(0xd5f3ff),
+	ReactSelfBorder: rgb(0x1264a3), ReactSelfText: rgb(0x1264a3),
 	Link: rgb(0x1264a3), NewLine: rgb(0xe01e5a), DayLine: rgb(0xdddddd), PillBorder: rgba(0x1d1c1d, 0.13),
-	Shadow: rgba(0x000000, 0.08), ToolbarIcon: rgb(0x616061), ToolbarHoverBg: rgb(0xf8f8f8),
+	Shadow: rgba(0x000000, 0.08), ToolbarIcon: rgb(0x616061), ToolbarHoverBg: rgba(0x1d1c1d, 0.04),
 	Tooltip: rgb(0x1d1c1d), TooltipText: rgb(0xffffff), Skeleton: rgb(0xeaeaea),
 	ThreadBorder: rgba(0x1d1c1d, 0.13), ThreadBg: rgb(0xffffff), JumpBg: rgb(0x1264a3),
 	JumpText: rgb(0xffffff), FailedText: rgb(0xe01e5a), BorderStrong: rgba(0x1d1c1d, 0.3),
-	SystemText: rgb(0x616061), HeaderBorder: rgba(0x1d1c1d, 0.13), CloseHover: rgba(0x1d1c1d, 0.06),
+	SystemText: rgb(0x454447), HeaderBorder: rgba(0x1d1c1d, 0.13), CloseHover: rgba(0x1d1c1d, 0.06),
 }
 
 var darkColors = colors{
 	Bg: rgb(0x1a1d21), Hover: rgb(0x222529), Text: rgb(0xd1d2d3), Text2: rgb(0xababad), Text3: rgb(0xd1d2d3),
+	Edited: rgb(0x868686), PinIcon: rgb(0xe8912d), Muted70: rgba(0xe8e8e8, 0.7), TimeSystem: rgb(0xababad),
 	Pinned: rgba(0xf2c744, 0.1), PinnedHover: rgba(0xf2c744, 0.14), Highlight: rgba(0xf2c744, 0.1),
 	BadgeBg: rgba(0xe8e8e8, 0.13), BadgeText: rgba(0xe8e8e8, 0.7),
 	ReactBg: rgba(0xe8e8e8, 0.06), ReactHoverBorder: rgba(0xe8e8e8, 0.3),
@@ -95,15 +98,15 @@ var mt = struct {
 	toolbarTop, toolbarRight      float32
 	statusEmoji                   float32
 }{
-	padX: 20, avatar: 36, gap: 8, contentX: 64,
+	padX: 16, avatar: 36, gap: 8, contentX: 60,
 	headPadTop: 8, padTop: 8, padBottom: 8,
 	nameLine: 22, bodyMarginBottom: 4,
-	tsGap: 7, badgeGap: 4,
+	tsGap: 8, badgeGap: 4,
 	reactH: 24, reactGap: 4, reactTop: 4, reactEmoji: 16, reactBottom: 4,
-	threadH: 36, threadAvatar: 24,
+	threadH: 34, threadAvatar: 24,
 	dayH: 40, dayPillH: 28, unreadH: 20,
 	toolbarBtn: 32, toolbarPad: 4, toolbarTop: -16, toolbarRight: 17,
-	statusEmoji: 18,
+	statusEmoji: 16,
 }
 
 // ---- drawing helpers ----

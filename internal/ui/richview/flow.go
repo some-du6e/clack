@@ -161,6 +161,7 @@ type deco struct {
 	radius int
 	target int16
 	face   faceKey
+	self   bool
 }
 
 type item struct {
@@ -202,6 +203,8 @@ type lay struct {
 	items []item
 	decos []deco
 	opts  Options
+	// noPlain is set while laying out non-selectable labels.
+	noPlain bool
 }
 
 func (l *lay) dp(v float32) int      { return int(v*l.scale + 0.5) }
@@ -220,6 +223,10 @@ func (l *lay) faceFor(base font.Font, sizePx int, s richtext.Style) faceKey {
 }
 
 func (l *lay) plainAdd(s string) (int32, int32) {
+	if l.noPlain {
+		n := int32(len(l.d.plain))
+		return n, n
+	}
 	p0 := int32(len(l.d.plain))
 	l.d.plain = append(l.d.plain, s...)
 	return p0, int32(len(l.d.plain))
@@ -357,11 +364,19 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 				tg = l.d.addTarget(target{kind: kind, id: sp.ID})
 			}
 			bg, fg := p.MentionBg, p.MentionText
-			if sp.Self || sp.Kind == richtext.Broadcast {
+			if sp.Self {
+				bg = p.SelfMentionBg
+			}
+			if sp.Kind == richtext.Broadcast {
 				bg, fg = p.SelfMentionBg, p.SelfMentionText
+				k = l.faceFor(base, size, st|richtext.Bold)
 			}
 			col = fg
-			l.decos = append(l.decos, deco{kind: 1, bg: bg, padL: l.dpf(2), padR: l.dpf(2), padB: l.dpf(1), radius: l.dp(3), target: tg, face: k})
+			pad, padV := l.dpf(2), l.dpf(1)
+			if fs.pre || st&richtext.Code != 0 {
+				pad, padV = 0, 0
+			}
+			l.decos = append(l.decos, deco{kind: 1, bg: bg, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, self: sp.Self || sp.Kind == richtext.Broadcast})
 			dc = int16(len(l.decos) - 1)
 		case richtext.Date:
 			if sp.URL != "" {
@@ -420,9 +435,12 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 	finishLine := func() {
 		// Compute this line's height: emoji may be taller.
 		lh := lineH0
+		if lineStart == len(d.frags) && !fs.pre {
+			lh = l.dp(8) // an empty line between paragraphs
+		}
 		for i := lineStart; i < len(d.frags); i++ {
 			if f := &d.frags[i]; f.kind == fImage {
-				if h := f.size + l.dp(2); h > lh {
+				if h := f.size + l.dp(4); f.size > lineH0 && h > lh {
 					lh = h
 				}
 			}
@@ -435,13 +453,7 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 			if f.kind == fText {
 				f.y = y + int(off+0.5)
 			} else {
-				f.y = y + (lh-f.size)/2 - l.dp(1)
-				if lh == lineH0 && f.size <= lineH0 {
-					f.y = y + (lineH0-f.size)/2 - l.dp(1)
-					if f.y < y-l.dp(1) {
-						f.y = y - l.dp(1)
-					}
-				}
+				f.y = y + (lh-f.size)/2
 			}
 		}
 		d.lines = append(d.lines, lineInfo{top: y, bot: y + lh, f0: lineStart, f1: len(d.frags)})
@@ -556,8 +568,9 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 					if it.deco >= 0 {
 						decoRuns = append(decoRuns, placed{item: q, frag: len(d.frags), x: float32(x0) + x, w: head.adv, line: len(d.lines), decoI: it.deco})
 					}
-					emit(it, head, head.adv, p0, p0+int32(nb))
-					p0 += int32(nb)
+					p1 := min(p0+int32(nb), it.p1) // labels without plain text keep empty ranges
+					emit(it, head, head.adv, p0, p1)
+					p0 = p1
 					sh = tail
 					if sh != nil {
 						finishLine()
@@ -613,8 +626,8 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 				d.boxes = append(d.boxes, box{kind: bBorder, r: rr, radius: dc.radius, fill: dc.bg, stroke: dc.border, bw: l.dp(1), target: -1})
 			default:
 				bx := box{kind: bFill, r: rr, radius: dc.radius, fill: dc.bg, target: dc.target}
-				if dc.kind == 1 {
-					bx.hover = l.st.Palette.MentionBg
+				if dc.kind == 1 && !dc.self {
+					bx.hover = l.st.Palette.MentionHoverBg
 				}
 				d.boxes = append(d.boxes, bx)
 			}
@@ -636,14 +649,24 @@ func (l *lay) ellipsize(ln *lineInfo, x0 int, maxW float32, fs *flowStyle) {
 	ell := l.st.word(k, "…")
 	for ln.f1 > ln.f0 {
 		last := &d.frags[ln.f1-1]
-		if last.x+last.w+ell.adv <= float32(x0)+maxW {
+		room := float32(x0) + maxW - ell.adv - last.x
+		if last.w <= room {
 			break
+		}
+		if last.kind == fText && last.sh != nil && room > 0 && ln.f1-1 == ln.f0 {
+			// Keep as much of a long word as fits.
+			head, _, nb := l.st.split(faceKey{f: fs.face, size: fixedPx(last.size)}, last.sh, room)
+			if head != last.sh && head.adv <= room {
+				last.sh, last.w, last.p1 = head, head.adv, last.p0+int32(nb)
+				break
+			}
 		}
 		ln.f1--
 		d.frags = d.frags[:ln.f1]
 	}
 	ex := float32(x0)
-	ty := ln.top + fs.lineH/2
+	bm := l.st.spaceOf(k)
+	ty := ln.top + int((float32(fs.lineH)-(bm.asc+bm.desc))/2+bm.asc+0.5)
 	if ln.f1 > ln.f0 {
 		last := d.frags[ln.f1-1]
 		ex = last.x + last.w
@@ -662,7 +685,9 @@ func (l *lay) textFlow(spans []richtext.Span, x, y, w int, fs *flowStyle) (int, 
 // plainFlow lays out a plain string in one style.
 func (l *lay) plainFlow(s string, x, y, w int, fs *flowStyle, tg int16) (int, int) {
 	k := l.faceFor(fs.face, fs.size, 0)
+	l.noPlain = fs.noSelect
 	l.addText(s, fs, k, fs.col, 0, -1, tg)
+	l.noPlain = false
 	return l.flow(x, y, w, fs)
 }
 

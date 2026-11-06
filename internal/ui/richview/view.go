@@ -442,7 +442,7 @@ func (v *View) offsetAt(p f32.Point) int32 {
 		if x <= f.x+f.w {
 			if f.kind == fText && f.sh != nil {
 				r := f.sh.runeAt(x - f.x)
-				return f.p0 + int32(bytesForRunes(f.sh.str, r))
+				return min(f.p1, f.p0+int32(bytesForRunes(f.sh.str, r)))
 			}
 			if x < f.x+f.w/2 {
 				return f.p0
@@ -482,6 +482,7 @@ func (v *View) targetAt(p f32.Point) int16 {
 
 func (v *View) selectWord(off int32) {
 	pl := v.d.plain
+	off = min(max(off, 0), int32(len(pl)))
 	a, b := int(off), int(off)
 	isW := func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '\'' }
 	for a > 0 {
@@ -503,6 +504,7 @@ func (v *View) selectWord(off int32) {
 
 func (v *View) selectLine(off int32) {
 	pl := v.d.plain
+	off = min(max(off, 0), int32(len(pl)))
 	a, b := int(off), int(off)
 	for a > 0 && pl[a-1] != '\n' {
 		a--
