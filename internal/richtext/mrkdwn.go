@@ -11,9 +11,10 @@ import (
 // FromMrkdwn parses Slack mrkdwn (the escaped `text` field of messages,
 // attachments and Block Kit mrkdwn objects) into blocks: paragraphs, quotes
 // (`>` and `>>>`) and preformatted (```) blocks. Inline formatting follows
-// Slack's rules: *bold*, _italic_, ~strike~ need a word boundary outside the
-// markers and non-space just inside them; `code` spans, <tokens> and resolved
-// :emoji: are atomic and never formatted inside.
+// Slack's rules (see prefixOK): *bold*, _italic_, ~strike~ and `code` need a
+// word boundary outside the markers and stay within one line; `code` spans,
+// <tokens> and resolved :emoji: are atomic and never formatted inside, except
+// that a link's label is itself mrkdwn.
 func FromMrkdwn(r Resolver, text string) []Block {
 	if text == "" {
 		return nil
@@ -120,7 +121,7 @@ func literal(r Resolver, s string, st Style) []Span {
 		if s[i] == '<' {
 			if end := tokenEnd(s, i); end > 0 {
 				flush()
-				for _, sp := range token(r, s[i+1:end-1]) {
+				for _, sp := range token(r, s[i+1:end-1], false) {
 					if sp.Kind == Text && sp.Text == "" {
 						continue
 					}
@@ -221,29 +222,83 @@ func emojiSpan(r Resolver, name string) (Span, bool) {
 
 // unit is one rune of a line, or an atomic group of spans (code, token, emoji).
 type unit struct {
-	ch     rune
-	atom   []Span
-	marker bool // consumed formatting marker (dropped from output)
-	st     Style
+	ch   rune
+	atom []Span
+	code bool  // atom is a `code` span
+	ent  bool  // ch was decoded from &amp; &lt; or &gt;
+	mk   uint8 // consumed formatting marker (dropped from output): mkOpen or mkClose
+	st   Style
 }
 
-const markerChars = "*_~"
+const (
+	mkOpen uint8 = 1 + iota
+	mkClose
+)
 
-func isOpenBound(u *unit) bool {
-	if u.atom != nil || u.marker {
-		return true
+// Slack's word-boundary rule for *bold*, _italic_, ~strike~ and `code`,
+// measured against Slack's own renderer (web client and the server-side
+// mrkdwn → rich_text conversion agree). A marker needs, just outside it:
+//   - line start/end, whitespace, or one of the ASCII sets below;
+//   - U+2000–U+206F (General Punctuation: — – … “ ” ‘ ’ • ‰ ‽, ZWSP …) or
+//     U+2E00–U+2E7F (Supplemental Punctuation: ⸺ ⸻ …);
+//   - an emoji, :emoji:, <link/mention> or, after a closing marker, `code`.
+//
+// Everything else blocks formatting: letters and digits of any script
+// (no mid-word a*b*c), CJK punctuation (。「」（）), Latin-1 punctuation
+// (« » ¡ ¿ · § °) and other symbols (€ × → ★ ™). The raw text is what
+// counts, so an escape (&amp; &lt; &gt;) ends in ';' (fine before an opening
+// marker) and starts with '&' (not fine after a closing one).
+const (
+	prefixASCII = "!\"#$%(+,-./:;=?[^{"
+	suffixASCII = "!\"#$%')+,-./:;=?[]^{}"
+)
+
+// suffixExtra lists the marker characters that may follow a closing m.
+func suffixExtra(m rune) string {
+	switch m {
+	case '*':
+		return "~"
+	case '_':
+		return "*`~"
 	}
-	return unicode.IsSpace(u.ch) || strings.ContainsRune("([{>\"'“‘«", u.ch) || strings.ContainsRune(markerChars, u.ch)
+	return ""
 }
 
-func isCloseBound(u *unit) bool {
-	if u.atom != nil || u.marker {
+func isWideBound(c rune) bool {
+	return unicode.IsSpace(c) || c >= 0x2000 && c <= 0x206F || c >= 0x2E00 && c <= 0x2E7F || isEmojiRune(c)
+}
+
+// prefixOK reports whether u may sit just before an opening marker m.
+func prefixOK(m rune, u *unit) bool {
+	switch {
+	case u.mk == mkOpen: // enclosing span: *_x_*
 		return true
+	case u.atom != nil:
+		return !u.code
+	case u.ent:
+		return true
+	case u.ch < utf8.RuneSelf:
+		return unicode.IsSpace(u.ch) || strings.ContainsRune(prefixASCII, u.ch) || m == '`' && strings.ContainsRune("\\_*~", u.ch)
 	}
-	return unicode.IsSpace(u.ch) || strings.ContainsRune(".,!?;:)]}>\"'”’»-", u.ch) || strings.ContainsRune(markerChars, u.ch)
+	return isWideBound(u.ch)
 }
 
-func isSpaceUnit(u *unit) bool { return u.atom == nil && !u.marker && unicode.IsSpace(u.ch) }
+// suffixOK reports whether u may sit just after a closing marker m.
+func suffixOK(m rune, u *unit) bool {
+	switch {
+	case u.mk == mkClose: // enclosing span
+		return true
+	case u.atom != nil:
+		return true
+	case u.ent:
+		return false
+	case u.ch < utf8.RuneSelf:
+		return unicode.IsSpace(u.ch) || strings.ContainsRune(suffixASCII, u.ch) || strings.ContainsRune(suffixExtra(m), u.ch)
+	}
+	return isWideBound(u.ch)
+}
+
+func isSpaceUnit(u *unit) bool { return u.atom == nil && u.mk == 0 && unicode.IsSpace(u.ch) }
 
 // inline formats one line of mrkdwn.
 func inline(r Resolver, s string) []Span {
@@ -257,14 +312,17 @@ func inline(r Resolver, s string) []Span {
 	for i := 0; i < len(s); {
 		switch s[i] {
 		case '`':
-			if j := strings.IndexByte(s[i+1:], '`'); j > 0 {
-				us = append(us, unit{atom: nonNil(literal(r, s[i+1:i+1+j], Code))})
+			// `code` needs a boundary before it (anything may follow) and
+			// some non-space content.
+			if j := strings.IndexByte(s[i+1:], '`'); j > 0 && strings.TrimSpace(s[i+1:i+1+j]) != "" &&
+				(len(us) == 0 || prefixOK('`', &us[len(us)-1])) {
+				us = append(us, unit{atom: nonNil(literal(r, s[i+1:i+1+j], Code)), code: true})
 				i += j + 2
 				continue
 			}
 		case '<':
 			if end := tokenEnd(s, i); end > 0 {
-				us = append(us, unit{atom: nonNil(token(r, s[i+1:end-1]))})
+				us = append(us, unit{atom: nonNil(token(r, s[i+1:end-1], true))})
 				i = end
 				continue
 			}
@@ -278,7 +336,7 @@ func inline(r Resolver, s string) []Span {
 			}
 		case '&':
 			if c, n := entity(s[i:]); n > 0 {
-				us = append(us, unit{ch: rune(c)})
+				us = append(us, unit{ch: rune(c), ent: true})
 				i += n
 				continue
 			}
@@ -287,9 +345,7 @@ func inline(r Resolver, s string) []Span {
 		us = append(us, unit{ch: c})
 		i += n
 	}
-	applyMarker(us, '*', Bold)
-	applyMarker(us, '_', Italic)
-	applyMarker(us, '~', Strike)
+	applyMarkers(us)
 
 	var out []Span
 	var buf strings.Builder
@@ -303,7 +359,7 @@ func inline(r Resolver, s string) []Span {
 	for i := range us {
 		u := &us[i]
 		switch {
-		case u.marker:
+		case u.mk != 0:
 		case u.atom != nil:
 			flush()
 			for _, sp := range u.atom {
@@ -333,40 +389,138 @@ func nonNil(ss []Span) []Span {
 	return ss
 }
 
-func isMarker(u *unit, m rune) bool { return u.atom == nil && !u.marker && u.ch == m }
+// isRaw reports whether u is an unconsumed m character.
+func isRaw(u *unit, m rune) bool { return u.atom == nil && u.mk == 0 && u.ch == m }
 
-// applyMarker pairs m markers following Slack's boundary rules and styles
-// the units between them.
-func applyMarker(us []unit, m rune, st Style) {
-	for i := 0; i < len(us); i++ {
-		if !isMarker(&us[i], m) {
+func markerStyle(c rune) Style {
+	switch c {
+	case '*':
+		return Bold
+	case '_':
+		return Italic
+	case '~':
+		return Strike
+	}
+	return 0
+}
+
+// applyMarkers pairs *, _ and ~ markers in one left-to-right pass, the way
+// Slack does: each opener (in text order) takes the first closer that
+// satisfies the rules, and the scan then continues inside the span, so
+// spans nest (*_x_*) and may even overlap (*a _b* c_ is bold "a b",
+// italic "b c").
+func applyMarkers(us []unit) {
+	for i := range us {
+		if us[i].atom != nil || us[i].mk != 0 {
 			continue
 		}
-		if i > 0 && !isOpenBound(&us[i-1]) {
+		m := us[i].ch
+		st := markerStyle(m)
+		if st == 0 || i > 0 && !prefixOK(m, &us[i-1]) {
 			continue
 		}
-		j := i + 1
-		for j < len(us) && !isMarker(&us[j], m) {
-			j++
+		if j := closer(us, i, m); j > 0 {
+			us[i].mk, us[j].mk = mkOpen, mkClose
+			for k := i + 1; k < j; k++ {
+				us[k].st |= st
+			}
 		}
-		if j >= len(us) {
-			return
-		}
-		if j == i+1 || isSpaceUnit(&us[i+1]) || isSpaceUnit(&us[j-1]) || (j+1 < len(us) && !isCloseBound(&us[j+1])) {
-			continue
-		}
-		us[i].marker, us[j].marker = true, true
-		for k := i + 1; k < j; k++ {
-			us[k].st |= st
-		}
-		i = j
 	}
 }
 
-// token turns the inside of a <...> control sequence into spans.
-func token(r Resolver, inner string) []Span {
-	target, label, _ := strings.Cut(inner, "|")
-	label = unescape(label)
+// closer finds the marker closing the m opened at us[i], or 0. Bold and
+// strike content never contains its own marker, so only the next one is
+// tried; italic content may (_snake_case_ is italic "snake_case").
+func closer(us []unit, i int, m rune) int {
+	for j := i + 1; j < len(us); j++ {
+		if !isRaw(&us[j], m) {
+			continue
+		}
+		if contentOK(us[i+1:j], m) && (j+1 == len(us) || suffixOK(m, &us[j+1])) {
+			return j
+		}
+		if m != '_' {
+			return 0
+		}
+	}
+	return 0
+}
+
+// contentOK checks the text between two m markers: not empty or all
+// whitespace, not starting or ending with m itself (**x**, _x__); bold may
+// not both start and end with a space (2 * 3 * 4), strike may not end with
+// one; italic allows either.
+func contentOK(c []unit, m rune) bool {
+	if len(c) == 0 || isRaw(&c[0], m) || isRaw(&c[len(c)-1], m) {
+		return false
+	}
+	blank := true
+	for k := range c {
+		if !isSpaceUnit(&c[k]) {
+			blank = false
+			break
+		}
+	}
+	if blank {
+		return false
+	}
+	lead, trail := isSpaceUnit(&c[0]), isSpaceUnit(&c[len(c)-1])
+	switch m {
+	case '*':
+		return !(lead && trail)
+	case '~':
+		return !trail
+	}
+	return true
+}
+
+// emojiRanges approximates the characters Slack turns into emoji (they
+// count as word boundaries): Unicode's Emoji property outside ASCII, minus
+// © ® ™ which Slack keeps as text, plus the joiners and modifiers that
+// appear next to them (VS16, keycap, tags). Sorted, inclusive.
+var emojiRanges = [...][2]rune{
+	{0x200D, 0x200D}, {0x203C, 0x203C}, {0x2049, 0x2049}, {0x20E3, 0x20E3}, {0x2139, 0x2139},
+	{0x2194, 0x2199}, {0x21A9, 0x21AA}, {0x231A, 0x231B}, {0x2328, 0x2328}, {0x23CF, 0x23CF},
+	{0x23E9, 0x23F3}, {0x23F8, 0x23FA}, {0x24C2, 0x24C2}, {0x25AA, 0x25AB}, {0x25B6, 0x25B6},
+	{0x25C0, 0x25C0}, {0x25FB, 0x25FE}, {0x2600, 0x2604}, {0x260E, 0x260E}, {0x2611, 0x2611},
+	{0x2614, 0x2615}, {0x2618, 0x2618}, {0x261D, 0x261D}, {0x2620, 0x2620}, {0x2622, 0x2623},
+	{0x2626, 0x2626}, {0x262A, 0x262A}, {0x262E, 0x262F}, {0x2638, 0x263A}, {0x2640, 0x2640},
+	{0x2642, 0x2642}, {0x2648, 0x2653}, {0x265F, 0x2660}, {0x2663, 0x2663}, {0x2665, 0x2666},
+	{0x2668, 0x2668}, {0x267B, 0x267B}, {0x267E, 0x267F}, {0x2692, 0x2697}, {0x2699, 0x2699},
+	{0x269B, 0x269C}, {0x26A0, 0x26A1}, {0x26A7, 0x26A7}, {0x26AA, 0x26AB}, {0x26B0, 0x26B1},
+	{0x26BD, 0x26BE}, {0x26C4, 0x26C5}, {0x26C8, 0x26C8}, {0x26CE, 0x26CF}, {0x26D1, 0x26D1},
+	{0x26D3, 0x26D4}, {0x26E9, 0x26EA}, {0x26F0, 0x26F5}, {0x26F7, 0x26FA}, {0x26FD, 0x26FD},
+	{0x2702, 0x2702}, {0x2705, 0x2705}, {0x2708, 0x270D}, {0x270F, 0x270F}, {0x2712, 0x2712},
+	{0x2714, 0x2714}, {0x2716, 0x2716}, {0x271D, 0x271D}, {0x2721, 0x2721}, {0x2728, 0x2728},
+	{0x2733, 0x2734}, {0x2744, 0x2744}, {0x2747, 0x2747}, {0x274C, 0x274C}, {0x274E, 0x274E},
+	{0x2753, 0x2755}, {0x2757, 0x2757}, {0x2763, 0x2764}, {0x2795, 0x2797}, {0x27A1, 0x27A1},
+	{0x27B0, 0x27B0}, {0x27BF, 0x27BF}, {0x2934, 0x2935}, {0x2B05, 0x2B07}, {0x2B1B, 0x2B1C},
+	{0x2B50, 0x2B50}, {0x2B55, 0x2B55}, {0x3030, 0x3030}, {0x303D, 0x303D}, {0x3297, 0x3297},
+	{0x3299, 0x3299}, {0xFE0F, 0xFE0F}, {0x1F000, 0x1FAFF}, {0xE0020, 0xE007F},
+}
+
+func isEmojiRune(c rune) bool {
+	lo, hi := 0, len(emojiRanges)
+	for lo < hi {
+		mid := (lo + hi) / 2
+		switch e := emojiRanges[mid]; {
+		case c < e[0]:
+			hi = mid
+		case c > e[1]:
+			lo = mid + 1
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+// token turns the inside of a <...> control sequence into spans. With
+// format set (outside code), a link's explicit label is mrkdwn itself:
+// <https://x|a *b*> shows "a " and a bold "b", both linked.
+func token(r Resolver, inner string, format bool) []Span {
+	target, raw, _ := strings.Cut(inner, "|")
+	label := unescape(raw)
 	switch {
 	case strings.HasPrefix(target, "@"):
 		return []Span{userSpan(r, target[1:], label)}
@@ -399,9 +553,19 @@ func token(r Resolver, inner string) []Span {
 	}
 	href := unescape(target)
 	if label == "" {
-		label = strings.TrimPrefix(href, "mailto:")
+		return []Span{linkSpan(href, strings.TrimPrefix(href, "mailto:"))}
 	}
-	return []Span{linkSpan(href, label)}
+	if !format || !strings.ContainsAny(raw, "*_~`:") {
+		return []Span{linkSpan(href, label)}
+	}
+	h := SafeURL(href)
+	out := inline(r, raw)
+	for k := range out {
+		if out[k].Kind == Text && h != "" {
+			out[k].Kind, out[k].URL = Link, h
+		}
+	}
+	return out
 }
 
 func linkSpan(href, label string) Span {

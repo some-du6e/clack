@@ -41,6 +41,8 @@ type row struct {
 	statusURL string
 	bot       bool
 
+	needChan bool // body mentions channels not resolved yet
+
 	nameBtn, avatarBtn widget.Clickable
 	threadBtn          widget.Clickable
 	broadcastBtn       widget.Clickable
@@ -90,6 +92,7 @@ func (r *row) set(e *entry) {
 		r.rv.Set(e.m.Doc, opts)
 	}
 	r.uRev = 0
+	r.needChan = blocksNeedChan(e.m.Doc.Blocks)
 	if len(r.reacts) < len(e.m.Reactions) {
 		r.reacts = append(r.reacts, make([]widget.Clickable, len(e.m.Reactions)-len(r.reacts))...)
 	}
@@ -101,6 +104,12 @@ func (r *row) resolve(rc *rowCtx) {
 	}
 	r.uRev = rc.usersRev
 	m := &r.m
+	if r.needChan {
+		doc := m.Doc
+		doc.Blocks = fixChannels(rc.h, doc.Blocks)
+		r.needChan = blocksNeedChan(doc.Blocks)
+		r.rv.Set(doc, richview.Options{Edited: m.Edited, Muted: m.System, Dim: m.Pending})
+	}
 	r.name, r.avatar, r.statusURL, r.bot = m.Name, m.Avatar, "", m.IsBot || (m.BotID != "" && m.User == "")
 	if m.User != "" && rc.h.Core() != nil {
 		if u, ok := rc.h.Core().User(m.User); ok {

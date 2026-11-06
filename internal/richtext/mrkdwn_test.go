@@ -143,7 +143,7 @@ func TestFromMrkdwn(t *testing.T) {
 		{"intraword star", "2*3*4", []Block{para(tx("2*3*4"))}},
 		{"space inside markers", "* not bold *", []Block{para(tx("* not bold *"))}},
 		{"close needs boundary", "*bold*text", []Block{para(tx("*bold*text"))}},
-		{"italic needs boundary", "_italic_text_", []Block{para(tx("_italic_text_"))}},
+		{"italic may hold underscores", "_italic_text_", []Block{para(st("italic_text", Italic))}},
 		{"empty markers", "** __", []Block{para(tx("** __"))}},
 		{"unmatched", "a * b", []Block{para(tx("a * b"))}},
 		{"code", "`code *x*`", []Block{para(st("code *x*", Code))}},
@@ -211,6 +211,141 @@ func TestFromMrkdwn(t *testing.T) {
 		eq(t, c.name, got, c.want)
 		checkInvariants(t, c.name, got)
 	}
+}
+
+// TestMrkdwnBoundaries pins Slack's word-boundary rule for inline markers,
+// as measured against Slack's renderer (see prefixOK in mrkdwn.go).
+func TestMrkdwnBoundaries(t *testing.T) {
+	const u = "https://x.test"
+	B, I, S, C := Bold, Italic, Strike, Code
+	cases := []struct {
+		name, in string
+		want     []Span
+	}{
+		// Unicode punctuation from U+2000-U+206F / U+2E00-U+2E7F is a boundary.
+		{"em dashes", "——————*static noise*——————", []Span{tx("——————"), st("static noise", B), tx("——————")}},
+		{"ellipsis then space", "hmm… *happy noises*", []Span{tx("hmm… "), st("happy noises", B)}},
+		{"ellipsis tight", "…*x*…", []Span{tx("…"), st("x", B), tx("…")}},
+		{"en dash italic", "–_x_–", []Span{tx("–"), st("x", I), tx("–")}},
+		{"em dash strike", "—~x~—", []Span{tx("—"), st("x", S), tx("—")}},
+		{"em dash code", "—`x`—", []Span{tx("—"), st("x", C), tx("—")}},
+		{"curly double quotes", "“*x*”", []Span{tx("“"), st("x", B), tx("”")}},
+		{"curly single quotes", "‘_x_’", []Span{tx("‘"), st("x", I), tx("’")}},
+		{"bullet and interrobang", "•*x*‽", []Span{tx("•"), st("x", B), tx("‽")}},
+		{"two-em dash", "⸺*x*⸺", []Span{tx("⸺"), st("x", B), tx("⸺")}},
+		{"zero-width space", "a\u200b*x*\u200bb", []Span{tx("a\u200b"), st("x", B), tx("\u200bb")}},
+		{"nbsp", "a\u00a0*x*\u00a0b", []Span{tx("a\u00a0"), st("x", B), tx("\u00a0b")}},
+		{"ideographic space", "日本\u3000*x*\u3000日本", []Span{tx("日本\u3000"), st("x", B), tx("\u3000日本")}},
+		// ASCII punctuation: openers before, closers and most others after.
+		{"brackets", "[*x*] {_y_}", []Span{tx("["), st("x", B), tx("] {"), st("y", I), tx("}")}},
+		{"sentence punct", "*a*! *b*? *c*: *d*; *e*,", []Span{
+			st("a", B), tx("! "), st("b", B), tx("? "), st("c", B), tx(": "), st("d", B), tx("; "), st("e", B), tx(","),
+		}},
+		{"possessive", "it's *x*'s", []Span{tx("it's "), st("x", B), tx("'s")}},
+		{"slashes and dashes", "x/*y*/z *a*-*b*", []Span{tx("x/"), st("y", B), tx("/z "), st("a", B), tx("-"), st("b", B)}},
+		{"apostrophe before", "'*x*'", []Span{tx("'*x*'")}},
+		{"closer before", ")*x*", []Span{tx(")*x*")}},
+		{"opener after", "*x*(", []Span{tx("*x*(")}},
+		{"at after", "*x*@", []Span{tx("*x*@")}},
+		{"backslash", "\\*x*\\", []Span{tx("\\*x*\\")}},
+		{"pipe", "|_x_|", []Span{tx("|_x_|")}},
+		// Escapes count as their raw text: "&amp;" ends with ';' and starts with '&'.
+		{"escape before", "&amp;*x*", []Span{tx("&"), st("x", B)}},
+		{"escape after", "*x*&amp;", []Span{tx("*x*&")}},
+		{"escaped gt before", "a &gt;_x_", []Span{tx("a >"), st("x", I)}},
+		// Letters, digits, CJK and other punctuation/symbols block formatting.
+		{"mid-word", "a*b*c", []Span{tx("a*b*c")}},
+		{"letter before", "a*b* c", []Span{tx("a*b* c")}},
+		{"letter after", "a *b*c", []Span{tx("a *b*c")}},
+		{"digit after", "*x*9", []Span{tx("*x*9")}},
+		{"accented letter", "é_x_é", []Span{tx("é_x_é")}},
+		{"cjk tight", "日本*x*日本", []Span{tx("日本*x*日本")}},
+		{"cjk spaced", "日本 *x* 日本", []Span{tx("日本 "), st("x", B), tx(" 日本")}},
+		{"cjk brackets", "「*x*」", []Span{tx("「*x*」")}},
+		{"cjk full stop", "*x*。", []Span{tx("*x*。")}},
+		{"fullwidth parens", "（_x_）", []Span{tx("（_x_）")}},
+		{"guillemets", "«*x*»", []Span{tx("«*x*»")}},
+		{"inverted question", "¿*x*?", []Span{tx("¿*x*?")}},
+		{"middle dot", "·~x~·", []Span{tx("·~x~·")}},
+		{"euro", "€*x*€", []Span{tx("€*x*€")}},
+		{"arrow", "→*x*", []Span{tx("→*x*")}},
+		{"black star", "★*x*★", []Span{tx("★*x*★")}},
+		{"trademark", "*x*™", []Span{tx("*x*™")}},
+		// Emoji, :emoji:, links and mentions are boundaries.
+		{"emoji", "😀*x*😀", []Span{tx("😀"), st("x", B), tx("😀")}},
+		{"emoji skin tone", "👍🏽_x_👍🏽", []Span{tx("👍🏽"), st("x", I), tx("👍🏽")}},
+		{"emoji vs16", "❤\ufe0f*x*❤\ufe0f", []Span{tx("❤\ufe0f"), st("x", B), tx("❤\ufe0f")}},
+		{"bmp emoji", "✨*x*⭐", []Span{tx("✨"), st("x", B), tx("⭐")}},
+		{"emoji code", ":smile:*x*:wave:", []Span{em("smile"), st("x", B), em("wave")}},
+		{"emoji inside", "*:smile:*", []Span{with(em("smile"), B)}},
+		{"mentions around", "<@U1>*x*<#C1>", []Span{user("U1", "@alice"), st("x", B), chn("C1", "#general")}},
+		{"links around", "<https://x.test|a>_x_<https://x.test|b>", []Span{lk("a", u), st("x", I), lk("b", u)}},
+		// Content: not empty or blank, not starting/ending with its own marker;
+		// bold may not have spaces on both inner sides, strike none before the closer.
+		{"bold trailing inner space", "*x * y", []Span{st("x ", B), tx(" y")}},
+		{"bold leading inner space", "* x*", []Span{st(" x", B)}},
+		{"bold first closer wins", "*a * b*", []Span{st("a ", B), tx(" b*")}},
+		{"multiplication", "2 * 3 * 4", []Span{tx("2 * 3 * 4")}},
+		{"italic spaces both sides", "_ x _", []Span{st(" x ", I)}},
+		{"italic blank", "_ _", []Span{tx("_ _")}},
+		{"strike trailing inner space", "~x ~", []Span{tx("~x ~")}},
+		{"strike leading inner space", "~ x~", []Span{st(" x", S)}},
+		{"double stars", "**", []Span{tx("**")}},
+		{"four stars", "****", []Span{tx("****")}},
+		{"markdown bold", "**x**", []Span{tx("**x**")}},
+		{"triple stars", "***x***", []Span{tx("***x***")}},
+		{"star pairs", "*a**b*", []Span{tx("*a**b*")}},
+		{"double underscores", "__x__ _y__", []Span{tx("__x__ _y__")}},
+		{"unmatched open", "*x", []Span{tx("*x")}},
+		{"unmatched close", "x*", []Span{tx("x*")}},
+		{"lone markers", "a * b _ c ~ d", []Span{tx("a * b _ c ~ d")}},
+		// Bold and strike stop at their next marker; italic may skip some.
+		{"bold no inner star", "*a *b* c*", []Span{tx("*a "), st("b", B), tx(" c*")}},
+		{"bold blocked closer", "*a*b c*", []Span{tx("*a*b c*")}},
+		{"strike no inner tilde", "~a~b~", []Span{tx("~a~b~")}},
+		{"italic inner underscore", "_a_b_", []Span{st("a_b", I)}},
+		{"italic first closer wins", "_a_ b_", []Span{st("a", I), tx(" b_")}},
+		{"italic double inner", "_a__b_", []Span{st("a__b", I)}},
+		{"italic punct closer", "_a_._", []Span{st("a", I), tx("._")}},
+		{"italic no closer", "_a_b_c", []Span{tx("_a_b_c")}},
+		{"snake case", "snake_case_name", []Span{tx("snake_case_name")}},
+		// Several on a line, nesting and overlap.
+		{"all four", "*a* _b_ ~c~ `d`", []Span{st("a", B), tx(" "), st("b", I), tx(" "), st("c", S), tx(" "), st("d", C)}},
+		{"adjacent with comma", "*x*,*y*", []Span{st("x", B), tx(","), st("y", B)}},
+		{"bold italic", "*_x_*", []Span{st("x", B|I)}},
+		{"italic bold", "_*x*_", []Span{st("x", B|I)}},
+		{"strike italic", "~_x_~", []Span{st("x", I|S)}},
+		{"inner italic at end", "*x _y_*", []Span{st("x ", B), st("y", B|I)}},
+		{"inner italic at start", "*_x_ y*", []Span{st("x", B|I), st(" y", B)}},
+		{"overlap", "*a _b* c_", []Span{st("a ", B), st("b", B|I), st(" c", I)}},
+		{"italic then star", "_x_*y*", []Span{st("x", I), tx("*y*")}},
+		{"bold then tilde", "*x*~y~", []Span{st("x", B), tx("~y~")}},
+		{"bold then underscore", "*x*_y_", []Span{tx("*x*_y_")}},
+		{"star underscore mismatch", "*_x*_", []Span{tx("*_x*_")}},
+		// Code: boundary before, anything after; atomic for the markers.
+		{"code letter before", "a`x`", []Span{tx("a`x`")}},
+		{"code letter after", "`x`s", []Span{st("x", C), tx("s")}},
+		{"code blank", "` `", []Span{tx("` `")}},
+		{"code spaces kept", "` x `", []Span{st(" x ", C)}},
+		{"code after code", "`a``b`", []Span{st("a", C), tx("`b`")}},
+		{"code marker before", "_`x`_", []Span{st("x", C|I)}},
+		{"stars in code", "`a*b` *c*", []Span{st("a*b", C), tx(" "), st("c", B)}},
+		{"bold after code", "`a*b`*c*", []Span{st("a*b", C), tx("*c*")}},
+		{"code after bold", "*x*`y`", []Span{st("x", B), st("y", C)}},
+		{"code inside bold", "*a `b*c` d*", []Span{st("a ", B), st("b*c", B|C), st(" d", B)}},
+		// Link labels are mrkdwn; URLs are not.
+		{"formatted label", "<https://x.test|a *b* c>", []Span{lk("a ", u), with(lk("b", u), B), lk(" c", u)}},
+		{"stars in url", "<https://x.test/a*b*c>", []Span{lk("https://x.test/a*b*c", "https://x.test/a*b*c")}},
+		{"unsafe formatted label", "<javascript:x|_y_>", []Span{st("y", I)}},
+		{"mention label not formatted", "<@U9|*x*>", []Span{user("U9", "@*x*")}},
+	}
+	for _, c := range cases {
+		got := FromMrkdwn(R, c.in)
+		eq(t, c.name, got, []Block{para(c.want...)})
+		checkInvariants(t, c.name, got)
+	}
+	// Markers never pair across lines.
+	eq(t, "across lines", FromMrkdwn(R, "_a\nb_ ~c\nd~"), []Block{para(tx("_a"), br(), tx("b_ ~c"), br(), tx("d~"))})
 }
 
 func TestOnlyEmoji(t *testing.T) {
