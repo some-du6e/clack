@@ -316,6 +316,7 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			col = p.CodeText
 		}
 		k := l.faceFor(base, size, st)
+		noAt := false
 		switch sp.Kind {
 		case richtext.Break:
 			p0, p1 := l.plainAdd("\n")
@@ -366,6 +367,13 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			case richtext.Usergroup:
 				kind = tUsergroup
 			}
+			if l.opts.Muted && sp.Kind == richtext.User {
+				// System messages show member names as plain text that
+				// underlines on hover (Slack's rollup_member).
+				tg = l.d.addTarget(target{kind: kind, id: sp.ID, underline: true})
+				noAt = true
+				break
+			}
 			if sp.Kind != richtext.Broadcast {
 				tg = l.d.addTarget(target{kind: kind, id: sp.ID})
 			}
@@ -401,6 +409,9 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			l.addPad(l.decos[dc].padL, dc, k)
 		}
 		txt := sp.Text
+		if noAt {
+			txt = strings.TrimPrefix(txt, "@")
+		}
 		if !fs.pre && st&richtext.Code != 0 {
 			// Inline code wraps normally.
 			txt = strings.ReplaceAll(txt, "\n", " ")
