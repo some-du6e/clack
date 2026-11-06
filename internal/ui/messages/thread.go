@@ -27,6 +27,7 @@ type ThreadView struct {
 // NewThreadView returns the thread pane for the thread rooted at ts.
 func NewThreadView(h Host, ch, ts string) *ThreadView {
 	v := &ThreadView{h: h, ch: ch, ts: ts, s: stateFor(h, ch, ts)}
+	v.s.closeEdits()
 	v.s.hb.ensureLoaded(v.s.m)
 	return v
 }
@@ -40,6 +41,9 @@ func (v *ThreadView) EditLast() bool { return v.s.editLast(v.h) }
 
 // Edit starts inline editing of message ts.
 func (v *ThreadView) Edit(ts string) { v.s.startEdit(v.h, ts) }
+
+// Leave closes any inline editor in the thread.
+func (v *ThreadView) Leave() { v.s.closeEdits() }
 
 // Typing returns the "X is typing…" text for this thread.
 func (v *ThreadView) Typing() string { return typingText(v.s.snap.typing) }
@@ -58,6 +62,7 @@ func (v *ThreadView) Layout(gtx layout.Context) layout.Dimensions {
 	t := op.Offset(image.Pt(0, hh)).Push(gtx.Ops)
 	g := gtx
 	g.Constraints = layout.Exact(image.Pt(size.X, max(0, size.Y-hh)))
+	shown(&lastThread, v.s)
 	v.s.layoutList(g, v.h, v.Origin.Add(image.Pt(0, hh)))
 	t.Pop()
 	return layout.Dimensions{Size: size}

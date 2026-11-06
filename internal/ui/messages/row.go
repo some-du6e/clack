@@ -31,6 +31,7 @@ type row struct {
 
 	// inline edit composer (nil when not editing)
 	edit                 *composer.Composer
+	editFrames           int
 	bodyRect             image.Rectangle // row-local rect of the message body
 	retryBtn, discardBtn widget.Clickable
 
@@ -188,7 +189,7 @@ func (r *row) layout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	y := dp(gtx, padTop) - dp(gtx, 4)
 
 	if m.Pinned && !rc.thread {
-		y += r.labelLine(gtx, rc, cx, y, "pin", "Pinned")
+		y += r.labelLine(gtx, rc, cx, y, "pin", pinnedLabel(rc, m.PinnedBy))
 	}
 	if m.Broadcast && !rc.thread && m.ThreadTS != "" && m.ThreadTS != m.TS {
 		y += r.broadcastLine(gtx, rc, cx, y)
@@ -225,6 +226,12 @@ func (r *row) layout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	var body layout.Dimensions
 	if r.edit != nil {
 		ed := r.edit
+		// The composer's first Focus can land before its editor registered
+		// for input; ask again on the next frames so Escape/typing work.
+		if r.editFrames < 3 {
+			r.editFrames++
+			ed.Focus()
+		}
 		ed.Origin = rc.winOrigin.Add(image.Pt(cx-dp(gtx, 4), y))
 		body = at(gtx, cx-dp(gtx, 4), y, func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(cw+dp(gtx, 4), 1<<20)}
@@ -713,4 +720,21 @@ func skeleton(gtx layout.Context, c *colors, i int) layout.Dimensions {
 	bw := (w - cx - padX) * (60 + (i*23)%35) / 100
 	rrect(gtx.Ops, image.Rect(cx, dp(gtx, 30), cx+bw, dp(gtx, 42)), dp(gtx, 6), c.Skeleton)
 	return layout.Dimensions{Size: image.Pt(w, h)}
+}
+
+// pinnedLabel is Slack's "Pinned by Name" ("Pinned by you" for the viewer).
+func pinnedLabel(rc *rowCtx, by string) string {
+	switch {
+	case by == "":
+		return "Pinned"
+	case by == rc.selfID:
+		return "Pinned by you"
+	}
+	if app := rc.h.Core(); app != nil {
+		if u, ok := app.User(by); ok && u.Name != "" {
+			return "Pinned by " + u.Name
+		}
+		ensureUser(rc.h, by)
+	}
+	return "Pinned"
 }

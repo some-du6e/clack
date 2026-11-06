@@ -94,7 +94,6 @@ type listState struct {
 	tbFor    int
 	jump     widget.Clickable
 	closeBtn widget.Clickable
-	saved    map[string]bool
 
 	tip     string
 	tipRect image.Rectangle
@@ -126,7 +125,7 @@ func stateFor(h Host, ch, ts string) *listState {
 		return s
 	}
 	hb := hubFor(h)
-	s := &listState{hb: hb, ch: ch, ts: ts, thread: ts != "", rows: map[string]*row{}, hoverIdx: -1, tbFor: -1, saved: map[string]bool{}}
+	s := &listState{hb: hb, ch: ch, ts: ts, thread: ts != "", rows: map[string]*row{}, hoverIdx: -1, tbFor: -1}
 	if ts != "" {
 		s.m = hb.threadModel(ch, ts)
 	} else {
@@ -199,6 +198,17 @@ func (s *listState) sync(h Host, now time.Time) {
 			}
 		}
 	}
+	// Confirmed sends keep their row (and its layout) under the real ts.
+	for _, rn := range s.snap.renames {
+		if r, ok := s.rows[rn[0]]; ok {
+			delete(s.rows, rn[0])
+			if _, taken := s.rows[rn[1]]; !taken {
+				r.ts = rn[1]
+				s.rows[rn[1]] = r
+			}
+		}
+	}
+	s.snap.renames = s.snap.renames[:0]
 	// Refresh rows whose message changed; drop rows of deleted messages.
 	live := make(map[string]bool, len(s.snap.msgs))
 	for i := range s.snap.msgs {
@@ -721,7 +731,7 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 	// hover toolbar
 	s.tbFor = -1
 	if s.hoverIdx >= 0 && s.hoverIdx < len(s.items) && s.items[s.hoverIdx].kind == itMsg {
-		if r := s.rows[s.items[s.hoverIdx].key]; r != nil && !s.sel.dragging && r.edit == nil && len(s.items[s.hoverIdx].group) == 0 {
+		if r := s.rows[s.items[s.hoverIdx].key]; r != nil && !s.sel.dragging&& r.edit == nil && len(s.items[s.hoverIdx].group) == 0 && !r.m.Pending && !r.m.Failed {
 			s.toolbar(gtx, h, rc, r, s.hoverIdx, size)
 		}
 	}
@@ -857,7 +867,7 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 				is := dp(gtx, isz)
 				at(gtx, (bs-is)/2, (bs-is)/2, func(gtx layout.Context) layout.Dimensions {
 					ic := tbIcons[i]
-					if i == tbTodo && s.saved[m.TS] {
+					if i == tbTodo && m.Saved {
 						ic = "check-circle"
 						col = c.Link
 					}
@@ -868,7 +878,7 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 		})
 		if btn.Hovered() {
 			tip := tbTips[i]
-			if i == tbTodo && s.saved[m.TS] {
+			if i == tbTodo && m.Saved {
 				tip = "Remove from to-dos"
 			}
 			s.tip = ""
@@ -879,8 +889,8 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 }
 
 func (s *listState) toggleSaved(h Host, app *core.App, m core.Message) {
-	saved := s.saved[m.TS]
-	s.saved[m.TS] = !saved
+	saved := m.Saved
+	s.m.mutate(m.TS, func(x *core.Message) { x.Saved = !saved }) // optimistic
 	if app != nil {
 		ch, ts := m.Channel, m.TS
 		go func() {
@@ -890,18 +900,16 @@ func (s *listState) toggleSaved(h Host, app *core.App, m core.Message) {
 			if saved {
 				err = app.Unsave(ctx, ch, ts)
 			} else {
-				err = app.Save(ctx, ch, ts, 0)
+				err = app.AddTodo(ctx, ch, ts, 0)
 			}
 			if err != nil {
+				s.m.mutate(ts, func(x *core.Message) { x.Saved = saved })
 				h.Toast("Couldn't update your to-dos")
+				h.Invalidate()
 			}
 		}()
 	}
-	if saved {
-		h.Toast("Removed from to-dos")
-	} else {
-		h.Toast("Added to to-dos")
-	}
+	h.Invalidate()
 }
 
 func threadRoot(m *core.Message) string {
@@ -950,6 +958,7 @@ func (s *listState) startEdit(h Host, ts string) {
 		}
 	}
 	rr := r
+	r.editFrames = 0
 	r.edit = composer.NewEdit(h, r.m, func() {
 		rr.edit = nil
 		h.Invalidate()
@@ -997,39 +1006,24 @@ func (s *listState) scrollTo(ts string) {
 
 func (s *listState) retry(h Host, r *row) {
 	m := r.m
-	markFailed(m.Channel, m.TS, false)
-	s.m.mu.Lock()
-	s.m.remove(m.TS)
-	s.m.rev++
-	s.m.mu.Unlock()
 	app := h.Core()
-	if app == nil {
+	if app == nil || m.ClientMsgID == "" {
 		return
 	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		_, err := app.Send(ctx, core.SendOpts{Channel: m.Channel, Text: m.Text, ThreadTS: m.ThreadTS})
-		if err != nil {
-			mm := m
-			mm.Pending = false
-			s.m.mu.Lock()
-			s.m.upsert(mm)
-			s.m.rev++
-			s.m.mu.Unlock()
-			markFailed(m.Channel, m.TS, true)
+		if _, err := app.Resend(ctx, m.Channel, m.ClientMsgID); err != nil {
+			h.Toast("Couldn't send the message")
 		}
 		h.Invalidate()
 	}()
 }
 
 func (s *listState) discard(h Host, r *row) {
-	markFailed(r.m.Channel, r.m.TS, false)
-	s.m.mu.Lock()
-	s.m.remove(r.m.TS)
-	s.m.rev++
-	s.m.mu.Unlock()
-	h.Invalidate()
+	if app := h.Core(); app != nil && r.m.ClientMsgID != "" {
+		app.DiscardPending(r.m.Channel, r.m.ClientMsgID) // emits "delete"
+	}
 }
 
 // joinKind classifies join/leave system messages for rollups (0 = other).
@@ -1101,4 +1095,11 @@ func (s *listState) groupEntry(h Host, idx []int) entry {
 	m.Reactions = nil
 	m.Doc = richtext.Doc{Blocks: []richtext.Block{{Kind: richtext.Paragraph, Spans: spans}}}
 	return entry{m: m, rev: rev | 1}
+}
+
+// closeEdits drops any open inline editor (leaving the conversation).
+func (s *listState) closeEdits() {
+	for _, r := range s.rows {
+		r.edit = nil
+	}
 }
