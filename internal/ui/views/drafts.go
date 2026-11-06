@@ -1,9 +1,13 @@
 package views
 
 // Drafts & sent (Home sidebar): unsent drafts, scheduled messages (drafts
-// with a date_scheduled) and the viewer's sent messages. Slack reads Sent
-// from messages.sent.list, which core doesn't expose yet, so Sent is a
-// search for from:<@self> sorted by time.
+// with a date_scheduled, the same set core.ScheduledMessages lists) and
+// the viewer's sent messages (core.Sent, messages.sent.list).
+//
+// Writes go through core and run only on a click: save an edited draft
+// (SaveDraft), delete (DeleteDraft / DeleteScheduled), send now
+// (SendDraft) and schedule or reschedule (RescheduleMessage turns a draft
+// into a scheduled message). Realtime "draft" events reload the lists.
 //
 // Measurements: /tmp/ui-views-spec/drafts.md. The header and tabs are
 // white; the content below is #f8f8f8 with white cards.
@@ -17,8 +21,6 @@ import (
 	"sync"
 	"time"
 
-	"gioui.org/io/event"
-	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -47,7 +49,6 @@ const (
 	draftsTile   unit.Dp = 36
 	draftsGap    unit.Dp = 12 // tile → text
 	draftsMargin unit.Dp = 20 // list and card side margin
-	draftsSentN          = 30
 )
 
 type draftsResult struct {
@@ -56,9 +57,9 @@ type draftsResult struct {
 }
 
 type sentResult struct {
-	res  core.SearchResult
-	seq  int
-	page int
+	res    core.SentPage
+	seq    int
+	cursor string
 }
 
 type draftsOpened struct {
@@ -71,65 +72,25 @@ type draftsRow struct {
 	del, edit, sched, send widget.Clickable
 }
 
-// draftsEdit is a draft being edited in place: its card holds the real
-// composer for the draft's destination, which loads the conversation's
-// unsent text (the same draft the channel composer shows).
+// draftsEdit is a draft being edited in place: the card holds the
+// composer's rich editor seeded with the draft's document, with Cancel
+// and Save (SaveDraft) like Slack's in-place message editing.
 type draftsEdit struct {
-	id, ch, ts string
-	comp       *composer.Composer
-	close      widget.Clickable
-	typed      bool // the composer held text at some point
-	origin     draftsOrigin
+	id           string
+	ed           *composer.Editor
+	st           composer.EditorStyle
+	cancel, save widget.Clickable
+	focused      bool
+	busy         bool // a save is in flight
 }
 
-// draftsOrigin finds where a local coordinate system sits in the window,
-// for widgets that anchor popups in window space (the composer's Origin).
-// A pass-through pointer handler records the pointer in local
-// coordinates; the Host's PointerPos has the same pointer in window
-// coordinates as of the end of the previous frame, so the pair from one
-// frame gives the offset on the next.
-type draftsOrigin struct {
-	tag    int
-	local  image.Point
-	fresh  bool // local is from the previous frame's events
-	origin image.Point
-}
-
-// get returns the window position of the local origin (call before
-// laying out the widget).
-func (o *draftsOrigin) get(h Host) image.Point {
-	if pp, ok := h.(interface{ PointerPos() image.Point }); ok && o.fresh {
-		o.origin = pp.PointerPos().Sub(o.local)
-	}
-	return o.origin
-}
-
-// watch registers the pass-through handler over size, on top of the
-// widget so its buttons don't hide the pointer (call after its layout).
-func (o *draftsOrigin) watch(gtx C, size image.Point) {
-	o.fresh = false
-	for {
-		e, ok := gtx.Event(pointer.Filter{Target: &o.tag, Kinds: pointer.Move | pointer.Enter | pointer.Press | pointer.Drag | pointer.Release})
-		if !ok {
-			break
-		}
-		if pe, ok := e.(pointer.Event); ok {
-			o.local = image.Pt(int(pe.Position.X+.5), int(pe.Position.Y+.5))
-			o.fresh = true
-		}
-	}
-	pass := pointer.PassOp{}.Push(gtx.Ops)
-	area := clip.Rect{Max: size}.Push(gtx.Ops)
-	event.Op(gtx.Ops, &o.tag)
-	area.Pop()
-	pass.Pop()
-}
-
-// draftsOpenEdit is a DM opened so a user-addressed draft can be edited.
-type draftsOpenEdit struct {
-	draft core.Draft
-	conv  core.Conv
-	seq   int
+// draftsDone is a finished write, reported back to the UI goroutine.
+type draftsDone struct {
+	okMsg, errMsg string
+	err           error
+	saved         *core.Draft // SaveDraft / RescheduleMessage result
+	closeEdit     string      // close the editor of this draft on success
+	unhide        []string    // ids to show again on failure
 }
 
 // Schedule presets (Slack's composer menu).
@@ -169,33 +130,34 @@ type Drafts struct {
 	dl                async[draftsResult]
 	dlApplied         int
 	drafts, scheduled []core.Draft
+	gone              map[string]time.Time // optimistic removals, hidden from reloads for a while
 
 	sent, sentMore  async[sentResult]
 	sentApplied     int
 	sentMoreApplied int
 	sentMsgs        []core.Message
 	sentConvs       map[string]core.ConvRef
-	sentPage        int // last page appended (1-based; 0 = none)
-	sentMax         int // result pages available
-	sentTried       int // page last requested by loadMoreSent
+	sentPage        int    // pages appended (0 = none)
+	sentNext        string // cursor of the next page ("" = end)
+	sentTried       string // cursor last requested by loadMoreSent
 
 	open        async[draftsOpened]
 	openApplied int
 
-	edit            *draftsEdit
-	editOpen        async[draftsOpenEdit]
-	editOpenApplied int
-	// editKey is "channel/thread" of the open editor and editSent is set
-	// when the viewer's message lands there; both shared with the event
-	// goroutine (editMu).
-	editMu   sync.Mutex
-	editKey  string
-	editSent bool
+	edit *draftsEdit
 
 	schedID    string // draft whose schedule menu is open
 	schedOpen  bool
 	schedScrim widget.Clickable
 	schedItems [draftsSchedN]widget.Clickable
+
+	// Header "Edit": select drafts to delete several at once.
+	selecting            bool
+	selected             map[string]bool
+	selCancel, selDelete widget.Clickable
+
+	mu   sync.Mutex
+	done []draftsDone
 
 	view      []draftsEntry
 	viewTab   int
@@ -217,6 +179,8 @@ func NewDrafts(h Host) *Drafts {
 		tabs:      newTabs(draftsTabLabels...),
 		rows:      map[string]*draftsRow{},
 		sentConvs: map[string]core.ConvRef{},
+		gone:      map[string]time.Time{},
+		selected:  map[string]bool{},
 		dirty:     true,
 	}
 	for i := range d.lists {
@@ -257,6 +221,25 @@ func (d *Drafts) layoutHeader(gtx C) D {
 				layout.Rigid(func(gtx C) D {
 					if d.tabs.Sel != draftsTabDrafts || len(d.drafts) == 0 {
 						return D{}
+					}
+					if d.selecting {
+						// Select mode: Cancel, then Delete with the count.
+						n := len(d.selectedIDs())
+						label := "Delete"
+						if n > 0 {
+							label += " (" + strconv.Itoa(n) + ")"
+						}
+						return row(gtx, layout.Middle,
+							layout.Rigid(func(gtx C) D { return d.button(gtx, &d.selCancel, btnOutline, true, "Cancel") }),
+							hgap(8),
+							layout.Rigid(func(gtx C) D {
+								kind := btnDanger
+								if n == 0 {
+									kind = btnOutline
+								}
+								return d.button(gtx, &d.selDelete, kind, true, label)
+							}),
+						)
 					}
 					return d.editButton(gtx)
 				}),
@@ -352,16 +335,15 @@ func (d *Drafts) update(gtx C) {
 		d.watching = true
 		c := d.h.Core()
 		d.w.watch(d.h, func(ev core.Event) bool {
-			// The viewer is looked up per event: the view can be built
-			// before boot knows who that is.
-			mine := false
-			if ev.Type == "message" && ev.UserID != "" {
-				mine = ev.UserID == c.Self().ID
+			switch ev.Type {
+			case "resync", "draft":
+				return true
+			case "message":
+				// The viewer is looked up per event: the view can be
+				// built before boot knows who that is.
+				return ev.UserID != "" && ev.UserID == c.Self().ID
 			}
-			if mine {
-				d.noteSent(ev)
-			}
-			return ev.Type == "resync" || mine
+			return false
 		})
 	}
 	switch {
@@ -374,12 +356,17 @@ func (d *Drafts) update(gtx C) {
 	if d.tabs.update(gtx) {
 		sel = d.tabs.Sel
 		d.reload(sel)
+		d.endSelect()
 		d.dirty = true
 	}
 	if d.w.due(gtx, 2*time.Second) {
-		d.reload(sel)
+		d.reload(d.tabs.Sel)
+		if d.tabs.Sel != draftsTabSent && d.sent.started() {
+			d.reload(draftsTabSent) // a send shows up there too
+		}
 	}
 	d.apply()
+	d.drainDone()
 	if d.retry.Clicked(gtx) {
 		d.reload(sel)
 	}
@@ -387,7 +374,16 @@ func (d *Drafts) update(gtx C) {
 		d.eduHidden, d.dirty = true, true
 	}
 	if d.editBtn.Clicked(gtx) {
-		d.h.Toast("Selecting drafts needs drafts.delete, which core doesn't have yet")
+		d.closeEdit()
+		d.closeSched()
+		d.selecting, d.dirty = true, true
+		clear(d.selected)
+	}
+	if d.selCancel.Clicked(gtx) {
+		d.endSelect()
+	}
+	if d.selDelete.Clicked(gtx) {
+		d.deleteSelected()
 	}
 	if d.emptyBtn.Clicked(gtx) {
 		// "New Message": like the shell's compose button, pick the
@@ -416,6 +412,10 @@ func (d *Drafts) update(gtx C) {
 			continue
 		}
 		switch {
+		case d.selecting:
+			if click {
+				d.selected[id] = !d.selected[id]
+			}
 		case del:
 			d.deleteDraft(dr)
 		case send:
@@ -458,42 +458,69 @@ func (d *Drafts) reload(tab int) {
 		})
 		return
 	}
-	q := "from:<@" + d.selfID() + ">"
 	d.sent.load(d.h, true, func(ctx context.Context) (sentResult, error) {
-		r, err := c.SearchMessages(ctx, core.SearchOpts{Query: q, Sort: "timestamp", Count: draftsSentN, Page: 1})
-		return sentResult{res: r, seq: seq, page: 1}, err
+		r, err := c.Sent(ctx, "", 1)
+		return sentResult{res: r, seq: seq}, err
 	})
 }
 
 func (d *Drafts) loadMoreSent() {
-	next := d.sentPage + 1
-	if d.sentPage == 0 || next > d.sentMax || next == d.sentTried || d.sentMore.busy() || d.sent.busy() {
+	cur := d.sentNext
+	if d.sentPage == 0 || cur == "" || cur == d.sentTried || d.sentMore.busy() || d.sent.busy() {
 		return
 	}
-	d.sentTried = next
+	d.sentTried = cur
 	d.seq++
-	seq := d.seq
+	seq, page := d.seq, d.sentPage+1
 	c := d.h.Core()
-	q := "from:<@" + d.selfID() + ">"
 	d.sentMore.load(d.h, true, func(ctx context.Context) (sentResult, error) {
-		r, err := c.SearchMessages(ctx, core.SearchOpts{Query: q, Sort: "timestamp", Count: draftsSentN, Page: next})
-		return sentResult{res: r, seq: seq, page: next}, err
+		r, err := c.Sent(ctx, cur, page)
+		return sentResult{res: r, seq: seq, cursor: cur}, err
 	})
+}
+
+// hidden reports a draft removed optimistically in the last 15 seconds
+// (drafts.list can lag behind a delete or send).
+func (d *Drafts) hidden(id string) bool {
+	at, ok := d.gone[id]
+	if !ok {
+		return false
+	}
+	if time.Since(at) > 15*time.Second {
+		delete(d.gone, id)
+		return false
+	}
+	return true
+}
+
+// place sorts a draft list into the Drafts and Scheduled tabs.
+func (d *Drafts) place(list []core.Draft) {
+	d.drafts, d.scheduled = d.drafts[:0:0], d.scheduled[:0:0]
+	for _, dr := range list {
+		switch {
+		case d.hidden(dr.ID):
+		case dr.DateScheduled > 0:
+			d.scheduled = append(d.scheduled, dr)
+		default:
+			d.drafts = append(d.drafts, dr)
+		}
+	}
+	sort.SliceStable(d.drafts, func(i, j int) bool { return draftTime(&d.drafts[i]).After(draftTime(&d.drafts[j])) })
+	sort.SliceStable(d.scheduled, func(i, j int) bool { return d.scheduled[i].DateScheduled < d.scheduled[j].DateScheduled })
+	d.dirty = true
+}
+
+func (d *Drafts) all() []core.Draft {
+	return append(append([]core.Draft(nil), d.drafts...), d.scheduled...)
 }
 
 func (d *Drafts) apply() {
 	if v, ok, _ := d.dl.get(); ok && v.seq != 0 && v.seq != d.dlApplied {
-		d.dlApplied, d.dirty = v.seq, true
-		d.drafts, d.scheduled = d.drafts[:0:0], d.scheduled[:0:0]
-		for _, dr := range v.list {
-			if dr.DateScheduled > 0 {
-				d.scheduled = append(d.scheduled, dr)
-			} else {
-				d.drafts = append(d.drafts, dr)
-			}
+		d.dlApplied = v.seq
+		d.place(v.list)
+		if d.edit != nil && d.findDraft(d.edit.id) == nil {
+			d.closeEdit() // deleted or sent elsewhere
 		}
-		sort.SliceStable(d.drafts, func(i, j int) bool { return draftTime(&d.drafts[i]).After(draftTime(&d.drafts[j])) })
-		sort.SliceStable(d.scheduled, func(i, j int) bool { return d.scheduled[i].DateScheduled < d.scheduled[j].DateScheduled })
 	}
 	if v, ok, _ := d.sent.get(); ok && v.seq != 0 && v.seq != d.sentApplied {
 		d.sentApplied, d.dirty = v.seq, true
@@ -502,11 +529,11 @@ func (d *Drafts) apply() {
 		for id, r := range v.res.Convs {
 			d.sentConvs[id] = r
 		}
-		d.sentPage, d.sentMax, d.sentTried = 1, v.res.Pages, 0
+		d.sentPage, d.sentNext, d.sentTried = 1, v.res.Next, ""
 	}
 	if v, ok, _ := d.sentMore.get(); ok && v.seq != 0 && v.seq != d.sentMoreApplied {
 		d.sentMoreApplied = v.seq
-		if v.page == d.sentPage+1 {
+		if v.cursor == d.sentNext {
 			have := make(map[string]bool, len(d.sentMsgs))
 			for i := range d.sentMsgs {
 				have[d.sentMsgs[i].Channel+"/"+d.sentMsgs[i].TS] = true
@@ -519,7 +546,8 @@ func (d *Drafts) apply() {
 			for id, r := range v.res.Convs {
 				d.sentConvs[id] = r
 			}
-			d.sentPage, d.dirty = v.page, true
+			d.sentPage++
+			d.sentNext, d.dirty = v.res.Next, true
 		}
 	}
 	if v, ok, err := d.open.get(); ok && v.seq != 0 && v.seq != d.openApplied {
@@ -655,162 +683,172 @@ func (d *Drafts) openMsg(m *core.Message) {
 
 // ---- edit in place ----
 
-// startEdit turns a draft's card into the composer for its destination.
-// Drafts addressed to people (no channel yet) open the DM first. Without a
-// composer-capable Host it falls back to opening the conversation.
+// startEdit turns a draft's card into an editor seeded with the draft.
 func (d *Drafts) startEdit(dr *core.Draft) {
-	if _, ok := d.h.(composer.Host); !ok {
-		d.openDraft(dr)
-		return
-	}
 	if d.edit != nil && d.edit.id == dr.ID {
-		d.edit.comp.Focus()
-		return
-	}
-	if dr.Channel != "" {
-		d.beginEdit(*dr)
-		return
-	}
-	if len(dr.Users) == 0 || d.editOpen.busy() {
-		return
-	}
-	draft := *dr
-	users := append([]string(nil), dr.Users...)
-	d.seq++
-	seq := d.seq
-	c := d.h.Core()
-	d.editOpen.load(d.h, false, func(ctx context.Context) (draftsOpenEdit, error) {
-		cv, err := c.OpenDM(ctx, users...)
-		return draftsOpenEdit{draft: draft, conv: cv, seq: seq}, err
-	})
-}
-
-func (d *Drafts) beginEdit(dr core.Draft) {
-	hc, ok := d.h.(composer.Host)
-	if !ok || dr.Channel == "" {
 		return
 	}
 	d.closeEdit()
 	d.closeSched()
-	c := composer.New(hc, dr.Channel, dr.ThreadTS)
-	if !composer.HasDraft(dr.Channel, dr.ThreadTS) {
-		draftsSeed(c, &dr)
+	doc := composer.DocFromRichtext(dr.Doc.Blocks)
+	if doc == nil || doc.Len() == 0 {
+		doc = composer.NewDoc()
+		if t := strings.TrimSpace(dr.Text); t != "" {
+			doc.Insert(0, t, composer.Attr{})
+		}
 	}
-	c.Focus()
-	d.edit = &draftsEdit{id: dr.ID, ch: dr.Channel, ts: dr.ThreadTS, comp: c}
-	d.editMu.Lock()
-	d.editKey, d.editSent = dr.Channel+"/"+dr.ThreadTS, false
-	d.editMu.Unlock()
+	e := &draftsEdit{id: dr.ID, ed: composer.NewEditor()}
+	e.ed.SetDoc(doc)
+	d.edit = e
 	d.dirty = true
 }
 
-// draftsSeed fills a fresh composer with a draft. A composer that accepts
-// a document keeps the formatting and mentions; otherwise the draft's
-// plain text goes in.
-func draftsSeed(c *composer.Composer, dr *core.Draft) {
-	if doc := composer.DocFromRichtext(dr.Doc.Blocks); doc != nil && doc.Len() > 0 {
-		if s, ok := any(c).(interface{ SetDoc(*composer.Doc) }); ok {
-			s.SetDoc(doc)
-			return
-		}
-	}
-	if t := strings.TrimSpace(richtext.PlainText(dr.Doc)); t != "" {
-		c.InsertText(t)
-	}
-}
-
-// closeEdit folds the editor back into its card. The composer keeps the
-// text as the conversation's unsent draft.
 func (d *Drafts) closeEdit() {
 	if d.edit == nil {
 		return
 	}
-	d.edit.comp.Close()
 	d.edit = nil
-	d.editMu.Lock()
-	d.editKey, d.editSent = "", false
-	d.editMu.Unlock()
 	d.dirty = true
 }
 
-// noteSent runs on the event goroutine for the viewer's own messages: one
-// landing in the open editor's conversation means its composer sent.
-func (d *Drafts) noteSent(ev core.Event) {
-	ts := ev.ThreadTS
-	if ts == ev.TS {
-		ts = ""
-	}
-	d.editMu.Lock()
-	if d.editKey != "" && d.editKey == ev.Channel+"/"+ts {
-		d.editSent = true
-	}
-	d.editMu.Unlock()
-}
-
 func (d *Drafts) updateEdit(gtx C) {
-	if v, ok, err := d.editOpen.get(); ok && v.seq != 0 && v.seq != d.editOpenApplied {
-		d.editOpenApplied = v.seq
-		if err != nil {
-			d.h.Toast("Couldn’t open that conversation: " + friendlyErr(err))
-		} else if v.conv.ID != "" {
-			dr := v.draft
-			dr.Channel = v.conv.ID
-			d.beginEdit(dr)
-		}
-	}
 	e := d.edit
 	if e == nil {
 		return
 	}
-	if e.close.Clicked(gtx) {
+	if e.cancel.Clicked(gtx) {
 		d.closeEdit()
 		return
 	}
-	if composer.HasDraft(e.ch, e.ts) {
-		e.typed = true
+	save := e.save.Clicked(gtx)
+	for {
+		ev, ok := e.ed.Update(gtx)
+		if !ok {
+			break
+		}
+		switch ev.Kind {
+		case composer.EvSubmit:
+			save = true
+		case composer.EvCancel:
+			d.closeEdit()
+			return
+		}
 	}
-	d.editMu.Lock()
-	sent := d.editSent
-	d.editSent = false
-	d.editMu.Unlock()
-	// The composer clears its text when it sends; the echo of the
-	// viewer's message confirms it.
-	if sent && e.typed && !composer.HasDraft(e.ch, e.ts) {
-		id := e.id
-		d.closeEdit()
-		d.draftSent(id)
+	if save {
+		d.saveEdit()
 	}
 }
 
-// editCard is the card of the draft being edited: the destination line
-// and a close button, then the composer (which has its own 20px margins).
+// saveEdit writes the editor's document back to the draft (SaveDraft). A
+// scheduled message keeps its send time.
+func (d *Drafts) saveEdit() {
+	e := d.edit
+	dr := d.findDraft(e.id)
+	if dr == nil || e.busy {
+		return
+	}
+	doc := e.ed.Doc()
+	if doc.Empty() {
+		d.h.Toast("A draft can’t be empty. Delete it instead.")
+		return
+	}
+	o := core.DraftOpts{ID: dr.ID, Channel: dr.Channel, Users: dr.Users, ThreadTS: dr.ThreadTS, Broadcast: dr.Broadcast,
+		Text: doc.Mrkdwn(), Blocks: doc.RichTextBlocks(), FileIDs: dr.FileIDs}
+	at := dr.DateScheduled
+	e.busy = true
+	if at > 0 && dr.Channel != "" {
+		// drafts.update on a scheduled draft without date_scheduled answers
+		// reattaching_not_allowed, so a scheduled message is replaced: the
+		// new text is scheduled for the same time, then the old one goes.
+		old := dr.ID
+		d.remove(old)
+		so := core.SendOpts{Channel: dr.Channel, ThreadTS: dr.ThreadTS, Broadcast: dr.Broadcast, Text: o.Text, Blocks: o.Blocks}
+		d.run(draftsDone{okMsg: "Scheduled message saved", errMsg: "Couldn’t save your scheduled message", unhide: []string{old}},
+			func(ctx context.Context, c *core.App) (*core.Draft, error) {
+				if _, err := c.ScheduleMessage(ctx, so, at); err != nil {
+					return nil, err
+				}
+				return nil, c.DeleteScheduled(ctx, so.Channel, old)
+			})
+		return
+	}
+	d.run(draftsDone{okMsg: "Draft saved", errMsg: "Couldn’t save your draft", closeEdit: dr.ID},
+		func(ctx context.Context, c *core.App) (*core.Draft, error) {
+			nd, err := c.SaveDraft(ctx, o)
+			if err != nil {
+				return nil, err
+			}
+			return &nd, nil
+		})
+}
+
+func (d *Drafts) editStyle() composer.EditorStyle {
+	p := &d.th.C
+	st := composer.DefaultEditorStyle(d.th.Shaper)
+	st.Color, st.Caret, st.LinkColor = p.Fg, p.Fg, p.Link
+	st.MentionColor, st.MentionBg = p.Mention, p.MentionBg
+	st.BroadcastColor, st.BroadcastBg = p.Mention, p.SelfMention
+	st.CodeColor, st.CodeBg, st.CodeBorder = p.CodeFg, p.CodeBg, p.CodeBorder
+	st.PreBg, st.PreBorder, st.QuoteBar = p.PreBg, p.CodeBorder, p.QuoteBar
+	st.Selection, st.Placeholder = p.Selection, p.FgSubtle
+	st.PlaceholderText = "Write a message"
+	st.MaxHeight = 300
+	if imgs := d.h.Images(); imgs != nil {
+		st.Images = func(url string, px int) (paint.ImageOp, bool) {
+			if url == "" {
+				return paint.ImageOp{}, false
+			}
+			return imgs.Get(url, px)
+		}
+	}
+	return st
+}
+
+// editCard is the card of the draft being edited: the destination line,
+// then the editor in an input box (radius 8, 1px border, blue focus ring)
+// and Cancel / Save at the bottom right.
 func (d *Drafts) editCard(gtx C, dr *core.Draft) D {
 	e := d.edit
-	dst := d.destOf(e.ch, dr.Users, e.ts, nil)
+	if e.st.Shaper != d.th.Shaper || e.st.Color != d.th.C.Fg {
+		e.st = d.editStyle()
+	}
+	if !e.focused {
+		e.focused = true
+		e.ed.Focus(gtx)
+	}
+	dst := d.destOf(dr.Channel, dr.Users, dr.ThreadTS, nil)
 	return layout.Inset{Left: draftsMargin, Right: draftsMargin, Bottom: 8}.Layout(gtx, func(gtx C) D {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 		m := op.Record(gtx.Ops)
-		dims := layout.Inset{Top: 12}.Layout(gtx, func(gtx C) D {
+		dims := layout.UniformInset(12).Layout(gtx, func(gtx C) D {
 			return col(gtx,
 				layout.Rigid(func(gtx C) D {
-					return layout.Inset{Left: 20, Right: 12}.Layout(gtx, func(gtx C) D {
-						return row(gtx, layout.Middle,
-							layout.Rigid(func(gtx C) D { return d.destTile(gtx, dst) }),
-							hgap(draftsGap),
-							layout.Flexed(1, func(gtx C) D { return d.destLine(gtx, dst) }),
-							layout.Rigid(func(gtx C) D { return d.iconButton(gtx, &e.close, "close", 28, 18, d.p.Sec) }),
-						)
-					})
+					return row(gtx, layout.Middle,
+						layout.Rigid(func(gtx C) D { return d.destTile(gtx, dst) }),
+						hgap(draftsGap),
+						layout.Flexed(1, func(gtx C) D { return d.destLine(gtx, dst) }),
+						layout.Rigid(func(gtx C) D {
+							if dr.DateScheduled == 0 {
+								return D{}
+							}
+							soft := d.p.Text
+							soft.A = 0xb3
+							soft = flatten(soft, d.p.Bg)
+							return d.para(gtx, 13, 18, wReg, soft, 1, draftsSendText(unixTime(dr.DateScheduled)))
+						}),
+					)
 				}),
 				vgap(12),
+				layout.Rigid(func(gtx C) D { return d.editBox(gtx, e) }),
+				vgap(8),
 				layout.Rigid(func(gtx C) D {
-					gtx.Constraints.Max.Y = gtx.Dp(420)
-					gtx.Constraints.Min = image.Pt(gtx.Constraints.Max.X, 0)
-					// Menus and the emoji picker anchor in window space.
-					e.comp.Origin = e.origin.get(d.h)
-					dims := e.comp.Layout(gtx)
-					e.origin.watch(gtx, dims.Size)
-					return dims
+					return layout.E.Layout(gtx, func(gtx C) D {
+						return row(gtx, layout.Middle,
+							layout.Rigid(func(gtx C) D { return d.button(gtx, &e.cancel, btnOutline, true, "Cancel") }),
+							hgap(8),
+							layout.Rigid(func(gtx C) D { return d.button(gtx, &e.save, btnPrimary, true, "Save") }),
+						)
+					})
 				}),
 			)
 		})
@@ -825,7 +863,30 @@ func (d *Drafts) editCard(gtx C, dr *core.Draft) D {
 	})
 }
 
-// ---- schedule menu ----
+// editBox: the input box around the editor, padding 8 12.
+func (d *Drafts) editBox(gtx C, e *draftsEdit) D {
+	gtx.Constraints.Min.X = gtx.Constraints.Max.X
+	m := op.Record(gtx.Ops)
+	dims := layout.Inset{Top: 9, Bottom: 9, Left: 12, Right: 12}.Layout(gtx, func(gtx C) D {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		gtx.Constraints.Min.Y = gtx.Dp(22)
+		return e.ed.Layout(gtx, e.st)
+	})
+	call := m.Stop()
+	r := image.Rectangle{Max: dims.Size}
+	rad := gtx.Dp(8)
+	rrect(gtx, r, rad, d.p.Bg)
+	if e.ed.Focused(gtx) {
+		border(gtx, r.Inset(-gtx.Dp(2)), rad+gtx.Dp(2), gtx.Dp(3), d.p.Focus)
+		border(gtx, r, rad, max(1, gtx.Dp(1)), d.p.Link)
+	} else {
+		border(gtx, r, rad, max(1, gtx.Dp(1)), d.p.BorderStr)
+	}
+	call.Add(gtx.Ops)
+	return dims
+}
+
+// ---- schedule menu and custom time ----
 
 // draftsSchedTime is a preset's send time: tomorrow or the next Monday
 // after tomorrow, at 9:00 AM local time.
@@ -859,32 +920,39 @@ func (d *Drafts) updateSched(gtx C) {
 		}
 		id := d.schedID
 		d.closeSched()
-		if i == draftsSchedCustom {
-			d.h.Toast("Custom schedule times aren’t available yet")
+		dr := d.findDraft(id)
+		if dr == nil {
 			return
 		}
-		if dr := d.findDraft(id); dr != nil {
-			d.scheduleDraft(dr, draftsSchedTime(i, time.Now()))
+		if i == draftsSchedCustom {
+			d.openPicker(dr)
+			return
 		}
+		d.scheduleDraft(dr, draftsSchedTime(i, time.Now()))
 		return
 	}
 }
 
-// schedMenu: "Schedule message" heading, the two presets, a divider and
-// "Custom time" (Slack's composer menu).
+// schedMenu: "Schedule message" heading (or "Reschedule message"), the
+// two presets, a divider and "Custom time" (Slack's composer menu).
 func (d *Drafts) schedMenu(gtx C) D {
 	now := time.Now()
+	head := "Schedule message"
+	if dr := d.findDraft(d.schedID); dr != nil && dr.DateScheduled > 0 {
+		head = "Reschedule message"
+	}
 	item := func(i int, label string) layout.FlexChild {
 		return layout.Rigid(func(gtx C) D { return d.menuItem(gtx, &d.schedItems[i], "", label, false, false) })
 	}
+	mon := draftsSchedTime(draftsSchedMonday, now)
 	return col(gtx,
 		layout.Rigid(func(gtx C) D {
 			return layout.Inset{Left: 16, Right: 16, Top: 4, Bottom: 4}.Layout(gtx, func(gtx C) D {
-				return d.para(gtx, 13, 18, wBold, d.p.Muted, 1, "Schedule message")
+				return d.para(gtx, 13, 18, wBold, d.p.Muted, 1, head)
 			})
 		}),
 		item(draftsSchedTomorrow, "Tomorrow at "+clock(draftsSchedTime(draftsSchedTomorrow, now))),
-		item(draftsSchedMonday, draftsSchedTime(draftsSchedMonday, now).Format("Monday")+" at "+clock(draftsSchedTime(draftsSchedMonday, now))),
+		item(draftsSchedMonday, mon.Format("Monday")+" at "+clock(mon)),
 		layout.Rigid(func(gtx C) D {
 			return layout.Inset{Top: 8, Bottom: 8}.Layout(gtx, func(gtx C) D { return hline(gtx, d.p.Border) })
 		}),
@@ -892,28 +960,292 @@ func (d *Drafts) schedMenu(gtx C) D {
 	)
 }
 
+// draftsPicker is the "Custom time" dialog: a day (the next 14 days) and
+// a time (every 30 minutes) as chips.
+type draftsPicker struct {
+	d         *Drafts
+	id        string
+	day, slot int
+	days      [14]widget.Clickable
+	slots     [48]widget.Clickable
+	list      widget.List
+}
+
+func (p *draftsPicker) at() time.Time {
+	now := time.Now()
+	return time.Date(now.Year(), now.Month(), now.Day()+p.day, p.slot/2, 30*(p.slot%2), 0, 0, now.Location())
+}
+
+func (d *Drafts) openPicker(dr *core.Draft) {
+	ph, ok := d.h.(popups.Host)
+	if !ok {
+		return
+	}
+	p := &draftsPicker{d: d, id: dr.ID, day: 1, slot: 18} // tomorrow 9:00 AM
+	if dr.DateScheduled > 0 {
+		t := unixTime(dr.DateScheduled)
+		now := time.Now()
+		days := int(time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location()).Sub(time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())).Hours()+12) / 24
+		if days >= 0 && days < len(p.days) {
+			p.day, p.slot = days, t.Hour()*2+t.Minute()/30
+		}
+	}
+	p.list.Axis = layout.Vertical
+	ph.ShowOverlay(popups.NewModal(ph, popups.ModalOpts{
+		Title: "Schedule message",
+		Body:  p.body,
+		Buttons: []*popups.ModalButton{
+			{Label: "Cancel", Kind: popups.BtnOutline},
+			{Label: "Schedule message", Kind: popups.BtnPrimary, Enabled: func() bool { return p.at().After(time.Now()) },
+				Do: func() bool {
+					if dr := d.findDraft(p.id); dr != nil {
+						d.scheduleDraft(dr, p.at())
+					}
+					return true
+				}},
+		},
+	}))
+}
+
+func (p *draftsPicker) body(gtx C) D {
+	d := p.d
+	for i := range p.days {
+		if p.days[i].Clicked(gtx) {
+			p.day = i
+		}
+	}
+	for i := range p.slots {
+		if p.slots[i].Clicked(gtx) {
+			p.slot = i
+		}
+	}
+	now := time.Now()
+	dayLabel := func(i int) string {
+		t := now.AddDate(0, 0, i)
+		switch i {
+		case 0:
+			return "Today"
+		case 1:
+			return "Tomorrow"
+		}
+		return t.Format("Mon, Jan 2")
+	}
+	chips := func(n, perRow, sel int, clicks func(int) *widget.Clickable, label func(int) string, disabled func(int) bool) layout.FlexChild {
+		return layout.Rigid(func(gtx C) D {
+			var rows []layout.FlexChild
+			for r0 := 0; r0 < n; r0 += perRow {
+				r0 := r0
+				rows = append(rows, layout.Rigid(func(gtx C) D {
+					var ch []layout.FlexChild
+					for i := r0; i < min(n, r0+perRow); i++ {
+						i := i
+						ch = append(ch, layout.Rigid(func(gtx C) D {
+							return layout.Inset{Right: 6, Bottom: 6}.Layout(gtx, func(gtx C) D {
+								kind := btnOutline
+								if i == sel {
+									kind = btnPrimary
+								}
+								if disabled(i) && i != sel {
+									kind = btnGhost
+								}
+								return d.button(gtx, clicks(i), kind, true, label(i))
+							})
+						}))
+					}
+					return row(gtx, layout.Middle, ch...)
+				}))
+			}
+			return col(gtx, rows...)
+		})
+	}
+	heading := func(s string) layout.FlexChild {
+		return layout.Rigid(func(gtx C) D {
+			return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D { return d.para(gtx, 15, 22, wBold, d.p.Text, 1, s) })
+		})
+	}
+	past := func(i int) bool {
+		t := time.Date(now.Year(), now.Month(), now.Day()+p.day, i/2, 30*(i%2), 0, 0, now.Location())
+		return !t.After(now)
+	}
+	at := p.at()
+	note := draftsSendText(at)
+	if !at.After(now) {
+		note = "Pick a time in the future."
+	}
+	return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D {
+		return col(gtx,
+			heading("Date"),
+			chips(len(p.days), 5, p.day, func(i int) *widget.Clickable { return &p.days[i] }, dayLabel, func(int) bool { return false }),
+			vgap(10),
+			heading("Time"),
+			chips(len(p.slots)-14, 6, p.slot-14, func(i int) *widget.Clickable { return &p.slots[i+14] },
+				func(i int) string {
+					return clock(time.Date(2000, 1, 1, (i+14)/2, 30*((i+14)%2), 0, 0, time.Local))
+				}, func(i int) bool { return past(i + 14) }),
+			vgap(6),
+			layout.Rigid(func(gtx C) D { return d.para(gtx, 13, 18, wReg, d.p.Muted, 1, note) }),
+		)
+	})
+}
+
 // ---- draft writes (core) ----
 
-// Core has no drafts.delete, send-draft or schedule yet; until it does the
-// hover bar says so. Sending works from the in-place editor (Edit), which
-// posts through core like any composer.
+// run performs a write off the UI goroutine and reports through drainDone.
+func (d *Drafts) run(dn draftsDone, f func(ctx context.Context, c *core.App) (*core.Draft, error)) {
+	c, h := d.h.Core(), d.h
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		saved, err := f(ctx, c)
+		dn.saved, dn.err = saved, err
+		d.mu.Lock()
+		d.done = append(d.done, dn)
+		d.mu.Unlock()
+		h.Invalidate()
+	}()
+}
+
+func (d *Drafts) drainDone() {
+	d.mu.Lock()
+	ds := d.done
+	d.done = nil
+	d.mu.Unlock()
+	for _, x := range ds {
+		if x.err != nil {
+			for _, id := range x.unhide {
+				delete(d.gone, id)
+			}
+			if e := d.edit; e != nil && e.id == x.closeEdit {
+				e.busy = false
+			}
+			d.h.Toast(x.errMsg + ": " + friendlyErr(x.err))
+		} else {
+			if x.saved != nil {
+				l := d.all()
+				for i := range l {
+					if l[i].ID == x.saved.ID {
+						l[i] = *x.saved
+					}
+				}
+				d.place(l)
+			}
+			if e := d.edit; e != nil && x.closeEdit != "" && e.id == x.closeEdit {
+				d.closeEdit()
+			}
+			if x.okMsg != "" {
+				d.h.Toast(x.okMsg)
+			}
+		}
+		d.reload(draftsTabDrafts)
+		if d.sent.started() {
+			d.reload(draftsTabSent)
+		}
+	}
+}
+
+// remove hides drafts at once (the write confirms or restores them).
+func (d *Drafts) remove(ids ...string) {
+	for _, id := range ids {
+		d.gone[id] = time.Now()
+		if d.edit != nil && d.edit.id == id {
+			d.closeEdit()
+		}
+		delete(d.selected, id)
+	}
+	d.place(d.all())
+}
 
 func (d *Drafts) deleteDraft(dr *core.Draft) {
-	d.h.Toast("Deleting drafts needs core support (drafts.delete) that isn’t there yet")
+	id, ch, sched := dr.ID, dr.Channel, dr.DateScheduled > 0
+	msg := "Draft deleted"
+	if sched {
+		msg = "Scheduled message deleted"
+	}
+	d.remove(id)
+	d.run(draftsDone{okMsg: msg, errMsg: "Couldn’t delete that", unhide: []string{id}},
+		func(ctx context.Context, c *core.App) (*core.Draft, error) {
+			if sched {
+				return nil, c.DeleteScheduled(ctx, ch, id)
+			}
+			return nil, c.DeleteDraft(ctx, id)
+		})
 }
 
 func (d *Drafts) sendDraft(dr *core.Draft) {
-	d.h.Toast("Sending a draft from here needs core support; use Edit and send it from the composer")
+	if dr.Files > 0 {
+		// SendDraft posts the text and blocks only.
+		d.h.Toast("Drafts with files can’t be sent from here yet; open the conversation to send it")
+		return
+	}
+	id := dr.ID
+	d.remove(id)
+	d.run(draftsDone{okMsg: "Message sent", errMsg: "Message not sent", unhide: []string{id}},
+		func(ctx context.Context, c *core.App) (*core.Draft, error) {
+			_, err := c.SendDraft(ctx, id)
+			return nil, err
+		})
 }
 
+// scheduleDraft schedules a draft (or reschedules a scheduled message)
+// for at; it moves to the Scheduled tab right away.
 func (d *Drafts) scheduleDraft(dr *core.Draft, at time.Time) {
-	d.h.Toast("Scheduling needs core support (chat.scheduleMessage) that isn’t there yet")
+	if !at.After(time.Now()) {
+		d.h.Toast("Pick a time in the future")
+		return
+	}
+	id, ts := dr.ID, at.Unix()
+	moved := *dr
+	moved.DateScheduled = ts
+	l := d.all()
+	for i := range l {
+		if l[i].ID == id {
+			l[i] = moved
+		}
+	}
+	d.place(l)
+	d.run(draftsDone{okMsg: "Scheduled for " + laterWhen(at), errMsg: "Couldn’t schedule your message"},
+		func(ctx context.Context, c *core.App) (*core.Draft, error) {
+			_, err := c.RescheduleMessage(ctx, id, ts)
+			return nil, err
+		})
 }
 
-// draftSent runs after the in-place editor sent the draft's text.
-func (d *Drafts) draftSent(id string) {
-	d.h.Toast("Message sent")
-	d.reload(d.tabs.Sel)
+// ---- select mode (header "Edit") ----
+
+func (d *Drafts) endSelect() {
+	if d.selecting {
+		d.selecting, d.dirty = false, true
+	}
+	clear(d.selected)
+}
+
+func (d *Drafts) selectedIDs() []string {
+	var ids []string
+	for _, dr := range d.drafts {
+		if d.selected[dr.ID] {
+			ids = append(ids, dr.ID)
+		}
+	}
+	return ids
+}
+
+func (d *Drafts) deleteSelected() {
+	ids := d.selectedIDs()
+	if len(ids) == 0 {
+		return
+	}
+	d.remove(ids...)
+	d.endSelect()
+	d.run(draftsDone{okMsg: "Deleted " + plural(len(ids), "draft"), errMsg: "Couldn’t delete every draft", unhide: ids},
+		func(ctx context.Context, c *core.App) (*core.Draft, error) {
+			var first error
+			for _, id := range ids {
+				if err := c.DeleteDraft(ctx, id); err != nil && first == nil {
+					first = err
+				}
+			}
+			return nil, first
+		})
 }
 
 func (d *Drafts) rowState(k string) *draftsRow {
@@ -1264,11 +1596,21 @@ func (d *Drafts) draftCard(gtx C, dr *core.Draft, scheduled bool) D {
 			return layout.Inset{Left: draftsMargin, Right: draftsMargin}.Layout(gtx, func(gtx C) D {
 				gtx.Constraints.Min.X = gtx.Constraints.Max.X
 				t := when
-				if r.hovered {
+				if r.hovered || r.pin {
 					t = ""
 				}
 				m := op.Record(gtx.Ops)
-				dims := layout.UniformInset(12).Layout(gtx, func(gtx C) D { return d.rowContent(gtx, dst, t, prev) })
+				dims := layout.UniformInset(12).Layout(gtx, func(gtx C) D {
+					if !d.selecting || scheduled {
+						return d.rowContent(gtx, dst, t, prev)
+					}
+					// Select mode: a checkbox before the tile.
+					return row(gtx, layout.Middle,
+						layout.Rigid(func(gtx C) D { return d.todoCheck(gtx, d.selected[dr.ID]) }),
+						hgap(12),
+						layout.Flexed(1, func(gtx C) D { return d.rowContent(gtx, dst, when, prev) }),
+					)
+				})
 				call := m.Stop()
 				rect := image.Rectangle{Max: dims.Size}
 				rad := gtx.Dp(12)
@@ -1283,6 +1625,9 @@ func (d *Drafts) draftCard(gtx C, dr *core.Draft, scheduled bool) D {
 		},
 		Below: func(gtx C) D { return D{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(8))} },
 		Bar: func(gtx C) D {
+			if d.selecting {
+				return D{}
+			}
 			ib := func(c *widget.Clickable, icon string) layout.FlexChild {
 				return layout.Rigid(func(gtx C) D { return d.iconButton(gtx, c, icon, 32, 18, d.p.Sec) })
 			}

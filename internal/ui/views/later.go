@@ -2,13 +2,14 @@ package views
 
 // To-dos (rail tab, route "later") and Saved (Home sidebar, route
 // "saved"): the 2026 replacements for the old Later tabs. Both read
-// saved.list. To-dos filters by status (In-progress = "saved", Completed
-// = "completed"; both checked loads both and merges) and, client-side,
-// by reminder state, with a client-side sort. Saved lists the in-progress
-// saved items.
+// saved.list with the web client's filters: To-dos uses
+// core.SavedFilterTodos (to-dos and completed ones; the status and
+// reminder filters and the sort run client-side), Saved uses
+// core.SavedFilterSaved and leaves out anything that is a to-do.
 //
-// Writes (complete, reminders, move to Saved, unsave, the clean-up
-// actions) run only when the user clicks them.
+// Writes go through core (AddTodo, CompleteTodo, MoveToSaved,
+// MoveToTodos, Unsave, UpdateSaved) and run only when the user clicks.
+// Realtime "saved" events reload the list.
 //
 // Measurements: /tmp/ui-views-spec/later.md. Rows are the spec's
 // "inferred" row (the Activity frame with a 36px avatar).
@@ -36,6 +37,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -76,10 +78,24 @@ var laterPresets = [5]laterPreset{
 
 func laterKey(it *core.SavedItem) string { return it.ItemID + "/" + it.TS }
 
-func laterBool(v bool) *bool { return &v }
-
 func laterCompleted(it *core.SavedItem) bool {
-	return it.DateCompleted > 0 || it.State == "completed"
+	return it.TodoState == "completed" || it.DateCompleted > 0 || it.State == "completed" || it.Progress == "completed"
+}
+
+// laterOverdue reports a due date before today (a to-do due earlier
+// today, e.g. one added without a reminder, counts as due today).
+func laterOverdue(it *core.SavedItem) bool {
+	if it.DateDue <= 0 {
+		return false
+	}
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	return unixTime(it.DateDue).Before(today)
+}
+
+// laterIsTodo reports a to-do (in progress or completed).
+func laterIsTodo(it *core.SavedItem) bool {
+	return it.TodoState == "to_do" || it.TodoState == "completed"
 }
 
 // laterWhen formats a reminder time for the confirmation toast.
@@ -117,8 +133,8 @@ type savedFeed struct {
 
 type laterRow struct {
 	dlRowState
-	done, remind, toSaved, unsave, more, clearDue widget.Clickable
-	presets                                       [len(laterPresets)]widget.Clickable
+	done, remind, toSaved, toTodos, unsave, more, clearDue widget.Clickable
+	presets                                                [len(laterPresets)]widget.Clickable
 }
 
 // laterDone is a finished write, reported back to the UI goroutine.
@@ -132,6 +148,7 @@ type laterDone struct {
 type savedBase struct {
 	base
 
+	todos    bool // the To-dos page (else Saved)
 	feeds    []*savedFeed
 	convs    map[string]core.ConvRef
 	rows     map[string]*laterRow
@@ -227,11 +244,8 @@ func (s *savedBase) applyFeed(f *savedFeed) bool {
 		seen := map[string]bool{}
 		var out []core.SavedItem
 		for _, it := range v.page.Items {
-			if f.filter == "completed" && it.DateCompleted == 0 {
-				it.State = "completed"
-			}
 			k := laterKey(&it)
-			if seen[k] || s.hidden(k) {
+			if seen[k] || s.hidden(k) || !s.wants(&it) {
 				continue
 			}
 			seen[k] = true
@@ -261,10 +275,7 @@ func (s *savedBase) applyFeed(f *savedFeed) bool {
 				have[laterKey(&f.items[j])] = true
 			}
 			for _, it := range v.page.Items {
-				if f.filter == "completed" && it.DateCompleted == 0 {
-					it.State = "completed"
-				}
-				if k := laterKey(&it); !have[k] && !s.hidden(k) {
+				if k := laterKey(&it); !have[k] && !s.hidden(k) && s.wants(&it) {
 					have[k] = true
 					f.items = append(f.items, it)
 				}
@@ -294,10 +305,16 @@ func (s *savedBase) hidden(k string) bool {
 	return true
 }
 
+// wants reports whether an item belongs on this page: To-dos lists
+// to-dos, Saved everything else.
+func (s *savedBase) wants(it *core.SavedItem) bool {
+	return laterIsTodo(it) == s.todos
+}
+
 // match runs on the event goroutine.
 func (s *savedBase) match(ev core.Event) bool {
 	switch ev.Type {
-	case "resync":
+	case "resync", "saved":
 		return true
 	case "update", "delete":
 		s.mu.Lock()
@@ -345,20 +362,6 @@ func (s *savedBase) write(key, okMsg string, reload bool, f func(ctx context.Con
 	}()
 }
 
-func (s *savedBase) update1(it core.SavedItem, u core.SavedUpdate, remove bool, okMsg string) {
-	if it.Channel == "" || it.TS == "" {
-		return
-	}
-	k := laterKey(&it)
-	if remove {
-		s.remove(k)
-	}
-	ch, ts := it.Channel, it.TS
-	s.write(k, okMsg, remove, func(ctx context.Context, c *core.App) error {
-		return c.UpdateSaved(ctx, ch, ts, u)
-	})
-}
-
 func (s *savedBase) drainDone() {
 	s.mu.Lock()
 	ds := s.done
@@ -398,7 +401,9 @@ func (s *savedBase) rowActions(gtx C) {
 		click := r.click.Clicked(gtx)
 		done := r.done.Clicked(gtx)
 		remind := r.remind.Clicked(gtx)
-		toSaved := r.toSaved.Clicked(gtx) || r.clearDue.Clicked(gtx)
+		toSaved := r.toSaved.Clicked(gtx)
+		toTodos := r.toTodos.Clicked(gtx)
+		clearDue := r.clearDue.Clicked(gtx)
 		unsave := r.unsave.Clicked(gtx)
 		more := r.more.Clicked(gtx)
 		preset := -1
@@ -407,7 +412,7 @@ func (s *savedBase) rowActions(gtx C) {
 				preset = i
 			}
 		}
-		if !click && !done && !remind && !toSaved && !unsave && !more && preset < 0 {
+		if !click && !done && !remind && !toSaved && !toTodos && !clearDue && !unsave && !more && preset < 0 {
 			continue
 		}
 		f, i := s.find(k)
@@ -415,25 +420,45 @@ func (s *savedBase) rowActions(gtx C) {
 			continue
 		}
 		it := f.items[i]
+		ch, ts := it.Channel, it.TS
 		switch {
 		case click:
 			s.open(&it)
 		case done && laterCompleted(&it):
-			s.update1(it, core.SavedUpdate{Completed: laterBool(false)}, true, "Moved back to in progress")
+			f.items[i].TodoState, f.items[i].DateCompleted, s.dirty = "to_do", 0, true
+			s.write1(it, false, "Moved back to in progress", func(ctx context.Context, c *core.App) error {
+				// MoveToTodos alone leaves the item completed (it sends no
+				// mark=uncompleted), so un-complete it first.
+				no := false
+				if err := c.UpdateSaved(ctx, ch, ts, core.SavedUpdate{Completed: &no}); err != nil {
+					return err
+				}
+				return c.MoveToTodos(ctx, ch, ts, 0)
+			})
 		case done:
-			s.update1(it, core.SavedUpdate{Completed: laterBool(true)}, true, "Marked as complete")
+			f.items[i].TodoState, f.items[i].DateCompleted, s.dirty = "completed", time.Now().Unix(), true
+			s.write1(it, false, "Marked as complete", func(ctx context.Context, c *core.App) error {
+				return c.CompleteTodo(ctx, ch, ts)
+			})
 		case remind:
 			r.pin = !r.pin
 		case toSaved:
+			s.write1(it, true, "Moved to Saved", func(ctx context.Context, c *core.App) error {
+				return c.MoveToSaved(ctx, ch, ts)
+			})
+		case toTodos:
+			s.write1(it, true, "Added to To-dos", func(ctx context.Context, c *core.App) error {
+				return c.MoveToTodos(ctx, ch, ts, 0)
+			})
+		case clearDue:
 			var zero int64
 			f.items[i].DateDue = 0
 			r.pin, s.dirty = false, true
-			s.update1(it, core.SavedUpdate{DateDue: &zero}, false, "Moved to Saved")
+			s.write1(it, false, "Reminder removed", func(ctx context.Context, c *core.App) error {
+				return c.UpdateSaved(ctx, ch, ts, core.SavedUpdate{DateDue: &zero})
+			})
 		case unsave:
-			k := laterKey(&it)
-			s.remove(k)
-			ch, ts := it.Channel, it.TS
-			s.write(k, "Removed from Saved", false, func(ctx context.Context, c *core.App) error {
+			s.write1(it, true, "Removed from Saved", func(ctx context.Context, c *core.App) error {
 				return c.Unsave(ctx, ch, ts)
 			})
 		case more:
@@ -441,13 +466,28 @@ func (s *savedBase) rowActions(gtx C) {
 				s.h.OpenMessageMenu(image.Point{}, *it.Msg)
 			}
 		case preset >= 0:
+			// A reminder makes the item a to-do due then (it leaves Saved).
 			at := laterPresets[preset].at(time.Now())
-			ts := at.Unix()
-			f.items[i].DateDue = ts
+			due := at.Unix()
+			f.items[i].DateDue = due
 			r.pin, s.dirty = false, true
-			s.update1(it, core.SavedUpdate{DateDue: &ts}, false, "Reminder set for "+laterWhen(at))
+			s.write1(it, !s.todos, "Reminder set for "+laterWhen(at), func(ctx context.Context, c *core.App) error {
+				return c.MoveToTodos(ctx, ch, ts, due)
+			})
 		}
 	}
+}
+
+// write1 runs one item's write; remove hides it from this page at once.
+func (s *savedBase) write1(it core.SavedItem, remove bool, okMsg string, f func(ctx context.Context, c *core.App) error) {
+	if it.Channel == "" || it.TS == "" {
+		return
+	}
+	k := laterKey(&it)
+	if remove {
+		s.remove(k)
+	}
+	s.write(k, okMsg, true, f)
 }
 
 // open jumps to the saved message: the thread for replies, else the
@@ -498,16 +538,13 @@ func (s *savedBase) rowBar(gtx C, it *core.SavedItem, r *laterRow, todo bool) D 
 		return layout.Rigid(func(gtx C) D { return s.iconButton(gtx, c, icon, 32, 18, s.p.Text) })
 	}
 	var btns []layout.FlexChild
-	if laterCompleted(it) {
-		btns = append(btns, ib(&r.done, "history")) // mark incomplete
-	} else {
-		btns = append(btns, ib(&r.done, "check"), ib(&r.remind, "clock"))
-	}
 	switch {
-	case !todo:
-		btns = append(btns, ib(&r.unsave, "bookmark-filled"))
-	case it.DateDue > 0:
-		btns = append(btns, ib(&r.toSaved, "bookmark"))
+	case !todo: // Saved: Add to To-dos, Set reminder, Remove from Saved
+		btns = append(btns, ib(&r.toTodos, "check-circle"), ib(&r.remind, "clock"), ib(&r.unsave, "bookmark-filled"))
+	case laterCompleted(it): // completed to-do: Mark incomplete, Move to Saved
+		btns = append(btns, ib(&r.done, "history"), ib(&r.toSaved, "bookmark"))
+	default: // to-do: Mark complete, Set reminder, Move to Saved
+		btns = append(btns, ib(&r.done, "check"), ib(&r.remind, "clock"), ib(&r.toSaved, "bookmark"))
 	}
 	if it.Msg != nil {
 		btns = append(btns, ib(&r.more, "more"))
@@ -531,7 +568,7 @@ func (s *savedBase) remindMenu(gtx C, it *core.SavedItem, r *laterRow) D {
 				})
 			}))
 		}
-		if it.DateDue > 0 {
+		if it.DateDue > 0 && laterIsTodo(it) {
 			ch = append(ch, layout.Rigid(func(gtx C) D {
 				return s.button(gtx, &r.clearDue, btnGhost, true, "Remove reminder")
 			}))
@@ -621,7 +658,13 @@ func (s *savedBase) savedChip(gtx C, it *core.SavedItem) D {
 	if it.DateDue <= 0 {
 		return D{}
 	}
-	txt, over := dueText(unixTime(it.DateDue))
+	due := unixTime(it.DateDue)
+	txt, over := dueText(due)
+	if over && !laterOverdue(it) {
+		// Slack stamps a to-do added without a reminder as due "now";
+		// that reads as due today, not overdue.
+		txt, over = "Due today", false
+	}
 	fg, bg := s.p.Sec, s.p.ReadFill
 	if over {
 		fg, bg = rgb(0xc01343), rgb(0xffe8ef)
@@ -707,9 +750,9 @@ const (
 type Later struct {
 	savedBase
 
-	inprog, completed savedFeed
-	list              widget.List
-	view              []core.SavedItem
+	feed savedFeed
+	list widget.List
+	view []core.SavedItem
 
 	f      [todoFilters]bool
 	sortBy int
@@ -727,9 +770,9 @@ type Later struct {
 // NewLater builds the To-dos page.
 func NewLater(h Host) *Later {
 	l := &Later{savedBase: newSavedBase(h)}
-	l.inprog.filter = "saved"
-	l.completed.filter = "completed"
-	l.feeds = []*savedFeed{&l.inprog, &l.completed}
+	l.todos = true
+	l.feed.filter = core.SavedFilterTodos
+	l.feeds = []*savedFeed{&l.feed}
 	l.list.Axis = layout.Vertical
 	return l
 }
@@ -743,14 +786,15 @@ func (l *Later) statusWant() (inprog, done bool) {
 	return
 }
 
-func (l *Later) active() []*savedFeed {
-	in, done := l.statusWant()
-	var out []*savedFeed
-	if in {
-		out = append(out, &l.inprog)
-	}
-	if done {
-		out = append(out, &l.completed)
+func (l *Later) active() []*savedFeed { return l.feeds }
+
+// inProgress lists the loaded to-dos that aren't completed.
+func (l *Later) inProgress() []core.SavedItem {
+	var out []core.SavedItem
+	for _, it := range l.feed.items {
+		if !laterCompleted(&it) && it.Channel != "" && it.TS != "" {
+			out = append(out, it)
+		}
 	}
 	return out
 }
@@ -772,7 +816,7 @@ func (l *Later) update(gtx C) {
 	l.rowActions(gtx)
 
 	if l.addBtn.Clicked(gtx) || l.emptyAdd.Clicked(gtx) {
-		l.h.Toast("Writing your own to-dos needs core support that isn’t there yet; save a message to add it")
+		l.openAdd()
 	}
 	toggle := func(m int) {
 		if l.menu == m {
@@ -831,55 +875,42 @@ func (l *Later) filtersChanged() {
 	l.list.Position = layout.Position{}
 }
 
-// cleanUp runs a clean-up menu action. Only what core supports runs; the
-// rest says so.
+// cleanUp runs a clean-up menu action.
 func (l *Later) cleanUp(i int) {
-	var todo []core.SavedItem
-	for _, it := range l.inprog.items {
-		if it.Channel != "" && it.TS != "" {
-			todo = append(todo, it)
-		}
-	}
+	todo := l.inProgress()
 	switch i {
-	case 0: // Move to-dos to Saved: clear every loaded reminder
-		var due []core.SavedItem
-		for j := range l.inprog.items {
-			if it := &l.inprog.items[j]; it.DateDue > 0 && it.Channel != "" {
-				due = append(due, *it)
-				it.DateDue = 0
-			}
-		}
-		if len(due) == 0 {
-			l.h.Toast("No to-dos have reminders")
+	case 0: // Move to-dos to Saved
+		if len(todo) == 0 {
+			l.h.Toast("No to-dos to move")
 			return
 		}
-		l.dirty = true
-		l.write("", "Moved "+plural(len(due), "to-do")+" to Saved", true, func(ctx context.Context, c *core.App) error {
-			var zero int64
-			return laterEach(ctx, due, func(it core.SavedItem) error {
-				return c.UpdateSaved(ctx, it.Channel, it.TS, core.SavedUpdate{DateDue: &zero})
-			})
+		for j := range todo {
+			l.remove(laterKey(&todo[j]))
+		}
+		l.write("", "Moved "+plural(len(todo), "to-do")+" to Saved", true, func(ctx context.Context, c *core.App) error {
+			return laterEach(ctx, todo, func(it core.SavedItem) error { return c.MoveToSaved(ctx, it.Channel, it.TS) })
 		})
 	case 1: // Complete to-dos
 		if len(todo) == 0 {
 			l.h.Toast("No to-dos to complete")
 			return
 		}
-		for j := range todo {
-			l.remove(laterKey(&todo[j]))
+		for j := range l.feed.items {
+			if it := &l.feed.items[j]; !laterCompleted(it) {
+				it.TodoState, it.DateCompleted = "completed", time.Now().Unix()
+			}
 		}
+		l.dirty = true
 		l.write("", "Completed "+plural(len(todo), "to-do"), true, func(ctx context.Context, c *core.App) error {
-			return laterEach(ctx, todo, func(it core.SavedItem) error {
-				return c.UpdateSaved(ctx, it.Channel, it.TS, core.SavedUpdate{Completed: laterBool(true)})
-			})
+			return laterEach(ctx, todo, func(it core.SavedItem) error { return c.CompleteTodo(ctx, it.Channel, it.TS) })
 		})
+	case 2: // Clear to-dos: remove every to-do (asks first)
+		l.confirmClear()
 	case 3: // Remove deleted messages: unsave the tombstones
 		var gone []core.SavedItem
-		for _, f := range l.feeds {
-			for _, it := range f.items {
-				if it.ItemType == "message" && it.Msg == nil && it.Channel != "" && it.TS != "" {
-					gone = append(gone, it)
-				}
+		for _, it := range l.feed.items {
+			if it.ItemType == "message" && it.Msg == nil && it.Channel != "" && it.TS != "" {
+				gone = append(gone, it)
 			}
 		}
 		if len(gone) == 0 {
@@ -892,9 +923,149 @@ func (l *Later) cleanUp(i int) {
 		l.write("", "Removed "+plural(len(gone), "deleted message"), true, func(ctx context.Context, c *core.App) error {
 			return laterEach(ctx, gone, func(it core.SavedItem) error { return c.Unsave(ctx, it.Channel, it.TS) })
 		})
-	default:
-		l.h.Toast("Clearing to-dos needs core support that isn’t there yet")
 	}
+}
+
+// confirmClear asks before removing every loaded to-do (in progress and
+// completed) from To-dos and Saved.
+func (l *Later) confirmClear() {
+	var all []core.SavedItem
+	for _, it := range l.feed.items {
+		if it.Channel != "" && it.TS != "" {
+			all = append(all, it)
+		}
+	}
+	if len(all) == 0 {
+		l.h.Toast("No to-dos to clear")
+		return
+	}
+	ph, ok := l.h.(popups.Host)
+	if !ok {
+		return
+	}
+	body := "This removes " + plural(len(all), "to-do") + " from To-dos and Saved. The messages themselves stay where they are."
+	ph.ShowOverlay(popups.NewModal(ph, popups.ModalOpts{
+		Title: "Clear to-dos?",
+		Body: func(gtx C) D {
+			return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D { return l.para(gtx, 15, 22, wReg, l.p.Text, 0, body) })
+		},
+		Buttons: []*popups.ModalButton{
+			{Label: "Cancel", Kind: popups.BtnOutline},
+			{Label: "Clear to-dos", Kind: popups.BtnDanger, Do: func() bool {
+				for j := range all {
+					l.remove(laterKey(&all[j]))
+				}
+				l.write("", "Cleared "+plural(len(all), "to-do"), true, func(ctx context.Context, c *core.App) error {
+					return laterEach(ctx, all, func(it core.SavedItem) error { return c.Unsave(ctx, it.Channel, it.TS) })
+				})
+				return true
+			}},
+		},
+	}))
+}
+
+// todoAdd is the "Add To-do" dialog. Core makes to-dos out of messages
+// (AddTodo / MoveToTodos), so it lists the Saved items, each with Add.
+type todoAdd struct {
+	l     *Later
+	res   async[laterResult]
+	adds  map[string]*widget.Clickable
+	added map[string]bool
+}
+
+func (l *Later) openAdd() {
+	ph, ok := l.h.(popups.Host)
+	if !ok {
+		return
+	}
+	a := &todoAdd{l: l, adds: map[string]*widget.Clickable{}, added: map[string]bool{}}
+	c := l.h.Core()
+	a.res.load(l.h, false, func(ctx context.Context) (laterResult, error) {
+		p, err := c.Saved(ctx, core.SavedFilterSaved, "")
+		return laterResult{page: p, seq: 1}, err
+	})
+	ph.ShowOverlay(popups.NewModal(ph, popups.ModalOpts{
+		Title:   "Add a to-do",
+		Body:    a.body,
+		Buttons: []*popups.ModalButton{{Label: "Done", Kind: popups.BtnOutline}},
+	}))
+}
+
+func (a *todoAdd) body(gtx C) D {
+	l := a.l
+	v, loaded, err := a.res.get()
+	var items []core.SavedItem
+	for _, it := range v.page.Items {
+		if !laterIsTodo(&it) && it.Channel != "" && it.TS != "" && it.Msg != nil && len(items) < 20 {
+			items = append(items, it)
+		}
+	}
+	for k, c := range a.adds {
+		if !c.Clicked(gtx) || a.added[k] {
+			continue
+		}
+		for _, it := range items {
+			if laterKey(&it) == k {
+				ch, ts := it.Channel, it.TS
+				a.added[k] = true
+				l.write("", "Added to To-dos", true, func(ctx context.Context, c *core.App) error {
+					return c.MoveToTodos(ctx, ch, ts, 0)
+				})
+			}
+		}
+	}
+	msg := func(s string) D {
+		return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D { return l.para(gtx, 15, 22, wReg, l.p.Text, 0, s) })
+	}
+	switch {
+	case !loaded:
+		return l.skeleton(gtx, 3, laterAvatar)
+	case err != nil:
+		return msg("Couldn’t load your saved items: " + friendlyErr(err))
+	case len(items) == 0:
+		return msg("Pick a saved message to turn into a to-do. Nothing is saved yet: save a message, or use Add to-do on any message.")
+	}
+	ch := []layout.FlexChild{
+		layout.Rigid(func(gtx C) D {
+			return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D {
+				return l.para(gtx, 13, 18, wReg, l.p.Muted, 1, "Pick a saved message to turn into a to-do.")
+			})
+		}),
+	}
+	for _, it := range items {
+		it := it
+		k := laterKey(&it)
+		c, ok := a.adds[k]
+		if !ok {
+			c = new(widget.Clickable)
+			a.adds[k] = c
+		}
+		name, av := l.authorOf(it.Msg)
+		ch = append(ch, layout.Rigid(func(gtx C) D {
+			return layout.Inset{Top: 6, Bottom: 6}.Layout(gtx, func(gtx C) D {
+				return row(gtx, layout.Middle,
+					layout.Rigid(func(gtx C) D { return l.avatar(gtx, av, 28) }),
+					hgap(8),
+					layout.Flexed(1, func(gtx C) D {
+						return col(gtx,
+							layout.Rigid(func(gtx C) D {
+								return l.para(gtx, 13, 18, wBold, l.p.Muted, 1, l.convTitle(it.Channel, v.page.Convs)+" · "+name)
+							}),
+							layout.Rigid(func(gtx C) D { return l.para(gtx, 15, 22, wReg, l.p.Text, 1, preview(it.Msg)) }),
+						)
+					}),
+					hgap(8),
+					layout.Rigid(func(gtx C) D {
+						if a.added[k] {
+							return l.para(gtx, 13, 18, wBold, l.p.Green, 1, "Added")
+						}
+						return l.button(gtx, c, btnOutline, true, "Add")
+					}),
+				)
+			})
+		}))
+	}
+	return col(gtx, ch...)
 }
 
 // laterEach applies f to every item, continuing past failures, and
@@ -916,16 +1087,19 @@ func laterEach(ctx context.Context, items []core.SavedItem, f func(core.SavedIte
 func (l *Later) rebuild() {
 	l.dirty = false
 	l.view = l.view[:0]
-	now := time.Now()
+	wantIn, wantDone := l.statusWant()
 	anyRem := l.f[todoFOverdue] || l.f[todoFUpcoming] || l.f[todoFNone]
 	keep := func(it *core.SavedItem) bool {
+		if done := laterCompleted(it); (done && !wantDone) || (!done && !wantIn) {
+			return false
+		}
 		if !anyRem {
 			return true
 		}
 		switch {
 		case it.DateDue == 0:
 			return l.f[todoFNone]
-		case unixTime(it.DateDue).Before(now):
+		case laterOverdue(it):
 			return l.f[todoFOverdue]
 		default:
 			return l.f[todoFUpcoming]
@@ -1160,9 +1334,8 @@ func (l *Later) cleanMenu(gtx C) D {
 
 // ---- Saved ----
 
-// Saved is the Home-sidebar Saved page (route "saved"): every in-progress
-// saved item, newest saved first, reminders or not (core can't tell a
-// to-do from a plain saved message).
+// Saved is the Home-sidebar Saved page (route "saved"): saved messages
+// that aren't to-dos (core.SavedFilterSaved), newest saved first.
 type Saved struct {
 	savedBase
 	feed savedFeed
@@ -1172,7 +1345,7 @@ type Saved struct {
 // NewSaved builds the Saved page.
 func NewSaved(h Host) *Saved {
 	s := &Saved{savedBase: newSavedBase(h)}
-	s.feed.filter = "saved"
+	s.feed.filter = core.SavedFilterSaved
 	s.feeds = []*savedFeed{&s.feed}
 	s.list.Axis = layout.Vertical
 	return s
