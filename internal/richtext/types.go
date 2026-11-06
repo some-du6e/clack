@@ -31,15 +31,19 @@ const (
 	Emoji
 	Date
 	Break // hard line break
+
+	// Additions beyond the original contract (append-only):
+	ColorSwatch // rich_text color element: Text is the hex value ("#1D9BD1"); draw a swatch before it
+	InlineImage // small inline image (context block image element): URL, Text = alt text
 )
 
 // Span is one run of inline content.
 type Span struct {
 	Kind  SpanKind
-	Text  string // display text, already unescaped and resolved ("@karim", "#general", "here", formatted date)
+	Text  string // display text, already unescaped and resolved ("@karim", "#general", "@here", formatted date); never contains "\n" (see Break)
 	Style Style
 	URL   string // Link: target. Emoji: image URL (custom or Slack CDN standard).
-	ID    string // User/Channel/Usergroup id; Emoji: name (with ::skin-tone-N)
+	ID    string // User/Channel/Usergroup id; Emoji: name (with ::skin-tone-N); Broadcast: "here"|"channel"|"everyone"; Date: unix seconds
 	Self  bool   // User mention of the viewer, or a broadcast (yellow highlight)
 }
 
@@ -55,29 +59,29 @@ const (
 	Divider
 	Context
 	Section
-	Image
+	ImageBlock // named *Block because Image, Attachment and File are also struct types
 	Actions
-	Attachment
-	File
+	AttachmentBlock
+	FileBlock
 	Tombstone
 )
 
 // Block is one vertical unit of a document.
 type Block struct {
 	Kind       BlockKind
-	Spans      []Span   // inline content (Paragraph, Preformatted, Quote, Header, Context, Section text)
+	Spans      []Span   // inline content (Paragraph, Preformatted, Quote, Header, Context, Section text, Tombstone)
 	Items      [][]Span // List items
 	Ordered    bool     // List
 	Indent     int      // List
 	Offset     int      // List
-	Border     bool     // List
+	Border     bool     // List (also Quote/Preformatted from rich_text border)
 	Fields     [][]Span // Section fields / attachment fields (Short flag in FieldShort)
 	FieldShort []bool
 	Image      *Image   // Image block, section accessory, attachment image/thumb
 	Buttons    []Button // Actions block / section button accessory
 	Att        *Attachment
 	File       *File
-	Children   []Block // nested blocks (e.g. attachment body)
+	Children   []Block // nested blocks: attachment files; Section text that has quotes/pre (then Spans is nil)
 }
 
 // Image is a remote image reference.
@@ -97,6 +101,7 @@ type Button struct {
 	ActionID string
 	Value    string
 	BlockID  string
+	Kind     string // addition: "button", "overflow", "select", "datepicker", "timepicker", "datetimepicker", "input", "checkboxes", "radio_buttons"
 }
 
 // Attachment is a legacy attachment, link unfurl or shared/forwarded message.
@@ -118,8 +123,13 @@ type Attachment struct {
 	Thumb        *Image
 	IsUnfurl     bool
 	IsShare      bool
-	ShareChannel string
+	ShareChannel string // channel name without "#"
 	FromURL      string
+
+	// Additions beyond the original contract (append-only):
+	AuthorSubname  string // e.g. "@handle" next to the author name in unfurls
+	ShareChannelID string // shared message's channel id
+	VideoURL       string // video block: the playable/embeddable URL
 }
 
 // File is a file shared in a message.

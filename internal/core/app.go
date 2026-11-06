@@ -1,0 +1,1016 @@
+package core
+
+import (
+	"context"
+	"encoding/json"
+	"log"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/yoloslackgoclient/internal/store"
+)
+
+// App wires the Slack client, the store and the realtime connection.
+// All methods are safe for concurrent use.
+type App struct {
+	C   *slack.Client
+	S   *store.Store
+	RTM *slack.RTM
+
+	ready     chan struct{}
+	bootErr   error
+	mu        sync.Mutex
+	connected bool
+	inflight  map[string]*call
+
+	subMu sync.Mutex
+	subs  map[*sub]struct{}
+
+	presSeen    map[string]time.Time
+	presWaiters []chan struct{}
+	countsTimer *time.Timer
+	cmdCache    []slack.Command
+	cmdAt       time.Time
+
+	files *fileCache
+}
+
+type call struct {
+	done chan struct{}
+	err  error
+}
+
+// New builds the service. Call Boot before using it.
+func New(c *slack.Client, s *store.Store) *App {
+	a := &App{C: c, S: s, ready: make(chan struct{}), inflight: map[string]*call{}, subs: map[*sub]struct{}{},
+		presSeen: map[string]time.Time{}, files: newFileCache(256 << 20)}
+	if s.SelfID() == "" {
+		s.Lock()
+		s.Self.ID = c.Creds.UserID
+		s.Unlock()
+	}
+	a.RTM = c.NewRTM()
+	a.RTM.OnState = func(up bool) {
+		a.mu.Lock()
+		a.connected = up
+		a.mu.Unlock()
+		a.emit(Event{Type: "connection", Connected: up})
+		if up {
+			go a.refreshCounts(context.Background())
+		}
+	}
+	a.RTM.OnHello = a.onHello
+	return a
+}
+
+// Ready is closed when Boot finished (successfully or not).
+func (a *App) Ready() <-chan struct{} { return a.ready }
+
+// ---- events ----
+
+type sub struct {
+	ch     chan Event
+	lagged bool
+}
+
+// SubscriberBuffer is the per-subscriber event buffer.
+const SubscriberBuffer = 1024
+
+// Subscribe returns a buffered stream of events and a function that ends
+// the subscription. If a subscriber falls behind, events are dropped and a
+// single Event{Type:"resync"} is delivered once there is room again: the UI
+// should then re-read what it shows (Snapshot, current History).
+func (a *App) Subscribe() (<-chan Event, func()) {
+	s := &sub{ch: make(chan Event, SubscriberBuffer)}
+	a.subMu.Lock()
+	a.subs[s] = struct{}{}
+	a.subMu.Unlock()
+	var once sync.Once
+	return s.ch, func() {
+		once.Do(func() {
+			a.subMu.Lock()
+			delete(a.subs, s)
+			a.subMu.Unlock()
+			close(s.ch)
+		})
+	}
+}
+
+func (a *App) emit(ev Event) {
+	a.subMu.Lock()
+	defer a.subMu.Unlock()
+	for s := range a.subs {
+		if s.lagged {
+			select {
+			case s.ch <- Event{Type: "resync"}:
+				s.lagged = false
+			default:
+				continue
+			}
+		}
+		select {
+		case s.ch <- ev:
+		default:
+			s.lagged = true
+		}
+	}
+}
+
+// once deduplicates concurrent identical fetches (e.g. prefetch + open).
+func (a *App) once(key string, f func() error) error {
+	a.mu.Lock()
+	if c, ok := a.inflight[key]; ok {
+		a.mu.Unlock()
+		<-c.done
+		return c.err
+	}
+	c := &call{done: make(chan struct{})}
+	a.inflight[key] = c
+	a.mu.Unlock()
+	c.err = f()
+	a.mu.Lock()
+	delete(a.inflight, key)
+	a.mu.Unlock()
+	close(c.done)
+	return c.err
+}
+
+// ---- boot ----
+
+// Boot loads everything the sidebar needs in parallel, then starts the
+// realtime connection and background prefetch. It logs timings only.
+func (a *App) Boot(ctx context.Context) error {
+	defer close(a.ready)
+	t0 := time.Now()
+	a.S.LoadCache()
+	tCache := time.Since(t0)
+	var (
+		wg       sync.WaitGroup
+		tmu      sync.Mutex
+		timings  []string
+		convs    []slack.Conversation
+		counts   *slack.Counts
+		sections []slack.Section
+		errConvs error
+	)
+	step := func(name string, f func() error) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s := time.Now()
+			err := f()
+			d := time.Since(s).Round(time.Millisecond).String()
+			tmu.Lock()
+			if err != nil {
+				d += "(err)"
+				log.Printf("boot: %s: %v", name, err)
+			}
+			timings = append(timings, name+"="+d)
+			tmu.Unlock()
+		}()
+	}
+	step("conversations", func() error {
+		convs, errConvs = a.C.Conversations(ctx)
+		return errConvs
+	})
+	step("counts", func() (err error) {
+		counts, err = a.C.Counts(ctx)
+		return err
+	})
+	step("sections", func() (err error) {
+		sections, err = a.C.SectionsAll(ctx)
+		return err
+	})
+	loadPrefs := func() error {
+		raw, err := a.C.Prefs(ctx)
+		if err == nil {
+			a.S.SetPrefs(store.ParsePrefs(raw))
+		}
+		return err
+	}
+	if a.S.HasCachedPrefs() {
+		go func() { _ = loadPrefs() }() // cached prefs render the first frame
+	} else {
+		step("prefs", loadPrefs)
+	}
+	step("team", func() error {
+		var r struct {
+			Team struct {
+				ID     string         `json:"id"`
+				Name   string         `json:"name"`
+				Domain string         `json:"domain"`
+				Icon   map[string]any `json:"icon"`
+			} `json:"team"`
+		}
+		err := a.C.Call(ctx, "team.info", nil, &r)
+		if err == nil {
+			a.S.Lock()
+			a.S.TeamID, a.S.TeamName, a.S.TeamDomain = r.Team.ID, r.Team.Name, r.Team.Domain
+			if s, ok := r.Team.Icon["image_88"].(string); ok {
+				a.S.TeamIcon = s
+			}
+			a.S.Unlock()
+		}
+		return err
+	})
+	if _, ok := a.S.User(a.C.Creds.UserID); !ok {
+		step("self", func() error {
+			a.EnsureUsers(ctx, []string{a.C.Creds.UserID})
+			return nil
+		})
+	}
+	if a.S.CustomEmoji.Len() == 0 {
+		step("emoji", func() error { return a.loadEmoji(ctx) })
+	} else {
+		go a.loadEmoji(context.Background())
+	}
+	go a.loadUsergroups(context.Background()) // cosmetic; cached on disk after the first run
+	wg.Wait()
+	if errConvs != nil {
+		a.bootErr = errConvs
+		return errConvs
+	}
+	for _, c := range convs {
+		a.S.PutConv(c)
+	}
+	if counts != nil {
+		a.S.SetCounts(counts)
+	}
+	a.S.Lock()
+	a.S.Sections = sections
+	a.S.Unlock()
+	ids := []string{a.C.Creds.UserID}
+	for _, c := range convs {
+		if c.IsIM {
+			ids = append(ids, c.User)
+		}
+	}
+	tu := time.Now()
+	a.EnsureUsers(ctx, ids)
+	if u, ok := a.S.User(a.C.Creds.UserID); ok {
+		a.S.Lock()
+		a.S.Self = *u
+		a.S.Unlock()
+	}
+	sort.Strings(timings)
+	log.Printf("boot: ready in %s (cache %s, %s, dm-users=%s); %d conversations, %d sections, %d emoji",
+		time.Since(t0).Round(time.Millisecond), tCache.Round(time.Millisecond), strings.Join(timings, " "),
+		time.Since(tu).Round(time.Millisecond), len(convs), len(sections), a.S.CustomEmoji.Len())
+	go a.RTM.Run(context.Background())
+	go a.pump()
+	go a.prefetch(context.Background())
+	go func() {
+		t := time.NewTicker(5 * time.Minute)
+		defer t.Stop()
+		for range t.C {
+			_ = a.S.SaveCache()
+		}
+	}()
+	return nil
+}
+
+// Close saves the metadata cache.
+func (a *App) Close() error { return a.S.SaveCache() }
+
+func (a *App) loadEmoji(ctx context.Context) error {
+	m, err := a.C.EmojiList(ctx)
+	if err != nil {
+		log.Printf("emoji.list: %v", err)
+		return err
+	}
+	a.S.CustomEmoji.Set(m)
+	_ = a.S.SaveCache()
+	return nil
+}
+
+func (a *App) loadUsergroups(ctx context.Context) error {
+	gs, err := a.C.Usergroups(ctx)
+	if err != nil {
+		return err
+	}
+	a.S.SetUsergroups(gs)
+	return nil
+}
+
+// EnsureUsers fetches unknown users (edge cache, parallel batches of 100).
+func (a *App) EnsureUsers(ctx context.Context, ids []string) {
+	miss := a.S.MissingUsers(ids)
+	if len(miss) == 0 {
+		return
+	}
+	us, err := a.C.UsersInfoParallel(ctx, miss)
+	if err != nil {
+		log.Printf("users/info: %v", err)
+	}
+	a.S.PutUsers(us)
+}
+
+// prefetch warms the history of unread conversations so opening them is
+// instant. Bounded: at most 24 conversations, 3 at a time.
+func (a *App) prefetch(ctx context.Context) {
+	t0 := time.Now()
+	type cand struct {
+		id, latest string
+		score      int
+	}
+	var cs []cand
+	a.S.RLock()
+	for id, e := range a.S.Counts {
+		if !e.HasUnreads && e.MentionCount == 0 {
+			continue
+		}
+		if _, ok := a.S.Convs[id]; !ok || a.S.Muted[id] {
+			continue
+		}
+		cs = append(cs, cand{id, e.Latest, e.MentionCount})
+	}
+	a.S.RUnlock()
+	sort.Slice(cs, func(i, j int) bool {
+		if cs[i].score != cs[j].score {
+			return cs[i].score > cs[j].score
+		}
+		return store.TSLess(cs[j].latest, cs[i].latest)
+	})
+	if len(cs) > 24 {
+		cs = cs[:24]
+	}
+	sem := make(chan struct{}, 3)
+	var wg sync.WaitGroup
+	n := 0
+	for _, c := range cs {
+		if a.S.Timeline(c.id) != nil {
+			continue
+		}
+		n++
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(id string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			_ = a.loadLatest(ctx, id)
+		}(c.id)
+	}
+	wg.Wait()
+	if n > 0 {
+		log.Printf("prefetch: %d unread conversations in %s", n, time.Since(t0).Round(time.Millisecond))
+	}
+}
+
+func (a *App) loadLatest(ctx context.Context, ch string) error {
+	return a.once("h:"+ch, func() error {
+		p, err := a.C.History(ctx, ch, slack.HistoryOpts{Limit: 50})
+		if err != nil {
+			return err
+		}
+		a.EnsureUsers(ctx, referencedUsers(p.Messages))
+		a.S.SetLatest(ch, p.Messages, p.HasMore)
+		for i := range p.Messages {
+			if needsFileInfo(&p.Messages[i]) {
+				go a.fillFiles(ch, p.Messages[i].TS)
+			}
+		}
+		return nil
+	})
+}
+
+// ---- counts ----
+
+func (a *App) refreshCounts(ctx context.Context) {
+	if c, err := a.C.Counts(ctx); err == nil {
+		a.S.SetCounts(c)
+		a.emit(Event{Type: "counts"})
+	}
+}
+
+// refreshCountsSoon coalesces bursts of events into one client.counts call.
+func (a *App) refreshCountsSoon() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.countsTimer != nil {
+		return
+	}
+	a.countsTimer = time.AfterFunc(1500*time.Millisecond, func() {
+		a.mu.Lock()
+		a.countsTimer = nil
+		a.mu.Unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		a.refreshCounts(ctx)
+	})
+}
+
+func countOf(e slack.CountEntry, muted bool) Count {
+	return Count{LastRead: e.LastRead, Latest: e.Latest, Unread: e.HasUnreads, Mentions: e.MentionCount, Muted: muted}
+}
+
+// Count returns a conversation's unread state.
+func (a *App) Count(ch string) Count {
+	e, _ := a.S.Count(ch)
+	a.S.RLock()
+	m := a.S.Muted[ch]
+	a.S.RUnlock()
+	return countOf(e, m)
+}
+
+// Counts returns every conversation's unread state.
+func (a *App) Counts() map[string]Count {
+	a.S.RLock()
+	defer a.S.RUnlock()
+	out := make(map[string]Count, len(a.S.Counts))
+	for id, e := range a.S.Counts {
+		out[id] = countOf(*e, a.S.Muted[id])
+	}
+	return out
+}
+
+// ThreadsState returns the Threads view's unread state.
+func (a *App) ThreadsState() ThreadsState {
+	a.S.RLock()
+	defer a.S.RUnlock()
+	return ThreadsState{Unread: a.S.ThreadsUnread, Mentions: a.S.ThreadMentions}
+}
+
+// ---- snapshot ----
+
+// Snapshot returns the sidebar state. It blocks until Boot finished.
+func (a *App) Snapshot() Snapshot {
+	<-a.ready
+	a.S.RLock()
+	cs := make([]*slack.Conversation, 0, len(a.S.Convs))
+	for _, c := range a.S.Convs {
+		cs = append(cs, c)
+	}
+	team := Team{ID: a.S.TeamID, Name: a.S.TeamName, Icon: a.S.TeamIcon, Domain: a.S.TeamDomain}
+	selfID := a.S.Self.ID
+	prefs := a.S.Prefs
+	a.S.RUnlock()
+	convs := make([]Conv, 0, len(cs))
+	ids := []string{selfID}
+	for _, c := range cs {
+		v := a.conv(c)
+		convs = append(convs, v)
+		if v.User != "" {
+			ids = append(ids, v.User)
+		}
+	}
+	sort.Slice(convs, func(i, j int) bool { return convs[i].Name < convs[j].Name })
+	a.mu.Lock()
+	connected := a.connected
+	a.mu.Unlock()
+	self, _ := a.User(selfID)
+	return Snapshot{
+		Self: self, Team: team, Convs: convs, Sections: a.sections(convs), Counts: a.Counts(),
+		Threads: a.ThreadsState(), Users: a.users(ids), Connected: connected, Prefs: prefs,
+		EmojiCount: a.S.CustomEmoji.Len(), EnterpriseID: a.C.Creds.EnterpriseID,
+	}
+}
+
+// BootErr is the error Boot returned, if any.
+func (a *App) BootErr() error {
+	<-a.ready
+	return a.bootErr
+}
+
+// ---- conversions ----
+
+func avatarURL(u *slack.User, size int) string {
+	p := u.Profile
+	switch {
+	case size <= 72 && p.Image72 != "":
+		return p.Image72
+	case size > 72 && size <= 192 && p.Image192 != "":
+		return p.Image192
+	case size > 192 && p.Image512 != "":
+		return p.Image512
+	}
+	if p.AvatarHash != "" {
+		team := firstNonEmpty(u.TeamID, p.Team, "T0266FRGM")
+		return "https://ca.slack-edge.com/" + team + "-" + u.ID + "-" + p.AvatarHash + "-" + strconv.Itoa(size)
+	}
+	if p.Image48 != "" {
+		return p.Image48
+	}
+	return "https://a.slack-edge.com/80588/img/avatars/ava_0001-" + strconv.Itoa(size) + ".png"
+}
+
+func (a *App) userOf(u *slack.User) User {
+	v := User{
+		ID: u.ID, Name: store.DisplayName(u), RealName: strings.TrimSpace(u.Profile.RealName), Handle: u.Name,
+		Avatar: avatarURL(u, 72), Avatar192: avatarURL(u, 192), Avatar512: avatarURL(u, 512),
+		Title: u.Profile.Title, Pronouns: u.Profile.Pronouns, StatusText: u.Profile.StatusText,
+		StatusEmoji: u.Profile.StatusEmoji, StatusExp: u.Profile.StatusExpiration, TZ: u.TZ, TZOffset: u.TZOffset,
+		TZLabel: u.TZLabel, IsBot: u.IsBot || u.ID == "USLACKBOT", Deleted: u.Deleted, IsAdmin: u.IsAdmin,
+		IsOwner: u.IsOwner, Guest: u.IsRestricted || u.IsUltraRestricted, Color: u.Color,
+		Huddle: u.Profile.HuddleState == "in_a_huddle",
+	}
+	if v.RealName == "​" {
+		v.RealName = ""
+	}
+	if v.StatusEmoji != "" {
+		v.StatusEmojiURL, _, _ = a.S.Emoji(strings.Trim(v.StatusEmoji, ":"))
+		if len(u.Profile.StatusEmojiDisplay) > 2 {
+			var di []struct {
+				DisplayURL string `json:"display_url"`
+			}
+			if json.Unmarshal(u.Profile.StatusEmojiDisplay, &di) == nil && len(di) > 0 && di[0].DisplayURL != "" {
+				v.StatusEmojiURL = di[0].DisplayURL
+			}
+		}
+	}
+	a.S.RLock()
+	v.Presence = a.S.Presence[u.ID]
+	a.S.RUnlock()
+	return v
+}
+
+// User returns a known user (from memory; see EnsureUsers).
+func (a *App) User(id string) (User, bool) {
+	u, ok := a.S.User(id)
+	if !ok {
+		return User{}, false
+	}
+	return a.userOf(u), true
+}
+
+// Self returns the signed-in user.
+func (a *App) Self() User {
+	u, _ := a.User(a.S.SelfID())
+	return u
+}
+
+func (a *App) users(ids []string) map[string]User {
+	out := map[string]User{}
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if _, ok := out[id]; ok {
+			continue
+		}
+		if u, ok := a.User(id); ok {
+			out[id] = u
+		}
+	}
+	return out
+}
+
+// Users returns the known users among ids.
+func (a *App) Users(ids []string) map[string]User { return a.users(ids) }
+
+func (a *App) conv(c *slack.Conversation) Conv {
+	v := Conv{ID: c.ID, Name: c.Name, User: c.User, NumMembers: c.NumMembers, IsArchived: c.IsArchived,
+		IsGeneral: c.IsGeneral, IsShared: c.IsExtShared, Created: c.Created, Creator: c.Creator, Priority: c.Priority}
+	switch {
+	case c.IsIM:
+		v.Kind = "im"
+		v.Name = a.S.UserName(c.User)
+	case c.IsMPIM:
+		v.Kind = "mpim"
+		v.Members = c.Members
+	case c.IsPrivate || c.IsGroup:
+		v.Kind = "private"
+	default:
+		v.Kind = "channel"
+	}
+	if c.Topic != nil && c.Topic.Value != "" {
+		v.Topic = c.Topic.Value
+		v.TopicDoc = richtext.FromMrkdwn(a.S, v.Topic)
+	}
+	if c.Purpose != nil && c.Purpose.Value != "" {
+		v.Purpose = c.Purpose.Value
+		v.PurposeDoc = richtext.FromMrkdwn(a.S, v.Purpose)
+	}
+	a.S.RLock()
+	v.Muted = a.S.Muted[c.ID]
+	a.S.RUnlock()
+	return v
+}
+
+// Conv returns a sidebar conversation.
+func (a *App) Conv(id string) (Conv, bool) {
+	c, ok := a.S.Conv(id)
+	if !ok {
+		return Conv{}, false
+	}
+	return a.conv(c), true
+}
+
+func (a *App) kindOf(ch string) string {
+	if c, ok := a.Conv(ch); ok {
+		return c.Kind
+	}
+	return ""
+}
+
+// ConvRef describes any conversation id, member or not.
+func (a *App) ConvRef(id string) ConvRef {
+	if c, ok := a.Conv(id); ok {
+		return ConvRef{ID: id, Name: c.Name, Kind: c.Kind, User: c.User}
+	}
+	kind := "channel"
+	switch {
+	case strings.HasPrefix(id, "D"):
+		kind = "im"
+	case strings.HasPrefix(id, "G"):
+		kind = "private"
+	}
+	return ConvRef{ID: id, Name: a.S.ChannelName(id), Kind: kind}
+}
+
+func (a *App) convRefs(ids map[string]bool) map[string]ConvRef {
+	out := make(map[string]ConvRef, len(ids))
+	for id := range ids {
+		if id != "" {
+			out[id] = a.ConvRef(id)
+		}
+	}
+	return out
+}
+
+var systemSubtypes = map[string]bool{
+	"channel_join": true, "channel_leave": true, "channel_topic": true, "channel_purpose": true,
+	"channel_name": true, "channel_archive": true, "channel_unarchive": true, "group_join": true,
+	"group_leave": true, "group_topic": true, "group_purpose": true, "group_name": true,
+	"pinned_item": true, "unpinned_item": true, "channel_canvas_updated": true, "channel_posting_permissions": true,
+	"channel_convert_to_private": true, "channel_convert_to_public": true, "bookmark_added": true,
+}
+
+// message converts a Slack message for the UI.
+func (a *App) message(ch string, m *slack.Message) Message {
+	v := Message{
+		TS: m.TS, Channel: firstNonEmpty(ch, m.Channel), User: m.User, BotID: m.BotID, Subtype: m.Subtype, Text: m.Text,
+		Edited: m.Edited != nil, ThreadTS: m.ThreadTS, ReplyCount: m.ReplyCount, ReplyUsers: m.ReplyUsers,
+		LatestReply: m.LatestReply, Pinned: len(m.PinnedTo) > 0, Huddle: m.Room,
+		Broadcast: m.Subtype == "thread_broadcast" || m.ReplyBroadcast, System: systemSubtypes[m.Subtype],
+	}
+	if m.Edited != nil {
+		v.EditedTS = m.Edited.TS
+	}
+	if m.Subtype == "bot_message" || (m.BotID != "" && m.User == "") || m.DisplayAsBot {
+		v.IsBot = true
+	}
+	if m.BotProfile != nil && m.User == "" {
+		v.IsBot = true
+		v.Name = m.BotProfile.Name
+		v.Avatar = firstNonEmpty(m.BotProfile.Icons.Image72, m.BotProfile.Icons.Image48, m.BotProfile.Icons.Image36)
+	}
+	if m.Username != "" && (m.User == "" || m.Subtype == "bot_message") {
+		v.Name = m.Username
+	}
+	if m.Icons != nil {
+		if m.Icons.Emoji != "" {
+			if u, _, ok := a.S.Emoji(strings.Trim(m.Icons.Emoji, ":")); ok {
+				v.Avatar = u
+			}
+		} else if i := firstNonEmpty(m.Icons.Image72, m.Icons.Image64, m.Icons.Image48, m.Icons.Image36); i != "" {
+			v.Avatar = i
+		}
+	}
+	self := a.S.SelfID()
+	for _, re := range m.Reactions {
+		rv := Reaction{Name: re.Name, Count: re.Count, Users: re.Users, URL: re.URL}
+		if rv.URL == "" {
+			rv.URL, _, _ = a.S.Emoji(re.Name)
+		}
+		for _, u := range re.Users {
+			if u == self {
+				rv.Self = true
+			}
+		}
+		v.Reactions = append(v.Reactions, rv)
+	}
+	v.Doc = richtext.FromMessage(a.S, m)
+	return v
+}
+
+func (a *App) messagePtr(ch string, m *slack.Message) *Message {
+	if m == nil || m.TS == "" {
+		return nil
+	}
+	v := a.message(ch, m)
+	return &v
+}
+
+// timeline converts top-level messages (and thread broadcasts).
+func (a *App) timeline(ch string, msgs []slack.Message) []Message {
+	out := make([]Message, 0, len(msgs))
+	for i := range msgs {
+		m := &msgs[i]
+		if m.Subtype == "thread_broadcast" || m.ThreadTS == "" || m.ThreadTS == m.TS || m.ReplyBroadcast {
+			out = append(out, a.message(ch, m))
+		}
+	}
+	return out
+}
+
+func (a *App) messages(ch string, msgs []slack.Message) []Message {
+	out := make([]Message, 0, len(msgs))
+	for i := range msgs {
+		out = append(out, a.message(firstNonEmpty(ch, msgs[i].Channel), &msgs[i]))
+	}
+	return out
+}
+
+// Mrkdwn renders arbitrary mrkdwn (previews, topics, command responses).
+func (a *App) Mrkdwn(text string) []richtext.Block { return richtext.FromMrkdwn(a.S, text) }
+
+// Emoji resolves an emoji name (custom or standard) to an image URL.
+func (a *App) Emoji(name string) (url, text string, ok bool) { return a.S.Emoji(name) }
+
+// CustomEmoji returns the workspace's custom emoji: name -> URL or
+// "alias:other". The map must not be modified.
+func (a *App) CustomEmoji() map[string]string { return a.S.CustomEmoji.Snapshot() }
+
+// ---- sidebar sections ----
+
+// sections orders sections by their linked list and assigns every
+// conversation to exactly one section (custom > default buckets).
+func (a *App) sections(convs []Conv) []Section {
+	a.S.RLock()
+	secs := append([]slack.Section(nil), a.S.Sections...)
+	a.S.RUnlock()
+	byID := map[string]slack.Section{}
+	pointed := map[string]bool{}
+	for _, s := range secs {
+		byID[s.ID] = s
+		if s.Next != "" {
+			pointed[s.Next] = true
+		}
+	}
+	var ordered []slack.Section
+	visited := map[string]bool{}
+	for _, s := range secs {
+		if pointed[s.ID] {
+			continue
+		}
+		for cur, ok := s, true; ok && !visited[cur.ID]; cur, ok = byID[cur.Next] {
+			ordered = append(ordered, cur)
+			visited[cur.ID] = true
+			if cur.Next == "" {
+				break
+			}
+		}
+		break
+	}
+	for _, s := range secs { // unreachable sections (broken links) still show, last
+		if !visited[s.ID] {
+			ordered = append(ordered, s)
+			visited[s.ID] = true
+		}
+	}
+	assigned := map[string]bool{}
+	var out []Section
+	chIdx, dmIdx := -1, -1
+	for _, s := range ordered {
+		switch s.Type {
+		case "salesforce_records", "slack_connect", "temporary_channels", "agents", "recent_apps":
+			if len(s.ChannelIDsPage.ChannelIDs) == 0 {
+				continue
+			}
+		}
+		sv := Section{ID: s.ID, Name: s.Name, Type: s.Type, Emoji: s.Emoji, Channels: []string{}}
+		for _, id := range s.ChannelIDsPage.ChannelIDs {
+			if _, ok := a.S.Conv(id); ok && !assigned[id] {
+				sv.Channels = append(sv.Channels, id)
+				assigned[id] = true
+			}
+		}
+		switch s.Type {
+		case "channels":
+			chIdx = len(out)
+			if sv.Name == "" {
+				sv.Name = "Channels"
+			}
+		case "direct_messages":
+			dmIdx = len(out)
+		case "stars":
+			sv.Name = "Starred"
+		case "recent_apps":
+			if sv.Name == "" {
+				sv.Name = "Apps"
+			}
+		}
+		out = append(out, sv)
+	}
+	if chIdx < 0 {
+		out = append(out, Section{ID: "channels", Name: "Channels", Type: "channels"})
+		chIdx = len(out) - 1
+	}
+	if dmIdx < 0 {
+		out = append(out, Section{ID: "dms", Name: "Direct messages", Type: "direct_messages"})
+		dmIdx = len(out) - 1
+	}
+	out[dmIdx].Name = "Direct messages"
+	var apps []string
+	for _, c := range convs {
+		if assigned[c.ID] {
+			continue
+		}
+		switch c.Kind {
+		case "im", "mpim":
+			if u, ok := a.S.User(c.User); ok && (u.IsBot || u.ID == "USLACKBOT") && c.Kind == "im" {
+				apps = append(apps, c.ID)
+			} else {
+				out[dmIdx].Channels = append(out[dmIdx].Channels, c.ID)
+			}
+		default:
+			out[chIdx].Channels = append(out[chIdx].Channels, c.ID)
+		}
+	}
+	names := map[string]string{}
+	for _, c := range convs {
+		names[c.ID] = strings.ToLower(c.Name)
+	}
+	sort.SliceStable(out[chIdx].Channels, func(i, j int) bool {
+		return names[out[chIdx].Channels[i]] < names[out[chIdx].Channels[j]]
+	})
+	if len(apps) > 0 {
+		out = append(out, Section{ID: "apps", Name: "Apps", Type: "apps", Channels: apps})
+	}
+	return out
+}
+
+// ---- presence ----
+
+func (a *App) onHello() {
+	ids := a.presenceIDs(nil)
+	if err := a.RTM.SubscribePresence(ids); err != nil {
+		log.Printf("rtm: presence_sub: %v", err)
+	}
+	if err := a.RTM.SubscribeUsers(ids); err != nil {
+		log.Printf("rtm: user subscribe: %v", err)
+	}
+}
+
+// presenceIDs merges add into the subscribed set (self + DM partners +
+// recently shown users, newest first, capped) and returns the full set.
+func (a *App) presenceIDs(add []string) []string {
+	base := map[string]bool{a.C.Creds.UserID: true}
+	a.S.RLock()
+	for _, c := range a.S.Convs {
+		if c.IsIM && c.User != "" {
+			base[c.User] = true
+		}
+	}
+	a.S.RUnlock()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	now := time.Now()
+	for _, id := range add {
+		if strings.HasPrefix(id, "U") || strings.HasPrefix(id, "W") {
+			a.presSeen[id] = now
+		}
+	}
+	type kv struct {
+		id string
+		t  time.Time
+	}
+	var recent []kv
+	for id, t := range a.presSeen {
+		if !base[id] {
+			recent = append(recent, kv{id, t})
+		}
+	}
+	sort.Slice(recent, func(i, j int) bool { return recent[i].t.After(recent[j].t) })
+	const maxSubs = 500
+	out := make([]string, 0, len(base)+len(recent))
+	for id := range base {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	for _, r := range recent {
+		if len(out) >= maxSubs {
+			delete(a.presSeen, r.id)
+			continue
+		}
+		out = append(out, r.id)
+	}
+	return out
+}
+
+// SubscribePresence adds users the UI is showing to the realtime presence
+// (and profile change) subscription. Updates arrive as "presence"/"user" events.
+func (a *App) SubscribePresence(ids []string) {
+	if len(ids) == 0 {
+		return
+	}
+	a.mu.Lock()
+	fresh := false
+	for _, id := range ids {
+		if _, ok := a.presSeen[id]; !ok && id != "" {
+			fresh = true
+			break
+		}
+	}
+	a.mu.Unlock()
+	all := a.presenceIDs(ids)
+	if fresh && a.RTM.Connected() {
+		_ = a.RTM.SubscribePresence(all)
+		_ = a.RTM.SubscribeUsers(all)
+	}
+}
+
+func (a *App) presenceArrived() {
+	a.mu.Lock()
+	ws := a.presWaiters
+	a.presWaiters = nil
+	a.mu.Unlock()
+	for _, c := range ws {
+		close(c)
+	}
+}
+
+func (a *App) presenceMap(ids []string) (map[string]string, []string) {
+	out := map[string]string{}
+	var missing []string
+	a.S.RLock()
+	for _, id := range ids {
+		if p, ok := a.S.Presence[id]; ok {
+			out[id] = p
+		} else if id != "" {
+			missing = append(missing, id)
+		}
+	}
+	a.S.RUnlock()
+	return out, missing
+}
+
+// Presence returns the presence of ids (active | away). Unknown users are
+// subscribed and awaited for up to 1.5 s (the gateway answers a
+// subscription with presence_change events).
+func (a *App) Presence(ctx context.Context, ids []string) map[string]string {
+	out, missing := a.presenceMap(ids)
+	if len(missing) == 0 {
+		return out
+	}
+	a.SubscribePresence(missing)
+	deadline := time.After(1500 * time.Millisecond)
+	for len(missing) > 0 {
+		c := make(chan struct{})
+		a.mu.Lock()
+		a.presWaiters = append(a.presWaiters, c)
+		a.mu.Unlock()
+		select {
+		case <-c:
+		case <-deadline:
+			return out
+		case <-ctx.Done():
+			return out
+		}
+		out, missing = a.presenceMap(ids)
+	}
+	return out
+}
+
+// referencedUsers collects user ids a message list needs for rendering.
+func referencedUsers(msgs []slack.Message) []string {
+	var ids []string
+	for i := range msgs {
+		m := &msgs[i]
+		ids = append(ids, m.User)
+		ids = append(ids, m.ReplyUsers...)
+		if m.Edited != nil {
+			ids = append(ids, m.Edited.User)
+		}
+		for _, re := range m.Reactions {
+			ids = append(ids, re.Users...)
+		}
+		for _, mm := range mentionRe.FindAllStringSubmatch(m.Text, -1) {
+			ids = append(ids, mm[1])
+		}
+		if m.Root != nil {
+			ids = append(ids, m.Root.User)
+		}
+	}
+	return ids
+}
+
+func firstNonEmpty(s ...string) string {
+	for _, x := range s {
+		if x != "" {
+			return x
+		}
+	}
+	return ""
+}
+
+func chanID(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	if raw[0] == '"' {
+		var s string
+		_ = json.Unmarshal(raw, &s)
+		return s
+	}
+	var c struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(raw, &c)
+	return c.ID
+}

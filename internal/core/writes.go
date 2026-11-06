@@ -1,0 +1,347 @@
+package core
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/yoloslackgoclient/internal/store"
+)
+
+func clientMsgID() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	h := hex.EncodeToString(b)
+	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
+}
+
+func isCode(err error, codes ...string) bool {
+	var se *slack.Error
+	if !errors.As(err, &se) {
+		return false
+	}
+	for _, c := range codes {
+		if se.Code == c {
+			return true
+		}
+	}
+	return false
+}
+
+// Send posts a message. The realtime echo arrives as a "message" event with
+// the same TS; the UI should de-duplicate by TS.
+func (a *App) Send(ctx context.Context, o SendOpts) (Message, error) {
+	if o.Channel == "" {
+		return Message{}, errors.New("core: Send needs a channel")
+	}
+	m, err := a.C.Post(ctx, slack.PostOpts{Channel: o.Channel, Text: o.Text, ThreadTS: o.ThreadTS,
+		Broadcast: o.Broadcast, Blocks: o.Blocks, ClientMsgID: clientMsgID()})
+	if err != nil {
+		return Message{}, err
+	}
+	return a.message(o.Channel, m), nil
+}
+
+// Edit replaces a message's text (and optional blocks).
+func (a *App) Edit(ctx context.Context, ch, ts, text string, blocks json.RawMessage) error {
+	return a.C.Update(ctx, ch, ts, text, blocks)
+}
+
+// Delete deletes a message.
+func (a *App) Delete(ctx context.Context, ch, ts string) error { return a.C.Delete(ctx, ch, ts) }
+
+// React adds or removes the viewer's reaction (idempotent).
+func (a *App) React(ctx context.Context, ch, ts, name string, add bool) error {
+	err := a.C.React(ctx, ch, ts, strings.Trim(name, ":"), add)
+	if isCode(err, "already_reacted", "no_reaction") {
+		return nil
+	}
+	return err
+}
+
+// Mark moves the read cursor of ch to ts and returns the new unread state.
+// Marking an earlier ts keeps the conversation unread (see MarkUnread).
+func (a *App) Mark(ctx context.Context, ch, ts string) (Count, error) {
+	if err := a.C.Mark(ctx, ch, ts); err != nil {
+		return a.Count(ch), err
+	}
+	e := a.S.MarkRead(ch, ts)
+	cv := a.Count(ch)
+	a.emit(Event{Type: "marked", Channel: ch, TS: ts, Count: &cv})
+	if e.HasUnreads {
+		a.refreshCountsSoon() // the server knows the mention count below the new cursor
+	}
+	return cv, nil
+}
+
+// MarkUnread marks ts and everything after it unread ("Mark unread" in the
+// message menu): the read cursor moves to just before ts.
+func (a *App) MarkUnread(ctx context.Context, ch, ts string) (Count, error) {
+	return a.Mark(ctx, ch, tsBefore(a.S.Timeline(ch), ts))
+}
+
+// tsBefore returns the ts of the message preceding ts in t, or ts minus one
+// microsecond when it is unknown.
+func tsBefore(t *store.Timeline, ts string) string {
+	if t != nil {
+		prev := ""
+		for _, m := range t.Msgs {
+			if !store.TSLess(m.TS, ts) {
+				break
+			}
+			prev = m.TS
+		}
+		if prev != "" {
+			return prev
+		}
+	}
+	sec, frac, ok := strings.Cut(ts, ".")
+	if !ok || len(frac) != 6 {
+		return ts
+	}
+	s, err1 := strconv.ParseInt(sec, 10, 64)
+	f, err2 := strconv.ParseInt(frac, 10, 64)
+	if err1 != nil || err2 != nil {
+		return ts
+	}
+	if f == 0 {
+		s, f = s-1, 999999
+	} else {
+		f--
+	}
+	return fmt.Sprintf("%d.%06d", s, f)
+}
+
+// Typing sends a typing indicator (optionally in a thread). Call it at most
+// every few seconds while the user types.
+func (a *App) Typing(ch, threadTS string) error { return a.RTM.Typing(ch, threadTS) }
+
+// Upload shares files (held in memory, never written to disk). The message
+// arrives as a realtime "message" event; file stubs are filled in by an
+// "update" once Slack has processed the upload.
+func (a *App) Upload(ctx context.Context, o UploadOpts) ([]UploadedFile, error) {
+	if len(o.Files) == 0 {
+		return nil, errors.New("core: Upload needs a file")
+	}
+	t0 := time.Now()
+	files := make([]slack.UploadFile, 0, len(o.Files))
+	total := 0
+	for _, f := range o.Files {
+		files = append(files, slack.UploadFile{Name: f.Name, Title: f.Title, Data: f.Data})
+		total += len(f.Data)
+	}
+	res, err := a.C.Upload(ctx, o.Channel, o.ThreadTS, o.Comment, files)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]UploadedFile, 0, len(res))
+	for _, f := range res {
+		out = append(out, UploadedFile{ID: f["id"], Name: f["name"], Title: f["title"]})
+	}
+	log.Printf("upload: %d file(s), %d bytes in %s", len(files), total, time.Since(t0).Round(time.Millisecond))
+	return out, nil
+}
+
+// Pin / Unpin a message.
+func (a *App) Pin(ctx context.Context, ch, ts string) error {
+	err := a.C.Call(ctx, "pins.add", url.Values{"channel": {ch}, "timestamp": {ts}}, nil)
+	if isCode(err, "already_pinned") {
+		return nil
+	}
+	return err
+}
+
+func (a *App) Unpin(ctx context.Context, ch, ts string) error {
+	err := a.C.Call(ctx, "pins.remove", url.Values{"channel": {ch}, "timestamp": {ts}}, nil)
+	if isCode(err, "no_pin") {
+		return nil
+	}
+	return err
+}
+
+func savedParams(ch, ts string) url.Values {
+	return url.Values{"item_type": {"message"}, "item_id": {ch}, "ts": {ts}}
+}
+
+// Save / Unsave a message ("Save for later"). dateDue 0 means no reminder.
+func (a *App) Save(ctx context.Context, ch, ts string, dateDue int64) error {
+	p := savedParams(ch, ts)
+	if dateDue > 0 {
+		p.Set("date_due", strconv.FormatInt(dateDue, 10))
+	}
+	return a.C.Call(ctx, "saved.add", p, nil)
+}
+
+func (a *App) Unsave(ctx context.Context, ch, ts string) error {
+	return a.C.Call(ctx, "saved.delete", savedParams(ch, ts), nil)
+}
+
+// UpdateSaved marks a saved item completed/archived or changes its due date.
+func (a *App) UpdateSaved(ctx context.Context, ch, ts string, u SavedUpdate) error {
+	p := savedParams(ch, ts)
+	if u.Completed != nil {
+		p.Set("mark", map[bool]string{true: "completed", false: "uncompleted"}[*u.Completed])
+	}
+	if u.Archived != nil {
+		p.Set("mark", map[bool]string{true: "archived", false: "unarchived"}[*u.Archived])
+	}
+	if u.DateDue != nil {
+		p.Set("date_due", strconv.FormatInt(*u.DateDue, 10))
+	}
+	return a.C.Call(ctx, "saved.update", p, nil)
+}
+
+// SubscribeThread follows or unfollows a thread.
+func (a *App) SubscribeThread(ctx context.Context, ch, threadTS string, follow bool) error {
+	m := "subscriptions.thread.remove"
+	if follow {
+		m = "subscriptions.thread.add"
+	}
+	err := a.C.Call(ctx, m, url.Values{"channel": {ch}, "thread_ts": {threadTS}}, nil)
+	if err == nil {
+		a.refreshCountsSoon()
+	}
+	return err
+}
+
+// MarkThread marks a thread read up to ts.
+func (a *App) MarkThread(ctx context.Context, ch, threadTS, ts string) error {
+	err := a.C.Call(ctx, "subscriptions.thread.mark", url.Values{"channel": {ch}, "thread_ts": {threadTS}, "ts": {ts}, "read": {"1"}}, nil)
+	if err == nil {
+		a.refreshCountsSoon()
+	}
+	return err
+}
+
+// Join joins a channel and adds it to the sidebar.
+func (a *App) Join(ctx context.Context, ch string) (Conv, error) {
+	var res struct {
+		Channel slack.Conversation `json:"channel"`
+	}
+	if err := a.C.Call(ctx, "conversations.join", url.Values{"channel": {ch}}, &res); err != nil {
+		return Conv{}, err
+	}
+	c := res.Channel
+	if full, err := a.C.ConversationInfo(ctx, ch); err == nil {
+		c = *full
+	}
+	a.S.PutConv(c)
+	v := a.conv(&c)
+	a.emit(Event{Type: "conv", Channel: ch, Conv: &v})
+	return v, nil
+}
+
+// Leave leaves a channel (or closes a DM) and removes it from the sidebar.
+func (a *App) Leave(ctx context.Context, ch string) error {
+	m := "conversations.leave"
+	if strings.HasPrefix(ch, "D") {
+		m = "conversations.close"
+	}
+	if err := a.C.Call(ctx, m, url.Values{"channel": {ch}}, nil); err != nil {
+		return err
+	}
+	a.S.Lock()
+	delete(a.S.Convs, ch)
+	a.S.Unlock()
+	a.emit(Event{Type: "conv_removed", Channel: ch})
+	return nil
+}
+
+// OpenDM opens (or resumes) a DM with one user or a group DM with several,
+// and adds it to the sidebar.
+func (a *App) OpenDM(ctx context.Context, users ...string) (Conv, error) {
+	if len(users) == 0 {
+		return Conv{}, errors.New("core: OpenDM needs users")
+	}
+	var res struct {
+		Channel slack.Conversation `json:"channel"`
+	}
+	if err := a.C.Call(ctx, "conversations.open", url.Values{"users": {strings.Join(users, ",")}, "return_im": {"true"}}, &res); err != nil {
+		return Conv{}, err
+	}
+	c := res.Channel
+	if c.ID != "" && c.User == "" && !c.IsMPIM {
+		if full, err := a.C.ConversationInfo(ctx, c.ID); err == nil {
+			c = *full
+		}
+	}
+	if len(users) == 1 && c.User == "" {
+		c.IsIM, c.User = true, users[0]
+	}
+	a.EnsureUsers(ctx, append(users, c.User))
+	a.S.PutConv(c)
+	v := a.conv(&c)
+	a.emit(Event{Type: "conv", Channel: c.ID, Conv: &v})
+	return v, nil
+}
+
+// SetStatus sets the viewer's custom status (empty text and emoji clear it).
+func (a *App) SetStatus(ctx context.Context, text, emoji string, expiration int64) error {
+	if emoji != "" && !strings.HasPrefix(emoji, ":") {
+		emoji = ":" + emoji + ":"
+	}
+	prof, _ := json.Marshal(map[string]any{"status_text": text, "status_emoji": emoji, "status_expiration": expiration})
+	return a.C.Call(ctx, "users.profile.set", url.Values{"profile": {string(prof)}}, nil)
+}
+
+// SetPresence sets "auto" or "away".
+func (a *App) SetPresence(ctx context.Context, presence string) error {
+	if presence != "auto" && presence != "away" {
+		return errors.New("core: presence must be auto or away")
+	}
+	return a.C.Call(ctx, "users.setPresence", url.Values{"presence": {presence}}, nil)
+}
+
+// SetDND snoozes notifications for minutes (0 ends the snooze).
+func (a *App) SetDND(ctx context.Context, minutes int) error {
+	if minutes > 0 {
+		return a.C.Call(ctx, "dnd.setSnooze", url.Values{"num_minutes": {strconv.Itoa(minutes)}}, nil)
+	}
+	return a.C.Call(ctx, "dnd.endSnooze", nil, nil)
+}
+
+// SetTopic sets a channel topic.
+func (a *App) SetTopic(ctx context.Context, ch, topic string) error {
+	return a.C.Call(ctx, "conversations.setTopic", url.Values{"channel": {ch}, "topic": {topic}}, nil)
+}
+
+// Command runs a slash command. /shrug, /me and /topic are handled
+// locally like the official client; others go through chat.command.
+func (a *App) Command(ctx context.Context, o CommandOpts) (CommandResult, error) {
+	cmd := o.Command
+	if !strings.HasPrefix(cmd, "/") {
+		cmd = "/" + cmd
+	}
+	switch cmd {
+	case "/shrug":
+		m, err := a.Send(ctx, SendOpts{Channel: o.Channel, Text: strings.TrimSpace(o.Text + ` ¯\_(ツ)_/¯`), ThreadTS: o.ThreadTS})
+		if err != nil {
+			return CommandResult{}, err
+		}
+		return CommandResult{Msg: &m}, nil
+	case "/me":
+		return CommandResult{}, a.C.Call(ctx, "chat.meMessage", url.Values{"channel": {o.Channel}, "text": {o.Text}}, nil)
+	case "/topic":
+		return CommandResult{}, a.SetTopic(ctx, o.Channel, o.Text)
+	}
+	p := url.Values{"channel": {o.Channel}, "command": {cmd}, "text": {o.Text}, "disp": {cmd}}
+	if o.ThreadTS != "" {
+		p.Set("thread_ts", o.ThreadTS)
+	}
+	var res struct {
+		Response string `json:"response"`
+	}
+	if err := a.C.Call(ctx, "chat.command", p, &res); err != nil {
+		return CommandResult{}, err
+	}
+	return CommandResult{Response: res.Response, ResponseDoc: a.Mrkdwn(res.Response)}, nil
+}
