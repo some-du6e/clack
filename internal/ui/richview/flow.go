@@ -51,6 +51,7 @@ const (
 	bSquare // small filled square
 	bPlay   // play triangle
 	bChevron
+	bCaret // small filled down-pointing triangle
 )
 
 type box struct {
@@ -73,7 +74,8 @@ type imgPrim struct {
 	url    string
 	radii  [4]int // NW NE SE SW
 	target int16
-	px     int // requested decode size
+	px     int  // requested decode size
+	fit    bool // contain (letterbox) instead of cover
 }
 
 type targetKind uint8

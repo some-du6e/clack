@@ -295,7 +295,10 @@ func (v *View) record(st *Style) {
 			v.pending = append(v.pending, int32(i))
 			continue
 		}
-		drawImage(ops, img, im.r, im.radii, true)
+		if im.fit {
+			fillRadii(ops, im.r, im.radii, st.Palette.Placeholder)
+		}
+		drawImage(ops, img, im.r, im.radii, !im.fit)
 	}
 	for i := range v.d.frags {
 		f := &v.d.frags[i]
