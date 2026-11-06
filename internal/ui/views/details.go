@@ -111,6 +111,12 @@ type ChannelDetails struct {
 	filtKey   string
 	filt      []core.User
 	rowClk    map[string]*widget.Clickable
+
+	// Realtime: conv (joined elsewhere, renamed, topic/purpose changed via
+	// a refresh) and conv_removed (left elsewhere, archived) for this
+	// conversation. refreshDue defers a reload while a write is in flight.
+	evq        dirEvents
+	refreshDue bool
 }
 
 // NewChannelDetails opens the details dialog for a conversation.
@@ -137,8 +143,14 @@ func NewChannelDetails(h Host, channelID string) *ChannelDetails {
 	return d
 }
 
-// Closed reports whether the dialog was dismissed (views.Closer).
-func (d *ChannelDetails) Closed() bool { return d.closed }
+// Closed reports whether the dialog was dismissed (views.Closer). It also
+// drops the realtime subscription.
+func (d *ChannelDetails) Closed() bool {
+	if d.closed {
+		d.evq.stop()
+	}
+	return d.closed
+}
 
 func cdGroup(kind string) string {
 	if kind == "im" || kind == "mpim" {
@@ -182,6 +194,59 @@ func (d *ChannelDetails) loadInfo() {
 	d.info.load(d.h, false, func(ctx context.Context) (core.ChannelDetails, error) {
 		return c.ChannelInfo(ctx, id)
 	})
+}
+
+// refreshInfo reloads the details in place (no skeleton), once no write
+// is in flight.
+func (d *ChannelDetails) refreshInfo() {
+	if d.writing() {
+		d.refreshDue = true
+		return
+	}
+	d.refreshDue = false
+	c, id := d.h.Core(), d.id
+	d.info.load(d.h, true, func(ctx context.Context) (core.ChannelDetails, error) {
+		return c.ChannelInfo(ctx, id)
+	})
+}
+
+// watch subscribes to this conversation's conv / conv_removed events.
+func (d *ChannelDetails) watch() {
+	id := d.id
+	d.evq.start(d.h, func(ev core.Event) (dirMemberNote, bool) {
+		switch {
+		case ev.Type == "resync":
+			return dirMemberNote{id: id, verify: true}, true
+		case ev.Channel != id:
+			return dirMemberNote{}, false
+		case ev.Type == "conv":
+			return dirMemberNote{id: id, verify: true}, true
+		case ev.Type == "conv_removed":
+			return dirMemberNote{id: id, ev: true}, true
+		}
+		return dirMemberNote{}, false
+	})
+	for _, n := range d.evq.drain() {
+		switch {
+		case n.verify:
+			d.refreshInfo()
+		case n.ev && cdGroup(d.kind) == "channel" && !d.writing():
+			// Left from elsewhere (or archived): show Join channel.
+			d.confirmLeave = false
+			d.info.mutate(func(v *core.ChannelDetails) {
+				if v.IsMember {
+					v.IsMember = false
+					if v.Conv.NumMembers > 0 {
+						v.Conv.NumMembers--
+					}
+				}
+			})
+			d.refreshInfo()
+		}
+	}
+	if d.refreshDue && !d.writing() {
+		d.refreshInfo()
+	}
 }
 
 func (d *ChannelDetails) loadMembers(marker string) {
@@ -253,6 +318,11 @@ func (d *ChannelDetails) dmUser(inf core.ChannelDetails) string {
 	return ""
 }
 
+// writing reports whether a write from this dialog is in flight.
+func (d *ChannelDetails) writing() bool {
+	return d.topicPending || d.leavePending || d.joinPending
+}
+
 // update handles keys, clicks and finished writes before drawing.
 func (d *ChannelDetails) update(gtx C) {
 	for {
@@ -290,6 +360,7 @@ func (d *ChannelDetails) update(gtx C) {
 	if !d.info.started() {
 		d.loadInfo()
 	}
+	d.watch()
 	inf, loaded, _ := d.info.get()
 	if loaded && inf.Conv.Kind != "" && inf.Conv.Kind != d.kind {
 		regroup := cdGroup(inf.Conv.Kind) != cdGroup(d.kind)
@@ -454,7 +525,7 @@ func (d *ChannelDetails) Layout(gtx C) D {
 		r := image.Rect(0, 0, dw, dh)
 		rad := gtx.Dp(cdRadius)
 		theme.Shadow(gtx, r, rad, gtx.Dp(24), argb(0x59000000))
-		rrect(gtx, r.Inset(-max(1, gtx.Dp(1))), rad+max(1, gtx.Dp(1)), argb(0x211d1c1d))
+		rrect(gtx, r.Inset(-max(1, gtx.Dp(1))), rad+max(1, gtx.Dp(1)), dirRing(d.p))
 		rrect(gtx, r, rad, d.p.Surface)
 		defer clip.UniformRRect(r, rad).Push(gtx.Ops).Pop()
 		g := gtx
@@ -705,10 +776,7 @@ func cdBox(b *base, gtx C, rows ...W) D {
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 	gtx.Constraints.Min.Y = 0
 	rad := gtx.Dp(12)
-	line := argb(0x211d1c1d)
-	if b.th.Dark {
-		line = b.p.Border
-	}
+	line := dirRing(b.p)
 	ch := make([]layout.FlexChild, 0, 2*len(rows))
 	for i, r := range rows {
 		if i > 0 {
@@ -1097,7 +1165,7 @@ func (d *ChannelDetails) membersTab(gtx C) D {
 				)
 			})
 			if p := l.Position; p.First > 0 || p.Offset > 0 {
-				fill(gtx, image.Rect(0, dims.Size.Y-max(1, gtx.Dp(1)), gtx.Constraints.Max.X, dims.Size.Y), argb(0x211d1c1d))
+				fill(gtx, image.Rect(0, dims.Size.Y-max(1, gtx.Dp(1)), gtx.Constraints.Max.X, dims.Size.Y), dirRing(d.p))
 			}
 			return dims
 		}),

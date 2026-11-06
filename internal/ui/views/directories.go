@@ -12,6 +12,7 @@ import (
 	"image/color"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"gioui.org/font"
@@ -90,11 +91,72 @@ type dirChans struct {
 	q                  string
 }
 
-// dirJoinOp is an optimistic Join/Leave in flight.
+// dirJoinOp is an optimistic Join/Leave in flight. prev is the membership
+// shown before the click, restored if the write fails.
 type dirJoinOp struct {
-	id, name string
-	join     bool
-	a        async[bool]
+	id, name   string
+	join, prev bool
+	a          async[bool]
+}
+
+// dirMemberNote is a membership fact learned off the UI goroutine
+// (realtime events, verification reads). seq is the channel's op sequence
+// when the read started; a note older than the latest own write is dropped.
+type dirMemberNote struct {
+	id     string
+	member bool
+	seq    int
+	ev     bool // straight from an event (applies unless a write is in flight)
+	verify bool // a "conv" event: verify membership with a read
+}
+
+// dirEvents queues realtime notes for the UI goroutine. start subscribes
+// once (UI goroutine only); stop unsubscribes.
+type dirEvents struct {
+	mu     sync.Mutex
+	q      []dirMemberNote
+	on     bool
+	cancel func()
+}
+
+func (e *dirEvents) start(h Host, match func(ev core.Event) (dirMemberNote, bool)) {
+	if e.on {
+		return
+	}
+	e.on = true
+	ch, cancel := h.Core().Subscribe()
+	e.cancel = cancel
+	go func() {
+		for ev := range ch {
+			if n, ok := match(ev); ok {
+				e.push(h, n)
+			}
+		}
+	}()
+}
+
+func (e *dirEvents) push(h Host, n dirMemberNote) {
+	e.mu.Lock()
+	if len(e.q) < 512 {
+		e.q = append(e.q, n)
+	}
+	e.mu.Unlock()
+	h.Invalidate()
+}
+
+func (e *dirEvents) drain() []dirMemberNote {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	q := e.q
+	e.q = nil
+	return q
+}
+
+func (e *dirEvents) stop() {
+	if e.cancel != nil {
+		e.cancel()
+		e.cancel = nil
+	}
 }
 
 // dirSortKey identifies a sorted copy of a result slice.
@@ -134,6 +196,17 @@ type Directories struct {
 	joinBtn map[string]*widget.Clickable
 	caret   map[string]*widget.Clickable
 	ops     []*dirJoinOp
+	// member overrides the loaded hits' membership with what this client
+	// knows better: its own Join/Leave and realtime conv events. It
+	// survives reloads (search results can lag behind a join).
+	member  map[string]bool
+	opSeq   map[string]int
+	evq     dirEvents
+	confirm string // private channel awaiting the Leave confirmation
+	confYes widget.Clickable
+	confNo  widget.Clickable
+	menuID  string // channel whose Join/Leave caret menu is open
+	rowMenu dirDropdown
 
 	groups    async[[]core.Usergroup]
 	groupsQ   string
@@ -152,8 +225,11 @@ func NewDirectories(h Host) *Directories {
 		rows:      map[string]*widget.Clickable{},
 		joinBtn:   map[string]*widget.Clickable{},
 		caret:     map[string]*widget.Clickable{},
+		member:    map[string]bool{},
+		opSeq:     map[string]int{},
 		wantFocus: 3,
 	}
+	d.rowMenu.sel = -1
 	for i := range d.srch {
 		d.srch[i] = newSearch(dirPlaceholders[i])
 		d.sorts[i].labels = dirSortLabels[i]
@@ -176,6 +252,7 @@ func (d *Directories) closeMenus() {
 	for i := range d.sorts {
 		d.sorts[i].open = false
 	}
+	d.menuID, d.rowMenu.open, d.confirm = "", false, ""
 }
 
 // Layout draws the view, filling the constraints.
@@ -215,6 +292,8 @@ func (d *Directories) titleRow(gtx C) D {
 func (d *Directories) update(gtx C) {
 	t := d.tab.Sel
 	d.pollOps()
+	d.watchMembership()
+	d.applyNotes()
 	if t > dirTabGroups {
 		return
 	}
@@ -331,10 +410,14 @@ func (d *Directories) loadChannels(q string, page int) {
 }
 
 // startJoin joins or leaves optimistically; pollOps reverts on failure.
-// Only called from a user's click.
+// Only called from a user's click. ch is the row as displayed.
 func (d *Directories) startJoin(ch core.ChannelHit, join bool) {
-	d.setMember(ch.ID, join)
-	o := &dirJoinOp{id: ch.ID, name: ch.Name, join: join}
+	if d.pending(ch.ID) {
+		return
+	}
+	d.opSeq[ch.ID]++
+	d.member[ch.ID] = join
+	o := &dirJoinOp{id: ch.ID, name: ch.Name, join: join, prev: ch.IsMember}
 	c, id := d.h.Core(), ch.ID
 	o.a.load(d.h, false, func(ctx context.Context) (bool, error) {
 		if join {
@@ -355,7 +438,9 @@ func (d *Directories) pollOps() {
 			continue
 		}
 		if err != nil {
-			d.setMember(o.id, !o.join)
+			if d.member[o.id] == o.join {
+				d.member[o.id] = o.prev
+			}
 			verb := "join"
 			if !o.join {
 				verb = "leave"
@@ -369,21 +454,96 @@ func (d *Directories) pollOps() {
 	d.ops = keep
 }
 
-func (d *Directories) setMember(id string, member bool) {
-	d.chans.mutate(func(v *dirChans) {
-		for i := range v.list {
-			h := &v.list[i]
-			if h.ID != id || h.IsMember == member {
-				continue
+// pending reports whether a Join/Leave for id is in flight.
+func (d *Directories) pending(id string) bool {
+	for _, o := range d.ops {
+		if o.id == id {
+			return true
+		}
+	}
+	return false
+}
+
+// pendingOp returns the in-flight Join/Leave for id, if any.
+func (d *Directories) pendingOp(id string) *dirJoinOp {
+	for _, o := range d.ops {
+		if o.id == id {
+			return o
+		}
+	}
+	return nil
+}
+
+// watchMembership subscribes to the conversation events that change
+// membership: "conv" (joined, renamed, created; verified with a read since
+// channel_created also emits it for channels the viewer isn't in) and
+// "conv_removed" (left, archived, deleted).
+func (d *Directories) watchMembership() {
+	d.evq.start(d.h, func(ev core.Event) (dirMemberNote, bool) {
+		switch ev.Type {
+		case "conv":
+			if ev.Conv != nil && isDMKind(ev.Conv.Kind) {
+				return dirMemberNote{}, false
 			}
-			h.IsMember = member
-			if member {
-				h.NumMembers++
-			} else if h.NumMembers > 0 {
-				h.NumMembers--
+			return dirMemberNote{id: ev.Channel, verify: true}, ev.Channel != ""
+		case "conv_removed":
+			return dirMemberNote{id: ev.Channel, member: false, ev: true}, ev.Channel != ""
+		}
+		return dirMemberNote{}, false
+	})
+}
+
+// applyNotes folds queued realtime notes into the membership overrides,
+// for channels in the loaded list only.
+func (d *Directories) applyNotes() {
+	notes := d.evq.drain()
+	if len(notes) == 0 {
+		return
+	}
+	st, _, _ := d.chans.get()
+	listed := make(map[string]bool, len(st.list))
+	for _, h := range st.list {
+		listed[h.ID] = true
+	}
+	c, h := d.h.Core(), d.h
+	for _, n := range notes {
+		if !listed[n.id] {
+			continue
+		}
+		switch {
+		case n.verify:
+			id, seq := n.id, d.opSeq[n.id]
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				defer cancel()
+				if inf, err := c.ChannelInfo(ctx, id); err == nil {
+					d.evq.push(h, dirMemberNote{id: id, member: inf.IsMember, seq: seq})
+				}
+			}()
+		case n.ev:
+			if !d.pending(n.id) {
+				d.member[n.id] = n.member
+			}
+		default: // a verification result
+			if n.seq == d.opSeq[n.id] && !d.pending(n.id) {
+				d.member[n.id] = n.member
 			}
 		}
-	})
+	}
+}
+
+// eff is a hit as displayed: membership (and the member count) adjusted
+// by the overrides.
+func (d *Directories) eff(h core.ChannelHit) core.ChannelHit {
+	if m, ok := d.member[h.ID]; ok && m != h.IsMember {
+		h.IsMember = m
+		if m {
+			h.NumMembers++
+		} else if h.NumMembers > 0 {
+			h.NumMembers--
+		}
+	}
+	return h
 }
 
 // ---- body ----
@@ -662,9 +822,9 @@ func (d *Directories) personCard(gtx C, u core.User, w, h int) D {
 			)
 		})
 		if c.Hovered() {
-			rrect(gtx, card, rad, argb(0x0a1d1c1d))
+			rrect(gtx, card, rad, dirHoverTint(d.p))
 		}
-		border(gtx, card, rad, max(1, gtx.Dp(1)), argb(0x211d1c1d))
+		border(gtx, card, rad, max(1, gtx.Dp(1)), dirRing(d.p))
 		return D{Size: card.Max}
 	})
 }
@@ -729,7 +889,7 @@ func (d *Directories) gridSkeleton(gtx C, cols, cw, gap, cardH int) D {
 					rrect(gtx, image.Rect(x, y, x+(cw-2*x)*(55+(i*13)%30)/100, y+gtx.Dp(12)), gtx.Dp(4), d.p.Skel)
 					y += gtx.Dp(22)
 					rrect(gtx, image.Rect(x, y, x+(cw-2*x)*(35+(i*17)%30)/100, y+gtx.Dp(10)), gtx.Dp(4), d.p.Skel)
-					border(gtx, image.Rect(0, 0, cw, cardH), rad, max(1, gtx.Dp(1)), argb(0x211d1c1d))
+					border(gtx, image.Rect(0, 0, cw, cardH), rad, max(1, gtx.Dp(1)), dirRing(d.p))
 					return D{}
 				})
 			}
@@ -801,19 +961,47 @@ func (d *Directories) chansTab(gtx C) D {
 // split button. The row's clickable is a sibling below its buttons so a
 // button click doesn't also open the channel.
 func (d *Directories) chanRow(gtx C, ch core.ChannelHit, first, last bool) D {
+	ch = d.eff(ch)
 	rc := dirClick(d.rows, ch.ID)
 	jb := dirClick(d.joinBtn, ch.ID)
 	cb := dirClick(d.caret, ch.ID)
+	confirming := d.confirm == ch.ID
 	if jb.Clicked(gtx) && !ch.IsArchived {
-		d.startJoin(ch, !ch.IsMember)
+		switch {
+		case ch.IsMember && ch.Kind == "private":
+			// Leaving a private channel can't be undone without an invite.
+			d.confirm, d.menuID = ch.ID, ""
+		default:
+			d.startJoin(ch, !ch.IsMember)
+		}
+	}
+	if confirming {
+		if d.confNo.Clicked(gtx) {
+			d.confirm, confirming = "", false
+		}
+		if d.confYes.Clicked(gtx) {
+			d.confirm, confirming = "", false
+			d.startJoin(ch, false)
+		}
 	}
 	if cb.Clicked(gtx) {
-		d.h.Toast(cdUnsupported)
+		if d.menuID == ch.ID && d.rowMenu.open {
+			d.menuID, d.rowMenu.open = "", false
+		} else {
+			d.menuID, d.rowMenu.open, d.confirm, confirming = ch.ID, true, "", false
+		}
+	}
+	menuOpen := d.menuID == ch.ID && d.rowMenu.open
+	if menuOpen {
+		d.rowMenuUpdate(gtx, ch)
+		menuOpen = d.menuID == ch.ID && d.rowMenu.open
 	}
 	if rc.Clicked(gtx) {
 		d.h.Navigate("c/" + ch.ID)
 	}
+	pend := d.pendingOp(ch.ID)
 	hover := rc.Hovered() || jb.Hovered() || cb.Hovered()
+	showBtn := (hover || menuOpen || pend != nil) && !ch.IsArchived
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 
 	m := op.Record(gtx.Ops)
@@ -824,19 +1012,43 @@ func (d *Directories) chanRow(gtx C, ch core.ChannelHit, first, last bool) D {
 					return col(gtx,
 						layout.Rigid(func(gtx C) D { return d.chanName(gtx, ch, hover) }),
 						vgap(4),
-						layout.Rigid(func(gtx C) D { return d.chanMeta(gtx, ch) }),
+						layout.Rigid(func(gtx C) D {
+							if confirming {
+								return d.para(gtx, 13, 18, wReg, d.p.Sec, 1, "Leave #"+ch.Name+"? You won’t be able to rejoin unless someone invites you.")
+							}
+							return d.chanMeta(gtx, ch)
+						}),
 					)
 				})
 			}),
 			layout.Rigid(func(gtx C) D {
-				if !hover || ch.IsArchived {
+				if confirming {
+					return layout.Inset{Left: 12}.Layout(gtx, func(gtx C) D {
+						return row(gtx, layout.Middle,
+							layout.Rigid(func(gtx C) D { return d.button(gtx, &d.confNo, btnOutline, false, "Cancel") }),
+							hgap(8),
+							layout.Rigid(func(gtx C) D { return d.button(gtx, &d.confYes, btnDanger, false, "Leave") }),
+						)
+					})
+				}
+				if !showBtn {
 					return D{}
 				}
 				label := "Join"
 				if ch.IsMember {
 					label = "Leave"
 				}
-				return layout.Inset{Left: 12}.Layout(gtx, func(gtx C) D { return dirSplitBtn(&d.base, gtx, jb, cb, label) })
+				if pend != nil {
+					label = "Joining…"
+					if !pend.join {
+						label = "Leaving…"
+					}
+				}
+				var menu func(gtx C, sz image.Point)
+				if menuOpen {
+					menu = func(gtx C, sz image.Point) { d.rowMenu.menu(&d.base, gtx, sz, true) }
+				}
+				return layout.Inset{Left: 12}.Layout(gtx, func(gtx C) D { return dirSplitBtn(&d.base, gtx, jb, cb, label, menu) })
 			}),
 		)
 	})
@@ -851,6 +1063,31 @@ func (d *Directories) chanRow(gtx C, ch core.ChannelHit, first, last bool) D {
 	})
 	call.Add(gtx.Ops)
 	return dims
+}
+
+// dirRowMenu is the Join/Leave caret menu.
+var dirRowMenu = []string{"View channel", "Copy link"}
+
+// rowMenuUpdate handles the open caret menu of row ch.
+func (d *Directories) rowMenuUpdate(gtx C, ch core.ChannelHit) {
+	dd := &d.rowMenu
+	dd.labels = dirRowMenu
+	dd.sel = -1
+	if !dd.update(gtx) {
+		if !dd.open {
+			d.menuID = ""
+		}
+		return
+	}
+	pick := dd.sel
+	dd.sel, dd.open, d.menuID = -1, false, ""
+	switch pick {
+	case 0:
+		d.h.Navigate("c/" + ch.ID)
+	case 1:
+		cdCopy(gtx, cdLinkPrefix+ch.ID)
+		d.h.Toast("Link copied to clipboard")
+	}
 }
 
 func (d *Directories) chanName(gtx C, ch core.ChannelHit, hover bool) D {
@@ -899,7 +1136,8 @@ func (d *Directories) chanMeta(gtx C, ch core.ChannelHit) D {
 
 // dirSplitBtn is the outline medium split button: an 80x36 label part
 // (radius 8 0 0 8) and a 41x36 caret part (radius 0 8 8 0).
-func dirSplitBtn(b *base, gtx C, main, caret *widget.Clickable, label string) D {
+// menu, when set, is drawn in the caret part's frame (the caret menu).
+func dirSplitBtn(b *base, gtx C, main, caret *widget.Clickable, label string, menu func(gtx C, sz image.Point)) D {
 	h, mw, cw := gtx.Dp(36), gtx.Dp(80), gtx.Dp(41)
 	rad := gtx.Dp(8)
 	bw := float32(max(1, gtx.Dp(1)))
@@ -924,6 +1162,12 @@ func dirSplitBtn(b *base, gtx C, main, caret *widget.Clickable, label string) D 
 	part(caret, mw, cw, clip.RRect{Rect: image.Rect(0, 0, cw, h), NE: rad, SE: rad}, func(gtx C) D {
 		return b.icon(gtx, "caret-down", 16, b.p.Sec)
 	})
+	if menu != nil {
+		dirAt(gtx, image.Pt(mw, 0), func(gtx C) D {
+			menu(gtx, image.Pt(cw, h))
+			return D{}
+		})
+	}
 	return D{Size: image.Pt(mw+cw, h)}
 }
 
@@ -1095,6 +1339,23 @@ func dirListBorder(p *pal) color.NRGBA {
 		return p.Border
 	}
 	return argb(0x1a1d1c1d)
+}
+
+// dirRing is the 1px #1d1c1d@.13 ring of cards, menus and dialogs; the
+// palette hairline in dark mode.
+func dirRing(p *pal) color.NRGBA {
+	if p == &darkPal {
+		return p.Border
+	}
+	return argb(0x211d1c1d)
+}
+
+// dirHoverTint is the card hover overlay (#1d1c1d@.04; white@.04 in dark).
+func dirHoverTint(p *pal) color.NRGBA {
+	if p == &darkPal {
+		return argb(0x0ae8e8e8)
+	}
+	return argb(0x0a1d1c1d)
 }
 
 // dirRowShape paints one row of a bordered list: white fill, 1px border,
@@ -1369,7 +1630,7 @@ func (dd *dirDropdown) menu(b *base, gtx C, btn image.Point, right bool) {
 		rad := gtx.Dp(8)
 		theme.Shadow(gtx, r, rad, gtx.Dp(12), argb(0x1f000000))
 		rrect(gtx, r, rad, b.p.Surface)
-		border(gtx, r, rad, max(1, gtx.Dp(1)), argb(0x211d1c1d))
+		border(gtx, r, rad, max(1, gtx.Dp(1)), dirRing(b.p))
 		g := gtx
 		g.Constraints = layout.Exact(r.Max)
 		dd.panel.Layout(g, func(gtx C) D { return D{Size: r.Max} })
