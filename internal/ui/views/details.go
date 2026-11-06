@@ -80,8 +80,31 @@ type ChannelDetails struct {
 	joinOp    async[bool]
 
 	topicPending, leavePending, joinPending bool
-	prevTopic                               string
-	prevTopicDoc                            []richtext.Block
+	prevConv                                core.Conv // before an optimistic edit (revert)
+	pendKind                                int       // the edit kind in flight
+
+	// Header writes: star and notification prefs (optimistic).
+	starOp       async[bool]
+	starPending  bool
+	starOv       bool
+	notifMenu    dirDropdown
+	notifOp      async[bool]
+	notifPending bool
+	notifOv      core.ChannelNotify
+
+	managers async[[]string]
+	counts   async[core.MemberCounts]
+	tabList  async[[]core.Tab]
+
+	// Add people (Members tab): an inline people search with Add buttons.
+	inviting   bool
+	inviteQ    *search
+	inviteDeb  debounce
+	inviteRes  async[[]core.User]
+	inviteOp   async[bool]
+	inviteUser string // user being added
+	added      map[string]bool
+	editName   widget.Clickable
 
 	tab      *tabs
 	tabKinds []int
@@ -100,6 +123,7 @@ type ChannelDetails struct {
 	huddleStart, huddleLink         widget.Clickable
 
 	editing      bool
+	editKind     int // cdEditTopic | cdEditPurpose | cdEditName
 	focusTopic   int
 	confirmLeave bool
 	topicEd      widget.Editor
@@ -111,6 +135,12 @@ type ChannelDetails struct {
 	filtKey   string
 	filt      []core.User
 	rowClk    map[string]*widget.Clickable
+
+	// Realtime: conv (joined elsewhere, renamed, topic/purpose changed via
+	// a refresh) and conv_removed (left elsewhere, archived) for this
+	// conversation. refreshDue defers a reload while a write is in flight.
+	evq        dirEvents
+	refreshDue bool
 }
 
 // NewChannelDetails opens the details dialog for a conversation.
@@ -126,6 +156,8 @@ func NewChannelDetails(h Host, channelID string) *ChannelDetails {
 		memFilter: dirDropdown{labels: []string{"All", "People", "Agents"}},
 		tabsPerm:  dirDropdown{labels: []string{"Everyone"}},
 		topicEd:   widget.Editor{SingleLine: true, Submit: true, MaxLen: 250},
+		inviteQ:   newSearch("Search by name or email"),
+		added:     map[string]bool{},
 	}
 	if strings.HasPrefix(channelID, "D") {
 		d.kind = "im"
@@ -137,8 +169,14 @@ func NewChannelDetails(h Host, channelID string) *ChannelDetails {
 	return d
 }
 
-// Closed reports whether the dialog was dismissed (views.Closer).
-func (d *ChannelDetails) Closed() bool { return d.closed }
+// Closed reports whether the dialog was dismissed (views.Closer). It also
+// drops the realtime subscription.
+func (d *ChannelDetails) Closed() bool {
+	if d.closed {
+		d.evq.stop()
+	}
+	return d.closed
+}
 
 func cdGroup(kind string) string {
 	if kind == "im" || kind == "mpim" {
@@ -184,6 +222,59 @@ func (d *ChannelDetails) loadInfo() {
 	})
 }
 
+// refreshInfo reloads the details in place (no skeleton), once no write
+// is in flight.
+func (d *ChannelDetails) refreshInfo() {
+	if d.writing() {
+		d.refreshDue = true
+		return
+	}
+	d.refreshDue = false
+	c, id := d.h.Core(), d.id
+	d.info.load(d.h, true, func(ctx context.Context) (core.ChannelDetails, error) {
+		return c.ChannelInfo(ctx, id)
+	})
+}
+
+// watch subscribes to this conversation's conv / conv_removed events.
+func (d *ChannelDetails) watch() {
+	id := d.id
+	d.evq.start(d.h, func(ev core.Event) (dirMemberNote, bool) {
+		switch {
+		case ev.Type == "resync":
+			return dirMemberNote{id: id, verify: true}, true
+		case ev.Channel != id:
+			return dirMemberNote{}, false
+		case ev.Type == "conv":
+			return dirMemberNote{id: id, verify: true}, true
+		case ev.Type == "conv_removed":
+			return dirMemberNote{id: id, ev: true}, true
+		}
+		return dirMemberNote{}, false
+	})
+	for _, n := range d.evq.drain() {
+		switch {
+		case n.verify:
+			d.refreshInfo()
+		case n.ev && cdGroup(d.kind) == "channel" && !d.writing():
+			// Left from elsewhere (or archived): show Join channel.
+			d.confirmLeave = false
+			d.info.mutate(func(v *core.ChannelDetails) {
+				if v.IsMember {
+					v.IsMember = false
+					if v.Conv.NumMembers > 0 {
+						v.Conv.NumMembers--
+					}
+				}
+			})
+			d.refreshInfo()
+		}
+	}
+	if d.refreshDue && !d.writing() {
+		d.refreshInfo()
+	}
+}
+
 func (d *ChannelDetails) loadMembers(marker string) {
 	var prev []core.User
 	if marker != "" {
@@ -207,19 +298,71 @@ func (d *ChannelDetails) loadBookmarks() {
 	})
 }
 
-// saveTopicNow applies the edited topic optimistically and sends it.
+// Inline edit kinds (one editor, one at a time).
+const (
+	cdEditTopic = iota + 1
+	cdEditPurpose
+	cdEditName
+)
+
+var cdEditWhat = map[int]string{cdEditTopic: "topic", cdEditPurpose: "description", cdEditName: "channel name"}
+
+// startEdit opens the inline editor for kind with its current value.
+func (d *ChannelDetails) startEdit(kind int, cur string) {
+	d.editing, d.editKind, d.confirmLeave = true, kind, false
+	d.topicEd.MaxLen = 250
+	if kind == cdEditName {
+		d.topicEd.MaxLen = 80
+	}
+	d.topicEd.SetText(cur)
+	n := d.topicEd.Len()
+	d.topicEd.SetCaret(n, n)
+	d.focusTopic = 3
+}
+
+// cdChannelName normalizes a typed channel name the way Slack does:
+// lowercase, spaces to dashes, no leading #.
+func cdChannelName(s string) string {
+	s = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(s), "#")))
+	return strings.Join(strings.Fields(s), "-")
+}
+
+// saveTopicNow applies the open edit (topic, description or name)
+// optimistically and sends it; update reverts on failure.
 func (d *ChannelDetails) saveTopicNow() {
 	t := strings.TrimSpace(d.topicEd.Text())
+	kind := d.editKind
 	d.editing = false
-	inf, _, _ := d.info.get()
-	if t == inf.Conv.Topic {
+	if d.topicPending {
 		return
 	}
-	d.prevTopic, d.prevTopicDoc = inf.Conv.Topic, inf.Conv.TopicDoc
-	d.info.mutate(func(v *core.ChannelDetails) { v.Conv.Topic, v.Conv.TopicDoc = t, nil })
+	inf, _, _ := d.info.get()
 	c, id := d.h.Core(), d.id
+	var send func(ctx context.Context) error
+	switch kind {
+	case cdEditPurpose:
+		if t == inf.Conv.Purpose {
+			return
+		}
+		d.info.mutate(func(v *core.ChannelDetails) { v.Conv.Purpose, v.Conv.PurposeDoc = t, nil })
+		send = func(ctx context.Context) error { return c.SetPurpose(ctx, id, t) }
+	case cdEditName:
+		t = cdChannelName(t)
+		if t == "" || t == inf.Conv.Name {
+			return
+		}
+		d.info.mutate(func(v *core.ChannelDetails) { v.Conv.Name = t })
+		send = func(ctx context.Context) error { return c.Rename(ctx, id, t) }
+	default:
+		if t == inf.Conv.Topic {
+			return
+		}
+		d.info.mutate(func(v *core.ChannelDetails) { v.Conv.Topic, v.Conv.TopicDoc = t, nil })
+		send = func(ctx context.Context) error { return c.SetTopic(ctx, id, t) }
+	}
+	d.prevConv, d.pendKind = inf.Conv, kind
 	d.topicPending = true
-	d.topicOp.load(d.h, false, func(ctx context.Context) (bool, error) { return true, c.SetTopic(ctx, id, t) })
+	d.topicOp.load(d.h, false, func(ctx context.Context) (bool, error) { return true, send(ctx) })
 }
 
 func (d *ChannelDetails) startLeave() {
@@ -253,6 +396,11 @@ func (d *ChannelDetails) dmUser(inf core.ChannelDetails) string {
 	return ""
 }
 
+// writing reports whether a write from this dialog is in flight.
+func (d *ChannelDetails) writing() bool {
+	return d.topicPending || d.leavePending || d.joinPending || d.starPending || d.notifPending || d.inviteUser != ""
+}
+
 // update handles keys, clicks and finished writes before drawing.
 func (d *ChannelDetails) update(gtx C) {
 	for {
@@ -265,8 +413,8 @@ func (d *ChannelDetails) update(gtx C) {
 			continue
 		}
 		switch {
-		case d.memFilter.open || d.tabsPerm.open:
-			d.memFilter.open, d.tabsPerm.open = false, false
+		case d.memFilter.open || d.tabsPerm.open || d.notifMenu.open:
+			d.memFilter.open, d.tabsPerm.open, d.notifMenu.open = false, false, false
 		case d.editing:
 			d.editing = false
 			gtx.Execute(key.FocusCmd{})
@@ -282,7 +430,7 @@ func (d *ChannelDetails) update(gtx C) {
 	d.dlg.Clicked(gtx)
 	if d.tab.update(gtx) {
 		d.editing, d.confirmLeave = false, false
-		d.memFilter.open, d.tabsPerm.open = false, false
+		d.memFilter.open, d.tabsPerm.open, d.notifMenu.open = false, false, false
 	}
 	d.memFilter.update(gtx)
 	d.tabsPerm.update(gtx)
@@ -290,6 +438,7 @@ func (d *ChannelDetails) update(gtx C) {
 	if !d.info.started() {
 		d.loadInfo()
 	}
+	d.watch()
 	inf, loaded, _ := d.info.get()
 	if loaded && inf.Conv.Kind != "" && inf.Conv.Kind != d.kind {
 		regroup := cdGroup(inf.Conv.Kind) != cdGroup(d.kind)
@@ -299,20 +448,27 @@ func (d *ChannelDetails) update(gtx C) {
 		}
 	}
 
-	for _, c := range []*widget.Clickable{&d.star, &d.notif, &d.call, &d.vip, &d.editPurpose, &d.emails,
-		&d.addPeople, &d.addPeopleRow, &d.addApp, &d.addWorkflow, &d.huddleStart, &d.huddleLink} {
+	for _, c := range []*widget.Clickable{&d.call, &d.vip, &d.emails, &d.addApp, &d.addWorkflow, &d.huddleStart, &d.huddleLink} {
 		if c.Clicked(gtx) {
 			d.h.Toast(cdUnsupported)
 		}
 	}
+	if d.addPeople.Clicked(gtx) {
+		// 1:1 and group DMs: Slack starts a new group conversation, which
+		// core can't do yet.
+		d.h.Toast("Adding people to a direct message isn’t supported yet")
+	}
+	d.updateWrites(gtx, inf, loaded)
 
-	// Topic editing.
+	// Topic / description / name editing.
 	if d.editTopic.Clicked(gtx) && loaded {
-		d.editing, d.confirmLeave = true, false
-		d.topicEd.SetText(inf.Conv.Topic)
-		n := d.topicEd.Len()
-		d.topicEd.SetCaret(n, n)
-		d.focusTopic = 3
+		d.startEdit(cdEditTopic, inf.Conv.Topic)
+	}
+	if d.editPurpose.Clicked(gtx) && loaded {
+		d.startEdit(cdEditPurpose, inf.Conv.Purpose)
+	}
+	if d.editName.Clicked(gtx) && loaded {
+		d.startEdit(cdEditName, inf.Conv.Name)
 	}
 	if d.editing && d.focusTopic > 0 {
 		// The editor appears this frame; retry focusing for a few frames.
@@ -345,9 +501,13 @@ func (d *ChannelDetails) update(gtx C) {
 		if _, done, err := d.topicOp.get(); done {
 			d.topicPending = false
 			if err != nil {
-				prev, doc := d.prevTopic, d.prevTopicDoc
-				d.info.mutate(func(v *core.ChannelDetails) { v.Conv.Topic, v.Conv.TopicDoc = prev, doc })
-				d.h.Toast("Couldn’t update the topic: " + friendlyErr(err))
+				prev := d.prevConv
+				d.info.mutate(func(v *core.ChannelDetails) {
+					v.Conv.Topic, v.Conv.TopicDoc = prev.Topic, prev.TopicDoc
+					v.Conv.Purpose, v.Conv.PurposeDoc = prev.Purpose, prev.PurposeDoc
+					v.Conv.Name = prev.Name
+				})
+				d.h.Toast("Couldn’t update the " + cdEditWhat[d.pendKind] + ": " + cdErr(err))
 			}
 		}
 	}
@@ -375,7 +535,7 @@ func (d *ChannelDetails) update(gtx C) {
 				d.h.Toast("Couldn’t hide this conversation: " + friendlyErr(err))
 			case err != nil:
 				d.confirmLeave = false
-				d.h.Toast("Couldn’t leave #" + name + ": " + friendlyErr(err))
+				d.h.Toast("Couldn’t leave #" + name + ": " + dirErr(err))
 			case dm:
 				d.h.Toast("Conversation hidden")
 				d.closed = true
@@ -399,7 +559,7 @@ func (d *ChannelDetails) update(gtx C) {
 		if _, done, err := d.joinOp.get(); done {
 			d.joinPending = false
 			if err != nil {
-				d.h.Toast("Couldn’t join #" + name + ": " + friendlyErr(err))
+				d.h.Toast("Couldn’t join #" + name + ": " + dirErr(err))
 			} else {
 				d.info.mutate(func(v *core.ChannelDetails) { v.IsMember = true; v.Conv.NumMembers++ })
 				d.h.Toast("You joined #" + name)
@@ -437,6 +597,9 @@ func (d *ChannelDetails) Layout(gtx C) D {
 	if d.th.Dark {
 		scrim = d.p.Overlay
 	}
+	// Stays translucent; LinearAlpha makes Gio's linear blend match the
+	// browser's sRGB result over the page background.
+	scrim = theme.LinearAlpha(scrim, d.p.Bg)
 	d.scrim.Layout(gtx, func(gtx C) D {
 		fill(gtx, image.Rectangle{Max: full}, scrim)
 		return D{Size: full}
@@ -454,7 +617,7 @@ func (d *ChannelDetails) Layout(gtx C) D {
 		r := image.Rect(0, 0, dw, dh)
 		rad := gtx.Dp(cdRadius)
 		theme.Shadow(gtx, r, rad, gtx.Dp(24), argb(0x59000000))
-		rrect(gtx, r.Inset(-max(1, gtx.Dp(1))), rad+max(1, gtx.Dp(1)), argb(0x211d1c1d))
+		rrect(gtx, r.Inset(-max(1, gtx.Dp(1))), rad+max(1, gtx.Dp(1)), d.p.Ring)
 		rrect(gtx, r, rad, d.p.Surface)
 		defer clip.UniformRRect(r, rad).Push(gtx.Ops).Pop()
 		g := gtx
@@ -525,24 +688,39 @@ func (d *ChannelDetails) head(gtx C, inf core.ChannelDetails, loaded bool) D {
 	})
 	dirAt(gtx, image.Pt(gtx.Dp(cdPadX), btnY), func(gtx C) D {
 		ch := []layout.FlexChild{
-			layout.Rigid(func(gtx C) D { return cdBtn(&d.base, gtx, &d.star, "star", "", true, 56) }),
+			layout.Rigid(func(gtx C) D {
+				ic := "star"
+				if d.isStarred() {
+					ic = "star-filled"
+				}
+				return cdBtn(&d.base, gtx, &d.star, ic, "", true, 56)
+			}),
 			hgap(8),
 		}
 		if dm {
 			ch = append(ch,
-				layout.Rigid(func(gtx C) D { return cdBtn(&d.base, gtx, &d.notif, "bell", "Mute", false, 0) }),
+				layout.Rigid(func(gtx C) D {
+					label := "Mute"
+					if d.muted(cv) {
+						label = "Unmute"
+					}
+					return cdBtn(&d.base, gtx, &d.notif, "bell", label, false, 0)
+				}),
 				hgap(8),
 				layout.Rigid(func(gtx C) D { return cdBtn(&d.base, gtx, &d.vip, "", "VIP", false, 0) }),
 				hgap(8),
 				layout.Rigid(func(gtx C) D { return cdBtn(&d.base, gtx, &d.hide, "", "Hide", false, 0) }),
 				hgap(8))
 		} else {
-			label := "Just mentions"
-			if cv.Muted {
-				label = "Mute"
-			}
+			label := d.notifLabel(cv)
 			ch = append(ch,
-				layout.Rigid(func(gtx C) D { return cdBtn(&d.base, gtx, &d.notif, "bell", label, true, 0) }),
+				layout.Rigid(func(gtx C) D {
+					dims := cdBtn(&d.base, gtx, &d.notifMenu.btn, "bell", label, true, 0)
+					if d.notifMenu.open {
+						d.notifMenu.menu(&d.base, gtx, dims.Size, false)
+					}
+					return dims
+				}),
 				hgap(8))
 		}
 		ch = append(ch, layout.Rigid(func(gtx C) D { return cdBtn(&d.base, gtx, &d.call, "phone", "Start a Call", true, 0) }))
@@ -555,6 +733,9 @@ func (d *ChannelDetails) head(gtx C, inf core.ChannelDetails, loaded bool) D {
 				continue
 			}
 			n := cv.NumMembers
+			if mc, ok, _ := d.counts.get(); ok && mc.People > 0 {
+				n = mc.People
+			}
 			if n == 0 {
 				n = len(cv.Members)
 			}
@@ -705,10 +886,7 @@ func cdBox(b *base, gtx C, rows ...W) D {
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 	gtx.Constraints.Min.Y = 0
 	rad := gtx.Dp(12)
-	line := argb(0x211d1c1d)
-	if b.th.Dark {
-		line = b.p.Border
-	}
+	line := dirRing(b, b.p.Surface)
 	ch := make([]layout.FlexChild, 0, 2*len(rows))
 	for i, r := range rows {
 		if i > 0 {
@@ -802,10 +980,13 @@ func (d *ChannelDetails) aboutItems(inf core.ChannelDetails) []W {
 		items = []W{cdGap(16), d.cdCard(topic), cdGap(16), d.cdCard(d.addPeopleField), cdGap(16), d.cdCard(d.emailsField)}
 	default:
 		rows := []W{topic, func(gtx C) D { return d.purposeField(gtx, cv) }}
+		if mgr := d.managerIDs(); len(mgr) > 0 {
+			rows = append(rows, func(gtx C) D { return d.managedField(gtx, mgr) })
+		}
 		if cv.Creator != "" || cv.Created != 0 {
 			rows = append(rows, func(gtx C) D { return d.createdField(gtx, cv) })
 		}
-		if !cv.IsArchived {
+		if !cv.IsArchived && !(cv.IsGeneral && inf.IsMember) {
 			rows = append(rows, func(gtx C) D { return d.leaveField(gtx, inf) })
 		}
 		items = []W{cdGap(16), d.cdCard(rows...), cdGap(16), d.cdCard(d.emailsField)}
@@ -814,7 +995,7 @@ func (d *ChannelDetails) aboutItems(inf core.ChannelDetails) []W {
 }
 
 func (d *ChannelDetails) topicField(gtx C, cv core.Conv) D {
-	if d.editing {
+	if d.editing && d.editKind == cdEditTopic {
 		return d.cdField(gtx, "Topic", nil, d.topicEditor)
 	}
 	return d.cdField(gtx, "Topic", &d.editTopic, func(gtx C) D {
@@ -823,6 +1004,9 @@ func (d *ChannelDetails) topicField(gtx C, cv core.Conv) D {
 }
 
 func (d *ChannelDetails) purposeField(gtx C, cv core.Conv) D {
+	if d.editing && d.editKind == cdEditPurpose {
+		return d.cdField(gtx, "Description", nil, d.topicEditor)
+	}
 	return d.cdField(gtx, "Description", &d.editPurpose, func(gtx C) D {
 		return d.richText(gtx, "purpose/"+d.id, cv.Purpose, cv.PurposeDoc, "Add a description")
 	})
@@ -926,7 +1110,7 @@ func (d *ChannelDetails) topicEditor(gtx C) D {
 			rad := gtx.Dp(8)
 			if gtx.Focused(&d.topicEd) {
 				ring := gtx.Dp(5)
-				rrect(gtx, r.Inset(-ring), rad+ring, theme.WithAlpha(d.p.Link, 0x4d))
+				rrect(gtx, r.Inset(-ring), rad+ring, flatten(theme.WithAlpha(d.p.Link, 0x4d), d.p.Surface))
 				one := max(1, gtx.Dp(1))
 				rrect(gtx, r.Inset(-one), rad+one, d.p.Link)
 			}
@@ -991,7 +1175,7 @@ func (d *ChannelDetails) cdTileRow(gtx C, icon string, text W) D {
 	return row(gtx, layout.Middle,
 		layout.Rigid(func(gtx C) D {
 			s := gtx.Dp(36)
-			rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(4), cdTileBg)
+			rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(4), flatten(cdTileBg, d.p.Surface))
 			g := gtx
 			g.Constraints = layout.Exact(image.Pt(s, s))
 			layout.Center.Layout(g, func(gtx C) D { return d.icon(gtx, icon, 20, d.p.Link) })
@@ -1072,7 +1256,11 @@ func (d *ChannelDetails) membersTab(gtx C) D {
 		busy = true
 	}
 	filtering := q != "" || d.memFilter.sel != 0
-	n := 1 + len(users) + 1 // "Add people or agents", members, footer
+	inv := 0
+	if d.inviting {
+		inv = 1
+	}
+	n := 1 + inv + len(users) + 1 // "Add people or agents", invite panel, members, footer
 	l := d.list(cdMembers)
 	if !filtering && loaded && err == nil && mp.next != "" && !busy {
 		if p := l.Position; p.First+p.Count >= n-5 {
@@ -1090,14 +1278,14 @@ func (d *ChannelDetails) membersTab(gtx C) D {
 					layout.Rigid(func(gtx C) D {
 						gtx.Constraints.Max.X = min(gtx.Dp(316), max(0, gtx.Constraints.Max.X-gtx.Dp(208)))
 						gtx.Constraints.Min.X = gtx.Constraints.Max.X
-						return dirSearchField(&d.base, gtx, d.find, dirFieldStyle{H: 36, Icon: 16, PadL: 8, Gap: 8, Border: d.p.Faint}, nil)
+						return dirSearchField(&d.base, gtx, d.find, dirFieldStyle{H: 36, Icon: 16, PadL: 8, Gap: 8, Border: d.p.Faint, Over: d.p.Surface}, nil)
 					}),
 					hgap(8),
 					layout.Rigid(func(gtx C) D { return d.memFilter.layoutSelect(&d.base, gtx, 200) }),
 				)
 			})
 			if p := l.Position; p.First > 0 || p.Offset > 0 {
-				fill(gtx, image.Rect(0, dims.Size.Y-max(1, gtx.Dp(1)), gtx.Constraints.Max.X, dims.Size.Y), argb(0x211d1c1d))
+				fill(gtx, image.Rect(0, dims.Size.Y-max(1, gtx.Dp(1)), gtx.Constraints.Max.X, dims.Size.Y), dirRing(&d.base, d.p.Surface))
 			}
 			return dims
 		}),
@@ -1107,8 +1295,10 @@ func (d *ChannelDetails) membersTab(gtx C) D {
 				switch {
 				case i == 0:
 					return d.addMembersRow(gtx)
-				case i <= len(users):
-					return d.memberRow(gtx, users[i-1], self)
+				case inv == 1 && i == 1:
+					return d.invitePanel(gtx, mp.users)
+				case i-inv <= len(users):
+					return d.memberRow(gtx, users[i-inv-1], self)
 				}
 				return d.membersFooter(gtx, q, filtering, loaded, err, busy, mp.next, len(users))
 			})
@@ -1256,8 +1446,18 @@ func (d *ChannelDetails) tabsItems() []W {
 	if !d.bookmarks.started() {
 		d.loadBookmarks()
 	}
-	rows := make([]W, len(cdTabRows))
-	for i, t := range cdTabRows {
+	tabRows := cdTabRows
+	if cdGroup(d.kind) != "im" {
+		if !d.tabList.started() {
+			c, id := d.h.Core(), d.id
+			d.tabList.load(d.h, false, func(ctx context.Context) ([]core.Tab, error) { return c.Tabs(ctx, id) })
+		}
+		if ts, ok, err := d.tabList.get(); ok && err == nil {
+			tabRows = cdTabsRows(ts)
+		}
+	}
+	rows := make([]W, len(tabRows))
+	for i, t := range tabRows {
 		rows[i] = func(gtx C) D {
 			return layout.Inset{Top: 16, Bottom: 16, Left: 20, Right: 20}.Layout(gtx, func(gtx C) D {
 				return row(gtx, layout.Middle,
@@ -1421,9 +1621,361 @@ func (d *ChannelDetails) settingsItems() []W {
 			return layout.Inset{Top: 8}.Layout(gtx, func(gtx C) D { return d.tabsPerm.layoutSelect(&d.base, gtx, 224) })
 		})
 	}
+	name := func(gtx C) D {
+		if d.editing && d.editKind == cdEditName {
+			return d.cdField(gtx, "Channel name", nil, d.topicEditor)
+		}
+		inf, _, _ := d.info.get()
+		return d.cdField(gtx, "Channel name", &d.editName, func(gtx C) D {
+			return d.para(gtx, 15, 22, wReg, d.p.Text, 1, "#"+inf.Conv.Name)
+		})
+	}
 	return []W{
+		cdGap(16),
+		d.cdCard(name),
 		cdGap(16),
 		d.cdCard(huddles, tabsPerm, setting("Posting permissions", "Choose who can post in this channel.")),
 		cdGap(24),
 	}
+}
+
+// ---- core writes: star, notifications, invite; managers, counts ----
+
+// isStarred is the star state shown (optimistic while a write runs).
+func (d *ChannelDetails) isStarred() bool {
+	if d.starPending {
+		return d.starOv
+	}
+	return d.h.Core().Starred(d.id)
+}
+
+// notify is the conversation's notification override as shown.
+func (d *ChannelDetails) notify() core.ChannelNotify {
+	if d.notifPending {
+		return d.notifOv
+	}
+	return d.h.Core().NotifyPrefs(d.id)
+}
+
+func (d *ChannelDetails) muted(cv core.Conv) bool {
+	if d.notifPending {
+		return d.notifOv.Muted
+	}
+	return d.notify().Muted || cv.Muted
+}
+
+// Notification levels of the bell menu (Slack's desktop values).
+var (
+	cdNotifKeys   = []string{"everything", "mentions_dms", "nothing"}
+	cdNotifLabels = []string{"All new posts", "Just mentions", "Off"}
+)
+
+// notifLevel is the effective desktop level index (the override, else the
+// global default; Just mentions when unknown).
+func (d *ChannelDetails) notifLevel() int {
+	v := d.notify().Desktop
+	if v == "" || v == "default" {
+		v = d.h.Core().Prefs().GlobalDesktop
+	}
+	for i, k := range cdNotifKeys {
+		if k == v {
+			return i
+		}
+	}
+	return 1
+}
+
+// notifLabel is the bell button label: "Mute" when muted, else the level.
+func (d *ChannelDetails) notifLabel(cv core.Conv) string {
+	if d.muted(cv) {
+		return "Mute"
+	}
+	return cdNotifLabels[d.notifLevel()]
+}
+
+// updateWrites handles the star, bell menu / mute, invite and the
+// managers / counts loads.
+func (d *ChannelDetails) updateWrites(gtx C, inf core.ChannelDetails, loaded bool) {
+	c, id := d.h.Core(), d.id
+	cv := d.conv(inf, loaded)
+	group := cdGroup(d.kind)
+
+	if d.star.Clicked(gtx) && !d.starPending {
+		on := !d.isStarred()
+		d.starOv, d.starPending = on, true
+		d.starOp.load(d.h, false, func(ctx context.Context) (bool, error) { return true, c.Star(ctx, id, on) })
+	}
+	if d.starPending {
+		if _, done, err := d.starOp.get(); done {
+			d.starPending = false
+			if err != nil {
+				verb := "star"
+				if !d.starOv {
+					verb = "unstar"
+				}
+				d.h.Toast("Couldn’t " + verb + " this conversation: " + cdErr(err))
+			}
+		}
+	}
+
+	// Bell: channels get the level menu plus Mute; DMs a Mute toggle.
+	setNotify := func(n core.ChannelNotify, mute *bool) {
+		if d.notifPending {
+			return
+		}
+		d.notifOv, d.notifPending = n, true
+		d.notifOp.load(d.h, false, func(ctx context.Context) (bool, error) {
+			if mute != nil {
+				return true, c.Mute(ctx, id, *mute)
+			}
+			return true, c.SetNotifyPrefs(ctx, id, n)
+		})
+	}
+	if d.notif.Clicked(gtx) {
+		n := d.notify()
+		m := !d.muted(cv)
+		n.Muted = m
+		setNotify(n, &m)
+	}
+	if group != "im" {
+		dd := &d.notifMenu
+		mute := "Mute channel"
+		if d.muted(cv) {
+			mute = "Unmute channel"
+		}
+		dd.labels = append(append(dd.labels[:0], cdNotifLabels...), mute)
+		dd.sel = d.notifLevel()
+		if dd.update(gtx) {
+			n := d.notify()
+			switch pick := dd.sel; {
+			case pick < len(cdNotifKeys):
+				v := cdNotifKeys[pick]
+				if n.Mobile == "" || n.Mobile == "default" || n.Mobile == n.Desktop {
+					n.Mobile = v
+				}
+				n.Desktop, n.Muted = v, false
+				setNotify(n, nil)
+			default:
+				m := !d.muted(cv)
+				n.Muted = m
+				setNotify(n, &m)
+			}
+			dd.sel = d.notifLevel()
+		}
+	}
+	if d.notifPending {
+		if _, done, err := d.notifOp.get(); done {
+			d.notifPending = false
+			if err != nil {
+				d.h.Toast("Couldn’t change notifications: " + cdErr(err))
+			}
+		}
+	}
+
+	if group == "channel" && loaded && inf.Conv.ID != "" {
+		if !d.managers.started() {
+			d.managers.load(d.h, false, func(ctx context.Context) ([]string, error) { return c.Managers(ctx, id) })
+		}
+		if !d.counts.started() {
+			d.counts.load(d.h, false, func(ctx context.Context) (core.MemberCounts, error) { return c.MemberCounts(ctx, id) })
+		}
+	}
+
+	// Add people.
+	if d.addPeopleRow.Clicked(gtx) {
+		if group == "channel" {
+			d.inviting = !d.inviting
+			if d.inviting {
+				gtx.Execute(key.FocusCmd{Tag: &d.inviteQ.ed})
+			}
+		} else {
+			d.h.Toast("Adding people to a direct message isn’t supported yet")
+		}
+	}
+	if d.inviting {
+		q, changed, submitted := d.inviteQ.update(gtx)
+		if changed {
+			d.inviteDeb.set(q, gtx.Now)
+		}
+		dq, due := d.inviteDeb.due(gtx, dirDebounce)
+		if submitted {
+			dq, due = q, true
+			d.inviteDeb.sent = q
+		}
+		if due && dq != "" {
+			d.inviteRes.load(d.h, true, func(ctx context.Context) ([]core.User, error) { return c.SearchUsers(ctx, dq, 8) })
+		}
+	}
+	if d.inviteUser != "" {
+		if _, done, err := d.inviteOp.get(); done {
+			uid := d.inviteUser
+			d.inviteUser = ""
+			if err != nil {
+				d.h.Toast("Couldn’t add " + d.userName(uid) + ": " + cdErr(err))
+			} else {
+				d.added[uid] = true
+				d.h.Toast("Added " + d.userName(uid) + " to #" + inf.Conv.Name)
+				d.loadMembers("")
+				d.counts.load(d.h, true, func(ctx context.Context) (core.MemberCounts, error) { return c.MemberCounts(ctx, id) })
+			}
+		}
+	}
+}
+
+// managerIDs is the loaded "Managed by" list (nil until loaded or when
+// the viewer can't read role assignments).
+func (d *ChannelDetails) managerIDs() []string {
+	ids, ok, err := d.managers.get()
+	if !ok || err != nil {
+		return nil
+	}
+	return ids
+}
+
+// managedField: "Managed by" then the managers' names as links.
+func (d *ChannelDetails) managedField(gtx C, ids []string) D {
+	return d.cdField(gtx, "Managed by", nil, func(gtx C) D {
+		ch := make([]layout.FlexChild, 0, 2*len(ids))
+		for i, uid := range ids {
+			c := dirClick(d.rowClk, "mgr:"+uid)
+			if c.Clicked(gtx) {
+				d.h.OpenProfile(d.press.at, uid)
+			}
+			name := d.userName(uid)
+			if i < len(ids)-1 {
+				name += ","
+			}
+			if i > 0 {
+				ch = append(ch, hgap(4))
+			}
+			ch = append(ch, layout.Rigid(func(gtx C) D {
+				return c.Layout(gtx, func(gtx C) D {
+					pointerCursor(gtx)
+					return d.para(gtx, 15, 22, wReg, d.p.Link, 1, name)
+				})
+			}))
+		}
+		return row(gtx, layout.Baseline, ch...)
+	})
+}
+
+// invitePanel is the inline Add people search: a field, then up to 8
+// people with Add buttons (members show "In channel").
+func (d *ChannelDetails) invitePanel(gtx C, members []core.User) D {
+	in := make(map[string]bool, len(members))
+	for _, u := range members {
+		in[u.ID] = true
+	}
+	res, loaded, err := d.inviteRes.get()
+	return layout.Inset{Top: 4, Bottom: 8, Left: cdPadX, Right: cdPadX}.Layout(gtx, func(gtx C) D {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		ch := []layout.FlexChild{
+			layout.Rigid(func(gtx C) D {
+				return dirSearchField(&d.base, gtx, d.inviteQ, dirFieldStyle{H: 36, Icon: 16, PadL: 8, Gap: 8, Border: d.p.Faint, Over: d.p.Surface}, nil)
+			}),
+		}
+		switch {
+		case d.inviteQ.text() == "":
+			ch = append(ch, layout.Rigid(func(gtx C) D {
+				return layout.Inset{Top: 8}.Layout(gtx, func(gtx C) D {
+					return d.para(gtx, 13, 18, wReg, d.p.Muted, 2, "Search for someone to add to this channel.")
+				})
+			}))
+		case err != nil:
+			ch = append(ch, layout.Rigid(func(gtx C) D {
+				return layout.Inset{Top: 8}.Layout(gtx, func(gtx C) D {
+					return d.para(gtx, 13, 18, wReg, d.p.Muted, 2, "Couldn’t search: "+friendlyErr(err))
+				})
+			}))
+		case loaded && len(res) == 0 && !d.inviteRes.busy():
+			ch = append(ch, layout.Rigid(func(gtx C) D {
+				return layout.Inset{Top: 8}.Layout(gtx, func(gtx C) D { return d.para(gtx, 13, 18, wReg, d.p.Muted, 1, "No one found.") })
+			}))
+		}
+		for _, u := range res {
+			ch = append(ch, layout.Rigid(func(gtx C) D { return d.inviteRow(gtx, u, in[u.ID] || d.added[u.ID]) }))
+		}
+		return col(gtx, ch...)
+	})
+}
+
+// inviteRow: 36px avatar, name and title, then Add / "In channel".
+func (d *ChannelDetails) inviteRow(gtx C, u core.User, member bool) D {
+	c := dirClick(d.rowClk, "inv:"+u.ID)
+	if c.Clicked(gtx) && !member && d.inviteUser == "" {
+		cl, id, uid := d.h.Core(), d.id, u.ID
+		d.inviteUser = uid
+		d.inviteOp.load(d.h, false, func(ctx context.Context) (bool, error) { return true, cl.Invite(ctx, id, uid) })
+	}
+	return layout.Inset{Top: 8}.Layout(gtx, func(gtx C) D {
+		return row(gtx, layout.Middle,
+			layout.Rigid(func(gtx C) D { return d.avatar(gtx, u.Avatar, 36) }),
+			hgap(12),
+			layout.Flexed(1, func(gtx C) D {
+				return dirFill(gtx, func(gtx C) D {
+					return col(gtx,
+						layout.Rigid(func(gtx C) D { return d.para(gtx, 15, 22, wBold, d.p.Text, 1, dirFirst(u.RealName, displayName(u))) }),
+						layout.Rigid(func(gtx C) D {
+							if u.Title == "" {
+								return D{}
+							}
+							return d.para(gtx, 13, 18, wReg, d.p.Sec, 1, u.Title)
+						}),
+					)
+				})
+			}),
+			layout.Rigid(func(gtx C) D {
+				switch {
+				case member:
+					return d.label(gtx, 13, wReg, d.p.Muted, "In channel")
+				case d.inviteUser == u.ID:
+					return d.label(gtx, 13, wReg, d.p.Muted, "Adding…")
+				}
+				return d.button(gtx, c, btnOutline, true, "Add")
+			}),
+		)
+	})
+}
+
+// cdTabsRows turns the channel's tab bar into Tabs-tab rows: Messages
+// first, then each tab with an icon for its type.
+func cdTabsRows(ts []core.Tab) []cdTabRow {
+	out := []cdTabRow{cdTabRows[0]}
+	for _, t := range ts {
+		icon := "link"
+		switch t.Type {
+		case "canvas", "channel_canvas":
+			icon = "canvas"
+		case "files":
+			icon = "files"
+		case "folder", "bookmarks":
+			icon = "bookmark"
+		case "workflows":
+			icon = "workflow"
+		case "list":
+			icon = "canvas"
+		}
+		note := ""
+		if t.Deleted {
+			note = "Deleted"
+		}
+		out = append(out, cdTabRow{icon, dirFirst(t.Title, t.Label, t.Type), note})
+	}
+	return out
+}
+
+// cdErr is a short reason for a failed channel write.
+func cdErr(err error) string {
+	s := err.Error()
+	switch {
+	case strings.Contains(s, "name_taken"):
+		return "that name is already taken"
+	case strings.Contains(s, "invalid_name"), strings.Contains(s, "invalid_name_specials"):
+		return "names can only contain lowercase letters, numbers, hyphens and underscores"
+	case strings.Contains(s, "not_authorized"), strings.Contains(s, "restricted_action"), strings.Contains(s, "cant_"):
+		return "you don’t have permission to do that here"
+	case strings.Contains(s, "already_in_channel"):
+		return "they’re already in the channel"
+	}
+	return dirErr(err)
 }
