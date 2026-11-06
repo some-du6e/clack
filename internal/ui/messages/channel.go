@@ -17,6 +17,9 @@ type ChannelView struct {
 	// Origin is the view's top-left in window coordinates, used for popup
 	// anchors when the Host doesn't implement PointerHost.
 	Origin image.Point
+	// Preview disables marking the channel read (channel previews,
+	// unjoined channels).
+	Preview bool
 }
 
 // NewChannelView returns the view for channelID. Views are cheap: rows,
@@ -33,6 +36,7 @@ func (v *ChannelView) Channel() string { return v.ch }
 
 // Layout draws the list filling the constraints.
 func (v *ChannelView) Layout(gtx layout.Context) layout.Dimensions {
+	v.s.noMark = v.Preview
 	return v.s.layoutList(gtx, v.h, v.Origin)
 }
 

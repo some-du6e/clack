@@ -105,6 +105,7 @@ type listState struct {
 
 	lastTyping time.Time
 
+	noMark      bool
 	highlight   string
 	highlightAt time.Time
 	pendingJump string
@@ -397,7 +398,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		s.hb.loadOlder(s.m)
 	}
 	// mark read at the bottom
-	if !s.thread && s.snap.loaded && !p.BeforeEnd && len(s.snap.msgs) > 0 {
+	if !s.thread && !s.noMark && s.snap.loaded && !p.BeforeEnd && len(s.snap.msgs) > 0 {
 		latest := s.snap.msgs[len(s.snap.msgs)-1].m.TS
 		if latest != s.markedTS && (s.snap.lastRead == "" || tsLess(s.snap.lastRead, latest)) && now.Sub(s.lastMark) > 1500*time.Millisecond {
 			s.markedTS, s.lastMark = latest, now
