@@ -3,6 +3,8 @@ package ui
 import (
 	"image"
 
+	"gioui.org/layout"
+
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/messages"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/views"
@@ -34,13 +36,26 @@ func init() {
 			return views.NewLater(a)
 		case "threads":
 			return views.NewThreads(a)
+		case "directories":
+			return views.NewDirectories(a)
 		}
 		return nil
+	}
+	openDetails = func(a *App, ch string) bool {
+		a.ShowOverlay(detailsOverlay{views.NewChannelDetails(a, ch)})
+		return true
 	}
 	mkMenu = func(a *App, anchor image.Point, items []MenuItem) Overlay {
 		return popups.NewMenu(a, anchor, toPopupItems(items))
 	}
 }
+
+// detailsOverlay shows views.ChannelDetails (a centered modal dialog, as
+// in Slack 2026) on the overlay stack.
+type detailsOverlay struct{ d *views.ChannelDetails }
+
+func (o detailsOverlay) Layout(gtx layout.Context) layout.Dimensions { return o.d.Layout(gtx) }
+func (o detailsOverlay) Dismissed() bool                             { return o.d.Closed() }
 
 func toPopupItems(items []MenuItem) []popups.MenuItem {
 	out := make([]popups.MenuItem, 0, len(items))

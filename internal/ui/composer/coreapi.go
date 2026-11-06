@@ -28,8 +28,7 @@ func (c coreAPI) send(ctx context.Context, ch, threadTS, text string, blocks jso
 }
 
 func (c coreAPI) edit(ctx context.Context, ch, ts, text string, blocks json.RawMessage) error {
-	_, err := c.a.Edit(ctx, ch, ts, text, blocks)
-	return err
+	return c.a.Edit(ctx, ch, ts, text, blocks)
 }
 
 func (c coreAPI) typing(ch, threadTS string) { c.a.Typing(ch, threadTS) }
