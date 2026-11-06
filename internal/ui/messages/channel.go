@@ -30,7 +30,8 @@ func NewChannelView(h Host, channelID string) *ChannelView {
 	v.s.hb.ensureLoaded(v.s.m)
 	// Each open places the "New" line at the read cursor as it is now.
 	if app := h.Core(); app != nil {
-		v.s.openLastRead = app.Count(channelID).LastRead
+		cnt := app.Count(channelID)
+		v.s.openLastRead, v.s.openUnread = cnt.LastRead, cnt.Unread
 		v.s.opened = true
 		v.s.built = 0
 	}

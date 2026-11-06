@@ -103,6 +103,7 @@ type listState struct {
 	lastTyping time.Time
 
 	noMark      bool
+	openUnread  bool // the server said "unread" when the view opened (e.g. marked unread)
 	jumpPages   int
 	origin      image.Point // view origin in window coordinates
 	lastOlder   time.Time
@@ -273,7 +274,7 @@ func (s *listState) build(h Host, now time.Time) {
 			for k := i; k < len(msgs) && !othersAfter; k++ {
 				othersAfter = msgs[k].m.User != self
 			}
-			if (i > 0 || s.snap.hasMore) && othersAfter {
+			if (i > 0 || s.snap.hasMore) && (othersAfter || s.openUnread) {
 				s.items = append(s.items, item{kind: itUnread, key: "unread"})
 				header = true
 			}
