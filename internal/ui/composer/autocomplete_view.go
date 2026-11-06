@@ -503,7 +503,7 @@ func (rc *acRowCtx) command(it acItem) {
 	if it.Command != nil && it.Command.IconURL != "" {
 		// App command: the app's icon (placeholder gray while it loads).
 		fillRRect(gtx, icon, gtx.Dp(acAvatarR), acPlaceBg)
-		ac.drawImage(gtx, it.Command.IconURL, icon, gtx.Dp(acAvatarR), acPlaceBg)
+		rc.ac.drawImage(gtx, it.Command.IconURL, icon, gtx.Dp(acAvatarR), acPlaceBg)
 	} else {
 		// Built-in (core) command: the slash glyph.
 		fillRRect(gtx, icon, gtx.Dp(acAvatarR), acPlaceBg)
