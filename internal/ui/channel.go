@@ -134,7 +134,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		return layout.Dimensions{Size: r.Size()}
 	})
 	if clicked(a.clicks.get("hdr.huddle")) {
-		a.Toast("Huddles aren't supported in "+AppName+" yet")
+		a.Toast("Huddles aren't supported in " + AppName + " yet")
 	}
 	right -= gtx.Dp(6)
 
