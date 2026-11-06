@@ -330,14 +330,23 @@ func runWrites(ctx context.Context, a *core.App, ew *watcher) {
 	if ev, ok := ew.wait("message", "", 10*time.Second, func(e core.Event) bool { return e.Reply && e.ThreadTS == m.TS }); ok {
 		fileTS = ev.TS
 		step("  upload message event", t, "ts=%s", fileTS)
-		_, upd := ew.wait("update", fileTS, 10*time.Second)
+		// open the thread (caches it); a stub file is then filled via files.info
+		_, _ = a.Replies(ctx, ch, m.TS)
 		hasURL := false
-		if fm, ok := a.S.Find(ch, fileTS); ok {
-			for _, f := range fm.Files {
-				hasURL = hasURL || f.URLPrivate != ""
+		for i := 0; i < 50 && !hasURL; i++ {
+			if fm, ok := a.S.Find(ch, fileTS); ok {
+				for _, f := range fm.Files {
+					hasURL = hasURL || f.URLPrivate != ""
+				}
+			}
+			if !hasURL {
+				time.Sleep(200 * time.Millisecond)
 			}
 		}
-		step("  upload file filled", t, "update_event=%v url_private=%v", upd, hasURL)
+		step("  upload file filled", t, "url_private=%v", hasURL)
+		if !hasURL {
+			fail("uploaded file never got a URL")
+		}
 	} else {
 		fail("upload: no reply message event")
 	}
