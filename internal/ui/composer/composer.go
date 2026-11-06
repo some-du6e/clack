@@ -247,6 +247,7 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 		Link:           c.ed.ActiveLink(),
 		CanSend:        !c.ed.Empty() || c.att.Len() > 0,
 		Broadcast:      c.broadcast,
+		Origin:         c.Origin,
 	}
 	st.InCode = st.Block == CodeBlock
 	st.ShowPlaceholder = c.ed.Empty() && c.ed.Doc().Len() == 0
