@@ -6,7 +6,43 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"time"
+
+	"github.com/godbus/dbus/v5"
 )
+
+// attExplorerUsable reports whether the xdg-desktop-portal FileChooser is
+// likely to answer. The Gio explorer talks to the portal over D-Bus and
+// blocks on a Response signal that never arrives when no portal backend is
+// registered (headless sessions, bare Xvfb), so we probe first and skip
+// the explorer when the portal name has no owner. The probe is bounded so
+// a wedged bus can't hang the picker.
+func attExplorerUsable() bool {
+	if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
+		return false
+	}
+	type res struct {
+		owned bool
+	}
+	ch := make(chan res, 1)
+	go func() {
+		conn, err := dbus.SessionBus()
+		if err != nil {
+			ch <- res{}
+			return
+		}
+		var has bool
+		err = conn.BusObject().Call("org.freedesktop.DBus.NameHasOwner", 0,
+			"org.freedesktop.portal.Desktop").Store(&has)
+		ch <- res{owned: err == nil && has}
+	}()
+	select {
+	case r := <-ch:
+		return r.owned
+	case <-time.After(400 * time.Millisecond):
+		return false
+	}
+}
 
 // Linux clipboard images and file pickers, via command-line tools when
 // installed: wl-paste (wl-clipboard) on Wayland, xclip on X11/XWayland;

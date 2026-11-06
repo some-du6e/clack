@@ -326,7 +326,9 @@ func detectTrigger(d *Doc, caret int) (acTrigger, bool) {
 	}
 	start := d.WordBefore(caret)
 	if start >= caret {
-		return acTrigger{}, false
+		// No word immediately before the caret: a mention may still be
+		// open with trailing spaces ("@karim h"), so try the @ scan.
+		return mentionTrigger(d, caret)
 	}
 	if d.Attrs[start].Style&Code != 0 {
 		return acTrigger{}, false
@@ -359,9 +361,52 @@ func detectTrigger(d *Doc, caret int) (acTrigger, bool) {
 			return acTrigger{}, false
 		}
 	default:
-		return acTrigger{}, false
+		// The word before the caret isn't a trigger token, but an @ mention
+		// with spaces may still be open further back ("@karim h").
+		return mentionTrigger(d, caret)
 	}
 	return t, true
+}
+
+// mentionTrigger scans back from the caret for an @ at a word boundary whose
+// query may contain single internal spaces, so "@karim h" matches
+// "Karim Hacker" as in Slack. It stops at a newline, an atom, a double
+// space, another trigger char, or 48 runes.
+func mentionTrigger(d *Doc, caret int) (acTrigger, bool) {
+	const maxLen = 48
+	lineStart := d.LineStart(d.LineOf(caret))
+	i := caret
+	for i > lineStart && caret-i < maxLen {
+		r := d.Runes[i-1]
+		if d.Attrs[i-1].Atom != nil {
+			break
+		}
+		if r == '@' {
+			// @ must be at a word boundary (line start or after a space).
+			if i-1 > lineStart {
+				p := d.Runes[i-2]
+				if p != ' ' && p != '\t' && p != ' ' {
+					break
+				}
+			}
+			if d.Attrs[i-1].Style&Code != 0 {
+				return acTrigger{}, false
+			}
+			if l := d.LineOf(i - 1); l < len(d.Lines) && d.Lines[l].Kind == CodeBlock {
+				return acTrigger{}, false
+			}
+			q := string(d.Runes[i:caret])
+			if strings.TrimSpace(q) == "" || !validQuery(q, ".-_' ") || strings.Contains(q, "  ") {
+				return acTrigger{}, false
+			}
+			return acTrigger{Kind: acUser, Start: i - 1, End: caret, Query: q}, true
+		}
+		if r == '\n' || r == '#' || r == ':' || r == '/' {
+			break
+		}
+		i--
+	}
+	return acTrigger{}, false
 }
 
 // validQuery reports whether q holds only letters, digits and extra.
@@ -663,10 +708,29 @@ func userTier(q string, u core.User) int {
 		return tierHandle
 	case wordPrefix(real, q) || wordPrefix(name, q) || strings.HasPrefix(real, q):
 		return tierWord
+	case allWordsPrefix(name+" "+real+" "+handle, q):
+		// Multi-word queries ("karim h", "hac karim"): every query token is
+		// a word-prefix somewhere in the combined name/handle/real name.
+		return tierWord
 	case strings.Contains(name, q) || strings.Contains(handle, q) || strings.Contains(real, q):
 		return tierSub
 	}
 	return tierNone
+}
+
+// allWordsPrefix reports whether every whitespace-separated token of q is a
+// wordPrefix of s. Only useful for multi-token queries.
+func allWordsPrefix(s, q string) bool {
+	toks := strings.Fields(q)
+	if len(toks) < 2 {
+		return false
+	}
+	for _, t := range toks {
+		if !wordPrefix(s, t) {
+			return false
+		}
+	}
+	return true
 }
 
 // wordPrefix reports whether some word of s (split on space, '-', '_',
