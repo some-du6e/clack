@@ -1,0 +1,150 @@
+// Package richtext turns Slack messages (mrkdwn, rich_text, Block Kit,
+// attachments, unfurls, files) into a structured document (Doc) that the
+// native UI lays out. It replaces the HTML renderer in internal/render.
+//
+// Everything here is pure: no I/O, no globals mutated, safe for concurrent use
+// as long as the Resolver is.
+package richtext
+
+// Style is a bit set of inline text styles.
+type Style uint16
+
+const (
+	Bold Style = 1 << iota
+	Italic
+	Strike
+	Code
+	Underline
+	Highlight
+)
+
+// SpanKind says what an inline span is.
+type SpanKind uint8
+
+const (
+	Text SpanKind = iota
+	Link
+	User
+	Channel
+	Usergroup
+	Broadcast // @here @channel @everyone
+	Emoji
+	Date
+	Break // hard line break
+)
+
+// Span is one run of inline content.
+type Span struct {
+	Kind  SpanKind
+	Text  string // display text, already unescaped and resolved ("@karim", "#general", "here", formatted date)
+	Style Style
+	URL   string // Link: target. Emoji: image URL (custom or Slack CDN standard).
+	ID    string // User/Channel/Usergroup id; Emoji: name (with ::skin-tone-N)
+	Self  bool   // User mention of the viewer, or a broadcast (yellow highlight)
+}
+
+// BlockKind says what a block is.
+type BlockKind uint8
+
+const (
+	Paragraph BlockKind = iota
+	Preformatted
+	Quote
+	List
+	Header
+	Divider
+	Context
+	Section
+	Image
+	Actions
+	Attachment
+	File
+	Tombstone
+)
+
+// Block is one vertical unit of a document.
+type Block struct {
+	Kind       BlockKind
+	Spans      []Span   // inline content (Paragraph, Preformatted, Quote, Header, Context, Section text)
+	Items      [][]Span // List items
+	Ordered    bool     // List
+	Indent     int      // List
+	Offset     int      // List
+	Border     bool     // List
+	Fields     [][]Span // Section fields / attachment fields (Short flag in FieldShort)
+	FieldShort []bool
+	Image      *Image   // Image block, section accessory, attachment image/thumb
+	Buttons    []Button // Actions block / section button accessory
+	Att        *Attachment
+	File       *File
+	Children   []Block // nested blocks (e.g. attachment body)
+}
+
+// Image is a remote image reference.
+type Image struct {
+	URL   string
+	Alt   string
+	W, H  int
+	Title string
+	Proxy bool // needs the session cookie (files.slack.com)
+}
+
+// Button is a Block Kit button (or a placeholder for another interactive element).
+type Button struct {
+	Text     string
+	URL      string
+	Style    string // primary|danger|""
+	ActionID string
+	Value    string
+	BlockID  string
+}
+
+// Attachment is a legacy attachment, link unfurl or shared/forwarded message.
+type Attachment struct {
+	Color        string
+	Pretext      []Span
+	ServiceName  string
+	ServiceIcon  string
+	AuthorName   string
+	AuthorIcon   string
+	AuthorLink   string
+	Title        []Span
+	TitleLink    string
+	Text         []Block
+	Footer       []Span
+	FooterIcon   string
+	TS           int64
+	Image        *Image
+	Thumb        *Image
+	IsUnfurl     bool
+	IsShare      bool
+	ShareChannel string
+	FromURL      string
+}
+
+// File is a file shared in a message.
+type File struct {
+	ID, Name, Title, Mime, Type, PrettyType string
+	Size                                    int64
+	URL, Download, Permalink                string
+	Thumb                                   *Image // best thumb for images/videos/pdfs
+	IsImage, IsVideo, IsAudio, IsSnippet    bool
+	Preview                                 string
+	Lines                                   int
+	DurationMS                              int
+}
+
+// Doc is a whole message body.
+type Doc struct {
+	Blocks []Block
+	Jumbo  bool // emoji-only, render emoji 32px
+}
+
+// Resolver supplies names and emoji while building a Doc.
+type Resolver interface {
+	UserName(id string) string
+	ChannelName(id string) string
+	UsergroupName(id string) string
+	Emoji(name string) (url, text string, ok bool)
+	SelfID() string
+}
