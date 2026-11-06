@@ -935,7 +935,7 @@ func (d *Directories) personCard(gtx C, u core.User, w, h int) D {
 				}
 			}
 			if c.Hovered() {
-				fill(gtx, image.Rect(0, 0, w, w), dirHoverTint(&d.base))
+				fill(gtx, image.Rect(0, 0, w, w), theme.LinearAlpha(dirHoverTint(&d.base), d.p.Surface))
 			}
 		}()
 		dirAt(gtx, image.Pt(gtx.Dp(16), w+gtx.Dp(10)), func(gtx C) D {

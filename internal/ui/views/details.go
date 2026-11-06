@@ -508,6 +508,9 @@ func (d *ChannelDetails) Layout(gtx C) D {
 	if d.th.Dark {
 		scrim = d.p.Overlay
 	}
+	// Stays translucent; LinearAlpha makes Gio's linear blend match the
+	// browser's sRGB result over the page background.
+	scrim = theme.LinearAlpha(scrim, d.p.Bg)
 	d.scrim.Layout(gtx, func(gtx C) D {
 		fill(gtx, image.Rectangle{Max: full}, scrim)
 		return D{Size: full}
