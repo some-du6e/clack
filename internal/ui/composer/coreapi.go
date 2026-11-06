@@ -13,7 +13,7 @@ import (
 
 type coreAPI struct{ a *core.App }
 
-func (c coreAPI) self() core.User                        { return c.a.Self() }
+func (c coreAPI) self() core.User                         { return c.a.Self() }
 func (c coreAPI) user(id string) (core.User, bool)        { return c.a.User(id) }
 func (c coreAPI) users(ids []string) map[string]core.User { return c.a.Users(ids) }
 func (c coreAPI) conv(id string) (core.Conv, bool)        { return c.a.Conv(id) }
