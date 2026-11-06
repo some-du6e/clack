@@ -21,6 +21,26 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
+// fileItem is a core.File with the Files view's display helpers.
+type fileItem struct{ core.File }
+
+func (f *fileItem) title() string {
+	if f.Title != "" {
+		return f.Title
+	}
+	return f.Name
+}
+
+func (f *fileItem) isImage() bool { return f.IsImage || strings.HasPrefix(f.Mime, "image/") }
+
+func (f *fileItem) isCanvas() bool {
+	return f.IsCanvas || f.Filetype == "quip" || f.Filetype == "canvas" || strings.EqualFold(f.PrettyType, "canvas")
+}
+
+func (f *fileItem) isList() bool {
+	return f.IsList || f.Filetype == "list" || strings.EqualFold(f.PrettyType, "list")
+}
+
 // Files is the 2026 Files rail tab: a themed Files sidebar (All files,
 // Canvases, Lists, Deleted, Starred) next to a #f8f8f8 primary pane with
 // search, the Templates strip, segment buttons (All / Created by you /
@@ -64,8 +84,8 @@ type Files struct {
 	filtersBtn widget.Clickable
 
 	retry  widget.Clickable
-	data   async[filePage]
-	more   async[filePage]
+	data   async[core.FilePage]
+	more   async[core.FilePage]
 	items  []fileItem
 	page   int
 	pages  int
@@ -136,11 +156,11 @@ func (f *Files) start() {
 	f.items, f.page, f.pages = f.items[:0], 0, 0
 	a := f.h.Core()
 	if f.kind() == "deleted" {
-		f.data.load(f.h, false, func(ctx context.Context) (filePage, error) { return deletedFiles(ctx, a) })
+		f.data.load(f.h, false, func(ctx context.Context) (core.FilePage, error) { return a.DeletedFiles(ctx) })
 		return
 	}
-	q := fileQuery{Kind: f.kind(), Query: f.query, Mine: f.seg == 1, Page: 1}
-	f.data.load(f.h, false, func(ctx context.Context) (filePage, error) { return listFiles(ctx, a, q) })
+	q := core.FilesOpts{Kind: f.kind(), Query: f.query, Mine: f.seg == 1, SharedWithMe: f.seg == 2, Page: 1}
+	f.data.load(f.h, false, func(ctx context.Context) (core.FilePage, error) { return a.Files(ctx, q) })
 }
 
 func (f *Files) loadMore() {
@@ -148,8 +168,8 @@ func (f *Files) loadMore() {
 		return
 	}
 	a := f.h.Core()
-	q := fileQuery{Kind: f.kind(), Query: f.query, Mine: f.seg == 1, Page: f.page + 1}
-	f.more.load(f.h, false, func(ctx context.Context) (filePage, error) { return listFiles(ctx, a, q) })
+	q := core.FilesOpts{Kind: f.kind(), Query: f.query, Mine: f.seg == 1, SharedWithMe: f.seg == 2, Page: f.page + 1}
+	f.more.load(f.h, false, func(ctx context.Context) (core.FilePage, error) { return a.Files(ctx, q) })
 }
 
 // visible reports whether a loaded file passes the client-side filters.
@@ -178,9 +198,6 @@ func (f *Files) visible(it *fileItem) bool {
 			return false
 		}
 	}
-	if f.seg == 2 && it.User == f.selfID() {
-		return false
-	}
 	return true
 }
 
@@ -203,11 +220,7 @@ func (f *Files) update(gtx C) {
 	}
 	for i := range f.segClicks {
 		if f.segClicks[i].Clicked(gtx) && f.seg != i {
-			// "Created by you" filters server-side; the others client-side.
-			if f.seg == 1 || i == 1 {
-				f.reload = true
-			}
-			f.seg = i
+			f.seg, f.reload = i, true
 		}
 	}
 	if f.gear.Clicked(gtx) {
@@ -1076,9 +1089,11 @@ var fileMention = regexp.MustCompile(`<([@#!])([A-Z0-9]+)(?:\|([^>]*))?>`)
 
 // cleanTitles unescapes Slack's &lt;&gt;&amp; and resolves <@U…>, <#C…>
 // and <!here> tokens in file titles, the way Slack displays them.
-func (f *Files) cleanTitles(in []fileItem) []fileItem {
+func (f *Files) cleanTitles(in []core.File) []fileItem {
 	out := make([]fileItem, len(in))
-	copy(out, in)
+	for i := range in {
+		out[i] = fileItem{in[i]}
+	}
 	for i := range out {
 		t := out[i].Title
 		if strings.Contains(t, "<") || strings.Contains(t, "&") {

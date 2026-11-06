@@ -331,3 +331,11 @@ func TestCustomEmojiSnapshotIsStable(t *testing.T) {
 		t.Errorf("snapshot %d, now %d", len(snap), len(a.CustomEmoji()))
 	}
 }
+
+func tss(ms []slack.Message) string {
+	var out []string
+	for _, m := range ms {
+		out = append(out, m.TS)
+	}
+	return strings.Join(out, ",")
+}
