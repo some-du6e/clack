@@ -800,7 +800,14 @@ func (d *Directories) personCard(gtx C, u core.User, w, h int) D {
 		if c.Hovered() {
 			rrect(gtx, card.Add(image.Pt(0, gtx.Dp(1))).Inset(-gtx.Dp(1)), rad+gtx.Dp(1), flatten(argb(0x14000000), d.p.ReadFill))
 		}
-		rrect(gtx, card, rad, d.p.Surface)
+		// The hover overlay is flattened over the card surface (Gio blends
+		// in linear space, which would make a translucent tint too strong)
+		// and stays translucent only over the photo.
+		bg := d.p.Surface
+		if c.Hovered() {
+			bg = flatten(dirHoverTint(&d.base), d.p.Surface)
+		}
+		rrect(gtx, card, rad, bg)
 		func() {
 			defer clip.RRect{Rect: image.Rect(0, 0, w, w), NW: rad, NE: rad}.Push(gtx.Ops).Pop()
 			fill(gtx, image.Rect(0, 0, w, w), d.p.Track)
@@ -808,6 +815,9 @@ func (d *Directories) personCard(gtx C, u core.User, w, h int) D {
 				if img, ok := d.h.Images().Get(url, w); ok {
 					theme.Image(gtx, img, image.Pt(w, w), 0)
 				}
+			}
+			if c.Hovered() {
+				fill(gtx, image.Rect(0, 0, w, w), dirHoverTint(&d.base))
 			}
 		}()
 		dirAt(gtx, image.Pt(gtx.Dp(16), w+gtx.Dp(10)), func(gtx C) D {
@@ -823,9 +833,6 @@ func (d *Directories) personCard(gtx C, u core.User, w, h int) D {
 				}),
 			)
 		})
-		if c.Hovered() {
-			rrect(gtx, card, rad, dirHoverTint(&d.base))
-		}
 		border(gtx, card, rad, max(1, gtx.Dp(1)), dirRing(&d.base, d.p.ReadFill))
 		return D{Size: card.Max}
 	})
