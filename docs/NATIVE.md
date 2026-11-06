@@ -22,19 +22,21 @@ type Style uint16
 const (Bold Style = 1 << iota; Italic; Strike; Code; Underline; Highlight)
 
 type SpanKind uint8
-const (Text SpanKind = iota; Link; User; Channel; Usergroup; Broadcast /* @here @channel @everyone */; Emoji; Date; Break /* hard line break */)
+const (Text SpanKind = iota; Link; User; Channel; Usergroup; Broadcast /* @here @channel @everyone */; Emoji; Date; Break /* hard line break */;
+	ColorSwatch /* rich_text color: Text is "#RRGGBB", draw a swatch */; InlineImage /* context-block image: URL, Text=alt */)
 
 type Span struct {
 	Kind  SpanKind
-	Text  string // display text, already unescaped and resolved ("@karim", "#general", "here", formatted date)
+	Text  string // display text, already unescaped and resolved ("@karim", "#general", "@here", formatted date); never contains "\n" (lines are split by Break spans)
 	Style Style
 	URL   string // Link: target. Emoji: image URL (custom or Slack CDN standard).
-	ID    string // User/Channel/Usergroup id; Emoji: name (with ::skin-tone-N)
+	ID    string // User/Channel/Usergroup id; Emoji: name (with ::skin-tone-N); Broadcast: here|channel|everyone; Date: unix seconds
 	Self  bool   // User mention of the viewer, or a broadcast (yellow highlight)
 }
 
 type BlockKind uint8
-const (Paragraph BlockKind = iota; Preformatted; Quote; List; Header; Divider; Context; Section; Image; Actions; Attachment; File; Tombstone)
+// ImageBlock/AttachmentBlock/FileBlock: Go can't have a const and a type both named Image/Attachment/File.
+const (Paragraph BlockKind = iota; Preformatted; Quote; List; Header; Divider; Context; Section; ImageBlock; Actions; AttachmentBlock; FileBlock; Tombstone)
 
 type Block struct {
 	Kind     BlockKind
@@ -47,15 +49,22 @@ type Block struct {
 	Buttons  []Button // Actions block / section button accessory
 	Att      *Attachment
 	File     *File
-	Children []Block  // nested blocks (e.g. attachment body)
+	Children []Block  // nested blocks: attachment files; Section text with quotes/pre (then Spans is nil)
 }
+// Preformatted spans carry no Code style (the block itself is monospace). Emoji with URL=="" (unknown to the Resolver
+// but with rich_text unicode) render as text. Tombstone: deleted message/file, Spans hold the notice.
 type Image struct { URL string; Alt string; W, H int; Title string; Proxy bool /* needs the session cookie (files.slack.com) */ }
-type Button struct { Text string; URL string; Style string /* primary|danger|"" */; ActionID, Value, BlockID string }
+type Button struct { Text string; URL string; Style string /* primary|danger|"" */; ActionID, Value, BlockID string
+	Kind string /* button|overflow|select|datepicker|timepicker|datetimepicker|input|checkboxes|radio_buttons */ }
 type Attachment struct {
 	Color string; Pretext []Span; ServiceName, ServiceIcon string; AuthorName, AuthorIcon, AuthorLink string
 	Title []Span; TitleLink string; Text []Block; Footer []Span; FooterIcon string; TS int64
-	Image *Image; Thumb *Image; IsUnfurl bool; IsShare bool; ShareChannel string; FromURL string
+	Image *Image; Thumb *Image; IsUnfurl bool; IsShare bool; ShareChannel string /* name, no "#" */; FromURL string
+	AuthorSubname string; ShareChannelID string; VideoURL string /* video block */
 }
+// Attachment blocks carry fields in Block.Fields/FieldShort (bold title, Break, value), legacy action buttons in
+// Block.Buttons, and attachment files in Block.Children. Video blocks, call blocks and huddle_thread messages are
+// also AttachmentBlocks (ServiceName "Call"/"Huddle"; huddle participants are User spans in Footer).
 type File struct {
 	ID, Name, Title, Mime, Type, PrettyType string; Size int64; URL, Download, Permalink string
 	Thumb *Image /* best thumb for images/videos/pdfs */; IsImage, IsVideo, IsAudio, IsSnippet bool; Preview string; Lines int; DurationMS int
@@ -69,6 +78,8 @@ type Resolver interface {
 func FromMessage(r Resolver, m *slack.Message) Doc   // blocks if rich, else mrkdwn text; plus files and attachments
 func FromMrkdwn(r Resolver, text string) []Block
 func PlainText(d Doc) string                         // for copy, previews, notifications
+// helpers: SpansText([]Span) string; FormatDate(t, "{date_short} at {time}") string (re-render Date spans: ID is unix secs);
+//          SafeURL(u) string; SafeImage(u) string; NeedsProxy(u) bool (files.slack.com etc: fetch via core.Fetch)
 ```
 
 ## `internal/core` contract
@@ -105,3 +116,32 @@ type Event struct {
 - Fast: immediate mode with virtualized `layout.List`s, no allocations in hot paths where avoidable, async image decode (`internal/imgcache`: memory LRU plus a disk cache for avatars/emoji only, decoded off the UI goroutine, invalidate the window on arrival). Instant channel switch from cached history.
 - Look: copy the Slack 2026 desktop client (measurements are taken from the real client in the agent-browser profile `whatever`). Lato TTF embedded (OFL). SVG-like icons drawn with `clip.Path` / vector icons; no Slack proprietary assets committed. Emoji images come from Slack's CDN at runtime.
 - Builds: Linux needs cgo with `libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev`. Windows cross-compiles without cgo. macOS builds on a `macos-latest` runner. Gio needs Go ≥ 1.24.
+
+## UI package ownership (Gio). Each agent edits only its own packages.
+| package | owner agent | contents |
+|---|---|---|
+| `internal/ui/theme` | ui-shell | `Theme` struct: colors (light + dark), `Shaper *text.Shaper` with embedded Lato TTF (300/400/700/900, italics), sizes, helpers `Label(gtx, size, weight, color, text)`; fonts in `assets/fonts` |
+| `internal/ui/icons` | ui-shell | vector icons as `func(gtx, size unit.Dp, col color.NRGBA) layout.Dimensions`, a named registry `icons.Get("hash")` |
+| `internal/imgcache` | ui-shell | `New(fetch func(ctx, url) ([]byte, error), diskDir string, invalidate func()) *Cache`; `(*Cache).Get(url string, sizePx int) (paint.ImageOp, bool)`: non-blocking, decodes off the UI goroutine, disk caching only for avatars/emoji (`DiskOK(url)` decides; never files.slack.com) |
+| `internal/ui` (root) + `cmd/yoloslack` | ui-shell | window/app loop, core event pump, `Host` implementation, shell layout (top nav, rail, sidebar, header + tabs, split panes, resizing), routing/history, keyboard shortcut registry, dark mode, window title/unread badge, desktop notifications, login screen, CI (cgo deps, per-OS builds) |
+| `internal/ui/richview` | ui-messages | layout engine for `richtext.Doc`: wrapped styled spans, inline emoji images, mention pills, code/pre/quote/lists, clickable links/mentions, text selection + copy |
+| `internal/ui/messages` | ui-messages | virtualized message list, rows (grouping, avatars, names, APP badge, status emoji, timestamps), day dividers (sticky), unread line, reactions, thread bar, hover action bar, files/images/video/audio cards, attachments/unfurls, infinite scroll, jump-to-bottom, thread pane |
+| `internal/ui/composer` | ui-composer | rich editor (formatting toolbar, inline styles, lists/quote/code), Enter-to-send, Up-to-edit, autocomplete (@ # : /), attachments (pick/paste/drop) with upload, drafts, typing indicator send, edit mode, "also send to channel" |
+| `internal/ui/popups` | ui-popups | overlay system (menu, popover, modal, tooltip, toast), emoji picker (virtualized 65k custom), quick switcher (Ctrl+K), search (dropdown + results view), profile card + full profile, lightbox, message/channel/user/team menus with actions |
+| `internal/ui/views` | ui-views | Activity, DMs, Later/Saved, Files, Threads, Huddles, Drafts & sent, Directories, channel details |
+
+### Cross-package interface: `Host`
+To avoid import cycles, every feature package defines the small interface it needs **in its own package** (e.g. `messages.Host`). The `internal/ui` root implements all of them on one `*ui.App`. Shared things every Host offers (use these exact names so one implementation satisfies all):
+```go
+Core() *core.App; Theme() *theme.Theme; Images() *imgcache.Cache; Invalidate()
+Navigate(route string)            // "c/<id>", "c/<id>/t/<ts>", "activity", "dms", "later", "files", "threads", "huddles", "drafts", "directories", "search?q="
+OpenThread(channel, ts string); CloseSecondary()
+ShowOverlay(o Overlay)            // popups.Overlay (interface below) — ui root renders the overlay stack on top
+OpenEmojiPicker(anchor image.Point, onPick func(name string))
+OpenProfile(anchor image.Point, userID string)
+OpenMessageMenu(anchor image.Point, m core.Message)
+OpenLightbox(img richtext.Image, m core.Message)
+Toast(text string)
+```
+`popups.Overlay`: `interface{ Layout(gtx layout.Context) layout.Dimensions; Dismissed() bool }` (popups agent owns the concrete types; ui root just stacks and draws them, and routes Escape/outside clicks).
+Each feature package exports a constructor and a widget with `Layout(gtx layout.Context) layout.Dimensions`, e.g. `messages.NewChannelView(h Host, channelID string) *ChannelView`, `messages.NewThreadView(h, ch, ts)`, `composer.New(h Host, channelID, threadTS string) *Composer`, `views.NewActivity(h)` …, and `popups.NewEmojiPicker(h, onPick) Overlay` etc.

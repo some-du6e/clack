@@ -3,15 +3,21 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
+
 jobs:
-  build:
+  linux:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version-file: go.mod
           cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
       - name: gofmt
         run: test -z "$(gofmt -l . | tee /dev/stderr)"
       - name: vet
@@ -19,17 +25,47 @@ jobs:
       - name: test
         run: go test ./...
       - name: build
+        if: ${{ !cancelled() }}
         run: |
           mkdir -p dist
-          for t in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64 windows/amd64; do
-            os=${t%/*}; arch=${t#*/}; ext=""; [ "$os" = windows ] && ext=.exe
-            CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags="-s -w" -o dist/yoloslack-$os-$arch$ext ./cmd/yoloslack
-          done
+          CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o dist/yoloslack-linux-amd64 ./cmd/yoloslack
       - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
         with:
           name: yoloslack-linux-amd64
           path: dist/yoloslack-linux-amd64
+
+  windows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: build (cross, no cgo)
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -H windowsgui" -o dist/yoloslack-windows-amd64.exe ./cmd/yoloslack
       - uses: actions/upload-artifact@v4
         with:
-          name: yoloslack-all
-          path: dist/
+          name: yoloslack-windows-amd64
+          path: dist/yoloslack-windows-amd64.exe
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: build
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o dist/yoloslack-darwin-arm64 ./cmd/yoloslack
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yoloslack-darwin-arm64
+          path: dist/yoloslack-darwin-arm64
