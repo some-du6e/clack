@@ -258,8 +258,11 @@ func (c *Client) Download(ctx context.Context, rawURL string) (*http.Response, e
 // UserAgent mimics a desktop Chrome so Slack serves the normal web payloads.
 const UserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 yoloslack/0.1"
 
-// UploadBytes sends file contents to an upload URL from files.getUploadURLExternal.
-func (c *Client) UploadBytes(ctx context.Context, uploadURL, filename string, data []byte) error {
+// UploadBytes sends file contents to an upload URL from
+// files.getUploadURLExternal. progress (may be nil) is called as the body
+// is written: every ~64 KB and once at the end, with the multipart body size
+// as total. It runs on the calling goroutine.
+func (c *Client) UploadBytes(ctx context.Context, uploadURL, filename string, data []byte, progress func(sent, total int64)) error {
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 	fw, err := mw.CreateFormFile("file", filename)
@@ -272,10 +275,16 @@ func (c *Client) UploadBytes(ctx context.Context, uploadURL, filename string, da
 	if err := mw.Close(); err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, &buf)
+	total := int64(buf.Len())
+	var body io.Reader = &buf
+	if progress != nil {
+		body = &progressReader{r: &buf, total: total, f: progress}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, body)
 	if err != nil {
 		return err
 	}
+	req.ContentLength = total
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	req.Header.Set("Cookie", c.cookieHeader())
 	req.Header.Set("Origin", "https://app.slack.com")
@@ -289,5 +298,25 @@ func (c *Client) UploadBytes(ctx context.Context, uploadURL, filename string, da
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("slack upload: http %d", resp.StatusCode)
 	}
+	if progress != nil {
+		progress(total, total)
+	}
 	return nil
+}
+
+type progressReader struct {
+	r           io.Reader
+	sent, total int64
+	last        int64
+	f           func(sent, total int64)
+}
+
+func (p *progressReader) Read(b []byte) (int, error) {
+	n, err := p.r.Read(b)
+	p.sent += int64(n)
+	if p.sent-p.last >= 64<<10 || (err == io.EOF && p.sent != p.last) {
+		p.last = p.sent
+		p.f(p.sent, p.total)
+	}
+	return n, err
 }

@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/store"
 )
@@ -24,16 +23,16 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 	t0 := time.Now()
 	source := "cache"
 	defer func() { log.Printf("history %s: %s (%s)", ch, time.Since(t0).Round(time.Millisecond), source) }()
-	// Fetch full channel info (member count etc.) alongside the history.
-	var infoCh chan *slack.Conversation
-	if c, ok := a.S.Conv(ch); ok && c.NumMembers == 0 && !c.IsIM && !c.IsMPIM && before == "" {
-		infoCh = make(chan *slack.Conversation, 1)
+	// Fetch the member count (people, like Slack's header) alongside the history.
+	var countDone chan struct{}
+	a.mu.Lock()
+	_, haveCount := a.memberN[ch]
+	a.mu.Unlock()
+	if c, ok := a.S.Conv(ch); ok && !haveCount && !c.IsIM && !c.IsMPIM && before == "" {
+		countDone = make(chan struct{})
 		go func() {
-			full, err := a.C.ConversationInfo(ctx, ch)
-			if err != nil {
-				full = nil
-			}
-			infoCh <- full
+			defer close(countDone)
+			a.loadMemberCount(ctx, ch)
 		}()
 	}
 	var msgs []slack.Message
@@ -62,10 +61,8 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 		store.SortAsc(msgs)
 	}
 	page := Page{Messages: a.timeline(ch, msgs), HasMore: hasMore}
-	if infoCh != nil {
-		if full := <-infoCh; full != nil && full.ID != "" {
-			a.S.PutConv(*full)
-		}
+	if countDone != nil {
+		<-countDone
 	}
 	if c, ok := a.Conv(ch); ok {
 		page.Conv = &c
@@ -123,6 +120,11 @@ func (a *App) fetchThread(ctx context.Context, ch, ts string) error {
 		}
 		a.EnsureUsers(ctx, referencedUsers(all))
 		a.S.SetThread(ch, ts, all)
+		for i := range all {
+			if needsFileInfo(&all[i]) {
+				go a.fillFiles(ch, all[i].TS)
+			}
+		}
 		return nil
 	})
 }
@@ -415,7 +417,12 @@ func (a *App) ChannelInfo(ctx context.Context, ch string) (ChannelDetails, error
 		a.S.PutConv(*c)
 	}
 	a.EnsureUsers(ctx, []string{c.Creator, c.User})
-	d := ChannelDetails{Conv: a.conv(c), IsMember: c.IsMember || c.IsIM, IsOrgShared: c.IsOrgShared, IsExtShared: c.IsExtShared, LastRead: c.LastRead}
+	var mgrs []string
+	a.loadMemberCount(ctx, ch)
+	if ms, err := a.Managers(ctx, ch); err == nil {
+		mgrs = ms
+	}
+	d := ChannelDetails{Conv: a.conv(c), Managers: mgrs, IsMember: c.IsMember || c.IsIM, IsOrgShared: c.IsOrgShared, IsExtShared: c.IsExtShared, LastRead: c.LastRead}
 	if c.Topic != nil {
 		d.TopicSetBy, d.TopicSetAt = c.Topic.Creator, c.Topic.LastSet
 	}
@@ -428,7 +435,9 @@ func (a *App) ChannelInfo(ctx context.Context, ch string) (ChannelDetails, error
 // ---- activity ----
 
 var activityTypes = map[string]string{
-	"all":       "at_user,at_user_group,at_channel,at_everyone,keyword,thread_v2,message_reaction,internal_channel_invite,external_channel_invite,bot_dm_bundle,list_record_assigned,list_user_mentioned",
+	// the web client's Activity inbox list (2026-11)
+	"all":       "at_user,at_user_group,at_channel,at_everyone,keyword,list_record_assigned,list_user_mentioned,list_todo_notification,list_approval_request,list_approval_reviewed,unjoined_channel_mention,thread_v2,message_reaction,bot_dm_bundle,dm,prejoin_dm_welcome_party_alert,internal_channel_invite,external_channel_invite,external_dm_invite,quietly_added_to_channel,channel,saved_reminder,list_record_edited",
+	"dms":       "dm",
 	"mentions":  "at_user,at_user_group,at_channel,at_everyone,keyword",
 	"threads":   "thread_v2",
 	"reactions": "message_reaction",
@@ -487,7 +496,7 @@ func (a *App) Activity(ctx context.Context, o ActivityOpts) (ActivityPage, error
 		limit = 30
 	}
 	p := url.Values{"limit": {strconv.Itoa(limit)}, "types": {types}, "mode": {"chrono_v1"},
-		"archive_only": {"false"}, "priority_only": {"false"}, "is_activity_inbox": {"true"},
+		"archive_only": {strconv.FormatBool(o.Archived)}, "priority_only": {"false"}, "is_activity_inbox": {"true"},
 		"unread_only": {strconv.FormatBool(o.Unread)}}
 	if o.Cursor != "" {
 		p.Set("cursor", o.Cursor)
@@ -501,9 +510,21 @@ func (a *App) Activity(ctx context.Context, o ActivityOpts) (ActivityPage, error
 	if err := a.C.Call(ctx, "activity.feed", p, &res); err != nil {
 		return ActivityPage{}, err
 	}
-	items := make([]ActivityItem, 0, len(res.Items))
+	items := a.activityItems(ctx, res.Items)
+	chans := map[string]bool{}
+	for _, it := range items {
+		chans[it.Channel] = true
+	}
+	log.Printf("activity: %d items in %s", len(items), time.Since(t0).Round(time.Millisecond))
+	return ActivityPage{Items: items, Next: res.Meta.NextCursor, Convs: a.convRefs(chans)}, nil
+}
+
+// activityItems converts feed entries and hydrates their messages (one
+// messages.list round trip for everything not cached).
+func (a *App) activityItems(ctx context.Context, raws []activityRaw) []ActivityItem {
+	items := make([]ActivityItem, 0, len(raws))
 	want := map[string][]string{}
-	for _, raw := range res.Items {
+	for _, raw := range raws {
 		it := ActivityItem{Key: raw.Key, Type: raw.Item.Type, FeedTS: raw.FeedTS, Unread: raw.IsUnread, Channel: raw.Item.Channel}
 		ref := raw.Item.Message
 		if bi := raw.Item.BundleInfo; bi != nil {
@@ -536,13 +557,10 @@ func (a *App) Activity(ctx context.Context, o ActivityOpts) (ActivityPage, error
 	}
 	got := a.hydrate(ctx, want)
 	ids := []string{}
-	chans := map[string]bool{}
 	for i := range items {
-		it := &items[i]
-		chans[it.Channel] = true
-		ids = append(ids, it.Author)
-		if it.Reaction != nil {
-			ids = append(ids, it.Reaction.User)
+		ids = append(ids, items[i].Author)
+		if items[i].Reaction != nil {
+			ids = append(ids, items[i].Reaction.User)
 		}
 	}
 	a.EnsureUsers(ctx, ids)
@@ -557,8 +575,7 @@ func (a *App) Activity(ctx context.Context, o ActivityOpts) (ActivityPage, error
 			}
 		}
 	}
-	log.Printf("activity: %d items in %s", len(items), time.Since(t0).Round(time.Millisecond))
-	return ActivityPage{Items: items, Next: res.Meta.NextCursor, Convs: a.convRefs(chans)}, nil
+	return items
 }
 
 // ---- threads view ----
@@ -619,27 +636,19 @@ func (a *App) Threads(ctx context.Context, cursor string, limit int) (ThreadsPag
 
 // ---- saved / later ----
 
-// Saved lists saved items. filter: "" or saved | completed | archived.
+// Saved lists saved items. filter: SavedFilterSaved (default, the Saved
+// page), SavedFilterTodos (the To-dos page), or any saved.list filter
+// (saved, todo, completed, archived, …).
 func (a *App) Saved(ctx context.Context, filter, cursor string) (SavedPage, error) {
-	if filter == "" || filter == "in_progress" {
-		filter = "saved"
+	if filter == "" {
+		filter = SavedFilterSaved
 	}
 	p := url.Values{"limit": {"50"}, "include_tombstones": {"true"}, "filter": {filter}}
 	if cursor != "" {
 		p.Set("cursor", cursor)
 	}
 	var res struct {
-		Items []struct {
-			ItemID        string `json:"item_id"`
-			ItemType      string `json:"item_type"`
-			TS            string `json:"ts"`
-			State         string `json:"state"`
-			TodoState     string `json:"todo_state"`
-			DateCreated   int64  `json:"date_created"`
-			DateDue       int64  `json:"date_due"`
-			DateCompleted int64  `json:"date_completed"`
-			IsArchived    bool   `json:"is_archived"`
-		} `json:"saved_items"`
+		Items  []savedRaw      `json:"saved_items"`
 		Counts json.RawMessage `json:"counts"`
 		Meta   struct {
 			NextCursor string `json:"next_cursor"`
@@ -657,63 +666,24 @@ func (a *App) Saved(ctx context.Context, filter, cursor string) (SavedPage, erro
 	got := a.hydrate(ctx, want)
 	out := SavedPage{Counts: res.Counts, Next: res.Meta.NextCursor}
 	chans := map[string]bool{}
+	a.mu.Lock()
 	for _, it := range res.Items {
-		v := SavedItem{ItemID: it.ItemID, ItemType: it.ItemType, TS: it.TS, State: firstNonEmpty(it.TodoState, it.State),
-			DateCreated: it.DateCreated, DateDue: it.DateDue, DateCompleted: it.DateCompleted, Archived: it.IsArchived}
 		if it.ItemType == "message" {
-			v.Channel = it.ItemID
-			chans[it.ItemID] = true
-			if m, ok := got[it.ItemID+"/"+it.TS]; ok {
-				v.Msg = a.messagePtr(it.ItemID, &m)
+			a.saved[savedKey(it.ItemID, it.TS)] = true
+		}
+	}
+	a.mu.Unlock()
+	for i := range res.Items {
+		v := savedItemOf(&res.Items[i])
+		if v.Channel != "" {
+			chans[v.Channel] = true
+			if m, ok := got[savedKey(v.Channel, v.TS)]; ok {
+				v.Msg = a.messagePtr(v.Channel, &m)
 			}
 		}
 		out.Items = append(out.Items, v)
 	}
 	out.Convs = a.convRefs(chans)
-	return out, nil
-}
-
-// ---- drafts ----
-
-// Drafts lists unsent drafts.
-func (a *App) Drafts(ctx context.Context) ([]Draft, error) {
-	var res struct {
-		Drafts []struct {
-			ID           string          `json:"id"`
-			Blocks       json.RawMessage `json:"blocks"`
-			Destinations []struct {
-				ChannelID string   `json:"channel_id"`
-				UserIDs   []string `json:"user_ids"`
-				ThreadTS  string   `json:"thread_ts"`
-				Broadcast bool     `json:"broadcast"`
-			} `json:"destinations"`
-			DateCreated   int64    `json:"date_created"`
-			DateScheduled int64    `json:"date_scheduled"`
-			LastUpdatedTS string   `json:"last_updated_ts"`
-			IsSent        bool     `json:"is_sent"`
-			FileIDs       []string `json:"file_ids"`
-		} `json:"drafts"`
-	}
-	if err := a.C.Call(ctx, "drafts.list", url.Values{"is_active": {"true"}, "limit": {"50"}}, &res); err != nil {
-		return nil, err
-	}
-	var out []Draft
-	ids := []string{}
-	for _, d := range res.Drafts {
-		if d.IsSent {
-			continue
-		}
-		v := Draft{ID: d.ID, Blocks: d.Blocks, DateCreated: d.DateCreated, DateScheduled: d.DateScheduled,
-			LastUpdated: d.LastUpdatedTS, Files: len(d.FileIDs)}
-		v.Doc = richtext.FromMessage(a.S, &slack.Message{Blocks: d.Blocks})
-		if len(d.Destinations) > 0 {
-			dst := d.Destinations[0]
-			v.Channel, v.Users, v.ThreadTS, v.Broadcast = dst.ChannelID, dst.UserIDs, dst.ThreadTS, dst.Broadcast
-			ids = append(ids, dst.UserIDs...)
-		}
-		out = append(out, v)
-	}
-	a.EnsureUsers(ctx, ids)
 	return out, nil
 }
 
@@ -822,4 +792,15 @@ func (a *App) DND(ctx context.Context) (json.RawMessage, error) {
 	var info json.RawMessage
 	err := a.C.Call(ctx, "dnd.info", url.Values{"user": {a.S.SelfID()}}, &info)
 	return info, err
+}
+
+// loadMemberCount caches the people count of ch (edge users/counts).
+func (a *App) loadMemberCount(ctx context.Context, ch string) {
+	mc, err := a.MemberCounts(ctx, ch)
+	if err != nil {
+		return
+	}
+	a.mu.Lock()
+	a.memberN[ch] = mc.People
+	a.mu.Unlock()
 }

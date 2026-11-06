@@ -183,6 +183,66 @@ func main() {
 		p, err := a.RefreshPrefs(ctx)
 		return fmt.Sprintf("emoji_style=%s muted=%d", p.EmojiStyle, len(p.Muted)), err
 	})
+	timed("tabs", func() (string, error) {
+		r, err := a.Tabs(ctx, ch)
+		var kinds []string
+		for _, t := range r {
+			kinds = append(kinds, t.Type+map[bool]string{true: "(deleted)", false: ""}[t.Deleted])
+		}
+		return fmt.Sprintf("tabs=%d %s", len(r), strings.Join(kinds, ",")), err
+	})
+	timed("member counts", func() (string, error) {
+		r, err := a.MemberCounts(ctx, ch)
+		return fmt.Sprintf("people=%d everyone=%d bots=%d", r.People, r.Everyone, r.Bots), err
+	})
+	timed("channel info (2)", func() (string, error) {
+		r, err := a.ChannelInfo(ctx, ch)
+		return fmt.Sprintf("num_members=%d managers=%d", r.Conv.NumMembers, len(r.Managers)), err
+	})
+	timed("files", func() (string, error) {
+		r, err := a.Files(ctx, core.FilesOpts{})
+		return fmt.Sprintf("files=%d total=%d", len(r.Files), r.Total), err
+	})
+	timed("files canvases", func() (string, error) {
+		r, err := a.Files(ctx, core.FilesOpts{Kind: "canvases"})
+		return fmt.Sprintf("files=%d", len(r.Files)), err
+	})
+	timed("deleted files", func() (string, error) {
+		r, err := a.DeletedFiles(ctx)
+		return fmt.Sprintf("files=%d", len(r.Files)), err
+	})
+	timed("huddle history", func() (string, error) {
+		r, _, err := a.HuddleHistory(ctx, "")
+		return fmt.Sprintf("huddles=%d", len(r)), err
+	})
+	timed("sent", func() (string, error) {
+		r, err := a.Sent(ctx, "", 1)
+		return fmt.Sprintf("msgs=%d total=%d", len(r.Messages), r.Total), err
+	})
+	timed("browse joined/private", func() (string, error) {
+		r, err := a.BrowseChannelsWith(ctx, core.ChannelBrowseOpts{Membership: "joined", Sort: "name"})
+		r2, err2 := a.BrowseChannelsWith(ctx, core.ChannelBrowseOpts{Type: "archived", Sort: "member_count", Desc: true})
+		if err == nil {
+			err = err2
+		}
+		return fmt.Sprintf("joined=%d archived=%d/%d", len(r.Channels), len(r2.Channels), r2.Total), err
+	})
+	timed("browse people", func() (string, error) {
+		r, err := a.BrowsePeople(ctx, core.PeopleBrowseOpts{Sort: "name"})
+		return fmt.Sprintf("users=%d total=%d", len(r.Users), r.Total), err
+	})
+	timed("usergroups search", func() (string, error) {
+		r, err := a.SearchUsergroups(ctx, core.UsergroupOpts{Sort: "member_count", Desc: true, Count: 5})
+		return fmt.Sprintf("groups=%d", len(r)), err
+	})
+	timed("scheduled", func() (string, error) {
+		r, err := a.ScheduledMessages(ctx, "")
+		return fmt.Sprintf("scheduled=%d", len(r)), err
+	})
+	timed("notify prefs", func() (string, error) {
+		n := a.NotifyPrefs(ch)
+		return fmt.Sprintf("desktop=%q muted=%v starred=%v", n.Desktop, n.Muted, a.Starred(ch)), nil
+	})
 	if thumb == "" {
 		for _, m := range page.Messages {
 			if m.Avatar != "" {
@@ -221,7 +281,19 @@ func runWrites(ctx context.Context, a *core.App, ew *watcher) {
 	if err != nil {
 		return
 	}
-	expect(ew, "message", m.TS, t)
+	if pe, ok := ew.wait("message", "", 5*time.Second, func(e core.Event) bool { return e.Msg != nil && e.Msg.Pending && e.ClientMsgID == m.ClientMsgID }); ok {
+		step("  event message(pending)", t, "local ts=%s", pe.TS)
+		if se, ok := ew.wait("sent", m.TS, 10*time.Second); ok && se.ReplacesTS == pe.TS {
+			step("  event sent", t, "replaces=%s", se.ReplacesTS)
+		} else {
+			fail("no sent event replacing the pending row")
+		}
+	} else {
+		fail("no pending message event")
+	}
+	if _, dup := ew.wait("message", m.TS, 1500*time.Millisecond); dup {
+		fail("duplicate message event for own echo")
+	}
 	expectErr(ew, "typing", a.Typing(ch, ""))
 	t = time.Now()
 	check("react add", t, a.React(ctx, ch, m.TS, "white_check_mark", true), "")
@@ -292,6 +364,73 @@ func runWrites(ctx context.Context, a *core.App, ew *watcher) {
 	t = time.Now()
 	cv, err = a.Mark(ctx, ch, latest)
 	check("mark read", t, err, "unread=%v", cv.Unread)
+	// to-dos
+	t = time.Now()
+	check("add to-do", t, a.AddTodo(ctx, ch, m.TS, 0), "")
+	expect(ew, "saved", m.TS, t)
+	t = time.Now()
+	check("complete to-do", t, a.CompleteTodo(ctx, ch, m.TS), "")
+	expect(ew, "saved", m.TS, t)
+	t = time.Now()
+	check("unsave to-do", t, a.Unsave(ctx, ch, m.TS), "")
+	expect(ew, "saved", m.TS, t)
+	// thread follow
+	t = time.Now()
+	check("unfollow thread", t, a.SubscribeThread(ctx, ch, m.TS, false), "")
+	check("follow thread", t, a.SubscribeThread(ctx, ch, m.TS, true), "")
+	if _, ok := ew.wait("thread_subscription", "", 8*time.Second); ok {
+		step("  event thread_subscription", t, "")
+	} else {
+		step("  event thread_subscription", t, "none (not sent for own threads?)")
+	}
+	// scheduling (far future), then cancel
+	t = time.Now()
+	sm, err := a.ScheduleMessage(ctx, core.SendOpts{Channel: ch, ThreadTS: m.TS, Text: tag + " (scheduled)"}, time.Now().Add(72*time.Hour).Unix())
+	check("schedule", t, err, "id=%s post_at=%d", sm.ID, sm.PostAt)
+	if err == nil {
+		expect(ew, "draft", "", t)
+		sl, err := a.ScheduledMessages(ctx, ch)
+		found := false
+		for _, s := range sl {
+			found = found || s.ID == sm.ID
+		}
+		check("scheduled listed", t, err, "found=%v", found)
+		if !found {
+			fail("scheduled message not listed")
+		}
+		t = time.Now()
+		check("delete scheduled", t, a.DeleteScheduled(ctx, ch, sm.ID), "")
+	}
+	// draft in our own thread, then delete
+	t = time.Now()
+	dr, err := a.SaveDraft(ctx, core.DraftOpts{Channel: ch, ThreadTS: m.TS, Text: tag + " (draft)"})
+	check("save draft", t, err, "id=%s", dr.ID)
+	if err == nil {
+		dr2, err := a.SaveDraft(ctx, core.DraftOpts{ID: dr.ID, Channel: ch, ThreadTS: m.TS, Text: tag + " (draft 2)"})
+		check("update draft", t, err, "id=%s", dr2.ID)
+		check("delete draft", t, a.DeleteDraft(ctx, dr.ID), "")
+	}
+	// star / unstar, mute / unmute (C0B4DEFKFCJ only; restored)
+	wasStarred := a.Starred(ch)
+	t = time.Now()
+	check("star", t, a.Star(ctx, ch, true), "starred=%v", a.Starred(ch))
+	if !wasStarred {
+		check("unstar", t, a.Star(ctx, ch, false), "starred=%v", a.Starred(ch))
+	}
+	wasMuted := a.NotifyPrefs(ch).Muted
+	t = time.Now()
+	check("mute", t, a.Mute(ctx, ch, true), "muted=%v", a.NotifyPrefs(ch).Muted)
+	check("restore mute", t, a.Mute(ctx, ch, wasMuted), "muted=%v", a.NotifyPrefs(ch).Muted)
+	// activity: mark the newest item unread then read again (restores state)
+	if act, err := a.Activity(ctx, core.ActivityOpts{View: "mentions", Limit: 5}); err == nil && len(act.Items) > 0 && !act.Items[0].Unread {
+		it := act.Items[0]
+		t = time.Now()
+		check("activity mark unread", t, a.MarkActivityUnread(ctx, it), "key=%s", it.Key)
+		check("activity mark read", t, a.MarkActivityRead(ctx, it), "")
+		if _, ok := ew.wait("activity", "", 5*time.Second); ok {
+			step("  event activity", t, "")
+		}
+	}
 	t = time.Now()
 	dm, err := a.OpenDM(ctx, a.Self().ID)
 	check("open self DM", t, err, "id=%s kind=%s", dm.ID, dm.Kind)
