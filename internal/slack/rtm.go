@@ -30,6 +30,10 @@ type RTM struct {
 	conn         *websocket.Conn
 	next         atomic.Int64
 	reconnectURL string
+	fails        int
+
+	// OnHello runs after every (re)connect, e.g. to resend subscriptions.
+	OnHello func()
 }
 
 func (c *Client) NewRTM() *RTM {
@@ -50,6 +54,9 @@ func (r *RTM) Run(ctx context.Context) {
 		}
 		if time.Since(start) > time.Minute {
 			backoff = time.Second
+			r.fails = 0
+		} else {
+			r.fails++
 		}
 		log.Printf("rtm: disconnected (%v), retrying in %s", err, backoff)
 		select {
@@ -68,8 +75,9 @@ func (r *RTM) once(ctx context.Context) error {
 	u := r.reconnectURL
 	r.reconnectURL = ""
 	if u == "" {
-		u = r.c.WebSocketURL(ctx)
+		u = r.c.WebSocketURL(ctx, r.fails%3 == 2) // every third failure, try the backup gateway
 	}
+	t0 := time.Now()
 	h := http.Header{}
 	h.Set("Cookie", r.c.cookieHeader())
 	h.Set("Origin", "https://app.slack.com")
@@ -118,9 +126,15 @@ func (r *RTM) once(ctx context.Context) error {
 		ev.Raw = data
 		switch ev.Type {
 		case "hello":
+			log.Printf("rtm: connected in %s", time.Since(t0).Round(time.Millisecond))
 			if r.OnState != nil {
 				r.OnState(true)
 			}
+			if r.OnHello != nil {
+				go r.OnHello()
+			}
+		case "error":
+			log.Printf("rtm: gateway error frame: %.200s", data)
 		case "reconnect_url":
 			var x struct {
 				URL string `json:"url"`
@@ -129,6 +143,19 @@ func (r *RTM) once(ctx context.Context) error {
 			r.reconnectURL = x.URL
 			continue
 		case "pong":
+			continue
+		case "":
+			// reply to one of our frames; surface failures only
+			var rep struct {
+				OK    *bool `json:"ok"`
+				Error struct {
+					Msg string `json:"msg"`
+				} `json:"error"`
+				ReplyTo int64 `json:"reply_to"`
+			}
+			if json.Unmarshal(data, &rep) == nil && rep.OK != nil && !*rep.OK {
+				log.Printf("rtm: frame %d rejected: %s", rep.ReplyTo, rep.Error.Msg)
+			}
 			continue
 		case "goodbye":
 			return nil
@@ -167,7 +194,27 @@ func (r *RTM) Typing(channel, threadTS string) error {
 	return r.Send(m)
 }
 
-// Subscribe asks the gateway for presence updates of the given users.
+// SubscribePresence asks the gateway for presence updates of the given
+// users. It replaces the previous subscription set (as the web client does).
 func (r *RTM) SubscribePresence(ids []string) error {
+	if ids == nil {
+		ids = []string{}
+	}
 	return r.Send(map[string]any{"type": "presence_sub", "ids": ids})
+}
+
+// SubscribeUsers asks for user_change events for the given users (flannel
+// only pushes profile changes for users the client has subscribed to).
+func (r *RTM) SubscribeUsers(ids []string) error {
+	if ids == nil {
+		ids = []string{}
+	}
+	return r.Send(map[string]any{"type": "subscription_update", "subtype": "user_change_subscribe_request", "ids": ids})
+}
+
+// Connected reports whether the socket is currently up.
+func (r *RTM) Connected() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.conn != nil
 }

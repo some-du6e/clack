@@ -93,7 +93,7 @@ func mrkdwn(r Resolver, text string, big bool) string {
 		if i%2 == 1 && i != len(parts)-1 {
 			p = strings.TrimPrefix(p, "\n")
 			out.WriteString(`<pre class="c-mrkdwn__pre" data-stringify-type="pre"><div class="p-rich_text_block--no-overflow">`)
-			out.WriteString(linkify(r, p, false))
+			out.WriteString(linkify(r, p))
 			out.WriteString(`</div></pre>`)
 			continue
 		}
@@ -109,10 +109,17 @@ func mrkdwnLines(r Resolver, s string, big bool) string {
 	lines := strings.Split(s, "\n")
 	var out strings.Builder
 	inQuote := false
+	rest := false // >>> quotes everything that follows
 	for i, ln := range lines {
-		q := strings.HasPrefix(ln, "&gt; ") || ln == "&gt;" || strings.HasPrefix(ln, "> ")
+		q := rest
+		if !q && strings.HasPrefix(ln, "&gt;&gt;&gt;") {
+			rest, q = true, true
+			ln = strings.TrimPrefix(strings.TrimPrefix(ln, "&gt;&gt;&gt;"), " ")
+		} else if !q && strings.HasPrefix(ln, "&gt;") {
+			q = true
+			ln = strings.TrimPrefix(strings.TrimPrefix(ln, "&gt;"), " ")
+		}
 		if q {
-			ln = strings.TrimPrefix(strings.TrimPrefix(strings.TrimPrefix(ln, "&gt;"), ">"), " ")
 			if !inQuote {
 				out.WriteString(`<blockquote type="cite" class="c-mrkdwn__quote" data-stringify-type="quote">`)
 				inQuote = true
@@ -133,57 +140,121 @@ func mrkdwnLines(r Resolver, s string, big bool) string {
 	return out.String()
 }
 
-var (
-	codeRe   = regexp.MustCompile("`([^`\n]+)`")
-	boldRe   = regexp.MustCompile(`(^|[\s(\[{>_~"'])\*([^*\n]*[^*\s\n])\*`)
-	italRe   = regexp.MustCompile(`(^|[\s(\[{>*~"'])_([^_\n]*[^_\s\n])_`)
-	strikeRe = regexp.MustCompile(`(^|[\s(\[{>*_"'])~([^~\n]*[^~\s\n])~`)
+// Formatting works on plain text in which code spans and <...> tokens have
+// been replaced by placeholders (\x01N\x01), so the style regexes can never
+// touch generated HTML. Styles are first marked with control characters and
+// only turned into tags after HTML escaping.
+const (
+	bOpen, bClose = "\x10", "\x11"
+	iOpen, iClose = "\x12", "\x13"
+	sOpen, sClose = "\x14", "\x15"
+	ph            = "\x01"
 )
 
-// inline formats one line: code spans, links/mentions, bold/italic/strike, emoji.
-func inline(r Resolver, s string, big bool) string {
-	// protect code spans
-	var codes []string
-	s = codeRe.ReplaceAllStringFunc(s, func(m string) string {
-		codes = append(codes, `<code class="c-mrkdwn__code" data-stringify-type="code">`+linkify(r, m[1:len(m)-1], false)+`</code>`)
-		return "\x00" + strconv.Itoa(len(codes)-1) + "\x00"
-	})
-	s = linkify(r, s, true)
-	s = boldRe.ReplaceAllString(s, `$1<b data-stringify-type="bold">$2</b>`)
-	s = italRe.ReplaceAllString(s, `$1<i data-stringify-type="italic">$2</i>`)
-	s = strikeRe.ReplaceAllString(s, `$1<s data-stringify-type="strike">$2</s>`)
-	s = emojify(r, s, big)
-	if len(codes) > 0 {
-		for i, c := range codes {
-			s = strings.Replace(s, "\x00"+strconv.Itoa(i)+"\x00", c, 1)
+const fmtBound = "\\s(\\[{>\"'\x01\x10-\x15"
+const fmtEnd = "\\s.,!?;:)\\]}>\"'\x01\x10-\x15\\-"
+
+var (
+	codeRe   = regexp.MustCompile("`([^`\n]+)`")
+	boldRe   = regexp.MustCompile(`(^|[` + fmtBound + `_~])\*([^*\n]*[^*\s\n])\*($|[` + fmtEnd + `_~])`)
+	italRe   = regexp.MustCompile(`(^|[` + fmtBound + `*~])_([^_\n]*[^_\s\n])_($|[` + fmtEnd + `*~])`)
+	strikeRe = regexp.MustCompile(`(^|[` + fmtBound + `*_])~([^~\n]*[^~\s\n])~($|[` + fmtEnd + `*_])`)
+	phRe     = regexp.MustCompile("\x01([0-9]+)\x01")
+	styleRep = strings.NewReplacer(
+		bOpen, `<b data-stringify-type="bold">`, bClose, `</b>`,
+		iOpen, `<i data-stringify-type="italic">`, iClose, `</i>`,
+		sOpen, `<s data-stringify-type="strike">`, sClose, `</s>`,
+	)
+)
+
+func applyStyle(re *regexp.Regexp, s, open, close string) string {
+	for n := 0; n < 4; n++ { // repeat: adjacent spans share boundary characters
+		next := re.ReplaceAllString(s, "${1}"+open+"${2}"+close+"${3}")
+		if next == s {
+			break
 		}
+		s = next
 	}
 	return s
 }
 
-var angleRe = regexp.MustCompile(`&lt;([^&\s][^>]*?)&gt;|<([^<>\s][^<>]*?)>`)
-
-// linkify escapes text and expands <...> tokens (links, mentions, dates).
+// inline formats one line: code spans, links/mentions, bold/italic/strike, emoji.
 // The input is Slack-escaped text (&amp; &lt; &gt;).
-func linkify(r Resolver, s string, rich bool) string {
+func inline(r Resolver, s string, big bool) string {
+	var frags []string
+	hold := func(html string) string {
+		frags = append(frags, html)
+		return ph + strconv.Itoa(len(frags)-1) + ph
+	}
+	s = strings.ReplaceAll(s, ph, "")
+	s = codeRe.ReplaceAllStringFunc(s, func(m string) string {
+		return hold(`<code class="c-mrkdwn__code" data-stringify-type="code">` + linkify(r, m[1:len(m)-1]) + `</code>`)
+	})
+	s = tokenRe.ReplaceAllStringFunc(s, func(m string) string {
+		return hold(token(r, m[1:len(m)-1]))
+	})
+	s = slackUnescape(s)
+	s = applyStyle(boldRe, s, bOpen, bClose)
+	s = applyStyle(italRe, s, iOpen, iClose)
+	s = applyStyle(strikeRe, s, sOpen, sClose)
+	s = esc(s)
+	s = styleRep.Replace(s)
+	s = emojify(r, s, big)
+	if len(frags) > 0 {
+		s = phRe.ReplaceAllStringFunc(s, func(m string) string {
+			i, err := strconv.Atoi(m[1 : len(m)-1])
+			if err != nil || i >= len(frags) {
+				return ""
+			}
+			return frags[i]
+		})
+	}
+	return s
+}
+
+// tokenRe matches Slack's <...> control sequences. A user-typed "<" arrives
+// escaped as &lt;, so only real tokens use literal angle brackets.
+var tokenRe = regexp.MustCompile(`<([^<>\s][^<>]*?)>`)
+
+// linkify escapes text and expands <...> tokens (links, mentions, dates)
+// without applying any formatting (used in code spans and pre blocks).
+func linkify(r Resolver, s string) string {
 	var out strings.Builder
 	last := 0
-	for _, m := range angleRe.FindAllStringSubmatchIndex(s, -1) {
+	for _, m := range tokenRe.FindAllStringSubmatchIndex(s, -1) {
 		out.WriteString(esc(slackUnescape(s[last:m[0]])))
-		var inner string
-		if m[2] >= 0 {
-			inner = s[m[2]:m[3]]
-		} else {
-			inner = s[m[4]:m[5]]
-		}
-		out.WriteString(token(r, inner, rich))
+		out.WriteString(token(r, s[m[2]:m[3]]))
 		last = m[1]
 	}
 	out.WriteString(esc(slackUnescape(s[last:])))
 	return out.String()
 }
 
-func token(r Resolver, inner string, rich bool) string {
+// SafeURL returns u if its scheme is safe to put in an href, else "".
+func SafeURL(u string) string {
+	t := strings.TrimSpace(u)
+	i := strings.IndexByte(t, ':')
+	if i < 0 {
+		if strings.HasPrefix(t, "/") || strings.HasPrefix(t, "#") {
+			return t
+		}
+		return ""
+	}
+	switch strings.ToLower(t[:i]) {
+	case "http", "https", "mailto", "tel", "slack", "ftp", "sms":
+		return t
+	}
+	return ""
+}
+
+func linkHTML(href, label string) string {
+	if h := SafeURL(href); h != "" {
+		return `<a class="c-link" href="` + esc(h) + `" target="_blank" rel="noopener noreferrer" data-stringify-link="` + esc(h) + `">` + esc(label) + `</a>`
+	}
+	return esc(label)
+}
+
+func token(r Resolver, inner string) string {
 	target, label, _ := strings.Cut(inner, "|")
 	label = slackUnescape(label)
 	switch {
@@ -196,7 +267,7 @@ func token(r Resolver, inner string, rich bool) string {
 		if name == "" {
 			name = r.ChannelName(id)
 		}
-		return `<a class="c-channel_entity c-link" data-channel-id="` + esc(id) + `" href="#/c/` + esc(id) + `">#` + esc(name) + `</a>`
+		return `<a class="c-channel_entity c-link" data-channel-id="` + esc(id) + `" href="#/c/` + esc(id) + `">#` + esc(strings.TrimPrefix(name, "#")) + `</a>`
 	case strings.HasPrefix(target, "!subteam^"):
 		id := strings.TrimPrefix(target, "!subteam^")
 		name := label
@@ -216,13 +287,9 @@ func token(r Resolver, inner string, rich bool) string {
 	}
 	href := slackUnescape(target)
 	if label == "" {
-		label = href
-		label = strings.TrimPrefix(label, "mailto:")
+		label = strings.TrimPrefix(href, "mailto:")
 	}
-	if !rich {
-		return `<a class="c-link" href="` + esc(href) + `" target="_blank" rel="noopener noreferrer">` + esc(label) + `</a>`
-	}
-	return `<a class="c-link" href="` + esc(href) + `" target="_blank" rel="noopener noreferrer" data-stringify-link="` + esc(href) + `">` + esc(label) + `</a>`
+	return linkHTML(href, label)
 }
 
 // UserMention renders an @user badge (highlighted when it is the viewer).

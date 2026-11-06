@@ -44,6 +44,142 @@ type Store struct {
 	CustomEmoji emoji.Custom
 	EmojiStyle  string
 	cacheDir    string
+
+	// Groups holds full usergroup records (Usergroups maps id -> handle).
+	Groups []slack.Usergroup
+	// Muted is the set of muted conversation ids (from prefs).
+	Muted map[string]bool
+	// Prefs is the curated set of user prefs that change rendering.
+	Prefs Prefs
+	// ThreadsUnread / ThreadMentions mirror client.counts "threads".
+	ThreadsUnread  bool
+	ThreadMentions int
+}
+
+// Prefs are the user preferences the UI needs for rendering.
+type Prefs struct {
+	EmojiStyle        string   `json:"emoji_style"` // apple | google
+	EmojiMode         string   `json:"emoji_mode,omitempty"`
+	SkinTone          string   `json:"skin_tone,omitempty"`
+	Time24            bool     `json:"time24"`
+	DisplayRealNames  bool     `json:"display_real_names"`
+	Jumbomoji         bool     `json:"jumbomoji"`
+	ConvertEmoticons  bool     `json:"convert_emoticons"`
+	SidebarBehavior   string   `json:"sidebar_behavior,omitempty"`
+	ChannelSort       string   `json:"channel_sort,omitempty"`
+	Locale            string   `json:"locale,omitempty"`
+	Theme             string   `json:"theme,omitempty"`
+	DarkMode          string   `json:"dark_mode,omitempty"`
+	SidebarTheme      string   `json:"sidebar_theme,omitempty"`
+	MessagesTheme     string   `json:"messages_theme,omitempty"`
+	EnterIsSpecial    bool     `json:"enter_is_special_in_tbt"`
+	ShowTyping        bool     `json:"show_typing"`
+	ColorNames        bool     `json:"color_names_in_list"`
+	FrequentEmoji     []string `json:"frequent_emoji,omitempty"`
+	Muted             []string `json:"muted"`
+	HideInactiveConvs bool     `json:"hide_inactive"`
+}
+
+// ParsePrefs extracts Prefs (and the muted set) from users.prefs.get.
+func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
+	str := func(k string) string {
+		var v string
+		_ = json.Unmarshal(raw[k], &v)
+		return v
+	}
+	boolean := func(k string, def bool) bool {
+		v, ok := raw[k]
+		if !ok {
+			return def
+		}
+		var b bool
+		if json.Unmarshal(v, &b) == nil {
+			return b
+		}
+		var n int
+		if json.Unmarshal(v, &n) == nil {
+			return n != 0
+		}
+		return def
+	}
+	p := Prefs{
+		EmojiMode: str("emoji_mode"), SkinTone: str("preferred_skin_tone"), Time24: boolean("time24", false),
+		DisplayRealNames: boolean("display_real_names_override", false) || boolean("display_real_names", false),
+		Jumbomoji:        boolean("jumbomoji", true), ConvertEmoticons: boolean("convert_emoticons", true),
+		SidebarBehavior: str("sidebar_behavior"), ChannelSort: str("channel_sort"), Locale: str("locale"),
+		Theme: str("theme"), DarkMode: str("dark_mode"), SidebarTheme: str("sidebar_theme"), MessagesTheme: str("messages_theme"),
+		EnterIsSpecial: boolean("enter_is_special_in_tbt", false), ShowTyping: boolean("show_typing", true),
+		ColorNames: boolean("color_names_in_list", true),
+	}
+	p.HideInactiveConvs = p.SidebarBehavior == "hide_inactive_channels"
+	// Slack calls the Google set "android"/"google"; everything else is Apple.
+	switch p.EmojiMode {
+	case "android", "google":
+		p.EmojiStyle = "google"
+	default:
+		p.EmojiStyle = "apple"
+	}
+	var use struct {
+		Recent []string `json:"recent"`
+	}
+	if s := str("emoji_use"); s != "" {
+		var counts map[string]int
+		if json.Unmarshal([]byte(s), &counts) == nil {
+			for n := range counts {
+				use.Recent = append(use.Recent, n)
+			}
+			sort.Slice(use.Recent, func(i, j int) bool {
+				a, b := counts[use.Recent[i]], counts[use.Recent[j]]
+				if a != b {
+					return a > b
+				}
+				return use.Recent[i] < use.Recent[j]
+			})
+			if len(use.Recent) > 40 {
+				use.Recent = use.Recent[:40]
+			}
+		}
+	}
+	p.FrequentEmoji = use.Recent
+	muted := map[string]bool{}
+	for _, id := range strings.Split(str("muted_channels"), ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			muted[id] = true
+		}
+	}
+	if s := str("all_notifications_prefs"); s != "" {
+		var n struct {
+			Channels map[string]struct {
+				Muted bool `json:"muted"`
+			} `json:"channels"`
+		}
+		if json.Unmarshal([]byte(s), &n) == nil {
+			for id, c := range n.Channels {
+				if c.Muted {
+					muted[id] = true
+				} else {
+					delete(muted, id)
+				}
+			}
+		}
+	}
+	p.Muted = make([]string, 0, len(muted))
+	for id := range muted {
+		p.Muted = append(p.Muted, id)
+	}
+	sort.Strings(p.Muted)
+	return p, muted
+}
+
+// SetPrefs installs parsed prefs (and the emoji style used for rendering).
+func (s *Store) SetPrefs(p Prefs, muted map[string]bool) {
+	s.mu.Lock()
+	s.Prefs = p
+	s.Muted = muted
+	if p.EmojiStyle != "" {
+		s.EmojiStyle = p.EmojiStyle
+	}
+	s.mu.Unlock()
 }
 
 func New(cacheDir string) *Store {
@@ -52,7 +188,8 @@ func New(cacheDir string) *Store {
 		Counts: map[string]*slack.CountEntry{}, Usergroups: map[string]string{},
 		Presence:  map[string]string{},
 		timelines: map[string]*Timeline{}, threads: map[string][]slack.Message{},
-		cacheDir: cacheDir, EmojiStyle: "apple",
+		cacheDir: cacheDir, EmojiStyle: "apple", Muted: map[string]bool{},
+		Prefs: Prefs{EmojiStyle: "apple", Jumbomoji: true, ShowTyping: true, Muted: []string{}},
 	}
 }
 
@@ -148,13 +285,20 @@ func (s *Store) UsergroupName(id string) string {
 }
 
 func (s *Store) Emoji(name string) (string, string, bool) {
-	return s.CustomEmoji.Resolve(name, s.EmojiStyle)
+	s.mu.RLock()
+	style := s.EmojiStyle
+	s.mu.RUnlock()
+	return s.CustomEmoji.Resolve(name, style)
 }
 
 // Proxy rewrites authenticated Slack file URLs to the local proxy.
 func (s *Store) Proxy(u string) string { return render.ProxyURL(u) }
 
-func (s *Store) SelfID() string { return s.Self.ID }
+func (s *Store) SelfID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.Self.ID
+}
 
 // ---- conversations ----
 
@@ -363,13 +507,94 @@ func (s *Store) SetCounts(c *slack.Counts) {
 			s.Counts[e.ID] = &e
 		}
 	}
+	s.ThreadsUnread = c.Threads.HasUnreads
+	s.ThreadMentions = c.Threads.MentionCount
+}
+
+// Count returns a copy of a conversation's unread state.
+func (s *Store) Count(ch string) (slack.CountEntry, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if e, ok := s.Counts[ch]; ok {
+		return *e, true
+	}
+	return slack.CountEntry{ID: ch}, false
+}
+
+// MarkRead moves a conversation's read cursor to ts. Marking at or after
+// the latest message clears it; marking earlier (mark unread) leaves it
+// unread. Mentions before the new cursor are unknown locally, so they are
+// cleared on read and kept on mark-unread until counts are refreshed.
+func (s *Store) MarkRead(ch, ts string) slack.CountEntry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.Counts[ch]
+	if !ok {
+		e = &slack.CountEntry{ID: ch}
+		s.Counts[ch] = e
+	}
+	e.LastRead = ts
+	if e.Latest == "" || !TSLess(ts, e.Latest) {
+		e.HasUnreads = false
+		e.MentionCount = 0
+	} else {
+		e.HasUnreads = true
+	}
+	return *e
+}
+
+// NoteMessage updates unread state for a new top-level message (or
+// broadcast) in ch. DMs count every message from others as a mention, the
+// way Slack badges them.
+func (s *Store) NoteMessage(ch string, m *slack.Message, mentionsSelf bool) slack.CountEntry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.Counts[ch]
+	if !ok {
+		e = &slack.CountEntry{ID: ch}
+		s.Counts[ch] = e
+	}
+	if e.Latest == "" || TSLess(e.Latest, m.TS) {
+		e.Latest = m.TS
+	}
+	self := s.Self.ID
+	if m.User == self && self != "" {
+		// Our own message (from any client) reads the conversation.
+		e.LastRead, e.HasUnreads, e.MentionCount = m.TS, false, 0
+		return *e
+	}
+	if e.LastRead != "" && !TSLess(e.LastRead, m.TS) {
+		return *e
+	}
+	e.HasUnreads = true
+	c := s.Convs[ch]
+	isDM := c != nil && (c.IsIM || c.IsMPIM) || strings.HasPrefix(ch, "D")
+	if mentionsSelf || isDM {
+		e.MentionCount++
+	}
+	return *e
 }
 
 // ---- disk cache (metadata only) ----
 
 type diskCache struct {
-	Users []slack.User      `json:"users"`
-	Emoji map[string]string `json:"emoji"`
+	Users      []slack.User      `json:"users"`
+	Emoji      map[string]string `json:"emoji"`
+	Usergroups []slack.Usergroup `json:"usergroups,omitempty"`
+}
+
+// SetUsergroups installs usergroups (for <!subteam^> names and autocomplete).
+func (s *Store) SetUsergroups(gs []slack.Usergroup) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Groups = s.Groups[:0]
+	for _, g := range gs {
+		if g.DateDelete != 0 {
+			continue
+		}
+		s.Groups = append(s.Groups, g)
+		s.Usergroups[g.ID] = g.Handle
+	}
 }
 
 func (s *Store) LoadCache() {
@@ -388,6 +613,9 @@ func (s *Store) LoadCache() {
 	if len(d.Emoji) > 0 {
 		s.CustomEmoji.Set(d.Emoji)
 	}
+	if len(d.Usergroups) > 0 {
+		s.SetUsergroups(d.Usergroups)
+	}
 }
 
 func (s *Store) SaveCache() error {
@@ -395,7 +623,7 @@ func (s *Store) SaveCache() error {
 		return nil
 	}
 	s.mu.RLock()
-	d := diskCache{Emoji: s.CustomEmoji.Snapshot()}
+	d := diskCache{Emoji: s.CustomEmoji.Snapshot(), Usergroups: append([]slack.Usergroup(nil), s.Groups...)}
 	for _, u := range s.Users {
 		d.Users = append(d.Users, *u)
 	}

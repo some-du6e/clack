@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/url"
 	"strconv"
+	"time"
 )
 
 // AuthTest returns the identity of the token.
@@ -209,29 +210,48 @@ func (c *Client) EmojiList(ctx context.Context) (map[string]string, error) {
 	return r.Emoji, err
 }
 
-// WebSocketURL builds the realtime gateway URL the web client uses.
-func (c *Client) WebSocketURL(ctx context.Context) string {
+// WebSocketURL builds the realtime gateway URL the web client uses
+// (verified against app.slack.com: org token, gateway_server from
+// client.getWebSocketURL's routing_context, and a real agent_version; the
+// gateway closes the socket without a hello when agent_version is bogus).
+func (c *Client) WebSocketURL(ctx context.Context, fallback bool) string {
 	base := "wss://wss-primary.slack.com/"
+	if fallback {
+		base = "wss://wss-backup.slack.com/"
+	}
 	var r struct {
-		Primary string `json:"primary_websocket_url"`
+		Primary  string `json:"primary_websocket_url"`
+		Fallback string `json:"fallback_websocket_url"`
+		Routing  string `json:"routing_context"`
 	}
-	if err := c.Call(ctx, "client.getWebSocketURL", nil, &r); err == nil && r.Primary != "" {
+	err := c.Call(ctx, "client.getWebSocketURL", nil, &r)
+	if err == nil && r.Primary != "" && !fallback {
 		base = r.Primary
+	} else if err == nil && r.Fallback != "" && fallback {
+		base = r.Fallback
 	}
-	team := c.Creds.Team
-	gw := team
-	if len(team) > 1 {
-		gw = "T" + team[1:]
+	tok := c.Creds.Token
+	gw := c.Creds.Team
+	if c.Creds.EnterpriseToken != "" && c.Creds.EnterpriseID != "" {
+		tok = c.Creds.EnterpriseToken
+		gw = c.Creds.EnterpriseID
+	}
+	if len(gw) > 1 {
+		gw = "T" + gw[1:] + "-1"
+	}
+	if r.Routing != "" {
+		gw = r.Routing
 	}
 	q := url.Values{
-		"token":                 {c.Creds.Token},
-		"sync_desync":           {"1"},
-		"slack_client":          {"desktop"},
-		"start_args":            {"?agent=client&org_wide_aware=true&agent_version=1&eac_cache_ts=true&cache_ts=0&name_tagging=true&only_self_subteams=true&connect_only=true&ms_latest=true"},
+		"token":        {tok},
+		"sync_desync":  {"1"},
+		"slack_client": {"desktop"},
+		"start_args": {"?agent=client&org_wide_aware=true&agent_version=" + strconv.FormatInt(time.Now().Unix(), 10) +
+			"&eac_cache_ts=true&cache_ts=0&name_tagging=true&only_self_subteams=true&connect_only=true&ms_latest=true"},
 		"no_query_on_subscribe": {"1"},
 		"flannel":               {"3"},
 		"lazy_channels":         {"1"},
-		"gateway_server":        {gw + "-1"},
+		"gateway_server":        {gw},
 		"batch_presence_aware":  {"1"},
 	}
 	if c.Creds.EnterpriseID != "" {

@@ -2,6 +2,7 @@ package render
 
 import (
 	"encoding/json"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -123,7 +124,7 @@ func TextObject(r Resolver, t *TextObj) string {
 	}
 	if t.Type == "mrkdwn" {
 		if t.Verbatim {
-			return linkify(r, t.Text, true)
+			return linkify(r, t.Text)
 		}
 		return mrkdwn(r, t.Text, false)
 	}
@@ -220,7 +221,7 @@ func block(r Resolver, b *Block, big bool) string {
 		if b.Title != nil {
 			t = esc(b.Title.Text)
 		}
-		return `<div class="p-block_kit_renderer__block_wrapper"><div class="p-video_block"><a class="c-link p-video_block__title" href="` + esc(b.TitleURL) + `" target="_blank" rel="noopener">` + t + `</a><img src="` + esc(b.ThumbnailURL) + `" alt="` + esc(b.AltText) + `" loading="lazy"></div></div>`
+		return `<div class="p-block_kit_renderer__block_wrapper"><div class="p-video_block"><a class="c-link p-video_block__title" href="` + esc(SafeURL(b.TitleURL)) + `" target="_blank" rel="noopener">` + t + `</a><img src="` + esc(SafeImg(b.ThumbnailURL)) + `" alt="` + esc(b.AltText) + `" loading="lazy"></div></div>`
 	case "file":
 		return ""
 	case "call":
@@ -247,9 +248,19 @@ func mustJSON(v any) []byte {
 	return b
 }
 
+var hexColorRe = regexp.MustCompile(`^#?[0-9a-fA-F]{3,8}$`)
+
+// SafeImg returns u if it is an http(s) or same-origin image URL, else "".
+func SafeImg(u string) string {
+	if strings.HasPrefix(u, "https://") || strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "/file?") {
+		return u
+	}
+	return ""
+}
+
 func imgURL(r Resolver, b *Block) string {
 	if b.ImageURL != "" {
-		return b.ImageURL
+		return SafeImg(r.Proxy(b.ImageURL))
 	}
 	if b.SlackFile != nil && b.SlackFile.URL != "" {
 		return r.Proxy(b.SlackFile.URL)
@@ -269,8 +280,8 @@ func element(r Resolver, e *Block) string {
 		}
 		label := TextObject(r, e.textObj())
 		attrs := ` data-action-id="` + esc(e.ActionID) + `" data-value="` + esc(e.Value) + `"`
-		if e.URL != "" {
-			return `<a class="` + cls + `" href="` + esc(e.URL) + `" target="_blank" rel="noopener"` + attrs + `>` + label + `</a>`
+		if h := SafeURL(e.URL); h != "" {
+			return `<a class="` + cls + `" href="` + esc(h) + `" target="_blank" rel="noopener"` + attrs + `>` + label + `</a>`
 		}
 		return `<button class="` + cls + `" type="button"` + attrs + `>` + label + `</button>`
 	case "image":
@@ -372,7 +383,7 @@ func richInline(r Resolver, els []Block, big bool) string {
 			if st.Unlink {
 				s = esc(label)
 			} else {
-				s = `<a class="c-link" href="` + esc(e.URL) + `" target="_blank" rel="noopener noreferrer" data-stringify-link="` + esc(e.URL) + `">` + esc(label) + `</a>`
+				s = linkHTML(e.URL, label)
 			}
 		case "user":
 			s = UserMention(r, e.UserID, "")
@@ -396,11 +407,14 @@ func richInline(r Resolver, els []Block, big bool) string {
 				txt = FormatDate(time.Unix(sec, 0), e.Format)
 			}
 			s = `<span class="c-timestamp-token" data-ts="` + strconv.FormatInt(sec, 10) + `" data-format="` + esc(e.Format) + `">` + esc(txt) + `</span>`
-			if e.URL != "" {
-				s = `<a class="c-link" href="` + esc(e.URL) + `" target="_blank" rel="noopener">` + s + `</a>`
+			if h := SafeURL(e.URL); h != "" {
+				s = `<a class="c-link" href="` + esc(h) + `" target="_blank" rel="noopener">` + s + `</a>`
 			}
 		case "color":
-			s = `<span class="c-color_swatch" style="background:` + esc(e.Value) + `"></span>` + esc(e.Value)
+			s = esc(e.Value)
+			if hexColorRe.MatchString(e.Value) {
+				s = `<span class="c-color_swatch" style="background:` + e.Value + `"></span>` + s
+			}
 		case "team":
 			s = `<span class="c-team_entity">` + esc(e.Value) + `</span>`
 		default:

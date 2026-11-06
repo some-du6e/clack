@@ -45,10 +45,18 @@ type ReactionView struct {
 }
 
 type FileView struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Mime string `json:"mime"`
-	URL  string `json:"url"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Title     string `json:"title,omitempty"`
+	Mime      string `json:"mime"`
+	Filetype  string `json:"filetype,omitempty"`
+	URL       string `json:"url"`
+	Download  string `json:"download,omitempty"`
+	Thumb     string `json:"thumb,omitempty"`
+	W         int    `json:"w,omitempty"`
+	H         int    `json:"h,omitempty"`
+	Size      int64  `json:"size,omitempty"`
+	Permalink string `json:"permalink,omitempty"`
 }
 
 var systemSubtypes = map[string]bool{
@@ -102,7 +110,12 @@ func Message(r Resolver, ch string, m *slack.Message) View {
 		v.Reactions = append(v.Reactions, rv)
 	}
 	for _, f := range m.Files {
-		v.Files = append(v.Files, FileView{ID: f.ID, Name: f.Name, Mime: f.Mimetype, URL: r.Proxy(f.URLPrivate)})
+		v.Files = append(v.Files, FileView{
+			ID: f.ID, Name: f.Name, Title: f.Title, Mime: f.Mimetype, Filetype: f.Filetype,
+			URL: r.Proxy(f.URLPrivate), Download: r.Proxy(f.URLPrivateDownload),
+			Thumb: r.Proxy(firstNonEmpty(f.Thumb720, f.Thumb480, f.Thumb360, f.ThumbVideo)),
+			W:     f.OriginalW, H: f.OriginalH, Size: f.Size, Permalink: f.Permalink,
+		})
 	}
 	v.HTML = Body(r, m)
 	return v
@@ -198,7 +211,7 @@ func fileCard(r Resolver, f *slack.File) string {
 	if f.Preview != "" && (f.Mode == "snippet" || f.Filetype == "text" || f.Lines > 0) {
 		preview = `<pre class="c-file__snippet_preview">` + esc(f.Preview) + `</pre>`
 	}
-	return `<div class="c-file_entity c-message_attachment__file" data-file-id="` + esc(f.ID) + `"><a class="c-file_entity__item" href="` + esc(r.Proxy(f.URLPrivate)) + `" target="_blank" rel="noopener"><span class="c-file_entity__icon" data-type="` + esc(f.Filetype) + `">` + fileIcon(f.Filetype) + `</span><span class="c-file_entity__content"><span class="c-file_entity__title">` + esc(firstNonEmpty(f.Title, f.Name)) + `</span><span class="c-file_entity__meta">` + esc(meta) + `</span></span></a>` + preview + `</div>`
+	return `<div class="c-file_entity c-message_attachment__file" data-file-id="` + esc(f.ID) + `"><a class="c-file_entity__item" href="` + esc(SafeURL(r.Proxy(f.URLPrivate))) + `" target="_blank" rel="noopener"><span class="c-file_entity__icon" data-type="` + esc(f.Filetype) + `">` + fileIcon(f.Filetype) + `</span><span class="c-file_entity__content"><span class="c-file_entity__title">` + esc(firstNonEmpty(f.Title, f.Name)) + `</span><span class="c-file_entity__meta">` + esc(meta) + `</span></span></a>` + preview + `</div>`
 }
 
 func fileIcon(ft string) string {
@@ -270,25 +283,25 @@ func Attachment(r Resolver, a *slack.Attachment) string {
 	if a.ServiceName != "" {
 		icon := ""
 		if a.ServiceIcon != "" {
-			icon = `<img class="c-message_attachment__author_icon" src="` + esc(a.ServiceIcon) + `" alt="" loading="lazy">`
+			icon = `<img class="c-message_attachment__author_icon" src="` + esc(SafeImg(a.ServiceIcon)) + `" alt="" loading="lazy">`
 		}
 		b.WriteString(`<div class="c-message_attachment__row c-message_attachment__service">` + icon + `<span class="c-message_attachment__service_name">` + esc(a.ServiceName) + `</span></div>`)
 	}
 	if a.AuthorName != "" {
 		icon := ""
 		if a.AuthorIcon != "" {
-			icon = `<img class="c-message_attachment__author_icon" src="` + esc(a.AuthorIcon) + `" alt="" loading="lazy">`
+			icon = `<img class="c-message_attachment__author_icon" src="` + esc(SafeImg(a.AuthorIcon)) + `" alt="" loading="lazy">`
 		}
 		name := esc(a.AuthorName)
-		if a.AuthorLink != "" {
-			name = `<a class="c-link" href="` + esc(a.AuthorLink) + `" target="_blank" rel="noopener">` + name + `</a>`
+		if h := SafeURL(a.AuthorLink); h != "" {
+			name = `<a class="c-link" href="` + esc(h) + `" target="_blank" rel="noopener">` + name + `</a>`
 		}
 		b.WriteString(`<div class="c-message_attachment__row c-message_attachment__author">` + icon + `<span class="c-message_attachment__author_name">` + name + `</span>` + subname(a) + `</div>`)
 	}
 	if a.Title != "" {
 		t := emojify(r, esc(slackUnescape(a.Title)), false)
-		if a.TitleLink != "" {
-			t = `<a class="c-link c-message_attachment__title_link" href="` + esc(a.TitleLink) + `" target="_blank" rel="noopener">` + t + `</a>`
+		if h := SafeURL(a.TitleLink); h != "" {
+			t = `<a class="c-link c-message_attachment__title_link" href="` + esc(h) + `" target="_blank" rel="noopener">` + t + `</a>`
 		}
 		b.WriteString(`<div class="c-message_attachment__row c-message_attachment__title">` + t + `</div>`)
 	}
@@ -309,14 +322,14 @@ func Attachment(r Resolver, a *slack.Attachment) string {
 		}
 		b.WriteString(`</div>`)
 	}
-	if a.ImageURL != "" {
+	if img := SafeImg(r.Proxy(a.ImageURL)); img != "" {
 		w, h := fit(a.ImageWidth, a.ImageHeight, 360, 270)
-		b.WriteString(fmt.Sprintf(`<div class="c-message_attachment__row c-message_attachment__image"><a href="%s" target="_blank" rel="noopener" data-zoom="%s"><img src="%s" alt="" loading="lazy" style="max-width:%dpx;max-height:%dpx"></a></div>`, esc(firstNonEmpty(a.FromURL, a.ImageURL)), esc(a.ImageURL), esc(a.ImageURL), w, h))
+		b.WriteString(fmt.Sprintf(`<div class="c-message_attachment__row c-message_attachment__image"><a href="%s" target="_blank" rel="noopener" data-zoom="%s"><img src="%s" alt="" loading="lazy" style="max-width:%dpx;max-height:%dpx"></a></div>`, esc(firstNonEmpty(SafeURL(a.FromURL), img)), esc(img), esc(img), w, h))
 	}
 	if a.Footer != "" || len(a.TS) > 0 {
 		icon := ""
 		if a.FooterIcon != "" {
-			icon = `<img class="c-message_attachment__footer_icon" src="` + esc(a.FooterIcon) + `" alt="" loading="lazy">`
+			icon = `<img class="c-message_attachment__footer_icon" src="` + esc(SafeImg(a.FooterIcon)) + `" alt="" loading="lazy">`
 		}
 		ts := ""
 		if sec := tsSeconds(a.TS); sec > 0 {
@@ -326,7 +339,7 @@ func Attachment(r Resolver, a *slack.Attachment) string {
 	}
 	b.WriteString(`</div>`)
 	if a.ThumbURL != "" && a.ImageURL == "" {
-		b.WriteString(`<div class="c-message_attachment__thumb"><img src="` + esc(a.ThumbURL) + `" alt="" loading="lazy"></div>`)
+		b.WriteString(`<div class="c-message_attachment__thumb"><img src="` + esc(SafeImg(r.Proxy(a.ThumbURL))) + `" alt="" loading="lazy"></div>`)
 	}
 	b.WriteString(`</div>`)
 	if len(a.Files) > 0 {
@@ -360,7 +373,7 @@ func sharedMessage(r Resolver, a *slack.Attachment) string {
 	b.WriteString(`<div class="c-message_attachment c-message_attachment--share"><div class="c-message_attachment__border"></div><div class="c-message_attachment__body">`)
 	icon := ""
 	if a.AuthorIcon != "" {
-		icon = `<img class="c-message_attachment__author_icon c-message_attachment__author_icon--share" src="` + esc(a.AuthorIcon) + `" alt="" loading="lazy">`
+		icon = `<img class="c-message_attachment__author_icon c-message_attachment__author_icon--share" src="` + esc(SafeImg(a.AuthorIcon)) + `" alt="" loading="lazy">`
 	}
 	b.WriteString(`<div class="c-message_attachment__row c-message_attachment__author">` + icon + `<span class="c-message_attachment__author_name">` + esc(firstNonEmpty(a.AuthorName, a.AuthorSubname)) + `</span></div>`)
 	body := ""
@@ -385,8 +398,8 @@ func sharedMessage(r Resolver, a *slack.Attachment) string {
 		ts = ` | <span class="c-timestamp-token" data-ts="` + strconv.FormatInt(sec, 10) + `" data-format="{date_short_pretty}"></span>`
 	}
 	link := ""
-	if a.FromURL != "" {
-		link = ` | <a class="c-link" href="` + esc(a.FromURL) + `" target="_blank" rel="noopener">View message</a>`
+	if h := SafeURL(a.FromURL); h != "" {
+		link = ` | <a class="c-link" href="` + esc(h) + `" target="_blank" rel="noopener">View message</a>`
 	}
 	b.WriteString(`<div class="c-message_attachment__row c-message_attachment__footer"><span class="c-message_attachment__footer_text">` + foot + ts + link + `</span></div>`)
 	b.WriteString(`</div></div>`)
