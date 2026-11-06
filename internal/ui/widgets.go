@@ -15,9 +15,26 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
+// clickedSet records clicks seen by clickArea. Gio's Clickable.Layout
+// drains pending events, so clicks must be read before Layout; clickArea
+// does that and callers check clicked(c) after laying out. UI goroutine only.
+var clickedSet = map[*widget.Clickable]bool{}
+
+// clicked reports (once) whether c was clicked this frame.
+func clicked(c *widget.Clickable) bool {
+	if clickedSet[c] {
+		delete(clickedSet, c)
+		return true
+	}
+	return false
+}
+
 // clickArea lays out w as a clickable with a pointer cursor; bg(hovered,
-// pressed) paints behind it.
+// pressed) paints behind it. Check clicked(c) afterwards.
 func clickArea(gtx layout.Context, c *widget.Clickable, bg func(gtx layout.Context, sz image.Point, hovered bool), w layout.Widget) layout.Dimensions {
+	if c.Clicked(gtx) {
+		clickedSet[c] = true
+	}
 	return c.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		m := op.Record(gtx.Ops)
 		d := w(gtx)

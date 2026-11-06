@@ -25,10 +25,12 @@ jobs:
       - name: test
         run: go test ./...
       - name: build
+        if: ${{ !cancelled() }}
         run: |
           mkdir -p dist
           CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o dist/yoloslack-linux-amd64 ./cmd/yoloslack
       - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
         with:
           name: yoloslack-linux-amd64
           path: dist/yoloslack-linux-amd64
@@ -59,6 +61,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: build
+        if: ${{ !cancelled() }}
         run: |
           mkdir -p dist
           CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o dist/yoloslack-darwin-arm64 ./cmd/yoloslack

@@ -24,6 +24,7 @@ const (
 	sbAction
 	sbGap
 	sbNote
+	sbDivider
 )
 
 type sbRow struct {
@@ -61,7 +62,7 @@ func sectionIcon(typ string) string {
 	case "stars":
 		return "star"
 	case "channels":
-		return "hash"
+		return "channels-section"
 	case "direct_messages":
 		return "dms"
 	case "recent_apps", "apps":
@@ -76,7 +77,7 @@ func (s *sidebarState) rebuild(m *model) {
 		s.collapsed = map[string]bool{}
 	}
 	rows := append(s.rows[:0], sbLinks...)
-	rows = append(rows, sbRow{kind: sbGap, gap: 24})
+	rows = append(rows, sbRow{kind: sbDivider, gap: 24})
 	for i, sec := range m.Sections {
 		if i > 0 {
 			rows = append(rows, sbRow{kind: sbGap, gap: 10})
@@ -105,7 +106,7 @@ func (s *sidebarState) rebuild(m *model) {
 		case "channels":
 			rows = append(rows, sbRow{kind: sbAction, key: "add-channels", label: "Add channels", icon: "channel-plus"})
 		case "direct_messages":
-			rows = append(rows, sbRow{kind: sbAction, key: "browse-people", label: "Browse all people", icon: "user-plus"})
+			rows = append(rows, sbRow{kind: sbAction, key: "browse-people", label: "Browse all people", icon: "contact"})
 		case "recent_apps", "apps":
 			rows = append(rows, sbRow{kind: sbAction, key: "add-apps", label: "Add apps", icon: "plus-small"})
 		}
@@ -128,7 +129,7 @@ var emptyModel = model{TeamName: "yoloslack", Convs: map[string]*convInfo{}}
 // layoutSidebar draws the sidebar header, jump box and scrolling list.
 func (a *App) layoutSidebar(gtx layout.Context) layout.Dimensions {
 	sz := gtx.Constraints.Max
-	c := &a.th.C
+	c := a.sidebarPalette()
 	m := a.model()
 	if a.sidebar.rows == nil || a.sidebar.builtFor != m.version {
 		a.sidebar.rebuild(m)
@@ -158,7 +159,7 @@ func (a *App) layoutSidebar(gtx layout.Context) layout.Dimensions {
 			return layout.Dimensions{Size: image.Pt(nameW+gtx.Dp(34), h)}
 		})
 	})
-	if a.clicks.get("sb.team").Clicked(gtx) {
+	if clicked(a.clicks.get("sb.team")) {
 		a.openTeamMenu(image.Pt(gtx.Dp(theme.RailW)+gtx.Dp(16), gtx.Dp(theme.TopNavH)+gtx.Dp(42)))
 	}
 	for i, b := range []string{"compose", "settings"} {
@@ -167,43 +168,44 @@ func (a *App) layoutSidebar(gtx layout.Context) layout.Dimensions {
 			return iconButton(gtx, a.clicks.get("sb."+b), b, 28, 20, c.SidebarTextUnread, c.SidebarHover, 6)
 		})
 	}
-	if a.clicks.get("sb.compose").Clicked(gtx) {
+	if clicked(a.clicks.get("sb.compose")) {
 		a.compose()
 	}
-	if a.clicks.get("sb.settings").Clicked(gtx) {
+	if clicked(a.clicks.get("sb.settings")) {
 		a.openPrefs()
 	}
 
 	// "Find a conversation…" box.
 	fy := hh
-	fh := gtx.Dp(27)
+	fh := gtx.Dp(28)
 	at(gtx, image.Pt(gtx.Dp(8), fy), image.Pt(sz.X-gtx.Dp(16), fh), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, a.clicks.get("sb.find"), func(gtx layout.Context, s image.Point, hovered bool) {
-			bg := theme.WithAlpha(c.SidebarText, 0x0d)
+			// Slack: rgba(249,237,255,.11) fill, 1px rgba(249,237,255,.22), radius 8.
+			bg := theme.Over(theme.WithAlpha(a.th.C.SidebarActive, 0x1c), a.sbBase)
 			if hovered {
-				bg = c.SidebarHover
+				bg = theme.Over(theme.WithAlpha(a.th.C.SidebarActive, 0x2a), a.sbBase)
 			}
-			theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(6), bg)
-			theme.Border(gtx, image.Rectangle{Max: s}, gtx.Dp(6), gtx.Dp(1), theme.WithAlpha(c.SidebarText, 0x40))
+			theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(8), bg)
+			theme.Border(gtx, image.Rectangle{Max: s}, gtx.Dp(8), gtx.Dp(1), theme.Over(theme.WithAlpha(a.th.C.SidebarActive, 0x38), a.sbBase))
 		}, func(gtx layout.Context) layout.Dimensions {
 			w := gtx.Constraints.Max.X
 			at(gtx, image.Pt(gtx.Dp(8), (fh-gtx.Dp(14))/2), image.Pt(gtx.Dp(14), gtx.Dp(14)), func(gtx layout.Context) layout.Dimensions {
-				return icons.Get("search")(gtx, 14, c.SidebarText)
+				return icons.Get("find")(gtx, 14, c.SidebarTextUnread)
 			})
 			at(gtx, image.Pt(gtx.Dp(26), 0), image.Pt(w-gtx.Dp(30), fh), func(gtx layout.Context) layout.Dimensions {
 				return vcenter(gtx, fh, func(gtx layout.Context) layout.Dimensions {
-					return a.th.Label(gtx, 13, theme.Regular, c.SidebarText, "Find a conversation…")
+					return a.th.Label(gtx, 13, theme.Regular, c.SidebarTextUnread, "Find a conversation…")
 				})
 			})
 			return layout.Dimensions{Size: image.Pt(w, fh)}
 		})
 	})
-	if a.clicks.get("sb.find").Clicked(gtx) {
+	if clicked(a.clicks.get("sb.find")) {
 		a.openSwitcher()
 	}
 
 	// scrolling list
-	top := fy + fh + gtx.Dp(11)
+	top := fy + fh + gtx.Dp(10)
 	at(gtx, image.Pt(0, top), image.Pt(sz.X, sz.Y-top), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min = gtx.Constraints.Max
 		a.sidebar.list.Axis = layout.Vertical
@@ -215,21 +217,27 @@ func (a *App) layoutSidebar(gtx layout.Context) layout.Dimensions {
 }
 
 func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
-	c := &a.th.C
+	c := &a.sbPal
 	w := gtx.Constraints.Max.X
 	rowH := gtx.Dp(theme.SidebarRowH)
 	pad := gtx.Dp(8)
 	switch r.kind {
 	case sbGap:
 		return layout.Dimensions{Size: image.Pt(w, gtx.Dp(unit.Dp(r.gap)))}
+	case sbDivider:
+		h := gtx.Dp(unit.Dp(r.gap))
+		theme.Fill(gtx, image.Rect(pad, h/2, w-pad, h/2+gtx.Dp(1)), c.SidebarDivider)
+		return layout.Dimensions{Size: image.Pt(w, h)}
 	case sbNote:
-		h := gtx.Dp(26)
-		at(gtx, image.Pt(pad+gtx.Dp(24), 0), image.Pt(w-pad*2-gtx.Dp(24), h), func(gtx layout.Context) layout.Dimensions {
-			return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
+		// Slack: 13px note under the empty Starred heading; the row is
+		// 44px with the text in its first 26px.
+		lh := gtx.Dp(26)
+		at(gtx, image.Pt(pad+gtx.Dp(24), 0), image.Pt(w-pad*2-gtx.Dp(24), lh), func(gtx layout.Context) layout.Dimensions {
+			return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
 				return a.th.Label(gtx, 13, theme.Regular, c.SidebarText, r.label)
 			})
 		})
-		return layout.Dimensions{Size: image.Pt(w, h)}
+		return layout.Dimensions{Size: image.Pt(w, gtx.Dp(44))}
 	}
 
 	route := a.router.Current()
@@ -266,7 +274,7 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 			col = c.SidebarTextUnread
 		}
 		if conv.Muted {
-			col = theme.WithAlpha(col, 0x80)
+			col = theme.Over(theme.WithAlpha(a.th.C.SidebarText, 0x80), a.sbBase)
 		}
 		mentions = conv.Mentions
 		if conv.Self {
@@ -340,9 +348,9 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 				})
 			})
 			if suffix != "" && nw+gtx.Dp(8) < tw {
-				sc := theme.WithAlpha(c.SidebarText, 0x99)
+				sc := theme.Over(theme.WithAlpha(a.th.C.SidebarText, 0xa3), a.sbBase) // rgba(249,237,255,.6)
 				if sel {
-					sc = theme.WithAlpha(c.SidebarActiveText, 0x99)
+					sc = theme.Over(theme.WithAlpha(c.SidebarActiveText, 0x99), c.SidebarActive)
 				}
 				at(gtx, image.Pt(tx+nw+gtx.Dp(6), 0), image.Pt(tw-nw-gtx.Dp(6), rowH), func(gtx layout.Context) layout.Dimensions {
 					return vcenter(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
@@ -353,7 +361,7 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 			return layout.Dimensions{Size: image.Pt(rw, rowH)}
 		})
 	})
-	if btn.Clicked(gtx) {
+	if clicked(btn) {
 		switch r.kind {
 		case sbLink:
 			a.Navigate(r.key)
@@ -372,8 +380,8 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 // presenceDot draws Slack's 12px presence badge: filled green when active,
 // hollow ring when away; ringed with the row background.
 func (a *App) presenceDot(gtx layout.Context, center image.Point, active, sel bool) {
-	c := &a.th.C
-	ring := c.ChromeB
+	c := &a.sbPal
+	ring := a.sbBase
 	if sel {
 		ring = c.SidebarActive
 	}

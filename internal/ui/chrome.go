@@ -11,6 +11,7 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/unit"
+	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
@@ -22,75 +23,139 @@ import (
 //	conic-gradient(from 45deg, B 0%, A 25%, B 50%, A 75%, B 100%)
 //
 // into a small image (1/8 scale) that the GPU upsamples with linear
-// filtering. Re-rendered only when the window size or palette changes.
+// filtering. Variants pre-composite translucent chrome overlays (sidebar
+// tint, search pill, hover tiles) in sRGB, matching browser blending.
+// Re-rendered only when the window size or palette changes.
 type gradient struct {
 	size image.Point
 	pal  [2]color.NRGBA
-	img  paint.ImageOp
-	ok   bool
+	imgs map[[2]color.NRGBA]paint.ImageOp
 }
 
 const gradScale = 8
 
-func (g *gradient) layout(gtx layout.Context, a, b color.NRGBA) {
-	sz := gtx.Constraints.Max
-	if !g.ok || g.size != sz || g.pal != [2]color.NRGBA{a, b} {
-		g.size, g.pal, g.ok = sz, [2]color.NRGBA{a, b}, true
-		g.img = paint.NewImageOp(renderGradient(sz, a, b))
-		g.img.Filter = paint.FilterLinear
+func (g *gradient) variant(sz image.Point, a, b color.NRGBA, over ...color.NRGBA) paint.ImageOp {
+	if g.size != sz || g.pal != [2]color.NRGBA{a, b} || g.imgs == nil {
+		g.size, g.pal = sz, [2]color.NRGBA{a, b}
+		g.imgs = map[[2]color.NRGBA]paint.ImageOp{}
 	}
-	is := g.img.Size()
-	defer clip.Rect{Max: sz}.Push(gtx.Ops).Pop()
-	sx := float32(sz.X) / float32(is.X)
-	sy := float32(sz.Y) / float32(is.Y)
-	defer op.Affine(f32.Affine2D{}.Scale(f32.Point{}, f32.Pt(sx, sy))).Push(gtx.Ops).Pop()
-	g.img.Add(gtx.Ops)
+	var k [2]color.NRGBA
+	copy(k[:], over)
+	if img, ok := g.imgs[k]; ok {
+		return img
+	}
+	img := paint.NewImageOp(renderGradient(sz, a, b, k[0], k[1]))
+	img.Filter = paint.FilterLinear
+	g.imgs[k] = img
+	return img
+}
+
+// draw paints the gradient (with overlays) clipped to clipR, both in window
+// coordinates; origin is the current op offset in window coordinates.
+func (g *gradient) draw(gtx layout.Context, win image.Point, origin image.Point, clipR clip.Op, a, b color.NRGBA, over ...color.NRGBA) {
+	img := g.variant(win, a, b, over...)
+	defer clipR.Push(gtx.Ops).Pop()
+	// image pixel centers sit at the window positions they were sampled at
+	aff := f32.Affine2D{}.Scale(f32.Point{}, f32.Pt(gradScale, gradScale)).
+		Offset(f32.Pt(-float32(origin.X), -float32(origin.Y)))
+	defer op.Affine(aff).Push(gtx.Ops).Pop()
+	img.Add(gtx.Ops)
 	paint.PaintOp{}.Add(gtx.Ops)
 }
 
-func renderGradient(sz image.Point, a, b color.NRGBA) *image.RGBA {
-	w, h := sz.X/gradScale+2, sz.Y/gradScale+2
-	img := image.NewRGBA(image.Rect(0, 0, w, h))
-	cx, cy := float64(w)/2, float64(h)/2
-	far := math.Hypot(cx, cy)
+func (g *gradient) layout(gtx layout.Context, a, b color.NRGBA) {
+	sz := gtx.Constraints.Max
+	g.draw(gtx, sz, image.Point{}, clip.Rect{Max: sz}.Op(), a, b)
+}
+
+// gradientColor evaluates the background at window point (x, y).
+func gradientColor(sz image.Point, x, y int, a, b color.NRGBA) color.NRGBA {
+	cx, cy := float64(sz.X)/2, float64(sz.Y)/2
+	return gradPixel(float64(x)-cx, float64(y)-cy, math.Hypot(cx, cy), a, b)
+}
+
+func gradPixel(dx, dy, far float64, a, b color.NRGBA) color.NRGBA {
 	lerp := func(x, y uint8, t float64) float64 { return float64(x) + (float64(y)-float64(x))*t }
+	// conic: CSS angle 0 = up, clockwise; "from 45deg".
+	ang := math.Atan2(dx, -dy)*180/math.Pi - 45
+	for ang < 0 {
+		ang += 360
+	}
+	t := math.Mod(ang, 180) / 90 // 0..2: B→A→B
+	if t > 1 {
+		t = 2 - t
+	}
+	r, g, bb := lerp(b.R, a.R, t), lerp(b.G, a.G, t), lerp(b.B, a.B, t)
+	// radial overlay: A at alpha 1 until 20%, fading to 0 at 80%.
+	d := math.Hypot(dx, dy) / far
+	al := 1.0
+	if d > .2 {
+		al = 1 - (d-.2)/.6
+		if al < 0 {
+			al = 0
+		}
+	}
+	r += (float64(a.R) - r) * al
+	g += (float64(a.G) - g) * al
+	bb += (float64(a.B) - bb) * al
+	return color.NRGBA{R: uint8(r + .5), G: uint8(g + .5), B: uint8(bb + .5), A: 0xff}
+}
+
+func renderGradient(sz image.Point, a, b, o1, o2 color.NRGBA) *image.RGBA {
+	w, h := sz.X/gradScale+1, sz.Y/gradScale+1
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	cx, cy := float64(sz.X)/2, float64(sz.Y)/2
+	far := math.Hypot(cx, cy)
 	i := 0
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
-			dx, dy := float64(x)+.5-cx, float64(y)+.5-cy
-			// conic: CSS angle 0 = up, clockwise; "from 45deg".
-			ang := math.Atan2(dx, -dy)*180/math.Pi - 45
-			for ang < 0 {
-				ang += 360
+			c := gradPixel(float64(x*gradScale)+gradScale/2-cx, float64(y*gradScale)+gradScale/2-cy, far, a, b)
+			if o1.A > 0 {
+				c = theme.Over(o1, c)
 			}
-			q := math.Mod(ang, 180) / 90 // 0..2: B→A→B
-			t := q
-			if t > 1 {
-				t = 2 - t
+			if o2.A > 0 {
+				c = theme.Over(o2, c)
 			}
-			r := lerp(b.R, a.R, t)
-			g := lerp(b.G, a.G, t)
-			bb := lerp(b.B, a.B, t)
-			// radial overlay: A at alpha 1 until 20%, fading to 0 at 80%.
-			d := math.Hypot(dx, dy) / far
-			al := 1.0
-			if d > .2 {
-				al = 1 - (d-.2)/.6
-				if al < 0 {
-					al = 0
-				}
-			}
-			r = r + (float64(a.R)-r)*al
-			g = g + (float64(a.G)-g)*al
-			bb = bb + (float64(a.B)-bb)*al
-			img.Pix[i+0] = uint8(r + .5)
-			img.Pix[i+1] = uint8(g + .5)
-			img.Pix[i+2] = uint8(bb + .5)
-			img.Pix[i+3] = 0xff
+			img.Pix[i+0], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = c.R, c.G, c.B, 0xff
 			i += 4
 		}
 	}
 	return img
+}
+
+// chrome paints a chrome surface with translucent overlays composited in
+// sRGB. r is local (relative to origin, the current offset in window
+// coordinates).
+func (a *App) chrome(gtx layout.Context, origin image.Point, r image.Rectangle, radius int, over ...color.NRGBA) {
+	cl := clip.UniformRRect(r, radius).Op(gtx.Ops)
+	a.grad.draw(gtx, a.winSize, origin, cl, a.th.C.ChromeA, a.th.C.ChromeB, over...)
+}
+
+// sidebarBase is the sidebar's effective (opaque) color near its middle, for
+// flattening translucent sidebar colors (text, hovers) in sRGB.
+func (a *App) sidebarBase() color.NRGBA {
+	g := gradientColor(a.winSize, a.px(70+a.sidebar.width/2), a.winSize.Y/2, a.th.C.ChromeA, a.th.C.ChromeB)
+	return theme.Over(a.th.C.SidebarBg, g)
+}
+
+// sidebarPalette returns the palette with the translucent sidebar colors
+// flattened over the sidebar's effective background (sRGB blending).
+func (a *App) sidebarPalette() *theme.Palette {
+	p := a.th.C
+	base := a.sidebarBase()
+	p.SidebarText = theme.Over(p.SidebarText, base)
+	p.SidebarHover = theme.Over(p.SidebarHover, base)
+	p.SidebarDivider = theme.Over(p.SidebarDivider, base)
+	p.SidebarButton = theme.Over(p.SidebarButton, base)
+	p.SidebarActive = theme.Over(p.SidebarActive, base)
+	a.sbBase = base
+	a.sbPal = p
+	return &a.sbPal
+}
+
+// chromeBase is the effective chrome color at window point p.
+func (a *App) chromeBase(p image.Point) color.NRGBA {
+	return gradientColor(a.winSize, p.X, p.Y, a.th.C.ChromeA, a.th.C.ChromeB)
 }
 
 // ---- top nav (40px) ----
@@ -110,18 +175,19 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 		if (i == 0 && !a.router.CanBack()) || (i == 1 && !a.router.CanForward()) {
 			col = theme.WithAlpha(col, 0x70)
 		}
-		at(gtx, image.Pt(x, y), image.Pt(b, b), func(gtx layout.Context) layout.Dimensions {
-			return iconButton(gtx, btn, name, 26, 18, col, c.ChromeHover, 4)
+		org := image.Pt(x, y)
+		at(gtx, org, image.Pt(b, b), func(gtx layout.Context) layout.Dimensions {
+			return a.chromeButton(gtx, org, btn, name, 26, 18, col, 4)
 		})
 		x -= b + gap
 	}
-	if a.clicks.get("nav.back").Clicked(gtx) {
+	if clicked(a.clicks.get("nav.back")) {
 		a.Back()
 	}
-	if a.clicks.get("nav.forward").Clicked(gtx) {
+	if clicked(a.clicks.get("nav.forward")) {
 		a.Forward()
 	}
-	if a.clicks.get("nav.history").Clicked(gtx) {
+	if clicked(a.clicks.get("nav.history")) {
 		a.openHistoryMenu()
 	}
 
@@ -136,13 +202,15 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 		sw = gtx.Dp(200)
 	}
 	sh := gtx.Dp(28)
-	at(gtx, image.Pt(primaryX, (h-sh)/2), image.Pt(sw, sh), func(gtx layout.Context) layout.Dimensions {
+	sorg := image.Pt(primaryX, (h-sh)/2)
+	at(gtx, sorg, image.Pt(sw, sh), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, a.clicks.get("nav.search"), func(gtx layout.Context, sz image.Point, hovered bool) {
 			bg := c.SearchBg
 			if hovered {
 				bg = c.SearchHover
 			}
-			theme.RRect(gtx, image.Rectangle{Max: sz}, gtx.Dp(4), bg)
+			// Slack: rgba(249,237,255,.25) plus a rgba(131,56,138,.08) tint.
+			a.chrome(gtx, sorg, image.Rectangle{Max: sz}, gtx.Dp(4), bg, theme.SearchTint)
 		}, func(gtx layout.Context) layout.Dimensions {
 			sz := image.Pt(sw, sh)
 			at(gtx, image.Pt(gtx.Dp(10), (sh-gtx.Dp(16))/2), sz, func(gtx layout.Context) layout.Dimensions {
@@ -160,15 +228,16 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 			return layout.Dimensions{Size: sz}
 		})
 	})
-	if a.clicks.get("nav.search").Clicked(gtx) {
+	if clicked(a.clicks.get("nav.search")) {
 		a.openSearch("")
 	}
 
 	// help button at the right edge.
-	at(gtx, image.Pt(width-gtx.Dp(34), y), image.Pt(b, b), func(gtx layout.Context) layout.Dimensions {
-		return iconButton(gtx, a.clicks.get("nav.help"), "help", 26, 20, c.ChromeText, c.ChromeHover, 4)
+	horg := image.Pt(width-gtx.Dp(34), y)
+	at(gtx, horg, image.Pt(b, b), func(gtx layout.Context) layout.Dimensions {
+		return a.chromeButton(gtx, horg, a.clicks.get("nav.help"), "help", 26, 20, c.ChromeText, 4)
 	})
-	if a.clicks.get("nav.help").Clicked(gtx) {
+	if clicked(a.clicks.get("nav.help")) {
 		a.Toast("Keyboard shortcuts: Ctrl+K switch, Ctrl+Shift+A unreads, Alt+↑/↓ channels, Ctrl+. side pane")
 	}
 }
@@ -198,7 +267,7 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 			return a.teamIcon(gtx, ws)
 		})
 	})
-	if a.clicks.get("rail.team").Clicked(gtx) {
+	if clicked(a.clicks.get("rail.team")) {
 		a.Navigate("home")
 	}
 
@@ -208,14 +277,15 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 		t := t
 		btn := a.clicks.get("rail." + t.key)
 		th := gtx.Dp(68)
-		at(gtx, image.Pt(gtx.Dp(9), y), image.Pt(gtx.Dp(52), th), func(gtx layout.Context) layout.Dimensions {
+		org := image.Pt(gtx.Dp(9), y)
+		at(gtx, org, image.Pt(gtx.Dp(52), th), func(gtx layout.Context) layout.Dimensions {
 			return clickArea(gtx, btn, nil, func(gtx layout.Context) layout.Dimensions {
 				sel := active == t.key
 				tile := image.Rect(gtx.Dp(8), gtx.Dp(8), gtx.Dp(44), gtx.Dp(44))
 				if sel {
-					theme.RRect(gtx, tile, gtx.Dp(8), c.ChromeActive)
+					a.chrome(gtx, org, tile, gtx.Dp(8), c.ChromeActive)
 				} else if btn.Hovered() {
-					theme.RRect(gtx, tile, gtx.Dp(8), c.ChromeHover)
+					a.chrome(gtx, org, tile, gtx.Dp(8), c.ChromeHover)
 				}
 				name := t.icon
 				if sel && icons.Has(name+"-filled") {
@@ -240,7 +310,7 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 				return layout.Dimensions{Size: image.Pt(gtx.Dp(52), th)}
 			})
 		})
-		if btn.Clicked(gtx) {
+		if clicked(btn) {
 			a.railClick(t.key)
 		}
 		y += th
@@ -258,28 +328,30 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 				icon = "sun"
 			}
 		}
-		at(gtx, image.Pt(x0, by), image.Pt(cs, cs), func(gtx layout.Context) layout.Dimensions {
+		org := image.Pt(x0, by)
+		at(gtx, org, image.Pt(cs, cs), func(gtx layout.Context) layout.Dimensions {
 			btn := a.clicks.get(k)
+			bg := c.SidebarButton
+			if btn.Hovered() {
+				bg = c.SearchHover
+			}
 			return clickArea(gtx, btn, func(gtx layout.Context, sz image.Point, hovered bool) {
-				bg := c.SidebarButton
-				if hovered {
-					bg = c.SearchHover
-				}
-				theme.Circle(gtx, image.Pt(sz.X/2, sz.Y/2), sz.X, bg)
+				a.chrome(gtx, org, image.Rectangle{Max: sz}, sz.X/2, bg)
 			}, func(gtx layout.Context) layout.Dimensions {
 				off := (cs - gtx.Dp(20)) / 2
+				fg := theme.Over(c.ChromeTextDim, theme.Over(bg, a.chromeBase(org.Add(image.Pt(cs/2, cs/2)))))
 				at(gtx, image.Pt(off, off), image.Pt(cs, cs), func(gtx layout.Context) layout.Dimensions {
-					return icons.Get(icon)(gtx, 20, c.ChromeTextDim)
+					return icons.Get(icon)(gtx, 20, fg)
 				})
 				return layout.Dimensions{Size: image.Pt(cs, cs)}
 			})
 		})
 		by += gtx.Dp(52)
 	}
-	if a.clicks.get("rail.new").Clicked(gtx) {
+	if clicked(a.clicks.get("rail.new")) {
 		a.compose()
 	}
-	if a.clicks.get("rail.theme").Clicked(gtx) {
+	if clicked(a.clicks.get("rail.theme")) {
 		a.ToggleDark()
 	}
 	at(gtx, image.Pt(x0, by), image.Pt(cs+gtx.Dp(8), cs+gtx.Dp(8)), func(gtx layout.Context) layout.Dimensions {
@@ -297,9 +369,27 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 			return layout.Dimensions{Size: image.Pt(cs, cs)}
 		})
 	})
-	if a.clicks.get("rail.me").Clicked(gtx) {
+	if clicked(a.clicks.get("rail.me")) {
 		a.openSelfMenu(image.Pt(x0+cs, by))
 	}
+}
+
+// chromeButton is an icon button on the chrome whose hover tile is
+// composited in sRGB. org is the button's window position.
+func (a *App) chromeButton(gtx layout.Context, org image.Point, c *widget.Clickable, name string, box, iconSz unit.Dp, col color.NRGBA, radius unit.Dp) layout.Dimensions {
+	return clickArea(gtx, c, func(gtx layout.Context, sz image.Point, hovered bool) {
+		if hovered {
+			a.chrome(gtx, org, image.Rectangle{Max: sz}, gtx.Dp(radius), a.th.C.ChromeHover)
+		}
+	}, func(gtx layout.Context) layout.Dimensions {
+		s := gtx.Dp(box)
+		is := gtx.Dp(iconSz)
+		off := (s - is) / 2
+		t := op.Offset(image.Pt(off, off)).Push(gtx.Ops)
+		icons.Get(name)(gtx, iconSz, col)
+		t.Pop()
+		return layout.Dimensions{Size: image.Pt(s, s)}
+	})
 }
 
 // railCount draws the small count bubble on a rail tile.
@@ -355,5 +445,3 @@ func (a *App) avatar(gtx layout.Context, url, name string, s, radius int) layout
 	theme.RRect(gtx, image.Rect(0, 0, s, s), radius, a.th.C.Skeleton)
 	return layout.Dimensions{Size: image.Pt(s, s)}
 }
-
-var _ = unit.Dp(0)

@@ -6,6 +6,7 @@ package ui
 
 import (
 	"image"
+	"image/color"
 	"log"
 	"os"
 	"sync"
@@ -17,14 +18,17 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+	"gioui.org/text"
 	"gioui.org/unit"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
-// Overlay is anything drawn above the shell (popups.Overlay satisfies it).
-type Overlay interface {
+// Overlay is anything drawn above the shell. An alias of an unnamed
+// interface (like popups.Overlay) so ShowOverlay's signature is identical
+// across every package's Host interface.
+type Overlay = interface {
 	Layout(gtx layout.Context) layout.Dimensions
 	Dismissed() bool
 }
@@ -97,6 +101,10 @@ type App struct {
 	prefsDirty  bool
 	notify      notifier
 	focused     bool
+	winSize     image.Point
+	sbBase      color.NRGBA
+	sbPal       theme.Palette
+	shaperCh    chan *text.Shaper
 	switchAt    time.Time // navigation time, for the channel-switch latency log
 	switchTo    Route
 }
@@ -108,7 +116,7 @@ func New(opts Options, images *imgcache.Cache) *App {
 	}
 	a := &App{
 		opts:   opts,
-		th:     theme.New(opts.Dark),
+		th:     theme.Bare(opts.Dark),
 		images: images,
 		clicks: clickables{},
 		views:  map[Route]View{},
@@ -117,6 +125,15 @@ func New(opts Options, images *imgcache.Cache) *App {
 	a.secondary.width = theme.SecondaryW
 	a.keys = a.defaultShortcuts()
 	a.loadPrefs()
+	// The shaper (font parsing + system font index) is the slowest part of
+	// startup; build it while the window and GPU context come up.
+	a.shaperCh = make(chan *text.Shaper, 1)
+	go func() {
+		t := time.Now()
+		sh := theme.NewShaper()
+		a.timing("shaper ready", t)
+		a.shaperCh <- sh
+	}()
 	if opts.Login != nil {
 		a.login = newLoginScreen()
 	}
@@ -141,6 +158,7 @@ func (a *App) Invalidate() {
 
 // Run opens the window and blocks until it closes.
 func (a *App) Run() error {
+	a.timing("run", a.opts.Started)
 	a.win = new(app.Window)
 	a.win.Option(
 		app.Title("yoloslack"),
@@ -165,13 +183,23 @@ func (a *App) Run() error {
 			a.focused = e.Config.Focused
 		case app.FrameEvent:
 			t0 := time.Now()
+			if a.th.Shaper == nil {
+				a.timing("first FrameEvent", a.opts.Started)
+				a.th.Shaper = <-a.shaperCh
+				a.timing("shaper waited", t0)
+			}
 			a.drain()
 			gtx := app.NewContext(&ops, e)
 			a.frame(gtx)
+			tl := time.Now()
 			e.Frame(gtx.Ops)
-			a.frameStats.add(time.Since(t0))
+			if !a.firstPaint {
+				a.timing("first layout", t0)
+				a.timing("first GPU submit", tl)
+			}
+			a.frameStats.add(time.Since(t0), tl.Sub(t0))
 			if !a.switchAt.IsZero() {
-				log.Printf("ui: switch to %s: %v to frame submitted (layout %v)", a.switchTo.Page(), time.Since(a.switchAt).Round(10*time.Microsecond), time.Since(t0).Round(10*time.Microsecond))
+				log.Printf("ui: switch to %s: %v to frame submitted (layout %v, gpu %v)", a.switchTo.Page(), time.Since(a.switchAt).Round(10*time.Microsecond), tl.Sub(t0).Round(10*time.Microsecond), time.Since(tl).Round(10*time.Microsecond))
 				a.switchAt = time.Time{}
 			}
 			if !a.firstPaint {
@@ -179,6 +207,14 @@ func (a *App) Run() error {
 				log.Printf("ui: first frame painted %v after start (%d sidebar rows)", time.Since(a.opts.Started).Round(time.Millisecond), a.sidebar.rowCount)
 			}
 		}
+	}
+}
+
+// timing logs a startup/latency measurement when YOLOSLACK_TIMING is set
+// (always for the first frame).
+func (a *App) timing(what string, since time.Time) {
+	if os.Getenv("YOLOSLACK_TIMING") != "" {
+		log.Printf("timing: %s: %v", what, time.Since(since).Round(100*time.Microsecond))
 	}
 }
 
@@ -196,9 +232,10 @@ func (a *App) drain() {
 func (a *App) frame(gtx layout.Context) {
 	sz := gtx.Constraints.Max
 	a.pxPerDp = gtx.Metric.PxPerDp
-	a.grad.layout(gtx, a.th.C.ChromeA, a.th.C.ChromeB)
+	a.winSize = sz
 
 	if a.login != nil {
+		a.grad.layout(gtx, a.th.C.ChromeA, a.th.C.ChromeB)
 		a.layoutLogin(gtx)
 		return
 	}
@@ -216,19 +253,28 @@ func (a *App) frame(gtx layout.Context) {
 	ws := image.Rect(railW, navH, sz.X-inset, sz.Y-inset)
 	primary := image.Rect(ws.Min.X+sbW, ws.Min.Y, ws.Max.X, ws.Max.Y)
 
+	// Paint the gradient only where it shows (nav, rail, insets and the
+	// panel's rounded corners): full-window fills are the main per-frame
+	// cost on software GL.
+	rad := gtx.Dp(theme.PanelRadius)
+	for _, r := range []image.Rectangle{
+		image.Rect(0, 0, sz.X, navH+rad),
+		image.Rect(0, navH, railW+rad, sz.Y),
+		image.Rect(ws.Max.X-rad, navH, sz.X, sz.Y),
+		image.Rect(railW, ws.Max.Y-rad, sz.X, sz.Y),
+	} {
+		a.grad.draw(gtx, sz, image.Point{}, clip.Rect(r).Op(), a.th.C.ChromeA, a.th.C.ChromeB)
+	}
+
 	a.layoutTopNav(gtx, primary.Min.X, sz.X)
 	a.layoutRail(gtx, navH, sz.Y-navH)
 
 	// workspace: sidebar (translucent) + primary panel, one rounded unit
 	// with Slack's soft shadow (-4px -4px 16px rgba(0,0,0,.09)).
-	rad := gtx.Dp(theme.PanelRadius)
 	theme.Shadow(gtx, ws.Add(image.Pt(-gtx.Dp(2), -gtx.Dp(2))), rad, gtx.Dp(8), a.th.C.PanelShadow)
 	if sbW > 0 {
 		sb := image.Rect(ws.Min.X, ws.Min.Y, primary.Min.X, ws.Max.Y)
-		func() {
-			defer clip.RRect{Rect: sb, NW: rad, SW: rad}.Push(gtx.Ops).Pop()
-			theme.Fill(gtx, sb, a.th.C.SidebarBg)
-		}()
+		a.grad.draw(gtx, sz, image.Point{}, clip.RRect{Rect: sb, NW: rad, SW: rad}.Op(gtx.Ops), a.th.C.ChromeA, a.th.C.ChromeB, a.th.C.SidebarBg)
 		atExact(gtx, sb.Min, sb.Size(), a.layoutSidebar)
 	}
 	nw, sw := 0, 0
@@ -379,20 +425,23 @@ func (a *App) layoutToast(gtx layout.Context) {
 // ---- frame stats (for the speed report) ----
 
 type frameStats struct {
-	n     int
-	total time.Duration
-	max   time.Duration
-	last  time.Time
+	n      int
+	total  time.Duration
+	layout time.Duration
+	max    time.Duration
+	last   time.Time
 }
 
-func (s *frameStats) add(d time.Duration) {
+func (s *frameStats) add(d, layout time.Duration) {
 	s.n++
 	s.total += d
+	s.layout += layout
 	if d > s.max {
 		s.max = d
 	}
 	if os.Getenv("YOLOSLACK_FRAMESTATS") != "" && time.Since(s.last) > 5*time.Second && s.n > 0 {
-		log.Printf("ui: %d frames, avg %v, max %v", s.n, (s.total / time.Duration(s.n)).Round(10*time.Microsecond), s.max.Round(10*time.Microsecond))
+		n := time.Duration(s.n)
+		log.Printf("ui: %d frames, avg %v (layout %v), max %v", s.n, (s.total / n).Round(10*time.Microsecond), (s.layout / n).Round(10*time.Microsecond), s.max.Round(10*time.Microsecond))
 		s.last = time.Now()
 		*s = frameStats{last: s.last}
 	}
