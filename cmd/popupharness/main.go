@@ -7,9 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"image"
 	"image/color"
+	"io"
 	"log"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -134,7 +137,10 @@ func main() {
 	w.Option(app.Title("popupharness"), app.Size(unit.Dp(1440), unit.Dp(900)))
 	h := &host{w: w, core: a, th: theme.New(*dark)}
 	h.img = imgcache.New(func(ctx context.Context, u string) ([]byte, error) {
-		b, _, err := a.Fetch(ctx, u)
+		if imgcache.DiskOK(u) || !strings.Contains(u, "slack") {
+			return httpGet(ctx, u)
+		}
+		b, _, err := a.Fetch(ctx, u) // files.slack.com: authenticated, memory only
 		return b, err
 	}, filepath.Join(cacheDir, "img"), w.Invalidate)
 	popups.OpenFullProfile = func(id string) { h.profile, h.pview = id, popups.NewProfileView(h, id) }
@@ -275,6 +281,22 @@ func main() {
 		os.Exit(0)
 	}()
 	app.Main()
+}
+
+func httpGet(ctx context.Context, u string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("GET %s: %s", u, resp.Status)
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, 16<<20))
 }
 
 func (h *host) openNamed(name string) {
