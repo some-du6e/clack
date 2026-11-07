@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -93,6 +94,27 @@ type plugin struct {
 }
 
 var validID = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,100}$`)
+
+// validPluginID is Taut's id rule (letters, digits, "_", ".", "-"; not "."
+// or ".."), checked again in Go: the JS check runs in the same realm as
+// the plugin's code, which can patch RegExp or hand out a different id on
+// each read of a getter, and the id names files under plugins/. Windows
+// device names (CON, NUL, COM1…) are refused too.
+func validPluginID(id string) bool {
+	return validID.MatchString(id) && id != "." && id != ".." && !windowsDeviceName(id)
+}
+
+// windowsDeviceName reports whether name (or name.ext) is reserved on Windows.
+func windowsDeviceName(name string) bool {
+	base, _, _ := strings.Cut(name, ".")
+	switch strings.ToUpper(strings.TrimRight(base, " ")) {
+	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",
+		"COM0", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "COM¹", "COM²", "COM³",
+		"LPT0", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9", "LPT¹", "LPT²", "LPT³":
+		return true
+	}
+	return false
+}
 
 func codeHash(code string) string {
 	h := sha256.Sum256([]byte(code))
@@ -619,6 +641,11 @@ func (t *Taut) Import(ctx context.Context, code []byte, replacing string) (strin
 		return "", errors.New(jsMessage(err))
 	}
 	id := m.ID
+	if !validPluginID(id) {
+		t.unloadJS(ctx, id)
+		restoreOld()
+		return "", fmt.Errorf("plugin has an invalid static id %q (allowed: letters, numbers, \"_\", \".\", \"-\")", id)
+	}
 	if replacing != "" && replacing != id {
 		t.unloadJS(ctx, id)
 		restoreOld()
@@ -629,6 +656,12 @@ func (t *Taut) Import(ctx context.Context, code []byte, replacing string) (strin
 	if existing := t.get(id); existing != nil && replacing == "" {
 		existing.inJS = false // its class was just replaced in JS; reload on next start
 		return "", fmt.Errorf("a plugin with id %q already exists; use its \"Update code\" button to replace it", id)
+	}
+	if other := t.caseTwin(id); other != "" {
+		// on Windows and macOS both would be the same plugins/<id>.js
+		t.unloadJS(ctx, id)
+		restoreOld()
+		return "", fmt.Errorf("a plugin with id %q already exists; ids can't differ only in case", other)
 	}
 	snap := t.data.snapshot(storageNS(id))
 	path := filepath.Join(t.pluginsDir(), id+".js")
@@ -685,28 +718,92 @@ func (t *Taut) rollback(ctx context.Context, id string, old *plugin, snap map[st
 	_ = t.registerLocked(ctx, id)
 }
 
+// caseTwin is an installed plugin whose id equals id ignoring case (but
+// isn't id), or "".
+func (t *Taut) caseTwin(id string) string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for other := range t.plugins {
+		if other != id && strings.EqualFold(other, id) {
+			return other
+		}
+	}
+	return ""
+}
+
 // InstallURL fetches a built plugin .js and imports it.
-func (t *Taut) InstallURL(ctx context.Context, url string) (string, error) {
-	if !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "http://") {
-		return "", errors.New("the plugin URL must start with https://")
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return "", err
-	}
-	res, err := t.opts.Fetch(ctx, req)
-	if err != nil {
-		return "", err
-	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("fetching the plugin: HTTP %d", res.StatusCode)
-	}
-	code, err := io.ReadAll(io.LimitReader(res.Body, 16<<20))
+func (t *Taut) InstallURL(ctx context.Context, rawURL string) (string, error) {
+	code, err := t.FetchPlugin(ctx, rawURL)
 	if err != nil {
 		return "", err
 	}
 	return t.Import(ctx, code, "")
+}
+
+// Plugin downloads (Install from URL, Update code): https only, or http to
+// this machine for a dev server (like Slick); at most maxPluginBytes, within
+// pluginFetchTimeout. The saved file is named from the plugin's validated
+// id, never from the URL.
+const (
+	maxPluginBytes     = 16 << 20
+	pluginFetchTimeout = 30 * time.Second
+)
+
+// CheckPluginURL validates a plugin download URL.
+func CheckPluginURL(raw string) (*url.URL, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return nil, errors.New("that isn't a valid URL")
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "https":
+		return u, nil
+	case "http":
+		switch u.Hostname() {
+		case "localhost", "127.0.0.1", "::1":
+			return u, nil
+		}
+	}
+	return nil, errors.New("the plugin URL must start with https:// (http:// only for localhost)")
+}
+
+// FetchPlugin downloads a plugin .js from a URL (see CheckPluginURL).
+func (t *Taut) FetchPlugin(ctx context.Context, rawURL string) ([]byte, error) {
+	u, err := CheckPluginURL(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, pluginFetchTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	res, err := t.opts.Fetch(ctx, req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, errors.New("fetching the plugin timed out")
+		}
+		return nil, err
+	}
+	defer res.Body.Close()
+	if res.Request != nil && res.Request.URL != nil {
+		// a redirect may not leave https either
+		if _, err := CheckPluginURL(res.Request.URL.String()); err != nil {
+			return nil, fmt.Errorf("the plugin URL redirected to %s: %v", res.Request.URL.Redacted(), err)
+		}
+	}
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetching the plugin: HTTP %d", res.StatusCode)
+	}
+	code, err := io.ReadAll(io.LimitReader(res.Body, maxPluginBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(code) > maxPluginBytes {
+		return nil, fmt.Errorf("that file is larger than %d MiB; it isn't a plugin", maxPluginBytes>>20)
+	}
+	return code, nil
 }
 
 // Remove deletes a user plugin with its config, storage, cache and secrets.

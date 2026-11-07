@@ -323,6 +323,11 @@ func (t *Taut) cookie(op string, a []json.RawMessage) any {
 		d = dec
 	}
 	cookie := map[string]any{"name": "d", "value": d, "domain": ".slack.com", "path": "/", "secure": true, "httpOnly": true, "sameSite": "lax"}
+	// Like Electron's cookie store: a url filter off slack.com matches no
+	// cookie (the d cookie is scoped to https .slack.com).
+	if q.URL != "" && !slack.CookieURL(q.URL) {
+		d = ""
+	}
 	switch op {
 	case "get":
 		if q.Name == "d" && d != "" {

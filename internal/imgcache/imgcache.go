@@ -14,6 +14,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"image"
 	"image/draw"
 	_ "image/gif"
@@ -204,20 +205,48 @@ func (c *Cache) evict() {
 }
 
 func (c *Cache) loadImage(k key) (paint.ImageOp, image.Point, int, error) {
-	data, err := c.raw(k.url)
+	data, save, err := c.raw(k.url)
 	if err != nil {
 		return paint.ImageOp{}, image.Point{}, 0, err
 	}
-	img, _, err := image.Decode(bytes.NewReader(data))
+	img, err := Decode(data)
 	if err != nil {
 		return paint.ImageOp{}, image.Point{}, 0, err
 	}
+	save() // only bytes that decoded as an image reach the disk tier
 	rgba := Scale(img, k.size)
 	return paint.NewImageOp(rgba), rgba.Bounds().Size(), len(rgba.Pix), nil
 }
 
-// raw returns the encoded bytes from disk (allowed URLs only) or the network.
-func (c *Cache) raw(u string) ([]byte, error) {
+// MaxPixels bounds the decoded size of one image (width × height), so a
+// tiny file that claims to be 60000×60000 (a decompression bomb) can't
+// allocate gigabytes. MaxSide bounds either dimension.
+const (
+	MaxPixels = 40 << 20
+	MaxSide   = 16384
+)
+
+// ErrTooBig is returned for images over MaxPixels or MaxSide.
+var ErrTooBig = errors.New("imgcache: image dimensions too large")
+
+// Decode decodes data after checking its header's dimensions.
+func Decode(data []byte) (image.Image, error) {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > MaxSide || cfg.Height > MaxSide || cfg.Width*cfg.Height > MaxPixels {
+		return nil, ErrTooBig
+	}
+	img, _, err := image.Decode(bytes.NewReader(data))
+	return img, err
+}
+
+// raw returns the encoded bytes from disk (DiskOK URLs only: avatars and
+// emoji) or the network, plus a func that saves fetched bytes to the disk
+// tier (a no-op for everything else, e.g. message images and files).
+func (c *Cache) raw(u string) ([]byte, func(), error) {
+	nop := func() {}
 	disk := c.dir != "" && DiskOK(u)
 	var path string
 	if disk {
@@ -225,7 +254,7 @@ func (c *Cache) raw(u string) ([]byte, error) {
 		name := hex.EncodeToString(h[:16])
 		path = filepath.Join(c.dir, name[:2], name)
 		if b, err := os.ReadFile(path); err == nil && len(b) > 0 {
-			return b, nil
+			return b, nop, nil
 		}
 	}
 	ctx, cancel := context.WithTimeout(c.ctx, 45*time.Second)
@@ -235,16 +264,18 @@ func (c *Cache) raw(u string) ([]byte, error) {
 	c.mu.Unlock()
 	b, err := fetch(ctx, u)
 	if err != nil {
-		return nil, err
+		return nil, nop, err
 	}
-	if disk {
+	if !disk {
+		return b, nop, nil
+	}
+	return b, func() {
 		_ = os.MkdirAll(filepath.Dir(path), 0o700)
 		tmp := path + ".tmp"
 		if os.WriteFile(tmp, b, 0o600) == nil {
 			_ = os.Rename(tmp, path)
 		}
-	}
-	return b, nil
+	}, nil
 }
 
 // Scale converts img to *image.RGBA (premultiplied, what Gio uploads

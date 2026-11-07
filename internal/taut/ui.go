@@ -273,12 +273,21 @@ type Bridge struct{ t *Taut }
 // Bridge returns the slackc bridge.
 func (t *Taut) Bridge() *Bridge { return &Bridge{t: t} }
 
-func (b *Bridge) runtime() *runtime {
-	rt, err := b.t.ensureRuntime()
-	if err != nil {
-		return nil
+// with runs f with the runtime. slackc calls the Bridge from the UI
+// goroutine, which must never wait for a runtime to start (hundreds of ms
+// cold, up to the init timeout) or to restart after a crash: without a
+// live one the start happens in the background and f runs once it's up
+// (not at all if it fails).
+func (b *Bridge) with(f func(r *runtime)) {
+	if r := b.t.liveRuntime(); r != nil {
+		f(r)
+		return
 	}
-	return rt
+	go func() {
+		if r, err := b.t.ensureRuntime(); err == nil {
+			f(r)
+		}
+	}()
 }
 
 func (b *Bridge) root(r *runtime, id uint64) *jsrt.Root {
@@ -302,12 +311,13 @@ func (b *Bridge) root(r *runtime, id uint64) *jsrt.Root {
 func (b *Bridge) mount(id uint64, fn string, args ...any) { b.mountAt(id, 0, fn, args...) }
 
 // mountAt is mount; with k > 0 the root is a portal inside the tree that
-// holds host node k (jsrt Root.RenderPortal).
+// holds host node k (jsrt Root.RenderPortal). It never starts the runtime
+// on the caller's (UI) goroutine: see with.
 func (b *Bridge) mountAt(id uint64, k int64, fn string, args ...any) {
-	r := b.runtime()
-	if r == nil {
-		return
-	}
+	b.with(func(r *runtime) { b.mountIn(r, id, k, fn, args...) })
+}
+
+func (b *Bridge) mountIn(r *runtime, id uint64, k int64, fn string, args ...any) {
 	jr := b.root(r, id)
 	r.rt.Post(func(js *jsrt.Ctx) {
 		f := js.Global().Get("__taut").Get(fn)
@@ -386,25 +396,23 @@ func (b *Bridge) Unmount(root uint64) {
 
 // Dispatch fires a DOM event at host node target.
 func (b *Bridge) Dispatch(target int64, event []byte) {
-	if r := b.runtime(); r != nil {
-		r.rt.DispatchEvent(int(target), event)
-	}
+	b.with(func(r *runtime) { r.rt.DispatchEvent(int(target), event) })
 }
 
 // Call calls a JS function prop; done (optional) gets its JSON result.
 func (b *Bridge) Call(fn int64, args []byte, done func(result []byte, err error)) {
-	r := b.runtime()
-	if r == nil {
-		if done != nil {
-			done(nil, b.t.rtErr)
-		}
-		return
-	}
 	if done == nil && !IsTautFn(fn) {
-		r.rt.CallFn(int(fn), args)
+		b.with(func(r *runtime) { r.rt.CallFn(int(fn), args) })
 		return
 	}
 	go func() {
+		r, err := b.t.ensureRuntime()
+		if err != nil {
+			if done != nil {
+				done(nil, err)
+			}
+			return
+		}
 		var a json.RawMessage = args
 		if len(a) == 0 {
 			a = json.RawMessage("[]")
@@ -433,22 +441,16 @@ func (b *Bridge) WantsEvent(typ string) bool {
 
 // SetRects reports laid-out host node boxes.
 func (b *Bridge) SetRects(rects map[int64][4]float32) {
-	r := b.runtime()
-	if r == nil {
-		return
-	}
 	m := make(map[int]jsrt.Rect, len(rects))
 	for k, v := range rects {
 		m[int(k)] = jsrt.Rect{X: v[0], Y: v[1], W: v[2], H: v[3]}
 	}
-	r.rt.SetRects(m)
+	b.with(func(r *runtime) { r.rt.SetRects(m) })
 }
 
 // SetViewport reports the window size, scale and color scheme.
 func (b *Bridge) SetViewport(w, h, dpr float32, dark bool) {
-	if r := b.runtime(); r != nil {
-		r.rt.SetViewport(w, h, dpr, dark)
-	}
+	b.with(func(r *runtime) { r.rt.SetViewport(w, h, dpr, dark) })
 }
 
 // RenderPreferencesTab mounts a plugin's Preferences tab into root.

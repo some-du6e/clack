@@ -171,7 +171,15 @@ func ParseTheme(data []byte, filename string) (json.RawMessage, error) {
 	name, _ := m["name"].(string)
 	name = strings.TrimSpace(name)
 	if name == "" {
-		name = strings.TrimSuffix(strings.TrimSuffix(filename, ".json"), ".JSON")
+		// a display name only: the file's base name, no directories
+		base := filename
+		if i := strings.LastIndexAny(base, `/\`); i >= 0 {
+			base = base[i+1:]
+		}
+		name = strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(base, ".json"), ".JSON"))
+	}
+	if r := []rune(name); len(r) > 100 {
+		name = string(r[:100])
 	}
 	if name == "" {
 		name = "Imported theme"

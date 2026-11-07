@@ -36,8 +36,15 @@ func SignIn(ctx context.Context, in SignInInput) (Creds, error) {
 	if ws == "" {
 		return Creds{}, errors.New("enter your workspace, e.g. hackclub")
 	}
+	if i := strings.IndexAny(ws, "/?#"); i >= 0 {
+		ws = ws[:i] // a pasted https://hackclub.slack.com/client/… URL
+	}
 	if !strings.Contains(ws, ".") {
 		ws += ".slack.com"
+	}
+	// The token and cookie are about to be sent here: only slack.com hosts.
+	if h, err := url.Parse("https://" + ws + "/"); err != nil || h.Host != ws || !CookieURL("https://"+ws+"/") {
+		return Creds{}, errors.New("the workspace should be a slack.com address, e.g. hackclub or hackclub.slack.com")
 	}
 	tok := strings.TrimSpace(in.Token)
 	if !strings.HasPrefix(tok, "xoxc-") {
@@ -56,7 +63,7 @@ func SignIn(ctx context.Context, in SignInInput) (Creds, error) {
 		return Creds{}, errors.New("that is the org token; paste the workspace token in Token and this one in Org token")
 	}
 	c.Team, c.UserID, c.EnterpriseID = a.TeamID, a.UserID, a.EnterpriseID
-	if a.URL != "" {
+	if slackURL(a.URL, "https") {
 		c.TeamURL = a.URL
 	}
 	if org := strings.TrimSpace(in.OrgToken); org != "" {
@@ -74,7 +81,9 @@ func SignIn(ctx context.Context, in SignInInput) (Creds, error) {
 		}
 		c.EnterpriseToken = org
 		c.EnterpriseID = oa.TeamID
-		c.EnterpriseURL = oa.URL
+		if slackURL(oa.URL, "https") {
+			c.EnterpriseURL = oa.URL
+		}
 	}
 	return c, nil
 }

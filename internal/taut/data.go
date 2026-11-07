@@ -1,6 +1,8 @@
 package taut
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -44,19 +46,44 @@ func newDataStore(dir string) *dataStore {
 }
 
 // fileFor maps a namespace like "plugin:Nicknames:storage" to a file name.
+// Plugins choose namespaces freely (__clack.taut_kv), so the name is
+// always one path element inside storage/ or secrets/: ":" becomes "~", and
+// a namespace with any other character outside [A-Za-z0-9._-], a leading
+// ".", a Windows device name or more than 120 bytes gets a hash suffix
+// instead, so "a/b", "a~b" and "a:b" don't share a file. (Isolation between
+// plugins isn't the point: every plugin can call taut_kv with any
+// namespace, and has the session anyway. Staying inside Dir is.)
 func (d *dataStore) fileFor(ns string) string {
-	safe := strings.Map(func(r rune) rune {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
-			return r
-		}
-		return '~'
-	}, ns)
+	safe := nsFileName(ns)
 	if strings.HasSuffix(ns, ":secrets") {
 		// api.secrets: the separate secret store, never next to plain storage
 		return filepath.Join(d.dir, "secrets", safe+".json")
 	}
 	return filepath.Join(d.dir, "storage", safe+".json")
+}
+
+func nsFileName(ns string) string {
+	plain := ns != "" && len(ns) <= 120 && ns[0] != '.'
+	safe := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+			return r
+		case r == ':':
+			return '~'
+		}
+		plain = false
+		return '~'
+	}, ns)
+	if plain && !windowsDeviceName(safe) {
+		return safe
+	}
+	// no "." left either: "CON.x" or ".x" can't come back that way
+	safe = strings.ReplaceAll(safe, ".", "~")
+	if len(safe) > 80 {
+		safe = safe[:80]
+	}
+	h := sha256.Sum256([]byte(ns))
+	return safe + "~" + hex.EncodeToString(h[:8])
 }
 
 func (d *dataStore) load(ns string) map[string]string {
@@ -241,15 +268,33 @@ func (d *dataStore) flush() error {
 	return errors.Join(errs...)
 }
 
+// writeFileAtomic writes path through a fresh O_EXCL temp file renamed over
+// it: a symlink planted at path (or at a guessable temp name) is replaced,
+// never written through, and readers never see a half-written file.
 func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, mode); err != nil {
+	f, err := os.CreateTemp(dir, ".tmp-*")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	tmp := f.Name()
+	err = f.Chmod(mode)
+	if _, werr := f.Write(data); err == nil {
+		err = werr
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
+	}
+	return err
 }
 
 // ---- jsrt localStorage / sessionStorage ----

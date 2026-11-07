@@ -88,6 +88,7 @@ type Taut struct {
 	dir  string
 
 	mu      sync.Mutex
+	startMu sync.Mutex // held while a runtime starts (ensureRuntime)
 	rt      *runtime
 	rtErr   error
 	plugins map[string]*plugin
@@ -106,6 +107,7 @@ type Taut struct {
 	changeCh map[chan struct{}]struct{}
 
 	running   atomic.Int32 // plugins with a live instance
+	crashes   []time.Time  // recent runtime crashes (restartAfterCrash; under mu)
 	stopWatch chan struct{}
 	watchOnce sync.Once
 	closed    atomic.Bool
@@ -139,6 +141,9 @@ func New(o Options) (*Taut, error) {
 	if err := os.MkdirAll(filepath.Join(o.Dir, "plugins"), 0o700); err != nil {
 		return nil, fmt.Errorf("taut: %w", err)
 	}
+	// plugin code, storage and secrets: the user's only (older builds or a
+	// hand-made Dir may have left it group/world readable)
+	_ = os.Chmod(o.Dir, 0o700)
 	t := &Taut{
 		opts:     o,
 		app:      o.App,
@@ -213,7 +218,39 @@ func (t *Taut) Started() bool {
 	return t.rt != nil
 }
 
+// liveRuntime is the running runtime, or nil (none yet, or it crashed),
+// without starting anything.
+func (t *Taut) liveRuntime() *runtime {
+	t.mu.Lock()
+	r := t.rt
+	t.mu.Unlock()
+	if r == nil {
+		return nil
+	}
+	select {
+	case <-r.rt.Done():
+		return nil
+	default:
+		return r
+	}
+}
+
+// ensureRuntime returns the runtime, starting it (or a fresh one after a
+// crash) if needed. One start at a time: callers that arrive meanwhile
+// wait for it instead of starting their own.
 func (t *Taut) ensureRuntime() (*runtime, error) {
+	if t.closed.Load() {
+		return nil, jsrt.ErrClosed
+	}
+	if r := t.liveRuntime(); r != nil {
+		return r, nil
+	}
+	t.startMu.Lock()
+	defer t.startMu.Unlock()
+	return t.ensureRuntimeLocked()
+}
+
+func (t *Taut) ensureRuntimeLocked() (*runtime, error) {
 	if t.closed.Load() {
 		return nil, jsrt.ErrClosed
 	}
@@ -231,7 +268,7 @@ func (t *Taut) ensureRuntime() (*runtime, error) {
 		}
 		t.mu.Unlock()
 		t.restartAfterCrash(r)
-		return t.ensureRuntime()
+		return t.ensureRuntimeLocked()
 	}
 	t.mu.Unlock()
 	r, err := t.startRuntime()
@@ -255,6 +292,13 @@ func (t *Taut) ensureRuntime() (*runtime, error) {
 	return r, nil
 }
 
+// After maxCrashes runtime crashes within crashWindow the running plugins
+// are stopped instead of restarted.
+const (
+	maxCrashes  = 3
+	crashWindow = 5 * time.Minute
+)
+
 // restartAfterCrash forgets everything the dead runtime held and restarts
 // the plugins that were running in a fresh one (in the background).
 func (t *Taut) restartAfterCrash(dead *runtime) {
@@ -269,16 +313,40 @@ func (t *Taut) restartAfterCrash(dead *runtime) {
 	t.ui.setStatePatched(statePatchInfo{})
 	t.ui.setOverlays(nil)
 	t.mu.Lock()
+	now := time.Now()
+	recent := t.crashes[:0]
+	for _, c := range t.crashes {
+		if now.Sub(c) < crashWindow {
+			recent = append(recent, c)
+		}
+	}
+	t.crashes = append(recent, now)
+	// a plugin that hangs or exhausts memory again right after each restart
+	// would otherwise burn a core forever: after a few crashes in a row
+	// the plugins stay stopped, with an error saying why
+	giveUp := len(t.crashes) >= maxCrashes
 	var restart []string
 	for id, p := range t.plugins {
 		p.inJS = false
 		if p.running {
 			p.running = false
 			t.running.Add(-1)
-			restart = append(restart, id)
+			if giveUp {
+				p.err = fmt.Sprintf("Stopped: the plugin runtime crashed %d times in %v (a plugin hung or ran out of memory). Turn plugins back on one at a time to find which.", len(t.crashes), crashWindow)
+			} else {
+				restart = append(restart, id)
+			}
 		}
 	}
+	if giveUp {
+		t.crashes = nil
+	}
 	t.mu.Unlock()
+	if giveUp {
+		t.logf("taut: the JS runtime crashed %d times in %v; not restarting plugins", maxCrashes, crashWindow)
+		t.changed()
+		return
+	}
 	go func() {
 		for _, id := range restart {
 			ctx, cancel := context.WithTimeout(context.Background(), t.opts.LifecycleTimeout+5*time.Second)

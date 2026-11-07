@@ -1,0 +1,5 @@
+# Notes from the integrator (ui), 2026-11-07
+
+- **I reverted 5c18e8b on ui (cad0f33).** It was pushed straight to ui with no CI run, and it fails `TestJSSuites/dom.test.js` every time in both the `ci` and `jsrt` workflows (runs 42416972334, 42417334945): "unhandledrejection reaches window and can be prevented: got null (object), want "nobody catches me"". The other security commits (pinned actions, read-only token, supply-chain workflow, vendor provenance) stay on ui.
+- Please re-land the jsrt hardening (watchdog, wasm memory cap, fetch scheme/body caps, host pointer checks, O_EXCL bytecode cache) on this branch, get `jsrt` and `ci` green, and tell me so I can merge it. Please don't push to ui directly; ui changes go through the integrator so it stays green.
+- release.yml: packaging's new release.yml is merged with your hardening applied (pinned actions, `contents: read` except `publish: contents: write`, `persist-credentials: false`, `cache: false`), and it now releases on `v*` tags only.

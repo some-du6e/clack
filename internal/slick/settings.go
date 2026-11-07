@@ -71,8 +71,13 @@ type PluginInfo struct {
 	AppWideReason         string   // set: workspace restriction doesn't apply
 	HasMain               bool     // a privileged half is installed
 	Capabilities          []string // the main half's declared capabilities
-	Options               []OptionInfo
-	RelaunchSettings      []string
+	// StoresMessages: the plugin keeps message contents (MessageLogger).
+	// Show StoresMessagesNote before turning it on and in its detail view;
+	// its data stays in memory unless KeepOnDisk (SetKeepOnDisk).
+	StoresMessages   bool
+	KeepOnDisk       bool
+	Options          []OptionInfo
+	RelaunchSettings []string
 }
 
 // OptionInfo is one schema setting with its current value.
@@ -203,6 +208,9 @@ func (s *Slick) infoLocked(p *plugin, ws string) PluginInfo {
 	}
 	if m.Main != nil {
 		info.HasMain, info.Capabilities = true, m.Main.Capabilities
+	}
+	if storesMessages[p.id] {
+		info.StoresMessages, info.KeepOnDisk = true, s.prefs[keepOnDiskPref+p.id] == "on"
 	}
 	live, relaunch := map[string]bool{}, map[string]bool{}
 	for _, k := range m.LiveSettings {

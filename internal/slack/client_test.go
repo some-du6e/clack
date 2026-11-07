@@ -64,12 +64,12 @@ func TestAdaptiveRouting(t *testing.T) {
 
 func TestWebSocketURL(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"ok":true,"primary_websocket_url":"wss://primary.example/","fallback_websocket_url":"wss://backup.example/","routing_context":"TE1-2"}`))
+		w.Write([]byte(`{"ok":true,"primary_websocket_url":"wss://wss-primary-x.slack.com/","fallback_websocket_url":"wss://wss-backup-x.slack.com/","routing_context":"TE1-2"}`))
 	}))
 	defer srv.Close()
 	c := New(Creds{Token: "team-tok", EnterpriseToken: "ent-tok", EnterpriseID: "E1", Team: "T1", TeamURL: srv.URL + "/", EnterpriseURL: srv.URL + "/"})
 	u := c.WebSocketURL(context.Background(), false)
-	for _, want := range []string{"wss://primary.example/?", "token=ent-tok", "gateway_server=TE1-2", "enterprise_id=E1", "flannel=3"} {
+	for _, want := range []string{"wss://wss-primary-x.slack.com/?", "token=ent-tok", "gateway_server=TE1-2", "enterprise_id=E1", "flannel=3"} {
 		if !strings.Contains(u, want) {
 			t.Errorf("ws url missing %q: %s", want, u)
 		}
@@ -77,7 +77,7 @@ func TestWebSocketURL(t *testing.T) {
 	if strings.Contains(u, "agent_version%3D1%26") {
 		t.Error("agent_version=1 makes the gateway drop the socket")
 	}
-	if b := c.WebSocketURL(context.Background(), true); !strings.HasPrefix(b, "wss://backup.example/?") {
+	if b := c.WebSocketURL(context.Background(), true); !strings.HasPrefix(b, "wss://wss-backup-x.slack.com/?") {
 		t.Errorf("fallback url: %s", b)
 	}
 }

@@ -5,14 +5,11 @@ package main
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
-	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -64,6 +61,11 @@ func migrateConfig(old, dir string) {
 			continue
 		}
 		dst := filepath.Join(dir, rel)
+		if rel == "creds.json" {
+			_ = slack.WriteSecretFile(dst, b) // owner-only (an ACL on Windows)
+			_ = slack.RestrictFile(filepath.Join(old, rel))
+			continue
+		}
 		if os.MkdirAll(filepath.Dir(dst), 0o700) == nil {
 			_ = os.WriteFile(dst, b, 0o600)
 		}
@@ -72,6 +74,9 @@ func migrateConfig(old, dir string) {
 }
 
 func main() {
+	// Last line of defence: no token or cookie reaches the log, whatever
+	// an error string quotes.
+	log.SetOutput(slack.RedactWriter(os.Stderr))
 	// Finder on old macOS versions passes -psn_<n>; the flag package
 	// would reject it.
 	args := os.Args[:1]
@@ -126,7 +131,7 @@ func main() {
 	if desktop.Forward(cfg, desktop.Request{URL: link}) {
 		return
 	}
-	images := imgcache.New(httpFetch, filepath.Join(cfg, "cache", "img"), nil)
+	images := imgcache.New(imgcache.PublicFetch, filepath.Join(cfg, "cache", "img"), nil)
 	opts := ui.Options{ConfigDir: cfg, Dark: *dark, Started: started,
 		SignOut: func() { _ = os.Remove(*credsPath) },
 		OnWindowEvent: func(e event.Event) {
@@ -137,7 +142,7 @@ func main() {
 		opts.CheckUpdate = checkUpdate
 	}
 
-	creds, err := readCreds(*credsPath)
+	creds, err := slack.ReadCreds(*credsPath)
 	ui.SetVersion(version)
 	a := ui.New(opts, images)
 	inst, lerr := desktop.Listen(cfg, func(r desktop.Request) {
@@ -158,16 +163,18 @@ func main() {
 		st := store.New(cacheDir)
 		svc := core.New(c, st)
 		images.SetFetcher(func(ctx context.Context, raw string) ([]byte, error) {
-			// slack.com hosts (files.slack.com, …) need the session cookie and
-			// stay in memory; CDNs, Slack's image proxy and unfurl hosts are public.
-			if u, err := url.Parse(raw); err == nil {
-				h := strings.ToLower(u.Hostname())
-				if h == "slack.com" || strings.HasSuffix(h, ".slack.com") {
-					b, _, err := svc.Fetch(ctx, raw)
-					return b, err
-				}
+			// https slack.com hosts (files.slack.com, …) need the session
+			// cookie and stay in memory (core.Fetch). Everything else is
+			// fetched with no credentials (imgcache.PublicFetch): https only,
+			// Slack's CDNs directly, any other host (unfurls, attachment and
+			// block images, bot icons, plugin CSS) through Slack's image
+			// proxy so a sender never sees your IP address, and never from a
+			// private address.
+			if c.CredentialsOK(raw) {
+				b, _, err := svc.Fetch(ctx, raw)
+				return b, err
 			}
-			return httpFetch(ctx, raw)
+			return imgcache.PublicFetch(ctx, raw)
 		})
 		a.Attach(svc, cacheDir)
 	}
@@ -176,7 +183,7 @@ func main() {
 		if err != nil {
 			return err
 		}
-		if err := writeCreds(*credsPath, c); err != nil {
+		if err := slack.WriteCreds(*credsPath, c); err != nil {
 			return err
 		}
 		a.Post(func() { connect(c) })
@@ -190,7 +197,11 @@ func main() {
 	}
 	// Taut's api.accounts: switch to other saved credentials.
 	a.SetSwitchAccount(func(c slack.Creds) {
-		if err := writeCreds(*credsPath, c); err != nil {
+		if err := slack.CheckCredsHosts(c); err != nil {
+			log.Printf("accounts: %v", err)
+			return
+		}
+		if err := slack.WriteCreds(*credsPath, c); err != nil {
 			log.Printf("accounts: %v", err)
 			return
 		}
@@ -240,52 +251,6 @@ func checkUpdate(ctx context.Context) (ui.UpdateInfo, bool, error) {
 	return ui.UpdateInfo{Tag: r.Tag, URL: r.URL}, desktop.Newer(r.Tag, cur), nil
 }
 
-var httpClient = &http.Client{Timeout: 45 * time.Second}
-
-// httpFetch downloads public images (avatars, emoji, unfurl thumbs).
-func httpFetch(ctx context.Context, url string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", "clack/0.1")
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("GET %s: %s", url, resp.Status)
-	}
-	return io.ReadAll(io.LimitReader(resp.Body, 32<<20))
-}
-
-func readCreds(path string) (slack.Creds, error) {
-	var c slack.Creds
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return c, err
-	}
-	if err := json.Unmarshal(b, &c); err != nil {
-		return c, err
-	}
-	if c.Token == "" {
-		return c, fmt.Errorf("no token in %s", path)
-	}
-	if c.TeamURL == "" {
-		c.TeamURL = "https://slack.com/"
-	}
-	return c, nil
-}
-
-func writeCreds(path string, c slack.Creds) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	b, _ := json.MarshalIndent(c, "", "  ")
-	return os.WriteFile(path, b, 0o600)
-}
-
 func loginCLI(path, workspace string) error {
 	in := bufio.NewReader(os.Stdin)
 	ask := func(prompt string) string {
@@ -293,22 +258,50 @@ func loginCLI(path, workspace string) error {
 		v, _ := in.ReadString('\n')
 		return strings.TrimSpace(v)
 	}
+	// askSecret doesn't echo what's typed (tokens and cookies would otherwise
+	// sit in the terminal's scrollback).
+	askSecret := func(prompt string) string {
+		if !setEcho(false) {
+			return ask(prompt)
+		}
+		defer func() { setEcho(true); fmt.Println() }()
+		return ask(prompt)
+	}
 	if workspace == "" {
 		workspace = ask("Workspace (e.g. hackclub): ")
 	}
 	fmt.Println("These come from your own signed-in Slack session, the same values other third-party Slack clients use.")
 	si := slack.SignInInput{Workspace: workspace}
-	si.Token = ask("Token (xoxc-…): ")
-	si.OrgToken = ask("Org token (xoxc-…, optional, Enterprise Grid only): ")
-	si.Cookie = ask("d cookie (xoxd-…): ")
-	si.CookieDS = ask("d-s cookie (optional): ")
+	fmt.Println("(What you paste isn't shown.)")
+	si.Token = askSecret("Token (xoxc-…): ")
+	si.OrgToken = askSecret("Org token (xoxc-…, optional, Enterprise Grid only): ")
+	si.Cookie = askSecret("d cookie (xoxd-…): ")
+	si.CookieDS = askSecret("d-s cookie (optional): ")
 	creds, err := slack.SignIn(context.Background(), si)
 	if err != nil {
 		return err
 	}
-	if err := writeCreds(path, creds); err != nil {
+	if err := slack.WriteCreds(path, creds); err != nil {
 		return err
 	}
 	fmt.Printf("Signed in as %s on %s. Credentials saved to %s\n", creds.UserID, creds.TeamURL, path)
 	return nil
+}
+
+// setEcho turns terminal echo on or off with stty (Unix terminals only);
+// false if it couldn't.
+func setEcho(on bool) bool {
+	if runtime.GOOS == "windows" {
+		return false
+	}
+	if fi, err := os.Stdin.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	arg := "-echo"
+	if on {
+		arg = "echo"
+	}
+	cmd := exec.Command("stty", arg)
+	cmd.Stdin = os.Stdin
+	return cmd.Run() == nil
 }
