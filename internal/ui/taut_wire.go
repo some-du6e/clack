@@ -95,19 +95,7 @@ func (b *backend) startTaut(a *App) {
 				}
 			},
 			// slack:// links (Slack's handleDeepLink thunk) open inside Clack.
-			DeepLink: func(uri string) bool {
-				route, user, ok := deepLinkRoute(uri)
-				if ok {
-					a.Post(func() {
-						if user != "" {
-							a.OpenUserProfile(user)
-						} else {
-							a.Navigate(route)
-						}
-					})
-				}
-				return ok
-			},
+			DeepLink: a.openDeepLink, // also OpenURL's native (desktop.go)
 			OnDocumentProps: func(html, body []byte) {
 				if err := slackc.SetDocumentProps(html, body); err != nil {
 					log.Printf("slackc: document props: %v", err)

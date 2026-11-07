@@ -14,12 +14,16 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
 	"gioui.org/app"
+	"gioui.org/io/event"
 
+	"github.com/some-du6e/yoloslackgoclient/assets/icon"
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/desktop"
 	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/store"
@@ -68,16 +72,43 @@ func migrateConfig(old, dir string) {
 }
 
 func main() {
+	// Finder on old macOS versions passes -psn_<n>; the flag package
+	// would reject it.
+	args := os.Args[:1]
+	for _, a := range os.Args[1:] {
+		if !strings.HasPrefix(a, "-psn_") {
+			args = append(args, a)
+		}
+	}
+	os.Args = args
+	// The platform app id: X11 WM_CLASS and the Wayland app_id, matching
+	// clack.desktop (its icon and slack:// handler).
+	app.ID = "clack"
+
 	credsPath := flag.String("creds", filepath.Join(configDir(), "creds.json"), "credentials file")
 	dark := flag.Bool("dark", false, "start in dark mode (overridden by the saved preference)")
 	showVersion := flag.Bool("version", false, "print the version and exit")
+	regURL := flag.Bool("register-url-handler", false, "make Clack the slack:// link handler for this user and exit")
+	unregURL := flag.Bool("unregister-url-handler", false, "remove Clack's slack:// handler registration (Windows) and exit")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: clack [flags]\n       clack login [workspace]   (sign in with your token and d cookie)\n\n")
+		fmt.Fprintf(os.Stderr, "usage: clack [flags] [slack://link]\n       clack login [workspace]   (sign in with your token and d cookie)\n\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
 	if *showVersion {
 		fmt.Println("clack", version)
+		return
+	}
+
+	if *regURL || *unregURL {
+		f, what := desktop.RegisterURLHandler, "registered"
+		if *unregURL {
+			f, what = desktop.UnregisterURLHandler, "unregistered"
+		}
+		if err := f(); err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println("clack: slack:// handler", what)
 		return
 	}
 
@@ -89,13 +120,38 @@ func main() {
 	}
 
 	cfg := configDir()
+	// One Clack per user (and config dir): a second launch, or the OS
+	// running `clack slack://…` for a link, hands it to the running one.
+	link := desktop.URLArg(flag.Args())
+	if desktop.Forward(cfg, desktop.Request{URL: link}) {
+		return
+	}
 	images := imgcache.New(httpFetch, filepath.Join(cfg, "cache", "img"), nil)
 	opts := ui.Options{ConfigDir: cfg, Dark: *dark, Started: started,
-		SignOut: func() { _ = os.Remove(*credsPath) }}
+		SignOut: func() { _ = os.Remove(*credsPath) },
+		OnWindowEvent: func(e event.Event) {
+			desktop.SetWindowIcon(e, icon.PNG32, icon.PNG64, icon.PNG128, icon.PNG512)
+		},
+	}
+	if desktop.Released(version) || os.Getenv("CLACK_UPDATE_URL") != "" {
+		opts.CheckUpdate = checkUpdate
+	}
 
 	creds, err := readCreds(*credsPath)
 	ui.SetVersion(version)
 	a := ui.New(opts, images)
+	inst, lerr := desktop.Listen(cfg, func(r desktop.Request) {
+		a.Raise()
+		if r.URL != "" {
+			a.OpenURL(r.URL)
+		}
+	})
+	if lerr != nil {
+		log.Printf("desktop: single instance: %v", lerr)
+	}
+	if link != "" {
+		a.OpenURL(link)
+	}
 	cacheDir := filepath.Join(cfg, "cache")
 	connect := func(creds slack.Creds) {
 		c := slack.New(creds)
@@ -143,13 +199,45 @@ func main() {
 	if os.Getenv("CLACK_TIMING") != "" || os.Getenv("YOLOSLACK_TIMING") != "" {
 		log.Printf("timing: main ready: %v", time.Since(started).Round(100*time.Microsecond))
 	}
+	var tray *desktop.Tray
+	if runtime.GOOS == "windows" { // Slack's notification-area icon
+		var terr error
+		if tray, terr = desktop.StartTray("Clack", a.Raise, a.Quit); terr != nil {
+			log.Printf("desktop: tray: %v", terr)
+		}
+	}
 	go func() {
-		if err := a.Run(); err != nil {
+		err := a.Run()
+		tray.Close()
+		inst.Close()
+		if err != nil {
 			log.Fatal(err)
 		}
 		os.Exit(0)
 	}()
-	app.Main()
+	// app.Events replaces app.Main: macOS delivers slack:// links opened
+	// while Clack runs (or that launched it) as URLEvents.
+	for e := range app.Events {
+		if u, ok := e.(app.URLEvent); ok && u.URL != nil {
+			a.Raise()
+			a.OpenURL(u.URL.String())
+		}
+	}
+}
+
+// checkUpdate asks GitHub Releases whether a newer Clack is out. It reads
+// release metadata only. CLACK_UPDATE_URL points it at another releases
+// API (testing); CLACK_UPDATE_AS pretends to be another version.
+func checkUpdate(ctx context.Context) (ui.UpdateInfo, bool, error) {
+	cur := version
+	if v := os.Getenv("CLACK_UPDATE_AS"); v != "" {
+		cur = v
+	}
+	r, err := desktop.LatestRelease(ctx, cur)
+	if err != nil {
+		return ui.UpdateInfo{}, false, err
+	}
+	return ui.UpdateInfo{Tag: r.Tag, URL: r.URL}, desktop.Newer(r.Tag, cur), nil
 }
 
 var httpClient = &http.Client{Timeout: 45 * time.Second}
