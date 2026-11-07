@@ -196,6 +196,7 @@ type Directories struct {
 	wantFocus int // frames left to try focusing the search box
 
 	people  async[dirPeople]
+	pusers  []core.User // the people a PeopleGrid patch left (slick.go)
 	peopleQ string
 	peopleL widget.List
 	cards   map[string]*widget.Clickable
@@ -837,8 +838,17 @@ func dirGrid(gtx C, w int) (cols, cw, gap int) {
 }
 
 func (d *Directories) peopleTab(gtx C) D {
+	return slackc.Component(gtx, "PeopleGrid", d, (*Directories).peopleProps, (*Directories).peopleGrid)
+}
+
+// peopleGrid is the people results (PeopleGrid's native, see slick.go):
+// under a patch only the people the plugin left in users are drawn.
+func (d *Directories) peopleGrid(gtx C, p slackc.Props) D {
 	st, loaded, err := d.people.get()
 	us := st.list
+	if p != nil {
+		us = d.peopleOverride(p, us)
+	}
 	head := d.heads(dirTabPeople)
 	inner := gtx.Constraints.Max.X - 2*gtx.Dp(dirPad)
 	cols, cw, gap := dirGrid(gtx, inner)

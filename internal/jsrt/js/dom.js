@@ -1889,7 +1889,10 @@
     if (v instanceof Date) return v.toISOString();
     if (v instanceof Map) return nativeProps(node, Object.fromEntries(v), path, depth + 1);
     if (v instanceof Set) return nativeProps(node, [...v], path, depth + 1);
-    if (hasOwn.call(v, '$slot') || hasOwn.call(v, '$gofn') || hasOwn.call(v, '$el')) return v; // already host-tree shaped
+    // a nested value that is already host-tree shaped passes through; the
+    // props object itself (depth 0) of a slot component also carries
+    // "$slot", but its functions must still become $fn ids
+    if (depth > 0 && (hasOwn.call(v, '$slot') || hasOwn.call(v, '$gofn') || hasOwn.call(v, '$el'))) return v;
     if (typeof v.toJSON === 'function') { try { return nativeProps(node, v.toJSON(), path, depth + 1); } catch { return null; } }
     const out = {};
     for (const k of Object.keys(v)) { const r = nativeProps(node, v[k], path + '.' + k, depth + 1); if (r !== undefined) out[k] = r; }
