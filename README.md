@@ -48,19 +48,9 @@ Download `clack-windows-amd64.exe` and double-click it. The binary isn't signed,
 
 ## Sign in
 
-Clack signs in with your Slack `d` cookie, the long-lived session cookie your browser already has.
+**Signing in from Clack is temporarily unavailable.** The old cookie sign-in loaded a Slack page with your `d` cookie to find your tokens, and that could sign you out of Slack in your browser, so it was removed. A safer sign-in is being worked on. An existing `~/.config/clack/creds.json` keeps working.
 
-1. Open your workspace in a browser (e.g. https://hackclub.slack.com) and sign in.
-2. Open DevTools → Application → Cookies → `https://app.slack.com` and copy the value of the cookie named `d`. It starts with `xoxd-`.
-3. Either paste it into the sign-in screen Clack shows on first start, or run:
-
-   ```sh
-   clack login hackclub
-   ```
-
-   and paste the cookie when asked.
-
-Clack loads the workspace once to find your session tokens (team and, on Enterprise Grid, org), checks them with `auth.test`, and saves them to `~/.config/clack/creds.json` (mode 600). Set `CLACK_HOME` to keep config somewhere else. Config from the old name (`~/.config/Clack`) is copied over on first start. "Sign out" deletes the file.
+Clack never calls Slack's sign-out or token-revoke methods. "Sign out on this device" only deletes `creds.json`; your Slack session in the browser and other apps is not affected.
 
 Treat `creds.json` like a password: it is a full session for your account.
 
@@ -70,7 +60,6 @@ Treat `creds.json` like a password: it is a full session for your account.
 clack            # open the window
 clack -dark      # start in dark mode (the saved preference wins)
 clack -version   # print the version
-clack login hackclub   # store credentials from a d cookie, in the terminal
 ```
 
 | flag | default | |

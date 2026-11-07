@@ -133,7 +133,19 @@ func (c *Client) Call(ctx context.Context, method string, params url.Values, out
 	return err
 }
 
+// forbiddenMethods would end the user's Slack session for every client.
+// Clack never calls them; "Sign out" only forgets local credentials.
+var forbiddenMethods = map[string]bool{
+	"auth.signout": true, "auth.revoke": true, "auth.enterpriseSignout": true, "enterpriseSignout": true,
+}
+
+// ErrForbiddenMethod is returned for methods that would end the session.
+var ErrForbiddenMethod = errors.New("slack: method refused (it would sign you out everywhere)")
+
 func (c *Client) callOn(ctx context.Context, method string, ent bool, params url.Values, out any) error {
+	if forbiddenMethods[method] {
+		return ErrForbiddenMethod
+	}
 	p := url.Values{}
 	for k, v := range params {
 		p[k] = v
@@ -164,6 +176,9 @@ func (c *Client) CallMultipart(ctx context.Context, method string, fields url.Va
 }
 
 func (c *Client) multipartOn(ctx context.Context, method string, ent bool, fields url.Values, fileField, filename string, data []byte, out any) error {
+	if forbiddenMethods[method] {
+		return ErrForbiddenMethod
+	}
 	base, tok := c.base, c.Creds.Token
 	if ent {
 		base, tok = c.ent, c.Creds.EnterpriseToken
@@ -300,7 +315,7 @@ func (c *Client) Download(ctx context.Context, rawURL string) (*http.Response, e
 }
 
 // UserAgent mimics a desktop Chrome so Slack serves the normal web payloads.
-const UserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 yoloslack/0.1"
+const UserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
 
 // UploadBytes sends file contents to an upload URL from
 // files.getUploadURLExternal. progress (may be nil) is called as the body
