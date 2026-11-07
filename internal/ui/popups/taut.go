@@ -153,9 +153,10 @@ func asProps(v any) slackc.Props {
 
 // slotOr lays out the slot a patched parent handed back in prop key (so
 // the plugin's context reaches it); otherwise it renders the boundary
-// name on its own.
+// name on its own. A slot that came back empty rendered null (Slick's
+// LocalTime hides Slack's LocalTime inside its own rows): nothing draws.
 func slotOr(gtx layout.Context, parent slackc.Props, key, name string, props func() slackc.Props, native slackc.Native) layout.Dimensions {
-	if e, ok := parent.Elem(key); ok && len(e.Nodes) > 0 {
+	if e, ok := parent.Elem(key); ok {
 		return slackc.LayoutElement(gtx, e)
 	}
 	return slackc.RenderLazy(gtx, name, props, native)
@@ -163,8 +164,5 @@ func slotOr(gtx layout.Context, parent slackc.Props, key, name string, props fun
 
 // childrenOr is slotOr for the "children" prop.
 func childrenOr(gtx layout.Context, parent slackc.Props, name string, props func() slackc.Props, native slackc.Native) layout.Dimensions {
-	if e, ok := slackc.PropChildren(parent); ok {
-		return slackc.LayoutElement(gtx, e)
-	}
-	return slackc.RenderLazy(gtx, name, props, native)
+	return slotOr(gtx, parent, "children", name, props, native)
 }

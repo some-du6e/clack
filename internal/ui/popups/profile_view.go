@@ -3,6 +3,7 @@ package popups
 import (
 	"image"
 	"image/color"
+	"time"
 
 	"gioui.org/layout"
 	"gioui.org/widget"
@@ -38,6 +39,8 @@ type ProfileView struct {
 
 	paneW   int             // last laid-out width (px)
 	moreBox image.Rectangle // kebab rect in pane coords (last frame)
+
+	editUntil time.Time // EditProfileFormPane is mounted until then
 }
 
 // NewProfileView builds the full profile pane for userID.
@@ -64,6 +67,9 @@ func (v *ProfileView) Layout(gtx layout.Context) layout.Dimensions {
 	}
 	self := ok && pfIsSelf(v.h, u.ID)
 	v.clicks(gtx, u, ok, self)
+	if self {
+		v.editPane(gtx)
+	}
 	if ok {
 		pfTick(gtx)
 	}
@@ -88,7 +94,10 @@ func (v *ProfileView) Layout(gtx layout.Context) layout.Dimensions {
 		defer clipRRect(gtx, image.Rect(0, 0, sz.X, bodyH), 0).Pop()
 		return v.list.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
 			gtx.Constraints.Min = image.Point{}
-			return v.body(gtx, th, cl, u, ok, self, sz.X)
+			if !ok {
+				return v.body(gtx, th, cl, u, ok, self, sz.X)
+			}
+			return v.content(gtx, th, cl, u, self, sz.X)
 		})
 	})
 	return layout.Dimensions{Size: sz}
@@ -120,7 +129,8 @@ func (v *ProfileView) clicks(gtx layout.Context, u core.User, ok, self bool) {
 		h.Toast("VIPs aren't supported yet")
 	}
 	if v.editBtn.Clicked(gtx) || v.pronBtn.Clicked(gtx) || v.nameSndBtn.Clicked(gtx) {
-		h.Toast(pfEditToast)
+		v.editUntil = gtx.Now.Add(pfEditPaneFor)
+		pfEditProfile(h)
 	}
 	if v.handleBtn.Clicked(gtx) && !pfBlank(u.Handle) {
 		copyText(gtx, "@"+u.Handle)
@@ -128,7 +138,7 @@ func (v *ProfileView) clicks(gtx layout.Context, u core.User, ok, self bool) {
 	}
 	if v.moreBtn.Clicked(gtx) {
 		items := pfMoreItems(h, u, false, nil)
-		h.ShowOverlay(&pfPaneMenu{h: h, items: items, box: v.moreBox, paneW: v.paneW, member: u.ID})
+		h.ShowOverlay(&pfPaneMenu{h: h, items: items, box: v.moreBox, paneW: v.paneW, member: u.ID, app: pfAppID(h, u)})
 	}
 }
 
@@ -242,9 +252,7 @@ func (v *ProfileView) body(gtx layout.Context, th *theme.Theme, cl *Colors, u co
 	if pfHasClock(u) {
 		at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(inner, rowH)}
-			return vcenter(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
-				return pfIconLine(gtx, th, cl, "clock", localTime(u, gtx.Now)+" local time", 15, 22)
-			})
+			return v.localTime(gtx, th, cl, u, rowH)
 		})
 		y += rowH
 	}
@@ -317,19 +325,38 @@ func (v *ProfileView) body(gtx layout.Context, th *theme.Theme, cl *Colors, u co
 // presence is the presence row: RimetoProfilePresence{member} around
 // BasePresence{showText} (LastSeen's context reaches the BasePresence).
 func (v *ProfileView) presence(gtx layout.Context, th *theme.Theme, u core.User, rowH int) layout.Dimensions {
-	h := v.h
-	bp := func() slackc.Props { return pfPresenceProps(h, u, true) }
-	native := func(gtx layout.Context, p slackc.Props) layout.Dimensions {
-		return pfPresenceNative(gtx, th, u, 8, true, rowH, p)
-	}
+	pp, native := pfPresenceParts(v.h, th, u, 8, true, rowH)
 	return slackc.RenderLazy(gtx, "RimetoProfilePresence", func() slackc.Props {
 		return slackc.Props{
 			"$key":     "profile-presence:" + u.ID,
 			"member":   slackMember(u),
-			"children": slackc.Child("BasePresence", bp(), native),
+			"children": slackc.Child("Presence", pp(), native),
 		}
 	}, func(gtx layout.Context, p slackc.Props) layout.Dimensions {
-		return childrenOr(gtx, p, "BasePresence", bp, native)
+		return childrenOr(gtx, p, "Presence", pp, native)
+	})
+}
+
+// localTime is the local time row: LocalTimeRow{member} around Slack's
+// LocalTime (Slick's LocalTime draws its own row there and hides
+// LocalTime; LastSeen's card line reads the same LocalTime).
+func (v *ProfileView) localTime(gtx layout.Context, th *theme.Theme, cl *Colors, u core.User, rowH int) layout.Dimensions {
+	lt := func() slackc.Props {
+		return slackc.Props{"$key": "profile-localtime:" + u.ID, "member": slackMember(u)}
+	}
+	native := func(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+		return vcenter(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
+			return pfIconLine(gtx, th, cl, "clock", localTime(u, gtx.Now)+" local time", 15, 22)
+		})
+	}
+	return slackc.RenderLazy(gtx, "LocalTimeRow", func() slackc.Props {
+		return slackc.Props{
+			"$key":     "profile-localtime-row:" + u.ID,
+			"member":   slackMember(u),
+			"children": slackc.Child("LocalTime", lt(), native),
+		}
+	}, func(gtx layout.Context, p slackc.Props) layout.Dimensions {
+		return childrenOr(gtx, p, "LocalTime", lt, native)
 	})
 }
 
@@ -426,6 +453,7 @@ type pfPaneMenu struct {
 	box    image.Rectangle // control rect in pane coords
 	paneW  int             // pane width in px
 	member string          // whose profile (RimetoMemberProfileOverflowMenu)
+	app    string          // the app's id on an app's profile (AppDetailsOverflow)
 	menu   *Menu
 	done   bool
 }
@@ -438,7 +466,13 @@ func (p *pfPaneMenu) Layout(gtx layout.Context) layout.Dimensions {
 		win := gtx.Constraints.Max
 		off := image.Pt(win.X-dp(gtx, theme.PanelInset)-p.paneW, dp(gtx, theme.TopNavH))
 		a := p.box.Add(off)
-		p.menu = NewMenuOpts(p.h, p.items, pfMenuOpts(p.member, MenuOpts{Anchor: a, Side: Below, AlignRight: true}))
+		o := MenuOpts{Anchor: a, Side: Below, AlignRight: true}
+		if p.app != "" {
+			o = pfAppMenuOpts(p.app, p.member, o)
+		} else {
+			o = pfMenuOpts(p.member, o)
+		}
+		p.menu = NewMenuOpts(p.h, p.items, o)
 	}
 	return p.menu.Layout(gtx)
 }
