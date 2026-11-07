@@ -241,16 +241,6 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	if len(v.d.comps) > 0 {
 		v.layoutComps(gtx, st)
 	}
-	if el := v.opts.Elements; el != nil {
-		for i := range v.d.slots {
-			s := &v.d.slots[i]
-			off := op.Offset(s.r.Min).Push(gtx.Ops)
-			g := gtx
-			g.Constraints = layout.Exact(s.r.Size())
-			el.LayoutElements(g, s.bs, s.acc)
-			off.Pop()
-		}
-	}
 	if v.hover >= 0 && int(v.hover) < len(v.d.targets) && v.d.targets[v.hover].underline {
 		for i := range v.d.frags {
 			f := &v.d.frags[i]
@@ -282,6 +272,25 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 			s := clip.Rect(fragRect(f)).Push(gtx.Ops)
 			pointer.CursorPointer.Add(gtx.Ops)
 			s.Pop()
+		}
+	}
+	// Element runs (Options.Elements) go last: their input areas must be
+	// above the cursor/hit areas of cards and links registered above.
+	if el := v.opts.Elements; el != nil && len(v.d.slots) > 0 {
+		var opac paint.OpacityStack
+		if v.opts.Dim {
+			opac = paint.PushOpacity(gtx.Ops, 0.5)
+		}
+		for i := range v.d.slots {
+			s := &v.d.slots[i]
+			off := op.Offset(s.r.Min).Push(gtx.Ops)
+			g := gtx
+			g.Constraints = layout.Exact(s.r.Size())
+			el.LayoutElements(g, s.bs, s.acc)
+			off.Pop()
+		}
+		if v.opts.Dim {
+			opac.Pop()
 		}
 	}
 	d := layout.Dimensions{Size: size}
