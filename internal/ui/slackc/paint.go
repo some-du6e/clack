@@ -585,6 +585,14 @@ func (p *painter) areas(b *box, r rectF) {
 		return
 	}
 	shield := p.v.overlay && (b.parent == nil || b.layered) || b.st.Position == css.PosFixed
+	if b.kind == kAnon && b.parent == nil && p.v.root == OverlayBody {
+		// document.body's own box spans the window (exact constraints), but
+		// in a browser the body never blocks the page: only its children
+		// with pointer-events take clicks where they are. A shield here ate
+		// every click as soon as a plugin put anything in the body (oneko's
+		// pointer-events:none cat).
+		shield = false
+	}
 	cur := b.cursor
 	pc := css.CursorAuto
 	if b.parent != nil {
