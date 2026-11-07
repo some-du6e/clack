@@ -166,6 +166,32 @@ test('window, matchMedia, getComputedStyle, canvas', () => {
   el.remove();
 });
 
+test('body carries sk-client-theme--dark/--light with the color scheme', async () => {
+  const body = document.body.classList;
+  assert(body.contains('sk-client-theme--light') && !body.contains('sk-client-theme--dark'), document.body.className);
+  const x = document.createElement('div');
+  x.className = 'x';
+  document.body.appendChild(x);
+  const seen = [];
+  const mo = new MutationObserver((records) => { for (const r of records) seen.push(r.attributeName); });
+  mo.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  globalThis.__clack.setViewport(innerWidth, innerHeight, devicePixelRatio, true);
+  try {
+    assert(body.contains('sk-client-theme--dark') && !body.contains('sk-client-theme--light'), document.body.className);
+    assert(x.matches('.sk-client-theme--dark .x') && !x.matches('.sk-client-theme--light .x'));
+    assert(matchMedia('(prefers-color-scheme: dark)').matches);
+    // Slick's theme.ts re-checks its mode gate from a MutationObserver on body's class
+    await sleep(0);
+    assert(seen.includes('class'), seen.join());
+  } finally {
+    globalThis.__clack.setViewport(innerWidth, innerHeight, devicePixelRatio, false);
+  }
+  assert(body.contains('sk-client-theme--light') && !body.contains('sk-client-theme--dark'), document.body.className);
+  assert(!x.matches('.sk-client-theme--dark .x') && x.matches('.sk-client-theme--light .x'));
+  mo.disconnect();
+  x.remove();
+});
+
 test('structuredClone and language extras', () => {
   const src = { a: [1, { b: new Date(0) }], m: new Map([[1, 'x']]), s: new Set([1]), u: new Uint8Array([1, 2]) };
   src.self = src;

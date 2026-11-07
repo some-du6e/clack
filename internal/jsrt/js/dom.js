@@ -869,6 +869,9 @@
   docHtml.appendChild(docHead);
   docHtml.appendChild(docBody);
   docHtml._setAttr('lang', (H.language || 'en-US'));
+  // Slack's client keeps sk-client-theme--dark or --light on <body>; themes,
+  // plugin CSS and plugins' dark checks key on it (setViewport switches it)
+  docBody._setAttr('class', 'sk-client-theme--light');
   def(G, 'document', document);
   jr.docBody = docBody;
   jr.docHead = docHead;
@@ -1208,6 +1211,10 @@
     dark = !!isDark;
     docHtml._r = [0, 0, vw, vh];
     docBody._r = [0, 0, vw, vh];
+    if (themed) {
+      docBody.classList.toggle('sk-client-theme--dark', dark);
+      docBody.classList.toggle('sk-client-theme--light', !dark);
+    }
     if (resized) G.dispatchEvent(new UIEvent('resize'));
     for (const m of mqls) m._update();
     for (const ro of resizeObs) ro._check();

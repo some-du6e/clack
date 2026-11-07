@@ -46,6 +46,8 @@ s.SetDark(dark)                         // themes with a "mode" apply only in th
 ch, stop := s.Subscribe()               // repaint Preferences > Slick on change
 ```
 
+The color scheme also reaches JS through slackc's `SetViewport`: `document.body` carries Slack's `sk-client-theme--dark` or `sk-client-theme--light`, so theme and plugin rules keyed on `.sk-client-theme--dark` match (on native widgets too, through the document at the bottom of slackc's element stack) and plugins' `body.classList.contains('sk-client-theme--dark')` checks see dark mode.
+
 Styles arrive through the same `UIHooks.SetStyle` Taut uses: `plugin:<id>:<key>` from plugins, `slick:theme` and `slick:user` from Slick. That is the only new wiring. Notifications already go through Taut's `showNotification` thunk, which is where Slick's notification filters (ShutUpSlackbot, StreamerMode) sit.
 
 What ui-shell has to draw: **Preferences > Slick** from `s.Settings()` (below), and the new component boundaries in [PLUGINS-components.md](PLUGINS-components.md) §9, owned by the UI packages listed there.
