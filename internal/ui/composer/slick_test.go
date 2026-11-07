@@ -94,6 +94,9 @@ func startSlick(t *testing.T, name string, opts map[string]any, before func(e *s
 			{ID: "U0BOBBY001", Name: "bobby", RealName: "Bobby Sample", Profile: slack.Profile{DisplayName: "bobby", RealName: "Bobby Sample"}},
 		})
 		st.PutConv(slack.Conversation{ID: tChRandom, Name: "random", IsChannel: true, IsMember: true, NumMembers: 40})
+		// DMs with both, so the composer knows them (its snapshot's people)
+		st.PutConv(slack.Conversation{ID: "D0BOB00001", IsIM: true, User: "U0BOB00001", IsMember: true})
+		st.PutConv(slack.Conversation{ID: "D0BOBBY001", IsIM: true, User: "U0BOBBY001", IsMember: true})
 	})
 	e := &slickEnv{t: t, app: app, slack: fs, trees: map[uint64][]byte{}, h: &slickHost{app: app, th: theme.New(false)}}
 	if before != nil {
