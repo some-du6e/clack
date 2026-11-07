@@ -299,7 +299,11 @@ func (b *Bridge) root(r *runtime, id uint64) *jsrt.Root {
 }
 
 // mount renders the element __taut.<fn>(args…) returns into root id.
-func (b *Bridge) mount(id uint64, fn string, args ...any) {
+func (b *Bridge) mount(id uint64, fn string, args ...any) { b.mountAt(id, 0, fn, args...) }
+
+// mountAt is mount; with k > 0 the root is a portal inside the tree that
+// holds host node k (jsrt Root.RenderPortal).
+func (b *Bridge) mountAt(id uint64, k int64, fn string, args ...any) {
 	r := b.runtime()
 	if r == nil {
 		return
@@ -326,7 +330,12 @@ func (b *Bridge) mount(id uint64, fn string, args ...any) {
 			b.t.logf("taut: %s: %v", fn, err)
 			return
 		}
-		if err := jr.Render(js, el); err != nil {
+		if k > 0 {
+			err = jr.RenderPortal(js, k, el)
+		} else {
+			err = jr.Render(js, el)
+		}
+		if err != nil {
 			b.t.logf("taut: render %s: %v", fn, err)
 		}
 	})
@@ -338,6 +347,21 @@ func (b *Bridge) Render(root uint64, name string, props []byte) {
 		props = []byte("{}")
 	}
 	b.mount(root, "componentElement", name, props)
+}
+
+// RenderIn is Render for a patched component a native draws inside the
+// patched root parent, under its host node parentK (slackc.NestedBridge):
+// it mounts as a portal there, so the contexts and providers that root's
+// patches put around that native reach it, as in Slack's single tree.
+func (b *Bridge) RenderIn(root, parent uint64, parentK int64, name string, props []byte) {
+	if len(props) == 0 {
+		props = []byte("{}")
+	}
+	if parentK <= 0 {
+		b.mount(root, "componentElement", name, props)
+		return
+	}
+	b.mountAt(root, parentK, "componentElement", name, props)
 }
 
 // RenderFn mounts root rendering the JS function fn called with args.
