@@ -1,21 +1,9 @@
 package jsrt
 
-import _ "embed"
-
-// Vendored React (see vendor/README.md). Each CommonJS file is wrapped in a
-// factory registered with env.js's require().
-var (
-	//go:embed vendor/react.production.js
-	vReact string
-	//go:embed vendor/react-jsx-runtime.production.js
-	vJSX string
-	//go:embed vendor/scheduler.production.js
-	vScheduler string
-	//go:embed vendor/react-reconciler.production.js
-	vReconciler string
-	//go:embed vendor/react-reconciler-constants.production.js
-	vReconcilerConstants string
-)
+// Vendored React (see vendor/README.md), from assets.pack. Each CommonJS
+// file is wrapped in a factory registered with env.js's require(). Built per
+// boot: as a package-level var the wrapping cost 1.8 MB of heap in every
+// process, plugins or not.
 
 type script struct{ name, src string }
 
@@ -28,10 +16,13 @@ func quoteJS(s string) string {
 	return string(b)
 }
 
-var vendorScripts = []script{
-	cjs("react", vReact),
-	cjs("react/jsx-runtime", vJSX),
-	cjs("scheduler", vScheduler),
-	cjs("react-reconciler", vReconciler),
-	cjs("react-reconciler/constants", vReconcilerConstants),
+func vendorScripts(f map[string][]byte) []script {
+	v := func(name string) string { return string(f["vendor/"+name+".production.js"]) }
+	return []script{
+		cjs("react", v("react")),
+		cjs("react/jsx-runtime", v("react-jsx-runtime")),
+		cjs("scheduler", v("scheduler")),
+		cjs("react-reconciler", v("react-reconciler")),
+		cjs("react-reconciler/constants", v("react-reconciler-constants")),
+	}
 }

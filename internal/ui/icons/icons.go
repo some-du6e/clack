@@ -20,6 +20,8 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/unit"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
 // Icon draws itself in a size×size square with color col.
@@ -83,7 +85,7 @@ func (d *def) draw(gtx layout.Context, size unit.Dp, col color.NRGBA) layout.Dim
 	px := gtx.Dp(size)
 	sc := float32(px) / view
 	for i, p := range d.parts {
-		var path clip.Path
+		var path theme.PathPen // cached by content: Gio tessellates each icon stroke once
 		path.Begin(gtx.Ops)
 		open := false
 		for _, sg := range d.segs[i] {

@@ -13,8 +13,10 @@ import (
 	"image/color"
 
 	"gioui.org/font"
+	"gioui.org/layout"
 	"gioui.org/op/paint"
 	"gioui.org/text"
+	"gioui.org/unit"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
@@ -38,6 +40,23 @@ type Handler interface {
 	OpenImage(img richtext.Image)
 	OpenFile(f *richtext.File)
 	Button(b richtext.Button)
+}
+
+// Elements draws Block Kit interactive elements as live widgets
+// (internal/ui/blockkit). With Options.Elements set, every run of
+// elements (an actions block, a section accessory, an attachment's action
+// buttons) gets a slot in the cached layout that the owner sizes and
+// draws each frame. Without it richview draws them as static buttons that
+// call Handler.Button.
+type Elements interface {
+	// ElementsSize is the run's size within maxW px. A section accessory
+	// (accessory true) that sits under the section's text instead of at
+	// its right (checkboxes, radio buttons, multi-selects) reports stack.
+	ElementsSize(bs []richtext.Button, maxW int, accessory bool, m unit.Metric) (size image.Point, stack bool)
+	// LayoutElements draws the run in gtx.Constraints (exactly the slot).
+	LayoutElements(gtx layout.Context, bs []richtext.Button, accessory bool) layout.Dimensions
+	// ElementsVersion changes whenever sizes may have changed (relayout).
+	ElementsVersion() uint32
 }
 
 // Palette holds every color richview paints with. Defaults are Slack's
@@ -165,6 +184,7 @@ type Style struct {
 
 	gen   uint32 // bumped by SetPalette; Views re-record when it changes
 	words map[wordKey]*shaped
+	prev  map[wordKey]*shaped // previous generation (see word)
 	space map[faceKey]spaceMetrics
 }
 
@@ -190,6 +210,7 @@ func (s *Style) SetPalette(p Palette) {
 // Invalidate forces every View to re-layout (e.g. after the font changed).
 func (s *Style) Invalidate() {
 	s.gen++
+	s.prev = nil
 	for k := range s.words {
 		delete(s.words, k)
 	}
@@ -210,6 +231,9 @@ type Options struct {
 	// Channel and TS identify the message, for the Slack-shaped props of
 	// its attachment components (activeChannelId, messageTs).
 	Channel, TS string
+	// Elements, if set, draws the doc's interactive elements (see
+	// Elements). Use a comparable (pointer) implementation.
+	Elements Elements
 }
 
 // textColor applies LightTextFade to light glyph colors at scale pxPerDp.

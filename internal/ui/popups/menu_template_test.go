@@ -1,6 +1,8 @@
 package popups
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
@@ -90,6 +92,67 @@ func TestMenuFromTemplateRoundTrip(t *testing.T) {
 	got[0].Do()
 	if ran != "copy" {
 		t.Fatalf("copy ran %q", ran)
+	}
+}
+
+// The sidebar row menu's getTemplate round trip (ChatTabs): the template
+// is plain JSON-able data with Slack's keys; what a plugin returns comes
+// back with the native actions by key and its own item clickable.
+func TestChannelMenuTemplateRoundTrip(t *testing.T) {
+	ran := ""
+	do := func(key string) func() { return func() { ran = key } }
+	items := ChannelMenuItems(ChannelMenuInfo{ID: "C1", Kind: "channel", Starred: true}, do)
+	tpl := MenuTemplate(items)
+	keys := make([]string, len(tpl))
+	for i, e := range tpl {
+		keys[i], _ = e["key"].(string)
+		if _, ok := e["click"]; ok {
+			t.Errorf("template item %s carries a click", keys[i])
+		}
+	}
+	want := []string{"view_details", "copy_link", "copy_name", "separator_1", "toggle_star", "toggle_mute", "mark_read", "separator_2", "leave"}
+	if strings.Join(keys, ",") != strings.Join(want, ",") {
+		t.Fatalf("keys %v, want %v", keys, want)
+	}
+	if tpl[4]["label"] != "Unstar channel" || tpl[8]["danger"] != true || tpl[3]["type"] != "separator" {
+		t.Fatalf("template %v", tpl)
+	}
+	if _, err := json.Marshal(tpl); err != nil {
+		t.Fatal(err)
+	}
+	// a plugin inserts its row before Leave and drops Copy name
+	var out []any
+	for _, e := range tpl {
+		switch e["key"] {
+		case "copy_name":
+			continue
+		case "leave":
+			out = append(out, map[string]any{"key": "slick-chat-tabs-open", "label": "Open in new Slick tab", "click": slackc.JSFunc{ID: 3}})
+		}
+		out = append(out, map[string]any(e))
+	}
+	got := ItemsFromTemplate(nil, out, items)
+	var gk []string
+	for _, it := range got {
+		gk = append(gk, it.Key)
+	}
+	want = []string{"view_details", "copy_link", "separator_1", "toggle_star", "toggle_mute", "mark_read", "separator_2", "slick-chat-tabs-open", "leave"}
+	if strings.Join(gk, ",") != strings.Join(want, ",") {
+		t.Fatalf("items %v, want %v", gk, want)
+	}
+	if got[7].Label != "Open in new Slick tab" || got[7].Do == nil {
+		t.Fatalf("plugin row %+v", got[7])
+	}
+	if !got[8].Danger || got[8].Do == nil {
+		t.Fatalf("leave row %+v", got[8])
+	}
+	got[8].Do()
+	if ran != "leave" {
+		t.Fatalf("leave ran %q", ran)
+	}
+	dm := ChannelMenuItems(ChannelMenuInfo{ID: "D1", Kind: "im", Muted: true}, nil)
+	if l := dm[len(dm)-1]; l.Key != "close" || l.Label != "Close conversation" || dm[5].Label != "Unmute conversation" || l.Do != nil {
+		t.Fatalf("DM items %+v", dm)
 	}
 }
 

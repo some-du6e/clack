@@ -13,6 +13,7 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -289,7 +290,6 @@ func (p *EmojiPicker) gifRow(gtx layout.Context, i int) layout.Dimensions {
 	t, gap := dp(gtx, gifTile), dp(gtx, gifGap)
 	h := t + gap
 	rad := dp(gtx, 6)
-	im := p.h.Images()
 	for c := 0; c < gifCols; c++ {
 		k := i*gifCols + c
 		tp := image.Pt(dp(gtx, gifX0)+c*(t+gap), gap/2)
@@ -312,26 +312,97 @@ func (p *EmojiPicker) gifRow(gtx layout.Context, i int) layout.Dimensions {
 			}
 		}
 		at(gtx, tp, func(gtx layout.Context) layout.Dimensions {
-			return clickBox(gtx, &g.tiles[k], nil, func(gtx layout.Context) layout.Dimensions {
-				sz := image.Pt(t, t)
-				if an, ok := gifAnimGet(p.h, gifAnimURL(gf), t, gtx.Now); ok {
-					// animated (frames decoded off the UI goroutine; the
-					// next redraw is scheduled only while this tile shows).
-					theme.Image(gtx, an.frameAt(gtx), sz, rad)
-				} else if img, ok := im.Get(gifStill(gf), gifImgPx(gtx, gf)); ok {
-					theme.Image(gtx, img, sz, rad)
-				} else {
-					th.Placeholder(gtx, sz, rad)
-				}
-				if g.tiles[k].Hovered() {
-					rrect(gtx, image.Rectangle{Max: sz}, rad, rgba(0x000000, .12))
-				}
-				stroke(gtx, image.Rectangle{Max: sz}, rad, maxInt(1, dp(gtx, 1)), cl.Ring)
-				return layout.Dimensions{Size: sz}
+			gtx.Constraints = layout.Exact(image.Pt(t, t))
+			return slackc.RenderLazy(gtx, "GifListItem", func() slackc.Props { return gifItemProps(gf) }, func(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+				return p.gifTile(gtx, cl, gf, k, t, rad)
 			})
 		})
 	}
 	return layout.Dimensions{Size: image.Pt(w, h)}
+}
+
+// gifTile draws GIF k (Slack's GifListItem native).
+func (p *EmojiPicker) gifTile(gtx layout.Context, cl *Colors, gf Gif, k, t, rad int) layout.Dimensions {
+	g := &p.gif
+	th := p.h.Theme()
+	im := p.h.Images()
+	return clickBox(gtx, &g.tiles[k], nil, func(gtx layout.Context) layout.Dimensions {
+		sz := image.Pt(t, t)
+		if an, ok := gifAnimGet(p.h, gifAnimURL(gf), t, gtx.Now); ok {
+			// animated (frames decoded off the UI goroutine; the
+			// next redraw is scheduled only while this tile shows).
+			theme.Image(gtx, an.frameAt(gtx), sz, rad)
+		} else if img, ok := im.Get(gifStill(gf), gifImgPx(gtx, gf)); ok {
+			theme.Image(gtx, img, sz, rad)
+		} else {
+			th.Placeholder(gtx, sz, rad)
+		}
+		if g.tiles[k].Hovered() {
+			rrect(gtx, image.Rectangle{Max: sz}, rad, rgba(0x000000, .12))
+		}
+		stroke(gtx, image.Rectangle{Max: sz}, rad, maxInt(1, dp(gtx, 1)), cl.Ring)
+		return layout.Dimensions{Size: sz}
+	})
+}
+
+// gifItemProps are Slack's GifListItem props for g (BetterGifs adds a
+// favourite star to Giphy items it can validate).
+func gifItemProps(g Gif) slackc.Props {
+	return slackc.Props{
+		"$key":       "gif:" + g.ID,
+		"id":         g.ID,
+		"name":       g.Title,
+		"url":        g.URL,
+		"previewUrl": gifStill(g),
+		"width":      g.W,
+		"height":     g.H,
+	}
+}
+
+// layoutGifPicker draws the GIF tab through Slack's GifPicker (the
+// picker's body below the tabs): {onGifSelected(event, payload),
+// onClosed(event), emojiSearchQuery}. A plugin that replaces it (BetterGifs)
+// calls onGifSelected with Slack's payload, which is sent like a picked
+// tile.
+func (p *EmojiPicker) layoutGifPicker(gtx layout.Context, th *theme.Theme, cl *Colors, sz image.Point) {
+	top := dp(gtx, epTopH)
+	at(gtx, image.Pt(0, top), func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Exact(image.Pt(sz.X, maxInt(0, sz.Y-top)))
+		return slackc.RenderLazy(gtx, "GifPicker", p.gifPickerProps, func(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+			defer op.Offset(image.Pt(0, -top)).Push(gtx.Ops).Pop()
+			p.layoutGif(gtx, th, cl, sz)
+			return layout.Dimensions{Size: image.Pt(sz.X, maxInt(0, sz.Y-top))}
+		})
+	})
+}
+
+func (p *EmojiPicker) gifPickerProps() slackc.Props {
+	return slackc.Props{
+		"$key":             "gif-picker",
+		"emojiSearchQuery": p.gif.typed,
+		"onClosed":         func(any) {},
+		"onGifSelected": func(args ...any) {
+			var pl slackc.Props
+			if len(args) > 1 {
+				pl = asProps(args[1])
+			}
+			if pl == nil {
+				return
+			}
+			g := Gif{
+				URL:     pl.StrOr("originalGifUrl", ""),
+				Preview: pl.StrOr("previewUrl", ""),
+				Title:   pl.StrOr("name", ""),
+				W:       pl.IntOr("width", 0),
+				H:       pl.IntOr("height", 0),
+			}
+			if g.URL == "" {
+				return
+			}
+			g.Still = g.Preview
+			p.pickGif(g)
+		},
+	}
 }
 
 // gifSkeleton fills the viewport with placeholder tiles while the first

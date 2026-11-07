@@ -139,7 +139,7 @@ const osShim = {
 const electronShim = {
   app: { isReady: () => true, whenReady: () => Promise.resolve(), getPath: (name) => go('os', name === 'home' ? 'home' : 'tmp'), getVersion: () => '0.0.0' },
   session: { defaultSession: { setSpellCheckerEnabled() {}, setSpellCheckerLanguages() {}, webRequest: { onBeforeRequest() {} } } },
-  shell: { openExternal: async (url) => void G.open?.(url) },
+  shell: { openExternal: async (url) => void go('openURL', new URL(String(url)).href) },
   webContents: { getAllWebContents: () => [] },
   BrowserWindow: { getAllWindows: () => [] },
 }
@@ -340,7 +340,7 @@ const pageFetch = G.fetch
 async function ruledFetch(input, init) {
   const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input?.url
   if (typeof url === 'string') {
-    const scheme = url.slice(0, Math.max(0, url.indexOf(':')))
+    const scheme = url.slice(0, Math.max(0, url.indexOf(':'))).toLowerCase()
     const proto = protocols.get(scheme)
     if (proto) {
       const req = input instanceof Request ? input : new Request(url, init)
@@ -433,9 +433,16 @@ function emitToRenderer(id, event, payload) {
 
 // ---- MainCtx ----
 
+// schemes a main half can't take over: the web's own, Slack's, and what
+// Clack or a browser handles itself
+const RESERVED_SCHEMES = new Set(['http', 'https', 'ws', 'wss', 'file', 'ftp', 'data', 'blob', 'about', 'javascript', 'vbscript', 'mailto', 'tel', 'sms', 'slack', 'clack', 'chrome', 'chrome-extension', 'devtools', 'view-source', 'filesystem', 'intent', 'content', 'app', 'electron'])
+const SCHEME = /^[a-z][a-z0-9+.-]{0,63}$/
+const setHas = Set.prototype.has
+
 function createMainCtx(id, main) {
+  const allowed = main.allowed
   const need = (cap) => {
-    if (!main.plugin.capabilities?.includes(cap)) throw new Error(`[slick] ${id} used "${cap}" without declaring it`)
+    if (!apply(setHas, allowed, [cap])) throw new Error(`[slick] ${id} used "${cap}" without declaring it`)
   }
   const disposers = (set, item, after) => {
     set.add(item)
@@ -471,7 +478,12 @@ function createMainCtx(id, main) {
       register(scheme, _privileges, handler) {
         need('protocol')
         if (main.booted) throw new Error(`[slick] ${id}: protocols must be declared during boot`)
-        main.protocols.set(scheme, handler)
+        const name = String(scheme).toLowerCase()
+        if (!SCHEME.test(name) || apply(setHas, RESERVED_SCHEMES, [name])) throw new Error(`[slick] ${id}: can't register the ${String(scheme)}: scheme`)
+        const owner = protocols.get(name)?.id ?? [...plugins].find(([other, p]) => other !== id && p.main?.protocols?.has(name))?.[0]
+        if (owner && owner !== id) throw new Error(`[slick] ${id}: ${name}: is already ${owner}'s`)
+        if (typeof handler !== 'function') throw new TypeError(`[slick] ${id}: protocol handler for ${name}: is not a function`)
+        main.protocols.set(name, handler)
       },
     },
     net: {
@@ -518,7 +530,7 @@ function createMainCtx(id, main) {
       async openExternal(url) {
         need('shell')
         const parsed = new URL(url)
-        if (!['https:', 'http:', 'mailto:', 'slack:'].includes(parsed.protocol)) throw new Error(`[slick] ${id}: refusing to open ${parsed.protocol} externally`)
+        if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:' && parsed.protocol !== 'mailto:') throw new Error(`[slick] ${id}: refusing to open ${parsed.protocol} externally`)
         go('openURL', parsed.href)
       },
     },
@@ -583,13 +595,20 @@ const mainMeta = (plugin) => ({ id: plugin.id, capabilities: [...(plugin.capabil
 /** Go → JS: a main-half file's declarations, without keeping it */
 S.describeMain = (code) => mainMeta(mainPluginFrom(code))
 
-/** Go → JS: evaluates a main-half file and keeps it for startMain */
-S.loadMain = (code) => {
+/**
+ * Go → JS: evaluates a main-half file and keeps it for startMain. caps are
+ * the capabilities Preferences shows for it (its cached declaration): it
+ * gets those it also declares now, and can't add any later.
+ */
+S.loadMain = (code, caps) => {
   const plugin = mainPluginFrom(code)
+  const declared = [...(plugin.capabilities ?? [])].map(String)
+  const approved = Array.isArray(caps) ? new Set(caps.map(String)) : null
+  const allowed = new Set(declared.filter((c) => CAPABILITIES.has(c) && (!approved || approved.has(c))))
   let entry = plugins.get(plugin.id)
   if (!entry) plugins.set(plugin.id, (entry = { Class: null, instance: null, scope: null }))
   if (entry.main?.running) throw new Error(`${plugin.id}'s main half is running; stop it before loading new code`)
-  entry.main = { plugin, ctx: null, settings: null, settingsListeners: new Set(), protocols: new Map(), running: false, booted: false, dispose: null }
+  entry.main = { plugin, allowed, ctx: null, settings: null, settingsListeners: new Set(), protocols: new Map(), running: false, booted: false, dispose: null }
   return mainMeta(plugin)
 }
 

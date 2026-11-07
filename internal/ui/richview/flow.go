@@ -126,6 +126,14 @@ type display struct {
 	plain   []byte
 	size    image.Point
 	comps   []compBox // Slack components (see comps.go)
+	slots   []slot    // interactive element runs drawn by Options.Elements
+}
+
+// slot is a run of interactive elements the owner draws (Options.Elements).
+type slot struct {
+	r   image.Rectangle
+	bs  []richtext.Button
+	acc bool
 }
 
 func (d *display) reset() {
@@ -138,6 +146,7 @@ func (d *display) reset() {
 	d.plain = d.plain[:0]
 	d.size = image.Point{}
 	d.comps = d.comps[:0]
+	d.slots = d.slots[:0]
 }
 
 func (d *display) addTarget(t target) int16 {
@@ -220,6 +229,8 @@ type lay struct {
 	cs        *[]compState
 	inAtt     bool
 	authorImg int // inside a card: its author icon, imgs index+1
+	// titleFrags is a YouTube card's title frags [from, to) (compBlock).
+	titleFrags [2]int
 }
 
 func (l *lay) dp(v float32) int      { return int(v*l.scale + 0.5) }
@@ -436,6 +447,9 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 				l.decos[dc].comp = cmp
 				if n := l.compState(cmp).name; n != "" && kind == compChannel {
 					txt = "#" + n
+				}
+				if kind == compUser && l.compState(cmp).noAt {
+					noAt = true // MemberSlug supressMentionAtSymbol
 				}
 			}
 		case richtext.Date:

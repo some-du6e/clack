@@ -3,6 +3,7 @@ package ui
 import (
 	"image"
 	"image/color"
+	"strconv"
 
 	"gioui.org/font"
 	"gioui.org/gesture"
@@ -35,8 +36,9 @@ type sbRow struct {
 	label   string
 	icon    string
 	section string
-	gap     int    // dp, for sbGap
-	itemKey string // Slack's data-item-key ("" = untagged spacer)
+	gap     int               // dp, for sbGap
+	itemKey string            // Slack's data-item-key ("" = untagged spacer)
+	btn     *widget.Clickable // resolved once per rebuild (no per-frame key strings)
 }
 
 type sidebarState struct {
@@ -51,6 +53,14 @@ type sidebarState struct {
 	dragX     float32
 	dragW     float32
 	hover     bool // pointer over the sidebar (.p-channel_sidebar:hover)
+
+	// ChannelSidebar (slick_shell.go)
+	gen       int   // bumped by every rebuild
+	propRows  []any // rows as Slack-shaped props, for gen propsGen
+	propsGen  int
+	shown     []int // rows a plugin left (nil: all), from shownFrom
+	shownFrom []any
+	shownGen  int
 }
 
 var sbLinks = []sbRow{
@@ -128,6 +138,7 @@ func (s *sidebarState) rebuild(m *model) {
 		}
 	}
 	s.rows = rows
+	s.gen++
 	s.builtFor = m.version
 	s.rowCount = len(rows)
 }
@@ -141,8 +152,14 @@ func (a *App) model() *model {
 
 var emptyModel = model{TeamName: AppName, Convs: map[string]*convInfo{}}
 
-// layoutSidebar draws the sidebar header, jump box and scrolling list.
+// layoutSidebar draws the sidebar through Slack's ChannelSidebar.
 func (a *App) layoutSidebar(gtx layout.Context) layout.Dimensions {
+	return slackc.Component(gtx, "ChannelSidebar", a, (*App).sidebarProps, (*App).layoutSidebarNative)
+}
+
+// layoutSidebarNative draws the sidebar header, jump box and scrolling
+// list. Under a patch it draws only the rows p's rows still list.
+func (a *App) layoutSidebarNative(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	sz := gtx.Constraints.Max
 	sbst := clsSidebar.Enter(gtx, hoverState(a.sidebar.hover), 0)
 	defer sbst.Leave()
@@ -153,6 +170,15 @@ func (a *App) layoutSidebar(gtx layout.Context) layout.Dimensions {
 	m := a.model()
 	if a.sidebar.rows == nil || a.sidebar.builtFor != m.version {
 		a.sidebar.rebuild(m)
+		for i := range a.sidebar.rows {
+			r := &a.sidebar.rows[i]
+			switch r.kind {
+			case sbHeading:
+				r.btn = a.clicks.get("sbh." + r.key)
+			case sbLink, sbConv, sbAction:
+				r.btn = a.clicks.get("sbr." + r.key)
+			}
+		}
 	}
 
 	// header: team name 18px/900 + chevron; settings + compose on the right.
@@ -230,11 +256,22 @@ func (a *App) layoutSidebar(gtx layout.Context) layout.Dimensions {
 
 	// scrolling list
 	top := fy + fh + gtx.Dp(10)
-	at(gtx, image.Pt(0, top), image.Pt(sz.X, sz.Y-top), func(gtx layout.Context) layout.Dimensions {
+	barH := a.huddles().BarHeight(gtx) // the huddle bar sits under the list
+	if barH > 0 {
+		at(gtx, image.Pt(0, sz.Y-barH), image.Pt(sz.X, barH), func(gtx layout.Context) layout.Dimensions {
+			return a.huddles().LayoutBar(gtx, a.th)
+		})
+	}
+	at(gtx, image.Pt(0, top), image.Pt(sz.X, sz.Y-top-barH), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min = gtx.Constraints.Max
 		ls := clsSbList.Enter(gtx, 0, 0)
 		defer ls.Leave()
 		a.sidebar.list.Axis = layout.Vertical
+		if shown := a.sidebar.sidebarShown(p); shown != nil {
+			return a.sidebar.list.List.Layout(gtx, len(shown), func(gtx layout.Context, i int) layout.Dimensions {
+				return a.layoutSidebarRow(gtx, &a.sidebar.rows[shown[i]])
+			})
+		}
 		return a.sidebar.list.List.Layout(gtx, len(a.sidebar.rows), func(gtx layout.Context, i int) layout.Dimensions {
 			return a.layoutSidebarRow(gtx, &a.sidebar.rows[i])
 		})
@@ -278,12 +315,12 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 		conv     *convInfo
 		suffix   string
 	)
-	clickKey := "sbr." + r.key
+	clickPrefix := "sbr."
 	switch r.kind {
 	case sbLink:
 		sel = string(route) == r.key
 	case sbHeading:
-		clickKey = "sbh." + r.key
+		clickPrefix = "sbh."
 		if a.sidebar.collapsed[r.key] {
 			icon = "caret-right"
 		}
@@ -309,7 +346,10 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 	case sbAction:
 		indent = gtx.Dp(16)
 	}
-	btn := a.clicks.get(clickKey)
+	btn := r.btn
+	if btn == nil {
+		btn = a.clicks.get(clickPrefix + r.key)
+	}
 	hov := hoverState(btn.Hovered())
 	item := clsSbItem.EnterAttr(gtx, hov, 0, "data-item-key", r.itemKey)
 	defer item.Leave()
@@ -343,10 +383,22 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 	d := item.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
 		return at(gtx, image.Pt(pad, 0), image.Pt(w-pad*2, rowH), func(gtx layout.Context) layout.Dimensions {
 			return inner.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
-				return a.sidebarRowBody(gtx, r, btn, sbRowState{sel: sel, label: label, icon: icon, weight: weight, col: col, mentions: mentions, indent: indent, conv: conv, suffix: suffix})
+				rs := sbRowState{sel: sel, label: label, icon: icon, weight: weight, col: col, mentions: mentions, indent: indent, conv: conv, suffix: suffix, rowH: rowH}
+				if conv != nil {
+					// ConnectedChannel > Channel > ChannelContextMenu > trigger
+					rs.fg = col
+					if sel {
+						rs.fg = c.SidebarActiveText
+					}
+					return slackc.Component(gtx, "ConnectedChannel", sbConvRow{a: a, r: r, btn: btn, rs: rs}, sbConvRow.connectedProps, sbConvRow.layoutConnected)
+				}
+				return a.sidebarRowBody(gtx, r, btn, rs, nil)
 			})
 		})
 	})
+	if conv != nil {
+		a.sbRowInput(gtx, conv.ID, btn, image.Pt(w, d.Size.Y))
+	}
 	if clicked(btn) {
 		switch r.kind {
 		case sbLink:
@@ -434,11 +486,14 @@ type sbRowState struct {
 	indent   int
 	conv     *convInfo
 	suffix   string
+	rowH     int         // px
+	fg       color.NRGBA // conversation rows: the name colour
 }
 
 // sidebarRowBody draws a row's tile, icon, name and badge. Conversation
-// rows draw their icon and name through Slack's ListChannelEntity.
-func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable, rs sbRowState) layout.Dimensions {
+// rows draw their name through Slack's ListChannelEntity and their suffix
+// through BaseChannelSuffix; p is their trigger's props under a patch.
+func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable, rs sbRowState, p slackc.Props) layout.Dimensions {
 	c := &a.sbPal
 	rw := gtx.Constraints.Max.X
 	rowH := gtx.Dp(theme.SidebarRowH)
@@ -473,10 +528,24 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 			right -= bd.Size.X + gtx.Dp(6)
 		}
 		if conv != nil {
-			e := sbEntity{a: a, conv: conv, label: rs.label, suffix: rs.suffix, fg: fg, weight: rs.weight, sel: sel, rowH: rowH, width: max(right-ix, 0)}
-			at(gtx, image.Pt(ix, 0), image.Pt(e.width, rowH), func(gtx layout.Context) layout.Dimensions {
-				return slackc.Component(gtx, "ListChannelEntity", e, sbEntity.props, sbEntity.layout)
-			})
+			// a huddle is on here: Slack's headphones + head count
+			if n := a.huddles().LiveCount(conv.ID); n > 0 {
+				num := strconv.Itoa(n)
+				nw := a.th.Measure(gtx, 13, theme.Bold, num)
+				right -= nw
+				at(gtx, image.Pt(right, 0), image.Pt(nw, rowH), func(gtx layout.Context) layout.Dimensions {
+					return vcenter(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
+						return a.th.Label(gtx, 13, theme.Bold, fg, num)
+					})
+				})
+				right -= gtx.Dp(17)
+				at(gtx, image.Pt(right, (rowH-gtx.Dp(15))/2), image.Pt(gtx.Dp(15), gtx.Dp(15)), func(gtx layout.Context) layout.Dimensions {
+					return icons.Get("headphones")(gtx, 15, fg)
+				})
+				right -= gtx.Dp(6)
+			}
+			rs.fg = fg
+			a.layoutConvBody(gtx, sbConvRow{a: a, r: r, btn: btn, rs: rs}, p, ix, right)
 			return layout.Dimensions{Size: image.Pt(rw, rowH)}
 		}
 		if icon != "" {

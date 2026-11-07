@@ -1,0 +1,25 @@
+--- a/quickjs.c
++++ b/quickjs.c
+@@ -10100,6 +10100,12 @@
+     }
+     val = JS_EXCEPTION;
+     present = -1;
++    /* clack: generic array methods loop over array-likes through here
++       ({length: 2**53 - 1}); let the interrupt handler stop them */
++    if (js_poll_interrupts(ctx)) {
++        *pval = val;
++        return present;
++    }
+     prop = JS_NewAtomInt64(ctx, idx);
+     if (likely(prop != JS_ATOM_NULL)) {
+         present = JS_HasProperty(ctx, obj, prop);
+@@ -10128,6 +10134,9 @@
+         if (js_get_fast_array_element(ctx, p, idx, &val))
+             return val;
+     }
++    /* clack: see JS_TryGetPropertyInt64 */
++    if (js_poll_interrupts(ctx))
++        return JS_EXCEPTION;
+     prop = JS_NewAtomInt64(ctx, idx);
+     if (prop == JS_ATOM_NULL)
+         return JS_EXCEPTION;

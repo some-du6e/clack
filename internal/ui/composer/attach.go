@@ -42,6 +42,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -97,9 +98,14 @@ func getExplorer() *explorer.Explorer {
 
 // attChip is one attached file.
 type attChip struct {
-	name string
-	data []byte
-	kind attKind
+	id   int    // pendingFileId (MultiFileUploadItem), unique across composers
+	name string // guarded by attachments.mu: plugins may rename it (prepare)
+	// title is the name the chip shows and the file is shared under
+	// (Slack's pendingFile title), guarded by attachments.mu: plugins
+	// rename it (updatePendingFile, attach_pending.go). Starts as name.
+	title string
+	data  []byte
+	kind  attKind
 
 	// Guarded by attachments.mu.
 	sending   bool
@@ -138,7 +144,11 @@ type attachments struct {
 	browser *attBrowser // UI goroutine only
 }
 
-func newAttachments(h Host) *attachments { return &attachments{h: h} }
+func newAttachments(h Host) *attachments {
+	a := &attachments{h: h}
+	registerAttachments(a)
+	return a
+}
 
 // Len is the number of files that will go with the next send (files of an
 // upload in flight don't count).
@@ -162,7 +172,7 @@ func (a *attachments) Files() []core.UploadFile {
 	var out []core.UploadFile
 	for _, c := range a.chips {
 		if !c.sending {
-			out = append(out, core.UploadFile{Name: c.name, Title: c.name, Data: c.data})
+			out = append(out, core.UploadFile{Name: c.name, Title: c.title, Data: c.data})
 		}
 	}
 	return out
@@ -219,6 +229,7 @@ func (a *attachments) Clear() {
 	a.done = 0
 	a.mu.Unlock()
 	a.h.Invalidate()
+	pendingChanged()
 }
 
 // Add attaches a file held in memory. Over-limit files are rejected with a
@@ -231,7 +242,7 @@ func (a *attachments) add(name string, data []byte) bool {
 	err := attCheckAdd(a.pendingLocked(), a.total, int64(len(data)))
 	var c *attChip
 	if err == nil {
-		c = &attChip{name: name, data: data, kind: attKindOf(name, data)}
+		c = &attChip{id: int(attNextID.Add(1)), name: name, title: name, data: data, kind: attKindOf(name, data)}
 		a.chips = append(a.chips, c)
 		a.total += int64(len(data))
 	}
@@ -242,6 +253,7 @@ func (a *attachments) add(name string, data []byte) bool {
 	}
 	go a.prepare(c) // upload the bytes now, like Slack; send just shares them
 	a.h.Invalidate()
+	pendingChanged()
 	return true
 }
 
@@ -257,6 +269,19 @@ func (a *attachments) prepare(c *attChip) {
 	name, data := c.name, c.data
 	a.mu.Unlock()
 	a.h.Invalidate()
+
+	// The name the file goes out under: Slack's upload reads File.name,
+	// which plugins may redefine (AnonymiseFileNames).
+	if n := uploadName(name, attMime(name)); n != name {
+		a.mu.Lock()
+		if c.title == c.name { // not renamed meanwhile
+			c.title = n
+		}
+		c.name = n
+		a.mu.Unlock()
+		name = n
+		pendingChanged()
+	}
 
 	var last time.Time
 	prog := func(sent, total int64) {
@@ -276,10 +301,12 @@ func (a *attachments) prepare(c *attChip) {
 		c.prepErr = err
 	} else {
 		p := pu
+		p.Title = c.title // a rename while the bytes went up
 		c.prepared = &p
 	}
 	a.mu.Unlock()
 	a.h.Invalidate()
+	pendingChanged() // its Slack file id (state.files)
 }
 
 // uploadBatch returns the files to share on send: PrepareUpload handles (for
@@ -294,9 +321,11 @@ func (a *attachments) uploadBatch() (prepared []core.PreparedUpload, raw []core.
 		}
 		hasAny = true
 		if c.prepared != nil {
-			prepared = append(prepared, *c.prepared)
+			p := *c.prepared
+			p.Title = c.title // shared under the chip's name
+			prepared = append(prepared, p)
 		} else {
-			raw = append(raw, core.UploadFile{Name: c.name, Title: c.name, Data: c.data})
+			raw = append(raw, core.UploadFile{Name: c.name, Title: c.title, Data: c.data})
 		}
 	}
 	return
@@ -335,6 +364,7 @@ func (a *attachments) remove(c *attChip) {
 	}
 	a.mu.Unlock()
 	a.h.Invalidate()
+	pendingChanged()
 }
 
 // attCheckAdd applies Slack's limits to one more file of size bytes when
@@ -551,7 +581,12 @@ func attOneDecimal(f float64) string {
 
 // Menu opens the attach (+) menu above the button; anchor is the button in
 // window coordinates.
-func (a *attachments) Menu(anchor image.Rectangle) {
+// ShortcutItems, when set (internal/ui/blockkit), adds the app
+// shortcuts section to the "+" menu for channel ch: recent global
+// shortcuts and "Browse all shortcuts".
+var ShortcutItems func(h popups.Host, ch string, anchor image.Rectangle) []popups.MenuItem
+
+func (a *attachments) Menu(anchor image.Rectangle, ch string) {
 	items := []popups.MenuItem{
 		{Label: "Upload from your computer", Icon: "upload", Do: a.Pick},
 	}
@@ -563,6 +598,11 @@ func (a *attachments) Menu(anchor image.Rectangle) {
 		popups.MenuItem{Label: "Text snippet", Icon: "code", Disabled: true},
 		popups.MenuItem{Label: "Canvas", Icon: "canvas", Disabled: true},
 	)
+	if ShortcutItems != nil {
+		if more := ShortcutItems(a.h, ch, anchor); len(more) > 0 {
+			items = append(append(items, popups.Sep()), more...)
+		}
+	}
 	a.h.ShowOverlay(popups.NewMenuOpts(a.h, items, popups.MenuOpts{Anchor: anchor, Side: popups.Above, Width: 300}))
 }
 
@@ -868,6 +908,8 @@ func attRun(ctx context.Context, limit int64, name string, args ...string) ([]by
 
 type attView struct {
 	c         *attChip
+	name      string // the file name it uploads under
+	title     string // the name the chip shows
 	thumb     paint.ImageOp
 	thumbPx   int
 	sending   bool
@@ -893,7 +935,7 @@ func (a *attachments) Layout(gtx layout.Context) layout.Dimensions {
 			c.thumbBusy = true
 			go a.makeThumb(c, px)
 		}
-		views[i] = attView{c: c, thumb: c.thumb, thumbPx: c.thumbPx, sending: c.sending,
+		views[i] = attView{c: c, name: c.name, title: c.title, thumb: c.thumb, thumbPx: c.thumbPx, sending: c.sending,
 			preparing: c.preparing, sent: c.sent, ptotal: c.ptotal,
 			asImage: c.kind.Image && !c.thumbBad}
 		anySending = anySending || c.sending || c.preparing
@@ -922,8 +964,8 @@ func (a *attachments) Layout(gtx layout.Context) layout.Dimensions {
 		}
 		sz := image.Pt(w, px)
 		offset(gtx, padX+x, padT+y, func(gtx layout.Context) layout.Dimensions {
-			a.layoutChip(gtx, v, sz)
-			return layout.Dimensions{Size: sz}
+			// MultiFileUploadItem (attach_slack.go): the chip.
+			return slackc.Component(gtx, "MultiFileUploadItem", attItem{a: a, v: v, sz: sz}, attItem.props, attItem.layout)
 		})
 		x += w + gap
 	}
@@ -982,7 +1024,13 @@ func (a *attachments) layoutChip(gtx layout.Context, v attView, sz image.Point) 
 		})
 	}
 	area.Pop()
-	popups.Tooltip(gtx, th, &c.tip, hovered && !c.remove.Hovered(), sz, popups.Above, c.name, "")
+	if hovered && !v.sending {
+		// FileFieldset > EditFileDialogTitle: Slack's rename dialog, at
+		// the chip's edit spot. Clack has no such dialog; both draw
+		// nothing unless a plugin adds to them.
+		slackc.Component(gtx, "FileFieldset", attItem{a: a, v: v, sz: sz}, attItem.fieldsetProps, attItem.layoutFieldset)
+	}
+	popups.Tooltip(gtx, th, &c.tip, hovered && !c.remove.Hovered(), sz, popups.Above, v.title, "")
 }
 
 func (a *attachments) drawThumb(gtx layout.Context, th *theme.Theme, v attView, r image.Rectangle, rad int) {
@@ -1020,7 +1068,7 @@ func (a *attachments) drawCard(gtx layout.Context, th *theme.Theme, v attView, r
 	sh := th.Shaper
 	offset(gtx, tx, pad, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(tw, gtx.Dp(22))}
-		return label(gtx, sh, textStyle{Size: 15, LineHeight: 22, Weight: theme.Bold, Color: th.C.Fg, MaxLines: 1}, v.c.name)
+		return label(gtx, sh, textStyle{Size: 15, LineHeight: 22, Weight: theme.Bold, Color: th.C.Fg, MaxLines: 1}, v.title)
 	})
 	offset(gtx, tx, pad+gtx.Dp(22), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(tw, gtx.Dp(18))}

@@ -14,6 +14,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"image"
 	"image/draw"
 	_ "image/gif"
@@ -61,8 +62,13 @@ type entry struct {
 	k    key
 	op   paint.ImageOp
 	size image.Point
-	n    int // decoded bytes
+	n    int   // decoded bytes
+	used int64 // unix seconds of the last Get (idle eviction)
 }
+
+// IdleAfter: images not asked for in this long are dropped by a sweep every
+// IdleAfter/2, so an idle client holds only what it showed recently.
+const IdleAfter = 60 * time.Second
 
 // DefaultLimit is the decoded-pixel budget. Images are decoded at display
 // size, so this holds a few screens of photos (a 720 px thumbnail is
@@ -80,7 +86,7 @@ func New(fetch Fetcher, diskDir string, invalidate func()) *Cache {
 	if invalidate == nil {
 		invalidate = func() {}
 	}
-	return &Cache{
+	c := &Cache{
 		fetch:      fetch,
 		dir:        diskDir,
 		invalidate: invalidate,
@@ -91,6 +97,36 @@ func New(fetch Fetcher, diskDir string, invalidate func()) *Cache {
 		failed:     map[key]time.Time{},
 		sem:        make(chan struct{}, 8),
 		ctx:        context.Background(),
+	}
+	go c.sweepLoop()
+	return c
+}
+
+func (c *Cache) sweepLoop() {
+	t := time.NewTicker(IdleAfter / 2)
+	defer t.Stop()
+	for range t.C {
+		c.sweep(time.Now().Add(-IdleAfter).Unix())
+	}
+}
+
+// sweep drops entries last used before cutoff (unix seconds).
+func (c *Cache) sweep(cutoff int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for el := c.lru.Back(); el != nil; {
+		prev := el.Prev()
+		if e := el.Value.(*entry); e.used < cutoff {
+			c.lru.Remove(el)
+			delete(c.entries, e.k)
+			c.bytes -= e.n
+		}
+		el = prev
+	}
+	for k, t := range c.failed {
+		if t.Unix() < cutoff {
+			delete(c.failed, k)
+		}
 	}
 }
 
@@ -128,7 +164,9 @@ func (c *Cache) Get(url string, sizePx int) (paint.ImageOp, bool) {
 	c.mu.Lock()
 	if el, ok := c.entries[k]; ok {
 		c.lru.MoveToFront(el)
-		op := el.Value.(*entry).op
+		e := el.Value.(*entry)
+		e.used = time.Now().Unix()
+		op := e.op
 		c.mu.Unlock()
 		return op, true
 	}
@@ -190,7 +228,7 @@ func (c *Cache) load(k key) {
 		c.failed[k] = time.Now()
 	} else {
 		delete(c.failed, k)
-		e := &entry{k: k, op: op, size: sz, n: n}
+		e := &entry{k: k, op: op, size: sz, n: n, used: time.Now().Unix()}
 		c.entries[k] = c.lru.PushFront(e)
 		c.bytes += n
 		c.evict()
@@ -211,20 +249,48 @@ func (c *Cache) evict() {
 }
 
 func (c *Cache) loadImage(k key) (paint.ImageOp, image.Point, int, error) {
-	data, err := c.raw(k.url)
+	data, save, err := c.raw(k.url)
 	if err != nil {
 		return paint.ImageOp{}, image.Point{}, 0, err
 	}
-	img, _, err := image.Decode(bytes.NewReader(data))
+	img, err := Decode(data)
 	if err != nil {
 		return paint.ImageOp{}, image.Point{}, 0, err
 	}
+	save() // only bytes that decoded as an image reach the disk tier
 	rgba := Scale(img, k.size)
 	return paint.NewImageOp(rgba), rgba.Bounds().Size(), len(rgba.Pix), nil
 }
 
-// raw returns the encoded bytes from disk (allowed URLs only) or the network.
-func (c *Cache) raw(u string) ([]byte, error) {
+// MaxPixels bounds the decoded size of one image (width × height), so a
+// tiny file that claims to be 60000×60000 (a decompression bomb) can't
+// allocate gigabytes. MaxSide bounds either dimension.
+const (
+	MaxPixels = 40 << 20
+	MaxSide   = 16384
+)
+
+// ErrTooBig is returned for images over MaxPixels or MaxSide.
+var ErrTooBig = errors.New("imgcache: image dimensions too large")
+
+// Decode decodes data after checking its header's dimensions.
+func Decode(data []byte) (image.Image, error) {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > MaxSide || cfg.Height > MaxSide || cfg.Width*cfg.Height > MaxPixels {
+		return nil, ErrTooBig
+	}
+	img, _, err := image.Decode(bytes.NewReader(data))
+	return img, err
+}
+
+// raw returns the encoded bytes from disk (DiskOK URLs only: avatars and
+// emoji) or the network, plus a func that saves fetched bytes to the disk
+// tier (a no-op for everything else, e.g. message images and files).
+func (c *Cache) raw(u string) ([]byte, func(), error) {
+	nop := func() {}
 	disk := c.dir != "" && DiskOK(u)
 	var path string
 	if disk {
@@ -232,7 +298,7 @@ func (c *Cache) raw(u string) ([]byte, error) {
 		name := hex.EncodeToString(h[:16])
 		path = filepath.Join(c.dir, name[:2], name)
 		if b, err := os.ReadFile(path); err == nil && len(b) > 0 {
-			return b, nil
+			return b, nop, nil
 		}
 	}
 	ctx, cancel := context.WithTimeout(c.ctx, 45*time.Second)
@@ -242,16 +308,18 @@ func (c *Cache) raw(u string) ([]byte, error) {
 	c.mu.Unlock()
 	b, err := fetch(ctx, u)
 	if err != nil {
-		return nil, err
+		return nil, nop, err
 	}
-	if disk {
+	if !disk {
+		return b, nop, nil
+	}
+	return b, func() {
 		_ = os.MkdirAll(filepath.Dir(path), 0o700)
 		tmp := path + ".tmp"
 		if os.WriteFile(tmp, b, 0o600) == nil {
 			_ = os.Rename(tmp, path)
 		}
-	}
-	return b, nil
+	}, nil
 }
 
 // Scale converts img to *image.RGBA (premultiplied, what Gio uploads

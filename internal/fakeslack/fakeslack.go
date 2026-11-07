@@ -109,7 +109,12 @@ func Serve(ln net.Listener, sz Size) *Server {
 }
 
 // Close stops the server.
-func (s *Server) Close() error { return s.srv.Close() }
+func (s *Server) Close() error {
+	if s.srv == nil {
+		return nil
+	}
+	return s.srv.Close()
+}
 
 // Creds returns credentials pointing every host (team, enterprise, edge) at
 // the fake.
@@ -120,13 +125,21 @@ func (s *Server) Creds() slack.Creds {
 
 // ChannelIDs returns the member channel ids in sidebar order.
 func (s *Server) ChannelIDs() []string {
-	var out []string
-	for _, c := range s.convs {
-		if c.IsChannel {
-			out = append(out, c.ID)
-		}
+	out := make([]string, s.Size.Channels)
+	for i := range out {
+		out[i] = fmt.Sprintf("C0FAKE%05d", i)
 	}
 	return out
+}
+
+// Remote describes a fakeslackd already serving at url (another process,
+// so benchmarks measure the client's memory without the fake's). Only the
+// client-side helpers (Creds, ChannelIDs, Fetch) work on it.
+func Remote(url string, sz Size) *Server {
+	if !strings.HasSuffix(url, "/") {
+		url += "/"
+	}
+	return &Server{Size: sz, URL: url, Calls: map[string]*atomic.Int64{}}
 }
 
 // CallCount returns how often method was called.

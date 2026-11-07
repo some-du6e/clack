@@ -112,3 +112,7 @@ func startupProfile() {
 		log.Printf("cpuprofile: wrote %s", path)
 	})
 }
+
+// startTrim is set by trim.go (kept apart so the perf workflow's baseline
+// tree, which takes this file from HEAD, runs without it).
+var startTrim func()

@@ -11,11 +11,29 @@ const TA = G.TautAPI
 const host = G.__clack || {}
 const S = (G.__slick = G.__slick || {})
 
-/** calls Go host function __clack.slick_<name> */
+// Go's __clack.slick_* host functions are taken off the global as soon as
+// this sees them, so plugin code can't call them around the checks below
+// (plugins share one realm, so that is hardening, not isolation; the Go
+// side checks what matters: see host.go).
+const hostFns = Object.create(null)
+const apply = Reflect.apply
+function takeHost(key) {
+  const fn = host[key]
+  if (typeof fn === 'function') {
+    hostFns[key] = fn
+    try {
+      delete host[key]
+    } catch {}
+  }
+  return hostFns[key]
+}
+for (const key of Object.keys(host)) if (key.startsWith('slick_')) takeHost(key)
+
+/** calls Go host function slick_<name> */
 function go(name, ...args) {
-  const fn = host['slick_' + name]
+  const fn = hostFns['slick_' + name] ?? takeHost('slick_' + name)
   if (typeof fn !== 'function') throw new Error(`[slick] host function slick_${name} is missing`)
-  return fn(...args)
+  return apply(fn, undefined, args)
 }
 
 const errorText = (err) => (err instanceof Error ? err.message : String(err))

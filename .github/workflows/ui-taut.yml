@@ -16,25 +16,37 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "taut git ref (branch, tag or sha)"
+        description: "taut git ref (branch, tag or sha); empty = TAUT_PIN"
         required: false
-        default: "main"
+        default: ""
 
+# Taut is third-party code (GPLv3) built and run here: by default CI uses the
+# reviewed commit TAUT_PIN; dispatch with ref=main (or any ref) to test upstream.
 env:
+  TAUT_PIN: 6fe5123e3b4cffaa16c6dda71291ad5d82cdad37
+  SLICK_PIN: f52d55dbd458feb0d6cd77136c6ab07c4a727a5a # Slick (GPLv3, third-party), same pin as slick.yml
   GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb
+
+permissions:
+  contents: read
 
 jobs:
   ui-taut:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "24"
       - name: clone taut
+        env:
+          TAUT_REF: ${{ inputs.ref || env.TAUT_PIN }}
         run: |
           git clone -q https://github.com/jeremy46231/taut /tmp/taut
-          git -C /tmp/taut checkout -q "${{ inputs.ref || 'main' }}"
+          case "$TAUT_REF" in -*|"") echo "bad taut ref: $TAUT_REF" >&2; exit 1;; esac
+          git -C /tmp/taut checkout -q "$TAUT_REF"
           git -C /tmp/taut log --oneline -1
       - name: install taut deps (no scripts)
         working-directory: /tmp/taut
@@ -48,21 +60,24 @@ jobs:
             npm run -s build:user-plugin -- "$f" "$GITHUB_WORKSPACE/dist/taut-plugins/$name.js"
           done
           ls "$GITHUB_WORKSPACE/dist/taut-plugins" | wc -l
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.4
       - name: clone slick and build its plugins (Slick's own build)
         run: |
           set -o pipefail
           git clone -q https://github.com/3kh0/slick /tmp/slick
+          git -C /tmp/slick checkout -q "$SLICK_PIN"
           git -C /tmp/slick log --oneline -1
           (cd /tmp/slick && bun install --frozen-lockfile --ignore-scripts)
           mkdir -p dist/slick-plugins
           node internal/slick/build/build.mjs /tmp/slick dist/slick-plugins > dist/slick-build.log 2>&1 || { tail -40 dist/slick-build.log; exit 1; }
           cp -r /tmp/slick/themes dist/slick-plugins/themes
           ls dist/slick-plugins | wc -l
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false # this job runs third-party code; never share its Go cache
       - name: gio deps
         run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
       - name: ui Taut tests
@@ -74,7 +89,7 @@ jobs:
         run: |
           mkdir -p "$TAUT_SHOTS_DIR"
           xvfb-run -a go test -count=1 -timeout 25m -v -run 'TestTaut|TestSlick|TestDeepLink' ./internal/ui/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
           name: ui-taut-shots

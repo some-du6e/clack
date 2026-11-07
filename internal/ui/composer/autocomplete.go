@@ -151,6 +151,9 @@ type Autocomplete struct {
 	// view state (autocomplete_view.go)
 	view acView
 
+	// ov is what a plugin changed on TextyAutocomplete (UI goroutine).
+	ov acOverrides
+
 	mu         sync.Mutex
 	gen        uint64               // bumped whenever async data lands
 	members    map[string]core.User // current conversation members
@@ -635,11 +638,11 @@ func (ac *Autocomplete) compute(t acTrigger) []acItem {
 	defer ac.mu.Unlock()
 	switch t.Kind {
 	case acUser:
-		items := ac.memberSourcesLocked().rank(t.Query, false)
+		items := ac.ov.keep(ac.memberSourcesLocked().rank(t.Query, ac.ov.includeAll))
 		ac.resolveStatusEmoji(items)
 		return items
 	case acChannel:
-		return ac.channelSourcesLocked().rank(t.Query)
+		return ac.ov.keep(ac.channelSourcesLocked().rank(t.Query))
 	case acEmoji:
 		if ac.emojiIdx == nil {
 			return nil
@@ -1071,7 +1074,7 @@ func sharedEmojiIndex(custom map[string]string) *emojiIndex {
 	emojiShared.Lock()
 	defer emojiShared.Unlock()
 	if emojiShared.idx == nil || emojiShared.nCus != len(custom) {
-		emojiShared.idx = buildEmojiIndex(emoji.StandardJSON, custom)
+		emojiShared.idx = buildEmojiIndex(emoji.StandardData(), custom)
 		emojiShared.nCus = len(custom)
 	}
 	return emojiShared.idx

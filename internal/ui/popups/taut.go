@@ -106,6 +106,10 @@ func slackMessage(m *core.Message) slackc.Props {
 			p["username"] = m.Name
 		}
 	}
+	if b := m.BotProfile; b != nil {
+		p["bot_profile"] = slackc.Props{"id": b.ID, "name": b.Name, "app_id": b.AppID, "user_id": b.UserID,
+			"team_id": b.TeamID, "deleted": b.Deleted}
+	}
 	if m.Subtype != "" {
 		p["subtype"] = m.Subtype
 	}
@@ -153,18 +157,27 @@ func asProps(v any) slackc.Props {
 
 // slotOr lays out the slot a patched parent handed back in prop key (so
 // the plugin's context reaches it); otherwise it renders the boundary
-// name on its own.
+// name on its own. A slot that came back empty rendered null (Slick's
+// LocalTime hides Slack's LocalTime inside its own rows): nothing draws.
 func slotOr(gtx layout.Context, parent slackc.Props, key, name string, props func() slackc.Props, native slackc.Native) layout.Dimensions {
-	if e, ok := parent.Elem(key); ok && len(e.Nodes) > 0 {
+	if e, ok := parent.Elem(key); ok {
 		return slackc.LayoutElement(gtx, e)
 	}
 	return slackc.RenderLazy(gtx, name, props, native)
 }
 
-// childrenOr is slotOr for the "children" prop.
+// childrenOr is slotOr for the "children" prop. Props that came from a
+// plugin's <Original> carry the rendered children as an Element, and none
+// at all when they rendered null (then nothing draws); the native's own
+// props (no plugin, or its tree not here yet) carry the Slot.
 func childrenOr(gtx layout.Context, parent slackc.Props, name string, props func() slackc.Props, native slackc.Native) layout.Dimensions {
-	if e, ok := slackc.PropChildren(parent); ok {
-		return slackc.LayoutElement(gtx, e)
+	switch c := parent["children"].(type) {
+	case slackc.Element:
+		return slackc.LayoutElement(gtx, c)
+	case nil:
+		if parent != nil {
+			return layout.Dimensions{}
+		}
 	}
 	return slackc.RenderLazy(gtx, name, props, native)
 }

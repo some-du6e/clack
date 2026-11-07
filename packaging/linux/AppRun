@@ -1,0 +1,5 @@
+#!/bin/sh
+# AppImage entry point: run the bundled binary with every argument
+# (e.g. a slack:// URL) passed through.
+HERE="$(dirname "$(readlink -f "$0")")"
+exec "$HERE/usr/bin/clack" "$@"

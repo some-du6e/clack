@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"net/url"
 	"strings"
 	"time"
 
@@ -26,7 +27,10 @@ func (a *App) Navigate(route string) {
 		return
 	}
 	if r.Page() == "search" {
-		a.searchQuery = r.Query()
+		a.searchQuery = r.Query() // routes carry it URL-escaped (popups' search)
+		if q, err := url.QueryUnescape(a.searchQuery); err == nil {
+			a.searchQuery = q
+		}
 	}
 	prev := a.router.Current()
 	a.router.Push(r)

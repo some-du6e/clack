@@ -19,6 +19,10 @@ type prefs struct {
 	Collapsed     []string `json:"collapsed,omitempty"`
 	EmojiStyle    string   `json:"emoji_style,omitempty"`
 	SidebarHidden bool     `json:"sidebar_hidden,omitempty"`
+	// NoUpdateCheck turns off the GitHub Releases check (Preferences >
+	// Advanced); UpdateDismissed is the release whose banner was closed.
+	NoUpdateCheck   bool   `json:"no_update_check,omitempty"`
+	UpdateDismissed string `json:"update_dismissed,omitempty"`
 }
 
 func (a *App) prefsPath() string {
@@ -40,6 +44,7 @@ func (a *App) loadPrefs() {
 	if json.Unmarshal(b, &a.prefs) != nil {
 		return
 	}
+	a.updatesOff.Store(a.prefs.NoUpdateCheck)
 	if a.prefs.Dark != nil {
 		a.th.SetDark(*a.prefs.Dark)
 	}
@@ -73,7 +78,9 @@ func (a *App) savePrefs() {
 	a.prefs.Dark = &d
 	a.prefs.SidebarW = a.sidebar.width
 	a.prefs.SecondaryW = a.secondary.width
-	a.prefs.Route = string(a.router.Current())
+	if r := a.router.Current(); r.Page() != "search" { // search queries stay in memory
+		a.prefs.Route = string(r)
+	}
 	a.prefs.LastChannel = a.lastChannel
 	a.prefs.SidebarHidden = a.sidebar.hidden
 	a.prefs.Collapsed = a.prefs.Collapsed[:0]

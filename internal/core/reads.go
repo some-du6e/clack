@@ -45,6 +45,20 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 			a.ResolveConv(ctx, ch)
 		}()
 	}
+	// Wait for the side fetches on every return path, errors included: a
+	// History that returned must have no requests left in flight (after an
+	// auth failure, one could otherwise reach Slack after sign-out).
+	waitSide := func() {
+		if countDone != nil {
+			<-countDone
+			countDone = nil
+		}
+		if convDone != nil {
+			<-convDone
+			convDone = nil
+		}
+	}
+	defer waitSide()
 	var msgs []slack.Message
 	var hasMore bool
 	if before == "" {
@@ -71,12 +85,7 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 		store.SortAsc(msgs)
 	}
 	page := Page{Messages: a.timeline(ch, msgs), HasMore: hasMore}
-	if countDone != nil {
-		<-countDone
-	}
-	if convDone != nil {
-		<-convDone
-	}
+	waitSide()
 	if c, ok := a.Conv(ch); ok {
 		page.Conv = &c
 	}
@@ -172,6 +181,21 @@ func (a *App) hydrate(ctx context.Context, want map[string][]string) map[string]
 	}
 	a.EnsureUsers(ctx, referencedUsers(all))
 	return out
+}
+
+// SlackbotCustomResponseInThread reports whether user (Slackbot) answered
+// with a custom response (SubtypeSlackbotResponse) in the thread
+// ch/threadTS: Slack's hasSlackbotCustomResponseInThread selector. It
+// reads the cached replies only (no request, safe on the UI and JS
+// threads), so it is false until the thread has been loaded. An empty
+// user matches any sender.
+func (a *App) SlackbotCustomResponseInThread(ch, threadTS, user string) bool {
+	if ch == "" || threadTS == "" {
+		return false
+	}
+	return a.S.ThreadHas(ch, threadTS, func(m *slack.Message) bool {
+		return m.Subtype == SubtypeSlackbotResponse && (user == "" || m.User == user)
+	})
 }
 
 // ---- prefs ----

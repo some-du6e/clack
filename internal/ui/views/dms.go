@@ -26,6 +26,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -159,6 +160,11 @@ type dmsEntry struct {
 type dmsRow struct {
 	dlRowState
 	todo, more widget.Clickable
+
+	// This frame's row, read by the DmsListItem and DmsChannel boundaries.
+	v       *DMs
+	dm      *core.DM
+	content W
 }
 
 // DMs is the Direct messages tab.
@@ -197,6 +203,11 @@ type DMs struct {
 	autoSel bool // the newest DM was considered for auto-selection
 	lastQ   string
 	lastUnr bool
+
+	// pview is the list as a DmsList patch left it (pviewOn: this
+	// frame's list was patched); keyboard steps walk what is drawn.
+	pview   []dmsEntry
+	pviewOn bool
 
 	w     watcher
 	evMu  sync.Mutex
@@ -266,7 +277,9 @@ func (d *DMs) LayoutList(gtx C) D {
 			return layout.Inset{Left: dmsInsetX, Right: dmsInsetX}.Layout(gtx, d.layoutFind)
 		}),
 		vgap(4),
-		layout.Flexed(1, d.layoutRows),
+		layout.Flexed(1, func(gtx C) D {
+			return slackc.Component(gtx, "DmsList", d, (*DMs).listProps, (*DMs).layoutRows)
+		}),
 	)
 	area.Pop()
 	return D{Size: size}
@@ -462,7 +475,7 @@ func (d *DMs) update(gtx C) {
 		d.reload()
 	}
 	if submitted {
-		for _, e := range d.view {
+		for _, e := range d.visible() {
 			if e.dm >= 0 {
 				d.choose(d.items[e.dm].Channel)
 				break
@@ -799,18 +812,19 @@ func (d *DMs) keys(gtx C) {
 }
 
 func (d *DMs) step(delta int) {
+	view := d.visible()
 	cur := -1
-	for i, e := range d.view {
+	for i, e := range view {
 		if e.dm >= 0 && d.items[e.dm].Channel == d.sel {
 			cur = i
 			break
 		}
 	}
-	for i := cur + delta; i >= 0 && i < len(d.view); i += delta {
-		if d.view[i].dm < 0 {
+	for i := cur + delta; i >= 0 && i < len(view); i += delta {
+		if view[i].dm < 0 {
 			continue
 		}
-		d.choose(d.items[d.view[i].dm].Channel)
+		d.choose(d.items[view[i].dm].Channel)
 		pos := d.list.Position
 		if i < pos.First {
 			d.list.ScrollTo(i)
@@ -909,7 +923,15 @@ func (d *DMs) personClick(id string) *widget.Clickable {
 	return c
 }
 
-func (d *DMs) layoutRows(gtx C) D {
+// layoutRows is the list (DmsList's native, see slick.go): under a patch
+// it draws only the DMs whose channel ids the plugin left in channelIds
+// and dms.
+func (d *DMs) layoutRows(gtx C, p slackc.Props) D {
+	view := d.view
+	d.pviewOn = p != nil
+	if p != nil {
+		view = d.listOverride(p)
+	}
 	_, loaded, err := d.first.get()
 	q := d.find.text()
 	switch {
@@ -917,17 +939,17 @@ func (d *DMs) layoutRows(gtx C) D {
 		return d.dmsSkeleton(gtx, 8)
 	case len(d.items) == 0 && err != nil:
 		return d.notice(gtx, "Couldn’t load your direct messages", friendlyErr(err), &d.retry, "Try again")
-	case len(d.view) == 0 && q != "":
+	case len(view) == 0 && q != "":
 		if d.people.busy() || d.deb.q != d.deb.sent {
 			return d.dmsSkeleton(gtx, 2)
 		}
 		return d.notice(gtx, "No results", "Nothing matches “"+q+"”.", nil, "")
-	case len(d.view) == 0 && d.unreads.Value:
+	case len(view) == 0 && d.unreads.Value:
 		return d.notice(gtx, "You’re all caught up", "There are no unread direct messages.", nil, "")
-	case len(d.view) == 0:
+	case len(view) == 0:
 		return d.notice(gtx, "No direct messages yet", "Use Find a DM to start a conversation.", nil, "")
 	}
-	n := len(d.view)
+	n := len(view)
 	extra := 0
 	if d.more.busy() {
 		extra = 1
@@ -937,10 +959,12 @@ func (d *DMs) layoutRows(gtx C) D {
 		if i >= n {
 			return d.dmsSkeleton(gtx, 1)
 		}
-		e := d.view[i]
+		e := view[i]
 		switch {
 		case e.dm >= 0:
-			return d.dmRow(gtx, &d.items[e.dm])
+			r := d.rowState(d.items[e.dm].Channel)
+			r.v, r.dm = d, &d.items[e.dm]
+			return slackc.Component(gtx, "DmsListItem", r, (*dmsRow).itemProps, (*dmsRow).layoutItem)
 		case e.head != "":
 			return layout.Inset{Top: 16, Bottom: 4, Left: dmsPad, Right: dmsPad}.Layout(gtx, func(gtx C) D {
 				return d.label(gtx, 13, wBold, d.c.soft, e.head)
@@ -1011,8 +1035,7 @@ func (d *DMs) dmRow(gtx C, dm *core.DM) D {
 	if st.Hidden() {
 		return D{}
 	}
-	return d.dlHoverRow(gtx, &r.dlRowState, dlRowOpts{Bg: bg, HoverBg: d.c.tint, Rule: d.c.rule, Bar: bar, BarTop: 4, BarRight: 12, Content: func(gtx C) D {
-		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+	r.content = func(gtx C) D {
 		return layout.UniformInset(dmsPad).Layout(gtx, func(gtx C) D {
 			align := layout.Start
 			if txt == "" {
@@ -1057,6 +1080,10 @@ func (d *DMs) dmRow(gtx C, dm *core.DM) D {
 				}),
 			)
 		})
+	}
+	return d.dlHoverRow(gtx, &r.dlRowState, dlRowOpts{Bg: bg, HoverBg: d.c.tint, Rule: d.c.rule, Bar: bar, BarTop: 4, BarRight: 12, Content: func(gtx C) D {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		return slackc.Component(gtx, "DmsChannel", r, (*dmsRow).channelProps, (*dmsRow).layoutChannel)
 	}})
 }
 

@@ -48,7 +48,10 @@ type spaceMetrics struct {
 	adv, asc, desc float32
 }
 
-const maxCachedWords = 60000
+// maxCachedWords is one generation of the shaped-word cache. Each word
+// carries its glyphs and outline paths; views keep the words they show, so
+// the cache only has to cover words seen recently.
+const maxCachedWords = 8000
 
 func f2f(v fixed.Int26_6) float32 { return float32(v) / 64 }
 
@@ -58,14 +61,17 @@ func (s *Style) word(k faceKey, str string) *shaped {
 	if w, ok := s.words[wk]; ok {
 		return w
 	}
-	if len(s.words) > maxCachedWords {
-		// Cheap bound: drop everything. Views keep pointers to the words they
-		// use, so they keep working; only new layouts re-shape.
-		for key := range s.words {
-			delete(s.words, key)
-		}
+	if len(s.words) >= maxCachedWords {
+		// Two generations: the current one becomes the previous, the older
+		// one is dropped. Words used since the last rotation survive (they
+		// are promoted on lookup). Views keep pointers to the words they use.
+		s.prev = s.words
+		s.words = make(map[wordKey]*shaped, maxCachedWords/2)
 	}
-	w := s.shapeNow(k, str, false)
+	w, ok := s.prev[wk]
+	if !ok {
+		w = s.shapeNow(k, str, false)
+	}
 	s.words[wk] = w
 	return w
 }

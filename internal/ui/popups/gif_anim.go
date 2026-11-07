@@ -18,8 +18,7 @@ import (
 	"image"
 	"image/draw"
 	"image/gif"
-	"io"
-	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +27,8 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/paint"
 	xdraw "golang.org/x/image/draw"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 )
 
 const (
@@ -54,14 +55,28 @@ type gifAnimKey struct {
 }
 
 var gifAnims = struct {
-	mu   sync.Mutex
-	m    map[gifAnimKey]*gifAnim
-	sem  chan struct{}
-	http *http.Client
+	mu    sync.Mutex
+	m     map[gifAnimKey]*gifAnim
+	sem   chan struct{}
+	fetch func(ctx context.Context, raw string) ([]byte, error) // tests swap it (no network)
 }{
-	m:    map[gifAnimKey]*gifAnim{},
-	sem:  make(chan struct{}, gifAnimWorkers),
-	http: &http.Client{Timeout: 25 * time.Second},
+	m:     map[gifAnimKey]*gifAnim{},
+	sem:   make(chan struct{}, gifAnimWorkers),
+	fetch: gifAnimFetch,
+}
+
+// gifAnimFetch loads a GIF with no credentials. gif.search results are
+// Giphy media, which Slack's picker loads directly; anything else goes
+// through Slack's image proxy.
+func gifAnimFetch(ctx context.Context, raw string) ([]byte, error) {
+	var b []byte
+	var err error
+	if pu, perr := url.Parse(raw); perr == nil && pu.Scheme == "https" && slack.HostUnder(pu.Hostname(), "giphy.com") {
+		b, _, err = slack.GetNoCreds(ctx, raw, gifAnimMaxBytes)
+	} else {
+		b, _, err = slack.FetchPublic(ctx, raw, gifAnimMaxBytes)
+	}
+	return b, err
 }
 
 // gifAnimURL is the animated .gif for a result (from the 200w webp preview).
@@ -70,7 +85,7 @@ func gifAnimURL(g Gif) string {
 	if u == "" {
 		u = g.URL
 	}
-	if u == "" || !strings.Contains(u, "giphy.com/") {
+	if pu, err := url.Parse(u); u == "" || err != nil || pu.Scheme != "https" || !slack.HostUnder(pu.Hostname(), "giphy.com") {
 		return ""
 	}
 	q := ""
@@ -150,26 +165,26 @@ func gifAnimLoad(h Host, k gifAnimKey, a *gifAnim) {
 	}
 }
 
+// gifAnimMaxSide bounds the logical screen of a GIF we decode (the picker
+// shows Giphy's 200 px renditions), so a small file claiming a huge canvas
+// can't allocate gigabytes per frame.
+const gifAnimMaxSide = 1024
+
 // gifAnimDecode fetches and decodes url into px×px cover-cropped frames.
-func gifAnimDecode(url string, px int) ([]paint.ImageOp, []time.Duration, error) {
+func gifAnimDecode(raw string, px int) ([]paint.ImageOp, []time.Duration, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	gifAnims.mu.Lock()
+	fetch := gifAnims.fetch
+	gifAnims.mu.Unlock()
+	b, err := fetch(ctx, raw) // no credentials; Giphy direct, anything else via Slack's image proxy
 	if err != nil {
 		return nil, nil, err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36")
-	resp, err := gifAnims.http.Do(req)
-	if err != nil {
+	if cfg, err := gif.DecodeConfig(bytes.NewReader(b)); err != nil {
 		return nil, nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil, nil, fmt.Errorf("GET gif: %s", resp.Status)
-	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, gifAnimMaxBytes))
-	if err != nil {
-		return nil, nil, err
+	} else if cfg.Width > gifAnimMaxSide || cfg.Height > gifAnimMaxSide {
+		return nil, nil, fmt.Errorf("gif: %dx%d is too large", cfg.Width, cfg.Height)
 	}
 	g, err := gif.DecodeAll(bytes.NewReader(b))
 	if err != nil {

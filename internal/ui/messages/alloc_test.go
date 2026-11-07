@@ -84,7 +84,10 @@ func TestRowPatchedWithoutRuntime(t *testing.T) {
 	h1, h2 := r1.height, r2.height
 	slackc.SetPatched([]string{"MessageWrapper", "MessageBackground", "MessageKitGutter", "MessageAvatar", "ConnectedBaseAvatar",
 		"Timestamp", "BaseBroadcastPreamble", "MessageSender", "BaseMessageSender", "MessageBlocks", "Blocks", "ReactionBar",
-		"Reaction", "UnstyledButton", "ReactionAddButton", "MemberLink"})
+		"Reaction", "UnstyledButton", "ReactionAddButton", "MemberLink",
+		// Slick's names (docs/PLUGINS-components.md §9)
+		"Message", "BaseMessageAvatar", "MessageText", "BaseVisuallyHiddenMessageText", "MessageFiles", "MessageKitAttachments",
+		"ThreadReplies", "ReplyBarAvatar", "CodeChannelEntityCard", "MemberSlug", "MessageFile"})
 	defer slackc.SetPatched(nil)
 	for i := 0; i < 3; i++ {
 		frame()
@@ -93,7 +96,7 @@ func TestRowPatchedWithoutRuntime(t *testing.T) {
 		t.Errorf("heights %d/%d, unpatched %d/%d", r1.height, r2.height, h1, h2)
 	}
 	for _, r := range []*row{r1, r2} {
-		if r.wrapOv != 0 || r.blocksOv != 0 || r.m.User != r.src.User || len(r.reactRects) != 2 {
+		if r.wrapOv != 0 || r.msgOv != 0 || r.blocksOv != 0 || r.textOv != nil || r.m.User != r.src.User || len(r.reactRects) != 2 {
 			t.Errorf("row %s: overrides %x/%x, user %q, %d pills", r.ts, r.wrapOv, r.blocksOv, r.m.User, len(r.reactRects))
 		}
 	}

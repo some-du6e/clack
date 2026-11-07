@@ -204,12 +204,72 @@ func joinChannelThunk(ctx context.Context, tt *taut.Taut, c *core.App, id string
 // (HuddleActivity…). Natively they are no-ops: Clack has no huddle media.
 var huddleThunks = [...]string{"startEventLog", "stopHuddle", "stopEventLog", "enqueueHuddleToast"}
 
-// huddleAttempt is a start/join click. Clack can't join (no Chime media),
-// so like a huddle that ends at once it runs startEventLog, stopHuddle and
-// stopEventLog, then shows why through enqueueHuddleToast. Without a
-// plugin wrapping any of them it's just the toast, inline.
-func huddleAttempt(h Host, tt *taut.Taut, roomID string) {
-	patched := false
+// huddleStarter is implemented by a Host that runs native huddles (the ui
+// root, through internal/ui/huddleui).
+type huddleStarter interface{ StartHuddle(channel string) }
+
+// startHuddle starts or joins the huddle in args.ChannelID natively, through
+// Slack's startHuddle thunk when a plugin wraps it (BetterHuddles), else
+// directly. Without a native huddle Host it is huddleAttempt.
+func startHuddle(h Host, tt *taut.Taut, args startHuddleArgs) {
+	hs, ok := h.(huddleStarter)
+	if !ok {
+		huddleAttempt(h, tt, args)
+		return
+	}
+	if args.ChannelID == "" { // Slack's "New huddle" asks who to call
+		if tt.ThunkPatched("startHuddle") {
+			huddleAttempt(h, tt, args) // a plugin may take it
+			return
+		}
+		h.Toast("Open a channel or DM and click Huddle in its header to start one")
+		return
+	}
+	if !tt.ThunkPatched("startHuddle") {
+		hs.StartHuddle(args.ChannelID)
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_, err := taut.Dispatch(ctx, tt, "startHuddle", args, func(ctx context.Context, a startHuddleArgs) (any, error) {
+			if a.ChannelID == "" {
+				return nil, nil
+			}
+			ch := a.ChannelID
+			if p, ok := h.(interface{ Post(func()) }); ok { // back on the UI goroutine
+				p.Post(func() { hs.StartHuddle(ch) })
+			} else {
+				hs.StartHuddle(ch)
+			}
+			return nil, nil
+		})
+		if err != nil {
+			h.Toast("Couldn't start the huddle: " + err.Error())
+		}
+		h.Invalidate()
+	}()
+}
+
+// startHuddleArgs is Slack's startHuddle argument (BetterHuddles reads
+// channelId, muted, isStandaloneHuddle and fromJoinPreview).
+type startHuddleArgs struct {
+	ChannelID          string `json:"channelId,omitempty"`
+	HuddleID           string `json:"huddleId,omitempty"`
+	Muted              bool   `json:"muted"`
+	FromJoinPreview    bool   `json:"fromJoinPreview,omitempty"`
+	IsStandaloneHuddle bool   `json:"isStandaloneHuddle,omitempty"`
+}
+
+// huddleAttempt is a start/join click: Slack's startHuddle thunk with
+// args (the conversation, the huddle when joining one; a new huddle from
+// the page header is standalone). Clack can't join (no Chime media), so natively it runs like a
+// huddle that ends at once: startEventLog, stopHuddle and stopEventLog,
+// then enqueueHuddleToast says why. A plugin wrapping startHuddle
+// (BetterHuddles) can take the join over instead. Without a plugin
+// wrapping any of them it's just the toast, inline.
+func huddleAttempt(h Host, tt *taut.Taut, args startHuddleArgs) {
+	patched := tt.ThunkPatched("startHuddle")
 	for _, n := range huddleThunks {
 		patched = patched || tt.ThunkPatched(n)
 	}
@@ -220,18 +280,20 @@ func huddleAttempt(h Host, tt *taut.Taut, roomID string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		noop := func(ctx context.Context, a huddleArgs) (any, error) { return nil, nil }
-		for _, n := range huddleThunks[:3] {
-			_, _ = taut.Dispatch(ctx, tt, n, huddleArgs{HuddleID: roomID}, noop)
-		}
-		_, err := taut.Dispatch(ctx, tt, "enqueueHuddleToast",
-			huddleToastArgs{Content: joinUnsupported, SVGIconProps: map[string]any{"type": "headphones"}, Duration: 5000},
-			func(ctx context.Context, a huddleToastArgs) (any, error) {
-				if a.Content != "" {
-					h.Toast(a.Content)
-				}
-				return nil, nil
-			})
+		_, err := taut.Dispatch(ctx, tt, "startHuddle", args, func(ctx context.Context, a startHuddleArgs) (any, error) {
+			noop := func(ctx context.Context, a huddleArgs) (any, error) { return nil, nil }
+			for _, n := range huddleThunks[:3] {
+				_, _ = taut.Dispatch(ctx, tt, n, huddleArgs{HuddleID: a.HuddleID}, noop)
+			}
+			return taut.Dispatch(ctx, tt, "enqueueHuddleToast",
+				huddleToastArgs{Content: joinUnsupported, SVGIconProps: map[string]any{"type": "headphones"}, Duration: 5000},
+				func(ctx context.Context, a huddleToastArgs) (any, error) {
+					if a.Content != "" {
+						h.Toast(a.Content)
+					}
+					return nil, nil
+				})
+		})
 		if err != nil {
 			h.Toast(joinUnsupported)
 		}

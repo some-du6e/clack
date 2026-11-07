@@ -15,6 +15,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/blockkit"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
@@ -110,6 +111,9 @@ type richHandler struct {
 }
 
 func (r *richHandler) OpenURL(url string) {
+	if blockkit.OpenWorkflowLink(r.h, url, r.m.Channel, r.m.TS) {
+		return
+	}
 	if ch, ts, ok := slackLink(url); ok {
 		if ts != "" {
 			r.h.Navigate("c/" + ch + "/t/" + ts)

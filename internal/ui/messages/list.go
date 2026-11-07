@@ -77,7 +77,7 @@ type listState struct {
 	rows   map[string]*row
 	items  []item
 	built  uint64 // snap.rev items were built from
-	dayKey string // date the items were built on (Today/Yesterday rollover)
+	dayKey int    // date the items were built on, yyyymmdd (Today/Yesterday rollover)
 
 	list     layout.List
 	contentH int // total item height when all items fit (see layoutList)
@@ -132,6 +132,35 @@ type listState struct {
 }
 
 var listCache = map[string]*listState{}
+
+// Off-screen rows keep their message but drop their laid-out text (glyph
+// paths are most of a row's memory) once they have not been drawn for
+// rowIdle; scrolling back lays them out again (~0.1 ms a row).
+const (
+	rowIdle    = 30 * time.Second
+	sweepEvery = 10 * time.Second
+)
+
+var lastSweep time.Time
+
+// sweepRows releases idle rows' layouts in every cached list, not just the
+// one on screen (the views for other channels stay cached).
+func sweepRows(now time.Time) {
+	if now.Sub(lastSweep) < sweepEvery {
+		return
+	}
+	lastSweep = now
+	for _, s := range listCache {
+		if _, _, _, _, ok := s.ordered(); ok {
+			continue // a selection may span rows off screen (copy reads their text)
+		}
+		for _, r := range s.rows {
+			if r.rv != nil && r.edit == nil && now.Sub(r.drawn) > rowIdle {
+				r.rv.Release()
+			}
+		}
+	}
+}
 
 // lastHost is the Host of the last message list drawn. Host components
 // (drawn inside plugin trees, possibly outside any list) reach core and
@@ -208,7 +237,8 @@ func (s *listState) sync(h Host, now time.Time) {
 		s.opened = true
 		s.openLastRead = s.snap.lastRead
 	}
-	dk := now.Format("2006-01-02")
+	y, mo, d := now.Date() // not Format: this runs every frame
+	dk := y*10000 + int(mo)*100 + d
 	if !changed && s.built == s.snap.rev && dk == s.dayKey && s.items != nil {
 		return
 	}
@@ -390,6 +420,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	lastHost = h
 	s.hb.ensureLoaded(s.m)
 	s.sync(h, now)
+	sweepRows(now)
 	size := gtx.Constraints.Max
 	fill(gtx.Ops, image.Rectangle{Max: size}, c.Bg)
 
@@ -700,6 +731,7 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 		s.applyView(tautOf(), r, rc.now)
 	}
 	r.rv.External = true
+	r.drawn = rc.now
 	sa, sb := s.rowSelection(i, r)
 	r.rv.SetSelection(sa, sb)
 	rc.header = it.header

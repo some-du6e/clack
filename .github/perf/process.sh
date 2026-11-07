@@ -32,6 +32,15 @@ for run in cold warm1 warm2 warm3; do
   ready=$(sed -n 's/.*ui: core ready \([0-9.]*m\?s\) after boot start.*/\1/p' "$out/$run.log" | head -1)
   boot=$(sed -n 's/.*boot: ready in \([0-9.]*m\?s\) (cache \([0-9.]*[mµ]\?s\).*/\1 \2/p' "$out/$run.log" | head -1)
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$run" "${paint:-? ?}" "${ready:-?}" "${boot:-? ?}" "$rss" "$hwm" "$anon" "$heap" | tee -a "$out/process.tsv"
+  if [ "$run" = warm3 ]; then # long idle: background sweeps (rows 30 s, images 60 s, trim) have run
+    sleep 75
+    irss=$(awk '/^VmRSS/{print $2}' /proc/$apid/status)
+    ianon=$(awk '/^RssAnon/{print $2}' /proc/$apid/status)
+    iheap=$(curl -s 127.0.0.1:6061/mem | awk '/^heap_alloc/{print $2}')
+    curl -s -o "$out/idle95.heap.pprof" "127.0.0.1:6061/heap?gc=1"
+    awk '/^[0-9a-f]+-[0-9a-f]+ /{n=($6==""?"[anon]":$6)} /^Rss:/{r[n]+=$2} END{for(k in r) if(r[k]>1024) print r[k], k}' /proc/$apid/smaps | sort -rn > "$out/idle95.smaps.txt"
+    printf 'idle95\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${paint:-? ?}" "${ready:-?}" "${boot:-? ?}" "$irss" "$hwm" "$ianon" "$iheap" | tee -a "$out/process.tsv"
+  fi
   kill $apid; wait $apid 2>/dev/null
 done
 kill $fpid $xpid 2>/dev/null

@@ -15,6 +15,8 @@ Message contents are memory only. Never write message text, files or attachments
 | `internal/core` | backend | **in-process service API** for the UI (replaces `internal/server`): boot, reads, writes, typed events. No HTTP. |
 | `internal/richtext` | richtext (`richtext`) | Slack message → structured document (`Doc`) for native layout. Replaces `internal/render`. |
 | `internal/ui/...`, `internal/imgcache`, `cmd/clack`, `assets/fonts`, `.github/workflows` | ui (`ui`) | the Gio app |
+| `internal/desktop`, `assets/icon`, `packaging/`, `.github/workflows/release.yml` | packaging (`packaging`) | single instance, update check, window/tray icons, slack:// registration, installers and the release workflow (see below) |
+| `internal/huddle`, `internal/ui/huddleui`, `cmd/huddle-demo` | huddles (`huddles`) | native huddles: `rooms.join` → Amazon Chime signaling (hand-written protobuf) + pion WebRTC, Opus in/out (pure-Go libopus, miniaudio via cgo for the sound card), H.264 video in (pure-Go decoder), peer messages, captions; the huddle bar, header pill and huddle window. Tests run against `huddle.NewFake` (a loopback Chime); `internal/huddle/probe` joins a real huddle only with `-live` (it rings people). |
 
 ## `internal/richtext` contract
 ```go
@@ -224,6 +226,17 @@ func ParseHuddle(raw json.RawMessage) (Huddle, bool)
 - **Files.** The Files browser uses `search.modules.files` with `search_context=desktop_files_browser`.
 - **Gateway subscriptions.** `user_change` subscriptions take at most 100 ids; `presence_sub` takes 500.
 
+## Desktop integration (`internal/desktop`, `packaging/`)
+- **Single instance.** `cmd/clack` calls `desktop.Forward(configDir, Request{URL})` before opening a window. If a Clack for the same user and config dir answers on its socket (`$XDG_RUNTIME_DIR/clack-<hash>.sock`, or the temp dir on macOS and Windows), the new process exits. Otherwise `desktop.Listen` makes it the primary, and every later launch calls `App.Raise` plus `App.OpenURL(url)`. Different `CLACK_HOME`s run side by side, which keeps test instances apart. A socket left by a crash is replaced.
+- **Deep links.** The OS runs `clack "slack://…"`: the Linux `.desktop` `Exec=clack %u`, and the Windows HKCU `Software\Classes\slack` keys written by the installer or `clack -register-url-handler`. macOS sends the link to the running app as a Gio `app.URLEvent` (`main` ranges over `app.Events` instead of calling `app.Main`). Every path ends in `App.OpenURL`, which dispatches Slack's `handleDeepLink` thunk; plugins can patch it, and the native is the shell's `openDeepLink` (`UIHooks.DeepLink`).
+- **Update check.** Release builds only (`main.version` is a semver). The check starts 15 s after launch and repeats every 12 h. It calls GitHub's `releases/latest`, which skips drafts and pre-releases, compares versions by semver, and shows a blue "A new version of Clack is available" banner above the workspace with **View release**, which opens the release page in the browser. Nothing is downloaded. Preferences > Advanced > "Check for updates" turns it off (`no_update_check` in ui.json). Closing the banner hides it until a newer tag comes out (`update_dismissed`). For testing, `CLACK_UPDATE_URL` points the check at another JSON file and `CLACK_UPDATE_AS` sets the version it compares against.
+- **Icons.** `assets/icon` holds the SVG masters (`gen_svg.py`) and the rendered PNG, .ico and .icns files (`build.py`). The window icon depends on the platform:
+  - X11: `_NET_WM_ICON`, set from the view event.
+  - Wayland: the compositor matches app id `clack` to `clack.desktop`.
+  - Windows: icon resource `#1`, which `go-winres` embeds from `packaging/windows/winres.json` (Gio and the tray both load it).
+  - macOS: the bundle's `clack.icns`; a bare binary sets the Dock icon itself.
+- **Windows tray.** A Win32 notification-area icon on its own thread. A click or **Open Clack** raises the window, and **Quit Clack** closes it. The icon comes back after an Explorer restart. Gio can't intercept the window's close button, so closing the window still quits Clack instead of hiding it to the tray.
+
 ## UI (Gio) principles
 - Fast: immediate mode with virtualized `layout.List`s, no allocations in hot paths where avoidable, async image decode (`internal/imgcache`: memory LRU plus a disk cache for avatars/emoji only, decoded off the UI goroutine, invalidate the window on arrival). Instant channel switch from cached history.
 - Look: copy the Slack 2026 desktop client (measurements are taken from the real client in the agent-browser profile `whatever`). Lato TTF embedded (OFL). SVG-like icons drawn with `clip.Path` / vector icons; no Slack proprietary assets committed. Emoji images come from Slack's CDN at runtime.
@@ -241,6 +254,7 @@ func ParseHuddle(raw json.RawMessage) (Huddle, bool)
 | `internal/ui/composer` | ui-composer | rich editor (formatting toolbar, inline styles, lists/quote/code), Enter-to-send, Up-to-edit, autocomplete (@ # : /), attachments (pick/paste/drop) with upload, drafts, typing indicator send, edit mode, "also send to channel" |
 | `internal/ui/popups` | ui-popups | overlay system (menu, popover, modal, tooltip, toast), emoji picker (virtualized 65k custom), quick switcher (Ctrl+K), search (dropdown + results view), profile card + full profile, lightbox, message/channel/user/team menus with actions |
 | `internal/ui/views` | ui-views | Activity, DMs, Later/Saved, Files, Threads, Huddles, Drafts & sent, Directories, channel details |
+| `internal/ui/blockkit` (+ `internal/core/interactive*.go`) | blockkit | interactive apps: Block Kit elements in messages, legacy attachment actions, modals (view stack), App Home tabs, app shortcuts, workflow links, ephemeral messages |
 
 ### Cross-package interface: `Host`
 To avoid import cycles, every feature package defines the small interface it needs **in its own package** (e.g. `messages.Host`). The `internal/ui` root implements all of them on one `*ui.App`. Shared things every Host offers (use these exact names so one implementation satisfies all):
@@ -257,3 +271,26 @@ Toast(text string)
 ```
 `popups.Overlay`: `interface{ Layout(gtx layout.Context) layout.Dimensions; Dismissed() bool }` (popups agent owns the concrete types; ui root just stacks and draws them, and routes Escape/outside clicks).
 Each feature package exports a constructor and a widget with `Layout(gtx layout.Context) layout.Dimensions`, e.g. `messages.NewChannelView(h Host, channelID string) *ChannelView`, `messages.NewThreadView(h, ch, ts)`, `composer.New(h Host, channelID, threadTS string) *Composer`, `views.NewActivity(h)` …, and `popups.NewEmojiPicker(h, onPick) Overlay` etc.
+
+## Interactive apps (`internal/ui/blockkit`, `core.Interactive`)
+
+`a.Interactive()` (internal/core/interactive.go) is the service; blockkit draws. Every call shape was read from Slack's web client (gantry-v2, 2026-11) and the ones marked live were tested on Hack Club:
+
+| what | Slack call | notes |
+|---|---|---|
+| block action (live) | `blocks.actions {service_id: bot_id, app_id, service_team_id, actions: [element + block_id + selection], container, client_token: web-<ms>, state: {values}}` | enterprise token (team token: `team_is_restricted`); container `message {message_ts, channel_id, is_ephemeral, thread_ts only for ephemerals}`, `message_attachment {…, attachment_id}`, `view {view_id}`; errors carry Slack's text (`post_error` "App took too long…") |
+| external select | `blocks.suggestions {service_id, app_id, service_team_id, container, action_id, block_id, value}` | `min_query_length` default 3, 200 ms debounce |
+| legacy attachment action (live) | `chat.attachmentAction {payload: {actions:[raw action (+selected_options)], attachment_id, callback_id, channel_id, is_ephemeral, message_ts, team_id}, client_token, service_id, app_id, bot_user_id}` | |
+| modal opens (live) | RTM `view_opened {view, view_id, view_type, previous_view_id, client_token, timeout_range, …}` (older payloads flat) then `view_updated {view_id, view}` | shown only when `client_token` is one this client issued, within `timeout_range` (a click in the browser must not open it in Clack too) |
+| submit (live) | `views.submit {view_id, client_token, state: {values}}` → `{view, response_action, toast_message}`; `ok:false error=validation_failed errors{block_id:msg}` | `slack.Error.Body` keeps the body for the errors |
+| close (live) | `views.close {view_id, client_token, root_view_id?}` | footer Close / Escape pop one view (root_view_id with clear_on_close); × closes the stack |
+| shortcuts (live) | `apps.actions.v2.list {resource_id: team, resource_type: team}`; `apps.actions.v2.execute {action_id, app_id, team_id: current workspace, context: {channel_id, message_ts?}, client_token}` | the list's per-app `team_id` gets `internal_error`; message shortcuts in the message menu's Connect to apps, global ones in the composer's + menu |
+| App Home (live) | `conversations.info {channel, return_app_home}` → `app_home` + `home_view`; `apps.home.dispatchOpenEvent {id, type: home/messages}`; RTM `view_opened/updated` type home; About: `apps.profile.get {bot, app}` | |
+| workflow links | `workflows.triggers.trip {url, context: {location: message, channel_id, message_ts}, client_token, run_precheck}` | `pretrip_ack_required` → "Start workflow?" confirm, trip again without precheck (not live-tested: workflows can post) |
+| legacy dialogs | RTM `dialog_opened` → `dialog.get`, `dialog.submit {dialog_id, submission}`, `dialog.notifyCancel` | |
+| ephemerals (live) | RTM `message` with `is_ephemeral` | `Interactive().Ephemeral(ch, ts)`; rows get "Only visible to you" + Slack's .04 background |
+
+UI wiring (minimal wraps): richview `Options.Elements` gives each run of elements (actions block, section accessory, attachment buttons) a slot in the cached layout that blockkit sizes and draws per frame; messages' rows pass `blockkit.MessageElements`; the ui root calls `blockkit.Start` after boot, `blockkit.SetTaut`, `AppDMFor` for app DM tabs, and sets `popups.MessageShortcuts` / `composer.ShortcutItems`. Taut thunks: `sendActions`, `executeAppAction`, `submitView` are dispatched with Slack's args; natives for those and `blocksFormatFetcher` are registered.
+
+Not done yet: `rich_text_input` edits as plain text; `file_input` toasts; the read-only Messages tab of some apps doesn't replace the composer (composer owns it: `AppDM.ReadOnly()`); speedbump on closing a changed modal; workflow unfurl cards.
+

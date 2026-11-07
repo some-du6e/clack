@@ -504,3 +504,29 @@ func TestPluginWhoReacted(t *testing.T) {
 			slackc.Patched("Reaction"), slackc.Patched("UnstyledButton"))
 	}
 }
+
+// TestPluginShowSendingBot: Taut's ShowSendingBot provides the message at
+// MessageBackground and reads it in its MessageKitGutter patch. The gutter
+// is its own slackc root drawn by the background's native, mounted as a
+// portal under it, so the context reaches a grouped row's compact gutter
+// like in Slack's single tree.
+func TestPluginShowSendingBot(t *testing.T) {
+	code := pluginFile(t, "ShowSendingBot")
+	app, _, tt, u, h := pluginEnv(t)
+	const ch = "C0BOTPOSTS"
+	app.S.PutConv(slack.Conversation{ID: ch, Name: "bot-posts", IsChannel: true, IsMember: true, NumMembers: 3})
+	app.S.PutBot("B0SENDER1", store.BotInfo{Name: "Sender Bot", Icon: "https://avatars.invalid/sender-bot-48.png"})
+	app.S.SetLatest(ch, []slack.Message{
+		{Type: "message", TS: "1700000301.000100", User: "UALICE", BotID: "B0SENDER1", Text: "posted for alice by a bot"},
+		{Type: "message", TS: "1700000361.000100", User: "UALICE", BotID: "B0SENDER1", Text: "and a grouped follow-up"},
+	}, false)
+	install(t, tt, code)
+	until(t, 3*time.Second, "components patched", func() {}, func() bool {
+		return slackc.Patched("MessageBackground") && slackc.Patched("MessageKitGutter")
+	})
+	v := NewChannelView(h, ch)
+	v.Preview = true
+	until(t, 10*time.Second, "the gutter badge on the grouped row", frameFn(v), func() bool {
+		return u.anyTree("taut-sending-bot__badge--gutter")
+	})
+}

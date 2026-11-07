@@ -82,6 +82,17 @@ const (
 
 var pluginID = regexp.MustCompile(pluginIDPattern)
 
+// validPluginID is Slick's PLUGIN_ID plus what keeps a plugin's files
+// apart in plugins/: no hidden names ("." and ".." included), and nothing
+// that ends like another plugin's .main.js or .meta.json.
+func validPluginID(id string) bool {
+	if !pluginID.MatchString(id) || strings.HasPrefix(id, ".") {
+		return false
+	}
+	l := strings.ToLower(id)
+	return !strings.HasSuffix(l, ".main") && !strings.HasSuffix(l, ".meta")
+}
+
 func hashOf(parts ...string) string {
 	h := sha256.New()
 	for _, p := range parts {
@@ -92,6 +103,9 @@ func hashOf(parts ...string) string {
 }
 
 func (s *Slick) code(id string) (renderer, main string) {
+	if !validPluginID(id) {
+		return "", ""
+	}
 	if b, err := os.ReadFile(s.path("plugins", id+".js")); err == nil {
 		renderer = string(b)
 	}
@@ -111,7 +125,7 @@ func (s *Slick) loadInstalled() {
 			continue
 		}
 		id := strings.TrimSuffix(base, ".js")
-		if !pluginID.MatchString(id) {
+		if !validPluginID(id) {
 			continue
 		}
 		r, m := s.code(id)
@@ -389,7 +403,15 @@ func (s *Slick) startLocked(ctx context.Context, p *plugin, settings map[string]
 		s.mu.Unlock()
 	}
 	if m != "" && !mainInJS {
-		if err := s.call(ctx, rt, "loadMain", nil, m); err != nil {
+		// the capabilities Preferences shows (from the cached declaration)
+		// are the only ones the main half gets, whatever it declares later
+		s.mu.Lock()
+		caps := []string{}
+		if p.meta.Main != nil {
+			caps = append(caps, p.meta.Main.Capabilities...)
+		}
+		s.mu.Unlock()
+		if err := s.call(ctx, rt, "loadMain", nil, m, caps); err != nil {
 			s.fail(p, "main half: "+err.Error())
 			return
 		}
@@ -680,18 +702,93 @@ func (s *Slick) Import(ctx context.Context, code []byte) (string, error) {
 	return s.install(ctx, string(code), "", "")
 }
 
+// Peek is what a plugin file says about itself, read without running it
+// (the "// slick-plugin {…}" / "// slick-main {…}" header build:plugin and
+// build.mjs write). It is what the file claims, for the confirmation
+// shown before installing; installing runs the file and checks it.
+type Peek struct {
+	ID, Name, Description string
+	Main                  bool // a privileged half
+	Installed             bool // a plugin with this id is installed (an update)
+	HasMain               bool // the installed plugin has a privileged half
+	Capabilities          []string
+	StoresMessages        bool
+}
+
+// Peek reads a file's header.
+func (s *Slick) Peek(code []byte) (Peek, error) {
+	c := string(code)
+	if len(c) > maxPluginSize {
+		return Peek{}, errors.New("That file is too big to be a plugin.")
+	}
+	var pk Peek
+	pk.Main = strings.Contains(c, mainMarker) && !strings.Contains(c, rendererMarker+" ??=")
+	if !pk.Main && !strings.Contains(c, rendererMarker) {
+		return Peek{}, errors.New("That file is not a Slick plugin.")
+	}
+	line, _, _ := strings.Cut(c, "\n")
+	for _, prefix := range []string{"// slick-plugin ", "// slick-main "} {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), prefix); ok {
+			var h struct{ ID, Name, Description string }
+			if json.Unmarshal([]byte(rest), &h) == nil {
+				pk.ID, pk.Name, pk.Description = h.ID, h.Name, h.Description
+			}
+		}
+	}
+	if !validPluginID(pk.ID) {
+		pk.ID = ""
+	}
+	if pk.Name == "" {
+		pk.Name = pk.ID
+	}
+	s.mu.Lock()
+	if p := s.plugins[pk.ID]; p != nil {
+		pk.Installed = true
+		if p.meta.Main != nil {
+			pk.HasMain, pk.Capabilities = true, append([]string(nil), p.meta.Main.Capabilities...)
+		}
+		if p.meta.Name != "" && pk.Name == pk.ID {
+			pk.Name = p.meta.Name
+		}
+	}
+	s.mu.Unlock()
+	pk.StoresMessages = storesMessages[pk.ID]
+	return pk, nil
+}
+
 // InstallURL downloads and installs a plugin, and keeps it updated (Slick's
 // "Install from URL": https, or http on localhost; GitHub file pages work).
 func (s *Slick) InstallURL(ctx context.Context, raw string) (string, error) {
-	u, err := pluginURL(raw)
+	code, u, err := s.Download(ctx, raw)
 	if err != nil {
 		return "", err
 	}
+	return s.InstallDownloaded(ctx, code, u)
+}
+
+// Download fetches a plugin file for "Install from URL" (https, or http on
+// localhost; 16 MiB, 20 s) without installing it, so the UI can Peek and
+// confirm first. It returns the URL to pass to InstallDownloaded.
+func (s *Slick) Download(ctx context.Context, raw string) ([]byte, string, error) {
+	u, err := pluginURL(raw)
+	if err != nil {
+		return nil, "", err
+	}
 	code, err := s.download(ctx, u)
 	if err != nil {
-		return "", fmt.Errorf("Could not download the plugin: %v", err)
+		return nil, "", fmt.Errorf("Could not download the plugin: %v", err)
 	}
-	return s.install(ctx, code, u, "")
+	return []byte(code), u, nil
+}
+
+// InstallDownloaded installs what Download returned and keeps it updated
+// from source.
+func (s *Slick) InstallDownloaded(ctx context.Context, code []byte, source string) (string, error) {
+	u, err := pluginURL(source)
+	if err != nil {
+		return "", err
+	}
+	return s.install(ctx, string(code), u, "")
 }
 
 func (s *Slick) install(ctx context.Context, code, source, expectedID string) (string, error) {
@@ -701,6 +798,11 @@ func (s *Slick) install(ctx context.Context, code, source, expectedID string) (s
 	isMain := strings.Contains(code, mainMarker) && !strings.Contains(code, rendererMarker+" ??=")
 	if !isMain && !strings.Contains(code, rendererMarker) {
 		return "", errors.New("That file is not a Slick plugin.")
+	}
+	if isMain && expectedID != "" {
+		// an update replaces a renderer; a privileged half (and its
+		// capabilities) only ever comes from the user importing one
+		return "", fmt.Errorf("the update for %s is a privileged main half now; install it yourself if you trust it", expectedID)
 	}
 	rt, err := s.js()
 	if err != nil {
@@ -716,6 +818,9 @@ func (s *Slick) install(ctx context.Context, code, source, expectedID string) (s
 			return "", err
 		}
 		id = mm.ID
+		if !validPluginID(id) {
+			return "", fmt.Errorf("plugin has an invalid id: %q", id)
+		}
 		renderer, _ = s.code(id)
 		if renderer == "" {
 			return "", fmt.Errorf("Install %s's plugin file first, then its main half.", id)
@@ -730,12 +835,21 @@ func (s *Slick) install(ctx context.Context, code, source, expectedID string) (s
 		renderer = code
 		_, main = s.code(id)
 	}
-	if !pluginID.MatchString(id) {
-		return "", fmt.Errorf("plugin has an invalid id: %s", id)
+	if !validPluginID(id) {
+		return "", fmt.Errorf("plugin has an invalid id: %q", id)
 	}
 	if expectedID != "" && id != expectedID {
 		return "", fmt.Errorf("the file now declares %s, not %s", id, expectedID)
 	}
+	s.mu.Lock()
+	for other := range s.plugins {
+		if other != id && strings.EqualFold(other, id) {
+			s.mu.Unlock()
+			// one file on case-insensitive disks (macOS, Windows)
+			return "", fmt.Errorf("%s is already installed as %s", id, other)
+		}
+	}
+	s.mu.Unlock()
 	meta, err := s.describe(ctx, rt, renderer, main)
 	if err != nil {
 		return "", err
@@ -808,15 +922,20 @@ func (s *Slick) Remove(ctx context.Context, id string) error {
 	for _, f := range []string{id + ".js", id + ".main.js", id + ".meta.json"} {
 		_ = os.Remove(s.path("plugins", f))
 	}
-	s.t.DataClear(dataNS("plugin:" + id))
-	s.t.DataClear(dataNS("plugin:" + id + ":secrets"))
+	s.clearData(id, true)
+	s.mu.Lock()
+	if _, ok := s.prefs[keepOnDiskPref+id]; ok {
+		delete(s.prefs, keepOnDiskPref+id)
+		_ = writeJSON(s.path("plugins", "prefs.json"), s.prefs)
+	}
+	s.mu.Unlock()
 	s.changed()
 	return nil
 }
 
 // ClearData deletes a plugin's storage (api.storage, Cache, stored files).
 func (s *Slick) ClearData(ctx context.Context, id string) error {
-	s.t.DataClear(dataNS("plugin:" + id))
+	s.clearData(id, false)
 	s.reconcile(ctx, id)
 	s.changed()
 	return nil
@@ -849,6 +968,11 @@ func (s *Slick) UpdateUserPlugins(ctx context.Context) UpdateResult {
 	sort.Strings(ids)
 	for _, id := range ids {
 		u := sources[id]
+		if _, err := pluginURL(u); err != nil {
+			res.Failed++
+			log.Printf("slick: not updating %s: %v", id, err)
+			continue
+		}
 		code, err := s.download(ctx, u)
 		if err != nil {
 			res.Failed++
@@ -925,7 +1049,7 @@ func pluginURL(input string) (string, error) {
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return "", errors.New("That is not a valid URL.")
 	}
-	local := u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1"
+	local := u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1" || u.Hostname() == "::1"
 	if u.Scheme != "https" && !(u.Scheme == "http" && local) {
 		return "", errors.New("Plugin URLs must use https.")
 	}
@@ -957,9 +1081,21 @@ func (s *Slick) download(ctx context.Context, u string) (string, error) {
 		if ctx.Err() != nil {
 			return "", errors.New("the request timed out")
 		}
+		// *url.Error repeats the URL, which can carry a token
+		// (raw.githubusercontent.com ?token=); logs and the UI get the cause
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			return "", ue.Err
+		}
 		return "", err
 	}
 	defer res.Body.Close()
+	if res.Request != nil && res.Request.URL != nil {
+		// a redirect must not leave https (or localhost)
+		if _, err := pluginURL(res.Request.URL.String()); err != nil {
+			return "", errors.New("the server redirected to a URL that isn't https")
+		}
+	}
 	if res.StatusCode != 200 {
 		return "", fmt.Errorf("the server answered %d", res.StatusCode)
 	}

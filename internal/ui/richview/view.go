@@ -34,6 +34,7 @@ type View struct {
 	laidPx  float32
 	laidSp  float32
 	laidGen uint32
+	laidEl  uint32 // Options.Elements version the layout was made with
 	dirty   bool
 
 	ops      op.Ops
@@ -138,6 +139,22 @@ func (v *View) SetOptions(o Options) {
 // Doc returns the current document.
 func (v *View) Doc() richtext.Doc { return v.doc }
 
+// Release drops the layout and its recorded paint ops (glyph paths, the
+// bulk of a message's memory). The next Layout lays the doc out again;
+// state (selection, component states) is kept. For rows that have been
+// off screen for a while.
+func (v *View) Release() {
+	if !v.recorded && len(v.d.frags) == 0 {
+		return
+	}
+	v.d = display{}
+	v.ops = op.Ops{}
+	v.call = op.CallOp{}
+	v.recorded = false
+	v.pending = nil
+	v.dirty = true
+}
+
 // HasSelection reports whether some text is selected.
 func (v *View) HasSelection() bool { return v.selA != v.selB }
 
@@ -178,6 +195,9 @@ func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimension
 		w = 1
 	}
 	mode := compMode()
+	if el := v.opts.Elements; el != nil && el.ElementsVersion() != v.laidEl {
+		v.dirty = true
+	}
 	if v.dirty || w != v.laidW || gtx.Metric.PxPerDp != v.laidPx || gtx.Metric.PxPerSp != v.laidSp || st.gen != v.laidGen || mode != v.laidMode {
 		v.relayout(st, w, gtx.Metric.PxPerDp, gtx.Metric.PxPerSp)
 	} else if len(v.pending) > 0 && v.anyReady(st) {
@@ -270,6 +290,25 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 			s.Pop()
 		}
 	}
+	// Element runs (Options.Elements) go last: their input areas must be
+	// above the cursor/hit areas of cards and links registered above.
+	if el := v.opts.Elements; el != nil && len(v.d.slots) > 0 {
+		var opac paint.OpacityStack
+		if v.opts.Dim {
+			opac = paint.PushOpacity(gtx.Ops, 0.5)
+		}
+		for i := range v.d.slots {
+			s := &v.d.slots[i]
+			off := op.Offset(s.r.Min).Push(gtx.Ops)
+			g := gtx
+			g.Constraints = layout.Exact(s.r.Size())
+			el.LayoutElements(g, s.bs, s.acc)
+			off.Pop()
+		}
+		if v.opts.Dim {
+			opac.Pop()
+		}
+	}
 	d := layout.Dimensions{Size: size}
 	if b := v.d.firstBaseline(); b >= 0 && b <= size.Y {
 		d.Baseline = size.Y - b
@@ -309,6 +348,9 @@ func fragRect(f *frag) image.Rectangle {
 
 func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 	mode := compMode()
+	if el := v.opts.Elements; el != nil {
+		v.laidEl = el.ElementsVersion()
+	}
 	v.d.reset()
 	l := lay{st: st, d: &v.d, scale: pxdp, spx: pxsp, jumbo: v.doc.Jumbo, opts: v.opts, mode: mode, cs: &v.cs}
 	if l.scale <= 0 {
@@ -713,8 +755,8 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 				v.dragging = false
 				v.press = -1
 			case pointer.Press:
-				if e.Buttons != pointer.ButtonPrimary {
-					continue
+				if e.Buttons != pointer.ButtonPrimary || v.inSlot(e.Position) {
+					continue // element widgets take their own presses
 				}
 				v.press = v.targetAt(e.Position)
 				v.pressPos = e.Position
@@ -772,6 +814,17 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 			}
 		}
 	}
+}
+
+// inSlot reports whether p is on an element run drawn by Options.Elements.
+func (v *View) inSlot(p f32.Point) bool {
+	pt := image.Pt(int(p.X), int(p.Y))
+	for i := range v.d.slots {
+		if pt.In(v.d.slots[i].r) {
+			return true
+		}
+	}
+	return false
 }
 
 func (v *View) activate(t int16, anchor image.Point, h Handler) {
