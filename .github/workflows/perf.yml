@@ -20,7 +20,7 @@ env:
 
 concurrency:
   group: perf-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false # queue: every pushed commit gets its numbers
 
 jobs:
   perf:
