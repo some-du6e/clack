@@ -94,6 +94,7 @@ func main() {
 		SignOut: func() { _ = os.Remove(*credsPath) }}
 
 	creds, err := readCreds(*credsPath)
+	ui.SetVersion(version)
 	a := ui.New(opts, images)
 	cacheDir := filepath.Join(cfg, "cache")
 	connect := func(creds slack.Creds) {
