@@ -386,6 +386,17 @@ func (b *Bridge) Call(fn int64, args []byte, done func(result []byte, err error)
 	}()
 }
 
+// WantsEvent reports whether any JS listens for window/document-level
+// events of type typ (Oneko's mousemove, StreamerMode's keydown), so slackc
+// forwards global input at target 0. False while no runtime runs; never
+// starts one.
+func (b *Bridge) WantsEvent(typ string) bool {
+	b.t.mu.Lock()
+	r := b.t.rt
+	b.t.mu.Unlock()
+	return r != nil && r.rt.WantsEvent(typ)
+}
+
 // SetRects reports laid-out host node boxes.
 func (b *Bridge) SetRects(rects map[int64][4]float32) {
 	r := b.runtime()
