@@ -22,8 +22,12 @@ import (
 //	/mem                       runtime.MemStats and /proc RSS, as text
 //	/freeos                    debug.FreeOSMemory, then /mem
 //
+// CLACK_CPUPROFILE=<file> profiles the first CLACK_CPUPROFILE_SECS
+// seconds (default 5) of the process: main to first frame and boot.
+//
 // It uses runtime/pprof directly (net/http/pprof would link html/template).
 func startProfiler() {
+	startupProfile()
 	addr := os.Getenv("CLACK_PPROF")
 	if addr == "" {
 		return
@@ -81,4 +85,30 @@ func writeMem(w http.ResponseWriter) {
 			}
 		}
 	}
+}
+
+func startupProfile() {
+	path := os.Getenv("CLACK_CPUPROFILE")
+	if path == "" {
+		return
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		log.Printf("cpuprofile: %v", err)
+		return
+	}
+	if err := pprof.StartCPUProfile(f); err != nil {
+		log.Printf("cpuprofile: %v", err)
+		f.Close()
+		return
+	}
+	secs, _ := strconv.Atoi(os.Getenv("CLACK_CPUPROFILE_SECS"))
+	if secs <= 0 {
+		secs = 5
+	}
+	time.AfterFunc(time.Duration(secs)*time.Second, func() {
+		pprof.StopCPUProfile()
+		f.Close()
+		log.Printf("cpuprofile: wrote %s", path)
+	})
 }
