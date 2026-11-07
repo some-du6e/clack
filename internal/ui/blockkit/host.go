@@ -291,7 +291,7 @@ func styleFor(th *theme.Theme, images *imgcache.Cache) *richview.Style {
 }
 
 // pointer returns the pointer position (window coords) or fallback.
-func pointer(h Host, fallback image.Point) image.Point {
+func pointerAt(h Host, fallback image.Point) image.Point {
 	if ph, ok := h.(PointerHost); ok {
 		return ph.PointerPos()
 	}

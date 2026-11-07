@@ -74,7 +74,7 @@ func MessageShortcutItems(h Host, m core.Message) []popups.MenuItem {
 	}
 	ch, ts := m.Channel, m.TS
 	items = append(items, popups.MenuItem{Label: "More message shortcuts…", Icon: "lightning", Do: func() {
-		OpenShortcuts(h, pointer(h, image.Point{}), "message_action", ch, ts)
+		OpenShortcuts(h, pointerAt(h, image.Point{}), "message_action", ch, ts)
 	}})
 	return items
 }

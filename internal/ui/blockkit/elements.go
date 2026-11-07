@@ -49,7 +49,7 @@ func (t *tap) clicked(gtx C, h Host) bool {
 		}
 		if e.Kind == gesture.KindClick {
 			hit = true
-			t.org = pointer(h, e.Position).Sub(e.Position)
+			t.org = pointerAt(h, e.Position).Sub(e.Position)
 		}
 	}
 	return hit
@@ -639,7 +639,9 @@ func (w *ew) layoutOptions(gtx C, sz image.Point) {
 				th1 := w.textView(o.Text).layout(gtx, tw, cl.Text)
 				if o.Description != nil {
 					at(gtx, image.Pt(0, th1), func(gtx C) D {
-						w.textView(*o.Description).layout(gtx, tw, cl.Text2)
+						dv := w.textView(*o.Description)
+						dv.setMuted(true)
+						dv.layout(gtx, tw, cl.Text2)
 						return D{}
 					})
 				}

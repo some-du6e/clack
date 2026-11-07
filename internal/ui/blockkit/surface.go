@@ -112,7 +112,7 @@ func (s *surfHandler) OpenURL(u string) {
 	openURL(u)
 }
 func (s *surfHandler) OpenUser(id string, anchor image.Point) {
-	s.h.OpenProfile(pointer(s.h, anchor), id)
+	s.h.OpenProfile(pointerAt(s.h, anchor), id)
 }
 func (s *surfHandler) OpenChannel(id string) { s.h.Navigate("c/" + id) }
 func (s *surfHandler) OpenUsergroup(id string, anchor image.Point) {
