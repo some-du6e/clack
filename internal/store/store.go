@@ -10,9 +10,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/emoji"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
@@ -59,6 +62,17 @@ type Store struct {
 	ext         map[string]*slack.Conversation // non-sidebar conversations
 	bots        map[string]BotInfo
 
+	// gen counts changes to what the disk cache holds; SaveCache writes
+	// only when it (or the emoji map's version) moved since the last load
+	// or save.
+	gen       atomic.Uint64
+	saveMu    sync.Mutex
+	saved     bool
+	savedGen  uint64
+	savedEmo  uint64
+	emojiAt   time.Time // when the cached emoji map was fetched (emoji.list)
+	emojiAtMu sync.Mutex
+
 	missMu     sync.Mutex
 	missSeen   map[string]bool
 	missing    []string // "c"+id | "u"+id | "b"+id
@@ -76,6 +90,7 @@ func (s *Store) PutName(id, name string) {
 	}
 	s.names[id] = name
 	s.mu.Unlock()
+	s.gen.Add(1)
 }
 
 // Prefs are the user preferences the UI needs for rendering.
@@ -227,12 +242,17 @@ func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
 // SetPrefs installs parsed prefs (and the emoji style used for rendering).
 func (s *Store) SetPrefs(p Prefs, muted map[string]bool) {
 	s.mu.Lock()
+	if reflect.DeepEqual(s.Prefs, p) && reflect.DeepEqual(s.Muted, muted) {
+		s.mu.Unlock()
+		return // refresh with no change: keep the cache clean
+	}
 	s.Prefs = p
 	s.Muted = muted
 	if p.EmojiStyle != "" {
 		s.EmojiStyle = p.EmojiStyle
 	}
 	s.mu.Unlock()
+	s.gen.Add(1)
 }
 
 func New(cacheDir string) *Store {
@@ -263,6 +283,9 @@ func (s *Store) PutUsers(us []slack.User) {
 		s.Users[u.ID] = &u
 	}
 	s.mu.Unlock()
+	if len(us) > 0 {
+		s.gen.Add(1)
+	}
 }
 
 func (s *Store) User(id string) (*slack.User, bool) {
@@ -442,6 +465,7 @@ func (s *Store) PutExtConv(c slack.Conversation) {
 			s.names = map[string]string{}
 		}
 		s.names[c.ID] = c.Name
+		s.gen.Add(1)
 	}
 	s.mu.Unlock()
 }
@@ -469,6 +493,7 @@ func (s *Store) PutBot(id string, b BotInfo) {
 	}
 	s.bots[id] = b
 	s.mu.Unlock()
+	s.gen.Add(1)
 }
 
 func (s *Store) Bot(id string) (BotInfo, bool) {
@@ -778,12 +803,32 @@ func (s *Store) NoteMessage(ch string, m *slack.Message, mentionsSelf bool) slac
 // ---- disk cache (metadata only) ----
 
 type diskCache struct {
-	Users      []slack.User       `json:"users"`
-	Emoji      map[string]string  `json:"emoji"`
-	Usergroups []slack.Usergroup  `json:"usergroups,omitempty"`
-	Prefs      *Prefs             `json:"prefs,omitempty"`
-	Names      map[string]string  `json:"channel_names,omitempty"` // channels outside the sidebar
-	Bots       map[string]BotInfo `json:"bots,omitempty"`
+	Users []slack.User      `json:"users"`
+	Emoji map[string]string `json:"emoji,omitempty"` // caches written before 2026-11-07
+	// EmojiPacked is the custom emoji map as "name\nvalue\n" pairs. Loaded
+	// as one string whose substrings become the map's keys and values: one
+	// allocation instead of 130k, and ~10x faster to parse than an object.
+	EmojiPacked string             `json:"emoji_packed,omitempty"`
+	EmojiAt     int64              `json:"emoji_at,omitempty"` // unix time of the emoji.list it came from
+	Usergroups  []slack.Usergroup  `json:"usergroups,omitempty"`
+	Prefs       *Prefs             `json:"prefs,omitempty"`
+	Names       map[string]string  `json:"channel_names,omitempty"` // channels outside the sidebar
+	Bots        map[string]BotInfo `json:"bots,omitempty"`
+}
+
+// sameGroups reports whether gs (minus deleted groups) equals s.Groups.
+func (s *Store) sameGroups(gs []slack.Usergroup) bool {
+	i := 0
+	for _, g := range gs {
+		if g.DateDelete != 0 {
+			continue
+		}
+		if i >= len(s.Groups) || s.Groups[i] != g {
+			return false
+		}
+		i++
+	}
+	return i == len(s.Groups)
 }
 
 // HasCachedPrefs reports whether prefs came from the disk cache.
@@ -797,6 +842,9 @@ func (s *Store) HasCachedPrefs() bool {
 func (s *Store) SetUsergroups(gs []slack.Usergroup) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.sameGroups(gs) {
+		return // the usual refresh: nothing to install or save
+	}
 	s.Groups = s.Groups[:0]
 	for _, g := range gs {
 		if g.DateDelete != 0 {
@@ -805,6 +853,7 @@ func (s *Store) SetUsergroups(gs []slack.Usergroup) {
 		s.Groups = append(s.Groups, g)
 		s.Usergroups[g.ID] = g.Handle
 	}
+	s.gen.Add(1)
 }
 
 func (s *Store) LoadCache() {
@@ -819,9 +868,17 @@ func (s *Store) LoadCache() {
 	if json.Unmarshal(b, &d) != nil {
 		return
 	}
+	b = nil
 	s.PutUsers(d.Users)
-	if len(d.Emoji) > 0 {
+	if d.EmojiPacked != "" {
+		s.CustomEmoji.Set(unpackEmoji(d.EmojiPacked))
+	} else if len(d.Emoji) > 0 {
 		s.CustomEmoji.Set(d.Emoji)
+	}
+	if d.EmojiAt > 0 {
+		s.emojiAtMu.Lock()
+		s.emojiAt = time.Unix(d.EmojiAt, 0)
+		s.emojiAtMu.Unlock()
 	}
 	if len(d.Usergroups) > 0 {
 		s.SetUsergroups(d.Usergroups)
@@ -849,16 +906,91 @@ func (s *Store) LoadCache() {
 		s.prefsCached = true
 		s.mu.Unlock()
 	}
+	// what was just read is what is on disk
+	s.saveMu.Lock()
+	s.saved, s.savedGen, s.savedEmo = true, s.gen.Load(), s.CustomEmoji.Version()
+	s.saveMu.Unlock()
+}
+
+// SetEmojiList installs a fresh emoji.list result, compacted the way the
+// disk cache stores it (see diskCache.EmojiPacked), and stamps its age.
+func (s *Store) SetEmojiList(m map[string]string) {
+	s.CustomEmoji.Set(unpackEmoji(packEmoji(m)))
+	s.emojiAtMu.Lock()
+	s.emojiAt = time.Now()
+	s.emojiAtMu.Unlock()
+}
+
+// EmojiAge is how old the custom emoji map is (a large value when unknown).
+func (s *Store) EmojiAge() time.Duration {
+	s.emojiAtMu.Lock()
+	defer s.emojiAtMu.Unlock()
+	if s.emojiAt.IsZero() {
+		return 1 << 62
+	}
+	return time.Since(s.emojiAt)
+}
+
+func packEmoji(m map[string]string) string {
+	n := 0
+	for k, v := range m {
+		n += len(k) + len(v) + 2
+	}
+	var b strings.Builder
+	b.Grow(n)
+	for k, v := range m {
+		if strings.ContainsRune(k, '\n') || strings.ContainsRune(v, '\n') {
+			continue
+		}
+		b.WriteString(k)
+		b.WriteByte('\n')
+		b.WriteString(v)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// unpackEmoji builds the map from packed pairs; keys and values share p's
+// memory.
+func unpackEmoji(p string) map[string]string {
+	m := make(map[string]string, strings.Count(p, "\n")/2)
+	for len(p) > 0 {
+		i := strings.IndexByte(p, '\n')
+		if i < 0 {
+			break
+		}
+		k := p[:i]
+		p = p[i+1:]
+		j := strings.IndexByte(p, '\n')
+		if j < 0 {
+			break
+		}
+		m[k] = p[:j]
+		p = p[j+1:]
+	}
+	return m
 }
 
 func (s *Store) SaveCache() error {
 	if s.cacheDir == "" {
 		return nil
 	}
+	s.saveMu.Lock()
+	defer s.saveMu.Unlock()
+	gen, emo := s.gen.Load(), s.CustomEmoji.Version()
+	if s.saved && gen == s.savedGen && emo == s.savedEmo {
+		return nil // unchanged since the last load or save
+	}
+	s.emojiAtMu.Lock()
+	emojiAt := s.emojiAt
+	s.emojiAtMu.Unlock()
 	s.mu.RLock()
 	prefs := s.Prefs
-	d := diskCache{Emoji: s.CustomEmoji.Snapshot(), Usergroups: append([]slack.Usergroup(nil), s.Groups...), Prefs: &prefs,
+	d := diskCache{EmojiPacked: packEmoji(s.CustomEmoji.Snapshot()), Usergroups: append([]slack.Usergroup(nil), s.Groups...), Prefs: &prefs,
 		Names: map[string]string{}, Bots: map[string]BotInfo{}}
+	if !emojiAt.IsZero() {
+		d.EmojiAt = emojiAt.Unix()
+	}
 	for k, v := range s.names {
 		d.Names[k] = v
 	}
@@ -880,7 +1012,11 @@ func (s *Store) SaveCache() error {
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, filepath.Join(s.cacheDir, "meta.json"))
+	if err := os.Rename(tmp, filepath.Join(s.cacheDir, "meta.json")); err != nil {
+		return err
+	}
+	s.saved, s.savedGen, s.savedEmo = true, gen, emo
+	return nil
 }
 
 func SortAsc(m []slack.Message) {

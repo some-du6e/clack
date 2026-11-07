@@ -59,7 +59,7 @@ type call struct {
 // New builds the service. Call Boot before using it.
 func New(c *slack.Client, s *store.Store) *App {
 	a := &App{C: c, S: s, ready: make(chan struct{}), inflight: map[string]*call{}, subs: map[*sub]struct{}{},
-		presSeen: map[string]time.Time{}, files: newFileCache(256 << 20), pending: map[string]*pendingSend{},
+		presSeen: map[string]time.Time{}, files: newFileCache(fileCacheBytes), pending: map[string]*pendingSend{},
 		saved: map[string]bool{}, starred: map[string]bool{}, memberN: map[string]int{}}
 	if s.SelfID() == "" {
 		s.Lock()
@@ -256,12 +256,16 @@ func (a *App) Boot(ctx context.Context) error {
 			return nil
 		})
 	}
+	// Custom emoji (65k on Hack Club, ~7 MB of JSON) and usergroups come
+	// from the disk cache; emoji_changed keeps a running session current.
+	// Refresh them only when stale, and after startup so the parse does
+	// not compete with the first frames.
 	if a.S.CustomEmoji.Len() == 0 {
 		step("emoji", func() error { return a.loadEmoji(ctx) })
-	} else {
-		go a.loadEmoji(a.bg)
+	} else if a.S.EmojiAge() > EmojiMaxAge {
+		a.later(10*time.Second, func() { _ = a.loadEmoji(a.bg) })
 	}
-	go a.loadUsergroups(a.bg) // cosmetic; cached on disk after the first run
+	a.later(5*time.Second, func() { _ = a.loadUsergroups(a.bg) }) // cosmetic; cached on disk after the first run
 	wg.Wait()
 	if errConvs != nil {
 		a.bootErr = errConvs
@@ -317,9 +321,31 @@ func (a *App) loadEmoji(ctx context.Context) error {
 		log.Printf("emoji.list: %v", err)
 		return err
 	}
-	a.S.CustomEmoji.Set(m)
+	a.S.SetEmojiList(m)
 	_ = a.S.SaveCache()
 	return nil
+}
+
+// fileCacheBytes bounds Fetch's memory-only cache of authenticated
+// downloads (files.slack.com thumbnails and files, compressed bytes; the
+// image cache decodes from it). Was 256 MB.
+const fileCacheBytes = 48 << 20
+
+// EmojiMaxAge is how old the cached emoji map may be before Boot refetches
+// emoji.list in the background.
+var EmojiMaxAge = 6 * time.Hour
+
+// later runs f after d on a background goroutine, unless the app stops.
+func (a *App) later(d time.Duration, f func()) {
+	go func() {
+		t := time.NewTimer(d)
+		defer t.Stop()
+		select {
+		case <-t.C:
+			f()
+		case <-a.bg.Done():
+		}
+	}()
 }
 
 func (a *App) loadUsergroups(ctx context.Context) error {

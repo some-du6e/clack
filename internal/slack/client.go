@@ -91,8 +91,26 @@ func New(c Creds) *Client {
 	if c.EnterpriseURL != "" {
 		ent = strings.TrimSuffix(c.EnterpriseURL, "/") + "/api/"
 	}
-	return &Client{HTTP: &http.Client{Transport: tr, Timeout: 60 * time.Second}, Creds: c, base: base, ent: ent,
+	cl := &Client{HTTP: &http.Client{Transport: tr, Timeout: 60 * time.Second}, Creds: c, base: base, ent: ent,
 		sem: make(chan struct{}, MaxConcurrent), learned: map[string]bool{}}
+	if isLoopback(base) {
+		cl.EdgeURL = base + "edge/" // a local fake (internal/fakeslack) serves the edge API too
+	}
+	return cl
+}
+
+// isLoopback reports whether u's host is localhost or a loopback address.
+func isLoopback(u string) bool {
+	p, err := url.Parse(u)
+	if err != nil {
+		return false
+	}
+	if h := p.Hostname(); h == "localhost" {
+		return true
+	} else if ip := net.ParseIP(h); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // Error is a Slack API {"ok":false} error.

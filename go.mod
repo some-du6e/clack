@@ -16,7 +16,7 @@ require (
 	gioui.org/shader v1.0.9 // indirect
 	git.wow.st/gmp/jni v0.0.0-20210610011705-34026c7e22d0 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
-	github.com/go-text/typesetting v0.3.5 // indirect
+	github.com/go-text/typesetting v0.3.5
 	github.com/tetratelabs/wazero v1.11.0
 	golang.org/x/exp/shiny v0.0.0-20250408133849-7e4ce0ab07d0 // indirect
 	golang.org/x/net v0.48.0 // indirect

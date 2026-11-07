@@ -20,7 +20,7 @@ import (
 // Dp/Sp and converted with gtx so the composer scales with the window.
 
 // Lato is the UI typeface (embedded by internal/ui/theme).
-const Lato = "Lato"
+const Lato = theme.Typeface
 
 // Mono is the code typeface list; the shaper falls back left to right.
 const Mono = "Monaco, Menlo, Consolas, Courier New, Go Mono, monospace"

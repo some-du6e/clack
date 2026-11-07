@@ -1,0 +1,117 @@
+name: perf
+# Reproducible performance numbers against internal/fakeslack (a synthetic,
+# Hack Club-sized workspace; no Slack traffic). Writes a markdown summary to
+# the run page, uploads pprof CPU/heap profiles, and appends one row per
+# push to docs/perf-history.md on the perf-history branch.
+on:
+  push:
+    branches: [perf, ui, main]
+  workflow_dispatch:
+    inputs:
+      base:
+        description: baseline commit for the before/after comparison
+        default: 4222be3
+
+permissions:
+  contents: write # perf-history branch
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
+
+concurrency:
+  group: perf-${{ github.ref }}
+  cancel-in-progress: false # queue: every pushed commit gets its numbers
+
+jobs:
+  perf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [head, base]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: baseline tree (harness from HEAD, everything else from the base commit)
+        if: matrix.variant == 'base'
+        env:
+          BASE: ${{ inputs.base || '4222be3' }}
+        run: |
+          keep='^(\.github/perf/|\.github/workflows/perf\.yml|internal/fakeslack/|internal/ui/perf_test\.go|internal/core/perf_test\.go|cmd/clack/debug\.go|cmd/clack/main\.go|internal/slack/client\.go|internal/ui/app\.go)'
+          for f in $(git diff --name-only "$BASE" HEAD | grep -Ev "$keep"); do
+            if git cat-file -e "$BASE:$f" 2>/dev/null; then git checkout -q "$BASE" -- "$f"; else git rm -q -f "$f"; fi
+          done
+          git status --short | head -50
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: deps (Gio, Xvfb, Mesa llvmpipe)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0 mesa-utils
+      - name: build
+        run: |
+          mkdir -p dist perf-out/process
+          CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o dist/clack-linux-amd64 ./cmd/clack
+          CGO_ENABLED=1 go build -trimpath -o dist/clack-unstripped ./cmd/clack
+          go build -o dist/fakeslackd ./internal/fakeslack/fakeslackd
+          s=$(stat -c %s dist/clack-linux-amd64)
+          echo "$(awk "BEGIN{printf \"%.1f MB\", $s/1048576}") stripped ($s bytes)" > perf-out/binsize.txt
+      - name: binary size by package
+        run: |
+          go tool nm -size -sort size dist/clack-unstripped | python3 -c '
+          import sys, collections
+          tot = collections.Counter()
+          for l in sys.stdin:
+              f = l.split()
+              if len(f) < 4: continue
+              name = " ".join(f[3:])
+              for p in ("type:", "go:", "go.shape."): name = name.removeprefix(p)
+              head, slash, tail = name.rpartition("/")
+              tot[head + slash + tail.split(".")[0]] += int(f[1])
+          for k, v in tot.most_common(30): print(f"{v/1048576:8.2f} MB  {k}")
+          ' | tee perf-out/binsize-packages.txt
+      - name: real process (Xvfb, cold + warm starts, idle RSS)
+        run: .github/perf/process.sh dist/clack-linux-amd64 dist/fakeslackd perf-out/process
+      - name: go benchmarks (layout + llvmpipe GPU)
+        env:
+          CLACK_BENCH_GPU: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a -s "-screen 0 1440x900x24" .github/perf/bench.sh perf-out
+      - name: startup CPU profile (top)
+        run: go tool pprof -top -nodecount 30 dist/clack-unstripped perf-out/process/startup.cpu.pprof > perf-out/process/startup.cpu.top.txt 2>&1 || true
+      - name: summary
+        env:
+          CLACK_BENCH_GPU: "1"
+        run: |
+          export RUN_DATE=$(date -u +%Y-%m-%d)
+          ref="${GITHUB_REF_NAME}"; [ "${{ matrix.variant }}" = base ] && ref="baseline ${{ inputs.base || '4222be3' }}"
+          python3 .github/perf/summary.py perf-out "$GITHUB_SHA" "$ref" >> "$GITHUB_STEP_SUMMARY"
+          { echo; echo '### Binary size by package'; echo '```'; cat perf-out/binsize-packages.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: perf-${{ matrix.variant }}
+          path: |
+            perf-out/
+            !perf-out/*.test
+      - name: append to perf-history
+        if: github.event_name == 'push' && matrix.variant == 'head'
+        run: |
+          git config user.name "clack-perf"
+          git config user.email "clack-perf@users.noreply.github.com"
+          git fetch -q origin perf-history || true
+          if git rev-parse -q --verify origin/perf-history >/dev/null; then
+            git worktree add -q ../hist origin/perf-history && (cd ../hist && git checkout -q -B perf-history)
+          else
+            git worktree add -q --detach ../hist && (cd ../hist && git checkout -q --orphan perf-history && git rm -rq . )
+          fi
+          f=../hist/docs/perf-history.md
+          mkdir -p ../hist/docs
+          if [ ! -f "$f" ]; then
+            printf '# Clack perf history\n\nOne row per push (perf workflow, GitHub runner, llvmpipe). Paint and RSS are the real binary on Xvfb against fakeslackd.\n\n| date | commit | branch | warm first paint | cold first paint | idle RSS | session heap | channel switch | scroll frame | typing frame / allocs | picker open | binary |\n|---|---|---|---|---|---|---|---|---|---|---|---|\n' > "$f"
+          fi
+          cat perf-out/history-row.md >> "$f"
+          cd ../hist && git add docs/perf-history.md && git commit -qm "perf: ${GITHUB_SHA::7} on ${GITHUB_REF_NAME}" && git push -q origin perf-history

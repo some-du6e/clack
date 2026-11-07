@@ -515,7 +515,9 @@ func (a *App) updateTitle() {
 	t := a.windowTitle()
 	if t != a.title {
 		a.title = t
-		a.win.Option(app.Title(t))
+		if a.win != nil { // nil in headless benchmarks
+			a.win.Option(app.Title(t))
+		}
 	}
 }
 

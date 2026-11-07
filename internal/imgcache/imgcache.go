@@ -64,6 +64,13 @@ type entry struct {
 	n    int // decoded bytes
 }
 
+// DefaultLimit is the decoded-pixel budget. Images are decoded at display
+// size, so this holds a few screens of photos (a 720 px thumbnail is
+// ~1.5 MB) plus hundreds of avatars and emoji; anything evicted is decoded
+// again off the UI goroutine from the disk cache or core's raw-bytes cache.
+// It was 384 MB, which a long image channel actually filled.
+const DefaultLimit = 64 << 20
+
 // New creates a cache. diskDir may be "" to disable the disk cache.
 // invalidate is called (from any goroutine) when an image becomes ready.
 func New(fetch Fetcher, diskDir string, invalidate func()) *Cache {
@@ -79,7 +86,7 @@ func New(fetch Fetcher, diskDir string, invalidate func()) *Cache {
 		invalidate: invalidate,
 		entries:    map[key]*list.Element{},
 		lru:        list.New(),
-		maxBytes:   384 << 20,
+		maxBytes:   DefaultLimit,
 		inflight:   map[key]bool{},
 		failed:     map[key]time.Time{},
 		sem:        make(chan struct{}, 8),

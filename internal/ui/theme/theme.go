@@ -22,12 +22,17 @@ import (
 	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
+	gtfont "github.com/go-text/typesetting/font"
 
 	"github.com/some-du6e/yoloslackgoclient/assets/fonts"
 )
 
 // Typeface is the font family name registered for the embedded Lato faces.
-const Typeface font.Typeface = "Lato"
+// It is not "Lato" so that a system-installed Lato (Ubuntu's fonts-lato, a
+// different build) can never win the family match: Gio's font map lists
+// system fonts before the embedded collection, so with the plain name every
+// label rendered with the system files (and parsed them into the heap).
+const Typeface font.Typeface = "Clack Lato"
 
 // Font weights in Gio units (CSS weight minus 400).
 const (
@@ -119,7 +124,14 @@ func Bare(dark bool) *Theme {
 // NewShaperFor builds a mode's shaper (Lato + the system font index as a
 // fallback for scripts Lato lacks). Safe to call from any goroutine.
 func NewShaperFor(dark bool) *text.Shaper {
-	return text.NewShaper(text.WithCollection(FacesFor(dark)))
+	coll := FacesFor(dark)
+	sh := text.NewShaper(text.WithCollection(coll))
+	faces := make([]*gtfont.Face, len(coll))
+	for i, f := range coll {
+		faces[i] = f.Face.Face()
+	}
+	registerShaperFaces(sh, faces) // Gio indexes collection faces in order
+	return sh
 }
 
 // NewShaper is the light-mode shaper (compatibility).
