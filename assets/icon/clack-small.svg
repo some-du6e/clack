@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Clack</title>
+  <defs>
+    <linearGradient id="cbg" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#7B5CFF"/>
+      <stop offset="1" stop-color="#3B1FB8"/>
+    </linearGradient>
+    <radialGradient id="csheen" cx="0.3" cy="0.12" r="0.75">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="225" fill="url(#cbg)"/>
+  <rect width="1024" height="1024" rx="225" fill="url(#csheen)"/>
+  <g>
+    <path d="M639.9 330.2A236 236 0 1 0 639.9 669.8" fill="none" stroke="#FFFFFF" stroke-width="196" stroke-linecap="round"/>
+    <path d="M183.8 583.8Q180.9 699.1 205.7 810.9Q320 770.2 412.8 797.4Z" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="36" stroke-linejoin="round"/>
+    <path d="M729.9 500L809.9 500" stroke="#FFB547" stroke-width="112" stroke-linecap="round"/>
+  </g>
+</svg>

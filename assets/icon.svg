@@ -1,4 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="14" fill="#7c3aed"/>
-  <text x="32" y="32" dy="0.35em" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="32" font-weight="600" fill="#ffffff">Y</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Clack</title>
+  <defs>
+    <linearGradient id="cbg" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#7B5CFF"/>
+      <stop offset="1" stop-color="#3B1FB8"/>
+    </linearGradient>
+    <radialGradient id="csheen" cx="0.3" cy="0.12" r="0.75">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="225" fill="url(#cbg)"/>
+  <rect width="1024" height="1024" rx="225" fill="url(#csheen)"/>
+  <g>
+    <path d="M660.3 334.1A248 248 0 1 0 660.3 665.9" fill="none" stroke="#FFFFFF" stroke-width="150" stroke-linecap="round"/>
+    <path d="M194.4 580.8Q190 692.9 206.4 810.2Q325.5 760.7 415.1 786.6Z" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="28" stroke-linejoin="round"/>
+    <path d="M748.9 432.2L821.8 386.6" stroke="#FFB547" stroke-width="62" stroke-linecap="round"/>
+    <path d="M748.9 567.8L821.8 613.4" stroke="#FFB547" stroke-width="62" stroke-linecap="round"/>
+  </g>
 </svg>

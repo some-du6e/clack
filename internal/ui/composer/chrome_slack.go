@@ -23,6 +23,7 @@ type crFrame struct {
 	h          Host
 	inputP     slackc.Props // MessageInput's props under a patch (nil: none)
 	wysP       slackc.Props // WysiwygContainer's
+	acP        slackc.Props // TextyAutocomplete's (Composer.Layout applies them)
 	input, att layout.Widget
 
 	W, maxY, margin, hintH int
@@ -203,6 +204,7 @@ func (c *chrome) textyProps() slackc.Props {
 	p["completeOnEmoji"] = true
 	p["completeOnMembers"] = true
 	p["completeOnChannels"] = true
+	p["children"] = []any{slackc.Child("TextyAutocomplete", c.textyACProps(), c.layoutTextyAC)}
 	return p
 }
 
@@ -222,6 +224,49 @@ func (c *chrome) layoutTexty(gtx layout.Context, p slackc.Props) layout.Dimensio
 	}
 	qs := crQuillClass.Enter(gtx, cs, 0)
 	defer qs.Leave()
+	if e, patched := kid(p, "TextyAutocomplete"); patched {
+		return slackc.LayoutElement(gtx, e)
+	}
+	return slackc.Component(gtx, "TextyAutocomplete", c, (*chrome).textyACProps, (*chrome).layoutTextyAC)
+}
+
+// TextyAutocomplete: the editor with its @ # : autocomplete (Slack's
+// memo between TextyInputWithAutocomplete and TextyInput). Its native
+// records what a plugin changed for the composer's Autocomplete
+// (Composer.Layout applies it): includeAllBroadcastKeywords (bChannel
+// offers every broadcast keyword) and disallowedResults (ids BetterBlock
+// hides from the rows).
+func (c *chrome) textyACProps() slackc.Props {
+	p := c.props()
+	p["completeOnEmoji"] = true
+	p["completeOnMembers"] = true
+	p["completeOnChannels"] = true
+	p["includeAllBroadcastKeywords"] = false
+	p["disallowedResults"] = []any{}
+	p["children"] = []any{slackc.Child("TextyInput", c.textyInputProps(), c.layoutTextyInput)}
+	return p
+}
+
+func (c *chrome) layoutTextyAC(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	c.f.acP = p
+	if e, patched := kid(p, "TextyInput"); patched {
+		return slackc.LayoutElement(gtx, e)
+	}
+	return slackc.Component(gtx, "TextyInput", c, (*chrome).textyInputProps, (*chrome).layoutTextyInput)
+}
+
+// TextyInput: the editor itself. In JS it has Slack's shape (plugins.js):
+// a memo of a class with getNumCharsOverLimit, whose ref exposes a
+// Quill-like editor fed from $texty (CharacterCounter counts with it).
+func (c *chrome) textyInputProps() slackc.Props {
+	p := c.props()
+	p["maxLength"] = MaxMessageLength
+	p["placeholder"] = c.cur.Placeholder
+	p["$texty"] = slackc.Props{"length": c.cur.Count, "index": c.cur.SelLo, "selected": c.cur.SelN}
+	return p
+}
+
+func (c *chrome) layoutTextyInput(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	if c.f.input == nil {
 		return layout.Dimensions{}
 	}
@@ -296,8 +341,12 @@ func (c *chrome) overflowProps() slackc.Props {
 		}))
 	}
 	if c.cur.Hide&(1<<crSend) == 0 || c.cur.Mode == modeEdit {
-		kids = append(kids, slackc.Child(crSubmitName, slackc.Props{"isDisabled": !c.cur.CanSend, "isEditing": c.cur.Mode == modeEdit}, func(gtx layout.Context, _ slackc.Props) layout.Dimensions {
-			return c.layoutSubmit(gtx)
+		sp := slackc.Props{"isDisabled": !c.cur.CanSend, "isEditing": c.cur.Mode == modeEdit}
+		if c.cur.Mode != modeEdit && c.cur.Hide&(1<<crSend) == 0 {
+			sp["children"] = []any{slackc.Child("SendButton", c.sendButtonProps(), c.layoutSendButton)}
+		}
+		kids = append(kids, slackc.Child(crSubmitName, sp, func(gtx layout.Context, p slackc.Props) layout.Dimensions {
+			return c.layoutSubmit(gtx, p)
 		}))
 	}
 	return slackc.Props{
@@ -396,7 +445,7 @@ func (c *chrome) layoutRow(gtx layout.Context, kids slackc.Element, patched bool
 		if !patched {
 			before := c.shown
 			m := op.Record(gtx.Ops)
-			d := c.layoutSubmit(gtx)
+			d := c.layoutSubmit(gtx, nil)
 			c.suf = append(c.suf, crSuf{call: m.Stop(), size: d.Size, ids: c.shown &^ before})
 		} else {
 			for i := suffix; i < n; i++ {
@@ -453,7 +502,7 @@ func (c *chrome) rowItem(gtx layout.Context, kids slackc.Element, patched bool, 
 			if it, ok := crItemNamed(s.Name); ok {
 				l, r = it.l, it.r
 			}
-			d = s.Native(gtx, nd.P)
+			d = s.Native(gtx, slotProps(nd))
 		} else {
 			c.one[0] = nd
 			d = slackc.LayoutElement(gtx, slackc.Element{Nodes: c.one[:]})
@@ -573,16 +622,67 @@ func (c *chrome) footDivider(gtx layout.Context, which uint8) layout.Dimensions 
 	return layout.Dimensions{Size: sz}
 }
 
-// layoutSubmit is the submit group: the send split button, or Cancel and
-// Save while editing.
-func (c *chrome) layoutSubmit(gtx layout.Context) layout.Dimensions {
+// layoutSubmit is the submit group: the send split button (SendButton),
+// or Cancel and Save while editing. p is TextySubmitButton's props under
+// a patch (nil otherwise).
+func (c *chrome) layoutSubmit(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	if c.cur.Mode == modeEdit {
 		return c.layoutEditButtons(gtx, c.f.h.Theme(), &c.cur)
 	}
 	if c.hidden(crSend) {
 		return layout.Dimensions{}
 	}
+	if e, patched := kid(p, "SendButton"); patched {
+		return c.layoutInline(gtx, e)
+	}
+	return slackc.Component(gtx, "SendButton", c, (*chrome).sendButtonProps, (*chrome).layoutSendButton)
+}
+
+// ---- SendButton: the send split button ----
+
+// SendButton is where CharacterCounter puts its count (before Original).
+// Under a patch its nodes and the plugin's are laid out in a row
+// (layoutInline), as in Slack's flex footer.
+func (c *chrome) sendButtonProps() slackc.Props {
+	p := c.props()
+	p["isDisabled"] = !c.cur.CanSend
+	p["type"] = "primary"
+	return p
+}
+
+func (c *chrome) layoutSendButton(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	return c.layoutSend(gtx, &c.fpal, &c.cur)
+}
+
+// layoutInline lays e's top-level nodes out left to right, centred on the
+// tallest. The hit rects of the buttons a node draws move with it.
+func (c *chrome) layoutInline(gtx layout.Context, e slackc.Element) layout.Dimensions {
+	c.inl = c.inl[:0]
+	h := 0
+	for _, nd := range e.Nodes {
+		before := c.shown
+		m := op.Record(gtx.Ops)
+		var d layout.Dimensions
+		if s, ok := slackc.SlotOf(nd); ok && s.Native != nil {
+			d = s.Native(gtx, slotProps(nd)) // our own part: its native, as rowItem does
+		} else {
+			c.inlOne[0] = nd
+			d = slackc.LayoutElement(gtx, slackc.Element{Nodes: c.inlOne[:]})
+			c.inlOne[0] = nil
+		}
+		c.inl = append(c.inl, crSuf{call: m.Stop(), size: d.Size, ids: c.shown &^ before})
+		h = max(h, d.Size.Y)
+	}
+	x := 0
+	for _, s := range c.inl {
+		if s.size.X <= 0 {
+			c.shown &^= s.ids
+			continue
+		}
+		c.place(gtx, s.call, image.Pt(x, (h-s.size.Y)/2), s.ids)
+		x += s.size.X
+	}
+	return layout.Dimensions{Size: image.Pt(x, h)}
 }
 
 // ---- ShortcutsMenuTriggerButton (row 36): the + ----

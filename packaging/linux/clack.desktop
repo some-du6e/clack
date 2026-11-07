@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Clack
+GenericName=Chat client
+Comment=Native Slack client
+Exec=clack %u
+Icon=clack
+Terminal=false
+Categories=Network;InstantMessaging;Chat;
+MimeType=x-scheme-handler/slack;
+StartupWMClass=clack
+StartupNotify=true
+Keywords=Slack;chat;messaging;team;

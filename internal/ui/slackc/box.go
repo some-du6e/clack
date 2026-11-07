@@ -113,6 +113,7 @@ type box struct {
 	natLaid     dimsF   // size the layout used
 	natCall     op.CallOp
 	natDrawn    bool
+	natLive     bool // natDrawn with an input source (not a measure pass)
 	natFrame    uint64
 	natDrawCons consKey
 	natReal     dimsF

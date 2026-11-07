@@ -959,3 +959,20 @@ From the `slick` workflow's acceptance run over Slick @ f52d55d (53 plugins, bui
 Filter-only or source-matched patches: ShowSendingBot (memo whose source has `c-message_kit__gutter__left`, i.e. MessageKitGutter), CharacterCounter (`{filter: isTextyInput}`), BetterGifs (`{filter: isGifPicker}`), NoUpsell (`{filter}` over every known name), ChannelListTyping (`{displayName: 'Channel', filter: isSidebarChannel}`, the sidebar row).
 
 Thunks Slick plugins patch or dispatch beyond the PLUGINS-taut.md table: `currentUserEndedTyping` (SilentTyping), `openEditProfileModal` (Nicknames), `startHuddle` (BetterHuddles), `showSavedItemNotification`, `autocompleteMembers`, `getMemberContextMenuTemplate` (already listed), `handleDeepLink` (`{uri}`, ChatTabs, InstalledApps; default native: `UIHooks.DeepLink`). They are in `taut.ThunkCatalogue` and route through `taut.Dispatch` like the others; the UI dispatches them where Slack would. New slice: `reactions` (BetterBlock filters it), `_rxn_key` → the message's `reactions`, in PLUGINS-state.md.
+
+### 9.1 Where each Slick name is wired (taut-ui, 2026-11-07)
+
+Every name in §9 is a `slackc` boundary. "Empty" means Clack has no such surface: the point draws nothing natively, so what a plugin adds still shows. `TestSlickView*` tests in each package (workflow `ui-slick`) install the real built Slick plugins and check the native views.
+
+| owner | names → where | empty points |
+|---|---|---|
+| messages, richview | Message, ThreadReplyGeneric (row.go `layoutMessage`); BaseMessageAvatar (between MessageAvatar and ConnectedBaseAvatar, as child slots); MessageText (wraps MessageBlocks → Blocks); MessageFiles, MessageKitAttachments (`tailParts`, filter the body by id); MessageFile (richview `compFile`); ThreadReplies, ReplyBarAvatar (thread bar); MemberSlug (MemberLink's child slot); MessageAttachmentYouTube → AttachmentTitle (YouTube unfurls); MessageKitGutter, UnstyledButton (already wired) | BaseVisuallyHiddenMessageText, CodeChannelEntityCard |
+| composer | TextyAutocomplete, TextyInput (the `isTextyInput` filter target, shaped like Slack's class in composer/plugins.js), SendButton, MultiFileUploadItem; `currentUserEndedTyping` dispatched | FileFieldset, EditFileDialogTitle |
+| popups | ProfileHoverCard, MemberProfileBaseEntity, Presence, LocalTimeRow, Menu (inside MenuFromTemplate), MessageActionsMenu, ContextMenuTriggerWithKeyboardFocus (channel menu inside ChannelContextMenu), BaseSearch, SearchInputBox, SearchAutocomplete, GifListItem, GifPicker (real-source markers for `isGifPicker`), Content, AppDetailsOverflow; `openEditProfileModal` dispatched | EditProfileFormPane (mounted briefly on Edit profile), AboutPage |
+| views | ActivityThread, ActivityDM, ActivityRowContentMultiLine/SingleLine/Detailed/Dense, DmsList, DmsListItem, DmsChannel, PeopleGrid, HuddleMvaWindowTitle, HuddleBottomBarContent, HuddleInviteWindowWithPreviewContent (live-huddle rows); `startHuddle` dispatched | HuddleRecordingIndicator, BaseDrawRenderer, HuddleMiniPanel |
+| shell (ui root) | ChannelSidebar, ConnectedChannel → Channel (the sidebar row; real-source marker for `isSidebarChannel`) → ChannelContextMenu → ContextMenuTriggerWithKeyboardFocus → ListChannelEntity + BaseChannelSuffix, ClientPrimaryView | ProgressiveDisclosureSuccessCoachmarkWrapper |
+
+Known limits:
+- **React context doesn't cross nested slackc roots** until the JS side implements `NestedBridge.RenderIn` (slackc passes the parent root and node already). A Provider a row-level patch adds doesn't reach MessageText/Blocks/MessageFile, so MessageLogger's edit history and ShowSendingBot's grouped-row badge don't show.
+- **No huddle call UI:** CallTimer, LetMeSee and BetterHuddles get their points but no live call to act on.
+- **Slack exports and stores Clack lacks:** `hasSlackbotCustomResponseInThread` (CustomSlackbot), `ClientStoreContext`/`clientHuddles` (CallTimer), the pending-file and edit-file APIs (AnonymiseFileNames' toggle), a team switcher (AccountSwitcher's Menu target).
