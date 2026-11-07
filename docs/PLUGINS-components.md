@@ -56,7 +56,7 @@ Clack's `slackc.Render(gtx, name, props, native)` has to reproduce these rules e
 | 33 | WysiwygContainer | patch + lazy (RichTextInput) | OwlMode; richTextInput | composer/chrome.go:`(*chrome).Layout` | comp | drawn |
 | 34 | TextyButtons | patch | SlimMessageBox; buttons infra | composer/chrome.go:`(*chrome).layoutBar` + `layoutFooter` | comp | drawn |
 | 35 | TextyButtonOverflow | patch | buttons infra (every `composer.addButton`) | composer/chrome.go:`(*chrome).layoutFooter` | comp | drawn, no plugin slot |
-| 36 | ShortcutsMenuTriggerButton | patch | OwlMode | composer/chrome.go:`layoutFooter` (`crShortcut`) | comp | button only, no menu |
+| 36 | ShortcutsMenuTriggerButton | patch | OwlMode | composer/chrome_slack.go: the **+** (attach/shortcuts) button, per the live props (`onFilesSelected`, `--shortcuts`) | comp | wrapped |
 | 37 | BaseContextBarV2 | patch | HaikuWarning, OwlMode | missing (no bar between list and composer; conversation.go:`layoutConvo`) | comp | **missing** |
 | 38 | MessageInputRoadblock | patch | RestrictedChannelWarning | missing (composer always shown) | comp | **missing** |
 | 39 | ThreadTypingIndicator | patch | BetterTypingIndicator | composer/chrome.go:`(*chrome).layoutHint` (+ typing.go `typingText`) | comp | text only |
