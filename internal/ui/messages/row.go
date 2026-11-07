@@ -404,7 +404,7 @@ func (r *row) layoutWrapper(gtx layout.Context, p slackc.Props) layout.Dimension
 
 // layoutBackground is MessageBackground: the hover/pinned/editing/highlight
 // fill under the labels and the gutter.
-func (r *row) layoutBackground(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	rc := r.rc
 	c := rc.c
 	m := &r.m
@@ -424,7 +424,7 @@ func (r *row) layoutBackground(gtx layout.Context, _ slackc.Props) layout.Dimens
 			mods |= 4
 		}
 	}
-	st := msgClass.Enter(gtx, hoverState(rc.hovered), mods)
+	st := msgClass.EnterClass(gtx, hoverState(rc.hovered), mods, slackc.ExtraClass(p))
 	defer st.Leave()
 	if st.Hidden() {
 		r.height = 0
@@ -568,7 +568,7 @@ func (r *row) layoutAvatar(gtx layout.Context, p slackc.Props) layout.Dimensions
 		s = dp(gtx, float32(p.IntOr("size", int(mt.avatar))))
 		url = avatarURL(rc.h, p, r.m.User, url)
 	}
-	st := avatarClass.Enter(gtx, btnState(gtx, &r.avatarBtn), 0)
+	st := avatarClass.EnterClass(gtx, btnState(gtx, &r.avatarBtn), 0, slackc.ExtraClass(p))
 	defer st.Leave()
 	if st.Hidden() {
 		return layout.Dimensions{}
@@ -787,10 +787,10 @@ func (r *row) layoutSender(gtx layout.Context, _ slackc.Props) layout.Dimensions
 
 // layoutBaseSender is BaseMessageSender: the name button, APP badge and
 // status emoji. Returns the width drawn and the name's baseline.
-func (r *row) layoutBaseSender(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	rc := r.rc
 	c := rc.c
-	st := senderClass.Enter(gtx, 0, 0)
+	st := senderClass.EnterClass(gtx, 0, 0, slackc.ExtraClass(p))
 	defer st.Leave()
 	if st.Hidden() {
 		return layout.Dimensions{}
