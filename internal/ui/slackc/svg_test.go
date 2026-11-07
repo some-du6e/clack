@@ -1,8 +1,11 @@
 package slackc
 
 import (
+	"fmt"
 	"image/color"
 	"math"
+	"runtime"
+	"strings"
 	"testing"
 
 	"gioui.org/f32"
@@ -615,6 +618,34 @@ func TestSVGPaintAllocs(t *testing.T) {
 	}
 	run()
 	if n := testing.AllocsPerRun(50, run); n > 0 {
+		old := runtime.MemProfileRate
+		runtime.MemProfileRate = 1
+		for i := 0; i < 20; i++ {
+			run()
+		}
+		runtime.GC()
+		runtime.GC()
+		runtime.MemProfileRate = old
+		recs := make([]runtime.MemProfileRecord, 4096)
+		k, _ := runtime.MemProfile(recs, true)
+		for _, r := range recs[:min(k, len(recs))] {
+			var b strings.Builder
+			fr := runtime.CallersFrames(r.Stack())
+			hit := false
+			for {
+				f, more := fr.Next()
+				if strings.Contains(f.Function, "svg") {
+					hit = true
+				}
+				fmt.Fprintf(&b, "\n\t%s %s:%d", f.Function, f.File, f.Line)
+				if !more {
+					break
+				}
+			}
+			if hit && r.AllocObjects >= 20 {
+				t.Logf("%d allocs, %d bytes:%s", r.AllocObjects, r.AllocBytes, b.String())
+			}
+		}
 		t.Fatalf("paint allocates %v times per frame", n)
 	}
 }
