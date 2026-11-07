@@ -127,15 +127,20 @@ type avPrefs struct {
 // when it is unset). Show it with h.ShowOverlay.
 func NewPreferencesModal(h Host, section string) *Modal {
 	_ = section // only Availability exists so far
+	p := newAvPrefs(h)
+	p.modal = NewModal(h, ModalOpts{Title: "Preferences", Width: 800, HeadH: 76, Body: p.layout})
+	return p.modal
+}
+
+func newAvPrefs(h Host) *avPrefs {
 	p := &avPrefs{h: h, hr: cxHours{Enabled: true, Days: "every_day", HuddleStatus: true, FocusStatus: true}}
 	p.from.Mins, p.to.Mins = 9*60, 17*60
 	p.from.NoIcon, p.to.NoIcon = true, true
 	p.from.Disabled, p.to.Disabled = true, true
 	p.from.OnChange = p.hoursChanged
 	p.to.OnChange = p.hoursChanged
-	p.modal = NewModal(h, ModalOpts{Title: "Preferences", Width: 800, HeadH: 76, Body: p.layout})
 	p.load()
-	return p.modal
+	return p
 }
 
 func (p *avPrefs) load() {
@@ -175,9 +180,12 @@ func (p *avPrefs) save() {
 	do(h, "", func(ctx context.Context) error { return cxSetWorkingHours(ctx, h, hr) })
 }
 
-func (p *avPrefs) events(gtx layout.Context, org image.Point) {
+func (p *avPrefs) events(gtx layout.Context, org image.Point, cx int) {
 	h := p.h
 	for i := range p.nav {
+		if p.modal == nil {
+			break
+		}
 		if !p.nav[i].Clicked(gtx) || i == 0 {
 			continue
 		}
@@ -222,7 +230,7 @@ func (p *avPrefs) events(gtx layout.Context, org image.Point) {
 				h.Invalidate()
 			}})
 		}
-		r := image.Rectangle{Min: org.Add(image.Pt(dp(gtx, 221), dp(gtx, 185))), Max: org.Add(image.Pt(dp(gtx, 221+160), dp(gtx, 221)))}
+		r := image.Rectangle{Min: org.Add(image.Pt(cx, dp(gtx, 185))), Max: org.Add(image.Pt(cx+dp(gtx, 160), dp(gtx, 221)))}
 		h.ShowOverlay(NewMenuOpts(h, items, MenuOpts{Anchor: r, Width: 160}))
 	}
 }
@@ -247,7 +255,7 @@ func (p *avPrefs) layout(gtx layout.Context) layout.Dimensions {
 		return layout.Dimensions{}
 	}
 	org := dtModalOrigin(gtx, p.modal)
-	p.events(gtx, org)
+	p.events(gtx, org, dp(gtx, 221))
 	if p.modal.done {
 		return layout.Dimensions{}
 	}
@@ -293,8 +301,16 @@ func (p *avPrefs) layout(gtx layout.Context) layout.Dimensions {
 		})
 	}
 
-	// Availability page
-	cx := dp(gtx, 221)
+	p.page(gtx, org, dp(gtx, 221), bw)
+	return layout.Dimensions{Size: image.Pt(bw, bh)}
+}
+
+// page draws the Availability page body with its left edge at cx and its
+// right edge at bw (body coordinates); org is the body origin in window
+// coordinates (for the dropdown anchors). Returns the page height.
+func (p *avPrefs) page(gtx layout.Context, org image.Point, cx, bw int) int {
+	th := p.h.Theme()
+	cl := colorsOf(th)
 	cw := maxInt(1, bw-cx)
 	at(gtx, image.Pt(cx, dp(gtx, 32)-dp(gtx, 14)), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, dp(gtx, 28), func(gtx layout.Context) layout.Dimensions {
@@ -371,7 +387,50 @@ func (p *avPrefs) layout(gtx layout.Context) layout.Dimensions {
 			})
 		})
 	}
-	return layout.Dimensions{Size: image.Pt(bw, bh)}
+	return dp(gtx, 580)
+}
+
+// ---- the page as a widget (ui-shell's single Preferences modal) ----
+
+// OpenPreferencesSection, when set by the ui root, opens its Preferences
+// modal on a section ("availability"); "Edit your working hours" uses it.
+var OpenPreferencesSection func(section string)
+
+// AvailabilityPage is the Preferences > Availability page body (working
+// hours and automatic statuses) without a modal or nav, for the ui root's
+// Preferences modal. It loads the prefs on creation and saves on change.
+type AvailabilityPage struct {
+	p      *avPrefs
+	origin image.Point
+}
+
+// NewAvailabilityPage builds the page. Call SetOrigin each frame with the
+// page's top-left in window coordinates so its dropdowns open in place.
+func NewAvailabilityPage(h Host) *AvailabilityPage {
+	return &AvailabilityPage{p: newAvPrefs(h)}
+}
+
+// SetOrigin sets the page's top-left corner in window coordinates.
+func (a *AvailabilityPage) SetOrigin(pt image.Point) { a.origin = pt }
+
+// Layout draws the page body using the constraint width.
+func (a *AvailabilityPage) Layout(gtx layout.Context) layout.Dimensions {
+	drain()
+	gtx.Constraints.Min = image.Point{}
+	w := gtx.Constraints.Max.X
+	a.p.events(gtx, a.origin, 0)
+	h := a.p.page(gtx, a.origin, 0, w)
+	return layout.Dimensions{Size: image.Pt(w, h)}
+}
+
+// openPreferences opens Preferences on section: the root's modal when it
+// installed OpenPreferencesSection, else this package's own.
+func openPreferences(h Host, section string) {
+	if OpenPreferencesSection != nil {
+		OpenPreferencesSection(section)
+		return
+	}
+	h.ShowOverlay(NewPreferencesModal(h, section))
 }
 
 // para draws a 15/22 #454447 paragraph with its top at y.
