@@ -1481,8 +1481,8 @@ func (v *Activity) undoBar(gtx C) {
 	}
 	bg, fg, link := rgb(0x1d1c1d), rgb(0xffffff), rgb(0x1d9bd1)
 	if v.th.Dark {
-		bg, fg = rgb(0xe8e8e8), rgb(0x1d1c1d)
-		link = rgb(0x1264a3)
+		// base-inv-pry / content-inv-pry / content-inv-hgl-1 in dark
+		bg, fg, link = rgb(0x212428), rgb(0xf8f8f8), rgb(0x2ba5ce)
 	}
 	m := op.Record(gtx.Ops)
 	g := gtx
@@ -1699,7 +1699,7 @@ func (v *Activity) actStatus(gtx C, it *core.ActivityItem, unread bool) D {
 	s := gtx.Dp(20)
 	c := rgb(0xd7d7da)
 	if v.th.Dark {
-		c = rgb(0x3b3d42)
+		c = rgb(0x212428) // plt-gray-10
 	}
 	theme.Circle(gtx, image.Pt(s/2, s/2), s, c)
 	g := gtx

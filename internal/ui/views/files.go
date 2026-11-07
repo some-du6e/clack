@@ -662,7 +662,7 @@ func (f *Files) templatesHead(gtx C) D {
 						sz := image.Pt(tw+gtx.Dp(8), gtx.Dp(20))
 						tagBg, tagFg := rgb(0xf0f3fc), rgb(0x112377)
 						if f.th.Dark {
-							tagBg, tagFg = rgb(0x1c2647), rgb(0xc5d1ff)
+							tagBg, tagFg = rgb(0x040b3d), rgb(0xe4e8f4) // base-education / content-education
 						}
 						rrect(gtx, image.Rectangle{Max: sz}, gtx.Dp(4), tagBg)
 						g := gtx
@@ -736,7 +736,10 @@ func (f *Files) tile(gtx C, i int, sz image.Point) D {
 		}
 		pageC, line0, line1 := rgb(0xffffff), rgb(0xd0d0d0), rgb(0xe8e8e8)
 		if f.th.Dark {
-			tint = theme.Mix(tint, f.p.Surface, 0.8)
+			tint = rgb(0x002f4b) // plt-lagoon-5
+			if t.list {
+				tint = rgb(0x361e00) // plt-honeycomb-0
+			}
 			pageC, line0, line1 = rgb(0x2c2d30), rgb(0x55565a), rgb(0x3d3e42)
 		}
 		func() {
@@ -868,9 +871,10 @@ func (f *Files) segButton(gtx C, c *widget.Clickable, active bool, icon, label s
 		r := image.Rectangle{Max: d.Size}
 		rad := gtx.Dp(4)
 		if active {
-			bg := f.p.Link
+			// base-inv-hgl-1 (filled blue): #1264a3 light, #0a77a7 dark
+			bg := f.lt(rgb(0x1264a3), rgb(0x0a77a7))
 			if c.Hovered() {
-				bg = rgb(0x0b4c8c)
+				bg = flatten(f.lt(argb(0x21122a59), argb(0x14d8eef6)), bg) // base-inv-hgl-1-hover
 			}
 			rrect(gtx, r, rad, bg)
 		} else {
@@ -1011,7 +1015,7 @@ func (f *Files) fileTile(gtx C, it *fileItem, size unit.Dp) D {
 		}
 		return f.th.Placeholder(gtx, image.Pt(s, s), gtx.Dp(8))
 	}
-	bg, fg, icon := fileTileStyle(it)
+	bg, fg, icon := fileTileStyle(it, f.th.Dark)
 	rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(8), bg)
 	g := gtx
 	g.Constraints = layout.Exact(image.Pt(s, s))
@@ -1021,10 +1025,13 @@ func (f *Files) fileTile(gtx C, it *fileItem, size unit.Dp) D {
 
 // fileTileStyle is the per-type tile Slack uses (Lists: #e19b06 with a
 // #fcf2d9 glyph, Canvases teal, PDFs red, ...).
-func fileTileStyle(it *fileItem) (bg, fg color.NRGBA, icon string) {
+func fileTileStyle(it *fileItem, dark bool) (bg, fg color.NRGBA, icon string) {
 	white := rgb(0xffffff)
 	switch {
 	case it.isList():
+		if dark {
+			return rgb(0xaa6c00), rgb(0x361e00), "list-view" // plt-honeycomb-40 / -0
+		}
 		return rgb(0xe19b06), rgb(0xfcf2d9), "list-view"
 	case it.isCanvas():
 		return rgb(0x1d9bd1), white, "canvas"
@@ -1041,6 +1048,9 @@ func fileTileStyle(it *fileItem) (bg, fg color.NRGBA, icon string) {
 	case strings.HasPrefix(it.Mime, "audio/"):
 		return rgb(0x7c3085), white, "volume"
 	case it.Mode == "snippet" || isCode(it.Filetype) || it.Filetype == "text":
+		if dark {
+			return rgb(0x3b3d42), white, "code"
+		}
 		return rgb(0x1d1c1d), white, "code"
 	case isDocType(it):
 		return rgb(0x1264a3), white, "files"

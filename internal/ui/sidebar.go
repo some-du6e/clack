@@ -346,7 +346,7 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 			if nw > tw {
 				nw = tw
 			}
-			at(gtx, image.Pt(tx, 0), image.Pt(nw, rowH), func(gtx layout.Context) layout.Dimensions {
+			at(gtx, image.Pt(tx, gtx.Dp(1)), image.Pt(nw, rowH) /* Slack: text 1px below center */, func(gtx layout.Context) layout.Dimensions {
 				return vcenter(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
 					return a.th.Label(gtx, 15, weight, fg, label)
 				})
@@ -367,7 +367,7 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 				if sel {
 					sc = theme.Over(theme.WithAlpha(c.SidebarActiveText, 0x99), c.SidebarActive)
 				}
-				at(gtx, image.Pt(tx+nw+gtx.Dp(6), 0), image.Pt(tw-nw-gtx.Dp(6), rowH), func(gtx layout.Context) layout.Dimensions {
+				at(gtx, image.Pt(tx+nw+gtx.Dp(6), gtx.Dp(1)), image.Pt(tw-nw-gtx.Dp(6), rowH), func(gtx layout.Context) layout.Dimensions {
 					return vcenter(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
 						return a.th.Label(gtx, 15, theme.Regular, sc, suffix)
 					})

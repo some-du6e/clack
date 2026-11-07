@@ -1370,7 +1370,7 @@ func (d *Drafts) eduCard(gtx C) D {
 		w, h := gtx.Constraints.Max.X, gtx.Dp(139)
 		bg := rgb(0xf4ede4)
 		if d.th != nil && d.th.Dark {
-			bg = rgb(0x2f2a24)
+			bg = rgb(0x2a1707) // plt-horchata-0
 		}
 		rrect(gtx, image.Rect(0, 0, w, h), gtx.Dp(12), bg)
 		g := gtx
