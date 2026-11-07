@@ -596,7 +596,8 @@ func TestMirrorOmitsUnset(t *testing.T) {
 				const walk = (v, path) => {
 					if (!v || typeof v !== 'object') return
 					for (const k of Object.keys(v)) {
-						if (v[k] === '' && !['text', 'display_name', 'real_name', 'status_text', 'status_emoji', 'first_name', 'last_name', 'title', 'value', 'creator', 'name'].includes(k)) bad.push(path + '.' + k)
+						// Slack's derived _*_lc names are always there, "" when the source is empty
+						if (v[k] === '' && !/^_\w+_lc$/.test(k) && !['text', 'display_name', 'real_name', 'status_text', 'status_emoji', 'first_name', 'last_name', 'title', 'value', 'creator', 'name'].includes(k)) bad.push(path + '.' + k)
 						walk(v[k], path + '.' + k)
 					}
 				}
