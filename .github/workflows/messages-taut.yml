@@ -2,7 +2,7 @@ name: messages-taut
 # The message list under Taut: builds Taut's published plugins with Taut's
 # own build:user-plugin (never committed: GPLv3) and runs internal/ui/messages'
 # plugin acceptance tests (ShutUpSlackbot, Censorship, BringBackSlackbot,
-# UserPronouns, WhoReacted) plus the zero-cost benchmark, on synthetic state.
+# UserPronouns, WhoReacted, ShowSendingBot) plus the zero-cost benchmark, on synthetic state.
 on:
   push:
     paths:
@@ -42,7 +42,7 @@ jobs:
           git -C /tmp/taut checkout -q "$TAUT_REF"
           cd /tmp/taut && npm ci --ignore-scripts --no-audit --no-fund
           mkdir -p "$GITHUB_WORKSPACE/dist/taut-plugins"
-          for n in ShutUpSlackbot Censorship BringBackSlackbot UserPronouns WhoReacted; do
+          for n in ShutUpSlackbot Censorship BringBackSlackbot UserPronouns WhoReacted ShowSendingBot; do
             f=$(ls plugins/$n.ts plugins/$n.tsx 2>/dev/null | head -1)
             npm run -s build:user-plugin -- "$f" "$GITHUB_WORKSPACE/dist/taut-plugins/$n.js"
           done
