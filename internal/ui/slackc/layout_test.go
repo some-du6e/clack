@@ -11,6 +11,7 @@ import (
 
 	"gioui.org/f32"
 	"gioui.org/io/input"
+	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -717,5 +718,98 @@ func TestHostChildren(t *testing.T) {
 	_, d := layoutJS(t, `{"t":"@","n":"TestPadded","k":1,"c":[{"t":"span","k":2,"p":{"id":"kid"}}]}`, 300, 300)
 	if d.Size.X != 50 || d.Size.Y < 30 {
 		t.Errorf("host with children: %v, want 50x≥30", d.Size)
+	}
+}
+
+func absY(b *box) float32 {
+	y := b.y + b.relY
+	for p := b.lp; p != nil; p = p.lp {
+		y += p.y + p.relY
+	}
+	return y
+}
+
+// TestInlineBaselines is OfficeHours' status editor: a button holding a
+// MrkdwnElement-like native (Gio Baseline), then a 38px text input. As in
+// Chrome, the native's text, the button and the input's text share the
+// line's baseline, and the input (centred text) doesn't push the line
+// taller than itself.
+func TestInlineBaselines(t *testing.T) {
+	RegisterHost(func(gtx layout.Context, h *Host) layout.Dimensions {
+		return layout.Dimensions{Size: image.Pt(40, 22), Baseline: 5} // baseline 17px from the top
+	}, "TestMrkdwn")
+	withStyles(t, func(n *Node, s *css.Style) {
+		switch n.ID {
+		case "line":
+			s.Display = css.DisplayBlock
+			s.Width = px(400)
+		case "in":
+			s.Height = px(38)
+			s.Width = px(200)
+		}
+	})
+	v, _ := layoutJS(t, `{"t":"div","k":1,"p":{"id":"line"},"c":[`+
+		`{"t":"button","k":2,"p":{"id":"btn"},"c":[{"t":"@","n":"TestMrkdwn","k":3,"p":{"id":"emoji"}}]},`+
+		`{"t":"input","k":4,"p":{"id":"in","value":"Out of office"}}]}`, 1000, 1000)
+	btn, in, line := byID(v, "btn"), byID(v, "in"), byID(v, "line")
+	host := byID(v, "emoji")
+	if btn == nil || in == nil || line == nil || host == nil {
+		t.Fatal("missing boxes")
+	}
+	if in.base < 0 || btn.lastBase < 0 {
+		t.Fatalf("no baselines: input %.1f, button %.1f", in.base, btn.lastBase)
+	}
+	hostBase := absY(host) + 17
+	inBase := absY(in) + in.base
+	btnBase := absY(btn) + btn.lastBase
+	if !near(hostBase, inBase) || !near(btnBase, inBase) {
+		t.Errorf("baselines differ: native %.1f, button %.1f, input %.1f", hostBase, btnBase, inBase)
+	}
+	// the input's text is centred in its 38px content box
+	lh := v.lineHeight(&in.st)
+	a, _, _, _ := v.metrics(&in.st)
+	if want := in.bd[0] + in.pad[0] + (38-lh)/2 + a; !near(in.base, want) {
+		t.Errorf("input baseline %.1f, want %.1f (centred text)", in.base, want)
+	}
+	if line.h > 38+1 {
+		t.Errorf("line box %.1f tall; an input sitting on its bottom edge would add the descent below 38", line.h)
+	}
+}
+
+// TestHostKeysReachDOM: a host component's keys (kit's FormTextInput)
+// reach JS as DOM events at its own node, so the plugin's wrapper
+// elements see them bubble, and Enter submits the enclosing form.
+func TestHostKeysReachDOM(t *testing.T) {
+	type sent struct {
+		k  int64
+		ev string
+	}
+	var got []sent
+	testDispatch = func(k int64, ev []byte) { got = append(got, sent{k, string(ev)}) }
+	t.Cleanup(func() { testDispatch = nil })
+	fired := false
+	RegisterHost(func(gtx layout.Context, h *Host) layout.Dimensions {
+		if !fired {
+			fired = true
+			h.DispatchKey(key.Event{Name: key.NameReturn, State: key.Press})
+			if !h.SubmitForm() {
+				t.Error("no form found")
+			}
+		}
+		return layout.Dimensions{Size: image.Pt(100, 20)}
+	}, "TestField")
+	withStyles(t, func(n *Node, s *css.Style) {})
+	layoutJS(t, `{"t":"form","k":1,"on":{"submit":1},"c":[{"t":"div","k":2,"on":{"keydown":2},"c":[{"t":"@","n":"TestField","k":3}]}]}`, 400, 400)
+	var key3, submit1 bool
+	for _, s := range got {
+		if s.k == 3 && strings.Contains(s.ev, `"type":"keydown"`) && strings.Contains(s.ev, `"key":"Enter"`) {
+			key3 = true
+		}
+		if s.k == 1 && strings.Contains(s.ev, `"type":"submit"`) {
+			submit1 = true
+		}
+	}
+	if !key3 || !submit1 {
+		t.Errorf("keydown at the field %v, submit at the form %v; dispatched %v", key3, submit1, got)
 	}
 }

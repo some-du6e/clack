@@ -289,6 +289,24 @@ func (v *View) doLayout(b *box, c lc) {
 	if ch < 0 {
 		ch = 0
 	}
+	switch {
+	case b.repl == rInput || b.repl == rSelect:
+		// Like Chrome, a text input or select sits on the baseline of the
+		// text it draws (vertically centred in the content box; see
+		// painter.input / selectCtl), not on its bottom edge.
+		lh := v.lineHeight(st)
+		a, _, _, _ := v.metrics(st)
+		oy := (ch - lh) / 2
+		if b.repl == rInput && oy < 0 {
+			oy = 0
+		}
+		b.base = b.bd[0] + b.pad[0] + oy + a
+		b.lastBase = b.base
+	case b.n != nil && b.n.T == "button" && b.base >= 0:
+		// A button's baseline is its first line's (HTML rendering), not
+		// the last line box an inline-block would use.
+		b.lastBase = b.base
+	}
 	b.w = cw + hp
 	b.h = ch + vp
 	b.contentW = max(b.contentW, cw+b.pad[1]+b.pad[3])
