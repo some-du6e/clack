@@ -3,6 +3,7 @@ package taut
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -199,6 +200,94 @@ var checks = map[string]pluginCheck{
 	},
 }
 
+// wantHooks is what each plugin registers with Taut's default config plus
+// enabled (checked against the plugins' sources): every listed name must be
+// registered. "styles"/"resize"/… give minimum counts.
+const wantHooks = `
+AccountSwitcher | components=MenuFromTemplate
+AdminBackend | components=MenuFromTemplate,RimetoMemberProfileOverflowMenu
+AnonymizeFilenames | thunks=addAndUploadPendingFile,uploadFiles
+BetterTypingIndicator | components=ThreadTypingIndicator,TypingNames styles=1
+BringBackSlackbot | slices=experiments exp=reskin_custom_responses
+BrowserPopouts |
+Censorship | thunks=searchInline,showNotification slices=messages,searchResults
+ClearURLs | linkTransforms=1
+ClickToLoad | components=AttachmentMedia styles=1
+CopyReacted | components=ReactionBar,ReactionAddButton styles=1
+CustomNameRecording | components=EditAudioButton styles=1
+Experiments | tabs=Experiments styles=1
+FasterSlack | styles=1 resize=1
+HaikuWarning | components=BaseContextBarV2 styles=1
+HuddleActivity | components=HuddleMetaEvent,HuddleBaseEvent,HuddlesAlertBannerBase,CaptionsSubmenu,CaptionsItemsMenu thunks=displayAlertMessage,processAwsTranscription,startEventLog,stopEventLog,stopHuddle,enqueueHuddleToast rtm=sh_room_join,sh_room_leave,sh_room_update peers=1
+HumanCount | components=BaseAvatarStack
+IdvStatus | components=BaseMessageSender styles=1
+InvisibleForward | sendTransforms=1
+LastSeen | components=RimetoProfilePresence,MemberProfileHoverCard,BasePresence,LocalTime rtm=presence_change,user_typing,message,reaction_added,reaction_removed,pin_added,pin_removed,file_shared,sh_room_join styles=1
+NativeAtChannel | thunks=autocompleteMembers,prepareAndSendMessage,clearDrafts,chatDeleteFetcher,commitMessageEdit rtm=message,view_opened actionable=1
+Nicknames | components=MenuFromTemplate,RimetoMemberProfileOverflowMenu thunks=getMemberContextMenuTemplate slices=members styles=1
+NoTrack |
+OfficeHours |
+Oneko |
+OwlMode | components=InputContainer,MessageInput,WysiwygContainer,BaseContextBarV2,ShortcutsMenuTriggerButton,ReactionBar,MessageActions,MessageActionButtonReaction,EmojiPickerPopover,EmojiPicker,ViewBlocks,MessageBlocks thunks=prepareAndSendMessage,currentUserStartedTyping,syncDraftCreate,syncDraftUpdates,changeReactionFromUserAction,submitAddOrRemoveReaction rtm=view_opened buttons=taut-owl-mode styles=1 sendChecks=1
+PrivateChannel | components=BaseMrkdwnChannel,ListChannelEntity,BaseMessageAttachmentSlackMessage,MessageAttachmentHuddleLink,HuddleLinkJoinGate thunks=fetchRawChannelsById,autocompleteChannels slices=channels
+QuickJoin | thunks=getContextMenuTemplate
+RealMarkdown | inlineMarkup=1
+RestrictedChannelWarning | components=MessageInputRoadblock slices=readOnlyChannels,threadOnlyChannels styles=1
+ShinigamiEyes |
+ShowRealUser | components=Blocks,MessageWrapper,ThreadRootGeneric,ActivityItem,MessageListItem slices=messages
+ShowSendingBot | components=ConnectedBaseAvatar,Blocks,MessageBackground,MessageAvatar,SearchResult,MessageAttachment,ActivityRowContentSenderAvatarLayout,MessageKitGutter,MessageSender,ThreadSenderAndTimestampGeneric styles=1
+ShutUpSlackbot | thunks=showNotification rtm=message
+SilentTyping | thunks=currentUserStartedTyping buttons=taut-silent-typing
+SlackFixes | components=ThreadFlexpaneAdminTools styles=2
+SlimMessageBox | components=TextyButtons buttons=taut-broadcast styles=3
+StreamerMode | styles=1
+ThreadJump | components=ThreadSearchButton slices=experiments styles=1 exp=find_in_thread
+UserPronouns | components=BaseBroadcastPreamble,ThreadSenderAndTimestampGeneric styles=1
+WhoReacted | components=Reaction,UnstyledButton styles=1
+`
+
+func checkHooks(t *testing.T, id string, in introspection) {
+	t.Helper()
+	for _, line := range strings.Split(strings.TrimSpace(wantHooks), "\n") {
+		name, spec, _ := strings.Cut(line, "|")
+		if strings.TrimSpace(name) != id {
+			continue
+		}
+		for _, f := range strings.Fields(spec) {
+			k, v, _ := strings.Cut(f, "=")
+			list := map[string][]string{"components": in.Components, "thunks": in.Thunks, "rtm": in.RTM, "buttons": in.Buttons, "slices": in.Slices, "tabs": in.Tabs}[k]
+			counts := map[string]int{"styles": len(in.Styles), "resize": in.Resize, "peers": in.Peers, "sendChecks": in.SendChecks, "linkTransforms": in.LinkTransforms,
+				"sendTransforms": in.SendTransforms, "actionable": in.Actionable}
+			switch k {
+			case "components", "thunks", "rtm", "buttons", "slices", "tabs":
+				for _, want := range strings.Split(v, ",") {
+					if !has(list, want) {
+						t.Errorf("%s: %s %q not registered (have %v)", id, k, want, list)
+					}
+				}
+			case "exp":
+				for _, want := range strings.Split(v, ",") {
+					if _, ok := in.Experiments[want]; !ok {
+						t.Errorf("%s: experiment %q not forced (have %v)", id, want, in.Experiments)
+					}
+				}
+			case "inlineMarkup":
+				if !in.InlineMarkup {
+					t.Errorf("%s: inline markup not patched", id)
+				}
+			default:
+				var n int
+				_, _ = fmt.Sscan(v, &n)
+				if counts[k] < n {
+					t.Errorf("%s: %s = %d, want at least %d", id, k, counts[k], n)
+				}
+			}
+		}
+		return
+	}
+	t.Errorf("%s: no expected hooks listed for this plugin", id)
+}
+
 func TestPlugins(t *testing.T) {
 	dir := pluginsDir(t)
 	files, _ := filepath.Glob(filepath.Join(dir, "*.js"))
@@ -256,6 +345,7 @@ func runPlugin(t *testing.T, file string) {
 	if !has(in.Running, id) {
 		t.Errorf("JS doesn't list %s as running", id)
 	}
+	checkHooks(t, id, in)
 	if c := checks[id]; c != nil {
 		t.Run("behaviour", func(t *testing.T) { c(t, h) })
 	}
