@@ -874,7 +874,7 @@ func (f *Files) segButton(gtx C, c *widget.Clickable, active bool, icon, label s
 			// base-inv-hgl-1 (filled blue): #1264a3 light, #0a77a7 dark
 			bg := f.lt(rgb(0x1264a3), rgb(0x0a77a7))
 			if c.Hovered() {
-				bg = flatten(argb(0x21122a59), bg) // base-inv-hgl-1-hover
+				bg = flatten(f.lt(argb(0x21122a59), argb(0x14d8eef6)), bg) // base-inv-hgl-1-hover
 			}
 			rrect(gtx, r, rad, bg)
 		} else {
