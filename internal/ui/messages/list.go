@@ -77,7 +77,7 @@ type listState struct {
 	rows   map[string]*row
 	items  []item
 	built  uint64 // snap.rev items were built from
-	dayKey int // date the items were built on, yyyymmdd (Today/Yesterday rollover)
+	dayKey int    // date the items were built on, yyyymmdd (Today/Yesterday rollover)
 
 	list    layout.List
 	heights []int
