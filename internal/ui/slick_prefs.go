@@ -26,6 +26,7 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/pluginlib"
 	"github.com/some-du6e/yoloslackgoclient/internal/slick"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
@@ -46,6 +47,7 @@ var slickTabs = []struct{ id, label, icon string }{
 	{"slick_plugins", "Plugins", "apps"},
 	{"slick_themes", "Themes", "paintbrush"},
 	{"slick_install", "Install plugins", "download"},
+	{"slick_library", "Library", "bookmark-outline"},
 }
 
 func isSlickTab(id string) bool { return strings.HasPrefix(id, "slick") && slickTabIndex(id) >= 0 }
@@ -85,6 +87,7 @@ type slickPage struct {
 	focusWas      map[*widget.Editor]bool
 	toolbarH      int
 	downloadState string
+	lib           *libraryView // the Library tab
 }
 
 func newSlickPage(a *App) *slickPage {
@@ -200,6 +203,8 @@ func (p *slickPage) layout(gtx layout.Context, tab string) layout.Dimensions {
 			p.themes(f, st)
 		case "slick_install":
 			p.install(f, st)
+		case "slick_library":
+			p.library(f, s)
 		}
 		f.gap(24) // panel padding-bottom
 		return layout.Dimensions{Size: image.Pt(sz.X, f.y)}
@@ -209,6 +214,28 @@ func (p *slickPage) layout(gtx layout.Context, tab string) layout.Dimensions {
 		bar.Add(gtx.Ops)
 	}
 	return layout.Dimensions{Size: sz}
+}
+
+// library is Slick > Library: the official Slick plugins (pluginlib), the
+// renderer installed first, then its privileged half.
+func (p *slickPage) library(f *flow, s *slick.Slick) {
+	if p.lib == nil {
+		p.lib = newLibraryView(pluginlib.Slick, p.k)
+	}
+	p.lib.layout(f, libraryHost{
+		installed: s.InstalledSHA256,
+		install: func(ctx context.Context, e pluginlib.Entry, code, main []byte, _ bool) error {
+			if _, err := s.Import(ctx, code); err != nil {
+				return err
+			}
+			if main != nil {
+				if _, err := s.Import(ctx, main); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	})
 }
 
 // ---- building blocks ----
