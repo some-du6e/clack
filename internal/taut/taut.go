@@ -288,6 +288,12 @@ func (t *Taut) restartAfterCrash(dead *runtime) {
 	}()
 }
 
+// startWatch follows hand edits of config.json and user.css, from the first
+// installed plugin on (nothing runs while there are none).
+func (t *Taut) startWatch() {
+	t.watchOnce.Do(func() { go t.watchFiles(t.stopWatch) })
+}
+
 func (t *Taut) logf(format string, args ...any) { log.Printf(format, args...) }
 
 // IsHackClub reports whether Clack is signed in to the Hack Club Slack.
