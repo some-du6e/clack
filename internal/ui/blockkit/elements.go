@@ -369,10 +369,10 @@ func (w *ew) layoutOverflow(gtx C, sz image.Point) {
 	outline(gtx, image.Rectangle{Max: sz}, dp(gtx, 4), max(1, dp(gtx, 1)), border, bg)
 	if w.busy {
 		s := dp(gtx, 16)
-		at(gtx, image.Pt((sz.X-s)/2, (sz.Y-s)/2), func(gtx C) D { spinner(gtx, s, cl.Fg); return D{} })
+		at(gtx, image.Pt((sz.X-s)/2, (sz.Y-s)/2), func(gtx C) D { spinner(gtx, s, cl.InputText); return D{} })
 	} else {
 		is := dp(gtx, 16)
-		at(gtx, image.Pt((sz.X-is)/2, (sz.Y-is)/2), func(gtx C) D { return icon(gtx, "more", 16, cl.Fg) })
+		at(gtx, image.Pt((sz.X-is)/2, (sz.Y-is)/2), func(gtx C) D { return icon(gtx, "more", 16, cl.InputText) })
 	}
 	w.main.add(gtx, sz)
 }
@@ -751,7 +751,7 @@ func (w *ew) layoutText(gtx C, sz image.Point) {
 				label(gtx, th, 15, theme.Regular, cl.Placeholder, ph)
 			}
 		}
-		return th.Editor(gtx, w.ed, 15, cl.Text, cl.FocusRing)
+		return th.Editor(gtx, w.ed, 15, cl.InputText, cl.FocusRing)
 	})
 }
 
@@ -943,7 +943,7 @@ func (w *ew) layoutMulti(gtx C, sz image.Point) {
 			cr := image.Rect(0, 0, cw, dp(gtx, 22))
 			rrect(gtx, cr, dp(gtx, 4), cl.BgAlt)
 			at(gtx, image.Pt(dp(gtx, 8), 0), func(gtx C) D {
-				return vcenter(gtx, cr.Dy(), func(gtx C) D { return label(gtx, th, 15, theme.Regular, cl.Text, c.label) })
+				return vcenter(gtx, cr.Dy(), func(gtx C) D { return label(gtx, th, 15, theme.Regular, cl.InputText, c.label) })
 			})
 			at(gtx, image.Pt(cw-dp(gtx, 20), dp(gtx, 3)), func(gtx C) D {
 				icon(gtx, "close-small", 16, cl.Text2)

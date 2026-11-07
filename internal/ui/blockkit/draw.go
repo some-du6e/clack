@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"sync"
 	"time"
 
 	"gioui.org/f32"
@@ -91,25 +92,68 @@ func vcenter(gtx C, h int, w layout.Widget) D {
 	return layout.Dimensions{Size: image.Pt(d.Size.X, h)}
 }
 
-// colors is the palette blockkit draws with.
+// colors is the palette blockkit draws with: popups' Slack tokens with
+// the Block Kit renderer's own values on top, measured in both modes
+// (Block Kit Builder, light and dark, 2026-11):
+//
+//	                light                   dark
+//	surface bg      #ffffff                 #1a1d21 (modal, inputs, buttons)
+//	text            #1d1c1d                 #d1d2d3 (labels, body)
+//	input text      #1d1c1d                 #f8f8f8 (fields, outline buttons)
+//	input border    #7c7a7f                 #797c81
+//	button border   rgba(94,93,96,.45)      rgba(121,124,129,.5)
+//	primary         #007a5a                 #177e56
+//	danger          #e01e5a                 #d3305d
+//	checked box     #1264a3                 #0a77a7
+//	check border    rgba(94,93,96,.45)      rgba(121,124,129,.5)
+//	hint            #5e5d60                 #9a9b9e
+//	picker text     #616061                 #ababad
+//	modal ring      rgba(29,28,29,.13)      rgba(232,232,232,.13)
+//	footer border   rgba(94,93,96,.13)      #35373b
 type colors struct {
 	*popups.Colors
-	Text, Text2, Hint, Placeholder color.NRGBA
-	SelectBorder, CheckBorder      color.NRGBA
-	ErrorText                      color.NRGBA
-	Hover                          color.NRGBA
+	Text, InputText, Text2, Hint, Placeholder color.NRGBA
+	SelectBorder, CheckBorder, Check          color.NRGBA
+	ErrorText, Hover, FooterBorder            color.NRGBA
 }
 
+var (
+	paletteMu sync.Mutex
+	palettes  [2]*colors
+)
+
 func colorsOf(th *theme.Theme) colors {
-	cl := popups.ColorsOf(th)
-	c := colors{Colors: cl, Text: cl.Fg, Text2: rgb(0x454447), Hint: rgb(0x5e5d60), Placeholder: rgb(0x616061),
-		SelectBorder: rgb(0x7c7a7f), CheckBorder: rgba(0x5e5d60, .45), ErrorText: rgb(0xe01e5a), Hover: rgb(0xf8f8f8)}
+	i := 0
 	if th.Dark {
-		c.Text2, c.Hint, c.Placeholder = rgb(0xababad), rgb(0xababad), rgb(0x9a9b9e)
-		c.SelectBorder, c.CheckBorder = rgba(0xe8e8e8, .3), rgba(0xe8e8e8, .3)
-		c.Hover = rgba(0xffffff, .04)
+		i = 1
 	}
-	return c
+	paletteMu.Lock()
+	defer paletteMu.Unlock()
+	if p := palettes[i]; p != nil {
+		return *p
+	}
+	pc := *popups.ColorsOf(th) // a copy: popups' palette is shared
+	c := &colors{Colors: &pc}
+	if th.Dark {
+		bg := rgb(0x1a1d21)
+		pc.Bg, pc.BtnBg, pc.BtnHover = bg, bg, rgb(0x222529)
+		pc.Fg = rgb(0xd1d2d3)
+		pc.BtnBorder = theme.LinearAlpha(rgba(0x797c81, .5), bg)
+		pc.Primary, pc.PrimaryText = rgb(0x177e56), rgb(0xffffff)
+		pc.DangerBg = rgb(0xd3305d)
+		pc.Ring = theme.LinearAlpha(rgba(0xe8e8e8, .13), bg)
+		c.Text, c.InputText, c.Text2, c.Hint, c.Placeholder = rgb(0xd1d2d3), rgb(0xf8f8f8), rgb(0xababad), rgb(0x9a9b9e), rgb(0xababad)
+		c.SelectBorder, c.CheckBorder, c.Check = rgb(0x797c81), theme.LinearAlpha(rgba(0x797c81, .5), bg), rgb(0x0a77a7)
+		c.ErrorText, c.Hover, c.FooterBorder = rgb(0xe8577e), theme.LinearAlpha(rgba(0xffffff, .04), bg), rgb(0x35373b)
+	} else {
+		bg := rgb(0xffffff)
+		pc.Primary, pc.PrimaryText, pc.DangerBg = rgb(0x007a5a), rgb(0xffffff), rgb(0xe01e5a)
+		c.Text, c.InputText, c.Text2, c.Hint, c.Placeholder = rgb(0x1d1c1d), rgb(0x1d1c1d), rgb(0x616061), rgb(0x5e5d60), rgb(0x616061)
+		c.SelectBorder, c.CheckBorder, c.Check = rgb(0x7c7a7f), theme.LinearAlpha(rgba(0x5e5d60, .45), bg), rgb(0x1264a3)
+		c.ErrorText, c.Hover, c.FooterBorder = rgb(0xe01e5a), rgb(0xf8f8f8), theme.LinearAlpha(rgba(0x5e5d60, .13), bg)
+	}
+	palettes[i] = c
+	return *c
 }
 
 func rgb(v uint32) color.NRGBA {
@@ -168,7 +212,7 @@ func buttonColors(cl colors, style string, hovered bool) (bg, fg, border color.N
 	if hovered {
 		bg = cl.BtnHover
 	}
-	return bg, cl.Fg, cl.BtnBorder
+	return bg, cl.InputText, cl.BtnBorder
 }
 
 // drawButton paints a Block Kit button of size sz (label centred; busy
@@ -243,10 +287,10 @@ func drawField(gtx C, th *theme.Theme, sz image.Point, lead, text string, ph, ac
 		if !small {
 			right = sz.X - dp(gtx, 12) - cs
 		}
-		at(gtx, image.Pt(right, (sz.Y-cs)/2), func(gtx C) D { return icon(gtx, "chevron-down", 20, cl.Text) })
+		at(gtx, image.Pt(right, (sz.Y-cs)/2), func(gtx C) D { return icon(gtx, "chevron-down", 20, cl.InputText) })
 		right -= dp(gtx, 4)
 	}
-	col := cl.Text
+	col := cl.InputText
 	if ph {
 		col = cl.Placeholder
 	}
@@ -263,7 +307,7 @@ func drawCheckbox(gtx C, th *theme.Theme, on, hovered bool) {
 	r := image.Rect(0, 0, s, s)
 	rad := dp(gtx, 4)
 	if on {
-		rrect(gtx, r, rad, cl.Highlight)
+		rrect(gtx, r, rad, cl.Check)
 		at(gtx, image.Pt(0, 0), func(gtx C) D { return icon(gtx, "check", 14, cl.HighText) })
 		return
 	}
@@ -280,7 +324,7 @@ func drawRadio(gtx C, th *theme.Theme, on, hovered bool) {
 	s := dp(gtx, 13)
 	ctr := image.Pt(s/2, s/2)
 	if on {
-		theme.Circle(gtx, ctr, s, cl.Highlight)
+		theme.Circle(gtx, ctr, s, cl.Check)
 		theme.Circle(gtx, ctr, dp(gtx, 5), cl.HighText)
 		return
 	}

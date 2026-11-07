@@ -429,7 +429,7 @@ func (s *Stack) Layout(gtx C) D {
 		// footer
 		if hasFooter {
 			if scrolls {
-				rrect(gtx, image.Rect(0, y, mw, y+max(1, dp(gtx, 1))), 0, cl.Divider)
+				rrect(gtx, image.Rect(0, y, mw, y+max(1, dp(gtx, 1))), 0, cl.FooterBorder)
 			}
 			s.footer(gtx, image.Pt(0, y), mw, footH, v)
 		}

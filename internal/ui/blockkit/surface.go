@@ -443,10 +443,38 @@ func errorLine(gtx C, th *theme.Theme, cl colors, w int, msg string) D {
 	return D{Size: image.Pt(w, dp(gtx, 20))}
 }
 
-// flow lays out an actions block's elements, wrapping, 8px apart.
+// flow lays out an actions block's elements, wrapping, 8px apart. In
+// modals Slack makes it a grid: two equal columns, every element (28px
+// tall) filling its column, rows 8px apart.
 func (s *Surface) flow(gtx C, b *Block, w int) int {
 	x, y, rowH := 0, 0, 0
 	gap := dp(gtx, 8)
+	if s.modal() {
+		colW := (w - gap) / 2
+		n := 0
+		for i := range b.Elements {
+			e := &b.Elements[i]
+			ew := s.widget(b, e)
+			sz := ew.size(gtx, colW, false)
+			if sz.X == 0 {
+				continue
+			}
+			if !stacks(e) && !isTextInput(e.Type) && e.Type != "datetimepicker" {
+				sz.X = colW
+			} else {
+				sz.X = min(sz.X, colW)
+			}
+			cx := (n % 2) * (colW + gap)
+			if n%2 == 0 && n > 0 {
+				y += rowH + gap
+				rowH = 0
+			}
+			at(gtx, image.Pt(cx, y), func(gtx C) D { return ew.layout(fixed(gtx, sz), sz) })
+			rowH = max(rowH, sz.Y)
+			n++
+		}
+		return y + rowH
+	}
 	for i := range b.Elements {
 		e := &b.Elements[i]
 		ew := s.widget(b, e)

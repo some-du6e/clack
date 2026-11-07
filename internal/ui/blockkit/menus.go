@@ -669,11 +669,11 @@ func (m *selectMenu) Layout(gtx C) D {
 					}
 					label(gtx, th, fs, theme.Regular, cl.Placeholder, txt)
 				}
-				return th.Editor(gtx, &m.ed, unitSp(fs), cl.Text, cl.FocusRing)
+				return th.Editor(gtx, &m.ed, unitSp(fs), cl.InputText, cl.FocusRing)
 			})
 		})
 		cs := dp(gtx, 20)
-		at(gtx, image.Pt(a.Dx()-pad-cs, (fh-cs)/2), func(gtx C) D { return icon(gtx, "chevron-up", 20, cl.Text) })
+		at(gtx, image.Pt(a.Dx()-pad-cs, (fh-cs)/2), func(gtx C) D { return icon(gtx, "chevron-up", 20, cl.InputText) })
 		// the field area isn't "outside"
 		func() {
 			defer clip.Rect(r).Push(gtx.Ops).Pop()
