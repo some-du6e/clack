@@ -209,3 +209,12 @@ func (r *Runtime) SetHidden(hidden bool) {
 		_, _ = js.Global().Get("__clack").Get("setHidden").Call(hidden)
 	})
 }
+
+// WantsEvent reports whether JS listens for DOM event type on window or
+// document (e.g. "mousemove", "keydown", "pointermove", "resize"), so the UI
+// can skip forwarding global input nobody handles. Any goroutine; cheap.
+func (r *Runtime) WantsEvent(typ string) bool {
+	r.globalMu.RLock()
+	defer r.globalMu.RUnlock()
+	return r.global[typ] > 0
+}

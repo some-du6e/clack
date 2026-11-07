@@ -1957,7 +1957,12 @@
     });
   }
   // DOM listeners change a node's "on" set
-  jr.onListen = (target, type, added) => { if (target instanceof Node) markDirty(target); };
+  // window/document listeners are reported to Go (Runtime.WantsEvent), so
+  // the UI only forwards global input (mousemove, keydown…) when JS listens
+  jr.onListen = (target, type, added) => {
+    if (target === G || target === document) H.listen(type, added ? 1 : -1);
+    else if (target instanceof Node) markDirty(target);
+  };
   jr.serializeNode = serializeNode;
 
   // roots: id → container element
