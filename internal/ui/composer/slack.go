@@ -29,11 +29,16 @@ import (
 //	   └─ MessageInput                        (edit composers start here)
 //	      ├─ WysiwygContainer                 the bordered box
 //	      │  ├─ texty_input_with_autocomplete the editor
+//	      │  │  └─ TextyAutocomplete          @ # : rows (includeAllBroadcastKeywords, disallowedResults)
+//	      │  │     └─ TextyInput              Slack's memo(class) + Quill ref (plugins.js)
 //	      │  ├─ TextyButtons                  the footer toolbar
 //	      │  │  └─ TextyButtonOverflow        children: the buttons
 //	      │  │     ├─ ShortcutsMenuTriggerButton (+), ComposerButton (Aa), …
 //	      │  │     └─ TextySubmitButton       send split / Save + Cancel
+//	      │  │        └─ SendButton           the send split
 //	      │  └─ CharacterCount                empty, left of send
+//	      │  (attachments: MultiFileUploadItem per chip, with FileFieldset >
+//	      │   EditFileDialogTitle empty at its edit spot; attach_slack.go)
 //	      └─ ThreadTypingIndicator > TypingNames (thread) | TypingNames
 //
 // A native whose props are nil (its parent unpatched) renders each nested
