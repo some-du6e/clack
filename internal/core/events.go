@@ -22,6 +22,7 @@ func (a *App) pump() {
 }
 
 func (a *App) handle(ev slack.Event) {
+	a.tapRaw(ev) // Taut's rtm.on (taut_raw.go)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	ch := chanID(ev.Channel)
