@@ -1,4 +1,5 @@
-// Command yoloslack is a fast, native Slack client (Gio).
+// Command clack is a fast, native Slack client (Gio). It was called yoloslack
+// until 2026-11-07; config migrates from ~/.config/yoloslack automatically.
 package main
 
 import (
@@ -28,11 +29,39 @@ import (
 var started = time.Now()
 
 func configDir() string {
-	if d := os.Getenv("YOLOSLACK_HOME"); d != "" {
+	if d := os.Getenv("CLACK_HOME"); d != "" {
+		return d
+	}
+	if d := os.Getenv("YOLOSLACK_HOME"); d != "" { // pre-rename name
 		return d
 	}
 	d, _ := os.UserConfigDir()
-	return filepath.Join(d, "yoloslack")
+	dir := filepath.Join(d, "clack")
+	migrateConfig(filepath.Join(d, "yoloslack"), dir)
+	return dir
+}
+
+// migrateConfig copies the pre-rename config (creds, UI prefs, sidebar and
+// metadata caches) into the new directory once. It copies rather than moves
+// so older builds and tools reading the old path keep working.
+func migrateConfig(old, dir string) {
+	if _, err := os.Stat(dir); err == nil {
+		return
+	}
+	if _, err := os.Stat(old); err != nil {
+		return
+	}
+	for _, rel := range []string{"creds.json", "ui.json", "cache/sidebar.json", "cache/meta.json"} {
+		b, err := os.ReadFile(filepath.Join(old, rel))
+		if err != nil {
+			continue
+		}
+		dst := filepath.Join(dir, rel)
+		if os.MkdirAll(filepath.Dir(dst), 0o700) == nil {
+			_ = os.WriteFile(dst, b, 0o600)
+		}
+	}
+	log.Printf("config: migrated %s to %s", old, dir)
 }
 
 func main() {
@@ -94,7 +123,7 @@ func main() {
 	} else {
 		a.SetLogin(login)
 	}
-	if os.Getenv("YOLOSLACK_TIMING") != "" {
+	if os.Getenv("CLACK_TIMING") != "" || os.Getenv("YOLOSLACK_TIMING") != "" {
 		log.Printf("timing: main ready: %v", time.Since(started).Round(100*time.Microsecond))
 	}
 	go func() {
