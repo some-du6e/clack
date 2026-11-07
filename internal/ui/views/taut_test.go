@@ -118,6 +118,7 @@ class ViewsProbe extends TautPlugin {
   static description = 'patches what the views read'
   static authors = ['test']
   static category = 'other'
+  static defaultConfig = { enabled: false }
   start() {
     const api = this.api
     api.redux.patchSlice('members', (id, m) => id === '` + tAlice + `' ? api.members.modifyMemberObject(m, {name: 'Ally'}) : m)
