@@ -350,6 +350,9 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 				col := c.FgMuted
 				if i == cur {
 					col = c.Fg
+					if a.th.Dark {
+						col = color.NRGBA{R: 0xf8, G: 0xf8, B: 0xf8, A: 0xff} // Slack: --dt_color-content-pry
+					}
 				}
 				icon := t.icon
 				if t.key == "messages" && i == cur {
