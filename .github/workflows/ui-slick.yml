@@ -60,7 +60,7 @@ jobs:
           set -o pipefail
           mkdir -p dist
           xvfb-run -a go test -count=1 -timeout 20m -v -run 'TestSlickView' \
-            ./internal/ui/ ./internal/ui/messages/ ./internal/ui/composer/ ./internal/ui/popups/ ./internal/ui/views/ 2>&1 | tee dist/ui-slick.log
+            ./internal/ui/ ./internal/ui/messages/ ./internal/ui/composer/ ./internal/ui/popups/ ./internal/ui/views/ ./internal/ui/huddleui/ 2>&1 | tee dist/ui-slick.log
       - name: summary
         if: ${{ !cancelled() }}
         run: grep -E '^\s*--- (PASS|FAIL|SKIP)|^(ok|FAIL)\b' dist/ui-slick.log || true
