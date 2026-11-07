@@ -1,0 +1,103 @@
+# nfpm config for the Clack .deb and .rpm (https://nfpm.goreleaser.com).
+# release.yml runs this from the repo root after building build/linux/clack:
+#   VERSION=0.3.1 ARCH=amd64 nfpm pkg -f packaging/linux/nfpm.yaml -p deb -t dist/clack_0.3.1_amd64.deb
+# Runtime dependencies are listed in packaging/linux/README.md; keep the two in sync.
+name: clack
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+version_schema: semver
+release: "1"
+section: net
+priority: optional
+maintainer: Clack contributors <noreply@github.com>
+vendor: Clack contributors
+homepage: https://github.com/some-du6e/yoloslackgoclient
+description: |-
+  Native Slack client.
+  Clack is a fast Slack desktop client written in Go with a GPU-rendered
+  window (Gio). No browser, no JavaScript, no Electron.
+
+contents:
+  - src: ./build/linux/clack
+    dst: /usr/bin/clack
+    file_info:
+      mode: 0755
+  - src: ./packaging/linux/clack.desktop
+    dst: /usr/share/applications/clack.desktop
+    file_info:
+      mode: 0644
+  - src: ./assets/icon/clack.svg
+    dst: /usr/share/icons/hicolor/scalable/apps/clack.svg
+    file_info:
+      mode: 0644
+  - src: ./assets/icon/clack-16.png
+    dst: /usr/share/icons/hicolor/16x16/apps/clack.png
+    file_info:
+      mode: 0644
+  - src: ./assets/icon/clack-24.png
+    dst: /usr/share/icons/hicolor/24x24/apps/clack.png
+    file_info:
+      mode: 0644
+  - src: ./assets/icon/clack-32.png
+    dst: /usr/share/icons/hicolor/32x32/apps/clack.png
+    file_info:
+      mode: 0644
+  - src: ./assets/icon/clack-48.png
+    dst: /usr/share/icons/hicolor/48x48/apps/clack.png
+    file_info:
+      mode: 0644
+  - src: ./assets/icon/clack-64.png
+    dst: /usr/share/icons/hicolor/64x64/apps/clack.png
+    file_info:
+      mode: 0644
+  - src: ./assets/icon/clack-128.png
+    dst: /usr/share/icons/hicolor/128x128/apps/clack.png
+    file_info:
+      mode: 0644
+  - src: ./assets/icon/clack-256.png
+    dst: /usr/share/icons/hicolor/256x256/apps/clack.png
+    file_info:
+      mode: 0644
+  - src: ./assets/icon/clack-512.png
+    dst: /usr/share/icons/hicolor/512x512/apps/clack.png
+    file_info:
+      mode: 0644
+
+scripts:
+  postinstall: ./packaging/linux/scripts/postinst.sh
+  postremove: ./packaging/linux/scripts/postrm.sh
+
+overrides:
+  deb:
+    # Debian 12+, Ubuntu 22.04+.
+    depends:
+      - libc6
+      - libwayland-client0
+      - libwayland-cursor0
+      - libwayland-egl1
+      - libxkbcommon0
+      - libxkbcommon-x11-0
+      - libx11-6
+      - libx11-xcb1
+      - libxcursor1
+      - libegl1
+      - libgles2
+    recommends:
+      - libvulkan1
+  rpm:
+    # Fedora 40+.
+    depends:
+      - glibc
+      - libwayland-client
+      - libwayland-cursor
+      - libwayland-egl
+      - libxkbcommon
+      - libxkbcommon-x11
+      - libX11
+      - libX11-xcb
+      - libXcursor
+      - libglvnd-egl
+      - libglvnd-gles
+    recommends:
+      - vulkan-loader

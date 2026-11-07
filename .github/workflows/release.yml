@@ -1,9 +1,22 @@
 name: release
-# Publishes the clack-* binaries as a GitHub Release when a v* tag is pushed
-# (e.g. `git tag v0.1.0 && git push origin v0.1.0`). Same builds as ci.yml.
+# A v* tag (`git tag v0.1.0 && git push origin v0.1.0`) builds every package
+# and publishes them, plus SHA256SUMS, as one GitHub Release titled
+# "Clack <tag>". Tags with a '-' (v0.4.0-rc.1) are marked pre-release.
+#
+#   macOS    Clack-<ver>-macos-universal.dmg / .zip (arm64+x86_64, ad-hoc signed)
+#   Windows  Clack-<ver>-windows-amd64-setup.exe (Inno Setup, per-user)
+#            Clack-<ver>-windows-{amd64,arm64}.zip (portable)
+#   Linux    clack_<ver>_{amd64,arm64}.deb, clack-<ver>.{x86_64,aarch64}.rpm,
+#            Clack-<ver>-{x86_64,aarch64}.AppImage
+#
+# <ver> is the tag without the leading v. Packaging files live in packaging/.
+#
+# Pushes to the branches below are dry-runs: same builds and checks, the
+# packages are left on the run page as artifacts, nothing is published.
 on:
   push:
     tags: ['v*']
+    branches: [packaging, packaging-release] # dry-runs; delete this line to drop them
   workflow_dispatch:
     inputs:
       tag:
@@ -13,88 +26,463 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}-${{ github.event.inputs.tag }}
+  cancel-in-progress: ${{ github.ref_type == 'branch' && github.event_name == 'push' }}
+
 env:
   GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
-  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  NFPM_VERSION: 2.48.0
+  APPIMAGETOOL_VERSION: 1.9.1
+  GO_WINRES_VERSION: v0.3.3
 
 jobs:
-  linux:
+  meta:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+      version: ${{ steps.v.outputs.version }}
+      num: ${{ steps.v.outputs.num }}
+      ref: ${{ steps.v.outputs.ref }}
+      publish: ${{ steps.v.outputs.publish }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - id: v
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -eu
+          if [ -n "$INPUT_TAG" ]; then
+            tag=$INPUT_TAG ref=refs/tags/$INPUT_TAG publish=true
+          elif [ "$GITHUB_REF_TYPE" = tag ]; then
+            tag=$GITHUB_REF_NAME ref=$GITHUB_SHA publish=true
+          else
+            tag="v0.0.0-dev+${GITHUB_SHA::7}" ref=$GITHUB_SHA publish=false
+          fi
+          version=${tag#v}
+          # numeric x.y.z for Info.plist, the Windows version resource and Inno Setup
+          num=$(printf '%s\n' "$version" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' || true)
+          if [ "${tag#v}" = "$tag" ] || [ -z "$num" ]; then
+            echo "::error::tag '$tag' must look like v1.2.3 or v1.2.3-something"; exit 1
+          fi
+          case $tag in *-*) prerelease=true ;; *) prerelease=false ;; esac
+          {
+            echo "tag=$tag"; echo "version=$version"; echo "num=$num"; echo "ref=$ref"
+            echo "publish=$publish"; echo "prerelease=$prerelease"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  # The icon set (assets/icon) every package job uses.
+  # TODO: drop the placeholder branch once assets/icon/ is committed.
+  icons:
+    runs-on: ubuntu-latest
+    needs: meta
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ needs.meta.outputs.ref }}
+      - name: icons (placeholders rendered from assets/icon.svg if assets/icon/ is missing)
+        run: |
+          set -eu
+          if [ -f assets/icon/clack.ico ] && [ -f assets/icon/clack.icns ] && [ -f assets/icon/clack.svg ]; then
+            ls -la assets/icon; exit 0
+          fi
+          echo "::warning::assets/icon/ is missing; using placeholders rendered from assets/icon.svg"
+          sudo apt-get update -qq && sudo apt-get install -y -qq librsvg2-bin imagemagick icnsutils >/dev/null
+          mkdir -p assets/icon
+          cp assets/icon.svg assets/icon/clack.svg
+          for n in 16 24 32 48 64 128 256 512 1024; do
+            rsvg-convert -w $n -h $n assets/icon.svg -o assets/icon/clack-$n.png
+          done
+          convert assets/icon/clack-{16,24,32,48,64,128,256}.png assets/icon/clack.ico
+          png2icns assets/icon/clack.icns assets/icon/clack-{16,32,48,128,256,512}.png
+          ls -la assets/icon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: icons
+          path: assets/icon
+
+  linux:
+    needs: [meta, icons]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 22.04 for an older glibc baseline (2.35)
+          - { runner: ubuntu-22.04, arch: amd64, rpmarch: x86_64, aiarch: x86_64, nfpmarch: x86_64 }
+          - { runner: ubuntu-22.04-arm, arch: arm64, rpmarch: aarch64, aiarch: aarch64, nfpmarch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    env:
+      TAG: ${{ needs.meta.outputs.tag }}
+      VERSION: ${{ needs.meta.outputs.version }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.meta.outputs.ref }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - name: gio deps
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - uses: actions/download-artifact@v4
+        with:
+          name: icons
+          path: assets/icon
+      - name: deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS desktop-file-utils rpm >/dev/null
       - name: test
         run: go test ./...
       - name: build
         run: |
-          mkdir -p dist
-          CGO_ENABLED=1 go build -trimpath -ldflags="-s -w -X main.version=$TAG" -o dist/clack-linux-amd64 ./cmd/clack
+          mkdir -p build/linux dist
+          CGO_ENABLED=1 go build -trimpath -ldflags="-s -w -X main.version=$TAG" -o build/linux/clack ./cmd/clack
+          build/linux/clack -version | tee /dev/stderr | grep -qF "$TAG"
+          echo "linked libraries:"; readelf -d build/linux/clack | grep NEEDED
+          echo "glibc symbol versions:"; objdump -T build/linux/clack | grep -oE 'GLIBC_[0-9.]+' | sort -uV | tail -3
+      - name: desktop file
+        run: desktop-file-validate packaging/linux/clack.desktop
+      - name: deb + rpm
+        run: |
+          set -eu
+          curl -fsSL "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_${{ matrix.nfpmarch }}.tar.gz" | tar -xz -C "$RUNNER_TEMP" nfpm
+          nfpm="$RUNNER_TEMP/nfpm"
+          "$nfpm" pkg -f packaging/linux/nfpm.yaml -p deb -t "dist/clack_${VERSION}_${ARCH}.deb"
+          "$nfpm" pkg -f packaging/linux/nfpm.yaml -p rpm -t "dist/clack-${VERSION}.${{ matrix.rpmarch }}.rpm"
+          dpkg-deb -I dist/*.deb && dpkg-deb -c dist/*.deb
+          rpm -qip dist/*.rpm && rpm -qpl dist/*.rpm && rpm -qp --requires --recommends dist/*.rpm
+      - name: AppImage
+        run: |
+          set -eu
+          app=build/AppDir
+          mkdir -p $app/usr/bin $app/usr/share/applications
+          cp build/linux/clack $app/usr/bin/clack
+          cp packaging/linux/AppRun $app/AppRun && chmod +x $app/AppRun
+          cp packaging/linux/clack.desktop $app/clack.desktop
+          cp packaging/linux/clack.desktop $app/usr/share/applications/clack.desktop
+          for n in 16 24 32 48 64 128 256 512; do
+            install -Dm644 assets/icon/clack-$n.png $app/usr/share/icons/hicolor/${n}x${n}/apps/clack.png
+          done
+          install -Dm644 assets/icon/clack.svg $app/usr/share/icons/hicolor/scalable/apps/clack.svg
+          cp assets/icon/clack-256.png $app/clack.png
+          ln -s clack.png $app/.DirIcon
+          tool="$RUNNER_TEMP/appimagetool"
+          curl -fsSL -o "$tool" "https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL_VERSION}/appimagetool-${{ matrix.aiarch }}.AppImage"
+          chmod +x "$tool"
+          ARCH=${{ matrix.aiarch }} APPIMAGE_EXTRACT_AND_RUN=1 "$tool" --no-appstream $app "dist/Clack-${VERSION}-${{ matrix.aiarch }}.AppImage"
+      - name: check AppImage
+        run: |
+          set -eu
+          img=$(realpath dist/*.AppImage)
+          cd "$(mktemp -d)"
+          "$img" --appimage-extract >/dev/null
+          find squashfs-root | sort
+          test -x squashfs-root/AppRun && test -x squashfs-root/usr/bin/clack && test -f squashfs-root/clack.desktop
+          squashfs-root/AppRun -version | grep -qF "$TAG"
+          APPIMAGE_EXTRACT_AND_RUN=1 "$img" -version | grep -qF "$TAG"
+      # Install the packages on clean distros: dependencies resolve, the binary
+      # finds every library it links and the ones Gio dlopens.
+      - name: install on clean distros
+        run: |
+          set -eu
+          cat > "$RUNNER_TEMP/check.sh" <<'EOF'
+          set -eu
+          clack -version
+          test -f /usr/share/applications/clack.desktop
+          test -f /usr/share/icons/hicolor/256x256/apps/clack.png
+          test -f /usr/share/icons/hicolor/scalable/apps/clack.svg
+          if ldd /usr/bin/clack | grep 'not found'; then exit 1; fi
+          for lib in libEGL.so.1 libGLESv2.so.2 libwayland-egl.so.1 libwayland-cursor.so.0 libxkbcommon-x11.so.0 libX11-xcb.so.1 libXcursor.so.1; do
+            ldconfig -p | grep -qF "$lib" || { echo "missing $lib"; exit 1; }
+          done
+          EOF
+          d="-v $PWD/dist:/dist:ro -v $RUNNER_TEMP/check.sh:/check.sh:ro"
+          for img in debian:12 ubuntu:22.04 ubuntu:24.04; do
+            echo "::group::$img"
+            docker run --rm $d $img sh -c 'export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get install -y -qq /dist/*.deb >/dev/null && sh /check.sh && apt-get remove -y -qq clack >/dev/null && ! test -e /usr/bin/clack'
+            echo "::endgroup::"
+          done
+          for img in fedora:41 fedora:42; do
+            echo "::group::$img"
+            docker run --rm $d $img sh -c 'dnf install -y -q /dist/*.rpm && sh /check.sh && dnf remove -y -q clack && ! test -e /usr/bin/clack'
+            echo "::endgroup::"
+          done
       - uses: actions/upload-artifact@v4
         with:
-          name: clack-linux-amd64
-          path: dist/clack-linux-amd64
+          name: dist-linux-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
 
   windows:
+    needs: [meta, icons]
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.meta.outputs.tag }}
+      VERSION: ${{ needs.meta.outputs.version }}
+      NUM: ${{ needs.meta.outputs.num }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ needs.meta.outputs.ref }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: icons
+          path: assets/icon
+      - name: resources (icon #1, manifest, version info)
+        run: |
+          go install github.com/tc-hib/go-winres@$GO_WINRES_VERSION
+          go-winres make --in packaging/windows/winres.json --out cmd/clack/rsrc --arch amd64,arm64 \
+            --file-version "$NUM.0" --product-version "$VERSION"
+          ls -la cmd/clack/*.syso
       - name: build (cross, no cgo)
         run: |
+          set -eu
           mkdir -p dist
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -H windowsgui -X main.version=$TAG" -o dist/clack-windows-amd64.exe ./cmd/clack
+          for arch in amd64 arm64; do
+            mkdir -p build/windows-$arch/Clack
+            CGO_ENABLED=0 GOOS=windows GOARCH=$arch go build -trimpath -ldflags="-s -w -H windowsgui -X main.version=$TAG" -o build/windows-$arch/Clack/Clack.exe ./cmd/clack
+            cp packaging/windows/README.txt build/windows-$arch/Clack/README.txt
+            (cd build/windows-$arch && zip -9 -r "../../dist/Clack-${VERSION}-windows-$arch.zip" Clack)
+            unzip -l "dist/Clack-${VERSION}-windows-$arch.zip"
+          done
       - uses: actions/upload-artifact@v4
         with:
-          name: clack-windows-amd64
-          path: dist/clack-windows-amd64.exe
+          name: dist-windows-zip
+          path: dist/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-amd64-exe
+          path: build/windows-amd64/Clack/Clack.exe
 
-  macos:
-    runs-on: macos-latest
+  windows-installer:
+    needs: [meta, icons, windows]
+    runs-on: windows-latest
+    env:
+      TAG: ${{ needs.meta.outputs.tag }}
+      VERSION: ${{ needs.meta.outputs.version }}
+      NUM: ${{ needs.meta.outputs.num }}
+    defaults:
+      run:
+        shell: pwsh
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ needs.meta.outputs.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: icons
+          path: assets/icon
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-amd64-exe
+          path: build/windows-amd64
+      - name: check Clack.exe
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Get-Item build\windows-amd64\Clack.exe
+          $vi = $exe.VersionInfo
+          $vi | Format-List ProductName, FileDescription, CompanyName, LegalCopyright, OriginalFilename, ProductVersion, FileVersion, FileVersionRaw, ProductVersionRaw
+          if ($vi.ProductName -ne 'Clack') { throw "ProductName is '$($vi.ProductName)'" }
+          if ($vi.OriginalFilename -ne 'Clack.exe') { throw "OriginalFilename is '$($vi.OriginalFilename)'" }
+          if ($vi.FileVersion -ne "$env:NUM.0") { throw "FileVersion is '$($vi.FileVersion)', want $env:NUM.0" }
+          if ($vi.ProductVersion -ne $env:VERSION) { throw "ProductVersion is '$($vi.ProductVersion)', want $env:VERSION" }
+          $out = (& $exe.FullName -version | Out-String).Trim()
+          Write-Host "Clack.exe -version: $out"
+          if (-not $out.Contains($env:TAG)) { throw "-version printed '$out'" }
+      - name: build installer
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "choco install innosetup failed" }
+          }
+          & $iscc /Qp "/DAppVersion=$env:VERSION" "/DAppVersionNum=$env:NUM.0" "/DSourceExe=$PWD\build\windows-amd64\Clack.exe" "/DOutputDir=$PWD\dist" packaging\windows\clack.iss
+          if ($LASTEXITCODE -ne 0) { throw "iscc failed with $LASTEXITCODE" }
+          Get-ChildItem dist
+      - name: install, check, uninstall
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = (Get-Item "dist\Clack-$env:VERSION-windows-amd64-setup.exe").FullName
+          $p = Start-Process -Wait -PassThru -FilePath $setup -ArgumentList '/VERYSILENT', '/CURRENTUSER', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$PWD\install.log"
+          if ($p.ExitCode -ne 0) { Get-Content install.log; throw "setup exited $($p.ExitCode)" }
+          $app = Join-Path $env:LOCALAPPDATA 'Programs\Clack'
+          $exe = Join-Path $app 'Clack.exe'
+          Get-ChildItem $app
+          foreach ($f in @($exe, "$app\README.txt", "$app\unins000.exe", "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Clack.lnk")) {
+            if (-not (Test-Path $f)) { throw "missing $f" }
+          }
+          if (Test-Path "$env:USERPROFILE\Desktop\Clack.lnk") { throw "desktop shortcut created without the task" }
+          $k = 'HKCU:\Software\Classes\slack'
+          $want = @{
+            "$k"                    = 'URL:slack Protocol'
+            "$k\DefaultIcon"        = "`"$exe`",0"
+            "$k\shell\open\command" = "`"$exe`" `"%1`""
+          }
+          foreach ($key in $want.Keys) {
+            $got = (Get-Item $key).GetValue('')
+            Write-Host "$key = $got"
+            if ($got -ne $want[$key]) { throw "$key is '$got', want '$($want[$key])'" }
+          }
+          if ((Get-Item $k).GetValue('URL Protocol') -ne '') { throw "URL Protocol value missing" }
+          $u = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{71A683CE-53A9-4BFE-877D-F9A6A1CA70FA}_is1'
+          Write-Host "uninstall entry: $($u.DisplayName) $($u.DisplayVersion)"
+          if ($u.DisplayVersion -ne $env:VERSION) { throw "DisplayVersion is '$($u.DisplayVersion)'" }
+
+          Start-Process -Wait -FilePath "$app\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
+          # the uninstaller re-launches itself from %TEMP%; wait for it to finish
+          for ($i = 0; ($i -lt 60) -and (Test-Path $exe); $i++) { Start-Sleep 1 }
+          if (Test-Path $exe) { throw "Clack.exe still there after uninstall" }
+          for ($i = 0; ($i -lt 30) -and (Test-Path $k); $i++) { Start-Sleep 1 }
+          if (Test-Path $k) { throw "slack:// handler still registered after uninstall" }
+          if (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Clack.lnk") { throw "Start Menu shortcut left behind" }
+          Write-Host "uninstalled cleanly"
+      - name: slack:// handler left alone when another app owns it
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = (Get-Item "dist\Clack-$env:VERSION-windows-amd64-setup.exe").FullName
+          Start-Process -Wait -FilePath $setup -ArgumentList '/VERYSILENT', '/CURRENTUSER', '/SUPPRESSMSGBOXES', '/NORESTART'
+          $app = Join-Path $env:LOCALAPPDATA 'Programs\Clack'
+          $cmd = 'HKCU:\Software\Classes\slack\shell\open\command'
+          Set-Item $cmd -Value '"C:\Other\slack.exe" "%1"'
+          Start-Process -Wait -FilePath "$app\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
+          for ($i = 0; ($i -lt 60) -and (Test-Path "$app\Clack.exe"); $i++) { Start-Sleep 1 }
+          Start-Sleep 3
+          if ((Get-Item $cmd).GetValue('') -ne '"C:\Other\slack.exe" "%1"') { throw "uninstaller removed someone else's slack:// handler" }
+          Remove-Item -Recurse 'HKCU:\Software\Classes\slack'
+      - name: portable -register-url-handler
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Select-String -Path cmd\clack\*.go -Pattern 'register-url-handler' -Quiet)) {
+            Write-Host "::warning::Clack.exe has no -register-url-handler yet; skipped"; exit 0
+          }
+          $exe = (Get-Item build\windows-amd64\Clack.exe).FullName
+          $k = 'HKCU:\Software\Classes\slack'
+          & $exe -register-url-handler | Out-String | Write-Host
+          $got = (Get-Item "$k\shell\open\command").GetValue('')
+          if ($got -ne "`"$exe`" `"%1`"") { throw "command is '$got'" }
+          & $exe -unregister-url-handler | Out-String | Write-Host
+          if (Test-Path $k) { throw "still registered after -unregister-url-handler" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-windows-installer
+          path: dist/*
+          if-no-files-found: error
+
+  macos:
+    needs: [meta, icons]
+    runs-on: macos-latest
+    env:
+      TAG: ${{ needs.meta.outputs.tag }}
+      VERSION: ${{ needs.meta.outputs.version }}
+      NUM: ${{ needs.meta.outputs.num }}
+      # Go 1.24 needs macOS 11; keep the cgo objects at the same floor.
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.meta.outputs.ref }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - name: build
+      - uses: actions/download-artifact@v4
+        with:
+          name: icons
+          path: assets/icon
+      - name: build (arm64 + x86_64 → universal)
         run: |
-          mkdir -p dist
-          CGO_ENABLED=1 go build -trimpath -ldflags="-s -w -X main.version=$TAG" -o dist/clack-darwin-arm64 ./cmd/clack
+          set -eu
+          mkdir -p build dist
+          flags="-s -w -X main.version=$TAG"
+          CGO_ENABLED=1 GOARCH=arm64 CC="clang -arch arm64" go build -trimpath -ldflags="$flags" -o build/clack-arm64 ./cmd/clack
+          CGO_ENABLED=1 GOARCH=amd64 CC="clang -arch x86_64" go build -trimpath -ldflags="$flags" -o build/clack-amd64 ./cmd/clack
+          lipo -create -output build/clack build/clack-arm64 build/clack-amd64
+          lipo -info build/clack
+          lipo build/clack -verify_arch arm64 x86_64
+          vtool -show-build build/clack | grep -E 'architecture|minos'
+          build/clack -version | grep -F "$TAG"
+          if arch -x86_64 /usr/bin/true 2>/dev/null; then arch -x86_64 build/clack -version | grep -F "$TAG"; fi
+      - name: Clack.app
+        run: |
+          set -eu
+          app=build/Clack.app
+          mkdir -p $app/Contents/MacOS $app/Contents/Resources
+          cp build/clack $app/Contents/MacOS/clack
+          cp assets/icon/clack.icns $app/Contents/Resources/clack.icns
+          sed "s/@VERSION@/$NUM/g" packaging/macos/Info.plist > $app/Contents/Info.plist
+          printf 'APPL????' > $app/Contents/PkgInfo
+          plutil -lint $app/Contents/Info.plist
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' $app/Contents/Info.plist)" = slack
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' $app/Contents/Info.plist)" = "$NUM"
+          codesign --force --deep --sign - $app
+          codesign -dv --verbose=2 $app
+          codesign --verify --deep --strict --verbose=2 $app
+          find $app | sort
+      - name: zip + dmg
+        run: |
+          set -eu
+          ditto -c -k --keepParent build/Clack.app "dist/Clack-${VERSION}-macos-universal.zip"
+          mkdir -p build/dmg
+          ditto build/Clack.app build/dmg/Clack.app
+          ln -s /Applications build/dmg/Applications
+          dmg="dist/Clack-${VERSION}-macos-universal.dmg"
+          # hdiutil sometimes fails with "Resource busy" on hosted runners
+          for i in 1 2 3 4 5; do
+            hdiutil create -volname Clack -srcfolder build/dmg -fs HFS+ -format UDZO -ov "$dmg" && break
+            echo "hdiutil create failed (try $i)"; sleep 5
+          done
+          test -f "$dmg"
+      - name: check zip + dmg
+        run: |
+          set -eu
+          t=$(mktemp -d)
+          ditto -x -k "dist/Clack-${VERSION}-macos-universal.zip" "$t"
+          codesign --verify --deep --strict "$t/Clack.app"
+          "$t/Clack.app/Contents/MacOS/clack" -version | grep -F "$TAG"
+          hdiutil verify "dist/Clack-${VERSION}-macos-universal.dmg"
+          mnt=$(mktemp -d)
+          hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "dist/Clack-${VERSION}-macos-universal.dmg"
+          ls -la "$mnt"
+          test -L "$mnt/Applications"
+          codesign --verify --deep --strict "$mnt/Clack.app"
+          plutil -lint "$mnt/Clack.app/Contents/Info.plist"
+          lipo -info "$mnt/Clack.app/Contents/MacOS/clack"
+          hdiutil detach "$mnt" || hdiutil detach -force "$mnt"
+          ls -la dist
       - uses: actions/upload-artifact@v4
         with:
-          name: clack-darwin-arm64
-          path: dist/clack-darwin-arm64
+          name: dist-macos
+          path: dist/*
+          if-no-files-found: error
 
   publish:
-    needs: [linux, windows, macos]
+    needs: [meta, linux, windows, windows-installer, macos]
+    if: needs.meta.outputs.publish == 'true'
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.meta.outputs.tag }}
     steps:
       - uses: actions/download-artifact@v4
         with:
+          pattern: dist-*
           path: dist
           merge-multiple: true
       - name: checksums
-        run: cd dist && sha256sum clack-* > SHA256SUMS && cat SHA256SUMS
+        run: cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
       - name: publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRERELEASE: ${{ needs.meta.outputs.prerelease }}
         run: |
+          set -eu
           if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/* --clobber -R "$GITHUB_REPOSITORY"
           else
-            gh release create "$TAG" dist/* -R "$GITHUB_REPOSITORY" --title "Clack $TAG" --generate-notes
+            pre=""; if [ "$PRERELEASE" = true ]; then pre=--prerelease; fi
+            gh release create "$TAG" dist/* -R "$GITHUB_REPOSITORY" --verify-tag --title "Clack $TAG" --generate-notes $pre
           fi
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json assets -q '.assets[].name'
