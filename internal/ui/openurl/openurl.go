@@ -24,7 +24,6 @@ var mailtoParams = map[string]bool{"subject": true, "body": true, "cc": true, "b
 // characters or spaces, are refused. The URL is re-serialized, so it always
 // starts with its scheme (never "-", which xdg-open/open would read as a flag).
 func Check(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
 	if raw == "" || len(raw) > 8192 || strings.ContainsAny(raw, " \t\r\n\\\"`<>") {
 		return "", ErrRefused
 	}
