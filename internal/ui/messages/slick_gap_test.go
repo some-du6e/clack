@@ -9,6 +9,8 @@ import (
 	"gioui.org/op"
 	"gioui.org/unit"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/yoloslackgoclient/internal/store"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 )
 
@@ -48,28 +50,31 @@ func TestSlickViewLocalTimeKeepsTimestampGap(t *testing.T) {
 
 // Nicknames renames people through patchSlice('members'); Slack's message
 // sender reads the member from the store, so the row's name follows it.
+// (Slick's names setting keeps only ids like /^[UWA][A-Z0-9]{6,}$/.)
 func TestSlickViewNicknamesRenamesSender(t *testing.T) {
-	e := newSlickEnv(t, nil)
-	e.install(t, "Nicknames", map[string]any{"names": map[string]any{"UALICE": "Ally Nick"}})
-	v := NewChannelView(e.h, tGen)
+	const ch, uid, ts = "C0NICKS01", "U0NICKAL1", "1700000401.000100"
+	e := newSlickEnv(t, func(s *store.Store) {
+		s.PutUsers([]slack.User{{ID: uid, Name: "nickal", RealName: "Nick Al", Profile: slack.Profile{DisplayName: "nickal", RealName: "Nick Al"}}})
+		s.PutConv(slack.Conversation{ID: ch, Name: "nicks", IsChannel: true, IsMember: true, NumMembers: 2})
+		s.SetLatest(ch, []slack.Message{{Type: "message", TS: ts, User: uid, Text: "synthetic hello"}}, false)
+	})
+	e.install(t, "Nicknames", map[string]any{"names": map[string]any{uid: "Ally Nick"}})
+	v := NewChannelView(e.h, ch)
 	v.Preview = true
 	f := frameFn(v)
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		f()
-		for _, r := range v.s.rows {
-			if r != nil && r.m.User == "UALICE" && r.name == "Ally Nick" {
-				return
-			}
+		if r := v.s.rows[ts]; r != nil && r.name == "Ally Nick" {
+			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	tt := tautOf()
-	mf, ok := tt.MemberView("UALICE")
-	for k, r := range v.s.rows {
-		if r != nil && r.m.User == "UALICE" {
-			t.Logf("row %v: name %q m.Name %q", k, r.name, r.m.Name)
-		}
+	mf, ok := tt.MemberView(uid)
+	name := ""
+	if r := v.s.rows[ts]; r != nil {
+		name = r.name
 	}
-	t.Fatalf("Alice's row isn't named by her nickname; members patched %v, MemberView %+v %v", tt.SlicePatched("members"), mf, ok)
+	t.Fatalf("row named %q, want the nickname; members patched %v, MemberView %+v %v", name, tt.SlicePatched("members"), mf, ok)
 }
