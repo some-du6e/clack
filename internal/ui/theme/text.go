@@ -73,7 +73,7 @@ type EmojiImages interface {
 }
 
 // useEmbolden (YOLOSLACK_EMBOLDEN=1) re-enables the old stroke, for A/B.
-var useEmbolden = os.Getenv("YOLOSLACK_EMBOLDEN") != ""
+var useEmbolden = os.Getenv("CLACK_EMBOLDEN") != "" || os.Getenv("YOLOSLACK_EMBOLDEN") != ""
 
 var shaperThemes sync.Map // *text.Shaper -> *Theme
 

@@ -2,6 +2,8 @@
 
 The user's requirement (2026-11-06): **no JS, no web UI, no Electron. Native and fast.** yoloslack is a single Go binary with a GPU-rendered native window built on **Gio** (`gioui.org`, immediate mode). Every widget is custom-drawn to look like the 2026 Slack desktop client. The HTTP server, `web/` and the HTML renderer `internal/render` will be deleted once the native UI lands.
 
+> **Rename (2026-11-07): the app is now Clack.** The binary is `cmd/clack`. CI artifacts are `clack-linux-amd64` (file `clack-linux-amd64`), `clack-windows-amd64` and `clack-darwin-arm64`; `yoloslack-linux-amd64` is no longer built, so update your download scripts. Config lives in `~/.config/clack`, and the first start copies over `~/.config/yoloslack`, which stays in place for older tools. Env vars are `CLACK_HOME`, `CLACK_TIMING`, `CLACK_FRAMELOG` and `CLACK_EMBOLDEN`; the `YOLOSLACK_*` names still work. The window title ends in ` - Clack`. The Go module path is unchanged.
+
 ## Scraping policy (Hack Club), non-negotiable
 Message contents are memory only. Never write message text, files or attachments to disk, logs or fixtures from real messages; test fixtures must be synthetic. Only metadata may be cached on disk: users, channel names, custom emoji map, and avatar/emoji images.
 

@@ -28,12 +28,12 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           mkdir -p dist
-          CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o dist/yoloslack-linux-amd64 ./cmd/yoloslack
+          CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o dist/clack-linux-amd64 ./cmd/clack
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
-          name: yoloslack-linux-amd64
-          path: dist/yoloslack-linux-amd64
+          name: clack-linux-amd64
+          path: dist/clack-linux-amd64
 
   windows:
     runs-on: ubuntu-latest
@@ -46,11 +46,11 @@ jobs:
       - name: build (cross, no cgo)
         run: |
           mkdir -p dist
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -H windowsgui" -o dist/yoloslack-windows-amd64.exe ./cmd/yoloslack
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -H windowsgui" -o dist/clack-windows-amd64.exe ./cmd/clack
       - uses: actions/upload-artifact@v4
         with:
-          name: yoloslack-windows-amd64
-          path: dist/yoloslack-windows-amd64.exe
+          name: clack-windows-amd64
+          path: dist/clack-windows-amd64.exe
 
   macos:
     runs-on: macos-latest
@@ -64,8 +64,8 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           mkdir -p dist
-          CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o dist/yoloslack-darwin-arm64 ./cmd/yoloslack
+          CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o dist/clack-darwin-arm64 ./cmd/clack
       - uses: actions/upload-artifact@v4
         with:
-          name: yoloslack-darwin-arm64
-          path: dist/yoloslack-darwin-arm64
+          name: clack-darwin-arm64
+          path: dist/clack-darwin-arm64

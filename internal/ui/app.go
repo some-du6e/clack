@@ -25,9 +25,9 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
-// AppName is the user-visible product name (Karim picked "Clack" on
-// 2026-11-06). The module path, binary, config dir and CI artifact names
-// still say yoloslack until a coordinated rename.
+// AppName is the product name (Karim picked "Clack" on 2026-11-06). The
+// binary, config dir (~/.config/clack) and CI artifacts are named clack; the
+// Go module path keeps its old name.
 const AppName = "Clack"
 
 // Overlay is anything drawn above the shell. An alias of an unnamed
@@ -249,13 +249,18 @@ func (a *App) Run() error {
 	}
 }
 
-// frameLog (YOLOSLACK_FRAMELOG=1) logs every frame's layout/total time.
-var frameLog = os.Getenv("YOLOSLACK_FRAMELOG") != ""
+// envFlag reads CLACK_<name> (or the pre-rename YOLOSLACK_<name>).
+func envFlag(name string) bool {
+	return os.Getenv("CLACK_"+name) != "" || os.Getenv("YOLOSLACK_"+name) != ""
+}
+
+// frameLog (CLACK_FRAMELOG=1) logs every frame's layout/total time.
+var frameLog = envFlag("FRAMELOG")
 
 // timing logs a startup/latency measurement when YOLOSLACK_TIMING is set
 // (always for the first frame).
 func (a *App) timing(what string, since time.Time) {
-	if os.Getenv("YOLOSLACK_TIMING") != "" {
+	if envFlag("TIMING") {
 		log.Printf("timing: %s: %v", what, time.Since(since).Round(100*time.Microsecond))
 	}
 }
@@ -505,7 +510,7 @@ func (s *frameStats) add(d, layout time.Duration) {
 	if d > s.max {
 		s.max = d
 	}
-	if os.Getenv("YOLOSLACK_FRAMESTATS") != "" && time.Since(s.last) > 5*time.Second && s.n > 0 {
+	if envFlag("FRAMESTATS") && time.Since(s.last) > 5*time.Second && s.n > 0 {
 		n := time.Duration(s.n)
 		log.Printf("ui: %d frames, avg %v (layout %v), max %v", s.n, (s.total / n).Round(10*time.Microsecond), (s.layout / n).Round(10*time.Microsecond), s.max.Round(10*time.Microsecond))
 		s.last = time.Now()

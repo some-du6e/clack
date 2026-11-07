@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-// Creds is the on-disk credential file (~/.config/yoloslack/creds.json).
+// Creds is the on-disk credential file (~/.config/clack/creds.json).
 type Creds struct {
 	Token           string `json:"token"`            // team xoxc token
 	Cookie          string `json:"cookie"`           // d cookie (xoxd-..., URL-encoded as stored by the browser)
