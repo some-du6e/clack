@@ -775,3 +775,52 @@ Clack: popups/modal.go:`NewModal` (`ModalOpts{Title, Body, Buttons, EnterSubmits
 12. **The class count is approximate at the edges.** `[class*="spookySidebarLinkContainer__"]` is a CSS-module hash prefix (Slack seasonal UI), and `c-reaction_add__fg` appears only in a comment.
 13. **`ShinigamiEyes.disabled.tsx`** is included although taut ships it disabled (it broke when the Hackatime API changed).
 14. **Process note**: the per-file extraction for this catalogue ran as a 6-agent workflow (4 plugin batches, `app/`, and a Clack widget index). Everything was then cross-checked by direct `rg` over every `patchComponent`/`lazyComponent`/`elements.*` call site. Raw notes are in `/tmp/pc/*.md` (not committed).
+
+---
+
+## 5. Wiring guide (per owner)
+
+Every Slack boundary in §Index becomes one `slackc` call in the owner's package. The rules are the same everywhere.
+
+### 5.1 The three calls
+```go
+// Hot widgets (rows, pills, sidebar items): allocation-free when unpatched.
+// Pass method expressions, not closures or method values.
+return slackc.Component(gtx, "MessageSender", r, (*row).senderProps, (*row).layoutSender)
+
+// Cold widgets (headers, modals): a closure is fine.
+return slackc.Render(gtx, "BaseAvatarStack", props, func(gtx layout.Context, p slackc.Props) layout.Dimensions { … })
+
+// Props that are costly to build: built only when patched.
+return slackc.RenderLazy(gtx, "MessageBlocks", func() slackc.Props { return r.blocksProps() }, r.layoutBlocks)
+```
+- **Props are Slack-shaped.** Use the names and shapes in §1 and in the live table (`message`/`msg` with Slack's message fields `ts`, `user`, `bot_id`, `subtype`, `blocks`, `reactions`, …, plus `channelId`, `memberId`, `userId`). Build them only inside the props func. Use `$key` (the message ts, the channel id) for list items so plugin hook state survives prop changes.
+- **The native's `p` is nil when unpatched.** Under a patch it is what the plugin passed to `<Original {...props}>`. Honour the overrides plugins make (§1, "overrides"): read them with `p.StrOr`, `p.Bool`, `p.Map`, `p.List`, and fall back to your own state when a key is missing.
+- **Children.** When Slack's component takes children, hand your sub-parts to JS as slots, so plugins can find and reorder them (UserPronouns, WhoReacted):
+  ```go
+  Props{"msg": m, "children": []any{slackc.Child("MessageSender", sp, r.layoutSender), slackc.Child("Timestamp", tp, r.layoutTS)}}
+  ```
+  In the native, `if e, ok := slackc.PropChildren(p); ok { return slackc.LayoutElement(gtx, e) }`. That lays the plugin's children out with the flow engine, and each slot calls back into its native.
+- **Events and state** stay native. Clickables and editors live where they live today. A native called through a patch still gets real input.
+- **Missing surfaces** (BaseContextBarV2, MessageInputRoadblock, CharacterCount, ThreadSearchButton, ThreadFlexpaneAdminTools, EditAudioButton): add the boundary with a native that draws nothing (or Slack's default), so a plugin that appends to it shows up.
+
+### 5.2 Class tagging for CSS
+```go
+var msgClass = slackc.Class("c-virtual_list__item c-message_kit__message", "data-qa", "message_container").
+	Mods("c-message_kit__message--hovered", "c-message--highlight")
+
+st := msgClass.Enter(gtx, hoverState(r), modBits) // css.StateHover etc.
+defer st.Leave()                                     // or call Leave on every return path
+if st.Hidden() { return layout.Dimensions{} }
+fg := st.Color(c.Text); pad := st.Padding(defPad); size := st.FontSize(15)
+return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { … }) // opacity, blur, background, border, margin, transform
+```
+`Enter` costs one atomic load while no CSS is set. Declare `ClassDef`s at package level. The class names to use are in §2.3. Tag the ancestors too (`.p-client_container`, `.p-channel_sidebar`, `.c-message_list`, `.p-message_pane`), because descendant selectors only match when the whole chain is on the stack.
+
+### 5.3 Per-owner checklist
+Rows link to §Index numbers. ✔ = wrapped in `taut-ui`.
+- **msgs** (`messages`, `richview`): 1 MessageBackground, 2 MessageWrapper, 5 MessageAvatar, 6 ConnectedBaseAvatar (register as host `ConnectedBaseAvatar`/`Avatar`), 7 gutter filter memo (name `MessageKitGutter`, source marker `c-message_kit__gutter__left`), 8, 9 MessageSender, 10 BaseMessageSender, 11 BaseBroadcastPreamble (children: sender + timestamp slots), 12, 13, 14 MessageBlocks, 15 Blocks (also host), 17–21 attachments, 22 ReactionBar (children: Reaction slots + ReactionAddButton slot), 23 Reaction, 24 UnstyledButton `data-qa=reactji`, 25 ReactionAddButton, 26 MessageActions, 27 MessageActionButtonReaction, 44, 45/46 (empty boundaries), 50 BaseMrkdwnChannel, 51 MemberLink, 72 MrkdwnElement (host).
+- **comp** (`composer`): 30 MessagePaneInput, 31 InputContainer, 32 MessageInput, 33 WysiwygContainer, 34 TextyButtons, 35 TextyButtonOverflow (+ composer.addButton slot), 36, 37 BaseContextBarV2 (empty boundary above the composer), 38 MessageInputRoadblock (boundary around the composer), 39 ThreadTypingIndicator, 40 TypingNames, 41, 42 CharacterCount (empty), 43 ComposerLinkModal.
+- **pop** (`popups`): 3 MessageListItem, 4 SearchResult, 28 EmojiPickerPopover, 29 EmojiPicker, 55–60 profile parts, 67–69 menus, plus the elements drawn by `slackc/kit`.
+- **views** (`views`): 12/13 in Threads, 52 ActivityItem, 53, 54 ActivityPrivacyBlurredName, 61–65 huddle surfaces where they exist (Huddles view), 90 BasicSelect.
+- **shell** (`internal/ui` root): 47 BaseAvatarStack, 48 HelpButton, 49 ListChannelEntity, 57 BasePresence (sidebar), 66 Tabs (prefs), 70 SvgIcon names, plus the ancestor classes (`p-client_container`, `p-ia`, `p-channel_sidebar`, `p-view_header`).
