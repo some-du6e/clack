@@ -567,7 +567,11 @@ func (s *scope) drawNatives() bool {
 	v := s.v
 	changed := false
 	for _, b := range s.natives {
-		if b.natDrawn && b.natFrame == v.frameNo && b.natDrawCons == b.natCons {
+		// Reuse this frame's draw unless it ran without input (inside a
+		// parent native's measure pass, gtx.Disabled()) and this pass has
+		// input: natives nested under a patch must see their events.
+		live := s.gtx.Source.Enabled()
+		if b.natDrawn && b.natFrame == v.frameNo && b.natDrawCons == b.natCons && (b.natLive || !live) {
 			continue
 		}
 		g := s.gtx
@@ -575,7 +579,7 @@ func (s *scope) drawNatives() bool {
 		m := op.Record(g.Ops)
 		d := s.callNative(g, b)
 		b.natCall = m.Stop()
-		b.natDrawn, b.natFrame, b.natDrawCons = true, v.frameNo, b.natCons
+		b.natDrawn, b.natFrame, b.natDrawCons, b.natLive = true, v.frameNo, b.natCons, live
 		b.natReal = dimsOf(d)
 		if b.natReal != b.natLaid {
 			changed = true
