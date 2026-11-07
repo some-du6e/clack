@@ -24,6 +24,8 @@ jobs:
         run: go vet ./...
       - name: test
         run: go test ./...
+      - name: sign-out stops all traffic (50 runs, race detector)
+        run: go test -race -count=50 -run 'TestAuthFailedStopsCore$' ./internal/core
       - name: build
         if: ${{ !cancelled() }}
         run: |
