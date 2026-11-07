@@ -495,7 +495,7 @@ func NewUserMenu(h Host, anchor image.Point) *Menu {
 		{Label: "Preferences", Do: actPreferences(h)},
 		{Label: "Account settings", External: true, Do: actToast(h, "Account settings live at app.slack.com")},
 		Sep(),
-		{Label: "Sign out of " + teamName, Do: actSignOut(h)},
+		{Key: "sign-out", Label: "Sign out of " + teamName, Do: actSignOut(h)},
 	}
 	menu = NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(anchor), Side: Above})
 	return menu
