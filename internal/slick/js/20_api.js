@@ -294,22 +294,12 @@ function onMessageSendDelta(transform) {
   }
 }
 
-// addSendCheck(check(blocks, {channelId, threadTs})): Taut's composer send
-// checks get the composer context, which carries the outgoing blocks.
+// addSendCheck(check(blocks, {channelId, threadTs})): Taut's send checks have
+// the same signature (the composer's outgoing blocks and context).
 function addSendCheck(check) {
-  return TA.composer.addSendCheck(async (ctx) => {
-    let blocks = Array.isArray(ctx?.blocks) ? ctx.blocks : null
-    if (!blocks) {
-      try {
-        const contents = T.getExport((e) => typeof e === 'function' && e.name === 'getInputProxy')?.({ channelId: ctx?.channelId })?.getContents?.()
-        blocks = T.deltaToBlocks(toDelta(contents?.contents ?? contents ?? []))
-      } catch {
-        blocks = []
-      }
-    }
-    const context = { channelId: ctx?.channelId, ...(ctx?.threadTs ? { threadTs: ctx.threadTs } : {}) }
+  return TA.composer.addSendCheck(async (blocks, context) => {
     try {
-      return (await check(blocks, context)) !== false
+      return (await check(Array.isArray(blocks) ? blocks : [], context ?? {})) !== false
     } catch (err) {
       console.error(`[slick] send check ${label(check)} failed; ignoring it:`, err)
       return true
