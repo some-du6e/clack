@@ -26,6 +26,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/slick"
+	"github.com/some-du6e/yoloslackgoclient/internal/store"
 	"github.com/some-du6e/yoloslackgoclient/internal/taut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
@@ -87,12 +88,13 @@ func startSlick(t *testing.T, name string, opts map[string]any, before func(e *s
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, fs := syntheticApp(t)
-	app.S.PutUsers([]slack.User{
-		{ID: "U0BOB00001", Name: "bob", RealName: "Bob Example", Profile: slack.Profile{DisplayName: "bob", RealName: "Bob Example"}},
-		{ID: "U0BOBBY001", Name: "bobby", RealName: "Bobby Sample", Profile: slack.Profile{DisplayName: "bobby", RealName: "Bobby Sample"}},
+	app, fs := syntheticApp(t, func(st *store.Store) {
+		st.PutUsers([]slack.User{
+			{ID: "U0BOB00001", Name: "bob", RealName: "Bob Example", Profile: slack.Profile{DisplayName: "bob", RealName: "Bob Example"}},
+			{ID: "U0BOBBY001", Name: "bobby", RealName: "Bobby Sample", Profile: slack.Profile{DisplayName: "bobby", RealName: "Bobby Sample"}},
+		})
+		st.PutConv(slack.Conversation{ID: tChRandom, Name: "random", IsChannel: true, IsMember: true, NumMembers: 40})
 	})
-	app.S.PutConv(slack.Conversation{ID: tChRandom, Name: "random", IsChannel: true, IsMember: true, NumMembers: 40})
 	e := &slickEnv{t: t, app: app, slack: fs, trees: map[uint64][]byte{}, h: &slickHost{app: app, th: theme.New(false)}}
 	if before != nil {
 		before(e)

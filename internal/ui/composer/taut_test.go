@@ -90,7 +90,8 @@ func (f *fakeSlack) called(method string) []url.Values {
 }
 
 // syntheticApp is a core.App over a seeded store and the fake API.
-func syntheticApp(t testing.TB) (*core.App, *fakeSlack) {
+// seed adds to the store before the app starts.
+func syntheticApp(t testing.TB, seed ...func(s *store.Store)) (*core.App, *fakeSlack) {
 	t.Helper()
 	f := newFakeSlack(t)
 	c := slack.New(slack.Creds{Token: "xoxc-test", Cookie: "xoxd-test", UserID: tSelf, Team: tTeam, EnterpriseID: tEnt,
@@ -105,6 +106,9 @@ func syntheticApp(t testing.TB) (*core.App, *fakeSlack) {
 		{ID: "UALICE", Name: "alice", RealName: "Alice Example", Profile: slack.Profile{DisplayName: "alice", RealName: "Alice Example"}},
 	})
 	s.PutConv(slack.Conversation{ID: tChGen, Name: "general", IsChannel: true, IsMember: true, IsGeneral: true, NumMembers: 12})
+	for _, f := range seed {
+		f(s)
+	}
 	app := core.New(c, s)
 	if u, ok := s.User(tSelf); ok {
 		app.S.Self = *u
