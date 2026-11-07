@@ -177,6 +177,11 @@ func (t *Taut) checkAuth(ctx context.Context, a storedAccount) string {
 		return "invalid"
 	}
 	base := strings.TrimSuffix(firstNonEmpty(c.TeamURL, "https://slack.com/"), "/") + "/api/auth.test"
+	// A saved account's cookie only goes to slack.com (or the API origin
+	// this session already talks to, as in tests).
+	if !slack.CookieURL(base) && (t.app == nil || t.app.C == nil || !t.app.C.CredentialsOK(base)) {
+		return "invalid"
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base, strings.NewReader("token="+url.QueryEscape(c.Token)))
 	if err != nil {
 		return "unknown"
