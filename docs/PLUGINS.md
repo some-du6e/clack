@@ -68,7 +68,7 @@ func (r *Runtime) ExposeJSON(name string, fn func(args []json.RawMessage) (any, 
 func (r *Runtime) ExposeAsync(name string, fn func(ctx context.Context, args []json.RawMessage) (any, error)) // → Promise, own goroutine
 func (r *Runtime) Do(f func(js *Ctx) error) error          // on the JS thread, waits (inline when already on it)
 func (r *Runtime) Post(f func(js *Ctx))                    // async
-func (r *Runtime) Stats() Stats                            // Boot duration, JS heap bytes
+func (r *Runtime) Stats() Stats                            // Boot duration + Phases, JS heap bytes
 type HostFunc func(js *Ctx, this Value, args []Value) (any, error) // returned Go values converted by js.Value
 ```
 `Value` (zero = undefined) is a GC-tracked handle; use its methods only on the JS thread: `Type, IsUndefined/IsNull/IsNullish/IsBool/IsNumber/IsString/IsObject/IsArray/IsFunction/IsPromise/IsError, Bool, Float, Int, String, Get, Index, Len, Set, SetIndex, Delete, Has, Keys, Call, CallThis, Method, New, JSON, Decode, Export, Bytes, Then(func(Value, error)), StrictEquals, Free`. `*Ctx`: `Global, Undefined, Null, Eval, Import, ParseJSON, NewObject, NewArray, NewError, Func(name, HostFunc), NewPromise() (p, resolve func(any), reject func(error))` (settle from any goroutine), `Value(any)` (nil→null, numbers, string, []byte→Uint8Array, json.RawMessage→parsed, error→Error, HostFunc→function, else encoding/json). JS exceptions come back as `*JSError{Name, Message, Stack}`; interrupted tasks as `ErrTimeout`.

@@ -547,7 +547,18 @@ func (e *engine) reportRejections() {
 	}
 	for p, reason := range e.unhandled {
 		delete(e.unhandled, p)
-		e.r.logError("uncaught (in promise)", e.toError(reason))
+		// window 'unhandledrejection' first; preventDefault() silences it
+		report := true
+		if js := e.r.js; js != nil {
+			if fn := js.Global().Get("__jr").Get("unhandled"); fn.IsFunction() {
+				if v, err := fn.Call(e.r.wrap(e.call("jr_dup", uint64(p))), e.r.wrap(e.call("jr_dup", uint64(reason)))); err == nil && v.IsBool() && !v.Bool() {
+					report = false
+				}
+			}
+		}
+		if report {
+			e.r.logError("uncaught (in promise)", e.toError(reason))
+		}
 		e.release(reason)
 		e.release(p)
 	}
