@@ -106,12 +106,19 @@ Treat `creds.json` like a password: it is a full session for your account.
 clack            # open the window
 clack -dark      # start in dark mode (the saved preference wins)
 clack -version   # print the version
+clack 'slack://channel?team=T0266FRGM&id=C0266FRGV'   # open a Slack link
 ```
 
 | flag | default | |
 |---|---|---|
 | `-creds <file>` | `~/.config/clack/creds.json` | credentials file |
 | `-dark` | off | start in dark mode |
+| `-register-url-handler` | | make Clack this user's `slack://` handler and exit (Windows registry; `xdg-mime` on Linux) |
+| `-unregister-url-handler` | | remove Clack's `slack://` registration (Windows) and exit |
+
+Only one Clack runs per user. Starting it again, or opening a `slack://` link, brings the running window to the front and opens the link there (`slack://channel?id=C…[&thread_ts=…]`, `slack://user?id=U…`, `slack://open`). Instances with different `CLACK_HOME`s are separate. On Windows, Clack also puts an icon in the notification area: click it to bring the window back, or right-click it to quit.
+
+Release builds check GitHub Releases for a newer version once at start and then twice a day. If there is one, a blue "A new version of Clack is available" banner appears with a **View release** button that opens the release page in your browser. Clack never downloads or installs anything by itself. Turn the check off in **Preferences → Advanced → Check for updates**.
 
 Config lives in `~/.config/clack` (`%AppData%\clack` on Windows, `~/Library/Application Support/clack` on macOS). Set `CLACK_HOME` to keep it elsewhere. Config from the old name (`yoloslack`) is copied over on first start. Set `CLACK_TIMING=1` to log startup timings, `CLACK_FRAMELOG=1` to log every frame, and `CLACK_NOEMBOLDEN=1` to skip the text-weight correction (faster on machines without a GPU).
 
