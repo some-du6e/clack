@@ -8,6 +8,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/taut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
@@ -72,6 +73,18 @@ type MenuOpts struct {
 	// profile ⋮ menu is RimetoMemberProfileOverflowMenu{memberId}).
 	Within      string
 	WithinProps slackc.Props
+	// Wraps are more Slack components around Within, outermost first (the
+	// channel menu is ChannelContextMenu{id} >
+	// ContextMenuTriggerWithKeyboardFocus{getTemplate}).
+	Wraps []MenuWrap
+	// MenuClass is Slack's Menu menuClassNames.
+	MenuClass string
+}
+
+// MenuWrap is a Slack component a menu is rendered inside.
+type MenuWrap struct {
+	Name  string
+	Props slackc.Props
 }
 
 // Menu is a Slack menu overlay with keyboard navigation and submenus.
@@ -99,6 +112,12 @@ type Menu struct {
 	key     string
 	win     image.Point
 	scale   float32
+
+	// Slick boundaries (slick_menu.go)
+	wraps   []MenuWrap     // Wraps + Within
+	nExtra  int            // trailing rows a plugin added as Menu children
+	ctxH    *taut.GoHandle // ContextMenuTriggerWithKeyboardFocus.getTemplate
+	ctxDone bool           // asked a patched getTemplate
 }
 
 // NewMenu opens a menu with its top-left corner at anchor (flipping at the
@@ -112,6 +131,10 @@ func NewMenuOpts(h Host, items []MenuItem, o MenuOpts) *Menu {
 	m := &Menu{h: h, items: items, orig: items, opts: o, sel: -1, subIdx: -1, key: nextKey("menu")}
 	m.clicks = make([]widget.Clickable, len(items))
 	m.onClose = o.OnClose
+	m.wraps = o.Wraps
+	if o.Within != "" {
+		m.wraps = append(m.wraps[:len(m.wraps):len(m.wraps)], MenuWrap{Name: o.Within, Props: o.WithinProps})
+	}
 	return m
 }
 
@@ -208,6 +231,10 @@ func (m *Menu) activate(gtx layout.Context, i int) {
 func (m *Menu) closeAll() {
 	for s := m; s != nil; s = s.sub {
 		s.done = true
+	}
+	if m.ctxH != nil {
+		m.ctxH.Release()
+		m.ctxH = nil
 	}
 	m.Dismiss()
 }
