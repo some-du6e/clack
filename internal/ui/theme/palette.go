@@ -23,6 +23,7 @@ type Palette struct {
 	SidebarActiveText color.NRGBA
 	SidebarDivider    color.NRGBA
 	SidebarButton     color.NRGBA // compose button tile
+	WorkspaceBorder   color.NRGBA // dark mode: 1px outline around sidebar+panel
 
 	// Badges.
 	Badge     color.NRGBA // mention count pill
@@ -150,25 +151,27 @@ var LightPalette = Palette{
 
 // DarkPalette is Slack's dark mode.
 var DarkPalette = Palette{
-	ChromeA:       rgb(0x2b1a2c),
-	ChromeB:       rgb(0x1f1220),
-	ChromeC:       rgb(0x2b1a2c),
+	// measured from app.slack.com in dark mode (Aubergine), 2026-11-07
+	ChromeA:       rgb(0x431349),
+	ChromeB:       rgb(0x200221),
+	ChromeC:       rgb(0x431349),
 	ChromeText:    rgb(0xffffff),
-	ChromeTextDim: rgba(0xffffff, 0xb3),
-	ChromeHover:   rgba(0xffffff, 0x1f),
-	ChromeActive:  rgba(0xffffff, 0x2b),
-	SearchBg:      rgba(0xffffff, 0x26),
-	SearchHover:   rgba(0xffffff, 0x38),
-	SearchText:    rgba(0xffffff, 0xd9),
+	ChromeTextDim: rgba(0xefe1f5, 0xe6),
+	ChromeHover:   rgba(0xefe1f5, 0x26),
+	ChromeActive:  rgba(0xefe1f5, 0x40),
+	SearchBg:      rgba(0xefe1f5, 0x40),
+	SearchHover:   rgba(0xefe1f5, 0x55),
+	SearchText:    rgb(0xffffff),
 
-	SidebarBg:         rgba(0xf9edff, 0x0f),
-	SidebarText:       rgba(0xf6e4ff, 0xcc),
+	SidebarBg:         rgba(0x101214, 0x99),
+	SidebarText:       rgba(0xe3ceeb, 0xcc),
 	SidebarTextUnread: rgb(0xffffff),
-	SidebarHover:      rgba(0xf9edff, 0x14),
-	SidebarActive:     rgba(0xf9edff, 0x33),
-	SidebarActiveText: rgb(0xffffff),
-	SidebarDivider:    rgba(0xffffff, 0x1a),
-	SidebarButton:     rgba(0xffffff, 0x2b),
+	SidebarHover:      rgba(0xefe1f5, 0x14),
+	SidebarActive:     rgb(0x7d3986),
+	SidebarActiveText: rgb(0xefe1f5),
+	SidebarDivider:    rgba(0xefe1f5, 0x26),
+	SidebarButton:     rgba(0xefe1f5, 0x40),
+	WorkspaceBorder:   rgba(0xefe1f5, 0x26),
 
 	Badge:     rgb(0xeabdfb),
 	BadgeText: rgb(0x39063a),
@@ -178,8 +181,8 @@ var DarkPalette = Palette{
 	BgRaised:     rgb(0x222529),
 	BgInset:      rgb(0x222529),
 	Fg:           rgb(0xd1d2d3),
-	FgMuted:      rgb(0xababad),
-	FgSubtle:     rgb(0x9a9b9e),
+	FgMuted:      rgb(0xb9babd),
+	FgSubtle:     rgb(0xababad),
 	Border:       rgba(0xd1d2d3, 0x21),
 	BorderStrong: rgba(0xd1d2d3, 0x4d),
 	Skeleton:     rgba(0xd1d2d3, 0x14),

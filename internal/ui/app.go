@@ -338,6 +338,14 @@ func (a *App) frame(gtx layout.Context) {
 	if sbW > 0 {
 		a.layoutSidebarResize(gtx, primary.Min.X, ws.Min.Y, ws.Dy())
 	}
+	if b := a.th.C.WorkspaceBorder; b.A > 0 {
+		// Slack dark mode outlines the workspace and the sidebar/panel seam.
+		bc := theme.Over(b, a.chromeBase(ws.Min))
+		theme.Border(gtx, ws, rad, gtx.Dp(1), bc)
+		if sbW > 0 {
+			theme.Fill(gtx, image.Rect(primary.Min.X, ws.Min.Y, primary.Min.X+gtx.Dp(1), ws.Max.Y), bc)
+		}
+	}
 
 	a.layoutOverlays(gtx)
 	a.layoutToast(gtx)
