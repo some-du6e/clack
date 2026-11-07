@@ -26,6 +26,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/taut"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -93,6 +94,8 @@ type App struct {
 	searchQuery     string
 	searchPill      image.Rectangle // window coords, for anchoring the search popover
 	primaryOrigin   image.Point     // window position of the primary panel
+	pvOrigin        originTracker   // ClientPrimaryView's origin under a patch
+	sbMenu          sbMenus         // sidebar row menus (slick_shell.go)
 	secondaryOrigin image.Point     // window position of the secondary pane
 	convos          map[string]*convo
 	convoOrder      []string
@@ -384,7 +387,6 @@ func (a *App) frame(gtx layout.Context) {
 
 func (a *App) layoutPrimary(gtx layout.Context) layout.Dimensions {
 	sz := gtx.Constraints.Max
-	r := a.router.Current()
 	secW := 0
 	if a.secondary.open() {
 		secW = gtx.Dp(unit.Dp(a.secondary.width))
@@ -398,12 +400,9 @@ func (a *App) layoutPrimary(gtx layout.Context) layout.Dimensions {
 	mainW := sz.X - secW
 	atExact(gtx, image.Pt(0, 0), image.Pt(mainW, sz.Y), func(gtx layout.Context) layout.Dimensions {
 		defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
-		pv := clsPrimaryView.Enter(gtx, 0, 0)
-		defer pv.Leave()
-		if r.Page() == "c" {
-			return a.layoutChannel(gtx, r.Channel())
-		}
-		return a.layoutPage(gtx, r)
+		d := slackc.Component(gtx, "ClientPrimaryView", a, (*App).primaryViewProps, (*App).layoutPrimaryView)
+		a.layoutShellPoints(gtx)
+		return d
 	})
 	if secW > 0 {
 		x := mainW
