@@ -78,13 +78,14 @@ func iconAt(gtx C, box image.Point, name string, size unit.Dp, col color.NRGBA) 
 // centerLabel draws a label centered in box.
 func centerLabel(gtx C, th *theme.Theme, box image.Point, size unit.Sp, w font.Weight, col color.NRGBA, txt string) {
 	m := op.Record(gtx.Ops)
-	gtx.Constraints = layout.Constraints{Max: box}
+	gtx.Constraints = layout.Constraints{Max: box} // Min 0: natural size
 	d := th.Label(gtx, size, w, col, txt)
 	call := m.Stop()
 	at(gtx, image.Pt((box.X-d.Size.X)/2, (box.Y-d.Size.Y)/2), box, func(gtx C) D { call.Add(gtx.Ops); return d })
 }
 
 func labelSize(gtx C, th *theme.Theme, size unit.Sp, w font.Weight, txt string) image.Point {
+	gtx.Constraints = layout.Constraints{Max: image.Pt(1<<20, 1<<20)} // natural size, whatever the caller's Min
 	m := op.Record(gtx.Ops)
 	d := th.Label(gtx, size, w, hudWhite, txt)
 	m.Stop()

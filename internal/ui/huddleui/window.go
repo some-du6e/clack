@@ -507,7 +507,7 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 	}
 	cc := ctl{id: "cc", icon: "captions", on: st.CaptionsOn}
 	ctls := []ctl{mic, deaf, {id: "camera", icon: "video-off"}, {id: "screen", icon: "screen-share"},
-		{id: "react", icon: "emoji", on: w.picker}, cc, {id: "thread", icon: "thread"}, {id: "leave", wide: 84, label: "Leave"}}
+		{id: "react", icon: "emoji", on: w.picker}, cc, {id: "thread", icon: "threads"}, {id: "leave", wide: 84, label: "Leave"}}
 	gap := gtx.Dp(8)
 	h := gtx.Dp(40)
 	total := 0

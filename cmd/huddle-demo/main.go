@@ -129,6 +129,8 @@ func main() {
 				theme.Fill(gtx, image.Rect(sbW, gtx.Dp(49), sz.X, gtx.Dp(50)), color.NRGBA{R: 0xdd, G: 0xdd, B: 0xdd, A: 0xff})
 				func() {
 					off := op.Offset(image.Pt(sbW+gtx.Dp(16), gtx.Dp(12))).Push(gtx.Ops)
+					gtx := gtx
+					gtx.Constraints.Min = image.Point{}
 					h.th.Label(gtx, 18, theme.Black, color.NRGBA{R: 0x1d, G: 0x1c, B: 0x1d, A: 0xff}, "# huddle-demo")
 					off.Pop()
 				}()
