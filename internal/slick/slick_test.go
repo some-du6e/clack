@@ -402,6 +402,17 @@ func TestThemesAndUserCSS(t *testing.T) {
 	if h.ui.style("slick:user") != "body{zoom:2}" {
 		t.Fatal("user css")
 	}
+	// pausing Slick stops plugins only; the theme and custom CSS stay (Slick's
+	// theme.ts and bootstrap.ts never read the global switch)
+	if err := s.SetGlobalEnabled(h.ctx(), false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(h.ui.style("slick:theme"), "--a:b !important") || h.ui.style("slick:user") != "body{zoom:2}" {
+		t.Fatalf("paused Slick dropped styles: theme %q user %q", h.ui.style("slick:theme"), h.ui.style("slick:user"))
+	}
+	if err := s.SetGlobalEnabled(h.ctx(), true); err != nil {
+		t.Fatal(err)
+	}
 	cards := s.Settings().Themes
 	if cards[0].ID != "" || cards[len(cards)-1].ID != "custom" || len(cards) != 4 {
 		t.Fatalf("cards %+v", cards)

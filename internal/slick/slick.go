@@ -417,7 +417,9 @@ func (s *Slick) localStorage(key string) (string, bool) {
 
 // ---- styles: theme and custom CSS (no JS) ----
 
-// applyStyles hands the selected theme's CSS and user.css to the UI.
+// applyStyles hands the selected theme's CSS and user.css to the UI. Both
+// stay while Slick is paused: Slick's installTheme and user CSS never read
+// the global switch, which only stops plugins.
 func (s *Slick) applyStyles() {
 	ui := s.t.UIHooks()
 	if ui.SetStyle == nil {
@@ -425,15 +427,10 @@ func (s *Slick) applyStyles() {
 	}
 	s.mu.Lock()
 	css := ""
-	if s.cfg.globallyEnabled() {
-		if th, ok := s.themeLocked(s.cfg.theme()); ok && (th.Mode == "" || (th.Mode == "dark") == s.dark.Load()) {
-			css = themeCSS(th)
-		}
+	if th, ok := s.themeLocked(s.cfg.theme()); ok && (th.Mode == "" || (th.Mode == "dark") == s.dark.Load()) {
+		css = themeCSS(th)
 	}
 	user := s.userCSS
-	if !s.cfg.globallyEnabled() {
-		user = ""
-	}
 	prev := s.styled
 	s.styled = css
 	s.mu.Unlock()

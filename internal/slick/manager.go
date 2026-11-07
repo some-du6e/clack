@@ -567,7 +567,6 @@ func (s *Slick) SetGlobalEnabled(ctx context.Context, on bool) error {
 	if err != nil {
 		return err
 	}
-	s.applyStyles()
 	s.reconcileAll(ctx)
 	s.changed()
 	return nil
