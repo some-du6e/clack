@@ -149,6 +149,11 @@ type Style struct {
 	// emoji style); nil uses Slack's apple set.
 	EmojiURL func(stem string) string
 
+	// LightTextAlpha scales the alpha of light text (luminance >= 0.6, i.e.
+	// light-on-dark) to cancel the extra weight Gio's linear-light glyph
+	// blending gives it compared with Chrome. 0 or 1 = off.
+	LightTextAlpha float32
+
 	// Embolden strokes glyph outlines with this width (in pixels, at any
 	// scale) to match the
 	// browser's heavier text rendering; 0 disables it.
@@ -198,4 +203,15 @@ type Options struct {
 	MaxWidth float32
 	// Compact uses 13px/18px text (previews, reply bars, search results).
 	Compact bool
+}
+
+// textColor applies LightTextAlpha to light glyph colors.
+func (s *Style) textColor(c color.NRGBA) color.NRGBA {
+	if s.LightTextAlpha <= 0 || s.LightTextAlpha >= 1 {
+		return c
+	}
+	if y := (0.299*float32(c.R) + 0.587*float32(c.G) + 0.114*float32(c.B)) / 255; y >= 0.6 {
+		c.A = uint8(float32(c.A)*s.LightTextAlpha + 0.5)
+	}
+	return c
 }
