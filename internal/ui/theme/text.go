@@ -73,8 +73,7 @@ type EmojiImages interface {
 	Get(url string, sizePx int) (paint.ImageOp, bool)
 }
 
-// useEmbolden (YOLOSLACK_EMBOLDEN=1) re-enables the old stroke, for A/B.
-var useEmbolden = os.Getenv("YOLOSLACK_EMBOLDEN") != ""
+var noEmbolden = os.Getenv("CLACK_NOEMBOLDEN") != "" || os.Getenv("YOLOSLACK_NOEMBOLDEN") != ""
 
 var shaperThemes sync.Map // *text.Shaper -> *Theme
 
