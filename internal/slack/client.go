@@ -272,6 +272,9 @@ func (c *Client) post(ctx context.Context, method, u, ctype string, body []byte,
 	if c.SignedOut() {
 		return ErrSignedOut
 	}
+	if err := ctx.Err(); err != nil {
+		return err // cancelled (e.g. core's background context at sign-out): never send
+	}
 	k := reqKey(method, u, body)
 	if !skipBackoff(ctx) {
 		if err := c.blocked(k, time.Now()); err != nil {
@@ -304,6 +307,14 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 		}
 	}()
 	for attempt := 0; ; attempt++ {
+		// re-check before every attempt: waiting for a slot or a rate-limit
+		// retry can outlast the session
+		if c.SignedOut() {
+			return ErrSignedOut
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
 		if err != nil {
 			return err
