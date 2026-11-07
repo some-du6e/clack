@@ -111,6 +111,14 @@ func (a *App) MemberCountCached(ch string) (n int, ok bool) {
 	return n, ok
 }
 
+// GuestCountCached is how many of MemberCountCached's people are guests
+// (edge users/counts `guests`, Slack's restricted_member_count).
+func (a *App) GuestCountCached(ch string) int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.memberG[ch]
+}
+
 // SavedState reports whether ch/ts is in the viewer's Saved / To-dos.
 func (a *App) SavedState(ch, ts string) bool {
 	a.mu.Lock()

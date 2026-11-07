@@ -392,6 +392,24 @@ func TestDispatch(t *testing.T) {
 // Slack's autocomplete results are tiered: the local rows, and the complete
 // tier as `.promise`. PrivateChannelMapper (index.tsx:304-317) puts its rows
 // in that tier; Go's Dispatch has to get it, not just the local array.
+// membershipCounts carries the header count's guests as Slack's
+// restricted_member_count (HumanCount's "exclude guests", count.ts:10).
+func TestMembershipCountsGuests(t *testing.T) {
+	h := newHarness(t)
+	h.app.C.EdgeURL = h.api.srv.URL + "/api/edge/"
+	h.api.set("edge/"+entID+"/users/counts", map[string]any{"ok": true, "counts": map[string]any{"people": 1300, "guests": 42}})
+	if _, err := h.app.History(h.ctx(), chGen, ""); err != nil {
+		t.Fatal(err)
+	}
+	var got struct{ Members, Guests int }
+	h.jsInto(`
+		const c = T.redux.getRawState().membershipCounts['`+chGen+`'].counts
+		return { Members: c.member_count, Guests: c.restricted_member_count }`, &got)
+	if got.Members != 1300 || got.Guests != 42 {
+		t.Errorf("membershipCounts %+v, want 1300 people of whom 42 guests", got)
+	}
+}
+
 func TestDispatchKeepsTieredPromise(t *testing.T) {
 	h := newHarness(t)
 	type row struct {
