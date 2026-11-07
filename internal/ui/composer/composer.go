@@ -117,6 +117,7 @@ func (c *Composer) init() {
 	c.ed = NewEditor()
 	c.ac = newAutocomplete(c.h, c.ch)
 	bindAutocomplete(c.ed, c.ac, c.h.Invalidate)
+	c.ac.later, c.ac.thread = c.later, c.ts != ""
 	c.att = newAttachments(c.h)
 	typingHub(c.h.Core()).addHost(c.h) // listen for typing events
 	c.initIDs()

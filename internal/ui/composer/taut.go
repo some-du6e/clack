@@ -154,11 +154,17 @@ type uploadFilesArgs struct {
 func sendTyping(api coreAPI, ch, ts string) {
 	if t := currentTaut(); t.ThunkPatched(thTyping) {
 		_, _ = taut.Dispatch(context.Background(), t, thTyping, typingArgs{ChannelID: ch, ThreadTs: ts},
-			func(_ context.Context, a typingArgs) (any, error) { return nil, api.typingErr(a.ChannelID, a.ThreadTs) })
+			func(_ context.Context, a typingArgs) (any, error) {
+				return nil, typingNative(api, a.ChannelID, a.ThreadTs)
+			})
 		return
 	}
-	api.typing(ch, ts)
+	_ = typingNative(api, ch, ts)
 }
+
+// typingNative is currentUserStartedTyping's native (core.Typing over the
+// realtime socket). A var so tests can observe it without a socket.
+var typingNative = func(api coreAPI, ch, ts string) error { return api.typingErr(ch, ts) }
 
 // ---- send ----
 
