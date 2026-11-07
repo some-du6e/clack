@@ -42,10 +42,34 @@ func init() {
 
 // ---- shared bits ----
 
-// ctlPress is a clickable with onMouseDown edge detection.
+// ctlPress is a clickable with onMouseDown edge detection. It is
+// keyboard-operable like Slack's buttons: Tab focuses it (Gio's focus
+// order), Enter or Space activates it, and focus shows Slack's ring.
 type ctlPress struct {
-	click widget.Clickable
-	down  bool
+	click   widget.Clickable
+	down    bool
+	focused bool
+}
+
+// layout lays w out as the clickable and draws the focus ring
+// (box-shadow 0 0 0 4px FocusRing, like Slack's c-button:focus-visible)
+// around it while it has keyboard focus. onFocus/onBlur fire on changes.
+func (s *ctlPress) layout(gtx layout.Context, h *slackc.Host, radius int, w layout.Widget) layout.Dimensions {
+	d := s.click.Layout(gtx, w)
+	f := gtx.Focused(&s.click)
+	if f != s.focused {
+		s.focused = f
+		if f {
+			h.Call("onFocus", focusEvent("focus", ""))
+		} else {
+			h.Call("onBlur", focusEvent("blur", ""))
+		}
+	}
+	if f {
+		g := dp(gtx, 2)
+		theme.Border(gtx, image.Rectangle{Max: d.Size}.Inset(-g), radius+g, 2*g, colorsOf(thm()).FocusRing)
+	}
+	return d
 }
 
 // update drains the clickable: it calls onMouseDown when a press starts
@@ -264,7 +288,7 @@ func buttonComp(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 	if disabled {
 		return draw(gtx)
 	}
-	return st.click.Layout(gtx, draw)
+	return st.layout(gtx, h, dp(gtx, rad), draw)
 }
 
 // ---- IconButtonBase ----
@@ -327,7 +351,7 @@ func iconButtonBase(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 	if disabled {
 		return draw(gtx)
 	}
-	return st.click.Layout(gtx, draw)
+	return st.layout(gtx, h, dp(gtx, 6), draw)
 }
 
 // ---- FilterPill ----
@@ -374,7 +398,7 @@ func filterPill(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 	if disabled {
 		return draw(gtx)
 	}
-	return st.click.Layout(gtx, draw)
+	return st.layout(gtx, h, H/2, draw)
 }
 
 // ---- Tag ----
@@ -490,7 +514,7 @@ func checkboxComp(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 	if disabled {
 		return draw(gtx)
 	}
-	return st.click.Layout(gtx, draw)
+	return st.layout(gtx, h, dp(gtx, 4), draw)
 }
 
 // ---- Label ----
@@ -744,9 +768,15 @@ func formTextInput(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 		}
 	}
 
-	// onKeyDown: Enter and the arrows reach the plugin before the editor.
-	if hasFunc(p, "onKeyDown") && gtx.Focused(ed) {
+	// Enter and the arrows reach the plugin before the editor, as in a
+	// browser input: the onKeyDown prop, then a DOM keydown/keyup at the
+	// component's node that bubbles through the plugin's elements around
+	// it (api.modal's wrapper, a form's onKeyDown). Enter without an
+	// onKeyDown of its own also submits an enclosing <form> (implicit
+	// submission).
+	if gtx.Focused(ed) {
 		mods := key.ModShift | key.ModCtrl | key.ModAlt | key.ModSuper
+		own := hasFunc(p, "onKeyDown")
 		for {
 			e, ok := gtx.Event(
 				key.Filter{Focus: ed, Name: key.NameReturn, Optional: mods},
@@ -757,8 +787,16 @@ func formTextInput(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 			if !ok {
 				break
 			}
-			if ke, ok := e.(key.Event); ok && ke.State == key.Press {
+			ke, ok := e.(key.Event)
+			if !ok {
+				continue
+			}
+			if ke.State == key.Press && own {
 				h.Call("onKeyDown", keyEvent("keydown", string(ke.Name), ke.Modifiers, ed.Text()))
+			}
+			h.DispatchKey(ke)
+			if ke.State == key.Press && !own && (ke.Name == key.NameReturn || ke.Name == key.NameEnter) && ke.Modifiers == 0 {
+				h.SubmitForm()
 			}
 		}
 	}
