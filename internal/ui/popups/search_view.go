@@ -33,6 +33,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -1027,8 +1028,65 @@ func (v *SearchView) results(gtx layout.Context, th *theme.Theme, cl *Colors, px
 	return layout.Dimensions{Size: sz}
 }
 
-// card draws message result i, width w, at the origin.
+// card draws message result i, width w, at the origin: Slack's
+// MessageListItem{result: {messages}} around SearchResult{…message}.
 func (v *SearchView) card(gtx layout.Context, th *theme.Theme, cl *Colors, i, w int) layout.Dimensions {
+	return slackc.Component(gtx, "MessageListItem", srCardArgs{v: v, th: th, cl: cl, i: i, w: w},
+		srCardArgs.listItemProps, srCardArgs.layoutListItem)
+}
+
+// srCardArgs carry a result card through its boundaries.
+type srCardArgs struct {
+	v    *SearchView
+	th   *theme.Theme
+	cl   *Colors
+	i, w int
+	over slackc.Props // the message MessageListItem's plugin passed (ShowRealUser)
+}
+
+func (a srCardArgs) listItemProps() slackc.Props {
+	m := &a.v.msgs[a.i]
+	return slackc.Props{
+		"$key":    m.Channel + "/" + m.TS,
+		"index":   a.i,
+		"variant": "search",
+		"result":  slackc.Props{"type": "message", "messages": []any{slackMessage(m)}},
+	}
+}
+
+func (a srCardArgs) layoutListItem(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	if r := p.Map("result"); r != nil {
+		if l := r.List("messages"); len(l) > 0 {
+			a.over = asProps(l[0])
+		}
+	}
+	return slackc.Component(gtx, "SearchResult", a, srCardArgs.resultProps, srCardArgs.layoutResult)
+}
+
+func (a srCardArgs) resultProps() slackc.Props {
+	m := &a.v.msgs[a.i]
+	return srResultProps(a.v.h, m, a.over, a.v.cards[a.i].avatar, 36)
+}
+
+func (a srCardArgs) layoutResult(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	v := a.v
+	m := &v.msgs[a.i]
+	c := &v.cards[a.i]
+	name, av := c.name, c.avatar
+	src := p
+	if src == nil {
+		src = a.over
+	}
+	if n, u, ok := srAuthorOver(v.h, m, src); ok {
+		name, av = n, u
+	}
+	return v.cardNative(gtx, a.th, a.cl, a.i, a.w, name, av, p)
+}
+
+// cardNative is SearchResult's native: the card with the sender's name
+// and avatar URL; rp holds the plugin's SearchResult props (nil
+// unpatched), whose avatar slot it lays out.
+func (v *SearchView) cardNative(gtx layout.Context, th *theme.Theme, cl *Colors, i, w int, name, av string, rp slackc.Props) layout.Dimensions {
 	gtx.Constraints.Min = image.Point{}
 	c := &v.cards[i]
 	m := &v.msgs[i]
@@ -1082,7 +1140,7 @@ func (v *SearchView) card(gtx layout.Context, th *theme.Theme, cl *Colors, i, w 
 		})
 	}
 	at(gtx, image.Pt(padL, padT+dp(gtx, 2)), func(gtx layout.Context) layout.Dimensions {
-		return avatar(gtx, v.h, c.avatar, 36)
+		return srAvatar(gtx, v.h, m, av, 36, rp)
 	})
 	right := w - padR
 	if c.when != "" {
@@ -1097,7 +1155,7 @@ func (v *SearchView) card(gtx layout.Context, th *theme.Theme, cl *Colors, i, w 
 	d := at(gtx, image.Pt(tx, padT), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, right-tx), nameH)}
 		return vcenter(gtx, nameH, func(gtx layout.Context) layout.Dimensions {
-			return text(gtx, th, 15, theme.Black, cl.Fg, c.name)
+			return text(gtx, th, 15, theme.Black, cl.Fg, name)
 		})
 	})
 	srDrawWhere(gtx, v.h, c.where, tx+d.Size.X+dp(gtx, 4), padT, right, nameH, bg)
