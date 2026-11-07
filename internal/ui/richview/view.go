@@ -270,7 +270,37 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 			s.Pop()
 		}
 	}
-	return layout.Dimensions{Size: size, Baseline: 0}
+	d := layout.Dimensions{Size: size}
+	if b := v.d.firstBaseline(); b >= 0 && b <= size.Y {
+		d.Baseline = size.Y - b
+	}
+	return d
+}
+
+// firstBaseline is the first line's baseline from the top (px), the way
+// a browser aligns inline content: text sits on its baseline, an
+// image-only line (emoji) on the image's bottom edge. -1 when nothing
+// was laid out. Hosts that put the doc inline (MrkdwnElement in a plugin
+// tree) align it to the surrounding text with it.
+func (d *display) firstBaseline() int {
+	if len(d.lines) == 0 {
+		return -1
+	}
+	ln := d.lines[0]
+	base, img := -1, -1
+	for i := ln.f0; i < ln.f1 && i < len(d.frags); i++ {
+		f := &d.frags[i]
+		switch f.kind {
+		case fText:
+			base = max(base, f.y)
+		case fImage:
+			img = max(img, f.y+f.size)
+		}
+	}
+	if base >= 0 {
+		return base
+	}
+	return img
 }
 
 func fragRect(f *frag) image.Rectangle {

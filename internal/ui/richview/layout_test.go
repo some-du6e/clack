@@ -2121,3 +2121,20 @@ func TestTableLayout(t *testing.T) {
 		t.Errorf("plain %q", v.d.plain)
 	}
 }
+
+// TestFirstBaseline: Layout reports the first line's baseline (Gio
+// Baseline, from the bottom), so hosts that put a doc inline (slackc's
+// MrkdwnElement) line it up with the surrounding text like a browser.
+func TestFirstBaseline(t *testing.T) {
+	st := newTestStyle()
+	v := New(doc(para(txt("Out of office")), para(txt("second paragraph"))), Options{})
+	gtx := testGtx(new(op.Ops), 300)
+	d := v.Layout(gtx, st, nil)
+	f := findFrag(t, &v.d, "Out")
+	if d.Baseline == 0 || d.Size.Y-d.Baseline != f.y {
+		t.Errorf("Baseline %d (size %v), want first-line baseline %d from the top", d.Baseline, d.Size, f.y)
+	}
+	if b := (&display{}).firstBaseline(); b != -1 {
+		t.Errorf("empty display baseline %d, want -1", b)
+	}
+}
