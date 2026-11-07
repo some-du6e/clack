@@ -150,10 +150,17 @@ func (r *ttRenderer) frame(w func(gtx layout.Context)) *image.RGBA {
 	return img
 }
 
-func (r *ttRenderer) save(name string, img *image.RGBA) {
+// save writes the top h pixels (the dialog is 560 tall; plugin pages are
+// drawn full height).
+func (r *ttRenderer) save(name string, img *image.RGBA, h ...int) {
 	if r.dir == "" || img == nil {
 		return
 	}
+	hh := 560
+	if len(h) > 0 {
+		hh = h[0]
+	}
+	img = img.SubImage(image.Rect(0, 0, img.Rect.Dx(), min(hh, img.Rect.Dy()))).(*image.RGBA)
 	f, err := os.Create(filepath.Join(r.dir, name+".png"))
 	if err != nil {
 		r.t.Fatal(err)
@@ -211,13 +218,27 @@ func TestTautPrefsRender(t *testing.T) {
 		}
 		ids = append(ids, id)
 	}
-	t.Logf("imported %d plugins in %v (js runtime started: %v)", len(ids), time.Since(t0), tt.Started())
+	t.Logf("imported %d plugins in %v", len(ids), time.Since(t0))
+
+	// Installed but all off: a fresh start reads metadata only, no JS.
+	for _, id := range ids {
+		if err := tt.SetEnabled(ctx, id, false); err != nil {
+			t.Errorf("disable %s: %v", id, err)
+		}
+	}
+	a.data.stopTaut()
+	t0 = time.Now()
+	a.data.startTaut(a)
+	t.Logf("startTaut with %d plugins installed, none on: %v", len(ids), time.Since(t0))
+	if tt = a.Taut(); tt == nil {
+		t.Fatal("taut didn't restart")
+	}
 	if tt.Started() {
-		t.Error("importing (without enabling) started the JS runtime")
+		t.Error("the JS runtime started with every plugin turned off")
 	}
 
 	shots := os.Getenv("TAUT_SHOTS_DIR")
-	r := &ttRenderer{t: t, a: a, sz: image.Pt(800, 560), dir: shots}
+	r := &ttRenderer{t: t, a: a, sz: image.Pt(800, 1400), dir: shots}
 	if shots != "" {
 		w, err := headless.NewWindow(r.sz.X, r.sz.Y)
 		if err != nil {
@@ -230,6 +251,12 @@ func TestTautPrefsRender(t *testing.T) {
 	defer p.close()
 	draw := func(gtx layout.Context) { p.layout(gtx) }
 	page := func() *tautPage { return p.taut }
+	// tall draws the Taut page alone, 600 wide and full height, so whole
+	// plugin pages (editors, data panels) fit in one shot.
+	tall := func(gtx layout.Context) {
+		gtx.Constraints = layout.Exact(image.Pt(600, r.sz.Y))
+		p.taut.layout(gtx)
+	}
 
 	for _, dark := range []bool{false, true} {
 		a.th.SetDark(dark)
@@ -294,7 +321,7 @@ func TestTautPrefsRender(t *testing.T) {
 				wantSubs++
 				panels++
 			}
-			img := r.settle(draw, 10*time.Second, func() bool {
+			img := r.settle(tall, 10*time.Second, func() bool {
 				ready := 0
 				for _, s := range page().subs {
 					if s.Ready() {
@@ -308,7 +335,7 @@ func TestTautPrefsRender(t *testing.T) {
 					t.Errorf("%s: %s never rendered", pl.ID, k)
 				}
 			}
-			r.save("plugin-"+safeName(pl.ID), img)
+			r.save("plugin-"+safeName(pl.ID), img, r.sz.Y)
 		}
 	}
 	t.Logf("option kinds %v; %d editors, %d data panels", kinds, editors, panels)
@@ -318,7 +345,7 @@ func TestTautPrefsRender(t *testing.T) {
 	a.th.SetDark(true)
 	if len(ids) > 0 {
 		page().go_("plugin", ids[0])
-		r.save("plugin-first-dark", r.settle(draw, 5*time.Second, nil))
+		r.save("plugin-first-dark", r.settle(tall, 5*time.Second, nil), r.sz.Y)
 	}
 	a.th.SetDark(false)
 }
