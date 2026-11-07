@@ -115,7 +115,9 @@ func slackDoc(d richtext.Doc) (blocks, files, atts []any) {
 			continue
 		case richtext.AttachmentBlock:
 			if b.Att != nil && b.Att.ServiceName != "Huddle" {
-				atts = append(atts, slackAttachment(b))
+				a := slackAttachment(b)
+				a["id"] = len(atts) + 1 // Slack numbers a message's attachments from 1
+				atts = append(atts, a)
 			}
 			continue
 		case richtext.Tombstone:
@@ -627,4 +629,111 @@ func jsonable(v any) any {
 		return v
 	}
 	return nil
+}
+
+// docTail reports whether blocks have file cards and attachment cards
+// (MessageFiles / MessageKitAttachments render only then, like Slack's).
+func docTail(blocks []richtext.Block) (files, atts bool) {
+	for i := range blocks {
+		switch b := &blocks[i]; b.Kind {
+		case richtext.FileBlock:
+			files = files || b.File != nil
+		case richtext.AttachmentBlock:
+			atts = atts || b.Att != nil && b.Att.ServiceName != "Huddle"
+		}
+	}
+	return
+}
+
+// filterTail drops the file and attachment cards a plugin left out of
+// MessageFiles' msg.files / MessageKitAttachments' msg.attachments
+// (matched by file id / attachment id). A list it can't match (missing,
+// or entries without ids) filters nothing. Returns blocks itself when
+// nothing is dropped.
+func filterTail(blocks []richtext.Block, files, atts slackc.Props) []richtext.Block {
+	fk, ak := idSet(files, "files"), idSet(atts, "attachments")
+	if fk == nil && ak == nil {
+		return blocks
+	}
+	var out []richtext.Block
+	ai := 0
+	for i := range blocks {
+		b := &blocks[i]
+		drop := false
+		switch {
+		case b.Kind == richtext.FileBlock && b.File != nil:
+			drop = fk != nil && !fk[b.File.ID]
+		case b.Kind == richtext.AttachmentBlock && b.Att != nil && b.Att.ServiceName != "Huddle":
+			ai++
+			drop = ak != nil && !ak[strconv.Itoa(ai)]
+		}
+		if drop && out == nil {
+			out = append(make([]richtext.Block, 0, len(blocks)), blocks[:i]...)
+		}
+		if !drop && out != nil {
+			out = append(out, *b)
+		}
+	}
+	if out == nil {
+		return blocks
+	}
+	return out
+}
+
+// idSet is the ids in msg[key] (strings, or objects with an id); nil when
+// there is no such list or an entry has no id.
+func idSet(msg slackc.Props, key string) map[string]bool {
+	if msg == nil {
+		return nil
+	}
+	list, ok := msg[key].([]any)
+	if !ok {
+		return nil
+	}
+	set := make(map[string]bool, len(list))
+	for _, v := range list {
+		if m := asMap(v); m != nil {
+			v = m["id"]
+		}
+		switch id := v.(type) {
+		case string:
+			set[id] = true
+		case float64:
+			set[strconv.FormatFloat(id, 'f', -1, 64)] = true
+		case int:
+			set[strconv.Itoa(id)] = true
+		default:
+			return nil
+		}
+	}
+	return set
+}
+
+// docChannels lists the channels a message mentions (at most 3, in order).
+func docChannels(blocks []richtext.Block) []string {
+	var out []string
+	add := func(spans []richtext.Span) {
+		for i := range spans {
+			if sp := &spans[i]; sp.Kind == richtext.Channel && sp.ID != "" && len(out) < 3 {
+				dup := false
+				for _, id := range out {
+					dup = dup || id == sp.ID
+				}
+				if !dup {
+					out = append(out, sp.ID)
+				}
+			}
+		}
+	}
+	for i := range blocks {
+		b := &blocks[i]
+		add(b.Spans)
+		for _, it := range b.Items {
+			add(it)
+		}
+		for _, f := range b.Fields {
+			add(f)
+		}
+	}
+	return out
 }
