@@ -507,7 +507,7 @@ func TestSlickViewNicknames(t *testing.T) {
 		t.Errorf("Set nickname… isn't right after Copy display name: %+v", m.items)
 	}
 	if set.Do == nil {
-		t.Log(slSlotFnGap)
+		t.Fatal("Set nickname… has no action: " + slSlotFnGap)
 	} else {
 		set.Do()
 		slUntil(t, 10*time.Second, "the nickname modal", nil, func() bool {
@@ -690,7 +690,7 @@ func TestSlickViewBetterGifs(t *testing.T) {
 			return strings.Contains(e.rec.dump("GifPicker"), "[data-qa=slick_better_gifs]")
 		})
 	} else {
-		t.Log("gap: BetterGifs' {filter: isGifPicker} reads the native's real function source, which internal/taut gives no gif-picker markers; the GifPicker boundary is drawn (unpatched)")
+		t.Error("GifPicker isn't patched: BetterGifs' {filter: isGifPicker} must match the native's real source (internal/taut REAL_SOURCES)")
 	}
 }
 
@@ -719,7 +719,7 @@ func TestSlickViewChatTabs(t *testing.T) {
 			t.Errorf("tab row %+v", m.items[i])
 		}
 	} else {
-		t.Log(slSlotFnGap)
+		t.Error("no Open in new Slick tab row: " + slSlotFnGap)
 	}
 	if len(m.items) < 3 {
 		t.Errorf("native rows gone: %+v", m.items)
@@ -759,7 +759,7 @@ func TestSlickViewInstalledApps(t *testing.T) {
 // adds to a template inside a Within slot (Nicknames, BetterBlock), or a
 // getTemplate it wraps on a slot (ChatTabs), never reaches Go. The check
 // becomes strict once that test only applies below the top level.
-const slSlotFnGap = "gap (internal/jsrt): function props a plugin sets on a slot component are dropped (dom.js nativeProps short-circuits on the props object's own $slot)"
+const slSlotFnGap = "function props a plugin sets on a slot component must reach Go (internal/jsrt dom.js nativeProps)"
 
 type slNoNet struct{}
 
