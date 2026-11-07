@@ -413,7 +413,9 @@ func TestFetchMemoryCache(t *testing.T) {
 	fetchHostAllowed = func(h string) bool { return h == "127.0.0.1" }
 	defer func() { testAllowHTTP = false; fetchHostAllowed = oldAllowed }()
 
-	a := New(slack.New(slack.Creds{Cookie: "xoxd-test", UserID: "USELF"}), store.New(""))
+	// The cookie goes to the configured API host (here the test server) or
+	// https Slack hosts only.
+	a := New(slack.New(slack.Creds{Cookie: "xoxd-test", UserID: "USELF", TeamURL: srv.URL + "/"}), store.New(""))
 	ctx := context.Background()
 	for i := 0; i < 3; i++ {
 		b, mime, err := a.Fetch(ctx, srv.URL+"/a.png")

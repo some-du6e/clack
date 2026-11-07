@@ -10,12 +10,15 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 )
 
 // MaxFetch bounds a single Fetch (bytes are held in memory).
 const MaxFetch = 64 << 20
 
-// fetchHostAllowed limits Fetch to Slack's file and CDN hosts.
+// fetchHostAllowed limits Fetch to Slack's file and CDN hosts. The session
+// cookie itself only goes to https slack.com hosts (slack.Client.Download).
 var fetchHostAllowed = func(host string) bool {
 	return host == "slack.com" || strings.HasSuffix(host, ".slack.com") || strings.HasSuffix(host, ".slack-edge.com")
 }
@@ -27,7 +30,7 @@ var fetchHostAllowed = func(host string) bool {
 func (a *App) Fetch(ctx context.Context, rawURL string) ([]byte, string, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil || (u.Scheme != "https" && !testAllowHTTP) || !fetchHostAllowed(u.Hostname()) {
-		return nil, "", fmt.Errorf("core: Fetch refuses %q", rawURL)
+		return nil, "", fmt.Errorf("core: Fetch refuses %q", slack.Redact(rawURL))
 	}
 	if e, ok := a.files.get(rawURL); ok {
 		return e.data, e.mime, nil
