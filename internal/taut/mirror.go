@@ -932,6 +932,26 @@ func (m *mirror) member(u *slack.User) map[string]any {
 	if _, ok := p["status_expiration"]; !ok {
 		p["status_expiration"] = 0
 	}
+	// the edge API's slim profiles carry avatar_hash but no image_* URLs;
+	// Slack's client fills them in, and plugins read them (WhoReacted's
+	// image_24 ?? image_48)
+	if pr.AvatarHash != "" {
+		team := u.TeamID
+		if team == "" {
+			team = pr.Team
+		}
+		if team == "" {
+			m.t.app.S.RLock()
+			team = m.t.app.S.TeamID
+			m.t.app.S.RUnlock()
+		}
+		for _, size := range []int{24, 32, 48, 72, 192, 512} {
+			k := "image_" + strconv.Itoa(size)
+			if v, _ := p[k].(string); v == "" {
+				p[k] = "https://ca.slack-edge.com/" + team + "-" + u.ID + "-" + pr.AvatarHash + "-" + strconv.Itoa(size)
+			}
+		}
+	}
 	realName := u.RealName
 	if realName == "" {
 		realName = pr.RealName
