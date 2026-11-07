@@ -67,13 +67,19 @@ var (
 
 func parseFace(b []byte) font.Face {
 	parseMu.Lock()
-	defer parseMu.Unlock()
-	if f, ok := parsed[&b[0]]; ok {
+	f, ok := parsed[&b[0]]
+	parseMu.Unlock()
+	if ok {
 		return f
 	}
-	face, err := opentype.Parse(b)
+	face, err := opentype.Parse(b) // outside the lock: faces parse in parallel
 	if err != nil {
 		panic("theme: bad embedded font: " + err.Error())
+	}
+	parseMu.Lock()
+	defer parseMu.Unlock()
+	if f, ok := parsed[&b[0]]; ok {
+		return f // a concurrent parse won; keep one Face per font
 	}
 	parsed[&b[0]] = face
 	return face
@@ -87,8 +93,7 @@ func FacesFor(dark bool) []font.FontFace {
 		w font.Weight
 		s font.Style
 	}
-	var out []font.FontFace
-	for _, f := range []src{
+	srcs := []src{
 		{fonts.Regular, font.Normal, font.Regular},
 		{fonts.Bold, font.Bold, font.Regular},
 		{fonts.Black, font.Black, font.Regular},
@@ -97,7 +102,17 @@ func FacesFor(dark bool) []font.FontFace {
 		{fonts.BoldItalic, font.Bold, font.Italic},
 		{fonts.BlackItalic, font.Black, font.Italic},
 		{fonts.LightItalic, font.Light, font.Italic},
-	} {
+	}
+	// Parse the eight faces in parallel (they dominate shaper creation,
+	// which the first frame waits for); parseFace memoizes.
+	var wg sync.WaitGroup
+	for _, f := range srcs {
+		wg.Add(1)
+		go func(b []byte) { defer wg.Done(); parseFace(b) }(f.b)
+	}
+	wg.Wait()
+	out := make([]font.FontFace, 0, len(srcs))
+	for _, f := range srcs {
 		out = append(out, font.FontFace{Font: font.Font{Typeface: Typeface, Weight: f.w, Style: f.s}, Face: parseFace(f.b)})
 	}
 	return out
