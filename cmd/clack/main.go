@@ -28,6 +28,9 @@ import (
 
 var started = time.Now()
 
+// version is set at release builds (-ldflags "-X main.version=v0.1.0").
+var version = "dev"
+
 func configDir() string {
 	if d := os.Getenv("CLACK_HOME"); d != "" {
 		return d
@@ -67,11 +70,16 @@ func migrateConfig(old, dir string) {
 func main() {
 	credsPath := flag.String("creds", filepath.Join(configDir(), "creds.json"), "credentials file")
 	dark := flag.Bool("dark", false, "start in dark mode (overridden by the saved preference)")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: clack [flags]\n       clack login [workspace]   (store credentials from a d cookie)\n\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+	if *showVersion {
+		fmt.Println("clack", version)
+		return
+	}
 
 	if flag.Arg(0) == "login" {
 		if err := loginCLI(*credsPath, flag.Arg(1)); err != nil {
