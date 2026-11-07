@@ -151,3 +151,20 @@ func TestSpansMrkdwn(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// OwlMode sets ReactionBar's currentUser: "reacted" follows that user.
+func TestReactionBarCurrentUser(t *testing.T) {
+	e := testRowEntry("1700000000.000100")
+	r := newRow(&e)
+	r.rc = &rowCtx{h: nilHost{}, selfID: "U1"}
+	if !r.pills[0].reacted() || r.pills[1].reacted() {
+		t.Fatal("viewer's own reactions")
+	}
+	r.reactAs = "U3"
+	if r.pills[0].reacted() || !r.pills[1].reacted() {
+		t.Error("currentUser override ignored")
+	}
+	if p := r.pills[1].buttonProps(); p.StrOr("className", "") != "c-button-unstyled c-reaction c-reaction--reacted" || p.StrOr("data-qa", "") != "reactji" {
+		t.Errorf("UnstyledButton props %v", p)
+	}
+}

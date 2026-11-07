@@ -81,6 +81,7 @@ type row struct {
 	reactAt          image.Point  // reaction bar origin, row-local
 	wrapOv, blocksOv uintptr      // msg overrides applied (propsID); 0 = none
 	srcMsg, msg      slackc.Props // slackMessage of src and of m, built lazily
+	reactAs          string       // ReactionBar's currentUser override ("" = the viewer)
 }
 
 // reactPill is one reaction's state: Reaction / UnstyledButton natives.
@@ -364,7 +365,7 @@ func (pl *reactPill) buttonProps() slackc.Props {
 	r := pl.r
 	re := &r.m.Reactions[pl.i]
 	cls := "c-button-unstyled c-reaction"
-	if re.Self {
+	if pl.reacted() {
 		cls += " c-reaction--reacted"
 	}
 	return slackc.Props{"$key": r.ts + ":" + re.Name, "data-qa": "reactji", "className": cls, "aria-pressed": re.Self,
@@ -914,6 +915,7 @@ func (r *row) reactionBar(gtx layout.Context, pos, origin image.Point, w int) in
 // layoutReactionBar is ReactionBar: the pills and the add button, or the
 // children a plugin passed (its own buttons beside Slack's).
 func (r *row) layoutReactionBar(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	r.reactAs = p.StrOr("currentUser", "")
 	r.reactRects = r.reactRects[:0]
 	r.addRect = image.Rectangle{}
 	st := reactionBarClass.Enter(gtx, 0, 0)
@@ -1018,6 +1020,22 @@ func (r *row) addButton(gtx layout.Context, st slackc.Styled, size image.Point) 
 	})
 }
 
+// reacted reports whether the bar's current user reacted (the viewer,
+// unless a plugin set ReactionBar's currentUser).
+func (pl *reactPill) reacted() bool {
+	r := pl.r
+	re := &r.m.Reactions[pl.i]
+	if as := r.reactAs; as != "" && as != r.rc.selfID {
+		for _, u := range re.Users {
+			if u == as {
+				return true
+			}
+		}
+		return false
+	}
+	return re.Self
+}
+
 // layout is Reaction around the UnstyledButton pill.
 func (pl *reactPill) layout(gtx layout.Context, _ slackc.Props) layout.Dimensions {
 	return slackc.Component(gtx, "UnstyledButton", pl, (*reactPill).buttonProps, (*reactPill).layoutButton)
@@ -1035,7 +1053,7 @@ func (pl *reactPill) layoutButton(gtx layout.Context, p slackc.Props) layout.Dim
 	}
 	hov := pl.btn.Hovered()
 	var mods uint64
-	if re.Self {
+	if pl.reacted() {
 		mods = 1
 	}
 	st := reactionClass.Enter(gtx, hoverState(hov), mods)
@@ -1064,16 +1082,16 @@ func (pl *reactPill) layoutButton(gtx layout.Context, p slackc.Props) layout.Dim
 
 func (pl *reactPill) pill(gtx layout.Context, st slackc.Styled, content op.CallOp, size image.Point, cy int) layout.Dimensions {
 	c := pl.r.rc.c
-	re := &pl.r.m.Reactions[pl.i]
+	self := pl.reacted()
 	return pl.btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		rr := image.Rectangle{Max: size}
 		rad := size.Y / 2
 		hov := pl.btn.Hovered()
 		switch {
-		case re.Self && hov:
+		case self && hov:
 			rrect(gtx.Ops, rr, rad, st.Background(c.ReactSelfHoverBg))
 			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
-		case re.Self:
+		case self:
 			rrect(gtx.Ops, rr, rad, st.Background(c.ReactSelfBg))
 			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
 		case hov:
@@ -1128,7 +1146,7 @@ func (pl *reactPill) count(gtx layout.Context, st slackc.Styled) layout.Dimensio
 	rc := pl.r.rc
 	re := &pl.r.m.Reactions[pl.i]
 	cs := textStyle{size: 12, col: rc.c.Text, lineH: 16}
-	if re.Self {
+	if pl.reacted() {
 		cs.col, cs.weight = rc.c.ReactSelfText, theme.Bold
 	}
 	cs.col = st.Color(cs.col)
