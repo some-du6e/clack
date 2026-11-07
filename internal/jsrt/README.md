@@ -38,13 +38,13 @@ JS values cross as `u32` handles into a table in wasm memory (0 = undefined; bit
 | | |
 |---|---|
 | first `New` in a process, cold compile cache | 350–650 ms (wazero compiles 1 MB of wasm; cached on disk with `CacheDir`) |
-| `New` with compiled code + bytecode cached | 20–30 ms (instantiate 10–15 ms, environment 6–8 ms, React 4 ms) |
-| JS heap after boot | 3 MiB |
-| Go→JS call (`Value.Call`) | 1.8–2.3 µs |
+| `New` with compiled code + bytecode cached | 20–45 ms (instantiate 9–22 ms, env+web+intl+dom 10–15 ms, React 4–8 ms) |
+| JS heap after boot | 3.8 MiB |
+| Go→JS call (`Value.Call`) | 1.2–2.3 µs |
 | JS→Go host call | 1.1–1.5 µs |
 | `Runtime.Do` round trip from another goroutine | 9–13 µs |
-| React: update 1 row of a 100-row list (event → render → commit → host tree) | 2.3–3.2 ms |
+| React: update 1 row of a 100-row list (event → render → commit → host tree) | 2.2–3.2 ms |
 | React: render+commit+serialize 100 `<li>` (minimal host config, same in both engines) | QuickJS-NG 2.7–4.0 ms, goja 2.9–4.0 ms |
 | CPU loop + 200k-object sort | QuickJS-NG 0.64–0.87 s, goja 0.92–1.26 s |
 
-goja lacks async generators, WeakRef, FinalizationRegistry, RegExp `/d` and `/v`, `Array.fromAsync` and ES modules/dynamic `import()`; Taut plugins are esbuild output with no downleveling, so QuickJS-NG (ES2024+, only `Intl` missing, which `js/intl.js` provides) is the engine. `wasm-opt -O3` on the clang `-O2 -flto` build measured no gain.
+goja lacks async generators, WeakRef, FinalizationRegistry, RegExp `/d` and `/v`, `Array.fromAsync` and ES modules/dynamic `import()`; Taut plugins are esbuild output with no downleveling, so QuickJS-NG (ES2024+; `Intl` comes from `js/intl.js`; 31/31 on the feature list in `enginecmp/`) is the engine. `wasm-opt -O3` on the clang `-O2 -flto` build measured no gain.
