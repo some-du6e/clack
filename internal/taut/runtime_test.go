@@ -542,3 +542,13 @@ func TestScheduleEnd(t *testing.T) {
 		t.Errorf("capped: %v", end.Sub(mon9))
 	}
 }
+
+func TestUTF16ToRune(t *testing.T) {
+	f := utf16ToRune("a😀**b**")
+	// UTF-16: a=0, 😀=1..2, *=3, *=4, b=5; runes: a=0, 😀=1, *=2, *=3, b=4
+	for u, want := range map[int]int{0: 0, 1: 1, 3: 2, 5: 4, 8: 7, 99: 7} {
+		if got := f(u); got != want {
+			t.Errorf("utf16 %d → rune %d, want %d", u, got, want)
+		}
+	}
+}

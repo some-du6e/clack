@@ -66,7 +66,7 @@ When no plugin patches the name, this is just `native(ctx, args)`. When a plugin
 - `t.HasSendChecks()` / `t.SendCheck(ctx, composerCtx)`: run before sending. `false` keeps the text in the composer.
 - `t.HasSendTransforms()` / `t.TransformSendBlocks(ctx, blocks)`: apply to the Block Kit of every send, edit and schedule.
 - `t.HasLinkTransforms()` / `t.TransformLink(ctx, url, "paste"|"link-dialog")`: links pasted or added in the link dialog.
-- `t.HasInlineMarkup()` / `ParseInlineMarkup`, `SerializeInlineMarkup`, `EscapeInlineMarkup`: replace the composer's `*bold*` shortcuts (RealMarkdown).
+- `t.HasInlineMarkup()` / `ParseInlineMarkup` (offsets in runes), `SerializeInlineMarkup`, `EscapeInlineMarkup`: replace the composer's `*bold*` shortcuts (RealMarkdown). viewContext values are Slack's names: `MESSAGE_PANE`, `THREADS_FLEXPANE`, …
 - `t.RegisterInput(where, true/false)`: register composers with Slack's `{viewContext, channelId}`. Answer `UIHooks.Input` ops `isEmpty`, `getContents`, `setContents`, `focus` and `insertText` (`getInputProxy`).
 - `t.SetEditing(windowID, ch, ts, open)`: call when an editor opens or closes. `patchMessageText` leaves the message being edited unchanged.
 - `t.SlicePatched("messages")` → `t.MessageView(ch, ts)` (core.Message, ok) and `t.InjectedMessages(ch)`. `t.SlicePatched("members")` → `t.MemberView(id)`. `t.SlicePatched("channels")` → `t.ChannelView(id)`. `t.ChannelRestriction(ch)` → read-only / thread-only. These never block: they return ok=false until the patched value is computed, then `Invalidate` fires.

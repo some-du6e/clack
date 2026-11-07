@@ -1538,14 +1538,15 @@ const getInputProxy = named('getInputProxy', (where) => {
 const isInputRegistered = named('isInputRegistered', (where) => [...inputs.values()].some((x) => x.channelId === where?.channelId && (!where.viewContext || x.viewContext === where.viewContext)))
 
 const viewContexts = Object.freeze({
-  MESSAGE_PANE: 'message_pane',
-  THREADS_FLEXPANE: 'threads_flexpane',
-  THREADS_VIEW: 'threads_view',
-  HUDDLE_THREAD: 'huddle_thread',
-  MESSAGE_EDIT: 'message_edit',
-  COMPOSER_PAGE: 'composer_page',
+  MESSAGE_PANE: 'MESSAGE_PANE',
+  THREADS_FLEXPANE: 'THREADS_FLEXPANE',
+  THREADS_VIEW: 'THREADS_VIEW',
+  HUDDLE_THREAD: 'HUDDLE_THREAD',
+  MESSAGE_EDIT: 'MESSAGE_EDIT',
+  COMPOSER_PAGE: 'COMPOSER_PAGE',
 })
-const isThreadViewContext = named('isThreadViewContext', (v) => v === 'threads_flexpane' || v === 'threads_view' || v === 'huddle_thread')
+const THREAD_CONTEXTS = new Set(['THREADS_FLEXPANE', 'THREADS_VIEW', 'HUDDLE_THREAD'])
+const isThreadViewContext = named('isThreadViewContext', (v) => THREAD_CONTEXTS.has(String(v).toUpperCase()))
 
 /** Slack's link detector the composer uses */
 const detectLinks = named('detectLinks', ({ input, ignoreEmailMatches, ignorePhoneMatches } = {}) => {

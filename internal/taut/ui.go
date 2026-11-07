@@ -539,7 +539,8 @@ func (t *Taut) TransformLink(ctx context.Context, url, source string) string {
 // formatting shortcuts (RealMarkdown).
 func (t *Taut) HasInlineMarkup() bool { h := t.composer(); return h != nil && h.InlineMarkup }
 
-// MarkupSpan is one piece of inline markup, offsets into the parsed text.
+// MarkupSpan is one piece of inline markup. Offsets are runes into the
+// parsed line (JS counts UTF-16 units; ParseInlineMarkup converts).
 type MarkupSpan struct {
 	Start        int             `json:"start"`
 	End          int             `json:"end"`
@@ -559,7 +560,34 @@ func (t *Taut) ParseInlineMarkup(ctx context.Context, line string) []MarkupSpan 
 	}
 	var spans []MarkupSpan
 	_ = rt.call(ctx, "inlineMarkup", &spans, "parse", line)
+	toRune := utf16ToRune(line)
+	for i := range spans {
+		sp := &spans[i]
+		sp.Start, sp.End, sp.ContentStart, sp.ContentEnd = toRune(sp.Start), toRune(sp.End), toRune(sp.ContentStart), toRune(sp.ContentEnd)
+	}
 	return spans
+}
+
+// utf16ToRune maps UTF-16 offsets into s (what JS strings count) to rune offsets.
+func utf16ToRune(s string) func(int) int {
+	idx := []int{0} // idx[utf16 offset] = rune offset
+	r := 0
+	for _, c := range s {
+		r++
+		idx = append(idx, r)
+		if c >= 0x10000 {
+			idx = append(idx, r) // the low surrogate lands on the same rune boundary
+		}
+	}
+	return func(u int) int {
+		if u < 0 {
+			return 0
+		}
+		if u >= len(idx) {
+			return r
+		}
+		return idx[u]
+	}
 }
 
 // SerializeInlineMarkup gives the markers for a format ("bold", …).
