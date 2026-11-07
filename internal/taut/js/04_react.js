@@ -522,4 +522,4 @@ T.preferencesTabElement = (id) => {
 }
 const preferences = { addTab }
 
-Object.assign(T, { patchComponent, slackComponent, nativeFor, getComponent, lazyComponent, elementsApi, modalApi, menuApi, dialogHelpersFor, openOverlay })
+Object.assign(T, { patchComponent, slackComponent, nativeFor, getComponent, waitForComponent, getRenderedComponent, waitForRenderedComponent, getComponentSource, componentName, lazyComponent, elementsApi, modalApi, menuApi, dialogHelpersFor, openOverlay })
