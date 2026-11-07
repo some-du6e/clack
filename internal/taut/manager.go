@@ -788,3 +788,17 @@ func jsMessage(err error) string {
 	}
 	return s
 }
+
+// InstalledSHA256 is the hex sha256 of user plugin id's file, "" when no
+// such plugin is installed (the plugin Library compares it with its own).
+func (t *Taut) InstalledSHA256(id string) string {
+	if id == "" || id != filepath.Base(id) || strings.ContainsAny(id, `/\`) || strings.HasPrefix(id, ".") {
+		return ""
+	}
+	b, err := os.ReadFile(filepath.Join(t.pluginsDir(), id+".js"))
+	if err != nil {
+		return ""
+	}
+	s := sha256.Sum256(b)
+	return hex.EncodeToString(s[:])
+}

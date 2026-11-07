@@ -22,6 +22,7 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/pluginlib"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/taut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
@@ -68,6 +69,7 @@ type tautPage struct {
 	jsonEd   widget.Editor
 	replace  bool
 	reveal   map[string]bool
+	lib      *libraryView // the Library screen
 
 	gtxNow   layout.Context // this frame's context (editor events)
 	focusWas map[*widget.Editor]bool
@@ -388,6 +390,8 @@ func (p *tautPage) layout(gtx layout.Context) layout.Dimensions {
 			p.advancedScreen(f, t, s)
 		case "about":
 			p.aboutScreen(f, s)
+		case "library":
+			p.libraryScreen(f, t)
 		default:
 			p.mainScreen(f, t, s)
 		}
@@ -438,6 +442,7 @@ func (p *tautPage) mainScreen(f *flow, t *taut.Taut, s taut.Settings) {
 	}
 	// Appearance / Advanced / About rows
 	for _, sub := range []struct{ id, label, desc, icon string }{
+		{"library", "Library", "Official Taut plugins, one-click install", "download"},
 		{"appearance", "Appearance", "Custom CSS", "edit"},
 		{"advanced", "Advanced", "Installing plugins, config.json", "settings"},
 		{"about", "About", "Credits", "info"},
@@ -1348,7 +1353,32 @@ func (p *tautPage) importFile(replacing string, done func(string)) {
 	}()
 }
 
-// ---- Appearance, Advanced, About ----
+// ---- Library, Appearance, Advanced, About ----
+
+// libraryScreen is Taut > Library: the official Taut plugins (pluginlib).
+func (p *tautPage) libraryScreen(f *flow, t *taut.Taut) {
+	p.subScreen(f, "Library", "Taut")
+	if p.lib == nil {
+		p.lib = newLibraryView(pluginlib.Taut, p)
+	}
+	p.lib.layout(f, p.libraryHost(t))
+}
+
+// libraryHost installs Library entries as Taut user plugins.
+func (p *tautPage) libraryHost(t *taut.Taut) libraryHost {
+	return libraryHost{
+		installed: func(id string) (string, string) { return t.InstalledSHA256(id), "" },
+		install: func(ctx context.Context, e pluginlib.Entry, code, _ []byte, update bool) error {
+			replacing := ""
+			if update {
+				replacing = e.ID
+			}
+			_, err := t.Import(ctx, code, replacing)
+			return err
+		},
+		open: func(id string) { p.go_("plugin", id) },
+	}
+}
 
 func (p *tautPage) appearanceScreen(f *flow, t *taut.Taut, s taut.Settings) {
 	p.subScreen(f, "Appearance", "Taut")

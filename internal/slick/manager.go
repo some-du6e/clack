@@ -977,3 +977,20 @@ func writeJSON(path string, v any) error {
 	}
 	return writeFileAtomic(path, b, 0o600)
 }
+
+// InstalledSHA256 is the hex sha256 of plugin id's renderer and main half
+// ("" for a file that isn't installed), for the plugin Library.
+func (s *Slick) InstalledSHA256(id string) (renderer, main string) {
+	if !pluginID.MatchString(id) {
+		return "", ""
+	}
+	sum := func(name string) string {
+		b, err := os.ReadFile(s.path("plugins", name))
+		if err != nil {
+			return ""
+		}
+		h := sha256.Sum256(b)
+		return hex.EncodeToString(h[:])
+	}
+	return sum(id + ".js"), sum(id + ".main.js")
+}

@@ -51,8 +51,10 @@ class LazyMap {
         self.entries.set(String(key), null)
         return true
       },
+      // Slack's store keeps a slice's real keys on its prototype too, and
+      // plugins scan them there (LastSeen: Object.keys(Object.getPrototypeOf(messages)))
       getPrototypeOf() {
-        return Object.prototype
+        return self.protoView()
       },
     }
     this.proxy = new Proxy(this.target, this.handler)
@@ -66,6 +68,8 @@ class LazyMap {
       error(`reading ${this.name}.${key} failed`, err)
     }
     if (v !== null && typeof v === 'object') v = harden(v)
+    // a channel's messages keep their timestamps on the prototype too, like Slack's
+    if (this.name === 'messages' && v !== null && typeof v === 'object' && !Array.isArray(v)) v = withKeyProto(v)
     this.entries.set(key, v)
     return v
   }
@@ -86,6 +90,17 @@ class LazyMap {
     }
     return this.keys
   }
+  /** an object whose own (lazy) properties are the slice's entries, served as its prototype */
+  protoView() {
+    const keys = this.allKeys()
+    if (this.proto && this.protoKeys === keys) return this.proto
+    const proto = Object.create(Object.prototype)
+    for (const k of keys) {
+      Object.defineProperty(proto, k, { get: () => this.handler.get(this.target, k), enumerable: true, configurable: true })
+    }
+    this.proto, this.protoKeys = proto, keys
+    return proto
+  }
   /** drops `keys` (or everything) so they're read again, and gives the slice a new identity */
   invalidate(keys) {
     if (!keys) {
@@ -100,6 +115,17 @@ class LazyMap {
     }
     this.proxy = new Proxy(this.target, this.handler)
   }
+}
+
+/** o with a prototype holding the same entries (Slack's nested slices look like this) */
+function withKeyProto(o) {
+  if (Object.getPrototypeOf(o) !== Object.prototype) return o
+  const proto = Object.create(Object.prototype)
+  for (const k of Object.keys(o)) proto[k] = o[k]
+  try {
+    Object.setPrototypeOf(o, proto)
+  } catch {}
+  return o
 }
 
 /** entries are shared by every reader, so they're frozen like Slack's immutable state */
