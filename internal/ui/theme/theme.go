@@ -8,6 +8,7 @@ package theme
 
 import (
 	"image"
+	"os"
 	"image/color"
 	"math"
 	"sync"
@@ -85,6 +86,16 @@ func parseFace(b []byte) font.Face {
 	return face
 }
 
+// lightTextFace is the 400 face for light text on dark backgrounds. Gio's
+// linear blending makes it ~19% inkier than Chrome (measured on the dark
+// sidebar); CLACK_LIGHTTEXT=light swaps in Lato Light for A/B measurement.
+func lightTextFace() ([]byte, []byte) {
+	if os.Getenv("CLACK_LIGHTTEXT") == "light" {
+		return fonts.Light, fonts.LightItalic
+	}
+	return fonts.Regular, fonts.Italic
+}
+
 // FacesFor returns the Lato collection for a mode's shaper.
 func FacesFor(dark bool) []font.FontFace {
 	type src struct {
@@ -92,10 +103,12 @@ func FacesFor(dark bool) []font.FontFace {
 		w font.Weight
 		s font.Style
 	}
+	// lightReg is the face light-on-dark text uses for 400 (see lightTextFace).
+	lightReg, lightRegIt := lightTextFace()
 	normal, normalIt := fonts.Medium, fonts.MediumItalic
-	alt, altIt, altW := fonts.Regular, fonts.Italic, wRegularAlias
+	alt, altIt, altW := lightReg, lightRegIt, wRegularAlias
 	if dark {
-		normal, normalIt = fonts.Regular, fonts.Italic
+		normal, normalIt = lightReg, lightRegIt
 		alt, altIt, altW = fonts.Medium, fonts.MediumItalic, wMediumAlias
 	}
 	var out []font.FontFace

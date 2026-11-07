@@ -320,7 +320,9 @@ func (a *App) frame(gtx layout.Context) {
 
 	// workspace: sidebar (translucent) + primary panel, one rounded unit
 	// with Slack's soft shadow (-4px -4px 16px rgba(0,0,0,.09)).
-	theme.Shadow(gtx, ws.Add(image.Pt(-gtx.Dp(2), -gtx.Dp(2))), rad, gtx.Dp(8), a.th.C.PanelShadow)
+	if !a.th.Dark { // dark mode uses Slack's 1px outline instead (below)
+		theme.Shadow(gtx, ws.Add(image.Pt(-gtx.Dp(2), -gtx.Dp(2))), rad, gtx.Dp(8), a.th.C.PanelShadow)
+	}
 	if sbW > 0 {
 		sb := image.Rect(ws.Min.X, ws.Min.Y, primary.Min.X, ws.Max.Y)
 		a.grad.draw(gtx, sz, image.Point{}, clip.RRect{Rect: sb, NW: rad, SW: rad}.Op(gtx.Ops), a.th.C.ChromeA, a.th.C.ChromeB, a.th.C.SidebarBg)
