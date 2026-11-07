@@ -369,6 +369,9 @@ func (pl *reactPill) props() slackc.Props {
 	p["$key"] = r.ts + ":" + re.Name
 	p["currentUser"], p["reactionKey"], p["canReact"] = r.rc.selfID, reactionKey(&r.m), true
 	p["reactions"] = slackReactions(r.m.Reactions)
+	// the pill button renders inside Reaction's React tree, so context a
+	// Reaction patch provides (WhoReacted's reactors) reaches the button
+	p["children"] = []any{slackc.Child("UnstyledButton", pl.buttonProps(), pl.layoutButton)}
 	return pl.r.pane(p)
 }
 
@@ -1078,7 +1081,10 @@ func (pl *reactPill) reacted() bool {
 }
 
 // layout is Reaction around the UnstyledButton pill.
-func (pl *reactPill) layout(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+func (pl *reactPill) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	if e, ok := slackc.PropChildren(p); ok {
+		return slackc.LayoutElement(gtx, e) // the button JS rendered in Reaction's tree
+	}
 	return slackc.Component(gtx, "UnstyledButton", pl, (*reactPill).buttonProps, (*reactPill).layoutButton)
 }
 
