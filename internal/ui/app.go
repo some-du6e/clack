@@ -432,7 +432,7 @@ func (a *App) layoutPrimary(gtx layout.Context) layout.Dimensions {
 	// Slack 2026 nests a channel's thread/profile pane inside the channel
 	// view, below its header and tabs (p-ia4_client--nested-secondary-view):
 	// the header and tabs keep the full width.
-	nested := secW > 0 && r.Page() == "c" && (a.secondary.kind == secThread || a.secondary.kind == secProfile)
+	nested := secW > 0 && a.router.Current().Page() == "c" && (a.secondary.kind == secThread || a.secondary.kind == secProfile)
 	primW, secTop := mainW, 0
 	if nested {
 		primW, secTop = sz.X, gtx.Dp(theme.HeaderH)+gtx.Dp(theme.TabsH)
