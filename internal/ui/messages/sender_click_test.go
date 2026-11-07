@@ -13,6 +13,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/unit"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/taut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 )
 
@@ -34,10 +35,11 @@ func (h *profileHost) count() int {
 	return len(h.opened)
 }
 
-// Clicking a sender's name opens their profile even when plugins patch
-// MessageSender and BaseMessageSender (ShowSendingBot + IdvStatus live: the
-// name hovered but clicks did nothing, and its context menu never opened).
-func TestSenderNameClickUnderPatches(t *testing.T) {
+// senderClickEnv is a channel view over a router, and click, which clicks
+// the first header row's name and reports whether a profile opened. The
+// first click (no plugins yet) checks the coordinates.
+func senderClickEnv(t *testing.T) (tt *taut.Taut, u *pluginUI, frame func(), click func() bool) {
+	t.Helper()
 	_, _, tt, u, ch := pluginEnv(t)
 	h := &profileHost{coreHost: ch}
 	v := NewChannelView(h, tGen)
@@ -45,7 +47,7 @@ func TestSenderNameClickUnderPatches(t *testing.T) {
 	var r input.Router
 	ops := new(op.Ops)
 	now := time.Now()
-	frame := func() {
+	frame = func() {
 		ops.Reset()
 		now = now.Add(20 * time.Millisecond)
 		gtx := layout.Context{Ops: ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(image.Pt(900, 700)), Now: now, Source: r.Source()}
@@ -55,7 +57,7 @@ func TestSenderNameClickUnderPatches(t *testing.T) {
 	until(t, 5*time.Second, "rows", frame, func() bool { return len(v.s.rows) >= 2 })
 	var ts time.Duration
 	// click is pressed on each candidate point of the first header row's name
-	click := func() bool {
+	click = func() bool {
 		before := h.count()
 		for i := v.s.visible[0]; i < v.s.visible[1] && i < len(v.s.items); i++ {
 			it := v.s.items[i]
@@ -87,6 +89,14 @@ func TestSenderNameClickUnderPatches(t *testing.T) {
 	if !click() {
 		t.Fatal("control: clicking the name without plugins didn't open a profile (test coordinates are off)")
 	}
+	return tt, u, frame, click
+}
+
+// Clicking a sender's name opens their profile even when plugins patch
+// MessageSender and BaseMessageSender (ShowSendingBot + IdvStatus live: the
+// name hovered but clicks did nothing, and its context menu never opened).
+func TestSenderNameClickUnderPatches(t *testing.T) {
+	tt, u, frame, click := senderClickEnv(t)
 	code := []byte(`(() => {
 const TautPlugin = globalThis.TautPlugin, opt = globalThis.TautOpt;
 class WrapSenders extends TautPlugin {
@@ -113,5 +123,23 @@ return WrapSenders
 	}
 	if !click() {
 		t.Error("with MessageSender and BaseMessageSender patched, clicking the name didn't open the profile")
+	}
+}
+
+// The same with the real plugins (the messages-taut workflow has them).
+func TestPluginIdvStatusSenderClick(t *testing.T) {
+	idv, ssb := pluginFile(t, "IdvStatus"), pluginFile(t, "ShowSendingBot")
+	tt, u, frame, click := senderClickEnv(t)
+	install(t, tt, ssb)
+	install(t, tt, idv)
+	until(t, 5*time.Second, "both senders patched", func() {}, func() bool {
+		return slackc.Patched("MessageSender") && slackc.Patched("BaseMessageSender")
+	})
+	until(t, 10*time.Second, "IdvStatus' class", frame, func() bool { return u.anyTree("taut-idv-status") })
+	for k := 0; k < 5; k++ {
+		frame()
+	}
+	if !click() {
+		t.Error("with ShowSendingBot and IdvStatus on, clicking the name didn't open the profile")
 	}
 }
