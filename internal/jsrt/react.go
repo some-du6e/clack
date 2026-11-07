@@ -201,3 +201,11 @@ func (r *Runtime) flushRender() {
 	}
 	r.eng.runJobs(r.js)
 }
+
+// SetHidden reports window visibility / focus (document.hidden,
+// visibilitychange, window focus/blur). Async.
+func (r *Runtime) SetHidden(hidden bool) {
+	r.Post(func(js *Ctx) {
+		_, _ = js.Global().Get("__clack").Get("setHidden").Call(hidden)
+	})
+}

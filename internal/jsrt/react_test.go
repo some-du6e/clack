@@ -136,11 +136,14 @@ React.createElement(Theme.Provider, { value: 'dark' }, React.createElement(Count
 	if btn == nil || btn.On["click"] != btn.K || btn.text() != "n=1" || btn.P["aria-label"] != "inc" {
 		t.Fatalf("button: %+v", btn)
 	}
-	// effects run → state update → new commit with the log
-	ns = rec.waitFor(t, "effects", func(ns []node) bool {
+	// effects run → state update → the log shows up (possibly already in the first commit)
+	effectsDone := func(ns []node) bool {
 		i := find(ns, func(n node) bool { return n.T == "i" })
 		return i != nil && i.text() == "layout,effect:1"
-	})
+	}
+	if !effectsDone(ns) {
+		ns = rec.waitFor(t, "effects", effectsDone)
+	}
 	// click the button (bubbles; stopPropagation reported)
 	res, err := r.DispatchEventSync(context.Background(), btn.K, []byte(`{"type":"click","clientX":5,"clientY":5,"button":0}`))
 	if err != nil || !res.PropagationStopped {

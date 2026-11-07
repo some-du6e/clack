@@ -197,6 +197,9 @@ func (r *Runtime) Call(ctx context.Context, path string, args ...any) (json.RawM
 			ch <- res{b, err}
 			return nil
 		}
+		if r.onJSThread() {
+			return errors.New("jsrt: Runtime.Call of an async function from the JS thread would deadlock; use Value.Then")
+		}
 		v.Then(func(v Value, err error) {
 			if err != nil {
 				ch <- res{nil, err}

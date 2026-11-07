@@ -32,6 +32,19 @@ jobs:
         with:
           name: jsrt-wasm
           path: internal/jsrt/jsrt.wasm
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: test
+        run: go test -count=1 ./internal/jsrt/...
+      - name: timings
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -run 'TestStartupTiming' -v ./internal/jsrt/ | grep -v '^=== RUN' || true
   bench:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.bench }}
     runs-on: ubuntu-latest

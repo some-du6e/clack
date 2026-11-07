@@ -17,10 +17,10 @@ IMPORT(host_call) uint32_t host_call(uint32_t id, uint32_t this_h, uint32_t argc
 IMPORT(host_interrupt) int32_t host_interrupt(void);
 IMPORT(host_module) uint64_t host_module(const char *name, uint32_t len);
 IMPORT(host_rejection) void host_rejection(uint32_t promise, uint32_t reason, int32_t handled);
+IMPORT(host_free) void host_free(uint32_t id);
 
 static JSRuntime *rt;
 static JSContext *ctx;
-static JSClassID fn_class;
 
 // ---- handle table ----
 static JSValue *tab;
@@ -105,8 +105,21 @@ static JSValue call_host(JSContext *c, JSValueConst this_val, int argc, JSValueC
 	return v;
 }
 
+// Each host function holds a HostRef object; when the function is garbage
+// collected the finalizer tells Go to drop the Go side (host_free).
+static JSClassID hostref_class;
+static void hostref_finalizer(JSRuntime *r, JSValueConst val) {
+	uint32_t id = (uint32_t)(uintptr_t)JS_GetOpaque(val, hostref_class);
+	host_free(id);
+}
+static JSClassDef hostref_def = {"HostRef", .finalizer = hostref_finalizer};
+
 EXPORT(jr_new_func) uint32_t jr_new_func(uint32_t id, const char *name, uint32_t nlen, uint32_t length) {
-	JSValue f = JS_NewCFunctionData(ctx, call_host, (int)length, (int)id, 0, NULL);
+	JSValue ref = JS_NewObjectClass(ctx, (int)hostref_class);
+	if (JS_IsException(ref)) return exc();
+	JS_SetOpaque(ref, (void *)(uintptr_t)id);
+	JSValue f = JS_NewCFunctionData(ctx, call_host, (int)length, (int)id, 1, &ref);
+	JS_FreeValue(ctx, ref);
 	if (JS_IsException(f)) return exc();
 	if (nlen) {
 		JSAtom a = JS_NewAtom(ctx, "name");
@@ -147,6 +160,8 @@ EXPORT(jr_init) int32_t jr_init(uint32_t mem_limit, uint32_t stack_size) {
 	JS_SetInterruptHandler(rt, interrupt, NULL);
 	JS_SetModuleLoaderFunc(rt, NULL, load_module, NULL);
 	JS_SetHostPromiseRejectionTracker(rt, rejection, NULL);
+	JS_NewClassID(rt, &hostref_class);
+	if (JS_NewClass(rt, hostref_class, &hostref_def) < 0) return -3;
 	ctx = JS_NewContext(rt);
 	if (!ctx) return -2;
 	put(JS_NewInt32(ctx, 0)); // make sure the table exists; handle 1 is a scratch 0
@@ -384,6 +399,7 @@ EXPORT(jr_promise_state) int32_t jr_promise_state(uint32_t h) {
 	case JS_PROMISE_PENDING: return 0;
 	case JS_PROMISE_FULFILLED: return 1;
 	case JS_PROMISE_REJECTED: return 2;
+	default: return -1;
 	}
 	return -1;
 }

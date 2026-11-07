@@ -35,7 +35,8 @@ type Runtime struct {
 	js       *Ctx
 	timers   timerHeap
 	timerN   int
-	hosts    []HostFunc
+	hosts    map[uint32]HostFunc
+	hostN    uint32
 	roots    map[uint64]*Root
 	onDoc    func(body []byte, css []string)
 	onCommit func(id uint64, tree []byte)
@@ -72,6 +73,7 @@ func New(opts Options) (*Runtime, error) {
 		wake:    make(chan struct{}, 1),
 		done:    make(chan struct{}),
 		roots:   map[uint64]*Root{},
+		hosts:   map[uint32]HostFunc{},
 		fetches: map[int]context.CancelFunc{},
 		start:   time.Now(),
 		ready:   make(chan struct{}),

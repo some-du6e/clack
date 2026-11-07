@@ -101,6 +101,10 @@ func newEngine(r *Runtime) (*engine, error) {
 	}), nil, []api.ValueType{i32}).Export("host_interrupt")
 	hb.NewFunctionBuilder().WithGoModuleFunction(api.GoModuleFunc(e.hostModule), []api.ValueType{i32, i32}, []api.ValueType{i64}).Export("host_module")
 	hb.NewFunctionBuilder().WithGoModuleFunction(api.GoModuleFunc(e.hostRejection), []api.ValueType{i32, i32, i32}, nil).Export("host_rejection")
+	hb.NewFunctionBuilder().WithGoModuleFunction(api.GoModuleFunc(func(_ context.Context, _ api.Module, st []uint64) {
+		// a host function was garbage collected (called from the GC; must not re-enter JS)
+		delete(r.hosts, uint32(st[0]))
+	}), []api.ValueType{i32}, nil).Export("host_free")
 	if _, err := hb.Instantiate(ctx); err != nil {
 		return nil, fmt.Errorf("jsrt: host module: %w", err)
 	}
@@ -558,11 +562,11 @@ func (e *engine) hostCall(_ context.Context, _ api.Module, st []uint64) {
 		}
 	}
 	this := r.wrap(thisH)
-	if int(id) >= len(r.hosts) {
+	fn := r.hosts[id]
+	if fn == nil {
 		st[0] = uint64(e.newError(errors.New("jsrt: unknown host function")) | excBit)
 		return
 	}
-	fn := r.hosts[id]
 	out, err := safeHost(fn, r.js, this, args)
 	if err != nil {
 		st[0] = uint64(e.newError(err) | excBit)
