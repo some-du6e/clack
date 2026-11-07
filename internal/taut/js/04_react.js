@@ -61,6 +61,9 @@ const rawNatives = new Map() // name → the unpatched native component
 const wrappers = new Map() // name → the patch-following component plugins get
 const componentNames = new WeakMap()
 
+let slotCtx
+const slotContext = () => (slotCtx ??= G.React.createContext(null))
+
 function nativeFor(name) {
   let c = rawNatives.get(name)
   if (c) return c
@@ -131,6 +134,10 @@ function originalObject(name) {
     const raw = nativeFor(name)
     // what replacers get as `Original`, a component they render like any other
     o = function Original(props) {
+      // a slot's <Original> rendered with new props (BetterTypingIndicator's
+      // <Original firstTyper={…}/>) keeps its slot, so Go still draws the native
+      const slot = G.React.useContext(slotContext())
+      if (slot && slot.name === name && (props == null || props.$slot === undefined)) props = { ...props, $slot: slot.slot }
       return G.React.createElement(raw, props)
     }
     o.displayName = name
@@ -170,11 +177,20 @@ function slackComponent(name) {
   w = function Wrapped(props) {
     const C = composed.use() || compose(name)
     // `__original` opts one render out of patching
+    let el
     if (props && props.__original) {
       const { __original, ...rest } = props
-      return React.createElement(nativeFor(name), rest)
+      el = React.createElement(nativeFor(name), rest)
+    } else {
+      el = React.createElement(C, props)
     }
-    return React.createElement(C, props)
+    // a Go slot (decode's $slot) tells its Original the slot even if a patch
+    // drops the prop; any other instance clears it for what it renders
+    const outer = React.useContext(slotContext())
+    const slotId = props?.$slot
+    const mine = React.useMemo(() => (slotId !== undefined ? { name, slot: slotId } : null), [slotId])
+    if (mine || outer) el = React.createElement(slotContext().Provider, { value: mine }, el)
+    return el
   }
   w.displayName = name
   componentNames.set(w, name)

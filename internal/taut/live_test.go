@@ -78,3 +78,46 @@ func TestInstalledSHA256(t *testing.T) {
 		}
 	}
 }
+
+// A patch that renders <Original> with new props (BetterTypingIndicator's
+// <Original firstTyper={…}/>) keeps the Go slot it was mounted for, so Clack
+// still draws the native ("no native component for TypingNames" live). A
+// fresh instance of the same component inside it doesn't inherit the slot.
+func TestOriginalKeepsSlot(t *testing.T) {
+	h := newHarness(t)
+	h.js(`
+		const R = globalThis.React
+		api.patchComponent('TypingNames', (Original) => () => R.createElement('span', null,
+			R.createElement(Original, { firstTyper: 'Ann', severalPeopleAreTyping: false }),
+			R.createElement(T.slackComponent('TypingNames'), { __original: true, firstTyper: 'Bob' })))
+		return 1`)
+	nodes := h.render(4242, "TypingNames", map[string]any{"$slot": 7, "firstTyper": "x"})
+	var found []map[string]any
+	var walk func([]any)
+	walk = func(ns []any) {
+		for _, x := range ns {
+			m, ok := x.(map[string]any)
+			if !ok {
+				continue
+			}
+			if m["t"] == "@" && m["n"] == "TypingNames" {
+				found = append(found, m)
+			}
+			if kids, ok := m["c"].([]any); ok {
+				walk(kids)
+			}
+		}
+	}
+	walk(nodes)
+	if len(found) != 2 {
+		t.Fatalf("TypingNames nodes: %v", nodes)
+	}
+	p0, _ := found[0]["p"].(map[string]any)
+	p1, _ := found[1]["p"].(map[string]any)
+	if p0["$slot"] != float64(7) || p0["firstTyper"] != "Ann" {
+		t.Errorf("Original with new props: %v", p0)
+	}
+	if _, ok := p1["$slot"]; ok || p1["firstTyper"] != "Bob" {
+		t.Errorf("a fresh instance inherited the slot: %v", p1)
+	}
+}
