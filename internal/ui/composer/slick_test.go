@@ -626,3 +626,17 @@ func TestSlickViewSilentTyping(t *testing.T) {
 		return started.Load() == 1 && ended.Load() == 1
 	})
 }
+
+// TestSlickViewSlimMessageBoxHidesEmoji: hideEmoji hides Slack's
+// [data-qa=emoji_toolbar_button] by CSS (it stays mounted for /gif); live,
+// Clack tagged the button texty_emoji_button and it stayed visible.
+func TestSlickViewSlimMessageBoxHidesEmoji(t *testing.T) {
+	e := startSlick(t, "SlimMessageBox", map[string]any{"hideEmoji": true, "hideMention": true}, nil)
+	e.patched("TextyButtons")
+	c, frame := e.composer(tChGen)
+	e.why = func() string { return fmt.Sprintf("shown %b", c.ui.shown) }
+	e.until(8*time.Second, "the emoji and mention buttons hidden, send still drawn", frame, func() bool {
+		s := c.ui.shown
+		return s&(1<<crSend) != 0 && s&(1<<crEmoji) == 0 && s&(1<<crMention) == 0
+	})
+}
