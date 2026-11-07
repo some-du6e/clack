@@ -215,6 +215,9 @@ func (a *App) handle(ev slack.Event) {
 	case "star_added", "star_removed":
 		a.onStarEvent(ev.Raw, ev.Type == "star_added")
 	default:
+		if a.canvasEvent(ev.Type, ev.Raw) { // canvases and lists (canvas.go)
+			return
+		}
 		if strings.HasPrefix(ev.Type, "sh_") || ev.Type == "huddle_invite" {
 			a.emit(Event{Type: "huddle", Name: ev.Type, Channel: ch, Raw: ev.Raw})
 		}
