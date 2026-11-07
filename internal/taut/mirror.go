@@ -28,6 +28,7 @@ var mapSlices = []string{
 	"channels", "members", "messages", "bots", "membershipCounts", "membership",
 	"readOnlyChannels", "threadOnlyChannels", "presence", "unreadChannelCounts",
 	"channelCursors", "userGroups", "channelHistory", "teams", "reactions",
+	"pendingFileUploads", "files", // the composer's attachments (files.go)
 }
 
 // wholeSlices are read whole.
@@ -36,6 +37,7 @@ var wholeSlices = []string{
 	"dndV2", "drafts", "slashCommand", "experiments", "huddleEvents", "allCalls", "peers",
 	"messageEditWindow", "searchResults", "huddlesCanvas", "alert", "unreadCounts",
 	"mutedChannels", "starredChannels", "huddles", "messagesMeta", "threadSub", "userGroupMembership",
+	"clientHuddles",
 }
 
 type change struct {
@@ -485,6 +487,8 @@ func (m *mirror) slices() map[string][]string {
 func (m *mirror) keys(slice string) []string {
 	a := m.t.app
 	switch slice {
+	case "pendingFileUploads", "files":
+		return pendingKeys(slice)
 	case "channels", "readOnlyChannels", "threadOnlyChannels", "membershipCounts", "unreadChannelCounts", "channelCursors":
 		ids := a.S.ConvIDs()
 		if slice == "readOnlyChannels" || slice == "threadOnlyChannels" {
@@ -552,6 +556,8 @@ func (m *mirror) get(slice, key string) any {
 	a := m.t.app
 	switch slice {
 	// ---- id-keyed ----
+	case "pendingFileUploads", "files":
+		return pendingEntry(slice, key)
 	case "channels":
 		c, ok := a.S.Conv(key)
 		if !ok {
@@ -744,13 +750,15 @@ func (m *mirror) get(slice, key string) any {
 	case "experiments":
 		return map[string]any{}
 	case "huddleEvents":
-		return map[string]any{"enabled": false, "isLoading": false, "events": []any{}, "isSideBySideEnabled": false, "isClosedCaptionsEnabled": false}
+		return m.t.huddleEventsSlice()
 	case "allCalls":
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		return map[string]any{"byId": m.calls, "inviteResponseById": map[string]any{}}
 	case "peers":
-		return map[string]any{"self": map[string]any{"id": "self"}, "invitedUsers": map[string]any{}, "byId": map[string]any{}, "leftById": map[string]any{}, "reacjis": []any{}}
+		return m.t.peersSlice()
+	case "clientHuddles":
+		return m.t.clientHuddlesSlice()
 	case "messageEditWindow":
 		m.mu.Lock()
 		defer m.mu.Unlock()

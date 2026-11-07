@@ -51,3 +51,25 @@ func TestParseCombo(t *testing.T) {
 		t.Fatalf("%q", n)
 	}
 }
+
+func TestDeepLinkRouteOnlyNavigates(t *testing.T) {
+	for _, uri := range []string{
+		"slack://channel?team=T1&id=C1/t/1.2",           // route segment smuggled in the id
+		"slack://channel?team=T1&id=C123%3Fq%3Dsecret",  // search?q=… smuggled
+		"slack://channel?team=T1&id=../../x",            //
+		"slack://channel?team=T1&id=C123&thread_ts=1/x", // bad ts
+		"slack://channel?team=T1&id=U123",               // a user id isn't a channel
+		"slack://user?team=T1&id=C123",                  // nor the other way round
+		"slack://user?team=T1&id=",                      //
+		"slack://file?team=T1&id=F123",                  // downloads aren't deep-linkable
+		"slack://signout", "slack://join?id=C1", "slack://leave?id=C1", "slack://send?channel=C1&text=x",
+		"slack://open/../../signout",
+	} {
+		if r, u, ok := deepLinkRoute(uri); ok && (u != "" || r != "home") {
+			t.Errorf("%s: handled as %q %q", uri, r, u)
+		}
+	}
+	if r, _, ok := deepLinkRoute("slack://channel?team=T1&id=G0ABC&thread_ts=1700000000.000100"); !ok || r != "c/G0ABC/t/1700000000.000100" {
+		t.Errorf("valid link: %q %v", r, ok)
+	}
+}

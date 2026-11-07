@@ -16,23 +16,38 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "slick git ref (branch, tag or sha)"
+        description: "slick git ref (branch, tag or sha); empty = SLICK_PIN"
         required: false
-        default: "main"
+        default: ""
+
+# Slick is third-party code (GPLv3) built and run here: by default CI uses the
+# reviewed commit SLICK_PIN; dispatch with ref=main (or any ref) to test upstream.
+env:
+  SLICK_PIN: f52d55dbd458feb0d6cd77136c6ab07c4a727a5a
+
+permissions:
+  contents: read
 
 jobs:
   plugins:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "24"
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.4
       - name: clone slick
+        env:
+          SLICK_REF: ${{ inputs.ref || env.SLICK_PIN }}
         run: |
           git clone -q https://github.com/3kh0/slick /tmp/slick
-          git -C /tmp/slick checkout -q "${{ inputs.ref || 'main' }}"
+          case "$SLICK_REF" in -*|"") echo "bad slick ref: $SLICK_REF" >&2; exit 1;; esac
+          git -C /tmp/slick checkout -q "$SLICK_REF"
           echo "SLICK_SHA=$(git -C /tmp/slick rev-parse HEAD)" >> "$GITHUB_ENV"
           git -C /tmp/slick log --oneline -1
       - name: "install slick deps (no scripts, so no electron download)"
@@ -46,15 +61,15 @@ jobs:
           cp -r /tmp/slick/themes dist/slick-plugins/themes
           echo "$SLICK_SHA" > dist/slick-plugins/SLICK_SHA
           ls -la dist/slick-plugins
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
           name: slick-plugins
           path: dist/slick-plugins
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false # this job runs third-party code; never share its Go cache
       - name: gofmt
         run: test -z "$(gofmt -l internal/slick internal/taut | tee /dev/stderr)"
       - name: vet

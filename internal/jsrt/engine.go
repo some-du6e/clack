@@ -85,8 +85,13 @@ func newEngine(r *Runtime) (*engine, error) {
 	}
 	ctx := context.Background()
 	// Each engine has its own wazero runtime (the "jr" host module is per
-	// instance); compiled code comes from the shared cache.
-	wrt := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfig().WithCompilationCache(compilationCache(r.opts.CacheDir)))
+	// instance); compiled code comes from the shared cache. The wasm memory
+	// is capped: QuickJS's own limit covers the JS heap, the cap the rest.
+	// (Not WithCloseOnContextDone: its per-call goroutine and per-loop
+	// checks made React renders 2–3× slower; see Runtime.watchdog.)
+	wrt := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfig().
+		WithCompilationCache(compilationCache(r.opts.CacheDir)).
+		WithMemoryLimitPages(memoryLimitPages(r.opts.MemoryLimit)))
 	e := &engine{r: r, ctx: ctx, wrt: wrt, fns: map[string]api.Function{}, unhandled: map[uint32]uint32{}}
 	ok := false
 	defer func() {
@@ -160,6 +165,20 @@ func newEngine(r *Runtime) (*engine, error) {
 	return e, nil
 }
 
+// wasmHeadroom is wasm memory allowed beyond the JS heap limit: the C
+// stack, the handle table and buffers Go copies in (fetch bodies, sources).
+const wasmHeadroom = 512 << 20
+
+// memoryLimitPages is the wasm memory cap in 64 KiB pages for a JS heap
+// limit of heap bytes (at most wasm32's 4 GiB).
+func memoryLimitPages(heap int) uint32 {
+	n := (uint64(heap) + wasmHeadroom) >> 16
+	if heap <= 0 || n > 65536 {
+		n = 65536
+	}
+	return uint32(n)
+}
+
 func (e *engine) close() {
 	if e.mod != nil {
 		_ = e.mod.Close(e.ctx)
@@ -193,8 +212,15 @@ func (e *engine) call(name string, args ...uint64) uint64 {
 
 // ---- memory helpers ----
 
-func (e *engine) malloc(n int) uint32 { return uint32(e.call("jr_malloc", uint64(n))) }
-func (e *engine) free(p uint32)       { e.call("jr_free", uint64(p)) }
+func (e *engine) malloc(n int) uint32 {
+	p := uint32(e.call("jr_malloc", uint64(n)))
+	if p == 0 {
+		// out of wasm memory: the engine can't go on (afterPanic closes it)
+		panic(fmt.Errorf("jsrt: engine trap in jr_malloc: out of memory (%d bytes)", n))
+	}
+	return p
+}
+func (e *engine) free(p uint32) { e.call("jr_free", uint64(p)) }
 
 // tmpBytes copies b (plus a NUL) into wasm memory. The returned free must
 // be called once the callee is done with it.
@@ -599,9 +625,18 @@ func (e *engine) gcFloor() {
 func (e *engine) hostCall(_ context.Context, _ api.Module, st []uint64) {
 	id, thisH, argc, argvP := uint32(st[0]), uint32(st[1]), uint32(st[2]), uint32(st[3])
 	r := e.r
+	// argv comes from the glue; still, a bad pointer must not panic here
+	if uint64(argc)*4 > uint64(e.mem.Size()) {
+		st[0] = uint64(e.newError(errors.New("jsrt: bad host call arguments")) | excBit)
+		return
+	}
 	args := make([]Value, argc)
 	if argc > 0 {
-		b, _ := e.mem.Read(argvP, 4*argc)
+		b, ok := e.mem.Read(argvP, 4*argc)
+		if !ok {
+			st[0] = uint64(e.newError(errors.New("jsrt: bad host call arguments")) | excBit)
+			return
+		}
 		for i := range args {
 			args[i] = r.wrap(binary.LittleEndian.Uint32(b[4*i:]))
 		}
@@ -640,7 +675,11 @@ func safeHost(fn HostFunc, js *Ctx, this Value, args []Value) (out any, err erro
 }
 
 func (e *engine) hostModule(_ context.Context, _ api.Module, st []uint64) {
-	nameB, _ := e.mem.Read(uint32(st[0]), uint32(st[1]))
+	nameB, ok := e.mem.Read(uint32(st[0]), uint32(st[1]))
+	if !ok {
+		st[0] = 0
+		return
+	}
 	name := string(nameB)
 	src, ok := e.r.moduleSource(name)
 	if !ok {
@@ -654,7 +693,8 @@ func (e *engine) hostModule(_ context.Context, _ api.Module, st []uint64) {
 }
 
 func (e *engine) hostRejection(_ context.Context, _ api.Module, st []uint64) {
-	p, reason, handled := uint32(st[0]), uint32(st[1]), st[2] != 0
+	// i32 params: only the low 32 bits of a stack slot are defined
+	p, reason, handled := uint32(st[0]), uint32(st[1]), uint32(st[2]) != 0
 	if !handled {
 		// key by promise identity: the glue hands a fresh handle each time,
 		// so compare against what we hold.

@@ -32,15 +32,21 @@ import (
 // §1.1), each part a slackc boundary Taut plugins can patch:
 //
 //	MessageWrapper | ThreadRootGeneric      layoutWrapper (msg override)
-//	└ MessageBackground                     layoutBackground
-//	  └ MessageKitGutter {light|compact}    layoutGutter
-//	    ├ MessageAvatar → ConnectedBaseAvatar, or the compact Timestamp
-//	    └ body column                       layoutColumn
-//	      ├ BaseBroadcastPreamble {MessageSender, Timestamp} (threads:
-//	      │ ThreadSenderAndTimestampGeneric) → MessageSender → BaseMessageSender
-//	      ├ MessageBlocks → Blocks          layoutBlocks (msg.blocks override)
-//	      └ ReactionBar {Reaction…, ReactionAddButton}
-//	        └ Reaction → UnstyledButton data-qa=reactji
+//	└ Message | ThreadReplyGeneric (thread replies)  layoutMessage (msg override)
+//	  └ MessageBackground                   layoutBackground
+//	    └ MessageKitGutter {light|compact}  layoutGutter
+//	      ├ MessageAvatar {BaseMessageAvatar {ConnectedBaseAvatar}}, or the compact Timestamp
+//	      └ body column                     layoutColumn
+//	        ├ BaseBroadcastPreamble {MessageSender, Timestamp} (threads:
+//	        │ ThreadSenderAndTimestampGeneric) → MessageSender → BaseMessageSender
+//	        ├ BaseVisuallyHiddenMessageText (screen-reader text: empty)
+//	        ├ MessageText → MessageBlocks → Blocks  layoutBlocks (msg overrides)
+//	        ├ MessageFiles, MessageKitAttachments   (drawn in the body; msg.files /
+//	        │                                         msg.attachments overrides filter it)
+//	        ├ ReactionBar {Reaction…, ReactionAddButton}
+//	        │ └ Reaction → UnstyledButton data-qa=reactji
+//	        ├ ThreadReplies → ReplyBarAvatar…  (the reply bar)
+//	        └ CodeChannelEntityCard per channel mentioned (empty, while patched)
 //
 // Unpatched, every boundary is one atomic load and the natives get nil
 // props.
@@ -93,6 +99,36 @@ type row struct {
 	wrapOv, blocksOv uintptr      // msg overrides applied (propsID); 0 = none
 	srcMsg, msg      slackc.Props // slackMessage of src and of m, built lazily
 	reactAs          string       // ReactionBar's currentUser override ("" = the viewer)
+
+	msgOv           uintptr      // Message / ThreadReplyGeneric msg override applied
+	wrapMsg         slackc.Props // MessageWrapper's override (what msgOv falls back to)
+	textOv          slackc.Props // MessageText's msg override (nil = none)
+	filesOv, attsOv slackc.Props // MessageFiles / MessageKitAttachments msg overrides
+	tailOv          [2]uintptr   // file / attachment filters applied (propsIDs)
+	hasFiles        bool         // the body has file cards (MessageFiles)
+	hasAtts         bool         // … attachment cards (MessageKitAttachments)
+	chans           []chanCard   // CodeChannelEntityCard per channel mentioned, while patched
+	chansDoc        bool         // chans is for the current doc
+	replyAvs        []replyAv    // the reply bar's ReplyBarAvatars
+	replyN          int          // … drawn in the last frame
+
+	// what the header drew last frame (CSS may replace both)
+	avDrawn   string // the avatar's picture: a CSS background-image wins
+	nameShown string // the sender label: ::before + name (unless font-size 0) + ::after
+}
+
+// chanCard is one CodeChannelEntityCard under a message.
+type chanCard struct {
+	r  *row
+	id string
+}
+
+// replyAv is one ReplyBarAvatar in the reply bar.
+type replyAv struct {
+	r  *row
+	id string
+	sz int
+	w  int // width drawn last frame (0: a plugin hid it)
 }
 
 // reactPill is one reaction's state: Reaction / UnstyledButton natives.
@@ -134,6 +170,7 @@ func (r *row) set(e *entry) {
 	r.rev = e.rev
 	r.src, r.m = e.m, e.m
 	r.wrapOv, r.blocksOv, r.srcMsg, r.msg = 0, 0, nil, nil
+	r.msgOv, r.wrapMsg, r.textOv, r.filesOv, r.attsOv = 0, nil, nil, nil, nil
 	r.setDoc()
 	r.growPills()
 }
@@ -147,8 +184,10 @@ func (r *row) setDoc() {
 		r.rv.Set(r.m.Doc, opts)
 	}
 	r.uRev = 0
-	r.blocksOv = 0
+	r.blocksOv, r.tailOv = 0, [2]uintptr{}
 	r.needChan = blocksNeedChan(r.m.Doc.Blocks)
+	r.hasFiles, r.hasAtts = docTail(r.m.Doc.Blocks)
+	r.chansDoc = false
 }
 
 // rvOpts are the body's richview options.
@@ -176,7 +215,7 @@ func (r *row) resolve(rc *rowCtx) {
 		doc.Blocks = fixChannels(rc.h, doc.Blocks)
 		r.needChan = blocksNeedChan(doc.Blocks)
 		r.rv.Set(doc, r.rvOpts())
-		r.blocksOv = 0
+		r.blocksOv, r.tailOv = 0, [2]uintptr{}
 	}
 	r.name, r.avatar, r.statusURL, r.bot = m.Name, m.Avatar, "", m.IsBot || (m.BotID != "" && m.User == "")
 	if m.User != "" && rc.h.Core() != nil {
@@ -245,7 +284,7 @@ func (r *row) viewContext() string {
 // message is the msg prop of the parts inside MessageWrapper: the message
 // as the wrapper's (possibly overridden) msg left it.
 func (r *row) message() slackc.Props {
-	if r.wrapOv == 0 {
+	if r.wrapOv == 0 && r.msgOv == 0 {
 		return r.sourceMessage()
 	}
 	if r.msg == nil {
@@ -267,6 +306,26 @@ func (r *row) wrapperProps() slackc.Props {
 		p["isSingleThread"], p["omitGutter"], p["omitSenderAndTimestamp"] = true, false, false
 	}
 	return r.pane(p)
+}
+
+// ownMsg reports whether msg is a msg prop the row built (handed back
+// unchanged, before JS answered).
+func (r *row) ownMsg(msg slackc.Props) bool {
+	id := propsID(msg)
+	return id == 0 || id == propsID(r.srcMsg) || id == propsID(r.msg)
+}
+
+func (r *row) messageProps() slackc.Props {
+	return r.pane(slackc.Props{"$key": r.ts, "msg": r.message(), "channelId": r.src.Channel, "viewContext": r.viewContext()})
+}
+
+// replyProps are ThreadReplyGeneric's (a reply in the thread pane).
+func (r *row) replyProps() slackc.Props {
+	return r.pane(slackc.Props{"$key": r.ts, "msg": r.message(), "channelId": r.src.Channel, "parentId": r.src.ThreadTS,
+		"adjacent": !r.rc.header, "className": "c-message_kit__background c-message_kit__message c-message_kit__thread_message",
+		"blocksContainerContext": "message", "messageContainerType": "thread", "viewContext": r.viewContext(),
+		"highlight": r.rc.highlight > 0, "focused": false, "isCompact": false, "isInView": true, "isSingleThread": false,
+		"hasContextMenu": true})
 }
 
 func (r *row) backgroundProps() slackc.Props {
@@ -291,8 +350,21 @@ func (r *row) gutterProps() slackc.Props {
 	return r.pane(p)
 }
 
+// avatarSlotProps are MessageAvatar's. Its child is BaseMessageAvatar,
+// whose child is ConnectedBaseAvatar, so context either provides
+// (ShowSendingBot's sender) reaches the avatar.
 func (r *row) avatarSlotProps() slackc.Props {
-	return r.pane(slackc.Props{"$key": r.ts, "msg": r.message(), "userId": r.m.User, "botId": r.m.BotID})
+	return r.pane(slackc.Props{"$key": r.ts, "msg": r.message(), "userId": r.m.User, "botId": r.m.BotID,
+		"children": []any{slackc.Child("BaseMessageAvatar", r.baseAvatarProps(), r.layoutBaseMessageAvatar)}})
+}
+
+func (r *row) baseAvatarProps() slackc.Props {
+	p := slackc.Props{"$key": r.ts, "msg": r.message(), "userId": r.m.User, "showCard": true, "isMpdm": false, "isAppOrBotJoiner": false,
+		"children": []any{slackc.Child("ConnectedBaseAvatar", r.avatarProps(), r.layoutAvatar)}}
+	if r.m.BotID != "" {
+		p["botId"] = r.m.BotID
+	}
+	return r.pane(p)
 }
 
 func (r *row) compactProps(cls string) slackc.Props {
@@ -342,8 +414,44 @@ func (r *row) timestampProps() slackc.Props {
 	return r.pane(slackc.Props{"$key": r.ts, "timestamp": r.m.TS, "clickable": true, "visible": true, "className": "c-timestamp"})
 }
 
+// bodyMessage is the msg of the parts inside MessageText: its override,
+// or the row's.
+func (r *row) bodyMessage() slackc.Props {
+	if r.textOv != nil {
+		return r.textOv
+	}
+	return r.message()
+}
+
 func (r *row) blocksProps() slackc.Props {
-	return r.pane(slackc.Props{"$key": r.ts, "msg": r.message(), "blocksContainerContext": "message", "inline": false, "streaming": false})
+	return r.pane(slackc.Props{"$key": r.ts, "msg": r.bodyMessage(), "blocksContainerContext": "message", "inline": false, "streaming": false})
+}
+
+func (r *row) textProps() slackc.Props {
+	return r.pane(slackc.Props{"$key": r.ts, "msg": r.message(), "isThreadRoot": r.rc.parent, "isSystemMessageRow": r.m.System,
+		"inline": false, "viewContext": r.viewContext()})
+}
+
+func (r *row) hiddenTextProps() slackc.Props {
+	return r.pane(slackc.Props{"$key": r.ts, "msg": r.message()})
+}
+
+func (r *row) tailProps() slackc.Props {
+	return r.pane(slackc.Props{"$key": r.ts, "msg": r.bodyMessage(), "blocksContainerContext": "message", "viewContext": r.viewContext()})
+}
+
+func (r *row) repliesProps() slackc.Props {
+	return r.pane(slackc.Props{"$key": r.ts, "msg": r.message(), "channelId": r.src.Channel, "messageContainerType": "message", "unreadThreadsCount": 0})
+}
+
+func (av *replyAv) props() slackc.Props {
+	r := av.r
+	return r.pane(slackc.Props{"$key": r.ts + "/" + av.id, "userId": av.id, "channelId": r.src.Channel, "threadTs": r.src.TS})
+}
+
+func (cc *chanCard) props() slackc.Props {
+	r := cc.r
+	return r.pane(slackc.Props{"$key": r.ts + "/" + cc.id, "channelId": cc.id, "borderless": false, "joinableFromChannelId": r.src.Channel})
 }
 
 func (r *row) reactionBarProps() slackc.Props {
@@ -401,16 +509,54 @@ func (r *row) layoutWrapper(gtx layout.Context, p slackc.Props) layout.Dimension
 		if r.wrapOv == propsID(r.srcMsg) { // our own props, before JS answered
 			r.wrapOv = 0
 		}
+		r.wrapMsg = nil
 		if r.wrapOv == 0 {
 			r.m = r.src
 		} else {
+			r.wrapMsg = msg
 			r.m = applySlackMessage(rc.h.Core(), &r.src, msg)
 		}
+		r.msgOv = 0 // the inner override re-applies over the new base
 		r.msg = nil
 		r.setDoc()
 		r.growPills()
 	}
 	r.resolve(rc)
+	switch {
+	case rc.parent:
+		return r.layoutMessage(gtx, nil)
+	case rc.thread:
+		return slackc.Component(gtx, "ThreadReplyGeneric", r, (*row).replyProps, (*row).layoutMessage)
+	}
+	return slackc.Component(gtx, "Message", r, (*row).messageProps, (*row).layoutMessage)
+}
+
+// layoutMessage is Message (a reply in a thread pane: ThreadReplyGeneric):
+// a plugin's msg replaces what the row draws, like MessageWrapper's.
+func (r *row) layoutMessage(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	rc := r.rc
+	if p != nil || r.msgOv != 0 {
+		msg := p.Map("msg")
+		id := propsID(msg)
+		if r.ownMsg(msg) {
+			id = 0
+		}
+		if id != r.msgOv {
+			r.msgOv = id
+			switch {
+			case id != 0:
+				r.m = applySlackMessage(rc.h.Core(), &r.src, msg)
+			case r.wrapMsg != nil:
+				r.m = applySlackMessage(rc.h.Core(), &r.src, r.wrapMsg)
+			default:
+				r.m = r.src
+			}
+			r.msg = nil
+			r.setDoc()
+			r.growPills()
+			r.resolve(rc)
+		}
+	}
 	if r.m.System && !rc.parent {
 		return r.systemLayout(gtx, rc)
 	}
@@ -439,6 +585,9 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 			mods |= 4
 		}
 	}
+	if m.SlackbotCustomResponse() {
+		mods |= 8
+	}
 	st := msgClass.EnterClass(gtx, hoverState(rc.hovered), mods, slackc.ExtraClass(p))
 	defer st.Leave()
 	if st.Hidden() {
@@ -466,7 +615,7 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 	}
 	r.col = image.Pt(cx, y)
 	g := at(gtx, 0, y, func(gtx layout.Context) layout.Dimensions {
-		return slackc.Component(gtx, "MessageKitGutter", r, (*row).gutterProps, (*row).layoutGutter)
+		return slackc.Component(gtx, "ProgressiveDisclosureSuccessCoachmarkWrapper", r, (*row).coachmarkProps, (*row).layoutCoachmark)
 	})
 	y += g.Size.Y
 	if m.Pending {
@@ -572,8 +721,20 @@ func (r *row) layoutGutterLeft(gtx layout.Context, p slackc.Props) layout.Dimens
 	return r.layoutCompactTS(gtx, nil)
 }
 
-// layoutMessageAvatar is MessageAvatar around ConnectedBaseAvatar.
-func (r *row) layoutMessageAvatar(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+// layoutMessageAvatar is MessageAvatar around BaseMessageAvatar (its
+// child, rendered in its tree when patched).
+func (r *row) layoutMessageAvatar(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	if e, ok := slackc.PropChildren(p); ok {
+		return slackc.LayoutElement(gtx, e)
+	}
+	return slackc.Component(gtx, "BaseMessageAvatar", r, (*row).baseAvatarProps, (*row).layoutBaseMessageAvatar)
+}
+
+// layoutBaseMessageAvatar is BaseMessageAvatar around ConnectedBaseAvatar.
+func (r *row) layoutBaseMessageAvatar(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	if e, ok := slackc.PropChildren(p); ok {
+		return slackc.LayoutElement(gtx, e)
+	}
 	return slackc.Component(gtx, "ConnectedBaseAvatar", r, (*row).avatarProps, (*row).layoutAvatar)
 }
 
@@ -592,6 +753,10 @@ func (r *row) layoutAvatar(gtx layout.Context, p slackc.Props) layout.Dimensions
 	if st.Hidden() {
 		return layout.Dimensions{}
 	}
+	// Slack's avatar is the element's picture, so a background-image rule
+	// (CustomSlackbot's custom-response avatar) replaces it.
+	url = st.BackgroundImage(url)
+	r.avDrawn = url
 	// Clicked before Layout: Clickable.Layout consumes pending clicks.
 	if r.avatarBtn.Clicked(gtx) && r.m.User != "" {
 		rc.h.OpenProfile(rc.origin(image.Point{}), r.m.User)
@@ -709,13 +874,23 @@ func (r *row) layoutColumn(gtx layout.Context) layout.Dimensions {
 		})
 		y += dp(gtx, 4)
 	} else {
+		hd := at(gtx, 0, y, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
+			return slackc.Component(gtx, "BaseVisuallyHiddenMessageText", r, (*row).hiddenTextProps, (*row).layoutNothing)
+		})
+		y += hd.Size.Y
 		body = at(gtx, 0, y, func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
-			return slackc.Component(gtx, "MessageBlocks", r, (*row).blocksProps, (*row).layoutMessageBlocks)
+			return slackc.Component(gtx, "MessageText", r, (*row).textProps, (*row).layoutMessageText)
 		})
 	}
 	r.bodyRect = image.Rectangle{Min: image.Pt(0, y), Max: image.Pt(body.Size.X, y+body.Size.Y)}.Add(r.col)
 	y += body.Size.Y
+	if r.edit == nil && (r.hasFiles || r.hasAtts) {
+		// the files and attachments are drawn in the body; these carry
+		// their props (overrides filter the body) and what plugins add
+		y += r.tailParts(gtx, y, cw)
+	}
 	if isFailed(m) {
 		y += r.failedLine(gtx, rc, 0, y)
 	}
@@ -736,10 +911,150 @@ func (r *row) layoutColumn(gtx layout.Context) layout.Dimensions {
 
 	// thread bar
 	if m.ReplyCount > 0 && !rc.thread && (m.ThreadTS == "" || m.ThreadTS == m.TS) {
-		y += r.threadBar(gtx, rc, 0, y, cw)
-		y += dp(gtx, 4)
+		d := at(gtx, 0, y, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
+			return slackc.Component(gtx, "ThreadReplies", r, (*row).repliesProps, (*row).layoutThreadReplies)
+		})
+		y += d.Size.Y
+	}
+	if slackc.Patched("CodeChannelEntityCard") {
+		y += r.channelCards(gtx, y, cw)
 	}
 	return layout.Dimensions{Size: image.Pt(cw, y)}
+}
+
+// layoutNothing is an empty native: a surface Clack doesn't draw
+// (BaseVisuallyHiddenMessageText is screen-reader text), so what a
+// plugin adds there still shows.
+func (r *row) layoutNothing(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+	return layout.Dimensions{}
+}
+
+// layoutMessageText is MessageText around MessageBlocks: a plugin's msg
+// (BetterBlock's filtered text) is what the body draws.
+func (r *row) layoutMessageText(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	r.textOv = nil
+	if msg := p.Map("msg"); !r.ownMsg(msg) {
+		r.textOv = msg
+	}
+	return slackc.Component(gtx, "MessageBlocks", r, (*row).blocksProps, (*row).layoutMessageBlocks)
+}
+
+// tailParts lays out MessageFiles and MessageKitAttachments under the
+// body; returns their height (0 unless a plugin adds something).
+func (r *row) tailParts(gtx layout.Context, y, cw int) int {
+	h := 0
+	if r.hasFiles {
+		d := at(gtx, 0, y, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
+			return slackc.Component(gtx, "MessageFiles", r, (*row).tailProps, (*row).layoutMessageFiles)
+		})
+		h += d.Size.Y
+	}
+	if r.hasAtts {
+		d := at(gtx, 0, y+h, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
+			return slackc.Component(gtx, "MessageKitAttachments", r, (*row).tailProps, (*row).layoutMessageAttachments)
+		})
+		h += d.Size.Y
+	}
+	return h
+}
+
+// layoutMessageFiles is MessageFiles: the files are the body's file
+// cards; a plugin's msg.files (BetterBlock) filters them.
+func (r *row) layoutMessageFiles(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	r.tailOverride(gtx, &r.filesOv, p)
+	return layout.Dimensions{}
+}
+
+// layoutMessageAttachments is MessageKitAttachments: the attachments are
+// the body's cards; a plugin's msg.attachments filters them.
+func (r *row) layoutMessageAttachments(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	r.tailOverride(gtx, &r.attsOv, p)
+	return layout.Dimensions{}
+}
+
+func (r *row) tailOverride(gtx layout.Context, ov *slackc.Props, p slackc.Props) {
+	msg := p.Map("msg")
+	if r.ownMsg(msg) || propsID(msg) == propsID(r.textOv) {
+		msg = nil
+	}
+	if propsID(msg) != propsID(*ov) {
+		*ov = msg
+		gtx.Execute(op.InvalidateCmd{}) // the body applies it next frame
+	}
+}
+
+// layoutThreadReplies is ThreadReplies, the reply bar. A plugin's msg
+// (BetterBlock's) sets the count, the repliers and the last reply; a
+// count of 0 hides the bar.
+func (r *row) layoutThreadReplies(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	m := &r.m
+	count, users, latest := m.ReplyCount, m.ReplyUsers, m.LatestReply
+	if msg := p.Map("msg"); msg != nil {
+		count, latest = msg.IntOr("reply_count", 0), msg.StrOr("latest_reply", "")
+		users = users[:0:0]
+		for _, u := range msg.List("reply_users") {
+			if s, ok := u.(string); ok {
+				users = append(users, s)
+			}
+		}
+	}
+	if count <= 0 {
+		r.replyN = 0
+		return layout.Dimensions{}
+	}
+	h := r.threadBar(gtx, r.rc, 0, 0, gtx.Constraints.Max.X, count, users, latest)
+	return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, h+dp(gtx, 4))}
+}
+
+// layoutReplyAvatar is one ReplyBarAvatar (a replier's 24px avatar); a
+// plugin may hide it (BetterBlock) or draw its own (CustomSlackbot).
+func (av *replyAv) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	rc := av.r.rc
+	id := av.id
+	if p != nil {
+		id = p.StrOr("userId", id)
+	}
+	url := ""
+	if rc.h.Core() != nil {
+		if u, ok := rc.h.Core().User(id); ok {
+			url = u.Avatar
+		} else {
+			ensureUser(rc.h, id)
+		}
+	}
+	drawAvatar(gtx, rc.h, url, image.Rect(0, 0, av.sz, av.sz), rc.c)
+	return layout.Dimensions{Size: image.Pt(av.sz, av.sz)}
+}
+
+// channelCards lays out a CodeChannelEntityCard (empty natively: Clack
+// has no channel entity card) under the message for each channel it
+// mentions, so what a plugin adds (QuickJoin's Join button) shows there.
+// Only called while the name is patched.
+func (r *row) channelCards(gtx layout.Context, y, cw int) int {
+	if !r.chansDoc {
+		r.chansDoc = true
+		r.chans = r.chans[:0]
+		for _, id := range docChannels(r.m.Doc.Blocks) {
+			r.chans = append(r.chans, chanCard{r: r, id: id})
+		}
+	}
+	h := 0
+	for i := range r.chans {
+		cc := &r.chans[i]
+		d := at(gtx, 0, y+h, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
+			return slackc.Component(gtx, "CodeChannelEntityCard", cc, (*chanCard).props, (*chanCard).layout)
+		})
+		h += d.Size.Y
+	}
+	return h
+}
+
+func (cc *chanCard) layout(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+	return layout.Dimensions{}
 }
 
 // layoutMessageBlocks is MessageBlocks: the boundary around the body that
@@ -763,18 +1078,20 @@ func (r *row) layoutMessageBlocks(gtx layout.Context, _ slackc.Props) layout.Dim
 func (r *row) layoutBlocks(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	rc := r.rc
 	msg := p.Map("msg")
-	id := propsID(msg)
-	if id == propsID(r.srcMsg) || id == propsID(r.msg) {
-		id = 0 // our own props, before JS answered
+	if r.ownMsg(msg) || propsID(msg) == propsID(r.textOv) {
+		msg = r.textOv // our own props (before JS answered): MessageText's, if any
 	}
-	if id != r.blocksOv {
+	id := propsID(msg)
+	tail := [2]uintptr{propsID(r.filesOv), propsID(r.attsOv)}
+	if id != r.blocksOv || tail != r.tailOv {
 		doc := r.m.Doc
 		doc.Blocks = fixChannels(rc.h, doc.Blocks)
 		if id != 0 {
 			doc.Blocks = docBlocks(rc.h.Core(), doc.Blocks, msg)
 		}
+		doc.Blocks = filterTail(doc.Blocks, r.filesOv, r.attsOv)
 		r.rv.Set(doc, r.rvOpts())
-		r.blocksOv = id
+		r.blocksOv, r.tailOv = id, tail
 	}
 	st := blocksClass.Enter(gtx, 0, 0)
 	defer st.Leave()
@@ -887,8 +1204,17 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 func (r *row) nameButton(gtx layout.Context, bs slackc.Styled) layout.Dimensions {
 	c := r.rc.c
 	nameS := textStyle{size: float32(bs.FontSize(15)), weight: theme.Black, col: bs.Color(c.Text), lineH: 22}
+	before, after := bs.Generated()
+	r.nameShown = before + after
+	if nameS.size > 0 {
+		r.nameShown = before + r.name + after
+	}
 	r.memberMenuOn(gtx, &r.nameCtx)
 	d := r.nameBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		if nameS.size <= 0 { // font-size: 0, the name drawn by ::after (CustomSlackbot)
+			h := dp(gtx, nameS.lineH)
+			return layout.Dimensions{Size: image.Pt(0, h), Baseline: dp(gtx, 5)}
+		}
 		d := label(gtx, r.rc.th, nameS, r.name)
 		if r.nameBtn.Hovered() {
 			base := d.Size.Y - d.Baseline
@@ -1306,7 +1632,7 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 }
 
 // threadBar draws the reply summary; returns its height.
-func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w int) int {
+func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, users []string, latest string) int {
 	c := rc.c
 	m := &r.m
 	bh := dp(gtx, mt.threadH)
@@ -1330,26 +1656,30 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w int) int {
 			pad := dp(gtx, 5)
 			as := dp(gtx, mt.threadAvatar)
 			ax := pad
-			users := m.ReplyUsers
 			if len(users) > 5 {
 				users = users[:5]
 			}
-			for _, id := range users {
-				url := ""
-				if rc.h.Core() != nil {
-					if u, ok := rc.h.Core().User(id); ok {
-						url = u.Avatar
-					} else {
-						ensureUser(rc.h, id)
-					}
+			if len(r.replyAvs) < len(users) {
+				r.replyAvs = append(r.replyAvs, make([]replyAv, len(users)-len(r.replyAvs))...)
+			}
+			r.replyN = len(users)
+			for i, id := range users {
+				av := &r.replyAvs[i]
+				av.r, av.id, av.sz = r, id, as
+				g := gtx
+				g.Constraints = layout.Constraints{Max: image.Pt(max(bw-ax, as), as)}
+				t := op.Offset(image.Pt(ax, (bh-as)/2)).Push(gtx.Ops)
+				d := slackc.Component(g, "ReplyBarAvatar", av, (*replyAv).props, (*replyAv).layout)
+				t.Pop()
+				av.w = d.Size.X
+				if d.Size.X > 0 {
+					ax += d.Size.X + dp(gtx, 4)
 				}
-				drawAvatar(gtx, rc.h, url, image.Rect(ax, (bh-as)/2, ax+as, (bh-as)/2+as), c)
-				ax += as + dp(gtx, 4)
 			}
 			ax += dp(gtx, 3)
 			n := "1 reply"
-			if m.ReplyCount != 1 {
-				n = strconv.Itoa(m.ReplyCount) + " replies"
+			if count != 1 {
+				n = strconv.Itoa(count) + " replies"
 			}
 			ty := (bh - dp(gtx, 18)) / 2
 			nd := at(gtx, ax, ty, func(gtx layout.Context) layout.Dimensions {
@@ -1359,8 +1689,8 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w int) int {
 			desc := ""
 			if hov {
 				desc = "View thread"
-			} else if m.LatestReply != "" {
-				desc = "Last reply " + ago(tsTime(m.LatestReply), rc.now)
+			} else if latest != "" {
+				desc = "Last reply " + ago(tsTime(latest), rc.now)
 			}
 			at(gtx, ax, ty, func(gtx layout.Context) layout.Dimensions {
 				gtx.Constraints.Max.X = bw - ax - dp(gtx, 28)
@@ -1446,4 +1776,16 @@ func pinnedLabel(rc *rowCtx, by string) string {
 		ensureUser(rc.h, by)
 	}
 	return "Pinned"
+}
+
+// ProgressiveDisclosureSuccessCoachmarkWrapper wraps the message's gutter
+// and content in Slack (props.msg); Clack has no coachmarks, so its native
+// is the gutter. Plugins provide context here (ShowSendingBot's sender for
+// grouped rows' compact gutters).
+func (r *row) coachmarkProps() slackc.Props {
+	return slackc.Props{"$key": r.ts, "msg": r.message(), "coachmarkName": "", "isOpen": false}
+}
+
+func (r *row) layoutCoachmark(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+	return slackc.Component(gtx, "MessageKitGutter", r, (*row).gutterProps, (*row).layoutGutter)
 }

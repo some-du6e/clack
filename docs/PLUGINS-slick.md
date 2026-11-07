@@ -120,7 +120,7 @@ Everything in `SlickAPI` (src/app/pluginManager.ts) and `$slick`:
 | `main.call` / `main.on` | the main half in the same runtime, args and results cloned like IPC, Slick's error strings |
 | Slick's `SlickBridge` (`getBridge()`) for plugins bundling Slick's shared code | js/10_plugin.js |
 
-**MainCtx** (src/shared/main.ts), capabilities enforced (`used "x" without declaring it`): `settings`, `onSettingsChange`, `log`, `emit`/`emitTo`, `storage`, `secrets` (0600 store), `net.fetch` (Go HTTP, no CORS), `net.block`/`net.intercept` (applied to every fetch in the runtime; Clack loads no Slack web assets, so these see plugin traffic), `protocol.register` (boot only; `fetch('<scheme>://…')` reaches the handler), `notifications.filter` (one chain over the `showNotification` thunk, Electron-shaped options), `shell.openExternal`, `dialog.openFile`, `cookies` (Taut's cookie host), `sessions` (one session in Clack), `switches` (recorded; no Chromium), `frames.onFrame` and `media` (no frames or screen capture in Clack: accepted, never called). Lifecycle: `boot` once per runtime, `ready` when enabled (its disposer runs on disable), `window` once, settings listeners on change; a renderer restart doesn't restart the main half. Node for main halves: `fs` (read-only, and only files a plugin's `file` setting points at), `path`, `os`, `stream.Readable.toWeb`, `crypto.createHash`, `util.promisify`, `events`, `url`, `process`, `Buffer`; other builtins load and throw `ENOSYS` when used. `electron` is a stub.
+**MainCtx** (src/shared/main.ts), capabilities enforced (`used "x" without declaring it`): `settings`, `onSettingsChange`, `log`, `emit`/`emitTo`, `storage`, `secrets` (0600 store), `net.fetch` (Go HTTP, no CORS), `net.block`/`net.intercept` (applied to every fetch in the runtime; Clack loads no Slack web assets, so these see plugin traffic), `protocol.register` (boot only; `fetch('<scheme>://…')` reaches the handler), `notifications.filter` (one chain over the `showNotification` thunk, Electron-shaped options), `shell.openExternal`, `dialog.openFile`, `cookies` (Taut's cookie host), `sessions` (one session in Clack), `switches` (recorded; no Chromium), `frames.onFrame` and `media` (no frames or screen capture in Clack: accepted, never called). Lifecycle: `boot` once per runtime, `ready` when enabled (its disposer runs on disable), `window` once, settings listeners on change; a renderer restart doesn't restart the main half. Node for main halves: `fs` (read-only, and only files the user picked for that plugin's `file` setting, never its schema default or a path the plugin set itself, outside Clack's config, Slick and Taut dirs, 16 MiB cap), `path`, `os`, `stream.Readable.toWeb`, `crypto.createHash`, `util.promisify`, `events`, `url`, `process`, `Buffer`; other builtins load and throw `ENOSYS` when used. `electron` is a stub.
 
 ## Acceptance (`.github/workflows/slick.yml`)
 
@@ -129,6 +129,17 @@ Clones Slick, builds every plugin with build.mjs (artifact `slick-plugins`, neve
 Behaviour checks (synthetic workspace, fake Slack API, no network): HumanCount (header count), Censorship (message view masked), Nicknames (member view renamed), SilentTyping (typing thunk swallowed), NotShitMarkdown (`**x**` sent bold), ClearURLs (main half fetches rules, links cleaned on send), UserPronouns (pronouns rendered), IgnoreTime (stylesheet), OfficeHours (`users.setPresence` away inside a window), oneko (cat in the document, mousemove forwarded), NoTrack (telemetry fetch blocked), ShutUpSlackbot (slash-command notices dropped, others shown), Experiments (forced group in state, Preferences tab), HaikuWarning (a 5-7-5 message waits for the dialog), HcaStatus (main-half lookup marks the sender), CustomFonts (font stylesheet), StreamerMode (notifications silenced), RestrictedChannelWarning ("Post anyway" in the roadblock). The others are checked for start, registration and clean teardown.
 
 Results are in the latest `slick` run's "acceptance summary" step (`ACCEPT n/53 pass: …`).
+
+## Security
+
+See [SECURITY.md](SECURITY.md) §3. In short:
+- `shell.openExternal` allows only http, https and mailto, at most 3 opens per 10 s. It's checked in Go, and the electron shim gets the same check.
+- `protocol.register` refuses reserved schemes (http, https, file, slack, data, blob…), and each scheme has one owner.
+- The allowed capability set is fixed at load and shown in Preferences.
+- An auto-update never adds a main half.
+- Installs from a file or URL show Slick's warning and the plugin's capabilities before any code runs (`Peek`).
+- Message-keeping plugins (MessageLogger) keep their storage in memory unless the user turns on **Keep on disk**.
+- All plugins share one JS realm, so the boundary between plugins is install-time consent, not a sandbox.
 
 ## Known gaps
 

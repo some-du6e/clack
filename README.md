@@ -4,6 +4,83 @@
 
 Clack (formerly yoloslack) is a fast Slack client for the desktop, written in Go with a native, GPU-rendered window ([Gio](https://gioui.org)). There is no browser, no JavaScript and no Electron: one small binary draws every pixel itself. It copies the 2026 Slack desktop client and is built for the Hack Club Slack (Enterprise Grid). Other workspaces work too.
 
+## Install
+
+Download the file for your system from the latest [GitHub Release](../../releases/latest). `<ver>` below is the version without the `v`, e.g. `0.3.1`.
+
+| system | file |
+|---|---|
+| macOS 11+ (Apple Silicon and Intel) | `Clack-<ver>-macos-universal.dmg` (or `.zip`) |
+| Windows 10/11 x64, installer | `Clack-<ver>-windows-amd64-setup.exe` |
+| Windows 10/11, portable | `Clack-<ver>-windows-amd64.zip` (`-arm64.zip` for ARM) |
+| Linux, any distro | `Clack-<ver>-x86_64.AppImage` (`-aarch64` for ARM) |
+| Debian 12+, Ubuntu 22.04+ | `clack_<ver>_amd64.deb` (`_arm64`) |
+| Fedora | `clack-<ver>.x86_64.rpm` (`.aarch64`) |
+
+None of the builds are signed by Apple or Microsoft, so both systems warn the first time you open Clack. The steps below get past that.
+
+### macOS
+
+Open the `.dmg` and drag **Clack** onto **Applications**. With the `.zip`, unzip it and move `Clack.app` to `/Applications`.
+
+The app has only an ad-hoc signature and isn't notarized, so the first launch says Apple "could not verify" it. Do one of these once:
+
+- Right-click (or Control-click) Clack in Applications, choose **Open**, then **Open** again. (macOS 15 and later don't offer this.)
+- Try to open Clack, then go to **System Settings → Privacy & Security**, scroll down and click **Open Anyway**.
+- In Terminal: `xattr -dr com.apple.quarantine /Applications/Clack.app`
+
+The app declares the `slack://` scheme, so macOS can send Slack links to it. If the official Slack app is installed too, macOS picks one of the two.
+
+### Windows
+
+**Installer:** run `Clack-<ver>-windows-amd64-setup.exe`. It installs for your user only (no admin prompt) into `%LocalAppData%\Programs\Clack`, adds a Start Menu entry and, unless you untick it, makes Clack open `slack://` links. A desktop shortcut is optional. Uninstall from **Settings → Apps**. Running a newer installer upgrades in place.
+
+**Portable:** unzip `Clack-<ver>-windows-amd64.zip` anywhere and run `Clack.exe`. It doesn't touch the registry. To have it open `slack://` links, run `Clack.exe -register-url-handler` once from that folder (`-unregister-url-handler` undoes it; both only affect your user).
+
+The files aren't code-signed, so SmartScreen may say "Windows protected your PC". Click **More info → Run anyway**.
+
+### Linux
+
+**AppImage** (no install):
+
+```sh
+chmod +x Clack-<ver>-x86_64.AppImage
+./Clack-<ver>-x86_64.AppImage
+```
+
+The AppImage mounts itself with FUSE (`fusermount3` from the `fuse3` package, which most desktops already have). If FUSE isn't available, run it with `--appimage-extract-and-run`.
+
+**Debian/Ubuntu:**
+
+```sh
+sudo apt install ./clack_<ver>_amd64.deb
+```
+
+**Fedora:**
+
+```sh
+sudo dnf install ./clack-<ver>.x86_64.rpm
+```
+
+The packages put `clack` in `/usr/bin`, add Clack to the application menu and declare it as a `slack://` handler. If another app already handles `slack://` links, make Clack the default with `xdg-mime default clack.desktop x-scheme-handler/slack`.
+
+Clack needs a Wayland or X11 desktop with OpenGL ES/EGL (Mesa is fine). The packages pull in the libraries; for the AppImage on a minimal system, see [packaging/linux/README.md](packaging/linux/README.md) for the package names on Debian/Ubuntu, Fedora and Arch. Desktop notifications use the standard `org.freedesktop.Notifications` D-Bus service that every desktop provides.
+
+### Check the download
+
+Each release has a `SHA256SUMS` file. Put it next to the files you downloaded and run:
+
+```sh
+sha256sum -c --ignore-missing SHA256SUMS        # Linux
+shasum -a 256 -c --ignore-missing SHA256SUMS    # macOS
+```
+
+On Windows, compare `Get-FileHash Clack-<ver>-windows-amd64-setup.exe` (PowerShell) with the line in `SHA256SUMS`.
+
+### Development builds
+
+Every commit is also built on the [Actions](../../actions/workflows/ci.yml) page: open a run and download an artifact from the bottom of the page (needs a GitHub login). These are bare binaries (`clack-linux-amd64`, `clack-windows-amd64.exe`, `clack-darwin-arm64`) with no installer. Run them the same way; on macOS, clear the quarantine flag first with `xattr -d com.apple.quarantine clack-darwin-arm64`.
+
 ## What it looks like
 
 There are no screenshots in this repo on purpose: any real screenshot would show other people's messages, and the repo is public. In words:
@@ -15,44 +92,13 @@ There are no screenshots in this repo on purpose: any real screenshot would show
 - **Threads and channel details** open in a pane on the right. Ctrl+K, search, the emoji picker, profile cards, menus, the lightbox and Preferences open as popups over the window.
 - **Dark mode** follows Slack's dark theme, including the darker aubergine chrome and the 1 px outline around the workspace.
 
-## Download
-
-Release binaries are attached to each [GitHub Release](../../releases) (`clack-linux-amd64`, `clack-windows-amd64.exe`, `clack-darwin-arm64`, plus `SHA256SUMS`). Rename the file to `clack` if you like; the examples below use that name. Builds of every commit are also on the [Actions](../../actions/workflows/ci.yml) page: open a run and download an artifact from the bottom of the page (needs a GitHub login).
-
-### Linux (x86-64)
-
-```sh
-chmod +x clack-linux-amd64
-./clack-linux-amd64
-```
-
-It needs a Wayland or X11 desktop with OpenGL ES/EGL (Mesa is fine). On a minimal install, add the runtime libraries, e.g. on Debian/Ubuntu:
-
-```sh
-sudo apt install libwayland-client0 libwayland-egl1 libx11-6 libx11-xcb1 libxkbcommon-x11-0 libxcursor1 libegl1 libgles2 libvulkan1
-```
-
-Desktop notifications use the standard `org.freedesktop.Notifications` D-Bus service that every desktop provides.
-
-### macOS (Apple Silicon)
-
-```sh
-chmod +x clack-darwin-arm64
-xattr -d com.apple.quarantine clack-darwin-arm64   # the binary isn't notarized
-./clack-darwin-arm64
-```
-
-### Windows (x86-64)
-
-Download `clack-windows-amd64.exe` and double-click it. The binary isn't signed, so SmartScreen may warn: choose **More info → Run anyway**.
-
 ## Sign in
 
-Clack signs in with the token and cookies of your own signed-in Slack session, the same values other third-party Slack clients use. Start Clack (or run `clack login`) and fill in your workspace, the `xoxc-` **token**, the **`d` cookie** (`xoxd-…`) and, optionally, the org token (Enterprise Grid workspaces such as Hack Club) and the `d-s` cookie. Clack only checks them with `auth.test`: it never loads Slack web pages with your cookie and never calls a sign-out API, so your browser session stays signed in. They're saved to `~/.config/clack/creds.json` (mode 600). "Sign out on this device" deletes that file and nothing else.
+Clack signs in with the token and cookies of your own signed-in Slack session, the same values other third-party Slack clients use. Start Clack (or run `clack login`) and fill in your workspace, the `xoxc-` **token**, the **`d` cookie** (`xoxd-…`) and, optionally, the org token (Enterprise Grid workspaces such as Hack Club) and the `d-s` cookie. Clack only checks them with `auth.test`: it never loads Slack web pages with your cookie and never calls a sign-out API, so your browser session stays signed in. They're saved to `~/.config/clack/creds.json`, readable only by you (mode 600 in a 700 directory; an owner-only ACL on Windows). They are only ever sent to https slack.com hosts. "Sign out on this device" deletes that file and nothing else.
 
 Clack never calls Slack's sign-out or token-revoke methods. "Sign out on this device" only deletes `creds.json`; your Slack session in the browser and other apps is not affected.
 
-Treat `creds.json` like a password: it is a full session for your account.
+Treat `creds.json` like a password: it is a full session for your account. See [docs/SECURITY.md](docs/SECURITY.md) for how Clack protects it, what plugins can see, and how Clack follows the Hack Club scraping policy.
 
 ## Run
 
@@ -60,18 +106,25 @@ Treat `creds.json` like a password: it is a full session for your account.
 clack            # open the window
 clack -dark      # start in dark mode (the saved preference wins)
 clack -version   # print the version
+clack 'slack://channel?team=T0266FRGM&id=C0266FRGV'   # open a Slack link
 ```
 
 | flag | default | |
 |---|---|---|
 | `-creds <file>` | `~/.config/clack/creds.json` | credentials file |
 | `-dark` | off | start in dark mode |
+| `-register-url-handler` | | make Clack this user's `slack://` handler and exit (Windows registry; `xdg-mime` on Linux) |
+| `-unregister-url-handler` | | remove Clack's `slack://` registration (Windows) and exit |
+
+Only one Clack runs per user. Starting it again, or opening a `slack://` link, brings the running window to the front and opens the link there (`slack://channel?id=C…[&thread_ts=…]`, `slack://user?id=U…`, `slack://open`). Instances with different `CLACK_HOME`s are separate. On Windows, Clack also puts an icon in the notification area: click it to bring the window back, or right-click it to quit.
+
+Release builds check GitHub Releases for a newer version once at start and then twice a day. If there is one, a blue "A new version of Clack is available" banner appears with a **View release** button that opens the release page in your browser. Clack never downloads or installs anything by itself. Turn the check off in **Preferences → Advanced → Check for updates**.
 
 Config lives in `~/.config/clack` (`%AppData%\clack` on Windows, `~/Library/Application Support/clack` on macOS). Set `CLACK_HOME` to keep it elsewhere. Config from the old name (`yoloslack`) is copied over on first start. Set `CLACK_TIMING=1` to log startup timings, `CLACK_FRAMELOG=1` to log every frame, and `CLACK_NOEMBOLDEN=1` to skip the text-weight correction (faster on machines without a GPU).
 
 ## Build
 
-Every push runs gofmt, vet and the tests in GitHub Actions, then builds Linux (cgo; Gio needs Wayland/X11/GL headers), Windows (cross-compiled, no cgo) and macOS binaries. A `v*` tag runs `.github/workflows/release.yml`, which publishes the three binaries and their checksums as a GitHub Release.
+Every push runs gofmt, vet and the tests in GitHub Actions, then builds Linux (cgo; Gio needs Wayland/X11/GL headers), Windows (cross-compiled, no cgo) and macOS binaries. A `v*` tag runs `.github/workflows/release.yml`, which builds the packages listed under [Install](#install) (the macOS app as a universal arm64 + x86-64 binary, the Windows installer with Inno Setup, the `.deb`/`.rpm` with nfpm, the AppImage with appimagetool), installs and checks them on the CI runners, and publishes them with `SHA256SUMS` as a GitHub Release. Tags with a `-` (`v0.4.0-rc.1`) become pre-releases. The packaging files are in `packaging/`.
 
 To build yourself you need Go ≥ 1.24. On Linux also install `libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev`, then:
 

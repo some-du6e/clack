@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 )
@@ -114,9 +115,18 @@ func TestAuthFailedStopsCore(t *testing.T) {
 	if a.bg.Err() == nil {
 		t.Error("background context not cancelled")
 	}
-	f.mu.Lock()
-	before := len(f.calls)
-	f.mu.Unlock()
+	// requests already in flight when the session ended may still land:
+	// count from when the fake server has gone quiet
+	count := func() int { f.mu.Lock(); defer f.mu.Unlock(); return len(f.calls) }
+	before := count()
+	for quiet, deadline := 0, time.Now().Add(2*time.Second); quiet < 3 && time.Now().Before(deadline); {
+		time.Sleep(20 * time.Millisecond)
+		if n := count(); n == before {
+			quiet++
+		} else {
+			before, quiet = n, 0
+		}
+	}
 	for i := 0; i < 30; i++ { // the UI's refetch loop
 		if _, err := a.History(context.Background(), "C1", ""); !errors.Is(err, slack.ErrSignedOut) {
 			t.Fatalf("refetch: %v", err)
@@ -143,5 +153,43 @@ func TestMessageRawFieldsForPlugins(t *testing.T) {
 	}
 	if v.BotProfile == nil || v.BotProfile.UserID != "U8" || v.BotProfile.Icon != "https://img.example/48.png" {
 		t.Errorf("bot profile: %+v", v.BotProfile)
+	}
+}
+
+// Slackbot custom responses (subtype slackbot_response) are found in the
+// cached thread, for Slack's hasSlackbotCustomResponseInThread and the
+// message background's --labels--custom_response class. Synthetic data.
+func TestSlackbotCustomResponse(t *testing.T) {
+	a, _ := testApp(t)
+	a.S.SetThread("C1", "10.000001", []slack.Message{
+		{TS: "10.000001", ThreadTS: "10.000001", User: "U2", Text: "where is the synthetic wiki?"},
+		{TS: "10.000002", ThreadTS: "10.000001", User: "USLACKBOT", Subtype: SubtypeSlackbotResponse, Text: "a synthetic custom response"},
+	})
+	a.S.SetThread("C1", "20.000001", []slack.Message{
+		{TS: "20.000001", ThreadTS: "20.000001", User: "U2", Text: "hi"},
+		{TS: "20.000002", ThreadTS: "20.000001", User: "USLACKBOT", Text: "a plain Slackbot reply"},
+	})
+	for _, c := range []struct {
+		ch, ts, user string
+		want         bool
+	}{
+		{"C1", "10.000001", "USLACKBOT", true},
+		{"C1", "10.000001", "", true},
+		{"C1", "10.000001", "U2", false},
+		{"C1", "20.000001", "USLACKBOT", false},
+		{"C1", "30.000001", "USLACKBOT", false}, // not cached
+		{"C2", "10.000001", "USLACKBOT", false},
+		{"C1", "", "USLACKBOT", false},
+	} {
+		if got := a.SlackbotCustomResponseInThread(c.ch, c.ts, c.user); got != c.want {
+			t.Errorf("SlackbotCustomResponseInThread(%s, %s, %s) = %v, want %v", c.ch, c.ts, c.user, got, c.want)
+		}
+	}
+	m := a.message("C1", &slack.Message{TS: "10.000002", User: "USLACKBOT", Subtype: SubtypeSlackbotResponse})
+	if !m.SlackbotCustomResponse() {
+		t.Error("a slackbot_response message isn't a custom response")
+	}
+	if m2 := a.message("C1", &slack.Message{TS: "20.000002", User: "USLACKBOT"}); m2.SlackbotCustomResponse() {
+		t.Error("a plain Slackbot message is a custom response")
 	}
 }

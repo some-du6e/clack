@@ -1,0 +1,71 @@
+name: ui-slick
+# Slick plugins through Clack's native views: builds every plugin in
+# Slick's src/plugins/ with Slick's own build (internal/slick/build), then
+# runs each UI package's TestSlickView* acceptance tests, which draw the real
+# native widgets (message list, composer, sidebar, popups, views) over a
+# synthetic workspace with the plugin installed unmodified and check what
+# the user would see. The built plugins are Slick's (GPLv3) and are never
+# committed; screenshots and logs carry synthetic data only.
+on:
+  push:
+    paths:
+      - "internal/ui/**"
+      - "internal/slick/**"
+      - "internal/taut/**"
+      - ".github/workflows/ui-slick.yml"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "slick git ref (branch, tag or sha)"
+        required: false
+        default: "main"
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb
+
+jobs:
+  ui-slick:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - name: clone slick
+        run: |
+          git clone -q https://github.com/3kh0/slick /tmp/slick
+          git -C /tmp/slick checkout -q "${{ inputs.ref || 'main' }}"
+          git -C /tmp/slick log --oneline -1
+      - name: "install slick deps (no scripts)"
+        working-directory: /tmp/slick
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: build every plugin with slick's build
+        run: |
+          set -o pipefail
+          mkdir -p dist/slick-plugins
+          node internal/slick/build/build.mjs /tmp/slick dist/slick-plugins 2>&1 | tail -20
+          cp -r /tmp/slick/themes dist/slick-plugins/themes
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: Slick acceptance through the native views
+        env:
+          SLICK_PLUGINS_DIR: ${{ github.workspace }}/dist/slick-plugins
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set -o pipefail
+          mkdir -p dist
+          xvfb-run -a go test -count=1 -timeout 20m -v -run 'TestSlickView' \
+            ./internal/ui/ ./internal/ui/messages/ ./internal/ui/composer/ ./internal/ui/popups/ ./internal/ui/views/ ./internal/ui/huddleui/ 2>&1 | tee dist/ui-slick.log
+      - name: summary
+        if: ${{ !cancelled() }}
+        run: grep -E '^\s*--- (PASS|FAIL|SKIP)|^(ok|FAIL)\b' dist/ui-slick.log || true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: ui-slick-log
+          path: dist/ui-slick.log

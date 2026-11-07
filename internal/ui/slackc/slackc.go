@@ -234,9 +234,20 @@ func componentPatched[T any](gtx layout.Context, name string, recv T, props func
 // --- patched instances (UI goroutine) ---
 
 type instKey struct {
-	name string
-	key  string
-	hash uint64
+	name    string
+	key     string
+	hash    uint64
+	parent  uint64 // enclosing patched root (0 = top level)
+	parentK int64  // the "@" node in it whose native drew this one
+}
+
+// NestedBridge is implemented by bridges that can mount a root inside
+// another root's React tree (a portal under the host node parentK of
+// root parent), so React context flows from a parent patch into the
+// patched components its <Original> draws natively. Without it nested
+// roots render on their own, as before.
+type NestedBridge interface {
+	RenderIn(root, parent uint64, parentK int64, name string, props []byte)
 }
 
 type inst struct {
@@ -284,6 +295,13 @@ func renderPatched(gtx layout.Context, name string, props Props, native Native) 
 
 	h := hashProps(props)
 	k := instKey{name: name}
+	// Drawn by a native inside another patched component's tree (a row's
+	// <Original> calling MessageText): the child root belongs under that
+	// "@" node, so JS can mount it inside the parent's React tree and
+	// context providers a parent patch adds reach it.
+	if c := curRender; c != nil && c.view != nil && c.n != nil {
+		k.parent, k.parentK = c.view.root, c.n.K
+	}
 	if id, ok := props["$key"]; ok {
 		k.key = keyString(id)
 	} else {
@@ -301,7 +319,11 @@ func renderPatched(gtx layout.Context, name string, props Props, native Native) 
 	in.used = t
 	if h != in.sent {
 		in.sent = h
-		b.Render(in.root, name, encodeProps(props, in.slots))
+		if nb, ok := b.(NestedBridge); ok && k.parent != 0 {
+			nb.RenderIn(in.root, k.parent, k.parentK, name, encodeProps(props, in.slots))
+		} else {
+			b.Render(in.root, name, encodeProps(props, in.slots))
+		}
 	} else if len(in.slots) > 0 {
 		refreshFns(props, in.slots, "")
 	}
@@ -446,6 +468,9 @@ func CallGo(id int64, args []byte) ([]byte, error) {
 func Pump() { pump() }
 
 func pump() {
+	if subFrame { // callbacks touch the main window's UI state: run them there
+		return
+	}
 	calls.Lock()
 	q := calls.q
 	calls.q = nil

@@ -25,6 +25,10 @@ func (t *Taut) installHost(r *runtime) {
 	sync("get", func(a []json.RawMessage) (any, error) { return t.mirror.get(strArg(a, 0), strArg(a, 1)), nil })
 	sync("keys", func(a []json.RawMessage) (any, error) { return t.mirror.keys(strArg(a, 0)), nil })
 	sync("action", func(a []json.RawMessage) (any, error) { return nil, nil })
+	// Slack's hasSlackbotCustomResponseInThread over core's cached replies
+	sync("slackbotCustomResponseInThread", func(a []json.RawMessage) (any, error) {
+		return t.app.SlackbotCustomResponseInThread(strArg(a, 0), strArg(a, 1), strArg(a, 2)), nil
+	})
 
 	// ---- what plugins patched (Go keeps cheap flags for the UI) ----
 	sync("statePatched", func(a []json.RawMessage) (any, error) {
@@ -130,14 +134,20 @@ func (t *Taut) installHost(r *runtime) {
 		}
 		return f(strArg(a, 0), where, arg), nil
 	})
+	sync("updatePendingFile", func(a []json.RawMessage) (any, error) {
+		if f := RenamePendingFile; f != nil {
+			return f(strArg(a, 0), strArg(a, 1)), nil
+		}
+		return false, nil
+	})
 	sync("localDraft", func(a []json.RawMessage) (any, error) {
 		if f := t.opts.UI.SetLocalDraft; f != nil && len(a) > 0 {
 			f(a[0])
 		}
 		return nil, nil
 	})
-	sync("huddleEventLog", func(a []json.RawMessage) (any, error) { return nil, nil })
-	sync("huddleReaction", func(a []json.RawMessage) (any, error) { return false, nil })
+	sync("huddleEventLog", t.huddleEventLog)
+	sync("huddleReaction", t.huddleReaction)
 
 	// ---- data ----
 	sync("kv", func(a []json.RawMessage) (any, error) {
@@ -313,6 +323,11 @@ func (t *Taut) cookie(op string, a []json.RawMessage) any {
 		d = dec
 	}
 	cookie := map[string]any{"name": "d", "value": d, "domain": ".slack.com", "path": "/", "secure": true, "httpOnly": true, "sameSite": "lax"}
+	// Like Electron's cookie store: a url filter off slack.com matches no
+	// cookie (the d cookie is scoped to https .slack.com).
+	if q.URL != "" && !slack.CookieURL(q.URL) {
+		d = ""
+	}
 	switch op {
 	case "get":
 		if q.Name == "d" && d != "" {

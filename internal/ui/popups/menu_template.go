@@ -299,6 +299,9 @@ func (m *Menu) tplProps() slackc.Props {
 		"targetBounds":            rectProps(m.opts.Anchor, m.scale),
 		"stripTerminalSeparators": true,
 		"onClose":                 m.closeAll,
+		// Slack's MenuFromTemplate renders a Menu: its slot, so context a
+		// wrapper provides (MessageLogger's rows) reaches it
+		"children": slackc.Child("Menu", m.menuProps(), m.layoutMenu),
 	}
 }
 
@@ -308,40 +311,67 @@ func (m *Menu) mftProps() slackc.Props {
 	return p
 }
 
-func (m *Menu) withinProps() slackc.Props {
-	p := make(slackc.Props, len(m.opts.WithinProps)+2)
-	for k, v := range m.opts.WithinProps {
+// wrapProps are the props of the i-th component the menu is rendered
+// inside (m.wraps), with the next one (or the MenuFromTemplate) as its
+// children slot.
+func (m *Menu) wrapProps(i int) slackc.Props {
+	w := m.wraps[i]
+	p := make(slackc.Props, len(w.Props)+4)
+	for k, v := range w.Props {
 		p[k] = v
 	}
-	p["$key"] = m.key
-	p["children"] = slackc.Child("MenuFromTemplate", m.tplProps(), m.layoutTemplate)
+	p["$key"] = m.key + ":" + w.Name
+	if !p.Has("onTriggerClose") {
+		p["onTriggerClose"] = m.closeAll
+	}
+	if w.Name == "ContextMenuTriggerWithKeyboardFocus" {
+		if h := m.ctxTemplate(); h != nil {
+			p["getTemplate"] = h
+		}
+	}
+	if i+1 < len(m.wraps) {
+		p["children"] = slackc.Child(m.wraps[i+1].Name, m.wrapProps(i+1), m.wrapNative(i+1))
+	} else {
+		p["children"] = slackc.Child("MenuFromTemplate", m.tplProps(), m.layoutTemplate)
+	}
 	return p
+}
+
+// wrapNative draws the i-th wrapper: its children slot, or the next
+// boundary on its own.
+func (m *Menu) wrapNative(i int) slackc.Native {
+	return func(gtx layout.Context, p slackc.Props) layout.Dimensions {
+		if m.wraps[i].Name == "ContextMenuTriggerWithKeyboardFocus" {
+			m.ctxPatched(p)
+		}
+		if i+1 < len(m.wraps) {
+			return childrenOr(gtx, p, m.wraps[i+1].Name, func() slackc.Props { return m.wrapProps(i + 1) }, m.wrapNative(i+1))
+		}
+		return childrenOr(gtx, p, "MenuFromTemplate", m.mftProps, m.layoutTemplate)
+	}
 }
 
 // layoutRoot draws the root card through the boundaries.
 func (m *Menu) layoutRoot(gtx layout.Context, win image.Point) {
+	m.win, m.scale = win, gtx.Metric.PxPerDp
 	if m.opts.Raw {
-		m.layoutCard(gtx, win)
+		// the items came out of a plugin's MenuFromTemplate, which renders
+		// a Menu
+		slackc.RenderLazy(gtx, "Menu", m.menuProps, m.layoutMenu)
 		return
 	}
-	m.win, m.scale = win, gtx.Metric.PxPerDp
-	if m.opts.Within != "" {
-		slackc.RenderLazy(gtx, m.opts.Within, m.withinProps, m.layoutWithin)
+	if len(m.wraps) > 0 {
+		slackc.RenderLazy(gtx, m.wraps[0].Name, func() slackc.Props { return m.wrapProps(0) }, m.wrapNative(0))
 		return
 	}
 	slackc.RenderLazy(gtx, "MenuFromTemplate", m.mftProps, m.layoutTemplate)
 }
 
-func (m *Menu) layoutWithin(gtx layout.Context, p slackc.Props) layout.Dimensions {
-	return childrenOr(gtx, p, "MenuFromTemplate", m.mftProps, m.layoutTemplate)
-}
-
-// layoutTemplate is MenuFromTemplate's native: it draws the template the
-// plugin passed (p nil: the native items).
+// layoutTemplate is MenuFromTemplate's native: it applies the template the
+// plugin passed (p nil: the native items) and draws its Menu.
 func (m *Menu) layoutTemplate(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	m.applyTemplate(p)
-	m.layoutCard(gtx, m.win)
-	return layout.Dimensions{Size: m.win}
+	return childrenOr(gtx, p, "Menu", m.menuProps, m.layoutMenu)
 }
 
 func (m *Menu) applyTemplate(p slackc.Props) {
@@ -365,6 +395,7 @@ func sameMap(a, b slackc.Props) bool {
 
 func (m *Menu) setItems(items []MenuItem) {
 	m.items = items
+	m.nExtra = 0
 	if len(m.clicks) != len(items) {
 		m.clicks = make([]widget.Clickable, len(items))
 	}

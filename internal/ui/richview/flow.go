@@ -232,9 +232,11 @@ type lay struct {
 	inAtt     bool
 	authorImg int // inside a card: its author icon, imgs index+1
 	// expanded holds the attachments whose text was expanded (View
-	// state); attN numbers attachments in doc order (truncate.go).
+	// state); expandAt is the one being laid out (truncate.go).
 	expanded map[*richtext.Attachment]bool
-	expandAt *richtext.Attachment // the attachment being laid out, for its expander target
+	expandAt *richtext.Attachment
+	// titleFrags is a YouTube card's title frags [from, to) (compBlock).
+	titleFrags [2]int
 }
 
 func (l *lay) dp(v float32) int      { return int(v*l.scale + 0.5) }
@@ -455,6 +457,9 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 				l.decos[dc].comp = cmp
 				if n := l.compState(cmp).name; n != "" && kind == compChannel {
 					txt = "#" + n
+				}
+				if kind == compUser && l.compState(cmp).noAt {
+					noAt = true // MemberSlug supressMentionAtSymbol
 				}
 			}
 		case richtext.Date:

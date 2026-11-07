@@ -250,6 +250,9 @@ func (l *lay) block(b *richtext.Block, x, y, w int, edited bool) int {
 		if b.File == nil {
 			return 0
 		}
+		if l.mode&modeAtts != 0 && !l.inAtt {
+			return l.compFile(b, x, y, w)
+		}
 		return l.file(b.File, x, y, w)
 	}
 	// Unknown: lay out whatever text it has.

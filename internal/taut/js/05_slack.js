@@ -1614,7 +1614,7 @@ const tracer = new GenericTracer()
 const telemeter = new GenericTelemeter()
 const noopTelemeter = new NoopTelemeter()
 
-// huddle events (Clack does not join huddles' media; the log thunks are no-ops that keep state)
+// huddle events (Clack does not join huddles' media; the log thunks keep state; Go feeds activeHuddle, peers and peer messages from the native huddle)
 const enableEventLog = withMeta('enableEventLog', () => ({ type: 'ENABLE_EVENT_LOG' }))
 const disableEventLog = withMeta('disableEventLog', () => ({ type: 'DISABLE_EVENT_LOG' }))
 onAction('ENABLE_EVENT_LOG', (a) => (goOr(null, 'huddleEventLog', true), a))
@@ -1632,11 +1632,56 @@ onAction('JUMP_TO_REPLY', (a) => {
 const setLocalDraft = withMeta('setLocalDraft', (draft) => ({ type: 'SET_LOCAL_DRAFT', payload: draft }))
 onAction('SET_LOCAL_DRAFT', (a) => (goOr(null, 'localDraft', encode(a.payload)), a))
 
+// ---- pending files (the composer's attachments) ----
+// state.pendingFileUploads[pendingFileId] is served from Go (the composer's
+// pending files, mirror.go); state.files has the ones whose bytes are up.
+// updatePendingFile is Slack's plain action creator: renaming a file here
+// renames it in the composer (its chip and the name it is shared under).
+// maybePersistPendingFileData and editFileApi are native thunks (thunks.go).
+const updatePendingFile = withMeta('updatePendingFile', (payload) => ({ type: 'UPDATE_PENDING_FILE', payload }))
+onAction('UPDATE_PENDING_FILE', (a) => {
+  const { pendingFileId, title } = a.payload || {}
+  if (pendingFileId != null && typeof title === 'string') {
+    goOr(false, 'updatePendingFile', String(pendingFileId), title)
+    // read again now, so selectors see the new title in this task
+    T.invalidate([{ slice: 'pendingFileUploads' }, { slice: 'files' }])
+  }
+  return a
+})
+
 class AudioVideoFacadeSubscriber {
   handlePeerMessageFromDataMessage() {}
 }
 
+// Slack's selector (state, channelId, threadTs, userId): did userId
+// (Slackbot) answer with one of the workspace's custom responses
+// (subtype slackbot_response) in this thread? Core answers from its cached
+// replies (no JSON built); once a plugin patches the state, the state
+// passed in is read instead, as Slack's selector would.
+function hasSlackbotCustomResponseInThread(state, channelId, threadTs, userId) {
+  if (!channelId || !threadTs) return false
+  if (statePatches.size === 0) return goOr(false, 'slackbotCustomResponseInThread', String(channelId), String(threadTs), userId ? String(userId) : '') === true
+  const bucket = state?.messages?.[channelId]
+  if (!bucket || typeof bucket !== 'object') return false
+  for (const ts of Object.keys(bucket)) {
+    const m = bucket[ts]
+    if (m && m.thread_ts === threadTs && m.subtype === 'slackbot_response' && (!userId || m.user === userId)) return true
+  }
+  return false
+}
+
+// Slack's ClientStoreContext: a React context holding {store}, which
+// Slack provides at its app root. Clack's patched components are separate
+// roots, so the store is the context's default value and every component
+// sees it (CallTimer reads clientHuddles through it).
+if (G.React) {
+  const ClientStoreContext = G.React.createContext({ store: getStore() })
+  ClientStoreContext.displayName = 'ClientStoreContext'
+  defineModule('slack-client-store', { ClientStoreContext })
+}
+
 defineModule('slack-exports', {
+  hasSlackbotCustomResponseInThread,
   I18n,
   getPrefCompliantMemberName,
   getBroadcastKeywordsForUser,
@@ -1669,6 +1714,7 @@ defineModule('slack-exports', {
   jumpToReply,
   setLocalDraft,
 })
+defineModule('pending-files', { updatePendingFile })
 defineModule('view-contexts', viewContexts)
 
 Object.assign(T, {

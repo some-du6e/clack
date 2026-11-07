@@ -1024,8 +1024,7 @@ func (p *slickPage) pluginRow(gtx layout.Context, w int, pl slick.PluginInfo, st
 	at(gtx, image.Pt(w-gtx.Dp(12)-chevW-gap-swW, (h-gtx.Dp(16))/2), image.Pt(swW, gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
 		d, c := p.sw(gtx, "en."+pl.ID, pl.Enabled, false)
 		if c {
-			on := !pl.Enabled
-			p.write(func(ctx context.Context, s *slick.Slick) error { return s.SetEnabled(ctx, pl.ID, on) })
+			p.setEnabled(pl, !pl.Enabled)
 		}
 		return d
 	})
@@ -1120,8 +1119,7 @@ func (p *slickPage) detail(f *flow, s *slick.Slick, st slick.Settings) {
 		at(gtx, image.Pt(f.w-swW, gtx.Dp(6)), image.Pt(swW, gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
 			d, c := p.sw(gtx, "den."+pl.ID, pl.Enabled, false)
 			if c {
-				on := !pl.Enabled
-				p.write(func(ctx context.Context, s *slick.Slick) error { return s.SetEnabled(ctx, pl.ID, on) })
+				p.setEnabled(pl, !pl.Enabled)
 			}
 			return d
 		})
@@ -1133,6 +1131,24 @@ func (p *slickPage) detail(f *flow, s *slick.Slick, st slick.Settings) {
 			prob += ". Turn this plugin off and on to retry."
 		}
 		p.notice(f, prob, isErr)
+	}
+	if pl.StoresMessages {
+		p.notice(f, slick.StoresMessagesNote, true)
+		p.card(f, "Storage", "", nil, []func(gtx layout.Context, w int) layout.Dimensions{
+			func(gtx layout.Context, w int) layout.Dimensions {
+				desc, warn := "Off: what it saves stays in memory and is gone when "+AppName+" quits.", ""
+				if pl.KeepOnDisk {
+					desc, warn = "On: what it saves is kept on this computer. Turning this off deletes it from disk.", "Messages on disk"
+				}
+				return p.field(gtx, w, "Keep on disk", desc, warn, false, func(gtx layout.Context, _ int) layout.Dimensions {
+					d, c := p.sw(gtx, "disk."+pl.ID, pl.KeepOnDisk, false)
+					if c {
+						p.setKeepOnDisk(pl, !pl.KeepOnDisk)
+					}
+					return d
+				})
+			},
+		})
 	}
 	if len(pl.Options) > 0 {
 		rows := make([]func(gtx layout.Context, w int) layout.Dimensions, len(pl.Options))
@@ -1148,7 +1164,7 @@ func (p *slickPage) detail(f *flow, s *slick.Slick, st slick.Settings) {
 		if pl.Source != "" {
 			label, desc = "Installed from a URL", pl.Source
 		}
-		p.card(f, "Source", "", nil, []func(gtx layout.Context, w int) layout.Dimensions{
+		rows := []func(gtx layout.Context, w int) layout.Dimensions{
 			func(gtx layout.Context, w int) layout.Dimensions {
 				return p.field(gtx, w, label, desc, "", false, func(gtx layout.Context, _ int) layout.Dimensions {
 					d, c := p.btn(gtx, "remove."+pl.ID, "Remove plugin", popups.BtnDanger, popups.BtnSmall, false)
@@ -1159,7 +1175,13 @@ func (p *slickPage) detail(f *flow, s *slick.Slick, st slick.Settings) {
 					return d
 				})
 			},
-		})
+		}
+		if pl.HasMain {
+			rows = append(rows, func(gtx layout.Context, w int) layout.Dimensions {
+				return p.field(gtx, w, "Main half", "Its privileged half "+slickCapabilities(pl.Capabilities)+".", "Privileged", false, nil)
+			})
+		}
+		p.card(f, "Source", "", nil, rows)
 	}
 }
 
@@ -2275,15 +2297,28 @@ func (p *slickPage) install(f *flow, st slick.Settings) {
 			if s == nil {
 				return
 			}
-			id, err := s.InstallURL(ctx, u)
+			code, source, err := s.Download(ctx, u)
+			var pk slick.Peek
+			if err == nil {
+				pk, err = s.Peek(code)
+			}
 			a.Post(func() {
 				p.installing = false
 				if err != nil {
 					p.installStatus = installErr(err)
 					return
 				}
-				p.urlEd.SetText("")
-				p.installStatus = "Installed " + p.pluginName(id) + ". It will keep itself up to date."
+				// nothing from the file has run yet: ask first, like Slick's warning
+				suffix := ". It will keep itself up to date."
+				if pk.Main {
+					suffix = "." // privileged halves never update by themselves
+				}
+				p.confirmInstall(pk, source, func() {
+					p.urlEd.SetText("")
+					p.runInstall(func(ctx context.Context, s *slick.Slick) (string, error) {
+						return s.InstallDownloaded(ctx, code, source)
+					}, suffix)
+				})
 			})
 		}()
 	}
@@ -2388,22 +2423,132 @@ func (p *slickPage) installFile() {
 			})
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
 		s := a.Slick()
 		if s == nil {
 			return
 		}
-		id, err := s.Import(ctx, files[0].Data)
+		code := files[0].Data
+		pk, err := s.Peek(code)
 		a.Post(func() {
 			p.installing = false
 			if err != nil {
 				p.installStatus = installErr(err)
 				return
 			}
-			p.installStatus = "Installed " + p.pluginName(id) + "."
+			p.confirmInstall(pk, "", func() {
+				p.runInstall(func(ctx context.Context, s *slick.Slick) (string, error) { return s.Import(ctx, code) }, ".")
+			})
 		})
 	}()
+}
+
+// confirmInstall asks before a plugin file runs (UI goroutine).
+func (p *slickPage) confirmInstall(pk slick.Peek, source string, ok func()) {
+	p.installing = false
+	title, body, action := slickInstallText(pk, source)
+	p.a.ShowOverlay(popups.Confirm(p.a, title, body, action, pk.Main, nil, ok))
+}
+
+// runInstall runs an install off the UI goroutine and reports it.
+func (p *slickPage) runInstall(install func(ctx context.Context, s *slick.Slick) (string, error), suffix string) {
+	p.installing, p.installStatus = true, ""
+	a := p.a
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		s := a.Slick()
+		if s == nil {
+			return
+		}
+		name, err := install(ctx, s)
+		a.Post(func() {
+			p.installing = false
+			if err != nil {
+				p.installStatus = installErr(err)
+				return
+			}
+			p.installStatus = "Installed " + name + suffix
+			for _, pl := range s.Settings().Plugins {
+				if pl.Name == name && pl.HasMain {
+					p.installStatus += " Privileged half: " + slickCapabilities(pl.Capabilities)
+				}
+			}
+			a.Invalidate()
+		})
+	}()
+}
+
+// slickInstallText is the confirmation before installing a plugin file:
+// what the file says it is (read without running it) and Slick's warning.
+func slickInstallText(pk slick.Peek, source string) (title, body, action string) {
+	name := pk.Name
+	if name == "" {
+		name = "this plugin"
+	}
+	var b strings.Builder
+	switch {
+	case pk.Main:
+		target := pk.ID
+		if target == "" {
+			target = "a plugin"
+		}
+		title, action = "Install a privileged half?", "Install"
+		fmt.Fprintf(&b, "This file is the privileged half (main.ts) of %s. Besides what every plugin can do, it can use the capabilities it declares: fetching any website, a secret store, your Slack cookies, opening links in your browser, filtering notifications, and reading files you pick. Its capabilities are listed under Source once it's installed.", target)
+		if pk.HasMain {
+			fmt.Fprintf(&b, " It replaces the installed one (%s).", slickCapabilities(pk.Capabilities))
+		}
+		b.WriteString("\n\n")
+	case pk.Installed:
+		title, action = "Update "+name+"?", "Update"
+	default:
+		title, action = "Install "+name+"?", "Install"
+	}
+	if pk.ID != "" && pk.ID != name && !pk.Main {
+		fmt.Fprintf(&b, "Plugin ID %s. ", pk.ID)
+	}
+	if source != "" && !pk.Main {
+		fmt.Fprintf(&b, "From %s. It is downloaded again every 3 hours and updated when it changes. ", source)
+	} else if source != "" {
+		fmt.Fprintf(&b, "From %s. ", source)
+	}
+	b.WriteString("Installing runs the file's code. Plugins you install will have FULL ACCESS to your Slack data: your messages, your session token, and posting as you. Only install code you trust!")
+	if pk.StoresMessages {
+		b.WriteString("\n\n" + slick.StoresMessagesNote)
+	}
+	return title, b.String(), action
+}
+
+// slickCapabilities describes a main half's declared capabilities.
+func slickCapabilities(caps []string) string {
+	if len(caps) == 0 {
+		return "declares no capabilities"
+	}
+	return "can use " + strings.Join(caps, ", ")
+}
+
+// setEnabled turns a plugin on or off. A plugin that keeps message
+// contents asks first (Hack Club's scraping policy).
+func (p *slickPage) setEnabled(pl slick.PluginInfo, on bool) {
+	id := pl.ID
+	if on && pl.StoresMessages {
+		p.a.ShowOverlay(popups.Confirm(p.a, "Turn on "+pl.Name+"?", slick.StoresMessagesNote, "Turn on", false, nil, func() {
+			p.write(func(ctx context.Context, s *slick.Slick) error { return s.SetEnabled(ctx, id, true) })
+		}))
+		return
+	}
+	p.write(func(ctx context.Context, s *slick.Slick) error { return s.SetEnabled(ctx, id, on) })
+}
+
+// setKeepOnDisk: turning it on asks first.
+func (p *slickPage) setKeepOnDisk(pl slick.PluginInfo, on bool) {
+	id := pl.ID
+	if on {
+		p.a.ShowOverlay(popups.Confirm(p.a, "Keep "+pl.Name+"'s data on disk?", slick.StoresMessagesNote, "Keep on disk", true, nil, func() {
+			p.write(func(ctx context.Context, s *slick.Slick) error { return s.SetKeepOnDisk(ctx, id, true) })
+		}))
+		return
+	}
+	p.write(func(ctx context.Context, s *slick.Slick) error { return s.SetKeepOnDisk(ctx, id, false) })
 }
 
 func (p *slickPage) checkUpdates() {

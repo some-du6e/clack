@@ -10,7 +10,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/jsrt"
@@ -34,6 +36,10 @@ func (a *App) Taut() *taut.Taut {
 	return a.data.taut
 }
 
+// deliverTap sees every host tree plugins deliver (tests: what a patched
+// boundary drew). Nil outside tests; set before startTaut.
+var deliverTap func(root uint64, tree []byte)
+
 // startTaut connects Taut plugins (internal/taut) to the native UI
 // through slackc. taut.New reads the plugin config only; no JS engine
 // starts unless a plugin is enabled.
@@ -42,6 +48,11 @@ func (b *backend) startTaut(a *App) {
 		return
 	}
 	t0 := time.Now()
+	// The runtime's patched names, kept so the reset Attached posts can't
+	// lose them: a plugin may register its patches (SetPatched) before the
+	// UI goroutine runs that reset, and JS only resends the set on change.
+	var patchMu sync.Mutex
+	var patchedNow []string
 	t, err := taut.New(taut.Options{
 		App:            b.core,
 		OpenURL:        openURL,
@@ -53,19 +64,33 @@ func (b *backend) startTaut(a *App) {
 			// a crash: drop every mounted root (their JS instances are
 			// gone), bind the new bridge, and let views remount (tautGen).
 			Attached: func(br *taut.Bridge) {
+				patchMu.Lock()
+				patchedNow = nil // a fresh runtime starts unpatched
+				patchMu.Unlock()
 				a.Post(func() {
 					slackc.Reset()
 					slackc.SetBridge(br)
+					patchMu.Lock()
+					slackc.SetPatched(patchedNow)
+					patchMu.Unlock()
 					a.tautGen++
 					a.Invalidate()
 				})
 			},
 			Deliver: func(root uint64, tree []byte) {
+				if f := deliverTap; f != nil {
+					f(root, tree)
+				}
 				if err := slackc.Deliver(root, tree); err != nil {
 					log.Printf("slackc: deliver %d: %v", root, err)
 				}
 			},
-			SetPatched:  slackc.SetPatched,
+			SetPatched: func(names []string) {
+				patchMu.Lock()
+				patchedNow = names
+				slackc.SetPatched(names)
+				patchMu.Unlock()
+			},
 			ThreadPane:  messages.ThreadPane, // api.threads.usePane (safe off the UI goroutine)
 			CallGo:      slackc.CallGo,
 			SetStyle:    slackc.SetStyle,
@@ -96,19 +121,7 @@ func (b *backend) startTaut(a *App) {
 				}
 			},
 			// slack:// links (Slack's handleDeepLink thunk) open inside Clack.
-			DeepLink: func(uri string) bool {
-				route, user, ok := deepLinkRoute(uri)
-				if ok {
-					a.Post(func() {
-						if user != "" {
-							a.OpenUserProfile(user)
-						} else {
-							a.Navigate(route)
-						}
-					})
-				}
-				return ok
-			},
+			DeepLink: a.openDeepLink, // also OpenURL's native (desktop.go)
 			OnDocumentProps: func(html, body []byte) {
 				if err := slackc.SetDocumentProps(html, body); err != nil {
 					log.Printf("slackc: document props: %v", err)
@@ -363,7 +376,10 @@ func (a *App) openFilePath(title, accept string) (string, error) {
 
 // deepLinkRoute maps a slack:// URI to a Clack route (or a user to open):
 // slack://channel?team=T&id=C[&thread_ts=ts], slack://user?team=T&id=U,
-// slack://open (Home). Unknown forms aren't handled.
+// slack://open (Home). Unknown forms aren't handled. Deep links only ever
+// navigate: nothing here sends, joins, leaves, downloads or signs out, and
+// ids and timestamps must look like Slack's so a link can't smuggle extra
+// route segments (c/C1/t/… or search?q=…) in.
 func deepLinkRoute(uri string) (route, user string, ok bool) {
 	u, err := url.Parse(uri)
 	if err != nil || u.Scheme != "slack" {
@@ -373,16 +389,19 @@ func deepLinkRoute(uri string) (route, user string, ok bool) {
 	id := q.Get("id")
 	switch u.Host {
 	case "channel":
-		if id == "" {
+		if !slackIDRE.MatchString(id) || !strings.ContainsAny(id[:1], "CDG") {
 			return "", "", false
 		}
 		r := "c/" + id
 		if ts := q.Get("thread_ts"); ts != "" {
+			if !slackTSRE.MatchString(ts) {
+				return "", "", false
+			}
 			r += "/t/" + ts // message=… alone opens the channel (no jump-to route yet)
 		}
 		return r, "", true
 	case "user":
-		if id == "" {
+		if !slackIDRE.MatchString(id) || !strings.ContainsAny(id[:1], "UW") {
 			return "", "", false
 		}
 		return "", id, true
@@ -391,3 +410,8 @@ func deepLinkRoute(uri string) (route, user string, ok bool) {
 	}
 	return "", "", false
 }
+
+var (
+	slackIDRE = regexp.MustCompile(`^[A-Z][A-Z0-9]{2,24}$`)
+	slackTSRE = regexp.MustCompile(`^[0-9]{1,12}\.[0-9]{1,8}$`)
+)

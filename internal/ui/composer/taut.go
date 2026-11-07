@@ -34,6 +34,7 @@ import (
 // Slack's thunk names the composer dispatches.
 const (
 	thTyping         = "currentUserStartedTyping"
+	thTypingEnded    = "currentUserEndedTyping"
 	thPrepareAndSend = "prepareAndSendMessage"
 	thSendMessage    = "sendMessage"
 	thDraftCreate    = "syncDraftCreate"
@@ -49,7 +50,10 @@ var tautRef atomic.Pointer[taut.Taut]
 
 // SetTaut connects the composer to the plugin system (the ui root calls it
 // next to taut.New, and again after an account switch; nil disconnects).
-func SetTaut(t *taut.Taut) { tautRef.Store(t) }
+func SetTaut(t *taut.Taut) {
+	extendTaut(t)
+	tautRef.Store(t)
+}
 
 // currentTaut is the plugin system, or nil. Every *taut.Taut method the
 // composer uses on the hot path is nil-safe or guarded here.

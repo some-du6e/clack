@@ -10,6 +10,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -152,9 +153,125 @@ func NewChannelMenu(h Host, anchor image.Point, convID string) *Menu {
 			Confirm(h, "Leave #"+name+"?", msg, "Leave channel", true, nil, func() { actLeave(h, convID, "You left #"+name) })
 		}})
 	}
-	m := NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(anchor), AlignRight: true})
+	m := NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(anchor), AlignRight: true, Wraps: []MenuWrap{
+		// Slack's channel context menu: ChatTabs marks the channel, then
+		// extends the trigger's getTemplate ("Open in new Slick tab")
+		{Name: "ChannelContextMenu", Props: slackc.Props{"id": convID}},
+		{Name: "ContextMenuTriggerWithKeyboardFocus", Props: slackc.Props{
+			"desktopAppOnly": false, "showSlackKitContextMenuOnDesktop": true, "overrideDefaultMenu": true,
+			"menuAriaLabel": "Channel options", "width": "300px",
+		}},
+	}})
 	tautMenu(h, m, "getContextMenuTemplate", convID) // QuickJoin et al.; free without plugins
 	return m
+}
+
+// ---- sidebar conversation menu (the shell's row right-click) ----
+
+// ChannelMenuInfo is what Slack's sidebar conversation menu depends on.
+// ChannelMenuAction is what popups' channel menu does for a sidebar menu
+// key, exactly as NewChannelMenu's rows do it: toggle_star and
+// toggle_mute through Slack (stars.add/remove, users.prefs) with their
+// toasts, leave after Slack's "Leave #name?" confirmation (private
+// channels warn that rejoining needs an invite), close for DMs. nil for
+// the keys the caller handles itself.
+func ChannelMenuAction(h Host, convID, key string) func() {
+	var c core.Conv
+	if a := h.Core(); a != nil {
+		c, _ = a.Conv(convID)
+	}
+	dm := c.Kind == "im" || c.Kind == "mpim" || c.Kind == "app" || strings.HasPrefix(convID, "D")
+	noun := "channel"
+	if dm {
+		noun = "conversation"
+	}
+	switch key {
+	case "toggle_star":
+		return func() { actToggleStar(h, convID, noun) }
+	case "toggle_mute":
+		return func() { actToggleMute(h, convID, noun) }
+	case "close":
+		return func() { actLeave(h, convID, "Conversation closed") }
+	case "leave":
+		if dm {
+			return func() { actLeave(h, convID, "Conversation closed") }
+		}
+		name := convTitle(h, c)
+		if name == "" {
+			name = convID
+		}
+		return func() {
+			msg := "You can rejoin this channel at any time."
+			if c.Kind == "private" {
+				msg = "You won't be able to rejoin this private channel unless someone invites you."
+			}
+			Confirm(h, "Leave #"+name+"?", msg, "Leave channel", true, nil, func() { actLeave(h, convID, "You left #"+name) })
+		}
+	}
+	return nil
+}
+
+type ChannelMenuInfo struct {
+	ID, Kind       string // Kind: core's ("channel", "private", "im", "mpim", "app")
+	Muted, Starred bool
+}
+
+func (c ChannelMenuInfo) dm() bool { return c.Kind == "im" || c.Kind == "mpim" || c.Kind == "app" }
+
+// ChannelMenuItems are Slack's sidebar conversation menu for c, with
+// stable keys (view_details, copy_link, copy_name, toggle_star,
+// toggle_mute, mark_read, leave or close, and separators). do, when
+// non-nil, gives each key's action. Pure: safe on any goroutine, so a
+// getTemplate JS calls can build its template from it.
+func ChannelMenuItems(c ChannelMenuInfo, do func(key string) func()) []MenuItem {
+	noun := "channel"
+	if c.dm() {
+		noun = "conversation"
+	}
+	star, mute := "Star "+noun, "Mute "+noun
+	if c.Starred {
+		star = "Unstar " + noun
+	}
+	if c.Muted {
+		mute = "Unmute " + noun
+	}
+	items := []MenuItem{
+		{Key: "view_details", Label: "View " + noun + " details"},
+		{Key: "copy_link", Label: "Copy link"},
+		{Key: "copy_name", Label: "Copy name"},
+		{Key: "separator_1", Separator: true},
+		{Key: "toggle_star", Label: star},
+		{Key: "toggle_mute", Label: mute},
+		{Key: "mark_read", Label: "Mark as read"},
+		{Key: "separator_2", Separator: true},
+	}
+	if c.dm() {
+		items = append(items, MenuItem{Key: "close", Label: "Close conversation"})
+	} else {
+		items = append(items, MenuItem{Key: "leave", Label: "Leave channel", Danger: true})
+	}
+	if do != nil {
+		for i := range items {
+			if !items[i].Separator {
+				items[i].Do = do(items[i].Key)
+			}
+		}
+	}
+	return items
+}
+
+// MenuTemplate is items as Slack's MenuTemplateItem[] in plain data (no
+// click functions): what a ContextMenuTriggerWithKeyboardFocus's
+// getTemplate returns for a plugin to extend. Keys are the items' Key, or
+// a slug of their label.
+func MenuTemplate(items []MenuItem) []map[string]any { return tautTemplate(items) }
+
+// ItemsFromTemplate turns a MenuTemplateItem[] a plugin returned (from a
+// getTemplate it wrapped) back into items: base's by key, keeping their
+// actions, and the plugin's own with their click (MenuFromTemplate's
+// conversion).
+func ItemsFromTemplate(th *theme.Theme, list []any, base []MenuItem) []MenuItem {
+	return menuFromTemplate(th, list, base)
 }
 
 // actMuteSet remembers mutes done here until core's conversation catches
