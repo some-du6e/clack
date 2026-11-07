@@ -103,6 +103,11 @@ func (s *scope) events() {
 		sx = pointer.ScrollRange{Min: -1e6, Max: 1e6}
 		sy = sx
 	}
+	if s.rehover && s.ptrIn {
+		// content scrolled under a still pointer
+		s.rehover = false
+		v.setHover(s.hitTest(s.ptr), s, &pointer.Event{Position: s.ptr})
+	}
 	moved := false
 	var last pointer.Event
 	for {
@@ -135,6 +140,7 @@ func (s *scope) events() {
 		case pointer.Release:
 			s.release(&pe)
 		case pointer.Scroll:
+			s.ptr, s.ptrIn = pe.Position, true
 			s.scroll(&pe)
 		case pointer.Cancel:
 			v.pressK = 0
@@ -616,6 +622,7 @@ func (s *scope) scroll(pe *pointer.Event) {
 	ns.scrollY = clampF(ns.scrollY+pe.Scroll.Y, 0, my)
 	if ns.scrollX != ox || ns.scrollY != oy {
 		s.rectsDirty = true
+		s.rehover = true
 		v.dispatchSimple(sc, "scroll", nil)
 		v.invalidate(s)
 	}

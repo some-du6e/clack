@@ -2,6 +2,8 @@ package messages
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"image"
 	"strings"
 	"time"
@@ -17,6 +19,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/taut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
@@ -95,6 +98,7 @@ type listState struct {
 	tbRect   image.Rectangle
 	tbFor    int
 	jump     widget.Clickable
+	retryBtn widget.Clickable
 	closeBtn widget.Clickable
 
 	tip     string
@@ -104,7 +108,11 @@ type listState struct {
 	lastTyping time.Time
 
 	noMark      bool
-	openUnread  bool // the server said "unread" when the view opened (e.g. marked unread)
+	pane        slackc.Props // $pane for components in a thread pane
+	inj         injState     // plugin-injected messages
+	pend        pendingEdit  // an edit waiting for taut's actionable message
+	viewsOn     bool         // rows may show plugin views
+	openUnread  bool         // the server said "unread" when the view opened (e.g. marked unread)
 	jumpPages   int
 	origin      image.Point // view origin in window coordinates
 	lastOlder   time.Time
@@ -134,11 +142,11 @@ func stateFor(h Host, ch, ts string) *listState {
 	if ts != "" {
 		key = ch + "/" + ts
 	}
-	if s, ok := listCache[key]; ok {
-		s.hb = hubFor(h)
+	hb := hubFor(h)
+	if s, ok := listCache[key]; ok && s.hb == hb {
 		return s
 	}
-	hb := hubFor(h)
+	// a new core (signed in again, another account): fresh state
 	s := &listState{hb: hb, ch: ch, ts: ts, thread: ts != "", rows: map[string]*row{}, hoverIdx: -1, tbFor: -1}
 	if ts != "" {
 		s.m = hb.threadModel(ch, ts)
@@ -162,7 +170,33 @@ func (s *listState) sync(h Host, now time.Time) {
 	if len(s.snap.typing) > 0 && now.Sub(s.lastTyping) > time.Second {
 		s.snap.rev = 0 // re-read to expire typing indicators
 	}
+	// plugins: patched message views and injected messages (one atomic
+	// load when no plugin patches messages)
+	t := tautOf()
+	views := t != nil && t.SlicePatched("messages")
+	if views {
+		if s.refreshInjected(t, now) {
+			s.snap.rev = 0
+		}
+	} else if s.viewsOn {
+		s.clearViews()
+		if s.inj.keys != "" {
+			s.inj = injState{}
+			s.snap.rev = 0
+		}
+	}
+	s.viewsOn = views
 	changed := s.m.snapshot(&s.snap)
+	if changed && len(s.inj.msgs) > 0 {
+		s.mergeInjected()
+	}
+	if s.snap.jump != "" {
+		s.highlight, s.highlightAt = s.snap.jump, now
+		s.pendingJump, s.snap.jump = s.snap.jump, ""
+	}
+	if m := s.pend.take(); m != nil {
+		s.openEdit(h, *m)
+	}
 	if changed {
 		s.lastTyping = now
 		if s.snap.refresh {
@@ -380,10 +414,8 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	event.Op(gtx.Ops, s)
 
 	if !s.snap.loaded && len(s.snap.msgs) == 0 {
-		if s.snap.err != nil {
-			at(gtx, dp(gtx, mt.padX), dp(gtx, 20), func(gtx layout.Context) layout.Dimensions {
-				return label(gtx, th, textStyle{size: 15, col: c.Text2}, "Couldn't load messages: "+s.snap.err.Error())
-			})
+		if s.snap.err != nil && !s.snap.loading {
+			s.layoutLoadError(gtx, h, c, size)
 		} else {
 			y := size.Y
 			for i := 0; y > 0; i++ {
@@ -430,7 +462,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	if h.Core() != nil {
 		selfID = h.Core().Self().ID
 	}
-	s.rc = rowCtx{h: h, th: th, st: st, c: c, now: now, thread: s.thread, selfID: selfID, usersRev: s.hb.usersRev() + 1,
+	s.rc = rowCtx{h: h, th: th, st: st, c: c, now: now, thread: s.thread, list: s, selfID: selfID, usersRev: s.hb.usersRev() + 1,
 		origin:    func(p image.Point) image.Point { return s.anchor(h, origin, p) },
 		onReact:   func(r *row, name string, add bool) { s.react(h, r, name, add, selfID) },
 		onRetry:   func(r *row) { s.retry(h, r) },
@@ -488,7 +520,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 				go func() {
 					ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 					defer cancel()
-					_, _ = app.Mark(ctx, ch, latest)
+					_ = markRead(ctx, app, ch, latest) // taut markLastRead {id, ts}
 				}()
 			}
 		}
@@ -504,7 +536,72 @@ func (s *listState) anchor(h Host, origin, p image.Point) image.Point {
 }
 
 func (s *listState) react(h Host, r *row, name string, add bool, self string) {
-	ts := r.m.TS
+	app := h.Core()
+	if app == nil {
+		return
+	}
+	key := reactionKey(&r.src)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		// Slack: the reaction button dispatches changeReactionFromUserAction,
+		// whose native submits submitAddOrRemoveReaction (plugins may wrap
+		// either; with none this is just core.React).
+		_, err := taut.Dispatch(ctx, tautOf(), "changeReactionFromUserAction", rxnUserArgs{Key: key, Name: name, Add: &add},
+			func(ctx context.Context, a rxnUserArgs) (any, error) {
+				on := !s.hasOwnReaction(a.Key, a.Name)
+				if a.Add != nil {
+					on = *a.Add
+				}
+				return s.submitReaction(ctx, h, app, a.Key, a.Name, on, self)
+			})
+		if err != nil {
+			h.Toast("Couldn't update reaction")
+		}
+	}()
+}
+
+// submitReaction is submitAddOrRemoveReaction {reactionKey, name, add}:
+// an optimistic local update, then core.React (reverted if it fails).
+func (s *listState) submitReaction(ctx context.Context, h Host, app *core.App, key, name string, add bool, self string) (any, error) {
+	return taut.Dispatch(ctx, tautOf(), "submitAddOrRemoveReaction", rxnSubmitArgs{ReactionKey: key, Name: name, Add: add},
+		func(ctx context.Context, a rxnSubmitArgs) (any, error) {
+			ch, ts, ok := parseRxnKey(a.ReactionKey)
+			if !ok {
+				return nil, fmt.Errorf("messages: bad reaction key %q", a.ReactionKey)
+			}
+			s.mutateReaction(h, ts, a.Name, a.Add, self)
+			h.Invalidate()
+			if err := app.React(ctx, ch, ts, a.Name, a.Add); err != nil {
+				s.mutateReaction(h, ts, a.Name, !a.Add, self)
+				h.Invalidate()
+				return nil, err
+			}
+			return nil, nil
+		})
+}
+
+// hasOwnReaction reports whether the viewer reacted name on the message
+// with Slack reaction key key (any goroutine).
+func (s *listState) hasOwnReaction(key, name string) bool {
+	_, ts, ok := parseRxnKey(key)
+	if !ok {
+		return false
+	}
+	s.m.mu.Lock()
+	defer s.m.mu.Unlock()
+	if i := s.m.find(ts); i >= 0 {
+		for _, re := range s.m.msgs[i].m.Reactions {
+			if re.Name == name {
+				return re.Self
+			}
+		}
+	}
+	return false
+}
+
+// mutateReaction adds or removes the viewer's reaction locally (any goroutine).
+func (s *listState) mutateReaction(h Host, ts, name string, add bool, self string) {
 	s.m.mutate(ts, func(m *core.Message) {
 		for i := range m.Reactions {
 			re := &m.Reactions[i]
@@ -530,19 +627,6 @@ func (s *listState) react(h Host, r *row, name string, add bool, self string) {
 			m.Reactions = append(m.Reactions, core.Reaction{Name: name, Count: 1, Users: []string{self}, URL: url, Self: true})
 		}
 	})
-	app := h.Core()
-	if app == nil {
-		return
-	}
-	ch := s.ch
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		if err := app.React(ctx, ch, ts, name, add); err != nil {
-			h.Toast("Couldn't update reaction")
-		}
-	}()
-	h.Invalidate()
 }
 
 // layoutItem draws item i as a .c-virtual_list__item keyed like Slack's
@@ -604,6 +688,9 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 		s.rows[it.key] = r
 	} else if len(it.group) > 0 && r.rev != e.rev {
 		r.set(e)
+	}
+	if s.viewsOn && len(it.group) == 0 {
+		s.applyView(tautOf(), r, rc.now)
 	}
 	r.rv.External = true
 	sa, sb := s.rowSelection(i, r)
@@ -868,13 +955,13 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 
 func (s *listState) actionsProps() slackc.Props {
 	r := s.tbRow
-	return slackc.Props{"$key": r.ts, "msg": r.message(), "ts": r.src.TS, "channelId": r.src.Channel, "hover": true,
-		"isEditing": false, "position": "default", "messageContainerType": "message", "viewContext": r.viewContext(), "windowId": "main"}
+	return s.paneProps(slackc.Props{"$key": r.ts, "msg": r.message(), "ts": r.src.TS, "channelId": r.src.Channel, "hover": true,
+		"isEditing": false, "position": "default", "messageContainerType": "message", "viewContext": r.viewContext(), "windowId": "main"})
 }
 
 func (s *listState) reactionButtonProps() slackc.Props {
-	return slackc.Props{"$key": s.tbRow.ts, "aria-label": tbTips[tbAddReact], "label": tbTips[tbAddReact],
-		"data-qa": tbQA[tbAddReact], "actionId": "add_reaction", "showLabel": false}
+	return s.paneProps(slackc.Props{"$key": s.tbRow.ts, "aria-label": tbTips[tbAddReact], "label": tbTips[tbAddReact],
+		"data-qa": tbQA[tbAddReact], "actionId": "add_reaction", "showLabel": false})
 }
 
 // layoutActions is MessageActions, the hover toolbar (the one OwlMode
@@ -924,8 +1011,8 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 		anchor := s.anchor(h, image.Point{}, image.Point{})
 		switch i {
 		case tbAddReact:
-			rr := r
-			h.OpenEmojiPicker(anchor, func(name string) { rc.onReact(rr, name, true) })
+			_ = rc
+			h.ShowOverlay(popups.NewReactionPicker(h, anchor, m.Channel, m.TS, m.ThreadTS, nil))
 		case tbReply:
 			h.OpenThread(m.Channel, threadRoot(&m))
 		case tbForward:
@@ -937,6 +1024,7 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 		case tbMore:
 			mm := m
 			h.ShowOverlay(popups.NewMessageMenuOpts(h, anchor, m, popups.MessageMenuOpts{
+				Delete:  func(ctx context.Context, ch, ts string) error { return deleteMessage(ctx, app, ch, ts) },
 				OnEdit:  func() { s.startEdit(h, mm.TS) },
 				OnReply: func() { h.OpenThread(mm.Channel, threadRoot(&mm)) },
 			}))
@@ -1048,18 +1136,56 @@ func (s *listState) startEdit(h Host, ts string) {
 		r.edit.Focus()
 		return
 	}
+	// Plugins may change what the editor sees (patchActionableMessage):
+	// ask JS off the UI goroutine, open on a later frame.
+	if t := tautOf(); t != nil && t.ActionablePatched() {
+		src, app := r.src, h.Core()
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			m := src
+			if sm, ok := t.ActionableMessage(ctx, src.Channel, src.TS); ok && app != nil {
+				am := app.MessageFromSlack(src.Channel, &sm)
+				am.TS, am.Channel = src.TS, src.Channel
+				m = am
+			}
+			s.pend.put(m)
+			h.Invalidate()
+		}()
+		return
+	}
+	s.openEdit(h, r.src)
+}
+
+// openEdit opens the inline editor on m (UI goroutine).
+func (s *listState) openEdit(h Host, m core.Message) {
+	r, ok := s.rows[m.TS]
+	if !ok {
+		return
+	}
 	for _, o := range s.rows {
 		if o.edit != nil {
 			o.edit = nil // one inline editor at a time, like Slack
 		}
 	}
+	t := tautOf()
+	if t != nil {
+		t.SetEditing("main", m.Channel, m.TS, true) // patchMessageText leaves it alone
+	}
 	rr := r
 	r.editFrames = 0
-	r.edit = composer.NewEdit(h, r.src, func() {
+	r.edit = composer.NewEdit(h, m, func() {
 		rr.edit = nil
+		if t != nil {
+			t.SetEditing("main", m.Channel, m.TS, false)
+		}
 		h.Invalidate()
 	})
-	s.scrollTo(ts)
+	app := h.Core()
+	r.edit.SaveEdit = func(ctx context.Context, ch, ts, text string, blocks json.RawMessage) error {
+		return commitEdit(ctx, app, ch, ts, text, blocks)
+	}
+	s.scrollTo(m.TS)
 	h.Invalidate()
 }
 
@@ -1195,7 +1321,39 @@ func (s *listState) groupEntry(h Host, idx []int) entry {
 
 // closeEdits drops any open inline editor (leaving the conversation).
 func (s *listState) closeEdits() {
+	t := tautOf()
 	for _, r := range s.rows {
+		if r.edit != nil && t != nil {
+			t.SetEditing("main", r.src.Channel, r.src.TS, false)
+		}
 		r.edit = nil
 	}
+}
+
+// layoutLoadError is Slack's "Couldn't load messages · Retry", centered in
+// the pane. Loads back off on their own (hub.backoff); Retry loads now.
+func (s *listState) layoutLoadError(gtx layout.Context, h Host, c *colors, size image.Point) {
+	th := h.Theme()
+	if s.retryBtn.Clicked(gtx) {
+		s.hb.retry(s.m)
+	}
+	st := textStyle{size: 15, col: c.Text2, lineH: 22}
+	lk := textStyle{size: 15, weight: theme.Bold, col: c.Link, lineH: 22}
+	msg, sep, link := "Couldn't load messages", " · ", "Retry"
+	w := measure(gtx, th, st, msg).X + measure(gtx, th, st, sep).X + measure(gtx, th, lk, link).X
+	x, y := (size.X-w)/2, size.Y/2-dp(gtx, 11)
+	d := at(gtx, x, y, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, st, msg) })
+	x += d.Size.X
+	d = at(gtx, x, y, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, st, sep) })
+	x += d.Size.X
+	at(gtx, x, y, func(gtx layout.Context) layout.Dimensions {
+		return s.retryBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			dd := label(gtx, th, lk, link)
+			if s.retryBtn.Hovered() {
+				base := dd.Size.Y - dd.Baseline
+				fill(gtx.Ops, image.Rect(0, base+dp(gtx, 1), dd.Size.X, base+dp(gtx, 2)), c.Link)
+			}
+			return dd
+		})
+	})
 }

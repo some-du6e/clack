@@ -2,6 +2,10 @@ package messages
 
 import (
 	"context"
+	"gioui.org/io/event"
+	"gioui.org/io/pointer"
+	"gioui.org/op/clip"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"image"
 	"image/color"
 	"strconv"
@@ -65,6 +69,7 @@ type row struct {
 	needChan bool // body mentions channels not resolved yet
 
 	nameBtn, avatarBtn widget.Clickable
+	nameCtx, avatarCtx ctxTag // right-click → the member context menu
 	threadBtn          widget.Clickable
 	broadcastBtn       widget.Clickable
 	addReact           widget.Clickable
@@ -76,7 +81,12 @@ type row struct {
 	height     int
 
 	// plugin state (patched path only)
-	rc               *rowCtx      // this frame's inputs, for the natives
+	rc *rowCtx // this frame's inputs, for the natives
+
+	// plugin view of the message (taut patchMessageText…), see applyView
+	viewAt           time.Time
+	viewRev          uint32
+	viewed           bool
 	col              image.Point  // body column origin, row-local
 	reactAt          image.Point  // reaction bar origin, row-local
 	wrapOv, blocksOv uintptr      // msg overrides applied (propsID); 0 = none
@@ -100,6 +110,7 @@ type rowCtx struct {
 	header    bool // first of a group: avatar + name line
 	hovered   bool
 	thread    bool // inside a thread pane (no thread bar, no "replied to")
+	list      *listState
 	parent    bool // the thread parent row
 	now       time.Time
 	selfID    string
@@ -254,7 +265,7 @@ func (r *row) wrapperProps() slackc.Props {
 	if r.rc.parent {
 		p["isSingleThread"], p["omitGutter"], p["omitSenderAndTimestamp"] = true, false, false
 	}
-	return p
+	return r.pane(p)
 }
 
 func (r *row) backgroundProps() slackc.Props {
@@ -262,8 +273,8 @@ func (r *row) backgroundProps() slackc.Props {
 	if r.rc.hovered {
 		cls += " c-message_kit__background--hovered"
 	}
-	return slackc.Props{"$key": r.ts, "msg": r.message(), "className": cls, "hover": r.rc.hovered,
-		"highlight": r.rc.highlight > 0, "isEditing": r.edit != nil, "viewContext": r.viewContext(), "windowId": "main"}
+	return r.pane(slackc.Props{"$key": r.ts, "msg": r.message(), "className": cls, "hover": r.rc.hovered,
+		"highlight": r.rc.highlight > 0, "isEditing": r.edit != nil, "viewContext": r.viewContext(), "windowId": "main"})
 }
 
 func (r *row) gutterProps() slackc.Props {
@@ -276,15 +287,15 @@ func (r *row) gutterProps() slackc.Props {
 	default:
 		p["compact"] = slackc.Child("Timestamp", r.compactProps("c-timestamp p-message_pane_message__compact_timestamp"), r.layoutCompactTS)
 	}
-	return p
+	return r.pane(p)
 }
 
 func (r *row) avatarSlotProps() slackc.Props {
-	return slackc.Props{"$key": r.ts, "msg": r.message(), "userId": r.m.User, "botId": r.m.BotID}
+	return r.pane(slackc.Props{"$key": r.ts, "msg": r.message(), "userId": r.m.User, "botId": r.m.BotID})
 }
 
 func (r *row) compactProps(cls string) slackc.Props {
-	return slackc.Props{"$key": r.ts, "className": cls, "timestamp": r.m.TS, "clickable": true, "visible": r.rc.hovered, "msg": r.message()}
+	return r.pane(slackc.Props{"$key": r.ts, "className": cls, "timestamp": r.m.TS, "clickable": true, "visible": r.rc.hovered, "msg": r.message()})
 }
 
 func (r *row) avatarProps() slackc.Props {
@@ -296,23 +307,23 @@ func (r *row) avatarProps() slackc.Props {
 			p["botProfile"] = slackc.Props{"id": r.m.BotID, "name": r.m.Name, "icons": slackc.Props{"image_36": r.m.Avatar, "image_48": r.m.Avatar, "image_72": r.m.Avatar}}
 		}
 	}
-	return p
+	return r.pane(p)
 }
 
 func (r *row) preambleProps() slackc.Props {
-	return slackc.Props{"$key": r.ts, "msg": r.message(), "shouldRender": true, "children": []any{
+	return r.pane(slackc.Props{"$key": r.ts, "msg": r.message(), "shouldRender": true, "children": []any{
 		slackc.Child("MessageSender", r.senderProps(), r.layoutSender),
 		slackc.Child("Timestamp", r.timestampProps(), r.layoutTimestamp),
-	}}
+	}})
 }
 
 func (r *row) threadSenderProps() slackc.Props {
-	return slackc.Props{"$key": r.ts, "msg": r.message(), "adjacent": false, "visible": true, "omitTimestamp": false,
-		"omitLinebreak": false, "keepSenderAccessible": false, "timestampLabel": clock(tsTime(r.m.TS))}
+	return r.pane(slackc.Props{"$key": r.ts, "msg": r.message(), "adjacent": false, "visible": true, "omitTimestamp": false,
+		"omitLinebreak": false, "keepSenderAccessible": false, "timestampLabel": clock(tsTime(r.m.TS))})
 }
 
 func (r *row) senderProps() slackc.Props {
-	return slackc.Props{"$key": r.ts, "msg": r.message(), "isInteractive": true, "visible": true, "viewContext": r.viewContext()}
+	return r.pane(slackc.Props{"$key": r.ts, "msg": r.message(), "isInteractive": true, "visible": true, "viewContext": r.viewContext()})
 }
 
 func (r *row) baseSenderProps() slackc.Props {
@@ -323,15 +334,15 @@ func (r *row) baseSenderProps() slackc.Props {
 	if r.m.BotID != "" {
 		p["botId"] = r.m.BotID
 	}
-	return p
+	return r.pane(p)
 }
 
 func (r *row) timestampProps() slackc.Props {
-	return slackc.Props{"$key": r.ts, "timestamp": r.m.TS, "clickable": true, "visible": true, "className": "c-timestamp"}
+	return r.pane(slackc.Props{"$key": r.ts, "timestamp": r.m.TS, "clickable": true, "visible": true, "className": "c-timestamp"})
 }
 
 func (r *row) blocksProps() slackc.Props {
-	return slackc.Props{"$key": r.ts, "msg": r.message(), "blocksContainerContext": "message", "inline": false, "streaming": false}
+	return r.pane(slackc.Props{"$key": r.ts, "msg": r.message(), "blocksContainerContext": "message", "inline": false, "streaming": false})
 }
 
 func (r *row) reactionBarProps() slackc.Props {
@@ -342,13 +353,13 @@ func (r *row) reactionBarProps() slackc.Props {
 		kids = append(kids, slackc.Child("Reaction", pl.props(), pl.layout))
 	}
 	kids = append(kids, slackc.Child("ReactionAddButton", r.addButtonProps(), r.layoutAddButton))
-	return slackc.Props{"$key": r.ts, "reactionKey": reactionKey(m), "reactions": slackReactions(m.Reactions),
+	return r.pane(slackc.Props{"$key": r.ts, "reactionKey": reactionKey(m), "reactions": slackReactions(m.Reactions),
 		"currentUser": r.rc.selfID, "channelId": m.Channel, "className": "c-message_kit__reaction_bar c-reaction_bar",
-		"canReact": true, "children": kids}
+		"canReact": true, "children": kids})
 }
 
 func (r *row) addButtonProps() slackc.Props {
-	return slackc.Props{"$key": r.ts, "channelId": r.m.Channel, "shouldShowReacjiTriggers": false}
+	return r.pane(slackc.Props{"$key": r.ts, "channelId": r.m.Channel, "shouldShowReacjiTriggers": false})
 }
 
 func (pl *reactPill) props() slackc.Props {
@@ -358,7 +369,10 @@ func (pl *reactPill) props() slackc.Props {
 	p["$key"] = r.ts + ":" + re.Name
 	p["currentUser"], p["reactionKey"], p["canReact"] = r.rc.selfID, reactionKey(&r.m), true
 	p["reactions"] = slackReactions(r.m.Reactions)
-	return p
+	// the pill button renders inside Reaction's React tree, so context a
+	// Reaction patch provides (WhoReacted's reactors) reaches the button
+	p["children"] = []any{slackc.Child("UnstyledButton", pl.buttonProps(), pl.layoutButton)}
+	return pl.r.pane(p)
 }
 
 func (pl *reactPill) buttonProps() slackc.Props {
@@ -368,11 +382,11 @@ func (pl *reactPill) buttonProps() slackc.Props {
 	if pl.reacted() {
 		cls += " c-reaction--reacted"
 	}
-	return slackc.Props{"$key": r.ts + ":" + re.Name, "data-qa": "reactji", "className": cls, "aria-pressed": re.Self,
+	return pl.r.pane(slackc.Props{"$key": r.ts + ":" + re.Name, "data-qa": "reactji", "className": cls, "aria-pressed": re.Self,
 		"aria-label": reactionTip(r.rc.h, re, r.rc.selfID), "children": []any{
 			slackc.Child("Emoji", slackc.Props{"emoji": re.Name, "size": mt.reactEmoji}, pl.layoutEmoji),
 			slackc.Child("ReactionCount", slackc.Props{"count": re.Count}, pl.layoutCount),
-		}}
+		}})
 }
 
 // ---- natives ----
@@ -586,10 +600,39 @@ func (r *row) layoutAvatar(gtx layout.Context, p slackc.Props) layout.Dimensions
 }
 
 func (r *row) avatarButton(gtx layout.Context, url string, size image.Point) layout.Dimensions {
-	return r.avatarBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	r.memberMenuOn(gtx, &r.avatarCtx)
+	d := r.avatarBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		drawAvatar(gtx, r.rc.h, url, image.Rectangle{Max: size}, r.rc.c)
 		return layout.Dimensions{Size: size}
 	})
+	contextArea(gtx, &r.avatarCtx, d.Size)
+	return d
+}
+
+// ctxTag is a right-click (context menu) event target.
+type ctxTag struct{ _ byte }
+
+// memberMenuOn opens Slack's member context menu (popups.NewMemberMenu,
+// which plugins like Nicknames extend) when tag got a right-click.
+func (r *row) memberMenuOn(gtx layout.Context, tag *ctxTag) {
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: tag, Kinds: pointer.Press})
+		if !ok {
+			return
+		}
+		if e, ok := ev.(pointer.Event); ok && e.Buttons.Contain(pointer.ButtonSecondary) && r.m.User != "" {
+			h := r.rc.h
+			h.ShowOverlay(popups.NewMemberMenu(h, r.rc.origin(image.Pt(int(e.Position.X), int(e.Position.Y))), r.m.User))
+		}
+	}
+}
+
+// contextArea registers tag for presses over size, passing them through
+// to the button underneath.
+func contextArea(gtx layout.Context, tag *ctxTag, size image.Point) {
+	defer clip.Rect(image.Rectangle{Max: size}).Push(gtx.Ops).Pop()
+	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+	event.Op(gtx.Ops, tag)
 }
 
 // layoutCompactTS is the grouped row's hover time ("3:04"), right-aligned
@@ -838,7 +881,8 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 func (r *row) nameButton(gtx layout.Context, bs slackc.Styled) layout.Dimensions {
 	c := r.rc.c
 	nameS := textStyle{size: float32(bs.FontSize(15)), weight: theme.Black, col: bs.Color(c.Text), lineH: 22}
-	return r.nameBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	r.memberMenuOn(gtx, &r.nameCtx)
+	d := r.nameBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		d := label(gtx, r.rc.th, nameS, r.name)
 		if r.nameBtn.Hovered() {
 			base := d.Size.Y - d.Baseline
@@ -846,6 +890,8 @@ func (r *row) nameButton(gtx layout.Context, bs slackc.Styled) layout.Dimensions
 		}
 		return d
 	})
+	contextArea(gtx, &r.nameCtx, d.Size)
+	return d
 }
 
 // layoutTimestamp is the header's Timestamp ("3:04 PM").
@@ -977,12 +1023,10 @@ func (r *row) layoutAddButton(gtx layout.Context, _ slackc.Props) layout.Dimensi
 	ph := dp(gtx, mt.reactH)
 	size := image.Pt(dp(gtx, 34), ph)
 	if r.addReact.Clicked(gtx) {
-		rr := r
-		rc.h.OpenEmojiPicker(rc.origin(image.Point{}), func(name string) {
-			if rc.onReact != nil {
-				rc.onReact(rr, name, true)
-			}
-		})
+		// popups' reaction picker reacts through submitAddOrRemoveReaction
+		// with this message's channel/ts (OwlMode may redirect it)
+		h := rc.h
+		h.ShowOverlay(popups.NewReactionPicker(h, rc.origin(image.Point{}), r.src.Channel, r.src.TS, r.src.ThreadTS, nil))
 	}
 	if !rc.hovered {
 		return layout.Dimensions{Size: size}
@@ -1037,7 +1081,10 @@ func (pl *reactPill) reacted() bool {
 }
 
 // layout is Reaction around the UnstyledButton pill.
-func (pl *reactPill) layout(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+func (pl *reactPill) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	if e, ok := slackc.PropChildren(p); ok {
+		return slackc.LayoutElement(gtx, e) // the button JS rendered in Reaction's tree
+	}
 	return slackc.Component(gtx, "UnstyledButton", pl, (*reactPill).buttonProps, (*reactPill).layoutButton)
 }
 
