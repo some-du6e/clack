@@ -55,7 +55,11 @@ func (b *base) user(id string) (core.User, bool) {
 	if id == "" {
 		return core.User{}, false
 	}
-	return b.h.Core().User(id)
+	u, ok := b.h.Core().User(id)
+	if ok {
+		u = b.viewUser(u)
+	}
+	return u, ok
 }
 
 // userName is the display name Slack shows (display name, else real name).
@@ -82,6 +86,7 @@ func (b *base) authorOf(m *core.Message) (name, avatar string) {
 	if m == nil {
 		return "", ""
 	}
+	m = b.viewMsg(m)
 	name, avatar = m.Name, m.Avatar
 	if u, ok := b.user(m.User); ok {
 		if name == "" {
@@ -124,10 +129,11 @@ func (b *base) refTitle(r core.ConvRef) string {
 		}
 		return mpimName(r.Name)
 	case "channel", "private":
-		if r.Name == "" {
+		name := b.viewChannelName(r.ID, r.Name)
+		if name == "" {
 			return r.ID
 		}
-		return "#" + r.Name
+		return "#" + name
 	}
 	if r.Name != "" {
 		return "#" + r.Name
@@ -263,11 +269,17 @@ func (b *base) msgBodyMuted(gtx C, m *core.Message, compact, muted bool, maxLine
 	if m == nil {
 		return D{}
 	}
+	orig := m
+	m = b.viewMsg(m)
 	if len(m.Doc.Blocks) == 0 {
 		return b.body(gtx, m.Doc, m.Text, maxLines)
 	}
 	key := m.Channel + "/" + m.TS
 	ver := m.EditedTS + ":" + strconv.Itoa(len(m.Text)) + ":" + strconv.Itoa(len(m.Doc.Blocks))
+	if m != orig {
+		// a plugin's text patch can keep the length: key on the text
+		ver += ":p" + strconv.FormatUint(uint64(textHash(m.Text)), 36)
+	}
 	return b.richDoc(gtx, key, ver, m.Doc, richview.Options{Edited: m.Edited, Compact: compact, Muted: m.System || muted}, maxLines)
 }
 
@@ -338,4 +350,14 @@ func (hh hostHandler) Button(btn richtext.Button) {
 		return
 	}
 	hh.h.Toast("Interactive buttons aren't supported yet")
+}
+
+// textHash is FNV-1a of s (patched-message cache keys).
+func textHash(s string) uint32 {
+	h := uint32(2166136261)
+	for i := 0; i < len(s); i++ {
+		h ^= uint32(s[i])
+		h *= 16777619
+	}
+	return h
 }

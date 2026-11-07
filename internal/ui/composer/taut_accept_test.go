@@ -299,3 +299,39 @@ func TestTautPluginsOffNativeAgain(t *testing.T) {
 		t.Error("hooks left installed")
 	}
 }
+
+// TestTautAnonymizeFilenames: a file attached to the composer (upload at
+// attach: addAndUploadPendingFile) and one shared on send (uploadFiles)
+// reach Slack under a random name with the extension kept.
+func TestTautAnonymizeFilenames(t *testing.T) {
+	e := startPlugin(t, "AnonymizeFilenames")
+	api := coreAPI{e.app}
+	ctx := e.ctx()
+	waitFor(t, 3*time.Second, "upload thunks patched", func() bool {
+		return currentTaut().ThunkPatched(thPendingFile) && currentTaut().ThunkPatched(thUploadFiles)
+	})
+	check := func(what string, n int) {
+		t.Helper()
+		calls := e.slack.called("files.getUploadURLExternal")
+		if len(calls) != n {
+			t.Fatalf("%s: %d upload slots, want %d", what, len(calls), n)
+		}
+		name := calls[n-1].Get("filename")
+		if name == "" || strings.Contains(name, "vacation") || !strings.HasSuffix(name, ".png") {
+			t.Errorf("%s: uploaded as %q, want a random name ending .png", what, name)
+		}
+	}
+	up, err := prepareFile(ctx, api, "vacation-at-home.png", []byte("\x89PNG synthetic"), nil)
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if up.ID != "F0TEST" {
+		t.Errorf("prepared %+v", up)
+	}
+	check("attach", 1)
+	err = sendFiles(ctx, api, tChGen, "", "", nil, nil, []core.UploadFile{{Name: "vacation-at-home.png", Data: []byte("\x89PNG synthetic")}})
+	if err != nil {
+		t.Fatalf("share: %v", err)
+	}
+	check("send", 2)
+}

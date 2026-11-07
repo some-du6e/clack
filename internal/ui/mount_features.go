@@ -49,6 +49,7 @@ func init() {
 	onWindow = func(a *App) {
 		e := explorer.NewExplorer(a.win)
 		composer.SetExplorer(e)
+		a.explorer = e // plugins' <input type=file> (taut PickFiles)
 		onEvent = e.ListenEvents
 	}
 	mkPage = func(a *App, r Route) View {

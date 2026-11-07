@@ -48,7 +48,7 @@ Download `clack-windows-amd64.exe` and double-click it. The binary isn't signed,
 
 ## Sign in
 
-**Signing in from Clack is temporarily unavailable.** The old cookie sign-in loaded a Slack page with your `d` cookie to find your tokens, and that could sign you out of Slack in your browser, so it was removed. A safer sign-in is being worked on. An existing `~/.config/clack/creds.json` keeps working.
+Clack signs in with the token and cookies of your own signed-in Slack session, the same values other third-party Slack clients use. Start Clack (or run `clack login`) and fill in your workspace, the `xoxc-` **token**, the **`d` cookie** (`xoxd-…`) and, optionally, the org token (Enterprise Grid workspaces such as Hack Club) and the `d-s` cookie. Clack only checks them with `auth.test`: it never loads Slack web pages with your cookie and never calls a sign-out API, so your browser session stays signed in. They're saved to `~/.config/clack/creds.json` (mode 600). "Sign out on this device" deletes that file and nothing else.
 
 Clack never calls Slack's sign-out or token-revoke methods. "Sign out on this device" only deletes `creds.json`; your Slack session in the browser and other apps is not affected.
 

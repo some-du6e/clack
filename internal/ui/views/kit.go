@@ -25,6 +25,7 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/taut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -241,6 +242,11 @@ type base struct {
 	th   *theme.Theme
 	p    *pal
 	rich richCache
+	// tt is the Host's Taut plugin system (nil without plugins); tgen/tmemo
+	// cache its patched member/channel/message views for one frame.
+	tt    *taut.Taut
+	tgen  uint32
+	tmemo map[string]*memoEntry
 }
 
 func newBase(h Host) base { return base{h: h, rich: richCache{}} }
@@ -249,6 +255,8 @@ func newBase(h Host) base { return base{h: h, rich: richCache{}} }
 func (b *base) frame() {
 	b.th = b.h.Theme()
 	b.p = palOf(b.th)
+	b.tt = tautOf(b.h)
+	b.tgen++
 }
 
 // ---- text ----

@@ -521,7 +521,7 @@ func (v *Threads) cardFor(t *thrItem, convs map[string]core.ConvRef) *thrCard {
 			c.built = false
 		}
 	}
-	if !c.built {
+	if !c.built || v.viewsPatched() {
 		c.name = v.convTitle(t.Channel, convs)
 		if strings.HasPrefix(t.Channel, "D") && (c.name == t.Channel || c.name == "Direct message") {
 			// a DM core doesn't know yet: name it after the other person

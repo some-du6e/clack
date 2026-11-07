@@ -47,6 +47,10 @@ func newFakeSlack(t testing.TB) *fakeSlack {
 		f.calls = append(f.calls, fakeCall{method, r.Form})
 		n := len(f.calls)
 		f.mu.Unlock()
+		if strings.HasPrefix(r.URL.Path, "/upload/") {
+			_, _ = w.Write([]byte("OK - 4"))
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		rep := map[string]any{"ok": true}
 		switch method {
@@ -54,6 +58,10 @@ func newFakeSlack(t testing.TB) *fakeSlack {
 			ts := "1700000100." + strings.Repeat("0", 5) + string(rune('0'+n%10))
 			rep = map[string]any{"ok": true, "channel": r.Form.Get("channel"), "ts": ts,
 				"message": map[string]any{"type": "message", "ts": ts, "user": tSelf, "text": r.Form.Get("text")}}
+		case "files.getUploadURLExternal":
+			rep = map[string]any{"ok": true, "upload_url": f.srv.URL + "/upload/F0TEST", "file_id": "F0TEST"}
+		case "files.completeUploadExternal":
+			rep = map[string]any{"ok": true, "files": []map[string]any{{"id": "F0TEST", "title": "x"}}}
 		case "drafts.create", "drafts.update":
 			rep = map[string]any{"ok": true, "draft": map[string]any{"id": "Dr0TEST", "client_draft_id": "x"}}
 		}

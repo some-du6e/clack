@@ -72,7 +72,7 @@ func main() {
 	dark := flag.Bool("dark", false, "start in dark mode (overridden by the saved preference)")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: clack [flags]\n       clack login [workspace]   (temporarily unavailable)\n\n")
+		fmt.Fprintf(os.Stderr, "usage: clack [flags]\n       clack login [workspace]   (sign in with your token and d cookie)\n\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -94,6 +94,7 @@ func main() {
 		SignOut: func() { _ = os.Remove(*credsPath) }}
 
 	creds, err := readCreds(*credsPath)
+	ui.SetVersion(version)
 	a := ui.New(opts, images)
 	cacheDir := filepath.Join(cfg, "cache")
 	connect := func(creds slack.Creds) {
@@ -114,8 +115,8 @@ func main() {
 		})
 		a.Attach(svc, cacheDir)
 	}
-	login := func(workspace, cookie string) error {
-		c, err := slack.Login(context.Background(), workspace, cookie)
+	login := func(in slack.SignInInput) error {
+		c, err := slack.SignIn(context.Background(), in)
 		if err != nil {
 			return err
 		}
@@ -131,6 +132,14 @@ func main() {
 	} else {
 		a.SetLogin(login)
 	}
+	// Taut's api.accounts: switch to other saved credentials.
+	a.SetSwitchAccount(func(c slack.Creds) {
+		if err := writeCreds(*credsPath, c); err != nil {
+			log.Printf("accounts: %v", err)
+			return
+		}
+		connect(c)
+	})
 	if os.Getenv("CLACK_TIMING") != "" || os.Getenv("YOLOSLACK_TIMING") != "" {
 		log.Printf("timing: main ready: %v", time.Since(started).Round(100*time.Microsecond))
 	}
@@ -191,15 +200,21 @@ func writeCreds(path string, c slack.Creds) error {
 
 func loginCLI(path, workspace string) error {
 	in := bufio.NewReader(os.Stdin)
-	if workspace == "" {
-		fmt.Print("Workspace (e.g. hackclub): ")
-		workspace, _ = in.ReadString('\n')
-		workspace = strings.TrimSpace(workspace)
+	ask := func(prompt string) string {
+		fmt.Print(prompt)
+		v, _ := in.ReadString('\n')
+		return strings.TrimSpace(v)
 	}
-	fmt.Println("Paste the value of your `d` cookie for slack.com (DevTools → Application → Cookies):")
-	cookie, _ := in.ReadString('\n')
-	cookie = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(cookie), "d="))
-	creds, err := slack.Login(context.Background(), workspace, cookie)
+	if workspace == "" {
+		workspace = ask("Workspace (e.g. hackclub): ")
+	}
+	fmt.Println("These come from your own signed-in Slack session, the same values other third-party Slack clients use.")
+	si := slack.SignInInput{Workspace: workspace}
+	si.Token = ask("Token (xoxc-…): ")
+	si.OrgToken = ask("Org token (xoxc-…, optional, Enterprise Grid only): ")
+	si.Cookie = ask("d cookie (xoxd-…): ")
+	si.CookieDS = ask("d-s cookie (optional): ")
+	creds, err := slack.SignIn(context.Background(), si)
 	if err != nil {
 		return err
 	}

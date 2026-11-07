@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"image"
 
 	"gioui.org/layout"
@@ -20,6 +21,9 @@ type prefsModal struct {
 	section string
 	avail   pagePositioned // popups.AvailabilityPage when linked
 	org     originTracker
+	taut    *tautPage              // Preferences > Taut, made on first view
+	tabSubs map[string]*slackc.Sub // plugin Preferences tabs (RenderPreferencesTab)
+	tabGen  int                    // App.tautGen the tab subs belong to
 }
 
 // pagePositioned is a page widget that needs its window origin (dropdowns).
@@ -50,10 +54,26 @@ var (
 
 func (a *App) openPrefs() { a.openPrefsSection("notifications") }
 
-// openPrefsSection opens Preferences on a section (popups'
-// OpenPreferencesSection hook, e.g. "availability" from "Edit your working
-// hours").
+// openPrefsSection opens Preferences on a section through Slack's
+// openPrefsModal thunk (plugins may redirect it; Taut opens its own tab
+// with activeSection "advanced"). popups' OpenPreferencesSection hook and
+// "Edit your working hours" land here.
 func (a *App) openPrefsSection(section string) {
+	a.dispatch("openPrefsModal", map[string]any{"activeSection": section},
+		func(ctx context.Context, args map[string]any) (any, error) {
+			sec := argStr(args, "activeSection")
+			a.Post(func() { a.showPrefs(sec) })
+			return nil, nil
+		})
+}
+
+// showPrefs opens the Preferences dialog on section (a Clack section,
+// "taut", or a plugin tab id). It is openPrefsModal's native and
+// UIHooks.OpenPreferences.
+func (a *App) showPrefs(section string) {
+	if section == "" {
+		section = "notifications"
+	}
 	if mkModal == nil {
 		a.openPrefsMenu()
 		return
@@ -62,7 +82,34 @@ func (a *App) openPrefsSection(section string) {
 	if mkAvailability != nil {
 		p.avail = mkAvailability(a)
 	}
-	a.ShowOverlay(mkModal(a, "Preferences", p.layout, nil))
+	a.ShowOverlay(mkModal(a, "Preferences", p.layout, p.close))
+}
+
+// close unmounts the JS roots the dialog mounted (Taut editors, data
+// panels, plugin tabs).
+func (p *prefsModal) close() {
+	if p.taut != nil {
+		p.taut.close()
+	}
+	for k, s := range p.tabSubs {
+		s.Close()
+		delete(p.tabSubs, k)
+	}
+}
+
+// extraNav is Clack's Taut tab and the plugins' own Preferences tabs,
+// drawn after Slack's tabs[] (kept out of tabsProps: plugins patching Tabs
+// expect "advanced" last).
+func (p *prefsModal) extraNav() []struct{ id, label, icon string } {
+	out := []struct{ id, label, icon string }{{"taut", "Taut", "code"}}
+	for _, t := range p.a.tautTabs {
+		icon := t.Icon
+		if icon != "" {
+			icon = icons.Slack(icon)
+		}
+		out = append(out, struct{ id, label, icon string }{t.ID, t.Label, icon})
+	}
+	return out
 }
 
 func (p *prefsModal) layout(gtx layout.Context) layout.Dimensions {
@@ -162,6 +209,19 @@ func (p *prefsModal) tabs(gtx layout.Context, tp slackc.Props) layout.Dimensions
 			y += gtx.Dp(34)
 		}
 	}
+	for _, it := range p.extraNav() {
+		if listHas(list, it.id) {
+			continue
+		}
+		if p.navItem(gtx, y, navW, it.id, it.label, nil, it.icon, cur == it.id) {
+			if tp != nil && tp.Has("onTabChange") && list != nil {
+				tp.Invoke("onTabChange", it.id, slackc.Props{"type": "click"})
+			}
+			p.section = it.id
+			a.Invalidate()
+		}
+		y += gtx.Dp(34)
+	}
 	ms.Leave()
 
 	pageW := w - navW
@@ -184,7 +244,54 @@ func (p *prefsModal) ownSection(id string) bool {
 			return true
 		}
 	}
+	for _, it := range p.extraNav() {
+		if it.id == id {
+			return true
+		}
+	}
 	return false
+}
+
+func listHas(list []any, id string) bool {
+	for _, x := range list {
+		if t, _ := x.(slackc.Props); t != nil && t.StrOr("id", "") == id {
+			return true
+		}
+	}
+	return false
+}
+
+// pluginTab lays out a plugin's own Preferences tab (Taut
+// registerPreferencesTab), mounted through Bridge.RenderPreferencesTab.
+func (p *prefsModal) pluginTab(gtx layout.Context, id string) (layout.Dimensions, bool) {
+	t := p.a.Taut()
+	known := false
+	for _, x := range p.a.tautTabs {
+		known = known || x.ID == id
+	}
+	if t == nil || !known {
+		return layout.Dimensions{}, false
+	}
+	if p.tabGen != p.a.tautGen { // fresh runtime: the old roots are gone
+		for k, s := range p.tabSubs {
+			s.Close()
+			delete(p.tabSubs, k)
+		}
+		p.tabGen = p.a.tautGen
+	}
+	if p.tabSubs == nil {
+		p.tabSubs = map[string]*slackc.Sub{}
+	}
+	s := p.tabSubs[id]
+	if s == nil {
+		s = slackc.NewSub()
+		p.tabSubs[id] = s
+		t.Bridge().RenderPreferencesTab(s.Root(), id)
+	}
+	if !s.Ready() {
+		return p.a.th.Label(gtx, 13, theme.Regular, p.a.th.C.FgSubtle, "Loading…"), true
+	}
+	return s.Layout(gtx), true
 }
 
 // section1 draws one of Clack's sections; org is its window origin.
@@ -192,6 +299,15 @@ func (p *prefsModal) section1(gtx layout.Context, id string, org image.Point) la
 	if id == "availability" && p.avail != nil {
 		p.avail.SetOrigin(org)
 		return p.avail.Layout(gtx)
+	}
+	if id == "taut" {
+		if p.taut == nil {
+			p.taut = newTautPage(p.a)
+		}
+		return p.taut.layout(gtx)
+	}
+	if d, ok := p.pluginTab(gtx, id); ok {
+		return d
 	}
 	return p.page(gtx, id)
 }
@@ -355,10 +471,20 @@ func (p *prefsModal) page(gtx layout.Context, sec string) layout.Dimensions {
 	return layout.Dimensions{Size: image.Pt(w, y)}
 }
 
+// setEmojiStyle goes through setUserPrefByApi (Slack's emoji_style pref),
+// applied locally.
 func (a *App) setEmojiStyle(s string) {
-	a.th.EmojiStyle = s
-	a.prefs.EmojiStyle = s
-	a.savePrefs()
+	a.dispatch("setUserPrefByApi", map[string]any{"pref": "emoji_style", "value": s},
+		func(ctx context.Context, args map[string]any) (any, error) {
+			v := argStr(args, "value")
+			a.Post(func() {
+				a.th.EmojiStyle = v
+				a.prefs.EmojiStyle = v
+				a.savePrefs()
+				a.Invalidate()
+			})
+			return nil, nil
+		})
 }
 
 // openPrefsMenu is the fallback when popups isn't linked.

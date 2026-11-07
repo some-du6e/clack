@@ -308,7 +308,14 @@ func (b *backend) handle(a *App, ev core.Event) {
 			c := m.conv(ev.Channel)
 			direct := ev.ConvKind == "im" || ev.ConvKind == "mpim"
 			if (ev.Mention || direct) && (c == nil || !c.Muted) && (cur != ev.Channel || !a.focused) {
-				a.Notify(b.notifyTitle(ev, c), richtext.PlainText(ev.Msg.Doc))
+				// through Taut's showNotification thunk: plugins may change or
+				// drop it (native: the desktop notification)
+				title, body := b.notifyTitle(ev, c), richtext.PlainText(ev.Msg.Doc)
+				a.dispatch("showNotification", map[string]any{"title": title, "message": body, "channelId": ev.Channel, "ts": ev.TS},
+					func(ctx context.Context, args map[string]any) (any, error) {
+						a.Notify(argStr(args, "title"), argStr(args, "message"))
+						return nil, nil
+					})
 			}
 		}
 	case "marked", "counts":
@@ -352,6 +359,9 @@ func (b *backend) handle(a *App, ev core.Event) {
 		}
 	case "conv", "conv_removed", "sidebar_changed", "resync":
 		b.resnapshot(a)
+	case "auth_failed":
+		// core stopped all traffic on a dead session: back to sign-in
+		a.sessionEnded()
 	case "names":
 		// core resolved channel/user/bot names in the background: re-read
 		// the visible conversations so mentions and headers re-render.

@@ -158,6 +158,21 @@ func (h *Host) RenderFn(fn JSFunc, args ...any) *Sub {
 	return s
 }
 
+// NewSub registers an empty root for a JS-rendered subtree the caller
+// mounts itself (Preferences > Taut: Bridge.RenderEditor / RenderDataPanel
+// / RenderPreferencesTab with Root()). Close it when done.
+func NewSub() *Sub {
+	s := &Sub{root: newRoot()}
+	s.view = NewView(s.root)
+	rootsMu.Lock()
+	roots[s.root] = &inst{root: s.root, fn: true, view: s.view, sub: s}
+	rootsMu.Unlock()
+	return s
+}
+
+// Root is the root id to mount into.
+func (s *Sub) Root() uint64 { return s.root }
+
 // Sub is a JS-rendered subtree owned by a host component.
 type Sub struct {
 	root uint64
