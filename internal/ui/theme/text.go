@@ -37,14 +37,15 @@ const (
 // BodyEmboldenFor is EmboldenFor at the message-body strength.
 func BodyEmboldenFor(c color.NRGBA) float32 { return EmboldenFor(c) * BodyEmbolden / Embolden }
 
-// LightTextAlpha scales the alpha of light text (luminance >= 0.6, i.e.
-// light-on-dark) in labels, cancelling the extra weight Gio's linear-light
-// glyph blending gives it compared with Chrome; the same rule richview
-// applies to message bodies (Style.LightTextAlpha). 1 = off.
-// CLACK_DARK_TEXT_ALPHA overrides it (shared with ui-messages' knob).
-var LightTextAlpha = envFloat("CLACK_DARK_TEXT_ALPHA", defaultLightTextAlpha)
-
-const defaultLightTextAlpha = 0.8 // dark sidebar 15px text: 0.85 → 96.8k, 0.75 → 90.9k ink vs Chrome 94.1k
+// LightTextFade fades light text (luminance >= 0.6, i.e. light-on-dark) in
+// labels to cancel the extra weight Gio's linear-light glyph blending gives
+// it compared with Chrome. The excess is an edge effect that halves at 2x,
+// so alpha = 1 - LightTextFade/pxPerDp (ui-messages' model; richview uses
+// its own k for message bodies, Style.LightTextFade). Measured on the dark
+// sidebar (15px lilac at 80% on aubergine) at 1x: alpha 0.85 → 96.8k,
+// 0.75 → 90.9k ink vs Chrome 94.1k, so k = 0.2. CLACK_LABEL_TEXT_FADE
+// overrides it for tuning; 0 = off.
+var LightTextFade = envFloat("CLACK_LABEL_TEXT_FADE", 0.2)
 
 func envFloat(name string, def float32) float32 {
 	if v, err := strconv.ParseFloat(os.Getenv(name), 32); err == nil {
@@ -53,9 +54,12 @@ func envFloat(name string, def float32) float32 {
 	return def
 }
 
-// lightTextColor applies LightTextAlpha to light glyph colors.
-func lightTextColor(c color.NRGBA) color.NRGBA {
-	a := LightTextAlpha
+// lightTextColor applies LightTextFade to light glyph colors.
+func lightTextColor(c color.NRGBA, pxPerDp float32) color.NRGBA {
+	if LightTextFade <= 0 || pxPerDp <= 0 {
+		return c
+	}
+	a := 1 - LightTextFade/pxPerDp
 	if a <= 0 || a >= 1 {
 		return c
 	}
@@ -132,7 +136,7 @@ func DrawText(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string) layo
 	if t := ForShaper(sh); t != nil {
 		return t.Text(gtx, o, txt)
 	}
-	o.Color = lightTextColor(o.Color)
+	o.Color = lightTextColor(o.Color, gtx.Metric.PxPerDp)
 	return drawText(gtx, sh, o, CleanText(txt), EmboldenFor(o.Color))
 }
 
@@ -141,7 +145,7 @@ func DrawText(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string) layo
 // emoji sprites) instead of relying on a color font.
 func (t *Theme) Text(gtx layout.Context, o LabelOpts, txt string) layout.Dimensions {
 	txt = CleanText(txt)
-	o.Color = lightTextColor(o.Color)
+	o.Color = lightTextColor(o.Color, gtx.Metric.PxPerDp)
 	if o.MaxLines == 1 && t.Images != nil {
 		if segs := splitEmoji(txt); segs != nil {
 			return t.textWithEmoji(gtx, o, segs)
