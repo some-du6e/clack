@@ -50,8 +50,12 @@ func TestLightboxSaveNames(t *testing.T) {
 			t.Errorf("lbSave(%q) wrote %s, outside %s", name, p, dl)
 		}
 		if runtime.GOOS != "windows" {
-			if fi, err := os.Stat(p); err != nil || fi.Mode().Perm()&0o111 != 0 {
-				t.Errorf("lbSave(%q): mode %v, err %v (must not be executable)", name, fi.Mode(), err)
+			fi, err := os.Stat(p)
+			if err != nil {
+				t.Fatalf("stat %s: %v", p, err)
+			}
+			if fi.Mode().Perm()&0o111 != 0 {
+				t.Errorf("lbSave(%q): mode %v (must not be executable)", name, fi.Mode())
 			}
 		}
 	}

@@ -32,7 +32,7 @@ func (a *App) Fetch(ctx context.Context, rawURL string) ([]byte, string, error) 
 	}
 	var data []byte
 	var mime string
-	err = a.once("f:"+rawURL, func() error {
+	err := a.once("f:"+rawURL, func() error {
 		if e, ok := a.files.get(rawURL); ok {
 			data, mime = e.data, e.mime
 			return nil
