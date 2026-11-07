@@ -1,0 +1,56 @@
+name: messages-taut
+# The message list under Taut: builds Taut's published plugins with Taut's
+# own build:user-plugin (never committed: GPLv3) and runs internal/ui/messages'
+# plugin acceptance tests (ShutUpSlackbot, Censorship, BringBackSlackbot,
+# UserPronouns, WhoReacted) plus the zero-cost benchmark, on synthetic state.
+on:
+  push:
+    paths:
+      - "internal/ui/messages/**"
+      - "internal/ui/richview/**"
+      - ".github/workflows/messages-taut.yml"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "taut git ref"
+        required: false
+        default: "main"
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
+jobs:
+  plugins:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: build Taut's plugins
+        run: |
+          git clone -q https://github.com/jeremy46231/taut /tmp/taut
+          git -C /tmp/taut checkout -q "${{ inputs.ref || 'main' }}"
+          cd /tmp/taut && npm ci --ignore-scripts --no-audit --no-fund
+          mkdir -p "$GITHUB_WORKSPACE/dist/taut-plugins"
+          for n in ShutUpSlackbot Censorship BringBackSlackbot UserPronouns WhoReacted; do
+            f=$(ls plugins/$n.ts plugins/$n.tsx 2>/dev/null | head -1)
+            npm run -s build:user-plugin -- "$f" "$GITHUB_WORKSPACE/dist/taut-plugins/$n.js"
+          done
+          ls -la "$GITHUB_WORKSPACE/dist/taut-plugins"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: plugin acceptance + zero cost
+        env:
+          TAUT_PLUGINS_DIR: ${{ github.workspace }}/dist/taut-plugins
+        run: |
+          set -o pipefail
+          go test -count=1 -timeout 10m -v -run 'Taut|Plugin|RowLayoutAllocs' ./internal/ui/messages/ 2>&1 | tee dist/messages-taut.log
+      - name: benchmark
+        run: go test -run '^$' -bench BenchmarkListFrame -benchtime 2s ./internal/ui/messages/ | tee -a dist/messages-taut.log
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: messages-taut-log
+          path: dist/messages-taut.log
