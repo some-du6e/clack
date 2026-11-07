@@ -377,7 +377,7 @@ func (v *Huddles) hero(gtx C) D {
 	bg := rgb(0xe9ffec)
 	body := argb(0xb31d1c1d)
 	if v.th.Dark {
-		bg, body = rgb(0x183a26), argb(0xb3d1d2d3)
+		bg, body = rgb(0x00240f), argb(0xb3f8f8f8) // plt-mojito-0, content-pry@.7
 	}
 	hair := max(1, gtx.Dp(1))
 	fill(gtx, image.Rect(0, 0, w, h), bg)

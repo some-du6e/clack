@@ -6,6 +6,8 @@ package messages
 
 import (
 	"image"
+	"os"
+	"strconv"
 	"sync"
 
 	"gioui.org/text"
@@ -30,6 +32,17 @@ type Host interface {
 type PointerHost interface {
 	PointerPos() image.Point
 }
+
+// darkTextAlpha is the light-on-dark glyph alpha (see richview
+// Style.LightTextAlpha). CLACK_DARK_TEXT_ALPHA overrides it for tuning.
+func darkTextAlpha() float32 {
+	if v, err := strconv.ParseFloat(os.Getenv("CLACK_DARK_TEXT_ALPHA"), 32); err == nil {
+		return float32(v)
+	}
+	return defaultDarkTextAlpha
+}
+
+const defaultDarkTextAlpha = 1 // tuned below against Chrome
 
 // styles holds one richview.Style per shaper (one per window).
 type styleEntry struct {
@@ -67,9 +80,11 @@ func styleFor(h Host) *richview.Style {
 		// 620.5k. Both interpolate to ~0.45px, so richview applies the
 		// stroke in pixels: theme.BodyEmbolden is that 0.45px.
 		e.st.Embolden = theme.BodyEmboldenFor(theme.LightPalette.Fg)
+		e.st.LightTextAlpha = 0
 		if th.Dark {
 			e.st.SetPalette(richview.DarkPalette())
 			e.st.Embolden = theme.BodyEmboldenFor(theme.DarkPalette.Fg)
+			e.st.LightTextAlpha = darkTextAlpha()
 		} else {
 			e.st.SetPalette(richview.LightPalette())
 		}
