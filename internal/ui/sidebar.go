@@ -3,6 +3,7 @@ package ui
 import (
 	"image"
 	"image/color"
+	"strconv"
 
 	"gioui.org/font"
 	"gioui.org/gesture"
@@ -479,6 +480,22 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 			right -= bd.Size.X + gtx.Dp(6)
 		}
 		if conv != nil {
+			// a huddle is on here: Slack's headphones + head count
+			if n := a.huddles().LiveCount(conv.ID); n > 0 {
+				num := strconv.Itoa(n)
+				nw := a.th.Measure(gtx, 13, theme.Bold, num)
+				right -= nw
+				at(gtx, image.Pt(right, 0), image.Pt(nw, rowH), func(gtx layout.Context) layout.Dimensions {
+					return vcenter(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
+						return a.th.Label(gtx, 13, theme.Bold, fg, num)
+					})
+				})
+				right -= gtx.Dp(17)
+				at(gtx, image.Pt(right, (rowH-gtx.Dp(15))/2), image.Pt(gtx.Dp(15), gtx.Dp(15)), func(gtx layout.Context) layout.Dimensions {
+					return icons.Get("headphones")(gtx, 15, fg)
+				})
+				right -= gtx.Dp(6)
+			}
 			e := sbEntity{a: a, conv: conv, label: rs.label, suffix: rs.suffix, fg: fg, weight: rs.weight, sel: sel, rowH: rowH, width: max(right-ix, 0)}
 			at(gtx, image.Pt(ix, 0), image.Pt(e.width, rowH), func(gtx layout.Context) layout.Dimensions {
 				return slackc.Component(gtx, "ListChannelEntity", e, sbEntity.props, sbEntity.layout)
