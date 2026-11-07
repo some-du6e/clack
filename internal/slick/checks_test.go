@@ -191,7 +191,7 @@ func init() {
 	}
 
 	before["HcaStatus"] = func(h *harness) {
-		h.answer("https://auth.hackclub.com/api/external/check", `{"result":"verified_eligible"}`)
+		h.answer("https://auth.hackclub.com/api/external/check", `{"result":"verified_but_over_18"}`)
 	}
 	checks["HcaStatus"] = func(t *testing.T, h *harness) {
 		h.render(3, "BaseMessageSender", map[string]any{"userId": aliceID})
@@ -199,10 +199,40 @@ func init() {
 			n := findNative(nodes, "BaseMessageSender")
 			p, _ := n["p"].(map[string]any)
 			c, _ := p["className"].(string)
-			return c != ""
+			return strings.Contains(c, "slick-hca-over-18")
 		})
 		if !h.wasFetched("https://auth.hackclub.com/api/external/check?slack_id=" + aliceID) {
 			t.Error("the main half didn't ask auth.hackclub.com")
+		}
+	}
+
+	enableWith["CustomFonts"] = map[string]any{"fontFamily": "Comic Neue"}
+	checks["CustomFonts"] = func(t *testing.T, h *harness) {
+		eventually(t, 3*time.Second, "font style", func() bool {
+			return strings.Contains(h.ui.style("plugin:CustomFonts"), "Comic Neue")
+		})
+	}
+	enableWith["StreamerMode"] = map[string]any{"activation": "always"}
+	checks["StreamerMode"] = func(t *testing.T, h *harness) {
+		type args struct {
+			Title   string `json:"title"`
+			Message string `json:"message"`
+		}
+		shown := 0
+		native := func(ctx context.Context, a args) (any, error) { shown++; return nil, nil }
+		eventually(t, 3*time.Second, "notifications silenced", func() bool {
+			before := shown
+			_, _ = taut.Dispatch(h.ctx(), h.tt, "showNotification", args{"alice", "secret dm"}, native)
+			return shown == before
+		})
+		if h.ui.style("plugin:StreamerMode:redaction") == "" {
+			t.Error("no redaction stylesheet")
+		}
+	}
+	checks["RestrictedChannelWarning"] = func(t *testing.T, h *harness) {
+		text := h.renderText(4, "MessageInputRoadblock", map[string]any{"channelId": chAnn, "roadblockMessage": "Only admins can post here."})
+		if !strings.Contains(text, "Post anyway") {
+			t.Errorf("no way to post anyway: %q", text)
 		}
 	}
 }
