@@ -68,7 +68,7 @@ jobs:
           done
           ls -la /tmp/taut-built
       - name: load them in jsrt
-        run: JSRT_TAUT_PLUGINS=/tmp/taut-built go test -count=1 -run TestTautPlugins -v ./internal/jsrt/ | grep -v '^=== RUN'
+        run: set -o pipefail; JSRT_TAUT_PLUGINS=/tmp/taut-built go test -count=1 -run TestTautPlugins -v ./internal/jsrt/ | grep -v '^=== RUN'
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
