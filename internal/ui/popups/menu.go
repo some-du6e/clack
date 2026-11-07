@@ -93,7 +93,7 @@ type Menu struct {
 	focus  bool
 
 	// MenuFromTemplate (menu_template.go)
-	base    []MenuItem   // the native items
+	orig    []MenuItem   // the native items
 	tplFrom slackc.Props // props the items were last built from
 	pending []MenuItem   // native actions JS clicked, run next frame
 	key     string
@@ -109,7 +109,7 @@ func NewMenu(h Host, anchor image.Point, items []MenuItem) *Menu {
 
 // NewMenuOpts opens a menu with explicit options.
 func NewMenuOpts(h Host, items []MenuItem, o MenuOpts) *Menu {
-	m := &Menu{h: h, items: items, base: items, opts: o, sel: -1, subIdx: -1, key: nextKey("menu")}
+	m := &Menu{h: h, items: items, orig: items, opts: o, sel: -1, subIdx: -1, key: nextKey("menu")}
 	m.clicks = make([]widget.Clickable, len(items))
 	m.onClose = o.OnClose
 	return m

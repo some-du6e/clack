@@ -240,8 +240,8 @@ func trimSeps(items []MenuItem) []MenuItem {
 // menuElemRow draws a ReactNode label (AccountSwitcher's account rows) as
 // a highlightable menu row.
 func menuElemRow(th *theme.Theme, e slackc.Element, it *MenuItem) func(gtx layout.Context, hl bool) layout.Dimensions {
-	danger := it.Danger
 	return func(gtx layout.Context, hl bool) layout.Dimensions {
+		danger := it.Danger
 		cl := colorsOf(th)
 		w := gtx.Constraints.Max.X
 		px := dp(gtx, 24)
@@ -293,7 +293,7 @@ func (m *Menu) menuPosition() string {
 // tplProps are MenuFromTemplate's props for the native items.
 func (m *Menu) tplProps() slackc.Props {
 	return slackc.Props{
-		"template":                m.menuTemplate(m.base),
+		"template":                m.menuTemplate(m.orig),
 		"isOpen":                  true,
 		"position":                m.menuPosition(),
 		"targetBounds":            rectProps(m.opts.Anchor, m.scale),
@@ -348,7 +348,7 @@ func (m *Menu) applyTemplate(p slackc.Props) {
 	if p == nil || !p.Has("template") {
 		if m.tplFrom != nil {
 			m.tplFrom = nil
-			m.setItems(m.base)
+			m.setItems(m.orig)
 		}
 		return
 	}
@@ -356,7 +356,7 @@ func (m *Menu) applyTemplate(p slackc.Props) {
 		return
 	}
 	m.tplFrom = p // held, so its address can't be reused by another map
-	m.setItems(menuFromTemplate(m.h.Theme(), p.List("template"), m.base))
+	m.setItems(menuFromTemplate(m.h.Theme(), p.List("template"), m.orig))
 }
 
 func sameMap(a, b slackc.Props) bool {
