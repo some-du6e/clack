@@ -14,6 +14,7 @@ t, _ := taut.New(taut.Options{App: app, UI: taut.UIHooks{
 	Overlays:    func(o []taut.Overlay) { /* draw each o.Root (bit 52) as a modal layer */ },
 	PreferencesTabs: …, Invalidate: w.Invalidate, Toast: …, OpenPreferences: …,
 	ThreadPane:  …, Input: …, SetLocalDraft: …, SwitchAccount: …,
+	OnDocument: slackc.SetDocument, OnDocumentProps: slackc.SetDocumentProps, // plugin DOM in body/head, <html>/<body> props
 }})
 defer t.Close()
 ```

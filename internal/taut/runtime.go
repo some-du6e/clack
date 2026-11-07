@@ -73,6 +73,12 @@ func (t *Taut) startRuntime() (*runtime, error) {
 			d(id, tree)
 		}
 	})
+	if f := t.opts.UI.OnDocument; f != nil {
+		rt.OnDocument(f)
+	}
+	if f := t.opts.UI.OnDocumentProps; f != nil {
+		rt.OnDocumentProps(f)
+	}
 	if _, err := rt.Eval("taut-runtime.js", prelude); err != nil {
 		rt.Close()
 		return nil, fmt.Errorf("taut: load the TautAPI: %w", err)

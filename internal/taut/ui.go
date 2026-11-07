@@ -53,6 +53,12 @@ type UIHooks struct {
 	SetLocalDraft func(draft json.RawMessage)
 	// SwitchAccount signs in as creds (empty: show the sign-in screen).
 	SwitchAccount func(c slack.Creds)
+	// OnDocument gets the DOM plugins append to document.body (a host
+	// tree) and every <style> in document.head (slackc.SetDocument).
+	OnDocument func(body []byte, css []string)
+	// OnDocumentProps gets <html>'s and <body>'s own props: classes,
+	// inline style vars (slackc.SetDocumentProps).
+	OnDocumentProps func(html, body []byte)
 }
 
 // InputWhere names a composer the way Slack does.
