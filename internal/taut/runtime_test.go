@@ -491,10 +491,28 @@ func TestRTMAndEvents(t *testing.T) {
 		t.Fatal("the raw tap delivered nothing")
 	}
 	var got []string
-	eventually(t, 3*time.Second, "rtm delivery", func() bool {
+	delivered := func() bool {
 		h.jsInto(`return globalThis.__rtm`, &got)
-		return len(got) == 1
-	})
+		return len(got) >= 1
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) && !delivered() {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(got) == 0 {
+		// tell apart the mirror's pump from the post into JS
+		h.tt.onRaw(slack.Event{Type: "message", Raw: raw})
+		time.Sleep(300 * time.Millisecond)
+		if delivered() {
+			t.Fatal("onRaw delivers, but the mirror's pump never handed the raw event over")
+		}
+		h.rt().post("rtm", raw)
+		time.Sleep(300 * time.Millisecond)
+		if delivered() {
+			t.Fatal("post delivers, but onRaw dropped the event")
+		}
+		t.Fatal("nothing reaches rtm listeners, even a direct post")
+	}
 	if got[0] != "realtime words" {
 		t.Errorf("rtm: %v", got)
 	}
