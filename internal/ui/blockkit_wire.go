@@ -34,6 +34,14 @@ func (b *backend) startBlockkit(a *App) {
 		return
 	}
 	stop := blockkit.Start(a)
+	blockkit.PickFiles = func(accept string, multiple bool) ([]core.UploadFile, error) {
+		fs, err := a.pickFiles(accept, multiple)
+		out := make([]core.UploadFile, 0, len(fs))
+		for _, f := range fs {
+			out = append(out, core.UploadFile{Name: f.Name, Title: f.Name, Data: f.Data})
+		}
+		return out, err
+	}
 	bkMu.Lock()
 	bkStops[b] = stop
 	bkMu.Unlock()
