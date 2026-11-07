@@ -467,6 +467,9 @@ func (ix *Interactive) onView(ev slack.Event) {
 		}
 	}
 	flat := e.rawView.view()
+	if flat.Type == ev.Type { // flat payloads: "type" is the event's
+		flat.Type = firstNonEmpty(e.ViewType, "modal")
+	}
 	if v == nil {
 		v = flat
 	} else {
