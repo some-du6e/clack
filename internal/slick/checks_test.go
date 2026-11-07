@@ -246,6 +246,26 @@ func init() {
 			t.Errorf("no way to post anyway: %q", text)
 		}
 	}
+
+	enableWith["BetterBlock"] = map[string]any{"blockedUsers": map[string]any{aliceID: "alice"}}
+	checks["BetterBlock"] = func(t *testing.T, h *harness) {
+		var r struct {
+			Message []string `json:"message"`
+			Slice   []string `json:"slice"`
+			Raw     []string `json:"raw"`
+		}
+		h.jsInto(`
+			const st = T.redux.getStore().getState()
+			const key = 'message-1700000002.000200-C0GENERAL1'
+			return {
+				message: st.messages['C0GENERAL1']['1700000002.000200'].reactions[0].users,
+				slice: st.reactions[key]?.[0]?.users ?? [],
+				raw: T.getRawState().reactions[key]?.[0]?.users ?? [],
+			}`, &r)
+		if has(r.Message, aliceID) || has(r.Slice, aliceID) || !has(r.Raw, aliceID) || !has(r.Message, selfID) {
+			t.Errorf("blocked reactor still shown: %+v", r)
+		}
+	}
 }
 
 // waitTree waits until root's latest tree satisfies cond.
