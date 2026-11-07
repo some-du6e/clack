@@ -149,7 +149,8 @@ type Style struct {
 	// emoji style); nil uses Slack's apple set.
 	EmojiURL func(stem string) string
 
-	// Embolden strokes glyph outlines with this width (dp) to match the
+	// Embolden strokes glyph outlines with this width (in pixels, at any
+	// scale) to match the
 	// browser's heavier text rendering; 0 disables it.
 	Embolden float32
 

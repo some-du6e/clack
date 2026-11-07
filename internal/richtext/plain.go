@@ -49,7 +49,7 @@ func writeBlock(b *strings.Builder, blk *Block) {
 			for _, cell := range row {
 				cells = append(cells, strings.ReplaceAll(SpansText(cell), "\n", " "))
 			}
-			line(b, strings.TrimRight(strings.Join(cells, "\t"), "\t")) // no trailing tab for empty last cells
+			line(b, strings.TrimRight(strings.Join(cells, "\t"), "\t")) // empty trailing cells add nothing
 		}
 	case Divider:
 	case ImageBlock:
