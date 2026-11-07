@@ -566,7 +566,11 @@ func (m *mirror) get(slice, key string) any {
 		if !ok {
 			return nil
 		}
-		return map[string]any{"id": key, "name": bi.Name, "deleted": false, "icons": map[string]any{"image_36": bi.Icon, "image_48": bi.Icon, "image_72": bi.Icon}}
+		bot := map[string]any{"id": key, "name": bi.Name, "deleted": false}
+		if bi.Icon != "" {
+			bot["icons"] = map[string]any{"image_36": bi.Icon, "image_48": bi.Icon, "image_72": bi.Icon}
+		}
+		return pruneEmpty(bot, false)
 	case "membershipCounts":
 		n, ok := a.MemberCountCached(key)
 		if !ok {
@@ -651,8 +655,8 @@ func (m *mirror) get(slice, key string) any {
 
 	// ---- whole ----
 	case "bootData":
-		return map[string]any{"user_id": a.S.SelfID(), "team_id": a.C.Creds.Team, "enterprise_id": a.C.Creds.EnterpriseID,
-			"page_needs_enterprise": a.C.Creds.EnterpriseID != "", "version_ts": time.Now().Unix(), "version_uid": "clack"}
+		return pruneEmpty(map[string]any{"user_id": a.S.SelfID(), "team_id": a.C.Creds.Team, "enterprise_id": a.C.Creds.EnterpriseID,
+			"page_needs_enterprise": a.C.Creds.EnterpriseID != "", "version_ts": time.Now().Unix(), "version_uid": "clack"}, false)
 	case "selfTeamIds":
 		ent := a.C.Creds.EnterpriseID
 		team := a.C.Creds.Team
@@ -664,7 +668,7 @@ func (m *mirror) get(slice, key string) any {
 		if team != "" {
 			ws = append(ws, team)
 		}
-		return map[string]any{"teamId": top, "enterpriseId": ent, "internalWorkspaceIds": ws, "defaultWorkspaceId": team}
+		return pruneEmpty(map[string]any{"teamId": top, "enterpriseId": ent, "internalWorkspaceIds": ws, "defaultWorkspaceId": team}, false)
 	case "prefs":
 		return map[string]any{"user": m.userPrefs(), "team": map[string]any{}, "channel": map[string]any{}, "enterprise": map[string]any{}}
 	case "userPrefs":
@@ -797,11 +801,14 @@ func (m *mirror) channel(c *slack.Conversation) map[string]any {
 		"is_archived": c.IsArchived, "is_general": c.IsGeneral, "is_member": c.IsMember || c.IsIM, "is_ext_shared": c.IsExtShared,
 		"is_org_shared": c.IsOrgShared, "isNonExistent": false, "isUnknown": false, "fromAnotherTeam": false,
 		"internalTeamIds": ids, "internal_team_ids": ids, "previous_names": []string{}, "unread_highlights": []any{}, "unreads": []any{},
-		"connectedTeamIds": []string{}, "connectedLimitedTeamIds": []string{}, "context_team_id": team,
+		"connectedTeamIds": []string{}, "connectedLimitedTeamIds": []string{},
 	} {
 		if _, has := e[k]; !has || k == "is_member" {
 			e[k] = v
 		}
+	}
+	if team != "" {
+		e["context_team_id"] = team
 	}
 	if _, ok := e["topic"]; !ok {
 		e["topic"] = map[string]any{"value": "", "creator": "", "last_set": 0}
@@ -880,7 +887,10 @@ func (m *mirror) member(u *slack.User) map[string]any {
 	pr := u.Profile
 	p["real_name_normalized"] = deburr(pr.RealName)
 	p["display_name_normalized"] = deburr(pr.DisplayName)
-	for _, k := range []string{"real_name", "display_name", "status_text", "status_emoji", "first_name", "last_name", "title", "image_24", "image_32", "image_48", "image_72", "image_192", "image_512"} {
+	// Slack always sends these as strings, "" when unset. Avatar URLs it
+	// sends only when it has them, so absent ones stay absent (plugins
+	// fall back with ??).
+	for _, k := range []string{"real_name", "display_name", "status_text", "status_emoji", "first_name", "last_name", "title"} {
 		if _, ok := p[k]; !ok {
 			p[k] = ""
 		}
@@ -907,7 +917,7 @@ func (m *mirror) member(u *slack.User) map[string]any {
 		"isUnknown": false, "isNonExistent": false, "isExternal": false, "is_stranger": false} {
 		e[k] = v
 	}
-	if e["team_id"] == nil {
+	if e["team_id"] == nil && m.t.app.C.Creds.EnterpriseID != "" {
 		e["team_id"] = m.t.app.C.Creds.EnterpriseID
 	}
 	if u.ID == m.t.app.S.SelfID() {
@@ -926,6 +936,27 @@ func (m *mirror) member(u *slack.User) map[string]any {
 // messageJSON is a stored message as Slack's store keeps it.
 func messageJSON(ch string, sm *slack.Message) map[string]any {
 	e := toMap(sm)
+	// attachments exactly as Slack sent them (the typed ones drop fields
+	// and add zero values); blocks, metadata and bot_profile are already
+	// Slack's own JSON
+	delete(e, "attachments")
+	if len(sm.RawAttachments) > 0 {
+		var raw any
+		if json.Unmarshal(sm.RawAttachments, &raw) == nil {
+			e["attachments"] = raw
+		}
+	} else if len(sm.Attachments) > 0 {
+		e["attachments"] = pruneEmpty(toMap(map[string]any{"a": sm.Attachments})["a"], true)
+	}
+	if files, ok := e["files"]; ok {
+		e["files"] = pruneEmpty(files, true)
+	}
+	if bp, ok := e["bot_profile"]; ok {
+		e["bot_profile"] = pruneEmpty(bp, false)
+	}
+	if sm.Root != nil {
+		e["root"] = messageJSON(ch, sm.Root)
+	}
 	e["channel"] = ch
 	if e["type"] == nil {
 		e["type"] = "message"
@@ -939,6 +970,38 @@ func messageJSON(ch string, sm *slack.Message) map[string]any {
 		e["text"] = ""
 	}
 	return e
+}
+
+// pruneEmpty drops map entries that are "" or null (and, with zeros, 0),
+// recursively: Go zero values Slack would leave out, which would defeat
+// plugins' `??` fallbacks. Array elements are kept.
+func pruneEmpty(v any, zeros bool) any {
+	switch x := v.(type) {
+	case map[string]any:
+		for k, val := range x {
+			switch y := val.(type) {
+			case nil:
+				delete(x, k)
+			case string:
+				if y == "" {
+					delete(x, k)
+				}
+			case float64:
+				if zeros && y == 0 {
+					delete(x, k)
+				}
+			default:
+				x[k] = pruneEmpty(val, zeros)
+			}
+		}
+		return x
+	case []any:
+		for i := range x {
+			x[i] = pruneEmpty(x[i], zeros)
+		}
+		return x
+	}
+	return v
 }
 
 // bucket is messages[ch]: the cached timeline plus open threads' replies.
@@ -1025,8 +1088,12 @@ func (m *mirror) team(id string) any {
 	if id != teamID && id != a.C.Creds.EnterpriseID {
 		return nil
 	}
-	return map[string]any{"id": id, "name": name, "domain": domain, "url": a.C.Creds.TeamURL, "enterprise_id": a.C.Creds.EnterpriseID,
-		"enterprise_name": name, "icon": map[string]any{"image_68": icon, "image_132": icon}, "isUnknown": false, "isNonExistent": false}
+	t := map[string]any{"id": id, "name": name, "domain": domain, "url": a.C.Creds.TeamURL, "enterprise_id": a.C.Creds.EnterpriseID,
+		"enterprise_name": name, "isUnknown": false, "isNonExistent": false}
+	if icon != "" {
+		t["icon"] = map[string]any{"image_68": icon, "image_132": icon}
+	}
+	return pruneEmpty(t, false)
 }
 
 func (m *mirror) userPrefs() map[string]any {

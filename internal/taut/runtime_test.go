@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/yoloslackgoclient/internal/store"
 )
 
 // pluginJS wraps a class body in build:user-plugin's format (an IIFE
@@ -550,5 +551,87 @@ func TestUTF16ToRune(t *testing.T) {
 		if got := f(u); got != want {
 			t.Errorf("utf16 %d → rune %d, want %d", u, got, want)
 		}
+	}
+}
+
+// Absent optional fields stay absent in every mirrored slice (Go zero
+// values would defeat plugins' `??` fallbacks, e.g. WhoReacted's avatar),
+// and messages carry Slack's own blocks, attachments, bot_profile and
+// metadata.
+func TestMirrorOmitsUnset(t *testing.T) {
+	h := newHarness(t)
+	var sm slack.Message
+	raw := `{"type":"message","ts":"1700000700.000100","bot_id":"B0BOT","text":"",
+		"bot_profile":{"id":"B0BOT","name":"Relay","app_id":"A0APP","icons":{"image_48":"https://avatars.example/48.png"},"deleted":false},
+		"blocks":[{"type":"section","block_id":"x1","text":{"type":"mrkdwn","text":"synthetic"},"accessory":{"type":"image","image_url":"https://example.com/i.png","alt_text":"i"}}],
+		"attachments":[{"id":1,"fallback":"f","author_subname":"Sub","custom_field":{"kept":true}}],
+		"files":[{"id":"F1","name":"a.txt","mimetype":"text/plain"}],
+		"metadata":{"event_type":"relay","event_payload":{"from":"UALICE"}}}`
+	if err := json.Unmarshal([]byte(raw), &sm); err != nil {
+		t.Fatal(err)
+	}
+	h.app.S.SetLatest("C0BOTS", []slack.Message{sm}, false)
+	h.app.S.PutBot("B0NOICON", store.BotInfo{Name: "No Icon"})
+	var got map[string]any
+	h.jsInto(`
+		const s = T.redux.getRawState()
+		const p = s.members.UALICE.profile
+		const m = s.messages.C0BOTS['1700000700.000100']
+		return {
+			images: Object.keys(p).filter((k) => k.startsWith('image_')),
+			avatarFallback: p.image_24 ?? 'fallback',
+			displayName: p.display_name, statusText: p.status_text,
+			botIcons: 'icons' in s.bots.B0NOICON,
+			bpUser: 'user_id' in m.bot_profile, bpTeam: 'team_id' in m.bot_profile, bpIcon: m.bot_profile.icons.image_48,
+			bpIcon36: 'image_36' in m.bot_profile.icons,
+			accessory: m.blocks[0].accessory.image_url,
+			attKept: m.attachments[0].custom_field.kept, attSub: m.attachments[0].author_subname,
+			attColor: 'color' in m.attachments[0], attTitle: 'title' in m.attachments[0],
+			fileThumb: 'thumb_360' in m.files[0], fileW: 'thumb_360_w' in m.files[0], fileName: m.files[0].name,
+			metaSync: api.messages.getMessageMetadata('C0BOTS', '1700000700.000100')?.event_payload?.from ?? null,
+			metaAsync: (await api.messages.fetchMessageMetadata('C0BOTS', '1700000700.000100'))?.event_type ?? null,
+			noMeta: api.messages.getMessageMetadata('`+chGen+`', '1700000001.000100'),
+			emptyStrings: (() => {
+				const bad = []
+				const walk = (v, path) => {
+					if (!v || typeof v !== 'object') return
+					for (const k of Object.keys(v)) {
+						if (v[k] === '' && !['text', 'display_name', 'real_name', 'status_text', 'status_emoji', 'first_name', 'last_name', 'title', 'value', 'creator', 'name'].includes(k)) bad.push(path + '.' + k)
+						walk(v[k], path + '.' + k)
+					}
+				}
+				walk(m, 'message'); walk(s.members.UALICE, 'member'); walk(s.bots.B0NOICON, 'bot')
+				walk(s.channels['`+chGen+`'], 'channel'); walk(s.teams['`+teamID+`'], 'team')
+				walk(s.bootData, 'bootData'); walk(s.selfTeamIds, 'selfTeamIds')
+				return bad
+			})(),
+		}`, &got)
+	want := map[string]any{
+		"avatarFallback": "fallback", "displayName": "alice", "statusText": "", "botIcons": false,
+		"bpUser": false, "bpTeam": false, "bpIcon": "https://avatars.example/48.png", "bpIcon36": false,
+		"accessory": "https://example.com/i.png", "attKept": true, "attSub": "Sub", "attColor": false, "attTitle": false,
+		"fileThumb": false, "fileW": false, "fileName": "a.txt",
+		"metaSync": "UALICE", "metaAsync": "relay", "noMeta": nil,
+	}
+	for k, w := range want {
+		if got[k] != w {
+			t.Errorf("%s = %v, want %v", k, got[k], w)
+		}
+	}
+	if imgs, _ := got["images"].([]any); len(imgs) != 0 {
+		t.Errorf("profile has unset avatar fields: %v", imgs)
+	}
+	if bad, _ := got["emptyStrings"].([]any); len(bad) != 0 {
+		t.Errorf("zero-value strings in mirrored slices: %v", bad)
+	}
+	if n := len(h.api.called("conversations.replies")); n != 0 {
+		t.Errorf("metadata cost %d conversations.replies calls", n)
+	}
+	// a message core never loaded still gets its metadata, with one call
+	h.api.set("conversations.replies", map[string]any{"ok": true, "messages": []any{map[string]any{"ts": "1700000800.000100", "metadata": map[string]any{"event_type": "remote"}}}})
+	var remote any
+	h.jsInto(`return (await api.messages.fetchMessageMetadata('C0ELSEWHERE', '1700000800.000100'))?.event_type ?? null`, &remote)
+	if remote != "remote" || len(h.api.called("conversations.replies")) != 1 {
+		t.Errorf("remote metadata %v, calls %d", remote, len(h.api.called("conversations.replies")))
 	}
 }

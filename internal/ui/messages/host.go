@@ -6,6 +6,8 @@ package messages
 
 import (
 	"image"
+	"os"
+	"strconv"
 	"sync"
 
 	"gioui.org/text"
@@ -29,6 +31,19 @@ type Host interface {
 // anchors are the click position plus the view's Origin.
 type PointerHost interface {
 	PointerPos() image.Point
+}
+
+// darkTextFade is richview's Style.LightTextFade for dark mode: light
+// glyphs get alpha 1 - fade/scale. Ink on the same 15px line vs Chrome's
+// dark mode (sk-client-theme--dark): 1x Chrome 116.5k, ours 135.1k
+// unfaded, 116.5k at alpha 0.76; 2x Chrome 456.2k, ours 487.7k unfaded,
+// 421.4k at 0.76 (needs ~0.886). Both fit fade 0.235.
+// CLACK_DARK_TEXT_FADE overrides it for tuning.
+func darkTextFade() float32 {
+	if v, err := strconv.ParseFloat(os.Getenv("CLACK_DARK_TEXT_FADE"), 32); err == nil {
+		return float32(v)
+	}
+	return 0.235
 }
 
 // styles holds one richview.Style per shaper (one per window).
@@ -67,9 +82,11 @@ func styleFor(h Host) *richview.Style {
 		// 620.5k. Both interpolate to ~0.45px, so richview applies the
 		// stroke in pixels: theme.BodyEmbolden is that 0.45px.
 		e.st.Embolden = theme.BodyEmboldenFor(theme.LightPalette.Fg)
+		e.st.LightTextFade = 0
 		if th.Dark {
 			e.st.SetPalette(richview.DarkPalette())
 			e.st.Embolden = theme.BodyEmboldenFor(theme.DarkPalette.Fg)
+			e.st.LightTextFade = darkTextFade()
 		} else {
 			e.st.SetPalette(richview.LightPalette())
 		}

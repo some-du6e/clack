@@ -22,7 +22,7 @@ func (a *App) openTeamMenu(anchor image.Point) {
 		{Label: "Browse channels", Icon: "hash", Do: func() { a.sidebarAction("add-channels") }},
 		{Label: "Directories", Icon: "directories", Do: func() { a.Navigate("directories") }},
 		{Divider: true},
-		{Label: "Sign out of " + a.teamName(), Danger: true, Do: a.signOut},
+		{Label: "Sign out of " + a.teamName() + " on this device", Danger: true, Do: a.signOut},
 	})
 }
 
@@ -49,7 +49,7 @@ func (a *App) openSelfMenu(anchor image.Point) {
 		{Label: "Profile", Icon: "user", Do: func() { a.OpenUserProfile(m.SelfID) }},
 		{Label: "Preferences", Icon: "settings", Hint: "Ctrl+,", Do: a.openPrefs},
 		{Divider: true},
-		{Label: "Sign out", Danger: true, Do: a.signOut},
+		{Label: "Sign out on this device", Danger: true, Do: a.signOut},
 	})
 }
 
@@ -231,5 +231,6 @@ func (a *App) signOut() {
 	a.viewOrder = nil
 	a.convos, a.convoOrder = nil, nil
 	a.login = newLoginScreen()
+	a.Toast("Signed out on this device. Your Slack session in other apps isn't affected.")
 	a.Invalidate()
 }
