@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/f32"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
@@ -516,5 +517,51 @@ func TestPluginWhoReacted(t *testing.T) {
 		u.mu.Unlock()
 		t.Fatalf("no reactor avatars (img.taut-reactors__avatar with Alice's picture) in the reaction pill; patched Reaction=%v UnstyledButton=%v",
 			slackc.Patched("Reaction"), slackc.Patched("UnstyledButton"))
+	}
+}
+
+// A plugin wrapping MessageActions (OwlMode does, with a context provider)
+// leaves the hover toolbar right-aligned: live, the patched card was drawn
+// at the list's left edge over the sender.
+func TestPatchedMessageActionsStayRightAligned(t *testing.T) {
+	code := []byte(`(() => {
+const TautPlugin = globalThis.TautPlugin, opt = globalThis.TautOpt;
+class WrapActions extends TautPlugin {
+  static id = 'WrapActions'
+  static pluginName = 'Wrap Actions'
+  static description = 'wraps the hover toolbar'
+  static authors = ['jeremy']
+  static defaultConfig = { enabled: true }
+  start() {
+    const Ctx = React.createContext(null)
+    this.api.patchComponent('MessageActions', (Original) => (props) => React.createElement(Ctx.Provider, { value: 1 }, React.createElement(Original, props)))
+  }
+}
+return WrapActions
+})()`)
+	_, _, tt, u, h := pluginEnv(t)
+	install(t, tt, code)
+	until(t, 3*time.Second, "MessageActions patched", func() {}, func() bool { return slackc.Patched("MessageActions") })
+	v := NewChannelView(h, tGen)
+	v.Preview = true
+	f := frameFn(v)
+	until(t, 5*time.Second, "rows", f, func() bool { return len(v.s.rows) >= 2 })
+	hover := func() {
+		for i := v.s.visible[0]; i < v.s.visible[1] && i < len(v.s.items); i++ {
+			if v.s.items[i].kind == itMsg && len(v.s.items[i].group) == 0 && v.s.heights[i] > 0 {
+				v.s.pointerIn = true
+				v.s.pointer = f32.Pt(450, float32(v.s.pos[i]+v.s.heights[i]/2))
+				return
+			}
+		}
+	}
+	until(t, 8*time.Second, "the patched toolbar", func() { hover(); f() }, func() bool { return v.s.tbFor >= 0 && u.anyTree("MessageActions") })
+	for i := 0; i < 5; i++ { // let the JS tree replace the native first frame
+		hover()
+		f()
+		time.Sleep(20 * time.Millisecond)
+	}
+	if v.s.tbFor < 0 || v.s.tbRect.Min.X < 900/2 || v.s.tbRect.Dx() > 400 {
+		t.Errorf("hover toolbar at %v in a 900px list; want it right-aligned and card-sized", v.s.tbRect)
 	}
 }
