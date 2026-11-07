@@ -463,6 +463,7 @@ var lastViewport struct {
 // plugin runtime is attached.
 func Frame(gtx layout.Context) {
 	windowSize = gtx.Constraints.Max
+	pushDocument()
 	b := bridge()
 	if b == nil {
 		return
