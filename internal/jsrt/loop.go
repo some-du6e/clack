@@ -102,7 +102,7 @@ func (r *Runtime) Close() {
 		return
 	}
 	r.cancel()
-	r.deadline.Store(time.Now().UnixNano()) // interrupt whatever runs now
+	r.deadline.Store(1) // interrupt whatever runs now
 	r.signal()
 }
 
@@ -182,15 +182,9 @@ func (r *Runtime) loop() {
 	r.initErr = r.boot()
 	close(r.ready)
 	if r.initErr != nil {
-		if r.eng != nil {
-			r.eng.close()
-			r.eng.kill()
-			r.eng = nil
-		}
 		return
 	}
 	defer r.shutdown()
-	go r.watchdog(r.eng.kill)
 	idle := time.NewTimer(time.Hour)
 	defer idle.Stop()
 	for !r.closed.Load() {
@@ -271,33 +265,6 @@ func (r *Runtime) checkpoint() {
 	r.eng.runJobs(r.js)
 	r.flushRender()
 	r.eng.gcFloor()
-}
-
-// watchdog backs up the interrupt handler. QuickJS polls it in JS code and
-// most builtins, but a few native loops never do (Array.prototype.reverse
-// on {length: 2**53 - 1} runs for years). A task still running a grace
-// period past its deadline gets the engine's context cancelled: wazero
-// closes the module mid-call, the call traps, afterPanic closes the
-// Runtime (Done) and Do callers get an error instead of waiting forever.
-func (r *Runtime) watchdog(kill func()) {
-	defer kill()
-	grace := r.opts.Timeout
-	if grace < time.Second {
-		grace = time.Second
-	}
-	tick := time.NewTicker(grace / 4)
-	defer tick.Stop()
-	for {
-		select {
-		case <-r.done:
-			return
-		case <-tick.C:
-		}
-		if d := r.deadline.Load(); d != 0 && time.Now().UnixNano() > d+int64(grace) {
-			r.opts.Log("error", fmt.Sprintf("jsrt: a task ignored its interrupt for %v past its deadline; stopping the JS engine", grace))
-			return
-		}
-	}
 }
 
 // interrupted is polled by the engine's interrupt handler.
