@@ -137,6 +137,7 @@ type App struct {
 	winSize     image.Point
 	sbBase      color.NRGBA
 	sbPal       theme.Palette
+	styleVer    uint64 // slackc.Styles.Version the palette was derived at
 	shaperCh    chan [2]*text.Shaper
 	explorer    *explorer.Explorer    // native file chooser (set in onWindow)
 	tautGen     int                   // bumps when a (new) plugin runtime attaches
@@ -309,6 +310,7 @@ func (a *App) frame(gtx layout.Context) {
 	sz := gtx.Constraints.Max
 	a.pxPerDp = gtx.Metric.PxPerDp
 	a.winSize = sz
+	a.syncThemeTokens()
 
 	if a.login != nil {
 		a.grad.layout(gtx, a.th.C.ChromeA, a.th.C.ChromeB)
@@ -372,7 +374,9 @@ func (a *App) frame(gtx layout.Context) {
 		sb := image.Rect(ws.Min.X, ws.Min.Y, primary.Min.X, ws.Max.Y)
 		a.grad.draw(gtx, sz, image.Point{}, clip.RRect{Rect: sb, NW: rad, SW: rad}.Op(gtx.Ops), a.th.C.ChromeA, a.th.C.ChromeB, a.th.C.SidebarBg)
 		a.sidebar.hover = a.ptrWin.In(sb)
+		sv := clsSidebarView.Enter(gtx, 0, 0)
 		atExact(gtx, sb.Min, sb.Size(), a.layoutSidebar)
+		sv.Leave()
 	}
 	nw, sw := 0, 0
 	if sbW == 0 {

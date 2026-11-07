@@ -51,6 +51,19 @@ type Theme struct {
 	// EmojiStyle is Slack's emoji set preference: "apple" (default) or "google".
 	EmojiStyle string
 
+	// Restyle, when set, adjusts each freshly selected palette before
+	// Flatten: the ui root lays the stylesheets' design tokens (Slick
+	// themes, user CSS) over it. See tokens.go.
+	Restyle func(t *Theme, p *Palette)
+	// Tokens are the active stylesheets' root design tokens, set by
+	// Restyle (nil: no sheet overrides one). Packages with their own
+	// palettes (views, richview) map them too; Gen says when to rebuild.
+	Tokens Tokens
+	// Gen increases whenever the mode, C or Tokens change (cache key for
+	// palettes derived from the theme).
+	Gen     uint64
+	genInit bool
+
 	shapers    [2]*text.Shaper // light, dark (may be the same shaper)
 	shaperDark bool
 }
@@ -146,14 +159,26 @@ func (t *Theme) pickShaper() {
 
 // SetDark switches palettes.
 func (t *Theme) SetDark(dark bool) {
+	oldDark, oldC, oldTok := t.Dark, t.C, tokensKey(t.Tokens)
 	t.Dark = dark
 	defer t.pickShaper()
+	p := LightPalette
 	if dark {
-		t.C = Flatten(DarkPalette)
-	} else {
-		t.C = Flatten(LightPalette)
+		p = DarkPalette
+	}
+	if t.Restyle != nil {
+		t.Restyle(t, &p)
+	}
+	t.C = Flatten(p)
+	if !t.genInit || oldDark != dark || oldC != t.C || oldTok != tokensKey(t.Tokens) {
+		t.genInit = true
+		t.Gen++
 	}
 }
+
+// Refresh re-selects the palette (call when stylesheets change, so
+// Restyle sees the new tokens).
+func (t *Theme) Refresh() { t.SetDark(t.Dark) }
 
 // Over composites fg over an opaque bg in sRGB space, the way browsers (and
 // so Slack) blend. Gio blends in linear light, which makes translucent

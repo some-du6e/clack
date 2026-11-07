@@ -58,6 +58,7 @@ type styleEntry struct {
 	st   *richview.Style
 	dark bool
 	init bool
+	gen  uint64 // th.Gen the palette was set at (stylesheet tokens)
 }
 
 var (
@@ -81,8 +82,8 @@ func styleForTheme(th *theme.Theme, images *imgcache.Cache) *richview.Style {
 		styles[th.Shaper] = e
 	}
 	stylesMu.Unlock()
-	if th.Dark != e.dark || !e.init {
-		e.dark, e.init = th.Dark, true
+	if th.Dark != e.dark || !e.init || th.Gen != e.gen {
+		e.dark, e.init, e.gen = th.Dark, true, th.Gen
 		// theme.EmboldenFor: dark text needs the stroke, light text doesn't.
 		// Message bodies need more than labels to match Chrome. Ink on the
 		// same 15px line: at 1x 151.9k (no stroke) / 193.6k (0.3px) vs
@@ -97,6 +98,9 @@ func styleForTheme(th *theme.Theme, images *imgcache.Cache) *richview.Style {
 			e.st.LightTextFade = darkTextFade()
 		} else {
 			e.st.SetPalette(richview.LightPalette())
+		}
+		if p, ok := richview.Themed(th); ok {
+			e.st.SetPalette(p)
 		}
 	}
 	return e.st

@@ -57,6 +57,9 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		return layout.Dimensions{Size: sz}
 	}
 	c := &a.th.C
+	if vh.Has("background-color") { // a theme's .p-view_header background
+		theme.Fill(gtx, image.Rectangle{Max: sz}, theme.Over(vh.Background(c.Bg), c.Bg))
+	}
 	h := sz.Y
 	x := gtx.Dp(18) // Slack: 28px star button at +18, title icon at +54
 	// star
