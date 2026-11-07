@@ -11,6 +11,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -39,6 +40,11 @@ func testRowEntry(ts string) entry {
 // rowAllocsFrame lays out a header row (hovered) and a grouped row
 // (hovered, so the gutter time and the add-reaction button draw) once.
 func rowAllocsFrame() func() {
+	f, _, _ := testRows()
+	return f
+}
+
+func testRows() (func(), *row, *row) {
 	th := theme.New(false)
 	h := themeHost{th: th}
 	e1, e2 := testRowEntry("1700000000.000100"), testRowEntry("1700000010.000100")
@@ -53,7 +59,7 @@ func rowAllocsFrame() func() {
 		r1.layout(gtx, rc)
 		rc.header = false
 		r2.layout(gtx, rc)
-	}
+	}, r1, r2
 }
 
 func TestRowLayoutAllocs(t *testing.T) {
@@ -67,5 +73,28 @@ func TestRowLayoutAllocs(t *testing.T) {
 		t.Errorf("baseline run: set rowAllocsBefore = %v", n)
 	} else if n > rowAllocsBefore {
 		t.Errorf("unpatched row layout allocates %v per frame, %v before the Taut boundaries", n, rowAllocsBefore)
+	}
+}
+
+// Every row boundary patched but no plugin runtime attached: the natives
+// get the props we built back, which must change nothing.
+func TestRowPatchedWithoutRuntime(t *testing.T) {
+	frame, r1, r2 := testRows()
+	frame()
+	h1, h2 := r1.height, r2.height
+	slackc.SetPatched([]string{"MessageWrapper", "MessageBackground", "MessageKitGutter", "MessageAvatar", "ConnectedBaseAvatar",
+		"Timestamp", "BaseBroadcastPreamble", "MessageSender", "BaseMessageSender", "MessageBlocks", "Blocks", "ReactionBar",
+		"Reaction", "UnstyledButton", "ReactionAddButton", "MemberLink"})
+	defer slackc.SetPatched(nil)
+	for i := 0; i < 3; i++ {
+		frame()
+	}
+	if r1.height != h1 || r2.height != h2 {
+		t.Errorf("heights %d/%d, unpatched %d/%d", r1.height, r2.height, h1, h2)
+	}
+	for _, r := range []*row{r1, r2} {
+		if r.wrapOv != 0 || r.blocksOv != 0 || r.m.User != r.src.User || len(r.reactRects) != 2 {
+			t.Errorf("row %s: overrides %x/%x, user %q, %d pills", r.ts, r.wrapOv, r.blocksOv, r.m.User, len(r.reactRects))
+		}
 	}
 }

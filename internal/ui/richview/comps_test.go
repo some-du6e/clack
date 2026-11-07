@@ -27,16 +27,22 @@ func TestNoComponentsByDefault(t *testing.T) {
 	}
 }
 
-// With CSS installed, pills and cards become components drawn per frame;
-// the layout itself must not move.
+// patchAll makes every pill and card a component (as a plugin patching
+// them, or installed CSS, does).
+func patchAll(t *testing.T) {
+	slackc.SetPatched([]string{"MemberLink", "BaseMrkdwnChannel", "MessageAttachment"})
+	t.Cleanup(func() { slackc.SetPatched(nil) })
+	if compMode() != modePills|modeAtts {
+		t.Fatalf("mode %b with patches", compMode())
+	}
+}
+
+// Patched, pills and cards become components drawn per frame; the layout
+// itself must not move.
 func TestComponentsKeepLayout(t *testing.T) {
 	st := newTestStyle()
 	plain := layoutAt(st, compDoc(), Options{}, 400)
-	slackc.SetStyle("richview-test", ".unrelated { color: red }")
-	defer slackc.RemoveStyle("richview-test")
-	if compMode() != modePills|modeAtts {
-		t.Fatalf("mode %b with CSS", compMode())
-	}
+	patchAll(t)
 	v := layoutAt(st, compDoc(), Options{TS: "1.2", Channel: "C9"}, 400)
 	if v.d.size != plain.d.size || len(v.d.frags) != len(plain.d.frags) {
 		t.Fatalf("size %v / %d frags, want %v / %d", v.d.size, len(v.d.frags), plain.d.size, len(plain.d.frags))
@@ -58,8 +64,8 @@ func TestComponentsKeepLayout(t *testing.T) {
 	if string(v.d.plain) != string(plain.d.plain) {
 		t.Errorf("plain text %q, want %q", v.d.plain, plain.d.plain)
 	}
-	// Drawing goes through the natives (no bridge: unpatched path) and
-	// settles: no extra space is fed back.
+	// Drawing goes through the natives (no plugin runtime: they get our
+	// own props) and settles: no extra space is fed back.
 	ops := new(op.Ops)
 	for i := 0; i < 3; i++ {
 		ops.Reset()
@@ -85,8 +91,7 @@ func TestComponentsKeepLayout(t *testing.T) {
 // A plugin's channelName for a shared message shows in "Posted in".
 func TestShareChannelOverride(t *testing.T) {
 	st := newTestStyle()
-	slackc.SetStyle("richview-test", ".unrelated { color: red }")
-	defer slackc.RemoveStyle("richview-test")
+	patchAll(t)
 	v := layoutAt(st, compDoc(), Options{}, 400)
 	before := string(v.d.plain)
 	ref := compRef{v: v, i: 2, st: st}
