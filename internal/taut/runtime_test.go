@@ -654,4 +654,11 @@ func TestRealSourceMarkers(t *testing.T) {
 	if !got.Fn || !got.Len || !got.Host || !got.Sel || !got.Query || got.Name != "GifPicker" {
 		t.Fatalf("GifPicker native: %+v", got)
 	}
+	// Slick's ChannelListTyping matches the sidebar row by its real source
+	var ch struct{ Fn, Marker bool }
+	h.jsInto(`const c = T.nativeFor('Channel')
+	return { Fn: typeof c === 'function', Marker: Function.prototype.toString.call(c).includes('getSidebarChannelUiInfo') }`, &ch)
+	if !ch.Fn || !ch.Marker {
+		t.Fatalf("Channel native: %+v", ch)
+	}
 }

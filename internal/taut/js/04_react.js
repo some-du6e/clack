@@ -29,6 +29,8 @@ const COMPONENT_SOURCES = {
  */
 const REAL_SOURCES = {
   GifPicker: '"gif-picker-host", e.onGifSelected, e.emojiSearchQuery',
+  // Slick's ChannelListTyping: {displayName: 'Channel', filter: isSidebarChannel}
+  Channel: '"getSidebarChannelUiInfo"',
 }
 /** Slack components that are anonymous memos in the web client, found by `filter` on their source */
 const ANONYMOUS = new Set(['MessageKitGutter', 'HuddleLinkJoinGate'])
