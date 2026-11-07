@@ -122,3 +122,25 @@ func LayoutOverlays(gtx layout.Context) {
 		it.v.Layout(g, it.nodes, "", nil, nil)
 	}
 }
+
+// KeepOverlays drops overlay roots (bit 52/63) that are no longer open;
+// the body root always stays. taut reports the open set on every change.
+func KeepOverlays(open []uint64) {
+	keep := make(map[uint64]bool, len(open)+1)
+	keep[OverlayBody] = true
+	for _, r := range open {
+		keep[r] = true
+	}
+	overlays.Lock()
+	for id := range overlays.m {
+		if !keep[id] {
+			delete(overlays.m, id)
+			if v := overlays.views[id]; v != nil {
+				v.Close()
+				delete(overlays.views, id)
+			}
+		}
+	}
+	overlays.Unlock()
+	invalidate()
+}
