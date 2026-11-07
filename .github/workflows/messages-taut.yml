@@ -42,7 +42,7 @@ jobs:
           git -C /tmp/taut checkout -q "$TAUT_REF"
           cd /tmp/taut && npm ci --ignore-scripts --no-audit --no-fund
           mkdir -p "$GITHUB_WORKSPACE/dist/taut-plugins"
-          for n in ShutUpSlackbot Censorship BringBackSlackbot UserPronouns WhoReacted; do
+          for n in ShutUpSlackbot Censorship BringBackSlackbot UserPronouns WhoReacted ShowSendingBot; do
             f=$(ls plugins/$n.ts plugins/$n.tsx 2>/dev/null | head -1)
             npm run -s build:user-plugin -- "$f" "$GITHUB_WORKSPACE/dist/taut-plugins/$n.js"
           done
