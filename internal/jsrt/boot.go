@@ -246,7 +246,6 @@ func (r *Runtime) installHost() {
 		return nil, nil
 	})
 	def("commit", func(js *Ctx, _ Value, a []Value) (any, error) {
-		r.eng.dirty = false
 		id := uint64(num(a, 0))
 		r.deliver(id, []byte(str(a, 1)))
 		return nil, nil

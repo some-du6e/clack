@@ -192,9 +192,12 @@ func (r *Runtime) flushRender() {
 	if r.eng == nil || !r.eng.hasDirty() {
 		return
 	}
+	r.eng.dirty = false
 	fn := r.js.Global().Get("__clack").Get("flush")
 	if fn.IsFunction() {
-		_, _ = fn.Call()
+		if _, err := fn.Call(); err != nil {
+			r.logError("flush", err)
+		}
 	}
 	r.eng.runJobs(r.js)
 }
