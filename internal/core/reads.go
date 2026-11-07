@@ -174,6 +174,21 @@ func (a *App) hydrate(ctx context.Context, want map[string][]string) map[string]
 	return out
 }
 
+// SlackbotCustomResponseInThread reports whether user (Slackbot) answered
+// with a custom response (SubtypeSlackbotResponse) in the thread
+// ch/threadTS: Slack's hasSlackbotCustomResponseInThread selector. It
+// reads the cached replies only (no request, safe on the UI and JS
+// threads), so it is false until the thread has been loaded. An empty
+// user matches any sender.
+func (a *App) SlackbotCustomResponseInThread(ch, threadTS, user string) bool {
+	if ch == "" || threadTS == "" {
+		return false
+	}
+	return a.S.ThreadHas(ch, threadTS, func(m *slack.Message) bool {
+		return m.Subtype == SubtypeSlackbotResponse && (user == "" || m.User == user)
+	})
+}
+
 // ---- prefs ----
 
 // Prefs returns the rendering-relevant user prefs.
