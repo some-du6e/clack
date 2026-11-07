@@ -1,0 +1,68 @@
+name: taut
+# Builds every plugin in Taut's plugins/ with Taut's own `build:user-plugin`
+# (the same .js a user imports in Clack's Preferences > Taut), uploads them as
+# an artifact, and runs internal/taut's acceptance tests against them.
+# The built plugins are Taut's (GPLv3) and are never committed here.
+on:
+  push:
+    paths:
+      - "internal/taut/**"
+      - "internal/jsrt/**"
+      - ".github/workflows/taut.yml"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "taut git ref (branch, tag or sha)"
+        required: false
+        default: "main"
+
+jobs:
+  plugins:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: clone taut
+        run: |
+          git clone -q https://github.com/jeremy46231/taut /tmp/taut
+          git -C /tmp/taut checkout -q "${{ inputs.ref || 'main' }}"
+          echo "TAUT_SHA=$(git -C /tmp/taut rev-parse HEAD)" >> "$GITHUB_ENV"
+          git -C /tmp/taut log --oneline -1
+      - name: install taut deps (no scripts: no electron download)
+        working-directory: /tmp/taut
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: build:user-plugin for every plugin
+        working-directory: /tmp/taut
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/dist/taut-plugins"
+          n=0
+          for f in plugins/*.ts plugins/*.tsx; do
+            name=$(basename "$f"); name=${name%.tsx}; name=${name%.ts}
+            npm run -s build:user-plugin -- "$f" "$GITHUB_WORKSPACE/dist/taut-plugins/$name.js"
+            n=$((n+1))
+          done
+          echo "built $n plugins from taut $TAUT_SHA"
+          echo "$TAUT_SHA" > "$GITHUB_WORKSPACE/dist/taut-plugins/TAUT_SHA"
+          ls -la "$GITHUB_WORKSPACE/dist/taut-plugins"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: taut-plugins
+          path: dist/taut-plugins
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gofmt
+        run: test -z "$(gofmt -l internal/taut | tee /dev/stderr)"
+      - name: vet
+        run: go vet ./internal/taut/...
+      - name: unit + acceptance tests
+        env:
+          TAUT_PLUGINS_DIR: ${{ github.workspace }}/dist/taut-plugins
+        run: go test -count=1 -timeout 15m -v ./internal/taut/... 2>&1 | tee dist/taut-test.log
+      - name: acceptance summary
+        if: ${{ !cancelled() }}
+        run: |
+          grep -E '^(=== RUN|--- (PASS|FAIL|SKIP)|ok|FAIL)' dist/taut-test.log | grep -E 'Plugin|ok|FAIL' | tail -120 || true
