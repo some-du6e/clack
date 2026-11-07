@@ -102,16 +102,28 @@ func warmHome(tb testing.TB, fs *fakeslack.Server) string {
 		e.openChannel(fs.ChannelIDs()[1])
 		e.settle(300 * time.Millisecond)
 		e.a.data.stop() // saves sidebar.json and meta.json
-		warmDir = dir
+		e.a.data.core.Close()
+		frozen, err := os.MkdirTemp("", "clack-perf-warm-frozen-")
+		if err != nil {
+			tb.Fatal(err)
+		}
+		copyTree(tb, dir, frozen)
+		warmDir = frozen
 	})
 	dst := tb.TempDir()
 	copyTree(tb, warmDir, dst)
 	return dst
 }
 
+// copyTree copies the warm config dir. The warm session's background
+// goroutines may still be renaming *.tmp files into place: skip those and
+// anything that vanishes mid-walk.
 func copyTree(tb testing.TB, src, dst string) {
 	err := filepath.Walk(src, func(p string, info os.FileInfo, err error) error {
 		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
 			return err
 		}
 		rel, _ := filepath.Rel(src, p)
@@ -119,8 +131,13 @@ func copyTree(tb testing.TB, src, dst string) {
 		if info.IsDir() {
 			return os.MkdirAll(t, 0o700)
 		}
+		if strings.HasSuffix(p, ".tmp") {
+			return nil
+		}
 		b, err := os.ReadFile(p)
-		if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		} else if err != nil {
 			return err
 		}
 		return os.WriteFile(t, b, 0o600)
