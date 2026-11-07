@@ -18,6 +18,8 @@ jobs:
           cache: true
       - name: gio deps
         run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: inlining of the unpatched fast paths
+        run: go build -gcflags=-m ./internal/ui/slackc/ 2>&1 | grep -E 'can inline (Render|RenderLazy|Component|\(\*ClassDef\)\.Enter|Patched)\b' || true
       - name: bench
         run: go test -run XXX -bench . -benchmem ./internal/ui/slackc/
       - name: alloc profile (relayout)
