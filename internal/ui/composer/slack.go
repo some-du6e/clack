@@ -265,9 +265,12 @@ func (c *Composer) initIDs() {
 		c.keyS = "edit/" + c.edit.Channel + "/" + c.edit.TS
 		c.draftS = "edit-" + c.edit.Channel + "-" + c.edit.TS
 	case c.ts != "":
-		c.draftS = "draft-" + c.ch + "-" + c.ts
+		// Slack's composer draftId: "<channel>-<threadTs>" for a thread
+		// (OwlMode parses /^([A-Z0-9]+)-(\d+\.\d+)$/), the channel id
+		// for a channel composer.
+		c.draftS = c.ch + "-" + c.ts
 	default:
-		c.draftS = "draft-" + c.ch
+		c.draftS = c.ch
 	}
 }
 

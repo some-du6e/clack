@@ -80,8 +80,12 @@ type chromeState struct {
 	InCode         bool      // caret in a code block: B I U S link code divider disabled
 	CanSend        bool
 	Broadcast      bool // thread: checkbox checked
-	ChannelName    string
-	Private, IsDM  bool
+	// ChannelType ("channel", "im", "mpim", …) and SetBroadcast feed the
+	// broadcast context plugin composer buttons get ({active, channelType, set}).
+	ChannelType   string
+	SetBroadcast  func(bool)
+	ChannelName   string
+	Private, IsDM bool
 	// Placeholder is "Message general" (channel: drawn as "Message " + the
 	// hash/lock icon + name), "Message Karim" (DM), "Reply to thread…".
 	Placeholder     string
