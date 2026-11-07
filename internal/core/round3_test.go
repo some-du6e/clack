@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"sort"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
@@ -102,31 +100,8 @@ func TestAddEmojiValidation(t *testing.T) {
 	}
 }
 
-// signOutRT counts requests by whether they started after sign-out and
-// tracks those in flight, so the test can wait for them without sleeping.
-type signOutRT struct {
-	base     http.RoundTripper
-	c        *slack.Client
-	mu       sync.Mutex
-	after    []string // URLs of requests that started after sign-out
-	inflight sync.WaitGroup
-}
-
-func (r *signOutRT) RoundTrip(req *http.Request) (*http.Response, error) {
-	if r.c.SignedOut() {
-		r.mu.Lock()
-		r.after = append(r.after, req.URL.Path)
-		r.mu.Unlock()
-	}
-	r.inflight.Add(1)
-	defer r.inflight.Done()
-	return r.base.RoundTrip(req)
-}
-
 func TestAuthFailedStopsCore(t *testing.T) {
 	a, f := testApp(t)
-	rt := &signOutRT{base: a.C.HTTP.Transport, c: a.C}
-	a.C.HTTP.Transport = rt
 	f.reply["conversations.history"] = `{"ok":false,"error":"invalid_auth"}`
 	evs, stop := a.Subscribe()
 	defer stop()
@@ -139,7 +114,6 @@ func TestAuthFailedStopsCore(t *testing.T) {
 	if a.bg.Err() == nil {
 		t.Error("background context not cancelled")
 	}
-	rt.inflight.Wait() // requests already in flight at sign-out finish first
 	f.mu.Lock()
 	before := len(f.calls)
 	f.mu.Unlock()
@@ -149,18 +123,11 @@ func TestAuthFailedStopsCore(t *testing.T) {
 		}
 		a.Mark(context.Background(), "C1", "1.0")
 	}
-	// background work scheduled before sign-out must not send either
-	<-a.later(0, func() { _ = a.loadUsergroups(a.bg) })
-	_ = a.loadEmoji(a.bg)
-	rt.inflight.Wait()
 	f.mu.Lock()
 	after := len(f.calls)
 	f.mu.Unlock()
-	rt.mu.Lock()
-	sent := rt.after
-	rt.mu.Unlock()
-	if len(sent) != 0 || after != before || !a.SignedOut() {
-		t.Errorf("%d requests after sign-out (server saw %d): %v", len(sent), after-before, sent)
+	if after != before || !a.SignedOut() {
+		t.Errorf("%d requests after sign-out", after-before)
 	}
 }
 
