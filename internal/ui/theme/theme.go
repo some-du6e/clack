@@ -8,9 +8,9 @@ package theme
 
 import (
 	"image"
-	"os"
 	"image/color"
 	"math"
+	"os"
 	"sync"
 
 	"gioui.org/f32"
