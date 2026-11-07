@@ -238,6 +238,7 @@ func seed(s *store.Store) {
 	s.PutConv(slack.Conversation{ID: chGen, Name: "general", IsChannel: true, IsMember: true, IsGeneral: true, NumMembers: 1234})
 	s.PutConv(slack.Conversation{ID: chAnn, Name: "announcements", IsChannel: true, IsMember: true, NumMembers: 99, Properties: posting})
 	s.PutConv(slack.Conversation{ID: dmAlice, IsIM: true, User: "UALICE", IsMember: true})
+	s.PutConv(slack.Conversation{ID: "D0SLACKBOT", IsIM: true, User: slackbot, IsMember: true})
 	s.PutExtConv(slack.Conversation{ID: chOther, Name: "elsewhere", IsChannel: true, IsMember: false, NumMembers: 7})
 	s.SetLatest(chGen, []slack.Message{
 		{Type: "message", TS: "1700000001.000100", User: "UALICE", Text: "the job fair is today"},

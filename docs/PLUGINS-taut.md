@@ -34,10 +34,10 @@ When no plugin patches the name, this is just `native(ctx, args)`. When a plugin
 | thunk | args (Slack's) | who must call it | today |
 |---|---|---|---|
 | currentUserStartedTyping | `{channelId, threadTs?}` | ui/composer, typing send | native default: core.Typing |
-| markLastRead | `{channelId, ts, threadTs?}` | ui/messages, marking read | default: core.Mark / MarkThread |
+| markLastRead | `{id: channelId, ts, threadTs?, reason?, immediate?}` | ui/messages, marking read | default: core.Mark / MarkThread |
 | setUserPrefByApi, setUserPrefFetcher | `{pref, value}` | ui (prefs toggles) | default: users.prefs.set |
 | initializeUserPrefs | `{prefsData}` | taut (prefs event) | identity |
-| deleteDraftApi, clearDrafts | `{draftId}` / `{draftIds}` | ui/composer, ui/views drafts | default: core.DeleteDraft |
+| deleteDraftApi, clearDrafts | `{draft: {id,…}, reason?}` / `{draftIds}` | ui/composer, ui/views drafts | default: core.DeleteDraft |
 | syncDraftCreate, syncDraftUpdates | `{draftId, …}` | ui/composer | UI must dispatch |
 | prepareAndSendMessage, sendMessage | `{channelId, replyToTs?, text, blocks, broadcast?}` / `{channel, blocks, thread_ts?, …}` | ui/composer send | UI must dispatch (after `TransformSendBlocks`) |
 | saveMessageEdit, commitMessageEdit | `{channelId, ts, blocks, text}` | ui/messages edit | UI must dispatch |
@@ -48,14 +48,14 @@ When no plugin patches the name, this is just `native(ctx, args)`. When a plugin
 | autocompleteChannels, autocompleteMembers | `{query, channelId?}` → results | ui/composer autocomplete | UI must dispatch (sync) |
 | showNotification | `{message, channelId, title, …}` | ui (desktop notifications) | UI must dispatch |
 | searchInline | `{query}` → `{items}` | ui/popups search dropdown | UI must dispatch |
-| addAndUploadPendingFile, uploadFiles | `{file: taut.File}` / `{files: []taut.File, channelId}` | ui/composer attachments | UI must dispatch |
+| addAndUploadPendingFile, uploadFiles | `{file: taut.File}` / `{files: []taut.File, channelId}` | ui/composer attachments | UI must dispatch; addAndUploadPendingFile has a default (core.PrepareUpload → `{fileIds}`) for api.files.upload |
 | getChannelMembershipInfoForUsers | `{channelId, userIds}` | taut | default: conversations.members, fills `membership` |
 | ensureMembersArePresent | `{memberIds}` | taut | default: core.EnsureUsers |
 | fetchRawChannelsById | `{ids}` | taut | default: core.ChannelInfo |
 | joinChannel | `{channelId}` | ui (join button) | default: core.Join |
-| openPrefsModal | `{tab?}` | ui shell | default: UIHooks.OpenPreferences |
+| openPrefsModal | `{activeSection?}` | ui shell | default: UIHooks.OpenPreferences |
 | enqueueHuddleToast | `{content, svgIconProps, duration}` | ui toasts | default: UIHooks.Toast |
-| maybeFetchBackgrounds, startEventLog, stopEventLog, stopHuddle, displayAlertMessage, processAwsTranscription | huddles | ui/views huddles | no-op defaults (Clack has no huddle media) |
+| maybeFetchBackgrounds, startEventLog, stopEventLog, stopHuddle, displayAlertMessage, processAwsTranscription, roomsStart/StopTranscriptionFetcher | huddles | ui/views huddles | no-op defaults (Clack has no huddle media) |
 | logExperimentExposure, handleMessageImmediatelyWithoutPreprocessing | — | — | no-ops |
 | apiCall, apiCallExpedited | `{method, args}` | taut | default: the Web API call |
 | blocksFormatFetcher, executeAppAction, submitView | Slack's | ui/composer markdown mode, ui/popups shortcuts and app modals | UI must register natives (no Clack surface yet) |

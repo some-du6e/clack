@@ -693,7 +693,8 @@ const huddles = {
 
 async function uploadFile(file) {
   const pending = await dispatchThunk('addAndUploadPendingFile', { file, hideBanner: true })
-  const id = (await pending?.uploadPromise)?.fileIds?.[0]
+  // Slack's thunk gives {uploadPromise}; Clack's native gives the result itself
+  const id = (await (pending?.uploadPromise ?? pending))?.fileIds?.[0]
   if (!id) throw new Error('[Taut] Slack rejected the upload')
   return id
 }

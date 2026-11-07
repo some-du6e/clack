@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 )
 
 // Acceptance: every plugin in Taut's plugins/, built with Taut's own
@@ -191,6 +193,34 @@ var checks = map[string]pluginCheck{
 		in := h.introspect()
 		if !has(in.Slices, "readOnlyChannels") && !has(in.Slices, "threadOnlyChannels") && len(in.Components) == 0 {
 			t.Errorf("no restriction patches: %+v", in)
+		}
+	},
+	"ShutUpSlackbot": func(t *testing.T, h *harness) {
+		eventually(t, 2*time.Second, "rtm listener", func() bool {
+			h.tt.ui.mu.Lock()
+			defer h.tt.ui.mu.Unlock()
+			return h.tt.ui.rtmTypes["message"]
+		})
+		notice := "Your workspace has been using `/poll` to kick off certain actions with Old Poll. Recently, New Poll was installed to Synthetic Club with the same command. " +
+			"Now, when people enter `/poll`, it'll run the action set up by New Poll. You can learn more about <https://slack.com/help/articles/201259356-Slash-commands-in-Slack|managing app installation settings> in the Help Center."
+		raw, _ := json.Marshal(map[string]any{"type": "message", "channel": "D0SLACKBOT", "user": slackbot, "text": notice, "ts": "1700000500.000100"})
+		h.app.Inject(slack.Event{Type: "message", Channel: json.RawMessage(`"D0SLACKBOT"`), Raw: raw})
+		eventually(t, 5*time.Second, "the notice marked read", func() bool {
+			for _, f := range h.api.called("conversations.mark") {
+				if f.Get("channel") == "D0SLACKBOT" && f.Get("ts") == "1700000500.000100" {
+					return true
+				}
+			}
+			return false
+		})
+		// an ordinary Slackbot message stays unread
+		raw, _ = json.Marshal(map[string]any{"type": "message", "channel": "D0SLACKBOT", "user": slackbot, "text": "a reminder you set", "ts": "1700000600.000100"})
+		h.app.Inject(slack.Event{Type: "message", Channel: json.RawMessage(`"D0SLACKBOT"`), Raw: raw})
+		time.Sleep(300 * time.Millisecond)
+		for _, f := range h.api.called("conversations.mark") {
+			if f.Get("ts") == "1700000600.000100" {
+				t.Error("an ordinary message was marked read")
+			}
 		}
 	},
 	"UserPronouns": func(t *testing.T, h *harness) {

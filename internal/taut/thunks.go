@@ -9,6 +9,8 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/core"
 )
 
 // Slack's named thunks are where plugins hook actions: SilentTyping wraps
@@ -34,11 +36,11 @@ type ThunkSpec struct {
 // ThunkCatalogue is every thunk Taut's plugins (and the TautAPI) use.
 var ThunkCatalogue = []ThunkSpec{
 	{"currentUserStartedTyping", "{channelId, threadTs?}", "ui/composer", "sending the typing indicator (core.Typing)"},
-	{"markLastRead", "{channelId, ts, threadTs?}", "ui/messages", "marking a conversation read (core.Mark)"},
+	{"markLastRead", "{id: channelId, ts, threadTs?, reason?, immediate?}", "ui/messages", "marking a conversation read (core.Mark)"},
 	{"setUserPrefByApi", "{pref, value}", "ui (prefs)", "saving a user pref (users.prefs.set)"},
 	{"setUserPrefFetcher", "{pref, value}", "ui (prefs)", "same, the fetcher form"},
 	{"initializeUserPrefs", "{prefsData}", "taut (prefs event)", "prefs loading into the store; the result's prefsData is what plugins leave"},
-	{"deleteDraftApi", "{draftId}", "ui/composer, ui/views (drafts)", "deleting a draft (core.DeleteDraft)"},
+	{"deleteDraftApi", "{draft: {id, …}, reason?}", "ui/composer, ui/views (drafts)", "deleting a draft (core.DeleteDraft)"},
 	{"syncDraftCreate", "{draftId, …draft}", "ui/composer", "saving a new draft (core.SaveDraft)"},
 	{"syncDraftUpdates", "{draftId, …draft}", "ui/composer", "updating a draft (core.SaveDraft)"},
 	{"clearDrafts", "{draftIds}", "ui/views (drafts)", "deleting drafts"},
@@ -61,7 +63,7 @@ var ThunkCatalogue = []ThunkSpec{
 	{"ensureMembersArePresent", "{memberIds}", "taut", "loading users (core.EnsureUsers)"},
 	{"fetchRawChannelsById", "{ids}", "taut", "loading conversations (core.ChannelInfo)"},
 	{"joinChannel", "{channelId}", "ui (join button)", "joining (core.Join)"},
-	{"openPrefsModal", "{tab?}", "ui (shell)", "opening Preferences"},
+	{"openPrefsModal", "{activeSection?}", "ui (shell)", "opening Preferences"},
 	{"enqueueHuddleToast", "{content, svgIconProps, duration}", "ui (toasts)", "a huddle toast"},
 	{"maybeFetchBackgrounds", "{huddleId}", "ui/views (huddles)", "huddle themes; Clack has none"},
 	{"startEventLog", "{}", "ui/views (huddles)", "huddle event log"},
@@ -69,6 +71,8 @@ var ThunkCatalogue = []ThunkSpec{
 	{"stopHuddle", "{}", "ui/views (huddles)", "leaving a huddle"},
 	{"displayAlertMessage", "{alert, …}", "ui (alerts)", "an alert banner"},
 	{"processAwsTranscription", "{type, …}", "ui/views (huddles)", "huddle captions"},
+	{"roomsStartTranscriptionFetcher", "{callId, reason}", "ui/views (huddles)", "huddle captions on"},
+	{"roomsStopTranscriptionFetcher", "{callId, reason}", "ui/views (huddles)", "huddle captions off"},
 	{"logExperimentExposure", "{name}", "none", "Clack logs no exposures"},
 	{"handleMessageImmediatelyWithoutPreprocessing", "rtm event", "taut (rtm)", "realtime events"},
 	{"blocksFormatFetcher", "{blocks, reason}", "ui/composer (markdown mode)", "blocks.format"},
@@ -290,7 +294,7 @@ func (tt *thunkTable) installDefaults() {
 		},
 		"markLastRead": func(ctx context.Context, a []json.RawMessage) (any, error) {
 			o := argObj(a)
-			ch, ts := o.str("channelId"), o.str("ts")
+			ch, ts := firstNonEmpty(o.str("id"), o.str("channelId")), o.str("ts")
 			if th := o.str("threadTs"); th != "" {
 				return nil, t.app.MarkThread(ctx, ch, th, ts)
 			}
@@ -301,7 +305,32 @@ func (tt *thunkTable) installDefaults() {
 		"setUserPrefFetcher":  app().setPref,
 		"initializeUserPrefs": func(ctx context.Context, a []json.RawMessage) (any, error) { return argObj(a), nil },
 		"deleteDraftApi": func(ctx context.Context, a []json.RawMessage) (any, error) {
-			return nil, t.app.DeleteDraft(ctx, argObj(a).str("draftId"))
+			o := argObj(a)
+			id := o.str("draftId")
+			if id == "" {
+				var d struct {
+					ID string `json:"id"`
+				}
+				_ = json.Unmarshal(o["draft"], &d)
+				id = d.ID
+			}
+			return nil, t.app.DeleteDraft(ctx, id)
+		},
+		"addAndUploadPendingFile": func(ctx context.Context, a []json.RawMessage) (any, error) {
+			var args struct {
+				File File `json:"file"`
+			}
+			if len(a) > 0 {
+				_ = json.Unmarshal(a[0], &args)
+			}
+			if args.File.Name == "" && len(args.File.Data) == 0 {
+				return nil, errors.New("no file to upload")
+			}
+			up, err := t.app.PrepareUpload(ctx, core.UploadFile{Name: args.File.Name, Title: args.File.Name, Data: args.File.Data}, nil)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"fileIds": []string{up.ID}}, nil
 		},
 		"clearDrafts": func(ctx context.Context, a []json.RawMessage) (any, error) {
 			for _, id := range argObj(a).strs("draftIds") {
@@ -346,7 +375,8 @@ func (tt *thunkTable) installDefaults() {
 		"apiCallExpedited": app().apiCall,
 		"openPrefsModal": func(ctx context.Context, a []json.RawMessage) (any, error) {
 			if f := t.opts.UI.OpenPreferences; f != nil {
-				f(argObj(a).str("tab"))
+				o := argObj(a)
+				f(firstNonEmpty(o.str("activeSection"), o.str("tab")))
 			}
 			return nil, nil
 		},
@@ -354,7 +384,7 @@ func (tt *thunkTable) installDefaults() {
 	// Slack bookkeeping with nothing to do in Clack: they resolve, so
 	// plugins awaiting them continue.
 	for _, name := range []string{"maybeFetchBackgrounds", "startEventLog", "stopEventLog", "stopHuddle", "displayAlertMessage",
-		"processAwsTranscription", "logExperimentExposure", "handleMessageImmediatelyWithoutPreprocessing", "commitMessageEdit"} {
+		"processAwsTranscription", "roomsStartTranscriptionFetcher", "roomsStopTranscriptionFetcher", "logExperimentExposure", "handleMessageImmediatelyWithoutPreprocessing", "commitMessageEdit"} {
 		n[name] = func(ctx context.Context, a []json.RawMessage) (any, error) { return nil, nil }
 	}
 	tt.natives = n
