@@ -905,56 +905,11 @@ func (v *SearchView) pillRow(gtx layout.Context, th *theme.Theme, cl *Colors, x,
 
 // pill draws one filter pill at (x, y) and returns its width.
 func (v *SearchView) pill(gtx layout.Context, th *theme.Theme, cl *Colors, i, x, y int, iconName, label string, chevron, active bool) int {
-	h := dp(gtx, 28)
-	tw := textW(gtx, th, 13, theme.Bold, label)
-	w := dp(gtx, 10) + dp(gtx, 16) + dp(gtx, 6) + tw
-	if chevron {
-		w += dp(gtx, 6) + dp(gtx, 12) + dp(gtx, 8)
-	} else {
-		w += dp(gtx, 10)
-	}
-	v.pillR[i] = image.Rect(x, y, x+w, y+h)
-	c := &v.pills[i]
-	at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints = layout.Exact(image.Pt(w, h))
-		return c.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			r := image.Rect(0, 0, w, h)
-			rad := dp(gtx, 8)
-			fg, border, bg := cl.Fg, cl.Divider, cl.Bg
-			if active {
-				fg, border, bg = cl.Link, cl.Link, theme.WithAlpha(cl.Link, 0x1a)
-				if c.Hovered() {
-					bg = theme.WithAlpha(cl.Link, 0x2a)
-				}
-			} else if c.Hovered() {
-				bg = cl.BgHover
-			}
-			rrect(gtx, r, rad, border)
-			rrect(gtx, r.Inset(1), rad-1, cl.Bg)
-			if bg != cl.Bg {
-				rrect(gtx, r.Inset(1), rad-1, bg)
-			}
-			ix := dp(gtx, 10)
-			at(gtx, image.Pt(ix, (h-dp(gtx, 16))/2), func(gtx layout.Context) layout.Dimensions {
-				return icon(gtx, iconName, 16, fg)
-			})
-			lx := ix + dp(gtx, 16) + dp(gtx, 6)
-			at(gtx, image.Pt(lx, 0), func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints = layout.Constraints{Max: image.Pt(tw+dp(gtx, 2), h)}
-				return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
-					return text(gtx, th, 13, theme.Bold, fg, label)
-				})
-			})
-			if chevron {
-				at(gtx, image.Pt(lx+tw+dp(gtx, 6), (h-dp(gtx, 12))/2), func(gtx layout.Context) layout.Dimensions {
-					return icon(gtx, "chevron-down", 12, fg)
-				})
-			}
-			pointerCursor(gtx, r.Max)
-			return layout.Dimensions{Size: r.Max}
-		})
+	d := at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
+		return Pill(gtx, th, &v.pills[i], iconName, label, chevron, active)
 	})
-	return w
+	v.pillR[i] = image.Rectangle{Min: image.Pt(x, y), Max: image.Pt(x, y).Add(d.Size)}
+	return d.Size.X
 }
 
 func (v *SearchView) results(gtx layout.Context, th *theme.Theme, cl *Colors, px int, sz image.Point) layout.Dimensions {

@@ -645,9 +645,17 @@ type dtTimeList struct {
 }
 
 func dtNewTimeList(h Host, anchor image.Rectangle, value, from int, onPick func(int)) *dtTimeList {
-	slots := dtTimeSlots(from, 30)
+	return dtNewTimeListStep(h, anchor, value, from, 30, onPick)
+}
+
+// dtNewTimeListStep lists times every step minutes from from.
+func dtNewTimeListStep(h Host, anchor image.Rectangle, value, from, step int, onPick func(int)) *dtTimeList {
+	if step <= 0 {
+		step = 30
+	}
+	slots := dtTimeSlots(from, step)
 	if len(slots) == 0 {
-		slots = dtTimeSlots(0, 30)
+		slots = dtTimeSlots(0, step)
 	}
 	t := &dtTimeList{h: h, anchor: anchor, slots: slots, sel: -1, cur: -1, onPick: onPick}
 	t.list.Axis = layout.Vertical
