@@ -274,6 +274,99 @@ func TestMainHalf(t *testing.T) {
 	}
 }
 
+// A renderer and main half that use the rpc sender the way StreamerMode
+// (once), ChatTabs (getURL, on/removeListener before-input-event) and
+// InstalledApps (session.fetch) do.
+const senderPlugin = `// slick-plugin {"id":"SenderProbe","name":"Sender Probe","description":"test"}
+(globalThis.__slickPlugins ??= []).push((require) => {
+const { SlickPlugin } = require("$slick");
+class SenderProbe extends SlickPlugin {
+  static id = "SenderProbe";
+  static pluginName = "Sender Probe";
+  static description = "test";
+  start() {}
+}
+return SenderProbe;
+});
+`
+
+const senderMain = `// slick-main {"id":"SenderProbe"}
+(globalThis.__slickMainPlugins ??= []).push((require) => {
+let hooked;
+return {
+  id: "SenderProbe",
+  capabilities: [],
+  rpc: {
+    async probe(ctx, args, sender) {
+      let gone = false;
+      sender.once("destroyed", () => (gone = true));
+      hooked = (event, input) => {
+        if (input.type === "keyDown" && input.control && input.key === "w") { event.preventDefault(); ctx.emitTo(sender, "close-tab"); }
+      };
+      sender.on("before-input-event", hooked);
+      const res = await sender.session.fetch("https://example.test/page?x=1", { credentials: "include", signal: AbortSignal.timeout(15000) });
+      return { id: sender.id, url: sender.getURL(), ok: res.ok, status: res.status, body: await res.text(), gone, destroyed: sender.isDestroyed() };
+    },
+    unhook(ctx, args, sender) { sender.removeListener("before-input-event", hooked); },
+  },
+};
+});
+`
+
+func TestMainHalfSender(t *testing.T) {
+	h := newHarness(t)
+	h.answer("https://example.test/page", `{"page":1}`)
+	mustImport(t, h, senderPlugin)
+	if _, err := h.s.Import(h.ctx(), []byte(senderMain)); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.s.SetEnabled(h.ctx(), "SenderProbe", true); err != nil {
+		t.Fatal(err)
+	}
+	h.s.SetRoute(teamID, chGen)
+	eventually(t, 3*time.Second, "route", func() bool { return h.jsBool(`return location.pathname.endsWith('/` + chGen + `')`) })
+	var r struct {
+		Probe struct {
+			ID        int    `json:"id"`
+			URL       string `json:"url"`
+			OK        bool   `json:"ok"`
+			Status    int    `json:"status"`
+			Body      string `json:"body"`
+			Gone      bool   `json:"gone"`
+			Destroyed bool   `json:"destroyed"`
+		} `json:"probe"`
+		Hooked   bool `json:"hooked"`
+		Closed   int  `json:"closed"`
+		Unhooked bool `json:"unhooked"`
+		Other    bool `json:"other"`
+	}
+	h.jsInto(`
+		const probe = await S.callMain('SenderProbe', 'probe', [])
+		let closed = 0
+		const off = S.onMain('SenderProbe', 'close-tab', () => closed++)
+		const key = (k) => window.dispatchEvent(new KeyboardEvent('keydown', { key: k, ctrlKey: true, cancelable: true }))
+		const hooked = !key('w')
+		const other = !key('q')
+		await new Promise((r) => setTimeout(r, 10))
+		await S.callMain('SenderProbe', 'unhook', [])
+		const unhooked = key('w')
+		await new Promise((r) => setTimeout(r, 10))
+		off()
+		return { probe, hooked, closed, unhooked, other }`, &r)
+	p := r.Probe
+	if p.ID != 1 || p.URL != "https://app.slack.com/client/"+teamID+"/"+chGen || !p.OK || p.Status != 200 || p.Body != `{"page":1}` || p.Gone || p.Destroyed {
+		t.Fatalf("probe %+v", p)
+	}
+	if !r.Hooked || r.Other || r.Closed != 1 || !r.Unhooked {
+		t.Fatalf("before-input-event: %+v", r)
+	}
+	h.fetchMu.Lock()
+	defer h.fetchMu.Unlock()
+	if len(h.cookied) > 0 {
+		t.Fatalf("session.fetch sent a cookie: %v", h.cookied)
+	}
+}
+
 func TestThemesAndUserCSS(t *testing.T) {
 	h := newHarness(t)
 	_ = os.MkdirAll(filepath.Join(h.s.Dir(), "themes"), 0o700)
@@ -298,13 +391,27 @@ func TestThemesAndUserCSS(t *testing.T) {
 	if err != nil || !strings.HasPrefix(id, "imported:") {
 		t.Fatalf("import %q %v", id, err)
 	}
-	_ = s.SetTheme(id)
+	// importing selects it (Slick's configStore.importTheme sets config.theme)
 	if css := h.ui.style("slick:theme"); !strings.Contains(css, "--a:b !important") {
-		t.Fatalf("imported %q", css)
+		t.Fatalf("imported theme not applied: %q", css)
+	}
+	if sel := selectedTheme(s); sel != id {
+		t.Fatalf("selected %q, want %q", sel, id)
 	}
 	_ = s.SetUserCSS("body{zoom:2}")
 	if h.ui.style("slick:user") != "body{zoom:2}" {
 		t.Fatal("user css")
+	}
+	// pausing Slick stops plugins only; the theme and custom CSS stay (Slick's
+	// theme.ts and bootstrap.ts never read the global switch)
+	if err := s.SetGlobalEnabled(h.ctx(), false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(h.ui.style("slick:theme"), "--a:b !important") || h.ui.style("slick:user") != "body{zoom:2}" {
+		t.Fatalf("paused Slick dropped styles: theme %q user %q", h.ui.style("slick:theme"), h.ui.style("slick:user"))
+	}
+	if err := s.SetGlobalEnabled(h.ctx(), true); err != nil {
+		t.Fatal(err)
 	}
 	cards := s.Settings().Themes
 	if cards[0].ID != "" || cards[len(cards)-1].ID != "custom" || len(cards) != 4 {
@@ -315,6 +422,37 @@ func TestThemesAndUserCSS(t *testing.T) {
 	}
 	if _, err := s.ImportTheme([]byte(`{"name":"x"}`), "x.json"); err == nil {
 		t.Fatal("a theme with no fields was accepted")
+	}
+}
+
+// Slick installs the theme, then user.css, so custom CSS beats the theme's
+// !important rules. In Clack a dark-only theme only appears once SetDark(true)
+// comes, after New already installed user.css; it must still land first.
+func TestThemeBeforeUserCSS(t *testing.T) {
+	h := newHarness(t)
+	_ = os.MkdirAll(filepath.Join(h.s.Dir(), "themes"), 0o700)
+	_ = os.WriteFile(filepath.Join(h.s.Dir(), "themes", "nord.json"), []byte(`{"mode":"dark","css":[".c-menu{background:#3b4252 !important}"]}`), 0o600)
+	_ = os.WriteFile(filepath.Join(h.s.Dir(), "user.css"), []byte(".c-menu{background:red !important}"), 0o600)
+	_ = os.WriteFile(filepath.Join(h.s.Dir(), "settings.json"), []byte(`{"theme":"nord","plugins":{}}`), 0o600)
+	s, err := New(Options{Taut: h.tt, Dir: h.s.Dir(), NoAutoStart: true, NoUpdates: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if h.ui.style("slick:user") == "" || h.ui.style("slick:theme") != "" {
+		t.Fatalf("light mode: theme %q user %q", h.ui.style("slick:theme"), h.ui.style("slick:user"))
+	}
+	s.SetDark(true)
+	if !h.ui.before("slick:theme", "slick:user") {
+		t.Fatalf("theme isn't before user.css: %v", h.ui.order)
+	}
+	// light → dark again, and switching themes, keep the order
+	s.SetDark(false)
+	s.SetDark(true)
+	_ = s.SetTheme("custom")
+	_ = s.SetTheme("nord")
+	if !h.ui.before("slick:theme", "slick:user") {
+		t.Fatalf("theme isn't before user.css after toggles: %v", h.ui.order)
 	}
 }
 
@@ -370,4 +508,61 @@ func mustImport(t *testing.T, h *harness, code string) string {
 		t.Fatalf("import: %v", err)
 	}
 	return name
+}
+
+func selectedTheme(s *Slick) string {
+	for _, c := range s.Settings().Themes {
+		if c.Selected {
+			return c.ID
+		}
+	}
+	return ""
+}
+
+// Slick's isThemeJson / parseThemeJson / themeToCss on the edge cases:
+// a present-but-null field is rejected, numbers print like String(n), and
+// the file name loses .json in any case.
+func TestThemeValidation(t *testing.T) {
+	for raw, want := range map[string]bool{
+		`{"vars":{"--a":"b"}}`:                     true,
+		`{"vars":{"--a":1}}`:                       true,
+		`{"palette":{}}`:                           true,
+		`{"css":"x{}"}`:                            true,
+		`{"css":["x{}","y{}"]}`:                    true,
+		`{"palette":null}`:                         false,
+		`{"palette":{"aubergine":null}}`:           false,
+		`{"sidebar":null}`:                         false,
+		`{"vars":null}`:                            false,
+		`{"vars":[]}`:                              false,
+		`{"css":null}`:                             false,
+		`{"css":["x{}",1]}`:                        false,
+		`{"vars":{"--a":"b"},"mode":null}`:         false,
+		`{"vars":{"--a":"b"},"mode":"dim"}`:        false,
+		`{"vars":{"--a":"b"},"name":null}`:         false,
+		`{"vars":{"--a":"b"},"description":false}`: false,
+		`{"name":"only a name"}`:                   false,
+		`null`:                                     false,
+		`[]`:                                       false,
+	} {
+		if got := validTheme(json.RawMessage(raw)); got != want {
+			t.Errorf("validTheme(%s) = %v, want %v", raw, got, want)
+		}
+	}
+	var th Theme
+	_ = json.Unmarshal([]byte(`{"vars":{"--n":1000000,"--f":0.5,"--big":1e21,"--tiny":1.5e-7,"--neg":-12.25}}`), &th)
+	css := themeCSS(th)
+	for _, d := range []string{"--n:1000000 !important", "--f:0.5 !important", "--big:1e+21 !important", "--tiny:1.5e-7 !important", "--neg:-12.25 !important"} {
+		if !strings.Contains(css, d) {
+			t.Errorf("no %q in %q", d, css)
+		}
+	}
+	for file, want := range map[string]string{"Mine.Json": "Mine", "a.JSON": "a", "b.json": "b", "c.txt": "c.txt", ".json": "Imported theme"} {
+		raw, err := ParseTheme([]byte(`{"vars":{"--a":"b"}}`), file)
+		var m struct {
+			Name string `json:"name"`
+		}
+		if err != nil || json.Unmarshal(raw, &m) != nil || m.Name != want {
+			t.Errorf("ParseTheme(%q) name %q, want %q (%v)", file, m.Name, want, err)
+		}
+	}
 }
