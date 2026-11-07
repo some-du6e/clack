@@ -166,6 +166,72 @@ func NewChannelMenu(h Host, anchor image.Point, convID string) *Menu {
 	return m
 }
 
+// ---- sidebar conversation menu (the shell's row right-click) ----
+
+// ChannelMenuInfo is what Slack's sidebar conversation menu depends on.
+type ChannelMenuInfo struct {
+	ID, Kind       string // Kind: core's ("channel", "private", "im", "mpim", "app")
+	Muted, Starred bool
+}
+
+func (c ChannelMenuInfo) dm() bool { return c.Kind == "im" || c.Kind == "mpim" || c.Kind == "app" }
+
+// ChannelMenuItems are Slack's sidebar conversation menu for c, with
+// stable keys (view_details, copy_link, copy_name, toggle_star,
+// toggle_mute, mark_read, leave or close, and separators). do, when
+// non-nil, gives each key's action. Pure: safe on any goroutine, so a
+// getTemplate JS calls can build its template from it.
+func ChannelMenuItems(c ChannelMenuInfo, do func(key string) func()) []MenuItem {
+	noun := "channel"
+	if c.dm() {
+		noun = "conversation"
+	}
+	star, mute := "Star "+noun, "Mute "+noun
+	if c.Starred {
+		star = "Unstar " + noun
+	}
+	if c.Muted {
+		mute = "Unmute " + noun
+	}
+	items := []MenuItem{
+		{Key: "view_details", Label: "View " + noun + " details"},
+		{Key: "copy_link", Label: "Copy link"},
+		{Key: "copy_name", Label: "Copy name"},
+		{Key: "separator_1", Separator: true},
+		{Key: "toggle_star", Label: star},
+		{Key: "toggle_mute", Label: mute},
+		{Key: "mark_read", Label: "Mark as read"},
+		{Key: "separator_2", Separator: true},
+	}
+	if c.dm() {
+		items = append(items, MenuItem{Key: "close", Label: "Close conversation"})
+	} else {
+		items = append(items, MenuItem{Key: "leave", Label: "Leave channel", Danger: true})
+	}
+	if do != nil {
+		for i := range items {
+			if !items[i].Separator {
+				items[i].Do = do(items[i].Key)
+			}
+		}
+	}
+	return items
+}
+
+// MenuTemplate is items as Slack's MenuTemplateItem[] in plain data (no
+// click functions): what a ContextMenuTriggerWithKeyboardFocus's
+// getTemplate returns for a plugin to extend. Keys are the items' Key, or
+// a slug of their label.
+func MenuTemplate(items []MenuItem) []map[string]any { return tautTemplate(items) }
+
+// ItemsFromTemplate turns a MenuTemplateItem[] a plugin returned (from a
+// getTemplate it wrapped) back into items: base's by key, keeping their
+// actions, and the plugin's own with their click (MenuFromTemplate's
+// conversion).
+func ItemsFromTemplate(th *theme.Theme, list []any, base []MenuItem) []MenuItem {
+	return menuFromTemplate(th, list, base)
+}
+
 // actMuteSet remembers mutes done here until core's conversation catches
 // up (UI goroutine only).
 var actMuteSet = map[string]bool{}

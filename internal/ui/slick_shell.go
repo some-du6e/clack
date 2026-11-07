@@ -335,10 +335,10 @@ func (r sbConvRow) suffix() sbSuffix {
 
 // ---- BaseChannelSuffix (ChannelListTyping) ----
 
-// sbSuffix is the row's suffix after the name. Clack draws no suffix
-// icons (drafts, huddles) and its mention badge stays at the row's right
-// edge, so the native is empty; what plugins add before <Original/> (the
-// typing indicator) is drawn after the name.
+// sbSuffix is the row's suffix. Clack draws no suffix icons (drafts,
+// huddles) and draws the mention badge itself at the row's right edge, so
+// the native is empty; what plugins add before <Original/> (the typing
+// indicator) is drawn right-aligned, just before the badge.
 type sbSuffix struct {
 	conv *convInfo
 	sel  bool
@@ -427,9 +427,21 @@ func sbHolds(n *slackc.Node, name string) bool {
 	return false
 }
 
+// sbSuffixTap sees where each conversation row put its suffix (tests):
+// row-local px. Nil outside tests.
+var sbSuffixTap func(ch string, g sbSuffixGeom)
+
+// sbSuffixGeom is a row's suffix placement: the suffix spans [X0, X1),
+// the name ends (unclipped) at NameEnd, Right is where the suffix area
+// ends (left of the mention badge) and RowW is the row's width.
+type sbSuffixGeom struct{ X0, X1, NameEnd, Right, RowW int }
+
 // layoutConvBody draws a conversation row's name (ListChannelEntity) from
-// ix to right, and its suffix (BaseChannelSuffix) after the name. p is the
-// trigger's props under a patch.
+// ix, and its suffix (BaseChannelSuffix) right-aligned at right, as in
+// Slack's row: what the suffix holds (ChannelListTyping's indicator, a
+// flex item with margin-left: auto) sits at the row's right edge, just
+// before the mention badge (right is already left of it), and the name
+// ellipsizes before it. p is the trigger's props under a patch.
 func (a *App) layoutConvBody(gtx layout.Context, r sbConvRow, p slackc.Props, ix, right int) {
 	rowH := r.rs.rowH
 	ent, suf, kids := sbKids(p)
@@ -441,16 +453,12 @@ func (a *App) layoutConvBody(gtx layout.Context, r sbConvRow, p slackc.Props, ix
 		})
 		return
 	}
-	// the suffix goes after the name (Slack: 6px gap); keep at least
-	// 48dp for it
-	nameEnd := ix + gtx.Dp(24) + a.th.Measure(gtx, 15, r.rs.weight, r.rs.label) + gtx.Dp(6)
-	if r.rs.suffix != "" {
-		nameEnd += a.th.Measure(gtx, 15, theme.Regular, r.rs.suffix) + gtx.Dp(6)
-	}
-	sx := min(nameEnd, right-gtx.Dp(48))
-	sx = max(sx, ix+gtx.Dp(24))
+	// The suffix is as wide as its content: laid out unbounded, slackc
+	// shrinks even a block-level root (display: flex) to fit. The name
+	// keeps at least its icon.
+	minX := ix + gtx.Dp(24)
 	sg := gtx
-	sg.Constraints = layout.Constraints{Max: image.Pt(max(right-sx, 0), rowH)}
+	sg.Constraints = layout.Constraints{Max: image.Pt(sbUnbounded, rowH)}
 	call, sd := measured(sg, func(gtx layout.Context) layout.Dimensions {
 		if kids {
 			return slackc.LayoutElement(gtx, suf)
@@ -458,9 +466,11 @@ func (a *App) layoutConvBody(gtx layout.Context, r sbConvRow, p slackc.Props, ix
 		s := r.suffix()
 		return slackc.Component(gtx, "BaseChannelSuffix", s, sbSuffix.props, sbSuffix.layout)
 	})
+	sw := min(sd.Size.X, max(right-minX, 0))
+	sx := right - sw
 	ew := right - ix
-	if sd.Size.X > 0 {
-		ew = sx - gtx.Dp(6) - ix
+	if sw > 0 {
+		ew = sx - ix
 	}
 	e := r.entity(max(ew, 0))
 	at(gtx, image.Pt(ix, 0), image.Pt(e.width, rowH), func(gtx layout.Context) layout.Dimensions {
@@ -469,73 +479,25 @@ func (a *App) layoutConvBody(gtx layout.Context, r sbConvRow, p slackc.Props, ix
 		}
 		return slackc.Component(gtx, "ListChannelEntity", e, sbEntity.props, sbEntity.layout)
 	})
-	if sd.Size.X > 0 {
+	if sw > 0 {
+		// wider than the row allows: its start shows, clipped at right
+		cl := clip.Rect{Min: image.Pt(sx, 0), Max: image.Pt(right, rowH)}.Push(gtx.Ops)
 		place(gtx, call, image.Pt(sx, (rowH-sd.Size.Y)/2))
+		cl.Pop()
+	}
+	if f := sbSuffixTap; f != nil {
+		nameEnd := minX + a.th.Measure(gtx, 15, r.rs.weight, r.rs.label)
+		if r.rs.suffix != "" {
+			nameEnd += gtx.Dp(6) + a.th.Measure(gtx, 15, theme.Regular, r.rs.suffix)
+		}
+		f(r.id(), sbSuffixGeom{X0: sx, X1: sx + sw, NameEnd: nameEnd, Right: right, RowW: gtx.Constraints.Max.X})
 	}
 }
+
+// sbUnbounded is a width slackc treats as unbounded (shrink-to-fit).
+const sbUnbounded = 1 << 24
 
 // ---- the row menu (ChannelContextMenu / ContextMenuTriggerWithKeyboardFocus) ----
-
-// sbMenuInfo is what a row menu depends on (a copy: the template is read
-// from JS's goroutine).
-type sbMenuInfo struct {
-	id, kind, name string
-	muted, starred bool
-}
-
-func (i sbMenuInfo) dm() bool { return i.kind == "im" || i.kind == "mpim" || i.kind == "app" }
-
-type sbMenuEntry struct {
-	key, label string
-	danger     bool
-	sep        bool
-}
-
-// sbMenuSpec is Slack's sidebar conversation menu: stable keys, labels.
-func sbMenuSpec(i sbMenuInfo) []sbMenuEntry {
-	noun := "channel"
-	if i.dm() {
-		noun = "conversation"
-	}
-	star, mute := "Star "+noun, "Mute "+noun
-	if i.starred {
-		star = "Unstar " + noun
-	}
-	if i.muted {
-		mute = "Unmute " + noun
-	}
-	out := []sbMenuEntry{
-		{key: "view_details", label: "View " + noun + " details"},
-		{key: "copy_link", label: "Copy link"},
-		{key: "copy_name", label: "Copy name"},
-		{key: "separator_1", sep: true},
-		{key: "toggle_star", label: star},
-		{key: "toggle_mute", label: mute},
-		{key: "mark_read", label: "Mark as read"},
-		{key: "separator_2", sep: true},
-	}
-	if i.dm() {
-		return append(out, sbMenuEntry{key: "close", label: "Close conversation"})
-	}
-	return append(out, sbMenuEntry{key: "leave", label: "Leave channel", danger: true})
-}
-
-// sbTemplate is spec as MenuTemplateItem[] (plain data).
-func sbTemplate(spec []sbMenuEntry) []any {
-	out := make([]any, len(spec))
-	for i, e := range spec {
-		if e.sep {
-			out[i] = map[string]any{"key": e.key, "type": "separator"}
-			continue
-		}
-		m := map[string]any{"key": e.key, "label": e.label}
-		if e.danger {
-			m["danger"] = true
-		}
-		out[i] = m
-	}
-	return out
-}
 
 // sbMenus holds each row's right-click tag and, while a plugin runtime
 // runs, its getTemplate function.
@@ -546,7 +508,7 @@ type sbMenus struct {
 	mu   sync.Mutex
 	t    *taut.Taut
 	fns  map[string]*taut.GoHandle
-	info map[string]sbMenuInfo
+	info map[string]popups.ChannelMenuInfo // a copy: the template is read from JS's goroutine
 }
 
 func (m *sbMenus) tag(id string) *int {
@@ -573,8 +535,8 @@ func (m *sbMenus) setTemplateFn(id string, f slackc.JSFunc) {
 	m.gts[id] = f
 }
 
-func menuInfoOf(c *convInfo) sbMenuInfo {
-	return sbMenuInfo{id: c.ID, kind: c.Kind, name: c.Name, muted: c.Muted, starred: c.Starred}
+func menuInfoOf(c *convInfo) popups.ChannelMenuInfo {
+	return popups.ChannelMenuInfo{ID: c.ID, Kind: c.Kind, Muted: c.Muted, Starred: c.Starred}
 }
 
 // handle returns the row's getTemplate (nil without a plugin runtime).
@@ -590,7 +552,7 @@ func (m *sbMenus) handle(a *App, c *convInfo) *taut.GoHandle {
 		for _, h := range m.fns {
 			h.Release()
 		}
-		m.t, m.fns, m.info = t, map[string]*taut.GoHandle{}, map[string]sbMenuInfo{}
+		m.t, m.fns, m.info = t, map[string]*taut.GoHandle{}, map[string]popups.ChannelMenuInfo{}
 	}
 	m.info[c.ID] = menuInfoOf(c)
 	h := m.fns[c.ID]
@@ -600,7 +562,7 @@ func (m *sbMenus) handle(a *App, c *convInfo) *taut.GoHandle {
 			m.mu.Lock()
 			i := m.info[id]
 			m.mu.Unlock()
-			return sbTemplate(sbMenuSpec(i)), nil
+			return popups.MenuTemplate(popups.ChannelMenuItems(i, nil)), nil
 		})
 		m.fns[c.ID] = h
 	}
@@ -614,14 +576,15 @@ var sbMenuTap func(ch string, items []popups.MenuItem)
 // openSidebarMenu opens a row's menu at anchor (window coordinates).
 // With a plugin's getTemplate it opens what that returns: Clack's items
 // by key, and the plugin's own items (their click calls back into JS).
-// Either way the menu goes through popups' MenuFromTemplate.
+// Either way the menu goes through popups' MenuFromTemplate. The items
+// and the template round trip are popups' (ChannelMenuItems, MenuTemplate,
+// ItemsFromTemplate); the actions are the shell's.
 func (a *App) openSidebarMenu(ch string, anchor image.Point, getTemplate slackc.JSFunc) {
 	c := a.model().conv(ch)
 	if c == nil {
 		return
 	}
-	spec := sbMenuSpec(menuInfoOf(c))
-	items := a.sbMenuItems(ch, spec)
+	items := popups.ChannelMenuItems(menuInfoOf(c), func(key string) func() { return a.sbMenuDo(ch, key) })
 	show := func(items []popups.MenuItem) {
 		if f := sbMenuTap; f != nil {
 			f(ch, items)
@@ -638,101 +601,42 @@ func (a *App) openSidebarMenu(ch string, anchor image.Point, getTemplate slackc.
 			show(items)
 			return
 		}
-		show(sbMergeTemplate(list, spec, items))
+		show(popups.ItemsFromTemplate(a.th, list, items))
 	})
 }
 
-// sbMenuItems are spec's native items.
-func (a *App) sbMenuItems(ch string, spec []sbMenuEntry) []popups.MenuItem {
-	out := make([]popups.MenuItem, 0, len(spec))
-	for _, e := range spec {
-		if e.sep {
-			out = append(out, popups.MenuItem{Key: e.key, Separator: true})
-			continue
-		}
-		it := popups.MenuItem{Key: e.key, Label: e.label, Danger: e.danger}
-		switch e.key {
-		case "view_details":
-			it.Do = func() { a.OpenDetails(ch) }
-		case "copy_link":
-			it.Do = func() { a.copyChannelLink(ch) }
-		case "copy_name":
-			it.Do = func() {
-				if c := a.model().conv(ch); c != nil {
-					a.copyText(c.Name)
-					a.Toast("Name copied")
-				}
-			}
-		case "toggle_star":
-			it.Do = func() { a.toggleStar(ch) }
-		case "toggle_mute":
-			it.Do = func() {
-				if c := a.model().conv(ch); c != nil && a.data != nil {
-					a.data.setMuted(ch, !c.Muted)
-				}
-			}
-		case "mark_read":
-			it.Do = func() { a.markRead(ch) }
-		case "leave", "close":
-			it.Do = func() {
-				if a.data != nil {
-					a.data.leave(ch)
-				}
+// sbMenuDo is what the row menu's item key does for ch.
+func (a *App) sbMenuDo(ch, key string) func() {
+	switch key {
+	case "view_details":
+		return func() { a.OpenDetails(ch) }
+	case "copy_link":
+		return func() { a.copyChannelLink(ch) }
+	case "copy_name":
+		return func() {
+			if c := a.model().conv(ch); c != nil {
+				a.copyText(c.Name)
+				a.Toast("Name copied")
 			}
 		}
-		out = append(out, it)
+	case "toggle_star":
+		return func() { a.toggleStar(ch) }
+	case "toggle_mute":
+		return func() {
+			if c := a.model().conv(ch); c != nil && a.data != nil {
+				a.data.setMuted(ch, !c.Muted)
+			}
+		}
+	case "mark_read":
+		return func() { a.markRead(ch) }
+	case "leave", "close":
+		return func() {
+			if a.data != nil {
+				a.data.leave(ch)
+			}
+		}
 	}
-	return out
-}
-
-// sbMergeTemplate turns the template a plugin returned back into items:
-// Clack's by key (a string label replaces theirs), the plugin's from
-// label + click.
-func sbMergeTemplate(list []any, spec []sbMenuEntry, items []popups.MenuItem) []popups.MenuItem {
-	byKey := make(map[string]int, len(spec))
-	for i, e := range spec {
-		byKey[e.key] = i
-	}
-	out := make([]popups.MenuItem, 0, len(list))
-	for _, v := range list {
-		e := asProps(v)
-		if e == nil {
-			continue
-		}
-		key := e.StrOr("key", "")
-		if t := e.StrOr("type", ""); t == "separator" || t == "divider" {
-			if len(out) > 0 && !out[len(out)-1].Separator {
-				out = append(out, popups.MenuItem{Key: key, Separator: true})
-			}
-			continue
-		}
-		var it popups.MenuItem
-		if i, ok := byKey[key]; ok && key != "" && !spec[i].sep {
-			it = items[i]
-		} else {
-			it.Key = key
-			if f, ok := e["click"].(slackc.JSFunc); ok {
-				it.Do = func() { f.Call() }
-			}
-		}
-		if l, ok := e["label"].(string); ok && l != "" {
-			it.Label = l
-		}
-		if e.Has("danger") {
-			it.Danger = e.Bool("danger")
-		}
-		if e.Has("disabled") {
-			it.Disabled = e.Bool("disabled")
-		}
-		if it.Label == "" {
-			continue
-		}
-		out = append(out, it)
-	}
-	for len(out) > 0 && out[len(out)-1].Separator {
-		out = out[:len(out)-1]
-	}
-	return out
+	return nil
 }
 
 // ---- ClientPrimaryView (ChatTabs) ----

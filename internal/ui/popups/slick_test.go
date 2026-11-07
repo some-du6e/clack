@@ -625,8 +625,40 @@ func TestSlickViewBetterBlock(t *testing.T) {
 		})
 	}
 
+	// message suggestions from search.messages: one by Alice (blocked),
+	// one by Bob, one by an app (its bot user in bot_profile)
+	const aliceTS, bobTS, botTS = "1700000101.000100", "1700000102.000100", "1700000103.000100"
+	e.api.set("search.messages", fmt.Sprintf(`{"ok":true,"messages":{"total":3,"matches":[`+
+		`{"type":"message","ts":%q,"user":%q,"text":"example from alice","channel":{"id":%q,"name":"general"}},`+
+		`{"type":"message","ts":%q,"user":%q,"text":"example from bob","channel":{"id":%q,"name":"general"}},`+
+		`{"type":"message","ts":%q,"subtype":"bot_message","bot_id":"B0HELPER01","text":"example from the bot",`+
+		`"bot_profile":{"id":"B0HELPER01","name":"Helper Bot","app_id":%q,"user_id":%q},"channel":{"id":%q,"name":"general"}}]}}`,
+		aliceTS, slAlice, slGen, bobTS, slBob, slGen, botTS, slAppID, slApp, slGen))
+	msgRow := func(rows []srRow, ts string) *srRow {
+		for i := range rows {
+			if rows[i].kind == srRMsg && rows[i].msg != nil && rows[i].msg.TS == ts {
+				return &rows[i]
+			}
+		}
+		return nil
+	}
+
 	p := NewSearchPopover(e.h, "example", image.Rectangle{})
 	f := slFrame(p)
+	slUntil(t, 15*time.Second, "the message suggestions among the search rows", f, func() bool {
+		return msgRow(p.full, aliceTS) != nil && msgRow(p.full, bobTS) != nil && msgRow(p.full, botTS) != nil
+	})
+	// the author rides on each message suggestion, as Slack's do
+	for _, c := range []struct{ ts, user, bot string }{{aliceTS, slAlice, ""}, {bobTS, slBob, ""}, {botTS, slApp, "B0HELPER01"}} {
+		r := msgRow(p.full, c.ts)
+		sg := p.slickSuggestion(r, r.key())
+		if got := sg.StrOr("user", ""); got != c.user {
+			t.Errorf("message %s suggestion: user %q, want %q", c.ts, got, c.user)
+		}
+		if got := sg.StrOr("bot_id", ""); got != c.bot {
+			t.Errorf("message %s suggestion: bot_id %q, want %q", c.ts, got, c.bot)
+		}
+	}
 	slUntil(t, 15*time.Second, "Alice's row among the search rows", f, func() bool {
 		for i := range p.full {
 			if p.full[i].kind == srRUser && p.full[i].id == slAlice {
@@ -650,6 +682,18 @@ func TestSlickViewBetterBlock(t *testing.T) {
 		r := &p.full[i]
 		if r.kind == srRUser && r.id == slBob && p.hide[r.key()] {
 			t.Errorf("Bob (not blocked) hidden too")
+		}
+	}
+	// Alice's message drops out of the dropdown; Bob's and the app's stay
+	slUntil(t, 15*time.Second, "Alice's message dropped from the search list", f, func() bool {
+		return msgRow(p.rows, aliceTS) == nil
+	})
+	if r := msgRow(p.full, aliceTS); !p.hide[r.key()] {
+		t.Error("Alice's message isn't among the rows BetterBlock dropped")
+	}
+	for _, ts := range []string{bobTS, botTS} {
+		if msgRow(p.rows, ts) == nil {
+			t.Errorf("message %s (not blocked) hidden too", ts)
 		}
 	}
 	if p.sel >= 0 && p.sel < len(p.rows) && p.rows[p.sel].kind == srRUser && p.rows[p.sel].id == slAlice {
