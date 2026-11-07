@@ -101,10 +101,24 @@ func (p *ProfileCard) Layout(gtx layout.Context) layout.Dimensions {
 		if !ok {
 			return p.content(gtx, th, cl, u, ok, w, nil)
 		}
-		return slackc.RenderLazy(gtx, "MemberProfileHoverCard", func() slackc.Props {
-			return p.hoverProps(th, cl, u, w)
-		}, func(gtx layout.Context, pp slackc.Props) layout.Dimensions {
+		hover := func() slackc.Props { return p.hoverProps(th, cl, u, w) }
+		content := func(gtx layout.Context, pp slackc.Props) layout.Dimensions {
 			return p.content(gtx, th, cl, u, ok, w, pp)
+		}
+		// Slack's ProfileHoverCard (the trigger's card) renders
+		// MemberProfileHoverCard: the inner card is its children slot, so
+		// context the outer one provides (LastSeen) reaches the rows.
+		return slackc.RenderLazy(gtx, "ProfileHoverCard", func() slackc.Props {
+			return slackc.Props{
+				"$key":                     p.key + ":outer",
+				"memberId":                 u.ID,
+				"shouldStopPropagation":    false,
+				"hideButtons":              false,
+				"disableMemberProfileLink": false,
+				"children":                 slackc.Child("MemberProfileHoverCard", hover(), content),
+			}
+		}, func(gtx layout.Context, pp slackc.Props) layout.Dimensions {
+			return childrenOr(gtx, pp, "MemberProfileHoverCard", hover, content)
 		})
 	})
 	pos := place(pointRect(p.anchor), d.Size, win, dp(gtx, 8), Below)
@@ -158,8 +172,10 @@ func (p *ProfileCard) clicks(gtx layout.Context, u core.User) {
 }
 
 // hoverProps are MemberProfileHoverCard's props: the primary block is the
-// header slot (ShinigamiEyes appends to it) and the clock line the
-// LocalTime slot (LastSeen appends "Last seen" in the card's context).
+// header slot, Slack's MemberProfileBaseEntity (ShinigamiEyes appends to
+// the header, LocalTime appends the card's time line to the entity), and
+// the clock line the LocalTime slot (LastSeen appends "Last seen" in the
+// card's context).
 func (p *ProfileCard) hoverProps(th *theme.Theme, cl *Colors, u core.User, w int) slackc.Props {
 	return slackc.Props{
 		"$key":                     p.key,
@@ -168,12 +184,26 @@ func (p *ProfileCard) hoverProps(th *theme.Theme, cl *Colors, u core.User, w int
 		"hideButtons":              false,
 		"disableMemberProfileLink": false,
 		"shouldStopPropagation":    false,
-		"header": slackc.Child("MemberProfileHoverCardHeader", slackc.Props{"memberId": u.ID}, func(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+		"header": slackc.Child("MemberProfileBaseEntity", p.entityProps(u), func(gtx layout.Context, _ slackc.Props) layout.Dimensions {
 			return p.header(gtx, th, cl, u, true, w)
 		}),
 		"localTime": slackc.Child("LocalTime", pfLocalTimeProps(u), func(gtx layout.Context, _ slackc.Props) layout.Dimensions {
 			return pfIconLine(gtx, th, cl, "clock", localTime(u, gtx.Now)+" local time", 15, 22)
 		}),
+	}
+}
+
+// entityProps are MemberProfileBaseEntity's props (the card's primary
+// block: avatar, name, presence, pronouns, title, status).
+func (p *ProfileCard) entityProps(u core.User) slackc.Props {
+	h := p.h
+	return slackc.Props{
+		"$key":                     p.key + ":entity",
+		"memberId":                 u.ID,
+		"channelId":                "",
+		"deletedHoverCard":         u.Deleted,
+		"disableMemberProfileLink": false,
+		"onNavigate":               func() { p.Dismiss(); pfOpenFull(h, u.ID) },
 	}
 }
 
@@ -186,8 +216,11 @@ func pfLocalTimeProps(u core.User) slackc.Props {
 func (p *ProfileCard) content(gtx layout.Context, th *theme.Theme, cl *Colors, u core.User, ok bool, w int, pp slackc.Props) layout.Dimensions {
 	pad := dp(gtx, 16)
 	var hd layout.Dimensions
-	if e, has := pp.Elem("header"); has && len(e.Nodes) > 0 {
+	if e, has := pp.Elem("header"); has {
 		hd = slackc.LayoutElement(loose(gtx, image.Pt(w, 1<<20)), e)
+	} else if ok {
+		hd = slackc.RenderLazy(gtx, "MemberProfileBaseEntity", func() slackc.Props { return p.entityProps(u) },
+			func(gtx layout.Context, _ slackc.Props) layout.Dimensions { return p.header(gtx, th, cl, u, ok, w) })
 	} else {
 		hd = p.header(gtx, th, cl, u, ok, w)
 	}
@@ -348,23 +381,50 @@ func pfPresenceProps(h Host, u core.User, showText bool) slackc.Props {
 	}
 }
 
-// pfPresence draws u's presence (Slack's BasePresence): the dot, plus
-// "Active"/"Away" when showText. rowH > 0 centers it in a 20dp column of
-// that height, text 28dp in (the full profile's presence row).
+// pfPresence draws u's presence (Slack's Presence around BasePresence):
+// the dot, plus "Active"/"Away" when showText. rowH > 0 centers it in a
+// 20dp column of that height, text 28dp in (the full profile's presence
+// row).
 func pfPresence(gtx layout.Context, h Host, th *theme.Theme, u core.User, dot float32, showText bool, rowH int) layout.Dimensions {
-	return slackc.RenderLazy(gtx, "BasePresence", func() slackc.Props { return pfPresenceProps(h, u, showText) },
-		func(gtx layout.Context, p slackc.Props) layout.Dimensions {
-			return pfPresenceNative(gtx, th, u, dot, showText, rowH, p)
-		})
+	props, native := pfPresenceParts(h, th, u, dot, showText, rowH)
+	return slackc.RenderLazy(gtx, "Presence", props, native)
 }
 
-// pfPresenceNative honours the showText and isActive overrides (LastSeen
-// renders it with showText=false and its own "Last seen" text after it).
+// pfPresenceParts are Presence's props and native: Presence{showText,
+// isActive, isSelf, userId} whose children slot is BasePresence, so a
+// context from an ancestor (RimetoProfilePresence) reaches both. Slick's
+// LastSeen renders Presence with showText=false plus "Last seen …"; Taut's
+// patches BasePresence the same way. Either override hides the text.
+func pfPresenceParts(h Host, th *theme.Theme, u core.User, dot float32, showText bool, rowH int) (func() slackc.Props, slackc.Native) {
+	show := showText // Presence's showText this frame, after its override
+	bpNative := func(gtx layout.Context, p slackc.Props) layout.Dimensions {
+		s := show
+		if p.Has("showText") {
+			s = s && p.Bool("showText")
+		}
+		return pfPresenceNative(gtx, th, u, dot, s, rowH, p)
+	}
+	bpProps := func() slackc.Props { return pfPresenceProps(h, u, show) }
+	props := func() slackc.Props {
+		p := pfPresenceProps(h, u, showText)
+		p["$key"] = "presence-outer:" + p.StrOr("$key", "")
+		p["children"] = slackc.Child("BasePresence", pfPresenceProps(h, u, showText), bpNative)
+		return p
+	}
+	native := func(gtx layout.Context, p slackc.Props) layout.Dimensions {
+		show = showText
+		if p.Has("showText") {
+			show = p.Bool("showText")
+		}
+		return childrenOr(gtx, p, "BasePresence", bpProps, bpNative)
+	}
+	return props, native
+}
+
+// pfPresenceNative draws the presence with showText already resolved, and
+// honours the isActive override.
 func pfPresenceNative(gtx layout.Context, th *theme.Theme, u core.User, dot float32, showText bool, rowH int, p slackc.Props) layout.Dimensions {
 	active := u.Presence == "active"
-	if p.Has("showText") {
-		showText = p.Bool("showText")
-	}
 	if p.Has("isActive") {
 		active = p.Bool("isActive")
 	}

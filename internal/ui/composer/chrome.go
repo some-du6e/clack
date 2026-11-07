@@ -108,6 +108,8 @@ type chromeState struct {
 	NoBroadcast bool
 	SquareTop   bool
 	Count       int // characters in the message (CharacterCount)
+	SelLo       int // selection start (TextyInput's quill.getSelection)
+	SelN        int // selected characters
 	// TypingIDs / TypingNames: who Typing names, sorted by name.
 	TypingIDs, TypingNames []string
 }
@@ -311,6 +313,8 @@ type chrome struct {
 	wFoot   [crNumBtn]layout.Widget
 	one     [1]*slackc.Node
 	suf     []crSuf
+	inlOne  [1]*slackc.Node // layoutInline's (it may run inside a row item)
+	inl     []crSuf
 }
 
 var crSpaceSizes = [3]unit.Sp{15, 12, 10.5}

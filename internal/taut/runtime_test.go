@@ -636,3 +636,29 @@ func TestMirrorOmitsUnset(t *testing.T) {
 		t.Errorf("remote metadata %v, calls %d", remote, len(h.api.called("conversations.replies")))
 	}
 }
+
+// TestRealSourceMarkers: Slick's BetterGifs finds Slack's GIF picker with
+// {filter: isGifPicker}, which reads Function.prototype.toString (not a
+// toString override) and wants a one-argument function mentioning
+// "gif-picker-host", onGifSelected and emojiSearchQuery.
+func TestRealSourceMarkers(t *testing.T) {
+	h := newHarness(t)
+	var got struct {
+		Fn, Len          bool
+		Host, Sel, Query bool
+		Name             string
+	}
+	h.jsInto(`const c = T.nativeFor('GifPicker'); const src = Function.prototype.toString.call(c)
+	return { Fn: typeof c === 'function', Len: c.length === 1, Host: src.includes('"gif-picker-host"'),
+	  Sel: src.includes('onGifSelected'), Query: src.includes('emojiSearchQuery'), Name: T.componentName(c) }`, &got)
+	if !got.Fn || !got.Len || !got.Host || !got.Sel || !got.Query || got.Name != "GifPicker" {
+		t.Fatalf("GifPicker native: %+v", got)
+	}
+	// Slick's ChannelListTyping matches the sidebar row by its real source
+	var ch struct{ Fn, Marker bool }
+	h.jsInto(`const c = T.nativeFor('Channel')
+	return { Fn: typeof c === 'function', Marker: Function.prototype.toString.call(c).includes('getSidebarChannelUiInfo') }`, &ch)
+	if !ch.Fn || !ch.Marker {
+		t.Fatalf("Channel native: %+v", ch)
+	}
+}

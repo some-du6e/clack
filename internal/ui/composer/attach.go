@@ -42,6 +42,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -97,7 +98,8 @@ func getExplorer() *explorer.Explorer {
 
 // attChip is one attached file.
 type attChip struct {
-	name string
+	id   int    // pendingFileId (MultiFileUploadItem)
+	name string // guarded by attachments.mu: plugins may rename it (prepare)
 	data []byte
 	kind attKind
 
@@ -130,6 +132,7 @@ type attachments struct {
 	chips     []*attChip
 	total     int64
 	nextBatch int
+	nextID    int
 	inflight  []int // batches being uploaded, oldest first
 	done      int   // last finished batch (Clear removes it)
 
@@ -231,7 +234,8 @@ func (a *attachments) add(name string, data []byte) bool {
 	err := attCheckAdd(a.pendingLocked(), a.total, int64(len(data)))
 	var c *attChip
 	if err == nil {
-		c = &attChip{name: name, data: data, kind: attKindOf(name, data)}
+		a.nextID++
+		c = &attChip{id: a.nextID, name: name, data: data, kind: attKindOf(name, data)}
 		a.chips = append(a.chips, c)
 		a.total += int64(len(data))
 	}
@@ -257,6 +261,15 @@ func (a *attachments) prepare(c *attChip) {
 	name, data := c.name, c.data
 	a.mu.Unlock()
 	a.h.Invalidate()
+
+	// The name the file goes out under: Slack's upload reads File.name,
+	// which plugins may redefine (AnonymiseFileNames).
+	if n := uploadName(name, attMime(name)); n != name {
+		a.mu.Lock()
+		c.name = n
+		a.mu.Unlock()
+		name = n
+	}
 
 	var last time.Time
 	prog := func(sent, total int64) {
@@ -868,6 +881,7 @@ func attRun(ctx context.Context, limit int64, name string, args ...string) ([]by
 
 type attView struct {
 	c         *attChip
+	name      string
 	thumb     paint.ImageOp
 	thumbPx   int
 	sending   bool
@@ -893,7 +907,7 @@ func (a *attachments) Layout(gtx layout.Context) layout.Dimensions {
 			c.thumbBusy = true
 			go a.makeThumb(c, px)
 		}
-		views[i] = attView{c: c, thumb: c.thumb, thumbPx: c.thumbPx, sending: c.sending,
+		views[i] = attView{c: c, name: c.name, thumb: c.thumb, thumbPx: c.thumbPx, sending: c.sending,
 			preparing: c.preparing, sent: c.sent, ptotal: c.ptotal,
 			asImage: c.kind.Image && !c.thumbBad}
 		anySending = anySending || c.sending || c.preparing
@@ -922,8 +936,8 @@ func (a *attachments) Layout(gtx layout.Context) layout.Dimensions {
 		}
 		sz := image.Pt(w, px)
 		offset(gtx, padX+x, padT+y, func(gtx layout.Context) layout.Dimensions {
-			a.layoutChip(gtx, v, sz)
-			return layout.Dimensions{Size: sz}
+			// MultiFileUploadItem (attach_slack.go): the chip.
+			return slackc.Component(gtx, "MultiFileUploadItem", attItem{a: a, v: v, sz: sz}, attItem.props, attItem.layout)
 		})
 		x += w + gap
 	}
@@ -982,7 +996,13 @@ func (a *attachments) layoutChip(gtx layout.Context, v attView, sz image.Point) 
 		})
 	}
 	area.Pop()
-	popups.Tooltip(gtx, th, &c.tip, hovered && !c.remove.Hovered(), sz, popups.Above, c.name, "")
+	if hovered && !v.sending {
+		// FileFieldset > EditFileDialogTitle: Slack's rename dialog, at
+		// the chip's edit spot. Clack has no such dialog; both draw
+		// nothing unless a plugin adds to them.
+		slackc.Component(gtx, "FileFieldset", attItem{a: a, v: v, sz: sz}, attItem.fieldsetProps, attItem.layoutFieldset)
+	}
+	popups.Tooltip(gtx, th, &c.tip, hovered && !c.remove.Hovered(), sz, popups.Above, v.name, "")
 }
 
 func (a *attachments) drawThumb(gtx layout.Context, th *theme.Theme, v attView, r image.Rectangle, rad int) {
@@ -1020,7 +1040,7 @@ func (a *attachments) drawCard(gtx layout.Context, th *theme.Theme, v attView, r
 	sh := th.Shaper
 	offset(gtx, tx, pad, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(tw, gtx.Dp(22))}
-		return label(gtx, sh, textStyle{Size: 15, LineHeight: 22, Weight: theme.Bold, Color: th.C.Fg, MaxLines: 1}, v.c.name)
+		return label(gtx, sh, textStyle{Size: 15, LineHeight: 22, Weight: theme.Bold, Color: th.C.Fg, MaxLines: 1}, v.name)
 	})
 	offset(gtx, tx, pad+gtx.Dp(22), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(tw, gtx.Dp(18))}

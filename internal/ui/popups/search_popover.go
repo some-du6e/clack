@@ -149,6 +149,15 @@ type SearchPopover struct {
 	msgs               []core.Message
 	msgConvs           map[string]core.ConvRef
 	msgQ               string
+
+	// Slick boundaries (slick_search.go)
+	full     []srRow         // every row; rows are full minus plugin-hidden ones
+	vis      []srRow         // backing array for filtered rows
+	hide     map[string]bool // row keys a plugin removed from the suggestions
+	sug      srSugState
+	inputPP  slackc.Props // SearchInputBox props a plugin passed (onEnter)
+	clearReq bool         // BaseSearch.clearSearchInput
+	advReq   bool         // BaseSearch.openAdvancedSearchModal
 }
 
 // NewQuickSwitcher opens the Ctrl+K switcher: empty query, centered at the
@@ -347,13 +356,14 @@ func (p *SearchPopover) candRow(c srCand, typing bool) srRow {
 // rebuild recomputes the rows for the current query and results.
 func (p *SearchPopover) rebuild(now time.Time, resetSel bool) {
 	q := strings.TrimSpace(p.query)
-	rows := p.rows[:0]
+	rows := p.full[:0]
 	if q == "" {
 		rows = p.emptyRows(rows)
 	} else {
 		rows = p.typingRows(rows, q, now)
 	}
-	p.rows = rows
+	p.full = rows
+	p.rows = p.visibleRows(rows)
 	for len(p.clicks) < len(p.rows) {
 		p.clicks = append(p.clicks, widget.Clickable{})
 	}
@@ -667,7 +677,7 @@ func (p *SearchPopover) keys(gtx layout.Context) {
 		case key.NameDownArrow:
 			p.move(1)
 		case key.NameReturn, key.NameEnter:
-			p.activate(p.sel)
+			p.enter()
 		case key.NameEscape:
 			if isTop(p) {
 				p.Dismiss()
@@ -713,20 +723,21 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 				p.onQuery(gtx)
 			}
 		case widget.SubmitEvent:
-			p.activate(p.sel)
+			p.enter()
 		}
 		if p.done {
 			return layout.Dimensions{}
 		}
 	}
 	// header buttons (last frame's clicks)
-	if p.clear.Clicked(gtx) {
+	if p.clear.Clicked(gtx) || p.clearReq {
+		p.clearReq = false
 		p.ed.SetText("")
 		p.query = ""
 		p.refocus = true
 		p.onQuery(gtx)
 	}
-	if p.filter.Clicked(gtx) {
+	if p.filter.Clicked(gtx) || p.advReq {
 		q := strings.TrimSpace(p.query)
 		srRecordQuery(q)
 		p.Dismiss()
@@ -808,7 +819,7 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 	defer cs.Pop()
 	defer op.Offset(p.rect.Min).Push(gtx.Ops).Pop()
 
-	p.inputRow(gtx, th, cl, w)
+	p.layoutInput(gtx, th, cl, w, inputH)
 
 	// list
 	if p.ensure {
@@ -817,9 +828,12 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 	}
 	at(gtx, image.Pt(0, inputH+padT), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Exact(image.Pt(w, listH))
-		defer clip.Rect{Max: image.Pt(w, listH)}.Push(gtx.Ops).Pop()
-		return p.list.Layout(gtx, len(p.rows), func(gtx layout.Context, i int) layout.Dimensions {
-			return p.row(gtx, th, cl, i, w)
+		return slackc.RenderLazy(gtx, "SearchAutocomplete", p.autocompleteProps, func(gtx layout.Context, pp slackc.Props) layout.Dimensions {
+			p.applySuggestions(pp)
+			defer clip.Rect{Max: image.Pt(w, listH)}.Push(gtx.Ops).Pop()
+			return p.list.Layout(gtx, len(p.rows), func(gtx layout.Context, i int) layout.Dimensions {
+				return p.row(gtx, th, cl, i, w)
+			})
 		})
 	})
 

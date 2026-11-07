@@ -1,0 +1,91 @@
+name: supply-chain
+# Re-verifies what Clack embeds or builds from third parties:
+# - internal/jsrt/vendor: each file against the sha256 recorded in its README,
+#   and against the npm registry tarball (sha512 = recorded dist.integrity).
+#   Tarballs are only hashed, extracted and diffed; nothing in them is run.
+# - go.sum: `go mod download` checks it against sum.golang.org, `go mod verify`
+#   checks the extracted module cache against it.
+# - workflows: every action pinned to a commit SHA; taut/slick pins agree.
+# (internal/jsrt/jsrt.wasm's reproducibility is checked by jsrt.yml's wasm job.)
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  vendor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: vendored files match the recorded sha256
+        working-directory: internal/jsrt/vendor
+        run: |
+          set -euo pipefail
+          awk '/^```sha256$/{f=1;next} /^```$/{f=0} f' README.md > /tmp/vendor.sha256
+          sha256sum -c --strict /tmp/vendor.sha256
+          # no vendored .js the README doesn't list
+          ls *.js | sort > /tmp/have
+          awk '{print $2}' /tmp/vendor.sha256 | grep '\.js$' | sort > /tmp/listed
+          diff /tmp/listed /tmp/have
+      - name: vendored files match the npm registry tarballs
+        working-directory: internal/jsrt/vendor
+        run: |
+          set -euo pipefail
+          vendor=$PWD
+          awk '/^```npm$/{f=1;next} /^```$/{f=0} f' README.md > /tmp/vendor.npm
+          test -s /tmp/vendor.npm
+          while read -r pkg ver integrity maps; do
+            reg=$(curl -fsSL "https://registry.npmjs.org/$pkg/$ver" | jq -r .dist.integrity)
+            [ "$reg" = "$integrity" ] || { echo "::error::$pkg@$ver: registry integrity $reg, recorded $integrity"; exit 1; }
+            d=$(mktemp -d)
+            curl -fsSL -o "$d/pkg.tgz" "https://registry.npmjs.org/$pkg/-/$pkg-$ver.tgz"
+            got="sha512-$(openssl dgst -sha512 -binary "$d/pkg.tgz" | base64 -w0)"
+            [ "$got" = "$integrity" ] || { echo "::error::$pkg@$ver: tarball $got, expected $integrity"; exit 1; }
+            mkdir "$d/x" && tar -xzf "$d/pkg.tgz" -C "$d/x" --no-same-owner
+            for m in $maps; do
+              cmp "$d/x/package/${m%%=*}" "$vendor/${m#*=}"
+              echo "$pkg@$ver ${m%%=*} == ${m#*=}"
+            done
+          done < /tmp/vendor.npm
+
+  go-modules:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false # verify a fresh download, not a restored cache
+      - name: go mod download (checked against sum.golang.org)
+        run: go mod download all
+      - name: go mod verify
+        run: go mod verify
+      - name: module list
+        run: go list -m all
+
+  workflows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: every action pinned to a commit SHA
+        run: |
+          set -euo pipefail
+          if grep -nE '^\s*-?\s*uses:' .github/workflows/*.yml | grep -vE 'uses: *[^@ ]+@[0-9a-f]{40}( |$)'; then
+            echo "::error::unpinned actions above"; exit 1
+          fi
+      - name: taut/slick pins agree across workflows
+        run: |
+          set -euo pipefail
+          for v in TAUT_PIN SLICK_PIN; do
+            n=$(grep -hoE "^\s*$v: [0-9a-f]{40}" .github/workflows/*.yml | awk '{print $2}' | sort -u | wc -l)
+            [ "$n" = 1 ] || { echo "::error::$v differs between workflows"; grep -nE "$v:" .github/workflows/*.yml; exit 1; }
+          done

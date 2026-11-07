@@ -813,3 +813,37 @@ func TestHostKeysReachDOM(t *testing.T) {
 		t.Errorf("keydown at the field %v, submit at the form %v; dispatched %v", key3, submit1, got)
 	}
 }
+
+// TestNestedNativeSeesInput: a native drawn inside another native's
+// children (a sidebar row's <Original> laying out its slots) is first
+// drawn during the parent's measure pass, without input; the real pass
+// must draw it again with input, or its clicks are lost.
+func TestNestedNativeSeesInput(t *testing.T) {
+	live := 0
+	RegisterHost(func(gtx layout.Context, h *Host) layout.Dimensions {
+		if gtx.Source.Enabled() {
+			live++
+		}
+		return layout.Dimensions{Size: image.Pt(20, 10)}
+	}, "TestLeaf")
+	withStyles(t, func(n *Node, s *css.Style) {})
+	windowSize = image.Pt(1000, 800)
+	v := NewView(1)
+	row := func(gtx layout.Context, p Props) layout.Dimensions {
+		if e, ok := PropChildren(p); ok {
+			return LayoutElement(gtx, e)
+		}
+		return layout.Dimensions{}
+	}
+	nodes := mustTree(t, `{"t":"div","k":1,"c":[{"t":"@","n":"Row","k":2,"c":[{"t":"@","n":"TestLeaf","k":3}]}]}`)
+	var r input.Router
+	for i := 0; i < 3; i++ {
+		gtx := testGtx(400, 400)
+		gtx.Source = r.Source()
+		live = 0
+		v.Layout(gtx, nodes, "Row", nil, row)
+		if live == 0 {
+			t.Fatalf("frame %d: the nested native never ran with input", i)
+		}
+	}
+}
