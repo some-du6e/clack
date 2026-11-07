@@ -1,0 +1,56 @@
+name: composer-taut
+# Builds Taut's plugins with Taut's own `build:user-plugin` (never committed:
+# they're GPLv3) and runs the composer's plugin tests against them: typing,
+# sends, pastes and live markup through the composer's real call sites, plus
+# the no-plugin allocation checks and benchmarks.
+on:
+  push:
+    paths:
+      - "internal/ui/composer/**"
+      - "internal/taut/**"
+      - "internal/jsrt/**"
+      - ".github/workflows/composer-taut.yml"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "taut git ref (branch, tag or sha)"
+        required: false
+        default: "main"
+
+jobs:
+  composer-taut:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: clone taut
+        run: |
+          git clone -q https://github.com/jeremy46231/taut /tmp/taut
+          git -C /tmp/taut checkout -q "${{ inputs.ref || 'main' }}"
+          git -C /tmp/taut log --oneline -1
+      - name: install taut deps (no scripts)
+        working-directory: /tmp/taut
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: build:user-plugin
+        working-directory: /tmp/taut
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/dist/taut-plugins"
+          for name in SilentTyping InvisibleForward ClearURLs RealMarkdown AnonymizeFilenames; do
+            f=$(ls plugins/$name.ts plugins/$name.tsx 2>/dev/null | head -1)
+            npm run -s build:user-plugin -- "$f" "$GITHUB_WORKSPACE/dist/taut-plugins/$name.js"
+          done
+          ls -la "$GITHUB_WORKSPACE/dist/taut-plugins"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
+      - name: composer plugin tests
+        env:
+          TAUT_PLUGINS_DIR: ${{ github.workspace }}/dist/taut-plugins
+        run: go test -count=1 -timeout 10m -v -run 'TestTaut|TestRouting|TestSyncHooks|TestDraftIDs|TestAutocompleteRows' ./internal/ui/composer/
+      - name: benchmarks (no plugins)
+        run: go test -run '^$' -bench 'ThunkGuard|SendTyping|SyncHooks' -benchmem -benchtime 200000x ./internal/ui/composer/

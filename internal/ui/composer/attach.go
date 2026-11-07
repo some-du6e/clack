@@ -268,7 +268,8 @@ func (a *attachments) prepare(c *attChip) {
 			a.h.Invalidate()
 		}
 	}
-	pu, err := coreAPI{a.h.Core()}.prepareUpload(context.Background(), core.UploadFile{Name: name, Title: name, Data: data}, prog)
+	// addAndUploadPendingFile (AnonymizeFilenames renames the file here).
+	pu, err := prepareFile(context.Background(), coreAPI{a.h.Core()}, name, data, prog)
 	a.mu.Lock()
 	c.preparing = false
 	if err != nil {
