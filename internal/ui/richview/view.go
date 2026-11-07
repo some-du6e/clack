@@ -138,6 +138,22 @@ func (v *View) SetOptions(o Options) {
 // Doc returns the current document.
 func (v *View) Doc() richtext.Doc { return v.doc }
 
+// Release drops the layout and its recorded paint ops (glyph paths, the
+// bulk of a message's memory). The next Layout lays the doc out again;
+// state (selection, component states) is kept. For rows that have been
+// off screen for a while.
+func (v *View) Release() {
+	if !v.recorded && len(v.d.frags) == 0 {
+		return
+	}
+	v.d = display{}
+	v.ops = op.Ops{}
+	v.call = op.CallOp{}
+	v.recorded = false
+	v.pending = nil
+	v.dirty = true
+}
+
 // HasSelection reports whether some text is selected.
 func (v *View) HasSelection() bool { return v.selA != v.selB }
 

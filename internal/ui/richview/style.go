@@ -165,6 +165,7 @@ type Style struct {
 
 	gen   uint32 // bumped by SetPalette; Views re-record when it changes
 	words map[wordKey]*shaped
+	prev  map[wordKey]*shaped // previous generation (see word)
 	space map[faceKey]spaceMetrics
 }
 
@@ -190,6 +191,7 @@ func (s *Style) SetPalette(p Palette) {
 // Invalidate forces every View to re-layout (e.g. after the font changed).
 func (s *Style) Invalidate() {
 	s.gen++
+	s.prev = nil
 	for k := range s.words {
 		delete(s.words, k)
 	}
