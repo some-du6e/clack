@@ -359,6 +359,9 @@ func (b *backend) handle(a *App, ev core.Event) {
 		}
 	case "conv", "conv_removed", "sidebar_changed", "resync":
 		b.resnapshot(a)
+	case "auth_failed":
+		// core stopped all traffic on a dead session: back to sign-in
+		a.sessionEnded()
 	case "names":
 		// core resolved channel/user/bot names in the background: re-read
 		// the visible conversations so mentions and headers re-render.

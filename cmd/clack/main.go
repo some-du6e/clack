@@ -131,6 +131,14 @@ func main() {
 	} else {
 		a.SetLogin(login)
 	}
+	// Taut's api.accounts: switch to other saved credentials.
+	a.SetSwitchAccount(func(c slack.Creds) {
+		if err := writeCreds(*credsPath, c); err != nil {
+			log.Printf("accounts: %v", err)
+			return
+		}
+		connect(c)
+	})
 	if os.Getenv("CLACK_TIMING") != "" || os.Getenv("YOLOSLACK_TIMING") != "" {
 		log.Printf("timing: main ready: %v", time.Since(started).Round(100*time.Microsecond))
 	}

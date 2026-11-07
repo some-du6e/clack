@@ -15,6 +15,8 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/jsrt"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/taut"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 )
 
@@ -100,6 +102,8 @@ func (b *backend) startTaut(a *App) {
 		return
 	}
 	b.taut = t
+	popups.SetTaut(t)   // channel/member menus, search, reactions, delete
+	composer.SetTaut(t) // composer buttons, send checks/transforms, drafts
 	if envFlag("TIMING") {
 		log.Printf("timing: taut.New %v (js runtime started: %v)", time.Since(t0).Round(10*time.Microsecond), t.Started())
 	}
@@ -117,12 +121,18 @@ func (b *backend) watchTaut(a *App, t *taut.Taut) {
 
 func (b *backend) stopTaut() {
 	if b.taut != nil {
+		popups.SetTaut(nil)
+		composer.SetTaut(nil)
 		_ = b.taut.Close()
 		b.taut = nil
 		slackc.SetBridge(nil)
 		slackc.Reset()
 	}
 }
+
+// SetSwitchAccount sets how api.accounts signs in as other credentials
+// (cmd/clack: save creds.json and reconnect).
+func (a *App) SetSwitchAccount(f func(c slack.Creds)) { a.opts.SwitchAccount = f }
 
 // switchAccount handles api.accounts: empty creds show the sign-in screen,
 // otherwise Clack saves them and reconnects as that account.
@@ -139,6 +149,26 @@ func (a *App) switchAccount(c slack.Creds) {
 	a.viewOrder = nil
 	a.convos, a.convoOrder = nil, nil
 	a.opts.SwitchAccount(c)
+}
+
+// sessionEnded shows the sign-in screen after core reported auth_failed
+// (core.App.SignedOut is true from then on); credentials stay on disk so a
+// fresh paste replaces them.
+func (a *App) sessionEnded() {
+	if a.login != nil {
+		return
+	}
+	a.showLogin()
+	a.login.err = "Your Slack session ended. Sign in again."
+}
+
+// SignedOut reports whether the Slack session ended (sign-in needed).
+func (a *App) SignedOut() bool {
+	if a.login != nil {
+		return true
+	}
+	c := a.Core()
+	return c != nil && c.SignedOut()
 }
 
 // showLogin returns to the sign-in screen without deleting credentials.
