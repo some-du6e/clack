@@ -81,6 +81,7 @@ overrides:
       - libx11-6
       - libx11-xcb1
       - libxcursor1
+      - libxfixes3
       - libegl1
       - libgles2
     recommends:
@@ -97,6 +98,7 @@ overrides:
       - libX11
       - libX11-xcb
       - libXcursor
+      - libXfixes
       - libglvnd-egl
       - libglvnd-gles
     recommends:

@@ -207,7 +207,7 @@ jobs:
           test -f /usr/share/icons/hicolor/256x256/apps/clack.png
           test -f /usr/share/icons/hicolor/scalable/apps/clack.svg
           if ldd /usr/bin/clack | grep 'not found'; then exit 1; fi
-          for lib in libEGL.so.1 libGLESv2.so.2 libwayland-egl.so.1 libwayland-cursor.so.0 libxkbcommon-x11.so.0 libX11-xcb.so.1 libXcursor.so.1; do
+          for lib in libEGL.so.1 libGLESv2.so.2 libwayland-egl.so.1 libwayland-cursor.so.0 libxkbcommon-x11.so.0 libX11-xcb.so.1 libXcursor.so.1 libXfixes.so.3; do
             ldconfig -p | grep -qF "$lib" || { echo "missing $lib"; exit 1; }
           done
           EOF
@@ -263,6 +263,17 @@ jobs:
             cp packaging/windows/README.txt build/windows-$arch/Clack/README.txt
             (cd build/windows-$arch && zip -9 -r "../../dist/Clack-${VERSION}-windows-$arch.zip" Clack)
             unzip -l "dist/Clack-${VERSION}-windows-$arch.zip"
+          done
+      - name: check resources in Clack.exe
+        run: |
+          set -eu
+          # Gio loads the window/tray icon with LoadImage(module, 1, IMAGE_ICON)
+          for arch in amd64 arm64; do
+            t=$(mktemp -d)
+            go-winres extract --xml-manifest --dir "$t" build/windows-$arch/Clack/Clack.exe
+            ls "$t"
+            jq -e '.RT_GROUP_ICON["#1"] and .RT_MANIFEST["#1"] and .RT_VERSION["#1"]' "$t/winres.json"
+            grep -q PerMonitorV2 "$t"/*.manifest
           done
       - uses: actions/upload-artifact@v4
         with:
