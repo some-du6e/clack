@@ -457,7 +457,8 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 	if m.Pinned && !rc.thread {
 		y += r.labelLine(gtx, rc, cx, y, "pin", pinnedLabel(rc, m.PinnedBy))
 	}
-	if ephemeral(rc, m) {
+	eph := ephemeral(rc, m)
+	if eph {
 		y += r.labelLine(gtx, rc, cx, y, "eye", "Only visible to you")
 	}
 	if m.Broadcast && !rc.thread && m.ThreadTS != "" && m.ThreadTS != m.TS {
@@ -489,7 +490,7 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 		bg = c.PinnedHover
 	case m.Pinned:
 		bg = c.Pinned
-	case rc.hovered:
+	case rc.hovered, eph: // ephemeral: rgba(29,28,29,.04) (c-message_kit__background--labels--ephemeral)
 		bg = c.Hover
 	}
 	bg = st.Background(bg)
