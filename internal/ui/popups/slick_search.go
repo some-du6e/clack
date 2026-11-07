@@ -48,7 +48,7 @@ func (p *SearchPopover) suggestions() ([]any, int) {
 			sel = len(keys)
 		}
 		keys = append(keys, k)
-		out = append(out, p.suggestion(r, k))
+		out = append(out, p.slickSuggestion(r, k))
 	}
 	if !sameStrings(keys, p.sug.keys) {
 		p.sug.gen++
@@ -62,7 +62,7 @@ func (p *SearchPopover) suggestions() ([]any, int) {
 	return out, sel
 }
 
-func (p *SearchPopover) suggestion(r *srRow, k string) slackc.Props {
+func (p *SearchPopover) slickSuggestion(r *srRow, k string) slackc.Props {
 	s := slackc.Props{"_key": k, "id": r.id, "title": r.title}
 	switch r.kind {
 	case srRUser:
