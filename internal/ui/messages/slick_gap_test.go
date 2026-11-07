@@ -3,6 +3,7 @@ package messages
 import (
 	"image"
 	"testing"
+	"time"
 
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -52,12 +53,23 @@ func TestSlickViewNicknamesRenamesSender(t *testing.T) {
 	e.install(t, "Nicknames", map[string]any{"names": map[string]any{"UALICE": "Ally Nick"}})
 	v := NewChannelView(e.h, tGen)
 	v.Preview = true
-	e.waitFor(t, "Alice's row named by her nickname", frameFn(v), func() bool {
+	f := frameFn(v)
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		f()
 		for _, r := range v.s.rows {
 			if r != nil && r.m.User == "UALICE" && r.name == "Ally Nick" {
-				return true
+				return
 			}
 		}
-		return false
-	})
+		time.Sleep(20 * time.Millisecond)
+	}
+	tt := tautOf()
+	mf, ok := tt.MemberView("UALICE")
+	for k, r := range v.s.rows {
+		if r != nil && r.m.User == "UALICE" {
+			t.Logf("row %v: name %q m.Name %q", k, r.name, r.m.Name)
+		}
+	}
+	t.Fatalf("Alice's row isn't named by her nickname; members patched %v, MemberView %+v %v", tt.SlicePatched("members"), mf, ok)
 }

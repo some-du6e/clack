@@ -406,26 +406,8 @@ func (r *row) avatarProps() slackc.Props {
 func (r *row) preambleProps() slackc.Props {
 	return r.pane(slackc.Props{"$key": r.ts, "msg": r.message(), "shouldRender": true, "children": []any{
 		slackc.Child("MessageSender", r.senderProps(), r.layoutSender),
-		slackc.Child("Timestamp", r.timestampProps(), r.layoutPreambleTimestamp),
+		slackc.Child("Timestamp", r.timestampProps(), r.layoutTimestamp),
 	}})
-}
-
-// layoutPreambleTimestamp is the Timestamp slot inside a patched
-// BaseBroadcastPreamble: the children then flow inline through slackc,
-// so the name-to-time gap nameLine adds natively comes with the slot.
-func (r *row) layoutPreambleTimestamp(gtx layout.Context, p slackc.Props) layout.Dimensions {
-	gap := dp(gtx, mt.tsGap)
-	g := gtx
-	g.Constraints.Max.X = max(0, g.Constraints.Max.X-gap)
-	g.Constraints.Min.X = max(0, g.Constraints.Min.X-gap)
-	t := op.Offset(image.Pt(gap, 0)).Push(gtx.Ops)
-	d := r.layoutTimestamp(g, p)
-	t.Pop()
-	if d.Size.X == 0 && d.Size.Y == 0 {
-		return d // hidden timestamp: no gap either
-	}
-	d.Size.X += gap
-	return d
 }
 
 func (r *row) threadSenderProps() slackc.Props {
