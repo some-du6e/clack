@@ -399,7 +399,7 @@ func (w *window) tile(gtx C, s *huddle.Session, p huddle.Participant, cam string
 				})
 			}
 			if p.Reaction != "" {
-				if age := now.Sub(p.ReactedAt); age < 3*time.Second {
+				if age := now.Sub(p.ReactedAt); age < 4*time.Second {
 					w.reaction(gtx, p.Reaction, sz, age)
 				}
 			}
