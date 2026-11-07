@@ -661,10 +661,10 @@ func TestSlickViewBetterBlock(t *testing.T) {
 // (GifListItem); the picker body is the GifPicker boundary.
 func TestSlickViewBetterGifs(t *testing.T) {
 	gifAnims.mu.Lock()
-	prev := gifAnims.http
-	gifAnims.http = &http.Client{Transport: slNoNet{}}
+	prev := gifAnims.fetch
+	gifAnims.fetch = func(context.Context, string) ([]byte, error) { return nil, errors.New("no network in tests") }
 	gifAnims.mu.Unlock()
-	t.Cleanup(func() { gifAnims.mu.Lock(); gifAnims.http = prev; gifAnims.mu.Unlock() })
+	t.Cleanup(func() { gifAnims.mu.Lock(); gifAnims.fetch = prev; gifAnims.mu.Unlock() })
 
 	e := slNewEnv(t)
 	e.load(t, "BetterGifs", nil)

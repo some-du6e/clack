@@ -55,12 +55,28 @@ type gifAnimKey struct {
 }
 
 var gifAnims = struct {
-	mu  sync.Mutex
-	m   map[gifAnimKey]*gifAnim
-	sem chan struct{}
+	mu    sync.Mutex
+	m     map[gifAnimKey]*gifAnim
+	sem   chan struct{}
+	fetch func(ctx context.Context, raw string) ([]byte, error) // tests swap it (no network)
 }{
-	m:   map[gifAnimKey]*gifAnim{},
-	sem: make(chan struct{}, gifAnimWorkers),
+	m:     map[gifAnimKey]*gifAnim{},
+	sem:   make(chan struct{}, gifAnimWorkers),
+	fetch: gifAnimFetch,
+}
+
+// gifAnimFetch loads a GIF with no credentials. gif.search results are
+// Giphy media, which Slack's picker loads directly; anything else goes
+// through Slack's image proxy.
+func gifAnimFetch(ctx context.Context, raw string) ([]byte, error) {
+	var b []byte
+	var err error
+	if pu, perr := url.Parse(raw); perr == nil && pu.Scheme == "https" && slack.HostUnder(pu.Hostname(), "giphy.com") {
+		b, _, err = slack.GetNoCreds(ctx, raw, gifAnimMaxBytes)
+	} else {
+		b, _, err = slack.FetchPublic(ctx, raw, gifAnimMaxBytes)
+	}
+	return b, err
 }
 
 // gifAnimURL is the animated .gif for a result (from the 200w webp preview).
@@ -153,15 +169,10 @@ func gifAnimLoad(h Host, k gifAnimKey, a *gifAnim) {
 func gifAnimDecode(raw string, px int) ([]paint.ImageOp, []time.Duration, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
-	// gif.search results are Giphy media, which Slack's picker loads
-	// directly; fetch them with no credentials, anything else via the proxy.
-	var b []byte
-	var err error
-	if pu, perr := url.Parse(raw); perr == nil && pu.Scheme == "https" && slack.HostUnder(pu.Hostname(), "giphy.com") {
-		b, _, err = slack.GetNoCreds(ctx, raw, gifAnimMaxBytes)
-	} else {
-		b, _, err = slack.FetchPublic(ctx, raw, gifAnimMaxBytes)
-	}
+	gifAnims.mu.Lock()
+	fetch := gifAnims.fetch
+	gifAnims.mu.Unlock()
+	b, err := fetch(ctx, raw)
 	if err != nil {
 		return nil, nil, err
 	}
