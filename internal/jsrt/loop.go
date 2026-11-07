@@ -48,6 +48,8 @@ type Runtime struct {
 	onDocProps func(html, body []byte)
 	onCommit   func(id uint64, tree []byte)
 	fetches    map[int]context.CancelFunc
+	opens      []time.Time // recent external opens (allowOpen)
+	openWarned bool
 	start      time.Time
 
 	kvs      map[string]KV

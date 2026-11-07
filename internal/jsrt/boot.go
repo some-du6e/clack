@@ -310,7 +310,10 @@ func (r *Runtime) installHost() {
 		return nil, nil
 	})
 	def("openURL", func(js *Ctx, _ Value, a []Value) (any, error) {
-		if r.opts.OpenURL != nil {
+		// window.open, link clicks and location.assign: at most
+		// openURLBurst per openURLWindow, like a popup blocker, so a plugin
+		// can't open browser tabs in a loop. Extra calls are dropped.
+		if r.opts.OpenURL != nil && r.allowOpen(time.Now()) {
 			u := str(a, 0)
 			go r.opts.OpenURL(u)
 		}
@@ -585,4 +588,32 @@ func pickedFiles(files []PickedFile) func(*Ctx) (Value, error) {
 		}
 		return arr, nil
 	}
+}
+
+// Rate limit for opening external links from JS (window.open and friends).
+const (
+	openURLBurst  = 5
+	openURLWindow = 10 * time.Second
+)
+
+// allowOpen reports whether one more external open fits the rate limit.
+// JS thread only.
+func (r *Runtime) allowOpen(now time.Time) bool {
+	keep := r.opens[:0]
+	for _, t := range r.opens {
+		if now.Sub(t) < openURLWindow {
+			keep = append(keep, t)
+		}
+	}
+	r.opens = keep
+	if len(r.opens) >= openURLBurst {
+		if !r.openWarned {
+			r.openWarned = true
+			r.opts.Log("warn", "window.open: too many links opened; ignoring the rest for a few seconds")
+		}
+		return false
+	}
+	r.openWarned = false
+	r.opens = append(r.opens, now)
+	return true
 }

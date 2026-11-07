@@ -255,3 +255,26 @@ func TestBytecodeCacheIgnoresSymlinks(t *testing.T) {
 		t.Fatalf("cache file is still the symlink: %v", err)
 	}
 }
+
+// window.open and link clicks open at most openURLBurst links per
+// openURLWindow, so a plugin can't open browser tabs in a loop.
+func TestOpenURLRateLimited(t *testing.T) {
+	var logs int
+	r := &Runtime{opts: Options{Log: func(string, string) { logs++ }}}
+	t0 := time.Unix(1_000_000, 0)
+	n := 0
+	for i := 0; i < 50; i++ {
+		if r.allowOpen(t0.Add(time.Duration(i) * time.Millisecond)) {
+			n++
+		}
+	}
+	if n != openURLBurst {
+		t.Fatalf("opened %d links in a burst, want %d", n, openURLBurst)
+	}
+	if logs != 1 {
+		t.Errorf("logged %d warnings, want 1", logs)
+	}
+	if !r.allowOpen(t0.Add(openURLWindow + time.Second)) {
+		t.Error("still refusing after the window passed")
+	}
+}
