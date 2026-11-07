@@ -474,7 +474,7 @@ func init() {
 		{[]string{"border-radius", "border-top-left-radius", "border-top-right-radius", "border-bottom-left-radius", "border-bottom-right-radius"}, false},
 		{[]string{"box-shadow"}, false},
 		{[]string{"background-image"}, false},
-		{[]string{"outline"}, false},
+		{[]string{"outline", "outline-width", "outline-style", "outline-color", "outline-offset"}, false},
 		{[]string{"text-decoration", "text-decoration-line"}, false},
 		{[]string{"pointer-events"}, true},
 	}
