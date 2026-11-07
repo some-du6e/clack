@@ -8,10 +8,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -126,7 +123,7 @@ func main() {
 	if desktop.Forward(cfg, desktop.Request{URL: link}) {
 		return
 	}
-	images := imgcache.New(httpFetch, filepath.Join(cfg, "cache", "img"), nil)
+	images := imgcache.New(publicFetch, filepath.Join(cfg, "cache", "img"), nil)
 	opts := ui.Options{ConfigDir: cfg, Dark: *dark, Started: started,
 		SignOut: func() { _ = os.Remove(*credsPath) },
 		OnWindowEvent: func(e event.Event) {
@@ -159,15 +156,16 @@ func main() {
 		svc := core.New(c, st)
 		images.SetFetcher(func(ctx context.Context, raw string) ([]byte, error) {
 			// slack.com hosts (files.slack.com, …) need the session cookie and
-			// stay in memory; CDNs, Slack's image proxy and unfurl hosts are public.
-			if u, err := url.Parse(raw); err == nil {
-				h := strings.ToLower(u.Hostname())
-				if h == "slack.com" || strings.HasSuffix(h, ".slack.com") {
-					b, _, err := svc.Fetch(ctx, raw)
-					return b, err
-				}
+			// stay in memory. Everything else is fetched with no credentials:
+			// Slack's CDNs directly, any other host (unfurls, attachment and
+			// block images, bot icons, plugin CSS) through Slack's image proxy,
+			// so a sender never sees your IP address.
+			if c.CredentialsOK(raw) {
+				b, _, err := svc.Fetch(ctx, raw)
+				return b, err
 			}
-			return httpFetch(ctx, raw)
+			b, _, err := slack.FetchPublic(ctx, raw, 32<<20)
+			return b, err
 		})
 		a.Attach(svc, cacheDir)
 	}
@@ -240,24 +238,11 @@ func checkUpdate(ctx context.Context) (ui.UpdateInfo, bool, error) {
 	return ui.UpdateInfo{Tag: r.Tag, URL: r.URL}, desktop.Newer(r.Tag, cur), nil
 }
 
-var httpClient = &http.Client{Timeout: 45 * time.Second}
-
-// httpFetch downloads public images (avatars, emoji, unfurl thumbs).
-func httpFetch(ctx context.Context, url string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", "clack/0.1")
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("GET %s: %s", url, resp.Status)
-	}
-	return io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+// publicFetch loads images with no credentials (before sign-in): Slack's
+// CDNs directly, anything else through Slack's image proxy.
+func publicFetch(ctx context.Context, raw string) ([]byte, error) {
+	b, _, err := slack.FetchPublic(ctx, raw, 32<<20)
+	return b, err
 }
 
 func readCreds(path string) (slack.Creds, error) {

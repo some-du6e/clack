@@ -39,6 +39,10 @@ func SignIn(ctx context.Context, in SignInInput) (Creds, error) {
 	if !strings.Contains(ws, ".") {
 		ws += ".slack.com"
 	}
+	// The token and cookie are about to be sent here: only slack.com hosts.
+	if !CookieURL("https://" + ws + "/") {
+		return Creds{}, errors.New("the workspace should be a slack.com address, e.g. hackclub or hackclub.slack.com")
+	}
 	tok := strings.TrimSpace(in.Token)
 	if !strings.HasPrefix(tok, "xoxc-") {
 		return Creds{}, errors.New("the token should start with xoxc-")
@@ -56,7 +60,7 @@ func SignIn(ctx context.Context, in SignInInput) (Creds, error) {
 		return Creds{}, errors.New("that is the org token; paste the workspace token in Token and this one in Org token")
 	}
 	c.Team, c.UserID, c.EnterpriseID = a.TeamID, a.UserID, a.EnterpriseID
-	if a.URL != "" {
+	if a.URL != "" && CookieURL(a.URL) {
 		c.TeamURL = a.URL
 	}
 	if org := strings.TrimSpace(in.OrgToken); org != "" {
@@ -74,7 +78,9 @@ func SignIn(ctx context.Context, in SignInInput) (Creds, error) {
 		}
 		c.EnterpriseToken = org
 		c.EnterpriseID = oa.TeamID
-		c.EnterpriseURL = oa.URL
+		if CookieURL(oa.URL) {
+			c.EnterpriseURL = oa.URL
+		}
 	}
 	return c, nil
 }

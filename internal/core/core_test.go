@@ -408,12 +408,9 @@ func TestFetchMemoryCache(t *testing.T) {
 		w.Write([]byte("PNGDATA" + r.URL.Path))
 	}))
 	defer srv.Close()
-	testAllowHTTP = true
-	oldAllowed := fetchHostAllowed
-	fetchHostAllowed = func(h string) bool { return h == "127.0.0.1" }
-	defer func() { testAllowHTTP = false; fetchHostAllowed = oldAllowed }()
-
-	a := New(slack.New(slack.Creds{Cookie: "xoxd-test", UserID: "USELF"}), store.New(""))
+	// The fake server is the client's API origin, the only non-slack.com
+	// host Download will send the cookie to.
+	a := New(slack.New(slack.Creds{Cookie: "xoxd-test", UserID: "USELF", TeamURL: srv.URL + "/"}), store.New(""))
 	ctx := context.Background()
 	for i := 0; i < 3; i++ {
 		b, mime, err := a.Fetch(ctx, srv.URL+"/a.png")
@@ -465,5 +462,33 @@ func TestMentionsAndHelpers(t *testing.T) {
 	ids := strings.Join(a.presenceIDs([]string{"U9", "B1", "U9"}), ",")
 	if !strings.Contains(ids, "USELF") || !strings.Contains(ids, "U1") || strings.Count(ids, "U9") != 1 || strings.Contains(ids, "B1") {
 		t.Errorf("presenceIDs = %s", ids)
+	}
+}
+
+// Message content can point a file's url_private, thumbs or an image at any
+// host (remote files, unfurls, bot icons). Fetch only sends the cookie to
+// slack.com, fetches Slack's CDNs without it, and refuses everything else
+// before making a request.
+func TestFetchRefusesNonSlack(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits.Add(1) }))
+	defer srv.Close()
+	a := New(slack.New(slack.Creds{Cookie: "xoxd-test", UserID: "USELF"}), store.New(""))
+	ctx := context.Background()
+	for _, u := range []string{
+		srv.URL + "/remote-file.pdf", // a files.remote.add external_url
+		"http://files.slack.com/files-pri/T1-F1/x.png",
+		"https://files.slack.com.evil.io/files-pri/x.png",
+		"https://evil.example/slack.com/files-pri/x.png",
+		"https://files.slack.com@evil.example/x.png",
+		"https://files.slack.com:8443/x.png",
+		"file:///etc/passwd",
+	} {
+		if _, _, err := a.Fetch(ctx, u); err == nil || !strings.Contains(err.Error(), "refuses") {
+			t.Errorf("Fetch(%q) = %v, want refused", u, err)
+		}
+	}
+	if hits.Load() != 0 {
+		t.Fatalf("refused URLs still made %d requests", hits.Load())
 	}
 }

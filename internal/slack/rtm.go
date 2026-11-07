@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -82,6 +83,11 @@ func (r *RTM) once(ctx context.Context) error {
 	r.reconnectURL = ""
 	if u == "" {
 		u = r.c.WebSocketURL(ctx, r.fails%3 == 2) // every third failure, try the backup gateway
+	}
+	// The URL carries the token and the dial sends the cookie: it must be
+	// on slack.com, whatever client.getWebSocketURL or a reconnect_url said.
+	if pu, err := url.Parse(u); err != nil || !r.c.credsOK(pu) {
+		return ErrUntrustedHost
 	}
 	if r.c.SignedOut() {
 		return ErrSignedOut
