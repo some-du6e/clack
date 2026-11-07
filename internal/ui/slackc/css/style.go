@@ -15,6 +15,10 @@ import "image/color"
 type Length struct {
 	Px, Pct, Vw, Vh float32
 	Kind            LenKind
+	// x holds min()/max()/clamp() over mixed units, which don't fold
+	// into Px+Pct+Vw+Vh; Resolve evaluates it (Px then holds the value
+	// with a zero percentage base).
+	x *lexpr
 }
 
 // LenKind says whether a Length holds a value or a keyword.
@@ -51,6 +55,9 @@ func (l Length) IsAuto() bool { return l.Kind == LenAuto }
 func (l Length) Resolve(base, vw, vh, def float32) float32 {
 	if l.Kind != LenFixed {
 		return def
+	}
+	if l.x != nil {
+		return l.x.eval(base, vw, vh)
 	}
 	return l.Px + l.Pct*base/100 + l.Vw*vw/100 + l.Vh*vh/100
 }
@@ -309,9 +316,10 @@ type Background struct {
 
 // Gradient is a parsed linear or radial gradient.
 type Gradient struct {
-	Radial bool
-	Angle  float32 // radians, linear only (CSS: 0 = to top, clockwise)
-	Stops  []Stop
+	Radial    bool
+	Repeating bool    // repeating-linear-gradient / repeating-radial-gradient
+	Angle     float32 // radians, linear only (CSS: 0 = to top, clockwise)
+	Stops     []Stop
 }
 
 // Stop is a gradient color stop; Pos < 0 means auto-distributed.
@@ -415,7 +423,14 @@ type Style struct {
 
 	// Vars are the custom properties in scope (inherited). Shared with the
 	// parent when the element declares none; never mutate in place.
+	// Env.RootVars (Slack's design tokens) sit underneath: a name missing
+	// here resolves there, so the large token map is never copied. A value
+	// of "\x00" marks a guaranteed-invalid property that hides a root one.
 	Vars map[string]string
+
+	// word-break / overflow-wrap, kept apart so they inherit separately
+	// (WordBreakAll is their combination).
+	wordBreak, overflowWrap uint8
 }
 
 // Initial is CSS's initial style with Clack's root defaults: Lato 15px,
@@ -441,5 +456,7 @@ func Initial(fg color.NRGBA) Style {
 		StrokeNone:      true,
 		StrokeWidth:     1,
 		Fill:            color.NRGBA{A: 0xff},
+		Background:      Background{Repeat: true},
+		BorderColor:     [4]color.NRGBA{fg, fg, fg, fg},
 	}
 }
