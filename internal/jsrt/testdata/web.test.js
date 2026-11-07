@@ -988,7 +988,7 @@ test('navigator basics', async () => {
   assertEq(sb('/relative'), true);
   assertEq(Object.prototype.toString.call(navigator), '[object Navigator]');
   assertEq(typeof indexedDB, 'undefined');
-  assertEq(typeof CompressionStream, 'undefined');
+  assertEq(typeof CompressionStream, 'function');
 });
 test('navigator.clipboard (no host clipboard in tests)', async () => {
   const e = await assertThrows(() => navigator.clipboard.writeText('x'), 'NotAllowedError');
@@ -1121,6 +1121,17 @@ test('globals are non-enumerable and replaceable', () => {
 test('CompressionStream / DecompressionStream: gzip, deflate, deflate-raw round trips; HaikuWarning\'s Blob → pipeThrough → text()', async () => {
   const text = 'an old silent pond\n'.repeat(5000);
   const raw = new TextEncoder().encode(text);
+  {
+    // diagnostics: direct writer/reader on one format
+    const cs = new CompressionStream('gzip');
+    const w = cs.writable.getWriter();
+    w.write(new TextEncoder().encode('hello hello hello'));
+    w.close();
+    const chunks = [];
+    for await (const c of cs.readable) chunks.push(c);
+    const info = chunks.map((c) => Object.prototype.toString.call(c) + ':' + (c.byteLength ?? c.length) + ':' + Array.from(new Uint8Array(c.buffer ?? c, c.byteOffset ?? 0, Math.min(4, c.byteLength ?? 0))).join(','));
+    assert(chunks.length === 1 && chunks[0][0] === 0x1f && chunks[0][1] === 0x8b, 'gzip chunk: ' + info.join(' | '));
+  }
   for (const f of ['gzip', 'deflate', 'deflate-raw']) {
     const z = new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new CompressionStream(f))).arrayBuffer());
     assert(z.length > 0 && z.length < raw.length / 10, f + ' compresses: ' + z.length);
