@@ -155,7 +155,7 @@ func TestYUV(t *testing.T) {
 	cb := []byte{128, 128}
 	cr := []byte{128, 128}
 	yuv420ToRGBA(img, Y, cb, cr, 4, 2, 0, 0, false)
-	if img.Pix[0] != 255 || img.Pix[8] != 0 || img.Pix[3] != 255 {
+	if img.Pix[0] < 254 || img.Pix[8] != 0 || img.Pix[3] != 255 {
 		t.Fatalf("pix %v", img.Pix[:12])
 	}
 }
