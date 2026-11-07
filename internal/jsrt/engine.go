@@ -551,7 +551,7 @@ func (e *engine) reportRejections() {
 		report := true
 		if js := e.r.js; js != nil {
 			if fn := js.Global().Get("__jr").Get("unhandled"); fn.IsFunction() {
-				if v, err := fn.Call(e.r.wrap(e.call("jr_dup", uint64(p))), e.r.wrap(e.call("jr_dup", uint64(reason)))); err == nil && v.IsBool() && !v.Bool() {
+				if v, err := fn.Call(e.r.wrap(uint32(e.call("jr_dup", uint64(p)))), e.r.wrap(uint32(e.call("jr_dup", uint64(reason))))); err == nil && v.IsBool() && !v.Bool() {
 					report = false
 				}
 			}
