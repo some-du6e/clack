@@ -67,6 +67,7 @@ type row struct {
 
 	// resolved author (refreshed when users change)
 	uRev      uint64
+	memAt     time.Time // last member-view check (patchSlice('members'))
 	name      string
 	avatar    string
 	statusURL string
@@ -204,10 +205,12 @@ func (r *row) growPills() {
 }
 
 func (r *row) resolve(rc *rowCtx) {
-	if r.uRev == rc.usersRev && r.uRev != 0 {
+	t := tautOf()
+	memPatched := t != nil && r.m.User != "" && t.SlicePatched("members")
+	if r.uRev == rc.usersRev && r.uRev != 0 && !(memPatched && rc.now.Sub(r.memAt) >= viewRefresh) {
 		return
 	}
-	r.uRev = rc.usersRev
+	r.uRev, r.memAt = rc.usersRev, rc.now
 	m := &r.m
 	if r.needChan {
 		doc := m.Doc
@@ -217,8 +220,13 @@ func (r *row) resolve(rc *rowCtx) {
 		r.blocksOv, r.tailOv = 0, [2]uintptr{}
 	}
 	r.name, r.avatar, r.statusURL, r.bot = m.Name, m.Avatar, "", m.IsBot || (m.BotID != "" && m.User == "")
+	coreName := ""
 	if m.User != "" && rc.h.Core() != nil {
 		if u, ok := rc.h.Core().User(m.User); ok {
+			coreName = u.Name
+			if coreName == "" {
+				coreName = u.RealName
+			}
 			if r.name == "" {
 				r.name = u.Name
 				if r.name == "" {
@@ -234,6 +242,19 @@ func (r *row) resolve(rc *rowCtx) {
 			}
 		} else {
 			ensureUser(rc.h, m.User)
+		}
+	}
+	// plugins' member patches (patchSlice('members'): Nicknames…), as
+	// Slack's sender reads the member from the store; a message's own
+	// username (bots) still wins.
+	if memPatched && (m.Name == "" || m.Name == coreName) {
+		if mf, ok := t.MemberView(m.User); ok {
+			if mf.Name != "" {
+				r.name = mf.Name
+			}
+			if mf.Avatar != "" {
+				r.avatar = mf.Avatar
+			}
 		}
 	}
 	if r.name == "" {

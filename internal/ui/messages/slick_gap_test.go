@@ -44,3 +44,20 @@ func TestSlickViewLocalTimeKeepsTimestampGap(t *testing.T) {
 		t.Errorf("preamble children = %v", kids)
 	}
 }
+
+// Nicknames renames people through patchSlice('members'); Slack's message
+// sender reads the member from the store, so the row's name follows it.
+func TestSlickViewNicknamesRenamesSender(t *testing.T) {
+	e := newSlickEnv(t, nil)
+	e.install(t, "Nicknames", map[string]any{"names": map[string]any{"UALICE": "Ally Nick"}})
+	v := NewChannelView(e.h, tGen)
+	v.Preview = true
+	e.waitFor(t, "Alice's row named by her nickname", frameFn(v), func() bool {
+		for _, r := range v.s.rows {
+			if r != nil && r.m.User == "UALICE" && r.name == "Ally Nick" {
+				return true
+			}
+		}
+		return false
+	})
+}
