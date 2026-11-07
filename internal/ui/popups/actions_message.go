@@ -11,6 +11,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -39,7 +40,30 @@ func NewMessageMenu(h Host, anchor image.Point, m core.Message) *Menu {
 
 // NewMessageMenuOpts is NewMessageMenu with caller hooks.
 func NewMessageMenuOpts(h Host, anchor image.Point, m core.Message, o MessageMenuOpts) *Menu {
-	return NewMenuOpts(h, actMessageItems(h, m, o), MenuOpts{Anchor: pointRect(anchor), AlignRight: true})
+	a := pointRect(anchor)
+	return NewMenuOpts(h, actMessageItems(h, m, o), MenuOpts{Anchor: a, AlignRight: true,
+		Within: "MessageActionsMenu", WithinProps: actMenuProps(m, a)})
+}
+
+// actMenuProps are Slack's MessageActionsMenu props for m's ⋮ menu
+// (MessageLogger adds its rows by channelId/ts).
+func actMenuProps(m core.Message, anchor image.Rectangle) slackc.Props {
+	p := slackc.Props{
+		"channelId":                m.Channel,
+		"ts":                       m.TS,
+		"userId":                   m.User,
+		"menuUsageLocation":        "message_actions_menu",
+		"messageContainerType":     "message",
+		"showJumpActionInOverflow": false,
+		"targetBounds":             rectProps(anchor, 1),
+	}
+	if m.ThreadTS != "" && m.ThreadTS != m.TS {
+		p["threadTs"] = m.ThreadTS
+	}
+	if m.BotID != "" {
+		p["botId"] = m.BotID
+	}
+	return p
 }
 
 func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
