@@ -114,8 +114,15 @@ func (q *PathPen) End() clip.PathSpec {
 // RRectPath is the outline of a w×h rounded rectangle at the origin,
 // cached by size and radius (for borders drawn every frame).
 func RRectPath(w, h, radius int) clip.PathSpec {
+	return CachedRRect(clip.UniformRRect(image.Rect(0, 0, w, h), radius))
+}
+
+// CachedRRect is rr.Path, recorded once per distinct rectangle and corner
+// radii: a border stroked every frame keeps one op identity, so Gio
+// tessellates it once. Use rectangles in local coordinates.
+func CachedRRect(rr clip.RRect) clip.PathSpec {
 	k := uint64(penOffset)
-	for _, v := range [...]int{7, w, h, radius} {
+	for _, v := range [...]int{8, rr.Rect.Min.X, rr.Rect.Min.Y, rr.Rect.Max.X, rr.Rect.Max.Y, rr.NW, rr.NE, rr.SE, rr.SW} {
 		k = (k ^ uint64(v)) * penPrime
 	}
 	pens.mu.Lock()
@@ -127,7 +134,7 @@ func RRectPath(w, h, radius int) clip.PathSpec {
 		pens.paths = make(map[uint64]penEntry, 256)
 	}
 	ops := new(op.Ops)
-	spec := clip.UniformRRect(image.Rect(0, 0, w, h), radius).Path(ops)
+	spec := rr.Path(ops)
 	pens.paths[k] = penEntry{spec: spec, ops: ops}
 	return spec
 }

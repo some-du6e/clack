@@ -1,10 +1,12 @@
 package theme
 
 import (
+	"image"
 	"testing"
 
 	"gioui.org/f32"
 	"gioui.org/op"
+	"gioui.org/op/clip"
 )
 
 func penTri(ops *op.Ops, x float32) (q PathPen) {
@@ -37,5 +39,14 @@ func BenchmarkPathPenHit(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		q := penTri(&frame, 10)
 		q.End()
+	}
+}
+
+func TestCachedRRect(t *testing.T) {
+	a := clip.RRect{Rect: image.Rect(0, 0, 80, 36), NW: 8, SW: 8}
+	b := a
+	b.NE = 8
+	if CachedRRect(a) != CachedRRect(a) || CachedRRect(a) == CachedRRect(b) {
+		t.Error("CachedRRect keyed wrong")
 	}
 }
