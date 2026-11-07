@@ -697,7 +697,9 @@ func (e *engine) hostModule(_ context.Context, _ api.Module, st []uint64) {
 }
 
 func (e *engine) hostRejection(_ context.Context, _ api.Module, st []uint64) {
-	p, reason, handled := uint32(st[0]), uint32(st[1]), st[2] != 0
+	// i32 params: only the low 32 bits of a stack slot are defined (wazero
+	// leaves garbage above them with CloseOnContextDone)
+	p, reason, handled := uint32(st[0]), uint32(st[1]), uint32(st[2]) != 0
 	if !handled {
 		// key by promise identity: the glue hands a fresh handle each time,
 		// so compare against what we hold.
