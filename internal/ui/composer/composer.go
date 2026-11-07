@@ -87,7 +87,7 @@ func NewEdit(h Host, m core.Message, onDone func()) *Composer {
 func (c *Composer) init() {
 	c.ed = NewEditor()
 	c.ac = newAutocomplete(c.h, c.ch)
-	c.ed.Intercept = c.ac.Key
+	bindAutocomplete(c.ed, c.ac, c.h.Invalidate)
 	c.att = newAttachments(c.h)
 	typingHub(c.h.Core()).addHost(c.h) // listen for typing events
 }
@@ -225,17 +225,40 @@ func (c *Composer) layoutPopup(gtx layout.Context) {
 	off.Pop()
 }
 
+// acceptAutocomplete applies a queued pick (only used when no OnAccept is
+// bound; bindAutocomplete applies picks synchronously).
 func (c *Composer) acceptAutocomplete() {
 	it, s, e, ok := c.ac.Accepted()
 	if !ok {
 		return
 	}
-	if it.Kind == acCommand {
-		c.ed.Replace(s, e, "/"+it.Name+" ")
-	} else if it.Atom != nil {
-		c.ed.InsertAtom(s, e, it.Atom)
-	}
+	applyPick(c.ed, it, s, e)
 	c.h.Invalidate()
+}
+
+// bindAutocomplete connects the popup to the editor. Picks are applied
+// inside the key event that made them (OnAccept) and keys re-sync against
+// the live document (Live), so text typed in the same input batch as the
+// Tab/Enter lands after the inserted pill instead of being reordered.
+func bindAutocomplete(ed *Editor, ac *Autocomplete, invalidate func()) {
+	ed.Intercept = ac.Key
+	ac.Live = func() (*Doc, int) { return ed.Doc(), caretOf(ed) }
+	ac.OnAccept = func(it acItem, start, end int) {
+		applyPick(ed, it, start, end)
+		if invalidate != nil {
+			invalidate()
+		}
+	}
+}
+
+// applyPick replaces the trigger token [start, end) with the pick: a pill
+// (mention, channel, emoji) or the command text, caret after it.
+func applyPick(ed *Editor, it acItem, start, end int) {
+	if it.Kind == acCommand {
+		ed.Replace(start, end, "/"+it.Name+" ")
+	} else if it.Atom != nil {
+		ed.InsertAtom(start, end, it.Atom)
+	}
 }
 
 func (c *Composer) chromeState(gtx layout.Context) chromeState {
