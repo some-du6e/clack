@@ -145,6 +145,49 @@ func (c *Client) callOn(ctx context.Context, method string, ent bool, params url
 	return c.post(ctx, method, base+method, "application/x-www-form-urlencoded", []byte(p.Encode()), out)
 }
 
+// CallMultipart invokes a Web API method with a multipart body: fields
+// plus one file part (fileField, filename, data). Routing and the
+// team/enterprise fallback are the same as Call.
+func (c *Client) CallMultipart(ctx context.Context, method string, fields url.Values, fileField, filename string, data []byte, out any) error {
+	ent := c.useEnt(method)
+	err := c.multipartOn(ctx, method, ent, fields, fileField, filename, data, out)
+	var se *Error
+	if c.Creds.EnterpriseToken != "" && errors.As(err, &se) &&
+		((!ent && se.Code == "team_is_restricted") || (ent && se.Code == "enterprise_is_restricted")) {
+		c.routeMu.Lock()
+		c.learned[method] = !ent
+		c.routeMu.Unlock()
+		err = c.multipartOn(ctx, method, !ent, fields, fileField, filename, data, out)
+	}
+	return err
+}
+
+func (c *Client) multipartOn(ctx context.Context, method string, ent bool, fields url.Values, fileField, filename string, data []byte, out any) error {
+	base, tok := c.base, c.Creds.Token
+	if ent {
+		base, tok = c.ent, c.Creds.EnterpriseToken
+	}
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	_ = mw.WriteField("token", tok)
+	for k, vs := range fields {
+		for _, v := range vs {
+			_ = mw.WriteField(k, v)
+		}
+	}
+	fw, err := mw.CreateFormFile(fileField, filename)
+	if err != nil {
+		return err
+	}
+	if _, err := fw.Write(data); err != nil {
+		return err
+	}
+	if err := mw.Close(); err != nil {
+		return err
+	}
+	return c.post(ctx, method, base+method, mw.FormDataContentType(), buf.Bytes(), out)
+}
+
 // Raw is like Call but returns the raw JSON body.
 func (c *Client) Raw(ctx context.Context, method string, params url.Values) (json.RawMessage, error) {
 	var raw json.RawMessage
