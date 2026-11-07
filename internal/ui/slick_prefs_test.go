@@ -41,7 +41,7 @@ func TestSlickNoPluginsStartup(t *testing.T) {
 	for _, tab := range slickTabs {
 		p.section = tab.id
 		gtx := ttContext(new(op.Ops), image.Pt(800, 560))
-		a.slickcFrame(gtx)
+		a.slackcFrame(gtx)
 		p.layout(gtx)
 	}
 	p.close()
