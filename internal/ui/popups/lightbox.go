@@ -3,9 +3,7 @@ package popups
 import (
 	"context"
 	"errors"
-	"fmt"
 	"image"
-	"io"
 	"math"
 	"net/http"
 	"net/url"
@@ -29,6 +27,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -818,37 +817,19 @@ func (lb *Lightbox) download() {
 	})
 }
 
+// lbSlackHost reports whether raw is on Slack's own hosts, which core.Fetch
+// handles (with the cookie only for slack.com).
 func lbSlackHost(raw string) bool {
 	u, err := url.Parse(raw)
-	if err != nil {
-		return false
-	}
-	host := strings.ToLower(u.Hostname())
-	return host == "slack.com" || strings.HasSuffix(host, ".slack.com") || strings.HasSuffix(host, ".slack-edge.com")
+	return err == nil && u.Scheme == "https" && slack.SlackOwnedHost(u.Hostname())
 }
 
-// lbGet downloads a public (non-Slack) image.
+// lbGet downloads a public (non-Slack) image with no credentials, through
+// Slack's image proxy, so saving an unfurl image doesn't reveal your IP
+// address to its host.
 func lbGet(ctx context.Context, raw string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("http %d", resp.StatusCode)
-	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, core.MaxFetch+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(b) > core.MaxFetch {
-		return nil, errors.New("file too large")
-	}
-	return b, nil
+	b, _, err := slack.FetchPublic(ctx, raw, core.MaxFetch)
+	return b, err
 }
 
 // lbSave writes data to the Downloads folder under a unique name and
@@ -918,12 +899,26 @@ func lbCleanName(name string) string {
 		switch {
 		case r < 0x20, r == 0x7f, strings.ContainsRune(`/\:*?"<>|`, r):
 			return '_'
+		case r == 0x200e, r == 0x200f, r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069:
+			return '_' // bidi controls: "\u202egnp.exe" would display as "exe.png"
 		}
 		return r
 	}, strings.TrimSpace(name))
 	name = strings.Trim(name, ". ")
 	if len(name) > 200 {
-		name = name[:200]
+		name = strings.ToValidUTF8(name[:200], "")
+		name = strings.TrimRight(name, ". ")
+	}
+	// Windows device names (CON, NUL, COM1, …) open the device, not a file,
+	// whatever the extension.
+	stem := strings.ToUpper(name)
+	if i := strings.IndexByte(stem, '.'); i >= 0 {
+		stem = stem[:i]
+	}
+	switch strings.TrimRight(stem, " ") {
+	case "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+		"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9":
+		name = "_" + name
 	}
 	return name
 }
