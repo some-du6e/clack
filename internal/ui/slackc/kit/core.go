@@ -680,7 +680,7 @@ func focusEvent(typ, value string) slackc.Props {
 
 // keyName maps Gio key names to DOM KeyboardEvent.key.
 func keyName(n string) string {
-	switch n {
+	switch key.Name(n) {
 	case key.NameReturn, key.NameEnter:
 		return "Enter"
 	case key.NameEscape:
