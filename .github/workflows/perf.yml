@@ -111,7 +111,7 @@ jobs:
           if git rev-parse -q --verify origin/perf-history >/dev/null; then
             git worktree add -q ../hist origin/perf-history && (cd ../hist && git checkout -q -B perf-history)
           else
-            git worktree add -q --detach ../hist && (cd ../hist && git checkout -q --orphan perf-history && git rm -rq . )
+            git worktree add -q --detach ../hist && (cd ../hist && git switch -q --orphan perf-history)
           fi
           f=../hist/docs/perf-history.md
           mkdir -p ../hist/docs
