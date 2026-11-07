@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // The model behind Preferences > Taut. ui-shell draws it with native
@@ -271,4 +272,43 @@ func (t *Taut) ReloadConfig(ctx context.Context) error {
 	}
 	t.changed()
 	return nil
+}
+
+// watchFiles applies hand edits to config.json and user.css (Taut watches
+// them too). It polls their modification times every 2 s, and only while
+// at least one plugin is installed.
+func (t *Taut) watchFiles(stop <-chan struct{}) {
+	stat := func(name string) time.Time {
+		fi, err := os.Stat(filepath.Join(t.dir, name))
+		if err != nil {
+			return time.Time{}
+		}
+		return fi.ModTime()
+	}
+	cfgAt, cssAt := stat("config.json"), stat("user.css")
+	tick := time.NewTicker(2 * time.Second)
+	defer tick.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-tick.C:
+		}
+		t.mu.Lock()
+		n := len(t.plugins)
+		t.mu.Unlock()
+		if n == 0 {
+			continue
+		}
+		c, s := stat("config.json"), stat("user.css")
+		if c.Equal(cfgAt) && s.Equal(cssAt) {
+			continue
+		}
+		cfgAt, cssAt = c, s
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		if err := t.ReloadConfig(ctx); err != nil {
+			t.logf("taut: config.json: %v", err)
+		}
+		cancel()
+	}
 }

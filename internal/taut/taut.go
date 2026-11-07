@@ -100,8 +100,9 @@ type Taut struct {
 	changeMu sync.Mutex
 	changeCh map[chan struct{}]struct{}
 
-	running atomic.Int32 // plugins with a live instance
-	closed  atomic.Bool
+	running   atomic.Int32 // plugins with a live instance
+	stopWatch chan struct{}
+	closed    atomic.Bool
 }
 
 // New loads config.json, user.css and the installed plugins' metadata. If
@@ -157,8 +158,10 @@ func New(o Options) (*Taut, error) {
 	if t.userCSS != "" && o.UI.SetStyle != nil {
 		o.UI.SetStyle("user", t.userCSS)
 	}
+	t.stopWatch = make(chan struct{})
 	if !o.NoAutoStart {
 		go t.StartEnabled(context.Background())
+		go t.watchFiles(t.stopWatch)
 	}
 	return t, nil
 }
@@ -183,6 +186,7 @@ func (t *Taut) Close() error {
 	for _, id := range ids {
 		_ = t.stopPlugin(ctx, id)
 	}
+	close(t.stopWatch)
 	t.mirror.stop()
 	if rt != nil {
 		rt.close()

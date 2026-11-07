@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -745,6 +747,16 @@ func (t *Taut) ChannelRestriction(ch string) (readOnly, threadOnly bool) {
 	return r.IsReadOnly, r.IsThreadOnly
 }
 
+// ViewIn reads slice[key] the way a plugin's redux.StateView presents it
+// to the components inside it: native "@" nodes rendered inside one carry
+// its id as the prop "$view" (a number). Non-blocking like View.
+func (t *Taut) ViewIn(viewID int64, slice, key string) (json.RawMessage, bool) {
+	if viewID == 0 {
+		return t.View(slice, key)
+	}
+	return t.ui.views.get(slice, key, "view:"+strconv.FormatInt(viewID, 10))
+}
+
 // View is the generic form: getState()[slice][key] (key "" = the slice),
 // as JSON. Non-blocking (ok=false until computed).
 func (t *Taut) View(slice, key string) (json.RawMessage, bool) {
@@ -836,6 +848,30 @@ func (v *viewCache) fetch() {
 	v.t.mu.Unlock()
 	if rt == nil {
 		return
+	}
+	// StateView reads go one by one through __taut.viewIn
+	var plain []viewKey
+	var viewed []viewKey
+	for _, k := range keys {
+		if strings.HasPrefix(k.sub, "view:") {
+			viewed = append(viewed, k)
+		} else {
+			plain = append(plain, k)
+		}
+	}
+	keys = plain
+	for _, k := range viewed {
+		id, _ := strconv.ParseInt(strings.TrimPrefix(k.sub, "view:"), 10, 64)
+		var key any = k.key
+		if k.key == "" {
+			key = nil
+		}
+		raw, err := rt.rt.Call(context.Background(), "__taut.viewIn", float64(id), k.slice, key)
+		if err == nil {
+			v.mu.Lock()
+			v.entries[k] = &viewEntry{raw: raw}
+			v.mu.Unlock()
+		}
 	}
 	// one JS read per (slice, key); message subs share their bucket
 	type sk struct{ slice, key string }
