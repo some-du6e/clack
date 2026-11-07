@@ -389,6 +389,55 @@ func TestDispatch(t *testing.T) {
 	}
 }
 
+// Slack's autocomplete results are tiered: the local rows, and the complete
+// tier as `.promise`. PrivateChannelMapper (index.tsx:304-317) puts its rows
+// in that tier; Go's Dispatch has to get it, not just the local array.
+func TestDispatchKeepsTieredPromise(t *testing.T) {
+	h := newHarness(t)
+	type row struct {
+		ID string `json:"id"`
+	}
+	type acArgs struct {
+		Query string `json:"query"`
+	}
+	native := func(ctx context.Context, a acArgs) ([]row, error) { return []row{{"C0LOCAL001"}}, nil }
+	h.js(`
+		T.redux.patchThunk('autocompleteChannels', (original) => (params) => (...rest) =>
+			Promise.resolve(original(params)(...rest)).then((local) => {
+				if (params.query === '#plain') return local
+				const fresh = local.slice()
+				fresh.promise = params.query === '#broken'
+					? Promise.reject(new Error('flaron down'))
+					: Promise.resolve(local.promise).then(async (remote) => {
+						await new Promise((r) => setTimeout(r, 10))
+						return [...(Array.isArray(remote) ? remote : local), { id: 'G0SHADOW01' }]
+					})
+				return fresh
+			}))
+		return 1`)
+	eventually(t, 2*time.Second, "thunk patched", func() bool { return h.tt.ThunkPatched("autocompleteChannels") })
+	ids := func(q string) string {
+		rows, err := Dispatch(h.ctx(), h.tt, "autocompleteChannels", acArgs{q}, native)
+		if err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+		var out []string
+		for _, r := range rows {
+			out = append(out, r.ID)
+		}
+		return strings.Join(out, ",")
+	}
+	if got := ids("#secret"); got != "C0LOCAL001,G0SHADOW01" {
+		t.Errorf("complete tier: %q", got)
+	}
+	if got := ids("#broken"); got != "C0LOCAL001" {
+		t.Errorf("failed tier falls back to the local rows: %q", got)
+	}
+	if got := ids("#plain"); got != "C0LOCAL001" {
+		t.Errorf("untiered: %q", got)
+	}
+}
+
 func TestStorageAndShared(t *testing.T) {
 	h := newHarness(t)
 	code := `class Store1 extends TautPlugin {

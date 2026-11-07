@@ -619,7 +619,24 @@ T.dispatchThunk = async (name, args, nativeId, sync) => {
     }
   }
   const result = await dispatch(creator(...decode(args || [])))
-  return encode(result)
+  return encode(await completeTier(result))
+}
+
+/**
+ * Slack's autocomplete thunks return tiered results: the local rows, with the
+ * complete tier as `.promise` (PrivateChannelMapper adds its rows there). Go
+ * gets one answer and keeps its native rows meanwhile, so it gets the complete
+ * tier, or the local rows when that tier fails or isn't a list.
+ */
+async function completeTier(result) {
+  if (!Array.isArray(result) || typeof result.promise?.then !== 'function') return result
+  try {
+    const all = await result.promise
+    return Array.isArray(all) ? all : result
+  } catch (err) {
+    warn('a thunk result tier failed', err)
+    return result
+  }
 }
 
 // ---- React hooks ----
