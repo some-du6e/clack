@@ -71,6 +71,24 @@ jobs:
             echo "publish=$publish"; echo "prerelease=$prerelease"
           } | tee -a "$GITHUB_OUTPUT"
 
+  # Same tests as ci.yml, on the same runner image (the 22.04 package
+  # builders below lay out text 1px differently in internal/ui/slackc).
+  test:
+    runs-on: ubuntu-latest
+    needs: meta
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.meta.outputs.ref }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: test
+        run: go test ./...
+
   # The icon set (assets/icon) every package job uses.
   # TODO: drop the placeholder branch once assets/icon/ is committed.
   icons:
@@ -102,6 +120,7 @@ jobs:
           path: assets/icon
 
   linux:
+    name: linux-${{ matrix.arch }}
     needs: [meta, icons]
     strategy:
       fail-fast: false
@@ -129,8 +148,6 @@ jobs:
           path: assets/icon
       - name: deps
         run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS desktop-file-utils rpm >/dev/null
-      - name: test
-        run: go test ./...
       - name: build
         run: |
           mkdir -p build/linux dist
@@ -460,7 +477,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [meta, linux, windows, windows-installer, macos]
+    needs: [meta, test, linux, windows, windows-installer, macos]
     if: needs.meta.outputs.publish == 'true'
     runs-on: ubuntu-latest
     env:
