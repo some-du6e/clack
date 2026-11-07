@@ -552,10 +552,10 @@ func (d *ChannelDetails) update(gtx C) {
 		}
 	}
 	if d.joinRow.Clicked(gtx) && loaded && !inf.IsMember && !d.joinPending {
-		c, id := d.h.Core(), d.id
+		c, id, tt := d.h.Core(), d.id, d.tt
 		d.joinPending = true
 		d.joinOp.load(d.h, false, func(ctx context.Context) (bool, error) {
-			_, err := c.Join(ctx, id)
+			err := joinChannelThunk(ctx, tt, c, id)
 			return err == nil, err
 		})
 	}
@@ -1357,6 +1357,7 @@ func (d *ChannelDetails) addMembersRow(gtx C) D {
 // bold full name (+ " (you)"), presence, display name and status emoji;
 // line 2 the title in #454447. The text block overhangs the avatar by 4px.
 func (d *ChannelDetails) memberRow(gtx C, u core.User, self string) D {
+	u = d.viewUser(u)
 	c := dirClick(d.memberClk, u.ID)
 	if c.Clicked(gtx) {
 		d.h.OpenProfile(d.press.at, u.ID)
@@ -1926,6 +1927,7 @@ func (d *ChannelDetails) invitePanel(gtx C, members []core.User) D {
 
 // inviteRow: 36px avatar, name and title, then Add / "In channel".
 func (d *ChannelDetails) inviteRow(gtx C, u core.User, member bool) D {
+	u = d.viewUser(u)
 	c := dirClick(d.rowClk, "inv:"+u.ID)
 	if c.Clicked(gtx) && !member && d.inviteUser == "" {
 		cl, id, uid := d.h.Core(), d.id, u.ID

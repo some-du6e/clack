@@ -84,6 +84,8 @@ type Huddles struct {
 	people   map[string]*widget.Clickable
 	chans    map[string]*widget.Clickable
 
+	bgFetched map[string]bool // live huddles maybeFetchBackgrounds ran for
+
 	sugAt    time.Time
 	sugUsers []string // IM partners by priority
 	sugChans []core.Conv
@@ -192,7 +194,7 @@ func (v *Huddles) update(gtx C) {
 		})
 	}
 	if v.newBtn.Clicked(gtx) || v.heroBtn.Clicked(gtx) {
-		v.h.Toast(joinUnsupported)
+		huddleAttempt(v.h, v.tt, "")
 	}
 	if v.heroX.Clicked(gtx) {
 		v.hideHero = true
@@ -200,10 +202,26 @@ func (v *Huddles) update(gtx C) {
 	if v.top.Clicked(gtx) {
 		v.list.Position = layout.Position{}
 	}
-	for _, m := range []map[string]*widget.Clickable{v.rooms, v.people, v.chans} {
-		for _, c := range m {
+	for i, m := range [...]map[string]*widget.Clickable{v.rooms, v.people, v.chans} {
+		for id, c := range m {
 			if c.Clicked(gtx) {
-				v.h.Toast(joinUnsupported)
+				room := ""
+				if i == 0 {
+					room = id
+				}
+				huddleAttempt(v.h, v.tt, room)
+			}
+		}
+	}
+	// Slack fetches a live huddle's backgrounds as it appears.
+	if v.tt.ThunkPatched("maybeFetchBackgrounds") {
+		for _, r := range v.liveRooms() {
+			if !v.bgFetched[r.ID] {
+				if v.bgFetched == nil {
+					v.bgFetched = map[string]bool{}
+				}
+				v.bgFetched[r.ID] = true
+				fetchBackgrounds(v.tt, r.ID)
 			}
 		}
 	}
