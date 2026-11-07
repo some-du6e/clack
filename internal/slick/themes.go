@@ -85,7 +85,7 @@ func varString(v any) string {
 	case float64:
 		return fmt.Sprint(x)
 	}
-	return fmt.Sprint(x)
+	return fmt.Sprint(v)
 }
 
 // themeCSS is Slick's themeToCss: palette, sidebar and vars as !important
