@@ -73,6 +73,8 @@ type box struct {
 	native     bool   // "@" drawn by a Clack widget (<Original> or a registered host)
 	hostFn     HostComponent
 	host       Host
+	nprops     Props     // n.P plus "children" (the rendered children) for natives
+	rctx       renderCtx // curRender while this native draws
 
 	tc  *textCache // text node shaping cache
 	svg *svgDoc
@@ -499,7 +501,9 @@ func (v *View) computeStyle(b *box, parent *css.Style, e *css.Env) {
 	b.key = mix(uint64(n.K)*0x9e3779b97f4a7c15 ^ v.root<<17 ^ uint64(v.styleGen)<<1 ^ uint64(b.n.index))
 	b.native, b.hostFn = false, nil
 	if b.kind == kComp {
-		if v.name != "" && n.N == v.name {
+		if _, ok := SlotOf(n); ok {
+			b.native = true
+		} else if v.name != "" && n.N == v.name {
 			b.native = true
 		} else if fn, ok := LookupHost(n.N); ok {
 			b.native, b.hostFn = true, fn

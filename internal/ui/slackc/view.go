@@ -3,6 +3,7 @@ package slackc
 import (
 	"image"
 	"math"
+	"strconv"
 
 	"gioui.org/f32"
 	"gioui.org/io/event"
@@ -20,6 +21,7 @@ import (
 type View struct {
 	root    uint64
 	overlay bool
+	sheet   string // text of the tree's <style> elements, installed as "root:<id>"
 
 	fr   frame
 	name string
@@ -265,6 +267,7 @@ func sameNodes(a, b []*Node) bool {
 // setTree installs a new delivered tree.
 func (v *View) setTree(nodes []*Node) {
 	v.nodes = nodes
+	v.syncSheet(nodes)
 	clear(v.byK)
 	v.top = v.buildBoxes(nodes, nil)
 	v.main.boxes = v.top
@@ -314,6 +317,10 @@ func (v *View) state(b *box) *nodeState {
 
 // Close releases the view's state.
 func (v *View) Close() {
+	if v.sheet != "" {
+		v.sheet = ""
+		RemoveStyle(v.sheetKey())
+	}
 	v.nodes = nil
 	v.top = nil
 	clear(v.byK)
@@ -579,19 +586,46 @@ func (s *scope) callNative(gtx layout.Context, b *box) layout.Dimensions {
 		pushHost(p, &p.st, p.set, p.key)
 	}
 	var d layout.Dimensions
-	switch {
+	prev := curRender
+	b.rctx = renderCtx{view: v, fr: &v.fr, st: &b.st, n: b.n}
+	curRender = &b.rctx
+	switch slot, isSlot := SlotOf(b.n); {
+	case isSlot:
+		if slot.Native != nil {
+			d = slot.Native(gtx, nativeProps(b))
+		}
 	case b.n.N == v.fr.name && v.fr.name != "":
 		if v.fr.native != nil {
-			d = v.fr.native(gtx, b.n.P)
+			d = v.fr.native(gtx, nativeProps(b))
 		}
 	case b.hostFn != nil:
 		b.host = Host{Node: b.n, Props: b.n.P, Style: &b.st, view: v, fr: &v.fr}
 		d = b.hostFn(gtx, &b.host)
 	}
+	curRender = prev
 	for i := 0; i < n; i++ {
 		popHost()
 	}
 	return d
+}
+
+// nativeProps is what a native gets from <Original {...props}>{children}:
+// the props, plus the rendered children as an Element under "children"
+// (PropChildren) when the plugin passed any. Built once per tree.
+func nativeProps(b *box) Props {
+	n := b.n
+	if len(n.C) == 0 {
+		return n.P
+	}
+	if b.nprops == nil {
+		p := make(Props, len(n.P)+1)
+		for k, x := range n.P {
+			p[k] = x
+		}
+		p["children"] = Element{Nodes: n.C}
+		b.nprops = p
+	}
+	return b.nprops
 }
 
 // paint paints the scope at the current op origin and registers its
@@ -805,3 +839,39 @@ func flushRects(b Bridge) {
 	pendingRects = nil
 	b.SetRects(r)
 }
+
+// syncSheet installs the text of <style> elements a plugin renders inside
+// its tree as a sheet that lives as long as the root (React apps put
+// their CSS there).
+func (v *View) syncSheet(nodes []*Node) {
+	var sb []byte
+	var walk func(ns []*Node)
+	walk = func(ns []*Node) {
+		for _, n := range ns {
+			if n.T == "style" {
+				for _, c := range n.C {
+					if c.IsText() {
+						sb = append(sb, c.V...)
+					}
+				}
+				sb = append(sb, '\n')
+				continue
+			}
+			if !n.IsText() {
+				walk(n.C)
+			}
+		}
+	}
+	walk(nodes)
+	if string(sb) == v.sheet {
+		return
+	}
+	v.sheet = string(sb)
+	if v.sheet == "" {
+		RemoveStyle(v.sheetKey())
+	} else {
+		SetStyle(v.sheetKey(), v.sheet)
+	}
+}
+
+func (v *View) sheetKey() string { return "root:" + strconv.FormatUint(v.root, 10) }
