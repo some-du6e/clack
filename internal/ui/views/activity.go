@@ -136,6 +136,12 @@ type actRow struct {
 	nameW   font.Weight
 	nameCol color.NRGBA
 	nameMax int // dense rows: the name's width cap (px)
+	bodyCol color.NRGBA
+	// Overrides from ActivityThread (BetterBlock): the message the row
+	// previews instead of it.Msg, and the unread count.
+	pm    *core.Message
+	tm    *core.Message // the last thread message pm was looked up as
+	count int
 }
 
 // Activity is the Activity view.
@@ -1336,7 +1342,7 @@ func (r *actRow) itemProps() slackc.Props {
 	v := r.v
 	return slackc.Props{"$key": r.key, "activityItem": r.itemShape(), "msg": msgProps(r.it.Msg),
 		"className": "", "isRead": !r.unread, "isSelected": v.selOK && v.selKey == r.key,
-		"density": r.density(), "showAsCard": false, "inTriageMode": false}
+		"density": r.density(), "showAsCard": false, "inTriageMode": false, "isDmTab": v.dmOnly()}
 }
 
 // layoutItem is the row (ActivityItem's native). Under a patch it honours
@@ -1507,9 +1513,9 @@ func (r *actRow) preview(gtx C, lines int) D {
 		return D{}
 	}
 	if !st.Active() {
-		return r.v.msgBodyMuted(gtx, r.it.Msg, false, !r.unread, lines)
+		return r.v.msgBodyMuted(gtx, r.msg(), false, !r.unread, lines)
 	}
-	return st.Wrap(gtx, func(gtx C) D { return r.v.msgBodyMuted(gtx, r.it.Msg, false, !r.unread, lines) })
+	return st.Wrap(gtx, func(gtx C) D { return r.v.msgBodyMuted(gtx, r.msg(), false, !r.unread, lines) })
 }
 
 func (v *Activity) choose(it *core.ActivityItem, key string, r *actRow) {
@@ -1753,17 +1759,24 @@ func (v *Activity) rowWhen(gtx C, d *actDesc) string {
 	return d.when
 }
 
+// rowContent is the inside of an ActivityItem: the row's colours and
+// time for this frame, then the Slack boundaries Slack renders there
+// (rowKind).
 func (v *Activity) rowContent(gtx C, r *actRow) D {
-	it, d, unread := r.it, r.cur, r.unread
 	nameW, nameCol, bodyCol := wReg, v.p.Sec, v.p.Sec
-	if unread {
+	if r.unread {
 		nameW, nameCol, bodyCol = wBlack, v.p.Text, v.p.Text
 	}
-	r.nameW, r.nameCol, r.nameMax = nameW, nameCol, 0
-	when := v.rowWhen(gtx, d)
-	if v.dense {
-		return v.denseContent(gtx, r, bodyCol, when)
-	}
+	r.nameW, r.nameCol, r.nameMax, r.bodyCol = nameW, nameCol, 0, bodyCol
+	r.pm, r.count = nil, r.it.Count
+	return r.rowKind(gtx)
+}
+
+// detailedContent is Slack's Detailed row (ActivityRowContentDetailed's
+// native).
+func (v *Activity) detailedContent(gtx C, r *actRow) D {
+	d, unread := r.cur, r.unread
+	bodyCol, when := r.bodyCol, v.rowWhen(gtx, d)
 	return layout.Inset{Top: 12, Bottom: 12, Left: 16, Right: 20}.Layout(gtx, func(gtx C) D {
 		return row(gtx, layout.Start,
 			layout.Rigid(func(gtx C) D {
@@ -1788,7 +1801,7 @@ func (v *Activity) rowContent(gtx C, r *actRow) D {
 						)
 					}),
 					layout.Rigid(func(gtx C) D {
-						if it.Msg != nil && !d.invite {
+						if r.msg() != nil && !d.invite {
 							return r.preview(gtx, 2)
 						}
 						if d.body == "" {
@@ -1806,7 +1819,7 @@ func (v *Activity) rowContent(gtx C, r *actRow) D {
 			}),
 			hgap(8),
 			layout.Rigid(func(gtx C) D {
-				return layout.Inset{Top: 5, Bottom: 2}.Layout(gtx, func(gtx C) D { return v.actStatus(gtx, it, unread) })
+				return layout.Inset{Top: 5, Bottom: 2}.Layout(gtx, func(gtx C) D { return v.actStatus(gtx, r.count, unread) })
 			}),
 		)
 	})
@@ -1818,8 +1831,9 @@ func (v *Activity) rowContent(gtx C, r *actRow) D {
 // 20px compact avatar, the sender (15px, 900 when unread), the context
 // ("Mention in #general", 13px muted with its 16px icon) and the one-line
 // preview, then the time pushed to the right.
-func (v *Activity) denseContent(gtx C, r *actRow, bodyCol color.NRGBA, when string) D {
+func (v *Activity) denseContent(gtx C, r *actRow) D {
 	it, d, unread := r.it, r.cur, r.unread
+	bodyCol, when := r.bodyCol, v.rowWhen(gtx, d)
 	return layout.Inset{Top: 8, Bottom: 8, Left: 16, Right: 20}.Layout(gtx, func(gtx C) D {
 		g := gtx
 		g.Constraints.Min.Y = gtx.Dp(22)
@@ -1843,7 +1857,7 @@ func (v *Activity) denseContent(gtx C, r *actRow, bodyCol color.NRGBA, when stri
 			}),
 			layout.Flexed(1, func(gtx C) D {
 				gtx.Constraints.Min.X = gtx.Constraints.Max.X
-				if it.Msg != nil && !d.invite && !(it.Type == "bot_dm_bundle" && it.Count > 1) && len(it.Msg.Doc.Blocks) > 0 {
+				if m := r.msg(); m != nil && !d.invite && !(it.Type == "bot_dm_bundle" && it.Count > 1) && len(m.Doc.Blocks) > 0 {
 					// The message's first line, drawn like the detailed body
 					// (emoji images, mentions) and clipped to one line.
 					return r.preview(gtx, 1)
@@ -1853,7 +1867,7 @@ func (v *Activity) denseContent(gtx C, r *actRow, bodyCol color.NRGBA, when stri
 			hgap(12),
 			layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wReg, v.p.Muted, when) }),
 			hgap(8),
-			layout.Rigid(func(gtx C) D { return v.actStatus(gtx, it, unread) }),
+			layout.Rigid(func(gtx C) D { return v.actStatus(gtx, r.count, unread) }),
 		)
 	})
 }
@@ -1905,9 +1919,9 @@ func (v *Activity) actFooter(gtx C, d *actDesc) D {
 
 // actStatus is the right column: the unread count pill, or the gray
 // "done" check for read items.
-func (v *Activity) actStatus(gtx C, it *core.ActivityItem, unread bool) D {
+func (v *Activity) actStatus(gtx C, count int, unread bool) D {
 	if unread {
-		return v.countBadge(gtx, max(1, it.Count))
+		return v.countBadge(gtx, max(1, count))
 	}
 	s := gtx.Dp(20)
 	c := rgb(0xd7d7da)
