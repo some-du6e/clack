@@ -40,6 +40,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/jsrt"
 )
 
 // HackClubIDs are the Hack Club enterprise grid and its workspace;
@@ -69,6 +70,9 @@ type Options struct {
 	// and errors with the log package. Message contents are never logged by
 	// Clack itself; what a plugin prints is the plugin's business.
 	Log func(level, msg string)
+	// PickFiles shows the native file picker for <input type=file> (nil:
+	// file inputs do nothing). Return nil, nil on cancel.
+	PickFiles func(accept string, multiple bool) ([]jsrt.PickedFile, error)
 	// TaskTimeout bounds one JS task (jsrt's Options.Timeout).
 	TaskTimeout time.Duration
 	// LifecycleTimeout is the start/stop limit (Taut: 5 s).
@@ -209,11 +213,24 @@ func (t *Taut) Started() bool {
 }
 
 func (t *Taut) ensureRuntime() (*runtime, error) {
+	if t.closed.Load() {
+		return nil, jsrt.ErrClosed
+	}
 	t.mu.Lock()
 	if t.rt != nil {
 		r := t.rt
+		select {
+		case <-r.rt.Done():
+			// the engine trapped and closed: start over below, then bring
+			// back the plugins that were running
+			t.rt = nil
+		default:
+			t.mu.Unlock()
+			return r, nil
+		}
 		t.mu.Unlock()
-		return r, nil
+		t.restartAfterCrash(r)
+		return t.ensureRuntime()
 	}
 	t.mu.Unlock()
 	r, err := t.startRuntime()
@@ -228,6 +245,7 @@ func (t *Taut) ensureRuntime() (*runtime, error) {
 		return t.rt, nil
 	}
 	t.rt = r
+	t.rtErr = nil
 	t.mirror.start()
 	if t.opts.UI.Attached != nil {
 		t.opts.UI.Attached(t.Bridge())
@@ -235,10 +253,39 @@ func (t *Taut) ensureRuntime() (*runtime, error) {
 	return r, nil
 }
 
-// startWatch follows hand edits of config.json and user.css, from the first
-// installed plugin on (nothing runs while there are none).
-func (t *Taut) startWatch() {
-	t.watchOnce.Do(func() { go t.watchFiles(t.stopWatch) })
+// restartAfterCrash forgets everything the dead runtime held and restarts
+// the plugins that were running in a fresh one (in the background).
+func (t *Taut) restartAfterCrash(dead *runtime) {
+	t.logf("taut: the JS runtime closed unexpectedly; restarting plugins")
+	dead.close()
+	t.ui.rootsMu.Lock()
+	t.ui.roots = map[uint64]*jsrt.Root{}
+	t.ui.rootsMu.Unlock()
+	t.thunks.setPatched(nil)
+	t.ui.setPatchedComponents(nil)
+	t.ui.setComposerHooks(composerHooks{})
+	t.ui.setStatePatched(statePatchInfo{})
+	t.ui.setOverlays(nil)
+	t.mu.Lock()
+	var restart []string
+	for id, p := range t.plugins {
+		p.inJS = false
+		if p.running {
+			p.running = false
+			t.running.Add(-1)
+			restart = append(restart, id)
+		}
+	}
+	t.mu.Unlock()
+	go func() {
+		for _, id := range restart {
+			ctx, cancel := context.WithTimeout(context.Background(), t.opts.LifecycleTimeout+5*time.Second)
+			if err := t.register(ctx, id); err != nil {
+				t.logf("taut: restarting %s: %v", id, err)
+			}
+			cancel()
+		}
+	}()
 }
 
 func (t *Taut) logf(format string, args ...any) { log.Printf(format, args...) }
