@@ -26,10 +26,16 @@ import (
 // Embolden is the outline stroke, in device pixels (not dp), added to dark
 // glyphs. Gio blends glyph coverage in linear light, so dark-on-light Lato
 // renders thinner than Chrome's. The missing ink is a fixed pixel amount at
-// any scale: ui-messages measured a 15px line against Chrome at 1x and 2x
-// and both interpolate to ~0.45px. Labels and richview message bodies use
-// this same value (messages reads it via EmboldenFor).
-const Embolden = 0.45
+// any scale. Measured by total ink against Chrome at 1x: UI labels (13px
+// topic) match at ~0.31px, message bodies (15px, ui-messages at 1x and 2x)
+// at ~0.45px.
+const (
+	Embolden     = 0.3  // labels (Text / DrawText)
+	BodyEmbolden = 0.45 // richview message bodies (BodyEmboldenFor)
+)
+
+// BodyEmboldenFor is EmboldenFor at the message-body strength.
+func BodyEmboldenFor(c color.NRGBA) float32 { return EmboldenFor(c) * BodyEmbolden / Embolden }
 
 // IsDarkText reports whether c is dark text (luminance under 0.5).
 func IsDarkText(c color.NRGBA) bool {
