@@ -452,12 +452,15 @@ func (b *backend) opened(ch string) {
 					if len(members) == 3 {
 						break
 					}
-					if u.Avatar != "" && !u.Deleted {
-						members = append(members, u.ID)
+					if u.Deleted || u.IsBot {
+						continue
+					}
+					members = append(members, u.ID)
+					if u.Avatar != "" {
 						b.avMu.Lock()
 						b.avatars[u.ID] = u.Avatar
 						b.avMu.Unlock()
-					}
+					} // else avatar() resolves it via core.User / EnsureUsers
 				}
 			}
 		}
