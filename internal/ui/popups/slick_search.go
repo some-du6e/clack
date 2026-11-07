@@ -85,10 +85,23 @@ func (p *SearchPopover) slickSuggestion(r *srRow, k string) slackc.Props {
 		s["channel"] = slackc.Props{"id": r.id}
 	case srRMsg:
 		s["type"] = "message"
-		if r.msg != nil {
-			s["id"] = r.msg.TS
-			s["channel"] = slackc.Props{"id": r.msg.Channel}
-			s["message"] = slackMessage(r.msg)
+		if m := r.msg; m != nil {
+			s["id"] = m.TS
+			s["channel"] = slackc.Props{"id": m.Channel}
+			s["message"] = slackMessage(m)
+			// the author, as Slack's search suggestions carry it (BetterBlock
+			// drops a blocked person's: suggestion.user); an app's message
+			// is its bot user's
+			user := m.User
+			if user == "" && m.BotProfile != nil {
+				user = m.BotProfile.UserID
+			}
+			if user != "" {
+				s["user"] = user
+			}
+			if m.BotID != "" {
+				s["bot_id"] = m.BotID
+			}
 		}
 	case srRPlace:
 		s["type"] = "place"
