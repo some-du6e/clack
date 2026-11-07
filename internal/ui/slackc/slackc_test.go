@@ -225,8 +225,10 @@ func TestNestedRootsKnowTheirParent(t *testing.T) {
 	gtx := ctx()
 	gtx.Constraints.Max = image.Pt(400, 400)
 	Render(gtx, "MessageWrapper", Props{"$key": "1.1"}, row)
-	if len(nb.rendered) != 1 || nb.rendered[0] != "MessageWrapper" {
-		t.Fatalf("top-level renders %v", nb.rendered)
+	// Before the parent's tree arrives its native draws directly, so the
+	// child renders top-level for that frame.
+	if len(nb.rendered) == 0 || nb.rendered[0] != "MessageWrapper" || len(nb.nested) != 0 {
+		t.Fatalf("first frame: top-level %v, nested %+v", nb.rendered, nb.nested)
 	}
 	var parent uint64
 	for r, in := range roots {
