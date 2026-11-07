@@ -30,12 +30,22 @@ import (
 // scales it by the text color; richview's Style.Embolden uses the same rule.
 const Embolden = 0.3
 
-// EmboldenFor is the Embolden stroke for text of color c: full for dark
-// text, fading to none for light text (light-on-dark is already heavy).
+// IsDarkText reports whether c is dark text (luminance under 0.5).
+func IsDarkText(c color.NRGBA) bool {
+	return 0.299*float32(c.R)+0.587*float32(c.G)+0.114*float32(c.B) < 0.5*255
+}
+
+// EmboldenFor was the per-frame stroke for dark text. The mode shapers'
+// Medium face replaced it (zero frame cost), so it returns 0 unless
+// YOLOSLACK_EMBOLDEN=1 brings the old stroke back for comparison.
 func EmboldenFor(c color.NRGBA) float32 {
-	if noEmbolden {
+	if !useEmbolden {
 		return 0
 	}
+	return emboldenStroke(c)
+}
+
+func emboldenStroke(c color.NRGBA) float32 {
 	y := (0.299*float32(c.R) + 0.587*float32(c.G) + 0.114*float32(c.B)) / 255
 	switch {
 	case y <= 0.35:
@@ -62,8 +72,8 @@ type EmojiImages interface {
 	Get(url string, sizePx int) (paint.ImageOp, bool)
 }
 
-// noEmbolden (YOLOSLACK_NOEMBOLDEN=1) disables the stroke, for A/B timing.
-var noEmbolden = os.Getenv("YOLOSLACK_NOEMBOLDEN") != ""
+// useEmbolden (YOLOSLACK_EMBOLDEN=1) re-enables the old stroke, for A/B.
+var useEmbolden = os.Getenv("YOLOSLACK_EMBOLDEN") != ""
 
 var shaperThemes sync.Map // *text.Shaper -> *Theme
 
@@ -96,6 +106,7 @@ func DrawText(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string) layo
 // emoji sprites) instead of relying on a color font.
 func (t *Theme) Text(gtx layout.Context, o LabelOpts, txt string) layout.Dimensions {
 	txt = CleanText(txt)
+	o.Font = t.weightFor(o.Font, o.Color)
 	if o.MaxLines == 1 && t.Images != nil {
 		if segs := splitEmoji(txt); segs != nil {
 			return t.textWithEmoji(gtx, o, segs)

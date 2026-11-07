@@ -498,13 +498,16 @@ func (c *dtCalendar) Layout(gtx layout.Context) layout.Dimensions {
 				if i >= 2 {
 					name = "chevron-right"
 				}
-				is := dp(gtx, 20)
+				// Slack's glyphs are ~16px tall chevrons (a 26px icon box);
+				// the doubles are two of them 6px apart.
+				const gs = 26
+				is := dp(gtx, gs)
 				o := (bs - is) / 2
 				if i == 0 || i == 3 { // double chevron
-					at(gtx, image.Pt(o-dp(gtx, 4), o), func(gtx layout.Context) layout.Dimensions { return icon(gtx, name, 20, cl.Fg2) })
-					at(gtx, image.Pt(o+dp(gtx, 4), o), func(gtx layout.Context) layout.Dimensions { return icon(gtx, name, 20, cl.Fg2) })
+					at(gtx, image.Pt(o-dp(gtx, 4), o), func(gtx layout.Context) layout.Dimensions { return icon(gtx, name, gs, cl.Fg2) })
+					at(gtx, image.Pt(o+dp(gtx, 4), o), func(gtx layout.Context) layout.Dimensions { return icon(gtx, name, gs, cl.Fg2) })
 				} else {
-					at(gtx, image.Pt(o, o), func(gtx layout.Context) layout.Dimensions { return icon(gtx, name, 20, cl.Fg2) })
+					at(gtx, image.Pt(o, o), func(gtx layout.Context) layout.Dimensions { return icon(gtx, name, gs, cl.Fg2) })
 				}
 				return layout.Dimensions{Size: image.Pt(bs, bs)}
 			})
@@ -548,10 +551,6 @@ func (c *dtCalendar) Layout(gtx layout.Context) layout.Dimensions {
 			if off || (!sel && (curs || c.cells[i].Hovered())) {
 				fill(gtx, box, cl.BgAlt)
 			}
-			fill(gtx, image.Rect(0, 0, s.X+1, 1), line)
-			fill(gtx, image.Rect(0, s.Y, s.X+1, s.Y+1), line)
-			fill(gtx, image.Rect(0, 0, 1, s.Y+1), line)
-			fill(gtx, image.Rect(s.X, 0, s.X+1, s.Y+1), line)
 			fg := cl.Fg
 			if off {
 				fg = cl.Muted
@@ -582,6 +581,19 @@ func (c *dtCalendar) Layout(gtx layout.Context) layout.Dimensions {
 			}
 			return clickBox(gtx, &c.cells[i], nil, cell)
 		})
+	}
+	// grid lines in one pass over the cells (every day cell gets all four
+	// edges, so the last row is closed like Slack's).
+	lw := maxInt(1, dp(gtx, 1))
+	for i, n := range grid {
+		if n == 0 {
+			continue
+		}
+		r := image.Rect(gx+(i%7)*cw, gy+(i/7)*ch, gx+(i%7+1)*cw, gy+(i/7+1)*ch)
+		fill(gtx, image.Rect(r.Min.X, r.Min.Y, r.Max.X+lw, r.Min.Y+lw), line)
+		fill(gtx, image.Rect(r.Min.X, r.Max.Y, r.Max.X+lw, r.Max.Y+lw), line)
+		fill(gtx, image.Rect(r.Min.X, r.Min.Y, r.Min.X+lw, r.Max.Y+lw), line)
+		fill(gtx, image.Rect(r.Max.X, r.Min.Y, r.Max.X+lw, r.Max.Y+lw), line)
 	}
 	return layout.Dimensions{Size: win}
 }

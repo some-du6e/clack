@@ -500,7 +500,7 @@ func (v *Threads) cardFor(t *thrItem, convs map[string]core.ConvRef) *thrCard {
 	}
 	if !c.built {
 		c.name = v.convTitle(t.Channel, convs)
-		if c.name == t.Channel && strings.HasPrefix(t.Channel, "D") {
+		if strings.HasPrefix(t.Channel, "D") && (c.name == t.Channel || c.name == "Direct message") {
 			// a DM core doesn't know yet: name it after the other person
 			c.name = v.dmPartner(&t.Root, t.Replies)
 		}
