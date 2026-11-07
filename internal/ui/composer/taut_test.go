@@ -31,6 +31,7 @@ type fakeSlack struct {
 	srv   *httptest.Server
 	mu    sync.Mutex
 	calls []fakeCall
+	reply map[string]any // method → answer, overriding the defaults
 }
 
 type fakeCall struct {
@@ -65,6 +66,11 @@ func newFakeSlack(t testing.TB) *fakeSlack {
 		case "drafts.create", "drafts.update":
 			rep = map[string]any{"ok": true, "draft": map[string]any{"id": "Dr0TEST", "client_draft_id": "x"}}
 		}
+		f.mu.Lock()
+		if r, ok := f.reply[method]; ok {
+			rep = r
+		}
+		f.mu.Unlock()
 		_ = json.NewEncoder(w).Encode(rep)
 	}))
 	t.Cleanup(f.srv.Close)
