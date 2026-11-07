@@ -150,8 +150,7 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 		l.plainAdd("\n")
 	}
 	if len(a.Text) > 0 {
-		k := l.attN
-		l.attN++
+		k := a
 		text := a.Text
 		maxC, maxN := attMaxChars, attMaxNewlines
 		if a.IsShare {
@@ -166,7 +165,7 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 		}
 		l.expandAt = k
 		row(l.blocks(text, cx, cy, cw, false))
-		l.expandAt = -1
+		l.expandAt = nil
 		l.plainAdd("\n")
 	}
 	if len(b.Fields) > 0 {

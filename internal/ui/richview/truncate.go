@@ -1,8 +1,6 @@
 package richview
 
 import (
-	"strconv"
-
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 )
 
@@ -125,5 +123,3 @@ func withExpander(bs []richtext.Block, more bool) []richtext.Block {
 
 // expandURL marks the expander link (never a real URL).
 const expandURL = "clack-expand:"
-
-func expandKey(i int) string { return strconv.Itoa(i) }

@@ -104,6 +104,7 @@ type target struct {
 	btn  *richtext.Button
 	// underline on hover (links)
 	underline bool
+	att       *richtext.Attachment // tExpand: the attachment to expand
 }
 
 type hit struct {
@@ -232,9 +233,8 @@ type lay struct {
 	authorImg int // inside a card: its author icon, imgs index+1
 	// expanded holds the attachments whose text was expanded (View
 	// state); attN numbers attachments in doc order (truncate.go).
-	expanded map[int]bool
-	attN     int
-	expandAt int // the attachment being laid out, for its expander target
+	expanded map[*richtext.Attachment]bool
+	expandAt *richtext.Attachment // the attachment being laid out, for its expander target
 }
 
 func (l *lay) dp(v float32) int      { return int(v*l.scale + 0.5) }
@@ -406,7 +406,7 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			}
 		case richtext.Link:
 			if sp.URL == expandURL { // attachment Show more / Show less (truncate.go)
-				tg = l.d.addTarget(target{kind: tExpand, id: expandKey(l.expandAt), underline: true})
+				tg = l.d.addTarget(target{kind: tExpand, att: l.expandAt, underline: true})
 			} else {
 				tg = l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true})
 			}

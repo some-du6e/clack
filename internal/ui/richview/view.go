@@ -4,7 +4,6 @@ import (
 	"image"
 	"image/color"
 	"io"
-	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -66,7 +65,7 @@ type View struct {
 	Origin image.Point
 
 	// expanded: attachments whose collapsed text was expanded (truncate.go)
-	expanded map[int]bool
+	expanded   map[*richtext.Attachment]bool
 
 	// External hands text selection to the owner (cross-message selection
 	// in a list): the View still handles clicks and hover but never changes
@@ -341,9 +340,9 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 	}
 	v.d.reset()
 	if v.expanded == nil {
-		v.expanded = map[int]bool{}
+		v.expanded = map[*richtext.Attachment]bool{}
 	}
-	l := lay{st: st, d: &v.d, scale: pxdp, spx: pxsp, jumbo: v.doc.Jumbo, opts: v.opts, mode: mode, cs: &v.cs, expanded: v.expanded, expandAt: -1}
+	l := lay{st: st, d: &v.d, scale: pxdp, spx: pxsp, jumbo: v.doc.Jumbo, opts: v.opts, mode: mode, cs: &v.cs, expanded: v.expanded}
 	if l.scale <= 0 {
 		l.scale = 1
 	}
@@ -832,8 +831,8 @@ func (v *View) activate(t int16, anchor image.Point, h Handler) {
 			h.Button(*tg.btn)
 		}
 	case tExpand:
-		if k, err := strconv.Atoi(tg.id); err == nil {
-			v.expanded[k] = !v.expanded[k]
+		if tg.att != nil && v.expanded != nil {
+			v.expanded[tg.att] = !v.expanded[tg.att]
 			v.dirty = true
 		}
 	}
