@@ -164,3 +164,105 @@ func (r *actRow) threadMsg(ts string) *core.Message {
 	r.tm = &m
 	return r.tm
 }
+
+// ---- DMs page: DmsList › DmsListItem › DmsChannel ----
+
+// dmChannel is a DM's conversation in Slack's channel shape (what
+// BetterBlock reads when the channel isn't in the store).
+func dmChannel(dm *core.DM) slackc.Props {
+	im := dm.Conv.Kind == "im" || dm.Conv.Kind == "" && dm.Conv.User != ""
+	c := slackc.Props{"id": dm.Channel, "is_im": im, "is_mpim": dm.Conv.Kind == "mpim"}
+	if dm.Conv.User != "" {
+		c["user"] = dm.Conv.User
+	}
+	if dm.Conv.Name != "" {
+		c["name"] = dm.Conv.Name
+	}
+	return c
+}
+
+// listProps: DmsList {channelIds, dms: [{channel, latest}]}, the DMs in
+// list order.
+func (d *DMs) listProps() slackc.Props {
+	ids := make([]any, 0, len(d.view))
+	dms := make([]any, 0, len(d.view))
+	for _, e := range d.view {
+		if e.dm < 0 {
+			continue
+		}
+		dm := &d.items[e.dm]
+		ids = append(ids, dm.Channel)
+		r := slackc.Props{"channel": dmChannel(dm), "unread": dmsUnread(dm)}
+		if dm.Latest != nil {
+			r["latest"] = dm.Latest.TS
+			r["message"] = msgProps(dm.Latest)
+		}
+		dms = append(dms, r)
+	}
+	return slackc.Props{"$key": "dms-list", "channelIds": ids, "dms": dms, "selectedChannelId": d.sel}
+}
+
+// listOverride is the view with only the DMs the plugin's channelIds and
+// dms still list (headings and directory people stay).
+func (d *DMs) listOverride(p slackc.Props) []dmsEntry {
+	var ids, dms map[string]bool
+	if p.Has("channelIds") {
+		ids = map[string]bool{}
+		for _, x := range p.List("channelIds") {
+			if s, ok := x.(string); ok {
+				ids[s] = true
+			}
+		}
+	}
+	if p.Has("dms") {
+		dms = map[string]bool{}
+		for _, x := range p.List("dms") {
+			var r slackc.Props
+			switch x := x.(type) {
+			case slackc.Props:
+				r = x
+			case map[string]any:
+				r = slackc.Props(x)
+			}
+			if c := r.Map("channel"); c != nil {
+				dms[c.StrOr("id", "")] = true
+			}
+		}
+	}
+	d.pview = d.pview[:0]
+	for _, e := range d.view {
+		if e.dm >= 0 {
+			ch := d.items[e.dm].Channel
+			if ids != nil && !ids[ch] || dms != nil && !dms[ch] {
+				continue
+			}
+		}
+		d.pview = append(d.pview, e)
+	}
+	return d.pview
+}
+
+// visible is the list as last drawn.
+func (d *DMs) visible() []dmsEntry {
+	if d.pviewOn {
+		return d.pview
+	}
+	return d.view
+}
+
+// itemProps: DmsListItem {channelId, result: {channel}, isSelected}.
+func (r *dmsRow) itemProps() slackc.Props {
+	dm := r.dm
+	return slackc.Props{"$key": dm.Channel, "channelId": dm.Channel, "result": slackc.Props{"channel": dmChannel(dm)},
+		"isSelected": dm.Channel == r.v.sel, "isUnread": dmsUnread(dm)}
+}
+
+func (r *dmsRow) layoutItem(gtx C, _ slackc.Props) D { return r.v.dmRow(gtx, r.dm) }
+
+// channelProps: DmsChannel {channelId, channel}, the row's content.
+func (r *dmsRow) channelProps() slackc.Props {
+	dm := r.dm
+	return slackc.Props{"$key": dm.Channel + "/channel", "channelId": dm.Channel, "channel": dmChannel(dm)}
+}
+
+func (r *dmsRow) layoutChannel(gtx C, _ slackc.Props) D { return r.content(gtx) }
