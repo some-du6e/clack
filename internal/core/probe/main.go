@@ -257,7 +257,21 @@ func main() {
 	t := time.Now()
 	_ = a.Mrkdwn("<#C0266FRGV> and <#C0C9QHNER26>") // channels outside the sidebar
 	a.S.NoteMissingBot("B0B83TK0FSA")
-	if ev, ok := ew.wait("names", "", 10*time.Second); ok {
+	has := func(e core.Event, ids ...string) bool {
+		n := 0
+		for _, u := range e.Users {
+			for _, id := range ids {
+				if u == id {
+					n++
+				}
+			}
+		}
+		return n > 0
+	}
+	if ev, ok := ew.wait("names", "", 10*time.Second, func(e core.Event) bool { return has(e, "C0C9QHNER26", "B0B83TK0FSA") }); ok {
+		if !has(ev, "B0B83TK0FSA") { // channels and bots may land in separate events
+			ew.wait("names", "", 5*time.Second, func(e core.Event) bool { return has(e, "B0B83TK0FSA") })
+		}
 		b, _ := a.S.Bot("B0B83TK0FSA")
 		step("names resolved", t, "ids=%d lounge=%q lantern=%q bot=%q icon=%v", len(ev.Users), a.S.ChannelName("C0266FRGV"),
 			a.S.ChannelName("C0C9QHNER26"), b.Name, b.Icon != "")
