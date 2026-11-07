@@ -37,6 +37,34 @@ const (
 // BodyEmboldenFor is EmboldenFor at the message-body strength.
 func BodyEmboldenFor(c color.NRGBA) float32 { return EmboldenFor(c) * BodyEmbolden / Embolden }
 
+// LightTextAlpha scales the alpha of light text (luminance >= 0.6, i.e.
+// light-on-dark) in labels, cancelling the extra weight Gio's linear-light
+// glyph blending gives it compared with Chrome; the same rule richview
+// applies to message bodies (Style.LightTextAlpha). 1 = off.
+// CLACK_DARK_TEXT_ALPHA overrides it (shared with ui-messages' knob).
+var LightTextAlpha = envFloat("CLACK_DARK_TEXT_ALPHA", defaultLightTextAlpha)
+
+const defaultLightTextAlpha = 1
+
+func envFloat(name string, def float32) float32 {
+	if v, err := strconv.ParseFloat(os.Getenv(name), 32); err == nil {
+		return float32(v)
+	}
+	return def
+}
+
+// lightTextColor applies LightTextAlpha to light glyph colors.
+func lightTextColor(c color.NRGBA) color.NRGBA {
+	a := LightTextAlpha
+	if a <= 0 || a >= 1 {
+		return c
+	}
+	if y := (0.299*float32(c.R) + 0.587*float32(c.G) + 0.114*float32(c.B)) / 255; y >= 0.6 {
+		c.A = uint8(float32(c.A)*a + 0.5)
+	}
+	return c
+}
+
 // IsDarkText reports whether c is dark text (luminance under 0.5).
 func IsDarkText(c color.NRGBA) bool {
 	return 0.299*float32(c.R)+0.587*float32(c.G)+0.114*float32(c.B) < 0.5*255
@@ -104,6 +132,7 @@ func DrawText(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string) layo
 	if t := ForShaper(sh); t != nil {
 		return t.Text(gtx, o, txt)
 	}
+	o.Color = lightTextColor(o.Color)
 	return drawText(gtx, sh, o, CleanText(txt), EmboldenFor(o.Color))
 }
 
@@ -112,6 +141,7 @@ func DrawText(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string) layo
 // emoji sprites) instead of relying on a color font.
 func (t *Theme) Text(gtx layout.Context, o LabelOpts, txt string) layout.Dimensions {
 	txt = CleanText(txt)
+	o.Color = lightTextColor(o.Color)
 	if o.MaxLines == 1 && t.Images != nil {
 		if segs := splitEmoji(txt); segs != nil {
 			return t.textWithEmoji(gtx, o, segs)
