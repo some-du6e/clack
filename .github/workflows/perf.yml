@@ -31,7 +31,7 @@ jobs:
       matrix:
         variant: [head, base]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
       - name: baseline tree (harness from HEAD, everything else from the base commit)
@@ -44,7 +44,7 @@ jobs:
             if git cat-file -e "$BASE:$f" 2>/dev/null; then git checkout -q "$BASE" -- "$f"; else git rm -q -f "$f"; fi
           done
           git status --short | head -50
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
@@ -95,7 +95,7 @@ jobs:
           python3 .github/perf/summary.py perf-out "$GITHUB_SHA" "$ref" >> "$GITHUB_STEP_SUMMARY"
           { echo; echo '### Binary size by package'; echo '```'; cat perf-out/binsize-packages.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           [ -f perf-out/fontcheck.md ] && cat perf-out/fontcheck.md >> "$GITHUB_STEP_SUMMARY" || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
           name: perf-${{ matrix.variant }}
