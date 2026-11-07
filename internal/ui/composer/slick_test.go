@@ -414,7 +414,11 @@ func TestSlickViewBetterBlock(t *testing.T) {
 
 // TestSlickViewAnonymiseFileNames: a file attached to the composer is
 // uploaded under a random name (extension kept), and the chip shows the
-// plugin's name toggle.
+// plugin's name toggle. Clicking the toggle switches the pending file
+// between its original and anonymous name (updatePendingFile and
+// maybePersistPendingFileData): the chip, MultiFileUploadItem's
+// pendingFile and the button follow, and the file is shared under the
+// name shown, while its bytes stay uploaded once, under the random name.
 func TestSlickViewAnonymiseFileNames(t *testing.T) {
 	e := startSlick(t, "AnonymiseFileNames", nil, nil)
 	e.patched("MultiFileUploadItem")
@@ -440,6 +444,139 @@ func TestSlickViewAnonymiseFileNames(t *testing.T) {
 		_, ok := e.treeWith("slick-afn-toggle")
 		return ok
 	})
+	e.until(8*time.Second, "the bytes uploaded", frame, func() bool {
+		c.att.mu.Lock()
+		defer c.att.mu.Unlock()
+		return len(c.att.chips) == 1 && c.att.chips[0].prepared != nil
+	})
+	rt, err := e.tt.JS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	chip := func() (title string) {
+		c.att.mu.Lock()
+		defer c.att.mu.Unlock()
+		return c.att.chips[0].title
+	}
+	// toggle clicks the plugin's button and waits until the chip, its
+	// props and the button all show want (anonymous: aria-pressed).
+	toggle := func(want string, anonymous bool) {
+		t.Helper()
+		e.mu.Lock()
+		var k float64
+		for _, tr := range e.trees {
+			var nodes []any
+			if json.Unmarshal(tr, &nodes) == nil {
+				if n := nodeWhere(nodes, isToggle); n != nil {
+					k, _ = n["k"].(float64)
+				}
+			}
+		}
+		e.trees = map[uint64][]byte{} // what follows is the click's
+		e.mu.Unlock()
+		if k == 0 {
+			t.Fatal("no toggle to click")
+		}
+		if _, err := rt.DispatchEventSync(e.ctx(), int(k), []byte(`{"type":"click","button":0}`)); err != nil {
+			t.Fatal(err)
+		}
+		e.why = func() string {
+			c.att.mu.Lock()
+			defer c.att.mu.Unlock()
+			return fmt.Sprintf("chip title %q, name %q", c.att.chips[0].title, c.att.chips[0].name)
+		}
+		e.until(8*time.Second, fmt.Sprintf("the chip named %q (anonymous %v)", want, anonymous), frame, func() bool {
+			if chip() != want {
+				return false
+			}
+			e.mu.Lock()
+			defer e.mu.Unlock()
+			for _, tr := range e.trees {
+				var nodes []any
+				if json.Unmarshal(tr, &nodes) != nil {
+					continue
+				}
+				btn := nodeWhere(nodes, isToggle)
+				item := nodeWhere(nodes, func(n map[string]any) bool { return n["t"] == "@" && n["n"] == "MultiFileUploadItem" })
+				if btn == nil || item == nil {
+					continue
+				}
+				bp, _ := btn["p"].(map[string]any)
+				ip, _ := item["p"].(map[string]any)
+				pf, _ := ip["pendingFile"].(map[string]any)
+				file, _ := pf["file"].(map[string]any)
+				// host props carry attribute values as strings
+				pressed := fmt.Sprint(bp["aria-pressed"]) == fmt.Sprint(anonymous)
+				busy := bp["disabled"] == true || bp["disabled"] == "true"
+				if pressed && !busy && pf["title"] == want && file["name"] == name {
+					return true
+				}
+			}
+			return false
+		})
+	}
+	toggle(real, false) // the original name
+	if files := c.att.Files(); files[0].Title != real || files[0].Name != name {
+		t.Errorf("after using the original name: %+v, want title %q and the uploaded name %q", files, real, name)
+	}
+	toggle(name, true) // anonymous again
+	if files := c.att.Files(); files[0].Title != name {
+		t.Errorf("after anonymising again: %+v, want title %q", files, name)
+	}
+	toggle(real, false)
+
+	// the upload follows: the file is shared under the name the chip shows
+	c.submit()
+	e.until(8*time.Second, "the file shared", frame, func() bool { return len(e.slack.called("files.completeUploadExternal")) > 0 })
+	var shared []struct{ ID, Title string }
+	if err := json.Unmarshal([]byte(e.slack.called("files.completeUploadExternal")[0].Get("files")), &shared); err != nil {
+		t.Fatal(err)
+	}
+	if len(shared) != 1 || shared[0].Title != real {
+		t.Errorf("shared %+v, want one file titled %q", shared, real)
+	}
+	if got := e.slack.called("files.getUploadURLExternal"); len(got) != 1 {
+		t.Errorf("bytes uploaded %d times, want once", len(got))
+	} else if got[0].Get("filename") != name {
+		t.Errorf("bytes uploaded as %q, want %q", got[0].Get("filename"), name)
+	}
+}
+
+func isToggle(n map[string]any) bool {
+	p, _ := n["p"].(map[string]any)
+	cls, _ := p["className"].(string)
+	return n["t"] == "button" && strings.Contains(cls, "slick-afn-toggle")
+}
+
+// nodeWhere is the first node in a host tree (children and element
+// props included) that ok accepts.
+func nodeWhere(nodes []any, ok func(map[string]any) bool) map[string]any {
+	for _, x := range nodes {
+		m, isMap := x.(map[string]any)
+		if !isMap {
+			continue
+		}
+		if ok(m) {
+			return m
+		}
+		if kids, isList := m["c"].([]any); isList {
+			if f := nodeWhere(kids, ok); f != nil {
+				return f
+			}
+		}
+		if p, isMap := m["p"].(map[string]any); isMap {
+			for _, v := range p {
+				if el, isEl := v.(map[string]any); isEl {
+					if sub, isList := el["$el"].([]any); isList {
+						if f := nodeWhere(sub, ok); f != nil {
+							return f
+						}
+					}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // TestSlickViewSilentTyping: typing in the composer, then clearing it,

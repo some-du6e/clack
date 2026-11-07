@@ -19,7 +19,10 @@ import (
 //
 // AnonymiseFileNames patches all three. The name it gives a file reaches
 // the upload through uploadName (plugins.go), which reads it from a real
-// File in the plugin runtime; the props carry that name.
+// File in the plugin runtime; the props carry that name. Its toggle
+// renames the file's title (updatePendingFile, attach_pending.go): the
+// chip shows the title and the file is shared under it, while file.name
+// stays the name the bytes were uploaded under.
 
 // attItem is one chip at a boundary: what the props and natives need.
 type attItem struct {
@@ -35,10 +38,13 @@ func attMime(name string) string { return mime.TypeByExtension(filepath.Ext(name
 func (it attItem) file() slackc.Props {
 	v := it.v
 	m := attMime(v.name)
-	return slackc.Props{"name": v.name, "title": v.name, "size": len(v.c.data), "mimetype": m, "type": m}
+	return slackc.Props{"name": v.name, "title": v.title, "size": len(v.c.data), "mimetype": m, "type": m}
 }
 
-func (it attItem) pendingID() string { return "clack_pending_" + strconv.Itoa(it.v.c.id) }
+func (it attItem) pendingID() string { return attPendingID(it.v.c.id) }
+
+// attPendingID is a chip's pendingFileId.
+func attPendingID(id int) string { return "clack_pending_" + strconv.Itoa(id) }
 
 // MultiFileUploadItem's props: Slack's pendingFile {pendingFileId, title,
 // file}.
@@ -47,7 +53,7 @@ func (it attItem) props() slackc.Props {
 		"$key": it.pendingID(),
 		"pendingFile": slackc.Props{
 			"pendingFileId": it.pendingID(),
-			"title":         it.v.name,
+			"title":         it.v.title,
 			"file":          it.file(),
 		},
 		"isUploading": it.v.sending || it.v.preparing,
@@ -77,7 +83,7 @@ func (it attItem) layoutFieldset(gtx layout.Context, p slackc.Props) layout.Dime
 }
 
 func (it attItem) titleProps() slackc.Props {
-	return slackc.Props{"$key": it.pendingID() + "/title", "file": it.file(), "title": it.v.name}
+	return slackc.Props{"$key": it.pendingID() + "/title", "file": it.file(), "title": it.v.title}
 }
 
 // layoutTitle: Clack has no rename dialog, so the title draws nothing.
