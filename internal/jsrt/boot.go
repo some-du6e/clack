@@ -26,7 +26,7 @@ import (
 // order. They come from assets.pack, decompressed for each boot and dropped
 // afterwards: nothing is held while no plugin runtime runs.
 func bootScripts() ([]script, error) {
-	f, err := unpack()
+	f, err := unpackAssets()
 	if err != nil {
 		return nil, err
 	}

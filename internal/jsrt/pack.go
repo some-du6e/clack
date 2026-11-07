@@ -31,8 +31,8 @@ var PackFiles = []string{
 	"vendor/react-reconciler.production.js", "vendor/react-reconciler-constants.production.js",
 }
 
-// unpack decompresses the pack (~10 ms). Callers keep only what they need.
-func unpack() (map[string][]byte, error) { return ReadPack(assetPack) }
+// unpackAssets decompresses the pack (~10 ms). Callers keep only what they need.
+func unpackAssets() (map[string][]byte, error) { return ReadPack(assetPack) }
 
 // ReadPack parses a pack: for each file, "<name>\x00<length>\n<bytes>".
 func ReadPack(pack []byte) (map[string][]byte, error) {

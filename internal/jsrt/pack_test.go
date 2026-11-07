@@ -8,7 +8,7 @@ import (
 
 // TestAssetPackFresh: assets.pack must match the files it is built from.
 func TestAssetPackFresh(t *testing.T) {
-	got, err := unpack()
+	got, err := unpackAssets()
 	if err != nil {
 		t.Fatal(err)
 	}

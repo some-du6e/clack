@@ -72,7 +72,7 @@ var engineWasm = sync.OnceValue(func() []byte {
 			return b
 		}
 	}
-	files, err := unpack()
+	files, err := unpackAssets()
 	if err != nil {
 		return nil
 	}
