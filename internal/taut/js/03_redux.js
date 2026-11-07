@@ -546,6 +546,26 @@ function waitForThunkCreator(name) {
     w.add(resolve)
   })
 }
+/** waitForThunkCreator that rejects with `message` after `ms` and drops its waiter (Slick gives up after 30 s; Taut waits) */
+function waitForThunkWithin(name, ms, message) {
+  const known = thunkCreators.get(name)
+  if (known) return Promise.resolve(known)
+  return new Promise((resolve, reject) => {
+    let w = thunkWaiters.get(name)
+    if (!w) thunkWaiters.set(name, (w = new Set()))
+    const waiters = w
+    const waiter = (creator) => {
+      clearTimeout(timer)
+      resolve(creator)
+    }
+    const timer = setTimeout(() => {
+      waiters.delete(waiter)
+      if (!waiters.size && thunkWaiters.get(name) === waiters) thunkWaiters.delete(name)
+      reject(new Error(message))
+    }, ms)
+    waiters.add(waiter)
+  })
+}
 async function dispatchThunk(name, ...args) {
   const creator = await waitForThunkCreator(name)
   return dispatch(creator(...args))
@@ -694,4 +714,4 @@ defineModule('redux-store', {
   }),
 })
 
-Object.assign(T, { redux, store, getState, getRawState, dispatch, defineThunk, nativeThunk, onAction, setLocalSlice, refresh })
+Object.assign(T, { redux, store, getState, getRawState, dispatch, defineThunk, nativeThunk, waitForThunkWithin, onAction, setLocalSlice, refresh })
