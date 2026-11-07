@@ -16,6 +16,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/taut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/messages"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 )
@@ -62,6 +63,7 @@ func (b *backend) startTaut(a *App) {
 				}
 			},
 			SetPatched:  slackc.SetPatched,
+			ThreadPane:  messages.ThreadPane, // api.threads.usePane (safe off the UI goroutine)
 			CallGo:      slackc.CallGo,
 			SetStyle:    slackc.SetStyle,
 			RemoveStyle: slackc.RemoveStyle,
@@ -103,6 +105,7 @@ func (b *backend) startTaut(a *App) {
 	}
 	b.taut = t
 	popups.SetTaut(t)   // channel/member menus, search, reactions, delete
+	messages.SetTaut(t) // message list thunks, patched message views
 	composer.SetTaut(t) // composer buttons, send checks/transforms, drafts
 	if envFlag("TIMING") {
 		log.Printf("timing: taut.New %v (js runtime started: %v)", time.Since(t0).Round(10*time.Microsecond), t.Started())
@@ -122,6 +125,7 @@ func (b *backend) watchTaut(a *App, t *taut.Taut) {
 func (b *backend) stopTaut() {
 	if b.taut != nil {
 		popups.SetTaut(nil)
+		messages.SetTaut(nil)
 		composer.SetTaut(nil)
 		_ = b.taut.Close()
 		b.taut = nil
