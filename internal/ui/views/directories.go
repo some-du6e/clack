@@ -1358,7 +1358,7 @@ func dirSplitBtn(b *base, gtx C, main, caret *widget.Clickable, label string, me
 					bg = b.p.ReadFill
 				}
 				paint.FillShape(gtx.Ops, bg, rr.Op(gtx.Ops))
-				paint.FillShape(gtx.Ops, b.p.BorderStr, clip.Stroke{Path: rr.Path(gtx.Ops), Width: bw}.Op())
+				paint.FillShape(gtx.Ops, b.p.BorderStr, clip.Stroke{Path: theme.CachedRRect(rr), Width: bw}.Op())
 				return layout.Center.Layout(gtx, inner)
 			})
 		})
@@ -1569,7 +1569,7 @@ func dirRowShape(b *base, gtx C, sz image.Point, first, last bool) {
 		paint.FillShape(gtx.Ops, flatten(argb(0x0f000000), b.p.ReadFill), sh.Op(gtx.Ops))
 	}
 	paint.FillShape(gtx.Ops, b.p.Surface, rr.Op(gtx.Ops))
-	paint.FillShape(gtx.Ops, dirListBorder(b), clip.Stroke{Path: rr.Path(gtx.Ops), Width: float32(max(1, gtx.Dp(1)))}.Op())
+	paint.FillShape(gtx.Ops, dirListBorder(b), clip.Stroke{Path: theme.CachedRRect(rr), Width: float32(max(1, gtx.Dp(1)))}.Op())
 }
 
 // dirTabStrip draws Slack's c-tabs: text-width tabs, padding 8px 0 (h 32),
