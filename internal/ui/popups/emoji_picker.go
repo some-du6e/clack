@@ -709,7 +709,7 @@ func (p *EmojiPicker) layoutBody(gtx layout.Context, th *theme.Theme, cl *Colors
 	if p.gifMode {
 		cs := clipRRect(gtx, local, rad)
 		p.layoutTop(gtx, th, cl, sz.X)
-		p.layoutGif(gtx, th, cl, sz)
+		p.layoutGifPicker(gtx, th, cl, sz)
 		cs.Pop()
 		return
 	}

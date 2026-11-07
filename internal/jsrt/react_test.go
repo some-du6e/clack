@@ -212,6 +212,7 @@ function App() {
   return React.createElement(React.Fragment, null,
     React.createElement(Avatar, { channelId: 'C1', memberCount: 3, goFn: Object.assign(() => {}, { $gofn: 7 }), slot: { $slot: 'x' }, onClick: () => { clicked++; return 'ret'; }, tooltip: React.createElement('em', null, 'tip') },
       React.createElement('span', null, 'kid')),
+    React.createElement(__clack.native('MenuItem'), { $slot: 5, label: 'Set nickname', click: () => { clicked += 10; } }),
     ReactDOM.createPortal(React.createElement('div', { className: 'overlay' }, 'over'), document.body),
     React.createElement(React.Suspense, { fallback: React.createElement('i', null, 'loading') }, React.createElement(Lazy)));
 }
@@ -240,6 +241,14 @@ React.createElement(App)`)
 	}
 	if sl, _ := av.P["slot"].(map[string]any); sl["$slot"] != "x" {
 		t.Fatalf("$slot passthrough: %v", av.P["slot"])
+	}
+	// a slot component's own props keep their functions (plugin menu rows)
+	mi := find(ns, func(n node) bool { return n.T == "@" && n.N == "MenuItem" })
+	if mi == nil || mi.P["$slot"] != float64(5) || mi.P["label"] != "Set nickname" {
+		t.Fatalf("slot component: %+v", mi)
+	}
+	if c, _ := mi.P["click"].(map[string]any); c == nil || c["$fn"] == nil {
+		t.Fatalf("slot component lost its click fn: %v", mi.P)
 	}
 	r.CallFn(int(fn["$fn"].(float64)), []byte(`[]`))
 	if got := evalString(t, r, `clicked`); got != "1" {

@@ -302,7 +302,11 @@ func (l *lay) videoCard(a *richtext.Attachment, x, y, w int) int {
 		fs.lineH = l.dp(18.75)
 		fs.maxLines, fs.ellipsis = 2, true
 		l.addSpansTarget(a.Title, &fs, cardT)
+		f0 := len(l.d.frags)
 		h, _ := l.flow(x+pad, cy, cw-2*pad, &fs)
+		if l.inAtt && l.mode&modeAtts != 0 && isYouTube(a) {
+			l.titleFrags = [2]int{f0, len(l.d.frags)} // AttachmentTitle (comps.go)
+		}
 		cy += h + l.dp(4)
 		l.plainAdd("\n")
 	}

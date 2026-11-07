@@ -10,6 +10,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -152,7 +153,15 @@ func NewChannelMenu(h Host, anchor image.Point, convID string) *Menu {
 			Confirm(h, "Leave #"+name+"?", msg, "Leave channel", true, nil, func() { actLeave(h, convID, "You left #"+name) })
 		}})
 	}
-	m := NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(anchor), AlignRight: true})
+	m := NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(anchor), AlignRight: true, Wraps: []MenuWrap{
+		// Slack's channel context menu: ChatTabs marks the channel, then
+		// extends the trigger's getTemplate ("Open in new Slick tab")
+		{Name: "ChannelContextMenu", Props: slackc.Props{"id": convID}},
+		{Name: "ContextMenuTriggerWithKeyboardFocus", Props: slackc.Props{
+			"desktopAppOnly": false, "showSlackKitContextMenuOnDesktop": true, "overrideDefaultMenu": true,
+			"menuAriaLabel": "Channel options", "width": "300px",
+		}},
+	}})
 	tautMenu(h, m, "getContextMenuTemplate", convID) // QuickJoin et al.; free without plugins
 	return m
 }
