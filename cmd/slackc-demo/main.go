@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"image"
 	"io"
@@ -122,6 +123,44 @@ func (logBridge) SetRects(r map[int64][4]float32) {
 	fmt.Fprintf(os.Stderr, "rects: %d nodes\n", len(r))
 }
 
+// normalize moves the props written inline on a node ({"t":"div","style":…})
+// into "p", the wire format the JS renderer sends.
+func normalize(src string) []byte {
+	var v any
+	if err := json.Unmarshal([]byte(src), &v); err != nil {
+		log.Fatal(err)
+	}
+	var walk func(x any)
+	walk = func(x any) {
+		switch x := x.(type) {
+		case []any:
+			for _, e := range x {
+				walk(e)
+			}
+		case map[string]any:
+			p, _ := x["p"].(map[string]any)
+			if p == nil {
+				p = map[string]any{}
+			}
+			for k, val := range x {
+				switch k {
+				case "t", "n", "v", "k", "p", "on", "c":
+					continue
+				}
+				p[k] = val
+				delete(x, k)
+			}
+			if len(p) > 0 {
+				x["p"] = p
+			}
+			walk(x["c"])
+		}
+	}
+	walk(v)
+	b, _ := json.Marshal(v)
+	return b
+}
+
 func fetch(ctx context.Context, url string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -159,7 +198,7 @@ func run() {
 		return th.Label(gtx, 15, theme.Bold, th.C.Link, h.Props.StrOr("label", "native"))
 	}, "Original")
 	for i, s := range sections {
-		nodes, err := slackc.ParseTree([]byte(s.tree))
+		nodes, err := slackc.ParseTree(normalize(s.tree))
 		if err != nil {
 			log.Fatalf("section %d: %v", i, err)
 		}
