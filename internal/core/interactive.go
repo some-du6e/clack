@@ -49,6 +49,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/url"
 	"strconv"
 	"strings"
@@ -499,6 +500,7 @@ func (ix *Interactive) onView(ev slack.Event) {
 	if v.ID == "" {
 		return
 	}
+	log.Printf("interactive: %s view=%s type=%s prev=%s ours=%v", ev.Type, v.ID, v.Type, v.PreviousViewID, ix.ours(e.ClientToken, e.TimeoutRange))
 	v.ChannelID = e.ChannelID
 	switch {
 	case ev.Type == "view_updated":
@@ -598,7 +600,22 @@ func (ix *Interactive) BlockActionSend(ctx context.Context, b BlockAction) (stri
 	if len(b.State) > 0 && string(b.State) != "{}" && string(b.State) != "null" {
 		p.Set("state", `{"values":`+string(b.State)+`}`)
 	}
-	return tok, actionErr(ix.call(ctx, "blocks.actions", p, nil))
+	err := actionErr(ix.call(ctx, "blocks.actions", p, nil))
+	logCall("blocks.actions", b.Container.String(), err)
+	return tok, err
+}
+
+// logCall logs an interaction (ids and error codes only, never contents).
+func logCall(method, what string, err error) {
+	if err != nil {
+		code := err.Error()
+		if ae, ok := err.(*ActionError); ok {
+			code = ae.Code
+		}
+		log.Printf("interactive: %s %s: %s", method, what, code)
+		return
+	}
+	log.Printf("interactive: %s %s: ok", method, what)
 }
 
 // actionErr turns a Slack error into an ActionError with Slack's text.
@@ -685,7 +702,9 @@ func (ix *Interactive) AttachmentActionSend(ctx context.Context, x AttachmentAct
 	if x.BotUserID != "" {
 		p.Set("bot_user_id", x.BotUserID)
 	}
-	return tok, actionErr(ix.call(ctx, "chat.attachmentAction", p, nil))
+	err = actionErr(ix.call(ctx, "chat.attachmentAction", p, nil))
+	logCall("chat.attachmentAction", fmt.Sprintf("ch=%s ts=%s att=%d", x.ChannelID, x.MessageTS, x.AttachmentID), err)
+	return tok, err
 }
 
 func (ix *Interactive) teamID() string {
@@ -728,6 +747,7 @@ func (ix *Interactive) SubmitView(ctx context.Context, viewID string, values jso
 		}
 	}
 	out := SubmitResult{ResponseAction: res.ResponseAction, Toast: res.Toast, Errors: res.Errors, ViewError: res.ViewError}
+	log.Printf("interactive: views.submit view=%s: ok=%v error=%s response_action=%s errors=%d", viewID, res.OK, res.Error, res.ResponseAction, len(res.Errors))
 	if !res.OK && res.Error != "" {
 		out.Code = res.Error
 		if res.Error == "validation_failed" && len(res.Errors) > 0 {
@@ -769,7 +789,9 @@ func (ix *Interactive) CloseView(ctx context.Context, viewID, rootViewID string)
 	ix.mu.Lock()
 	delete(ix.views, viewID)
 	ix.mu.Unlock()
-	return ix.call(ctx, "views.close", p, nil)
+	err := ix.call(ctx, "views.close", p, nil)
+	logCall("views.close", "view="+viewID+" root="+rootViewID, err)
+	return err
 }
 
 // GetView fetches a view (views.get), e.g. to reload a modal.
@@ -908,7 +930,9 @@ func (ix *Interactive) RunShortcut(ctx context.Context, s AppShortcut, channelID
 	if s.TeamID != "" {
 		p.Set("team_id", s.TeamID)
 	}
-	return tok, actionErr(ix.call(ctx, "apps.actions.v2.execute", p, nil))
+	err := actionErr(ix.call(ctx, "apps.actions.v2.execute", p, nil))
+	logCall("apps.actions.v2.execute", "app="+s.AppID+" action="+s.ActionID, err)
+	return tok, err
 }
 
 // ---- App Home ----

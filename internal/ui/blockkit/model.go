@@ -3,6 +3,8 @@ package blockkit
 import (
 	"encoding/json"
 	"strings"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/emoji"
 )
 
 // Text is a Block Kit text object.
@@ -306,7 +308,37 @@ func textOf(t *Text) string {
 	if t.Type == "mrkdwn" {
 		s = stripMrkdwn(s)
 	}
-	return unescape(s)
+	return emojize(unescape(s))
+}
+
+// emojize turns standard :shortcodes: into their unicode emoji (labels
+// draw them as Slack's emoji images), like Slack's plain_text emoji.
+func emojize(s string) string {
+	if strings.Count(s, ":") < 2 {
+		return s
+	}
+	var b strings.Builder
+	for {
+		i := strings.IndexByte(s, ':')
+		if i < 0 {
+			break
+		}
+		j := strings.IndexByte(s[i+1:], ':')
+		if j < 0 {
+			break
+		}
+		name := s[i+1 : i+1+j]
+		if _, uni, ok := emoji.Standard(name); ok && name != "" && !strings.ContainsAny(name, " \t") {
+			b.WriteString(s[:i])
+			b.WriteString(uni)
+			s = s[i+j+2:]
+			continue
+		}
+		b.WriteString(s[:i+1])
+		s = s[i+1:]
+	}
+	b.WriteString(s)
+	return b.String()
 }
 
 func unescape(s string) string {

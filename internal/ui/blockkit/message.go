@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"image"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -201,6 +202,7 @@ func (me *Message) attOf(bid string) *attachment {
 }
 
 func (me *Message) fire(w *ew, action json.RawMessage, done func(error)) {
+	log.Printf("blockkit: %s action in %s/%s block=%s legacy=%v", w.e.Type, me.m.Channel, me.m.TS, w.bid, me.legacy[w] != nil)
 	ix := me.h.Core().Interactive()
 	key := w.bid
 	if lr := me.legacy[w]; lr != nil {
