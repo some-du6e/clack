@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -63,6 +64,9 @@ type View struct {
 	// Origin, if set by the owner, is added to click anchors so they are in
 	// window coordinates.
 	Origin image.Point
+
+	// expanded: attachments whose collapsed text was expanded (truncate.go)
+	expanded map[int]bool
 
 	// External hands text selection to the owner (cross-message selection
 	// in a list): the View still handles clicks and hover but never changes
@@ -336,7 +340,10 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 		v.laidEl = el.ElementsVersion()
 	}
 	v.d.reset()
-	l := lay{st: st, d: &v.d, scale: pxdp, spx: pxsp, jumbo: v.doc.Jumbo, opts: v.opts, mode: mode, cs: &v.cs}
+	if v.expanded == nil {
+		v.expanded = map[int]bool{}
+	}
+	l := lay{st: st, d: &v.d, scale: pxdp, spx: pxsp, jumbo: v.doc.Jumbo, opts: v.opts, mode: mode, cs: &v.cs, expanded: v.expanded, expandAt: -1}
 	if l.scale <= 0 {
 		l.scale = 1
 	}
@@ -823,6 +830,11 @@ func (v *View) activate(t int16, anchor image.Point, h Handler) {
 	case tButton:
 		if tg.btn != nil {
 			h.Button(*tg.btn)
+		}
+	case tExpand:
+		if k, err := strconv.Atoi(tg.id); err == nil {
+			v.expanded[k] = !v.expanded[k]
+			v.dirty = true
 		}
 	}
 }
