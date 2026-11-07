@@ -316,8 +316,10 @@ func RRect(gtx layout.Context, r image.Rectangle, radius int, c color.NRGBA) {
 
 // Border strokes a rounded rectangle outline of width w px.
 func Border(gtx layout.Context, r image.Rectangle, radius, w int, c color.NRGBA) {
-	rr := clip.UniformRRect(r, radius)
-	paint.FillShape(gtx.Ops, c, clip.Stroke{Path: rr.Path(gtx.Ops), Width: float32(w)}.Op())
+	// a cached path at the origin, translated: stable op identity, so Gio
+	// tessellates the stroke once instead of every frame (see PathPen)
+	defer op.Offset(r.Min).Push(gtx.Ops).Pop()
+	paint.FillShape(gtx.Ops, c, clip.Stroke{Path: RRectPath(r.Dx(), r.Dy(), radius), Width: float32(w)}.Op())
 }
 
 // Circle fills a circle with the given center and diameter.
