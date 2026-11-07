@@ -305,6 +305,13 @@ func refreshFns(v any, slots map[string]int64, path string) {
 		for i, x := range v {
 			refreshFns(x, slots, path+"."+strconv.Itoa(i))
 		}
+	case Slot:
+		if id, ok := slots[path]; ok {
+			gofns.Lock()
+			gofns.m[id] = v
+			gofns.Unlock()
+		}
+		refreshFns(v.Props, slots, path+".p")
 	case nil, string, bool, float64, int, int64, JSFunc, Element:
 	default:
 		if id, ok := slots[path]; ok && isFunc(v) {

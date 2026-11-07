@@ -1,6 +1,8 @@
 package slackc
 
 import (
+	"encoding/json"
+	"strconv"
 	"testing"
 
 	"gioui.org/layout"
@@ -140,4 +142,41 @@ func BenchmarkStyledUnstyled(b *testing.B) {
 		s.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{} })
 		s.Leave()
 	}
+}
+
+func TestSlotEncoding(t *testing.T) {
+	slots := map[string]int64{}
+	drew := ""
+	p := Props{"children": []any{Child("MessageSender", Props{"isInteractive": true}, func(gtx layout.Context, p Props) layout.Dimensions {
+		drew = p.StrOr("x", "native")
+		return layout.Dimensions{}
+	}), "text"}}
+	js := encodeProps(p, slots)
+	var enc struct {
+		Children []json.RawMessage `json:"children"`
+	}
+	if err := json.Unmarshal(js, &enc); err != nil || len(enc.Children) != 2 {
+		t.Fatalf("%s: %v", js, err)
+	}
+	var sl struct {
+		ID int64  `json:"$slot"`
+		N  string `json:"n"`
+	}
+	json.Unmarshal(enc.Children[0], &sl)
+	if sl.N != "MessageSender" || sl.ID == 0 {
+		t.Fatalf("slot encoding %s", js)
+	}
+	nodes, err := ParseTree([]byte(`{"t":"@","n":"MessageSender","k":5,"p":{"$slot":` + strconv.FormatInt(sl.ID, 10) + `,"x":"plugin"}}`))
+	if err != nil {
+		t.Fatal(err, string(js))
+	}
+	s, ok := SlotOf(nodes[0])
+	if !ok || s.Name != "MessageSender" {
+		t.Fatalf("slot lookup failed for %s", js)
+	}
+	s.Native(ctx(), nodes[0].P)
+	if drew != "plugin" {
+		t.Fatalf("drew %q", drew)
+	}
+	releaseSlots(slots)
 }

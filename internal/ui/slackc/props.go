@@ -57,6 +57,36 @@ var errNoBridge = errors.New("slackc: no plugin runtime")
 // Tooltip's tip; lay it out with Host.Element.
 type Element struct{ Nodes []*Node }
 
+// Slot is a native sub-part passed to JS as a React child (or prop) of a
+// patched component: JS sees an element of the Slack component Name with
+// Props, which plugins can inspect, reorder, wrap or patch; when it is
+// rendered Go calls Native with the props the plugin left on it.
+//
+//	Props{"msg": m, "children": []any{
+//		slackc.Child("MessageSender", senderProps, r.layoutSender),
+//		slackc.Child("MessageTimestamp", tsProps, r.layoutTS),
+//	}}
+type Slot struct {
+	Name   string
+	Props  Props
+	Native Native
+}
+
+// Child makes a Slot.
+func Child(name string, p Props, native Native) Slot {
+	return Slot{Name: name, Props: p, Native: native}
+}
+
+// SlotOf returns the native slot an "@" node renders (its "$slot" prop).
+func SlotOf(n *Node) (Slot, bool) {
+	id, ok := n.P["$slot"].(float64)
+	if !ok {
+		return Slot{}, false
+	}
+	s, ok := goFn(int64(id)).(Slot)
+	return s, ok
+}
+
 // Str returns a string prop.
 func (p Props) Str(k string) (string, bool) {
 	s, ok := p[k].(string)
@@ -417,6 +447,17 @@ func appendValue(b []byte, v any, slots map[string]int64, path string) []byte {
 		return strconv.AppendInt(b, int64(v), 10)
 	case uint64:
 		return strconv.AppendUint(b, v, 10)
+	case Slot:
+		if slots == nil {
+			return append(b, "null"...)
+		}
+		b = append(b, `{"$slot":`...)
+		b = strconv.AppendInt(b, fnSlot(slots, path, v), 10)
+		b = append(b, `,"n":`...)
+		b = appendString(b, v.Name)
+		b = append(b, `,"p":`...)
+		b = appendValue(b, v.Props, slots, path+".p")
+		return append(b, '}')
 	case JSFunc:
 		b = append(b, `{"$fn":`...)
 		b = strconv.AppendInt(b, v.ID, 10)
@@ -574,6 +615,8 @@ func hashValue(h uint64, v any) uint64 {
 		return (h ^ math.Float64bits(float64(v))) * fnvPrime
 	case JSFunc:
 		return (h ^ uint64(v.ID) ^ 0x9e3779b97f4a7c15) * fnvPrime
+	case Slot:
+		return hashValue(hstr(h^14, v.Name), v.Props)
 	case Props:
 		var s uint64
 		for k, x := range v {
