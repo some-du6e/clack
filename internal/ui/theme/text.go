@@ -111,7 +111,17 @@ type EmojiImages interface {
 	Get(url string, sizePx int) (paint.ImageOp, bool)
 }
 
-var noEmbolden = os.Getenv("CLACK_NOEMBOLDEN") != "" || os.Getenv("YOLOSLACK_NOEMBOLDEN") != ""
+var noEmbolden = envOn("CLACK_NOEMBOLDEN") || envOn("YOLOSLACK_NOEMBOLDEN")
+
+// envOn reports whether a boolean env var is set: "", "0", "false", "no"
+// and "off" mean unset, so CLACK_NOEMBOLDEN=0 keeps the embolden.
+func envOn(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "", "0", "false", "no", "off":
+		return false
+	}
+	return true
+}
 
 var shaperThemes sync.Map // *text.Shaper -> *Theme
 
