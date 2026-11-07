@@ -47,6 +47,7 @@ import (
 type row struct {
 	ts  string
 	rev uint32
+	bk  bkState      // live Block Kit elements (blockkit.go)
 	src core.Message // the message as core has it
 	m   core.Message // what the row draws: src, or src with a plugin's msg
 
@@ -456,6 +457,9 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 	if m.Pinned && !rc.thread {
 		y += r.labelLine(gtx, rc, cx, y, "pin", pinnedLabel(rc, m.PinnedBy))
 	}
+	if ephemeral(rc, m) {
+		y += r.labelLine(gtx, rc, cx, y, "eye", "Only visible to you")
+	}
 	if m.Broadcast && !rc.thread && m.ThreadTS != "" && m.ThreadTS != m.TS {
 		y += r.broadcastLine(gtx, rc, cx, y)
 	}
@@ -776,6 +780,7 @@ func (r *row) layoutBlocks(gtx layout.Context, p slackc.Props) layout.Dimensions
 	if st.Hidden() {
 		return layout.Dimensions{}
 	}
+	r.withElements(rc.h)
 	if st.Active() {
 		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return r.rv.Layout(gtx, rc.st, &r.handler) })
 	}
