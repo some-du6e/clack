@@ -80,6 +80,12 @@ var ThunkCatalogue = []ThunkSpec{
 	{"submitView", "{viewId, values, …}", "ui/popups (app modals)", "submitting an app modal"},
 	{"apiCall", "{method, args}", "taut", "a Slack API call"},
 	{"apiCallExpedited", "{method, args}", "taut", "a Slack API call"},
+	// used by Slick's plugins (docs/PLUGINS-slick.md)
+	{"handleDeepLink", "{uri}", "ui (shell)", "opening a slack:// deep link (UIHooks.DeepLink)"},
+	{"currentUserEndedTyping", "{channelId, threadTs?}", "ui/composer", "the typing indicator ending (Clack sends none)"},
+	{"openEditProfileModal", "{}", "ui/popups (profile)", "opening the edit-profile dialog"},
+	{"showSavedItemNotification", "{message, …}", "ui (notifications)", "a saved-item reminder notification"},
+	{"startHuddle", "{channelId, …}", "ui/views (huddles)", "starting a huddle (Clack has no huddle media)"},
 }
 
 // SyncThunks return their result synchronously in Slack (plugins call the
@@ -401,7 +407,13 @@ func (tt *thunkTable) installDefaults() {
 	}
 	// Slack bookkeeping with nothing to do in Clack: they resolve, so
 	// plugins awaiting them continue.
-	for _, name := range []string{"maybeFetchBackgrounds", "startEventLog", "stopEventLog", "stopHuddle", "displayAlertMessage",
+	n["handleDeepLink"] = func(ctx context.Context, a []json.RawMessage) (any, error) {
+		if f := t.opts.UI.DeepLink; f != nil {
+			return f(argObj(a).str("uri")), nil
+		}
+		return false, nil
+	}
+	for _, name := range []string{"maybeFetchBackgrounds", "startEventLog", "stopEventLog", "stopHuddle", "displayAlertMessage", "currentUserEndedTyping", "startHuddle",
 		"processAwsTranscription", "roomsStartTranscriptionFetcher", "roomsStopTranscriptionFetcher", "logExperimentExposure", "handleMessageImmediatelyWithoutPreprocessing"} {
 		n[name] = func(ctx context.Context, a []json.RawMessage) (any, error) { return nil, nil }
 	}
