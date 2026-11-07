@@ -7,12 +7,17 @@ on:
 env:
   GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
 
+permissions:
+  contents: read
+
 jobs:
   bench:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
@@ -31,8 +36,9 @@ jobs:
   demo:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           fetch-depth: 0
       - name: merge the CSS engine and SVG renderer for an integrated demo
         run: |
@@ -45,7 +51,7 @@ jobs:
             git fetch -q origin taut-ui-layout-svg && git merge -q --no-edit origin/taut-ui-layout-svg && git rm -q -f internal/ui/slackc/svg_stub.go
           fi
           git log --oneline -5
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
@@ -55,7 +61,7 @@ jobs:
         run: |
           mkdir -p dist
           if [ -d cmd/slackc-demo ]; then CGO_ENABLED=1 go build -tags slackcdemo -trimpath -o dist/slackc-demo ./cmd/slackc-demo; fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: slackc-demo
           path: dist/

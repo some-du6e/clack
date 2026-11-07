@@ -11,7 +11,7 @@ on:
         required: true
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
@@ -21,13 +21,14 @@ jobs:
   linux:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           ref: ${{ env.TAG }}
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false # release binaries are built from a clean module/build cache
       - name: gio deps
         run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
       - name: test
@@ -36,7 +37,7 @@ jobs:
         run: |
           mkdir -p dist
           CGO_ENABLED=1 go build -trimpath -ldflags="-s -w -X main.version=$TAG" -o dist/clack-linux-amd64 ./cmd/clack
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: clack-linux-amd64
           path: dist/clack-linux-amd64
@@ -44,18 +45,19 @@ jobs:
   windows:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           ref: ${{ env.TAG }}
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false # release binaries are built from a clean module/build cache
       - name: build (cross, no cgo)
         run: |
           mkdir -p dist
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -H windowsgui -X main.version=$TAG" -o dist/clack-windows-amd64.exe ./cmd/clack
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: clack-windows-amd64
           path: dist/clack-windows-amd64.exe
@@ -63,18 +65,19 @@ jobs:
   macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           ref: ${{ env.TAG }}
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false # release binaries are built from a clean module/build cache
       - name: build
         run: |
           mkdir -p dist
           CGO_ENABLED=1 go build -trimpath -ldflags="-s -w -X main.version=$TAG" -o dist/clack-darwin-arm64 ./cmd/clack
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: clack-darwin-arm64
           path: dist/clack-darwin-arm64
@@ -82,8 +85,10 @@ jobs:
   publish:
     needs: [linux, windows, macos]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # gh release create/upload
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
           merge-multiple: true

@@ -1,7 +1,9 @@
 name: jsrt
 # Builds internal/jsrt's engine (QuickJS-NG → wasm32-wasip1) and runs the
 # jsrt benchmarks. The wasm is committed as internal/jsrt/jsrt.wasm; this
-# job rebuilds it from csrc/ and uploads it as the jsrt-wasm artifact.
+# job rebuilds it from csrc/ with pinned, checksummed inputs, uploads it as
+# the jsrt-wasm artifact, and fails if it differs from the committed one (the
+# build is reproducible, so the committed binary must match its source).
 on:
   push:
     paths: ['internal/jsrt/**', '.github/workflows/jsrt.yml']
@@ -12,31 +14,55 @@ on:
         type: boolean
         default: true
 env:
+  # Taut (GPLv3, third-party) commit the taut-plugins job builds; same pin as taut.yml
+  TAUT_PIN: 6fe5123e3b4cffaa16c6dda71291ad5d82cdad37
   QJS_VERSION: v0.18.0
+  QJS_COMMIT: d7215b0ad3fc2c562e8317fd9bca058fd4863804 # quickjs-ng tag v0.18.0
   WASI_SDK_VERSION: "27"
+  WASI_SDK_SHA256: b7d4d944c88503e4f21d84af07ac293e3440b1b6210bfd7fe78e0afd92c23bc2 # wasi-sdk-27.0-x86_64-linux.tar.gz
+permissions:
+  contents: read
+
 jobs:
   wasm:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: wasi-sdk
         run: |
           v=$WASI_SDK_VERSION
-          curl -fsSL "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-$v/wasi-sdk-$v.0-x86_64-linux.tar.gz" | tar xz -C /opt
+          curl -fsSL -o /tmp/wasi-sdk.tar.gz "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-$v/wasi-sdk-$v.0-x86_64-linux.tar.gz"
+          echo "$WASI_SDK_SHA256  /tmp/wasi-sdk.tar.gz" | sha256sum -c -
+          tar xzf /tmp/wasi-sdk.tar.gz -C /opt
           echo "WASI_SDK=/opt/wasi-sdk-$v.0-x86_64-linux" >> $GITHUB_ENV
       - name: quickjs-ng
-        run: git clone -q --depth 1 --branch $QJS_VERSION https://github.com/quickjs-ng/quickjs /opt/quickjs && echo "QJS=/opt/quickjs" >> $GITHUB_ENV
+        run: |
+          git clone -q --depth 1 --branch "$QJS_VERSION" https://github.com/quickjs-ng/quickjs /opt/quickjs
+          got=$(git -C /opt/quickjs rev-parse HEAD)
+          [ "$got" = "$QJS_COMMIT" ] || { echo "::error::quickjs-ng $QJS_VERSION is $got, expected $QJS_COMMIT"; exit 1; }
+          echo "QJS=/opt/quickjs" >> $GITHUB_ENV
       - name: build
         run: internal/jsrt/csrc/build.sh && sha256sum internal/jsrt/jsrt.wasm
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: jsrt-wasm
           path: internal/jsrt/jsrt.wasm
+      - name: committed jsrt.wasm matches its source
+        run: |
+          # content only: the linker's output is mode 755, the committed file 644
+          if ! git show HEAD:internal/jsrt/jsrt.wasm | cmp -s - internal/jsrt/jsrt.wasm; then
+            echo "::error::internal/jsrt/jsrt.wasm differs from the build of csrc/ (built $(sha256sum < internal/jsrt/jsrt.wasm | cut -c1-64), committed $(git show HEAD:internal/jsrt/jsrt.wasm | sha256sum | cut -c1-64)). Commit this run's jsrt-wasm artifact."
+            exit 1
+          fi
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
@@ -49,17 +75,20 @@ jobs:
     # every plugin in taut's plugins/, built with taut's own build:user-plugin, must load
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
-          cache: true
-      - uses: actions/setup-node@v4
+          cache: false # this job runs third-party code; never share its Go cache
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
       - name: build taut plugins
         run: |
-          git clone -q --depth 1 https://github.com/jeremy46231/taut /tmp/taut
+          git clone -q https://github.com/jeremy46231/taut /tmp/taut
+          git -C /tmp/taut checkout -q "$TAUT_PIN"
           cd /tmp/taut && npm ci --ignore-scripts --no-audit --no-fund
           mkdir -p /tmp/taut-built
           for f in plugins/*.ts plugins/*.tsx; do
@@ -69,7 +98,7 @@ jobs:
           ls -la /tmp/taut-built
       - name: load them in jsrt
         run: set -o pipefail; JSRT_TAUT_PLUGINS=/tmp/taut-built go test -count=1 -run TestTautPlugins -v ./internal/jsrt/ | grep -v '^=== RUN'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
           name: taut-plugins-built
@@ -78,8 +107,10 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.bench }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
@@ -87,14 +118,14 @@ jobs:
         run: go test -run '^$' -bench . -benchmem -benchtime 2s ./internal/jsrt/ | tee bench.txt
       - name: startup and render profile
         run: go test -count=1 -run 'TestStartupTiming|TestRenderProfile' -v ./internal/jsrt/
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: internal/jsrt/enginecmp/go.mod
           cache: false
       - name: engine comparison (QuickJS-NG/wazero vs goja)
         working-directory: internal/jsrt/enginecmp
         run: go test -count=1 -v . | tee ../../../enginecmp.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: jsrt-bench
           path: |

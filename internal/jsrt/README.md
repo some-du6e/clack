@@ -26,6 +26,13 @@ Boot order: env → web → intl → dom → React (CommonJS via `__jr.require`)
 
 JS values cross as `u32` handles into a table in wasm memory (0 = undefined; bit 31 on a returned handle means "exception, the rest is the thrown value"). Go owns every handle it receives, wrapped in a GC-tracked `Value` (`runtime.AddCleanup` queues the release on the JS thread). Host functions are `JS_NewCFunctionData` with the Go id in `magic`, plus a `HostRef` object whose finalizer calls `host_free` so Go drops the closure when JS collects the function. Imports: `host_call`, `host_interrupt` (deadline per task), `host_module` (ES module source by name), `host_rejection`, `host_free`.
 
+## Limits (plugins are untrusted code)
+
+- CPU: every task (a `Do`, a timer, an event, and the microtasks after it) has `Options.Timeout` (5 s); QuickJS's interrupt handler (`host_interrupt`) throws an uncatchable error past it. A few native builtins never poll it (`Array.prototype.reverse.call({length: 2**53-1})`), so a watchdog cancels the engine's context once a task is `max(Timeout, 1 s)` past its deadline: wazero (`WithCloseOnContextDone`) closes the module mid-call, the Runtime closes (`Done`), and Taut starts a fresh one.
+- Memory: QuickJS's heap limit (`Options.MemoryLimit`, 512 MiB) makes allocations throw; the wasm memory is capped at the limit + 512 MiB (`WithMemoryLimitPages`). `fetch` bodies are capped at 128 MiB.
+- No WASI filesystem, env, args or stdio (wazero's defaults: nothing preopened, output discarded); only clocks and crypto random. `fetch` goes to http(s) only, through `Options.Fetch` (the default, and Taut's, add no cookies or tokens).
+- A Go panic in a host function becomes a JS exception; an engine trap closes the Runtime instead of the process.
+
 ## Rebuilding
 
 - Engine: edit `csrc/`, push; the `jsrt` workflow's `wasm` job builds `jsrt.wasm` (wasi-sdk 27, QuickJS-NG `QJS_VERSION`) and uploads the `jsrt-wasm` artifact. Download it (`gh run download <id> -n jsrt-wasm`) and commit it. New exports should be optional in `engine.go` so Go keeps working with the previous wasm.
