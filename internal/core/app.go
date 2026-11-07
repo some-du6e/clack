@@ -256,12 +256,16 @@ func (a *App) Boot(ctx context.Context) error {
 			return nil
 		})
 	}
+	// Custom emoji (65k on Hack Club, ~7 MB of JSON) and usergroups come
+	// from the disk cache; emoji_changed keeps a running session current.
+	// Refresh them only when stale, and after startup so the parse does
+	// not compete with the first frames.
 	if a.S.CustomEmoji.Len() == 0 {
 		step("emoji", func() error { return a.loadEmoji(ctx) })
-	} else {
-		go a.loadEmoji(a.bg)
+	} else if a.S.EmojiAge() > EmojiMaxAge {
+		a.later(10*time.Second, func() { _ = a.loadEmoji(a.bg) })
 	}
-	go a.loadUsergroups(a.bg) // cosmetic; cached on disk after the first run
+	a.later(5*time.Second, func() { _ = a.loadUsergroups(a.bg) }) // cosmetic; cached on disk after the first run
 	wg.Wait()
 	if errConvs != nil {
 		a.bootErr = errConvs
@@ -317,9 +321,26 @@ func (a *App) loadEmoji(ctx context.Context) error {
 		log.Printf("emoji.list: %v", err)
 		return err
 	}
-	a.S.CustomEmoji.Set(m)
+	a.S.SetEmojiList(m)
 	_ = a.S.SaveCache()
 	return nil
+}
+
+// EmojiMaxAge is how old the cached emoji map may be before Boot refetches
+// emoji.list in the background.
+var EmojiMaxAge = 6 * time.Hour
+
+// later runs f after d on a background goroutine, unless the app stops.
+func (a *App) later(d time.Duration, f func()) {
+	go func() {
+		t := time.NewTimer(d)
+		defer t.Stop()
+		select {
+		case <-t.C:
+			f()
+		case <-a.bg.Done():
+		}
+	}()
 }
 
 func (a *App) loadUsergroups(ctx context.Context) error {
