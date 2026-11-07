@@ -67,7 +67,7 @@ func newFakeSlack(t testing.TB) *fakeSlack {
 			rep = map[string]any{"ok": true, "draft": map[string]any{"id": "Dr0TEST", "client_draft_id": "x"}}
 		}
 		f.mu.Lock()
-		if r, ok := f.reply[method]; ok {
+		if r, ok := f.reply[method].(map[string]any); ok {
 			rep = r
 		}
 		f.mu.Unlock()
