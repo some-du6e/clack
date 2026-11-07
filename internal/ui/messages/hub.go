@@ -39,6 +39,7 @@ type model struct {
 	fetched  time.Time // last full refresh
 	refreshQ bool
 	renames  [][2]string // pending ts -> confirmed ts, consumed by views
+	jump     string      // a reply to scroll to (taut jumpToReply), consumed by views
 }
 
 type typingEntry struct {
@@ -488,6 +489,7 @@ type snap struct {
 	rev      uint64
 	refresh  bool
 	renames  [][2]string
+	jump     string
 }
 
 func (m *model) snapshot(dst *snap) bool {
@@ -517,6 +519,7 @@ func (m *model) snapshot(dst *snap) bool {
 	m.refreshQ = false
 	dst.renames = append(dst.renames[:0], m.renames...)
 	m.renames = m.renames[:0]
+	dst.jump, m.jump = m.jump, ""
 	return true
 }
 

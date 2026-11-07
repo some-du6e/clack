@@ -66,10 +66,10 @@ func (v *ThreadView) flexpaneProps() slackc.Props {
 		ts[i] = v.s.snap.msgs[i].m.TS
 	}
 	scrollTo := func(ts string) { v.s.scrollTo(ts); v.h.Invalidate() }
-	return slackc.Props{"$key": v.ch + "-" + v.ts, "channelId": v.ch, "threadTs": v.ts, "windowId": "main",
+	return v.s.paneProps(slackc.Props{"$key": v.ch + "-" + v.ts, "channelId": v.ch, "threadTs": v.ts, "windowId": "main",
 		"timestamps": ts, "highlightKey": v.s.highlight,
 		"ref": slackc.Props{"current": slackc.Props{"scrollToTs": scrollTo,
-			"listRef": slackc.Props{"current": slackc.Props{"getScrollmark": func() {}}}}}}
+			"listRef": slackc.Props{"current": slackc.Props{"getScrollmark": func() {}}}}}})
 }
 
 func (v *ThreadView) layoutPane(gtx layout.Context, _ slackc.Props) layout.Dimensions {
@@ -112,11 +112,11 @@ func (v *ThreadView) pane(gtx layout.Context, size image.Point) layout.Dimension
 }
 
 func (v *ThreadView) adminToolsProps() slackc.Props {
-	return slackc.Props{"$key": v.ch + "-" + v.ts, "channelId": v.ch, "threadTs": v.ts, "isLockedThread": false, "maxMarkableTs": v.ts}
+	return v.s.paneProps(slackc.Props{"$key": v.ch + "-" + v.ts, "channelId": v.ch, "threadTs": v.ts, "isLockedThread": false, "maxMarkableTs": v.ts})
 }
 
 func (v *ThreadView) searchButtonProps() slackc.Props {
-	return slackc.Props{"$key": v.ch + "-" + v.ts, "threadKey": v.ch + "-" + v.ts, "windowId": "main", "isThreadTypeSupported": true}
+	return v.s.paneProps(slackc.Props{"$key": v.ch + "-" + v.ts, "threadKey": v.ch + "-" + v.ts, "windowId": "main", "isThreadTypeSupported": true})
 }
 
 // layoutEmpty is the native of boundaries Clack has no surface for
