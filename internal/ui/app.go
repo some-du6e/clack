@@ -93,6 +93,7 @@ type App struct {
 	ptrWin          image.Point
 	ptrOK           bool
 	overlays        []Overlay
+	slackc          slackcState
 	toast           toastState
 	keys            *shortcuts
 	login           *loginScreen
@@ -286,6 +287,7 @@ func (a *App) frame(gtx layout.Context) {
 	}
 
 	a.readRootPointer(gtx)
+	a.slackcFrame(gtx)
 	a.keys.process(gtx, a)
 	a.updateTitle()
 
@@ -354,6 +356,7 @@ func (a *App) frame(gtx layout.Context) {
 	}
 
 	a.layoutOverlays(gtx)
+	a.slackcOverlays(gtx)
 	a.layoutToast(gtx)
 	a.rootPointer(gtx)
 }
