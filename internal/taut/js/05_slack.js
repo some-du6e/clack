@@ -1614,7 +1614,7 @@ const tracer = new GenericTracer()
 const telemeter = new GenericTelemeter()
 const noopTelemeter = new NoopTelemeter()
 
-// huddle events (Clack does not join huddles' media; the log thunks are no-ops that keep state)
+// huddle events (Clack does not join huddles' media; the log thunks keep state; Go feeds activeHuddle, peers and peer messages from the native huddle)
 const enableEventLog = withMeta('enableEventLog', () => ({ type: 'ENABLE_EVENT_LOG' }))
 const disableEventLog = withMeta('disableEventLog', () => ({ type: 'DISABLE_EVENT_LOG' }))
 onAction('ENABLE_EVENT_LOG', (a) => (goOr(null, 'huddleEventLog', true), a))

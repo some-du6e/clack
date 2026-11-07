@@ -136,8 +136,8 @@ func (t *Taut) installHost(r *runtime) {
 		}
 		return nil, nil
 	})
-	sync("huddleEventLog", func(a []json.RawMessage) (any, error) { return nil, nil })
-	sync("huddleReaction", func(a []json.RawMessage) (any, error) { return false, nil })
+	sync("huddleEventLog", t.huddleEventLog)
+	sync("huddleReaction", t.huddleReaction)
 
 	// ---- data ----
 	sync("kv", func(a []json.RawMessage) (any, error) {
