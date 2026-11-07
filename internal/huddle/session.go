@@ -142,6 +142,7 @@ type Session struct {
 	lines    []Caption
 	sinks    map[string]*videoSink // by video key
 	ended    bool
+	leaving  bool // LEAVE sent: a closing socket is expected, not a drop
 
 	// connection (replaced on reconnect)
 	conn     *websocket.Conn
@@ -421,6 +422,7 @@ func (s *Session) Leave() {
 		s.mu.Unlock()
 		return
 	}
+	s.leaving = true
 	s.mu.Unlock()
 	ack := s.wait(ftLeaveAck)
 	if s.send(encodeLeave()) == nil {
@@ -518,10 +520,14 @@ func (s *Session) run() {
 			s.finish(err)
 			return
 		}
-		s.o.Logf("huddle: connection lost: %v (reconnecting)", err)
 		s.mu.Lock()
+		if s.ended || s.leaving {
+			s.mu.Unlock()
+			return
+		}
 		s.phase = Reconnecting
 		s.mu.Unlock()
+		s.o.Logf("huddle: connection lost: %v (reconnecting)", err)
 		s.changed()
 		s.closeConn()
 		select {

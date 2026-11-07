@@ -3,7 +3,7 @@ name: huddle
 # tool; not shipped). The app itself builds in ci.yml.
 on:
   push:
-    paths: ['internal/huddle/**', 'go.mod', 'go.sum', '.github/workflows/huddle.yml']
+    paths: ['internal/huddle/**', 'internal/ui/huddleui/**', 'cmd/huddle-demo/**', 'go.mod', 'go.sum', '.github/workflows/huddle.yml']
   workflow_dispatch:
 jobs:
   huddle:
@@ -26,3 +26,23 @@ jobs:
         with:
           name: huddle-probe-linux-amd64
           path: dist/huddle-probe
+
+  demo:
+    # the huddle UI against the fake Chime (cmd/huddle-demo)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
+      - name: vet
+        run: go vet ./internal/ui/huddleui/... ./cmd/huddle-demo/...
+      - name: build
+        run: CGO_ENABLED=1 go build -trimpath -o dist/huddle-demo ./cmd/huddle-demo
+      - uses: actions/upload-artifact@v4
+        with:
+          name: huddle-demo-linux-amd64
+          path: dist/huddle-demo

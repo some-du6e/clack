@@ -40,14 +40,6 @@ func TestPeerMessageRoundTrip(t *testing.T) {
 	}
 }
 
-// buildFrame encodes a synthetic server frame the way Chime would.
-func buildFrame(typ int, body func(w *pbw)) []byte {
-	var w pbw
-	frameHeader(&w, typ)
-	body(&w)
-	return wrapRTC(w.b)
-}
-
 func TestDecodeFrames(t *testing.T) {
 	b := buildFrame(ftJoinAck, func(w *pbw) {
 		w.msg(5, func(w *pbw) {

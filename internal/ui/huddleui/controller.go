@@ -54,6 +54,11 @@ type liveRoom struct {
 type Controller struct {
 	h Host
 
+	// Client and SelfID override core's Slack client and user (the fake
+	// Chime demo, tests). Set before the first Start.
+	Client huddle.Caller
+	SelfID string
+
 	mu      sync.Mutex
 	s       *huddle.Session
 	joining string // channel being joined
@@ -214,7 +219,7 @@ func (c *Controller) Start(channel string) {
 		}
 		if tt != nil {
 			tt.SetHuddleReaction(func(emoji, kind, url string) bool { return s.React(emoji, url) == nil })
-			tt.SetActiveHuddle(s.RoomID(), channel, s.SelfAttendee(), app.Self().ID)
+			tt.SetActiveHuddle(s.RoomID(), channel, s.SelfAttendee(), c.selfID())
 		}
 		c.changed()
 	}()
@@ -229,9 +234,13 @@ func errText(err error) string {
 }
 
 func (c *Controller) options(app *core.App) huddle.Options {
+	var client huddle.Caller = app.C
+	if c.Client != nil {
+		client = c.Client
+	}
 	return huddle.Options{
-		Client:   app.C,
-		SelfID:   app.Self().ID,
+		Client:   client,
+		SelfID:   c.selfID(),
 		Logf:     log.Printf,
 		OnChange: c.onSession,
 		OnPeer: func(ev huddle.PeerEvent) {
@@ -491,6 +500,16 @@ func remove(l []string, s string) []string {
 }
 
 // ---- helpers ----
+
+func (c *Controller) selfID() string {
+	if c.SelfID != "" {
+		return c.SelfID
+	}
+	if app := c.h.Core(); app != nil {
+		return app.Self().ID
+	}
+	return ""
+}
 
 func (c *Controller) user(id string) (core.User, bool) {
 	if app := c.h.Core(); app != nil && id != "" {
