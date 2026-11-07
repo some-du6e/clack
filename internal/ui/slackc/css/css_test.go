@@ -1305,3 +1305,22 @@ func BenchmarkCascadeHitCompute(b *testing.B) {
 		Compute(&c, &parent, env)
 	}
 }
+
+// IdvStatus' `underline wavy <color>`: the wavy style and color survive the
+// shorthand and the longhands, and `text-decoration-line: none` keeps the style.
+func TestWavyDecoration(t *testing.T) {
+	leaf := n("span.idv")
+	_ = n("div", leaf)
+	s := styleOf(eng(`.idv { text-decoration: underline wavy #e01e5a !important; text-decoration-thickness: 1px !important }`), leaf, testEnv)
+	if s.TextDecoration.Lines() != DecoUnderline || s.TextDecoration&DecoWavy == 0 || s.DecoColor != rgb(0xe0, 0x1e, 0x5a) {
+		t.Errorf("wavy shorthand: deco %b color %v", s.TextDecoration, s.DecoColor)
+	}
+	s = styleOf(eng(`.idv { text-decoration-line: underline; text-decoration-style: wavy }`), leaf, testEnv)
+	if s.TextDecoration != DecoUnderline|DecoWavy {
+		t.Errorf("longhands: %b", s.TextDecoration)
+	}
+	s = styleOf(eng(`.idv { text-decoration: underline wavy; text-decoration-style: solid }`), leaf, testEnv)
+	if s.TextDecoration != DecoUnderline {
+		t.Errorf("solid after wavy: %b", s.TextDecoration)
+	}
+}
