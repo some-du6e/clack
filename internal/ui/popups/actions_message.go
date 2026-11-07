@@ -126,7 +126,7 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	items = append(items,
 		MenuItem{Label: "Organize", Sub: []MenuItem{pin}},
 		MenuItem{Label: "Forward message…", Do: func() { h.ShowOverlay(NewForwardModal(h, m)) }},
-		MenuItem{Label: "Connect to apps", Sub: []MenuItem{{Label: "No apps", Disabled: true}}},
+		MenuItem{Label: "Connect to apps", Sub: connectToApps(h, m)},
 	)
 	if own {
 		items = append(items, Sep(), MenuItem{Label: "Delete message…", Hint: "delete", Danger: true, Do: func() { confirmDelete(h, m, o.Delete) }})
@@ -366,4 +366,18 @@ func actMinutesUntil(now, t time.Time) int {
 		n = 1
 	}
 	return n
+}
+
+// MessageShortcuts, when set (internal/ui/blockkit), fills the message
+// menu's "Connect to apps" submenu with the workspace's message
+// shortcuts (recent ones, then "More message shortcuts…").
+var MessageShortcuts func(h Host, m core.Message) []MenuItem
+
+func connectToApps(h Host, m core.Message) []MenuItem {
+	if MessageShortcuts != nil {
+		if items := MessageShortcuts(h, m); len(items) > 0 {
+			return items
+		}
+	}
+	return []MenuItem{{Label: "No apps", Disabled: true}}
 }
