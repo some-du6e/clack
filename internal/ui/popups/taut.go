@@ -16,6 +16,20 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 )
 
+// Class tags (§2.3) of popups' generic widgets. Feature popups declare
+// theirs next to the widget (menu_template.go, profile_card.go,
+// emoji_picker.go, search_popover.go).
+var (
+	popoverClass    = slackc.Class("c-popover c-popover--fade", "role", "dialog")
+	modalClass      = slackc.Class("ReactModal__Content c-sk-modal c-sk-modal--fixed", "role", "dialog", "data-qa", "sk-modal")
+	dtDropdownClass = slackc.Class("c-date_picker__dropdown", "role", "dialog")
+	buttonClass     = slackc.Class("c-button", "type", "button").Tag("button").
+			Mods("c-button--outline", "c-button--primary", "c-button--danger", "c-button--disabled",
+			"c-button--small", "c-button--medium", "c-button--icon")
+	inputTextClass   = slackc.Class("c-input_text", "type", "text").Tag("input")
+	statusInputClass = slackc.Class("p-custom_status_modal__input")
+)
+
 // instSeq hands out "$key"s so each popup instance keeps its plugin hook
 // state across prop changes.
 var instSeq atomic.Int64

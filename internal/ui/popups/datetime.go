@@ -479,121 +479,132 @@ func (c *dtCalendar) Layout(gtx layout.Context) layout.Dimensions {
 	a.Min.X = a.Max.X - sz.X // right-aligned with the field, like Slack
 	pos := place(a, sz, win, dp(gtx, 8), Below)
 	c.rect = image.Rectangle{Min: pos, Max: pos.Add(sz)}
-	card(gtx, cl, c.rect, dp(gtx, 8))
-	c.block.Layout(gtx, c.rect)
 	keyTarget(gtx, c, c.rect)
+	st := dtDropdownClass.Enter(gtx, 0, 0)
+	defer st.Leave()
+	if !st.Hidden() {
+		at(gtx, pos, func(gtx layout.Context) layout.Dimensions {
+			return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
+				pos := image.Point{}
+				local := image.Rectangle{Max: sz}
+				card(gtx, cl, local, dp(gtx, 8))
+				c.block.Layout(gtx, local)
 
-	// header: « ‹ Month Year › »
-	bs := dp(gtx, 32)
-	by := pos.Y + pad + (headH-bs)/2
-	bx := [4]int{pos.X + pad, pos.X + pad + bs, pos.X + sz.X - pad - 2*bs, pos.X + sz.X - pad - bs}
-	for i := range c.nav {
-		at(gtx, image.Pt(bx[i], by), func(gtx layout.Context) layout.Dimensions {
-			return clickBox(gtx, &c.nav[i], func(gtx layout.Context, s image.Point, hovered bool) {
-				if hovered {
-					rrect(gtx, image.Rectangle{Max: s}, dp(gtx, 4), cl.BgHover)
+				// header: « ‹ Month Year › »
+				bs := dp(gtx, 32)
+				by := pos.Y + pad + (headH-bs)/2
+				bx := [4]int{pos.X + pad, pos.X + pad + bs, pos.X + sz.X - pad - 2*bs, pos.X + sz.X - pad - bs}
+				for i := range c.nav {
+					at(gtx, image.Pt(bx[i], by), func(gtx layout.Context) layout.Dimensions {
+						return clickBox(gtx, &c.nav[i], func(gtx layout.Context, s image.Point, hovered bool) {
+							if hovered {
+								rrect(gtx, image.Rectangle{Max: s}, dp(gtx, 4), cl.BgHover)
+							}
+						}, func(gtx layout.Context) layout.Dimensions {
+							name := "chevron-left"
+							if i >= 2 {
+								name = "chevron-right"
+							}
+							// Slack's glyphs are ~16px tall chevrons (a 26px icon box);
+							// the doubles are two of them 6px apart.
+							const gs = 26
+							is := dp(gtx, gs)
+							o := (bs - is) / 2
+							if i == 0 || i == 3 { // double chevron
+								at(gtx, image.Pt(o-dp(gtx, 4), o), func(gtx layout.Context) layout.Dimensions { return icon(gtx, name, gs, cl.Fg2) })
+								at(gtx, image.Pt(o+dp(gtx, 4), o), func(gtx layout.Context) layout.Dimensions { return icon(gtx, name, gs, cl.Fg2) })
+							} else {
+								at(gtx, image.Pt(o, o), func(gtx layout.Context) layout.Dimensions { return icon(gtx, name, gs, cl.Fg2) })
+							}
+							return layout.Dimensions{Size: image.Pt(bs, bs)}
+						})
+					})
 				}
-			}, func(gtx layout.Context) layout.Dimensions {
-				name := "chevron-left"
-				if i >= 2 {
-					name = "chevron-right"
-				}
-				// Slack's glyphs are ~16px tall chevrons (a 26px icon box);
-				// the doubles are two of them 6px apart.
-				const gs = 26
-				is := dp(gtx, gs)
-				o := (bs - is) / 2
-				if i == 0 || i == 3 { // double chevron
-					at(gtx, image.Pt(o-dp(gtx, 4), o), func(gtx layout.Context) layout.Dimensions { return icon(gtx, name, gs, cl.Fg2) })
-					at(gtx, image.Pt(o+dp(gtx, 4), o), func(gtx layout.Context) layout.Dimensions { return icon(gtx, name, gs, cl.Fg2) })
-				} else {
-					at(gtx, image.Pt(o, o), func(gtx layout.Context) layout.Dimensions { return icon(gtx, name, gs, cl.Fg2) })
-				}
-				return layout.Dimensions{Size: image.Pt(bs, bs)}
-			})
-		})
-	}
-	title := c.month.Format("January 2006")
-	tw := textW(gtx, th, 15, theme.Bold, title)
-	at(gtx, image.Pt(pos.X+(sz.X-tw)/2, pos.Y+pad), func(gtx layout.Context) layout.Dimensions {
-		return vcenter(gtx, headH, func(gtx layout.Context) layout.Dimensions {
-			return text(gtx, th, 15, theme.Bold, cl.Fg, title)
-		})
-	})
-
-	// weekdays
-	gx := pos.X + (sz.X-7*cw)/2
-	wy := pos.Y + pad + headH
-	for i, wd := range [...]string{"Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"} {
-		w := textW(gtx, th, 13, theme.Bold, wd)
-		at(gtx, image.Pt(gx+i*cw+(cw-w)/2, wy), func(gtx layout.Context) layout.Dimensions {
-			return vcenter(gtx, wkH, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 13, theme.Bold, cl.Fg2, wd)
-			})
-		})
-	}
-
-	// grid
-	gy := wy + wkH
-	line := cl.Tab
-	for i, n := range grid {
-		if n == 0 {
-			continue
-		}
-		day := c.dayN(n)
-		r := image.Rect(gx+(i%7)*cw, gy+(i/7)*ch, gx+(i%7+1)*cw, gy+(i/7+1)*ch)
-		off := c.disabled(day)
-		sel := day.Equal(c.sel)
-		curs := c.kbd && day.Equal(c.cur)
-		cell := func(gtx layout.Context) layout.Dimensions {
-			s := r.Size()
-			box := image.Rectangle{Max: s}
-			if off || (!sel && (curs || c.cells[i].Hovered())) {
-				fill(gtx, box, cl.BgAlt)
-			}
-			fg := cl.Fg
-			if off {
-				fg = cl.Muted
-			}
-			if sel {
-				rrect(gtx, box, dp(gtx, 4), cl.Highlight)
-				d := dp(gtx, 34)
-				ctr := image.Pt(s.X/2, s.Y/2)
-				theme.Circle(gtx, ctr, d, cl.HighText)
-				theme.Circle(gtx, ctr, d-2*maxInt(1, dp(gtx, 1)), cl.Highlight)
-				fg = cl.HighText
-			} else if curs {
-				stroke(gtx, box, dp(gtx, 4), maxInt(1, dp(gtx, 2)), cl.Focus)
-			}
-			num := dtNum(n)
-			nw := textW(gtx, th, 15, theme.Regular, num)
-			at(gtx, image.Pt((s.X-nw)/2, 0), func(gtx layout.Context) layout.Dimensions {
-				return vcenter(gtx, s.Y, func(gtx layout.Context) layout.Dimensions {
-					return text(gtx, th, 15, theme.Regular, fg, num)
+				title := c.month.Format("January 2006")
+				tw := textW(gtx, th, 15, theme.Bold, title)
+				at(gtx, image.Pt(pos.X+(sz.X-tw)/2, pos.Y+pad), func(gtx layout.Context) layout.Dimensions {
+					return vcenter(gtx, headH, func(gtx layout.Context) layout.Dimensions {
+						return text(gtx, th, 15, theme.Bold, cl.Fg, title)
+					})
 				})
+
+				// weekdays
+				gx := pos.X + (sz.X-7*cw)/2
+				wy := pos.Y + pad + headH
+				for i, wd := range [...]string{"Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"} {
+					w := textW(gtx, th, 13, theme.Bold, wd)
+					at(gtx, image.Pt(gx+i*cw+(cw-w)/2, wy), func(gtx layout.Context) layout.Dimensions {
+						return vcenter(gtx, wkH, func(gtx layout.Context) layout.Dimensions {
+							return text(gtx, th, 13, theme.Bold, cl.Fg2, wd)
+						})
+					})
+				}
+
+				// grid
+				gy := wy + wkH
+				line := cl.Tab
+				for i, n := range grid {
+					if n == 0 {
+						continue
+					}
+					day := c.dayN(n)
+					r := image.Rect(gx+(i%7)*cw, gy+(i/7)*ch, gx+(i%7+1)*cw, gy+(i/7+1)*ch)
+					off := c.disabled(day)
+					sel := day.Equal(c.sel)
+					curs := c.kbd && day.Equal(c.cur)
+					cell := func(gtx layout.Context) layout.Dimensions {
+						s := r.Size()
+						box := image.Rectangle{Max: s}
+						if off || (!sel && (curs || c.cells[i].Hovered())) {
+							fill(gtx, box, cl.BgAlt)
+						}
+						fg := cl.Fg
+						if off {
+							fg = cl.Muted
+						}
+						if sel {
+							rrect(gtx, box, dp(gtx, 4), cl.Highlight)
+							d := dp(gtx, 34)
+							ctr := image.Pt(s.X/2, s.Y/2)
+							theme.Circle(gtx, ctr, d, cl.HighText)
+							theme.Circle(gtx, ctr, d-2*maxInt(1, dp(gtx, 1)), cl.Highlight)
+							fg = cl.HighText
+						} else if curs {
+							stroke(gtx, box, dp(gtx, 4), maxInt(1, dp(gtx, 2)), cl.Focus)
+						}
+						num := dtNum(n)
+						nw := textW(gtx, th, 15, theme.Regular, num)
+						at(gtx, image.Pt((s.X-nw)/2, 0), func(gtx layout.Context) layout.Dimensions {
+							return vcenter(gtx, s.Y, func(gtx layout.Context) layout.Dimensions {
+								return text(gtx, th, 15, theme.Regular, fg, num)
+							})
+						})
+						return layout.Dimensions{Size: s}
+					}
+					at(gtx, r.Min, func(gtx layout.Context) layout.Dimensions {
+						gtx.Constraints = layout.Exact(r.Size())
+						if off {
+							return cell(gtx)
+						}
+						return clickBox(gtx, &c.cells[i], nil, cell)
+					})
+				}
+				// grid lines in one pass over the cells (every day cell gets all four
+				// edges, so the last row is closed like Slack's).
+				lw := maxInt(1, dp(gtx, 1))
+				for i, n := range grid {
+					if n == 0 {
+						continue
+					}
+					r := image.Rect(gx+(i%7)*cw, gy+(i/7)*ch, gx+(i%7+1)*cw, gy+(i/7+1)*ch)
+					fill(gtx, image.Rect(r.Min.X, r.Min.Y, r.Max.X+lw, r.Min.Y+lw), line)
+					fill(gtx, image.Rect(r.Min.X, r.Max.Y, r.Max.X+lw, r.Max.Y+lw), line)
+					fill(gtx, image.Rect(r.Min.X, r.Min.Y, r.Min.X+lw, r.Max.Y+lw), line)
+					fill(gtx, image.Rect(r.Max.X, r.Min.Y, r.Max.X+lw, r.Max.Y+lw), line)
+				}
+				return layout.Dimensions{Size: sz}
 			})
-			return layout.Dimensions{Size: s}
-		}
-		at(gtx, r.Min, func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints = layout.Exact(r.Size())
-			if off {
-				return cell(gtx)
-			}
-			return clickBox(gtx, &c.cells[i], nil, cell)
 		})
-	}
-	// grid lines in one pass over the cells (every day cell gets all four
-	// edges, so the last row is closed like Slack's).
-	lw := maxInt(1, dp(gtx, 1))
-	for i, n := range grid {
-		if n == 0 {
-			continue
-		}
-		r := image.Rect(gx+(i%7)*cw, gy+(i/7)*ch, gx+(i%7+1)*cw, gy+(i/7+1)*ch)
-		fill(gtx, image.Rect(r.Min.X, r.Min.Y, r.Max.X+lw, r.Min.Y+lw), line)
-		fill(gtx, image.Rect(r.Min.X, r.Max.Y, r.Max.X+lw, r.Max.Y+lw), line)
-		fill(gtx, image.Rect(r.Min.X, r.Min.Y, r.Min.X+lw, r.Max.Y+lw), line)
-		fill(gtx, image.Rect(r.Max.X, r.Min.Y, r.Max.X+lw, r.Max.Y+lw), line)
 	}
 	return layout.Dimensions{Size: win}
 }
