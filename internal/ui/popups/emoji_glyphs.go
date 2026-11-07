@@ -9,6 +9,8 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
 // Category tab glyphs for the emoji picker: outline icons on a 20×20 grid
@@ -34,8 +36,8 @@ const (
 // epPen builds clip paths in glyph units.
 type epPen struct {
 	gtx  layout.Context
-	s    float32 // px per unit
-	path clip.Path
+	s    float32       // px per unit
+	path theme.PathPen // cached by content (stable op identity across frames)
 	col  color.NRGBA
 }
 
