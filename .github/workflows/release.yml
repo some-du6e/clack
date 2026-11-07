@@ -51,10 +51,12 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: build (cross, no cgo)
+      - name: mingw (cgo: miniaudio for huddle audio)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq gcc-mingw-w64-x86-64
+      - name: build (cross, cgo via mingw)
         run: |
           mkdir -p dist
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -H windowsgui -X main.version=$TAG" -o dist/clack-windows-amd64.exe ./cmd/clack
+          CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -H windowsgui -X main.version=$TAG" -o dist/clack-windows-amd64.exe ./cmd/clack
       - uses: actions/upload-artifact@v4
         with:
           name: clack-windows-amd64
