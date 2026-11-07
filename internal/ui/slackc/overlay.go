@@ -10,7 +10,8 @@ import (
 
 // Overlay roots are the trees JS mounts on its own: open api.modal
 // modals, api.menu menus, and whatever plugins append to document.body.
-// Their root ids have bit 63 set; the body is root OverlayBody. The ui
+// Their root ids have bit 63 (or taut's bit 52) set; the body is root
+// OverlayBody. The ui
 // root draws them above everything with LayoutOverlays.
 
 // OverlayBody is the root id of document.body's children.
@@ -23,7 +24,7 @@ var overlays struct {
 }
 
 func deliverOverlay(root uint64, nodes []*Node) bool {
-	if root&(1<<63) == 0 {
+	if root&(1<<63|1<<52) == 0 {
 		return false
 	}
 	overlays.Lock()

@@ -881,3 +881,28 @@ func formTextInput(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 	}
 	return layout.Dimensions{Size: image.Pt(w, y), Baseline: 0}
 }
+
+// ---- ComposerButton ----
+
+// composerButton draws one composer.addButton entry (taut-api renders
+// each as "@ComposerButton" with {id, icon, label, pressed, onClick,
+// tooltip}) as Slack's composer icon button.
+func composerButton(gtx layout.Context, h *slackc.Host) layout.Dimensions {
+	p := h.Props
+	q := make(slackc.Props, len(p)+3)
+	for k, v := range p {
+		q[k] = v
+	}
+	q["size"] = "small"
+	if p.Bool("pressed") {
+		q["aria-pressed"] = "true"
+	}
+	if l, ok := p.Str("label"); ok && !p.Has("aria-label") {
+		q["aria-label"] = l
+	}
+	h.Props = q
+	defer func() { h.Props = p }()
+	return iconButtonBase(gtx, h)
+}
+
+func init() { add(composerButton, "ComposerButton") }
