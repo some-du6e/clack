@@ -263,50 +263,66 @@ func TestSlickViewShowSendingBot(t *testing.T) {
 
 // BetterBlock: a blocked person's messages collapse (Message /
 // MessageWrapper / ThreadReplyGeneric render nothing), their avatar
-// leaves the reply bar (ReplyBarAvatar), and mentions of them leave
-// others' text (MessageText / Blocks msg overrides).
+// leaves the reply bar (ThreadReplies' msg, ReplyBarAvatar), and mentions
+// of them leave others' text (MessageText / Blocks msg overrides). Slick
+// keeps only Slack-shaped ids in a names setting, hence UCAROL001.
 func TestSlickViewBetterBlock(t *testing.T) {
-	const tsMention = "1700000401.000100"
+	const (
+		ch, carol                        = "C0BLOCKS", "UCAROL001"
+		tsRoot, tsCarol, tsMention, tsOK = "1700000401.000100", "1700000402.000100", "1700000403.000100", "1700000404.000100"
+		tsReplyAlice, tsReplyCarol       = "1700000405.000100", "1700000406.000100"
+	)
 	e := newSlickEnv(t, func(s *store.Store) {
-		// newTestApp's #general, plus Alice mentioning Bob
-		s.SetLatest(tGen, []slack.Message{
-			{Type: "message", TS: tsFair, User: "UALICE", Text: "the job fair is today", ReplyCount: 1, ThreadTS: tsFair, LatestReply: "1700000004.000400", ReplyUsers: []string{"UBOB"}},
-			{Type: "message", TS: tsTada, User: "UBOB", Text: "synthetic tada", Reactions: []slack.Reaction{{Name: "tada", Count: 2, Users: []string{"UALICE", tSelf}}}},
-			{Type: "message", TS: tsMine, User: tSelf, Text: "hello there"},
-			{Type: "message", TS: tsMention, User: "UALICE", Text: "ask <@UBOB> about it",
-				Blocks: richBlocks(textEl("ask "), map[string]any{"type": "user", "user_id": "UBOB"}, textEl(" about it"))},
+		s.PutUsers([]slack.User{{ID: carol, Name: "carol", RealName: "Carol Example", Profile: slack.Profile{DisplayName: "carol",
+			Image24: "https://avatars.invalid/carol-48.png", Image48: "https://avatars.invalid/carol-48.png"}}})
+		s.PutConv(slack.Conversation{ID: ch, Name: "blocks", IsChannel: true, IsMember: true, NumMembers: 4})
+		s.SetLatest(ch, []slack.Message{
+			{Type: "message", TS: tsRoot, User: "UALICE", Text: "the synthetic plan", ThreadTS: tsRoot, ReplyCount: 2,
+				ReplyUsers: []string{"UALICE", carol}, LatestReply: tsReplyCarol},
+			{Type: "message", TS: tsCarol, User: carol, Text: "carol's synthetic message"},
+			{Type: "message", TS: tsMention, User: "UALICE", Text: "ask <@" + carol + "> about it",
+				Blocks: richBlocks(textEl("ask "), map[string]any{"type": "user", "user_id": carol}, textEl(" about it"))},
+			{Type: "message", TS: tsOK, User: tSelf, Text: "sounds good"},
 		}, false)
+		s.SetThread(ch, tsRoot, []slack.Message{
+			{Type: "message", TS: tsRoot, User: "UALICE", Text: "the synthetic plan", ThreadTS: tsRoot, ReplyCount: 2},
+			{Type: "message", TS: tsReplyAlice, User: "UALICE", Text: "first synthetic reply", ThreadTS: tsRoot},
+			{Type: "message", TS: tsReplyCarol, User: carol, Text: "carol's synthetic reply", ThreadTS: tsRoot},
+		})
 	})
-	e.install(t, "BetterBlock", map[string]any{"blockedUsers": map[string]any{"UBOB": "bob"}})
+	e.install(t, "BetterBlock", map[string]any{"blockedUsers": map[string]any{carol: "carol"}})
 	patched(t, "MessageWrapper", "Message", "ThreadReplyGeneric", "MessageText", "ThreadReplies", "ReplyBarAvatar")
-	v := NewChannelView(e.h, tGen)
+	v := NewChannelView(e.h, ch)
 	v.Preview = true
 	f := frameFn(v)
-	e.waitFor(t, "Bob's message collapsed, the others drawn", f, func() bool {
-		return itemHeight(v.s, tsTada) == 0 && itemHeight(v.s, tsFair) > 0 && itemHeight(v.s, tsMine) > 0
+	e.waitFor(t, "Carol's message collapsed, the others drawn", f, func() bool {
+		return itemHeight(v.s, tsCarol) == 0 && itemHeight(v.s, tsRoot) > 0 && itemHeight(v.s, tsOK) > 0
 	})
-	e.waitFor(t, "the mention of Bob gone from Alice's text", f, func() bool {
+	e.waitFor(t, "the mention of Carol gone from Alice's text", f, func() bool {
 		txt := rowText(v.s.rows[tsMention])
-		return strings.Contains(txt, "ask") && strings.Contains(txt, "about it") && !strings.Contains(txt, "bob")
+		return strings.Contains(txt, "ask") && strings.Contains(txt, "about it") && !strings.Contains(txt, "carol")
 	})
-	// the reply bar under Alice's thread: Bob's avatar is not drawn
-	e.waitFor(t, "Bob's avatar out of the reply bar", f, func() bool {
-		r := v.s.rows[tsFair]
+	// the reply bar under Alice's thread: Alice's avatar, not Carol's
+	e.waitFor(t, "Carol's avatar out of the reply bar", f, func() bool {
+		r := v.s.rows[tsRoot]
 		if r == nil {
 			return false
 		}
+		alice := false
 		for i := 0; i < r.replyN && i < len(r.replyAvs); i++ {
-			if av := &r.replyAvs[i]; av.id == "UBOB" && av.w > 0 {
+			av := &r.replyAvs[i]
+			if av.id == carol && av.w > 0 {
 				return false
 			}
+			alice = alice || av.id == "UALICE" && av.w > 0
 		}
-		return true
+		return alice
 	})
-	// the thread pane: Bob's reply collapses, Alice's root stays
-	tv := NewThreadView(e.h, tGen, tsFair)
+	// the thread pane: Carol's reply collapses, Alice's stay
+	tv := NewThreadView(e.h, ch, tsRoot)
 	ft := frameFn(tv)
-	e.waitFor(t, "Bob's reply collapsed in the thread", ft, func() bool {
-		return itemHeight(tv.s, "1700000004.000400") == 0 && itemHeight(tv.s, tsFair) > 0
+	e.waitFor(t, "Carol's reply collapsed in the thread", ft, func() bool {
+		return itemHeight(tv.s, tsReplyCarol) == 0 && itemHeight(tv.s, tsReplyAlice) > 0 && itemHeight(tv.s, tsRoot) > 0
 	})
 }
 
