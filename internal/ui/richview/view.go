@@ -65,7 +65,7 @@ type View struct {
 	Origin image.Point
 
 	// expanded: attachments whose collapsed text was expanded (truncate.go)
-	expanded   map[*richtext.Attachment]bool
+	expanded map[*richtext.Attachment]bool
 
 	// External hands text selection to the owner (cross-message selection
 	// in a list): the View still handles clicks and hover but never changes
