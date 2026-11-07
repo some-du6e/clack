@@ -111,41 +111,54 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		a.openNotifPrefs(ch)
 	}
 
-	// Huddle split button (94×28: 74 + 20), outlined.
+	// Huddle split button (94×28: 74 + 20), outlined; Slack's mint pill
+	// with faces and "Huddle N" while a huddle is on (huddleui).
+	hud := a.huddles()
+	hud.Seed()
 	hw := gtx.Dp(94)
+	live := hud.HeaderLive(ch)
+	if live {
+		hw = hud.HeaderPillWidth(gtx, a.th, ch)
+	}
 	right -= hw
-	at(gtx, image.Pt(right, y), image.Pt(hw, btn), func(gtx layout.Context) layout.Dimensions {
-		r := image.Rect(0, 0, hw, btn)
-		theme.Border(gtx, r, gtx.Dp(8), gtx.Dp(1), c.Border)
-		at(gtx, image.Pt(0, 0), image.Pt(gtx.Dp(74), btn), func(gtx layout.Context) layout.Dimensions {
-			return clickArea(gtx, a.clicks.get("hdr.huddle"), func(gtx layout.Context, s image.Point, hov bool) {
-				if hov {
-					theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(8), c.BgHover)
-				}
-			}, func(gtx layout.Context) layout.Dimensions {
-				at(gtx, image.Pt(gtx.Dp(8), (btn-gtx.Dp(18))/2), image.Pt(gtx.Dp(18), gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {
-					return icons.Get("huddle")(gtx, 18, c.FgMuted)
-				})
-				at(gtx, image.Pt(gtx.Dp(30), 0), image.Pt(gtx.Dp(44), btn), func(gtx layout.Context) layout.Dimensions {
-					return vcenter(gtx, btn, func(gtx layout.Context) layout.Dimensions {
-						return a.th.Label(gtx, 13, theme.Bold, c.FgMuted, "Huddle")
+	if live {
+		at(gtx, image.Pt(right, y), image.Pt(hw, btn), func(gtx layout.Context) layout.Dimensions {
+			return hud.HeaderPill(gtx, a.th, ch, btn)
+		})
+	} else {
+		at(gtx, image.Pt(right, y), image.Pt(hw, btn), func(gtx layout.Context) layout.Dimensions {
+			r := image.Rect(0, 0, hw, btn)
+			theme.Border(gtx, r, gtx.Dp(8), gtx.Dp(1), c.Border)
+			at(gtx, image.Pt(0, 0), image.Pt(gtx.Dp(74), btn), func(gtx layout.Context) layout.Dimensions {
+				return clickArea(gtx, a.clicks.get("hdr.huddle"), func(gtx layout.Context, s image.Point, hov bool) {
+					if hov {
+						theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(8), c.BgHover)
+					}
+				}, func(gtx layout.Context) layout.Dimensions {
+					at(gtx, image.Pt(gtx.Dp(8), (btn-gtx.Dp(18))/2), image.Pt(gtx.Dp(18), gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {
+						return icons.Get("huddle")(gtx, 18, c.FgMuted)
 					})
+					at(gtx, image.Pt(gtx.Dp(30), 0), image.Pt(gtx.Dp(44), btn), func(gtx layout.Context) layout.Dimensions {
+						return vcenter(gtx, btn, func(gtx layout.Context) layout.Dimensions {
+							return a.th.Label(gtx, 13, theme.Bold, c.FgMuted, "Huddle")
+						})
+					})
+					return layout.Dimensions{Size: image.Pt(gtx.Dp(74), btn)}
 				})
-				return layout.Dimensions{Size: image.Pt(gtx.Dp(74), btn)}
 			})
-		})
-		at(gtx, image.Pt(gtx.Dp(74), 0), image.Pt(gtx.Dp(20), btn), func(gtx layout.Context) layout.Dimensions {
-			return clickArea(gtx, a.clicks.get("hdr.huddlemore"), nil, func(gtx layout.Context) layout.Dimensions {
-				at(gtx, image.Pt(gtx.Dp(1), (btn-gtx.Dp(14))/2), image.Pt(gtx.Dp(14), gtx.Dp(14)), func(gtx layout.Context) layout.Dimensions {
-					return icons.Get("chevron-down")(gtx, 14, c.FgMuted)
+			at(gtx, image.Pt(gtx.Dp(74), 0), image.Pt(gtx.Dp(20), btn), func(gtx layout.Context) layout.Dimensions {
+				return clickArea(gtx, a.clicks.get("hdr.huddlemore"), nil, func(gtx layout.Context) layout.Dimensions {
+					at(gtx, image.Pt(gtx.Dp(1), (btn-gtx.Dp(14))/2), image.Pt(gtx.Dp(14), gtx.Dp(14)), func(gtx layout.Context) layout.Dimensions {
+						return icons.Get("chevron-down")(gtx, 14, c.FgMuted)
+					})
+					return layout.Dimensions{Size: image.Pt(gtx.Dp(20), btn)}
 				})
-				return layout.Dimensions{Size: image.Pt(gtx.Dp(20), btn)}
 			})
+			return layout.Dimensions{Size: r.Size()}
 		})
-		return layout.Dimensions{Size: r.Size()}
-	})
+	}
 	if clicked(a.clicks.get("hdr.huddle")) {
-		a.Toast("Huddles aren't supported in " + AppName + " yet")
+		hud.Start(ch)
 	}
 	right -= gtx.Dp(6)
 

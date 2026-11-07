@@ -26,6 +26,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/taut"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/huddleui"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -131,6 +132,7 @@ type App struct {
 	tautTabs    []taut.PreferencesTab // plugins' Preferences tabs
 	switchAt    time.Time             // navigation time, for the channel-switch latency log
 	switchTo    Route
+	hud         *huddleui.Controller // the native huddle (huddle_wire.go)
 }
 
 // New creates the app. Call Run on the UI goroutine (main).
@@ -210,6 +212,9 @@ func (a *App) Run() error {
 		}
 		switch e := ev.(type) {
 		case app.DestroyEvent:
+			if a.hud != nil {
+				a.hud.Close() // leave the huddle cleanly (Chime LEAVE)
+			}
 			if a.data != nil {
 				a.data.stop()
 			}

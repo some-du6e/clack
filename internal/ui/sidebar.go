@@ -230,7 +230,13 @@ func (a *App) layoutSidebar(gtx layout.Context) layout.Dimensions {
 
 	// scrolling list
 	top := fy + fh + gtx.Dp(10)
-	at(gtx, image.Pt(0, top), image.Pt(sz.X, sz.Y-top), func(gtx layout.Context) layout.Dimensions {
+	barH := a.huddles().BarHeight(gtx) // the huddle bar sits under the list
+	if barH > 0 {
+		at(gtx, image.Pt(0, sz.Y-barH), image.Pt(sz.X, barH), func(gtx layout.Context) layout.Dimensions {
+			return a.huddles().LayoutBar(gtx, a.th)
+		})
+	}
+	at(gtx, image.Pt(0, top), image.Pt(sz.X, sz.Y-top-barH), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min = gtx.Constraints.Max
 		ls := clsSbList.Enter(gtx, 0, 0)
 		defer ls.Leave()
