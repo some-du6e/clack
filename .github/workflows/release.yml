@@ -51,7 +51,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: mingw (cgo: miniaudio for huddle audio)
+      - name: mingw (cgo, for miniaudio huddle audio)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq gcc-mingw-w64-x86-64
       - name: build (cross, cgo via mingw)
         run: |
