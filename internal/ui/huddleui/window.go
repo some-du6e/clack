@@ -189,13 +189,9 @@ func (w *window) layout(gtx C) {
 	tt := op.Offset(image.Pt(ix+gtx.Dp(22), (titleH-ts.Y)/2)).Push(gtx.Ops)
 	tcall.Add(gtx.Ops)
 	tt.Pop()
-	if !st.Started.IsZero() {
-		el := elapsed(now.Sub(st.Started))
-		es := labelSize(gtx, w.th, 12, theme.Regular, el)
-		at(gtx, image.Pt(gtx.Dp(14), (titleH-es.Y)/2), es, func(gtx C) D {
-			return w.th.Label(gtx, 12, theme.Regular, theme.WithAlpha(hudWhite, 0xb0), el)
-		})
-	}
+	// No elapsed time here: Slack's huddle window shows none (its only
+	// huddle timer is the Huddles page's HuddlesActiveTimer); Slick's
+	// CallTimer adds one after the title.
 	bs := gtx.Dp(28)
 	at(gtx, image.Pt(sz.X-bs-gtx.Dp(10), (titleH-bs)/2), image.Pt(bs, bs), func(gtx C) D {
 		return button(gtx, w.click("full"), image.Pt(bs, bs), func(gtx C, hov bool) {
