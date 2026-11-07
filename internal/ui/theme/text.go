@@ -70,29 +70,37 @@ func envFloat(name string, def float32) float32 {
 
 // lightTextColor applies LightTextFade to light glyph colors.
 //
-// The excess depends on the weight: on the embedded Lato at 1x, regular
-// sidebar rows were still +8% heavy at k=0.2 while the Black team name was
-// 8.5% light, so regular fades more and Black less.
+// The excess grows as light text gets dimmer (mid greys gain the most from
+// linear-light blending). Measured at 1x on the embedded Lato vs Chrome,
+// regular weight: sidebar rows (#f6e4ff at .9, y≈.83) match at k≈0.12, the
+// dark-mode topic (#b9babd, y=.73) at 0.26 and timestamps (#ababad, y=.67)
+// at 0.39, so k = 0.12 + (0.83-y)·1.7, scaled by LightTextFade/0.2 (the env
+// knob). Bold needs ~3/4 of that (dark tabs); Black gets no fade (the
+// sidebar's white team name is already 8% light, see lightBlackEmbolden).
 func lightTextColor(c color.NRGBA, pxPerDp float32, w font.Weight) color.NRGBA {
-	if LightTextFade <= 0 || pxPerDp <= 0 {
+	if LightTextFade <= 0 || pxPerDp <= 0 || w >= font.Black {
 		return c
 	}
-	k := LightTextFade
-	switch {
-	case w >= font.Black:
-		k *= 0.6
-	case w < font.Bold:
-		k *= 1.3
+	y := (0.299*float32(c.R) + 0.587*float32(c.G) + 0.114*float32(c.B)) / 255
+	if y < 0.6 {
+		return c
+	}
+	k := 0.12 + (0.83-y*float32(c.A)/255)*1.7
+	k = min(max(k, 0), 0.45) * LightTextFade / 0.2
+	if w >= font.Bold {
+		k *= 0.75
 	}
 	a := 1 - k/pxPerDp
 	if a <= 0 || a >= 1 {
 		return c
 	}
-	if y := (0.299*float32(c.R) + 0.587*float32(c.G) + 0.114*float32(c.B)) / 255; y >= 0.6 {
-		c.A = uint8(float32(c.A)*a + 0.5)
-	}
+	c.A = uint8(float32(c.A)*a + 0.5)
 	return c
 }
+
+// lightBlackEmbolden (px) gives light Black text (the sidebar team name)
+// the ink it lacks next to Chrome: 8% at 1x unfaded.
+const lightBlackEmbolden = 0.12
 
 // IsDarkText reports whether c is dark text (luminance under 0.5).
 func IsDarkText(c color.NRGBA) bool {
@@ -292,6 +300,9 @@ func (t *Theme) textWithEmoji(gtx layout.Context, o LabelOpts, segs []segment) l
 
 func drawText(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string, emb float32) layout.Dimensions {
 	emb *= weightEmbolden(o.Font.Weight)
+	if emb == 0 && o.Font.Weight >= font.Black && !noEmbolden && !IsDarkText(o.Color) {
+		emb = lightBlackEmbolden
+	}
 	cs := gtx.Constraints
 	trunc := ""
 	if o.MaxLines > 0 {
