@@ -34,9 +34,10 @@ type Element interface {
 	// Prev is the previous element sibling (nil when first or unknown),
 	// for the + and ~ combinators.
 	Prev() Element
-	// Index is the element's position among its element siblings and the
-	// sibling count, for :first-child/:last-child/:nth-child. n == 0 when
-	// unknown (native widgets): structural pseudo-classes then don't match.
+	// Index is the element's 0-based position among its element siblings
+	// and the sibling count, for :first-child/:last-child/:nth-child.
+	// n == 0 when unknown (native widgets): structural pseudo-classes then
+	// don't match.
 	Index() (i, n int)
 	// TypeIndex is Index among siblings of the same tag (:first-of-type…).
 	TypeIndex() (i, n int)
@@ -44,7 +45,9 @@ type Element interface {
 }
 
 // KidsElement is implemented by elements that know their children
-// (host-tree nodes), for :has() and :empty.
+// (host-tree nodes), for :has() and :empty. Kids are element children;
+// an element with text children may also implement HasText() bool so
+// :empty doesn't match it.
 type KidsElement interface {
 	Element
 	Kids() []Element
@@ -56,6 +59,10 @@ type Decl struct {
 	Prop      string
 	Value     string
 	Important bool
+	// Shorthand is set on a longhand that came from a shorthand whose
+	// value has var(): Value is then the shorthand's value, expanded in
+	// Compute after substitution ("pending-substitution value").
+	Shorthand string
 }
 
 // Decls is a declaration list in source order.
