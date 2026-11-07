@@ -177,6 +177,8 @@ func styleOf(e *Engine, el *fakeEl, env Env) Style {
 	return *parent
 }
 
+func has(c Cascaded, prop string) bool { return c.Has(prop) }
+
 func val(t *testing.T, c Cascaded, prop string) string {
 	t.Helper()
 	v, _ := c.Get(prop)
@@ -428,7 +430,7 @@ func TestSelectors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		e := eng(tc.sel + " { color: red }")
-		got := e.Cascade(tc.el, 0, nil, testEnv).Has("color")
+		got := has(e.Cascade(tc.el, 0, nil, testEnv), "color")
 		if got != tc.want {
 			t.Errorf("%s on %s.%v: got %v", tc.sel, tc.el.tag, tc.el.classes, got)
 		}
@@ -467,10 +469,10 @@ func TestHasNeverOnNatives(t *testing.T) {
 	kid := n("span.k")
 	p := n("div.p", kid)
 	e := eng(`.p:has(.k) { color: red }`)
-	if !e.Cascade(p, 0, nil, testEnv).Has("color") {
+	if !has(e.Cascade(p, 0, nil, testEnv), "color") {
 		t.Fatal(":has on a host node")
 	}
-	if e.Cascade(nativeLike{p}, 0, nil, testEnv).Has("color") {
+	if has(e.Cascade(nativeLike{p}, 0, nil, testEnv), "color") {
 		t.Fatal(":has matched a native")
 	}
 }
@@ -484,19 +486,19 @@ func TestInvalidSelectorDropsRule(t *testing.T) {
 		`.b > { color: red }`,
 		`#123, .b { color: red }`,
 	} {
-		if eng(css).Cascade(el, 0, nil, testEnv).Has("color") {
+		if has(eng(css).Cascade(el, 0, nil, testEnv), "color") {
 			t.Errorf("%s: rule should be dropped", css)
 		}
 	}
 	// forgiving :is() keeps the valid argument
-	if !eng(`:is(.a:unknown, .b) { color: red }`).Cascade(el, 0, nil, testEnv).Has("color") {
+	if !has(eng(`:is(.a:unknown, .b) { color: red }`).Cascade(el, 0, nil, testEnv), "color") {
 		t.Error(":is should be forgiving")
 	}
 	// never-matching but valid pseudo-elements keep the rest of the list
-	if !eng(`.b::selection, .b { color: red }`).Cascade(el, 0, nil, testEnv).Has("color") {
+	if !has(eng(`.b::selection, .b { color: red }`).Cascade(el, 0, nil, testEnv), "color") {
 		t.Error("::selection should not drop the rule")
 	}
-	if !eng(`.b::-webkit-scrollbar, .b { color: red }`).Cascade(el, 0, nil, testEnv).Has("color") {
+	if !has(eng(`.b::-webkit-scrollbar, .b { color: red }`).Cascade(el, 0, nil, testEnv), "color") {
 		t.Error("::-webkit-scrollbar should not drop the rule")
 	}
 }
@@ -551,10 +553,10 @@ func TestPseudoElements(t *testing.T) {
 	if sa.Content != `Hi "there"!` {
 		t.Fatalf("attr(): %q", sa.Content)
 	}
-	if !e.Cascade(el, PseudoPlaceholder, nil, testEnv).Has("color") {
+	if !has(e.Cascade(el, PseudoPlaceholder, nil, testEnv), "color") {
 		t.Fatal("::placeholder")
 	}
-	if e.Cascade(el, PseudoNone, nil, testEnv).Has("content") {
+	if has(e.Cascade(el, PseudoNone, nil, testEnv), "content") {
 		t.Fatal("pseudo-element rule leaked onto the element")
 	}
 	none := eng(`.a::before { content: none }`).Cascade(el, PseudoBefore, nil, testEnv)
@@ -667,7 +669,7 @@ func TestMedia(t *testing.T) {
 	}
 	rm := testEnv
 	rm.ReduceMotion = true
-	if !e.Cascade(el, 0, nil, rm).Has("padding-bottom") {
+	if !has(e.Cascade(el, 0, nil, rm), "padding-bottom") {
 		t.Fatal("reduced motion")
 	}
 }
@@ -896,7 +898,7 @@ func TestColors(t *testing.T) {
 		t.Errorf("currentColor: %v %v %v", s.BorderColor[0], s.Background.Color, s.BoxShadow)
 	}
 	for _, bad := range []string{"#ab", "#abcde", "rgb(1, 2)", "notacolor", "hsl(1 2)"} {
-		if eng(".x { color: "+bad+" }").Cascade(n("div.x"), 0, nil, testEnv).Has("color") {
+		if has(eng(".x { color: "+bad+" }").Cascade(n("div.x"), 0, nil, testEnv), "color") {
 			t.Errorf("%s accepted", bad)
 		}
 	}
@@ -962,7 +964,7 @@ func TestUnits(t *testing.T) {
 		}
 	}
 	for _, bad := range []string{"width: 10", "width: 10qq", "width: calc(10px + 5)", "width: calc(100% -20px)", "width: -5px", "font-size: -1px"} {
-		if eng(".c { "+bad+" }").Cascade(leaf, 0, nil, env).Has(strings.Split(bad, ":")[0]) {
+		if has(eng(".c { "+bad+" }").Cascade(leaf, 0, nil, env), strings.Split(bad, ":")[0]) {
 			t.Errorf("%s accepted", bad)
 		}
 	}
