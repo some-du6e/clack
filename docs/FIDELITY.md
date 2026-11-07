@@ -78,4 +78,4 @@ Same window, same channel, the chrome regions that don't depend on message conte
 | header | 7.74 / 6.8% | 7.66 / 6.7% |
 | tabs | 12.00 / 10.6% | 10.08 / 9.4% |
 
-² Slack's top-bar avatar button was shown in the "after" session only (the search pill now matches at 633px).
+² The top nav got slightly worse even though the search pill now matches Slack's 633px: Clack still lacks Slack's top-bar avatar button, and the narrower pill exposes more gradient. Not investigated further.
