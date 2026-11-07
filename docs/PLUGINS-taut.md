@@ -61,6 +61,9 @@ When no plugin patches the name, this is just `native(ctx, args)`. When a plugin
 | maybeFetchBackgrounds, startEventLog, stopEventLog, stopHuddle, displayAlertMessage, processAwsTranscription, roomsStart/StopTranscriptionFetcher | huddles | ui/views huddles | no-op defaults (Clack has no huddle media) |
 | logExperimentExposure, handleMessageImmediatelyWithoutPreprocessing | — | — | no-ops |
 | apiCall, apiCallExpedited | `{method, args}` | taut | default: the Web API call |
+| handleDeepLink | `{uri}` (slack:// links) | ui shell | default: `UIHooks.DeepLink(uri) bool` (false when unset) |
+| currentUserEndedTyping, startHuddle | Slack's | ui/composer, ui/views | no-op defaults |
+| openEditProfileModal, showSavedItemNotification | Slack's | ui/popups, ui notifications | UI must dispatch |
 | blocksFormatFetcher, executeAppAction, submitView | Slack's | ui/composer markdown mode, ui/popups shortcuts and app modals | UI must register natives (no Clack surface yet) |
 
 ## Composer, messages and members
