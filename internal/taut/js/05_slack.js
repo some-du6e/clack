@@ -1653,7 +1653,25 @@ class AudioVideoFacadeSubscriber {
   handlePeerMessageFromDataMessage() {}
 }
 
+// Slack's selector (state, channelId, threadTs, userId): did userId
+// (Slackbot) answer with one of the workspace's custom responses
+// (subtype slackbot_response) in this thread? Core answers from its cached
+// replies (no JSON built); once a plugin patches the state, the state
+// passed in is read instead, as Slack's selector would.
+function hasSlackbotCustomResponseInThread(state, channelId, threadTs, userId) {
+  if (!channelId || !threadTs) return false
+  if (statePatches.size === 0) return goOr(false, 'slackbotCustomResponseInThread', String(channelId), String(threadTs), userId ? String(userId) : '') === true
+  const bucket = state?.messages?.[channelId]
+  if (!bucket || typeof bucket !== 'object') return false
+  for (const ts of Object.keys(bucket)) {
+    const m = bucket[ts]
+    if (m && m.thread_ts === threadTs && m.subtype === 'slackbot_response' && (!userId || m.user === userId)) return true
+  }
+  return false
+}
+
 defineModule('slack-exports', {
+  hasSlackbotCustomResponseInThread,
   I18n,
   getPrefCompliantMemberName,
   getBroadcastKeywordsForUser,

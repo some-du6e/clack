@@ -662,3 +662,47 @@ func TestRealSourceMarkers(t *testing.T) {
 		t.Fatalf("Channel native: %+v", ch)
 	}
 }
+
+// hasSlackbotCustomResponseInThread is Slack's selector (state, channelId,
+// threadTs, userId), found by name: core answers from the cached thread,
+// and once a plugin patches the state the patched messages decide.
+// Synthetic messages only.
+func TestSlackbotCustomResponseExport(t *testing.T) {
+	h := newHarness(t)
+	h.app.S.SetThread("C0FAQ", "1700000900.000100", []slack.Message{
+		{Type: "message", TS: "1700000900.000100", ThreadTS: "1700000900.000100", User: "UALICE", Text: "where is the synthetic wiki?"},
+		{Type: "message", TS: "1700000900.000200", ThreadTS: "1700000900.000100", User: "USLACKBOT", Subtype: "slackbot_response", Text: "a synthetic custom response"},
+	})
+	h.app.S.SetThread("C0FAQ", "1700000901.000100", []slack.Message{
+		{Type: "message", TS: "1700000901.000100", ThreadTS: "1700000901.000100", User: "UALICE", Text: "hi"},
+		{Type: "message", TS: "1700000901.000200", ThreadTS: "1700000901.000100", User: "USLACKBOT", Text: "a plain Slackbot reply"},
+	})
+	var got map[string]any
+	h.jsInto(`
+		const f = T.getExport((v) => typeof v === 'function' && v.name === 'hasSlackbotCustomResponseInThread')
+		if (!f) return { found: false }
+		const s = () => T.redux.getStore().getState()
+		const out = { found: true,
+			custom: f(s(), 'C0FAQ', '1700000900.000100', 'USLACKBOT'),
+			other: f(s(), 'C0FAQ', '1700000900.000100', 'UALICE'),
+			plain: f(s(), 'C0FAQ', '1700000901.000100', 'USLACKBOT'),
+			missing: f(s(), 'C0FAQ', '1700000999.000100', 'USLACKBOT'),
+			noThread: f(s(), 'C0FAQ', undefined, 'USLACKBOT') }
+		// a plugin that rewrites the subtype away: the patched state decides
+		const un = T.redux.patchSlice('messages', (ch, bucket) => {
+			if (ch !== 'C0FAQ' || !bucket) return bucket
+			const o = {}
+			for (const ts of Object.keys(bucket)) o[ts] = { ...bucket[ts], subtype: undefined }
+			return o
+		})
+		out.patched = f(s(), 'C0FAQ', '1700000900.000100', 'USLACKBOT')
+		un()
+		out.unpatched = f(s(), 'C0FAQ', '1700000900.000100', 'USLACKBOT')
+		return out`, &got)
+	want := map[string]any{"found": true, "custom": true, "other": false, "plain": false, "missing": false, "noThread": false, "patched": false, "unpatched": true}
+	for k, w := range want {
+		if got[k] != w {
+			t.Errorf("%s = %v, want %v", k, got[k], w)
+		}
+	}
+}
