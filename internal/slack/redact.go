@@ -123,5 +123,11 @@ func IsSlackHost(host string) bool { return CookieHost(host) }
 // "wss" for the realtime gateway): CookieURL with that exact scheme.
 func slackURL(raw, scheme string) bool {
 	u, err := url.Parse(raw)
-	return err == nil && u.Scheme == scheme && cookieURL(u)
+	if err != nil {
+		return false
+	}
+	if harnessLoopback && harnessURL(u, scheme) {
+		return true
+	}
+	return u.Scheme == scheme && cookieURL(u)
 }
