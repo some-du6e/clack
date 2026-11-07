@@ -105,7 +105,7 @@ func (a *App) layoutLogin(gtx layout.Context) {
 	})
 	y += gtx.Dp(44)
 	at(gtx, image.Pt(x, y), image.Pt(cw, gtx.Dp(70)), func(gtx layout.Context) layout.Dimensions {
-		return th.Para(gtx, 15, 22, theme.Regular, lc.FgMuted, "Paste the token and cookies from your own signed-in Slack session, the same values other third-party Slack clients use. "+AppName+" only checks them with Slack and never signs that session out.")
+		return th.Para(gtx, 15, 22, theme.Regular, lc.FgMuted, "Paste the token and cookies from your own Slack session. "+AppName+" only checks them with Slack and never signs that session out.")
 	})
 	y += gtx.Dp(88)
 	field := func(label string, ed *widget.Editor, hint string) {
