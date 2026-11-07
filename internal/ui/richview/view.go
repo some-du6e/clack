@@ -370,7 +370,7 @@ func (v *View) record(st *Style) {
 			// offsets, which makes word spacing uneven.
 			t := op.Offset(image.Pt(int(f.x+0.5), f.y)).Push(ops)
 			cs := clip.Outline{Path: path}.Op().Push(ops)
-			paint.ColorOp{Color: st.textColor(f.col)}.Add(ops)
+			paint.ColorOp{Color: st.textColor(f.col, v.laidPx)}.Add(ops)
 			paint.PaintOp{}.Add(ops)
 			cs.Pop()
 			if st.Embolden > 0 {

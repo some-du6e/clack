@@ -149,10 +149,13 @@ type Style struct {
 	// emoji style); nil uses Slack's apple set.
 	EmojiURL func(stem string) string
 
-	// LightTextAlpha scales the alpha of light text (luminance >= 0.6, i.e.
-	// light-on-dark) to cancel the extra weight Gio's linear-light glyph
-	// blending gives it compared with Chrome. 0 or 1 = off.
-	LightTextAlpha float32
+	// LightTextFade cancels the extra weight Gio's linear-light glyph
+	// blending gives light text on dark backgrounds (luminance >= 0.6)
+	// compared with Chrome: such glyphs are drawn with alpha
+	// 1 - LightTextFade/pxPerDp. The excess is an edge effect, so it halves
+	// at 2x. Measured on Lato 15px #d1d2d3 on #1a1d21 against Chrome: 0.235
+	// matches ink within ±1% at 1x and 2x. 0 = off.
+	LightTextFade float32
 
 	// Embolden strokes glyph outlines with this width (in pixels, at any
 	// scale) to match the
@@ -205,13 +208,17 @@ type Options struct {
 	Compact bool
 }
 
-// textColor applies LightTextAlpha to light glyph colors.
-func (s *Style) textColor(c color.NRGBA) color.NRGBA {
-	if s.LightTextAlpha <= 0 || s.LightTextAlpha >= 1 {
+// textColor applies LightTextFade to light glyph colors at scale pxPerDp.
+func (s *Style) textColor(c color.NRGBA, pxPerDp float32) color.NRGBA {
+	if s.LightTextFade <= 0 || pxPerDp <= 0 {
 		return c
 	}
 	if y := (0.299*float32(c.R) + 0.587*float32(c.G) + 0.114*float32(c.B)) / 255; y >= 0.6 {
-		c.A = uint8(float32(c.A)*s.LightTextAlpha + 0.5)
+		a := 1 - s.LightTextFade/pxPerDp
+		if a < 0.5 {
+			a = 0.5
+		}
+		c.A = uint8(float32(c.A)*a + 0.5)
 	}
 	return c
 }
