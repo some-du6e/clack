@@ -662,9 +662,14 @@ func (c *chrome) layoutInline(gtx layout.Context, e slackc.Element) layout.Dimen
 	for _, nd := range e.Nodes {
 		before := c.shown
 		m := op.Record(gtx.Ops)
-		c.inlOne[0] = nd
-		d := slackc.LayoutElement(gtx, slackc.Element{Nodes: c.inlOne[:]})
-		c.inlOne[0] = nil
+		var d layout.Dimensions
+		if s, ok := slackc.SlotOf(nd); ok && s.Native != nil {
+			d = s.Native(gtx, nd.P) // our own part: its native, as rowItem does
+		} else {
+			c.inlOne[0] = nd
+			d = slackc.LayoutElement(gtx, slackc.Element{Nodes: c.inlOne[:]})
+			c.inlOne[0] = nil
+		}
 		c.inl = append(c.inl, crSuf{call: m.Stop(), size: d.Size, ids: c.shown &^ before})
 		h = max(h, d.Size.Y)
 	}

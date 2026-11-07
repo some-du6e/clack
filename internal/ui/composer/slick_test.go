@@ -50,6 +50,8 @@ type slickEnv struct {
 
 	mu    sync.Mutex
 	trees map[uint64][]byte
+
+	why func() string // what to log when until times out
 }
 
 // slickHost is the composer's Host over the synthetic core and a real
@@ -203,6 +205,9 @@ func (e *slickEnv) until(d time.Duration, what string, frame func(), cond func()
 		time.Sleep(15 * time.Millisecond)
 	}
 	e.dumpTrees()
+	if e.why != nil {
+		e.t.Logf("state: %s", e.why())
+	}
 	e.t.Fatalf("timed out waiting for %s", what)
 }
 
@@ -310,7 +315,8 @@ func TestSlickViewCharacterCounter(t *testing.T) {
 		return ok && count.MatchString(txt)
 	})
 	if c.ui.shown&(1<<crSend) == 0 {
-		t.Error("the send button isn't drawn next to the count")
+		e.dumpTrees()
+		t.Errorf("the send button isn't drawn next to the count (shown %b)", c.ui.shown)
 	}
 	edType(c.ed, " world")
 	count = regexp.MustCompile(`(^|\D)11/40,?000`)
@@ -362,6 +368,15 @@ func TestSlickViewBetterBlock(t *testing.T) {
 	e := startSlick(t, "BetterBlock", map[string]any{"blockedUsers": map[string]any{"U0BOB00001": "bob"}}, nil)
 	e.patched("TextyAutocomplete")
 	c, frame := e.composer(tChGen)
+	e.why = func() string {
+		items, sel := c.ac.Items()
+		ids := make([]string, len(items))
+		for i, it := range items {
+			ids[i] = it.ID + "=" + it.Name
+		}
+		return fmt.Sprintf("open=%v active=%v trig=%+v rows=%v sel=%d disallowed=%v patched(autocompleteMembers)=%v",
+			c.ac.Open(), c.ac.active, c.ac.trig, ids, sel, c.ac.ov.disallowed, currentTaut().ThunkPatched(thACMembers))
+	}
 	edType(c.ed, "@bob")
 	e.until(8*time.Second, "bobby in the @ rows and bob gone", frame, func() bool {
 		names := rowNames(c)
