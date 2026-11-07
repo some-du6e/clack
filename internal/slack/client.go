@@ -66,6 +66,9 @@ type Client struct {
 	learned map[string]bool // method -> use enterprise host
 
 	g guard // signed-out state + backoff of repeated failures (guard.go)
+
+	// EdgeURL is the edge cache API base (tests point it at a fake server).
+	EdgeURL string
 }
 
 // New builds a client with a tuned, keep-alive HTTP/2 transport.
@@ -226,7 +229,11 @@ func (c *Client) Edge(ctx context.Context, path string, body map[string]any, out
 	body["token"] = tok
 	body["enterprise_token"] = tok
 	b, _ := json.Marshal(body)
-	u := "https://edgeapi.slack.com/cache/" + ent + "/" + path + "?_x_app_name=client"
+	base := c.EdgeURL
+	if base == "" {
+		base = "https://edgeapi.slack.com/cache/"
+	}
+	u := base + ent + "/" + path + "?_x_app_name=client"
 	return c.post(ctx, "edge:"+path, u, "text/plain;charset=UTF-8", b, out)
 }
 

@@ -67,6 +67,7 @@ func (f *fakeSlack) last(method string) url.Values {
 func testApp(t *testing.T) (*App, *fakeSlack) {
 	f := newFake(t)
 	c := slack.New(slack.Creds{Token: "xoxc-test", UserID: "USELF", Team: "T1", TeamURL: f.srv.URL + "/"})
+	c.EdgeURL = f.srv.URL + "/edge/" // never reach the real edge API from tests
 	s := store.New("")
 	s.PutUsers([]slack.User{
 		{ID: "USELF", Name: "me", Profile: slack.Profile{DisplayName: "Me", AvatarHash: "h1"}},
