@@ -216,9 +216,10 @@ type lay struct {
 	noPlain bool
 	// mode says which Slack components lay out as such (comps.go); cs is
 	// their state from the View, inAtt is set inside an attachment card.
-	mode  uint8
-	cs    *[]compState
-	inAtt bool
+	mode      uint8
+	cs        *[]compState
+	inAtt     bool
+	authorImg int // inside a card: its author icon, imgs index+1
 }
 
 func (l *lay) dp(v float32) int      { return int(v*l.scale + 0.5) }

@@ -74,6 +74,9 @@ type compBox struct {
 	span richtext.Span   // pills
 	att  *richtext.Block // cards
 	r    image.Rectangle // its box in View coordinates
+	// author is a card's author icon (imgs index+1), drawn as
+	// ConnectedBaseAvatar className c-message_attachment__author_icon.
+	author int
 }
 
 // compState is what a component's plugin tree told the layout, kept
@@ -115,7 +118,7 @@ func (l *lay) compBlock(b *richtext.Block, x, y, w int) int {
 		b = &bb
 	}
 	f0, b0, i0 := len(l.d.frags), len(l.d.boxes), len(l.d.imgs)
-	l.inAtt = true
+	l.inAtt, l.authorImg = true, 0
 	h := l.attachment(b, x, y, w)
 	l.inAtt = false
 	for i := f0; i < len(l.d.frags); i++ {
@@ -126,6 +129,10 @@ func (l *lay) compBlock(b *richtext.Block, x, y, w int) int {
 	}
 	for i := i0; i < len(l.d.imgs); i++ {
 		l.d.imgs[i].comp = tag
+	}
+	if a := l.authorImg; a > 0 {
+		l.d.imgs[a-1].comp = -tag // not painted with the card
+		l.d.comps[tag-1].author = a
 	}
 	l.d.comps[tag-1].r = image.Rect(x, y, x+w, y+h)
 	return max(0, h+cs.extra)
@@ -211,7 +218,43 @@ func (c *compRef) paint(gtx layout.Context, s slackc.Styled) layout.Dimensions {
 	t := op.Offset(b.r.Min.Mul(-1)).Push(gtx.Ops)
 	c.v.paint(gtx.Ops, c.st, int16(c.i+1), fg)
 	t.Pop()
+	if b.author > 0 {
+		im := &c.v.d.imgs[b.author-1]
+		t := op.Offset(im.r.Min.Sub(b.r.Min)).Push(gtx.Ops)
+		slackc.Component(gtx, "ConnectedBaseAvatar", c, (*compRef).authorProps, (*compRef).layoutAuthor)
+		t.Pop()
+	}
 	return layout.Dimensions{Size: b.r.Size()}
+}
+
+func (c *compRef) authorProps() slackc.Props {
+	b := c.box()
+	a := b.att.Att
+	px := c.v.d.imgs[b.author-1].r.Dx()
+	if c.v.laidPx > 0 {
+		px = int(float32(px)/c.v.laidPx + 0.5)
+	}
+	p := slackc.Props{"$key": c.v.opts.TS + "/" + strconv.Itoa(c.i) + "/author", "className": "c-message_attachment__author_icon",
+		"size": px, "isInteractive": false, "messageTs": c.v.opts.TS}
+	if id := slackUserID(a.AuthorLink); id != "" {
+		p["userId"] = id
+	}
+	return p
+}
+
+// layoutAuthor is the card's author icon (its image; the native ignores
+// a plugin's userId, the URL comes from the attachment).
+func (c *compRef) layoutAuthor(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+	im := &c.v.d.imgs[c.box().author-1]
+	r := image.Rectangle{Max: im.r.Size()}
+	if c.st.Images != nil {
+		if img, ok := c.st.Images.Get(im.url, im.px); ok {
+			drawImage(gtx.Ops, img, r, im.radii, true)
+			return layout.Dimensions{Size: r.Size()}
+		}
+	}
+	fillRadii(gtx.Ops, r, im.radii, c.st.Palette.Placeholder)
+	return layout.Dimensions{Size: r.Size()}
 }
 
 // styled is paint under class s's box effects (Wrap only when CSS applies).
