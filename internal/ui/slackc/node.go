@@ -23,6 +23,9 @@ type Node struct {
 	N string // "@": the Slack component name
 	V string // "#": the text
 	K int64  // stable host-instance id (0 for text)
+	// Focus marks the node JS focused (el.focus(), autoFocus): the layout
+	// engine moves key focus to it.
+	Focus bool
 
 	// P holds every prop as decoded JSON, minus className, id, style and
 	// children. "@" props are decoded with DecodeProps ($fn/$gofn/$el).
@@ -94,6 +97,7 @@ type rawNode struct {
 	N  string                     `json:"n"`
 	V  string                     `json:"v"`
 	K  int64                      `json:"k"`
+	F  bool                       `json:"focus"`
 	P  map[string]json.RawMessage `json:"p"`
 	On map[string]int64           `json:"on"`
 	C  []json.RawMessage          `json:"c"`
@@ -200,7 +204,7 @@ func parseNode(parent *Node, b []byte) (*Node, error) {
 	if err := json.Unmarshal(b, &r); err != nil {
 		return nil, err
 	}
-	n := &Node{T: r.T, N: r.N, V: r.V, K: r.K, On: r.On, parent: parent}
+	n := &Node{T: r.T, N: r.N, V: r.V, K: r.K, Focus: r.F, On: r.On, parent: parent}
 	if n.T == "" {
 		n.T = "div"
 	}
