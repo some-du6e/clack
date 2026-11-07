@@ -1739,7 +1739,8 @@ func (p *slickPage) scheduleControl(gtx layout.Context, key string, w int, o sli
 			next[i].Start = t
 			save(next)
 		})
-		at(gtx, image.Pt(x, y), image.Pt(gtx.Dp(8), ch), func(gtx layout.Context) layout.Dimensions {
+		dw := p.a.th.Measure(gtx, 15, theme.Regular, "–") // centred in its 8px column, unclipped
+		at(gtx, image.Pt(x+(gtx.Dp(8)-dw)/2, y), image.Pt(dw+gtx.Dp(4), ch), func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, ch, func(gtx layout.Context) layout.Dimensions {
 				return p.k.label(gtx, 15, theme.Regular, theme.WithAlpha(cl.pry, 0xb3), "–")
 			})
