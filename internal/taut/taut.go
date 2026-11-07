@@ -100,6 +100,7 @@ type Taut struct {
 	thunks *thunkTable
 	ui     *uiState
 	fns    *goFns
+	exts   extensions
 
 	changeMu sync.Mutex
 	changeCh map[chan struct{}]struct{}
@@ -250,6 +251,7 @@ func (t *Taut) ensureRuntime() (*runtime, error) {
 	if t.opts.UI.Attached != nil {
 		t.opts.UI.Attached(t.Bridge())
 	}
+	t.readyExtensions(r.rt)
 	return r, nil
 }
 

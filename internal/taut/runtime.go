@@ -53,8 +53,14 @@ type runtime struct {
 // a settings editor needs JS), never at Clack start without plugins.
 func (t *Taut) startRuntime() (*runtime, error) {
 	opts := jsrt.Options{
-		Fetch:          t.opts.Fetch,
-		Storage:        func(ns string) jsrt.KV { return t.data.localStorage(ns) },
+		Fetch: t.opts.Fetch,
+		Storage: func(ns string) jsrt.KV {
+			kv := t.data.localStorage(ns)
+			if ns == "sessionStorage" {
+				return kv
+			}
+			return &virtualKV{base: kv, t: t}
+		},
 		Log:            t.jsLog,
 		CacheDir:       t.opts.CacheDir,
 		OpenURL:        t.opts.OpenURL,
@@ -89,6 +95,10 @@ func (t *Taut) startRuntime() (*runtime, error) {
 	if _, err := rt.Call(ctx, "__taut.init"); err != nil {
 		rt.Close()
 		return nil, fmt.Errorf("taut: init the TautAPI: %w", err)
+	}
+	if err := t.installExtensions(rt); err != nil {
+		rt.Close()
+		return nil, err
 	}
 	return r, nil
 }
