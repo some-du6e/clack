@@ -190,6 +190,9 @@ func palOf(th *theme.Theme) *pal {
 	flatOnce.Do(func() {
 		flatLight, flatDark = flatPal(lightPal), flatPal(darkPal)
 	})
+	if p := themedPal(th); p != nil {
+		return p
+	}
 	if th != nil && th.Dark {
 		return &flatDark
 	}

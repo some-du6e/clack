@@ -50,6 +50,8 @@ The color scheme also reaches JS through slackc's `SetViewport`: `document.body`
 
 Styles arrive through the same `UIHooks.SetStyle` Taut uses: `plugin:<id>:<key>` from plugins, `slick:theme` and `slick:user` from Slick. That is the only new wiring. Notifications already go through Taut's `showNotification` thunk, which is where Slick's notification filters (ShutUpSlackbot, StreamerMode) sit.
 
+**Native surfaces follow the tokens.** In Slack every surface is painted from `--dt_color-*`, `--sk_*` and the plt ramps, so a theme's `:root,…{--x:… !important}` rule recolours the whole client. Clack's native palettes (`theme.Palette`, the views `pal`, richview's message palette) do the same. When `slackc.Styles` changes, `css.Engine.RootTokens` cascades `html > body.sk-client-theme--dark|light > .p-client_container` over Slack's captured raw tokens. Each field Slack paints from a token takes the override (`theme.ApplyTokens`; the field-to-token table lives in `internal/ui/theme/tokens.go`). Fields whose tokens no sheet touches keep their measured values, so with no theme nothing changes. Two surfaces the bundled themes repaint with raw CSS are read from their Slack classes: `.p-theme_background` (window gradient) and `.p-view_contents--sidebar`. The native sidebar is an element of that class, so token overrides scoped to it reach its rows. The cost is one atomic load per frame; the palette is recomputed only when a sheet changes, and on a light/dark switch.
+
 What ui-shell has to draw: **Preferences > Slick** from `s.Settings()` (below), and the new component boundaries in [PLUGINS-components.md](PLUGINS-components.md) §9, owned by the UI packages listed there.
 
 ## Preferences > Slick: `s.Settings()`
