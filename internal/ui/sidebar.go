@@ -181,12 +181,16 @@ func (a *App) layoutSidebar(gtx layout.Context) layout.Dimensions {
 	at(gtx, image.Pt(gtx.Dp(8), fy), image.Pt(sz.X-gtx.Dp(16), fh), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, a.clicks.get("sb.find"), func(gtx layout.Context, s image.Point, hovered bool) {
 			// Slack: rgba(249,237,255,.11) fill, 1px rgba(249,237,255,.22), radius 8.
-			bg := theme.Over(theme.WithAlpha(a.th.C.SidebarActive, 0x1c), a.sbBase)
+			lilac := color.NRGBA{R: 0xf9, G: 0xed, B: 0xff} // Slack's tint in both modes
+			bg := theme.Over(theme.WithAlpha(lilac, 0x1c), a.sbBase)
+			if a.th.Dark {
+				bg = a.sbBase // dark: transparent box, outline only
+			}
 			if hovered {
-				bg = theme.Over(theme.WithAlpha(a.th.C.SidebarActive, 0x2a), a.sbBase)
+				bg = theme.Over(theme.WithAlpha(lilac, 0x2a), a.sbBase)
 			}
 			theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(8), bg)
-			theme.Border(gtx, image.Rectangle{Max: s}, gtx.Dp(8), gtx.Dp(1), theme.Over(theme.WithAlpha(a.th.C.SidebarActive, 0x38), a.sbBase))
+			theme.Border(gtx, image.Rectangle{Max: s}, gtx.Dp(8), gtx.Dp(1), theme.Over(theme.WithAlpha(lilac, 0x38), a.sbBase))
 		}, func(gtx layout.Context) layout.Dimensions {
 			w := gtx.Constraints.Max.X
 			at(gtx, image.Pt(gtx.Dp(8), (fh-gtx.Dp(14))/2), image.Pt(gtx.Dp(14), gtx.Dp(14)), func(gtx layout.Context) layout.Dimensions {
