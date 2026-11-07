@@ -472,9 +472,24 @@ func TestRTMAndEvents(t *testing.T) {
 	h := newHarness(t)
 	h.js(`globalThis.__rtm = []; api.rtm.on('message', (e) => globalThis.__rtm.push(e.text)); return 1`)
 	h.tt.mirror.start()
-	time.Sleep(30 * time.Millisecond)
+	eventually(t, 2*time.Second, "rtm types reach Go", func() bool {
+		h.tt.ui.mu.Lock()
+		defer h.tt.ui.mu.Unlock()
+		return h.tt.ui.rtmTypes["message"]
+	})
+	// the raw tap itself
+	raws, stop := h.app.SubscribeRaw()
+	defer stop()
 	raw := json.RawMessage(`{"type":"message","channel":"` + chGen + `","user":"UBOB","text":"realtime words","ts":"1700000099.000100"}`)
 	h.app.Inject(slack.Event{Type: "message", Channel: json.RawMessage(`"` + chGen + `"`), Raw: raw})
+	select {
+	case ev := <-raws:
+		if ev.Type != "message" {
+			t.Errorf("raw tap got %q", ev.Type)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the raw tap delivered nothing")
+	}
 	var got []string
 	eventually(t, 3*time.Second, "rtm delivery", func() bool {
 		h.jsInto(`return globalThis.__rtm`, &got)

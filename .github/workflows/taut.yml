@@ -61,7 +61,9 @@ jobs:
       - name: unit + acceptance tests
         env:
           TAUT_PLUGINS_DIR: ${{ github.workspace }}/dist/taut-plugins
-        run: go test -count=1 -timeout 15m -v ./internal/taut/... 2>&1 | tee dist/taut-test.log
+        run: |
+          set -o pipefail
+          go test -count=1 -timeout 15m -v ./internal/taut/... 2>&1 | tee dist/taut-test.log
       - name: acceptance summary
         if: ${{ !cancelled() }}
         run: |
