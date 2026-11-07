@@ -34,12 +34,20 @@ func (a *App) layoutChannel(gtx layout.Context, ch string) layout.Dimensions {
 	atExact(gtx, image.Pt(0, 0), image.Pt(sz.X, hh), func(gtx layout.Context) layout.Dimensions {
 		return a.layoutChannelHeader(gtx, ch, conv)
 	})
+	dm := a.appDM(ch) // app DMs: Home / Messages / About (blockkit)
 	atExact(gtx, image.Pt(0, hh), image.Pt(sz.X, th), func(gtx layout.Context) layout.Dimensions {
+		if dm != nil {
+			return dm.LayoutTabs(gtx)
+		}
 		return a.layoutChannelTabs(gtx, ch)
 	})
 	theme.Fill(gtx, image.Rect(0, hh+th-gtx.Dp(1), sz.X, hh+th), c.Border)
 
 	body := image.Rect(0, hh+th, sz.X, sz.Y)
+	if dm != nil && dm.Tab() != "messages" {
+		atExact(gtx, body.Min, body.Size(), dm.LayoutBody)
+		return layout.Dimensions{Size: sz}
+	}
 	cv := a.convoFor(ch, "")
 	atExact(gtx, body.Min, body.Size(), func(gtx layout.Context) layout.Dimensions {
 		mp := clsMessagePane.Enter(gtx, 0, 0)

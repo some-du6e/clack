@@ -126,6 +126,14 @@ type display struct {
 	plain   []byte
 	size    image.Point
 	comps   []compBox // Slack components (see comps.go)
+	slots   []slot    // interactive element runs drawn by Options.Elements
+}
+
+// slot is a run of interactive elements the owner draws (Options.Elements).
+type slot struct {
+	r   image.Rectangle
+	bs  []richtext.Button
+	acc bool
 }
 
 func (d *display) reset() {
@@ -138,6 +146,7 @@ func (d *display) reset() {
 	d.plain = d.plain[:0]
 	d.size = image.Point{}
 	d.comps = d.comps[:0]
+	d.slots = d.slots[:0]
 }
 
 func (d *display) addTarget(t target) int16 {

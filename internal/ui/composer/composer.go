@@ -446,7 +446,7 @@ func (c *Composer) handleActions(gtx layout.Context) {
 			showFormatting = !showFormatting
 			c.ed.Focus(gtx)
 		case caAttach:
-			c.att.Menu(a.Anchor)
+			c.att.Menu(a.Anchor, c.ch)
 		case caEmoji:
 			c.h.OpenEmojiPicker(image.Pt(a.Anchor.Min.X, a.Anchor.Min.Y), func(name string) { c.InsertEmoji(name) })
 		case caMention:

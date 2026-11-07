@@ -581,7 +581,12 @@ func attOneDecimal(f float64) string {
 
 // Menu opens the attach (+) menu above the button; anchor is the button in
 // window coordinates.
-func (a *attachments) Menu(anchor image.Rectangle) {
+// ShortcutItems, when set (internal/ui/blockkit), adds the app
+// shortcuts section to the "+" menu for channel ch: recent global
+// shortcuts and "Browse all shortcuts".
+var ShortcutItems func(h popups.Host, ch string, anchor image.Rectangle) []popups.MenuItem
+
+func (a *attachments) Menu(anchor image.Rectangle, ch string) {
 	items := []popups.MenuItem{
 		{Label: "Upload from your computer", Icon: "upload", Do: a.Pick},
 	}
@@ -593,6 +598,11 @@ func (a *attachments) Menu(anchor image.Rectangle) {
 		popups.MenuItem{Label: "Text snippet", Icon: "code", Disabled: true},
 		popups.MenuItem{Label: "Canvas", Icon: "canvas", Disabled: true},
 	)
+	if ShortcutItems != nil {
+		if more := ShortcutItems(a.h, ch, anchor); len(more) > 0 {
+			items = append(append(items, popups.Sep()), more...)
+		}
+	}
 	a.h.ShowOverlay(popups.NewMenuOpts(a.h, items, popups.MenuOpts{Anchor: anchor, Side: popups.Above, Width: 300}))
 }
 

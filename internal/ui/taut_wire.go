@@ -19,6 +19,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/slick"
 	"github.com/some-du6e/yoloslackgoclient/internal/taut"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/blockkit"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/messages"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
@@ -136,6 +137,7 @@ func (b *backend) startTaut(a *App) {
 	popups.SetTaut(t)   // channel/member menus, search, reactions, delete
 	messages.SetTaut(t) // message list thunks, patched message views
 	composer.SetTaut(t) // composer buttons, send checks/transforms, drafts
+	blockkit.SetTaut(t) // sendActions, executeAppAction, submitView, blocksFormatFetcher
 	b.startSlick(a, t)
 	if envFlag("TIMING") {
 		log.Printf("timing: taut.New %v (js runtime started: %v)", time.Since(t0).Round(10*time.Microsecond), t.Started())

@@ -147,6 +147,9 @@ var ErrUntrustedHost = errors.New("slack: refusing to send credentials to a non-
 type Error struct {
 	Method string
 	Code   string
+	// Body is the whole response (memory only): some errors carry details,
+	// e.g. views.submit's validation errors or blocks.actions' message.
+	Body json.RawMessage
 }
 
 func (e *Error) Error() string { return "slack " + e.Method + ": " + e.Code }
@@ -379,7 +382,7 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 			return fmt.Errorf("slack %s: bad json: %w", method, err)
 		}
 		if head.OK != nil && !*head.OK {
-			return &Error{Method: method, Code: head.Error}
+			return &Error{Method: method, Code: head.Error, Body: data}
 		}
 		if out == nil {
 			return nil
