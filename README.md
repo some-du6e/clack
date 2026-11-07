@@ -94,11 +94,11 @@ There are no screenshots in this repo on purpose: any real screenshot would show
 
 ## Sign in
 
-Clack signs in with the token and cookies of your own signed-in Slack session, the same values other third-party Slack clients use. Start Clack (or run `clack login`) and fill in your workspace, the `xoxc-` **token**, the **`d` cookie** (`xoxd-…`) and, optionally, the org token (Enterprise Grid workspaces such as Hack Club) and the `d-s` cookie. Clack only checks them with `auth.test`: it never loads Slack web pages with your cookie and never calls a sign-out API, so your browser session stays signed in. They're saved to `~/.config/clack/creds.json` (mode 600). "Sign out on this device" deletes that file and nothing else.
+Clack signs in with the token and cookies of your own signed-in Slack session, the same values other third-party Slack clients use. Start Clack (or run `clack login`) and fill in your workspace, the `xoxc-` **token**, the **`d` cookie** (`xoxd-…`) and, optionally, the org token (Enterprise Grid workspaces such as Hack Club) and the `d-s` cookie. Clack only checks them with `auth.test`: it never loads Slack web pages with your cookie and never calls a sign-out API, so your browser session stays signed in. They're saved to `~/.config/clack/creds.json`, readable only by you (mode 600 in a 700 directory; an owner-only ACL on Windows). They are only ever sent to https slack.com hosts. "Sign out on this device" deletes that file and nothing else.
 
 Clack never calls Slack's sign-out or token-revoke methods. "Sign out on this device" only deletes `creds.json`; your Slack session in the browser and other apps is not affected.
 
-Treat `creds.json` like a password: it is a full session for your account.
+Treat `creds.json` like a password: it is a full session for your account. See [docs/SECURITY.md](docs/SECURITY.md) for how Clack protects it, what plugins can see, and how Clack follows the Hack Club scraping policy.
 
 ## Run
 
