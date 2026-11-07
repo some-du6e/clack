@@ -45,8 +45,6 @@ jobs:
           cache: true
       - name: resources (icon #1, manifest, version info)
         run: |
-          # TODO: drop this guard once assets/icon/ is committed
-          if [ ! -f assets/icon/clack.ico ]; then echo "::warning::assets/icon/clack.ico missing; building without resources"; exit 0; fi
           go install github.com/tc-hib/go-winres@v0.3.3
           go-winres make --in packaging/windows/winres.json --out cmd/clack/rsrc --arch amd64 --file-version 0.0.0.0 --product-version "0.0.0-dev+${GITHUB_SHA::7}"
       - name: build (cross, no cgo)
