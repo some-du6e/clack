@@ -414,6 +414,9 @@ func (c *Composer) roadblockProps() slackc.Props {
 }
 
 func (c *Composer) layoutRoadblock(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	if p == nil && c.roadblock != "" { // unpatched fast path: no props
+		p = c.roadblockProps()
+	}
 	if p != nil {
 		if e, ok := p.Elem("roadblockMessage"); ok && len(e.Nodes) > 0 {
 			return c.drawRoadblock(gtx, p)
