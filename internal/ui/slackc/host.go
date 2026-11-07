@@ -193,3 +193,35 @@ func (s *Sub) Close() {
 		b.Unmount(s.root)
 	}
 }
+
+// PropChildren returns the children a plugin passed to <Original>
+// ({children}), already rendered to host nodes. A native whose Slack
+// counterpart takes children (BaseBroadcastPreamble, ReactionBar, …) lays
+// them out with LayoutElement instead of drawing its own parts; the native
+// parts it handed out as Slots come back inside as "@" slot nodes.
+func PropChildren(p Props) (Element, bool) {
+	e, ok := p["children"].(Element)
+	return e, ok && len(e.Nodes) > 0
+}
+
+// LayoutElement lays out a host element (children or a React-node prop)
+// that came back in a native's props, in the render context of the
+// patched component currently being drawn. Outside a patched render it
+// draws nothing.
+func LayoutElement(gtx layout.Context, e Element) layout.Dimensions {
+	c := curRender
+	if c == nil || len(e.Nodes) == 0 {
+		return layout.Dimensions{}
+	}
+	return c.view.layoutNodes(gtx, c.fr, e.Nodes, nil, c.st)
+}
+
+// curRender is the innermost host-tree render in progress (UI
+// goroutine); the layout engine sets it around native calls.
+var curRender *renderCtx
+
+type renderCtx struct {
+	view *View
+	fr   *frame
+	st   *css.Style
+}
