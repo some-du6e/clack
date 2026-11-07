@@ -157,7 +157,7 @@ func (a *App) selfName() string    { return a.model().SelfName }
 func (a *App) selfActive() bool    { return a.model().SelfActive }
 
 func (a *App) userAvatar(id string) string {
-	if a.data == nil {
+	if a.data == nil || id == "" { // "" = facepile placeholder
 		return ""
 	}
 	return a.data.avatar(id)

@@ -31,3 +31,32 @@ func TestParseRelativeAndArc(t *testing.T) {
 		t.Fatalf("arc end = %v", last)
 	}
 }
+
+func TestSlackNames(t *testing.T) {
+	for slack, clack := range slackIconNames {
+		if !Has(clack) {
+			t.Errorf("slackIconNames[%q] = %q: not registered", slack, clack)
+		}
+	}
+	// Every SvgIcon name taut's plugins pass (docs/PLUGINS-components.md §1.12).
+	for _, n := range []string{
+		"arrow-left", "bug", "caret-up-down", "check-filled", "eye-closed", "eye-open", "file-upload",
+		"glasses", "glasses-filled", "magic-wand", "megaphone", "megaphone-filled", "notifications",
+		"notifications-off", "paintbrush", "plug", "reorder", "sparkles", "trash-filled", "undo",
+		"calendar", "caret-down", "caret-right", "close", "code", "copy", "edit", "emoji", "info",
+		"lock", "minus", "plus", "settings", "warning",
+	} {
+		if !HasSlack(n) {
+			t.Errorf("Slack icon %q has no counterpart", n)
+		}
+	}
+	if got := Slack("calendar-filled"); got != "calendar" {
+		t.Errorf("suffix fallback: %q", got)
+	}
+	if got := Slack("no-such-icon"); got != SlackFallback {
+		t.Errorf("fallback: %q", got)
+	}
+	if n := testing.AllocsPerRun(100, func() { _ = Slack("notifications-off"); _ = Slack("trash-small") }); n != 0 {
+		t.Errorf("Slack allocates: %v", n)
+	}
+}

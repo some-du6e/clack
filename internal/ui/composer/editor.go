@@ -677,7 +677,8 @@ func (e *Editor) autoformat() {
 		return
 	}
 	r := e.doc.Runes[c-1]
-	if r != ' ' && r != '`' && r != '*' && r != '_' && r != '~' {
+	custom := InlineMarkup != nil
+	if r != ' ' && r != '`' && r != '*' && r != '_' && r != '~' && !(custom && markupTrigger(r)) {
 		return
 	}
 	literal := e.snap()
@@ -693,7 +694,11 @@ func (e *Editor) autoformat() {
 	if r == ' ' {
 		return
 	}
-	if nc, st, ok := autoformatInline(e.doc, c); ok {
+	inline := autoformatInline
+	if custom {
+		inline = markupInline // a plugin's markup replaces Slack's
+	}
+	if nc, st, ok := inline(e.doc, c); ok {
 		e.pushUndo(literal)
 		e.anchor, e.caret = nc, nc
 		e.lastKind = edOther
@@ -716,7 +721,7 @@ func (e *Editor) paste(s string) {
 	lo, hi := e.sel()
 	if u := strings.TrimSpace(s); hi > lo && edIsURL(u) {
 		e.begin(edOther, false)
-		d.SetLink(lo, hi, u)
+		d.SetLink(lo, hi, transformLink(u))
 		e.anchor, e.caret = hi, hi
 		e.commit()
 		return
@@ -729,6 +734,9 @@ func (e *Editor) paste(s string) {
 		end = d.InsertDoc(lo, e.clipDoc)
 	} else {
 		end = d.Insert(lo, s, Attr{Style: a.Style})
+		if LinkTransforms != nil && a.Style&Code == 0 {
+			end = transformPastedLinks(d, lo, end)
+		}
 	}
 	e.anchor, e.caret = end, end
 	e.commit()

@@ -128,25 +128,48 @@ func (s *typingState) apply(ev core.Event) {
 
 // names returns who is typing in ch/ts (excluding self), sorted.
 func (s *typingState) names(ch, ts, self string) []string {
+	_, names := s.typers(ch, ts, self)
+	return names
+}
+
+// typers returns the user ids and names of who is typing in ch/ts
+// (excluding self), sorted by name (ids in the same order).
+func (s *typingState) typers(ch, ts, self string) (ids, names []string) {
 	if s == nil {
-		return nil
+		return nil, nil
 	}
 	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	us := s.m[draftKey(ch, ts)]
-	var out []string
 	for id, t := range us {
 		if t.until.Before(now) {
 			delete(us, id)
 			continue
 		}
 		if id != self {
-			out = append(out, t.name)
+			ids = append(ids, id)
+			names = append(names, t.name)
 		}
 	}
-	sort.Strings(out)
-	return out
+	if len(names) > 1 {
+		sort.Sort(byName{ids, names})
+	}
+	return ids, names
+}
+
+type byName struct{ ids, names []string }
+
+func (b byName) Len() int { return len(b.names) }
+func (b byName) Less(i, j int) bool {
+	if b.names[i] != b.names[j] {
+		return b.names[i] < b.names[j]
+	}
+	return b.ids[i] < b.ids[j]
+}
+func (b byName) Swap(i, j int) {
+	b.ids[i], b.ids[j] = b.ids[j], b.ids[i]
+	b.names[i], b.names[j] = b.names[j], b.names[i]
 }
 
 // typingLine formats Slack's typing indicator text.
