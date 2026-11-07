@@ -40,7 +40,9 @@ func TestSidebarMenuUsesPopupsActions(t *testing.T) {
 	}
 	n = len(a.overlays)
 	a.sbMenuDo("D0ALICE01", "close")()
-	if len(a.overlays) != n {
-		t.Errorf("closing a DM asked for confirmation")
+	for _, o := range a.overlays[n:] { // (popups' async pump is an overlay too)
+		if _, ok := o.(*popups.Modal); ok {
+			t.Errorf("closing a DM asked for confirmation")
+		}
 	}
 }
