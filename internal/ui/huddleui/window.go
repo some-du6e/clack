@@ -409,7 +409,7 @@ func (w *window) tile(gtx C, s *huddle.Session, p huddle.Participant, cam string
 
 // reaction floats the emoji up the tile and fades it.
 func (w *window) reaction(gtx C, name string, sz image.Point, age time.Duration) {
-	t := float32(age) / float32(3*time.Second)
+	t := float32(age) / float32(4*time.Second)
 	es := gtx.Dp(unit.Dp(36 + 8*float32(math.Sin(float64(t)*math.Pi))))
 	y := int(float32(sz.Y-es)/2 - t*float32(sz.Y)/4)
 	txt := w.emojiText(name)
