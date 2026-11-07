@@ -44,7 +44,7 @@ func BodyEmboldenFor(c color.NRGBA) float32 { return EmboldenFor(c) * BodyEmbold
 // CLACK_DARK_TEXT_ALPHA overrides it (shared with ui-messages' knob).
 var LightTextAlpha = envFloat("CLACK_DARK_TEXT_ALPHA", defaultLightTextAlpha)
 
-const defaultLightTextAlpha = 1
+const defaultLightTextAlpha = 0.8 // dark sidebar 15px text: 0.85 → 96.8k, 0.75 → 90.9k ink vs Chrome 94.1k
 
 func envFloat(name string, def float32) float32 {
 	if v, err := strconv.ParseFloat(os.Getenv(name), 32); err == nil {
