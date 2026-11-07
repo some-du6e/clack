@@ -564,7 +564,7 @@ const cookies = {
 
 class AccountSwitcher {
   constructor() {
-    this.supported = !!goOr(false, 'accounts', 'supported')
+    this.supported = !!goOr(false, 'accountsSupported')
   }
   list() {
     return Promise.resolve(go('accounts', 'list'))

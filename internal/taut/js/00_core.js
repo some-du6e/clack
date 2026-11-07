@@ -251,12 +251,51 @@ function encode(v, seen = new Set()) {
   }
 }
 
+/** encode, with Blobs and Files read into {$file: {name, type, data}} (base64), for natives that need the bytes */
+async function encodeAsync(v) {
+  const files = []
+  const walk = (x, seen = new Set()) => {
+    if (!x || typeof x !== 'object' || seen.has(x)) return
+    seen.add(x)
+    if (typeof Blob !== 'undefined' && x instanceof Blob) return files.push(x)
+    for (const k in x) walk(x[k], seen)
+  }
+  walk(v)
+  if (!files.length) return encode(v)
+  const read = new Map()
+  for (const f of files) {
+    const bytes = new Uint8Array(await f.arrayBuffer())
+    let bin = ''
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+    read.set(f, { $file: { name: f.name ?? 'blob', type: f.type || 'application/octet-stream', size: bytes.length, data: btoa(bin) } })
+  }
+  const swap = (x, seen = new Set()) => {
+    if (!x || typeof x !== 'object') return x
+    if (read.has(x)) return read.get(x)
+    if (seen.has(x)) return null
+    seen.add(x)
+    if (Array.isArray(x)) return x.map((y) => swap(y, seen))
+    const o = {}
+    for (const k in x) o[k] = swap(x[k], seen)
+    return o
+  }
+  return encode(swap(v))
+}
+
 /** turns {$gofn} into callables and {$fn} back into the JS functions they name */
 function decode(v) {
   if (v === null || typeof v !== 'object') return v
   if (Array.isArray(v)) return v.map(decode)
   if (typeof v.$gofn === 'number' && Object.keys(v).length === 1) return goFn(v.$gofn)
   if (typeof v.$fn === 'number' && Object.keys(v).length === 1) return jsFns.get(v.$fn) ?? (() => {})
+  // a file from Go (composer attachments): a real File, which plugins like AnonymizeFilenames rebuild
+  if (v.$file && typeof v.$file === 'object' && typeof File !== 'undefined') {
+    const f = v.$file
+    const bin = atob(f.data || '')
+    const bytes = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+    return new File([bytes], f.name || 'file', { type: f.type || '' })
+  }
   // a native sub-part Go passes as a child or prop: a patchable Slack component carrying its slot id
   if (v.$slot !== undefined && typeof v.n === 'string') return G.React.createElement(slackComponent(v.n), { ...decode(v.p || {}), $slot: v.$slot, key: v.k ?? v.$slot })
   const out = {}

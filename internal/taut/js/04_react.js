@@ -19,10 +19,23 @@ const COMPONENT_SOURCES = {
   Legend: '"c-legend"',
   Popover: '"c-popover"',
   MessageKitGutter: '"c-message_kit__gutter__left"',
-  ExternalHuddleLinkJoin: 'canJoinByExternalHuddleLink',
+  HuddleLinkJoinGate: 'canJoinByExternalHuddleLink',
 }
 /** Slack components that are anonymous memos in the web client, found by `filter` on their source */
-const ANONYMOUS = new Set(['MessageKitGutter', 'ExternalHuddleLinkJoin'])
+const ANONYMOUS = new Set(['MessageKitGutter', 'HuddleLinkJoinGate'])
+/** every Slack component Clack draws at a boundary (docs/PLUGINS-components.md), so filter-only patches can match them */
+const KNOWN_COMPONENTS = ('MessageBackground;MessageWrapper;MessageListItem;SearchResult;MessageAvatar;ConnectedBaseAvatar;MessageKitGutter;' +
+  'ThreadCompactGutterGeneric;MessageSender;BaseMessageSender;BaseBroadcastPreamble;ThreadSenderAndTimestampGeneric;ThreadRootGeneric;' +
+  'MessageBlocks;Blocks;ViewBlocks;MessageAttachment;BaseMessageAttachmentSlackMessage;AttachmentMedia;MessageAttachmentHuddleLink;' +
+  'HuddleLinkJoinGate;ReactionBar;Reaction;UnstyledButton;ReactionAddButton;MessageActions;MessageActionButtonReaction;EmojiPickerPopover;' +
+  'EmojiPicker;MessagePaneInput;InputContainer;MessageInput;WysiwygContainer;TextyButtons;TextyButtonOverflow;ShortcutsMenuTriggerButton;' +
+  'BaseContextBarV2;MessageInputRoadblock;ThreadTypingIndicator;TypingNames;texty_input_with_autocomplete;CharacterCount;ComposerLinkModal;' +
+  'Serialized(ThreadsFlexpane);ThreadSearchButton;ThreadFlexpaneAdminTools;BaseAvatarStack;HelpButton;ListChannelEntity;BaseMrkdwnChannel;' +
+  'MemberLink;ActivityItem;ActivityRowContentSenderAvatarLayout;ActivityPrivacyBlurredName;RimetoProfilePresence;MemberProfileHoverCard;' +
+  'BasePresence;LocalTime;RimetoMemberProfileOverflowMenu;EditAudioButton;CaptionsSubmenu;CaptionsItemsMenu;HuddleMetaEvent;HuddleBaseEvent;' +
+  'HuddlesAlertBannerBase;Tabs;MenuFromTemplate;MenuTrigger;withKeyboardFocusContext(ContextMenuTrigger);SvgIcon;ProfileHoverTrigger;' +
+  'MrkdwnElement;Button;Tooltip;KeyboardKeysTooltip;IconButtonBase;ConfirmationModal;InlineAlert;Label;FormTextInput;Checkbox;FilterPill;' +
+  'Tag;DateRangePicker;DatePickerTrigger;TimePicker;FieldSet;Legend;Hint;BasicSelect;Connect(EmojiMenuTrigger);Popover;RichTextInput').split(';')
 
 const rawNatives = new Map() // name → the unpatched native component
 const wrappers = new Map() // name → the patch-following component plugins get
@@ -131,6 +144,11 @@ function slackComponent(name) {
   const React = G.React
   w = function Wrapped(props) {
     const C = composed.use() || compose(name)
+    // `__original` opts one render out of patching
+    if (props && props.__original) {
+      const { __original, ...rest } = props
+      return React.createElement(nativeFor(name), rest)
+    }
     return React.createElement(C, props)
   }
   w.displayName = name
@@ -174,8 +192,8 @@ function patchComponent(matcher, replacement) {
     patchTargetNames.add(displayName)
     nativeFor(displayName)
   }
-  // a filter can only match what exists, so the anonymous components get a chance too
-  if (filter) for (const n of ANONYMOUS) nativeFor(n)
+  // a filter-only spec matches any component its filter accepts, so offer it every one Clack draws
+  if (filter) for (const n of KNOWN_COMPONENTS) nativeFor(n)
   replacements.set(fn, replacement)
   applyPatches()
   return () => {
@@ -185,7 +203,28 @@ function patchComponent(matcher, replacement) {
 }
 
 /** Go → JS: the element Go's root renders for patched component `name` */
-T.componentElement = (name, props) => G.React.createElement(slackComponent(name), decode(props || {}))
+T.componentElement = (name, props) => {
+  const React = G.React
+  const p = decode(props || {})
+  const C = name === 'TautComposerButtons' ? ComposerButtons : slackComponent(name)
+  let el = React.createElement(C, p)
+  // components inside a thread pane get it from Clack's thread view as $pane
+  if (p && p.$pane) el = React.createElement(PaneContext().Provider, { value: paneFrom(p.$pane) }, el)
+  return el
+}
+/** Go → JS: a render-prop root (MenuTrigger.renderMenu, Tooltip tip fns): fn called with args */
+T.fnElement = (fnId, args) => {
+  const fn = fnId >= FN_BASE ? jsFns.get(fnId) : typeof host.fnById === 'function' ? host.fnById(fnId) : null
+  if (typeof fn !== 'function') return null
+  const Rendered = () => fn(...decode(args || []))
+  return G.React.createElement(Rendered)
+}
+/** Go → JS: calls a function prop jsrt serialized as {"$fn"} (not taut's), awaiting its result */
+T.callHostFn = (id, args) => {
+  const fn = typeof host.fnById === 'function' ? host.fnById(id) : null
+  if (typeof fn !== 'function') throw new Error(`[Taut] function ${id} is gone`)
+  return Promise.resolve(fn(...decode(args || []))).then(encode)
+}
 T.patchedComponents = () => [...patchedNames]
 
 // ---- lookups (getComponent, lazyComponent, …) ----

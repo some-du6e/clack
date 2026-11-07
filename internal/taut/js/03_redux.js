@@ -519,7 +519,7 @@ function defineThunk(name, impl) {
 
 /** a thunk whose work is Clack's native implementation, run in Go */
 function nativeThunk(name) {
-  return defineThunk(name, (args) => Promise.resolve(go('thunk', name, encode(args))).then(decode))
+  return defineThunk(name, async (args) => decode(await go('thunk', name, await encodeAsync(args))))
 }
 
 const getThunkCreator = (name) => thunkCreators.get(name)
@@ -568,7 +568,7 @@ const tellGoThunks = batcher(() => goOr(null, 'patchedThunks', patchedThunkNames
 
 /** Go → JS: runs thunk `name` through every patch, with Go's native work (callable `nativeId`) at the core */
 T.dispatchThunk = async (name, args, nativeId) => {
-  const native = withMeta(name, (...a) => () => Promise.resolve(go('callNative', nativeId, encode(a))).then(decode))
+  const native = withMeta(name, (...a) => async () => decode(await go('callNative', nativeId, await encodeAsync(a))))
   let creator = native
   for (const { match, wrap } of thunkWraps) {
     let ok = false

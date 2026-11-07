@@ -19,8 +19,6 @@ type rawTaps struct {
 	subs map[chan slack.Event]struct{}
 }
 
-
-
 type rawTapPtr = atomic.Pointer[rawTaps]
 
 var rawTapIndex sync.Map // *App → *rawTapPtr
@@ -119,3 +117,14 @@ func (a *App) SavedState(ch, ts string) bool {
 	defer a.mu.Unlock()
 	return a.saved[ch+"/"+ts]
 }
+
+// ServeOffline marks the app ready without Boot: Ready, Snapshot and the
+// rest answer from what the store already holds. For packages built on
+// core that run without a network (internal/taut's plugin tests, demos).
+// Call it at most once, instead of Boot.
+func (a *App) ServeOffline() { close(a.ready) }
+
+// Inject applies one realtime event as if the gateway had sent it (raw
+// subscribers first, then core's own handling and its typed events). For
+// offline use and tests; the live gateway goes through the same path.
+func (a *App) Inject(ev slack.Event) { a.handle(ev) }
