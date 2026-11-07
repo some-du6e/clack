@@ -549,7 +549,7 @@ func tabIcon(typ string) string {
 	case "canvas", "channel_canvas":
 		return "canvas"
 	case "list":
-		return "list-view"
+		return "list-tab" // Slack's list tab: a card with checklist rows
 	case "bookmarks", "folder":
 		return "bookmark"
 	case "files":

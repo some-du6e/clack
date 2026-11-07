@@ -112,6 +112,7 @@ type convo struct {
 	edit     composerView // Up-to-edit / "Edit message" composer, replaces comp
 	org      originTracker
 	compH    int
+	fitH     int             // thread content height the composer was placed under (0: bottom)
 	compRect image.Rectangle // window coords (emoji picker anchor)
 }
 
@@ -165,6 +166,14 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 			comp = c.edit
 		}
 	}
+	// Slack top-aligns a short thread: the reply composer sits right under
+	// the last reply instead of at the pane's bottom (last frame's height).
+	fit := 0
+	if ch, ok := c.list.(interface{ ContentHeight() int }); ok && c.ts != "" {
+		if h := ch.ContentHeight(); h > 0 && h < sz.Y-c.compH {
+			fit = h
+		}
+	}
 	compH := 0
 	var call op.CallOp
 	if comp != nil {
@@ -178,7 +187,11 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 			}
 			mb = gtx.Dp(24)
 		}
-		comp.SetOrigin(origin.Add(image.Pt(mx, sz.Y-c.compH)))
+		compY := sz.Y - c.compH
+		if fit > 0 {
+			compY = fit
+		}
+		comp.SetOrigin(origin.Add(image.Pt(mx, compY)))
 		m := op.Record(gtx.Ops)
 		g := gtx
 		g.Constraints = layout.Constraints{Min: image.Pt(sz.X-2*mx, 0), Max: image.Pt(sz.X-2*mx, sz.Y*6/10)}
@@ -188,10 +201,21 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 		call = m.Stop()
 		compH = d.Size.Y + mb
 		c.compH = compH
-		top := origin.Add(image.Pt(0, sz.Y-compH))
+		compY = sz.Y - compH
+		if fit > 0 && fit < compY {
+			compY = fit
+		}
+		top := origin.Add(image.Pt(0, compY))
 		c.compRect = image.Rectangle{Min: top, Max: top.Add(image.Pt(sz.X, compH))}
 	}
 	listH := sz.Y - compH
+	if fit > 0 && fit < listH {
+		listH = fit
+	}
+	if fit != c.fitH { // the thread grew or shrank: settle on the next frame
+		c.fitH = fit
+		a.Invalidate()
+	}
 	if s, ok := c.list.(originSetter); ok {
 		s.SetOrigin(origin)
 	}

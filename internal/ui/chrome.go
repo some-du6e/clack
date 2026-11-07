@@ -200,11 +200,12 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 		a.openHistoryMenu()
 	}
 
-	// search pill: starts at the primary panel's left edge.
-	right := width - gtx.Dp(4)
-	avail := right - primaryX - gtx.Dp(112)
-	sw := avail
-	if max := gtx.Dp(680); sw > max {
+	// search pill: starts at the primary panel's left edge. Slack's middle
+	// container is flex 2 1 0 (max 1000px) beside a right container of
+	// flex 1 0 auto (~88px of buttons): ⅔ of what's left after the 4px
+	// right padding, the sidebar edge and those 88px.
+	sw := (width - gtx.Dp(4) - primaryX - gtx.Dp(88)) * 2 / 3
+	if max := gtx.Dp(1000); sw > max {
 		sw = max
 	}
 	if sw < gtx.Dp(200) {
