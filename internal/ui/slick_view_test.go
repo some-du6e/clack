@@ -46,14 +46,15 @@ type svMenu struct {
 
 // svEnv is the shell over a synthetic workspace with Slick running.
 type svEnv struct {
-	t   *testing.T
-	a   *App
-	ca  *core.App
-	s   *slick.Slick
-	dir string
-	ops *op.Ops
-	rt  *input.Router
-	sz  image.Point
+	t     *testing.T
+	a     *App
+	ca    *core.App
+	s     *slick.Slick
+	dir   string
+	ops   *op.Ops
+	rt    *input.Router
+	sz    image.Point
+	clock time.Duration // pointer event times
 
 	mu    sync.Mutex
 	trees map[uint64][]byte
@@ -252,16 +253,22 @@ func (e *svEnv) rowPos(ch string) (f32.Point, bool) {
 }
 
 // rightClick presses the secondary button over ch's sidebar row.
-func (e *svEnv) rightClick(ch string) {
+func (e *svEnv) rightClick(ch string) { e.press(ch, pointer.ButtonSecondary) }
+
+// click clicks ch's sidebar row.
+func (e *svEnv) click(ch string) { e.press(ch, pointer.ButtonPrimary) }
+
+func (e *svEnv) press(ch string, b pointer.Buttons) {
 	e.t.Helper()
 	p, ok := e.rowPos(ch)
 	if !ok {
 		e.t.Fatalf("no sidebar row for %s", ch)
 	}
+	e.clock += time.Second
 	e.rt.Queue(
-		pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: p, Time: time.Second},
-		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonSecondary, Position: p, Time: time.Second + 10*time.Millisecond},
-		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: p, Time: time.Second + 60*time.Millisecond},
+		pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: p, Time: e.clock},
+		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: b, Position: p, Time: e.clock + 10*time.Millisecond},
+		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: p, Time: e.clock + 60*time.Millisecond},
 	)
 	e.frame()
 	e.frame()
@@ -392,6 +399,18 @@ func TestSlickViewChatTabs(t *testing.T) {
 	e.until(8*time.Second, "two tabs, general and random", func() bool {
 		return e.tree("slick-chat-tabs__tab", `data-tab-count":2`) != "" || e.tree("slick-chat-tabs__tab", "random", "general") != ""
 	})
+
+	// the rows still navigate on click while they're inside ChatTabs' tree
+	e.dismissOverlays()
+	e.click(ttGen)
+	e.until(5*time.Second, "a click on #general's row opening it", func() bool { return string(e.a.router.Current()) == "c/"+ttGen })
+}
+
+// dismissOverlays closes open menus (as Esc would).
+func (e *svEnv) dismissOverlays() {
+	for e.a.dismissTop() {
+	}
+	e.frame()
 }
 
 // BetterBlock: a blocked person's DM disappears from the sidebar

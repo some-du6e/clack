@@ -267,31 +267,55 @@ func (r sbConvRow) triggerProps() slackc.Props {
 	return p
 }
 
-// layoutTrigger draws the row and opens its menu on a right-click: the
-// template a plugin's getTemplate returns (ChatTabs), else Clack's.
+// layoutTrigger draws the row. The getTemplate a plugin passed (ChatTabs)
+// is kept for the row's right-click, which sbRowInput reads outside the
+// boundaries.
 func (r sbConvRow) layoutTrigger(gtx layout.Context, p slackc.Props) layout.Dimensions {
-	a := r.a
-	tag := a.sbMenu.tag(r.id())
 	var gt slackc.JSFunc
 	if p != nil {
 		gt, _ = p["getTemplate"].(slackc.JSFunc)
 	}
+	r.a.sbMenu.setTemplateFn(r.id(), gt)
+	return r.a.sidebarRowBody(gtx, r.r, r.btn, r.rs, p)
+}
+
+// sbRowNested reports whether a conversation row's body is drawn inside
+// another boundary's plugin tree. slackc draws natives nested that deep
+// from its measuring pass, which has no input, so the row's clicks are
+// taken at the row instead.
+func sbRowNested() bool {
+	return slackc.Patched("ConnectedChannel") || slackc.Patched("Channel") || slackc.Patched("ChannelContextMenu")
+}
+
+// sbRowInput handles a conversation row's input over its whole size, at
+// the row (outside its boundaries): the right-click menu, and its clicks
+// while the body is nested in a plugin tree.
+func (a *App) sbRowInput(gtx layout.Context, id string, btn *widget.Clickable, sz image.Point) {
+	tag := a.sbMenu.tag(id)
 	for {
 		ev, ok := gtx.Event(pointer.Filter{Target: tag, Kinds: pointer.Press})
 		if !ok {
 			break
 		}
-		if e, ok := ev.(pointer.Event); ok && e.Buttons.Contain(pointer.ButtonSecondary) && (p == nil || !p.Bool("isDisabled")) {
-			a.openSidebarMenu(r.id(), a.ptrWin, gt)
+		if e, ok := ev.(pointer.Event); ok && e.Buttons.Contain(pointer.ButtonSecondary) {
+			a.openSidebarMenu(id, a.ptrWin, a.sbMenu.gts[id])
 		}
 	}
-	d := a.sidebarRowBody(gtx, r.r, r.btn, r.rs, p)
-	func() {
-		defer clip.Rect{Max: d.Size}.Push(gtx.Ops).Pop()
-		defer pointer.PassOp{}.Push(gtx.Ops).Pop()
-		event.Op(gtx.Ops, tag)
-	}()
-	return d
+	if sbRowNested() {
+		if btn.Clicked(gtx) {
+			clickedSet[btn] = true
+		}
+		g := gtx
+		g.Constraints = layout.Exact(sz)
+		btn.Layout(g, func(gtx layout.Context) layout.Dimensions {
+			defer clip.Rect{Max: sz}.Push(gtx.Ops).Pop()
+			pointer.CursorPointer.Add(gtx.Ops)
+			return layout.Dimensions{Size: sz}
+		})
+	}
+	defer clip.Rect{Max: sz}.Push(gtx.Ops).Pop()
+	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+	event.Op(gtx.Ops, tag)
 }
 
 // entity is the row's ListChannelEntity, width px wide.
@@ -516,7 +540,8 @@ func sbTemplate(spec []sbMenuEntry) []any {
 // sbMenus holds each row's right-click tag and, while a plugin runtime
 // runs, its getTemplate function.
 type sbMenus struct {
-	tags map[string]*int // UI goroutine
+	tags map[string]*int          // UI goroutine
+	gts  map[string]slackc.JSFunc // a plugin's getTemplate per row (UI goroutine)
 
 	mu   sync.Mutex
 	t    *taut.Taut
@@ -534,6 +559,18 @@ func (m *sbMenus) tag(id string) *int {
 		m.tags[id] = t
 	}
 	return t
+}
+
+// setTemplateFn records the getTemplate a plugin passed to row id's
+// trigger (zero: none). Writes only on change.
+func (m *sbMenus) setTemplateFn(id string, f slackc.JSFunc) {
+	if m.gts[id] == f {
+		return
+	}
+	if m.gts == nil {
+		m.gts = map[string]slackc.JSFunc{}
+	}
+	m.gts[id] = f
 }
 
 func menuInfoOf(c *convInfo) sbMenuInfo {

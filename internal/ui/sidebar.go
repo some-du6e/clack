@@ -376,6 +376,9 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 			})
 		})
 	})
+	if conv != nil {
+		a.sbRowInput(gtx, conv.ID, btn, image.Pt(w, d.Size.Y))
+	}
 	if clicked(btn) {
 		switch r.kind {
 		case sbLink:
