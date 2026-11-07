@@ -1,6 +1,7 @@
 package slackc
 
 import (
+	"image"
 	"log"
 	"sync"
 
@@ -213,7 +214,11 @@ func LayoutElement(gtx layout.Context, e Element) layout.Dimensions {
 	if c == nil || len(e.Nodes) == 0 {
 		return layout.Dimensions{}
 	}
-	return c.view.layoutNodes(gtx, c.fr, e.Nodes, nil, c.st)
+	parent := c.n
+	if len(e.Nodes) > 0 && e.Nodes[0].parent != nil {
+		parent = e.Nodes[0].parent
+	}
+	return c.view.layoutNodes(gtx, c.fr, e.Nodes, parent, c.st)
 }
 
 // curRender is the innermost host-tree render in progress (UI
@@ -224,4 +229,25 @@ type renderCtx struct {
 	view *View
 	fr   *frame
 	st   *css.Style
+	n    *Node // the "@" node whose native is drawing
 }
+
+// WindowRect is the component's border box in window pixels as of the
+// last frame it was painted (ok false before that, or when the window
+// origin isn't known yet). Popovers and menus anchor to it.
+func (h *Host) WindowRect() (image.Rectangle, bool) {
+	if h.view == nil || h.Node == nil {
+		return image.Rectangle{}, false
+	}
+	b := h.view.byK[h.Node.K]
+	if b == nil || b.scope == nil || b.rectFr == 0 {
+		return image.Rectangle{}, false
+	}
+	ox, oy := b.scope.windowOrigin()
+	r := b.rect
+	return image.Rect(int(r.x0+ox+.5), int(r.y0+oy+.5), int(r.x1+ox+.5), int(r.y1+oy+.5)), true
+}
+
+// WindowSize is the window size in pixels (for flipping popovers at the
+// edges).
+func (h *Host) WindowSize() image.Point { return windowSize }

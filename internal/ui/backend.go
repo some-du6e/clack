@@ -14,13 +14,15 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/taut"
 )
 
 // backend adapts the in-process core service to the shell's model. Model
 // mutations happen on the UI goroutine only (via App.Post).
 type backend struct {
 	core      *core.App
-	cacheFile string // sidebar metadata cache (names/kinds/order only)
+	taut      *taut.Taut // Taut plugins (nil until boot)
+	cacheFile string     // sidebar metadata cache (names/kinds/order only)
 
 	m       model
 	started bool
@@ -99,6 +101,7 @@ func (b *backend) start(a *App) {
 			log.Printf("ui: boot: %v", err)
 			a.Post(func() { a.Toast("Couldn't connect to Slack: " + err.Error()) })
 		}
+		a.Post(func() { b.startTaut(a) })
 		snap := b.core.Snapshot()
 		log.Printf("ui: core ready %v after boot start (%d convs)", time.Since(t0).Round(time.Millisecond), len(snap.Convs))
 		a.Post(func() {
@@ -115,6 +118,7 @@ func (b *backend) start(a *App) {
 }
 
 func (b *backend) stop() {
+	b.stopTaut()
 	if b.cancel != nil {
 		b.cancel()
 	}

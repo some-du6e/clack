@@ -508,6 +508,7 @@ func menuFromTemplate(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 			}
 			items := menuItems(tpl, fireClick)
 			ctx.menu = popups.NewMenuOpts(ph, items, popups.MenuOpts{
+				Raw:        true, // already a plugin-rendered MenuFromTemplate
 				Anchor:     ctx.anchor,
 				Side:       ctx.side,
 				AlignRight: ctx.align == 2,

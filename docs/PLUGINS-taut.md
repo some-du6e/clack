@@ -15,10 +15,12 @@ t, _ := taut.New(taut.Options{App: app, UI: taut.UIHooks{
 	PreferencesTabs: …, Invalidate: w.Invalidate, Toast: …, OpenPreferences: …,
 	ThreadPane:  …, Input: …, SetLocalDraft: …, SwitchAccount: …,
 	OnDocument: slackc.SetDocument, OnDocumentProps: slackc.SetDocumentProps, // plugin DOM in body/head, <html>/<body> props
-}})
+}, PickFiles: nativeFilePicker /* <input type=file>; nil = inert */})
 defer t.Close()
 ```
 `taut.New` reads `~/.config/clack/taut/` (config.json, user.css, plugins/*.js and their cached metadata). After `core.Boot` it starts the enabled plugins that run in this workspace. Hack Club–only plugins run only on the Hack Club grid (E09V59WQY1E / T0266FRGM).
+
+If the JS engine traps, taut starts a fresh runtime on next use and restarts the plugins that were running.
 
 Function ids: taut tags its own `{"$fn"}` / `{"$gofn"}` ids with bit 51 (`taut.IsTautFn`). `Bridge.Call` routes both kinds.
 

@@ -171,8 +171,14 @@ func Patched(name string) bool {
 // value passed here is heap-allocated on every call. Hot widgets use
 // Component, which is allocation-free when unpatched.
 func Render(gtx layout.Context, name string, props Props, native Native) layout.Dimensions {
-	m := patched.Load()
-	if m == nil || !(*m)[name] {
+	if patched.Load() == nil { // inlined: one atomic load
+		return native(gtx, props)
+	}
+	return renderSlow(gtx, name, props, native)
+}
+
+func renderSlow(gtx layout.Context, name string, props Props, native Native) layout.Dimensions {
+	if m := patched.Load(); m == nil || !(*m)[name] {
 		return native(gtx, props)
 	}
 	return renderPatched(gtx, name, props, native)
@@ -180,8 +186,14 @@ func Render(gtx layout.Context, name string, props Props, native Native) layout.
 
 // RenderLazy is Render with props built only when name is patched.
 func RenderLazy(gtx layout.Context, name string, props func() Props, native Native) layout.Dimensions {
-	m := patched.Load()
-	if m == nil || !(*m)[name] {
+	if patched.Load() == nil {
+		return native(gtx, nil)
+	}
+	return renderLazySlow(gtx, name, props, native)
+}
+
+func renderLazySlow(gtx layout.Context, name string, props func() Props, native Native) layout.Dimensions {
+	if m := patched.Load(); m == nil || !(*m)[name] {
 		return native(gtx, nil)
 	}
 	return renderPatched(gtx, name, props(), native)
@@ -196,8 +208,14 @@ func RenderLazy(gtx layout.Context, name string, props func() Props, native Nati
 // props may be nil (no props). native's Props argument is nil when
 // unpatched.
 func Component[T any](gtx layout.Context, name string, recv T, props func(T) Props, native func(T, layout.Context, Props) layout.Dimensions) layout.Dimensions {
-	m := patched.Load()
-	if m == nil || !(*m)[name] {
+	if patched.Load() == nil { // inlined: the native becomes a direct call
+		return native(recv, gtx, nil)
+	}
+	return componentSlow(gtx, name, recv, props, native)
+}
+
+func componentSlow[T any](gtx layout.Context, name string, recv T, props func(T) Props, native func(T, layout.Context, Props) layout.Dimensions) layout.Dimensions {
+	if m := patched.Load(); m == nil || !(*m)[name] {
 		return native(recv, gtx, nil)
 	}
 	return componentPatched(gtx, name, recv, props, native)

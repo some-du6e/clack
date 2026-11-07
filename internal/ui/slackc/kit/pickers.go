@@ -286,7 +286,7 @@ func basicSelect(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 				invalidate()
 			}}
 		}
-		st.menu = popups.NewMenuOpts(ph, items, popups.MenuOpts{Anchor: pkRect(&st.org, image.Pt(w, hh)), Width: pkToDp(gtx, w)})
+		st.menu = popups.NewMenuOpts(ph, items, popups.MenuOpts{Anchor: pkRect(&st.org, image.Pt(w, hh)), Width: pkToDp(gtx, w), Raw: true})
 		showOverlay(st.menu)
 	}
 
