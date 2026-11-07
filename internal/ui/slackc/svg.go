@@ -2214,10 +2214,8 @@ func (c *svgCtx) drawShape(e *svgEl, st *svgState) {
 	if st.cap == svgCapRound && st.join == svgJoinRound {
 		paint.FillShape(c.ops, col, clip.Stroke{Path: c.pathSpec(segs), Width: st.sw}.Op())
 	} else {
-		var p clip.Path
-		p.Begin(c.ops)
 		var sk svgStroker
-		sk.reset(&p, st.sw/2, st.cap, st.join, st.miter, 0.25/st.scale)
+		sk.reset(c.ops, st.sw/2, st.cap, st.join, st.miter, 0.25/st.scale)
 		for i := range segs {
 			s := &segs[i]
 			switch s.op {
@@ -2232,7 +2230,7 @@ func (c *svgCtx) drawShape(e *svgEl, st *svgState) {
 			}
 		}
 		sk.finish()
-		spec := p.End()
+		spec := sk.p.End()
 		if sk.n == 0 {
 			return
 		}
@@ -2345,7 +2343,7 @@ func svgGradAvg(g *svgEl, cur color.NRGBA) (color.NRGBA, bool) {
 // per segment, join and cap) into a clip.Path; filling it with the nonzero
 // rule unions them into the stroke area.
 type svgStroker struct {
-	p          *clip.Path
+	p          clip.Path // held by value: a pointer stored here would escape
 	hw, tol    float32
 	miter      float32
 	cap, join  uint8
@@ -2357,8 +2355,10 @@ type svgStroker struct {
 	pts        [svgMaxFan]f32.Point
 }
 
-func (s *svgStroker) reset(p *clip.Path, hw float32, cp, join uint8, miter, tol float32) {
-	s.p, s.hw, s.cap, s.join, s.miter, s.tol = p, hw, cp, join, miter, tol
+// reset begins s.p in ops; the caller ends it with s.p.End().
+func (s *svgStroker) reset(ops *op.Ops, hw float32, cp, join uint8, miter, tol float32) {
+	s.p.Begin(ops)
+	s.hw, s.cap, s.join, s.miter, s.tol = hw, cp, join, miter, tol
 	if s.miter < 1 {
 		s.miter = 4
 	}
@@ -2563,7 +2563,7 @@ func (s *svgStroker) poly(pts []f32.Point) {
 	if area == 0 || math.IsNaN(float64(area)) {
 		return
 	}
-	p := s.p
+	p := &s.p
 	if area > 0 {
 		p.MoveTo(pts[0])
 		for _, q := range pts[1:] {

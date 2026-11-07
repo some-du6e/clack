@@ -10,7 +10,6 @@ import (
 
 	"gioui.org/f32"
 	"gioui.org/op"
-	"gioui.org/op/clip"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
 )
@@ -580,10 +579,8 @@ func TestSVGStrokerCapsJoins(t *testing.T) {
 	ops := new(op.Ops)
 	for _, cp := range []uint8{svgCapButt, svgCapRound, svgCapSquare} {
 		for _, join := range []uint8{svgJoinMiter, svgJoinRound, svgJoinBevel} {
-			var p clip.Path
-			p.Begin(ops)
 			var s svgStroker
-			s.reset(&p, 1, cp, join, 4, 0.05)
+			s.reset(ops, 1, cp, join, 4, 0.05)
 			for _, seg := range svgParsePath("M0 0L10 0L10 10L0 10M20 20C30 20 30 30 20 30L20 20z") {
 				switch seg.op {
 				case 'M':
@@ -597,7 +594,7 @@ func TestSVGStrokerCapsJoins(t *testing.T) {
 				}
 			}
 			s.finish()
-			p.End()
+			s.p.End()
 			if s.n < 8 {
 				t.Fatalf("cap %d join %d: only %d polygons", cp, join, s.n)
 			}
