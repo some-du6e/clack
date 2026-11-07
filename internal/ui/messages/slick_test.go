@@ -1,0 +1,441 @@
+package messages
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/yoloslackgoclient/internal/slick"
+	"github.com/some-du6e/yoloslackgoclient/internal/store"
+	"github.com/some-du6e/yoloslackgoclient/internal/taut"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+)
+
+// Slick plugins through the native message views (the ui-slick workflow
+// builds them with Slick's own build into SLICK_PLUGINS_DIR). Each test
+// installs one real, unmodified plugin over the synthetic workspace of
+// taut_test.go (made-up people and messages, never real Slack content),
+// draws the real ChannelView / ThreadView and checks what a user would
+// see: rows hidden or kept, the text drawn, the plugin's markup in the
+// trees the views render, native fields the plugin's props changed.
+
+type slickEnv struct {
+	app *core.App
+	api *fakeSlack
+	tt  *taut.Taut
+	s   *slick.Slick
+	ui  *pluginUI
+	h   coreHost
+
+	fetchMu sync.Mutex
+	fetches map[string]string // URL prefix → JSON body; other fetches 404
+	fetched []string
+}
+
+func slickDir(t *testing.T) string {
+	dir := os.Getenv("SLICK_PLUGINS_DIR")
+	if dir == "" {
+		t.Skip("SLICK_PLUGINS_DIR not set (the ui-slick workflow builds Slick's plugins)")
+	}
+	return dir
+}
+
+// newSlickEnv is pluginEnv with Slick on top and fetches answered from
+// e.fetches (no network). seed adds a test's synthetic data first.
+func newSlickEnv(t *testing.T, seed func(s *store.Store)) *slickEnv {
+	slickDir(t)
+	app, api := newTestApp(t)
+	if seed != nil {
+		seed(app.S)
+	}
+	e := &slickEnv{app: app, api: api, ui: &pluginUI{trees: map[uint64][]byte{}}, fetches: map[string]string{}}
+	dir := t.TempDir()
+	tt, err := taut.New(taut.Options{App: app, Dir: filepath.Join(dir, "taut"), CredsPath: filepath.Join(dir, "creds.json"), UI: e.ui.hooks(),
+		NoAutoStart: true, CacheDir: filepath.Join(dir, "cache"), Fetch: e.fetch, Log: func(level, msg string) {
+			if level == "error" || level == "warn" {
+				t.Logf("js %s: %s", level, msg)
+			}
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := slick.New(slick.Options{Taut: tt, Dir: filepath.Join(dir, "slick"), NoAutoStart: true, NoUpdates: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.tt, e.s = tt, s
+	slackc.SetBridge(tt.Bridge())
+	SetTaut(tt)
+	t.Cleanup(func() {
+		SetTaut(nil)
+		slackc.SetBridge(nil)
+		slackc.SetPatched(nil)
+		_ = s.Close()
+		_ = tt.Close()
+	})
+	e.h = coreHost{app: app, th: theme.New(false)}
+	return e
+}
+
+func (e *slickEnv) fetch(ctx context.Context, req *http.Request) (*http.Response, error) {
+	u := req.URL.String()
+	if strings.HasPrefix(u, e.api.srv.URL) {
+		return http.DefaultClient.Do(req.WithContext(ctx))
+	}
+	e.fetchMu.Lock()
+	defer e.fetchMu.Unlock()
+	e.fetched = append(e.fetched, u)
+	for prefix, body := range e.fetches {
+		if strings.HasPrefix(u, prefix) {
+			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
+		}
+	}
+	return &http.Response{StatusCode: 404, Header: http.Header{}, Body: io.NopCloser(bytes.NewReader(nil)), Request: req}, nil
+}
+
+// install imports the built plugin (and its main half) the way a user
+// does, applies settings and enables it.
+func (e *slickEnv) install(t *testing.T, id string, settings map[string]any) {
+	t.Helper()
+	dir := slickDir(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for _, f := range []string{id + ".js", id + ".main.js"} {
+		code, err := os.ReadFile(filepath.Join(dir, f))
+		if err != nil {
+			if f == id+".js" {
+				t.Fatal(err)
+			}
+			continue
+		}
+		if _, err := e.s.Import(ctx, code); err != nil {
+			t.Fatalf("import %s: %v", f, err)
+		}
+	}
+	for k, v := range settings {
+		if err := e.s.SetOption(ctx, id, k, v); err != nil {
+			t.Fatalf("set %s.%s: %v", id, k, err)
+		}
+	}
+	if err := e.s.SetEnabled(ctx, id, true); err != nil {
+		t.Fatalf("enable %s: %v", id, err)
+	}
+	for _, p := range e.s.Settings().Plugins {
+		if p.ID == id && (!p.Running || p.StartError != "") {
+			t.Fatalf("%s didn't start: running=%v error=%q", id, p.Running, p.StartError)
+		}
+	}
+	time.Sleep(150 * time.Millisecond)
+}
+
+// patched waits until a plugin's patches reach slackc.
+func patched(t *testing.T, names ...string) {
+	t.Helper()
+	until(t, 5*time.Second, "patched "+strings.Join(names, ", "), func() {}, func() bool {
+		for _, n := range names {
+			if !slackc.Patched(n) {
+				return false
+			}
+		}
+		return true
+	})
+}
+
+// dumpTrees logs the trees (on failure).
+func (u *pluginUI) dump(t *testing.T) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	for root, tr := range u.trees {
+		s := string(tr)
+		if len(s) > 3000 {
+			s = s[:3000] + "…"
+		}
+		t.Logf("tree %d: %s", root, s)
+	}
+}
+
+// waitFor runs frames until cond holds, dumping the trees on timeout.
+func (e *slickEnv) waitFor(t *testing.T, what string, frame func(), cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		frame()
+		if cond() {
+			return
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	e.ui.dump(t)
+	t.Fatalf("timed out waiting for %s", what)
+}
+
+// rowText is the text a row's body draws.
+func rowText(r *row) string {
+	if r == nil || r.rv == nil {
+		return ""
+	}
+	return r.rv.TextRange(0, r.rv.PlainLen())
+}
+
+// itemHeight is the height an item of the list was laid out at (-1: none).
+func itemHeight(s *listState, key string) int {
+	for i, it := range s.items {
+		if it.key == key && i < len(s.heights) {
+			return s.heights[i]
+		}
+	}
+	return -1
+}
+
+func richBlocks(elements ...map[string]any) json.RawMessage {
+	els := make([]any, len(elements))
+	for i, e := range elements {
+		els[i] = e
+	}
+	b, _ := json.Marshal([]any{map[string]any{"type": "rich_text", "block_id": "b1", "elements": []any{
+		map[string]any{"type": "rich_text_section", "elements": els},
+	}}})
+	return b
+}
+
+func textEl(s string) map[string]any { return map[string]any{"type": "text", "text": s} }
+
+const tsVideo = "1700000201.000100"
+
+// DeArrow: a YouTube unfurl (MessageAttachmentYouTube) shows DeArrow's
+// crowdsourced title and thumbnail, with its toggle beside the title
+// (AttachmentTitle, inside the YouTube card's tree).
+func TestSlickViewDeArrow(t *testing.T) {
+	const ch, vid = "C0VIDEOS", "AbCdEfGhIjK"
+	e := newSlickEnv(t, func(s *store.Store) {
+		s.PutConv(slack.Conversation{ID: ch, Name: "videos", IsChannel: true, IsMember: true, NumMembers: 3})
+		s.SetLatest(ch, []slack.Message{{Type: "message", TS: tsVideo, User: "UALICE", Text: "look", Attachments: []slack.Attachment{{
+			ID: 1, ServiceName: "YouTube", ServiceIcon: "https://avatars.invalid/yt.png", Title: "You WON'T BELIEVE what this synthetic cat does",
+			TitleLink: "https://www.youtube.com/watch?v=" + vid, FromURL: "https://www.youtube.com/watch?v=" + vid,
+			ThumbURL: "https://thumbs.invalid/" + vid + ".jpg", ThumbWidth: 480, ThumbHeight: 360,
+		}}}}, false)
+	})
+	e.fetches["https://sponsor.ajay.app/api/branding?videoID="+vid] =
+		`{"titles":[{"title":"A calm synthetic cat sits still","original":false,"votes":3}],"thumbnails":[{"timestamp":42.5,"original":false,"votes":2}]}`
+	e.install(t, "DeArrow", nil)
+	patched(t, "MessageAttachmentYouTube", "AttachmentTitle")
+	v := NewChannelView(e.h, ch)
+	v.Preview = true
+	e.waitFor(t, "DeArrow's title drawn in the card", frameFn(v), func() bool {
+		txt := rowText(v.s.rows[tsVideo])
+		return strings.Contains(txt, "A calm synthetic cat sits still") && !strings.Contains(txt, "BELIEVE")
+	})
+	e.waitFor(t, "DeArrow's thumbnail and its toggle beside the title", frameFn(v), func() bool {
+		return e.ui.anyTree("dearrow-thumb.ajay.app/api/v1/getThumbnail?videoID="+vid) && e.ui.anyTree("slick-dearrow__toggle") &&
+			e.ui.anyTree(`"n":"AttachmentTitle"`)
+	})
+}
+
+// ShowSendingBot: a message a bot posted for a person gets the bot's
+// badge on the avatar (MessageAvatar → BaseMessageAvatar provide the
+// message, ConnectedBaseAvatar in their tree draws the badge).
+func TestSlickViewShowSendingBot(t *testing.T) {
+	const ch, ts = "C0BOTPOST", "1700000301.000100"
+	e := newSlickEnv(t, func(s *store.Store) {
+		s.PutConv(slack.Conversation{ID: ch, Name: "bot-posts", IsChannel: true, IsMember: true, NumMembers: 3})
+		s.PutBot("B0SENDER1", store.BotInfo{Name: "Sender Bot", Icon: "https://avatars.invalid/sender-bot-48.png"})
+		s.SetLatest(ch, []slack.Message{{Type: "message", TS: ts, User: "UALICE", BotID: "B0SENDER1", Text: "posted for alice by a bot"}}, false)
+	})
+	e.install(t, "ShowSendingBot", nil)
+	patched(t, "MessageKitGutter", "MessageAvatar", "BaseMessageAvatar", "ConnectedBaseAvatar")
+	v := NewChannelView(e.h, ch)
+	v.Preview = true
+	e.waitFor(t, "the sending bot's badge on Alice's avatar", frameFn(v), func() bool {
+		return e.ui.anyTree("slick-sending-bot__badge") && e.ui.anyTree("B0SENDER1") && e.ui.anyTree(`"n":"BaseMessageAvatar"`)
+	})
+}
+
+// BetterBlock: a blocked person's messages collapse (Message /
+// MessageWrapper / ThreadReplyGeneric render nothing), their avatar
+// leaves the reply bar (ReplyBarAvatar), and mentions of them leave
+// others' text (MessageText / Blocks msg overrides).
+func TestSlickViewBetterBlock(t *testing.T) {
+	const tsMention = "1700000401.000100"
+	e := newSlickEnv(t, func(s *store.Store) {
+		// newTestApp's #general, plus Alice mentioning Bob
+		s.SetLatest(tGen, []slack.Message{
+			{Type: "message", TS: tsFair, User: "UALICE", Text: "the job fair is today", ReplyCount: 1, ThreadTS: tsFair, LatestReply: "1700000004.000400", ReplyUsers: []string{"UBOB"}},
+			{Type: "message", TS: tsTada, User: "UBOB", Text: "synthetic tada", Reactions: []slack.Reaction{{Name: "tada", Count: 2, Users: []string{"UALICE", tSelf}}}},
+			{Type: "message", TS: tsMine, User: tSelf, Text: "hello there"},
+			{Type: "message", TS: tsMention, User: "UALICE", Text: "ask <@UBOB> about it",
+				Blocks: richBlocks(textEl("ask "), map[string]any{"type": "user", "user_id": "UBOB"}, textEl(" about it"))},
+		}, false)
+	})
+	e.install(t, "BetterBlock", map[string]any{"blockedUsers": map[string]any{"UBOB": "bob"}})
+	patched(t, "MessageWrapper", "Message", "ThreadReplyGeneric", "MessageText", "ThreadReplies", "ReplyBarAvatar")
+	v := NewChannelView(e.h, tGen)
+	v.Preview = true
+	f := frameFn(v)
+	e.waitFor(t, "Bob's message collapsed, the others drawn", f, func() bool {
+		return itemHeight(v.s, tsTada) == 0 && itemHeight(v.s, tsFair) > 0 && itemHeight(v.s, tsMine) > 0
+	})
+	e.waitFor(t, "the mention of Bob gone from Alice's text", f, func() bool {
+		txt := rowText(v.s.rows[tsMention])
+		return strings.Contains(txt, "ask") && strings.Contains(txt, "about it") && !strings.Contains(txt, "bob")
+	})
+	// the reply bar under Alice's thread: Bob's avatar is not drawn
+	e.waitFor(t, "Bob's avatar out of the reply bar", f, func() bool {
+		r := v.s.rows[tsFair]
+		if r == nil {
+			return false
+		}
+		for i := 0; i < r.replyN && i < len(r.replyAvs); i++ {
+			if av := &r.replyAvs[i]; av.id == "UBOB" && av.w > 0 {
+				return false
+			}
+		}
+		return true
+	})
+	// the thread pane: Bob's reply collapses, Alice's root stays
+	tv := NewThreadView(e.h, tGen, tsFair)
+	ft := frameFn(tv)
+	e.waitFor(t, "Bob's reply collapsed in the thread", ft, func() bool {
+		return itemHeight(tv.s, "1700000004.000400") == 0 && itemHeight(tv.s, tsFair) > 0
+	})
+}
+
+// MessageLogger: a deleted message stays in the channel, drawn under the
+// plugin's .slick-ml-deleted row (MessageWrapper), and an edited one is
+// marked .slick-ml-edited.
+func TestSlickViewMessageLogger(t *testing.T) {
+	const ch, tsGone, tsEdit = "C0LOGGED", "1700000501.000100", "1700000502.000200"
+	e := newSlickEnv(t, func(s *store.Store) {
+		s.PutConv(slack.Conversation{ID: ch, Name: "logged", IsChannel: true, IsMember: true, NumMembers: 3})
+		s.SetLatest(ch, []slack.Message{
+			{Type: "message", TS: tsGone, User: "UALICE", Text: "this synthetic note will vanish"},
+			{Type: "message", TS: tsEdit, User: "UBOB", Text: "first synthetic draft"},
+		}, false)
+	})
+	e.install(t, "MessageLogger", nil)
+	patched(t, "MessageWrapper", "MessageText", "Blocks")
+	v := NewChannelView(e.h, ch)
+	v.Preview = true
+	f := frameFn(v)
+	e.waitFor(t, "both rows drawn through the plugin", f, func() bool {
+		return v.s.rows[tsGone] != nil && v.s.rows[tsEdit] != nil && e.ui.anyTree(tsGone) && e.ui.anyTree(tsEdit)
+	})
+	inject := func(ev map[string]any) {
+		raw, _ := json.Marshal(ev)
+		e.app.Inject(slack.Event{Type: "message", Subtype: ev["subtype"].(string), Channel: json.RawMessage(`"` + ch + `"`), Raw: raw})
+	}
+	inject(map[string]any{"type": "message", "subtype": "message_deleted", "channel": ch, "hidden": true, "ts": "1700000510.000100", "deleted_ts": tsGone,
+		"previous_message": map[string]any{"type": "message", "user": "UALICE", "text": "this synthetic note will vanish", "ts": tsGone}})
+	e.waitFor(t, "the deleted message kept and marked deleted", f, func() bool {
+		r := v.s.rows[tsGone]
+		return r != nil && itemHeight(v.s, tsGone) > 0 && strings.Contains(rowText(r), "will vanish") && e.ui.anyTree("slick-ml-deleted")
+	})
+	inject(map[string]any{"type": "message", "subtype": "message_changed", "channel": ch, "hidden": true, "ts": "1700000511.000100",
+		"message":          map[string]any{"type": "message", "user": "UBOB", "text": "second synthetic draft", "ts": tsEdit, "edited": map[string]any{"user": "UBOB", "ts": "1700000511.000000"}},
+		"previous_message": map[string]any{"type": "message", "user": "UBOB", "text": "first synthetic draft", "ts": tsEdit}})
+	e.waitFor(t, "the edited message drawn with its new text, marked edited", f, func() bool {
+		return strings.Contains(rowText(v.s.rows[tsEdit]), "second synthetic draft") && e.ui.anyTree("slick-ml-edited")
+	})
+	// The edit history (old text, struck through) is drawn by the plugin's
+	// Blocks patch from a context its row patch provides; Blocks renders in
+	// its own slackc root, so that context doesn't reach it yet.
+	if e.ui.anyTree("slick-ml-edited-original") {
+		t.Log("edit history drawn")
+	} else {
+		t.Log("edit history not drawn (row → Blocks context, see the package gaps)")
+	}
+}
+
+// QuickJoin: a channel you can join, mentioned in a message, gets a Join
+// button under it (CodeChannelEntityCard, empty natively).
+func TestSlickViewQuickJoin(t *testing.T) {
+	const ch, open, ts = "C0LOBBY", "C0JOINME", "1700000601.000100"
+	e := newSlickEnv(t, func(s *store.Store) {
+		s.PutConv(slack.Conversation{ID: ch, Name: "lobby", IsChannel: true, IsMember: true, NumMembers: 3})
+		s.PutConv(slack.Conversation{ID: open, Name: "join-me", IsChannel: true, IsMember: false, NumMembers: 12})
+		s.SetLatest(ch, []slack.Message{{Type: "message", TS: ts, User: "UALICE", Text: "come to <#" + open + ">",
+			Blocks: richBlocks(textEl("come to "), map[string]any{"type": "channel", "channel_id": open})}}, false)
+	})
+	e.install(t, "QuickJoin", nil)
+	patched(t, "CodeChannelEntityCard")
+	v := NewChannelView(e.h, ch)
+	v.Preview = true
+	e.waitFor(t, "a Join Channel button under the message", frameFn(v), func() bool {
+		return e.ui.anyTree("Join Channel") && e.ui.anyTree("slick-qj-card") && e.ui.anyTree(open)
+	})
+}
+
+// MentionProfiles: @mention pills (MemberSlug, inside MemberLink) get the
+// person's picture, and with showAtSymbol off the "@" goes
+// (supressMentionAtSymbol).
+func TestSlickViewMentionProfiles(t *testing.T) {
+	const ch, ts = "C0MENTION", "1700000701.000100"
+	e := newSlickEnv(t, func(s *store.Store) {
+		s.PutConv(slack.Conversation{ID: ch, Name: "mentions", IsChannel: true, IsMember: true, NumMembers: 3})
+		s.SetLatest(ch, []slack.Message{{Type: "message", TS: ts, User: "UBOB", Text: "thanks <@UALICE>",
+			Blocks: richBlocks(textEl("thanks "), map[string]any{"type": "user", "user_id": "UALICE"})}}, false)
+	})
+	e.install(t, "MentionProfiles", map[string]any{"showAtSymbol": false})
+	patched(t, "MemberSlug")
+	v := NewChannelView(e.h, ch)
+	v.Preview = true
+	e.waitFor(t, "Alice's picture in her mention pill, without the @", frameFn(v), func() bool {
+		txt := rowText(v.s.rows[ts])
+		return e.ui.anyTree("slick-mention-profile") && e.ui.anyTree("alice-48.png") &&
+			strings.Contains(txt, "alice") && !strings.Contains(txt, "@alice")
+	})
+}
+
+// CustomSlackbot: Slackbot's reply-bar avatar renders through the
+// plugin with Slack's props (ReplyBarAvatar {userId, channelId,
+// threadTs}) and its stylesheet is installed.
+func TestSlickViewCustomSlackbot(t *testing.T) {
+	const ch, ts = "C0SBTHRD", "1700000801.000100"
+	e := newSlickEnv(t, func(s *store.Store) {
+		s.PutConv(slack.Conversation{ID: ch, Name: "faq", IsChannel: true, IsMember: true, NumMembers: 3})
+		s.SetLatest(ch, []slack.Message{{Type: "message", TS: ts, User: "UALICE", Text: "where is the synthetic wiki?", ThreadTS: ts,
+			ReplyCount: 1, ReplyUsers: []string{tBot}, LatestReply: "1700000802.000100"}}, false)
+		s.SetThread(ch, ts, []slack.Message{
+			{Type: "message", TS: ts, User: "UALICE", Text: "where is the synthetic wiki?", ThreadTS: ts, ReplyCount: 1},
+			{Type: "message", TS: "1700000802.000100", User: tBot, Text: "a synthetic custom response", ThreadTS: ts},
+		})
+	})
+	e.install(t, "CustomSlackbot", map[string]any{"name": "Helper", "url": "https://avatars.invalid/helper.png"})
+	patched(t, "ReplyBarAvatar")
+	v := NewChannelView(e.h, ch)
+	v.Preview = true
+	e.waitFor(t, "Slackbot's reply-bar avatar through the plugin", frameFn(v), func() bool {
+		r := v.s.rows[ts]
+		drawn := false
+		for i := 0; r != nil && i < r.replyN && i < len(r.replyAvs); i++ {
+			drawn = drawn || r.replyAvs[i].id == tBot && r.replyAvs[i].w > 0
+		}
+		return drawn && e.ui.anyTree(`"n":"ReplyBarAvatar"`) && e.ui.anyTree(`"userId":"`+tBot+`"`) && e.ui.anyTree(`"threadTs":"`+ts+`"`)
+	})
+	// Its avatar swap needs Slack's hasSlackbotCustomResponseInThread
+	// export, which Clack's module registry doesn't have yet: the patch
+	// renders the original avatar (see the package gaps).
+}
+
+// WhoReacted: each reaction pill lists its reactors' avatars (Reaction
+// provides them, UnstyledButton data-qa=reactji in its tree draws them).
+func TestSlickViewWhoReacted(t *testing.T) {
+	e := newSlickEnv(t, nil)
+	e.install(t, "WhoReacted", nil)
+	patched(t, "Reaction", "UnstyledButton")
+	v := NewChannelView(e.h, tGen)
+	v.Preview = true
+	e.waitFor(t, "the reactors' avatars in the tada pill", frameFn(v), func() bool {
+		return e.ui.anyTree("slick-wr__av") && e.ui.anyTree("alice-48.png")
+	})
+}

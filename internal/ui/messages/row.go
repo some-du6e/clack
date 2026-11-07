@@ -109,6 +109,7 @@ type row struct {
 	chans           []chanCard   // CodeChannelEntityCard per channel mentioned, while patched
 	chansDoc        bool         // chans is for the current doc
 	replyAvs        []replyAv    // the reply bar's ReplyBarAvatars
+	replyN          int          // … drawn in the last frame
 }
 
 // chanCard is one CodeChannelEntityCard under a message.
@@ -122,6 +123,7 @@ type replyAv struct {
 	r  *row
 	id string
 	sz int
+	w  int // width drawn last frame (0: a plugin hid it)
 }
 
 // reactPill is one reaction's state: Reaction / UnstyledButton natives.
@@ -984,6 +986,7 @@ func (r *row) layoutThreadReplies(gtx layout.Context, p slackc.Props) layout.Dim
 		}
 	}
 	if count <= 0 {
+		r.replyN = 0
 		return layout.Dimensions{}
 	}
 	h := r.threadBar(gtx, r.rc, 0, 0, gtx.Constraints.Max.X, count, users, latest)
@@ -1633,6 +1636,7 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 			if len(r.replyAvs) < len(users) {
 				r.replyAvs = append(r.replyAvs, make([]replyAv, len(users)-len(r.replyAvs))...)
 			}
+			r.replyN = len(users)
 			for i, id := range users {
 				av := &r.replyAvs[i]
 				av.r, av.id, av.sz = r, id, as
@@ -1641,6 +1645,7 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 				t := op.Offset(image.Pt(ax, (bh-as)/2)).Push(gtx.Ops)
 				d := slackc.Component(g, "ReplyBarAvatar", av, (*replyAv).props, (*replyAv).layout)
 				t.Pop()
+				av.w = d.Size.X
 				if d.Size.X > 0 {
 					ax += d.Size.X + dp(gtx, 4)
 				}
