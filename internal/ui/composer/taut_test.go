@@ -95,6 +95,7 @@ func syntheticApp(t testing.TB) (*core.App, *fakeSlack) {
 	f := newFakeSlack(t)
 	c := slack.New(slack.Creds{Token: "xoxc-test", Cookie: "xoxd-test", UserID: tSelf, Team: tTeam, EnterpriseID: tEnt,
 		TeamURL: f.srv.URL + "/", EnterpriseURL: f.srv.URL + "/"})
+	c.EdgeURL = f.srv.URL + "/edge/" // never the real edgeapi.slack.com
 	s := store.New("")
 	s.Lock()
 	s.TeamID, s.TeamName, s.TeamDomain = tTeam, "Synthetic Club", "hackclub"

@@ -87,8 +87,8 @@ func startSlick(t *testing.T, name string, opts map[string]any, before func(e *s
 	}
 	app, fs := syntheticApp(t)
 	app.S.PutUsers([]slack.User{
-		{ID: "UBOB", Name: "bob", RealName: "Bob Example", Profile: slack.Profile{DisplayName: "bob", RealName: "Bob Example"}},
-		{ID: "UBOBBY", Name: "bobby", RealName: "Bobby Sample", Profile: slack.Profile{DisplayName: "bobby", RealName: "Bobby Sample"}},
+		{ID: "U0BOB00001", Name: "bob", RealName: "Bob Example", Profile: slack.Profile{DisplayName: "bob", RealName: "Bob Example"}},
+		{ID: "U0BOBBY001", Name: "bobby", RealName: "Bobby Sample", Profile: slack.Profile{DisplayName: "bobby", RealName: "Bobby Sample"}},
 	})
 	app.S.PutConv(slack.Conversation{ID: tChRandom, Name: "random", IsChannel: true, IsMember: true, NumMembers: 40})
 	e := &slickEnv{t: t, app: app, slack: fs, trees: map[uint64][]byte{}, h: &slickHost{app: app, th: theme.New(false)}}
@@ -147,10 +147,10 @@ func startSlick(t *testing.T, name string, opts map[string]any, before func(e *s
 		slackc.SetPatched(nil)
 	})
 	ctx := e.ctx()
-	id, err := s.Import(ctx, code)
-	if err != nil {
+	if _, err := s.Import(ctx, code); err != nil {
 		t.Fatalf("import %s: %v", name, err)
 	}
+	id := name // the built file is named by the plugin's id
 	for k, v := range opts {
 		if err := s.SetOption(ctx, id, k, v); err != nil {
 			t.Fatalf("set %s.%s: %v", id, k, err)
@@ -359,7 +359,7 @@ func TestSlickViewbChannel(t *testing.T) {
 // TestSlickViewBetterBlock: a blocked person drops out of the @ rows;
 // others with a matching name stay.
 func TestSlickViewBetterBlock(t *testing.T) {
-	e := startSlick(t, "BetterBlock", map[string]any{"blockedUsers": map[string]any{"UBOB": "bob"}}, nil)
+	e := startSlick(t, "BetterBlock", map[string]any{"blockedUsers": map[string]any{"U0BOB00001": "bob"}}, nil)
 	e.patched("TextyAutocomplete")
 	c, frame := e.composer(tChGen)
 	edType(c.ed, "@bob")
@@ -367,8 +367,8 @@ func TestSlickViewBetterBlock(t *testing.T) {
 		names := rowNames(c)
 		return c.ac.Open() && hasName(names, "bobby") && !hasName(names, "bob")
 	})
-	if !c.ac.ov.disallowed["UBOB"] {
-		t.Errorf("disallowedResults = %v, want UBOB in it", c.ac.ov.disallowed)
+	if !c.ac.ov.disallowed["U0BOB00001"] {
+		t.Errorf("disallowedResults = %v, want U0BOB00001 in it", c.ac.ov.disallowed)
 	}
 	// still gone after more async rows land
 	for i := 0; i < 20; i++ {
