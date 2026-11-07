@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
+	goruntime "runtime"
 	"strings"
 	"testing"
 	"time"
@@ -187,7 +187,7 @@ func TestStorageNamespaceFiles(t *testing.T) {
 // Writes replace a symlink at the destination instead of following it,
 // and plugin data and secrets are 0600 in 0700 directories.
 func TestWritesDontFollowSymlinks(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if goruntime.GOOS == "windows" {
 		t.Skip("symlinks and modes differ on Windows")
 	}
 	dir := t.TempDir()
