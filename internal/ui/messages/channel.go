@@ -28,6 +28,7 @@ type ChannelView struct {
 func NewChannelView(h Host, channelID string) *ChannelView {
 	v := &ChannelView{h: h, ch: channelID, s: stateFor(h, channelID, "")}
 	v.s.hb.ensureLoaded(v.s.m)
+	v.s.closeEdits() // an editor left open when you navigated away is gone, like Slack
 	// Each open places the "New" line at the read cursor as it is now.
 	if app := h.Core(); app != nil {
 		cnt := app.Count(channelID)
@@ -44,7 +45,26 @@ func (v *ChannelView) Channel() string { return v.ch }
 // Layout draws the list filling the constraints.
 func (v *ChannelView) Layout(gtx layout.Context) layout.Dimensions {
 	v.s.noMark = v.Preview
+	shown(&lastChannel, v.s)
 	return v.s.layoutList(gtx, v.h, v.Origin)
+}
+
+// Leave closes any inline editor (the ui root may call it when navigating
+// away; switching to another conversation does it automatically).
+func (v *ChannelView) Leave() { v.s.closeEdits() }
+
+// lastChannel/lastThread are the conversations drawn most recently; when
+// another one is drawn, the previous one was left and its inline editor is
+// discarded, like Slack (views themselves are cached by the ui root).
+var lastChannel, lastThread *listState
+
+func shown(last **listState, s *listState) {
+	if *last != s {
+		if *last != nil {
+			(*last).closeEdits()
+		}
+		*last = s
+	}
 }
 
 // EditLast starts inline editing of the viewer's most recent message here

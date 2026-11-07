@@ -31,6 +31,7 @@ type row struct {
 
 	// inline edit composer (nil when not editing)
 	edit                 *composer.Composer
+	editFrames           int
 	bodyRect             image.Rectangle // row-local rect of the message body
 	retryBtn, discardBtn widget.Clickable
 
@@ -188,7 +189,7 @@ func (r *row) layout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	y := dp(gtx, padTop) - dp(gtx, 4)
 
 	if m.Pinned && !rc.thread {
-		y += r.labelLine(gtx, rc, cx, y, "pin", "Pinned")
+		y += r.labelLine(gtx, rc, cx, y, "pin", pinnedLabel(rc, m.PinnedBy))
 	}
 	if m.Broadcast && !rc.thread && m.ThreadTS != "" && m.ThreadTS != m.TS {
 		y += r.broadcastLine(gtx, rc, cx, y)
@@ -197,6 +198,12 @@ func (r *row) layout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	if rc.header {
 		// avatar
 		ar := image.Rectangle{Min: image.Pt(padX, y+dp(gtx, 4)), Max: image.Pt(padX+dp(gtx, mt.avatar), y+dp(gtx, 4)+dp(gtx, mt.avatar))}
+		// Clicked before Layout: Clickable.Layout consumes pending clicks.
+		if r.avatarBtn.Clicked(gtx) || r.nameBtn.Clicked(gtx) {
+			if m.User != "" {
+				rc.h.OpenProfile(rc.origin(image.Pt(cx, y+dp(gtx, 22))), m.User)
+			}
+		}
 
 		at(gtx, ar.Min.X, ar.Min.Y, func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Exact(ar.Size())
@@ -205,11 +212,6 @@ func (r *row) layout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 				return layout.Dimensions{Size: ar.Size()}
 			})
 		})
-		if r.avatarBtn.Clicked(gtx) || r.nameBtn.Clicked(gtx) {
-			if m.User != "" {
-				rc.h.OpenProfile(rc.origin(image.Pt(cx, y+dp(gtx, 22))), m.User)
-			}
-		}
 		y += r.nameLine(gtx, rc, cx, y, cw)
 	} else if rc.hovered {
 		// hover timestamp in the gutter, right-aligned to the avatar column
@@ -225,6 +227,12 @@ func (r *row) layout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	var body layout.Dimensions
 	if r.edit != nil {
 		ed := r.edit
+		// The composer's first Focus can land before its editor registered
+		// for input; ask again on the next frames so Escape/typing work.
+		if r.editFrames < 3 {
+			r.editFrames++
+			ed.Focus()
+		}
 		ed.Origin = rc.winOrigin.Add(image.Pt(cx-dp(gtx, 4), y))
 		body = at(gtx, cx-dp(gtx, 4), y, func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(cw+dp(gtx, 4), 1<<20)}
@@ -324,16 +332,16 @@ func (r *row) failedLine(gtx layout.Context, rc *rowCtx, x, y int) int {
 		})
 		xx += d.Size.X
 	}
-	link(&r.retryBtn, "Retry")
-	d = at(gtx, xx, y+dp(gtx, 2), func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, s, " · ") })
-	xx += d.Size.X
-	link(&r.discardBtn, "Delete")
 	if r.retryBtn.Clicked(gtx) && rc.onRetry != nil {
 		rc.onRetry(r)
 	}
 	if r.discardBtn.Clicked(gtx) && rc.onDiscard != nil {
 		rc.onDiscard(r)
 	}
+	link(&r.retryBtn, "Retry")
+	d = at(gtx, xx, y+dp(gtx, 2), func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, s, " · ") })
+	xx += d.Size.X
+	link(&r.discardBtn, "Delete")
 	return lh + dp(gtx, 4)
 }
 
@@ -353,8 +361,9 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 		icon = "user-plus"
 	case "channel_leave", "group_leave":
 		icon = "user"
-	case "channel_topic", "channel_purpose", "group_topic", "group_purpose", "channel_name":
-		icon = "edit"
+	case "channel_topic", "channel_purpose", "group_topic", "group_purpose", "channel_name",
+		"channel_archive", "channel_unarchive", "channel_convert_to_private", "channel_convert_to_public":
+		icon = "hash" // Slack's channel-event glyph
 	case "pinned_item":
 		icon = "pin"
 	}
@@ -467,15 +476,15 @@ func (r *row) broadcastLine(gtx layout.Context, rc *rowCtx, x, y int) int {
 	h := dp(gtx, 18)
 	s := textStyle{size: 13, col: c.Text2, lineH: 18}
 	pre := "replied to a thread: "
+	if r.broadcastBtn.Clicked(gtx) {
+		rc.h.OpenThread(r.m.Channel, r.m.ThreadTS)
+	}
 	pd := at(gtx, x, y+dp(gtx, 4), func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, s, pre) })
 	at(gtx, x+pd.Size.X, y+dp(gtx, 4), func(gtx layout.Context) layout.Dimensions {
 		return r.broadcastBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return label(gtx, rc.th, textStyle{size: 13, col: c.Link, lineH: 18}, "View thread")
 		})
 	})
-	if r.broadcastBtn.Clicked(gtx) {
-		rc.h.OpenThread(r.m.Channel, r.m.ThreadTS)
-	}
 	return h + dp(gtx, 4)
 }
 
@@ -558,6 +567,14 @@ func (r *row) reactions(gtx layout.Context, rc *rowCtx, x, y, w int) int {
 		cy += ph + gap
 	}
 	r.addRect = image.Rect(cx, cy, cx+aw, cy+ph)
+	if r.addReact.Clicked(gtx) {
+		rr := r
+		rc.h.OpenEmojiPicker(rc.origin(image.Pt(cx, cy)), func(name string) {
+			if rc.onReact != nil {
+				rc.onReact(rr, name, true)
+			}
+		})
+	}
 	if rc.hovered {
 		at(gtx, cx, cy, func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Exact(r.addRect.Size())
@@ -576,14 +593,6 @@ func (r *row) reactions(gtx layout.Context, rc *rowCtx, x, y, w int) int {
 				})
 				return layout.Dimensions{Size: rr.Size()}
 			})
-		})
-	}
-	if r.addReact.Clicked(gtx) {
-		rr := r
-		rc.h.OpenEmojiPicker(rc.origin(image.Pt(cx, cy)), func(name string) {
-			if rc.onReact != nil {
-				rc.onReact(rr, name, true)
-			}
 		})
 	}
 	return cy + ph - y
@@ -713,4 +722,21 @@ func skeleton(gtx layout.Context, c *colors, i int) layout.Dimensions {
 	bw := (w - cx - padX) * (60 + (i*23)%35) / 100
 	rrect(gtx.Ops, image.Rect(cx, dp(gtx, 30), cx+bw, dp(gtx, 42)), dp(gtx, 6), c.Skeleton)
 	return layout.Dimensions{Size: image.Pt(w, h)}
+}
+
+// pinnedLabel is Slack's "Pinned by Name" ("Pinned by you" for the viewer).
+func pinnedLabel(rc *rowCtx, by string) string {
+	switch {
+	case by == "":
+		return "Pinned"
+	case by == rc.selfID:
+		return "Pinned by you"
+	}
+	if app := rc.h.Core(); app != nil {
+		if u, ok := app.User(by); ok && u.Name != "" {
+			return "Pinned by " + u.Name
+		}
+		ensureUser(rc.h, by)
+	}
+	return "Pinned"
 }

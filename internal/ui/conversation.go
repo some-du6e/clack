@@ -203,6 +203,10 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 // editLast opens the edit composer on the viewer's newest message (Up in
 // an empty composer, like Slack).
 func (a *App) editLast(c *convo) {
+	// ui-messages edits inside the row (pale-yellow row, Cancel/Save).
+	if e, ok := c.list.(interface{ EditLast() bool }); ok && e.EditLast() {
+		return
+	}
 	if a.data == nil {
 		return
 	}
@@ -251,6 +255,10 @@ func (a *App) editMessage(m core.Message) {
 	c := a.convoFor(m.Channel, "")
 	if m.ThreadTS != "" && m.ThreadTS != m.TS {
 		c = a.convoFor(m.Channel, m.ThreadTS) // a reply: edit in the thread pane
+	}
+	if e, ok := c.list.(interface{ Edit(string) }); ok {
+		e.Edit(m.TS) // inline in the row
+		return
 	}
 	a.startEdit(c, m)
 }

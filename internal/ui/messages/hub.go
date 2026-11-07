@@ -38,6 +38,7 @@ type model struct {
 	used     time.Time
 	fetched  time.Time // last full refresh
 	refreshQ bool
+	renames  [][2]string // pending ts -> confirmed ts, consumed by views
 }
 
 type typingEntry struct {
@@ -383,6 +384,29 @@ func (hb *hub) apply(ev core.Event) bool {
 			}
 		}
 		return changed
+	case "sent":
+		// A confirmed optimistic send: swap the pending copy (ReplacesTS) for
+		// the real message in place; views move the row to the new ts so it
+		// isn't re-laid out (no flicker).
+		if ev.Msg == nil {
+			return false
+		}
+		chm, thm := hb.models(ev.Channel, ev.Msg.ThreadTS)
+		for _, m := range []*model{chm, thm} {
+			if m == nil {
+				continue
+			}
+			m.mu.Lock()
+			if ev.ReplacesTS != "" && ev.ReplacesTS != ev.Msg.TS && m.find(ev.ReplacesTS) >= 0 {
+				m.remove(ev.ReplacesTS)
+				m.renames = append(m.renames, [2]string{ev.ReplacesTS, ev.Msg.TS})
+			}
+			m.upsert(*ev.Msg)
+			m.rev++
+			m.mu.Unlock()
+		}
+		// a reply's parent (reply count) arrives as an "update"
+		return chm != nil || thm != nil
 	case "delete":
 		hb.mu.Lock()
 		var ms []*model
@@ -463,6 +487,7 @@ type snap struct {
 	typing   []string
 	rev      uint64
 	refresh  bool
+	renames  [][2]string
 }
 
 func (m *model) snapshot(dst *snap) bool {
@@ -490,6 +515,8 @@ func (m *model) snapshot(dst *snap) bool {
 	}
 	dst.refresh = m.refreshQ
 	m.refreshQ = false
+	dst.renames = append(dst.renames[:0], m.renames...)
+	m.renames = m.renames[:0]
 	return true
 }
 

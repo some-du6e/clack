@@ -169,6 +169,10 @@ func (a *App) openTab(ch, key string) {
 		if a.data != nil {
 			a.data.openBookmark(ch, strings.TrimPrefix(key, "bm:"))
 		}
+	case strings.HasPrefix(key, "tab:"):
+		if a.data != nil {
+			a.data.openTab(ch, key)
+		}
 	}
 }
 

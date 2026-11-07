@@ -241,6 +241,25 @@ func isCJK(r rune) bool {
 
 // addText splits s into word/space/break items.
 func (l *lay) addText(s string, fs *flowStyle, k faceKey, col color.NRGBA, st richtext.Style, dc, tg int16) {
+	segs := splitEmoji(s)
+	if segs == nil {
+		l.addTextRun(s, fs, k, col, st, dc, tg)
+		return
+	}
+	for _, sg := range segs {
+		if sg.stem == "" {
+			l.addTextRun(sg.text, fs, k, col, st, dc, tg)
+			continue
+		}
+		p0, p1 := l.plainAdd(sg.text)
+		ep := fs.emoji
+		l.items = append(l.items, item{kind: itImage, face: k, w: float32(ep + 2*l.dp(1)), url: l.st.emojiURL(sg.stem), size: ep,
+			deco: dc, target: tg, p0: p0, p1: p1, brk: true, alt: true})
+	}
+}
+
+// addTextRun splits emoji-free text into word/space/break items.
+func (l *lay) addTextRun(s string, fs *flowStyle, k faceKey, col color.NRGBA, st richtext.Style, dc, tg int16) {
 	start := -1
 	flush := func(end int) {
 		if start < 0 {
@@ -710,6 +729,17 @@ func (l *lay) plainFlow(s string, x, y, w int, fs *flowStyle, tg int16) (int, in
 
 // measure returns the width of s in face k (single line).
 func (l *lay) measure(s string, k faceKey) float32 {
+	if segs := splitEmoji(s); segs != nil {
+		var w float32
+		for _, sg := range segs {
+			if sg.stem != "" {
+				w += float32(k.size>>6)*1.2 + 2*l.dpf(1) // emoji ≈ 1.2em, like the flows
+			} else {
+				w += l.measure(sg.text, k)
+			}
+		}
+		return w
+	}
 	var w float32
 	for _, part := range strings.SplitAfter(s, " ") {
 		trim := strings.TrimSuffix(part, " ")

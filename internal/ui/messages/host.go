@@ -31,6 +31,9 @@ type PointerHost interface {
 	PointerPos() image.Point
 }
 
+// bodyEmbolden scales the theme's stroke for message bodies (see styleFor).
+const bodyEmbolden = 1.5
+
 // styles holds one richview.Style per shaper (one per window).
 type styleEntry struct {
 	st   *richview.Style
@@ -54,16 +57,21 @@ func styleFor(h Host) *richview.Style {
 		}
 		e = &styleEntry{st: richview.NewStyle(th.Shaper, imgs, richview.LightPalette())}
 		e.st.Face = theme.Typeface
+		e.st.EmojiURL = th.EmojiURL // unicode emoji in text → the theme's CDN images
 		styles[th.Shaper] = e
 	}
 	stylesMu.Unlock()
 	if th.Dark != e.dark || !e.init {
 		e.dark, e.init = th.Dark, true
-		// theme.EmboldenFor: dark text needs the stroke, light text doesn't
-		e.st.Embolden = theme.EmboldenFor(theme.LightPalette.Fg)
+		// theme.EmboldenFor: dark text needs the stroke, light text doesn't.
+		// Message bodies need more than labels to match Chrome: measured on
+		// the same 15px line at 1x, total ink was 151.9k with no stroke and
+		// 193.6k at 0.3dp, against Chrome's 214.0k, which interpolates to
+		// about 0.45dp (bodyEmbolden x the theme's rule).
+		e.st.Embolden = bodyEmbolden * theme.EmboldenFor(theme.LightPalette.Fg)
 		if th.Dark {
 			e.st.SetPalette(richview.DarkPalette())
-			e.st.Embolden = theme.EmboldenFor(theme.DarkPalette.Fg)
+			e.st.Embolden = bodyEmbolden * theme.EmboldenFor(theme.DarkPalette.Fg)
 		} else {
 			e.st.SetPalette(richview.LightPalette())
 		}

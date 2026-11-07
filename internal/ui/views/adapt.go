@@ -114,6 +114,9 @@ func (b *base) refTitle(r core.ConvRef) string {
 		if r.User != "" {
 			return b.userName(r.User)
 		}
+		if r.Name == "" || r.Name == r.ID {
+			return "Direct message"
+		}
 		return r.Name
 	case "mpim":
 		if c, ok := b.h.Core().Conv(r.ID); ok && len(c.Members) > 0 {

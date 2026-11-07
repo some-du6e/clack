@@ -43,6 +43,14 @@ func writeBlock(b *strings.Builder, blk *Block) {
 			}
 			b.WriteString(strings.Repeat("    ", blk.Indent) + bullet + SpansText(it) + "\n")
 		}
+	case Table:
+		for _, row := range blk.Rows {
+			cells := make([]string, 0, len(row))
+			for _, cell := range row {
+				cells = append(cells, strings.ReplaceAll(SpansText(cell), "\n", " "))
+			}
+			line(b, strings.TrimRight(strings.Join(cells, "\t"), "\t")) // no trailing tab for empty last cells
+		}
 	case Divider:
 	case ImageBlock:
 		if blk.Image != nil {

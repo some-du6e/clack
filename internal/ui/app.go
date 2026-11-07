@@ -117,7 +117,7 @@ type App struct {
 	winSize     image.Point
 	sbBase      color.NRGBA
 	sbPal       theme.Palette
-	shaperCh    chan *text.Shaper
+	shaperCh    chan [2]*text.Shaper
 	switchAt    time.Time // navigation time, for the channel-switch latency log
 	switchTo    Route
 }
@@ -140,12 +140,14 @@ func New(opts Options, images *imgcache.Cache) *App {
 	a.loadPrefs()
 	// The shaper (font parsing + system font index) is the slowest part of
 	// startup; build it while the window and GPU context come up.
-	a.shaperCh = make(chan *text.Shaper, 1)
+	a.shaperCh = make(chan [2]*text.Shaper, 1)
 	go func() {
 		t := time.Now()
-		sh := theme.NewShaper()
-		a.timing("shaper ready", t)
-		a.shaperCh <- sh
+		dch := make(chan *text.Shaper, 1)
+		go func() { dch <- theme.NewShaperFor(true) }()
+		light := theme.NewShaperFor(false)
+		a.shaperCh <- [2]*text.Shaper{light, <-dch}
+		a.timing("shapers ready", t)
 	}()
 	if opts.Login != nil {
 		a.login = newLoginScreen()
@@ -209,7 +211,8 @@ func (a *App) Run() error {
 			t0 := time.Now()
 			if a.th.Shaper == nil {
 				a.timing("first FrameEvent", a.opts.Started)
-				a.th.SetShaper(<-a.shaperCh)
+				sh := <-a.shaperCh
+				a.th.SetShapers(sh[0], sh[1])
 				a.timing("shaper waited", t0)
 			}
 			a.drain()
@@ -231,6 +234,9 @@ func (a *App) Run() error {
 				a.timing("first GPU submit", tl)
 			}
 			a.frameStats.add(time.Since(t0), tl.Sub(t0))
+			if frameLog {
+				log.Printf("frame: layout %.2fms total %.1fms", float64(tl.Sub(t0).Microseconds())/1000, float64(time.Since(t0).Microseconds())/1000)
+			}
 			if !a.switchAt.IsZero() {
 				log.Printf("ui: switch to %s: %v to frame submitted (layout %v, gpu %v)", a.switchTo.Page(), time.Since(a.switchAt).Round(10*time.Microsecond), tl.Sub(t0).Round(10*time.Microsecond), time.Since(tl).Round(10*time.Microsecond))
 				a.switchAt = time.Time{}
@@ -242,6 +248,9 @@ func (a *App) Run() error {
 		}
 	}
 }
+
+// frameLog (YOLOSLACK_FRAMELOG=1) logs every frame's layout/total time.
+var frameLog = os.Getenv("YOLOSLACK_FRAMELOG") != ""
 
 // timing logs a startup/latency measurement when YOLOSLACK_TIMING is set
 // (always for the first frame).
