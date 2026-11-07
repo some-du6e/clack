@@ -41,7 +41,7 @@ func TestTableBlock(t *testing.T) {
 	if tb.Rows[2][1] != nil {
 		t.Errorf("empty cell = %+v", tb.Rows[2][1])
 	}
-	if got := PlainText(d); got != "Name\tScore\nann @alice\t42\nline1 • item" {
+	if got := PlainText(d); got != "Name\tScore\nann @alice\t42\nline1 • item\t" { // empty cell keeps its column
 		t.Errorf("plain = %q", got)
 	}
 }
