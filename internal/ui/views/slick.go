@@ -8,6 +8,8 @@ package views
 // of a boundary hides that part of the view (BetterBlock's blocked people).
 
 import (
+	"gioui.org/layout"
+
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 )
@@ -325,4 +327,156 @@ func (d *Directories) peopleOverride(p slackc.Props, us []core.User) []core.User
 		}
 	}
 	return d.pusers
+}
+
+// ---- Huddles ----
+//
+// Clack has no huddle call window (no Chime media), so Slack's call
+// surfaces become patch points on the closest thing Clack draws, a live
+// huddle's row on the Huddles page:
+//
+//	HuddleMvaWindowTitle                 the huddle's title
+//	HuddleBottomBarContent               the row's right side: faces, then
+//	  └ HuddleRecordingIndicator         (empty: Clack doesn't record)
+//	HuddleInviteWindowWithPreviewContent the Join button (onHuddleJoin)
+//	BaseDrawRenderer, HuddleMiniPanel    empty, under the row (screen-share
+//	                                     drawings and its floating bar)
+//
+// Natives draw what Clack drew before (or nothing), so a plugin's
+// additions appear without Clack inventing call UI.
+
+func roomChannel(r huddleRoom) string {
+	if len(r.Channels) > 0 {
+		return r.Channels[0]
+	}
+	return ""
+}
+
+// huddleBase is the props every huddle point gets.
+func huddleBase(r huddleRoom, part string) slackc.Props {
+	return slackc.Props{"$key": r.ID + "/" + part, "huddleId": r.ID, "channelId": roomChannel(r), "isActive": r.Active}
+}
+
+// huddleTitle: HuddleMvaWindowTitle {huddleId, channelId, title}; a
+// plugin's title prop replaces the text.
+func (v *Huddles) huddleTitle(gtx C, r huddleRoom) D {
+	return slackc.RenderLazy(gtx, "HuddleMvaWindowTitle", func() slackc.Props {
+		p := huddleBase(r, "title")
+		p["title"] = v.roomTitle(r)
+		return p
+	}, func(gtx C, p slackc.Props) D {
+		return v.label(gtx, 15, wBold, v.p.Text, p.StrOr("title", v.roomTitle(r)))
+	})
+}
+
+// huddleBar: HuddleBottomBarContent {huddleId, channelId, children:
+// [HuddleRecordingIndicator]}, then the Join point.
+func (v *Huddles) huddleBar(gtx C, r huddleRoom) D {
+	return slackc.RenderLazy(gtx, "HuddleBottomBarContent", func() slackc.Props {
+		p := huddleBase(r, "bar")
+		p["children"] = slackc.Child("HuddleRecordingIndicator", v.recProps(r), func(gtx C, _ slackc.Props) D { return D{} })
+		return p
+	}, func(gtx C, p slackc.Props) D {
+		return row(gtx, layout.Middle,
+			layout.Rigid(func(gtx C) D { return v.faces(gtx, r) }),
+			layout.Rigid(func(gtx C) D {
+				if e, ok := slackc.PropChildren(p); ok {
+					return slackc.LayoutElement(gtx, e)
+				}
+				return slackc.RenderLazy(gtx, "HuddleRecordingIndicator", func() slackc.Props { return v.recProps(r) },
+					func(gtx C, _ slackc.Props) D { return D{} })
+			}),
+			layout.Rigid(func(gtx C) D { return v.joinPoint(gtx, r) }),
+		)
+	})
+}
+
+func (v *Huddles) recProps(r huddleRoom) slackc.Props {
+	p := huddleBase(r, "recording")
+	p["isRecording"] = false
+	return p
+}
+
+// joinPoint: HuddleInviteWindowWithPreviewContent {channelId, huddleId,
+// onHuddleJoin}. The row's click joins through the onHuddleJoin a plugin
+// left (BetterHuddles notes the preview's devices, then calls Clack's).
+func (v *Huddles) joinPoint(gtx C, r huddleRoom) D {
+	return slackc.RenderLazy(gtx, "HuddleInviteWindowWithPreviewContent", func() slackc.Props {
+		p := huddleBase(r, "join")
+		id := r.ID
+		p["onHuddleJoin"] = func() { v.join(id) }
+		return p
+	}, func(gtx C, p slackc.Props) D {
+		if f, ok := p.Func("onHuddleJoin"); ok {
+			if jf, ok := f.(slackc.JSFunc); ok {
+				if v.joinFn == nil {
+					v.joinFn = map[string]slackc.JSFunc{}
+				}
+				v.joinFn[r.ID] = jf
+			} else {
+				delete(v.joinFn, r.ID)
+			}
+		} else {
+			delete(v.joinFn, r.ID)
+		}
+		// drawn, not a separate clickable: the whole row joins
+		return layout.Inset{Left: 12}.Layout(gtx, func(gtx C) D { return v.joinPill(gtx) })
+	})
+}
+
+// huddleSurfaces: BaseDrawRenderer and HuddleMiniPanel, empty.
+func (v *Huddles) huddleSurfaces(gtx C, r huddleRoom) D {
+	return col(gtx,
+		layout.Rigid(func(gtx C) D {
+			return slackc.RenderLazy(gtx, "BaseDrawRenderer", func() slackc.Props {
+				p := huddleBase(r, "draw")
+				p["isScreenSharing"] = false
+				return p
+			}, func(gtx C, _ slackc.Props) D { return D{} })
+		}),
+		layout.Rigid(func(gtx C) D {
+			return slackc.RenderLazy(gtx, "HuddleMiniPanel", func() slackc.Props {
+				p := huddleBase(r, "mini")
+				p["isScreenSharing"] = false
+				return p
+			}, func(gtx C, _ slackc.Props) D { return D{} })
+		}),
+	)
+}
+
+// joinClicked is a click on a huddle row: through the plugin's
+// onHuddleJoin when the Join point is patched, else straight to join.
+func (v *Huddles) joinClicked(id string) {
+	if f, ok := v.joinFn[id]; ok && f.ID != 0 {
+		f.Call()
+		return
+	}
+	v.join(id)
+}
+
+// join starts Slack's startHuddle for the room (from its join preview
+// when the huddle is live).
+func (v *Huddles) join(id string) {
+	r, ok := v.roomByID(id)
+	if !ok {
+		huddleAttempt(v.h, v.tt, startHuddleArgs{HuddleID: id})
+		return
+	}
+	huddleAttempt(v.h, v.tt, startHuddleArgs{ChannelID: roomChannel(r), HuddleID: r.ID, FromJoinPreview: r.Active})
+}
+
+func (v *Huddles) roomByID(id string) (huddleRoom, bool) {
+	v.mu.Lock()
+	r, ok := v.live[id]
+	v.mu.Unlock()
+	if ok {
+		return r, true
+	}
+	recent, _, _ := v.recent.get()
+	for _, r := range recent {
+		if r.ID == id {
+			return r, true
+		}
+	}
+	return huddleRoom{}, false
 }
