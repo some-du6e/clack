@@ -1135,3 +1135,29 @@ func (ix *Interactive) TripWorkflow(ctx context.Context, link, channelID, messag
 	}
 	return actionErr(err)
 }
+
+// ---- file_input ----
+
+// UploadForInput uploads a file for a Block Kit file_input without
+// sharing it anywhere (files.getUploadURLExternal + upload +
+// files.completeUploadExternal with no channel) and returns Slack's file
+// object, which goes into the input's state as {"files": [file, …]}.
+func (ix *Interactive) UploadForInput(ctx context.Context, f UploadFile, progress func(sent, total int64)) (json.RawMessage, error) {
+	pu, err := ix.a.PrepareUpload(ctx, f, progress)
+	if err != nil {
+		return nil, err
+	}
+	refs, _ := json.Marshal([]map[string]string{{"id": pu.ID, "title": firstNonEmpty(f.Title, f.Name)}})
+	var res struct {
+		Files []json.RawMessage `json:"files"`
+	}
+	if err := ix.call(ctx, "files.completeUploadExternal", url.Values{"files": {string(refs)}}, &res); err != nil {
+		return nil, err
+	}
+	logCall("files.completeUploadExternal", "file="+pu.ID+" (file_input)", nil)
+	if len(res.Files) == 0 {
+		b, _ := json.Marshal(map[string]string{"id": pu.ID, "name": f.Name, "title": firstNonEmpty(f.Title, f.Name)})
+		return b, nil
+	}
+	return res.Files[0], nil
+}
