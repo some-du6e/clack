@@ -113,9 +113,9 @@ func (p *prefsModal) extraNav() []navExtra {
 		}
 	}
 	for _, t := range p.a.tautTabs {
-		icon := t.Icon
-		if icon != "" {
-			icon = icons.Slack(icon)
+		icon := "settings" // none: the host (Advanced) tab's icon, like Slick
+		if t.Icon != "" {
+			icon = icons.Slack(t.Icon)
 		}
 		out = append(out, navExtra{id: t.ID, label: t.Label, icon: icon})
 	}

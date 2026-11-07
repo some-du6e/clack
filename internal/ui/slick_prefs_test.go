@@ -219,6 +219,36 @@ func TestSlickPrefsRender(t *testing.T) {
 		r.save("slick-plugin-"+safeName(pl.ID), r.settle(tall("slick_plugins"), time.Second, nil), r.sz.Y)
 	}
 	t.Logf("%d/%d running; setting kinds %v", running, len(ids), kinds)
+	// a schedule rule with its days popover open, and a names entry
+	for _, pl := range s.Settings().Plugins {
+		for _, o := range pl.Options {
+			switch o.Type {
+			case "schedule":
+				status := ""
+				if len(o.Statuses) > 0 {
+					status = o.Statuses[0].Value
+				}
+				rules := []any{
+					map[string]any{"days": []any{1, 2, 3, 4, 5}, "start": "09:00", "end": "17:30", "status": status},
+					map[string]any{"days": []any{0, 6}, "start": "22:00", "end": "08:00", "status": status},
+				}
+				if err := s.SetOption(ctx, pl.ID, o.Key, rules); err != nil {
+					t.Errorf("schedule %s: %v", pl.ID, err)
+				}
+				p.slick.open = pl.ID
+				r.settle(tall("slick_plugins"), time.Second, nil)
+				p.slick.daysOpen = pl.ID + "/" + o.Key + ".0"
+				r.save("slick-schedule-"+safeName(pl.ID), r.settle(tall("slick_plugins"), time.Second, nil), r.sz.Y)
+				p.slick.daysOpen = ""
+			case "names":
+				if err := s.SetOption(ctx, pl.ID, o.Key, map[string]any{"UALICE01": "Alice Example", "UBOB0002": "Bobby"}); err != nil {
+					t.Errorf("names %s: %v", pl.ID, err)
+				}
+				p.slick.open = pl.ID
+				r.save("slick-names-"+safeName(pl.ID)+"-"+o.Key, r.settle(tall("slick_plugins"), time.Second, nil), r.sz.Y)
+			}
+		}
+	}
 	p.slick.open = ""
 	for _, dark := range []bool{false, true} {
 		a.th.SetDark(dark)

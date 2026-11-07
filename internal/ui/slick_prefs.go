@@ -581,7 +581,7 @@ func (p *slickPage) field(gtx layout.Context, w int, label, desc, warn string, s
 		}
 		if desc != "" {
 			dd := at(gtx, image.Pt(0, y), image.Pt(tw, 1<<20), func(gtx layout.Context) layout.Dimensions {
-				return p.a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: cl.sec, Wrap: text.WrapGraphemes}, desc)
+				return p.a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: cl.sec, Wrap: text.WrapHeuristically}, desc)
 			})
 			y += dd.Size.Y
 		}
@@ -1983,9 +1983,9 @@ func (p *slickPage) themeCard(gtx layout.Context, w int, t slick.ThemeCard) layo
 			return icons.Get("check")(gtx, 16, cl.hgl)
 		})
 	}
-	desc := t.Description
-	if t.Mode != "" {
-		desc += " · Only in " + t.Mode + " mode"
+	desc := t.Description // slick already appends " · Only in <mode> mode"
+	if suf := " · Only in " + t.Mode + " mode"; t.Mode != "" && !strings.Contains(desc, suf) {
+		desc += suf
 	}
 	at(gtx, image.Pt(gtx.Dp(12), ty+nameH), image.Pt(w-gtx.Dp(24), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
 		return p.a.th.Layout(gtx, theme.TextStyle{Size: 12, LineHeight: 16, Color: cl.sec, MaxLines: 1}, desc)
