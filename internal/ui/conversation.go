@@ -179,6 +179,7 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 			mb = gtx.Dp(24)
 		}
 		comp.SetOrigin(origin.Add(image.Pt(mx, sz.Y-c.compH)))
+		a.appDMRoadblock(c, comp)
 		m := op.Record(gtx.Ops)
 		g := gtx
 		g.Constraints = layout.Constraints{Min: image.Pt(sz.X-2*mx, 0), Max: image.Pt(sz.X-2*mx, sz.Y*6/10)}

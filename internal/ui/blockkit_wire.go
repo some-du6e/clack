@@ -56,3 +56,17 @@ func (a *App) appDM(ch string) *blockkit.AppDM {
 	}
 	return blockkit.AppDMFor(a, ch)
 }
+
+// appDMRoadblock swaps the composer of a read-only app DM's Messages tab
+// for Slack's notice (MessageInputAnnounceOnlyAppDmRoadblock).
+func (a *App) appDMRoadblock(c *convo, comp composerView) {
+	r, ok := comp.(interface{ SetRoadblock(string) })
+	if !ok || c.ts != "" || comp == c.edit {
+		return
+	}
+	msg := ""
+	if dm := a.appDM(c.ch); dm != nil && dm.ReadOnly() {
+		msg = "Sending messages to this app has been turned off."
+	}
+	r.SetRoadblock(msg)
+}
