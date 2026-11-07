@@ -103,7 +103,7 @@ func (b *backend) start(a *App) {
 			log.Printf("ui: boot: %v", err)
 			a.Post(func() { a.Toast("Couldn't connect to Slack: " + err.Error()) })
 		}
-		a.Post(func() { b.startTaut(a) })
+		a.Post(func() { b.startTaut(a); b.startBlockkit(a) })
 		snap := b.core.Snapshot()
 		log.Printf("ui: core ready %v after boot start (%d convs)", time.Since(t0).Round(time.Millisecond), len(snap.Convs))
 		a.Post(func() {
@@ -121,6 +121,7 @@ func (b *backend) start(a *App) {
 
 func (b *backend) stop() {
 	b.stopTaut()
+	b.stopBlockkit()
 	if b.cancel != nil {
 		b.cancel()
 	}
