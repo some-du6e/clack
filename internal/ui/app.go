@@ -285,6 +285,7 @@ func (a *App) frame(gtx layout.Context) {
 		return
 	}
 
+	a.readRootPointer(gtx)
 	a.keys.process(gtx, a)
 	a.updateTitle()
 

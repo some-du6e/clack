@@ -49,9 +49,10 @@ func (t *originTracker) get(fallback image.Point) image.Point {
 	return fallback
 }
 
-// rootPointer records the window-coordinate pointer position (PointerPos).
-// Registered last each frame, pass-through, over the whole window.
-func (a *App) rootPointer(gtx layout.Context) {
+// readRootPointer consumes the root handler's pointer events at the START
+// of a frame, so origin trackers laid out later in the frame pair each local
+// event with the same event's window position.
+func (a *App) readRootPointer(gtx layout.Context) {
 	for {
 		e, ok := gtx.Event(pointer.Filter{Target: &a.ptrTag, Kinds: pointer.Move | pointer.Enter | pointer.Press | pointer.Drag | pointer.Release})
 		if !ok {
@@ -62,6 +63,11 @@ func (a *App) rootPointer(gtx layout.Context) {
 			a.ptrOK = true
 		}
 	}
+}
+
+// rootPointer registers the window-wide pass-through handler (last each
+// frame, so it sits above everything without blocking it).
+func (a *App) rootPointer(gtx layout.Context) {
 	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
 	defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
 	event.Op(gtx.Ops, &a.ptrTag)
