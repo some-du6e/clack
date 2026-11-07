@@ -112,7 +112,7 @@ func init() {
 		add("border-"+s, []string{"border-" + s + "-width", "border-" + s + "-style", "border-" + s + "-color"}, borderSide)
 	}
 	add("outline", []string{"outline-width", "outline-style", "outline-color"}, borderSide)
-	add("border", append(append(append(sides("border", "-width"), sides("border", "-style")...), sides("border", "-color")...)), borderAll)
+	add("border", append(append(sides("border", "-width"), sides("border", "-style")...), sides("border", "-color")...), borderAll)
 	add("border-inline", []string{"border-left-width", "border-right-width", "border-left-style", "border-right-style", "border-left-color", "border-right-color"}, borderAll)
 	add("border-block", []string{"border-top-width", "border-bottom-width", "border-top-style", "border-bottom-style", "border-top-color", "border-bottom-color"}, borderAll)
 	add("border-radius", []string{"border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius"}, radius)

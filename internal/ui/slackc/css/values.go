@@ -847,7 +847,7 @@ func labToSRGB(L, a, b float64) (float64, float64, float64) {
 		y = L / kappa
 	}
 	z := cube(fz)
-	x, y, z = x*0.96422, y, z*0.82521
+	x, z = x*0.96422, z*0.82521
 	return xyz65ToSRGB(xyz50To65(x, y, z))
 }
 
