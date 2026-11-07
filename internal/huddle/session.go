@@ -674,6 +674,9 @@ func (s *Session) handle(f *signalFrame) {
 
 // ---- media ----
 
+// testSettings lets tests adjust the ICE setup (loopback candidates).
+var testSettings func(*webrtc.SettingEngine)
+
 var h264Fmtp = []struct {
 	pt   uint8
 	fmtp string
@@ -707,6 +710,9 @@ func newAPI() (*webrtc.API, error) {
 	se := webrtc.SettingEngine{}
 	// Chime's audio server only speaks AES-CM: with GCM it drops you.
 	se.SetSRTPProtectionProfiles(dtls.SRTP_AES128_CM_HMAC_SHA1_80)
+	if testSettings != nil {
+		testSettings(&se)
+	}
 	return webrtc.NewAPI(webrtc.WithMediaEngine(me), webrtc.WithInterceptorRegistry(ir), webrtc.WithSettingEngine(se)), nil
 }
 

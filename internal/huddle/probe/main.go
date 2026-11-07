@@ -2,7 +2,10 @@
 // test tone for the microphone, logs of participants, speaking, received
 // audio and video, then it leaves. A developer tool; not shipped.
 //
-//	CLACK_HUDDLE_TONE=440 probe -channel C0B4DEFKFCJ -for 90s
+//	CLACK_HUDDLE_TONE=440 probe -live -channel C0B4DEFKFCJ -for 90s
+//
+// Starting a huddle rings people: don't run it without the channel's
+// owner agreeing. Tests use the fake Chime server (fake_test.go).
 package main
 
 import (
@@ -27,7 +30,11 @@ func main() {
 	channel := flag.String("channel", "C0B4DEFKFCJ", "channel or DM to huddle in")
 	dur := flag.Duration("for", 60*time.Second, "how long to stay")
 	react := flag.String("react", "wave", "reaction to send after 10s (\"\" = none)")
+	live := flag.Bool("live", false, "really start or join a live huddle (it rings people in the channel)")
 	flag.Parse()
+	if !*live {
+		log.Fatal("probe: refusing to start a live huddle without -live (it rings the channel's members; test against fakes instead)")
+	}
 	log.SetFlags(log.Ltime | log.Lmicroseconds)
 	if os.Getenv("CLACK_HUDDLE_TONE") == "" {
 		os.Setenv("CLACK_HUDDLE_TONE", "440")
