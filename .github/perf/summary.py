@@ -54,7 +54,7 @@ for name, v in bench.items():
 
 # ---- real process ----
 proc = []
-for line in read("process.tsv").splitlines():
+for line in read("process/process.tsv").splitlines():
     f = line.split("\t")
     if len(f) < 8:
         continue
