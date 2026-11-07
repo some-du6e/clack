@@ -362,6 +362,7 @@ func (p *painter) input(b *box, r rectF, visible bool) {
 			v.dispatchKey(b, "keydown", key.Event{Name: key.NameReturn})
 			v.dispatchKey(b, "keyup", key.Event{Name: key.NameReturn, State: key.Release})
 			v.dispatchValue(b, "change")
+			ns.focusVal = ed.Text()
 			if f := formOf(b); f != nil {
 				v.dispatchSimple(f, "submit", nil)
 			}

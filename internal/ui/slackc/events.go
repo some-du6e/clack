@@ -668,6 +668,14 @@ func (v *View) focusBox(s *scope, b *box) {
 		v.editor(b)
 	}
 	s.gtx.Execute(key.FocusCmd{Tag: v.focusTag(b)})
+	// DOM order: blur the old element, then focus the new one, before the
+	// mouseup/click that follow (Gio reports the focus change a frame later).
+	if old := v.byK[v.focusK]; old != nil && old != b && old.ns != nil && old.ns.focused {
+		v.setFocused(s, old, false)
+	}
+	if ns := v.state(b); !ns.focused {
+		v.setFocused(s, b, true)
+	}
 }
 
 // focusEvents reports focus transitions of a focusable box (called while
@@ -678,6 +686,11 @@ func (v *View) focusEvents(s *scope, b *box) {
 	if f == ns.focused {
 		return
 	}
+	v.setFocused(s, b, f)
+}
+
+func (v *View) setFocused(s *scope, b *box, f bool) {
+	ns := v.state(b)
 	ns.focused = f
 	v.setState(b, css.StateFocus, f)
 	for x := b.parent; x != nil; x = x.parent {
@@ -687,6 +700,9 @@ func (v *View) focusEvents(s *scope, b *box) {
 	}
 	if f {
 		v.focusK = b.k()
+		if ns.ed != nil {
+			ns.focusVal = ns.ed.Text()
+		}
 		v.dispatchSimple(b, "focus", nil)
 		v.dispatchSimple(b, "focusin", nil)
 	} else {
@@ -695,7 +711,7 @@ func (v *View) focusEvents(s *scope, b *box) {
 		}
 		v.dispatchSimple(b, "blur", nil)
 		v.dispatchSimple(b, "focusout", nil)
-		if b.repl == rInput || b.repl == rTextarea {
+		if (b.repl == rInput || b.repl == rTextarea) && ns.ed != nil && ns.ed.Text() != ns.focusVal {
 			v.dispatchValue(b, "change")
 		}
 	}
