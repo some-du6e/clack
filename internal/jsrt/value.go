@@ -391,7 +391,8 @@ func (c *Ctx) NewPromise() (p Value, resolve func(any), reject func(error)) {
 // Value converts a Go value to JS: Value as-is; nil → null; bool, ints,
 // floats, string; []byte → Uint8Array; json.RawMessage → JSON.parse;
 // error → Error; HostFunc / func(*Ctx, Value, []Value) (any, error) →
-// function; anything else via encoding/json.
+// function; func(*Ctx) (Value, error) → its result (built on the JS
+// thread); anything else via encoding/json.
 func (c *Ctx) Value(x any) (Value, error) {
 	e := c.r.eng
 	switch x := x.(type) {
@@ -425,6 +426,8 @@ func (c *Ctx) Value(x any) (Value, error) {
 		return c.Func("", x), nil
 	case func(*Ctx, Value, []Value) (any, error):
 		return c.Func("", x), nil
+	case func(*Ctx) (Value, error):
+		return x(c) // built on the JS thread (e.g. a NewPromise resolve from another goroutine)
 	}
 	b, err := json.Marshal(x)
 	if err != nil {

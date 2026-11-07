@@ -534,7 +534,11 @@
     // focus
     focus(opts) { focusElement(this); }
     blur() { if (document.activeElement === this) focusElement(null); }
-    click() { dispatchSynthetic(this, 'click', { bubbles: true, cancelable: true, button: 0 }); }
+    click() {
+      if (this.disabled && /^(button|input|select|textarea)$/.test(this.localName)) return;
+      const ev = makeEvent('click', { bubbles: true, cancelable: true, composed: true, button: 0, view: G });
+      if (this.dispatchEvent(ev)) defaultAction(this, ev); // activation behavior, like el.click() in browsers
+    }
     animate(keyframes, opts) { return new Animation(this, keyframes, opts); }
     getAnimations() { return []; }
     attachShadow() { const f = document.createDocumentFragment(); def(this, 'shadowRoot', f); f.host = this; return f; }
@@ -1158,10 +1162,24 @@
     if (!ev.defaultPrevented) defaultAction(t, ev);
     return res;
   };
+  // <input type=file>: Options.PickFiles shows the native picker
+  const pickFiles = (input) => {
+    if (!H.pickFiles) return;
+    H.pickFiles(input.accept || '', !!input.multiple).then((list) => {
+      if (!list) { dispatchSynthetic(input, 'cancel', { bubbles: false, cancelable: false }); return; }
+      const files = list.map((f) => new File([f.data], f.name, { type: f.type || '', lastModified: f.lastModified || Date.now() }));
+      input._files = Object.assign(files, { item(i) { return this[i] ?? null; } });
+      input._val = files.length ? 'C:\\fakepath\\' + files[0].name : '';
+      markDirty(input);
+      dispatchSynthetic(input, 'input', { cancelable: false });
+      dispatchSynthetic(input, 'change', { cancelable: false });
+    }, (e) => jr.reportError(e));
+  };
   const defaultAction = (t, ev) => {
     if (ev.type === 'click' && ev.button === 0) {
       const el = t.nodeType === ELEMENT_NODE ? t : t.parentElement;
       if (!el) return;
+      if (el.localName === 'input' && el.type === 'file' && !el.disabled) { pickFiles(el); return; }
       const a = el.closest('a[href]');
       if (a) { const href = a.href; if (href && !/^javascript:/i.test(href)) { if (href.startsWith(location.origin + '/') && a.target !== '_blank') G.location.assign(href); else H.openURL(href); } return; }
       const label = el.closest('label');

@@ -321,6 +321,25 @@ func (r *Runtime) installHost() {
 		}
 		return r.opts.ClipboardRead()
 	})
+	if r.opts.PickFiles != nil {
+		def("pickFiles", func(js *Ctx, _ Value, a []Value) (any, error) {
+			accept, multiple := str(a, 0), len(a) > 1 && a[1].Bool()
+			p, resolve, reject := js.NewPromise()
+			go func() {
+				files, err := r.opts.PickFiles(accept, multiple)
+				if err != nil {
+					reject(err)
+					return
+				}
+				if files == nil {
+					resolve(nil) // cancelled
+					return
+				}
+				resolve(pickedFiles(files))
+			}()
+			return p, nil
+		})
+	}
 	def("tz", func(js *Ctx, _ Value, a []Value) (any, error) {
 		return tzInfo(str(a, 0), num(a, 1))
 	})
@@ -506,4 +525,32 @@ func (r *Runtime) startFetch(id int, method, url string, headers [][2]string, bo
 			_, _ = fn.Call(id, string(meta), data)
 		})
 	}()
+}
+
+// PickedFile is a file chosen in the native picker (Options.PickFiles).
+type PickedFile struct {
+	Name         string
+	Type         string // MIME type, "" if unknown
+	Data         []byte
+	LastModified time.Time
+}
+
+// pickedFiles builds the JS list [{name, type, data: Uint8Array, lastModified}].
+func pickedFiles(files []PickedFile) func(*Ctx) (Value, error) {
+	return func(js *Ctx) (Value, error) {
+		arr := js.NewArray()
+		for i, f := range files {
+			o := js.NewObject()
+			_ = o.Set("name", f.Name)
+			_ = o.Set("type", f.Type)
+			_ = o.Set("data", f.Data)
+			if !f.LastModified.IsZero() {
+				_ = o.Set("lastModified", float64(f.LastModified.UnixMilli()))
+			}
+			if err := arr.SetIndex(i, o); err != nil {
+				return Value{}, err
+			}
+		}
+		return arr, nil
+	}
 }

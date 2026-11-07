@@ -375,6 +375,29 @@ return Pronouns;
 	})
 }
 
+func TestFileInputPicker(t *testing.T) {
+	r := newTest(t, func(o *Options) {
+		o.PickFiles = func(accept string, multiple bool) ([]PickedFile, error) {
+			return []PickedFile{{Name: "name.webm", Type: "audio/webm", Data: []byte{1, 2, 3}}}, nil
+		}
+	})
+	evalString(t, r, `globalThis.picked = new Promise((resolve) => {
+  const input = document.createElement('input');
+  Object.assign(input, { type: 'file', accept: 'audio/*' });
+  input.style.display = 'none';
+  input.addEventListener('change', async () => { const f = input.files[0]; resolve(f.name + ':' + f.type + ':' + (await f.arrayBuffer()).byteLength + ':' + (f instanceof File)); input.remove(); });
+  document.body.appendChild(input);
+  input.click();
+}); 0`)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	evalString(t, r, `globalThis.getPicked = () => picked; 0`)
+	got, err := r.Call(ctx, "getPicked")
+	if err != nil || string(got) != `"name.webm:audio/webm:3:true"` {
+		t.Fatalf("picked: %s %v", got, err)
+	}
+}
+
 func mustJSON(v any) []byte { b, _ := json.Marshal(v); return b }
 
 // ---- benchmarks & timings ----
