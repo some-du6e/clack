@@ -60,14 +60,23 @@ func TestHistoryAuthFailureStops(t *testing.T) {
 	if !v.s.hb.authFailed.Load() {
 		t.Error("invalid_auth didn't stop the hub")
 	}
-	// Retry clears the stop and loads at once
-	v.s.hb.retry(v.s.m)
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) && len(api.called("conversations.history")) < 2 {
-		time.Sleep(20 * time.Millisecond)
+	// core stops all Slack traffic once the session ended: Retry can't
+	// load until the user signs in again (no request goes out), and the
+	// list keeps showing "Couldn't load messages · Retry".
+	if !v.s.hb.app.SignedOut() {
+		t.Error("core didn't record the ended session")
 	}
-	if got := len(api.called("conversations.history")); got != 2 {
-		t.Errorf("Retry made %d calls in total, want 2", got)
+	v.s.hb.retry(v.s.m)
+	f := frameFn(v)
+	for i := 0; i < 60; i++ {
+		f()
+		time.Sleep(16 * time.Millisecond)
+	}
+	if got := len(api.called("conversations.history")); got != 1 {
+		t.Errorf("%d history calls after Retry on an ended session, want still 1", got)
+	}
+	if v.s.snap.err == nil || v.s.snap.loaded {
+		t.Errorf("no error state after Retry: err=%v loaded=%v", v.s.snap.err, v.s.snap.loaded)
 	}
 }
 

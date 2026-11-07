@@ -83,6 +83,7 @@ func newTestApp(t testing.TB) (*core.App, *fakeSlack) {
 	t.Cleanup(f.srv.Close)
 	c := slack.New(slack.Creds{Token: "xoxc-test", Cookie: "xoxd-test", UserID: tSelf, Team: "T0266FRGM", EnterpriseID: "E09V59WQY1E",
 		TeamURL: f.srv.URL + "/", EnterpriseURL: f.srv.URL + "/"})
+	c.EdgeURL = f.srv.URL + "/edge/" // never the real edgeapi.slack.com (it would answer invalid_auth)
 	s := store.New("")
 	s.Lock()
 	s.TeamID, s.TeamName, s.TeamDomain = "T0266FRGM", "Synthetic Club", "hackclub"
