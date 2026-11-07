@@ -46,6 +46,7 @@ type Runtime struct {
 	kvs      map[string]KV
 	builtins map[string]string
 	bootTime time.Duration
+	phases   []Phase
 
 	initErr error
 	ready   chan struct{}

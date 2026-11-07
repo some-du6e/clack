@@ -88,14 +88,17 @@ func (r *Runtime) boot() error {
 		return err
 	}
 	r.eng = e
+	r.phases = append(r.phases, Phase{"engine", time.Since(t0)})
 	r.installHost()
 	scripts := []script{{"env.js", envJS}, {"web.js", webJS}, {"intl.js", intlJS}, {"dom.js", domJS}}
 	scripts = append(scripts, vendorScripts...)
 	scripts = append(scripts, script{"react-host.js", reactHostJS})
 	for _, v := range scripts {
+		t1 := time.Now()
 		if err := e.evalBoot("clack:"+v.name, v.src); err != nil {
 			return fmt.Errorf("jsrt: %s: %w", v.name, err)
 		}
+		r.phases = append(r.phases, Phase{v.name, time.Since(t1)})
 	}
 	r.fillModuleNames()
 	e.runJobs(r.js)

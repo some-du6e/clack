@@ -373,7 +373,11 @@ func TestStartupTiming(t *testing.T) {
 			t.Fatal(err)
 		}
 		st := r.Stats()
-		t.Logf("New #%d: %v (boot %v, heap %d KiB)", i, time.Since(t0), st.Boot, st.Memory>>10)
+		var ph []string
+		for _, p := range st.Phases {
+			ph = append(ph, p.Name+"="+p.Time.Round(10*time.Microsecond).String())
+		}
+		t.Logf("New #%d: %v (boot %v, heap %d KiB) %s", i, time.Since(t0), st.Boot, st.Memory>>10, strings.Join(ph, " "))
 		r.Close()
 	}
 }
