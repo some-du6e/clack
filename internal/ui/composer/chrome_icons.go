@@ -10,6 +10,8 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
 // Composer glyphs the shared icon set lacks (underline, pilcrow, divider,
@@ -20,7 +22,7 @@ import (
 
 // crPen builds one path on a grid scaled to pixels.
 type crPen struct {
-	p clip.Path
+	p theme.PathPen // cached by content (stable op identity across frames)
 	k float32
 }
 
