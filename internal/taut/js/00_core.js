@@ -5,6 +5,71 @@
 
 const G = globalThis
 const host = G.__clack || {}
+
+// Fallbacks for web APIs every plugin needs, used only where the JS
+// environment doesn't provide them yet (jsrt does; these keep the TautAPI
+// usable regardless).
+if (typeof G.AbortSignal === 'undefined' && typeof G.EventTarget === 'function') {
+  class AbortSignalImpl extends G.EventTarget {
+    constructor() {
+      super()
+      this.aborted = false
+      this.reason = undefined
+      this.onabort = null
+    }
+    throwIfAborted() {
+      if (this.aborted) throw this.reason
+    }
+    static abort(reason) {
+      const c = new G.AbortController()
+      c.abort(reason)
+      return c.signal
+    }
+    static timeout(ms) {
+      const c = new G.AbortController()
+      setTimeout(() => c.abort(abortError('The operation timed out.', 'TimeoutError')), ms)
+      return c.signal
+    }
+    static any(signals) {
+      const c = new G.AbortController()
+      for (const s of signals) {
+        if (s.aborted) {
+          c.abort(s.reason)
+          return c.signal
+        }
+      }
+      for (const s of signals) s.addEventListener('abort', () => c.abort(s.reason), { once: true })
+      return c.signal
+    }
+  }
+  const abortError = (message, name) => {
+    if (typeof G.DOMException === 'function') return new G.DOMException(message, name)
+    const e = new Error(message)
+    e.name = name
+    return e
+  }
+  class AbortControllerImpl {
+    constructor() {
+      this.signal = new AbortSignalImpl()
+    }
+    abort(reason) {
+      const s = this.signal
+      if (s.aborted) return
+      s.aborted = true
+      s.reason = reason === undefined ? abortError('signal is aborted without reason', 'AbortError') : reason
+      const ev = new G.Event('abort')
+      try {
+        s.onabort?.(ev)
+      } catch {}
+      s.dispatchEvent(ev)
+    }
+  }
+  G.AbortSignal = AbortSignalImpl
+  G.AbortController = AbortControllerImpl
+}
+if (typeof G.navigator === 'undefined') {
+  G.navigator = { language: 'en-US', languages: ['en-US'], platform: 'Linux x86_64', userAgent: 'Clack', onLine: true }
+}
 const T = (G.__taut = G.__taut || {})
 
 /** calls a Go host function registered as __clack.taut_<name> */
