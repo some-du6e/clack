@@ -27,6 +27,12 @@ import (
 var (
 	//go:embed js/env.js
 	envJS string
+	//go:embed js/web.js
+	webJS string
+	//go:embed js/intl.js
+	intlJS string
+	//go:embed js/dom.js
+	domJS string
 	//go:embed js/react-host.js
 	reactHostJS string
 )
@@ -83,8 +89,10 @@ func (r *Runtime) boot() error {
 	}
 	r.eng = e
 	r.installHost()
-	if _, err := e.evalChecked("clack:env.js", envJS); err != nil {
-		return fmt.Errorf("jsrt: env.js: %w", err)
+	for _, v := range []script{{"env.js", envJS}, {"web.js", webJS}, {"intl.js", intlJS}, {"dom.js", domJS}} {
+		if _, err := e.evalChecked("clack:"+v.name, v.src); err != nil {
+			return fmt.Errorf("jsrt: %s: %w", v.name, err)
+		}
 	}
 	for _, v := range vendorScripts {
 		if _, err := e.evalChecked("clack:"+v.name, v.src); err != nil {
