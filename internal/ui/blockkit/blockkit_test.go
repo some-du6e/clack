@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/core"
 )
 
 // Synthetic fixtures only (scraping policy).
@@ -138,5 +140,44 @@ func TestStripMrkdwn(t *testing.T) {
 	}
 	if timeLabel("15:30") != "3:30 PM" || timeLabel("00:05") != "12:05 AM" || dateLabel("2026-11-07") != "Nov 7, 2026" {
 		t.Error("labels")
+	}
+}
+
+func TestMergeRichText(t *testing.T) {
+	in := `[{"type":"rich_text","block_id":"a","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"hi"}]}]},
+	 {"type":"header","text":{"type":"plain_text","text":"Head"}},{"type":"divider"},
+	 {"type":"rich_text","block_id":"b","elements":[{"type":"rich_text_list","style":"bullet","elements":[]}]}]`
+	out := string(mergeRichText(json.RawMessage(in)))
+	if !strings.HasPrefix(out, `{"elements":[{"type":"rich_text_section"`) || !strings.Contains(out, `"text":"Head"`) ||
+		!strings.Contains(out, `rich_text_list`) || !strings.HasSuffix(out, `"type":"rich_text"}`) {
+		t.Errorf("merge: %s", out)
+	}
+}
+
+func TestFileInputState(t *testing.T) {
+	v := &Value{Type: "file_input"}
+	if !v.empty() || string(mustJSON(v.stateJSON())) != `{"files":[],"type":"file_input"}` {
+		t.Errorf("empty: %s", mustJSON(v.stateJSON()))
+	}
+	v.Files = []json.RawMessage{json.RawMessage(`{"id":"F1"}`)}
+	if v.empty() || string(mustJSON(v.stateJSON())) != `{"files":[{"id":"F1"}],"type":"file_input"}` {
+		t.Errorf("files: %s", mustJSON(v.stateJSON()))
+	}
+}
+
+func TestSpeedbumpDirty(t *testing.T) {
+	bs := `[{"type":"input","block_id":"i","label":{"type":"plain_text","text":"L"},"element":{"type":"plain_text_input","action_id":"t","initial_value":"a"}}]`
+	s := &Surface{}
+	s.set(&core.View{ID: "V", Type: "modal", Blocks: json.RawMessage(bs)}, false)
+	if s.dirty() {
+		t.Fatal("fresh view dirty")
+	}
+	s.vals.get("i", "t").Text = "b"
+	if !s.dirty() {
+		t.Fatal("edit not dirty")
+	}
+	s.vals.get("i", "t").Text = "a"
+	if s.dirty() {
+		t.Fatal("reverted edit dirty")
 	}
 }

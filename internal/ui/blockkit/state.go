@@ -31,7 +31,8 @@ type Value struct {
 
 	Text    string // text inputs
 	textSet bool
-	Rich    json.RawMessage // rich_text_input
+	Rich    json.RawMessage   // rich_text_input
+	Files   []json.RawMessage // file_input: Slack file objects
 }
 
 // initialValue is an element's starting state (its initial_* fields).
@@ -105,6 +106,8 @@ func (v *Value) empty() bool {
 		return v.SelectedDateTime == 0
 	case "rich_text_input":
 		return len(v.Rich) == 0 && v.Text == ""
+	case "file_input":
+		return len(v.Files) == 0
 	}
 	return v.Text == ""
 }
@@ -176,6 +179,12 @@ func (v *Value) fields(m map[string]any) {
 		}
 	case "plain_text_input", "email_text_input", "url_text_input", "number_input":
 		m["value"] = nul(v.Text)
+	case "file_input":
+		fs := v.Files
+		if fs == nil {
+			fs = []json.RawMessage{}
+		}
+		m["files"] = fs
 	}
 }
 

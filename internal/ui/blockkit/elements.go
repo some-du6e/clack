@@ -14,6 +14,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -77,6 +78,8 @@ type ew struct {
 	more  tap
 	ed    *widget.Editor
 	edSet bool
+	red   *composer.Editor // rich_text_input (richinput.go)
+	files []*upFile        // file_input (richinput.go)
 
 	busy  bool
 	errAt time.Time
@@ -89,7 +92,7 @@ type ew struct {
 
 func newEW(o owner, b *Block, e *Element, input bool) *ew {
 	w := &ew{o: o, bid: b.BlockID, b: b, e: e, input: input}
-	if isTextInput(e.Type) {
+	if isTextInput(e.Type) && e.Type != "rich_text_input" {
 		w.ed = &widget.Editor{SingleLine: !e.Multiline && e.Type != "rich_text_input", Submit: !e.Multiline && e.Type != "rich_text_input"}
 		if e.Type == "number_input" {
 			w.ed.Filter = "0123456789-"
@@ -181,9 +184,9 @@ func (w *ew) size(gtx C, maxW int, accessory bool) image.Point {
 		}
 		return full(h36)
 	case "rich_text_input":
-		return full(max(dp(gtx, 104), w.edHeight(gtx, maxW)))
+		return full(w.richHeight(gtx))
 	case "file_input":
-		return full(dp(gtx, 72))
+		return full(w.fileHeight(gtx))
 	}
 	return image.Point{}
 }
@@ -255,8 +258,10 @@ func (w *ew) layout(gtx C, sz image.Point) D {
 		w.layoutDateTime(gtx, sz)
 	case "checkboxes", "radio_buttons":
 		w.layoutOptions(gtx, sz)
-	case "plain_text_input", "email_text_input", "url_text_input", "number_input", "rich_text_input":
+	case "plain_text_input", "email_text_input", "url_text_input", "number_input":
 		w.layoutText(gtx, sz)
+	case "rich_text_input":
+		w.layoutRich(gtx, sz)
 	case "file_input":
 		w.layoutFile(gtx, sz)
 	}
@@ -803,24 +808,6 @@ func richPlain(raw json.RawMessage) string {
 		}
 	}
 	return b.String()
-}
-
-// ---- file input ----
-
-func (w *ew) layoutFile(gtx C, sz image.Point) {
-	th := w.th()
-	cl := colorsOf(th)
-	r := image.Rectangle{Max: sz}
-	outline(gtx, r, dp(gtx, 8), max(1, dp(gtx, 1)), cl.SelectBorder, cl.Bg)
-	at(gtx, image.Pt(dp(gtx, 16), 0), func(gtx C) D {
-		return vcenter(gtx, sz.Y, func(gtx C) D {
-			return label(gtx, th, 15, theme.Regular, cl.Text2, "Drag and drop or click to upload a file")
-		})
-	})
-	if w.main.clicked(gtx, w.o.host()) {
-		w.o.host().Toast("Uploading files to apps isn't supported yet")
-	}
-	w.main.add(gtx, sz)
 }
 
 // ---- multi-selects ----

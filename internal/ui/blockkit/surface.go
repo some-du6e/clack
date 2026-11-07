@@ -332,7 +332,7 @@ func (s *Surface) validate() bool {
 		switch {
 		case !b.Optional && v.empty() && stateful(e.Type):
 			msg = "Please complete this required field."
-		case v != nil && !v.empty() && e.MinLength > 0 && len([]rune(v.Text)) < e.MinLength && isTextInput(e.Type):
+		case v != nil && !v.empty() && e.MinLength > 0 && len([]rune(v.Text)) < e.MinLength && isTextInput(e.Type) && e.Type != "rich_text_input":
 			msg = "Please enter at least " + strconv.Itoa(e.MinLength) + " characters."
 		case v != nil && v.Text != "" && e.Type == "email_text_input":
 			if _, err := mail.ParseAddress(v.Text); err != nil {
