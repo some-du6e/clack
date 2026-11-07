@@ -37,10 +37,10 @@ When no plugin patches the name, this is just `native(ctx, args)`. When a plugin
 | markLastRead | `{id: channelId, ts, threadTs?, reason?, immediate?}` | ui/messages, marking read | default: core.Mark / MarkThread |
 | setUserPrefByApi, setUserPrefFetcher | `{pref, value}` | ui (prefs toggles) | default: users.prefs.set |
 | initializeUserPrefs | `{prefsData}` | taut (prefs event) | identity |
-| deleteDraftApi, clearDrafts | `{draft: {id,…}, reason?}` / `{draftIds}` | ui/composer, ui/views drafts | default: core.DeleteDraft |
+| deleteDraftApi, clearDrafts | `{draft: {id,…}, reason?}` / `{ids, syncDelete?}` | ui/composer, ui/views drafts | default: core.DeleteDraft |
 | syncDraftCreate, syncDraftUpdates | `{draftId, …}` | ui/composer | UI must dispatch |
 | prepareAndSendMessage, sendMessage | `{channelId, replyToTs?, text, blocks, broadcast?}` / `{channel, blocks, thread_ts?, …}` | ui/composer send | UI must dispatch (after `TransformSendBlocks`) |
-| saveMessageEdit, commitMessageEdit | `{channelId, ts, blocks, text}` | ui/messages edit | UI must dispatch |
+| commitMessageEdit (→ saveMessageEdit) | `{channelId, ts, blocks, text?}` | ui/messages edit | UI must dispatch commitMessageEdit; default native: saveMessageEdit → core.Edit with send transforms |
 | chatDeleteFetcher | `{channel, ts}` | ui/messages delete | default: core.Delete |
 | changeReactionFromUserAction, submitAddOrRemoveReaction | `{key: _rxn_key, name}` / `{reactionKey, name, add}` | ui/messages reactions, ui/popups emoji picker | UI must dispatch |
 | getContextMenuTemplate | `{id: channelId}` → `[]MenuItem` | ui/popups channel menu | UI must dispatch (sync) |
@@ -51,7 +51,7 @@ When no plugin patches the name, this is just `native(ctx, args)`. When a plugin
 | addAndUploadPendingFile, uploadFiles | `{file: taut.File}` / `{files: []taut.File, channelId}` | ui/composer attachments | UI must dispatch; addAndUploadPendingFile has a default (core.PrepareUpload → `{fileIds}`) for api.files.upload |
 | getChannelMembershipInfoForUsers | `{channelId, userIds}` | taut | default: conversations.members, fills `membership` |
 | ensureMembersArePresent | `{memberIds}` | taut | default: core.EnsureUsers |
-| fetchRawChannelsById | `{ids}` | taut | default: core.ChannelInfo |
+| fetchRawChannelsById | `{ids}` → `{missing}` | taut | default: core.ChannelInfo |
 | joinChannel | `{channelId}` | ui (join button) | default: core.Join |
 | openPrefsModal | `{activeSection?}` | ui shell | default: UIHooks.OpenPreferences |
 | enqueueHuddleToast | `{content, svgIconProps, duration}` | ui toasts | default: UIHooks.Toast |

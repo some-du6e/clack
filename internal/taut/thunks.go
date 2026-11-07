@@ -43,11 +43,11 @@ var ThunkCatalogue = []ThunkSpec{
 	{"deleteDraftApi", "{draft: {id, …}, reason?}", "ui/composer, ui/views (drafts)", "deleting a draft (core.DeleteDraft)"},
 	{"syncDraftCreate", "{draftId, …draft}", "ui/composer", "saving a new draft (core.SaveDraft)"},
 	{"syncDraftUpdates", "{draftId, …draft}", "ui/composer", "updating a draft (core.SaveDraft)"},
-	{"clearDrafts", "{draftIds}", "ui/views (drafts)", "deleting drafts"},
+	{"clearDrafts", "{ids, syncDelete?}", "ui/views (drafts)", "deleting drafts"},
 	{"prepareAndSendMessage", "{channelId, replyToTs?, text, blocks, broadcast?}", "ui/composer", "sending (core.Send); after TransformSendBlocks"},
 	{"sendMessage", "{channel, blocks, thread_ts?, reply_broadcast?, unfurl?}", "ui/composer", "the send itself, inside prepareAndSendMessage"},
-	{"saveMessageEdit", "{channelId, ts, blocks, text}", "ui/messages", "saving an edit (core.Edit)"},
-	{"commitMessageEdit", "{channelId, ts}", "ui/messages", "closing the editor after a save"},
+	{"commitMessageEdit", "{channelId, ts, blocks, text?}", "ui/messages", "submitting an edit; its native dispatches saveMessageEdit"},
+	{"saveMessageEdit", "{channelId, ts, blocks, text?}", "ui/messages", "saving an edit (core.Edit, after TransformSendBlocks)"},
 	{"chatDeleteFetcher", "{channel, ts}", "ui/messages", "deleting a message (core.Delete)"},
 	{"changeReactionFromUserAction", "{key: _rxn_key, name, add?}", "ui/messages", "toggling a reaction (core.React)"},
 	{"submitAddOrRemoveReaction", "{reactionKey, name, add}", "ui/messages, ui/popups (emoji picker)", "adding/removing a reaction"},
@@ -61,7 +61,7 @@ var ThunkCatalogue = []ThunkSpec{
 	{"uploadFiles", "{files: File[], channelId, …}", "ui/composer (attachments)", "uploading and sharing files (core.Upload)"},
 	{"getChannelMembershipInfoForUsers", "{channelId, userIds}", "taut", "who is in a channel; fills membership"},
 	{"ensureMembersArePresent", "{memberIds}", "taut", "loading users (core.EnsureUsers)"},
-	{"fetchRawChannelsById", "{ids}", "taut", "loading conversations (core.ChannelInfo)"},
+	{"fetchRawChannelsById", "{ids}", "taut", "loading conversations (core.ChannelInfo); returns {missing}"},
 	{"joinChannel", "{channelId}", "ui (join button)", "joining (core.Join)"},
 	{"openPrefsModal", "{activeSection?}", "ui (shell)", "opening Preferences"},
 	{"enqueueHuddleToast", "{content, svgIconProps, duration}", "ui (toasts)", "a huddle toast"},
@@ -333,7 +333,12 @@ func (tt *thunkTable) installDefaults() {
 			return map[string]any{"fileIds": []string{up.ID}}, nil
 		},
 		"clearDrafts": func(ctx context.Context, a []json.RawMessage) (any, error) {
-			for _, id := range argObj(a).strs("draftIds") {
+			o := argObj(a)
+			ids := o.strs("ids")
+			if len(ids) == 0 {
+				ids = o.strs("draftIds")
+			}
+			for _, id := range ids {
 				if err := t.app.DeleteDraft(ctx, id); err != nil {
 					return nil, err
 				}
@@ -351,13 +356,26 @@ func (tt *thunkTable) installDefaults() {
 			if len(ids) == 0 {
 				ids = o.strs("channelIds")
 			}
+			missing := []string{}
 			for _, id := range ids {
 				if _, err := t.app.ChannelInfo(ctx, id); err != nil {
-					return nil, err
+					missing = append(missing, id)
+					continue
 				}
 				t.mirror.invalidate("channels", id)
 			}
-			return nil, nil
+			return map[string]any{"missing": missing}, nil
+		},
+		"commitMessageEdit": func(ctx context.Context, a []json.RawMessage) (any, error) {
+			if len(a) == 0 {
+				return nil, errors.New("commitMessageEdit needs {channelId, ts, blocks}")
+			}
+			return t.DispatchJSON(ctx, "saveMessageEdit", []any{a[0]}, func(ctx context.Context, a []json.RawMessage) (any, error) {
+				return nil, t.saveEdit(ctx, argObj(a))
+			})
+		},
+		"saveMessageEdit": func(ctx context.Context, a []json.RawMessage) (any, error) {
+			return nil, t.saveEdit(ctx, argObj(a))
 		},
 		"joinChannel": func(ctx context.Context, a []json.RawMessage) (any, error) {
 			_, err := t.app.Join(ctx, argObj(a).str("channelId"))
@@ -384,10 +402,21 @@ func (tt *thunkTable) installDefaults() {
 	// Slack bookkeeping with nothing to do in Clack: they resolve, so
 	// plugins awaiting them continue.
 	for _, name := range []string{"maybeFetchBackgrounds", "startEventLog", "stopEventLog", "stopHuddle", "displayAlertMessage",
-		"processAwsTranscription", "roomsStartTranscriptionFetcher", "roomsStopTranscriptionFetcher", "logExperimentExposure", "handleMessageImmediatelyWithoutPreprocessing", "commitMessageEdit"} {
+		"processAwsTranscription", "roomsStartTranscriptionFetcher", "roomsStopTranscriptionFetcher", "logExperimentExposure", "handleMessageImmediatelyWithoutPreprocessing"} {
 		n[name] = func(ctx context.Context, a []json.RawMessage) (any, error) { return nil, nil }
 	}
 	tt.natives = n
+}
+
+// saveEdit is core.Edit with the send transforms applied to the blocks.
+func (t *Taut) saveEdit(ctx context.Context, o obj) error {
+	blocks := o["blocks"]
+	if len(blocks) == 0 || string(blocks) == "null" {
+		blocks = nil
+	} else {
+		blocks = t.TransformSendBlocks(ctx, blocks)
+	}
+	return t.app.Edit(ctx, firstNonEmpty(o.str("channelId"), o.str("channel")), o.str("ts"), o.str("text"), blocks)
 }
 
 type appRef struct{ t *Taut }
