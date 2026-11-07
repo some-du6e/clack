@@ -466,7 +466,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		}
 		return ok("usergroups", gs)
 	case "client.getWebSocketURL":
-		return ok("primary_websocket_url", "ws"+strings.TrimPrefix(s.URL, "http")+"ws", "routing_context", "fake")
+		ws := "ws" + strings.TrimPrefix(s.URL, "http") + "ws"
+		return ok("primary_websocket_url", ws, "fallback_websocket_url", ws, "routing_context", "fake")
 	case "conversations.history":
 		return s.historyPage(f)
 	case "conversations.replies":
@@ -612,7 +613,8 @@ func (s *Server) img(w http.ResponseWriter, r *http.Request) {
 // ws accepts the realtime gateway and says hello; it then idles.
 func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	s.count("ws")
-	c, err := websocket.Accept(w, r, nil)
+	// the client sends Origin: https://app.slack.com, like the web client
+	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 	if err != nil {
 		return
 	}
