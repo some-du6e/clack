@@ -10,7 +10,7 @@ import (
 )
 
 // maxInflate bounds what one DecompressionStream may produce.
-var maxInflate = 512 << 20
+var maxInflate int64 = 512 << 20
 
 // zlibOp compresses (mode "c") or decompresses (mode "d") data in one of
 // the Compression Streams formats.
@@ -64,7 +64,7 @@ func zlibOp(mode, format string, data []byte) ([]byte, error) {
 		if err != nil {
 			return nil, errors.New("The compressed data was not valid")
 		}
-		if len(out) > maxInflate {
+		if int64(len(out)) > maxInflate {
 			return nil, errors.New("The decompressed data is too large")
 		}
 		return out, nil

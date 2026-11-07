@@ -38,7 +38,7 @@ func TestZlibOp(t *testing.T) {
 	var bomb bytes.Buffer
 	w := gzip.NewWriter(&bomb)
 	zero := make([]byte, 1<<20)
-	for i := 0; i < maxInflate>>20+1; i++ {
+	for i := int64(0); i < maxInflate>>20+1; i++ {
 		w.Write(zero)
 	}
 	w.Close()
