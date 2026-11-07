@@ -134,6 +134,12 @@ func newEngine(r *Runtime) (*engine, error) {
 		}
 		e.fns[name] = f
 	}
+	// optional exports (older engine builds lack them)
+	for _, name := range []string{"jr_compile", "jr_free_js", "jr_eval_bytecode"} {
+		if f := mod.ExportedFunction(name); f != nil {
+			e.fns[name] = f
+		}
+	}
 	if rc := int32(e.call("jr_init", uint64(r.opts.MemoryLimit), 7<<20)); rc != 0 {
 		return nil, fmt.Errorf("jsrt: jr_init failed (%d)", rc)
 	}

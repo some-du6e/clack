@@ -404,3 +404,28 @@ EXPORT(jr_promise_state) int32_t jr_promise_state(uint32_t h) {
 	return -1;
 }
 EXPORT(jr_promise_result) uint32_t jr_promise_result(uint32_t h) { return put(JS_PromiseResult(ctx, get(h))); }
+
+// ---- bytecode (boot cache for the environment scripts) ----
+// jr_compile compiles a classic script to QuickJS bytecode: ptr<<32|len
+// (free with jr_free_js), or 0 with the exception pending.
+EXPORT(jr_compile) uint64_t jr_compile(const char *src, uint32_t len, const char *name, uint32_t nlen) {
+	char nbuf[256];
+	if (nlen >= sizeof(nbuf)) nlen = sizeof(nbuf) - 1;
+	memcpy(nbuf, name, nlen);
+	nbuf[nlen] = 0;
+	JSValue f = JS_Eval(ctx, src, len, nbuf, JS_EVAL_TYPE_GLOBAL | JS_EVAL_FLAG_COMPILE_ONLY);
+	if (JS_IsException(f)) return 0;
+	size_t size = 0;
+	uint8_t *buf = JS_WriteObject(ctx, &size, f, JS_WRITE_OBJ_BYTECODE);
+	JS_FreeValue(ctx, f);
+	if (!buf) return 0;
+	return ((uint64_t)(uintptr_t)buf << 32) | (uint64_t)size;
+}
+EXPORT(jr_free_js) void jr_free_js(void *p) { js_free(ctx, p); }
+
+// jr_eval_bytecode runs bytecode from jr_compile; returns the completion value.
+EXPORT(jr_eval_bytecode) uint32_t jr_eval_bytecode(const uint8_t *buf, uint32_t len) {
+	JSValue f = JS_ReadObject(ctx, buf, len, JS_READ_OBJ_BYTECODE);
+	if (JS_IsException(f)) return exc();
+	return ret(JS_EvalFunction(ctx, f));
+}
