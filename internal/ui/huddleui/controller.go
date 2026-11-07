@@ -392,6 +392,20 @@ func (c *Controller) Handle(ev core.Event) {
 	if ev.Type != "huddle" {
 		return
 	}
+	if ev.Name == "huddle_invite" {
+		var inv struct {
+			Channel string `json:"channel_id"`
+			Sender  string `json:"sender_user_id"`
+		}
+		if json.Unmarshal(ev.Raw, &inv) == nil && inv.Channel != "" && !c.In(inv.Channel) {
+			who := c.userName(inv.Sender)
+			if who == "" {
+				who = "Someone"
+			}
+			c.toast(who+" invited you to a huddle in "+c.channelTitle(inv.Channel), "headphones")
+		}
+		return
+	}
 	if s := c.Session(); s != nil {
 		s.HandleRoomEvent(ev.Name, ev.Raw)
 	}
