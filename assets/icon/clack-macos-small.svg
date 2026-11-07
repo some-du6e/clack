@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Clack</title>
+  <defs>
+    <linearGradient id="mbg" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#7B5CFF"/>
+      <stop offset="1" stop-color="#3B1FB8"/>
+    </linearGradient>
+    <radialGradient id="msheen" cx="0.3" cy="0.12" r="0.75">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <defs>
+    <filter id="mshadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="14"/>
+      <feOffset dy="12"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.30"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <g filter="url(#mshadow)">
+    <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#mbg)"/>
+  </g>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#msheen)"/>
+  <g transform="translate(100 100) scale(0.804688)">
+    <path d="M639.9 330.2A236 236 0 1 0 639.9 669.8" fill="none" stroke="#FFFFFF" stroke-width="196" stroke-linecap="round"/>
+    <path d="M183.8 583.8Q180.9 699.1 205.7 810.9Q320 770.2 412.8 797.4Z" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="36" stroke-linejoin="round"/>
+    <path d="M729.9 500L809.9 500" stroke="#FFB547" stroke-width="112" stroke-linecap="round"/>
+  </g>
+</svg>
