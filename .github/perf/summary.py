@@ -100,7 +100,7 @@ row = "| {date} | `{sha}` | {ref} | {wp} | {cp} | {rss} | {sheap} | {sw} | {sc} 
     date=os.environ.get("RUN_DATE", ""), sha=sha, ref=ref,
     wp=num(med([dur_ms(p["paint"]) for p in warm]), " ms"),
     cp=num(next((dur_ms(p["paint"]) for p in proc if p["run"] == "cold"), None), " ms"),
-    rss=num(med([p["rss"] for p in warm]), " MB"),
+    rss=num(next((p["rss"] for p in proc if p["run"] == "idle95"), med([p["rss"] for p in warm])), " MB"),
     sheap=num(g("BenchmarkSessionMemory", "heap-MB"), " MB"),
     sw=ms(g("BenchmarkChannelSwitch")), sc=ms(g("BenchmarkScroll500")),
     ty=f"{ms(g('BenchmarkTypingFrame'))} / {num(g('BenchmarkTypingFrame', 'allocs/op'))}",

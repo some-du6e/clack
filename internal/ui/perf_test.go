@@ -628,6 +628,14 @@ func BenchmarkSessionMemory(b *testing.B) {
 		b.StopTimer()
 		b.ReportMetric(liveHeapMB(), "heap-MB")
 		b.ReportMetric(rssMB(), "rss-MB")
+		// long idle: one frame a second (a blinking caret's worth) while
+		// the background sweeps run
+		for t0 := time.Now(); time.Since(t0) < 75*time.Second; {
+			e.frame()
+			time.Sleep(time.Second)
+		}
+		b.ReportMetric(liveHeapMB(), "idle-heap-MB")
+		b.ReportMetric(rssMB(), "idle-rss-MB")
 		if p := os.Getenv("CLACK_BENCH_HEAPPROFILE"); p != "" {
 			writeHeapProfile(b, p)
 		}
