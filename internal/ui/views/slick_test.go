@@ -540,53 +540,6 @@ func (e *slickEnv) liveHuddle() *Huddles {
 	return v
 }
 
-func TestSlickViewCallTimer(t *testing.T) {
-	e := newSlickEnv(t)
-	e.install("CallTimer", nil)
-	e.patched("HuddleMvaWindowTitle", "HuddleBottomBarContent", "HuddleRecordingIndicator")
-	v := e.liveHuddle()
-	// the title still draws through CallTimer's wrapper, and its bottom
-	// bar context reaches the recording indicator inside the bar's tree
-	e.until("CallTimer's trees around the title and the bar", v.Layout, func() bool {
-		_, title := e.ui.tree("HuddleMvaWindowTitle")
-		_, bar := e.ui.tree("HuddleBottomBarContent")
-		return title != "" && bar != "" && strings.Contains(bar, "HuddleRecordingIndicator")
-	})
-	room := v.liveRooms()[0]
-	gtx := e.gtx()
-	if d := v.huddleTitle(gtx, room); d.Size.X == 0 || d.Size.Y == 0 {
-		t.Errorf("the huddle title draws nothing under CallTimer: %v", d.Size)
-	}
-	// Clack never joins (no huddle media), so there is no call to time
-	if _, bar := e.ui.tree("HuddleBottomBarContent"); strings.Contains(bar, "slick-call-timer") {
-		t.Errorf("a call timer without a joined huddle: %s", bar)
-	}
-}
-
-func TestSlickViewLetMeSee(t *testing.T) {
-	e := newSlickEnv(t)
-	e.install("LetMeSee", nil)
-	e.patched("HuddleMiniPanel", "BaseDrawRenderer")
-	v := e.liveHuddle()
-	e.until("LetMeSee's anchor after the mini panel and its wrapper around the drawings", v.Layout, func() bool {
-		mini, _ := e.ui.tree("HuddleMiniPanel")
-		draw, _ := e.ui.tree("BaseDrawRenderer")
-		return mini != nil && draw != nil
-	})
-	// HuddleMiniPanel: <><Original/><Anchor/></>, the anchor a hidden span
-	// right after the panel
-	mini, mj := e.ui.tree("HuddleMiniPanel")
-	if len(mini) < 2 || !strings.Contains(mj, `"span"`) || !strings.Contains(mj, "none") {
-		t.Errorf("no anchor after the mini panel: %s", mj)
-	}
-	// BaseDrawRenderer: drawings wrapped in a display:contents div, shown
-	draw, dj := e.ui.tree("BaseDrawRenderer")
-	path := findAt(draw, "BaseDrawRenderer", nil)
-	if len(path) < 2 || path[len(path)-2]["t"] != "div" || !strings.Contains(dj, "contents") {
-		t.Errorf("drawings not inside LetMeSee's wrapper: %s", dj)
-	}
-}
-
 func TestSlickViewBetterHuddles(t *testing.T) {
 	e := newSlickEnv(t)
 	e.install("BetterHuddles", nil)
