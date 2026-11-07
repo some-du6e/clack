@@ -314,7 +314,11 @@ func (p *EmojiPicker) gifRow(gtx layout.Context, i int) layout.Dimensions {
 		at(gtx, tp, func(gtx layout.Context) layout.Dimensions {
 			return clickBox(gtx, &g.tiles[k], nil, func(gtx layout.Context) layout.Dimensions {
 				sz := image.Pt(t, t)
-				if img, ok := im.Get(gifStill(gf), gifImgPx(gtx, gf)); ok {
+				if an, ok := gifAnimGet(p.h, gifAnimURL(gf), t, gtx.Now); ok {
+					// animated (frames decoded off the UI goroutine; the
+					// next redraw is scheduled only while this tile shows).
+					theme.Image(gtx, an.frameAt(gtx), sz, rad)
+				} else if img, ok := im.Get(gifStill(gf), gifImgPx(gtx, gf)); ok {
 					theme.Image(gtx, img, sz, rad)
 				} else {
 					th.Placeholder(gtx, sz, rad)

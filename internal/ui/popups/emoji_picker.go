@@ -24,7 +24,7 @@ import (
 //	            bottom bar, inactive #454447; 1px #eaeaea line under both
 //	y  50.. 96  category tabs: 32×28 tiles radius 4 at x 10 + 34i, y 60;
 //	            20px icons #868686, active tile #dddddd with #1d1c1d icon
-//	y  96..146  search input at x 17, y 102, 327×38, radius 8, 15px,
+//	y  96..146  search input at x 18, y 103, 326×36, radius 8, 15px,
 //	            focus ring 1px #1264a3 + 4px rgba(18,100,163,.3)
 //	y 146..458  list: group headings 26 tall (13/700 at x 20, sticky,
 //	            bg rgba(255,255,255,.95)), 2px between groups; rows 33 tall,
@@ -40,9 +40,9 @@ const (
 	epCatX, epCatY = 10, 60
 	epCatStep      = 34
 	epCatW, epCatH = 32, 28
-	epInputX       = 17
-	epInputY       = 102
-	epInputH       = 38
+	epInputX       = 18
+	epInputY       = 103
+	epInputH       = 36 // measured: 326×36 at (18,103)
 	epListY        = 146
 	epFootH        = 60
 	epHdrH         = 26

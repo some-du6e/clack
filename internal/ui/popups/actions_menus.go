@@ -463,7 +463,7 @@ func NewUserMenu(h Host, anchor image.Point) *Menu {
 		MenuItem{Label: "Until next week", Do: snooze(func(now time.Time) int { return actMinutesUntil(now, actNextMonday9(now)) })},
 		MenuItem{Label: "Custom…", Do: func() { h.ShowOverlay(actNewPauseModal(h)) }},
 		Sep(),
-		MenuItem{Label: "Edit your working hours", Do: func() { h.ShowOverlay(NewPreferencesModal(h, "availability")) }},
+		MenuItem{Label: "Edit your working hours", Do: func() { openPreferences(h, "availability") }},
 		MenuItem{Note: "You can choose to always allow notifications from VIPs in preferences."},
 	)
 	notifState := "On"
