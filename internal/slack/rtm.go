@@ -95,7 +95,7 @@ func (r *RTM) once(ctx context.Context) error {
 	conn, _, err := websocket.Dial(dctx, u, &websocket.DialOptions{HTTPHeader: h, HTTPClient: r.c.HTTP, CompressionMode: websocket.CompressionContextTakeover})
 	cancel()
 	if err != nil {
-		return err
+		return scrubErr(err) // the dial error quotes the URL, token included
 	}
 	conn.SetReadLimit(64 << 20)
 	r.mu.Lock()
@@ -162,7 +162,9 @@ func (r *RTM) once(ctx context.Context) error {
 				URL string `json:"url"`
 			}
 			_ = json.Unmarshal(data, &x)
-			r.reconnectURL = x.URL
+			if slackURL(x.URL, "wss") { // it carries the token: Slack hosts only
+				r.reconnectURL = x.URL
+			}
 			continue
 		case "pong":
 			continue

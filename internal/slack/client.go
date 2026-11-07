@@ -91,8 +91,45 @@ func New(c Creds) *Client {
 	if c.EnterpriseURL != "" {
 		ent = strings.TrimSuffix(c.EnterpriseURL, "/") + "/api/"
 	}
-	return &Client{HTTP: &http.Client{Transport: tr, Timeout: 60 * time.Second}, Creds: c, base: base, ent: ent,
-		sem: make(chan struct{}, MaxConcurrent), learned: map[string]bool{}}
+	cl := &Client{Creds: c, base: base, ent: ent, sem: make(chan struct{}, MaxConcurrent), learned: map[string]bool{}}
+	cl.HTTP = &http.Client{Transport: tr, Timeout: 60 * time.Second, CheckRedirect: cl.checkRedirect}
+	return cl
+}
+
+// credOK reports whether u may receive the session cookie: https on
+// slack.com or a subdomain, or the configured API host itself (tests run
+// against an httptest server there).
+func (c *Client) credOK(u *url.URL) bool {
+	if u == nil || u.User != nil {
+		return false
+	}
+	if u.Scheme == "https" && IsSlackHost(u.Hostname()) {
+		return true
+	}
+	for _, b := range []string{c.base, c.ent} {
+		if bu, err := url.Parse(b); err == nil && bu.Scheme == u.Scheme && strings.EqualFold(bu.Host, u.Host) {
+			return true
+		}
+	}
+	return false
+}
+
+// checkRedirect never follows https to http, and drops the Cookie header
+// on a hop to a host that mustn't see it (net/http only strips it for
+// hosts that aren't a subdomain of the first one, so files.slack.com to
+// an http:// or non-Slack host would otherwise keep it in some cases).
+func (c *Client) checkRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("slack: too many redirects")
+	}
+	if via[0].URL.Scheme == "https" && req.URL.Scheme != "https" {
+		return errors.New("slack: refusing redirect from https to " + req.URL.Scheme)
+	}
+	if !c.credOK(req.URL) {
+		req.Header.Del("Cookie")
+		req.Header.Del("Authorization")
+	}
+	return nil
 }
 
 // Error is a Slack API {"ok":false} error.
@@ -288,7 +325,7 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 	for attempt := 0; ; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
 		if err != nil {
-			return err
+			return scrubErr(err)
 		}
 		req.Header.Set("Content-Type", ctype)
 		req.Header.Set("Cookie", c.cookieHeader())
@@ -296,7 +333,7 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 		req.Header.Set("User-Agent", UserAgent)
 		resp, err := c.HTTP.Do(req)
 		if err != nil {
-			return err
+			return scrubErr(err)
 		}
 		if resp.StatusCode == http.StatusTooManyRequests {
 			resp.Body.Close()
@@ -318,7 +355,7 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 		data, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
-			return err
+			return scrubErr(err)
 		}
 		if resp.StatusCode >= 400 && resp.StatusCode != 200 {
 			return fmt.Errorf("slack %s: http %d", method, resp.StatusCode)
@@ -344,18 +381,23 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 	}
 }
 
-// Download fetches an authenticated URL (files.slack.com etc) with the session cookie.
+// Download fetches an authenticated URL (files.slack.com etc) with the
+// session cookie. The cookie only goes to https Slack hosts (see credOK);
+// any other URL is fetched without it.
 func (c *Client) Download(ctx context.Context, rawURL string) (*http.Response, error) {
 	if c.SignedOut() {
 		return nil, ErrSignedOut
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, scrubErr(err)
 	}
-	req.Header.Set("Cookie", c.cookieHeader())
+	if c.credOK(req.URL) {
+		req.Header.Set("Cookie", c.cookieHeader())
+	}
 	req.Header.Set("User-Agent", UserAgent)
-	return c.HTTP.Do(req)
+	resp, err := c.HTTP.Do(req)
+	return resp, scrubErr(err)
 }
 
 // UserAgent mimics a desktop Chrome so Slack serves the normal web payloads.
@@ -388,16 +430,19 @@ func (c *Client) UploadBytes(ctx context.Context, uploadURL, filename string, da
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, body)
 	if err != nil {
-		return err
+		return scrubErr(err)
 	}
 	req.ContentLength = total
 	req.Header.Set("Content-Type", mw.FormDataContentType())
+	if !c.credOK(req.URL) { // the file and the cookie only go to Slack over https
+		return errors.New("slack upload: refusing upload URL on " + req.URL.Scheme + "://" + req.URL.Host)
+	}
 	req.Header.Set("Cookie", c.cookieHeader())
 	req.Header.Set("Origin", "https://app.slack.com")
 	req.Header.Set("User-Agent", UserAgent)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return err
+		return scrubErr(err)
 	}
 	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
