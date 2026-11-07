@@ -890,3 +890,72 @@ The unpatched path doesn't inline: it makes two calls, which exceeds Go's inline
 - **core.Message gaps:** no `metadata`, `bot_profile`, raw `blocks` or `attachments`. This blocks ShowRealUser relay-bot detection, OwlMode, and `blocks` in search props.
 - **Ordering CSS on natives:** SlimMessageBox's one-line composer layout relies on `order`/`flex` rules, which natives with fixed positions don't apply.
 - **Emoji picker context:** pass channel/ts/thread to `EmojiPicker.SetMessage` from the ui root.
+
+## 9. Names Slick plugins patch (2026-11-07)
+
+From the `slick` workflow's acceptance run over Slick @ f52d55d (53 plugins, built with Slick's own build; see [PLUGINS-slick.md](PLUGINS-slick.md)). These are the names not already in the index above; everything else Slick plugins patch is in it. Patches on them register and render through slackc today (`internal/taut/js/04_react.js` lists them in `KNOWN_COMPONENTS`, so filter-only patches such as NoUpsell's reach them too). They show in Clack once the owner calls `slackc.Render` at that boundary. Owners as in §5; "views" huddle rows have no Clack surface (no huddle media).
+
+| Name | Slick plugins | Owner |
+|---|---|---|
+| AboutPage | InstalledApps | pop |
+| ActivityDM | BetterBlock | views |
+| ActivityRowContentDense | BetterBlock | views |
+| ActivityRowContentDetailed | BetterBlock | views |
+| ActivityRowContentMultiLine | BetterBlock | views |
+| ActivityRowContentSingleLine | BetterBlock | views |
+| ActivityThread | BetterBlock | views |
+| AppDetailsOverflow | Nicknames | pop |
+| AttachmentTitle | DeArrow | msgs |
+| BaseChannelSuffix | ChannelListTyping | shell |
+| BaseDrawRenderer | LetMeSee | views |
+| BaseMessageAvatar | ShowSendingBot | msgs |
+| BaseSearch | ChatTabs | pop |
+| BaseVisuallyHiddenMessageText | BetterBlock | msgs |
+| ChannelContextMenu | ChatTabs | shell |
+| ChannelSidebar | BetterBlock | shell |
+| ClientPrimaryView | ChatTabs | shell |
+| CodeChannelEntityCard | QuickJoin | msgs |
+| ConnectedChannel | ChatTabs | shell |
+| Content | InstalledApps | pop |
+| ContextMenuTriggerWithKeyboardFocus | ChatTabs | pop |
+| DmsChannel | BetterBlock | shell |
+| DmsList | BetterBlock | shell |
+| DmsListItem | BetterBlock | shell |
+| EditFileDialogTitle | AnonymiseFileNames | comp |
+| EditProfileFormPane | Nicknames | pop |
+| FileFieldset | AnonymiseFileNames | comp |
+| GifListItem | BetterGifs | comp |
+| HuddleBottomBarContent | CallTimer | views |
+| HuddleInviteWindowWithPreviewContent | BetterHuddles | views |
+| HuddleMiniPanel | LetMeSee | views |
+| HuddleMvaWindowTitle | CallTimer | views |
+| HuddleRecordingIndicator | CallTimer | views |
+| LocalTimeRow | LocalTime | pop |
+| MemberProfileBaseEntity | LocalTime | pop |
+| MemberSlug | MentionProfiles | msgs |
+| Menu | AccountSwitcher, MessageLogger | pop |
+| Message | BetterBlock | msgs |
+| MessageActionsMenu | MessageLogger | pop |
+| MessageAttachmentYouTube | DeArrow | msgs |
+| MessageFile | BetterBlock, MessageLogger | msgs |
+| MessageFiles | BetterBlock, MessageLogger | msgs |
+| MessageKitAttachments | BetterBlock | msgs |
+| MessageKitGutter | ShowSendingBot | msgs |
+| MessageText | BetterBlock, MessageLogger | msgs |
+| MultiFileUploadItem | AnonymiseFileNames | comp |
+| PeopleGrid | BetterBlock | views |
+| Presence | LastSeen | pop |
+| ProfileHoverCard | BetterBlock, LastSeen | pop |
+| ProgressiveDisclosureSuccessCoachmarkWrapper | ShowSendingBot | shell |
+| ReplyBarAvatar | BetterBlock, CustomSlackbot | msgs |
+| SearchAutocomplete | BetterBlock | pop |
+| SearchInputBox | BetterBlock | pop |
+| SendButton | CharacterCounter | comp |
+| TextyAutocomplete | bChannel, BetterBlock | comp |
+| ThreadReplies | BetterBlock | msgs |
+| ThreadReplyGeneric | BetterBlock, MessageLogger | msgs |
+| UnstyledButton | WhoReacted | msgs |
+
+Filter-only or source-matched patches: ShowSendingBot (memo whose source has `c-message_kit__gutter__left`, i.e. MessageKitGutter), CharacterCounter (`{filter: isTextyInput}`), BetterGifs (`{filter: isGifPicker}`), NoUpsell (`{filter}` over every known name), ChannelListTyping (`{displayName: 'Channel', filter: isSidebarChannel}`, the sidebar row).
+
+Thunks Slick plugins patch or dispatch beyond the PLUGINS-taut.md table: `currentUserEndedTyping` (SilentTyping), `openEditProfileModal` (Nicknames), `startHuddle` (BetterHuddles), `showSavedItemNotification`, `autocompleteMembers`, `getMemberContextMenuTemplate` (already listed), `handleDeepLink` (`{uri}`, ChatTabs, QuickJoin). They route through `taut.Dispatch` like the others; the UI dispatches them where Slack would. Slices read beyond PLUGINS-state.md: `reactions` (WhoReacted, CopyReacted; Slack's `{_rxn_key: [{name, users, count}]}`), served from the messages' reactions.

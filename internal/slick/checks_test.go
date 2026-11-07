@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/taut"
 )
 
@@ -229,8 +230,18 @@ func init() {
 			t.Error("no redaction stylesheet")
 		}
 	}
+	// an admin-only channel the viewer may post in only because they're an admin
+	before["RestrictedChannelWarning"] = func(h *harness) {
+		self, _ := h.app.S.User(selfID)
+		admin := *self
+		admin.IsAdmin = true
+		h.app.S.PutUsers([]slack.User{admin})
+		h.app.S.Self = admin
+		props, _ := json.Marshal(map[string]any{"posting_restricted_to": map[string]any{"type": []string{"admin"}}})
+		h.app.S.PutConv(slack.Conversation{ID: "C0ADMINS01", Name: "admins-post", IsChannel: true, IsMember: true, NumMembers: 50, Properties: props})
+	}
 	checks["RestrictedChannelWarning"] = func(t *testing.T, h *harness) {
-		text := h.renderText(4, "MessageInputRoadblock", map[string]any{"channelId": chAnn, "roadblockMessage": "Only admins can post here."})
+		text := h.renderText(4, "MessageInputRoadblock", map[string]any{"channelId": "C0ADMINS01"})
 		if !strings.Contains(text, "Post anyway") {
 			t.Errorf("no way to post anyway: %q", text)
 		}
