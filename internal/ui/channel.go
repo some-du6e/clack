@@ -149,6 +149,11 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		if len(faces) > 3 {
 			faces = faces[:3]
 		}
+		if len(faces) == 0 {
+			// members not fetched yet: gray rounded squares (avatar()'s
+			// skeleton for an empty URL), never just the count
+			faces = make([]string, min(3, conv.NumMembers))
+		}
 		pw := gtx.Dp(8) + len(faces)*gtx.Dp(16) + gtx.Dp(6) + cw + gtx.Dp(8)
 		if len(faces) > 0 {
 			pw += gtx.Dp(4)

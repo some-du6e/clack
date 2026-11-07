@@ -669,7 +669,7 @@ func (s *savedBase) savedChip(gtx C, it *core.SavedItem) D {
 	if over {
 		fg, bg = rgb(0xc01343), rgb(0xffe8ef)
 		if s.th != nil && s.th.Dark {
-			fg, bg = s.p.Red, flatten(argb(0x33e01e5a), s.p.Bg)
+			fg, bg = rgb(0xde678a), rgb(0x300005) // content-imp / base-imp
 		}
 	}
 	return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D {
