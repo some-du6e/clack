@@ -31,7 +31,7 @@ import (
 // at ~0.45px.
 const (
 	Embolden     = 0.3 // labels (Text / DrawText), regular weight
-	BodyEmbolden = 0.3 // richview message bodies (BodyEmboldenFor)
+	BodyEmbolden = 0.33 // richview message bodies (BodyEmboldenFor): light bodies were -3% at 0.3 (1x and 2x)
 )
 
 // Outline emboldening on the embedded Lato (2026-11-07, 1x, ink vs Chrome):
@@ -41,7 +41,7 @@ const (
 func weightEmbolden(w font.Weight) float32 {
 	switch {
 	case w >= font.Black:
-		return 1.6
+		return 1.7 // names: -1.6% (1x) / -6.2% (2x) at 1.6
 	case w >= font.Bold:
 		return 1.1
 	}
@@ -89,7 +89,7 @@ func lightTextColor(c color.NRGBA, pxPerDp float32, w font.Weight, chrome bool) 
 	if y < 0.6 {
 		return c
 	}
-	k := float32(0.17)
+	k := float32(0.15) // rows -3.5% (1x) / -2.9% (2x) at 0.17
 	if !chrome {
 		k = 0.27 + max(0, 0.73-y)*2
 	}
