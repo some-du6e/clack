@@ -267,6 +267,10 @@ class ClackShapes extends TautPlugin {
       args?.key === 'message-` + tsTada + `-` + tGen + `' && args.name === 'tada' ? orig({ ...args, name: 'eyes' }, ...rest) : orig(args, ...rest))
     r.patchThunk('submitAddOrRemoveReaction', (orig) => (args, ...rest) =>
       keys(args) === 'add,name,reactionKey' ? orig({ ...args, name: args.name + '_ok' }, ...rest) : orig(args, ...rest))
+    r.patchThunk('commitMessageEdit', (orig) => (args, ...rest) =>
+      keys(args) === 'blocks,channelId,text,ts' ? orig({ ...args, text: args.text + ' (shape ok)' }, ...rest) : orig(args, ...rest))
+    r.patchThunk('chatDeleteFetcher', (orig) => (args, ...rest) =>
+      keys(args) === 'channel,ts' ? orig({ ...args, ts: '` + tsMine + `' }, ...rest) : orig(args, ...rest))
   }
 }
 return ClackShapes`
@@ -311,6 +315,22 @@ func TestTautThunkShapes(t *testing.T) {
 	}
 	if !strings.Contains(got, "eyes_ok") {
 		t.Errorf("reaction calls %q, want the plugin-rewritten name eyes_ok", got)
+	}
+	// edits (composer.SaveEdit) and deletes (popups' Delete hook)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	blocks := json.RawMessage(`[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"edited"}]}]}]`)
+	if err := commitEdit(ctx, app, tGen, tsMine, "edited", blocks); err != nil {
+		t.Fatal(err)
+	}
+	if ups := api.called("chat.update"); len(ups) != 1 || ups[0].Get("text") != "edited (shape ok)" || ups[0].Get("ts") != tsMine {
+		t.Errorf("chat.update %v, want the commitMessageEdit-shaped edit", ups)
+	}
+	if err := deleteMessage(ctx, app, tGen, "1700000099.000000"); err != nil {
+		t.Fatal(err)
+	}
+	if ds := api.called("chat.delete"); len(ds) != 1 || ds[0].Get("ts") != tsMine {
+		t.Errorf("chat.delete %v, want the chatDeleteFetcher-shaped delete", ds)
 	}
 }
 

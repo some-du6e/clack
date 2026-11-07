@@ -2,6 +2,7 @@ package messages
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"image"
 	"strings"
@@ -1010,8 +1011,8 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 		anchor := s.anchor(h, image.Point{}, image.Point{})
 		switch i {
 		case tbAddReact:
-			rr := r
-			h.OpenEmojiPicker(anchor, func(name string) { rc.onReact(rr, name, true) })
+			_ = rc
+			h.ShowOverlay(popups.NewReactionPicker(h, anchor, m.Channel, m.TS, m.ThreadTS, nil))
 		case tbReply:
 			h.OpenThread(m.Channel, threadRoot(&m))
 		case tbForward:
@@ -1023,6 +1024,7 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 		case tbMore:
 			mm := m
 			h.ShowOverlay(popups.NewMessageMenuOpts(h, anchor, m, popups.MessageMenuOpts{
+				Delete:  func(ctx context.Context, ch, ts string) error { return deleteMessage(ctx, app, ch, ts) },
 				OnEdit:  func() { s.startEdit(h, mm.TS) },
 				OnReply: func() { h.OpenThread(mm.Channel, threadRoot(&mm)) },
 			}))
@@ -1179,6 +1181,10 @@ func (s *listState) openEdit(h Host, m core.Message) {
 		}
 		h.Invalidate()
 	})
+	app := h.Core()
+	r.edit.SaveEdit = func(ctx context.Context, ch, ts, text string, blocks json.RawMessage) error {
+		return commitEdit(ctx, app, ch, ts, text, blocks)
+	}
 	s.scrollTo(m.TS)
 	h.Invalidate()
 }

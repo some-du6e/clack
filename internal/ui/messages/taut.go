@@ -2,6 +2,7 @@ package messages
 
 import (
 	"context"
+	"encoding/json"
 	"regexp"
 	"sync"
 	"sync/atomic"
@@ -70,6 +71,44 @@ func markRead(ctx context.Context, app *core.App, ch, ts string) error {
 			_, err := app.Mark(ctx, a.ID, a.TS)
 			return nil, err
 		})
+	return err
+}
+
+// commitEditArgs is Slack's commitMessageEdit {channelId, ts, blocks, text}.
+type commitEditArgs struct {
+	ChannelID string          `json:"channelId"`
+	TS        string          `json:"ts"`
+	Blocks    json.RawMessage `json:"blocks,omitempty"`
+	Text      string          `json:"text,omitempty"`
+}
+
+// commitEdit saves an inline edit (composer.SaveEdit) through Slack's
+// commitMessageEdit; the native applies the plugins' send transforms like
+// saveMessageEdit and calls core.Edit.
+func commitEdit(ctx context.Context, app *core.App, ch, ts, text string, blocks json.RawMessage) error {
+	t := tautOf()
+	_, err := taut.Dispatch(ctx, t, "commitMessageEdit", commitEditArgs{ChannelID: ch, TS: ts, Blocks: blocks, Text: text},
+		func(ctx context.Context, a commitEditArgs) (any, error) {
+			b := a.Blocks
+			if t != nil && len(b) > 0 && t.HasSendTransforms() {
+				b = t.TransformSendBlocks(ctx, b)
+			}
+			return nil, app.Edit(ctx, a.ChannelID, a.TS, a.Text, b)
+		})
+	return err
+}
+
+// deleteArgs is Slack's chatDeleteFetcher {channel, ts}.
+type deleteArgs struct {
+	Channel string `json:"channel"`
+	TS      string `json:"ts"`
+}
+
+// deleteMessage is popups' delete hook (MessageMenuOpts.Delete) through
+// Slack's chatDeleteFetcher over core.Delete.
+func deleteMessage(ctx context.Context, app *core.App, ch, ts string) error {
+	_, err := taut.Dispatch(ctx, tautOf(), "chatDeleteFetcher", deleteArgs{Channel: ch, TS: ts},
+		func(ctx context.Context, a deleteArgs) (any, error) { return nil, app.Delete(ctx, a.Channel, a.TS) })
 	return err
 }
 
