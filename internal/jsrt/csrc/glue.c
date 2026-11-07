@@ -429,3 +429,7 @@ EXPORT(jr_eval_bytecode) uint32_t jr_eval_bytecode(const uint8_t *buf, uint32_t 
 	if (JS_IsException(f)) return exc();
 	return ret(JS_EvalFunction(ctx, f));
 }
+
+// GC tuning: the cycle collector runs when the heap grows past threshold.
+EXPORT(jr_set_gc_threshold) void jr_set_gc_threshold(uint32_t threshold) { JS_SetGCThreshold(rt, threshold); }
+EXPORT(jr_gc_threshold) uint32_t jr_gc_threshold(void) { return (uint32_t)JS_GetGCThreshold(rt); }

@@ -135,7 +135,7 @@ func newEngine(r *Runtime) (*engine, error) {
 		e.fns[name] = f
 	}
 	// optional exports (older engine builds lack them)
-	for _, name := range []string{"jr_compile", "jr_free_js", "jr_eval_bytecode"} {
+	for _, name := range []string{"jr_compile", "jr_free_js", "jr_eval_bytecode", "jr_set_gc_threshold", "jr_gc_threshold"} {
 		if f := mod.ExportedFunction(name); f != nil {
 			e.fns[name] = f
 		}
@@ -554,6 +554,21 @@ func (e *engine) reportRejections() {
 }
 
 func (e *engine) hasDirty() bool { return e.dirty }
+
+// gcFloorBytes keeps QuickJS's cycle collector from running every few
+// hundred KiB of allocation (its threshold resets to 1.5× the live heap
+// after each collection); React's fiber garbage is cyclic, so a low
+// threshold means a full heap scan every couple of renders.
+const gcFloorBytes = 16 << 20
+
+func (e *engine) gcFloor() {
+	if e.fns["jr_gc_threshold"] == nil || e.mod == nil {
+		return
+	}
+	if e.call("jr_gc_threshold") < gcFloorBytes {
+		e.call("jr_set_gc_threshold", gcFloorBytes)
+	}
+}
 
 // ---- host imports ----
 

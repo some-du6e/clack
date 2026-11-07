@@ -247,7 +247,7 @@ func TestGojaFeatures(t *testing.T) {
 	var qmissing []string
 	for name, src := range feats {
 		_ = q.Do(func(js *jsrt.Ctx) error {
-			v, err := js.Eval("f.js", src)
+			v, err := js.Eval("f.js", "{"+src+"}") // block scope: class names repeat across snippets
 			if err != nil || v.IsUndefined() || v.String() == "undefined" {
 				qmissing = append(qmissing, name)
 			}
