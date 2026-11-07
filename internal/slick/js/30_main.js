@@ -144,8 +144,107 @@ const electronShim = {
   BrowserWindow: { getAllWindows: () => [] },
 }
 
+// the rest of Node's builtins: loadable, and a clear error when a main half
+// actually uses a part Clack doesn't offer (CustomSounds' macOS afconvert)
+const notInClack = (what) => (...args) => {
+  const err = new Error(`[slick] ${what} is not available to plugins in Clack`)
+  err.code = 'ENOSYS'
+  const cb = args.findLast?.((a) => typeof a === 'function')
+  if (cb) {
+    queueMicrotask(() => cb(err))
+    return undefined
+  }
+  throw err
+}
+const stubModule = (name) =>
+  new Proxy(
+    {},
+    {
+      get: (_t, key) => (key === '__esModule' ? false : key === 'default' ? stubModule(name) : typeof key === 'symbol' ? undefined : notInClack(`${name}.${String(key)}`)),
+    }
+  )
+const promisify = (fn) => (...args) =>
+  new Promise((resolve, reject) => fn(...args, (err, ...out) => (err ? reject(err) : resolve(out.length > 1 ? out : out[0]))))
+const utilShim = { promisify, inspect: (v) => (typeof v === 'string' ? v : JSON.stringify(v)), format: (...a) => a.join(' '), TextEncoder, TextDecoder }
+class Hash {
+  #alg
+  #parts = []
+  constructor(alg) {
+    this.#alg = String(alg).toLowerCase()
+  }
+  update(data) {
+    this.#parts.push(typeof data === 'string' ? new TextEncoder().encode(data) : new Uint8Array(data.buffer ?? data, data.byteOffset ?? 0, data.byteLength ?? data.length))
+    return this
+  }
+  digest(enc) {
+    let bin = ''
+    for (const p of this.#parts) for (let i = 0; i < p.length; i += 0x8000) bin += String.fromCharCode(...p.subarray(i, i + 0x8000))
+    const hex = go('hash', this.#alg, btoa(bin))
+    if (enc === 'hex') return hex
+    const bytes = Uint8Array.from(hex.match(/../g) ?? [], (h) => parseInt(h, 16))
+    if (enc === 'base64') return btoa(String.fromCharCode(...bytes))
+    return bytes
+  }
+}
+const cryptoShim = { createHash: (alg) => new Hash(alg), randomUUID: () => crypto.randomUUID(), randomBytes: (n) => crypto.getRandomValues(new Uint8Array(n)), webcrypto: crypto }
+class EventEmitter {
+  #l = new Map()
+  on(e, f) {
+    if (!this.#l.has(e)) this.#l.set(e, [])
+    this.#l.get(e).push(f)
+    return this
+  }
+  addListener(e, f) {
+    return this.on(e, f)
+  }
+  once(e, f) {
+    const g = (...a) => {
+      this.off(e, g)
+      f(...a)
+    }
+    return this.on(e, g)
+  }
+  off(e, f) {
+    this.#l.set(e, (this.#l.get(e) ?? []).filter((x) => x !== f))
+    return this
+  }
+  removeListener(e, f) {
+    return this.off(e, f)
+  }
+  emit(e, ...a) {
+    const ls = this.#l.get(e) ?? []
+    for (const f of [...ls]) f(...a)
+    return ls.length > 0
+  }
+}
+const urlShim = {
+  URL,
+  URLSearchParams,
+  fileURLToPath: (u) => decodeURIComponent(new URL(String(u)).pathname),
+  pathToFileURL: (p) => new URL('file://' + encodeURI(pathShim.resolve(p))),
+}
+
 function requireMain(name) {
   switch (name.replace(/^node:/, '')) {
+    case 'util':
+      return utilShim
+    case 'crypto':
+      return cryptoShim
+    case 'events':
+      return Object.assign(EventEmitter, { EventEmitter, default: EventEmitter })
+    case 'url':
+      return urlShim
+    case 'child_process':
+    case 'zlib':
+    case 'http':
+    case 'https':
+    case 'net':
+    case 'tls':
+    case 'dgram':
+    case 'worker_threads':
+    case 'readline':
+    case 'vm':
+      return stubModule(name.replace(/^node:/, ''))
     case 'fs':
       return fsShim
     case 'fs/promises':
@@ -227,7 +326,10 @@ function syncNotificationPatch() {
   if (notificationFilters.size && !unpatchNotifications) {
     unpatchNotifications = TA.redux.patchThunk('showNotification', (original) => (...args) => {
       const opts = args[0] || {}
-      const options = { title: opts.title ?? '', body: opts.message ?? opts.body ?? opts.subtitle ?? '', subtitle: opts.subtitle, silent: opts.silent, ...opts }
+      const message = opts.message
+      const body = typeof message === 'string' ? message : (message?.text ?? opts.body ?? '')
+      // Electron's NotificationConstructorOptions, from Slack's showNotification args
+      const options = { ...opts, title: opts.title ?? '', subtitle: opts.subtitle, body, silent: opts.silent }
       for (const f of [...notificationFilters]) {
         let ok = true
         try {

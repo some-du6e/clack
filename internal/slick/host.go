@@ -2,10 +2,16 @@ package slick
 
 import (
 	"context"
+	"crypto/md5"
 	"crypto/rand"
+	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash"
 	"mime"
 	"os"
 	"path/filepath"
@@ -168,6 +174,29 @@ func (s *Slick) installHost(rt *jsrt.Runtime) {
 			return "", nil
 		}
 		return p, nil
+	})
+
+	// node:crypto createHash for main halves
+	sync("hash", func(a []json.RawMessage) (any, error) {
+		data, err := base64.StdEncoding.DecodeString(strArg(a, 1))
+		if err != nil {
+			return nil, err
+		}
+		var h hash.Hash
+		switch strArg(a, 0) {
+		case "sha256":
+			h = sha256.New()
+		case "sha1":
+			h = sha1.New()
+		case "sha512":
+			h = sha512.New()
+		case "md5":
+			h = md5.New()
+		default:
+			return nil, fmt.Errorf("slick: hash %s isn't supported", strArg(a, 0))
+		}
+		h.Write(data)
+		return hex.EncodeToString(h.Sum(nil)), nil
 	})
 
 	// the bridge's initialSettings / readSettings: settings.json as Slick wrote it
