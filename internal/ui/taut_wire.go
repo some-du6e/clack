@@ -33,6 +33,10 @@ func (a *App) Taut() *taut.Taut {
 	return a.data.taut
 }
 
+// deliverTap sees every host tree plugins deliver (tests: what a patched
+// boundary drew). Nil outside tests; set before startTaut.
+var deliverTap func(root uint64, tree []byte)
+
 // startTaut connects Taut plugins (internal/taut) to the native UI
 // through slackc. taut.New reads the plugin config only; no JS engine
 // starts unless a plugin is enabled.
@@ -60,6 +64,9 @@ func (b *backend) startTaut(a *App) {
 				})
 			},
 			Deliver: func(root uint64, tree []byte) {
+				if f := deliverTap; f != nil {
+					f(root, tree)
+				}
 				if err := slackc.Deliver(root, tree); err != nil {
 					log.Printf("slackc: deliver %d: %v", root, err)
 				}
