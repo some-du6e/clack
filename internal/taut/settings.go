@@ -208,6 +208,9 @@ func (t *Taut) info(p *plugin) PluginInfo {
 	return info
 }
 
+// Dir is the plugin directory (config.json, user.css, plugins/).
+func (t *Taut) Dir() string { return t.dir }
+
 // Code returns a plugin's installed code (for "Update code" / export).
 func (t *Taut) Code(id string) string {
 	if p := t.get(id); p != nil {

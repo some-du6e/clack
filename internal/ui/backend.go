@@ -308,7 +308,14 @@ func (b *backend) handle(a *App, ev core.Event) {
 			c := m.conv(ev.Channel)
 			direct := ev.ConvKind == "im" || ev.ConvKind == "mpim"
 			if (ev.Mention || direct) && (c == nil || !c.Muted) && (cur != ev.Channel || !a.focused) {
-				a.Notify(b.notifyTitle(ev, c), richtext.PlainText(ev.Msg.Doc))
+				// through Taut's showNotification thunk: plugins may change or
+				// drop it (native: the desktop notification)
+				title, body := b.notifyTitle(ev, c), richtext.PlainText(ev.Msg.Doc)
+				a.dispatch("showNotification", map[string]any{"title": title, "message": body, "channelId": ev.Channel, "ts": ev.TS},
+					func(ctx context.Context, args map[string]any) (any, error) {
+						a.Notify(argStr(args, "title"), argStr(args, "message"))
+						return nil, nil
+					})
 			}
 		}
 	case "marked", "counts":

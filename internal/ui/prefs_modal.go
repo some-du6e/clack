@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"image"
 
 	"gioui.org/layout"
@@ -50,10 +51,26 @@ var (
 
 func (a *App) openPrefs() { a.openPrefsSection("notifications") }
 
-// openPrefsSection opens Preferences on a section (popups'
-// OpenPreferencesSection hook, e.g. "availability" from "Edit your working
-// hours").
+// openPrefsSection opens Preferences on a section through Slack's
+// openPrefsModal thunk (plugins may redirect it; Taut opens its own tab
+// with activeSection "advanced"). popups' OpenPreferencesSection hook and
+// "Edit your working hours" land here.
 func (a *App) openPrefsSection(section string) {
+	a.dispatch("openPrefsModal", map[string]any{"activeSection": section},
+		func(ctx context.Context, args map[string]any) (any, error) {
+			sec := argStr(args, "activeSection")
+			a.Post(func() { a.showPrefs(sec) })
+			return nil, nil
+		})
+}
+
+// showPrefs opens the Preferences dialog on section (a Clack section,
+// "taut", or a plugin tab id). It is openPrefsModal's native and
+// UIHooks.OpenPreferences.
+func (a *App) showPrefs(section string) {
+	if section == "" {
+		section = "notifications"
+	}
 	if mkModal == nil {
 		a.openPrefsMenu()
 		return
@@ -355,10 +372,20 @@ func (p *prefsModal) page(gtx layout.Context, sec string) layout.Dimensions {
 	return layout.Dimensions{Size: image.Pt(w, y)}
 }
 
+// setEmojiStyle goes through setUserPrefByApi (Slack's emoji_style pref),
+// applied locally.
 func (a *App) setEmojiStyle(s string) {
-	a.th.EmojiStyle = s
-	a.prefs.EmojiStyle = s
-	a.savePrefs()
+	a.dispatch("setUserPrefByApi", map[string]any{"pref": "emoji_style", "value": s},
+		func(ctx context.Context, args map[string]any) (any, error) {
+			v := argStr(args, "value")
+			a.Post(func() {
+				a.th.EmojiStyle = v
+				a.prefs.EmojiStyle = v
+				a.savePrefs()
+				a.Invalidate()
+			})
+			return nil, nil
+		})
 }
 
 // openPrefsMenu is the fallback when popups isn't linked.
