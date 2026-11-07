@@ -518,3 +518,51 @@ func selectedTheme(s *Slick) string {
 	}
 	return ""
 }
+
+// Slick's isThemeJson / parseThemeJson / themeToCss on the edge cases:
+// a present-but-null field is rejected, numbers print like String(n), and
+// the file name loses .json in any case.
+func TestThemeValidation(t *testing.T) {
+	for raw, want := range map[string]bool{
+		`{"vars":{"--a":"b"}}`:                     true,
+		`{"vars":{"--a":1}}`:                       true,
+		`{"palette":{}}`:                           true,
+		`{"css":"x{}"}`:                            true,
+		`{"css":["x{}","y{}"]}`:                    true,
+		`{"palette":null}`:                         false,
+		`{"palette":{"aubergine":null}}`:           false,
+		`{"sidebar":null}`:                         false,
+		`{"vars":null}`:                            false,
+		`{"vars":[]}`:                              false,
+		`{"css":null}`:                             false,
+		`{"css":["x{}",1]}`:                        false,
+		`{"vars":{"--a":"b"},"mode":null}`:         false,
+		`{"vars":{"--a":"b"},"mode":"dim"}`:        false,
+		`{"vars":{"--a":"b"},"name":null}`:         false,
+		`{"vars":{"--a":"b"},"description":false}`: false,
+		`{"name":"only a name"}`:                   false,
+		`null`:                                     false,
+		`[]`:                                       false,
+	} {
+		if got := validTheme(json.RawMessage(raw)); got != want {
+			t.Errorf("validTheme(%s) = %v, want %v", raw, got, want)
+		}
+	}
+	var th Theme
+	_ = json.Unmarshal([]byte(`{"vars":{"--n":1000000,"--f":0.5,"--big":1e21,"--tiny":1.5e-7,"--neg":-12.25}}`), &th)
+	css := themeCSS(th)
+	for _, d := range []string{"--n:1000000 !important", "--f:0.5 !important", "--big:1e+21 !important", "--tiny:1.5e-7 !important", "--neg:-12.25 !important"} {
+		if !strings.Contains(css, d) {
+			t.Errorf("no %q in %q", d, css)
+		}
+	}
+	for file, want := range map[string]string{"Mine.Json": "Mine", "a.JSON": "a", "b.json": "b", "c.txt": "c.txt", ".json": "Imported theme"} {
+		raw, err := ParseTheme([]byte(`{"vars":{"--a":"b"}}`), file)
+		var m struct {
+			Name string `json:"name"`
+		}
+		if err != nil || json.Unmarshal(raw, &m) != nil || m.Name != want {
+			t.Errorf("ParseTheme(%q) name %q, want %q (%v)", file, m.Name, want, err)
+		}
+	}
+}
