@@ -862,7 +862,7 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 	}
 	baseline := nd.Size.Y - nd.Baseline
 	xx := nd.Size.X
-	if r.bot {
+	if r.bot && r.m.User != "USLACKBOT" { // Slack shows no APP tag on Slackbot
 		xx += dp(gtx, mt.badgeGap)
 		s := textStyle{size: 10, weight: theme.Bold, col: c.BadgeText}
 		sz := measure(gtx, rc.th, s, "APP")
