@@ -63,8 +63,8 @@ var gifAnims = struct {
 	fetch func(ctx context.Context, url string, limit int64) ([]byte, error)
 }{
 	fetch: imgcache.PublicFetchLimit,
-	m:   map[gifAnimKey]*gifAnim{},
-	sem: make(chan struct{}, gifAnimWorkers),
+	m:     map[gifAnimKey]*gifAnim{},
+	sem:   make(chan struct{}, gifAnimWorkers),
 }
 
 // gifAnimURL is the animated .gif for a result (from the 200w webp preview).
