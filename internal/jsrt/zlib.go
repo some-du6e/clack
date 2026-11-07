@@ -10,7 +10,7 @@ import (
 )
 
 // maxInflate bounds what one DecompressionStream may produce.
-const maxInflate = 512 << 20
+var maxInflate = 512 << 20
 
 // zlibOp compresses (mode "c") or decompresses (mode "d") data in one of
 // the Compression Streams formats.

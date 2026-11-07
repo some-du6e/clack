@@ -32,6 +32,9 @@ func TestZlibOp(t *testing.T) {
 		t.Error("unknown format accepted")
 	}
 	// a bomb past maxInflate is refused, not buffered whole
+	old := maxInflate
+	maxInflate = 4 << 20
+	defer func() { maxInflate = old }()
 	var bomb bytes.Buffer
 	w := gzip.NewWriter(&bomb)
 	zero := make([]byte, 1<<20)
