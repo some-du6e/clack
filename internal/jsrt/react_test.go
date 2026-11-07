@@ -251,13 +251,15 @@ React.createElement(App)`)
 	rec.waitFor(t, "lazy loaded", func(ns []node) bool {
 		return find(ns, func(n node) bool { return n.T == "b" && n.text() == "loaded" }) != nil
 	})
-	select {
-	case body := <-bodyCh:
-		if find(body, func(n node) bool { return n.T == "div" && n.P["className"] == "overlay" }) == nil {
-			t.Fatalf("portal body: %+v", body)
+	// the subscriber first gets the current state, then the portal's commit
+	deadline := time.After(5 * time.Second)
+	for found := false; !found; {
+		select {
+		case body := <-bodyCh:
+			found = find(body, func(n node) bool { return n.T == "div" && n.P["className"] == "overlay" }) != nil
+		case <-deadline:
+			t.Fatal("no document update for the portal")
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("no document update for the portal")
 	}
 }
 
