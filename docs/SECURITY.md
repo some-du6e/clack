@@ -1,0 +1,194 @@
+# Security and policy review (2026-11-07)
+
+This review covers the whole codebase on branch `security` (based on `ui` at 4222be3, then merged with `ui` at e54f91a). It looks at credentials, deep links, the network, the plugin sandbox (Taut and Slick), the Hack Club scraping policy, and the supply chain. Every High and Medium finding is fixed on this branch. Each finding below lists its fix and the test that covers it.
+
+Severity scale:
+- **High:** a remote party (a message, a link or a plugin update) gets credentials, local files or code execution outside the sandbox.
+- **Medium:** the same, but it needs an unusual setup or a malicious plugin the user installed. Also covers a policy breach.
+- **Low:** defence in depth.
+- **Info:** a design decision, written down.
+
+## Trust model
+
+- **Slack content is hostile.** That covers messages, unfurls, files, links and other people's profiles. It must never reach credentials, local files, internal network addresses or disk.
+- **Plugins are trusted code, granted with informed consent.** This matches Taut and Slick. A plugin gets `fetch` (no CORS), `cookies`, `localStorage`, and `localStorage['localConfig_v2']`, which holds the session token as it does on Slack's own page. That was a deliberate decision. So a plugin can act as the user on Slack. The sandbox makes sure it can't do more than that: no reading or writing files outside its own storage, no host process, no breakout from wasm, no freezing the UI. Install-time consent tells the user what a plugin can do.
+- **Same-user local processes are trusted.** That includes the single-instance socket and the `slack://` handoff from the OS.
+
+## 1. Credentials
+
+| ID | Sev | Finding | Fix | Test |
+|---|---|---|---|---|
+| C-1 | High | The RTM gateway URL carries `token=xoxc-…`. A failed websocket dial returned an error that quoted the URL, and `rtm: disconnected (%v)` wrote it to the log. | `slack.scrubErr` redacts every HTTP and websocket error. `cmd/clack` also wraps the log output in `slack.RedactWriter`, as a last line of defence for `xox?-` tokens and `d`/`d-s` cookie values. | `TestDialErrorRedacted`, `TestRedact` (internal/slack/redact_test.go) |
+| C-4 | Medium | `Client.Download` attached the `d`/`d-s` cookies to any URL, including `http://` and non-Slack hosts. An https→http redirect kept the cookie. | `credOK`: cookies and the token go only to `https` slack.com / `*.slack.com` hosts or the configured API host. `CheckRedirect` refuses https→http and strips credentials on any other hop. Uploads to other hosts are refused. | `TestCookieOnlyToSlackHosts`, `TestRedirectDowngradeRefused` |
+| C-5 | Medium | Gateway URLs from the server (primary, fallback, `reconnect_url`) had the token appended without a host check. Sign-in accepted any workspace with a dot in it (`evil.com`) and trusted the URL `auth.test` returned. | Only `wss://` Slack hosts get the token. Sign-in needs a slack.com host. `ReadCreds` and account switching refuse non-https or non-Slack team/enterprise URLs. | `TestWebSocketURLRejectsForeignHosts`, `TestSignInRejectsNonSlackWorkspace`, `TestReadCredsRefusesForeignHosts` |
+| C-6 | Medium | creds.json: rewriting an existing 0644 file left it at 0644 (`os.WriteFile` doesn't chmod). On Windows, `0600` means nothing. | `slack.WriteCreds`/`WriteSecretFile`: write a temp file, then rename; the file is 0600 in a 0700 directory; on Windows an owner-only protected DACL (`x/sys/windows`, already a dependency). Loading tightens a file that's too open. The yoloslack→clack migration copies through the same path. | `TestWriteCredsPermissions` |
+| C-8 | Low | `%v`/`%+v` of `slack.Creds` or `SignInInput` printed the tokens and cookies. | Redacting `String`, `GoString` and `Format`. JSON output is unchanged. | `TestCredsFormattingRedacts` |
+| C-11 | Low | `clack login` echoed the pasted token and cookies. | `stty -echo` while reading secrets on Unix terminals. Windows still echoes. | code review |
+| P-* | — | Plugin-facing credential paths: see §3. | | |
+| C-14 | Info | No macOS Keychain or Windows Credential Manager. | Not done: it needs cgo (Keychain) or new dependencies. creds.json is owner-only on every OS instead. Future work. | — |
+
+The `d-s` cookie is stored, sent, scoped and redacted exactly like `d` (same `credOK` check, same redaction patterns, same file).
+
+## 2. Deep links and opening URLs
+
+| ID | Sev | Finding | Fix | Test |
+|---|---|---|---|---|
+| C-7 | Medium | Three copies of `openURL` checked only the prefix. `mailto:x?attach=~/.ssh/id_rsa` makes some mail clients attach the file. Control characters and quotes went through to `xdg-open`/`open`/`rundll32`. | One opener, `internal/ui/openurl`. It allows http, https and mailto only. mailto keeps only `subject`, `body`, `cc`, `bcc` and `to`. Control characters, spaces, quotes and backslashes are refused. The URL is re-serialized, so it always starts with its scheme and is never read as a `-flag`. Slick, Taut, slackc and the lightbox all go through it. | `TestCheck` (internal/ui/openurl) |
+| C-9 | Low | `slack://` deep links: `id=C1/t/…` or `id=C1?q=…` could smuggle extra route segments in. Links only ever navigated or opened a profile; nothing sent, joined, left, downloaded or signed out. | Ids and timestamps must have Slack's shape (C/D/G channels, U/W users, `\d+\.\d+` ts). | `TestDeepLinkRouteOnlyNavigates` (internal/ui/route_test.go) |
+| D-1 | Low | Single-instance socket on Linux without `XDG_RUNTIME_DIR`: `/tmp/clack-<uid>-<hash>.sock` sits in a world-writable directory. Another local user could squat on it, receive forwarded `slack://` links, or block startup. | The fallback socket now lives in `/tmp/clack-<uid>/`, which is created 0700 and must be owned by the user (not a symlink) before it's used. | `TestRuntimeDirRefusesForeignOrOpen` (internal/desktop) |
+| D-2 | Info | OS URL handlers (`"Clack.exe" "%1"`, `Exec=clack %u`). | The URL is the first positional argument. Go's `flag` stops at the first non-flag, so text a browser lets into the URL can't inject `-creds` or other flags. A forwarded link goes through Slack's `handleDeepLink` thunk (which plugins can see, as in Slack) and then C-9's route check. | code review |
+
+## 3. Plugin sandbox (Taut, Slick, jsrt)
+
+Plugins run in QuickJS compiled to wasm on wazero (`internal/jsrt`). Wasm has no host access except the imported host functions. There's no WASI preopen, no environment variables and no arguments.
+
+### jsrt and Taut
+
+| ID | Sev | Finding | Fix | Test |
+|---|---|---|---|---|
+| P-1 | High | Path traversal through a plugin id. The id check ran only in JS, in the plugin's own realm. A bundle whose `static get id()` returns `'Ok'` once and then `'../../x'` made Go write `plugins/<id>.js` and `.meta.json` anywhere the user can write. | `validPluginID` in Go: Taut's regex, not `.` or `..`, no Windows device names, no case-only duplicates. | `TestImportRejectsBadIDs` (internal/taut/security_test.go) |
+| P-2 | High | Uninterruptible loops. QuickJS-NG's generic array methods (`Array.prototype.reverse.call({length: 2**53-1})`, sort, join, includes…) loop in C without checking the interrupt, so the JS thread stayed at 100% forever and every `Do`/`Call` caller waited forever. | `csrc/quickjs-interrupt.patch` makes the slow paths of `JS_(Try)GetPropertyInt64` check the interrupt, and jsrt.wasm is rebuilt reproducibly in CI. Backstop: a watchdog gives up on a task still running `max(Timeout, 1 s)` past its deadline. `Done` fires and callers get `ErrClosed`. wazero's `WithCloseOnContextDone` was tried and dropped because it made renders 2–3× slower. | `TestArrayLikeLoopsInterrupted`, `TestWatchdogGivesUpOnStuckTask` (internal/jsrt/security_test.go) |
+| P-3 | Medium | A hung plugin was restarted after each crash, forever. | After 3 crashes in 5 minutes, plugins stay stopped with an error ("turn plugins back on one at a time"). | `TestHungPluginStopsAfterRepeatedCrashes` |
+| P-4 | Medium | Install from URL and "Update code" accepted plain http (`http.DefaultClient`, no cap). | `CheckPluginURL`/`FetchPlugin`: https only (http only for localhost, 127.0.0.1 and ::1), the final URL after redirects is checked too, 16 MiB cap (too large is an error, not a silent cut), 30 s timeout. Taut's warning ("Only install code you trust! Plugins can do anything you can do in Slack.") now also shows before "Update code". | `TestPluginURLs` |
+| P-5 | Medium | Plugin `fetch` had no body cap (a multi-GB response could exhaust memory) and no Go-side scheme check. | Bodies are capped at 128 MiB, and Go refuses anything but http(s), `file:` included, whatever `Options.Fetch` is. | `TestFetchSchemesAndSize` |
+| P-6 | Medium | The UI goroutine could block for up to 10 s cold-starting the runtime or restarting it after a crash (`Bridge.mount`, `SetRects`, `RenderEditor` from Preferences layout). | The Bridge runs at once on a live runtime and otherwise starts one in the background. Only one start runs at a time. | `TestBridgeDoesNotBlockOnStart` |
+| P-7 | Medium | `host_rejection` read its i32 flag from all 64 bits of the wasm value, only the low 32 of which are defined. This is the `dom.test.js` failure that got 5c18e8b reverted on `ui`. | Reads `uint32(st[2])`. | `TestJSSuites/dom.test.js` |
+| P-8 | Low | Plugin-chosen storage namespaces (`__clack.taut_kv`) never escaped `storage/`/`secrets/`, but `a/b`, `a~b` and `a:b` shared one file, and long or device names broke writes. | Names that aren't plain get a hash suffix. Existing file names are unchanged. | `TestStorageNamespaceFiles` |
+| P-9 | Low | Storage, bytecode-cache and config.json writes went through a fixed `<path>.tmp`, so a symlink planted there was written through. | `O_EXCL` `CreateTemp` then rename, which replaces a link instead of following it. 0600 files, 0700 directories. | `TestWritesDontFollowSymlinks`, `TestBytecodeCacheIgnoresSymlinks` |
+| P-10 | Low | Unchecked guest memory reads, and no wasm memory cap. | `hostCall`/`hostModule` check `mem.Read` and argument counts. A `malloc` returning 0 closes the runtime. Memory is capped at `MemoryLimit + 512 MiB`. Host-function panics, nested ones included, become JS errors. | `TestMemoryBombFailsCleanly`, `TestHostPanicNested`, `TestMicrotaskFloodInterrupted` |
+| P-11 | Low | `window.open`, link clicks and `location.assign` could open browser tabs in a loop. | At most 5 per 10 s, like a popup blocker; extra calls are dropped with one warning. | `TestOpenURLRateLimited` |
+| P-12 | Low | Taut's AccountSwitcher `checkAuth` sent a saved account's token and `d` cookie to its stored TeamURL without a host check, and left `d-s` out. Switching wrote creds.json with plain `0600` (nothing on Windows). | Only https slack.com hosts, `d-s` sent alongside `d`, and `slack.WriteCreds` (owner-only, Windows ACL). | `TestAccountCredsStayOnSlack` (internal/taut/accounts_security_test.go) |
+| P-13 | Info | By design, and unchanged: any plugin can reach any namespace through `taut_kv`, saved accounts through `taut_accounts` (Taut's shape, including xoxd), and any Web API method through `taut_api`. `cookies.get` returns `d`; `cookies.set` replaces it in memory. There is no isolation between plugins (see S-16). | — | — |
+
+Host functions plugins can reach:
+
+- **wazero imports (`jr`)**: `host_call`, `host_interrupt`, `host_module`, `host_rejection`, `host_free`. glue.c calls them, not JS, and every pointer and length is bounds-checked.
+- **WASI**: `clock_time_get`, `fd_close`, `fd_fdstat_get`, `fd_seek`, `fd_write`, `random_get`. No filesystem preopens, environment or arguments, and stdio is discarded.
+- **`__jrh`** (held privately by env.js and deleted from the global):
+  - log, timers, wake, now, random (64 KiB cap), digest, document and commit plumbing, gc.
+  - storage: `localStorage`/`sessionStorage` only.
+  - fetch: http(s) only, size cap, no credentials added by Go.
+  - fetchAbort.
+  - pickFiles: native picker; returns what the user picked.
+  - openURL: rate-limited, then `openurl.Check`.
+  - clipboardWrite. clipboardRead is refused by the UI.
+  - tz: `time.LoadLocation`, which rejects `..` and absolute paths.
+- **`__clack.taut_*`**: memory-only state and UI flags. `kv` is confined to `storage/` and `secrets/`. `callGo` is queued to the UI goroutine and never blocks. `thunk`/`callNative` run native thunks, and `api`/`messageMetadata` call Slack as the user, as designed. `cookie`/`accounts` are as described in P-13.
+- **`__clack.slick_*`**: see Slick below. They're captured privately and removed from the global.
+
+Runaway bounds:
+
+- Every call into the guest has a deadline and an interrupt.
+- Loops in C check the interrupt (P-2), and the watchdog is the backstop.
+- QuickJS heap limit, wasm page cap, and fetch body caps.
+- The UI goroutine never waits on the JS thread (P-6).
+- A plugin that keeps crashing stays off (P-3).
+
+### Slick
+
+| ID | Sev | Finding | Fix | Test |
+|---|---|---|---|---|
+| S-1 | High | A plugin could read any local file through its own `file` setting's **default**: `{type:'file', default:'~/.ssh/id_rsa'}`, read with `storedFileUrl` or the main half's `fs`, with no user action. | Only a value stored in settings.json counts (picked in Preferences, or in a settings.json the user dropped in). The schema default never does. | `TestFileSettingsOnlyReadWhatTheUserPicked` (internal/slick/security_test.go) |
+| S-2 | High | `api.settings.set(fileKey, '/any/path')` made that path readable. | `settings.set` on a `file` key accepts only `""` or `stored:…`. | same |
+| S-3 | Medium | `fs` had no protected paths, and symlinks weren't treated as a boundary. | Paths are made absolute and symlinks resolved. Anything under `$CLACK_HOME`, the Slick or Taut directories, or `/proc`, `/sys` and `/dev` is refused. Every read goes through the resolved path. Reads are capped at 16 MiB. | same (`..` path, creds.json, symlink to creds) |
+| S-4 | Medium | `shell.openExternal` was checked only in JS. Calling `__clack.slick_openURL` directly or `require('electron').shell.openExternal` opened any scheme, in a loop. | A Go-side check: http, https or mailto only, no leading `-`, no spaces or control characters, a length cap, and at most 3 per 10 s. It then goes through `openurl`. | `TestMainCapabilitiesAreEnforced`, `TestExternalURLAndRateLimit` |
+| S-5 | Medium | A main half could give itself capabilities by pushing to its own `capabilities` array. | The allowed set is fixed at load. It's what Go's cached declaration says (and Preferences shows), intersected with what the file declares, and checked with a captured `Set.prototype.has`. | `TestMainCapabilitiesAreEnforced` |
+| S-6 | Medium | `protocol.register('https', …)` took over every fetch in the runtime, including other plugins' requests and their headers. | Valid scheme names only. `http`, `https`, `file`, `slack`, `data`, `blob` and similar are reserved. One owner per scheme, matched case-insensitively. | `TestProtocolSchemesAreValidated` |
+| S-7 | Medium | An auto-update (every 3 h) could quietly add a privileged main half. | Updates must stay renderers. A main half only arrives when the user imports it. The stored source URL is re-checked before each update. | `TestURLInstallsAndUpdates` |
+| S-8 | Medium | URL installs followed redirects to http. | The final URL must be https (or localhost). | code review (the test harness's fetch can't redirect) |
+| S-9 | Medium | Install from file or URL ran the code at once, and a main half's capabilities were never shown. | `slick.Peek` reads the header without running it. Both install paths now ask first, with Slick's wording ("Plugins you install will have FULL ACCESS to your Slack data. Only install code you trust!"), the URL and its 3-hourly updates, and the main half's capabilities. The plugin's Source card lists them as well. | `TestSlickInstallText` (internal/ui/slick_prefs_install_test.go), `TestPeekReadsTheHeaderOnly` |
+| S-10 | Medium | MessageLogger stores message contents on disk (policy). | Memory-only by default. See §4. | `TestMessageKeepingPluginsStayInMemory` |
+| S-11 | Low | Plugin ids: `X.main` wrote `plugins/X.main.js` and became X's main half. `.`, `..` and hidden names were allowed. Case-only duplicates collide on macOS and Windows. | Those ids are rejected, and the id is checked before any file is read. | `TestPluginIDs` |
+| S-12 | Low | `__clack.slick_*` host functions were on the global. | Captured privately and deleted from the global. Blob namespaces must match `plugin:<id>[:secrets]`. | `TestHostFunctionsAreOffTheGlobal` |
+| S-13 | Low | Download errors (`*url.Error`) repeated the URL, which can carry `?token=`. | Only the cause is returned and logged. | code review |
+| S-14 | Low | Native file pickers could be stacked in a loop. | One picker at a time; extra calls get "cancelled". | `TestFilePickerIsOneAtATime` |
+| S-15 | Low | An imported theme's name came from the raw file name. | Base name, at most 100 characters. | `TestImportedThemeNameIsABaseName` |
+| S-16 | Info | Plugins aren't isolated from each other. Every Taut and Slick plugin and main half shares one JS realm, so a malicious plugin can patch shared prototypes and reach other plugins' objects and storage. `bridge.readSettings` returns the whole settings.json, as in Slick. | Not fixable without a realm per plugin. Install-time consent is the boundary between plugins. The hard limits (files, URLs, pickers, CPU, memory) are enforced in Go. Declared capabilities are a consent label and stop a main half from escalating itself. They aren't a sandbox between plugins. | — |
+
+MainCtx capabilities:
+
+| capability | enforcement |
+|---|---|
+| settings, onSettingsChange, log, emit, emitTo, storage | always on, scoped to the plugin's id; namespace checked in Go |
+| secrets | gated; Taut's 0600 secret store (but see S-16) |
+| net.fetch | gated; same reach as a renderer's `api.fetch` |
+| net.block / net.intercept | gated; they affect only `fetch` inside the JS runtime, never Clack's Go Slack client or the image cache. The handler sees `{url, method, resourceType}` only |
+| protocol.register | gated, boot only, scheme validated, reserved list, one owner per scheme |
+| notifications.filter | gated; one chain over the `showNotification` thunk |
+| shell.openExternal | gated in JS, checked again in Go (schemes, injection, 3 per 10 s) |
+| dialog.openFile | gated; native picker, one at a time, returns what the user chose |
+| cookies | gated; Taut's cookie host |
+| Node `fs` | read-only; only files the user picked; protected roots; 16 MiB |
+| frames, media, switches | gated; no-ops |
+
+## 4. Hack Club scraping policy
+
+Policy (https://news.hackclub.com/news/scraping-use-policy/): Clack never writes message contents to disk. Every disk write in the codebase was audited:
+
+| writer | contents | verdict |
+|---|---|---|
+| `internal/slack/creds.go` creds.json | tokens, cookies, team URLs | no messages; owner-only (C-6) |
+| `cmd/clack` `migrateConfig` | copies creds.json, ui.json, sidebar.json, meta.json | no messages |
+| `internal/store` cache/meta.json | users and profiles, custom emoji, usergroups, prefs, channel names, bots | metadata only, 0600 |
+| `internal/ui/backend.go` cache/sidebar.json | team, self, sections; per conversation id, name, kind, user, avatar and flags | no topics, previews or text; 0600 |
+| `internal/ui/prefs.go` ui.json | layout, last route (ids only), collapsed sections | search routes are no longer saved (C-12), so search queries don't reach disk |
+| `internal/imgcache` cache/img | avatars (`avatars.slack-edge.com`, `ca.slack-edge.com`, gravatar) and emoji (`emoji.slack-edge.com`, `a.slack-edge.com` emoji paths) | `DiskOK` allow-list; files.slack.com images, Slack's image proxy, unfurl and GIF images stay in memory (tested). Bytes are written only after a successful decode (C-13) |
+| `internal/ui/popups/emoji_frecency.go` | emoji names and use times | no messages |
+| `internal/ui/popups/lightbox.go` Download | a file the user explicitly saves to ~/Downloads | the user's choice; name sanitized (C-10), `O_EXCL` |
+| `internal/jsrt/bytecode.go` | compiled plugin bytecode, keyed by source hash | plugin code, not messages |
+| `internal/taut` taut/storage, secrets, config | plugin data, by design (docs/PLUGINS.md) | see below |
+| `internal/slick` settings.json, plugins/, themes | plugin code, settings and themes | no messages |
+| `internal/core` file fetch cache, history, search, Activity, canvases, lists, drafts | — | memory only; drafts live on Slack's servers |
+| logs | ids, counts, timings | no message text; output goes through `RedactWriter` |
+
+| ID | Sev | Finding | Fix | Test |
+|---|---|---|---|---|
+| C-12 | Low | The `search?q=…` route, which holds the search query, was saved to ui.json. | Search routes aren't saved. | code review |
+| C-13 | Low | The image disk tier wrote bytes before checking they decoded as an image. | It writes only after a successful decode. | `TestBombNotCached` |
+| C-10 | Low | Lightbox Download: path traversal and overwrites were already refused (`O_EXCL`, cleaned base name). Windows device names (`CON.png`) and truncation in the middle of a character weren't. | Device names get a `_` prefix; truncation happens on a rune boundary. | `TestLightboxSaveSanitizesName` |
+
+Nothing in Clack bundles a plugin or enables one by default. A user has to install every Taut or Slick plugin.
+
+**Message-keeping plugins (MessageLogger).** Slick's MessageLogger stores deleted and edited messages, with image previews, through `api.storage`. Running it is the user's choice, but it conflicts with the policy, so Clack keeps a short Go-side list of such plugins (`storesMessages` in internal/slick/messages.go; currently only MessageLogger, since nothing else in Slick's or Taut's plugin lists stores message text). Their storage (`api.storage`, `Cache`, stored files, `MainCtx.storage`/`secrets`) stays **in memory** and is gone when Clack quits. Preferences > Slick shows the policy note as a red banner in the plugin's detail view and asks before the plugin is installed or enabled. A **Keep on disk** switch asks again before allowing disk storage. Turning it back off moves the data to memory and deletes it from disk. Remove and Clear data clear both.
+
+We chose memory-only over a warning alone because it follows the policy without breaking the plugin. MessageLogger still works during a session, the Slick acceptance stays at 53/53, and storing to disk becomes an explicit, informed choice. Data stored on disk before this change stays where it is, unused, until the user turns Keep on disk on or uses Clear data or Remove.
+
+Other plugin storage (Taut `api.storage`, `localStorage`) persists on disk as in Taut (docs/PLUGINS.md). That's the plugin's own data.
+
+## 5. Network
+
+- **TLS only.** Slack API, websocket, files and sign-in use https/wss to Slack hosts (C-4, C-5). No `InsecureSkipVerify` anywhere.
+- **Credentials only to Slack.** `slack.credOK` and `CheckRedirect` (C-4). `cmd/clack`'s image fetcher sends slack.com hosts through `core.Fetch` (with the cookie, memory-only cache) and everything else through `imgcache.PublicFetch` (no credentials).
+
+| ID | Sev | Finding | Fix | Test |
+|---|---|---|---|---|
+| C-2 | High | SSRF from message content. Unfurl, image block and attachment URLs were fetched with the default client: `http://`, `127.0.0.1`, `169.254.169.254` (cloud metadata), 10/8 and so on. | `imgcache.PublicFetch` allows https only and no userinfo. The address check runs in the dialer's `Control` on the address actually dialled, so DNS rebinding doesn't help. It refuses loopback, RFC 1918, CGNAT, link-local, ULA, multicast and documentation ranges. No proxy (a proxy would dial for us). Redirects must stay https and pass the same dial check. 32 MiB cap. The lightbox Download and GIF tiles use it too. | `TestDialControlRefusesPrivate`, `TestPublicFetchRefusesURLs` (internal/imgcache/fetch_test.go), `TestGifAnimURLHosts` |
+| C-3 | Medium | Decompression bombs. A tiny PNG declaring 100000×100000 would try to allocate about 40 GB. | Header check before decoding: at most 16384 px per side and about 42 Mpx. GIF canvases are capped at 1024 px. | `TestDecodeRefusesBombs`, `TestBombNotCached` |
+| C-15 | Info | The public fetcher ignores `HTTP(S)_PROXY`, so behind a mandatory proxy third-party images don't load. Slack's own hosts are unaffected. | Accepted trade-off. | — |
+| D-3 | Info | The update check (`internal/desktop/update.go`) asks api.github.com over https and only shows the release page link. The link opens through `openurl`, and nothing is downloaded or run. | — | — |
+
+Plugin `fetch` reaches any https or http host, by design (no CORS, as in Taut and Slick). See §3 for its limits.
+
+## 6. Supply chain and CI
+
+| ID | Sev | Finding | Fix | Verification |
+|---|---|---|---|---|
+| SC-1 | Medium | The Go module/build cache could be poisoned. Every workflow shared one setup-go cache key, and the taut and slick jobs run third-party code (`npm run build:user-plugin`, Slick's esbuild) before setup-go saves that cache. ci and release builds would then restore it. | `cache: false` in the jobs that run third-party code, and in release.yml. | all workflows green |
+| SC-2 | Medium | Actions were referenced by movable tags, and setup-bun installed whatever bun was newest. | Every `uses:` is pinned to a full commit SHA with a version comment. bun is pinned to 1.4.4. supply-chain.yml fails on any unpinned action. | supply-chain.yml |
+| SC-3 | Medium | Token scope. release.yml gave `contents: write` to every job; the other workflows had no `permissions:`. Checkouts left the token in `.git/config`, where third-party npm/bun code could read it. | Top-level `contents: read`; `contents: write` only on release's publish job; `persist-credentials: false` everywhere. | — |
+| SC-5 | Medium | Taut (jeremy46231/taut) and Slick (3kh0/slick) were built from moving `main`. | Default to fixed commits (`TAUT_PIN`, `SLICK_PIN`). The `ref` input still overrides, and supply-chain.yml checks the pins match across workflows. npm/bun installs already used `--ignore-scripts`. | taut manual run with `ref=main` |
+| SC-6 | Medium | jsrt.wasm: wasi-sdk was piped from `curl` into `tar` unchecked, QuickJS-NG came from a movable tag, and nothing compared the committed binary with what the source builds. | wasi-sdk sha256 pinned, QuickJS-NG v0.18.0 checked against its commit, and the built wasm must equal the committed one byte for byte. It is reproducible. | jsrt.yml `wasm` job |
+| SC-4 | Low | `${{ inputs.ref }}` was pasted into `run:` (script injection by people with write access). | Passed through `env:`, quoted, and anything empty or starting with `-` is refused. | — |
+| SC-7 | Info | Vendored React (react 19.3.1, react-reconciler 0.34.0, scheduler 0.28.0) is byte-identical to the npm tarballs, with sha512 checked against registry integrity. | Versions, sha256 and integrity recorded in internal/jsrt/vendor/README.md. supply-chain.yml re-checks both on every push. | supply-chain.yml |
+| SC-8 | Low | Missing license notices: QuickJS-NG (MIT) inside jsrt.wasm and CLDR data (Unicode-3.0) in js/intl.js. | Added vendor/LICENSE.quickjs-ng and LICENSE.unicode. Still open: the repo has no top-level LICENSE, and release binaries ship without a third-party notices file. | — |
+| SC-9 | Info | No workflow uses Slack credentials. The only secret is `GITHUB_TOKEN` in the publish step. Artifacts hold binaries, screenshots of synthetic data, logs and built GPL plugins. No `pull_request_target`. | — | — |
+| SC-10 | Info | `go mod verify` passes, and go.sum has only expected modules. | Runs in supply-chain.yml (`go mod download all && go mod verify`). | supply-chain.yml |
+
+Dependency licenses: gioui.org (Unlicense or MIT), wazero (Apache-2.0), coder/websocket (ISC), godbus/dbus (BSD-2), golang.org/x/* (BSD-3), go-text/typesetting (Unlicense or BSD-3), go-ole (MIT), git.wow.st/gmp/jni (BSD-3), eliasnaur.com/font (Roboto license), Lato (OFL 1.1, assets/fonts/OFL.txt), React, react-reconciler and scheduler (MIT), QuickJS-NG (MIT), CLDR (Unicode-3.0). Taut and Slick (GPL-3.0) are never in the repo or the binaries; CI clones them only to build test plugins.
+
+## Open items
+
+- Keychain storage (C-14).
+- Isolating plugins from each other (S-16) would need a JS realm per plugin.
+- Plugin `fetch` can reach localhost and LAN addresses (no CORS, by design). Consider the PublicFetch address check for plugin traffic, behind a per-plugin opt-out for local development servers.
+- A top-level LICENSE and a third-party notices file in releases (SC-8).
