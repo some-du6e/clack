@@ -164,10 +164,17 @@ func (s *Slick) installHost(rt *jsrt.Runtime) {
 		return nil, nil
 	})
 
+	// MainCtx.dialog.openFile and the bridge's openFile: the native picker,
+	// one at a time (a plugin can't stack pickers in a loop); the result is
+	// the path the user chose, which doesn't make it readable by itself
 	async("openFile", func(ctx context.Context, a []json.RawMessage) (any, error) {
 		if s.opts.OpenFile == nil {
 			return "", nil
 		}
+		if !s.picking.CompareAndSwap(false, true) {
+			return "", nil
+		}
+		defer s.picking.Store(false)
 		p, err := s.opts.OpenFile(strArg(a, 0), strArg(a, 1))
 		if err != nil {
 			return "", nil

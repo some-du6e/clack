@@ -365,3 +365,43 @@ func TestImportedThemeNameIsABaseName(t *testing.T) {
 		}
 	}
 }
+
+func TestFilePickerIsOneAtATime(t *testing.T) {
+	h := newHarness(t)
+	release := make(chan struct{})
+	var mu sync.Mutex
+	calls := 0
+	h.s.opts.OpenFile = func(title, accept string) (string, error) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		<-release
+		return "/picked/by/user.woff2", nil
+	}
+	mustImport(t, h, probePlugin("PickProbe", `{}`, ""))
+	mustImport(t, h, probeMain("PickProbe", `["dialog"]`, `rpc: {
+		async spam(ctx) { const all = []; for (let i = 0; i < 5; i++) all.push(ctx.dialog.openFile({ title: "x" })); globalThis.__picks = Promise.all(all); return true },
+		async picks() { return await globalThis.__picks },
+	}`))
+	if err := h.s.SetEnabled(h.ctx(), "PickProbe", true); err != nil {
+		t.Fatal(err)
+	}
+	h.js(`return await S.callMain("PickProbe", "spam", [])`)
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+	var picks []string
+	h.jsInto(`return await S.callMain("PickProbe", "picks", [])`, &picks)
+	mu.Lock()
+	defer mu.Unlock()
+	got := 0
+	for _, p := range picks {
+		if p == "/picked/by/user.woff2" {
+			got++
+		} else if p != "" {
+			t.Fatalf("picks %v", picks)
+		}
+	}
+	if calls != 1 || len(picks) != 5 || got != 1 {
+		t.Fatalf("calls=%d picks=%v: more than one picker", calls, picks)
+	}
+}

@@ -107,8 +107,9 @@ type Slick struct {
 	dark    atomic.Bool
 	styled  string // the theme CSS last handed to the UI
 
-	mem       memStore  // storage of plugins that keep messages (messages.go)
-	openLimit rateLimit // shell.openExternal
+	mem       memStore    // storage of plugins that keep messages (messages.go)
+	openLimit rateLimit   // shell.openExternal
+	picking   atomic.Bool // a native file picker is open
 
 	changeMu sync.Mutex
 	changeCh map[chan struct{}]struct{}
