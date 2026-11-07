@@ -25,6 +25,10 @@ import (
 type MessageMenuOpts struct {
 	OnEdit  func() // start inline editing (own messages)
 	OnReply func() // open the thread composer
+	// Delete, when set, deletes for "Delete message…" (ui-messages routes
+	// it through Taut's chatDeleteFetcher); else DeleteMessage, else
+	// popups dispatches chatDeleteFetcher over core.Delete.
+	Delete func(ctx context.Context, ch, ts string) error
 }
 
 // NewMessageMenu builds the More actions menu for m. The menu's right edge
@@ -125,19 +129,21 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 		MenuItem{Label: "Connect to apps", Sub: []MenuItem{{Label: "No apps", Disabled: true}}},
 	)
 	if own {
-		items = append(items, Sep(), MenuItem{Label: "Delete message…", Hint: "delete", Danger: true, Do: func() { ConfirmDelete(h, m) }})
+		items = append(items, Sep(), MenuItem{Label: "Delete message…", Hint: "delete", Danger: true, Do: func() { confirmDelete(h, m, o.Delete) }})
 	}
 	return items
 }
 
 // ConfirmDelete asks before deleting m (delmodal.png) and deletes it on
 // confirmation. It shows the modal itself.
-func ConfirmDelete(h Host, m core.Message) {
+func ConfirmDelete(h Host, m core.Message) { confirmDelete(h, m, nil) }
+
+func confirmDelete(h Host, m core.Message, del func(ctx context.Context, ch, ts string) error) {
 	Confirm(h, "Delete message", "Are you sure you want to delete this message? This cannot be undone.", "Delete", true,
 		func(gtx layout.Context) layout.Dimensions { return actMsgPreview(gtx, h, m, true) },
 		func() {
 			ch, ts := m.Channel, m.TS
-			actDo(h, "", func(ctx context.Context, a *core.App) error { return a.Delete(ctx, ch, ts) })
+			actDo(h, "", func(ctx context.Context, _ *core.App) error { return deleteMessage(ctx, h, del, ch, ts) })
 		})
 }
 

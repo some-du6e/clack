@@ -88,7 +88,10 @@ func (d *crLinkDlg) save() {
 func (d *crLinkDlg) saveLink(text, url string) {
 	d.saved = true
 	if d.onSave != nil {
-		d.onSave(text, transformLink(url))
+		linkSource = "link-dialog" // addLinkTransform's ctx.source
+		u := transformLink(url)
+		linkSource = "paste"
+		d.onSave(text, u)
 	}
 }
 

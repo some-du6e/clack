@@ -13,6 +13,7 @@ import (
 	"gioui.org/op/paint"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/taut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 )
@@ -43,9 +44,21 @@ type Composer struct {
 	// edits your last message). The ui root wires it to the message list.
 	OnEditLast func()
 
+	// SaveEdit, when set, saves an inline edit instead of core.Edit
+	// (ui/messages routes it through taut.Dispatch("commitMessageEdit")).
+	// The blocks are the composer's own; plugin send transforms are the
+	// saver's job (commitMessageEdit's native applies them).
+	SaveEdit func(ctx context.Context, ch, ts, text string, blocks json.RawMessage) error
+
 	broadcast  bool
 	lastTyping time.Time
 	lastVer    uint64
+
+	// Server draft sync (syncDraftCreate / syncDraftUpdates /
+	// deleteDraftApi): see drafts_sync.go.
+	dsync draftSync
+
+	setBroadcastFn func(bool) // bound once: the plugin buttons' broadcast.set
 
 	// Slack boundaries (slack.go): this frame's chrome state, the props
 	// patched boundaries handed back, and widgets bound once so the
@@ -104,10 +117,12 @@ func (c *Composer) init() {
 	c.ed = NewEditor()
 	c.ac = newAutocomplete(c.h, c.ch)
 	bindAutocomplete(c.ed, c.ac, c.h.Invalidate)
+	c.ac.later, c.ac.thread = c.later, c.ts != ""
 	c.att = newAttachments(c.h)
 	typingHub(c.h.Core()).addHost(c.h) // listen for typing events
 	c.initIDs()
 	c.wPane, c.wInput = c.layoutPaneBody, c.layoutInputBody
+	c.setBroadcastFn = c.setBroadcast
 	c.wEditor, c.wAtt = c.layoutEditor, c.att.Layout
 }
 
@@ -156,6 +171,7 @@ func (c *Composer) emojiAtom(name string) *Atom {
 // edit composers draw just the box.
 func (c *Composer) Layout(gtx layout.Context) layout.Dimensions {
 	runRestores()
+	syncHooks()
 	th := c.h.Theme()
 	if c.st.Shaper != th.Shaper || c.st.Shaper == nil {
 		c.st = c.editorStyle()
@@ -299,6 +315,7 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 		Link:           c.ed.ActiveLink(),
 		CanSend:        !c.ed.Empty() || c.att.Len() > 0,
 		Broadcast:      c.broadcast,
+		SetBroadcast:   c.setBroadcastFn,
 		Origin:         c.Origin,
 		Key:            c.key(),
 		Channel:        c.ch,
@@ -341,6 +358,9 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 	st.Typing = typingLine(st.TypingNames)
 	st.ScrolledTop = c.ed.scrollY > 0
 	st.ScrolledBottom = c.ed.scrollY+c.ed.viewH < c.ed.contentH
+	if st.ThreadTS != "" && slackc.Patched(tautButtons) {
+		st.ChannelType = c.channelType() // only plugin buttons read it
+	}
 	return st
 }
 
@@ -387,10 +407,11 @@ func (c *Composer) changed() {
 		return
 	}
 	c.saveDraft()
+	c.syncDraftSoon()
 	if !c.ed.Empty() && time.Since(c.lastTyping) > 3*time.Second {
 		c.lastTyping = time.Now()
 		api, ch, ts := c.api, c.ch, c.ts
-		go api.typing(ch, ts)
+		go sendTyping(api, ch, ts)
 	}
 }
 
@@ -537,7 +558,9 @@ func (c *Composer) schedule(t time.Time) {
 	when := t.Format("Mon Jan 2 at 3:04 PM")
 	c.clearAfterSend()
 	go func() {
-		_, err := api.scheduleMessage(context.Background(), ch, ts, text, blocks, broadcast, t.Unix())
+		ctx := context.Background()
+		text, blocks := transformBlocks(ctx, text, blocks)
+		_, err := api.scheduleMessage(ctx, ch, ts, text, blocks, broadcast, t.Unix())
 		if err != nil {
 			c.later(func() { c.h.Toast("Couldn't schedule: " + err.Error()) })
 			c.restore(doc)
@@ -565,8 +588,17 @@ func (c *Composer) submit() {
 
 	if c.edit != nil {
 		m := c.edit
+		save := c.SaveEdit
 		go func() {
-			if err := api.edit(context.Background(), m.Channel, m.TS, text, blocks); err != nil {
+			ctx := context.Background()
+			var err error
+			if save != nil {
+				err = save(ctx, m.Channel, m.TS, text, blocks)
+			} else {
+				text, blocks := transformBlocks(ctx, text, blocks)
+				err = api.edit(ctx, m.Channel, m.TS, text, blocks)
+			}
+			if err != nil {
 				c.later(func() { c.h.Toast("Couldn't save your edit: " + err.Error()) })
 			}
 		}()
@@ -616,19 +648,18 @@ type outgoing struct {
 	broadcast bool
 }
 
-// send posts the message (with any attached files).
+// send posts the message (with any attached files) through Slack's
+// prepareAndSendMessage → sendMessage thunks.
 func (c *Composer) send(o *outgoing) {
-	api, ch, ts := c.api, c.ch, c.ts
-	doc, text, blocks, broadcast := o.doc, o.text, o.blocks, o.broadcast
 	prepared, rawFiles, hasFiles := c.att.uploadBatch()
 	if hasFiles {
 		c.att.SetUploading(true)
-		go func() {
-			comment := text
-			if doc.Empty() {
-				comment = ""
-			}
-			_, err := api.upload(context.Background(), core.UploadOpts{Channel: ch, ThreadTS: ts, Comment: comment, Files: rawFiles, Prepared: prepared})
+	}
+	job := &sendJob{api: c.api, ch: c.ch, ts: c.ts, o: o, prepared: prepared, raw: rawFiles, files: hasFiles,
+		draftID: c.draftID(), view: c.viewContext()}
+	go func() {
+		err := job.run(context.Background())
+		if hasFiles {
 			c.later(func() {
 				c.att.SetUploading(false)
 				if err != nil {
@@ -637,19 +668,53 @@ func (c *Composer) send(o *outgoing) {
 				}
 				c.att.Clear()
 			})
-			if err != nil {
-				c.restore(doc)
-			}
-		}()
-		return
-	}
-	go func() {
-		_, err := api.send(context.Background(), ch, ts, text, blocks, broadcast)
-		if err != nil {
+		} else if err != nil {
 			c.later(func() { c.h.Toast("Message not sent: " + err.Error()) })
-			c.restore(doc)
+		}
+		if err != nil {
+			c.restore(o.doc)
 		}
 	}()
+}
+
+// sendJob is one outgoing message; run happens off the UI goroutine.
+type sendJob struct {
+	api           coreAPI
+	ch, ts        string
+	o             *outgoing
+	prepared      []core.PreparedUpload
+	raw           []core.UploadFile
+	files         bool
+	draftID, view string
+}
+
+func (j *sendJob) run(ctx context.Context) error {
+	if t := currentTaut(); t.ThunkPatched(thPrepareAndSend) {
+		args := prepareSendArgs{ChannelID: j.ch, ReplyToTs: j.ts, Delta: j.o.doc.Delta(), Text: j.o.text, Blocks: j.o.blocks,
+			ShouldBroadcast: j.o.broadcast, Broadcast: j.o.broadcast, DraftID: j.draftID, ViewContext: j.view}
+		for _, p := range j.prepared {
+			args.FileIDs = append(args.FileIDs, p.ID)
+		}
+		_, err := taut.Dispatch(ctx, t, thPrepareAndSend, args, func(ctx context.Context, a prepareSendArgs) (any, error) {
+			broadcast := (a.ShouldBroadcast || a.Broadcast) && a.ReplyToTs != ""
+			return nil, j.deliver(ctx, a.ChannelID, a.ReplyToTs, a.Text, a.Blocks, broadcast)
+		})
+		return err
+	}
+	return j.deliver(ctx, j.ch, j.ts, j.o.text, j.o.blocks, j.o.broadcast)
+}
+
+// deliver is prepareAndSendMessage's native: share the files with the
+// message as their comment, or post the message.
+func (j *sendJob) deliver(ctx context.Context, ch, ts, text string, blocks json.RawMessage, broadcast bool) error {
+	if j.files {
+		comment := text
+		if j.o.doc.Empty() {
+			comment = ""
+		}
+		return sendFiles(ctx, j.api, ch, ts, comment, blocks, j.prepared, j.raw)
+	}
+	return postMessage(ctx, j.api, ch, ts, text, blocks, broadcast)
 }
 
 // checkThenSend runs the SendChecks hook (composer.addSendCheck) and
@@ -716,6 +781,7 @@ func (c *Composer) prepareAndSend(opts slackc.Props) {
 func (c *Composer) clearAfterSend() {
 	c.ed.SetDoc(NewDoc())
 	c.lastVer = c.ed.Version()
+	c.deleteServerDraft("message_sent")
 	c.broadcast = false
 	c.lastTyping = time.Time{}
 	clearDraft(c.ch, c.ts)
@@ -817,4 +883,15 @@ func HasDraft(ch, ts string) bool {
 	defer drafts.Unlock()
 	_, ok := drafts.m[draftKey(ch, ts)]
 	return ok
+}
+
+// setBroadcast sets the thread composer's "Also send to" checkbox (a
+// plugin button's broadcast.set). Runs on the UI goroutine (slackc calls
+// Go funcs from its pump).
+func (c *Composer) setBroadcast(on bool) {
+	if c.ts == "" || c.broadcast == on {
+		return
+	}
+	c.broadcast = on
+	c.h.Invalidate()
 }

@@ -721,7 +721,12 @@ func (c *chrome) tautButtonsProps(placement string) slackc.Props {
 	ctx := slackc.Props{"kind": kind, "channelId": st.Channel}
 	if st.ThreadTS != "" {
 		ctx["threadTs"] = st.ThreadTS
-		ctx["broadcast"] = st.Broadcast
+		// Taut's ComposerContext.broadcast: {active, channelType, set}.
+		b := slackc.Props{"active": st.Broadcast, "channelType": st.ChannelType}
+		if st.SetBroadcast != nil {
+			b["set"] = st.SetBroadcast
+		}
+		ctx["broadcast"] = b
 	}
 	return slackc.Props{"$key": st.Key + "/" + placement, "placement": placement, "context": ctx}
 }

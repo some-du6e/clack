@@ -46,6 +46,14 @@ func (c coreAPI) edit(ctx context.Context, ch, ts, text string, blocks json.RawM
 
 func (c coreAPI) typing(ch, threadTS string) { c.a.Typing(ch, threadTS) }
 
+func (c coreAPI) typingErr(ch, threadTS string) error { return c.a.Typing(ch, threadTS) }
+
+func (c coreAPI) saveDraft(ctx context.Context, o core.DraftOpts) (core.Draft, error) {
+	return c.a.SaveDraft(ctx, o)
+}
+
+func (c coreAPI) deleteDraft(ctx context.Context, id string) error { return c.a.DeleteDraft(ctx, id) }
+
 func (c coreAPI) upload(ctx context.Context, o core.UploadOpts) ([]core.UploadedFile, error) {
 	return c.a.Upload(ctx, o)
 }

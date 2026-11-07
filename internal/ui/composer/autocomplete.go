@@ -110,6 +110,12 @@ type Autocomplete struct {
 	// inserted pill. Without it picks are queued for Accepted.
 	OnAccept func(it acItem, start, end int)
 
+	// later runs f on the UI goroutine (the composer's queue); plugin
+	// autocomplete answers land through it. thread marks a thread composer
+	// (autocompleteMembers' isThread).
+	later  func(f func())
+	thread bool
+
 	ctx    context.Context
 	cancel context.CancelFunc
 
@@ -327,6 +333,7 @@ func (ac *Autocomplete) Update(d *Doc, caret int) {
 	ac.items = ac.compute(t)
 	ac.itemsVer++
 	ac.watchPresence()
+	ac.pluginRank(t, ac.items)
 	ac.itemsFor, ac.itemsGen, ac.itemsOK = t, gen, true
 	// async rows landed: keep the row the user picked selected
 	if selID != "" {
@@ -628,42 +635,11 @@ func (ac *Autocomplete) compute(t acTrigger) []acItem {
 	defer ac.mu.Unlock()
 	switch t.Kind {
 	case acUser:
-		users := make([]core.User, 0, len(ac.known)+len(ac.members)+len(ac.searched))
-		seen := map[string]bool{}
-		boost := map[string]bool{}
-		add := func(u core.User) {
-			if u.ID == "" || seen[u.ID] {
-				return
-			}
-			seen[u.ID] = true
-			users = append(users, u)
-		}
-		for id, u := range ac.members {
-			boost[id] = true
-			add(u)
-		}
-		for id := range ac.dmUsers {
-			boost[id] = true
-		}
-		for _, u := range ac.known {
-			add(u)
-		}
-		for _, u := range ac.searched {
-			add(u)
-		}
-		items := rankUsers(t.Query, users, boost, ac.members, ac.selfID, ac.groups, acMaxItems)
+		items := ac.memberSourcesLocked().rank(t.Query, false)
 		ac.resolveStatusEmoji(items)
-		kind, general := "", false
-		if ac.haveConv {
-			kind, general = ac.conv.Kind, ac.conv.IsGeneral
-		}
-		return append(items, rankBroadcasts(t.Query, kind, general)...)
+		return items
 	case acChannel:
-		hits := make([]core.ChannelHit, 0, len(ac.chanHits))
-		for _, h := range ac.chanHits {
-			hits = append(hits, h)
-		}
-		return rankChannels(t.Query, ac.convs, hits, acMaxItems)
+		return ac.channelSourcesLocked().rank(t.Query)
 	case acEmoji:
 		if ac.emojiIdx == nil {
 			return nil
