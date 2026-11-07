@@ -50,69 +50,136 @@ type Theme struct {
 	Images EmojiImages
 	// EmojiStyle is Slack's emoji set preference: "apple" (default) or "google".
 	EmojiStyle string
+
+	shapers    [2]*text.Shaper // light, dark
+	shaperDark bool            // Shaper is the dark-mode one
 }
 
-var (
-	facesOnce sync.Once
-	faces     []font.FontFace
+// Alias weights. Gio blends glyph coverage in linear light, so dark text on
+// a light background renders thinner than Chrome's Lato 400 and light text
+// on a dark background heavier. Instead of emboldening every frame, each
+// mode gets a shaper whose "Normal" face is what that mode's dominant text
+// needs (Medium for light mode, Regular for dark mode); the other face is
+// registered under an alias weight that Text picks by text color.
+const (
+	wRegularAlias font.Weight = -60 // light-mode shaper: true Regular (light text)
+	wMediumAlias  font.Weight = 60  // dark-mode shaper: Medium (dark text)
 )
 
-// Faces returns the parsed Lato faces (parsed once per process).
-func Faces() []font.FontFace {
-	facesOnce.Do(func() {
-		type src struct {
-			b []byte
-			w font.Weight
-			s font.Style
-		}
-		for _, f := range []src{
-			{fonts.Regular, font.Normal, font.Regular},
-			{fonts.Bold, font.Bold, font.Regular},
-			{fonts.Black, font.Black, font.Regular},
-			{fonts.Light, font.Light, font.Regular},
-			{fonts.Italic, font.Normal, font.Italic},
-			{fonts.BoldItalic, font.Bold, font.Italic},
-			{fonts.BlackItalic, font.Black, font.Italic},
-			{fonts.LightItalic, font.Light, font.Italic},
-		} {
-			face, err := opentype.Parse(f.b)
-			if err != nil {
-				panic("theme: bad embedded font: " + err.Error())
-			}
-			faces = append(faces, font.FontFace{
-				Font: font.Font{Typeface: Typeface, Weight: f.w, Style: f.s},
-				Face: face,
-			})
-		}
-	})
-	return faces
+var (
+	parseMu sync.Mutex
+	parsed  = map[*byte]font.Face{}
+)
+
+func parseFace(b []byte) font.Face {
+	parseMu.Lock()
+	defer parseMu.Unlock()
+	if f, ok := parsed[&b[0]]; ok {
+		return f
+	}
+	face, err := opentype.Parse(b)
+	if err != nil {
+		panic("theme: bad embedded font: " + err.Error())
+	}
+	parsed[&b[0]] = face
+	return face
 }
 
-// New builds a theme. System fonts stay enabled as a fallback for scripts
-// Lato lacks (CJK, symbols); Lato is preferred for everything it covers.
+// FacesFor returns the Lato collection for a mode's shaper.
+func FacesFor(dark bool) []font.FontFace {
+	type src struct {
+		b []byte
+		w font.Weight
+		s font.Style
+	}
+	normal, normalIt := fonts.Medium, fonts.MediumItalic
+	alt, altIt, altW := fonts.Regular, fonts.Italic, wRegularAlias
+	if dark {
+		normal, normalIt = fonts.Regular, fonts.Italic
+		alt, altIt, altW = fonts.Medium, fonts.MediumItalic, wMediumAlias
+	}
+	var out []font.FontFace
+	for _, f := range []src{
+		{normal, font.Normal, font.Regular},
+		{alt, altW, font.Regular},
+		{fonts.Bold, font.Bold, font.Regular},
+		{fonts.Black, font.Black, font.Regular},
+		{fonts.Light, font.Light, font.Regular},
+		{normalIt, font.Normal, font.Italic},
+		{altIt, altW, font.Italic},
+		{fonts.BoldItalic, font.Bold, font.Italic},
+		{fonts.BlackItalic, font.Black, font.Italic},
+		{fonts.LightItalic, font.Light, font.Italic},
+	} {
+		out = append(out, font.FontFace{Font: font.Font{Typeface: Typeface, Weight: f.w, Style: f.s}, Face: parseFace(f.b)})
+	}
+	return out
+}
+
+// Faces returns the light-mode collection (compatibility).
+func Faces() []font.FontFace { return FacesFor(false) }
+
+// New builds a theme with both mode shapers.
 func New(dark bool) *Theme {
 	t := Bare(dark)
-	t.SetShaper(NewShaper())
+	t.SetShapers(NewShaperFor(false), NewShaperFor(true))
 	return t
 }
 
-// Bare returns a theme without a shaper (set Shaper before drawing text).
-// Lets the app build the shaper concurrently with window creation.
+// Bare returns a theme without shapers (call SetShapers before drawing
+// text). Lets the app build them concurrently with window creation.
 func Bare(dark bool) *Theme {
 	t := &Theme{}
 	t.SetDark(dark)
 	return t
 }
 
-// NewShaper parses the embedded Lato faces and loads the system font index
-// (fallback for scripts Lato lacks). Safe to call from any goroutine.
-func NewShaper() *text.Shaper {
-	return text.NewShaper(text.WithCollection(Faces()))
+// NewShaperFor builds a mode's shaper (Lato + the system font index as a
+// fallback for scripts Lato lacks). Safe to call from any goroutine.
+func NewShaperFor(dark bool) *text.Shaper {
+	return text.NewShaper(text.WithCollection(FacesFor(dark)))
+}
+
+// NewShaper is the light-mode shaper (compatibility).
+func NewShaper() *text.Shaper { return NewShaperFor(false) }
+
+// SetShapers installs both mode shapers; Shaper follows the mode.
+func (t *Theme) SetShapers(light, dark *text.Shaper) {
+	t.shapers = [2]*text.Shaper{light, dark}
+	shaperThemes.Store(light, t)
+	shaperThemes.Store(dark, t)
+	t.pickShaper()
+}
+
+func (t *Theme) pickShaper() {
+	i := 0
+	if t.Dark {
+		i = 1
+	}
+	if t.shapers[i] != nil {
+		t.Shaper = t.shapers[i]
+		t.shaperDark = t.Dark
+	}
+}
+
+// weightFor maps Normal to the face the text color needs on this shaper.
+func (t *Theme) weightFor(f font.Font, c color.NRGBA) font.Font {
+	if f.Weight != font.Normal || (f.Typeface != Typeface && f.Typeface != "") {
+		return f
+	}
+	dark := IsDarkText(c)
+	if t.shaperDark && dark {
+		f.Weight = wMediumAlias
+	} else if !t.shaperDark && !dark {
+		f.Weight = wRegularAlias
+	}
+	return f
 }
 
 // SetDark switches palettes.
 func (t *Theme) SetDark(dark bool) {
 	t.Dark = dark
+	defer t.pickShaper()
 	if dark {
 		t.C = Flatten(DarkPalette)
 	} else {

@@ -105,8 +105,9 @@ func init() {
 		})
 	}
 	mkLightbox = func(a *App, img richtext.Image, m core.Message) Overlay { return popups.NewLightbox(a, img, m) }
+	mkAvailability = func(a *App) pagePositioned { return popups.NewAvailabilityPage(a) }
 	mkModal = func(a *App, title string, body layout.Widget, done func()) Overlay {
-		return popups.NewModal(a, popups.ModalOpts{Title: title, Body: body, Width: 600, OnClose: done,
+		return popups.NewModal(a, popups.ModalOpts{Title: title, Body: body, Width: 800, OnClose: done,
 			Buttons: []*popups.ModalButton{{Label: "Done", Kind: popups.BtnPrimary, Do: func() bool { return true }}}})
 	}
 	mkTeamMenu = func(a *App, anchor image.Point) Overlay { return popups.NewTeamMenu(a, a.anchor(anchor)) }
@@ -119,6 +120,7 @@ func init() {
 		popups.OpenOwnProfile = func() { a.OpenUserProfile(a.model().SelfID) }
 		popups.OpenChannelDetails = func(ch string) { a.OpenDetails(ch) }
 		popups.OpenPreferences = func() { a.openPrefs() }
+		popups.OpenPreferencesSection = func(sec string) { a.openPrefsSection(sec) }
 		popups.SignOut = func() { a.signOut() }
 	}
 	mkStatusModal = func(a *App) Overlay { return popups.NewSetStatusModal(a) }
