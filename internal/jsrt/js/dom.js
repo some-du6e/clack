@@ -2011,6 +2011,8 @@
     if (n._st) p.style = n._st;
     return p;
   };
+  // a new subscriber gets the current state on the next flush
+  __clack.resendDocument = () => { lastBody = lastCss = lastHtmlP = lastBodyP = null; docDirty = true; queueFlush(); };
   __clack.flush = () => {
     flushQueued = false;
     if (dirtyRoots.size) {

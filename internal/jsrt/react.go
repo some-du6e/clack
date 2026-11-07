@@ -177,7 +177,10 @@ func (r *Runtime) SetViewport(w, h, dpr float32, dark bool) {
 // document.head plus inline <style> in body, in order. Called on the JS
 // thread after each change, once per task at most. Any goroutine.
 func (r *Runtime) OnDocument(fn func(body []byte, css []string)) {
-	r.Post(func(js *Ctx) { js.r.onDoc = fn })
+	r.Post(func(js *Ctx) {
+		js.r.onDoc = fn
+		js.resendDocument()
+	})
 }
 
 // OnDocumentProps subscribes to the attributes and inline style of <html>
@@ -187,8 +190,7 @@ func (r *Runtime) OnDocument(fn func(body []byte, css []string)) {
 func (r *Runtime) OnDocumentProps(fn func(html, body []byte)) {
 	r.Post(func(js *Ctx) {
 		js.r.onDocProps = fn
-		// replay the current state
-		_, _ = js.Eval("<docprops>", "document.documentElement.toggleAttribute('data-clack', true), document.documentElement.removeAttribute('data-clack')")
+		js.resendDocument()
 	})
 }
 
@@ -229,4 +231,10 @@ func (r *Runtime) WantsEvent(typ string) bool {
 	r.globalMu.RLock()
 	defer r.globalMu.RUnlock()
 	return r.global[typ] > 0
+}
+
+func (c *Ctx) resendDocument() {
+	if fn := c.Global().Get("__clack").Get("resendDocument"); fn.IsFunction() {
+		_, _ = fn.Call()
+	}
 }
