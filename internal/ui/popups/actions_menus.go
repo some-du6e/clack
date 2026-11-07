@@ -169,6 +169,48 @@ func NewChannelMenu(h Host, anchor image.Point, convID string) *Menu {
 // ---- sidebar conversation menu (the shell's row right-click) ----
 
 // ChannelMenuInfo is what Slack's sidebar conversation menu depends on.
+// ChannelMenuAction is what popups' channel menu does for a sidebar menu
+// key, exactly as NewChannelMenu's rows do it: toggle_star and
+// toggle_mute through Slack (stars.add/remove, users.prefs) with their
+// toasts, leave after Slack's "Leave #name?" confirmation (private
+// channels warn that rejoining needs an invite), close for DMs. nil for
+// the keys the caller handles itself.
+func ChannelMenuAction(h Host, convID, key string) func() {
+	var c core.Conv
+	if a := h.Core(); a != nil {
+		c, _ = a.Conv(convID)
+	}
+	dm := c.Kind == "im" || c.Kind == "mpim" || c.Kind == "app" || strings.HasPrefix(convID, "D")
+	noun := "channel"
+	if dm {
+		noun = "conversation"
+	}
+	switch key {
+	case "toggle_star":
+		return func() { actToggleStar(h, convID, noun) }
+	case "toggle_mute":
+		return func() { actToggleMute(h, convID, noun) }
+	case "close":
+		return func() { actLeave(h, convID, "Conversation closed") }
+	case "leave":
+		if dm {
+			return func() { actLeave(h, convID, "Conversation closed") }
+		}
+		name := convTitle(h, c)
+		if name == "" {
+			name = convID
+		}
+		return func() {
+			msg := "You can rejoin this channel at any time."
+			if c.Kind == "private" {
+				msg = "You won't be able to rejoin this private channel unless someone invites you."
+			}
+			Confirm(h, "Leave #"+name+"?", msg, "Leave channel", true, nil, func() { actLeave(h, convID, "You left #"+name) })
+		}
+	}
+	return nil
+}
+
 type ChannelMenuInfo struct {
 	ID, Kind       string // Kind: core's ("channel", "private", "im", "mpim", "app")
 	Muted, Starred bool

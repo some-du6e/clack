@@ -607,6 +607,11 @@ func (a *App) openSidebarMenu(ch string, anchor image.Point, getTemplate slackc.
 
 // sbMenuDo is what the row menu's item key does for ch.
 func (a *App) sbMenuDo(ch, key string) func() {
+	// star, mute and leave/close are popups' channel-menu actions, as in
+	// Slack: real star/mute, leave after its confirmation
+	if f := popups.ChannelMenuAction(a, ch, key); f != nil {
+		return f
+	}
 	switch key {
 	case "view_details":
 		return func() { a.OpenDetails(ch) }
@@ -619,22 +624,8 @@ func (a *App) sbMenuDo(ch, key string) func() {
 				a.Toast("Name copied")
 			}
 		}
-	case "toggle_star":
-		return func() { a.toggleStar(ch) }
-	case "toggle_mute":
-		return func() {
-			if c := a.model().conv(ch); c != nil && a.data != nil {
-				a.data.setMuted(ch, !c.Muted)
-			}
-		}
 	case "mark_read":
 		return func() { a.markRead(ch) }
-	case "leave", "close":
-		return func() {
-			if a.data != nil {
-				a.data.leave(ch)
-			}
-		}
 	}
 	return nil
 }
