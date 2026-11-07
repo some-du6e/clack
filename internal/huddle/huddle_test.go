@@ -204,3 +204,27 @@ func TestParticipantsJSON(t *testing.T) {
 		t.Fatalf("%v %v", p.P, err)
 	}
 }
+
+func TestUserOfExternal(t *testing.T) {
+	for in, want := range map[string]string{
+		"E09V59WQY1E-R0CGNGYKT9N-U0CFFEW8VMK":                "U0CFFEW8VMK",
+		"E09V59WQY1E-R0CGNGYKT9N-U0CFFEW8VMK-12566582084688": "U0CFFEW8VMK",
+		"E1-R1-U9": "U9",
+	} {
+		if got := userOfExternal(in); got != want {
+			t.Errorf("%s: %s", in, got)
+		}
+	}
+}
+
+func TestTwoDevices(t *testing.T) {
+	s := &Session{o: Options{SelfID: "U1"}, people: map[string]*Participant{}, byAtt: map[string]string{}, join: &joinInfo{}}
+	s.person("U1").AttendeeID = "a1"
+	s.byAtt["a1"] = "U1"
+	if k := s.keyFor("a2", "U1"); k != "U1/a2" || s.people[k].UserID != "U1" || s.people[k].Self {
+		t.Fatalf("second device: %q %+v", k, s.people[k])
+	}
+	if k := s.keyFor("b1", "U2"); k != "U2" || s.userOf("b1") != "U2" {
+		t.Fatalf("other user: %q", k)
+	}
+}

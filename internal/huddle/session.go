@@ -136,7 +136,7 @@ type Session struct {
 	captions bool
 	people   map[string]*Participant // by user id
 	order    []string
-	byAtt    map[string]string // attendee id -> user id
+	byAtt    map[string]string // attendee id -> people key (user id, or "U…/<attendee>" for a second device)
 	streamAt map[uint32]string // audio stream id -> attendee id
 	sources  map[uint32]streamDesc
 	lines    []Caption
@@ -226,14 +226,52 @@ func (s *Session) openDevice() {
 
 // person returns (creating) the participant for user id. Callers hold mu
 // (or own s exclusively).
-func (s *Session) person(uid string) *Participant {
-	p := s.people[uid]
+func (s *Session) person(uid string) *Participant { return s.personKey(uid, uid) }
+
+func (s *Session) personKey(key, uid string) *Participant {
+	p := s.people[key]
 	if p == nil {
-		p = &Participant{UserID: uid, Self: uid == s.o.SelfID}
-		s.people[uid] = p
-		s.order = append(s.order, uid)
+		p = &Participant{UserID: uid, Self: key == s.o.SelfID}
+		s.people[key] = p
+		s.order = append(s.order, key)
 	}
 	return p
+}
+
+// keyFor maps a Chime attendee to its participant key. One person in the
+// huddle from two devices has two attendees and, like Slack, two tiles.
+// Callers hold mu.
+func (s *Session) keyFor(att, uid string) string {
+	if k, ok := s.byAtt[att]; ok {
+		return k
+	}
+	if uid == "" {
+		return ""
+	}
+	k := uid
+	if p := s.people[uid]; p != nil && p.AttendeeID != "" && p.AttendeeID != att {
+		k = uid + "/" + att
+	}
+	s.byAtt[att] = k
+	if p := s.personKey(k, uid); p.AttendeeID == "" {
+		p.AttendeeID = att
+	}
+	return k
+}
+
+// userOf is the Slack user behind an attendee ("" if unknown). Callers hold mu.
+func (s *Session) userOf(att string) string {
+	if p := s.people[s.byAtt[att]]; p != nil {
+		return p.UserID
+	}
+	return ""
+}
+
+// UserOf is the Slack user behind a Chime attendee id ("" if unknown).
+func (s *Session) UserOf(att string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.userOf(att)
 }
 
 // Done is closed when the session ended.
@@ -269,7 +307,7 @@ func (s *Session) State() State {
 	}
 	for k, v := range s.sinks {
 		vid := Video{Key: k, AttendeeID: strings.TrimSuffix(k, "#content"), Content: strings.HasSuffix(k, "#content")}
-		vid.UserID = s.byAtt[vid.AttendeeID]
+		vid.UserID = s.userOf(vid.AttendeeID)
 		vid.W, vid.H = v.size()
 		st.Videos = append(st.Videos, vid)
 	}
@@ -986,7 +1024,7 @@ func (s *Session) onIndex(ix *indexFrame) {
 		s.sources[src.StreamID] = src
 		att := strings.TrimSuffix(src.AttendeeID, "#content")
 		if u := userOfExternal(src.ExternalUserID); u != "" && att != "" {
-			s.byAtt[att] = u
+			s.keyFor(att, u)
 		}
 		if strings.HasSuffix(src.AttendeeID, "#content") {
 			shares[att] = true
@@ -1083,16 +1121,12 @@ func (s *Session) onAudioInfo(info []audioStreamInfo) {
 		switch {
 		case st.AttendeeID != "":
 			s.streamAt[st.StreamID] = st.AttendeeID
-			uid := userOfExternal(st.ExternalUserID)
-			if uid == "" {
-				uid = s.byAtt[st.AttendeeID]
-			}
-			if uid == "" {
+			k := s.keyFor(st.AttendeeID, userOfExternal(st.ExternalUserID))
+			if k == "" {
 				continue
 			}
-			s.byAtt[st.AttendeeID] = uid
-			p := s.person(uid)
-			p.AttendeeID, p.InMedia = st.AttendeeID, true
+			p := s.people[k]
+			p.InMedia = true
 			if st.HasMuted && !p.Self {
 				p.Muted = st.Muted
 			}
@@ -1105,9 +1139,19 @@ func (s *Session) onAudioInfo(info []audioStreamInfo) {
 		default: // the stream went away
 			att := s.streamAt[st.StreamID]
 			delete(s.streamAt, st.StreamID)
-			if uid := s.byAtt[att]; uid != "" {
-				if p := s.people[uid]; p != nil {
+			if k := s.byAtt[att]; k != "" {
+				if p := s.people[k]; p != nil {
 					p.InMedia = false
+					if strings.Contains(k, "/") { // a second device left: drop its tile
+						delete(s.people, k)
+						delete(s.byAtt, att)
+						for i, o := range s.order {
+							if o == k {
+								s.order = append(s.order[:i], s.order[i+1:]...)
+								break
+							}
+						}
+					}
 				}
 			}
 		}
@@ -1175,17 +1219,16 @@ func (s *Session) onData(m dataMessage) {
 		return
 	}
 	s.mu.Lock()
-	uid := s.byAtt[m.SenderAttendee]
-	known := uid != ""
-	if uid == "" && m.SenderExternal != "" {
-		uid = userOfExternal(m.SenderExternal)
-	}
+	key := s.byAtt[m.SenderAttendee]
+	known := key != ""
+	uid := s.userOf(m.SenderAttendee)
 	s.mu.Unlock()
 	switch {
 	case pm.Reacji != nil && pm.Reacji.Emoji != "" && known:
 		s.mu.Lock()
-		p := s.person(uid)
-		p.Reaction, p.ReactedAt = pm.Reacji.Emoji, time.Now()
+		if p := s.people[key]; p != nil {
+			p.Reaction, p.ReactedAt = pm.Reacji.Emoji, time.Now()
+		}
 		s.mu.Unlock()
 		s.changed()
 	case pm.MuteRequest != nil && pm.MuteRequest.PeerID == self && known:
@@ -1211,7 +1254,7 @@ func (s *Session) onTranscript(b []byte) {
 		if r.Text == "" {
 			continue
 		}
-		uid := s.byAtt[r.Speaker]
+		uid := s.userOf(r.Speaker)
 		if uid == "" {
 			uid = userOfExternal(r.SpeakerEx)
 		}

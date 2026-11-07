@@ -164,11 +164,27 @@ func firstNonEmpty(s ...string) string {
 	return ""
 }
 
-// userOfExternal maps a Chime ExternalUserId ("<enterprise>-<room>-<user>")
-// to the Slack user id.
+// userOfExternal maps a Chime ExternalUserId to the Slack user id:
+// "<enterprise>-<room>-<user>", or with a device suffix when the person is in
+// the huddle from more than one device.
 func userOfExternal(ext string) string {
-	if i := strings.LastIndexByte(ext, '-'); i >= 0 {
-		return ext[i+1:]
+	parts := strings.Split(ext, "-")
+	for i := len(parts) - 1; i >= 0; i-- {
+		if p := parts[i]; len(p) >= 9 && (p[0] == 'U' || p[0] == 'W') && isIDChars(p) {
+			return p
+		}
 	}
-	return ext
+	if len(parts) >= 3 {
+		return parts[2]
+	}
+	return ""
+}
+
+func isIDChars(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; !(c >= 'A' && c <= 'Z' || c >= '0' && c <= '9') {
+			return false
+		}
+	}
+	return true
 }
