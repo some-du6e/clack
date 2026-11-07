@@ -287,6 +287,10 @@ func (b *backend) handle(a *App, ev core.Event) {
 	m := &b.m
 	changed := false
 	switch ev.Type {
+	case "typing":
+		if envFlag("TYPINGLOG") { // ids only
+			log.Printf("ui: typing ch=%s user=%s self=%v", ev.Channel, ev.UserID, ev.UserID == b.selfID)
+		}
 	case "message":
 		if ev.Count != nil {
 			changed = b.setCount(ev.Channel, *ev.Count)
