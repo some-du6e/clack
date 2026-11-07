@@ -2,7 +2,6 @@ package jsrt
 
 import (
 	"context"
-	_ "embed"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -17,9 +16,7 @@ import (
 )
 
 // jsrt.wasm is QuickJS-NG + csrc/glue.c, built by .github/workflows/jsrt.yml.
-//
-//go:embed jsrt.wasm
-var wasmBin []byte
+// It is embedded compressed in assets.pack (see pack.go).
 
 const excBit = 0x80000000
 
@@ -75,7 +72,11 @@ var engineWasm = sync.OnceValue(func() []byte {
 			return b
 		}
 	}
-	return wasmBin
+	files, err := unpack()
+	if err != nil {
+		return nil
+	}
+	return files["jsrt.wasm"]
 })
 
 func newEngine(r *Runtime) (*engine, error) {
