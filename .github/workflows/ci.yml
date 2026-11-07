@@ -50,6 +50,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: resources (icon #1, manifest, version info)
+        run: |
+          go install github.com/tc-hib/go-winres@v0.3.3
+          go-winres make --in packaging/windows/winres.json --out cmd/clack/rsrc --arch amd64 --file-version 0.0.0.0 --product-version "0.0.0-dev+${GITHUB_SHA::7}"
       - name: build (cross, no cgo)
         run: |
           mkdir -p dist

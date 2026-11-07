@@ -70,22 +70,11 @@ func storeBC(dir string, k [32]byte, body []byte) {
 		return
 	}
 	s := sha256.Sum256(body)
-	// a fresh O_EXCL temp file, renamed over p: never writes through a
-	// symlink someone left at p or p.tmp
-	f, err := os.CreateTemp(filepath.Dir(p), ".bc-*.tmp")
-	if err != nil {
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, append(append([]byte(nil), body...), s[:]...), 0o600); err != nil {
 		return
 	}
-	_, err = f.Write(append(append([]byte(nil), body...), s[:]...))
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	if err == nil {
-		err = os.Rename(f.Name(), p)
-	}
-	if err != nil {
-		_ = os.Remove(f.Name())
-	}
+	_ = os.Rename(tmp, p)
 }
 
 // evalBoot evaluates a trusted boot script through the bytecode cache

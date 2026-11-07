@@ -594,13 +594,15 @@ React.createElement(Ctx.Provider, { value: 'from-row-patch' }, React.createEleme
 	portal := func(label string) {
 		t.Helper()
 		err := r.Do(func(js *Ctx) error {
+			// one component type across updates, as taut's componentElement
+			// gives per Slack name, so its state survives
 			el, err := js.Eval("child.js", `
-function Text(props) {
+globalThis.PortalText = globalThis.PortalText || function PortalText(props) {
   const v = React.useContext(Ctx);
   const [n] = React.useState(() => (globalThis.mounts = (globalThis.mounts || 0) + 1));
   return React.createElement('span', { className: 'text' }, v + ':' + props.label + ':' + n);
-}
-React.createElement(Text, { label: '`+label+`' })`)
+};
+React.createElement(globalThis.PortalText, { label: '`+label+`' })`)
 			if err != nil {
 				return err
 			}

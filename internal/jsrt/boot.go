@@ -15,7 +15,6 @@ import (
 	"hash"
 	"io"
 	"net/http"
-	neturl "net/url"
 	"runtime"
 	"sort"
 	"strings"
@@ -466,24 +465,6 @@ type fetchResult struct {
 	Redirected bool        `json:"redirected"`
 }
 
-// maxFetchBytes caps a fetch() response body; a larger one fails with a
-// TypeError instead of growing Go's heap and the wasm memory without bound.
-var maxFetchBytes int64 = 128 << 20
-
-// fetchURLAllowed: fetch() goes to the network over http(s) only. data:
-// and blob: URLs are answered in JS (web.js) and never reach Go; file:,
-// ftp: and every other scheme are refused here, whatever Options.Fetch is.
-func fetchURLAllowed(raw string) error {
-	u, err := neturl.Parse(raw)
-	if err != nil {
-		return err
-	}
-	if s := strings.ToLower(u.Scheme); s != "http" && s != "https" || u.Host == "" {
-		return fmt.Errorf("fetch: URL scheme %q is not supported", u.Scheme)
-	}
-	return nil
-}
-
 func (r *Runtime) startFetch(id int, method, url string, headers [][2]string, body []byte) {
 	ctx, cancel := context.WithCancel(r.ctx)
 	r.fetches[id] = cancel
@@ -498,10 +479,6 @@ func (r *Runtime) startFetch(id int, method, url string, headers [][2]string, bo
 			fn := js.Global().Get("__jr").Get("fetchDone")
 			_, _ = fn.Call(id, nil, nil, name, err.Error())
 		})
-	}
-	if err := fetchURLAllowed(url); err != nil {
-		fail(err)
-		return
 	}
 	go func() {
 		var rd io.Reader
@@ -530,11 +507,8 @@ func (r *Runtime) startFetch(id int, method, url string, headers [][2]string, bo
 			fail(err)
 			return
 		}
-		data, err := io.ReadAll(io.LimitReader(resp.Body, maxFetchBytes+1))
+		data, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		if err == nil && int64(len(data)) > maxFetchBytes {
-			err = fmt.Errorf("fetch: the response body is larger than %d MiB", maxFetchBytes>>20)
-		}
 		if err != nil {
 			fail(err)
 			return
