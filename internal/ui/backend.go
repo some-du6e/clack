@@ -31,6 +31,7 @@ type backend struct {
 	selfID string
 	domain string
 	teamID string
+	ext    map[string]*convInfo // ResolveConv results for convs outside the sidebar
 
 	tabCache  map[string][]chTab
 	bookmarks map[string][]core.Bookmark
@@ -344,6 +345,19 @@ func (b *backend) handle(a *App, ev core.Event) {
 		}
 	case "conv", "conv_removed", "sidebar_changed", "resync":
 		b.resnapshot(a)
+	case "names":
+		// core resolved channel/user/bot names in the background: re-read
+		// the visible conversations so mentions and headers re-render.
+		b.resnapshot(a)
+		a.refreshVisible()
+		for id := range b.ext {
+			delete(b.ext, id) // re-resolve closed-DM headers
+		}
+	case "tabs":
+		delete(b.fetched, ev.Channel)
+		if a.router.Current().Channel() == ev.Channel {
+			b.opened(ev.Channel)
+		}
 	case "connection":
 		m.Connected = ev.Connected
 		changed = true
@@ -471,6 +485,42 @@ func (b *backend) opened(ch string) {
 }
 
 func (b *backend) tabs(ch string) []chTab { return b.tabCache[ch] }
+
+// resolved returns header info for a conversation that isn't in the sidebar
+// (a closed DM, a channel opened from search) via core.ResolveConv, fetched
+// once in the background. UI goroutine only.
+func (b *backend) resolved(ch string) *convInfo {
+	if ci, ok := b.ext[ch]; ok {
+		return ci
+	}
+	if b.ext == nil {
+		b.ext = map[string]*convInfo{}
+	}
+	b.ext[ch] = nil // in flight
+	a := b.app
+	go func() {
+		ctx, cancel := context.WithTimeout(b.ctx, 15*time.Second)
+		defer cancel()
+		c, ok := b.core.ResolveConv(ctx, ch)
+		if !ok || a == nil {
+			return
+		}
+		ci := &convInfo{ID: c.ID, Name: c.Name, Kind: c.Kind, User: c.User, Topic: c.Topic, NumMembers: c.NumMembers,
+			TopicSpans: firstSpans(c.TopicDoc)}
+		if c.Kind == "im" {
+			if u, ok := b.core.User(c.User); ok {
+				ci.Name, ci.Avatar, ci.Bot, ci.Active = u.Name, u.Avatar, u.IsBot, u.Presence == "active"
+				ci.StatusEmoji = u.StatusEmojiURL
+			}
+			ci.Self = c.User == b.selfID
+		}
+		a.Post(func() {
+			b.ext[ch] = ci
+			a.Invalidate()
+		})
+	}()
+	return nil
+}
 
 func tabIcon(typ string) string {
 	switch typ {

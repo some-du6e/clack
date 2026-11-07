@@ -10,7 +10,6 @@ import (
 	"image"
 	"image/color"
 	"math"
-	"os"
 	"sync"
 
 	"gioui.org/f32"
@@ -52,20 +51,9 @@ type Theme struct {
 	// EmojiStyle is Slack's emoji set preference: "apple" (default) or "google".
 	EmojiStyle string
 
-	shapers    [2]*text.Shaper // light, dark
-	shaperDark bool            // Shaper is the dark-mode one
+	shapers    [2]*text.Shaper // light, dark (may be the same shaper)
+	shaperDark bool
 }
-
-// Alias weights. Gio blends glyph coverage in linear light, so dark text on
-// a light background renders thinner than Chrome's Lato 400 and light text
-// on a dark background heavier. Instead of emboldening every frame, each
-// mode gets a shaper whose "Normal" face is what that mode's dominant text
-// needs (Medium for light mode, Regular for dark mode); the other face is
-// registered under an alias weight that Text picks by text color.
-const (
-	wRegularAlias font.Weight = -60 // light-mode shaper: true Regular (light text)
-	wMediumAlias  font.Weight = 60  // dark-mode shaper: Medium (dark text)
-)
 
 var (
 	parseMu sync.Mutex
@@ -86,40 +74,21 @@ func parseFace(b []byte) font.Face {
 	return face
 }
 
-// lightTextFace is the 400 face for light text on dark backgrounds. Gio's
-// linear blending makes it ~19% inkier than Chrome (measured on the dark
-// sidebar); CLACK_LIGHTTEXT=light swaps in Lato Light for A/B measurement.
-func lightTextFace() ([]byte, []byte) {
-	if os.Getenv("CLACK_LIGHTTEXT") == "light" {
-		return fonts.Light, fonts.LightItalic
-	}
-	return fonts.Regular, fonts.Italic
-}
-
-// FacesFor returns the Lato collection for a mode's shaper.
+// FacesFor returns the Lato collection (the same for both modes; text
+// weight is matched to Chrome with the Embolden stroke instead).
 func FacesFor(dark bool) []font.FontFace {
 	type src struct {
 		b []byte
 		w font.Weight
 		s font.Style
 	}
-	// lightReg is the face light-on-dark text uses for 400 (see lightTextFace).
-	lightReg, lightRegIt := lightTextFace()
-	normal, normalIt := fonts.Medium, fonts.MediumItalic
-	alt, altIt, altW := lightReg, lightRegIt, wRegularAlias
-	if dark {
-		normal, normalIt = lightReg, lightRegIt
-		alt, altIt, altW = fonts.Medium, fonts.MediumItalic, wMediumAlias
-	}
 	var out []font.FontFace
 	for _, f := range []src{
-		{normal, font.Normal, font.Regular},
-		{alt, altW, font.Regular},
+		{fonts.Regular, font.Normal, font.Regular},
 		{fonts.Bold, font.Bold, font.Regular},
 		{fonts.Black, font.Black, font.Regular},
 		{fonts.Light, font.Light, font.Regular},
-		{normalIt, font.Normal, font.Italic},
-		{altIt, altW, font.Italic},
+		{fonts.Italic, font.Normal, font.Italic},
 		{fonts.BoldItalic, font.Bold, font.Italic},
 		{fonts.BlackItalic, font.Black, font.Italic},
 		{fonts.LightItalic, font.Light, font.Italic},
@@ -173,20 +142,6 @@ func (t *Theme) pickShaper() {
 		t.Shaper = t.shapers[i]
 		t.shaperDark = t.Dark
 	}
-}
-
-// weightFor maps Normal to the face the text color needs on this shaper.
-func (t *Theme) weightFor(f font.Font, c color.NRGBA) font.Font {
-	if f.Weight != font.Normal || (f.Typeface != Typeface && f.Typeface != "") {
-		return f
-	}
-	dark := IsDarkText(c)
-	if t.shaperDark && dark {
-		f.Weight = wMediumAlias
-	} else if !t.shaperDark && !dark {
-		f.Weight = wRegularAlias
-	}
-	return f
 }
 
 // SetDark switches palettes.

@@ -24,6 +24,9 @@ func (a *App) layoutChannel(gtx layout.Context, ch string) layout.Dimensions {
 	sz := gtx.Constraints.Max
 	c := &a.th.C
 	conv := a.model().conv(ch)
+	if conv == nil && a.data != nil {
+		conv = a.data.resolved(ch) // closed DM / channel outside the sidebar
+	}
 	hh := gtx.Dp(theme.HeaderH)
 	th := gtx.Dp(theme.TabsH)
 

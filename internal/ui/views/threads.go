@@ -401,6 +401,14 @@ func (v *Threads) people(root *core.Message, replies []core.Message) string {
 			hasSelf = true
 			return
 		}
+		if _, ok := v.user(id); !ok && strings.HasPrefix(id, "B") {
+			// a bot id (ReplyUsers can hold them): use the name its
+			// messages carry, never the raw B… id
+			if n := botName(id, root, replies); n != "" {
+				names = append(names, n)
+			}
+			return
+		}
 		names = append(names, v.userName(id))
 	}
 	if root.User == "" {
@@ -845,4 +853,17 @@ func (v *Threads) dmPartner(root *core.Message, replies []core.Message) string {
 		}
 	}
 	return "Direct message"
+}
+
+// botName finds a bot's display name on one of the thread's messages.
+func botName(id string, root *core.Message, replies []core.Message) string {
+	if root.BotID == id && root.Name != "" {
+		return root.Name
+	}
+	for i := range replies {
+		if replies[i].BotID == id && replies[i].Name != "" {
+			return replies[i].Name
+		}
+	}
+	return ""
 }

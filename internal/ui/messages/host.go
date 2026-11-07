@@ -31,9 +31,6 @@ type PointerHost interface {
 	PointerPos() image.Point
 }
 
-// bodyEmbolden scales the theme's stroke for message bodies (see styleFor).
-const bodyEmbolden = 1.5
-
 // styles holds one richview.Style per shaper (one per window).
 type styleEntry struct {
 	st   *richview.Style
@@ -68,11 +65,11 @@ func styleFor(h Host) *richview.Style {
 		// same 15px line: at 1x 151.9k (no stroke) / 193.6k (0.3px) vs
 		// Chrome 214.0k; at 2x 516.7k (none) / 727.4k (0.9px) vs Chrome
 		// 620.5k. Both interpolate to ~0.45px, so richview applies the
-		// stroke in pixels: bodyEmbolden x 0.3 = 0.45px at any scale.
-		e.st.Embolden = bodyEmbolden * theme.EmboldenFor(theme.LightPalette.Fg)
+		// stroke in pixels: theme.Embolden is that 0.45px (shared with labels).
+		e.st.Embolden = theme.EmboldenFor(theme.LightPalette.Fg)
 		if th.Dark {
 			e.st.SetPalette(richview.DarkPalette())
-			e.st.Embolden = bodyEmbolden * theme.EmboldenFor(theme.DarkPalette.Fg)
+			e.st.Embolden = theme.EmboldenFor(theme.DarkPalette.Fg)
 		} else {
 			e.st.SetPalette(richview.LightPalette())
 		}

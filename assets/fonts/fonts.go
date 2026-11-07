@@ -17,12 +17,6 @@ var (
 	Bold []byte
 	//go:embed Lato-BoldItalic.ttf
 	BoldItalic []byte
-	// Medium (Lato 2.0, latofonts.com, OFL): what dark-on-light body text
-	// uses, since Chrome renders Lato 400 visibly heavier than Gio does.
-	//go:embed Lato-Medium.ttf
-	Medium []byte
-	//go:embed Lato-MediumItalic.ttf
-	MediumItalic []byte
 	//go:embed Lato-Black.ttf
 	Black []byte
 	//go:embed Lato-BlackItalic.ttf

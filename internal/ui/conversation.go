@@ -264,3 +264,24 @@ func (a *App) editMessage(m core.Message) {
 }
 
 var _ = f32.Point{}
+
+// refreshVisible re-reads the conversations on screen (after core resolved
+// names in the background).
+func (a *App) refreshVisible() {
+	type refresher interface{ Refresh() }
+	want := map[string]bool{}
+	if ch := a.router.Current().Channel(); ch != "" {
+		want[ch+"/"] = true
+	}
+	if a.secondary.kind == secThread {
+		want[a.secondary.channel+"/"+a.secondary.ts] = true
+	}
+	for k, c := range a.convos {
+		if !want[k] {
+			continue
+		}
+		if r, ok := c.list.(refresher); ok {
+			r.Refresh()
+		}
+	}
+}

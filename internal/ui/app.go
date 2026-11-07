@@ -143,10 +143,8 @@ func New(opts Options, images *imgcache.Cache) *App {
 	a.shaperCh = make(chan [2]*text.Shaper, 1)
 	go func() {
 		t := time.Now()
-		dch := make(chan *text.Shaper, 1)
-		go func() { dch <- theme.NewShaperFor(true) }()
-		light := theme.NewShaperFor(false)
-		a.shaperCh <- [2]*text.Shaper{light, <-dch}
+		sh := theme.NewShaper() // one collection serves both modes
+		a.shaperCh <- [2]*text.Shaper{sh, sh}
 		a.timing("shapers ready", t)
 	}()
 	if opts.Login != nil {

@@ -23,23 +23,24 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/emoji"
 )
 
-// Embolden is the outline stroke (dp) added to dark glyphs. Gio blends
-// glyph coverage in linear light, which renders dark-on-light text thinner
-// and light-on-dark text heavier than Chrome's gamma-corrected text. A
-// hairline stroke fixes dark text; light text needs none. EmboldenFor
-// scales it by the text color; richview's Style.Embolden uses the same rule.
-const Embolden = 0.3
+// Embolden is the outline stroke, in device pixels (not dp), added to dark
+// glyphs. Gio blends glyph coverage in linear light, so dark-on-light Lato
+// renders thinner than Chrome's. The missing ink is a fixed pixel amount at
+// any scale: ui-messages measured a 15px line against Chrome at 1x and 2x
+// and both interpolate to ~0.45px. Labels and richview message bodies use
+// this same value (messages reads it via EmboldenFor).
+const Embolden = 0.45
 
 // IsDarkText reports whether c is dark text (luminance under 0.5).
 func IsDarkText(c color.NRGBA) bool {
 	return 0.299*float32(c.R)+0.587*float32(c.G)+0.114*float32(c.B) < 0.5*255
 }
 
-// EmboldenFor was the per-frame stroke for dark text. The mode shapers'
-// Medium face replaced it (zero frame cost), so it returns 0 unless
-// YOLOSLACK_EMBOLDEN=1 brings the old stroke back for comparison.
+// EmboldenFor is the stroke (px) for text of color c: Embolden for dark
+// text, fading to none for light text (light-on-dark is already heavy in
+// linear blending). CLACK_NOEMBOLDEN=1 disables it for A/B timing.
 func EmboldenFor(c color.NRGBA) float32 {
-	if !useEmbolden {
+	if noEmbolden {
 		return 0
 	}
 	return emboldenStroke(c)
@@ -106,7 +107,6 @@ func DrawText(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string) layo
 // emoji sprites) instead of relying on a color font.
 func (t *Theme) Text(gtx layout.Context, o LabelOpts, txt string) layout.Dimensions {
 	txt = CleanText(txt)
-	o.Font = t.weightFor(o.Font, o.Color)
 	if o.MaxLines == 1 && t.Images != nil {
 		if segs := splitEmoji(txt); segs != nil {
 			return t.textWithEmoji(gtx, o, segs)
@@ -234,8 +234,8 @@ func drawText(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string, emb 
 	}, txt)
 	m := op.Record(gtx.Ops)
 	viewport := image.Rectangle{Max: cs.Max}
-	it := glyphIter{viewport: viewport, maxLines: o.MaxLines, col: o.Color, emb: emb * gtx.Metric.PxPerDp}
-	var glyphs [512]text.Glyph // one batch per line in practice (see paint)
+	it := glyphIter{viewport: viewport, maxLines: o.MaxLines, col: o.Color, emb: emb} // px, not dp
+	var glyphs [512]text.Glyph                                                        // one batch per line in practice (see paint)
 	line := glyphs[:0]
 	for g, ok := sh.NextGlyph(); ok; g, ok = sh.NextGlyph() {
 		var ok bool
@@ -330,11 +330,9 @@ func (it *glyphIter) paint(gtx layout.Context, sh *text.Shaper, g text.Glyph, li
 			// Second fill shifted right by the embolden width: thickens
 			// stems like a hairline stroke, without per-frame CPU stroke
 			// tessellation (half the frame cost of clip.Stroke here).
-			// A PathSpec must not be used twice: shape the batch again
-			// (the shaper's path cache makes this cheap).
-			e := op.Affine(f32.AffineId().Offset(f32.Pt(it.emb, 0))).Push(gtx.Ops)
-			paint.FillShape(gtx.Ops, it.col, clip.Outline{Path: sh.Shape(line)}.Op())
-			e.Pop()
+			// hairline outline stroke (same as richview); shape the batch
+			// again rather than reuse the PathSpec
+			paint.FillShape(gtx.Ops, it.col, clip.Stroke{Path: sh.Shape(line), Width: it.emb}.Op())
 		}
 		if call := sh.Bitmaps(line); call != (op.CallOp{}) {
 			call.Add(gtx.Ops)

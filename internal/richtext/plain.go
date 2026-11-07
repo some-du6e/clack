@@ -49,7 +49,7 @@ func writeBlock(b *strings.Builder, blk *Block) {
 			for _, cell := range row {
 				cells = append(cells, strings.ReplaceAll(SpansText(cell), "\n", " "))
 			}
-			line(b, strings.Join(cells, "\t")) // empty cells keep their column (tab-separated, pastes into sheets)
+			line(b, strings.TrimRight(strings.Join(cells, "\t"), "\t")) // trailing empty cells add nothing (decision 2026-11-07: trim)
 		}
 	case Divider:
 	case ImageBlock:
