@@ -97,6 +97,19 @@ func (a *App) onAuthFailed(code string) {
 	a.emit(Event{Type: "auth_failed", Name: code})
 }
 
+// Shutdown stops core's background work (realtime socket, prefetch,
+// timers). The App must not be used afterwards. For tests and benchmarks
+// that start many sessions in one process; the UI simply exits.
+func (a *App) Shutdown() {
+	a.stopBG()
+	a.mu.Lock()
+	if a.countsTimer != nil {
+		a.countsTimer.Stop()
+		a.countsTimer = nil
+	}
+	a.mu.Unlock()
+}
+
 // SignedOut reports whether the session ended (see Event "auth_failed").
 func (a *App) SignedOut() bool { return a.C.SignedOut() }
 
