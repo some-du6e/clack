@@ -66,6 +66,7 @@ type View struct {
 
 	// expanded: attachments whose collapsed text was expanded (truncate.go)
 	expanded map[*richtext.Attachment]bool
+	redraw   bool // ask for a frame after this frame's events
 
 	// External hands text selection to the owner (cross-message selection
 	// in a list): the View still handles clicks and hover but never changes
@@ -691,6 +692,12 @@ func (v *View) selectLine(off int32) {
 }
 
 func (v *View) events(gtx layout.Context, st *Style, h Handler) {
+	defer func() {
+		if v.redraw { // a click changed the layout (Show more): next frame now
+			v.redraw = false
+			gtx.Execute(op.InvalidateCmd{})
+		}
+	}()
 	for {
 		ev, ok := gtx.Event(
 			pointer.Filter{Target: v, Kinds: pointer.Press | pointer.Release | pointer.Drag | pointer.Move | pointer.Enter | pointer.Leave | pointer.Cancel},
@@ -834,6 +841,7 @@ func (v *View) activate(t int16, anchor image.Point, h Handler) {
 		if tg.att != nil && v.expanded != nil {
 			v.expanded[tg.att] = !v.expanded[tg.att]
 			v.dirty = true
+			v.redraw = true
 		}
 	}
 }
