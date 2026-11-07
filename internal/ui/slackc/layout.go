@@ -53,7 +53,11 @@ func (v *View) length(l css.Length, base float32) float32 {
 	if base < 0 {
 		base = 0
 	}
-	return l.Px*v.dp + l.Pct*base/100 + l.Vw*v.vw/100 + l.Vh*v.vh/100
+	if l.Pct == 0 && l.Vw == 0 && l.Vh == 0 {
+		return l.Resolve(0, 0, 0, 0) * v.dp
+	}
+	// Resolve works in CSS px (and evaluates min()/max()/clamp()).
+	return l.Resolve(base/v.dp, v.vw/v.dp, v.vh/v.dp, 0) * v.dp
 }
 
 // lenDef reports whether l is a definite length against base (base < 0:
@@ -205,7 +209,7 @@ func (v *View) doLayout(b *box, c lc) {
 	cw := float32(-1)
 	if c.fixedW {
 		cw = max(c.fixW-hp, 0)
-	} else if sw := v.specW(b, c.cbW); sw >= 0 {
+	} else if sw := v.specW(b, c.cbW); sw >= 0 && !c.autoMinW {
 		cw = clampF(sw, lo, hi)
 	} else if !c.shrink {
 		cw = clampF(c.availW-b.m[1]-b.m[3]-hp, lo, hi)
@@ -249,10 +253,10 @@ func (v *View) doLayout(b *box, c lc) {
 		bfc := c.bfc || st.OverflowX != css.OverflowVisible || st.OverflowY != css.OverflowVisible ||
 			st.Display == css.DisplayInlineBlock || st.Display == css.DisplayTableCell || st.Display == css.DisplayTable
 		if cw < 0 {
-			used, _ := v.layoutFlow(b, avail, ch, bfc, ch < 0, true, c)
-			cw = clampF(min(used, max(avail, used)), lo, hi)
+			used, _ := v.layoutFlow(b, avail, ch, bfc, ch < 0, true, true, c)
+			cw = clampF(used, lo, hi)
 		}
-		_, h := v.layoutFlow(b, cw, ch, bfc, ch < 0, c.measure, c)
+		_, h := v.layoutFlow(b, cw, ch, bfc, ch < 0, c.measure, false, c)
 		if ch < 0 {
 			ch = clampF(h, hlo, hhi)
 		} else if h > ch {
@@ -288,7 +292,9 @@ func (m mcoll) val() float32 { return m.pos + m.neg }
 // layoutFlow lays out a block container's children (blocks and inline
 // runs) in a content box of width cw. It returns the widest child (for
 // shrink-to-fit) and the content height.
-func (v *View) layoutFlow(b *box, cw, ch float32, bfc, autoH, measure bool, c lc) (float32, float32) {
+// shrink lays block children out at their preferred widths (a
+// shrink-to-fit measuring pass).
+func (v *View) layoutFlow(b *box, cw, ch float32, bfc, autoH, measure, shrink bool, c lc) (float32, float32) {
 	st := &b.st
 	cx := b.bd[3] + b.pad[3]
 	cy := b.bd[0] + b.pad[0]
@@ -368,7 +374,7 @@ func (v *View) layoutFlow(b *box, cw, ch float32, bfc, autoH, measure bool, c lc
 			k.staticLP = b
 			continue
 		}
-		v.layout(k, lc{availW: cw, cbW: cw, cbH: chDef, measure: measure})
+		v.layout(k, lc{availW: cw, cbW: cw, cbH: chDef, measure: measure, shrink: shrink})
 		ml, mr := k.m[3], k.m[1]
 		if k.st.Margin[3].IsAuto() || k.st.Margin[1].IsAuto() {
 			free := cw - k.w - ml - mr

@@ -411,6 +411,7 @@ func TestEventTargeting(t *testing.T) {
 		pointer.Event{Kind: pointer.Release, Position: p, Source: pointer.Mouse, Time: 30 * time.Millisecond},
 	)
 	frame()
+	frame() // the press focused the button; Gio delivers the rest a frame later
 	var types []string
 	clickK := int64(-1)
 	for _, e := range got {
@@ -493,13 +494,13 @@ func TestControlledInput(t *testing.T) {
 		t.Errorf("sync: %q sent=%v", ed.Text(), ns.sent)
 	}
 	// JS sets its own value (e.g. clears after submit): adopt it
-	v.Layout(gtx, tree("x"), "", nil, nil)
+	nodes := tree("x")
+	v.Layout(gtx, nodes, "", nil, nil)
 	if ed.Text() != "x" {
 		t.Errorf("controlled value not adopted: %q", ed.Text())
 	}
 	// same tree again: the user's edits stand
 	ed.SetText("xy")
-	nodes := tree("x")
 	v.Layout(gtx, nodes, "", nil, nil)
 	v.Layout(gtx, nodes, "", nil, nil)
 	if ed.Text() != "xy" {

@@ -171,7 +171,7 @@ func (v *View) layoutFlex(b *box, cw, ch, avail, lo, hi, hlo, hhi float32, c lc)
 		if autoMin && !tableRow {
 			var mc float32
 			if row {
-				v.layout(k, lc{availW: 0, cbW: pctBase, cbH: chDef, shrink: true, measure: true, bfc: true})
+				v.layout(k, lc{availW: 0, cbW: pctBase, cbH: chDef, shrink: true, measure: true, bfc: true, autoMinW: true})
 				mc = k.w - it.mainExtra
 				if sw := v.specW(k, pctBase); sw >= 0 && sw < mc {
 					mc = sw
