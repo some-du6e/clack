@@ -41,7 +41,7 @@ func TestMenuItems(t *testing.T) {
 	if items[1].Label != "Copy" || items[1].Icon != "copy" || items[1].DoCtx == nil {
 		t.Errorf("copy item = %+v", items[1])
 	}
-	if !items[2].Danger || items[2].Icon != "trash" || items[2].DoCtx != nil {
+	if !items[2].Danger || items[2].Icon != "trash-filled" || items[2].DoCtx != nil {
 		t.Errorf("delete item = %+v", items[2])
 	}
 	if !items[3].Separator {
@@ -110,11 +110,11 @@ func TestClackIcon(t *testing.T) {
 		"hash":                     "hash",
 		"edit":                     "edit",
 		"trash":                    "trash",
-		"trash-filled":             "trash",
+		"trash-filled":             "trash-filled",
 		"copy":                     "copy",
 		"link":                     "link",
 		"check":                    "check",
-		"check-filled":             "check-circle",
+		"check-filled":             "check-filled",
 		"chevron-down":             "chevron-down",
 		"search":                   "search",
 		"plus":                     "plus",
@@ -124,13 +124,13 @@ func TestClackIcon(t *testing.T) {
 		"bookmark":                 "bookmark",
 		"thread":                   "threads",
 		"send":                     "send",
-		"undo":                     "history-back",
+		"undo":                     "undo",
 		"arrow-left":               "back",
 		"caret-right":              "caret-right",
-		"caret-up-down":            "sort",
+		"caret-up-down":            "caret-up-down",
 		"user-add":                 "user-plus",
-		"file-upload":              "upload",
-		"glasses-filled":           "eye",
+		"file-upload":              "file-upload",
+		"glasses-filled":           "glasses-filled",
 		"Close":                    "close",
 		"":                         fallbackIcon,
 		"no-such-icon-anywhere":    fallbackIcon,
