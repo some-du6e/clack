@@ -1882,7 +1882,7 @@ func (p *slickPage) daysPopover(gtx layout.Context, rk string, days []int, setDa
 		p.daysOpen = ""
 	}
 	for i := 3; i >= 1; i-- { // 0 4 12 rgba(0,0,0,.25), approximated
-		theme.RRect(gtx, r.Add(image.Pt(0, gtx.Dp(4))).Inset(-gtx.Dp(i*2)), gtx.Dp(8+i*2), color.NRGBA{A: uint8(0x14 / i)})
+		theme.RRect(gtx, r.Add(image.Pt(0, gtx.Dp(4))).Inset(-gtx.Dp(unit.Dp(i*2))), gtx.Dp(unit.Dp(8+i*2)), color.NRGBA{A: uint8(0x14 / i)})
 	}
 	theme.RRect(gtx, r, gtx.Dp(8), cl.popBg)
 	theme.Border(gtx, r, gtx.Dp(8), gtx.Dp(1), cl.popLine)
