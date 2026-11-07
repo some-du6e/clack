@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"strings"
 	"sync"
 
@@ -66,7 +67,19 @@ type engine struct {
 	dirty     bool // a root or the document needs flushing
 }
 
+// engineWasm is the engine binary: the embedded one, or the file named by
+// CLACK_JSRT_WASM (a developer override for benchmarking engine builds).
+var engineWasm = sync.OnceValue(func() []byte {
+	if p := os.Getenv("CLACK_JSRT_WASM"); p != "" {
+		if b, err := os.ReadFile(p); err == nil && len(b) > 0 {
+			return b
+		}
+	}
+	return wasmBin
+})
+
 func newEngine(r *Runtime) (*engine, error) {
+	wasmBin := engineWasm()
 	if len(wasmBin) == 0 {
 		return nil, errors.New("jsrt: engine wasm missing (internal/jsrt/jsrt.wasm not built)")
 	}
@@ -547,7 +560,18 @@ func (e *engine) reportRejections() {
 	}
 	for p, reason := range e.unhandled {
 		delete(e.unhandled, p)
-		e.r.logError("uncaught (in promise)", e.toError(reason))
+		// window 'unhandledrejection' first; preventDefault() silences it
+		report := true
+		if js := e.r.js; js != nil {
+			if fn := js.Global().Get("__jr").Get("unhandled"); fn.IsFunction() {
+				if v, err := fn.Call(e.r.wrap(uint32(e.call("jr_dup", uint64(p)))), e.r.wrap(uint32(e.call("jr_dup", uint64(reason))))); err == nil && v.IsBool() && !v.Bool() {
+					report = false
+				}
+			}
+		}
+		if report {
+			e.r.logError("uncaught (in promise)", e.toError(reason))
+		}
 		e.release(reason)
 		e.release(p)
 	}

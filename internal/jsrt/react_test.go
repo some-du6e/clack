@@ -298,6 +298,20 @@ React.createElement(M)`)
 	if got := evalString(t, r, `seen.join(' ')`); got != "win-capture:Enter dom:Enter react:Enter" {
 		t.Fatalf("order: %s", got)
 	}
+	if !r.WantsEvent("keydown") || r.WantsEvent("mousemove") {
+		t.Fatalf("WantsEvent: keydown=%v mousemove=%v", r.WantsEvent("keydown"), r.WantsEvent("mousemove"))
+	}
+	// a document-level mousemove (target 0) reaches document listeners
+	evalString(t, r, `document.addEventListener('mousemove', (e) => seen.push('move:' + e.clientX)); 0`)
+	if !r.WantsEvent("mousemove") {
+		t.Fatal("WantsEvent(mousemove) after addEventListener")
+	}
+	if _, err := r.DispatchEventSync(context.Background(), 0, []byte(`{"type":"mousemove","clientX":42,"clientY":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	if got := evalString(t, r, `seen.at(-1)`); got != "move:42" {
+		t.Fatalf("document mousemove: %s", got)
+	}
 }
 
 // TestSamplePlugin renders a Taut-style plugin component that wraps the
@@ -373,7 +387,11 @@ func TestStartupTiming(t *testing.T) {
 			t.Fatal(err)
 		}
 		st := r.Stats()
-		t.Logf("New #%d: %v (boot %v, heap %d KiB)", i, time.Since(t0), st.Boot, st.Memory>>10)
+		var ph []string
+		for _, p := range st.Phases {
+			ph = append(ph, p.Name+"="+p.Time.Round(10*time.Microsecond).String())
+		}
+		t.Logf("New #%d: %v (boot %v, heap %d KiB) %s", i, time.Since(t0), st.Boot, st.Memory>>10, strings.Join(ph, " "))
 		r.Close()
 	}
 }

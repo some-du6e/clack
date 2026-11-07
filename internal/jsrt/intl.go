@@ -40,7 +40,14 @@ func localZoneName() string {
 // Stats reports runtime figures (JS thread; use inside Do).
 type Stats struct {
 	Boot   time.Duration // New → environment and React ready
+	Phases []Phase       // where Boot went
 	Memory uint64        // JS heap bytes in use
+}
+
+// Phase is one step of the boot.
+type Phase struct {
+	Name string
+	Time time.Duration
 }
 
 // Stats returns runtime figures.
@@ -48,6 +55,7 @@ func (r *Runtime) Stats() Stats {
 	var s Stats
 	_ = r.Do(func(js *Ctx) error {
 		s.Boot = r.bootTime
+		s.Phases = append([]Phase(nil), r.phases...)
 		if r.eng != nil {
 			s.Memory = r.eng.call("jr_memory")
 		}

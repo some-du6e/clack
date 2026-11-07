@@ -27,6 +27,9 @@ type Runtime struct {
 	done    chan struct{} // closed when the loop exits
 	closed  atomic.Bool
 
+	globalMu sync.RWMutex
+	global   map[string]int // window/document listener counts by event type
+
 	goid     atomic.Int64 // JS thread goroutine id
 	deadline atomic.Int64 // unix nanos; the running task is interrupted after it (0 = none)
 
@@ -46,6 +49,7 @@ type Runtime struct {
 	kvs      map[string]KV
 	builtins map[string]string
 	bootTime time.Duration
+	phases   []Phase
 
 	initErr error
 	ready   chan struct{}

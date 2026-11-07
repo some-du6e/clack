@@ -88,14 +88,17 @@ func (r *Runtime) boot() error {
 		return err
 	}
 	r.eng = e
+	r.phases = append(r.phases, Phase{"engine", time.Since(t0)})
 	r.installHost()
 	scripts := []script{{"env.js", envJS}, {"web.js", webJS}, {"intl.js", intlJS}, {"dom.js", domJS}}
 	scripts = append(scripts, vendorScripts...)
 	scripts = append(scripts, script{"react-host.js", reactHostJS})
 	for _, v := range scripts {
+		t1 := time.Now()
 		if err := e.evalBoot("clack:"+v.name, v.src); err != nil {
 			return fmt.Errorf("jsrt: %s: %w", v.name, err)
 		}
+		r.phases = append(r.phases, Phase{v.name, time.Since(t1)})
 	}
 	r.fillModuleNames()
 	e.runJobs(r.js)
@@ -320,6 +323,19 @@ func (r *Runtime) installHost() {
 	})
 	def("tz", func(js *Ctx, _ Value, a []Value) (any, error) {
 		return tzInfo(str(a, 0), num(a, 1))
+	})
+	def("listen", func(js *Ctx, _ Value, a []Value) (any, error) {
+		t, d := str(a, 0), int(num(a, 1))
+		r.globalMu.Lock()
+		if r.global == nil {
+			r.global = map[string]int{}
+		}
+		r.global[t] += d
+		if r.global[t] <= 0 {
+			delete(r.global, t)
+		}
+		r.globalMu.Unlock()
+		return nil, nil
 	})
 	def("gc", func(js *Ctx, _ Value, a []Value) (any, error) {
 		r.eng.call("jr_gc")

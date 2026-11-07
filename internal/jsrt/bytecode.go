@@ -18,7 +18,7 @@ import (
 var (
 	bcMu    sync.Mutex
 	bcMem   = map[[32]byte][]byte{}
-	wasmSum = sync.OnceValue(func() [32]byte { return sha256.Sum256(wasmBin) })
+	wasmSum = sync.OnceValue(func() [32]byte { return sha256.Sum256(engineWasm()) })
 )
 
 func bcKey(name, src string) [32]byte {

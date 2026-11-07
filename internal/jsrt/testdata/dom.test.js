@@ -202,3 +202,13 @@ test('async generators, private methods, error cause', async () => {
   assertEq(typeof wr.deref, 'function');
   assertEq(Array.fromAsync ? (await Array.fromAsync(gen())).length : 2, 2);
 });
+
+test('unhandledrejection reaches window and can be prevented', async () => {
+  let got = null;
+  const h = (e) => { got = e.reason; e.preventDefault(); };
+  window.addEventListener('unhandledrejection', h);
+  Promise.reject(new Error('nobody catches me'));
+  await sleep(5);
+  window.removeEventListener('unhandledrejection', h);
+  assertEq(got && got.message, 'nobody catches me');
+});
