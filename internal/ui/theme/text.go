@@ -447,7 +447,7 @@ func loadEmojiIndex() {
 			S map[string]string `json:"s"`
 		} `json:"emoji"`
 	}
-	_ = json.Unmarshal(emoji.StandardJSON, &f)
+	_ = json.Unmarshal(emoji.StandardData(), &f)
 	emojiIndex = make(map[string]string, len(f.Emoji)*3)
 	add := func(hexSeq, stem string) {
 		var b strings.Builder

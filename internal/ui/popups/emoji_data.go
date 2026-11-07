@@ -13,7 +13,7 @@ import (
 
 // Emoji data for the picker and the composer's ":" autocomplete.
 //
-// The standard table (internal/emoji.StandardJSON, iamcal order) is parsed
+// The standard table (internal/emoji.StandardData(), iamcal order) is parsed
 // once. An emojiIndex combines it with the workspace's custom emoji
 // (Hack Club has ~65,000) into id-indexed slices: ids [0, nStd) are standard
 // emoji, the rest custom emoji sorted by name. Custom aliases are attached
@@ -72,7 +72,7 @@ var (
 )
 
 func epStandard() *epStdTable {
-	epStdOnce.Do(func() { epStd = epParseStd(emoji.StandardJSON) })
+	epStdOnce.Do(func() { epStd = epParseStd(emoji.StandardData()) })
 	return epStd
 }
 
