@@ -70,14 +70,18 @@ func envFloat(name string, def float32) float32 {
 
 // lightTextColor applies LightTextFade to light glyph colors.
 //
-// The excess grows as light text gets dimmer (mid greys gain the most from
-// linear-light blending). Measured at 1x on the embedded Lato vs Chrome,
-// regular weight: sidebar rows (#f6e4ff at .9, y≈.83) match at k≈0.12, the
-// dark-mode topic (#b9babd, y=.73) at 0.26 and timestamps (#ababad, y=.67)
-// at 0.39, so k = 0.12 + (0.83-y)·1.7, scaled by LightTextFade/0.2 (the env
-// knob). Bold needs ~3/4 of that (dark tabs); Black gets no fade (the
-// sidebar's white team name is already 8% light, see lightBlackEmbolden).
-func lightTextColor(c color.NRGBA, pxPerDp float32, w font.Weight) color.NRGBA {
+// Measured at 1x on the embedded Lato vs Chrome (ink with a fixed white
+// reference), regular weight:
+//   - on the aubergine chrome (chrome=true), sidebar rows (#f6e4ff at .9)
+//     match at k≈0.17 whatever the shade;
+//   - on the dark main pane, the fade grows as the text dims: #b9babd
+//     (topic, y=.73) at 0.26-0.27 and #ababad (timestamps, y=.67) at 0.39,
+//     so k = 0.27 + max(0, .73-y)·2.
+//
+// The result is scaled by LightTextFade/0.2 (the env knob). Bold needs 3/4
+// of it (dark tabs, #b9babd and #f8f8f8). Black gets no fade: the white
+// team name is already light, see lightBlackEmbolden.
+func lightTextColor(c color.NRGBA, pxPerDp float32, w font.Weight, chrome bool) color.NRGBA {
 	if LightTextFade <= 0 || pxPerDp <= 0 || w >= font.Black {
 		return c
 	}
@@ -85,8 +89,11 @@ func lightTextColor(c color.NRGBA, pxPerDp float32, w font.Weight) color.NRGBA {
 	if y < 0.6 {
 		return c
 	}
-	k := 0.12 + (0.83-y*float32(c.A)/255)*1.7
-	k = min(max(k, 0), 0.45) * LightTextFade / 0.2
+	k := float32(0.17)
+	if !chrome {
+		k = 0.27 + max(0, 0.73-y)*2
+	}
+	k = min(k, 0.45) * LightTextFade / 0.2
 	if w >= font.Bold {
 		k *= 0.75
 	}
@@ -181,7 +188,7 @@ func DrawText(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string) layo
 	if t := ForShaper(sh); t != nil {
 		return t.Text(gtx, o, txt)
 	}
-	o.Color = lightTextColor(o.Color, gtx.Metric.PxPerDp, o.Font.Weight)
+	o.Color = lightTextColor(o.Color, gtx.Metric.PxPerDp, o.Font.Weight, false)
 	return drawText(gtx, sh, o, CleanText(txt), EmboldenFor(o.Color))
 }
 
@@ -190,7 +197,7 @@ func DrawText(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string) layo
 // emoji sprites) instead of relying on a color font.
 func (t *Theme) Text(gtx layout.Context, o LabelOpts, txt string) layout.Dimensions {
 	txt = CleanText(txt)
-	o.Color = lightTextColor(o.Color, gtx.Metric.PxPerDp, o.Font.Weight)
+	o.Color = lightTextColor(o.Color, gtx.Metric.PxPerDp, o.Font.Weight, t.Chrome)
 	if o.MaxLines == 1 && t.Images != nil {
 		if segs := splitEmoji(txt); segs != nil {
 			return t.textWithEmoji(gtx, o, segs)
