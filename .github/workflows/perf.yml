@@ -39,10 +39,11 @@ jobs:
         env:
           BASE: ${{ inputs.base || '4222be3' }}
         run: |
-          keep='^(\.github/perf/|\.github/workflows/perf\.yml|internal/fakeslack/|internal/ui/perf_test\.go|internal/core/perf_test\.go|cmd/clack/debug\.go|cmd/clack/main\.go|internal/slack/client\.go|internal/ui/app\.go)'
+          keep='^(\.github/perf/|\.github/workflows/perf\.yml|internal/fakeslack/|internal/ui/perf_test\.go|internal/core/perf_test\.go|cmd/clack/debug\.go)'
           for f in $(git diff --name-only "$BASE" HEAD | grep -Ev "$keep"); do
             if git cat-file -e "$BASE:$f" 2>/dev/null; then git checkout -q "$BASE" -- "$f"; else git rm -q -f "$f"; fi
           done
+          python3 .github/perf/patch-base.py
           git status --short | head -50
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
@@ -54,6 +55,8 @@ jobs:
         run: |
           mkdir -p dist perf-out/process
           CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o dist/clack-linux-amd64 ./cmd/clack
+          # the process test's binary: same, plus the perfharness tag (accepts the loopback fake)
+          CGO_ENABLED=1 go build -tags perfharness -trimpath -ldflags="-s -w" -o dist/clack-perf ./cmd/clack
           CGO_ENABLED=1 go build -trimpath -o dist/clack-unstripped ./cmd/clack
           go build -o dist/fakeslackd ./internal/fakeslack/fakeslackd
           s=$(stat -c %s dist/clack-linux-amd64)
@@ -73,7 +76,7 @@ jobs:
           for k, v in tot.most_common(30): print(f"{v/1048576:8.2f} MB  {k}")
           ' | tee perf-out/binsize-packages.txt
       - name: real process (Xvfb, cold + warm starts, idle RSS)
-        run: .github/perf/process.sh dist/clack-linux-amd64 dist/fakeslackd perf-out/process
+        run: .github/perf/process.sh dist/clack-perf dist/fakeslackd perf-out/process
       - name: go benchmarks (layout + llvmpipe GPU)
         env:
           CLACK_BENCH_GPU: "1"

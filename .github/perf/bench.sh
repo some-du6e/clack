@@ -4,8 +4,9 @@
 set -uo pipefail
 out=${1:-perf-out}
 mkdir -p "$out/prof"
-go test -c -o "$out/ui.test" ./internal/ui
-go test -c -o "$out/core.test" ./internal/core
+# perfharness: the client accepts the loopback fake (internal/slack/harness.go)
+go test -c -tags perfharness -o "$out/ui.test" ./internal/ui
+go test -c -tags perfharness -o "$out/core.test" ./internal/core
 : > "$out/bench.txt"
 # the fake runs in its own process so benchmark heaps are the client's alone
 go build -o "$out/fakeslackd" ./internal/fakeslack/fakeslackd
