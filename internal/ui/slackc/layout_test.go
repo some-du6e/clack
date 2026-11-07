@@ -581,7 +581,7 @@ func TestSteadyFrameAllocs(t *testing.T) {
 		v.Layout(gtx, nodes, "MessageSender", nil, senderNative)
 	})
 	t.Logf("steady frame: %.1f allocs", n)
-	if n > 8 {
+	if n > 0 {
 		t.Errorf("steady frame allocates %.1f times", n)
 	}
 }

@@ -121,7 +121,10 @@ func (p *painter) svg(b *box, r rectF) {
 	root := svgPaint{Color: st.Color, Fill: st.Fill, FillNone: st.FillNone, Stroke: st.Stroke, StrokeNone: st.StrokeNone, StrokeWidth: st.StrokeWidth, Opacity: 1}
 	var mc func(color.NRGBA) color.NRGBA
 	if len(p.filt) > 0 {
-		mc = p.col
+		// a func value made once per View: a method value on p would make
+		// every painter escape
+		p.v.cmap.filt = p.filt
+		mc = p.v.cmapFn
 	}
 	var sty func(*Node) *svgCSS
 	if p.v.svgCSS != nil {
@@ -348,8 +351,10 @@ func (p *painter) input(b *box, r rectF, visible bool) {
 			if txt == ns.lastText {
 				continue
 			}
-			if ch := typedChar(ns.lastText, txt); ch != "" {
-				v.dispatchChar(b, ch)
+			if ins := typedText(ns.lastText, txt); ins != "" {
+				for _, r := range ins {
+					v.dispatchChar(b, string(r))
+				}
 			} else if len(txt) < len(ns.lastText) {
 				v.dispatchKey(b, "keydown", key.Event{Name: key.NameDeleteBackward})
 			}
@@ -415,8 +420,9 @@ func (p *painter) input(b *box, r rectF, visible bool) {
 	t.Pop()
 }
 
-// typedChar returns the single character inserted between a and b.
-func typedChar(a, b string) string {
+// typedText returns the few characters typed between a and b (a pure
+// insertion of up to 8 runes; several can land in one frame).
+func typedText(a, b string) string {
 	if len(b) <= len(a) {
 		return ""
 	}
@@ -429,7 +435,7 @@ func typedChar(a, b string) string {
 		j++
 	}
 	ins := b[i : len(b)-j]
-	if utf8.RuneCountInString(ins) == 1 {
+	if n := utf8.RuneCountInString(ins); n >= 1 && n <= 8 {
 		return ins
 	}
 	return ""
@@ -576,7 +582,7 @@ func (v *View) rangeSet(s *scope, b *box, x float32, commit bool) {
 	val := lo + t*(hi-lo)
 	val = lo + math.Round((val-lo)/step)*step
 	val = math.Max(lo, math.Min(hi, val))
-	changed := val != ns.rangeV || !ns.valueSet
+	changed := val != v.rangeValue(b)
 	ns.rangeV, ns.valueSet = val, true
 	ns.rangeDrag = !commit
 	if changed {
