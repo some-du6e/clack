@@ -408,6 +408,13 @@ func TestTautPlugins(t *testing.T) {
 		if _, ok := tzItem(m.items, "copy_display_name"); !ok {
 			t.Errorf("native items gone: %+v", m.items)
 		}
+		// Nicknames also patches MenuFromTemplate, which renders the menu
+		// from its props: the thunk's item survives that render (live, the
+		// native template came back and "Set nickname…" vanished)
+		m.applyTemplate(m.tplProps())
+		if _, ok := tzItem(m.items, "taut-nicknames__set"); !ok {
+			t.Errorf("a MenuFromTemplate render dropped the thunk's item: %+v", m.items)
+		}
 		set.Do()
 		tzUntil(t, 10*time.Second, "the nickname modal (api.modal.openModal)", func() bool {
 			for _, o := range e.h.pluginOverlays() {
