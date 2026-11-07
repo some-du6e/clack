@@ -35,8 +35,9 @@ type sbRow struct {
 	label   string
 	icon    string
 	section string
-	gap     int    // dp, for sbGap
-	itemKey string // Slack's data-item-key ("" = untagged spacer)
+	gap     int               // dp, for sbGap
+	itemKey string            // Slack's data-item-key ("" = untagged spacer)
+	btn     *widget.Clickable // resolved once per rebuild (no per-frame key strings)
 }
 
 type sidebarState struct {
@@ -153,6 +154,15 @@ func (a *App) layoutSidebar(gtx layout.Context) layout.Dimensions {
 	m := a.model()
 	if a.sidebar.rows == nil || a.sidebar.builtFor != m.version {
 		a.sidebar.rebuild(m)
+		for i := range a.sidebar.rows {
+			r := &a.sidebar.rows[i]
+			switch r.kind {
+			case sbHeading:
+				r.btn = a.clicks.get("sbh." + r.key)
+			case sbLink, sbConv, sbAction:
+				r.btn = a.clicks.get("sbr." + r.key)
+			}
+		}
 	}
 
 	// header: team name 18px/900 + chevron; settings + compose on the right.
@@ -278,12 +288,12 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 		conv     *convInfo
 		suffix   string
 	)
-	clickKey := "sbr." + r.key
+	clickPrefix := "sbr."
 	switch r.kind {
 	case sbLink:
 		sel = string(route) == r.key
 	case sbHeading:
-		clickKey = "sbh." + r.key
+		clickPrefix = "sbh."
 		if a.sidebar.collapsed[r.key] {
 			icon = "caret-right"
 		}
@@ -309,7 +319,10 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 	case sbAction:
 		indent = gtx.Dp(16)
 	}
-	btn := a.clicks.get(clickKey)
+	btn := r.btn
+	if btn == nil {
+		btn = a.clicks.get(clickPrefix + r.key)
+	}
 	hov := hoverState(btn.Hovered())
 	item := clsSbItem.EnterAttr(gtx, hov, 0, "data-item-key", r.itemKey)
 	defer item.Leave()
