@@ -456,9 +456,6 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 	if m.Pinned && !rc.thread {
 		y += r.labelLine(gtx, rc, cx, y, "pin", pinnedLabel(rc, m.PinnedBy))
 	}
-	if m.Broadcast && !rc.thread && m.ThreadTS != "" && m.ThreadTS != m.TS {
-		y += r.broadcastLine(gtx, rc, cx, y)
-	}
 	r.col = image.Pt(cx, y)
 	g := at(gtx, 0, y, func(gtx layout.Context) layout.Dimensions {
 		return slackc.Component(gtx, "MessageKitGutter", r, (*row).gutterProps, (*row).layoutGutter)
@@ -683,6 +680,9 @@ func (r *row) layoutColumn(gtx layout.Context) layout.Dimensions {
 			d = slackc.Component(gtx, "BaseBroadcastPreamble", r, (*row).preambleProps, (*row).layoutPreamble)
 		}
 		y += max(d.Size.Y, dp(gtx, mt.nameLine))
+	}
+	if m.Broadcast && !rc.thread && m.ThreadTS != "" && m.ThreadTS != m.TS {
+		y += r.broadcastLine(gtx, rc, 0, y)
 	}
 
 	// body (or the inline edit composer)
@@ -927,23 +927,24 @@ func (r *row) labelLine(gtx layout.Context, rc *rowCtx, x, y int, icon, txt stri
 	return dp(gtx, 20)
 }
 
-// broadcastLine draws "replied to a thread: …" for thread replies also sent
-// to the channel.
+// broadcastLine draws Slack's broadcast preamble under the header line of a
+// thread reply also sent to the channel: "replied to a thread", 15px/22,
+// with "a thread" a bold link that opens the thread.
 func (r *row) broadcastLine(gtx layout.Context, rc *rowCtx, x, y int) int {
 	c := rc.c
-	h := dp(gtx, 18)
-	s := textStyle{size: 13, col: c.Text2, lineH: 18}
-	pre := "replied to a thread: "
+	h := dp(gtx, 22)
 	if r.broadcastBtn.Clicked(gtx) {
 		rc.h.OpenThread(r.m.Channel, r.m.ThreadTS)
 	}
-	pd := at(gtx, x, y+dp(gtx, 4), func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, s, pre) })
-	at(gtx, x+pd.Size.X, y+dp(gtx, 4), func(gtx layout.Context) layout.Dimensions {
+	pd := at(gtx, x, y, func(gtx layout.Context) layout.Dimensions {
+		return label(gtx, rc.th, textStyle{size: 15, col: c.Text2, lineH: 22}, "replied to ")
+	})
+	at(gtx, x+pd.Size.X, y, func(gtx layout.Context) layout.Dimensions {
 		return r.broadcastBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return label(gtx, rc.th, textStyle{size: 13, col: c.Link, lineH: 18}, "View thread")
+			return label(gtx, rc.th, textStyle{size: 15, weight: theme.Bold, col: c.Link, lineH: 22}, "a thread")
 		})
 	})
-	return h + dp(gtx, 4)
+	return h
 }
 
 // reactionBar lays out the ReactionBar at pos (origin is pos's frame in

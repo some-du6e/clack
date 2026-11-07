@@ -23,6 +23,19 @@ type ThreadView struct {
 
 	// Origin is the view's top-left in window coordinates (see ChannelView).
 	Origin image.Point
+
+	top int // header (+ admin tools) height of the last frame
+}
+
+// ContentHeight is the height the pane needs to show the whole thread (header,
+// parent, divider and replies) as of the last frame, or 0 when the thread is
+// taller than the pane. Slack top-aligns a short thread with its reply
+// composer right under the last reply; the ui root places the composer with it.
+func (v *ThreadView) ContentHeight() int {
+	if v.s.contentH <= 0 || len(v.s.items) == 0 {
+		return 0
+	}
+	return v.top + v.s.contentH
 }
 
 // NewThreadView returns the thread pane for the thread rooted at ts.
@@ -103,6 +116,7 @@ func (v *ThreadView) pane(gtx layout.Context, size image.Point) layout.Dimension
 		return slackc.Component(gtx, "ThreadFlexpaneAdminTools", v, (*ThreadView).adminToolsProps, (*ThreadView).layoutEmpty)
 	})
 	top := hh + ad.Size.Y
+	v.top = top
 	t := op.Offset(image.Pt(0, top)).Push(gtx.Ops)
 	g.Constraints = layout.Exact(image.Pt(size.X, max(0, size.Y-top)))
 	shown(&lastThread, v.s)
