@@ -283,6 +283,16 @@ func (b *box) Kids() []css.Element {
 	return b.ekids
 }
 
+// HasText reports text children (so :empty doesn't match).
+func (b *box) HasText() bool {
+	for _, k := range b.kids {
+		if k.kind == kText && k.text != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // isElem reports a host element or component (event targets, CSS).
 func (b *box) isElem() bool { return b.kind == kElem || b.kind == kComp }
 

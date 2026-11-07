@@ -174,12 +174,19 @@ func clampF(x, lo, hi float32) float32 {
 
 // layout lays out b (and its in-flow subtree) under c. Results land in
 // b.w/b.h…; children positions are valid after the last non-measure call.
+//
+// Measuring and final passes compute the same thing (positions, native
+// constraints), so the measure flag isn't part of the cache key: the last
+// computation's key says whose positions the subtree holds.
 func (v *View) layout(b *box, c lc) {
+	measure := c.measure
+	c.measure = false
 	if b.lastOK && b.lastGen == v.layGen && b.last == c {
 		b.setRes(b.lastRes)
 		return
 	}
-	if c.measure {
+	if measure {
+		// sizes only: positions stay those of b.last
 		for i := range b.mcache {
 			e := &b.mcache[i]
 			if e.gen == v.layGen && e.c == c {
@@ -188,7 +195,9 @@ func (v *View) layout(b *box, c lc) {
 			}
 		}
 	}
+	c.measure = measure
 	v.doLayout(b, c)
+	c.measure = false
 	b.last, b.lastGen, b.lastOK = c, v.layGen, true
 	b.lastRes = b.res()
 	e := &b.mcache[b.mnext%uint8(len(b.mcache))]
@@ -252,11 +261,20 @@ func (v *View) doLayout(b *box, c lc) {
 	default:
 		bfc := c.bfc || st.OverflowX != css.OverflowVisible || st.OverflowY != css.OverflowVisible ||
 			st.Display == css.DisplayInlineBlock || st.Display == css.DisplayTableCell || st.Display == css.DisplayTable
+		h := float32(0)
 		if cw < 0 {
-			used, _ := v.layoutFlow(b, avail, ch, bfc, ch < 0, true, true, c)
+			used, h1 := v.layoutFlow(b, avail, ch, bfc, ch < 0, true, true, c)
 			cw = clampF(used, lo, hi)
+			// Inline-only, start-aligned content is already laid out
+			// exactly as a second pass at the used width would.
+			if cw == used && v.inlineOnly(b) {
+				h = h1
+			} else {
+				_, h = v.layoutFlow(b, cw, ch, bfc, ch < 0, c.measure, false, c)
+			}
+		} else {
+			_, h = v.layoutFlow(b, cw, ch, bfc, ch < 0, c.measure, false, c)
 		}
-		_, h := v.layoutFlow(b, cw, ch, bfc, ch < 0, c.measure, false, c)
 		if ch < 0 {
 			ch = clampF(h, hlo, hhi)
 		} else if h > ch {
@@ -337,7 +355,7 @@ func (v *View) layoutFlow(b *box, cw, ch float32, bfc, autoH, measure, shrink bo
 			}
 			r.y = y
 			y += h
-			if !measure {
+			{
 				for fi := range r.f.items {
 					it := &r.f.items[fi]
 					switch it.kind {
@@ -350,13 +368,6 @@ func (v *View) layoutFlow(b *box, cw, ch float32, bfc, autoH, measure, shrink bo
 						it.b.staticLP = b
 					}
 				}
-				if b.base < 0 && r.f.base >= 0 {
-					b.base = cy + r.y + r.f.base
-				}
-				if r.f.lastBase >= 0 {
-					b.lastBase = cy + r.y + r.f.lastBase
-				}
-			} else {
 				if b.base < 0 && r.f.base >= 0 {
 					b.base = cy + r.y + r.f.base
 				}
@@ -442,6 +453,22 @@ func (v *View) layoutFlow(b *box, cw, ch float32, bfc, autoH, measure, shrink bo
 	}
 	_ = st
 	return used, y
+}
+
+// inlineOnly reports a block container whose in-flow content is all
+// inline runs with start-aligned text (one shrink-to-fit pass suffices).
+func (v *View) inlineOnly(b *box) bool {
+	switch b.st.TextAlign {
+	case css.TextStart, css.TextLeft:
+	default:
+		return false
+	}
+	for _, k := range b.lk {
+		if k.kind != kText && k.st.Display != css.DisplayNone && !v.inRun(k) && !outOfFlow(&k.st) {
+			return false
+		}
+	}
+	return true
 }
 
 // collapseThrough reports an empty block whose margins collapse
@@ -683,10 +710,8 @@ func (v *View) layoutNative(b *box, cw, ch, avail, lo, hi, hlo, hhi float32, c l
 		cs.Max.X = cs.Min.X
 	}
 	d := b.scope.measureNative(b, cs)
-	if !c.measure {
-		b.natCons = ck(cs)
-		b.natLaid = d
-	}
+	b.natCons = ck(cs)
+	b.natLaid = d
 	b.base = d.base
 	b.lastBase = d.base
 	if b.base >= 0 {
@@ -750,45 +775,42 @@ func offsetTo(b, anc *box) (float32, float32, bool) {
 // postLayout places out-of-flow boxes, computes relative offsets and
 // collects stacking-context layers. Final layouts only.
 func (s *scope) postLayout() {
-	v := s.v
 	root := &s.root
-	var walk func(b *box)
-	walk = func(b *box) {
-		for _, k := range b.lk {
-			if k.kind == kText {
-				continue
-			}
-			if k.st.Display == css.DisplayNone {
-				continue
-			}
-			if outOfFlow(&k.st) {
-				s.placeAbs(k)
-			} else if k.st.Position == css.PosRelative || k.st.Position == css.PosSticky {
-				cbw, cbh := s.cbSize(k.lp)
-				l, r, t, bt := k.st.Left, k.st.Right, k.st.Top, k.st.Bottom
-				k.relX, k.relY = 0, 0
-				if l.Kind == css.LenFixed {
-					k.relX = v.length(l, cbw)
-				} else if r.Kind == css.LenFixed {
-					k.relX = -v.length(r, cbw)
-				}
-				if t.Kind == css.LenFixed && (t.Pct == 0 || cbh >= 0) {
-					k.relY = v.length(t, cbh)
-				} else if bt.Kind == css.LenFixed && (bt.Pct == 0 || cbh >= 0) {
-					k.relY = -v.length(bt, cbh)
-				}
-			} else {
-				k.relX, k.relY = 0, 0
-			}
-			if k.native {
-				s.addNative(k)
-				continue // its children belong to the host's sub scopes
-			}
-			walk(k)
-		}
-	}
-	walk(root)
+	s.postWalk(root)
 	s.stack(root)
+}
+
+func (s *scope) postWalk(b *box) {
+	v := s.v
+	for _, k := range b.lk {
+		if k.kind == kText || k.st.Display == css.DisplayNone {
+			continue
+		}
+		if outOfFlow(&k.st) {
+			s.placeAbs(k)
+		} else if k.st.Position == css.PosRelative || k.st.Position == css.PosSticky {
+			cbw, cbh := s.cbSize(k.lp)
+			l, r, t, bt := k.st.Left, k.st.Right, k.st.Top, k.st.Bottom
+			k.relX, k.relY = 0, 0
+			if l.Kind == css.LenFixed {
+				k.relX = v.length(l, cbw)
+			} else if r.Kind == css.LenFixed {
+				k.relX = -v.length(r, cbw)
+			}
+			if t.Kind == css.LenFixed && (t.Pct == 0 || cbh >= 0) {
+				k.relY = v.length(t, cbh)
+			} else if bt.Kind == css.LenFixed && (bt.Pct == 0 || cbh >= 0) {
+				k.relY = -v.length(bt, cbh)
+			}
+		} else {
+			k.relX, k.relY = 0, 0
+		}
+		if k.native {
+			s.addNative(k)
+			continue // its children belong to the host's sub scopes
+		}
+		s.postWalk(k)
+	}
 }
 
 func (s *scope) cbSize(cb *box) (float32, float32) {
@@ -889,50 +911,50 @@ func (s *scope) placeAbs(k *box) {
 // stack marks stacking contexts and collects their layers.
 func (s *scope) stack(root *box) {
 	root.ctxRoot = true
-	var mark func(b *box, parentFlex bool)
-	mark = func(b *box, parentFlex bool) {
-		for _, k := range b.lk {
-			if k.kind == kText || k.st.Display == css.DisplayNone {
-				continue
-			}
-			st := &k.st
-			pos := st.Position != css.PosStatic && !k.inIFCBox()
-			flexItem := parentFlex && !st.ZAuto
-			k.layered = pos || flexItem
-			k.ctxRoot = (pos && !st.ZAuto) || st.Position == css.PosFixed || st.Position == css.PosSticky ||
-				st.Opacity < 1 || len(st.Transform) > 0 || !st.Filter.IsZero() || flexItem
-			if !k.native {
-				mark(k, isFlex(st.Display) || isGrid(st.Display))
-			}
-		}
-	}
-	mark(root, false)
-	var collect func(ctx, b *box)
-	collect = func(ctx, b *box) {
-		for _, k := range b.lk {
-			if k.kind == kText || k.st.Display == css.DisplayNone {
-				continue
-			}
-			if k.layered {
-				if k.st.ZIndex < 0 && !k.st.ZAuto {
-					ctx.neg = insertZ(ctx.neg, k)
-				} else {
-					ctx.pos = insertZ(ctx.pos, k)
-				}
-			}
-			if k.native {
-				continue
-			}
-			if k.ctxRoot {
-				k.neg, k.pos = k.neg[:0], k.pos[:0]
-				collect(k, k)
-				continue
-			}
-			collect(ctx, k)
-		}
-	}
+	markCtx(root, false)
 	root.neg, root.pos = root.neg[:0], root.pos[:0]
-	collect(root, root)
+	collectCtx(root, root)
+}
+
+func markCtx(b *box, parentFlex bool) {
+	for _, k := range b.lk {
+		if k.kind == kText || k.st.Display == css.DisplayNone {
+			continue
+		}
+		st := &k.st
+		pos := st.Position != css.PosStatic && !k.inIFCBox()
+		flexItem := parentFlex && !st.ZAuto
+		k.layered = pos || flexItem
+		k.ctxRoot = (pos && !st.ZAuto) || st.Position == css.PosFixed || st.Position == css.PosSticky ||
+			st.Opacity < 1 || len(st.Transform) > 0 || !st.Filter.IsZero() || flexItem
+		if !k.native {
+			markCtx(k, isFlex(st.Display) || isGrid(st.Display))
+		}
+	}
+}
+
+func collectCtx(ctx, b *box) {
+	for _, k := range b.lk {
+		if k.kind == kText || k.st.Display == css.DisplayNone {
+			continue
+		}
+		if k.layered {
+			if k.st.ZIndex < 0 && !k.st.ZAuto {
+				ctx.neg = insertZ(ctx.neg, k)
+			} else {
+				ctx.pos = insertZ(ctx.pos, k)
+			}
+		}
+		if k.native {
+			continue
+		}
+		if k.ctxRoot {
+			k.neg, k.pos = k.neg[:0], k.pos[:0]
+			collectCtx(k, k)
+			continue
+		}
+		collectCtx(ctx, k)
+	}
 }
 
 func zOf(b *box) int32 {

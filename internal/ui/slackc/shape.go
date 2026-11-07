@@ -87,8 +87,31 @@ func fontFor(st *css.Style) font.Font {
 }
 
 func isMonoFamily(f string) bool {
-	f = strings.ToLower(f)
-	return strings.Contains(f, "mono") || strings.Contains(f, "menlo") || strings.Contains(f, "consolas") || strings.Contains(f, "courier")
+	if f == "Lato" {
+		return false
+	}
+	return containsFold(f, "mono") || containsFold(f, "menlo") || containsFold(f, "consolas") || containsFold(f, "courier")
+}
+
+// containsFold is an allocation-free ASCII case-insensitive Contains.
+func containsFold(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		j := 0
+		for j < len(sub) {
+			c := s[i+j]
+			if c >= 'A' && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			if c != sub[j] {
+				break
+			}
+			j++
+		}
+		if j == len(sub) {
+			return true
+		}
+	}
+	return false
 }
 
 func (v *View) face(st *css.Style) faceKey {
