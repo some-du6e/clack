@@ -25,7 +25,7 @@ func (h themeHost) Theme() *theme.Theme { return h.th }
 // rowAllocsBefore is the steady-state allocations of one frame of
 // rowAllocsFrame before the Taut boundaries (CI, go1.24, linux/amd64).
 // The unpatched, unstyled row must not allocate more.
-const rowAllocsBefore = -1
+const rowAllocsBefore = 6
 
 func testRowEntry(ts string) entry {
 	return entry{rev: 1, m: core.Message{TS: ts, Channel: "C1", User: "U1", Name: "Alice", Text: "hello <@U2>",
