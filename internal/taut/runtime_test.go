@@ -410,6 +410,28 @@ func TestMembershipCountsGuests(t *testing.T) {
 	}
 }
 
+// A profile's status_text_canonical (the preset a status came from) reaches
+// plugins: Slick's OfficeHours tells its own "Out of office" from one set by
+// hand by it, and TautAPI's profile.getStatus().canonical reads it.
+func TestMemberStatusTextCanonical(t *testing.T) {
+	h := newHarness(t)
+	var self, alice slack.User
+	if err := json.Unmarshal([]byte(`{"id":"`+selfID+`","name":"me","profile":{"status_text":"Away until Monday","status_emoji":":palm_tree:","status_text_canonical":"Out of office"}}`), &self); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(`{"id":"UALICE","name":"alice","profile":{"status_text":"Out of office","status_emoji":":palm_tree:"}}`), &alice); err != nil {
+		t.Fatal(err)
+	}
+	h.app.S.PutUsers([]slack.User{self, alice})
+	var got struct{ Self, Alice, Status string }
+	h.jsInto(`const s = T.redux.getRawState().members
+		return { Self: s['`+selfID+`'].profile.status_text_canonical, Alice: s.UALICE.profile.status_text_canonical,
+			Status: T.profile.getStatus().canonical }`, &got)
+	if got.Self != "Out of office" || got.Alice != "" || got.Status != "Out of office" {
+		t.Errorf("status_text_canonical %+v", got)
+	}
+}
+
 func TestDispatchKeepsTieredPromise(t *testing.T) {
 	h := newHarness(t)
 	type row struct {
