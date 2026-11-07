@@ -35,7 +35,16 @@ const KNOWN_COMPONENTS = ('MessageBackground;MessageWrapper;MessageListItem;Sear
   'BasePresence;LocalTime;RimetoMemberProfileOverflowMenu;EditAudioButton;CaptionsSubmenu;CaptionsItemsMenu;HuddleMetaEvent;HuddleBaseEvent;' +
   'HuddlesAlertBannerBase;Tabs;MenuFromTemplate;MenuTrigger;withKeyboardFocusContext(ContextMenuTrigger);SvgIcon;ProfileHoverTrigger;' +
   'MrkdwnElement;Button;Tooltip;KeyboardKeysTooltip;IconButtonBase;ConfirmationModal;InlineAlert;Label;FormTextInput;Checkbox;FilterPill;' +
-  'Tag;DateRangePicker;DatePickerTrigger;TimePicker;FieldSet;Legend;Hint;BasicSelect;Connect(EmojiMenuTrigger);Popover;RichTextInput').split(';')
+  'Tag;DateRangePicker;DatePickerTrigger;TimePicker;FieldSet;Legend;Hint;BasicSelect;Connect(EmojiMenuTrigger);Popover;RichTextInput;' +
+  // names Slick's plugins patch (docs/PLUGINS-components.md §9)
+  'AboutPage;ActivityDM;ActivityRowContentDense;ActivityRowContentDetailed;ActivityRowContentMultiLine;ActivityRowContentSingleLine;' +
+  'ActivityThread;AppDetailsOverflow;AttachmentTitle;BaseChannelSuffix;BaseDrawRenderer;BaseMessageAvatar;BaseSearch;BaseVisuallyHiddenMessageText;' +
+  'ChannelContextMenu;ChannelSidebar;ClientPrimaryView;CodeChannelEntityCard;ConnectedChannel;Channel;Content;ContextMenuTriggerWithKeyboardFocus;' +
+  'DmsChannel;DmsList;DmsListItem;EditFileDialogTitle;EditProfileFormPane;FileFieldset;GifListItem;GifPicker;HuddleBottomBarContent;' +
+  'HuddleInviteWindowWithPreviewContent;HuddleMiniPanel;HuddleMvaWindowTitle;HuddleRecordingIndicator;LocalTimeRow;MemberProfileBaseEntity;' +
+  'MemberSlug;Menu;Message;MessageActionsMenu;MessageAttachmentYouTube;MessageFile;MessageFiles;MessageKitAttachments;MessageText;' +
+  'MultiFileUploadItem;PeopleGrid;Presence;ProfileHoverCard;ProgressiveDisclosureSuccessCoachmarkWrapper;ReplyBarAvatar;SearchAutocomplete;' +
+  'SearchInputBox;SendButton;TextyAutocomplete;ThreadReplies;ThreadReplyGeneric;MessageAvatar;MessageKitGutter').split(';')
 
 const rawNatives = new Map() // name → the unpatched native component
 const wrappers = new Map() // name → the patch-following component plugins get
