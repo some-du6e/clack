@@ -31,6 +31,9 @@ type Element interface {
 	// data-*, …). "class" and "id" are also answered.
 	Attr(name string) (string, bool)
 	Parent() Element // nil at the root
+	// Prev is the previous element sibling (nil when first or unknown),
+	// for the + and ~ combinators.
+	Prev() Element
 	// Index is the element's position among its element siblings and the
 	// sibling count, for :first-child/:last-child/:nth-child. n == 0 when
 	// unknown (native widgets): structural pseudo-classes then don't match.
@@ -38,6 +41,13 @@ type Element interface {
 	// TypeIndex is Index among siblings of the same tag (:first-of-type…).
 	TypeIndex() (i, n int)
 	State() State
+}
+
+// KidsElement is implemented by elements that know their children
+// (host-tree nodes), for :has() and :empty.
+type KidsElement interface {
+	Element
+	Kids() []Element
 }
 
 // Decl is one declaration; Prop is lowercase kebab-case ("margin-left",

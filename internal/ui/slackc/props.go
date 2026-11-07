@@ -2,6 +2,7 @@ package slackc
 
 import (
 	"encoding/json"
+	"errors"
 	"math"
 	"reflect"
 	"sort"
@@ -25,9 +26,32 @@ type JSFunc struct{ ID int64 }
 // Call invokes the JS function with JSON-encodable args (async).
 func (f JSFunc) Call(args ...any) {
 	if b := bridge(); b != nil && f.ID != 0 {
-		b.Call(f.ID, encodeArgs(args))
+		b.Call(f.ID, encodeArgs(args), nil)
 	}
 }
+
+// CallResult calls the JS function and delivers its decoded result to
+// done on the UI goroutine (queued like CallGo; the window is
+// invalidated). Never blocks.
+func (f JSFunc) CallResult(done func(result any, err error), args ...any) {
+	b := bridge()
+	if b == nil || f.ID == 0 {
+		done(nil, errNoBridge)
+		return
+	}
+	b.Call(f.ID, encodeArgs(args), func(res []byte, err error) {
+		var v any
+		if err == nil && len(res) > 0 {
+			v, err = decodeValue(res)
+		}
+		calls.Lock()
+		calls.q = append(calls.q, func() { done(v, err) })
+		calls.Unlock()
+		invalidate()
+	})
+}
+
+var errNoBridge = errors.New("slackc: no plugin runtime")
 
 // Element is a React element passed as a prop ({"$el":[…]}), e.g. a
 // Tooltip's tip; lay it out with Host.Element.

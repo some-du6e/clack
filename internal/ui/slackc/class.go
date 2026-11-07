@@ -133,6 +133,7 @@ func (e *nativeEl) Parent() css.Element {
 	}
 	return e.parent
 }
+func (e *nativeEl) Prev() css.Element     { return nil }
 func (e *nativeEl) Index() (int, int)     { return 0, 0 }
 func (e *nativeEl) TypeIndex() (int, int) { return 0, 0 }
 func (e *nativeEl) State() css.State      { return e.st }

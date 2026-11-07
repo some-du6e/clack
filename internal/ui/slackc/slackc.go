@@ -25,6 +25,7 @@ import (
 
 	"gioui.org/layout"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
@@ -47,8 +48,10 @@ type Bridge interface {
 	// Dispatch fires a DOM event at the host node with K == target (0 =
 	// document/window); JS runs capture and bubble.
 	Dispatch(target int64, event []byte)
-	// Call calls a JS function prop with a JSON array of args.
-	Call(fn int64, args []byte)
+	// Call calls a JS function prop with a JSON array of args. done, when
+	// non-nil, gets the JSON result (or error) on any goroutine, e.g.
+	// ContextMenuTrigger's getTemplate().
+	Call(fn int64, args []byte, done func(result []byte, err error))
 	// SetRects reports laid-out host node boxes (x, y, w, h in CSS px,
 	// window coordinates) for getBoundingClientRect / ResizeObserver.
 	SetRects(rects map[int64][4]float32)
@@ -66,13 +69,21 @@ type Env struct {
 		Layout(gtx layout.Context) layout.Dimensions
 		Dismissed() bool
 	})
-	// Fetch loads a URL for <img> sources that need the session
-	// (files.slack.com); nil = imgcache's own fetcher.
 	Toast func(text string)
 	// OpenURL opens a link in the browser.
 	OpenURL func(url string)
 	// Navigate follows a Clack route ("c/<id>", …) for Slack-internal links.
 	Navigate func(route string)
+	// Core is the in-process Slack service (users, channels, emoji).
+	Core *core.App
+	// PointerWin is the last pointer position in window coordinates
+	// (ui.App.ptrWin). With a widget's local pointer position it gives the
+	// widget's window origin, as ui's originTracker does.
+	PointerWin func() image.Point
+	// OpenEmojiPicker, OpenProfile and OpenMenu are the popups the ui root
+	// offers every package (anchor in window coordinates).
+	OpenEmojiPicker func(anchor image.Point, onPick func(name string))
+	OpenProfile     func(anchor image.Point, userID string)
 }
 
 var (
