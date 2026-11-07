@@ -337,8 +337,10 @@ func (a *App) frame(gtx layout.Context) {
 	if !a.sidebar.hidden {
 		navX = ws.Min.X + gtx.Dp(unit.Dp(a.sidebar.width))
 	}
+	a.th.Chrome = true // light-on-aubergine text fade (theme.lightTextColor)
 	a.layoutTopNav(gtx, navX, sz.X)
 	a.layoutRail(gtx, navH, sz.Y-navH)
+	a.th.Chrome = false
 
 	// workspace: sidebar (translucent) + primary panel, one rounded unit
 	// with Slack's soft shadow (-4px -4px 16px rgba(0,0,0,.09)).
@@ -349,7 +351,9 @@ func (a *App) frame(gtx layout.Context) {
 		sb := image.Rect(ws.Min.X, ws.Min.Y, primary.Min.X, ws.Max.Y)
 		a.grad.draw(gtx, sz, image.Point{}, clip.RRect{Rect: sb, NW: rad, SW: rad}.Op(gtx.Ops), a.th.C.ChromeA, a.th.C.ChromeB, a.th.C.SidebarBg)
 		a.sidebar.hover = a.ptrWin.In(sb)
+		a.th.Chrome = true
 		atExact(gtx, sb.Min, sb.Size(), a.layoutSidebar)
+		a.th.Chrome = false
 	}
 	nw, sw := 0, 0
 	if sbW == 0 {
