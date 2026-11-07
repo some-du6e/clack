@@ -313,9 +313,12 @@ func (b *backend) handle(a *App, ev core.Event) {
 				// through Taut's showNotification thunk: plugins may change or
 				// drop it (native: the desktop notification)
 				title, body := b.notifyTitle(ev, c), richtext.PlainText(ev.Msg.Doc)
-				a.dispatch("showNotification", map[string]any{"title": title, "message": body, "channelId": ev.Channel, "ts": ev.TS},
+				msg := notificationMessage(a.Taut(), ev)
+				a.dispatch("showNotification", map[string]any{"title": title, "message": msg, "body": body, "channelId": ev.Channel, "ts": ev.TS},
 					func(ctx context.Context, args map[string]any) (any, error) {
-						a.Notify(argStr(args, "title"), argStr(args, "message"))
+						if t, b, ok := notificationText(args, msg, body); ok {
+							a.Notify(t, b)
+						}
 						return nil, nil
 					})
 			}
@@ -780,4 +783,49 @@ func openURL(u string) {
 		cmd = exec.Command("xdg-open", u)
 	}
 	_ = cmd.Start()
+}
+
+// notificationMessage is showNotification's `message`: the message as
+// Slack's store keeps it, which plugins drop (ShutUpSlackbot, StreamerMode
+// set it to undefined) or rewrite (Censorship masks its text).
+func notificationMessage(t *taut.Taut, ev core.Event) map[string]any {
+	if m := t.SlackMessage(ev.Channel, ev.TS); m != nil {
+		return m
+	}
+	m := map[string]any{"type": "message", "channel": ev.Channel, "ts": ev.TS, "text": ev.Msg.Text}
+	if ev.Msg.User != "" {
+		m["user"] = ev.Msg.User
+	}
+	if ev.Msg.BotID != "" {
+		m["bot_id"] = ev.Msg.BotID
+	}
+	if ev.Msg.ThreadTS != "" {
+		m["thread_ts"] = ev.Msg.ThreadTS
+	}
+	if ev.Msg.Subtype != "" {
+		m["subtype"] = ev.Msg.Subtype
+	}
+	return m
+}
+
+// notificationText is what the desktop notification shows after the
+// showNotification thunk: nothing when a plugin removed the message, the
+// plugin's text when it changed it, else Clack's plain rendering.
+func notificationText(args map[string]any, orig map[string]any, body string) (title, text string, ok bool) {
+	m, has := args["message"]
+	if !has || m == nil {
+		return "", "", false
+	}
+	title = argStr(args, "title")
+	switch v := m.(type) {
+	case string:
+		return title, v, true
+	case map[string]any:
+		if s, _ := v["text"].(string); s != "" {
+			if o, _ := orig["text"].(string); s != o {
+				return title, s, true
+			}
+		}
+	}
+	return title, body, true
 }

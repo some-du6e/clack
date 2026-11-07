@@ -155,3 +155,25 @@ func TestSlickTabIconsRegistered(t *testing.T) {
 		}
 	}
 }
+
+// showNotification carries Slack's message object; a plugin that removes it
+// (ShutUpSlackbot, StreamerMode) silences the notification, and one that
+// rewrites its text (Censorship) changes what it shows.
+func TestNotificationText(t *testing.T) {
+	orig := map[string]any{"text": "the job fair", "user": "U1"}
+	if _, b, ok := notificationText(map[string]any{"title": "T", "message": orig}, orig, "the job fair"); !ok || b != "the job fair" {
+		t.Errorf("unchanged: %q %v", b, ok)
+	}
+	if _, _, ok := notificationText(map[string]any{"title": "T"}, orig, "x"); ok {
+		t.Error("a removed message still notified")
+	}
+	if _, _, ok := notificationText(map[string]any{"title": "T", "message": nil}, orig, "x"); ok {
+		t.Error("a null message still notified")
+	}
+	if _, b, ok := notificationText(map[string]any{"title": "T", "message": map[string]any{"text": "the *** fair"}}, orig, "the job fair"); !ok || b != "the *** fair" {
+		t.Errorf("rewritten: %q", b)
+	}
+	if ti, b, _ := notificationText(map[string]any{"title": "New", "message": "plain"}, orig, "x"); ti != "New" || b != "plain" {
+		t.Errorf("string message: %q %q", ti, b)
+	}
+}
