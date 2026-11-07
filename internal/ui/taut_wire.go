@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -361,7 +362,10 @@ func (a *App) openFilePath(title, accept string) (string, error) {
 
 // deepLinkRoute maps a slack:// URI to a Clack route (or a user to open):
 // slack://channel?team=T&id=C[&thread_ts=ts], slack://user?team=T&id=U,
-// slack://open (Home). Unknown forms aren't handled.
+// slack://open (Home). Unknown forms aren't handled. Deep links only ever
+// navigate: nothing here sends, joins, leaves, downloads or signs out, and
+// ids and timestamps must look like Slack's so a link can't smuggle extra
+// route segments (c/C1/t/… or search?q=…) in.
 func deepLinkRoute(uri string) (route, user string, ok bool) {
 	u, err := url.Parse(uri)
 	if err != nil || u.Scheme != "slack" {
@@ -371,16 +375,19 @@ func deepLinkRoute(uri string) (route, user string, ok bool) {
 	id := q.Get("id")
 	switch u.Host {
 	case "channel":
-		if id == "" {
+		if !slackIDRE.MatchString(id) || !strings.ContainsAny(id[:1], "CDG") {
 			return "", "", false
 		}
 		r := "c/" + id
 		if ts := q.Get("thread_ts"); ts != "" {
+			if !slackTSRE.MatchString(ts) {
+				return "", "", false
+			}
 			r += "/t/" + ts // message=… alone opens the channel (no jump-to route yet)
 		}
 		return r, "", true
 	case "user":
-		if id == "" {
+		if !slackIDRE.MatchString(id) || !strings.ContainsAny(id[:1], "UW") {
 			return "", "", false
 		}
 		return "", id, true
@@ -389,3 +396,8 @@ func deepLinkRoute(uri string) (route, user string, ok bool) {
 	}
 	return "", "", false
 }
+
+var (
+	slackIDRE = regexp.MustCompile(`^[A-Z][A-Z0-9]{2,24}$`)
+	slackTSRE = regexp.MustCompile(`^[0-9]{1,12}\.[0-9]{1,8}$`)
+)

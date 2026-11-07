@@ -73,7 +73,9 @@ func (a *App) savePrefs() {
 	a.prefs.Dark = &d
 	a.prefs.SidebarW = a.sidebar.width
 	a.prefs.SecondaryW = a.secondary.width
-	a.prefs.Route = string(a.router.Current())
+	if r := a.router.Current(); r.Page() != "search" { // search queries stay in memory
+		a.prefs.Route = string(r)
+	}
 	a.prefs.LastChannel = a.lastChannel
 	a.prefs.SidebarHidden = a.sidebar.hidden
 	a.prefs.Collapsed = a.prefs.Collapsed[:0]
