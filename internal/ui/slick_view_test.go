@@ -213,10 +213,19 @@ func (e *svEnv) dump() {
 	defer e.mu.Unlock()
 	for root, tr := range e.trees {
 		s := string(tr)
+		for i := 0; ; {
+			j := strings.Index(s[i:], "getTemplate")
+			if j < 0 {
+				break
+			}
+			j += i
+			e.t.Logf("tree %d getTemplate@%d: …%s…", root, j, s[max(j-200, 0):min(j+80, len(s))])
+			i = j + 1
+		}
 		if len(s) > 3000 {
 			s = s[:3000] + "…"
 		}
-		e.t.Logf("tree %d: %s", root, s)
+		e.t.Logf("tree %d (%d bytes): %s", root, len(tr), s)
 	}
 	e.t.Logf("menus opened: %d", len(e.menus))
 }
