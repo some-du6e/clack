@@ -749,13 +749,13 @@ func (m *mirror) get(slice, key string) any {
 	case "experiments":
 		return map[string]any{}
 	case "huddleEvents":
-		return map[string]any{"enabled": false, "isLoading": false, "events": []any{}, "isSideBySideEnabled": false, "isClosedCaptionsEnabled": false}
+		return m.t.huddleEventsSlice()
 	case "allCalls":
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		return map[string]any{"byId": m.calls, "inviteResponseById": map[string]any{}}
 	case "peers":
-		return map[string]any{"self": map[string]any{"id": "self"}, "invitedUsers": map[string]any{}, "byId": map[string]any{}, "leftById": map[string]any{}, "reacjis": []any{}}
+		return m.t.peersSlice()
 	case "messageEditWindow":
 		m.mu.Lock()
 		defer m.mu.Unlock()

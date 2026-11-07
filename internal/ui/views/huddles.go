@@ -198,7 +198,7 @@ func (v *Huddles) update(gtx C) {
 		})
 	}
 	if v.newBtn.Clicked(gtx) || v.heroBtn.Clicked(gtx) {
-		huddleAttempt(v.h, v.tt, startHuddleArgs{IsStandaloneHuddle: true})
+		startHuddle(v.h, v.tt, startHuddleArgs{IsStandaloneHuddle: true})
 	}
 	if v.heroX.Clicked(gtx) {
 		v.hideHero = true
@@ -212,12 +212,22 @@ func (v *Huddles) update(gtx C) {
 				continue
 			}
 			switch i {
-			case 0:
+			case 0: // a live huddle: the plugin's join, else join it in its conversation
 				v.joinClicked(id)
-			case 1:
-				huddleAttempt(v.h, v.tt, startHuddleArgs{})
+			case 1: // a person: huddle in your DM with them
+				uid := id
+				go func() {
+					ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+					defer cancel()
+					conv, err := v.h.Core().OpenDM(ctx, uid)
+					if err != nil {
+						v.h.Toast("Couldn't open the DM: " + err.Error())
+						return
+					}
+					startHuddle(v.h, v.tt, startHuddleArgs{ChannelID: conv.ID})
+				}()
 			default:
-				huddleAttempt(v.h, v.tt, startHuddleArgs{ChannelID: id})
+				startHuddle(v.h, v.tt, startHuddleArgs{ChannelID: id})
 			}
 		}
 	}

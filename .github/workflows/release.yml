@@ -211,19 +211,22 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false # release binaries build from a clean module/build cache
+      - name: mingw (cgo for amd64, miniaudio huddle audio)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq gcc-mingw-w64-x86-64
       - name: resources (icon #1, manifest, version info)
         run: |
           go install github.com/tc-hib/go-winres@$GO_WINRES_VERSION
           go-winres make --in packaging/windows/winres.json --out cmd/clack/rsrc --arch amd64,arm64 \
             --file-version "$NUM.0" --product-version "$VERSION"
           ls -la cmd/clack/*.syso
-      - name: build (cross, no cgo)
+      - name: build (cross; amd64 with cgo via mingw, arm64 without cgo so no huddle audio device)
         run: |
           set -eu
           mkdir -p dist
           for arch in amd64 arm64; do
             mkdir -p build/windows-$arch/Clack
-            CGO_ENABLED=0 GOOS=windows GOARCH=$arch go build -trimpath -ldflags="-s -w -H windowsgui -X main.version=$TAG" -o build/windows-$arch/Clack/Clack.exe ./cmd/clack
+            cgo=0; cc=; if [ $arch = amd64 ]; then cgo=1; cc=x86_64-w64-mingw32-gcc; fi
+            CGO_ENABLED=$cgo CC=$cc GOOS=windows GOARCH=$arch go build -trimpath -ldflags="-s -w -H windowsgui -X main.version=$TAG" -o build/windows-$arch/Clack/Clack.exe ./cmd/clack
             cp packaging/windows/README.txt build/windows-$arch/Clack/README.txt
             (cd build/windows-$arch && zip -9 -r "../../dist/Clack-${VERSION}-windows-$arch.zip" Clack)
             unzip -l "dist/Clack-${VERSION}-windows-$arch.zip"

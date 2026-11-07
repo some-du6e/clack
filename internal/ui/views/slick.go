@@ -462,7 +462,7 @@ func (v *Huddles) join(id string) {
 		huddleAttempt(v.h, v.tt, startHuddleArgs{HuddleID: id})
 		return
 	}
-	huddleAttempt(v.h, v.tt, startHuddleArgs{ChannelID: roomChannel(r), HuddleID: r.ID, FromJoinPreview: r.Active})
+	startHuddle(v.h, v.tt, startHuddleArgs{ChannelID: roomChannel(r), HuddleID: r.ID, FromJoinPreview: r.Active})
 }
 
 func (v *Huddles) roomByID(id string) (huddleRoom, bool) {

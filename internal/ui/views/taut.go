@@ -204,6 +204,53 @@ func joinChannelThunk(ctx context.Context, tt *taut.Taut, c *core.App, id string
 // (HuddleActivity…). Natively they are no-ops: Clack has no huddle media.
 var huddleThunks = [...]string{"startEventLog", "stopHuddle", "stopEventLog", "enqueueHuddleToast"}
 
+// huddleStarter is implemented by a Host that runs native huddles (the ui
+// root, through internal/ui/huddleui).
+type huddleStarter interface{ StartHuddle(channel string) }
+
+// startHuddle starts or joins the huddle in args.ChannelID natively, through
+// Slack's startHuddle thunk when a plugin wraps it (BetterHuddles), else
+// directly. Without a native huddle Host it is huddleAttempt.
+func startHuddle(h Host, tt *taut.Taut, args startHuddleArgs) {
+	hs, ok := h.(huddleStarter)
+	if !ok {
+		huddleAttempt(h, tt, args)
+		return
+	}
+	if args.ChannelID == "" { // Slack's "New huddle" asks who to call
+		if tt.ThunkPatched("startHuddle") {
+			huddleAttempt(h, tt, args) // a plugin may take it
+			return
+		}
+		h.Toast("Open a channel or DM and click Huddle in its header to start one")
+		return
+	}
+	if !tt.ThunkPatched("startHuddle") {
+		hs.StartHuddle(args.ChannelID)
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_, err := taut.Dispatch(ctx, tt, "startHuddle", args, func(ctx context.Context, a startHuddleArgs) (any, error) {
+			if a.ChannelID == "" {
+				return nil, nil
+			}
+			ch := a.ChannelID
+			if p, ok := h.(interface{ Post(func()) }); ok { // back on the UI goroutine
+				p.Post(func() { hs.StartHuddle(ch) })
+			} else {
+				hs.StartHuddle(ch)
+			}
+			return nil, nil
+		})
+		if err != nil {
+			h.Toast("Couldn't start the huddle: " + err.Error())
+		}
+		h.Invalidate()
+	}()
+}
+
 // startHuddleArgs is Slack's startHuddle argument (BetterHuddles reads
 // channelId, muted, isStandaloneHuddle and fromJoinPreview).
 type startHuddleArgs struct {

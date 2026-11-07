@@ -3,6 +3,7 @@ package ui
 import (
 	"image"
 	"image/color"
+	"strconv"
 
 	"gioui.org/font"
 	"gioui.org/gesture"
@@ -245,7 +246,13 @@ func (a *App) layoutSidebarNative(gtx layout.Context, p slackc.Props) layout.Dim
 
 	// scrolling list
 	top := fy + fh + gtx.Dp(10)
-	at(gtx, image.Pt(0, top), image.Pt(sz.X, sz.Y-top), func(gtx layout.Context) layout.Dimensions {
+	barH := a.huddles().BarHeight(gtx) // the huddle bar sits under the list
+	if barH > 0 {
+		at(gtx, image.Pt(0, sz.Y-barH), image.Pt(sz.X, barH), func(gtx layout.Context) layout.Dimensions {
+			return a.huddles().LayoutBar(gtx, a.th)
+		})
+	}
+	at(gtx, image.Pt(0, top), image.Pt(sz.X, sz.Y-top-barH), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min = gtx.Constraints.Max
 		ls := clsSbList.Enter(gtx, 0, 0)
 		defer ls.Leave()
@@ -508,6 +515,22 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 			right -= bd.Size.X + gtx.Dp(6)
 		}
 		if conv != nil {
+			// a huddle is on here: Slack's headphones + head count
+			if n := a.huddles().LiveCount(conv.ID); n > 0 {
+				num := strconv.Itoa(n)
+				nw := a.th.Measure(gtx, 13, theme.Bold, num)
+				right -= nw
+				at(gtx, image.Pt(right, 0), image.Pt(nw, rowH), func(gtx layout.Context) layout.Dimensions {
+					return vcenter(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
+						return a.th.Label(gtx, 13, theme.Bold, fg, num)
+					})
+				})
+				right -= gtx.Dp(17)
+				at(gtx, image.Pt(right, (rowH-gtx.Dp(15))/2), image.Pt(gtx.Dp(15), gtx.Dp(15)), func(gtx layout.Context) layout.Dimensions {
+					return icons.Get("headphones")(gtx, 15, fg)
+				})
+				right -= gtx.Dp(6)
+			}
 			rs.fg = fg
 			a.layoutConvBody(gtx, sbConvRow{a: a, r: r, btn: btn, rs: rs}, p, ix, right)
 			return layout.Dimensions{Size: image.Pt(rw, rowH)}

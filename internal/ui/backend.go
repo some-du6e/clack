@@ -294,6 +294,9 @@ func (b *backend) recount() {
 
 // handle applies one realtime event to the model.
 func (b *backend) handle(a *App, ev core.Event) {
+	if ev.Type == "huddle" {
+		a.huddles().Handle(ev)
+	}
 	m := &b.m
 	changed := false
 	switch ev.Type {
