@@ -141,11 +141,11 @@ func stateFor(h Host, ch, ts string) *listState {
 	if ts != "" {
 		key = ch + "/" + ts
 	}
-	if s, ok := listCache[key]; ok {
-		s.hb = hubFor(h)
+	hb := hubFor(h)
+	if s, ok := listCache[key]; ok && s.hb == hb {
 		return s
 	}
-	hb := hubFor(h)
+	// a new core (signed in again, another account): fresh state
 	s := &listState{hb: hb, ch: ch, ts: ts, thread: ts != "", rows: map[string]*row{}, hoverIdx: -1, tbFor: -1}
 	if ts != "" {
 		s.m = hb.threadModel(ch, ts)

@@ -88,8 +88,8 @@ func newTestApp(t testing.TB) (*core.App, *fakeSlack) {
 	s.TeamID, s.TeamName, s.TeamDomain = "T0266FRGM", "Synthetic Club", "hackclub"
 	s.Unlock()
 	s.PutUsers([]slack.User{
-		{ID: tSelf, Name: "me", RealName: "Test Self", Profile: slack.Profile{DisplayName: "self", Pronouns: "they/them"}},
-		{ID: "UALICE", Name: "alice", RealName: "Alice Example", Profile: slack.Profile{DisplayName: "alice", Pronouns: "she/her"}},
+		{ID: tSelf, Name: "me", RealName: "Test Self", Profile: slack.Profile{DisplayName: "self", Pronouns: "they/them", Image48: "https://avatars.invalid/self-48.png"}},
+		{ID: "UALICE", Name: "alice", RealName: "Alice Example", Profile: slack.Profile{DisplayName: "alice", Pronouns: "she/her", Image48: "https://avatars.invalid/alice-48.png"}},
 		{ID: "UBOB", Name: "bob", RealName: "Bob Example", Profile: slack.Profile{DisplayName: "bob"}},
 		{ID: tBot, Name: "slackbot", RealName: "Slackbot", IsBot: true, Profile: slack.Profile{DisplayName: "Slackbot"}},
 	})
@@ -463,7 +463,23 @@ func TestPluginWhoReacted(t *testing.T) {
 	v := NewChannelView(h, tGen)
 	v.Preview = true
 	// the tada pill: WhoReacted lists the reactors' avatars in it
-	until(t, 8*time.Second, "reactor avatars in the reaction", frameFn(v), func() bool {
-		return u.anyTree("UALICE") && (u.anyTree("Avatar") || u.anyTree("avatar"))
-	})
+	f := frameFn(v)
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) && !(u.anyTree("taut-reactors__avatar") && u.anyTree("alice-48.png")) {
+		f()
+		time.Sleep(15 * time.Millisecond)
+	}
+	if !u.anyTree("taut-reactors__avatar") || !u.anyTree("alice-48.png") {
+		u.mu.Lock()
+		for root, tr := range u.trees {
+			s := string(tr)
+			if len(s) > 600 {
+				s = s[:600] + "…"
+			}
+			t.Logf("tree %d: %s", root, s)
+		}
+		u.mu.Unlock()
+		t.Fatalf("no reactor avatars (img.taut-reactors__avatar with Alice's picture) in the reaction pill; patched Reaction=%v UnstyledButton=%v",
+			slackc.Patched("Reaction"), slackc.Patched("UnstyledButton"))
+	}
 }
