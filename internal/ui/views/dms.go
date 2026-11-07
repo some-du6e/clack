@@ -1002,6 +1002,15 @@ func (d *DMs) dmRow(gtx C, dm *core.DM) D {
 		}
 	}
 
+	var mods uint64
+	if sel {
+		mods = 1
+	}
+	st := dmRowClass.Enter(gtx, hoverState(r.hovered), mods)
+	defer st.Leave()
+	if st.Hidden() {
+		return D{}
+	}
 	return d.dlHoverRow(gtx, &r.dlRowState, dlRowOpts{Bg: bg, HoverBg: d.c.tint, Rule: d.c.rule, Bar: bar, BarTop: 4, BarRight: 12, Content: func(gtx C) D {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 		return layout.UniformInset(dmsPad).Layout(gtx, func(gtx C) D {
@@ -1024,7 +1033,15 @@ func (d *DMs) dmRow(gtx C, dm *core.DM) D {
 							}
 							return row(gtx, layout.Start,
 								layout.Flexed(1, func(gtx C) D {
-									return d.para(gtx, 15, dmsLine, wReg, prevC, 2, txt)
+									ms := dmMsgClass.Enter(gtx, 0, 0)
+									defer ms.Leave()
+									if ms.Hidden() {
+										return D{}
+									}
+									if !ms.Active() {
+										return d.para(gtx, 15, dmsLine, wReg, prevC, 2, txt)
+									}
+									return ms.Wrap(gtx, func(gtx C) D { return d.para(gtx, 15, dmsLine, wReg, ms.Color(prevC), 2, txt) })
 								}),
 								layout.Rigid(func(gtx C) D {
 									if !unread || dm.Count.Mentions <= 0 {
@@ -1063,7 +1080,15 @@ func (d *DMs) nameLine(gtx C, name string, isSelf bool, statusURL, when string) 
 			dims := row(gtx, layout.Middle,
 				layout.Rigid(func(gtx C) D {
 					gtx.Constraints.Max.X = nameMax
-					return d.para(gtx, dmsNameSize, dmsLine, wBold, d.c.white, 1, name)
+					ns := dmNameClass.Enter(gtx, 0, 0)
+					defer ns.Leave()
+					if ns.Hidden() {
+						return D{}
+					}
+					if !ns.Active() {
+						return d.para(gtx, dmsNameSize, dmsLine, wBold, d.c.white, 1, name)
+					}
+					return ns.Wrap(gtx, func(gtx C) D { return d.para(gtx, dmsNameSize, dmsLine, wBold, ns.Color(d.c.white), 1, name) })
 				}),
 				layout.Rigid(func(gtx C) D {
 					if !isSelf {
@@ -1116,6 +1141,8 @@ func (d *DMs) dmAvatar(gtx C, dm *core.DM, ring color.NRGBA) D {
 	for len(urls) < 2 {
 		urls = append(urls, "")
 	}
+	gs := dmStackClass.Enter(gtx, 0, 0)
+	defer gs.Leave()
 	// Two 24px avatars: the back one top-left, the front one bottom-right
 	// with a ring cut out in the sidebar color.
 	s := gtx.Dp(dmsAvatar)

@@ -12,6 +12,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -26,13 +27,15 @@ type crLinkDlg struct {
 	modal          *popups.Modal
 	focused, saved bool
 	onSave         func(text, url string)
+	text0, url0    string        // the prefill (didTextChange, props)
+	saveJS         slackc.JSFunc // a plugin's saveLink override
 }
 
 // openLinkDialog shows the dialog. text and url prefill the fields (url
 // when editing an existing link); onSave gets the text and the normalized
 // URL, onCancel runs when the dialog closes without saving.
 func openLinkDialog(h Host, text, url string, onSave func(text, url string), onCancel func()) {
-	d := &crLinkDlg{h: h, onSave: onSave}
+	d := &crLinkDlg{h: h, onSave: onSave, text0: text, url0: url}
 	d.text = widget.Editor{SingleLine: true, Submit: true}
 	d.link = widget.Editor{SingleLine: true, Submit: true}
 	if text != "" {
@@ -47,7 +50,7 @@ func openLinkDialog(h Host, text, url string, onSave func(text, url string), onC
 	}
 	d.modal = popups.NewModal(h, popups.ModalOpts{
 		Title:        "Add link",
-		Body:         d.body,
+		Body:         d.slackBody,
 		PadX:         24, // Slack's link dialog: 24px padding, 68px header → 472px fields
 		HeadH:        68,
 		EnterSubmits: true,
@@ -66,14 +69,56 @@ func openLinkDialog(h Host, text, url string, onSave func(text, url string), onC
 
 func (d *crLinkDlg) canSave() bool { return strings.TrimSpace(d.link.Text()) != "" }
 
+// save goes through saveLink({didTextChange, text, url}), Slack's
+// ComposerLinkModal method: a plugin's override when one came back in
+// the props, else the composer's own, which runs LinkTransforms.
 func (d *crLinkDlg) save() {
 	if d.saved || !d.canSave() {
 		return
 	}
 	d.saved = true
-	if d.onSave != nil {
-		d.onSave(d.text.Text(), crNormalizeURL(d.link.Text()))
+	text, url := d.text.Text(), crNormalizeURL(d.link.Text())
+	if d.saveJS.ID != 0 {
+		d.saveJS.Call(slackc.Props{"didTextChange": text != d.text0, "text": text, "url": url})
+		return
 	}
+	d.saveLink(text, url)
+}
+
+func (d *crLinkDlg) saveLink(text, url string) {
+	d.saved = true
+	if d.onSave != nil {
+		d.onSave(text, transformLink(url))
+	}
+}
+
+// ComposerLinkModal (row 43). The props carry the prefill and the
+// dialog's methods; saveLink({didTextChange, text, url}) saves.
+func (d *crLinkDlg) slackBody(gtx layout.Context) layout.Dimensions {
+	return slackc.Component(gtx, "ComposerLinkModal", d, (*crLinkDlg).props, (*crLinkDlg).layoutBody)
+}
+
+func (d *crLinkDlg) props() slackc.Props {
+	return slackc.Props{
+		"url":       d.url0,
+		"text":      d.text0,
+		"isEditing": d.url0 != "",
+		"saveLink": func(a slackc.Props) {
+			d.saveLink(a.StrOr("text", d.text.Text()), crNormalizeURL(a.StrOr("url", d.link.Text())))
+		},
+		"onSave":  func() { d.save(); d.modal.Dismiss() },
+		"onClose": func() { d.modal.Dismiss() },
+	}
+}
+
+func (d *crLinkDlg) layoutBody(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	d.saveJS = slackc.JSFunc{}
+	if p != nil {
+		if f, ok := p["saveLink"].(slackc.JSFunc); ok {
+			d.saveJS = f
+		}
+	}
+	return d.body(gtx)
 }
 
 // body draws the two fields. The modal calls it twice a frame (measure,

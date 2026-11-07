@@ -1,0 +1,19 @@
+name: bench-css
+on:
+  push:
+    branches: [taut-ui-css]
+  workflow_dispatch:
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: css tests
+        run: go test -count=1 ./internal/ui/slackc/css/
+      - name: css benchmarks
+        run: go test -run XXX -bench . -benchmem ./internal/ui/slackc/css/

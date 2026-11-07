@@ -61,6 +61,7 @@ func (a *App) readRootPointer(gtx layout.Context) {
 		if pe, ok := e.(pointer.Event); ok {
 			a.ptrWin = image.Pt(int(pe.Position.X+.5), int(pe.Position.Y+.5))
 			a.ptrOK = true
+			a.globalPointer(gtx, pe)
 		}
 	}
 }

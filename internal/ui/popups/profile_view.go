@@ -8,6 +8,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -127,7 +128,7 @@ func (v *ProfileView) clicks(gtx layout.Context, u core.User, ok, self bool) {
 	}
 	if v.moreBtn.Clicked(gtx) {
 		items := pfMoreItems(h, u, false, nil)
-		h.ShowOverlay(&pfPaneMenu{h: h, items: items, box: v.moreBox, paneW: v.paneW})
+		h.ShowOverlay(&pfPaneMenu{h: h, items: items, box: v.moreBox, paneW: v.paneW, member: u.ID})
 	}
 }
 
@@ -176,7 +177,7 @@ func (v *ProfileView) body(gtx layout.Context, th *theme.Theme, cl *Colors, u co
 		editW += dp(gtx, 12)
 	}
 	at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
-		return pfNameLine(gtx, th, nil, u, 22, 30, 12, maxInt(1, inner-editW))
+		return pfNameLine(gtx, v.h, th, nil, u, 22, 30, 12, maxInt(1, inner-editW))
 	})
 	y += dp(gtx, 30)
 
@@ -192,9 +193,15 @@ func (v *ProfileView) body(gtx layout.Context, th *theme.Theme, cl *Colors, u co
 
 	// pronunciation / pronouns
 	if self {
-		at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
+		d := at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
 			return pfLinkRow(gtx, th, cl, &v.nameSndBtn, "Add name pronunciation", rowH)
 		})
+		if x := pad + d.Size.X + dp(gtx, 8); x < pad+inner {
+			at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints = layout.Constraints{Max: image.Pt(pad+inner-x, rowH)}
+				return slackc.RenderLazy(gtx, "EditAudioButton", v.audioProps, pfNoNative)
+			})
+		}
 		y += rowH
 	}
 	if !pfBlank(u.Pronouns) {
@@ -224,21 +231,9 @@ func (v *ProfileView) body(gtx layout.Context, th *theme.Theme, cl *Colors, u co
 
 	// presence
 	if !u.IsBot { // unknown presence reads as Away, like Slack
-		label := "Away"
-		if u.Presence == "active" {
-			label = "Active"
-		}
 		at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
-			dot := dp(gtx, 8)
-			at(gtx, image.Pt((dp(gtx, 20)-dot)/2, (rowH-dot)/2), func(gtx layout.Context) layout.Dimensions {
-				return presenceDot(gtx, th, u.Presence == "active", 8)
-			})
-			return at(gtx, image.Pt(dp(gtx, 28), 0), func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, inner-dp(gtx, 28)), rowH)}
-				return vcenter(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
-					return text(gtx, th, 15, theme.Regular, cl.Fg, label)
-				})
-			})
+			gtx.Constraints = layout.Constraints{Max: image.Pt(inner, rowH)}
+			return v.presence(gtx, th, u, rowH)
 		})
 		y += rowH
 	}
@@ -266,7 +261,7 @@ func (v *ProfileView) body(gtx layout.Context, th *theme.Theme, cl *Colors, u co
 		specs = []pfBtnSpec{
 			{c: &v.btn1, label: "Message", lead: "threads"},
 			{c: &v.btn2, label: "Huddle", lead: "headphones", caret: true},
-			{c: &v.btn3, label: "VIP", lead: "user-plus"},
+			{c: &v.btn3, label: "VIP", lead: "user-plus", vip: true},
 		}
 	}
 	by := y
@@ -318,6 +313,44 @@ func (v *ProfileView) body(gtx layout.Context, th *theme.Theme, cl *Colors, u co
 	y += pad
 	return layout.Dimensions{Size: image.Pt(w, y)}
 }
+
+// presence is the presence row: RimetoProfilePresence{member} around
+// BasePresence{showText} (LastSeen's context reaches the BasePresence).
+func (v *ProfileView) presence(gtx layout.Context, th *theme.Theme, u core.User, rowH int) layout.Dimensions {
+	h := v.h
+	bp := func() slackc.Props { return pfPresenceProps(h, u, true) }
+	native := func(gtx layout.Context, p slackc.Props) layout.Dimensions {
+		return pfPresenceNative(gtx, th, u, 8, true, rowH, p)
+	}
+	return slackc.RenderLazy(gtx, "RimetoProfilePresence", func() slackc.Props {
+		return slackc.Props{
+			"$key":     "profile-presence:" + u.ID,
+			"member":   slackMember(u),
+			"children": slackc.Child("BasePresence", bp(), native),
+		}
+	}, func(gtx layout.Context, p slackc.Props) layout.Dimensions {
+		return childrenOr(gtx, p, "BasePresence", bp, native)
+	})
+}
+
+// audioProps are EditAudioButton's (the name-recording control; Clack
+// draws none, plugins append their own).
+func (v *ProfileView) audioProps() slackc.Props {
+	h := v.h
+	return slackc.Props{
+		"$key": "edit-audio:" + v.id,
+		"onChangeFile": func(fileID any) {
+			if s, ok := fileID.(string); ok && s != "" {
+				h.Toast("Name recording uploaded")
+			}
+		},
+		"onFileUploadStart": func() {},
+		"onFileUploadEnd":   func() {},
+	}
+}
+
+// pfNoNative draws nothing (boundaries Clack has no widget for).
+func pfNoNative(layout.Context, slackc.Props) layout.Dimensions { return layout.Dimensions{} }
 
 // section draws a 15/900 section title at y and returns its height.
 func (v *ProfileView) section(gtx layout.Context, th *theme.Theme, cl *Colors, y, w int, title string) int {
@@ -388,12 +421,13 @@ func pfLinkRow(gtx layout.Context, th *theme.Theme, cl *Colors, c *widget.Clicka
 // secondary pane is right-aligned in the workspace (theme.PanelInset from
 // the window's right edge) and starts below the top nav (theme.TopNavH).
 type pfPaneMenu struct {
-	h     Host
-	items []MenuItem
-	box   image.Rectangle // control rect in pane coords
-	paneW int             // pane width in px
-	menu  *Menu
-	done  bool
+	h      Host
+	items  []MenuItem
+	box    image.Rectangle // control rect in pane coords
+	paneW  int             // pane width in px
+	member string          // whose profile (RimetoMemberProfileOverflowMenu)
+	menu   *Menu
+	done   bool
 }
 
 func (p *pfPaneMenu) Layout(gtx layout.Context) layout.Dimensions {
@@ -404,7 +438,7 @@ func (p *pfPaneMenu) Layout(gtx layout.Context) layout.Dimensions {
 		win := gtx.Constraints.Max
 		off := image.Pt(win.X-dp(gtx, theme.PanelInset)-p.paneW, dp(gtx, theme.TopNavH))
 		a := p.box.Add(off)
-		p.menu = NewMenuOpts(p.h, p.items, MenuOpts{Anchor: a, Side: Below, AlignRight: true})
+		p.menu = NewMenuOpts(p.h, p.items, pfMenuOpts(p.member, MenuOpts{Anchor: a, Side: Below, AlignRight: true}))
 	}
 	return p.menu.Layout(gtx)
 }

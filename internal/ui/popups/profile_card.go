@@ -12,6 +12,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -46,12 +47,13 @@ type ProfileCard struct {
 	avatarBtn, nameBtn                 widget.Clickable
 	msgBtn, huddleBtn, vipBtn, moreBtn widget.Clickable
 	moreLocal                          image.Rectangle // kebab rect, card coords
+	key                                string          // slackc instance key
 }
 
 // NewProfileCard opens the card with its top-left corner at anchor (window
 // coords), flipping/clamping at the window edges.
 func NewProfileCard(h Host, anchor image.Point, userID string) *ProfileCard {
-	p := &ProfileCard{h: h, id: userID, anchor: anchor}
+	p := &ProfileCard{h: h, id: userID, anchor: anchor, key: nextKey("card")}
 	pfSubscribe(h, userID)
 	return p
 }
@@ -96,17 +98,34 @@ func (p *ProfileCard) Layout(gtx layout.Context) layout.Dimensions {
 		w = mw
 	}
 	call, d := record(loose(gtx, image.Pt(w, win.Y)), func(gtx layout.Context) layout.Dimensions {
-		return p.content(gtx, th, cl, u, ok, w)
+		if !ok {
+			return p.content(gtx, th, cl, u, ok, w, nil)
+		}
+		return slackc.RenderLazy(gtx, "MemberProfileHoverCard", func() slackc.Props {
+			return p.hoverProps(th, cl, u, w)
+		}, func(gtx layout.Context, pp slackc.Props) layout.Dimensions {
+			return p.content(gtx, th, cl, u, ok, w, pp)
+		})
 	})
 	pos := place(pointRect(p.anchor), d.Size, win, dp(gtx, 8), Below)
 	p.rect = image.Rectangle{Min: pos, Max: pos.Add(d.Size)}
 	rad := dp(gtx, 8)
-	card(gtx, cl, p.rect, rad)
-	p.block.Layout(gtx, p.rect)
+	st := pfCardClass.Enter(gtx, 0, 0)
+	if !st.Hidden() {
+		at(gtx, pos, func(gtx layout.Context) layout.Dimensions {
+			return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
+				local := image.Rectangle{Max: d.Size}
+				card(gtx, cl, local, rad)
+				p.block.Layout(gtx, local)
+				cs := clipRRect(gtx, local, rad)
+				call.Add(gtx.Ops)
+				cs.Pop()
+				return d
+			})
+		})
+	}
+	st.Leave()
 	keyTarget(gtx, p, p.rect)
-	cs := clipRRect(gtx, p.rect, rad)
-	macroAt(gtx, call, pos)
-	cs.Pop()
 	return layout.Dimensions{Size: win}
 }
 
@@ -134,12 +153,78 @@ func (p *ProfileCard) clicks(gtx layout.Context, u core.User) {
 	}
 	if p.moreBtn.Clicked(gtx) {
 		items := pfMoreItems(h, u, true, p.Dismiss)
-		h.ShowOverlay(NewMenuOpts(h, items, MenuOpts{Anchor: p.moreLocal.Add(p.rect.Min), Side: Below}))
+		h.ShowOverlay(NewMenuOpts(h, items, pfMenuOpts(u.ID, MenuOpts{Anchor: p.moreLocal.Add(p.rect.Min), Side: Below})))
 	}
 }
 
-// content draws the card body at the origin (card coords).
-func (p *ProfileCard) content(gtx layout.Context, th *theme.Theme, cl *Colors, u core.User, ok bool, w int) layout.Dimensions {
+// hoverProps are MemberProfileHoverCard's props: the primary block is the
+// header slot (ShinigamiEyes appends to it) and the clock line the
+// LocalTime slot (LastSeen appends "Last seen" in the card's context).
+func (p *ProfileCard) hoverProps(th *theme.Theme, cl *Colors, u core.User, w int) slackc.Props {
+	return slackc.Props{
+		"$key":                     p.key,
+		"memberId":                 u.ID,
+		"closeProfileCard":         p.Dismiss,
+		"hideButtons":              false,
+		"disableMemberProfileLink": false,
+		"shouldStopPropagation":    false,
+		"header": slackc.Child("MemberProfileHoverCardHeader", slackc.Props{"memberId": u.ID}, func(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+			return p.header(gtx, th, cl, u, true, w)
+		}),
+		"localTime": slackc.Child("LocalTime", pfLocalTimeProps(u), func(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+			return pfIconLine(gtx, th, cl, "clock", localTime(u, gtx.Now)+" local time", 15, 22)
+		}),
+	}
+}
+
+func pfLocalTimeProps(u core.User) slackc.Props {
+	return slackc.Props{"member": slackMember(u), "$key": "localtime:" + u.ID}
+}
+
+// content draws the card body at the origin (card coords). pp holds the
+// plugin's MemberProfileHoverCard props (nil when unpatched).
+func (p *ProfileCard) content(gtx layout.Context, th *theme.Theme, cl *Colors, u core.User, ok bool, w int, pp slackc.Props) layout.Dimensions {
+	pad := dp(gtx, 16)
+	var hd layout.Dimensions
+	if e, has := pp.Elem("header"); has && len(e.Nodes) > 0 {
+		hd = slackc.LayoutElement(loose(gtx, image.Pt(w, 1<<20)), e)
+	} else {
+		hd = p.header(gtx, th, cl, u, ok, w)
+	}
+	y := hd.Size.Y
+
+	// secondary block
+	fill(gtx, image.Rect(0, y, w, y+1), cl.Ring)
+	y++
+	if ok && pfHasClock(u) {
+		y += dp(gtx, 16)
+		d := at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(w-2*pad, 1<<20)}
+			return slotOr(gtx, pp, "localTime", "LocalTime", func() slackc.Props { return pfLocalTimeProps(u) },
+				func(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+					return pfIconLine(gtx, th, cl, "clock", localTime(u, gtx.Now)+" local time", 15, 22)
+				})
+		})
+		y += d.Size.Y
+	}
+	y += dp(gtx, 12)
+	if ok {
+		d := at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
+			return p.buttons(gtx, th, u, w-2*pad)
+		})
+		p.moreLocal = p.moreLocal.Add(image.Pt(pad, y))
+		y += d.Size.Y
+	} else {
+		rrect(gtx, image.Rect(pad, y, pad+dp(gtx, 120), y+dp(gtx, 28)), dp(gtx, 4), cl.Selected)
+		y += dp(gtx, 28)
+	}
+	y += pad
+	return layout.Dimensions{Size: image.Pt(w, y)}
+}
+
+// header is the primary block (avatar, name, presence, pronouns, title,
+// status), full card width, paddings included.
+func (p *ProfileCard) header(gtx layout.Context, th *theme.Theme, cl *Colors, u core.User, ok bool, w int) layout.Dimensions {
 	pad := dp(gtx, 16)
 	av := dp(gtx, 72)
 	colX := pad + av + dp(gtx, 12)
@@ -168,30 +253,6 @@ func (p *ProfileCard) content(gtx layout.Context, th *theme.Theme, cl *Colors, u
 		return p.column(gtx, th, cl, u, colW)
 	})
 	y := pad + maxInt(av, cd.Size.Y-2*m4) + pad
-
-	// secondary block
-	fill(gtx, image.Rect(0, y, w, y+1), cl.Ring)
-	y++
-	if ok && pfHasClock(u) {
-		y += dp(gtx, 16)
-		d := at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints = layout.Constraints{Max: image.Pt(w-2*pad, 1<<20)}
-			return pfIconLine(gtx, th, cl, "clock", localTime(u, gtx.Now)+" local time", 15, 22)
-		})
-		y += d.Size.Y
-	}
-	y += dp(gtx, 12)
-	if ok {
-		d := at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
-			return p.buttons(gtx, th, u, w-2*pad)
-		})
-		p.moreLocal = p.moreLocal.Add(image.Pt(pad, y))
-		y += d.Size.Y
-	} else {
-		rrect(gtx, image.Rect(pad, y, pad+dp(gtx, 120), y+dp(gtx, 28)), dp(gtx, 4), cl.Selected)
-		y += dp(gtx, 28)
-	}
-	y += pad
 	return layout.Dimensions{Size: image.Pt(w, y)}
 }
 
@@ -201,7 +262,7 @@ func (p *ProfileCard) column(gtx layout.Context, th *theme.Theme, cl *Colors, u 
 	y := 0
 	// name + presence
 	at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
-		return pfNameLine(gtx, th, &p.nameBtn, u, 15, 22, 10, colW)
+		return pfNameLine(gtx, p.h, th, &p.nameBtn, u, 15, 22, 10, colW)
 	})
 	y += lineH
 	if !pfBlank(u.Pronouns) {
@@ -236,7 +297,7 @@ func (p *ProfileCard) buttons(gtx layout.Context, th *theme.Theme, u core.User, 
 		specs = []pfBtnSpec{
 			{c: &p.msgBtn, label: "Message", lead: "threads"},
 			{c: &p.huddleBtn, label: "Huddle", lead: "headphones", caret: true},
-			{c: &p.vipBtn, label: "VIP", lead: "user-plus"},
+			{c: &p.vipBtn, label: "VIP", lead: "user-plus", vip: true},
 		}
 	}
 	kebab := &p.moreBtn
@@ -246,6 +307,105 @@ func (p *ProfileCard) buttons(gtx layout.Context, th *theme.Theme, u core.User, 
 	d, kr := pfBtnRow(gtx, th, BtnSmall, specs, kebab, w, false)
 	p.moreLocal = kr
 	return d
+}
+
+// ---- Slack boundaries (BasePresence, overflow menu, classes) ----
+
+var (
+	pfCardClass     = slackc.Class("p-member_profile_hover_card", "role", "dialog")
+	pfPresenceClass = slackc.Class("c-presence", "data-qa", "presence").Tag("span").
+			Mods("c-presence--active", "c-presence--away")
+	pfVipIconClass = slackc.Class("c-base_icon c-icon", "data-qa", "vip").Tag("svg")
+)
+
+// pfMenuOpts puts a member's ⋮ menu inside RimetoMemberProfileOverflowMenu
+// (AdminBackend and Nicknames mark that subtree, then append items to its
+// MenuFromTemplate).
+func pfMenuOpts(memberID string, o MenuOpts) MenuOpts {
+	o.Within = "RimetoMemberProfileOverflowMenu"
+	o.WithinProps = slackc.Props{"memberId": memberID}
+	return o
+}
+
+// pfPresenceProps are BasePresence's props for u.
+func pfPresenceProps(h Host, u core.User, showText bool) slackc.Props {
+	k := "presence:" + u.ID
+	if showText {
+		k += ":text"
+	}
+	presence := "away"
+	if u.Presence == "active" {
+		presence = "active"
+	}
+	return slackc.Props{
+		"$key":      k,
+		"userId":    u.ID,
+		"presence":  presence,
+		"isActive":  presence == "active",
+		"isSelf":    pfIsSelf(h, u.ID),
+		"showText":  showText,
+		"className": "c-presence",
+	}
+}
+
+// pfPresence draws u's presence (Slack's BasePresence): the dot, plus
+// "Active"/"Away" when showText. rowH > 0 centers it in a 20dp column of
+// that height, text 28dp in (the full profile's presence row).
+func pfPresence(gtx layout.Context, h Host, th *theme.Theme, u core.User, dot float32, showText bool, rowH int) layout.Dimensions {
+	return slackc.RenderLazy(gtx, "BasePresence", func() slackc.Props { return pfPresenceProps(h, u, showText) },
+		func(gtx layout.Context, p slackc.Props) layout.Dimensions {
+			return pfPresenceNative(gtx, th, u, dot, showText, rowH, p)
+		})
+}
+
+// pfPresenceNative honours the showText and isActive overrides (LastSeen
+// renders it with showText=false and its own "Last seen" text after it).
+func pfPresenceNative(gtx layout.Context, th *theme.Theme, u core.User, dot float32, showText bool, rowH int, p slackc.Props) layout.Dimensions {
+	active := u.Presence == "active"
+	if p.Has("showText") {
+		showText = p.Bool("showText")
+	}
+	if p.Has("isActive") {
+		active = p.Bool("isActive")
+	}
+	var mods uint64 = 2
+	if active {
+		mods = 1
+	}
+	st := pfPresenceClass.Enter(gtx, 0, mods)
+	defer st.Leave()
+	if st.Hidden() {
+		return layout.Dimensions{}
+	}
+	return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
+		if rowH <= 0 {
+			if !showText {
+				return presenceDot(gtx, th, active, dot)
+			}
+			rowH = dp(gtx, 22)
+		}
+		cl := colorsOf(th)
+		col := dp(gtx, 20)
+		d := dp(gtx, dot)
+		at(gtx, image.Pt((col-d)/2, (rowH-d)/2), func(gtx layout.Context) layout.Dimensions {
+			return presenceDot(gtx, th, active, dot)
+		})
+		if !showText {
+			return layout.Dimensions{Size: image.Pt(col, rowH)}
+		}
+		label := "Away"
+		if active {
+			label = "Active"
+		}
+		x := dp(gtx, 28)
+		td := at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, gtx.Constraints.Max.X-x), rowH)}
+			return vcenter(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
+				return text(gtx, th, 15, theme.Regular, st.Color(cl.Fg), label)
+			})
+		})
+		return layout.Dimensions{Size: image.Pt(x+td.Size.X, rowH)}
+	})
 }
 
 // ---- shared profile helpers (card + full profile) ----
@@ -418,7 +578,7 @@ func pfImage(gtx layout.Context, h Host, url string, size, rad float32) layout.D
 
 // pfNameLine draws the bold name (clickable via c) and the presence
 // indicator after it, within maxW.
-func pfNameLine(gtx layout.Context, th *theme.Theme, c *widget.Clickable, u core.User, size, lh, dot float32, maxW int) layout.Dimensions {
+func pfNameLine(gtx layout.Context, h Host, th *theme.Theme, c *widget.Clickable, u core.User, size, lh, dot float32, maxW int) layout.Dimensions {
 	cl := colorsOf(th)
 	lineH := dp(gtx, lh)
 	name := pfName(u)
@@ -444,10 +604,10 @@ func pfNameLine(gtx layout.Context, th *theme.Theme, c *widget.Clickable, u core
 		if x > 0 {
 			x += dp(gtx, 6)
 		}
-		at(gtx, image.Pt(x, (lineH-dp(gtx, dot))/2), func(gtx layout.Context) layout.Dimensions {
-			return presenceDot(gtx, th, u.Presence == "active", dot)
+		d := at(gtx, image.Pt(x, (lineH-dp(gtx, dot))/2), func(gtx layout.Context) layout.Dimensions {
+			return pfPresence(gtx, h, th, u, dot, false, 0)
 		})
-		x += dp(gtx, dot)
+		x += maxInt(d.Size.X, dp(gtx, dot))
 	}
 	return layout.Dimensions{Size: image.Pt(x, lineH)}
 }
@@ -527,6 +687,7 @@ type pfBtnSpec struct {
 	label string
 	lead  string // icon before the label
 	caret bool   // chevron-down after the label
+	vip   bool   // the VIP button (its icon is svg[data-qa="vip"])
 }
 
 type pfBtnMetrics struct {
@@ -589,7 +750,17 @@ func pfBtn(gtx layout.Context, th *theme.Theme, size BtnSize, s pfBtnSpec, w int
 		}
 		if s.lead != "" {
 			at(gtx, image.Pt(x, (hh-dp(gtx, m.isz))/2), func(gtx layout.Context) layout.Dimensions {
-				return icon(gtx, s.lead, m.isz, cl.Fg)
+				if !s.vip {
+					return icon(gtx, s.lead, m.isz, cl.Fg)
+				}
+				st := pfVipIconClass.Enter(gtx, 0, 0)
+				defer st.Leave()
+				if st.Hidden() {
+					return layout.Dimensions{}
+				}
+				return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
+					return icon(gtx, s.lead, m.isz, st.Color(cl.Fg))
+				})
 			})
 			x += iw
 		}

@@ -7,6 +7,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -29,12 +30,23 @@ type pagePositioned interface {
 
 var mkAvailability func(a *App) pagePositioned
 
-var prefsNav = []struct{ id, label, icon string }{
-	{"availability", "Availability", "clock"},
-	{"notifications", "Notifications", "bell"},
-	{"navigation", "Navigation", "sidebar"},
-	{"appearance", "Appearance", "edit"},
+// prefsNav is Slack's tabs[] for the dialog. The last id must be
+// "advanced": Taut appends its own tabs only to the Preferences Tabs.
+var prefsNav = []struct{ id, label, icon, slackIcon string }{
+	{"availability", "Availability", "clock", "clock"},
+	{"notifications", "Notifications", "bell", "notifications"},
+	{"navigation", "Navigation", "sidebar", "sidebar"},
+	{"appearance", "Appearance", "edit", "paintbrush"},
+	{"advanced", "Advanced", "settings", "settings"},
 }
+
+// Slack's Preferences classes (taut's settings CSS targets them).
+var (
+	clsPrefsTabs  = slackc.Class("c-tabs p-prefs_dialog__tabs c-tabs--vertical")
+	clsPrefsMenu  = slackc.Class("c-tabs__tab_menu p-prefs_dialog__menu", "role", "tablist")
+	clsPrefsTab   = slackc.Class("c-button-unstyled c-tabs__tab js-tab", "role", "tab").Tag("button").Mods("c-tabs__tab--active")
+	clsPrefsPanel = slackc.Class("c-tabs__tab_panel p-prefs_dialog__panel", "role", "tabpanel")
+)
 
 func (a *App) openPrefs() { a.openPrefsSection("notifications") }
 
@@ -54,8 +66,42 @@ func (a *App) openPrefsSection(section string) {
 }
 
 func (p *prefsModal) layout(gtx layout.Context) layout.Dimensions {
+	return slackc.Component(gtx, "Tabs", p, (*prefsModal).tabsProps, (*prefsModal).tabs)
+}
+
+// tabsProps is Slack's Tabs shape: tabs [{id, label, content, svgIcon}],
+// currentTabId, onTabChange(id, event), collapsible.
+func (p *prefsModal) tabsProps() slackc.Props {
+	tabs := make([]any, len(prefsNav))
+	for i, it := range prefsNav {
+		id := it.id
+		tabs[i] = slackc.Props{
+			"id":         id,
+			"label":      it.label,
+			"aria-label": it.label,
+			"svgIcon":    slackc.Props{"name": it.slackIcon},
+			"content": slackc.Child("PrefsSection", slackc.Props{"id": id}, func(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+				return p.section1(gtx, id, image.Point{})
+			}),
+		}
+	}
+	return slackc.Props{
+		"$key":         "prefs",
+		"tabs":         tabs,
+		"currentTabId": p.section,
+		"collapsible":  true,
+		"onTabChange": func(id string) {
+			p.section = id
+			p.a.Invalidate()
+		},
+	}
+}
+
+// tabs is the native Tabs: Clack's nav + page. Under a patch it draws the
+// tabs[] it was given (Taut's own tabs lay out their content element),
+// selects currentTabId and reports clicks through onTabChange.
+func (p *prefsModal) tabs(gtx layout.Context, tp slackc.Props) layout.Dimensions {
 	a := p.a
-	c := &a.th.C
 	w := gtx.Constraints.Max.X
 	navW := gtx.Dp(200)
 	h := gtx.Dp(560)
@@ -63,49 +109,140 @@ func (p *prefsModal) layout(gtx layout.Context) layout.Dimensions {
 	g := gtx
 	g.Constraints = layout.Exact(image.Pt(w, h))
 	p.org.track(g, a)
+	ts := clsPrefsTabs.Enter(gtx, 0, 0)
+	defer ts.Leave()
+
+	cur := p.section
+	var list []any
+	if tp != nil {
+		cur = tp.StrOr("currentTabId", cur)
+		list = tp.List("tabs")
+	}
+	var content slackc.Element
+	ownContent := true
+	ms := clsPrefsMenu.Enter(gtx, 0, 0)
 	y := 0
+	if list == nil {
+		for _, it := range prefsNav {
+			if p.navItem(gtx, y, navW, it.id, it.label, nil, it.icon, cur == it.id) {
+				p.section = it.id
+				a.Invalidate()
+			}
+			y += gtx.Dp(34)
+		}
+	} else {
+		for i, x := range list {
+			t, _ := x.(slackc.Props)
+			if t == nil {
+				continue
+			}
+			id := t.StrOr("id", "tab-"+itoa(i))
+			label := t.StrOr("label", "")
+			var lel *slackc.Element
+			if e, ok := t.Elem("label"); ok {
+				lel = &e
+			}
+			if id == cur {
+				if e, ok := t.Elem("content"); ok && !p.ownSection(id) {
+					content, ownContent = e, false
+				}
+			}
+			icon := t.Map("svgIcon").StrOr("name", "")
+			if icon != "" {
+				icon = icons.Slack(icon)
+			}
+			if p.navItem(gtx, y, navW, id, label, lel, icon, cur == id) {
+				if tp.Has("onTabChange") {
+					tp.Invoke("onTabChange", id, slackc.Props{"type": "click"})
+				} else {
+					p.section = id
+				}
+				a.Invalidate()
+			}
+			y += gtx.Dp(34)
+		}
+	}
+	ms.Leave()
+
+	pageW := w - navW
+	at(gtx, image.Pt(navW, 0), image.Pt(pageW, h), func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min = image.Point{}
+		ps := clsPrefsPanel.Enter(gtx, 0, 0)
+		defer ps.Leave()
+		if !ownContent {
+			return slackc.LayoutElement(gtx, content)
+		}
+		return p.section1(gtx, cur, org.Add(image.Pt(navW, 0)))
+	})
+	return layout.Dimensions{Size: image.Pt(w, h)}
+}
+
+// ownSection reports whether id is one of Clack's own sections.
+func (p *prefsModal) ownSection(id string) bool {
 	for _, it := range prefsNav {
-		it := it
-		b := p.btn("nav." + it.id)
-		at(gtx, image.Pt(0, y), image.Pt(navW-gtx.Dp(16), gtx.Dp(32)), func(gtx layout.Context) layout.Dimensions {
+		if it.id == id {
+			return true
+		}
+	}
+	return false
+}
+
+// section1 draws one of Clack's sections; org is its window origin.
+func (p *prefsModal) section1(gtx layout.Context, id string, org image.Point) layout.Dimensions {
+	if id == "availability" && p.avail != nil {
+		p.avail.SetOrigin(org)
+		return p.avail.Layout(gtx)
+	}
+	return p.page(gtx, id)
+}
+
+// navItem draws one tab button at y; label is a string, or lel a plugin's
+// label element. Reports a click.
+func (p *prefsModal) navItem(gtx layout.Context, y, navW int, id, label string, lel *slackc.Element, icon string, cur bool) bool {
+	a := p.a
+	c := &a.th.C
+	b := p.btn("nav." + id)
+	var mods uint64
+	if cur {
+		mods = 1
+	}
+	st := clsPrefsTab.Enter(gtx, hoverState(b.Hovered()), mods)
+	defer st.Leave()
+	if st.Hidden() {
+		return false
+	}
+	at(gtx, image.Pt(0, y), image.Pt(navW-gtx.Dp(16), gtx.Dp(32)), func(gtx layout.Context) layout.Dimensions {
+		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
 			return clickArea(gtx, b, func(gtx layout.Context, s image.Point, hov bool) {
-				if p.section == it.id {
+				if cur {
 					theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(6), c.Link)
 				} else if hov {
 					theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(6), c.BgHover)
 				}
 			}, func(gtx layout.Context) layout.Dimensions {
 				fg := c.Fg
-				if p.section == it.id {
+				if cur {
 					fg = c.SendText
 				}
-				at(gtx, image.Pt(gtx.Dp(10), gtx.Dp(8)), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
-					return icons.Get(it.icon)(gtx, 16, fg)
-				})
+				fg = st.Color(fg)
+				if icon != "" {
+					at(gtx, image.Pt(gtx.Dp(10), gtx.Dp(8)), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
+						return icons.Get(icon)(gtx, 16, fg)
+					})
+				}
 				at(gtx, image.Pt(gtx.Dp(34), 0), image.Pt(navW, gtx.Dp(32)), func(gtx layout.Context) layout.Dimensions {
 					return vcenter(gtx, gtx.Dp(32), func(gtx layout.Context) layout.Dimensions {
-						return a.th.Label(gtx, 15, theme.Regular, fg, it.label)
+						if lel != nil {
+							return slackc.LayoutElement(gtx, *lel)
+						}
+						return a.th.Label(gtx, st.FontSize(15), theme.Regular, fg, label)
 					})
 				})
 				return layout.Dimensions{Size: image.Pt(navW-gtx.Dp(16), gtx.Dp(32))}
 			})
 		})
-		if clicked(b) {
-			p.section = it.id
-			a.Invalidate()
-		}
-		y += gtx.Dp(34)
-	}
-	pageW := w - navW
-	at(gtx, image.Pt(navW, 0), image.Pt(pageW, h), func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints.Min = image.Point{}
-		if p.section == "availability" && p.avail != nil {
-			p.avail.SetOrigin(org.Add(image.Pt(navW, 0)))
-			return p.avail.Layout(gtx)
-		}
-		return p.page(gtx)
 	})
-	return layout.Dimensions{Size: image.Pt(w, h)}
+	return clicked(b)
 }
 
 func (p *prefsModal) btn(k string) *widget.Clickable {
@@ -117,12 +254,11 @@ func (p *prefsModal) btn(k string) *widget.Clickable {
 	return c
 }
 
-func (p *prefsModal) page(gtx layout.Context) layout.Dimensions {
+func (p *prefsModal) page(gtx layout.Context, sec string) layout.Dimensions {
 	a := p.a
 	c := &a.th.C
 	w := gtx.Constraints.Max.X
 	y := 0
-	sec := p.section
 	heading := func(t string) {
 		at(gtx, image.Pt(0, y), image.Pt(w, gtx.Dp(24)), func(gtx layout.Context) layout.Dimensions {
 			return a.th.Label(gtx, 15, theme.Black, c.Fg, t)
@@ -204,6 +340,13 @@ func (p *prefsModal) page(gtx layout.Context) layout.Dimensions {
 			a.sidebar.width = theme.SidebarW
 			a.savePrefs()
 		})
+	}
+	if sec == "advanced" {
+		heading("Advanced")
+		at(gtx, image.Pt(0, y), image.Pt(w, gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {
+			return a.th.Label(gtx, 13, theme.Regular, c.FgMuted, "Plugin settings appear as their own tabs.")
+		})
+		y += gtx.Dp(28)
 	}
 	if sec == "notifications" || sec == "availability" {
 		heading("Notifications")

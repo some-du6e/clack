@@ -13,6 +13,7 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -180,11 +181,17 @@ type EmojiPicker struct {
 	gif          gifPanel
 	onGif        func(g Gif)
 	gifCh, gifTS string
+
+	// EmojiPickerPopover (the message reacted to) and slackc state
+	msgCh, msgTS, msgThread string
+	key                     string
+	win                     image.Point
+	scale                   float32
 }
 
 // NewEmojiPicker opens the picker near the bottom center of the window.
 func NewEmojiPicker(h Host, onPick func(name string)) *EmojiPicker {
-	p := &EmojiPicker{h: h, onPick: onPick, side: Above}
+	p := &EmojiPicker{h: h, onPick: onPick, side: Above, key: nextKey("emoji")}
 	p.ed = widget.Editor{SingleLine: true, Submit: true}
 	p.list.Axis = layout.Vertical
 	p.sel, p.hover, p.press = epNoCell, epNoCell, epNoCell
@@ -595,12 +602,11 @@ func (p *EmojiPicker) Layout(gtx layout.Context) layout.Dimensions {
 		return layout.Dimensions{}
 	}
 	stacked(gtx, p)
-	th := p.h.Theme()
-	cl := colorsOf(th)
 	win := gtx.Constraints.Max
 	gtx.Constraints.Min = image.Point{}
 
 	p.refreshIndex()
+	p.scale = gtx.Metric.PxPerDp
 
 	if isTop(p) && escape(gtx, nil) {
 		p.Dismiss()
@@ -611,15 +617,89 @@ func (p *EmojiPicker) Layout(gtx layout.Context) layout.Dimensions {
 		return layout.Dimensions{}
 	}
 
+	p.win = win
+	slackc.RenderLazy(gtx, "EmojiPickerPopover", p.popoverProps, p.layoutPopover)
+	return layout.Dimensions{Size: win}
+}
+
+// ---- Slack boundaries: EmojiPickerPopover > EmojiPicker ----
+
+var epClass = slackc.Class("p-emoji_picker c-menu p-emoji_picker--style-v2 p-emoji_picker--with_gif_picker", "data-qa", "emoji-picker")
+
+// SetMessage names the message the picker reacts to (EmojiPickerPopover's
+// channelId, ts and threadTs; OwlMode reads them).
+func (p *EmojiPicker) SetMessage(channelID, ts, threadTS string) {
+	p.msgCh, p.msgTS, p.msgThread = channelID, ts, threadTS
+}
+
+// popoverProps are EmojiPickerPopover's props; the picker itself is its
+// EmojiPicker child, so a plugin's context wrap reaches it.
+func (p *EmojiPicker) popoverProps() slackc.Props {
+	ch := p.msgCh
+	if ch == "" {
+		ch = p.gifCh
+	}
+	var target image.Rectangle
+	switch p.anchorKind {
+	case 1:
+		target = pointRect(p.anchorPt)
+	case 2:
+		target = p.anchorRect
+	}
+	ctype := "message_pane"
+	if p.msgTS == "" {
+		ctype = "composer"
+	}
+	return slackc.Props{
+		"$key":                 p.key,
+		"channelId":            ch,
+		"ts":                   p.msgTS,
+		"threadTs":             p.msgThread,
+		"messageContainerType": ctype,
+		"targetBounds":         rectProps(target, p.scale),
+		"onClose":              p.Dismiss,
+		"onOpen":               func() {},
+		"children":             slackc.Child("EmojiPicker", slackc.Props{}, p.layoutCard),
+	}
+}
+
+func (p *EmojiPicker) pickerProps() slackc.Props { return slackc.Props{"$key": p.key} }
+
+func (p *EmojiPicker) layoutPopover(gtx layout.Context, pp slackc.Props) layout.Dimensions {
+	return childrenOr(gtx, pp, "EmojiPicker", p.pickerProps, p.layoutCard)
+}
+
+// layoutCard is EmojiPicker's native: the card at its window position.
+func (p *EmojiPicker) layoutCard(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+	th := p.h.Theme()
+	cl := colorsOf(th)
+	win := p.win
 	sz := image.Pt(dp(gtx, epW), dp(gtx, epH))
 	if mh := win.Y - 2*dp(gtx, 8); sz.Y > mh {
 		sz.Y = maxInt(mh, dp(gtx, epListY+epFootH+epRowH*2))
 	}
 	pos := p.position(gtx, sz, win)
 	p.rect = image.Rectangle{Min: pos, Max: pos.Add(sz)}
+	st := epClass.Enter(gtx, 0, 0)
+	defer st.Leave()
+	if st.Hidden() {
+		return layout.Dimensions{Size: win}
+	}
+	t := op.Offset(pos).Push(gtx.Ops)
+	st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
+		p.layoutBody(gtx, th, cl, sz)
+		return layout.Dimensions{Size: sz}
+	})
+	t.Pop()
+	return layout.Dimensions{Size: win}
+}
+
+// layoutBody draws the card at the origin.
+func (p *EmojiPicker) layoutBody(gtx layout.Context, th *theme.Theme, cl *Colors, sz image.Point) {
 	rad := dp(gtx, 6)
-	epCard(gtx, cl, th.Dark, p.rect, rad)
-	p.block.Layout(gtx, p.rect)
+	local := image.Rectangle{Max: sz}
+	epCard(gtx, cl, th.Dark, local, rad)
+	p.block.Layout(gtx, local)
 
 	for i := range p.topTabs {
 		if p.topTabs[i].Clicked(gtx) {
@@ -627,19 +707,17 @@ func (p *EmojiPicker) Layout(gtx layout.Context) layout.Dimensions {
 		}
 	}
 	if p.gifMode {
-		t := op.Offset(pos).Push(gtx.Ops)
-		cs := clipRRect(gtx, image.Rectangle{Max: sz}, rad)
+		cs := clipRRect(gtx, local, rad)
 		p.layoutTop(gtx, th, cl, sz.X)
 		p.layoutGif(gtx, th, cl, sz)
 		cs.Pop()
-		t.Pop()
-		return layout.Dimensions{Size: win}
+		return
 	}
 
 	p.ensureRows(gtx)
 	p.keys(gtx)
 	if p.done {
-		return layout.Dimensions{Size: win}
+		return
 	}
 	for {
 		e, ok := p.ed.Update(gtx)
@@ -654,15 +732,14 @@ func (p *EmojiPicker) Layout(gtx layout.Context) layout.Dimensions {
 		}
 	}
 	if p.done {
-		return layout.Dimensions{Size: win}
+		return
 	}
 	if !p.focused || (isTop(p) && !gtx.Focused(&p.ed)) {
 		gtx.Execute(key.FocusCmd{Tag: &p.ed})
 		p.focused = true
 	}
 
-	t := op.Offset(pos).Push(gtx.Ops)
-	cs := clipRRect(gtx, image.Rectangle{Max: sz}, rad)
+	cs := clipRRect(gtx, local, rad)
 	p.layoutTop(gtx, th, cl, sz.X)
 	p.layoutCats(gtx, th, cl)
 	at(gtx, image.Pt(dp(gtx, epInputX), dp(gtx, epInputY)), func(gtx layout.Context) layout.Dimensions {
@@ -673,11 +750,9 @@ func (p *EmojiPicker) Layout(gtx layout.Context) layout.Dimensions {
 	p.layoutList(gtx, th, cl, image.Rect(0, dp(gtx, epListY), sz.X, sz.Y-foot))
 	p.layoutFooter(gtx, th, cl, image.Rect(0, sz.Y-foot, sz.X, sz.Y))
 	cs.Pop()
-	t.Pop()
 	if tab := p.activeTab(); tab != p.drawnTab {
 		gtx.Execute(op.InvalidateCmd{}) // the tab row was drawn before the list scrolled
 	}
-	return layout.Dimensions{Size: win}
 }
 
 func (p *EmojiPicker) layoutTop(gtx layout.Context, th *theme.Theme, cl *Colors, w int) {

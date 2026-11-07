@@ -33,6 +33,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -904,56 +905,11 @@ func (v *SearchView) pillRow(gtx layout.Context, th *theme.Theme, cl *Colors, x,
 
 // pill draws one filter pill at (x, y) and returns its width.
 func (v *SearchView) pill(gtx layout.Context, th *theme.Theme, cl *Colors, i, x, y int, iconName, label string, chevron, active bool) int {
-	h := dp(gtx, 28)
-	tw := textW(gtx, th, 13, theme.Bold, label)
-	w := dp(gtx, 10) + dp(gtx, 16) + dp(gtx, 6) + tw
-	if chevron {
-		w += dp(gtx, 6) + dp(gtx, 12) + dp(gtx, 8)
-	} else {
-		w += dp(gtx, 10)
-	}
-	v.pillR[i] = image.Rect(x, y, x+w, y+h)
-	c := &v.pills[i]
-	at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints = layout.Exact(image.Pt(w, h))
-		return c.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			r := image.Rect(0, 0, w, h)
-			rad := dp(gtx, 8)
-			fg, border, bg := cl.Fg, cl.Divider, cl.Bg
-			if active {
-				fg, border, bg = cl.Link, cl.Link, theme.WithAlpha(cl.Link, 0x1a)
-				if c.Hovered() {
-					bg = theme.WithAlpha(cl.Link, 0x2a)
-				}
-			} else if c.Hovered() {
-				bg = cl.BgHover
-			}
-			rrect(gtx, r, rad, border)
-			rrect(gtx, r.Inset(1), rad-1, cl.Bg)
-			if bg != cl.Bg {
-				rrect(gtx, r.Inset(1), rad-1, bg)
-			}
-			ix := dp(gtx, 10)
-			at(gtx, image.Pt(ix, (h-dp(gtx, 16))/2), func(gtx layout.Context) layout.Dimensions {
-				return icon(gtx, iconName, 16, fg)
-			})
-			lx := ix + dp(gtx, 16) + dp(gtx, 6)
-			at(gtx, image.Pt(lx, 0), func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints = layout.Constraints{Max: image.Pt(tw+dp(gtx, 2), h)}
-				return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
-					return text(gtx, th, 13, theme.Bold, fg, label)
-				})
-			})
-			if chevron {
-				at(gtx, image.Pt(lx+tw+dp(gtx, 6), (h-dp(gtx, 12))/2), func(gtx layout.Context) layout.Dimensions {
-					return icon(gtx, "chevron-down", 12, fg)
-				})
-			}
-			pointerCursor(gtx, r.Max)
-			return layout.Dimensions{Size: r.Max}
-		})
+	d := at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
+		return Pill(gtx, th, &v.pills[i], iconName, label, chevron, active)
 	})
-	return w
+	v.pillR[i] = image.Rectangle{Min: image.Pt(x, y), Max: image.Pt(x, y).Add(d.Size)}
+	return d.Size.X
 }
 
 func (v *SearchView) results(gtx layout.Context, th *theme.Theme, cl *Colors, px int, sz image.Point) layout.Dimensions {
@@ -1027,8 +983,65 @@ func (v *SearchView) results(gtx layout.Context, th *theme.Theme, cl *Colors, px
 	return layout.Dimensions{Size: sz}
 }
 
-// card draws message result i, width w, at the origin.
+// card draws message result i, width w, at the origin: Slack's
+// MessageListItem{result: {messages}} around SearchResult{…message}.
 func (v *SearchView) card(gtx layout.Context, th *theme.Theme, cl *Colors, i, w int) layout.Dimensions {
+	return slackc.Component(gtx, "MessageListItem", srCardArgs{v: v, th: th, cl: cl, i: i, w: w},
+		srCardArgs.listItemProps, srCardArgs.layoutListItem)
+}
+
+// srCardArgs carry a result card through its boundaries.
+type srCardArgs struct {
+	v    *SearchView
+	th   *theme.Theme
+	cl   *Colors
+	i, w int
+	over slackc.Props // the message MessageListItem's plugin passed (ShowRealUser)
+}
+
+func (a srCardArgs) listItemProps() slackc.Props {
+	m := &a.v.msgs[a.i]
+	return slackc.Props{
+		"$key":    m.Channel + "/" + m.TS,
+		"index":   a.i,
+		"variant": "search",
+		"result":  slackc.Props{"type": "message", "messages": []any{slackMessage(m)}},
+	}
+}
+
+func (a srCardArgs) layoutListItem(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	if r := p.Map("result"); r != nil {
+		if l := r.List("messages"); len(l) > 0 {
+			a.over = asProps(l[0])
+		}
+	}
+	return slackc.Component(gtx, "SearchResult", a, srCardArgs.resultProps, srCardArgs.layoutResult)
+}
+
+func (a srCardArgs) resultProps() slackc.Props {
+	m := &a.v.msgs[a.i]
+	return srResultProps(a.v.h, m, a.over, a.v.cards[a.i].avatar, 36)
+}
+
+func (a srCardArgs) layoutResult(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	v := a.v
+	m := &v.msgs[a.i]
+	c := &v.cards[a.i]
+	name, av := c.name, c.avatar
+	src := p
+	if src == nil {
+		src = a.over
+	}
+	if n, u, ok := srAuthorOver(v.h, m, src); ok {
+		name, av = n, u
+	}
+	return v.cardNative(gtx, a.th, a.cl, a.i, a.w, name, av, p)
+}
+
+// cardNative is SearchResult's native: the card with the sender's name
+// and avatar URL; rp holds the plugin's SearchResult props (nil
+// unpatched), whose avatar slot it lays out.
+func (v *SearchView) cardNative(gtx layout.Context, th *theme.Theme, cl *Colors, i, w int, name, avURL string, rp slackc.Props) layout.Dimensions {
 	gtx.Constraints.Min = image.Point{}
 	c := &v.cards[i]
 	m := &v.msgs[i]
@@ -1082,7 +1095,7 @@ func (v *SearchView) card(gtx layout.Context, th *theme.Theme, cl *Colors, i, w 
 		})
 	}
 	at(gtx, image.Pt(padL, padT+dp(gtx, 2)), func(gtx layout.Context) layout.Dimensions {
-		return avatar(gtx, v.h, c.avatar, 36)
+		return srAvatar(gtx, v.h, m, avURL, 36, rp)
 	})
 	right := w - padR
 	if c.when != "" {
@@ -1097,7 +1110,7 @@ func (v *SearchView) card(gtx layout.Context, th *theme.Theme, cl *Colors, i, w 
 	d := at(gtx, image.Pt(tx, padT), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, right-tx), nameH)}
 		return vcenter(gtx, nameH, func(gtx layout.Context) layout.Dimensions {
-			return text(gtx, th, 15, theme.Black, cl.Fg, c.name)
+			return text(gtx, th, 15, theme.Black, cl.Fg, name)
 		})
 	})
 	srDrawWhere(gtx, v.h, c.where, tx+d.Size.X+dp(gtx, 4), padT, right, nameH, bg)

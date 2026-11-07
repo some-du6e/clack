@@ -11,6 +11,7 @@ import (
 	"image"
 	"image/color"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +29,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -1696,6 +1698,14 @@ type dirDropdown struct {
 	catcher widget.Clickable
 	panel   widget.Clickable
 	items   []widget.Clickable
+
+	// BasicSelect boundary (layoutSelect): this frame's base and width,
+	// a plugin's pick through onSelectionChange, and option labels a
+	// plugin overrode (same count as labels).
+	b      *base
+	width  unit.Dp
+	picked int // index+1 of a pick made through onSelectionChange
+	shown  []string
 }
 
 // update handles clicks and reports whether the selection changed.
@@ -1711,6 +1721,12 @@ func (dd *dirDropdown) update(gtx C) bool {
 	}
 	dd.panel.Clicked(gtx)
 	changed := false
+	if dd.picked > 0 {
+		if i := dd.picked - 1; i < len(dd.labels) && i != dd.sel {
+			dd.sel, changed = i, true
+		}
+		dd.picked = 0
+	}
 	for i := range dd.items {
 		if dd.items[i].Clicked(gtx) {
 			dd.open = false
@@ -1757,7 +1773,80 @@ func (dd *dirDropdown) layoutSelect(b *base, gtx C, width unit.Dp) D {
 	if len(dd.labels) == 0 {
 		return D{}
 	}
+	dd.b, dd.width = b, width
+	return slackc.Component(gtx, "BasicSelect", dd, (*dirDropdown).selectProps, (*dirDropdown).layoutSelectNative)
+}
+
+// selectProps: BasicSelect {selectId, options [{label, value}],
+// selectedOption, onSelectionChange(option), width, size, ariaLabel}.
+// Values are the option indexes as strings.
+func (dd *dirDropdown) selectProps() slackc.Props {
+	opts := make([]any, len(dd.labels))
+	for i, l := range dd.labels {
+		opts[i] = slackc.Props{"label": l, "value": strconv.Itoa(i)}
+	}
+	return slackc.Props{"$key": strings.Join(dd.labels, "\x00"), "options": opts,
+		"selectedOption": opts[min(dd.sel, len(opts)-1)], "width": int(dd.width), "size": "medium",
+		"onSelectionChange": func(o any) {
+			var v any
+			switch o := o.(type) {
+			case slackc.Props:
+				v = o["value"]
+			case map[string]any:
+				v = o["value"]
+			}
+			var i int
+			switch v := v.(type) {
+			case string:
+				n, err := strconv.Atoi(v)
+				if err != nil {
+					return
+				}
+				i = n
+			case float64:
+				i = int(v)
+			default:
+				return
+			}
+			if i >= 0 && i < len(dd.labels) {
+				dd.picked = i + 1
+			}
+		}}
+}
+
+// layoutSelectNative is the select field (BasicSelect's native). Under a
+// patch it shows the selectedOption label and the options' labels the
+// plugin passed (string or element).
+func (dd *dirDropdown) layoutSelectNative(gtx C, p slackc.Props) D {
+	b, width := dd.b, dd.width
 	label := dd.labels[min(dd.sel, len(dd.labels)-1)]
+	var elem slackc.Element
+	dd.shown = nil
+	if p != nil {
+		if so := p.Map("selectedOption"); so != nil {
+			if e, ok := so.Elem("label"); ok {
+				elem = e
+			} else {
+				label = so.StrOr("label", label)
+			}
+		}
+		if ol := p.List("options"); len(ol) == len(dd.labels) {
+			dd.shown = make([]string, len(ol))
+			for i, o := range ol {
+				dd.shown[i] = dd.labels[i]
+				if m, ok := o.(slackc.Props); ok {
+					dd.shown[i] = m.StrOr("label", dd.labels[i])
+				} else if m, ok := o.(map[string]any); ok {
+					dd.shown[i] = slackc.Props(m).StrOr("label", dd.labels[i])
+				}
+			}
+		}
+	}
+	st := selectClass.Enter(gtx, hoverState(dd.btn.Hovered()), 0)
+	defer st.Leave()
+	if st.Hidden() {
+		return D{}
+	}
 	dims := dd.btn.Layout(gtx, func(gtx C) D {
 		pointerCursor(gtx)
 		w, h, pad, chev := gtx.Dp(width), gtx.Dp(36), gtx.Dp(12), gtx.Dp(16)
@@ -1770,7 +1859,10 @@ func (dd *dirDropdown) layoutSelect(b *base, gtx C, width unit.Dp) D {
 		border(gtx, r, rad, max(1, gtx.Dp(1)), b.p.Faint)
 		dirAt(gtx, image.Pt(pad, 0), func(gtx C) D {
 			gtx.Constraints = layout.Exact(image.Pt(max(0, w-2*pad-chev-gtx.Dp(4)), h))
-			return layout.W.Layout(gtx, func(gtx C) D { return b.label(gtx, 15, wReg, b.p.Text, label) })
+			if len(elem.Nodes) > 0 {
+				return layout.W.Layout(gtx, func(gtx C) D { return slackc.LayoutElement(gtx, elem) })
+			}
+			return layout.W.Layout(gtx, func(gtx C) D { return b.label(gtx, st.FontSize(15), wReg, st.Color(b.p.Text), label) })
 		})
 		dirAt(gtx, image.Pt(w-pad-chev, (h-chev)/2), func(gtx C) D { return b.icon(gtx, "chevron-down", 16, b.p.Sec) })
 		return D{Size: r.Max}
@@ -1812,7 +1904,11 @@ func (dd *dirDropdown) menu(b *base, gtx C, btn image.Point, right bool) {
 		g := gtx
 		g.Constraints = layout.Exact(r.Max)
 		dd.panel.Layout(g, func(gtx C) D { return D{Size: r.Max} })
-		for i, l := range dd.labels {
+		labels := dd.labels
+		if len(dd.shown) == len(labels) {
+			labels = dd.shown
+		}
+		for i, l := range labels {
 			dirAt(gtx, image.Pt(0, padY+i*itemH), func(gtx C) D {
 				gtx.Constraints = layout.Exact(image.Pt(w, itemH))
 				return dd.items[i].Layout(gtx, func(gtx C) D {
