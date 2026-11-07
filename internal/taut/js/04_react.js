@@ -21,6 +21,15 @@ const COMPONENT_SOURCES = {
   MessageKitGutter: '"c-message_kit__gutter__left"',
   HuddleLinkJoinGate: 'canJoinByExternalHuddleLink',
 }
+/**
+ * components plugins pick out by their real implementation source
+ * (Function.prototype.toString, which ignores a toString override), e.g.
+ * Slick's BetterGifs `isGifPicker`: a one-argument function whose code
+ * mentions these markers, like Slack's own
+ */
+const REAL_SOURCES = {
+  GifPicker: '"gif-picker-host", e.onGifSelected, e.emojiSearchQuery',
+}
 /** Slack components that are anonymous memos in the web client, found by `filter` on their source */
 const ANONYMOUS = new Set(['MessageKitGutter', 'HuddleLinkJoinGate'])
 /** every Slack component Clack draws at a boundary (docs/PLUGINS-components.md), so filter-only patches can match them */
@@ -55,10 +64,15 @@ function nativeFor(name) {
   if (c) return c
   const native = typeof host.native === 'function' ? host.native(name) : null
   const React = G.React
-  const inner = function SlackNative(props) {
+  const render = function SlackNative(props) {
     const view = React.useContext(stateViewContext())
     const el = native ? React.createElement(native, view ? { ...props, $view: view.id } : props) : React.createElement('clack-native', { name, props })
     return el
+  }
+  let inner = render
+  if (REAL_SOURCES[name]) {
+    // compiled from text, so its real source carries the markers
+    inner = new Function('render', `return function (e) { void [${REAL_SOURCES[name]}]; return render(e) }`)(render)
   }
   const marker = COMPONENT_SOURCES[name]
   const src = `function(e){let{className:t,...n}=e;return(0,r.jsx)("div",{className:(0,a.A)(${marker || `"c-${name.replace(/[A-Z]/g, (m, i) => (i ? '_' : '') + m.toLowerCase())}"`},t),...n})}`

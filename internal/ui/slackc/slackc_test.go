@@ -2,6 +2,7 @@ package slackc
 
 import (
 	"encoding/json"
+	"image"
 	"strconv"
 	"testing"
 
@@ -179,4 +180,70 @@ func TestSlotEncoding(t *testing.T) {
 		t.Fatalf("drew %q", drew)
 	}
 	releaseSlots(slots)
+}
+
+type nestBridge struct {
+	rendered []string
+	nested   []struct {
+		root, parent uint64
+		parentK      int64
+		name         string
+	}
+}
+
+func (b *nestBridge) Render(root uint64, name string, props []byte) {
+	b.rendered = append(b.rendered, name)
+}
+func (b *nestBridge) RenderFn(root uint64, fn int64, args []byte)          {}
+func (b *nestBridge) Unmount(root uint64)                                  {}
+func (b *nestBridge) Dispatch(target int64, event []byte)                  {}
+func (b *nestBridge) Call(fn int64, args []byte, done func([]byte, error)) {}
+func (b *nestBridge) SetRects(rects map[int64][4]float32)                  {}
+func (b *nestBridge) SetViewport(w, h, dpr float32, dark bool)             {}
+func (b *nestBridge) RenderIn(root, parent uint64, parentK int64, name string, props []byte) {
+	b.nested = append(b.nested, struct {
+		root, parent uint64
+		parentK      int64
+		name         string
+	}{root, parent, parentK, name})
+}
+
+// TestNestedRootsKnowTheirParent: a patched component drawn by the native
+// behind another patched component's <Original> is rendered inside that
+// parent (RenderIn with the parent root and the "@" node), so React
+// context from the parent's patch reaches it; top-level ones use Render.
+func TestNestedRootsKnowTheirParent(t *testing.T) {
+	nb := &nestBridge{}
+	SetBridge(nb)
+	SetPatched([]string{"MessageWrapper", "MessageText"})
+	t.Cleanup(func() { Reset(); SetBridge(nil) })
+
+	inner := func(gtx layout.Context, p Props) layout.Dimensions { return layout.Dimensions{} }
+	row := func(gtx layout.Context, p Props) layout.Dimensions {
+		return Render(gtx, "MessageText", Props{"$key": "1.1", "msg": Props{"ts": "1.1"}}, inner)
+	}
+	gtx := ctx()
+	gtx.Constraints.Max = image.Pt(400, 400)
+	Render(gtx, "MessageWrapper", Props{"$key": "1.1"}, row)
+	// Before the parent's tree arrives its native draws directly, so the
+	// child renders top-level for that frame.
+	if len(nb.rendered) == 0 || nb.rendered[0] != "MessageWrapper" || len(nb.nested) != 0 {
+		t.Fatalf("first frame: top-level %v, nested %+v", nb.rendered, nb.nested)
+	}
+	var parent uint64
+	for r, in := range roots {
+		if in.name == "MessageWrapper" {
+			parent = r
+		}
+	}
+	if err := Deliver(parent, []byte(`{"t":"div","k":1,"c":[{"t":"@","n":"MessageWrapper","k":7,"p":{"$key":"1.1"}}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	Render(gtx, "MessageWrapper", Props{"$key": "1.1"}, row)
+	if len(nb.nested) != 1 || nb.nested[0].name != "MessageText" || nb.nested[0].parent != parent || nb.nested[0].parentK != 7 {
+		t.Fatalf("nested renders %+v (parent root %d)", nb.nested, parent)
+	}
+	if curRender != nil {
+		t.Error("render context leaked past the parent's layout")
+	}
 }
