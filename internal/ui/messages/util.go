@@ -2,11 +2,11 @@ package messages
 
 import (
 	"net/url"
-	"os/exec"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/openurl"
 )
 
 // tsTime parses a Slack ts ("1700000000.123456").
@@ -139,25 +139,9 @@ func permalink(domain, ch, ts string) string {
 	return "https://" + domain + ".slack.com/archives/" + ch + "/p" + strings.ReplaceAll(ts, ".", "")
 }
 
-// openURL opens a link in the system browser without blocking.
-func openURL(u string) {
-	if u == "" {
-		return
-	}
-	if pu, err := url.Parse(u); err != nil || (pu.Scheme != "http" && pu.Scheme != "https" && pu.Scheme != "mailto") {
-		return
-	}
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("open", u)
-	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", u)
-	default:
-		cmd = exec.Command("xdg-open", u)
-	}
-	go func() { _ = cmd.Run() }()
-}
+// openURL opens a link in the system browser without blocking (http,
+// https and mailto only; see openurl.Check).
+func openURL(u string) { _ = openurl.Open(u) }
 
 // avatarRadius is Slack's clamp(4px, min(22.222%, 12px), 12px).
 func avatarRadius(px int) int {
