@@ -266,3 +266,63 @@ func (r *dmsRow) channelProps() slackc.Props {
 }
 
 func (r *dmsRow) layoutChannel(gtx C, _ slackc.Props) D { return r.content(gtx) }
+
+// ---- Directories: PeopleGrid ----
+
+// peopleProps: PeopleGrid {users: Slack members, query, total}.
+func (d *Directories) peopleProps() slackc.Props {
+	st, _, _ := d.people.get()
+	users := make([]any, len(st.list))
+	for i := range st.list {
+		users[i] = memberProps(&st.list[i])
+	}
+	return slackc.Props{"$key": "people-grid", "users": users, "query": st.q, "total": st.total}
+}
+
+// memberProps is a core.User in Slack's member shape (the fields Clack
+// has).
+func memberProps(u *core.User) slackc.Props {
+	prof := slackc.Props{"display_name": u.Name, "real_name": u.RealName}
+	set := func(k, v string) {
+		if v != "" {
+			prof[k] = v
+		}
+	}
+	set("title", u.Title)
+	set("pronouns", u.Pronouns)
+	set("image_72", u.Avatar)
+	set("image_192", u.Avatar192)
+	set("image_512", u.Avatar512)
+	set("status_text", u.StatusText)
+	set("status_emoji", u.StatusEmoji)
+	m := slackc.Props{"id": u.ID, "name": u.Handle, "real_name": u.RealName, "profile": prof,
+		"is_bot": u.IsBot, "deleted": u.Deleted}
+	if u.Presence != "" {
+		m["presence"] = u.Presence
+	}
+	return m
+}
+
+// peopleOverride keeps the people whose ids the plugin's users list
+// still has, in Clack's order.
+func (d *Directories) peopleOverride(p slackc.Props, us []core.User) []core.User {
+	if !p.Has("users") {
+		return us
+	}
+	keep := map[string]bool{}
+	for _, x := range p.List("users") {
+		switch x := x.(type) {
+		case slackc.Props:
+			keep[x.StrOr("id", "")] = true
+		case map[string]any:
+			keep[slackc.Props(x).StrOr("id", "")] = true
+		}
+	}
+	d.pusers = d.pusers[:0]
+	for _, u := range us {
+		if keep[u.ID] {
+			d.pusers = append(d.pusers, u)
+		}
+	}
+	return d.pusers
+}
