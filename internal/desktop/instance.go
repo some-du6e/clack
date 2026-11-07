@@ -46,7 +46,16 @@ func SocketPath(configDir string) string {
 	if d := os.Getenv("XDG_RUNTIME_DIR"); d != "" {
 		return filepath.Join(d, name)
 	}
-	return filepath.Join(os.TempDir(), fmt.Sprintf("clack-%d-%x.sock", os.Getuid(), h[:6]))
+	// No per-user runtime dir: /tmp is shared, so the socket goes in a
+	// 0700 directory of our own there. If someone else made (or symlinked)
+	// that directory, there is no single instance rather than a socket
+	// another user could squat on to receive our slack:// links.
+	dir := filepath.Join(os.TempDir(), fmt.Sprintf("clack-%d", os.Getuid()))
+	if err := privateDir(dir); err != nil {
+		log.Printf("desktop: %v; single instance disabled", err)
+		return ""
+	}
+	return filepath.Join(dir, name)
 }
 
 // Forward hands req to a running instance and reports whether one took it.
@@ -57,6 +66,9 @@ func Forward(configDir string, req Request) bool {
 }
 
 func forward(path string, req Request) bool {
+	if path == "" {
+		return false
+	}
 	c, err := net.DialTimeout("unix", path, time.Second)
 	if err != nil {
 		return false
@@ -80,6 +92,9 @@ func Listen(configDir string, handle func(Request)) (*Instance, error) {
 }
 
 func listen(path string, handle func(Request)) (*Instance, error) {
+	if path == "" {
+		return nil, errors.New("desktop: no private directory for the instance socket")
+	}
 	ln, err := net.Listen("unix", path)
 	if err != nil {
 		// Stale: nobody answers on it (Forward already failed), so remove
