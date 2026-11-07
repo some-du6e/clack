@@ -233,6 +233,9 @@ func (l *lay) block(b *richtext.Block, x, y, w int, edited bool) int {
 	case richtext.Actions:
 		return l.buttons(b.Buttons, x, y, w)
 
+	case richtext.Table:
+		return l.table(b, x, y, w)
+
 	case richtext.AttachmentBlock:
 		if b.Att == nil {
 			return 0
@@ -545,4 +548,120 @@ func fitSize(iw, ih, maxW, maxH int, l *lay) (int, int) {
 		h = 1
 	}
 	return int(w + 0.5), int(h + 0.5)
+}
+
+// table lays out a Block Kit table: a rounded bordered grid, header row in
+// bold, content-sized columns shrunk to fit, per-column alignment.
+func (l *lay) table(b *richtext.Block, x, y, w int) int {
+	p := &l.st.Palette
+	ncol := 0
+	for _, r := range b.Rows {
+		ncol = max(ncol, len(r))
+	}
+	if ncol == 0 || len(b.Rows) == 0 {
+		return 0
+	}
+	padX, padY := l.dp(12), l.dp(8)
+	bw := l.dp(1)
+	// natural (single-line) column widths
+	nat := make([]int, ncol)
+	k := l.faceFor(font.Font{Typeface: l.st.Face}, l.sp(l.st.TextSize), 0)
+	kb := l.faceFor(font.Font{Typeface: l.st.Face}, l.sp(l.st.TextSize), richtext.Bold)
+	for ri, r := range b.Rows {
+		for ci, cell := range r {
+			kk := k
+			if ri == 0 {
+				kk = kb
+			}
+			cw := 0
+			for _, line := range strings.Split(richtext.SpansText(cell), "\n") {
+				cw = max(cw, int(l.measure(line, kk)+0.999))
+			}
+			nat[ci] = max(nat[ci], min(cw, l.dp(400))+2*padX)
+		}
+	}
+	total := 0
+	for _, c := range nat {
+		total += c
+	}
+	avail := w - bw*(ncol+1)
+	cols := make([]int, ncol)
+	for i := range cols {
+		cols[i] = nat[i]
+		if total > avail && total > 0 {
+			cols[i] = max(l.dp(48), nat[i]*avail/total)
+		}
+	}
+	tw := bw * (ncol + 1)
+	for _, c := range cols {
+		tw += c
+	}
+	bi := len(l.d.boxes)
+	l.d.boxes = append(l.d.boxes, box{kind: bBorder, fill: p.Panel, stroke: p.Border, bw: bw, radius: l.dp(8), target: -1})
+	cy := y + bw
+	for ri, r := range b.Rows {
+		if ri > 0 {
+			l.d.boxes = append(l.d.boxes, box{kind: bFill, r: image.Rect(x+bw, cy, x+tw-bw, cy+bw), fill: p.Border, target: -1})
+			cy += bw
+		}
+		rowH := 0
+		cx := x + bw
+		for ci := 0; ci < ncol; ci++ {
+			if ci > 0 {
+				cx += bw
+			}
+			cw := cols[ci]
+			if ci < len(r) && len(r[ci]) > 0 {
+				fs := l.bodyStyle()
+				if ri == 0 {
+					fs.face.Weight = font.Bold
+				}
+				if ci > 0 {
+					l.plainAdd("\t")
+				}
+				f0, b0, h0 := len(l.d.frags), len(l.d.boxes), len(l.d.hits)
+				l.addSpans(r[ci], &fs)
+				h, wd := l.flow(cx+padX, cy+padY, cw-2*padX, &fs)
+				align := ""
+				if ci < len(b.ColAlign) {
+					align = b.ColAlign[ci]
+				}
+				if dx := cw - 2*padX - wd; dx > 0 && (align == "right" || align == "center") {
+					if align == "center" {
+						dx /= 2
+					}
+					l.shift(f0, b0, h0, dx)
+				}
+				rowH = max(rowH, h)
+			}
+			cx += cw
+		}
+		rowH = max(rowH, l.dp(l.st.LineHeight)) + 2*padY
+		// column separators for this row
+		sx := x + bw
+		for ci := 0; ci < ncol-1; ci++ {
+			sx += cols[ci]
+			l.d.boxes = append(l.d.boxes, box{kind: bFill, r: image.Rect(sx, cy, sx+bw, cy+rowH), fill: p.Border, target: -1})
+			sx += bw
+		}
+		cy += rowH
+		l.plainAdd("\n")
+	}
+	cy += bw
+	l.d.boxes[bi].r = image.Rect(x, y, x+tw, cy)
+	return cy - y
+}
+
+// shift moves the frags, boxes and hit areas laid out since (f0, b0, h0)
+// right by dx (aligned table cells).
+func (l *lay) shift(f0, b0, h0, dx int) {
+	for i := f0; i < len(l.d.frags); i++ {
+		l.d.frags[i].x += float32(dx)
+	}
+	for i := b0; i < len(l.d.boxes); i++ {
+		l.d.boxes[i].r = l.d.boxes[i].r.Add(image.Pt(dx, 0))
+	}
+	for i := h0; i < len(l.d.hits); i++ {
+		l.d.hits[i].r = l.d.hits[i].r.Add(image.Pt(dx, 0))
+	}
 }

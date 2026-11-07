@@ -2092,3 +2092,32 @@ func TestUnicodeEmojiAsImages(t *testing.T) {
 		t.Errorf("no-emoji text split: %+v", segs)
 	}
 }
+
+func TestTableLayout(t *testing.T) {
+	st := newTestStyle()
+	b := rt.Block{Kind: rt.Table, ColAlign: []string{"", "right"}, Rows: [][][]rt.Span{
+		{{txt("Name")}, {txt("Score")}},
+		{{txt("ann")}, {txt("42")}},
+	}}
+	v := layoutAt(st, doc(b), Options{}, 600)
+	var card *box
+	for i := range v.d.boxes {
+		if v.d.boxes[i].kind == bBorder {
+			card = &v.d.boxes[i]
+		}
+	}
+	if card == nil || card.r.Dy() <= 0 || card.r.Dx() > 600 {
+		t.Fatalf("table frame %+v", card)
+	}
+	name, score, n42 := findFrag(t, &v.d, "Name"), findFrag(t, &v.d, "Score"), findFrag(t, &v.d, "42")
+	if name.top >= findFrag(t, &v.d, "ann").top {
+		t.Errorf("rows not stacked")
+	}
+	// right-aligned column: "42" ends where "Score" ends
+	if d := (n42.x + n42.w) - (score.x + score.w); d > 1 || d < -1 {
+		t.Errorf("right alignment off by %.1f", d)
+	}
+	if !strings.Contains(string(v.d.plain), "Name\tScore") {
+		t.Errorf("plain %q", v.d.plain)
+	}
+}
