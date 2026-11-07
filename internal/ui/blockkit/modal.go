@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"image"
+	"sync"
 	"time"
 
 	"gioui.org/io/event"
@@ -435,6 +436,12 @@ func (s *Stack) header(gtx C, mw, hh int, v *core.View) {
 	})
 }
 
+// appIcons caches app icons by app id (apps.profile.get; memory only).
+var (
+	appIconsMu sync.Mutex
+	appIcons   = map[string]string{}
+)
+
 func (s *Stack) appIcon(v *core.View) string {
 	c := s.h.Core()
 	if c == nil {
@@ -445,7 +452,29 @@ func (s *Stack) appIcon(v *core.View) string {
 			return b.Icon
 		}
 	}
-	return ""
+	if v.AppID == "" {
+		return ""
+	}
+	appIconsMu.Lock()
+	u, known := appIcons[v.AppID]
+	if !known {
+		appIcons[v.AppID] = "" // one fetch per app
+	}
+	appIconsMu.Unlock()
+	if !known {
+		h, bot, app := s.h, v.BotID, v.AppID
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if p, err := c.Interactive().AppProfileOf(ctx, bot, app); err == nil && p.Icon != "" {
+				appIconsMu.Lock()
+				appIcons[app] = p.Icon
+				appIconsMu.Unlock()
+				h.Invalidate()
+			}
+		}()
+	}
+	return u
 }
 
 func titleOf(raw json.RawMessage) string {

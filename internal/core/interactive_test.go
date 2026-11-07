@@ -208,3 +208,30 @@ func TestShortcutsAndHome(t *testing.T) {
 		t.Errorf("info params: %v", p)
 	}
 }
+
+func TestWorkflowLinks(t *testing.T) {
+	if id := WorkflowTriggerID("https://slack.com/shortcuts/Ft0123ABCDEF/abcdef0123"); id != "Ft0123ABCDEF" {
+		t.Errorf("id %q", id)
+	}
+	if WorkflowTriggerID("https://example.com/shortcuts/Ft0123ABCDEF/x") != "" || WorkflowTriggerID("https://slack.com/archives/C1") != "" {
+		t.Error("non-workflow links")
+	}
+	a, f := testApp(t)
+	f.reply["workflows.triggers.trip"] = `{"ok":false,"error":"pretrip_ack_required"}`
+	ix := a.Interactive()
+	link := "https://slack.com/shortcuts/Ft0123ABCDEF/abcdef0123"
+	if err := ix.TripWorkflow(context.Background(), link, "C1", "1.2", true, nil); err != ErrPretripAck {
+		t.Fatalf("precheck: %v", err)
+	}
+	p := f.last("workflows.triggers.trip")
+	if p.Get("url") != link || p.Get("run_precheck") != "true" || p.Get("context") != `{"channel_id":"C1","location":"message","message_ts":"1.2"}` {
+		t.Errorf("params: %v", p)
+	}
+	f.reply["workflows.triggers.trip"] = `{"ok":true}`
+	if err := ix.TripWorkflow(context.Background(), link, "", "", false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if p := f.last("workflows.triggers.trip"); p.Get("context") != `{"location":"markdown_link"}` || p.Get("run_precheck") != "false" {
+		t.Errorf("params: %v", p)
+	}
+}

@@ -278,6 +278,17 @@ func (w *ew) layoutButton(gtx C, sz image.Point) {
 // app, like Slack), workflow buttons start their workflow, and confirm
 // asks first.
 func (w *ew) press() {
+	if w.e.Type == "workflow_button" {
+		if link, inputs := workflowTrigger(w.e); link != "" {
+			act := func() { tripWorkflow(w.o.host(), link, w.o.channel(), w.messageTS(), inputs) }
+			if w.e.Confirm != nil {
+				showConfirm(w.o.host(), w.e.Confirm, act, nil)
+				return
+			}
+			act()
+			return
+		}
+	}
 	act := func() {
 		if w.e.URL != "" {
 			openURL(w.e.URL)
@@ -289,6 +300,14 @@ func (w *ew) press() {
 		return
 	}
 	act()
+}
+
+// messageTS is the ts of the message the element is in ("" in views).
+func (w *ew) messageTS() string {
+	if m, ok := w.o.(*Message); ok {
+		return m.m.TS
+	}
+	return ""
 }
 
 // send fires the action with the loading state.
