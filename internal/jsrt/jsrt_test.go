@@ -158,6 +158,22 @@ func TestTimeoutInterrupts(t *testing.T) {
 	}
 }
 
+func TestPanicsDoNotCrash(t *testing.T) {
+	r := newTest(t)
+	err := r.Do(func(js *Ctx) error { panic("boom") })
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("Do panic: %v", err)
+	}
+	r.Post(func(js *Ctx) { panic("posted boom") })
+	r.Expose("bad", func(js *Ctx, this Value, args []Value) (any, error) { panic("host boom") })
+	if got := evalString(t, r, `try { __clack.bad() } catch (e) { 'caught:' + e.message }`); !strings.Contains(got, "host boom") {
+		t.Fatalf("host panic: %s", got)
+	}
+	if got := evalString(t, r, `40 + 2`); got != "42" {
+		t.Fatalf("after panics: %s", got)
+	}
+}
+
 func TestHostFunctions(t *testing.T) {
 	r := newTest(t)
 	r.Expose("add", func(js *Ctx, this Value, args []Value) (any, error) {

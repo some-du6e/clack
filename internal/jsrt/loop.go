@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log"
 	"runtime"
+	"runtime/debug"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,17 +36,18 @@ type Runtime struct {
 	deadline atomic.Int64 // unix nanos; the running task is interrupted after it (0 = none)
 
 	// JS-thread-only state below.
-	eng      *engine
-	js       *Ctx
-	timers   timerHeap
-	timerN   int
-	hosts    map[uint32]HostFunc
-	hostN    uint32
-	roots    map[uint64]*Root
-	onDoc    func(body []byte, css []string)
-	onCommit func(id uint64, tree []byte)
-	fetches  map[int]context.CancelFunc
-	start    time.Time
+	eng        *engine
+	js         *Ctx
+	timers     timerHeap
+	timerN     int
+	hosts      map[uint32]HostFunc
+	hostN      uint32
+	roots      map[uint64]*Root
+	onDoc      func(body []byte, css []string)
+	onDocProps func(html, body []byte)
+	onCommit   func(id uint64, tree []byte)
+	fetches    map[int]context.CancelFunc
+	start      time.Time
 
 	kvs      map[string]KV
 	builtins map[string]string
@@ -126,8 +129,8 @@ func (r *Runtime) Do(f func(js *Ctx) error) error {
 	r.enqueue(func() {
 		defer func() {
 			if p := recover(); p != nil {
-				ch <- fmt.Errorf("jsrt: panic: %v", p)
-				panic(p)
+				ch <- fmt.Errorf("jsrt: panic in Do: %v", p)
+				r.afterPanic(p)
 			}
 		}()
 		ch <- f(r.js)
@@ -229,10 +232,29 @@ func (r *Runtime) loop() {
 // runTask runs one macrotask with a deadline, then the microtask checkpoint
 // and the render flush.
 func (r *Runtime) runTask(f func()) {
+	defer func() {
+		r.deadline.Store(0)
+		if p := recover(); p != nil {
+			r.afterPanic(p)
+		}
+	}()
 	r.deadline.Store(time.Now().Add(r.opts.Timeout).UnixNano())
 	f()
 	r.checkpoint()
-	r.deadline.Store(0)
+}
+
+// afterPanic handles a panic on the JS thread: a Go panic in a task is
+// logged and the loop goes on; an engine trap (the wasm state can't be
+// trusted afterwards) closes the runtime, so callers see ErrClosed instead
+// of Clack crashing.
+func (r *Runtime) afterPanic(p any) {
+	err, _ := p.(error)
+	if err != nil && strings.Contains(err.Error(), "jsrt: engine trap") {
+		r.opts.Log("error", fmt.Sprintf("jsrt: engine trapped, closing the runtime: %v", err))
+		r.Close()
+		return
+	}
+	r.opts.Log("error", fmt.Sprintf("jsrt: panic on the JS thread: %v\n%s", p, debug.Stack()))
 }
 
 // checkpoint drains Promise jobs and flushes React roots and the document.

@@ -251,13 +251,15 @@ React.createElement(App)`)
 	rec.waitFor(t, "lazy loaded", func(ns []node) bool {
 		return find(ns, func(n node) bool { return n.T == "b" && n.text() == "loaded" }) != nil
 	})
-	select {
-	case body := <-bodyCh:
-		if find(body, func(n node) bool { return n.T == "div" && n.P["className"] == "overlay" }) == nil {
-			t.Fatalf("portal body: %+v", body)
+	// the subscriber first gets the current state, then the portal's commit
+	deadline := time.After(5 * time.Second)
+	for found := false; !found; {
+		select {
+		case body := <-bodyCh:
+			found = find(body, func(n node) bool { return n.T == "div" && n.P["className"] == "overlay" }) != nil
+		case <-deadline:
+			t.Fatal("no document update for the portal")
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("no document update for the portal")
 	}
 }
 
@@ -373,6 +375,24 @@ return Pronouns;
 		s := find(ns, func(n node) bool { return n.T == "span" && n.P["className"] == "pronouns" })
 		return s != nil && s.text() == " (U123)"
 	})
+}
+
+func TestDocumentProps(t *testing.T) {
+	r := newTest(t)
+	ch := make(chan [2]string, 8)
+	r.OnDocumentProps(func(html, body []byte) { ch <- [2]string{string(html), string(body)} })
+	evalString(t, r, `document.documentElement.classList.add('streamer'); document.documentElement.style.setProperty('--sidebar-width', '260px'); document.body.dataset.theme = 'dark'; 0`)
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case x := <-ch:
+			if strings.Contains(x[0], `"className":"streamer"`) && strings.Contains(x[0], `"--sidebar-width":"260px"`) && strings.Contains(x[1], `"data-theme":"dark"`) {
+				return
+			}
+		case <-deadline:
+			t.Fatal("no document props")
+		}
+	}
 }
 
 func TestFileInputPicker(t *testing.T) {
