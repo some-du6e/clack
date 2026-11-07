@@ -363,15 +363,16 @@ func (it *glyphIter) paint(gtx layout.Context, sh *text.Shaper, g text.Glyph, li
 	}
 	if g.Flags&text.FlagLineBreak != 0 || cap(line)-len(line) == 0 || !ok {
 		t := op.Affine(f32.AffineId().Offset(it.lineOff)).Push(gtx.Ops)
-		path := sh.Shape(line)
-		paint.FillShape(gtx.Ops, it.col, clip.Outline{Path: path}.Op())
-		if it.emb > 0 {
-			// Second fill shifted right by the embolden width: thickens
-			// stems like a hairline stroke, without per-frame CPU stroke
-			// tessellation (half the frame cost of clip.Stroke here).
-			// hairline outline stroke (same as richview); shape the batch
-			// again rather than reuse the PathSpec
-			paint.FillShape(gtx.Ops, it.col, clip.Stroke{Path: sh.Shape(line), Width: it.emb}.Op())
+		// Dark text gets its extra ink from an emboldened outline (one
+		// fill, see EmboldenedShape); fallback-font runs keep the stroke.
+		if path, ok := EmboldenedShape(sh, line, it.emb); ok {
+			paint.FillShape(gtx.Ops, it.col, clip.Outline{Path: path}.Op())
+		} else {
+			path := sh.Shape(line)
+			paint.FillShape(gtx.Ops, it.col, clip.Outline{Path: path}.Op())
+			if it.emb > 0 {
+				paint.FillShape(gtx.Ops, it.col, clip.Stroke{Path: path, Width: it.emb}.Op())
+			}
 		}
 		if call := sh.Bitmaps(line); call != (op.CallOp{}) {
 			call.Add(gtx.Ops)
@@ -446,7 +447,7 @@ func loadEmojiIndex() {
 			S map[string]string `json:"s"`
 		} `json:"emoji"`
 	}
-	_ = json.Unmarshal(emoji.StandardJSON, &f)
+	_ = json.Unmarshal(emoji.StandardData(), &f)
 	emojiIndex = make(map[string]string, len(f.Emoji)*3)
 	add := func(hexSeq, stem string) {
 		var b strings.Builder

@@ -91,3 +91,21 @@ func countFiles(dir string) int {
 	})
 	return n
 }
+
+func TestSweepDropsIdleEntries(t *testing.T) {
+	c := New(nil, "", nil)
+	c.mu.Lock()
+	for i, used := range []int64{100, 200} {
+		e := &entry{k: key{url: string(rune('a' + i))}, n: 10, used: used}
+		c.entries[e.k] = c.lru.PushFront(e)
+		c.bytes += e.n
+	}
+	c.mu.Unlock()
+	c.sweep(150)
+	if len(c.entries) != 1 || c.bytes != 10 {
+		t.Fatalf("after sweep: %d entries, %d bytes", len(c.entries), c.bytes)
+	}
+	if _, ok := c.entries[key{url: "b"}]; !ok {
+		t.Fatal("the recently used entry was dropped")
+	}
+}

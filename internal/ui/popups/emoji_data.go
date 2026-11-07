@@ -13,7 +13,7 @@ import (
 
 // Emoji data for the picker and the composer's ":" autocomplete.
 //
-// The standard table (internal/emoji.StandardJSON, iamcal order) is parsed
+// The standard table (internal/emoji.StandardData(), iamcal order) is parsed
 // once. An emojiIndex combines it with the workspace's custom emoji
 // (Hack Club has ~65,000) into id-indexed slices: ids [0, nStd) are standard
 // emoji, the rest custom emoji sorted by name. Custom aliases are attached
@@ -72,7 +72,7 @@ var (
 )
 
 func epStandard() *epStdTable {
-	epStdOnce.Do(func() { epStd = epParseStd(emoji.StandardJSON) })
+	epStdOnce.Do(func() { epStd = epParseStd(emoji.StandardData()) })
 	return epStd
 }
 
@@ -525,7 +525,34 @@ var (
 	epFull     *emojiIndex
 	epStdIdx   = map[string]*emojiIndex{}
 	epBuilding = map[epKey]bool{}
+
+	epLastUse  time.Time // guarded by epCacheMu
+	epReleaser sync.Once
 )
+
+// epIndexIdle: the full index (65k custom emoji on Hack Club, ~10 MB) is
+// dropped after this long unused (picker and ":" autocomplete). The next
+// use shows standard emoji at once and rebuilds the full index (~170 ms)
+// off the UI goroutine, as on first use.
+const epIndexIdle = 5 * time.Minute
+
+func epNoteUse() {
+	epCacheMu.Lock()
+	epLastUse = time.Now()
+	epCacheMu.Unlock()
+	epReleaser.Do(func() {
+		go func() {
+			for {
+				time.Sleep(epIndexIdle / 5)
+				epCacheMu.Lock()
+				if epFull != nil && len(epBuilding) == 0 && time.Since(epLastUse) > epIndexIdle {
+					epFull = nil
+				}
+				epCacheMu.Unlock()
+			}
+		}()
+	})
+}
 
 func epStyle(h Host) string {
 	if h != nil && h.Core() != nil && h.Core().Prefs().EmojiStyle == "google" {
@@ -553,6 +580,7 @@ func epStdIndex(style string) *emojiIndex {
 // started off the UI goroutine; h is invalidated when it lands. Must be
 // called on the UI goroutine.
 func epIndexFor(h Host) (*emojiIndex, bool) {
+	epNoteUse()
 	style := epStyle(h)
 	var custom map[string]string
 	if h != nil && h.Core() != nil {

@@ -19,6 +19,7 @@ import (
 	"gioui.org/unit"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
 // Images is the subset of imgcache.Cache that richview needs. Get must not
@@ -183,6 +184,7 @@ type Style struct {
 
 	gen   uint32 // bumped by SetPalette; Views re-record when it changes
 	words map[wordKey]*shaped
+	prev  map[wordKey]*shaped // previous generation (see word)
 	space map[faceKey]spaceMetrics
 }
 
@@ -190,7 +192,7 @@ type Style struct {
 func NewStyle(sh *text.Shaper, imgs Images, p Palette) *Style {
 	return &Style{
 		Shaper: sh, Images: imgs, Palette: p,
-		Face:     "Lato",
+		Face:     theme.Typeface,
 		Mono:     "Roboto Mono, Monaco, Menlo, Consolas, \"Courier New\", monospace",
 		TextSize: 15, LineHeight: 22, Embolden: 0.3,
 		gen:   1,
@@ -208,6 +210,7 @@ func (s *Style) SetPalette(p Palette) {
 // Invalidate forces every View to re-layout (e.g. after the font changed).
 func (s *Style) Invalidate() {
 	s.gen++
+	s.prev = nil
 	for k := range s.words {
 		delete(s.words, k)
 	}

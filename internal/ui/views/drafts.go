@@ -1565,7 +1565,7 @@ func (d *Drafts) sentRow(gtx C, m *core.Message, first, last bool) D {
 				bg = d.p.ReadFill
 			}
 			paint.FillShape(gtx.Ops, bg, rr.Op(gtx.Ops))
-			paint.FillShape(gtx.Ops, d.p.CardLine, clip.Stroke{Path: rr.Path(gtx.Ops), Width: float32(max(1, gtx.Dp(1)))}.Op())
+			paint.FillShape(gtx.Ops, d.p.CardLine, clip.Stroke{Path: theme.CachedRRect(rr), Width: float32(max(1, gtx.Dp(1)))}.Op())
 			call.Add(gtx.Ops)
 			return dims
 		})

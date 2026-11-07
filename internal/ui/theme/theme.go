@@ -22,12 +22,17 @@ import (
 	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
+	gtfont "github.com/go-text/typesetting/font"
 
 	"github.com/some-du6e/yoloslackgoclient/assets/fonts"
 )
 
 // Typeface is the font family name registered for the embedded Lato faces.
-const Typeface font.Typeface = "Lato"
+// It is not "Lato" so that a system-installed Lato (Ubuntu's fonts-lato, a
+// different build) can never win the family match: Gio's font map lists
+// system fonts before the embedded collection, so with the plain name every
+// label rendered with the system files (and parsed them into the heap).
+const Typeface font.Typeface = "Clack Lato"
 
 // Font weights in Gio units (CSS weight minus 400).
 const (
@@ -62,13 +67,19 @@ var (
 
 func parseFace(b []byte) font.Face {
 	parseMu.Lock()
-	defer parseMu.Unlock()
-	if f, ok := parsed[&b[0]]; ok {
+	f, ok := parsed[&b[0]]
+	parseMu.Unlock()
+	if ok {
 		return f
 	}
-	face, err := opentype.Parse(b)
+	face, err := opentype.Parse(b) // outside the lock: faces parse in parallel
 	if err != nil {
 		panic("theme: bad embedded font: " + err.Error())
+	}
+	parseMu.Lock()
+	defer parseMu.Unlock()
+	if f, ok := parsed[&b[0]]; ok {
+		return f // a concurrent parse won; keep one Face per font
 	}
 	parsed[&b[0]] = face
 	return face
@@ -82,8 +93,7 @@ func FacesFor(dark bool) []font.FontFace {
 		w font.Weight
 		s font.Style
 	}
-	var out []font.FontFace
-	for _, f := range []src{
+	srcs := []src{
 		{fonts.Regular, font.Normal, font.Regular},
 		{fonts.Bold, font.Bold, font.Regular},
 		{fonts.Black, font.Black, font.Regular},
@@ -92,7 +102,17 @@ func FacesFor(dark bool) []font.FontFace {
 		{fonts.BoldItalic, font.Bold, font.Italic},
 		{fonts.BlackItalic, font.Black, font.Italic},
 		{fonts.LightItalic, font.Light, font.Italic},
-	} {
+	}
+	// Parse the eight faces in parallel (they dominate shaper creation,
+	// which the first frame waits for); parseFace memoizes.
+	var wg sync.WaitGroup
+	for _, f := range srcs {
+		wg.Add(1)
+		go func(b []byte) { defer wg.Done(); parseFace(b) }(f.b)
+	}
+	wg.Wait()
+	out := make([]font.FontFace, 0, len(srcs))
+	for _, f := range srcs {
 		out = append(out, font.FontFace{Font: font.Font{Typeface: Typeface, Weight: f.w, Style: f.s}, Face: parseFace(f.b)})
 	}
 	return out
@@ -119,7 +139,14 @@ func Bare(dark bool) *Theme {
 // NewShaperFor builds a mode's shaper (Lato + the system font index as a
 // fallback for scripts Lato lacks). Safe to call from any goroutine.
 func NewShaperFor(dark bool) *text.Shaper {
-	return text.NewShaper(text.WithCollection(FacesFor(dark)))
+	coll := FacesFor(dark)
+	sh := text.NewShaper(text.WithCollection(coll))
+	faces := make([]*gtfont.Face, len(coll))
+	for i, f := range coll {
+		faces[i] = f.Face.Face()
+	}
+	registerShaperFaces(sh, faces) // Gio indexes collection faces in order
+	return sh
 }
 
 // NewShaper is the light-mode shaper (compatibility).
@@ -304,8 +331,10 @@ func RRect(gtx layout.Context, r image.Rectangle, radius int, c color.NRGBA) {
 
 // Border strokes a rounded rectangle outline of width w px.
 func Border(gtx layout.Context, r image.Rectangle, radius, w int, c color.NRGBA) {
-	rr := clip.UniformRRect(r, radius)
-	paint.FillShape(gtx.Ops, c, clip.Stroke{Path: rr.Path(gtx.Ops), Width: float32(w)}.Op())
+	// a cached path at the origin, translated: stable op identity, so Gio
+	// tessellates the stroke once instead of every frame (see PathPen)
+	defer op.Offset(r.Min).Push(gtx.Ops).Pop()
+	paint.FillShape(gtx.Ops, c, clip.Stroke{Path: RRectPath(r.Dx(), r.Dy(), radius), Width: float32(w)}.Op())
 }
 
 // Circle fills a circle with the given center and diameter.
@@ -356,8 +385,12 @@ func Shadow(gtx layout.Context, r image.Rectangle, radius int, spread int, c col
 		if a == 0 {
 			continue
 		}
-		rr := clip.UniformRRect(r.Inset(-i), radius+i)
-		paint.FillShape(gtx.Ops, color.NRGBA{R: c.R, G: c.G, B: c.B, A: a}, clip.Stroke{Path: rr.Path(gtx.Ops), Width: 1.5}.Op())
+		// cached ring path at the origin (stable op identity: Gio
+		// tessellates each ring once, not every frame; see PathPen)
+		ri := r.Inset(-i)
+		t := op.Offset(ri.Min).Push(gtx.Ops)
+		paint.FillShape(gtx.Ops, color.NRGBA{R: c.R, G: c.G, B: c.B, A: a}, clip.Stroke{Path: RRectPath(ri.Dx(), ri.Dy(), radius+i), Width: 1.5}.Op())
+		t.Pop()
 	}
 }
 

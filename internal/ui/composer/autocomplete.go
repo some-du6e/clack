@@ -1074,7 +1074,7 @@ func sharedEmojiIndex(custom map[string]string) *emojiIndex {
 	emojiShared.Lock()
 	defer emojiShared.Unlock()
 	if emojiShared.idx == nil || emojiShared.nCus != len(custom) {
-		emojiShared.idx = buildEmojiIndex(emoji.StandardJSON, custom)
+		emojiShared.idx = buildEmojiIndex(emoji.StandardData(), custom)
 		emojiShared.nCus = len(custom)
 	}
 	return emojiShared.idx

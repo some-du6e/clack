@@ -90,6 +90,10 @@ func main() {
 	// clack.desktop (its icon and slack:// handler).
 	app.ID = "clack"
 
+	startProfiler()
+	if startTrim != nil {
+		startTrim()
+	}
 	credsPath := flag.String("creds", filepath.Join(configDir(), "creds.json"), "credentials file")
 	dark := flag.Bool("dark", false, "start in dark mode (overridden by the saved preference)")
 	showVersion := flag.Bool("version", false, "print the version and exit")

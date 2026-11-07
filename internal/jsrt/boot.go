@@ -8,7 +8,6 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
-	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,20 +22,20 @@ import (
 	"time"
 )
 
-// The browser environment (env.js) and the React host renderer
-// (react-host.js), plus vendored React (vendor/). Evaluated at boot.
-var (
-	//go:embed js/env.js
-	envJS string
-	//go:embed js/web.js
-	webJS string
-	//go:embed js/intl.js
-	intlJS string
-	//go:embed js/dom.js
-	domJS string
-	//go:embed js/react-host.js
-	reactHostJS string
-)
+// bootScripts are the browser environment (js/env.js …), vendored React
+// (vendor/) and the React host renderer (js/react-host.js), in evaluation
+// order. They come from assets.pack, decompressed for each boot and dropped
+// afterwards: nothing is held while no plugin runtime runs.
+func bootScripts() ([]script, error) {
+	f, err := unpackAssets()
+	if err != nil {
+		return nil, err
+	}
+	s := func(name string) string { return string(f[name]) }
+	scripts := []script{{"env.js", s("js/env.js")}, {"web.js", s("js/web.js")}, {"intl.js", s("js/intl.js")}, {"dom.js", s("js/dom.js")}}
+	scripts = append(scripts, vendorScripts(f)...)
+	return append(scripts, script{"react-host.js", s("js/react-host.js")}), nil
+}
 
 func jsonMarshal(v any) ([]byte, error)   { return json.Marshal(v) }
 func jsonUnmarshal(b []byte, v any) error { return json.Unmarshal(b, v) }
@@ -91,9 +90,10 @@ func (r *Runtime) boot() error {
 	r.eng = e
 	r.phases = append(r.phases, Phase{"engine", time.Since(t0)})
 	r.installHost()
-	scripts := []script{{"env.js", envJS}, {"web.js", webJS}, {"intl.js", intlJS}, {"dom.js", domJS}}
-	scripts = append(scripts, vendorScripts...)
-	scripts = append(scripts, script{"react-host.js", reactHostJS})
+	scripts, err := bootScripts()
+	if err != nil {
+		return err
+	}
 	for _, v := range scripts {
 		t1 := time.Now()
 		if err := e.evalBoot("clack:"+v.name, v.src); err != nil {

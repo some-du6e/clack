@@ -2,15 +2,33 @@
 package emoji
 
 import (
+	"bytes"
+	"compress/gzip"
 	_ "embed"
 	"encoding/json"
+	"io"
 	"strconv"
 	"strings"
 	"sync"
 )
 
-//go:embed standard.json
-var StandardJSON []byte
+// standard.json.gz is the standard emoji table (iamcal order), gzipped:
+// 161 KB of JSON is 28 KB in the binary.
+//
+//go:embed standard.json.gz
+var standardGz []byte
+
+// StandardData returns the standard emoji table as JSON
+// ({"categories":[…],"emoji":[{n,i,u,c,s}]}), decompressed on each call
+// (~1 ms): callers parse it into their own tables and drop the bytes.
+func StandardData() []byte {
+	r, err := gzip.NewReader(bytes.NewReader(standardGz))
+	if err != nil {
+		return nil
+	}
+	b, _ := io.ReadAll(r)
+	return b
+}
 
 // CDN is where Slack serves its standard emoji images.
 const CDN = "https://a.slack-edge.com/production-standard-emoji-assets/16.0/"
@@ -33,7 +51,7 @@ func load() {
 	var f struct {
 		Emoji []std `json:"emoji"`
 	}
-	_ = json.Unmarshal(StandardJSON, &f)
+	_ = json.Unmarshal(StandardData(), &f)
 	byName = make(map[string]*std, len(f.Emoji)*2)
 	for i := range f.Emoji {
 		e := &f.Emoji[i]
@@ -105,14 +123,23 @@ func unicodeText(uni string) string {
 // returned by Snapshot is never mutated afterwards and may be iterated
 // without locks while emoji_changed events arrive.
 type Custom struct {
-	mu sync.RWMutex
-	m  map[string]string
+	mu  sync.RWMutex
+	m   map[string]string
+	ver uint64 // bumped by every change (the disk cache saves only on change)
+}
+
+// Version changes whenever the map does.
+func (c *Custom) Version() uint64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.ver
 }
 
 // Set replaces the whole map; the caller must not modify m afterwards.
 func (c *Custom) Set(m map[string]string) {
 	c.mu.Lock()
 	c.m = m
+	c.ver++
 	c.mu.Unlock()
 }
 
@@ -129,6 +156,7 @@ func (c *Custom) Put(name, v string) {
 	n := c.clone(1)
 	n[name] = v
 	c.m = n
+	c.ver++
 	c.mu.Unlock()
 }
 
@@ -139,6 +167,7 @@ func (c *Custom) Remove(names ...string) {
 		delete(n, name)
 	}
 	c.m = n
+	c.ver++
 	c.mu.Unlock()
 }
 

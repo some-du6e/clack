@@ -143,6 +143,22 @@ func (v *View) SetOptions(o Options) {
 // Doc returns the current document.
 func (v *View) Doc() richtext.Doc { return v.doc }
 
+// Release drops the layout and its recorded paint ops (glyph paths, the
+// bulk of a message's memory). The next Layout lays the doc out again;
+// state (selection, component states) is kept. For rows that have been
+// off screen for a while.
+func (v *View) Release() {
+	if !v.recorded && len(v.d.frags) == 0 {
+		return
+	}
+	v.d = display{}
+	v.ops = op.Ops{}
+	v.call = op.CallOp{}
+	v.recorded = false
+	v.pending = nil
+	v.dirty = true
+}
+
 // HasSelection reports whether some text is selected.
 func (v *View) HasSelection() bool { return v.selA != v.selB }
 
@@ -482,7 +498,19 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 			if fg != nil {
 				col = *fg
 			}
-			path, bm := st.pathOf(f.sh)
+			// Browsers render Lato visibly heavier than Gio's linear
+			// coverage. Dark text gets the missing ink (st.Embolden px,
+			// ~0.45 at 1x and 2x) from an emboldened outline: one fill,
+			// no stroke tessellation (theme.EmboldenedShape).
+			var emb clip.PathSpec
+			embOK := false
+			if st.Embolden > 0 {
+				emb, embOK = st.emboldenedOf(f.sh, st.Embolden)
+			}
+			path, bm := st.pathOf(f.sh, !embOK)
+			if embOK {
+				path = emb
+			}
 			// Whole-pixel pen positions: Gio's path cache snaps fractional
 			// offsets, which makes word spacing uneven.
 			t := op.Offset(image.Pt(int(f.x+0.5), f.y)).Push(ops)
@@ -490,7 +518,7 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 			paint.ColorOp{Color: st.textColor(col, v.laidPx)}.Add(ops)
 			paint.PaintOp{}.Add(ops)
 			cs.Pop()
-			if st.Embolden > 0 {
+			if st.Embolden > 0 && !embOK { // fallback-font run
 				// Browsers render Lato visibly heavier than Gio's linear
 				// coverage; a hairline stroke of the outline matches it.
 				// Width is in pixels, not dp: measured against Chrome, the

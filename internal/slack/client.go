@@ -93,7 +93,24 @@ func New(c Creds) *Client {
 	}
 	cl := &Client{Creds: c, base: base, ent: ent, sem: make(chan struct{}, MaxConcurrent), learned: map[string]bool{}}
 	cl.HTTP = &http.Client{Transport: tr, Timeout: 60 * time.Second, CheckRedirect: cl.checkRedirect}
+	if isLoopback(base) {
+		cl.EdgeURL = base + "edge/" // a local fake (internal/fakeslack) serves the edge API too
+	}
 	return cl
+}
+
+// isLoopback reports whether u's host is localhost or a loopback address.
+func isLoopback(u string) bool {
+	p, err := url.Parse(u)
+	if err != nil {
+		return false
+	}
+	if h := p.Hostname(); h == "localhost" {
+		return true
+	} else if ip := net.ParseIP(h); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // credsOK reports whether a request to u may carry the session cookie and
@@ -305,6 +322,9 @@ func (c *Client) post(ctx context.Context, method, u, ctype string, body []byte,
 	if c.SignedOut() {
 		return ErrSignedOut
 	}
+	if err := ctx.Err(); err != nil {
+		return err // cancelled (e.g. core's background context at sign-out): never send
+	}
 	k := reqKey(method, u, body)
 	if !skipBackoff(ctx) {
 		if err := c.blocked(k, time.Now()); err != nil {
@@ -337,6 +357,14 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 		}
 	}()
 	for attempt := 0; ; attempt++ {
+		// re-check before every attempt: waiting for a slot or a rate-limit
+		// retry can outlast the session
+		if c.SignedOut() {
+			return ErrSignedOut
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
 		if err != nil {
 			return scrubErr(err)
