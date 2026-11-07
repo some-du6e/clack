@@ -603,6 +603,10 @@ func (m *mirror) get(slice, key string) any {
 		return pruneEmpty(bot, false)
 	case "membershipCounts":
 		n, ok := a.MemberCountCached(key)
+		guests := 0
+		if ok {
+			guests = a.GuestCountCached(key)
+		}
 		if !ok {
 			c, have := a.S.Conv(key)
 			if !have || c.NumMembers == 0 {
@@ -614,7 +618,7 @@ func (m *mirror) get(slice, key string) any {
 		if team == "" {
 			team = a.C.Creds.Team
 		}
-		return map[string]any{"counts": map[string]any{"member_count": n, "current_team_member_count": n, "restricted_member_count": 0, "member_count_by_team": map[string]int{team: n}}}
+		return map[string]any{"counts": map[string]any{"member_count": n, "current_team_member_count": n, "restricted_member_count": guests, "member_count_by_team": map[string]int{team: n}}}
 	case "membership":
 		out := map[string]membershipRec{}
 		if c, ok := a.S.Conv(key); ok {
@@ -1261,7 +1265,7 @@ func (m *mirror) memberFP(id string) uint64 {
 	}
 	h := fnv.New64a()
 	h.Write([]byte(strconv.FormatInt(u.Updated, 10)))
-	h.Write([]byte(u.Name + "\x00" + u.RealName + "\x00" + u.Profile.DisplayName + "\x00" + u.Profile.StatusText + "\x00" + u.Profile.StatusEmoji + "\x00" + u.Profile.Image72))
+	h.Write([]byte(u.Name + "\x00" + u.RealName + "\x00" + u.Profile.DisplayName + "\x00" + u.Profile.StatusText + "\x00" + u.Profile.StatusTextCanonical + "\x00" + u.Profile.StatusEmoji + "\x00" + u.Profile.Image72))
 	return h.Sum64()
 }
 

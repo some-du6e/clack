@@ -831,5 +831,6 @@ func (a *App) loadMemberCount(ctx context.Context, ch string) {
 	}
 	a.mu.Lock()
 	a.memberN[ch] = mc.People
+	a.memberG[ch] = mc.Guests
 	a.mu.Unlock()
 }

@@ -216,6 +216,10 @@ type Profile struct {
 	HuddleState        string          `json:"huddle_state,omitempty"`
 	BotID              string          `json:"bot_id,omitempty"`
 	APIAppID           string          `json:"api_app_id,omitempty"`
+
+	// StatusTextCanonical is the preset a status came from ("Out of
+	// office"), whatever its text says.
+	StatusTextCanonical string `json:"status_text_canonical,omitempty"`
 }
 
 // Conversation is a channel, private channel, DM or group DM.

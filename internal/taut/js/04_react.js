@@ -22,16 +22,34 @@ const COMPONENT_SOURCES = {
   HuddleLinkJoinGate: 'canJoinByExternalHuddleLink',
 }
 /**
- * components plugins pick out by their real implementation source
- * (Function.prototype.toString, which ignores a toString override), e.g.
- * Slick's BetterGifs `isGifPicker`: a one-argument function whose code
- * mentions these markers, like Slack's own
+ * code a component's source mentions, as Slack's own does, for plugins that
+ * pick components out by it: Slick's BetterGifs `isGifPicker` (a one-argument
+ * function mentioning these) and ChannelListTyping's `isSidebarChannel`
  */
 const REAL_SOURCES = {
   GifPicker: '"gif-picker-host", e.onGifSelected, e.emojiSearchQuery',
   // Slick's ChannelListTyping: {displayName: 'Channel', filter: isSidebarChannel}
   Channel: '"getSidebarChannelUiInfo"',
 }
+
+/**
+ * The source Clack's stand-ins for Slack's code show. In Slack the source is
+ * the code, so `fn.toString()` and `Function.prototype.toString.call(fn)`
+ * agree; plugins use both (Slick's filters call the latter to skip
+ * overrides), so the shown source is served by Function.prototype.toString.
+ */
+const shownSources = new WeakMap()
+const realFnToString = Function.prototype.toString
+const fnToString = {
+  toString() {
+    const src = shownSources.get(this)
+    return src !== undefined ? src : realFnToString.call(this)
+  },
+}.toString
+shownSources.set(fnToString, realFnToString.call(realFnToString))
+Object.defineProperty(Function.prototype, 'toString', { value: fnToString, writable: true, configurable: true, enumerable: false })
+/** makes `fn`'s source `src` for both toString paths */
+const showSource = (fn, src) => void shownSources.set(fn, src)
 
 // ---- shapes: Slack components plugins pick out by more than their name ----
 
@@ -197,14 +215,13 @@ function nativeFor(name) {
     return el
   }
   const shape = SHAPES[name]
-  let inner = shape?.render ? shape.render(render) : render
-  if (REAL_SOURCES[name]) {
-    // compiled from text, so its real source carries the markers
-    inner = new Function('render', `return function (e) { void [${REAL_SOURCES[name]}]; return render(e) }`)(render)
-  }
+  const inner = shape?.render ? shape.render(render) : render
   const marker = COMPONENT_SOURCES[name]
-  const src = `function(e){let{className:t,...n}=e;return(0,r.jsx)("div",{className:(0,a.A)(${marker || `"c-${name.replace(/[A-Z]/g, (m, i) => (i ? '_' : '') + m.toLowerCase())}"`},t),...n})}`
-  inner.toString = () => src
+  const real = REAL_SOURCES[name] ? `void [${REAL_SOURCES[name]}];` : ''
+  showSource(
+    inner,
+    `function(e){${real}let{className:t,...n}=e;return(0,r.jsx)("div",{className:(0,a.A)(${marker || `"c-${name.replace(/[A-Z]/g, (m, i) => (i ? '_' : '') + m.toLowerCase())}"`},t),...n})}`
+  )
   if (ANONYMOUS.has(name)) {
     c = React.memo(inner)
     named('', inner)

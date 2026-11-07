@@ -389,6 +389,95 @@ func TestDispatch(t *testing.T) {
 	}
 }
 
+// Slack's autocomplete results are tiered: the local rows, and the complete
+// tier as `.promise`. PrivateChannelMapper (index.tsx:304-317) puts its rows
+// in that tier; Go's Dispatch has to get it, not just the local array.
+// membershipCounts carries the header count's guests as Slack's
+// restricted_member_count (HumanCount's "exclude guests", count.ts:10).
+func TestMembershipCountsGuests(t *testing.T) {
+	h := newHarness(t)
+	h.app.C.EdgeURL = h.api.srv.URL + "/api/edge/"
+	h.api.set("edge/"+entID+"/users/counts", map[string]any{"ok": true, "counts": map[string]any{"people": 1300, "guests": 42}})
+	if _, err := h.app.History(h.ctx(), chGen, ""); err != nil {
+		t.Fatal(err)
+	}
+	var got struct{ Members, Guests int }
+	h.jsInto(`
+		const c = T.redux.getRawState().membershipCounts['`+chGen+`'].counts
+		return { Members: c.member_count, Guests: c.restricted_member_count }`, &got)
+	if got.Members != 1300 || got.Guests != 42 {
+		t.Errorf("membershipCounts %+v, want 1300 people of whom 42 guests", got)
+	}
+}
+
+// A profile's status_text_canonical (the preset a status came from) reaches
+// plugins: Slick's OfficeHours tells its own "Out of office" from one set by
+// hand by it, and TautAPI's profile.getStatus().canonical reads it.
+func TestMemberStatusTextCanonical(t *testing.T) {
+	h := newHarness(t)
+	var self, alice slack.User
+	if err := json.Unmarshal([]byte(`{"id":"`+selfID+`","name":"me","profile":{"status_text":"Away until Monday","status_emoji":":palm_tree:","status_text_canonical":"Out of office"}}`), &self); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(`{"id":"UALICE","name":"alice","profile":{"status_text":"Out of office","status_emoji":":palm_tree:"}}`), &alice); err != nil {
+		t.Fatal(err)
+	}
+	h.app.S.PutUsers([]slack.User{self, alice})
+	var got struct{ Self, Alice, Status string }
+	h.jsInto(`const s = T.redux.getRawState().members
+		return { Self: s['`+selfID+`'].profile.status_text_canonical, Alice: s.UALICE.profile.status_text_canonical ?? '',
+			Status: T.profile.getStatus().canonical }`, &got)
+	if got.Self != "Out of office" || got.Alice != "" || got.Status != "Out of office" {
+		t.Errorf("status_text_canonical %+v", got)
+	}
+}
+
+func TestDispatchKeepsTieredPromise(t *testing.T) {
+	h := newHarness(t)
+	type row struct {
+		ID string `json:"id"`
+	}
+	type acArgs struct {
+		Query string `json:"query"`
+	}
+	native := func(ctx context.Context, a acArgs) ([]row, error) { return []row{{"C0LOCAL001"}}, nil }
+	h.js(`
+		T.redux.patchThunk('autocompleteChannels', (original) => (params) => (...rest) =>
+			Promise.resolve(original(params)(...rest)).then((local) => {
+				if (params.query === '#plain') return local
+				const fresh = local.slice()
+				fresh.promise = params.query === '#broken'
+					? Promise.reject(new Error('flaron down'))
+					: Promise.resolve(local.promise).then(async (remote) => {
+						await new Promise((r) => setTimeout(r, 10))
+						return [...(Array.isArray(remote) ? remote : local), { id: 'G0SHADOW01' }]
+					})
+				return fresh
+			}))
+		return 1`)
+	eventually(t, 2*time.Second, "thunk patched", func() bool { return h.tt.ThunkPatched("autocompleteChannels") })
+	ids := func(q string) string {
+		rows, err := Dispatch(h.ctx(), h.tt, "autocompleteChannels", acArgs{q}, native)
+		if err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+		var out []string
+		for _, r := range rows {
+			out = append(out, r.ID)
+		}
+		return strings.Join(out, ",")
+	}
+	if got := ids("#secret"); got != "C0LOCAL001,G0SHADOW01" {
+		t.Errorf("complete tier: %q", got)
+	}
+	if got := ids("#broken"); got != "C0LOCAL001" {
+		t.Errorf("failed tier falls back to the local rows: %q", got)
+	}
+	if got := ids("#plain"); got != "C0LOCAL001" {
+		t.Errorf("untiered: %q", got)
+	}
+}
+
 func TestStorageAndShared(t *testing.T) {
 	h := newHarness(t)
 	code := `class Store1 extends TautPlugin {
@@ -660,6 +749,25 @@ func TestRealSourceMarkers(t *testing.T) {
 	return { Fn: typeof c === 'function', Marker: Function.prototype.toString.call(c).includes('getSidebarChannelUiInfo') }`, &ch)
 	if !ch.Fn || !ch.Marker {
 		t.Fatalf("Channel native: %+v", ch)
+	}
+	// both toString paths and getComponentSource show one source, as in Slack
+	var same struct {
+		Same                      []string
+		Button, Gif, Native, Mine bool
+	}
+	h.jsInto(`const out = { Same: [] }
+	for (const n of ['GifPicker', 'Channel', 'Button', 'MessageKitGutter', 'MessageSender']) {
+	  const c = T.nativeFor(n), f = c.$$typeof ? c.type : c
+	  const a = f.toString(), b = Function.prototype.toString.call(f), g = T.getComponentSource(c)
+	  if (a === b && b === g && b === String(f)) out.Same.push(n)
+	}
+	out.Button = Function.prototype.toString.call(T.nativeFor('Button')).includes('"c-button"')
+	out.Gif = T.nativeFor('GifPicker').toString().includes('"gif-picker-host"')
+	out.Native = Function.prototype.toString.call(Function.prototype.toString).includes('[native code]')
+	out.Mine = (function mine(x) { return x + 1 }).toString() === 'function mine(x) { return x + 1 }'
+	return out`, &same)
+	if strings.Join(same.Same, ",") != "GifPicker,Channel,Button,MessageKitGutter,MessageSender" || !same.Button || !same.Gif || !same.Native || !same.Mine {
+		t.Fatalf("shown sources: %+v", same)
 	}
 }
 

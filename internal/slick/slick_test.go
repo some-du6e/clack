@@ -566,3 +566,63 @@ func TestThemeValidation(t *testing.T) {
 		}
 	}
 }
+
+// reduxPlugin hands its scoped this.api.redux to the test.
+const reduxPlugin = `// slick-plugin {"id":"ReduxProbe","name":"Redux Probe","description":"test"}
+(globalThis.__slickPlugins ??= []).push((require) => {
+var import_slick = require("$slick");
+class ReduxProbe extends import_slick.SlickPlugin {
+  static id = "ReduxProbe";
+  static pluginName = "Redux Probe";
+  static description = "test";
+  static requiredAPIs = ["redux"];
+  start() { globalThis.__probeRedux = this.api.redux; }
+  stop() {}
+}
+return ReduxProbe;
+});
+`
+
+// Slick's redux.ts (THUNK_WAIT_MS): dispatching a thunk Slack never defines
+// rejects after 30 s instead of hanging (QuickJoin's joinCodeChannel
+// fallback stuck on "Joining…", ChatTabs' navigate).
+func TestDispatchThunkTimesOutLikeSlick(t *testing.T) {
+	h := newHarness(t)
+	mustImport(t, h, reduxPlugin)
+	if err := h.s.SetEnabled(h.ctx(), "ReduxProbe", true); err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Default  int
+		Dispatch string
+		Wait     string
+		Late     any
+		Known    string
+	}
+	h.jsInto(`
+		const r = globalThis.__probeRedux
+		const out = { Default: S.thunkWaitMs }
+		S.thunkWaitMs = 50
+		try { await r.dispatchThunk('joinCodeChannel', { channelId: 'C1' }); out.Dispatch = 'resolved' } catch (e) { out.Dispatch = e.message }
+		try { await r.waitForThunkCreator('navigate'); out.Wait = 'resolved' } catch (e) { out.Wait = e.message }
+		// a thunk defined while waiting still resolves, and its timer doesn't fire later
+		S.thunkWaitMs = 5000
+		const late = r.dispatchThunk('slickProbeLate', 6)
+		T.defineThunk('slickProbeLate', ([n]) => n + 1)
+		out.Late = await late
+		out.Known = typeof (await r.waitForThunkCreator('joinChannel'))
+		S.thunkWaitMs = 30000
+		return out`, &got)
+	if got.Default != 30000 {
+		t.Errorf("default wait %d ms, Slick's is 30000", got.Default)
+	}
+	if got.Dispatch != "[slick] timed out waiting for Slack thunk: joinCodeChannel" {
+		t.Errorf("dispatchThunk: %q", got.Dispatch)
+	}
+	if got.Wait != "[slick] timed out waiting for Slack thunk: navigate" {
+		t.Errorf("waitForThunkCreator: %q", got.Wait)
+	}
+	if got.Late != float64(7) || got.Known != "function" {
+		t.Errorf("late %v, known %q", got.Late, got.Known)
+	}
+}

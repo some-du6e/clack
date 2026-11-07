@@ -746,6 +746,19 @@
   htmlClasses.HTMLAudioElement = class HTMLAudioElement extends htmlClasses.HTMLMediaElement {};
   htmlClasses.HTMLVideoElement = class HTMLVideoElement extends htmlClasses.HTMLMediaElement {};
   for (const [k, v] of Object.entries({ HAVE_NOTHING: 0, HAVE_METADATA: 1, HAVE_CURRENT_DATA: 2, HAVE_FUTURE_DATA: 3, HAVE_ENOUGH_DATA: 4 })) def(htmlClasses.HTMLMediaElement, k, v);
+  // members browsers define on the element classes that have them, not on
+  // HTMLElement: plugins wrap them there (Click2Load's
+  // HTMLIFrameElement.prototype.src, CustomSounds' HTMLMediaElement.prototype.play)
+  const moveMembers = (names, classes) => {
+    for (const name of names) {
+      const d = Object.getOwnPropertyDescriptor(HTMLElement.prototype, name);
+      for (const c of classes) Object.defineProperty(htmlClasses[c].prototype, name, { ...d });
+      delete HTMLElement.prototype[name];
+    }
+  };
+  moveMembers(['src'], ['HTMLImageElement', 'HTMLIFrameElement', 'HTMLMediaElement', 'HTMLScriptElement', 'HTMLSourceElement', 'HTMLEmbedElement', 'HTMLInputElement', 'HTMLTrackElement']);
+  moveMembers(['currentSrc'], ['HTMLImageElement', 'HTMLMediaElement']);
+  moveMembers(['play', 'pause', 'load', 'canPlayType', 'paused', 'currentTime', 'duration', 'volume', 'muted', 'ended', 'readyState', 'srcObject'], ['HTMLMediaElement']);
   const svgClasses = {};
   for (const n of ['SVGSVGElement', 'SVGPathElement', 'SVGGElement', 'SVGCircleElement', 'SVGRectElement', 'SVGGraphicsElement', 'SVGUseElement', 'SVGTextElement']) svgClasses[n] = { [n]: class extends SVGElement {} }[n];
   const svgTag = { svg: 'SVGSVGElement', path: 'SVGPathElement', g: 'SVGGElement', circle: 'SVGCircleElement', rect: 'SVGRectElement', use: 'SVGUseElement', text: 'SVGTextElement' };

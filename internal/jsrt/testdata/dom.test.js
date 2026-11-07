@@ -238,3 +238,37 @@ test('unhandledrejection reaches window and can be prevented', async () => {
   window.removeEventListener('unhandledrejection', h);
   assertEq(got && got.message, 'nobody catches me');
 });
+
+test('src and media members live on the classes browsers put them on', async () => {
+  // Click2Load wraps HTMLIFrameElement.prototype.src; CustomSounds wraps HTMLMediaElement.prototype.play
+  const d = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'src');
+  assert(d && d.get && d.set && d.configurable, 'iframe src descriptor');
+  const play = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'play');
+  assert(play && typeof play.value === 'function' && play.configurable, 'media play descriptor');
+  assertEq(Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'src'), undefined);
+  assertEq(Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'play'), undefined);
+  assertEq(document.createElement('div').src, undefined);
+  assertEq(document.createElement('div').play, undefined);
+  for (const tag of ['img', 'iframe', 'audio', 'video', 'script', 'source', 'embed', 'input', 'track']) {
+    const el = document.createElement(tag);
+    el.src = 'https://example.com/' + tag;
+    assertEq(el.getAttribute('src'), 'https://example.com/' + tag);
+    assertEq(el.src, 'https://example.com/' + tag);
+  }
+  // a wrapped setter sees iframe src writes, and the original still works
+  const seen = [];
+  Object.defineProperty(HTMLIFrameElement.prototype, 'src', { ...d, set(v) { seen.push(v); d.set.call(this, v); } });
+  try {
+    const f = document.createElement('iframe');
+    f.src = 'https://www.youtube.com/embed/x';
+    assertEq(seen, ['https://www.youtube.com/embed/x']);
+    assertEq(f.getAttribute('src'), 'https://www.youtube.com/embed/x');
+  } finally {
+    Object.defineProperty(HTMLIFrameElement.prototype, 'src', d);
+  }
+  const a = new Audio('https://example.com/ding.mp3');
+  assert(a instanceof HTMLMediaElement && a.paused && a.currentTime === 0 && a.canPlayType('audio/mpeg') === '');
+  let rejected = false;
+  await a.play().catch(() => { rejected = true; });
+  assert(rejected, 'play() rejects without media playback');
+});
