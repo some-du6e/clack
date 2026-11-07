@@ -1,0 +1,28 @@
+name: huddle
+# Tests internal/huddle and builds its headless live probe (a developer
+# tool; not shipped). The app itself builds in ci.yml.
+on:
+  push:
+    paths: ['internal/huddle/**', 'go.mod', 'go.sum', '.github/workflows/huddle.yml']
+  workflow_dispatch:
+jobs:
+  huddle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: vet
+        run: go vet ./internal/huddle/...
+      - name: test
+        run: go test -race ./internal/huddle/...
+      - name: test (no cgo)
+        run: CGO_ENABLED=0 go test ./internal/huddle/...
+      - name: probe
+        run: CGO_ENABLED=0 go build -trimpath -o dist/huddle-probe ./internal/huddle/probe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: huddle-probe-linux-amd64
+          path: dist/huddle-probe
