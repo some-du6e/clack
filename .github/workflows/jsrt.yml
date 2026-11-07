@@ -51,7 +51,8 @@ jobs:
           path: internal/jsrt/jsrt.wasm
       - name: committed jsrt.wasm matches its source
         run: |
-          if ! git diff --quiet -- internal/jsrt/jsrt.wasm; then
+          # content only: the linker's output is mode 755, the committed file 644
+          if ! git show HEAD:internal/jsrt/jsrt.wasm | cmp -s - internal/jsrt/jsrt.wasm; then
             echo "::error::internal/jsrt/jsrt.wasm differs from the build of csrc/ (built $(sha256sum < internal/jsrt/jsrt.wasm | cut -c1-64), committed $(git show HEAD:internal/jsrt/jsrt.wasm | sha256sum | cut -c1-64)). Commit this run's jsrt-wasm artifact."
             exit 1
           fi
