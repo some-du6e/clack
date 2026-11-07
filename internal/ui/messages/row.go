@@ -3,6 +3,7 @@ package messages
 import (
 	"context"
 	"image"
+	"image/color"
 	"strconv"
 	"strings"
 	"time"
@@ -17,14 +18,33 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
 // row is the cached UI state of one message.
+//
+// A row is Slack's message component tree (docs/PLUGINS-components.md
+// §1.1), each part a slackc boundary Taut plugins can patch:
+//
+//	MessageWrapper | ThreadRootGeneric      layoutWrapper (msg override)
+//	└ MessageBackground                     layoutBackground
+//	  └ MessageKitGutter {light|compact}    layoutGutter
+//	    ├ MessageAvatar → ConnectedBaseAvatar, or the compact Timestamp
+//	    └ body column                       layoutColumn
+//	      ├ BaseBroadcastPreamble {MessageSender, Timestamp} (threads:
+//	      │ ThreadSenderAndTimestampGeneric) → MessageSender → BaseMessageSender
+//	      ├ MessageBlocks → Blocks          layoutBlocks (msg.blocks override)
+//	      └ ReactionBar {Reaction…, ReactionAddButton}
+//	        └ Reaction → UnstyledButton data-qa=reactji
+//
+// Unpatched, every boundary is one atomic load and the natives get nil
+// props.
 type row struct {
 	ts  string
 	rev uint32
-	m   core.Message
+	src core.Message // the message as core has it
+	m   core.Message // what the row draws: src, or src with a plugin's msg
 
 	rv      *richview.View
 	handler richHandler
@@ -48,12 +68,26 @@ type row struct {
 	threadBtn          widget.Clickable
 	broadcastBtn       widget.Clickable
 	addReact           widget.Clickable
-	reacts             []widget.Clickable
+	pills              []reactPill
 
 	// geometry of the last layout (row-local), for overlays
 	reactRects []image.Rectangle
 	addRect    image.Rectangle
 	height     int
+
+	// plugin state (patched path only)
+	rc               *rowCtx      // this frame's inputs, for the natives
+	col              image.Point  // body column origin, row-local
+	reactAt          image.Point  // reaction bar origin, row-local
+	wrapOv, blocksOv uintptr      // msg overrides applied (propsID); 0 = none
+	srcMsg, msg      slackc.Props // slackMessage of src and of m, built lazily
+}
+
+// reactPill is one reaction's state: Reaction / UnstyledButton natives.
+type reactPill struct {
+	r   *row
+	i   int
+	btn widget.Clickable
 }
 
 // rowCtx carries per-frame inputs to a row layout.
@@ -85,17 +119,31 @@ func newRow(e *entry) *row {
 
 func (r *row) set(e *entry) {
 	r.rev = e.rev
-	r.m = e.m
-	opts := richview.Options{Edited: e.m.Edited, Muted: e.m.System, Dim: e.m.Pending}
+	r.src, r.m = e.m, e.m
+	r.wrapOv, r.blocksOv, r.srcMsg, r.msg = 0, 0, nil, nil
+	r.setDoc()
+	r.growPills()
+}
+
+// setDoc shows r.m's body (after set or a msg override).
+func (r *row) setDoc() {
+	opts := richview.Options{Edited: r.m.Edited, Muted: r.m.System, Dim: r.m.Pending}
 	if r.rv == nil {
-		r.rv = richview.New(e.m.Doc, opts)
+		r.rv = richview.New(r.m.Doc, opts)
 	} else {
-		r.rv.Set(e.m.Doc, opts)
+		r.rv.Set(r.m.Doc, opts)
 	}
 	r.uRev = 0
-	r.needChan = blocksNeedChan(e.m.Doc.Blocks)
-	if len(r.reacts) < len(e.m.Reactions) {
-		r.reacts = append(r.reacts, make([]widget.Clickable, len(e.m.Reactions)-len(r.reacts))...)
+	r.blocksOv = 0
+	r.needChan = blocksNeedChan(r.m.Doc.Blocks)
+}
+
+func (r *row) growPills() {
+	if n := len(r.m.Reactions); len(r.pills) < n {
+		r.pills = append(r.pills, make([]reactPill, n-len(r.pills))...)
+	}
+	for i := range r.pills {
+		r.pills[i].r, r.pills[i].i = r, i
 	}
 }
 
@@ -110,6 +158,7 @@ func (r *row) resolve(rc *rowCtx) {
 		doc.Blocks = fixChannels(rc.h, doc.Blocks)
 		r.needChan = blocksNeedChan(doc.Blocks)
 		r.rv.Set(doc, richview.Options{Edited: m.Edited, Muted: m.System, Dim: m.Pending})
+		r.blocksOv = 0
 	}
 	r.name, r.avatar, r.statusURL, r.bot = m.Name, m.Avatar, "", m.IsBot || (m.BotID != "" && m.User == "")
 	if m.User != "" && rc.h.Core() != nil {
@@ -159,25 +208,221 @@ func ensureUser(h Host, id string) {
 
 // layout draws the row at full width and returns its size.
 func (r *row) layout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
-	r.resolve(rc)
-	c := rc.c
-	w := gtx.Constraints.Max.X
-	padX := dp(gtx, mt.padX)
-	cx := dp(gtx, mt.contentX)
-	cw := w - cx - padX
-	if cw < dp(gtx, 80) {
-		cw = dp(gtx, 80)
+	r.rc = rc
+	if rc.parent {
+		return slackc.Component(gtx, "ThreadRootGeneric", r, (*row).wrapperProps, (*row).layoutWrapper)
 	}
+	return slackc.Component(gtx, "MessageWrapper", r, (*row).wrapperProps, (*row).layoutWrapper)
+}
+
+// ---- props (patched path only) ----
+
+func (r *row) viewContext() string {
+	if r.rc.thread {
+		return "threads_flexpane"
+	}
+	return "message_pane"
+}
+
+// message is the msg prop of the parts inside MessageWrapper: the message
+// as the wrapper's (possibly overridden) msg left it.
+func (r *row) message() slackc.Props {
+	if r.wrapOv == 0 {
+		return r.sourceMessage()
+	}
+	if r.msg == nil {
+		r.msg = slackMessage(&r.m)
+	}
+	return r.msg
+}
+
+func (r *row) sourceMessage() slackc.Props {
+	if r.srcMsg == nil {
+		r.srcMsg = slackMessage(&r.src)
+	}
+	return r.srcMsg
+}
+
+func (r *row) wrapperProps() slackc.Props {
+	p := slackc.Props{"$key": r.ts, "msg": r.sourceMessage(), "channelId": r.src.Channel, "viewContext": r.viewContext()}
+	if r.rc.parent {
+		p["isSingleThread"], p["omitGutter"], p["omitSenderAndTimestamp"] = true, false, false
+	}
+	return p
+}
+
+func (r *row) backgroundProps() slackc.Props {
+	cls := "c-message_kit__background c-message_kit__message"
+	if r.rc.hovered {
+		cls += " c-message_kit__background--hovered"
+	}
+	return slackc.Props{"$key": r.ts, "msg": r.message(), "className": cls, "hover": r.rc.hovered,
+		"highlight": r.rc.highlight > 0, "isEditing": r.edit != nil, "viewContext": r.viewContext(), "windowId": "main"}
+}
+
+func (r *row) gutterProps() slackc.Props {
+	p := slackc.Props{"$key": r.ts, "msg": r.message()}
+	switch {
+	case r.rc.header:
+		p["light"] = slackc.Child("MessageAvatar", r.avatarSlotProps(), r.layoutMessageAvatar)
+	case r.rc.thread:
+		p["compact"] = slackc.Child("ThreadCompactGutterGeneric", r.compactProps("p-thread_compact_gutter_generic"), r.layoutCompactTS)
+	default:
+		p["compact"] = slackc.Child("Timestamp", r.compactProps("c-timestamp p-message_pane_message__compact_timestamp"), r.layoutCompactTS)
+	}
+	return p
+}
+
+func (r *row) avatarSlotProps() slackc.Props {
+	return slackc.Props{"$key": r.ts, "msg": r.message(), "userId": r.m.User, "botId": r.m.BotID}
+}
+
+func (r *row) compactProps(cls string) slackc.Props {
+	return slackc.Props{"$key": r.ts, "className": cls, "timestamp": r.m.TS, "clickable": true, "visible": r.rc.hovered, "msg": r.message()}
+}
+
+func (r *row) avatarProps() slackc.Props {
+	p := slackc.Props{"$key": r.ts, "userId": r.m.User, "size": mt.avatar, "className": "c-message_kit__avatar",
+		"isInteractive": true, "showCard": true, "messageTs": r.m.TS, "channelId": r.m.Channel}
+	if r.m.BotID != "" {
+		p["botId"] = r.m.BotID
+		if r.m.Avatar != "" {
+			p["botProfile"] = slackc.Props{"id": r.m.BotID, "name": r.m.Name, "icons": slackc.Props{"image_36": r.m.Avatar, "image_48": r.m.Avatar, "image_72": r.m.Avatar}}
+		}
+	}
+	return p
+}
+
+func (r *row) preambleProps() slackc.Props {
+	return slackc.Props{"$key": r.ts, "msg": r.message(), "shouldRender": true, "children": []any{
+		slackc.Child("MessageSender", r.senderProps(), r.layoutSender),
+		slackc.Child("Timestamp", r.timestampProps(), r.layoutTimestamp),
+	}}
+}
+
+func (r *row) threadSenderProps() slackc.Props {
+	return slackc.Props{"$key": r.ts, "msg": r.message(), "adjacent": false, "visible": true, "omitTimestamp": false,
+		"omitLinebreak": false, "keepSenderAccessible": false, "timestampLabel": clock(tsTime(r.m.TS))}
+}
+
+func (r *row) senderProps() slackc.Props {
+	return slackc.Props{"$key": r.ts, "msg": r.message(), "isInteractive": true, "visible": true, "viewContext": r.viewContext()}
+}
+
+func (r *row) baseSenderProps() slackc.Props {
+	p := slackc.Props{"$key": r.ts, "className": "c-message__sender c-message_kit__sender", "isInteractive": true, "msg": r.message()}
+	if r.m.User != "" {
+		p["userId"] = r.m.User
+	}
+	if r.m.BotID != "" {
+		p["botId"] = r.m.BotID
+	}
+	return p
+}
+
+func (r *row) timestampProps() slackc.Props {
+	return slackc.Props{"$key": r.ts, "timestamp": r.m.TS, "clickable": true, "visible": true, "className": "c-timestamp"}
+}
+
+func (r *row) blocksProps() slackc.Props {
+	return slackc.Props{"$key": r.ts, "msg": r.message(), "blocksContainerContext": "message", "inline": false, "streaming": false}
+}
+
+func (r *row) reactionBarProps() slackc.Props {
 	m := &r.m
-	if m.System && !rc.parent {
+	kids := make([]any, 0, len(m.Reactions)+1)
+	for i := range m.Reactions {
+		pl := &r.pills[i]
+		kids = append(kids, slackc.Child("Reaction", pl.props(), pl.layout))
+	}
+	kids = append(kids, slackc.Child("ReactionAddButton", r.addButtonProps(), r.layoutAddButton))
+	return slackc.Props{"$key": r.ts, "reactionKey": reactionKey(m), "reactions": slackReactions(m.Reactions),
+		"currentUser": r.rc.selfID, "channelId": m.Channel, "className": "c-message_kit__reaction_bar c-reaction_bar",
+		"canReact": true, "children": kids}
+}
+
+func (r *row) addButtonProps() slackc.Props {
+	return slackc.Props{"$key": r.ts, "channelId": r.m.Channel, "shouldShowReacjiTriggers": false}
+}
+
+func (pl *reactPill) props() slackc.Props {
+	r := pl.r
+	re := &r.m.Reactions[pl.i]
+	p := slackReaction(re)
+	p["$key"] = r.ts + ":" + re.Name
+	p["currentUser"], p["reactionKey"], p["canReact"] = r.rc.selfID, reactionKey(&r.m), true
+	p["reactions"] = slackReactions(r.m.Reactions)
+	return p
+}
+
+func (pl *reactPill) buttonProps() slackc.Props {
+	r := pl.r
+	re := &r.m.Reactions[pl.i]
+	cls := "c-button-unstyled c-reaction"
+	if re.Self {
+		cls += " c-reaction--reacted"
+	}
+	return slackc.Props{"$key": r.ts + ":" + re.Name, "data-qa": "reactji", "className": cls, "aria-pressed": re.Self,
+		"aria-label": reactionTip(r.rc.h, re, r.rc.selfID), "children": []any{
+			slackc.Child("Emoji", slackc.Props{"emoji": re.Name, "size": mt.reactEmoji}, pl.layoutEmoji),
+			slackc.Child("ReactionCount", slackc.Props{"count": re.Count}, pl.layoutCount),
+		}}
+}
+
+// ---- natives ----
+
+// layoutWrapper is MessageWrapper / ThreadRootGeneric: a plugin's msg
+// (ShowRealUser) replaces the sender, avatar, badge and blocks drawn.
+func (r *row) layoutWrapper(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	rc := r.rc
+	if msg := p.Map("msg"); propsID(msg) != r.wrapOv {
+		r.wrapOv = propsID(msg)
+		if r.wrapOv == propsID(r.srcMsg) { // our own props, before JS answered
+			r.wrapOv = 0
+		}
+		if r.wrapOv == 0 {
+			r.m = r.src
+		} else {
+			r.m = applySlackMessage(rc.h.Core(), &r.src, msg)
+		}
+		r.msg = nil
+		r.setDoc()
+		r.growPills()
+	}
+	r.resolve(rc)
+	if r.m.System && !rc.parent {
 		return r.systemLayout(gtx, rc)
 	}
+	return slackc.Component(gtx, "MessageBackground", r, (*row).backgroundProps, (*row).layoutBackground)
+}
+
+// layoutBackground is MessageBackground: the hover/pinned/editing/highlight
+// fill under the labels and the gutter.
+func (r *row) layoutBackground(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+	rc := r.rc
+	c := rc.c
+	m := &r.m
+	w := gtx.Constraints.Max.X
+	cx := dp(gtx, mt.contentX)
 	padTop := mt.padTop
 	if rc.parent {
 		padTop = 20
 	}
+	var mods uint64
+	if rc.hovered {
+		mods |= 1
+	}
 	if rc.thread {
-		cw = w - cx - dp(gtx, 24)
+		mods |= 2
+		if rc.parent {
+			mods |= 4
+		}
+	}
+	st := msgClass.Enter(gtx, hoverState(rc.hovered), mods)
+	defer st.Leave()
+	if st.Hidden() {
+		r.height = 0
+		return layout.Dimensions{}
 	}
 
 	// Record content first; the background depends on the height.
@@ -194,82 +439,11 @@ func (r *row) layout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	if m.Broadcast && !rc.thread && m.ThreadTS != "" && m.ThreadTS != m.TS {
 		y += r.broadcastLine(gtx, rc, cx, y)
 	}
-
-	if rc.header {
-		// avatar
-		ar := image.Rectangle{Min: image.Pt(padX, y+dp(gtx, 4)), Max: image.Pt(padX+dp(gtx, mt.avatar), y+dp(gtx, 4)+dp(gtx, mt.avatar))}
-		// Clicked before Layout: Clickable.Layout consumes pending clicks.
-		if r.avatarBtn.Clicked(gtx) || r.nameBtn.Clicked(gtx) {
-			if m.User != "" {
-				rc.h.OpenProfile(rc.origin(image.Pt(cx, y+dp(gtx, 22))), m.User)
-			}
-		}
-
-		at(gtx, ar.Min.X, ar.Min.Y, func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints = layout.Exact(ar.Size())
-			return r.avatarBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				drawAvatar(gtx, rc.h, r.avatar, image.Rectangle{Max: ar.Size()}, c)
-				return layout.Dimensions{Size: ar.Size()}
-			})
-		})
-		y += r.nameLine(gtx, rc, cx, y, cw)
-	} else if rc.hovered {
-		// hover timestamp in the gutter, right-aligned to the avatar column
-		ts := shortClock(tsTime(m.TS))
-		s := textStyle{size: 12, col: c.Text2, lineH: 22}
-		sz := measure(gtx, rc.th, s, ts)
-		at(gtx, padX+dp(gtx, mt.avatar)-sz.X, y, func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, s, ts) })
-	}
-
-	// body (or the inline edit composer)
-	r.handler.h, r.handler.m = rc.h, m
-	r.handler.anchor = rc.origin
-	var body layout.Dimensions
-	if r.edit != nil {
-		ed := r.edit
-		// The composer's first Focus can land before its editor registered
-		// for input; ask again on the next frames so Escape/typing work.
-		if r.editFrames < 3 {
-			r.editFrames++
-			ed.Focus()
-		}
-		ed.Origin = rc.winOrigin.Add(image.Pt(cx-dp(gtx, 4), y))
-		body = at(gtx, cx-dp(gtx, 4), y, func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints = layout.Constraints{Max: image.Pt(cw+dp(gtx, 4), 1<<20)}
-			return ed.Layout(gtx)
-		})
-		y += dp(gtx, 4)
-	} else {
-		body = at(gtx, cx, y, func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
-			return r.rv.Layout(gtx, rc.st, &r.handler)
-		})
-	}
-	r.bodyRect = image.Rectangle{Min: image.Pt(cx, y), Max: image.Pt(cx+body.Size.X, y+body.Size.Y)}
-	y += body.Size.Y
-	if isFailed(m) {
-		y += r.failedLine(gtx, rc, cx, y)
-	}
-	if body.Size.Y == 0 && !rc.header {
-		y += dp(gtx, mt.nameLine)
-	}
-	y += dp(gtx, mt.bodyMarginBottom)
-
-	// reactions
-	if len(m.Reactions) > 0 {
-		y += dp(gtx, mt.reactTop) - dp(gtx, 4)
-		y += r.reactions(gtx, rc, cx, y, cw)
-		y += dp(gtx, mt.reactBottom)
-	} else {
-		r.reactRects = r.reactRects[:0]
-		r.addRect = image.Rectangle{}
-	}
-
-	// thread bar
-	if m.ReplyCount > 0 && !rc.thread && (m.ThreadTS == "" || m.ThreadTS == m.TS) {
-		y += r.threadBar(gtx, rc, cx, y, cw)
-		y += dp(gtx, 4)
-	}
+	r.col = image.Pt(cx, y)
+	g := at(gtx, 0, y, func(gtx layout.Context) layout.Dimensions {
+		return slackc.Component(gtx, "MessageKitGutter", r, (*row).gutterProps, (*row).layoutGutter)
+	})
+	y += g.Size.Y
 	if m.Pending {
 		opac.Pop()
 	}
@@ -294,15 +468,666 @@ func (r *row) layout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	case rc.hovered:
 		bg = c.Hover
 	}
+	bg = st.Background(bg)
+	r.height = h
+	if st.Active() {
+		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return r.paintBackground(gtx, content, size, bg) })
+	}
+	return r.paintBackground(gtx, content, size, bg)
+}
+
+func (r *row) paintBackground(gtx layout.Context, content op.CallOp, size image.Point, bg color.NRGBA) layout.Dimensions {
 	fill(gtx.Ops, image.Rectangle{Max: size}, bg)
-	if rc.highlight > 0 {
-		hl := c.Highlight
-		hl.A = uint8(float32(hl.A) * rc.highlight)
-		fill(gtx.Ops, image.Rectangle{Max: size}, hl)
+	if hl := r.rc.highlight; hl > 0 {
+		c := r.rc.c.Highlight
+		c.A = uint8(float32(c.A) * hl)
+		fill(gtx.Ops, image.Rectangle{Max: size}, c)
 	}
 	content.Add(gtx.Ops)
-	r.height = h
 	return layout.Dimensions{Size: size}
+}
+
+// layoutGutter is the gutter memo (filter-matched by its source marker
+// c-message_kit__gutter__left): the avatar column, from its light/compact
+// slots, and the body column.
+func (r *row) layoutGutter(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	w := gtx.Constraints.Max.X
+	padX := dp(gtx, mt.padX)
+	cx := dp(gtx, mt.contentX)
+	cw := w - cx - padX
+	if cw < dp(gtx, 80) {
+		cw = dp(gtx, 80)
+	}
+	if r.rc.thread {
+		cw = w - cx - dp(gtx, 24)
+	}
+	gs := gutterClass.Enter(gtx, 0, 0)
+	defer gs.Leave()
+	if gs.Hidden() {
+		return layout.Dimensions{}
+	}
+	left := gutterLeftClass.Enter(gtx, 0, 0)
+	if !left.Hidden() {
+		at(gtx, padX, 0, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(dp(gtx, mt.avatar), 1<<20)}
+			if left.Active() {
+				return left.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return r.layoutGutterLeft(gtx, p) })
+			}
+			return r.layoutGutterLeft(gtx, p)
+		})
+	}
+	left.Leave()
+	right := gutterRightClass.Enter(gtx, 0, 0)
+	defer right.Leave()
+	if right.Hidden() {
+		return layout.Dimensions{}
+	}
+	d := at(gtx, cx, 0, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
+		if right.Active() {
+			return right.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return r.layoutColumn(gtx) })
+		}
+		return r.layoutColumn(gtx)
+	})
+	return layout.Dimensions{Size: image.Pt(w, d.Size.Y)}
+}
+
+func (r *row) layoutGutterLeft(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	if r.rc.header {
+		return at(gtx, 0, dp(gtx, 4), func(gtx layout.Context) layout.Dimensions {
+			if e, ok := p.Elem("light"); ok {
+				return slackc.LayoutElement(gtx, e)
+			}
+			return slackc.Component(gtx, "MessageAvatar", r, (*row).avatarSlotProps, (*row).layoutMessageAvatar)
+		})
+	}
+	if e, ok := p.Elem("compact"); ok {
+		return slackc.LayoutElement(gtx, e)
+	}
+	return r.layoutCompactTS(gtx, nil)
+}
+
+// layoutMessageAvatar is MessageAvatar around ConnectedBaseAvatar.
+func (r *row) layoutMessageAvatar(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+	return slackc.Component(gtx, "ConnectedBaseAvatar", r, (*row).avatarProps, (*row).layoutAvatar)
+}
+
+// layoutAvatar is the row's ConnectedBaseAvatar (className
+// c-message_kit__avatar); a plugin may change userId/botId/size.
+func (r *row) layoutAvatar(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	rc := r.rc
+	s := dp(gtx, mt.avatar)
+	url := r.avatar
+	if p != nil {
+		s = dp(gtx, float32(p.IntOr("size", int(mt.avatar))))
+		url = avatarURL(rc.h, p, r.m.User, url)
+	}
+	st := avatarClass.Enter(gtx, hoverState(r.avatarBtn.Hovered()), 0)
+	defer st.Leave()
+	if st.Hidden() {
+		return layout.Dimensions{}
+	}
+	// Clicked before Layout: Clickable.Layout consumes pending clicks.
+	if r.avatarBtn.Clicked(gtx) && r.m.User != "" {
+		rc.h.OpenProfile(rc.origin(image.Point{}), r.m.User)
+	}
+	size := image.Pt(s, s)
+	gtx.Constraints = layout.Exact(size)
+	if st.Active() {
+		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return r.avatarButton(gtx, url, size) })
+	}
+	return r.avatarButton(gtx, url, size)
+}
+
+func (r *row) avatarButton(gtx layout.Context, url string, size image.Point) layout.Dimensions {
+	return r.avatarBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		drawAvatar(gtx, r.rc.h, url, image.Rectangle{Max: size}, r.rc.c)
+		return layout.Dimensions{Size: size}
+	})
+}
+
+// layoutCompactTS is the grouped row's hover time ("3:04"), right-aligned
+// in the avatar column: the gutter's compact slot.
+func (r *row) layoutCompactTS(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	rc := r.rc
+	box := image.Pt(dp(gtx, mt.avatar), dp(gtx, 22))
+	visible := rc.hovered
+	if p.Has("visible") {
+		visible = p.Bool("visible")
+	}
+	if !visible {
+		return layout.Dimensions{Size: box}
+	}
+	def := compactTSClass
+	if rc.thread {
+		def = threadCompactTSClass
+	}
+	st := def.Enter(gtx, hoverState(rc.hovered), 0)
+	defer st.Leave()
+	if st.Hidden() {
+		return layout.Dimensions{Size: box}
+	}
+	ts := shortClock(tsTime(r.m.TS))
+	s := textStyle{size: float32(st.FontSize(12)), col: st.Color(rc.c.Text2), lineH: 22}
+	sz := measure(gtx, rc.th, s, ts)
+	at(gtx, box.X-sz.X, 0, func(gtx layout.Context) layout.Dimensions {
+		if st.Active() {
+			return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, s, ts) })
+		}
+		return label(gtx, rc.th, s, ts)
+	})
+	return layout.Dimensions{Size: box}
+}
+
+// layoutColumn is the gutter's right side: name line, body, reactions,
+// thread bar. Returns its height.
+func (r *row) layoutColumn(gtx layout.Context) layout.Dimensions {
+	rc := r.rc
+	m := &r.m
+	cw := gtx.Constraints.Max.X
+	y := 0
+	if rc.header {
+		var d layout.Dimensions
+		if rc.thread {
+			d = slackc.Component(gtx, "ThreadSenderAndTimestampGeneric", r, (*row).threadSenderProps, (*row).layoutThreadSender)
+		} else {
+			d = slackc.Component(gtx, "BaseBroadcastPreamble", r, (*row).preambleProps, (*row).layoutPreamble)
+		}
+		y += max(d.Size.Y, dp(gtx, mt.nameLine))
+	}
+
+	// body (or the inline edit composer)
+	r.handler.h, r.handler.m = rc.h, m
+	r.handler.anchor = rc.origin
+	var body layout.Dimensions
+	if r.edit != nil {
+		ed := r.edit
+		// The composer's first Focus can land before its editor registered
+		// for input; ask again on the next frames so Escape/typing work.
+		if r.editFrames < 3 {
+			r.editFrames++
+			ed.Focus()
+		}
+		ed.Origin = rc.winOrigin.Add(r.col).Add(image.Pt(-dp(gtx, 4), y))
+		body = at(gtx, -dp(gtx, 4), y, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(cw+dp(gtx, 4), 1<<20)}
+			return ed.Layout(gtx)
+		})
+		y += dp(gtx, 4)
+	} else {
+		body = at(gtx, 0, y, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
+			return slackc.Component(gtx, "MessageBlocks", r, (*row).blocksProps, (*row).layoutMessageBlocks)
+		})
+	}
+	r.bodyRect = image.Rectangle{Min: image.Pt(0, y), Max: image.Pt(body.Size.X, y+body.Size.Y)}.Add(r.col)
+	y += body.Size.Y
+	if isFailed(m) {
+		y += r.failedLine(gtx, rc, 0, y)
+	}
+	if body.Size.Y == 0 && !rc.header {
+		y += dp(gtx, mt.nameLine)
+	}
+	y += dp(gtx, mt.bodyMarginBottom)
+
+	// reactions
+	if len(m.Reactions) > 0 {
+		y += dp(gtx, mt.reactTop) - dp(gtx, 4)
+		y += r.reactionBar(gtx, image.Pt(0, y), r.col, cw)
+		y += dp(gtx, mt.reactBottom)
+	} else {
+		r.reactRects = r.reactRects[:0]
+		r.addRect = image.Rectangle{}
+	}
+
+	// thread bar
+	if m.ReplyCount > 0 && !rc.thread && (m.ThreadTS == "" || m.ThreadTS == m.TS) {
+		y += r.threadBar(gtx, rc, 0, y, cw)
+		y += dp(gtx, 4)
+	}
+	return layout.Dimensions{Size: image.Pt(cw, y)}
+}
+
+// layoutMessageBlocks is MessageBlocks: the boundary around the body that
+// plugins append siblings to (OwlMode's save button).
+func (r *row) layoutMessageBlocks(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+	st := msgBlocksClass.Enter(gtx, 0, 0)
+	defer st.Leave()
+	if st.Hidden() {
+		return layout.Dimensions{}
+	}
+	if st.Active() {
+		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
+			return slackc.Component(gtx, "Blocks", r, (*row).blocksProps, (*row).layoutBlocks)
+		})
+	}
+	return slackc.Component(gtx, "Blocks", r, (*row).blocksProps, (*row).layoutBlocks)
+}
+
+// layoutBlocks is Blocks: the rich body. A plugin's msg.blocks (filtered,
+// reordered, or new Block Kit) is what gets drawn.
+func (r *row) layoutBlocks(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	rc := r.rc
+	msg := p.Map("msg")
+	id := propsID(msg)
+	if id == propsID(r.srcMsg) || id == propsID(r.msg) {
+		id = 0 // our own props, before JS answered
+	}
+	if id != r.blocksOv {
+		doc := r.m.Doc
+		doc.Blocks = fixChannels(rc.h, doc.Blocks)
+		if id != 0 {
+			doc.Blocks = docBlocks(rc.h.Core(), doc.Blocks, msg)
+		}
+		r.rv.Set(doc, richview.Options{Edited: r.m.Edited, Muted: r.m.System, Dim: r.m.Pending})
+		r.blocksOv = id
+	}
+	st := blocksClass.Enter(gtx, 0, 0)
+	defer st.Leave()
+	if st.Hidden() {
+		return layout.Dimensions{}
+	}
+	if st.Active() {
+		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return r.rv.Layout(gtx, rc.st, &r.handler) })
+	}
+	return r.rv.Layout(gtx, rc.st, &r.handler)
+}
+
+// layoutPreamble is BaseBroadcastPreamble, the channel message header.
+// Its children are the MessageSender and Timestamp slots; a plugin may
+// insert siblings between them (UserPronouns).
+func (r *row) layoutPreamble(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	if e, ok := slackc.PropChildren(p); ok {
+		return slackc.LayoutElement(gtx, e)
+	}
+	return r.nameLine(gtx, true)
+}
+
+// layoutThreadSender is ThreadSenderAndTimestampGeneric (thread pane).
+func (r *row) layoutThreadSender(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	if p.Has("visible") && !p.Bool("visible") {
+		return layout.Dimensions{}
+	}
+	return r.nameLine(gtx, !p.Bool("omitTimestamp"))
+}
+
+// nameLine draws "Name [APP] [status] 3:04 PM", baselines aligned.
+func (r *row) nameLine(gtx layout.Context, withTS bool) layout.Dimensions {
+	w := gtx.Constraints.Max.X
+	lh := dp(gtx, mt.nameLine)
+	g := gtx
+	g.Constraints = layout.Constraints{Max: image.Pt(w*2/3, lh)}
+	nd := slackc.Component(g, "MessageSender", r, (*row).senderProps, (*row).layoutSender)
+	baseline := nd.Size.Y - nd.Baseline
+	if nd.Size.Y == 0 {
+		baseline = lh - dp(gtx, 5)
+	}
+	if withTS {
+		// Align baselines.
+		m := op.Record(gtx.Ops)
+		d := r.layoutTimestamp(gtx, nil)
+		call := m.Stop()
+		t := op.Offset(image.Pt(nd.Size.X+dp(gtx, mt.tsGap), baseline-(d.Size.Y-d.Baseline))).Push(gtx.Ops)
+		call.Add(gtx.Ops)
+		t.Pop()
+	}
+	return layout.Dimensions{Size: image.Pt(w, lh), Baseline: lh - baseline}
+}
+
+// layoutSender is MessageSender around BaseMessageSender.
+func (r *row) layoutSender(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+	return slackc.Component(gtx, "BaseMessageSender", r, (*row).baseSenderProps, (*row).layoutBaseSender)
+}
+
+// layoutBaseSender is BaseMessageSender: the name button, APP badge and
+// status emoji. Returns the width drawn and the name's baseline.
+func (r *row) layoutBaseSender(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+	rc := r.rc
+	c := rc.c
+	st := senderClass.Enter(gtx, 0, 0)
+	defer st.Leave()
+	if st.Hidden() {
+		return layout.Dimensions{}
+	}
+	if r.nameBtn.Clicked(gtx) && r.m.User != "" {
+		rc.h.OpenProfile(rc.origin(image.Point{}), r.m.User)
+	}
+	bs := senderBtnClass.Enter(gtx, hoverState(r.nameBtn.Hovered()), 0)
+	var nd layout.Dimensions
+	if !bs.Hidden() {
+		if bs.Active() {
+			nd = bs.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return r.nameButton(gtx, bs) })
+		} else {
+			nd = r.nameButton(gtx, bs)
+		}
+	}
+	bs.Leave()
+	if nd.Size.Y == 0 {
+		nd.Size.Y, nd.Baseline = dp(gtx, mt.nameLine), dp(gtx, 5)
+	}
+	baseline := nd.Size.Y - nd.Baseline
+	xx := nd.Size.X
+	if r.bot {
+		xx += dp(gtx, mt.badgeGap)
+		s := textStyle{size: 10, weight: theme.Bold, col: c.BadgeText}
+		sz := measure(gtx, rc.th, s, "APP")
+		bw := sz.X + dp(gtx, 6)
+		bh := dp(gtx, 14)
+		top := baseline - dp(gtx, 11)
+		rrect(gtx.Ops, image.Rect(xx, top, xx+bw, top+bh), dp(gtx, 2), c.BadgeBg)
+		at(gtx, xx+dp(gtx, 3), top+(bh-sz.Y)/2, func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, s, "APP") })
+		xx += bw
+	}
+	if r.statusURL != "" {
+		s := dp(gtx, mt.statusEmoji)
+		xx += dp(gtx, 4)
+		top := baseline - s + dp(gtx, 3)
+		drawEmoji(gtx, rc.h, r.statusURL, image.Rect(xx, top, xx+s, top+s))
+		xx += s
+	}
+	return layout.Dimensions{Size: image.Pt(xx, nd.Size.Y), Baseline: nd.Baseline}
+}
+
+// nameButton is .c-message__sender_button: the name, underlined on hover.
+func (r *row) nameButton(gtx layout.Context, bs slackc.Styled) layout.Dimensions {
+	c := r.rc.c
+	nameS := textStyle{size: float32(bs.FontSize(15)), weight: theme.Black, col: bs.Color(c.Text), lineH: 22}
+	return r.nameBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		d := label(gtx, r.rc.th, nameS, r.name)
+		if r.nameBtn.Hovered() {
+			base := d.Size.Y - d.Baseline
+			fill(gtx.Ops, image.Rect(0, base+dp(gtx, 2), d.Size.X, base+dp(gtx, 3)), nameS.col)
+		}
+		return d
+	})
+}
+
+// layoutTimestamp is the header's Timestamp ("3:04 PM").
+func (r *row) layoutTimestamp(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	if p.Has("visible") && !p.Bool("visible") {
+		return layout.Dimensions{}
+	}
+	st := tsClass.Enter(gtx, 0, 0)
+	defer st.Leave()
+	if st.Hidden() {
+		return layout.Dimensions{}
+	}
+	tsS := textStyle{size: float32(st.FontSize(12)), col: st.Color(r.rc.c.Text2)}
+	tsText := clock(tsTime(r.m.TS))
+	if st.Active() {
+		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return label(gtx, r.rc.th, tsS, tsText) })
+	}
+	return label(gtx, r.rc.th, tsS, tsText)
+}
+
+// labelLine draws a small gray label with an icon above the name ("Pinned").
+func (r *row) labelLine(gtx layout.Context, rc *rowCtx, x, y int, icon, txt string) int {
+	c := rc.c
+	lh := dp(gtx, 19)
+	is := dp(gtx, 14)
+	// icon right-aligned in the 36px gutter box that starts at x=20
+	at(gtx, dp(gtx, 56)-is, y+(lh-is)/2, func(gtx layout.Context) layout.Dimensions {
+		return icons.Get(icon)(gtx, unit.Dp(14), c.PinIcon)
+	})
+	at(gtx, dp(gtx, 64), y, func(gtx layout.Context) layout.Dimensions {
+		return label(gtx, rc.th, textStyle{size: 13, col: c.Muted70, lineH: 19}, txt)
+	})
+	return dp(gtx, 20)
+}
+
+// broadcastLine draws "replied to a thread: …" for thread replies also sent
+// to the channel.
+func (r *row) broadcastLine(gtx layout.Context, rc *rowCtx, x, y int) int {
+	c := rc.c
+	h := dp(gtx, 18)
+	s := textStyle{size: 13, col: c.Text2, lineH: 18}
+	pre := "replied to a thread: "
+	if r.broadcastBtn.Clicked(gtx) {
+		rc.h.OpenThread(r.m.Channel, r.m.ThreadTS)
+	}
+	pd := at(gtx, x, y+dp(gtx, 4), func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, s, pre) })
+	at(gtx, x+pd.Size.X, y+dp(gtx, 4), func(gtx layout.Context) layout.Dimensions {
+		return r.broadcastBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return label(gtx, rc.th, textStyle{size: 13, col: c.Link, lineH: 18}, "View thread")
+		})
+	})
+	return h + dp(gtx, 4)
+}
+
+// reactionBar lays out the ReactionBar at pos (origin is pos's frame in
+// row-local coordinates), width w; returns its height.
+func (r *row) reactionBar(gtx layout.Context, pos, origin image.Point, w int) int {
+	r.growPills()
+	r.reactAt = origin.Add(pos)
+	d := at(gtx, pos.X, pos.Y, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Constraints{Max: image.Pt(w, 1<<20)}
+		return slackc.Component(gtx, "ReactionBar", r, (*row).reactionBarProps, (*row).layoutReactionBar)
+	})
+	return d.Size.Y
+}
+
+// layoutReactionBar is ReactionBar: the pills and the add button, or the
+// children a plugin passed (its own buttons beside Slack's).
+func (r *row) layoutReactionBar(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	r.reactRects = r.reactRects[:0]
+	r.addRect = image.Rectangle{}
+	st := reactionBarClass.Enter(gtx, 0, 0)
+	defer st.Leave()
+	if st.Hidden() {
+		return layout.Dimensions{}
+	}
+	if e, ok := slackc.PropChildren(p); ok {
+		if st.Active() {
+			return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return slackc.LayoutElement(gtx, e) })
+		}
+		return slackc.LayoutElement(gtx, e)
+	}
+	if st.Active() {
+		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return r.reactionPills(gtx) })
+	}
+	return r.reactionPills(gtx)
+}
+
+// reactionPills flows the Reaction pills and the add button.
+func (r *row) reactionPills(gtx layout.Context) layout.Dimensions {
+	m := &r.m
+	w := gtx.Constraints.Max.X
+	ph := dp(gtx, mt.reactH)
+	gap := dp(gtx, mt.reactGap)
+	cx, cy := 0, 0
+	place := func(call op.CallOp, sz image.Point) image.Rectangle {
+		if cx > 0 && cx+sz.X > w {
+			cx = 0
+			cy += ph + gap
+		}
+		t := op.Offset(image.Pt(cx, cy)).Push(gtx.Ops)
+		call.Add(gtx.Ops)
+		t.Pop()
+		rect := image.Rect(cx, cy, cx+sz.X, cy+ph)
+		cx += sz.X + gap
+		return rect
+	}
+	g := gtx
+	g.Constraints.Min = image.Point{}
+	for i := range m.Reactions {
+		pl := &r.pills[i]
+		rec := op.Record(gtx.Ops)
+		d := slackc.Component(g, "Reaction", pl, (*reactPill).props, (*reactPill).layout)
+		r.reactRects = append(r.reactRects, place(rec.Stop(), d.Size).Add(r.reactAt))
+	}
+	// add-reaction button, visible on hover
+	rec := op.Record(gtx.Ops)
+	d := slackc.Component(g, "ReactionAddButton", r, (*row).addButtonProps, (*row).layoutAddButton)
+	ar := place(rec.Stop(), d.Size)
+	r.addRect = ar.Add(r.reactAt)
+	return layout.Dimensions{Size: image.Pt(w, ar.Max.Y)}
+}
+
+// layoutAddButton is ReactionAddButton (.c-reaction_add): drawn on hover,
+// its space always kept.
+func (r *row) layoutAddButton(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+	rc := r.rc
+	ph := dp(gtx, mt.reactH)
+	size := image.Pt(dp(gtx, 34), ph)
+	if r.addReact.Clicked(gtx) {
+		rr := r
+		rc.h.OpenEmojiPicker(rc.origin(image.Point{}), func(name string) {
+			if rc.onReact != nil {
+				rc.onReact(rr, name, true)
+			}
+		})
+	}
+	if !rc.hovered {
+		return layout.Dimensions{Size: size}
+	}
+	st := reactionAddClass.Enter(gtx, hoverState(r.addReact.Hovered()), 0)
+	defer st.Leave()
+	if st.Hidden() {
+		return layout.Dimensions{Size: size}
+	}
+	gtx.Constraints = layout.Exact(size)
+	if st.Active() {
+		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return r.addButton(gtx, st, size) })
+	}
+	return r.addButton(gtx, st, size)
+}
+
+func (r *row) addButton(gtx layout.Context, st slackc.Styled, size image.Point) layout.Dimensions {
+	c := r.rc.c
+	ph := size.Y
+	return r.addReact.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		rr := image.Rectangle{Max: size}
+		col := c.Text
+		if r.addReact.Hovered() {
+			border(gtx.Ops, rr, ph/2, dp(gtx, 1), c.ReactHoverBorder)
+			col = rgb(0xecb22e)
+		} else {
+			rrect(gtx.Ops, rr, ph/2, st.Background(c.ReactBg))
+		}
+		col = st.Color(col)
+		is := dp(gtx, 18)
+		at(gtx, (rr.Dx()-is)/2, (rr.Dy()-is)/2, func(gtx layout.Context) layout.Dimensions {
+			return icons.Get("add-reaction")(gtx, unit.Dp(18), col)
+		})
+		return layout.Dimensions{Size: size}
+	})
+}
+
+// layout is Reaction around the UnstyledButton pill.
+func (pl *reactPill) layout(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+	return slackc.Component(gtx, "UnstyledButton", pl, (*reactPill).buttonProps, (*reactPill).layoutButton)
+}
+
+// layoutButton is the pill: UnstyledButton data-qa="reactji", .c-reaction
+// (--reacted for the viewer's own). Its children are the emoji and the
+// count; a plugin may append to them (WhoReacted's avatars).
+func (pl *reactPill) layoutButton(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	r := pl.r
+	rc := r.rc
+	re := &r.m.Reactions[pl.i]
+	if pl.btn.Clicked(gtx) && rc.onReact != nil {
+		rc.onReact(r, re.Name, !re.Self)
+	}
+	hov := pl.btn.Hovered()
+	var mods uint64
+	if re.Self {
+		mods = 1
+	}
+	st := reactionClass.Enter(gtx, hoverState(hov), mods)
+	defer st.Leave()
+	if st.Hidden() {
+		return layout.Dimensions{}
+	}
+	ph := dp(gtx, mt.reactH)
+	rec := op.Record(gtx.Ops)
+	var cd layout.Dimensions
+	cy := 0
+	if e, ok := slackc.PropChildren(p); ok {
+		cd = slackc.LayoutElement(gtx, e)
+		cy = (ph - cd.Size.Y) / 2
+	} else {
+		cd = pl.content(gtx, st)
+	}
+	content := rec.Stop()
+	size := image.Pt(dp(gtx, 8)+cd.Size.X+dp(gtx, 8), ph)
+	gtx.Constraints = layout.Exact(size)
+	if st.Active() {
+		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return pl.pill(gtx, st, content, size, cy) })
+	}
+	return pl.pill(gtx, st, content, size, cy)
+}
+
+func (pl *reactPill) pill(gtx layout.Context, st slackc.Styled, content op.CallOp, size image.Point, cy int) layout.Dimensions {
+	c := pl.r.rc.c
+	re := &pl.r.m.Reactions[pl.i]
+	return pl.btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		rr := image.Rectangle{Max: size}
+		rad := size.Y / 2
+		hov := pl.btn.Hovered()
+		switch {
+		case re.Self && hov:
+			rrect(gtx.Ops, rr, rad, st.Background(c.ReactSelfHoverBg))
+			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
+		case re.Self:
+			rrect(gtx.Ops, rr, rad, st.Background(c.ReactSelfBg))
+			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
+		case hov:
+			rrect(gtx.Ops, rr, rad, st.Background(colorNone))
+			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactHoverBorder)
+		default:
+			rrect(gtx.Ops, rr, rad, st.Background(c.ReactBg))
+		}
+		t := op.Offset(image.Pt(dp(gtx, 8), cy)).Push(gtx.Ops)
+		content.Add(gtx.Ops)
+		t.Pop()
+		return layout.Dimensions{Size: size}
+	})
+}
+
+// content is the pill's native children: emoji, then the count.
+func (pl *reactPill) content(gtx layout.Context, st slackc.Styled) layout.Dimensions {
+	ph := dp(gtx, mt.reactH)
+	es := dp(gtx, mt.reactEmoji)
+	at(gtx, 0, (ph-es)/2, func(gtx layout.Context) layout.Dimensions { return pl.layoutEmoji(gtx, nil) })
+	d := at(gtx, es+dp(gtx, 4), (ph-dp(gtx, 16))/2, func(gtx layout.Context) layout.Dimensions { return pl.count(gtx, st) })
+	return layout.Dimensions{Size: image.Pt(es+dp(gtx, 4)+d.Size.X, ph)}
+}
+
+// layoutEmoji is the pill's emoji (its alt text while the image loads).
+func (pl *reactPill) layoutEmoji(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+	rc := pl.r.rc
+	re := &pl.r.m.Reactions[pl.i]
+	es := dp(gtx, mt.reactEmoji)
+	url, alt := re.URL, ""
+	if url == "" && rc.h.Core() != nil {
+		url, alt, _ = rc.h.Core().Emoji(re.Name)
+	}
+	if !drawEmoji(gtx, rc.h, url, image.Rect(0, 0, es, es)) {
+		if alt == "" {
+			alt = ":" + re.Name + ":"
+		}
+		ph := dp(gtx, mt.reactH)
+		at(gtx, 0, -(ph-es)/2, func(gtx layout.Context) layout.Dimensions {
+			return label(gtx, rc.th, textStyle{size: 13, col: rc.c.Text, lineH: 24}, alt)
+		})
+	}
+	return layout.Dimensions{Size: image.Pt(es, es)}
+}
+
+// layoutCount is the pill's count slot.
+func (pl *reactPill) layoutCount(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+	return pl.count(gtx, slackc.Styled{})
+}
+
+func (pl *reactPill) count(gtx layout.Context, st slackc.Styled) layout.Dimensions {
+	rc := pl.r.rc
+	re := &pl.r.m.Reactions[pl.i]
+	cs := textStyle{size: 12, col: rc.c.Text, lineH: 16}
+	if re.Self {
+		cs.col, cs.weight = rc.c.ReactSelfText, theme.Bold
+	}
+	cs.col = st.Color(cs.col)
+	return label(gtx, rc.th, cs, strconv.Itoa(re.Count))
 }
 
 // failedLine is "Message failed to send. Retry · Delete" under a failed
@@ -390,7 +1215,7 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	}
 	if len(m.Reactions) > 0 {
 		y += dp(gtx, 4)
-		y += r.reactions(gtx, rc, cx, y, cw)
+		y += r.reactionBar(gtx, image.Pt(cx, y), image.Point{}, cw)
 		y += dp(gtx, 4)
 	} else {
 		r.reactRects = r.reactRects[:0]
@@ -403,199 +1228,6 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	content.Add(gtx.Ops)
 	r.height = h
 	return layout.Dimensions{Size: image.Pt(w, h)}
-}
-
-// nameLine draws "Name [APP] [status] 3:04 PM" and returns its height.
-func (r *row) nameLine(gtx layout.Context, rc *rowCtx, x, y, w int) int {
-	c := rc.c
-	lh := dp(gtx, mt.nameLine)
-	nameS := textStyle{size: 15, weight: theme.Black, col: c.Text, lineH: 22}
-	nd := at(gtx, x, y, func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints = layout.Constraints{Max: image.Pt(w*2/3, lh)}
-		return r.nameBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			d := label(gtx, rc.th, nameS, r.name)
-			if r.nameBtn.Hovered() {
-				base := d.Size.Y - d.Baseline
-				fill(gtx.Ops, image.Rect(0, base+dp(gtx, 2), d.Size.X, base+dp(gtx, 3)), c.Text)
-			}
-			return d
-		})
-	})
-	baseline := y + nd.Size.Y - nd.Baseline
-	xx := x + nd.Size.X
-	if r.bot {
-		xx += dp(gtx, mt.badgeGap)
-		s := textStyle{size: 10, weight: theme.Bold, col: c.BadgeText}
-		sz := measure(gtx, rc.th, s, "APP")
-		bw := sz.X + dp(gtx, 6)
-		bh := dp(gtx, 14)
-		top := baseline - dp(gtx, 11)
-		rrect(gtx.Ops, image.Rect(xx, top, xx+bw, top+bh), dp(gtx, 2), c.BadgeBg)
-		at(gtx, xx+dp(gtx, 3), top+(bh-sz.Y)/2, func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, s, "APP") })
-		xx += bw
-	}
-	if r.statusURL != "" {
-		s := dp(gtx, mt.statusEmoji)
-		xx += dp(gtx, 4)
-		top := baseline - s + dp(gtx, 3)
-		drawEmoji(gtx, rc.h, r.statusURL, image.Rect(xx, top, xx+s, top+s))
-		xx += s
-	}
-	xx += dp(gtx, mt.tsGap)
-	tsS := textStyle{size: 12, col: c.Text2}
-	tsText := clock(tsTime(r.m.TS))
-	// Align baselines.
-	m := op.Record(gtx.Ops)
-	d := label(gtx, rc.th, tsS, tsText)
-	call := m.Stop()
-	t := op.Offset(image.Pt(xx, baseline-(d.Size.Y-d.Baseline))).Push(gtx.Ops)
-	call.Add(gtx.Ops)
-	t.Pop()
-	return lh
-}
-
-// labelLine draws a small gray label with an icon above the name ("Pinned").
-func (r *row) labelLine(gtx layout.Context, rc *rowCtx, x, y int, icon, txt string) int {
-	c := rc.c
-	lh := dp(gtx, 19)
-	is := dp(gtx, 14)
-	// icon right-aligned in the 36px gutter box that starts at x=20
-	at(gtx, dp(gtx, 56)-is, y+(lh-is)/2, func(gtx layout.Context) layout.Dimensions {
-		return icons.Get(icon)(gtx, unit.Dp(14), c.PinIcon)
-	})
-	at(gtx, dp(gtx, 64), y, func(gtx layout.Context) layout.Dimensions {
-		return label(gtx, rc.th, textStyle{size: 13, col: c.Muted70, lineH: 19}, txt)
-	})
-	return dp(gtx, 20)
-}
-
-// broadcastLine draws "replied to a thread: …" for thread replies also sent
-// to the channel.
-func (r *row) broadcastLine(gtx layout.Context, rc *rowCtx, x, y int) int {
-	c := rc.c
-	h := dp(gtx, 18)
-	s := textStyle{size: 13, col: c.Text2, lineH: 18}
-	pre := "replied to a thread: "
-	if r.broadcastBtn.Clicked(gtx) {
-		rc.h.OpenThread(r.m.Channel, r.m.ThreadTS)
-	}
-	pd := at(gtx, x, y+dp(gtx, 4), func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, s, pre) })
-	at(gtx, x+pd.Size.X, y+dp(gtx, 4), func(gtx layout.Context) layout.Dimensions {
-		return r.broadcastBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return label(gtx, rc.th, textStyle{size: 13, col: c.Link, lineH: 18}, "View thread")
-		})
-	})
-	return h + dp(gtx, 4)
-}
-
-// reactions draws the reaction pills and the add button; returns height.
-func (r *row) reactions(gtx layout.Context, rc *rowCtx, x, y, w int) int {
-	c := rc.c
-	m := &r.m
-	if len(r.reacts) < len(m.Reactions) {
-		r.reacts = append(r.reacts, make([]widget.Clickable, len(m.Reactions)-len(r.reacts))...)
-	}
-	r.reactRects = r.reactRects[:0]
-	ph := dp(gtx, mt.reactH)
-	gap := dp(gtx, mt.reactGap)
-	es := dp(gtx, mt.reactEmoji)
-	cx, cy := x, y
-	countS := textStyle{size: 12, col: c.Text, lineH: 16}
-	for i := range m.Reactions {
-		re := &m.Reactions[i]
-		cnt := strconv.Itoa(re.Count)
-		cs := countS
-		if re.Self {
-			cs.col, cs.weight = c.ReactSelfText, theme.Bold
-		}
-		tw := measure(gtx, rc.th, cs, cnt).X
-		pw := dp(gtx, 8) + es + dp(gtx, 4) + tw + dp(gtx, 8)
-		if cx > x && cx+pw > x+w {
-			cx = x
-			cy += ph + gap
-		}
-		rect := image.Rect(cx, cy, cx+pw, cy+ph)
-		btn := &r.reacts[i]
-		if btn.Clicked(gtx) && rc.onReact != nil {
-			rc.onReact(r, re.Name, !re.Self)
-		}
-		at(gtx, cx, cy, func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints = layout.Exact(rect.Size())
-			return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				rr := image.Rectangle{Max: rect.Size()}
-				rad := ph / 2
-				hov := btn.Hovered()
-				switch {
-				case re.Self && hov:
-					rrect(gtx.Ops, rr, rad, c.ReactSelfHoverBg)
-					border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
-				case re.Self:
-					rrect(gtx.Ops, rr, rad, c.ReactSelfBg)
-					border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
-				case hov:
-					border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactHoverBorder)
-				default:
-					rrect(gtx.Ops, rr, rad, c.ReactBg)
-				}
-				ex := dp(gtx, 8)
-				er := image.Rect(ex, (ph-es)/2, ex+es, (ph-es)/2+es)
-				url, alt := re.URL, ""
-				if url == "" && rc.h.Core() != nil {
-					url, alt, _ = rc.h.Core().Emoji(re.Name)
-				}
-				if !drawEmoji(gtx, rc.h, url, er) {
-					if alt == "" {
-						alt = ":" + re.Name + ":"
-					}
-					at(gtx, ex, 0, func(gtx layout.Context) layout.Dimensions {
-						return label(gtx, rc.th, textStyle{size: 13, col: c.Text, lineH: 24}, alt)
-					})
-				}
-				at(gtx, ex+es+dp(gtx, 4), (ph-dp(gtx, 16))/2, func(gtx layout.Context) layout.Dimensions {
-					return label(gtx, rc.th, cs, cnt)
-				})
-				return layout.Dimensions{Size: rect.Size()}
-			})
-		})
-		r.reactRects = append(r.reactRects, rect)
-		cx += pw + gap
-	}
-	// add-reaction button, visible on hover
-	aw := dp(gtx, 34)
-	if cx > x && cx+aw > x+w {
-		cx = x
-		cy += ph + gap
-	}
-	r.addRect = image.Rect(cx, cy, cx+aw, cy+ph)
-	if r.addReact.Clicked(gtx) {
-		rr := r
-		rc.h.OpenEmojiPicker(rc.origin(image.Pt(cx, cy)), func(name string) {
-			if rc.onReact != nil {
-				rc.onReact(rr, name, true)
-			}
-		})
-	}
-	if rc.hovered {
-		at(gtx, cx, cy, func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints = layout.Exact(r.addRect.Size())
-			return r.addReact.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				rr := image.Rectangle{Max: r.addRect.Size()}
-				col := c.Text
-				if r.addReact.Hovered() {
-					border(gtx.Ops, rr, ph/2, dp(gtx, 1), c.ReactHoverBorder)
-					col = rgb(0xecb22e)
-				} else {
-					rrect(gtx.Ops, rr, ph/2, c.ReactBg)
-				}
-				is := dp(gtx, 18)
-				at(gtx, (rr.Dx()-is)/2, (rr.Dy()-is)/2, func(gtx layout.Context) layout.Dimensions {
-					return icons.Get("add-reaction")(gtx, unit.Dp(18), col)
-				})
-				return layout.Dimensions{Size: rr.Size()}
-			})
-		})
-	}
-	return cy + ph - y
 }
 
 // threadBar draws the reply summary; returns its height.

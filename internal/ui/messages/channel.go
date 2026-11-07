@@ -46,6 +46,14 @@ func (v *ChannelView) Channel() string { return v.ch }
 func (v *ChannelView) Layout(gtx layout.Context) layout.Dimensions {
 	v.s.noMark = v.Preview
 	shown(&lastChannel, v.s)
+	st := paneClass.Enter(gtx, 0, 0)
+	defer st.Leave()
+	if st.Hidden() {
+		return layout.Dimensions{}
+	}
+	if st.Active() {
+		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return v.s.layoutList(gtx, v.h, v.Origin) })
+	}
 	return v.s.layoutList(gtx, v.h, v.Origin)
 }
 
