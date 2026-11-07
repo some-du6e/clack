@@ -468,6 +468,9 @@ func CallGo(id int64, args []byte) ([]byte, error) {
 func Pump() { pump() }
 
 func pump() {
+	if subFrame { // callbacks touch the main window's UI state: run them there
+		return
+	}
 	calls.Lock()
 	q := calls.q
 	calls.q = nil

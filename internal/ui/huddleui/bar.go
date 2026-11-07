@@ -10,6 +10,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/huddle"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -34,6 +35,19 @@ func (c *Controller) LayoutBar(gtx C, th *theme.Theme) D {
 	if h == 0 {
 		return D{}
 	}
+	// Slack's HuddleMiniPanel (LetMeSee adds after it)
+	if slackc.Patched("HuddleMiniPanel") {
+		var room, ch string
+		if s := c.Session(); s != nil {
+			room, ch = s.RoomID(), s.State().Channel
+		}
+		return slackc.Render(gtx, "HuddleMiniPanel", slackc.Props{"$key": "huddle-mini-panel", "huddleId": room, "channelId": ch,
+			"className": "p-huddle_mini_panel"}, func(gtx C, _ slackc.Props) D { return c.layoutBar(gtx, th, h) })
+	}
+	return c.layoutBar(gtx, th, h)
+}
+
+func (c *Controller) layoutBar(gtx C, th *theme.Theme, h int) D {
 	sz := image.Pt(gtx.Constraints.Max.X, h)
 	s := c.Session()
 	var st huddle.State

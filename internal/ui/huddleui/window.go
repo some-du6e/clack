@@ -17,6 +17,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/huddle"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -134,7 +135,13 @@ func (w *window) run() {
 			return
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, e)
+			// Slack's huddle components here are plugin patch points
+			// (slackc), shared with the main window: one frame at a time.
+			slackc.LockFrame()
+			restore := slackc.SubFrame(gtx, "p-multi_view_window p-huddle_window", hudWhite)
 			w.layout(gtx)
+			restore()
+			slackc.UnlockFrame()
 			e.Frame(gtx.Ops)
 		}
 	}
@@ -164,22 +171,27 @@ func (w *window) layout(gtx C) {
 	case huddle.Reconnecting:
 		title = "Reconnecting… " + title
 	}
-	ts := labelSize(gtx, w.th, 14, theme.Bold, title)
+	// the title is Slack's HuddleMvaWindowTitle (CallTimer adds its timer
+	// after it): measured, then centered with the headphones before it
+	tg := gtx
+	tg.Constraints = layout.Constraints{Max: image.Pt(max(0, sz.X-gtx.Dp(22)-gtx.Dp(120)), titleH)}
+	tm := op.Record(gtx.Ops)
+	td := slackc.Render(tg, "HuddleMvaWindowTitle", w.titleProps(s, st, title), func(gtx C, p slackc.Props) D {
+		return w.th.Label(gtx, 14, theme.Bold, hudWhite, p.StrOr("title", title))
+	})
+	tcall := tm.Stop()
+	ts := td.Size
 	ix := (sz.X - ts.X - gtx.Dp(22)) / 2
 	at(gtx, image.Pt(ix, (titleH-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx C) D {
 		iconAt(gtx, image.Pt(gtx.Dp(16), gtx.Dp(16)), "headphones", 16, hudWhite)
 		return D{Size: image.Pt(gtx.Dp(16), gtx.Dp(16))}
 	})
-	at(gtx, image.Pt(ix+gtx.Dp(22), (titleH-ts.Y)/2), ts, func(gtx C) D {
-		return w.th.Label(gtx, 14, theme.Bold, hudWhite, title)
-	})
-	if !st.Started.IsZero() {
-		el := elapsed(now.Sub(st.Started))
-		es := labelSize(gtx, w.th, 12, theme.Regular, el)
-		at(gtx, image.Pt(gtx.Dp(14), (titleH-es.Y)/2), es, func(gtx C) D {
-			return w.th.Label(gtx, 12, theme.Regular, theme.WithAlpha(hudWhite, 0xb0), el)
-		})
-	}
+	tt := op.Offset(image.Pt(ix+gtx.Dp(22), (titleH-ts.Y)/2)).Push(gtx.Ops)
+	tcall.Add(gtx.Ops)
+	tt.Pop()
+	// No elapsed time here: Slack's huddle window shows none (its only
+	// huddle timer is the Huddles page's HuddlesActiveTimer); Slick's
+	// CallTimer adds one after the title.
 	bs := gtx.Dp(28)
 	at(gtx, image.Pt(sz.X-bs-gtx.Dp(10), (titleH-bs)/2), image.Pt(bs, bs), func(gtx C) D {
 		return button(gtx, w.click("full"), image.Pt(bs, bs), func(gtx C, hov bool) {
@@ -194,7 +206,7 @@ func (w *window) layout(gtx C) {
 	if stage.Dx() > 0 && stage.Dy() > 0 {
 		w.stage(gtx, s, st, stage, now)
 	}
-	w.toolbar(gtx, st, image.Rect(0, sz.Y-barH, sz.X, sz.Y))
+	w.bottomBar(gtx, s, st, image.Rect(0, sz.Y-barH, sz.X, sz.Y))
 	if w.notice != "" && now.Sub(w.noteAt) < 4*time.Second {
 		ns := labelSize(gtx, w.th, 13, theme.Bold, w.notice)
 		pad := gtx.Dp(10)
@@ -302,6 +314,11 @@ func (w *window) stage(gtx C, s *huddle.Session, st huddle.State, r image.Rectan
 				return D{}
 			})
 		}
+		// Slack's drawing layer over a shared screen (BaseDrawRenderer):
+		// Clack draws no annotations, so natively it's empty
+		drawP := slackc.Props{"$key": "huddle-draw-" + share.Key, "huddleId": s.RoomID(), "screenShareId": share.Key,
+			"isScreenSharing": true, "width": sr.Dx(), "height": sr.Dy()}
+		at(gtx, sr.Min, sr.Size(), func(gtx C) D { return slackc.Render(gtx, "BaseDrawRenderer", drawP, noNative) })
 		name := w.c.userName(share.UserID)
 		if name != "" {
 			lbl := name + "'s screen"
@@ -559,3 +576,42 @@ func (w *window) ctlW(gtx C, c ctl) int {
 	}
 	return gtx.Dp(40)
 }
+
+// ---- Slack's huddle window components (plugin patch points) ----
+
+func (w *window) titleProps(s *huddle.Session, st huddle.State, title string) slackc.Props {
+	return slackc.Props{"$key": "huddle-title", "huddleId": s.RoomID(), "channelId": st.Channel, "title": title,
+		"className": "p-multi_view_window_title__huddle"}
+}
+
+// bottomBar is Slack's HuddleBottomBarContent: the call controls, with
+// HuddleRecordingIndicator at the left (Clack doesn't record huddles, so
+// natively it's empty; CallTimer draws its timer there).
+func (w *window) bottomBar(gtx C, s *huddle.Session, st huddle.State, r image.Rectangle) {
+	size := r.Size()
+	rec := slackc.Props{"$key": "huddle-recording", "huddleId": s.RoomID(), "isRecording": false}
+	props := slackc.Props{"$key": "huddle-bottom-bar", "huddleId": s.RoomID(), "channelId": st.Channel,
+		"children": []any{slackc.Child("HuddleRecordingIndicator", rec, noNative)}}
+	at(gtx, r.Min, size, func(gtx C) D {
+		return slackc.Render(gtx, "HuddleBottomBarContent", props, func(gtx C, p slackc.Props) D {
+			w.toolbar(gtx, st, image.Rectangle{Max: size})
+			// the recording indicator, left of the controls, centered
+			ig := gtx
+			ig.Constraints = layout.Constraints{Max: image.Pt(size.X/4, size.Y)}
+			im := op.Record(gtx.Ops)
+			var id D
+			if e, ok := slackc.PropChildren(p); ok {
+				id = slackc.LayoutElement(ig, e)
+			} else {
+				id = slackc.Render(ig, "HuddleRecordingIndicator", rec, noNative)
+			}
+			ic := im.Stop()
+			t := op.Offset(image.Pt(gtx.Dp(14), (size.Y-id.Size.Y)/2)).Push(gtx.Ops)
+			ic.Add(gtx.Ops)
+			t.Pop()
+			return D{Size: size}
+		})
+	})
+}
+
+func noNative(gtx C, p slackc.Props) D { return D{} }

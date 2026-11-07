@@ -402,7 +402,6 @@ func (v *Huddles) item(gtx C, it huddleItem) D {
 			}
 			return col(gtx,
 				layout.Rigid(func(gtx C) D { return v.room(gtx, it.r) }),
-				layout.Rigid(func(gtx C) D { return v.huddleSurfaces(gtx, it.r) }),
 			)
 		})
 	case hkTiles:

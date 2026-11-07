@@ -331,19 +331,12 @@ func (d *Directories) peopleOverride(p slackc.Props, us []core.User) []core.User
 
 // ---- Huddles ----
 //
-// Clack has no huddle call window (no Chime media), so Slack's call
-// surfaces become patch points on the closest thing Clack draws, a live
-// huddle's row on the Huddles page:
+// The live call's components (HuddleMvaWindowTitle, HuddleBottomBarContent,
+// HuddleRecordingIndicator, BaseDrawRenderer, HuddleMiniPanel) are patch
+// points in huddleui's call window and sidebar bar. A live huddle's row on
+// the Huddles page keeps the join point:
 //
-//	HuddleMvaWindowTitle                 the huddle's title
-//	HuddleBottomBarContent               the row's right side: faces, then
-//	  └ HuddleRecordingIndicator         (empty: Clack doesn't record)
 //	HuddleInviteWindowWithPreviewContent the Join button (onHuddleJoin)
-//	BaseDrawRenderer, HuddleMiniPanel    empty, under the row (screen-share
-//	                                     drawings and its floating bar)
-//
-// Natives draw what Clack drew before (or nothing), so a plugin's
-// additions appear without Clack inventing call UI.
 
 func roomChannel(r huddleRoom) string {
 	if len(r.Channels) > 0 {
@@ -357,44 +350,20 @@ func huddleBase(r huddleRoom, part string) slackc.Props {
 	return slackc.Props{"$key": r.ID + "/" + part, "huddleId": r.ID, "channelId": roomChannel(r), "isActive": r.Active}
 }
 
-// huddleTitle: HuddleMvaWindowTitle {huddleId, channelId, title}; a
-// plugin's title prop replaces the text.
+// huddleTitle is the live row's title. Slack's huddle window components
+// (HuddleMvaWindowTitle, HuddleBottomBarContent, HuddleRecordingIndicator,
+// BaseDrawRenderer, HuddleMiniPanel) are patch points in huddleui's real
+// call window and sidebar bar; this list row only joins.
 func (v *Huddles) huddleTitle(gtx C, r huddleRoom) D {
-	return slackc.RenderLazy(gtx, "HuddleMvaWindowTitle", func() slackc.Props {
-		p := huddleBase(r, "title")
-		p["title"] = v.roomTitle(r)
-		return p
-	}, func(gtx C, p slackc.Props) D {
-		return v.label(gtx, 15, wBold, v.p.Text, p.StrOr("title", v.roomTitle(r)))
-	})
+	return v.label(gtx, 15, wBold, v.p.Text, v.roomTitle(r))
 }
 
-// huddleBar: HuddleBottomBarContent {huddleId, channelId, children:
-// [HuddleRecordingIndicator]}, then the Join point.
+// huddleBar is the row's right side: faces, then the Join point.
 func (v *Huddles) huddleBar(gtx C, r huddleRoom) D {
-	return slackc.RenderLazy(gtx, "HuddleBottomBarContent", func() slackc.Props {
-		p := huddleBase(r, "bar")
-		p["children"] = slackc.Child("HuddleRecordingIndicator", v.recProps(r), func(gtx C, _ slackc.Props) D { return D{} })
-		return p
-	}, func(gtx C, p slackc.Props) D {
-		return row(gtx, layout.Middle,
-			layout.Rigid(func(gtx C) D { return v.faces(gtx, r) }),
-			layout.Rigid(func(gtx C) D {
-				if e, ok := slackc.PropChildren(p); ok {
-					return slackc.LayoutElement(gtx, e)
-				}
-				return slackc.RenderLazy(gtx, "HuddleRecordingIndicator", func() slackc.Props { return v.recProps(r) },
-					func(gtx C, _ slackc.Props) D { return D{} })
-			}),
-			layout.Rigid(func(gtx C) D { return v.joinPoint(gtx, r) }),
-		)
-	})
-}
-
-func (v *Huddles) recProps(r huddleRoom) slackc.Props {
-	p := huddleBase(r, "recording")
-	p["isRecording"] = false
-	return p
+	return row(gtx, layout.Middle,
+		layout.Rigid(func(gtx C) D { return v.faces(gtx, r) }),
+		layout.Rigid(func(gtx C) D { return v.joinPoint(gtx, r) }),
+	)
 }
 
 // joinPoint: HuddleInviteWindowWithPreviewContent {channelId, huddleId,
@@ -422,26 +391,6 @@ func (v *Huddles) joinPoint(gtx C, r huddleRoom) D {
 		// drawn, not a separate clickable: the whole row joins
 		return layout.Inset{Left: 12}.Layout(gtx, func(gtx C) D { return v.joinPill(gtx) })
 	})
-}
-
-// huddleSurfaces: BaseDrawRenderer and HuddleMiniPanel, empty.
-func (v *Huddles) huddleSurfaces(gtx C, r huddleRoom) D {
-	return col(gtx,
-		layout.Rigid(func(gtx C) D {
-			return slackc.RenderLazy(gtx, "BaseDrawRenderer", func() slackc.Props {
-				p := huddleBase(r, "draw")
-				p["isScreenSharing"] = false
-				return p
-			}, func(gtx C, _ slackc.Props) D { return D{} })
-		}),
-		layout.Rigid(func(gtx C) D {
-			return slackc.RenderLazy(gtx, "HuddleMiniPanel", func() slackc.Props {
-				p := huddleBase(r, "mini")
-				p["isScreenSharing"] = false
-				return p
-			}, func(gtx C, _ slackc.Props) D { return D{} })
-		}),
-	)
 }
 
 // joinClicked is a click on a huddle row: through the plugin's

@@ -249,6 +249,8 @@ func (a *App) Run() error {
 				a.th.SetShapers(sh[0], sh[1])
 				a.timing("shaper waited", t0)
 			}
+			// patch points (slackc) are shared with the huddle call window
+			slackc.LockFrame()
 			a.drain()
 			gtx := app.NewContext(&ops, e)
 			before := a.router.Current()
@@ -261,6 +263,7 @@ func (a *App) Run() error {
 				gtx = app.NewContext(&ops, e)
 				a.frame(gtx)
 			}
+			slackc.UnlockFrame()
 			tl := time.Now()
 			e.Frame(gtx.Ops)
 			if !a.firstPaint {

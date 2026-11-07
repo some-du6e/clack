@@ -37,6 +37,7 @@ var wholeSlices = []string{
 	"dndV2", "drafts", "slashCommand", "experiments", "huddleEvents", "allCalls", "peers",
 	"messageEditWindow", "searchResults", "huddlesCanvas", "alert", "unreadCounts",
 	"mutedChannels", "starredChannels", "huddles", "messagesMeta", "threadSub", "userGroupMembership",
+	"clientHuddles",
 }
 
 type change struct {
@@ -756,6 +757,8 @@ func (m *mirror) get(slice, key string) any {
 		return map[string]any{"byId": m.calls, "inviteResponseById": map[string]any{}}
 	case "peers":
 		return m.t.peersSlice()
+	case "clientHuddles":
+		return m.t.clientHuddlesSlice()
 	case "messageEditWindow":
 		m.mu.Lock()
 		defer m.mu.Unlock()

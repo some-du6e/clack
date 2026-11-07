@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 )
@@ -114,9 +115,18 @@ func TestAuthFailedStopsCore(t *testing.T) {
 	if a.bg.Err() == nil {
 		t.Error("background context not cancelled")
 	}
-	f.mu.Lock()
-	before := len(f.calls)
-	f.mu.Unlock()
+	// requests already in flight when the session ended may still land:
+	// count from when the fake server has gone quiet
+	count := func() int { f.mu.Lock(); defer f.mu.Unlock(); return len(f.calls) }
+	before := count()
+	for quiet, deadline := 0, time.Now().Add(2*time.Second); quiet < 3 && time.Now().Before(deadline); {
+		time.Sleep(20 * time.Millisecond)
+		if n := count(); n == before {
+			quiet++
+		} else {
+			before, quiet = n, 0
+		}
+	}
 	for i := 0; i < 30; i++ { // the UI's refetch loop
 		if _, err := a.History(context.Background(), "C1", ""); !errors.Is(err, slack.ErrSignedOut) {
 			t.Fatalf("refetch: %v", err)
