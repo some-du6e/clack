@@ -82,6 +82,10 @@ jobs:
         run: xvfb-run -a -s "-screen 0 1440x900x24" .github/perf/bench.sh perf-out
       - name: startup CPU profile (top)
         run: go tool pprof -top -nodecount 30 dist/clack-unstripped perf-out/process/startup.cpu.pprof > perf-out/process/startup.cpu.top.txt 2>&1 || true
+      - name: Lato coverage vs Slack's own faces (public CDN, no cookie)
+        if: matrix.variant == 'head'
+        continue-on-error: true
+        run: pip install -q fonttools brotli && python3 .github/perf/fontcheck.py perf-out
       - name: summary
         env:
           CLACK_BENCH_GPU: "1"
@@ -90,6 +94,7 @@ jobs:
           ref="${GITHUB_REF_NAME}"; [ "${{ matrix.variant }}" = base ] && ref="baseline ${{ inputs.base || '4222be3' }}"
           python3 .github/perf/summary.py perf-out "$GITHUB_SHA" "$ref" >> "$GITHUB_STEP_SUMMARY"
           { echo; echo '### Binary size by package'; echo '```'; cat perf-out/binsize-packages.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          [ -f perf-out/fontcheck.md ] && cat perf-out/fontcheck.md >> "$GITHUB_STEP_SUMMARY" || true
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:

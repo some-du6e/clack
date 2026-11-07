@@ -13,6 +13,8 @@ package ui
 
 import (
 	"image"
+	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -46,11 +48,21 @@ var (
 	perfErr  error
 )
 
+// perfServer is the fake Slack: fakeslackd in another process when
+// CLACK_FAKESLACK_URL is set (bench.sh does that, so the heap numbers are
+// the client's alone), otherwise in-process.
 func perfServer(tb testing.TB) *fakeslack.Server {
 	perfOnce.Do(func() {
+		if os.Getenv("CLACK_BENCH_LOG") == "" {
+			log.SetOutput(io.Discard) // keeps benchmark output parseable
+		}
 		sz := fakeslack.HackClub
 		if testing.Short() {
 			sz = fakeslack.Small
+		}
+		if u := os.Getenv("CLACK_FAKESLACK_URL"); u != "" {
+			perfFake = fakeslack.Remote(u, sz)
+			return
 		}
 		perfFake, perfErr = fakeslack.Start(sz)
 	})
@@ -91,8 +103,17 @@ var (
 )
 
 // warmHome runs one full session to fill the caches, then hands out copies.
+//
+// CLACK_BENCH_WARMDIR names a frozen warm dir made by an earlier process
+// (TestPerfMakeWarmDir), so no warm-up session lives in the measured one.
 func warmHome(tb testing.TB, fs *fakeslack.Server) string {
 	warmOnce.Do(func() {
+		if d := os.Getenv("CLACK_BENCH_WARMDIR"); d != "" {
+			if _, err := os.Stat(filepath.Join(d, "cache", "meta.json")); err == nil {
+				warmDir = d
+				return
+			}
+		}
 		dir, err := os.MkdirTemp("", "clack-perf-warm-")
 		if err != nil {
 			tb.Fatal(err)
@@ -102,10 +123,13 @@ func warmHome(tb testing.TB, fs *fakeslack.Server) string {
 		e.openChannel(fs.ChannelIDs()[1])
 		e.settle(300 * time.Millisecond)
 		e.a.data.stop() // saves sidebar.json and meta.json
-		e.a.data.core.Close()
+		e.shutdown()
 		frozen, err := os.MkdirTemp("", "clack-perf-warm-frozen-")
 		if err != nil {
 			tb.Fatal(err)
+		}
+		if d := os.Getenv("CLACK_BENCH_WARMDIR"); d != "" {
+			frozen = d
 		}
 		copyTree(tb, dir, frozen)
 		warmDir = frozen
@@ -167,15 +191,48 @@ func startEnv(tb testing.TB, fs *fakeslack.Server, home string) *perfEnv {
 			tb.Logf("no GPU renderer (%v): layout only", err)
 		} else {
 			e.gpu = w
-			tb.Cleanup(w.Release)
 		}
 	}
-	tb.Cleanup(func() {
-		if e.a.data != nil && e.a.data.cancel != nil {
-			e.a.data.cancel()
-		}
-	})
+	tb.Cleanup(e.shutdown)
 	return e
+}
+
+// shutdown stops the session's background work so it can be collected.
+func (e *perfEnv) shutdown() {
+	if e.a == nil || e.a.data == nil {
+		return
+	}
+	if e.a.data.cancel != nil {
+		e.a.data.cancel()
+	}
+	if c, ok := any(e.a.data.core).(interface{ Shutdown() }); ok { // core.App.Shutdown (absent in the baseline tree)
+		c.Shutdown()
+	}
+	if e.gpu != nil {
+		e.gpu.Release()
+		e.gpu = nil
+	}
+}
+
+// loopProfile writes allocation profiles right before and after a
+// benchmark's measured loop (CLACK_BENCH_PROFDIR), so
+// "go tool pprof -base before after" shows only per-op allocations.
+func loopProfile(b *testing.B) func() {
+	dir := os.Getenv("CLACK_BENCH_PROFDIR")
+	if dir == "" {
+		return func() {}
+	}
+	name := strings.ReplaceAll(b.Name(), "/", "_")
+	write := func(suffix string) {
+		f, err := os.Create(filepath.Join(dir, name+suffix))
+		if err != nil {
+			b.Fatal(err)
+		}
+		defer f.Close()
+		_ = pprof.Lookup("allocs").WriteTo(f, 0)
+	}
+	write(".loop-before.pprof")
+	return func() { write(".loop-after.pprof") }
 }
 
 // frame lays out (and with a GPU, renders) one frame the way App.Run does.
@@ -302,6 +359,15 @@ func rssMB() float64 {
 	return 0
 }
 
+// TestPerfMakeWarmDir writes the warm config dir for later benchmark
+// processes (only when CLACK_BENCH_WARMDIR is set).
+func TestPerfMakeWarmDir(t *testing.T) {
+	if os.Getenv("CLACK_BENCH_WARMDIR") == "" {
+		t.Skip("CLACK_BENCH_WARMDIR not set")
+	}
+	warmHome(t, perfServer(t))
+}
+
 // ---- benchmarks ----
 
 // BenchmarkStartup measures a warm start: process-level setup (shaper,
@@ -323,7 +389,7 @@ func BenchmarkStartup(b *testing.B) {
 		e.waitReady()
 		ready += time.Since(e.start)
 		b.StopTimer()
-		e.a.data.cancel()
+		e.shutdown()
 		b.StartTimer()
 	}
 	b.ReportMetric(float64(side.Milliseconds())/float64(b.N), "sidebar-ms")
@@ -337,7 +403,7 @@ func BenchmarkBootCold(b *testing.B) {
 		e := newPerfEnv(b, false)
 		e.waitReady()
 		b.StopTimer()
-		e.a.data.cancel()
+		e.shutdown()
 		b.StartTimer()
 	}
 }
@@ -354,6 +420,8 @@ func BenchmarkChannelSwitch(b *testing.B) {
 		e.settle(50 * time.Millisecond)
 	}
 	b.ReportAllocs()
+	done := loopProfile(b)
+	defer done()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		e.openChannel(ids[i%len(ids)])
@@ -386,6 +454,8 @@ func BenchmarkScroll500(b *testing.B) {
 	}
 	e.settle(500 * time.Millisecond)
 	b.ReportAllocs()
+	done := loopProfile(b)
+	defer done()
 	b.ResetTimer()
 	dir := float32(240)
 	for i := 0; i < b.N; i++ {
@@ -415,6 +485,8 @@ func BenchmarkEmojiPickerOpen(b *testing.B) {
 	e.frame()
 	e.settle(100 * time.Millisecond)
 	b.ReportAllocs()
+	done := loopProfile(b)
+	defer done()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		e.a.OpenEmojiPicker(image.Pt(700, 700), func(string) {})
@@ -436,6 +508,8 @@ func BenchmarkEmojiSearch(b *testing.B) {
 	e.settle(100 * time.Millisecond)
 	word := "parrot"
 	b.ReportAllocs()
+	done := loopProfile(b)
+	defer done()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if i%len(word) == 0 && i > 0 {
@@ -457,6 +531,8 @@ func BenchmarkQuickSwitcher(b *testing.B) {
 	e.openChannel(e.fs.ChannelIDs()[1])
 	e.settle(100 * time.Millisecond)
 	b.ReportAllocs()
+	done := loopProfile(b)
+	defer done()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		e.key("K", key.ModShortcut)
@@ -488,6 +564,8 @@ func BenchmarkTypingFrame(b *testing.B) {
 	e.frame()
 	e.frame()
 	b.ReportAllocs()
+	done := loopProfile(b)
+	defer done()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if i%200 == 199 { // keep the draft short: select all, delete
@@ -512,6 +590,8 @@ func BenchmarkIdleFrame(b *testing.B) {
 	e.settle(500 * time.Millisecond)
 	wake := 0
 	b.ReportAllocs()
+	done := loopProfile(b)
+	defer done()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		e.frame()
@@ -551,7 +631,7 @@ func BenchmarkSessionMemory(b *testing.B) {
 		if p := os.Getenv("CLACK_BENCH_HEAPPROFILE"); p != "" {
 			writeHeapProfile(b, p)
 		}
-		e.a.data.cancel()
+		e.shutdown()
 		b.StartTimer()
 	}
 }

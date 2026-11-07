@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -24,9 +26,16 @@ var (
 
 func perfServer(tb testing.TB) *fakeslack.Server {
 	perfOnce.Do(func() {
+		if os.Getenv("CLACK_BENCH_LOG") == "" {
+			log.SetOutput(io.Discard) // keeps benchmark output parseable
+		}
 		sz := fakeslack.HackClub
 		if testing.Short() {
 			sz = fakeslack.Small
+		}
+		if u := os.Getenv("CLACK_FAKESLACK_URL"); u != "" {
+			perfFake = fakeslack.Remote(u, sz)
+			return
 		}
 		var err error
 		if perfFake, err = fakeslack.Start(sz); err != nil {
@@ -63,7 +72,7 @@ func BenchmarkCoreBoot(b *testing.B) {
 	if err := a.Close(); err != nil {
 		b.Fatal(err)
 	}
-	a.stopBG()
+	shutdown(a)
 	if fi, err := os.Stat(filepath.Join(warm, "meta.json")); err == nil {
 		b.Logf("meta.json: %.1f MB", float64(fi.Size())/(1<<20))
 	}
@@ -83,7 +92,7 @@ func BenchmarkCoreBoot(b *testing.B) {
 				b.StopTimer()
 				time.Sleep(500 * time.Millisecond)
 				heap += heapMB()
-				a.stopBG()
+				shutdown(a)
 				a = nil
 				b.StartTimer()
 			}
@@ -100,10 +109,18 @@ func BenchmarkLoadCache(b *testing.B) {
 	a := bootOnce(b, fs, dir)
 	time.Sleep(time.Second)
 	_ = a.Close()
-	a.stopBG()
+	shutdown(a)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		store.New(dir).LoadCache()
+	}
+}
+
+// shutdown calls App.Shutdown when it exists (the perf workflow also runs
+// this file against a baseline tree that predates it).
+func shutdown(a *App) {
+	if s, ok := any(a).(interface{ Shutdown() }); ok {
+		s.Shutdown()
 	}
 }
