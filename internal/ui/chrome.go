@@ -270,7 +270,7 @@ var railTabs = []railTab{
 	{"dms", "DMs", "dms"},
 	{"activity", "Activity", "activity"},
 	{"files", "Files", "files"},
-	{"later", "To-dos", "check-circle"},
+	{"later", "To-dos", "todos"},
 	{"more", "Agents & tools", "agents"},
 }
 
