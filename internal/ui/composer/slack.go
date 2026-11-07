@@ -391,9 +391,20 @@ func (c *Composer) setContextBarShowing(on bool) {
 // MessageInputRoadblock: around the composer. Its native is the composer
 // itself unless a plugin passes a roadblockMessage (RestrictedChannelWarning),
 // which is drawn in a box instead of the editor.
+// SetRoadblock replaces the editor with Slack's roadblock notice
+// (MessageInputRoadblock with roadblockMessage), e.g. "Sending messages
+// to this app has been turned off." for read-only app DMs; "" restores
+// the editor.
+func (c *Composer) SetRoadblock(msg string) {
+	if c.roadblock != msg {
+		c.roadblock = msg
+		c.h.Invalidate()
+	}
+}
+
 func (c *Composer) roadblockProps() slackc.Props {
 	p := c.convProps()
-	p["roadblockMessage"] = ""
+	p["roadblockMessage"] = c.roadblock
 	p["roadblockMessageId"] = "message_input_roadblock_" + strings.ReplaceAll(c.draftID(), ".", "_")
 	p["allowWrap"] = false
 	p["dataQa"] = "message_input_roadblock"

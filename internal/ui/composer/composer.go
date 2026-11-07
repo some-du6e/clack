@@ -70,6 +70,7 @@ type Composer struct {
 	top           int           // context bar height above the box
 	ctxShowing    bool          // onIsContextBarShowing
 	drewInput     bool          // the editor was laid out (no roadblock)
+	roadblock     string        // SetRoadblock: Slack's notice instead of the editor
 	wPane, wInput layout.Widget
 	wEditor, wAtt layout.Widget
 	keyS, draftS  string
