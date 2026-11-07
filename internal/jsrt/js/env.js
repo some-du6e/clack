@@ -420,7 +420,7 @@
         else if ('^$\\.*+?()[]{}|/'.includes(c)) out += '\\' + c;
         else if (',-=<>#&!%:;@~\'`"'.includes(c)) out += '\\x' + code.toString(16).padStart(2, '0');
         else if (/[\t\n\v\f\r ]/.test(c)) out += { '\t': '\\t', '\n': '\\n', '\v': '\\v', '\f': '\\f', '\r': '\\r', ' ': '\\x20' }[c];
-        else if (/[   -     　﻿]/.test(c) || (code >= 0xd800 && code <= 0xdfff && !(code <= 0xdbff && (s.charCodeAt(i + 1) & 0xfc00) === 0xdc00) && !((code & 0xfc00) === 0xdc00 && i > 0 && (s.charCodeAt(i - 1) & 0xfc00) === 0xd800)))
+        else if (/[\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]/.test(c) || (code >= 0xd800 && code <= 0xdfff && !(code <= 0xdbff && (s.charCodeAt(i + 1) & 0xfc00) === 0xdc00) && !((code & 0xfc00) === 0xdc00 && i > 0 && (s.charCodeAt(i - 1) & 0xfc00) === 0xd800)))
           out += '\\u' + code.toString(16).padStart(4, '0');
         else out += c;
       }

@@ -89,18 +89,13 @@ func (r *Runtime) boot() error {
 	}
 	r.eng = e
 	r.installHost()
-	for _, v := range []script{{"env.js", envJS}, {"web.js", webJS}, {"intl.js", intlJS}, {"dom.js", domJS}} {
-		if _, err := e.evalChecked("clack:"+v.name, v.src); err != nil {
+	scripts := []script{{"env.js", envJS}, {"web.js", webJS}, {"intl.js", intlJS}, {"dom.js", domJS}}
+	scripts = append(scripts, vendorScripts...)
+	scripts = append(scripts, script{"react-host.js", reactHostJS})
+	for _, v := range scripts {
+		if err := e.evalBoot("clack:"+v.name, v.src); err != nil {
 			return fmt.Errorf("jsrt: %s: %w", v.name, err)
 		}
-	}
-	for _, v := range vendorScripts {
-		if _, err := e.evalChecked("clack:"+v.name, v.src); err != nil {
-			return fmt.Errorf("jsrt: %s: %w", v.name, err)
-		}
-	}
-	if _, err := e.evalChecked("clack:react-host.js", reactHostJS); err != nil {
-		return fmt.Errorf("jsrt: react-host.js: %w", err)
 	}
 	r.fillModuleNames()
 	e.runJobs(r.js)
@@ -246,7 +241,6 @@ func (r *Runtime) installHost() {
 		return nil, nil
 	})
 	def("commit", func(js *Ctx, _ Value, a []Value) (any, error) {
-		r.eng.dirty = false
 		id := uint64(num(a, 0))
 		r.deliver(id, []byte(str(a, 1)))
 		return nil, nil

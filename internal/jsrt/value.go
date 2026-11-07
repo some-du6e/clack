@@ -445,8 +445,15 @@ func (c *Ctx) expose(name string, fn HostFunc) {
 }
 
 func (r *Runtime) addHost(fn HostFunc) uint32 {
-	r.hosts = append(r.hosts, fn)
-	return uint32(len(r.hosts) - 1)
+	r.hostN++
+	for r.hosts[r.hostN] != nil || r.hostN == 0 || r.hostN >= 1<<31 {
+		if r.hostN >= 1<<31 {
+			r.hostN = 0
+		}
+		r.hostN++
+	}
+	r.hosts[r.hostN] = fn
+	return r.hostN
 }
 
 // resolvePath resolves "a.b.c" from globalThis to (fn, this).
