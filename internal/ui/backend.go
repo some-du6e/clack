@@ -166,8 +166,11 @@ func (b *backend) apply(a *App, s core.Snapshot) {
 		}
 		ci := &convInfo{ID: c.ID, Name: c.Name, Kind: c.Kind, User: c.User, Topic: c.Topic,
 			NumMembers: c.NumMembers, Members: c.Members, Muted: c.Muted, TopicSpans: firstSpans(c.TopicDoc)}
-		if old := m.Convs[c.ID]; old != nil && ci.NumMembers == 0 {
-			ci.NumMembers = old.NumMembers
+		if old := m.Convs[c.ID]; old != nil {
+			// keep what opened() fetched (count, facepile) across snapshots
+			if ci.NumMembers == 0 {
+				ci.NumMembers = old.NumMembers
+			}
 			if len(ci.Members) == 0 {
 				ci.Members = old.Members
 			}
