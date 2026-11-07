@@ -30,9 +30,23 @@ import (
 // topic) match at ~0.31px, message bodies (15px, ui-messages at 1x and 2x)
 // at ~0.45px.
 const (
-	Embolden     = 0.3  // labels (Text / DrawText)
-	BodyEmbolden = 0.45 // richview message bodies (BodyEmboldenFor)
+	Embolden     = 0.3 // labels (Text / DrawText), regular weight
+	BodyEmbolden = 0.3 // richview message bodies (BodyEmboldenFor)
 )
+
+// Outline emboldening on the embedded Lato (2026-11-07, 1x, ink vs Chrome):
+// regular dark text matches at ~0.29px (13px topic, 15px bodies: the old
+// 0.45 body value was for the stroke embolden on the system Lato), Bold at
+// ~0.32 and Black (sender names) at ~0.47, so heavier faces scale it up.
+func weightEmbolden(w font.Weight) float32 {
+	switch {
+	case w >= font.Black:
+		return 1.6
+	case w >= font.Bold:
+		return 1.1
+	}
+	return 1
+}
 
 // BodyEmboldenFor is EmboldenFor at the message-body strength.
 func BodyEmboldenFor(c color.NRGBA) float32 { return EmboldenFor(c) * BodyEmbolden / Embolden }
@@ -55,11 +69,22 @@ func envFloat(name string, def float32) float32 {
 }
 
 // lightTextColor applies LightTextFade to light glyph colors.
-func lightTextColor(c color.NRGBA, pxPerDp float32) color.NRGBA {
+//
+// The excess depends on the weight: on the embedded Lato at 1x, regular
+// sidebar rows were still +8% heavy at k=0.2 while the Black team name was
+// 8.5% light, so regular fades more and Black less.
+func lightTextColor(c color.NRGBA, pxPerDp float32, w font.Weight) color.NRGBA {
 	if LightTextFade <= 0 || pxPerDp <= 0 {
 		return c
 	}
-	a := 1 - LightTextFade/pxPerDp
+	k := LightTextFade
+	switch {
+	case w >= font.Black:
+		k *= 0.6
+	case w < font.Bold:
+		k *= 1.3
+	}
+	a := 1 - k/pxPerDp
 	if a <= 0 || a >= 1 {
 		return c
 	}
@@ -86,13 +111,15 @@ func EmboldenFor(c color.NRGBA) float32 {
 
 func emboldenStroke(c color.NRGBA) float32 {
 	y := (0.299*float32(c.R) + 0.587*float32(c.G) + 0.114*float32(c.B)) / 255
+	// Mid greys need much less than dark text: #616061 (timestamps, y=.38)
+	// matches Chrome at ~0.15px, #454447 (y=.27) at the full 0.3.
 	switch {
-	case y <= 0.35:
+	case y <= 0.33:
 		return Embolden
-	case y >= 0.6:
+	case y >= 0.43:
 		return 0
 	}
-	return Embolden * (0.6 - y) / 0.25
+	return Embolden * (0.43 - y) / 0.10
 }
 
 // LabelOpts describes a run of label text for Text / DrawText.
@@ -146,7 +173,7 @@ func DrawText(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string) layo
 	if t := ForShaper(sh); t != nil {
 		return t.Text(gtx, o, txt)
 	}
-	o.Color = lightTextColor(o.Color, gtx.Metric.PxPerDp)
+	o.Color = lightTextColor(o.Color, gtx.Metric.PxPerDp, o.Font.Weight)
 	return drawText(gtx, sh, o, CleanText(txt), EmboldenFor(o.Color))
 }
 
@@ -155,7 +182,7 @@ func DrawText(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string) layo
 // emoji sprites) instead of relying on a color font.
 func (t *Theme) Text(gtx layout.Context, o LabelOpts, txt string) layout.Dimensions {
 	txt = CleanText(txt)
-	o.Color = lightTextColor(o.Color, gtx.Metric.PxPerDp)
+	o.Color = lightTextColor(o.Color, gtx.Metric.PxPerDp, o.Font.Weight)
 	if o.MaxLines == 1 && t.Images != nil {
 		if segs := splitEmoji(txt); segs != nil {
 			return t.textWithEmoji(gtx, o, segs)
@@ -264,6 +291,7 @@ func (t *Theme) textWithEmoji(gtx layout.Context, o LabelOpts, segs []segment) l
 // ---- glyph painting (adapted from gioui.org/widget's Label, MIT/Unlicense) ----
 
 func drawText(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string, emb float32) layout.Dimensions {
+	emb *= weightEmbolden(o.Font.Weight)
 	cs := gtx.Constraints
 	trunc := ""
 	if o.MaxLines > 0 {
