@@ -348,17 +348,28 @@ const fileCacheBytes = 48 << 20
 // emoji.list in the background.
 var EmojiMaxAge = 6 * time.Hour
 
-// later runs f after d on a background goroutine, unless the app stops.
-func (a *App) later(d time.Duration, f func()) {
+// later runs f after d on a background goroutine, unless the app stops
+// first. f must use a.bg for its requests: the auth-failed stop cancels it.
+// The returned channel closes once f ran or was skipped.
+func (a *App) later(d time.Duration, f func()) <-chan struct{} {
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		t := time.NewTimer(d)
 		defer t.Stop()
 		select {
 		case <-t.C:
-			f()
 		case <-a.bg.Done():
+			return
 		}
+		// re-check right before sending: the session may have ended while
+		// the timer ran (the client also refuses after sign-out)
+		if a.bg.Err() != nil || a.C.SignedOut() {
+			return
+		}
+		f()
 	}()
+	return done
 }
 
 func (a *App) loadUsergroups(ctx context.Context) error {

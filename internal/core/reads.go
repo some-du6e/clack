@@ -45,6 +45,20 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 			a.ResolveConv(ctx, ch)
 		}()
 	}
+	// Wait for the side fetches on every return path, errors included: a
+	// History that returned must have no requests left in flight (after an
+	// auth failure, one could otherwise reach Slack after sign-out).
+	waitSide := func() {
+		if countDone != nil {
+			<-countDone
+			countDone = nil
+		}
+		if convDone != nil {
+			<-convDone
+			convDone = nil
+		}
+	}
+	defer waitSide()
 	var msgs []slack.Message
 	var hasMore bool
 	if before == "" {
@@ -71,12 +85,7 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 		store.SortAsc(msgs)
 	}
 	page := Page{Messages: a.timeline(ch, msgs), HasMore: hasMore}
-	if countDone != nil {
-		<-countDone
-	}
-	if convDone != nil {
-		<-convDone
-	}
+	waitSide()
 	if c, ok := a.Conv(ch); ok {
 		page.Conv = &c
 	}
