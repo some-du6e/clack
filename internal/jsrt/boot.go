@@ -257,6 +257,12 @@ func (r *Runtime) installHost() {
 		r.onDoc([]byte(str(a, 0)), css)
 		return nil, nil
 	})
+	def("documentProps", func(js *Ctx, _ Value, a []Value) (any, error) {
+		if r.onDocProps != nil {
+			r.onDocProps([]byte(str(a, 0)), []byte(str(a, 1)))
+		}
+		return nil, nil
+	})
 	def("storage", func(js *Ctx, _ Value, a []Value) (any, error) {
 		kv := r.kv(str(a, 0))
 		key := str(a, 2)

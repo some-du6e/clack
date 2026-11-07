@@ -34,17 +34,18 @@ type Runtime struct {
 	deadline atomic.Int64 // unix nanos; the running task is interrupted after it (0 = none)
 
 	// JS-thread-only state below.
-	eng      *engine
-	js       *Ctx
-	timers   timerHeap
-	timerN   int
-	hosts    map[uint32]HostFunc
-	hostN    uint32
-	roots    map[uint64]*Root
-	onDoc    func(body []byte, css []string)
-	onCommit func(id uint64, tree []byte)
-	fetches  map[int]context.CancelFunc
-	start    time.Time
+	eng        *engine
+	js         *Ctx
+	timers     timerHeap
+	timerN     int
+	hosts      map[uint32]HostFunc
+	hostN      uint32
+	roots      map[uint64]*Root
+	onDoc      func(body []byte, css []string)
+	onDocProps func(html, body []byte)
+	onCommit   func(id uint64, tree []byte)
+	fetches    map[int]context.CancelFunc
+	start      time.Time
 
 	kvs      map[string]KV
 	builtins map[string]string

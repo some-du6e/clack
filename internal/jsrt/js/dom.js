@@ -24,7 +24,7 @@
     for (let n = node; n; n = n.parentNode) {
       n._j = undefined;
       if (n._rootId !== undefined) { dirtyRoots.add(n); queueFlush(); return; }
-      if (n === docBody || n === docHead) { docDirty = true; queueFlush(); return; }
+      if (n === docBody || n === docHead || n === docHtml) { docDirty = true; queueFlush(); return; }
     }
   };
   jr.markDirty = markDirty;
@@ -2003,6 +2003,14 @@
     for (const sh of document.adoptedStyleSheets || []) if (sh && sh._text) css.push(sh._text);
     return css;
   };
+  let lastBody = '[]', lastCss = '[]', lastHtmlP = '', lastBodyP = '';
+  // attributes and inline style of <html> / <body> (classes, CSS variables)
+  const rootProps = (n) => {
+    const p = {};
+    if (n._a) for (const [a, v] of n._a) p[attrName(a, false)] = v;
+    if (n._st) p.style = n._st;
+    return p;
+  };
   __clack.flush = () => {
     flushQueued = false;
     if (dirtyRoots.size) {
@@ -2015,7 +2023,10 @@
     }
     if (docDirty) {
       docDirty = false;
-      H.document('[' + serChildren(docBody) + ']', JSON.stringify(collectCss()));
+      const body = '[' + serChildren(docBody) + ']', css = JSON.stringify(collectCss());
+      if (body !== lastBody || css !== lastCss) { lastBody = body; lastCss = css; H.document(body, css); }
+      const hp = J(rootProps(docHtml)), bp = J(rootProps(docBody));
+      if (hp !== lastHtmlP || bp !== lastBodyP) { lastHtmlP = hp; lastBodyP = bp; H.documentProps(hp, bp); }
     }
   };
 

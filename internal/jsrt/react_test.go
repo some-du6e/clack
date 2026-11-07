@@ -375,6 +375,24 @@ return Pronouns;
 	})
 }
 
+func TestDocumentProps(t *testing.T) {
+	r := newTest(t)
+	ch := make(chan [2]string, 8)
+	r.OnDocumentProps(func(html, body []byte) { ch <- [2]string{string(html), string(body)} })
+	evalString(t, r, `document.documentElement.classList.add('streamer'); document.documentElement.style.setProperty('--sidebar-width', '260px'); document.body.dataset.theme = 'dark'; 0`)
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case x := <-ch:
+			if strings.Contains(x[0], `"className":"streamer"`) && strings.Contains(x[0], `"--sidebar-width":"260px"`) && strings.Contains(x[1], `"data-theme":"dark"`) {
+				return
+			}
+		case <-deadline:
+			t.Fatal("no document props")
+		}
+	}
+}
+
 func TestFileInputPicker(t *testing.T) {
 	r := newTest(t, func(o *Options) {
 		o.PickFiles = func(accept string, multiple bool) ([]PickedFile, error) {

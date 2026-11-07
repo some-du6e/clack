@@ -180,6 +180,18 @@ func (r *Runtime) OnDocument(fn func(body []byte, css []string)) {
 	r.Post(func(js *Ctx) { js.r.onDoc = fn })
 }
 
+// OnDocumentProps subscribes to the attributes and inline style of <html>
+// and <body> (a "p" object each, same shape as host-tree props), e.g.
+// documentElement.classList / style.setProperty('--x', …) used by global CSS.
+// Called on the JS thread after a change. Any goroutine.
+func (r *Runtime) OnDocumentProps(fn func(html, body []byte)) {
+	r.Post(func(js *Ctx) {
+		js.r.onDocProps = fn
+		// replay the current state
+		_, _ = js.Eval("<docprops>", "document.documentElement.toggleAttribute('data-clack', true), document.documentElement.removeAttribute('data-clack')")
+	})
+}
+
 // OnCommit receives the commits of roots created from JS
 // (__clack.createRoot(), ids with bit 52 set), on the JS thread.
 func (r *Runtime) OnCommit(fn func(id uint64, tree []byte)) {
