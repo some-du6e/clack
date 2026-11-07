@@ -84,3 +84,16 @@ func TestEmptyAppDMsHiddenAndSorted(t *testing.T) {
 		}
 	}
 }
+
+func TestAddEmojiValidation(t *testing.T) {
+	a, _ := testApp(t)
+	if err := a.AddEmoji(context.Background(), " :: ", []byte("x")); err == nil {
+		t.Error("empty name accepted")
+	}
+	if err := a.AddEmoji(context.Background(), "parrot", nil); err == nil {
+		t.Error("empty image accepted")
+	}
+	if emojiExt([]byte("GIF89a....")) != ".gif" || emojiExt([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}) != ".png" {
+		t.Error("emojiExt")
+	}
+}

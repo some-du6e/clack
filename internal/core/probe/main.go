@@ -243,6 +243,46 @@ func main() {
 		n := a.NotifyPrefs(ch)
 		return fmt.Sprintf("desktop=%q muted=%v starred=%v", n.Desktop, n.Muted, a.Starred(ch)), nil
 	})
+	// round 3: background name resolution, non-sidebar conversations, bots
+	for _, sec := range snap.Sections {
+		if sec.Type == "apps" || sec.Type == "direct_messages" {
+			var names []string
+			for _, id := range sec.Channels {
+				c, _ := a.Conv(id)
+				names = append(names, c.Name)
+			}
+			fmt.Printf("    %s order: %s\n", sec.Type, strings.Join(names, ", "))
+		}
+	}
+	t := time.Now()
+	_ = a.Mrkdwn("<#C0266FRGV> and <#C0C9QHNER26>") // channels outside the sidebar
+	a.S.NoteMissingBot("B0B83TK0FSA")
+	has := func(e core.Event, ids ...string) bool {
+		n := 0
+		for _, u := range e.Users {
+			for _, id := range ids {
+				if u == id {
+					n++
+				}
+			}
+		}
+		return n > 0
+	}
+	if ev, ok := ew.wait("names", "", 10*time.Second, func(e core.Event) bool { return has(e, "C0C9QHNER26", "B0B83TK0FSA") }); ok {
+		if !has(ev, "B0B83TK0FSA") { // channels and bots may land in separate events
+			ew.wait("names", "", 5*time.Second, func(e core.Event) bool { return has(e, "B0B83TK0FSA") })
+		}
+		b, _ := a.S.Bot("B0B83TK0FSA")
+		step("names resolved", t, "ids=%d lounge=%q lantern=%q bot=%q icon=%v", len(ev.Users), a.S.ChannelName("C0266FRGV"),
+			a.S.ChannelName("C0C9QHNER26"), b.Name, b.Icon != "")
+	} else {
+		fail("no names event")
+	}
+	timed("resolve conv", func() (string, error) {
+		c, ok := a.ResolveConv(ctx, "C0266FRGV")
+		_, inSidebar := a.S.Conv("C0266FRGV")
+		return fmt.Sprintf("ok=%v name=%s kind=%s sidebar=%v", ok, c.Name, c.Kind, inSidebar), nil
+	})
 	if thumb == "" {
 		for _, m := range page.Messages {
 			if m.Avatar != "" {

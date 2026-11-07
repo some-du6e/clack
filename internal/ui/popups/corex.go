@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 )
 
 var errNoCore = errors.New("not connected")
@@ -79,31 +80,33 @@ func cxNoteStar(ch string, star bool) {}
 
 // ---- custom emoji ----
 
-// cxCanAddEmoji reports whether core can add custom emoji.
-func cxCanAddEmoji(h Host) bool {
-	a, err := cxApp(h)
-	if err != nil {
-		return false
-	}
-	_, ok := any(a).(interface {
-		AddEmoji(context.Context, string, []byte) error
-	})
-	return ok
-}
+// cxCanAddEmoji reports whether core can add custom emoji (it can).
+func cxCanAddEmoji(h Host) bool { return h != nil && h.Core() != nil }
 
-// cxAddEmoji uploads a custom emoji (emoji.add needs a multipart upload,
-// which only core can do).
+// cxAddEmoji uploads a custom emoji via core.AddEmoji (emoji.add) and turns
+// Slack's error codes into the dialog's wording.
 func cxAddEmoji(ctx context.Context, h Host, name string, img []byte) error {
 	a, err := cxApp(h)
 	if err != nil {
 		return err
 	}
-	if s, ok := any(a).(interface {
-		AddEmoji(context.Context, string, []byte) error
-	}); ok {
-		return s.AddEmoji(ctx, name, img)
+	err = a.AddEmoji(ctx, name, img)
+	var se *slack.Error
+	if errors.As(err, &se) {
+		switch se.Code {
+		case "error_name_taken", "error_name_taken_i18n":
+			return errors.New("that name is already taken")
+		case "too_large", "error_too_big":
+			return errors.New("that image is too large")
+		case "invalid_name", "error_invalid_name":
+			return errors.New("that name isn't allowed")
+		case "error_bad_upload", "error_bad_format":
+			return errors.New("Slack couldn't read that image")
+		case "not_allowed", "restricted_action", "missing_scope", "no_permission":
+			return errors.New("you aren't allowed to add emoji here")
+		}
 	}
-	return errors.New("adding emoji needs core support (emoji.add)")
+	return err
 }
 
 // ---- GIFs (Slack's GIF tab: gif.featured / gif.search, Giphy media) ----

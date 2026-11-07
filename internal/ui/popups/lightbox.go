@@ -285,7 +285,15 @@ func (lb *Lightbox) Layout(gtx layout.Context) layout.Dimensions {
 
 	rad := dp(gtx, 8)
 	pc := clipRRect(gtx, panel, rad)
-	fill(gtx, panel, cl.Lightbox)
+	// Slack's media viewer panel is rgba(0,0,0,.7) over an opaque white
+	// (dark: #1a1d21) layer, so it reads as a solid gray that hides the app;
+	// only the 28px band around it shows the dimmed window (top nav and
+	// rail included, via the backdrop above).
+	under := rgb(0xffffff)
+	if th.Dark {
+		under = rgb(0x1a1d21)
+	}
+	fill(gtx, panel, theme.Mix(under, rgb(0x000000), .7))
 
 	headH, footH := dp(gtx, 85), dp(gtx, 85)
 	side := dp(gtx, 36)

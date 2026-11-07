@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -149,6 +150,47 @@ func (a *App) SetNotifyPrefs(ctx context.Context, ch string, n ChannelNotify) er
 		notifyPref{Name: "suppress_at_channel", Value: strconv.FormatBool(n.SuppressAtChannel)},
 		notifyPref{Name: "muted", Value: strconv.FormatBool(n.Muted)})
 	return a.setNotifications(ctx, ch, ps)
+}
+
+// ---- custom emoji ----
+
+// AddEmoji uploads a custom emoji (emoji.add, mode=data, multipart image).
+// Slack's error codes come back as *slack.Error (error_name_taken,
+// too_large, invalid_name, …). The new emoji reaches CustomEmoji through
+// the realtime emoji_changed event; it is also added locally as soon as
+// Slack answers with its URL.
+func (a *App) AddEmoji(ctx context.Context, name string, image []byte) error {
+	name = strings.Trim(strings.TrimSpace(name), ":")
+	if name == "" || len(image) == 0 {
+		return errors.New("core: AddEmoji needs a name and an image")
+	}
+	var r struct {
+		Emoji struct {
+			Name string `json:"name"`
+			URL  string `json:"url"`
+		} `json:"emoji"`
+		URL string `json:"url"`
+	}
+	if err := a.C.CallMultipart(ctx, "emoji.add", url.Values{"mode": {"data"}, "name": {name}}, "image", name+emojiExt(image), image, &r); err != nil {
+		return err
+	}
+	if u := firstNonEmpty(r.Emoji.URL, r.URL); u != "" {
+		a.S.CustomEmoji.Put(name, u)
+		a.emit(Event{Type: "emoji_changed", Name: name})
+	}
+	return nil
+}
+
+func emojiExt(b []byte) string {
+	switch http.DetectContentType(b) {
+	case "image/gif":
+		return ".gif"
+	case "image/jpeg":
+		return ".jpg"
+	case "image/webp":
+		return ".webp"
+	}
+	return ".png"
 }
 
 // ---- channel admin ----
