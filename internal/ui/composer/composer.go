@@ -59,6 +59,7 @@ type Composer struct {
 	drewInput     bool          // the editor was laid out (no roadblock)
 	wPane, wInput layout.Widget
 	wEditor, wAtt layout.Widget
+	keyS, draftS  string
 }
 
 // showFormatting is Slack's "Show formatting" (Aa) toggle; one setting for
@@ -105,6 +106,7 @@ func (c *Composer) init() {
 	bindAutocomplete(c.ed, c.ac, c.h.Invalidate)
 	c.att = newAttachments(c.h)
 	typingHub(c.h.Core()).addHost(c.h) // listen for typing events
+	c.initIDs()
 	c.wPane, c.wInput = c.layoutPaneBody, c.layoutInputBody
 	c.wEditor, c.wAtt = c.layoutEditor, c.att.Layout
 }

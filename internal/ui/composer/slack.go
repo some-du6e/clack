@@ -147,9 +147,11 @@ func crWysiwygFor(className string) *slackc.ClassDef {
 // kid returns the host nodes standing for the nested boundary name in a
 // patched native's children. patched is false when p is nil (the parent
 // was not patched: render the boundary yourself). Under a patch the
-// nested part is the slot node named name plus any plugin nodes after it
-// (and before it, when it is the first slot), up to the next slot; when
-// the plugin dropped it, e is empty.
+// nested part is the top-level node that is (or wraps, like
+// BetterTypingIndicator's span around TypingNames) the slot named name,
+// plus the plugin nodes after it (and before it, when nothing before
+// holds a slot), up to the next node holding a slot. When the plugin
+// dropped it, e is empty.
 func kid(p slackc.Props, name string) (e slackc.Element, patched bool) {
 	if p == nil {
 		return slackc.Element{}, false
@@ -161,7 +163,7 @@ func kid(p slackc.Props, name string) (e slackc.Element, patched bool) {
 	ns := ch.Nodes
 	start := -1
 	for i, n := range ns {
-		if s, ok := slotName(n); ok && s == name {
+		if holdsSlot(n, name) {
 			start = i
 			break
 		}
@@ -170,23 +172,34 @@ func kid(p slackc.Props, name string) (e slackc.Element, patched bool) {
 		return slackc.Element{}, true
 	}
 	first := start
-	for first > 0 {
-		if _, ok := slotName(ns[first-1]); ok {
-			break
-		}
+	for first > 0 && !holdsSlot(ns[first-1], "") {
 		first--
 	}
 	if first > 0 {
-		first = start // plugin nodes before it belong to the previous slot
+		first = start // plugin nodes before it belong to the previous part
 	}
 	end := start + 1
-	for end < len(ns) {
-		if _, ok := slotName(ns[end]); ok {
-			break
-		}
+	for end < len(ns) && !holdsSlot(ns[end], "") {
 		end++
 	}
 	return slackc.Element{Nodes: ns[first:end]}, true
+}
+
+// holdsSlot reports whether n is, or wraps, a native slot named name (any
+// slot when name is ""). It doesn't look inside slots.
+func holdsSlot(n *slackc.Node, name string) bool {
+	if n == nil {
+		return false
+	}
+	if s, ok := slotName(n); ok {
+		return name == "" || s == name
+	}
+	for _, k := range n.C {
+		if holdsSlot(k, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // slotName reports the Slack name of a native slot node.
@@ -240,16 +253,22 @@ func putEnableFlags(p slackc.Props, hide uint32) {
 
 // ---- composer-level boundaries ----
 
-func (c *Composer) key() string { return draftKey(c.ch, c.ts) }
+// key and draftID are fixed for a composer; init computes them once so
+// the frame doesn't build strings.
+func (c *Composer) key() string     { return c.keyS }
+func (c *Composer) draftID() string { return c.draftS }
 
-func (c *Composer) draftID() string {
-	if c.edit != nil {
-		return "edit-" + c.edit.Channel + "-" + c.edit.TS
+func (c *Composer) initIDs() {
+	c.keyS = draftKey(c.ch, c.ts)
+	switch {
+	case c.edit != nil:
+		c.keyS = "edit/" + c.edit.Channel + "/" + c.edit.TS
+		c.draftS = "edit-" + c.edit.Channel + "-" + c.edit.TS
+	case c.ts != "":
+		c.draftS = "draft-" + c.ch + "-" + c.ts
+	default:
+		c.draftS = "draft-" + c.ch
 	}
-	if c.ts != "" {
-		return "draft-" + c.ch + "-" + c.ts
-	}
-	return "draft-" + c.ch
 }
 
 func (c *Composer) viewContext() string {
