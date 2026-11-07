@@ -425,7 +425,7 @@ func TestMemberStatusTextCanonical(t *testing.T) {
 	h.app.S.PutUsers([]slack.User{self, alice})
 	var got struct{ Self, Alice, Status string }
 	h.jsInto(`const s = T.redux.getRawState().members
-		return { Self: s['`+selfID+`'].profile.status_text_canonical, Alice: s.UALICE.profile.status_text_canonical,
+		return { Self: s['`+selfID+`'].profile.status_text_canonical, Alice: s.UALICE.profile.status_text_canonical ?? '',
 			Status: T.profile.getStatus().canonical }`, &got)
 	if got.Self != "Out of office" || got.Alice != "" || got.Status != "Out of office" {
 		t.Errorf("status_text_canonical %+v", got)

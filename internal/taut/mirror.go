@@ -924,7 +924,7 @@ func (m *mirror) member(u *slack.User) map[string]any {
 	// Slack always sends these as strings, "" when unset. Avatar URLs it
 	// sends only when it has them, so absent ones stay absent (plugins
 	// fall back with ??).
-	for _, k := range []string{"real_name", "display_name", "status_text", "status_text_canonical", "status_emoji", "first_name", "last_name", "title"} {
+	for _, k := range []string{"real_name", "display_name", "status_text", "status_emoji", "first_name", "last_name", "title"} {
 		if _, ok := p[k]; !ok {
 			p[k] = ""
 		}
