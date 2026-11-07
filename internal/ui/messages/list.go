@@ -20,6 +20,8 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -111,9 +113,21 @@ type listState struct {
 	sel         selection
 	sb          scrollbar
 	pendingJump string
+
+	rc rowCtx // this frame's row inputs (rows keep a pointer to it)
+
+	// hover toolbar state for its natives (MessageActions)
+	tbRow  *row
+	tbSize image.Point
+	tbHov  int // hovered toolbar button, -1 none
 }
 
 var listCache = map[string]*listState{}
+
+// lastHost is the Host of the last message list drawn. Host components
+// (drawn inside plugin trees, possibly outside any list) reach core and
+// the popups through it; nil until a list has been drawn.
+var lastHost Host
 
 func stateFor(h Host, ch, ts string) *listState {
 	key := ch
@@ -338,6 +352,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	c := colorsFor(th)
 	st := styleFor(h)
 	now := time.Now()
+	lastHost = h
 	s.hb.ensureLoaded(s.m)
 	s.sync(h, now)
 	size := gtx.Constraints.Max
@@ -415,16 +430,19 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	if h.Core() != nil {
 		selfID = h.Core().Self().ID
 	}
-	rc := rowCtx{h: h, th: th, st: st, c: c, now: now, thread: s.thread, selfID: selfID, usersRev: s.hb.usersRev() + 1,
+	s.rc = rowCtx{h: h, th: th, st: st, c: c, now: now, thread: s.thread, selfID: selfID, usersRev: s.hb.usersRev() + 1,
 		origin:    func(p image.Point) image.Point { return s.anchor(h, origin, p) },
 		onReact:   func(r *row, name string, add bool) { s.react(h, r, name, add, selfID) },
 		onRetry:   func(r *row) { s.retry(h, r) },
 		onDiscard: func(r *row) { s.discard(h, r) },
 	}
+	rc := &s.rc
 	s.origin = origin
 	s.tip = ""
+	ls := listClass.Enter(gtx, 0, 0)
+	defer ls.Leave()
 	s.list.Layout(gtx, len(s.items), func(gtx layout.Context, i int) layout.Dimensions {
-		d := s.layoutItem(gtx, h, &rc, i)
+		d := s.layoutItem(gtx, h, rc, i)
 		s.heights[i] = d.Size.Y
 		return d
 	})
@@ -439,7 +457,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		s.visible[1] = i + 1
 	}
 
-	s.overlays(gtx, h, &rc, size)
+	s.overlays(gtx, h, rc, size)
 	s.layoutScrollbar(gtx, c, size, now)
 	area.Pop()
 
@@ -527,7 +545,18 @@ func (s *listState) react(h Host, r *row, name string, add bool, self string) {
 	h.Invalidate()
 }
 
+// layoutItem draws item i as a .c-virtual_list__item keyed like Slack's
+// data-item-key.
 func (s *listState) layoutItem(gtx layout.Context, h Host, rc *rowCtx, i int) layout.Dimensions {
+	st := itemClass.EnterAttr(gtx, 0, 0, "data-item-key", s.items[i].key)
+	defer st.Leave()
+	if st.Hidden() {
+		return layout.Dimensions{}
+	}
+	return s.layoutItemContent(gtx, h, rc, i)
+}
+
+func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i int) layout.Dimensions {
 	it := s.items[i]
 	c := rc.c
 	w := gtx.Constraints.Max.X
@@ -597,8 +626,8 @@ func (s *listState) layoutItem(gtx layout.Context, h Host, rc *rowCtx, i int) la
 	d := r.layout(gtx, rc)
 	// hover tooltip for reaction pills
 	if rc.hovered {
-		for k := range r.reacts {
-			if k < len(r.reactRects) && k < len(r.m.Reactions) && r.reacts[k].Hovered() {
+		for k := range r.pills {
+			if k < len(r.reactRects) && k < len(r.m.Reactions) && r.pills[k].btn.Hovered() {
 				s.tip = reactionTip(h, &r.m.Reactions[k], rc.selfID)
 				s.tipRect = r.reactRects[k] // row-local; positioned in overlays
 				s.tipItem = i
@@ -807,11 +836,6 @@ func tooltip(gtx layout.Context, th *theme.Theme, c *colors, txt string, anchor 
 func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx int, size image.Point) {
 	c := rc.c
 	th := h.Theme()
-	bs := dp(gtx, mt.toolbarBtn)
-	pad := dp(gtx, mt.toolbarPad)
-	n := tbCount
-	tw := pad*2 + n*bs
-	x := size.X - dp(gtx, mt.toolbarRight) - tw
 	top := mt.toolbarTop
 	if !s.items[idx].header {
 		top = -28
@@ -820,72 +844,144 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 	if y < dp(gtx, 4) {
 		y = dp(gtx, 4)
 	}
-	th2 := bs + 2*pad
-	rect := image.Rect(x, y, x+tw, y+th2)
-	s.tbRect, s.tbFor = rect, idx
-	shadowCard(gtx.Ops, rect, dp(gtx, 12), dp(gtx, 1), c.Bg, c.PillBorder, c.Shadow)
-	app := h.Core()
-	m := r.m
-	bx := x + pad
-	for i := 0; i < n; i++ {
-		btn := &s.tb[i]
-		i := i
-		if btn.Clicked(gtx) {
-			anchor := s.anchor(h, image.Point{}, image.Pt(bx, y+th2))
-			switch i {
-			case tbAddReact:
-				rr := r
-				h.OpenEmojiPicker(anchor, func(name string) { rc.onReact(rr, name, true) })
-			case tbReply:
-				h.OpenThread(m.Channel, threadRoot(&m))
-			case tbForward:
-				h.ShowOverlay(popups.NewForwardModal(h, m))
-			case tbTodo:
-				s.toggleSaved(h, app, m)
-			case tbList:
-				h.Toast("Lists aren't supported yet")
-			case tbMore:
-				mm := m
-				h.ShowOverlay(popups.NewMessageMenuOpts(h, anchor, m, popups.MessageMenuOpts{
-					OnEdit:  func() { s.startEdit(h, mm.TS) },
-					OnReply: func() { h.OpenThread(mm.Channel, threadRoot(&mm)) },
-				}))
-			}
+	s.tbRow, s.tbSize, s.tbHov = r, size, -1
+	// Right-aligned: measure first (a plugin may add to the toolbar).
+	rec := op.Record(gtx.Ops)
+	d := slackc.Component(gtx, "MessageActions", s, (*listState).actionsProps, (*listState).layoutActions)
+	call := rec.Stop()
+	x := size.X - dp(gtx, mt.toolbarRight) - d.Size.X
+	t := op.Offset(image.Pt(x, y)).Push(gtx.Ops)
+	call.Add(gtx.Ops)
+	t.Pop()
+	s.tbRect, s.tbFor = image.Rectangle{Min: image.Pt(x, y), Max: image.Pt(x, y).Add(d.Size)}, idx
+	if i := s.tbHov; i >= 0 {
+		bs := dp(gtx, mt.toolbarBtn)
+		bx := x + dp(gtx, mt.toolbarPad) + i*bs
+		tip := tbTips[i]
+		if i == tbTodo && r.src.Saved {
+			tip = "Remove from to-dos"
 		}
-		bxx := bx
-		at(gtx, bxx, y+pad, func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints = layout.Exact(image.Pt(bs, bs))
-			return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				rr := image.Rectangle{Max: image.Pt(bs, bs)}
-				col := c.ToolbarIcon
-				isz := float32(18)
-				if btn.Hovered() {
-					rrect(gtx.Ops, rr, dp(gtx, 8), c.ToolbarHoverBg)
-					col = c.Text
-					isz = 21.6 // Slack scales the icon 1.2x on hover
-				}
-				is := dp(gtx, isz)
-				at(gtx, (bs-is)/2, (bs-is)/2, func(gtx layout.Context) layout.Dimensions {
-					ic := tbIcons[i]
-					if i == tbTodo && m.Saved {
-						ic = "check-circle"
-						col = c.Link
-					}
-					return icons.Get(ic)(gtx, unit.Dp(isz), col)
-				})
-				return layout.Dimensions{Size: rr.Size()}
-			})
-		})
-		if btn.Hovered() {
-			tip := tbTips[i]
-			if i == tbTodo && m.Saved {
-				tip = "Remove from to-dos"
-			}
-			s.tip = ""
-			tooltip(gtx, th, c, tip, image.Pt(bxx+bs/2, y-dp(gtx, 4)), size)
-		}
-		bx += bs
+		s.tip = ""
+		tooltip(gtx, th, c, tip, image.Pt(bx+bs/2, y-dp(gtx, 4)), size)
 	}
+}
+
+func (s *listState) actionsProps() slackc.Props {
+	r := s.tbRow
+	return slackc.Props{"$key": r.ts, "msg": r.message(), "ts": r.src.TS, "channelId": r.src.Channel, "hover": true,
+		"isEditing": false, "position": "default", "messageContainerType": "message", "viewContext": r.viewContext(), "windowId": "main"}
+}
+
+func (s *listState) reactionButtonProps() slackc.Props {
+	return slackc.Props{"$key": s.tbRow.ts, "aria-label": tbTips[tbAddReact], "label": tbTips[tbAddReact],
+		"data-qa": tbQA[tbAddReact], "actionId": "add_reaction", "showLabel": false}
+}
+
+// layoutActions is MessageActions, the hover toolbar (the one OwlMode
+// wraps; Slack's other MessageActions wraps the whole message).
+func (s *listState) layoutActions(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+	st := actionsClass.Enter(gtx, css.StateHover, 0)
+	defer st.Leave()
+	if st.Hidden() {
+		return layout.Dimensions{}
+	}
+	if st.Active() {
+		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return s.actionsCard(gtx, st) })
+	}
+	return s.actionsCard(gtx, st)
+}
+
+func (s *listState) actionsCard(gtx layout.Context, st slackc.Styled) layout.Dimensions {
+	c := s.rc.c
+	bs := dp(gtx, mt.toolbarBtn)
+	pad := dp(gtx, mt.toolbarPad)
+	size := image.Pt(pad*2+tbCount*bs, bs+2*pad)
+	shadowCard(gtx.Ops, image.Rectangle{Max: size}, dp(gtx, 12), dp(gtx, 1), st.Background(c.Bg), c.PillBorder, c.Shadow)
+	for i := 0; i < tbCount; i++ {
+		at(gtx, pad+i*bs, pad, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Exact(image.Pt(bs, bs))
+			if i == tbAddReact {
+				return slackc.Component(gtx, "MessageActionButtonReaction", s, (*listState).reactionButtonProps, (*listState).layoutReactionButton)
+			}
+			return s.toolbarButton(gtx, i)
+		})
+	}
+	return layout.Dimensions{Size: size}
+}
+
+// layoutReactionButton is MessageActionButtonReaction ("Add reaction…").
+func (s *listState) layoutReactionButton(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+	return s.toolbarButton(gtx, tbAddReact)
+}
+
+// toolbarButton draws toolbar button i (.c-message_actions__button).
+func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
+	h, rc, r := s.rc.h, &s.rc, s.tbRow
+	app := h.Core()
+	m := r.src
+	btn := &s.tb[i]
+	if btn.Clicked(gtx) {
+		anchor := s.anchor(h, image.Point{}, image.Point{})
+		switch i {
+		case tbAddReact:
+			rr := r
+			h.OpenEmojiPicker(anchor, func(name string) { rc.onReact(rr, name, true) })
+		case tbReply:
+			h.OpenThread(m.Channel, threadRoot(&m))
+		case tbForward:
+			h.ShowOverlay(popups.NewForwardModal(h, m))
+		case tbTodo:
+			s.toggleSaved(h, app, m)
+		case tbList:
+			h.Toast("Lists aren't supported yet")
+		case tbMore:
+			mm := m
+			h.ShowOverlay(popups.NewMessageMenuOpts(h, anchor, m, popups.MessageMenuOpts{
+				OnEdit:  func() { s.startEdit(h, mm.TS) },
+				OnReply: func() { h.OpenThread(mm.Channel, threadRoot(&mm)) },
+			}))
+		}
+	}
+	hov := btn.Hovered()
+	if hov {
+		s.tbHov = i
+	}
+	st := actionBtnClass.EnterAttr(gtx, btnState(gtx, btn), 0, "data-qa", tbQA[i])
+	defer st.Leave()
+	bs := gtx.Constraints.Max.X
+	if st.Hidden() {
+		return layout.Dimensions{Size: image.Pt(bs, bs)}
+	}
+	if st.Active() {
+		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return s.toolbarIcon(gtx, btn, i, m.Saved, st) })
+	}
+	return s.toolbarIcon(gtx, btn, i, m.Saved, st)
+}
+
+func (s *listState) toolbarIcon(gtx layout.Context, btn *widget.Clickable, i int, saved bool, st slackc.Styled) layout.Dimensions {
+	c := s.rc.c
+	bs := gtx.Constraints.Max.X
+	return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		rr := image.Rectangle{Max: image.Pt(bs, bs)}
+		col := c.ToolbarIcon
+		isz := float32(18)
+		if btn.Hovered() {
+			rrect(gtx.Ops, rr, dp(gtx, 8), st.Background(c.ToolbarHoverBg))
+			col = c.Text
+			isz = 21.6 // Slack scales the icon 1.2x on hover
+		}
+		ic := tbIcons[i]
+		if i == tbTodo && saved {
+			ic = "check-circle"
+			col = c.Link
+		}
+		col = st.Color(col)
+		is := dp(gtx, isz)
+		at(gtx, (bs-is)/2, (bs-is)/2, func(gtx layout.Context) layout.Dimensions {
+			return icons.Get(ic)(gtx, unit.Dp(isz), col)
+		})
+		return layout.Dimensions{Size: rr.Size()}
+	})
 }
 
 func (s *listState) toggleSaved(h Host, app *core.App, m core.Message) {
@@ -959,7 +1055,7 @@ func (s *listState) startEdit(h Host, ts string) {
 	}
 	rr := r
 	r.editFrames = 0
-	r.edit = composer.NewEdit(h, r.m, func() {
+	r.edit = composer.NewEdit(h, r.src, func() {
 		rr.edit = nil
 		h.Invalidate()
 	})

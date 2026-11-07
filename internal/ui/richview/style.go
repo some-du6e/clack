@@ -206,6 +206,9 @@ type Options struct {
 	MaxWidth float32
 	// Compact uses 13px/18px text (previews, reply bars, search results).
 	Compact bool
+	// Channel and TS identify the message, for the Slack-shaped props of
+	// its attachment components (activeChannelId, messageTs).
+	Channel, TS string
 }
 
 // textColor applies LightTextFade to light glyph colors at scale pxPerDp.

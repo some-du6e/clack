@@ -131,6 +131,9 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 		if a.AuthorSubname != "" {
 			name += "  " + a.AuthorSubname
 		}
+		if l.inAtt && a.AuthorIcon != "" {
+			l.authorImg = len(l.d.imgs) + 1 // drawn as ConnectedBaseAvatar (comps.go)
+		}
 		row(l.iconRow(a.AuthorIcon, name, cx, cy, cw, ic, weight, 15, p.Text, tg))
 	}
 	if len(a.Title) > 0 {

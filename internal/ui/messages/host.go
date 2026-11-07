@@ -13,6 +13,7 @@ import (
 	"gioui.org/text"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
@@ -58,14 +59,15 @@ var (
 	styles   = map[*text.Shaper]*styleEntry{}
 )
 
-func styleFor(h Host) *richview.Style {
-	th := h.Theme()
+func styleFor(h Host) *richview.Style { return styleForTheme(h.Theme(), h.Images()) }
+
+func styleForTheme(th *theme.Theme, images *imgcache.Cache) *richview.Style {
 	stylesMu.Lock()
 	e, ok := styles[th.Shaper]
 	if !ok {
 		var imgs richview.Images
-		if c := h.Images(); c != nil {
-			imgs = c
+		if images != nil {
+			imgs = images
 		}
 		e = &styleEntry{st: richview.NewStyle(th.Shaper, imgs, richview.LightPalette())}
 		e.st.Face = theme.Typeface
