@@ -320,10 +320,10 @@ func TestSlickViewCharacterCounter(t *testing.T) {
 		txt, ok := e.treeWith("slick-char-counter")
 		return ok && count.MatchString(txt)
 	})
-	if c.ui.shown&(1<<crSend) == 0 {
-		e.dumpTrees()
-		t.Errorf("the send button isn't drawn next to the count (shown %b)", c.ui.shown)
-	}
+	e.why = func() string { return fmt.Sprintf("shown %b", c.ui.shown) }
+	e.until(5*time.Second, "the send button drawn next to the count", frame, func() bool {
+		return c.ui.shown&(1<<crSend) != 0
+	})
 	edType(c.ed, " world")
 	count = regexp.MustCompile(`(^|\D)11/40,?000`)
 	e.until(5*time.Second, "the count following the text (11)", frame, func() bool {
@@ -380,8 +380,16 @@ func TestSlickViewBetterBlock(t *testing.T) {
 		for i, it := range items {
 			ids[i] = it.ID + "=" + it.Name
 		}
-		return fmt.Sprintf("open=%v active=%v trig=%+v rows=%v sel=%d disallowed=%v patched(autocompleteMembers)=%v",
-			c.ac.Open(), c.ac.active, c.ac.trig, ids, sel, c.ac.ov.disallowed, currentTaut().ThunkPatched(thACMembers))
+		c.ac.mu.Lock()
+		src := c.ac.memberSourcesLocked()
+		c.ac.mu.Unlock()
+		var native []string
+		for _, it := range src.rank("bob", false) {
+			native = append(native, it.ID+"="+it.Name)
+		}
+		_, haveBobby := c.ac.known["U0BOBBY001"]
+		return fmt.Sprintf("open=%v active=%v trig=%+v rows=%v sel=%d disallowed=%v patched(autocompleteMembers)=%v native=%v known=%d bobbyKnown=%v",
+			c.ac.Open(), c.ac.active, c.ac.trig, ids, sel, c.ac.ov.disallowed, currentTaut().ThunkPatched(thACMembers), native, len(c.ac.known), haveBobby)
 	}
 	edType(c.ed, "@bob")
 	e.until(8*time.Second, "bobby in the @ rows and bob gone", frame, func() bool {
