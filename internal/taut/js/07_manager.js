@@ -377,3 +377,25 @@ T.init = () => {
   for (const name of go('thunkNames') || []) nativeThunk(name)
   return { version: 1 }
 }
+
+/** Go → JS: what plugins have registered, for settings diagnostics and tests */
+T.introspect = () => ({
+  running: T.running(),
+  components: T.patchedComponents(),
+  thunks: patchedThunkNames(),
+  rtm: [...rtmListeners.keys()],
+  buttons: composerButtons.get().map((b) => b.id),
+  sendChecks: sendChecks.size,
+  linkTransforms: linkTransforms.size,
+  inlineMarkup: !!activeMarkup,
+  sendTransforms: sendTransforms.size,
+  actionable: actionableTransforms.size,
+  styles: [...sheets.keys()],
+  slices: [...sliceLayers.keys()],
+  statePatches: statePatches.size,
+  tabs: preferencesTabs.get().map((t) => t.label),
+  overlays: [...overlays.values()].map((o) => o.kind + ':' + o.title),
+  experiments: Object.fromEntries(forcedExperiments),
+  resize: resizeRegs.size,
+  peers: peerListeners.size,
+})

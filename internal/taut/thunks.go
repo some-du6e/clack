@@ -249,7 +249,7 @@ func (tt *thunkTable) runThunk(ctx context.Context, name string, args []json.Raw
 
 // ---- default native implementations, over core ----
 
-type obj = map[string]json.RawMessage
+type obj map[string]json.RawMessage
 
 func argObj(args []json.RawMessage) obj {
 	o := obj{}
