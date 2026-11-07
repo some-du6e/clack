@@ -88,8 +88,8 @@ func newTestApp(t testing.TB) (*core.App, *fakeSlack) {
 	s.TeamID, s.TeamName, s.TeamDomain = "T0266FRGM", "Synthetic Club", "hackclub"
 	s.Unlock()
 	s.PutUsers([]slack.User{
-		{ID: tSelf, Name: "me", RealName: "Test Self", Profile: slack.Profile{DisplayName: "self", Pronouns: "they/them", Image48: "https://avatars.invalid/self-48.png"}},
-		{ID: "UALICE", Name: "alice", RealName: "Alice Example", Profile: slack.Profile{DisplayName: "alice", Pronouns: "she/her", Image48: "https://avatars.invalid/alice-48.png"}},
+		{ID: tSelf, Name: "me", RealName: "Test Self", Profile: slack.Profile{DisplayName: "self", Pronouns: "they/them", Image24: "https://avatars.invalid/self-48.png", Image48: "https://avatars.invalid/self-48.png"}},
+		{ID: "UALICE", Name: "alice", RealName: "Alice Example", Profile: slack.Profile{DisplayName: "alice", Pronouns: "she/her", Image24: "https://avatars.invalid/alice-48.png", Image48: "https://avatars.invalid/alice-48.png"}},
 		{ID: "UBOB", Name: "bob", RealName: "Bob Example", Profile: slack.Profile{DisplayName: "bob"}},
 		{ID: tBot, Name: "slackbot", RealName: "Slackbot", IsBot: true, Profile: slack.Profile{DisplayName: "Slackbot"}},
 	})
