@@ -33,6 +33,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -66,7 +67,8 @@ type thrData struct {
 // thrCard is the per-thread widget state and cached header text.
 type thrCard struct {
 	title, more, reply     widget.Clickable
-	hovers                 map[string]*gesture.Hover // per message ts
+	msgs                   map[string]*thrMsg // per message ts
+	itemKey                string             // data-item-key: <channel>-<root ts>
 	name, people, moreText string
 	also                   string // "Also send to #general"
 	built                  bool
@@ -75,13 +77,24 @@ type thrCard struct {
 	compY int                // composer top within the list element (px)
 }
 
-func (c *thrCard) hover(ts string) *gesture.Hover {
-	h := c.hovers[ts]
-	if h == nil {
-		h = new(gesture.Hover)
-		c.hovers[ts] = h
+func (c *thrCard) msg(ts string) *thrMsg {
+	m := c.msgs[ts]
+	if m == nil {
+		m = new(thrMsg)
+		c.msgs[ts] = m
 	}
-	return h
+	return m
+}
+
+// thrMsg is one message row's hover state and this frame's context, read
+// by its Slack boundaries (ThreadRootGeneric,
+// ThreadSenderAndTimestampGeneric) through method expressions.
+type thrMsg struct {
+	hv          gesture.Hover
+	v           *Threads
+	m           *core.Message
+	top         unit.Dp
+	name, stamp string
 }
 
 // Threads is the Threads view.
@@ -138,8 +151,10 @@ func (v *Threads) Layout(gtx C) D {
 	}
 	v.settle()
 
+	st := thrViewClass.Enter(gtx, 0, 0)
+	defer st.Leave()
 	size := gtx.Constraints.Max
-	fill(gtx, image.Rectangle{Max: size}, v.p.Page)
+	fill(gtx, image.Rectangle{Max: size}, st.Background(v.p.Page))
 	layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(v.head),
 		layout.Flexed(1, v.body),
@@ -497,7 +512,7 @@ func (v *Threads) msgHover() color.NRGBA {
 func (v *Threads) cardFor(t *thrItem, convs map[string]core.ConvRef) *thrCard {
 	c := v.cards[t.key]
 	if c == nil {
-		c = &thrCard{hovers: map[string]*gesture.Hover{}}
+		c = &thrCard{msgs: map[string]*thrMsg{}, itemKey: t.Channel + "-" + t.Root.TS}
 		v.cards[t.key] = c
 	}
 	if c.built && (c.name == t.Channel || c.name == "#"+t.Channel) {
@@ -561,6 +576,11 @@ func (v *Threads) thread(gtx C, t *thrItem, convs map[string]core.ConvRef) D {
 	nameW := wBold
 	if v.unread(t) > 0 {
 		nameW = wBlack
+	}
+	st := thrItemClass.EnterAttr(gtx, 0, 0, "data-item-key", c.itemKey)
+	defer st.Leave()
+	if st.Hidden() {
+		return D{}
 	}
 	headH, cardTop := 0, 0
 	d := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -626,7 +646,11 @@ func (v *Threads) card(gtx C, c *thrCard, t *thrItem) (D, int) {
 		compBottom = 0 // the real composer ends with its 24px hint bar
 	}
 	d := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(func(gtx C) D { return v.msg(gtx, c.hover(t.Root.TS), &t.Root, 20) }),
+		layout.Rigid(func(gtx C) D {
+			s := c.msg(t.Root.TS)
+			s.v, s.m, s.top = v, &t.Root, 20
+			return slackc.Component(gtx, "ThreadRootGeneric", s, (*thrMsg).rootProps, (*thrMsg).layoutRoot)
+		}),
 		layout.Rigid(func(gtx C) D {
 			if c.moreText == "" {
 				return D{}
@@ -646,7 +670,7 @@ func (v *Threads) card(gtx C, c *thrCard, t *thrItem) (D, int) {
 		layout.Rigid(func(gtx C) D {
 			return actStack(gtx, len(t.Replies), func(gtx C, i int) D {
 				m := &t.Replies[i]
-				d := v.msg(gtx, c.hover(m.TS), m, 8)
+				d := v.msg(gtx, c.msg(m.TS), m, 8)
 				if unread > 0 && i == max(unreadFrom, 0) {
 					v.newLine(gtx, d.Size.X)
 				}
@@ -693,12 +717,23 @@ func (v *Threads) newLine(gtx C, w int) {
 // 36 radius 8, 8px gap, 15px/22px 900 name, 12px/17.6px #616061 time 7px
 // after it, 15px/22px body. Hover paints #f8f8f8 (the hover overlay in
 // dark mode).
-func (v *Threads) msg(gtx C, hv *gesture.Hover, m *core.Message, top unit.Dp) D {
+func (v *Threads) msg(gtx C, s *thrMsg, m *core.Message, top unit.Dp) D {
+	hv := &s.hv
 	hovered := hv.Update(gtx.Source)
 	name, av := v.authorOf(m)
 	stamp, next := thrTime(tsTime(m.TS), gtx.Now)
 	if next > 0 {
 		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(next)})
+	}
+	s.v, s.m, s.name, s.stamp = v, m, name, stamp
+	var mods uint64
+	if hovered {
+		mods = 1
+	}
+	cs := thrMsgClass.Enter(gtx, hoverState(hovered), mods)
+	defer cs.Leave()
+	if cs.Hidden() {
+		return D{}
 	}
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 	rec := op.Record(gtx.Ops)
@@ -709,11 +744,7 @@ func (v *Threads) msg(gtx C, hv *gesture.Hover, m *core.Message, top unit.Dp) D 
 			layout.Flexed(1, func(gtx C) D {
 				return col(gtx,
 					layout.Rigid(func(gtx C) D {
-						return row(gtx, layout.Baseline,
-							layout.Rigid(func(gtx C) D { return v.para(gtx, 15, 22, wBlack, v.p.Text, 1, name) }),
-							hgap(7),
-							layout.Rigid(func(gtx C) D { return v.para(gtx, 12, 17.6, wReg, v.meta(), 1, stamp) }),
-						)
+						return slackc.Component(gtx, "ThreadSenderAndTimestampGeneric", s, (*thrMsg).senderProps, (*thrMsg).layoutSender)
 					}),
 					layout.Rigid(func(gtx C) D { return v.msgBody(gtx, m, false, 0) }),
 					layout.Rigid(func(gtx C) D {
@@ -729,7 +760,7 @@ func (v *Threads) msg(gtx C, hv *gesture.Hover, m *core.Message, top unit.Dp) D 
 	call := rec.Stop()
 	r := image.Rectangle{Max: d.Size}
 	if hovered {
-		fill(gtx, r, v.msgHover())
+		fill(gtx, r, cs.Background(v.msgHover()))
 	}
 	call.Add(gtx.Ops)
 	st := clip.Rect(r).Push(gtx.Ops)
@@ -866,4 +897,78 @@ func botName(id string, root *core.Message, replies []core.Message) string {
 		}
 	}
 	return ""
+}
+
+// --- Slack boundaries (docs/PLUGINS-components.md §1.1, §5) ---
+
+// rootProps: ThreadRootGeneric {msg}.
+func (s *thrMsg) rootProps() slackc.Props {
+	return slackc.Props{"$key": "root-" + s.m.Channel + "-" + s.m.TS, "msg": msgProps(s.m)}
+}
+
+// layoutRoot draws the thread's root message (ThreadRootGeneric's native),
+// from the plugin's msg when it overrides it (ShowRealUser).
+func (s *thrMsg) layoutRoot(gtx C, p slackc.Props) D {
+	m := s.m
+	if mp := p.Map("msg"); mp != nil {
+		om := msgOverride(m, mp)
+		m = &om
+	}
+	return s.v.msg(gtx, s, m, s.top)
+}
+
+// senderProps: ThreadSenderAndTimestampGeneric {msg, adjacent, visible,
+// omitTimestamp, omitLinebreak, timestampLabel}. Clack draws the body on
+// its own line, so omitLinebreak is set.
+func (s *thrMsg) senderProps() slackc.Props {
+	return slackc.Props{"$key": "sender-" + s.m.Channel + "-" + s.m.TS, "msg": msgProps(s.m), "adjacent": false,
+		"visible": true, "omitTimestamp": false, "omitLinebreak": true, "keepSenderAccessible": false,
+		"timestampLabel": s.stamp}
+}
+
+// layoutSender is the name and time line. Under a patch it honours
+// children, visible=false, omitTimestamp and a msg override (the name).
+func (s *thrMsg) layoutSender(gtx C, p slackc.Props) D {
+	st := thrSenderClass.Enter(gtx, 0, 0)
+	defer st.Leave()
+	if st.Hidden() {
+		return D{}
+	}
+	if e, ok := slackc.PropChildren(p); ok {
+		return slackc.LayoutElement(gtx, e)
+	}
+	name, stamp := s.name, s.stamp
+	if p != nil {
+		if p.Has("visible") && !p.Bool("visible") {
+			return D{}
+		}
+		if p.Bool("omitTimestamp") {
+			stamp = ""
+		}
+		if mp := p.Map("msg"); mp != nil && s.m != nil {
+			om := msgOverride(s.m, mp)
+			if n, _ := s.v.authorOf(&om); n != "" {
+				name = n
+			}
+		}
+	}
+	if !st.Active() {
+		return s.line(gtx, st, name, stamp)
+	}
+	return st.Wrap(gtx, func(gtx C) D { return s.line(gtx, st, name, stamp) })
+}
+
+func (s *thrMsg) line(gtx C, st slackc.Styled, name, stamp string) D {
+	v := s.v
+	col, size := st.Color(v.p.Text), st.FontSize(15)
+	return row(gtx, layout.Baseline,
+		layout.Rigid(func(gtx C) D { return v.para(gtx, size, 22, wBlack, col, 1, name) }),
+		hgap(7),
+		layout.Rigid(func(gtx C) D {
+			if stamp == "" {
+				return D{}
+			}
+			return v.para(gtx, 12, 17.6, wReg, v.meta(), 1, stamp)
+		}),
+	)
 }

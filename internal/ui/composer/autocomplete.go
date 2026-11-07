@@ -100,6 +100,16 @@ type Autocomplete struct {
 	h         Host
 	channelID string
 
+	// Live returns the editor's current document and caret. When set, Key
+	// re-detects the trigger against it before acting, so a Tab/Enter that
+	// arrives in the same input batch as more typing (fast typists, slow
+	// frames) sees the real query and range, not last frame's.
+	Live func() (*Doc, int)
+	// OnAccept, when set, applies a pick immediately (inside the key event
+	// that made it), so keys queued behind the Tab/Enter land after the
+	// inserted pill. Without it picks are queued for Accepted.
+	OnAccept func(it acItem, start, end int)
+
 	ctx    context.Context
 	cancel context.CancelFunc
 
@@ -202,6 +212,16 @@ func (ac *Autocomplete) Accepted() (it acItem, start, end int, ok bool) {
 // Key handles a key press while the popup is open (Editor.Intercept). It
 // returns false, letting the editor handle the key, when closed.
 func (ac *Autocomplete) Key(name key.Name, mods key.Modifiers) bool {
+	if ac.Live != nil {
+		switch name {
+		case key.NameTab, key.NameReturn, key.NameEnter, key.NameUpArrow, key.NameDownArrow, key.NameEscape:
+			// The popup state is from the last frame; the document may
+			// have moved on within this input batch. Sync first.
+			if d, caret := ac.Live(); d != nil {
+				ac.Update(d, caret)
+			}
+		}
+	}
 	if !ac.Open() {
 		return false
 	}
@@ -258,10 +278,15 @@ func (ac *Autocomplete) accept(i int) {
 		a := *it.Atom
 		it.Atom = &a
 	}
-	ac.pending = &acAccept{it: it, start: ac.trig.Start, end: ac.trig.End}
+	start, end := ac.trig.Start, ac.trig.End
 	// Suppress the token until the composer replaces it, so an Update that
 	// runs before Accepted is polled doesn't reopen the popup.
 	ac.Dismiss()
+	if ac.OnAccept != nil {
+		ac.OnAccept(it, start, end)
+		return
+	}
+	ac.pending = &acAccept{it: it, start: start, end: end}
 }
 
 // Update re-detects the trigger before caret and refreshes the rows. It is

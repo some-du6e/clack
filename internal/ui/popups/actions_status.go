@@ -16,6 +16,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -820,6 +821,21 @@ func (s *actStatus) replyPreview(gtx layout.Context, th *theme.Theme, cl *Colors
 
 // input draws the 42px status field.
 func (s *actStatus) input(gtx layout.Context, th *theme.Theme, cl *Colors) layout.Dimensions {
+	var state css.State
+	if gtx.Focused(&s.ed) {
+		state = css.StateFocusWithin
+	}
+	st := statusInputClass.Enter(gtx, state, 0)
+	defer st.Leave()
+	if st.Hidden() {
+		return layout.Dimensions{}
+	}
+	return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
+		return s.inputNative(gtx, th, cl)
+	})
+}
+
+func (s *actStatus) inputNative(gtx layout.Context, th *theme.Theme, cl *Colors) layout.Dimensions {
 	w := gtx.Constraints.Max.X
 	hh := dp(gtx, 42)
 	r := image.Rect(0, 0, w, hh)

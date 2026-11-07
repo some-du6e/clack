@@ -1,0 +1,62 @@
+name: bench-slackc
+on:
+  push:
+    branches: ['taut-ui*']
+  workflow_dispatch:
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: inlining of the unpatched fast paths
+        run: go build -gcflags=-m ./internal/ui/slackc/ 2>&1 | grep -E 'can inline (Render|RenderLazy|Component|\(\*ClassDef\)\.Enter|Patched)\b' || true
+      - name: bench
+        run: go test -run XXX -bench . -benchmem ./internal/ui/slackc/
+      - name: alloc profile (relayout)
+        run: |
+          go test -run XXX -bench 'SenderRelayout$' -benchtime 2000x -memprofile /tmp/mem.out -memprofilerate 1 ./internal/ui/slackc/
+          go tool pprof -sample_index=alloc_objects -top -nodecount 25 /tmp/mem.out | head -40
+          go tool pprof -sample_index=alloc_objects -top -cum -nodecount 25 /tmp/mem.out | head -40
+
+  demo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: merge the CSS engine and SVG renderer for an integrated demo
+        run: |
+          git config user.email ci@example.com
+          git config user.name ci
+          if git ls-remote --exit-code origin taut-ui-css >/dev/null; then
+            git fetch -q origin taut-ui-css && git merge -q --no-edit origin/taut-ui-css
+          fi
+          if [ ! -f internal/ui/slackc/svg.go ] && git ls-remote --exit-code origin taut-ui-layout-svg >/dev/null; then
+            git fetch -q origin taut-ui-layout-svg && git merge -q --no-edit origin/taut-ui-layout-svg && git rm -q -f internal/ui/slackc/svg_stub.go
+          fi
+          git log --oneline -5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: build demo
+        run: |
+          mkdir -p dist
+          if [ -d cmd/slackc-demo ]; then CGO_ENABLED=1 go build -tags slackcdemo -trimpath -o dist/slackc-demo ./cmd/slackc-demo; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slackc-demo
+          path: dist/
+          if-no-files-found: ignore

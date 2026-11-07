@@ -108,12 +108,22 @@ func (p *Popover) Layout(gtx layout.Context) layout.Dimensions {
 	if rad == 0 {
 		rad = 8
 	}
-	card(gtx, cl, p.rect, dp(gtx, rad))
-	p.block.Layout(gtx, p.rect)
 	keyTarget(gtx, p, p.rect)
-	cs := clipRRect(gtx, p.rect, dp(gtx, rad))
-	macroAt(gtx, call, pos)
-	cs.Pop()
+	st := popoverClass.Enter(gtx, 0, 0)
+	defer st.Leave()
+	if !st.Hidden() {
+		at(gtx, pos, func(gtx layout.Context) layout.Dimensions {
+			return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
+				local := image.Rectangle{Max: d.Size}
+				card(gtx, cl, local, dp(gtx, rad))
+				p.block.Layout(gtx, local)
+				cs := clipRRect(gtx, local, dp(gtx, rad))
+				call.Add(gtx.Ops)
+				cs.Pop()
+				return d
+			})
+		})
+	}
 	return layout.Dimensions{Size: win}
 }
 

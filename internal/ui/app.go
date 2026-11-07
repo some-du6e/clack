@@ -93,6 +93,7 @@ type App struct {
 	ptrWin          image.Point
 	ptrOK           bool
 	overlays        []Overlay
+	slackc          slackcState
 	toast           toastState
 	keys            *shortcuts
 	login           *loginScreen
@@ -286,8 +287,14 @@ func (a *App) frame(gtx layout.Context) {
 	}
 
 	a.readRootPointer(gtx)
+	a.slackcFrame(gtx)
 	a.keys.process(gtx, a)
 	a.updateTitle()
+
+	// Slack's ancestor chain for plugin CSS (.p-client_container > .p-ia…);
+	// overlays draw outside it, like Slack's modal portals.
+	client := clsClient.Enter(gtx, 0, 0)
+	ia := clsIA.Enter(gtx, 0, 0)
 
 	navH := gtx.Dp(theme.TopNavH)
 	railW := gtx.Dp(theme.RailW)
@@ -330,6 +337,7 @@ func (a *App) frame(gtx layout.Context) {
 	if sbW > 0 {
 		sb := image.Rect(ws.Min.X, ws.Min.Y, primary.Min.X, ws.Max.Y)
 		a.grad.draw(gtx, sz, image.Point{}, clip.RRect{Rect: sb, NW: rad, SW: rad}.Op(gtx.Ops), a.th.C.ChromeA, a.th.C.ChromeB, a.th.C.SidebarBg)
+		a.sidebar.hover = a.ptrWin.In(sb)
 		atExact(gtx, sb.Min, sb.Size(), a.layoutSidebar)
 	}
 	nw, sw := 0, 0
@@ -353,7 +361,11 @@ func (a *App) frame(gtx layout.Context) {
 		}
 	}
 
+	ia.Leave()
+	client.Leave()
+
 	a.layoutOverlays(gtx)
+	a.slackcOverlays(gtx)
 	a.layoutToast(gtx)
 	a.rootPointer(gtx)
 }
@@ -376,6 +388,8 @@ func (a *App) layoutPrimary(gtx layout.Context) layout.Dimensions {
 	mainW := sz.X - secW
 	atExact(gtx, image.Pt(0, 0), image.Pt(mainW, sz.Y), func(gtx layout.Context) layout.Dimensions {
 		defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
+		pv := clsPrimaryView.Enter(gtx, 0, 0)
+		defer pv.Leave()
 		if r.Page() == "c" {
 			return a.layoutChannel(gtx, r.Channel())
 		}
@@ -392,6 +406,8 @@ func (a *App) layoutPrimary(gtx layout.Context) layout.Dimensions {
 		a.secondaryOrigin = a.primaryOrigin.Add(image.Pt(x+gtx.Dp(1), 0))
 		atExact(gtx, image.Pt(x+gtx.Dp(1), 0), image.Pt(secW-gtx.Dp(1), sz.Y), func(gtx layout.Context) layout.Dimensions {
 			defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
+			sv := clsSecondary.Enter(gtx, 0, 0)
+			defer sv.Leave()
 			return a.layoutSecondary(gtx)
 		})
 		a.layoutSecondaryResize(gtx, x, sz.Y)

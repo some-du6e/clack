@@ -9,6 +9,8 @@ import (
 	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 )
 
 // shortcut is one global key binding.
@@ -125,12 +127,25 @@ func (s *shortcuts) process(gtx layout.Context, a *App) {
 	for _, sc := range s.list {
 		filters = append(filters, key.Filter{Name: sc.name, Required: sc.mods, Optional: 0})
 	}
+	// Plugins with window/document key listeners (StreamerMode) also see
+	// the keys no widget claims; free while none listens.
+	globalKeys := slackc.WantsGlobal("keydown") || slackc.WantsGlobal("keyup")
+	if globalKeys {
+		filters = append(filters, key.Filter{Optional: key.ModCtrl | key.ModShift | key.ModAlt | key.ModSuper | key.ModCommand})
+	}
 	for {
 		e, ok := gtx.Event(filters...)
 		if !ok {
 			break
 		}
 		ke, ok := e.(key.Event)
+		if ok && globalKeys {
+			if ke.State == key.Press {
+				slackc.GlobalKey("keydown", ke)
+			} else {
+				slackc.GlobalKey("keyup", ke)
+			}
+		}
 		if !ok || ke.State != key.Press {
 			continue
 		}

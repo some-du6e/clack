@@ -130,47 +130,49 @@ var lightPal = pal{
 
 // Dark values follow Slack's dark mode tokens.
 var darkPal = pal{
-	Bg:          rgb(0x1a1d21),
-	Text:        rgb(0xd1d2d3),
-	Muted:       rgb(0x9a9b9e),
-	Faint:       rgb(0x86878a),
-	Border:      argb(0x21e8e8e8),
-	BorderStr:   argb(0x73e8e8e8),
-	Hover:       argb(0x0fe8e8e8),
-	SelBg:       rgb(0x2f2c1f),
-	SelText:     rgb(0xd1d2d3),
+	// Values are Slack's dark-theme design tokens (.sk-client-theme--dark
+	// --dt_color-*), read from the web client's stylesheets.
+	Bg:          rgb(0x1a1d21), // base-pry
+	Text:        rgb(0xf8f8f8), // content-pry
+	Muted:       rgb(0x9a9b9e), // content-ter
+	Faint:       rgb(0x9a9b9e),
+	Border:      argb(0x4d797c81), // otl-ter
+	BorderStr:   argb(0x80797c81), // otl-sec
+	Hover:       argb(0x14f8f8f8), // base-pry-hover
+	SelBg:       rgb(0x2f1e00),    // base-hgl-3
+	SelText:     rgb(0xf8f8f8),
 	SelMuted:    rgb(0x9a9b9e),
-	Link:        rgb(0x1d9bd1),
-	Green:       rgb(0x007a5a),
-	GreenHover:  rgb(0x148567),
-	Red:         rgb(0xe8677f),
-	Badge:       rgb(0xb36fb8),
+	Link:        rgb(0x2ba5ce), // content-hgl-1
+	Green:       rgb(0x177e56), // base-inv-hgl-2
+	GreenHover:  rgb(0x1f8f62),
+	Red:         rgb(0xde678a), // content-imp
+	Badge:       rgb(0xcfa1de), // theme-base-imp (aubergine-70)
 	Presence:    rgb(0x2bac76),
-	Skel:        rgb(0x2c2d30),
-	Focus:       argb(0x4d1d9bd1),
-	Chip:        argb(0x0fe8e8e8),
-	ChipSel:     rgb(0x0f2c3d),
-	ChipSelText: rgb(0x1d9bd1),
-	Surface:     rgb(0x222529),
-	Overlay:     argb(0x99000000),
-	Mention:     argb(0x331d9bd1),
-	Yellow:      rgb(0x2f2c1f),
-	TabLine:     rgb(0xd7a4dc),
-	Sec:         rgb(0xb9babd),
-	TitleText:   rgb(0xe8e8e8),
-	Accent:      rgb(0xb36fb8),
-	AccentText:  rgb(0xffffff),
-	ReadFill:    rgb(0x1d2024),
-	Track:       rgb(0x2c2d30),
-	PillOnBg:    rgb(0x0f2c3d),
-	PillOnFg:    rgb(0x1d9bd1),
-	TabHover:    argb(0x12e8e8e8),
-	Pressed:     argb(0x21e8e8e8),
-	CardLine:    argb(0x1ae8e8e8),
-	SegLine:     argb(0x4de8e8e8),
-	Meta:        rgb(0xababad),
-	Ring:        argb(0x21e8e8e8),
-	Page:        rgb(0x1a1d21),
+	Skel:        rgb(0x212428), // base-ter
+	Focus:       argb(0x4d2ba5ce),
+	Chip:        argb(0x14f8f8f8),
+	ChipSel:     rgb(0x001a2d), // base-hgl-1
+	ChipSelText: rgb(0x2ba5ce),
+	Surface:     rgb(0x212428),    // ctr-pry
+	Overlay:     argb(0x99101214), // base-modal
+	Mention:     argb(0x40036696), // surf-hgl-1
+	Yellow:      rgb(0x2f1e00),
+	TabLine:     rgb(0xe3ceeb), // theme-base-pry (aubergine-90)
+	Sec:         rgb(0xb9babd), // content-sec
+	TitleText:   rgb(0xefe1f5), // theme-content-pry (aubergine-100)
+	Accent:      rgb(0xcfa1de),
+	AccentText:  rgb(0x200221), // aubergine-0
+	ReadFill:    rgb(0x1a1d21), // base-sec
+	Track:       rgb(0x212428), // base-ter
+	PillOnBg:    rgb(0x001a2d), // base-hgl-1
+	PillOnFg:    rgb(0x2ba5ce), // content-hgl-1
+	TabHover:    argb(0x14efe1f5),
+	Pressed:     argb(0x2ef8f8f8), // base-pry-pressed
+	CardLine:    argb(0x4d797c81),
+	SegLine:     argb(0x80797c81),
+	Meta:        rgb(0x9a9b9e),
+	Ring:        argb(0x4d797c81),
+	Page:        rgb(0x1a1d21), // base-sec
 }
 
 // Gio composites in linear RGB while browsers blend in sRGB, so a
@@ -199,6 +201,15 @@ func flatPal(p pal) pal {
 		*c = flatten(*c, p.Bg)
 	}
 	return p
+}
+
+// lt picks the light or dark value (for literals that have a Slack token
+// in each theme).
+func (b *base) lt(light, dark color.NRGBA) color.NRGBA {
+	if b.th != nil && b.th.Dark {
+		return dark
+	}
+	return light
 }
 
 // flatten composites c over the opaque base in sRGB (like a browser) and

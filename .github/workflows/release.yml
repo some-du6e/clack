@@ -1,0 +1,100 @@
+name: release
+# Publishes the clack-* binaries as a GitHub Release when a v* tag is pushed
+# (e.g. `git tag v0.1.0 && git push origin v0.1.0`). Same builds as ci.yml.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: existing tag to (re)publish, e.g. v0.1.0
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: test
+        run: go test ./...
+      - name: build
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=1 go build -trimpath -ldflags="-s -w -X main.version=$TAG" -o dist/clack-linux-amd64 ./cmd/clack
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clack-linux-amd64
+          path: dist/clack-linux-amd64
+
+  windows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: build (cross, no cgo)
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -H windowsgui -X main.version=$TAG" -o dist/clack-windows-amd64.exe ./cmd/clack
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clack-windows-amd64
+          path: dist/clack-windows-amd64.exe
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: build
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=1 go build -trimpath -ldflags="-s -w -X main.version=$TAG" -o dist/clack-darwin-arm64 ./cmd/clack
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clack-darwin-arm64
+          path: dist/clack-darwin-arm64
+
+  publish:
+    needs: [linux, windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: checksums
+        run: cd dist && sha256sum clack-* > SHA256SUMS && cat SHA256SUMS
+      - name: publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber -R "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" dist/* -R "$GITHUB_REPOSITORY" --title "Clack $TAG" --generate-notes
+          fi

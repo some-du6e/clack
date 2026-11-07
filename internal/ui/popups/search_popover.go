@@ -37,6 +37,8 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -995,55 +997,40 @@ func (p *SearchPopover) row(gtx layout.Context, th *theme.Theme, cl *Colors, i, 
 		fill(gtx, image.Rect(dp(gtx, 16), y, w-dp(gtx, 16), y+1), cl.Ring)
 		return layout.Dimensions{Size: sz}
 	case srRMsg:
-		return p.msgRow(gtx, th, cl, i, sz)
+		return slackc.Component(gtx, "SearchResult", srMsgArgs{p: p, th: th, cl: cl, i: i, sz: sz},
+			srMsgArgs.props, srMsgArgs.layout)
 	}
 	sel := i == p.sel
+	var state css.State
+	if sel || p.clicks[i].Hovered() {
+		state = css.StateHover
+	}
+	if sel {
+		state |= css.StateFocusVisible
+	}
+	rst := srSuggClass.EnterAttr(gtx, state, 0, "data-type", srDataType(r))
+	defer rst.Leave()
+	if rst.Hidden() {
+		return layout.Dimensions{}
+	}
 	gtx.Constraints = layout.Exact(sz)
+	return rst.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
+		return p.suggestion(gtx, th, cl, rst, i, sz)
+	})
+}
+
+// suggestion draws a non-message row (Slack's
+// .c-search_autocomplete__suggestion_item; icon and title are its
+// __suggestion_item_left, which StreamerMode blurs).
+func (p *SearchPopover) suggestion(gtx layout.Context, th *theme.Theme, cl *Colors, rst slackc.Styled, i int, sz image.Point) layout.Dimensions {
+	r := &p.rows[i]
+	sel := i == p.sel
 	return p.clicks[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min = image.Point{}
 		if sel {
-			fill(gtx, image.Rectangle{Max: sz}, cl.Selected)
-		}
-		box := dp(gtx, 24)
-		lx, ly := dp(gtx, 16), (sz.Y-box)/2
-		switch {
-		case r.mpim:
-			rowBg := cl.Bg
-			if sel {
-				rowBg = cl.Selected
-			}
-			at(gtx, image.Pt(lx, ly), func(gtx layout.Context) layout.Dimensions {
-				return mpimTile(gtx, p.h, r.members, 24, rowBg, sel)
-			})
-		case r.isAvatar:
-			at(gtx, image.Pt(lx, ly), func(gtx layout.Context) layout.Dimensions {
-				return avatar(gtx, p.h, r.avatar, 24)
-			})
-			if r.presence != "" {
-				d := dp(gtx, 10)
-				c := image.Pt(lx+box-d/2+dp(gtx, 1), ly+box-d/2+dp(gtx, 1))
-				bg := cl.Bg
-				if sel {
-					bg = cl.Selected
-				}
-				theme.Circle(gtx, c, d, bg)
-				dd := dp(gtx, 7)
-				at(gtx, c.Sub(image.Pt(dd/2, dd/2)), func(gtx layout.Context) layout.Dimensions {
-					return presenceDot(gtx, th, r.presence == "active", 7)
-				})
-			}
-		case r.boxed:
-			rb := image.Rect(lx, ly, lx+box, ly+box)
-			stroke(gtx, rb, dp(gtx, 6), maxInt(1, dp(gtx, 1)), cl.BtnBorder)
-			is := dp(gtx, 16)
-			at(gtx, image.Pt(lx+(box-is)/2, ly+(box-is)/2), func(gtx layout.Context) layout.Dimensions {
-				return icon(gtx, r.icon, 16, cl.Fg)
-			})
-		case r.icon != "":
-			is := dp(gtx, 20)
-			at(gtx, image.Pt(lx+(box-is)/2, ly+(box-is)/2), func(gtx layout.Context) layout.Dimensions {
-				return icon(gtx, r.icon, 20, cl.Fg2)
-			})
+			fill(gtx, image.Rectangle{Max: sz}, rst.Background(cl.Selected))
+		} else if rst.Has("background-color") {
+			fill(gtx, image.Rectangle{Max: sz}, rst.Background(cl.Bg))
 		}
 		// right side
 		right := sz.X - dp(gtx, 16)
@@ -1055,21 +1042,75 @@ func (p *SearchPopover) row(gtx layout.Context, th *theme.Theme, cl *Colors, i, 
 			right -= srBadge(gtx, th, cl, r.badge, right, sz.Y)
 			right -= dp(gtx, 12)
 		}
-		x := dp(gtx, 52)
-		maxX := right
-		x = p.drawTitle(gtx, th, cl, r, x, maxX, sz.Y)
-		if r.alt != "" && x < maxX {
-			s := " · " + r.alt
-			at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints = layout.Constraints{Max: image.Pt(maxX-x, sz.Y)}
-				return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
-					return text(gtx, th, 13, theme.Regular, cl.Fg3, s)
-				})
+		lst := srSuggLeftClass.Enter(gtx, 0, 0)
+		if !lst.Hidden() {
+			lst.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
+				p.suggestionLeft(gtx, th, cl, r, sel, sz, right)
+				return layout.Dimensions{Size: image.Pt(right, sz.Y)}
 			})
 		}
+		lst.Leave()
 		pointerCursor(gtx, sz)
 		return layout.Dimensions{Size: sz}
 	})
+}
+
+// suggestionLeft draws the row's icon, title and secondary text left of
+// right.
+func (p *SearchPopover) suggestionLeft(gtx layout.Context, th *theme.Theme, cl *Colors, r *srRow, sel bool, sz image.Point, right int) {
+	box := dp(gtx, 24)
+	lx, ly := dp(gtx, 16), (sz.Y-box)/2
+	switch {
+	case r.mpim:
+		rowBg := cl.Bg
+		if sel {
+			rowBg = cl.Selected
+		}
+		at(gtx, image.Pt(lx, ly), func(gtx layout.Context) layout.Dimensions {
+			return mpimTile(gtx, p.h, r.members, 24, rowBg, sel)
+		})
+	case r.isAvatar:
+		at(gtx, image.Pt(lx, ly), func(gtx layout.Context) layout.Dimensions {
+			return avatar(gtx, p.h, r.avatar, 24)
+		})
+		if r.presence != "" {
+			d := dp(gtx, 10)
+			c := image.Pt(lx+box-d/2+dp(gtx, 1), ly+box-d/2+dp(gtx, 1))
+			bg := cl.Bg
+			if sel {
+				bg = cl.Selected
+			}
+			theme.Circle(gtx, c, d, bg)
+			dd := dp(gtx, 7)
+			at(gtx, c.Sub(image.Pt(dd/2, dd/2)), func(gtx layout.Context) layout.Dimensions {
+				return presenceDot(gtx, th, r.presence == "active", 7)
+			})
+		}
+	case r.boxed:
+		rb := image.Rect(lx, ly, lx+box, ly+box)
+		stroke(gtx, rb, dp(gtx, 6), maxInt(1, dp(gtx, 1)), cl.BtnBorder)
+		is := dp(gtx, 16)
+		at(gtx, image.Pt(lx+(box-is)/2, ly+(box-is)/2), func(gtx layout.Context) layout.Dimensions {
+			return icon(gtx, r.icon, 16, cl.Fg)
+		})
+	case r.icon != "":
+		is := dp(gtx, 20)
+		at(gtx, image.Pt(lx+(box-is)/2, ly+(box-is)/2), func(gtx layout.Context) layout.Dimensions {
+			return icon(gtx, r.icon, 20, cl.Fg2)
+		})
+	}
+	x := dp(gtx, 52)
+	maxX := right
+	x = p.drawTitle(gtx, th, cl, r, x, maxX, sz.Y)
+	if r.alt != "" && x < maxX {
+		s := " · " + r.alt
+		at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(maxX-x, sz.Y)}
+			return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
+				return text(gtx, th, 13, theme.Regular, cl.Fg3, s)
+			})
+		})
+	}
 }
 
 // drawTitle draws the row's primary text (match in bold) and returns the x
@@ -1148,7 +1189,7 @@ func srBadge(gtx layout.Context, th *theme.Theme, cl *Colors, n, right, h int) i
 	return w
 }
 
-func (p *SearchPopover) msgRow(gtx layout.Context, th *theme.Theme, cl *Colors, i int, sz image.Point) layout.Dimensions {
+func (p *SearchPopover) msgRow(gtx layout.Context, th *theme.Theme, cl *Colors, i int, sz image.Point, name, av string, rp slackc.Props) layout.Dimensions {
 	r := &p.rows[i]
 	sel := i == p.sel
 	gtx.Constraints = layout.Exact(sz)
@@ -1166,7 +1207,7 @@ func (p *SearchPopover) msgRow(gtx layout.Context, th *theme.Theme, cl *Colors, 
 		rrect(gtx, cr.Inset(1), rad-1, bg)
 		ax := cr.Min.X + dp(gtx, 13)
 		at(gtx, image.Pt(ax, cr.Min.Y+(cr.Dy()-dp(gtx, 36))/2), func(gtx layout.Context) layout.Dimensions {
-			return avatar(gtx, p.h, r.avatar, 36)
+			return srAvatar(gtx, p.h, r.msg, av, 36, rp)
 		})
 		tx := ax + dp(gtx, 36) + dp(gtx, 11)
 		right := cr.Max.X - dp(gtx, 16)
@@ -1185,7 +1226,7 @@ func (p *SearchPopover) msgRow(gtx layout.Context, th *theme.Theme, cl *Colors, 
 		d := at(gtx, image.Pt(x, ly), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, right-x), lh)}
 			return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 15, theme.Black, cl.Fg, r.name)
+				return text(gtx, th, 15, theme.Black, cl.Fg, name)
 			})
 		})
 		x += d.Size.X + dp(gtx, 6)
@@ -1206,6 +1247,144 @@ func (p *SearchPopover) msgRow(gtx layout.Context, th *theme.Theme, cl *Colors, 
 		pointerCursor(gtx, sz)
 		return layout.Dimensions{Size: sz}
 	})
+}
+
+// ---- Slack boundaries (SearchResult, ConnectedBaseAvatar, classes) ----
+
+var (
+	srSuggClass     = slackc.Class("c-search_autocomplete__suggestion_item", "role", "option")
+	srSuggLeftClass = slackc.Class("c-search_autocomplete__suggestion_item_left")
+)
+
+// srDataType is a suggestion row's data-type attribute.
+func srDataType(r *srRow) string {
+	switch {
+	case r.mpim:
+		return "mpim"
+	case r.kind == srRConv && r.isAvatar:
+		return "im"
+	case r.kind == srRConv, r.kind == srRChan:
+		return "channel"
+	case r.kind == srRUser:
+		return "member"
+	case r.kind == srRPlace:
+		return "shortcut"
+	case r.kind == srRQuery:
+		return "recent_search"
+	case r.kind == srRShow:
+		return "search"
+	}
+	return ""
+}
+
+// srMsgArgs carry a popover message card through SearchResult.
+type srMsgArgs struct {
+	p  *SearchPopover
+	th *theme.Theme
+	cl *Colors
+	i  int
+	sz image.Point
+}
+
+func (a srMsgArgs) props() slackc.Props {
+	r := &a.p.rows[a.i]
+	return srResultProps(a.p.h, r.msg, nil, r.avatar, 36)
+}
+
+func (a srMsgArgs) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	r := &a.p.rows[a.i]
+	name, av := r.name, r.avatar
+	if n, u, ok := srAuthorOver(a.p.h, r.msg, p); ok {
+		name, av = n, u
+	}
+	return a.p.msgRow(gtx, a.th, a.cl, a.i, a.sz, name, av, p)
+}
+
+// srResultProps are SearchResult's props: the message's fields at the top
+// level (ShowSendingBot treats the whole props object as the message),
+// channel {id}, and the avatar as a ConnectedBaseAvatar slot. over is a
+// rewritten message from MessageListItem (nil: m's own fields); av the
+// avatar URL drawn when the slot's userId is unchanged.
+func srResultProps(h Host, m *core.Message, over slackc.Props, av string, size float32) slackc.Props {
+	src := over
+	if src == nil {
+		src = slackMessage(m)
+	}
+	if _, u, ok := srAuthorOver(h, m, src); ok {
+		av = u
+	}
+	p := make(slackc.Props, len(src)+4)
+	for k, v := range src {
+		p[k] = v
+	}
+	p["$key"] = m.Channel + "/" + m.TS
+	p["channel"] = slackc.Props{"id": m.Channel}
+	p["avatar"] = slackc.Child("ConnectedBaseAvatar", srAvatarProps(m, src, size), func(gtx layout.Context, ap slackc.Props) layout.Dimensions {
+		return srAvatarNative(gtx, h, m, av, size, ap)
+	})
+	return p
+}
+
+// srAuthorOver resolves the sender when a plugin rewrote the message's
+// user or bot (ShowRealUser shows a relay bot's real poster); ok is false
+// when src leaves them as they are.
+func srAuthorOver(h Host, m *core.Message, src slackc.Props) (name, av string, ok bool) {
+	if src == nil || m == nil {
+		return "", "", false
+	}
+	user, bot := src.StrOr("user", ""), src.StrOr("bot_id", "")
+	if user == m.User && bot == m.BotID {
+		return "", "", false
+	}
+	mm := core.Message{User: user, BotID: bot}
+	if bot != "" && bot == m.BotID {
+		mm.Name, mm.Avatar = m.Name, m.Avatar
+	}
+	name, av = srAuthor(h, &mm)
+	return name, av, true
+}
+
+func srAvatarProps(m *core.Message, src slackc.Props, size float32) slackc.Props {
+	p := slackc.Props{
+		"size":          size,
+		"className":     "c-search_message__avatar",
+		"isInteractive": true,
+		"messageTs":     m.TS,
+	}
+	if u := src.StrOr("user", ""); u != "" {
+		p["userId"] = u
+	}
+	if b := src.StrOr("bot_id", ""); b != "" {
+		p["botId"] = b
+	}
+	return p
+}
+
+// srAvatar draws a search result's avatar: the slot a patched SearchResult
+// handed back, else ConnectedBaseAvatar (when patched) or the image.
+func srAvatar(gtx layout.Context, h Host, m *core.Message, url string, size float32, rp slackc.Props) layout.Dimensions {
+	if e, ok := rp.Elem("avatar"); ok && len(e.Nodes) > 0 {
+		return slackc.LayoutElement(gtx, e)
+	}
+	if m == nil || !slackc.Patched("ConnectedBaseAvatar") {
+		return avatar(gtx, h, url, size)
+	}
+	return slackc.Render(gtx, "ConnectedBaseAvatar", srAvatarProps(m, slackMessage(m), size), func(gtx layout.Context, ap slackc.Props) layout.Dimensions {
+		return srAvatarNative(gtx, h, m, url, size, ap)
+	})
+}
+
+// srAvatarNative honours a userId override.
+func srAvatarNative(gtx layout.Context, h Host, m *core.Message, url string, size float32, ap slackc.Props) layout.Dimensions {
+	if u := ap.StrOr("userId", ""); u != "" && m != nil && u != m.User {
+		if uu, ok := lookupUser(h, u); ok && uu.Avatar != "" {
+			url = uu.Avatar
+		}
+	}
+	if s, ok := ap.Num("size"); ok && s > 0 {
+		size = float32(s)
+	}
+	return avatar(gtx, h, url, size)
 }
 
 // ---- shared helpers (popover and results view) ----

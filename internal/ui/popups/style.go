@@ -18,6 +18,8 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -371,7 +373,35 @@ const (
 )
 
 // Button draws a Slack button. icon may be "" ; minW in dp (0 = content).
+// It carries .c-button (--primary/--outline/--danger/--disabled, --small/
+// --medium, --icon for icon-only buttons) for plugin CSS.
 func Button(gtx layout.Context, th *theme.Theme, c *widget.Clickable, kind BtnKind, size BtnSize, label, iconName string, minW float32) layout.Dimensions {
+	var mods uint64 = 1 << kind // BtnOutline … BtnDisabled
+	if size == BtnMedium {
+		mods |= 1 << 5
+	} else {
+		mods |= 1 << 4
+	}
+	if label == "" {
+		mods |= 1 << 6
+	}
+	var state css.State
+	if kind == BtnDisabled {
+		state = css.StateDisabled
+	} else if c.Hovered() {
+		state = css.StateHover
+	}
+	st := buttonClass.Enter(gtx, state, mods)
+	defer st.Leave()
+	if st.Hidden() {
+		return layout.Dimensions{}
+	}
+	return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
+		return buttonNative(gtx, th, st, c, kind, size, label, iconName, minW)
+	})
+}
+
+func buttonNative(gtx layout.Context, th *theme.Theme, st slackc.Styled, c *widget.Clickable, kind BtnKind, size BtnSize, label, iconName string, minW float32) layout.Dimensions {
 	cl := colorsOf(th)
 	h, fs, rad, pad, isz := float32(28), float32(13), float32(4), float32(12), float32(16)
 	if size == BtnMedium {
@@ -408,7 +438,9 @@ func Button(gtx layout.Context, th *theme.Theme, c *widget.Clickable, kind BtnKi
 		w = gtx.Constraints.Min.X
 	}
 	hh := dp(gtx, h)
-	sz := image.Pt(w, hh)
+	sz := st.Size(gtx, image.Pt(w, hh))
+	w, hh = sz.X, sz.Y
+	bg, fg = st.Background(bg), st.Color(fg)
 	draw := func(gtx layout.Context) layout.Dimensions {
 		r := image.Rectangle{Max: sz}
 		hovered := c.Hovered() && kind != BtnDisabled
@@ -500,6 +532,24 @@ func splitKeys(s string) []string {
 // field draws a bordered single-line input (Slack c-input_text) with an
 // optional leading icon and a placeholder. h in dp, radius 8.
 func field(gtx layout.Context, th *theme.Theme, ed *widget.Editor, placeholder string, leadIcon string, h, size float32) layout.Dimensions {
+	var state css.State
+	if gtx.Focused(ed) {
+		state = css.StateFocus | css.StateFocusVisible
+	}
+	if ed.Len() == 0 && placeholder != "" {
+		state |= css.StatePlaceholderShown
+	}
+	st := inputTextClass.Enter(gtx, state, 0)
+	defer st.Leave()
+	if st.Hidden() {
+		return layout.Dimensions{}
+	}
+	return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
+		return fieldNative(gtx, th, st, ed, placeholder, leadIcon, h, size)
+	})
+}
+
+func fieldNative(gtx layout.Context, th *theme.Theme, st slackc.Styled, ed *widget.Editor, placeholder string, leadIcon string, h, size float32) layout.Dimensions {
 	cl := colorsOf(th)
 	w := gtx.Constraints.Max.X
 	hh := dp(gtx, h)
@@ -535,7 +585,7 @@ func field(gtx layout.Context, th *theme.Theme, ed *widget.Editor, placeholder s
 				})
 				call.Add(gtx.Ops)
 			}
-			return th.Editor(gtx, ed, unit.Sp(size), cl.Fg, theme.WithAlpha(cl.Focus, 0x55))
+			return th.Editor(gtx, ed, unit.Sp(size), st.Color(cl.Fg), theme.WithAlpha(cl.Focus, 0x55))
 		})
 	})
 	defer clip.Rect(r).Push(gtx.Ops).Pop()

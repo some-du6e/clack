@@ -2,6 +2,7 @@ package composer
 
 import (
 	"context"
+	"encoding/json"
 	"image"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 )
 
 // Composer is the message box under a channel or thread, or the inline
@@ -44,6 +46,20 @@ type Composer struct {
 	broadcast  bool
 	lastTyping time.Time
 	lastVer    uint64
+
+	// Slack boundaries (slack.go): this frame's chrome state, the props
+	// patched boundaries handed back, and widgets bound once so the
+	// unpatched path allocates nothing.
+	cs            chromeState
+	paneP, inputP slackc.Props
+	sendJS        slackc.JSFunc // a patched prepareAndSendMessage (send checks)
+	pending       *outgoing     // the message sendJS is deciding on
+	top           int           // context bar height above the box
+	ctxShowing    bool          // onIsContextBarShowing
+	drewInput     bool          // the editor was laid out (no roadblock)
+	wPane, wInput layout.Widget
+	wEditor, wAtt layout.Widget
+	keyS, draftS  string
 }
 
 // showFormatting is Slack's "Show formatting" (Aa) toggle; one setting for
@@ -87,9 +103,12 @@ func NewEdit(h Host, m core.Message, onDone func()) *Composer {
 func (c *Composer) init() {
 	c.ed = NewEditor()
 	c.ac = newAutocomplete(c.h, c.ch)
-	c.ed.Intercept = c.ac.Key
+	bindAutocomplete(c.ed, c.ac, c.h.Invalidate)
 	c.att = newAttachments(c.h)
 	typingHub(c.h.Core()).addHost(c.h) // listen for typing events
+	c.initIDs()
+	c.wPane, c.wInput = c.layoutPaneBody, c.layoutInputBody
+	c.wEditor, c.wAtt = c.layoutEditor, c.att.Layout
 }
 
 // Focus asks for keyboard focus on the next frame.
@@ -151,17 +170,27 @@ func (c *Composer) Layout(gtx layout.Context) layout.Dimensions {
 	c.handleEditor(gtx)
 	c.handleActions(gtx)
 
-	st := c.chromeState(gtx)
-	input := func(gtx layout.Context) layout.Dimensions {
-		dims := c.ed.Layout(gtx, c.st)
-		return dims
+	// Slack's boundaries (slack.go): MessagePaneInput / InputContainer
+	// (the context bar, the roadblock, MessageInput), or MessageInput for
+	// an edit. Unpatched each is a direct call.
+	c.cs = c.chromeState(gtx)
+	c.ui.prime(&c.cs)
+	c.top, c.drewInput = 0, false
+	c.paneP, c.inputP = nil, nil
+	var dims layout.Dimensions
+	switch {
+	case c.edit != nil:
+		dims = slackc.Component(gtx, "MessageInput", c, (*Composer).inputProps, (*Composer).layoutInput)
+	case c.ts != "":
+		dims = slackc.Component(gtx, "InputContainer", c, (*Composer).paneProps, (*Composer).layoutPane)
+	default:
+		dims = slackc.Component(gtx, "MessagePaneInput", c, (*Composer).paneProps, (*Composer).layoutPane)
 	}
-	dims := c.ui.Layout(gtx, c.h, st, input, c.att.Layout)
 
 	// Autocomplete after the editor laid out, anchored at the trigger.
 	c.ac.Update(c.ed.Doc(), caretOf(c.ed))
 	c.acceptAutocomplete()
-	if c.ac.Open() {
+	if c.ac.Open() && c.drewInput {
 		c.layoutPopup(gtx)
 	}
 	c.handleActions(gtx)
@@ -201,7 +230,7 @@ func (c *Composer) emojiImage(url string, px int) (paint.ImageOp, bool) {
 }
 
 func (c *Composer) layoutPopup(gtx layout.Context) {
-	org := c.ui.InputOffset()
+	org := c.ui.InputOffset().Add(image.Pt(0, c.top))
 	r := c.ed.PosRect(c.ac.Anchor())
 	left := org.X + r.Min.X - gtx.Dp(17)
 	bottom := org.Y + r.Min.Y - gtx.Dp(5)
@@ -225,17 +254,40 @@ func (c *Composer) layoutPopup(gtx layout.Context) {
 	off.Pop()
 }
 
+// acceptAutocomplete applies a queued pick (only used when no OnAccept is
+// bound; bindAutocomplete applies picks synchronously).
 func (c *Composer) acceptAutocomplete() {
 	it, s, e, ok := c.ac.Accepted()
 	if !ok {
 		return
 	}
-	if it.Kind == acCommand {
-		c.ed.Replace(s, e, "/"+it.Name+" ")
-	} else if it.Atom != nil {
-		c.ed.InsertAtom(s, e, it.Atom)
-	}
+	applyPick(c.ed, it, s, e)
 	c.h.Invalidate()
+}
+
+// bindAutocomplete connects the popup to the editor. Picks are applied
+// inside the key event that made them (OnAccept) and keys re-sync against
+// the live document (Live), so text typed in the same input batch as the
+// Tab/Enter lands after the inserted pill instead of being reordered.
+func bindAutocomplete(ed *Editor, ac *Autocomplete, invalidate func()) {
+	ed.Intercept = ac.Key
+	ac.Live = func() (*Doc, int) { return ed.Doc(), caretOf(ed) }
+	ac.OnAccept = func(it acItem, start, end int) {
+		applyPick(ed, it, start, end)
+		if invalidate != nil {
+			invalidate()
+		}
+	}
+}
+
+// applyPick replaces the trigger token [start, end) with the pick: a pill
+// (mention, channel, emoji) or the command text, caret after it.
+func applyPick(ed *Editor, it acItem, start, end int) {
+	if it.Kind == acCommand {
+		ed.Replace(start, end, "/"+it.Name+" ")
+	} else if it.Atom != nil {
+		ed.InsertAtom(start, end, it.Atom)
+	}
 }
 
 func (c *Composer) chromeState(gtx layout.Context) chromeState {
@@ -248,6 +300,12 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 		CanSend:        !c.ed.Empty() || c.att.Len() > 0,
 		Broadcast:      c.broadcast,
 		Origin:         c.Origin,
+		Key:            c.key(),
+		Channel:        c.ch,
+		ThreadTS:       c.ts,
+		DraftID:        c.draftID(),
+		ViewContext:    c.viewContext(),
+		Count:          c.ed.Doc().Len(),
 	}
 	st.InCode = st.Block == CodeBlock
 	st.ShowPlaceholder = c.ed.Empty() && c.ed.Doc().Len() == 0
@@ -279,7 +337,8 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 	} else if st.Mode == modeChannel {
 		st.Placeholder = "Message"
 	}
-	st.Typing = typingText(c.h.Core(), c.ch, c.ts, c.api.self().ID)
+	st.TypingIDs, st.TypingNames = typingHub(c.h.Core()).typers(c.ch, c.ts, c.api.self().ID)
+	st.Typing = typingLine(st.TypingNames)
 	st.ScrolledTop = c.ed.scrollY > 0
 	st.ScrolledBottom = c.ed.scrollY+c.ed.viewH < c.ed.contentH
 	return st
@@ -337,7 +396,7 @@ func (c *Composer) changed() {
 
 func (c *Composer) handleActions(gtx layout.Context) {
 	for _, a := range c.ui.Actions() {
-		a.Anchor = a.Anchor.Add(c.Origin)
+		a.Anchor = a.Anchor.Add(c.Origin).Add(image.Pt(0, c.top))
 		switch a.Kind {
 		case caFocus:
 			c.ed.Focus(gtx)
@@ -537,9 +596,31 @@ func (c *Composer) submit() {
 		}
 	}
 
-	prepared, rawFiles, hasFiles := c.att.uploadBatch()
-	broadcast := c.broadcast && ts != ""
+	o := &outgoing{doc: doc, text: text, blocks: blocks, broadcast: c.broadcast && ts != ""}
 	c.clearAfterSend()
+	switch {
+	case c.sendJS.ID != 0:
+		c.sendViaJS(o)
+	case SendChecks != nil:
+		c.checkThenSend(o)
+	default:
+		c.send(o)
+	}
+}
+
+// outgoing is a message on its way out of the composer.
+type outgoing struct {
+	doc       *Doc
+	text      string
+	blocks    json.RawMessage
+	broadcast bool
+}
+
+// send posts the message (with any attached files).
+func (c *Composer) send(o *outgoing) {
+	api, ch, ts := c.api, c.ch, c.ts
+	doc, text, blocks, broadcast := o.doc, o.text, o.blocks, o.broadcast
+	prepared, rawFiles, hasFiles := c.att.uploadBatch()
 	if hasFiles {
 		c.att.SetUploading(true)
 		go func() {
@@ -569,6 +650,67 @@ func (c *Composer) submit() {
 			c.restore(doc)
 		}
 	}()
+}
+
+// checkThenSend runs the SendChecks hook (composer.addSendCheck) and
+// sends, or puts the message back (files stay attached).
+func (c *Composer) checkThenSend(o *outgoing) {
+	check := SendChecks
+	if check == nil {
+		c.send(o)
+		return
+	}
+	check(SendCheck{ChannelID: c.ch, ThreadTS: c.ts, Blocks: o.blocks, Text: o.text}, func(ok bool) {
+		c.later(func() {
+			if ok {
+				c.send(o)
+			} else {
+				c.restore(o.doc)
+			}
+		})
+	})
+}
+
+// sendViaJS sends through a plugin's prepareAndSendMessage (taut's send
+// checks wrap it on MessagePaneInput / InputContainer). It calls back
+// into prepareAndSend to really send; a thrown error or rejected promise
+// puts the message back.
+func (c *Composer) sendViaJS(o *outgoing) {
+	c.pending = o
+	opts := slackc.Props{
+		"delta":           o.doc.Delta(),
+		"channelId":       c.ch,
+		"shouldBroadcast": o.broadcast,
+		"blocks":          o.blocks,
+		"text":            o.text,
+	}
+	if c.ts != "" {
+		opts["replyToTs"] = c.ts
+	}
+	c.sendJS.CallResult(func(_ any, err error) {
+		if c.pending == o {
+			c.pending = nil // a plugin sent it itself, or held it back
+		}
+		if err != nil {
+			c.restore(o.doc)
+		}
+	}, opts)
+}
+
+// prepareAndSend is the prepareAndSendMessage({delta, channelId,
+// replyToTs, shouldBroadcast}) MessagePaneInput and InputContainer pass
+// to JS. It sends the message the composer handed to sendViaJS, with a
+// plugin's shouldBroadcast override (SlimMessageBox).
+func (c *Composer) prepareAndSend(opts slackc.Props) {
+	o := c.pending
+	c.pending = nil
+	if o == nil {
+		return
+	}
+	if opts.Has("shouldBroadcast") {
+		o.broadcast = opts.Bool("shouldBroadcast") && c.ts != ""
+	}
+	c.checkThenSend(o)
 }
 
 func (c *Composer) clearAfterSend() {

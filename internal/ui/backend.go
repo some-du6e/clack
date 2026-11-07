@@ -166,8 +166,11 @@ func (b *backend) apply(a *App, s core.Snapshot) {
 		}
 		ci := &convInfo{ID: c.ID, Name: c.Name, Kind: c.Kind, User: c.User, Topic: c.Topic,
 			NumMembers: c.NumMembers, Members: c.Members, Muted: c.Muted, TopicSpans: firstSpans(c.TopicDoc)}
-		if old := m.Convs[c.ID]; old != nil && ci.NumMembers == 0 {
-			ci.NumMembers = old.NumMembers
+		if old := m.Convs[c.ID]; old != nil {
+			// keep what opened() fetched (count, facepile) across snapshots
+			if ci.NumMembers == 0 {
+				ci.NumMembers = old.NumMembers
+			}
 			if len(ci.Members) == 0 {
 				ci.Members = old.Members
 			}
@@ -452,12 +455,15 @@ func (b *backend) opened(ch string) {
 					if len(members) == 3 {
 						break
 					}
-					if u.Avatar != "" && !u.Deleted {
-						members = append(members, u.ID)
+					if u.Deleted || u.IsBot {
+						continue
+					}
+					members = append(members, u.ID)
+					if u.Avatar != "" {
 						b.avMu.Lock()
 						b.avatars[u.ID] = u.Avatar
 						b.avMu.Unlock()
-					}
+					} // else avatar() resolves it via core.User / EnsureUsers
 				}
 			}
 		}
@@ -566,23 +572,31 @@ func (b *backend) openTab(ch, key string) {
 
 func (b *backend) avatar(id string) string {
 	b.avMu.Lock()
-	url, ok := b.avatars[id]
+	url := b.avatars[id]
 	b.avMu.Unlock()
-	if ok {
+	if url != "" {
 		return url
 	}
-	if u, ok := b.core.User(id); ok {
+	if u, ok := b.core.User(id); ok && u.Avatar != "" {
 		b.avMu.Lock()
 		b.avatars[id] = u.Avatar
 		b.avMu.Unlock()
 		return u.Avatar
 	}
+	// unknown, or known only partially (edge-API members carry no avatar):
+	// fetch the full profile once; the next frame picks it up from core.
 	b.avMu.Lock()
 	ask := !b.asked[id]
 	b.asked[id] = true
 	b.avMu.Unlock()
 	if ask && b.ctx != nil {
-		go b.core.EnsureUsers(b.ctx, []string{id})
+		a := b.app
+		go func() {
+			b.core.EnsureUsers(b.ctx, []string{id})
+			if a != nil {
+				a.Invalidate()
+			}
+		}()
 	}
 	return ""
 }

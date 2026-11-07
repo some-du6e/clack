@@ -39,6 +39,7 @@ type frag struct {
 	url    string // image
 	p0, p1 int32  // plain text byte range
 	alt    bool   // image frag has text fallback in plain (":name:")
+	comp   int16  // component tag (index+1 into display.comps), 0 = static
 }
 
 type boxKind uint8
@@ -67,6 +68,7 @@ type box struct {
 	// perCorner uses corners (NW NE SE SW) instead of radius.
 	perCorner bool
 	corners   [4]int
+	comp      int16 // component tag, 0 = static
 }
 
 type imgPrim struct {
@@ -74,8 +76,9 @@ type imgPrim struct {
 	url    string
 	radii  [4]int // NW NE SE SW
 	target int16
-	px     int  // requested decode size
-	fit    bool // contain (letterbox) instead of cover
+	px     int   // requested decode size
+	fit    bool  // contain (letterbox) instead of cover
+	comp   int16 // component tag, 0 = static
 }
 
 type targetKind uint8
@@ -122,6 +125,7 @@ type display struct {
 	lines   []lineInfo
 	plain   []byte
 	size    image.Point
+	comps   []compBox // Slack components (see comps.go)
 }
 
 func (d *display) reset() {
@@ -133,6 +137,7 @@ func (d *display) reset() {
 	d.lines = d.lines[:0]
 	d.plain = d.plain[:0]
 	d.size = image.Point{}
+	d.comps = d.comps[:0]
 }
 
 func (d *display) addTarget(t target) int16 {
@@ -164,6 +169,7 @@ type deco struct {
 	target int16
 	face   faceKey
 	self   bool
+	comp   int16
 }
 
 type item struct {
@@ -180,6 +186,7 @@ type item struct {
 	p0, p1 int32
 	brk    bool // break opportunity after this item (CJK, images)
 	alt    bool
+	comp   int16
 }
 
 // flowStyle configures one inline flow.
@@ -207,6 +214,12 @@ type lay struct {
 	opts  Options
 	// noPlain is set while laying out non-selectable labels.
 	noPlain bool
+	// mode says which Slack components lay out as such (comps.go); cs is
+	// their state from the View, inAtt is set inside an attachment card.
+	mode      uint8
+	cs        *[]compState
+	inAtt     bool
+	authorImg int // inside a card: its author icon, imgs index+1
 }
 
 func (l *lay) dp(v float32) int      { return int(v*l.scale + 0.5) }
@@ -336,6 +349,9 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 		}
 		k := l.faceFor(base, size, st)
 		noAt := false
+		n0 := len(l.items)
+		var cmp int16 // a mention pill laid out as a Slack component
+		txt := sp.Text
 		switch sp.Kind {
 		case richtext.Break:
 			p0, p1 := l.plainAdd("\n")
@@ -411,6 +427,17 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			}
 			l.decos = append(l.decos, deco{kind: 1, bg: bg, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, self: sp.Self || sp.Kind == richtext.Broadcast})
 			dc = int16(len(l.decos) - 1)
+			if l.mode&modePills != 0 && !l.inAtt && (sp.Kind == richtext.User || sp.Kind == richtext.Channel) {
+				kind := compUser
+				if sp.Kind == richtext.Channel {
+					kind = compChannel
+				}
+				cmp = l.addComp(compBox{kind: kind, span: *sp})
+				l.decos[dc].comp = cmp
+				if n := l.compState(cmp).name; n != "" && kind == compChannel {
+					txt = "#" + n
+				}
+			}
 		case richtext.Date:
 			if sp.URL != "" {
 				tg = l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true})
@@ -427,7 +454,6 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 		if dc >= 0 && l.decos[dc].padL > 0 {
 			l.addPad(l.decos[dc].padL, dc, k)
 		}
-		txt := sp.Text
 		if noAt {
 			txt = strings.TrimPrefix(txt, "@")
 		}
@@ -438,6 +464,14 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 		l.addText(txt, fs, k, col, st, dc, tg)
 		if dc >= 0 && l.decos[dc].padR > 0 {
 			l.addPad(l.decos[dc].padR, dc, k)
+		}
+		if cmp != 0 {
+			for i := n0; i < len(l.items); i++ {
+				l.items[i].comp = cmp
+			}
+			if ex := l.compState(cmp).extra; ex != 0 {
+				l.addPad(float32(ex), -1, k) // the plugin's pill is wider/narrower
+			}
 		}
 	}
 }
@@ -504,9 +538,9 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 
 	emit := func(it *item, sh *shaped, w float32, p0, p1 int32) {
 		if it.kind == itImage {
-			d.frags = append(d.frags, frag{kind: fImage, x: float32(x0) + x + l.dpf(1), w: float32(it.size), size: it.size, url: it.url, target: it.target, p0: p0, p1: p1, alt: it.alt})
+			d.frags = append(d.frags, frag{kind: fImage, x: float32(x0) + x + l.dpf(1), w: float32(it.size), size: it.size, url: it.url, target: it.target, p0: p0, p1: p1, alt: it.alt, comp: it.comp})
 		} else if it.kind == itWord {
-			d.frags = append(d.frags, frag{kind: fText, x: float32(x0) + x, w: w, size: int(it.face.size >> 6), sh: sh, col: it.col, style: it.style, target: it.target, p0: p0, p1: p1})
+			d.frags = append(d.frags, frag{kind: fText, x: float32(x0) + x, w: w, size: int(it.face.size >> 6), sh: sh, col: it.col, style: it.style, target: it.target, p0: p0, p1: p1, comp: it.comp})
 		}
 		x += w
 	}
@@ -661,7 +695,7 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 			case 2:
 				d.boxes = append(d.boxes, box{kind: bBorder, r: rr, radius: dc.radius, fill: dc.bg, stroke: dc.border, bw: l.dp(1), target: -1})
 			default:
-				bx := box{kind: bFill, r: rr, radius: dc.radius, fill: dc.bg, target: dc.target}
+				bx := box{kind: bFill, r: rr, radius: dc.radius, fill: dc.bg, target: dc.target, comp: dc.comp}
 				if dc.kind == 1 && !dc.self {
 					bx.hover = l.st.Palette.MentionHoverBg
 				}

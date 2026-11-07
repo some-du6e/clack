@@ -15,6 +15,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -164,6 +165,12 @@ func (a *App) chromeBase(p image.Point) color.NRGBA {
 func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 	c := &a.th.C
 	h := gtx.Dp(theme.TopNavH)
+	tn := clsTopNav.Enter(gtx, 0, 0)
+	defer tn.Leave()
+	if tn.Hidden() {
+		return
+	}
+	left := clsTopNavLeft.Enter(gtx, 0, 0)
 	// history buttons: 26×26, 6px gaps, right-aligned 9px before the search.
 	b := gtx.Dp(26)
 	gap := gtx.Dp(6)
@@ -188,6 +195,7 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 	if clicked(a.clicks.get("nav.forward")) {
 		a.Forward()
 	}
+	left.Leave()
 	if clicked(a.clicks.get("nav.history")) {
 		a.openHistoryMenu()
 	}
@@ -234,11 +242,17 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 		a.openSearch("")
 	}
 
-	// help button at the right edge.
+	// help button at the right edge: Slack's HelpButton. Plugins add
+	// buttons before it (StreamerMode, Taut's What's new), so lay it out
+	// right-aligned in the space after the search pill.
 	horg := image.Pt(width-gtx.Dp(34), y)
-	at(gtx, horg, image.Pt(b, b), func(gtx layout.Context) layout.Dimensions {
-		return a.chromeButton(gtx, horg, a.clicks.get("nav.help"), "help", 26, 20, c.ChromeText, 4)
+	rs := clsTopNavRight.Enter(gtx, 0, 0)
+	call, d := measured(gtx, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Constraints{Max: image.Pt(max(width-gtx.Dp(8)-(sorg.X+sw+gtx.Dp(8)), b), h)}
+		return slackc.Component(gtx, "HelpButton", navHelp{a: a, org: horg, b: b}, nil, navHelp.layout)
 	})
+	rs.Leave()
+	place(gtx, call, image.Pt(width-gtx.Dp(8)-d.Size.X, (h-d.Size.Y)/2))
 	if clicked(a.clicks.get("nav.help")) {
 		a.Toast("Keyboard shortcuts: Ctrl+K switch, Ctrl+Shift+A unreads, Alt+↑/↓ channels, Ctrl+. side pane")
 	}
