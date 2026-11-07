@@ -148,6 +148,9 @@ func largestThumb(f *slack.File) *Image {
 			return image(u, f.Name, 0, 0)
 		}
 	}
+	if f.ThumbPDF != "" { // first page of a PDF
+		return image(f.ThumbPDF, f.Name, f.ThumbPDFW, f.ThumbPDFH)
+	}
 	return nil
 }
 

@@ -35,6 +35,16 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 			a.loadMemberCount(ctx, ch)
 		}()
 	}
+	// A conversation outside the sidebar (closed DM, channel from a link or
+	// search): resolve it alongside so the header shows its name.
+	var convDone chan struct{}
+	if _, ok := a.Conv(ch); !ok && before == "" {
+		convDone = make(chan struct{})
+		go func() {
+			defer close(convDone)
+			a.ResolveConv(ctx, ch)
+		}()
+	}
 	var msgs []slack.Message
 	var hasMore bool
 	if before == "" {
@@ -63,6 +73,9 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 	page := Page{Messages: a.timeline(ch, msgs), HasMore: hasMore}
 	if countDone != nil {
 		<-countDone
+	}
+	if convDone != nil {
+		<-convDone
 	}
 	if c, ok := a.Conv(ch); ok {
 		page.Conv = &c

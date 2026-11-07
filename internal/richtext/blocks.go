@@ -12,9 +12,14 @@ import (
 
 // bk is a generic Block Kit block / element / rich_text node.
 type bk struct {
-	Type        string          `json:"type"`
-	BlockID     string          `json:"block_id"`
-	Elements    []bk            `json:"elements"`
+	Type      string `json:"type"`
+	BlockID   string `json:"block_id"`
+	Elements  []bk   `json:"elements"`
+	Rows      [][]bk `json:"rows"` // table
+	ColumnSet []struct {
+		Align     string `json:"align"`
+		IsWrapped bool   `json:"is_wrapped"`
+	} `json:"column_settings"` // table
 	Text        json.RawMessage `json:"text"` // string (rich_text) or text object
 	Style       json.RawMessage `json:"style"`
 	URL         string          `json:"url"`
@@ -392,6 +397,8 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		return append(out, blk)
 	case "markdown":
 		return append(out, FromMrkdwn(c.r, markdownToMrkdwn(b.textString()))...)
+	case "table":
+		return append(out, c.table(b))
 	}
 	if t := b.textObj(); t != nil {
 		return append(out, c.textBlocks(t)...)
@@ -631,4 +638,65 @@ func richOnlyEmoji(bs []bk) bool {
 		}
 	}
 	return n > 0 && n <= 23
+}
+
+// table converts a Block Kit table block. Cells are raw_text or rich_text.
+func (c *builder) table(b *bk) Block {
+	blk := Block{Kind: Table}
+	for _, cs := range b.ColumnSet {
+		blk.ColAlign = append(blk.ColAlign, cs.Align)
+		blk.ColWrap = append(blk.ColWrap, cs.IsWrapped)
+	}
+	for _, row := range b.Rows {
+		cells := make([][]Span, 0, len(row))
+		for i := range row {
+			cells = append(cells, c.tableCell(&row[i]))
+		}
+		blk.Rows = append(blk.Rows, cells)
+	}
+	return blk
+}
+
+func (c *builder) tableCell(cell *bk) []Span {
+	switch cell.Type {
+	case "rich_text":
+		return flattenSpans(c.richText(cell.Elements))
+	case "raw_text", "plain_text":
+		if t := cell.textString(); t != "" {
+			return []Span{{Kind: Text, Text: t}}
+		}
+		return nil
+	}
+	if t := cell.textObj(); t != nil {
+		return flattenSpans(c.textBlocks(t))
+	}
+	return nil
+}
+
+// flattenSpans joins the inline content of blocks with hard breaks.
+func flattenSpans(bs []Block) []Span {
+	var out []Span
+	for _, b := range bs {
+		var sp []Span
+		switch {
+		case len(b.Items) > 0:
+			for i, it := range b.Items {
+				if i > 0 {
+					sp = append(sp, Span{Kind: Break})
+				}
+				sp = append(sp, Span{Kind: Text, Text: "• "})
+				sp = append(sp, it...)
+			}
+		default:
+			sp = b.Spans
+		}
+		if len(sp) == 0 {
+			continue
+		}
+		if len(out) > 0 {
+			out = append(out, Span{Kind: Break})
+		}
+		out = append(out, sp...)
+	}
+	return out
 }

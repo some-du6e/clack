@@ -56,6 +56,13 @@ type Store struct {
 	// names of conversations we are not a member of (from search/browse)
 	names       map[string]string
 	prefsCached bool
+	ext         map[string]*slack.Conversation // non-sidebar conversations
+	bots        map[string]BotInfo
+
+	missMu     sync.Mutex
+	missSeen   map[string]bool
+	missing    []string // "c"+id | "u"+id | "b"+id
+	missNotify chan struct{}
 }
 
 // PutName remembers the name of a conversation outside the sidebar.
@@ -303,25 +310,172 @@ func DisplayName(u *slack.User) string {
 // ---- richtext.Resolver ----
 
 func (s *Store) UserName(id string) string {
-	u, _ := s.User(id)
+	u, ok := s.User(id)
+	if !ok {
+		s.noteMissing('u', id)
+	}
 	return DisplayName(u)
 }
 
 func (s *Store) ChannelName(id string) string {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if c, ok := s.Convs[id]; ok {
+	c, ok := s.Convs[id]
+	if !ok {
+		c, ok = s.ext[id]
+	}
+	if ok {
+		defer s.mu.RUnlock()
 		if c.IsIM {
 			if u, ok := s.Users[c.User]; ok {
 				return DisplayName(u)
 			}
+			s.noteMissing('u', c.User)
 		}
 		return c.Name
 	}
-	if n, ok := s.names[id]; ok {
+	n, named := s.names[id]
+	s.mu.RUnlock()
+	if named {
 		return n
 	}
+	s.noteMissing('c', id)
 	return id
+}
+
+// ---- unresolved ids (resolved in the background by core) ----
+
+// noteMissing records an id that rendering could not name. Ids are only
+// recorded once per session (see TakeMissing).
+func (s *Store) noteMissing(kind byte, id string) {
+	if id == "" {
+		return
+	}
+	switch kind {
+	case 'u':
+		if !(strings.HasPrefix(id, "U") || strings.HasPrefix(id, "W")) {
+			return
+		}
+	case 'c':
+		if !(strings.HasPrefix(id, "C") || strings.HasPrefix(id, "G") || strings.HasPrefix(id, "D")) {
+			return
+		}
+	}
+	key := string(kind) + id
+	s.missMu.Lock()
+	if s.missSeen == nil {
+		s.missSeen = map[string]bool{}
+		s.missNotify = make(chan struct{}, 1)
+	}
+	if !s.missSeen[key] {
+		s.missSeen[key] = true
+		s.missing = append(s.missing, key)
+		select {
+		case s.missNotify <- struct{}{}:
+		default:
+		}
+	}
+	s.missMu.Unlock()
+}
+
+// NoteMissingBot records a bot id whose name/icon is unknown.
+func (s *Store) NoteMissingBot(id string) {
+	if strings.HasPrefix(id, "B") {
+		s.noteMissing('b', id)
+	}
+}
+
+// MissingNotify fires (coalesced) when new unresolved ids were recorded.
+func (s *Store) MissingNotify() <-chan struct{} {
+	s.missMu.Lock()
+	defer s.missMu.Unlock()
+	if s.missNotify == nil {
+		s.missSeen = map[string]bool{}
+		s.missNotify = make(chan struct{}, 1)
+	}
+	return s.missNotify
+}
+
+// TakeMissing returns and clears the unresolved channel, user and bot ids.
+func (s *Store) TakeMissing() (chans, users, bots []string) {
+	s.missMu.Lock()
+	keys := s.missing
+	s.missing = nil
+	s.missMu.Unlock()
+	for _, k := range keys {
+		switch k[0] {
+		case 'c':
+			chans = append(chans, k[1:])
+		case 'u':
+			users = append(users, k[1:])
+		case 'b':
+			bots = append(bots, k[1:])
+		}
+	}
+	return
+}
+
+// ForgetMissing lets ids be recorded (and resolved) again, e.g. after a
+// failed lookup that may succeed later.
+func (s *Store) ForgetMissing(kind byte, ids ...string) {
+	s.missMu.Lock()
+	for _, id := range ids {
+		delete(s.missSeen, string(kind)+id)
+	}
+	s.missMu.Unlock()
+}
+
+// ---- conversations outside the sidebar (closed DMs, previews) ----
+
+// PutExtConv remembers a conversation the viewer is not showing in the
+// sidebar (metadata, memory only).
+func (s *Store) PutExtConv(c slack.Conversation) {
+	if c.ID == "" {
+		return
+	}
+	s.mu.Lock()
+	if s.ext == nil {
+		s.ext = map[string]*slack.Conversation{}
+	}
+	s.ext[c.ID] = &c
+	if c.Name != "" && !c.IsIM {
+		if s.names == nil {
+			s.names = map[string]string{}
+		}
+		s.names[c.ID] = c.Name
+	}
+	s.mu.Unlock()
+}
+
+// ExtConv returns a non-sidebar conversation.
+func (s *Store) ExtConv(id string) (*slack.Conversation, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	c, ok := s.ext[id]
+	return c, ok
+}
+
+// ---- bots ----
+
+// BotInfo is a bot's display metadata (bots.info), cached on disk.
+type BotInfo struct {
+	Name string `json:"name"`
+	Icon string `json:"icon,omitempty"`
+}
+
+func (s *Store) PutBot(id string, b BotInfo) {
+	s.mu.Lock()
+	if s.bots == nil {
+		s.bots = map[string]BotInfo{}
+	}
+	s.bots[id] = b
+	s.mu.Unlock()
+}
+
+func (s *Store) Bot(id string) (BotInfo, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	b, ok := s.bots[id]
+	return b, ok
 }
 
 func (s *Store) UsergroupName(id string) string {
@@ -624,10 +778,12 @@ func (s *Store) NoteMessage(ch string, m *slack.Message, mentionsSelf bool) slac
 // ---- disk cache (metadata only) ----
 
 type diskCache struct {
-	Users      []slack.User      `json:"users"`
-	Emoji      map[string]string `json:"emoji"`
-	Usergroups []slack.Usergroup `json:"usergroups,omitempty"`
-	Prefs      *Prefs            `json:"prefs,omitempty"`
+	Users      []slack.User       `json:"users"`
+	Emoji      map[string]string  `json:"emoji"`
+	Usergroups []slack.Usergroup  `json:"usergroups,omitempty"`
+	Prefs      *Prefs             `json:"prefs,omitempty"`
+	Names      map[string]string  `json:"channel_names,omitempty"` // channels outside the sidebar
+	Bots       map[string]BotInfo `json:"bots,omitempty"`
 }
 
 // HasCachedPrefs reports whether prefs came from the disk cache.
@@ -670,6 +826,19 @@ func (s *Store) LoadCache() {
 	if len(d.Usergroups) > 0 {
 		s.SetUsergroups(d.Usergroups)
 	}
+	s.mu.Lock()
+	if len(d.Names) > 0 {
+		if s.names == nil {
+			s.names = map[string]string{}
+		}
+		for k, v := range d.Names {
+			s.names[k] = v
+		}
+	}
+	if len(d.Bots) > 0 {
+		s.bots = d.Bots
+	}
+	s.mu.Unlock()
 	if d.Prefs != nil {
 		muted := map[string]bool{}
 		for _, id := range d.Prefs.Muted {
@@ -688,7 +857,14 @@ func (s *Store) SaveCache() error {
 	}
 	s.mu.RLock()
 	prefs := s.Prefs
-	d := diskCache{Emoji: s.CustomEmoji.Snapshot(), Usergroups: append([]slack.Usergroup(nil), s.Groups...), Prefs: &prefs}
+	d := diskCache{Emoji: s.CustomEmoji.Snapshot(), Usergroups: append([]slack.Usergroup(nil), s.Groups...), Prefs: &prefs,
+		Names: map[string]string{}, Bots: map[string]BotInfo{}}
+	for k, v := range s.names {
+		d.Names[k] = v
+	}
+	for k, v := range s.bots {
+		d.Bots[k] = v
+	}
 	for _, u := range s.Users {
 		d.Users = append(d.Users, *u)
 	}
