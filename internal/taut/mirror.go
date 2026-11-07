@@ -28,6 +28,7 @@ var mapSlices = []string{
 	"channels", "members", "messages", "bots", "membershipCounts", "membership",
 	"readOnlyChannels", "threadOnlyChannels", "presence", "unreadChannelCounts",
 	"channelCursors", "userGroups", "channelHistory", "teams", "reactions",
+	"pendingFileUploads", "files", // the composer's attachments (files.go)
 }
 
 // wholeSlices are read whole.
@@ -485,6 +486,8 @@ func (m *mirror) slices() map[string][]string {
 func (m *mirror) keys(slice string) []string {
 	a := m.t.app
 	switch slice {
+	case "pendingFileUploads", "files":
+		return pendingKeys(slice)
 	case "channels", "readOnlyChannels", "threadOnlyChannels", "membershipCounts", "unreadChannelCounts", "channelCursors":
 		ids := a.S.ConvIDs()
 		if slice == "readOnlyChannels" || slice == "threadOnlyChannels" {
@@ -552,6 +555,8 @@ func (m *mirror) get(slice, key string) any {
 	a := m.t.app
 	switch slice {
 	// ---- id-keyed ----
+	case "pendingFileUploads", "files":
+		return pendingEntry(slice, key)
 	case "channels":
 		c, ok := a.S.Conv(key)
 		if !ok {

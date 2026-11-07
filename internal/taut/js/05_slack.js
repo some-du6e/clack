@@ -1632,6 +1632,23 @@ onAction('JUMP_TO_REPLY', (a) => {
 const setLocalDraft = withMeta('setLocalDraft', (draft) => ({ type: 'SET_LOCAL_DRAFT', payload: draft }))
 onAction('SET_LOCAL_DRAFT', (a) => (goOr(null, 'localDraft', encode(a.payload)), a))
 
+// ---- pending files (the composer's attachments) ----
+// state.pendingFileUploads[pendingFileId] is served from Go (the composer's
+// pending files, mirror.go); state.files has the ones whose bytes are up.
+// updatePendingFile is Slack's plain action creator: renaming a file here
+// renames it in the composer (its chip and the name it is shared under).
+// maybePersistPendingFileData and editFileApi are native thunks (thunks.go).
+const updatePendingFile = withMeta('updatePendingFile', (payload) => ({ type: 'UPDATE_PENDING_FILE', payload }))
+onAction('UPDATE_PENDING_FILE', (a) => {
+  const { pendingFileId, title } = a.payload || {}
+  if (pendingFileId != null && typeof title === 'string') {
+    goOr(false, 'updatePendingFile', String(pendingFileId), title)
+    // read again now, so selectors see the new title in this task
+    T.invalidate([{ slice: 'pendingFileUploads' }, { slice: 'files' }])
+  }
+  return a
+})
+
 class AudioVideoFacadeSubscriber {
   handlePeerMessageFromDataMessage() {}
 }
@@ -1669,6 +1686,7 @@ defineModule('slack-exports', {
   jumpToReply,
   setLocalDraft,
 })
+defineModule('pending-files', { updatePendingFile })
 defineModule('view-contexts', viewContexts)
 
 Object.assign(T, {

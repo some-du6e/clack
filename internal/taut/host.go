@@ -130,6 +130,12 @@ func (t *Taut) installHost(r *runtime) {
 		}
 		return f(strArg(a, 0), where, arg), nil
 	})
+	sync("updatePendingFile", func(a []json.RawMessage) (any, error) {
+		if f := RenamePendingFile; f != nil {
+			return f(strArg(a, 0), strArg(a, 1)), nil
+		}
+		return false, nil
+	})
 	sync("localDraft", func(a []json.RawMessage) (any, error) {
 		if f := t.opts.UI.SetLocalDraft; f != nil && len(a) > 0 {
 			f(a[0])
