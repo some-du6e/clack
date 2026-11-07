@@ -1116,3 +1116,23 @@ test('globals are non-enumerable and replaceable', () => {
   window.fetch = orig;
   assertEq(typeof self.atob, 'function');
 });
+
+// ---- Compression Streams ----
+test('CompressionStream / DecompressionStream: gzip, deflate, deflate-raw round trips; HaikuWarning\'s Blob → pipeThrough → text()', async () => {
+  const text = 'an old silent pond\n'.repeat(5000);
+  const raw = new TextEncoder().encode(text);
+  for (const f of ['gzip', 'deflate', 'deflate-raw']) {
+    const z = new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new CompressionStream(f))).arrayBuffer());
+    assert(z.length > 0 && z.length < raw.length / 10, f + ' compresses: ' + z.length);
+    const back = await new Response(new Blob([z]).stream().pipeThrough(new DecompressionStream(f))).text();
+    assertEq(back.length, text.length);
+    assert(back === text, f + ' round trip');
+  }
+  // gzip header magic, and a known gzip of "hi" made by Go/zlib
+  const gz = new Uint8Array(await new Response(new Blob(['hi']).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer());
+  assertEq([gz[0], gz[1]], [0x1f, 0x8b]);
+  await assertThrows(() => new DecompressionStream('brotli'), 'TypeError');
+  await assertThrows(() => new CompressionStream(), 'TypeError');
+  await assertThrows(() => new Response(new Blob([new Uint8Array([1, 2, 3, 4])]).stream().pipeThrough(new DecompressionStream('gzip'))).text());
+  assertEq(typeof globalThis.DecompressionStream, 'function');
+});

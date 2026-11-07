@@ -2325,6 +2325,51 @@
     get readable() { return this.#t.readable; }
     get writable() { return this.#t.writable; }
   }
+  // CompressionStream / DecompressionStream: the chunks are collected and
+  // (de)compressed natively in Go when the writable side closes.
+  const zFormat = (f, who) => {
+    const s = String(f);
+    if (s !== 'gzip' && s !== 'deflate' && s !== 'deflate-raw') throw new TypeError(`Failed to construct '${who}': Unsupported compression format: '${s}'`);
+    return s;
+  };
+  const zStream = (mode, format) => {
+    const parts = [];
+    let n = 0;
+    return new TransformStream({
+      transform(chunk) {
+        const b = toBytes(chunk);
+        if (!b) throw new TypeError("Failed to execute 'write' on 'WritableStreamDefaultWriter': The provided value is not of type '(ArrayBuffer or ArrayBufferView)'.");
+        parts.push(b.slice());
+        n += b.length;
+      },
+      flush(c) {
+        const all = new Uint8Array(n);
+        let o = 0;
+        for (const p of parts) { all.set(p, o); o += p.length; }
+        parts.length = 0;
+        const out = toBytes(H.zlib(mode, format, all));
+        if (out && out.length) c.enqueue(new Uint8Array(out));
+      },
+    });
+  };
+  class CompressionStream {
+    #t;
+    constructor(format) {
+      need(arguments, 1, null, 'CompressionStream');
+      this.#t = zStream('c', zFormat(format, 'CompressionStream'));
+    }
+    get readable() { return this.#t.readable; }
+    get writable() { return this.#t.writable; }
+  }
+  class DecompressionStream {
+    #t;
+    constructor(format) {
+      need(arguments, 1, null, 'DecompressionStream');
+      this.#t = zStream('d', zFormat(format, 'DecompressionStream'));
+    }
+    get readable() { return this.#t.readable; }
+    get writable() { return this.#t.writable; }
+  }
   const countSize = function size() { return 1; };
   const byteSize = function size(chunk) { return chunk.byteLength; };
   class CountQueuingStrategy {
@@ -2351,6 +2396,7 @@
     ReadableStream, ReadableStreamDefaultReader, ReadableStreamBYOBReader, ReadableStreamDefaultController, ReadableByteStreamController,
     WritableStream, WritableStreamDefaultWriter, WritableStreamDefaultController, TransformStream, TransformStreamDefaultController,
     TextEncoderStream, TextDecoderStream, CountQueuingStrategy, ByteLengthQueuingStrategy,
+    CompressionStream, DecompressionStream,
   })) expose(n, C);
 
   // ---- Headers ----

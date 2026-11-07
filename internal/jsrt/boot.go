@@ -239,6 +239,21 @@ func (r *Runtime) installHost() {
 		}
 		return hh.Sum(nil), nil
 	})
+	// zlib backs CompressionStream / DecompressionStream ("gzip", "deflate"
+	// = zlib, "deflate-raw"): Chromium's are native, and plugins (Slick's
+	// HaikuWarning, its 1.4 MB dictionary) rely on them being fast; inflating
+	// in JS ran past the task timeout.
+	def("zlib", func(js *Ctx, _ Value, a []Value) (any, error) {
+		var data []byte
+		if len(a) > 2 {
+			data = a[2].Bytes()
+		}
+		out, err := zlibOp(str(a, 0), str(a, 1), data)
+		if err != nil {
+			return nil, &JSError{Name: "TypeError", Message: err.Error()}
+		}
+		return out, nil
+	})
 	def("dirty", func(js *Ctx, _ Value, a []Value) (any, error) {
 		r.eng.dirty = true
 		return nil, nil
