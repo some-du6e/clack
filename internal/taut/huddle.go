@@ -7,6 +7,7 @@ package taut
 import (
 	"encoding/json"
 	"sync"
+	"time"
 )
 
 type huddleState struct {
@@ -19,6 +20,11 @@ type huddleState struct {
 	left     map[string]string // attendee -> user (left)
 	logOn    bool
 	react    func(emoji, kind, url string) bool
+
+	// clientHuddles: the most recent huddle and when you joined it (ms)
+	lastCall, lastChannel string
+	startedAt             int64
+	ended                 bool
 }
 
 var huddles sync.Map // *Taut -> *huddleState
@@ -50,6 +56,13 @@ func (t *Taut) SetActiveHuddle(callID, channelID, selfAttendee, selfUser string)
 		h.mu.Unlock()
 		return
 	}
+	if callID != "" && callID != h.callID {
+		h.lastCall, h.lastChannel, h.startedAt, h.ended = callID, channelID, time.Now().UnixMilli(), false
+	} else if callID == "" && h.callID != "" {
+		h.ended = true
+	} else if callID != "" && channelID != "" {
+		h.lastChannel = channelID
+	}
 	h.callID, h.channel, h.self, h.selfUser = callID, channelID, selfAttendee, selfUser
 	if callID == "" {
 		h.peers, h.left, h.logOn = map[string]string{}, map[string]string{}, false
@@ -63,6 +76,7 @@ func (t *Taut) SetActiveHuddle(callID, channelID, selfAttendee, selfUser string)
 	}
 	t.mirror.invalidate("peers")
 	t.mirror.invalidate("huddleEvents")
+	t.mirror.invalidate("clientHuddles")
 	if callID == "" {
 		rt.post("activeHuddle", nil)
 		return
@@ -174,4 +188,27 @@ func (t *Taut) huddleEventsSlice() map[string]any {
 	on := h.logOn
 	h.mu.Unlock()
 	return map[string]any{"enabled": on, "isLoading": false, "events": []any{}, "isSideBySideEnabled": false, "isClosedCaptionsEnabled": false}
+}
+
+// clientHuddlesSlice is Slack's clientHuddles state: the most recent huddle
+// (huddleState STARTED while you're in it, ENDED after) and lastStartTs,
+// when you joined it in ms (CallTimer's elapsed time).
+func (t *Taut) clientHuddlesSlice() map[string]any {
+	h := t.huddle()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := map[string]any{"lastStartTs": h.startedAt, "mostRecentHuddle": nil}
+	if h.lastCall == "" {
+		return out
+	}
+	state := "STARTED"
+	if h.ended {
+		state = "ENDED"
+	}
+	recent := map[string]any{"callId": h.lastCall, "huddleState": state}
+	if h.lastChannel != "" {
+		recent["channelId"] = h.lastChannel
+	}
+	out["mostRecentHuddle"] = recent
+	return out
 }

@@ -1670,6 +1670,16 @@ function hasSlackbotCustomResponseInThread(state, channelId, threadTs, userId) {
   return false
 }
 
+// Slack's ClientStoreContext: a React context holding {store}, which
+// Slack provides at its app root. Clack's patched components are separate
+// roots, so the store is the context's default value and every component
+// sees it (CallTimer reads clientHuddles through it).
+if (G.React) {
+  const ClientStoreContext = G.React.createContext({ store: getStore() })
+  ClientStoreContext.displayName = 'ClientStoreContext'
+  defineModule('slack-client-store', { ClientStoreContext })
+}
+
 defineModule('slack-exports', {
   hasSlackbotCustomResponseInThread,
   I18n,
