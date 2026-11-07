@@ -151,6 +151,7 @@ type scope struct {
 	src        css.Style // the style a sub scope's root inherits from
 	srcOK      bool
 	rectsDirty bool
+	rehover    bool
 	dropdown   dropState
 }
 
