@@ -250,14 +250,25 @@ func TestSlickViewShowSendingBot(t *testing.T) {
 	e := newSlickEnv(t, func(s *store.Store) {
 		s.PutConv(slack.Conversation{ID: ch, Name: "bot-posts", IsChannel: true, IsMember: true, NumMembers: 3})
 		s.PutBot("B0SENDER1", store.BotInfo{Name: "Sender Bot", Icon: "https://avatars.invalid/sender-bot-48.png"})
-		s.SetLatest(ch, []slack.Message{{Type: "message", TS: ts, User: "UALICE", BotID: "B0SENDER1", Text: "posted for alice by a bot"}}, false)
+		s.SetLatest(ch, []slack.Message{
+			{Type: "message", TS: ts, User: "UALICE", BotID: "B0SENDER1", Text: "posted for alice by a bot"},
+			// a minute later, same sender: a grouped row (compact gutter, no avatar)
+			{Type: "message", TS: "1700000361.000100", User: "UALICE", BotID: "B0SENDER1", Text: "and a grouped follow-up"},
+		}, false)
 	})
 	e.install(t, "ShowSendingBot", nil)
-	patched(t, "MessageKitGutter", "MessageAvatar", "BaseMessageAvatar", "ConnectedBaseAvatar")
+	patched(t, "MessageKitGutter", "MessageAvatar", "BaseMessageAvatar", "ConnectedBaseAvatar", "ProgressiveDisclosureSuccessCoachmarkWrapper")
 	v := NewChannelView(e.h, ch)
 	v.Preview = true
-	e.waitFor(t, "the sending bot's badge on Alice's avatar", frameFn(v), func() bool {
+	f := frameFn(v)
+	e.waitFor(t, "the sending bot's badge on Alice's avatar", f, func() bool {
 		return e.ui.anyTree("slick-sending-bot__badge") && e.ui.anyTree("B0SENDER1") && e.ui.anyTree(`"n":"BaseMessageAvatar"`)
+	})
+	// The grouped row's compact gutter gets the badge from the sender
+	// context ProgressiveDisclosureSuccessCoachmarkWrapper provides above
+	// it: MessageKitGutter is a nested root, a portal under that wrapper.
+	e.waitFor(t, "the gutter badge on the grouped row", f, func() bool {
+		return e.ui.anyTree("slick-sending-bot__badge--gutter")
 	})
 }
 
@@ -363,13 +374,12 @@ func TestSlickViewMessageLogger(t *testing.T) {
 		return strings.Contains(rowText(v.s.rows[tsEdit]), "second synthetic draft") && e.ui.anyTree("slick-ml-edited")
 	})
 	// The edit history (old text, struck through) is drawn by the plugin's
-	// Blocks patch from a context its row patch provides; Blocks renders in
-	// its own slackc root, so that context doesn't reach it yet.
-	if e.ui.anyTree("slick-ml-edited-original") {
-		t.Log("edit history drawn")
-	} else {
-		t.Log("edit history not drawn (row → Blocks context, see the package gaps)")
-	}
+	// Blocks patch from a context its row patch provides: Blocks is its own
+	// slackc root, mounted as a portal under the row (NestedBridge), so the
+	// context reaches it as in Slack's single tree.
+	e.waitFor(t, "the edit history (original text) under the edited message", f, func() bool {
+		return e.ui.anyTree("slick-ml-edited-original") && e.ui.anyTree("first synthetic draft")
+	})
 }
 
 // QuickJoin: a channel you can join, mentioned in a message, gets a Join

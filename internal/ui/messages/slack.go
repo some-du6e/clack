@@ -44,6 +44,26 @@ func slackMessage(m *core.Message) slackc.Props {
 			p["bot_profile"] = slackc.Props{"id": m.BotID, "name": m.Name, "icons": icons}
 		}
 	}
+	if bp := m.BotProfile; bp != nil {
+		prof := slackc.Props{"id": bp.ID, "name": bp.Name, "deleted": bp.Deleted}
+		for k, v := range map[string]string{"app_id": bp.AppID, "user_id": bp.UserID, "team_id": bp.TeamID} {
+			if v != "" {
+				prof[k] = v
+			}
+		}
+		if bp.Icon != "" {
+			prof["icons"] = slackc.Props{"image_36": bp.Icon, "image_48": bp.Icon, "image_72": bp.Icon}
+		} else if old, ok := p["bot_profile"].(slackc.Props); ok && old["icons"] != nil {
+			prof["icons"] = old["icons"]
+		}
+		p["bot_profile"] = prof
+	}
+	if len(m.Metadata) > 2 {
+		var md any
+		if json.Unmarshal(m.Metadata, &md) == nil {
+			p["metadata"] = md
+		}
+	}
 	if m.ReplyCount > 0 {
 		p["reply_count"] = m.ReplyCount
 		p["reply_users"] = strList(m.ReplyUsers)

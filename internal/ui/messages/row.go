@@ -603,7 +603,7 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 	}
 	r.col = image.Pt(cx, y)
 	g := at(gtx, 0, y, func(gtx layout.Context) layout.Dimensions {
-		return slackc.Component(gtx, "MessageKitGutter", r, (*row).gutterProps, (*row).layoutGutter)
+		return slackc.Component(gtx, "ProgressiveDisclosureSuccessCoachmarkWrapper", r, (*row).coachmarkProps, (*row).layoutCoachmark)
 	})
 	y += g.Size.Y
 	if m.Pending {
@@ -1750,4 +1750,16 @@ func pinnedLabel(rc *rowCtx, by string) string {
 		ensureUser(rc.h, by)
 	}
 	return "Pinned"
+}
+
+// ProgressiveDisclosureSuccessCoachmarkWrapper wraps the message's gutter
+// and content in Slack (props.msg); Clack has no coachmarks, so its native
+// is the gutter. Plugins provide context here (ShowSendingBot's sender for
+// grouped rows' compact gutters).
+func (r *row) coachmarkProps() slackc.Props {
+	return slackc.Props{"$key": r.ts, "msg": r.message(), "coachmarkName": "", "isOpen": false}
+}
+
+func (r *row) layoutCoachmark(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+	return slackc.Component(gtx, "MessageKitGutter", r, (*row).gutterProps, (*row).layoutGutter)
 }
