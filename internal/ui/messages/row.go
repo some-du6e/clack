@@ -127,7 +127,7 @@ func (r *row) set(e *entry) {
 
 // setDoc shows r.m's body (after set or a msg override).
 func (r *row) setDoc() {
-	opts := richview.Options{Edited: r.m.Edited, Muted: r.m.System, Dim: r.m.Pending}
+	opts := r.rvOpts()
 	if r.rv == nil {
 		r.rv = richview.New(r.m.Doc, opts)
 	} else {
@@ -136,6 +136,11 @@ func (r *row) setDoc() {
 	r.uRev = 0
 	r.blocksOv = 0
 	r.needChan = blocksNeedChan(r.m.Doc.Blocks)
+}
+
+// rvOpts are the body's richview options.
+func (r *row) rvOpts() richview.Options {
+	return richview.Options{Edited: r.m.Edited, Muted: r.m.System, Dim: r.m.Pending, Channel: r.m.Channel, TS: r.m.TS}
 }
 
 func (r *row) growPills() {
@@ -157,7 +162,7 @@ func (r *row) resolve(rc *rowCtx) {
 		doc := m.Doc
 		doc.Blocks = fixChannels(rc.h, doc.Blocks)
 		r.needChan = blocksNeedChan(doc.Blocks)
-		r.rv.Set(doc, richview.Options{Edited: m.Edited, Muted: m.System, Dim: m.Pending})
+		r.rv.Set(doc, r.rvOpts())
 		r.blocksOv = 0
 	}
 	r.name, r.avatar, r.statusURL, r.bot = m.Name, m.Avatar, "", m.IsBot || (m.BotID != "" && m.User == "")
@@ -719,7 +724,7 @@ func (r *row) layoutBlocks(gtx layout.Context, p slackc.Props) layout.Dimensions
 		if id != 0 {
 			doc.Blocks = docBlocks(rc.h.Core(), doc.Blocks, msg)
 		}
-		r.rv.Set(doc, richview.Options{Edited: r.m.Edited, Muted: r.m.System, Dim: r.m.Pending})
+		r.rv.Set(doc, r.rvOpts())
 		r.blocksOv = id
 	}
 	st := blocksClass.Enter(gtx, 0, 0)
