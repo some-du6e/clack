@@ -30,42 +30,74 @@ func callAsync(t *testing.T, r *Runtime, body string) (string, error) {
 	return string(raw), err
 }
 
-// A loop QuickJS never interrupts (a native builtin that doesn't poll the
-// interrupt handler) is stopped by the watchdog: Do returns, and the
-// runtime either still works or is closed (Taut then starts a fresh one).
-func TestUninterruptibleLoopIsStopped(t *testing.T) {
+// Generic array methods over a huge array-like used to loop in C without
+// polling the interrupt handler (csrc/quickjs-interrupt.patch); they stop
+// at the task deadline like any other loop and the runtime keeps working.
+func TestArrayLikeLoopsInterrupted(t *testing.T) {
 	r := newTest(t, func(o *Options) { o.Timeout = 200 * time.Millisecond })
-	start := time.Now()
-	errc := make(chan error, 1)
-	go func() {
-		errc <- r.Do(func(js *Ctx) error {
-			_, err := js.Eval("hang.js", `Array.prototype.reverse.call({ length: 2 ** 53 - 1 }); 'done'`)
-			return err
-		})
-	}()
-	select {
-	case err := <-errc:
-		if err == nil {
-			t.Fatal("the loop finished?")
+	for _, src := range []string{
+		`Array.prototype.reverse.call({ length: 2 ** 53 - 1 })`,
+		`Array.prototype.copyWithin.call({ length: 2 ** 53 - 1 }, 0, 1)`,
+		`Array.prototype.join.call({ length: 2 ** 53 - 1 })`,
+		`Array.prototype.includes.call({ length: 2 ** 53 - 1 }, 1)`,
+		`try { Array.prototype.reverse.call({ length: 2 ** 53 - 1 }) } catch { 'caught' }`,
+	} {
+		start := time.Now()
+		errc := make(chan error, 1)
+		go func() {
+			errc <- r.Do(func(js *Ctx) error {
+				_, err := js.Eval("hang.js", src)
+				return err
+			})
+		}()
+		select {
+		case err := <-errc:
+			if !errors.Is(err, ErrTimeout) {
+				t.Fatalf("%s: %v", src, err)
+			}
+			t.Logf("%s: stopped after %v", src, time.Since(start).Round(time.Millisecond))
+		case <-time.After(20 * time.Second):
+			t.Fatalf("%s: the JS thread is still stuck after 20 s", src)
 		}
-		t.Logf("stopped after %v: %v", time.Since(start).Round(time.Millisecond), err)
-	case <-time.After(20 * time.Second):
-		t.Fatal("the JS thread is still stuck after 20 s")
+		if got := evalString(t, r, `1+1`); got != "2" {
+			t.Fatalf("after %s: %q", src, got)
+		}
+	}
+}
+
+// A task that never comes back (here a host function that blocks; in
+// real life a native loop that doesn't poll) makes the watchdog give the
+// Runtime up: Do returns ErrClosed and Done fires, instead of every caller
+// waiting forever.
+func TestWatchdogGivesUpOnStuckTask(t *testing.T) {
+	r := newTest(t, func(o *Options) { o.Timeout = 200 * time.Millisecond })
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	r.Expose("stuck", func(js *Ctx, this Value, args []Value) (any, error) {
+		select {
+		case <-release:
+		case <-time.After(30 * time.Second):
+		}
+		return nil, nil
+	})
+	start := time.Now()
+	err := r.Do(func(js *Ctx) error {
+		_, err := js.Eval("stuck.js", `__clack.stuck()`)
+		return err
+	})
+	if !errors.Is(err, ErrClosed) || time.Since(start) > 10*time.Second {
+		t.Fatalf("stuck task: %v after %v", err, time.Since(start))
 	}
 	select {
 	case <-r.Done():
-		if err := r.Do(func(js *Ctx) error { return nil }); !errors.Is(err, ErrClosed) {
-			t.Fatalf("Do after the engine was stopped: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		// interrupted rather than killed: it must still work
-		if got := evalString(t, r, `1+1`); got != "2" {
-			t.Fatalf("after the loop: %q", got)
-		}
+	case <-time.After(time.Second):
+		t.Fatal("Done didn't fire")
+	}
+	if err := r.Do(func(js *Ctx) error { return nil }); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Do afterwards: %v", err)
 	}
 	// a fresh runtime works
-	r2 := newTest(t)
-	if got := evalString(t, r2, `6*7`); got != "42" {
+	if got := evalString(t, newTest(t), `6*7`); got != "42" {
 		t.Fatalf("fresh runtime: %q", got)
 	}
 }

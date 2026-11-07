@@ -50,12 +50,11 @@ func compilationCache(dir string) wazero.CompilationCache {
 }
 
 type engine struct {
-	r    *Runtime
-	ctx  context.Context
-	kill context.CancelFunc // closes the module mid-call (the watchdog's last resort)
-	wrt  wazero.Runtime
-	mod  api.Module
-	mem  api.Memory
+	r   *Runtime
+	ctx context.Context
+	wrt wazero.Runtime
+	mod api.Module
+	mem api.Memory
 
 	fns    map[string]api.Function
 	stacks [][]uint64 // free call stacks (calls nest through host_call)
@@ -84,23 +83,20 @@ func newEngine(r *Runtime) (*engine, error) {
 	if len(wasmBin) == 0 {
 		return nil, errors.New("jsrt: engine wasm missing (internal/jsrt/jsrt.wasm not built)")
 	}
-	// Every call into the guest runs under ctx; cancelling it closes the
-	// module even inside a native loop that never polls the interrupt
-	// handler (CloseOnContextDone). The wasm memory is capped too: QuickJS's
-	// own limit covers the JS heap, the cap covers everything else.
-	ctx, kill := context.WithCancel(context.Background())
+	ctx := context.Background()
 	// Each engine has its own wazero runtime (the "jr" host module is per
-	// instance); compiled code comes from the shared cache.
+	// instance); compiled code comes from the shared cache. The wasm memory
+	// is capped: QuickJS's own limit covers the JS heap, the cap the rest.
+	// (Not WithCloseOnContextDone: its per-call goroutine and per-loop
+	// checks made React renders 2–3× slower; see Runtime.watchdog.)
 	wrt := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfig().
 		WithCompilationCache(compilationCache(r.opts.CacheDir)).
-		WithCloseOnContextDone(true).
 		WithMemoryLimitPages(memoryLimitPages(r.opts.MemoryLimit)))
-	e := &engine{r: r, ctx: ctx, kill: kill, wrt: wrt, fns: map[string]api.Function{}, unhandled: map[uint32]uint32{}}
+	e := &engine{r: r, ctx: ctx, wrt: wrt, fns: map[string]api.Function{}, unhandled: map[uint32]uint32{}}
 	ok := false
 	defer func() {
 		if !ok {
 			_ = wrt.Close(ctx)
-			kill()
 		}
 	}()
 	if _, err := wasi_snapshot_preview1.Instantiate(ctx, wrt); err != nil {
@@ -697,8 +693,7 @@ func (e *engine) hostModule(_ context.Context, _ api.Module, st []uint64) {
 }
 
 func (e *engine) hostRejection(_ context.Context, _ api.Module, st []uint64) {
-	// i32 params: only the low 32 bits of a stack slot are defined (wazero
-	// leaves garbage above them with CloseOnContextDone)
+	// i32 params: only the low 32 bits of a stack slot are defined
 	p, reason, handled := uint32(st[0]), uint32(st[1]), uint32(st[2]) != 0
 	if !handled {
 		// key by promise identity: the glue hands a fresh handle each time,
