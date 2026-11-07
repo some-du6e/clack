@@ -3,17 +3,13 @@ package popups
 import (
 	"context"
 	"errors"
-	"fmt"
 	"image"
-	"io"
 	"math"
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 
@@ -28,7 +24,10 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/openurl"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -818,37 +817,19 @@ func (lb *Lightbox) download() {
 	})
 }
 
+// lbSlackHost reports whether raw is on Slack's own hosts, which core.Fetch
+// handles (with the cookie only for slack.com).
 func lbSlackHost(raw string) bool {
 	u, err := url.Parse(raw)
-	if err != nil {
-		return false
-	}
-	host := strings.ToLower(u.Hostname())
-	return host == "slack.com" || strings.HasSuffix(host, ".slack.com") || strings.HasSuffix(host, ".slack-edge.com")
+	return err == nil && u.Scheme == "https" && slack.SlackOwnedHost(u.Hostname())
 }
 
-// lbGet downloads a public (non-Slack) image.
+// lbGet downloads a public (non-Slack) image with no credentials:
+// imgcache.PublicFetchLimit refuses non-https, userinfo and private
+// addresses, then loads it through Slack's image proxy, so saving an unfurl
+// image doesn't reveal your IP address to its host. At most core.MaxFetch.
 func lbGet(ctx context.Context, raw string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("http %d", resp.StatusCode)
-	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, core.MaxFetch+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(b) > core.MaxFetch {
-		return nil, errors.New("file too large")
-	}
-	return b, nil
+	return imgcache.PublicFetchLimit(ctx, raw, core.MaxFetch)
 }
 
 // lbSave writes data to the Downloads folder under a unique name and
@@ -862,6 +843,14 @@ func lbSave(name, src string, data []byte) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
+	return lbSaveIn(dir, name, src, data)
+}
+
+// lbSaveIn writes data to a new file in dir. The Slack-supplied name is
+// reduced to one plain file name (no separators, "..", drive letters or
+// Windows device names), and O_EXCL means an existing file or symlink is
+// never overwritten or followed.
+func lbSaveIn(dir, name, src string, data []byte) (string, error) {
 	name = lbCleanName(name)
 	if name == "" {
 		if u, err := url.Parse(src); err == nil {
@@ -918,12 +907,30 @@ func lbCleanName(name string) string {
 		switch {
 		case r < 0x20, r == 0x7f, strings.ContainsRune(`/\:*?"<>|`, r):
 			return '_'
+		case r == 0x200e, r == 0x200f, r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069:
+			return '_' // bidi controls: "\u202egnp.exe" would display as "exe.png"
 		}
 		return r
 	}, strings.TrimSpace(name))
 	name = strings.Trim(name, ". ")
 	if len(name) > 200 {
-		name = name[:200]
+		name = strings.ToValidUTF8(name[:200], "")
+		name = strings.TrimRight(name, ". ")
+	}
+	// Windows device names (CON, NUL, COM1, CONIN$, …) open the device, not
+	// a file, whatever the extension.
+	stem := strings.ToUpper(name)
+	if i := strings.IndexByte(stem, '.'); i >= 0 {
+		stem = stem[:i]
+	}
+	stem = strings.TrimRight(stem, " ")
+	switch stem {
+	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$":
+		name = "_" + name
+	default:
+		if len(stem) == 4 && (strings.HasPrefix(stem, "COM") || strings.HasPrefix(stem, "LPT")) && stem[3] >= '0' && stem[3] <= '9' {
+			name = "_" + name
+		}
 	}
 	return name
 }
@@ -934,26 +941,9 @@ func lbOpen(h Host, raw string) {
 		h.Toast("Can't open this link")
 		return
 	}
-	run(h, func(context.Context) (struct{}, error) {
-		var cmd *exec.Cmd
-		switch runtime.GOOS {
-		case "windows":
-			cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", raw)
-		case "darwin":
-			cmd = exec.Command("open", raw)
-		default:
-			cmd = exec.Command("xdg-open", raw)
-		}
-		if err := cmd.Start(); err != nil {
-			return struct{}{}, err
-		}
-		go func() { _ = cmd.Wait() }()
-		return struct{}{}, nil
-	}, func(_ struct{}, err error) {
-		if err != nil {
-			h.Toast("Couldn't open the browser: " + errText(err))
-		}
-	})
+	if err := openurl.Open(raw); err != nil {
+		h.Toast("Couldn't open the browser: " + errText(err))
+	}
 }
 
 func lbMaxF(a, b float32) float32 {

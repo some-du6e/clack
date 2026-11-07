@@ -14,6 +14,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -85,6 +86,9 @@ type Huddles struct {
 	chans    map[string]*widget.Clickable
 
 	bgFetched map[string]bool // live huddles maybeFetchBackgrounds ran for
+	// joinFn is the onHuddleJoin a HuddleInviteWindowWithPreviewContent
+	// patch handed the Join point, by room (slick.go).
+	joinFn map[string]slackc.JSFunc
 
 	sugAt    time.Time
 	sugUsers []string // IM partners by priority
@@ -194,7 +198,7 @@ func (v *Huddles) update(gtx C) {
 		})
 	}
 	if v.newBtn.Clicked(gtx) || v.heroBtn.Clicked(gtx) {
-		huddleAttempt(v.h, v.tt, "")
+		startHuddle(v.h, v.tt, startHuddleArgs{IsStandaloneHuddle: true})
 	}
 	if v.heroX.Clicked(gtx) {
 		v.hideHero = true
@@ -204,12 +208,26 @@ func (v *Huddles) update(gtx C) {
 	}
 	for i, m := range [...]map[string]*widget.Clickable{v.rooms, v.people, v.chans} {
 		for id, c := range m {
-			if c.Clicked(gtx) {
-				room := ""
-				if i == 0 {
-					room = id
-				}
-				huddleAttempt(v.h, v.tt, room)
+			if !c.Clicked(gtx) {
+				continue
+			}
+			switch i {
+			case 0: // a live huddle: the plugin's join, else join it in its conversation
+				v.joinClicked(id)
+			case 1: // a person: huddle in your DM with them
+				uid := id
+				go func() {
+					ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+					defer cancel()
+					conv, err := v.h.Core().OpenDM(ctx, uid)
+					if err != nil {
+						v.h.Toast("Couldn't open the DM: " + err.Error())
+						return
+					}
+					startHuddle(v.h, v.tt, startHuddleArgs{ChannelID: conv.ID})
+				}()
+			default:
+				startHuddle(v.h, v.tt, startHuddleArgs{ChannelID: id})
 			}
 		}
 	}
@@ -378,7 +396,15 @@ func (v *Huddles) item(gtx C, it huddleItem) D {
 			)
 		})
 	case hkRoom:
-		return layout.Inset{Left: 55, Right: 55}.Layout(gtx, func(gtx C) D { return v.room(gtx, it.r) })
+		return layout.Inset{Left: 55, Right: 55}.Layout(gtx, func(gtx C) D {
+			if !it.r.Active {
+				return v.room(gtx, it.r)
+			}
+			return col(gtx,
+				layout.Rigid(func(gtx C) D { return v.room(gtx, it.r) }),
+				layout.Rigid(func(gtx C) D { return v.huddleSurfaces(gtx, it.r) }),
+			)
+		})
 	case hkTiles:
 		return layout.Inset{Left: 55, Right: 55, Bottom: 10}.Layout(gtx, v.tiles)
 	case hkChannel:
@@ -527,17 +553,20 @@ func (v *Huddles) room(gtx C, r huddleRoom) D {
 				hgap(8),
 				layout.Flexed(1, func(gtx C) D {
 					return col(gtx,
-						layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wBold, v.p.Text, v.roomTitle(r)) }),
+						layout.Rigid(func(gtx C) D {
+							if r.Active {
+								return v.huddleTitle(gtx, r)
+							}
+							return v.label(gtx, 15, wBold, v.p.Text, v.roomTitle(r))
+						}),
 						layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wReg, v.p.Muted, v.roomMeta(r)) }),
 					)
 				}),
-				layout.Rigid(func(gtx C) D { return v.faces(gtx, r) }),
 				layout.Rigid(func(gtx C) D {
-					if !r.Active {
-						return D{}
+					if r.Active {
+						return v.huddleBar(gtx, r)
 					}
-					// drawn, not a separate clickable: the whole row joins
-					return layout.Inset{Left: 12}.Layout(gtx, func(gtx C) D { return v.joinPill(gtx) })
+					return v.faces(gtx, r)
 				}),
 			)
 		})

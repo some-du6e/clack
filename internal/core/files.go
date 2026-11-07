@@ -7,54 +7,59 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
-	"strings"
 	"sync"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 )
 
 // MaxFetch bounds a single Fetch (bytes are held in memory).
 const MaxFetch = 64 << 20
 
-// fetchHostAllowed limits Fetch to Slack's file and CDN hosts.
-var fetchHostAllowed = func(host string) bool {
-	return host == "slack.com" || strings.HasSuffix(host, ".slack.com") || strings.HasSuffix(host, ".slack-edge.com")
-}
-
-// Fetch downloads an authenticated Slack URL (files.slack.com thumbnails,
-// downloads, avatars, emoji) with the session cookie. Results are kept in a
-// memory-only LRU (256 MB) and never written to disk; concurrent requests
-// for the same URL share one download.
+// Fetch downloads a Slack URL. Only https slack.com and its subdomains
+// (files.slack.com thumbnails and downloads) get the session cookie, via
+// slack.Client.Download; Slack's CDNs (slack-edge.com avatars and emoji,
+// slack-imgs.com) are fetched with no credentials. Anything else, such as a
+// remote file's url_private on the sender's own host, is refused.
+// Results are kept in a memory-only LRU (256 MB) and never written to
+// disk; concurrent requests for the same URL share one download.
 func (a *App) Fetch(ctx context.Context, rawURL string) ([]byte, string, error) {
-	u, err := url.Parse(rawURL)
-	if err != nil || (u.Scheme != "https" && !testAllowHTTP) || !fetchHostAllowed(u.Hostname()) {
-		return nil, "", fmt.Errorf("core: Fetch refuses %q", rawURL)
+	authed := a.C.CredentialsOK(rawURL)
+	if !authed && !slack.PublicFetchURL(rawURL) {
+		return nil, "", fmt.Errorf("core: Fetch refuses %q", slack.Redact(rawURL))
 	}
 	if e, ok := a.files.get(rawURL); ok {
 		return e.data, e.mime, nil
 	}
 	var data []byte
 	var mime string
-	err = a.once("f:"+rawURL, func() error {
+	err := a.once("f:"+rawURL, func() error {
 		if e, ok := a.files.get(rawURL); ok {
 			data, mime = e.data, e.mime
 			return nil
 		}
-		resp, err := a.C.Download(ctx, rawURL)
-		if err != nil {
-			return err
+		var b []byte
+		if authed {
+			resp, err := a.C.Download(ctx, rawURL)
+			if err != nil {
+				return err
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				return fmt.Errorf("core: Fetch: http %d", resp.StatusCode)
+			}
+			if b, err = io.ReadAll(io.LimitReader(resp.Body, MaxFetch+1)); err != nil {
+				return err
+			}
+			if len(b) > MaxFetch {
+				return errors.New("core: Fetch: file too large")
+			}
+			mime = resp.Header.Get("Content-Type")
+		} else {
+			var err error
+			if b, mime, err = slack.GetNoCreds(ctx, rawURL, MaxFetch); err != nil {
+				return err
+			}
 		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("core: Fetch: http %d", resp.StatusCode)
-		}
-		b, err := io.ReadAll(io.LimitReader(resp.Body, MaxFetch+1))
-		if err != nil {
-			return err
-		}
-		if len(b) > MaxFetch {
-			return errors.New("core: Fetch: file too large")
-		}
-		mime = resp.Header.Get("Content-Type")
 		if mime == "" {
 			mime = http.DetectContentType(b)
 		}
@@ -73,9 +78,6 @@ func (a *App) Fetch(ctx context.Context, rawURL string) ([]byte, string, error) 
 	}
 	return data, mime, nil
 }
-
-// testAllowHTTP lets tests fetch from an httptest server.
-var testAllowHTTP = false
 
 type fileEntry struct {
 	data []byte

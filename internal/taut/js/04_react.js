@@ -21,6 +21,139 @@ const COMPONENT_SOURCES = {
   MessageKitGutter: '"c-message_kit__gutter__left"',
   HuddleLinkJoinGate: 'canJoinByExternalHuddleLink',
 }
+/**
+ * components plugins pick out by their real implementation source
+ * (Function.prototype.toString, which ignores a toString override), e.g.
+ * Slick's BetterGifs `isGifPicker`: a one-argument function whose code
+ * mentions these markers, like Slack's own
+ */
+const REAL_SOURCES = {
+  GifPicker: '"gif-picker-host", e.onGifSelected, e.emojiSearchQuery',
+  // Slick's ChannelListTyping: {displayName: 'Channel', filter: isSidebarChannel}
+  Channel: '"getSidebarChannelUiInfo"',
+}
+
+// ---- shapes: Slack components plugins pick out by more than their name ----
+
+/**
+ * Slack's TextyInput is memo(class TextyInput). Slick's CharacterCounter
+ * finds it with a filter on that type (a memo whose type's prototype has
+ * getNumCharsOverLimit) and reads the editor through the ref it passes:
+ * ref.instance.quill (getLength, getSelection, on/off for 'editor-change',
+ * 'text-change', 'selection-change'). The editor is Clack's native widget,
+ * so the Quill here is a model of it, fed by whoever draws the native
+ * (feedNative; the composer passes its length and selection).
+ */
+class TextyInput {
+  getNumCharsOverLimit() {
+    return 0
+  }
+}
+
+/** a Quill-like view of a native editor's {length, index, selected} (characters) */
+function quillModel() {
+  const listeners = new Map()
+  let s = { length: 0, index: 0, selected: 0 }
+  const emit = (ev, ...args) => {
+    const set = listeners.get(ev)
+    if (!set) return
+    for (const fn of [...set]) {
+      try {
+        fn(...args)
+      } catch (err) {
+        error(`a quill ${ev} listener threw`, err)
+      }
+    }
+  }
+  const quill = {
+    getLength: () => s.length + 1, // Quill counts the trailing newline
+    getSelection: () => ({ index: s.index, length: s.selected }),
+    on(ev, fn) {
+      if (!listeners.has(ev)) listeners.set(ev, new Set())
+      listeners.get(ev).add(fn)
+      return quill
+    },
+    off(ev, fn) {
+      listeners.get(ev)?.delete(fn)
+      return quill
+    },
+  }
+  return {
+    quill,
+    get: () => s,
+    set(next) {
+      const text = next.length !== s.length
+      const sel = next.index !== s.index || next.selected !== s.selected
+      if (!text && !sel) return
+      s = next
+      if (text) emit('text-change')
+      if (sel) emit('selection-change')
+      emit('editor-change', text ? 'text-change' : 'selection-change')
+    },
+  }
+}
+
+const finite = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+
+/** TextyInput's render: hands its ref Slack's {instance: {quill}} and draws the native with the rest */
+function textyInputRender(render) {
+  return function (props) {
+    const React = G.React
+    const { state, props: rest } = fedProps('TextyInput', props)
+    const { ref, ...pass } = rest
+    const q = React.useMemo(quillModel, [])
+    const max = React.useRef(0)
+    max.current = finite(pass.maxLength)
+    const handle = React.useMemo(
+      () => ({ instance: { quill: q.quill, getNumCharsOverLimit: () => (max.current > 0 ? Math.max(0, q.get().length - max.current) : 0) } }),
+      [q]
+    )
+    React.useLayoutEffect(() => {
+      if (state) q.set({ length: finite(state.length), index: finite(state.index), selected: finite(state.selected) })
+    })
+    React.useLayoutEffect(() => {
+      if (!ref) return
+      if (typeof ref === 'function') {
+        const cleanup = ref(handle)
+        return () => (typeof cleanup === 'function' ? cleanup() : ref(null))
+      }
+      ref.current = handle
+      return () => {
+        ref.current = null
+      }
+    }, [ref, handle])
+    return render(pass)
+  }
+}
+
+/**
+ * name → how its native is shaped: `render` wraps the native's render,
+ * `memoOf` makes the component look like memo(memoOf) (React still sees a
+ * function component: it checks typeof before $$typeof)
+ */
+const SHAPES = {
+  TextyInput: { render: textyInputRender, memoOf: TextyInput },
+}
+
+/** name → feed(props) → {state, props}: the data a shaped native shows, from whoever draws it */
+const nativeFeeds = new Map()
+/** sets (or with null removes) the feed of shaped native `name`; read at every render, so order doesn't matter */
+function feedNative(name, feed) {
+  if (typeof feed === 'function') nativeFeeds.set(name, feed)
+  else nativeFeeds.delete(name)
+}
+function fedProps(name, props) {
+  const feed = nativeFeeds.get(name)
+  if (!feed) return { state: null, props }
+  try {
+    const out = feed(props)
+    if (out && out.props && typeof out.props === 'object') return out
+  } catch (err) {
+    error(`the ${name} feed threw`, err)
+  }
+  return { state: null, props }
+}
+
 /** Slack components that are anonymous memos in the web client, found by `filter` on their source */
 const ANONYMOUS = new Set(['MessageKitGutter', 'HuddleLinkJoinGate'])
 /** every Slack component Clack draws at a boundary (docs/PLUGINS-components.md), so filter-only patches can match them */
@@ -29,7 +162,7 @@ const KNOWN_COMPONENTS = ('MessageBackground;MessageWrapper;MessageListItem;Sear
   'MessageBlocks;Blocks;ViewBlocks;MessageAttachment;BaseMessageAttachmentSlackMessage;AttachmentMedia;MessageAttachmentHuddleLink;' +
   'HuddleLinkJoinGate;ReactionBar;Reaction;UnstyledButton;ReactionAddButton;MessageActions;MessageActionButtonReaction;EmojiPickerPopover;' +
   'EmojiPicker;MessagePaneInput;InputContainer;MessageInput;WysiwygContainer;TextyButtons;TextyButtonOverflow;ShortcutsMenuTriggerButton;' +
-  'BaseContextBarV2;MessageInputRoadblock;ThreadTypingIndicator;TypingNames;texty_input_with_autocomplete;CharacterCount;ComposerLinkModal;' +
+  'BaseContextBarV2;MessageInputRoadblock;ThreadTypingIndicator;TypingNames;texty_input_with_autocomplete;TextyInput;CharacterCount;ComposerLinkModal;' +
   'Serialized(ThreadsFlexpane);ThreadSearchButton;ThreadFlexpaneAdminTools;BaseAvatarStack;HelpButton;ListChannelEntity;BaseMrkdwnChannel;' +
   'MemberLink;ActivityItem;ActivityRowContentSenderAvatarLayout;ActivityPrivacyBlurredName;RimetoProfilePresence;MemberProfileHoverCard;' +
   'BasePresence;LocalTime;RimetoMemberProfileOverflowMenu;EditAudioButton;CaptionsSubmenu;CaptionsItemsMenu;HuddleMetaEvent;HuddleBaseEvent;' +
@@ -55,10 +188,16 @@ function nativeFor(name) {
   if (c) return c
   const native = typeof host.native === 'function' ? host.native(name) : null
   const React = G.React
-  const inner = function SlackNative(props) {
+  const render = function SlackNative(props) {
     const view = React.useContext(stateViewContext())
     const el = native ? React.createElement(native, view ? { ...props, $view: view.id } : props) : React.createElement('clack-native', { name, props })
     return el
+  }
+  const shape = SHAPES[name]
+  let inner = shape?.render ? shape.render(render) : render
+  if (REAL_SOURCES[name]) {
+    // compiled from text, so its real source carries the markers
+    inner = new Function('render', `return function (e) { void [${REAL_SOURCES[name]}]; return render(e) }`)(render)
   }
   const marker = COMPONENT_SOURCES[name]
   const src = `function(e){let{className:t,...n}=e;return(0,r.jsx)("div",{className:(0,a.A)(${marker || `"c-${name.replace(/[A-Z]/g, (m, i) => (i ? '_' : '') + m.toLowerCase())}"`},t),...n})}`
@@ -70,6 +209,10 @@ function nativeFor(name) {
     named(name, inner)
     inner.displayName = name
     c = inner
+  }
+  if (shape?.memoOf) {
+    c.$$typeof = MEMO
+    c.type = shape.memoOf
   }
   componentNames.set(c, name)
   rawNatives.set(name, c)
@@ -531,4 +674,4 @@ T.preferencesTabElement = (id) => {
 }
 const preferences = { addTab }
 
-Object.assign(T, { patchComponent, slackComponent, nativeFor, getComponent, waitForComponent, getRenderedComponent, waitForRenderedComponent, getComponentSource, componentName, lazyComponent, elementsApi, modalApi, menuApi, dialogHelpersFor, openOverlay })
+Object.assign(T, { patchComponent, slackComponent, nativeFor, feedNative, getComponent, waitForComponent, getRenderedComponent, waitForRenderedComponent, getComponentSource, componentName, lazyComponent, elementsApi, modalApi, menuApi, dialogHelpersFor, openOverlay })

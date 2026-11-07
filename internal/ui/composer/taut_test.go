@@ -31,6 +31,7 @@ type fakeSlack struct {
 	srv   *httptest.Server
 	mu    sync.Mutex
 	calls []fakeCall
+	reply map[string]any // method → answer, overriding the defaults
 }
 
 type fakeCall struct {
@@ -65,6 +66,11 @@ func newFakeSlack(t testing.TB) *fakeSlack {
 		case "drafts.create", "drafts.update":
 			rep = map[string]any{"ok": true, "draft": map[string]any{"id": "Dr0TEST", "client_draft_id": "x"}}
 		}
+		f.mu.Lock()
+		if r, ok := f.reply[method].(map[string]any); ok {
+			rep = r
+		}
+		f.mu.Unlock()
 		_ = json.NewEncoder(w).Encode(rep)
 	}))
 	t.Cleanup(f.srv.Close)
@@ -84,11 +90,13 @@ func (f *fakeSlack) called(method string) []url.Values {
 }
 
 // syntheticApp is a core.App over a seeded store and the fake API.
-func syntheticApp(t testing.TB) (*core.App, *fakeSlack) {
+// seed adds to the store before the app starts.
+func syntheticApp(t testing.TB, seed ...func(s *store.Store)) (*core.App, *fakeSlack) {
 	t.Helper()
 	f := newFakeSlack(t)
 	c := slack.New(slack.Creds{Token: "xoxc-test", Cookie: "xoxd-test", UserID: tSelf, Team: tTeam, EnterpriseID: tEnt,
 		TeamURL: f.srv.URL + "/", EnterpriseURL: f.srv.URL + "/"})
+	c.EdgeURL = f.srv.URL + "/edge/" // never the real edgeapi.slack.com
 	s := store.New("")
 	s.Lock()
 	s.TeamID, s.TeamName, s.TeamDomain = tTeam, "Synthetic Club", "hackclub"
@@ -98,6 +106,9 @@ func syntheticApp(t testing.TB) (*core.App, *fakeSlack) {
 		{ID: "UALICE", Name: "alice", RealName: "Alice Example", Profile: slack.Profile{DisplayName: "alice", RealName: "Alice Example"}},
 	})
 	s.PutConv(slack.Conversation{ID: tChGen, Name: "general", IsChannel: true, IsMember: true, IsGeneral: true, NumMembers: 12})
+	for _, f := range seed {
+		f(s)
+	}
 	app := core.New(c, s)
 	if u, ok := s.User(tSelf); ok {
 		app.S.Self = *u

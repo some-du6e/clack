@@ -353,8 +353,15 @@ func TestNativeAndHost(t *testing.T) {
 	nodes := mustTree(t, `{"t":"div","k":1,"p":{"id":"row"},"c":[{"t":"@","n":"MessageSender","k":2,"p":{"name":"Ann"}},{"t":"@","n":"TestBadge","k":3}]}`)
 	gtx := testGtx(500, 500)
 	d := v.Layout(gtx, nodes, "MessageSender", Props{"name": "Ann"}, native)
-	if d.Size.X != 84 || d.Size.Y != 20 {
-		t.Errorf("dims %v, want 84x20", d.Size)
+	// The row sits on a line with the font's strut, so its height is
+	// max(native's 15px above the baseline, ascent) + max(5px below,
+	// descent): derived from the shaper, since system font metrics differ
+	// between runners (Ubuntu 22.04 measures 21, 24.04 20), ±1px rounding.
+	row := byID(v, "row")
+	asc, desc, _, _ := v.metrics(&row.st)
+	wantH := float32(math.Max(15, float64(asc)) + math.Max(5, float64(desc)))
+	if d.Size.X != 84 || math.Abs(float64(float32(d.Size.Y)-wantH)) > 1 {
+		t.Errorf("dims %v, want 84x%.1f (±1)", d.Size, wantH)
 	}
 	if v.fr.native != nil || v.fr.orig != nil {
 		t.Error("frame retained native/orig")
@@ -811,5 +818,39 @@ func TestHostKeysReachDOM(t *testing.T) {
 	}
 	if !key3 || !submit1 {
 		t.Errorf("keydown at the field %v, submit at the form %v; dispatched %v", key3, submit1, got)
+	}
+}
+
+// TestNestedNativeSeesInput: a native drawn inside another native's
+// children (a sidebar row's <Original> laying out its slots) is first
+// drawn during the parent's measure pass, without input; the real pass
+// must draw it again with input, or its clicks are lost.
+func TestNestedNativeSeesInput(t *testing.T) {
+	live := 0
+	RegisterHost(func(gtx layout.Context, h *Host) layout.Dimensions {
+		if gtx.Source.Enabled() {
+			live++
+		}
+		return layout.Dimensions{Size: image.Pt(20, 10)}
+	}, "TestLeaf")
+	withStyles(t, func(n *Node, s *css.Style) {})
+	windowSize = image.Pt(1000, 800)
+	v := NewView(1)
+	row := func(gtx layout.Context, p Props) layout.Dimensions {
+		if e, ok := PropChildren(p); ok {
+			return LayoutElement(gtx, e)
+		}
+		return layout.Dimensions{}
+	}
+	nodes := mustTree(t, `{"t":"div","k":1,"c":[{"t":"@","n":"Row","k":2,"c":[{"t":"@","n":"TestLeaf","k":3}]}]}`)
+	var r input.Router
+	for i := 0; i < 3; i++ {
+		gtx := testGtx(400, 400)
+		gtx.Source = r.Source()
+		live = 0
+		v.Layout(gtx, nodes, "Row", nil, row)
+		if live == 0 {
+			t.Fatalf("frame %d: the nested native never ran with input", i)
+		}
 	}
 }

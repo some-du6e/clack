@@ -22,12 +22,13 @@ type Runtime struct {
 	ctx    context.Context // cancelled by Close
 	cancel context.CancelFunc
 
-	mu      sync.Mutex
-	queue   []func()
-	modules map[string]string
-	wake    chan struct{}
-	done    chan struct{} // closed when the loop exits
-	closed  atomic.Bool
+	mu       sync.Mutex
+	queue    []func()
+	modules  map[string]string
+	wake     chan struct{}
+	done     chan struct{} // closed when the loop exits (or the watchdog gives up on it)
+	doneOnce sync.Once
+	closed   atomic.Bool
 
 	globalMu sync.RWMutex
 	global   map[string]int // window/document listener counts by event type
@@ -47,6 +48,8 @@ type Runtime struct {
 	onDocProps func(html, body []byte)
 	onCommit   func(id uint64, tree []byte)
 	fetches    map[int]context.CancelFunc
+	opens      []time.Time // recent external opens (allowOpen)
+	openWarned bool
 	start      time.Time
 
 	kvs      map[string]KV
@@ -102,7 +105,7 @@ func (r *Runtime) Close() {
 		return
 	}
 	r.cancel()
-	r.deadline.Store(1) // interrupt whatever runs now
+	r.deadline.Store(time.Now().UnixNano()) // interrupt whatever runs now
 	r.signal()
 }
 
@@ -177,14 +180,19 @@ func curGoid() int64 {
 
 func (r *Runtime) loop() {
 	r.goid.Store(curGoid())
-	defer close(r.done)
+	defer r.markDone()
 	r.js = &Ctx{r: r}
 	r.initErr = r.boot()
 	close(r.ready)
 	if r.initErr != nil {
+		if r.eng != nil {
+			r.eng.close()
+			r.eng = nil
+		}
 		return
 	}
 	defer r.shutdown()
+	go r.watchdog()
 	idle := time.NewTimer(time.Hour)
 	defer idle.Stop()
 	for !r.closed.Load() {
@@ -266,6 +274,39 @@ func (r *Runtime) checkpoint() {
 	r.flushRender()
 	r.eng.gcFloor()
 }
+
+// watchdog backs up the interrupt handler. QuickJS polls it in JS code,
+// regexps and the generic array methods (csrc/quickjs-interrupt.patch), but
+// a native loop that never polls would hold the JS thread forever. Once a
+// task is max(Timeout, 1 s) past its deadline the Runtime is given up on:
+// it closes and Done fires, so Do and Call callers get ErrClosed instead of
+// waiting forever and Taut starts a fresh runtime. The stuck goroutine
+// can't be stopped from outside the wasm; if it ever returns it shuts its
+// engine down.
+func (r *Runtime) watchdog() {
+	grace := r.opts.Timeout
+	if grace < time.Second {
+		grace = time.Second
+	}
+	tick := time.NewTicker(grace / 4)
+	defer tick.Stop()
+	for {
+		select {
+		case <-r.done:
+			return
+		case <-tick.C:
+		}
+		if d := r.deadline.Load(); d != 0 && time.Now().UnixNano() > d+int64(grace) {
+			r.opts.Log("error", fmt.Sprintf("jsrt: a task ignored its interrupt for %v past its deadline; abandoning the JS runtime", grace))
+			r.Close()
+			r.markDone()
+			return
+		}
+	}
+}
+
+// markDone closes done once (the loop exiting, or the watchdog giving up).
+func (r *Runtime) markDone() { r.doneOnce.Do(func() { close(r.done) }) }
 
 // interrupted is polled by the engine's interrupt handler.
 func (r *Runtime) interrupted() bool {

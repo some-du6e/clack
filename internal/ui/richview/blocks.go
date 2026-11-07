@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"gioui.org/font"
+	"gioui.org/unit"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 )
@@ -249,6 +250,9 @@ func (l *lay) block(b *richtext.Block, x, y, w int, edited bool) int {
 		if b.File == nil {
 			return 0
 		}
+		if l.mode&modeAtts != 0 && !l.inAtt {
+			return l.compFile(b, x, y, w)
+		}
 		return l.file(b.File, x, y, w)
 	}
 	// Unknown: lay out whatever text it has.
@@ -388,13 +392,24 @@ func (l *lay) context(b *richtext.Block, x, y, w int) int {
 func (l *lay) section(b *richtext.Block, x, y, w int, edited bool) int {
 	y0 := y
 	tw := w
-	accW := 0
+	accW, accH := 0, 0
+	stacked := false
 	if b.Image != nil {
 		accW = l.dp(88)
 		tw = w - accW - l.dp(12)
 	} else if len(b.Buttons) > 0 {
-		accW = l.buttonWidth(b.Buttons[0])
-		tw = w - accW - l.dp(12)
+		if el := l.opts.Elements; el != nil {
+			sz, stack := el.ElementsSize(b.Buttons[:1], w, true, l.metric())
+			if !stack {
+				accW, accH = sz.X, sz.Y
+				tw = w - accW - l.dp(12)
+			} else {
+				stacked = true
+			}
+		} else {
+			accW = l.buttonWidth(b.Buttons[0])
+			tw = w - accW - l.dp(12)
+		}
 	}
 	h := 0
 	if len(b.Children) > 0 {
@@ -420,6 +435,20 @@ func (l *lay) section(b *richtext.Block, x, y, w int, edited bool) int {
 		if accW > h {
 			h = accW
 		}
+	} else if len(b.Buttons) > 0 && l.opts.Elements != nil {
+		if stacked {
+			if h > 0 {
+				h += l.dp(12)
+			}
+			sz, _ := l.opts.Elements.ElementsSize(b.Buttons[:1], w, true, l.metric())
+			l.addSlot(b.Buttons[:1], image.Rect(x, y+h, x+sz.X, y+h+sz.Y), true)
+			h += sz.Y
+		} else {
+			l.addSlot(b.Buttons[:1], image.Rect(x+w-accW, y, x+w, y+accH), true)
+			if accH > h {
+				h = accH
+			}
+		}
 	} else if len(b.Buttons) > 0 {
 		bh := l.button(b.Buttons[0], x+w-accW, y)
 		if bh > h {
@@ -427,6 +456,15 @@ func (l *lay) section(b *richtext.Block, x, y, w int, edited bool) int {
 		}
 	}
 	return y + h - y0
+}
+
+func (l *lay) metric() unit.Metric { return unit.Metric{PxPerDp: l.scale, PxPerSp: l.spx} }
+
+// addSlot reserves r for a run of elements Options.Elements draws.
+func (l *lay) addSlot(bs []richtext.Button, r image.Rectangle, acc bool) {
+	l.d.slots = append(l.d.slots, slot{r: r, bs: bs, acc: acc})
+	// a box so the doc's size covers the slot
+	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, target: -1})
 }
 
 // fields lays out Block Kit / attachment fields in two columns. short (may
@@ -499,6 +537,11 @@ func (l *lay) button(bt richtext.Button, x, y int) int {
 }
 
 func (l *lay) buttons(bs []richtext.Button, x, y, w int) int {
+	if el := l.opts.Elements; el != nil {
+		sz, _ := el.ElementsSize(bs, w, false, l.metric())
+		l.addSlot(bs, image.Rect(x, y, x+sz.X, y+sz.Y), false)
+		return sz.Y
+	}
 	cx, cy := x, y
 	rowH := 0
 	for _, bt := range bs {

@@ -43,6 +43,15 @@ type Message struct {
 	BotProfile  *BotProfile     // bot_profile of bot messages
 }
 
+// SubtypeSlackbotResponse is the subtype of Slackbot's answers to the
+// workspace's custom responses (Customize Slack > Slackbot, the
+// slackbot.responses API): user USLACKBOT, subtype "slackbot_response".
+const SubtypeSlackbotResponse = "slackbot_response"
+
+// SlackbotCustomResponse reports whether m is Slackbot answering with one
+// of the workspace's custom responses.
+func (m *Message) SlackbotCustomResponse() bool { return m.Subtype == SubtypeSlackbotResponse }
+
 // BotProfile is the bot_profile Slack attaches to app messages.
 type BotProfile struct {
 	ID, Name, AppID, UserID, TeamID string

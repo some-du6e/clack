@@ -258,6 +258,7 @@
     R.flushSyncWork();
   };
   __clack.unmount = (id) => {
+    if (portalRootK.has(id)) { removePortal(id); return; }
     const r = rootsById.get(id);
     if (!r) return;
     R.updateContainerSync(null, r.fiberRoot, null, null);
@@ -266,6 +267,44 @@
     jr.dropContainer(id);
   };
   __clack.rootContainer = (id) => { const r = rootsById.get(id); return r ? r.container : null; };
+
+  // ---- nested roots as portals ----
+  // A patched Slack component that a native draws under another root's
+  // native host node k (a message row's <Original> drawing MessageText) is
+  // mounted as a portal inside that root's tree, at that native, so the
+  // contexts and providers around it (plugin patches, Redux views) reach
+  // it exactly as in Slack's single tree. Its own container delivers its
+  // commits to its own root id.
+  const portalsByK = new Map(); // host k → Map(root id → element)
+  const portalRootK = new Map(); // root id → host k
+  const portalSubs = new Map(); // host k → Set(rerender)
+  const portalBoxes = new Map(); // root id → container
+  const notifyPortal = (k) => {
+    const subs = portalSubs.get(k);
+    if (subs && subs.size) flushSync(() => { for (const f of subs) f(); });
+  };
+  const removePortal = (id) => {
+    const k = portalRootK.get(id);
+    portalRootK.delete(id);
+    const m = portalsByK.get(k);
+    if (m) { m.delete(id); if (!m.size) portalsByK.delete(k); }
+    notifyPortal(k);
+    portalBoxes.delete(id);
+    jr.dropContainer(id);
+  };
+  __clack.portalInto = (k, id, element) => {
+    k = Number(k);
+    const was = portalRootK.get(id);
+    if (was !== undefined && was !== k) removePortal(id);
+    if (!portalBoxes.has(id)) portalBoxes.set(id, jr.newContainer(id));
+    let m = portalsByK.get(k);
+    if (!m) portalsByK.set(k, (m = new Map()));
+    m.set(id, element === undefined ? null : element);
+    portalRootK.set(id, k);
+    notifyPortal(k);
+    R.flushSyncWork();
+  };
+  __clack.portalCount = () => portalRootK.size;
 
   // ---- native Slack components ----
   const natives = new Map();
@@ -283,7 +322,25 @@
         if (isEl(v) || (Array.isArray(v) && v.length && v.some(isEl))) (slots || (slots = [])).push(React.createElement('#slot', { key: '$' + k, name: k }, v));
         else np[k] = v;
       }
-      return slots ? React.createElement(type, { __np: np }, props.children, slots) : React.createElement(type, { __np: np }, props.children);
+      // nested patched roots Go mounted under this native (portalInto)
+      const ref = React.useRef(null);
+      const [, rerender] = React.useReducer((x) => x + 1, 0);
+      React.useLayoutEffect(() => {
+        const hk = ref.current && ref.current._k;
+        if (!hk) return undefined;
+        let subs = portalSubs.get(hk);
+        if (!subs) portalSubs.set(hk, (subs = new Set()));
+        subs.add(rerender);
+        if (portalsByK.has(hk)) rerender();
+        return () => { subs.delete(rerender); if (!subs.size) portalSubs.delete(hk); };
+      }, []);
+      const hk = ref.current && ref.current._k;
+      const pm = hk ? portalsByK.get(hk) : null;
+      const host = slots ? React.createElement(type, { __np: np, ref }, props.children, slots) : React.createElement(type, { __np: np, ref }, props.children);
+      if (!pm) return host;
+      const portals = [];
+      for (const [id, el] of pm) portals.push(R.createPortal(el, portalBoxes.get(id), null, 'p' + id));
+      return React.createElement(React.Fragment, null, host, portals);
     };
     def(C, 'name', name);
     C.displayName = name;

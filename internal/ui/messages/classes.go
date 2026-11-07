@@ -19,9 +19,11 @@ var (
 	listClass   = slackc.Class("c-message_list c-virtual_list", "role", "list", "data-qa", "slack_kit_list")
 	itemClass   = slackc.Class("c-virtual_list__item", "role", "listitem")
 
-	// MessageBackground; mods: hovered, thread message, thread root.
+	// MessageBackground; mods: hovered, thread message, thread root,
+	// Slackbot custom response (core.Message.SlackbotCustomResponse).
 	msgClass = slackc.Class("c-message_kit__background c-message_kit__message", "data-qa", "message_container").
-			Mods("c-message_kit__background--hovered", "c-message_kit__thread_message", "c-message_kit__thread_message--root")
+			Mods("c-message_kit__background--hovered", "c-message_kit__thread_message", "c-message_kit__thread_message--root",
+			"c-message_kit__background--labels--custom_response")
 	gutterClass      = slackc.Class("c-message_kit__gutter")
 	gutterLeftClass  = slackc.Class("c-message_kit__gutter__left")
 	gutterRightClass = slackc.Class("c-message_kit__gutter__right")

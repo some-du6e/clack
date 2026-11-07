@@ -238,6 +238,15 @@ func (t *Taut) SetUserCSS(css string) error {
 	return nil
 }
 
+// WriteConfig replaces config.json with text (Preferences > Advanced's
+// editor; the caller checked it's a JSON object) and applies it.
+func (t *Taut) WriteConfig(ctx context.Context, text []byte) error {
+	if err := writeFileAtomic(filepath.Join(t.dir, "config.json"), text, 0o600); err != nil {
+		return err
+	}
+	return t.ReloadConfig(ctx)
+}
+
 // ReloadConfig re-reads config.json (edited by hand) and applies it: like
 // Taut's file watcher, plugins whose resolved config changed restart.
 func (t *Taut) ReloadConfig(ctx context.Context) error {

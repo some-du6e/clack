@@ -14,6 +14,7 @@ import (
 	"hash"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"runtime"
 	"sort"
 	"strings"
@@ -309,7 +310,10 @@ func (r *Runtime) installHost() {
 		return nil, nil
 	})
 	def("openURL", func(js *Ctx, _ Value, a []Value) (any, error) {
-		if r.opts.OpenURL != nil {
+		// window.open, link clicks and location.assign: at most
+		// openURLBurst per openURLWindow, like a popup blocker, so a plugin
+		// can't open browser tabs in a loop. Extra calls are dropped.
+		if r.opts.OpenURL != nil && r.allowOpen(time.Now()) {
 			u := str(a, 0)
 			go r.opts.OpenURL(u)
 		}
@@ -465,6 +469,24 @@ type fetchResult struct {
 	Redirected bool        `json:"redirected"`
 }
 
+// maxFetchBytes caps a fetch() response body; a larger one fails with a
+// TypeError instead of growing Go's heap and the wasm memory without bound.
+var maxFetchBytes int64 = 128 << 20
+
+// fetchURLAllowed: fetch() goes to the network over http(s) only. data:
+// and blob: URLs are answered in JS (web.js) and never reach Go; file:,
+// ftp: and every other scheme are refused here, whatever Options.Fetch is.
+func fetchURLAllowed(raw string) error {
+	u, err := neturl.Parse(raw)
+	if err != nil {
+		return err
+	}
+	if s := strings.ToLower(u.Scheme); s != "http" && s != "https" || u.Host == "" {
+		return fmt.Errorf("fetch: URL scheme %q is not supported", u.Scheme)
+	}
+	return nil
+}
+
 func (r *Runtime) startFetch(id int, method, url string, headers [][2]string, body []byte) {
 	ctx, cancel := context.WithCancel(r.ctx)
 	r.fetches[id] = cancel
@@ -479,6 +501,10 @@ func (r *Runtime) startFetch(id int, method, url string, headers [][2]string, bo
 			fn := js.Global().Get("__jr").Get("fetchDone")
 			_, _ = fn.Call(id, nil, nil, name, err.Error())
 		})
+	}
+	if err := fetchURLAllowed(url); err != nil {
+		fail(err)
+		return
 	}
 	go func() {
 		var rd io.Reader
@@ -507,8 +533,11 @@ func (r *Runtime) startFetch(id int, method, url string, headers [][2]string, bo
 			fail(err)
 			return
 		}
-		data, err := io.ReadAll(resp.Body)
+		data, err := io.ReadAll(io.LimitReader(resp.Body, maxFetchBytes+1))
 		resp.Body.Close()
+		if err == nil && int64(len(data)) > maxFetchBytes {
+			err = fmt.Errorf("fetch: the response body is larger than %d MiB", maxFetchBytes>>20)
+		}
 		if err != nil {
 			fail(err)
 			return
@@ -559,4 +588,32 @@ func pickedFiles(files []PickedFile) func(*Ctx) (Value, error) {
 		}
 		return arr, nil
 	}
+}
+
+// Rate limit for opening external links from JS (window.open and friends).
+const (
+	openURLBurst  = 5
+	openURLWindow = 10 * time.Second
+)
+
+// allowOpen reports whether one more external open fits the rate limit.
+// JS thread only.
+func (r *Runtime) allowOpen(now time.Time) bool {
+	keep := r.opens[:0]
+	for _, t := range r.opens {
+		if now.Sub(t) < openURLWindow {
+			keep = append(keep, t)
+		}
+	}
+	r.opens = keep
+	if len(r.opens) >= openURLBurst {
+		if !r.openWarned {
+			r.openWarned = true
+			r.opts.Log("warn", "window.open: too many links opened; ignoring the rest for a few seconds")
+		}
+		return false
+	}
+	r.openWarned = false
+	r.opens = append(r.opens, now)
+	return true
 }

@@ -52,6 +52,7 @@ type Composer struct {
 
 	broadcast  bool
 	lastTyping time.Time
+	typingOn   bool // typing reported since the composer was last empty
 	lastVer    uint64
 
 	// Server draft sync (syncDraftCreate / syncDraftUpdates /
@@ -203,7 +204,9 @@ func (c *Composer) Layout(gtx layout.Context) layout.Dimensions {
 		dims = slackc.Component(gtx, "MessagePaneInput", c, (*Composer).paneProps, (*Composer).layoutPane)
 	}
 
-	// Autocomplete after the editor laid out, anchored at the trigger.
+	// Autocomplete after the editor laid out, anchored at the trigger,
+	// with what plugins changed on TextyAutocomplete.
+	c.ac.setOverrides(c.ui.f.acP)
 	c.ac.Update(c.ed.Doc(), caretOf(c.ed))
 	c.acceptAutocomplete()
 	if c.ac.Open() && c.drewInput {
@@ -324,6 +327,11 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 		ViewContext:    c.viewContext(),
 		Count:          c.ed.Doc().Len(),
 	}
+	if lo, hi := c.ed.Selection(); lo <= hi {
+		st.SelLo, st.SelN = lo, hi-lo
+	} else {
+		st.SelLo, st.SelN = hi, lo-hi
+	}
 	st.InCode = st.Block == CodeBlock
 	st.ShowPlaceholder = c.ed.Empty() && c.ed.Doc().Len() == 0
 	switch {
@@ -408,8 +416,11 @@ func (c *Composer) changed() {
 	}
 	c.saveDraft()
 	c.syncDraftSoon()
-	if !c.ed.Empty() && time.Since(c.lastTyping) > 3*time.Second {
+	if c.ed.Empty() {
+		c.typingStopped()
+	} else if time.Since(c.lastTyping) > 3*time.Second {
 		c.lastTyping = time.Now()
+		c.typingOn = true
 		api, ch, ts := c.api, c.ch, c.ts
 		go sendTyping(api, ch, ts)
 	}
@@ -435,7 +446,7 @@ func (c *Composer) handleActions(gtx layout.Context) {
 			showFormatting = !showFormatting
 			c.ed.Focus(gtx)
 		case caAttach:
-			c.att.Menu(a.Anchor)
+			c.att.Menu(a.Anchor, c.ch)
 		case caEmoji:
 			c.h.OpenEmojiPicker(image.Pt(a.Anchor.Min.X, a.Anchor.Min.Y), func(name string) { c.InsertEmoji(name) })
 		case caMention:
@@ -784,6 +795,7 @@ func (c *Composer) clearAfterSend() {
 	c.deleteServerDraft("message_sent")
 	c.broadcast = false
 	c.lastTyping = time.Time{}
+	c.typingStopped()
 	clearDraft(c.ch, c.ts)
 	c.h.Invalidate()
 }

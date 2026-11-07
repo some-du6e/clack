@@ -1,0 +1,561 @@
+package huddleui
+
+import (
+	"image"
+	"image/color"
+	"math"
+	"strings"
+	"sync"
+	"time"
+
+	"gioui.org/app"
+	"gioui.org/io/system"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/op/paint"
+	"gioui.org/unit"
+	"gioui.org/widget"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/huddle"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+)
+
+// window is the huddle window: Slack's separate huddle window with the
+// stage (tiles, screen share), captions and the control row. It runs its
+// own Gio event loop and theme (text shapers aren't shared across windows).
+type window struct {
+	c  *Controller
+	w  *app.Window
+	th *theme.Theme
+
+	mu     sync.Mutex
+	closed bool
+
+	vids   videoOps
+	clicks map[string]*widget.Clickable
+	picker bool
+	notice string
+	noteAt time.Time
+	full   bool
+}
+
+// OpenWindow shows the huddle window (creating it), when you're in a huddle.
+func (c *Controller) OpenWindow() {
+	c.mu.Lock()
+	if c.win != nil || (c.s == nil && c.joining == "") {
+		c.mu.Unlock()
+		return
+	}
+	w := &window{c: c, clicks: map[string]*widget.Clickable{}}
+	c.win = w
+	c.mu.Unlock()
+	go w.run()
+}
+
+// WindowOpen reports whether the huddle window is showing.
+func (c *Controller) WindowOpen() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.win != nil
+}
+
+func (w *window) invalidate() {
+	w.mu.Lock()
+	ww := w.w
+	w.mu.Unlock()
+	if ww != nil {
+		ww.Invalidate()
+	}
+}
+
+func (w *window) close() {
+	w.mu.Lock()
+	w.closed = true
+	ww := w.w
+	w.mu.Unlock()
+	if ww != nil {
+		ww.Perform(system.ActionClose)
+	}
+}
+
+func (w *window) click(id string) *widget.Clickable {
+	c := w.clicks[id]
+	if c == nil {
+		c = new(widget.Clickable)
+		w.clicks[id] = c
+	}
+	return c
+}
+
+func (w *window) note(s string) {
+	w.notice, w.noteAt = s, time.Now()
+}
+
+func (w *window) run() {
+	ww := new(app.Window)
+	ww.Option(app.Title("Huddle - "+AppName), app.Size(unit.Dp(620), unit.Dp(400)), app.MinSize(unit.Dp(440), unit.Dp(300)))
+	main := w.c.h.Theme()
+	th := theme.Bare(true)
+	sh := theme.NewShaper()
+	th.SetShapers(sh, sh)
+	th.Images, th.EmojiStyle = main.Images, main.EmojiStyle
+	w.th = th
+	w.mu.Lock()
+	w.w = ww
+	closed := w.closed
+	w.mu.Unlock()
+	if closed {
+		ww.Perform(system.ActionClose)
+	}
+	tick := time.NewTicker(250 * time.Millisecond) // speaking bars, timer, images
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-tick.C:
+				ww.Invalidate()
+			case <-done:
+				return
+			}
+		}
+	}()
+	var ops op.Ops
+	for {
+		switch e := ww.Event().(type) {
+		case app.DestroyEvent:
+			tick.Stop()
+			close(done)
+			w.c.mu.Lock()
+			if w.c.win == w {
+				w.c.win = nil
+			}
+			w.c.mu.Unlock()
+			w.c.h.Invalidate()
+			return
+		case app.FrameEvent:
+			gtx := app.NewContext(&ops, e)
+			w.layout(gtx)
+			e.Frame(gtx.Ops)
+		}
+	}
+}
+
+// AppName is the window title suffix (the ui root sets it to its own).
+var AppName = "Clack"
+
+func (w *window) layout(gtx C) {
+	sz := gtx.Constraints.Max
+	theme.Fill(gtx, image.Rectangle{Max: sz}, hudFrame)
+	s := w.c.Session()
+	if s == nil {
+		centerLabel(gtx, w.th, sz, 14, theme.Bold, hudWhite, "Joining the huddle…")
+		return
+	}
+	st := s.State()
+	now := time.Now()
+	w.handle(gtx, s, st)
+
+	// title: headphones + "Huddle in #channel", centered
+	titleH := gtx.Dp(34)
+	title := "Huddle in " + w.c.channelTitle(st.Channel)
+	switch st.Phase {
+	case huddle.Connecting:
+		title = "Connecting… " + title
+	case huddle.Reconnecting:
+		title = "Reconnecting… " + title
+	}
+	ts := labelSize(gtx, w.th, 14, theme.Bold, title)
+	ix := (sz.X - ts.X - gtx.Dp(22)) / 2
+	at(gtx, image.Pt(ix, (titleH-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx C) D {
+		iconAt(gtx, image.Pt(gtx.Dp(16), gtx.Dp(16)), "headphones", 16, hudWhite)
+		return D{Size: image.Pt(gtx.Dp(16), gtx.Dp(16))}
+	})
+	at(gtx, image.Pt(ix+gtx.Dp(22), (titleH-ts.Y)/2), ts, func(gtx C) D {
+		return w.th.Label(gtx, 14, theme.Bold, hudWhite, title)
+	})
+	if !st.Started.IsZero() {
+		el := elapsed(now.Sub(st.Started))
+		es := labelSize(gtx, w.th, 12, theme.Regular, el)
+		at(gtx, image.Pt(gtx.Dp(14), (titleH-es.Y)/2), es, func(gtx C) D {
+			return w.th.Label(gtx, 12, theme.Regular, theme.WithAlpha(hudWhite, 0xb0), el)
+		})
+	}
+	bs := gtx.Dp(28)
+	at(gtx, image.Pt(sz.X-bs-gtx.Dp(10), (titleH-bs)/2), image.Pt(bs, bs), func(gtx C) D {
+		return button(gtx, w.click("full"), image.Pt(bs, bs), func(gtx C, hov bool) {
+			if hov {
+				theme.RRect(gtx, image.Rectangle{Max: gtx.Constraints.Max}, gtx.Dp(6), hudBtn)
+			}
+		}, func(gtx C) D { iconAt(gtx, image.Pt(bs, bs), "expand", 16, hudWhite); return D{} })
+	})
+
+	barH := gtx.Dp(60)
+	stage := image.Rect(gtx.Dp(8), titleH, sz.X-gtx.Dp(8), sz.Y-barH)
+	if stage.Dx() > 0 && stage.Dy() > 0 {
+		w.stage(gtx, s, st, stage, now)
+	}
+	w.toolbar(gtx, st, image.Rect(0, sz.Y-barH, sz.X, sz.Y))
+	if w.notice != "" && now.Sub(w.noteAt) < 4*time.Second {
+		ns := labelSize(gtx, w.th, 13, theme.Bold, w.notice)
+		pad := gtx.Dp(10)
+		r := image.Rect((sz.X-ns.X)/2-pad, stage.Min.Y+gtx.Dp(10), (sz.X+ns.X)/2+pad, stage.Min.Y+gtx.Dp(10)+ns.Y+pad)
+		theme.RRect(gtx, r, gtx.Dp(8), color.NRGBA{R: 0x1d, G: 0x1c, B: 0x1d, A: 0xee})
+		at(gtx, image.Pt(r.Min.X+pad, r.Min.Y+pad/2), ns, func(gtx C) D {
+			return w.th.Label(gtx, 13, theme.Bold, hudWhite, w.notice)
+		})
+	}
+}
+
+func (w *window) handle(gtx C, s *huddle.Session, st huddle.State) {
+	if w.click("mic").Clicked(gtx) {
+		s.SetMuted(!st.Muted)
+	}
+	if w.click("deafen").Clicked(gtx) {
+		s.SetDeafened(!st.Deafened)
+		if !st.Deafened {
+			w.note("You won't hear the huddle until you undeafen")
+		}
+	}
+	if w.click("camera").Clicked(gtx) {
+		w.note(AppName + " can't send video yet")
+	}
+	if w.click("screen").Clicked(gtx) {
+		w.note(AppName + " can't share your screen yet")
+	}
+	if w.click("react").Clicked(gtx) {
+		w.picker = !w.picker
+	}
+	if w.click("cc").Clicked(gtx) {
+		s.SetCaptions(!st.CaptionsOn)
+		if !st.CaptionsOn {
+			w.note("Captions show when someone in the huddle turns on transcription")
+		}
+	}
+	if w.click("thread").Clicked(gtx) {
+		if st.ThreadTS != "" {
+			ch := firstNonEmpty(st.ThreadChannel, st.Channel)
+			w.c.h.OpenThread(ch, st.ThreadTS)
+		} else {
+			w.c.h.Navigate("c/" + st.Channel)
+		}
+		w.c.h.Invalidate()
+	}
+	if w.click("leave").Clicked(gtx) {
+		w.c.Leave()
+	}
+	if w.click("full").Clicked(gtx) {
+		w.full = !w.full
+		if w.full {
+			w.w.Option(app.Fullscreen.Option())
+		} else {
+			w.w.Option(app.Windowed.Option())
+		}
+	}
+	for _, e := range quickEmoji {
+		if w.click("emoji:" + e).Clicked(gtx) {
+			w.picker = false
+			if err := s.React(e, ""); err != nil {
+				w.note("Couldn't send the reaction")
+			}
+		}
+	}
+}
+
+func firstNonEmpty(s ...string) string {
+	for _, v := range s {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+var quickEmoji = []string{"+1", "heart", "joy", "tada", "wave", "clap", "raised_hands", "fire"}
+
+// stage draws the participants (and the screen share, when there is one).
+func (w *window) stage(gtx C, s *huddle.Session, st huddle.State, r image.Rectangle, now time.Time) {
+	gradient(gtx, r, gtx.Dp(10), hudStageA, hudStageB)
+	ps := orderedParticipants(st)
+	cams := map[string]string{} // attendee -> video key
+	var share *huddle.Video
+	for i := range st.Videos {
+		v := st.Videos[i]
+		if v.Content {
+			if share == nil {
+				share = &st.Videos[i]
+			}
+		} else {
+			cams[v.AttendeeID] = v.Key
+		}
+	}
+	area := r.Inset(gtx.Dp(12))
+	if share != nil {
+		// the share takes the stage; the people sit in a column on the right
+		col := min(gtx.Dp(132), area.Dx()/4)
+		sr := image.Rect(area.Min.X, area.Min.Y, area.Max.X-col-gtx.Dp(10), area.Max.Y)
+		theme.RRect(gtx, sr, gtx.Dp(8), color.NRGBA{R: 0x1a, G: 0x1d, B: 0x21, A: 0xff})
+		if img, ok := w.vids.get(s, share.Key); ok {
+			at(gtx, sr.Min, sr.Size(), func(gtx C) D { fit(gtx, img, sr.Size(), gtx.Dp(8)); return D{} })
+		} else {
+			at(gtx, sr.Min, sr.Size(), func(gtx C) D {
+				centerLabel(gtx, w.th, sr.Size(), 13, theme.Bold, hudWhite, "Loading screen share…")
+				return D{}
+			})
+		}
+		name := w.c.userName(share.UserID)
+		if name != "" {
+			lbl := name + "'s screen"
+			ls := labelSize(gtx, w.th, 12, theme.Bold, lbl)
+			chip := image.Rect(sr.Min.X+gtx.Dp(8), sr.Max.Y-ls.Y-gtx.Dp(16), sr.Min.X+gtx.Dp(20)+ls.X, sr.Max.Y-gtx.Dp(8))
+			theme.RRect(gtx, chip, gtx.Dp(6), hudShade)
+			at(gtx, image.Pt(chip.Min.X+gtx.Dp(6), chip.Min.Y+gtx.Dp(4)), ls, func(gtx C) D {
+				return w.th.Label(gtx, 12, theme.Bold, hudWhite, lbl)
+			})
+		}
+		tile := min(col, (area.Dy()-gtx.Dp(8)*(len(ps)-1))/max(len(ps), 1))
+		y := area.Min.Y
+		for _, p := range ps {
+			if y+tile > area.Max.Y {
+				break
+			}
+			w.tile(gtx, s, p, cams[p.AttendeeID], image.Rect(area.Max.X-col, y, area.Max.X-col+tile, y+tile), now)
+			y += tile + gtx.Dp(8)
+		}
+	} else if n := len(ps); n > 0 {
+		gap := gtx.Dp(8)
+		best, bc := 0, 1
+		for cols := 1; cols <= n; cols++ {
+			rows := (n + cols - 1) / cols
+			side := min((area.Dx()-gap*(cols-1))/cols, (area.Dy()-gap*(rows-1))/rows)
+			if side > best {
+				best, bc = side, cols
+			}
+		}
+		best = min(best, gtx.Dp(220))
+		rows := (n + bc - 1) / bc
+		for i, p := range ps {
+			row, col := i/bc, i%bc
+			inRow := min(bc, n-row*bc)
+			x0 := area.Min.X + (area.Dx()-(inRow*best+(inRow-1)*gap))/2
+			y0 := area.Min.Y + (area.Dy()-(rows*best+(rows-1)*gap))/2
+			x, y := x0+col*(best+gap), y0+row*(best+gap)
+			w.tile(gtx, s, p, cams[p.AttendeeID], image.Rect(x, y, x+best, y+best), now)
+		}
+	}
+	if st.CaptionsOn {
+		w.captions(gtx, st, r)
+	}
+	if w.picker {
+		w.emojiPicker(gtx, r)
+	}
+}
+
+func (w *window) tile(gtx C, s *huddle.Session, p huddle.Participant, cam string, r image.Rectangle, now time.Time) {
+	rad := gtx.Dp(8)
+	sz := r.Size()
+	key := "tile:" + p.UserID + "/" + p.AttendeeID
+	at(gtx, r.Min, sz, func(gtx C) D {
+		return button(gtx, w.click(key), sz, func(gtx C, hov bool) {
+			theme.RRect(gtx, image.Rectangle{Max: sz}, rad, hudTileBg)
+			drawn := false
+			if cam != "" {
+				if img, ok := w.vids.get(s, cam); ok {
+					theme.Image(gtx, img, sz, rad)
+					drawn = true
+				}
+			}
+			if !drawn {
+				avatar(gtx, w.th, w.c.h.Images(), w.c.avatarURL(p.UserID, sz.X), sz, rad)
+			}
+			if p.Speaking(now) {
+				theme.Border(gtx, image.Rectangle{Max: sz}, rad, gtx.Dp(3), hudGreen)
+				at(gtx, image.Pt(gtx.Dp(8), sz.Y-gtx.Dp(28)), sz, func(gtx C) D { return speakingBars(gtx, now) })
+			}
+			if p.Muted {
+				d := gtx.Dp(24)
+				c := image.Pt(sz.X-gtx.Dp(8)-d/2, sz.Y-gtx.Dp(8)-d/2)
+				theme.Circle(gtx, c, d, hudShade)
+				at(gtx, c.Sub(image.Pt(d/2, d/2)), image.Pt(d, d), func(gtx C) D {
+					iconAt(gtx, image.Pt(d, d), "mic-off", 14, hudWhite)
+					return D{}
+				})
+			}
+			if hov || !p.InMedia {
+				name := w.c.userName(p.UserID)
+				if p.Self {
+					name += " (you)"
+				}
+				if !p.InMedia {
+					name += " · connecting"
+				}
+				ls := labelSize(gtx, w.th, 12, theme.Bold, name)
+				chip := image.Rect(gtx.Dp(6), gtx.Dp(6), gtx.Dp(18)+ls.X, gtx.Dp(14)+ls.Y)
+				if chip.Max.X > sz.X-gtx.Dp(6) {
+					chip.Max.X = sz.X - gtx.Dp(6)
+				}
+				theme.RRect(gtx, chip, gtx.Dp(6), hudShade)
+				at(gtx, image.Pt(chip.Min.X+gtx.Dp(6), chip.Min.Y+gtx.Dp(4)), chip.Size(), func(gtx C) D {
+					return w.th.Label(gtx, 12, theme.Bold, hudWhite, name)
+				})
+			}
+			if p.Reaction != "" {
+				if age := now.Sub(p.ReactedAt); age < 4*time.Second {
+					w.reaction(gtx, p.Reaction, sz, age)
+				}
+			}
+		}, nil)
+	})
+}
+
+// reaction floats the emoji up the tile and fades it.
+func (w *window) reaction(gtx C, name string, sz image.Point, age time.Duration) {
+	t := float32(age) / float32(4*time.Second)
+	es := gtx.Dp(unit.Dp(36 + 8*float32(math.Sin(float64(t)*math.Pi))))
+	y := int(float32(sz.Y-es)/2 - t*float32(sz.Y)/4)
+	txt := w.emojiText(name)
+	m := op.Record(gtx.Ops)
+	gtx2 := gtx
+	gtx2.Constraints = layout.Constraints{Max: image.Pt(sz.X, es*2)}
+	d := w.th.Label(gtx2, unit.Sp(float32(es)/gtx.Metric.PxPerSp), theme.Regular, hudWhite, txt)
+	call := m.Stop()
+	alpha := uint8(255)
+	if t > 0.7 {
+		alpha = uint8(255 * (1 - (t-0.7)/0.3))
+	}
+	defer op.Offset(image.Pt((sz.X-d.Size.X)/2, y)).Push(gtx.Ops).Pop()
+	defer paint.PushOpacity(gtx.Ops, float32(alpha)/255).Pop()
+	call.Add(gtx.Ops)
+}
+
+// emojiText turns an emoji name into its character ("+1" → 👍) when Slack
+// knows one, else ":name:".
+func (w *window) emojiText(name string) string {
+	if app := w.c.h.Core(); app != nil {
+		if _, text, ok := app.Emoji(name); ok && text != "" {
+			return text
+		}
+	}
+	return ":" + name + ":"
+}
+
+func (w *window) emojiPicker(gtx C, stage image.Rectangle) {
+	bs := gtx.Dp(36)
+	pad := gtx.Dp(6)
+	wd := len(quickEmoji)*bs + 2*pad
+	r := image.Rect((stage.Min.X+stage.Max.X-wd)/2, stage.Max.Y-bs-2*pad-gtx.Dp(6), (stage.Min.X+stage.Max.X+wd)/2, stage.Max.Y-gtx.Dp(6))
+	theme.RRect(gtx, r, gtx.Dp(10), color.NRGBA{R: 0x1d, G: 0x1c, B: 0x1d, A: 0xf2})
+	for i, e := range quickEmoji {
+		p := image.Pt(r.Min.X+pad+i*bs, r.Min.Y+pad)
+		txt := w.emojiText(e)
+		at(gtx, p, image.Pt(bs, bs), func(gtx C) D {
+			return button(gtx, w.click("emoji:"+e), image.Pt(bs, bs), func(gtx C, hov bool) {
+				if hov {
+					theme.RRect(gtx, image.Rectangle{Max: image.Pt(bs, bs)}, gtx.Dp(8), hudBtnHover)
+				}
+			}, func(gtx C) D { centerLabel(gtx, w.th, image.Pt(bs, bs), 20, theme.Regular, hudWhite, txt); return D{} })
+		})
+	}
+}
+
+func (w *window) captions(gtx C, st huddle.State, stage image.Rectangle) {
+	lines := st.Captions
+	if len(lines) > 2 {
+		lines = lines[len(lines)-2:]
+	}
+	if len(lines) == 0 {
+		return
+	}
+	maxW := stage.Dx() * 4 / 5
+	var b strings.Builder
+	for i, l := range lines {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		if n := w.c.userName(l.UserID); n != "" {
+			b.WriteString(n + ": ")
+		}
+		b.WriteString(l.Text)
+	}
+	txt := b.String()
+	m := op.Record(gtx.Ops)
+	g := gtx
+	g.Constraints = layout.Constraints{Max: image.Pt(maxW, stage.Dy()/2)}
+	d := w.th.Para(g, 14, 20, theme.Bold, hudWhite, txt)
+	call := m.Stop()
+	pad := gtx.Dp(10)
+	r := image.Rect((stage.Min.X+stage.Max.X-d.Size.X)/2-pad, stage.Max.Y-d.Size.Y-2*pad-gtx.Dp(10), (stage.Min.X+stage.Max.X+d.Size.X)/2+pad, stage.Max.Y-gtx.Dp(10))
+	theme.RRect(gtx, r, gtx.Dp(8), color.NRGBA{A: 0xcc})
+	defer op.Offset(image.Pt(r.Min.X+pad, r.Min.Y+pad)).Push(gtx.Ops).Pop()
+	call.Add(gtx.Ops)
+}
+
+type ctl struct {
+	id, icon string
+	on       bool // lit (mic on)
+	wide     int  // dp; 0 = 40
+	label    string
+}
+
+func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
+	mic := ctl{id: "mic", icon: "mic", on: true}
+	if st.Muted {
+		mic = ctl{id: "mic", icon: "mic-off"}
+	}
+	deaf := ctl{id: "deafen", icon: "headphones"}
+	if st.Deafened {
+		deaf = ctl{id: "deafen", icon: "headphones-off", on: true}
+	}
+	cc := ctl{id: "cc", icon: "captions", on: st.CaptionsOn}
+	ctls := []ctl{mic, deaf, {id: "camera", icon: "video-off"}, {id: "screen", icon: "screen-share"},
+		{id: "react", icon: "emoji", on: w.picker}, cc, {id: "thread", icon: "threads"}, {id: "leave", wide: 84, label: "Leave"}}
+	gap := gtx.Dp(8)
+	h := gtx.Dp(40)
+	total := 0
+	for _, c := range ctls {
+		total += w.ctlW(gtx, c) + gap
+	}
+	total -= gap
+	x := (r.Dx() - total) / 2
+	y := r.Min.Y + (r.Dy()-h)/2
+	for _, c := range ctls {
+		cw := w.ctlW(gtx, c)
+		c := c
+		at(gtx, image.Pt(x, y), image.Pt(cw, h), func(gtx C) D {
+			return button(gtx, w.click(c.id), image.Pt(cw, h), func(gtx C, hov bool) {
+				bg := hudBtn
+				if hov {
+					bg = hudBtnHover
+				}
+				if c.on {
+					bg = hudBtnOn
+				}
+				if c.id == "leave" {
+					bg = hudLeave
+					if hov {
+						bg = hudLeaveHov
+					}
+				}
+				theme.RRect(gtx, image.Rectangle{Max: image.Pt(cw, h)}, gtx.Dp(8), bg)
+			}, func(gtx C) D {
+				fg := hudWhite
+				if c.on {
+					fg = hudInk
+				}
+				if c.label != "" {
+					centerLabel(gtx, w.th, image.Pt(cw, h), 15, theme.Bold, hudWhite, c.label)
+				} else {
+					iconAt(gtx, image.Pt(cw, h), c.icon, 20, fg)
+				}
+				return D{}
+			})
+		})
+		x += cw + gap
+	}
+}
+
+func (w *window) ctlW(gtx C, c ctl) int {
+	if c.wide > 0 {
+		return gtx.Dp(unit.Dp(c.wide))
+	}
+	return gtx.Dp(40)
+}

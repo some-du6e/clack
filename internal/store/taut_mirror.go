@@ -92,3 +92,19 @@ func (s *Store) ConvIDs() []string {
 	sort.Strings(out)
 	return out
 }
+
+// ThreadHas reports whether a message of the cached thread ch/ts (the
+// root included when Slack sent it) satisfies match, without copying the
+// thread. match runs under the store's read lock: it must not call the
+// store. False when the thread isn't cached.
+func (s *Store) ThreadHas(ch, ts string, match func(*slack.Message) bool) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	th := s.threads[ch+"/"+ts]
+	for i := range th {
+		if match(&th[i]) {
+			return true
+		}
+	}
+	return false
+}

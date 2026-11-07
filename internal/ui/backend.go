@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +14,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/slick"
 	"github.com/some-du6e/yoloslackgoclient/internal/taut"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/openurl"
 )
 
 // backend adapts the in-process core service to the shell's model. Model
@@ -103,7 +102,7 @@ func (b *backend) start(a *App) {
 			log.Printf("ui: boot: %v", err)
 			a.Post(func() { a.Toast("Couldn't connect to Slack: " + err.Error()) })
 		}
-		a.Post(func() { b.startTaut(a) })
+		a.Post(func() { b.startTaut(a); b.startBlockkit(a) })
 		snap := b.core.Snapshot()
 		log.Printf("ui: core ready %v after boot start (%d convs)", time.Since(t0).Round(time.Millisecond), len(snap.Convs))
 		a.Post(func() {
@@ -121,6 +120,7 @@ func (b *backend) start(a *App) {
 
 func (b *backend) stop() {
 	b.stopTaut()
+	b.stopBlockkit()
 	if b.cancel != nil {
 		b.cancel()
 	}
@@ -294,6 +294,9 @@ func (b *backend) recount() {
 
 // handle applies one realtime event to the model.
 func (b *backend) handle(a *App, ev core.Event) {
+	if ev.Type == "huddle" {
+		a.huddles().Handle(ev)
+	}
 	m := &b.m
 	changed := false
 	switch ev.Type {
@@ -765,19 +768,6 @@ func (b *backend) saveCache() {
 	}()
 }
 
-// openURL opens a link in the system browser.
-func openURL(u string) {
-	if !strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "mailto:") {
-		return
-	}
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("open", u)
-	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", u)
-	default:
-		cmd = exec.Command("xdg-open", u)
-	}
-	_ = cmd.Start()
-}
+// openURL opens a link in the system browser (http, https and mailto only;
+// see openurl.Check).
+func openURL(u string) { _ = openurl.Open(u) }

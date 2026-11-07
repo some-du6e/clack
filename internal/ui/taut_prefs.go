@@ -3,12 +3,8 @@ package ui
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"image"
 	"image/color"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -1249,6 +1245,8 @@ func (p *tautPage) dataSection(f *flow, t *taut.Taut, pl taut.PluginInfo) {
 	})
 	if p.replace && pl.IsUser {
 		f.gap(12)
+		p.muted(f, "Only install code you trust! Plugins can do anything you can do in Slack.")
+		f.gap(8)
 		p.importControls(f, pl.ID)
 	}
 	if p.errText != "" {
@@ -1317,7 +1315,7 @@ func (p *tautPage) importURL(replacing string, done func(string)) {
 			id, err = t.InstallURL(ctx, u)
 			return err
 		}
-		code, err := fetchPlugin(ctx, u)
+		code, err := t.FetchPlugin(ctx, u)
 		if err != nil {
 			return err
 		}
@@ -1428,14 +1426,7 @@ func (p *tautPage) advancedScreen(f *flow, t *taut.Taut, s taut.Settings) {
 				return d
 			}
 			p.run("cfg", func(ctx context.Context, t *taut.Taut) error {
-				tmp := path + ".tmp"
-				if err := os.WriteFile(tmp, []byte(text), 0o600); err != nil {
-					return err
-				}
-				if err := os.Rename(tmp, path); err != nil {
-					return err
-				}
-				return t.ReloadConfig(ctx)
+				return t.WriteConfig(ctx, []byte(text))
 			}, func() { p.note = "Saved." })
 		}
 		x := d.Size.X + gtx.Dp(8)
@@ -1495,27 +1486,6 @@ func (p *tautPage) openTautChannel() {
 		}
 	}
 	openURL("https://github.com/jeremy46231/taut")
-}
-
-// fetchPlugin downloads a plugin .js for "Update code" from a URL
-// (InstallURL only adds new plugins).
-func fetchPlugin(ctx context.Context, u string) ([]byte, error) {
-	if !strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") {
-		return nil, errors.New("the plugin URL must start with https://")
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return nil, err
-	}
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetching the plugin: HTTP %d", res.StatusCode)
-	}
-	return io.ReadAll(io.LimitReader(res.Body, 16<<20))
 }
 
 func appVersion() string {

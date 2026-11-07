@@ -7,6 +7,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/taut"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 )
 
 // Slack's autocompleteMembers / autocompleteChannels thunks for plugins
@@ -263,18 +264,18 @@ func (ac *Autocomplete) pluginRank(t acTrigger, items []acItem) {
 		mu.Unlock()
 	}
 	remember(items)
-	channelID, isThread, later := ac.channelID, ac.thread, ac.later
+	channelID, isThread, later, includeAll := ac.channelID, ac.thread, ac.later, ac.ov.includeAll
 
 	go func() {
 		ctx := context.Background()
 		var rows []acRow
 		var err error
 		if t.Kind == acUser {
-			args := membersArgs{Query: t.Query, ChannelID: channelID, IsThread: isThread}
+			args := membersArgs{Query: t.Query, ChannelID: channelID, IsThread: isThread, IncludeAllBroadcastKeywords: includeAll}
 			rows, err = taut.Dispatch(ctx, tt, name, args, func(_ context.Context, a membersArgs) ([]acRow, error) {
 				q := strings.TrimPrefix(a.Query, "@")
 				var xs []acItem
-				if q == t.Query && !a.IncludeAllBroadcastKeywords {
+				if q == t.Query && a.IncludeAllBroadcastKeywords == includeAll {
 					xs = items
 				} else {
 					xs = mem.rank(q, a.IncludeAllBroadcastKeywords)
@@ -327,10 +328,10 @@ func (ac *Autocomplete) applyPlugin(t acTrigger, items []acItem) {
 	if !ac.pseudo && ac.sel < len(ac.items) {
 		selID = ac.items[ac.sel].ID
 	}
-	ac.items = items
+	ac.items = ac.ov.keep(items)
 	ac.itemsVer++
 	ac.sel = 0
-	for i, it := range items {
+	for i, it := range ac.items {
 		if selID != "" && it.ID == selID {
 			ac.sel = i
 			break
@@ -339,4 +340,66 @@ func (ac *Autocomplete) applyPlugin(t acTrigger, items []acItem) {
 	if ac.h != nil {
 		ac.h.Invalidate()
 	}
+}
+
+// ---- TextyAutocomplete's props (chrome_slack.go) ----
+
+// acOverrides are the TextyAutocomplete props a plugin changed:
+// includeAllBroadcastKeywords (bChannel offers @channel/@here/@everyone
+// where Slack wouldn't) and disallowedResults (row ids to leave out;
+// BetterBlock's blocked people). The zero value changes nothing.
+type acOverrides struct {
+	includeAll bool
+	disallowed map[string]bool
+}
+
+// keep drops the disallowed rows (in place: items is freshly built).
+func (o *acOverrides) keep(items []acItem) []acItem {
+	if len(o.disallowed) == 0 {
+		return items
+	}
+	out := items[:0]
+	for _, it := range items {
+		if !o.disallowed[it.ID] {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
+// setOverrides takes TextyAutocomplete's props as the plugins left them
+// (nil when it isn't patched) and recomputes the rows when they changed.
+// Called by Composer.Layout every frame, before Update.
+func (ac *Autocomplete) setOverrides(p slackc.Props) {
+	if p == nil {
+		if ac.ov.includeAll || ac.ov.disallowed != nil {
+			ac.ov = acOverrides{}
+			ac.itemsOK = false
+		}
+		return
+	}
+	inc := p.Bool("includeAllBroadcastKeywords")
+	ids := p.List("disallowedResults")
+	same := inc == ac.ov.includeAll && len(ids) == len(ac.ov.disallowed)
+	for _, v := range ids {
+		if !same {
+			break
+		}
+		id, _ := v.(string)
+		same = ac.ov.disallowed[id]
+	}
+	if same {
+		return
+	}
+	ac.ov.includeAll = inc
+	ac.ov.disallowed = nil
+	if len(ids) > 0 {
+		ac.ov.disallowed = make(map[string]bool, len(ids))
+		for _, v := range ids {
+			if id, ok := v.(string); ok && id != "" {
+				ac.ov.disallowed[id] = true
+			}
+		}
+	}
+	ac.itemsOK = false
 }

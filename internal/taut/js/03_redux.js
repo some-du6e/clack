@@ -517,9 +517,23 @@ function defineThunk(name, impl) {
   return creator
 }
 
+/** native thunks whose Go work changes slices: read again before the thunk resolves, so callers see the change */
+const THUNK_CHANGES = {
+  maybePersistPendingFileData: ['pendingFileUploads', 'files'],
+  editFileApi: ['pendingFileUploads', 'files'],
+}
+
 /** a thunk whose work is Clack's native implementation, run in Go */
 function nativeThunk(name) {
-  return defineThunk(name, async (args) => decode(await go('thunk', name, await encodeAsync(args))))
+  const changes = THUNK_CHANGES[name]
+  if (!changes) return defineThunk(name, async (args) => decode(await go('thunk', name, await encodeAsync(args))))
+  return defineThunk(name, async (args) => {
+    try {
+      return decode(await go('thunk', name, await encodeAsync(args)))
+    } finally {
+      T.invalidate(changes.map((slice) => ({ slice })))
+    }
+  })
 }
 
 const getThunkCreator = (name) => thunkCreators.get(name)
