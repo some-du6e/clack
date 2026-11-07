@@ -113,12 +113,31 @@ func (r *Runtime) Module(name, src string) {
 // Import imports a registered module (or anything the loader resolves) and
 // returns its namespace object, after top-level await settles. Any goroutine.
 func (r *Runtime) Import(name string) (Value, error) {
-	var v Value
-	err := r.Do(func(js *Ctx) (err error) {
-		v, err = js.Import(name)
-		return err
+	if r.onJSThread() {
+		return r.js.Import(name)
+	}
+	type res struct {
+		v   Value
+		err error
+	}
+	ch := make(chan res, 1)
+	err := r.Do(func(js *Ctx) error {
+		p, err := js.importPromise(name)
+		if err != nil {
+			return err
+		}
+		p.Then(func(v Value, err error) { ch <- res{v, err} })
+		return nil
 	})
-	return v, err
+	if err != nil {
+		return Value{}, err
+	}
+	select {
+	case x := <-ch:
+		return x.v, x.err
+	case <-r.done:
+		return Value{}, ErrClosed
+	}
 }
 
 // Eval runs a classic script (sloppy mode, like a <script> or new Function

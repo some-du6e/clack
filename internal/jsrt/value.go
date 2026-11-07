@@ -328,6 +328,13 @@ func (c *Ctx) Import(name string) (Value, error) {
 	return c.r.wrap(h), err
 }
 
+// importPromise starts import(name) and returns its Promise.
+func (c *Ctx) importPromise(name string) (Value, error) {
+	q, _ := jsonMarshal(name)
+	h, err := c.r.eng.eval("<import>", "import("+string(q)+")", false)
+	return c.r.wrap(h), err
+}
+
 // ParseJSON is JSON.parse(b).
 func (c *Ctx) ParseJSON(b []byte) (Value, error) {
 	h, err := c.r.eng.parse(b)
