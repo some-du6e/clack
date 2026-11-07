@@ -61,8 +61,13 @@ type entry struct {
 	k    key
 	op   paint.ImageOp
 	size image.Point
-	n    int // decoded bytes
+	n    int   // decoded bytes
+	used int64 // unix seconds of the last Get (idle eviction)
 }
+
+// IdleAfter: images not asked for in this long are dropped by a sweep every
+// IdleAfter/2, so an idle client holds only what it showed recently.
+const IdleAfter = 60 * time.Second
 
 // DefaultLimit is the decoded-pixel budget. Images are decoded at display
 // size, so this holds a few screens of photos (a 720 px thumbnail is
@@ -80,7 +85,7 @@ func New(fetch Fetcher, diskDir string, invalidate func()) *Cache {
 	if invalidate == nil {
 		invalidate = func() {}
 	}
-	return &Cache{
+	c := &Cache{
 		fetch:      fetch,
 		dir:        diskDir,
 		invalidate: invalidate,
@@ -91,6 +96,36 @@ func New(fetch Fetcher, diskDir string, invalidate func()) *Cache {
 		failed:     map[key]time.Time{},
 		sem:        make(chan struct{}, 8),
 		ctx:        context.Background(),
+	}
+	go c.sweepLoop()
+	return c
+}
+
+func (c *Cache) sweepLoop() {
+	t := time.NewTicker(IdleAfter / 2)
+	defer t.Stop()
+	for range t.C {
+		c.sweep(time.Now().Add(-IdleAfter).Unix())
+	}
+}
+
+// sweep drops entries last used before cutoff (unix seconds).
+func (c *Cache) sweep(cutoff int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for el := c.lru.Back(); el != nil; {
+		prev := el.Prev()
+		if e := el.Value.(*entry); e.used < cutoff {
+			c.lru.Remove(el)
+			delete(c.entries, e.k)
+			c.bytes -= e.n
+		}
+		el = prev
+	}
+	for k, t := range c.failed {
+		if t.Unix() < cutoff {
+			delete(c.failed, k)
+		}
 	}
 }
 
@@ -128,7 +163,9 @@ func (c *Cache) Get(url string, sizePx int) (paint.ImageOp, bool) {
 	c.mu.Lock()
 	if el, ok := c.entries[k]; ok {
 		c.lru.MoveToFront(el)
-		op := el.Value.(*entry).op
+		e := el.Value.(*entry)
+		e.used = time.Now().Unix()
+		op := e.op
 		c.mu.Unlock()
 		return op, true
 	}
@@ -190,7 +227,7 @@ func (c *Cache) load(k key) {
 		c.failed[k] = time.Now()
 	} else {
 		delete(c.failed, k)
-		e := &entry{k: k, op: op, size: sz, n: n}
+		e := &entry{k: k, op: op, size: sz, n: n, used: time.Now().Unix()}
 		c.entries[k] = c.lru.PushFront(e)
 		c.bytes += n
 		c.evict()
