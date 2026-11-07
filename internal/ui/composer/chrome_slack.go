@@ -502,7 +502,7 @@ func (c *chrome) rowItem(gtx layout.Context, kids slackc.Element, patched bool, 
 			if it, ok := crItemNamed(s.Name); ok {
 				l, r = it.l, it.r
 			}
-			d = s.Native(gtx, nd.P)
+			d = s.Native(gtx, slotProps(nd))
 		} else {
 			c.one[0] = nd
 			d = slackc.LayoutElement(gtx, slackc.Element{Nodes: c.one[:]})
@@ -664,7 +664,7 @@ func (c *chrome) layoutInline(gtx layout.Context, e slackc.Element) layout.Dimen
 		m := op.Record(gtx.Ops)
 		var d layout.Dimensions
 		if s, ok := slackc.SlotOf(nd); ok && s.Native != nil {
-			d = s.Native(gtx, nd.P) // our own part: its native, as rowItem does
+			d = s.Native(gtx, slotProps(nd)) // our own part: its native, as rowItem does
 		} else {
 			c.inlOne[0] = nd
 			d = slackc.LayoutElement(gtx, slackc.Element{Nodes: c.inlOne[:]})

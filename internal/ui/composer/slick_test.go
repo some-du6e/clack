@@ -178,8 +178,12 @@ func (e *slickEnv) ctx() context.Context {
 // composer is a real channel composer over the env, with a frame func
 // that lays it out like the ui root (slackc.Frame, then Layout).
 func (e *slickEnv) composer(ch string) (*Composer, func()) {
+	clearDraft(ch, "") // drafts are per channel and shared by the tests
 	c := New(e.h, ch, "")
-	e.t.Cleanup(c.Close)
+	e.t.Cleanup(func() {
+		c.Close()
+		clearDraft(ch, "")
+	})
 	ops := new(op.Ops)
 	frame := func() {
 		ops.Reset()

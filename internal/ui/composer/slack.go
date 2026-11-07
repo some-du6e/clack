@@ -218,6 +218,23 @@ func slotName(n *slackc.Node) (string, bool) {
 	return "", false
 }
 
+// slotProps is what a slot's native gets when the composer calls it
+// itself for a node of a patched tree (the footer row): the node's props
+// plus its rendered children under "children", as the layout engine
+// passes them (so kid finds nested parts, e.g. TextySubmitButton's
+// SendButton).
+func slotProps(nd *slackc.Node) slackc.Props {
+	if len(nd.C) == 0 {
+		return nd.P
+	}
+	p := make(slackc.Props, len(nd.P)+1)
+	for k, v := range nd.P {
+		p[k] = v
+	}
+	p["children"] = slackc.Element{Nodes: nd.C}
+	return p
+}
+
 // noneNative draws nothing (props that are elements, never laid out).
 func noneNative(layout.Context, slackc.Props) layout.Dimensions { return layout.Dimensions{} }
 
