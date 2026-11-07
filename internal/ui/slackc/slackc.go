@@ -110,6 +110,10 @@ func env() Env {
 	return envVal
 }
 
+// CurrentEnv returns the environment Init installed (host components and
+// the popups they open read Core, PointerWin, OpenEmojiPicker… from it).
+func CurrentEnv() Env { return env() }
+
 func invalidate() {
 	if f := env().Invalidate; f != nil {
 		f()
