@@ -233,17 +233,22 @@ func TestWritesDontFollowSymlinks(t *testing.T) {
 	}
 }
 
-// A plugin that wedges the engine in a loop QuickJS can't interrupt gets
-// the runtime stopped by jsrt's watchdog; Taut restarts plugins after a
-// crash, but not forever: after maxCrashes the plugin stays stopped with
-// an error.
+// A plugin that wedges the JS thread where the interrupt can't reach (here
+// a host call that blocks; a native loop that never polls would do the
+// same) gets the runtime given up by jsrt's watchdog. Taut restarts the
+// plugins after a crash, but not forever: after maxCrashes the plugin
+// stays stopped with an error.
 func TestHungPluginStopsAfterRepeatedCrashes(t *testing.T) {
 	h := newHarness(t)
 	h.tt.opts.TaskTimeout = 200 * time.Millisecond
+	h.ui.callGo = func(id int64, args []byte) ([]byte, error) {
+		time.Sleep(3 * time.Second)
+		return nil, nil
+	}
 	code := `class Hang extends TautPlugin {
 		static id = 'Hang'; static pluginName = 'Hang'; static description = ''; static authors = []
 		static defaultConfig = { enabled: true }
-		start() { setTimeout(() => Array.prototype.reverse.call({ length: 2 ** 53 - 1 }), 50) }
+		start() { setTimeout(() => globalThis.__clack.taut_callGo(1, []), 50) }
 	}
 	return Hang`
 	if _, err := h.tt.Import(h.ctx(), pluginJS(code), ""); err != nil {
