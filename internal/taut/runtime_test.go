@@ -728,6 +728,25 @@ func TestRealSourceMarkers(t *testing.T) {
 	if !ch.Fn || !ch.Marker {
 		t.Fatalf("Channel native: %+v", ch)
 	}
+	// both toString paths and getComponentSource show one source, as in Slack
+	var same struct {
+		Same                      []string
+		Button, Gif, Native, Mine bool
+	}
+	h.jsInto(`const out = { Same: [] }
+	for (const n of ['GifPicker', 'Channel', 'Button', 'MessageKitGutter', 'MessageSender']) {
+	  const c = T.nativeFor(n), f = c.$$typeof ? c.type : c
+	  const a = f.toString(), b = Function.prototype.toString.call(f), g = T.getComponentSource(c)
+	  if (a === b && b === g && b === String(f)) out.Same.push(n)
+	}
+	out.Button = Function.prototype.toString.call(T.nativeFor('Button')).includes('"c-button"')
+	out.Gif = T.nativeFor('GifPicker').toString().includes('"gif-picker-host"')
+	out.Native = Function.prototype.toString.call(Function.prototype.toString).includes('[native code]')
+	out.Mine = (function mine(x) { return x + 1 }).toString() === 'function mine(x) { return x + 1 }'
+	return out`, &same)
+	if strings.Join(same.Same, ",") != "GifPicker,Channel,Button,MessageKitGutter,MessageSender" || !same.Button || !same.Gif || !same.Native || !same.Mine {
+		t.Fatalf("shown sources: %+v", same)
+	}
 }
 
 // hasSlackbotCustomResponseInThread is Slack's selector (state, channelId,
