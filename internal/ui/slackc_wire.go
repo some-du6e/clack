@@ -7,7 +7,9 @@ import (
 	"gioui.org/layout"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/messages"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/kit"
 )
 
 // slackcState wires the Taut component registry (internal/ui/slackc) to
@@ -21,6 +23,12 @@ type slackcState struct {
 // slackcFrame runs at the start of every frame.
 func (a *App) slackcFrame(gtx layout.Context) {
 	if c := a.Core(); !a.slackc.inited || c != a.slackc.core {
+		if !a.slackc.inited {
+			// Native components plugins can render (api.elements, avatars,
+			// mrkdwn, blocks): map writes only, no JS.
+			kit.Register()
+			messages.RegisterSlackHosts()
+		}
 		a.slackc.inited, a.slackc.core = true, c
 		slackc.Init(slackc.Env{
 			Theme:      a.th,
