@@ -162,7 +162,18 @@ func slotOr(gtx layout.Context, parent slackc.Props, key, name string, props fun
 	return slackc.RenderLazy(gtx, name, props, native)
 }
 
-// childrenOr is slotOr for the "children" prop.
+// childrenOr is slotOr for the "children" prop. Props that came from a
+// plugin's <Original> carry the rendered children as an Element, and none
+// at all when they rendered null (then nothing draws); the native's own
+// props (no plugin, or its tree not here yet) carry the Slot.
 func childrenOr(gtx layout.Context, parent slackc.Props, name string, props func() slackc.Props, native slackc.Native) layout.Dimensions {
-	return slotOr(gtx, parent, "children", name, props, native)
+	switch c := parent["children"].(type) {
+	case slackc.Element:
+		return slackc.LayoutElement(gtx, c)
+	case nil:
+		if parent != nil {
+			return layout.Dimensions{}
+		}
+	}
+	return slackc.RenderLazy(gtx, name, props, native)
 }
