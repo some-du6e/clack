@@ -22,6 +22,7 @@ import (
 	"gioui.org/unit"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
+	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -48,8 +49,8 @@ type Options struct {
 	ConfigDir string
 	Dark      bool
 	// Login, when set, shows the native sign-in screen first and is called
-	// with the workspace and d cookie; it returns nil once signed in.
-	Login func(workspace, cookie string) error
+	// with what the user pasted; it returns nil once signed in.
+	Login func(in slack.SignInInput) error
 	// Started is the process start time, for the startup-latency log.
 	Started time.Time
 	// SignOut forgets the stored credentials.
@@ -57,14 +58,14 @@ type Options struct {
 }
 
 // SetLogin shows the sign-in screen, calling login on submit.
-func (a *App) SetLogin(login func(workspace, cookie string) error) {
+func (a *App) SetLogin(login func(in slack.SignInInput) error) {
 	a.opts.Login = login
 	a.login = newLoginScreen()
 }
 
 // SetLoginHandler sets the sign-in function used after "Sign out" without
 // showing the screen now.
-func (a *App) SetLoginHandler(login func(workspace, cookie string) error) {
+func (a *App) SetLoginHandler(login func(in slack.SignInInput) error) {
 	if a.opts.Login == nil {
 		a.opts.Login = login
 	}

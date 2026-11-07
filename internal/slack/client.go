@@ -23,10 +23,11 @@ import (
 
 // Creds is the on-disk credential file (~/.config/clack/creds.json).
 type Creds struct {
-	Token           string `json:"token"`            // team xoxc token
-	Cookie          string `json:"cookie"`           // d cookie (xoxd-..., URL-encoded as stored by the browser)
-	Team            string `json:"team"`             // team id, e.g. T0266FRGM
-	EnterpriseToken string `json:"enterprise_token"` // org xoxc token (optional)
+	Token           string `json:"token"`               // team xoxc token
+	Cookie          string `json:"cookie"`              // d cookie (xoxd-..., URL-encoded as stored by the browser)
+	CookieDS        string `json:"cookie_ds,omitempty"` // optional d-s cookie sent alongside d
+	Team            string `json:"team"`                // team id, e.g. T0266FRGM
+	EnterpriseToken string `json:"enterprise_token"`    // org xoxc token (optional)
 	EnterpriseID    string `json:"enterprise_id"`
 	UserID          string `json:"user_id"`
 	TeamURL         string `json:"team_url"`       // e.g. https://hackclub.slack.com/
@@ -100,7 +101,12 @@ func (e *Error) Error() string { return "slack " + e.Method + ": " + e.Code }
 // RateLimited is returned when Slack answers 429 too many times in a row.
 var RateLimited = errors.New("slack: rate limited")
 
-func (c *Client) cookieHeader() string { return "d=" + c.Creds.Cookie }
+func (c *Client) cookieHeader() string {
+	if c.Creds.CookieDS != "" {
+		return "d=" + c.Creds.Cookie + "; d-s=" + c.Creds.CookieDS
+	}
+	return "d=" + c.Creds.Cookie
+}
 
 // useEnt reports whether method should go to the enterprise host.
 func (c *Client) useEnt(method string) bool {

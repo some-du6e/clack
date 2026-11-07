@@ -8,14 +8,19 @@ import (
 	"gioui.org/layout"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
-// loginScreen is the native sign-in card shown when credentials are missing:
-// workspace + the browser's `d` cookie → slack.Login.
+// loginScreen is the native sign-in card shown when credentials are missing.
+// The user pastes the token and cookies of their own signed-in Slack session;
+// slack.SignIn only checks them with auth.test (no page loads, no sign-out).
 type loginScreen struct {
 	workspace widget.Editor
+	token     widget.Editor
+	orgToken  widget.Editor
 	cookie    widget.Editor
+	cookieDS  widget.Editor
 	submit    widget.Clickable
 	busy      bool
 	err       string
@@ -27,9 +32,11 @@ func newLoginScreen() *loginScreen {
 	l.workspace.SingleLine = true
 	l.workspace.Submit = true
 	l.workspace.SetText("hackclub")
-	l.cookie.SingleLine = true
-	l.cookie.Submit = true
-	l.cookie.Mask = '•'
+	for _, ed := range []*widget.Editor{&l.token, &l.orgToken, &l.cookie, &l.cookieDS} {
+		ed.SingleLine = true
+		ed.Submit = true
+		ed.Mask = '•'
+	}
 	return l
 }
 
@@ -39,11 +46,11 @@ func (a *App) layoutLogin(gtx layout.Context) {
 	th := a.th
 	lc := theme.LightPalette // the card is always light, like Slack's sign-in page
 	if !l.focused {
-		gtx.Execute(key.FocusCmd{Tag: &l.cookie})
+		gtx.Execute(key.FocusCmd{Tag: &l.token})
 		l.focused = true
 	}
 	submit := l.submit.Clicked(gtx)
-	for _, ed := range []*widget.Editor{&l.workspace, &l.cookie} {
+	for _, ed := range []*widget.Editor{&l.workspace, &l.token, &l.orgToken, &l.cookie, &l.cookieDS} {
 		for {
 			e, ok := ed.Update(gtx)
 			if !ok {
@@ -55,21 +62,28 @@ func (a *App) layoutLogin(gtx layout.Context) {
 		}
 	}
 	if submit && !l.busy && a.opts.Login != nil {
-		ws := strings.TrimSpace(l.workspace.Text())
-		ck := strings.TrimSpace(l.cookie.Text())
-		if ck == "" {
-			l.err = "Paste your d cookie first."
+		in := slack.SignInInput{
+			Workspace: strings.TrimSpace(l.workspace.Text()),
+			Token:     strings.TrimSpace(l.token.Text()),
+			OrgToken:  strings.TrimSpace(l.orgToken.Text()),
+			Cookie:    strings.TrimSpace(l.cookie.Text()),
+			CookieDS:  strings.TrimSpace(l.cookieDS.Text()),
+		}
+		if in.Token == "" || in.Cookie == "" {
+			l.err = "Paste your token and d cookie first."
 		} else {
 			l.busy, l.err = true, ""
 			go func() {
-				err := a.opts.Login(ws, ck)
+				err := a.opts.Login(in)
 				a.Post(func() {
 					l.busy = false
 					if err != nil {
 						l.err = err.Error()
 						return
 					}
-					l.cookie.SetText("")
+					for _, ed := range []*widget.Editor{&l.token, &l.orgToken, &l.cookie, &l.cookieDS} {
+						ed.SetText("")
+					}
 					a.login = nil
 					if a.data != nil {
 						a.data.start(a)
@@ -79,7 +93,7 @@ func (a *App) layoutLogin(gtx layout.Context) {
 		}
 	}
 
-	w, h := gtx.Dp(440), gtx.Dp(424)
+	w, h := gtx.Dp(440), gtx.Dp(700)
 	r := image.Rect((sz.X-w)/2, (sz.Y-h)/2, (sz.X+w)/2, (sz.Y+h)/2)
 	theme.Shadow(gtx, r, gtx.Dp(12), gtx.Dp(12), theme.WithAlpha(lc.PanelShadow, 0x60))
 	theme.RRect(gtx, r, gtx.Dp(12), lc.Bg)
@@ -91,7 +105,7 @@ func (a *App) layoutLogin(gtx layout.Context) {
 	})
 	y += gtx.Dp(44)
 	at(gtx, image.Pt(x, y), image.Pt(cw, gtx.Dp(70)), func(gtx layout.Context) layout.Dimensions {
-		return th.Para(gtx, 15, 22, theme.Regular, lc.FgMuted, "Signing in from "+AppName+" is temporarily unavailable: the old cookie sign-in could sign you out of Slack, so it was removed.")
+		return th.Para(gtx, 15, 22, theme.Regular, lc.FgMuted, "Paste the token and cookies from your own signed-in Slack session, the same values other third-party Slack clients use. "+AppName+" only checks them with Slack and never signs that session out.")
 	})
 	y += gtx.Dp(88)
 	field := func(label string, ed *widget.Editor, hint string) {
@@ -118,7 +132,10 @@ func (a *App) layoutLogin(gtx layout.Context) {
 		y += gtx.Dp(56)
 	}
 	field("Workspace", &l.workspace, "hackclub")
+	field("Token", &l.token, "xoxc-…")
+	field("Org token (optional)", &l.orgToken, "xoxc-… (Enterprise Grid)")
 	field("d cookie", &l.cookie, "xoxd-…")
+	field("d-s cookie (optional)", &l.cookieDS, "")
 	br := image.Rect(x, y, x+cw, y+gtx.Dp(44))
 	atExact(gtx, br.Min, br.Size(), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, &l.submit, func(gtx layout.Context, s image.Point, hov bool) {
