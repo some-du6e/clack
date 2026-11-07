@@ -77,7 +77,7 @@ type listState struct {
 	rows   map[string]*row
 	items  []item
 	built  uint64 // snap.rev items were built from
-	dayKey string // date the items were built on (Today/Yesterday rollover)
+	dayKey int // date the items were built on, yyyymmdd (Today/Yesterday rollover)
 
 	list    layout.List
 	heights []int
@@ -207,7 +207,8 @@ func (s *listState) sync(h Host, now time.Time) {
 		s.opened = true
 		s.openLastRead = s.snap.lastRead
 	}
-	dk := now.Format("2006-01-02")
+	y, mo, d := now.Date() // not Format: this runs every frame
+	dk := y*10000 + int(mo)*100 + d
 	if !changed && s.built == s.snap.rev && dk == s.dayKey && s.items != nil {
 		return
 	}
