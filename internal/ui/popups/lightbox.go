@@ -26,6 +26,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/openurl"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
@@ -816,17 +817,17 @@ func (lb *Lightbox) download() {
 	})
 }
 
+// lbSlackHost reports whether raw is on Slack's own hosts, which core.Fetch
+// handles (with the cookie only for slack.com).
 func lbSlackHost(raw string) bool {
 	u, err := url.Parse(raw)
-	if err != nil {
-		return false
-	}
-	host := strings.ToLower(u.Hostname())
-	return host == "slack.com" || strings.HasSuffix(host, ".slack.com") || strings.HasSuffix(host, ".slack-edge.com")
+	return err == nil && u.Scheme == "https" && slack.SlackOwnedHost(u.Hostname())
 }
 
-// lbGet downloads a public (non-Slack) image: https only, never from a
-// private or loopback address (imgcache.PublicFetch), at most core.MaxFetch.
+// lbGet downloads a public (non-Slack) image with no credentials:
+// imgcache.PublicFetchLimit refuses non-https, userinfo and private
+// addresses, then loads it through Slack's image proxy, so saving an unfurl
+// image doesn't reveal your IP address to its host. At most core.MaxFetch.
 func lbGet(ctx context.Context, raw string) ([]byte, error) {
 	return imgcache.PublicFetchLimit(ctx, raw, core.MaxFetch)
 }
@@ -906,14 +907,18 @@ func lbCleanName(name string) string {
 		switch {
 		case r < 0x20, r == 0x7f, strings.ContainsRune(`/\:*?"<>|`, r):
 			return '_'
+		case r == 0x200e, r == 0x200f, r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069:
+			return '_' // bidi controls: "\u202egnp.exe" would display as "exe.png"
 		}
 		return r
 	}, strings.TrimSpace(name))
 	name = strings.Trim(name, ". ")
 	if len(name) > 200 {
 		name = strings.ToValidUTF8(name[:200], "")
+		name = strings.TrimRight(name, ". ")
 	}
-	// CON, NUL, COM1, LPT1… (with any extension) are devices on Windows.
+	// Windows device names (CON, NUL, COM1, CONIN$, …) open the device, not
+	// a file, whatever the extension.
 	stem := strings.ToUpper(name)
 	if i := strings.IndexByte(stem, '.'); i >= 0 {
 		stem = stem[:i]

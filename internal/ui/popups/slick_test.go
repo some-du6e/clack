@@ -662,7 +662,7 @@ func TestSlickViewBetterBlock(t *testing.T) {
 func TestSlickViewBetterGifs(t *testing.T) {
 	gifAnims.mu.Lock()
 	prev := gifAnims.fetch
-	gifAnims.fetch = func(context.Context, string, int64) ([]byte, error) { return nil, errors.New("no network in tests") }
+	gifAnims.fetch = func(context.Context, string) ([]byte, error) { return nil, errors.New("no network in tests") }
 	gifAnims.mu.Unlock()
 	t.Cleanup(func() { gifAnims.mu.Lock(); gifAnims.fetch = prev; gifAnims.mu.Unlock() })
 

@@ -19,15 +19,15 @@ Severity scale:
 | ID | Sev | Finding | Fix | Test |
 |---|---|---|---|---|
 | C-1 | High | The RTM gateway URL carries `token=xoxc-…`. A failed websocket dial returned an error that quoted the URL, and `rtm: disconnected (%v)` wrote it to the log. | `slack.scrubErr` redacts every HTTP and websocket error. `cmd/clack` also wraps the log output in `slack.RedactWriter`, as a last line of defence for `xox?-` tokens and `d`/`d-s` cookie values. | `TestDialErrorRedacted`, `TestRedact` (internal/slack/redact_test.go) |
-| C-4 | Medium | `Client.Download` attached the `d`/`d-s` cookies to any URL, including `http://` and non-Slack hosts. An https→http redirect kept the cookie. | `credOK`: cookies and the token go only to `https` slack.com / `*.slack.com` hosts or the configured API host. `CheckRedirect` refuses https→http and strips credentials on any other hop. Uploads to other hosts are refused. | `TestCookieOnlyToSlackHosts`, `TestRedirectDowngradeRefused` |
-| C-5 | Medium | Gateway URLs from the server (primary, fallback, `reconnect_url`) had the token appended without a host check. Sign-in accepted any workspace with a dot in it (`evil.com`) and trusted the URL `auth.test` returned. | Only `wss://` Slack hosts get the token. Sign-in needs a slack.com host. `ReadCreds` and account switching refuse non-https or non-Slack team/enterprise URLs. | `TestWebSocketURLRejectsForeignHosts`, `TestSignInRejectsNonSlackWorkspace`, `TestReadCredsRefusesForeignHosts` |
+| C-4 | Medium | `Client.Download` attached the `d`/`d-s` cookies to any URL, including `http://` and non-Slack hosts. An https→http redirect kept the cookie. | `credsOK`: cookies and the token go only to `https` slack.com / `*.slack.com` hosts or the configured API origin; anything else is refused (`ErrUntrustedHost`). Redirects: see U-2 in §5. | `TestCredentialsStayOnSlack`, `TestCheckRedirectStripsCredentials` |
+| C-5 | Medium | Gateway URLs from the server (primary, fallback, `reconnect_url`) had the token appended without a host check. Sign-in accepted any workspace with a dot in it (`evil.com`) and trusted the URL `auth.test` returned. | Only `wss://` Slack hosts get the token. Sign-in needs a slack.com host. `ReadCreds` and account switching refuse non-https or non-Slack team/enterprise URLs. | `TestWebSocketURLRejectsForeignHosts`, `TestRTMRefusesForeignSocket`, `TestSignInOnlySlackHosts`, `TestReadCredsRefusesForeignHosts` |
 | C-6 | Medium | creds.json: rewriting an existing 0644 file left it at 0644 (`os.WriteFile` doesn't chmod). On Windows, `0600` means nothing. | `slack.WriteCreds`/`WriteSecretFile`: write a temp file, then rename; the file is 0600 in a 0700 directory; on Windows an owner-only protected DACL (`x/sys/windows`, already a dependency). Loading tightens a file that's too open. The yoloslack→clack migration copies through the same path. | `TestWriteCredsPermissions` |
 | C-8 | Low | `%v`/`%+v` of `slack.Creds` or `SignInInput` printed the tokens and cookies. | Redacting `String`, `GoString` and `Format`. JSON output is unchanged. | `TestCredsFormattingRedacts` |
 | C-11 | Low | `clack login` echoed the pasted token and cookies. | `stty -echo` while reading secrets on Unix terminals. Windows still echoes. | code review |
 | P-* | — | Plugin-facing credential paths: see §3. | | |
 | C-14 | Info | No macOS Keychain or Windows Credential Manager. | Not done: it needs cgo (Keychain) or new dependencies. creds.json is owner-only on every OS instead. Future work. | — |
 
-The `d-s` cookie is stored, sent, scoped and redacted exactly like `d` (same `credOK` check, same redaction patterns, same file).
+The `d-s` cookie is stored, sent, scoped and redacted exactly like `d` (same `credsOK` check, same redaction patterns, same file).
 
 ## 2. Deep links and opening URLs
 
@@ -57,7 +57,7 @@ Plugins run in QuickJS compiled to wasm on wazero (`internal/jsrt`). Wasm has no
 | P-9 | Low | Storage, bytecode-cache and config.json writes went through a fixed `<path>.tmp`, so a symlink planted there was written through. | `O_EXCL` `CreateTemp` then rename, which replaces a link instead of following it. 0600 files, 0700 directories. | `TestWritesDontFollowSymlinks`, `TestBytecodeCacheIgnoresSymlinks` |
 | P-10 | Low | Unchecked guest memory reads, and no wasm memory cap. | `hostCall`/`hostModule` check `mem.Read` and argument counts. A `malloc` returning 0 closes the runtime. Memory is capped at `MemoryLimit + 512 MiB`. Host-function panics, nested ones included, become JS errors. | `TestMemoryBombFailsCleanly`, `TestHostPanicNested`, `TestMicrotaskFloodInterrupted` |
 | P-11 | Low | `window.open`, link clicks and `location.assign` could open browser tabs in a loop. | At most 5 per 10 s, like a popup blocker; extra calls are dropped with one warning. | `TestOpenURLRateLimited` |
-| P-12 | Low | Taut's AccountSwitcher `checkAuth` sent a saved account's token and `d` cookie to its stored TeamURL without a host check, and left `d-s` out. Switching wrote creds.json with plain `0600` (nothing on Windows). | Only https slack.com hosts, `d-s` sent alongside `d`, and `slack.WriteCreds` (owner-only, Windows ACL). | `TestAccountCredsStayOnSlack` (internal/taut/accounts_security_test.go) |
+| P-12 | Low | Taut's AccountSwitcher `checkAuth` sent a saved account's token and `d` cookie to its stored TeamURL without a host check, and left `d-s` out. Switching wrote creds.json with plain `0600` (nothing on Windows). | Only https slack.com hosts, `d-s` sent alongside `d`, and `slack.WriteCreds` (owner-only, Windows ACL). | `TestCheckAuthStaysOnSlack` (internal/taut/cookies_sec_test.go), `TestAccountSendsDSAndWritesOwnerOnly` (internal/taut/accounts_security_test.go) |
 | P-13 | Info | By design, and unchanged: any plugin can reach any namespace through `taut_kv`, saved accounts through `taut_accounts` (Taut's shape, including xoxd), and any Web API method through `taut_api`. `cookies.get` returns `d`; `cookies.set` replaces it in memory. There is no isolation between plugins (see S-16). | — | — |
 
 Host functions plugins can reach:
@@ -155,19 +155,50 @@ We chose memory-only over a warning alone because it follows the policy without 
 
 Other plugin storage (Taut `api.storage`, `localStorage`) persists on disk as in Taut (docs/PLUGINS.md). That's the plugin's own data.
 
-## 5. Network
+## 5. Network and URLs from message content
 
-- **TLS only.** Slack API, websocket, files and sign-in use https/wss to Slack hosts (C-4, C-5). No `InsecureSkipVerify` anywhere.
-- **Credentials only to Slack.** `slack.credOK` and `CheckRedirect` (C-4). `cmd/clack`'s image fetcher sends slack.com hosts through `core.Fetch` (with the cookie, memory-only cache) and everything else through `imgcache.PublicFetch` (no credentials).
+Anyone who can post in a conversation you open controls URLs Clack might load:
+- file shares, including `files.remote.add` files, whose `url_private` and `external_url` point at the sender's own server;
+- unfurl and attachment images, Block Kit `image_url`, bot `icon_url`;
+- custom emoji, theme and plugin CSS.
+
+None of these may steal the session, read a file off your disk, reach your local network, or reveal your IP address to the sender. The rules live in `internal/slack/hosts.go` (which hosts get what) and `internal/slack/netguard.go` (which addresses are dialled). Every fetch Clack makes on its own goes through them. This section merges this review with live-slick's `urlsec` review; where the two differed, the stricter check was kept.
+
+**TLS only.** The Slack API, the realtime socket, files and sign-in use https/wss. There's no `InsecureSkipVerify` anywhere.
+
+**The session cookie and token go only to `https://slack.com` and its subdomains** (`slack.CookieURL`, `Client.credsOK`). That's the scope a browser gives Slack's `d` cookie (`.slack.com`).
+- Hosts must be plain ASCII DNS names. They're compared exactly after lower-casing, at a dot boundary, on port 443 with no userinfo. So `slack.com.evil.io`, `evilslack.com`, `evil.com/slack.com`, `files.slack.com@evil.com`, a trailing dot, `%2e` escapes, punycode or Unicode look-alikes, IP literals, `http://` and other ports all get nothing.
+- `slack-edge.com` gets no cookie either.
+- `d-s` is handled exactly like `d`.
+- The only exception is the client's own configured API origin, which is how tests run against an httptest server.
+
+**Credential-free fetches** (`slack.PublicHTTP`):
+- No cookie, and redirects only to Slack-owned hosts.
+- The dialer refuses non-public addresses on the IP actually dialled. That covers loopback, RFC 1918, CGNAT, link-local and cloud metadata, ULA, multicast and documentation ranges, so DNS rebinding doesn't help.
+- `HTTP(S)_PROXY` is ignored, because a proxy would dial for us.
+- Images load directly only from Slack's own hosts (`slack.com`, `slack-edge.com`, `slack-imgs.com`, `slack-files.com`) and Gravatar (`secure.gravatar.com` and its `i0`–`i3.wp.com` fallbacks), which Slack's client also loads directly.
+- Every other image goes through Slack's image proxy (`https://slack-imgs.com/?c=1&o1=ro&url=…`, `slack.ProxyImage`), as the web client does. The sender's host never sees the request.
+- GIF picker results (`gif.search`, Giphy media) load directly only after an exact `giphy.com` host check.
+- Clack makes no link previews of its own. Unfurls are whatever Slack's servers attached.
 
 | ID | Sev | Finding | Fix | Test |
 |---|---|---|---|---|
-| C-2 | High | SSRF from message content. Unfurl, image block and attachment URLs were fetched with the default client: `http://`, `127.0.0.1`, `169.254.169.254` (cloud metadata), 10/8 and so on. | `imgcache.PublicFetch` allows https only and no userinfo. The address check runs in the dialer's `Control` on the address actually dialled, so DNS rebinding doesn't help. It refuses loopback, RFC 1918, CGNAT, link-local, ULA, multicast and documentation ranges. No proxy (a proxy would dial for us). Redirects must stay https and pass the same dial check. 32 MiB cap. The lightbox Download and GIF tiles use it too. | `TestDialControlRefusesPrivate`, `TestPublicFetchRefusesURLs` (internal/imgcache/fetch_test.go), `TestGifAnimURLHosts` |
+| C-2 | High | SSRF from message content. Unfurl, image block and attachment URLs were fetched with the default client: `http://`, `127.0.0.1`, `169.254.169.254` (cloud metadata), 10/8 and so on. | `imgcache.PublicFetch` refuses non-https URLs, userinfo, private IP literals and `localhost`, then loads through `slack.FetchPublic` (proxy or Slack CDN) on `PublicHTTP`'s guarded dialer. 32 MiB cap. The lightbox Save button and GIF tiles use the same path. | `TestDialControlRefusesPrivate` (internal/slack/netguard_test.go), `TestPublicFetchRefusesURLs` (internal/imgcache), `TestPublicFetch`, `TestProxyImage` (internal/slack/hosts_test.go) |
+| U-1 | Medium | IP tracking. Any image URL in a message was fetched from the sender's host, so posting an image revealed every viewer's IP address and when they looked. | Third-party images go through Slack's image proxy. Only Slack's own hosts, Gravatar and exact `giphy.com` load directly. | `TestProxyImage`, `TestGifAnimURLHost` |
+| U-2 | Medium | A trusted URL could bounce a request off Slack. A `files.slack.com` URL that redirected (302 or 307, which resends the token body) to another host was followed. | A hop that leaves `CookieURL` drops `Cookie` and `Authorization` (also on https→http and port changes). A hop off Slack-owned hosts isn't followed at all. | `TestCredentialsStayOnSlack`, `TestCheckRedirectStripsCredentials` |
+| U-3 | Medium | Remote files. A `files.remote.add` file's `url_private` on the sender's server was fetched by `core.Fetch`, and `Download` would have attached the cookie to any URL (see C-4). | `Download`, `UploadBytes` and the realtime socket refuse non-Slack URLs (`ErrUntrustedHost`) before connecting. `core.Fetch` sends the cookie only to `CredentialsOK` URLs, fetches Slack-owned hosts without it, and refuses everything else. | `TestCredentialsStayOnSlack`, `TestFetchRefusesNonSlack`, `TestRTMRefusesForeignSocket` |
+| U-4 | Low | Host matching by suffix or substring: the GIF picker matched `giphy.com` anywhere in the host, and an IDN or a trailing dot could pass `HasSuffix(".slack.com")`. | One normaliser (`normHost`) and `HostUnder`/`CookieHost` everywhere, `IsSlackHost` included. | `TestCookieURL`, `TestSlackOwnedAndHostUnder`, `TestGifAnimURLHost` |
+| U-5 | Low | Taut's `api.cookies.get({url})` returned the `d` cookie for any URL filter. | Scoped like Electron's cookie store: https slack.com URLs only. | `TestCookieURLScope` (internal/taut/cookies_sec_test.go) |
+| U-6 | Low | Saved file names: bidi overrides (`\u202egnp.exe` displays as `exe.png`), and trailing dots left by truncation. | Bidi controls become `_`, and trailing dots and spaces are trimmed after truncation (on top of C-10). | `TestLightboxSaveNames` (internal/ui/popups/lightbox_sec_test.go) |
 | C-3 | Medium | Decompression bombs. A tiny PNG declaring 100000×100000 would try to allocate about 40 GB. | Header check before decoding: at most 16384 px per side and about 42 Mpx. GIF canvases are capped at 1024 px. | `TestDecodeRefusesBombs`, `TestBombNotCached` |
-| C-15 | Info | The public fetcher ignores `HTTP(S)_PROXY`, so behind a mandatory proxy third-party images don't load. Slack's own hosts are unaffected. | Accepted trade-off. | — |
+| C-15 | Info | Because the public client ignores `HTTP(S)_PROXY`, third-party images don't load behind a mandatory proxy. Slack's API and files use the normal transport. | Accepted trade-off. | — |
 | D-3 | Info | The update check (`internal/desktop/update.go`) asks api.github.com over https and only shows the release page link. The link opens through `openurl`, and nothing is downloaded or run. | — | — |
 
-Plugin `fetch` reaches any https or http host, by design (no CORS, as in Taut and Slick). See §3 for its limits.
+**When you add a fetch** (canvas embeds, huddle assets, new previews):
+- Use `core.Fetch` for authenticated Slack URLs, and `imgcache.PublicFetch` or `slack.FetchPublic` for everything else.
+- Never call `http.Get` or `http.DefaultClient` on a URL taken from a message.
+
+Plugin `fetch` reaches any http(s) host by design: no CORS, as in Taut and Slick, and Clack adds no Slack cookie to it. See §3 for its limits.
 
 ## 6. Supply chain and CI
 
@@ -185,6 +216,14 @@ Plugin `fetch` reaches any https or http host, by design (no CORS, as in Taut an
 | SC-10 | Info | `go mod verify` passes, and go.sum has only expected modules. | Runs in supply-chain.yml (`go mod download all && go mod verify`). | supply-chain.yml |
 
 Dependency licenses: gioui.org (Unlicense or MIT), wazero (Apache-2.0), coder/websocket (ISC), godbus/dbus (BSD-2), golang.org/x/* (BSD-3), go-text/typesetting (Unlicense or BSD-3), go-ole (MIT), git.wow.st/gmp/jni (BSD-3), eliasnaur.com/font (Roboto license), Lato (OFL 1.1, assets/fonts/OFL.txt), React, react-reconciler and scheduler (MIT), QuickJS-NG (MIT), CLDR (Unicode-3.0). Taut and Slick (GPL-3.0) are never in the repo or the binaries; CI clones them only to build test plugins.
+
+## Session safety
+
+Clack never calls `auth.signout` or `auth.revoke`, and never loads Slack web pages with the session cookie. "Sign out on this device" only deletes `creds.json`. See README "Sign in".
+
+## Reporting
+
+Please report vulnerabilities through a private security advisory on this repository, not a public issue.
 
 ## Open items
 

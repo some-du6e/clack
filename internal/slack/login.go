@@ -42,8 +42,8 @@ func SignIn(ctx context.Context, in SignInInput) (Creds, error) {
 	if !strings.Contains(ws, ".") {
 		ws += ".slack.com"
 	}
-	// The token and cookie are sent to this host: Slack's own only.
-	if h, err := url.Parse("https://" + ws + "/"); err != nil || h.Host != ws || !IsSlackHost(ws) {
+	// The token and cookie are about to be sent here: only slack.com hosts.
+	if h, err := url.Parse("https://" + ws + "/"); err != nil || h.Host != ws || !CookieURL("https://"+ws+"/") {
 		return Creds{}, errors.New("the workspace should be a slack.com address, e.g. hackclub or hackclub.slack.com")
 	}
 	tok := strings.TrimSpace(in.Token)

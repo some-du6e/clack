@@ -115,15 +115,13 @@ func (in SignInInput) Format(f fmt.State, verb rune) {
 }
 
 // IsSlackHost reports whether host is slack.com or a subdomain of it, the
-// only hosts that ever get the session cookie or a token.
-func IsSlackHost(host string) bool {
-	h := strings.ToLower(strings.TrimSuffix(host, "."))
-	return h == "slack.com" || strings.HasSuffix(h, ".slack.com")
-}
+// only hosts that ever get the session cookie or a token. It is CookieHost
+// (hosts.go): plain ASCII DNS names only, so look-alikes and IDN don't match.
+func IsSlackHost(host string) bool { return CookieHost(host) }
 
 // slackURL reports whether raw is an https URL on a Slack host (scheme
-// "wss" for the realtime gateway).
+// "wss" for the realtime gateway): CookieURL with that exact scheme.
 func slackURL(raw, scheme string) bool {
 	u, err := url.Parse(raw)
-	return err == nil && u.Scheme == scheme && u.User == nil && IsSlackHost(u.Hostname()) && (u.Port() == "" || u.Port() == "443")
+	return err == nil && u.Scheme == scheme && cookieURL(u)
 }

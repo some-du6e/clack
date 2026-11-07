@@ -8,7 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -165,10 +164,13 @@ func main() {
 		svc := core.New(c, st)
 		images.SetFetcher(func(ctx context.Context, raw string) ([]byte, error) {
 			// https slack.com hosts (files.slack.com, …) need the session
-			// cookie and stay in memory (core.Fetch). Everything else (CDNs,
-			// Slack's image proxy, unfurl hosts) is fetched without
-			// credentials, https only and never from a private address.
-			if u, err := url.Parse(raw); err == nil && u.Scheme == "https" && slack.IsSlackHost(u.Hostname()) {
+			// cookie and stay in memory (core.Fetch). Everything else is
+			// fetched with no credentials (imgcache.PublicFetch): https only,
+			// Slack's CDNs directly, any other host (unfurls, attachment and
+			// block images, bot icons, plugin CSS) through Slack's image
+			// proxy so a sender never sees your IP address, and never from a
+			// private address.
+			if c.CredentialsOK(raw) {
 				b, _, err := svc.Fetch(ctx, raw)
 				return b, err
 			}

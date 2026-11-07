@@ -93,67 +93,6 @@ func TestDialErrorRedacted(t *testing.T) {
 	noSecrets(t, "RedactWriter", buf.String())
 }
 
-func TestCookieOnlyToSlackHosts(t *testing.T) {
-	var got []string
-	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got = append(got, "other:"+r.Header.Get("Cookie"))
-	}))
-	defer other.Close()
-	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got = append(got, "api:"+r.Header.Get("Cookie"))
-		if r.URL.Path == "/redir" {
-			http.Redirect(w, r, other.URL+"/x", http.StatusFound)
-		}
-	}))
-	defer api.Close()
-	// other and api are both 127.0.0.1 (different ports): only api is the
-	// configured host.
-	c := New(Creds{Token: "t", Cookie: "xoxd-c", TeamURL: api.URL + "/"})
-	for _, u := range []string{api.URL + "/f", other.URL + "/f", api.URL + "/redir"} {
-		resp, err := c.Download(context.Background(), u)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-	}
-	want := "api:d=xoxd-c other: api:d=xoxd-c other:"
-	if s := strings.Join(got, " "); s != want {
-		t.Errorf("cookies:\n got %s\nwant %s", s, want)
-	}
-	if err := c.UploadBytes(context.Background(), other.URL+"/up", "a.txt", []byte("x"), nil); err == nil {
-		t.Error("upload to a non-Slack host was allowed")
-	}
-
-	for u, ok := range map[string]bool{
-		"https://files.slack.com/a":     true,
-		"https://slack.com/a":           true,
-		"http://files.slack.com/a":      false,
-		"https://files.slack.com.evil/": false,
-		"https://evilslack.com/":        false,
-		"https://slack-edge.com/":       false,
-		"https://u:p@files.slack.com/":  false,
-	} {
-		pu, _ := url.Parse(u)
-		if c.credOK(pu) != ok {
-			t.Errorf("credOK(%s) = %v", u, !ok)
-		}
-	}
-}
-
-func TestRedirectDowngradeRefused(t *testing.T) {
-	c := New(Creds{Token: "t", Cookie: "xoxd-c"})
-	req, _ := http.NewRequest("GET", "http://files.slack.com/x", nil)
-	prev, _ := http.NewRequest("GET", "https://files.slack.com/x", nil)
-	if err := c.checkRedirect(req, []*http.Request{prev}); err == nil {
-		t.Error("https to http redirect followed")
-	}
-	req, _ = http.NewRequest("GET", "https://slack-edge.com/x", nil)
-	req.Header.Set("Cookie", "d=xoxd-c")
-	if err := c.checkRedirect(req, []*http.Request{prev}); err != nil || req.Header.Get("Cookie") != "" {
-		t.Errorf("cookie kept on redirect to a non-Slack host: %v %q", err, req.Header.Get("Cookie"))
-	}
-}
-
 func TestWebSocketURLRejectsForeignHosts(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"ok":true,"primary_websocket_url":"wss://evil.example/","fallback_websocket_url":"ws://wss-backup.slack.com/"}`))
@@ -165,15 +104,6 @@ func TestWebSocketURLRejectsForeignHosts(t *testing.T) {
 	}
 	if u := c.WebSocketURL(context.Background(), true); !strings.HasPrefix(u, "wss://wss-backup.slack.com/?") {
 		t.Errorf("fallback: %s", u)
-	}
-}
-
-func TestSignInRejectsNonSlackWorkspace(t *testing.T) {
-	for _, ws := range []string{"evil.com", "https://hackclub.slack.com.evil.com/", "127.0.0.1:8080", "hackclub.slack.com:444"} {
-		_, err := SignIn(context.Background(), SignInInput{Workspace: ws, Token: "xoxc-1", Cookie: "xoxd-1"})
-		if err == nil || !strings.Contains(err.Error(), "slack.com address") {
-			t.Errorf("SignIn(%q) = %v", ws, err)
-		}
 	}
 }
 

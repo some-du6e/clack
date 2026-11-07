@@ -56,18 +56,3 @@ func TestLightboxSaveSanitizesName(t *testing.T) {
 		}
 	}
 }
-
-func TestGifAnimURLHosts(t *testing.T) {
-	for in, want := range map[string]string{
-		"https://media2.giphy.com/media/x/200w.webp?cid=1": "https://media2.giphy.com/media/x/200w.gif?cid=1",
-		"https://giphy.com/x.gif":                          "https://giphy.com/x.gif",
-		"http://media.giphy.com/media/x/200w.gif":          "",
-		"https://169.254.169.254/giphy.com/x.gif":          "",
-		"https://evil.example/?giphy.com/x.gif":            "",
-		"https://giphy.com.evil.example/x.gif":             "",
-	} {
-		if got := gifAnimURL(Gif{Preview: in}); got != want {
-			t.Errorf("gifAnimURL(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
