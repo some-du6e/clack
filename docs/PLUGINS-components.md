@@ -818,9 +818,75 @@ return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { … }) // opaci
 `Enter` costs one atomic load while no CSS is set. Declare `ClassDef`s at package level. The class names to use are in §2.3. Tag the ancestors too (`.p-client_container`, `.p-channel_sidebar`, `.c-message_list`, `.p-message_pane`), because descendant selectors only match when the whole chain is on the stack.
 
 ### 5.3 Per-owner checklist
-Rows link to §Index numbers. ✔ = wrapped in `taut-ui`.
+Rows link to §Index numbers. Status on `taut-ui` (2026-11-07): every row below is wrapped unless it's listed under §8 "Left to do".
 - **msgs** (`messages`, `richview`): 1 MessageBackground, 2 MessageWrapper, 5 MessageAvatar, 6 ConnectedBaseAvatar (register as host `ConnectedBaseAvatar`/`Avatar`), 7 gutter filter memo (name `MessageKitGutter`, source marker `c-message_kit__gutter__left`), 8, 9 MessageSender, 10 BaseMessageSender, 11 BaseBroadcastPreamble (children: sender + timestamp slots), 12, 13, 14 MessageBlocks, 15 Blocks (also host), 17–21 attachments, 22 ReactionBar (children: Reaction slots + ReactionAddButton slot), 23 Reaction, 24 UnstyledButton `data-qa=reactji`, 25 ReactionAddButton, 26 MessageActions, 27 MessageActionButtonReaction, 44, 45/46 (empty boundaries), 50 BaseMrkdwnChannel, 51 MemberLink, 72 MrkdwnElement (host).
 - **comp** (`composer`): 30 MessagePaneInput, 31 InputContainer, 32 MessageInput, 33 WysiwygContainer, 34 TextyButtons, 35 TextyButtonOverflow (+ composer.addButton slot), 36, 37 BaseContextBarV2 (empty boundary above the composer), 38 MessageInputRoadblock (boundary around the composer), 39 ThreadTypingIndicator, 40 TypingNames, 41, 42 CharacterCount (empty), 43 ComposerLinkModal.
 - **pop** (`popups`): 3 MessageListItem, 4 SearchResult, 28 EmojiPickerPopover, 29 EmojiPicker, 55–60 profile parts, 67–69 menus, plus the elements drawn by `slackc/kit`.
 - **views** (`views`): 12/13 in Threads, 52 ActivityItem, 53, 54 ActivityPrivacyBlurredName, 61–65 huddle surfaces where they exist (Huddles view), 90 BasicSelect.
 - **shell** (`internal/ui` root): 47 BaseAvatarStack, 48 HelpButton, 49 ListChannelEntity, 57 BasePresence (sidebar), 66 Tabs (prefs), 70 SvgIcon names, plus the ancestor classes (`p-client_container`, `p-ia`, `p-channel_sidebar`, `p-view_header`).
+
+
+## 6. Feature coverage (taut-ui, 2026-11-07)
+
+### 6.1 Layout engine (`internal/ui/slackc`: box, flex, inline, layout, paint, events, input, svg)
+- **Done:**
+  - Formatting: block, inline, inline-block, flex/inline-flex (wrap, gap, justify, align-*, grow/shrink/basis, order, auto minimum, clamping loop, auto margins, baseline), contents, none, list-item.
+  - Box model: box-sizing, %, aspect-ratio, min/max, margin collapsing.
+  - Positioning: relative/sticky offsets, absolute, fixed (overlay roots, modals), z-index stacking contexts.
+  - Overflow: hidden/clip with rounded clip; scroll/auto with wheel, thumb drag and a scrollbar.
+  - Effects: opacity, transforms with origin, box-shadow (outer and inset), colour/gradient/url() backgrounds, per-side borders and radii, dashed/dotted, outline, visibility.
+  - Text: Lato and emoji images through Clack's shaper, mixed runs, every white-space mode, text-align including justify, line-height, letter/word spacing, decorations, text-transform, ellipsis, line-clamp, ::before/::after.
+  - Replaced elements: img (object-fit, radius clip, alt), inline SVG (path grammar including arcs, circle/ellipse/rect/line/poly*, g/use, transforms, fill/stroke/currentColor, viewBox).
+  - Form controls: br, hr, a, button, inputs (text, password, checkbox, radio, range), textarea, select with a native dropdown, label, progress. Controlled editors are keyed by host instance.
+  - Events: DOM-style dispatch to jsrt (click, dblclick, auxclick, contextmenu, wheel, scroll, mouse*/pointer*, enter/leave per node, focus/blur/focusin/focusout, keydown/keyup, input/change, submit). `title` tooltips, CSS cursors, pointer-events, hit-testing by z-order. getBoundingClientRect via SetRects.
+- **Approximated:**
+  - Grid is N equal columns, and tables become flex rows.
+  - Blur replays the content 17 times at offsets; colour filters don't reach images or natives.
+  - Shadow blur is stacked layers.
+  - SVG gradients paint the average colour of their stops.
+  - Typed-character keydown is synthesized from editor changes.
+- **Missing:** floats, text selection and copy, real sticky positioning, `<details>`, video, transitions and animations.
+
+### 6.2 CSS engine (`internal/ui/slackc/css`)
+- **Syntax:** Syntax-3 tokenizer, CSS nesting, and these at-rules:
+  - @media (prefers-color-scheme, ranges, and/or/not), evaluated at cascade time;
+  - @supports, @layer (ordering across sheets), @scope;
+  - @container, treated as matching.
+- **Selectors:** all Selectors-4 forms plugins use: :is/:where/:not/:has, the structural pseudo-classes, ::before/::after/::placeholder, attribute operators with flags, and the + and ~ combinators. Specificity follows Selectors-4.
+- **Cascade:** importance, then layers, then specificity, then source order. Inline !important wins. Each sheet change swaps in a new compiled rule set atomically, so matching never takes a lock.
+- **Values:**
+  - var() with cycles handled, calc/min/max/clamp, every unit plugins use.
+  - All colour syntaxes, including Slack's `rgba(var(--sk_…,97,96,97),1)`.
+  - Shorthands are expanded; logical properties map to physical ones.
+- **Slack tokens:** 719 light and 719 dark design tokens, read from the live client (`slackvars.go`).
+- **Sources:** api.setStyle, the user CSS box (key "user"), `<style>` in document.head, `<style>` inside a plugin's tree (lives as long as its root), and `<html>`/`<body>` classes and inline vars (StreamerMode, FasterSlack).
+- **Native widgets:** `slackc.Class(...).Enter/EnterClass/EnterAttr`, with Hidden, Color, Background, FontSize, FontWeight, Padding, Size, Opacity, and Wrap (margin, background, border, radius, shadow, opacity, blur, transform, ::before/::after). A plugin's className prop reaches CSS through EnterClass. The cost is one atomic load while no CSS is set.
+- **Not on natives:** :has() and sibling combinators can't see a native widget's children or siblings (natives report none).
+
+### 6.3 api.elements (`internal/ui/slackc/kit`)
+Every component taut's `elements.ts` exposes is registered under Slack's names and aliases, plus ComposerButton (taut's composer.addButton). The props honoured and the gaps are listed per component in [kit/README.md](../internal/ui/slackc/kit/README.md). The main gaps:
+- no keyboard activation on buttons;
+- FormTextInput keys don't bubble to plugin DOM handlers;
+- no edge flipping for Popover/Tooltip yet (`Host.WindowSize` now exists for it);
+- Block Kit buttons inside MrkdwnElement/Blocks do nothing.
+
+## 7. Speed (CI, 4 vCPU)
+| path | time | allocs |
+|---|---|---|
+| `Render`/`Component`, nothing patched | 4.5 ns | 0 |
+| same, another component patched | 10–11 ns | 0 |
+| `ClassDef.Enter` + `Wrap`, no CSS | 6.8 ns | 0 |
+| CSS cascade, element matching no rule (500-rule sheet) | 42 ns | 0 |
+| patched sender (~15 nodes), unchanged frame | 1.6–4.2 µs | 0 |
+| patched sender, forced relayout | 12–25 µs | 0 |
+| patched sender, new tree from JS (parse + build + layout) | 50–100 µs | ~400 |
+
+The unpatched path doesn't inline: it makes two calls, which exceeds Go's inline budget. It is one atomic load plus an indirect call. Owners' row-layout allocation counts are unchanged; a test pins them, e.g. messages at 6 per row frame.
+
+## 8. Left to do
+- **Live verification on Slack.** Blocked on 2026-11-07: the test account's session was revoked (creds and the `whatever` browser profile both get `invalid_auth`). The engine was checked visually only with `cmd/slackc-demo` (hand-written trees). taut-api's CI acceptance suite loads all 40 plugins.
+- **Surfaces Clack doesn't have**, so plugins patching them change nothing: huddle call UI (rows 61–65), Block Kit modal views (ViewBlocks), the profile hover card on hover (it opens on click).
+- **Thunk dispatch (`taut.Dispatch`)** in the owners: typing, markLastRead, sends, reactions, menus, autocomplete (docs/PLUGINS-taut.md). Also UIHooks.Input / ThreadPane / SetLocalDraft / PreferencesTabs: the Preferences > Taut tab UI and plugin settings editors (Bridge.RenderEditor) belong to ui-shell.
+- **core.Message gaps:** no `metadata`, `bot_profile`, raw `blocks` or `attachments`. This blocks ShowRealUser relay-bot detection, OwlMode, and `blocks` in search props.
+- **Ordering CSS on natives:** SlimMessageBox's one-line composer layout relies on `order`/`flex` rules, which natives with fixed positions don't apply.
+- **Emoji picker context:** pass channel/ts/thread to `EmojiPicker.SetMessage` from the ui root.
