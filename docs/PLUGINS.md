@@ -55,6 +55,7 @@ type Options struct {
 	MemoryLimit    int                       // JS heap (default 512 MiB)
 	OpenURL        func(url string)          // window.open, <a href> clicks, location.assign
 	ClipboardWrite func(text string) error; ClipboardRead func() (string, error)
+	PickFiles      func(accept string, multiple bool) ([]PickedFile, error) // <input type=file> picker; nil files = cancelled
 	Language, Platform string                // navigator.language / navigator.platform
 }
 func New(opts Options) (*Runtime, error)   // lazy: only when the first plugin is enabled

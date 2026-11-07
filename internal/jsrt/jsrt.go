@@ -57,6 +57,10 @@ type Options struct {
 	// ClipboardWrite / ClipboardRead back navigator.clipboard. nil rejects.
 	ClipboardWrite func(text string) error
 	ClipboardRead  func() (string, error)
+	// PickFiles shows the native file picker for <input type=file> (accept is
+	// the input's accept attribute). Return nil files (and nil error) when
+	// the user cancels. Called on its own goroutine. nil = inputs do nothing.
+	PickFiles func(accept string, multiple bool) ([]PickedFile, error)
 	// Language is navigator.language (default "en-US"); Platform is
 	// navigator.platform (default from GOOS: "MacIntel", "Win32", "Linux x86_64").
 	Language, Platform string
