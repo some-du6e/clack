@@ -52,6 +52,7 @@ type row struct {
 
 	rv      *richview.View
 	handler richHandler
+	drawn   time.Time // last frame the row was laid out (sweepRows)
 
 	// inline edit composer (nil when not editing)
 	edit                 *composer.Composer
