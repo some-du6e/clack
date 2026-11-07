@@ -58,7 +58,11 @@ var gifAnims = struct {
 	mu  sync.Mutex
 	m   map[gifAnimKey]*gifAnim
 	sem chan struct{}
+	// fetch downloads one .gif: imgcache's public fetcher (https, public
+	// addresses only, no credentials). Tests swap it for a no-network one.
+	fetch func(ctx context.Context, url string, limit int64) ([]byte, error)
 }{
+	fetch: imgcache.PublicFetchLimit,
 	m:   map[gifAnimKey]*gifAnim{},
 	sem: make(chan struct{}, gifAnimWorkers),
 }
@@ -159,7 +163,10 @@ const gifAnimMaxSide = 1024
 func gifAnimDecode(url string, px int) ([]paint.ImageOp, []time.Duration, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
-	b, err := imgcache.PublicFetchLimit(ctx, url, gifAnimMaxBytes) // https, public addresses only
+	gifAnims.mu.Lock()
+	fetch := gifAnims.fetch
+	gifAnims.mu.Unlock()
+	b, err := fetch(ctx, url, gifAnimMaxBytes) // https, public addresses only
 	if err != nil {
 		return nil, nil, err
 	}
