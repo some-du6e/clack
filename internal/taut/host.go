@@ -174,6 +174,13 @@ func (t *Taut) installHost(r *runtime) {
 		jsonArg(a, 1, &args)
 		return t.thunks.runThunk(ctx, strArg(a, 0), args)
 	})
+	sync("callNativeSync", func(a []json.RawMessage) (any, error) {
+		var id int64
+		jsonArg(a, 0, &id)
+		var args []json.RawMessage
+		jsonArg(a, 1, &args)
+		return t.thunks.callNative(context.Background(), id, args)
+	})
 	async("callNative", func(ctx context.Context, a []json.RawMessage) (any, error) {
 		var id int64
 		jsonArg(a, 0, &id)

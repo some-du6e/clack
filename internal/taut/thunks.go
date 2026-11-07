@@ -78,6 +78,15 @@ var ThunkCatalogue = []ThunkSpec{
 	{"apiCallExpedited", "{method, args}", "taut", "a Slack API call"},
 }
 
+// SyncThunks return their result synchronously in Slack (plugins call the
+// original thunk and use its value right away, e.g. QuickJoin appends to
+// the menu template). Their natives run on the JS thread, so they must be
+// quick and never touch the network.
+var SyncThunks = map[string]bool{
+	"getContextMenuTemplate": true, "getMemberContextMenuTemplate": true,
+	"autocompleteChannels": true, "autocompleteMembers": true,
+}
+
 // NativeFunc is a thunk's native implementation: Clack's own code for what
 // Slack's thunk does. args is the (possibly plugin-changed) JSON argument
 // list Slack passes (usually one object).
@@ -224,7 +233,7 @@ func (t *Taut) dispatchJS(ctx context.Context, name string, args []any, native N
 		delete(tt.calls, id)
 		tt.mu.Unlock()
 	}()
-	return rt.rt.Call(ctx, "__taut.dispatchThunk", name, args, id)
+	return rt.rt.Call(ctx, "__taut.dispatchThunk", name, args, id, SyncThunks[name])
 }
 
 // callNative runs the native core of an in-flight Dispatch (JS → Go).

@@ -567,8 +567,10 @@ function patchedThunkNames() {
 const tellGoThunks = batcher(() => goOr(null, 'patchedThunks', patchedThunkNames()))
 
 /** Go → JS: runs thunk `name` through every patch, with Go's native work (callable `nativeId`) at the core */
-T.dispatchThunk = async (name, args, nativeId) => {
-  const native = withMeta(name, (...a) => async () => decode(await go('callNative', nativeId, await encodeAsync(a))))
+T.dispatchThunk = async (name, args, nativeId, sync) => {
+  const native = sync
+    ? withMeta(name, (...a) => () => decode(go('callNativeSync', nativeId, encode(a))))
+    : withMeta(name, (...a) => async () => decode(await go('callNative', nativeId, await encodeAsync(a))))
   let creator = native
   for (const { match, wrap } of thunkWraps) {
     let ok = false
