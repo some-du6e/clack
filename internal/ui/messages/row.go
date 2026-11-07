@@ -110,6 +110,10 @@ type row struct {
 	chansDoc        bool         // chans is for the current doc
 	replyAvs        []replyAv    // the reply bar's ReplyBarAvatars
 	replyN          int          // … drawn in the last frame
+
+	// what the header drew last frame (CSS may replace both)
+	avDrawn   string // the avatar's picture: a CSS background-image wins
+	nameShown string // the sender label: ::before + name (unless font-size 0) + ::after
 }
 
 // chanCard is one CodeChannelEntityCard under a message.
@@ -580,6 +584,9 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 			mods |= 4
 		}
 	}
+	if m.SlackbotCustomResponse() {
+		mods |= 8
+	}
 	st := msgClass.EnterClass(gtx, hoverState(rc.hovered), mods, slackc.ExtraClass(p))
 	defer st.Leave()
 	if st.Hidden() {
@@ -741,6 +748,10 @@ func (r *row) layoutAvatar(gtx layout.Context, p slackc.Props) layout.Dimensions
 	if st.Hidden() {
 		return layout.Dimensions{}
 	}
+	// Slack's avatar is the element's picture, so a background-image rule
+	// (CustomSlackbot's custom-response avatar) replaces it.
+	url = st.BackgroundImage(url)
+	r.avDrawn = url
 	// Clicked before Layout: Clickable.Layout consumes pending clicks.
 	if r.avatarBtn.Clicked(gtx) && r.m.User != "" {
 		rc.h.OpenProfile(rc.origin(image.Point{}), r.m.User)
@@ -1187,8 +1198,17 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 func (r *row) nameButton(gtx layout.Context, bs slackc.Styled) layout.Dimensions {
 	c := r.rc.c
 	nameS := textStyle{size: float32(bs.FontSize(15)), weight: theme.Black, col: bs.Color(c.Text), lineH: 22}
+	before, after := bs.Generated()
+	r.nameShown = before + after
+	if nameS.size > 0 {
+		r.nameShown = before + r.name + after
+	}
 	r.memberMenuOn(gtx, &r.nameCtx)
 	d := r.nameBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		if nameS.size <= 0 { // font-size: 0, the name drawn by ::after (CustomSlackbot)
+			h := dp(gtx, nameS.lineH)
+			return layout.Dimensions{Size: image.Pt(0, h), Baseline: dp(gtx, 5)}
+		}
 		d := label(gtx, r.rc.th, nameS, r.name)
 		if r.nameBtn.Hovered() {
 			base := d.Size.Y - d.Baseline

@@ -59,6 +59,8 @@ var ThunkCatalogue = []ThunkSpec{
 	{"autocompleteMembers", "{query, channelId, …}", "ui/composer (@ autocomplete)", "returns results (broadcast keywords included)"},
 	{"addAndUploadPendingFile", "{file: File, hideBanner?}", "ui/composer (attachments)", "uploading a file (core.PrepareUpload); returns {uploadPromise}"},
 	{"uploadFiles", "{files: File[], channelId, …}", "ui/composer (attachments)", "uploading and sharing files (core.Upload)"},
+	{"maybePersistPendingFileData", "{pendingFileId}", "taut (PersistPendingFile, set by ui/composer)", "keeping a pending file's edited title for its upload"},
+	{"editFileApi", "{fileId, title}", "taut (EditFile, set by ui/composer)", "renaming an uploaded file; state.files[fileId].title follows"},
 	{"getChannelMembershipInfoForUsers", "{channelId, userIds}", "taut", "who is in a channel; fills membership"},
 	{"ensureMembersArePresent", "{memberIds}", "taut", "loading users (core.EnsureUsers)"},
 	{"fetchRawChannelsById", "{ids}", "taut", "loading conversations (core.ChannelInfo); returns {missing}"},
@@ -337,6 +339,13 @@ func (tt *thunkTable) installDefaults() {
 				return nil, err
 			}
 			return map[string]any{"fileIds": []string{up.ID}}, nil
+		},
+		"maybePersistPendingFileData": func(ctx context.Context, a []json.RawMessage) (any, error) {
+			return nil, persistPendingFile(ctx, argObj(a).str("pendingFileId"))
+		},
+		"editFileApi": func(ctx context.Context, a []json.RawMessage) (any, error) {
+			o := argObj(a)
+			return t.editFile(ctx, firstNonEmpty(o.str("fileId"), o.str("id")), o.str("title"))
 		},
 		"clearDrafts": func(ctx context.Context, a []json.RawMessage) (any, error) {
 			o := argObj(a)

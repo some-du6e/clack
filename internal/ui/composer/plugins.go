@@ -11,14 +11,17 @@ import (
 )
 
 // The composer's part of the plugin runtime: a taut extension prelude
-// (plugins.js) that gives the composer's boundaries the shapes Slack's
-// components have in JS, where plugins find them by more than their name.
+// (plugins.js) with the data the composer's boundaries carry in JS.
 //
-//   - TextyInput is a memo of a class with getNumCharsOverLimit, and its
-//     ref is Slack's {instance: {quill}} (CharacterCounter filters on the
-//     former and counts through the latter).
+//   - TextyInput's shape (Slack's memo(class TextyInput) with a Quill on
+//     its ref, which CharacterCounter filters on and counts through) is
+//     taut's; the prelude feeds that Quill the editor's length and
+//     selection ($texty, chrome_slack.go).
 //   - __clackComposer.fileName reads an attachment's name through a real
 //     File, whose name getter plugins may redefine (AnonymiseFileNames).
+//
+// Pending attachments reach plugins through taut's pending-file hooks
+// (attach_pending.go).
 //
 // Like every extension it costs nothing until the runtime starts.
 

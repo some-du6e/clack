@@ -30,7 +30,7 @@ import (
 //	      ├─ WysiwygContainer                 the bordered box
 //	      │  ├─ texty_input_with_autocomplete the editor
 //	      │  │  └─ TextyAutocomplete          @ # : rows (includeAllBroadcastKeywords, disallowedResults)
-//	      │  │     └─ TextyInput              Slack's memo(class) + Quill ref (plugins.js)
+//	      │  │     └─ TextyInput              Slack's memo(class) + Quill ref (taut; fed by plugins.js)
 //	      │  ├─ TextyButtons                  the footer toolbar
 //	      │  │  └─ TextyButtonOverflow        children: the buttons
 //	      │  │     ├─ ShortcutsMenuTriggerButton (+), ComposerButton (Aa), …

@@ -2,7 +2,7 @@ name: messages-taut
 # The message list under Taut: builds Taut's published plugins with Taut's
 # own build:user-plugin (never committed: GPLv3) and runs internal/ui/messages'
 # plugin acceptance tests (ShutUpSlackbot, Censorship, BringBackSlackbot,
-# UserPronouns, WhoReacted) plus the zero-cost benchmark, on synthetic state.
+# UserPronouns, WhoReacted, ShowSendingBot) plus the zero-cost benchmark, on synthetic state.
 on:
   push:
     paths:

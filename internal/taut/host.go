@@ -25,6 +25,10 @@ func (t *Taut) installHost(r *runtime) {
 	sync("get", func(a []json.RawMessage) (any, error) { return t.mirror.get(strArg(a, 0), strArg(a, 1)), nil })
 	sync("keys", func(a []json.RawMessage) (any, error) { return t.mirror.keys(strArg(a, 0)), nil })
 	sync("action", func(a []json.RawMessage) (any, error) { return nil, nil })
+	// Slack's hasSlackbotCustomResponseInThread over core's cached replies
+	sync("slackbotCustomResponseInThread", func(a []json.RawMessage) (any, error) {
+		return t.app.SlackbotCustomResponseInThread(strArg(a, 0), strArg(a, 1), strArg(a, 2)), nil
+	})
 
 	// ---- what plugins patched (Go keeps cheap flags for the UI) ----
 	sync("statePatched", func(a []json.RawMessage) (any, error) {
@@ -129,6 +133,12 @@ func (t *Taut) installHost(r *runtime) {
 			arg = a[2]
 		}
 		return f(strArg(a, 0), where, arg), nil
+	})
+	sync("updatePendingFile", func(a []json.RawMessage) (any, error) {
+		if f := RenamePendingFile; f != nil {
+			return f(strArg(a, 0), strArg(a, 1)), nil
+		}
+		return false, nil
 	})
 	sync("localDraft", func(a []json.RawMessage) (any, error) {
 		if f := t.opts.UI.SetLocalDraft; f != nil && len(a) > 0 {

@@ -106,6 +106,10 @@ func slackMessage(m *core.Message) slackc.Props {
 			p["username"] = m.Name
 		}
 	}
+	if b := m.BotProfile; b != nil {
+		p["bot_profile"] = slackc.Props{"id": b.ID, "name": b.Name, "app_id": b.AppID, "user_id": b.UserID,
+			"team_id": b.TeamID, "deleted": b.Deleted}
+	}
 	if m.Subtype != "" {
 		p["subtype"] = m.Subtype
 	}
