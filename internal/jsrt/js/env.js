@@ -288,13 +288,13 @@
   jr.kListeners = kListeners;
   const flatOpts = (o) => typeof o === 'boolean' ? { capture: o } : (o || {});
   class EventTarget {
-    constructor() { def(this, kListeners, null); }
+    constructor() { this[kListeners] = null; } // Symbol keys never show in Object.keys / for-in
     addEventListener(type, cb, opts) {
       if (cb == null) return;
       const o = flatOpts(opts);
       if (o.signal && o.signal.aborted) return;
       let m = this[kListeners];
-      if (!m) { m = new Map(); def(this, kListeners, m); }
+      if (!m) { m = new Map(); this[kListeners] = m; }
       type = String(type);
       let l = m.get(type);
       if (!l) { l = []; m.set(type, l); }

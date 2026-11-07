@@ -32,15 +32,6 @@ jobs:
         with:
           name: jsrt-wasm
           path: internal/jsrt/jsrt.wasm
-      - name: wasm-opt variant (experiment)
-        run: |
-          curl -fsSL https://github.com/WebAssembly/binaryen/releases/download/version_124/binaryen-version_124-x86_64-linux.tar.gz | tar xz -C /opt
-          /opt/binaryen-version_124/bin/wasm-opt -O3 --enable-bulk-memory --enable-sign-ext --enable-nontrapping-float-to-int --enable-mutable-globals internal/jsrt/jsrt.wasm -o /tmp/jsrt.opt.wasm
-          ls -l internal/jsrt/jsrt.wasm /tmp/jsrt.opt.wasm
-      - uses: actions/upload-artifact@v4
-        with:
-          name: jsrt-wasm-opt
-          path: /tmp/jsrt.opt.wasm
   test:
     runs-on: ubuntu-latest
     steps:
@@ -85,14 +76,9 @@ jobs:
           path: /tmp/taut-built
   bench:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.bench }}
-    needs: wasm
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: jsrt-wasm-opt
-          path: /tmp/opt
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -101,8 +87,6 @@ jobs:
         run: go test -run '^$' -bench . -benchmem -benchtime 2s ./internal/jsrt/ | tee bench.txt
       - name: startup and render profile
         run: go test -count=1 -run 'TestStartupTiming|TestRenderProfile' -v ./internal/jsrt/
-      - name: same with wasm-opt -O3 engine
-        run: CLACK_JSRT_WASM=/tmp/opt/jsrt.opt.wasm go test -count=1 -run 'TestStartupTiming|TestRenderProfile' -v ./internal/jsrt/
       - uses: actions/setup-go@v5
         with:
           go-version-file: internal/jsrt/enginecmp/go.mod
