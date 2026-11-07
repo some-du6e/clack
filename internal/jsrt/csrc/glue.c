@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include "quickjs.h"
 
 #define EXPORT(name) __attribute__((export_name(#name)))
@@ -18,6 +19,20 @@ IMPORT(host_interrupt) int32_t host_interrupt(void);
 IMPORT(host_module) uint64_t host_module(const char *name, uint32_t len);
 IMPORT(host_rejection) void host_rejection(uint32_t promise, uint32_t reason, int32_t handled);
 IMPORT(host_free) void host_free(uint32_t id);
+IMPORT(host_tz_offset) int32_t host_tz_offset(int64_t secs);
+
+// localtime_r is where QuickJS's Date gets the local zone (getTimezoneOffset,
+// every local getter and setter, toString). wasi-libc has no time zones, so
+// local time was UTC while Intl used the host's zone; this asks the host
+// (Go's time.Local) for the offset at that instant. It replaces wasi-libc's
+// weak localtime_r.
+struct tm *localtime_r(const time_t *restrict t, struct tm *restrict tm) {
+	int32_t off = host_tz_offset((int64_t)*t); // seconds east of UTC
+	time_t local = *t + off;
+	if (!gmtime_r(&local, tm)) return NULL;
+	tm->tm_gmtoff = off;
+	return tm;
+}
 
 static JSRuntime *rt;
 static JSContext *ctx;

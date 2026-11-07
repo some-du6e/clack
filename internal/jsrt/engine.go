@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
@@ -118,6 +119,11 @@ func newEngine(r *Runtime) (*engine, error) {
 		// a host function was garbage collected (called from the GC; must not re-enter JS)
 		delete(r.hosts, uint32(st[0]))
 	}), []api.ValueType{i32}, nil).Export("host_free")
+	hb.NewFunctionBuilder().WithGoModuleFunction(api.GoModuleFunc(func(_ context.Context, _ api.Module, st []uint64) {
+		// glue.c's localtime_r: the local zone's offset (seconds east of UTC) at Unix time st[0]
+		_, off := time.Unix(int64(st[0]), 0).In(time.Local).Zone()
+		st[0] = uint64(uint32(int32(off)))
+	}), []api.ValueType{i64}, []api.ValueType{i32}).Export("host_tz_offset")
 	if _, err := hb.Instantiate(ctx); err != nil {
 		return nil, fmt.Errorf("jsrt: host module: %w", err)
 	}
