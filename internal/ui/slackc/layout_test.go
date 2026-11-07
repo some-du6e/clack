@@ -639,3 +639,83 @@ func BenchmarkParseSenderTree(b *testing.B) {
 		}
 	}
 }
+
+func TestOverlayFixedModal(t *testing.T) {
+	withStyles(t, func(n *Node, s *css.Style) {
+		switch n.ID {
+		case "backdrop":
+			s.Position = css.PosFixed
+			s.Left, s.Right, s.Top, s.Bottom = px(0), px(0), px(0), px(0)
+			s.Background.Color = color.NRGBA{A: 0x80}
+		case "modal":
+			s.Position = css.PosFixed
+			s.Left, s.Right, s.Top, s.Bottom = px(0), px(0), px(0), px(0)
+			s.Width, s.Height = px(200), px(100)
+			s.Margin = [4]css.Length{css.Auto, css.Auto, css.Auto, css.Auto}
+		}
+	})
+	windowSize = image.Pt(800, 600)
+	v := NewView(1 << 63)
+	v.overlay = true
+	gtx := testGtx(800, 600)
+	gtx.Constraints = layout.Exact(image.Pt(800, 600))
+	v.Layout(gtx, mustTree(t, `[{"t":"div","k":1,"p":{"id":"backdrop"}},{"t":"div","k":2,"p":{"id":"modal"}}]`), "", nil, nil)
+	checkBox(t, v, "backdrop", 0, 0, 800, 600)
+	checkBox(t, v, "modal", 300, 250, 200, 100)
+	// the modal is on top
+	if b := v.main.hitTest(f32.Pt(400, 300)); b == nil || b.n.ID != "modal" {
+		t.Errorf("hit %v, want modal", b)
+	}
+	if b := v.main.hitTest(f32.Pt(10, 10)); b == nil || b.n.ID != "backdrop" {
+		t.Errorf("hit %v, want backdrop", b)
+	}
+}
+
+func TestZIndexHitOrder(t *testing.T) {
+	withStyles(t, func(n *Node, s *css.Style) {
+		switch n.ID {
+		case "wrap":
+			s.Position = css.PosRelative
+			s.Width, s.Height = px(100), px(100)
+		case "low", "high":
+			s.Position = css.PosAbsolute
+			s.Left, s.Top = px(0), px(0)
+			s.Width, s.Height = px(50), px(50)
+			s.ZAuto = false
+			s.ZIndex = 1
+			if n.ID == "high" {
+				s.ZIndex = 5
+			}
+		}
+	})
+	// "high" comes first in the tree but has the larger z-index
+	v, _ := layoutJS(t, `{"t":"div","k":1,"p":{"id":"wrap"},"c":[{"t":"div","k":2,"p":{"id":"high"}},{"t":"div","k":3,"p":{"id":"low"}}]}`, 300, 300)
+	if b := v.main.hitTest(f32.Pt(10, 10)); b == nil || b.n.ID != "high" {
+		t.Errorf("hit %v, want high", b)
+	}
+}
+
+func TestHostChildren(t *testing.T) {
+	RegisterHost(func(gtx layout.Context, h *Host) layout.Dimensions {
+		// a host that pads its children by 5px on each side
+		m := op.Record(gtx.Ops)
+		g := gtx
+		g.Constraints.Max.X -= 10
+		d := h.Children(g)
+		c := m.Stop()
+		st := op.Offset(image.Pt(5, 5)).Push(gtx.Ops)
+		c.Add(gtx.Ops)
+		st.Pop()
+		return layout.Dimensions{Size: image.Pt(d.Size.X+10, d.Size.Y+10)}
+	}, "TestPadded")
+	withStyles(t, func(n *Node, s *css.Style) {
+		if n.ID == "kid" {
+			s.Display = css.DisplayInlineBlock
+			s.Width, s.Height = px(40), px(20)
+		}
+	})
+	_, d := layoutJS(t, `{"t":"@","n":"TestPadded","k":1,"c":[{"t":"span","k":2,"p":{"id":"kid"}}]}`, 300, 300)
+	if d.Size.X != 50 || d.Size.Y < 30 {
+		t.Errorf("host with children: %v, want 50x≥30", d.Size)
+	}
+}
