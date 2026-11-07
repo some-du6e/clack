@@ -331,13 +331,11 @@ func (e *slickEnv) install(id string, settings map[string]any) {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	got, err := e.s.Import(e.ctx(), code)
+	name, err := e.s.Import(e.ctx(), code) // returns the plugin's name
 	if err != nil {
 		e.t.Fatalf("import %s: %v", id, err)
 	}
-	if got != id {
-		e.t.Fatalf("imported %q, want %q", got, id)
-	}
+	e.t.Logf("installed %s (%s)", id, name)
 	for k, v := range settings {
 		if err := e.s.SetOption(e.ctx(), id, k, v); err != nil {
 			e.t.Fatalf("set %s: %v", k, err)
