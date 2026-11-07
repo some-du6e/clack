@@ -568,7 +568,7 @@ func (r *row) layoutAvatar(gtx layout.Context, p slackc.Props) layout.Dimensions
 		s = dp(gtx, float32(p.IntOr("size", int(mt.avatar))))
 		url = avatarURL(rc.h, p, r.m.User, url)
 	}
-	st := avatarClass.Enter(gtx, hoverState(r.avatarBtn.Hovered()), 0)
+	st := avatarClass.Enter(gtx, btnState(gtx, &r.avatarBtn), 0)
 	defer st.Leave()
 	if st.Hidden() {
 		return layout.Dimensions{}
@@ -798,7 +798,7 @@ func (r *row) layoutBaseSender(gtx layout.Context, _ slackc.Props) layout.Dimens
 	if r.nameBtn.Clicked(gtx) && r.m.User != "" {
 		rc.h.OpenProfile(rc.origin(image.Point{}), r.m.User)
 	}
-	bs := senderBtnClass.Enter(gtx, hoverState(r.nameBtn.Hovered()), 0)
+	bs := senderBtnClass.Enter(gtx, btnState(gtx, &r.nameBtn), 0)
 	var nd layout.Dimensions
 	if !bs.Hidden() {
 		if bs.Active() {
@@ -987,7 +987,7 @@ func (r *row) layoutAddButton(gtx layout.Context, _ slackc.Props) layout.Dimensi
 	if !rc.hovered {
 		return layout.Dimensions{Size: size}
 	}
-	st := reactionAddClass.Enter(gtx, hoverState(r.addReact.Hovered()), 0)
+	st := reactionAddClass.Enter(gtx, btnState(gtx, &r.addReact), 0)
 	defer st.Leave()
 	if st.Hidden() {
 		return layout.Dimensions{Size: size}
@@ -1051,12 +1051,11 @@ func (pl *reactPill) layoutButton(gtx layout.Context, p slackc.Props) layout.Dim
 	if pl.btn.Clicked(gtx) && rc.onReact != nil {
 		rc.onReact(r, re.Name, !re.Self)
 	}
-	hov := pl.btn.Hovered()
 	var mods uint64
 	if pl.reacted() {
 		mods = 1
 	}
-	st := reactionClass.Enter(gtx, hoverState(hov), mods)
+	st := reactionClass.Enter(gtx, btnState(gtx, &pl.btn), mods)
 	defer st.Leave()
 	if st.Hidden() {
 		return layout.Dimensions{}

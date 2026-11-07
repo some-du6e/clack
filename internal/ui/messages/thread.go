@@ -164,7 +164,7 @@ func (v *ThreadView) header(gtx layout.Context, th *theme.Theme, c *colors, w, h
 	if v.s.closeBtn.Clicked(gtx) {
 		v.h.CloseSecondary()
 	}
-	st := flexControlClass.Enter(gtx, hoverState(v.s.closeBtn.Hovered()), 0)
+	st := flexControlClass.Enter(gtx, btnState(gtx, &v.s.closeBtn), 0)
 	defer st.Leave()
 	if st.Hidden() {
 		return

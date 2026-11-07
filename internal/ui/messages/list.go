@@ -946,7 +946,7 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 	if hov {
 		s.tbHov = i
 	}
-	st := actionBtnClass.EnterAttr(gtx, hoverState(hov), 0, "data-qa", tbQA[i])
+	st := actionBtnClass.EnterAttr(gtx, btnState(gtx, btn), 0, "data-qa", tbQA[i])
 	defer st.Leave()
 	bs := gtx.Constraints.Max.X
 	if st.Hidden() {

@@ -3,6 +3,9 @@ package messages
 import (
 	"image/color"
 
+	"gioui.org/layout"
+	"gioui.org/widget"
+
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
 )
@@ -53,6 +56,25 @@ var (
 var tbQA = [tbCount]string{"add_reaction", "start_thread", "share_message", "save_message", "add_to_list", "more_message_actions"}
 
 var colorNone color.NRGBA
+
+// btnState is a button's CSS state (hover, keyboard focus, active); 0
+// without asking anything while no CSS is installed.
+func btnState(gtx layout.Context, b *widget.Clickable) css.State {
+	if slackc.Styles.Empty() {
+		return 0
+	}
+	var s css.State
+	if b.Hovered() {
+		s |= css.StateHover
+	}
+	if gtx.Focused(b) {
+		s |= css.StateFocus | css.StateFocusVisible
+	}
+	if b.Pressed() {
+		s |= css.StateActive
+	}
+	return s
+}
 
 func hoverState(hovered bool) css.State {
 	if hovered {
