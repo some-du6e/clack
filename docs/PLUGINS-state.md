@@ -14,6 +14,7 @@ Optional fields Slack leaves out when unset (avatar `image_*` URLs, bot icons, f
 | `membership` | channel id → `{userId: {isKnown, isMember}}` | from the conversation's member list and `getChannelMembershipInfoForUsers` answers | that thunk, `conv` |
 | `readOnlyChannels` | channel id | `{isReadOnly:true}` when the viewer can't post at the top level or in threads (`posting_restricted_to` and `threads_restricted_to`) | `conv` |
 | `threadOnlyChannels` | channel id | `{isThreadOnly:true}` when only thread replies are allowed | `conv` |
+| `reactions` | `message-<ts>-<channel>` (`_rxn_key`) | the message's `reactions` array (`[{name, users, count}]`), for every cached message that has reactions | with `messages` |
 | `presence` | user id | `{id, presence}` | `presence` |
 | `unreadChannelCounts` | channel id | `{unreadCnt, unreadHighlightCnt, unreadVIPMentionCnt}` | `message`, `marked`, `counts` |
 | `channelCursors` | channel id | last read ts | `marked`, `counts` |

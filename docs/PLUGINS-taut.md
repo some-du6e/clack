@@ -61,6 +61,9 @@ When no plugin patches the name, this is just `native(ctx, args)`. When a plugin
 | maybeFetchBackgrounds, startEventLog, stopEventLog, stopHuddle, displayAlertMessage, processAwsTranscription, roomsStart/StopTranscriptionFetcher | huddles | ui/views huddles | no-op defaults (Clack has no huddle media) |
 | logExperimentExposure, handleMessageImmediatelyWithoutPreprocessing | — | — | no-ops |
 | apiCall, apiCallExpedited | `{method, args}` | taut | default: the Web API call |
+| handleDeepLink | `{uri}` (slack:// links) | ui shell | default: `UIHooks.DeepLink(uri) bool` (false when unset) |
+| currentUserEndedTyping, startHuddle | Slack's | ui/composer, ui/views | no-op defaults |
+| openEditProfileModal, showSavedItemNotification | Slack's | ui/popups, ui notifications | UI must dispatch |
 | blocksFormatFetcher, executeAppAction, submitView | Slack's | ui/composer markdown mode, ui/popups shortcuts and app modals | UI must register natives (no Clack surface yet) |
 
 ## Composer, messages and members
@@ -81,3 +84,7 @@ When no plugin patches the name, this is just `native(ctx, args)`. When a plugin
 `t.Settings()` returns the categories (Messages, Message Box, People, Privacy, App, Fun, Other) with each plugin's name, mrkdwn description, authors, enabled/running state, error, option problems, options and data flags. It also carries the custom CSS box, a config.json error and plugin tabs. Option kinds map to controls: boolean → toggle, number → number field (Min/Max), string → text field, select → dropdown, list → rows, color → picker, json → code box, secret → password field (`t.Secret` / `t.SetSecret`). `HasEditor` means a React editor, rendered with `Bridge.RenderEditor`. `HasDataPanel` means the plugin's panel, rendered with `Bridge.RenderDataPanel` while it runs, and remounted when `RunID` changes. Actions: `SetEnabled`, `SetOption`, `ResetOption`, `SetSecret`, `Import(code, replacingID)`, `InstallURL`, `Remove`, `ClearData(id, "storage"|"cache")`, `SetUserCSS`, `ReloadConfig`. `t.Subscribe()` signals changes.
 
 Files: `config.json` (Taut's format: only set options), `user.css`, `plugins/<id>.js` plus `.meta.json`, `storage/` (api.storage, api.Cache, localStorage), and the separate 0600 secret store (`secrets.json` for opt.secret values and accounts, `secrets/` for api.secrets).
+
+## Extensions (other plugin systems on this runtime)
+
+`t.Extend(taut.Extension{Name, Install, Prelude, Ready, LocalStorage, LocalStorageKeys})` adds a plugin system to Taut's runtime: `Install` registers host functions and `Prelude` runs after the TautAPI in every fresh runtime (the internals are on `globalThis.__taut`, the base API on `globalThis.TautAPI`), `Ready(rt, restarted)` runs once the runtime is attached (restart what ran after a crash), and `LocalStorage` serves read-only virtual keys that never reach disk. `t.JS()` starts the runtime on demand; registering an extension doesn't. `t.DataList/DataRead/DataWrite/DataDelete/DataClear` give extensions namespaces in Taut's data store. internal/slick is the user ([PLUGINS-slick.md](PLUGINS-slick.md)). `ComposerContext.Blocks`/`Text` carry the outgoing message to send checks.

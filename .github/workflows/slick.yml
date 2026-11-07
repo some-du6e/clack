@@ -1,0 +1,73 @@
+name: slick
+# Builds every plugin in Slick's src/plugins/ with Slick's own build
+# (build:plugin's buildUserPlugin, or Slick's page build options for the
+# first-party plugins build:plugin refuses, plus their main.ts halves; see
+# internal/slick/build/build.mjs), uploads them as an artifact, and runs
+# internal/slick's acceptance tests against them, unmodified. The built
+# plugins are Slick's (GPLv3) and are never committed here. Taut's tests
+# run too, since Slick shares Taut's runtime.
+on:
+  push:
+    paths:
+      - "internal/slick/**"
+      - "internal/taut/**"
+      - "internal/jsrt/**"
+      - ".github/workflows/slick.yml"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "slick git ref (branch, tag or sha)"
+        required: false
+        default: "main"
+
+jobs:
+  plugins:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: oven-sh/setup-bun@v2
+      - name: clone slick
+        run: |
+          git clone -q https://github.com/3kh0/slick /tmp/slick
+          git -C /tmp/slick checkout -q "${{ inputs.ref || 'main' }}"
+          echo "SLICK_SHA=$(git -C /tmp/slick rev-parse HEAD)" >> "$GITHUB_ENV"
+          git -C /tmp/slick log --oneline -1
+      - name: "install slick deps (no scripts, so no electron download)"
+        working-directory: /tmp/slick
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: build every plugin with slick's build
+        run: |
+          set -o pipefail
+          mkdir -p dist/slick-plugins
+          node internal/slick/build/build.mjs /tmp/slick dist/slick-plugins 2>&1 | tee dist/slick-build.log
+          cp -r /tmp/slick/themes dist/slick-plugins/themes
+          echo "$SLICK_SHA" > dist/slick-plugins/SLICK_SHA
+          ls -la dist/slick-plugins
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: slick-plugins
+          path: dist/slick-plugins
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gofmt
+        run: test -z "$(gofmt -l internal/slick internal/taut | tee /dev/stderr)"
+      - name: vet
+        run: go vet ./internal/slick/... ./internal/taut/...
+      - name: slick unit + acceptance tests
+        env:
+          SLICK_PLUGINS_DIR: ${{ github.workspace }}/dist/slick-plugins
+        run: |
+          set -o pipefail
+          go test -count=1 -timeout 20m -v ./internal/slick/... 2>&1 | tee dist/slick-test.log
+      - name: acceptance summary
+        if: ${{ !cancelled() }}
+        run: |
+          grep -E '^\s*--- (PASS|FAIL|SKIP)|^(ok|FAIL)\b|ACCEPT' dist/slick-test.log | tail -150 || true
+      - name: taut tests still green (shared runtime)
+        run: go test -count=1 -timeout 15m ./internal/taut/...

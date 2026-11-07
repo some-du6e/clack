@@ -27,7 +27,7 @@ import (
 var mapSlices = []string{
 	"channels", "members", "messages", "bots", "membershipCounts", "membership",
 	"readOnlyChannels", "threadOnlyChannels", "presence", "unreadChannelCounts",
-	"channelCursors", "userGroups", "channelHistory", "teams",
+	"channelCursors", "userGroups", "channelHistory", "teams", "reactions",
 }
 
 // wholeSlices are read whole.
@@ -256,6 +256,7 @@ func (m *mirror) sweep() {
 			m.invalidate(it.slice, it.key)
 			if it.slice == "messages" {
 				m.invalidate("channelHistory")
+				m.invalidate("reactions")
 			}
 		}
 	}
@@ -268,6 +269,7 @@ func (m *mirror) onEvent(ev core.Event) {
 	case "message", "update", "delete", "sent":
 		m.invalidate("messages", ev.Channel)
 		m.invalidate("channelHistory")
+		m.invalidate("reactions")
 		if ev.Count != nil {
 			m.invalidate("unreadChannelCounts", ev.Channel)
 			m.invalidate("channelCursors", ev.Channel)
@@ -508,6 +510,18 @@ func (m *mirror) keys(slice string) []string {
 			}
 		}
 		return out
+	case "reactions":
+		// Slack's reactions slice: _rxn_key → the message's reactions
+		var out []string
+		for _, ch := range a.S.MessageChannels() {
+			for ts, msg := range m.bucket(ch) {
+				if mm, ok := msg.(map[string]any); ok && mm["reactions"] != nil {
+					out = append(out, "message-"+ts+"-"+ch)
+				}
+			}
+		}
+		sort.Strings(out)
+		return out
 	case "bots":
 		return a.S.BotIDs()
 	case "membership":
@@ -561,6 +575,17 @@ func (m *mirror) get(slice, key string) any {
 			return nil
 		}
 		return b
+	case "reactions":
+		rest, ok := strings.CutPrefix(key, "message-")
+		i := strings.LastIndex(rest, "-")
+		if !ok || i < 0 {
+			return nil
+		}
+		msg, _ := m.bucket(rest[i+1:])[rest[:i]].(map[string]any)
+		if msg == nil || msg["reactions"] == nil {
+			return nil
+		}
+		return msg["reactions"]
 	case "bots":
 		bi, ok := a.S.Bot(key)
 		if !ok {

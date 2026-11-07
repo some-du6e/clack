@@ -43,6 +43,10 @@ type UIHooks struct {
 	Toast func(text string, icon string, d time.Duration)
 	// OpenPreferences opens Preferences (on a tab when given).
 	OpenPreferences func(tab string)
+	// DeepLink opens a slack:// URI inside Clack (Slack's handleDeepLink
+	// thunk: slack://channel?team=…&id=…, slack://user?…, slack://app?…);
+	// true if it was handled. nil: handleDeepLink resolves false.
+	DeepLink func(uri string) bool
 	// ThreadPane answers api.threads.usePane(): op loaded | topReply |
 	// jumpToReply for the pane showing ch/threadTs.
 	ThreadPane func(op, ch, threadTs, arg string) any
@@ -468,6 +472,10 @@ type ComposerContext struct {
 	ChannelID string             `json:"channelId,omitempty"`
 	ThreadTs  string             `json:"threadTs,omitempty"`
 	Broadcast *ComposerBroadcast `json:"broadcast,omitempty"`
+	// Blocks and Text are the message being sent (for send checks that
+	// read it, like Slick's addSendCheck(blocks, context)).
+	Blocks json.RawMessage `json:"blocks,omitempty"`
+	Text   string          `json:"text,omitempty"`
 }
 
 // ComposerBroadcast is the "Also send to #channel" checkbox; Set is a Go

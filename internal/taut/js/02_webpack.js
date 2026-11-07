@@ -145,4 +145,4 @@ function withMeta(name, fn) {
   return fn
 }
 
-Object.assign(T, { defineModule, named, withMeta, getExport, waitForExport, byName, byMeta })
+Object.assign(T, { defineModule, named, withMeta, getExport, waitForExport, forEachExport, getByProps, getModuleSources, getModuleSource, findModuleId, getValueSource, byName, byMeta })

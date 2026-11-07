@@ -93,6 +93,9 @@ Globals (env.js): `React` (real React 19.3, vendored), `ReactDOM` (`createPortal
 - The settings model for **Preferences > Taut** (plugin list by category, toggles, every `opt.*` control kind, custom `editor`s rendered via React, the plugin's `settingsData` component, plugin authors, Hack Club–only filtering). ui-shell draws the tab with native widgets plus host-tree rendering for React editors.
 - Implemented: the Go API UI owners call (wiring, `taut.Dispatch` and the thunk catalogue, composer/message hooks, patched views, settings) is in [PLUGINS-taut.md](PLUGINS-taut.md). The Redux mirror's slices and shapes are in [PLUGINS-state.md](PLUGINS-state.md). The `taut` workflow builds every Taut plugin with `build:user-plugin` and runs the acceptance suite against them.
 
+### `internal/slick` (owner: slick-api agent)
+Slick plugins (https://github.com/3kh0/slick) run unmodified on the same runtime through `taut.Extension`: the `$slick` module, each plugin's SlickAPI over the TautAPI internals, privileged `main.ts` halves against a Go-backed MainCtx, Slick's settings.json, themes and custom CSS (pure Go), and the Preferences > Slick model (`Slick.Settings()`). Design, wiring and coverage: [PLUGINS-slick.md](PLUGINS-slick.md). The `slick` workflow builds every Slick plugin with Slick's own build and runs the acceptance suite.
+
 ### `internal/ui/slackc` (owner: taut-ui agent)
 ```go
 type Props map[string]any

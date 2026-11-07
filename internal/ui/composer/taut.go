@@ -331,7 +331,7 @@ func tautSendCheck(m SendCheck, done func(ok bool)) {
 	if m.ThreadTS != "" {
 		kind = "thread"
 	}
-	c := taut.ComposerContext{Kind: kind, ChannelID: m.ChannelID, ThreadTs: m.ThreadTS}
+	c := taut.ComposerContext{Kind: kind, ChannelID: m.ChannelID, ThreadTs: m.ThreadTS, Blocks: m.Blocks, Text: m.Text}
 	go func() { done(t.SendCheck(context.Background(), c)) }()
 }
 
