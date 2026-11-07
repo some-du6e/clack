@@ -18,7 +18,7 @@ jobs:
   wasm:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: wasi-sdk
         run: |
           v=$WASI_SDK_VERSION
@@ -28,15 +28,15 @@ jobs:
         run: git clone -q --depth 1 --branch $QJS_VERSION https://github.com/quickjs-ng/quickjs /opt/quickjs && echo "QJS=/opt/quickjs" >> $GITHUB_ENV
       - name: build
         run: internal/jsrt/csrc/build.sh && sha256sum internal/jsrt/jsrt.wasm
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: jsrt-wasm
           path: internal/jsrt/jsrt.wasm
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
@@ -49,12 +49,12 @@ jobs:
     # every plugin in taut's plugins/, built with taut's own build:user-plugin, must load
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
       - name: build taut plugins
@@ -69,7 +69,7 @@ jobs:
           ls -la /tmp/taut-built
       - name: load them in jsrt
         run: set -o pipefail; JSRT_TAUT_PLUGINS=/tmp/taut-built go test -count=1 -run TestTautPlugins -v ./internal/jsrt/ | grep -v '^=== RUN'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
           name: taut-plugins-built
@@ -78,8 +78,8 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.bench }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
@@ -87,14 +87,14 @@ jobs:
         run: go test -run '^$' -bench . -benchmem -benchtime 2s ./internal/jsrt/ | tee bench.txt
       - name: startup and render profile
         run: go test -count=1 -run 'TestStartupTiming|TestRenderProfile' -v ./internal/jsrt/
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: internal/jsrt/enginecmp/go.mod
           cache: false
       - name: engine comparison (QuickJS-NG/wazero vs goja)
         working-directory: internal/jsrt/enginecmp
         run: go test -count=1 -v . | tee ../../../enginecmp.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: jsrt-bench
           path: |
