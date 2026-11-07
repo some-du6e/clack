@@ -17,6 +17,8 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -91,6 +93,19 @@ type chromeState struct {
 	// Origin is the composer's window position (composer.Origin); the
 	// chrome anchors its own "More options" menus with it.
 	Origin image.Point
+
+	// Slack-shaped identity for the plugin boundaries (slack.go).
+	Key, Channel, ThreadTS, DraftID, ViewContext string
+	// Hide is the buttons plugins turned off (MessageInput's enable*
+	// flags, crBtn bits). NoBroadcast hides the "Also send to" row
+	// (dontShowBroadcastControls). SquareTop squares the box's top
+	// corners under a plugin's context bar.
+	Hide        uint32
+	NoBroadcast bool
+	SquareTop   bool
+	Count       int // characters in the message (CharacterCount)
+	// TypingIDs / TypingNames: who Typing names, sorted by name.
+	TypingIDs, TypingNames []string
 }
 
 // crBtn names every clickable in the chrome.
@@ -281,6 +296,17 @@ type chrome struct {
 
 	spKey float32
 	spW   [3]int // space advance at crSpaceSizes
+
+	// Per-frame state for the Slack boundary natives (chrome_slack.go).
+	cur     chromeState
+	f       crFrame
+	fpal    crPal       // this frame's colors: pal with CSS overrides
+	base    image.Point // composer-local position of the current gtx origin
+	pxPerDp float32
+	wBox    layout.Widget
+	wFoot   [crNumBtn]layout.Widget
+	one     [1]*slackc.Node
+	suf     []crSuf
 }
 
 var crSpaceSizes = [3]unit.Sp{15, 12, 10.5}
@@ -387,7 +413,11 @@ func (c *chrome) openMore(h Host, st *chromeState, id crBtn) {
 	if id == crFmtMore {
 		ids = crFmtOrder[len(crFmtOrder)-c.fmtHidden:]
 	} else {
-		ids = crFootOverflow[:]
+		for _, b := range crFootOverflow {
+			if c.f.hide&(1<<b) == 0 {
+				ids = append(ids, b)
+			}
+		}
 	}
 	if len(ids) == 0 {
 		return
@@ -411,18 +441,26 @@ func (c *chrome) openMore(h Host, st *chromeState, id crBtn) {
 
 // ---- layout ----
 
+// prime sets the state the boundary props read before Layout runs (the
+// composer builds MessageInput's props, which nest the chrome's, first).
+func (c *chrome) prime(st *chromeState) { c.cur = *st }
+
 // Layout draws the composer chrome around input (the editor) and
 // attachments, and returns the full size: for channel/thread composers the
 // side margins and the hint bar included, for edit composers just the box.
-func (c *chrome) Layout(gtx layout.Context, h Host, st chromeState, input, attachments layout.Widget) layout.Dimensions {
+// inputP is MessageInput's props under a patch (nil otherwise).
+func (c *chrome) Layout(gtx layout.Context, h Host, st chromeState, input, attachments layout.Widget, inputP slackc.Props) layout.Dimensions {
 	th := h.Theme()
 	p := c.palette(th)
 	c.update(gtx, h, &st)
 	c.shown = 0
+	c.cur = st
+	c.fpal = *p
+	c.pxPerDp = gtx.Metric.PxPerDp
+	c.f = crFrame{h: h, inputP: inputP, input: input, att: attachments, barBg: p.bar, hide: st.Hide, minOverflow: 1}
 
 	edit := st.Mode == modeEdit
 	W := gtx.Constraints.Max.X
-	bw := max(gtx.Dp(1), 1)
 	margin := 0
 	switch st.Mode {
 	case modeChannel:
@@ -430,6 +468,53 @@ func (c *chrome) Layout(gtx layout.Context, h Host, st chromeState, input, attac
 	case modeThread:
 		margin = gtx.Dp(16)
 	}
+	hintH := 0
+	if !edit {
+		hintH = gtx.Dp(24)
+	}
+	c.f.W, c.f.maxY, c.f.margin, c.f.hintH = W, gtx.Constraints.Max.Y, margin, hintH
+
+	bg := gtx
+	bg.Constraints = layout.Constraints{Max: image.Pt(max(W-2*margin, 0), gtx.Constraints.Max.Y)}
+	t := op.Offset(image.Pt(margin, 0)).Push(gtx.Ops)
+	var bd layout.Dimensions
+	if e, patched := kid(inputP, "WysiwygContainer"); patched {
+		bd = slackc.LayoutElement(bg, e)
+	} else {
+		bd = slackc.Component(bg, "WysiwygContainer", c, (*chrome).wysiwygProps, (*chrome).layoutWysiwyg)
+	}
+	t.Pop()
+	boxH := max(bd.Size.Y, 0)
+	box := image.Rect(margin, 0, margin+bd.Size.X, boxH)
+	if c.f.boxOK {
+		box.Min.X, box.Max.X = c.f.box.Min.X, c.f.box.Max.X
+	}
+	if hintH > 0 {
+		c.layoutHint(gtx, th, &c.fpal, &c.cur, box)
+	}
+
+	// Buttons that weren't drawn can't receive the Leave that ends their
+	// hover; reset them so a tooltip doesn't pop when they come back.
+	for id := crBtn(0); id < crNumBtn; id++ {
+		if c.shown&(1<<id) == 0 {
+			c.rect[id] = image.Rectangle{}
+			if c.btn[id].Hovered() || c.btn[id].Pressed() {
+				c.btn[id] = widget.Clickable{}
+			}
+		}
+	}
+	return layout.Dimensions{Size: image.Pt(W, boxH+hintH)}
+}
+
+// layoutBox draws the bordered box (WysiwygContainer's native) in
+// composer-local coordinates and returns its size.
+func (c *chrome) layoutBox(gtx layout.Context) layout.Dimensions {
+	th := c.f.h.Theme()
+	p := &c.fpal
+	st := &c.cur
+	edit := st.Mode == modeEdit
+	W, margin := c.f.W, c.f.margin
+	bw := max(gtx.Dp(1), 1)
 	rad := gtx.Dp(8)
 	if edit {
 		rad = gtx.Dp(4)
@@ -437,28 +522,54 @@ func (c *chrome) Layout(gtx layout.Context, h Host, st chromeState, input, attac
 	box := image.Rect(margin, 0, max(W-margin, margin+2*bw+2), 0)
 	x0, x1 := box.Min.X+bw, box.Max.X-bw
 	innerW := x1 - x0
+
+	body := crBodyClass.Enter(gtx, 0, 0)
+	defer body.Leave()
 	barH := 0
 	if st.ShowFormatting {
-		barH = gtx.Dp(38)
+		fs := crFmtClass.Enter(gtx, 0, 0)
+		hidden := fs.Hidden()
+		c.f.barBg = fs.Background(p.bar)
+		fs.Leave()
+		if !hidden {
+			barH = gtx.Dp(38)
+		}
 	}
 	padX, padY := gtx.Dp(12), gtx.Dp(8)
 	footH := gtx.Dp(40)
+	var fmods uint64
+	if st.ShowFormatting {
+		fmods = 1
+	}
+	if fs := crFootClass.Enter(gtx, 0, fmods); fs.Hidden() {
+		footH = 0
+		fs.Leave()
+	} else {
+		fs.Leave()
+	}
 	bcH := 0
-	if st.Mode == modeThread {
-		bcH = gtx.Dp(26)
+	if st.Mode == modeThread && !st.NoBroadcast {
+		bs := crBroadcastClass.Enter(gtx, 0, 0)
+		hidden := bs.Hidden()
+		bs.Leave()
+		if !hidden {
+			bcH = gtx.Dp(26)
+		}
 	}
-	hintH := 0
-	if !edit {
-		hintH = gtx.Dp(24)
-	}
+	hintH := c.f.hintH
 
 	// The editor first (recorded) to know the box height.
 	tw := max(innerW-2*padX, 1)
 	fixed := 2*bw + barH + 2*padY + bcH + footH + hintH
 	ig := gtx
-	ig.Constraints = layout.Constraints{Max: image.Pt(tw, max(gtx.Constraints.Max.Y-fixed, gtx.Dp(22)))}
+	ig.Constraints = layout.Constraints{Max: image.Pt(tw, max(c.f.maxY-fixed, gtx.Dp(22)))}
 	rec := op.Record(gtx.Ops)
-	ed := input(ig)
+	var ed layout.Dimensions
+	if e, patched := kid(c.f.wysP, "texty_input_with_autocomplete"); patched {
+		ed = slackc.LayoutElement(ig, e)
+	} else {
+		ed = slackc.Component(ig, "texty_input_with_autocomplete", c, (*chrome).textyProps, (*chrome).layoutTexty)
+	}
 	inCall := rec.Stop()
 	textTop := bw + barH
 	textH := max(ed.Size.Y+2*padY, gtx.Dp(38))
@@ -466,19 +577,23 @@ func (c *chrome) Layout(gtx layout.Context, h Host, st chromeState, input, attac
 	attTop := textTop + textH
 	ah := 0
 	var attCall op.CallOp
-	if attachments != nil {
+	if c.f.att != nil {
 		ag := gtx
-		ag.Constraints = layout.Constraints{Max: image.Pt(innerW, max(gtx.Constraints.Max.Y-fixed-textH, gtx.Dp(120)))}
+		ag.Constraints = layout.Constraints{Max: image.Pt(innerW, max(c.f.maxY-fixed-textH, gtx.Dp(120)))}
 		rec = op.Record(gtx.Ops)
-		ad := attachments(ag)
+		as := crAttClass[st.Mode].Enter(gtx, 0, 0)
+		ad := c.f.att(ag)
+		as.Leave()
 		attCall = rec.Stop()
 		ah = ad.Size.Y
 	}
 	bcTop := attTop + ah
 	footTop := bcTop + bcH
 	box.Max.Y = footTop + footH + bw
+	c.f.box, c.f.boxOK = box, true
 
-	// Box: shadow, border, fill, formatting bar background.
+	// Box: shadow, border, fill, formatting bar background. Under a
+	// plugin's context bar the top corners are square.
 	if st.Focused && !edit {
 		crShadow(gtx, box, rad, p)
 	}
@@ -486,12 +601,21 @@ func (c *chrome) Layout(gtx layout.Context, h Host, st chromeState, input, attac
 	if st.Focused || edit {
 		border = p.borderFocus
 	}
-	fillRRect(gtx, box, rad, border)
 	ir := max(rad-bw, 0)
-	fillRRect(gtx, box.Inset(bw), ir, p.bg)
+	if st.SquareTop {
+		paint.FillShape(gtx.Ops, border, clip.RRect{Rect: box, SE: rad, SW: rad}.Op(gtx.Ops))
+		paint.FillShape(gtx.Ops, p.bg, clip.RRect{Rect: box.Inset(bw), SE: ir, SW: ir}.Op(gtx.Ops))
+	} else {
+		fillRRect(gtx, box, rad, border)
+		fillRRect(gtx, box.Inset(bw), ir, p.bg)
+	}
 	if barH > 0 {
 		r := image.Rect(x0, bw, x1, bw+barH)
-		paint.FillShape(gtx.Ops, p.bar, clip.RRect{Rect: r, NW: ir, NE: ir}.Op(gtx.Ops))
+		tr := ir
+		if st.SquareTop {
+			tr = 0
+		}
+		paint.FillShape(gtx.Ops, c.f.barBg, clip.RRect{Rect: r, NW: tr, NE: tr}.Op(gtx.Ops))
 	}
 
 	// A press anywhere on the box that no button or the editor takes
@@ -507,7 +631,7 @@ func (c *chrome) Layout(gtx layout.Context, h Host, st chromeState, input, attac
 	org := image.Pt(x0+padX, textTop+padY)
 	c.inputOff = org
 	if st.ShowPlaceholder && st.Placeholder != "" {
-		c.placeholder(gtx, th, p, &st, org, tw)
+		c.placeholder(gtx, th, p, st, org, tw)
 	}
 	t := op.Offset(org).Push(gtx.Ops)
 	inCall.Add(gtx.Ops)
@@ -529,29 +653,21 @@ func (c *chrome) Layout(gtx layout.Context, h Host, st chromeState, input, attac
 	}
 
 	if barH > 0 {
-		c.layoutBar(gtx, th, p, &st, x0, innerW, bw)
+		fs := crFmtClass.Enter(gtx, 0, 0)
+		c.layoutBar(gtx, th, p, st, x0, innerW, bw)
+		fs.Leave()
 	} else {
 		c.fmtHidden = 0
 	}
 	if bcH > 0 {
-		c.layoutBroadcast(gtx, th, p, &st, x0, x1, bcTop)
+		c.layoutBroadcast(gtx, th, p, st, x0, x1, bcTop)
 	}
-	c.layoutFooter(gtx, th, p, &st, x0, x1, footTop)
-	if hintH > 0 {
-		c.layoutHint(gtx, th, p, &st, box)
+	if footH > 0 {
+		fs := crFootClass.Enter(gtx, 0, fmods)
+		c.layoutFooter(gtx, x0, x1, footTop)
+		fs.Leave()
 	}
-
-	// Buttons that weren't drawn can't receive the Leave that ends their
-	// hover; reset them so a tooltip doesn't pop when they come back.
-	for id := crBtn(0); id < crNumBtn; id++ {
-		if c.shown&(1<<id) == 0 {
-			c.rect[id] = image.Rectangle{}
-			if c.btn[id].Hovered() || c.btn[id].Pressed() {
-				c.btn[id] = widget.Clickable{}
-			}
-		}
-	}
-	return layout.Dimensions{Size: image.Pt(W, box.Max.Y+hintH)}
+	return layout.Dimensions{Size: image.Pt(box.Dx(), box.Max.Y)}
 }
 
 // crShadow paints a small drop shadow (0 1px 3px) around r, as opaque rings
@@ -567,7 +683,7 @@ func crShadow(gtx layout.Context, r image.Rectangle, rad int, p *crPal) {
 
 // hit lays out the click area of button id at r (composer-local).
 func (c *chrome) hit(gtx layout.Context, id crBtn, r image.Rectangle, enabled bool) {
-	c.rect[id] = r
+	c.rect[id] = r.Add(c.base)
 	c.shown |= 1 << id
 	t := op.Offset(r.Min).Push(gtx.Ops)
 	g := gtx
@@ -749,50 +865,42 @@ func (c *chrome) fmtButton(gtx layout.Context, th *theme.Theme, p *crPal, st *ch
 
 // ---- footer ----
 
-func (c *chrome) layoutFooter(gtx layout.Context, th *theme.Theme, p *crPal, st *chromeState, x0, x1, top int) {
+// layoutFooter lays out the footer: TextyButtons (the toolbar and the
+// submit group, chrome_slack.go) and CharacterCount left of the send
+// group.
+func (c *chrome) layoutFooter(gtx layout.Context, x0, x1, top int) {
 	bs := gtx.Dp(28)
-	m := gtx.Dp(2)
 	y := top + (gtx.Dp(40)-bs)/2
-	btn := func(x int) image.Rectangle { return image.Rect(x, y, x+bs, y+bs) }
-
-	x := x0 + gtx.Dp(6)
-	c.attachButton(gtx, th, p, st, btn(x))
-	x += bs // the toolbar group starts here; buttons have 2px margins
-	for _, id := range [...]crBtn{crAa, crEmoji} {
-		x += m
-		c.footButton(gtx, th, p, st, id, btn(x))
-		x += bs + m
-	}
-	if st.Mode == modeEdit {
-		c.layoutEditButtons(gtx, th, st, x1, y)
-		return
-	}
-	x += m
-	c.footButton(gtx, th, p, st, crMention, btn(x))
-	x += bs // mention has no right margin
-	if x1-x0+2*gtx.Dp(1) < gtx.Dp(crFootCollapseW) {
-		x += 2 * m
-		c.footButton(gtx, th, p, st, crFootMore, btn(x))
+	c.f.x0, c.f.x1 = x0, x1
+	c.f.narrow = x1-x0+2*gtx.Dp(1) < gtx.Dp(crFootCollapseW)
+	c.f.fold = c.foldFooter()
+	c.f.sufX = x1 - gtx.Dp(6)
+	org := image.Pt(x0, y)
+	g := gtx
+	g.Constraints = layout.Constraints{Max: image.Pt(max(x1-x0, 0), bs)}
+	t := op.Offset(org).Push(gtx.Ops)
+	c.base = org
+	if e, patched := kid(c.f.wysP, "TextyButtons"); patched {
+		slackc.LayoutElement(g, e)
 	} else {
-		dm := gtx.Dp(6)
-		dw := max(gtx.Dp(1), 1)
-		dy0, dy1 := top+gtx.Dp(10), top+gtx.Dp(30)
-		divider := func() {
-			x += dm
-			fillRect(gtx, image.Rect(x, dy0, x+dw, dy1), p.sepFoot)
-			x += dw + dm
-		}
-		divider()
-		for _, id := range [...]crBtn{crVideo, crAudio} {
-			x += m
-			c.footButton(gtx, th, p, st, id, btn(x))
-			x += bs + m
-		}
-		divider()
-		x += m
-		c.footButton(gtx, th, p, st, crShortcut, btn(x))
+		slackc.Component(g, "TextyButtons", c, (*chrome).textyButtonsProps, (*chrome).layoutTextyButtons)
 	}
-	c.layoutSend(gtx, p, st, x1, y)
+	c.base = image.Point{}
+	t.Pop()
+
+	rec := op.Record(gtx.Ops)
+	var d layout.Dimensions
+	if e, patched := kid(c.f.wysP, "CharacterCount"); patched {
+		d = slackc.LayoutElement(g, e)
+	} else {
+		d = slackc.Component(g, "CharacterCount", c, (*chrome).charCountProps, (*chrome).layoutCharCount)
+	}
+	call := rec.Stop()
+	if d.Size.X > 0 {
+		t = op.Offset(image.Pt(c.f.sufX-gtx.Dp(8)-d.Size.X, y+(bs-d.Size.Y)/2)).Push(gtx.Ops)
+		call.Add(gtx.Ops)
+		t.Pop()
+	}
 }
 
 // footButton: #454447 icon; hover #eaeaea tile (radius 4) + #1d1c1d icon.
@@ -801,9 +909,10 @@ func (c *chrome) footButton(gtx layout.Context, th *theme.Theme, p *crPal, st *c
 	hov := c.btn[id].Hovered()
 	ic := p.icon
 	if hov {
-		fillRRect(gtx, r, gtx.Dp(4), p.footHover)
+		fillRRect(gtx, r, gtx.Dp(4), c.f.btn.Background(p.footHover))
 		ic = p.fg
 	}
+	ic = c.f.btn.Color(ic)
 	if id == crEmoji && hov {
 		is := gtx.Dp(18)
 		t := op.Offset(r.Min.Add(image.Pt((r.Dx()-is)/2, (r.Dy()-is)/2))).Push(gtx.Ops)
@@ -823,6 +932,7 @@ func (c *chrome) attachButton(gtx layout.Context, th *theme.Theme, p *crPal, st 
 	if hov {
 		bg, ic = p.plusHover, p.fg
 	}
+	bg, ic = c.f.btn.Background(bg), c.f.btn.Color(ic)
 	fillRRect(gtx, r, r.Dx()/2, bg)
 	// Slack's + is a ~13px cross: the registry's plus drawn at 22.
 	is := gtx.Dp(22)
@@ -833,67 +943,93 @@ func (c *chrome) attachButton(gtx layout.Context, th *theme.Theme, p *crPal, st 
 	c.tooltip(gtx, th, st, crAttach, r)
 }
 
-// layoutSend draws the 60×28 split button (send 32 + chevron 28) ending
-// 6px inside the box. Disabled: transparent at .3; enabled #007a5a with
-// the hovered half #148567 and a small shadow.
-func (c *chrome) layoutSend(gtx layout.Context, p *crPal, st *chromeState, x1, y int) {
+// layoutSend draws the 60×28 split button (send 32 + chevron 28; 32×28
+// when a plugin turns scheduling off) at the gtx origin. Disabled:
+// transparent at .3; enabled #007a5a (--TextyTheme-send-bg) with the
+// hovered half #148567 and a small shadow.
+func (c *chrome) layoutSend(gtx layout.Context, p *crPal, st *chromeState) layout.Dimensions {
 	h, sw, cw := gtx.Dp(28), gtx.Dp(32), gtx.Dp(28)
-	right := x1 - gtx.Dp(6)
-	r := image.Rect(right-sw-cw, y, right, y+h)
-	rs := image.Rect(r.Min.X, y, r.Min.X+sw, y+h)
-	rc := image.Rect(rs.Max.X, y, right, y+h)
-	rad := gtx.Dp(4)
+	sched := !c.hidden(crSchedule)
+	if !sched {
+		cw = 0
+	}
 	en := st.CanSend
+	hs, hc := c.btn[crSend].Hovered(), sched && c.btn[crSchedule].Hovered()
+	var cs css.State
+	if !en {
+		cs |= css.StateDisabled
+	}
+	if hs || hc {
+		cs |= css.StateHover
+	}
+	s := crSendClass.Enter(gtx, cs, 0)
+	defer s.Leave()
+	if s.Hidden() {
+		return layout.Dimensions{}
+	}
+	r := image.Rect(0, 0, sw+cw, h)
+	rs := image.Rect(0, 0, sw, h)
+	rc := image.Rect(sw, 0, sw+cw, h)
+	rad := gtx.Dp(4)
 	icol, div := p.sendDisIcon, p.sendDisDiv
 	if en {
-		hs, hc := c.btn[crSend].Hovered(), c.btn[crSchedule].Hovered()
 		if hs || hc {
 			crShadow(gtx, r, rad, p)
 		}
-		fillRRect(gtx, r, rad, p.send)
+		fillRRect(gtx, r, rad, s.Background(p.send))
 		if hs {
-			paint.FillShape(gtx.Ops, p.sendHover, clip.RRect{Rect: rs, NW: rad, SW: rad}.Op(gtx.Ops))
+			if sched {
+				paint.FillShape(gtx.Ops, p.sendHover, clip.RRect{Rect: rs, NW: rad, SW: rad}.Op(gtx.Ops))
+			} else {
+				fillRRect(gtx, rs, rad, p.sendHover)
+			}
 		}
 		if hc {
 			paint.FillShape(gtx.Ops, p.sendHover, clip.RRect{Rect: rc, NE: rad, SE: rad}.Op(gtx.Ops))
 		}
-		icol, div = p.sendText, p.sendDiv
+		icol, div = s.Color(p.sendText), p.sendDiv
 	}
-	dx := rs.Min.X + gtx.Dp(31)
-	fillRect(gtx, image.Rect(dx, y+gtx.Dp(4), dx+max(gtx.Dp(1), 1), y+gtx.Dp(24)), div)
 	is := gtx.Dp(16)
-	t := op.Offset(image.Pt(rs.Min.X+gtx.Dp(8), y+(h-is)/2)).Push(gtx.Ops)
+	if sched {
+		dx := rs.Min.X + gtx.Dp(31)
+		fillRect(gtx, image.Rect(dx, gtx.Dp(4), dx+max(gtx.Dp(1), 1), gtx.Dp(24)), div)
+	}
+	t := op.Offset(image.Pt(rs.Min.X+gtx.Dp(8), (h-is)/2)).Push(gtx.Ops)
 	crIconSend(gtx, is, icol)
 	t.Pop()
-	t = op.Offset(image.Pt(rc.Min.X+(cw-is)/2, y+(h-is)/2)).Push(gtx.Ops)
-	crIcChevron(gtx, 16, icol)
-	t.Pop()
+	if sched {
+		t = op.Offset(image.Pt(rc.Min.X+(cw-is)/2, (h-is)/2)).Push(gtx.Ops)
+		crIcChevron(gtx, 16, icol)
+		t.Pop()
+	}
 	c.hit(gtx, crSend, rs, en)
-	c.hit(gtx, crSchedule, rc, en)
+	if sched {
+		c.hit(gtx, crSchedule, rc, en)
+	}
+	return layout.Dimensions{Size: r.Size()}
 }
 
 // layoutEditButtons draws Cancel (outline) and Save (primary), small,
-// right-aligned 6px inside the box with 8px between.
-func (c *chrome) layoutEditButtons(gtx layout.Context, th *theme.Theme, st *chromeState, x1, y int) {
+// 8px apart, at the gtx origin (the row right-aligns them 6px inside the
+// box).
+func (c *chrome) layoutEditButtons(gtx layout.Context, th *theme.Theme, st *chromeState) layout.Dimensions {
 	g := gtx
-	g.Constraints = layout.Constraints{Max: image.Pt(max(x1, 0), gtx.Dp(28))}
+	g.Constraints = layout.Constraints{Max: image.Pt(max(c.f.x1, 0), gtx.Dp(28))}
 	rec := op.Record(gtx.Ops)
 	ds := popups.Button(g, th, &c.btn[crSave], popups.BtnPrimary, popups.BtnSmall, "Save", "", 0)
 	save := rec.Stop()
 	rec = op.Record(gtx.Ops)
 	dc := popups.Button(g, th, &c.btn[crCancel], popups.BtnOutline, popups.BtnSmall, "Cancel", "", 0)
 	cancel := rec.Stop()
-	right := x1 - gtx.Dp(6)
-	rs := image.Rect(right-ds.Size.X, y, right, y+ds.Size.Y)
-	rc := image.Rect(rs.Min.X-gtx.Dp(8)-dc.Size.X, y, rs.Min.X-gtx.Dp(8), y+dc.Size.Y)
-	t := op.Offset(rc.Min).Push(gtx.Ops)
+	rc := image.Rect(0, 0, dc.Size.X, dc.Size.Y)
+	rs := image.Rect(rc.Max.X+gtx.Dp(8), 0, rc.Max.X+gtx.Dp(8)+ds.Size.X, ds.Size.Y)
 	cancel.Add(gtx.Ops)
-	t.Pop()
-	t = op.Offset(rs.Min).Push(gtx.Ops)
+	t := op.Offset(rs.Min).Push(gtx.Ops)
 	save.Add(gtx.Ops)
 	t.Pop()
-	c.rect[crSave], c.rect[crCancel] = rs, rc
+	c.rect[crSave], c.rect[crCancel] = rs.Add(c.base), rc.Add(c.base)
 	c.shown |= 1<<crSave | 1<<crCancel
+	return layout.Dimensions{Size: image.Pt(rs.Max.X, max(ds.Size.Y, dc.Size.Y))}
 }
 
 // ---- thread broadcast row ----
@@ -906,9 +1042,11 @@ func (c *chrome) layoutBroadcast(gtx layout.Context, th *theme.Theme, p *crPal, 
 	cy := top + gtx.Dp(8)
 	cs := gtx.Dp(13)
 	hov := c.btn[crBroadcast].Hovered()
+	bs := crBroadcastClass.Enter(gtx, 0, 0)
+	defer bs.Leave()
 	crCheckbox(gtx, image.Rect(cx, cy, cx+cs, cy+cs), st.Broadcast, hov, p)
 
-	s := textStyle{Size: 12, LineHeight: 18, Color: p.hint, MaxLines: 1}
+	s := textStyle{Size: bs.FontSize(12), LineHeight: 18, Color: bs.Color(p.hint), MaxLines: 1}
 	x := cx + cs + gtx.Dp(12)
 	maxX := x1 - gtx.Dp(12)
 	var end int
@@ -999,7 +1137,22 @@ func (c *chrome) layoutHint(gtx layout.Context, th *theme.Theme, p *crPal, st *c
 	ty := box.Max.Y + (gtx.Dp(24)-gtx.Dp(16))/2
 	maxW := box.Dx() - gtx.Dp(20)
 	if st.Typing != "" {
-		crText(gtx, th.Shaper, box.Min.X+gtx.Dp(12), ty, maxW, textStyle{Size: 10.5, LineHeight: 16, Color: p.typing, MaxLines: 1}, st.Typing)
+		t := op.Offset(image.Pt(box.Min.X+gtx.Dp(12), ty)).Push(gtx.Ops)
+		g := gtx
+		g.Constraints = layout.Constraints{Max: image.Pt(max(maxW, 0), gtx.Dp(16))}
+		switch e, patched := kid(c.f.inputP, "ThreadTypingIndicator"); {
+		case st.Mode == modeThread && patched:
+			slackc.LayoutElement(g, e)
+		case st.Mode == modeThread:
+			slackc.Component(g, "ThreadTypingIndicator", c, (*chrome).threadTypingProps, (*chrome).layoutThreadTyping)
+		default:
+			if e, patched := kid(c.f.inputP, "TypingNames"); patched {
+				slackc.LayoutElement(g, e)
+			} else {
+				slackc.Component(g, "TypingNames", c, (*chrome).typingNamesProps, (*chrome).layoutTypingNames)
+			}
+		}
+		t.Pop()
 		return
 	}
 	if !st.CanSend {
