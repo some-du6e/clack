@@ -13,9 +13,14 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "taut git ref (branch, tag or sha)"
+        description: "taut git ref (branch, tag or sha); empty = TAUT_PIN"
         required: false
-        default: "main"
+        default: ""
+
+# Taut is third-party code (GPLv3) built and run here: by default CI uses the
+# reviewed commit TAUT_PIN; dispatch with ref=main (or any ref) to test upstream.
+env:
+  TAUT_PIN: 6fe5123e3b4cffaa16c6dda71291ad5d82cdad37
 
 permissions:
   contents: read
@@ -31,9 +36,12 @@ jobs:
         with:
           node-version: "24"
       - name: clone taut
+        env:
+          TAUT_REF: ${{ inputs.ref || env.TAUT_PIN }}
         run: |
           git clone -q https://github.com/jeremy46231/taut /tmp/taut
-          git -C /tmp/taut checkout -q "${{ inputs.ref || 'main' }}"
+          case "$TAUT_REF" in -*|"") echo "bad taut ref: $TAUT_REF" >&2; exit 1;; esac
+          git -C /tmp/taut checkout -q "$TAUT_REF"
           git -C /tmp/taut log --oneline -1
       - name: install taut deps (no scripts)
         working-directory: /tmp/taut
@@ -50,7 +58,7 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false # this job runs third-party code; never share its Go cache
       - name: gio deps
         run: sudo apt-get update -qq && sudo apt-get install -y -qq libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
       - name: composer plugin tests

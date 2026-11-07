@@ -16,9 +16,14 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "slick git ref (branch, tag or sha)"
+        description: "slick git ref (branch, tag or sha); empty = SLICK_PIN"
         required: false
-        default: "main"
+        default: ""
+
+# Slick is third-party code (GPLv3) built and run here: by default CI uses the
+# reviewed commit SLICK_PIN; dispatch with ref=main (or any ref) to test upstream.
+env:
+  SLICK_PIN: f52d55dbd458feb0d6cd77136c6ab07c4a727a5a
 
 permissions:
   contents: read
@@ -37,9 +42,12 @@ jobs:
         with:
           bun-version: 1.4.4
       - name: clone slick
+        env:
+          SLICK_REF: ${{ inputs.ref || env.SLICK_PIN }}
         run: |
           git clone -q https://github.com/3kh0/slick /tmp/slick
-          git -C /tmp/slick checkout -q "${{ inputs.ref || 'main' }}"
+          case "$SLICK_REF" in -*|"") echo "bad slick ref: $SLICK_REF" >&2; exit 1;; esac
+          git -C /tmp/slick checkout -q "$SLICK_REF"
           echo "SLICK_SHA=$(git -C /tmp/slick rev-parse HEAD)" >> "$GITHUB_ENV"
           git -C /tmp/slick log --oneline -1
       - name: "install slick deps (no scripts, so no electron download)"
@@ -61,7 +69,7 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false # this job runs third-party code; never share its Go cache
       - name: gofmt
         run: test -z "$(gofmt -l internal/slick internal/taut | tee /dev/stderr)"
       - name: vet
