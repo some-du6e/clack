@@ -569,23 +569,31 @@ func (b *backend) openTab(ch, key string) {
 
 func (b *backend) avatar(id string) string {
 	b.avMu.Lock()
-	url, ok := b.avatars[id]
+	url := b.avatars[id]
 	b.avMu.Unlock()
-	if ok {
+	if url != "" {
 		return url
 	}
-	if u, ok := b.core.User(id); ok {
+	if u, ok := b.core.User(id); ok && u.Avatar != "" {
 		b.avMu.Lock()
 		b.avatars[id] = u.Avatar
 		b.avMu.Unlock()
 		return u.Avatar
 	}
+	// unknown, or known only partially (edge-API members carry no avatar):
+	// fetch the full profile once; the next frame picks it up from core.
 	b.avMu.Lock()
 	ask := !b.asked[id]
 	b.asked[id] = true
 	b.avMu.Unlock()
 	if ask && b.ctx != nil {
-		go b.core.EnsureUsers(b.ctx, []string{id})
+		a := b.app
+		go func() {
+			b.core.EnsureUsers(b.ctx, []string{id})
+			if a != nil {
+				a.Invalidate()
+			}
+		}()
 	}
 	return ""
 }
