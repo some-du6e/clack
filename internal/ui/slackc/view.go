@@ -2,6 +2,7 @@ package slackc
 
 import (
 	"image"
+	"image/color"
 	"math"
 
 	"gioui.org/f32"
@@ -74,6 +75,18 @@ type View struct {
 	tip      tipState
 	svgCSS   map[*Node]*svgCSS
 	svgStyFn func(*Node) *svgCSS
+	cmap     colorMap
+	cmapFn   func(color.NRGBA) color.NRGBA
+}
+
+// colorMap applies the color filters in effect (for the svg renderer).
+type colorMap struct{ filt []css.Filter }
+
+func (m *colorMap) apply(c color.NRGBA) color.NRGBA {
+	for i := len(m.filt) - 1; i >= 0; i-- {
+		c = applyFilter(m.filt[i], c)
+	}
+	return c
 }
 
 // frame is the per-Layout-call context. It must not outlive the call:
@@ -167,6 +180,7 @@ type scopeKey struct {
 func NewView(root uint64) *View {
 	v := &View{root: root, byK: map[int64]*box{}, ns: map[int64]*nodeState{}}
 	v.svgStyFn = v.svgSty
+	v.cmapFn = v.cmap.apply
 	v.main.v = v
 	v.main.root.kind = kAnon
 	v.main.root.v = v

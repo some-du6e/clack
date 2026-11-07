@@ -121,7 +121,10 @@ func (p *painter) svg(b *box, r rectF) {
 	root := svgPaint{Color: st.Color, Fill: st.Fill, FillNone: st.FillNone, Stroke: st.Stroke, StrokeNone: st.StrokeNone, StrokeWidth: st.StrokeWidth, Opacity: 1}
 	var mc func(color.NRGBA) color.NRGBA
 	if len(p.filt) > 0 {
-		mc = p.col
+		// a func value made once per View: a method value on p would make
+		// every painter escape
+		p.v.cmap.filt = p.filt
+		mc = p.v.cmapFn
 	}
 	var sty func(*Node) *svgCSS
 	if p.v.svgCSS != nil {
