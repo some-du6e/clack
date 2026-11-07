@@ -194,7 +194,9 @@ func (v *Huddles) update(gtx C) {
 		})
 	}
 	if v.newBtn.Clicked(gtx) || v.heroBtn.Clicked(gtx) {
-		huddleAttempt(v.h, v.tt, "")
+		// Slack's "New huddle" asks who to call; start one in the last
+		// conversation you were in, or explain.
+		v.h.Toast("Open a channel or DM and click Huddle in its header to start one")
 	}
 	if v.heroX.Clicked(gtx) {
 		v.hideHero = true
@@ -204,12 +206,32 @@ func (v *Huddles) update(gtx C) {
 	}
 	for i, m := range [...]map[string]*widget.Clickable{v.rooms, v.people, v.chans} {
 		for id, c := range m {
-			if c.Clicked(gtx) {
-				room := ""
-				if i == 0 {
-					room = id
+			if !c.Clicked(gtx) {
+				continue
+			}
+			switch i {
+			case 0: // a live huddle: join it in its conversation
+				ch := ""
+				v.mu.Lock()
+				if r, ok := v.live[id]; ok && len(r.Channels) > 0 {
+					ch = r.Channels[0]
 				}
-				huddleAttempt(v.h, v.tt, room)
+				v.mu.Unlock()
+				startHuddle(v.h, v.tt, ch, id)
+			case 1: // a person: huddle in your DM with them
+				uid := id
+				go func() {
+					ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+					defer cancel()
+					conv, err := v.h.Core().OpenDM(ctx, uid)
+					if err != nil {
+						v.h.Toast("Couldn't open the DM: " + err.Error())
+						return
+					}
+					startHuddle(v.h, v.tt, conv.ID, "")
+				}()
+			case 2:
+				startHuddle(v.h, v.tt, id, "")
 			}
 		}
 	}

@@ -204,7 +204,21 @@ func joinChannelThunk(ctx context.Context, tt *taut.Taut, c *core.App, id string
 // (HuddleActivity…). Natively they are no-ops: Clack has no huddle media.
 var huddleThunks = [...]string{"startEventLog", "stopHuddle", "stopEventLog", "enqueueHuddleToast"}
 
-// huddleAttempt is a start/join click. Clack can't join (no Chime media),
+// huddleStarter is implemented by a Host that runs native huddles (the ui
+// root, through internal/ui/huddleui).
+type huddleStarter interface{ StartHuddle(channel string) }
+
+// startHuddle starts or joins the huddle in channel natively; without a
+// native huddle Host it falls back to huddleAttempt's explanation.
+func startHuddle(h Host, tt *taut.Taut, channel, roomID string) {
+	if hs, ok := h.(huddleStarter); ok && channel != "" {
+		hs.StartHuddle(channel)
+		return
+	}
+	huddleAttempt(h, tt, roomID)
+}
+
+// huddleAttempt is a start/join click without native huddles. Clack can't join (no Chime media),
 // so like a huddle that ends at once it runs startEventLog, stopHuddle and
 // stopEventLog, then shows why through enqueueHuddleToast. Without a
 // plugin wrapping any of them it's just the toast, inline.
