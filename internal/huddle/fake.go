@@ -202,7 +202,30 @@ func (f *fakeChime) chatter(ctx context.Context, send func(int, func(*pbw))) {
 				})
 			})
 		})
-		if i == 3 {
+		if i == 5 || i%40 == 0 { // live captions (Chime transcription)
+			var tw pbw
+			tw.msg(1, func(w *pbw) {
+				w.msg(2, func(w *pbw) {
+					w.msg(1, func(w *pbw) {
+						w.msg(1, func(w *pbw) {
+							w.msg(1, func(w *pbw) { w.str(3, fakeRemoteAtt) })
+							w.str(2, "Hello from the fake huddle")
+						})
+						w.str(5, "res-1")
+					})
+				})
+			})
+			send(ftDataMessage, func(w *pbw) {
+				w.msg(23, func(w *pbw) {
+					w.msg(1, func(w *pbw) {
+						w.str(1, TopicTranscript)
+						w.bytes(2, tw.b)
+						w.str(4, "aws:chime")
+					})
+				})
+			})
+		}
+		if i == 3 || i%20 == 0 {
 			send(ftDataMessage, func(w *pbw) {
 				w.msg(23, func(w *pbw) {
 					w.msg(1, func(w *pbw) {

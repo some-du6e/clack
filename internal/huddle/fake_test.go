@@ -55,7 +55,8 @@ func TestFakeChime(t *testing.T) {
 			}
 		}
 		_, gotPeer := peers.Load("reacji")
-		return remote != nil && remote.InMedia && remote.Speaking(time.Now()) && remote.Reaction == "tada" &&
+		captioned := len(st.Captions) == 1 && st.Captions[0].UserID == fakeRemote && st.Captions[0].Text == "Hello from the fake huddle"
+		return captioned && remote != nil && remote.InMedia && remote.Speaking(time.Now()) && remote.Reaction == "tada" &&
 			gotPeer && frame.Img != nil && frame.Seq >= 3 && f.peak.Load() > 50 && s.audioInCount() > 20
 	}
 	for !ok() {

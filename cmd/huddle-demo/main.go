@@ -52,6 +52,7 @@ func main() {
 	clipPath := flag.String("clip", "internal/huddle/testdata/testsrc-320x180.h264", "Annex B H.264 for the fake screen share (\"\" = none)")
 	dur := flag.Duration("for", 0, "quit after this long (0 = when the window closes)")
 	muted := flag.Bool("muted", false, "join muted")
+	captions := flag.Bool("captions", true, "show live captions")
 	flag.Parse()
 	if os.Getenv("CLACK_HUDDLE_TONE") == "" {
 		os.Setenv("CLACK_HUDDLE_TONE", "440") // a synthetic microphone
@@ -87,14 +88,16 @@ func main() {
 		w.Option(app.Title("Huddle demo - Clack"), app.Size(unit.Dp(900), unit.Dp(560)))
 		h.win = w
 		ctl.Start(demoChannel)
-		if *muted {
-			go func() {
-				for ctl.Session() == nil {
-					time.Sleep(50 * time.Millisecond)
-				}
-				ctl.Session().SetMuted(true)
-			}()
-		}
+		go func() {
+			for ctl.Session() == nil {
+				time.Sleep(50 * time.Millisecond)
+			}
+			s := ctl.Session()
+			s.SetCaptions(*captions)
+			if *muted {
+				s.SetMuted(true)
+			}
+		}()
 		if *dur > 0 {
 			go func() {
 				time.Sleep(*dur)
