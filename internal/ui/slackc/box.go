@@ -885,7 +885,7 @@ func (v *View) buildLayoutKids(b *box, e *css.Env) {
 	if b.after != nil {
 		add(b.after)
 	}
-	if b.kind == kText || !(isFlex(b.st.Display) || isGrid(b.st.Display) || b.st.Display == css.DisplayTableRow) {
+	if b.kind == kText || !(isFlex(b.st.Display) && b.st.LineClamp == 0 || isGrid(b.st.Display) || b.st.Display == css.DisplayTableRow) {
 		return
 	}
 	// Flex/grid: wrap consecutive text runs into anonymous blocks; drop

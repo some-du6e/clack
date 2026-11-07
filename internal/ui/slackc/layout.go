@@ -252,7 +252,9 @@ func (v *View) doLayout(b *box, c lc) {
 		cw = clampF(cw, lo, hi)
 	case b.native:
 		cw, ch = v.layoutNative(b, cw, ch, avail, lo, hi, hlo, hhi, c)
-	case isFlex(st.Display):
+	case isFlex(st.Display) && st.LineClamp == 0:
+		// display:-webkit-box with -webkit-line-clamp lays out as a block
+		// flow with clamped lines, like Chrome.
 		cw, ch = v.layoutFlex(b, cw, ch, avail, lo, hi, hlo, hhi, c)
 	case isGrid(st.Display):
 		cw, ch = v.layoutGrid(b, cw, ch, avail, lo, hi, c)
@@ -262,36 +264,35 @@ func (v *View) doLayout(b *box, c lc) {
 		bfc := c.bfc || st.OverflowX != css.OverflowVisible || st.OverflowY != css.OverflowVisible ||
 			st.Display == css.DisplayInlineBlock || st.Display == css.DisplayTableCell || st.Display == css.DisplayTable
 		h := float32(0)
+		used := float32(0)
 		if cw < 0 {
-			used, h1 := v.layoutFlow(b, avail, ch, bfc, ch < 0, true, true, c)
-			cw = clampF(used, lo, hi)
+			u, h1 := v.layoutFlow(b, avail, ch, bfc, ch < 0, true, true, c)
+			cw = clampF(u, lo, hi)
+			used = u
 			// Inline-only, start-aligned content is already laid out
 			// exactly as a second pass at the used width would.
-			if cw == used && v.inlineOnly(b) {
+			if cw == u && v.inlineOnly(b) {
 				h = h1
 			} else {
-				_, h = v.layoutFlow(b, cw, ch, bfc, ch < 0, c.measure, false, c)
+				used, h = v.layoutFlow(b, cw, ch, bfc, ch < 0, c.measure, false, c)
 			}
 		} else {
-			_, h = v.layoutFlow(b, cw, ch, bfc, ch < 0, c.measure, false, c)
+			used, h = v.layoutFlow(b, cw, ch, bfc, ch < 0, c.measure, false, c)
 		}
 		if ch < 0 {
 			ch = clampF(h, hlo, hhi)
-		} else if h > ch {
-			b.contentH = h
 		}
+		// scrollable overflow (padding box)
+		b.contentH = h + b.pad[0] + b.pad[2]
+		b.contentW = used + b.pad[1] + b.pad[3]
 	}
 	if ch < 0 {
 		ch = 0
 	}
 	b.w = cw + hp
 	b.h = ch + vp
-	if b.contentW < cw {
-		b.contentW = cw
-	}
-	if b.contentH < ch {
-		b.contentH = ch
-	}
+	b.contentW = max(b.contentW, cw+b.pad[1]+b.pad[3])
+	b.contentH = max(b.contentH, ch+b.pad[0]+b.pad[2])
 }
 
 // mcoll accumulates collapsing margins.
@@ -755,7 +756,8 @@ func (s *scope) blockOf(p *box) *box {
 
 // inIFCBox reports a non-atomic inline box (no box of its own).
 func (b *box) inIFCBox() bool {
-	return b.kind != kText && b.st.Display == css.DisplayInline && (b.kind == kPseudo || b.kind == kElem && b.repl == rNone && !b.native)
+	return b.kind != kText && b.st.Display == css.DisplayInline && !outOfFlow(&b.st) &&
+		(b.kind == kPseudo || b.kind == kElem && b.repl == rNone && !b.native)
 }
 
 // offsetTo is the position of b's border box relative to anc's border box

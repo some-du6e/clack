@@ -335,7 +335,7 @@ func TestNativeAndHost(t *testing.T) {
 	}, "TestBadge")
 	withStyles(t, func(n *Node, s *css.Style) {
 		if n.ID == "row" {
-			s.Display = css.DisplayFlex
+			s.Display = css.DisplayInlineFlex // inline-level root: shrink-to-fit
 			s.ColGap = px(4)
 		}
 	})

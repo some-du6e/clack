@@ -428,7 +428,10 @@ func (s *scope) layout() {
 		c.cbH = maxH
 		c.fixedH, c.fixH = true, maxH
 	}
-	if s.exact {
+	// A tree of inline-level content (a patched sender name, a badge)
+	// is as wide as its content; block-level roots fill the width like
+	// they would in their DOM parent.
+	if s.exact || !s.inlineRoot() && maxW < inf/2 {
 		c.fixedW, c.fixW = true, maxW
 	} else {
 		c.shrink = true
@@ -465,6 +468,23 @@ func (s *scope) layout() {
 		s.dims.Baseline = h - int(math.Round(float64(root.base)))
 	}
 	v.layGen = saveGen
+}
+
+// inlineRoot reports a scope whose in-flow top-level boxes are all
+// inline-level.
+func (s *scope) inlineRoot() bool {
+	for _, b := range s.root.lk {
+		if b.kind == kText {
+			continue
+		}
+		if b.st.Display == css.DisplayNone || outOfFlow(&b.st) {
+			continue
+		}
+		if !isInlineLevel(b.st.Display) {
+			return false
+		}
+	}
+	return true
 }
 
 func setScope(b *box, s *scope) {
