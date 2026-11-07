@@ -113,13 +113,58 @@ func (s *Stack) update(v *core.View) {
 
 func (s *Stack) Dismissed() bool { return s.done }
 
-// Dismiss is Escape from the root: back out of the top view.
+// Dismiss is Escape from the root (an input had the focus): back out
+// of the top view. The root drops the overlay right after Dismiss, so the
+// stack shows itself again first; if it closes, the copy is just a
+// dismissed overlay the root prunes. Any speedbump goes above it.
 func (s *Stack) Dismiss() {
 	if s.done {
 		return
 	}
-	s.back()
+	s.h.ShowOverlay(s)
+	s.userBack()
 }
+
+// Slack's speedbump (BlockKitModal getShouldShowSpeedBump): leaving a
+// view that has a submit button and stateful inputs whose values changed
+// asks first. Backing out of a pushed view says "Continue", otherwise
+// "Leave" (danger); "Keep Editing" stays.
+func (s *Stack) changed() bool {
+	if len(s.views) == 0 {
+		return false
+	}
+	sf := s.top()
+	if sf.view.Submit == nil && s.dialog == nil {
+		return false
+	}
+	return sf.dirty()
+}
+
+func (s *Stack) speedbump(pushed bool, leave func()) {
+	if !s.changed() {
+		leave()
+		return
+	}
+	cont, style := "Leave", "danger"
+	if pushed {
+		cont, style = "Continue", "primary"
+	}
+	showConfirm(s.h, &Confirm{
+		Title:   &Text{Type: "plain_text", Text: "Are you sure you want to leave?"},
+		Text:    &Text{Type: "plain_text", Text: "It looks like you’re still working on this. You may lose the info you’ve entered so far if you leave now."},
+		Confirm: &Text{Type: "plain_text", Text: cont},
+		Deny:    &Text{Type: "plain_text", Text: "Keep Editing"},
+		Style:   style,
+	}, leave, nil)
+}
+
+// userBack / userCloseAll are the user's Close, Escape, back and ×.
+func (s *Stack) userBack() {
+	pushed := len(s.views) > 1 && !s.top().view.ClearOnClose
+	s.speedbump(pushed, s.back)
+}
+
+func (s *Stack) userCloseAll() { s.speedbump(false, s.closeAll) }
 
 // back pops the top view (closing the stack at the root, or entirely
 // with clear_on_close) and tells Slack.
@@ -282,7 +327,7 @@ func (s *Stack) Layout(gtx C) D {
 		}
 		if ke, ok := e.(key.Event); ok && ke.State == key.Press {
 			if ke.Name == key.NameEscape {
-				s.back()
+				s.userBack()
 				return D{}
 			}
 			if s.top().view.Submit != nil {
@@ -294,11 +339,12 @@ func (s *Stack) Layout(gtx C) D {
 	sf := s.top()
 	v := sf.view
 	if s.closeTap.clicked(gtx, s.h) {
-		s.closeAll()
-		return D{}
+		s.userCloseAll()
 	}
 	if s.backTap.clicked(gtx, s.h) || s.cancel.clicked(gtx, s.h) {
-		s.back()
+		s.userBack()
+	}
+	if s.done {
 		return D{}
 	}
 	if s.submit.clicked(gtx, s.h) || s.retry.clicked(gtx, s.h) {

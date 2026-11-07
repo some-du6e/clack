@@ -148,6 +148,21 @@ type Surface struct {
 	// onAction lets the modal know an action went out (Slack clears a
 	// failed submit's banner on any action).
 	onAction func()
+	// initial is the state when the view was shown (speedbump on close).
+	initial string
+}
+
+// dirty reports whether the user changed any input since the view was
+// shown (Slack compares initialViewState.values with the block state).
+func (s *Surface) dirty() bool {
+	for i := range s.blocks {
+		for _, e := range elementsOf(&s.blocks[i]) {
+			if stateful(e.Type) {
+				return string(s.vals.JSON(false)) != s.initial
+			}
+		}
+	}
+	return false
 }
 
 func newSurface(h Host, v *core.View) *Surface {
@@ -179,6 +194,7 @@ func (s *Surface) set(v *core.View, keep bool) {
 	if len(v.State) > 0 && !keep {
 		s.applyState(v.State)
 	}
+	s.initial = string(s.vals.JSON(false))
 	s.ws = map[string]*ew{}
 	s.texts = map[string]*richview.View{}
 	s.errs = map[string]string{}
