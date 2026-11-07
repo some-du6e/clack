@@ -110,11 +110,14 @@ type executeArgs struct {
 // dispatchExecute runs an app shortcut through executeAppAction.
 func dispatchExecute(ctx context.Context, h Host, s core.AppShortcut, ch, ts string) (string, error) {
 	ix := h.Core().Interactive()
-	args := executeArgs{AppID: s.AppID, ActionID: s.ActionID, ChannelID: ch, MessageTS: ts, ApplicableTeamID: s.TeamID,
+	args := executeArgs{AppID: s.AppID, ActionID: s.ActionID, ChannelID: ch, MessageTS: ts,
 		Reason: "app-global-actions-api/execute-app-action"}
 	return taut.Dispatch(ctx, tautFor("executeAppAction"), "executeAppAction", args, func(ctx context.Context, a executeArgs) (string, error) {
 		sc := s
-		sc.AppID, sc.ActionID, sc.TeamID = firstNonEmpty(a.AppID, s.AppID), firstNonEmpty(a.ActionID, s.ActionID), firstNonEmpty(a.ApplicableTeamID, s.TeamID)
+		sc.AppID, sc.ActionID = firstNonEmpty(a.AppID, s.AppID), firstNonEmpty(a.ActionID, s.ActionID)
+		if a.ApplicableTeamID != "" {
+			sc.TeamID = a.ApplicableTeamID
+		}
 		return ix.RunShortcut(ctx, sc, firstNonEmpty(a.ChannelID, ch), firstNonEmpty(a.MessageTS, ts))
 	})
 }

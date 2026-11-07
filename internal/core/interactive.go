@@ -926,10 +926,11 @@ func (ix *Interactive) RunShortcut(ctx context.Context, s AppShortcut, channelID
 		c["message_ts"] = messageTS
 	}
 	cb, _ := json.Marshal(c)
-	p := url.Values{"action_id": {s.ActionID}, "app_id": {s.AppID}, "context": {string(cb)}, "client_token": {tok}}
-	if s.TeamID != "" {
-		p.Set("team_id", s.TeamID)
-	}
+	// team_id is the workspace the shortcut runs in (Slack's
+	// applicableTeamId), not the app's home team from the list: that one
+	// answers internal_error (live-tested 2026-11-07).
+	p := url.Values{"action_id": {s.ActionID}, "app_id": {s.AppID}, "context": {string(cb)}, "client_token": {tok},
+		"team_id": {firstNonEmpty(ix.teamID(), s.TeamID)}}
 	err := actionErr(ix.call(ctx, "apps.actions.v2.execute", p, nil))
 	logCall("apps.actions.v2.execute", "app="+s.AppID+" action="+s.ActionID, err)
 	return tok, err
