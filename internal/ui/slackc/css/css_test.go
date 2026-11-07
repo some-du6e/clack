@@ -884,7 +884,7 @@ func TestColors(t *testing.T) {
 	}
 	for css, want := range cases {
 		got := colorOf(t, css)
-		d := func(a, b uint8) bool { return a > b+1 || b > a+1 }
+		d := func(a, b uint8) bool { return int(a)-int(b) > 1 || int(b)-int(a) > 1 }
 		if d(got.R, want.R) || d(got.G, want.G) || d(got.B, want.B) || d(got.A, want.A) {
 			t.Errorf("%s: got %v want %v", css, got, want)
 		}

@@ -883,7 +883,7 @@ func (cx *cctx) apply(prop, v string) bool {
 		var l Length
 		for j := range cs {
 			x, ok := cx.length(&cs[j], true)
-			if !ok || x.Px < 0 || x.Pct < 0 {
+			if !ok || negLen(&cs[j], x) {
 				return false
 			}
 			if j == 0 {
@@ -976,7 +976,7 @@ func (cx *cctx) apply(prop, v string) bool {
 			l = Zero
 		} else {
 			x, ok := cx.length(&cs[0], true)
-			if !one || !ok || x.Px < 0 {
+			if !one || !ok || negLen(&cs[0], x) {
 				return false
 			}
 			l = x
@@ -1529,6 +1529,15 @@ func (cx *cctx) apply(prop, v string) bool {
 	return true
 }
 
+// negLen reports a negative plain length. Math functions are never
+// rejected for their sign: browsers clamp them at used-value time.
+func negLen(c *cv, l Length) bool {
+	if c.t.k == tFunction {
+		return false
+	}
+	return l.Px < 0 || l.Pct < 0 || l.Vw < 0 || l.Vh < 0
+}
+
 func sideIndex(p string) int {
 	switch {
 	case strings.Contains(p, "-top"):
@@ -1551,7 +1560,7 @@ func (cx *cctx) lengthKw(cs []cv, auto, pct, nonNeg bool) (Length, bool) {
 		return Auto, true
 	}
 	l, ok := cx.length(&cs[0], pct)
-	if !ok || nonNeg && (l.Px < 0 || l.Pct < 0) && l.x == nil {
+	if !ok || nonNeg && negLen(&cs[0], l) {
 		return Length{}, false
 	}
 	return l, true
@@ -1588,7 +1597,7 @@ func (cx *cctx) size(cs []cv, auto, none bool) (Length, bool) {
 		return Length{Kind: LenFitContent}, len(c.args) == 1
 	}
 	l, ok := cx.length(c, true)
-	if !ok || (l.Px < 0 || l.Pct < 0) && l.x == nil {
+	if !ok || negLen(c, l) {
 		return Length{}, false
 	}
 	return l, true
@@ -2451,7 +2460,7 @@ func (cx *cctx) bgSizeText(src string, cs []cv) (string, bool) {
 			continue
 		}
 		l, ok := cx.length(&cs[i], true)
-		if !ok || l.Px < 0 || l.Pct < 0 {
+		if !ok || negLen(&cs[i], l) {
 			return "", false
 		}
 	}
@@ -2562,10 +2571,10 @@ func (cx *cctx) fontSize(cs []cv, k string) bool {
 		return false
 	}
 	v := l.Resolve(pfs, cx.env.Width, cx.env.Height, pfs)
-	if v < 0 || (l.Px < 0 || l.Pct < 0) && l.x == nil {
+	if negLen(&cs[0], l) {
 		return false
 	}
-	cx.st.FontSize = v
+	cx.st.FontSize = max(v, 0)
 	return true
 }
 
