@@ -1,6 +1,8 @@
 package taut
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -55,5 +57,24 @@ func TestErrWithStack(t *testing.T) {
 	}
 	if got := logArg([]any{"MessageSender", []byte("{}")}); got != "MessageSender" {
 		t.Errorf("logArg = %q", got)
+	}
+}
+
+// The plugin Library compares the installed file's sha256 with its index.
+func TestInstalledSHA256(t *testing.T) {
+	h := newHarness(t)
+	code := pluginJS(`class LibHash extends TautPlugin { static id = 'LibHash'; static pluginName = 'Lib Hash'; static description = 'd'; static authors = ['jeremy']; static defaultConfig = { enabled: false }; start() {} stop() {} }; return LibHash`)
+	if h.tt.InstalledSHA256("LibHash") != "" {
+		t.Fatal("hash before install")
+	}
+	h.install(code, false)
+	sum := sha256.Sum256(code)
+	if got := h.tt.InstalledSHA256("LibHash"); got != hex.EncodeToString(sum[:]) {
+		t.Errorf("InstalledSHA256 = %q", got)
+	}
+	for _, bad := range []string{"", "../config", "a/b", ".hidden"} {
+		if h.tt.InstalledSHA256(bad) != "" {
+			t.Errorf("InstalledSHA256(%q) read a file", bad)
+		}
 	}
 }
