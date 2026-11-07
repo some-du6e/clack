@@ -8,6 +8,8 @@ import (
 	"gioui.org/op"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -22,6 +24,9 @@ import (
 
 // MenuItem is one menu row.
 type MenuItem struct {
+	// Key is the row's MenuTemplateItem key ("sign-out"); "" derives one
+	// from the label. Plugins find rows by it.
+	Key      string
 	Label    string
 	Icon     string // icons registry name ("" = no icon column)
 	Hint     string // right-aligned shortcut, e.g. "Ctrl+Shift+S"
@@ -58,6 +63,15 @@ type MenuOpts struct {
 	// (header kebab menus).
 	AlignRight bool
 	OnClose    func()
+
+	// Raw skips the MenuFromTemplate boundary: the items already came out
+	// of a MenuFromTemplate a plugin rendered (slackc/kit's MenuTrigger).
+	Raw bool
+	// Within is the Slack component the menu belongs to, rendered around
+	// its MenuFromTemplate so plugin context wraps reach the menu (the
+	// profile ⋮ menu is RimetoMemberProfileOverflowMenu{memberId}).
+	Within      string
+	WithinProps slackc.Props
 }
 
 // Menu is a Slack menu overlay with keyboard navigation and submenus.
@@ -77,6 +91,14 @@ type Menu struct {
 	rows   []image.Rectangle // last frame's row rects (window coords)
 	rect   image.Rectangle
 	focus  bool
+
+	// MenuFromTemplate (menu_template.go)
+	orig    []MenuItem   // the native items
+	tplFrom slackc.Props // props the items were last built from
+	pending []MenuItem   // native actions JS clicked, run next frame
+	key     string
+	win     image.Point
+	scale   float32
 }
 
 // NewMenu opens a menu with its top-left corner at anchor (flipping at the
@@ -87,7 +109,7 @@ func NewMenu(h Host, anchor image.Point, items []MenuItem) *Menu {
 
 // NewMenuOpts opens a menu with explicit options.
 func NewMenuOpts(h Host, items []MenuItem, o MenuOpts) *Menu {
-	m := &Menu{h: h, items: items, opts: o, sel: -1, subIdx: -1}
+	m := &Menu{h: h, items: items, orig: items, opts: o, sel: -1, subIdx: -1, key: nextKey("menu")}
 	m.clicks = make([]widget.Clickable, len(items))
 	m.onClose = o.OnClose
 	return m
@@ -288,8 +310,16 @@ func (m *Menu) Layout(gtx layout.Context) layout.Dimensions {
 			m.closeAll()
 			return layout.Dimensions{}
 		}
+		if len(m.pending) > 0 {
+			m.runPending(gtx)
+			if m.done {
+				return layout.Dimensions{}
+			}
+		}
+		m.layoutRoot(gtx, win)
+	} else {
+		m.layoutCard(gtx, win)
 	}
-	m.layoutCard(gtx, win)
 	if m.parent == nil && !m.done {
 		keyTarget(gtx, m, m.rect)
 	}
@@ -330,12 +360,33 @@ func (m *Menu) layoutCard(gtx layout.Context, win image.Point) {
 		pos = place(a, sz, win, dp(gtx, 8), m.opts.Side)
 	}
 	m.rect = image.Rectangle{Min: pos, Max: pos.Add(sz)}
-	card(gtx, cl, m.rect, dp(gtx, 4))
-	m.block.Layout(gtx, m.rect)
-
 	if len(m.rows) != len(m.items) {
 		m.rows = make([]image.Rectangle, len(m.items))
 	}
+	st := menuClass.Enter(gtx, 0, 0)
+	if st.Hidden() {
+		st.Leave()
+		return
+	}
+	at(gtx, pos, func(gtx layout.Context) layout.Dimensions {
+		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
+			m.layoutBody(gtx, th, cl, pos, w, hs)
+			return layout.Dimensions{Size: sz}
+		})
+	})
+	st.Leave()
+	if m.sub != nil && !m.done {
+		m.sub.layoutCard(gtx, win)
+	}
+}
+
+// layoutBody draws the card at the origin (pos is its window position).
+func (m *Menu) layoutBody(gtx layout.Context, th *theme.Theme, cl *Colors, pos image.Point, w int, hs []int) {
+	local := image.Rectangle{Max: m.rect.Size()}
+	rad := dp(gtx, 4)
+	card(gtx, cl, local, rad)
+	m.block.Layout(gtx, local)
+
 	// clicks & hover first (they reflect last frame's layout).
 	for i := range m.items {
 		if m.clicks[i].Clicked(gtx) {
@@ -364,12 +415,13 @@ func (m *Menu) layoutCard(gtx layout.Context, win image.Point) {
 		}
 	}
 
-	cs := clipRRect(gtx, m.rect, dp(gtx, 4))
-	y := pos.Y + pad
+	cs := clipRRect(gtx, local, rad)
+	pad := dp(gtx, 12)
+	y := pad
 	for i := range m.items {
-		r := image.Rect(pos.X, y, pos.X+w, y+hs[i])
-		m.rows[i] = r
-		if y > m.rect.Max.Y {
+		r := image.Rect(0, y, w, y+hs[i])
+		m.rows[i] = r.Add(pos)
+		if y > local.Max.Y {
 			y += hs[i]
 			continue
 		}
@@ -379,22 +431,33 @@ func (m *Menu) layoutCard(gtx layout.Context, win image.Point) {
 		y += hs[i]
 	}
 	cs.Pop()
-	if m.sub != nil {
-		m.sub.layoutCard(gtx, win)
-	}
 }
 
 func (m *Menu) row(gtx layout.Context, th *theme.Theme, cl *Colors, i int, sz image.Point) layout.Dimensions {
 	it := &m.items[i]
 	switch {
 	case it.Separator:
-		y := sz.Y / 2
-		fill(gtx, image.Rect(0, y, sz.X, y+1), cl.Divider)
-		return layout.Dimensions{Size: sz}
+		st := menuSepClass.Enter(gtx, 0, 0)
+		defer st.Leave()
+		if st.Hidden() {
+			return layout.Dimensions{Size: sz}
+		}
+		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
+			y := sz.Y / 2
+			fill(gtx, image.Rect(0, y, sz.X, y+1), st.Color(cl.Divider))
+			return layout.Dimensions{Size: sz}
+		})
 	case it.Header != "":
-		return at(gtx, image.Pt(dp(gtx, 24), 0), func(gtx layout.Context) layout.Dimensions {
-			return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 13, theme.Bold, cl.Fg3, it.Header)
+		st := menuHdrClass.Enter(gtx, 0, 0)
+		defer st.Leave()
+		if st.Hidden() {
+			return layout.Dimensions{Size: sz}
+		}
+		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
+			return at(gtx, image.Pt(dp(gtx, 24), 0), func(gtx layout.Context) layout.Dimensions {
+				return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
+					return text(gtx, th, 13, theme.Bold, st.Color(cl.Fg3), it.Header)
+				})
 			})
 		})
 	case it.Note != "":
@@ -405,18 +468,44 @@ func (m *Menu) row(gtx layout.Context, th *theme.Theme, cl *Colors, i int, sz im
 		return layout.Dimensions{Size: sz}
 	}
 	hl := m.sel == i && !it.Disabled
+	var state css.State
+	var mods uint64
+	if hl {
+		state, mods = css.StateHover, 1
+	}
+	if it.Danger {
+		mods |= 2
+	}
+	if it.Disabled {
+		state, mods = state|css.StateDisabled, mods|4
+	}
+	st := menuItemClass.Enter(gtx, state, mods)
+	defer st.Leave()
+	if st.Hidden() {
+		return layout.Dimensions{Size: sz}
+	}
 	if it.Widget != nil {
 		// widgets get the row width as Max only (Min zero), so nested text
 		// measures its natural size.
 		gtx.Constraints = layout.Constraints{Max: sz}
 		if !m.selectable(i) {
-			return it.Widget(gtx, false)
+			return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return it.Widget(gtx, false) })
 		}
-		return clickBox(gtx, &m.clicks[i], nil, func(gtx layout.Context) layout.Dimensions {
-			return it.Widget(gtx, hl)
+		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
+			return clickBox(gtx, &m.clicks[i], nil, func(gtx layout.Context) layout.Dimensions {
+				return it.Widget(gtx, hl)
+			})
 		})
 	}
 	gtx.Constraints = layout.Exact(sz)
+	return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
+		return m.itemRow(gtx, th, cl, st, i, sz, hl)
+	})
+}
+
+// itemRow draws a plain item row (label, icon, hints, check, chevron).
+func (m *Menu) itemRow(gtx layout.Context, th *theme.Theme, cl *Colors, st slackc.Styled, i int, sz image.Point, hl bool) layout.Dimensions {
+	it := &m.items[i]
 	fg, hint := cl.Fg, cl.Fg3
 	if it.Danger {
 		fg = cl.Danger
@@ -431,9 +520,12 @@ func (m *Menu) row(gtx layout.Context, th *theme.Theme, cl *Colors, i int, sz im
 			if it.Danger {
 				bg = cl.DangerBg
 			}
-			fill(gtx, image.Rectangle{Max: sz}, bg)
+			fill(gtx, image.Rectangle{Max: sz}, st.Background(bg))
 			fg, hint = cl.HighText, cl.HighText
+		} else if st.Has("background-color") {
+			fill(gtx, image.Rectangle{Max: sz}, st.Background(cl.Bg))
 		}
+		fg = st.Color(fg)
 		x := dp(gtx, 24)
 		if it.Icon != "" {
 			at(gtx, image.Pt(x, (sz.Y-dp(gtx, 18))/2), func(gtx layout.Context) layout.Dimensions {
