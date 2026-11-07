@@ -151,11 +151,12 @@ func (t *RootTokens) Scope(path ...string) *RootTokens {
 // first) under html > body > .p-client_container. ok is false when no
 // rule sets one on the last element or it is fully transparent (a lone
 // gradient). A gradient over a color yields the color.
-func (t *RootTokens) Background(path ...string) (c color.NRGBA, ok bool) {
+func (t *RootTokens) Background(path ...string) (color.NRGBA, bool) {
 	if t == nil || t.eng.Empty() || len(path) == 0 {
 		return color.NRGBA{}, false
 	}
 	if t.chain == nil {
+		t.chain = make([]Style, 0, 3)
 		var parent *Style
 		for _, el := range []*rootEl{t.client.parent.parent, t.client.parent, t.client} {
 			c := t.eng.Cascade(el, PseudoNone, nil, t.env)
