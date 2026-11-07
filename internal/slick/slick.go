@@ -107,6 +107,9 @@ type Slick struct {
 	dark    atomic.Bool
 	styled  string // the theme CSS last handed to the UI
 
+	mem       memStore  // storage of plugins that keep messages (messages.go)
+	openLimit rateLimit // shell.openExternal
+
 	changeMu sync.Mutex
 	changeCh map[chan struct{}]struct{}
 
