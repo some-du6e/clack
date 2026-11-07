@@ -871,9 +871,10 @@ func (f *Files) segButton(gtx C, c *widget.Clickable, active bool, icon, label s
 		r := image.Rectangle{Max: d.Size}
 		rad := gtx.Dp(4)
 		if active {
-			bg := f.p.Link
+			// base-inv-hgl-1 (filled blue): #1264a3 light, #0a77a7 dark
+			bg := f.lt(rgb(0x1264a3), rgb(0x0a77a7))
 			if c.Hovered() {
-				bg = rgb(0x0b4c8c)
+				bg = flatten(argb(0x21122a59), bg) // base-inv-hgl-1-hover
 			}
 			rrect(gtx, r, rad, bg)
 		} else {
