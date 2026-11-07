@@ -197,6 +197,18 @@ func TestModules(t *testing.T) {
 	r := newTest(t)
 	r.Module("lib", `export const x = 40; export default function add(a) { return a + x }`)
 	r.Module("main", `import add, { x } from "lib"; import React from "react"; export const y = add(2); export const r = typeof React.useState;`)
+	// top-level await on a timer (I/O-like) settles through Runtime.Import
+	r.Module("tla", `await new Promise((r) => setTimeout(r, 20)); export const ready = 'yes';`)
+	tla, err := r.Import("tla")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = r.Do(func(js *Ctx) error {
+		if got := tla.Get("ready").String(); got != "yes" {
+			t.Errorf("tla ready = %q", got)
+		}
+		return nil
+	})
 	ns, err := r.Import("main")
 	if err != nil {
 		t.Fatal(err)

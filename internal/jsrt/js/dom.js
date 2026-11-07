@@ -22,6 +22,7 @@
   // markDirty walks up to the owning root container or document part
   const markDirty = (node) => {
     for (let n = node; n; n = n.parentNode) {
+      n._j = undefined;
       if (n._rootId !== undefined) { dirtyRoots.add(n); queueFlush(); return; }
       if (n === docBody || n === docHead) { docDirty = true; queueFlush(); return; }
     }
@@ -354,8 +355,6 @@
       this._st = null; // style object (camelCase → raw)
       this._h = null; // React handlers: lowercased name ('click', 'clickcapture') → fn
       this._r = null; // [x, y, w, h] from Go layout
-      this.scrollTop = 0;
-      this.scrollLeft = 0;
     }
     get nodeType() { return ELEMENT_NODE; }
     get tagName() { return this._svg || this.localName.startsWith('@') ? this.localName : this.localName.toUpperCase(); }
@@ -1142,6 +1141,7 @@
     if (e.target && target.nodeType === ELEMENT_NODE) {
       if ('value' in e.target && e.target.value != null) { target._val = String(e.target.value); if (e.target.selectionStart != null) { target._selStart = e.target.selectionStart; target._selEnd = e.target.selectionEnd ?? e.target.selectionStart; } }
       if ('checked' in e.target && e.target.checked != null) target._chk = !!e.target.checked;
+      markDirty(target);
     }
     if (type === 'focus') { focusElement(target === document ? null : target); return { defaultPrevented: false, propagationStopped: false }; }
     if (type === 'blur') { if (activeEl === target || target === document) focusElement(null); return { defaultPrevented: false, propagationStopped: false }; }
@@ -1878,59 +1878,86 @@
     return out;
   };
   const register = (n) => { if (!kmap.has(n._k)) { kmap.set(n._k, new WeakRef(n)); kfree.register(n, n._k); } };
-  const serializeChildren = (node, out) => {
+  // Serialization produces JSON text directly. Each element caches its JSON
+  // in _j; markDirty clears the caches up the ancestor path, so an update
+  // re-serializes only the changed path and splices cached siblings.
+  const J = JSON.stringify;
+  const serChildren = (node) => {
     const c = node._c;
-    if (!c) return out;
+    if (!c || !c.length) return '';
+    let out = '';
     for (let i = 0; i < c.length; i++) {
-      const s = serializeNode(c[i]);
-      if (s) out.push(s);
+      const x = ser(c[i]);
+      if (x) out = out ? out + ',' + x : x;
     }
     return out;
   };
-  const serializeNode = (n) => {
+  const ser = (n) => {
     const t = n.nodeType;
-    if (t === TEXT_NODE) return n._v === '' ? null : { t: '#', v: n._v };
-    if (t !== ELEMENT_NODE) return null;
+    if (t === TEXT_NODE) return n._v === '' ? '' : '{"t":"#","v":' + J(n._v) + '}';
+    if (t !== ELEMENT_NODE) return '';
+    if (n._j !== undefined) return n._j;
     register(n);
-    if (n._slot !== undefined) return null; // native component slots are folded into "$el" props
-    if (n instanceof NativeElement) {
-      const p = n._np ? nativeProps(n, n._np, '', 0) : {};
-      const kids = [];
+    let out;
+    if (n._slot !== undefined) out = ''; // native component slots are folded into "$el" props
+    else if (n instanceof NativeElement) {
+      let pj = J(n._np ? nativeProps(n, n._np, '', 0) : {});
+      let kids = '', slots = '';
       if (n._c) for (const c of n._c) {
-        if (c._slot !== undefined) { register(c); p[c._slot] = { $el: serializeChildren(c, []) }; continue; }
-        const s = serializeNode(c);
-        if (s) kids.push(s);
+        if (c._slot !== undefined) { register(c); slots += (slots ? ',' : '') + J(c._slot) + ':{"$el":[' + serChildren(c) + ']}'; continue; }
+        const x = ser(c);
+        if (x) kids = kids ? kids + ',' + x : x;
       }
-      const o = { t: '@', n: n._n, k: n._k, p };
-      if (kids.length) o.c = kids;
-      if (n === activeEl) o.focus = true;
-      return o;
+      if (slots) pj = pj === '{}' ? '{' + slots + '}' : pj.slice(0, -1) + ',' + slots + '}';
+      out = '{"t":"@","n":' + J(n._n) + ',"k":' + n._k + ',"p":' + pj + (kids ? ',"c":[' + kids + ']' : '') + (n === activeEl ? ',"focus":true' : '') + '}';
+    } else {
+      const p = {};
+      if (n._a) for (const [a, v] of n._a) p[attrName(a, n._svg)] = v;
+      if (n._st) p.style = n._st;
+      const ln = n.localName;
+      if (n._val !== undefined) p.value = n._val;
+      if (n._chk !== undefined) p.checked = n._chk;
+      if (n._sel !== undefined) p.selected = n._sel;
+      if (n._ind) p.indeterminate = true;
+      if ((ln === 'input' || ln === 'textarea') && n._selStart !== undefined && n === activeEl) { p.selectionStart = n._selStart; p.selectionEnd = n._selEnd; }
+      if (n._sT) p.scrollTop = n._sT;
+      if (n._sL) p.scrollLeft = n._sL;
+      if (ln === 'textarea' && n._val === undefined) p.value = n.textContent;
+      // handled events: React handlers, DOM listeners, on<type> properties
+      let on = '';
+      const seen = n._h || n[kListeners] || n._onp ? new Set() : null;
+      const addOn = (k) => { if (!seen.has(k)) { seen.add(k); on += (on ? ',' : '') + J(k) + ':' + n._k; } };
+      if (n._h) for (const k in n._h) addOn(k);
+      const ls = n[kListeners];
+      if (ls) for (const k of ls.keys()) addOn(k);
+      if (n._onp) for (const k in n._onp) if (typeof n._onp[k] === 'function') addOn(k);
+      const kids = ln === 'textarea' ? '' : serChildren(n);
+      out = '{"t":' + J(ln) + ',"k":' + n._k + ',"p":' + J(p) + (on ? ',"on":{' + on + '}' : '') + (kids ? ',"c":[' + kids + ']' : '') + (n === activeEl ? ',"focus":true' : '') + '}';
     }
-    const p = {};
-    if (n._a) for (const [a, v] of n._a) p[attrName(a, n._svg)] = v;
-    if (n._st) p.style = n._st;
-    const ln = n.localName;
-    if (n._val !== undefined) p.value = n._val;
-    if (n._chk !== undefined) p.checked = n._chk;
-    if (n._sel !== undefined) p.selected = n._sel;
-    if (n._ind) p.indeterminate = true;
-    if ((ln === 'input' || ln === 'textarea') && n._selStart !== undefined && n === activeEl) { p.selectionStart = n._selStart; p.selectionEnd = n._selEnd; }
-    if (n.scrollTop) p.scrollTop = n.scrollTop;
-    if (n.scrollLeft) p.scrollLeft = n.scrollLeft;
-    const o = { t: ln, k: n._k, p };
-    // handled events: React handlers + DOM listeners (+ on<type> props)
-    let on = null;
-    if (n._h) for (const k in n._h) { (on || (on = {}))[k] = n._k; }
-    const ls = n[kListeners];
-    if (ls) for (const k of ls.keys()) (on || (on = {}))[k] = n._k;
-    for (const k of onProps) if (typeof n[k] === 'function' && Object.prototype.hasOwnProperty.call(n, k)) (on || (on = {}))[k.slice(2)] = n._k;
-    if (on) o.on = on;
-    if (ln === 'textarea' && n._val === undefined) p.value = n.textContent;
-    else if (ln !== 'textarea' || n._val === undefined) { const kids = serializeChildren(n, []); if (kids.length) o.c = kids; }
-    if (n === activeEl) o.focus = true;
-    return o;
+    n._j = out;
+    return out;
   };
-  const onProps = ['onclick', 'ondblclick', 'onmousedown', 'onmouseup', 'onmouseenter', 'onmouseleave', 'onmousemove', 'onmouseover', 'onmouseout', 'onkeydown', 'onkeyup', 'onkeypress', 'oninput', 'onchange', 'onfocus', 'onblur', 'onsubmit', 'onwheel', 'onscroll', 'oncontextmenu', 'onpointerdown', 'onpointerup', 'onpointermove', 'onload', 'onerror'];
+  // object form (tests / debugging)
+  const serializeNode = (n) => { const x = ser(n); return x ? JSON.parse(x) : null; };
+  // on<type> event handler properties on elements (el.onclick = fn)
+  const onProps = ['onclick', 'ondblclick', 'onauxclick', 'oncontextmenu', 'onmousedown', 'onmouseup', 'onmouseenter', 'onmouseleave', 'onmousemove', 'onmouseover', 'onmouseout', 'onpointerdown', 'onpointerup', 'onpointermove', 'onpointerenter', 'onpointerleave', 'onpointerover', 'onpointerout', 'onpointercancel', 'onkeydown', 'onkeyup', 'onkeypress', 'oninput', 'onbeforeinput', 'onchange', 'onfocus', 'onblur', 'onfocusin', 'onfocusout', 'onsubmit', 'onreset', 'onwheel', 'onscroll', 'onload', 'onerror', 'onabort', 'oncancel', 'onclose', 'ontoggle', 'onselect', 'oncopy', 'oncut', 'onpaste', 'ondrag', 'ondragstart', 'ondragend', 'ondragenter', 'ondragleave', 'ondragover', 'ondrop', 'onanimationend', 'onanimationstart', 'ontransitionend', 'ontouchstart', 'ontouchend', 'ontouchmove', 'oncompositionstart', 'oncompositionend', 'oninvalid', 'onresize', 'onplay', 'onpause', 'onended', 'ontimeupdate', 'onloadeddata', 'onloadedmetadata', 'oncanplay'];
+  for (const name of onProps) {
+    const type = name.slice(2);
+    Object.defineProperty(Node.prototype, name, {
+      configurable: true, enumerable: false,
+      get() { return (this._onp && this._onp[type]) || null; },
+      set(fn) { const m = this._onp || (this._onp = Object.create(null)); if (typeof fn === 'function') m[type] = fn; else delete m[type]; markDirty(this); },
+    });
+  }
+  for (const [name, field] of [['scrollTop', '_sT'], ['scrollLeft', '_sL']]) {
+    Object.defineProperty(Element.prototype, name, {
+      configurable: true, enumerable: false,
+      get() { return this[field] || 0; },
+      set(v) { v = +v || 0; if (v < 0) v = 0; if (this[field] === v) return; this[field] = v; markDirty(this); },
+    });
+  }
+  // DOM listeners change a node's "on" set
+  jr.onListen = (target, type, added) => { if (target instanceof Node) markDirty(target); };
   jr.serializeNode = serializeNode;
 
   // roots: id → container element
@@ -1960,13 +1987,12 @@
       dirtyRoots.clear();
       for (const c of list) {
         if (!roots.has(c._rootId)) continue;
-        H.commit(c._rootId, JSON.stringify(serializeChildren(c, [])));
+        H.commit(c._rootId, '[' + serChildren(c) + ']');
       }
     }
     if (docDirty) {
       docDirty = false;
-      const body = serializeChildren(docBody, []);
-      H.document(JSON.stringify(body), JSON.stringify(collectCss()));
+      H.document('[' + serChildren(docBody) + ']', JSON.stringify(collectCss()));
     }
   };
 
@@ -1987,6 +2013,4 @@
   for (const [k, v] of Object.entries(svgClasses)) def(G, k, v);
   // window is the end of every event path
   def(G, '_parentForEvents', () => null);
-  // window.onerror / unhandledrejection go through EventTarget on the global
-  jr.onListen = null;
 })();

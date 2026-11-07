@@ -45,6 +45,35 @@ jobs:
       - name: timings
         if: ${{ !cancelled() }}
         run: go test -count=1 -run 'TestStartupTiming' -v ./internal/jsrt/ | grep -v '^=== RUN' || true
+  taut-plugins:
+    # every plugin in taut's plugins/, built with taut's own build:user-plugin, must load
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: build taut plugins
+        run: |
+          git clone -q --depth 1 https://github.com/jeremy46231/taut /tmp/taut
+          cd /tmp/taut && npm ci --ignore-scripts --no-audit --no-fund
+          mkdir -p /tmp/taut-built
+          for f in plugins/*.ts plugins/*.tsx; do
+            n=$(basename "$f"); n=${n%.*}
+            node scripts/userPlugin.ts "$f" "/tmp/taut-built/$n.js" || echo "BUILD FAILED: $f"
+          done
+          ls -la /tmp/taut-built
+      - name: load them in jsrt
+        run: set -o pipefail; JSRT_TAUT_PLUGINS=/tmp/taut-built go test -count=1 -run TestTautPlugins -v ./internal/jsrt/ | grep -v '^=== RUN'
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: taut-plugins-built
+          path: /tmp/taut-built
   bench:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.bench }}
     runs-on: ubuntu-latest
@@ -56,9 +85,18 @@ jobs:
           cache: true
       - name: bench
         run: go test -run '^$' -bench . -benchmem -benchtime 2s ./internal/jsrt/ | tee bench.txt
-      - name: startup
-        run: go test -run 'TestStartupTiming' -v ./internal/jsrt/
+      - name: startup and render profile
+        run: go test -count=1 -run 'TestStartupTiming|TestRenderProfile' -v ./internal/jsrt/
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: internal/jsrt/enginecmp/go.mod
+          cache: false
+      - name: engine comparison (QuickJS-NG/wazero vs goja)
+        working-directory: internal/jsrt/enginecmp
+        run: go test -count=1 -v . | tee ../../../enginecmp.txt
       - uses: actions/upload-artifact@v4
         with:
           name: jsrt-bench
-          path: bench.txt
+          path: |
+            bench.txt
+            enginecmp.txt

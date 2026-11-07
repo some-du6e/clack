@@ -238,6 +238,7 @@ func (r *Runtime) checkpoint() {
 	}
 	r.eng.runJobs(r.js)
 	r.flushRender()
+	r.eng.gcFloor()
 }
 
 // interrupted is polled by the engine's interrupt handler.
