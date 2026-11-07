@@ -15,6 +15,7 @@ Message contents are memory only. Never write message text, files or attachments
 | `internal/core` | backend | **in-process service API** for the UI (replaces `internal/server`): boot, reads, writes, typed events. No HTTP. |
 | `internal/richtext` | richtext (`richtext`) | Slack message → structured document (`Doc`) for native layout. Replaces `internal/render`. |
 | `internal/ui/...`, `internal/imgcache`, `cmd/clack`, `assets/fonts`, `.github/workflows` | ui (`ui`) | the Gio app |
+| `internal/huddle`, `internal/ui/huddleui`, `cmd/huddle-demo` | huddles (`huddles`) | native huddles: `rooms.join` → Amazon Chime signaling (hand-written protobuf) + pion WebRTC, Opus in/out (pure-Go libopus, miniaudio via cgo for the sound card), H.264 video in (pure-Go decoder), peer messages, captions; the huddle bar, header pill and huddle window. Tests run against `huddle.NewFake` (a loopback Chime); `internal/huddle/probe` joins a real huddle only with `-live` (it rings people). |
 
 ## `internal/richtext` contract
 ```go

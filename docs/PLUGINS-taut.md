@@ -58,7 +58,8 @@ When no plugin patches the name, this is just `native(ctx, args)`. When a plugin
 | joinChannel | `{channelId}` | ui (join button) | default: core.Join |
 | openPrefsModal | `{activeSection?}` | ui shell | default: UIHooks.OpenPreferences |
 | enqueueHuddleToast | `{content, svgIconProps, duration}` | ui toasts | default: UIHooks.Toast |
-| maybeFetchBackgrounds, startEventLog, stopEventLog, stopHuddle, displayAlertMessage, processAwsTranscription, roomsStart/StopTranscriptionFetcher | huddles | ui/views huddles | no-op defaults (Clack has no huddle media) |
+| startEventLog, stopHuddle, stopEventLog | huddles | ui/huddleui | joining runs startEventLog around `huddle.Join`; leaving runs stopHuddle (native: the Chime LEAVE) then stopEventLog |
+| maybeFetchBackgrounds, displayAlertMessage, processAwsTranscription, roomsStart/StopTranscriptionFetcher | huddles | ui/views huddles | no-op defaults (no huddle themes; captions come from Chime's transcription data messages) |
 | logExperimentExposure, handleMessageImmediatelyWithoutPreprocessing | — | — | no-ops |
 | apiCall, apiCallExpedited | `{method, args}` | taut | default: the Web API call |
 | handleDeepLink | `{uri}` (slack:// links) | ui shell | default: `UIHooks.DeepLink(uri) bool` (false when unset) |
@@ -88,3 +89,11 @@ Files: `config.json` (Taut's format: only set options), `user.css`, `plugins/<id
 ## Extensions (other plugin systems on this runtime)
 
 `t.Extend(taut.Extension{Name, Install, Prelude, Ready, LocalStorage, LocalStorageKeys})` adds a plugin system to Taut's runtime: `Install` registers host functions and `Prelude` runs after the TautAPI in every fresh runtime (the internals are on `globalThis.__taut`, the base API on `globalThis.TautAPI`), `Ready(rt, restarted)` runs once the runtime is attached (restart what ran after a crash), and `LocalStorage` serves read-only virtual keys that never reach disk. `t.JS()` starts the runtime on demand; registering an extension doesn't. `t.DataList/DataRead/DataWrite/DataDelete/DataClear` give extensions namespaces in Taut's data store. internal/slick is the user ([PLUGINS-slick.md](PLUGINS-slick.md)). `ComposerContext.Blocks`/`Text` carry the outgoing message to send checks.
+
+## api.huddles (native)
+`internal/ui/huddleui` feeds the TautAPI's huddles from the native session (`internal/taut/huddle.go`):
+- `SetActiveHuddle(callID, channelID, selfAttendee, selfUser)` → `onActiveHuddle` / `getActiveHuddle` and the `getActiveHuddleCallId` / `getActiveHuddleChannelId` selectors.
+- `HuddlePeerMessage(huddle.PeerEvent)` → `onPeerMessage` listeners get `{message, kind, senderAttendeeId, selfAttendeeId}`, with protobuf-es field names (`reacji`, `muteRequest`, `fromPeerIdString`…) for the `data-channel`, `awareness-sync-channel` and `transcript-catchup` topics.
+- `SetHuddlePeers(attendee → user)` → the `peers` slice (`byId`, `leftById`), so `getAttendeeUserId` works.
+- `SetHuddleReaction(f)` → `sendReaction` / `sendReactionMessage` send a reacji through Chime.
+- `ENABLE_EVENT_LOG` / `DISABLE_EVENT_LOG` set `huddleEvents.enabled`.
