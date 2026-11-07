@@ -78,6 +78,17 @@ func TestHistoryAuthFailureStops(t *testing.T) {
 	if v.s.snap.err == nil || v.s.snap.loaded {
 		t.Errorf("no error state after Retry: err=%v loaded=%v", v.s.snap.err, v.s.snap.loaded)
 	}
+	// the Retry link is the sign-in prompt now
+	sh := &signInHost{coreHost: coreHost{app: v.s.hb.app, th: theme.New(false)}}
+	v.s.retryBtn.Click()
+	v2 := &ChannelView{h: sh, ch: tEmpty, s: v.s}
+	frameFn(v2)()
+	if sh.shown != 1 {
+		t.Errorf("Retry on an ended session showed sign-in %d times, want 1", sh.shown)
+	}
+	if got := len(api.called("conversations.history")); got != 1 {
+		t.Errorf("%d history calls after the sign-in Retry, want 1", got)
+	}
 }
 
 // core's auth_failed event stops every load, even ones that would retry.
@@ -98,3 +109,10 @@ func TestAuthFailedEventStops(t *testing.T) {
 		t.Error("still stopped after reconnecting")
 	}
 }
+
+type signInHost struct {
+	coreHost
+	shown int
+}
+
+func (h *signInHost) ShowSignIn() { h.shown++ }

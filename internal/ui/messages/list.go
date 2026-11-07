@@ -1334,12 +1334,26 @@ func (s *listState) closeEdits() {
 // the pane. Loads back off on their own (hub.backoff); Retry loads now.
 func (s *listState) layoutLoadError(gtx layout.Context, h Host, c *colors, size image.Point) {
 	th := h.Theme()
+	// After auth_failed core sends nothing until the user signs in again,
+	// so Retry becomes the sign-in prompt instead of a refetch.
+	signedOut := h.Core() != nil && h.Core().SignedOut()
 	if s.retryBtn.Clicked(gtx) {
-		s.hb.retry(s.m)
+		if signedOut {
+			if sh, ok := h.(SignInHost); ok {
+				sh.ShowSignIn()
+			} else {
+				h.Toast("Your Slack session ended. Sign in again to load messages.")
+			}
+		} else {
+			s.hb.retry(s.m)
+		}
 	}
 	st := textStyle{size: 15, col: c.Text2, lineH: 22}
 	lk := textStyle{size: 15, weight: theme.Bold, col: c.Link, lineH: 22}
 	msg, sep, link := "Couldn't load messages", " · ", "Retry"
+	if signedOut {
+		msg, link = "Your Slack session ended", "Sign in again"
+	}
 	w := measure(gtx, th, st, msg).X + measure(gtx, th, st, sep).X + measure(gtx, th, lk, link).X
 	x, y := (size.X-w)/2, size.Y/2-dp(gtx, 11)
 	d := at(gtx, x, y, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, st, msg) })

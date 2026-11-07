@@ -27,6 +27,12 @@ type Host interface {
 	popups.Host
 }
 
+// SignInHost is optional: the ui root's sign-in screen, shown by the
+// list's "Sign in again" link once core reports the session ended.
+type SignInHost interface {
+	ShowSignIn()
+}
+
 // PointerHost is optional: when the Host implements it, popup anchors use
 // the last absolute pointer position (window coordinates). Otherwise
 // anchors are the click position plus the view's Origin.
