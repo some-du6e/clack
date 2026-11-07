@@ -506,7 +506,7 @@ func TestRTMAndEvents(t *testing.T) {
 		if delivered() {
 			t.Fatal("onRaw delivers, but the mirror's pump never handed the raw event over")
 		}
-		h.rt().post("rtm", raw)
+		h.rt().post("rtmEvent", raw)
 		time.Sleep(300 * time.Millisecond)
 		if delivered() {
 			t.Fatal("post delivers, but onRaw dropped the event")

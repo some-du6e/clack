@@ -103,6 +103,7 @@ func (r *runtime) post(fn string, args ...any) {
 	r.rt.Post(func(js *jsrt.Ctx) {
 		f := js.Global().Get("__taut").Get(fn)
 		if !f.IsFunction() {
+			r.t.logf("taut: __taut.%s is not a function", fn)
 			return
 		}
 		vals := make([]any, len(args))

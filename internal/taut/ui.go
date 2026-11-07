@@ -232,7 +232,7 @@ func (t *Taut) onRaw(ev slack.Event) {
 	rt := t.rt
 	t.mu.Unlock()
 	if rt != nil {
-		rt.post("rtm", json.RawMessage(ev.Raw))
+		rt.post("rtmEvent", json.RawMessage(ev.Raw))
 	}
 }
 

@@ -440,7 +440,7 @@ function rtmEmit(type, ev) {
   }
 }
 /** Go → JS: one raw realtime event, as Slack's socket delivered it */
-T.rtm = (ev) => rtmEmit(ev?.type, ev)
+T.rtmEvent = (ev) => rtmEmit(ev?.type, ev)
 T.rtmTypes = () => [...rtmListeners.keys()]
 const tellGoRtm = batcher(() => goOr(null, 'rtmTypes', [...rtmListeners.keys()]))
 function onRtm(type, listener) {
