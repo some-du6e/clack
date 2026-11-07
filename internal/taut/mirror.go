@@ -1272,3 +1272,16 @@ func (m *mirror) channelFP(id string) uint64 {
 	h.Write(b)
 	return h.Sum64()
 }
+
+// SlackMessage is message ts in ch as Slack's store keeps it (what thunks
+// such as showNotification carry as `message`), or nil when it isn't cached.
+func (t *Taut) SlackMessage(ch, ts string) map[string]any {
+	if t == nil || t.app == nil || t.app.S == nil {
+		return nil
+	}
+	sm, ok := t.app.S.Find(ch, ts)
+	if !ok {
+		return nil
+	}
+	return messageJSON(ch, &sm)
+}

@@ -151,3 +151,19 @@ func TestSliceKeysOnPrototype(t *testing.T) {
 		t.Errorf("keys on the prototype: %+v", got)
 	}
 }
+
+// showNotification's message is the stored message in Slack's shape.
+func TestSlackMessage(t *testing.T) {
+	h := newHarness(t)
+	m := h.tt.SlackMessage(chGen, "1700000001.000100")
+	if m == nil || m["user"] != "UALICE" || m["channel"] != chGen || m["text"] != "the job fair is today" {
+		t.Errorf("SlackMessage = %v", m)
+	}
+	if h.tt.SlackMessage(chGen, "1.2") != nil {
+		t.Error("a message that isn't cached")
+	}
+	var nilT *Taut
+	if nilT.SlackMessage(chGen, "1700000001.000100") != nil {
+		t.Error("nil Taut")
+	}
+}
