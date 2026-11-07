@@ -613,7 +613,8 @@ func (s *Slick) SetTheme(id string) error {
 	return nil
 }
 
-// ImportTheme adds a theme JSON file and returns its id ("imported:…").
+// ImportTheme adds a theme JSON file, selects it (Slick's importTheme sets
+// config.theme) and returns its id ("imported:…").
 func (s *Slick) ImportTheme(data []byte, filename string) (string, error) {
 	if len(data) > 256*1024 {
 		return "", errors.New("Theme files must be smaller than 256 KiB.")
@@ -625,11 +626,18 @@ func (s *Slick) ImportTheme(data []byte, filename string) (string, error) {
 	id := "imported:" + newUUID()
 	s.mu.Lock()
 	s.cfg.ImportedThemes[id] = t
+	prev := s.cfg.Theme
+	s.cfg.Theme = id
 	err = s.saveConfigLocked()
+	if err != nil {
+		delete(s.cfg.ImportedThemes, id)
+		s.cfg.Theme = prev
+	}
 	s.mu.Unlock()
 	if err != nil {
 		return "", err
 	}
+	s.applyStyles()
 	s.changed()
 	return id, nil
 }

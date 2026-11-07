@@ -391,9 +391,12 @@ func TestThemesAndUserCSS(t *testing.T) {
 	if err != nil || !strings.HasPrefix(id, "imported:") {
 		t.Fatalf("import %q %v", id, err)
 	}
-	_ = s.SetTheme(id)
+	// importing selects it (Slick's configStore.importTheme sets config.theme)
 	if css := h.ui.style("slick:theme"); !strings.Contains(css, "--a:b !important") {
-		t.Fatalf("imported %q", css)
+		t.Fatalf("imported theme not applied: %q", css)
+	}
+	if sel := selectedTheme(s); sel != id {
+		t.Fatalf("selected %q, want %q", sel, id)
 	}
 	_ = s.SetUserCSS("body{zoom:2}")
 	if h.ui.style("slick:user") != "body{zoom:2}" {
@@ -463,4 +466,13 @@ func mustImport(t *testing.T, h *harness, code string) string {
 		t.Fatalf("import: %v", err)
 	}
 	return name
+}
+
+func selectedTheme(s *Slick) string {
+	for _, c := range s.Settings().Themes {
+		if c.Selected {
+			return c.ID
+		}
+	}
+	return ""
 }
