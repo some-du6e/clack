@@ -353,8 +353,15 @@ func TestNativeAndHost(t *testing.T) {
 	nodes := mustTree(t, `{"t":"div","k":1,"p":{"id":"row"},"c":[{"t":"@","n":"MessageSender","k":2,"p":{"name":"Ann"}},{"t":"@","n":"TestBadge","k":3}]}`)
 	gtx := testGtx(500, 500)
 	d := v.Layout(gtx, nodes, "MessageSender", Props{"name": "Ann"}, native)
-	if d.Size.X != 84 || d.Size.Y != 20 {
-		t.Errorf("dims %v, want 84x20", d.Size)
+	// The row sits on a line with the font's strut, so its height is
+	// max(native's 15px above the baseline, ascent) + max(5px below,
+	// descent): derived from the shaper, since system font metrics differ
+	// between runners (Ubuntu 22.04 measures 21, 24.04 20), ±1px rounding.
+	row := byID(v, "row")
+	asc, desc, _, _ := v.metrics(&row.st)
+	wantH := float32(math.Max(15, float64(asc)) + math.Max(5, float64(desc)))
+	if d.Size.X != 84 || math.Abs(float64(float32(d.Size.Y)-wantH)) > 1 {
+		t.Errorf("dims %v, want 84x%.1f (±1)", d.Size, wantH)
 	}
 	if v.fr.native != nil || v.fr.orig != nil {
 		t.Error("frame retained native/orig")
