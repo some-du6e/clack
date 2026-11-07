@@ -468,6 +468,10 @@ type ComposerContext struct {
 	ChannelID string             `json:"channelId,omitempty"`
 	ThreadTs  string             `json:"threadTs,omitempty"`
 	Broadcast *ComposerBroadcast `json:"broadcast,omitempty"`
+	// Blocks and Text are the message being sent (for send checks that
+	// read it, like Slick's addSendCheck(blocks, context)).
+	Blocks json.RawMessage `json:"blocks,omitempty"`
+	Text   string          `json:"text,omitempty"`
 }
 
 // ComposerBroadcast is the "Also send to #channel" checkbox; Set is a Go
