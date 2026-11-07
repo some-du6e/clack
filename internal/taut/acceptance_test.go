@@ -193,6 +193,45 @@ var checks = map[string]pluginCheck{
 			t.Errorf("no restriction patches: %+v", in)
 		}
 	},
+	"UserPronouns": func(t *testing.T, h *harness) {
+		// the thread header: pronouns after the sender
+		nodes := h.render(3, "ThreadSenderAndTimestampGeneric", map[string]any{"msg": map[string]any{"user": "UALICE", "ts": "1700000001.000100"}})
+		if findNative(nodes, "ThreadSenderAndTimestampGeneric") == nil || !strings.Contains(treeText(nodes), "she/her") {
+			t.Errorf("thread header %v", nodes)
+		}
+		// the channel header gets the pronouns spliced in after the timestamp slot
+		nodes = h.render(4, "BaseBroadcastPreamble", map[string]any{
+			"msg": map[string]any{"user": "UALICE"},
+			"children": []any{
+				map[string]any{"$slot": 1, "n": "MessageSender", "p": map[string]any{"isInteractive": true}},
+				map[string]any{"$slot": 2, "n": "MessageTimestamp", "p": map[string]any{"clickable": true}},
+			},
+		})
+		pre := findNative(nodes, "BaseBroadcastPreamble")
+		if pre == nil || findNative(nodes, "MessageSender") == nil || findNative(nodes, "MessageTimestamp") == nil || !strings.Contains(treeText(nodes), "she/her") {
+			t.Errorf("preamble %v", nodes)
+		}
+		// someone without pronouns gets none
+		nodes = h.render(5, "ThreadSenderAndTimestampGeneric", map[string]any{"msg": map[string]any{"user": "UBOB"}})
+		if strings.Contains(treeText(nodes), "/") {
+			t.Errorf("pronouns for bob: %q", treeText(nodes))
+		}
+	},
+	"Experiments": func(t *testing.T, h *harness) {
+		tabs := h.tt.PreferencesTabs()
+		if len(tabs) != 1 || tabs[0].Label != "Experiments" {
+			t.Fatalf("tabs %+v", tabs)
+		}
+		h.ui.mu.Lock()
+		delete(h.ui.trees, 6)
+		h.ui.mu.Unlock()
+		h.tt.Bridge().RenderPreferencesTab(6, tabs[0].ID)
+		eventually(t, 5*time.Second, "the Experiments tab", func() bool {
+			h.ui.mu.Lock()
+			defer h.ui.mu.Unlock()
+			return len(h.ui.trees[6]) > 2
+		})
+	},
 	"OfficeHours": func(t *testing.T, h *harness) {
 		if len(h.tt.PreferencesTabs()) == 0 && len(h.introspect().Components) == 0 && len(h.introspect().Tabs) == 0 {
 			t.Log("office hours registered no UI with default config")
@@ -240,7 +279,7 @@ ShutUpSlackbot | thunks=showNotification rtm=message
 SilentTyping | thunks=currentUserStartedTyping buttons=taut-silent-typing
 SlackFixes | components=ThreadFlexpaneAdminTools styles=2
 SlimMessageBox | components=TextyButtons buttons=taut-broadcast styles=3
-StreamerMode | styles=1
+StreamerMode | components=MessageBackground,ActivityItem,ActivityPrivacyBlurredName,HelpButton thunks=showNotification styles=1
 ThreadJump | components=ThreadSearchButton slices=experiments styles=1 exp=find_in_thread
 UserPronouns | components=BaseBroadcastPreamble,ThreadSenderAndTimestampGeneric styles=1
 WhoReacted | components=Reaction,UnstyledButton styles=1
