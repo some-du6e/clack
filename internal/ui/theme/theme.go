@@ -385,8 +385,12 @@ func Shadow(gtx layout.Context, r image.Rectangle, radius int, spread int, c col
 		if a == 0 {
 			continue
 		}
-		rr := clip.UniformRRect(r.Inset(-i), radius+i)
-		paint.FillShape(gtx.Ops, color.NRGBA{R: c.R, G: c.G, B: c.B, A: a}, clip.Stroke{Path: rr.Path(gtx.Ops), Width: 1.5}.Op())
+		// cached ring path at the origin (stable op identity: Gio
+		// tessellates each ring once, not every frame; see PathPen)
+		ri := r.Inset(-i)
+		t := op.Offset(ri.Min).Push(gtx.Ops)
+		paint.FillShape(gtx.Ops, color.NRGBA{R: c.R, G: c.G, B: c.B, A: a}, clip.Stroke{Path: RRectPath(ri.Dx(), ri.Dy(), radius+i), Width: 1.5}.Op())
+		t.Pop()
 	}
 }
 
