@@ -422,6 +422,7 @@ func Deliver(root uint64, tree []byte) error {
 		}
 		return nil
 	}
+	logTree(in.name, root, nodes)
 	if in.sub != nil {
 		in.sub.mu.Lock()
 		in.sub.tree = nodes
