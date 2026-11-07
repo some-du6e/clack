@@ -494,10 +494,10 @@ func (d *Directories) startJoin(ch core.ChannelHit, join bool) {
 	d.opSeq[ch.ID]++
 	d.member[ch.ID] = join
 	o := &dirJoinOp{id: ch.ID, name: ch.Name, join: join, prev: ch.IsMember}
-	c, id := d.h.Core(), ch.ID
+	c, id, tt := d.h.Core(), ch.ID, d.tt
 	o.a.load(d.h, false, func(ctx context.Context) (bool, error) {
 		if join {
-			_, err := c.Join(ctx, id)
+			err := joinChannelThunk(ctx, tt, c, id)
 			return err == nil, err
 		}
 		return true, c.Leave(ctx, id)
@@ -902,6 +902,7 @@ func (d *Directories) peopleTab(gtx C) D {
 // 2 lines) followed by presence and status emoji, then "title · pronouns"
 // (13/18, 3 lines). Hover adds a soft shadow and a #1d1c1d@.04 overlay.
 func (d *Directories) personCard(gtx C, u core.User, w, h int) D {
+	u = d.viewUser(u)
 	c := dirClick(d.cards, u.ID)
 	if c.Clicked(gtx) {
 		d.h.OpenProfile(d.press.at, u.ID)

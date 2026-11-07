@@ -1051,7 +1051,7 @@ func (a *todoAdd) body(gtx C) D {
 							layout.Rigid(func(gtx C) D {
 								return l.para(gtx, 13, 18, wBold, l.p.Muted, 1, l.convTitle(it.Channel, v.page.Convs)+" · "+name)
 							}),
-							layout.Rigid(func(gtx C) D { return l.para(gtx, 15, 22, wReg, l.p.Text, 1, preview(it.Msg)) }),
+							layout.Rigid(func(gtx C) D { return l.para(gtx, 15, 22, wReg, l.p.Text, 1, l.preview(it.Msg)) }),
 						)
 					}),
 					hgap(8),

@@ -975,7 +975,7 @@ func (d *DMs) dmRow(gtx C, dm *core.DM) D {
 	when, txt := "", ""
 	if dm.Latest != nil {
 		when = listTime(tsTime(dm.Latest.TS))
-		txt = preview(dm.Latest)
+		txt = d.preview(dm.Latest)
 		if dm.Latest.User != "" && dm.Latest.User == self {
 			txt = "You: " + txt
 		}
@@ -1189,6 +1189,7 @@ func (d *DMs) dmsPill(gtx C, n int) D {
 }
 
 func (d *DMs) personRow(gtx C, u core.User) D {
+	u = d.viewUser(u)
 	c := d.personClick(u.ID)
 	sub := u.RealName
 	if sub == "" || sub == displayName(u) {

@@ -802,7 +802,7 @@ func (v *Activity) describe(it *core.ActivityItem, refs map[string]core.ConvRef)
 		}
 	}
 	d.name, d.avatar = name, av
-	d.prev = preview(it.Msg)
+	d.prev = v.preview(it.Msg)
 	switch {
 	case actIsMention(it.Type):
 		d.footIcon = "at"
@@ -868,6 +868,9 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 		q = ""
 	}
 	dm := v.dmOnly()
+	// plugins' member/channel/message patches land asynchronously: re-derive
+	// row text while any is active (otherwise rows stay cached).
+	patchedViews := v.viewsPatched()
 	dots := v.tabs.Sel == 0 && v.filterCount() == 0
 	if dots {
 		v.dots = [4]int{}
@@ -876,7 +879,7 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 		it := &page.Items[i]
 		key := actKey(it)
 		r := v.rowFor(key)
-		if !r.built {
+		if !r.built || patchedViews {
 			r.d, r.built = v.describe(it, page.Convs), true
 		}
 		// cleared: true = cleared here (hide from the inbox), false =

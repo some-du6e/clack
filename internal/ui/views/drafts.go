@@ -1162,12 +1162,13 @@ func (d *Drafts) deleteDraft(dr *core.Draft) {
 		msg = "Scheduled message deleted"
 	}
 	d.remove(id)
+	tt := d.tt
 	d.run(draftsDone{okMsg: msg, errMsg: "Couldn’t delete that", unhide: []string{id}},
 		func(ctx context.Context, c *core.App) (*core.Draft, error) {
 			if sched {
 				return nil, c.DeleteScheduled(ctx, ch, id)
 			}
-			return nil, c.DeleteDraft(ctx, id)
+			return nil, deleteDraftThunk(ctx, tt, c, id, ch)
 		})
 }
 
@@ -1236,15 +1237,10 @@ func (d *Drafts) deleteSelected() {
 	}
 	d.remove(ids...)
 	d.endSelect()
+	tt := d.tt
 	d.run(draftsDone{okMsg: "Deleted " + plural(len(ids), "draft"), errMsg: "Couldn’t delete every draft", unhide: ids},
 		func(ctx context.Context, c *core.App) (*core.Draft, error) {
-			var first error
-			for _, id := range ids {
-				if err := c.DeleteDraft(ctx, id); err != nil && first == nil {
-					first = err
-				}
-			}
-			return nil, first
+			return nil, clearDraftsThunk(ctx, tt, c, ids)
 		})
 }
 
@@ -1546,7 +1542,7 @@ func (d *Drafts) sentRow(gtx C, m *core.Message, first, last bool) D {
 	}
 	dst := d.destOf(m.Channel, nil, thread, d.sentConvs)
 	when := clock(tsTime(m.TS))
-	prev := preview(m)
+	prev := d.preview(m)
 	return layout.Inset{Left: draftsMargin, Right: draftsMargin}.Layout(gtx, func(gtx C) D {
 		return r.click.Layout(gtx, func(gtx C) D {
 			pointerCursor(gtx)
