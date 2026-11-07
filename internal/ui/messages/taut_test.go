@@ -493,8 +493,8 @@ func TestPluginWhoReacted(t *testing.T) {
 		u.mu.Lock()
 		for root, tr := range u.trees {
 			s := string(tr)
-			if len(s) > 600 {
-				s = s[:600] + "…"
+			if len(s) > 4000 {
+				s = s[:4000] + "…"
 			}
 			t.Logf("tree %d: %s", root, s)
 		}
