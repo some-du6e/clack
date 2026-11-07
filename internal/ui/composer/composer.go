@@ -204,7 +204,9 @@ func (c *Composer) Layout(gtx layout.Context) layout.Dimensions {
 		dims = slackc.Component(gtx, "MessagePaneInput", c, (*Composer).paneProps, (*Composer).layoutPane)
 	}
 
-	// Autocomplete after the editor laid out, anchored at the trigger.
+	// Autocomplete after the editor laid out, anchored at the trigger,
+	// with what plugins changed on TextyAutocomplete.
+	c.ac.setOverrides(c.ui.f.acP)
 	c.ac.Update(c.ed.Doc(), caretOf(c.ed))
 	c.acceptAutocomplete()
 	if c.ac.Open() && c.drewInput {
@@ -324,6 +326,11 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 		DraftID:        c.draftID(),
 		ViewContext:    c.viewContext(),
 		Count:          c.ed.Doc().Len(),
+	}
+	if lo, hi := c.ed.Selection(); lo <= hi {
+		st.SelLo, st.SelN = lo, hi-lo
+	} else {
+		st.SelLo, st.SelN = hi, lo-hi
 	}
 	st.InCode = st.Block == CodeBlock
 	st.ShowPlaceholder = c.ed.Empty() && c.ed.Doc().Len() == 0

@@ -108,6 +108,8 @@ type chromeState struct {
 	NoBroadcast bool
 	SquareTop   bool
 	Count       int // characters in the message (CharacterCount)
+	SelLo       int // selection start (TextyInput's quill.getSelection)
+	SelN        int // selected characters
 	// TypingIDs / TypingNames: who Typing names, sorted by name.
 	TypingIDs, TypingNames []string
 }

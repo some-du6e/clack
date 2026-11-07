@@ -23,6 +23,7 @@ type crFrame struct {
 	h          Host
 	inputP     slackc.Props // MessageInput's props under a patch (nil: none)
 	wysP       slackc.Props // WysiwygContainer's
+	acP        slackc.Props // TextyAutocomplete's (Composer.Layout applies them)
 	input, att layout.Widget
 
 	W, maxY, margin, hintH int
@@ -203,6 +204,7 @@ func (c *chrome) textyProps() slackc.Props {
 	p["completeOnEmoji"] = true
 	p["completeOnMembers"] = true
 	p["completeOnChannels"] = true
+	p["children"] = []any{slackc.Child("TextyAutocomplete", c.textyACProps(), c.layoutTextyAC)}
 	return p
 }
 
@@ -222,6 +224,49 @@ func (c *chrome) layoutTexty(gtx layout.Context, p slackc.Props) layout.Dimensio
 	}
 	qs := crQuillClass.Enter(gtx, cs, 0)
 	defer qs.Leave()
+	if e, patched := kid(p, "TextyAutocomplete"); patched {
+		return slackc.LayoutElement(gtx, e)
+	}
+	return slackc.Component(gtx, "TextyAutocomplete", c, (*chrome).textyACProps, (*chrome).layoutTextyAC)
+}
+
+// TextyAutocomplete: the editor with its @ # : autocomplete (Slack's
+// memo between TextyInputWithAutocomplete and TextyInput). Its native
+// records what a plugin changed for the composer's Autocomplete
+// (Composer.Layout applies it): includeAllBroadcastKeywords (bChannel
+// offers every broadcast keyword) and disallowedResults (ids BetterBlock
+// hides from the rows).
+func (c *chrome) textyACProps() slackc.Props {
+	p := c.props()
+	p["completeOnEmoji"] = true
+	p["completeOnMembers"] = true
+	p["completeOnChannels"] = true
+	p["includeAllBroadcastKeywords"] = false
+	p["disallowedResults"] = []any{}
+	p["children"] = []any{slackc.Child("TextyInput", c.textyInputProps(), c.layoutTextyInput)}
+	return p
+}
+
+func (c *chrome) layoutTextyAC(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	c.f.acP = p
+	if e, patched := kid(p, "TextyInput"); patched {
+		return slackc.LayoutElement(gtx, e)
+	}
+	return slackc.Component(gtx, "TextyInput", c, (*chrome).textyInputProps, (*chrome).layoutTextyInput)
+}
+
+// TextyInput: the editor itself. In JS it has Slack's shape (plugins.js):
+// a memo of a class with getNumCharsOverLimit, whose ref exposes a
+// Quill-like editor fed from $texty (CharacterCounter counts with it).
+func (c *chrome) textyInputProps() slackc.Props {
+	p := c.props()
+	p["maxLength"] = MaxMessageLength
+	p["placeholder"] = c.cur.Placeholder
+	p["$texty"] = slackc.Props{"length": c.cur.Count, "index": c.cur.SelLo, "selected": c.cur.SelN}
+	return p
+}
+
+func (c *chrome) layoutTextyInput(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	if c.f.input == nil {
 		return layout.Dimensions{}
 	}
