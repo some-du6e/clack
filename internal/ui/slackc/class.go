@@ -78,6 +78,7 @@ type nativeEl struct {
 	st     css.State
 	attrK  string
 	attrV  string
+	extra  []string
 	parent css.Element
 }
 
@@ -94,13 +95,19 @@ func (e *nativeEl) HasClass(c string) bool {
 			return true
 		}
 	}
+	for _, x := range e.extra {
+		if x == c {
+			return true
+		}
+	}
 	return false
 }
 func (e *nativeEl) Classes() []string {
-	if e.mods == 0 {
+	if e.mods == 0 && len(e.extra) == 0 {
 		return e.def.classes
 	}
 	out := append([]string(nil), e.def.classes...)
+	out = append(out, e.extra...)
 	for i, x := range e.def.mods {
 		if e.mods&(1<<uint(i)) != 0 {
 			out = append(out, x)
@@ -162,6 +169,7 @@ type nsKey struct {
 	st     css.State
 	attrK  string
 	attrV  string
+	extra  string
 	parent uint64
 }
 
@@ -181,6 +189,16 @@ func (d *ClassDef) Enter(gtx layout.Context, st css.State, mods uint64) Styled {
 	return d.enter(st, mods, "", "")
 }
 
+// EnterClass is Enter with extra classes known only at run time, such as
+// the className a plugin passed to <Original className=…> (StreamerMode,
+// IdvStatus, OwlMode). extra is a space-separated list; "" is Enter.
+func (d *ClassDef) EnterClass(gtx layout.Context, st css.State, mods uint64, extra string) Styled {
+	if Styles.Empty() {
+		return Styled{}
+	}
+	return d.enterX(st, mods, "", "", extra)
+}
+
 // EnterAttr is Enter with one dynamic attribute, e.g.
 // ("data-qa-channel-sidebar-channel-id", "C123").
 func (d *ClassDef) EnterAttr(gtx layout.Context, st css.State, mods uint64, name, value string) Styled {
@@ -191,11 +209,15 @@ func (d *ClassDef) EnterAttr(gtx layout.Context, st css.State, mods uint64, name
 }
 
 func (d *ClassDef) enter(st css.State, mods uint64, ak, av string) Styled {
+	return d.enterX(st, mods, ak, av, "")
+}
+
+func (d *ClassDef) enterX(st css.State, mods uint64, ak, av, extra string) Styled {
 	var parent *stackEntry
 	if len(stack) > 0 {
 		parent = &stack[len(stack)-1]
 	}
-	k := nsKey{def: d, mods: mods, st: st, attrK: ak, attrV: av}
+	k := nsKey{def: d, mods: mods, st: st, attrK: ak, attrV: av, extra: extra}
 	if parent != nil {
 		k.parent = parent.key
 	}
@@ -217,7 +239,7 @@ func lookupNative(k nsKey, parent *stackEntry) *nativeStyle {
 	if ns != nil {
 		return ns
 	}
-	ns = &nativeStyle{el: nativeEl{def: k.def, mods: k.mods, st: k.st, attrK: k.attrK, attrV: k.attrV}}
+	ns = &nativeStyle{el: nativeEl{def: k.def, mods: k.mods, st: k.st, attrK: k.attrK, attrV: k.attrV, extra: strings.Fields(k.extra)}}
 	var ps *css.Style
 	var pinh propSet
 	if parent != nil {
@@ -496,5 +518,12 @@ func propsOf(c *css.Cascaded) propSet {
 			s |= b
 		}
 	}
+	return s
+}
+
+// ExtraClass is the className a plugin passed to <Original className=…>
+// (nil-safe; "" when unpatched), for ClassDef.EnterClass.
+func ExtraClass(p Props) string {
+	s, _ := p["className"].(string)
 	return s
 }
