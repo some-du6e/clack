@@ -381,25 +381,6 @@ func TestSlickViewChatTabs(t *testing.T) {
 
 	// #random's row inside ChatTabs' channel context: its trigger gets
 	// ChatTabs' getTemplate (a JS function wrapping Clack's)
-	if !e.wait(3*time.Second, func() bool { return e.a.sbMenu.gts[svRandom].ID != 0 }) {
-		// what Go hands the nested trigger, and what came back
-		for i := range e.a.sidebar.rows {
-			if r := &e.a.sidebar.rows[i]; r.kind == sbConv && r.key == svRandom {
-				row := sbConvRow{a: e.a, r: r, btn: e.a.clicks.get("sbr." + svRandom), rs: sbRowState{conv: e.a.model().conv(svRandom)}}
-				cm := row.ctxMenuProps()
-				sl, _ := cm["children"].(slackc.Slot)
-				t.Logf("Go: ctxMenu children %T, trigger getTemplate %T %v", cm["children"], sl.Props["getTemplate"], sl.Props["getTemplate"])
-			}
-		}
-		e.mu.Lock()
-		for root, tr := range e.trees {
-			s := string(tr)
-			if j := strings.Index(s, `"ct:`+svRandom); j >= 0 {
-				t.Logf("tree %d trigger: %s", root, s[max(j-120, 0):min(j+700, len(s))])
-			}
-		}
-		e.mu.Unlock()
-	}
 	e.until(8*time.Second, "ChatTabs' getTemplate on #random's trigger", func() bool {
 		return e.tree(`"$key":"ct:`+svRandom+`"`, `"getTemplate":{"$fn"`) != "" && e.a.sbMenu.gts[svRandom].ID != 0
 	})
