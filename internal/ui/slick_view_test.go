@@ -358,6 +358,31 @@ func TestSlickViewChannelListTyping(t *testing.T) {
 	if e.tree("slick-channel-typing", `"channelId":"`+ttGen+`"`) != "" {
 		t.Error("the indicator shows in #general too, where nobody types")
 	}
+
+	// where it is drawn: Slack's suffix sits at the row's right edge
+	// (before the mention badge; #random has none), not right after the
+	// name, and is only as wide as the indicator
+	var g sbSuffixGeom
+	sbSuffixTap = func(ch string, x sbSuffixGeom) {
+		if ch == svRandom {
+			g = x
+		}
+	}
+	t.Cleanup(func() { sbSuffixTap = nil })
+	e.until(3*time.Second, "#random's suffix laid out with the indicator", func() bool { return g.X1 > g.X0 })
+	t.Logf("#random's row: name ends at %d, suffix [%d, %d), suffix area ends at %d, row %d wide", g.NameEnd, g.X0, g.X1, g.Right, g.RowW)
+	if g.X1 != g.Right {
+		t.Errorf("the indicator ends at x=%d, not at the suffix area's right edge %d", g.X1, g.Right)
+	}
+	if g.RowW-g.Right > 10 {
+		t.Errorf("the suffix area ends at x=%d, %dpx short of the row's right edge (%d) with no badge", g.Right, g.RowW-g.Right, g.RowW)
+	}
+	if g.X0 < g.NameEnd+24 {
+		t.Errorf("the indicator starts at x=%d, right after the name (ends at %d), not at the row's right part", g.X0, g.NameEnd)
+	}
+	if w := g.X1 - g.X0; w > g.RowW/3 {
+		t.Errorf("the indicator is %dpx wide in a %dpx row: it fills the row instead of fitting its content", w, g.RowW)
+	}
 }
 
 // ChatTabs: its tab bar over the primary view, its "Open in new Slick
