@@ -121,3 +121,33 @@ func TestOriginalKeepsSlot(t *testing.T) {
 		t.Errorf("a fresh instance inherited the slot: %v", p1)
 	}
 }
+
+// Slack's store keeps a slice's keys on its prototype, at both levels of
+// messages, and LastSeen scans them there; Clack's proxy reported
+// Object.prototype, so LastSeen never saw a cached message.
+func TestSliceKeysOnPrototype(t *testing.T) {
+	h := newHarness(t)
+	var got struct {
+		Channels []string
+		TS       []string
+		User     string
+		Members  bool
+	}
+	h.jsInto(`
+		const st = T.redux.getStore().getState()
+		const keys = (v) => Object.keys(Object.getPrototypeOf(v))
+		const chs = keys(st.messages)
+		const b = st.messages['`+chGen+`']
+		return { Channels: chs, TS: keys(b), User: b['1700000001.000100']?.user ?? '', Members: keys(st.members).includes('UALICE') }`, &got)
+	found := false
+	for _, c := range got.Channels {
+		found = found || c == chGen
+	}
+	tsFound := false
+	for _, ts := range got.TS {
+		tsFound = tsFound || ts == "1700000001.000100"
+	}
+	if !found || !tsFound || got.User == "" || !got.Members {
+		t.Errorf("keys on the prototype: %+v", got)
+	}
+}
