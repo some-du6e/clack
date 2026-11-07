@@ -67,6 +67,7 @@ func (f *fakeSlack) last(method string) url.Values {
 func testApp(t *testing.T) (*App, *fakeSlack) {
 	f := newFake(t)
 	c := slack.New(slack.Creds{Token: "xoxc-test", UserID: "USELF", Team: "T1", TeamURL: f.srv.URL + "/"})
+	c.EdgeURL = f.srv.URL + "/edge/" // never reach the real edge API from tests
 	s := store.New("")
 	s.PutUsers([]slack.User{
 		{ID: "USELF", Name: "me", Profile: slack.Profile{DisplayName: "Me", AvatarHash: "h1"}},
@@ -324,8 +325,11 @@ func TestHistoryFromCacheAndMarks(t *testing.T) {
 	if err != nil || len(p.Messages) != 2 || !p.HasMore || p.Conv == nil || p.Conv.Name != "general" || p.LastRead != "1.000003" {
 		t.Fatalf("history: %+v %v", p, err)
 	}
-	if len(f.calls) != 0 {
-		t.Errorf("cached history made calls: %v", f.calls)
+	for _, m := range f.calls { // only the member count (edge users/counts) may be fetched
+		if m != "counts" {
+			t.Errorf("cached history made calls: %v", f.calls)
+			break
+		}
 	}
 	cv, err := a.MarkUnread(context.Background(), "C1", "1.000003")
 	if err != nil || !cv.Unread {

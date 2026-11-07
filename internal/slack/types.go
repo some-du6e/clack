@@ -23,6 +23,8 @@ type Message struct {
 	Files          []File          `json:"files,omitempty"`
 	Blocks         json.RawMessage `json:"blocks,omitempty"`
 	Attachments    []Attachment    `json:"attachments,omitempty"`
+	RawAttachments json.RawMessage `json:"-"`                  // attachments exactly as Slack sent them (memory only)
+	Metadata       json.RawMessage `json:"metadata,omitempty"` // app metadata {event_type, event_payload}
 	Icons          *Icons          `json:"icons,omitempty"`
 	BotProfile     *BotProfile     `json:"bot_profile,omitempty"`
 	PinnedTo       []string        `json:"pinned_to,omitempty"`
@@ -69,6 +71,8 @@ type BotProfile struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
 	AppID   string `json:"app_id"`
+	UserID  string `json:"user_id,omitempty"`
+	TeamID  string `json:"team_id,omitempty"`
 	Icons   Icons  `json:"icons"`
 	Deleted bool   `json:"deleted"`
 }
@@ -284,4 +288,25 @@ type Counts struct {
 	IMs           []CountEntry    `json:"ims"`
 	ChannelBadges map[string]int  `json:"channel_badges"`
 	Saved         json.RawMessage `json:"saved"`
+}
+
+// UnmarshalJSON decodes a message and keeps the raw attachments JSON (for
+// plugins that need fields the typed Attachment drops). Malformed
+// attachments no longer fail the whole message.
+func (m *Message) UnmarshalJSON(b []byte) error {
+	type plain Message
+	aux := struct {
+		*plain
+		RawAtt json.RawMessage `json:"attachments,omitempty"`
+	}{plain: (*plain)(m)}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	m.Attachments = nil
+	m.RawAttachments = nil
+	if len(aux.RawAtt) > 0 && string(aux.RawAtt) != "null" {
+		m.RawAttachments = append(json.RawMessage(nil), aux.RawAtt...)
+		_ = json.Unmarshal(aux.RawAtt, &m.Attachments)
+	}
+	return nil
 }

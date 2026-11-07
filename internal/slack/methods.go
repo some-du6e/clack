@@ -100,7 +100,7 @@ type HistoryPage struct {
 }
 
 func (c *Client) History(ctx context.Context, ch string, o HistoryOpts) (*HistoryPage, error) {
-	p := url.Values{"channel": {ch}, "include_pin_count": {"true"}}
+	p := url.Values{"channel": {ch}, "include_pin_count": {"true"}, "include_all_metadata": {"true"}}
 	if o.Limit == 0 {
 		o.Limit = 50
 	}
@@ -120,7 +120,7 @@ func (c *Client) History(ctx context.Context, ch string, o HistoryOpts) (*Histor
 }
 
 func (c *Client) Replies(ctx context.Context, ch, ts, cursor string) ([]Message, string, error) {
-	p := url.Values{"channel": {ch}, "ts": {ts}, "limit": {"200"}}
+	p := url.Values{"channel": {ch}, "ts": {ts}, "limit": {"200"}, "include_all_metadata": {"true"}}
 	if cursor != "" {
 		p.Set("cursor", cursor)
 	}

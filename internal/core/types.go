@@ -36,6 +36,18 @@ type Message struct {
 	Reactions                []Reaction
 	Huddle                   json.RawMessage
 	Doc                      richtext.Doc
+	// Raw Slack data for plugins (Taut): memory only, never written to disk.
+	Blocks      json.RawMessage // Block Kit blocks as sent
+	Attachments json.RawMessage // legacy attachments / unfurls as sent
+	Metadata    json.RawMessage // app metadata {event_type, event_payload}
+	BotProfile  *BotProfile     // bot_profile of bot messages
+}
+
+// BotProfile is the bot_profile Slack attaches to app messages.
+type BotProfile struct {
+	ID, Name, AppID, UserID, TeamID string
+	Icon                            string // best icon URL
+	Deleted                         bool
 }
 
 type Reaction struct {

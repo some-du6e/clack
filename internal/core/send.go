@@ -184,7 +184,7 @@ func (a *App) Resend(ctx context.Context, ch, clientMsgID string) (Message, erro
 		return Message{}, errors.New("core: no failed message to resend")
 	}
 	a.DiscardPending(ch, clientMsgID)
-	return a.send(ctx, p.opts, clientMsgID)
+	return a.send(slack.NoBackoff(ctx), p.opts, clientMsgID) // a user retry: skip the backoff window
 }
 
 // DiscardPending drops a pending or failed local message (emits "delete").
