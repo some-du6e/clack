@@ -370,6 +370,12 @@ func TestSlickViewChatTabs(t *testing.T) {
 		t.Error("the channel view didn't draw inside the patched primary view")
 	}
 
+	// #random's row inside ChatTabs' channel context: its trigger gets
+	// ChatTabs' getTemplate (a JS function wrapping Clack's)
+	e.until(8*time.Second, "ChatTabs' getTemplate on #random's trigger", func() bool {
+		return e.tree(`"$key":"ct:`+svRandom+`"`, `"getTemplate":{"$fn"`) != "" && e.a.sbMenu.gts[svRandom].ID != 0
+	})
+
 	// right-click #random in the sidebar
 	e.rightClick(svRandom)
 	e.until(5*time.Second, "#random's context menu", func() bool { return e.lastMenu(svRandom) != nil })
