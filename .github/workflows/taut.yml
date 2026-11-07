@@ -30,7 +30,7 @@ jobs:
           git -C /tmp/taut checkout -q "${{ inputs.ref || 'main' }}"
           echo "TAUT_SHA=$(git -C /tmp/taut rev-parse HEAD)" >> "$GITHUB_ENV"
           git -C /tmp/taut log --oneline -1
-      - name: install taut deps (no scripts: no electron download)
+      - name: "install taut deps (no scripts, so no electron download)"
         working-directory: /tmp/taut
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: build:user-plugin for every plugin
