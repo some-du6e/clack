@@ -97,6 +97,7 @@ type listState struct {
 	tbRect   image.Rectangle
 	tbFor    int
 	jump     widget.Clickable
+	retryBtn widget.Clickable
 	closeBtn widget.Clickable
 
 	tip     string
@@ -412,10 +413,8 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	event.Op(gtx.Ops, s)
 
 	if !s.snap.loaded && len(s.snap.msgs) == 0 {
-		if s.snap.err != nil {
-			at(gtx, dp(gtx, mt.padX), dp(gtx, 20), func(gtx layout.Context) layout.Dimensions {
-				return label(gtx, th, textStyle{size: 15, col: c.Text2}, "Couldn't load messages: "+s.snap.err.Error())
-			})
+		if s.snap.err != nil && !s.snap.loading {
+			s.layoutLoadError(gtx, h, c, size)
 		} else {
 			y := size.Y
 			for i := 0; y > 0; i++ {
@@ -1323,4 +1322,32 @@ func (s *listState) closeEdits() {
 		}
 		r.edit = nil
 	}
+}
+
+// layoutLoadError is Slack's "Couldn't load messages · Retry", centered in
+// the pane. Loads back off on their own (hub.backoff); Retry loads now.
+func (s *listState) layoutLoadError(gtx layout.Context, h Host, c *colors, size image.Point) {
+	th := h.Theme()
+	if s.retryBtn.Clicked(gtx) {
+		s.hb.retry(s.m)
+	}
+	st := textStyle{size: 15, col: c.Text2, lineH: 22}
+	lk := textStyle{size: 15, weight: theme.Bold, col: c.Link, lineH: 22}
+	msg, sep, link := "Couldn't load messages", " · ", "Retry"
+	w := measure(gtx, th, st, msg).X + measure(gtx, th, st, sep).X + measure(gtx, th, lk, link).X
+	x, y := (size.X-w)/2, size.Y/2-dp(gtx, 11)
+	d := at(gtx, x, y, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, st, msg) })
+	x += d.Size.X
+	d = at(gtx, x, y, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, st, sep) })
+	x += d.Size.X
+	at(gtx, x, y, func(gtx layout.Context) layout.Dimensions {
+		return s.retryBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			dd := label(gtx, th, lk, link)
+			if s.retryBtn.Hovered() {
+				base := dd.Size.Y - dd.Baseline
+				fill(gtx.Ops, image.Rect(0, base+dp(gtx, 1), dd.Size.X, base+dp(gtx, 2)), c.Link)
+			}
+			return dd
+		})
+	})
 }

@@ -37,11 +37,13 @@ const (
 	tsFair = "1700000001.000100"
 	tsTada = "1700000002.000200"
 	tsMine = "1700000003.000300"
+	tEmpty = "C0NOTCACHED" // no cached history: opening it calls conversations.history
 )
 
 type fakeSlack struct {
 	srv   *httptest.Server
 	mu    sync.Mutex
+	fail  map[string]string // method -> Slack error code to answer with
 	calls []struct {
 		method string
 		form   url.Values
@@ -61,7 +63,7 @@ func (f *fakeSlack) called(method string) []url.Values {
 }
 
 func newTestApp(t testing.TB) (*core.App, *fakeSlack) {
-	f := &fakeSlack{}
+	f := &fakeSlack{fail: map[string]string{}}
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseMultipartForm(8 << 20)
 		f.mu.Lock()
@@ -69,8 +71,13 @@ func newTestApp(t testing.TB) (*core.App, *fakeSlack) {
 			method string
 			form   url.Values
 		}{strings.TrimPrefix(r.URL.Path, "/api/"), r.Form})
+		code := f.fail[strings.TrimPrefix(r.URL.Path, "/api/")]
 		f.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
+		if code != "" {
+			_, _ = w.Write([]byte(`{"ok":false,"error":"` + code + `"}`))
+			return
+		}
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 	t.Cleanup(f.srv.Close)
@@ -88,6 +95,7 @@ func newTestApp(t testing.TB) (*core.App, *fakeSlack) {
 	})
 	s.PutConv(slack.Conversation{ID: tGen, Name: "general", IsChannel: true, IsMember: true, IsGeneral: true, NumMembers: 3})
 	s.PutConv(slack.Conversation{ID: tBotDM, IsIM: true, User: tBot, IsMember: true})
+	s.PutConv(slack.Conversation{ID: tEmpty, Name: "not-cached", IsChannel: true, IsMember: true, NumMembers: 2})
 	s.SetLatest(tGen, []slack.Message{
 		{Type: "message", TS: tsFair, User: "UALICE", Text: "the job fair is today", ReplyCount: 1, ThreadTS: tsFair, LatestReply: "1700000004.000400", ReplyUsers: []string{"UBOB"}},
 		{Type: "message", TS: tsTada, User: "UBOB", Text: "synthetic tada", Reactions: []slack.Reaction{{Name: "tada", Count: 2, Users: []string{"UALICE", tSelf}}}},

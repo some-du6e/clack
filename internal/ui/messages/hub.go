@@ -3,7 +3,9 @@ package messages
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
@@ -40,6 +42,51 @@ type model struct {
 	refreshQ bool
 	renames  [][2]string // pending ts -> confirmed ts, consumed by views
 	jump     string      // a reply to scroll to (taut jumpToReply), consumed by views
+
+	// failed loads back off (see backoff); no retries at all after auth fails
+	fails, olderFails     int
+	retryAt, olderRetryAt time.Time
+}
+
+// backoff is the wait after the n-th consecutive failed load: 1 s, 2 s,
+// 4 s … capped at maxBackoff.
+func backoff(n int) time.Duration {
+	d := time.Second
+	for i := 1; i < n && d < maxBackoff; i++ {
+		d *= 2
+	}
+	return min(d, maxBackoff)
+}
+
+const maxBackoff = time.Minute
+
+// authError reports Slack errors that mean the session is gone: retrying
+// can't help until the user signs in again.
+func authError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	for _, code := range []string{"invalid_auth", "not_authed", "token_revoked", "token_expired", "account_inactive", "auth_failed"} {
+		if strings.Contains(s, code) {
+			return true
+		}
+	}
+	return false
+}
+
+// failed records a failed load (caller holds m.mu).
+func (m *model) failed(hb *hub, err error, older bool, now time.Time) {
+	if older {
+		m.olderFails++
+		m.olderRetryAt = now.Add(backoff(m.olderFails))
+	} else {
+		m.fails++
+		m.retryAt = now.Add(backoff(m.fails))
+	}
+	if authError(err) {
+		hb.authFailed.Store(true)
+	}
 }
 
 type typingEntry struct {
@@ -54,6 +101,9 @@ type hub struct {
 	chans  map[string]*model
 	thread map[string]*model // key ch + "/" + ts
 	userRv uint64            // bumps on user/presence/emoji events
+	// authFailed stops every load after core's auth_failed (or an auth
+	// error) until the connection comes back or the user hits Retry.
+	authFailed atomic.Bool
 }
 
 var (
@@ -132,8 +182,12 @@ func (hb *hub) evict(ms map[string]*model) {
 // ensureLoaded starts the first load (or a background refresh of a cached
 // model). Never blocks.
 func (hb *hub) ensureLoaded(m *model) {
+	if hb.authFailed.Load() {
+		return
+	}
+	now := time.Now()
 	m.mu.Lock()
-	if m.loading || (m.loaded && time.Since(m.fetched) < 30*time.Second) {
+	if m.loading || (m.loaded && now.Sub(m.fetched) < 30*time.Second) || now.Before(m.retryAt) {
 		m.mu.Unlock()
 		return
 	}
@@ -151,6 +205,9 @@ func (hb *hub) ensureLoaded(m *model) {
 				m.setAll(msgs)
 				m.loaded = true
 				m.fetched = time.Now()
+				m.fails, m.retryAt = 0, time.Time{}
+			} else {
+				m.failed(hb, err, false, time.Now())
 			}
 			m.rev++
 			m.mu.Unlock()
@@ -166,6 +223,9 @@ func (hb *hub) ensureLoaded(m *model) {
 				}
 				m.loaded = true
 				m.fetched = time.Now()
+				m.fails, m.retryAt = 0, time.Time{}
+			} else {
+				m.failed(hb, err, false, time.Now())
 			}
 			m.rev++
 			m.mu.Unlock()
@@ -174,10 +234,23 @@ func (hb *hub) ensureLoaded(m *model) {
 	}()
 }
 
+// retry is the Retry link: forget the backoff (and an auth stop) and load.
+func (hb *hub) retry(m *model) {
+	hb.authFailed.Store(false)
+	m.mu.Lock()
+	m.fails, m.retryAt, m.olderFails, m.olderRetryAt = 0, time.Time{}, 0, time.Time{}
+	m.fetched = time.Time{}
+	m.mu.Unlock()
+	hb.ensureLoaded(m)
+}
+
 // loadOlder fetches the page before the oldest loaded message.
 func (hb *hub) loadOlder(m *model) {
+	if hb.authFailed.Load() {
+		return
+	}
 	m.mu.Lock()
-	if m.older || !m.hasMore || len(m.msgs) == 0 || m.threadTS != "" {
+	if m.older || !m.hasMore || len(m.msgs) == 0 || m.threadTS != "" || time.Now().Before(m.olderRetryAt) {
 		m.mu.Unlock()
 		return
 	}
@@ -194,8 +267,10 @@ func (hb *hub) loadOlder(m *model) {
 		m.older = false
 		if err == nil {
 			m.prepend(p.Messages, p.HasMore)
+			m.olderFails, m.olderRetryAt = 0, time.Time{}
 		} else {
 			m.err = err
+			m.failed(hb, err, true, time.Now())
 		}
 		m.rev++
 		m.mu.Unlock()
@@ -448,7 +523,15 @@ func (hb *hub) apply(ev core.Event) bool {
 		hb.userRv++
 		hb.mu.Unlock()
 		return true
+	case "auth_failed":
+		// core: the session is gone (signed out, token revoked). Stop
+		// loading anything until the connection is back or Retry.
+		hb.authFailed.Store(true)
+		return true
 	case "resync", "connection":
+		if ev.Type == "connection" && ev.Connected {
+			hb.authFailed.Store(false)
+		}
 		hb.mu.Lock()
 		var ms []*model
 		for _, m := range hb.chans {
@@ -461,6 +544,9 @@ func (hb *hub) apply(ev core.Event) bool {
 		for _, m := range ms {
 			m.mu.Lock()
 			m.fetched = time.Time{}
+			if ev.Type == "connection" && ev.Connected {
+				m.fails, m.retryAt, m.olderFails, m.olderRetryAt = 0, time.Time{}, 0, time.Time{}
+			}
 			m.refreshQ = true
 			m.rev++
 			m.mu.Unlock()
