@@ -30,7 +30,7 @@ import (
 // topic) match at ~0.31px, message bodies (15px, ui-messages at 1x and 2x)
 // at ~0.45px.
 const (
-	Embolden     = 0.3 // labels (Text / DrawText), regular weight
+	Embolden     = 0.3  // labels (Text / DrawText), regular weight
 	BodyEmbolden = 0.33 // richview message bodies (BodyEmboldenFor): light bodies were -3% at 0.3 (1x and 2x)
 )
 
