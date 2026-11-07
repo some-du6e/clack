@@ -549,7 +549,11 @@ func (p *SearchPopover) tick(gtx layout.Context) {
 		} else {
 			p.msgFired = true
 			run(p.h, func(ctx context.Context) (core.SearchResult, error) {
-				return c.SearchMessages(ctx, core.SearchOpts{Query: q, Count: 3, Sort: "timestamp"})
+				res, err := c.SearchMessages(ctx, core.SearchOpts{Query: q, Count: 3, Sort: "timestamp"})
+				if err == nil {
+					res.Messages = tautSearchInline(ctx, p.h, q, res.Messages) // free without plugins
+				}
+				return res, err
 			}, func(res core.SearchResult, err error) {
 				if p.done || seq != p.seq || err != nil {
 					return

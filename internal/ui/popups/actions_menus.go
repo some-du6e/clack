@@ -102,10 +102,6 @@ func NewChannelMenu(h Host, anchor image.Point, convID string) *Menu {
 	if dm {
 		noun = "conversation"
 	}
-	if h.Core() != nil { // labels follow the refreshed stars.list
-		run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, cxRefreshStars(ctx, h) },
-			func(struct{}, error) { h.Invalidate() })
-	}
 	starLabel, unstarLabel := "Star "+noun, "Unstar "+noun
 	muteLabel, unmuteLabel := "Mute "+noun, "Unmute "+noun
 	items := []MenuItem{
@@ -156,7 +152,9 @@ func NewChannelMenu(h Host, anchor image.Point, convID string) *Menu {
 			Confirm(h, "Leave #"+name+"?", msg, "Leave channel", true, nil, func() { actLeave(h, convID, "You left #"+name) })
 		}})
 	}
-	return NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(anchor), AlignRight: true})
+	m := NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(anchor), AlignRight: true})
+	tautMenu(h, m, "getContextMenuTemplate", convID) // QuickJoin et al.; free without plugins
+	return m
 }
 
 // actMuteSet remembers mutes done here until core's conversation catches
