@@ -3,6 +3,7 @@ package taut
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sort"
 	"strconv"
 	"strings"
@@ -323,11 +324,11 @@ func (b *Bridge) mount(id uint64, fn string, args ...any) {
 		}
 		el, err := f.CallThis(js.Global().Get("__taut"), vals...)
 		if err != nil {
-			b.t.logf("taut: %s: %v", fn, err)
+			b.t.logf("taut: %s %v: %s", fn, logArg(args), errWithStack(err))
 			return
 		}
 		if err := jr.Render(js, el); err != nil {
-			b.t.logf("taut: render %s: %v", fn, err)
+			b.t.logf("taut: render %s %v: %s", fn, logArg(args), errWithStack(err))
 		}
 	})
 }
@@ -990,4 +991,32 @@ func (f *File) UnmarshalJSON(b []byte) error {
 	}
 	f.Name, f.Type, f.Data = v.F.Name, v.F.Type, v.F.Data
 	return nil
+}
+
+// logArg is the first mount argument when it is a component name; props are
+// never logged (they can carry message contents).
+func logArg(args []any) string {
+	if len(args) > 0 {
+		if s, ok := args[0].(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// errWithStack formats a JS error with the top of its stack (function names
+// and positions only), so plugin failures in the log say where they threw.
+func errWithStack(err error) string {
+	var je *jsrt.JSError
+	if !errors.As(err, &je) || je.Stack == "" {
+		return err.Error()
+	}
+	lines := strings.Split(strings.TrimSpace(je.Stack), "\n")
+	if len(lines) > 6 {
+		lines = lines[:6]
+	}
+	for i, l := range lines {
+		lines[i] = strings.TrimSpace(l)
+	}
+	return err.Error() + " [" + strings.Join(lines, " | ") + "]"
 }
