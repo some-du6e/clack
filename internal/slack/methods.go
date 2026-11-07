@@ -24,13 +24,16 @@ func (c *Client) AuthTest(ctx context.Context) (*AuthInfo, error) {
 }
 
 // Conversations lists every conversation the user is a member of.
+// Archived channels are dropped, but DMs are kept even when Slack flags them
+// archived (exclude_archived=true hides some app DMs the real client shows,
+// verified 2026-11).
 func (c *Client) Conversations(ctx context.Context) ([]Conversation, error) {
 	var all []Conversation
 	cursor := ""
 	for {
 		p := url.Values{
 			"types":            {"public_channel,private_channel,mpim,im"},
-			"exclude_archived": {"true"},
+			"exclude_archived": {"false"},
 			"limit":            {"1000"},
 		}
 		if cursor != "" {
@@ -45,7 +48,12 @@ func (c *Client) Conversations(ctx context.Context) ([]Conversation, error) {
 		if err := c.Call(ctx, "users.conversations", p, &r); err != nil {
 			return all, err
 		}
-		all = append(all, r.Channels...)
+		for _, ch := range r.Channels {
+			if ch.IsArchived && !ch.IsIM && !ch.IsMPIM {
+				continue
+			}
+			all = append(all, ch)
+		}
 		if r.Meta.NextCursor == "" {
 			return all, nil
 		}
