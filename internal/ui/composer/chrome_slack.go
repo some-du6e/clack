@@ -377,6 +377,17 @@ func (c *chrome) layoutRow(gtx layout.Context, kids slackc.Element, patched bool
 		c.place(gtx, call, image.Pt(x, (bs-d.Size.Y)/2), ids)
 		x += d.Size.X + gtx.Dp(r)
 	}
+	// taut's composer.addButton buttons ("native" placement) follow the
+	// toolbar; free while no plugin adds one.
+	if slackc.Patched(tautButtons) {
+		m := op.Record(gtx.Ops)
+		d := slackc.Render(gtx, tautButtons, c.tautButtonsProps("native"), noNative)
+		if call := m.Stop(); d.Size.X > 0 {
+			x += gtx.Dp(2)
+			c.place(gtx, call, image.Pt(x, (bs-d.Size.Y)/2), 0)
+			x += d.Size.X + gtx.Dp(2)
+		}
+	}
 
 	c.suf = c.suf[:0]
 	tot := 0
@@ -396,6 +407,11 @@ func (c *chrome) layoutRow(gtx layout.Context, kids slackc.Element, patched bool
 				c.suf = append(c.suf, crSuf{call: call, size: d.Size, l: gtx.Dp(l), r: gtx.Dp(r), ids: ids})
 			}
 		}
+	}
+	if !ss.Hidden() && slackc.Patched(tautButtons) {
+		m := op.Record(gtx.Ops)
+		d := slackc.Render(gtx, tautButtons, c.tautButtonsProps("end"), noNative)
+		c.suf = append(c.suf, crSuf{call: m.Stop(), size: d.Size, l: gtx.Dp(4)})
 	}
 	ss.Leave()
 	for _, s := range c.suf {
@@ -688,3 +704,26 @@ func (c *chrome) layoutTypingNames(gtx layout.Context, p slackc.Props) layout.Di
 	}
 	return layout.Dimensions{Size: image.Pt(min(x, maxW), h)}
 }
+
+// tautButtons is internal/taut's boundary for composer.addButton entries
+// (each an "@ComposerButton" drawn by slackc/kit).
+const tautButtons = "TautComposerButtons"
+
+func (c *chrome) tautButtonsProps(placement string) slackc.Props {
+	st := &c.cur
+	kind := "channel"
+	switch {
+	case st.Mode == modeEdit:
+		kind = "edit"
+	case st.ThreadTS != "":
+		kind = "thread"
+	}
+	ctx := slackc.Props{"kind": kind, "channelId": st.Channel}
+	if st.ThreadTS != "" {
+		ctx["threadTs"] = st.ThreadTS
+		ctx["broadcast"] = st.Broadcast
+	}
+	return slackc.Props{"$key": st.Key + "/" + placement, "placement": placement, "context": ctx}
+}
+
+func noNative(gtx layout.Context, p slackc.Props) layout.Dimensions { return layout.Dimensions{} }
