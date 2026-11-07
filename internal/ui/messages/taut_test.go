@@ -460,6 +460,20 @@ func TestPluginUserPronouns(t *testing.T) {
 	v := NewChannelView(h, tGen)
 	v.Preview = true
 	until(t, 8*time.Second, "pronouns in the channel header", frameFn(v), func() bool { return u.anyTree("she/her") })
+	// the patched header lays its slots out inline: the Timestamp slot keeps
+	// the name/time gap (live: "clod3:26 PM" with UserPronouns on)
+	for _, r := range v.s.rows {
+		if r.rc == nil || r.m.TS == "" {
+			continue
+		}
+		gtx := layout.Context{Ops: new(op.Ops), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Constraints{Max: image.Pt(400, 40)}, Now: time.Now()}
+		plain := r.layoutTimestamp(gtx, r.timestampProps())
+		slot := r.layoutPreambleTimestamp(gtx, r.timestampProps())
+		if plain.Size.X == 0 || slot.Size.X != plain.Size.X+int(mt.tsGap) {
+			t.Errorf("preamble Timestamp slot width %d, want %d + gap %v", slot.Size.X, plain.Size.X, mt.tsGap)
+		}
+		break
+	}
 	// the thread pane: ThreadSenderAndTimestampGeneric, rendered with $pane
 	tv := NewThreadView(h, tGen, tsFair)
 	ft := frameFn(tv)
