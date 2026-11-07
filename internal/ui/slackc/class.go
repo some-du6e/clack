@@ -365,6 +365,31 @@ func (s Styled) Background(def color.NRGBA) color.NRGBA {
 	return def
 }
 
+// Generated is the ::before / ::after content CSS gives the widget ("" for
+// none), which Wrap draws around it. Natives that report what they show
+// (a sender name a plugin replaced with ::after) read it here.
+func (s Styled) Generated() (before, after string) {
+	if s.s == nil || !s.Active() {
+		return "", ""
+	}
+	if b := s.s.before; b != nil && b.Display != css.DisplayNone {
+		before = b.Content
+	}
+	if a := s.s.after; a != nil && a.Display != css.DisplayNone {
+		after = a.Content
+	}
+	return before, after
+}
+
+// BackgroundImage is the url() of a CSS background-image set on the
+// widget, else def. Image natives (avatars) draw it as their picture.
+func (s Styled) BackgroundImage(def string) string {
+	if s.Has("background-image") && s.s.style.Background.Image != "" {
+		return s.s.style.Background.Image
+	}
+	return def
+}
+
 // FontSize returns the CSS font size (CSS px == Sp) when set, else def.
 func (s Styled) FontSize(def unit.Sp) unit.Sp {
 	if s.Has("font-size") {
