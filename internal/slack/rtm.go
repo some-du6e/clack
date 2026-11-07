@@ -3,8 +3,10 @@ package slack
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -43,7 +45,7 @@ func (c *Client) NewRTM() *RTM {
 // Run blocks until ctx is done, reconnecting with exponential backoff.
 func (r *RTM) Run(ctx context.Context) {
 	backoff := time.Second
-	for ctx.Err() == nil {
+	for ctx.Err() == nil && !r.c.SignedOut() {
 		start := time.Now()
 		err := r.once(ctx)
 		if ctx.Err() != nil {
@@ -51,6 +53,10 @@ func (r *RTM) Run(ctx context.Context) {
 		}
 		if r.OnState != nil {
 			r.OnState(false)
+		}
+		if r.c.SignedOut() {
+			log.Printf("rtm: session ended, not reconnecting")
+			return
 		}
 		if time.Since(start) > time.Minute {
 			backoff = time.Second
@@ -76,6 +82,9 @@ func (r *RTM) once(ctx context.Context) error {
 	r.reconnectURL = ""
 	if u == "" {
 		u = r.c.WebSocketURL(ctx, r.fails%3 == 2) // every third failure, try the backup gateway
+	}
+	if r.c.SignedOut() {
+		return ErrSignedOut
 	}
 	t0 := time.Now()
 	h := http.Header{}
@@ -134,7 +143,20 @@ func (r *RTM) once(ctx context.Context) error {
 				go r.OnHello()
 			}
 		case "error":
-			log.Printf("rtm: gateway error frame: %.200s", data)
+			var fe struct {
+				Error struct {
+					Code any    `json:"code"`
+					Msg  string `json:"msg"`
+				} `json:"error"`
+			}
+			_ = json.Unmarshal(data, &fe)
+			log.Printf("rtm: gateway error frame: %s", fe.Error.Msg)
+			for code := range authCodes {
+				if strings.Contains(fe.Error.Msg, code) {
+					r.c.markAuth(code)
+					return errors.New("rtm: " + code)
+				}
+			}
 		case "reconnect_url":
 			var x struct {
 				URL string `json:"url"`

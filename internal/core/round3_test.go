@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"sort"
 	"strings"
 	"testing"
@@ -95,5 +97,51 @@ func TestAddEmojiValidation(t *testing.T) {
 	}
 	if emojiExt([]byte("GIF89a....")) != ".gif" || emojiExt([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}) != ".png" {
 		t.Error("emojiExt")
+	}
+}
+
+func TestAuthFailedStopsCore(t *testing.T) {
+	a, f := testApp(t)
+	f.reply["conversations.history"] = `{"ok":false,"error":"invalid_auth"}`
+	evs, stop := a.Subscribe()
+	defer stop()
+	if _, err := a.History(context.Background(), "C1", ""); !slack.IsAuthError(err) {
+		t.Fatalf("history: %v", err)
+	}
+	if e := next(t, evs, "auth_failed"); e.Name != "invalid_auth" {
+		t.Errorf("event: %+v", e)
+	}
+	if a.bg.Err() == nil {
+		t.Error("background context not cancelled")
+	}
+	f.mu.Lock()
+	before := len(f.calls)
+	f.mu.Unlock()
+	for i := 0; i < 30; i++ { // the UI's refetch loop
+		if _, err := a.History(context.Background(), "C1", ""); !errors.Is(err, slack.ErrSignedOut) {
+			t.Fatalf("refetch: %v", err)
+		}
+		a.Mark(context.Background(), "C1", "1.0")
+	}
+	f.mu.Lock()
+	after := len(f.calls)
+	f.mu.Unlock()
+	if after != before || !a.SignedOut() {
+		t.Errorf("%d requests after sign-out", after-before)
+	}
+}
+
+func TestMessageRawFieldsForPlugins(t *testing.T) {
+	a, _ := testApp(t)
+	var m slack.Message
+	_ = json.Unmarshal([]byte(`{"ts":"1.0","bot_id":"B1","text":"x","metadata":{"event_type":"e"},
+		"blocks":[{"type":"section","text":{"type":"mrkdwn","text":"hi"}}],"attachments":[{"fallback":"f","x":1}],
+		"bot_profile":{"id":"B1","name":"relay","app_id":"A1","user_id":"U8","icons":{"image_48":"https://img.example/48.png"}}}`), &m)
+	v := a.message("C1", &m)
+	if string(v.Metadata) != `{"event_type":"e"}` || !strings.Contains(string(v.Blocks), `"section"`) || !strings.Contains(string(v.Attachments), `"x":1`) {
+		t.Errorf("raw: meta=%s blocks=%s att=%s", v.Metadata, v.Blocks, v.Attachments)
+	}
+	if v.BotProfile == nil || v.BotProfile.UserID != "U8" || v.BotProfile.Icon != "https://img.example/48.png" {
+		t.Errorf("bot profile: %+v", v.BotProfile)
 	}
 }

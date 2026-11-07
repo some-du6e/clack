@@ -64,6 +64,8 @@ type Client struct {
 
 	routeMu sync.RWMutex
 	learned map[string]bool // method -> use enterprise host
+
+	g guard // signed-out state + backoff of repeated failures (guard.go)
 }
 
 // New builds a client with a tuned, keep-alive HTTP/2 transport.
@@ -231,7 +233,33 @@ func (c *Client) Edge(ctx context.Context, path string, body map[string]any, out
 // SlowCall is the duration above which a call's method name and timing are logged.
 var SlowCall = 1500 * time.Millisecond
 
+// post sends one request through the traffic guards: nothing goes out after
+// the session ended, a request that keeps failing identically backs off
+// exponentially (BackoffBase … BackoffMax), and a session-ended answer from
+// any call trips SignedOut.
 func (c *Client) post(ctx context.Context, method, u, ctype string, body []byte, out any) error {
+	if c.SignedOut() {
+		return ErrSignedOut
+	}
+	k := reqKey(method, u, body)
+	if !skipBackoff(ctx) {
+		if err := c.blocked(k, time.Now()); err != nil {
+			return err
+		}
+	}
+	err := c.doPost(ctx, method, u, ctype, body, out)
+	if ctx.Err() != nil && err != nil { // cancelled by the caller: not a server failure
+		return err
+	}
+	c.record(k, err, time.Now())
+	var se *Error
+	if errors.As(err, &se) && authCodes[se.Code] {
+		c.markAuth(se.Code)
+	}
+	return err
+}
+
+func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byte, out any) error {
 	select {
 	case c.sem <- struct{}{}:
 	case <-ctx.Done():
@@ -305,6 +333,9 @@ func (c *Client) post(ctx context.Context, method, u, ctype string, body []byte,
 
 // Download fetches an authenticated URL (files.slack.com etc) with the session cookie.
 func (c *Client) Download(ctx context.Context, rawURL string) (*http.Response, error) {
+	if c.SignedOut() {
+		return nil, ErrSignedOut
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, err
@@ -322,6 +353,9 @@ const UserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, li
 // is written: every ~64 KB and once at the end, with the multipart body size
 // as total. It runs on the calling goroutine.
 func (c *Client) UploadBytes(ctx context.Context, uploadURL, filename string, data []byte, progress func(sent, total int64)) error {
+	if c.SignedOut() {
+		return ErrSignedOut
+	}
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 	fw, err := mw.CreateFormFile("file", filename)
