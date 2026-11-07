@@ -79,6 +79,9 @@ func TestProxyImage(t *testing.T) {
 		"https://avatars.slack-edge.com/2024/x_72.jpg",
 		"https://secure.gravatar.com/avatar/abc.jpg?s=72",
 		"https://slack-imgs.com/?c=1&o1=ro&url=x",
+		// Slack's own host: unchanged (the public path fetches it without the
+		// cookie; authenticated loads go through core.Fetch).
+		"https://files.slack.com/files-pri/x",
 	}
 	for _, u := range same {
 		if got := ProxyImage(u); got != u {
@@ -91,7 +94,6 @@ func TestProxyImage(t *testing.T) {
 		"https://a.slack-edge.com.evil.io/x.png",
 		"https://a.slack-edge.com:8080/x.png",
 		"https://user@a.slack-edge.com/x.png",
-		"https://files.slack.com/files-pri/x", // authenticated: core.Fetch, never here unproxied
 	}
 	for _, u := range proxied {
 		got := ProxyImage(u)
