@@ -222,7 +222,8 @@ func init() {
 	reg("plus-small", s("M10 5.5 V14.5 M5.5 10 H14.5"))
 	reg("minus", s("M4 10 H16"))
 	reg("check", s("M4.5 10.5 L8.25 14 L15.5 6.25"))
-	reg("check-circle", s(circle(10, 10, 6.75)), s("M6.9 10.2 L9.1 12.3 L13.1 7.8"))
+	// Slack's rail To-dos circle: outer Ø≈17 with a ~1.5px stroke.
+	reg("check-circle", sw(1.5, circle(10, 10, 7.6)), sw(1.5, "M6.6 10.3 L8.9 12.5 L13.4 7.6"))
 	reg("x-circle", s(circle(10, 10, 6.75)), s("M7.5 7.5 L12.5 12.5 M12.5 7.5 L7.5 12.5"))
 	reg("plus-circle", s(circle(10, 10, 6.75)), s("M10 6.75 V13.25 M6.75 10 H13.25"))
 	reg("warning", s("M10 3.5 L17 16 H3 Z"), s("M10 8 V11.5"), f(circle(10, 13.75, 0.9)))
@@ -242,24 +243,37 @@ func init() {
 	// tab rail
 	reg("home", s("M3.75 8.6 L10 3.5 L16.25 8.6 V15.75 A1 1 0 0 1 15.25 16.75 H12 V12.25 H8 V16.75 H4.75 A1 1 0 0 1 3.75 15.75 Z"))
 	reg("home-filled", f("M3 8.4 L10 2.7 L17 8.4 V15.9 A1.6 1.6 0 0 1 15.4 17.5 H12.5 V12.5 H7.5 V17.5 H4.6 A1.6 1.6 0 0 1 3 15.9 Z"))
-	reg("dms", s("M3.25 5.5 A2 2 0 0 1 5.25 3.5 H11.75 A2 2 0 0 1 13.75 5.5 V9.25 A2 2 0 0 1 11.75 11.25 H7.5 L4.5 13.75 V11.1 A2 2 0 0 1 3.25 9.25 Z"),
-		s("M13.75 7.25 H14.75 A2 2 0 0 1 16.75 9.25 V13 A2 2 0 0 1 15.5 14.85 V17.25 L12.75 15 H10.25 A2 2 0 0 1 8.25 13 V11.25"))
-	reg("dms-filled", f("M2.5 5.4 A2.4 2.4 0 0 1 4.9 3 H12.1 A2.4 2.4 0 0 1 14.5 5.4 V9.6 A2.4 2.4 0 0 1 12.1 12 H7.7 L4 14.9 V11.8 A2.4 2.4 0 0 1 2.5 9.6 Z"),
-		s("M14.5 7.25 H15 A2 2 0 0 1 17 9.25 V13 A2 2 0 0 1 15.75 14.85 V17.25 L13 15 H10.5 A2 2 0 0 1 8.5 13 V12"))
+	// Slack's DMs: a round bubble (tail bottom-left) in front of a smaller
+	// one (tail right) whose outline stops short of the front bubble.
+	reg("dms", sw(1.5, "M5.53 16.77 L2.60 17.30 L3.08 14.44 A4.6 4.6 0 1 1 5.53 16.77 Z"),
+		sw(1.5, "M8.40 6.61 A4.4 4.4 0 1 1 16.93 8.61 L17.85 11.85 L15.08 10.98 A4.4 4.4 0 0 1 13.19 11.63"))
+	reg("dms-filled", f("M5.53 16.77 L2.60 17.30 L3.08 14.44 A4.6 4.6 0 1 1 5.53 16.77 Z"),
+		sw(1.5, "M8.40 6.61 A4.4 4.4 0 1 1 16.93 8.61 L17.85 11.85 L15.08 10.98 A4.4 4.4 0 0 1 13.19 11.63"))
 	reg("bell", s("M10 3.25 A4.75 4.75 0 0 0 5.25 8 V11.5 L3.75 14 H16.25 L14.75 11.5 V8 A4.75 4.75 0 0 0 10 3.25 Z"), s("M8 16.25 A2 2 0 0 0 12 16.25"))
 	reg("bell-filled", f("M10 2.5 A5.4 5.4 0 0 0 4.6 7.9 V11.3 L3 14.2 A.6.6 0 0 0 3.5 15 H16.5 A.6.6 0 0 0 17 14.2 L15.4 11.3 V7.9 A5.4 5.4 0 0 0 10 2.5 Z"), s("M8 16.5 A2 2 0 0 0 12 16.5"))
 	reg("bell-off", s("M7 4.2 A4.75 4.75 0 0 1 14.75 8 V11.5 L15.5 12.75 M5.25 7.9 V11.5 L3.75 14 H13.5"), s("M8 16.25 A2 2 0 0 0 12 16.25"), s("M3 3 L17 17"))
-	reg("activity", registry["bell"].parts...)
+	// rail Activity: Slack's thinner, taller bell
+	reg("activity", sw(1.5, "M10 2.75 C7.25 2.75 5.5 4.9 5.5 7.6 V10.6 C5.5 11.7 4.9 12.6 3.9 13.4 C3.6 13.7 3.8 14.25 4.25 14.25 H15.75 C16.2 14.25 16.4 13.7 16.1 13.4 C15.1 12.6 14.5 11.7 14.5 10.6 V7.6 C14.5 4.9 12.75 2.75 10 2.75 Z"),
+		sw(1.5, "M8 16.6 C8.4 17.25 9.1 17.6 10 17.6 C10.9 17.6 11.6 17.25 12 16.6"))
 	reg("activity-filled", registry["bell-filled"].parts...)
-	reg("files", s("M5 3.25 H11.25 L15.5 7.5 V15.75 A1 1 0 0 1 14.5 16.75 H5 A1 1 0 0 1 4 15.75 V4.25 A1 1 0 0 1 5 3.25 Z"), s("M11.25 3.25 V7.5 H15.5"))
-	reg("files-filled", f("M4.9 2.5 H11 V6.5 A1.5 1.5 0 0 0 12.5 8 H16.25 V15.9 A1.6 1.6 0 0 1 14.65 17.5 H4.9 A1.6 1.6 0 0 1 3.3 15.9 V4.1 A1.6 1.6 0 0 1 4.9 2.5 Z"), f("M12.25 2.8 L16 6.6 H12.6 A.35.35 0 0 1 12.25 6.25 Z"))
+	// Slack's Files: two stacked rounded sheets, the front one with a
+	// folded bottom-right corner.
+	reg("files", sw(1.5, "M6.25 13.75 H5.5 A2.25 2.25 0 0 1 3.25 11.5 V5.5 A2.25 2.25 0 0 1 5.5 3.25 H11.5 A2.25 2.25 0 0 1 13.75 5.5 V6.25"),
+		sw(1.5, "M8.5 6.25 H14.5 A2.25 2.25 0 0 1 16.75 8.5 V12.5 L12.5 16.75 H8.5 A2.25 2.25 0 0 1 6.25 14.5 V8.5 A2.25 2.25 0 0 1 8.5 6.25 Z"),
+		sw(1.5, "M16.75 12.5 H14 A1.5 1.5 0 0 0 12.5 14 V16.75"))
+	reg("files-filled", sw(1.5, "M6.25 13.75 H5.5 A2.25 2.25 0 0 1 3.25 11.5 V5.5 A2.25 2.25 0 0 1 5.5 3.25 H11.5 A2.25 2.25 0 0 1 13.75 5.5 V6.25"),
+		f("M8.5 5.5 H14.5 A3 3 0 0 1 17.5 8.5 V12.1 H14 A2.25 2.25 0 0 0 11.75 14.35 V17.5 H8.5 A3 3 0 0 1 5.5 14.5 V8.5 A3 3 0 0 1 8.5 5.5 Z"),
+		f("M17.25 13.6 L13.25 17.5 V14.35 A.75.75 0 0 1 14 13.6 Z"))
 	reg("later", s("M5.75 3.25 H14.25 A1 1 0 0 1 15.25 4.25 V16.75 L10 13.25 L4.75 16.75 V4.25 A1 1 0 0 1 5.75 3.25 Z"))
 	reg("later-filled", f("M5.6 2.5 H14.4 A1.6 1.6 0 0 1 16 4.1 V17.1 A.5.5 0 0 1 15.2 17.5 L10 14 L4.8 17.5 A.5.5 0 0 1 4 17.1 V4.1 A1.6 1.6 0 0 1 5.6 2.5 Z"))
 	reg("bookmark", registry["later"].parts...)
 	reg("bookmark-filled", registry["later-filled"].parts...)
 	reg("saved", registry["later"].parts...)
 	reg("saved-filled", registry["later-filled"].parts...)
-	reg("agents", s(circle(6.25, 6.25, 2.75)), s(circle(13.75, 6.25, 2.75)), s(circle(6.25, 13.75, 2.75)), s("M13.75 10.25 C14.1 12.3 14.95 13.15 17 13.5 C14.95 13.85 14.1 14.7 13.75 16.75 C13.4 14.7 12.55 13.85 10.5 13.5 C12.55 13.15 13.4 12.3 13.75 10.25 Z"))
+	// Slack's Agents & tools: three small circles and a 4-point sparkle
+	// (top right), not touching.
+	reg("agents", sw(1.5, circle(6, 6, 2.4)), sw(1.5, circle(6, 14, 2.4)), sw(1.5, circle(14, 14, 2.4)),
+		sw(1.5, "M14 2.6 C14.3 4.9 15.1 5.7 17.4 6 C15.1 6.3 14.3 7.1 14 9.4 C13.7 7.1 12.9 6.3 10.6 6 C12.9 5.7 13.7 4.9 14 2.6 Z"))
 	reg("apps", s(rrect(3.5, 3.5, 5, 5, 1.25)), s(rrect(11.5, 3.5, 5, 5, 1.25)), s(rrect(3.5, 11.5, 5, 5, 1.25)), s(rrect(11.5, 11.5, 5, 5, 1.25)))
 
 	// sidebar
@@ -271,11 +285,17 @@ func init() {
 	reg("headphones", registry["huddle"].parts...)
 	reg("send", f("M2.9 3.1 A.7.7 0 0 1 3.9 2.4 L17.1 9.3 A.8.8 0 0 1 17.1 10.7 L3.9 17.6 A.7.7 0 0 1 2.9 16.9 L4.6 10.7 L11 10 L4.6 9.3 Z"))
 	reg("drafts", s("M3.5 3.5 L16.75 10 L3.5 16.5 L5.4 10 Z"), s("M5.4 10 H10"))
-	reg("directories", s(circle(7.5, 7, 2.75)), s("M2.75 16 A4.75 4.75 0 0 1 12.25 16"), s("M12.5 4.5 A2.6 2.6 0 0 1 12.5 9.5 M14.25 11.5 A4.6 4.6 0 0 1 17.25 16"))
-	reg("people", registry["directories"].parts...)
+	reg("people", s(circle(7.5, 7, 2.75)), s("M2.75 16 A4.75 4.75 0 0 1 12.25 16"), s("M12.5 4.5 A2.6 2.6 0 0 1 12.5 9.5 M14.25 11.5 A4.6 4.6 0 0 1 17.25 16"))
+	// Slack's Directories: a contact card with ticks on its left edge.
+	reg("contact-book", sw(1.5, rrect(5, 3, 11.5, 14, 2)), sw(1.5, circle(10.75, 8.25, 2)),
+		sw(1.5, "M7.6 14.25 C7.9 12.6 9.2 11.75 10.75 11.75 C12.3 11.75 13.6 12.6 13.9 14.25"), sw(1.5, "M3 6.5 H6.25 M3 10 H6.25 M3 13.5 H6.25"))
+	reg("directories", registry["contact-book"].parts...)
 	reg("user", s(circle(10, 7, 3.25)), s("M3.75 17 A6.25 5.5 0 0 1 16.25 17"))
 	reg("user-plus", s(circle(8.5, 7, 3.25)), s("M2.5 17 A6 5.5 0 0 1 14.5 17"), s("M15.5 5 V10 M13 7.5 H18"))
-	reg("channel-plus", s("M7.6 3 L6.2 15 M12.6 3 L11.6 11 M3.5 6.75 H15.5 M3 11.25 H11"), s("M15 12 V18 M12 15 H18"))
+	// Slack's Add channels: "#" with a small person at the top right.
+	reg("channel-add", sw(1.5, "M6.6 7.5 L5.5 16.75 M10.4 7.5 L9.3 16.75 M3.5 10.25 H11.5 M3 14 H11"),
+		sw(1.5, circle(14.75, 5, 2)), sw(1.5, "M11.9 10.75 C12.2 9.2 13.3 8.4 14.75 8.4 C16.2 8.4 17.3 9.2 17.6 10.75"))
+	reg("channel-plus", registry["channel-add"].parts...)
 	reg("channels-section", s(rrect(3, 3, 14, 14, 3)), sw(1.3, "M8.6 6 L7.6 14 M12.4 6 L11.4 14 M6 8.4 H14 M5.7 11.6 H13.7"))
 	reg("contact", s(rrect(4.25, 2.75, 11.5, 14.5, 2)), s(circle(10, 8.5, 2)), s("M6.9 14 A3.2 2.6 0 0 1 13.1 14"), s("M2.75 6 H4.25 M2.75 10 H4.25 M2.75 14 H4.25"))
 	reg("star", s(star(10, 10.4, 7, 3.1)))
@@ -283,7 +303,14 @@ func init() {
 	reg("unreads", s("M4 5.5 H11 M4 10 H16 M4 14.5 H16"), f(circle(15, 5.5, 2)))
 	reg("mention", s(circle(10, 10, 2.9)), s("M12.9 10 V11.1 A2.1 2.1 0 0 0 17.1 11.1 V10 A7.1 7.1 0 1 0 14.3 15.6"))
 	reg("at", registry["mention"].parts...)
-	reg("canvas", s(rrect(4, 3.25, 12, 13.5, 1.75)), s("M7 7.25 H13 M7 10 H13 M7 12.75 H10.5"))
+	// Slack's canvas: a rounded sheet with a folded bottom-right corner.
+	reg("canvas", sw(1.5, "M5.5 3.5 H14.5 A2 2 0 0 1 16.5 5.5 V12 L12 16.5 H5.5 A2 2 0 0 1 3.5 14.5 V5.5 A2 2 0 0 1 5.5 3.5 Z"),
+		sw(1.5, "M16.5 12 H13.5 A1.5 1.5 0 0 0 12 13.5 V16.5"), sw(1.5, "M6.75 7.5 H13.25 M6.75 10.5 H10.5"))
+	// Slack's list: a card with two rows, each a small box plus a line.
+	reg("list-tab", sw(1.5, rrect(3.25, 3.75, 13.5, 12.5, 2)), sw(1.2, rrect(6, 6.75, 2.5, 2.5, 0.5)), sw(1.2, rrect(6, 10.75, 2.5, 2.5, 0.5)),
+		sw(1.5, "M10.75 8 H14 M10.75 12 H14"))
+	// Slack's active Messages tab: a solid round bubble, tail bottom-left.
+	reg("messages-filled", f("M10 2.75 A7.25 7.25 0 0 0 3.75 13.7 L2.9 16.8 A.6.6 0 0 0 3.6 17.5 L6.9 16.6 A7.25 7.25 0 1 0 10 2.75 Z"))
 	reg("list-view", s("M7 5 H16.5 M7 10 H16.5 M7 15 H16.5"), f(circle(3.75, 5, 1.1)), f(circle(3.75, 10, 1.1)), f(circle(3.75, 15, 1.1)))
 	reg("workflow", s(rrect(3, 3.5, 6, 5, 1.25)), s(rrect(11, 11.5, 6, 5, 1.25)), s("M6 8.5 V11 A1.5 1.5 0 0 0 7.5 12.5 H11"))
 	reg("lightning", s("M11.25 2.75 L4.75 11 H10 L8.75 17.25 L15.25 9 H10 Z"))
@@ -309,6 +336,14 @@ func init() {
 	reg("reply", s("M8.25 5 L3.75 9.5 L8.25 14 M3.75 9.5 H11.75 A4.5 4.5 0 0 1 16.25 14 V16"))
 	reg("share", s("M11.75 5 L16.25 9.5 L11.75 14 M16.25 9.5 H8.25 A4.5 4.5 0 0 0 3.75 14 V16"))
 	reg("forward-msg", registry["share"].parts...)
+	// hover toolbar: thread (bubble with two lines, tail bottom right), add
+	// to To-dos (check-circle open at a top-right +), save to a list (an
+	// arrow pointing into a checklist).
+	reg("comment-lines", sw(1.5, "M10 3.25 A6.75 6.75 0 0 1 15.9 13.3 L16.75 16.75 L13.2 15.95 A6.75 6.75 0 1 1 10 3.25 Z"), sw(1.5, "M7 8.5 H13 M7 11.5 H11.5"))
+	reg("todo-add", sw(1.5, "M15.9 11.63 A6.5 6.5 0 1 1 11.72 4.39"), sw(1.5, "M6.5 10.6 L8.6 12.7 L12.6 8.4"), sw(1.5, "M15.5 2 V7 M13 4.5 H18"))
+	reg("list-add", sw(1.5, "M8.5 3.5 H15.5 A1.5 1.5 0 0 1 17 5 V15.5 A1.5 1.5 0 0 1 15.5 17 H5.5 A1.5 1.5 0 0 1 4 15.5 V10"),
+		sw(1.5, "M2.5 6.25 H9.25 M7 4 L9.25 6.25 L7 8.5"), sw(1.5, "M11.5 7.25 H14.5 M11.25 11 H14.5 M11.25 14.25 H14.5"),
+		sw(1.3, "M6.25 11 L7.25 12 L9 10.25 M6.25 14.25 L7.25 15.25 L9 13.5"))
 	reg("edit", s("M13.25 3.6 L16.4 6.75 L7.2 15.95 L3.6 16.4 L4.05 12.8 Z M11.5 5.35 L14.65 8.5"))
 	reg("trash", s("M3.75 5.5 H16.25 M8 5.5 V4.25 A1 1 0 0 1 9 3.25 H11 A1 1 0 0 1 12 4.25 V5.5"), s("M5.25 5.5 L6.05 15.85 A1 1 0 0 0 7.05 16.75 H12.95 A1 1 0 0 0 13.95 15.85 L14.75 5.5"), s("M8.5 8.5 V13.75 M11.5 8.5 V13.75"))
 	reg("pin", s("M11.9 2.9 L17.1 8.1 L15.6 8.6 L12.7 11.5 L12.6 14.9 L11.2 16.3 L3.7 8.8 L5.1 7.4 L8.5 7.3 L11.4 4.4 Z"), s("M7.2 12.8 L3 17"))
