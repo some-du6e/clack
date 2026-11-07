@@ -183,6 +183,7 @@ func (r *Runtime) Call(ctx context.Context, path string, args ...any) (json.RawM
 		err error
 	}
 	ch := make(chan res, 1)
+	onJS := r.onJSThread()
 	err := r.Do(func(js *Ctx) error {
 		fn, this, err := js.resolvePath(path)
 		if err != nil {
@@ -197,7 +198,7 @@ func (r *Runtime) Call(ctx context.Context, path string, args ...any) (json.RawM
 			ch <- res{b, err}
 			return nil
 		}
-		if r.onJSThread() {
+		if onJS {
 			return errors.New("jsrt: Runtime.Call of an async function from the JS thread would deadlock; use Value.Then")
 		}
 		v.Then(func(v Value, err error) {

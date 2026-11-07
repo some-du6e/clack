@@ -210,7 +210,7 @@ let resolve;
 const Lazy = React.lazy(() => new Promise((r) => { resolve = r; setTimeout(() => r({ default: () => React.createElement('b', null, 'loaded') }), 20); }));
 function App() {
   return React.createElement(React.Fragment, null,
-    React.createElement(Avatar, { channelId: 'C1', memberCount: 3, onClick: () => { clicked++; }, tooltip: React.createElement('em', null, 'tip') },
+    React.createElement(Avatar, { channelId: 'C1', memberCount: 3, goFn: Object.assign(() => {}, { $gofn: 7 }), slot: { $slot: 'x' }, onClick: () => { clicked++; return 'ret'; }, tooltip: React.createElement('em', null, 'tip') },
       React.createElement('span', null, 'kid')),
     ReactDOM.createPortal(React.createElement('div', { className: 'overlay' }, 'over'), document.body),
     React.createElement(React.Suspense, { fallback: React.createElement('i', null, 'loading') }, React.createElement(Lazy)));
@@ -235,9 +235,18 @@ React.createElement(App)`)
 	if find(ns, func(n node) bool { return n.T == "i" && n.text() == "loading" }) == nil {
 		t.Fatalf("suspense fallback missing: %+v", ns)
 	}
+	if g, _ := av.P["goFn"].(map[string]any); g["$gofn"] != float64(7) {
+		t.Fatalf("$gofn passthrough: %v", av.P["goFn"])
+	}
+	if sl, _ := av.P["slot"].(map[string]any); sl["$slot"] != "x" {
+		t.Fatalf("$slot passthrough: %v", av.P["slot"])
+	}
 	r.CallFn(int(fn["$fn"].(float64)), []byte(`[]`))
 	if got := evalString(t, r, `clicked`); got != "1" {
 		t.Fatalf("CallFn: clicked=%s", got)
+	}
+	if got := evalString(t, r, `__clack.fnById(`+itoa(int(fn["$fn"].(float64)))+`)()`); got != "ret" {
+		t.Fatalf("fnById: %s", got)
 	}
 	rec.waitFor(t, "lazy loaded", func(ns []node) bool {
 		return find(ns, func(n node) bool { return n.T == "b" && n.text() == "loaded" }) != nil

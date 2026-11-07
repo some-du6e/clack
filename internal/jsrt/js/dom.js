@@ -1847,13 +1847,19 @@
     if (typeof fn !== 'function') return undefined;
     return fn.apply(undefined, Array.isArray(args) ? args : args === undefined || args === null ? [] : [args]);
   };
+  __clack.fnById = (id) => fnTable.get(id);
+  const hasOwn = Object.prototype.hasOwnProperty;
   jr.releaseFns = (node) => { if (node._fnIds) { for (const id of node._fnIds.values()) fnTable.delete(id); node._fnIds = null; } };
   const isElement = (v) => v !== null && typeof v === 'object' && (v.$$typeof === Symbol.for('react.transitional.element') || v.$$typeof === Symbol.for('react.element'));
   // plain JSON-able copy of a native component's props
   const nativeProps = (node, v, path, depth) => {
     if (v === null || v === undefined) return v === null ? null : undefined;
     switch (typeof v) {
-      case 'function': return { $fn: fnId(node, path, v) };
+      case 'function':
+        // Go funcs (taut tags them with an own numeric $gofn) and taut's own ids pass through
+        if (hasOwn.call(v, '$gofn') && typeof v.$gofn === 'number') return { $gofn: v.$gofn };
+        if (hasOwn.call(v, '$fn') && typeof v.$fn === 'number') return { $fn: v.$fn };
+        return { $fn: fnId(node, path, v) };
       case 'string': case 'boolean': return v;
       case 'number': return Number.isFinite(v) ? v : null;
       case 'bigint': return String(v);
@@ -1865,6 +1871,7 @@
     if (v instanceof Date) return v.toISOString();
     if (v instanceof Map) return nativeProps(node, Object.fromEntries(v), path, depth + 1);
     if (v instanceof Set) return nativeProps(node, [...v], path, depth + 1);
+    if (hasOwn.call(v, '$slot') || hasOwn.call(v, '$gofn') || hasOwn.call(v, '$el')) return v; // already host-tree shaped
     if (typeof v.toJSON === 'function') { try { return nativeProps(node, v.toJSON(), path, depth + 1); } catch { return null; } }
     const out = {};
     for (const k of Object.keys(v)) { const r = nativeProps(node, v[k], path + '.' + k, depth + 1); if (r !== undefined) out[k] = r; }
