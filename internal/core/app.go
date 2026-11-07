@@ -59,7 +59,7 @@ type call struct {
 // New builds the service. Call Boot before using it.
 func New(c *slack.Client, s *store.Store) *App {
 	a := &App{C: c, S: s, ready: make(chan struct{}), inflight: map[string]*call{}, subs: map[*sub]struct{}{},
-		presSeen: map[string]time.Time{}, files: newFileCache(256 << 20), pending: map[string]*pendingSend{},
+		presSeen: map[string]time.Time{}, files: newFileCache(fileCacheBytes), pending: map[string]*pendingSend{},
 		saved: map[string]bool{}, starred: map[string]bool{}, memberN: map[string]int{}}
 	if s.SelfID() == "" {
 		s.Lock()
@@ -325,6 +325,11 @@ func (a *App) loadEmoji(ctx context.Context) error {
 	_ = a.S.SaveCache()
 	return nil
 }
+
+// fileCacheBytes bounds Fetch's memory-only cache of authenticated
+// downloads (files.slack.com thumbnails and files, compressed bytes; the
+// image cache decodes from it). Was 256 MB.
+const fileCacheBytes = 48 << 20
 
 // EmojiMaxAge is how old the cached emoji map may be before Boot refetches
 // emoji.list in the background.
