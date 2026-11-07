@@ -64,7 +64,8 @@ When no plugin patches the name, this is just `native(ctx, args)`. When a plugin
 | handleDeepLink | `{uri}` (slack:// links) | ui shell | default: `UIHooks.DeepLink(uri) bool` (false when unset) |
 | currentUserEndedTyping, startHuddle | Slack's | ui/composer, ui/views | no-op defaults |
 | openEditProfileModal, showSavedItemNotification | Slack's | ui/popups, ui notifications | UI must dispatch |
-| blocksFormatFetcher, executeAppAction, submitView | Slack's | ui/composer markdown mode, ui/popups shortcuts and app modals | UI must register natives (no Clack surface yet) |
+| sendActions, executeAppAction, submitView | Slack's (`{serviceId, appId, serviceTeamId, container, actions}`, `{appId, actionId, channelId, messageTs, applicableTeamId}`, `{viewId, viewState: {values}}` → `{updatedView, responseAction, toastMessage}`) | ui/blockkit (block actions, shortcuts, modals) | dispatched by blockkit; natives registered (blocks.actions, apps.actions.v2.execute, views.submit) |
+| blocksFormatFetcher | `{blocks, reason}` | ui/composer markdown mode | native registered by blockkit (blocks.format) |
 
 ## Composer, messages and members
 

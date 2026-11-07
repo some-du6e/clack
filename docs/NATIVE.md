@@ -241,6 +241,7 @@ func ParseHuddle(raw json.RawMessage) (Huddle, bool)
 | `internal/ui/composer` | ui-composer | rich editor (formatting toolbar, inline styles, lists/quote/code), Enter-to-send, Up-to-edit, autocomplete (@ # : /), attachments (pick/paste/drop) with upload, drafts, typing indicator send, edit mode, "also send to channel" |
 | `internal/ui/popups` | ui-popups | overlay system (menu, popover, modal, tooltip, toast), emoji picker (virtualized 65k custom), quick switcher (Ctrl+K), search (dropdown + results view), profile card + full profile, lightbox, message/channel/user/team menus with actions |
 | `internal/ui/views` | ui-views | Activity, DMs, Later/Saved, Files, Threads, Huddles, Drafts & sent, Directories, channel details |
+| `internal/ui/blockkit` (+ `internal/core/interactive*.go`) | blockkit | interactive apps: Block Kit elements in messages, legacy attachment actions, modals (view stack), App Home tabs, app shortcuts, workflow links, ephemeral messages |
 
 ### Cross-package interface: `Host`
 To avoid import cycles, every feature package defines the small interface it needs **in its own package** (e.g. `messages.Host`). The `internal/ui` root implements all of them on one `*ui.App`. Shared things every Host offers (use these exact names so one implementation satisfies all):
@@ -257,3 +258,26 @@ Toast(text string)
 ```
 `popups.Overlay`: `interface{ Layout(gtx layout.Context) layout.Dimensions; Dismissed() bool }` (popups agent owns the concrete types; ui root just stacks and draws them, and routes Escape/outside clicks).
 Each feature package exports a constructor and a widget with `Layout(gtx layout.Context) layout.Dimensions`, e.g. `messages.NewChannelView(h Host, channelID string) *ChannelView`, `messages.NewThreadView(h, ch, ts)`, `composer.New(h Host, channelID, threadTS string) *Composer`, `views.NewActivity(h)` …, and `popups.NewEmojiPicker(h, onPick) Overlay` etc.
+
+## Interactive apps (`internal/ui/blockkit`, `core.Interactive`)
+
+`a.Interactive()` (internal/core/interactive.go) is the service; blockkit draws. Every call shape was read from Slack's web client (gantry-v2, 2026-11) and the ones marked live were tested on Hack Club:
+
+| what | Slack call | notes |
+|---|---|---|
+| block action (live) | `blocks.actions {service_id: bot_id, app_id, service_team_id, actions: [element + block_id + selection], container, client_token: web-<ms>, state: {values}}` | enterprise token (team token: `team_is_restricted`); container `message {message_ts, channel_id, is_ephemeral, thread_ts only for ephemerals}`, `message_attachment {…, attachment_id}`, `view {view_id}`; errors carry Slack's text (`post_error` "App took too long…") |
+| external select | `blocks.suggestions {service_id, app_id, service_team_id, container, action_id, block_id, value}` | `min_query_length` default 3, 200 ms debounce |
+| legacy attachment action (live) | `chat.attachmentAction {payload: {actions:[raw action (+selected_options)], attachment_id, callback_id, channel_id, is_ephemeral, message_ts, team_id}, client_token, service_id, app_id, bot_user_id}` | |
+| modal opens (live) | RTM `view_opened {view, view_id, view_type, previous_view_id, client_token, timeout_range, …}` (older payloads flat) then `view_updated {view_id, view}` | shown only when `client_token` is one this client issued, within `timeout_range` (a click in the browser must not open it in Clack too) |
+| submit (live) | `views.submit {view_id, client_token, state: {values}}` → `{view, response_action, toast_message}`; `ok:false error=validation_failed errors{block_id:msg}` | `slack.Error.Body` keeps the body for the errors |
+| close (live) | `views.close {view_id, client_token, root_view_id?}` | footer Close / Escape pop one view (root_view_id with clear_on_close); × closes the stack |
+| shortcuts (live) | `apps.actions.v2.list {resource_id: team, resource_type: team}`; `apps.actions.v2.execute {action_id, app_id, team_id: current workspace, context: {channel_id, message_ts?}, client_token}` | the list's per-app `team_id` gets `internal_error`; message shortcuts in the message menu's Connect to apps, global ones in the composer's + menu |
+| App Home (live) | `conversations.info {channel, return_app_home}` → `app_home` + `home_view`; `apps.home.dispatchOpenEvent {id, type: home/messages}`; RTM `view_opened/updated` type home; About: `apps.profile.get {bot, app}` | |
+| workflow links | `workflows.triggers.trip {url, context: {location: message, channel_id, message_ts}, client_token, run_precheck}` | `pretrip_ack_required` → "Start workflow?" confirm, trip again without precheck (not live-tested: workflows can post) |
+| legacy dialogs | RTM `dialog_opened` → `dialog.get`, `dialog.submit {dialog_id, submission}`, `dialog.notifyCancel` | |
+| ephemerals (live) | RTM `message` with `is_ephemeral` | `Interactive().Ephemeral(ch, ts)`; rows get "Only visible to you" + Slack's .04 background |
+
+UI wiring (minimal wraps): richview `Options.Elements` gives each run of elements (actions block, section accessory, attachment buttons) a slot in the cached layout that blockkit sizes and draws per frame; messages' rows pass `blockkit.MessageElements`; the ui root calls `blockkit.Start` after boot, `blockkit.SetTaut`, `AppDMFor` for app DM tabs, and sets `popups.MessageShortcuts` / `composer.ShortcutItems`. Taut thunks: `sendActions`, `executeAppAction`, `submitView` are dispatched with Slack's args; natives for those and `blocksFormatFetcher` are registered.
+
+Not done yet: `rich_text_input` edits as plain text; `file_input` toasts; the read-only Messages tab of some apps doesn't replace the composer (composer owns it: `AppDM.ReadOnly()`); speedbump on closing a changed modal; workflow unfurl cards.
+
