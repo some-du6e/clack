@@ -227,10 +227,18 @@ T.actionable = (ch, ts) => {
 
 const metadataKnown = new Map()
 const metadataPending = new Map()
+/** a mirrored message carries its metadata already (core loads history with include_all_metadata) */
+function storedMetadata(ch, ts) {
+  const m = getRawMessage(ch, ts)
+  if (!m) return undefined
+  if (m.is_ephemeral) return null
+  return m.metadata ?? null
+}
 function fetchMessageMetadata(ch, ts, signal) {
   const key = `${ch}:${ts}`
   if (metadataKnown.has(key)) return Promise.resolve(metadataKnown.get(key))
-  if (getRawMessage(ch, ts)?.is_ephemeral) return Promise.resolve(null)
+  const stored = storedMetadata(ch, ts)
+  if (stored !== undefined) return Promise.resolve(stored)
   if (signal?.aborted) return Promise.reject(signal.reason)
   let p = metadataPending.get(key)
   if (!p) {
@@ -265,7 +273,8 @@ const refreshSoon = () => {
 function getMessageMetadata(ch, ts, signal) {
   const key = `${ch}:${ts}`
   if (metadataKnown.has(key) || metadataFailed.has(key)) return metadataKnown.get(key)
-  if (getRawMessage(ch, ts)?.is_ephemeral) return null
+  const stored = storedMetadata(ch, ts)
+  if (stored !== undefined) return stored
   fetchMessageMetadata(ch, ts, signal).catch((err) => {
     if (!signal?.aborted) warn('Could not look up metadata for', key, err)
   })

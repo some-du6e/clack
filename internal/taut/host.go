@@ -265,9 +265,17 @@ func (t *Taut) userAPI(ctx context.Context, method string, fields map[string]str
 	return map[string]any{"status": 200, "json": out}, nil
 }
 
-// messageMetadata is a message's app metadata (event_type + event_payload),
-// which history only returns with include_all_metadata.
+// messageMetadata is a message's app metadata (event_type + event_payload).
+// core fetches history and replies with include_all_metadata, so the stored
+// message has it; only a message core never loaded (a search hit, an
+// activity item) costs one conversations.replies call.
 func (t *Taut) messageMetadata(ctx context.Context, ch, ts string) (any, error) {
+	if sm, ok := t.app.S.Find(ch, ts); ok {
+		if len(sm.Metadata) == 0 || string(sm.Metadata) == "null" {
+			return nil, nil
+		}
+		return sm.Metadata, nil
+	}
 	raw, err := t.app.C.Raw(ctx, "conversations.replies", url.Values{
 		"channel": {ch}, "ts": {ts}, "limit": {"1"}, "inclusive": {"true"}, "include_all_metadata": {"true"},
 	})
