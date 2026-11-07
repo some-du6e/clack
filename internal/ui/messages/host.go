@@ -64,10 +64,11 @@ func styleFor(h Host) *richview.Style {
 	if th.Dark != e.dark || !e.init {
 		e.dark, e.init = th.Dark, true
 		// theme.EmboldenFor: dark text needs the stroke, light text doesn't.
-		// Message bodies need more than labels to match Chrome: measured on
-		// the same 15px line at 1x, total ink was 151.9k with no stroke and
-		// 193.6k at 0.3dp, against Chrome's 214.0k, which interpolates to
-		// about 0.45dp (bodyEmbolden x the theme's rule).
+		// Message bodies need more than labels to match Chrome. Ink on the
+		// same 15px line: at 1x 151.9k (no stroke) / 193.6k (0.3px) vs
+		// Chrome 214.0k; at 2x 516.7k (none) / 727.4k (0.9px) vs Chrome
+		// 620.5k. Both interpolate to ~0.45px, so richview applies the
+		// stroke in pixels: bodyEmbolden x 0.3 = 0.45px at any scale.
 		e.st.Embolden = bodyEmbolden * theme.EmboldenFor(theme.LightPalette.Fg)
 		if th.Dark {
 			e.st.SetPalette(richview.DarkPalette())

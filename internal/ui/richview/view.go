@@ -376,7 +376,10 @@ func (v *View) record(st *Style) {
 			if st.Embolden > 0 {
 				// Browsers render Lato visibly heavier than Gio's linear
 				// coverage; a hairline stroke of the outline matches it.
-				paint.FillShape(ops, f.col, clip.Stroke{Path: path, Width: st.Embolden * v.laidPx}.Op())
+				// Width is in pixels, not dp: measured against Chrome, the
+				// missing ink is ~0.45px at both 1x and 2x (thinning comes
+				// from coverage at the pixel level, not from glyph size).
+				paint.FillShape(ops, f.col, clip.Stroke{Path: path, Width: st.Embolden}.Op())
 			}
 			if f.sh.color {
 				bm.Add(ops)
