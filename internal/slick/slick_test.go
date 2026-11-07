@@ -425,6 +425,37 @@ func TestThemesAndUserCSS(t *testing.T) {
 	}
 }
 
+// Slick installs the theme, then user.css, so custom CSS beats the theme's
+// !important rules. In Clack a dark-only theme only appears once SetDark(true)
+// comes, after New already installed user.css; it must still land first.
+func TestThemeBeforeUserCSS(t *testing.T) {
+	h := newHarness(t)
+	_ = os.MkdirAll(filepath.Join(h.s.Dir(), "themes"), 0o700)
+	_ = os.WriteFile(filepath.Join(h.s.Dir(), "themes", "nord.json"), []byte(`{"mode":"dark","css":[".c-menu{background:#3b4252 !important}"]}`), 0o600)
+	_ = os.WriteFile(filepath.Join(h.s.Dir(), "user.css"), []byte(".c-menu{background:red !important}"), 0o600)
+	_ = os.WriteFile(filepath.Join(h.s.Dir(), "settings.json"), []byte(`{"theme":"nord","plugins":{}}`), 0o600)
+	s, err := New(Options{Taut: h.tt, Dir: h.s.Dir(), NoAutoStart: true, NoUpdates: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if h.ui.style("slick:user") == "" || h.ui.style("slick:theme") != "" {
+		t.Fatalf("light mode: theme %q user %q", h.ui.style("slick:theme"), h.ui.style("slick:user"))
+	}
+	s.SetDark(true)
+	if !h.ui.before("slick:theme", "slick:user") {
+		t.Fatalf("theme isn't before user.css: %v", h.ui.order)
+	}
+	// light → dark again, and switching themes, keep the order
+	s.SetDark(false)
+	s.SetDark(true)
+	_ = s.SetTheme("custom")
+	_ = s.SetTheme("nord")
+	if !h.ui.before("slick:theme", "slick:user") {
+		t.Fatalf("theme isn't before user.css after toggles: %v", h.ui.order)
+	}
+}
+
 func TestLocalConfigAndRoute(t *testing.T) {
 	h := newHarness(t)
 	h.s.SetRoute(teamID, chGen)
