@@ -67,6 +67,7 @@ func newSV(t *testing.T) *svEnv {
 		t.Skip("SLICK_PLUGINS_DIR not set: the ui-slick workflow builds Slick's plugins and runs this")
 	}
 	a, ca := ttApp(t, t.TempDir())
+	ca.C.EdgeURL = "http://127.0.0.1:1/edge/" // never the real edge API
 	ca.S.PutUsers([]slack.User{
 		{ID: svAlice, Name: "alice", RealName: "Alice Example", Profile: slack.Profile{DisplayName: "alice", RealName: "Alice Example"}},
 		{ID: svBob, Name: "bob", RealName: "Bob Example", Profile: slack.Profile{DisplayName: "bob", RealName: "Bob Example"}},
@@ -77,6 +78,9 @@ func newSV(t *testing.T) *svEnv {
 	b := newBackend(ca, "")
 	b.app = a
 	b.ctx, b.cancel = context.WithCancel(context.Background())
+	for _, ch := range []string{ttGen, svRandom, svDM} {
+		b.fetched[ch] = time.Now() // no tabs/facepile fetches (offline)
+	}
 	a.data = b
 	b.apply(a, ca.Snapshot())
 	m := &b.m
@@ -157,6 +161,9 @@ func (e *svEnv) frame() {
 	e.a.title = e.a.windowTitle() // no window to retitle
 	e.a.frame(gtx)
 	e.rt.Frame(e.ops)
+	if e.a.login != nil {
+		e.t.Fatal("the shell fell back to the sign-in screen (the core signed out)")
+	}
 }
 
 // until draws frames until cond holds.

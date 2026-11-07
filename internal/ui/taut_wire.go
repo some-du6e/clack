@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/jsrt"
@@ -45,6 +46,11 @@ func (b *backend) startTaut(a *App) {
 		return
 	}
 	t0 := time.Now()
+	// The runtime's patched names, kept so the reset Attached posts can't
+	// lose them: a plugin may register its patches (SetPatched) before the
+	// UI goroutine runs that reset, and JS only resends the set on change.
+	var patchMu sync.Mutex
+	var patchedNow []string
 	t, err := taut.New(taut.Options{
 		App:            b.core,
 		OpenURL:        openURL,
@@ -56,9 +62,15 @@ func (b *backend) startTaut(a *App) {
 			// a crash: drop every mounted root (their JS instances are
 			// gone), bind the new bridge, and let views remount (tautGen).
 			Attached: func(br *taut.Bridge) {
+				patchMu.Lock()
+				patchedNow = nil // a fresh runtime starts unpatched
+				patchMu.Unlock()
 				a.Post(func() {
 					slackc.Reset()
 					slackc.SetBridge(br)
+					patchMu.Lock()
+					slackc.SetPatched(patchedNow)
+					patchMu.Unlock()
 					a.tautGen++
 					a.Invalidate()
 				})
@@ -71,7 +83,12 @@ func (b *backend) startTaut(a *App) {
 					log.Printf("slackc: deliver %d: %v", root, err)
 				}
 			},
-			SetPatched:  slackc.SetPatched,
+			SetPatched: func(names []string) {
+				patchMu.Lock()
+				patchedNow = names
+				slackc.SetPatched(names)
+				patchMu.Unlock()
+			},
 			ThreadPane:  messages.ThreadPane, // api.threads.usePane (safe off the UI goroutine)
 			CallGo:      slackc.CallGo,
 			SetStyle:    slackc.SetStyle,
