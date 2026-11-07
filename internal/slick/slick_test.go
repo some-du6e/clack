@@ -274,6 +274,99 @@ func TestMainHalf(t *testing.T) {
 	}
 }
 
+// A renderer and main half that use the rpc sender the way StreamerMode
+// (once), ChatTabs (getURL, on/removeListener before-input-event) and
+// InstalledApps (session.fetch) do.
+const senderPlugin = `// slick-plugin {"id":"SenderProbe","name":"Sender Probe","description":"test"}
+(globalThis.__slickPlugins ??= []).push((require) => {
+const { SlickPlugin } = require("$slick");
+class SenderProbe extends SlickPlugin {
+  static id = "SenderProbe";
+  static pluginName = "Sender Probe";
+  static description = "test";
+  start() {}
+}
+return SenderProbe;
+});
+`
+
+const senderMain = `// slick-main {"id":"SenderProbe"}
+(globalThis.__slickMainPlugins ??= []).push((require) => {
+let hooked;
+return {
+  id: "SenderProbe",
+  capabilities: [],
+  rpc: {
+    async probe(ctx, args, sender) {
+      let gone = false;
+      sender.once("destroyed", () => (gone = true));
+      hooked = (event, input) => {
+        if (input.type === "keyDown" && input.control && input.key === "w") { event.preventDefault(); ctx.emitTo(sender, "close-tab"); }
+      };
+      sender.on("before-input-event", hooked);
+      const res = await sender.session.fetch("https://example.test/page?x=1", { credentials: "include", signal: AbortSignal.timeout(15000) });
+      return { id: sender.id, url: sender.getURL(), ok: res.ok, status: res.status, body: await res.text(), gone, destroyed: sender.isDestroyed() };
+    },
+    unhook(ctx, args, sender) { sender.removeListener("before-input-event", hooked); },
+  },
+};
+});
+`
+
+func TestMainHalfSender(t *testing.T) {
+	h := newHarness(t)
+	h.answer("https://example.test/page", `{"page":1}`)
+	mustImport(t, h, senderPlugin)
+	if _, err := h.s.Import(h.ctx(), []byte(senderMain)); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.s.SetEnabled(h.ctx(), "SenderProbe", true); err != nil {
+		t.Fatal(err)
+	}
+	h.s.SetRoute(teamID, chGen)
+	eventually(t, 3*time.Second, "route", func() bool { return h.jsBool(`return location.pathname.endsWith('/` + chGen + `')`) })
+	var r struct {
+		Probe struct {
+			ID        int    `json:"id"`
+			URL       string `json:"url"`
+			OK        bool   `json:"ok"`
+			Status    int    `json:"status"`
+			Body      string `json:"body"`
+			Gone      bool   `json:"gone"`
+			Destroyed bool   `json:"destroyed"`
+		} `json:"probe"`
+		Hooked   bool `json:"hooked"`
+		Closed   int  `json:"closed"`
+		Unhooked bool `json:"unhooked"`
+		Other    bool `json:"other"`
+	}
+	h.jsInto(`
+		const probe = await S.callMain('SenderProbe', 'probe', [])
+		let closed = 0
+		const off = S.onMain('SenderProbe', 'close-tab', () => closed++)
+		const key = (k) => window.dispatchEvent(new KeyboardEvent('keydown', { key: k, ctrlKey: true, cancelable: true }))
+		const hooked = !key('w')
+		const other = !key('q')
+		await new Promise((r) => setTimeout(r, 10))
+		await S.callMain('SenderProbe', 'unhook', [])
+		const unhooked = key('w')
+		await new Promise((r) => setTimeout(r, 10))
+		off()
+		return { probe, hooked, closed, unhooked, other }`, &r)
+	p := r.Probe
+	if p.ID != 1 || p.URL != "https://app.slack.com/client/"+teamID+"/"+chGen || !p.OK || p.Status != 200 || p.Body != `{"page":1}` || p.Gone || p.Destroyed {
+		t.Fatalf("probe %+v", p)
+	}
+	if !r.Hooked || r.Other || r.Closed != 1 || !r.Unhooked {
+		t.Fatalf("before-input-event: %+v", r)
+	}
+	h.fetchMu.Lock()
+	defer h.fetchMu.Unlock()
+	if len(h.cookied) > 0 {
+		t.Fatalf("session.fetch sent a cookie: %v", h.cookied)
+	}
+}
+
 func TestThemesAndUserCSS(t *testing.T) {
 	h := newHarness(t)
 	_ = os.MkdirAll(filepath.Join(h.s.Dir(), "themes"), 0o700)

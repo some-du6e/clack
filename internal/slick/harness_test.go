@@ -150,6 +150,7 @@ type harness struct {
 	fetchMu sync.Mutex
 	fetches map[string]string // URL prefix → JSON body
 	fetched []string
+	cookied []string // fetched URLs that carried a Cookie header
 }
 
 func newHarness(t *testing.T) *harness {
@@ -199,6 +200,9 @@ func (h *harness) fetch(ctx context.Context, req *http.Request) (*http.Response,
 	h.fetchMu.Lock()
 	defer h.fetchMu.Unlock()
 	h.fetched = append(h.fetched, u)
+	if req.Header.Get("Cookie") != "" {
+		h.cookied = append(h.cookied, u)
+	}
 	best := ""
 	for prefix := range h.fetches {
 		if strings.HasPrefix(u, prefix) && len(prefix) > len(best) {
