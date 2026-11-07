@@ -1,7 +1,7 @@
 name: ui-taut
 # Builds every Taut plugin with Taut's own `build:user-plugin`, then runs
 # internal/ui's Taut tests: startup cost with no plugins, and Preferences >
-# Taut rendered headlessly (main, Advanced, Appearance, About, every plugin
+# Taut and Preferences > Slick rendered headlessly (main, Advanced, Appearance, About, every plugin
 # page with its options, React editors and data panels) over a synthetic
 # workspace. Screenshots (synthetic data only) are uploaded as an artifact;
 # the built plugins (GPLv3) are never committed.
@@ -11,6 +11,7 @@ on:
       - "internal/ui/*.go"
       - "internal/ui/slackc/**"
       - "internal/taut/**"
+      - "internal/slick/**"
       - ".github/workflows/ui-taut.yml"
   workflow_dispatch:
     inputs:
@@ -47,6 +48,17 @@ jobs:
             npm run -s build:user-plugin -- "$f" "$GITHUB_WORKSPACE/dist/taut-plugins/$name.js"
           done
           ls "$GITHUB_WORKSPACE/dist/taut-plugins" | wc -l
+      - uses: oven-sh/setup-bun@v2
+      - name: clone slick and build its plugins (Slick's own build)
+        run: |
+          set -o pipefail
+          git clone -q https://github.com/3kh0/slick /tmp/slick
+          git -C /tmp/slick log --oneline -1
+          (cd /tmp/slick && bun install --frozen-lockfile --ignore-scripts)
+          mkdir -p dist/slick-plugins
+          node internal/slick/build/build.mjs /tmp/slick dist/slick-plugins > dist/slick-build.log 2>&1 || { tail -40 dist/slick-build.log; exit 1; }
+          cp -r /tmp/slick/themes dist/slick-plugins/themes
+          ls dist/slick-plugins | wc -l
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -57,10 +69,11 @@ jobs:
         env:
           TAUT_PLUGINS_DIR: ${{ github.workspace }}/dist/taut-plugins
           TAUT_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          SLICK_PLUGINS_DIR: ${{ github.workspace }}/dist/slick-plugins
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$TAUT_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -timeout 15m -v -run 'TestTaut' ./internal/ui/
+          xvfb-run -a go test -count=1 -timeout 25m -v -run 'TestTaut|TestSlick|TestDeepLink' ./internal/ui/
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:

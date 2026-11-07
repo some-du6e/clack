@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"image"
+	"image/color"
 
 	"gioui.org/layout"
 	"gioui.org/widget"
@@ -22,6 +23,7 @@ type prefsModal struct {
 	avail   pagePositioned // popups.AvailabilityPage when linked
 	org     originTracker
 	taut    *tautPage              // Preferences > Taut, made on first view
+	slick   *slickPage             // Preferences > Slick's tabs
 	tabSubs map[string]*slackc.Sub // plugin Preferences tabs (RenderPreferencesTab)
 	tabGen  int                    // App.tautGen the tab subs belong to
 }
@@ -91,6 +93,9 @@ func (p *prefsModal) close() {
 	if p.taut != nil {
 		p.taut.close()
 	}
+	if p.slick != nil {
+		p.slick.close()
+	}
 	for k, s := range p.tabSubs {
 		s.Close()
 		delete(p.tabSubs, k)
@@ -100,16 +105,26 @@ func (p *prefsModal) close() {
 // extraNav is Clack's Taut tab and the plugins' own Preferences tabs,
 // drawn after Slack's tabs[] (kept out of tabsProps: plugins patching Tabs
 // expect "advanced" last).
-func (p *prefsModal) extraNav() []struct{ id, label, icon string } {
-	out := []struct{ id, label, icon string }{{"taut", "Taut", "code"}}
+func (p *prefsModal) extraNav() []navExtra {
+	out := []navExtra{{id: "taut", label: "Taut", icon: "code"}}
+	if p.a.Slick() != nil { // Slick's tabs, a divider above the first
+		for i, t := range slickTabs {
+			out = append(out, navExtra{id: t.id, label: t.label, icon: t.icon, divider: i == 0})
+		}
+	}
 	for _, t := range p.a.tautTabs {
 		icon := t.Icon
 		if icon != "" {
 			icon = icons.Slack(icon)
 		}
-		out = append(out, struct{ id, label, icon string }{t.ID, t.Label, icon})
+		out = append(out, navExtra{id: t.ID, label: t.Label, icon: icon})
 	}
 	return out
+}
+
+type navExtra struct {
+	id, label, icon string
+	divider         bool // Slick's: 17px margin and a 1px rule 8px above the tab
 }
 
 func (p *prefsModal) layout(gtx layout.Context) layout.Dimensions {
@@ -213,6 +228,10 @@ func (p *prefsModal) tabs(gtx layout.Context, tp slackc.Props) layout.Dimensions
 		if listHas(list, it.id) {
 			continue
 		}
+		if it.divider {
+			y += gtx.Dp(17)
+			theme.Fill(gtx, image.Rect(0, y-gtx.Dp(9), navW-gtx.Dp(16), y-gtx.Dp(8)), p.a.th.OnBg(otlTer(p.a.th.Dark)))
+		}
 		if p.navItem(gtx, y, navW, it.id, it.label, nil, it.icon, cur == it.id) {
 			if tp != nil && tp.Has("onTabChange") && list != nil {
 				tp.Invoke("onTabChange", it.id, slackc.Props{"type": "click"})
@@ -299,6 +318,12 @@ func (p *prefsModal) section1(gtx layout.Context, id string, org image.Point) la
 	if id == "availability" && p.avail != nil {
 		p.avail.SetOrigin(org)
 		return p.avail.Layout(gtx)
+	}
+	if isSlickTab(id) {
+		if p.slick == nil {
+			p.slick = newSlickPage(p.a)
+		}
+		return p.slick.layout(gtx, id)
 	}
 	if id == "taut" {
 		if p.taut == nil {
@@ -496,4 +521,12 @@ func (a *App) openPrefsMenu() {
 		{Label: map[bool]string{true: "✓ Desktop notifications", false: "Desktop notifications"}[a.notifyOn()], Icon: "bell", Do: a.toggleNotify},
 		{Label: map[bool]string{true: "Show sidebar", false: "Hide sidebar"}[a.sidebar.hidden], Icon: "sidebar", Hint: "Ctrl+Shift+D", Do: func() { a.sidebar.hidden = !a.sidebar.hidden }},
 	})
+}
+
+// otlTer is Slack's --dt_color-otl-ter (hairlines).
+func otlTer(dark bool) color.NRGBA {
+	if dark {
+		return hex8(0x797c814d)
+	}
+	return hex8(0x5e5d6021)
 }

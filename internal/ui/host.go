@@ -70,6 +70,7 @@ func (a *App) Forward() {
 }
 
 func (a *App) afterRoute(prev, r Route) {
+	a.slickRoute(r)
 	ch := r.Channel()
 	if prev.Channel() != ch {
 		// leaving a channel closes its thread/details pane (Slack keeps the

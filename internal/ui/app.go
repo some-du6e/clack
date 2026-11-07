@@ -471,6 +471,9 @@ func (a *App) setDark(dark bool) {
 			on := argStr(args, "value") == "dark"
 			a.Post(func() {
 				a.th.SetDark(on)
+				if s := a.Slick(); s != nil {
+					s.SetDark(on) // themes with a "mode" apply only in it
+				}
 				a.savePrefs()
 				a.Invalidate()
 			})

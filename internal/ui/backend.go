@@ -14,6 +14,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/slick"
 	"github.com/some-du6e/yoloslackgoclient/internal/taut"
 )
 
@@ -21,8 +22,9 @@ import (
 // mutations happen on the UI goroutine only (via App.Post).
 type backend struct {
 	core      *core.App
-	taut      *taut.Taut // Taut plugins (nil until boot)
-	cacheFile string     // sidebar metadata cache (names/kinds/order only)
+	taut      *taut.Taut   // Taut plugins (nil until boot)
+	slick     *slick.Slick // Slick plugins, on Taut's runtime (nil until boot)
+	cacheFile string       // sidebar metadata cache (names/kinds/order only)
 
 	m       model
 	started bool

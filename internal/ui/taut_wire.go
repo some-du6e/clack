@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"mime"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/jsrt"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/yoloslackgoclient/internal/slick"
 	"github.com/some-du6e/yoloslackgoclient/internal/taut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/messages"
@@ -92,6 +94,20 @@ func (b *backend) startTaut(a *App) {
 					log.Printf("slackc: document: %v", err)
 				}
 			},
+			// slack:// links (Slack's handleDeepLink thunk) open inside Clack.
+			DeepLink: func(uri string) bool {
+				route, user, ok := deepLinkRoute(uri)
+				if ok {
+					a.Post(func() {
+						if user != "" {
+							a.OpenUserProfile(user)
+						} else {
+							a.Navigate(route)
+						}
+					})
+				}
+				return ok
+			},
 			OnDocumentProps: func(html, body []byte) {
 				if err := slackc.SetDocumentProps(html, body); err != nil {
 					log.Printf("slackc: document props: %v", err)
@@ -107,6 +123,7 @@ func (b *backend) startTaut(a *App) {
 	popups.SetTaut(t)   // channel/member menus, search, reactions, delete
 	messages.SetTaut(t) // message list thunks, patched message views
 	composer.SetTaut(t) // composer buttons, send checks/transforms, drafts
+	b.startSlick(a, t)
 	if envFlag("TIMING") {
 		log.Printf("timing: taut.New %v (js runtime started: %v)", time.Since(t0).Round(10*time.Microsecond), t.Started())
 	}
@@ -123,6 +140,10 @@ func (b *backend) watchTaut(a *App, t *taut.Taut) {
 }
 
 func (b *backend) stopTaut() {
+	if b.slick != nil { // Slick runs on Taut's runtime: close it first
+		_ = b.slick.Close()
+		b.slick = nil
+	}
 	if b.taut != nil {
 		popups.SetTaut(nil)
 		messages.SetTaut(nil)
@@ -275,4 +296,96 @@ func argStr(args map[string]any, k string) string {
 		return v.String()
 	}
 	return ""
+}
+
+// startSlick starts Slick plugins on Taut's runtime. slick.New reads
+// settings.json, themes and cached plugin metadata only; with no plugin on,
+// no JS starts (themes and custom CSS are converted in Go).
+func (b *backend) startSlick(a *App, t *taut.Taut) {
+	t0 := time.Now()
+	s, err := slick.New(slick.Options{Taut: t, OpenURL: openURL, OpenFile: a.openFilePath})
+	if err != nil {
+		log.Printf("slick: %v", err)
+		return
+	}
+	b.slick = s
+	s.SetDark(a.th.Dark)
+	s.SetRoute(b.teamID, a.router.Current().Channel())
+	if envFlag("TIMING") {
+		log.Printf("timing: slick.New %v (js runtime started: %v)", time.Since(t0).Round(10*time.Microsecond), t.Started())
+	}
+	go func() { // repaint Preferences > Slick on change
+		ch, stop := s.Subscribe()
+		defer stop()
+		for range ch {
+			a.Invalidate()
+		}
+	}()
+}
+
+// Slick returns the Slick plugin system (nil until boot).
+func (a *App) Slick() *slick.Slick {
+	if a.data == nil {
+		return nil
+	}
+	return a.data.slick
+}
+
+// slickRoute tells Slick where the window is (location.pathname,
+// getCurrentChannelId, workspace restrictions).
+func (a *App) slickRoute(r Route) {
+	if s := a.Slick(); s != nil {
+		s.SetRoute(a.data.teamID, r.Channel())
+	}
+}
+
+// openFilePath is Slick's native file picker (file settings,
+// MainCtx.dialog.openFile): the chosen file's path, "" when cancelled.
+// Blocks; call off the UI goroutine.
+func (a *App) openFilePath(title, accept string) (string, error) {
+	e := a.explorer
+	if e == nil {
+		return "", errors.New("no file chooser on this platform")
+	}
+	rc, err := e.ChooseFile(acceptExtensions(accept)...)
+	if err != nil || rc == nil {
+		return "", nil // cancelled
+	}
+	defer rc.Close()
+	f, ok := rc.(interface{ Name() string })
+	if !ok {
+		return "", errors.New("the file chooser didn't return a path")
+	}
+	return f.Name(), nil
+}
+
+// deepLinkRoute maps a slack:// URI to a Clack route (or a user to open):
+// slack://channel?team=T&id=C[&thread_ts=ts], slack://user?team=T&id=U,
+// slack://open (Home). Unknown forms aren't handled.
+func deepLinkRoute(uri string) (route, user string, ok bool) {
+	u, err := url.Parse(uri)
+	if err != nil || u.Scheme != "slack" {
+		return "", "", false
+	}
+	q := u.Query()
+	id := q.Get("id")
+	switch u.Host {
+	case "channel":
+		if id == "" {
+			return "", "", false
+		}
+		r := "c/" + id
+		if ts := q.Get("thread_ts"); ts != "" {
+			r += "/t/" + ts // message=… alone opens the channel (no jump-to route yet)
+		}
+		return r, "", true
+	case "user":
+		if id == "" {
+			return "", "", false
+		}
+		return "", id, true
+	case "open":
+		return "home", "", true
+	}
+	return "", "", false
 }
