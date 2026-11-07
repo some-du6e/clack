@@ -245,6 +245,9 @@ type renderCtx struct {
 	fr   *frame
 	st   *css.Style
 	n    *Node // the "@" node whose native is drawing
+	// depth is the element stack's height when the native was called;
+	// above it are the elements the native entered (nativeAnchor).
+	depth int
 }
 
 // WindowRect is the component's border box in window pixels as of the

@@ -76,6 +76,10 @@ type box struct {
 	nprops     Props     // n.P plus "children" (the rendered children) for natives
 	rctx       renderCtx // curRender while this native draws
 
+	// up is the CSS parent of an extra tree's root laid out inside the
+	// elements a native entered (nativeAnchor); nil: parent.
+	up css.Element
+
 	tc  *textCache // text node shaping cache
 	svg *svgDoc
 
@@ -220,6 +224,9 @@ func (b *box) Attr(name string) (string, bool) {
 }
 
 func (b *box) Parent() css.Element {
+	if b.up != nil {
+		return b.up
+	}
 	p := b.parent
 	for p != nil && (p.kind == kAnon || p.kind == kPseudo) {
 		p = p.parent

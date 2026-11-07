@@ -854,3 +854,64 @@ func TestNestedNativeSeesInput(t *testing.T) {
 		}
 	}
 }
+
+// TestNestedNativeSeesNativeAncestors: a native laid out from a patched
+// component's children, after the Original entered its own elements,
+// matches selectors through those elements, and so do plugin nodes next
+// to it. SlimMessageBox patches TextyButtons and hides the emoji button
+// with `.c-texty_buttons [data-qa="emoji_toolbar_button"]`; the button
+// is drawn by TextyButtonOverflow inside .c-texty_buttons, and saw the
+// patched component's host chain instead.
+func TestNestedNativeSeesNativeAncestors(t *testing.T) {
+	outer := Class("c-test_outer")
+	leaf := Class("c-test_leaf", "data-qa", "test_leaf_button").Tag("button")
+	ran, hidden := 0, 0
+	RegisterHost(func(gtx layout.Context, h *Host) layout.Dimensions {
+		s := leaf.Enter(gtx, 0, 0)
+		defer s.Leave()
+		ran++
+		if s.Hidden() {
+			hidden++
+			return layout.Dimensions{}
+		}
+		return layout.Dimensions{Size: image.Pt(20, 10)}
+	}, "TestNestedLeaf")
+	SetStyle("test:nested", `.c-test_outer [data-qa="test_leaf_button"]{position:absolute !important;visibility:hidden !important}`+
+		`.c-test_outer > .x-plugin{display:none}`)
+	t.Cleanup(func() { RemoveStyle("test:nested") })
+	windowSize = image.Pt(1000, 800)
+	v := NewView(1)
+	row := func(gtx layout.Context, p Props) layout.Dimensions {
+		s := outer.Enter(gtx, 0, 0)
+		defer s.Leave()
+		if e, ok := PropChildren(p); ok {
+			return LayoutElement(gtx, e)
+		}
+		return layout.Dimensions{}
+	}
+	nodes := mustTree(t, `{"t":"@","n":"Row","k":1,"c":[{"t":"@","n":"TestNestedLeaf","k":2},{"t":"span","k":3,"p":{"className":"x-plugin"},"c":["hi"]}]}`)
+	for i := 0; i < 2; i++ {
+		ran, hidden = 0, 0
+		v.Layout(testGtx(400, 400), nodes, "Row", nil, row)
+		if ran == 0 || hidden != ran {
+			t.Fatalf("frame %d: the leaf drew %d times, hidden %d: .c-test_outer is not its ancestor", i, ran, hidden)
+		}
+		if len(stack) != 0 {
+			t.Fatalf("frame %d: %d elements left on the stack", i, len(stack))
+		}
+	}
+	var plugin *box
+	for _, x := range v.extra {
+		for _, b := range x.boxes {
+			if b.n == nodes[0].C[1] {
+				plugin = b
+			}
+		}
+	}
+	if plugin == nil {
+		t.Fatal("the plugin span was never laid out")
+	}
+	if plugin.st.Display != css.DisplayNone {
+		t.Errorf("the plugin span under the Original's .c-test_outer: display %v, want none", plugin.st.Display)
+	}
+}
