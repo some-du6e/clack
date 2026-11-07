@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -176,7 +175,15 @@ func (t *Taut) checkAuth(ctx context.Context, a storedAccount) string {
 	if c.Token == "" || c.Cookie == "" {
 		return "invalid"
 	}
-	base := strings.TrimSuffix(firstNonEmpty(c.TeamURL, "https://slack.com/"), "/") + "/api/auth.test"
+	if c.TeamURL == "" {
+		c.TeamURL = "https://slack.com/"
+	}
+	// The token and cookie only ever go to https slack.com hosts, whatever
+	// the saved account (which plugins can see) says.
+	if slack.CheckCredsHosts(c) != nil {
+		return "invalid"
+	}
+	base := strings.TrimSuffix(c.TeamURL, "/") + "/api/auth.test"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base, strings.NewReader("token="+url.QueryEscape(c.Token)))
 	if err != nil {
 		return "unknown"
@@ -185,6 +192,12 @@ func (t *Taut) checkAuth(ctx context.Context, a storedAccount) string {
 	cookie := c.Cookie
 	if !strings.Contains(cookie, "%") {
 		cookie = url.QueryEscape(cookie)
+	}
+	if ds := c.CookieDS; ds != "" { // d-s goes along with d, as Slack's own client sends it
+		if !strings.Contains(ds, "%") {
+			ds = url.QueryEscape(ds)
+		}
+		cookie += "; d-s=" + ds
 	}
 	req.Header.Set("Cookie", "d="+cookie)
 	res, err := t.opts.Fetch(ctx, req)
@@ -204,13 +217,12 @@ func (t *Taut) checkAuth(ctx context.Context, a storedAccount) string {
 	return "invalid"
 }
 
+// writeCreds saves the account Clack switches to: owner-only like
+// cmd/clack's own creds.json (0600/0700, an owner-only ACL on Windows), and
+// only for https slack.com hosts.
 func writeCreds(path string, c slack.Creds) error {
-	b, err := json.MarshalIndent(c, "", "  ")
-	if err != nil {
+	if err := slack.CheckCredsHosts(c); err != nil {
 		return err
 	}
-	if err := writeFileAtomic(path, b, 0o600); err != nil {
-		return err
-	}
-	return os.Chmod(path, 0o600)
+	return slack.WriteCreds(path, c)
 }
