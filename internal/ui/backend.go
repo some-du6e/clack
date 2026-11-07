@@ -288,7 +288,7 @@ func (b *backend) handle(a *App, ev core.Event) {
 	changed := false
 	switch ev.Type {
 	case "typing":
-		if envFlag("TYPINGLOG") { // ids only
+		if os.Getenv("CLACK_TYPINGLOG") != "" { // ids only
 			log.Printf("ui: typing ch=%s user=%s self=%v", ev.Channel, ev.UserID, ev.UserID == b.selfID)
 		}
 	case "message":
