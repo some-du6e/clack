@@ -488,6 +488,15 @@ func (p *prefsModal) page(gtx layout.Context, sec string) layout.Dimensions {
 			return a.th.Label(gtx, 13, theme.Regular, c.FgMuted, "Plugin settings appear as their own tabs.")
 		})
 		y += gtx.Dp(28)
+		gap()
+		heading("Updates")
+		option("updates", "Check for updates", "Shows a banner when a new Clack release is on GitHub. Nothing downloads on its own.", a.updateChecksOn(), false, a.toggleUpdateChecks)
+		if buildVersion != "" {
+			at(gtx, image.Pt(gtx.Dp(28), y), image.Pt(w-gtx.Dp(28), gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {
+				return a.th.Label(gtx, 13, theme.Regular, c.FgMuted, "You have Clack "+buildVersion)
+			})
+			y += gtx.Dp(28)
+		}
 	}
 	if sec == "notifications" || sec == "availability" {
 		heading("Notifications")

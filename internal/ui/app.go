@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gioui.org/app"
@@ -62,6 +63,14 @@ type Options struct {
 	// SwitchAccount signs in with other credentials (Taut's api.accounts):
 	// save them and reconnect. Nil: plugins can't switch accounts.
 	SwitchAccount func(c slack.Creds)
+	// CheckUpdate asks whether a newer release exists (cmd/clack: GitHub
+	// Releases). Called off the UI goroutine while Preferences > Advanced >
+	// "Check for updates" is on; ok=true shows the "Update available"
+	// banner. Nil: no update checks (dev builds).
+	CheckUpdate func(ctx context.Context) (u UpdateInfo, ok bool, err error)
+	// OnWindowEvent sees every window event before the UI (cmd/clack:
+	// window icons from the platform view events).
+	OnWindowEvent func(e event.Event)
 }
 
 // SetLogin shows the sign-in screen, calling login on submit.
@@ -134,6 +143,9 @@ type App struct {
 	tautTabs    []taut.PreferencesTab // plugins' Preferences tabs
 	switchAt    time.Time             // navigation time, for the channel-switch latency log
 	switchTo    Route
+	winLive     atomic.Pointer[app.Window] // a.win once Run made it, for other goroutines
+	update      updateState                // "Update available" banner
+	updatesOff  atomic.Bool                // prefs.NoUpdateCheck, for updateLoop
 }
 
 // New creates the app. Call Run on the UI goroutine (main).
@@ -192,6 +204,8 @@ func (a *App) Run() error {
 		app.Size(1440, 900),
 		app.MinSize(800, 500),
 	)
+	a.winLive.Store(a.win)
+	go a.updateLoop()
 	if a.images != nil {
 		a.images.SetInvalidate(a.win.Invalidate)
 		a.th.Images = a.images
@@ -208,6 +222,9 @@ func (a *App) Run() error {
 	var ops op.Ops
 	for {
 		ev := a.win.Event()
+		if a.opts.OnWindowEvent != nil {
+			a.opts.OnWindowEvent(ev)
+		}
 		if onEvent != nil {
 			onEvent(ev)
 		}
@@ -316,7 +333,8 @@ func (a *App) frame(gtx layout.Context) {
 	if a.sidebar.hidden || pageOwnsWorkspace(a.router.Current()) {
 		sbW = 0
 	}
-	ws := image.Rect(railW, navH, sz.X-inset, sz.Y-inset)
+	bannerH := a.updateBannerH(gtx) // the workspace starts below the update banner
+	ws := image.Rect(railW, navH+bannerH, sz.X-inset, sz.Y-inset)
 	primary := image.Rect(ws.Min.X+sbW, ws.Min.Y, ws.Max.X, ws.Max.Y)
 	a.primaryOrigin = primary.Min
 
@@ -325,7 +343,7 @@ func (a *App) frame(gtx layout.Context) {
 	// cost on software GL.
 	rad := gtx.Dp(theme.PanelRadius)
 	for _, r := range []image.Rectangle{
-		image.Rect(0, 0, sz.X, navH+rad),
+		image.Rect(0, 0, sz.X, ws.Min.Y+rad),
 		image.Rect(0, navH, railW+rad, sz.Y),
 		image.Rect(ws.Max.X-rad, navH, sz.X, sz.Y),
 		image.Rect(railW, ws.Max.Y-rad, sz.X, sz.Y),
@@ -341,6 +359,9 @@ func (a *App) frame(gtx layout.Context) {
 	}
 	a.layoutTopNav(gtx, navX, sz.X)
 	a.layoutRail(gtx, navH, sz.Y-navH)
+	if bannerH > 0 {
+		a.layoutUpdateBanner(gtx, image.Rect(ws.Min.X, navH, ws.Max.X, ws.Min.Y-gtx.Dp(bannerGap)))
+	}
 
 	// workspace: sidebar (translucent) + primary panel, one rounded unit
 	// with Slack's soft shadow (-4px -4px 16px rgba(0,0,0,.09)).
