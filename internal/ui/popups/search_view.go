@@ -1086,7 +1086,7 @@ func (a srCardArgs) layoutResult(gtx layout.Context, p slackc.Props) layout.Dime
 // cardNative is SearchResult's native: the card with the sender's name
 // and avatar URL; rp holds the plugin's SearchResult props (nil
 // unpatched), whose avatar slot it lays out.
-func (v *SearchView) cardNative(gtx layout.Context, th *theme.Theme, cl *Colors, i, w int, name, av string, rp slackc.Props) layout.Dimensions {
+func (v *SearchView) cardNative(gtx layout.Context, th *theme.Theme, cl *Colors, i, w int, name, avURL string, rp slackc.Props) layout.Dimensions {
 	gtx.Constraints.Min = image.Point{}
 	c := &v.cards[i]
 	m := &v.msgs[i]
@@ -1140,7 +1140,7 @@ func (v *SearchView) cardNative(gtx layout.Context, th *theme.Theme, cl *Colors,
 		})
 	}
 	at(gtx, image.Pt(padL, padT+dp(gtx, 2)), func(gtx layout.Context) layout.Dimensions {
-		return srAvatar(gtx, v.h, m, av, 36, rp)
+		return srAvatar(gtx, v.h, m, avURL, 36, rp)
 	})
 	right := w - padR
 	if c.when != "" {
