@@ -23,7 +23,7 @@ func (a *App) pump() {
 
 func (a *App) handle(ev slack.Event) {
 	a.tapRaw(ev) // Taut's rtm.on (taut_raw.go)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(a.bg, 15*time.Second)
 	defer cancel()
 	ch := chanID(ev.Channel)
 	switch ev.Type {
@@ -390,7 +390,7 @@ func needsFileInfo(m *slack.Message) bool {
 
 // fillFiles completes the file stubs of one message and emits an update.
 func (a *App) fillFiles(ch, ts string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(a.bg, 30*time.Second)
 	defer cancel()
 	for attempt := 0; attempt < 3; attempt++ {
 		time.Sleep(time.Duration(attempt+1) * 700 * time.Millisecond) // uploads take a moment to process

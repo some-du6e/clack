@@ -64,6 +64,11 @@ type Client struct {
 
 	routeMu sync.RWMutex
 	learned map[string]bool // method -> use enterprise host
+
+	g guard // signed-out state + backoff of repeated failures (guard.go)
+
+	// EdgeURL is the edge cache API base (tests point it at a fake server).
+	EdgeURL string
 }
 
 // New builds a client with a tuned, keep-alive HTTP/2 transport.
@@ -133,7 +138,19 @@ func (c *Client) Call(ctx context.Context, method string, params url.Values, out
 	return err
 }
 
+// forbiddenMethods would end the user's Slack session for every client.
+// Clack never calls them; "Sign out" only forgets local credentials.
+var forbiddenMethods = map[string]bool{
+	"auth.signout": true, "auth.revoke": true, "auth.enterpriseSignout": true, "enterpriseSignout": true,
+}
+
+// ErrForbiddenMethod is returned for methods that would end the session.
+var ErrForbiddenMethod = errors.New("slack: method refused (it would sign you out everywhere)")
+
 func (c *Client) callOn(ctx context.Context, method string, ent bool, params url.Values, out any) error {
+	if forbiddenMethods[method] {
+		return ErrForbiddenMethod
+	}
 	p := url.Values{}
 	for k, v := range params {
 		p[k] = v
@@ -164,6 +181,9 @@ func (c *Client) CallMultipart(ctx context.Context, method string, fields url.Va
 }
 
 func (c *Client) multipartOn(ctx context.Context, method string, ent bool, fields url.Values, fileField, filename string, data []byte, out any) error {
+	if forbiddenMethods[method] {
+		return ErrForbiddenMethod
+	}
 	base, tok := c.base, c.Creds.Token
 	if ent {
 		base, tok = c.ent, c.Creds.EnterpriseToken
@@ -209,14 +229,44 @@ func (c *Client) Edge(ctx context.Context, path string, body map[string]any, out
 	body["token"] = tok
 	body["enterprise_token"] = tok
 	b, _ := json.Marshal(body)
-	u := "https://edgeapi.slack.com/cache/" + ent + "/" + path + "?_x_app_name=client"
+	base := c.EdgeURL
+	if base == "" {
+		base = "https://edgeapi.slack.com/cache/"
+	}
+	u := base + ent + "/" + path + "?_x_app_name=client"
 	return c.post(ctx, "edge:"+path, u, "text/plain;charset=UTF-8", b, out)
 }
 
 // SlowCall is the duration above which a call's method name and timing are logged.
 var SlowCall = 1500 * time.Millisecond
 
+// post sends one request through the traffic guards: nothing goes out after
+// the session ended, a request that keeps failing identically backs off
+// exponentially (BackoffBase … BackoffMax), and a session-ended answer from
+// any call trips SignedOut.
 func (c *Client) post(ctx context.Context, method, u, ctype string, body []byte, out any) error {
+	if c.SignedOut() {
+		return ErrSignedOut
+	}
+	k := reqKey(method, u, body)
+	if !skipBackoff(ctx) {
+		if err := c.blocked(k, time.Now()); err != nil {
+			return err
+		}
+	}
+	err := c.doPost(ctx, method, u, ctype, body, out)
+	if ctx.Err() != nil && err != nil { // cancelled by the caller: not a server failure
+		return err
+	}
+	c.record(k, err, time.Now())
+	var se *Error
+	if errors.As(err, &se) && authCodes[se.Code] {
+		c.markAuth(se.Code)
+	}
+	return err
+}
+
+func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byte, out any) error {
 	select {
 	case c.sem <- struct{}{}:
 	case <-ctx.Done():
@@ -290,6 +340,9 @@ func (c *Client) post(ctx context.Context, method, u, ctype string, body []byte,
 
 // Download fetches an authenticated URL (files.slack.com etc) with the session cookie.
 func (c *Client) Download(ctx context.Context, rawURL string) (*http.Response, error) {
+	if c.SignedOut() {
+		return nil, ErrSignedOut
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, err
@@ -300,13 +353,16 @@ func (c *Client) Download(ctx context.Context, rawURL string) (*http.Response, e
 }
 
 // UserAgent mimics a desktop Chrome so Slack serves the normal web payloads.
-const UserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 yoloslack/0.1"
+const UserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
 
 // UploadBytes sends file contents to an upload URL from
 // files.getUploadURLExternal. progress (may be nil) is called as the body
 // is written: every ~64 KB and once at the end, with the multipart body size
 // as total. It runs on the calling goroutine.
 func (c *Client) UploadBytes(ctx context.Context, uploadURL, filename string, data []byte, progress func(sent, total int64)) error {
+	if c.SignedOut() {
+		return ErrSignedOut
+	}
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 	fw, err := mw.CreateFormFile("file", filename)

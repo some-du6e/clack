@@ -72,7 +72,7 @@ func main() {
 	dark := flag.Bool("dark", false, "start in dark mode (overridden by the saved preference)")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: clack [flags]\n       clack login [workspace]   (store credentials from a d cookie)\n\n")
+		fmt.Fprintf(os.Stderr, "usage: clack [flags]\n       clack login [workspace]   (temporarily unavailable)\n\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()

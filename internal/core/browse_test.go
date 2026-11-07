@@ -403,6 +403,7 @@ func tabsServer(t *testing.T, a *App) (calls func(method string) []url.Values) {
 	}))
 	t.Cleanup(srv.Close)
 	a.C = slack.New(slack.Creds{Token: "xoxc-test", UserID: "USELF", Team: "T1", TeamURL: srv.URL + "/"})
+	a.C.EdgeURL = srv.URL + "/edge/"
 	return func(method string) []url.Values {
 		mu.Lock()
 		defer mu.Unlock()

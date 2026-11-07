@@ -39,6 +39,11 @@ type App struct {
 
 	files *fileCache
 
+	// bg scopes all background work (realtime, prefetch, resolvers); it is
+	// cancelled when the session ends.
+	bg     context.Context
+	stopBG context.CancelFunc
+
 	pending map[string]*pendingSend // client_msg_id -> optimistic send
 	saved   map[string]bool         // "channel/ts" of saved / to-do messages
 	starred map[string]bool         // starred conversation ids (stars.list)
@@ -61,6 +66,8 @@ func New(c *slack.Client, s *store.Store) *App {
 		s.Self.ID = c.Creds.UserID
 		s.Unlock()
 	}
+	a.bg, a.stopBG = context.WithCancel(context.Background())
+	c.OnAuthFailed(a.onAuthFailed)
 	a.RTM = c.NewRTM()
 	a.RTM.OnState = func(up bool) {
 		a.mu.Lock()
@@ -68,12 +75,30 @@ func New(c *slack.Client, s *store.Store) *App {
 		a.mu.Unlock()
 		a.emit(Event{Type: "connection", Connected: up})
 		if up {
-			go a.refreshCounts(context.Background())
+			go a.refreshCounts(a.bg)
 		}
 	}
 	a.RTM.OnHello = a.onHello
 	return a
 }
+
+// onAuthFailed runs once when any call learns the session ended: stop all
+// background work and tell the UI. Every later call fails fast with
+// slack.ErrSignedOut without touching the network.
+func (a *App) onAuthFailed(code string) {
+	log.Printf("core: session ended (%s); stopping all Slack traffic", code)
+	a.stopBG()
+	a.mu.Lock()
+	if a.countsTimer != nil {
+		a.countsTimer.Stop()
+		a.countsTimer = nil
+	}
+	a.mu.Unlock()
+	a.emit(Event{Type: "auth_failed", Name: code})
+}
+
+// SignedOut reports whether the session ended (see Event "auth_failed").
+func (a *App) SignedOut() bool { return a.C.SignedOut() }
 
 // Ready is closed when Boot finished (successfully or not).
 func (a *App) Ready() <-chan struct{} { return a.ready }
@@ -234,9 +259,9 @@ func (a *App) Boot(ctx context.Context) error {
 	if a.S.CustomEmoji.Len() == 0 {
 		step("emoji", func() error { return a.loadEmoji(ctx) })
 	} else {
-		go a.loadEmoji(context.Background())
+		go a.loadEmoji(a.bg)
 	}
-	go a.loadUsergroups(context.Background()) // cosmetic; cached on disk after the first run
+	go a.loadUsergroups(a.bg) // cosmetic; cached on disk after the first run
 	wg.Wait()
 	if errConvs != nil {
 		a.bootErr = errConvs
@@ -268,11 +293,11 @@ func (a *App) Boot(ctx context.Context) error {
 	log.Printf("boot: ready in %s (cache %s, %s, dm-users=%s); %d conversations, %d sections, %d emoji",
 		time.Since(t0).Round(time.Millisecond), tCache.Round(time.Millisecond), strings.Join(timings, " "),
 		time.Since(tu).Round(time.Millisecond), len(convs), len(sections), a.S.CustomEmoji.Len())
-	go a.RTM.Run(context.Background())
+	go a.RTM.Run(a.bg)
 	go a.pump()
-	go a.prefetch(context.Background())
-	go a.loadExtras(context.Background())  // starred + saved sets
-	go a.resolveLoop(context.Background()) // unresolved channel/user/bot names
+	go a.prefetch(a.bg)
+	go a.loadExtras(a.bg)  // starred + saved sets
+	go a.resolveLoop(a.bg) // unresolved channel/user/bot names
 	go func() {
 		t := time.NewTicker(5 * time.Minute)
 		defer t.Stop()
@@ -407,7 +432,7 @@ func (a *App) refreshCountsSoon() {
 		a.mu.Lock()
 		a.countsTimer = nil
 		a.mu.Unlock()
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		ctx, cancel := context.WithTimeout(a.bg, 20*time.Second)
 		defer cancel()
 		a.refreshCounts(ctx)
 	})
@@ -670,6 +695,14 @@ func (a *App) message(ch string, m *slack.Message) Message {
 		v.EditedTS = m.Edited.TS
 	}
 	v.ClientMsgID = m.ClientMsgID
+	v.Blocks, v.Attachments, v.Metadata = m.Blocks, m.RawAttachments, m.Metadata
+	if v.Attachments == nil && len(m.Attachments) > 0 { // built in memory (not decoded from Slack)
+		v.Attachments, _ = json.Marshal(m.Attachments)
+	}
+	if bp := m.BotProfile; bp != nil {
+		v.BotProfile = &BotProfile{ID: bp.ID, Name: bp.Name, AppID: bp.AppID, UserID: bp.UserID, TeamID: bp.TeamID,
+			Icon: firstNonEmpty(bp.Icons.Image72, bp.Icons.Image48, bp.Icons.Image36), Deleted: bp.Deleted}
+	}
 	v.Pending, v.Failed = a.pendingState(m)
 	if m.PinnedInfo != nil {
 		v.PinnedBy = m.PinnedInfo.PinnedBy
