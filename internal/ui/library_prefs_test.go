@@ -14,6 +14,7 @@ import (
 	"gioui.org/op"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/pluginlib"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 )
 
 // Tests never reach the published Library unless they point it somewhere.
@@ -143,5 +144,14 @@ func TestLibraryInstallsAndUpdatesTautPlugin(t *testing.T) {
 	wait("the tampered install", func() bool { return p.lib.status["LibTest"] != "" })
 	if !p.lib.failed["LibTest"] || !strings.Contains(p.lib.status["LibTest"], "integrity") || tt.InstalledSHA256("LibTest") != pluginlib.Hash(v2) {
 		t.Errorf("tampered: %q", p.lib.status["LibTest"])
+	}
+}
+
+// Every Slick tab's icon is registered (Library first drew the "missing" box).
+func TestSlickTabIconsRegistered(t *testing.T) {
+	for _, tab := range slickTabs {
+		if !icons.Has(tab.icon) {
+			t.Errorf("Slick tab %s: icon %q isn't registered", tab.id, tab.icon)
+		}
 	}
 }

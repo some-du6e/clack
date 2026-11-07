@@ -47,7 +47,7 @@ var slickTabs = []struct{ id, label, icon string }{
 	{"slick_plugins", "Plugins", "apps"},
 	{"slick_themes", "Themes", "paintbrush"},
 	{"slick_install", "Install plugins", "download"},
-	{"slick_library", "Library", "bookmark-outline"},
+	{"slick_library", "Library", "bookmark"},
 }
 
 func isSlickTab(id string) bool { return strings.HasPrefix(id, "slick") && slickTabIndex(id) >= 0 }
