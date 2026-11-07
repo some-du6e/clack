@@ -21,6 +21,8 @@ Optional fields Slack leaves out when unset (avatar `image_*` URLs, bot icons, f
 | `bots` | bot id | `{id, name, deleted, icons:{image_36,48,72}}` | — |
 | `userGroups` | usergroup id | `{id, handle, name, description, user_count, is_usergroup, is_subteam, _name_lc}` | — |
 | `teams` | team / enterprise id | `{id, name, domain, url, enterprise_id, enterprise_name, icon}` | — |
+| `pendingFileUploads` | pendingFileId (`clack_pending_<n>`) | the composers' attached, unsent files: `{id, pendingFileId, title, name, size, mimetype, status: "pending"\|"uploaded", file:{name, title, size, type}, fileId?}`. `title` is what the chip shows and the file is shared under; `name` is what its bytes were uploaded under | the composer (`taut.PendingFiles`, `Taut.PendingFilesChanged`; files.go) |
+| `files` | Slack file id | the pending files whose bytes are up: `{id, name, title, size, mimetype, is_external:false}` | same |
 | `bootData` | whole | `{user_id, team_id, enterprise_id, page_needs_enterprise, version_ts, version_uid}` | — |
 | `selfTeamIds` | whole | `{teamId (org on a grid), enterpriseId, internalWorkspaceIds, defaultWorkspaceId}`. `workspace.isHackClub()` reads this | — |
 | `prefs` | whole | `{user:{…}, team:{}, channel:{}, enterprise:{}}`. `user` uses Slack's pref names (`emoji_mode`, `time24`, `display_real_names_override`, `messages_theme`, `muted_channels`, …) | `prefs`, `pref_change` |
@@ -36,4 +38,4 @@ Optional fields Slack leaves out when unset (avatar `image_*` URLs, bot icons, f
 | `experiments` | whole | `{}`. Clack runs no experiments, but `api.experiments.set` shows forced assignments here | — |
 | `huddleEvents`, `peers`, `huddlesCanvas`, `alert`, `unreadCounts`, `mutedChannels`, `starredChannels` | whole | Slack's empty shapes, or the counts core has | — |
 
-Plain actions plugins dispatch go to JS handlers (`OPEN_MODAL`, `SET_LOCAL_DRAFT`, `JUMP_TO_REPLY`, the huddle log actions). Thunks are covered in [PLUGINS-taut.md](PLUGINS-taut.md).
+Plain actions plugins dispatch go to JS handlers (`OPEN_MODAL`, `SET_LOCAL_DRAFT`, `JUMP_TO_REPLY`, `UPDATE_PENDING_FILE` from the `updatePendingFile` export, which renames a pending file through `taut.RenamePendingFile`, the huddle log actions). Thunks are covered in [PLUGINS-taut.md](PLUGINS-taut.md).

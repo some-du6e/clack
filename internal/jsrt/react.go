@@ -45,6 +45,22 @@ func (rt *Root) Render(js *Ctx, element Value) error {
 	return err
 }
 
+// RenderPortal renders element as a portal inside another root's tree, at
+// the native Slack component whose host node has k (its "k" in the host
+// tree): the element sees every context and provider around that native,
+// while its commits are delivered to this root's onUpdate as usual. Used
+// for patched components a native draws inside another patched
+// component. JS thread. Unmount removes the portal.
+func (rt *Root) RenderPortal(js *Ctx, k int64, element Value) error {
+	if rt.closed {
+		return ErrClosed
+	}
+	js.r.roots[rt.id] = rt
+	fn := js.Global().Get("__clack").Get("portalInto")
+	_, err := fn.Call(float64(k), float64(rt.id), element)
+	return err
+}
+
 // Unmount unmounts the tree and forgets the root. Any goroutine.
 func (rt *Root) Unmount() {
 	rt.r.Post(func(js *Ctx) {

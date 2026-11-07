@@ -52,6 +52,8 @@ When no plugin patches the name, this is just `native(ctx, args)`. When a plugin
 | showNotification | `{message, channelId, title, …}` | ui (desktop notifications) | UI must dispatch |
 | searchInline | `{query}` → `{items}` | ui/popups search dropdown | UI must dispatch |
 | addAndUploadPendingFile, uploadFiles | `{file: taut.File}` / `{files: []taut.File, channelId}` | ui/composer attachments | UI must dispatch; addAndUploadPendingFile has a default (core.PrepareUpload → `{fileIds}`) for api.files.upload |
+| maybePersistPendingFileData | `{pendingFileId}` | taut | native: `taut.PersistPendingFile` (ui/composer sets it); no-op unset |
+| editFileApi | `{fileId, title}` | taut | native: `taut.EditFile` (ui/composer: its uploaded pending files); `files[fileId].title` reads the new title when it resolves; other ids fail |
 | getChannelMembershipInfoForUsers | `{channelId, userIds}` | taut | default: conversations.members, fills `membership` |
 | ensureMembersArePresent | `{memberIds}` | taut | default: core.EnsureUsers |
 | fetchRawChannelsById | `{ids}` → `{missing}` | taut | default: core.ChannelInfo |
@@ -73,6 +75,8 @@ When no plugin patches the name, this is just `native(ctx, args)`. When a plugin
 - `t.HasSendTransforms()` / `t.TransformSendBlocks(ctx, blocks)`: apply to the Block Kit of every send, edit and schedule.
 - `t.HasLinkTransforms()` / `t.TransformLink(ctx, url, "paste"|"link-dialog")`: links pasted or added in the link dialog.
 - `t.HasInlineMarkup()` / `ParseInlineMarkup` (offsets in runes), `SerializeInlineMarkup`, `EscapeInlineMarkup`: replace the composer's `*bold*` shortcuts (RealMarkdown). viewContext values are Slack's names: `MESSAGE_PANE`, `THREADS_FLEXPANE`, …
+- Pending files (files.go): set `taut.PendingFiles` (list), `taut.RenamePendingFile` (the `updatePendingFile` action), `taut.PersistPendingFile` (maybePersistPendingFileData) and `taut.EditFile` (editFileApi) once, before the runtime starts, and call `t.PendingFilesChanged()` when attachments change. They serve `pendingFileUploads` and `files`. Unset, plugins see no pending files.
+- Shaped natives: some Slack components have a JS shape beyond their name (04_react.js `SHAPES`). TextyInput is `memo(class TextyInput)` with Slack's `{instance: {quill}}` on its ref. Its owner feeds the Quill with `__taut.feedNative('TextyInput', props => ({state: {length, index, selected}, props: rest}))` from a prelude (ui/composer does).
 - `t.RegisterInput(where, true/false)`: register composers with Slack's `{viewContext, channelId}`. Answer `UIHooks.Input` ops `isEmpty`, `getContents`, `setContents`, `focus` and `insertText` (`getInputProxy`).
 - `t.SetEditing(windowID, ch, ts, open)`: call when an editor opens or closes. `patchMessageText` leaves the message being edited unchanged.
 - `t.SlicePatched("messages")` → `t.MessageView(ch, ts)` (core.Message, ok) and `t.InjectedMessages(ch)`. `t.SlicePatched("members")` → `t.MemberView(id)`. `t.SlicePatched("channels")` → `t.ChannelView(id)`. `t.ChannelRestriction(ch)` → read-only / thread-only. These never block: they return ok=false until the patched value is computed, then `Invalidate` fires.

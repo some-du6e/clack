@@ -67,6 +67,7 @@ type row struct {
 
 	// resolved author (refreshed when users change)
 	uRev      uint64
+	memAt     time.Time // last member-view check (patchSlice('members'))
 	name      string
 	avatar    string
 	statusURL string
@@ -110,6 +111,10 @@ type row struct {
 	chansDoc        bool         // chans is for the current doc
 	replyAvs        []replyAv    // the reply bar's ReplyBarAvatars
 	replyN          int          // … drawn in the last frame
+
+	// what the header drew last frame (CSS may replace both)
+	avDrawn   string // the avatar's picture: a CSS background-image wins
+	nameShown string // the sender label: ::before + name (unless font-size 0) + ::after
 }
 
 // chanCard is one CodeChannelEntityCard under a message.
@@ -200,10 +205,12 @@ func (r *row) growPills() {
 }
 
 func (r *row) resolve(rc *rowCtx) {
-	if r.uRev == rc.usersRev && r.uRev != 0 {
+	t := tautOf()
+	memPatched := t != nil && r.m.User != "" && t.SlicePatched("members")
+	if r.uRev == rc.usersRev && r.uRev != 0 && !(memPatched && rc.now.Sub(r.memAt) >= viewRefresh) {
 		return
 	}
-	r.uRev = rc.usersRev
+	r.uRev, r.memAt = rc.usersRev, rc.now
 	m := &r.m
 	if r.needChan {
 		doc := m.Doc
@@ -213,8 +220,13 @@ func (r *row) resolve(rc *rowCtx) {
 		r.blocksOv, r.tailOv = 0, [2]uintptr{}
 	}
 	r.name, r.avatar, r.statusURL, r.bot = m.Name, m.Avatar, "", m.IsBot || (m.BotID != "" && m.User == "")
+	coreName := ""
 	if m.User != "" && rc.h.Core() != nil {
 		if u, ok := rc.h.Core().User(m.User); ok {
+			coreName = u.Name
+			if coreName == "" {
+				coreName = u.RealName
+			}
 			if r.name == "" {
 				r.name = u.Name
 				if r.name == "" {
@@ -230,6 +242,19 @@ func (r *row) resolve(rc *rowCtx) {
 			}
 		} else {
 			ensureUser(rc.h, m.User)
+		}
+	}
+	// plugins' member patches (patchSlice('members'): Nicknames…), as
+	// Slack's sender reads the member from the store; a message's own
+	// username (bots) still wins.
+	if memPatched && (m.Name == "" || m.Name == coreName) {
+		if mf, ok := t.MemberView(m.User); ok {
+			if mf.Name != "" {
+				r.name = mf.Name
+			}
+			if mf.Avatar != "" {
+				r.avatar = mf.Avatar
+			}
 		}
 	}
 	if r.name == "" {
@@ -598,6 +623,9 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 			mods |= 4
 		}
 	}
+	if m.SlackbotCustomResponse() {
+		mods |= 8
+	}
 	st := msgClass.EnterClass(gtx, hoverState(rc.hovered), mods, slackc.ExtraClass(p))
 	defer st.Leave()
 	if st.Hidden() {
@@ -621,7 +649,7 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 	}
 	r.col = image.Pt(cx, y)
 	g := at(gtx, 0, y, func(gtx layout.Context) layout.Dimensions {
-		return slackc.Component(gtx, "MessageKitGutter", r, (*row).gutterProps, (*row).layoutGutter)
+		return slackc.Component(gtx, "ProgressiveDisclosureSuccessCoachmarkWrapper", r, (*row).coachmarkProps, (*row).layoutCoachmark)
 	})
 	y += g.Size.Y
 	if m.Pending {
@@ -759,6 +787,10 @@ func (r *row) layoutAvatar(gtx layout.Context, p slackc.Props) layout.Dimensions
 	if st.Hidden() {
 		return layout.Dimensions{}
 	}
+	// Slack's avatar is the element's picture, so a background-image rule
+	// (CustomSlackbot's custom-response avatar) replaces it.
+	url = st.BackgroundImage(url)
+	r.avDrawn = url
 	// Clicked before Layout: Clickable.Layout consumes pending clicks.
 	if r.avatarBtn.Clicked(gtx) && r.m.User != "" {
 		rc.h.OpenProfile(rc.origin(image.Point{}), r.m.User)
@@ -1213,8 +1245,17 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 func (r *row) nameButton(gtx layout.Context, bs slackc.Styled) layout.Dimensions {
 	c := r.rc.c
 	nameS := textStyle{size: float32(bs.FontSize(15)), weight: theme.Black, col: bs.Color(c.Text), lineH: 22}
+	before, after := bs.Generated()
+	r.nameShown = before + after
+	if nameS.size > 0 {
+		r.nameShown = before + r.name + after
+	}
 	r.memberMenuOn(gtx, &r.nameCtx)
 	d := r.nameBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		if nameS.size <= 0 { // font-size: 0, the name drawn by ::after (CustomSlackbot)
+			h := dp(gtx, nameS.lineH)
+			return layout.Dimensions{Size: image.Pt(0, h), Baseline: dp(gtx, 5)}
+		}
 		d := label(gtx, r.rc.th, nameS, r.name)
 		if r.nameBtn.Hovered() {
 			base := d.Size.Y - d.Baseline
@@ -1776,4 +1817,16 @@ func pinnedLabel(rc *rowCtx, by string) string {
 		ensureUser(rc.h, by)
 	}
 	return "Pinned"
+}
+
+// ProgressiveDisclosureSuccessCoachmarkWrapper wraps the message's gutter
+// and content in Slack (props.msg); Clack has no coachmarks, so its native
+// is the gutter. Plugins provide context here (ShowSendingBot's sender for
+// grouped rows' compact gutters).
+func (r *row) coachmarkProps() slackc.Props {
+	return slackc.Props{"$key": r.ts, "msg": r.message(), "coachmarkName": "", "isOpen": false}
+}
+
+func (r *row) layoutCoachmark(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+	return slackc.Component(gtx, "MessageKitGutter", r, (*row).gutterProps, (*row).layoutGutter)
 }

@@ -30,7 +30,7 @@ import (
 //	      ├─ WysiwygContainer                 the bordered box
 //	      │  ├─ texty_input_with_autocomplete the editor
 //	      │  │  └─ TextyAutocomplete          @ # : rows (includeAllBroadcastKeywords, disallowedResults)
-//	      │  │     └─ TextyInput              Slack's memo(class) + Quill ref (plugins.js)
+//	      │  │     └─ TextyInput              Slack's memo(class) + Quill ref (taut; fed by plugins.js)
 //	      │  ├─ TextyButtons                  the footer toolbar
 //	      │  │  └─ TextyButtonOverflow        children: the buttons
 //	      │  │     ├─ ShortcutsMenuTriggerButton (+), ComposerButton (Aa), …
@@ -97,7 +97,7 @@ var (
 	crBtnClass = [crNumBtn]*slackc.ClassDef{
 		crAttach:   crButton("c-wysiwyg_container__button--shortcuts p-shortcuts_menu_trigger_button--composer_ia", "", "Attach"),
 		crAa:       crButton("c-wysiwyg_container__button--composer", "texty_composer_button", "Formatting").Mods("c-wysiwyg_container__button--composer_active"),
-		crEmoji:    crButton("c-wysiwyg_container__button--emoji", "texty_emoji_button", "Emoji"),
+		crEmoji:    crButton("c-wysiwyg_container__button--emoji", "emoji_toolbar_button", "Emoji"),
 		crMention:  crButton("c-wysiwyg_container__button--mention", "texty_mention_button", "Mention someone"),
 		crVideo:    crButton("c-wysiwyg_container__button--story_meeting p-video_composer_button", "texty_video_button", "Record video clip"),
 		crAudio:    crButton("p-audio_composer_button", "texty_audio_button", "Record audio clip"),

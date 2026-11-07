@@ -96,6 +96,7 @@ type testUI struct {
 	trees    map[uint64][]byte
 	patched  []string
 	styles   map[string]string
+	order    []string // style keys in cascade order (a new key is appended, a replaced one keeps its place)
 	overlays []taut.Overlay
 	tabs     []taut.PreferencesTab
 	toasts   []string
@@ -108,9 +109,28 @@ func (u *testUI) hooks() taut.UIHooks {
 			u.trees[root] = append([]byte(nil), tree...)
 			u.mu.Unlock()
 		},
-		SetPatched:      func(names []string) { u.mu.Lock(); u.patched = names; u.mu.Unlock() },
-		SetStyle:        func(k, css string) { u.mu.Lock(); u.styles[k] = css; u.mu.Unlock() },
-		RemoveStyle:     func(k string) { u.mu.Lock(); delete(u.styles, k); u.mu.Unlock() },
+		SetPatched: func(names []string) { u.mu.Lock(); u.patched = names; u.mu.Unlock() },
+		SetStyle: func(k, css string) {
+			u.mu.Lock()
+			if _, ok := u.styles[k]; !ok {
+				u.order = append(u.order, k)
+			}
+			u.styles[k] = css
+			u.mu.Unlock()
+		},
+		RemoveStyle: func(k string) {
+			u.mu.Lock()
+			if _, ok := u.styles[k]; ok {
+				for i, x := range u.order {
+					if x == k {
+						u.order = append(u.order[:i:i], u.order[i+1:]...)
+						break
+					}
+				}
+			}
+			delete(u.styles, k)
+			u.mu.Unlock()
+		},
 		Overlays:        func(o []taut.Overlay) { u.mu.Lock(); u.overlays = o; u.mu.Unlock() },
 		PreferencesTabs: func(tabs []taut.PreferencesTab) { u.mu.Lock(); u.tabs = tabs; u.mu.Unlock() },
 		Toast: func(text, icon string, d time.Duration) {
@@ -125,6 +145,22 @@ func (u *testUI) hooks() taut.UIHooks {
 			return nil
 		},
 	}
+}
+
+// before reports whether style key a comes before key b in the cascade.
+func (u *testUI) before(a, b string) bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	ia, ib := -1, -1
+	for i, k := range u.order {
+		switch k {
+		case a:
+			ia = i
+		case b:
+			ib = i
+		}
+	}
+	return ia >= 0 && ib >= 0 && ia < ib
 }
 
 func (u *testUI) style(substr string) string {
@@ -150,6 +186,7 @@ type harness struct {
 	fetchMu sync.Mutex
 	fetches map[string]string // URL prefix → JSON body
 	fetched []string
+	cookied []string // fetched URLs that carried a Cookie header
 }
 
 func newHarness(t *testing.T) *harness {
@@ -199,6 +236,9 @@ func (h *harness) fetch(ctx context.Context, req *http.Request) (*http.Response,
 	h.fetchMu.Lock()
 	defer h.fetchMu.Unlock()
 	h.fetched = append(h.fetched, u)
+	if req.Header.Get("Cookie") != "" {
+		h.cookied = append(h.cookied, u)
+	}
 	best := ""
 	for prefix := range h.fetches {
 		if strings.HasPrefix(u, prefix) && len(prefix) > len(best) {

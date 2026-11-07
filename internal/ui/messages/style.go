@@ -85,6 +85,9 @@ func colorsFor(th *theme.Theme) *colors {
 	flatOnce.Do(func() {
 		lightFlat, darkFlat = flatten(lightColors), flatten(darkColors)
 	})
+	if c := themedColors(th); c != nil {
+		return c
+	}
 	if th.Dark {
 		return &darkFlat
 	}

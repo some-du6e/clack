@@ -229,6 +229,53 @@ func init() {
 		if h.ui.style("plugin:StreamerMode:redaction") == "" {
 			t.Error("no redaction stylesheet")
 		}
+		// its main half keeps a window muted until sender 'destroyed'
+		if !h.jsBool(`return await S.callMain('StreamerMode', 'setActive', [true])`) {
+			t.Error("setActive(true) didn't report the window active")
+		}
+	}
+	// main half: getURL, before-input-event on the rpc sender (Ctrl+W closes a tab)
+	checks["ChatTabs"] = func(t *testing.T, h *harness) {
+		h.s.SetRoute(teamID, chGen)
+		eventually(t, 3*time.Second, "route", func() bool { return h.jsBool(`return location.pathname.endsWith('/` + chGen + `')`) })
+		var r struct {
+			Prevented bool `json:"prevented"`
+			Closed    int  `json:"closed"`
+			After     bool `json:"after"`
+		}
+		h.jsInto(`
+			let closed = 0
+			const off = S.onMain('ChatTabs', 'close-tab', () => closed++)
+			const ctrlW = () => !window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', ctrlKey: true, cancelable: true }))
+			await S.callMain('ChatTabs', 'closeShortcut', [true])
+			const prevented = ctrlW()
+			await new Promise((r) => setTimeout(r, 10))
+			await S.callMain('ChatTabs', 'closeShortcut', [false])
+			const after = ctrlW()
+			off()
+			return { prevented, closed, after }`, &r)
+		if !r.Prevented || r.Closed != 1 || r.After {
+			t.Errorf("close-tab shortcut: %+v", r)
+		}
+	}
+	// main half: sender.session.fetch of the app's marketplace page
+	before["InstalledApps"] = func(h *harness) {
+		h.answer("https://slack.com/marketplace/A0APP00001?team="+teamID, `<div data-automount-component="AppDirectoryBotUser" data-automount-props="{&quot;memberships&quot;:[&quot;`+chGen+`&quot;],&quot;otherGroups&quot;:2}"></div>`)
+	}
+	checks["InstalledApps"] = func(t *testing.T, h *harness) {
+		var r struct {
+			Memberships []string `json:"memberships"`
+			OtherGroups int      `json:"otherGroups"`
+		}
+		h.jsInto(`return await S.callMain('InstalledApps', 'marketplace', ['A0APP00001', '`+teamID+`'])`, &r)
+		if len(r.Memberships) != 1 || r.Memberships[0] != chGen || r.OtherGroups != 2 {
+			t.Errorf("marketplace %+v", r)
+		}
+		h.fetchMu.Lock()
+		defer h.fetchMu.Unlock()
+		if len(h.cookied) > 0 {
+			t.Errorf("session.fetch sent a cookie: %v", h.cookied)
+		}
 	}
 	// an admin-only channel the viewer may post in only because they're an admin
 	before["RestrictedChannelWarning"] = func(h *harness) {

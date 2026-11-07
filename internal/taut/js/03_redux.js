@@ -543,9 +543,23 @@ function defineThunk(name, impl) {
   return creator
 }
 
+/** native thunks whose Go work changes slices: read again before the thunk resolves, so callers see the change */
+const THUNK_CHANGES = {
+  maybePersistPendingFileData: ['pendingFileUploads', 'files'],
+  editFileApi: ['pendingFileUploads', 'files'],
+}
+
 /** a thunk whose work is Clack's native implementation, run in Go */
 function nativeThunk(name) {
-  return defineThunk(name, async (args) => decode(await go('thunk', name, await encodeAsync(args))))
+  const changes = THUNK_CHANGES[name]
+  if (!changes) return defineThunk(name, async (args) => decode(await go('thunk', name, await encodeAsync(args))))
+  return defineThunk(name, async (args) => {
+    try {
+      return decode(await go('thunk', name, await encodeAsync(args)))
+    } finally {
+      T.invalidate(changes.map((slice) => ({ slice })))
+    }
+  })
 }
 
 const getThunkCreator = (name) => thunkCreators.get(name)
@@ -556,6 +570,26 @@ function waitForThunkCreator(name) {
     let w = thunkWaiters.get(name)
     if (!w) thunkWaiters.set(name, (w = new Set()))
     w.add(resolve)
+  })
+}
+/** waitForThunkCreator that rejects with `message` after `ms` and drops its waiter (Slick gives up after 30 s; Taut waits) */
+function waitForThunkWithin(name, ms, message) {
+  const known = thunkCreators.get(name)
+  if (known) return Promise.resolve(known)
+  return new Promise((resolve, reject) => {
+    let w = thunkWaiters.get(name)
+    if (!w) thunkWaiters.set(name, (w = new Set()))
+    const waiters = w
+    const waiter = (creator) => {
+      clearTimeout(timer)
+      resolve(creator)
+    }
+    const timer = setTimeout(() => {
+      waiters.delete(waiter)
+      if (!waiters.size && thunkWaiters.get(name) === waiters) thunkWaiters.delete(name)
+      reject(new Error(message))
+    }, ms)
+    waiters.add(waiter)
   })
 }
 async function dispatchThunk(name, ...args) {
@@ -611,7 +645,24 @@ T.dispatchThunk = async (name, args, nativeId, sync) => {
     }
   }
   const result = await dispatch(creator(...decode(args || [])))
-  return encode(result)
+  return encode(await completeTier(result))
+}
+
+/**
+ * Slack's autocomplete thunks return tiered results: the local rows, with the
+ * complete tier as `.promise` (PrivateChannelMapper adds its rows there). Go
+ * gets one answer and keeps its native rows meanwhile, so it gets the complete
+ * tier, or the local rows when that tier fails or isn't a list.
+ */
+async function completeTier(result) {
+  if (!Array.isArray(result) || typeof result.promise?.then !== 'function') return result
+  try {
+    const all = await result.promise
+    return Array.isArray(all) ? all : result
+  } catch (err) {
+    warn('a thunk result tier failed', err)
+    return result
+  }
 }
 
 // ---- React hooks ----
@@ -706,4 +757,4 @@ defineModule('redux-store', {
   }),
 })
 
-Object.assign(T, { redux, store, getState, getRawState, dispatch, defineThunk, nativeThunk, onAction, setLocalSlice, refresh })
+Object.assign(T, { redux, store, getState, getRawState, dispatch, defineThunk, nativeThunk, waitForThunkWithin, onAction, setLocalSlice, refresh })

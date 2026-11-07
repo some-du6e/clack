@@ -250,14 +250,25 @@ func TestSlickViewShowSendingBot(t *testing.T) {
 	e := newSlickEnv(t, func(s *store.Store) {
 		s.PutConv(slack.Conversation{ID: ch, Name: "bot-posts", IsChannel: true, IsMember: true, NumMembers: 3})
 		s.PutBot("B0SENDER1", store.BotInfo{Name: "Sender Bot", Icon: "https://avatars.invalid/sender-bot-48.png"})
-		s.SetLatest(ch, []slack.Message{{Type: "message", TS: ts, User: "UALICE", BotID: "B0SENDER1", Text: "posted for alice by a bot"}}, false)
+		s.SetLatest(ch, []slack.Message{
+			{Type: "message", TS: ts, User: "UALICE", BotID: "B0SENDER1", Text: "posted for alice by a bot"},
+			// a minute later, same sender: a grouped row (compact gutter, no avatar)
+			{Type: "message", TS: "1700000361.000100", User: "UALICE", BotID: "B0SENDER1", Text: "and a grouped follow-up"},
+		}, false)
 	})
 	e.install(t, "ShowSendingBot", nil)
-	patched(t, "MessageKitGutter", "MessageAvatar", "BaseMessageAvatar", "ConnectedBaseAvatar")
+	patched(t, "MessageKitGutter", "MessageAvatar", "BaseMessageAvatar", "ConnectedBaseAvatar", "ProgressiveDisclosureSuccessCoachmarkWrapper")
 	v := NewChannelView(e.h, ch)
 	v.Preview = true
-	e.waitFor(t, "the sending bot's badge on Alice's avatar", frameFn(v), func() bool {
+	f := frameFn(v)
+	e.waitFor(t, "the sending bot's badge on Alice's avatar", f, func() bool {
 		return e.ui.anyTree("slick-sending-bot__badge") && e.ui.anyTree("B0SENDER1") && e.ui.anyTree(`"n":"BaseMessageAvatar"`)
+	})
+	// The grouped row's compact gutter gets the badge from the sender
+	// context ProgressiveDisclosureSuccessCoachmarkWrapper provides above
+	// it: MessageKitGutter is a nested root, a portal under that wrapper.
+	e.waitFor(t, "the gutter badge on the grouped row", f, func() bool {
+		return e.ui.anyTree("slick-sending-bot__badge--gutter")
 	})
 }
 
@@ -363,13 +374,12 @@ func TestSlickViewMessageLogger(t *testing.T) {
 		return strings.Contains(rowText(v.s.rows[tsEdit]), "second synthetic draft") && e.ui.anyTree("slick-ml-edited")
 	})
 	// The edit history (old text, struck through) is drawn by the plugin's
-	// Blocks patch from a context its row patch provides; Blocks renders in
-	// its own slackc root, so that context doesn't reach it yet.
-	if e.ui.anyTree("slick-ml-edited-original") {
-		t.Log("edit history drawn")
-	} else {
-		t.Log("edit history not drawn (row → Blocks context, see the package gaps)")
-	}
+	// Blocks patch from a context its row patch provides: Blocks is its own
+	// slackc root, mounted as a portal under the row (NestedBridge), so the
+	// context reaches it as in Slack's single tree.
+	e.waitFor(t, "the edit history (original text) under the edited message", f, func() bool {
+		return e.ui.anyTree("slick-ml-edited-original") && e.ui.anyTree("first synthetic draft")
+	})
 }
 
 // QuickJoin: a channel you can join, mentioned in a message, gets a Join
@@ -412,35 +422,72 @@ func TestSlickViewMentionProfiles(t *testing.T) {
 	})
 }
 
-// CustomSlackbot: Slackbot's reply-bar avatar renders through the
-// plugin with Slack's props (ReplyBarAvatar {userId, channelId,
-// threadTs}) and its stylesheet is installed.
+// CustomSlackbot: Slackbot's custom responses (subtype slackbot_response)
+// get the plugin's avatar and name. On the message row its CSS hits
+// .c-message_kit__background--labels--custom_response: the avatar is the
+// rule's background-image, and the sender name is font-size 0 with the
+// new name in ::after. In the reply bar, ReplyBarAvatar asks Slack's
+// hasSlackbotCustomResponseInThread(state, channelId, threadTs, userId) and
+// draws its own avatar. Plain Slackbot messages and threads keep Slack's.
 func TestSlickViewCustomSlackbot(t *testing.T) {
-	const ch, ts = "C0SBTHRD", "1700000801.000100"
+	const ch, helper = "C0SBTHRD", "https://avatars.invalid/helper.png"
+	const tsPlain, tsA, replyA, tsB, replyB, tsCustom = "1700000800.000100", "1700000801.000100", "1700000801.000200",
+		"1700000802.000100", "1700000802.000200", "1700000803.000100"
 	e := newSlickEnv(t, func(s *store.Store) {
 		s.PutConv(slack.Conversation{ID: ch, Name: "faq", IsChannel: true, IsMember: true, NumMembers: 3})
-		s.SetLatest(ch, []slack.Message{{Type: "message", TS: ts, User: "UALICE", Text: "where is the synthetic wiki?", ThreadTS: ts,
-			ReplyCount: 1, ReplyUsers: []string{tBot}, LatestReply: "1700000802.000100"}}, false)
-		s.SetThread(ch, ts, []slack.Message{
-			{Type: "message", TS: ts, User: "UALICE", Text: "where is the synthetic wiki?", ThreadTS: ts, ReplyCount: 1},
-			{Type: "message", TS: "1700000802.000100", User: tBot, Text: "a synthetic custom response", ThreadTS: ts},
+		s.SetLatest(ch, []slack.Message{
+			{Type: "message", TS: tsPlain, User: tBot, Text: "a plain synthetic Slackbot note"},
+			{Type: "message", TS: tsA, User: "UALICE", Text: "where is the synthetic wiki?", ThreadTS: tsA,
+				ReplyCount: 1, ReplyUsers: []string{tBot}, LatestReply: replyA},
+			{Type: "message", TS: tsB, User: "UALICE", Text: "and the synthetic lunch menu?", ThreadTS: tsB,
+				ReplyCount: 1, ReplyUsers: []string{tBot}, LatestReply: replyB},
+			{Type: "message", TS: tsCustom, User: tBot, Subtype: core.SubtypeSlackbotResponse, Text: "a synthetic custom response in the channel"},
+		}, false)
+		s.SetThread(ch, tsA, []slack.Message{
+			{Type: "message", TS: tsA, User: "UALICE", Text: "where is the synthetic wiki?", ThreadTS: tsA, ReplyCount: 1},
+			{Type: "message", TS: replyA, User: tBot, Subtype: core.SubtypeSlackbotResponse, Text: "a synthetic custom response", ThreadTS: tsA},
+		})
+		s.SetThread(ch, tsB, []slack.Message{
+			{Type: "message", TS: tsB, User: "UALICE", Text: "and the synthetic lunch menu?", ThreadTS: tsB, ReplyCount: 1},
+			{Type: "message", TS: replyB, User: tBot, Text: "a plain synthetic Slackbot reply", ThreadTS: tsB},
 		})
 	})
-	e.install(t, "CustomSlackbot", map[string]any{"name": "Helper", "url": "https://avatars.invalid/helper.png"})
+	e.install(t, "CustomSlackbot", map[string]any{"name": "Helper", "url": helper})
 	patched(t, "ReplyBarAvatar")
 	v := NewChannelView(e.h, ch)
 	v.Preview = true
-	e.waitFor(t, "Slackbot's reply-bar avatar through the plugin", frameFn(v), func() bool {
+	slackbotAv := func(ts string) bool {
 		r := v.s.rows[ts]
 		drawn := false
 		for i := 0; r != nil && i < r.replyN && i < len(r.replyAvs); i++ {
 			drawn = drawn || r.replyAvs[i].id == tBot && r.replyAvs[i].w > 0
 		}
-		return drawn && e.ui.anyTree(`"n":"ReplyBarAvatar"`) && e.ui.anyTree(`"userId":"`+tBot+`"`) && e.ui.anyTree(`"threadTs":"`+ts+`"`)
+		return drawn
+	}
+	e.waitFor(t, "the custom response's avatar and name, and the plugin's reply-bar avatar", frameFn(v), func() bool {
+		c := v.s.rows[tsCustom]
+		return c != nil && c.avDrawn == helper && c.nameShown == "Helper" &&
+			slackbotAv(tsA) && e.ui.anyTree("slick-custom-slackbot-reply-avatar") &&
+			// the plain thread's reply bar renders Slack's ReplyBarAvatar with Slack's props
+			slackbotAv(tsB) && e.ui.anyTree(`"n":"ReplyBarAvatar"`) && e.ui.anyTree(`"threadTs":"`+tsB+`"`)
 	})
-	// Its avatar swap needs Slack's hasSlackbotCustomResponseInThread
-	// export, which Clack's module registry doesn't have yet: the patch
-	// renders the original avatar (see the package gaps).
+	if !v.s.rows[tsCustom].m.SlackbotCustomResponse() {
+		t.Fatal("the slackbot_response message isn't a custom response in core")
+	}
+	// the plain Slackbot message keeps Slack's avatar and name
+	p := v.s.rows[tsPlain]
+	if p == nil || p.avDrawn == helper || p.nameShown == "" || strings.Contains(p.nameShown, "Helper") {
+		var av, name string
+		if p != nil {
+			av, name = p.avDrawn, p.nameShown
+		}
+		t.Fatalf("plain Slackbot message: avatar %q name %q, want Slack's own", av, name)
+	}
+	// only the custom-response thread's ReplyBarAvatar was replaced
+	if e.ui.anyTree(`"threadTs":"` + tsA + `"`) {
+		e.ui.dump(t)
+		t.Fatal("the custom-response thread still rendered Slack's ReplyBarAvatar")
+	}
 }
 
 // WhoReacted: each reaction pill lists its reactors' avatars (Reaction

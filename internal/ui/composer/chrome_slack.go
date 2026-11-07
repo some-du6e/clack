@@ -255,9 +255,10 @@ func (c *chrome) layoutTextyAC(gtx layout.Context, p slackc.Props) layout.Dimens
 	return slackc.Component(gtx, "TextyInput", c, (*chrome).textyInputProps, (*chrome).layoutTextyInput)
 }
 
-// TextyInput: the editor itself. In JS it has Slack's shape (plugins.js):
-// a memo of a class with getNumCharsOverLimit, whose ref exposes a
-// Quill-like editor fed from $texty (CharacterCounter counts with it).
+// TextyInput: the editor itself. In JS it has Slack's shape (taut's
+// 04_react.js): a memo of a class with getNumCharsOverLimit, whose ref
+// exposes a Quill-like editor fed from $texty (plugins.js;
+// CharacterCounter counts with it).
 func (c *chrome) textyInputProps() slackc.Props {
 	p := c.props()
 	p["maxLength"] = MaxMessageLength

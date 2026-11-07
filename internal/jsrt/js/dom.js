@@ -746,6 +746,19 @@
   htmlClasses.HTMLAudioElement = class HTMLAudioElement extends htmlClasses.HTMLMediaElement {};
   htmlClasses.HTMLVideoElement = class HTMLVideoElement extends htmlClasses.HTMLMediaElement {};
   for (const [k, v] of Object.entries({ HAVE_NOTHING: 0, HAVE_METADATA: 1, HAVE_CURRENT_DATA: 2, HAVE_FUTURE_DATA: 3, HAVE_ENOUGH_DATA: 4 })) def(htmlClasses.HTMLMediaElement, k, v);
+  // members browsers define on the element classes that have them, not on
+  // HTMLElement: plugins wrap them there (Click2Load's
+  // HTMLIFrameElement.prototype.src, CustomSounds' HTMLMediaElement.prototype.play)
+  const moveMembers = (names, classes) => {
+    for (const name of names) {
+      const d = Object.getOwnPropertyDescriptor(HTMLElement.prototype, name);
+      for (const c of classes) Object.defineProperty(htmlClasses[c].prototype, name, { ...d });
+      delete HTMLElement.prototype[name];
+    }
+  };
+  moveMembers(['src'], ['HTMLImageElement', 'HTMLIFrameElement', 'HTMLMediaElement', 'HTMLScriptElement', 'HTMLSourceElement', 'HTMLEmbedElement', 'HTMLInputElement', 'HTMLTrackElement']);
+  moveMembers(['currentSrc'], ['HTMLImageElement', 'HTMLMediaElement']);
+  moveMembers(['play', 'pause', 'load', 'canPlayType', 'paused', 'currentTime', 'duration', 'volume', 'muted', 'ended', 'readyState', 'srcObject'], ['HTMLMediaElement']);
   const svgClasses = {};
   for (const n of ['SVGSVGElement', 'SVGPathElement', 'SVGGElement', 'SVGCircleElement', 'SVGRectElement', 'SVGGraphicsElement', 'SVGUseElement', 'SVGTextElement']) svgClasses[n] = { [n]: class extends SVGElement {} }[n];
   const svgTag = { svg: 'SVGSVGElement', path: 'SVGPathElement', g: 'SVGGElement', circle: 'SVGCircleElement', rect: 'SVGRectElement', use: 'SVGUseElement', text: 'SVGTextElement' };
@@ -869,6 +882,9 @@
   docHtml.appendChild(docHead);
   docHtml.appendChild(docBody);
   docHtml._setAttr('lang', (H.language || 'en-US'));
+  // Slack's client keeps sk-client-theme--dark or --light on <body>; themes,
+  // plugin CSS and plugins' dark checks key on it (setViewport switches it)
+  docBody._setAttr('class', 'sk-client-theme--light');
   def(G, 'document', document);
   jr.docBody = docBody;
   jr.docHead = docHead;
@@ -1208,6 +1224,10 @@
     dark = !!isDark;
     docHtml._r = [0, 0, vw, vh];
     docBody._r = [0, 0, vw, vh];
+    if (themed) {
+      docBody.classList.toggle('sk-client-theme--dark', dark);
+      docBody.classList.toggle('sk-client-theme--light', !dark);
+    }
     if (resized) G.dispatchEvent(new UIEvent('resize'));
     for (const m of mqls) m._update();
     for (const ro of resizeObs) ro._check();

@@ -571,3 +571,69 @@ func itoa(i int) string {
 	b, _ := json.Marshal(i)
 	return string(b)
 }
+
+// TestPortalRootSeesParentContext: a root rendered as a portal at a native
+// component inside another root's tree (a patched MessageText under a
+// patched message row) sees the providers around that native, keeps its
+// own state across updates, delivers to its own root, and goes away on
+// Unmount.
+func TestPortalRootSeesParentContext(t *testing.T) {
+	r := newTest(t)
+	parentRec, childRec := newRecv(), newRecv()
+	parent := r.NewRoot(parentRec.cb(t))
+	child := r.NewRoot(childRec.cb(t))
+	renderJS(t, r, parent, `
+globalThis.Ctx = React.createContext('none');
+const Row = __clack.native('MessageWrapper');
+React.createElement(Ctx.Provider, { value: 'from-row-patch' }, React.createElement('div', null, React.createElement(Row, { ts: '1.1' })))`)
+	ns := parentRec.next(t)
+	row := find(ns, func(n node) bool { return n.T == "@" && n.N == "MessageWrapper" })
+	if row == nil || row.K == 0 {
+		t.Fatalf("no native row: %+v", ns)
+	}
+	portal := func(label string) {
+		t.Helper()
+		err := r.Do(func(js *Ctx) error {
+			// one component type across updates, as taut's componentElement
+			// gives per Slack name, so its state survives
+			el, err := js.Eval("child.js", `
+globalThis.PortalText = globalThis.PortalText || function PortalText(props) {
+  const v = React.useContext(Ctx);
+  const [n] = React.useState(() => (globalThis.mounts = (globalThis.mounts || 0) + 1));
+  return React.createElement('span', { className: 'text' }, v + ':' + props.label + ':' + n);
+};
+React.createElement(globalThis.PortalText, { label: '`+label+`' })`)
+			if err != nil {
+				return err
+			}
+			return child.RenderPortal(js, int64(row.K), el)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	portal("a")
+	childRec.waitFor(t, "the portal sees the row's provider", func(ns []node) bool {
+		s := find(ns, func(n node) bool { return n.T == "span" })
+		return s != nil && s.text() == "from-row-patch:a:1"
+	})
+	portal("b") // an update keeps the instance (state survives)
+	childRec.waitFor(t, "the updated portal", func(ns []node) bool {
+		s := find(ns, func(n node) bool { return n.T == "span" })
+		return s != nil && s.text() == "from-row-patch:b:1"
+	})
+	for drained := false; !drained; {
+		select {
+		case pt := <-parentRec.ch:
+			if find(pt, func(n node) bool { return n.T == "span" }) != nil {
+				t.Errorf("the portal leaked into the parent's tree: %+v", pt)
+			}
+		default:
+			drained = true
+		}
+	}
+	child.Unmount()
+	if got := evalString(t, r, `__clack.portalCount()`); got != "0" {
+		t.Errorf("portals after Unmount: %s", got)
+	}
+}
