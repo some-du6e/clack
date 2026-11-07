@@ -264,18 +264,20 @@ const label = (fn) => fn?.name || 'anonymous'
 function sendThroughDeltas(blocks) {
   if (!deltaTransforms.size || !Array.isArray(blocks)) return blocks
   const input = T.blocksToDelta(blocks)
+  // transforms may edit the Delta in place (ClearURLs does) or return a new one
+  const before = JSON.stringify(input.ops)
   let result = input
   for (const transform of [...deltaTransforms.keys()]) {
-    const before = result
+    const current = result
     try {
-      const next = transform(before)
-      if (isUsableDelta(next, before)) result = next
+      const next = transform(current)
+      if (isUsableDelta(next, current)) result = next
       else console.error(`[slick] message transform ${label(transform)} returned an invalid Delta; ignoring it`)
     } catch (err) {
       console.error(`[slick] message transform ${label(transform)} failed; ignoring it:`, err)
     }
   }
-  if (result === input || T.deepEqual(result.ops, input.ops)) return blocks
+  if (JSON.stringify(result.ops) === before) return blocks
   return T.deltaToBlocks(result)
 }
 

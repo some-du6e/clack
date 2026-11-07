@@ -82,7 +82,9 @@ async function mainBuild(dir, id) {
     define: { __SLICK_VERSION__: '"clack"', __SLICK_BUILD__: '0', __SLICK_LOADER__: '"electron"' },
     plugins: [slickExternal, ...pagePlugins.filter((p) => p.name !== 'slick-shared-alias')],
   });
-  await writeFile(path.join(out, `${id}.main.js`), `// slick-main ${JSON.stringify({ id })}\n${wrap('__slickMainPlugins', outputFiles[0].text)}`);
+  // Node's globals, from the host (a main half runs in Electron's main process)
+  const globals = 'var process = require("node:process"), Buffer = require("node:buffer").Buffer;\n';
+  await writeFile(path.join(out, `${id}.main.js`), `// slick-main ${JSON.stringify({ id })}\n${wrap('__slickMainPlugins', globals + outputFiles[0].text)}`);
 }
 
 const manifest = {};

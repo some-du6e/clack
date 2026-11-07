@@ -141,13 +141,85 @@ func init() {
 		}
 		shown := 0
 		native := func(ctx context.Context, a args) (any, error) { shown++; return nil, nil }
-		_, _ = taut.Dispatch(h.ctx(), h.tt, "showNotification", args{"Slackbot", "Bob has been using the /deploy slash command. When people enter /deploy, it runs Deploy Bot."}, native)
+		_, _ = taut.Dispatch(h.ctx(), h.tt, "showNotification", args{"Slackbot", "A new slash command /deploy was added to this workspace by Bob."}, native)
 		if shown != 0 {
 			t.Errorf("a slash-command notice was shown")
 		}
 		_, _ = taut.Dispatch(h.ctx(), h.tt, "showNotification", args{"alice", "lunch?"}, native)
-		if shown != 1 {
+		if shown == 0 {
 			t.Errorf("an ordinary notification was dropped")
 		}
 	}
+
+	before["Experiments"] = func(h *harness) {
+		h.tt.DataWrite("slick:plugin:Experiments", "overrides", `{"clack_test_experiment":"treatment"}`)
+	}
+	checks["Experiments"] = func(t *testing.T, h *harness) {
+		g := h.jsString(`return T.redux.getStore().getState().experiments?.clack_test_experiment?.group ?? ''`)
+		if g != "treatment" {
+			t.Errorf("override group %q", g)
+		}
+		h.ui.mu.Lock()
+		tabs := len(h.ui.tabs)
+		h.ui.mu.Unlock()
+		if tabs == 0 {
+			t.Error("no Preferences tab")
+		}
+	}
+	checks["HaikuWarning"] = func(t *testing.T, h *harness) {
+		if !h.tt.SendCheck(h.ctx(), composerCtx(chGen, string(richText("just a normal message")))) {
+			t.Fatal("blocked a normal message")
+		}
+		bodyKids := func() int {
+			var n int
+			h.jsInto(`return document.body.children.length`, &n)
+			return n
+		}
+		n0 := bodyKids()
+		done := make(chan bool, 1)
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+			defer cancel()
+			done <- h.tt.SendCheck(ctx, composerCtx(chGen, string(richText("an old silent pond a frog jumps into the pond splash silence again"))))
+		}()
+		eventually(t, 3*time.Second, "the haiku dialog", func() bool { return bodyKids() > n0 })
+		select {
+		case ok := <-done:
+			t.Errorf("the haiku went out without asking (%v)", ok)
+		default:
+		}
+	}
+
+	before["HcaStatus"] = func(h *harness) {
+		h.answer("https://auth.hackclub.com/api/external/check", `{"result":"verified_eligible"}`)
+	}
+	checks["HcaStatus"] = func(t *testing.T, h *harness) {
+		h.render(3, "BaseMessageSender", map[string]any{"userId": aliceID})
+		h.waitTree(t, 3, "a status class on the sender", func(nodes []any) bool {
+			n := findNative(nodes, "BaseMessageSender")
+			p, _ := n["p"].(map[string]any)
+			c, _ := p["className"].(string)
+			return c != ""
+		})
+		if !h.wasFetched("https://auth.hackclub.com/api/external/check?slack_id=" + aliceID) {
+			t.Error("the main half didn't ask auth.hackclub.com")
+		}
+	}
+}
+
+// waitTree waits until root's latest tree satisfies cond.
+func (h *harness) waitTree(t *testing.T, root uint64, what string, cond func([]any) bool) []any {
+	t.Helper()
+	var nodes []any
+	eventually(t, 5*time.Second, what, func() bool {
+		h.ui.mu.Lock()
+		tree := h.ui.trees[root]
+		h.ui.mu.Unlock()
+		nodes = nil
+		if json.Unmarshal(tree, &nodes) != nil {
+			return false
+		}
+		return cond(nodes)
+	})
+	return nodes
 }

@@ -224,8 +224,50 @@ const urlShim = {
   pathToFileURL: (p) => new URL('file://' + encodeURI(pathShim.resolve(p))),
 }
 
+const processShim = {
+  platform: 'linux',
+  arch: 'x64',
+  env: {},
+  argv: [],
+  versions: { node: '24.0.0', electron: '0.0.0-clack' },
+  version: 'v24.0.0',
+  cwd: () => go('os', 'cwd'),
+  nextTick: (fn, ...args) => queueMicrotask(() => fn(...args)),
+  on() {
+    return processShim
+  },
+  off() {
+    return processShim
+  },
+  once() {
+    return processShim
+  },
+  emitWarning: (w) => console.warn(String(w)),
+}
+let processReady = false
+function processFor() {
+  if (!processReady) {
+    processReady = true
+    try {
+      processShim.platform = go('os', 'platform')
+    } catch {}
+  }
+  return processShim
+}
+const bufferShim = {
+  Buffer: {
+    from: (v, enc) => (typeof v === 'string' ? (enc === 'base64' ? Uint8Array.from(atob(v), (c) => c.charCodeAt(0)) : new TextEncoder().encode(v)) : new Uint8Array(v)),
+    isBuffer: (v) => v instanceof Uint8Array,
+    byteLength: (s) => new TextEncoder().encode(String(s)).length,
+  },
+}
+
 function requireMain(name) {
   switch (name.replace(/^node:/, '')) {
+    case 'process':
+      return processFor()
+    case 'buffer':
+      return bufferShim
     case 'util':
       return utilShim
     case 'crypto':
