@@ -78,7 +78,7 @@ func (f *fakeChime) serve(w http.ResponseWriter, r *http.Request) {
 	if strings.Contains(r.Header.Get("Sec-WebSocket-Protocol"), fakeToken) {
 		f.gotToken.Store(true)
 	}
-	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{"_aws_wt_session"}})
+	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{"_aws_wt_session"}, OriginPatterns: []string{"app.slack.com"}})
 	if err != nil {
 		return
 	}
