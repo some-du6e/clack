@@ -166,6 +166,12 @@ func (a *App) sessionEnded() {
 	a.login.err = "Your Slack session ended. Sign in again."
 }
 
+// ShowSignIn is messages.SignInHost: the list's "Sign in again" link
+// after the session ended opens the sign-in screen.
+func (a *App) ShowSignIn() { a.sessionEnded() }
+
+var _ messages.SignInHost = (*App)(nil)
+
 // SignedOut reports whether the Slack session ended (sign-in needed).
 func (a *App) SignedOut() bool {
 	if a.login != nil {
