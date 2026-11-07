@@ -3,6 +3,7 @@ package ui
 import (
 	"image"
 
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
@@ -48,5 +49,24 @@ func (a *App) slackcFrame(gtx layout.Context) {
 func (a *App) slackcOverlays(gtx layout.Context) {
 	if slackc.HasOverlays() {
 		slackc.LayoutOverlays(gtx)
+	}
+}
+
+// globalPointer forwards window pointer input to plugins that listen on
+// document/window (Oneko's mousemove); free while none listens.
+func (a *App) globalPointer(gtx layout.Context, pe pointer.Event) {
+	var typ string
+	switch pe.Kind {
+	case pointer.Move, pointer.Drag:
+		typ = "mousemove"
+	case pointer.Press:
+		typ = "mousedown"
+	case pointer.Release:
+		typ = "mouseup"
+	default:
+		return
+	}
+	if slackc.WantsGlobal(typ) {
+		slackc.GlobalPointer(typ, pe.Position.X, pe.Position.Y, gtx.Metric.PxPerDp, int(pe.Buttons))
 	}
 }
