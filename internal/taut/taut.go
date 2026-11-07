@@ -102,6 +102,7 @@ type Taut struct {
 
 	running   atomic.Int32 // plugins with a live instance
 	stopWatch chan struct{}
+	watchOnce sync.Once
 	closed    atomic.Bool
 }
 
@@ -161,7 +162,9 @@ func New(o Options) (*Taut, error) {
 	t.stopWatch = make(chan struct{})
 	if !o.NoAutoStart {
 		go t.StartEnabled(context.Background())
-		go t.watchFiles(t.stopWatch)
+		if len(t.plugins) > 0 {
+			t.startWatch()
+		}
 	}
 	return t, nil
 }
@@ -230,6 +233,12 @@ func (t *Taut) ensureRuntime() (*runtime, error) {
 		t.opts.UI.Attached(t.Bridge())
 	}
 	return r, nil
+}
+
+// startWatch follows hand edits of config.json and user.css, from the first
+// installed plugin on (nothing runs while there are none).
+func (t *Taut) startWatch() {
+	t.watchOnce.Do(func() { go t.watchFiles(t.stopWatch) })
 }
 
 func (t *Taut) logf(format string, args ...any) { log.Printf(format, args...) }

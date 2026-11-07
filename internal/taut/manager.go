@@ -649,6 +649,9 @@ func (t *Taut) Import(ctx context.Context, code []byte, replacing string) (strin
 		t.rollback(ctx, id, old, snap)
 		return "", err
 	}
+	if !t.opts.NoAutoStart {
+		t.startWatch()
+	}
 	return id, nil
 }
 
