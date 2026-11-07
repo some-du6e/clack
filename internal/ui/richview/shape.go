@@ -8,6 +8,8 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/text"
 	"golang.org/x/image/math/fixed"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
 // faceKey identifies a font at a pixel size.
@@ -32,9 +34,14 @@ type shaped struct {
 	str       string
 
 	pathDone bool
+	bmDone   bool
 	path     clip.PathSpec
-	bitmaps  op.CallOp
-	color    bool // has bitmap (color emoji) glyphs
+	// emboldened outline (theme.EmboldenedShape) at width embW
+	embW    float32
+	embPath clip.PathSpec
+	embOK   bool
+	bitmaps op.CallOp
+	color   bool // has bitmap (color emoji) glyphs
 }
 
 type spaceMetrics struct {
@@ -130,19 +137,33 @@ func (s *Style) spaceOf(k faceKey) spaceMetrics {
 	return m
 }
 
-// pathOf returns the cached outline and bitmap ops for w.
-func (s *Style) pathOf(w *shaped) (clip.PathSpec, op.CallOp) {
-	if !w.pathDone {
+// pathOf returns the cached outline (shaped only when needPath) and the
+// bitmap ops for w.
+func (s *Style) pathOf(w *shaped, needPath bool) (clip.PathSpec, op.CallOp) {
+	if !w.bmDone {
+		w.bmDone = true
+		if len(w.glyphs) > 0 && needsBitmaps(w.str) {
+			w.bitmaps = s.Shaper.Bitmaps(w.glyphs)
+			w.color = w.bitmaps != (op.CallOp{})
+		}
+	}
+	if needPath && !w.pathDone {
 		w.pathDone = true
 		if len(w.glyphs) > 0 {
 			w.path = s.Shaper.Shape(w.glyphs)
-			if needsBitmaps(w.str) {
-				w.bitmaps = s.Shaper.Bitmaps(w.glyphs)
-				w.color = w.bitmaps != (op.CallOp{})
-			}
 		}
 	}
 	return w.path, w.bitmaps
+}
+
+// emboldenedOf returns w's outline grown by emb px (one fill instead of the
+// outline plus a clip.Stroke), or false for runs in fallback fonts.
+func (s *Style) emboldenedOf(w *shaped, emb float32) (clip.PathSpec, bool) {
+	if w.embW != emb {
+		w.embW = emb
+		w.embPath, w.embOK = theme.EmboldenedShape(s.Shaper, w.glyphs, emb)
+	}
+	return w.embPath, w.embOK
 }
 
 // needsBitmaps reports whether s may contain color (emoji) glyphs.

@@ -449,7 +449,19 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 			if fg != nil {
 				col = *fg
 			}
-			path, bm := st.pathOf(f.sh)
+			// Browsers render Lato visibly heavier than Gio's linear
+			// coverage. Dark text gets the missing ink (st.Embolden px,
+			// ~0.45 at 1x and 2x) from an emboldened outline: one fill,
+			// no stroke tessellation (theme.EmboldenedShape).
+			var emb clip.PathSpec
+			embOK := false
+			if st.Embolden > 0 {
+				emb, embOK = st.emboldenedOf(f.sh, st.Embolden)
+			}
+			path, bm := st.pathOf(f.sh, !embOK)
+			if embOK {
+				path = emb
+			}
 			// Whole-pixel pen positions: Gio's path cache snaps fractional
 			// offsets, which makes word spacing uneven.
 			t := op.Offset(image.Pt(int(f.x+0.5), f.y)).Push(ops)
@@ -457,7 +469,7 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 			paint.ColorOp{Color: st.textColor(col, v.laidPx)}.Add(ops)
 			paint.PaintOp{}.Add(ops)
 			cs.Pop()
-			if st.Embolden > 0 {
+			if st.Embolden > 0 && !embOK { // fallback-font run
 				// Browsers render Lato visibly heavier than Gio's linear
 				// coverage; a hairline stroke of the outline matches it.
 				// Width is in pixels, not dp: measured against Chrome, the
