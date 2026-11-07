@@ -149,6 +149,14 @@ type Style struct {
 	// emoji style); nil uses Slack's apple set.
 	EmojiURL func(stem string) string
 
+	// LightTextFade cancels the extra weight Gio's linear-light glyph
+	// blending gives light text on dark backgrounds (luminance >= 0.6)
+	// compared with Chrome: such glyphs are drawn with alpha
+	// 1 - LightTextFade/pxPerDp. The excess is an edge effect, so it halves
+	// at 2x. Measured on Lato 15px #d1d2d3 on #1a1d21 against Chrome: 0.235
+	// matches ink within ±1% at 1x and 2x. 0 = off.
+	LightTextFade float32
+
 	// Embolden strokes glyph outlines with this width (in pixels, at any
 	// scale) to match the
 	// browser's heavier text rendering; 0 disables it.
@@ -198,4 +206,22 @@ type Options struct {
 	MaxWidth float32
 	// Compact uses 13px/18px text (previews, reply bars, search results).
 	Compact bool
+	// Channel and TS identify the message, for the Slack-shaped props of
+	// its attachment components (activeChannelId, messageTs).
+	Channel, TS string
+}
+
+// textColor applies LightTextFade to light glyph colors at scale pxPerDp.
+func (s *Style) textColor(c color.NRGBA, pxPerDp float32) color.NRGBA {
+	if s.LightTextFade <= 0 || pxPerDp <= 0 {
+		return c
+	}
+	if y := (0.299*float32(c.R) + 0.587*float32(c.G) + 0.114*float32(c.B)) / 255; y >= 0.6 {
+		a := 1 - s.LightTextFade/pxPerDp
+		if a < 0.5 {
+			a = 0.5
+		}
+		c.A = uint8(float32(c.A)*a + 0.5)
+	}
+	return c
 }

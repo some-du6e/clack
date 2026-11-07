@@ -2,6 +2,7 @@ package richview
 
 import (
 	"image"
+	"image/color"
 	"io"
 	"strings"
 	"time"
@@ -39,6 +40,12 @@ type View struct {
 	call     op.CallOp
 	recorded bool
 	pending  []int32 // imgs (>=0) or ^frag index of images not yet decoded
+
+	// Slack components (comps.go): the mode the layout was made in, each
+	// component's state and its props/natives receiver.
+	laidMode uint8
+	cs       []compState
+	refs     []compRef
 
 	hover    int16 // hovered target
 	press    int16 // target under the press
@@ -115,6 +122,7 @@ func (v *View) Set(doc richtext.Doc, o Options) {
 	v.doc = doc
 	v.opts = o
 	v.dirty = true
+	v.cs = v.cs[:0]
 	v.selA, v.selB = 0, 0
 	v.hover, v.press = -1, -1
 }
@@ -169,7 +177,8 @@ func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimension
 	if w <= 0 {
 		w = 1
 	}
-	if v.dirty || w != v.laidW || gtx.Metric.PxPerDp != v.laidPx || gtx.Metric.PxPerSp != v.laidSp || st.gen != v.laidGen {
+	mode := compMode()
+	if v.dirty || w != v.laidW || gtx.Metric.PxPerDp != v.laidPx || gtx.Metric.PxPerSp != v.laidSp || st.gen != v.laidGen || mode != v.laidMode {
 		v.relayout(st, w, gtx.Metric.PxPerDp, gtx.Metric.PxPerSp)
 	} else if len(v.pending) > 0 && v.anyReady(st) {
 		v.recorded = false
@@ -179,6 +188,24 @@ func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimension
 	}
 	v.events(gtx, st, h)
 
+	// Slack's .p-rich_text_block > .p-rich_text_section, for CSS.
+	bs := richBlockClass.Enter(gtx, 0, 0)
+	defer bs.Leave()
+	ss := richSectionClass.Enter(gtx, 0, 0)
+	defer ss.Leave()
+	if bs.Hidden() || ss.Hidden() {
+		return layout.Dimensions{}
+	}
+	if bs.Active() || ss.Active() {
+		return bs.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
+			return ss.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return v.draw(gtx, st) })
+		})
+	}
+	return v.draw(gtx, st)
+}
+
+// draw paints the laid-out doc and registers its input areas.
+func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	size := v.d.size
 	if gtx.Constraints.Min.X > size.X {
 		size.X = gtx.Constraints.Min.X
@@ -207,6 +234,9 @@ func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimension
 		}
 	}
 	v.call.Add(gtx.Ops)
+	if len(v.d.comps) > 0 {
+		v.layoutComps(gtx, st)
+	}
 	if v.hover >= 0 && int(v.hover) < len(v.d.targets) && v.d.targets[v.hover].underline {
 		for i := range v.d.frags {
 			f := &v.d.frags[i]
@@ -248,8 +278,9 @@ func fragRect(f *frag) image.Rectangle {
 }
 
 func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
+	mode := compMode()
 	v.d.reset()
-	l := lay{st: st, d: &v.d, scale: pxdp, spx: pxsp, jumbo: v.doc.Jumbo, opts: v.opts}
+	l := lay{st: st, d: &v.d, scale: pxdp, spx: pxsp, jumbo: v.doc.Jumbo, opts: v.opts, mode: mode, cs: &v.cs}
 	if l.scale <= 0 {
 		l.scale = 1
 	}
@@ -257,6 +288,7 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 		l.spx = l.scale
 	}
 	h := l.blocks(v.doc.Blocks, 0, 0, w, true)
+	v.d.pillRects()
 	maxX := 0
 	for i := range v.d.frags {
 		if x := int(v.d.frags[i].x + v.d.frags[i].w + 0.999); x > maxX {
@@ -283,7 +315,7 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 		maxX = w
 	}
 	v.d.size = image.Pt(maxX, h)
-	v.laidW, v.laidPx, v.laidSp, v.laidGen = w, pxdp, pxsp, st.gen
+	v.laidW, v.laidPx, v.laidSp, v.laidGen, v.laidMode = w, pxdp, pxsp, st.gen, mode
 	v.dirty = false
 	v.recorded = false
 	if int(v.selB) > len(v.d.plain) || int(v.selA) > len(v.d.plain) {
@@ -320,13 +352,24 @@ func (v *View) record(st *Style) {
 	v.pending = v.pending[:0]
 	ops := &v.ops
 	m := op.Record(ops)
+	v.paint(ops, st, 0, nil)
+	v.call = m.Stop()
+	v.recorded = true
+}
+
+// paint draws the primitives tagged comp (0: the static content, which
+// also tracks images still loading); fg, if set, recolors text.
+func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 	for i := range v.d.boxes {
-		if b := &v.d.boxes[i]; b.layer == 0 {
+		if b := &v.d.boxes[i]; b.layer == 0 && b.comp == comp {
 			drawBox(ops, b)
 		}
 	}
 	for i := range v.d.imgs {
 		im := &v.d.imgs[i]
+		if im.comp != comp {
+			continue
+		}
 		if im.url == "" {
 			fillRadii(ops, im.r, im.radii, st.Palette.Placeholder)
 			continue
@@ -338,7 +381,9 @@ func (v *View) record(st *Style) {
 		}
 		if !ok {
 			fillRadii(ops, im.r, im.radii, st.Palette.Placeholder)
-			v.pending = append(v.pending, int32(i))
+			if comp == 0 {
+				v.pending = append(v.pending, int32(i))
+			}
 			continue
 		}
 		if im.fit {
@@ -348,6 +393,9 @@ func (v *View) record(st *Style) {
 	}
 	for i := range v.d.frags {
 		f := &v.d.frags[i]
+		if f.comp != comp {
+			continue
+		}
 		switch f.kind {
 		case fImage:
 			var img paint.ImageOp
@@ -356,7 +404,9 @@ func (v *View) record(st *Style) {
 				img, ok = st.Images.Get(f.url, f.size)
 			}
 			if !ok {
-				v.pending = append(v.pending, ^int32(i))
+				if comp == 0 {
+					v.pending = append(v.pending, ^int32(i))
+				}
 				continue
 			}
 			r := image.Rect(int(f.x+0.5), f.y, int(f.x+0.5)+f.size, f.y+f.size)
@@ -365,12 +415,16 @@ func (v *View) record(st *Style) {
 			if f.sh == nil || len(f.sh.glyphs) == 0 {
 				continue
 			}
+			col := f.col
+			if fg != nil {
+				col = *fg
+			}
 			path, bm := st.pathOf(f.sh)
 			// Whole-pixel pen positions: Gio's path cache snaps fractional
 			// offsets, which makes word spacing uneven.
 			t := op.Offset(image.Pt(int(f.x+0.5), f.y)).Push(ops)
 			cs := clip.Outline{Path: path}.Op().Push(ops)
-			paint.ColorOp{Color: f.col}.Add(ops)
+			paint.ColorOp{Color: st.textColor(col, v.laidPx)}.Add(ops)
 			paint.PaintOp{}.Add(ops)
 			cs.Pop()
 			if st.Embolden > 0 {
@@ -379,7 +433,7 @@ func (v *View) record(st *Style) {
 				// Width is in pixels, not dp: measured against Chrome, the
 				// missing ink is ~0.45px at both 1x and 2x (thinning comes
 				// from coverage at the pixel level, not from glyph size).
-				paint.FillShape(ops, f.col, clip.Stroke{Path: path, Width: st.Embolden}.Op())
+				paint.FillShape(ops, col, clip.Stroke{Path: path, Width: st.Embolden}.Op())
 			}
 			if f.sh.color {
 				bm.Add(ops)
@@ -389,7 +443,7 @@ func (v *View) record(st *Style) {
 				thick := max(1, f.size/14)
 				if f.style&richtext.Strike != 0 {
 					y := f.y - int(float32(f.size)*0.3+0.5)
-					paint.FillShape(ops, f.col, clip.Rect(image.Rect(int(f.x), y, int(f.x+f.w+0.5), y+thick)).Op())
+					paint.FillShape(ops, col, clip.Rect(image.Rect(int(f.x), y, int(f.x+f.w+0.5), y+thick)).Op())
 				}
 				if f.style&richtext.Underline != 0 {
 					underline(ops, f, st)
@@ -398,12 +452,10 @@ func (v *View) record(st *Style) {
 		}
 	}
 	for i := range v.d.boxes {
-		if b := &v.d.boxes[i]; b.layer == 1 {
+		if b := &v.d.boxes[i]; b.layer == 1 && b.comp == comp {
 			drawBox(ops, b)
 		}
 	}
-	v.call = m.Stop()
-	v.recorded = true
 }
 
 func underline(ops *op.Ops, f *frag, st *Style) {

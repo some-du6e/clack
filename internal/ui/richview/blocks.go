@@ -240,6 +240,9 @@ func (l *lay) block(b *richtext.Block, x, y, w int, edited bool) int {
 		if b.Att == nil {
 			return 0
 		}
+		if l.mode&modeAtts != 0 && !l.inAtt {
+			return l.compBlock(b, x, y, w)
+		}
 		return l.attachment(b, x, y, w)
 
 	case richtext.FileBlock:

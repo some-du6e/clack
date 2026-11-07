@@ -29,6 +29,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -123,6 +124,18 @@ type actRow struct {
 	mark, clear, more widget.Clickable
 	d                 actDesc
 	built             bool
+
+	// This frame's row context, read by the Slack boundaries
+	// (ActivityItem and its parts) through method expressions.
+	v       *Activity
+	it      *core.ActivityItem
+	key     string
+	unread  bool
+	cur     *actDesc // d, or pd when a plugin overrode msg
+	pd      actDesc
+	nameW   font.Weight
+	nameCol color.NRGBA
+	nameMax int // dense rows: the name's width cap (px)
 }
 
 // Activity is the Activity view.
@@ -281,8 +294,10 @@ func (v *Activity) Layout(gtx C) D {
 	v.update(gtx)
 	v.settle()
 
+	st := actPageClass.Enter(gtx, 0, 0)
+	defer st.Leave()
 	size := gtx.Constraints.Max
-	fill(gtx, image.Rectangle{Max: size}, v.p.Bg)
+	fill(gtx, image.Rectangle{Max: size}, st.Background(v.p.Bg))
 	layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(v.head),
 		layout.Flexed(1, v.main),
@@ -1267,29 +1282,8 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 		gtx.Execute(op.InvalidateCmd{})
 	}
 	sel := v.selOK && v.selKey == key
-	d := r.click.Layout(gtx, func(gtx C) D {
-		pointerCursor(gtx)
-		gtx.Constraints.Min.X = gtx.Constraints.Max.X
-		m := op.Record(gtx.Ops)
-		dims := v.rowContent(gtx, it, &r.d, unread)
-		call := m.Stop()
-		rect := image.Rectangle{Max: dims.Size}
-		bg := v.p.ReadFill
-		if unread {
-			bg = v.p.Bg
-		}
-		if sel {
-			bg = v.p.SelBg
-		}
-		if r.click.Hovered() {
-			bg = v.actHover(bg)
-		}
-		fill(gtx, rect, bg)
-		call.Add(gtx.Ops)
-		h := max(1, gtx.Dp(1))
-		fill(gtx, image.Rect(0, dims.Size.Y-h, dims.Size.X, dims.Size.Y), v.p.Border)
-		return dims
-	})
+	r.v, r.it, r.key, r.unread = v, it, key, unread
+	d := slackc.Component(gtx, "ActivityItem", r, (*actRow).itemProps, (*actRow).layoutItem)
 	// Drain the bar's hover events even when it isn't drawn this frame, so
 	// moving from the row onto the bar keeps it up.
 	for {
@@ -1306,6 +1300,213 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 		v.hoverBar(gtx, r, unread, d.Size.X, y)
 	}
 	return d
+}
+
+// --- Slack boundaries of an activity row (docs/PLUGINS-components.md §1.7) ---
+
+// itemShape is Slack's activityItem prop.
+func (r *actRow) itemShape() slackc.Props {
+	it := r.it
+	p := slackc.Props{"key": r.key, "type": it.Type, "channelId": it.Channel, "messageTs": it.TS,
+		"feedTs": it.FeedTS, "ts": it.FeedTS, "isUnread": r.unread, "isArchived": false, "isPriority": false}
+	if it.ThreadTS != "" {
+		p["threadTs"] = it.ThreadTS
+	}
+	if it.Count > 0 {
+		p["unreadCount"] = it.Count
+	}
+	if rx := it.Reaction; rx != nil {
+		p["reactionName"], p["reactionUser"] = rx.Name, rx.User
+	}
+	return p
+}
+
+func (r *actRow) density() string {
+	if r.v.dense {
+		return "dense"
+	}
+	return "detailed"
+}
+
+// itemProps: ActivityItem {activityItem, msg, className, isRead, density}.
+func (r *actRow) itemProps() slackc.Props {
+	v := r.v
+	return slackc.Props{"$key": r.key, "activityItem": r.itemShape(), "msg": msgProps(r.it.Msg),
+		"className": "", "isRead": !r.unread, "isSelected": v.selOK && v.selKey == r.key,
+		"density": r.density(), "showAsCard": false, "inTriageMode": false}
+}
+
+// layoutItem is the row (ActivityItem's native). Under a patch it honours
+// className (the known StreamerMode classes, for CSS) and msg (the sender's
+// name and avatar, e.g. ShowRealUser).
+func (r *actRow) layoutItem(gtx C, p slackc.Props) D {
+	v, it := r.v, r.it
+	r.cur = &r.d
+	sel := v.selOK && v.selKey == r.key
+	hov := r.click.Hovered()
+	var mods uint64
+	if p != nil {
+		mods = classMods(p.StrOr("className", ""), actItemMods)
+		if mp := p.Map("msg"); mp != nil && it.Msg != nil && !r.d.invite && it.Reaction == nil {
+			om := msgOverride(it.Msg, mp)
+			r.pd = r.d
+			if n, av := v.authorOf(&om); n != "" {
+				r.pd.name, r.pd.avatar = n, av
+			}
+			r.cur = &r.pd
+		}
+	}
+	if hov {
+		mods |= actModHovered
+	}
+	if sel {
+		mods |= actModSelected
+	}
+	st := actItemClass.Enter(gtx, hoverState(hov), mods)
+	defer st.Leave()
+	if st.Hidden() {
+		return D{}
+	}
+	if !st.Active() {
+		return r.itemBody(gtx, st, sel)
+	}
+	return st.Wrap(gtx, func(gtx C) D { return r.itemBody(gtx, st, sel) })
+}
+
+func (r *actRow) itemBody(gtx C, st slackc.Styled, sel bool) D {
+	v := r.v
+	return r.click.Layout(gtx, func(gtx C) D {
+		pointerCursor(gtx)
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		m := op.Record(gtx.Ops)
+		dims := v.rowContent(gtx, r)
+		call := m.Stop()
+		rect := image.Rectangle{Max: dims.Size}
+		bg := v.p.ReadFill
+		if r.unread {
+			bg = v.p.Bg
+		}
+		if sel {
+			bg = v.p.SelBg
+		}
+		if r.click.Hovered() {
+			bg = v.actHover(bg)
+		}
+		fill(gtx, rect, st.Background(bg))
+		call.Add(gtx.Ops)
+		h := max(1, gtx.Dp(1))
+		fill(gtx, image.Rect(0, dims.Size.Y-h, dims.Size.X, dims.Size.Y), v.p.Border)
+		return dims
+	})
+}
+
+func (r *actRow) avSize() unit.Dp {
+	if r.v.dense {
+		return actDenseAv
+	}
+	return actAvatar
+}
+
+// avatarProps: ActivityRowContentSenderAvatarLayout {activityItem, size,
+// density, children: the avatar}.
+func (r *actRow) avatarProps() slackc.Props {
+	size := "large"
+	if r.v.dense {
+		size = "small"
+	}
+	av := slackc.Props{"size": int(r.avSize()), "isInteractive": false}
+	if m := r.it.Msg; m != nil {
+		if m.User != "" {
+			av["userId"] = m.User
+		}
+		if m.BotID != "" {
+			av["botId"] = m.BotID
+		}
+	}
+	return slackc.Props{"$key": r.key + "/avatar", "activityItem": r.itemShape(), "size": size, "density": r.density(),
+		"children": slackc.Child("ConnectedBaseAvatar", av, func(gtx C, _ slackc.Props) D {
+			return r.v.actAvatarOf(gtx, r.cur, r.avSize())
+		})}
+}
+
+func (r *actRow) layoutAvatar(gtx C, p slackc.Props) D {
+	var mods uint64
+	if r.v.dense {
+		mods = 1
+	}
+	st := actAvatarClass.Enter(gtx, 0, mods)
+	defer st.Leave()
+	if st.Hidden() {
+		return D{}
+	}
+	if e, ok := slackc.PropChildren(p); ok {
+		return slackc.LayoutElement(gtx, e)
+	}
+	if !st.Active() {
+		return r.v.actAvatarOf(gtx, r.cur, r.avSize())
+	}
+	return st.Wrap(gtx, func(gtx C) D { return r.v.actAvatarOf(gtx, r.cur, r.avSize()) })
+}
+
+// nameProps: ActivityPrivacyBlurredName {activityItem, children: the name}.
+// Clack's own prop "blurred" draws the blurred variant.
+func (r *actRow) nameProps() slackc.Props {
+	return slackc.Props{"$key": r.key + "/name", "activityItem": r.itemShape(), "blurred": false,
+		"children": slackc.Child("ActivityItemName", slackc.Props{"name": r.cur.name}, func(gtx C, _ slackc.Props) D {
+			return r.nameText(gtx, slackc.Styled{}, false)
+		})}
+}
+
+// layoutName is the sender/conversation name (ActivityPrivacyBlurredName's
+// native): plugin children laid out in its place, or the name, blurred
+// when the blurred prop is set.
+func (r *actRow) layoutName(gtx C, p slackc.Props) D {
+	st := actNameClass.Enter(gtx, 0, 0)
+	defer st.Leave()
+	if st.Hidden() {
+		return D{}
+	}
+	if r.nameMax > 0 {
+		gtx.Constraints.Max.X = r.nameMax
+	}
+	if e, ok := slackc.PropChildren(p); ok {
+		return slackc.LayoutElement(gtx, e)
+	}
+	blur := p.Bool("blurred") || p.Bool("isBlurred")
+	if !st.Active() {
+		return r.nameText(gtx, st, blur)
+	}
+	return st.Wrap(gtx, func(gtx C) D { return r.nameText(gtx, st, blur) })
+}
+
+func (r *actRow) nameText(gtx C, st slackc.Styled, blur bool) D {
+	v := r.v
+	col := st.Color(r.nameCol)
+	size := st.FontSize(15)
+	name := r.cur.name
+	if r.nameMax > 0 {
+		gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, r.nameMax)
+	}
+	switch {
+	case blur:
+		return v.blurPara(gtx, size, 22, r.nameW, col, name)
+	case v.dense:
+		return v.label(gtx, size, r.nameW, col, name)
+	}
+	return v.para(gtx, size, 22, r.nameW, col, 1, name)
+}
+
+// preview is the message body, tagged data-qa="activity-item-message".
+func (r *actRow) preview(gtx C, lines int) D {
+	st := actMsgClass.Enter(gtx, 0, 0)
+	defer st.Leave()
+	if st.Hidden() {
+		return D{}
+	}
+	if !st.Active() {
+		return r.v.msgBodyMuted(gtx, r.it.Msg, false, !r.unread, lines)
+	}
+	return st.Wrap(gtx, func(gtx C) D { return r.v.msgBodyMuted(gtx, r.it.Msg, false, !r.unread, lines) })
 }
 
 func (v *Activity) choose(it *core.ActivityItem, key string, r *actRow) {
@@ -1481,8 +1682,8 @@ func (v *Activity) undoBar(gtx C) {
 	}
 	bg, fg, link := rgb(0x1d1c1d), rgb(0xffffff), rgb(0x1d9bd1)
 	if v.th.Dark {
-		bg, fg = rgb(0xe8e8e8), rgb(0x1d1c1d)
-		link = rgb(0x1264a3)
+		// base-inv-pry / content-inv-pry / content-inv-hgl-1 in dark
+		bg, fg, link = rgb(0x212428), rgb(0xf8f8f8), rgb(0x2ba5ce)
 	}
 	m := op.Record(gtx.Ops)
 	g := gtx
@@ -1549,19 +1750,23 @@ func (v *Activity) rowWhen(gtx C, d *actDesc) string {
 	return d.when
 }
 
-func (v *Activity) rowContent(gtx C, it *core.ActivityItem, d *actDesc, unread bool) D {
+func (v *Activity) rowContent(gtx C, r *actRow) D {
+	it, d, unread := r.it, r.cur, r.unread
 	nameW, nameCol, bodyCol := wReg, v.p.Sec, v.p.Sec
 	if unread {
 		nameW, nameCol, bodyCol = wBlack, v.p.Text, v.p.Text
 	}
+	r.nameW, r.nameCol, r.nameMax = nameW, nameCol, 0
 	when := v.rowWhen(gtx, d)
 	if v.dense {
-		return v.denseContent(gtx, it, d, unread, nameW, nameCol, bodyCol, when)
+		return v.denseContent(gtx, r, bodyCol, when)
 	}
 	return layout.Inset{Top: 12, Bottom: 12, Left: 16, Right: 20}.Layout(gtx, func(gtx C) D {
 		return row(gtx, layout.Start,
 			layout.Rigid(func(gtx C) D {
-				return layout.Inset{Top: 6}.Layout(gtx, func(gtx C) D { return v.actAvatarOf(gtx, d, actAvatar) })
+				return layout.Inset{Top: 6}.Layout(gtx, func(gtx C) D {
+					return slackc.Component(gtx, "ActivityRowContentSenderAvatarLayout", r, (*actRow).avatarProps, (*actRow).layoutAvatar)
+				})
 			}),
 			hgap(8),
 			layout.Flexed(1, func(gtx C) D {
@@ -1570,7 +1775,9 @@ func (v *Activity) rowContent(gtx C, it *core.ActivityItem, d *actDesc, unread b
 						g := gtx
 						g.Constraints.Min.Y = gtx.Dp(22)
 						return row(g, layout.Middle,
-							layout.Rigid(func(gtx C) D { return v.para(gtx, 15, 22, nameW, nameCol, 1, d.name) }),
+							layout.Rigid(func(gtx C) D {
+								return slackc.Component(gtx, "ActivityPrivacyBlurredName", r, (*actRow).nameProps, (*actRow).layoutName)
+							}),
 							hgap(8),
 							layout.Rigid(func(gtx C) D {
 								return layout.Inset{Top: 2}.Layout(gtx, func(gtx C) D { return v.para(gtx, 13, 18, wReg, v.p.Muted, 1, when) })
@@ -1579,7 +1786,7 @@ func (v *Activity) rowContent(gtx C, it *core.ActivityItem, d *actDesc, unread b
 					}),
 					layout.Rigid(func(gtx C) D {
 						if it.Msg != nil && !d.invite {
-							return v.msgBodyMuted(gtx, it.Msg, false, !unread, 2)
+							return r.preview(gtx, 2)
 						}
 						if d.body == "" {
 							return D{}
@@ -1608,17 +1815,20 @@ func (v *Activity) rowContent(gtx C, it *core.ActivityItem, d *actDesc, unread b
 // 20px compact avatar, the sender (15px, 900 when unread), the context
 // ("Mention in #general", 13px muted with its 16px icon) and the one-line
 // preview, then the time pushed to the right.
-func (v *Activity) denseContent(gtx C, it *core.ActivityItem, d *actDesc, unread bool, nameW font.Weight, nameCol, bodyCol color.NRGBA, when string) D {
+func (v *Activity) denseContent(gtx C, r *actRow, bodyCol color.NRGBA, when string) D {
+	it, d, unread := r.it, r.cur, r.unread
 	return layout.Inset{Top: 8, Bottom: 8, Left: 16, Right: 20}.Layout(gtx, func(gtx C) D {
 		g := gtx
 		g.Constraints.Min.Y = gtx.Dp(22)
 		full := gtx.Constraints.Max.X
 		return row(g, layout.Middle,
-			layout.Rigid(func(gtx C) D { return v.actAvatarOf(gtx, d, actDenseAv) }),
+			layout.Rigid(func(gtx C) D {
+				return slackc.Component(gtx, "ActivityRowContentSenderAvatarLayout", r, (*actRow).avatarProps, (*actRow).layoutAvatar)
+			}),
 			hgap(8),
 			layout.Rigid(func(gtx C) D {
-				gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(200), full/4)
-				return v.label(gtx, 15, nameW, nameCol, d.name)
+				r.nameMax = min(gtx.Constraints.Max.X, gtx.Dp(200), full/4)
+				return slackc.Component(gtx, "ActivityPrivacyBlurredName", r, (*actRow).nameProps, (*actRow).layoutName)
 			}),
 			hgap(8),
 			layout.Rigid(func(gtx C) D {
@@ -1633,7 +1843,7 @@ func (v *Activity) denseContent(gtx C, it *core.ActivityItem, d *actDesc, unread
 				if it.Msg != nil && !d.invite && !(it.Type == "bot_dm_bundle" && it.Count > 1) && len(it.Msg.Doc.Blocks) > 0 {
 					// The message's first line, drawn like the detailed body
 					// (emoji images, mentions) and clipped to one line.
-					return v.msgBodyMuted(gtx, it.Msg, false, !unread, 1)
+					return r.preview(gtx, 1)
 				}
 				return layout.W.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wReg, bodyCol, d.prev) })
 			}),
@@ -1699,7 +1909,7 @@ func (v *Activity) actStatus(gtx C, it *core.ActivityItem, unread bool) D {
 	s := gtx.Dp(20)
 	c := rgb(0xd7d7da)
 	if v.th.Dark {
-		c = rgb(0x3b3d42)
+		c = rgb(0x212428) // plt-gray-10
 	}
 	theme.Circle(gtx, image.Pt(s/2, s/2), s, c)
 	g := gtx

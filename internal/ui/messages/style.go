@@ -14,6 +14,7 @@ import (
 	"gioui.org/text"
 	"gioui.org/unit"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
@@ -214,9 +215,13 @@ func at(gtx layout.Context, x, y int, w layout.Widget) layout.Dimensions {
 
 // drawAvatar paints an avatar (or a placeholder while it loads).
 func drawAvatar(gtx layout.Context, h Host, url string, r image.Rectangle, c *colors) {
+	paintAvatar(gtx, h.Images(), url, r, c)
+}
+
+func paintAvatar(gtx layout.Context, imgs *imgcache.Cache, url string, r image.Rectangle, c *colors) {
 	radius := avatarRadius(r.Dx())
-	if url != "" && h.Images() != nil {
-		if img, ok := h.Images().Get(url, r.Dx()); ok {
+	if url != "" && imgs != nil {
+		if img, ok := imgs.Get(url, r.Dx()); ok {
 			richview.DrawImage(gtx.Ops, img, r, radius, true)
 			return
 		}

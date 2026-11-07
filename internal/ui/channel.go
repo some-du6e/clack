@@ -11,6 +11,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -41,6 +42,8 @@ func (a *App) layoutChannel(gtx layout.Context, ch string) layout.Dimensions {
 	body := image.Rect(0, hh+th, sz.X, sz.Y)
 	cv := a.convoFor(ch, "")
 	atExact(gtx, body.Min, body.Size(), func(gtx layout.Context) layout.Dimensions {
+		mp := clsMessagePane.Enter(gtx, 0, 0)
+		defer mp.Leave()
 		return a.layoutConvo(gtx, cv, a.primaryOrigin.Add(body.Min))
 	})
 	return layout.Dimensions{Size: sz}
@@ -48,6 +51,11 @@ func (a *App) layoutChannel(gtx layout.Context, ch string) layout.Dimensions {
 
 func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo) layout.Dimensions {
 	sz := gtx.Constraints.Max
+	vh := clsViewHeader.Enter(gtx, 0, 0)
+	defer vh.Leave()
+	if vh.Hidden() {
+		return layout.Dimensions{Size: sz}
+	}
 	c := &a.th.C
 	h := sz.Y
 	x := gtx.Dp(18) // Slack: 28px star button at +18, title icon at +54
@@ -141,51 +149,21 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	}
 	right -= gtx.Dp(6)
 
-	// member facepile (up to 3 avatars, 20px, overlapped) + count.
+	// member facepile (up to 3 avatars, 20px, overlapped) + count: Slack's
+	// BaseAvatarStack, whose width a plugin may change (HumanCount).
 	if conv != nil && conv.Kind != "im" && conv.NumMembers > 0 {
-		cnt := itoa(conv.NumMembers)
-		cw := a.th.Measure(gtx, 13, theme.Bold, cnt)
-		faces := conv.Members
-		if len(faces) > 3 {
-			faces = faces[:3]
-		}
-		pw := gtx.Dp(8) + len(faces)*gtx.Dp(16) + gtx.Dp(6) + cw + gtx.Dp(8)
-		if len(faces) > 0 {
-			pw += gtx.Dp(4)
-		}
-		right -= pw
-		at(gtx, image.Pt(right, y), image.Pt(pw, btn), func(gtx layout.Context) layout.Dimensions {
-			return clickArea(gtx, a.clicks.get("hdr.members"), func(gtx layout.Context, s image.Point, hov bool) {
-				theme.Border(gtx, image.Rectangle{Max: s}, gtx.Dp(8), gtx.Dp(1), c.Border)
-				if hov {
-					theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(8), c.BgHover)
-				}
-			}, func(gtx layout.Context) layout.Dimensions {
-				fx := gtx.Dp(6)
-				for _, uid := range faces {
-					url := a.userAvatar(uid)
-					at(gtx, image.Pt(fx, (btn-gtx.Dp(20))/2), image.Pt(gtx.Dp(20), gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {
-						s := gtx.Dp(20)
-						theme.RRect(gtx, image.Rect(-gtx.Dp(2), -gtx.Dp(2), s+gtx.Dp(2), s+gtx.Dp(2)), gtx.Dp(6), c.Bg)
-						return a.avatar(gtx, url, "", s, gtx.Dp(4))
-					})
-					fx += gtx.Dp(16)
-				}
-				if len(faces) > 0 {
-					fx += gtx.Dp(8)
-				}
-				at(gtx, image.Pt(fx, 0), image.Pt(cw+2, btn), func(gtx layout.Context) layout.Dimensions {
-					return vcenter(gtx, btn, func(gtx layout.Context) layout.Dimensions {
-						return a.th.Label(gtx, 13, theme.Bold, c.FgMuted, cnt)
-					})
-				})
-				return layout.Dimensions{Size: image.Pt(pw, btn)}
-			})
+		call, d := measured(gtx, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(max(right-x, 0), btn)}
+			return slackc.Component(gtx, "BaseAvatarStack", hdrStack{a: a, ch: ch, conv: conv, btn: btn}, hdrStack.props, hdrStack.layout)
 		})
+		right -= d.Size.X
+		place(gtx, call, image.Pt(right, y+(btn-d.Size.Y)/2))
 		if clicked(a.clicks.get("hdr.members")) {
 			a.OpenDetails(ch)
 		}
-		right -= gtx.Dp(6)
+		if d.Size.X > 0 {
+			right -= gtx.Dp(6)
+		}
 	}
 
 	// title: icon + name 18px/900 + chevron, clickable → details.

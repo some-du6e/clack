@@ -195,56 +195,67 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 	}
 	pos := image.Pt((win.X-w)/2, (win.Y-h)/2)
 	m.rect = image.Rectangle{Min: pos, Max: pos.Add(image.Pt(w, h))}
-	modalCard(gtx, cl, m.rect, dp(gtx, 8))
-	m.block.Layout(gtx, m.rect)
 	keyTarget(gtx, m, m.rect)
+	st := modalClass.Enter(gtx, 0, 0)
+	defer st.Leave()
+	if !st.Hidden() {
+		at(gtx, pos, func(gtx layout.Context) layout.Dimensions {
+			return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
+				pos := image.Point{}
+				local := image.Rectangle{Max: m.rect.Size()}
+				modalCard(gtx, cl, local, dp(gtx, 8))
+				m.block.Layout(gtx, local)
 
-	// header
-	at(gtx, pos.Add(image.Pt(padX, (headH-dp(gtx, 30))/2)), func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints = layout.Constraints{Max: image.Pt(w-padX-dp(gtx, 64), dp(gtx, 30))}
-		return para(gtx, th, 22, 30, theme.Black, cl.Fg, m.o.Title, 1)
-	})
-	if !m.o.NoClose {
-		at(gtx, pos.Add(image.Pt(w-dp(gtx, 20)-dp(gtx, 36), (headH-dp(gtx, 36))/2)), func(gtx layout.Context) layout.Dimensions {
-			return iconButton(gtx, &m.close, "close", 36, 20, cl.Fg2, cl.BgHover, 8)
-		})
-	}
-	// body
-	if m.o.Body != nil {
-		at(gtx, pos.Add(image.Pt(padX, headH)), func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints = layout.Constraints{Min: image.Pt(bodyW, 0), Max: image.Pt(bodyW, bodyH)}
-			if !scroll {
-				gtx.Constraints.Min.X = 0
-				return m.o.Body(gtx)
-			}
-			defer clipRRect(gtx, image.Rect(0, 0, bodyW, bodyH), 0).Pop()
-			return m.list.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
-				gtx.Constraints.Min.X = 0
-				return m.o.Body(gtx)
+				// header
+				at(gtx, pos.Add(image.Pt(padX, (headH-dp(gtx, 30))/2)), func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints = layout.Constraints{Max: image.Pt(w-padX-dp(gtx, 64), dp(gtx, 30))}
+					return para(gtx, th, 22, 30, theme.Black, cl.Fg, m.o.Title, 1)
+				})
+				if !m.o.NoClose {
+					at(gtx, pos.Add(image.Pt(w-dp(gtx, 20)-dp(gtx, 36), (headH-dp(gtx, 36))/2)), func(gtx layout.Context) layout.Dimensions {
+						return iconButton(gtx, &m.close, "close", 36, 20, cl.Fg2, cl.BgHover, 8)
+					})
+				}
+				// body
+				if m.o.Body != nil {
+					at(gtx, pos.Add(image.Pt(padX, headH)), func(gtx layout.Context) layout.Dimensions {
+						gtx.Constraints = layout.Constraints{Min: image.Pt(bodyW, 0), Max: image.Pt(bodyW, bodyH)}
+						if !scroll {
+							gtx.Constraints.Min.X = 0
+							return m.o.Body(gtx)
+						}
+						defer clipRRect(gtx, image.Rect(0, 0, bodyW, bodyH), 0).Pop()
+						return m.list.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+							gtx.Constraints.Min.X = 0
+							return m.o.Body(gtx)
+						})
+					})
+				}
+				// footer
+				if len(m.o.Buttons) > 0 {
+					fy := pos.Y + headH + bodyH
+					if m.o.Border {
+						fill(gtx, image.Rect(pos.X, fy, pos.X+w, fy+1), cl.Ring)
+						fy++
+					}
+					x := pos.X + w - padX
+					for i := len(m.o.Buttons) - 1; i >= 0; i-- {
+						b := m.o.Buttons[i]
+						kind := b.Kind
+						if !b.enabled() {
+							kind = BtnDisabled
+						}
+						call, d := record(gtx, func(gtx layout.Context) layout.Dimensions {
+							return Button(gtx, th, &b.click, kind, BtnMedium, b.Label, "", 80)
+						})
+						x -= d.Size.X
+						macroAt(gtx, call, image.Pt(x, fy+footPad))
+						x -= dp(gtx, 12)
+					}
+				}
+				return layout.Dimensions{Size: m.rect.Size()}
 			})
 		})
-	}
-	// footer
-	if len(m.o.Buttons) > 0 {
-		fy := pos.Y + headH + bodyH
-		if m.o.Border {
-			fill(gtx, image.Rect(pos.X, fy, pos.X+w, fy+1), cl.Ring)
-			fy++
-		}
-		x := pos.X + w - padX
-		for i := len(m.o.Buttons) - 1; i >= 0; i-- {
-			b := m.o.Buttons[i]
-			kind := b.Kind
-			if !b.enabled() {
-				kind = BtnDisabled
-			}
-			call, d := record(gtx, func(gtx layout.Context) layout.Dimensions {
-				return Button(gtx, th, &b.click, kind, BtnMedium, b.Label, "", 80)
-			})
-			x -= d.Size.X
-			macroAt(gtx, call, image.Pt(x, fy+footPad))
-			x -= dp(gtx, 12)
-		}
 	}
 	return layout.Dimensions{Size: win}
 }
