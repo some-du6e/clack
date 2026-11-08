@@ -18,7 +18,6 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/pluginlib"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/taut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
@@ -54,18 +53,23 @@ type tautPage struct {
 	// async state
 	busy    string
 	errText string
+	errFor  string // the run errText came from
 	note    string
 
 	urlEd    widget.Editor
 	cssEd    widget.Editor
 	cssInit  bool
+	cssSaved string // user.css as last loaded or saved (dirty = editor differs)
 	cfgEd    widget.Editor
 	cfgInit  bool
+	cfgSaved string
+	cfgErr   string // config.json parse error (Not saved: …)
 	jsonEdit bool
 	jsonEd   widget.Editor
 	replace  bool
 	reveal   map[string]bool
-	lib      *libraryView // the Library screen
+	text     prefsText       // mrkdwn lines (meta, credits) through richview
+	openTab  func(id string) // selects a Preferences tab (the Library); nil outside the dialog
 
 	gtxNow   layout.Context // this frame's context (editor events)
 	focusWas map[*widget.Editor]bool
@@ -128,7 +132,7 @@ func (p *tautPage) run(busy string, f func(ctx context.Context, t *taut.Taut) er
 	if t == nil || p.busy != "" {
 		return
 	}
-	p.busy, p.errText = busy, ""
+	p.busy, p.errText, p.errFor = busy, "", busy
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
@@ -203,6 +207,12 @@ func (p *tautPage) para(gtx layout.Context, size, lh unit.Sp, col color.NRGBA, s
 
 // linkButton is Taut's LinkButton: link-colored text, underlined on hover.
 func (p *tautPage) linkButton(gtx layout.Context, k, label, icon string) (layout.Dimensions, bool) {
+	return p.linkButtonW(gtx, k, label, icon, theme.Regular, 4) // taut-settings__back: gap 4
+}
+
+// linkButtonW is linkButton with a weight and an icon gap (Slick's back
+// button is bold with a 6px gap).
+func (p *tautPage) linkButtonW(gtx layout.Context, k, label, icon string, weight font.Weight, gap unit.Dp) (layout.Dimensions, bool) {
 	cl := p.colors()
 	b := p.btn(k)
 	d := clickArea(gtx, b, nil, func(gtx layout.Context) layout.Dimensions {
@@ -211,10 +221,10 @@ func (p *tautPage) linkButton(gtx layout.Context, k, label, icon string) (layout
 			at(gtx, image.Pt(0, gtx.Dp(3)), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
 				return icons.Get(icon)(gtx, 16, cl.link)
 			})
-			x = gtx.Dp(20)
+			x = gtx.Dp(16 + gap)
 		}
 		ld := at(gtx, image.Pt(x, 0), image.Pt(1<<20, gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
-			return p.label(gtx, 15, theme.Regular, cl.link, label)
+			return p.label(gtx, 15, weight, cl.link, label)
 		})
 		if b.Hovered() {
 			theme.Fill(gtx, image.Rect(x, ld.Size.Y-gtx.Dp(3), x+ld.Size.X, ld.Size.Y-gtx.Dp(2)), cl.link)
@@ -385,9 +395,7 @@ func (p *tautPage) layout(gtx layout.Context) layout.Dimensions {
 		case "advanced":
 			p.advancedScreen(f, t, s)
 		case "about":
-			p.aboutScreen(f, s)
-		case "library":
-			p.libraryScreen(f, t)
+			p.aboutScreen(f, t, s)
 		default:
 			p.mainScreen(f, t, s)
 		}
@@ -438,13 +446,19 @@ func (p *tautPage) mainScreen(f *flow, t *taut.Taut, s taut.Settings) {
 	}
 	// Appearance / Advanced / About rows
 	for _, sub := range []struct{ id, label, desc, icon string }{
-		{"library", "Library", "Official Taut plugins, one-click install", "download"},
-		{"appearance", "Appearance", "Custom CSS", "edit"},
+		{"library", "Plugin library", "Official Taut and Slick plugins", "bookmark"},
+		{"appearance", "Appearance", "Custom CSS", "paintbrush"},
 		{"advanced", "Advanced", "Installing plugins, config.json", "settings"},
 		{"about", "About", "Credits", "info"},
 	} {
 		sub := sub
 		if p.navRow(f, "nav."+sub.id, sub.icon, sub.label, sub.desc) {
+			if sub.id == "library" { // its own Preferences tab, shared with Slick
+				if p.openTab != nil {
+					p.openTab(libraryTabID)
+				}
+				continue
+			}
 			p.go_(sub.id, "")
 		}
 	}
@@ -456,8 +470,12 @@ func (p *tautPage) mainScreen(f *flow, t *taut.Taut, s taut.Settings) {
 	})
 	// filters
 	var plugins []taut.PluginInfo
+	anyUser := false
 	for _, c := range s.Categories {
 		plugins = append(plugins, c.Plugins...)
+		for _, pl := range c.Plugins {
+			anyUser = anyUser || pl.IsUser
+		}
 	}
 	f.gap(12)
 	f.put(0, func(gtx layout.Context) layout.Dimensions {
@@ -465,7 +483,7 @@ func (p *tautPage) mainScreen(f *flow, t *taut.Taut, s taut.Settings) {
 		for _, o := range []struct{ id, label string }{
 			{"all", "All"}, {"enabled", "Enabled"}, {"disabled", "Disabled"}, {"hack-club", "Hack Club only"}, {"user", "User plugins"},
 		} {
-			if o.id == "hack-club" && !t.IsHackClub() || o.id == "user" && len(plugins) == 0 {
+			if o.id == "hack-club" && !t.IsHackClub() || o.id == "user" && !anyUser {
 				continue
 			}
 			o := o
@@ -569,7 +587,7 @@ func (p *tautPage) navRow(f *flow, k, icon, name, desc string) bool {
 				return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions { return p.label(gtx, 13, theme.Regular, cl.fg2, desc) })
 			})
 			at(gtx, image.Pt(f.w-gtx.Dp(24), (h-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
-				return icons.Get("chevron-right")(gtx, 16, cl.fg3)
+				return icons.Get("caret-right")(gtx, 16, cl.fg3)
 			})
 			return layout.Dimensions{Size: image.Pt(f.w, h)}
 		})
@@ -626,7 +644,7 @@ func (p *tautPage) pluginRow(f *flow, t *taut.Taut, pl taut.PluginInfo) {
 				}
 				ix := w - gtx.Dp(4) - gtx.Dp(16)
 				at(gtx, image.Pt(ix, (rowH-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
-					return icons.Get("chevron-right")(gtx, 16, cl.fg3)
+					return icons.Get("caret-right")(gtx, 16, cl.fg3)
 				})
 				if warn {
 					at(gtx, image.Pt(ix-gtx.Dp(24), (rowH-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
@@ -685,18 +703,17 @@ func (p *tautPage) pluginScreen(f *flow, t *taut.Taut, s taut.Settings) {
 		p.muted(f, d)
 		f.gap(4)
 	}
-	meta := []string{group}
-	if a := authorsText(pl); a != "" {
+	// Taut's PluginHeader: one small mrkdwn line, "Messages · by <authors> ·
+	// user plugin `Id`" (authors are mentions in the Hack Club Slack)
+	meta := []string{mrkdwnEscape(group)}
+	if a := tautAuthorsMrkdwn(pl, t.IsHackClub()); a != "" {
 		meta = append(meta, "by "+a)
 	}
 	if pl.IsUser {
-		meta = append(meta, "user plugin "+pl.ID)
-	}
-	if pl.HackClubOnly {
-		meta = append(meta, "Hack Club only")
+		meta = append(meta, "user plugin `"+pl.ID+"`")
 	}
 	f.put(0, func(gtx layout.Context) layout.Dimensions {
-		return p.para(gtx, 13, 18, cl.fg3, strings.Join(meta, " · "))
+		return p.mrkdwn(gtx, "meta."+pl.ID, strings.Join(meta, " · "), true, cl.fg3)
 	})
 	f.gap(12)
 	f.put(0, func(gtx layout.Context) layout.Dimensions {
@@ -1351,63 +1368,87 @@ func (p *tautPage) importFile(replacing string, done func(string)) {
 	}()
 }
 
-// ---- Library, Appearance, Advanced, About ----
+// ---- Appearance, Advanced, About ----
 
-// libraryScreen is Taut > Library: the official Taut plugins (pluginlib).
-func (p *tautPage) libraryScreen(f *flow, t *taut.Taut) {
-	p.subScreen(f, "Library", "Taut")
-	if p.lib == nil {
-		p.lib = newLibraryView(pluginlib.Taut, p)
-	}
-	p.lib.layout(f, p.libraryHost(t))
-}
+// fieldGap separates two of Slack's FieldSets on one screen (Taut's
+// Advanced and About stack them without rules).
+func (p *tautPage) fieldGap(f *flow) { f.gap(28) }
 
-// libraryHost installs Library entries as Taut user plugins.
-func (p *tautPage) libraryHost(t *taut.Taut) libraryHost {
-	return libraryHost{
-		installed: func(id string) (string, string) { return t.InstalledSHA256(id), "" },
-		install: func(ctx context.Context, e pluginlib.Entry, code, _ []byte, update bool) error {
-			replacing := ""
-			if update {
-				replacing = e.ID
-			}
-			_, err := t.Import(ctx, code, replacing)
-			return err
-		},
-		open: func(id string) { p.go_("plugin", id) },
-	}
+// editorBar is Taut's DocumentEditor bar: an outline small save button
+// (off until there are changes), Discard while there are, extra buttons,
+// and "Unsaved changes" / "Saved" at the right.
+func (p *tautPage) editorBar(f *flow, k, saveLabel string, dirty bool, save, discard func(), extra ...struct {
+	k, label string
+	do       func()
+}) {
+	cl := p.colors()
+	f.put(0, func(gtx layout.Context) layout.Dimensions {
+		x := 0
+		add := func(k, label string, enabled bool, do func()) {
+			d := at(gtx, image.Pt(x, 0), image.Pt(1<<20, gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
+				b := p.btn(k)
+				kind := popups.BtnOutline
+				if !enabled || p.busy != "" {
+					kind = popups.BtnDisabled
+				}
+				hit := b.Clicked(gtx)
+				d := popups.Button(gtx, p.a.th, b, kind, popups.BtnSmall, label, "", 0)
+				if hit && kind != popups.BtnDisabled {
+					do()
+				}
+				return d
+			})
+			x += d.Size.X + gtx.Dp(8)
+		}
+		label := saveLabel
+		if p.busy == k {
+			label = "Saving..."
+		}
+		add("save."+k, label, dirty, save)
+		if dirty {
+			add("discard."+k, "Discard", true, discard)
+		}
+		for _, e := range extra {
+			add(e.k, e.label, true, e.do)
+		}
+		st := "Saved"
+		if dirty {
+			st = "Unsaved changes"
+		}
+		sw := p.a.th.Measure(gtx, 13, theme.Regular, st)
+		at(gtx, image.Pt(f.w-sw, 0), image.Pt(sw+2, gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
+			return vcenter(gtx, gtx.Dp(28), func(gtx layout.Context) layout.Dimensions {
+				return p.label(gtx, 13, theme.Regular, cl.fg3, st)
+			})
+		})
+		return layout.Dimensions{Size: image.Pt(f.w, gtx.Dp(28))}
+	})
 }
 
 func (p *tautPage) appearanceScreen(f *flow, t *taut.Taut, s taut.Settings) {
+	cl := p.colors()
 	p.subScreen(f, "Appearance", "Taut")
 	p.legend(f, "Custom CSS")
-	p.muted(f, "CSS applied to Clack's Slack class names, like Taut's custom CSS. It's saved in user.css.")
-	f.gap(8)
+	note := "Saved to `" + filepath.Join(t.Dir(), "user.css") + "`. It styles " + AppName + "'s Slack class names, like Taut's custom CSS."
+	f.put(0, func(gtx layout.Context) layout.Dimensions { return p.mrkdwn(gtx, "css.note", note, false, cl.fg2) })
+	f.gap(20)
 	if !p.cssInit {
 		p.cssEd.SetText(s.UserCSS)
+		p.cssSaved = s.UserCSS
 		p.cssInit = true
 	}
 	f.put(0, func(gtx layout.Context) layout.Dimensions {
-		return p.input(gtx, &p.cssEd, f.w, gtx.Dp(320), "/* your CSS */", true)
+		return p.input(gtx, &p.cssEd, f.w, gtx.Dp(420), "/* your CSS */", true)
 	})
 	f.gap(8)
-	f.put(0, func(gtx layout.Context) layout.Dimensions {
-		d, c := p.button(gtx, "savecss", "Save", popups.BtnPrimary)
-		if c {
-			css := p.cssEd.Text()
-			p.run("css", func(ctx context.Context, t *taut.Taut) error { return t.SetUserCSS(css) }, func() { p.note = "Saved." })
-		}
-		if p.note != "" {
-			at(gtx, image.Pt(d.Size.X+gtx.Dp(12), gtx.Dp(4)), image.Pt(f.w, gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
-				return p.label(gtx, 13, theme.Regular, p.colors().fg3, p.note)
-			})
-		}
-		return d
-	})
 	if p.errText != "" {
-		f.gap(8)
 		f.put(0, func(gtx layout.Context) layout.Dimensions { return p.alert(gtx, p.errText) })
+		f.gap(8)
 	}
+	p.editorBar(f, "css", "Save user.css", p.cssEd.Text() != p.cssSaved, func() {
+		css := p.cssEd.Text()
+		p.run("css", func(ctx context.Context, t *taut.Taut) error { return t.SetUserCSS(css) }, func() { p.cssSaved = css })
+	}, func() { p.cssEd.SetText(p.cssSaved); p.errText = "" })
 }
 
 func (p *tautPage) advancedScreen(f *flow, t *taut.Taut, s taut.Settings) {
@@ -1415,17 +1456,18 @@ func (p *tautPage) advancedScreen(f *flow, t *taut.Taut, s taut.Settings) {
 	p.subScreen(f, "Advanced", "Taut")
 	p.legend(f, "Install a plugin")
 	p.muted(f, "Add a pre-built plugin from a .js file or a link. Only install code you trust! Plugins can do anything you can do in Slack.")
-	f.gap(8)
+	f.gap(16)
 	p.importControls(f, "")
-	if p.errText != "" {
+	if p.errText != "" && p.errFor != "cfg" {
 		f.gap(8)
 		f.put(0, func(gtx layout.Context) layout.Dimensions { return p.alert(gtx, p.errText) })
 	}
-	p.hr(f)
+	p.fieldGap(f)
 	p.legend(f, "config.json")
 	path := filepath.Join(t.Dir(), "config.json")
-	p.muted(f, "Plugin settings are saved in "+path+". Edits made here or in a text editor apply right away.")
-	f.gap(8)
+	note := "Saved to `" + path + "`. Edits made here or in a text editor apply right away."
+	f.put(0, func(gtx layout.Context) layout.Dimensions { return p.mrkdwn(gtx, "cfg.note", note, false, cl.fg2) })
+	f.gap(20)
 	if s.ConfigError != "" {
 		f.put(0, func(gtx layout.Context) layout.Dimensions {
 			return p.alert(gtx, "Can't read config.json: "+s.ConfigError)
@@ -1438,69 +1480,68 @@ func (p *tautPage) advancedScreen(f *flow, t *taut.Taut, s taut.Settings) {
 			b = []byte("{}\n")
 		}
 		p.cfgEd.SetText(string(b))
+		p.cfgSaved = string(b)
 		p.cfgInit = true
 	}
-	f.put(0, func(gtx layout.Context) layout.Dimensions { return p.input(gtx, &p.cfgEd, f.w, gtx.Dp(300), "", true) })
+	f.put(0, func(gtx layout.Context) layout.Dimensions { return p.input(gtx, &p.cfgEd, f.w, gtx.Dp(420), "", true) })
 	f.gap(8)
-	f.put(0, func(gtx layout.Context) layout.Dimensions {
-		d, c := p.button(gtx, "savecfg", "Save config.json", popups.BtnPrimary)
-		if c {
-			text := p.cfgEd.Text()
-			var probe any
-			if err := json.Unmarshal([]byte(text), &probe); err != nil {
-				p.errText = "Not saved: " + err.Error()
-				return d
-			}
-			if _, ok := probe.(map[string]any); !ok {
-				p.errText = "Not saved: expected a JSON object"
-				return d
-			}
-			p.run("cfg", func(ctx context.Context, t *taut.Taut) error {
-				return t.WriteConfig(ctx, []byte(text))
-			}, func() { p.note = "Saved." })
+	if e := p.cfgErr; e != "" || p.errFor == "cfg" && p.errText != "" {
+		if e == "" {
+			e = p.errText
 		}
-		x := d.Size.X + gtx.Dp(8)
-		at(gtx, image.Pt(x, 0), image.Pt(1<<20, gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
-			d, c := p.button(gtx, "reloadcfg", "Reload from disk", popups.BtnOutline)
-			if c {
-				p.cfgInit = false
-				p.run("cfg", func(ctx context.Context, t *taut.Taut) error { return t.ReloadConfig(ctx) }, nil)
-			}
-			return d
-		})
-		if p.note != "" {
-			at(gtx, image.Pt(x+gtx.Dp(150), gtx.Dp(4)), image.Pt(f.w, gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
-				return p.label(gtx, 13, theme.Regular, cl.fg3, p.note)
-			})
+		f.put(0, func(gtx layout.Context) layout.Dimensions { return p.alert(gtx, e) })
+		f.gap(8)
+	}
+	p.editorBar(f, "cfg", "Save config.json", p.cfgEd.Text() != p.cfgSaved, func() {
+		text := p.cfgEd.Text()
+		var probe any
+		if err := json.Unmarshal([]byte(text), &probe); err != nil {
+			p.cfgErr = "Not saved: " + err.Error()
+			return
 		}
-		return d
-	})
+		if _, ok := probe.(map[string]any); !ok {
+			p.cfgErr = "Not saved: expected a JSON object"
+			return
+		}
+		p.cfgErr = ""
+		p.run("cfg", func(ctx context.Context, t *taut.Taut) error {
+			return t.WriteConfig(ctx, []byte(text))
+		}, func() { p.cfgSaved = text })
+	}, func() { p.cfgEd.SetText(p.cfgSaved); p.cfgErr = "" }, struct {
+		k, label string
+		do       func()
+	}{"reloadcfg", "Reload from disk", func() {
+		p.cfgInit, p.cfgErr = false, ""
+		p.run("cfg", func(ctx context.Context, t *taut.Taut) error { return t.ReloadConfig(ctx) }, nil)
+	}})
 }
 
-func (p *tautPage) aboutScreen(f *flow, s taut.Settings) {
+func (p *tautPage) aboutScreen(f *flow, t *taut.Taut, s taut.Settings) {
+	cl := p.colors()
+	hc := t.IsHackClub()
 	p.subScreen(f, "About", "Taut")
 	p.legend(f, "Taut")
-	p.muted(f, "Taut (github.com/jeremy46231/taut, GPLv3) is a plugin system for Slack by Jeremy Woolley. "+AppName+" runs Taut plugins unmodified on its own native implementation of the Taut API; no Taut code is included.")
-	p.hr(f)
+	about := tautMrkdwnHere("<https://github.com/jeremy46231/taut|Taut> is a client mod for Slack, made by <@U06UYA5GMB5> (GPLv3 or later). "+
+		AppName+" runs Taut plugins unmodified on its own native implementation of the Taut API; no Taut code is included. Come say hi in <#C0A057686SF>.", hc)
+	f.put(0, func(gtx layout.Context) layout.Dimensions { return p.mrkdwn(gtx, "about", about, false, cl.fg) })
+	p.fieldGap(f)
 	p.legend(f, "Plugins")
-	seen := map[string]bool{}
-	var lines []string
+	n := 0
 	for _, c := range s.Categories {
 		for _, pl := range c.Plugins {
-			if a := authorsText(pl); a != "" {
-				l := pl.Name + " by " + a
-				if !seen[l] {
-					seen[l] = true
-					lines = append(lines, l)
-				}
+			line := "*" + mrkdwnEscape(pl.Name) + "*"
+			if a := tautAuthorsMrkdwn(pl, hc); a != "" {
+				line += " by " + a
 			}
+			if n > 0 {
+				f.gap(6)
+			}
+			n++
+			f.put(0, func(gtx layout.Context) layout.Dimensions { return p.mrkdwn(gtx, "credit."+pl.ID, line, false, cl.fg) })
 		}
 	}
-	if len(lines) == 0 {
+	if n == 0 {
 		p.muted(f, "No plugins installed.")
-	}
-	for _, l := range lines {
-		p.muted(f, l)
 	}
 }
 
@@ -1538,23 +1579,6 @@ func plainMrkdwn(s string) string {
 	}
 	t := richtext.PlainText(richtext.Doc{Blocks: richtext.FromMrkdwn(nil, s)})
 	return strings.Join(strings.Fields(t), " ")
-}
-
-func authorsText(pl taut.PluginInfo) string {
-	if len(pl.Authors) == 0 {
-		return plainMrkdwn(pl.AuthorsMrkdwn)
-	}
-	names := make([]string, 0, len(pl.Authors))
-	for _, a := range pl.Authors {
-		names = append(names, a.Name)
-	}
-	switch len(names) {
-	case 1:
-		return names[0]
-	case 2:
-		return names[0] + " and " + names[1]
-	}
-	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
 
 func jsonScalar(raw json.RawMessage) string {

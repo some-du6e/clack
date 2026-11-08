@@ -4,6 +4,7 @@ import (
 	"context"
 	"image"
 	"image/color"
+	"strings"
 
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -25,6 +26,7 @@ type prefsModal struct {
 	org     originTracker
 	taut    *tautPage              // Preferences > Taut, made on first view
 	slick   *slickPage             // Preferences > Slick's tabs
+	library *libraryPage           // Preferences > Plugin library (Taut's and Slick's)
 	tabSubs map[string]*slackc.Sub // plugin Preferences tabs (RenderPreferencesTab)
 	tabGen  int                    // App.tautGen the tab subs belong to
 }
@@ -101,6 +103,9 @@ func (p *prefsModal) close() {
 	if p.slick != nil {
 		p.slick.close()
 	}
+	if p.library != nil {
+		p.library.close()
+	}
 	for k, s := range p.tabSubs {
 		s.Close()
 		delete(p.tabSubs, k)
@@ -117,6 +122,9 @@ func (p *prefsModal) extraNav() []navExtra {
 			out = append(out, navExtra{id: t.id, label: t.label, icon: t.icon, divider: i == 0})
 		}
 	}
+	// one Library for both systems, after Slick's Install plugins (or after
+	// Taut when Slick isn't running)
+	out = append(out, libraryTab)
 	for _, t := range p.a.tautTabs {
 		icon := "settings" // none: the host (Advanced) tab's icon, like Slick
 		if t.Icon != "" {
@@ -332,21 +340,53 @@ func (p *prefsModal) section1(gtx layout.Context, id string, org image.Point) la
 		return p.avail.Layout(gtx)
 	}
 	if isSlickTab(id) {
-		if p.slick == nil {
-			p.slick = newSlickPage(p.a)
-		}
-		return p.slick.layout(gtx, id)
+		return p.slickPage().layout(gtx, id)
 	}
 	if id == "taut" {
-		if p.taut == nil {
-			p.taut = newTautPage(p.a)
+		return p.tautPage().layout(gtx)
+	}
+	if id == libraryTabID {
+		if p.library == nil {
+			p.library = newLibraryPage(p.a, p.selectTab)
 		}
-		return p.taut.layout(gtx)
+		return p.library.layout(gtx)
 	}
 	if d, ok := p.pluginTab(gtx, id); ok {
 		return d
 	}
 	return p.page(gtx, id)
+}
+
+func (p *prefsModal) tautPage() *tautPage {
+	if p.taut == nil {
+		p.taut = newTautPage(p.a)
+		p.taut.openTab = p.selectTab
+	}
+	return p.taut
+}
+
+func (p *prefsModal) slickPage() *slickPage {
+	if p.slick == nil {
+		p.slick = newSlickPage(p.a)
+	}
+	return p.slick
+}
+
+// selectTab switches the dialog to a tab, as a click on it would; "taut:ID"
+// and "slick_plugins:ID" open a plugin's page there (the Library's
+// Settings button).
+func (p *prefsModal) selectTab(target string) {
+	id, plugin, _ := strings.Cut(target, ":")
+	switch {
+	case id == "taut" && plugin != "":
+		p.tautPage().go_("plugin", plugin)
+	case id == "slick_plugins" && plugin != "":
+		sp := p.slickPage()
+		sp.layoutTab(id) // entering the tab resets it; then open the plugin
+		sp.open = plugin
+	}
+	p.section = id
+	p.a.Invalidate()
 }
 
 // navItem draws one tab button at y; label is a string, or lel a plugin's
