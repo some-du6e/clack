@@ -147,6 +147,8 @@ type Editor struct {
 	clipText   string
 	clipDoc    *Doc
 	plainPaste bool
+	richRead   *clipRead     // HTML read started by Ctrl/Cmd+V
+	pendPaste  *pendingPaste // plain text waiting for richRead
 
 	events  []EditorEvent
 	filters []event.Filter
@@ -709,7 +711,14 @@ func (e *Editor) autoformat() {
 
 // paste inserts clipboard text: the rich copy if it is ours, a link on the
 // selection if it is a single URL, plain text otherwise.
-func (e *Editor) paste(s string) {
+func (e *Editor) paste(s string) { e.pasteHTML(s, "") }
+
+// pasteHTML is paste with the clipboard's HTML, if any: the rich copy if
+// it is ours, a link on the selection if the text is a single URL, the
+// HTML's formatting, a list if the text looks like one, else plain text.
+// Code blocks and inline code take plain text, as does Shift (paste and
+// match style).
+func (e *Editor) pasteHTML(s, html string) {
 	e.init()
 	plain := e.plainPaste
 	e.plainPaste = false
@@ -730,9 +739,26 @@ func (e *Editor) paste(s string) {
 	a := e.typingAttr(lo, hi)
 	d.Delete(lo, hi)
 	var end int
-	if !plain && e.clipDoc != nil && s == strings.ReplaceAll(e.clipText, "\r\n", "\n") {
+	line := d.LineOf(lo)
+	own := !plain && e.clipDoc != nil && s == strings.ReplaceAll(e.clipText, "\r\n", "\n")
+	var rich *Doc
+	if !plain && !own && a.Style&Code == 0 && d.Lines[line].Kind != CodeBlock {
+		if html != "" {
+			rich = docFromHTML(html)
+		}
+		if rich == nil {
+			rich = docFromPlainText(s, lo == d.LineStart(line))
+		}
+	}
+	switch {
+	case own:
 		end = d.InsertDoc(lo, e.clipDoc)
-	} else {
+	case rich != nil:
+		end = e.pasteRich(lo, rich)
+		if LinkTransforms != nil {
+			end = transformPastedLinks(d, lo, end)
+		}
+	default:
 		end = d.Insert(lo, s, Attr{Style: a.Style})
 		if LinkTransforms != nil && a.Style&Code == 0 {
 			end = transformPastedLinks(d, lo, end)
@@ -780,6 +806,7 @@ func (e *Editor) Update(gtx layout.Context) (EditorEvent, bool) {
 	if ev, ok := e.pop(); ok {
 		return ev, true
 	}
+	e.flushPaste(gtx)
 	e.processPointer(gtx)
 	if len(e.events) == 0 {
 		e.processKeys(gtx)
@@ -932,7 +959,7 @@ func (e *Editor) processKeys(gtx layout.Context) {
 			b, err := io.ReadAll(rc)
 			rc.Close()
 			if err == nil {
-				e.paste(string(b))
+				e.receivePaste(gtx, string(b))
 			}
 		case key.SelectionEvent:
 			if e.ime.echoOK && key.Range(ev) == e.ime.echo {
