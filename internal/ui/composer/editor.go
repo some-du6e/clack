@@ -786,7 +786,9 @@ func (e *Editor) paste(s string) { e.pasteHTML(s, "") }
 // match style).
 func (e *Editor) pasteHTML(s, html string) {
 	e.init()
-	plain := e.plainPaste
+	// Under "Format messages with markup" the composer shows no
+	// formatting, so pastes go in as text like typing does.
+	plain := e.plainPaste || e.plainText
 	e.plainPaste = false
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	if s == "" {

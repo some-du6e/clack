@@ -223,3 +223,21 @@ func TestMarkupModeFollowsSlackPref(t *testing.T) {
 		t.Error("plain_text_mode defaults on")
 	}
 }
+
+// TestMarkupModePaste: under markup mode a paste is text (no HTML
+// formatting, no list detection); live mode keeps paste-rich's formatting.
+func TestMarkupModePaste(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		e := NewEditor()
+		e.plainText = on
+		e.pasteHTML("- one\n- two", "<ul><li>one</li><li>two</li></ul>")
+		d := e.Doc()
+		list := d.Lines[0].Kind == Bullet
+		if on && (list || string(d.Runes) != "- one\n- two") {
+			t.Errorf("markup mode paste = %q kinds %v, want the text as is", string(d.Runes), lineKinds(d))
+		}
+		if !on && !list {
+			t.Errorf("live paste = %q kinds %v, want a list", string(d.Runes), lineKinds(d))
+		}
+	}
+}
