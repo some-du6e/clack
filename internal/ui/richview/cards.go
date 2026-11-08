@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -492,8 +493,9 @@ func (l *lay) file(f *richtext.File, x, y, w int) int {
 	case f.IsImage && f.Thumb != nil:
 		nh := l.fileNameRow(f, x, y, w)
 		tg := l.d.addTarget(target{kind: tFile, file: f})
-		iw, ih := fitSize(f.Thumb.W, f.Thumb.H, w, l.dp(360), l)
-		bh := max(ih, l.dp(108))
+		bw, bh := galleryBox(f.Thumb.W, f.Thumb.H, w, l)
+		iw, ih := fitSize(f.Thumb.W, f.Thumb.H, bw, bh, l)
+		bh = max(ih, l.dp(108))
 		r := image.Rect(x, y+nh, x+iw, y+nh+bh)
 		rad := l.dp(8)
 		l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: f.Thumb.URL, radii: [4]int{rad, rad, rad, rad}, target: tg, px: max(iw, ih), fit: bh != ih})
@@ -508,6 +510,53 @@ func (l *lay) file(f *richtext.File, x, y, w int) int {
 		return l.snippet(f, x, y, w)
 	}
 	return l.genericFile(f, x, y, w)
+}
+
+// galleryCaps is Slack's media-gallery v3 max image height (CSS px) per
+// gallery breakpoint and orientation: {landscape, portrait, square}.
+var galleryCaps = [4][3]float64{
+	{235, 354, 314}, // large: gallery ≥ 636
+	{154, 276, 206}, // medium: ≥ 472
+	{115, 206, 206}, // small: ≥ 448
+	{115, 206, 154}, // tiny
+}
+
+// galleryBox is the box (device px) Slack gives a single inline image of
+// iw×ih (thumb px) in a message w device px wide: the gallery is the content
+// width minus 26px, at most 1000px; the height is capped by the breakpoint
+// table, the width follows the aspect, both at least 108px (but never wider
+// than the message).
+func galleryBox(iw, ih, w int, l *lay) (int, int) {
+	sc := float64(l.scale)
+	if sc <= 0 {
+		sc = 1
+	}
+	gw := math.Min(float64(w)/sc-26, 1000)
+	if iw <= 0 || ih <= 0 {
+		return max(min(w, l.dp(360)), 1), l.dp(240)
+	}
+	fw, fh := float64(iw), float64(ih)
+	bp := 3
+	switch {
+	case gw >= 636:
+		bp = 0
+	case gw >= 472:
+		bp = 1
+	case gw >= 448:
+		bp = 2
+	}
+	o := 2 // square
+	if fw > fh {
+		o = 0
+	} else if fw < fh {
+		o = 1
+	}
+	s := fw / fh
+	d := math.Max(math.Min(fw, gw), 108)
+	u := math.Max(math.Floor(math.Min(math.Min(d/s, galleryCaps[bp][o]), fh)), 108)
+	d = math.Max(math.Min(math.Floor(u*s), d), 108)
+	bw := min(int(d*sc+0.5), w)
+	return max(bw, 1), int(u*sc + 0.5)
 }
 
 // fileNameRow is the "name.png ▾" line above image and video files.

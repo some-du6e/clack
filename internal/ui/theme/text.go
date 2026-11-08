@@ -30,9 +30,23 @@ import (
 // topic) match at ~0.31px, message bodies (15px, ui-messages at 1x and 2x)
 // at ~0.45px.
 const (
-	Embolden     = 0.3  // labels (Text / DrawText)
-	BodyEmbolden = 0.45 // richview message bodies (BodyEmboldenFor)
+	Embolden     = 0.3  // labels (Text / DrawText), regular weight
+	BodyEmbolden = 0.33 // richview message bodies (BodyEmboldenFor): light bodies were -3% at 0.3 (1x and 2x)
 )
+
+// Outline emboldening on the embedded Lato (2026-11-07, 1x, ink vs Chrome):
+// regular dark text matches at ~0.29px (13px topic, 15px bodies: the old
+// 0.45 body value was for the stroke embolden on the system Lato), Bold at
+// ~0.32 and Black (sender names) at ~0.47, so heavier faces scale it up.
+func weightEmbolden(w font.Weight) float32 {
+	switch {
+	case w >= font.Black:
+		return 1.7 // names: -1.6% (1x) / -6.2% (2x) at 1.6
+	case w >= font.Bold:
+		return 1.1
+	}
+	return 1
+}
 
 // BodyEmboldenFor is EmboldenFor at the message-body strength.
 func BodyEmboldenFor(c color.NRGBA) float32 { return EmboldenFor(c) * BodyEmbolden / Embolden }
@@ -55,19 +69,45 @@ func envFloat(name string, def float32) float32 {
 }
 
 // lightTextColor applies LightTextFade to light glyph colors.
-func lightTextColor(c color.NRGBA, pxPerDp float32) color.NRGBA {
-	if LightTextFade <= 0 || pxPerDp <= 0 {
+//
+// Measured at 1x on the embedded Lato vs Chrome (ink with a fixed white
+// reference), regular weight:
+//   - on the aubergine chrome (chrome=true), sidebar rows (#f6e4ff at .9)
+//     match at k≈0.17 whatever the shade;
+//   - on the dark main pane, the fade grows as the text dims: #b9babd
+//     (topic, y=.73) at 0.26-0.27 and #ababad (timestamps, y=.67) at 0.39,
+//     so k = 0.27 + max(0, .73-y)·2.
+//
+// The result is scaled by LightTextFade/0.2 (the env knob). Bold needs 3/4
+// of it (dark tabs, #b9babd and #f8f8f8). Black gets no fade: the white
+// team name is already light, see lightBlackEmbolden.
+func lightTextColor(c color.NRGBA, pxPerDp float32, w font.Weight, chrome bool) color.NRGBA {
+	if LightTextFade <= 0 || pxPerDp <= 0 || w >= font.Black {
 		return c
 	}
-	a := 1 - LightTextFade/pxPerDp
+	y := (0.299*float32(c.R) + 0.587*float32(c.G) + 0.114*float32(c.B)) / 255
+	if y < 0.6 {
+		return c
+	}
+	k := float32(0.15) // rows -3.5% (1x) / -2.9% (2x) at 0.17
+	if !chrome {
+		k = 0.27 + max(0, 0.73-y)*2
+	}
+	k = min(k, 0.45) * LightTextFade / 0.2
+	if w >= font.Bold {
+		k *= 0.75
+	}
+	a := 1 - k/pxPerDp
 	if a <= 0 || a >= 1 {
 		return c
 	}
-	if y := (0.299*float32(c.R) + 0.587*float32(c.G) + 0.114*float32(c.B)) / 255; y >= 0.6 {
-		c.A = uint8(float32(c.A)*a + 0.5)
-	}
+	c.A = uint8(float32(c.A)*a + 0.5)
 	return c
 }
+
+// lightBlackEmbolden (px) gives light Black text (the sidebar team name)
+// the ink it lacks next to Chrome: 8% at 1x unfaded.
+const lightBlackEmbolden = 0.12
 
 // IsDarkText reports whether c is dark text (luminance under 0.5).
 func IsDarkText(c color.NRGBA) bool {
@@ -86,13 +126,15 @@ func EmboldenFor(c color.NRGBA) float32 {
 
 func emboldenStroke(c color.NRGBA) float32 {
 	y := (0.299*float32(c.R) + 0.587*float32(c.G) + 0.114*float32(c.B)) / 255
+	// Mid greys need much less than dark text: #616061 (timestamps, y=.38)
+	// matches Chrome at ~0.15px, #454447 (y=.27) at the full 0.3.
 	switch {
-	case y <= 0.35:
+	case y <= 0.33:
 		return Embolden
-	case y >= 0.6:
+	case y >= 0.43:
 		return 0
 	}
-	return Embolden * (0.6 - y) / 0.25
+	return Embolden * (0.43 - y) / 0.10
 }
 
 // LabelOpts describes a run of label text for Text / DrawText.
@@ -111,7 +153,17 @@ type EmojiImages interface {
 	Get(url string, sizePx int) (paint.ImageOp, bool)
 }
 
-var noEmbolden = os.Getenv("CLACK_NOEMBOLDEN") != "" || os.Getenv("YOLOSLACK_NOEMBOLDEN") != ""
+var noEmbolden = envOn("CLACK_NOEMBOLDEN") || envOn("YOLOSLACK_NOEMBOLDEN")
+
+// envOn reports whether a boolean env var is set: "", "0", "false", "no"
+// and "off" mean unset, so CLACK_NOEMBOLDEN=0 keeps the embolden.
+func envOn(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "", "0", "false", "no", "off":
+		return false
+	}
+	return true
+}
 
 var shaperThemes sync.Map // *text.Shaper -> *Theme
 
@@ -136,7 +188,7 @@ func DrawText(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string) layo
 	if t := ForShaper(sh); t != nil {
 		return t.Text(gtx, o, txt)
 	}
-	o.Color = lightTextColor(o.Color, gtx.Metric.PxPerDp)
+	o.Color = lightTextColor(o.Color, gtx.Metric.PxPerDp, o.Font.Weight, false)
 	return drawText(gtx, sh, o, CleanText(txt), EmboldenFor(o.Color))
 }
 
@@ -145,7 +197,7 @@ func DrawText(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string) layo
 // emoji sprites) instead of relying on a color font.
 func (t *Theme) Text(gtx layout.Context, o LabelOpts, txt string) layout.Dimensions {
 	txt = CleanText(txt)
-	o.Color = lightTextColor(o.Color, gtx.Metric.PxPerDp)
+	o.Color = lightTextColor(o.Color, gtx.Metric.PxPerDp, o.Font.Weight, t.Chrome)
 	if o.MaxLines == 1 && t.Images != nil {
 		if segs := splitEmoji(txt); segs != nil {
 			return t.textWithEmoji(gtx, o, segs)
@@ -254,6 +306,10 @@ func (t *Theme) textWithEmoji(gtx layout.Context, o LabelOpts, segs []segment) l
 // ---- glyph painting (adapted from gioui.org/widget's Label, MIT/Unlicense) ----
 
 func drawText(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string, emb float32) layout.Dimensions {
+	emb *= weightEmbolden(o.Font.Weight)
+	if emb == 0 && o.Font.Weight >= font.Black && !noEmbolden && !IsDarkText(o.Color) {
+		emb = lightBlackEmbolden
+	}
 	cs := gtx.Constraints
 	trunc := ""
 	if o.MaxLines > 0 {

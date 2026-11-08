@@ -943,8 +943,10 @@ func TestFileImage(t *testing.T) {
 		t.Fatalf("%d imgs", len(v.d.imgs))
 	}
 	im := v.d.imgs[0]
-	if im.r != image.Rect(0, 26, 600, 326) {
-		t.Errorf("image %v, want 600x300 below the name row (fit, aspect kept)", im.r)
+	// Slack's gallery rule: 600 wide → gallery 574 (medium), landscape cap
+	// 154 → 308x154.
+	if im.r != image.Rect(0, 26, 308, 180) {
+		t.Errorf("image %v, want 308x154 below the name row (Slack gallery size)", im.r)
 	}
 	if im.target < 0 || v.d.targets[im.target].kind != tFile || v.d.targets[im.target].file != f {
 		t.Errorf("image target %d", im.target)
@@ -961,8 +963,29 @@ func TestFileImage(t *testing.T) {
 	if string(v.d.plain) != "pic.png" {
 		t.Errorf("plain %q", v.d.plain)
 	}
-	if v.d.size != image.Pt(600, 326) {
+	if v.d.size != image.Pt(308, 180) {
 		t.Errorf("size %v", v.d.size)
+	}
+}
+
+func TestGalleryBox(t *testing.T) {
+	l := &lay{scale: 1}
+	cases := []struct {
+		iw, ih, w int
+		bw, bh    int
+	}{
+		{1024, 393, 962, 612, 235}, // wide screenshot, large gallery: height cap 235
+		{1024, 161, 962, 934, 147}, // very wide: nearly the full gallery (Slack: 934)
+		{393, 1024, 962, 135, 354}, // portrait cap
+		{500, 500, 962, 314, 314},  // square cap
+		{100, 80, 962, 108, 108},   // small image: 108 minimum box
+		{1024, 393, 600, 401, 154}, // medium gallery (574)
+		{1024, 393, 60, 60, 108},   // never wider than the message
+	}
+	for _, c := range cases {
+		if bw, bh := galleryBox(c.iw, c.ih, c.w, l); bw != c.bw || bh != c.bh {
+			t.Errorf("galleryBox(%d,%d,%d) = %d,%d want %d,%d", c.iw, c.ih, c.w, bw, bh, c.bw, c.bh)
+		}
 	}
 }
 

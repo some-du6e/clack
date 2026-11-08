@@ -218,7 +218,7 @@ func (h hdrStack) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	}
 	return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, a.clicks.get("hdr.members"), func(gtx layout.Context, s image.Point, hov bool) {
-			theme.Border(gtx, image.Rectangle{Max: s}, gtx.Dp(8), gtx.Dp(1), c.Border)
+			// Slack 2026 (--polish): no outline, only the hover fill.
 			if hov {
 				theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(8), c.BgHover)
 			}

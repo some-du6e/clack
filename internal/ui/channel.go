@@ -44,6 +44,9 @@ func (a *App) layoutChannel(gtx layout.Context, ch string) layout.Dimensions {
 	theme.Fill(gtx, image.Rect(0, hh+th-gtx.Dp(1), sz.X, hh+th), c.Border)
 
 	body := image.Rect(0, hh+th, sz.X, sz.Y)
+	if a.chBodyW > 0 && a.chBodyW < sz.X {
+		body.Max.X = a.chBodyW
+	}
 	if dm != nil && dm.Tab() != "messages" {
 		atExact(gtx, body.Min, body.Size(), dm.LayoutBody)
 		return layout.Dimensions{Size: sz}
@@ -119,8 +122,9 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		a.openNotifPrefs(ch)
 	}
 
-	// Huddle split button (94×28: 74 + 20), outlined; Slack's mint pill
-	// with faces and "Huddle N" while a huddle is on (huddleui).
+	// Huddle split button (94×28: 74 + 20); Slack 2026's --polish variant
+	// has no outline, only hover fills. Slack's mint pill with faces and
+	// "Huddle N" while a huddle is on (huddleui).
 	hud := a.huddles()
 	hud.Seed()
 	hw := gtx.Dp(94)
@@ -136,7 +140,6 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	} else {
 		at(gtx, image.Pt(right, y), image.Pt(hw, btn), func(gtx layout.Context) layout.Dimensions {
 			r := image.Rect(0, 0, hw, btn)
-			theme.Border(gtx, r, gtx.Dp(8), gtx.Dp(1), c.Border)
 			at(gtx, image.Pt(0, 0), image.Pt(gtx.Dp(74), btn), func(gtx layout.Context) layout.Dimensions {
 				return clickArea(gtx, a.clicks.get("hdr.huddle"), func(gtx layout.Context, s image.Point, hov bool) {
 					if hov {
@@ -368,9 +371,16 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 				col := c.FgMuted
 				if i == cur {
 					col = c.Fg
+					if a.th.Dark {
+						col = color.NRGBA{R: 0xf8, G: 0xf8, B: 0xf8, A: 0xff} // Slack: --dt_color-content-pry
+					}
+				}
+				icon := t.icon
+				if t.key == "messages" && i == cur {
+					icon = "messages-filled" // Slack fills the active Messages bubble
 				}
 				at(gtx, image.Pt(gtx.Dp(8), (sz.Y-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
-					return icons.Get(t.icon)(gtx, 16, col)
+					return icons.Get(icon)(gtx, 16, col)
 				})
 				at(gtx, image.Pt(gtx.Dp(28), 0), image.Pt(lw+2, sz.Y), func(gtx layout.Context) layout.Dimensions {
 					return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {

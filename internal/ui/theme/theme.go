@@ -47,7 +47,11 @@ const (
 // Theme is the shared look. Swap palettes with SetDark; everything reads
 // colors through t.C each frame so a toggle repaints instantly.
 type Theme struct {
-	Dark   bool
+	Dark bool
+	// Chrome is set by the ui root while it draws the aubergine chrome
+	// (top nav, rail, sidebar): light text there needs a different fade
+	// than light text on the dark-mode main pane (see lightTextColor).
+	Chrome bool
 	C      Palette
 	Shaper *text.Shaper
 	// Images, when set (the ui root sets the app's imgcache), lets labels

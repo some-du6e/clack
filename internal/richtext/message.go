@@ -103,8 +103,10 @@ func convertFile(f *slack.File) *File {
 	return out
 }
 
-// imageThumb picks the best thumbnail for inline display (≈720px, Slack's
-// 2x of its 360px box) with its pixel size. Animated GIFs use the original.
+// imageThumb picks the thumbnail Slack shows inline (thumb_1024 first, then
+// the next largest) with its pixel size: Slack sizes inline images from the
+// 1024 thumb's dimensions, up to the gallery width. Animated GIFs use the
+// original.
 func imageThumb(f *slack.File) *Image {
 	if strings.EqualFold(f.Mimetype, "image/gif") && f.URLPrivate != "" && (f.Size == 0 || f.Size <= 8<<20) {
 		return image(f.URLPrivate, f.Name, f.OriginalW, f.OriginalH)
@@ -115,9 +117,9 @@ func imageThumb(f *slack.File) *Image {
 		side int
 	}
 	cs := []cand{
-		{f.Thumb720, f.Thumb720W, f.Thumb720H, 720},
-		{f.Thumb960, 0, 0, 960},
 		{f.Thumb1024, 0, 0, 1024},
+		{f.Thumb960, 0, 0, 960},
+		{f.Thumb720, f.Thumb720W, f.Thumb720H, 720},
 		{f.Thumb480, 0, 0, 480},
 		{f.Thumb360, f.Thumb360W, f.Thumb360H, 360},
 		{f.URLPrivate, f.OriginalW, f.OriginalH, 0},

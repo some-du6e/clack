@@ -61,7 +61,7 @@ const (
 )
 
 var tbTips = [tbCount]string{"Add reaction…", "Reply in thread", "Forward message…", "Add to-do", "Add to list…", "More actions"} // aria-labels of the live 2026 client
-var tbIcons = [tbCount]string{"add-reaction", "reply", "forward-msg", "check", "list-view", "kebab"}
+var tbIcons = [tbCount]string{"add-reaction", "comment-lines", "forward-msg", "todo-add", "list-add", "kebab"}
 
 // listState is the per-conversation UI state shared by channel and thread
 // views. It is cached across view instances (UI goroutine only), so
@@ -79,10 +79,11 @@ type listState struct {
 	built  uint64 // snap.rev items were built from
 	dayKey int    // date the items were built on, yyyymmdd (Today/Yesterday rollover)
 
-	list    layout.List
-	heights []int
-	pos     []int // y of visible items (valid where heights > 0 this frame)
-	visible [2]int
+	list     layout.List
+	contentH int // total item height when all items fit (see layoutList)
+	heights  []int
+	pos      []int // y of visible items (valid where heights > 0 this frame)
+	visible  [2]int
 
 	openLastRead string // the "New" line position, fixed while open
 	opened       bool
@@ -519,6 +520,12 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		y += s.heights[i]
 		s.visible[1] = i + 1
 	}
+	// contentH is the total item height when every item was laid out (the
+	// thread pane top-aligns short threads with it), else 0.
+	s.contentH = 0
+	if p.First == 0 && s.visible[1] == len(s.items) {
+		s.contentH = y + p.Offset
+	}
 
 	s.overlays(gtx, h, rc, size)
 	s.layoutScrollbar(gtx, c, size, now)
@@ -859,7 +866,7 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 			}
 		}
 		if d >= 0 {
-			pillY := dp(gtx, 14)
+			pillY := dp(gtx, 6) // Slack: 6px under the header/tabs (y=133 at 1440×900)
 			ownY := s.pos[d] + (dp(gtx, mt.dayH)-dp(gtx, mt.dayPillH))/2
 			if d < s.visible[0] || ownY < pillY {
 				// pushed up by the next day's divider

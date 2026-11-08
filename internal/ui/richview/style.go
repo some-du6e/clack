@@ -137,7 +137,7 @@ func LightPalette() Palette {
 // DarkPalette is Slack's dark theme.
 func DarkPalette() Palette {
 	p := LightPalette()
-	p.Text, p.Text2, p.Text3, p.Link = rgb(209, 210, 211), rgb(171, 171, 173), rgb(209, 210, 211), rgb(29, 155, 209)
+	p.Text, p.Text2, p.Text3, p.Link = rgb(185, 186, 189), rgb(171, 171, 173), rgb(209, 210, 211), rgb(29, 155, 209)
 	p.Edited, p.CardText, p.CardFooter = rgb(134, 134, 134), rgb(209, 210, 211), rgb(171, 171, 173)
 	p.FileIconBg, p.FileIconText = rgba(232, 232, 232, 0.06), rgb(171, 171, 173)
 	p.MentionText, p.MentionBg, p.MentionHoverBg = rgb(29, 155, 209), rgba(29, 155, 209, 0.1), rgba(29, 155, 209, 0.2)

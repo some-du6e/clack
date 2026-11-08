@@ -42,16 +42,16 @@ type PointerHost interface {
 }
 
 // darkTextFade is richview's Style.LightTextFade for dark mode: light
-// glyphs get alpha 1 - fade/scale. Ink on the same 15px line vs Chrome's
-// dark mode (sk-client-theme--dark): 1x Chrome 116.5k, ours 135.1k
-// unfaded, 116.5k at alpha 0.76; 2x Chrome 456.2k, ours 487.7k unfaded,
-// 421.4k at 0.76 (needs ~0.886). Both fit fade 0.235.
+// glyphs get alpha 1 - fade/scale. The old 0.235 cancelled a too-bright
+// body colour (#d1d2d3); with Slack's --dt_color-content-sec (#b9babd) and
+// the embedded Lato, unfaded bodies match Chrome's ink within ±1% at 1x
+// (2026-11-07), so the default is 0.
 // CLACK_DARK_TEXT_FADE overrides it for tuning.
 func darkTextFade() float32 {
 	if v, err := strconv.ParseFloat(os.Getenv("CLACK_DARK_TEXT_FADE"), 32); err == nil {
 		return float32(v)
 	}
-	return 0.235
+	return 0
 }
 
 // styles holds one richview.Style per shaper (one per window).

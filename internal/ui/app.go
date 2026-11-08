@@ -107,6 +107,7 @@ type App struct {
 	pvOrigin        originTracker   // ClientPrimaryView's origin under a patch
 	sbMenu          sbMenus         // sidebar row menus (slick_shell.go)
 	secondaryOrigin image.Point     // window position of the secondary pane
+	chBodyW         int             // >0: layoutChannel's messages+composer width (nested secondary pane)
 	convos          map[string]*convo
 	convoOrder      []string
 	ptrTag          int
@@ -365,8 +366,10 @@ func (a *App) frame(gtx layout.Context) {
 	if !a.sidebar.hidden {
 		navX = ws.Min.X + gtx.Dp(unit.Dp(a.sidebar.width))
 	}
+	a.th.Chrome = true // light-on-aubergine text fade (theme.lightTextColor)
 	a.layoutTopNav(gtx, navX, sz.X)
 	a.layoutRail(gtx, navH, sz.Y-navH)
+	a.th.Chrome = false
 	if bannerH > 0 {
 		a.layoutUpdateBanner(gtx, image.Rect(ws.Min.X, navH, ws.Max.X, ws.Min.Y-gtx.Dp(bannerGap)))
 	}
@@ -380,7 +383,9 @@ func (a *App) frame(gtx layout.Context) {
 		sb := image.Rect(ws.Min.X, ws.Min.Y, primary.Min.X, ws.Max.Y)
 		a.grad.draw(gtx, sz, image.Point{}, clip.RRect{Rect: sb, NW: rad, SW: rad}.Op(gtx.Ops), a.th.C.ChromeA, a.th.C.ChromeB, a.th.C.SidebarBg)
 		a.sidebar.hover = a.ptrWin.In(sb)
+		a.th.Chrome = true
 		atExact(gtx, sb.Min, sb.Size(), a.layoutSidebar)
+		a.th.Chrome = false
 	}
 	nw, sw := 0, 0
 	if sbW == 0 {
@@ -427,13 +432,42 @@ func (a *App) layoutPrimary(gtx layout.Context) layout.Dimensions {
 		}
 	}
 	mainW := sz.X - secW
-	atExact(gtx, image.Pt(0, 0), image.Pt(mainW, sz.Y), func(gtx layout.Context) layout.Dimensions {
+	// Slack 2026 nests a channel's thread/profile pane inside the channel
+	// view, below its header and tabs (p-ia4_client--nested-secondary-view):
+	// the header and tabs keep the full width.
+	nested := secW > 0 && a.router.Current().Page() == "c" && (a.secondary.kind == secThread || a.secondary.kind == secProfile)
+	primW, secTop := mainW, 0
+	if nested {
+		primW, secTop = sz.X, gtx.Dp(theme.HeaderH)+gtx.Dp(theme.TabsH)
+	}
+	atExact(gtx, image.Pt(0, 0), image.Pt(primW, sz.Y), func(gtx layout.Context) layout.Dimensions {
 		defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
+		if nested { // the channel's messages + composer stop at the nested pane
+			a.chBodyW = mainW
+			defer func() { a.chBodyW = 0 }()
+		}
 		d := slackc.Component(gtx, "ClientPrimaryView", a, (*App).primaryViewProps, (*App).layoutPrimaryView)
 		a.layoutShellPoints(gtx)
 		return d
 	})
-	if secW > 0 {
+	if secW > 0 && nested {
+		x := mainW
+		// Slack: box-shadow 0 4px 12px rgba(0,0,0,.1), no border.
+		pane := image.Rect(x, secTop, sz.X, sz.Y)
+		theme.Shadow(gtx, pane.Add(image.Pt(0, gtx.Dp(4))), 0, gtx.Dp(12), theme.WithAlpha(a.th.C.PanelShadow, 0x1a))
+		theme.Fill(gtx, pane, a.th.C.Bg)
+		a.secondaryOrigin = a.primaryOrigin.Add(pane.Min)
+		atExact(gtx, pane.Min, pane.Size(), func(gtx layout.Context) layout.Dimensions {
+			defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
+			sv := clsSecondary.Enter(gtx, 0, 0)
+			defer sv.Leave()
+			return a.layoutSecondary(gtx)
+		})
+		func() {
+			defer op.Offset(image.Pt(0, secTop)).Push(gtx.Ops).Pop()
+			a.layoutSecondaryResize(gtx, x, sz.Y-secTop)
+		}()
+	} else if secW > 0 {
 		x := mainW
 		// Slack 2026 floats the thread/details pane: a soft shadow on its
 		// left edge over the conversation, plus a hairline border.
