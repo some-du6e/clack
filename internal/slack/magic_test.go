@@ -202,8 +202,8 @@ func TestLoginMagicExchange(t *testing.T) {
 		t.Errorf("exchange sent cookies %q: nothing from the browser may go along", ex.Header.Get("Cookie"))
 	}
 	for _, r := range reqs {
-		if ua := r.Header.Get("User-Agent"); ua != DesktopUserAgent() {
-			t.Errorf("%s UA = %q, want Slack desktop's", r.URL.Path, ua)
+		if ua := r.Header.Get("User-Agent"); ua != UserAgent() {
+			t.Errorf("%s UA = %q, want %q", r.URL.Path, ua, UserAgent())
 		}
 		if r.Header.Get("sec-ch-ua") != "" {
 			t.Errorf("%s sent client hints", r.URL.Path)
@@ -348,29 +348,6 @@ func TestRedactMagicLinks(t *testing.T) {
 	c := Creds{Cookies: "lc=secret-tok-1"}
 	if strings.Contains(c.String(), "secret") {
 		t.Errorf("Creds leaks cookies: %s", c)
-	}
-}
-
-func TestDesktopUserAgent(t *testing.T) {
-	got := desktopUserAgent("linux", linuxUAFrom("NAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\n", "ubuntu:GNOME"))
-	want := "Mozilla/5.0 (X11; Linux x86_64; Ubuntu 24.04; ubuntuGNOME) AppleWebKit/537.36 (KHTML, like Gecko) Slack/4.53.276 Chrome/156.0.8078.49 Electron/45.1.0 Safari/537.36 Sonic Slack_SSB/4.53.276"
-	if got != want {
-		t.Errorf("linux UA\n got %q\nwant %q", got, want)
-	}
-	if got := desktopUserAgent("linux", ""); !strings.HasPrefix(got, "Mozilla/5.0 (X11; Linux x86_64) ") {
-		t.Errorf("no os-release: %q", got)
-	}
-	if got := desktopUserAgent("darwin", ""); !strings.Contains(got, "(Macintosh; Intel Mac OS X 10_15_7)") || !strings.HasSuffix(got, " Sonic Slack_SSB/4.53.276") {
-		t.Errorf("mac UA %q", got)
-	}
-	if got := linuxUAFrom("ID=arch\n", "KDE"); got != "; arch unversioned; KDE" {
-		t.Errorf("arch: %q", got)
-	}
-	if got := linuxUAFrom("NAME=\"Evil) (x\"\nVERSION_ID=1;2\n", ""); strings.ContainsAny(got, "()") || strings.Count(got, ";") != 1 {
-		t.Errorf("hostile os-release kept separators: %q", got)
-	}
-	if clientHints(DesktopUserAgent()) != nil {
-		t.Error("Slack desktop sends no client hints")
 	}
 }
 

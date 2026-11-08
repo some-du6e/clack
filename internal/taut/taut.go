@@ -44,6 +44,16 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 )
 
+// honestFetch makes plugin and account requests to Slack say they are
+// Clack, like every other request Clack makes there: no browser User-Agent,
+// client hints, Origin or Referer, whatever a plugin set.
+func honestFetch(fetch func(context.Context, *http.Request) (*http.Response, error)) func(context.Context, *http.Request) (*http.Response, error) {
+	return func(ctx context.Context, req *http.Request) (*http.Response, error) {
+		honestToSlack(req)
+		return fetch(ctx, req)
+	}
+}
+
 // honestToSlack gives a request to one of Slack's hosts Clack's own
 // headers (slack.HonestHeaders). Other hosts get what the plugin set.
 func honestToSlack(req *http.Request) {
@@ -156,14 +166,7 @@ func New(o Options) (*Taut, error) {
 			return client.Do(req.WithContext(ctx))
 		}
 	}
-	// Plugin and account requests to Slack say they are Clack, like every
-	// other request Clack makes there: no browser User-Agent, client hints,
-	// Origin or Referer, whatever a plugin set (slack.HonestHeaders).
-	inner := o.Fetch
-	o.Fetch = func(ctx context.Context, req *http.Request) (*http.Response, error) {
-		honestToSlack(req)
-		return inner(ctx, req)
-	}
+	o.Fetch = honestFetch(o.Fetch)
 	if err := os.MkdirAll(filepath.Join(o.Dir, "plugins"), 0o700); err != nil {
 		return nil, fmt.Errorf("taut: %w", err)
 	}

@@ -33,6 +33,9 @@ func TestAccountSendsOnlyDAndWritesOwnerOnly(t *testing.T) {
 	if c := got[0].Header.Get("Cookie"); c != "d=xoxd-1" {
 		t.Errorf("Cookie = %q, want d only (never d-s)", c)
 	}
+	if ua := got[0].Header.Get("User-Agent"); ua != slack.UserAgent() {
+		t.Errorf("User-Agent = %q, want Clack's own %q", ua, slack.UserAgent())
+	}
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "clack", "creds.json")

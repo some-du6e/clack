@@ -265,7 +265,7 @@ func srgbLin(v uint8) float64 {
 
 // Flatten pre-composites the panel-content colors that Slack defines as
 // translucent over the primary background (borders, code, reactions, …).
-// Chrome/sidebar colors stay translucent; the shell composites those itself.
+// Window chrome and sidebar colors stay translucent; the shell composites those itself.
 func Flatten(p Palette) Palette {
 	for _, c := range []*color.NRGBA{&p.BgHover, &p.BgInset, &p.Border, &p.BorderStrong, &p.Skeleton,
 		&p.MentionBg, &p.SelfMention, &p.Highlight, &p.CodeBg, &p.CodeBorder, &p.PreBg, &p.QuoteBar,

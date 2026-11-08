@@ -106,15 +106,17 @@ func exerciseClient(t *testing.T, c *Client, s *sessionServer) (cookies, uas, hi
 	return
 }
 
-// A pasted session is exactly as before: d only (never d-s, whatever Slack
-// sets), the browser's user agent and client hints, Set-Cookie ignored,
-// nothing written anywhere.
+// A pasted session: d only (never d-s, whatever Slack sets), Clack's own
+// User-Agent (an old creds.json's browser user agent is ignored), no client
+// hints, Set-Cookie ignored, nothing written anywhere.
 func TestPastedSessionUnchanged(t *testing.T) {
 	s := newSessionServer(t)
-	ua := "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
-	c := New(Creds{Token: "xoxc-1", Cookie: "xoxd-paste%2F1", CookieDS: "1700000000", TeamURL: s.srv.URL + "/", UserAgent: ua})
-	if _, ok := c.HTTP.Transport.(*http.Transport); !ok {
-		t.Errorf("pasted session transport %T, want the plain one", c.HTTP.Transport)
+	legacy := "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
+	c := New(Creds{Token: "xoxc-1", Cookie: "xoxd-paste%2F1", CookieDS: "1700000000", TeamURL: s.srv.URL + "/", UserAgent: legacy})
+	if ht, ok := c.HTTP.Transport.(honestTransport); !ok {
+		t.Errorf("pasted session transport %T, want the plain one behind honestTransport", c.HTTP.Transport)
+	} else if _, ok := ht.base.(*http.Transport); !ok {
+		t.Errorf("pasted session base transport %T, want the plain one", ht.base)
 	}
 	saved := false
 	c.PersistSession(func(Creds) error { saved = true; return nil })
@@ -125,13 +127,12 @@ func TestPastedSessionUnchanged(t *testing.T) {
 			if cookies[i] != "d=xoxd-paste%2F1" {
 				t.Errorf("round %d request %d Cookie = %q, want d only", round, i, cookies[i])
 			}
-			if uas[i] != ua {
-				t.Errorf("round %d request %d UA = %q", round, i, uas[i])
+			if uas[i] != UserAgent() {
+				t.Errorf("round %d request %d UA = %q, want %q", round, i, uas[i], UserAgent())
 			}
-		}
-		// client hints on https requests, none on the socket (as before)
-		if hints[0] == "" || hints[1] == "" || hints[2] == "" || hints[3] != "" {
-			t.Errorf("client hints %q", hints)
+			if hints[i] != "" {
+				t.Errorf("round %d request %d sent client hints %q", round, i, hints[i])
+			}
 		}
 	}
 	c.FlushSession()
@@ -146,7 +147,7 @@ func desktopCreds(base string) Creds {
 }
 
 // A desktop session sends every cookie it has, follows Slack's rotation on
-// every kind of request, and presents as Slack desktop everywhere.
+// every kind of request, and sends Clack's own User-Agent everywhere.
 func TestDesktopSessionJar(t *testing.T) {
 	s := newSessionServer(t)
 	c := New(desktopCreds(s.srv.URL))
@@ -161,8 +162,8 @@ func TestDesktopSessionJar(t *testing.T) {
 		if cookies[i] != want[i] {
 			t.Errorf("request %d Cookie = %q, want %q", i, cookies[i], want[i])
 		}
-		if uas[i] != DesktopUserAgent() {
-			t.Errorf("request %d UA = %q, want Slack desktop's", i, uas[i])
+		if uas[i] != UserAgent() {
+			t.Errorf("request %d UA = %q, want %q", i, uas[i], UserAgent())
 		}
 		if hints[i] != "" {
 			t.Errorf("request %d sent client hints %q", i, hints[i])
@@ -335,22 +336,5 @@ func TestSetSessionCookie(t *testing.T) {
 	d.SetSessionCookie("xoxd-b")
 	if d.SessionCookie() != "xoxd-b" || !strings.HasPrefix(d.cookieHeader(), "d=xoxd-b; ") {
 		t.Errorf("desktop: %q", d.cookieHeader())
-	}
-}
-
-func TestPublicUserAgent(t *testing.T) {
-	defer SetPublicUserAgent("")
-	var got string
-	if publicUserAgent() != UserAgent {
-		t.Errorf("default %q", publicUserAgent())
-	}
-	SetPublicUserAgent(DesktopUserAgent())
-	got = publicUserAgent()
-	if got != DesktopUserAgent() {
-		t.Errorf("desktop %q", got)
-	}
-	SetPublicUserAgent("")
-	if publicUserAgent() != UserAgent {
-		t.Error("reset")
 	}
 }

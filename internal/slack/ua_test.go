@@ -6,75 +6,126 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
 
-func TestDefaultUserAgentMatchesOS(t *testing.T) {
-	for goos, want := range map[string]string{
-		"linux":   "(X11; Linux x86_64)",
-		"darwin":  "(Macintosh; Intel Mac OS X 10_15_7)",
-		"windows": "(Windows NT 10.0; Win64; x64)",
-	} {
-		ua := defaultUserAgent(goos)
-		if !strings.Contains(ua, want) || !strings.Contains(ua, "Chrome/"+chromeMajor+".0.0.0") || CleanUserAgent(ua) != ua {
-			t.Errorf("%s: %s", goos, ua)
-		}
+// The one User-Agent names Clack and nothing that looks like a browser.
+func TestUserAgentIsHonest(t *testing.T) {
+	defer SetVersion("dev")
+	const want = "Clack/dev (+https://github.com/some-du6e/yoloslackgoclient)"
+	if got := UserAgent(); got != want {
+		t.Errorf("UserAgent() = %q, want %q", got, want)
 	}
-}
-
-func TestCleanUserAgent(t *testing.T) {
-	good := "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36"
 	for in, want := range map[string]string{
-		good:                      good,
-		"  " + good + "\n":        good,
-		`"` + good + `"`:          good,
-		"User-Agent: " + good:     good,
-		"curl/8.0":                "",
-		"Mozilla/5.0 (x)\r\nX: y": "",
-		"":                        "",
+		"v0.1.0":          "Clack/0.1.0 (+https://github.com/some-du6e/yoloslackgoclient)",
+		"1.2.3-rc.1+abc":  "Clack/1.2.3-rc.1+abc (+https://github.com/some-du6e/yoloslackgoclient)",
+		"":                "Clack/dev (+https://github.com/some-du6e/yoloslackgoclient)",
+		"1.0 Chrome/157":  "Clack/dev (+https://github.com/some-du6e/yoloslackgoclient)",
+		"v1\r\nX-Evil: 1": "Clack/dev (+https://github.com/some-du6e/yoloslackgoclient)",
 	} {
-		if got := CleanUserAgent(in); got != want {
-			t.Errorf("CleanUserAgent(%q) = %q, want %q", in, got, want)
+		SetVersion(in)
+		got := UserAgent()
+		if got != want {
+			t.Errorf("SetVersion(%q): %q, want %q", in, got, want)
+		}
+		if tok := browserToken(got); tok != "" {
+			t.Errorf("SetVersion(%q): %q contains %q", in, got, tok)
 		}
 	}
 }
 
-func TestClientHints(t *testing.T) {
-	h := clientHints("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36")
-	if h["sec-ch-ua-platform"] != `"Windows"` || h["sec-ch-ua-mobile"] != "?0" || !strings.Contains(h["sec-ch-ua"], `"Google Chrome";v="157"`) {
-		t.Errorf("chrome/windows: %v", h)
+// browserToken returns the first deny-listed browser token in ua, or "".
+func browserToken(ua string) string {
+	for _, tok := range browserUATokens {
+		if strings.Contains(strings.ToLower(ua), strings.ToLower(tok)) {
+			return tok
+		}
 	}
-	if h := clientHints("Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0"); h != nil {
-		t.Errorf("firefox sends no client hints: %v", h)
+	return ""
+}
+
+// HonestHeaders drops every browser-only header, whatever its case, and
+// keeps the rest.
+func TestHonestHeaders(t *testing.T) {
+	h := http.Header{}
+	for _, k := range []string{"sec-ch-ua", "Sec-CH-UA-Platform", "sec-ch-ua-mobile", "Sec-Fetch-Site", "sec-fetch-mode", "Origin", "Referer"} {
+		h[k] = []string{"x"} // raw keys: a header map need not be canonical
 	}
-	if h := clientHints("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36 Edg/157.0.0.0"); h["sec-ch-ua-platform"] != `"macOS"` || !strings.Contains(h["sec-ch-ua"], "Microsoft Edge") {
-		t.Errorf("edge/mac: %v", h)
+	h.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36")
+	h.Set("Cookie", "d=xoxd-1")
+	HonestHeaders(h)
+	for k := range h {
+		if BrowserOnlyHeader(k) {
+			t.Errorf("kept %s", k)
+		}
+	}
+	if h.Get("User-Agent") != UserAgent() || h.Get("Cookie") != "d=xoxd-1" || len(h) != 2 {
+		t.Errorf("after HonestHeaders: %v", h)
 	}
 }
 
-// API calls carry the session's own browser User-Agent and its client hints.
-func TestCallsSendSessionUserAgent(t *testing.T) {
-	ua := "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
+// No non-test Go file may carry a browser or Slack desktop identity: the
+// strings below appear only in ua.go's deny list (browserUATokens).
+func TestNoBrowserUserAgentInSource(t *testing.T) {
+	deny := regexp.MustCompile(`(?m)^var browserUATokens = \[\]string\{[^\n]*\}$`)
+	root := filepath.Join("..", "..")
+	err := filepath.Walk(root, func(p string, fi os.FileInfo, err error) error {
+		if err != nil || fi.IsDir() || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
+			return err
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		src := string(b)
+		if strings.HasSuffix(p, filepath.Join("slack", "ua.go")) {
+			if !deny.MatchString(src) {
+				t.Errorf("%s: the browserUATokens deny list is missing or moved", p)
+			}
+			src = deny.ReplaceAllString(src, "")
+		}
+		for _, s := range []string{"Slack_SSB", "Chrome/"} {
+			if strings.Contains(src, s) {
+				t.Errorf("%s contains %q outside the deny list", p, s)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// An old creds.json's browser user agent is read and never sent.
+func TestLegacyUserAgentIgnored(t *testing.T) {
+	legacy := "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
 	var gotUA, gotPlat string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotUA, gotPlat = r.Header.Get("User-Agent"), r.Header.Get("sec-ch-ua-platform")
 		w.Write([]byte(`{"ok":true}`))
 	}))
 	defer srv.Close()
-	c := New(Creds{Token: "xoxc-1", Cookie: "xoxd-1", TeamURL: srv.URL + "/", UserAgent: ua})
-	if err := c.Call(context.Background(), "plain.method", nil, nil); err != nil {
+	path := filepath.Join(t.TempDir(), "creds.json")
+	if err := os.WriteFile(path, []byte(`{"token":"xoxc-1","cookie":"xoxd-1","team_url":"https://hackclub.slack.com/","user_agent":"`+legacy+`"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if gotUA != ua || gotPlat != `"macOS"` {
-		t.Errorf("UA %q platform %q", gotUA, gotPlat)
-	}
-	c = New(Creds{Token: "xoxc-1", Cookie: "xoxd-1", TeamURL: srv.URL + "/"})
-	if err := c.Call(context.Background(), "plain.method", nil, nil); err != nil {
+	cr, err := ReadCreds(path)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if gotUA != UserAgent {
-		t.Errorf("fallback UA %q, want %q", gotUA, UserAgent)
+	if cr.UserAgent != legacy || cr.Token != "xoxc-1" {
+		t.Errorf("old creds.json read as %+v", cr)
+	}
+	cr.TeamURL = srv.URL + "/" // the fake stands in for hackclub.slack.com
+	if err := New(cr).Call(context.Background(), "plain.method", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if gotUA != UserAgent() || gotPlat != "" {
+		t.Errorf("UA %q platform %q, want %q and no client hints", gotUA, gotPlat, UserAgent())
 	}
 }
 
@@ -148,17 +199,20 @@ func TestAgentVersionStable(t *testing.T) {
 	}
 }
 
-func TestSignInUserAgent(t *testing.T) {
-	in := SignInInput{Workspace: "hackclub", Token: "xoxc-1", Cookie: "xoxd-1", UserAgent: "curl/8"}
-	if _, err := SignIn(context.Background(), in); err == nil || !strings.Contains(err.Error(), "user agent") {
-		t.Errorf("bad UA accepted: %v", err)
-	}
+// Pasted JSON from the old snippet ({"ua": …, "teams": …}) still signs in;
+// its user agent is ignored.
+func TestPastedJSONUserAgentIgnored(t *testing.T) {
 	ua := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36"
-	p := SignInInput{Workspace: "hackclub", Token: `{"ua":"` + ua + `","teams":{"T1":{"id":"T1","url":"https://hackclub.slack.com/","token":"xoxc-team"},"E1":{"id":"E1","token":"xoxc-org"}}}`}
-	if err := expandPastedTeams(&p); err != nil {
-		t.Fatal(err)
-	}
-	if p.Token != "xoxc-team" || p.OrgToken != "xoxc-org" || p.UserAgent != ua || p.Workspace != "https://hackclub.slack.com/" {
-		t.Errorf("wrapper JSON: %+v", p)
+	for _, raw := range []string{
+		`{"ua":"` + ua + `","teams":{"T1":{"id":"T1","url":"https://hackclub.slack.com/","token":"xoxc-team"},"E1":{"id":"E1","token":"xoxc-org"}}}`,
+		`{"teams":{"T1":{"id":"T1","url":"https://hackclub.slack.com/","token":"xoxc-team"},"E1":{"id":"E1","token":"xoxc-org"}}}`,
+	} {
+		p := SignInInput{Workspace: "hackclub", Token: raw}
+		if err := expandPastedTeams(&p); err != nil {
+			t.Fatal(err)
+		}
+		if p.Token != "xoxc-team" || p.OrgToken != "xoxc-org" || p.Workspace != "https://hackclub.slack.com/" {
+			t.Errorf("wrapper JSON: %+v", p)
+		}
 	}
 }
