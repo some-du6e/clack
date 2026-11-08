@@ -283,3 +283,35 @@ func TestCacheRoundTripMetadataOnly(t *testing.T) {
 		t.Error("timeline restored from disk")
 	}
 }
+
+// Preferences dialog keys: display_real_names_override is 1/-1/0 against
+// the team default, and the render prefs default to Slack's.
+func TestPrefsDialogKeys(t *testing.T) {
+	names := func(override, team string) bool {
+		raw := map[string]json.RawMessage{"display_real_names_override": json.RawMessage(override)}
+		if team != "" {
+			raw["display_real_names"] = json.RawMessage(team)
+		}
+		p, _ := ParsePrefs(raw)
+		return p.DisplayRealNames
+	}
+	if !names(`1`, "") || names(`-1`, `true`) || names(`0`, "") || !names(`0`, `true`) || names(`-1`, "") {
+		t.Error("display_real_names_override")
+	}
+	d, _ := ParsePrefs(map[string]json.RawMessage{})
+	if d.UnderlineLinks || d.NoAnimations || d.HideHexSwatch || d.NoInternalImgs || d.NoInlineImgs || d.NoTextPreviews ||
+		d.MarkReadImmediately || d.StartAtOldest || d.NoTextInNotifications {
+		t.Errorf("defaults %+v", d)
+	}
+	p, _ := ParsePrefs(map[string]json.RawMessage{
+		"underline_links": json.RawMessage(`true`), "a11y_animations": json.RawMessage(`false`),
+		"hide_hex_swatch": json.RawMessage(`true`), "expand_internal_inline_imgs": json.RawMessage(`false`),
+		"expand_inline_imgs": json.RawMessage(`false`), "expand_non_media_attachments": json.RawMessage(`false`),
+		"mark_msgs_read_immediately": json.RawMessage(`true`), "start_scroll_at_oldest": json.RawMessage(`true`),
+		"all_notifications_prefs": json.RawMessage(`"{\"global\":{\"no_text_in_notifications\":true}}"`),
+	})
+	if !p.UnderlineLinks || !p.NoAnimations || !p.HideHexSwatch || !p.NoInternalImgs || !p.NoInlineImgs || !p.NoTextPreviews ||
+		!p.MarkReadImmediately || !p.StartAtOldest || !p.NoTextInNotifications {
+		t.Errorf("set %+v", p)
+	}
+}

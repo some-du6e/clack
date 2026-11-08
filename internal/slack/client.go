@@ -117,7 +117,7 @@ var entMethods = map[string]bool{
 	"users.channelSections.update": true, "users.channelSections.delete": true,
 	"activity.feed": true, "activity.views": true, "saved.list": true, "saved.add": true, "saved.delete": true,
 	"saved.update": true, "later.list": true, "client.dms": true, "drafts.list": true, "client.init": true,
-	"client.channels": true, "users.prefs.get": true, "subscriptions.thread.getView": true,
+	"client.channels": true, "users.prefs.get": true, "users.prefs.set": true, "subscriptions.thread.getView": true,
 	"subscriptions.thread.add": true, "subscriptions.thread.remove": true, "subscriptions.thread.mark": true,
 	"messages.list": true, "search.modules.people": true, "search.modules.channels": true,
 	"search.modules.messages": true, "search.modules.files": true, "commands.list": true,

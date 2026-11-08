@@ -11,6 +11,7 @@ import (
 	"golang.org/x/image/math/fixed"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
 )
 
 // ---------- display list ----------
@@ -409,7 +410,7 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			l.items = append(l.items, item{kind: itImage, face: k, w: float32(ip + 2*l.dp(1)), url: sp.URL, size: ip, deco: -1, target: -1, p0: p0, p1: p1, brk: true})
 			continue
 		case richtext.ColorSwatch:
-			if c := parseColor(sp.Text, color.NRGBA{}); c.A > 0 {
+			if c := parseColor(sp.Text, color.NRGBA{}); c.A > 0 && !uipref.Get().HideHexSwatch {
 				sw := l.dp(12)
 				l.decos = append(l.decos, deco{kind: 4, bg: c, border: rgba(0, 0, 0, 0.15), face: k, target: -1, radius: l.dp(3)})
 				l.addPad(float32(sw), int16(len(l.decos)-1), k)

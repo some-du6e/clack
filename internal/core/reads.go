@@ -217,8 +217,131 @@ func (a *App) RefreshPrefs(ctx context.Context) (Prefs, error) {
 	if err != nil {
 		return a.Prefs(), err
 	}
-	a.S.SetPrefs(store.ParsePrefs(raw))
+	a.installPrefs(raw)
 	return a.Prefs(), nil
+}
+
+// installPrefs keeps users.prefs.get's map and its parsed Prefs.
+func (a *App) installPrefs(raw map[string]json.RawMessage) {
+	a.S.SetRawPrefs(raw)
+	a.S.SetPrefs(store.ParsePrefs(raw))
+}
+
+// Pref returns one users.prefs.get value as Slack sent it (ok: present).
+func (a *App) Pref(name string) (json.RawMessage, bool) {
+	a.S.RLock()
+	defer a.S.RUnlock()
+	v, ok := a.S.RawPrefs[name]
+	return v, ok
+}
+
+// PrefString is a string pref ("" when absent or not a string). JSON-typed
+// prefs (ia_theme, …) come back as the JSON text Slack stores.
+func (a *App) PrefString(name string) string {
+	v, _ := a.Pref(name)
+	var s string
+	if json.Unmarshal(v, &s) == nil {
+		return s
+	}
+	if len(v) > 0 && (v[0] == '{' || v[0] == '[') {
+		return string(v)
+	}
+	return ""
+}
+
+// PrefBool is a boolean pref (def when absent). Slack sends some as 0/1
+// or "true"/"false".
+func (a *App) PrefBool(name string, def bool) bool {
+	v, ok := a.Pref(name)
+	if !ok {
+		return def
+	}
+	return prefTruthy(v, def)
+}
+
+// PrefInt is a numeric pref (def when absent or not a number).
+func (a *App) PrefInt(name string, def int) int {
+	v, ok := a.Pref(name)
+	if !ok {
+		return def
+	}
+	var n float64
+	if json.Unmarshal(v, &n) == nil {
+		return int(n)
+	}
+	var s string
+	if json.Unmarshal(v, &s) == nil {
+		if i, err := strconv.Atoi(s); err == nil {
+			return i
+		}
+	}
+	return def
+}
+
+func prefTruthy(v json.RawMessage, def bool) bool {
+	var b bool
+	if json.Unmarshal(v, &b) == nil {
+		return b
+	}
+	var n float64
+	if json.Unmarshal(v, &n) == nil {
+		return n != 0
+	}
+	var s string
+	if json.Unmarshal(v, &s) == nil {
+		switch s {
+		case "true", "1":
+			return true
+		case "false", "0", "":
+			return false
+		}
+	}
+	return def
+}
+
+// SetPref writes one account pref the way Slack's setUserPrefByApi does
+// (users.prefs.set name=…&value=…). value is a string, bool, number, or
+// for Slack's JSON-typed prefs (ia_theme) any JSON-marshalable value,
+// sent JSON-encoded like Slack's serializer. On success the local copy
+// is updated at once (Slack's pref_change follows) and a "prefs" event
+// fires.
+func (a *App) SetPref(ctx context.Context, name string, value any) error {
+	var form string
+	var local json.RawMessage
+	switch v := value.(type) {
+	case string:
+		form = v
+		local, _ = json.Marshal(v)
+	case bool:
+		form = strconv.FormatBool(v)
+		local, _ = json.Marshal(v)
+	case int:
+		form = strconv.Itoa(v)
+		local, _ = json.Marshal(v)
+	case nil:
+		form, local = "", json.RawMessage("null")
+	default:
+		b, err := json.Marshal(v)
+		if err != nil {
+			return err
+		}
+		form = string(b)
+		local, _ = json.Marshal(form) // users.prefs.get returns JSON prefs as strings
+	}
+	if err := a.C.SetPref(ctx, name, form); err != nil {
+		return err
+	}
+	a.S.RLock()
+	raw := make(map[string]json.RawMessage, len(a.S.RawPrefs)+1)
+	for k, v := range a.S.RawPrefs {
+		raw[k] = v
+	}
+	a.S.RUnlock()
+	raw[name] = local
+	a.installPrefs(raw)
+	p := a.Prefs()
+	a.emit(Event{Type: "prefs", Prefs: &p})
+	return nil
 }
 
 // ---- search & directory ----

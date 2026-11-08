@@ -29,6 +29,9 @@ type prefs struct {
 	// Realtime is the live-updates choice (Slack's websocket): nil until
 	// the user answers the first-run banner, which means off (realtime.go).
 	Realtime *bool `json:"realtime,omitempty"`
+	// ThemeSync is Appearance's "Sync with OS setting" (Slack keeps it in
+	// localStorage, per device). nil: on while Dark was never chosen.
+	ThemeSync *bool `json:"theme_sync,omitempty"`
 	// PlainText is Preferences > Advanced > "Format messages with markup"
 	// (Slack's plain_text_mode); nil follows the pref Slack sent.
 	PlainText *bool `json:"plain_text_mode,omitempty"`

@@ -16,6 +16,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
 )
 
 // ---- images ----
@@ -208,7 +209,7 @@ func tsTime(ts string) time.Time {
 }
 
 // clock formats "4:31 PM".
-func clock(t time.Time) string { return t.Format("3:04 PM") }
+func clock(t time.Time) string { return uipref.Clock(t) }
 
 // dayTime formats Slack's search/lightbox timestamps: "Today at 12:15 PM",
 // "Yesterday at 9:02 AM", "Nov 3rd at 4:31 PM", "Nov 3rd, 2024 at …".

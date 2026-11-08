@@ -129,38 +129,40 @@ type App struct {
 	mu      sync.Mutex
 	pending []func()
 
-	title         string
-	firstPaint    bool
-	frameStats    frameStats
-	lastChannel   string
-	railOverflow  []string // tabs under the rail's More (layoutRail)
-	teamIconShown string   // the last workspace icon URL that drew (kept while a new one loads)
-	pxPerDp       float32
-	chTab         map[string]int
-	clipboard     string
-	prefs         prefs
-	prefsDirty    bool
-	notify        notifier
-	focused       bool
-	winSize       image.Point
-	sbBase        color.NRGBA
-	sbPal         theme.Palette
-	styleVer      uint64 // slackc.Styles.Version the palette was derived at
-	shaperCh      chan [2]*text.Shaper
-	explorer      *explorer.Explorer    // native file chooser (set in onWindow)
-	tautGen       int                   // bumps when a (new) plugin runtime attaches
-	tautTabs      []taut.PreferencesTab // plugins' Preferences tabs
-	switchAt      time.Time             // navigation time, for the channel-switch latency log
-	switchTo      Route
-	winLive       atomic.Pointer[app.Window] // a.win once Run made it, for other goroutines
-	update        updateState                // "Update available" banner
-	rtAsk         realtimeState              // first-run "Live updates are off" banner
-	updatesOff    atomic.Bool                // prefs.NoUpdateCheck, for updateLoop
-	hud           *huddleui.Controller       // the native huddle (huddle_wire.go)
-	swipe         swiper                     // trackpad history swipes (swipe.go, nav.go)
-	swipeNow      swipeState                 // this frame's swipe progress, for the arrow
-	navTag        int                        // the window-wide scroll handler (navGestures)
-	ptrBtns       pointer.Buttons            // mouse buttons held, for back/forward (navButtons)
+	title       string
+	firstPaint  bool
+	frameStats  frameStats
+	lastChannel string
+	pxPerDp     float32
+	chTab       map[string]int
+	clipboard   string
+	prefs       prefs
+	prefsDirty  bool
+	notify      notifier
+	focused     bool
+	winSize     image.Point
+	sbBase      color.NRGBA
+	sbPal       theme.Palette
+	styleVer    uint64    // slackc.Styles.Version the palette was derived at
+	acct        acctTheme // the Slack account's theme (theme_account.go)
+	shaperCh    chan [2]*text.Shaper
+	explorer    *explorer.Explorer    // native file chooser (set in onWindow)
+	tautGen     int                   // bumps when a (new) plugin runtime attaches
+	tautTabs    []taut.PreferencesTab // plugins' Preferences tabs
+	switchAt    time.Time             // navigation time, for the channel-switch latency log
+	switchTo    Route
+	winLive     atomic.Pointer[app.Window] // a.win once Run made it, for other goroutines
+	update      updateState                // "Update available" banner
+	rtAsk       realtimeState              // first-run "Live updates are off" banner
+	updatesOff  atomic.Bool                // prefs.NoUpdateCheck, for updateLoop
+	hud         *huddleui.Controller       // the native huddle (huddle_wire.go)
+
+	swipe         swiper          // trackpad history swipes (swipe.go, nav.go)
+	swipeNow      swipeState      // this frame's swipe progress, for the arrow
+	navTag        int             // the window-wide scroll handler (navGestures)
+	ptrBtns       pointer.Buttons // mouse buttons held, for back/forward (navButtons)
+	railOverflow  []string        // tabs under the rail's More (layoutRail)
+	teamIconShown string          // the last workspace icon URL that drew (kept while a new one loads)
 }
 
 // New creates the app. Call Run on the UI goroutine (main).
@@ -221,6 +223,7 @@ func (a *App) Run() error {
 	)
 	a.winLive.Store(a.win)
 	go a.updateLoop()
+	a.watchOSTheme()
 	if a.images != nil {
 		a.images.SetInvalidate(a.win.Invalidate)
 		a.th.Images = a.images
@@ -552,9 +555,10 @@ func (a *App) view(r Route, mk func() View) View {
 // ToggleDark flips light/dark mode and persists the choice.
 func (a *App) ToggleDark() { a.setDark(!a.th.Dark) }
 
-// setDark goes through Taut's setUserPrefByApi thunk (Slack's dark_mode
-// pref) so plugins see the change; the native applies it locally only
-// (Clack's theme is a local setting, the account pref is left alone).
+// setDark goes through Taut's setUserPrefByApi thunk (dark_mode) so
+// plugins see the change; the native applies it locally only. Slack keeps
+// light/dark per device in localStorage ("userTheme"), not in users.prefs,
+// so there is no account pref to write (theme_account.go).
 func (a *App) setDark(dark bool) {
 	v := "light"
 	if dark {

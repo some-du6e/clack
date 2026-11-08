@@ -27,6 +27,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/taut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
 )
 
 type (
@@ -1146,8 +1147,8 @@ func sameDay(a, b time.Time) bool {
 	return ay == by && am == bm && ad == bd
 }
 
-// clock formats "3:04 PM".
-func clock(t time.Time) string { return t.Format("3:04 PM") }
+// clock formats "3:04 PM" ("15:04" with time24).
+func clock(t time.Time) string { return uipref.Clock(t) }
 
 // listTime is the compact time Slack shows on list rows: "3:04 PM" today,
 // "Yesterday", the weekday within a week, "Oct 12" this year, else

@@ -308,6 +308,11 @@ func init() {
 	reg("contact", s(rrect(4.25, 2.75, 11.5, 14.5, 2)), s(circle(10, 8.5, 2)), s("M6.9 14 A3.2 2.6 0 0 1 13.1 14"), s("M2.75 6 H4.25 M2.75 10 H4.25 M2.75 14 H4.25"))
 	reg("star", s(star(10, 10.4, 7, 3.1)))
 	reg("star-filled", f(star(10, 10.4, 7.4, 3.4)))
+	// Preferences nav: VIP (a star in a ring), Accessibility (a laptop),
+	// Salesforce (a cloud).
+	reg("vip", sw(1.5, circle(10, 10, 7.6)), sw(1.3, star(10, 10.3, 4.2, 1.9)))
+	reg("laptop", s(rrect(4.25, 4.5, 11.5, 8, 1.5)), s("M2.5 15.5 H17.5"))
+	reg("cloud", s("M6 15.25 A3.25 3.25 0 0 1 5.6 8.8 A4.6 4.6 0 0 1 14.3 8.3 A3.5 3.5 0 0 1 14.2 15.25 Z"))
 	reg("unreads", s("M4 5.5 H11 M4 10 H16 M4 14.5 H16"), f(circle(15, 5.5, 2)))
 	reg("mention", s(circle(10, 10, 2.9)), s("M12.9 10 V11.1 A2.1 2.1 0 0 0 17.1 11.1 V10 A7.1 7.1 0 1 0 14.3 15.6"))
 	reg("at", registry["mention"].parts...)

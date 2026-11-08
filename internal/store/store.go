@@ -53,6 +53,9 @@ type Store struct {
 	Muted map[string]bool
 	// Prefs is the curated set of user prefs that change rendering.
 	Prefs Prefs
+	// RawPrefs is users.prefs.get's whole map (memory only: Preferences
+	// reads the keys it shows from it; Prefs is what the disk cache keeps).
+	RawPrefs map[string]json.RawMessage
 	// ThreadsUnread / ThreadMentions mirror client.counts "threads".
 	ThreadsUnread  bool
 	ThreadMentions int
@@ -109,7 +112,14 @@ type Prefs struct {
 	DarkMode         string `json:"dark_mode,omitempty"`
 	SidebarTheme     string `json:"sidebar_theme,omitempty"`
 	MessagesTheme    string `json:"messages_theme,omitempty"`
-	EnterIsSpecial   bool   `json:"enter_is_special_in_tbt"`
+	// IATheme is Slack's 2026 theme, users.prefs ia_theme: a JSON string
+	// {primary,highlight1,highlight2,important:{palette,custom},
+	// brightness, sidebarInverted, useCustomHex} (theme.ParseIATheme).
+	IATheme string `json:"ia_theme,omitempty"`
+	// NoWindowGradients is window_background_gradients=false (Appearance >
+	// "Show gradients": a flat chrome instead of Slack's conic gradient).
+	NoWindowGradients bool `json:"no_window_gradients,omitempty"`
+	EnterIsSpecial    bool `json:"enter_is_special_in_tbt"`
 	// PlainTextMode is Preferences > Advanced > "Format messages with
 	// markup": the composer keeps markup as typed (no live formatting, no
 	// toolbar) and formats it when the message is sent.
@@ -140,6 +150,28 @@ type Prefs struct {
 	GlobalDesktop string                   `json:"global_desktop,omitempty"` // everything | mentions_dms | nothing
 	GlobalMobile  string                   `json:"global_mobile,omitempty"`
 	ChannelNotify map[string]ChannelNotify `json:"channel_notify,omitempty"`
+	// NoTextInNotifications is the global no_text_in_notifications
+	// (Notifications > "Include a preview of the message"): desktop
+	// notifications show no message text.
+	NoTextInNotifications bool `json:"no_text_in_notifications,omitempty"`
+
+	// Render prefs (Preferences dialog). Named so the zero value is
+	// Slack's default: the disk cache drops false fields.
+	UnderlineLinks bool `json:"underline_links,omitempty"` // underline_links
+	NoAnimations   bool `json:"no_animations,omitempty"`   // a11y_animations=false
+	HideHexSwatch  bool `json:"hide_hex_swatch,omitempty"` // hide_hex_swatch
+	// NoInternalImgs is expand_internal_inline_imgs=false (images uploaded
+	// to Slack show as file cards); NoInlineImgs expand_inline_imgs=false
+	// (no images from linked websites); NoTextPreviews
+	// expand_non_media_attachments=false (no text previews of links).
+	NoInternalImgs bool `json:"no_internal_imgs,omitempty"`
+	NoInlineImgs   bool `json:"no_inline_imgs,omitempty"`
+	NoTextPreviews bool `json:"no_text_previews,omitempty"`
+	// MarkReadImmediately and StartAtOldest are Mark as read's
+	// mark_msgs_read_immediately and start_scroll_at_oldest (both false:
+	// Slack's "default", leave unseen messages unread).
+	MarkReadImmediately bool `json:"mark_msgs_read_immediately,omitempty"`
+	StartAtOldest       bool `json:"start_scroll_at_oldest,omitempty"`
 }
 
 // ChannelNotify is a conversation's notification override.
@@ -186,6 +218,17 @@ func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
 		_ = json.Unmarshal(raw[k], &v)
 		return v
 	}
+	// jsonStr is a JSON-typed pref: Slack sends it as a string holding
+	// JSON; an object is taken as is.
+	jsonStr := func(k string) string {
+		if v := str(k); v != "" {
+			return v
+		}
+		if r := raw[k]; len(r) > 0 && r[0] == '{' {
+			return string(r)
+		}
+		return ""
+	}
 	boolean := func(k string, def bool) bool {
 		v, ok := raw[k]
 		if !ok {
@@ -201,15 +244,33 @@ func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
 		}
 		return def
 	}
+	// display_real_names_override is 1 (full names), -1 (display names)
+	// or 0 (the team's display_real_names default), like Slack's
+	// MessageNamesPref.
+	override := 0
+	if v, ok := raw["display_real_names_override"]; ok {
+		var n float64
+		if json.Unmarshal(v, &n) == nil {
+			override = int(n)
+		} else if boolean("display_real_names_override", false) {
+			override = 1
+		}
+	}
 	p := Prefs{
 		EmojiMode: str("emoji_mode"), SkinTone: str("preferred_skin_tone"), Time24: boolean("time24", false),
-		DisplayRealNames: boolean("display_real_names_override", false) || boolean("display_real_names", false),
+		DisplayRealNames: override > 0 || (override == 0 && boolean("display_real_names", false)),
 		Jumbomoji:        boolean("jumbomoji", true), ConvertEmoticons: boolean("convert_emoticons", true),
 		SidebarBehavior: str("sidebar_behavior"), ChannelSort: str("channel_sort"), Locale: str("locale"),
 		Theme: str("theme"), DarkMode: str("dark_mode"), SidebarTheme: str("sidebar_theme"), MessagesTheme: str("messages_theme"),
 		EnterIsSpecial: boolean("enter_is_special_in_tbt", false), ShowTyping: boolean("show_typing", true),
-		PlainTextMode: boolean("plain_text_mode", false),
 		ColorNames:    boolean("color_names_in_list", true),
+		PlainTextMode: boolean("plain_text_mode", false),
+		IATheme:       jsonStr("ia_theme"), NoWindowGradients: !boolean("window_background_gradients", true),
+		UnderlineLinks: boolean("underline_links", false), NoAnimations: !boolean("a11y_animations", true),
+		HideHexSwatch:  boolean("hide_hex_swatch", false),
+		NoInternalImgs: !boolean("expand_internal_inline_imgs", true), NoInlineImgs: !boolean("expand_inline_imgs", true),
+		NoTextPreviews:      !boolean("expand_non_media_attachments", true),
+		MarkReadImmediately: boolean("mark_msgs_read_immediately", false), StartAtOldest: boolean("start_scroll_at_oldest", false),
 	}
 	p.HideInactiveConvs = p.SidebarBehavior == "hide_inactive_channels"
 	p.ShowMutedOutside = boolean("show_muted_items_outside_sidebar_menus", false)
@@ -304,6 +365,7 @@ func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
 			_ = json.Unmarshal(n.Global["global_desktop"], &gd)
 			_ = json.Unmarshal(n.Global["global_mobile"], &gm)
 			p.GlobalDesktop, p.GlobalMobile = gd, gm
+			p.NoTextInNotifications = truthy(n.Global["no_text_in_notifications"])
 		}
 	}
 	p.Muted = make([]string, 0, len(muted))
@@ -312,6 +374,13 @@ func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
 	}
 	sort.Strings(p.Muted)
 	return p, muted
+}
+
+// SetRawPrefs keeps users.prefs.get's whole map (memory only).
+func (s *Store) SetRawPrefs(raw map[string]json.RawMessage) {
+	s.mu.Lock()
+	s.RawPrefs = raw
+	s.mu.Unlock()
 }
 
 // SetPrefs installs parsed prefs (and the emoji style used for rendering).
