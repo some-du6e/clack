@@ -33,7 +33,7 @@ The app declares the `slack://` scheme, so macOS can send Slack links to it. If 
 
 ### Windows
 
-**Installer:** run `Clack-<ver>-windows-amd64-setup.exe`. It installs for your user only (no admin prompt) into `%LocalAppData%\Programs\Clack`, adds a Start Menu entry and, unless you untick it, makes Clack open `slack://` links. A desktop shortcut is optional. Uninstall from **Settings → Apps**. Running a newer installer upgrades in place.
+**Installer:** run `Clack-<ver>-windows-amd64-setup.exe`. It installs for your user only (no admin prompt) into `%LocalAppData%\Programs\Clack`, adds a Start Menu entry and, if you tick it, makes Clack open `slack://` links (off by default: the Slack desktop app claims those too, and you don't need it to sign in). A desktop shortcut is optional. Uninstall from **Settings → Apps**. Running a newer installer upgrades in place.
 
 **Portable:** unzip `Clack-<ver>-windows-amd64.zip` anywhere and run `Clack.exe`. It doesn't touch the registry. To have it open `slack://` links, run `Clack.exe -register-url-handler` once from that folder (`-unregister-url-handler` undoes it; both only affect your user).
 
@@ -94,10 +94,32 @@ There are no screenshots in this repo on purpose: any real screenshot would show
 
 ## Sign in
 
-> [!WARNING]
-> **Clack shares your browser's Slack session. It is not a separate sign-in.** If Slack sees that session used in a way it finds unusual, it can sign it out **everywhere**: the browser, the desktop app and Clack. This happened four times to a tester on Hack Club's Enterprise Grid, with v0.1.0-alpha.1 and v0.1.0-alpha.2, the moment they clicked Sign in. The leading suspect is the `d-s` cookie, which those versions sent and which Clack no longer sends at all ([docs/SIGNOUT-AUDIT.md](docs/SIGNOUT-AUDIT.md)). That isn't confirmed yet, so use an account you can sign back in to.
+Clack has two ways in. Use the first.
 
-Clack signs in with the token and cookies of your own signed-in Slack session, the same values other third-party Slack clients use. Start Clack (or run `clack login`) and fill in your workspace, the `xoxc-` **token**, the **`d` cookie** (`xoxd-…`) and, optionally, the org token (Enterprise Grid workspaces such as Hack Club). Don't paste `d-s`: Clack never sends it. Clack only checks them with `auth.test`: it never loads Slack web pages with your cookie and never calls a sign-out API, so your browser session stays signed in. They're saved to `~/.config/clack/creds.json`, readable only by you (mode 600 in a 700 directory; an owner-only ACL on Windows). They are only ever sent to https slack.com hosts. "Sign out on this device" deletes that file and nothing else.
+### Sign in with a Slack link (Clack's own session)
+
+This is how Slack's desktop app signs in. You sign in in your browser, Slack's page hands "the Slack app" a one-time `slack://…/magic-login/…` link, and Clack trades that link for a session Slack issues to Clack (`auth.loginMagicBulk?ssb=1`). Nothing is copied from your browser, so Clack and the browser are two separate sessions, the way the browser and Slack desktop are.
+
+1. Start Clack. The sign-in screen opens on **Sign in with a Slack link**.
+2. Click **Open sign-in page** (or open `https://slack.com/ssb/add?s=1&v=4.53.276` yourself) and sign in to your workspace in the browser.
+3. When Slack offers to open the Slack app, right-click that link ("Open Slack", "launch the app"), choose **Copy Link**, paste it into **Sign-in link** and press **Sign in**.
+
+The link works once, for a few minutes. If it has expired, sign in on the page again. Treat it like a password until then. Workspaces with single sign-on may send you back to the browser to finish.
+
+Instead of copying, you can let the browser open Clack with the link, if Clack handles `slack://` links. Clack never takes them by itself. Run `clack --register-url-handler` once (on Linux it runs `xdg-mime default clack.desktop x-scheme-handler/slack`; on Windows it writes the per-user `slack` URL keys). The Slack desktop app claims `slack://` too and re-claims it whenever it starts, so with both installed whichever registered last wins, and a link may open the wrong app. Copying the link avoids that. A link that reaches Clack while it's already signed in does nothing but show a note: any web page can make your browser open a `slack://` link, and one for someone else's account must not swap yours. Sign out first.
+
+From a terminal: `clack login 'slack://T…/magic-login/…'`, or `clack login` and paste the link at the prompt. A running Clack also accepts `clack 'slack://T…/magic-login/…'`.
+
+After that, Clack presents itself as Slack desktop 4.53.276 on your OS (its User-Agent, on every request and the realtime socket). It sends every cookie Slack set for the session (`d`, `lc`, `d-s`, …), takes in each new value Slack sends back, and saves them to `creds.json` (soon after `d` changes, within 30 s for the rest, and at exit). If the link asked for DPoP (`dpop=1`), Clack keeps a P-256 key for that domain in `~/.config/clack/dpop-keys/` and signs a proof for each API and socket request. If Slack rejects a proof, or the key is gone, Clack stops talking to Slack and asks you to sign in again.
+
+What isn't verified yet: whether this session survives you signing out in the browser (it should, it's a separate session), how Enterprise Grid treats DPoP, and whether Slack's desktop boot page always has the token Clack reads from it. See [docs/DESKTOP-SIGNIN.md](docs/DESKTOP-SIGNIN.md).
+
+### Advanced: paste a token
+
+> [!WARNING]
+> **This way Clack shares your browser's Slack session. It is not a separate sign-in.** If Slack sees that session used in a way it finds unusual, it can sign it out **everywhere**: the browser, the desktop app and Clack. This happened four times to a tester on Hack Club's Enterprise Grid, with v0.1.0-alpha.1 and v0.1.0-alpha.2, the moment they clicked Sign in. The leading suspect is the `d-s` cookie, which those versions sent and which Clack no longer sends at all ([docs/SIGNOUT-AUDIT.md](docs/SIGNOUT-AUDIT.md)). That isn't confirmed yet, so use an account you can sign back in to.
+
+Click **Advanced: paste a token instead** on the sign-in screen (or press Enter at `clack login`'s link prompt). Fill in your workspace, the `xoxc-` **token**, the **`d` cookie** (`xoxd-…`) and, optionally, the org token (Enterprise Grid workspaces such as Hack Club). Don't paste `d-s`: Clack never sends it on a pasted session. Clack only checks them with `auth.test`: it never loads Slack web pages with your cookie and never calls a sign-out API, so your browser session stays signed in.
 
 The quickest way to get them: open Slack in the browser you'll copy from, open DevTools (F12) on that tab, and run this in the Console. It copies your user agent and the tokens Slack's own page keeps in `localStorage`. The sign-in screen shows the same snippet with a Copy button:
 
@@ -106,6 +128,10 @@ copy(JSON.stringify({ua: navigator.userAgent, teams: JSON.parse(localStorage.loc
 ```
 
 Paste that JSON into the Token field. Clack picks out the workspace token, the org token, the workspace URL and the user agent. `d` is HttpOnly, so copy it from DevTools > Application > Cookies > `https://app.slack.com`. Leave `d-s` alone: Slack resets it to the current time on every response, so a copy is stale at once, and sending an older one than the browser's looks like a cloned cookie. From then on Clack sends that browser's User-Agent (and its Chrome client hints) with every request. Without one, it uses current Chrome on your OS.
+
+### Either way
+
+Credentials are saved to `~/.config/clack/creds.json`, readable only by you (mode 600 in a 700 directory; an owner-only ACL on Windows). They only ever go to https slack.com hosts. "Sign out on this device" deletes that file and nothing else.
 
 **Live updates are off until you turn them on.** On first run a banner asks. You can also switch them in Preferences > Advanced > Live updates. While they're off, Clack never opens Slack's realtime websocket. It refreshes unread counts and the open conversation and threads over the Web API every 20 seconds instead. You can read and send, but there's no typing indicator, presence, instant delivery, desktop notifications, huddle events or slash-command modals. `clack -no-realtime` (or `CLACK_NO_REALTIME=1`) keeps the socket closed whatever the setting says.
 
@@ -126,10 +152,10 @@ clack 'slack://channel?team=T0266FRGM&id=C0266FRGV'   # open a Slack link
 |---|---|---|
 | `-creds <file>` | `~/.config/clack/creds.json` | credentials file |
 | `-dark` | off | start in dark mode |
-| `-register-url-handler` | | make Clack this user's `slack://` handler and exit (Windows registry; `xdg-mime` on Linux) |
+| `-register-url-handler` | | make Clack this user's `slack://` handler and exit (Windows registry; `xdg-mime` on Linux). Clack never does this on its own; the Slack desktop app claims the same links |
 | `-unregister-url-handler` | | remove Clack's `slack://` registration (Windows) and exit |
 
-Only one Clack runs per user. Starting it again, or opening a `slack://` link, brings the running window to the front and opens the link there (`slack://channel?id=C…[&thread_ts=…]`, `slack://user?id=U…`, `slack://open`). Instances with different `CLACK_HOME`s are separate. On Windows, Clack also puts an icon in the notification area: click it to bring the window back, or right-click it to quit.
+Only one Clack runs per user. Starting it again, or opening a `slack://` link, brings the running window to the front and opens the link there (`slack://channel?id=C…[&thread_ts=…]`, `slack://user?id=U…`, `slack://open`). A `slack://…/magic-login/…` or `slack://login-v2/…` link signs in instead, from the sign-in screen only. Instances with different `CLACK_HOME`s are separate. On Windows, Clack also puts an icon in the notification area: click it to bring the window back, or right-click it to quit.
 
 Release builds check GitHub Releases for a newer version once at start and then twice a day. If there is one, a blue "A new version of Clack is available" banner appears with a **View release** button that opens the release page in your browser. Clack never downloads or installs anything by itself. Turn the check off in **Preferences → Advanced → Check for updates**.
 

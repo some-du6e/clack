@@ -10,7 +10,7 @@ Message contents are memory only. Never write message text, files or attachments
 ## Packages and owners
 | package | owner (branch) | purpose |
 |---|---|---|
-| `internal/slack` | backend (`backend`) | HTTP client, realtime gateway, typed methods, login |
+| `internal/slack` | backend (`backend`) | HTTP client, realtime gateway, typed methods, login (pasted sessions; desktop sign-in with a magic link: `magic.go`, cookie jar `desktop.go`, `dpop.go`) |
 | `internal/store` | backend | in-memory state, metadata disk cache |
 | `internal/core` | backend | **in-process service API** for the UI (replaces `internal/server`): boot, reads, writes, typed events. No HTTP. |
 | `internal/richtext` | richtext (`richtext`) | Slack message → structured document (`Doc`) for native layout. Replaces `internal/render`. |
@@ -229,6 +229,7 @@ func ParseHuddle(raw json.RawMessage) (Huddle, bool)
 ## Desktop integration (`internal/desktop`, `packaging/`)
 - **Single instance.** `cmd/clack` calls `desktop.Forward(configDir, Request{URL})` before opening a window. If a Clack for the same user and config dir answers on its socket (`$XDG_RUNTIME_DIR/clack-<hash>.sock`, or the temp dir on macOS and Windows), the new process exits. Otherwise `desktop.Listen` makes it the primary, and every later launch calls `App.Raise` plus `App.OpenURL(url)`. Different `CLACK_HOME`s run side by side, which keeps test instances apart. A socket left by a crash is replaced.
 - **Deep links.** The OS runs `clack "slack://…"`: the Linux `.desktop` `Exec=clack %u`, and the Windows HKCU `Software\Classes\slack` keys written by the installer or `clack -register-url-handler`. macOS sends the link to the running app as a Gio `app.URLEvent` (`main` ranges over `app.Events` instead of calling `app.Main`). Every path ends in `App.OpenURL`, which dispatches Slack's `handleDeepLink` thunk; plugins can patch it, and the native is the shell's `openDeepLink` (`UIHooks.DeepLink`).
+- **Sign-in links.** A `slack://<TEAM>/magic-login/<tok>` or `slack://login-v2/?0.host=…` link (`slack.IsMagicLink`) isn't a navigation. `cmd/clack`'s `openLink` sends it to `App.SignInWithLink` instead of `App.OpenURL`, on every path: the launch argument, a forwarded one (`desktop.Listen`) and macOS `URLEvent`s. It signs in only from the sign-in screen and shows a toast otherwise. The login callback runs `slack.ParseMagicLink` + `slack.LoginMagic` (DPoP keys next to `creds.json`). Clack never registers itself as the `slack://` handler. `-register-url-handler` and the Windows installer's task (unchecked by default) do, on request. Slack desktop re-registers `slack://` on every start, so with both installed the last one to register wins.
 - **Update check.** Release builds only (`main.version` is a semver). The check starts 15 s after launch and repeats every 12 h. It calls GitHub's `releases/latest`, which skips drafts and pre-releases, compares versions by semver, and shows a blue "A new version of Clack is available" banner above the workspace with **View release**, which opens the release page in the browser. Nothing is downloaded. Preferences > Advanced > "Check for updates" turns it off (`no_update_check` in ui.json). Closing the banner hides it until a newer tag comes out (`update_dismissed`). For testing, `CLACK_UPDATE_URL` points the check at another JSON file and `CLACK_UPDATE_AS` sets the version it compares against.
 - **Icons.** `assets/icon` holds the SVG masters (`gen_svg.py`) and the rendered PNG, .ico and .icns files (`build.py`). The window icon depends on the platform:
   - X11: `_NET_WM_ICON`, set from the view event.
@@ -236,6 +237,14 @@ func ParseHuddle(raw json.RawMessage) (Huddle, bool)
   - Windows: icon resource `#1`, which `go-winres` embeds from `packaging/windows/winres.json` (Gio and the tray both load it).
   - macOS: the bundle's `clack.icns`; a bare binary sets the Dock icon itself.
 - **Windows tray.** A Win32 notification-area icon on its own thread. A click or **Open Clack** raises the window, and **Quit Clack** closes it. The icon comes back after an Explorer restart. Gio can't intercept the window's close button, so closing the window still quits Clack instead of hiding it to the tray.
+
+## Sessions (`internal/slack`)
+
+`Creds.Session` tells the two kinds apart. Both live in `creds.json`.
+
+- **Pasted** (`Session` empty). The browser's own `xoxc` token and `d` cookie. Every request sends `Cookie: d=…` only, never `d-s`, with the browser's User-Agent (`Creds.UserAgent`, else Chrome on this OS) and its client hints. `Set-Cookie` is ignored. Unchanged from before desktop sign-in.
+- **Desktop** (`Session: "desktop"`, from `LoginMagic`). The `d` cookie (`Cookie`) and every other cookie Slack vended (`Cookies`, `name=value; …`) belong to Clack. `New` wraps the transport (`desktopTransport`). It sends the jar on every slack.com request, takes in `Set-Cookie` from every slack.com response (redirect hops and the socket handshake too), and adds DPoP proofs when `Creds.DPoP` names a bound domain. `Client.PersistSession(save)` gets the rotated creds, debounced (1 s when `d` or the set of cookies changes, 30 s otherwise), and `FlushSession` at exit. `cmd/clack` saves only while that client is the live one. The User-Agent is `DesktopUserAgent()` on every request, the socket, and (`SetPublicUserAgent`) credential-free fetches. Callers that need the current cookie use `SessionCookie`/`SetSessionCookie`/`SessionCreds`, not `Creds.Cookie`.
+- **DPoP-bound** desktop sessions send nothing until `EnableDPoP(configDir)` loads the key. A missing key, or a proof Slack rejects, trips the signed-out guard with a `DPoPError`, so traffic stops at once instead of retrying.
 
 ## UI (Gio) principles
 - Fast: immediate mode with virtualized `layout.List`s, no allocations in hot paths where avoidable, async image decode (`internal/imgcache`: memory LRU plus a disk cache for avatars/emoji only, decoded off the UI goroutine, invalidate the window on arrival). Instant channel switch from cached history.

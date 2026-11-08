@@ -26,8 +26,10 @@ Severity scale:
 | C-11 | Low | `clack login` echoed the pasted token and cookies. | `stty -echo` while reading secrets on Unix terminals. Windows still echoes. | code review |
 | P-* | — | Plugin-facing credential paths: see §3. | | |
 | C-14 | Info | No macOS Keychain or Windows Credential Manager. | Not done: it needs cgo (Keychain) or new dependencies. creds.json is owner-only on every OS instead. Future work. | — |
+| C-16 | Medium | Desktop sign-in (README "Sign in with a Slack link") takes a `slack://` magic-login link, which is untrusted input: anyone can send one, and a web page can make the browser open one. | `ParseMagicLink` accepts only Slack's two shapes. Every `host=` must be slack.com or a subdomain (no ports, userinfo, IP literals or IDN), and tokens must be `[A-Za-z0-9_-]`, so nothing can be smuggled into the exchange URL. The exchange's own client refuses redirects off slack.com and to `/ssb/redirect`. An `auth_redir` is only shown if it is https on a Slack host, and a `team.url` that isn't https slack.com is refused. A link the OS delivers while Clack is signed in never replaces the session (`App.SignInWithLink`). Links are masked on screen and redacted in logs and errors (`magic-login/…`, `magic_tokens=`, `<i>.tokens=`). | `TestParseMagicLinkHostile`, `TestLoginMagicErrors`, `TestSignInWithLink`, `TestRedactMagicLinks` |
+| C-17 | Info | New secrets in a desktop session: the cookies Slack vends to Clack (`d`, plus `lc`, `d-s` and whatever else Slack sets, in `creds.json`'s `cookie` and `cookies`) and, for links with `dpop=1`, a P-256 DPoP private key per base domain. | `creds.json` as C-6. Rotated cookies are written through `WriteCreds` (temp file, rename, owner-only), and only while that session is the live one, so a late write can't bring back credentials after "Sign out" or an account switch. Cookies are taken only from https slack.com responses (or the configured API origin), capped at 48 cookies of 4 KB, and sent only to the same hosts. The DPoP key is PKCS#8 PEM in `<config>/dpop-keys/<domain>.pem`, 0600 in a 0700 directory, with a file name checked against slack.com. It isn't encrypted at rest (Slack desktop uses Electron `safeStorage`; Clack has no keychain yet, C-14). Anyone who can read `creds.json` can already act as you, and the key adds nothing beyond that on this machine. `dpop-unbind` from Slack deletes it. `Creds` formatting masks `cookies`. | `TestDesktopSessionPersists`, `TestDesktopSessionIgnoresOtherHosts`, `TestDPoPProofShape`, `TestDPoPUnbind`, `TestCredsFormattingRedacts` |
 
-The `d-s` cookie is never sent or stored (old creds.json files may still hold one; it's ignored). Slack resets it to the current Unix time on every response, so a pasted copy is stale at once, and replaying an older stamp than the browser's is the leading suspect for Enterprise Grid ending the session everywhere (docs/SIGNOUT-AUDIT.md). It is still redacted like `d`.
+On a pasted session the `d-s` cookie is never sent or stored (old creds.json files may still hold one; it's ignored). Slack resets it to the current Unix time on every response, so a pasted copy is stale at once, and replaying an older stamp than the browser's is the leading suspect for Enterprise Grid ending the session everywhere (docs/SIGNOUT-AUDIT.md). It is still redacted like `d`. A desktop session is different: Slack vended `d-s` to Clack and Clack follows every new value Slack sets, so it sends the current one, as Slack desktop does (`internal/slack/desktop.go`).
 
 ## 2. Deep links and opening URLs
 
@@ -219,7 +221,11 @@ Dependency licenses: gioui.org (Unlicense or MIT), wazero (Apache-2.0), coder/we
 
 ## Session safety
 
-Clack never calls `auth.signout` or `auth.revoke`, and never loads Slack web pages with the session cookie. "Sign out on this device" only deletes `creds.json`. See README "Sign in".
+Clack never calls `auth.signout` or `auth.revoke`. "Sign out on this device" only deletes `creds.json`. See README "Sign in".
+
+Clack loads one Slack web page with a session cookie: during desktop sign-in, `https://app.slack.com/ssb/first?redir=/ssb/client`, with the cookie Slack has just vended to Clack and Slack desktop's user agent, to read the session's token. That is the page Slack desktop loads at the same point. It loads nothing else, never `/ssb/redirect`, and never any page with a cookie copied from the browser.
+
+The recommended sign-in (README "Sign in with a Slack link") gives Clack its own session, so the fingerprint problem below doesn't apply to it: Slack vended that session to a client that says it is Slack desktop, and Clack keeps saying so (`DesktopUserAgent`), sends every cookie Slack set, follows their rotation, and signs DPoP proofs if the link asked for them. Whether Slack keeps that session when the browser signs out isn't verified yet (docs/DESKTOP-SIGNIN.md, "As built"). The rest of this section is about pasted sessions (Advanced).
 
 Clack runs on a session copied from the user's browser. Slack can end that session everywhere, browser included. It did so three times for one tester running v0.1.0-alpha.1 on Enterprise Grid (2026-11-08). Nothing Clack sends asks for a sign-out. Our best explanation is Slack's session anomaly checks, which on Grid can end a session when its fingerprint changes. Clack's fingerprint did not match the browser's:
 
@@ -241,7 +247,8 @@ Please report vulnerabilities through a private security advisory on this reposi
 
 ## Open items
 
-- Keychain storage (C-14).
+- Keychain storage (C-14), which would also cover the DPoP key (C-17).
+- A live test of desktop sign-in on a throwaway account: the token on `/ssb/first`, DPoP on Grid, and whether the session survives a browser sign-out (docs/DESKTOP-SIGNIN.md).
 - Isolating plugins from each other (S-16) would need a JS realm per plugin.
 - Plugin `fetch` can reach localhost and LAN addresses (no CORS, by design). Consider the PublicFetch address check for plugin traffic, behind a per-plugin opt-out for local development servers.
 - A top-level LICENSE and a third-party notices file in releases (SC-8).
