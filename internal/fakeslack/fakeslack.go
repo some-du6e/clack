@@ -85,6 +85,9 @@ type Server struct {
 	Calls   map[string]*atomic.Int64
 	// Latency is added to every API call (not images), to model a network.
 	Latency time.Duration
+	// Hook, when set, sees every API call first; ok=true answers it with
+	// out (tests: hold a call back, fail it). Set it before the calls.
+	Hook func(method string, form url.Values) (out any, ok bool)
 }
 
 // Start serves a workspace of the given size on a loopback port.
@@ -401,7 +404,14 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	out := s.handle(method, form, edge)
+	var out any
+	hooked := false
+	if s.Hook != nil {
+		out, hooked = s.Hook(method, form)
+	}
+	if !hooked {
+		out = s.handle(method, form, edge)
+	}
 	if out == nil {
 		out = map[string]any{"ok": true}
 	}

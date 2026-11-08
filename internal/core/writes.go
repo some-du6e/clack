@@ -45,15 +45,6 @@ func (a *App) Edit(ctx context.Context, ch, ts, text string, blocks json.RawMess
 // Delete deletes a message.
 func (a *App) Delete(ctx context.Context, ch, ts string) error { return a.C.Delete(ctx, ch, ts) }
 
-// React adds or removes the viewer's reaction (idempotent).
-func (a *App) React(ctx context.Context, ch, ts, name string, add bool) error {
-	err := a.C.React(ctx, ch, ts, strings.Trim(name, ":"), add)
-	if isCode(err, "already_reacted", "no_reaction") {
-		return nil
-	}
-	return err
-}
-
 // Mark moves the read cursor of ch to ts and returns the new unread state.
 // Marking an earlier ts keeps the conversation unread (see MarkUnread).
 func (a *App) Mark(ctx context.Context, ch, ts string) (Count, error) {

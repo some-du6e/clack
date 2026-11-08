@@ -81,7 +81,7 @@ func fontFor(st *css.Style) font.Font {
 		f = theme.Font(w)
 	}
 	if fam := st.FontFamily; fam != "" && isMonoFamily(fam) {
-		f.Typeface = "monospace"
+		f.Typeface = theme.MonoTypeface + ", monospace" // not the system Monaco (theme.MonoTypeface)
 	}
 	return f
 }
@@ -90,7 +90,7 @@ func isMonoFamily(f string) bool {
 	if f == "Lato" {
 		return false
 	}
-	return containsFold(f, "mono") || containsFold(f, "menlo") || containsFold(f, "consolas") || containsFold(f, "courier")
+	return containsFold(f, "mono") || containsFold(f, "monaco") || containsFold(f, "menlo") || containsFold(f, "consolas") || containsFold(f, "courier")
 }
 
 // containsFold is an allocation-free ASCII case-insensitive Contains.

@@ -45,6 +45,7 @@ type App struct {
 	stopBG context.CancelFunc
 
 	pending map[string]*pendingSend // client_msg_id -> optimistic send
+	rxn     reactState              // the viewer's reactions in flight (reactions.go)
 	saved   map[string]bool         // "channel/ts" of saved / to-do messages
 	starred map[string]bool         // starred conversation ids (stars.list)
 	starsOK bool                    // starred was loaded
@@ -1020,6 +1021,7 @@ func (a *App) message(ch string, m *slack.Message) Message {
 		}
 		v.Reactions = append(v.Reactions, rv)
 	}
+	v.Reactions = a.overlayReactions(ch, m.TS, v.Reactions)
 	v.Doc = richtext.FromMessage(a.S, m)
 	return v
 }

@@ -23,7 +23,7 @@ import (
 const Lato = theme.Typeface
 
 // Mono is the code typeface list; the shaper falls back left to right.
-const Mono = "Monaco, Menlo, Consolas, Courier New, Go Mono, monospace"
+const Mono = theme.MonoTypeface + ", Monaco, Menlo, Consolas, Courier New, Go Mono, monospace"
 
 func rgb(c uint32) color.NRGBA {
 	return color.NRGBA{R: uint8(c >> 16), G: uint8(c >> 8), B: uint8(c), A: 0xff}
