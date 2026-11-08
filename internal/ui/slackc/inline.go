@@ -263,7 +263,7 @@ func (v *View) buildItems(f *ifc, owner *box, boxes []*box) {
 			}
 			if v.isInlineBox(k) {
 				d, dc := deco, dcol
-				if k.st.TextDecoration != 0 {
+				if k.st.TextDecoration.Lines() != 0 {
 					d |= k.st.TextDecoration
 					dc = k.st.DecoColor
 					if dc.A == 0 {

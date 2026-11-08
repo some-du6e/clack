@@ -176,7 +176,16 @@ const (
 	DecoUnderline TextDecoration = 1 << iota
 	DecoLineThrough
 	DecoOverline
+	// DecoWavy is text-decoration-style: wavy (a style bit carried with the
+	// lines, so it propagates to inline children with them).
+	DecoWavy TextDecoration = 1 << 7
 )
+
+// DecoLines are the line bits (underline, line-through, overline).
+const DecoLines = DecoUnderline | DecoLineThrough | DecoOverline
+
+// Lines is d's line bits, without the style.
+func (d TextDecoration) Lines() TextDecoration { return d & DecoLines }
 
 // TextTransform values.
 type TextTransform uint8

@@ -124,6 +124,11 @@ func tautMenu(h Host, m *Menu, thunk, id string) {
 			return
 		}
 		if items, ok := tautMenuItems(h, raw, base); ok {
+			// the thunk's template is what Slack's MenuFromTemplate renders,
+			// so it becomes the menu's base too (a patched MenuFromTemplate
+			// is fed m.orig and would put the native items back)
+			m.orig = items
+			m.tplFrom = nil
 			m.setItems(items)
 			h.Invalidate()
 		}

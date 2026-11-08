@@ -163,7 +163,7 @@ align-content justify-items justify-self row-gap column-gap flex-grow flex-shrin
 overflow-x overflow-y opacity transform translate rotate scale transform-origin filter backdrop-filter box-shadow
 text-shadow background-color background-image background-size background-position background-repeat mix-blend-mode
 color font-family font-size font-weight font-style line-height letter-spacing word-spacing text-align
-text-decoration-line text-decoration-color text-transform white-space text-wrap text-wrap-mode text-overflow
+text-decoration-line text-decoration-style text-decoration-color text-transform white-space text-wrap text-wrap-mode text-overflow
 -webkit-line-clamp line-clamp word-break overflow-wrap vertical-align cursor pointer-events user-select content
 fill stroke stroke-width object-fit`) {
 		computedProps[p] = struct{}{}

@@ -1220,6 +1220,14 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 			nd = r.nameButton(gtx, bs)
 		}
 	}
+	// a plugin's text-decoration on the sender (IdvStatus' wavy underline)
+	if nd.Size.X > 0 {
+		ds := bs
+		if s := ds.Style(); s == nil || s.TextDecoration.Lines() == 0 {
+			ds = st
+		}
+		slackc.Decorate(gtx, ds, 0, nd.Size.Y-nd.Baseline, nd.Size.X, bs.Color(c.Text))
+	}
 	bs.Leave()
 	if nd.Size.Y == 0 {
 		nd.Size.Y, nd.Baseline = dp(gtx, mt.nameLine), dp(gtx, 5)
