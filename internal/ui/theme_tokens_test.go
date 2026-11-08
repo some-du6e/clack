@@ -227,3 +227,45 @@ func TestThemeTokensUserCSS(t *testing.T) {
 		t.Error("user.css changed fields it doesn't touch")
 	}
 }
+
+// A sheet that paints the primary view or message pane with raw CSS
+// (Material: `.p-view_contents--primary,.p-message_pane{background:
+// var(--slick-material-background)}`) recolours the pane everywhere the
+// pane token is read, over its --sk_primary_background.
+func TestThemeTokensPrimaryViewBackground(t *testing.T) {
+	eng := css.NewEngine()
+	eng.Set("slick:theme", tkSlickRule("--sk_primary_background", "38,43,60", "--slick-material-background", "#1c1f2a", "--dt_color-content-hgl-1", "#899de7")+
+		".p-message_pane,.p-threads_view{background:var(--slick-material-background) !important;}\n"+
+		".p-view_contents--primary,.p-workspace__primary_view{background:var(--slick-material-background) !important;}\n")
+	th := tkThemed(eng, true)
+	rv, ok := richview.Themed(th)
+	if !ok {
+		t.Fatal("richview not themed")
+	}
+	tkCheck(t, []tkWant{
+		{"Bg", th.C.Bg, tkHex(0x1c1f2a)},
+		{"Link", th.C.Link, tkHex(0x899de7)},
+		{"richview Panel", rv.Panel, tkHex(0x1c1f2a)},
+	})
+
+	// raw CSS alone, no root token: only the pane changes
+	eng = css.NewEngine()
+	eng.Set("slick:user", ".p-message_pane{background:#123456}")
+	th = tkThemed(eng, false)
+	if th.C.Bg != tkHex(0x123456) {
+		t.Fatalf("Bg = %v", th.C.Bg)
+	}
+	// Flatten pre-mixes translucent fields over Bg, so those follow it
+	want := theme.LightPalette
+	want.Bg = tkHex(0x123456)
+	if th.C != theme.Flatten(want) {
+		t.Error("a pane background changed other fields")
+	}
+	// a lone gradient (i hate myself) has no colour: the pane keeps its token
+	eng = css.NewEngine()
+	eng.Set("slick:theme", tkSlickRule("--sk_primary_background", "255,241,168")+
+		".p-message_pane{background:repeating-linear-gradient(0deg,#fff1a8 0 27px,#ffffc7 27px 29px) !important;}\n")
+	if bg := tkThemed(eng, false).C.Bg; bg != tkHex(0xfff1a8) {
+		t.Errorf("gradient pane Bg = %v", bg)
+	}
+}

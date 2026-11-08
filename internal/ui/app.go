@@ -192,6 +192,7 @@ func New(opts Options, images *imgcache.Cache) *App {
 	a.secondary.width = theme.SecondaryW
 	a.keys = a.defaultShortcuts()
 	a.loadPrefs()
+	a.settleThemeSync()
 	// The shaper (font parsing + system font index) is the slowest part of
 	// startup; build it while the window and GPU context come up.
 	a.shaperCh = make(chan [2]*text.Shaper, 1)
@@ -563,8 +564,10 @@ func (a *App) view(r Route, mk func() View) View {
 
 // ---- dark mode / title ----
 
-// ToggleDark flips light/dark mode and persists the choice.
-func (a *App) ToggleDark() { a.setDark(!a.th.Dark) }
+// ToggleDark flips light/dark mode and persists the choice. Like picking
+// Light or Dark in Appearance it ends "Sync with OS setting" (else the OS
+// scheme would put the old mode back at the next start).
+func (a *App) ToggleDark() { a.pickMode(!a.th.Dark) }
 
 // setDark goes through Taut's setUserPrefByApi thunk (dark_mode) so
 // plugins see the change; the native applies it locally only. Slack keeps

@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -211,5 +213,50 @@ func TestAppearancePageDraws(t *testing.T) {
 				t.Errorf("dark=%v: no %s row", dark, k)
 			}
 		}
+	}
+}
+
+// "Sync with OS setting" survives saves and restarts. savePrefs writes
+// "dark" every time (and did before theme_sync existed), so without
+// pinning theme_sync the first save turned sync off for every later
+// start, and a Mac in dark mode left Clack light: Slick's dark-only
+// themes (AMOLED, Catppuccin, Nord…) then never applied.
+func TestThemeSyncSurvivesSaves(t *testing.T) {
+	images := imgcache.New(func(ctx context.Context, url string) ([]byte, error) { return nil, errors.New("offline") }, "", nil)
+	open := func(dir string) *App { return New(Options{ConfigDir: dir, NoRealtime: true}, images) }
+	for _, c := range []struct {
+		name, uiJSON string
+		sync         bool
+	}{
+		{"fresh", "", true},
+		{"alpha.7 default (dark:false written by every save)", `{"dark":false,"route":"c/C1"}`, true},
+		{"alpha.7 dark picked", `{"dark":true}`, false},
+		{"sync off picked", `{"dark":false,"theme_sync":false}`, false},
+		{"sync on picked, OS dark", `{"dark":true,"theme_sync":true}`, true},
+	} {
+		dir := t.TempDir()
+		if c.uiJSON != "" {
+			if err := os.WriteFile(filepath.Join(dir, "ui.json"), []byte(c.uiJSON), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		a := open(dir)
+		if a.themeSyncOn() != c.sync {
+			t.Errorf("%s: sync %v at start", c.name, a.themeSyncOn())
+		}
+		// the OS went dark (sync on), then any save, then a restart
+		if c.sync {
+			a.th.SetDark(true)
+		}
+		a.savePrefs()
+		if b := open(dir); b.themeSyncOn() != c.sync || b.th.Dark != a.th.Dark {
+			t.Errorf("%s: after a save and a restart sync %v dark %v", c.name, b.themeSyncOn(), b.th.Dark)
+		}
+	}
+	// Ctrl+Shift+Y is a choice, like Appearance's Light/Dark: sync ends.
+	a := open(t.TempDir())
+	a.ToggleDark()
+	if a.themeSyncOn() {
+		t.Error("toggling dark mode kept syncing with the OS")
 	}
 }

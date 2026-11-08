@@ -156,6 +156,22 @@ func (a *App) themeSyncOn() bool {
 	return a.prefs.Dark == nil && !a.opts.Dark
 }
 
+// settleThemeSync pins "Sync with OS setting" in the prefs at start.
+// savePrefs writes "dark" on every save, and it did before theme_sync
+// existed (alpha.7 and older, where light was the default), so "dark" in
+// ui.json is not a choice by itself: without theme_sync, the first save
+// (a route change) turned sync off for every later start, and a Mac in
+// dark mode left Clack light, where Slick's dark-only themes (AMOLED,
+// Catppuccin, Nord…) don't apply. An old dark:false is that default, so
+// sync is on; dark:true was picked (Ctrl+Shift+Y, the menu), so it stays.
+func (a *App) settleThemeSync() {
+	if a.prefs.ThemeSync != nil || a.opts.Dark {
+		return
+	}
+	on := a.prefs.Dark == nil || !*a.prefs.Dark
+	a.prefs.ThemeSync = &on
+}
+
 // setThemeSync turns OS sync on or off; on applies the OS mode now.
 func (a *App) setThemeSync(on bool) {
 	a.prefs.ThemeSync = &on
