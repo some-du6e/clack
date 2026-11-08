@@ -818,6 +818,28 @@ return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { … }) // opaci
 ```
 `Enter` costs one atomic load while no CSS is set. Declare `ClassDef`s at package level. The class names to use are in §2.3. Tag the ancestors too (`.p-client_container`, `.p-channel_sidebar`, `.c-message_list`, `.p-message_pane`), because descendant selectors only match when the whole chain is on the stack.
 
+**Slack's own rules (the base sheet).** A rule on a row reaches its descendants two ways in Slack's DOM: directly (`.slick-ml-deleted *`) or by inheritance, and inheritance stops at an element with a value of its own in Slack's stylesheet (a link's color, the sender's weight). `slackc/native_css.go` restates those rules with the value `css.NativeValue` ("the native's own value") and installs them as the engine's base sheet (`Engine.SetBase`): first in source order, competing by importance and specificity like any rule, and never making the engine non-empty. So `Styled.Color(def)` & co. answer with CSS exactly where a plugin or user rule would beat Slack's in the browser, and `def` otherwise, and an inherited value stops at the part. A native that has its own look for a property and gets a new Slack class adds a line there; a native whose text inherits in Slack (body text, list items, quotes) needs none. Host nodes ignore the base sheet (`stripNative`): a plugin's own `<a className="c-link">` has no native look to keep.
+
+**Parts a native draws itself (`Styled.Child`, `CurrentScope`).** A native that draws many Slack elements without pushing each on the stack (richview's runs, links, list items) asks for each one's style as a child: `slackc.CurrentScope().Child(def, 0).Child(…)` is the cascade of an element at that path below the stack's top, cached like `Enter`. `Styled.Deco()` is the text-decoration its text gets, its own plus what ancestors propagate (not into buttons or other atomic inlines); `slackc.DrawDecoration` draws it into recorded ops. `slackc.EffectiveOpacity()` is the opacity a native drawn now is multiplied by. In `messages`, `styledLabel`/`decoLabel` apply color, weight, style, decoration and box effects to a label.
+
+**Message body parts (richview/css.go).** Every word, inline box and list marker richview lays out is tagged with its part, the path of Slack elements from the View's parent down to it:
+
+| richview content | Slack element path (under the View's parent, `.c-message_kit__blocks` in a row) |
+|---|---|
+| paragraph text | `.p-rich_text_block > .p-rich_text_section` |
+| bold, italic, strike, underline, inline code | `… > b[data-stringify-type=bold]`, `i`, `s`, `u`, `code.c-mrkdwn__code` (nested in that order) |
+| link (and a dated link) | `… > a.c-link` |
+| user / channel mention, usergroup, @here | `a.c-link.c-member_slug.c-member_slug--link`, `a.c-link.c-inline_channel_entity`, `span.c-mrkdwn__subteam--link`, `span.c-mrkdwn__broadcast--mention` |
+| emoji | `span.c-emoji.c-emoji__medium.c-emoji--inline[data-qa=emoji]` |
+| list item, its marker | `.p-rich_text_block > ul.p-rich_text_list.p-rich_text_list__bullet` (or `ol…__ordered`) `> li` |
+| quote, code block | `.p-rich_text_block > blockquote.c-mrkdwn__quote`, `> pre.c-mrkdwn__pre` |
+| "(edited)" | `<container> > span.c-message__edited_label` |
+| Block Kit header / section / context | `.p-header_block`; `.p-section_block > .p-section_block__text > span.p-mrkdwn_element`; `.p-context_block > span.p-mrkdwn_element` |
+| attachment card | `.c-message_attachment` `> .c-message_attachment__pretext`, `__service_name`, `__author_name`, `__title (> a.c-link)`, `__text (> rich text blocks)`, `__fields`, `__footer` |
+| file card | `.c-message_kit__file.c-file_container` |
+
+Parts are resolved at layout (font-weight and font-style change the shaping) and applied when the static ops are recorded: color, background (inline parts: behind their words; code, mentions, `pre`: their box), opacity (multiplied along the path; `.p-rich_text_block`/`.p-rich_text_section` are applied by the View's `Wrap` instead), text-decoration (own and propagated, joined across spaces), list markers in their item's color. A frame compares the View's parent element (`Scope.Same`); when it changed (the row hovered, a class a plugin added) the parts are re-resolved, and the body is laid out again only if a font changed. `View.Runs` reports each word's final color and decoration (tests). With no CSS installed none of this runs.
+
 ### 5.3 Per-owner checklist
 Rows link to §Index numbers. Status on `taut-ui` (2026-11-07): every row below is wrapped unless it's listed under §8 "Left to do".
 - **msgs** (`messages`, `richview`): 1 MessageBackground, 2 MessageWrapper, 5 MessageAvatar, 6 ConnectedBaseAvatar (register as host `ConnectedBaseAvatar`/`Avatar`), 7 gutter filter memo (name `MessageKitGutter`, source marker `c-message_kit__gutter__left`), 8, 9 MessageSender, 10 BaseMessageSender, 11 BaseBroadcastPreamble (children: sender + timestamp slots), 12, 13, 14 MessageBlocks, 15 Blocks (also host), 17–21 attachments, 22 ReactionBar (children: Reaction slots + ReactionAddButton slot), 23 Reaction, 24 UnstyledButton `data-qa=reactji`, 25 ReactionAddButton, 26 MessageActions, 27 MessageActionButtonReaction, 44, 45/46 (empty boundaries), 50 BaseMrkdwnChannel, 51 MemberLink, 72 MrkdwnElement (host).
@@ -861,7 +883,7 @@ Rows link to §Index numbers. Status on `taut-ui` (2026-11-07): every row below 
   - Shorthands are expanded; logical properties map to physical ones.
 - **Slack tokens:** 719 light and 719 dark design tokens, read from the live client (`slackvars.go`).
 - **Sources:** api.setStyle, the user CSS box (key "user"), `<style>` in document.head, `<style>` inside a plugin's tree (lives as long as its root), and `<html>`/`<body>` classes and inline vars (StreamerMode, FasterSlack).
-- **Native widgets:** `slackc.Class(...).Enter/EnterClass/EnterAttr`, with Hidden, Color, Background, FontSize, FontWeight, Padding, Size, Opacity, and Wrap (margin, background, border, radius, shadow, opacity, blur, transform, ::before/::after). A plugin's className prop reaches CSS through EnterClass. The cost is one atomic load while no CSS is set.
+- **Native widgets:** `slackc.Class(...).Enter/EnterClass/EnterAttr`, with Hidden, Color, Background, FontSize, FontWeight, Italic, Padding, Size, Opacity, Deco, and Wrap (margin, background, border, radius, shadow, opacity, blur, transform, ::before/::after). A plugin's className prop reaches CSS through EnterClass. Parts a native draws itself take CSS through `Styled.Child`/`CurrentScope` (§5.2). Slack's own rules for natives are the base sheet (`Engine.SetBase`, `css.NativeValue`, §5.2), so specificity, `!important` and inheritance against Slack's stylesheet behave as in the browser. The cost is one atomic load while no CSS is set.
 - **Not on natives:** :has() and sibling combinators can't see a native widget's children or siblings (natives report none).
 
 ### 6.3 api.elements (`internal/ui/slackc/kit`)
