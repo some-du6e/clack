@@ -1064,6 +1064,9 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 			h.Toast("Lists aren't supported yet")
 		case tbMore:
 			mm := m
+			// Slack's menu top sits 32px above the kebab's centre (16 above
+			// the button), its right edge 3px left of the centre.
+			anchor = anchor.Add(image.Pt(-dp(gtx, 2), -dp(gtx, 32)))
 			h.ShowOverlay(popups.NewMessageMenuOpts(h, anchor, m, popups.MessageMenuOpts{
 				Delete:  func(ctx context.Context, ch, ts string) error { return deleteMessage(ctx, app, ch, ts) },
 				OnEdit:  func() { s.startEdit(h, mm.TS) },
