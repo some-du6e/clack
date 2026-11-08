@@ -45,7 +45,7 @@ jobs:
       - name: pictures (Mesa llvmpipe)
         env:
           CLACK_PIXEL_TESTS: "1"
-          CLACK_SHOTS: dist/shots
+          CLACK_SHOTS: ${{ github.workspace }}/dist/shots
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
@@ -80,9 +80,13 @@ jobs:
           cache: true
       - name: vet
         run: go vet ./internal/huddle/... ./internal/ui/huddleui/...
+      - name: opus on arm64 (the transpiled libopus was generated on linux/amd64)
+        run: go test -count=1 -v -run 'TestOpus' ./internal/huddle
       - name: test
-        run: go test -count=1 -gcflags=all=-d=checkptr=0 ./internal/huddle/... ./internal/ui/huddleui/...
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v ./internal/huddle/... ./internal/ui/huddleui/... 2>&1 | tee test.log | grep -E '^(=== RUN|--- |ok|FAIL|panic)|opus' ; test "${PIPESTATUS[0]}" = 0
       - name: permission checks from inside an .app bundle
+        if: ${{ !cancelled() }}
         run: |
           set -eu
           go test -c -o build/avperm.test ./internal/huddle/avperm

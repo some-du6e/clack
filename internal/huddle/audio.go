@@ -1,6 +1,7 @@
 package huddle
 
 import (
+	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -180,7 +181,17 @@ func newOpusEnc() (*opusEnc, error) {
 	return &opusEnc{e: e}, nil
 }
 
-func (o *opusEnc) encode(pcm []int16, out []byte) ([]byte, error) {
+func (o *opusEnc) encode(pcm []int16, out []byte) (pkt []byte, err error) {
+	// libopus's assertions abort (a Go panic in the transpiled build): drop
+	// the frame and start a fresh encoder rather than take the app down
+	defer func() {
+		if r := recover(); r != nil {
+			pkt, err = nil, fmt.Errorf("opus encoder: %v", r)
+			if e, ferr := newOpusEnc(); ferr == nil {
+				o.e = e.e // the old one may be mid-call state: leave it
+			}
+		}
+	}()
 	n, err := o.e.Encode(pcm, frameSamples, out[:cap(out)])
 	if err != nil {
 		return nil, err
@@ -203,7 +214,17 @@ func newOpusDec() (*opusDec, error) {
 
 // decode returns interleaved stereo PCM (valid until the next call). A nil
 // packet runs packet-loss concealment for one 20 ms frame.
-func (o *opusDec) decode(pkt []byte) ([]int16, error) {
+func (o *opusDec) decode(pkt []byte) (pcm []int16, err error) {
+	// a packet that trips libopus's assertions (a Go panic in the
+	// transpiled build) is dropped, with a fresh decoder for the next one
+	defer func() {
+		if r := recover(); r != nil {
+			pcm, err = nil, fmt.Errorf("opus decoder: %v", r)
+			if d, ferr := newOpusDec(); ferr == nil {
+				o.d = d.d
+			}
+		}
+	}()
 	frame := len(o.pcm) / playChannels
 	if pkt == nil {
 		frame = frameSamples
