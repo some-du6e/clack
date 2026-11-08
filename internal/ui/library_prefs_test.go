@@ -362,8 +362,11 @@ func TestTautAuthorsMrkdwn(t *testing.T) {
 	if got := tautAuthorsMrkdwn(old, false); got != "<https://jeremywoolley.com|Jeremy>, Someone, a Hack Club Slack member" {
 		t.Errorf("mrkdwn elsewhere: %q", got)
 	}
-	if got := tautAuthorsMrkdwn(old, true); got != old.AuthorsMrkdwn {
+	if got := tautAuthorsMrkdwn(old, true); got != "<@U06UYA5GMB5|Jeremy>, <@U0NOBODY01|Someone>, <@U0NOBODY02>" {
 		t.Errorf("mrkdwn in the Hack Club Slack: %q", got)
+	}
+	if got := tautMrkdwnHere("say hi in <#C0A057686SF>", true); got != "say hi in <#C0A057686SF|taut>" {
+		t.Errorf("channel in the Hack Club Slack: %q", got)
 	}
 	if got := tautMrkdwnHere("say hi in <#C0A057686SF>", false); got != "say hi in <https://hackclub.slack.com/archives/C0A057686SF|#taut on the Hack Club Slack>" {
 		t.Errorf("channel: %q", got)

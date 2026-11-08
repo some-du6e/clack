@@ -136,8 +136,21 @@ func tautAuthorBySlackID(id string) (taut.Author, bool) {
 // they become the author's name (linked to their page) or a link to the
 // channel on the Hack Club Slack.
 func tautMrkdwnHere(s string, hackClub bool) string {
-	if hackClub {
-		return s
+	if hackClub { // mentions, labelled with the known name in case the member isn't loaded yet
+		s = mrkdwnUserRE.ReplaceAllStringFunc(s, func(m string) string {
+			sm := mrkdwnUserRE.FindStringSubmatch(m)
+			if a, ok := tautAuthorBySlackID(sm[1]); ok && sm[2] == "" {
+				return "<@" + sm[1] + "|" + a.Name + ">"
+			}
+			return m
+		})
+		return mrkdwnChannelRE.ReplaceAllStringFunc(s, func(m string) string {
+			sm := mrkdwnChannelRE.FindStringSubmatch(m)
+			if n := tautChannels[sm[1]]; n != "" && sm[2] == "" {
+				return "<#" + sm[1] + "|" + n + ">"
+			}
+			return m
+		})
 	}
 	s = mrkdwnUserRE.ReplaceAllStringFunc(s, func(m string) string {
 		sm := mrkdwnUserRE.FindStringSubmatch(m)
