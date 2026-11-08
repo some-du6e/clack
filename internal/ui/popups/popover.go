@@ -10,6 +10,8 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
+	gtext "gioui.org/text"
+	"gioui.org/unit"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
@@ -139,6 +141,22 @@ func (p *Popover) Layout(gtx layout.Context) layout.Dimensions {
 type TipState struct {
 	since   time.Time
 	hovered bool
+
+	// Delay overrides TipDelay for this tooltip (Slack's BaseTooltip
+	// defaults to delay 150; some callers pass longer ones).
+	Delay time.Duration
+	// MaxWidth, when set, wraps the label at that width with each line
+	// centred (c-tooltip__tip: max-width 200px, text-align center).
+	MaxWidth unit.Dp
+}
+
+// Showing reports whether the tooltip is up at now: hovered for its delay.
+func (st *TipState) Showing(now time.Time) bool {
+	delay := TipDelay
+	if st.Delay > 0 {
+		delay = st.Delay
+	}
+	return st.hovered && !now.Before(st.since.Add(delay))
 }
 
 // TipDelay is how long the pointer must rest before a tooltip shows.
@@ -157,12 +175,16 @@ func Tooltip(gtx layout.Context, th *theme.Theme, st *TipState, hovered bool, sz
 		st.hovered = true
 		st.since = gtx.Now
 	}
-	if wait := st.since.Add(TipDelay); gtx.Now.Before(wait) {
+	delay := TipDelay
+	if st.Delay > 0 {
+		delay = st.Delay
+	}
+	if wait := st.since.Add(delay); gtx.Now.Before(wait) {
 		gtx.Execute(op.InvalidateCmd{At: wait})
 		return
 	}
 	call, d := record(gtx, func(gtx layout.Context) layout.Dimensions {
-		return tipBox(gtx, th, label, shortcut)
+		return tipBox(gtx, th, label, shortcut, st.MaxWidth)
 	})
 	gap := dp(gtx, 8)
 	var p image.Point
@@ -205,12 +227,16 @@ func Tooltip(gtx layout.Context, th *theme.Theme, st *TipState, hovered bool, sz
 }
 
 // tipBox draws the tooltip body at the origin.
-func tipBox(gtx layout.Context, th *theme.Theme, label, shortcut string) layout.Dimensions {
+func tipBox(gtx layout.Context, th *theme.Theme, label, shortcut string, maxWidth unit.Dp) layout.Dimensions {
 	cl := colorsOf(th)
 	lines := strings.Split(label, "\n")
 	keys := splitKeys(shortcut)
 	padX, padY := dp(gtx, 12), dp(gtx, 8)
 	maxW := dp(gtx, 320)
+	align := gtext.Start
+	if maxWidth > 0 {
+		maxW, align = gtx.Dp(maxWidth)-2*padX, gtext.Middle
+	}
 	type piece struct {
 		call op.CallOp
 		d    layout.Dimensions
@@ -223,6 +249,10 @@ func tipBox(gtx layout.Context, th *theme.Theme, label, shortcut string) layout.
 			wt = theme.Regular
 		}
 		c, d := record(loose(gtx, image.Pt(maxW, 1<<20)), func(gtx layout.Context) layout.Dimensions {
+			if align != gtext.Start {
+				gtx.Constraints.Min = image.Point{}
+				return th.Layout(gtx, theme.TextStyle{Size: 13, Weight: wt, Color: cl.TooltipText, LineHeight: 18, Align: align}, l)
+			}
 			return para(gtx, th, 13, 18, wt, cl.TooltipText, l, 0)
 		})
 		ps = append(ps, piece{c, d})

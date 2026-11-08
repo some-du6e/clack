@@ -52,6 +52,15 @@ const SubtypeSlackbotResponse = "slackbot_response"
 // of the workspace's custom responses.
 func (m *Message) SlackbotCustomResponse() bool { return m.Subtype == SubtypeSlackbotResponse }
 
+// CustomResponse is Slack's isCustomResponse (REqS ZO): a custom response
+// posted by Slackbot itself, which the reskin_custom_responses experiment
+// shows as the team (App.CustomResponseTeam) with an info badge.
+// SlackbotCustomResponse, the subtype alone, is what MessageLabels and the
+// row's custom_response class check.
+func (m *Message) CustomResponse() bool {
+	return m.Subtype == SubtypeSlackbotResponse && m.User == "USLACKBOT"
+}
+
 // BotProfile is the bot_profile Slack attaches to app messages.
 type BotProfile struct {
 	ID, Name, AppID, UserID, TeamID string

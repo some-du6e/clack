@@ -471,6 +471,7 @@ func (a *App) Boot(ctx context.Context) error {
 			a.S.TeamID, a.S.TeamName, a.S.TeamDomain = r.Team.ID, r.Team.Name, r.Team.Domain
 			a.S.Unlock()
 			a.setTeamIcon(r.Team.ID, r.Team.Icon)
+			a.setTeamName(r.Team.ID, r.Team.Name)
 		}
 		return err
 	})

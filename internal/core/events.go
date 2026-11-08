@@ -116,7 +116,9 @@ func (a *App) handle(ev slack.Event) {
 		if e.Name != "" && (e.TeamID == "" || e.TeamID == a.S.TeamID) {
 			a.S.TeamName = e.Name
 		}
+		cur := a.S.TeamID
 		a.S.Unlock()
+		a.setTeamName(firstNonEmpty(e.TeamID, cur), e.Name)
 		a.emit(Event{Type: "team"})
 	case "emoji_changed":
 		var e struct {

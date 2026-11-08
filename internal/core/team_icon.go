@@ -34,6 +34,7 @@ const railIconPx = 36
 
 type teamIconState struct {
 	icons     map[string]json.RawMessage // team id -> icon object
+	names     map[string]string          // team id -> name (team.info)
 	useWS     bool                       // use_workspace_icon_for_single_workspace_users
 	prefKnown bool
 	lastFetch time.Time
@@ -151,9 +152,30 @@ func (a *App) refreshTeamIcon(ctx context.Context) {
 		}
 	}
 	team := a.iconTeam()
+	changed := false
+	// Slackbot custom responses show the org (customResponseTeam); when the
+	// rail shows the workspace instead, read the org's name and icon once.
+	if org := a.C.Creds.EnterpriseID; org != "" && org != team {
+		a.mu.Lock()
+		_, known := a.icon.icons[org]
+		a.mu.Unlock()
+		if !known {
+			changed = a.fetchTeam(ctx, org)
+		}
+	}
+	changed = a.fetchTeam(ctx, team) || changed
+	if changed {
+		a.emit(Event{Type: "team"})
+	}
+}
+
+// fetchTeam reads a team's name and icon with team.info (team "" is the
+// session's own) and reports whether the rail icon changed.
+func (a *App) fetchTeam(ctx context.Context, team string) bool {
 	var r struct {
 		Team struct {
 			ID   string          `json:"id"`
+			Name string          `json:"name"`
 			Icon json.RawMessage `json:"icon"`
 		} `json:"team"`
 	}
@@ -162,16 +184,75 @@ func (a *App) refreshTeamIcon(ctx context.Context) {
 		p = url.Values{"team": {team}}
 	}
 	if err := a.C.Call(ctx, "team.info", p, &r); err != nil {
-		return
+		return false
 	}
+	a.setTeamName(firstNonEmpty(r.Team.ID, team), r.Team.Name)
 	changed := a.setTeamIcon(firstNonEmpty(r.Team.ID, team), r.Team.Icon)
 	if team != "" && r.Team.ID != team {
+		a.setTeamName(team, r.Team.Name)
 		changed = a.setTeamIcon(team, r.Team.Icon) || changed
 	}
-	if changed {
-		a.emit(Event{Type: "team"})
-	}
+	return changed
 }
+
+// setTeamName records a team's name (team.info, team_rename).
+func (a *App) setTeamName(team, name string) {
+	if team == "" || name == "" {
+		return
+	}
+	a.mu.Lock()
+	if a.icon.names == nil {
+		a.icon.names = map[string]string{}
+	}
+	a.icon.names[team] = name
+	a.mu.Unlock()
+}
+
+// customResponseTeam is the team Slack shows as the sender of a Slackbot
+// custom response: BaseMessageAvatar/MessageSender read selfTeamIds
+// (3+gS Kc: enterpriseId || teamId), so the org on Enterprise Grid.
+func (a *App) customResponseTeam() string {
+	if org := a.C.Creds.EnterpriseID; org != "" {
+		return org
+	}
+	a.S.RLock()
+	id := a.S.TeamID
+	a.S.RUnlock()
+	return firstNonEmpty(id, a.C.Creds.Team)
+}
+
+// CustomResponseTeam is who Slack shows as the sender of a Slackbot
+// custom response (Message.CustomResponse) while reskin_custom_responses
+// is on (CustomResponseReskin): the team's name and its icon for an
+// avatar of px pixels (BaseTeamIcon: the image_N for 2*px; "" for the
+// default icon, which Slack draws as initials). Until the org has been
+// read it answers with the workspace's.
+func (a *App) CustomResponseTeam(px int) (name, icon string) {
+	team := a.customResponseTeam()
+	a.S.RLock()
+	cur, curName := a.S.TeamID, a.S.TeamName
+	a.S.RUnlock()
+	a.mu.Lock()
+	name = a.icon.names[team]
+	raw, have := a.icon.icons[team]
+	if !have {
+		raw, have = a.icon.icons[cur]
+	}
+	a.mu.Unlock()
+	if name == "" {
+		name = curName
+	}
+	if have {
+		icon = pickTeamIcon(raw, px)
+	}
+	return name, icon
+}
+
+// CustomResponseReskin reports Slack's reskin_custom_responses experiment
+// (xT5u ZV). On, a Slackbot custom response shows the team as its sender
+// (CustomResponseTeam) with the custom_response_info_badge; off, Slackbot
+// with a "Custom response" label (MessageLabels).
+func (a *App) CustomResponseReskin() bool { return a.experiment("reskin_custom_responses") == "on" }
 
 // teamIconDue reports whether the poll loop should re-read the icon.
 func (a *App) teamIconDue() bool {
