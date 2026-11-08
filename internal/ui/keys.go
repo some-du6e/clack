@@ -76,24 +76,33 @@ func (a *App) defaultShortcuts() *shortcuts {
 	add("Ctrl+K", "Jump to a conversation", func(a *App) { a.openSwitcher() })
 	add("Ctrl+T", "Jump to a conversation", func(a *App) { a.openSwitcher() })
 	add("Ctrl+G", "Search", func(a *App) { a.openSearch("") })
-	add("Ctrl+F", "Search in conversation", func(a *App) {
-		if ch := a.router.Current().Channel(); ch != "" {
-			a.openSearch("in:<#" + ch + ">")
-		} else {
-			a.openSearch("")
-		}
-	})
+	add("Ctrl+F", "Search in conversation", func(a *App) { a.findInConversation() })
 	add("Ctrl+Shift+A", "All unreads", func(a *App) { a.Navigate("unreads") })
 	add("Ctrl+Shift+T", "Threads", func(a *App) { a.Navigate("threads") })
 	add("Ctrl+Shift+K", "DMs", func(a *App) { a.Navigate("dms") })
 	add("Ctrl+Shift+M", "Activity", func(a *App) { a.Navigate("activity") })
 	add("Ctrl+Shift+S", "Later", func(a *App) { a.Navigate("later") })
-	add("Ctrl+Shift+E", "Directories", func(a *App) { a.Navigate("directories") })
-	add("Ctrl+Shift+D", "Toggle sidebar", func(a *App) { a.sidebar.hidden = !a.sidebar.hidden })
+	add("Ctrl+Shift+E", "People & user groups", func(a *App) { a.Navigate(peopleRoute) })
+	add("Ctrl+Shift+L", "Channel browser", func(a *App) { a.Navigate(channelsRoute) })
+	add("Ctrl+Shift+D", "Toggle sidebar", func(a *App) { a.toggleSidebar() })
 	add("Ctrl+Shift+Y", "Toggle dark mode", func(a *App) { a.ToggleDark() })
 	add("Ctrl+N", "Compose", func(a *App) { a.compose() })
 	add("Ctrl+,", "Preferences", func(a *App) { a.openPrefs() })
 	add("Ctrl+.", "Toggle the right pane", func(a *App) { a.toggleSecondary() })
+	// Slack's zoom (View > Actual Size, Zoom In, Zoom Out): Cmd/Ctrl with
+	// 0, = or + (shifted or not, by keyboard), -.
+	add("Ctrl+0", "Actual size", func(a *App) { a.zoom(0) })
+	for _, z := range []struct {
+		name key.Name
+		mods key.Modifiers
+		d    int
+	}{
+		{"=", key.ModShortcut, 1}, {"+", key.ModShortcut, 1}, {"+", key.ModShortcut | key.ModShift, 1},
+		{"-", key.ModShortcut, -1},
+	} {
+		d := z.d
+		s.list = append(s.list, shortcut{name: z.name, mods: z.mods, desc: "Zoom", do: func(a *App) { a.zoom(d) }})
+	}
 	for _, b := range navBindings(runtime.GOOS) {
 		desc, dir := "Back", b.dir
 		if dir > 0 {

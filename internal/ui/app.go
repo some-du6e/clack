@@ -163,6 +163,7 @@ type App struct {
 	ptrBtns       pointer.Buttons // mouse buttons held, for back/forward (navButtons)
 	railOverflow  []string        // tabs under the rail's More (layoutRail)
 	teamIconShown string          // the last workspace icon URL that drew (kept while a new one loads)
+	mbar          menuBar         // the macOS menu bar's state (macmenu.go)
 }
 
 // New creates the app. Call Run on the UI goroutine (main).
@@ -237,6 +238,7 @@ func (a *App) Run() error {
 	if startNavGlue != nil {
 		startNavGlue(a)
 	}
+	a.startMenuBar()
 	if a.data != nil {
 		a.data.start(a)
 	}
@@ -248,6 +250,9 @@ func (a *App) Run() error {
 		}
 		if onEvent != nil {
 			onEvent(ev)
+		}
+		if menuViewEvent != nil {
+			menuViewEvent(ev)
 		}
 		switch e := ev.(type) {
 		case app.DestroyEvent:
@@ -271,7 +276,7 @@ func (a *App) Run() error {
 			// patch points (slackc) are shared with the huddle call window
 			slackc.LockFrame()
 			a.drain()
-			gtx := app.NewContext(&ops, e)
+			gtx := a.newContext(&ops, e)
 			before := a.router.Current()
 			a.frame(gtx)
 			if a.router.Current() != before {
@@ -279,7 +284,7 @@ func (a *App) Run() error {
 				// was computed): lay out again so the new page never shows
 				// one frame with the old layout. Layout is ~2 ms.
 				ops.Reset()
-				gtx = app.NewContext(&ops, e)
+				gtx = a.newContext(&ops, e)
 				a.frame(gtx)
 			}
 			slackc.UnlockFrame()
@@ -331,12 +336,24 @@ func (a *App) drain() {
 	}
 }
 
+// newContext is app.NewContext at View > Zoom's scale (Slack's zoom
+// level), so everything lays out larger or smaller.
+func (a *App) newContext(ops *op.Ops, e app.FrameEvent) layout.Context {
+	gtx := app.NewContext(ops, e)
+	if f := a.zoomFactor(); f != 1 {
+		gtx.Metric.PxPerDp *= f
+		gtx.Metric.PxPerSp *= f
+	}
+	return gtx
+}
+
 // frame lays out the whole window.
 func (a *App) frame(gtx layout.Context) {
 	sz := gtx.Constraints.Max
 	a.pxPerDp = gtx.Metric.PxPerDp
 	a.winSize = sz
 	a.syncThemeTokens()
+	a.syncMenuBar()
 
 	if a.login != nil {
 		a.grad.layout(gtx, a.th.C.ChromeA, a.th.C.ChromeB)

@@ -35,6 +35,8 @@ type prefs struct {
 	// PlainText is Preferences > Advanced > "Format messages with markup"
 	// (Slack's plain_text_mode); nil follows the pref Slack sent.
 	PlainText *bool `json:"plain_text_mode,omitempty"`
+	// Zoom is View > Zoom's level, -3…5 (Slack's zoomLevel; macmenu.go).
+	Zoom int `json:"zoom,omitempty"`
 }
 
 func (a *App) prefsPath() string {

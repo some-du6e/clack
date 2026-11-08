@@ -257,7 +257,7 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 	rs.Leave()
 	place(gtx, call, image.Pt(width-gtx.Dp(8)-d.Size.X, (h-d.Size.Y)/2))
 	if clicked(a.clicks.get("nav.help")) {
-		a.Toast("Keyboard shortcuts: Ctrl+K switch, Ctrl+Shift+A unreads, Alt+↑/↓ channels, Ctrl+. side pane")
+		a.showShortcutsHelp()
 	}
 }
 
