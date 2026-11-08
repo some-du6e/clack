@@ -82,17 +82,19 @@ Legend: ✅ works as in Slick on real Slack · ⚠️ partly (what's missing is 
 
 Clack converts theme JSON exactly as Slick's `themeToCss` does. Until `279f419` + `a4aa0ac` the native views ignored the tokens, so only the composer, menus and hovered rows changed. Now chrome, sidebar, header, message list, text, links and hover follow the stylesheets' Slack tokens. With no theme set, the palette is unchanged.
 
-| Theme | Result | Measured live (main pane / sidebar / window) |
+| Theme | Result | Measured live on `6da798a` (pane background / sidebar / window) |
 |---|---|---|
-| Catppuccin Frappé | ✅ | `#303446` / `#292c3c` / `#232634`: all as in the JSON |
-| Catppuccin Macchiato | ✅ | `#24273a` / `#1e2030` / `#181926` |
-| Catppuccin Mocha | ✅ | `#1e1e2e` / `#181825` / `#11111b` |
-| Gruvbox Dark | ✅ | `#282828` / `#32302f` / `#1d2021` |
-| AMOLED | ✅ | black chrome, sidebar and pane |
+| Catppuccin Frappé | ⚠️ | `#303446` / `#292c3c` / `#232634`: all as in the JSON |
+| Catppuccin Macchiato | ⚠️ | `#24273a` / `#1e2030` / `#181926` |
+| Catppuccin Mocha | ⚠️ | `#1e1e2e` / `#181825` / `#11111b` |
+| Gruvbox Dark | ⚠️ | `#282828` / `#32302f` / `#1d2021` |
+| AMOLED | ⚠️ | black chrome, sidebar and pane |
 | Hot Dog Stand | ⚠️ | red chrome, yellow sidebar and header. Message list pending a re-shot after `a4aa0ac`. |
 | i hate myself | ⚠️ | its raw CSS restyles Preferences (borders, tilted Done button). Message list pending a re-shot after `a4aa0ac` (before it, dark text sat on Slack's dark list). |
 | Material, Nord, Verdant | pending live | covered by `internal/ui/theme_tokens_test.go` (Nord) |
 | Custom CSS (user.css) | pending live | Order theme → user.css is fixed (`00d5efe`). user.css overriding a theme token: `TestThemeTokensUserCSS`. |
+
+On `6da798a` the pane background, sidebar and window matched every measured theme exactly, but the message list itself still painted Slack's `#1a1d21`. `a4aa0ac` makes the list follow the tokens (unit test `TestMessageColorsFollowTokens`). Re-shooting the themes on that build is pending live, and each ⚠️ above becomes ✅ when it shows the list themed.
 
 Related theme fixes: importing selects the theme (`fcc7ac9`); pausing Slick keeps the theme and user.css (`142b738`); validation matches `isThemeJson` (`528dd0a`); `document.body` carries `sk-client-theme--dark/--light` (`a1e88f5`).
 
