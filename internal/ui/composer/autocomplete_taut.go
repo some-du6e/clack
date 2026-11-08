@@ -2,6 +2,7 @@ package composer
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"sync"
 
@@ -26,13 +27,14 @@ import (
 // memberSources is everything ranking an @ query needs, copied out from
 // under ac.mu so it can be ranked on any goroutine.
 type memberSources struct {
-	users    []core.User
-	boost    map[string]bool
-	members  map[string]core.User
-	selfID   string
-	groups   []core.Usergroup
-	convKind string
-	general  bool
+	users   []core.User
+	boost   map[string]bool
+	members map[string]core.User
+	selfID  string
+	groups  []core.Usergroup
+	// keywords are the broadcast keywords the viewer may use here
+	// (getBroadcastKeywordsForUser)
+	keywords []string
 }
 
 // memberSourcesLocked snapshots the @ sources; ac.mu must be held. The
@@ -68,20 +70,20 @@ func (ac *Autocomplete) memberSourcesLocked() memberSources {
 		add(u)
 	}
 	if ac.haveConv {
-		src.convKind, src.general = ac.conv.Kind, ac.conv.IsGeneral
+		src.keywords = core.BroadcastKeywords(ac.conv, ac.perms)
 	}
 	return src
 }
 
-// rank is the composer's @ ranking. includeAll offers every broadcast
-// keyword (Slack's includeAllBroadcastKeywords), @everyone included.
+// rank is the composer's @ ranking. Broadcast keywords are the ones the
+// viewer may use here; includeAll offers every one (Slack's
+// includeAllBroadcastKeywords), @everyone included.
 func (s memberSources) rank(q string, includeAll bool) []acItem {
 	items := rankUsers(q, s.users, s.boost, s.members, s.selfID, s.groups, acMaxItems)
-	kind, general := s.convKind, s.general
 	if includeAll {
-		kind, general = "channel", true
+		return append(items, rankBroadcasts(q, "channel", true)...)
 	}
-	return append(items, rankBroadcasts(q, kind, general)...)
+	return append(items, rankKeywords(q, func(id string) bool { return slices.Contains(s.keywords, id) })...)
 }
 
 // channelSources is what ranking a # query needs.

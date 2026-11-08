@@ -89,6 +89,11 @@ type Server struct {
 	// out (tests: hold a call back, fail it). Set it before the calls.
 	Hook func(method string, form url.Values) (out any, ok bool)
 
+	// Permissions are permissions/info's answers by channel_id ("" for a
+	// request without one). nil: every broadcast permission is allowed.
+	// Set it before the calls.
+	Permissions map[string][]string
+
 	prefsMu sync.Mutex
 	prefs   map[string]any // users.prefs.get; users.prefs.set writes it
 
@@ -740,6 +745,14 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return ok("results", s.users[:min(len(s.users), 50)], "next_marker", "")
 	case "edge/channels/info":
 		return ok("results", []any{}, "failed_ids", []string{})
+	case "edge/permissions/info":
+		var ch string
+		_ = json.Unmarshal(edge["channel_id"], &ch)
+		allowed := []string{"CAN_AT_CHANNEL", "CAN_AT_EVERYONE"}
+		if s.Permissions != nil {
+			allowed = append([]string{}, s.Permissions[ch]...)
+		}
+		return ok("allowed", allowed, "allowed_per_team", map[string]any{})
 	case "edge/huddles/list":
 		return ok("huddles", []any{})
 	}

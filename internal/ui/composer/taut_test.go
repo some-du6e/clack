@@ -3,6 +3,7 @@ package composer
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -42,8 +43,15 @@ type fakeCall struct {
 func newFakeSlack(t testing.TB) *fakeSlack {
 	f := &fakeSlack{}
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = r.ParseMultipartForm(8 << 20)
 		method := strings.TrimPrefix(r.URL.Path, "/api/")
+		if rest, ok := strings.CutPrefix(r.URL.Path, "/edge/"); ok { // edge/<enterprise>/<path>, JSON body
+			_, p, _ := strings.Cut(rest, "/")
+			method = "edge/" + p
+			body, _ := io.ReadAll(r.Body)
+			r.Form = url.Values{"body": {string(body)}}
+		} else {
+			_ = r.ParseMultipartForm(8 << 20)
+		}
 		f.mu.Lock()
 		f.calls = append(f.calls, fakeCall{method, r.Form})
 		n := len(f.calls)
@@ -63,6 +71,8 @@ func newFakeSlack(t testing.TB) *fakeSlack {
 			rep = map[string]any{"ok": true, "upload_url": f.srv.URL + "/upload/F0TEST", "file_id": "F0TEST"}
 		case "files.completeUploadExternal":
 			rep = map[string]any{"ok": true, "files": []map[string]any{{"id": "F0TEST", "title": "x"}}}
+		case "edge/permissions/info": // a regular member of a small workspace may @channel and @everyone
+			rep = map[string]any{"ok": true, "allowed": []string{"CAN_AT_CHANNEL", "CAN_AT_EVERYONE"}, "allowed_per_team": map[string]any{}}
 		case "drafts.create", "drafts.update":
 			rep = map[string]any{"ok": true, "draft": map[string]any{"id": "Dr0TEST", "client_draft_id": "x"}}
 		}

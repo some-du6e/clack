@@ -120,3 +120,12 @@ func (c coreAPI) commands(ctx context.Context) ([]core.Command, error) {
 func (c coreAPI) command(ctx context.Context, o core.CommandOpts) (core.CommandResult, error) {
 	return c.a.Command(ctx, o)
 }
+
+// broadcastPerms is the viewer's @channel/@everyone permissions in ch
+// (permissions/info, cached by core for an hour). Blocks on a miss.
+func (c coreAPI) broadcastPerms(ctx context.Context, ch string) (core.BroadcastPerms, error) {
+	return c.a.LoadBroadcastPerms(ctx, ch)
+}
+
+// localEphemeral shows a Slackbot "Only visible to you" message.
+func (c coreAPI) localEphemeral(ch, threadTS, text string) { c.a.LocalEphemeral(ch, threadTS, text) }
