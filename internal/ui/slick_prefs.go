@@ -26,7 +26,6 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/pluginlib"
 	"github.com/some-du6e/yoloslackgoclient/internal/slick"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
@@ -49,7 +48,6 @@ var slickTabs = []struct{ id, label, icon string }{
 	{"slick_plugins", "Plugins", "apps"},
 	{"slick_themes", "Themes", "paintbrush"},
 	{"slick_install", "Install plugins", "download"},
-	{"slick_library", "Library", "bookmark"},
 }
 
 func isSlickTab(id string) bool { return strings.HasPrefix(id, "slick") && slickTabIndex(id) >= 0 }
@@ -89,7 +87,6 @@ type slickPage struct {
 	focusWas      map[*widget.Editor]bool
 	toolbarH      int
 	downloadState string
-	lib           *libraryView // the Library tab
 }
 
 func newSlickPage(a *App) *slickPage {
@@ -162,13 +159,18 @@ func (p *slickPage) colors() slickColors {
 
 // ---- entry ----
 
-// layout draws one of Slick's tabs.
-func (p *slickPage) layout(gtx layout.Context, tab string) layout.Dimensions {
-	if tab != p.tab { // leaving a tab resets its state, like Slick
+// layoutTab enters tab: leaving a tab resets its state, like Slick.
+func (p *slickPage) layoutTab(tab string) {
+	if tab != p.tab {
 		p.tab, p.open, p.filter, p.daysOpen = tab, "", "all", ""
 		p.query.SetText("")
 		p.list.Position = layout.Position{}
 	}
+}
+
+// layout draws one of Slick's tabs.
+func (p *slickPage) layout(gtx layout.Context, tab string) layout.Dimensions {
+	p.layoutTab(tab)
 	s := p.a.Slick()
 	sz := gtx.Constraints.Max
 	if s == nil {
@@ -205,8 +207,6 @@ func (p *slickPage) layout(gtx layout.Context, tab string) layout.Dimensions {
 			p.themes(f, st)
 		case "slick_install":
 			p.install(f, st)
-		case "slick_library":
-			p.library(f, s)
 		}
 		f.gap(24) // panel padding-bottom
 		return layout.Dimensions{Size: image.Pt(sz.X, f.y)}
@@ -216,28 +216,6 @@ func (p *slickPage) layout(gtx layout.Context, tab string) layout.Dimensions {
 		bar.Add(gtx.Ops)
 	}
 	return layout.Dimensions{Size: sz}
-}
-
-// library is Slick > Library: the official Slick plugins (pluginlib), the
-// renderer installed first, then its privileged half.
-func (p *slickPage) library(f *flow, s *slick.Slick) {
-	if p.lib == nil {
-		p.lib = newLibraryView(pluginlib.Slick, p.k)
-	}
-	p.lib.layout(f, libraryHost{
-		installed: s.InstalledSHA256,
-		install: func(ctx context.Context, e pluginlib.Entry, code, main []byte, _ bool) error {
-			if _, err := s.Import(ctx, code); err != nil {
-				return err
-			}
-			if main != nil {
-				if _, err := s.Import(ctx, main); err != nil {
-					return err
-				}
-			}
-			return nil
-		},
-	})
 }
 
 // ---- building blocks ----
@@ -1090,7 +1068,7 @@ func (p *slickPage) mentions(s string) string {
 func (p *slickPage) detail(f *flow, s *slick.Slick, st slick.Settings) {
 	cl := p.colors()
 	f.put(0, func(gtx layout.Context) layout.Dimensions {
-		d, c := p.k.linkButton(gtx, "back", "All plugins", "back")
+		d, c := p.k.linkButtonW(gtx, "back", "All plugins", "back", theme.Bold, 6) // slick-settings__back: 700, gap 6
 		if c {
 			p.open, p.daysOpen = "", ""
 			p.list.Position = p.listBack
