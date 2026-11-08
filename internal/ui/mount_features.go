@@ -111,6 +111,9 @@ func init() {
 		return popups.NewModal(a, popups.ModalOpts{Title: title, Body: body, Width: 800, OnClose: done,
 			Buttons: []*popups.ModalButton{{Label: "Done", Kind: popups.BtnPrimary, Do: func() bool { return true }}}})
 	}
+	mkPrefsModal = func(a *App, title string, body layout.Widget, done func()) Overlay {
+		return popups.NewModal(a, popups.ModalOpts{Title: title, Body: body, Width: 800, HeadH: 76, Flush: true, OnClose: done})
+	}
 	mkTeamMenu = func(a *App, anchor image.Point) Overlay { return popups.NewTeamMenu(a, a.anchor(anchor)) }
 	mkUserMenu = func(a *App, anchor image.Point) Overlay { return popups.NewUserMenu(a, a.anchor(anchor)) }
 	mkChannelMenu = func(a *App, anchor image.Point, ch string) Overlay {

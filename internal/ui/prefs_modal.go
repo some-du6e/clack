@@ -6,6 +6,7 @@ import (
 	"image/color"
 
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
@@ -84,7 +85,11 @@ func (a *App) showPrefs(section string) {
 	if mkAvailability != nil {
 		p.avail = mkAvailability(a)
 	}
-	a.ShowOverlay(mkModal(a, "Preferences", p.layout, p.close))
+	mk := mkModal
+	if mkPrefsModal != nil {
+		mk = mkPrefsModal
+	}
+	a.ShowOverlay(mk(a, "Preferences", p.layout, p.close))
 }
 
 // close unmounts the JS roots the dialog mounted (Taut editors, data
@@ -164,9 +169,14 @@ func (p *prefsModal) tabsProps() slackc.Props {
 // selects currentTabId and reports clicks through onTabChange.
 func (p *prefsModal) tabs(gtx layout.Context, tp slackc.Props) layout.Dimensions {
 	a := p.a
+	// Slack's p-prefs_dialog__layout (800×624 under the 76px header): a 1px
+	// top line, the nav at (16, 17) with 205×29 items every 33px, the page
+	// at (249, 21), 523 wide.
 	w := gtx.Constraints.Max.X
-	navW := gtx.Dp(200)
-	h := gtx.Dp(560)
+	navW := gtx.Dp(205 + 16)
+	h := gtx.Dp(624)
+	theme.Fill(gtx, image.Rect(0, 0, w, max(1, gtx.Dp(1))), a.th.C.Border)
+	navT := op.Offset(image.Pt(gtx.Dp(16), gtx.Dp(17))).Push(gtx.Ops)
 	org := p.org.get(image.Point{})
 	g := gtx
 	g.Constraints = layout.Exact(image.Pt(w, h))
@@ -190,7 +200,7 @@ func (p *prefsModal) tabs(gtx layout.Context, tp slackc.Props) layout.Dimensions
 				p.section = it.id
 				a.Invalidate()
 			}
-			y += gtx.Dp(34)
+			y += gtx.Dp(33)
 		}
 	} else {
 		for i, x := range list {
@@ -221,7 +231,7 @@ func (p *prefsModal) tabs(gtx layout.Context, tp slackc.Props) layout.Dimensions
 				}
 				a.Invalidate()
 			}
-			y += gtx.Dp(34)
+			y += gtx.Dp(33)
 		}
 	}
 	for _, it := range p.extraNav() {
@@ -239,19 +249,21 @@ func (p *prefsModal) tabs(gtx layout.Context, tp slackc.Props) layout.Dimensions
 			p.section = it.id
 			a.Invalidate()
 		}
-		y += gtx.Dp(34)
+		y += gtx.Dp(33)
 	}
 	ms.Leave()
+	navT.Pop()
 
-	pageW := w - navW
-	at(gtx, image.Pt(navW, 0), image.Pt(pageW, h), func(gtx layout.Context) layout.Dimensions {
+	pageX, pageY := gtx.Dp(249), gtx.Dp(21)
+	pageW := w - pageX - gtx.Dp(28)
+	at(gtx, image.Pt(pageX, pageY), image.Pt(pageW, h-pageY), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min = image.Point{}
 		ps := clsPrefsPanel.Enter(gtx, 0, 0)
 		defer ps.Leave()
 		if !ownContent {
 			return slackc.LayoutElement(gtx, content)
 		}
-		return p.section1(gtx, cur, org.Add(image.Pt(navW, 0)))
+		return p.section1(gtx, cur, org.Add(image.Pt(pageX, pageY)))
 	})
 	return layout.Dimensions{Size: image.Pt(w, h)}
 }
@@ -352,13 +364,14 @@ func (p *prefsModal) navItem(gtx layout.Context, y, navW int, id, label string, 
 	if st.Hidden() {
 		return false
 	}
-	at(gtx, image.Pt(0, y), image.Pt(navW-gtx.Dp(16), gtx.Dp(32)), func(gtx layout.Context) layout.Dimensions {
+	ih := gtx.Dp(29) // Slack: 205×29, radius 4, 15px icon at (9, 7), label at x 32
+	at(gtx, image.Pt(0, y), image.Pt(navW-gtx.Dp(16), ih), func(gtx layout.Context) layout.Dimensions {
 		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
 			return clickArea(gtx, b, func(gtx layout.Context, s image.Point, hov bool) {
 				if cur {
-					theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(6), c.Link)
+					theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(4), c.Link)
 				} else if hov {
-					theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(6), c.BgHover)
+					theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(4), c.BgHover)
 				}
 			}, func(gtx layout.Context) layout.Dimensions {
 				fg := c.Fg
@@ -367,19 +380,19 @@ func (p *prefsModal) navItem(gtx layout.Context, y, navW int, id, label string, 
 				}
 				fg = st.Color(fg)
 				if icon != "" {
-					at(gtx, image.Pt(gtx.Dp(10), gtx.Dp(8)), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
-						return icons.Get(icon)(gtx, 16, fg)
+					at(gtx, image.Pt(gtx.Dp(9), gtx.Dp(7)), image.Pt(gtx.Dp(15), gtx.Dp(15)), func(gtx layout.Context) layout.Dimensions {
+						return icons.Get(icon)(gtx, 15, fg)
 					})
 				}
-				at(gtx, image.Pt(gtx.Dp(34), 0), image.Pt(navW, gtx.Dp(32)), func(gtx layout.Context) layout.Dimensions {
-					return vcenter(gtx, gtx.Dp(32), func(gtx layout.Context) layout.Dimensions {
+				at(gtx, image.Pt(gtx.Dp(32), 0), image.Pt(navW, ih), func(gtx layout.Context) layout.Dimensions {
+					return vcenter(gtx, ih, func(gtx layout.Context) layout.Dimensions {
 						if lel != nil {
 							return slackc.LayoutElement(gtx, *lel)
 						}
 						return a.th.Label(gtx, st.FontSize(15), theme.Regular, fg, label)
 					})
 				})
-				return layout.Dimensions{Size: image.Pt(navW-gtx.Dp(16), gtx.Dp(32))}
+				return layout.Dimensions{Size: image.Pt(navW-gtx.Dp(16), ih)}
 			})
 		})
 	})
@@ -402,7 +415,7 @@ func (p *prefsModal) page(gtx layout.Context, sec string) layout.Dimensions {
 	y := 0
 	heading := func(t string) {
 		at(gtx, image.Pt(0, y), image.Pt(w, gtx.Dp(24)), func(gtx layout.Context) layout.Dimensions {
-			return a.th.Label(gtx, 15, theme.Black, c.Fg, t)
+			return a.th.Label(gtx, 18, theme.Bold, c.Fg, t) // Slack's section h2: 700 18px/24
 		})
 		y += gtx.Dp(30)
 	}

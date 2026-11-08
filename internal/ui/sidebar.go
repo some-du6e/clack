@@ -206,7 +206,7 @@ func (a *App) layoutSidebarNative(gtx layout.Context, p slackc.Props) layout.Dim
 		})
 	})
 	if clicked(a.clicks.get("sb.team")) {
-		a.openTeamMenu(image.Pt(gtx.Dp(theme.RailW)+gtx.Dp(16), gtx.Dp(theme.TopNavH)+gtx.Dp(42)))
+		a.openTeamMenu(image.Pt(gtx.Dp(theme.RailW)-gtx.Dp(12), gtx.Dp(theme.TopNavH)+gtx.Dp(51))) // Slack: menu at (58, 91)
 	}
 	for i, b := range []string{"compose", "settings"} {
 		x := sz.X - gtx.Dp(8) - gtx.Dp(28)*(i+1) - gtx.Dp(6)*i
