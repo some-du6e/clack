@@ -8,6 +8,7 @@ import (
 	"image"
 	"os"
 	"os/exec"
+	"time"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/uiguard"
 )
@@ -31,6 +32,9 @@ func write(ctx context.Context, img image.Image) error {
 	// stdout pipe is attached, so Run doesn't wait for the child.
 	c := exec.CommandContext(ctx, args[0], args[1:]...)
 	c.Stdin = bytes.NewReader(data)
+	// The forked server child may keep our stdin pipe open: without
+	// WaitDelay, Run could wait on it forever (TestEveryExecSetsWaitDelay).
+	c.WaitDelay = 2 * time.Second
 	return c.Run()
 }
 
