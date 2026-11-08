@@ -361,7 +361,7 @@ func (v *View) layoutBlock(gtx layout.Context, b *blk, first bool) layout.Dimens
 		pad := gtx.Dp(16)
 		ex := pad
 		if b.emoji != nil {
-			ex += gtx.Dp(30)
+			ex += gtx.Dp(32)
 		}
 		m := op.Record(gtx.Ops)
 		kh := v.layoutKids(gtx, b.kids, ex, w-ex-pad)
@@ -369,7 +369,7 @@ func (v *View) layoutBlock(gtx layout.Context, b *blk, first bool) layout.Dimens
 			func() {
 				defer op.Offset(image.Pt(pad, pad)).Push(gtx.Ops).Pop()
 				g := gtx
-				g.Constraints = layout.Constraints{Max: image.Pt(gtx.Dp(24), gtx.Dp(30))}
+				g.Constraints = layout.Constraints{Max: image.Pt(gtx.Dp(40), gtx.Dp(30))}
 				b.emoji.Layout(g, v.styles.body, v.handler)
 			}()
 		}
