@@ -1,9 +1,11 @@
 package popups
 
 import (
+	"context"
 	"image"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"gioui.org/io/event"
 	"gioui.org/io/key"
@@ -56,9 +58,44 @@ const (
 	epCols         = 9
 )
 
-// EmojiPickerSize is the picker card size in dp (361×518), for callers
-// that anchor it.
-func EmojiPickerSize() image.Point { return image.Pt(epW, epH) }
+// EmojiPickerSize is the picker card size in dp (361×518 with the
+// "Emoji | GIFs" row, 361×468 without it), for callers that anchor it.
+func EmojiPickerSize() image.Point { return image.Pt(epW, epH-epTopH+gifRowH()) }
+
+// gifAvail is whether Slack's GIF picker is available to this account:
+// 0 unknown, 1 yes, 2 no, 3 probing. Slack hides the "Emoji | GIFs" row
+// unless the (enterprise) allow_native_gif_picker pref is on; Clack can't
+// read the enterprise pref, so it asks gif.featured once (Hack Club:
+// team_is_restricted, and Slack shows no GIF row there).
+var gifAvail atomic.Int32
+
+// gifRowH is the height (dp) of the "Emoji | GIFs" row: 0 until GIFs are
+// known to work.
+func gifRowH() int {
+	if gifAvail.Load() == 1 {
+		return epTopH
+	}
+	return 0
+}
+
+// probeGifs checks once whether gif.featured answers.
+func (p *EmojiPicker) probeGifs() {
+	if !gifAvail.CompareAndSwap(0, 3) {
+		return
+	}
+	h := p.h
+	run(h, func(ctx context.Context) (bool, error) {
+		_, _, err := cxGifs(ctx, h, "", "", 1)
+		return err == nil, nil
+	}, func(ok bool, _ error) {
+		if ok {
+			gifAvail.Store(1)
+		} else {
+			gifAvail.Store(2)
+		}
+		h.Invalidate()
+	})
+}
 
 // epRow is one list row: a group heading (n == 0) or up to 9 emoji
 // lists[list][start : start+n]. y is the row's top in px.
@@ -178,6 +215,7 @@ type EmojiPicker struct {
 
 	// GIFs tab (emoji_gif.go)
 	gifMode      bool
+	topH         int // dp height of the "Emoji | GIFs" row this frame (0 when GIFs are unavailable)
 	gif          gifPanel
 	onGif        func(g Gif)
 	gifCh, gifTS string
@@ -674,9 +712,15 @@ func (p *EmojiPicker) layoutCard(gtx layout.Context, _ slackc.Props) layout.Dime
 	th := p.h.Theme()
 	cl := colorsOf(th)
 	win := p.win
-	sz := image.Pt(dp(gtx, epW), dp(gtx, epH))
+	p.probeGifs()
+	top := gifRowH()
+	if p.gifMode {
+		top = epTopH
+	}
+	p.topH = top
+	sz := image.Pt(dp(gtx, epW), dp(gtx, epH-epTopH+top))
 	if mh := win.Y - 2*dp(gtx, 8); sz.Y > mh {
-		sz.Y = maxInt(mh, dp(gtx, epListY+epFootH+epRowH*2))
+		sz.Y = maxInt(mh, dp(gtx, epListY-epTopH+top+epFootH+epRowH*2))
 	}
 	pos := p.position(gtx, sz, win)
 	p.rect = image.Rectangle{Min: pos, Max: pos.Add(sz)}
@@ -740,14 +784,16 @@ func (p *EmojiPicker) layoutBody(gtx layout.Context, th *theme.Theme, cl *Colors
 	}
 
 	cs := clipRRect(gtx, local, rad)
-	p.layoutTop(gtx, th, cl, sz.X)
+	if p.topH > 0 {
+		p.layoutTop(gtx, th, cl, sz.X)
+	}
 	p.layoutCats(gtx, th, cl)
-	at(gtx, image.Pt(dp(gtx, epInputX), dp(gtx, epInputY)), func(gtx layout.Context) layout.Dimensions {
+	at(gtx, image.Pt(dp(gtx, epInputX), dp(gtx, epInputY-epTopH+p.topH)), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Exact(image.Pt(sz.X-2*dp(gtx, epInputX), dp(gtx, epInputH)))
 		return field(gtx, th, &p.ed, "Search all emoji", "", epInputH, 15)
 	})
 	foot := dp(gtx, epFootH)
-	p.layoutList(gtx, th, cl, image.Rect(0, dp(gtx, epListY), sz.X, sz.Y-foot))
+	p.layoutList(gtx, th, cl, image.Rect(0, dp(gtx, epListY-epTopH+p.topH), sz.X, sz.Y-foot))
 	p.layoutFooter(gtx, th, cl, image.Rect(0, sz.Y-foot, sz.X, sz.Y))
 	cs.Pop()
 	if tab := p.activeTab(); tab != p.drawnTab {
@@ -806,7 +852,7 @@ func (p *EmojiPicker) layoutCats(gtx layout.Context, th *theme.Theme, cl *Colors
 	ig := dp(gtx, 20)
 	for i := 0; i < epNumGroups; i++ {
 		x := dp(gtx, epCatX) + i*dp(gtx, epCatStep)
-		at(gtx, image.Pt(x, dp(gtx, epCatY)), func(gtx layout.Context) layout.Dimensions {
+		at(gtx, image.Pt(x, dp(gtx, epCatY-epTopH+p.topH)), func(gtx layout.Context) layout.Dimensions {
 			d := clickBox(gtx, &p.cats[i], func(gtx layout.Context, s image.Point, hovered bool) {
 				switch {
 				case i == active:
