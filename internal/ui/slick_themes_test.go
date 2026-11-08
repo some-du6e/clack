@@ -43,6 +43,7 @@ type svThemeWant struct {
 	modeless            bool   // no "mode": applies in light and dark
 	composerIsPane      bool   // the composer's background is the pane's
 	skipHeader, skipBox bool
+	paneFromCSS         bool // the pane is a raw CSS background, not the vars'
 }
 
 // Values copied from Slick's themes/*.json (main, 2026-11-08); the test
@@ -53,6 +54,10 @@ var svThemeWants = []svThemeWant{
 	{id: "catppuccin-mocha", chrome: "#11111b", sidebar: "#181825", pane: "#1e1e2e", header: "#1e1e2e", composer: "#181825", border: "#45475a", text: "#cdd6f4"},
 	{id: "nord", chrome: "#2e3440", sidebar: "#3b4252", pane: "#2e3440", header: "#2e3440", composer: "#3b4252", border: "#4c566a", text: "#eceff4"},
 	{id: "gruvbox-dark", chrome: "#1d2021", sidebar: "#32302f", pane: "#282828", header: "#282828", composer: "#32302f", border: "#504945", text: "#ebdbb2"},
+	// Material paints the primary view and message pane with its own
+	// --slick-material-background (raw CSS, not --sk_primary_background)
+	// and floats the header and composer on lighter surfaces.
+	{id: "material", paneFromCSS: true, chrome: "#1c1f2a", sidebar: "#1c1f2a", pane: "#1c1f2a", header: "#262b3c", composer: "#2e3449", text: "#dbe0e6"},
 	{id: "hot-dog-stand", modeless: true, chrome: "#ff0000", sidebar: "#ffff00", pane: "#ff0000", header: "#ffff00", composer: "#cc0000", border: "#cccc00", text: "#ffff00"},
 }
 
@@ -353,7 +358,7 @@ func TestSlickViewThemes(t *testing.T) {
 
 	for _, w := range svThemeWants {
 		j := svReadTheme(t, e.dir, w.id)
-		if pane, ok := svPaneOf(j); ok && !svNear(pane, parseHexColor(w.pane), 1) {
+		if pane, ok := svPaneOf(j); ok && !w.paneFromCSS && !svNear(pane, parseHexColor(w.pane), 1) {
 			t.Errorf("%s: upstream pane is %s now, the test expects %s", w.id, svHex(pane), w.pane)
 		}
 		if (j.Mode == "") != w.modeless {
@@ -443,9 +448,10 @@ func TestSlickViewEveryTheme(t *testing.T) {
 				t.Fatal(err)
 			}
 			pane, hasPane := svPaneOf(j)
-			e.until(15*time.Second, tag, func() bool {
-				return e.s.ThemeApplies() && (!hasPane || e.a.th.C.Bg == pane)
-			})
+			e.until(15*time.Second, tag, func() bool { return e.s.ThemeApplies() && e.a.th.Tokens != nil })
+			for i := 0; i < 3; i++ {
+				e.frame()
+			}
 			img := sh.shot()
 			sh.save("every-"+strings.ReplaceAll(tag, "/", "-"), img)
 			r := e.regions()
