@@ -36,17 +36,18 @@ func TestNativeKeepsFocusAcrossTrees(t *testing.T) {
 			}
 			slots := map[string]int64{}
 			defer releaseSlots(slots)
+			// each slot under its own prop path: fnSlot keeps one id per
+			// path, so a shared path would hand the second native the
+			// first one's id
 			slotID := func(name string, p Props, n Native) string {
-				js := encodeProps(Props{"x": Child(name, p, n)}, slots)
-				var enc struct {
-					X struct {
-						ID int64 `json:"$slot"`
-					} `json:"x"`
+				js := encodeProps(Props{name: Child(name, p, n)}, slots)
+				var enc map[string]struct {
+					ID int64 `json:"$slot"`
 				}
 				if err := json.Unmarshal(js, &enc); err != nil {
 					t.Fatal(err)
 				}
-				return strconv.FormatInt(enc.X.ID, 10)
+				return strconv.FormatInt(enc[name].ID, 10)
 			}
 			texty := slotID("Texty", nil, editor)
 			inner := `{"t":"@","n":"Texty","k":3,"p":{"$slot":` + texty + `}}`
