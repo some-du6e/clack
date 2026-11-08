@@ -60,7 +60,9 @@ func TestPrepareMacDMG(t *testing.T) {
 	if out, _ := exec.Command("hdiutil", "info").Output(); len(out) > 0 && strings.Contains(string(out), filepath.Base(dmg)) {
 		t.Errorf("dmg still attached:\n%s", out)
 	}
+	realRun := runCmd
 	rc := record(t) // don't really `open` the app
+	runCmd = realRun // but do run ditto for the zip below
 	if err := applyPlan(Plan{Swap: p.Swap, Stage: p.Stage, Relaunch: p.Relaunch}, time.Second); err != nil {
 		t.Fatal(err)
 	}

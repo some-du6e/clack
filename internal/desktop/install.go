@@ -326,7 +326,7 @@ func StartHelper(plan Plan) error {
 func ApplyUpdate(planPath string) error {
 	if f, err := os.OpenFile(filepath.Join(filepath.Dir(planPath), "update.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
 		prev := log.Writer()
-		log.SetOutput(io.MultiWriter(os.Stderr, f))
+		log.SetOutput(io.MultiWriter(f, os.Stderr)) // the file first: a windowsgui exe has no stderr, and MultiWriter stops at the first error
 		defer func() { log.SetOutput(prev); f.Close() }()
 	}
 	b, err := os.ReadFile(planPath)
