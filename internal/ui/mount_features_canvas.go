@@ -5,8 +5,10 @@ package ui
 // after mount_features.go so its init runs later and wraps mkPage.
 
 import (
+	"context"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/canvasview"
 )
@@ -140,4 +142,148 @@ func (a *App) canvasTabView(ch string) View {
 		views[key] = v
 	}
 	return v
+}
+
+// ---- creating and sharing (stage 3) ----
+
+func init() {
+	canvasShare = (*App).shareCanvasMenu
+}
+
+// newChannelCanvas is the channel tab bar's "+" > Canvas: a channel canvas
+// tab (conversations.canvases.create) that opens once the tab bar reloads.
+func (a *App) newChannelCanvas(ch string) {
+	c := a.Core()
+	if c == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		id, err := c.CreateCanvas(ctx, ch, "", "")
+		a.Post(func() {
+			if err != nil {
+				a.Toast("Couldn't create the canvas: " + err.Error())
+				return
+			}
+			if a.data != nil {
+				delete(a.data.fetched, ch)
+				a.data.opened(ch)
+			}
+			a.pendingCanvasTab(ch, id)
+		})
+	}()
+}
+
+// pendingCanvasTab selects ch's tab for canvas id as soon as it is listed.
+func (a *App) pendingCanvasTab(ch, id string) {
+	tries := 0
+	var check func()
+	check = func() {
+		for i, t := range a.channelTabs(ch) {
+			if t.fileID == id {
+				if a.chTab == nil {
+					a.chTab = map[string]int{}
+				}
+				a.chTab[ch] = i
+				a.Invalidate()
+				return
+			}
+		}
+		if tries++; tries < 40 {
+			time.AfterFunc(250*time.Millisecond, func() { a.Post(check) })
+		}
+	}
+	check()
+}
+
+// addTabMenu is the tab bar's "+": Slack offers a canvas, a list and more.
+func (a *App) addTabMenu(ch string) {
+	a.menu(a.PointerPos(), []MenuItem{
+		{Label: "Canvas", Icon: "canvas", Do: func() { a.newChannelCanvas(ch) }},
+		{Label: "List", Icon: "list-tab", Do: func() { a.Toast("Adding lists isn't supported yet") }},
+	})
+}
+
+// CreateCanvas is Files' "+ New Canvas": a standalone canvas, opened in
+// full view.
+func (a *App) CreateCanvas() {
+	c := a.Core()
+	if c == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		id, err := c.CreateCanvas(ctx, "", "", "")
+		a.Post(func() {
+			if err != nil {
+				a.Toast("Couldn't create the canvas: " + err.Error())
+				return
+			}
+			a.OpenCanvasFull(id)
+		})
+	}()
+}
+
+// shareCanvasMenu is the canvas's Share: pick a conversation from the
+// sidebar, then the access it gets; Clack sets it and posts the link.
+func (a *App) shareCanvasMenu(id string) {
+	m := a.model()
+	var items []MenuItem
+	seen := map[string]bool{}
+	for _, s := range m.Sections {
+		for _, cid := range s.Rows {
+			c := m.conv(cid)
+			if c == nil || seen[cid] || c.Archived || c.Preview {
+				continue
+			}
+			seen[cid] = true
+			cid, name := cid, c.displayName()
+			icon := "hash"
+			switch c.Kind {
+			case "private":
+				icon = "lock"
+			case "im", "mpim":
+				icon = "dms"
+			}
+			items = append(items, MenuItem{Label: name, Icon: icon, Do: func() { a.shareCanvasAccess(id, cid, name) }})
+			if len(items) == 12 {
+				break
+			}
+		}
+		if len(items) == 12 {
+			break
+		}
+	}
+	if len(items) == 0 {
+		a.Toast("No conversations to share to")
+		return
+	}
+	a.menu(a.PointerPos(), append([]MenuItem{{Label: "Share canvas to…", Disabled: true}}, items...))
+}
+
+func (a *App) shareCanvasAccess(id, ch, name string) {
+	share := func(level string) {
+		c := a.Core()
+		if c == nil {
+			return
+		}
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			err := c.ShareCanvas(ctx, id, []string{ch}, level, "")
+			a.Post(func() {
+				if err != nil {
+					a.Toast("Couldn't share the canvas: " + err.Error())
+					return
+				}
+				a.Toast("Canvas shared to " + name)
+			})
+		}()
+	}
+	a.menu(a.PointerPos(), []MenuItem{
+		{Label: "Can edit", Icon: "edit", Do: func() { share("write") }},
+		{Label: "Can view", Icon: "eye", Do: func() { share("read") }},
+	})
 }

@@ -227,7 +227,11 @@ func (f *Files) update(gtx C) {
 		f.h.Toast("File settings aren't supported yet")
 	}
 	if f.plus.Clicked(gtx) || f.newBtn.Clicked(gtx) || f.emptyNew.Clicked(gtx) {
-		f.h.Toast("Creating canvases and lists isn't supported yet")
+		if cc, ok := f.h.(interface{ CreateCanvas() }); ok && filesNav[f.nav].kind != "lists" {
+			cc.CreateCanvas()
+		} else {
+			f.h.Toast("Creating lists isn't supported yet")
+		}
 	}
 	if f.tplToggle.Clicked(gtx) {
 		f.tplOpen = !f.tplOpen

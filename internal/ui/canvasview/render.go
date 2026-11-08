@@ -400,7 +400,7 @@ func (v *View) layoutBlock(gtx layout.Context, b *blk, first bool) layout.Dimens
 		}
 		d := b.rv.Layout(g, st, v.handler)
 		h = d.Size.Y
-		if k.IsText() && v.edit.canEdit(v) {
+		if (k.IsText() || k == canvas.Code) && v.edit.canEdit(v) {
 			v.edit.textArea(gtx, v, b, image.Rect(0, 0, w, h))
 		}
 	}
@@ -425,12 +425,33 @@ func (v *View) layoutKids(gtx layout.Context, kids []*blk, x, w int) int {
 // layoutItem draws a list item: its marker (bullet, number, checkbox) in
 // the gutter at its level, then its text.
 func (v *View) layoutItem(gtx layout.Context, b *blk, w int) int {
-	th := v.h.Theme()
-	c := &th.C
 	x := gtx.Dp(indentDp) * b.b.Level
 	gut := gtx.Dp(indentDp)
 	tx := x + gut
 	lineH := gtx.Dp(bodyLine)
+	v.drawMarker(gtx, b, x, lineH)
+	g := gtx
+	g.Constraints = layout.Constraints{Max: image.Pt(max(1, w-tx), gtx.Constraints.Max.Y)}
+	h := lineH
+	func() {
+		defer op.Offset(image.Pt(tx, 0)).Push(gtx.Ops).Pop()
+		if b.rv != nil {
+			d := b.rv.Layout(g, v.styles.body, v.handler)
+			h = max(h, d.Size.Y)
+		}
+		if v.edit.canEdit(v) {
+			v.edit.textArea(gtx, v, b, image.Rect(0, 0, w-tx, h))
+		}
+	}()
+	return h
+}
+
+// drawMarker draws a list item's bullet, number or checkbox in the gutter
+// at x (one indentDp wide), centred on the first line (lineH).
+func (v *View) drawMarker(gtx layout.Context, b *blk, x, lineH int) {
+	th := v.h.Theme()
+	c := &th.C
+	gut := gtx.Dp(indentDp)
 	switch b.b.Kind {
 	case canvas.Bullet:
 		marks := []string{"•", "◦", "▪"}
@@ -476,20 +497,6 @@ func (v *View) layoutItem(gtx layout.Context, b *blk, w int) int {
 			v.edit.toggleCheck(v, b)
 		}
 	}
-	g := gtx
-	g.Constraints = layout.Constraints{Max: image.Pt(max(1, w-tx), gtx.Constraints.Max.Y)}
-	h := lineH
-	func() {
-		defer op.Offset(image.Pt(tx, 0)).Push(gtx.Ops).Pop()
-		if b.rv != nil {
-			d := b.rv.Layout(g, v.styles.body, v.handler)
-			h = max(h, d.Size.Y)
-		}
-		if v.edit.canEdit(v) {
-			v.edit.textArea(gtx, v, b, image.Rect(0, 0, w-tx, h))
-		}
-	}()
-	return h
 }
 
 // ordinal numbers an item the way Quip does per level: 1. a. i.

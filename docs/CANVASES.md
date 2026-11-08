@@ -81,6 +81,21 @@ The `id` attributes (`temp:C:…`) are Quip section ids. They are the same ids `
 
 Canvas markdown (`internal/canvas/markdown.go`): `#`/`##`/`###`, `- `, `1. `, `- [ ] `/`- [x] `, two spaces per nesting level, `> `, fenced code, `---`, pipe tables, `**bold**`, `_italic_`, `~strike~`, `` `code` ``, `[text](url)`, `![](@U…)` / `![](#C…)` mentions, `:emoji:`, `@here`.
 
+**Editing in the UI** (`internal/ui/canvasview/edit.go`, `picker.go`). Only canvases whose `files.info` says `editable` can be edited.
+- **Opening a block for editing:** clicking a paragraph, heading, list item or code block (not on a link or mention) turns it into the composer's rich editor. A list item keeps its gutter marker at its level.
+- **Toolbar:** while editing, it floats at the top of the document: bold, italic, strike, code, link, H1/H2/H3/text, bulleted/numbered/checklist, quote, code block, @ mention, emoji.
+- **Enter** adds a line below in the same editor; a list stays a list, a checklist adds an unticked item.
+- **Saving:** Escape, Ctrl/Cmd+Enter, or a click elsewhere saves the whole edit as one `canvases.edit`. That is a `replace` of the section with the lines' markdown, or a `delete` if the block was emptied; an unchanged block sends nothing. The view updates at once, and a failed save shows a toast and reloads.
+- **Adding a block:** clicking the empty space under the last block types a new one (`insert_after` the last section).
+- **Markdown shortcuts at the start of a block:** `# ` `## ` `### ` headings, `[] ` / `[x] ` checklist, plus the composer's own `- `, `1. `, `> `, ` ``` ` and *bold* _italic_ ~strike~ `code`.
+- **Mentions:** `@name` searches people (core's directory search; `@here`, `@channel`, `@everyone` too) and `#name` channels. Up/Down/Enter/Tab or a click inserts a pill, which saves as `![](@U…)` / `![](#C…)`. The emoji button opens the shell's emoji picker.
+- **Checklists:** ticking a box is its own `replace` of that item (`- [x] …`).
+- **Rename:** click the title, or More actions → Rename canvas. Enter or clicking away saves (`rename`); Escape cancels.
+- **Create:** the channel tab bar's "+" → Canvas (`conversations.canvases.create`; the new tab opens once the tab bar reloads), and Files' "+ New Canvas" (`canvases.create`, opened in full view).
+- **Share:** in full view, Share or More actions → Share canvas lists the sidebar's conversations, then "Can edit" / "Can view" (`canvases.access.set`, then the link is posted).
+
+**Not supported yet:** editing tables, images, columns, callouts and embeds (they render, but don't open in the editor), inserting images or files, comments, version history, templates, deleting a canvas, Lists, and sending cursors (`document_change`). The link button only links selected text that is itself an address (there's no link dialog yet). The export has mention names but no ids, so a mention that was already in the canvas saves back as plain "@name" text if its block is edited.
+
 ## Plugins
 
 In the library, only Slick's NoUpsell touches canvas UI: it hides `CanvasAskSlackbotButton` / `[data-qa="canvas_ask_slackbot_button"]`. Clack draws no Ask Slackbot button, so there is nothing to hide. HaikuWarning's comment about canvas links (sent as the file id) is about the composer. HuddleActivity's `huddlesCanvas` and BetterHuddles' `canvas_thread_ts` are huddle state. None of them break.

@@ -445,7 +445,7 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 		return iconButton(gtx, a.clicks.get("tab.add"), "plus", 28, 18, c.FgMuted, c.BgHover, 6)
 	})
 	if clicked(a.clicks.get("tab.add")) {
-		a.Toast("Adding canvases and lists isn't supported yet")
+		a.addTabMenu(ch) // mount_features_canvas.go
 	}
 	return layout.Dimensions{Size: sz}
 }

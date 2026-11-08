@@ -45,6 +45,8 @@ type View struct {
 	handler *handler
 	edit    *editState
 
+	queue []func() // post: run on the UI goroutine at the next frame
+
 	live     atomic.Bool  // files.open sent, watching events
 	lastSeen atomic.Int64 // unix ms of the last frame that drew the view
 	stop     context.CancelFunc
@@ -52,7 +54,7 @@ type View struct {
 
 // New returns a view of canvas id. It loads on its first frame.
 func New(h Host, id string, mode Mode, act Actions) *View {
-	v := &View{h: h, id: id, mode: mode, act: act, btns: map[string]*widget.Clickable{}}
+	v := &View{h: h, id: id, mode: mode, act: act, btns: map[string]*widget.Clickable{}, edit: newEditState()}
 	v.list.Axis = layout.Vertical
 	v.handler = &handler{v: v}
 	return v
@@ -192,9 +194,24 @@ func (v *View) btn(key string) *widget.Clickable {
 	return b
 }
 
+// post runs f on the UI goroutine at the next frame (safe from any goroutine).
+func (v *View) post(f func()) {
+	v.mu.Lock()
+	v.queue = append(v.queue, f)
+	v.mu.Unlock()
+	v.h.Invalidate()
+}
+
 // Layout draws the view filling the constraints.
 func (v *View) Layout(gtx layout.Context) layout.Dimensions {
 	v.lastSeen.Store(time.Now().UnixMilli())
+	v.mu.Lock()
+	q := v.queue
+	v.queue = nil
+	v.mu.Unlock()
+	for _, f := range q {
+		f()
+	}
 	v.mu.Lock()
 	started := v.gen > 0
 	d, err, loading := v.doc, v.err, v.loading
@@ -445,13 +462,16 @@ func (v *View) layoutDoc(gtx layout.Context, d *core.CanvasDoc) layout.Dimension
 	x0, cw := v.column(gtx, sz.X)
 	n := len(v.blocks) + 2 // header, blocks, bottom space
 	v.edit.events(gtx, v)
+	defer v.edit.layoutFloatingToolbar(gtx, v)
 	return v.list.Layout(gtx, n, func(gtx layout.Context, i int) layout.Dimensions {
 		gtx.Constraints.Min.X = sz.X
 		switch {
 		case i == 0:
 			return v.layoutHeader(gtx, d, x0, cw)
 		case i == n-1:
-			return layout.Dimensions{Size: image.Pt(sz.X, gtx.Dp(96))}
+			below := image.Pt(sz.X, max(gtx.Dp(96), sz.Y/3))
+			v.edit.belowArea(gtx, v, below)
+			return layout.Dimensions{Size: below}
 		}
 		b := v.blocks[i-1]
 		defer op.Offset(image.Pt(x0, 0)).Push(gtx.Ops).Pop()
