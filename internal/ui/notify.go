@@ -1,5 +1,7 @@
 package ui
 
+import "github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
+
 // notifier posts desktop notifications (D-Bus on Linux, no-op elsewhere).
 type notifier interface {
 	Notify(title, body string) error
@@ -13,6 +15,9 @@ func (nopNotifier) Notify(string, string) error { return nil }
 func (a *App) Notify(title, body string) {
 	if !a.notifyOn() {
 		return
+	}
+	if uipref.Get().NoTextInNotifications { // Notifications: no message preview
+		body = ""
 	}
 	if a.notify == nil {
 		a.notify = newNotifier()

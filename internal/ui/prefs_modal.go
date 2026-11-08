@@ -14,9 +14,10 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
-// prefsModal is the one Preferences dialog: Slack's left nav with
-// Availability (ui-popups' page), Notifications, Navigation and Appearance.
-// Changes apply immediately, like Slack.
+// prefsModal is the one Preferences dialog: Slack's left nav with its
+// sections in Slack's order (Availability is ui-popups' page, the rest are
+// prefs_sections.go and prefs_appearance.go). Changes apply immediately,
+// like Slack.
 type prefsModal struct {
 	a       *App
 	clicks  map[string]*widget.Clickable
@@ -27,6 +28,11 @@ type prefsModal struct {
 	slick   *slickPage             // Preferences > Slick's tabs
 	tabSubs map[string]*slackc.Sub // plugin Preferences tabs (RenderPreferencesTab)
 	tabGen  int                    // App.tautGen the tab subs belong to
+
+	pend      map[string]any // values just written, shown until the write lands
+	scroll    prefsScroll    // the page
+	scrollFor string         // the section scroll belongs to
+	navScroll prefsScroll
 }
 
 // pagePositioned is a page widget that needs its window origin (dropdowns).
@@ -37,14 +43,38 @@ type pagePositioned interface {
 
 var mkAvailability func(a *App) pagePositioned
 
-// prefsNav is Slack's tabs[] for the dialog. The last id must be
-// "advanced": Taut appends its own tabs only to the Preferences Tabs.
+// prefsNav is Slack's tabs[] for the dialog, in Slack's order. The last
+// id must be "advanced": Taut appends its own tabs only to the Preferences
+// Tabs. Clack's first ids (navigation, appearance) stay; the rest are
+// Slack's own tab ids, and Slack's ids for those two are aliases
+// (prefsAliases). slackIcon is Slack's svgIcon name.
 var prefsNav = []struct{ id, label, icon, slackIcon string }{
 	{"availability", "Availability", "clock", "clock"},
 	{"notifications", "Notifications", "bell", "notifications"},
-	{"navigation", "Navigation", "sidebar", "sidebar"},
+	{"vip", "VIP", "vip", "vip"},
+	{"navigation", "Navigation", "sidebar", "navigation-tabs-vertical"},
+	{"sidebar", "Home", "home", "home"},
 	{"appearance", "Appearance", "edit", "paintbrush"},
+	{"messages_media", "Messages & media", "threads", "threads"},
+	{"language_region", "Language & region", "globe", "globe"},
+	{"accessibility", "Accessibility", "laptop", "laptop"},
+	{"mark_as_read", "Mark as read", "check-circle", "check-circle"},
+	{"video_audio", "Audio & video", "video", "video"},
+	{"salesforce", "Salesforce", "cloud", "sf-cloud"},
+	{"connected_accounts", "Connected accounts", "plug", "plug"},
+	{"privacy_visibility", "Privacy & visibility", "lock", "lock"},
 	{"advanced", "Advanced", "settings", "settings"},
+}
+
+// prefsAliases maps Slack's tab ids for sections Clack named first.
+var prefsAliases = map[string]string{"tab_rail": "navigation", "themes": "appearance"}
+
+// prefsSection is the section id to show for a requested one.
+func prefsSection(id string) string {
+	if v, ok := prefsAliases[id]; ok {
+		return v
+	}
+	return id
 }
 
 // Slack's Preferences classes (taut's settings CSS targets them).
@@ -74,6 +104,7 @@ func (a *App) openPrefsSection(section string) {
 // "taut", or a plugin tab id). It is openPrefsModal's native and
 // UIHooks.OpenPreferences.
 func (a *App) showPrefs(section string) {
+	section = prefsSection(section)
 	if section == "" {
 		section = "notifications"
 	}
@@ -158,7 +189,7 @@ func (p *prefsModal) tabsProps() slackc.Props {
 		"currentTabId": p.section,
 		"collapsible":  true,
 		"onTabChange": func(id string) {
-			p.section = id
+			p.section = prefsSection(id)
 			p.a.Invalidate()
 		},
 	}
@@ -187,70 +218,77 @@ func (p *prefsModal) tabs(gtx layout.Context, tp slackc.Props) layout.Dimensions
 	cur := p.section
 	var list []any
 	if tp != nil {
-		cur = tp.StrOr("currentTabId", cur)
+		cur = prefsSection(tp.StrOr("currentTabId", cur))
 		list = tp.List("tabs")
 	}
 	var content slackc.Element
 	ownContent := true
 	ms := clsPrefsMenu.Enter(gtx, 0, 0)
-	y := 0
-	if list == nil {
-		for _, it := range prefsNav {
+	// 15 sections plus Taut's and Slick's tabs outgrow the dialog: the
+	// nav scrolls.
+	ng := gtx
+	ng.Constraints = layout.Constraints{Max: image.Pt(navW, h-gtx.Dp(17))}
+	p.navScroll.layout(ng, func(gtx layout.Context) layout.Dimensions {
+		y := 0
+		if list == nil {
+			for _, it := range prefsNav {
+				if p.navItem(gtx, y, navW, it.id, it.label, nil, it.icon, cur == it.id) {
+					p.section = it.id
+					a.Invalidate()
+				}
+				y += gtx.Dp(33)
+			}
+		} else {
+			for i, x := range list {
+				t, _ := x.(slackc.Props)
+				if t == nil {
+					continue
+				}
+				id := t.StrOr("id", "tab-"+itoa(i))
+				label := t.StrOr("label", "")
+				var lel *slackc.Element
+				if e, ok := t.Elem("label"); ok {
+					lel = &e
+				}
+				if id == cur {
+					if e, ok := t.Elem("content"); ok && !p.ownSection(id) {
+						content, ownContent = e, false
+					}
+				}
+				icon := t.Map("svgIcon").StrOr("name", "")
+				if icon != "" {
+					icon = icons.Slack(icon)
+				}
+				if p.navItem(gtx, y, navW, id, label, lel, icon, cur == id) {
+					if tp.Has("onTabChange") {
+						tp.Invoke("onTabChange", id, slackc.Props{"type": "click"})
+					} else {
+						p.section = id
+					}
+					a.Invalidate()
+				}
+				y += gtx.Dp(33)
+			}
+		}
+		for _, it := range p.extraNav() {
+			if listHas(list, it.id) {
+				continue
+			}
+			if it.divider {
+				y += gtx.Dp(17)
+				theme.Fill(gtx, image.Rect(0, y-gtx.Dp(9), navW-gtx.Dp(16), y-gtx.Dp(8)), p.a.th.OnBg(otlTer(p.a.th.Dark)))
+			}
 			if p.navItem(gtx, y, navW, it.id, it.label, nil, it.icon, cur == it.id) {
+				if tp != nil && tp.Has("onTabChange") && list != nil {
+					tp.Invoke("onTabChange", it.id, slackc.Props{"type": "click"})
+				}
 				p.section = it.id
 				a.Invalidate()
 			}
 			y += gtx.Dp(33)
 		}
-	} else {
-		for i, x := range list {
-			t, _ := x.(slackc.Props)
-			if t == nil {
-				continue
-			}
-			id := t.StrOr("id", "tab-"+itoa(i))
-			label := t.StrOr("label", "")
-			var lel *slackc.Element
-			if e, ok := t.Elem("label"); ok {
-				lel = &e
-			}
-			if id == cur {
-				if e, ok := t.Elem("content"); ok && !p.ownSection(id) {
-					content, ownContent = e, false
-				}
-			}
-			icon := t.Map("svgIcon").StrOr("name", "")
-			if icon != "" {
-				icon = icons.Slack(icon)
-			}
-			if p.navItem(gtx, y, navW, id, label, lel, icon, cur == id) {
-				if tp.Has("onTabChange") {
-					tp.Invoke("onTabChange", id, slackc.Props{"type": "click"})
-				} else {
-					p.section = id
-				}
-				a.Invalidate()
-			}
-			y += gtx.Dp(33)
-		}
-	}
-	for _, it := range p.extraNav() {
-		if listHas(list, it.id) {
-			continue
-		}
-		if it.divider {
-			y += gtx.Dp(17)
-			theme.Fill(gtx, image.Rect(0, y-gtx.Dp(9), navW-gtx.Dp(16), y-gtx.Dp(8)), p.a.th.OnBg(otlTer(p.a.th.Dark)))
-		}
-		if p.navItem(gtx, y, navW, it.id, it.label, nil, it.icon, cur == it.id) {
-			if tp != nil && tp.Has("onTabChange") && list != nil {
-				tp.Invoke("onTabChange", it.id, slackc.Props{"type": "click"})
-			}
-			p.section = it.id
-			a.Invalidate()
-		}
-		y += gtx.Dp(33)
-	}
+		return layout.Dimensions{Size: image.Pt(navW, y)}
+	})
 	ms.Leave()
 	navT.Pop()
 
@@ -409,46 +447,25 @@ func (p *prefsModal) btn(k string) *widget.Clickable {
 }
 
 func (p *prefsModal) page(gtx layout.Context, sec string) layout.Dimensions {
-	a := p.a
-	f := p.form(gtx)
-	heading, option, gap := f.heading, f.option, f.gap
 	if sec == "appearance" {
 		return p.appearancePage(gtx)
 	}
-	if sec == "navigation" {
-		heading("Sidebar")
-		option("sidebar", "Show the sidebar", "Ctrl+Shift+D toggles it", !a.sidebar.hidden, false, func() {
-			a.sidebar.hidden = !a.sidebar.hidden
-			a.savePrefs()
-		})
-		option("sbreset", "Reset sidebar width", "Back to the default 232px", a.sidebar.width == theme.SidebarW, false, func() {
-			a.sidebar.width = theme.SidebarW
-			a.savePrefs()
-		})
+	fn := pageFns[sec]
+	if sec == "availability" { // popups' page isn't linked: notifications
+		fn = (*prefsModal).notificationsPage
 	}
-	if sec == "advanced" {
-		heading("Advanced")
-		f.note("Plugin settings appear as their own tabs.", false, 1)
-		gap()
-		heading("Live updates")
-		rtHint := "Opens Slack's realtime connection. Off: messages refresh every 20 s"
-		if a.opts.NoRealtime {
-			rtHint = "Turned off with -no-realtime or CLACK_NO_REALTIME"
-		}
-		option("realtime", "Live updates (typing, presence, instant messages)", rtHint, a.realtimeOn(), false, a.toggleRealtime)
-		f.note("Clack shares your browser's Slack session. On some Enterprise Grid workspaces Slack can sign that session out everywhere if it notices.", true, 2)
-		gap()
-		heading("Updates")
-		option("updates", "Check for updates", "Shows a banner when a new Clack release is on GitHub. Nothing downloads on its own.", a.updateChecksOn(), false, a.toggleUpdateChecks)
-		if buildVersion != "" {
-			f.note("You have Clack "+buildVersion, true, 1)
-		}
+	if fn == nil {
+		return layout.Dimensions{}
 	}
-	if sec == "notifications" || sec == "availability" {
-		heading("Notifications")
-		option("notify", "Desktop notifications for DMs and mentions", "Muted conversations never notify", a.notifyOn(), false, a.toggleNotify)
+	if p.scrollFor != sec {
+		p.scroll, p.scrollFor = prefsScroll{}, sec
 	}
-	return f.dims()
+	return p.scroll.layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		f := p.form(gtx)
+		fn(p, f)
+		f.y += gtx.Dp(24) // room under the last row
+		return f.dims()
+	})
 }
 
 // setEmojiStyle goes through setUserPrefByApi (Slack's emoji_style pref),

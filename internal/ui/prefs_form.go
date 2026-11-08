@@ -118,3 +118,144 @@ func (f *prefsForm) optionAt(key, label, hint string, on, radio, enabled bool, d
 	}
 	f.y += rowH + gtx.Dp(4)
 }
+
+// naNote is the note under settings Clack shows disabled.
+const naNote = "Not available in Clack yet"
+
+// subheading is a group legend (Slack's fieldset legend: 700 15px/22).
+func (f *prefsForm) subheading(t string) {
+	gtx, a := f.gtx, f.p.a
+	at(gtx, image.Pt(0, f.y), image.Pt(f.w, gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
+		return a.th.Label(gtx, 15, theme.Bold, a.th.C.Fg, t)
+	})
+	f.y += gtx.Dp(26)
+}
+
+// para is body text (15px/22), wrapped to the page width.
+func (f *prefsForm) para(t string) {
+	gtx, a := f.gtx, f.p.a
+	d := at(gtx, image.Pt(0, f.y), image.Pt(f.w, gtx.Dp(400)), func(gtx layout.Context) layout.Dimensions {
+		return a.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Color: a.th.C.Fg}, t)
+	})
+	f.y += d.Size.Y + gtx.Dp(10)
+}
+
+// muted is muted 13px text wrapped to the page width (indent: under a
+// row's label).
+func (f *prefsForm) muted(t string, indent bool) {
+	gtx, a := f.gtx, f.p.a
+	x := 0
+	if indent {
+		x = gtx.Dp(28)
+	}
+	d := at(gtx, image.Pt(x, f.y), image.Pt(f.w-x, gtx.Dp(400)), func(gtx layout.Context) layout.Dimensions {
+		return a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: a.th.C.FgMuted}, t)
+	})
+	f.y += d.Size.Y + gtx.Dp(10)
+}
+
+// na is the "Not available in Clack yet" note.
+func (f *prefsForm) na() { f.muted(naNote, false) }
+
+// check is a checkbox bound to a users.prefs boolean (def when absent),
+// written with setUserPrefByApi. invert: the box shows the pref's negation
+// (Slack's "Display color swatches" is !hide_hex_swatch).
+func (f *prefsForm) check(name, label, hint string, def, invert bool) {
+	on := f.p.prefBool(name, def) != invert
+	f.option("pref."+name, label, hint, on, false, func() { f.p.setPref(name, !on != invert) })
+}
+
+// radio is a radio row bound to a users.prefs string value.
+func (f *prefsForm) radio(name, value, label, hint string) {
+	on := f.p.prefStr(name) == value
+	f.option("pref."+name+"="+value, label, hint, on, true, func() { f.p.setPref(name, value) })
+}
+
+// off is a disabled row the way Slack shows it (on: its current state).
+func (f *prefsForm) off(key, label, hint string, on, radio bool) {
+	f.optionAt("na."+key, label, hint, on, radio, false, func() {})
+}
+
+// selectBox is Slack's select (a 36px box with the value and a caret);
+// enabled, a click opens items as a menu at the pointer.
+func (f *prefsForm) selectBox(key, label, value string, enabled bool, items []MenuItem) {
+	gtx, a := f.gtx, f.p.a
+	c := &a.th.C
+	if label != "" {
+		f.subheading(label)
+	}
+	b := f.p.btn("sel." + key)
+	bw, bh := min(f.w, gtx.Dp(300)), gtx.Dp(36)
+	fg := c.Fg
+	if !enabled {
+		fg = c.FgSubtle
+	}
+	at(gtx, image.Pt(0, f.y), image.Pt(bw, bh), func(gtx layout.Context) layout.Dimensions {
+		return clickArea(gtx, b, func(gtx layout.Context, s image.Point, hov bool) {
+			r := image.Rectangle{Max: s}
+			theme.RRect(gtx, r, gtx.Dp(8), c.Bg)
+			bc := c.BorderStrong
+			if hov && enabled {
+				bc = c.Fg
+			}
+			theme.Border(gtx, r, gtx.Dp(8), gtx.Dp(1), bc)
+		}, func(gtx layout.Context) layout.Dimensions {
+			at(gtx, image.Pt(gtx.Dp(12), 0), image.Pt(bw-gtx.Dp(40), bh), func(gtx layout.Context) layout.Dimensions {
+				return vcenter(gtx, bh, func(gtx layout.Context) layout.Dimensions {
+					return a.th.Label(gtx, 15, theme.Regular, fg, value)
+				})
+			})
+			at(gtx, image.Pt(bw-gtx.Dp(28), (bh-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
+				return icons.Get("caret-down")(gtx, 16, fg)
+			})
+			return layout.Dimensions{Size: image.Pt(bw, bh)}
+		})
+	})
+	if clicked(b) && enabled && len(items) > 0 {
+		a.menu(a.anchor(image.Point{}), items)
+	}
+	f.y += bh + gtx.Dp(12)
+}
+
+// listRow is a 36px row: an avatar, a name and an action link on the
+// right (VIP list "Remove").
+func (f *prefsForm) listRow(key, avatar, name, action string, do func()) {
+	gtx, a := f.gtx, f.p.a
+	c := &a.th.C
+	rh := gtx.Dp(36)
+	s := gtx.Dp(24)
+	at(gtx, image.Pt(0, f.y+(rh-s)/2), image.Pt(s, s), func(gtx layout.Context) layout.Dimensions {
+		return a.avatar(gtx, avatar, name, s, gtx.Dp(6))
+	})
+	at(gtx, image.Pt(s+gtx.Dp(10), 0).Add(image.Pt(0, f.y)), image.Pt(f.w-gtx.Dp(120), rh), func(gtx layout.Context) layout.Dimensions {
+		return vcenter(gtx, rh, func(gtx layout.Context) layout.Dimensions {
+			return a.th.Label(gtx, 15, theme.Regular, c.Fg, name)
+		})
+	})
+	if action != "" {
+		b := f.p.btn("row." + key)
+		aw := a.th.Measure(gtx, 13, theme.Bold, action) + gtx.Dp(16)
+		at(gtx, image.Pt(f.w-aw, f.y+(rh-gtx.Dp(28))/2), image.Pt(aw, gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
+			return clickArea(gtx, b, func(gtx layout.Context, s image.Point, hov bool) {
+				r := image.Rectangle{Max: s}
+				if hov {
+					theme.RRect(gtx, r, gtx.Dp(6), c.BgHover)
+				}
+				theme.Border(gtx, r, gtx.Dp(6), gtx.Dp(1), c.BorderStrong)
+			}, func(gtx layout.Context) layout.Dimensions {
+				sz := image.Pt(aw, gtx.Dp(28))
+				at(gtx, image.Pt(gtx.Dp(8), 0), sz, func(gtx layout.Context) layout.Dimensions {
+					return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
+						return a.th.Label(gtx, 13, theme.Bold, c.Fg, action)
+					})
+				})
+				return layout.Dimensions{Size: sz}
+			})
+		})
+		if clicked(b) {
+			do()
+			a.Invalidate()
+		}
+	}
+	f.y += rh + gtx.Dp(4)
+}

@@ -15,6 +15,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
 )
 
 // GIFs tab of the emoji picker (Slack's Giphy tab), measured from
@@ -328,7 +329,13 @@ func (p *EmojiPicker) gifTile(gtx layout.Context, cl *Colors, gf Gif, k, t, rad 
 	im := p.h.Images()
 	return clickBox(gtx, &g.tiles[k], nil, func(gtx layout.Context) layout.Dimensions {
 		sz := image.Pt(t, t)
-		if an, ok := gifAnimGet(p.h, gifAnimURL(gf), t, gtx.Now); ok {
+		// Accessibility > "Allow animations" (a11y_animations) off: stills.
+		var an *gifAnim
+		ok := false
+		if !uipref.Get().NoAnimations {
+			an, ok = gifAnimGet(p.h, gifAnimURL(gf), t, gtx.Now)
+		}
+		if ok {
 			// animated (frames decoded off the UI goroutine; the
 			// next redraw is scheduled only while this tile shows).
 			theme.Image(gtx, an.frameAt(gtx), sz, rad)

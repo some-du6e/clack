@@ -10,6 +10,8 @@ import (
 	"gioui.org/io/key"
 	"gioui.org/io/transfer"
 	"gioui.org/layout"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
 )
 
 // edMaxIndent is the deepest list nesting level (0-based).
@@ -83,6 +85,16 @@ func (e *Editor) command(gtx layout.Context, k key.Event) {
 	}
 	switch k.Name {
 	case key.NameReturn, key.NameEnter:
+		if e.inCode() && uipref.Get().EnterIsSpecial {
+			// Advanced > "When typing code with ```, Enter should not send
+			// the message" (enter_is_special_in_tbt): Shift+Enter sends.
+			if shift {
+				e.emit(EvSubmit)
+			} else {
+				e.newline()
+			}
+			return
+		}
 		e.enter(mods != 0)
 	case key.NameEscape:
 		e.emit(EvCancel)
@@ -229,6 +241,16 @@ func (e *Editor) enter(soft bool) {
 		}
 	}
 	e.newline()
+}
+
+// inCode reports whether the caret is in code being typed with ```: a
+// code block line, or after an unclosed ``` in the text.
+func (e *Editor) inCode() bool {
+	d := e.doc
+	if d.Lines[d.LineOf(e.caret)].Kind == CodeBlock {
+		return true
+	}
+	return strings.Count(d.String(0, e.caret), "```")%2 == 1
 }
 
 // newline splits the line at the caret; the new line keeps the block

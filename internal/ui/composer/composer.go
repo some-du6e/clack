@@ -16,6 +16,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/taut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
 )
 
 // Composer is the message box under a channel or thread, or the inline
@@ -366,7 +367,9 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 	} else if st.Mode == modeChannel {
 		st.Placeholder = "Message"
 	}
-	st.TypingIDs, st.TypingNames = typingHub(c.h.Core()).typers(c.ch, c.ts, c.api.self().ID)
+	if uipref.Get().ShowTyping { // Messages & media > "Display information about who is currently typing"
+		st.TypingIDs, st.TypingNames = typingHub(c.h.Core()).typers(c.ch, c.ts, c.api.self().ID)
+	}
 	st.Typing = typingLine(st.TypingNames)
 	st.ScrolledTop = c.ed.scrollY > 0
 	st.ScrolledBottom = c.ed.scrollY+c.ed.viewH < c.ed.contentH
@@ -570,7 +573,7 @@ func (c *Composer) schedule(t time.Time) {
 	text, blocks := doc.Mrkdwn(), doc.RichTextBlocks()
 	api, ch, ts := c.api, c.ch, c.ts
 	broadcast := c.broadcast && ts != ""
-	when := t.Format("Mon Jan 2 at 3:04 PM")
+	when := t.Format(uipref.Layout("Mon Jan 2 at 3:04 PM"))
 	c.clearAfterSend()
 	go func() {
 		ctx := context.Background()

@@ -98,7 +98,68 @@ func DefaultPrefs() map[string]any {
 		"emoji_use": `{"smile":10,"tada":7,"+1":30,"fire":5,"eyes":9}`, "muted_channels": "",
 		"ia_theme":                    `{"primary":{"palette":"aubergine"},"highlight1":{"palette":"aubergine"},"highlight2":{"palette":"jade"},"important":{"palette":"aubergine"},"brightness":6,"sidebarInverted":true,"useCustomHex":false}`,
 		"window_background_gradients": true,
+		// Preferences dialog keys Clack wires, at Slack's defaults
+		"display_real_names_override": 0, "mentions_real_names_override": 0, "messages_theme": "default",
+		"show_typing": true, "hide_hex_swatch": false, "jumbomoji": true, "convert_emoticons": true,
+		"enter_is_special_in_tbt": false, "expand_internal_inline_imgs": true, "expand_inline_imgs": true,
+		"obey_inline_img_limit": true, "expand_non_media_attachments": true,
+		"mark_msgs_read_immediately": false, "start_scroll_at_oldest": false, "confirm_clear_all_unreads": true,
+		"a11y_animations": true, "underline_links": false, "locale": "en-US",
+		"who_can_see_account_by_searching_email": "EVERYONE", "who_can_share_contact_card": "EVERYONE",
+		"vip_users": "", "priority_dnd_override": false, "sidebar_behavior": "",
+		"huddles_mute_by_default": false, "huddles_set_status": true, "huddles_disconnect_on_lock": true,
+		"all_notifications_prefs": `{"channels":{},"global":{"global_desktop":"mentions_dms","global_mobile":"mentions_dms",` +
+			`"global_keywords":"","no_text_in_notifications":false,"push_idle_wait":0,"threads_everything":true,` +
+			`"desktop_sound":"knock_brush.mp3"}}`,
 	}
+}
+
+// setGlobalNotify is users.prefs.setNotifications global=true: the value
+// lands in all_notifications_prefs.global, keeping the pref's type.
+func (s *Server) setGlobalNotify(name, value string) {
+	s.prefsMu.Lock()
+	defer s.prefsMu.Unlock()
+	var n map[string]any
+	if str, _ := s.prefs["all_notifications_prefs"].(string); str != "" {
+		_ = json.Unmarshal([]byte(str), &n)
+	}
+	if n == nil {
+		n = map[string]any{}
+	}
+	g, _ := n["global"].(map[string]any)
+	if g == nil {
+		g = map[string]any{}
+	}
+	var v any = value
+	switch g[name].(type) {
+	case bool:
+		v = value == "true" || value == "1"
+	case float64:
+		if f, err := strconv.ParseFloat(value, 64); err == nil {
+			v = f
+		}
+	}
+	g[name] = v
+	n["global"] = g
+	b, _ := json.Marshal(n)
+	s.prefs["all_notifications_prefs"] = string(b)
+}
+
+// setVIP adds or removes a user from vip_users (users.priority.add/remove).
+func (s *Server) setVIP(user string, add bool) {
+	s.prefsMu.Lock()
+	defer s.prefsMu.Unlock()
+	cur, _ := s.prefs["vip_users"].(string)
+	var ids []string
+	for _, id := range strings.Split(cur, ",") {
+		if id != "" && id != user {
+			ids = append(ids, id)
+		}
+	}
+	if add {
+		ids = append(ids, user)
+	}
+	s.prefs["vip_users"] = strings.Join(ids, ",")
 }
 
 // Pref returns the fake account's pref (what users.prefs.get serves).
@@ -550,6 +611,29 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		} else {
 			return map[string]any{"ok": false, "error": "invalid_name"}
 		}
+		return ok()
+	case "users.prefs.setNotifications":
+		if f.Get("global") != "true" {
+			return map[string]any{"ok": false, "error": "not_supported_by_fake"}
+		}
+		if n := f.Get("name"); n != "" {
+			s.setGlobalNotify(n, f.Get("value"))
+		} else {
+			var ps []struct{ Name, Value string }
+			if json.Unmarshal([]byte(f.Get("prefs")), &ps) != nil {
+				return map[string]any{"ok": false, "error": "invalid_prefs"}
+			}
+			for _, p := range ps {
+				s.setGlobalNotify(p.Name, p.Value)
+			}
+		}
+		return ok()
+	case "users.priority.add", "users.priority.remove":
+		u := f.Get("user")
+		if u == "" {
+			return map[string]any{"ok": false, "error": "user_not_found"}
+		}
+		s.setVIP(u, method == "users.priority.add")
 		return ok()
 	case "team.info":
 		return ok("team", map[string]any{"id": TeamID, "name": "Fake Club", "domain": "fakeclub",

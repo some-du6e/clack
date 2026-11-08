@@ -159,6 +159,8 @@ var slackIconNames = map[string]string{
 	"sliders":                    "filter-sliders",
 	"bug-filled":                 "bug",
 	"plug-filled":                "plug",
+	"sf-cloud":                   "cloud",
+	"navigation-tabs-vertical":   "sidebar",
 }
 
 // slackSuffixes are modifiers Slack appends to a base icon name; a name

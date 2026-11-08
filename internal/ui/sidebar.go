@@ -4,6 +4,8 @@ import (
 	"image"
 	"image/color"
 	"strconv"
+	"strings"
+	"time"
 
 	"gioui.org/font"
 	"gioui.org/gesture"
@@ -16,6 +18,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
 )
 
 type sbKind uint8
@@ -46,7 +49,8 @@ type sidebarState struct {
 	hidden    bool
 	list      widget.List
 	rows      []sbRow
-	builtFor  int // model version
+	builtFor  int    // model version
+	cur       string // the open conversation the rows were built for (always shown)
 	collapsed map[string]bool
 	rowCount  int
 	drag      gesture.Drag
@@ -92,6 +96,8 @@ func (s *sidebarState) rebuild(m *model) {
 	}
 	rows := append(s.rows[:0], sbLinks...)
 	rows = append(rows, sbRow{kind: sbDivider, gap: 24})
+	behavior := uipref.Get().SidebarBehavior
+	now := time.Now()
 	for i, sec := range m.Sections {
 		if i > 0 {
 			rows = append(rows, sbRow{kind: sbGap, gap: 10})
@@ -105,6 +111,9 @@ func (s *sidebarState) rebuild(m *model) {
 			}
 			// collapsed sections still show unread and the selected conv
 			if col && !c.Unread && c.Mentions == 0 {
+				continue
+			}
+			if !sbShows(behavior, sec.Type, c, s.cur, now) {
 				continue
 			}
 			rows = append(rows, sbRow{kind: sbConv, key: id, section: sec.ID})
@@ -143,6 +152,31 @@ func (s *sidebarState) rebuild(m *model) {
 	s.rowCount = len(rows)
 }
 
+// sbShows is Home > "Show…" (sidebar_behavior): every conversation (""),
+// unreads only, mentions only, unreads plus Starred, or Active only (new
+// activity within 30 days). The open conversation and mentions always show.
+func sbShows(behavior, secType string, c *convInfo, cur string, now time.Time) bool {
+	if c.ID == cur || c.Mentions > 0 {
+		return true
+	}
+	switch behavior {
+	case "hide_read_channels":
+		return c.Unread
+	case "hide_read_channels_unless_starred":
+		return c.Unread || secType == "stars"
+	case "show_mentions_only":
+		return false
+	case "hide_inactive_channels":
+		if c.Unread || c.Latest == "" { // no activity known: keep it
+			return true
+		}
+		sec, _, _ := strings.Cut(c.Latest, ".")
+		t, err := strconv.ParseInt(sec, 10, 64)
+		return err != nil || now.Sub(time.Unix(t, 0)) < 30*24*time.Hour
+	}
+	return true
+}
+
 func (a *App) model() *model {
 	if a.data == nil {
 		return &emptyModel
@@ -168,7 +202,8 @@ func (a *App) layoutSidebarNative(gtx layout.Context, p slackc.Props) layout.Dim
 	}
 	c := a.sidebarPalette()
 	m := a.model()
-	if a.sidebar.rows == nil || a.sidebar.builtFor != m.version {
+	if cur := a.router.Current().Channel(); a.sidebar.rows == nil || a.sidebar.builtFor != m.version || a.sidebar.cur != cur {
+		a.sidebar.cur = cur
 		a.sidebar.rebuild(m)
 		for i := range a.sidebar.rows {
 			r := &a.sidebar.rows[i]

@@ -46,7 +46,8 @@ import (
 func (a *App) sidebarProps() slackc.Props {
 	s := &a.sidebar
 	m := a.model()
-	if s.rows == nil || s.builtFor != m.version {
+	if cur := a.router.Current().Channel(); s.rows == nil || s.builtFor != m.version || s.cur != cur {
+		s.cur = cur
 		s.rebuild(m)
 	}
 	if s.propRows == nil || s.propsGen != s.gen {
