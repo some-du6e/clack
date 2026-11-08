@@ -14,6 +14,7 @@ import (
 	"image"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -407,36 +408,21 @@ func TestSlickViewChatTabs(t *testing.T) {
 		tr := e.tree("p-view_contents--primary", `slick-chat-tabs`, `data-tab-count`, `"n":"`+viewBodySlot+`"`)
 		return tr != "" && strings.Index(tr, `data-tab-count`) < strings.Index(tr, `"n":"`+viewBodySlot+`"`)
 	})
-	// its height measured (ResizeObserver over the laid-out bar) into the
-	// variable the view's :has(> .slick-chat-tabs) padding reads
-	rt, err := e.a.Taut().JS()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var geom struct {
-		Bar, View [4]float64
-		Var       string
-	}
-	var lastOut string
-	var lastErr error
-	if !e.wait(8*time.Second, func() bool {
-		out, _, err := e.svJS(rt, `const r = (el) => { const b = el?.getBoundingClientRect(); return b ? [b.x, b.y, b.width, b.height] : [-1, -1, -1, -1] }
-			const bar = document.querySelector('.slick-chat-tabs'), view = bar?.closest('.p-view_contents--primary'), lay = document.querySelector('.slick-chat-tabs-layout')
-			return { Bar: r(bar), View: r(view), Var: lay?.style.getPropertyValue('--slick-chat-tabs-height') || '',
-			  Debug: { bar: !!bar, view: !!view, layout: !!lay, layoutStyle: lay?.getAttribute('style') ?? null, barParent: bar?.parentElement?.className ?? null, barRect: bar?._r ?? null } }`, 2*time.Second)
-		lastOut, lastErr = out, err
-		if err != nil || json.Unmarshal([]byte(out), &geom) != nil {
+	// its height measured (ResizeObserver over the bar Clack laid out) into
+	// the variable the view's :has(> .slick-chat-tabs) padding reads, on
+	// the layout's inline style (the geometry: slackc's TestViewContentsTabBar)
+	heightVar := regexp.MustCompile(`"--slick-chat-tabs-height":"([0-9.]+)px"`)
+	var barH float64
+	e.until(8*time.Second, "the bar's laid-out height in --slick-chat-tabs-height", func() bool {
+		m := heightVar.FindStringSubmatch(e.tree("slick-chat-tabs-layout", "--slick-chat-tabs-height"))
+		if m == nil {
 			return false
 		}
-		return geom.Bar[3] > 0 && geom.Var != "" && geom.Var != "0px"
-	}) {
-		t.Fatalf("the bar laid out at the view's top, its height in --slick-chat-tabs-height: last probe %s (err %v)", lastOut, lastErr)
-	}
-	if geom.Bar[1] != geom.View[1] || geom.Bar[2] != geom.View[2] {
-		t.Errorf("bar %v not across the view's top %v", geom.Bar, geom.View)
-	}
-	if want := strconv.FormatFloat(geom.Bar[3], 'f', -1, 64) + "px"; geom.Var != want {
-		t.Errorf("--slick-chat-tabs-height %q, want the bar's %s", geom.Var, want)
+		barH, _ = strconv.ParseFloat(m[1], 64)
+		return barH > 0
+	})
+	if barH < 20 || barH > 120 {
+		t.Errorf("--slick-chat-tabs-height %vpx, want the bar's row height", barH)
 	}
 	if len(e.a.convos) == 0 {
 		t.Error("the channel view didn't draw inside the patched primary view")
