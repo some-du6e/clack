@@ -220,6 +220,10 @@ func ParseHuddle(raw json.RawMessage) (Huddle, bool)
 - **Stars and mute.**
   - Starred membership comes from `stars.list` on the team host: the Starred section from `users.channelSections.list` stays empty. Star and unstar use `stars.add`/`stars.remove`.
   - Mute and the per-channel notification prefs use `users.prefs.setNotifications`; they are read from `all_notifications_prefs`.
+- **Preferences.** The dialog's sections, ids and keys come from Slack's `gantry-v2-async-prefs-dialog` chunk.
+  - One pref is `users.prefs.set name=&value=` (`setUserPrefByApi`); Mark as read writes `mark_msgs_read_immediately` and `start_scroll_at_oldest` together as `prefs={…}`. Global notification prefs are `users.prefs.setNotifications global=true`, read from `all_notifications_prefs.global`. VIPs are read from `vip_users` and removed with `users.priority.remove user=`.
+  - `display_real_names_override` is 1 (full names), -1 (display names) or 0 (the team's `display_real_names`).
+  - Render paths read the prefs through `internal/ui/uipref` (a snapshot set on every `prefs` event); `uipref.Gen` changes when a pref that changes text layout does, and richview relays out.
 - **Scheduling.** Scheduled messages are drafts (`drafts.update date_scheduled`), because `chat.scheduleMessage` rejects session tokens.
 - **Saved and To-dos.** Both are `saved.list`, with `filter=saved_with_archived` for Saved and `todo_with_completed` for To-dos, split by `todo_state`.
 - **Sent.** The Sent list is `messages.sent.list`, which returns ids only, hydrated with `messages.list`.
