@@ -112,7 +112,8 @@ func init() {
 			Buttons: []*popups.ModalButton{{Label: "Done", Kind: popups.BtnPrimary, Do: func() bool { return true }}}})
 	}
 	mkPrefsModal = func(a *App, title string, body layout.Widget, done func()) Overlay {
-		return popups.NewModal(a, popups.ModalOpts{Title: title, Body: body, Width: 800, HeadH: 76, Flush: true, OnClose: done})
+		return popups.NewModal(a, popups.ModalOpts{Title: title, Body: body, Width: 800, HeadH: 76, Flush: true, OnClose: done,
+			Class: "p-prefs_dialog__modal p-prefs_dialog__modal--ia_layout"}) // Slack's classes on the prefs c-sk-modal
 	}
 	mkTeamMenu = func(a *App, anchor image.Point) Overlay { return popups.NewTeamMenu(a, a.anchor(anchor)) }
 	mkUserMenu = func(a *App, anchor image.Point) Overlay { return popups.NewUserMenu(a, a.anchor(anchor)) }

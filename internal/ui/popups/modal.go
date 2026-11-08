@@ -49,6 +49,9 @@ type ModalOpts struct {
 	// Flush draws the body across the card's full width (from x 0) with no
 	// bottom padding: bodies that lay out their own columns (Preferences).
 	Flush bool
+	// Class adds Slack classes to the modal element (.c-sk-modal), e.g.
+	// Preferences' p-prefs_dialog__modal, which themes style.
+	Class string
 }
 
 // Modal is a centered dialog over a dimmed backdrop.
@@ -202,14 +205,13 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 	pos := image.Pt((win.X-w)/2, (win.Y-h)/2)
 	m.rect = image.Rectangle{Min: pos, Max: pos.Add(image.Pt(w, h))}
 	keyTarget(gtx, m, m.rect)
-	st := modalClass.Enter(gtx, 0, 0)
+	st := modalClass.EnterClass(gtx, 0, 0, m.o.Class)
 	defer st.Leave()
 	if !st.Hidden() {
-		at(gtx, pos, func(gtx layout.Context) layout.Dimensions {
-			return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
+		styledCard(gtx, st, cl, pos, m.rect.Size(), dp(gtx, 8), true, func(gtx layout.Context) {
+			{
 				pos := image.Point{}
 				local := image.Rectangle{Max: m.rect.Size()}
-				modalCard(gtx, cl, local, dp(gtx, 8))
 				m.block.Layout(gtx, local)
 
 				// header
@@ -259,8 +261,7 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 						x -= dp(gtx, 12)
 					}
 				}
-				return layout.Dimensions{Size: m.rect.Size()}
-			})
+			}
 		})
 	}
 	return layout.Dimensions{Size: win}

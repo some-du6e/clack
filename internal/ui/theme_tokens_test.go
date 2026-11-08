@@ -1,11 +1,16 @@
 package ui
 
 import (
+	"image"
 	"image/color"
 	"strings"
 	"testing"
 
+	"gioui.org/op"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
@@ -267,5 +272,104 @@ func TestThemeTokensPrimaryViewBackground(t *testing.T) {
 		".p-message_pane{background:repeating-linear-gradient(0deg,#fff1a8 0 27px,#ffffc7 27px 29px) !important;}\n")
 	if bg := tkThemed(eng, false).C.Bg; bg != tkHex(0xfff1a8) {
 		t.Errorf("gradient pane Bg = %v", bg)
+	}
+}
+
+// hotDogOverlayCSS is Hot Dog Stand's overlay part (themes/hot-dog-stand.json):
+// the tokens Slack's dialogs, menus, tooltips and tabs are painted from,
+// and the raw rules every bundled theme repaints cards and the active
+// Preferences tab with.
+var hotDogOverlayCSS = hotDogCSS + tkSlickRule(
+	"--dt_color-ctr-pry", "#cc0000", "--dt_color-content-pry", "#ffff00",
+	"--dt_color-content-sec", "#eeee00", "--dt_color-content-inv-pry", "#ffff00",
+	"--dt_color-base-inv-pry", "#cc0000", "--dt_color-base-inv-hgl-1", "#aa0000",
+	"--dt_color-base-pry-hover", "#ffff0014", "--dt_color-ctr-pry-hover", "#ffff0014",
+	"--dt_color-base-modal", "#ff0000b3",
+	"--sk_menu-item_highlight-background", "#aa0000", "--sk_menu-item_highlight-color", "#ffff00",
+) + ".c-tabs__tab_menu--vertical .c-tabs__tab.c-tabs__tab--active,.c-tabs__tab_menu--vertical .c-tabs__tab:active{background-color:#cccc00 !important;color:#ff0000 !important;}\n" +
+	"[role=menu],[role=dialog],[role=listbox],.c-menu,.p-ia4_floating_window,.c-popover__content{background-color:#cc0000 !important;border:1px solid #aa0000 !important;}\n"
+
+// Overlays read the theme's tokens like the window does: Slack paints
+// menus and popovers from --dt_color-ctr-pry (.c-menu), modals from
+// --dt_color-base-pry (.c-sk-modal), the menu highlight from
+// --sk_menu-item_highlight-*, tooltips from --dt_color-base-inv-pry and
+// Preferences' tabs from --dt_color-base-inv-hgl-1. With no sheet they
+// keep the measured colours.
+func TestThemeTokensOverlaysHotDogStand(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		eng := css.NewEngine()
+		eng.Set("slick:theme", hotDogOverlayCSS)
+		th := tkThemed(eng, dark)
+		cl := popups.ColorsOf(th)
+		tc := prefsTabColorsOf(th)
+		tkCheck(t, []tkWant{
+			{"popups Bg (.c-menu)", cl.Bg, tkHex(0xcc0000)},
+			{"popups ModalBg (.c-sk-modal)", cl.ModalBg, tkHex(0xff0000)},
+			{"popups Fg", cl.Fg, tkHex(0xffff00)},
+			{"popups Fg2", cl.Fg2, tkHex(0xeeee00)},
+			{"popups Highlight", cl.Highlight, tkHex(0xaa0000)},
+			{"popups HighText", cl.HighText, tkHex(0xffff00)},
+			{"popups BgHover", cl.BgHover, theme.Over(color.NRGBA{255, 255, 0, 0x14}, tkHex(0xcc0000))},
+			{"popups Tooltip", cl.Tooltip, tkHex(0xcc0000)},
+			{"popups TooltipText", cl.TooltipText, tkHex(0xffff00)},
+			{"palette Tooltip", th.C.Tooltip, tkHex(0xcc0000)},
+			{"prefs tab text", tc.text, tkHex(0xffff00)},
+			{"prefs active tab", tc.active, tkHex(0xaa0000)},
+			{"prefs active tab text", tc.activeText, tkHex(0xffff00)},
+			{"prefs tab hover", tc.hover, theme.Over(color.NRGBA{255, 255, 0, 0x14}, tkHex(0xff0000))},
+		})
+		if cl.Backdrop.A == 0 || cl.Backdrop.R != 0xff || cl.Backdrop.G != 0 {
+			t.Errorf("dark=%v: backdrop %v, want the theme's red scrim", dark, cl.Backdrop)
+		}
+	}
+
+	// no stylesheet: the measured palettes, the tabs' measured colours
+	for _, dark := range []bool{false, true} {
+		th := tkThemed(css.NewEngine(), dark)
+		if popups.ColorsOf(th) != popups.ColorsOf(theme.Bare(dark)) {
+			t.Errorf("dark=%v: popups palette themed without a sheet", dark)
+		}
+		bg := map[bool]color.NRGBA{false: tkHex(0xffffff), true: tkHex(0x222529)}[dark]
+		if c := popups.ColorsOf(th); c.Bg != bg || c.ModalBg != bg {
+			t.Errorf("dark=%v: default card %v / modal %v, want %v", dark, c.Bg, c.ModalBg, bg)
+		}
+		want := prefsTabColors{text: th.C.Fg, active: th.C.Link, activeText: th.C.SendText, hover: th.C.BgHover}
+		if got := prefsTabColorsOf(th); got != want {
+			t.Errorf("dark=%v: prefs tabs %+v, want the measured %+v", dark, got, want)
+		}
+	}
+}
+
+// The theme's raw rules reach the native elements Slack's DOM has them
+// on: the modal (role dialog) takes the card background and border, the
+// Preferences tab under .c-tabs__tab_menu--vertical its active colours.
+func TestThemeOverlayRulesReachNatives(t *testing.T) {
+	slackc.SetStyle("slick:theme", hotDogOverlayCSS)
+	defer slackc.RemoveStyle("slick:theme")
+	gtx := ttContext(new(op.Ops), image.Pt(800, 600))
+	none := color.NRGBA{1, 2, 3, 255}
+
+	st := popups.ModalClass.EnterClass(gtx, 0, 0, "p-prefs_dialog__modal")
+	bg, bw := st.Background(none), st.BorderWidth()
+	st.Leave()
+	if bg != tkHex(0xcc0000) || bw != 1 {
+		t.Errorf("modal: background %v border %v, want #cc0000 and 1px (the [role=dialog] rule)", bg, bw)
+	}
+
+	ts := clsPrefsTabs.Enter(gtx, 0, 0)
+	ms := clsPrefsMenu.Enter(gtx, 0, 0)
+	tab := clsPrefsTab.Enter(gtx, 0, 1) // c-tabs__tab--active
+	tbg, tfg := tab.Background(none), tab.Color(none)
+	tab.Leave()
+	idle := clsPrefsTab.Enter(gtx, 0, 0)
+	ibg := idle.Background(none)
+	idle.Leave()
+	ms.Leave()
+	ts.Leave()
+	if tbg != tkHex(0xcccc00) || tfg != tkHex(0xff0000) {
+		t.Errorf("active prefs tab: background %v color %v, want #cccc00 / #ff0000", tbg, tfg)
+	}
+	if ibg != none {
+		t.Errorf("an inactive tab took a background (%v)", ibg)
 	}
 }

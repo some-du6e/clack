@@ -16,6 +16,7 @@ import (
 	"gioui.org/unit"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -376,11 +377,16 @@ func (s *Stack) Layout(gtx C) D {
 	mh := headH + bannerH + bodyH + footH
 	pos := image.Pt((win.X-mw)/2, max((win.Y-mh)/2, dp(gtx, 32)))
 
-	at(gtx, pos, func(gtx C) D {
+	// the card: Slack's c-sk-modal (role dialog), so a theme's
+	// [role=dialog] background and border land on it as in Slack
+	st := popups.ModalClass.Enter(gtx, 0, 0)
+	defer st.Leave()
+	if st.Hidden() {
+		return D{Size: win}
+	}
+	shadow := func(gtx C, r image.Rectangle, rad int) { theme.Shadow(gtx, r, rad, dp(gtx, 24), cl.ModalShadow) }
+	popups.StyledCard(gtx, st, cl.Bg, cl.Ring, shadow, pos, image.Pt(mw, mh), dp(gtx, 8), func(gtx C) {
 		r := image.Rect(0, 0, mw, mh)
-		theme.Shadow(gtx, r, dp(gtx, 8), dp(gtx, 24), cl.ModalShadow)
-		rrect(gtx, r.Inset(-1), dp(gtx, 8)+1, cl.Ring)
-		rrect(gtx, r, dp(gtx, 8), cl.Bg)
 		func() {
 			defer clip.Rect(r).Push(gtx.Ops).Pop()
 			event.Op(gtx.Ops, &s.tag)
@@ -433,7 +439,6 @@ func (s *Stack) Layout(gtx C) D {
 			}
 			s.footer(gtx, image.Pt(0, y), mw, footH, v)
 		}
-		return D{Size: r.Max}
 	})
 	return D{Size: win}
 }
