@@ -107,12 +107,13 @@ func (rt rewriteTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 
 // fakeDesktopSlack is just enough of Slack for desktop sign-in.
 type fakeDesktopSlack struct {
-	mu       sync.Mutex
-	srv      *httptest.Server
-	reqs     []*http.Request
-	exchange func(w http.ResponseWriter, r *http.Request)
-	bootHTML string
-	rotateDS int // d-s value set on every API answer, incremented each time
+	mu        sync.Mutex
+	srv       *httptest.Server
+	reqs      []*http.Request
+	exchange  func(w http.ResponseWriter, r *http.Request)
+	bootHTML  string
+	rotateDS  int      // d-s value set on every API answer, incremented each time
+	authTests []string // "host token" of every auth.test, as the server saw it
 }
 
 func (f *fakeDesktopSlack) requests() []*http.Request {
@@ -151,6 +152,11 @@ func newFakeDesktopSlack(t *testing.T) *fakeDesktopSlack {
 			f.mu.Unlock()
 			http.SetCookie(w, &http.Cookie{Name: "d-s", Value: strconv.Itoa(ds), Domain: ".slack.com", Path: "/", Secure: true, HttpOnly: true})
 			r.ParseForm()
+			if r.URL.Path == "/api/auth.test" {
+				f.mu.Lock()
+				f.authTests = append(f.authTests, host+" "+r.FormValue("token"))
+				f.mu.Unlock()
+			}
 			switch r.FormValue("token") {
 			case "xoxc-vended-1-2-3abc":
 				json.NewEncoder(w).Encode(map[string]any{"ok": true, "team_id": "T08PSQ7BQ", "user_id": "U1", "url": "https://hackclub.slack.com/", "enterprise_id": "E1"})
@@ -225,13 +231,9 @@ func TestLoginMagicGridTokens(t *testing.T) {
 	}
 	// One auth.test, with the workspace token: the org token is never sent
 	// to auth.test (every Grid sign-out so far followed that call).
-	var tests []string
-	for _, r := range f.requests() {
-		if r.URL.Path == "/api/auth.test" {
-			r.ParseForm()
-			tests = append(tests, r.Header.Get("X-Orig-Host")+" "+r.FormValue("token"))
-		}
-	}
+	f.mu.Lock()
+	tests := append([]string(nil), f.authTests...)
+	f.mu.Unlock()
 	if strings.Join(tests, ",") != "hackclub.slack.com xoxc-vended-1-2-3abc" {
 		t.Errorf("auth.test calls = %v, want one with the workspace token", tests)
 	}
