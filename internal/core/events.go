@@ -40,9 +40,10 @@ func (a *App) handle(ev slack.Event) {
 		}
 		_ = json.Unmarshal(ev.Raw, &e)
 		add := ev.Type == "reaction_added"
-		m, ok := a.S.Mutate(e.Item.Channel, e.Item.TS, func(m *slack.Message) { applyReaction(m, e.Reaction, e.User, add) })
+		changed := false
+		m, ok := a.S.Mutate(e.Item.Channel, e.Item.TS, func(m *slack.Message) { changed = applyReaction(m, e.Reaction, e.User, add) || changed })
 		a.EnsureUsers(ctx, []string{e.User})
-		if ok {
+		if ok && changed { // the echo of the viewer's own (optimistic) reaction changes nothing
 			a.emitUpdate(e.Item.Channel, &m)
 		}
 	case "user_typing":
@@ -240,39 +241,6 @@ func (a *App) refreshConv(ctx context.Context, id string) {
 	}
 	v := a.conv(c)
 	a.emit(Event{Type: "conv", Channel: id, Conv: &v})
-}
-
-func applyReaction(m *slack.Message, name, user string, add bool) {
-	for i := range m.Reactions {
-		r := &m.Reactions[i]
-		if r.Name != name {
-			continue
-		}
-		if add {
-			for _, u := range r.Users {
-				if u == user {
-					return
-				}
-			}
-			r.Users = append(r.Users, user)
-			r.Count++
-			return
-		}
-		for j, u := range r.Users {
-			if u == user {
-				r.Users = append(r.Users[:j], r.Users[j+1:]...)
-				r.Count--
-				break
-			}
-		}
-		if r.Count <= 0 {
-			m.Reactions = append(m.Reactions[:i], m.Reactions[i+1:]...)
-		}
-		return
-	}
-	if add {
-		m.Reactions = append(m.Reactions, slack.Reaction{Name: name, Count: 1, Users: []string{user}})
-	}
 }
 
 func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
