@@ -201,6 +201,10 @@ func (w *hw) inline(spans []richtext.Span) {
 				close = "</" + t.tag + ">" + close
 			}
 		}
+		if s.Style&richtext.Highlight != 0 {
+			open += `<span style="background-color:#fae7b4">`
+			close = "</span>" + close
+		}
 		w.s.WriteString(open)
 		switch s.Kind {
 		case richtext.Break:

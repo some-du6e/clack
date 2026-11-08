@@ -93,6 +93,8 @@ type blk struct {
 	emoji *richview.View // callout emoji
 	check widget.Clickable
 	hit   widget.Clickable // click to edit
+	edOK  bool             // canvas.Editable: opens in the editor
+	edWhy string           // else what is in the way
 }
 
 // rebuild makes blocks for a newly fetched doc, keeping the laid-out ones
@@ -135,10 +137,12 @@ func (v *View) makeBlocks(d *core.CanvasDoc, bs []canvas.Block, old map[string]*
 		key := b.ID + "\x00" + string(rune('A'+b.Kind)) + "\x00" + canvas.Markdown(*b) + fileKey(d, b)
 		if o, ok := old[key]; ok && len(b.Children) == 0 && len(b.Columns) == 0 {
 			o.b = b
+			o.edOK, o.edWhy = canvas.Editable(*b)
 			out = append(out, o)
 			continue
 		}
 		x := &blk{b: b, key: key}
+		x.edOK, x.edWhy = canvas.Editable(*b)
 		switch b.Kind {
 		case canvas.Quote, canvas.Callout:
 			x.kids = v.makeBlocks(d, b.Children, old)
@@ -400,7 +404,7 @@ func (v *View) layoutBlock(gtx layout.Context, b *blk, first bool) layout.Dimens
 		}
 		d := b.rv.Layout(g, st, v.handler)
 		h = d.Size.Y
-		if (k.IsText() || k == canvas.Code) && v.edit.canEdit(v) {
+		if v.edit.canEdit(v) { // other kinds: a click explains they can't be edited yet
 			v.edit.textArea(gtx, v, b, image.Rect(0, 0, w, h))
 		}
 	}

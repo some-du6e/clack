@@ -1,6 +1,7 @@
 package canvasview
 
 import (
+	"context"
 	"encoding/json"
 	"image"
 	"strings"
@@ -47,19 +48,11 @@ func lastChange(t *testing.T, fs *fakeslack.Server) map[string]any {
 // items with Enter, insert a channel mention, rename: each is one
 // canvases.edit the fake applies, and the view shows the result.
 func TestEditRoundTrip(t *testing.T) {
-	h, fs := newEnv(t, false)
-	v := New(h, fakeslack.CanvasChannel, Full, Actions{})
-	s := newShooter(t, image.Pt(1100, 900))
-	frame := func() { s.frame(func(gtx layout.Context) { v.Layout(gtx) }) }
-	settle(t, s, v, "the canvas", func() bool { return v.Doc() != nil })
-	frame()
-	if !v.edit.canEdit(v) {
-		t.Fatal("fixture canvas not editable")
-	}
+	h, fs, v, s, frame := editEnv(t)
 	edits := func() int { return len(fs.CanvasEdits()) }
 
 	// 1. a paragraph: replace its text (bold via the toolbar's style)
-	p := findBlk(v, func(b *canvas.Block) bool { return b.Kind == canvas.Paragraph && strings.HasPrefix(b.Text(), "A ") })
+	p := findBlk(v, func(b *canvas.Block) bool { return b.ID == "temp:C:KS1p3" }) // the empty line
 	if p == nil {
 		t.Fatal("no paragraph")
 	}
@@ -200,6 +193,125 @@ func TestEditRoundTrip(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if edits() != n {
 		t.Error("an unchanged block was saved")
+	}
+}
+
+func editEnv(t *testing.T) (*testHost, *fakeslack.Server, *View, *shooter, func()) {
+	t.Helper()
+	h, fs := newEnv(t, false)
+	v := New(h, fakeslack.CanvasChannel, Full, Actions{})
+	s := newShooter(t, image.Pt(1100, 900))
+	frame := func() { s.frame(func(gtx layout.Context) { v.Layout(gtx) }) }
+	settle(t, s, v, "the canvas", func() bool { return v.Doc() != nil })
+	frame()
+	if !v.edit.canEdit(v) {
+		t.Fatal("fixture canvas not editable")
+	}
+	return h, fs, v, s, frame
+}
+
+// A block holding what canvas markdown can't carry (a mention the export
+// names but Clack can't match, underline, highlight) never opens in the
+// editor: the click says so, and no canvases.edit goes out.
+func TestNotEditableBlockSendsNothing(t *testing.T) {
+	h, fs, v, s, frame := editEnv(t)
+	for _, id := range []string{"temp:C:KS1p7", "temp:C:KS1p1", "temp:C:KS1p6"} {
+		b := findBlk(v, func(b *canvas.Block) bool { return b.ID == id })
+		if b == nil {
+			t.Fatalf("no block %s", id)
+		}
+		if b.edOK {
+			t.Fatalf("%s marked editable", id)
+		}
+		v.edit.start(v, b)
+		frame()
+		if v.edit.cur != nil {
+			t.Fatalf("%s opened in the editor", id)
+		}
+	}
+	p7 := v.Doc().Doc.Find("temp:C:KS1p7")
+	for _, sp := range p7.Spans {
+		if sp.Kind == richtext.User && sp.ID != "" {
+			t.Errorf("@nobody.anywhere resolved to %s", sp.ID)
+		}
+	}
+	h.mu.Lock()
+	n := 0
+	for _, m := range h.toasts {
+		if strings.HasPrefix(m, cantEdit) {
+			n++
+		}
+	}
+	h.mu.Unlock()
+	if n != 3 {
+		t.Errorf("%d \"can't be edited\" toasts, want 3", n)
+	}
+	v.edit.finish(v)
+	for i := 0; i < 5; i++ {
+		frame()
+	}
+	time.Sleep(200 * time.Millisecond)
+	if es := fs.CanvasEdits(); len(es) != 0 {
+		t.Fatalf("%d canvases.edit calls, want 0: %v", len(es), es)
+	}
+	s.shot("canvas-not-editable", s.frame(func(gtx layout.Context) { v.Layout(gtx) }))
+	// an edit that adds underline (Ctrl+U) is refused, not saved without it
+	e := findBlk(v, func(b *canvas.Block) bool { return b.ID == "temp:C:KS1p3" })
+	v.edit.start(v, e)
+	frame()
+	ed := v.edit.cur.ed
+	ed.ToggleStyle(composer.Underline)
+	ed.InsertText("under")
+	if v.edit.finish(v) || v.edit.cur == nil {
+		t.Fatal("underlined text saved")
+	}
+	v.edit.discard(v)
+	time.Sleep(100 * time.Millisecond)
+	if len(fs.CanvasEdits()) != 0 {
+		t.Fatal("a refused edit was sent")
+	}
+}
+
+// A mention the export names is matched back to its id from the caches,
+// and saves as canvas markdown's ![](@U…) / ![](#C…) (docs.slack.dev,
+// "Canvases": "![](@U123ABCDEFG)", "![](#C123ABC456)").
+func TestMentionResolvesAndRoundTrips(t *testing.T) {
+	h, fs, v, s, frame := editEnv(t)
+	h.a.EnsureUsers(context.Background(), []string{"U0FAKE00003"})
+	fs.EditCanvasAsOther(fakeslack.CanvasChannel, "Thanks ![](@U0FAKE00003) for ![](#C0FAKE00002)")
+	v.Reload()
+	var b *blk
+	settle(t, s, v, "the new paragraph", func() bool {
+		b = findBlk(v, func(x *canvas.Block) bool { return strings.HasPrefix(x.Text(), "Thanks @") })
+		return b != nil
+	})
+	var uid, cid string
+	for _, sp := range b.b.Spans {
+		switch sp.Kind {
+		case richtext.User:
+			uid = sp.ID
+		case richtext.Channel:
+			cid = sp.ID
+		}
+	}
+	if uid != "U0FAKE00003" || cid != "C0FAKE00002" {
+		t.Fatalf("resolved %q %q (spans %+v)", uid, cid, b.b.Spans)
+	}
+	if !b.edOK {
+		t.Fatalf("resolved block not editable: %s", b.edWhy)
+	}
+	v.edit.start(v, b)
+	frame()
+	ed := v.edit.cur.ed
+	ed.SetSelection(ed.Doc().Len(), ed.Doc().Len())
+	ed.InsertText(" today")
+	frame()
+	if !v.edit.finish(v) {
+		t.Fatal("save refused")
+	}
+	settle(t, s, v, "the save", func() bool { return len(fs.CanvasEdits()) == 1 })
+	if md := lastChange(t, fs)["document_content"].(map[string]any)["markdown"]; md != "Thanks ![](@U0FAKE00003) for ![](#C0FAKE00002) today" {
+		t.Errorf("markdown %q", md)
 	}
 }
 

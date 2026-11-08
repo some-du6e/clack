@@ -79,7 +79,7 @@ The `id` attributes (`temp:C:…`) are Quip section ids. They are the same ids `
 | new channel canvas | `conversations.canvases.create {channel_id, title?, document_content?}` → `canvas_id` (adds a tab) |
 | share | `canvases.access.set {canvas_id, access_level: read|write, channel_ids: [...]}`, then the canvas's permalink is posted to each conversation (Slack unfurls it as the canvas card) |
 
-Canvas markdown (`internal/canvas/markdown.go`): `#`/`##`/`###`, `- `, `1. `, `- [ ] `/`- [x] `, two spaces per nesting level, `> `, fenced code, `---`, pipe tables, `**bold**`, `_italic_`, `~strike~`, `` `code` ``, `[text](url)`, `![](@U…)` / `![](#C…)` mentions, `:emoji:`, `@here`.
+Canvas markdown (`internal/canvas/markdown.go`): `#`/`##`/`###`, `- `, `1. `, `- [ ] `/`- [x] `, two spaces per nesting level, `> `, fenced code, `---`, pipe tables, `**bold**`, `_italic_`, `~~strike~~`, `` `code` ``, `[text](url)`, `![](@U…)` / `![](#C…)` mentions, `:emoji:`, `@here`.
 
 **Editing in the UI** (`internal/ui/canvasview/edit.go`, `picker.go`). Only canvases whose `files.info` says `editable` can be edited.
 - **Opening a block for editing:** clicking a paragraph, heading, list item or code block (not on a link or mention) turns it into the composer's rich editor. A list item keeps its gutter marker at its level.
@@ -94,7 +94,16 @@ Canvas markdown (`internal/canvas/markdown.go`): `#`/`##`/`###`, `- `, `1. `, `-
 - **Create:** the channel tab bar's "+" → Canvas (`conversations.canvases.create`; the new tab opens once the tab bar reloads), and Files' "+ New Canvas" (`canvases.create`, opened in full view).
 - **Share:** in full view, Share or More actions → Share canvas lists the sidebar's conversations, then "Can edit" / "Can view" (`canvases.access.set`, then the link is posted).
 
-**Not supported yet:** editing tables, images, columns, callouts and embeds (they render, but don't open in the editor), inserting images or files, comments, version history, templates, deleting a canvas, Lists, and sending cursors (`document_change`). The link button only links selected text that is itself an address (there's no link dialog yet). The export has mention names but no ids, so a mention that was already in the canvas saves back as plain "@name" text if its block is edited.
+**Editing never degrades a canvas.**
+- *Mentions:* the export names mentions but carries no ids. Core resolves each one from the user and channel caches (`ResolveCanvasMention`): users by display name, then username, then real name, case-insensitively; channels by name. A name is accepted only when exactly one user or channel has it at the first tier that matches, so an ambiguous name stays unresolved.
+- *Fidelity check:* a block opens in the editor only if `canvas.Editable` passes. Its kind must be one canvas markdown writes, and its markdown must parse back to the same inlines: text and links by text, style and target; mentions and emoji by id.
+- *What fails the check:* underline and highlight (not in canvases.edit's supported list), dates, inline images, @here/@channel/@everyone and user groups (no documented form), unresolved mentions, hard line breaks inside a block (supported, but the syntax isn't documented), a link styled as code, and a code block that contains a fence.
+- *What happens instead:* clicking such a block shows "This part can't be edited in Clack yet (it has …)", and nothing is sent. Ticking a checklist item that fails the check is refused the same way.
+- *Saving:* a save whose new content would fail the check (say, Ctrl+U underline) is refused with a toast, and the editor stays open; a second Escape discards the edit.
+
+The editor draws its text with richview's 0.45px embolden (`composer.EditorStyle.Embolden`), so a block doesn't look lighter while it's being edited.
+
+**Not supported yet:** editing tables, images, columns, callouts and embeds (they render, but don't open in the editor), inserting images or files, comments, version history, templates, deleting a canvas, Lists, and sending cursors (`document_change`). The link button only links selected text that is itself an address (there's no link dialog yet).
 
 ## Plugins
 

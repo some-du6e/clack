@@ -36,7 +36,7 @@ func TestParseKitchenSink(t *testing.T) {
 		Bullet, Bullet, Bullet, Bullet,
 		Numbered, Numbered, Numbered, Numbered,
 		Heading3, Check, Check, Check,
-		Quote, Code, Divider, Table, Columns, Embed, File, Callout, Paragraph}
+		Quote, Code, Divider, Table, Columns, Embed, File, Callout, Paragraph, Paragraph}
 	if got := kinds(d.Blocks); !reflect.DeepEqual(got, want) {
 		t.Fatalf("kinds\n got %v\nwant %v", got, want)
 	}
@@ -164,7 +164,7 @@ func TestMarkdownBlocks(t *testing.T) {
 	b := d.Blocks
 	cases := map[int]string{
 		0:  "# Launch plan :rocket:",
-		1:  "Hello **bold**, _italic_, ~struck~, underlined and `inline code`. Ask @ada.lovelace in #general, @here.",
+		1:  "Hello **bold**, _italic_, ~~struck~~, underlined and `inline code`. Ask @ada.lovelace in #general, @here.",
 		6:  "  - Nested **bullet**",
 		10: "2. Two",
 		14: "- [x] Book the venue",
@@ -232,5 +232,51 @@ func TestMarkdownRoundTrip(t *testing.T) {
 	md := DocMarkdown(d)
 	if md2 := DocMarkdown(Doc{Blocks: ParseMarkdown(md, nil)}); md2 != md {
 		t.Errorf("unstable markdown:\n%s\n---\n%s", md, md2)
+	}
+}
+
+// Only blocks that survive canvases.edit markdown unchanged are editable.
+func TestEditable(t *testing.T) {
+	d := kitchen(t)
+	want := map[string]bool{
+		"temp:C:KS1h1": true,  // heading with an emoji
+		"temp:C:KS1p1": false, // underline, a name-only mention, @here
+		"temp:C:KS1p2": false, // a date
+		"temp:C:KS1p3": true,  // an empty line
+		"temp:C:KS1b2": true,  // nested bullet with bold
+		"temp:C:KS1c1": true,  // ticked item
+		"temp:C:KS1c2": true,  // item with a link
+		"temp:C:KS1p6": false, // highlight
+		"temp:C:KS1p7": false, // unresolvable mention, underline, highlight
+	}
+	for id, w := range want {
+		b := d.Find(id)
+		if b == nil {
+			t.Fatalf("no %s", id)
+		}
+		if ok, why := Editable(*b); ok != w {
+			t.Errorf("%s: Editable = %v (%s), want %v", id, ok, why, w)
+		}
+	}
+	for _, k := range []Kind{Table, Image, Columns, Callout, Embed, File, Quote, Divider} {
+		if ok, _ := Editable(Block{Kind: k}); ok {
+			t.Errorf("kind %d editable", k)
+		}
+	}
+	// a resolved mention is fine; the same without its id isn't
+	b := Block{Kind: Paragraph, Spans: []richtext.Span{{Kind: richtext.Text, Text: "hi "}, {Kind: richtext.User, ID: "U0ABC", Text: "@ada"}}}
+	if ok, why := Editable(b); !ok {
+		t.Errorf("resolved mention: %s", why)
+	}
+	b.Spans[1].ID = ""
+	if ok, _ := Editable(b); ok {
+		t.Error("unresolved mention editable")
+	}
+	// a code block holding a fence can't be written back
+	if ok, _ := Editable(Block{Kind: Code, Code: "a\n```\nb"}); ok {
+		t.Error("fenced code editable")
+	}
+	if ok, _ := Editable(Block{Kind: Code, Code: "  indented\nx"}); !ok {
+		t.Error("plain code not editable")
 	}
 }

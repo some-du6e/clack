@@ -250,11 +250,17 @@ func (a *App) downloadCanvas(ctx context.Context, raw string) (string, error) {
 }
 
 // resolveCanvasSpans gives emoji the workspace's own images (custom emoji,
-// the standard set) instead of the export's slack-imgs proxy URLs.
+// the standard set) instead of the export's slack-imgs proxy URLs, and
+// mentions the ids the export leaves out (ResolveCanvasMention).
 func (a *App) resolveCanvasSpans(d *canvas.Doc) {
 	d.Walk(func(b *canvas.Block) bool {
 		for i := range b.Spans {
 			s := &b.Spans[i]
+			if (s.Kind == richtext.User || s.Kind == richtext.Channel) && s.ID == "" {
+				if id, ok := a.ResolveCanvasMention(s.Kind, s.Text); ok {
+					s.ID = id
+				}
+			}
 			if s.Kind == richtext.Emoji {
 				if u, txt, ok := a.S.Emoji(s.ID); ok {
 					if u != "" {
@@ -268,6 +274,68 @@ func (a *App) resolveCanvasSpans(d *canvas.Doc) {
 		}
 		return true
 	})
+}
+
+// ResolveCanvasMention finds the id behind a mention in a canvas export,
+// which carries only the name Quip showed ("@name", "#channel"). Users are
+// matched from the cache by display name, then username, then real name
+// (case-insensitively); channels by name. A name is accepted only when
+// exactly one user (channel) has it at the first tier that matches at all;
+// an ambiguous name stays unresolved, so an edit can't turn it into a
+// mention of the wrong person.
+func (a *App) ResolveCanvasMention(kind richtext.SpanKind, text string) (string, bool) {
+	name := strings.TrimSpace(text)
+	switch kind {
+	case richtext.User:
+		name = strings.TrimPrefix(name, "@")
+	case richtext.Channel:
+		name = strings.TrimPrefix(name, "#")
+	default:
+		return "", false
+	}
+	if name == "" {
+		return "", false
+	}
+	a.S.Lock()
+	defer a.S.Unlock()
+	if kind == richtext.Channel {
+		id := ""
+		for _, c := range a.S.Convs {
+			if c == nil || c.IsIM || c.IsMPIM || !strings.EqualFold(c.Name, name) {
+				continue
+			}
+			if id != "" && id != c.ID {
+				return "", false
+			}
+			id = c.ID
+		}
+		return id, id != ""
+	}
+	tiers := []func(u *slack.User) string{
+		func(u *slack.User) string { return u.Profile.DisplayName },
+		func(u *slack.User) string { return u.Name },
+		func(u *slack.User) string { return firstNonEmpty(u.Profile.RealName, u.RealName) },
+	}
+	for _, field := range tiers {
+		id := ""
+		n := 0
+		for _, u := range a.S.Users {
+			if u == nil || u.Deleted {
+				continue
+			}
+			if f := strings.TrimSpace(field(u)); f != "" && strings.EqualFold(f, name) && u.ID != id {
+				id = u.ID
+				n++
+			}
+		}
+		switch {
+		case n == 1:
+			return id, true
+		case n > 1:
+			return "", false // ambiguous: never guess
+		}
+	}
+	return "", false
 }
 
 // OpenCanvas tells Slack the viewer has the canvas open (files.open), so the

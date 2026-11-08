@@ -232,3 +232,41 @@ func TestCanvasCreateShare(t *testing.T) {
 		t.Errorf("share posts %d", fs.CallCount("chat.postMessage"))
 	}
 }
+
+// Mentions in a canvas export carry names only; they resolve to ids by
+// display name, then username, then real name, and only when unique.
+func TestResolveCanvasMention(t *testing.T) {
+	a, _ := canvasApp(t)
+	u := func(id, handle, display, real string) slack.User {
+		return slack.User{ID: id, Name: handle, RealName: real, Profile: slack.Profile{DisplayName: display, RealName: real}}
+	}
+	a.S.PutUsers([]slack.User{
+		u("UR0001", "solo.handle", "Solo", "Solo Person"),
+		u("UR0002", "twin.one", "Twin", "Twin One"),
+		u("UR0003", "twin.two", "Twin", "Twin Two"),
+		u("UR0004", "only.handle", "", "Only Real"),
+		u("UR0005", "shared.real", "", "Same Name"),
+		u("UR0006", "shared.real2", "", "Same Name"),
+	})
+	for in, want := range map[string]string{
+		"@Solo":          "UR0001", // display name
+		"@solo":          "UR0001", // case-insensitive
+		"@twin.one":      "UR0002", // username (display name "Twin" is ambiguous, but this tier has no match)
+		"@Twin":          "",       // two people: never guess
+		"@only.handle":   "UR0004",
+		"@Only Real":     "UR0004", // real name
+		"@Same Name":     "",
+		"@nobody.at.all": "",
+	} {
+		id, ok := a.ResolveCanvasMention(richtext.User, in)
+		if id != want || ok != (want != "") {
+			t.Errorf("%s -> %q %v, want %q", in, id, ok, want)
+		}
+	}
+	if id, ok := a.ResolveCanvasMention(richtext.Channel, "#"+a.S.Convs["C0FAKE00002"].Name); !ok || id != "C0FAKE00002" {
+		t.Errorf("channel -> %q %v", id, ok)
+	}
+	if _, ok := a.ResolveCanvasMention(richtext.Channel, "#no-such-channel"); ok {
+		t.Error("unknown channel resolved")
+	}
+}

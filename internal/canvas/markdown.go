@@ -11,7 +11,7 @@ import (
 // canvases.edit take (docs.slack.dev "Canvas markdown"): # headings, - / 1.
 // / - [ ] lists indented two spaces per level, > quotes, ``` code, ---,
 // pipe tables, ![](@U…) and ![](#C…) mentions, :emoji:, **bold**, _italic_,
-// ~strike~, `code` and [text](url) links.
+// ~~strike~~, `code` and [text](url) links.
 func Markdown(b Block) string {
 	var w strings.Builder
 	writeBlock(&w, b, "")
@@ -203,7 +203,7 @@ func wrapStyle(t string, st richtext.Style) string {
 		core = "`" + core + "`"
 	}
 	if st&richtext.Strike != 0 {
-		core = "~" + core + "~"
+		core = "~~" + core + "~~"
 	}
 	if st&richtext.Italic != 0 {
 		core = "_" + core + "_"

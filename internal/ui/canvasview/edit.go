@@ -61,6 +61,7 @@ type session struct {
 	ed      *composer.Editor
 	focus   bool
 	ver     uint64
+	refused bool // the last save was refused: Escape now discards
 }
 
 func newEditState() *editState {
@@ -114,8 +115,22 @@ func (e *editState) textArea(gtx layout.Context, v *View, b *blk, r image.Rectan
 	}
 	defer clip.Rect(r).Push(gtx.Ops).Pop()
 	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
-	pointer.CursorText.Add(gtx.Ops)
+	if b.edOK {
+		pointer.CursorText.Add(gtx.Ops)
+	}
 	event.Op(gtx.Ops, b)
+}
+
+// cantEdit is Slack's feedback for a part of a canvas the client can't
+// edit: a toast, and nothing is sent.
+const cantEdit = "This part can't be edited in Clack yet"
+
+func (e *editState) refuse(v *View, b *blk) {
+	msg := cantEdit
+	if b.edWhy != "" {
+		msg += " (it has " + b.edWhy + ")"
+	}
+	v.h.Toast(msg)
 }
 
 // titleArea: a click on the title renames.
@@ -146,7 +161,9 @@ func (v *View) startRename() {
 		v.h.Toast("You can't edit this canvas")
 		return
 	}
-	e.finish(v)
+	if !e.finish(v) {
+		return
+	}
 	e.renaming, e.renameOn = true, true
 	e.rename.SingleLine, e.rename.Submit = true, true
 	e.rename.SetText(v.shown.Info.Title)
@@ -243,6 +260,10 @@ func (e *editState) toggleCheck(v *View, b *blk) {
 	if e == nil || b.b.ID == "" {
 		return
 	}
+	if !b.edOK { // saving the item would rewrite its text lossily
+		e.refuse(v, b)
+		return
+	}
 	nb := *b.b
 	nb.Checked = !nb.Checked
 	md := canvas.Markdown(nb)
@@ -258,12 +279,14 @@ func (e *editState) start(v *View, b *blk) {
 	if e.cur != nil && e.cur.target == b {
 		return
 	}
-	e.finish(v)
-	k := b.b.Kind
-	if !k.IsText() && k != canvas.Code {
+	if !e.finish(v) {
 		return
 	}
-	s := &session{target: b, id: b.b.ID, kind: k, level: b.b.Level, checked: b.b.Checked, orig: canvas.Markdown(*b.b),
+	if !b.edOK {
+		e.refuse(v, b)
+		return
+	}
+	s := &session{target: b, id: b.b.ID, kind: b.b.Kind, level: b.b.Level, checked: b.b.Checked, orig: canvas.Markdown(*b.b),
 		ed: composer.NewEditor(), focus: true}
 	s.ed.SetDoc(toDoc(b.b))
 	s.ver = s.ed.Version()
@@ -271,29 +294,42 @@ func (e *editState) start(v *View, b *blk) {
 	v.h.Invalidate()
 }
 
-// finish saves the current session, if any.
-func (e *editState) finish(v *View) {
+// finish saves the current session, if any. It reports false (and keeps
+// editing) when the edit holds something canvas markdown can't carry
+// (underline, say): nothing is sent; a second Escape discards the edit.
+func (e *editState) finish(v *View) bool {
 	if e == nil || e.cur == nil {
-		return
+		return true
 	}
 	s := e.cur
+	bs := fromDoc(s.ed.Doc(), s)
+	for _, b := range bs {
+		if ok, why := canvas.Editable(b); !ok {
+			if why == "" {
+				why = "this"
+			}
+			v.h.Toast("Clack can't save " + why + " to a canvas yet. Remove it, or press Escape again to discard your changes")
+			s.refused = true
+			s.focus = true
+			return false
+		}
+	}
 	e.cur = nil
 	e.pick = picker{}
-	bs := fromDoc(s.ed.Doc(), s)
 	md := blocksMarkdown(bs)
 	var ch core.CanvasChange
 	switch {
 	case s.target != nil && md == s.orig:
-		return
+		return true
 	case s.target != nil && md == "":
 		if s.id == "" {
-			return
+			return true
 		}
 		ch = core.CanvasChange{Operation: "delete", SectionID: s.id}
 		e.replaceLocal(v, s.target, nil)
 	case s.target != nil:
 		if s.id == "" {
-			return
+			return true
 		}
 		ch = core.CanvasChange{Operation: "replace", SectionID: s.id, Markdown: md}
 		if len(bs) > 0 {
@@ -303,7 +339,7 @@ func (e *editState) finish(v *View) {
 	default: // a new block
 		e.dropPlace(v, s)
 		if md == "" {
-			return
+			return true
 		}
 		ch = core.CanvasChange{Operation: "insert_after", SectionID: s.afterID, Markdown: md}
 		if s.afterID == "" {
@@ -312,16 +348,26 @@ func (e *editState) finish(v *View) {
 		e.insertLocal(v, s.afterID, bs)
 	}
 	e.save(v, func(ctx context.Context, a *core.App) error { return a.EditCanvas(ctx, v.id, ch) })
+	return true
+}
+
+// discard ends the session without saving.
+func (e *editState) discard(v *View) {
+	if s := e.cur; s != nil && s.place != nil {
+		e.dropPlace(v, s)
+	}
+	e.cur = nil
+	e.pick = picker{}
+	v.h.Invalidate()
 }
 
 // StartNewBlock begins typing a new paragraph after the document's last
 // block (the empty area under a canvas, Slack's "Type anything…").
 func (v *View) StartNewBlock() {
 	e := v.edit
-	if e == nil || !e.canEdit(v) {
+	if e == nil || !e.canEdit(v) || !e.finish(v) {
 		return
 	}
-	e.finish(v)
 	after := ""
 	for i := len(v.blocks) - 1; i >= 0; i-- {
 		if v.blocks[i].b.ID != "" {
@@ -499,11 +545,17 @@ func (e *editState) layoutEditor(gtx layout.Context, v *View, b *blk, top, w int
 				e.pick = picker{}
 				continue
 			}
-			e.finish(v)
-			return gtx.Dp(bodyLine)
+			if s.refused { // discard: the block shows what is saved
+				e.discard(v)
+				return gtx.Dp(bodyLine)
+			}
+			if e.finish(v) {
+				return gtx.Dp(bodyLine)
+			}
 		case composer.EvSubmit: // Ctrl/Cmd+Enter saves
-			e.finish(v)
-			return gtx.Dp(bodyLine)
+			if e.finish(v) {
+				return gtx.Dp(bodyLine)
+			}
 		case composer.EvChange:
 			shortcuts(s)
 		}
@@ -523,6 +575,7 @@ func (e *editState) layoutEditor(gtx layout.Context, v *View, b *blk, top, w int
 		v.drawMarker(gtx, probe, x, lineH)
 	}
 	st := editorStyle(th, kind, v.h)
+	st.Embolden = v.styles.body.Embolden // richview's ink, so the text doesn't go grey while edited
 	g := gtx
 	g.Constraints = layout.Constraints{Max: image.Pt(max(1, w-tx), gtx.Constraints.Max.Y)}
 	var d layout.Dimensions

@@ -18,6 +18,8 @@ import (
 	"gioui.org/text"
 	"gioui.org/unit"
 	"golang.org/x/image/math/fixed"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
 // textlayout.go shapes and wraps a *Doc for the editor. Every style run is
@@ -342,6 +344,7 @@ type tlColors struct {
 	preBg, preBorder, quoteBar           color.NRGBA
 	mention, mentionBg                   color.NRGBA
 	broadcast, broadcastBg               color.NRGBA
+	emb                                  float32 // EditorStyle.Embolden
 }
 
 func tlColorsOf(st *EditorStyle) tlColors {
@@ -349,7 +352,7 @@ func tlColorsOf(st *EditorStyle) tlColors {
 		text: st.Color, link: st.LinkColor, code: st.CodeColor, codeBg: st.CodeBg, codeBorder: st.CodeBorder,
 		preBg: st.PreBg, preBorder: st.PreBorder, quoteBar: st.QuoteBar,
 		mention: st.MentionColor, mentionBg: st.MentionBg,
-		broadcast: st.BroadcastColor, broadcastBg: st.BroadcastBg,
+		broadcast: st.BroadcastColor, broadcastBg: st.BroadcastBg, emb: st.Embolden,
 	}
 }
 
@@ -366,6 +369,7 @@ type tlLayout struct {
 	width  int
 	sh     *text.Shaper
 	cache  tlCache
+	emb    float32 // text stroke while painting (tlColors.emb)
 
 	latoAsc, latoDesc int
 	monoAsc, monoDesc int
@@ -839,6 +843,7 @@ func (l *tlLayout) forRange(lo, hi int, fn func(li, x0, x1 int, nl bool)) {
 // paintStatic records the background and text macros if the layout or the
 // colors changed since the last recording.
 func (l *tlLayout) paintStatic(gtx layout.Context, c tlColors) {
+	l.emb = c.emb
 	if l.paintOK && l.paintGen == l.gen && l.paintCol == c {
 		return
 	}
@@ -987,15 +992,30 @@ func (l *tlLayout) paintRun(gtx layout.Context, li int, it *tlItem, a, b int, co
 		return
 	}
 	x := l.vxf(li, it.x0+it.padL+gs[0].X)
-	tlPaintGlyphs(gtx, l.sh, gs, f32.Pt(x, float32(l.lines[li].base)), col)
+	tlPaintGlyphs(gtx, l.sh, gs, f32.Pt(x, float32(l.lines[li].base)), col, l.emb)
 }
 
 // tlPaintGlyphs paints glyphs of one line with their first dot at origin.
-func tlPaintGlyphs(gtx layout.Context, sh *text.Shaper, gs []text.Glyph, origin f32.Point, col color.NRGBA) {
+// emb > 0 grows the ink by an emb-px stroke, like richview's message text.
+func tlPaintGlyphs(gtx layout.Context, sh *text.Shaper, gs []text.Glyph, origin f32.Point, col color.NRGBA, emb ...float32) {
 	if len(gs) == 0 {
 		return
 	}
 	t := op.Affine(f32.AffineId().Offset(origin)).Push(gtx.Ops)
+	if len(emb) > 0 && emb[0] > 0 {
+		if path, ok := theme.EmboldenedShape(sh, gs, emb[0]); ok {
+			paint.FillShape(gtx.Ops, col, clip.Outline{Path: path}.Op())
+		} else {
+			path := sh.Shape(gs)
+			paint.FillShape(gtx.Ops, col, clip.Outline{Path: path}.Op())
+			paint.FillShape(gtx.Ops, col, clip.Stroke{Path: path, Width: emb[0]}.Op())
+		}
+		if call := sh.Bitmaps(gs); call != (op.CallOp{}) {
+			call.Add(gtx.Ops)
+		}
+		t.Pop()
+		return
+	}
 	path := sh.Shape(gs)
 	outline := clip.Outline{Path: path}.Op().Push(gtx.Ops)
 	paint.ColorOp{Color: col}.Add(gtx.Ops)
