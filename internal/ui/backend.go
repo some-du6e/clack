@@ -205,6 +205,7 @@ func (b *backend) apply(a *App, s core.Snapshot) {
 	b.teamID = s.Team.ID
 	m.TeamName = s.Team.Name
 	m.TeamIcon = s.Team.Icon
+	m.Rail = s.Rail
 	m.SelfID = s.Self.ID
 	m.SelfName = s.Self.Name
 	m.SelfAvatar = s.Self.Avatar
@@ -418,7 +419,7 @@ func (b *backend) handle(a *App, ev core.Event) {
 			}
 			changed = true
 		}
-	case "conv", "conv_removed", "sidebar_changed", "resync":
+	case "conv", "conv_removed", "sidebar_changed", "resync", "team", "prefs":
 		b.resnapshot(a)
 	case "auth_failed":
 		// core stopped all traffic on a dead session: back to sign-in

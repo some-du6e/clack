@@ -44,14 +44,16 @@ type App struct {
 	bg     context.Context
 	stopBG context.CancelFunc
 
-	pending map[string]*pendingSend // client_msg_id -> optimistic send
-	saved   map[string]bool         // "channel/ts" of saved / to-do messages
-	starred map[string]bool         // starred conversation ids (stars.list)
-	starsOK bool                    // starred was loaded
-	memberN map[string]int          // conversation -> people count (edge users/counts)
-	memberG map[string]int          // conversation -> guests among them (edge users/counts)
-	dms     dmState                 // which DMs Slack's sidebar shows (dmsidebar.go)
-	exp     *sidebarExp             // experiments the sidebar rules read (nil: defaults)
+	pending   map[string]*pendingSend // client_msg_id -> optimistic send
+	saved     map[string]bool         // "channel/ts" of saved / to-do messages
+	starred   map[string]bool         // starred conversation ids (stars.list)
+	starsOK   bool                    // starred was loaded
+	memberN   map[string]int          // conversation -> people count (edge users/counts)
+	memberG   map[string]int          // conversation -> guests among them (edge users/counts)
+	dms       dmState                 // which DMs Slack's sidebar shows (dmsidebar.go)
+	exp       *sidebarExp             // experiments the sidebar rules read (nil: defaults)
+	expGroups map[string]string       // every experiment group (experiments.getByUser)
+	icon      teamIconState           // the rail's workspace icon (team_icon.go)
 
 	// Realtime (Slack's websocket gateway) is opt-in; see SetRealtime.
 	rtMu      sync.Mutex
@@ -198,6 +200,9 @@ func (a *App) pollLoop(ctx context.Context) {
 		}
 		cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		a.pollOnce(cctx)
+		if a.teamIconDue() { // no team_icon_change without the socket
+			a.refreshTeamIcon(cctx)
+		}
 		cancel()
 	}
 }
@@ -449,20 +454,18 @@ func (a *App) Boot(ctx context.Context) error {
 	step("team", func() error {
 		var r struct {
 			Team struct {
-				ID     string         `json:"id"`
-				Name   string         `json:"name"`
-				Domain string         `json:"domain"`
-				Icon   map[string]any `json:"icon"`
+				ID     string          `json:"id"`
+				Name   string          `json:"name"`
+				Domain string          `json:"domain"`
+				Icon   json.RawMessage `json:"icon"`
 			} `json:"team"`
 		}
 		err := a.C.Call(ctx, "team.info", nil, &r)
 		if err == nil {
 			a.S.Lock()
 			a.S.TeamID, a.S.TeamName, a.S.TeamDomain = r.Team.ID, r.Team.Name, r.Team.Domain
-			if s, ok := r.Team.Icon["image_88"].(string); ok {
-				a.S.TeamIcon = s
-			}
 			a.S.Unlock()
+			a.setTeamIcon(r.Team.ID, r.Team.Icon)
 		}
 		return err
 	})
@@ -521,6 +524,7 @@ func (a *App) Boot(ctx context.Context) error {
 	a.rtMu.Unlock()
 	a.startRealtime()
 	go a.pollLoop(a.bg)
+	go a.refreshTeamIcon(a.bg) // Grid: the icon Slack's rail shows (team_icon.go), fresh
 	go a.pump()
 	go a.prefetch(a.bg)
 	go a.loadExtras(a.bg)  // starred + saved sets
@@ -763,7 +767,7 @@ func (a *App) Snapshot() Snapshot {
 	return Snapshot{
 		Self: self, Team: team, Convs: convs, Sections: a.sections(convs), Counts: a.Counts(),
 		Threads: a.ThreadsState(), Users: a.users(ids), Connected: connected, Prefs: prefs,
-		EmojiCount: a.S.CustomEmoji.Len(), EnterpriseID: a.C.Creds.EnterpriseID,
+		EmojiCount: a.S.CustomEmoji.Len(), EnterpriseID: a.C.Creds.EnterpriseID, Rail: a.Rail(),
 	}
 }
 

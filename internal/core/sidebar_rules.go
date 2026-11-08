@@ -59,7 +59,28 @@ func (a *App) setExperiments(groups map[string]string) {
 	}
 	a.mu.Lock()
 	a.exp = &e
+	a.expGroups = groups
 	a.mu.Unlock()
+}
+
+// experiment returns the viewer's group for an experiment; before (or
+// without) experiments.getByUser it falls back to what the test account had
+// on 2026-11-08 (defaultExperimentGroups).
+func (a *App) experiment(name string) string {
+	a.mu.Lock()
+	g := a.expGroups
+	a.mu.Unlock()
+	if g == nil {
+		return defaultExperimentGroups[name]
+	}
+	return g[name]
+}
+
+// defaultExperimentGroups mirrors defaultSidebarExp for the rail's
+// experiments (rail.go).
+var defaultExperimentGroups = map[string]string{
+	"filter_dormant_channels": "on", "improve_mute_pref": "on", "dm_recency_sort_rollout": "without_edu",
+	"activity_inbox": "on", "agent_tasks": "on", "agents_landing_page": "on", "later_todos": "on",
 }
 
 func (a *App) sidebarExperiments() sidebarExp {

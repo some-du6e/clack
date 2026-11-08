@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"math"
 	"strings"
+	"unicode"
 
 	"gioui.org/f32"
 	"gioui.org/layout"
@@ -14,6 +15,7 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
@@ -262,16 +264,72 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 // ---- tab rail (70px) ----
 
 type railTab struct {
-	key, label, icon string
+	key, label, icon, sub string
+	id                    string // Slack's tab id (core.Tab*)
 }
 
-var railTabs = []railTab{
-	{"home", "Home", "home"},
-	{"dms", "DMs", "dms"},
-	{"activity", "Activity", "activity"},
-	{"files", "Files", "files"},
-	{"later", "To-dos", "todos"},
-	{"more", "Agents & tools", "agents"},
+// railKey maps Slack's tab ids to Clack's rail keys (routes).
+func railKey(id string) string {
+	switch id {
+	case core.TabActivity, core.TabActivityInbox, core.TabActivityProto:
+		return "activity"
+	case core.TabFiles:
+		return "files"
+	}
+	return id // home, dms, later, platform, browse
+}
+
+// railTabFor is a tab's label and icon (q0zJ icons, mBDz labels).
+func (a *App) railTabFor(id string) railTab {
+	t := a.model().Rail.Tabs[id]
+	rt := railTab{key: railKey(id), id: id, label: t.Label, sub: t.Subtitle}
+	switch id {
+	case core.TabHome:
+		rt.icon = "home"
+	case core.TabDMs:
+		rt.icon = "dms"
+	case core.TabActivity, core.TabActivityInbox, core.TabActivityProto:
+		rt.icon = "activity"
+	case core.TabFiles:
+		rt.icon = "files"
+	case core.TabLater:
+		rt.icon = "bookmark"
+		if t.Label == "To-dos" {
+			rt.icon = "todos"
+		}
+	case core.TabPlatform, core.TabAgents:
+		rt.icon = "agents"
+	case core.TabBrowse:
+		rt.icon = "more"
+	}
+	if rt.label == "" { // before the first snapshot
+		rt.label = map[string]string{core.TabHome: "Home", core.TabDMs: "DMs", core.TabActivity: "Activity",
+			core.TabActivityInbox: "Activity", core.TabFiles: "Files", core.TabLater: "Later",
+			core.TabPlatform: "Tools", core.TabBrowse: "More"}[id]
+	}
+	return rt
+}
+
+// railLines splits "Agents & tools" onto two lines, as Slack wraps it.
+func railLines(label string) []string {
+	return strings.SplitN(strings.Replace(label, " & ", "\n& ", 1), "\n", 2)
+}
+
+// railFit runs Slack's tab rail organizer for the space between the first
+// tab and the control strip (px), returning the rail and More's tabs.
+func (a *App) railFit(gtx layout.Context, space int) (show, overflow []string) {
+	r := a.model().Rail
+	if len(r.Rail) == 0 { // no snapshot yet: Slack's defaults
+		r.Rail = []string{core.TabHome, core.TabDMs, core.TabActivityInbox}
+		r.Available = r.Rail
+	}
+	h := func(id string) int {
+		if len(railLines(a.railTabFor(id).label)) == 2 {
+			return 80 // two-line label (Slack keeps 68 in its budget; Clack draws it taller)
+		}
+		return core.RailTabHeight(r.Compact)
+	}
+	return core.OrganizeRail(r, int(float32(space)/gtx.Metric.PxPerDp), h)
 }
 
 func (a *App) layoutRail(gtx layout.Context, top, height int) {
@@ -289,12 +347,19 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 	}
 
 	y := top + gtx.Dp(61)
+	show, overflow := a.railFit(gtx, height-gtx.Dp(61)-gtx.Dp(164))
+	a.railOverflow = overflow
 	active := a.activeRail()
-	for _, t := range railTabs {
-		t := t
+	for _, k := range overflow { // the active tab is under More: More is active (Zxh6)
+		if railKey(k) == active {
+			active = "browse"
+		}
+	}
+	for _, id := range show {
+		t := a.railTabFor(id)
 		btn := a.clicks.get("rail." + t.key)
 		th := gtx.Dp(68)
-		lines := strings.SplitN(strings.Replace(t.label, " & ", "\n& ", 1), "\n", 2)
+		lines := railLines(t.label)
 		if len(lines) == 2 {
 			th = gtx.Dp(80) // Slack wraps "Agents & tools" onto two lines
 		}
@@ -335,7 +400,7 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 			})
 		})
 		if clicked(btn) {
-			a.railClick(t.key)
+			a.railClick(t.key, org)
 		}
 		y += th
 	}
@@ -441,15 +506,19 @@ func (a *App) teamIcon(gtx layout.Context, s int) layout.Dimensions {
 	r := s * 2 / 9
 	if url := a.teamIconURL(); url != "" {
 		if img, ok := a.images.Get(url, s*2); ok {
+			a.teamIconShown = url
 			return theme.Image(gtx, img, image.Pt(s, s), r)
+		}
+		// a rotated icon (team_icon_change) loads under a new URL: keep the
+		// previous one until it is ready
+		if prev := a.teamIconShown; prev != "" && prev != url {
+			if img, ok := a.images.Get(prev, s*2); ok {
+				return theme.Image(gtx, img, image.Pt(s, s), r)
+			}
 		}
 	}
 	theme.RRect(gtx, image.Rect(0, 0, s, s), r, theme.WithAlpha(a.th.C.ChromeText, 0x33))
-	name := a.teamName()
-	ini := "Y"
-	if name != "" {
-		ini = string([]rune(name)[:1])
-	}
+	ini := teamInitials(a.teamName())
 	tw := a.th.Measure(gtx, 20, theme.Black, ini)
 	at(gtx, image.Pt((s-tw)/2, 0), image.Pt(s, s), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, s, func(gtx layout.Context) layout.Dimensions {
@@ -468,4 +537,30 @@ func (a *App) avatar(gtx layout.Context, url, name string, s, radius int) layout
 	}
 	theme.RRect(gtx, image.Rect(0, 0, s, s), radius, a.th.C.Skeleton)
 	return layout.Dimensions{Size: image.Pt(s, s)}
+}
+
+// teamInitials is mAu1.getTeamInitials(name, {limit: 2}): the first letter
+// of each word (split on spaces, "|" and "-"), uppercased.
+func teamInitials(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		if r == ' ' || r == '-' || r == '|' || r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	var out []rune
+	for _, w := range strings.FieldsFunc(b.String(), func(r rune) bool { return r == ' ' || r == '|' || r == '-' }) {
+		if len(out) == 2 {
+			break
+		}
+		out = append(out, []rune(w)[0])
+	}
+	if len(out) == 0 {
+		rs := []rune(name)
+		if len(rs) > 2 {
+			rs = rs[:2]
+		}
+		return string(rs)
+	}
+	return strings.ToUpper(string(out))
 }
