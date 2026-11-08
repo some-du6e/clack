@@ -184,6 +184,7 @@ type User struct {
 	IsAppUser         bool    `json:"is_app_user,omitempty"`
 	IsRestricted      bool    `json:"is_restricted,omitempty"`
 	IsUltraRestricted bool    `json:"is_ultra_restricted,omitempty"`
+	AgentStatus       string  `json:"agent_status,omitempty"` // not_an_agent | consistently_an_agent | check_required (bot users)
 	Updated           int64   `json:"updated,omitempty"`
 	Profile           Profile `json:"profile"`
 	Presence          string  `json:"presence,omitempty"`
