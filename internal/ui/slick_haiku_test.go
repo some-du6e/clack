@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -32,39 +31,28 @@ func (e *svEnv) svJS(rt *jsrt.Runtime, body string, d time.Duration) (string, ti
 
 var svJSN int
 
-// typeKeys types s into whatever has key focus the way a keyboard does:
-// a press, the text, a release per character.
-func (e *svEnv) typeKeys(s string) {
-	for _, r := range s {
-		n := key.Name(strings.ToUpper(string(r)))
-		if r == ' ' {
-			n = key.NameSpace
-		}
-		e.rt.Queue(key.Event{Name: n, State: key.Press}, key.EditEvent{Text: string(r)}, key.Event{Name: n, State: key.Release})
-		e.frame()
-	}
-}
-
 // HaikuWarning with ChatTabs (its renderer and main half, two tabs open
 // so the tab bar wires Ctrl+W through before-input-event): typing a haiku
 // in the channel composer and pressing Enter opens HaikuWarning's dialog
 // in document.body, like Slick on Slack. Clack cleared the composer and
 // the send never settled.
 func TestSlickViewHaikuWarningWithChatTabs(t *testing.T) {
-	t.Run("alone", func(t *testing.T) { haikuThroughComposer(t, false) })
-	t.Run("with-ChatTabs", func(t *testing.T) { haikuThroughComposer(t, true) })
+	t.Run("alone", func(t *testing.T) { haikuThroughComposer(t, 0) })
+	t.Run("ChatTabs-one-tab", func(t *testing.T) { haikuThroughComposer(t, 1) })
+	t.Run("ChatTabs-two-tabs", func(t *testing.T) { haikuThroughComposer(t, 2) })
 }
 
-func haikuThroughComposer(t *testing.T, chatTabs bool) {
+func haikuThroughComposer(t *testing.T, tabs int) {
 	e := newSV(t)
-	if chatTabs {
+	if tabs > 0 {
 		e.install("ChatTabs", nil)
+		e.until(8*time.Second, "the tab bar", func() bool { return e.tree(`slick-chat-tabs`, `data-tab-count`) != "" })
 	}
 	e.install("HaikuWarning", nil)
-	if chatTabs {
+	if tabs > 1 {
 		chatTabsTwoTabs(t, e)
 	}
-	haikuSend(t, e, chatTabs)
+	haikuSend(t, e, tabs > 0)
 }
 
 func chatTabsTwoTabs(t *testing.T, e *svEnv) {
@@ -151,11 +139,14 @@ func haikuSend(t *testing.T, e *svEnv, logKeys bool) {
 	if cv == nil || cv.comp == nil {
 		t.Fatal("no #general composer")
 	}
-	cv.comp.Focus()
-	e.frame()
-	e.frame()
-	e.typeKeys("an old silent pond a frog jumps into the pond splash silence again")
-	e.frame()
+	cb, ok := cv.comp.(composerBox)
+	if !ok {
+		t.Fatalf("the composer is a %T", cv.comp)
+	}
+	cb.InsertText("an old silent pond a frog jumps into the pond splash silence again")
+	for i := 0; i < 4; i++ {
+		e.frame()
+	}
 	t.Logf("route before Enter: %s", e.a.router.Current())
 	t0 := time.Now()
 	e.rt.Queue(key.Event{Name: key.NameReturn, State: key.Press}, key.Event{Name: key.NameReturn, State: key.Release})

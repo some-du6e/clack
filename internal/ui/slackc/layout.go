@@ -746,6 +746,9 @@ func (v *View) layoutNative(b *box, cw, ch, avail, lo, hi, hlo, hhi float32, c l
 // nearest positioned (or transformed) block ancestor, nil for the scope
 // root (absolute) or the viewport (fixed).
 func (s *scope) containing(k *box) *box {
+	if k.topLayer {
+		return nil // the window, whatever its ancestors are
+	}
 	fixed := k.st.Position == css.PosFixed
 	for p := k.parent; p != nil && p != s.host; p = p.parent {
 		if p.kind == kText {
@@ -933,7 +936,7 @@ func (s *scope) stack(root *box) {
 	root.ctxRoot = true
 	markCtx(root, false)
 	root.neg, root.pos = root.neg[:0], root.pos[:0]
-	collectCtx(root, root)
+	collectCtx(root, root, root)
 }
 
 func markCtx(b *box, parentFlex bool) {
@@ -953,12 +956,16 @@ func markCtx(b *box, parentFlex bool) {
 	}
 }
 
-func collectCtx(ctx, b *box) {
+func collectCtx(root, ctx, b *box) {
 	for _, k := range b.lk {
 		if k.kind == kText || k.st.Display == css.DisplayNone {
 			continue
 		}
-		if k.layered {
+		if k.topLayer {
+			// the top layer: above everything in the tree, in the order
+			// the dialogs appear
+			root.pos = insertZ(root.pos, k)
+		} else if k.layered {
 			if k.st.ZIndex < 0 && !k.st.ZAuto {
 				ctx.neg = insertZ(ctx.neg, k)
 			} else {
@@ -970,14 +977,17 @@ func collectCtx(ctx, b *box) {
 		}
 		if k.ctxRoot {
 			k.neg, k.pos = k.neg[:0], k.pos[:0]
-			collectCtx(k, k)
+			collectCtx(root, k, k)
 			continue
 		}
-		collectCtx(ctx, k)
+		collectCtx(root, ctx, k)
 	}
 }
 
 func zOf(b *box) int32 {
+	if b.topLayer {
+		return math.MaxInt32
+	}
 	if b.st.ZAuto {
 		return 0
 	}

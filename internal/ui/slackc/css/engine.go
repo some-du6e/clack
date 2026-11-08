@@ -76,6 +76,7 @@ const (
 	PseudoBefore
 	PseudoAfter
 	PseudoPlaceholder
+	PseudoBackdrop // ::backdrop of a modal <dialog>
 )
 
 // Env is the media/viewport context for @media and units.

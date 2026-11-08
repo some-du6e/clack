@@ -43,8 +43,8 @@ type ruleIndex struct {
 }
 
 type snapshot struct {
-	idx     [4]ruleIndex // per Pseudo
-	layered bool         // some rule is in a layer (important order differs)
+	idx     [PseudoBackdrop + 1]ruleIndex // per Pseudo
+	layered bool                          // some rule is in a layer (important order differs)
 }
 
 // NewEngine returns an empty engine.

@@ -553,6 +553,7 @@ func (p *painter) fixed(k *box) {
 	ox, oy := p.s.windowOrigin()
 	x, y := k.x-ox, k.y-oy
 	if p.inDefer || p.v.overlay {
+		p.backdrop(k, ox, oy)
 		p.paintBox(k, x, y)
 		return
 	}
@@ -560,18 +561,50 @@ func (p *painter) fixed(k *box) {
 	saveClip := p.clip
 	p.clip = noClip
 	p.inDefer = true
+	p.backdrop(k, ox, oy)
 	p.paintBox(k, x, y)
 	p.inDefer = false
 	p.clip = saveClip
 	// a pass-through handler inside the deferred ops so events over the
 	// fixed box reach this scope too
 	r := rectF{x, y, x + k.w, y + k.h}
+	if k.backdrop != nil {
+		r = rectF{-ox, -oy, -ox + p.v.vw, -oy + p.v.vh}
+	}
 	ar := clip.Rect(irect(r)).Push(p.ops)
 	pp := pointer.PassOp{}.Push(p.ops)
 	event.Op(p.ops, &p.s.ptag)
 	pp.Pop()
 	ar.Pop()
 	op.Defer(p.ops, m.Stop())
+}
+
+// backdrop paints a modal dialog's ::backdrop over the window and makes
+// the page under it inert: a click there goes to the dialog (as in
+// browsers, where the backdrop's events target the dialog) and never to
+// what is below.
+func (p *painter) backdrop(k *box, ox, oy float32) {
+	bd := k.backdrop
+	if bd == nil {
+		return
+	}
+	r := rectF{-ox, -oy, -ox + p.v.vw, -oy + p.v.vh}
+	saveClip := p.clip
+	p.clip = noClip
+	if p.s != nil {
+		p.s.bounds = p.s.bounds.union(r) // the scope's pointer handler covers it
+	}
+	if bd.st.Visibility == css.Visible {
+		p.background(bd, r, [4]float32{})
+	}
+	if s := p.s; s != nil && k.st.PointerEvents {
+		p.hit(k, r)
+		ar := clip.Rect(irect(r)).Push(p.ops)
+		pointer.CursorDefault.Add(p.ops)
+		event.Op(p.ops, &s.stag)
+		ar.Pop()
+	}
+	p.clip = saveClip
 }
 
 // areas registers cursor and shield areas under the box.
