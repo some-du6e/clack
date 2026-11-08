@@ -50,6 +50,8 @@ type App struct {
 	starsOK bool                    // starred was loaded
 	memberN map[string]int          // conversation -> people count (edge users/counts)
 	memberG map[string]int          // conversation -> guests among them (edge users/counts)
+	dms     dmState                 // which DMs Slack's sidebar shows (dmsidebar.go)
+	exp     *sidebarExp             // experiments the sidebar rules read (nil: defaults)
 
 	// Realtime (Slack's websocket gateway) is opt-in; see SetRealtime.
 	rtMu      sync.Mutex
@@ -389,6 +391,8 @@ func (a *App) Boot(ctx context.Context) error {
 		convs    []slack.Conversation
 		counts   *slack.Counts
 		sections []slack.Section
+		dms      []slack.SidebarDM
+		errDMs   error
 		errConvs error
 	)
 	step := func(name string, f func() error) {
@@ -418,6 +422,17 @@ func (a *App) Boot(ctx context.Context) error {
 	step("sections", func() (err error) {
 		sections, err = a.C.SectionsAll(ctx)
 		return err
+	})
+	step("experiments", func() error { // the sidebar rules depend on a few (sidebar_rules.go)
+		g, err := a.C.ExperimentGroups(ctx)
+		if err == nil {
+			a.setExperiments(g)
+		}
+		return err
+	})
+	step("sidebar.dms", func() error { // which DMs are open (users.conversations has no is_open)
+		dms, errDMs = a.C.SidebarDMs(ctx)
+		return errDMs
 	})
 	loadPrefs := func() error {
 		raw, err := a.C.Prefs(ctx)
@@ -477,6 +492,9 @@ func (a *App) Boot(ctx context.Context) error {
 	}
 	if counts != nil {
 		a.S.SetCounts(counts)
+	}
+	if errDMs == nil {
+		a.setSidebarDMs(dms) // after counts: closed DMs reopen on messages newer than now
 	}
 	a.S.Lock()
 	a.S.Sections = sections
@@ -660,6 +678,9 @@ func (a *App) refreshCounts(ctx context.Context) {
 	if c, err := a.C.Counts(ctx); err == nil {
 		a.S.SetCounts(c)
 		a.emit(Event{Type: "counts"})
+		if a.reopenActive() { // a closed DM got a new message
+			a.emit(Event{Type: "sidebar_changed"})
+		}
 	}
 }
 
@@ -1043,44 +1064,85 @@ func (a *App) CustomEmoji() map[string]string { return a.S.CustomEmoji.Snapshot(
 
 // ---- sidebar sections ----
 
+// orderSections is Slack's updatedOrderedChannelSectionList (modern.vendor
+// @14759265): follow next_channel_section_id from every section nothing
+// points to (or from the first, if all are pointed to), longest chain first,
+// and keep each section's first position. Sections outside every chain get
+// position 0, so they sort with the first one (lodash sortBy quirk).
+func orderSections(secs []slack.Section) []slack.Section {
+	if len(secs) == 0 {
+		return nil
+	}
+	next := map[string]string{}
+	byID := map[string]slack.Section{}
+	heads := map[string]bool{}
+	var headOrder []string
+	for _, s := range secs {
+		if _, ok := byID[s.ID]; !ok {
+			next[s.ID] = s.Next
+			byID[s.ID] = s
+		}
+		if !heads[s.ID] {
+			heads[s.ID] = true
+			headOrder = append(headOrder, s.ID)
+		}
+	}
+	for _, s := range secs {
+		if s.Next != "" && heads[s.Next] {
+			delete(heads, s.Next)
+		}
+	}
+	if len(heads) == 0 {
+		heads[secs[0].ID] = true
+	}
+	var chains [][]string
+	for _, h := range headOrder {
+		if !heads[h] {
+			continue
+		}
+		seen := map[string]bool{}
+		var chain []string
+		for cur := h; cur != "" && !seen[cur]; cur = next[cur] {
+			if _, ok := byID[cur]; ok {
+				chain = append(chain, cur)
+			}
+			seen[cur] = true
+		}
+		chains = append(chains, chain)
+	}
+	sort.SliceStable(chains, func(i, j int) bool { return len(chains[i]) > len(chains[j]) })
+	index := map[string]int{}
+	for _, ch := range chains {
+		for _, id := range ch {
+			if _, ok := index[id]; !ok {
+				index[id] = len(index)
+			}
+		}
+	}
+	// sortBy(sections, s => index[s.id] || 0): sections outside every chain
+	// tie with the first one and keep their API order (stable sort).
+	var out []slack.Section
+	seen := map[string]bool{}
+	for _, s := range secs {
+		if !seen[s.ID] {
+			seen[s.ID] = true
+			out = append(out, byID[s.ID])
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return index[out[i].ID] < index[out[j].ID] })
+	return out
+}
+
 // sections orders sections by their linked list and assigns every
 // conversation to exactly one section (custom > default buckets).
 func (a *App) sections(convs []Conv) []Section {
 	a.S.RLock()
 	secs := append([]slack.Section(nil), a.S.Sections...)
 	a.S.RUnlock()
-	byID := map[string]slack.Section{}
-	pointed := map[string]bool{}
-	for _, s := range secs {
-		byID[s.ID] = s
-		if s.Next != "" {
-			pointed[s.Next] = true
-		}
-	}
-	var ordered []slack.Section
-	visited := map[string]bool{}
-	for _, s := range secs {
-		if pointed[s.ID] {
-			continue
-		}
-		for cur, ok := s, true; ok && !visited[cur.ID]; cur, ok = byID[cur.Next] {
-			ordered = append(ordered, cur)
-			visited[cur.ID] = true
-			if cur.Next == "" {
-				break
-			}
-		}
-		break
-	}
-	for _, s := range secs { // unreachable sections (broken links) still show, last
-		if !visited[s.ID] {
-			ordered = append(ordered, s)
-			visited[s.ID] = true
-		}
-	}
+	ordered := orderSections(secs)
 	assigned := map[string]bool{}
 	var out []Section
-	chIdx, dmIdx := -1, -1
+	chIdx, dmIdx, appIdx := -1, -1, -1
 	a.mu.Lock()
 	var starred []string
 	for id := range a.starred {
@@ -1089,17 +1151,26 @@ func (a *App) sections(convs []Conv) []Section {
 	a.mu.Unlock()
 	names := map[string]string{}
 	for _, c := range convs {
-		names[c.ID] = strings.ToLower(c.Name)
+		names[c.ID] = a.sortName(c)
 	}
-	sort.Slice(starred, func(i, j int) bool { return names[starred[i]] < names[starred[j]] })
+	secOf := assignSections(ordered, starred)
+	// Slack's candidates: closed DMs leave every section (sidebar_rules.go)
+	isDMKind := func(id string) bool {
+		c, ok := a.S.Conv(id)
+		return ok && (c.IsIM || c.IsMPIM)
+	}
+	visibleDM := func(id string) bool { return !isDMKind(id) || a.dmCandidate(id) }
 	for _, s := range ordered {
 		switch s.Type {
-		case "salesforce_records", "slack_connect", "temporary_channels", "agents", "recent_apps":
+		case "salesforce_records", "slack_connect", "temporary_channels", "agents":
 			if len(s.ChannelIDsPage.ChannelIDs) == 0 {
 				continue
 			}
 		}
-		sv := Section{ID: s.ID, Name: s.Name, Type: s.Type, Emoji: s.Emoji, Channels: []string{}}
+		sv := Section{ID: s.ID, Name: s.Name, Type: s.Type, Emoji: s.Emoji, Channels: []string{}, Collapsed: a.sectionCollapsed(s)}
+		if sv.Emoji != "" {
+			sv.EmojiURL, _, _ = a.S.Emoji(strings.Trim(sv.Emoji, ":"))
+		}
 		ids := s.ChannelIDsPage.ChannelIDs
 		if s.Type == "stars" { // starred membership comes from stars.list
 			ids = append(append([]string(nil), ids...), starred...)
@@ -1107,6 +1178,12 @@ func (a *App) sections(convs []Conv) []Section {
 		for _, id := range ids {
 			if s.Type == "direct_messages" && a.isAppDM(id) {
 				continue // Slack lists bot/app DMs under Apps
+			}
+			if !visibleDM(id) {
+				continue
+			}
+			if secOf[id] != s.ID {
+				continue // Slack files it in another section (starred first)
 			}
 			if _, ok := a.S.Conv(id); ok && !assigned[id] {
 				sv.Channels = append(sv.Channels, id)
@@ -1124,9 +1201,9 @@ func (a *App) sections(convs []Conv) []Section {
 		case "stars":
 			sv.Name = "Starred"
 		case "recent_apps":
-			if sv.Name == "" {
-				sv.Name = "Apps"
-			}
+			// Apps sits where the user's section list puts it, not last.
+			appIdx = len(out)
+			sv.Name = "Apps"
 		}
 		out = append(out, sv)
 	}
@@ -1140,12 +1217,18 @@ func (a *App) sections(convs []Conv) []Section {
 	}
 	out[dmIdx].Name = "Direct messages"
 	var apps []string
+	if appIdx >= 0 {
+		apps = out[appIdx].Channels
+	}
 	for _, c := range convs {
 		if assigned[c.ID] {
 			continue
 		}
 		switch c.Kind {
 		case "im", "mpim":
+			if !visibleDM(c.ID) {
+				continue // closed (or inactive): Slack keeps it out of the sidebar
+			}
 			if a.isAppDM(c.ID) {
 				if !a.emptyDM(c.ID) { // Slack hides app DMs that never had a message (e.g. Slackbot)
 					apps = append(apps, c.ID)
@@ -1157,17 +1240,17 @@ func (a *App) sections(convs []Conv) []Section {
 			out[chIdx].Channels = append(out[chIdx].Channels, c.ID)
 		}
 	}
-	// Slack's default sort (verified against the web client): channels, DMs
-	// and apps alphabetically by display name.
-	byName := func(ids []string) {
-		sort.SliceStable(ids, func(i, j int) bool { return names[ids[i]] < names[ids[j]] })
-	}
-	byName(out[chIdx].Channels)
-	byName(out[dmIdx].Channels)
-	byName(apps)
-	if len(apps) > 0 {
+	switch {
+	case appIdx >= 0 && len(apps) > 0:
+		out[appIdx].Channels = apps
+	case appIdx >= 0: // no app DMs: Slack shows no Apps section (shouldSeparateApps)
+		out = append(out[:appIdx], out[appIdx+1:]...)
+	case len(apps) > 0:
 		out = append(out, Section{ID: "apps", Name: "Apps", Type: "apps", Channels: apps})
 	}
+	// users.channelSections stores membership only; Slack filters and sorts
+	// each section from prefs and experiments (sidebar_rules.go).
+	a.applySectionRules(out, names, time.Now())
 	return out
 }
 
