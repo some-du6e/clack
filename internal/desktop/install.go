@@ -296,29 +296,30 @@ func openManual(ctx context.Context, path string, why error) error {
 }
 
 // StartHelper starts a copy of this executable as the update helper for
-// plan. The caller quits right after.
-func StartHelper(plan Plan) error {
+// plan and returns the helper's update.log path. The caller quits right
+// after.
+func StartHelper(plan Plan) (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
-		return err
+		return "", err
 	}
 	dir, err := os.MkdirTemp("", "clack-update-helper-")
 	if err != nil {
-		return err
+		return "", err
 	}
 	helper := filepath.Join(dir, "clack-updater")
 	if runtime.GOOS == "windows" {
 		helper += ".exe"
 	}
 	if err := copyFile(exe, helper, 0o755); err != nil {
-		return err
+		return "", err
 	}
 	b, _ := json.MarshalIndent(plan, "", "  ")
 	planPath := filepath.Join(dir, "plan.json")
 	if err := os.WriteFile(planPath, b, 0o600); err != nil {
-		return err
+		return "", err
 	}
-	return startCmd(helper, "-apply-update", planPath)
+	return filepath.Join(dir, "update.log"), startCmd(helper, "-apply-update", planPath)
 }
 
 // ApplyUpdate is the helper's whole job (`clack -apply-update plan.json`).

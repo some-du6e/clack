@@ -213,6 +213,22 @@ type Updater struct {
 	// (default 5), Backoff the first pause between them (doubling).
 	Attempts int
 	Backoff  time.Duration
+	// Progress, when set, sees the bytes on disk so far and the declared
+	// size (or the cap) as a download runs.
+	Progress func(done, total int64)
+}
+
+type progressWriter struct {
+	w           io.Writer
+	done, total int64
+	fn          func(done, total int64)
+}
+
+func (p *progressWriter) Write(b []byte) (int, error) {
+	n, err := p.w.Write(b)
+	p.done += int64(n)
+	p.fn(p.done, p.total)
+	return n, err
 }
 
 const (
@@ -470,7 +486,12 @@ func (u *Updater) fetchTo(ctx context.Context, raw, part string, limit int64, ex
 	if err != nil {
 		return err
 	}
-	n, err := io.Copy(f, io.LimitReader(resp.Body, limit-offset+1))
+	var w io.Writer = f
+	if u.Progress != nil {
+		w = &progressWriter{w: f, done: offset, total: limit, fn: u.Progress}
+		u.Progress(offset, limit)
+	}
+	n, err := io.Copy(w, io.LimitReader(resp.Body, limit-offset+1))
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
