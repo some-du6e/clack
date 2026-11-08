@@ -19,7 +19,9 @@ func TestNoSessionEndingMethods(t *testing.T) {
 	}
 	root := filepath.Join("..", "..")
 	err := filepath.Walk(root, func(p string, fi os.FileInfo, err error) error {
-		if err != nil || fi.IsDir() || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") || strings.HasSuffix(p, filepath.Join("slack", "client.go")) {
+		if err != nil || fi.IsDir() || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") || strings.HasSuffix(p, filepath.Join("slack", "client.go")) ||
+			// the plugin fetch deny list (signOutMethods) names them only to refuse them
+			strings.HasSuffix(p, filepath.Join("jsrt", "boot.go")) {
 			return err
 		}
 		b, err := os.ReadFile(p)
