@@ -11,6 +11,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/paint"
+	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/taut"
@@ -81,6 +82,8 @@ type Composer struct {
 	ctxShowing    bool          // onIsContextBarShowing
 	drewInput     bool          // the editor was laid out (no roadblock)
 	roadblock     string        // SetRoadblock: Slack's notice instead of the editor
+	rbLink, rbURL string        // SetRoadblockLink: a link after it ("Learn more")
+	rbClick       widget.Clickable
 	wPane, wInput layout.Widget
 	wEditor, wAtt layout.Widget
 	keyS, draftS  string

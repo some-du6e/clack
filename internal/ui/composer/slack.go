@@ -6,9 +6,12 @@ import (
 	"strconv"
 	"strings"
 
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/clip"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/openurl"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
@@ -424,6 +427,19 @@ func (c *Composer) SetRoadblock(msg string) {
 	}
 }
 
+// RoadblockMessage is the roadblock notice in place of the editor ("" for
+// none).
+func (c *Composer) RoadblockMessage() string { return c.roadblock }
+
+// SetRoadblockLink adds a link after the roadblock message (label ""
+// for none), as MessageInputAnnounceOnlyRoadblock's "Learn more".
+func (c *Composer) SetRoadblockLink(label, url string) {
+	if c.rbLink != label || c.rbURL != url {
+		c.rbLink, c.rbURL = label, url
+		c.h.Invalidate()
+	}
+}
+
 func (c *Composer) roadblockProps() slackc.Props {
 	p := c.convProps()
 	p["roadblockMessage"] = c.roadblock
@@ -476,7 +492,12 @@ func (c *Composer) drawRoadblock(gtx layout.Context, p slackc.Props) layout.Dime
 		if !p.Bool("allowWrap") {
 			s.MaxLines = 1
 		}
-		d = label(g, th.Shaper, s, p.StrOr("roadblockMessage", ""))
+		msg := p.StrOr("roadblockMessage", "")
+		if c.rbLink != "" && msg == c.roadblock {
+			d = c.roadblockWithLink(g, s, msg)
+		} else {
+			d = label(g, th.Shaper, s, msg)
+		}
 	}
 	call := rec.Stop()
 	box.Max.Y = max(d.Size.Y+2*pad, gtx.Dp(56))
@@ -678,4 +699,35 @@ func opaqueOver(col, under color.NRGBA) color.NRGBA {
 		return col
 	}
 	return theme.Over(col, under)
+}
+
+// roadblockWithLink draws msg, a space and the link (Slack's Link, no_wrap)
+// on one line; a click opens c.rbURL.
+func (c *Composer) roadblockWithLink(gtx layout.Context, s textStyle, msg string) layout.Dimensions {
+	th := c.h.Theme()
+	if c.rbClick.Clicked(gtx) && c.rbURL != "" {
+		_ = openurl.Open(c.rbURL)
+	}
+	ls := s
+	ls.Color = th.C.Link
+	ls.MaxLines = 1
+	m := op.Record(gtx.Ops)
+	g := gtx
+	g.Constraints.Min = image.Point{}
+	ld := c.rbClick.Layout(g, func(gtx layout.Context) layout.Dimensions {
+		d := label(gtx, th.Shaper, ls, c.rbLink)
+		defer clip.Rect{Max: d.Size}.Push(gtx.Ops).Pop()
+		pointer.CursorPointer.Add(gtx.Ops)
+		return d
+	})
+	lc := m.Stop()
+	gap := gtx.Dp(4)
+	mg := gtx
+	mg.Constraints.Min = image.Point{}
+	mg.Constraints.Max.X = max(gtx.Constraints.Max.X-ld.Size.X-gap, 1)
+	md := label(mg, th.Shaper, s, msg)
+	t := op.Offset(image.Pt(md.Size.X+gap, 0)).Push(gtx.Ops)
+	lc.Add(gtx.Ops)
+	t.Pop()
+	return layout.Dimensions{Size: image.Pt(md.Size.X+gap+ld.Size.X, max(md.Size.Y, ld.Size.Y))}
 }

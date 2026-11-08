@@ -456,6 +456,7 @@ func (a *App) applySectionRules(out []Section, names map[string]string, now time
 	self := a.S.Self.ID
 	a.S.RUnlock()
 	e := a.sidebarExperiments()
+	sel := a.selectedID()
 	for i := range out {
 		sec := &out[i]
 		f := sectionFilter(sec.Type, sec.ID, p, e)
@@ -468,7 +469,7 @@ func (a *App) applySectionRules(out []Section, names map[string]string, now time
 		rows := make([]sortRow, 0, len(sec.Channels))
 		expanded, folded := map[string]bool{}, map[string]bool{}
 		for _, id := range sec.Channels {
-			c, ok := a.S.Conv(id)
+			c, ok := a.sidebarConv(id)
 			if !ok {
 				continue
 			}
@@ -490,6 +491,9 @@ func (a *App) applySectionRules(out []Section, names map[string]string, now time
 			windowHidden := cutoff > 0 && (c.IsIM || c.IsMPIM) && hasCount && (cnt.Latest == "" || tsFloat(cnt.Latest) < float64(cutoff))
 			expanded[id] = keepRow(r.rowState, f, windowHidden, false, p, e)
 			folded[id] = keepRow(r.rowState, f, windowHidden, true, p, e)
+			if id == sel { // lJBI: the open conversation's row always shows, collapsed or not
+				expanded[id], folded[id] = true, true
+			}
 			if expanded[id] || folded[id] {
 				rows = append(rows, r)
 			}
@@ -520,17 +524,21 @@ func (a *App) sectionCollapsed(s slack.Section) bool {
 var sectionRank = map[string]int{"stars": 3, "standard": 2, "user_group": 1}
 
 // assignSections picks each conversation's section like lJBI: starred ones
-// go to Starred; a single listing wins; several pick the highest rank among
-// the leading starred/custom/user-group sections; "" leaves it to the
-// default buckets.
-func assignSections(ordered []slack.Section, starred []string) map[string]string {
-	starsID := ""
+// go to Starred; temporary memberships (temp) to Temporary channels, or the
+// default bucket without one; a single listing wins; several pick the
+// highest rank among the leading starred/custom/user-group sections; ""
+// leaves it to the default buckets.
+func assignSections(ordered []slack.Section, starred []string, temp map[string]bool) map[string]string {
+	starsID, tempID := "", ""
 	in := map[string][]slack.Section{}
 	isStar := map[string]bool{}
 	for _, id := range starred {
 		isStar[id] = true
 	}
 	for _, s := range ordered {
+		if s.Type == "temporary_channels" && tempID == "" {
+			tempID = s.ID
+		}
 		if s.Type == "stars" {
 			if starsID == "" {
 				starsID = s.ID
@@ -549,6 +557,12 @@ func assignSections(ordered []slack.Section, starred []string) map[string]string
 		for id := range isStar {
 			out[id] = starsID
 		}
+	}
+	for id := range temp {
+		if _, ok := out[id]; ok {
+			continue // starred first
+		}
+		out[id] = tempID // "" (no such section): the default Channels bucket
 	}
 	for id, list := range in {
 		if _, ok := out[id]; ok {

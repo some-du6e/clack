@@ -113,6 +113,12 @@ type Conv struct {
 	Priority   float64
 	Muted      bool
 	Starred    bool
+	// Preview: a channel the viewer isn't in (Slack's isPreview), shown
+	// with JoinChannelPane instead of the composer (preview.go).
+	Preview bool
+	// TempUntil: a temporary membership's expiration_ts ("Join…"), 0 when
+	// the membership is permanent.
+	TempUntil int64
 }
 
 // ConvRef describes a conversation that may not be in the sidebar

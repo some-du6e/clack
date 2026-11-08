@@ -58,7 +58,7 @@ Clack's `slackc.Render(gtx, name, props, native)` has to reproduce these rules e
 | 35 | TextyButtonOverflow | patch | buttons infra (every `composer.addButton`) | composer/chrome.go:`(*chrome).layoutFooter` | comp | drawn, no plugin slot |
 | 36 | ShortcutsMenuTriggerButton | patch | OwlMode | composer/chrome_slack.go: the **+** (attach/shortcuts) button, per the live props (`onFilesSelected`, `--shortcuts`) | comp | wrapped |
 | 37 | BaseContextBarV2 | patch | HaikuWarning, OwlMode | missing (no bar between list and composer; conversation.go:`layoutConvo`) | comp | **missing** |
-| 38 | MessageInputRoadblock | patch | RestrictedChannelWarning | missing (composer always shown) | comp | **missing** |
+| 38 | MessageInputRoadblock | patch | RestrictedChannelWarning | composer/slack.go:`layoutRoadblock` + ui/joinpane.go:`composerRoadblock` (announce-only message when `readOnlyChannels`/`threadOnlyChannels` say so) | comp | drawn |
 | 39 | ThreadTypingIndicator | patch | BetterTypingIndicator | composer/chrome.go:`(*chrome).layoutHint` (+ typing.go `typingText`) | comp | text only |
 | 40 | TypingNames | patch | BetterTypingIndicator | composer/chrome.go:`layoutHint`; composer/typing.go:`typingText` | comp | text only |
 | 41 | texty_input_with_autocomplete | lazy | richTextInput | composer/editor.go:`Editor` + autocomplete.go | comp | drawn |
@@ -305,7 +305,7 @@ Taut's own infra patches these at module load, so its patches sit innermost (app
 
 #### MessageInputRoadblock
 - **RestrictedChannelWarning** P/RestrictedChannelWarning.tsx:61-87. Reads `channelId, roadblockMessage: ReactNode, allowWrap`. When an admin would be restricted as a non-admin, it sets `allowWrap: true` and `roadblockMessage: <span.taut-restricted-channel><span>{orig}</span><Button size small type outline>Post anyway</Button></span>`. The plugin also patches redux slices `readOnlyChannels` (`isReadOnly`) and `threadOnlyChannels` (`isThreadOnly`).
-- **Clack**: **missing**. **comp** has to draw the roadblock instead of the editor when `readOnlyChannels[ch].isReadOnly` (or thread-only/archived), with `roadblockMessage` as a ReactNode slot.
+- **Clack**: composer/slack.go:`layoutRoadblock` draws the roadblock instead of the editor. ui/joinpane.go:`composerRoadblock` sets MessageInputAnnounceOnlyRoadblock's "Only certain people can post in this channel." (plus a native "Learn more" link) when Taut's `ChannelRestriction` says read-only or thread-only (top level), or read-only (threads). So a plugin's `readOnlyChannels`/`threadOnlyChannels` patch decides. The mirror computes those slices with core/posting.go, Slack's `computeChannelPostingPermissions`. `roadblockMessage` reaches JS as a string, without the link; a patched node replaces it.
 
 #### ThreadTypingIndicator
 - **BetterTypingIndicator** P/BetterTypingIndicator.tsx:140. Reads `channelId, threadTs`. Context wrap.
