@@ -163,7 +163,7 @@ func TestSlickViewThemeOverlays(t *testing.T) {
 		if !strings.Contains(css, "[role=dialog]") || !strings.Contains(css, "background-color:"+w.dialog) && !strings.Contains(css, "background-color:"+short+" ") {
 			t.Errorf("%s: upstream has no [role=dialog] rule with %s now", w.id, w.dialog)
 		}
-		if w.tab != "" && !strings.Contains(css, "c-tabs__tab--active{background-color:"+w.tab) {
+		if w.tab != "" && !strings.Contains(css, ".c-tabs__tab:active{background-color:"+w.tab) {
 			t.Errorf("%s: upstream's active tab isn't %s now", w.id, w.tab)
 		}
 		modes := []bool{w.dark}
