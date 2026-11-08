@@ -24,6 +24,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
 )
 
 // row is the cached UI state of one message.
@@ -236,6 +237,11 @@ func (r *row) resolve(rc *rowCtx) {
 				if r.name == "" {
 					r.name = u.RealName
 				}
+			}
+			// Messages & media > Names: "Full & display names"
+			// (display_real_names_override) shows people's full names.
+			if uipref.Get().DisplayRealNames && !u.IsBot && u.RealName != "" && (m.Name == "" || m.Name == coreName) {
+				r.name = u.RealName
 			}
 			if r.avatar == "" {
 				r.avatar = u.Avatar

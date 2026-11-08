@@ -132,7 +132,8 @@ func FacesFor(dark bool) []font.FontFace {
 	for _, f := range srcs {
 		out = append(out, font.FontFace{Font: font.Font{Typeface: Typeface, Weight: f.w, Style: f.s}, Face: parseFace(f.b)})
 	}
-	return out
+	// after Lato: the first face is the shaper's default
+	return append(out, MonoFaces()...)
 }
 
 // Faces returns the light-mode collection (compatibility).

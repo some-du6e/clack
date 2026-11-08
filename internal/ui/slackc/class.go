@@ -305,6 +305,26 @@ func CurrentScope() Scope {
 	return sc
 }
 
+// BodyScope is the scope of <body>: the parent of what Slack renders in
+// a portal (tooltips, menus), which a row's rules don't reach. Zero
+// while no CSS is installed.
+func BodyScope() Scope {
+	if Styles.Empty() {
+		return Scope{}
+	}
+	sc := Scope{ver: Styles.Version(), ok: true}
+	for i := range stack {
+		if el := stack[i].el; el != nil && el.Tag() == "body" {
+			sc.e = stack[i]
+			break
+		}
+		if i > 1 {
+			break
+		}
+	}
+	return sc
+}
+
 // Same reports that two scopes give their children the same styles (the
 // same element in the same stylesheet generation).
 func (sc Scope) Same(o Scope) bool {

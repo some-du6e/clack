@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 )
 
 // coreapi.go is the only file that calls into *core.App. The rest of the
@@ -35,6 +36,16 @@ func (c coreAPI) customEmoji() map[string]string { return c.a.CustomEmoji() }
 func (c coreAPI) emoji(name string) (url, text string, ok bool) {
 	return c.a.Emoji(name)
 }
+
+// emojiVersion changes whenever the custom emoji set does (emoji.list
+// landing, emoji_changed).
+func (c coreAPI) emojiVersion() uint64 { return c.a.S.CustomEmoji.Version() }
+
+// plainTextMode is Slack's plain_text_mode user pref.
+func (c coreAPI) plainTextMode() bool { return c.a.Prefs().PlainTextMode }
+
+// resolver names users, channels and emoji for the mrkdwn parser.
+func (c coreAPI) resolver() richtext.Resolver { return c.a.S }
 
 func (c coreAPI) send(ctx context.Context, ch, threadTS, text string, blocks json.RawMessage, broadcast bool) (core.Message, error) {
 	return c.a.Send(ctx, core.SendOpts{Channel: ch, ThreadTS: threadTS, Text: text, Blocks: blocks, Broadcast: broadcast})

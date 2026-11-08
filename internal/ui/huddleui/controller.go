@@ -239,8 +239,10 @@ func (c *Controller) options(app *core.App) huddle.Options {
 		client = c.Client
 	}
 	return huddle.Options{
-		Client:   client,
-		SelfID:   c.selfID(),
+		Client: client,
+		SelfID: c.selfID(),
+		// Audio & video > When joining a huddle… "Mute my microphone"
+		Muted:    app.PrefBool("huddles_mute_by_default", false),
 		Logf:     log.Printf,
 		OnChange: c.onSession,
 		OnPeer: func(ev huddle.PeerEvent) {

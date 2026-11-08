@@ -143,7 +143,8 @@ type App struct {
 	winSize     image.Point
 	sbBase      color.NRGBA
 	sbPal       theme.Palette
-	styleVer    uint64 // slackc.Styles.Version the palette was derived at
+	styleVer    uint64    // slackc.Styles.Version the palette was derived at
+	acct        acctTheme // the Slack account's theme (theme_account.go)
 	shaperCh    chan [2]*text.Shaper
 	explorer    *explorer.Explorer    // native file chooser (set in onWindow)
 	tautGen     int                   // bumps when a (new) plugin runtime attaches
@@ -155,6 +156,13 @@ type App struct {
 	rtAsk       realtimeState              // first-run "Live updates are off" banner
 	updatesOff  atomic.Bool                // prefs.NoUpdateCheck, for updateLoop
 	hud         *huddleui.Controller       // the native huddle (huddle_wire.go)
+
+	swipe         swiper          // trackpad history swipes (swipe.go, nav.go)
+	swipeNow      swipeState      // this frame's swipe progress, for the arrow
+	navTag        int             // the window-wide scroll handler (navGestures)
+	ptrBtns       pointer.Buttons // mouse buttons held, for back/forward (navButtons)
+	railOverflow  []string        // tabs under the rail's More (layoutRail)
+	teamIconShown string          // the last workspace icon URL that drew (kept while a new one loads)
 }
 
 // New creates the app. Call Run on the UI goroutine (main).
@@ -215,6 +223,7 @@ func (a *App) Run() error {
 	)
 	a.winLive.Store(a.win)
 	go a.updateLoop()
+	a.watchOSTheme()
 	if a.images != nil {
 		a.images.SetInvalidate(a.win.Invalidate)
 		a.th.Images = a.images
@@ -224,6 +233,9 @@ func (a *App) Run() error {
 	}
 	if onWindow != nil {
 		onWindow(a)
+	}
+	if startNavGlue != nil {
+		startNavGlue(a)
 	}
 	if a.data != nil {
 		a.data.start(a)
@@ -332,6 +344,9 @@ func (a *App) frame(gtx layout.Context) {
 		return
 	}
 
+	// first: an ancestor of every other input area (popped at the end)
+	navArea := a.navGestures(gtx)
+	defer navArea.Pop()
 	a.readRootPointer(gtx)
 	a.slackcFrame(gtx)
 	a.keys.process(gtx, a)
@@ -426,6 +441,7 @@ func (a *App) frame(gtx layout.Context) {
 	ia.Leave()
 	client.Leave()
 
+	a.layoutSwipe(gtx, primary)
 	a.layoutOverlays(gtx)
 	a.slackcOverlays(gtx)
 	a.layoutToast(gtx)
@@ -539,9 +555,10 @@ func (a *App) view(r Route, mk func() View) View {
 // ToggleDark flips light/dark mode and persists the choice.
 func (a *App) ToggleDark() { a.setDark(!a.th.Dark) }
 
-// setDark goes through Taut's setUserPrefByApi thunk (Slack's dark_mode
-// pref) so plugins see the change; the native applies it locally only
-// (Clack's theme is a local setting, the account pref is left alone).
+// setDark goes through Taut's setUserPrefByApi thunk (dark_mode) so
+// plugins see the change; the native applies it locally only. Slack keeps
+// light/dark per device in localStorage ("userTheme"), not in users.prefs,
+// so there is no account pref to write (theme_account.go).
 func (a *App) setDark(dark bool) {
 	v := "light"
 	if dark {

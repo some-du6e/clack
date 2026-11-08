@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
-	"github.com/some-du6e/yoloslackgoclient/internal/store"
 )
 
 var mentionRe = regexp.MustCompile(`<@([UW][A-Z0-9]+)`)
@@ -40,9 +39,10 @@ func (a *App) handle(ev slack.Event) {
 		}
 		_ = json.Unmarshal(ev.Raw, &e)
 		add := ev.Type == "reaction_added"
-		m, ok := a.S.Mutate(e.Item.Channel, e.Item.TS, func(m *slack.Message) { applyReaction(m, e.Reaction, e.User, add) })
+		changed := false
+		m, ok := a.S.Mutate(e.Item.Channel, e.Item.TS, func(m *slack.Message) { changed = applyReaction(m, e.Reaction, e.User, add) || changed })
 		a.EnsureUsers(ctx, []string{e.User})
-		if ok {
+		if ok && changed { // the echo of the viewer's own (optimistic) reaction changes nothing
 			a.emitUpdate(e.Item.Channel, &m)
 		}
 	case "user_typing":
@@ -104,6 +104,20 @@ func (a *App) handle(ev slack.Event) {
 				a.emit(Event{Type: "user", UserID: u.ID, User: &u})
 			}
 		}
+	case "team_icon_change":
+		a.onTeamIconChange(ev.Raw)
+	case "team_rename":
+		var e struct {
+			Name   string `json:"name"`
+			TeamID string `json:"team_id"`
+		}
+		_ = json.Unmarshal(ev.Raw, &e)
+		a.S.Lock()
+		if e.Name != "" && (e.TeamID == "" || e.TeamID == a.S.TeamID) {
+			a.S.TeamName = e.Name
+		}
+		a.S.Unlock()
+		a.emit(Event{Type: "team"})
 	case "emoji_changed":
 		var e struct {
 			Subtype string   `json:"subtype"`
@@ -134,8 +148,30 @@ func (a *App) handle(ev slack.Event) {
 			Channel slack.Conversation `json:"channel"`
 		}
 		_ = json.Unmarshal(ev.Raw, &e)
-		a.refreshConv(ctx, firstNonEmpty(e.Channel.ID, ch))
-	case "channel_left", "group_left", "channel_archive", "group_archive", "channel_deleted", "im_close":
+		id := firstNonEmpty(e.Channel.ID, ch)
+		switch ev.Type {
+		case "im_created", "mpim_joined", "im_open", "mpim_open": // Slack marks these open
+			a.openDM(id) // before refreshConv, whose "conv" event resnapshots the sidebar
+		}
+		a.refreshConv(ctx, id)
+	case "im_close", "mpim_close":
+		// Closed from some client: out of the sidebar until a new message,
+		// but still a known conversation (search, switcher, history).
+		var e struct {
+			ConvertedTo string `json:"converted_to"`
+		}
+		_ = json.Unmarshal(ev.Raw, &e)
+		a.markDMClosed(ch)
+		if e.ConvertedTo != "" { // group DM turned into a private channel
+			a.S.Lock()
+			delete(a.S.Convs, ch)
+			a.S.Unlock()
+			a.emit(Event{Type: "conv_removed", Channel: ch})
+			a.refreshConv(ctx, e.ConvertedTo)
+			return
+		}
+		a.emit(Event{Type: "sidebar_changed"})
+	case "channel_left", "group_left", "channel_archive", "group_archive", "channel_deleted":
 		a.S.Lock()
 		delete(a.S.Convs, ch)
 		a.S.Unlock()
@@ -177,7 +213,7 @@ func (a *App) handle(ev slack.Event) {
 			a.refreshCountsSoon()
 		case "pref_change":
 			if raw, err := a.C.Prefs(ctx); err == nil {
-				a.S.SetPrefs(store.ParsePrefs(raw))
+				a.installPrefs(raw)
 				p := a.Prefs()
 				a.emit(Event{Type: "prefs", Prefs: &p})
 			}
@@ -240,39 +276,6 @@ func (a *App) refreshConv(ctx context.Context, id string) {
 	}
 	v := a.conv(c)
 	a.emit(Event{Type: "conv", Channel: id, Conv: &v})
-}
-
-func applyReaction(m *slack.Message, name, user string, add bool) {
-	for i := range m.Reactions {
-		r := &m.Reactions[i]
-		if r.Name != name {
-			continue
-		}
-		if add {
-			for _, u := range r.Users {
-				if u == user {
-					return
-				}
-			}
-			r.Users = append(r.Users, user)
-			r.Count++
-			return
-		}
-		for j, u := range r.Users {
-			if u == user {
-				r.Users = append(r.Users[:j], r.Users[j+1:]...)
-				r.Count--
-				break
-			}
-		}
-		if r.Count <= 0 {
-			m.Reactions = append(m.Reactions[:i], m.Reactions[i+1:]...)
-		}
-		return
-	}
-	if add {
-		m.Reactions = append(m.Reactions, slack.Reaction{Name: name, Count: 1, Users: []string{user}})
-	}
 }
 
 func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
@@ -352,6 +355,11 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	}
 	if _, known := a.S.Conv(ch); !known {
 		a.refreshConv(ctx, ch)
+	}
+	if !isReply || m.Subtype == "thread_broadcast" {
+		if a.reopenActive() { // a new message brings a closed DM back
+			a.emit(Event{Type: "sidebar_changed"})
+		}
 	}
 	if needsFileInfo(&m) {
 		go a.fillFiles(ch, m.TS)

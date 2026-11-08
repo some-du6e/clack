@@ -26,6 +26,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
 )
 
 type itemKind uint8
@@ -105,10 +106,14 @@ type listState struct {
 	tip     string
 	tipRect image.Rectangle
 	tipItem int
+	tipURL  string    // the hovered reaction's emoji image
+	tipKey  string    // which pill (item key + name), to time the delay
+	tipAt   time.Time // when the pointer reached it
 
 	lastTyping time.Time
 
 	noMark      bool
+	unreadSeen  bool         // the "New" line (or no line at all) has been on screen
 	pane        slackc.Props // $pane for components in a thread pane
 	inj         injState     // plugin-injected messages
 	pend        pendingEdit  // an edit waiting for taut's actionable message
@@ -236,6 +241,18 @@ func (s *listState) sync(h Host, now time.Time) {
 	if s.snap.loaded && !s.opened {
 		s.opened = true
 		s.openLastRead = s.snap.lastRead
+		// Mark as read > "Start me where I left off" (start_scroll_at_oldest
+		// with mark_msgs_read_immediately): open on the first unread.
+		if pf := uipref.Get(); pf.StartAtOldest && pf.MarkReadImmediately && !s.thread && s.pendingJump == "" && s.openLastRead != "" {
+			for i := range s.snap.msgs {
+				if ts := s.snap.msgs[i].m.TS; tsLess(s.openLastRead, ts) {
+					if i > 0 || s.snap.hasMore {
+						s.pendingJump = ts
+					}
+					break
+				}
+			}
+		}
 	}
 	y, mo, d := now.Date() // not Format: this runs every frame
 	dk := y*10000 + int(mo)*100 + d
@@ -528,6 +545,10 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	if p.First == 0 && s.visible[1] == len(s.items) {
 		s.contentH = y + p.Offset
 	}
+	if !s.unreadSeen && s.opened {
+		ui := s.unreadIndex()
+		s.unreadSeen = ui < 0 || (ui >= s.visible[0] && ui < s.visible[1])
+	}
 
 	s.overlays(gtx, h, rc, size)
 	s.layoutScrollbar(gtx, c, size, now)
@@ -549,8 +570,12 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		s.lastOlder = now
 		s.hb.loadOlder(s.m)
 	}
-	// mark read at the bottom
-	if !s.thread && !s.noMark && s.snap.loaded && !p.BeforeEnd && len(s.snap.msgs) > 0 {
+	// Mark as read: mark_msgs_read_immediately marks as soon as the
+	// conversation shows; Slack's default leaves unseen messages unread,
+	// so the newest must be on screen and the "New" line must have been.
+	pf := uipref.Get()
+	seen := pf.MarkReadImmediately || (!p.BeforeEnd && s.unreadSeen)
+	if !s.thread && !s.noMark && s.snap.loaded && seen && len(s.snap.msgs) > 0 {
 		latest := s.snap.msgs[len(s.snap.msgs)-1].m.TS
 		app := h.Core()
 		if latest != s.markedTS && app != nil && tsLess(app.Count(s.ch).LastRead, latest) && now.Sub(s.lastMark) > 1500*time.Millisecond {
@@ -756,9 +781,17 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 	if rc.hovered {
 		for k := range r.pills {
 			if k < len(r.reactRects) && k < len(r.m.Reactions) && r.pills[k].btn.Hovered() {
-				s.tip = reactionTip(h, &r.m.Reactions[k], rc.selfID)
+				re := &r.m.Reactions[k]
+				s.tip = reactionTip(h, re, rc.selfID)
 				s.tipRect = r.reactRects[k] // row-local; positioned in overlays
 				s.tipItem = i
+				s.tipURL = re.URL
+				if s.tipURL == "" && h.Core() != nil {
+					s.tipURL, _, _ = h.Core().Emoji(re.Name)
+				}
+				if key := s.items[i].key + "\x00" + re.Name; key != s.tipKey {
+					s.tipKey, s.tipAt = key, rc.now
+				}
 			}
 		}
 	}
@@ -894,9 +927,15 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 	}
 
 	// reaction tooltip
-	if s.tip != "" && s.tipItem >= s.visible[0] && s.tipItem < s.visible[1] {
-		r := s.tipRect.Add(image.Pt(0, s.pos[s.tipItem]))
-		tooltip(gtx, th, c, s.tip, image.Pt((r.Min.X+r.Max.X)/2, r.Min.Y-dp(gtx, 6)), size)
+	if s.tip == "" {
+		s.tipKey = ""
+	} else if s.tipItem >= s.visible[0] && s.tipItem < s.visible[1] {
+		if wait := s.tipAt.Add(reactionTipDelay); rc.now.Before(wait) {
+			gtx.Execute(op.InvalidateCmd{At: wait})
+		} else {
+			r := s.tipRect.Add(image.Pt(0, s.pos[s.tipItem]))
+			reactionTooltip(gtx, h, th, c, s.tip, s.tipURL, image.Pt((r.Min.X+r.Max.X)/2, r.Min.Y-dp(gtx, 6)), size)
+		}
 	}
 
 	// jump to recent
@@ -1154,6 +1193,9 @@ func threadRoot(m *core.Message) string {
 
 // typingText is Slack's "X is typing…" line.
 func typingText(names []string) string {
+	if !uipref.Get().ShowTyping { // show_typing off
+		return ""
+	}
 	switch len(names) {
 	case 0:
 		return ""

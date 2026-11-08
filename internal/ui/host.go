@@ -113,13 +113,14 @@ func (a *App) activeRail() string {
 		return "later"
 	case "more", "directories", "huddles", "workflows":
 		if p == "more" {
-			return "more"
+			return "platform"
 		}
 	}
 	return "home"
 }
 
-func (a *App) railClick(key string) {
+// railClick opens a rail tab; org is the button's window position.
+func (a *App) railClick(key string, org image.Point) {
 	switch key {
 	case "home":
 		if a.lastChannel != "" {
@@ -127,24 +128,68 @@ func (a *App) railClick(key string) {
 		} else {
 			a.Navigate("threads")
 		}
-	case "more":
-		a.openMoreMenu(image.Pt(a.px(70), a.px(380)))
+	case "platform": // Agents & tools: Clack's tools menu stands in for Slack's page
+		a.openMoreMenu(image.Pt(a.px(70), org.Y))
+	case "browse":
+		a.openRailMore(image.Pt(a.px(70), org.Y))
 	default:
 		a.Navigate(key)
 	}
+}
+
+// openRailMore is Slack's More menu (BrowsePeekMenu): the tabs that are not
+// in the rail, with their subtitles and Ctrl+Shift shortcuts, then
+// "Customize navigation bar".
+func (a *App) openRailMore(anchor image.Point) {
+	r := a.model().Rail
+	items := []MenuItem{{Label: "More", Disabled: true}}
+	for _, id := range a.railOverflow {
+		t := a.railTabFor(id)
+		hint := ""
+		if i := indexOf(r.Rail, id); i >= 0 && i < 9 { // shortcut: position among the rail tabs
+			hint = "Ctrl Shift " + itoa(i+1)
+		}
+		key := t.key
+		items = append(items, MenuItem{Label: t.label, Subtitle: t.sub, Icon: t.icon, Hint: hint, Do: func() {
+			a.railClick(key, anchor)
+		}})
+	}
+	items = append(items, MenuItem{Divider: true},
+		MenuItem{Label: "Customize navigation bar", Do: func() { a.openPrefsSection("navigation") }})
+	a.menu(anchor, items)
+}
+
+func indexOf(list []string, s string) int {
+	for i, v := range list {
+		if v == s {
+			return i
+		}
+	}
+	return -1
 }
 
 func (a *App) railBadge(key string) (int, bool) {
 	m := a.model()
 	switch key {
 	case "home":
-		if a.activeRail() != "home" {
-			return m.HomeCount, m.HomeUnread
-		}
+		return m.Rail.HomeBadge(m.HomeUnread, m.DMCount)
 	case "dms":
 		return m.DMCount, m.DMUnread
 	case "activity":
 		return m.ActivityCount, false
+	case "browse": // yEMG: badges of what is under More
+		n := 0
+		for _, id := range a.railOverflow {
+			switch railKey(id) {
+			case "dms":
+				if !(m.Rail.ActivityInbox && !m.Rail.DMsOptOut) && m.Rail.DMsInRail {
+					n += m.DMCount
+				}
+			case "activity":
+				n += m.ActivityCount
+			}
+		}
+		return n, false
 	}
 	return 0, false
 }

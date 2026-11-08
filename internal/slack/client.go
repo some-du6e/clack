@@ -117,11 +117,12 @@ var entMethods = map[string]bool{
 	"users.channelSections.update": true, "users.channelSections.delete": true,
 	"activity.feed": true, "activity.views": true, "saved.list": true, "saved.add": true, "saved.delete": true,
 	"saved.update": true, "later.list": true, "client.dms": true, "drafts.list": true, "client.init": true,
-	"client.channels": true, "users.prefs.get": true, "subscriptions.thread.getView": true,
+	"client.channels": true, "users.prefs.get": true, "users.prefs.set": true, "subscriptions.thread.getView": true,
 	"subscriptions.thread.add": true, "subscriptions.thread.remove": true, "subscriptions.thread.mark": true,
 	"messages.list": true, "search.modules.people": true, "search.modules.channels": true,
 	"search.modules.messages": true, "search.modules.files": true, "commands.list": true,
-	"bots.info": true, // the team host answers bots_not_found for org apps (verified)
+	"sidebar.dms": true, // team host: team_is_restricted (verified 2026-11-08)
+	"bots.info":   true, // the team host answers bots_not_found for org apps (verified)
 }
 
 // MaxConcurrent bounds in-flight Web API requests (be gentle with rate limits).

@@ -35,6 +35,7 @@ type sbRow struct {
 	key     string // click key / route / conv id
 	label   string
 	icon    string
+	emoji   string // section headings: the section emoji's image URL, drawn instead of icon
 	section string
 	gap     int               // dp, for sbGap
 	itemKey string            // Slack's data-item-key ("" = untagged spacer)
@@ -85,6 +86,15 @@ func sectionIcon(typ string) string {
 	return "list-view"
 }
 
+// sbEmoji is the emoji image a heading row draws instead of icon: only
+// while icon is the section's own (collapsed and hover carets win).
+func sbEmoji(r *sbRow, icon string) string {
+	if r.kind != sbHeading || icon != r.icon {
+		return ""
+	}
+	return r.emoji
+}
+
 // rebuild flattens the model into sidebar rows (only when the model changes).
 func (s *sidebarState) rebuild(m *model) {
 	if s.collapsed == nil {
@@ -96,15 +106,18 @@ func (s *sidebarState) rebuild(m *model) {
 		if i > 0 {
 			rows = append(rows, sbRow{kind: sbGap, gap: 10})
 		}
-		rows = append(rows, sbRow{kind: sbHeading, key: sec.ID, label: sec.Name, icon: sectionIcon(sec.Type), section: sec.ID})
-		col := s.collapsed[sec.ID]
-		for _, id := range sec.Rows {
-			c := m.conv(id)
-			if c == nil {
-				continue
-			}
-			// collapsed sections still show unread and the selected conv
-			if col && !c.Unread && c.Mentions == 0 {
+		rows = append(rows, sbRow{kind: sbHeading, key: sec.ID, label: sec.Name, icon: sectionIcon(sec.Type), emoji: sec.EmojiURL, section: sec.ID})
+		col, seen := s.collapsed[sec.ID]
+		if !seen { // first sight: Slack's saved state (channel_sections "c")
+			col = sec.Collapsed
+			s.collapsed[sec.ID] = col
+		}
+		ids := sec.Rows
+		if col { // collapsed: Slack's unread rows (core's CollapsedChannels)
+			ids = sec.CollapsedRows
+		}
+		for _, id := range ids {
+			if m.conv(id) == nil {
 				continue
 			}
 			rows = append(rows, sbRow{kind: sbConv, key: id, section: sec.ID})
@@ -383,7 +396,7 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 	d := item.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
 		return at(gtx, image.Pt(pad, 0), image.Pt(w-pad*2, rowH), func(gtx layout.Context) layout.Dimensions {
 			return inner.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
-				rs := sbRowState{sel: sel, label: label, icon: icon, weight: weight, col: col, mentions: mentions, indent: indent, conv: conv, suffix: suffix, rowH: rowH}
+				rs := sbRowState{sel: sel, label: label, icon: icon, emoji: sbEmoji(r, icon), weight: weight, col: col, mentions: mentions, indent: indent, conv: conv, suffix: suffix, rowH: rowH}
 				if conv != nil {
 					// ConnectedChannel > Channel > ChannelContextMenu > trigger
 					rs.fg = col
@@ -480,6 +493,7 @@ type sbRowState struct {
 	sel      bool
 	label    string
 	icon     string
+	emoji    string // image URL drawn in place of icon (section emoji)
 	weight   font.Weight
 	col      color.NRGBA
 	mentions int
@@ -576,7 +590,18 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 			a.layoutConvBody(gtx, sbConvRow{a: a, r: r, btn: btn, rs: rs}, p, ix, right)
 			return layout.Dimensions{Size: image.Pt(rw, rowH)}
 		}
-		if icon != "" {
+		switch {
+		case rs.emoji != "" && icon == rs.icon:
+			// a custom section's emoji (Slack: 16px, where the icon goes);
+			// the hover caret still replaces it
+			es := gtx.Dp(16)
+			at(gtx, image.Pt(ix, iy), image.Pt(es, es), func(gtx layout.Context) layout.Dimensions {
+				if img, ok := a.images.Get(rs.emoji, es*2); ok {
+					return theme.Image(gtx, img, image.Pt(es, es), 0)
+				}
+				return layout.Dimensions{Size: image.Pt(es, es)}
+			})
+		case icon != "":
 			at(gtx, image.Pt(ix, iy), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
 				return icons.Get(icon)(gtx, 16, fg)
 			})

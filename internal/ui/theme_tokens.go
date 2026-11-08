@@ -27,7 +27,7 @@ var (
 // atomic load per frame otherwise.
 func (a *App) syncThemeTokens() {
 	if a.th.Restyle == nil {
-		a.th.Restyle = restyleFromSheets
+		a.th.Restyle = a.restyle
 	}
 	if v := slackc.Styles.Version(); v != a.styleVer {
 		a.styleVer = v

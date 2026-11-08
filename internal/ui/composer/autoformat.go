@@ -140,3 +140,52 @@ func autoformatBlock(d *Doc, caret int) (newCaret int, k BlockKind, ok bool) {
 	d.Lines[line] = Line{Kind: k}
 	return ls, k, true
 }
+
+// autoformatFence handles "```" typed after text on a line, as Slack's
+// composer does: "hello ```" ends the paragraph at "hello" and opens a code
+// block on a new line below, caret inside it. Text after the caret moves
+// into the code block. (A fence at the start of a paragraph is
+// autoformatBlock's.) It returns the new caret.
+func autoformatFence(d *Doc, caret int) (newCaret int, ok bool) {
+	caret = d.clamp(caret)
+	line := d.LineOf(caret)
+	ls := d.LineStart(line)
+	if caret-ls < 4 {
+		return caret, false
+	}
+	switch d.Lines[line].Kind {
+	case CodeBlock, Divider:
+		return caret, false
+	}
+	for i := caret - 3; i < caret; i++ {
+		if d.Runes[i] != '`' || d.Attrs[i].Atom != nil || d.Attrs[i].Style&Code != 0 {
+			return caret, false
+		}
+	}
+	// A fourth backtick before is someone typing ```` (or ``` inside a
+	// longer run): leave it.
+	if d.Runes[caret-4] == '`' {
+		return caret, false
+	}
+	start := caret - 3
+	d.Delete(start, caret)
+	// "hello ```" keeps "hello": the space before the fence goes too.
+	cut := start
+	for cut > ls && edSpace(d.Runes[cut-1]) && d.Attrs[cut-1].Atom == nil {
+		cut--
+	}
+	d.Delete(cut, start)
+	if cut == ls {
+		// Only whitespace before the fence: the line itself becomes code.
+		d.Lines[line] = Line{Kind: CodeBlock}
+		return ls, true
+	}
+	d.Insert(cut, "\n", Attr{})
+	d.Lines[line+1] = Line{Kind: CodeBlock}
+	// The code block starts plain: drop inline styles carried over from
+	// the text after the caret.
+	end := d.LineEnd(line + 1)
+	d.SetStyle(cut+1, end, Bold|Italic|Underline|Strike|Code, false)
+	d.SetLink(cut+1, end, "")
+	return cut + 1, true
+}

@@ -11,6 +11,7 @@ import (
 	"golang.org/x/image/math/fixed"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
 )
 
 // ---------- display list ----------
@@ -43,6 +44,7 @@ type frag struct {
 	part   uint8  // CSS part (css.go), 0 = none
 	boxed  bool   // its part's background is a deco box (code, pill)
 	weight font.Weight
+	tip    int16 // emoji: index+1 into display.tips (its :name: tooltip)
 }
 
 type boxKind uint8
@@ -134,6 +136,7 @@ type display struct {
 	size    image.Point
 	comps   []compBox // Slack components (see comps.go)
 	slots   []slot    // interactive element runs drawn by Options.Elements
+	tips    []string  // emoji tooltips (":name:"), frag.tip-1
 }
 
 // slot is a run of interactive elements the owner draws (Options.Elements).
@@ -154,6 +157,7 @@ func (d *display) reset() {
 	d.size = image.Point{}
 	d.comps = d.comps[:0]
 	d.slots = d.slots[:0]
+	d.tips = d.tips[:0]
 }
 
 func (d *display) addTarget(t target) int16 {
@@ -205,6 +209,7 @@ type item struct {
 	alt    bool
 	comp   int16
 	part   uint8
+	tip    int16
 }
 
 // flowStyle configures one inline flow.
@@ -414,7 +419,12 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			}
 			p0, p1 := l.plainAdd(alt)
 			ep := fs.emoji
-			l.items = append(l.items, item{kind: itImage, face: k, w: float32(ep + 2*l.dp(1)), url: sp.URL, size: ep, deco: -1, target: -1, p0: p0, p1: p1, brk: true, alt: true, part: pt})
+			var tip int16
+			if sp.ID != "" { // Slack's emoji tooltip: the :name: (with ::skin-tone-N)
+				l.d.tips = append(l.d.tips, ":"+sp.ID+":")
+				tip = int16(len(l.d.tips))
+			}
+			l.items = append(l.items, item{kind: itImage, face: k, w: float32(ep + 2*l.dp(1)), url: sp.URL, size: ep, deco: -1, target: -1, p0: p0, p1: p1, brk: true, alt: true, tip: tip, part: pt})
 			continue
 		case richtext.InlineImage:
 			if sp.URL == "" {
@@ -425,7 +435,7 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			l.items = append(l.items, item{kind: itImage, face: k, w: float32(ip + 2*l.dp(1)), url: sp.URL, size: ip, deco: -1, target: -1, p0: p0, p1: p1, brk: true, part: pt})
 			continue
 		case richtext.ColorSwatch:
-			if c := parseColor(sp.Text, color.NRGBA{}); c.A > 0 {
+			if c := parseColor(sp.Text, color.NRGBA{}); c.A > 0 && !uipref.Get().HideHexSwatch {
 				sw := l.dp(12)
 				l.decos = append(l.decos, deco{kind: 4, bg: c, border: rgba(0, 0, 0, 0.15), face: k, target: -1, radius: l.dp(3)})
 				l.addPad(float32(sw), int16(len(l.decos)-1), k)
@@ -590,7 +600,7 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 
 	emit := func(it *item, sh *shaped, w float32, p0, p1 int32) {
 		if it.kind == itImage {
-			d.frags = append(d.frags, frag{kind: fImage, x: float32(x0) + x + l.dpf(1), w: float32(it.size), size: it.size, url: it.url, target: it.target, p0: p0, p1: p1, alt: it.alt, comp: it.comp, part: it.part})
+			d.frags = append(d.frags, frag{kind: fImage, x: float32(x0) + x + l.dpf(1), w: float32(it.size), size: it.size, url: it.url, target: it.target, p0: p0, p1: p1, alt: it.alt, comp: it.comp, tip: it.tip, part: it.part})
 		} else if it.kind == itWord {
 			d.frags = append(d.frags, frag{kind: fText, x: float32(x0) + x, w: w, size: int(it.face.size >> 6), sh: sh, col: it.col, style: it.style, target: it.target, p0: p0, p1: p1, comp: it.comp,
 				part: it.part, boxed: it.deco >= 0, weight: it.face.f.Weight})

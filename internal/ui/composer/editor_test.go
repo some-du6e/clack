@@ -5,6 +5,9 @@ import (
 
 	"gioui.org/io/key"
 	"gioui.org/layout"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/store"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
 )
 
 // These tests drive the editor's logic without a window: a zero
@@ -645,5 +648,30 @@ func TestListNumbers(t *testing.T) {
 		if p.num != want[i] {
 			t.Fatalf("para %d num %d want %d", i, p.num, want[i])
 		}
+	}
+}
+
+// Advanced > "When typing code with ```, Enter should not send the
+// message" (enter_is_special_in_tbt): Enter adds a line, Shift+Enter sends.
+func TestEnterIsSpecialInCode(t *testing.T) {
+	t.Cleanup(uipref.Reset)
+	uipref.Set(store.Prefs{EnterIsSpecial: true})
+	e := NewEditor()
+	edType(e, "```x")
+	e.events = nil
+	edPress(e, key.NameReturn, 0)
+	if edHas(e, EvSubmit) || len(e.doc.Lines) != 2 || e.doc.Lines[1].Kind != CodeBlock {
+		t.Fatalf("Enter in code: submit=%v lines %+v", edHas(e, EvSubmit), e.doc.Lines)
+	}
+	edPress(e, key.NameReturn, key.ModShift)
+	if !edHas(e, EvSubmit) {
+		t.Fatal("Shift+Enter in code didn't send")
+	}
+	// outside code Enter still sends
+	e = NewEditor()
+	edType(e, "hi")
+	edPress(e, key.NameReturn, 0)
+	if !edHas(e, EvSubmit) {
+		t.Fatal("Enter in a paragraph didn't send")
 	}
 }

@@ -188,6 +188,13 @@ type User struct {
 	Updated           int64   `json:"updated,omitempty"`
 	Profile           Profile `json:"profile"`
 	Presence          string  `json:"presence,omitempty"`
+	// EnterpriseUser lists the Grid workspaces the user belongs to.
+	EnterpriseUser *EnterpriseUser `json:"enterprise_user,omitempty"`
+}
+
+type EnterpriseUser struct {
+	ID    string   `json:"id,omitempty"`
+	Teams []string `json:"teams,omitempty"`
 }
 
 type Profile struct {
@@ -256,6 +263,19 @@ type Purpose struct {
 	Value   string `json:"value"`
 	Creator string `json:"creator,omitempty"`
 	LastSet int64  `json:"last_set,omitempty"`
+}
+
+// Dormant reports Slack's server-side "inactive" flag
+// (properties.is_dormant), which the sidebar's "Active only" filter hides.
+func (c *Conversation) Dormant() bool {
+	if len(c.Properties) == 0 {
+		return false
+	}
+	var p struct {
+		IsDormant bool `json:"is_dormant"`
+	}
+	_ = json.Unmarshal(c.Properties, &p)
+	return p.IsDormant
 }
 
 // Section is a sidebar section from users.channelSections.list.

@@ -46,6 +46,7 @@ const nativeCSS = `
 .c-message__reply_count { color: N; font-weight: N }
 .c-message__reply_bar_description { color: N }
 .c-message_kit__labels__text { color: N }
+.c-tooltip__tip { color: N; background-color: N }
 `
 
 func init() {

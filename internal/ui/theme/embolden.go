@@ -170,6 +170,11 @@ func (e *emboldener) build(gs []text.Glyph, w float32) clip.PathSpec {
 			outline = d
 		case gtfont.GlyphSVG:
 			outline = d.Outline
+		case gtfont.GlyphBitmap: // a strike next to the outline (see MonoTypeface)
+			if d.Outline == nil {
+				continue
+			}
+			outline = *d.Outline
 		default:
 			continue
 		}

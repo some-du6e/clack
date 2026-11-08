@@ -2,6 +2,7 @@ package ui
 
 import (
 	"io"
+	"runtime"
 	"strings"
 
 	"gioui.org/io/clipboard"
@@ -93,10 +94,13 @@ func (a *App) defaultShortcuts() *shortcuts {
 	add("Ctrl+N", "Compose", func(a *App) { a.compose() })
 	add("Ctrl+,", "Preferences", func(a *App) { a.openPrefs() })
 	add("Ctrl+.", "Toggle the right pane", func(a *App) { a.toggleSecondary() })
-	add("Ctrl+[", "Back", func(a *App) { a.Back() })
-	add("Ctrl+]", "Forward", func(a *App) { a.Forward() })
-	add("Alt+Left", "Back", func(a *App) { a.Back() })
-	add("Alt+Right", "Forward", func(a *App) { a.Forward() })
+	for _, b := range navBindings(runtime.GOOS) {
+		desc, dir := "Back", b.dir
+		if dir > 0 {
+			desc = "Forward"
+		}
+		s.list = append(s.list, shortcut{name: b.name, mods: b.mods, desc: desc, do: func(a *App) { a.navigate(dir) }})
+	}
 	add("Alt+Up", "Previous conversation", func(a *App) { a.stepConv(-1, false) })
 	add("Alt+Down", "Next conversation", func(a *App) { a.stepConv(1, false) })
 	add("Alt+Shift+Up", "Previous unread", func(a *App) { a.stepConv(-1, true) })
@@ -109,11 +113,7 @@ func (a *App) defaultShortcuts() *shortcuts {
 			a.markRead(ch)
 		}
 	})
-	add("Shift+Esc", "Mark all as read", func(a *App) {
-		if a.data != nil {
-			a.data.markAllRead()
-		}
-	})
+	add("Shift+Esc", "Mark all as read", func(a *App) { a.confirmMarkAllRead() })
 	return s
 }
 

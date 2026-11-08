@@ -21,6 +21,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
 )
 
 // View lays out and draws one Doc. Keep one View per message and reuse it
@@ -36,12 +37,14 @@ type View struct {
 	laidSp  float32
 	laidGen uint32
 	laidEl  uint32 // Options.Elements version the layout was made with
+	laidPf  uint32 // uipref.Gen the layout was made with (jumbomoji, swatches, link underlines, inline media)
 	dirty   bool
 
 	ops      op.Ops
 	call     op.CallOp
 	recorded bool
 	pending  []int32 // imgs (>=0) or ^frag index of images not yet decoded
+	live     []int32 // frags of animated emoji: drawn every frame, not recorded
 
 	// Slack components (comps.go): the mode the layout was made in, each
 	// component's state and its props/natives receiver.
@@ -64,6 +67,9 @@ type View struct {
 	lastTap  time.Duration
 	tapCount int
 	hovering bool
+	ptr      f32.Point // last pointer position (view coordinates)
+	tipFrag  int       // emoji frag under the pointer, -1 none
+	tipAt    time.Time // when the pointer reached it (gtx.Now)
 
 	// Origin, if set by the owner, is added to click anchors so they are in
 	// window coordinates.
@@ -122,7 +128,7 @@ func (v *View) LineAt(off int32) (int32, int32) {
 
 // New returns a View for doc.
 func New(doc richtext.Doc, o Options) *View {
-	v := &View{hover: -1, press: -1}
+	v := &View{hover: -1, press: -1, tipFrag: -1}
 	v.Set(doc, o)
 	return v
 }
@@ -135,6 +141,7 @@ func (v *View) Set(doc richtext.Doc, o Options) {
 	v.cs = v.cs[:0]
 	v.selA, v.selB = 0, 0
 	v.hover, v.press = -1, -1
+	v.tipFrag = -1
 }
 
 // SetOptions changes only the options (e.g. edited flag, pending state).
@@ -212,7 +219,7 @@ func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimension
 	} else if rec {
 		v.recorded = false
 	}
-	if v.dirty || w != v.laidW || gtx.Metric.PxPerDp != v.laidPx || gtx.Metric.PxPerSp != v.laidSp || st.gen != v.laidGen || mode != v.laidMode {
+	if v.dirty || w != v.laidW || gtx.Metric.PxPerDp != v.laidPx || gtx.Metric.PxPerSp != v.laidSp || st.gen != v.laidGen || mode != v.laidMode || uipref.Gen() != v.laidPf {
 		v.relayout(st, w, gtx.Metric.PxPerDp, gtx.Metric.PxPerSp)
 	} else if len(v.pending) > 0 && v.anyReady(st) {
 		v.recorded = false
@@ -268,6 +275,20 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 		}
 	}
 	v.call.Add(gtx.Ops)
+	for _, i := range v.live {
+		if f := &v.d.frags[i]; st.Images != nil {
+			if img, ok := st.Images.Get(f.url, f.size); ok {
+				r := image.Rect(int(f.x+0.5), f.y, int(f.x+0.5)+f.size, f.y+f.size)
+				if ps := v.css.get(f.part); ps != nil && ps.alpha < 1 { // CSS opacity on the emoji (css.go)
+					o := paint.PushOpacity(gtx.Ops, max(ps.alpha, 0))
+					drawImage(gtx.Ops, img, r, [4]int{}, false)
+					o.Pop()
+				} else {
+					drawImage(gtx.Ops, img, r, [4]int{}, false)
+				}
+			}
+		}
+	}
 	if len(v.d.comps) > 0 {
 		v.layoutComps(gtx, st)
 	}
@@ -275,13 +296,14 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 		for i := range v.d.frags {
 			f := &v.d.frags[i]
 			if f.target == v.hover && f.kind == fText {
-				underline(gtx.Ops, f, st)
+				underline(gtx.Ops, f, v.textCol(f))
 			}
 		}
 	}
 	if v.opts.Dim {
 		opac.Pop()
 	}
+	v.emojiTip(gtx, st)
 
 	// Input areas: the whole view takes text-selection input; clickable
 	// things show the hand cursor.
@@ -366,10 +388,12 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 		v.laidEl = el.ElementsVersion()
 	}
 	v.d.reset()
+	v.laidPf = uipref.Gen()
+	v.tipFrag = -1
 	if v.expanded == nil {
 		v.expanded = map[*richtext.Attachment]bool{}
 	}
-	l := lay{st: st, d: &v.d, scale: pxdp, spx: pxsp, jumbo: v.doc.Jumbo, opts: v.opts, mode: mode, cs: &v.cs, expanded: v.expanded}
+	l := lay{st: st, d: &v.d, scale: pxdp, spx: pxsp, jumbo: v.doc.Jumbo && uipref.Get().Jumbomoji, opts: v.opts, mode: mode, cs: &v.cs, expanded: v.expanded}
 	v.css.parts = v.css.parts[:0]
 	if v.css.scope.Active() {
 		l.css = &v.css
@@ -444,6 +468,7 @@ func (v *View) anyReady(st *Style) bool {
 func (v *View) record(st *Style) {
 	v.ops.Reset()
 	v.pending = v.pending[:0]
+	v.live = v.live[:0]
 	ops := &v.ops
 	m := op.Record(ops)
 	v.paint(ops, st, 0, nil)
@@ -489,6 +514,7 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 		}
 		drawImage(ops, img, im.r, im.radii, !im.fit)
 	}
+	ul := uipref.Get().UnderlineLinks
 	for i := range v.d.frags {
 		f := &v.d.frags[i]
 		if f.comp != comp {
@@ -496,6 +522,10 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 		}
 		switch f.kind {
 		case fImage:
+			if comp == 0 && animated(st.Images, f.url, f.size) {
+				v.live = append(v.live, int32(i)) // a recording would freeze it
+				continue
+			}
 			var img paint.ImageOp
 			ok := false
 			if st.Images != nil {
@@ -568,8 +598,10 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 					paint.FillShape(ops, col, clip.Rect(image.Rect(int(f.x), y, int(f.x+f.w+0.5), y+thick)).Op())
 				}
 				if f.style&richtext.Underline != 0 {
-					underline(ops, f, st)
+					underline(ops, f, col)
 				}
+			} else if ul && f.target >= 0 && int(f.target) < len(v.d.targets) && v.d.targets[f.target].kind == tLink {
+				underline(ops, f, col) // Accessibility > "Underline links to websites"
 			}
 			if css && f.part != 0 {
 				v.partDeco(ops, i, col)
@@ -619,10 +651,11 @@ func (v *View) partDeco(ops *op.Ops, i int, col color.NRGBA) {
 	slackc.DrawDecoration(ops, ps.deco, dc, f.x, float32(f.y), w, float32(f.size))
 }
 
-func underline(ops *op.Ops, f *frag, st *Style) {
+// underline draws f's underline in col, its painted (CSS) color.
+func underline(ops *op.Ops, f *frag, col color.NRGBA) {
 	thick := max(1, f.size/14)
 	y := f.y + max(1, f.size/8)
-	paint.FillShape(ops, f.col, clip.Rect(image.Rect(int(f.x), y, int(f.x+f.w+0.5), y+thick)).Op())
+	paint.FillShape(ops, col, clip.Rect(image.Rect(int(f.x), y, int(f.x+f.w+0.5), y+thick)).Op())
 }
 
 func (v *View) paintSelection(gtx layout.Context, st *Style) {
@@ -829,8 +862,13 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 			case pointer.Enter, pointer.Move:
 				v.hovering = true
 				v.hover = v.targetAt(e.Position)
+				v.ptr = e.Position
+				if f := v.emojiAt(e.Position); f != v.tipFrag {
+					v.tipFrag, v.tipAt = f, gtx.Now
+				}
 			case pointer.Leave:
 				v.hovering = false
+				v.tipFrag = -1
 				if !v.dragging {
 					v.hover = -1
 				}

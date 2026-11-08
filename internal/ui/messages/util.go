@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/openurl"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
 )
 
 // tsTime parses a Slack ts ("1700000000.123456").
@@ -52,11 +53,12 @@ func ordinal(d int) string {
 	return "th"
 }
 
-// clock formats a message time like Slack: "3:04 PM".
-func clock(t time.Time) string { return t.Format("3:04 PM") }
+// clock formats a message time like Slack: "3:04 PM" ("15:04" with the
+// time24 pref).
+func clock(t time.Time) string { return uipref.Clock(t) }
 
 // shortClock is the hover timestamp in grouped rows: "3:04".
-func shortClock(t time.Time) string { return t.Format("3:04") }
+func shortClock(t time.Time) string { return uipref.ShortClock(t) }
 
 func sameDay(a, b time.Time) bool {
 	ay, am, ad := a.Date()

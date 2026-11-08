@@ -53,6 +53,9 @@ type Store struct {
 	Muted map[string]bool
 	// Prefs is the curated set of user prefs that change rendering.
 	Prefs Prefs
+	// RawPrefs is users.prefs.get's whole map (memory only: Preferences
+	// reads the keys it shows from it; Prefs is what the disk cache keeps).
+	RawPrefs map[string]json.RawMessage
 	// ThreadsUnread / ThreadMentions mirror client.counts "threads".
 	ThreadsUnread  bool
 	ThreadMentions int
@@ -95,31 +98,80 @@ func (s *Store) PutName(id, name string) {
 
 // Prefs are the user preferences the UI needs for rendering.
 type Prefs struct {
-	EmojiStyle        string   `json:"emoji_style"` // apple | google
-	EmojiMode         string   `json:"emoji_mode,omitempty"`
-	SkinTone          string   `json:"skin_tone,omitempty"`
-	Time24            bool     `json:"time24"`
-	DisplayRealNames  bool     `json:"display_real_names"`
-	Jumbomoji         bool     `json:"jumbomoji"`
-	ConvertEmoticons  bool     `json:"convert_emoticons"`
-	SidebarBehavior   string   `json:"sidebar_behavior,omitempty"`
-	ChannelSort       string   `json:"channel_sort,omitempty"`
-	Locale            string   `json:"locale,omitempty"`
-	Theme             string   `json:"theme,omitempty"`
-	DarkMode          string   `json:"dark_mode,omitempty"`
-	SidebarTheme      string   `json:"sidebar_theme,omitempty"`
-	MessagesTheme     string   `json:"messages_theme,omitempty"`
-	EnterIsSpecial    bool     `json:"enter_is_special_in_tbt"`
+	EmojiStyle       string `json:"emoji_style"` // apple | google
+	EmojiMode        string `json:"emoji_mode,omitempty"`
+	SkinTone         string `json:"skin_tone,omitempty"`
+	Time24           bool   `json:"time24"`
+	DisplayRealNames bool   `json:"display_real_names"`
+	Jumbomoji        bool   `json:"jumbomoji"`
+	ConvertEmoticons bool   `json:"convert_emoticons"`
+	SidebarBehavior  string `json:"sidebar_behavior,omitempty"`
+	ChannelSort      string `json:"channel_sort,omitempty"`
+	Locale           string `json:"locale,omitempty"`
+	Theme            string `json:"theme,omitempty"`
+	DarkMode         string `json:"dark_mode,omitempty"`
+	SidebarTheme     string `json:"sidebar_theme,omitempty"`
+	MessagesTheme    string `json:"messages_theme,omitempty"`
+	// IATheme is Slack's 2026 theme, users.prefs ia_theme: a JSON string
+	// {primary,highlight1,highlight2,important:{palette,custom},
+	// brightness, sidebarInverted, useCustomHex} (theme.ParseIATheme).
+	IATheme string `json:"ia_theme,omitempty"`
+	// NoWindowGradients is window_background_gradients=false (Appearance >
+	// "Show gradients": a flat chrome instead of Slack's conic gradient).
+	NoWindowGradients bool `json:"no_window_gradients,omitempty"`
+	EnterIsSpecial    bool `json:"enter_is_special_in_tbt"`
+	// PlainTextMode is Preferences > Advanced > "Format messages with
+	// markup": the composer keeps markup as typed (no live formatting, no
+	// toolbar) and formats it when the message is sent.
+	PlainTextMode     bool     `json:"plain_text_mode"`
 	ShowTyping        bool     `json:"show_typing"`
 	ColorNames        bool     `json:"color_names_in_list"`
 	FrequentEmoji     []string `json:"frequent_emoji,omitempty"`
 	Muted             []string `json:"muted"`
 	HideInactiveConvs bool     `json:"hide_inactive"`
+	// Sidebar rules (see internal/core/sidebar_rules.go): the
+	// channel_sections pref (section id -> {"sidebar": filter, "sort": …,
+	// "c": collapsed}) and the prefs that group and hide rows.
+	SectionPrefs     map[string]map[string]string `json:"section_prefs,omitempty"`
+	ShowMutedOutside bool                         `json:"show_muted_outside,omitempty"` // show_muted_items_outside_sidebar_menus
+	BoostMentions    bool                         `json:"boost_mentions,omitempty"`
+	SeparatePrivate  bool                         `json:"separate_private,omitempty"`
+	UndoIntermix     bool                         `json:"undo_intermix,omitempty"` // undo_channel_intermix
+	// Tab rail (internal/core/rail.go): Preferences > Navigation.
+	TabRailCustomization map[string]bool `json:"tab_rail_customization,omitempty"` // tab -> shown in the rail
+	TabRailOrder         []string        `json:"tab_rail_order,omitempty"`         // tab_rail_customization_order
+	TabRailOrderSet      bool            `json:"tab_rail_order_set,omitempty"`     // the order pref parsed as an array
+	HasUploaded          bool            `json:"has_uploaded,omitempty"`
+	HasStarredItem       bool            `json:"has_starred_item,omitempty"`
+	ActivityDMsOptOut    bool            `json:"activity_dms_opt_out,omitempty"`
+	CompactRail          bool            `json:"compact_rail,omitempty"` // ia4_compact_mode
 	// Notifications: global defaults and per-conversation overrides
 	// (users.prefs.get all_notifications_prefs).
 	GlobalDesktop string                   `json:"global_desktop,omitempty"` // everything | mentions_dms | nothing
 	GlobalMobile  string                   `json:"global_mobile,omitempty"`
 	ChannelNotify map[string]ChannelNotify `json:"channel_notify,omitempty"`
+	// NoTextInNotifications is the global no_text_in_notifications
+	// (Notifications > "Include a preview of the message"): desktop
+	// notifications show no message text.
+	NoTextInNotifications bool `json:"no_text_in_notifications,omitempty"`
+
+	// Render prefs (Preferences dialog). Named so the zero value is
+	// Slack's default: the disk cache drops false fields.
+	UnderlineLinks bool `json:"underline_links,omitempty"` // underline_links
+	NoAnimations   bool `json:"no_animations,omitempty"`   // a11y_animations=false
+	HideHexSwatch  bool `json:"hide_hex_swatch,omitempty"` // hide_hex_swatch
+	// NoInternalImgs is expand_internal_inline_imgs=false (images uploaded
+	// to Slack show as file cards); NoInlineImgs expand_inline_imgs=false
+	// (no images from linked websites); NoTextPreviews
+	// expand_non_media_attachments=false (no text previews of links).
+	NoInternalImgs bool `json:"no_internal_imgs,omitempty"`
+	NoInlineImgs   bool `json:"no_inline_imgs,omitempty"`
+	NoTextPreviews bool `json:"no_text_previews,omitempty"`
+	// MarkReadImmediately and StartAtOldest are Mark as read's
+	// mark_msgs_read_immediately and start_scroll_at_oldest (both false:
+	// Slack's "default", leave unseen messages unread).
+	MarkReadImmediately bool `json:"mark_msgs_read_immediately,omitempty"`
+	StartAtOldest       bool `json:"start_scroll_at_oldest,omitempty"`
 }
 
 // ChannelNotify is a conversation's notification override.
@@ -131,12 +183,51 @@ type ChannelNotify struct {
 	SuppressAtChannel bool   `json:"suppress_at_channel,omitempty"`
 }
 
+// parseSectionPrefs reads the channel_sections pref, a JSON object of
+// section id -> {pref: value}; values become strings ("c":"0", "sidebar":"hid").
+func parseSectionPrefs(s string) map[string]map[string]string {
+	if s == "" {
+		return nil
+	}
+	var raw map[string]map[string]any
+	if json.Unmarshal([]byte(s), &raw) != nil {
+		return nil
+	}
+	out := make(map[string]map[string]string, len(raw))
+	for id, kv := range raw {
+		m := make(map[string]string, len(kv))
+		for k, v := range kv {
+			switch x := v.(type) {
+			case string:
+				m[k] = x
+			case nil:
+			default:
+				b, _ := json.Marshal(x)
+				m[k] = string(b)
+			}
+		}
+		out[id] = m
+	}
+	return out
+}
+
 // ParsePrefs extracts Prefs (and the muted set) from users.prefs.get.
 func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
 	str := func(k string) string {
 		var v string
 		_ = json.Unmarshal(raw[k], &v)
 		return v
+	}
+	// jsonStr is a JSON-typed pref: Slack sends it as a string holding
+	// JSON; an object is taken as is.
+	jsonStr := func(k string) string {
+		if v := str(k); v != "" {
+			return v
+		}
+		if r := raw[k]; len(r) > 0 && r[0] == '{' {
+			return string(r)
+		}
+		return ""
 	}
 	boolean := func(k string, def bool) bool {
 		v, ok := raw[k]
@@ -153,16 +244,61 @@ func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
 		}
 		return def
 	}
+	// display_real_names_override is 1 (full names), -1 (display names)
+	// or 0 (the team's display_real_names default), like Slack's
+	// MessageNamesPref.
+	override := 0
+	if v, ok := raw["display_real_names_override"]; ok {
+		var n float64
+		if json.Unmarshal(v, &n) == nil {
+			override = int(n)
+		} else if boolean("display_real_names_override", false) {
+			override = 1
+		}
+	}
 	p := Prefs{
 		EmojiMode: str("emoji_mode"), SkinTone: str("preferred_skin_tone"), Time24: boolean("time24", false),
-		DisplayRealNames: boolean("display_real_names_override", false) || boolean("display_real_names", false),
+		DisplayRealNames: override > 0 || (override == 0 && boolean("display_real_names", false)),
 		Jumbomoji:        boolean("jumbomoji", true), ConvertEmoticons: boolean("convert_emoticons", true),
 		SidebarBehavior: str("sidebar_behavior"), ChannelSort: str("channel_sort"), Locale: str("locale"),
 		Theme: str("theme"), DarkMode: str("dark_mode"), SidebarTheme: str("sidebar_theme"), MessagesTheme: str("messages_theme"),
 		EnterIsSpecial: boolean("enter_is_special_in_tbt", false), ShowTyping: boolean("show_typing", true),
-		ColorNames: boolean("color_names_in_list", true),
+		ColorNames:    boolean("color_names_in_list", true),
+		PlainTextMode: boolean("plain_text_mode", false),
+		IATheme:       jsonStr("ia_theme"), NoWindowGradients: !boolean("window_background_gradients", true),
+		UnderlineLinks: boolean("underline_links", false), NoAnimations: !boolean("a11y_animations", true),
+		HideHexSwatch:  boolean("hide_hex_swatch", false),
+		NoInternalImgs: !boolean("expand_internal_inline_imgs", true), NoInlineImgs: !boolean("expand_inline_imgs", true),
+		NoTextPreviews:      !boolean("expand_non_media_attachments", true),
+		MarkReadImmediately: boolean("mark_msgs_read_immediately", false), StartAtOldest: boolean("start_scroll_at_oldest", false),
 	}
 	p.HideInactiveConvs = p.SidebarBehavior == "hide_inactive_channels"
+	p.ShowMutedOutside = boolean("show_muted_items_outside_sidebar_menus", false)
+	p.BoostMentions = boolean("boost_mentions", false)
+	p.SeparatePrivate = boolean("separate_private_channels", false)
+	p.UndoIntermix = boolean("undo_channel_intermix", false)
+	p.SectionPrefs = parseSectionPrefs(str("channel_sections"))
+	if s := str("tab_rail_customization"); s != "" {
+		var m map[string]bool
+		if json.Unmarshal([]byte(s), &m) == nil && len(m) > 0 {
+			p.TabRailCustomization = m
+		}
+	}
+	if s := str("tab_rail_customization_order"); s != "" {
+		var order []any
+		if json.Unmarshal([]byte(s), &order) == nil {
+			p.TabRailOrderSet = true
+			for _, v := range order {
+				if t, ok := v.(string); ok {
+					p.TabRailOrder = append(p.TabRailOrder, t)
+				}
+			}
+		}
+	}
+	p.HasUploaded = boolean("has_uploaded", false)
+	p.HasStarredItem = boolean("has_starred_item", false)
+	p.ActivityDMsOptOut = boolean("activity_dms_opt_out", false)
+	p.CompactRail = boolean("ia4_compact_mode", false)
 	// Slack calls the Google set "android"/"google"; everything else is Apple.
 	switch p.EmojiMode {
 	case "android", "google":
@@ -229,6 +365,7 @@ func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
 			_ = json.Unmarshal(n.Global["global_desktop"], &gd)
 			_ = json.Unmarshal(n.Global["global_mobile"], &gm)
 			p.GlobalDesktop, p.GlobalMobile = gd, gm
+			p.NoTextInNotifications = truthy(n.Global["no_text_in_notifications"])
 		}
 	}
 	p.Muted = make([]string, 0, len(muted))
@@ -237,6 +374,13 @@ func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
 	}
 	sort.Strings(p.Muted)
 	return p, muted
+}
+
+// SetRawPrefs keeps users.prefs.get's whole map (memory only).
+func (s *Store) SetRawPrefs(raw map[string]json.RawMessage) {
+	s.mu.Lock()
+	s.RawPrefs = raw
+	s.mu.Unlock()
 }
 
 // SetPrefs installs parsed prefs (and the emoji style used for rendering).
@@ -805,6 +949,9 @@ func (s *Store) NoteMessage(ch string, m *slack.Message, mentionsSelf bool) slac
 	e.HasUnreads = true
 	c := s.Convs[ch]
 	isDM := c != nil && (c.IsIM || c.IsMPIM) || strings.HasPrefix(ch, "D")
+	if isDM && c != nil && c.IsMPIM && s.Muted[ch] {
+		isDM = false // a muted group DM badges on mentions only (Slack's unreadHighlightCnt)
+	}
 	if mentionsSelf || isDM {
 		e.MentionCount++
 	}

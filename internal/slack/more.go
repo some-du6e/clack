@@ -10,6 +10,74 @@ import (
 	"sync"
 )
 
+// ExperimentGroups returns the viewer's experiment assignments
+// (experiments.getByUser): experiment name -> group ("on", "without_edu", …).
+func (c *Client) ExperimentGroups(ctx context.Context) (map[string]string, error) {
+	var r struct {
+		Assignments map[string]struct {
+			Group string `json:"group"`
+		} `json:"assignments"`
+	}
+	if err := c.Call(ctx, "experiments.getByUser", nil, &r); err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(r.Assignments))
+	for k, v := range r.Assignments {
+		out[k] = v.Group
+	}
+	return out, nil
+}
+
+// SidebarDM is one direct message or group DM from sidebar.dms.
+type SidebarDM struct {
+	ID       string `json:"id"`
+	User     string `json:"user,omitempty"`
+	IsOpen   bool   `json:"is_open"`
+	IsIM     bool   `json:"is_im,omitempty"`
+	IsMPIM   bool   `json:"is_mpim,omitempty"`
+	LastRead string `json:"last_read,omitempty"`
+}
+
+// SidebarDMs lists every DM and group DM the viewer has, each with its
+// is_open flag (sidebar.dms, on the enterprise host). Slack's own sidebar
+// shows only the open ones: users.conversations returns closed DMs too and
+// has no is_open. It follows response_metadata.next_cursor if Slack ever
+// pages the answer.
+func (c *Client) SidebarDMs(ctx context.Context) ([]SidebarDM, error) {
+	var all []SidebarDM
+	cursor := ""
+	for i := 0; i < 50; i++ {
+		p := url.Values{}
+		if cursor != "" {
+			p.Set("cursor", cursor)
+		}
+		var r struct {
+			IMs   []SidebarDM `json:"ims"`
+			MPDMs []SidebarDM `json:"mpdms"`
+			MPIMs []SidebarDM `json:"mpims"`
+			Meta  struct {
+				NextCursor string `json:"next_cursor"`
+			} `json:"response_metadata"`
+		}
+		if err := c.Call(ctx, "sidebar.dms", p, &r); err != nil {
+			return all, err
+		}
+		for _, d := range r.IMs {
+			d.IsIM = true
+			all = append(all, d)
+		}
+		for _, d := range append(r.MPDMs, r.MPIMs...) {
+			d.IsMPIM = true
+			all = append(all, d)
+		}
+		if r.Meta.NextCursor == "" || r.Meta.NextCursor == cursor {
+			break
+		}
+		cursor = r.Meta.NextCursor
+	}
+	return all, nil
+}
+
 // SectionsAll lists sidebar sections, following the top-level cursor and
 // each section's channel_ids_page cursor so big sections are complete.
 func (c *Client) SectionsAll(ctx context.Context) ([]Section, error) {
@@ -325,6 +393,15 @@ func (c *Client) Prefs(ctx context.Context) (map[string]json.RawMessage, error) 
 	}
 	err := c.Call(ctx, "users.prefs.get", nil, &r)
 	return r.Prefs, err
+}
+
+// SetPref writes one user pref the way Slack's setUserPrefByApi does:
+// users.prefs.set with name and value. Slack's client JSON-encodes the
+// JSON-typed prefs (ia_theme, …) and sends every other value as its plain
+// form value ("true", "3", "default"), so value arrives here already
+// serialized.
+func (c *Client) SetPref(ctx context.Context, name, value string) error {
+	return c.Call(ctx, "users.prefs.set", url.Values{"name": {name}, "value": {value}}, nil)
 }
 
 // Command is a slash command from commands.list.

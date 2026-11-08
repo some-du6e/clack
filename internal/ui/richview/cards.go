@@ -13,6 +13,7 @@ import (
 	"golang.org/x/image/math/fixed"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
 )
 
 func fixedPx(px int) fixed.Int26_6 { return fixed.I(px) }
@@ -83,6 +84,13 @@ func (l *lay) small(col color.NRGBA) flowStyle {
 func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 	a := b.Att
 	if a.IsUnfurl && !a.IsShare && len(b.Fields) == 0 && len(b.Buttons) == 0 && len(b.Children) == 0 {
+		pf := uipref.Get()
+		media := a.Image != nil || a.Thumb != nil || isVideoUnfurl(a)
+		// Messages & media > Inline media & links: expand_non_media_attachments
+		// (text previews of linked websites), expand_inline_imgs (their images).
+		if (!media && pf.NoTextPreviews) || (media && pf.NoInlineImgs && pf.NoTextPreviews) {
+			return 0
+		}
 		return l.unfurl(a, x, y, w)
 	}
 	p := &l.st.Palette
@@ -389,7 +397,8 @@ func (l *lay) videoCard(a *richtext.Attachment, x, y, w int) int {
 }
 
 func (l *lay) unfurl(a *richtext.Attachment, x, y, w int) int {
-	if isVideoUnfurl(a) {
+	noImg := uipref.Get().NoInlineImgs // expand_inline_imgs off: the card without its image
+	if isVideoUnfurl(a) && !noImg {
 		return l.videoCard(a, x, y, w)
 	}
 	p := &l.st.Palette
@@ -405,7 +414,7 @@ func (l *lay) unfurl(a *richtext.Attachment, x, y, w int) int {
 	cardT := l.d.addTarget(target{kind: tCard, url: url})
 	l.d.boxes = append(l.d.boxes, box{kind: bBorder, fill: p.Panel, stroke: p.Border, bw: l.dp(1), radius: l.dp(12), target: cardT, hover: p.BorderHover})
 	thumbW := 0
-	if a.Thumb != nil || (a.Image != nil && a.Image.W > 0 && a.Image.W < 300) {
+	if !noImg && (a.Thumb != nil || (a.Image != nil && a.Image.W > 0 && a.Image.W < 300)) {
 		thumbW = l.dp(106)
 	}
 	cx := x + pad
@@ -443,7 +452,7 @@ func (l *lay) unfurl(a *richtext.Attachment, x, y, w int) int {
 		cy += h
 		l.plainAdd("\n")
 	}
-	if a.Image != nil && thumbW == 0 {
+	if a.Image != nil && thumbW == 0 && !noImg {
 		cy += l.dp(8)
 		tg := l.d.addTarget(target{kind: tImage, img: a.Image})
 		if a.VideoURL != "" {
@@ -528,7 +537,7 @@ func fileName(f *richtext.File) string {
 
 func (l *lay) file(f *richtext.File, x, y, w int) int {
 	switch {
-	case f.IsImage && f.Thumb != nil:
+	case f.IsImage && f.Thumb != nil && !uipref.Get().NoInternalImgs: // expand_internal_inline_imgs
 		nh := l.fileNameRow(f, x, y, w)
 		tg := l.d.addTarget(target{kind: tFile, file: f})
 		bw, bh := galleryBox(f.Thumb.W, f.Thumb.H, w, l)

@@ -2,11 +2,16 @@ package messages
 
 import (
 	"encoding/json"
+	"image"
 	"image/color"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/unit"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
@@ -190,4 +195,38 @@ func keys[V any](m map[string]V) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// The reaction tooltip is Slack's .c-tooltip__tip, a portal under
+// <body>: a deleted row's red doesn't reach it, a tooltip rule does.
+func TestCSSReactionTooltip(t *testing.T) {
+	th := theme.New(false)
+	c := colorsFor(th)
+	const txt = "Bob reacted with :tada:"
+	drawn := func(rowClass string) color.NRGBA {
+		t.Helper()
+		var got color.NRGBA
+		gtx := layout.Context{Ops: new(op.Ops), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(image.Pt(400, 300)), Now: time.Now()}
+		row := rowWrap.EnterClass(gtx, 0, 0, rowClass)
+		labelMu.Lock()
+		labelHook = func(s string, ts textStyle) {
+			if s == txt {
+				got = ts.col
+			}
+		}
+		reactionTooltip(gtx, nilHost{}, th, c, txt, "", image.Pt(200, 250), image.Pt(400, 300))
+		labelHook = nil
+		labelMu.Unlock()
+		row.Leave()
+		return got
+	}
+	slackc.SetStyle("test:rtip", mlDeletedCSS)
+	defer slackc.RemoveStyle("test:rtip")
+	if got := drawn("slick-ml-deleted"); got != c.TooltipText {
+		t.Errorf("a row's rule reached the reaction tooltip: %v", got)
+	}
+	slackc.SetStyle("test:rtip", `.c-tooltip__tip { color: #0000ff !important }`)
+	if got := drawn(""); got != (color.NRGBA{B: 0xff, A: 0xff}) {
+		t.Errorf("tooltip rule: %v, want #0000ff", got)
+	}
 }

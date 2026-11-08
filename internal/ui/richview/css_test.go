@@ -55,6 +55,9 @@ func cssRuns(t *testing.T, rowClass string, o Options) (map[string]Run, *View) {
 	return runs, v
 }
 
+// mlDeletedRule is Slick MessageLogger's red deleted style, verbatim.
+const mlDeletedRule = `.slick-ml-deleted, .slick-ml-deleted * { color: #e01e5a !important; }`
+
 var (
 	mlRed  = color.NRGBA{R: 0xe0, G: 0x1e, B: 0x5a, A: 0xff}
 	words  = []string{"plainword", "boldword", "italicword", "strikeword", "linkword", "codeword", "@mentionword", "@groupword", "@here", "listword", "listtwo", "quoteword", "preword", "(edited)", "1.", "2."}
@@ -63,7 +66,7 @@ var (
 
 func TestCSSMessageLoggerRedReachesEveryPart(t *testing.T) {
 	// Slick MessageLogger's deleted style, verbatim (src/plugins/MessageLogger/index.ts)
-	slackc.SetStyle("test:ml", `.slick-ml-deleted, .slick-ml-deleted * { color: #e01e5a !important; }`)
+	slackc.SetStyle("test:ml", mlDeletedRule)
 	defer slackc.RemoveStyle("test:ml")
 	runs, _ := cssRuns(t, "slick-ml-deleted", Options{Edited: true})
 	for _, w := range words {
@@ -186,5 +189,67 @@ func TestCSSNoneNoParts(t *testing.T) {
 	}
 	if runs["plainword"].Color == mlRed {
 		t.Fatal("red without CSS")
+	}
+}
+
+// The paths richview draws outside the static recording take CSS too: an
+// animated emoji (drawn every frame) gets its part's opacity, and inline
+// code in its own font gets MessageLogger's red.
+func TestCSSAnimatedEmojiAndCodeRuns(t *testing.T) {
+	slackc.SetStyle("test:live", mlDeletedRule+` .slick-ml-deleted .c-emoji { opacity: 0.5 }`)
+	defer slackc.RemoveStyle("test:live")
+	imgs := animImages{newFakeImages()}
+	imgs.ready = true
+	st := NewStyle(sharedShaper(), imgs, LightPalette())
+	d := doc(para(txt("party "), rt.Span{Kind: rt.Emoji, ID: "party", URL: "https://e.test/party.gif"},
+		txt(" "), rt.Span{Kind: rt.Text, Text: "codeword", Style: rt.Code}))
+	v := New(d, Options{})
+	ops := new(op.Ops)
+	for i := 0; i < 2; i++ {
+		ops.Reset()
+		gtx := testGtx(ops, 400)
+		row := rowDef.EnterClass(gtx, 0, 0, "slick-ml-deleted")
+		v.Layout(gtx, st, &recHandler{})
+		row.Leave()
+	}
+	if len(v.live) != 1 {
+		t.Fatalf("live frags %v", v.live)
+	}
+	if ps := v.css.get(v.d.frags[v.live[0]].part); ps == nil || ps.alpha != 0.5 {
+		t.Errorf("the animated emoji's part: %+v, want opacity 0.5", ps)
+	}
+	found := false
+	v.Runs(func(r Run) {
+		if r.Text == "codeword" {
+			found = true
+			if r.Color != mlRed {
+				t.Errorf("inline code in its mono face: %v, want #e01e5a", r.Color)
+			}
+		}
+	})
+	if !found {
+		t.Fatal("no code run")
+	}
+}
+
+// The emoji tooltip is Slack's .c-tooltip__tip, a portal under <body>:
+// a row's ".slick-ml-deleted *" doesn't reach it, a tooltip rule does.
+func TestCSSEmojiTooltip(t *testing.T) {
+	p := LightPalette()
+	tip := func(rowClass string) (color.NRGBA, color.NRGBA, float32) {
+		gtx := testGtx(new(op.Ops), 400)
+		row := rowDef.EnterClass(gtx, 0, 0, rowClass)
+		defer row.Leave()
+		return tooltipStyle(&p)
+	}
+	slackc.SetStyle("test:tip", mlDeletedRule)
+	if bg, fg, _ := tip("slick-ml-deleted"); bg != p.TooltipBg || fg != p.TooltipText {
+		t.Errorf("a row's rule reached the tooltip: bg %v fg %v", bg, fg)
+	}
+	slackc.SetStyle("test:tip", `.c-tooltip__tip { background-color: #00ff00 !important; color: #0000ff; opacity: 0.8 }`)
+	defer slackc.RemoveStyle("test:tip")
+	bg, fg, o := tip("")
+	if bg != (color.NRGBA{G: 0xff, A: 0xff}) || fg != (color.NRGBA{B: 0xff, A: 0xff}) || o != 0.8 {
+		t.Errorf("tooltip rule: bg %v fg %v opacity %v", bg, fg, o)
 	}
 }

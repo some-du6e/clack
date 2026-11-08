@@ -15,6 +15,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/slick"
 	"github.com/some-du6e/yoloslackgoclient/internal/taut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/openurl"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
 )
 
 // backend adapts the in-process core service to the shell's model. Model
@@ -105,6 +106,9 @@ func (b *backend) start(a *App) {
 	// Live updates only when the user opted in (realtime.go); core polls
 	// otherwise. Set before Boot so the socket is never opened unasked.
 	b.core.SetRealtime(a.realtimeOn())
+	if b.core.S.HasCachedPrefs() { // the cached account theme paints the first frame
+		a.applyAccountPrefs(b.core.Prefs())
+	}
 	go func() {
 		t0 := time.Now()
 		if err := b.core.Boot(b.ctx); err != nil {
@@ -200,11 +204,14 @@ func (b *backend) resnapshot(a *App) {
 // apply replaces the model from a snapshot.
 func (b *backend) apply(a *App, s core.Snapshot) {
 	m := &b.m
+	a.applyAccountPrefs(s.Prefs)
+	uipref.Set(b.core.Prefs())
 	b.selfID = s.Self.ID
 	b.domain = s.Team.Domain
 	b.teamID = s.Team.ID
 	m.TeamName = s.Team.Name
 	m.TeamIcon = s.Team.Icon
+	m.Rail = s.Rail
 	m.SelfID = s.Self.ID
 	m.SelfName = s.Self.Name
 	m.SelfAvatar = s.Self.Avatar
@@ -253,7 +260,12 @@ func (b *backend) apply(a *App, s core.Snapshot) {
 	m.Convs = convs
 	m.Sections = m.Sections[:0]
 	for _, sec := range s.Sections {
-		ss := sbSection{ID: sec.ID, Name: sec.Name, Type: sec.Type, Emoji: sec.Emoji}
+		ss := sbSection{ID: sec.ID, Name: sec.Name, Type: sec.Type, Emoji: sec.Emoji, EmojiURL: sec.EmojiURL, Collapsed: sec.Collapsed}
+		for _, id := range sec.CollapsedChannels {
+			if convs[id] != nil {
+				ss.CollapsedRows = append(ss.CollapsedRows, id)
+			}
+		}
 		for _, id := range sec.Channels {
 			if c := convs[id]; c != nil {
 				ss.Rows = append(ss.Rows, id)
@@ -338,6 +350,25 @@ func (b *backend) recount() {
 	m.HomeCount += m.DMCount
 }
 
+// wantsNotify applies Notifications > Desktop notifications (users.prefs
+// all_notifications_prefs: the channel's desktop override, else
+// global_desktop): everything, mentions_dms (DMs, mentions and keywords:
+// mention) or nothing.
+func (b *backend) wantsNotify(ch string, mention bool) bool {
+	p := b.core.Prefs()
+	level := p.GlobalDesktop
+	if o := p.ChannelNotify[ch].Desktop; o != "" && o != "default" {
+		level = o
+	}
+	switch level {
+	case "everything":
+		return true
+	case "nothing":
+		return false
+	}
+	return mention
+}
+
 // handle applies one realtime event to the model.
 func (b *backend) handle(a *App, ev core.Event) {
 	if ev.Type == "huddle" {
@@ -346,6 +377,14 @@ func (b *backend) handle(a *App, ev core.Event) {
 	m := &b.m
 	changed := false
 	switch ev.Type {
+	case "prefs": // users.prefs changed (Preferences, pref_change)
+		if ev.Prefs != nil {
+			a.applyAccountPrefs(*ev.Prefs)
+			uipref.Set(*ev.Prefs)
+		}
+		// core's sidebar rules read sidebar_behavior, channel_sort,
+		// boost_mentions…: rebuild the sections from a fresh snapshot
+		b.resnapshot(a)
 	case "draft":
 		b.loadDrafts(a)
 	case "typing":
@@ -360,7 +399,7 @@ func (b *backend) handle(a *App, ev core.Event) {
 			cur := a.router.Current().Channel()
 			c := m.conv(ev.Channel)
 			direct := ev.ConvKind == "im" || ev.ConvKind == "mpim"
-			if (ev.Mention || direct) && (c == nil || !c.Muted) && (cur != ev.Channel || !a.focused) {
+			if b.wantsNotify(ev.Channel, ev.Mention || direct) && (c == nil || !c.Muted) && (cur != ev.Channel || !a.focused) {
 				// through Taut's showNotification thunk: plugins may change or
 				// drop it (native: the desktop notification)
 				title, body := b.notifyTitle(ev, c), richtext.PlainText(ev.Msg.Doc)
@@ -413,7 +452,7 @@ func (b *backend) handle(a *App, ev core.Event) {
 			}
 			changed = true
 		}
-	case "conv", "conv_removed", "sidebar_changed", "resync":
+	case "conv", "conv_removed", "sidebar_changed", "resync", "team": // "prefs" is handled above (it resnapshots too)
 		b.resnapshot(a)
 	case "auth_failed":
 		// core stopped all traffic on a dead session: back to sign-in
