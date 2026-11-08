@@ -72,7 +72,9 @@ jobs:
           name: ui-slick-log
           path: dist/ui-slick.log
       # Slick's bundled themes drawn by the whole window, light and dark
-      # (TestSlickViewThemes, TestSlickViewEveryTheme; synthetic data).
+      # (TestSlickViewThemes, TestSlickViewEveryTheme), and Preferences and
+      # a menu under them (TestSlickViewThemeOverlays: overlay-*.png;
+      # synthetic data).
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

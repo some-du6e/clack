@@ -644,6 +644,38 @@ func (s Styled) Wrap(gtx layout.Context, w layout.Widget) layout.Dimensions {
 	return wrapNative(gtx, s.s, w)
 }
 
+// WrapRounded is Wrap for a native that rounds its own box (a menu, a
+// popover, a modal card) as Slack's own stylesheet rounds the element
+// (.c-menu{border-radius:4px}, .c-sk-modal{border-radius:8px}): a rule's
+// background, border and box-shadow follow radius unless the rule sets
+// border-radius itself. With the zero Styled it is exactly w(gtx).
+func (s Styled) WrapRounded(gtx layout.Context, radius unit.Dp, w layout.Widget) layout.Dimensions {
+	if s.s == nil || !s.Active() {
+		return w(gtx)
+	}
+	if s.s.style.Display == css.DisplayNone {
+		return layout.Dimensions{}
+	}
+	if s.Has("border-radius") {
+		return wrapNative(gtx, s.s, w)
+	}
+	b := wrapBox(s.s)
+	old := b.st.Radius
+	for i := range b.st.Radius {
+		b.st.Radius[i] = css.Px(float32(radius))
+	}
+	defer func() { b.st.Radius = old }()
+	return wrapNative(gtx, s.s, w)
+}
+
+// BorderWidth is the top border width a rule set, in dp (0 when none).
+func (s Styled) BorderWidth() unit.Dp {
+	if !s.Has("border") {
+		return 0
+	}
+	return unit.Dp(s.s.style.BorderWidth[0])
+}
+
 // propSet is a bitmask of the properties natives can query.
 type propSet uint64
 

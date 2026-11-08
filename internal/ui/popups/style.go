@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"io"
 	"strings"
+	"sync"
 
 	"gioui.org/f32"
 	"gioui.org/font"
@@ -27,6 +28,7 @@ import (
 // (see the measurement notes in each file). Light and dark sets.
 type Colors struct {
 	Bg, BgAlt, BgHover   color.NRGBA // card, footer (#f8f8f8), row hover
+	ModalBg              color.NRGBA // modal card (Slack's .c-sk-modal; menus' Bg is .c-menu's)
 	Fg, Fg2, Fg3, Muted  color.NRGBA // #1d1c1d, #454447, #5e5d60, #616061
 	Subtle               color.NRGBA // #868686 (inactive tab icons)
 	Ring                 color.NRGBA // 1px card ring rgba(29,28,29,.13)
@@ -70,7 +72,8 @@ func rgba(v uint32, a float32) color.NRGBA {
 
 var lightColors = Colors{
 	Bg: rgb(0xffffff), BgAlt: rgb(0xf8f8f8), BgHover: rgb(0xf8f8f8),
-	Fg: rgb(0x1d1c1d), Fg2: rgb(0x454447), Fg3: rgb(0x5e5d60), Muted: rgb(0x616061),
+	ModalBg: rgb(0xffffff),
+	Fg:      rgb(0x1d1c1d), Fg2: rgb(0x454447), Fg3: rgb(0x5e5d60), Muted: rgb(0x616061),
 	Subtle:  rgb(0x868686),
 	Ring:    rgba(0x1d1c1d, .13),
 	Divider: rgba(0x5e5d60, .13),
@@ -100,7 +103,8 @@ var lightColors = Colors{
 
 var darkColors = Colors{
 	Bg: rgb(0x222529), BgAlt: rgb(0x1a1d21), BgHover: rgb(0x27292d),
-	Fg: rgb(0xd1d2d3), Fg2: rgb(0xababad), Fg3: rgb(0x9a9b9e), Muted: rgb(0xababad),
+	ModalBg: rgb(0x222529),
+	Fg:      rgb(0xd1d2d3), Fg2: rgb(0xababad), Fg3: rgb(0x9a9b9e), Muted: rgb(0xababad),
 	Subtle:  rgb(0x868686),
 	Ring:    rgba(0xd1d2d3, .13),
 	Divider: rgba(0xd1d2d3, .13),
@@ -128,12 +132,150 @@ var darkColors = Colors{
 	Lightbox:    rgba(0x000000, .7),
 }
 
-// colorsOf returns the popup palette for th.
+// colorsOf returns the popup palette for th: the measured set, or with a
+// stylesheet overriding Slack's tokens (a Slick theme, user.css) that set
+// with the tokens laid over it.
 func colorsOf(th *theme.Theme) *Colors {
+	if c := themedColors(th); c != nil {
+		return c
+	}
 	if th != nil && th.Dark {
 		return &darkColors
 	}
 	return &lightColors
+}
+
+// popupTokens is the Slack token behind each Colors field, read from the
+// web client's stylesheet (modern.vendor CSS, 2026-11-08):
+//
+//	.c-menu                      background-color: var(--dt_color-ctr-pry)
+//	.c-sk-modal, _header, _footer background-color: var(--dt_color-base-pry)
+//	.c-sk-overlay:before         background-color: var(--dt_color-base-modal)
+//	.c-menu_item__button         color: var(--dt_color-content-pry)
+//	.c-menu_item__header         color: var(--dt_color-content-sec)
+//	.c-menu_item__button--highlighted
+//	  background-color: var(--sk_menu-item_highlight-background, var(--dt_color-base-inv-hgl-1))
+//	  color: var(--sk_menu-item_highlight-color, var(--dt_color-content-inv-pry))
+//	.c-button--primary           background-color: var(--dt_color-base-inv-hgl-2)
+//	.c-button--danger            background-color: var(--dt_color-base-inv-imp)
+//	.c-button--outline           background var(--dt_color-base-pry), border var(--dt_color-otl-sec)
+//	.c-input_text                border var(--dt_color-otl-pry), background var(--dt_color-base-pry)
+//	.c-tooltip__tip              background var(--dt_color-base-inv-pry), color var(--dt_color-content-inv-pry)
+//	.c-sk-modal__close_button    color: var(--dt_color-content-sec)
+//
+// Fields not listed keep their measured values: Slack paints them with
+// literals (the card's 1px ring is box-shadow 0 0 0 1px #1d1c1d21, the
+// emoji hover tints) or with tokens no theme sets.
+var popupTokens = []struct {
+	f   func(*Colors) *color.NRGBA
+	tok theme.Tok
+}{
+	{func(c *Colors) *color.NRGBA { return &c.Bg }, theme.Both("var(--dt_color-ctr-pry)")},
+	{func(c *Colors) *color.NRGBA { return &c.ModalBg }, theme.Both("var(--dt_color-base-pry)")},
+	{func(c *Colors) *color.NRGBA { return &c.BgAlt }, theme.Both("var(--dt_color-base-sec)")},
+	{func(c *Colors) *color.NRGBA { return &c.BgHover }, theme.Both("var(--dt_color-ctr-pry-hover)")},
+	{func(c *Colors) *color.NRGBA { return &c.Fg }, theme.Both("var(--dt_color-content-pry)")},
+	{func(c *Colors) *color.NRGBA { return &c.Fg2 }, theme.Both("var(--dt_color-content-sec)")},
+	{func(c *Colors) *color.NRGBA { return &c.Fg3 }, theme.Both("var(--dt_color-content-ter)")},
+	{func(c *Colors) *color.NRGBA { return &c.Muted }, theme.Both("var(--dt_color-content-sec)")},
+	{func(c *Colors) *color.NRGBA { return &c.Subtle }, theme.Both("var(--dt_color-content-ter)")},
+	{func(c *Colors) *color.NRGBA { return &c.Divider }, theme.Both("var(--dt_color-otl-ter)")},
+	{func(c *Colors) *color.NRGBA { return &c.Backdrop }, theme.Both("var(--dt_color-base-modal)")},
+	{func(c *Colors) *color.NRGBA { return &c.Highlight }, theme.Both("var(--sk_menu-item_highlight-background) | var(--dt_color-base-inv-hgl-1)")},
+	{func(c *Colors) *color.NRGBA { return &c.HighText }, theme.Both("var(--sk_menu-item_highlight-color) | var(--dt_color-content-inv-pry)")},
+	{func(c *Colors) *color.NRGBA { return &c.Danger }, theme.Both("var(--dt_color-content-imp)")},
+	{func(c *Colors) *color.NRGBA { return &c.DangerBg }, theme.Both("var(--dt_color-base-inv-imp)")},
+	{func(c *Colors) *color.NRGBA { return &c.Link }, theme.Both("var(--dt_color-content-hgl-1)")},
+	{func(c *Colors) *color.NRGBA { return &c.Primary }, theme.Both("var(--dt_color-base-inv-hgl-2)")},
+	{func(c *Colors) *color.NRGBA { return &c.BtnBorder }, theme.Both("var(--dt_color-otl-sec)")},
+	{func(c *Colors) *color.NRGBA { return &c.BtnBg }, theme.Both("var(--dt_color-base-pry)")},
+	{func(c *Colors) *color.NRGBA { return &c.BtnHover }, theme.Both("var(--dt_color-base-pry-hover)")},
+	{func(c *Colors) *color.NRGBA { return &c.Tooltip }, theme.Both("var(--dt_color-base-inv-pry)")},
+	{func(c *Colors) *color.NRGBA { return &c.TooltipText }, theme.Both("var(--dt_color-content-inv-pry)")},
+	{func(c *Colors) *color.NRGBA { return &c.Focus }, theme.Both("var(--dt_color-otl-hgl-1)")},
+	{func(c *Colors) *color.NRGBA { return &c.FocusRing }, theme.Both("var(--dt_color-otl-hgl-1-sec)")},
+	{func(c *Colors) *color.NRGBA { return &c.InputBorder }, theme.Both("var(--dt_color-otl-pry)")},
+	{func(c *Colors) *color.NRGBA { return &c.Placeholder }, theme.Both("var(--dt_color-content-ter)")},
+	{func(c *Colors) *color.NRGBA { return &c.Aubergine }, theme.Both("var(--dt_color-theme-base-pry)")},
+	{func(c *Colors) *color.NRGBA { return &c.Badge }, theme.Both("var(--dt_color-theme-base-imp)")},
+	{func(c *Colors) *color.NRGBA { return &c.BadgeText }, theme.Both("var(--dt_color-theme-content-imp)")},
+}
+
+var (
+	tokColMu  sync.Mutex
+	tokColTh  *theme.Theme
+	tokColGen uint64
+	tokCol    *Colors
+)
+
+// themedColors is the mode's Colors with the overridden tokens laid over
+// them, cached per theme generation; nil when no stylesheet overrides a
+// token. A rebuild allocates, so a palette a caller holds stays valid.
+func themedColors(th *theme.Theme) *Colors {
+	if th == nil || th.Tokens == nil || !th.Tokens.Overridden() {
+		return nil
+	}
+	tokColMu.Lock()
+	defer tokColMu.Unlock()
+	if tokCol != nil && tokColTh == th && tokColGen == th.Gen {
+		return tokCol
+	}
+	c := lightColors
+	if th.Dark {
+		c = darkColors
+	}
+	ApplyTokens(&c, th)
+	tokCol, tokColTh, tokColGen = &c, th, th.Gen
+	return tokCol
+}
+
+// ApplyTokens lays th's overridden Slack tokens (popupTokens) over c, a
+// copy of the measured set (or a renderer's own values on top of it).
+// Nothing changes when no stylesheet overrides a token.
+func ApplyTokens(c *Colors, th *theme.Theme) {
+	if th == nil || th.Tokens == nil || !th.Tokens.Overridden() {
+		return
+	}
+	var set []*color.NRGBA
+	own := map[*color.NRGBA]bool{}
+	for _, f := range popupTokens {
+		if theme.SetTok(th.Tokens, f.f(c), f.tok, th.Dark) {
+			set = append(set, f.f(c))
+			own[f.f(c)] = true
+		}
+	}
+	// a hover over a themed surface the theme gave no hover token: Slack's
+	// own translucent hover over it (the measured value is pre-mixed over
+	// the default surface)
+	for _, h := range []struct {
+		hover, base *color.NRGBA
+		expr        string
+	}{{&c.BgHover, &c.Bg, "var(--dt_color-ctr-pry-hover)"}, {&c.BtnHover, &c.BtnBg, "var(--dt_color-base-pry-hover)"}} {
+		if own[h.base] && !own[h.hover] {
+			if v, _, ok := th.Tokens.Color(h.expr); ok {
+				*h.hover = v
+				set = append(set, h.hover)
+			}
+		}
+	}
+	// translucent tokens: fills read as CSS over the card (flattened in
+	// sRGB like a browser), lines and scrims keep their alpha, corrected
+	// for Gio's linear blending as the measured set is.
+	for _, p := range set {
+		if p.A == 0xff {
+			continue
+		}
+		switch p {
+		case &c.Bg: // first in popupTokens: the rest mix over it
+			*p = theme.Over(*p, th.C.Bg)
+		case &c.Divider, &c.Backdrop, &c.BtnBorder, &c.FocusRing, &c.InputBorder:
+			*p = linearAlpha(*p, c.Bg)
+		case &c.BtnHover:
+			*p = theme.Over(*p, c.BtnBg)
+		default:
+			*p = theme.Over(*p, c.Bg)
+		}
+	}
 }
 
 // ---- small layout helpers ----
@@ -275,7 +417,69 @@ func card(gtx layout.Context, cl *Colors, r image.Rectangle, radius int) {
 func modalCard(gtx layout.Context, cl *Colors, r image.Rectangle, radius int) {
 	softShadow(gtx, r, radius, dp(gtx, 18), dp(gtx, 48), cl.ModalShadow)
 	rrect(gtx, r.Inset(-1), radius+1, cl.Ring)
-	rrect(gtx, r, radius, cl.Bg)
+	rrect(gtx, r, radius, cl.ModalBg)
+}
+
+// styledCard lays out a card at pos, sz its content size, through st, its
+// Slack element (.c-menu, .c-popover, .c-sk-modal; [role=menu],
+// [role=dialog]), and body at the content origin. With no rule on the
+// element it is card (modalCard) and body. Slick themes repaint every
+// card with one raw rule, `[role=menu],[role=dialog],[role=listbox],
+// .c-menu,.p-ia4_floating_window,.c-popover__content{background-color:…;
+// border:1px solid …}`, which in Slack lands on the element under its own
+// border-radius and box-shadow: st paints the rule's background and border
+// rounded like the card (WrapRounded), the native shadow and 1px ring
+// (Slack's box-shadow) stay outside them unless a rule sets box-shadow,
+// and the native fill is left out where a rule gave a background.
+func styledCard(gtx layout.Context, st slackc.Styled, cl *Colors, pos, sz image.Point, radius int, modal bool, body func(gtx layout.Context)) layout.Dimensions {
+	lk := cardLook{fill: cl.Bg, ring: cl.Ring, shadow: func(gtx layout.Context, r image.Rectangle, rad int) {
+		softShadow(gtx, r, rad, dp(gtx, 4), dp(gtx, 12), cl.Shadow)
+	}}
+	if modal {
+		lk.fill = cl.ModalBg
+		lk.shadow = func(gtx layout.Context, r image.Rectangle, rad int) {
+			softShadow(gtx, r, rad, dp(gtx, 18), dp(gtx, 48), cl.ModalShadow)
+		}
+	}
+	return styledCardLook(gtx, st, lk, pos, sz, radius, body)
+}
+
+// cardLook is a card's native paint: fill, 1px ring, and its shadow
+// around a rect.
+type cardLook struct {
+	fill, ring color.NRGBA
+	shadow     func(gtx layout.Context, r image.Rectangle, radius int)
+}
+
+// styledCardLook is styledCard with the card's own look.
+func styledCardLook(gtx layout.Context, st slackc.Styled, lk cardLook, pos, sz image.Point, radius int, body func(gtx layout.Context)) layout.Dimensions {
+	return at(gtx, pos, func(gtx layout.Context) layout.Dimensions {
+		local := image.Rectangle{Max: sz}
+		if !st.Active() {
+			lk.shadow(gtx, local, radius)
+			rrect(gtx, local.Inset(-1), radius+1, lk.ring)
+			rrect(gtx, local, radius, lk.fill)
+			body(gtx)
+			return layout.Dimensions{Size: sz}
+		}
+		bw := gtx.Dp(st.BorderWidth())
+		box := image.Rectangle{Max: sz.Add(image.Pt(2*bw, 2*bw))}
+		if !st.Has("box-shadow") {
+			lk.shadow(gtx, box, radius+bw)
+			stroke(gtx, box.Inset(-1), radius+bw+1, 1, lk.ring)
+		}
+		pxd := gtx.Metric.PxPerDp
+		if pxd == 0 {
+			pxd = 1
+		}
+		return st.WrapRounded(gtx, unit.Dp(float32(radius+bw)/pxd), func(gtx layout.Context) layout.Dimensions {
+			if !st.Has("background-color") {
+				rrect(gtx, local, radius, lk.fill)
+			}
+			body(gtx)
+			return layout.Dimensions{Size: sz}
+		})
+	})
 }
 
 // clipRRect pushes a rounded clip for r.

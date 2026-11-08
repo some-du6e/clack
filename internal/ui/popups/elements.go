@@ -8,6 +8,7 @@ package popups
 
 import (
 	"image"
+	"image/color"
 	"time"
 
 	"gioui.org/layout"
@@ -20,6 +21,18 @@ import (
 
 // ColorsOf returns popups' palette (Slack 2026 tokens) for th.
 func ColorsOf(th *theme.Theme) *Colors { return colorsOf(th) }
+
+// ModalClass is Slack's modal element (ReactModal__Content c-sk-modal,
+// role dialog), which a theme's [role=dialog] / .c-sk-modal rules style.
+var ModalClass = modalClass
+
+// StyledCard lays out a card at pos (sz its content size, radius px) with
+// its native look (fill, 1px ring, shadow around a rect) under the CSS box
+// st, its Slack element, gets from a theme, and body at the content
+// origin (see styledCard). With no rule on st it is the native card.
+func StyledCard(gtx layout.Context, st slackc.Styled, fill, ring color.NRGBA, shadow func(gtx layout.Context, r image.Rectangle, radius int), pos, sz image.Point, radius int, body func(gtx layout.Context)) layout.Dimensions {
+	return styledCardLook(gtx, st, cardLook{fill: fill, ring: ring, shadow: shadow}, pos, sz, radius, body)
+}
 
 // Field draws Slack's single-line input (.c-input_text: radius 8,
 // InputBorder, 4dp focus ring) around ed, full constraint width, h dp tall,

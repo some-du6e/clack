@@ -398,11 +398,8 @@ func (m *Menu) layoutCard(gtx layout.Context, win image.Point) {
 		st.Leave()
 		return
 	}
-	at(gtx, pos, func(gtx layout.Context) layout.Dimensions {
-		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
-			m.layoutBody(gtx, th, cl, pos, w, hs)
-			return layout.Dimensions{Size: sz}
-		})
+	styledCard(gtx, st, cl, pos, sz, dp(gtx, 4), false, func(gtx layout.Context) {
+		m.layoutBody(gtx, th, cl, pos, w, hs)
 	})
 	st.Leave()
 	if m.sub != nil && !m.done {
@@ -414,7 +411,6 @@ func (m *Menu) layoutCard(gtx layout.Context, win image.Point) {
 func (m *Menu) layoutBody(gtx layout.Context, th *theme.Theme, cl *Colors, pos image.Point, w int, hs []int) {
 	local := image.Rectangle{Max: m.rect.Size()}
 	rad := dp(gtx, 4)
-	card(gtx, cl, local, rad)
 	m.block.Layout(gtx, local)
 
 	// clicks & hover first (they reflect last frame's layout).

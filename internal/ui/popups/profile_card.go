@@ -126,16 +126,12 @@ func (p *ProfileCard) Layout(gtx layout.Context) layout.Dimensions {
 	rad := dp(gtx, 8)
 	st := pfCardClass.Enter(gtx, 0, 0)
 	if !st.Hidden() {
-		at(gtx, pos, func(gtx layout.Context) layout.Dimensions {
-			return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
-				local := image.Rectangle{Max: d.Size}
-				card(gtx, cl, local, rad)
-				p.block.Layout(gtx, local)
-				cs := clipRRect(gtx, local, rad)
-				call.Add(gtx.Ops)
-				cs.Pop()
-				return d
-			})
+		styledCard(gtx, st, cl, pos, d.Size, rad, false, func(gtx layout.Context) {
+			local := image.Rectangle{Max: d.Size}
+			p.block.Layout(gtx, local)
+			cs := clipRRect(gtx, local, rad)
+			call.Add(gtx.Ops)
+			cs.Pop()
 		})
 	}
 	st.Leave()
