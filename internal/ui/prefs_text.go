@@ -19,58 +19,78 @@ import (
 // richview, Clack's native MrkdwnElement: links, inline code and member
 // mentions look exactly like they do in messages.
 
-// prefsText caches one richview.View per text for a settings page.
+// prefsText caches one richview.View per text for a settings page, and
+// one richview.Style per text colour (a palette change re-records every
+// View of a style, so colours don't share one).
 type prefsText struct {
-	views map[string]*prefsTextView
-	style *richview.Style
-	dark  bool
-	col   color.NRGBA // the style's body colour
+	views  map[string]*prefsTextView
+	styles map[color.NRGBA]*prefsTextStyle
+}
+
+type prefsTextStyle struct {
+	st   *richview.Style
+	dark bool
 }
 
 type prefsTextView struct {
 	src string
+	st  *richview.Style // the style it was laid out with (Views track a style's gen, not which style)
 	v   *richview.View
 }
 
-// mrkdwn draws s (Slack mrkdwn) at size 13/18 (small) or 15/22 in col.
-func (p *tautPage) mrkdwn(gtx layout.Context, key, s string, small bool, col color.NRGBA) layout.Dimensions {
+// textStyle is the richview style drawing body text in col.
+func (p *tautPage) textStyle(col color.NRGBA) *richview.Style {
 	t := &p.text
 	th := p.a.th
-	if t.style == nil {
+	if t.styles == nil {
+		t.styles = map[color.NRGBA]*prefsTextStyle{}
+	}
+	ps := t.styles[col]
+	if ps == nil {
 		var imgs richview.Images // emoji in descriptions
 		if p.a.images != nil {
 			imgs = p.a.images
 		}
-		t.style = richview.NewStyle(th.Shaper, imgs, richview.LightPalette())
-		t.style.Face = theme.Typeface
-		t.style.EmojiURL = th.EmojiURL
-		t.views = map[string]*prefsTextView{}
-		t.dark = !th.Dark // forces the palette below
+		st := richview.NewStyle(th.Shaper, imgs, richview.LightPalette())
+		st.Face = theme.Typeface
+		st.EmojiURL = th.EmojiURL
+		ps = &prefsTextStyle{st: st, dark: !th.Dark} // forces the palette below
+		t.styles[col] = ps
 	}
-	if t.dark != th.Dark || t.col != col {
-		t.dark, t.col = th.Dark, col
+	if ps.dark != th.Dark {
+		ps.dark = th.Dark
 		pal := richview.LightPalette()
-		t.style.Embolden = theme.BodyEmboldenFor(theme.LightPalette.Fg)
-		t.style.LightTextFade = 0
+		ps.st.Embolden = theme.BodyEmboldenFor(theme.LightPalette.Fg)
+		ps.st.LightTextFade = 0
 		if th.Dark {
 			pal = richview.DarkPalette()
-			t.style.Embolden = theme.BodyEmboldenFor(theme.DarkPalette.Fg)
-			t.style.LightTextFade = 0.235
+			ps.st.Embolden = theme.BodyEmboldenFor(theme.DarkPalette.Fg)
+			ps.st.LightTextFade = 0.235
 		}
 		pal.Text, pal.Link = col, p.colors().link
-		t.style.SetPalette(pal)
+		ps.st.SetPalette(pal)
+	}
+	return ps.st
+}
+
+// mrkdwn draws s (Slack mrkdwn) at 13/18 (small) or 15/22 in col.
+func (p *tautPage) mrkdwn(gtx layout.Context, key, s string, small bool, col color.NRGBA) layout.Dimensions {
+	t := &p.text
+	st := p.textStyle(col)
+	if t.views == nil {
+		t.views = map[string]*prefsTextView{}
 	}
 	tv := t.views[key]
-	if tv == nil || tv.src != s {
+	if tv == nil || tv.src != s || tv.st != st {
 		var r richtext.Resolver
 		if c := p.a.Core(); c != nil {
 			r = c.S
 		}
 		doc := richtext.Doc{Blocks: richtext.FromMrkdwn(r, s)}
-		tv = &prefsTextView{src: s, v: richview.New(doc, richview.Options{Compact: small})}
+		tv = &prefsTextView{src: s, st: st, v: richview.New(doc, richview.Options{Compact: small})}
 		t.views[key] = tv
 	}
-	return tv.v.Layout(gtx, t.style, prefsTextHandler{p.a})
+	return tv.v.Layout(gtx, st, prefsTextHandler{p.a})
 }
 
 // prefsTextHandler opens what settings text links to.
