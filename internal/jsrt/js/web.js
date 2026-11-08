@@ -343,17 +343,15 @@
   };
   def(G, 'btoa', function btoa(data) {
     need(arguments, 1, 'btoa', 'Window');
-    const s = String(data);
-    for (let i = 0; i < s.length; i++) {
-      if (s.charCodeAt(i) > 255) throw new DOMException("Failed to execute 'btoa' on 'Window': The string to be encoded contains characters outside of the Latin1 range.", 'InvalidCharacterError');
-    }
-    return b64encode(fromLatin1(s));
+    const r = H.btoa(String(data));
+    if (typeof r !== 'string') throw new DOMException("Failed to execute 'btoa' on 'Window': The string to be encoded contains characters outside of the Latin1 range.", 'InvalidCharacterError');
+    return r;
   });
   def(G, 'atob', function atob(data) {
     need(arguments, 1, 'atob', 'Window');
-    const b = b64decode(String(data));
-    if (!b) throw new DOMException("Failed to execute 'atob' on 'Window': The string to be decoded is not correctly encoded.", 'InvalidCharacterError');
-    return latin1(b);
+    const r = H.atob(String(data));
+    if (typeof r !== 'string') throw new DOMException("Failed to execute 'atob' on 'Window': The string to be decoded is not correctly encoded.", 'InvalidCharacterError');
+    return r;
   });
 
   // ---- percent-encoding ----

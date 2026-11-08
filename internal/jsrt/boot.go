@@ -254,6 +254,18 @@ func (r *Runtime) installHost() {
 		}
 		return out, nil
 	})
+	def("atob", func(js *Ctx, _ Value, a []Value) (any, error) {
+		if out, ok := atobGo(str(a, 0)); ok {
+			return out, nil
+		}
+		return nil, nil
+	})
+	def("btoa", func(js *Ctx, _ Value, a []Value) (any, error) {
+		if out, ok := btoaGo(str(a, 0)); ok {
+			return out, nil
+		}
+		return nil, nil
+	})
 	def("dirty", func(js *Ctx, _ Value, a []Value) (any, error) {
 		r.eng.dirty = true
 		return nil, nil
