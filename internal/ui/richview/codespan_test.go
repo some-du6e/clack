@@ -6,10 +6,16 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 
+	"gioui.org/f32"
+	"gioui.org/io/input"
+	"gioui.org/io/pointer"
+	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
+	"gioui.org/unit"
 
 	rt "github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
@@ -117,5 +123,66 @@ func TestCodeSpanAfterEmoji(t *testing.T) {
 				t.Errorf("only %d CodeBg pixels in the chip %v", n, in)
 			}
 		})
+	}
+}
+
+// TestEmojiTooltip: resting on an emoji shows its :name: (with the skin
+// tone) in Slack's dark tooltip after EmojiTipDelay, above the emoji.
+func TestEmojiTooltip(t *testing.T) {
+	em := func(id string) rt.Span { return rt.Span{Kind: rt.Emoji, ID: id, URL: "https://e.test/" + id + ".png"} }
+	d := doc(para(txt("one")), para(txt("two")), para(txt("three")), para(txt("wave "), em("wave::skin-tone-3"), txt(" and "), em("robot_face")))
+	st := NewStyle(themeShaper(), noImages{}, LightPalette())
+	v := New(d, Options{})
+	var r input.Router
+	var ops op.Ops
+	const w, h = 400, 200
+	t0 := time.Unix(1000, 0)
+	frame := func(now time.Time) {
+		ops.Reset()
+		paint.FillShape(&ops, st.Palette.Panel, clip.Rect{Max: image.Pt(w, h)}.Op())
+		gtx := layout.Context{Ops: &ops, Source: r.Source(), Now: now, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(w, h))}
+		v.Layout(gtx, st, &recHandler{})
+		r.Frame(&ops)
+	}
+	frame(t0)
+	var ems []*frag
+	for i := range v.d.frags {
+		if f := &v.d.frags[i]; f.kind == fImage {
+			ems = append(ems, f)
+		}
+	}
+	if len(ems) != 2 {
+		t.Fatalf("%d emoji frags", len(ems))
+	}
+	for i, want := range []string{":wave::skin-tone-3:", ":robot_face:"} {
+		f := ems[i]
+		c := f32.Pt(f.x+float32(f.size)/2, float32(f.y+f.size/2))
+		r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: c})
+		frame(t0)
+		if got, ok := v.HoveredEmoji(); !ok || got != want {
+			t.Fatalf("hovered %q %v, want %q", got, ok, want)
+		}
+	}
+	f := ems[1]
+	above := image.Rect(int(f.x)-10, f.y-30, int(f.x)+f.size+10, f.y-8)
+	frame(t0.Add(100 * time.Millisecond))
+	early := pixeltest.Render(t, w, h, &ops)
+	frame(t0.Add(EmojiTipDelay + 10*time.Millisecond))
+	late := pixeltest.Render(t, w, h, &ops)
+	if n := pixeltest.Count(early, above, st.Palette.TooltipBg, 8); n > 0 {
+		t.Errorf("tooltip before the delay (%d px)", n)
+	}
+	if n := pixeltest.Count(late, above, st.Palette.TooltipBg, 8); n < 100 {
+		t.Errorf("no tooltip above the emoji after the delay (%d px)", n)
+	}
+	if n := pixeltest.Ink(late, above, st.Palette.TooltipText, st.Palette.TooltipBg); n < 10 {
+		t.Errorf("tooltip has no text (%d px)", n)
+	}
+
+	r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(2, 2)})
+	frame(t0.Add(time.Second))
+	if _, ok := v.HoveredEmoji(); ok {
+		t.Fatal("still hovering an emoji over plain text")
 	}
 }

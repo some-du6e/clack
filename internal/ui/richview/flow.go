@@ -40,6 +40,7 @@ type frag struct {
 	p0, p1 int32  // plain text byte range
 	alt    bool   // image frag has text fallback in plain (":name:")
 	comp   int16  // component tag (index+1 into display.comps), 0 = static
+	tip    int16  // emoji: index+1 into display.tips (its :name: tooltip)
 }
 
 type boxKind uint8
@@ -129,6 +130,7 @@ type display struct {
 	size    image.Point
 	comps   []compBox // Slack components (see comps.go)
 	slots   []slot    // interactive element runs drawn by Options.Elements
+	tips    []string  // emoji tooltips (":name:"), frag.tip-1
 }
 
 // slot is a run of interactive elements the owner draws (Options.Elements).
@@ -149,6 +151,7 @@ func (d *display) reset() {
 	d.size = image.Point{}
 	d.comps = d.comps[:0]
 	d.slots = d.slots[:0]
+	d.tips = d.tips[:0]
 }
 
 func (d *display) addTarget(t target) int16 {
@@ -198,6 +201,7 @@ type item struct {
 	brk    bool // break opportunity after this item (CJK, images)
 	alt    bool
 	comp   int16
+	tip    int16
 }
 
 // flowStyle configures one inline flow.
@@ -389,7 +393,12 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			}
 			p0, p1 := l.plainAdd(alt)
 			ep := fs.emoji
-			l.items = append(l.items, item{kind: itImage, face: k, w: float32(ep + 2*l.dp(1)), url: sp.URL, size: ep, deco: -1, target: -1, p0: p0, p1: p1, brk: true, alt: true})
+			var tip int16
+			if sp.ID != "" { // Slack's emoji tooltip: the :name: (with ::skin-tone-N)
+				l.d.tips = append(l.d.tips, ":"+sp.ID+":")
+				tip = int16(len(l.d.tips))
+			}
+			l.items = append(l.items, item{kind: itImage, face: k, w: float32(ep + 2*l.dp(1)), url: sp.URL, size: ep, deco: -1, target: -1, p0: p0, p1: p1, brk: true, alt: true, tip: tip})
 			continue
 		case richtext.InlineImage:
 			if sp.URL == "" {
@@ -562,7 +571,7 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 
 	emit := func(it *item, sh *shaped, w float32, p0, p1 int32) {
 		if it.kind == itImage {
-			d.frags = append(d.frags, frag{kind: fImage, x: float32(x0) + x + l.dpf(1), w: float32(it.size), size: it.size, url: it.url, target: it.target, p0: p0, p1: p1, alt: it.alt, comp: it.comp})
+			d.frags = append(d.frags, frag{kind: fImage, x: float32(x0) + x + l.dpf(1), w: float32(it.size), size: it.size, url: it.url, target: it.target, p0: p0, p1: p1, alt: it.alt, comp: it.comp, tip: it.tip})
 		} else if it.kind == itWord {
 			d.frags = append(d.frags, frag{kind: fText, x: float32(x0) + x, w: w, size: int(it.face.size >> 6), sh: sh, col: it.col, style: it.style, target: it.target, p0: p0, p1: p1, comp: it.comp})
 		}
