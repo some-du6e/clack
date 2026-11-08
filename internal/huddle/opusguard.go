@@ -8,8 +8,9 @@ import (
 )
 
 // opus-go is libopus transpiled to Go: a failed libopus assertion
-// (celt_fatal) panics with "libcshim: abort". Seen on darwin/arm64 in CI
-// (silk_resampler: inLen >= Fs_in_kHz) on the fake's audio. One bad packet
+// (celt_fatal) panics with "libcshim: abort". Seen once per session, on an
+// early packet of the fake's audio, on darwin/arm64 (CI) and linux/amd64
+// (huddle-demo): silk_resampler's inLen >= Fs_in_kHz. One bad packet
 // must not take the app down, so decoding recovers, replaces the decoder
 // (its state is half-updated) and reports an error.
 
