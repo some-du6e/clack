@@ -14,6 +14,7 @@ import (
 	"image"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -385,21 +386,52 @@ func TestSlickViewChannelListTyping(t *testing.T) {
 	}
 }
 
-// ChatTabs: its tab bar over the primary view, its "Open in new Slick
-// tab" entry on a sidebar channel's right-click menu, and that entry
-// opening the channel (handleDeepLink → Clack route) as a second tab.
+// ChatTabs: its layout around ClientPrimaryView, its tab bar first inside
+// the primary view element (RenderedViewContents, before the view's body),
+// padding the view by its measured height; its "Open in new Slick tab"
+// entry on a sidebar channel's right-click menu, and that entry opening
+// the channel (handleDeepLink → Clack route) as a second tab.
 func TestSlickViewChatTabs(t *testing.T) {
 	e := newSV(t)
 	e.install("ChatTabs", nil)
 	e.until(5*time.Second, "ChatTabs' patches", func() bool {
-		return slackc.Patched("ClientPrimaryView") && slackc.Patched("ConnectedChannel") &&
+		return slackc.Patched("ClientPrimaryView") && slackc.Patched("RenderedViewContents") && slackc.Patched("ConnectedChannel") &&
 			slackc.Patched("ChannelContextMenu") && slackc.Patched("ContextMenuTriggerWithKeyboardFocus")
 	})
 	// the layout around the primary view, the view itself inside it
 	e.until(8*time.Second, "the tab layout around the primary view", func() bool {
-		return e.tree("slick-chat-tabs-layout", "slick-chat-tabs-body", `"n":"ClientPrimaryView"`) != ""
+		return e.tree("slick-chat-tabs-layout", `"n":"ClientPrimaryView"`) != ""
 	})
-	e.until(8*time.Second, "the tab bar", func() bool { return e.tree(`slick-chat-tabs`, `data-tab-count`) != "" })
+	// the bar inside the view element, ahead of the body
+	e.until(8*time.Second, "the tab bar inside .p-view_contents--primary", func() bool {
+		tr := e.tree("p-view_contents--primary", `slick-chat-tabs`, `data-tab-count`, `"n":"`+viewBodySlot+`"`)
+		return tr != "" && strings.Index(tr, `data-tab-count`) < strings.Index(tr, `"n":"`+viewBodySlot+`"`)
+	})
+	// its height measured (ResizeObserver over the laid-out bar) into the
+	// variable the view's :has(> .slick-chat-tabs) padding reads
+	rt, err := e.a.Taut().JS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var geom struct {
+		Bar, View [4]float64
+		Var       string
+	}
+	e.until(8*time.Second, "the bar laid out at the view's top, its height in --slick-chat-tabs-height", func() bool {
+		out, _, err := e.svJS(rt, `const r = (el) => { const b = el?.getBoundingClientRect(); return b ? [b.x, b.y, b.width, b.height] : [0, 0, 0, 0] }
+			const bar = document.querySelector('.slick-chat-tabs'), view = bar?.closest('.p-view_contents--primary')
+			return { Bar: r(bar), View: r(view), Var: document.querySelector('.slick-chat-tabs-layout')?.style.getPropertyValue('--slick-chat-tabs-height') || '' }`, 2*time.Second)
+		if err != nil || json.Unmarshal([]byte(out), &geom) != nil {
+			return false
+		}
+		return geom.Bar[3] > 0 && geom.Var != "" && geom.Var != "0px"
+	})
+	if geom.Bar[1] != geom.View[1] || geom.Bar[2] != geom.View[2] {
+		t.Errorf("bar %v not across the view's top %v", geom.Bar, geom.View)
+	}
+	if want := strconv.FormatFloat(geom.Bar[3], 'f', -1, 64) + "px"; geom.Var != want {
+		t.Errorf("--slick-chat-tabs-height %q, want the bar's %s", geom.Var, want)
+	}
 	if len(e.a.convos) == 0 {
 		t.Error("the channel view didn't draw inside the patched primary view")
 	}
