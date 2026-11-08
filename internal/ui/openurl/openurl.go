@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/uiguard"
 )
@@ -70,15 +71,22 @@ func Check(raw string) (string, error) {
 // command is the OS command for an already-checked URL.
 func command(u string) *exec.Cmd {
 	uiguard.OffUI("exec (open a link)") // exec.Command looks the tool up in PATH
+	var c *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		return exec.Command("open", u)
+		c = exec.Command("open", u)
 	case "windows":
-		return exec.Command("rundll32", "url.dll,FileProtocolHandler", u)
+		c = exec.Command("rundll32", "url.dll,FileProtocolHandler", u)
 	default:
-		return exec.Command("xdg-open", u)
+		c = exec.Command("xdg-open", u)
 	}
+	c.WaitDelay = waitDelay
+	return c
 }
+
+// waitDelay bounds Wait after the tool exits (its children may keep the
+// inherited stdio open).
+const waitDelay = 2 * time.Second
 
 // OpenFolder shows an existing directory in the file manager (Finder,
 // Explorer, xdg-open), without blocking. dir must be absolute.
@@ -101,6 +109,7 @@ func OpenFolder(dir string) error {
 		default:
 			cmd = exec.Command("xdg-open", dir)
 		}
+		cmd.WaitDelay = waitDelay
 		if err := cmd.Start(); err != nil {
 			log.Printf("openurl: %v", err)
 			return

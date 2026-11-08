@@ -95,8 +95,8 @@ jobs:
           go test -count=1 -v ./internal/ui/uiguard
           go test -count=1 -v -run 'TestThemeMapping|TestHCTSolveBounded|TestParseIAThemeJunk|FuzzIATheme' ./internal/ui/theme
           go test -count=1 -v -run 'TestNoExecOnUIPaths|TestOSPrefersDarkOffUI|TestOSSchemeFollow|TestWatchdogReport|TestTakeShaperDoesNotWait|TestAccountTheme|TestAppearancePageDraws|TestFormatWithMarkupPref' ./internal/ui
-          go test -count=1 -timeout 20m -run 'TestStartupStatesNeverBlock' ./internal/ui
-          go test -count=1 -v -run 'Paste' ./internal/ui/composer
+          go test -count=1 -timeout 20m -v -run 'TestStartupStatesNeverBlock|TestStartupWithHangingTools|TestEveryExecSetsWaitDelay' ./internal/ui
+          go test -count=1 -v -run 'Paste|TestAttRunHangingChild' ./internal/ui/composer
       - name: build
         if: ${{ !cancelled() }}
         run: |

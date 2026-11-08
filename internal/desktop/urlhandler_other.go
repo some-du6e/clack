@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os/exec"
 	"runtime"
+	"time"
 )
 
 // RegisterURLHandler makes Clack the user's slack:// handler. On Linux it
@@ -16,7 +17,9 @@ func RegisterURLHandler() error {
 	if runtime.GOOS == "darwin" {
 		return errors.New("on macOS, open Clack.app once; its Info.plist registers slack://")
 	}
-	return exec.Command("xdg-mime", "default", "clack.desktop", "x-scheme-handler/slack").Run()
+	cmd := exec.Command("xdg-mime", "default", "clack.desktop", "x-scheme-handler/slack")
+	cmd.WaitDelay = 5 * time.Second // never wait on a child's inherited pipes
+	return cmd.Run()
 }
 
 // UnregisterURLHandler is only needed on Windows; elsewhere the package

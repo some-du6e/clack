@@ -106,14 +106,18 @@ func attNativePick(ctx context.Context) (paths []string, ok bool, err error) {
 		if home != "" {
 			args = append(args, "--filename="+home+"/")
 		}
-		out, err := exec.CommandContext(ctx, "zenity", args...).Output()
+		c := exec.CommandContext(ctx, "zenity", args...)
+		c.WaitDelay = attWaitDelay
+		out, err := c.Output()
 		return attPickResult(out, err)
 	case attHave("kdialog"):
 		if home == "" {
 			home = "/"
 		}
-		out, err := exec.CommandContext(ctx, "kdialog", "--title", "Upload files",
-			"--getopenfilename", home, "--multiple", "--separate-output").Output()
+		c := exec.CommandContext(ctx, "kdialog", "--title", "Upload files",
+			"--getopenfilename", home, "--multiple", "--separate-output")
+		c.WaitDelay = attWaitDelay
+		out, err := c.Output()
 		return attPickResult(out, err)
 	}
 	return nil, false, nil

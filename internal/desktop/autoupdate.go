@@ -124,12 +124,12 @@ func packageOwner(path string) InstallKind {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if _, err := exec.LookPath("dpkg-query"); err == nil {
-		if exec.CommandContext(ctx, "dpkg-query", "-S", path).Run() == nil {
+		if c := exec.CommandContext(ctx, "dpkg-query", "-S", path); waitDelay(c).Run() == nil {
 			return KindDeb
 		}
 	}
 	if _, err := exec.LookPath("rpm"); err == nil {
-		if exec.CommandContext(ctx, "rpm", "-qf", path).Run() == nil {
+		if c := exec.CommandContext(ctx, "rpm", "-qf", path); waitDelay(c).Run() == nil {
 			return KindRPM
 		}
 	}

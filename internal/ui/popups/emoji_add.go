@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"gioui.org/io/key"
@@ -430,7 +431,9 @@ func (s *emojiAddModal) pick() {
 			}
 			c = emojiChooser.cmd
 		}
-		out, err := exec.Command(c.name, c.args...).Output()
+		cmd := exec.Command(c.name, c.args...)
+		cmd.WaitDelay = 2 * time.Second // never wait on a grandchild's inherited pipes
+		out, err := cmd.Output()
 		if err != nil {
 			var ee *exec.ExitError
 			if errors.As(err, &ee) {
