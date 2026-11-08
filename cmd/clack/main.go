@@ -75,6 +75,14 @@ func migrateConfig(old, dir string) {
 }
 
 func main() {
+	// The update helper (a temp copy of Clack started by "Install and
+	// restart"): it waits for Clack to exit, installs, relaunches.
+	if len(os.Args) == 3 && os.Args[1] == "-apply-update" {
+		if err := desktop.ApplyUpdate(os.Args[2]); err != nil {
+			os.Exit(1)
+		}
+		return
+	}
 	// Last line of defence: no token or cookie reaches the log, whatever
 	// an error string quotes.
 	log.SetOutput(slack.RedactWriter(os.Stderr))
@@ -169,7 +177,8 @@ func main() {
 		},
 	}
 	if desktop.Released(version) || os.Getenv("CLACK_UPDATE_URL") != "" {
-		opts.CheckUpdate = checkUpdate
+		u := newUpdates(filepath.Join(cfg, "cache", "updates"))
+		opts.CheckUpdate, opts.DownloadUpdate, opts.InstallUpdate = u.check, u.download, u.install
 	}
 
 	creds, err := slack.ReadCreds(*credsPath)
@@ -315,21 +324,6 @@ func main() {
 			}()
 		}
 	}
-}
-
-// checkUpdate asks GitHub Releases whether a newer Clack is out. It reads
-// release metadata only. CLACK_UPDATE_URL points it at another releases
-// API (testing); CLACK_UPDATE_AS pretends to be another version.
-func checkUpdate(ctx context.Context) (ui.UpdateInfo, bool, error) {
-	cur := version
-	if v := os.Getenv("CLACK_UPDATE_AS"); v != "" {
-		cur = v
-	}
-	r, err := desktop.LatestRelease(ctx, cur)
-	if err != nil {
-		return ui.UpdateInfo{}, false, err
-	}
-	return ui.UpdateInfo{Tag: r.Tag, URL: r.URL}, desktop.Newer(r.Tag, cur), nil
 }
 
 // signInWithLink is desktop-style sign-in: trade a slack:// magic-login

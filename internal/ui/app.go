@@ -66,9 +66,20 @@ type Options struct {
 	SwitchAccount func(c slack.Creds)
 	// CheckUpdate asks whether a newer release exists (cmd/clack: GitHub
 	// Releases). Called off the UI goroutine while Preferences > Advanced >
-	// "Check for updates" is on; ok=true shows the "Update available"
-	// banner. Nil: no update checks (dev builds).
+	// "Check for updates" is on; ok=true shows the update banner. Nil: no
+	// update checks (dev builds).
 	CheckUpdate func(ctx context.Context) (u UpdateInfo, ok bool, err error)
+	// DownloadUpdate fetches and verifies release u in the background
+	// (cmd/clack: the package for this install, checked against the
+	// release's SHA256SUMS) while "Download updates automatically" is on.
+	// nil error: the banner offers "Install and restart". Nil: the banner
+	// only links the release page.
+	DownloadUpdate func(ctx context.Context, u UpdateInfo) error
+	// InstallUpdate installs the downloaded u, called only from the
+	// banner's "Install and restart" click. nil error: Clack quits and the
+	// update helper starts the new version; ErrUpdateManual: the system
+	// installer opened instead.
+	InstallUpdate func(u UpdateInfo) error
 	// OnWindowEvent sees every window event before the UI (cmd/clack:
 	// window icons from the platform view events).
 	OnWindowEvent func(e event.Event)
