@@ -155,21 +155,12 @@ func drawTeamIcon(gtx layout.Context, h Host, url, name string, r image.Rectangl
 	ring(gtx, r, radius, color.NRGBA{A: 0x14})
 }
 
-// ring strokes a 1px inset outline.
+// ring strokes a 1px inset outline (the ::after inset box-shadow): a
+// 2px stroke on the edge, clipped to the shape.
 func ring(gtx layout.Context, r image.Rectangle, radius int, col color.NRGBA) {
-	w := max(1, dp(gtx, 1))
-	outer := clip.RRect{Rect: r, SE: radius, SW: radius, NE: radius, NW: radius}
-	in := r.Inset(w)
-	ir := max(0, radius-w)
-	inner := clip.RRect{Rect: in, SE: ir, SW: ir, NE: ir, NW: ir}
-	var p clip.Path
-	p.Begin(gtx.Ops)
-	p.Append(outer.Path(gtx.Ops))
-	p.Append(inner.Path(gtx.Ops))
-	st := clip.Outline{Path: p.End()}.Op().Push(gtx.Ops)
-	paint.ColorOp{Color: col}.Add(gtx.Ops)
-	paint.PaintOp{}.Add(gtx.Ops)
-	st.Pop()
+	w := float32(2 * max(1, dp(gtx, 1)))
+	defer clip.UniformRRect(r, radius).Push(gtx.Ops).Pop()
+	paint.FillShape(gtx.Ops, col, clip.Stroke{Path: clip.UniformRRect(r, radius).Path(gtx.Ops), Width: w}.Op())
 }
 
 // teamInitials is Slack's default team icon text: the first letters of
