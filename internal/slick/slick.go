@@ -466,6 +466,29 @@ func (s *Slick) applyStyles() {
 	}
 }
 
+// ReloadThemes re-reads <Dir>/themes/*.json (Preferences > Slick >
+// Themes downloads Slick's themes there) and re-applies the selected
+// theme, so new theme files show without restarting Clack.
+func (s *Slick) ReloadThemes() {
+	th := bundledThemes(s.dir)
+	s.mu.Lock()
+	s.themes = th
+	s.mu.Unlock()
+	s.applyStyles()
+	s.changed()
+}
+
+// ThemeApplies reports whether the selected theme's stylesheet is
+// installed now: false for Slack's own and "Custom CSS only", and for a
+// theme made for the other mode ("Only in dark mode"), as in Slick.
+func (s *Slick) ThemeApplies() bool {
+	s.styleMu.Lock()
+	defer s.styleMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.styled != ""
+}
+
 func (s *Slick) themeLocked(id string) (Theme, bool) {
 	if id == "" || id == "custom" {
 		return Theme{}, false
