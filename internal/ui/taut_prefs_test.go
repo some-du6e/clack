@@ -57,7 +57,7 @@ func ttApp(t *testing.T, home string) (*App, *core.App) {
 	}
 	ca.ServeOffline()
 	images := imgcache.New(func(ctx context.Context, url string) ([]byte, error) { return nil, errors.New("offline") }, "", nil)
-	a := New(Options{ConfigDir: t.TempDir()}, images)
+	a := New(Options{ConfigDir: t.TempDir(), NoRealtime: true}, images)
 	sh := theme.NewShaper()
 	a.th.SetShapers(sh, sh)
 	b := &backend{core: ca, app: a}

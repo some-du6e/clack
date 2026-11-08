@@ -53,7 +53,7 @@ const realtimeBannerH = unit.Dp(64)
 // realtimeAskH is the height of the first-run banner (with its gap), 0
 // once the user chose or when it is forced off.
 func (a *App) realtimeAskH(gtx layout.Context) int {
-	if a.data == nil || a.prefs.Realtime != nil || a.opts.NoRealtime {
+	if a.data == nil || !a.data.started || a.prefs.Realtime != nil || a.opts.NoRealtime {
 		return 0
 	}
 	return gtx.Dp(realtimeBannerH + bannerGap)
