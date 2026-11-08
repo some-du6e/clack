@@ -190,12 +190,7 @@ func (t *Taut) checkAuth(ctx context.Context, a storedAccount) string {
 	if !strings.Contains(cookie, "%") {
 		cookie = url.QueryEscape(cookie)
 	}
-	if ds := c.CookieDS; ds != "" { // d-s goes along with d, as Slack's own client sends it
-		if !strings.Contains(ds, "%") {
-			ds = url.QueryEscape(ds)
-		}
-		cookie += "; d-s=" + ds
-	}
+	// d only, never d-s: see slack.Client.cookieHeader.
 	req.Header.Set("Cookie", "d="+cookie)
 	res, err := t.opts.Fetch(ctx, req)
 	if err != nil {

@@ -25,7 +25,6 @@ type loginScreen struct {
 	token     widget.Editor
 	orgToken  widget.Editor
 	cookie    widget.Editor
-	cookieDS  widget.Editor
 	userAgent widget.Editor
 	submit    widget.Clickable
 	copy      widget.Clickable
@@ -46,7 +45,7 @@ func newLoginScreen() *loginScreen {
 	l.workspace.SingleLine = true
 	l.workspace.Submit = true
 	l.workspace.SetText("hackclub")
-	for _, ed := range []*widget.Editor{&l.token, &l.orgToken, &l.cookie, &l.cookieDS} {
+	for _, ed := range []*widget.Editor{&l.token, &l.orgToken, &l.cookie} {
 		ed.SingleLine = true
 		ed.Submit = true
 		ed.Mask = '•'
@@ -72,7 +71,7 @@ func (a *App) layoutLogin(gtx layout.Context) {
 		gtx.Execute(clipboard.WriteCmd{Type: "application/text", Data: io.NopCloser(strings.NewReader(signInSnippet))})
 		l.copied = true
 	}
-	for _, ed := range []*widget.Editor{&l.workspace, &l.token, &l.orgToken, &l.cookie, &l.cookieDS, &l.userAgent} {
+	for _, ed := range []*widget.Editor{&l.workspace, &l.token, &l.orgToken, &l.cookie, &l.userAgent} {
 		for {
 			e, ok := ed.Update(gtx)
 			if !ok {
@@ -89,7 +88,6 @@ func (a *App) layoutLogin(gtx layout.Context) {
 			Token:     strings.TrimSpace(l.token.Text()),
 			OrgToken:  strings.TrimSpace(l.orgToken.Text()),
 			Cookie:    strings.TrimSpace(l.cookie.Text()),
-			CookieDS:  strings.TrimSpace(l.cookieDS.Text()),
 			UserAgent: strings.TrimSpace(l.userAgent.Text()),
 		}
 		if in.Token == "" || in.Cookie == "" {
@@ -104,7 +102,7 @@ func (a *App) layoutLogin(gtx layout.Context) {
 						l.err = err.Error()
 						return
 					}
-					for _, ed := range []*widget.Editor{&l.token, &l.orgToken, &l.cookie, &l.cookieDS} {
+					for _, ed := range []*widget.Editor{&l.token, &l.orgToken, &l.cookie} {
 						ed.SetText("")
 					}
 					a.login = nil
@@ -189,7 +187,7 @@ func (a *App) layoutLogin(gtx layout.Context) {
 	})
 	ly += bh + gtx.Dp(16)
 	ly += para(x, colW, body, "2. Paste what it copied into Token. That fills in the org token and user agent for you.") + gtx.Dp(12)
-	ly += para(x, colW, body, "3. The d and d-s cookies are HttpOnly, so the snippet can't read them. Copy them from DevTools \u2192 Application \u2192 Cookies \u2192 https://app.slack.com.")
+	ly += para(x, colW, body, "3. The d cookie is HttpOnly, so the snippet can't read it. Copy its value from DevTools \u2192 Application \u2192 Cookies \u2192 https://app.slack.com. Leave d-s out: Clack doesn't use it.")
 
 	// Right column: the fields and the button.
 	fx, fy := x+colW+gap, y
@@ -220,7 +218,6 @@ func (a *App) layoutLogin(gtx layout.Context) {
 	field("Token", &l.token, "xoxc-\u2026 or the copied JSON")
 	field("Org token (optional)", &l.orgToken, "filled in from the JSON")
 	field("d cookie", &l.cookie, "xoxd-\u2026")
-	field("d-s cookie (recommended)", &l.cookieDS, "the d-s cookie next to d")
 	field("Browser user agent (optional)", &l.userAgent, "filled in from the JSON")
 	br := image.Rect(fx, fy, fx+colW, fy+gtx.Dp(44))
 	atExact(gtx, br.Min, br.Size(), func(gtx layout.Context) layout.Dimensions {

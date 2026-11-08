@@ -281,7 +281,6 @@ func loginCLI(path, workspace string) error {
 	si.Token = askSecret("Token (xoxc-…): ")
 	si.OrgToken = askSecret("Org token (xoxc-…, optional, Enterprise Grid only): ")
 	si.Cookie = askSecret("d cookie (xoxd-…): ")
-	si.CookieDS = askSecret("d-s cookie (optional): ")
 	fmt.Println("Clack shares that browser's session. Slack can sign it out everywhere if it sees it from what looks like another browser,")
 	fmt.Println("so give Clack the same browser's user agent (run navigator.userAgent in its DevTools console).")
 	si.UserAgent = ask("User agent (Mozilla/5.0 …, recommended): ")

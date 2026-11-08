@@ -26,7 +26,7 @@ type SignInInput struct {
 	Token     string // xoxc-… workspace token
 	OrgToken  string // optional xoxc-… org (Enterprise Grid) token
 	Cookie    string // value of the d cookie (xoxd-…)
-	CookieDS  string // optional value of the d-s cookie
+	CookieDS  string // ignored: d-s is never kept or sent (Client.cookieHeader)
 	// UserAgent is navigator.userAgent of the same browser (optional but
 	// recommended: Slack can end a session it sees from a different
 	// browser; see ua.go).
@@ -63,7 +63,7 @@ func SignIn(ctx context.Context, in SignInInput) (Creds, error) {
 	if !strings.HasPrefix(ck, "xoxd-") && !strings.HasPrefix(ck, "xoxd%") {
 		return Creds{}, errors.New("the d cookie should start with xoxd-")
 	}
-	c := Creds{Token: tok, Cookie: ck, CookieDS: cleanCookie(in.CookieDS, "d-s"), TeamURL: "https://" + ws + "/"}
+	c := Creds{Token: tok, Cookie: ck, TeamURL: "https://" + ws + "/"} // d-s is never kept or sent (Client.cookieHeader)
 	if v := strings.TrimSpace(in.UserAgent); v != "" {
 		if c.UserAgent = CleanUserAgent(v); c.UserAgent == "" {
 			return Creds{}, errors.New("the user agent should be your browser's navigator.userAgent, starting with Mozilla/5.0 (")

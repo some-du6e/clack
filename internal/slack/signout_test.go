@@ -43,3 +43,27 @@ func TestLoginDoesNotFetch(t *testing.T) {
 		t.Errorf("Login = %v", err)
 	}
 }
+
+// Method names that aren't plain names are refused, so a plugin can't reach
+// /api/auth.signout around the exact-name check.
+func TestRefusedMethodSpellings(t *testing.T) {
+	for _, m := range []string{"auth.signout?x=1", "auth.signout/", "../auth.signout", "AUTH.SIGNOUT", "Auth.EnterpriseSignout", "auth.revoke#", "auth.signout ", ""} {
+		if !refusedMethod(m) {
+			t.Errorf("refusedMethod(%q) = false, want true", m)
+		}
+	}
+	for _, m := range []string{"auth.test", "conversations.history", "users.prefs.get", "client.counts"} {
+		if refusedMethod(m) {
+			t.Errorf("refusedMethod(%q) = true, want false", m)
+		}
+	}
+}
+
+// d-s is never sent: Slack re-sets it to the current time on every response,
+// so a stored one is always stale (docs/SIGNOUT-AUDIT.md).
+func TestCookieHeaderNeverSendsDS(t *testing.T) {
+	c := New(Creds{Token: "xoxc-1", Cookie: "xoxd-1", CookieDS: "1794000000"})
+	if h := c.cookieHeader(); h != "d=xoxd-1" {
+		t.Errorf("cookieHeader = %q, want d only", h)
+	}
+}

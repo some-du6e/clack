@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	neturl "net/url"
+	"path"
 	"runtime"
 	"sort"
 	"strings"
@@ -511,7 +512,26 @@ func fetchURLAllowed(raw string) error {
 	if s := strings.ToLower(u.Scheme); s != "http" && s != "https" || u.Host == "" {
 		return fmt.Errorf("fetch: URL scheme %q is not supported", u.Scheme)
 	}
+	// Slack's sign-out and revoke methods end the session in every client
+	// (browser and desktop included), so no plugin may call them, on any
+	// host and however the path is spelled. Clack's own client refuses them
+	// too (slack.refusedMethod).
+	if m, ok := strings.CutPrefix(strings.ToLower(path.Clean("/"+u.Path)), "/api/"); ok {
+		if i := strings.IndexFunc(m, func(r rune) bool {
+			return !(r == '.' || r == '_' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z')
+		}); i >= 0 {
+			m = m[:i] // "auth.signout;x", "auth.signout/" and the like
+		}
+		if signOutMethods[m] {
+			return fmt.Errorf("fetch: %s is refused (it would sign you out of Slack everywhere)", m)
+		}
+	}
 	return nil
+}
+
+// signOutMethods are the Slack Web API methods that end the session (lower case).
+var signOutMethods = map[string]bool{
+	"auth.signout": true, "auth.revoke": true, "auth.enterprisesignout": true, "enterprisesignout": true,
 }
 
 func (r *Runtime) startFetch(id int, method, url string, headers [][2]string, body []byte) {

@@ -27,7 +27,7 @@ Severity scale:
 | P-* | — | Plugin-facing credential paths: see §3. | | |
 | C-14 | Info | No macOS Keychain or Windows Credential Manager. | Not done: it needs cgo (Keychain) or new dependencies. creds.json is owner-only on every OS instead. Future work. | — |
 
-The `d-s` cookie is stored, sent, scoped and redacted exactly like `d` (same `credsOK` check, same redaction patterns, same file).
+The `d-s` cookie is never sent or stored (old creds.json files may still hold one; it's ignored). Slack resets it to the current Unix time on every response, so a pasted copy is stale at once, and replaying an older stamp than the browser's is the leading suspect for Enterprise Grid ending the session everywhere (docs/SIGNOUT-AUDIT.md). It is still redacted like `d`.
 
 ## 2. Deep links and opening URLs
 
@@ -57,7 +57,7 @@ Plugins run in QuickJS compiled to wasm on wazero (`internal/jsrt`). Wasm has no
 | P-9 | Low | Storage, bytecode-cache and config.json writes went through a fixed `<path>.tmp`, so a symlink planted there was written through. | `O_EXCL` `CreateTemp` then rename, which replaces a link instead of following it. 0600 files, 0700 directories. | `TestWritesDontFollowSymlinks`, `TestBytecodeCacheIgnoresSymlinks` |
 | P-10 | Low | Unchecked guest memory reads, and no wasm memory cap. | `hostCall`/`hostModule` check `mem.Read` and argument counts. A `malloc` returning 0 closes the runtime. Memory is capped at `MemoryLimit + 512 MiB`. Host-function panics, nested ones included, become JS errors. | `TestMemoryBombFailsCleanly`, `TestHostPanicNested`, `TestMicrotaskFloodInterrupted` |
 | P-11 | Low | `window.open`, link clicks and `location.assign` could open browser tabs in a loop. | At most 5 per 10 s, like a popup blocker; extra calls are dropped with one warning. | `TestOpenURLRateLimited` |
-| P-12 | Low | Taut's AccountSwitcher `checkAuth` sent a saved account's token and `d` cookie to its stored TeamURL without a host check, and left `d-s` out. Switching wrote creds.json with plain `0600` (nothing on Windows). | Only https slack.com hosts, `d-s` sent alongside `d`, and `slack.WriteCreds` (owner-only, Windows ACL). | `TestCheckAuthStaysOnSlack` (internal/taut/cookies_sec_test.go), `TestAccountSendsDSAndWritesOwnerOnly` (internal/taut/accounts_security_test.go) |
+| P-12 | Low | Taut's AccountSwitcher `checkAuth` sent a saved account's token and `d` cookie to its stored TeamURL without a host check, and left `d-s` out. Switching wrote creds.json with plain `0600` (nothing on Windows). | Only https slack.com hosts, `d` only (never `d-s`), and `slack.WriteCreds` (owner-only, Windows ACL). | `TestCheckAuthStaysOnSlack` (internal/taut/cookies_sec_test.go), `TestAccountSendsOnlyDAndWritesOwnerOnly` (internal/taut/accounts_security_test.go) |
 | P-13 | Info | By design, and unchanged: any plugin can reach any namespace through `taut_kv`, saved accounts through `taut_accounts` (Taut's shape, including xoxd), and any Web API method through `taut_api`. `cookies.get` returns `d`; `cookies.set` replaces it in memory. There is no isolation between plugins (see S-16). | — | — |
 
 Host functions plugins can reach:
@@ -169,7 +169,7 @@ None of these may steal the session, read a file off your disk, reach your local
 **The session cookie and token go only to `https://slack.com` and its subdomains** (`slack.CookieURL`, `Client.credsOK`). That's the scope a browser gives Slack's `d` cookie (`.slack.com`).
 - Hosts must be plain ASCII DNS names. They're compared exactly after lower-casing, at a dot boundary, on port 443 with no userinfo. So `slack.com.evil.io`, `evilslack.com`, `evil.com/slack.com`, `files.slack.com@evil.com`, a trailing dot, `%2e` escapes, punycode or Unicode look-alikes, IP literals, `http://` and other ports all get nothing.
 - `slack-edge.com` gets no cookie either.
-- `d-s` is handled exactly like `d`.
+- `d-s` is never sent (see above).
 - The only exception is the client's own configured API origin, which is how tests run against an httptest server.
 
 **Credential-free fetches** (`slack.PublicHTTP`):
@@ -228,7 +228,7 @@ Clack runs on a session copied from the user's browser. Slack can end that sessi
 | User-Agent | the browser's own (Chrome 157 on that OS) | always `X11; Linux x86_64 … Chrome/142`, whatever the OS | the browser's own, pasted at sign-in; otherwise Chrome 157 on this OS |
 | `sec-ch-ua*` client hints on API calls | sent | not sent | derived from the User-Agent (Chromium browsers only) |
 | Gateway URL params | `slack_client=desktop`, org token, `gateway_server=T…-2`, `enterprise_id`, `flannel=3`, `agent_version=<build ts>` | the same, except `agent_version` = the current time on every dial | the same, except `agent_version` is fixed per run and a few hours in the past |
-| Socket handshake | `Origin: https://app.slack.com`, `Pragma`/`Cache-Control: no-cache`, all `.slack.com` cookies | Origin, `d` (+ `d-s` if given) | adds Pragma/Cache-Control; `d-s` is now recommended at sign-in |
+| Socket handshake | `Origin: https://app.slack.com`, `Pragma`/`Cache-Control: no-cache`, all `.slack.com` cookies | Origin, `d` only | adds Pragma/Cache-Control; `d-s` is never sent |
 | Socket opened | when the page loads | automatically after boot, retrying forever | only after the user opts in; gives up after 8 failed connects |
 | Cookie GETs | the browser loads Slack pages itself | any https `*.slack.com` URL from message content, following redirects | file hosts and file paths only (`files*.slack.com`, `/files-pri/`, `/files-tmb/`), redirects to pages stopped, HTML answers dropped (`ErrNotAFile`) |
 | After sign-out or account switch | — | the old session's socket and loops kept running | `core.Shutdown` stops them |

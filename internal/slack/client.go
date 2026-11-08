@@ -25,7 +25,7 @@ import (
 type Creds struct {
 	Token           string `json:"token"`               // team xoxc token
 	Cookie          string `json:"cookie"`              // d cookie (xoxd-..., URL-encoded as stored by the browser)
-	CookieDS        string `json:"cookie_ds,omitempty"` // optional d-s cookie sent alongside d
+	CookieDS        string `json:"cookie_ds,omitempty"` // legacy: read from old creds.json, never sent (see cookieHeader)
 	Team            string `json:"team"`                // team id, e.g. T0266FRGM
 	EnterpriseToken string `json:"enterprise_token"`    // org xoxc token (optional)
 	EnterpriseID    string `json:"enterprise_id"`
@@ -187,10 +187,14 @@ func (e *Error) Error() string { return "slack " + e.Method + ": " + e.Code }
 // RateLimited is returned when Slack answers 429 too many times in a row.
 var RateLimited = errors.New("slack: rate limited")
 
+// cookieHeader sends d only. d-s is never sent: Slack re-sets it on every
+// response to the current Unix time (a last-seen stamp), so a pasted d-s is
+// already older than the one the browser sends next. Presenting an older
+// stamp for the same session is what looks like a cloned cookie, and it is
+// the leading suspect for Enterprise Grid ending the session everywhere the
+// moment Clack signed in (docs/SIGNOUT-AUDIT.md). The Creds field stays so
+// existing creds.json files still load.
 func (c *Client) cookieHeader() string {
-	if c.Creds.CookieDS != "" {
-		return "d=" + c.Creds.Cookie + "; d-s=" + c.Creds.CookieDS
-	}
 	return "d=" + c.Creds.Cookie
 }
 
@@ -227,15 +231,32 @@ func (c *Client) Call(ctx context.Context, method string, params url.Values, out
 
 // forbiddenMethods would end the user's Slack session for every client.
 // Clack never calls them; "Sign out" only forgets local credentials.
+// Keys are lower case; refusedMethod compares case-insensitively.
 var forbiddenMethods = map[string]bool{
-	"auth.signout": true, "auth.revoke": true, "auth.enterpriseSignout": true, "enterpriseSignout": true,
+	"auth.signout": true, "auth.revoke": true, "auth.enterprisesignout": true, "enterprisesignout": true,
 }
 
 // ErrForbiddenMethod is returned for methods that would end the session.
 var ErrForbiddenMethod = errors.New("slack: method refused (it would sign you out everywhere)")
 
+// refusedMethod reports whether method must not be sent. Anything but a plain
+// method name ([A-Za-z0-9._]) is refused too, so "auth.signout?x=1",
+// "auth.signout/", "../auth.signout" or "AUTH.SIGNOUT" from a plugin can't
+// reach /api/auth.signout around the exact-name check.
+func refusedMethod(method string) bool {
+	if method == "" {
+		return true
+	}
+	for _, r := range method {
+		if !(r == '.' || r == '_' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z') {
+			return true
+		}
+	}
+	return forbiddenMethods[strings.ToLower(method)]
+}
+
 func (c *Client) callOn(ctx context.Context, method string, ent bool, params url.Values, out any) error {
-	if forbiddenMethods[method] {
+	if refusedMethod(method) {
 		return ErrForbiddenMethod
 	}
 	p := url.Values{}
@@ -268,7 +289,7 @@ func (c *Client) CallMultipart(ctx context.Context, method string, fields url.Va
 }
 
 func (c *Client) multipartOn(ctx context.Context, method string, ent bool, fields url.Values, fileField, filename string, data []byte, out any) error {
-	if forbiddenMethods[method] {
+	if refusedMethod(method) {
 		return ErrForbiddenMethod
 	}
 	base, tok := c.base, c.Creds.Token

@@ -13,10 +13,10 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 )
 
-// A saved account's d-s cookie goes along with d (TestCheckAuthStaysOnSlack
+// A saved account sends d and never its stale d-s (TestCheckAuthStaysOnSlack
 // covers non-Slack hosts), and switching writes an owner-only creds.json
 // only for Slack hosts.
-func TestAccountSendsDSAndWritesOwnerOnly(t *testing.T) {
+func TestAccountSendsOnlyDAndWritesOwnerOnly(t *testing.T) {
 	var got []*http.Request
 	tt := &Taut{opts: Options{Fetch: func(ctx context.Context, req *http.Request) (*http.Response, error) {
 		got = append(got, req)
@@ -30,8 +30,8 @@ func TestAccountSendsDSAndWritesOwnerOnly(t *testing.T) {
 	if len(got) != 1 || got[0].URL.Host != "hackclub.slack.com" {
 		t.Fatalf("requests: %v", got)
 	}
-	if c := got[0].Header.Get("Cookie"); c != "d=xoxd-1; d-s=ds1" {
-		t.Errorf("Cookie = %q, want d and d-s", c)
+	if c := got[0].Header.Get("Cookie"); c != "d=xoxd-1" {
+		t.Errorf("Cookie = %q, want d only (never d-s)", c)
 	}
 
 	dir := t.TempDir()
