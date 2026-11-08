@@ -20,6 +20,7 @@ import (
 // each because its exec calls only run off the UI goroutine.
 var execAllowed = map[string]string{
 	"openurl/openurl.go":       "Open starts the browser on its own goroutine",
+	"openurl/settings.go":      "OpenSettings execs on its own goroutine",
 	"composer/attach.go":       "attRun/attHave run on the picker and clipboard-image goroutines",
 	"composer/attach_linux.go": "attNativePick runs on Pick's goroutine",
 	"composer/attach_other.go": "attNativePick runs on Pick's goroutine",

@@ -1,7 +1,8 @@
 // Command huddle-demo shows the huddle UI (internal/ui/huddleui) against
 // the fake Slack + Chime (huddle.NewFake): a window with the sidebar's
 // huddle bar and the channel header's huddle pill, plus the huddle window
-// with a second person talking, reacting and sharing a test-pattern screen.
+// with a second person talking, reacting and sharing a test-pattern screen,
+// and a test-pattern camera of your own (-camera turns it on at start).
 // Nothing connects to Slack or AWS. A developer tool; not shipped.
 //
 //	huddle-demo -clip internal/huddle/testdata/testsrc-320x180.h264 -for 60s
@@ -53,9 +54,14 @@ func main() {
 	dur := flag.Duration("for", 0, "quit after this long (0 = when the window closes)")
 	muted := flag.Bool("muted", false, "join muted")
 	captions := flag.Bool("captions", true, "show live captions")
+	camera := flag.Bool("camera", false, "turn your (test-pattern) camera on at start")
+	window := flag.Bool("window", false, "open the huddle window at start")
 	flag.Parse()
 	if os.Getenv("CLACK_HUDDLE_TONE") == "" {
 		os.Setenv("CLACK_HUDDLE_TONE", "440") // a synthetic microphone
+	}
+	if os.Getenv("CLACK_HUDDLE_TESTCAM") == "" {
+		os.Setenv("CLACK_HUDDLE_TESTCAM", "640x360") // a synthetic camera
 	}
 	var clip []byte
 	if *clipPath != "" {
@@ -96,6 +102,12 @@ func main() {
 			s.SetCaptions(*captions)
 			if *muted {
 				s.SetMuted(true)
+			}
+			if *camera {
+				s.SetCamera(true)
+			}
+			if *window {
+				ctl.OpenWindow()
 			}
 		}()
 		if *dur > 0 {

@@ -38,6 +38,7 @@ type window struct {
 	notice string
 	noteAt time.Time
 	full   bool
+	cam    camUI // window_camera.go
 }
 
 // OpenWindow shows the huddle window (creating it), when you're in a huddle.
@@ -167,6 +168,7 @@ func (w *window) layout(gtx C) {
 	st := s.State()
 	now := time.Now()
 	w.handle(gtx, s, st)
+	w.cameraWatch(st)
 
 	// title: headphones + "Huddle in #channel", centered
 	titleH := gtx.Dp(34)
@@ -222,6 +224,8 @@ func (w *window) layout(gtx C) {
 			return w.th.Label(gtx, 13, theme.Bold, hudWhite, w.notice)
 		})
 	}
+	w.cameraNotice(gtx, st, stage)
+	w.toolbarTip(gtx, image.Rect(0, sz.Y-barH, sz.X, sz.Y))
 }
 
 func (w *window) handle(gtx C, s *huddle.Session, st huddle.State) {
@@ -235,7 +239,7 @@ func (w *window) handle(gtx C, s *huddle.Session, st huddle.State) {
 		}
 	}
 	if w.click("camera").Clicked(gtx) {
-		w.note(AppName + " can't send video yet")
+		w.cameraClick(s, st)
 	}
 	if w.click("screen").Clicked(gtx) {
 		w.note(AppName + " can't share your screen yet")
@@ -315,6 +319,7 @@ func (w *window) stage(gtx C, s *huddle.Session, st huddle.State, r image.Rectan
 			cams[v.AttendeeID] = v.Key
 		}
 	}
+	selfCam(st, cams) // your own tile shows your (mirrored) preview
 	area := r.Inset(gtx.Dp(12))
 	if share != nil {
 		// the share takes the stage; the people sit in a column on the right
@@ -526,6 +531,8 @@ type ctl struct {
 	on       bool // lit (mic on)
 	wide     int  // dp; 0 = 40
 	label    string
+	dim      bool   // unavailable (greyed)
+	tip      string // tooltip on hover
 }
 
 func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
@@ -538,7 +545,7 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 		deaf = ctl{id: "deafen", icon: "headphones-off", on: true}
 	}
 	cc := ctl{id: "cc", icon: "captions", on: st.CaptionsOn}
-	ctls := []ctl{mic, deaf, {id: "camera", icon: "video-off"}, {id: "screen", icon: "screen-share"},
+	ctls := []ctl{mic, deaf, w.cameraCtl(st), {id: "screen", icon: "screen-share"},
 		{id: "react", icon: "emoji", on: w.picker}, cc, {id: "thread", icon: "threads"}, {id: "leave", wide: 84, label: "Leave"}}
 	gap := gtx.Dp(8)
 	h := gtx.Dp(40)
@@ -552,6 +559,9 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 	for _, c := range ctls {
 		cw := w.ctlW(gtx, c)
 		c := c
+		if c.tip != "" && w.click(c.id).Hovered() {
+			w.cam.tip, w.cam.tipAnchor = c.tip, image.Rect(x, y, x+cw, y+h).Sub(r.Min)
+		}
 		at(gtx, image.Pt(x, y), image.Pt(cw, h), func(gtx C) D {
 			return button(gtx, w.click(c.id), image.Pt(cw, h), func(gtx C, hov bool) {
 				bg := hudBtn
@@ -572,6 +582,9 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 				fg := hudWhite
 				if c.on {
 					fg = hudInk
+				}
+				if c.dim {
+					fg.A = 0x66
 				}
 				if c.label != "" {
 					centerLabel(gtx, w.th, image.Pt(cw, h), 15, theme.Bold, hudWhite, c.label)
