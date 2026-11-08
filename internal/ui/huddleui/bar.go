@@ -6,12 +6,13 @@ import (
 	"time"
 
 	"gioui.org/layout"
-	"gioui.org/unit"
+	"gioui.org/op/clip"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/huddle"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/openurl"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
@@ -250,16 +251,30 @@ var hudGreenLight = color.NRGBA{R: 0x5b, G: 0xe0, B: 0x9b, A: 0xff}
 
 // ---- channel header ----
 
-type headerState struct{ click widget.Clickable }
+// The header's huddle button while a huddle is on, as Slack's
+// HuddleChannelHeaderButton draws it (container --polish: 28px tall,
+// radius 8, no border; a main button and a separate 20px caret):
+//
+//   - live, you're not in it (--active): jade-5 behind a facepile of up to
+//     3 people (20px, radius 5, overlapped, no "+N"), the headphones and a
+//     bare count ("2", 15px). The "Huddle" word only shows to people new to
+//     huddles (isSelfUserNewToHuddles), so not here. Click: join.
+//   - you're in it (--in_huddle): a jade-50 fill, a white headphones icon
+//     that turns into an X on hover, no faces or count. Click: leave.
+type headerState struct {
+	click, caret  widget.Clickable
+	tip, caretTip popups.TipState
+}
 
 // HeaderLive reports whether channel's header should show the live
-// huddle pill (a huddle is on there, or you're in or joining it).
+// huddle button (a huddle is on there, or you're in or joining it).
 func (c *Controller) HeaderLive(ch string) bool {
 	_, live := c.Live(ch)
 	return live || c.In(ch)
 }
 
-func (c *Controller) headerText(ch string) (string, []string) {
+// headerPeople is who's in ch's huddle (from the room, or your session).
+func (c *Controller) headerPeople(ch string) []string {
 	people := []string{}
 	if r, ok := c.Live(ch); ok {
 		people = r.Participants
@@ -273,29 +288,71 @@ func (c *Controller) headerText(ch string) (string, []string) {
 			}
 		}
 	}
-	if len(people) == 0 {
-		return "Huddle", people
-	}
-	return "Huddle " + itoa(len(people)), people
+	return people
 }
 
-// HeaderPillWidth is the live pill's width for ch.
-func (c *Controller) HeaderPillWidth(gtx C, th *theme.Theme, ch string) int {
-	txt, people := c.headerText(ch)
-	w := labelSize(gtx, th, 13, theme.Bold, txt).X
-	faces := min(len(people), 3)
-	return gtx.Dp(8) + faces*gtx.Dp(16) + boolDp(gtx, faces > 0, 6) + gtx.Dp(18+6) + w + gtx.Dp(6+14+6)
-}
+// Slack's jade palette for the button (light, dark).
+var (
+	hdrJade5    = [2]color.NRGBA{{R: 0xc3, G: 0xf6, B: 0xe0, A: 0xff}, {R: 0x06, G: 0x32, B: 0x25, A: 0xff}}
+	hdrJade10   = [2]color.NRGBA{{R: 0xa5, G: 0xed, B: 0xce, A: 0xff}, {R: 0x08, G: 0x3f, B: 0x2e, A: 0xff}}
+	hdrJade100  = [2]color.NRGBA{{R: 0x0a, G: 0x40, B: 0x32, A: 0xff}, {R: 0xd8, G: 0xf5, B: 0xe9, A: 0xff}}
+	hdrJade50   = [2]color.NRGBA{{R: 0x20, G: 0xa2, B: 0x71, A: 0xff}, {R: 0x25, G: 0x9b, B: 0x69, A: 0xff}}
+	hdrInvInk   = [2]color.NRGBA{{R: 0xff, G: 0xff, B: 0xff, A: 0xff}, {R: 0xf8, G: 0xf8, B: 0xf8, A: 0xff}}
+	hdrInvHover = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x2e} // surf-inv
+)
 
-func boolDp(gtx C, b bool, dp unit.Dp) int {
-	if b {
-		return gtx.Dp(dp)
+func mode(th *theme.Theme) int {
+	if th.Dark {
+		return 1
 	}
 	return 0
 }
 
-// HeaderPill draws Slack's mint "huddle is on" button: faces, headphones,
-// "Huddle N", chevron. A click joins (or leaves, when you're in it).
+const (
+	hdrFace    = 20   // facepile avatar (x_small)
+	hdrFaceGap = 18.5 // avatar step: margin-left -2.235% overlaps them by ~1.5px
+	hdrCaret   = 20
+	hdrIcon    = 20
+)
+
+// headerMainWidth is the main button's width (the caret follows).
+func (c *Controller) headerMainWidth(gtx C, th *theme.Theme, ch string) int {
+	if c.In(ch) {
+		return gtx.Dp(4 + hdrIcon + 4)
+	}
+	people := c.headerPeople(ch)
+	w := gtx.Dp(4) + gtx.Dp(hdrIcon) + gtx.Dp(4)
+	if n := min(len(people), 3); n > 0 {
+		w = gtx.Dp(2+8) + gtx.Dp(hdrFace) + (n-1)*gtx.Dp(hdrFaceGap) + gtx.Dp(8) + gtx.Dp(hdrIcon) + gtx.Dp(4)
+		w += gtx.Dp(4) + labelSize(gtx, th, 15, theme.Regular, itoa(len(people))).X
+	}
+	return w
+}
+
+// HeaderPillWidth is the live button's width for ch.
+func (c *Controller) HeaderPillWidth(gtx C, th *theme.Theme, ch string) int {
+	return c.headerMainWidth(gtx, th, ch) + gtx.Dp(hdrCaret)
+}
+
+// headerTip is the main button's tooltip.
+func (c *Controller) headerTip(ch string, in bool, people []string) string {
+	if in {
+		return "Leave huddle"
+	}
+	if contains(people, c.selfID()) {
+		return "Joined on another device\nJoin on this device"
+	}
+	where := "in " + c.channelTitle(ch)
+	if conv, ok := c.h.Core().S.Conv(ch); ok && conv.IsIM {
+		if n := c.userName(conv.User); n != "" {
+			where = "with " + n
+		}
+	}
+	return "Join huddle " + where + "\n" + itoa(len(people)) + " in the huddle"
+}
+
+// HeaderPill draws the live huddle button (see headerState). A click on
+// the main part joins, or leaves when you're in it.
 func (c *Controller) HeaderPill(gtx C, th *theme.Theme, ch string, h int) D {
 	hs := c.hdr[ch]
 	if hs == nil {
@@ -305,48 +362,86 @@ func (c *Controller) HeaderPill(gtx C, th *theme.Theme, ch string, h int) D {
 	if hs.click.Clicked(gtx) {
 		c.Toggle(ch)
 	}
-	txt, people := c.headerText(ch)
-	w := c.HeaderPillWidth(gtx, th, ch)
-	bg, ink := hudMint, hudMintInk
-	if th.Dark {
-		bg, ink = hudMintDark, hudGreenLight
+	in := c.In(ch)
+	people := c.headerPeople(ch)
+	m := mode(th)
+	mw := c.headerMainWidth(gtx, th, ch)
+	w := mw + gtx.Dp(hdrCaret)
+	rad := gtx.Dp(8)
+
+	// the container: radius 8, overflow hidden
+	cl := clip.UniformRRect(image.Rectangle{Max: image.Pt(w, h)}, rad).Push(gtx.Ops)
+	bg, ink, hov := hdrJade5[m], hdrJade100[m], hdrJade10[m]
+	if in {
+		bg, ink = hdrJade50[m], hdrInvInk[m]
 	}
-	return button(gtx, &hs.click, image.Pt(w, h), func(gtx C, hov bool) {
-		col := bg
-		if hov {
-			col = theme.Mix(bg, ink, 0.12)
+	theme.Fill(gtx, image.Rectangle{Max: image.Pt(w, h)}, bg)
+	hover := func(gtx C, sz image.Point, on bool) {
+		if !on {
+			return
 		}
-		theme.RRect(gtx, image.Rectangle{Max: image.Pt(w, h)}, gtx.Dp(8), col)
-	}, func(gtx C) D {
-		x := gtx.Dp(8)
-		fs := gtx.Dp(18)
-		for i, u := range people {
-			if i == 3 {
-				break
+		if in {
+			theme.Fill(gtx, image.Rectangle{Max: sz}, hdrInvHover)
+		} else {
+			theme.Fill(gtx, image.Rectangle{Max: sz}, hov)
+		}
+	}
+
+	button(gtx, &hs.click, image.Pt(mw, h), func(gtx C, on bool) { hover(gtx, image.Pt(mw, h), on) }, func(gtx C) D {
+		ic := gtx.Dp(hdrIcon)
+		if in {
+			name := "headphones"
+			if hs.click.Hovered() {
+				name = "close"
 			}
-			u := u
-			at(gtx, image.Pt(x, (h-fs)/2), image.Pt(fs, fs), func(gtx C) D {
-				theme.RRect(gtx, image.Rect(-gtx.Dp(1), -gtx.Dp(1), fs+gtx.Dp(1), fs+gtx.Dp(1)), gtx.Dp(5), bg)
-				avatar(gtx, th, c.h.Images(), c.avatarURL(u, fs), image.Pt(fs, fs), gtx.Dp(4))
-				return D{Size: image.Pt(fs, fs)}
-			})
-			x += gtx.Dp(16)
+			at(gtx, image.Pt((mw-ic)/2, (h-ic)/2), image.Pt(ic, ic), func(gtx C) D { return icons.Get(name)(gtx, hdrIcon, ink) })
+			return D{}
 		}
+		x := gtx.Dp(4)
+		if n := min(len(people), 3); n > 0 {
+			x = gtx.Dp(2 + 8)
+			fs := gtx.Dp(hdrFace)
+			under := bg
+			if hs.click.Hovered() {
+				under = hov
+			}
+			for i, u := range people[:n] {
+				u := u
+				at(gtx, image.Pt(x+i*gtx.Dp(hdrFaceGap), (h-fs)/2), image.Pt(fs, fs), func(gtx C) D {
+					if i > 0 { // the crescent mask's gap where it overlaps the one before
+						theme.RRect(gtx, image.Rect(-gtx.Dp(1.5), -gtx.Dp(1.5), fs, fs+gtx.Dp(1.5)), gtx.Dp(6), under)
+					}
+					avatar(gtx, th, c.h.Images(), c.avatarURL(u, fs), image.Pt(fs, fs), gtx.Dp(5))
+					return D{Size: image.Pt(fs, fs)}
+				})
+			}
+			x += fs + (n-1)*gtx.Dp(hdrFaceGap) + gtx.Dp(8)
+		}
+		at(gtx, image.Pt(x, (h-ic)/2), image.Pt(ic, ic), func(gtx C) D { return icons.Get("headphones")(gtx, hdrIcon, ink) })
+		x += ic
 		if len(people) > 0 {
-			x += gtx.Dp(6)
+			txt := itoa(len(people))
+			ls := labelSize(gtx, th, 15, theme.Regular, txt)
+			x += gtx.Dp(4)
+			at(gtx, image.Pt(x, (h-ls.Y)/2), ls, func(gtx C) D { return th.Label(gtx, 15, theme.Regular, ink, txt) })
 		}
-		at(gtx, image.Pt(x, (h-gtx.Dp(18))/2), image.Pt(gtx.Dp(18), gtx.Dp(18)), func(gtx C) D {
-			return icons.Get("headphones")(gtx, 18, ink)
-		})
-		x += gtx.Dp(24)
-		ls := labelSize(gtx, th, 13, theme.Bold, txt)
-		at(gtx, image.Pt(x, (h-ls.Y)/2), ls, func(gtx C) D { return th.Label(gtx, 13, theme.Bold, ink, txt) })
-		x += ls.X + gtx.Dp(6)
-		at(gtx, image.Pt(x, (h-gtx.Dp(14))/2), image.Pt(gtx.Dp(14), gtx.Dp(14)), func(gtx C) D {
-			return icons.Get("chevron-down")(gtx, 14, ink)
-		})
 		return D{}
 	})
+	popups.Tooltip(gtx, th, &hs.tip, hs.click.Hovered(), image.Pt(mw, h), popups.Below, c.headerTip(ch, in, people), "")
+
+	cw := gtx.Dp(hdrCaret)
+	at(gtx, image.Pt(mw, 0), image.Pt(cw, h), func(gtx C) D {
+		d := button(gtx, &hs.caret, image.Pt(cw, h), func(gtx C, on bool) { hover(gtx, image.Pt(cw, h), on) }, func(gtx C) D {
+			at(gtx, image.Pt(gtx.Dp(1), (h-gtx.Dp(14))/2), image.Pt(gtx.Dp(14), gtx.Dp(14)), func(gtx C) D {
+				return icons.Get("chevron-down")(gtx, 14, ink)
+			})
+			return D{}
+		})
+		popups.Tooltip(gtx, th, &hs.caretTip, hs.caret.Hovered(), image.Pt(cw, h), popups.Below, "More Huddles options", "")
+		return d
+	})
+	cl.Pop()
+	return D{Size: image.Pt(w, h)}
 }
 
 // Toggle is the header button: join the huddle in ch, or leave it when

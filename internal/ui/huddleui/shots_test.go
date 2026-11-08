@@ -3,6 +3,7 @@ package huddleui
 import (
 	"context"
 	"image"
+	"image/color"
 	"image/png"
 	"os"
 	"path/filepath"
@@ -229,5 +230,74 @@ func TestHuddleShotsMicOK(t *testing.T) {
 	var ops op.Ops
 	if h := e.c.BarHeight(shotCtx(&ops, 260, 200)); h != 112*shotScale {
 		t.Fatalf("bar height %d", h)
+	}
+}
+
+// The channel header's live huddle button: mint with faces, headphones and
+// a bare count when you're not in it; solid jade with white headphones
+// when you are. Never "Huddle N".
+func TestHeaderShots(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		e := newShotEnv(t, dark)
+		suffix := "light"
+		page := color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
+		if dark {
+			suffix, page = "dark", color.NRGBA{R: 0x1a, G: 0x1d, B: 0x21, A: 0xff}
+		}
+		m := mode(e.h.th)
+		draw := func(gtx C) {
+			theme.Fill(gtx, image.Rectangle{Max: gtx.Constraints.Max}, page)
+			off := op.Offset(image.Pt(gtx.Dp(8), gtx.Dp(6))).Push(gtx.Ops)
+			e.c.HeaderPill(gtx, e.h.th, hcChannel, gtx.Dp(28))
+			off.Pop()
+		}
+
+		// live, not in it: two people
+		e.c.mu.Lock()
+		e.c.live[hcChannel] = liveRoom{ID: "R1", Channel: hcChannel, Participants: []string{huddle.FakeRemoteUser, "U0THIRD"}}
+		e.c.mu.Unlock()
+		var ops op.Ops
+		g := shotCtx(&ops, 160, 40)
+		w := e.c.HeaderPillWidth(g, e.h.th, hcChannel) / shotScale
+		// 2+8 faces(20+18.5) 8 icon 20, 4 + "2", 4, caret 20
+		if w < 104 || w > 118 {
+			t.Fatalf("live width %d dp", w)
+		}
+		img := render(t, "header-live-"+suffix, 160, 40, draw)
+		pill := image.Rect(8*shotScale, 6*shotScale, (8+w)*shotScale, 34*shotScale)
+		if n := pixeltest.Count(img, pill, hdrJade5[m], 3); n < pill.Dx()*pill.Dy()/4 {
+			t.Fatalf("%s: live pill isn't jade-5 (%d px)", suffix, n)
+		}
+		if n := pixeltest.Count(img, pill, hdrJade100[m], 40); n < 30 {
+			t.Fatalf("%s: no jade-100 ink (%d px)", suffix, n)
+		}
+
+		// in it: the fill, headphones only
+		e.join(nil, nil)
+		g = shotCtx(&ops, 160, 40)
+		if w := e.c.HeaderPillWidth(g, e.h.th, hcChannel) / shotScale; w != 48 {
+			t.Fatalf("in-huddle width %d dp, want 28+20", w)
+		}
+		img = render(t, "header-in-"+suffix, 160, 40, draw)
+		pill = image.Rect(8*shotScale, 6*shotScale, 56*shotScale, 34*shotScale)
+		if n := pixeltest.Count(img, pill, hdrJade50[m], 3); n < pill.Dx()*pill.Dy()/2 {
+			t.Fatalf("%s: in-huddle button isn't jade-50 (%d px)", suffix, n)
+		}
+		if n := pixeltest.Count(img, pill, hdrJade5[m], 3); n > 10 {
+			t.Fatalf("%s: mint left in the in-huddle button (%d px)", suffix, n)
+		}
+	}
+}
+
+func TestHeaderTip(t *testing.T) {
+	e := newShotEnv(t, false)
+	if got := e.c.headerTip(hcChannel, true, nil); got != "Leave huddle" {
+		t.Fatal(got)
+	}
+	if got := e.c.headerTip(hcChannel, false, []string{"U1", "U2"}); got != "Join huddle in #huddle-test\n2 in the huddle" {
+		t.Fatalf("%q", got)
+	}
+	if got := e.c.headerTip(hcChannel, false, []string{huddle.FakeSelfUser}); got != "Joined on another device\nJoin on this device" {
+		t.Fatalf("%q", got)
 	}
 }
