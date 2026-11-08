@@ -1222,7 +1222,7 @@ func (p *painter) run(b *box, r *run, x, y float32) {
 			if it.kind == iWord {
 				p.drawWord(fr.sh, ox+fr.x, oy+fr.y, col, st)
 			}
-			if it.deco != 0 {
+			if it.deco.Lines() != 0 {
 				p.decorate(it, ox+fr.x, oy+fr.y, fr.w, st)
 			}
 		case iEmoji:
@@ -1242,25 +1242,69 @@ func (p *painter) run(b *box, r *run, x, y float32) {
 }
 
 func (p *painter) decorate(it *item, x, base, w float32, st *css.Style) {
-	fs := st.FontSize * p.v.sp
-	th := max(1, float32(math.Round(float64(fs/15))))
 	col := p.col(it.dcol)
 	if col.A == 0 {
 		col = p.col(st.Color)
 	}
+	drawDecoration(p.ops, it.deco, col, x, base, w, st.FontSize*p.v.sp)
+}
+
+// drawDecoration draws d's lines (straight, or wavy) for a run of text
+// w wide at baseline base, in font size fs (px).
+func drawDecoration(ops *op.Ops, d css.TextDecoration, col color.NRGBA, x, base, w, fs float32) {
+	th := max(1, float32(math.Round(float64(fs/15))))
 	line := func(y float32) {
 		yy := float32(math.Round(float64(y)))
-		paint.FillShape(p.ops, col, clip.Rect(irectSnap(rectF{x, yy, x + w, yy + th})).Op())
+		if d&css.DecoWavy == 0 {
+			paint.FillShape(ops, col, clip.Rect(irectSnap(rectF{x, yy, x + w, yy + th})).Op())
+			return
+		}
+		// a zigzag of quarter-wave segments, amplitude th, wavelength 4th
+		amp, step := th, 2*th
+		var path clip.Path
+		path.Begin(ops)
+		path.MoveTo(f32.Pt(x, yy))
+		up := true
+		for cx := x; cx < x+w; cx += step {
+			nx := min(cx+step, x+w)
+			dy := amp
+			if up {
+				dy = -amp
+			}
+			path.QuadTo(f32.Pt((cx+nx)/2, yy+2*dy), f32.Pt(nx, yy))
+			up = !up
+		}
+		paint.FillShape(ops, col, clip.Stroke{Path: path.End(), Width: th}.Op())
 	}
-	if it.deco&css.DecoUnderline != 0 {
+	if d&css.DecoUnderline != 0 {
 		line(base + fs*0.1)
 	}
-	if it.deco&css.DecoLineThrough != 0 {
+	if d&css.DecoLineThrough != 0 {
 		line(base - fs*0.3)
 	}
-	if it.deco&css.DecoOverline != 0 {
+	if d&css.DecoOverline != 0 {
 		line(base - fs*0.95)
 	}
+}
+
+// Decorate draws st's text-decoration (underline, line-through, overline;
+// straight or wavy) under a native widget's text run: x and w in px, base
+// the baseline, fg the text's color (for currentColor). Natives call it for
+// text drawn outside the host tree (a sender name with a plugin's class).
+func Decorate(gtx layout.Context, s Styled, x, base, w int, fg color.NRGBA) {
+	st := s.Style()
+	if st == nil || st.TextDecoration.Lines() == 0 {
+		return
+	}
+	col := st.DecoColor
+	if col.A == 0 {
+		col = fg
+	}
+	fs := st.FontSize * gtx.Metric.PxPerSp
+	if fs <= 0 {
+		fs = 15 * gtx.Metric.PxPerSp
+	}
+	drawDecoration(gtx.Ops, st.TextDecoration, col, float32(x), float32(base), float32(w), fs)
 }
 
 func (p *painter) emoji(url string, x, base, es float32) {
