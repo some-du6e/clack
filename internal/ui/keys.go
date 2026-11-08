@@ -118,35 +118,34 @@ func (a *App) defaultShortcuts() *shortcuts {
 }
 
 // process registers the root key handler and dispatches matched shortcuts.
+// It runs first in the frame, so the shortcuts win over widgets, as
+// before. Keys for plugins' window/document listeners go through
+// processGlobal at the end of the frame instead.
 func (s *shortcuts) process(gtx layout.Context, a *App) {
 	// The root tag covers the whole window so unfocused keys reach it.
 	area := clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops)
 	event.Op(gtx.Ops, &s.tag)
 	area.Pop()
 	filters := make([]event.Filter, 0, len(s.list))
-	for _, sc := range s.list {
-		filters = append(filters, key.Filter{Name: sc.name, Required: sc.mods, Optional: 0})
+	if !slackc.ModalOpen() { // a modal dialog makes the page inert: its keys go to it
+		for _, sc := range s.list {
+			filters = append(filters, key.Filter{Name: sc.name, Required: sc.mods, Optional: 0})
+		}
 	}
-	// Plugins with window/document key listeners (StreamerMode) also see
-	// the keys no widget claims; free while none listens.
 	globalKeys := slackc.WantsGlobal("keydown") || slackc.WantsGlobal("keyup")
-	if globalKeys {
-		filters = append(filters, key.Filter{Optional: key.ModCtrl | key.ModShift | key.ModAlt | key.ModSuper | key.ModCommand})
-	}
 	for {
 		e, ok := gtx.Event(filters...)
 		if !ok {
 			break
 		}
 		ke, ok := e.(key.Event)
-		if ok && globalKeys {
-			if ke.State == key.Press {
-				slackc.GlobalKey("keydown", ke)
-			} else {
-				slackc.GlobalKey("keyup", ke)
-			}
+		if !ok {
+			continue
 		}
-		if !ok || ke.State != key.Press {
+		if globalKeys {
+			forwardKey(ke)
+		}
+		if ke.State != key.Press {
 			continue
 		}
 		for _, sc := range s.list {
@@ -160,6 +159,37 @@ func (s *shortcuts) process(gtx layout.Context, a *App) {
 	if a.clipboard != "" {
 		gtx.Execute(clipboard.WriteCmd{Type: "application/text", Data: io.NopCloser(strings.NewReader(a.clipboard))})
 		a.clipboard = ""
+	}
+}
+
+// processGlobal hands plugins with window/document key listeners
+// (StreamerMode, ChatTabs) the keys no widget claimed; free while none
+// listens. It must run after everything else in the frame: Gio gives a
+// key event to the first Event call whose filters match, and the empty
+// Name matches every key, so asked any earlier it took the focused
+// composer's Enter (no send, no send checks: HaikuWarning never asked)
+// and every other key a widget handles.
+func (s *shortcuts) processGlobal(gtx layout.Context) {
+	if !slackc.WantsGlobal("keydown") && !slackc.WantsGlobal("keyup") {
+		return
+	}
+	f := key.Filter{Optional: key.ModCtrl | key.ModShift | key.ModAlt | key.ModSuper | key.ModCommand}
+	for {
+		e, ok := gtx.Event(f)
+		if !ok {
+			break
+		}
+		if ke, ok := e.(key.Event); ok {
+			forwardKey(ke)
+		}
+	}
+}
+
+func forwardKey(ke key.Event) {
+	if ke.State == key.Press {
+		slackc.GlobalKey("keydown", ke)
+	} else {
+		slackc.GlobalKey("keyup", ke)
 	}
 }
 

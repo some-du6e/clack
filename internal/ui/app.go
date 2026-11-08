@@ -406,6 +406,7 @@ func (a *App) frame(gtx layout.Context) {
 	a.slackcOverlays(gtx)
 	a.layoutToast(gtx)
 	a.rootPointer(gtx)
+	a.keys.processGlobal(gtx) // last: only the keys no widget took
 }
 
 // ---- primary panel ----

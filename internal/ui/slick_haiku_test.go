@@ -160,9 +160,39 @@ func haikuSend(t *testing.T, e *svEnv, logKeys bool) {
 		t.Fatalf("no haiku dialog %v after Enter", time.Since(t0))
 	}
 	t.Logf("haiku dialog after %v", time.Since(t0))
-	var open bool
-	_ = json.Unmarshal([]byte(probe(`return document.querySelector('dialog.slick-haiku-dialog').open`)), &open)
-	if !open {
-		t.Error("the dialog isn't open")
+	var st struct {
+		Open, Focused bool
+	}
+	_ = json.Unmarshal([]byte(probe(`const d = document.querySelector('dialog.slick-haiku-dialog')
+		return { open: d.open, focused: d.contains(document.activeElement) }`)), &st)
+	if !st.Open || !st.Focused {
+		t.Errorf("the dialog: %+v; want open with its Keep editing button focused", st)
+	}
+	callsMu.Lock()
+	n := len(calls)
+	callsMu.Unlock()
+	if n != 1 {
+		t.Fatalf("the composer ran %d send checks, want 1", n)
+	}
+	// the page under it is modal: Escape goes to the dialog (cancel, close),
+	// HaikuWarning settles false and the message goes back to the composer
+	for i := 0; i < 3; i++ {
+		e.frame()
+	}
+	e.rt.Queue(key.Event{Name: key.NameEscape, State: key.Press}, key.Event{Name: key.NameEscape, State: key.Release})
+	closed := e.wait(5*time.Second, func() bool {
+		return probe(`return !document.querySelector('dialog.slick-haiku-dialog')`) == "true"
+	})
+	if !closed {
+		t.Fatal("Escape didn't close the dialog")
+	}
+	select {
+	case ok := <-calls[0].done:
+		if ok {
+			t.Error("Escape (Keep editing) sent the haiku")
+		}
+		calls[0].done <- ok // for the deferred report
+	case <-time.After(5 * time.Second):
+		t.Error("the send check didn't settle after Escape")
 	}
 }
