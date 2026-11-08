@@ -190,7 +190,7 @@ func TestLibraryMergesTautAndSlick(t *testing.T) {
 	}
 	counts := func() map[string]int {
 		m := map[string]int{}
-		for _, f := range lp.filters(es) {
+		for _, f := range lp.filters(libraryEntries(lp.ix)) { // the current index
 			m[f.ID] = f.Count
 		}
 		return m
