@@ -1,24 +1,33 @@
 # Sign-out audit (v0.1.0-alpha.2)
 
-## Result (2026-11-08): the browser disguise was the cause
+## Status (2026-11-08): cause NOT yet found
 
-**Hack Club's Enterprise Grid ends a session everywhere (browser, desktop, every client) when a request that claims to be a browser plainly isn't one.** Clack's TLS and HTTP/2 come from Go's `net/http`, and no User-Agent string changes that.
+**Read this first.** The "browser disguise" conclusion this section used to state was refuted by round 4. A build of this branch (84bcdf7), which sends only the honest `Clack/…` User-Agent and no browser headers, still signed the test account out everywhere. `clack login` alone did it: the exchange, the token page and one workspace `auth.test`. The session ended about 9 s after login finished, before the app had started.
 
 Live tests on the project's own test account, with the user's consent:
 
-| run | identity sent | steps | session afterwards |
+| run | client and identity | steps | session afterwards |
 |---|---|---|---|
-| alpha.1 | hardcoded Linux Chrome User-Agent | pasted session, Sign in | **signed out everywhere** when Sign in was clicked |
-| alpha.2 | the user's own browser User-Agent plus Chrome `sec-ch-ua*` client hints, `Origin: https://app.slack.com` | pasted session, Sign in | **signed out everywhere** when Sign in was clicked |
-| desktop sign-in, rounds 2 and 3 (Go) | Slack desktop's `Mozilla/5.0 (…) … Electron/… Slack_SSB/…` User-Agent | `auth.loginMagicBulk?…&ssb=1`, `app.slack.com/auth`, `auth.test` | **signed out everywhere** within 15 s. Round 3 ran 3092cb9, which never sends the org token to `auth.test` |
-| **control: Python script** | its default `Python-urllib/3.x`; no client hints, no `Origin`, a plain cookie jar | the same three requests: `auth.loginMagicBulk?…&ssb=1`, then `GET https://app.slack.com/auth?app=client&return_to=%2Fclient%2F<T>&teams=&iframe=1`, then `auth.test` with the workspace token | **both the browser session and the new session alive** 100+ s later |
-| the same script style, all day | honest default User-Agent, a borrowed browser session | ordinary Web API calls | never signed out |
+| alpha.1 | Go, hardcoded Linux Chrome UA | pasted session, Sign in | **signed out everywhere** at Sign in |
+| alpha.2 | Go, the user's browser UA, Chrome client hints, Origin | pasted session, Sign in | **signed out everywhere** at Sign in |
+| desktop round 1 | Go, Slack desktop UA | exchange, then `/ssb/first` (no token, so it stopped); **no token call** | survived |
+| desktop rounds 2 and 3 | Go, Slack desktop UA | exchange, `app.slack.com/auth`, `auth.test` (round 3 = 3092cb9: no org-token `auth.test`) | **signed out everywhere** within 15 s |
+| desktop round 4 | Go, honest `Clack/…` UA, no client hints, no Origin (84bcdf7) | exchange, `app.slack.com/auth`, one workspace `auth.test` | **signed out everywhere** ~9 s after login |
+| control | Python `urllib` (OpenSSL, HTTP/1.1), `Python-urllib/3.x` UA, jar with `d`, `d-s`, `lc` | the same three requests as rounds 2–4 | **both sessions alive** 100+ s later |
+| helper, all day | Python `urllib`, borrowed browser session, `d` only | ordinary Web API calls | never signed out |
+| real Chrome, incognito | Chrome, vended session | exchange, full web client incl. `/auth` | survived |
 
-The control did the exact steps that failed, from a non-browser stack, and said so. So the trigger is the disguise, not the `/auth` token page and not the `d-s` cookie.
+**What is ruled out as the sole trigger:** the User-Agent string (round 4), `d-s` (rounds 2–4 and the control all sent a fresh one), the org-token `auth.test` (round 3), and loading `/auth` (the control and Chrome did).
 
-**The fix (honest User-Agent).** Every request Clack makes to Slack carries one User-Agent, `Clack/<version> (+https://github.com/some-du6e/yoloslackgoclient)`, for pasted and desktop sessions alike: Web API, edgeapi, file downloads and uploads, the sign-in exchange and token page, the realtime handshake, and credential-free CDN and image fetches. No request sends `sec-ch-ua*` client hints, `Sec-Fetch-*`, `Origin` or `Referer`. The socket handshake also drops the browser's `Pragma`/`Cache-Control`. That is `slack.HonestHeaders`, enforced again in the transport (`honestTransport`) so redirect hops and anything a caller adds go out the same way. Plugin fetches to Slack hosts and Taut's saved-account check get the same headers. `TestNoBrowserDisguise` walks every request kind through both session kinds and fails on any browser token or browser-only header, and `TestNoBrowserUserAgentInSource` keeps `Slack_SSB` and `Chrome/` out of the code outside ua.go's deny list.
+**What every sign-out has in common:** Go's `net/http` client making a token call. Every survivor was a different HTTP stack, or Go without a token call.
 
-**The earlier hypotheses were not the cause.** Suspect #2 (`d-s`) and suspect #3 (the org token's `auth.test` on the workspace host) are ruled out as the trigger. Round 3 made no org-token `auth.test` and was still signed out. Its jar sent the vended `d-s` the way the control's jar did, and the control survived. Both changes stay because they are cheaper and closer to what Slack's own client does: pasted sessions send `d` only, and nothing sends the org token to `auth.test`. Suspect #4 below, ranked last at ~10%, was right.
+**Untested suspects, to test one at a time, and only with the user's go-ahead:**
+1. Go's connection fingerprint: TLS ClientHello (JA3/JA4) and the HTTP/2 SETTINGS/priority frames. Clack uses a tuned HTTP/2 transport (`newTransport`), and Python used HTTP/1.1. First test: force HTTP/1.1.
+2. The extra cookies Clack's desktop jar sends (`b`, `x`, `utm`) beyond the control's `d`, `d-s`, `lc`.
+
+Revocation lands seconds after the offending request, not on it, so a check right after one request can miss it. Watch for at least 30 s.
+
+All changes so far stay, because they are closer to Slack's own client and cost nothing: `d` only for pasted sessions, no org-token `auth.test`, the honest User-Agent, and no browser headers. None of them is the fix.
 
 The rest of this file is the original code-only audit and its follow-ups, kept as written.
 
