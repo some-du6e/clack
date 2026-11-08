@@ -1,8 +1,10 @@
 package desktop
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,29 +18,49 @@ import (
 
 // ReleasesURL is the GitHub API for Clack's newest published release
 // (drafts and pre-releases are skipped by GitHub). CLACK_UPDATE_URL
-// overrides it, for testing the banner.
+// overrides it, for testing the banner and the auto-updater: it may serve
+// one release object or a list of them.
 var ReleasesURL = "https://api.github.com/repos/some-du6e/yoloslackgoclient/releases/latest"
 
-func releasesURL() string {
+// ReleaseListURL lists recent releases, pre-releases included. A
+// pre-release build (v0.1.0-alpha.8) follows the pre-release channel:
+// releases/latest never returns a pre-release, so it would never see one.
+var ReleaseListURL = "https://api.github.com/repos/some-du6e/yoloslackgoclient/releases?per_page=20"
+
+func releasesURL(version string) string {
 	if u := os.Getenv("CLACK_UPDATE_URL"); u != "" {
 		return u
+	}
+	if v, ok := parseSemver(version); ok && len(v.pre) > 0 {
+		return ReleaseListURL
 	}
 	return ReleasesURL
 }
 
 // Release is a published GitHub release.
 type Release struct {
-	Tag  string `json:"tag_name"`
-	Name string `json:"name"`
-	URL  string `json:"html_url"` // the release page (the banner's button)
+	Tag        string  `json:"tag_name"`
+	Name       string  `json:"name"`
+	URL        string  `json:"html_url"` // the release page (the banner's button)
+	Draft      bool    `json:"draft"`
+	Prerelease bool    `json:"prerelease"`
+	Assets     []Asset `json:"assets"`
 }
 
-// LatestRelease asks GitHub for the newest release. It downloads nothing
-// else: the user opens the release page themselves.
+// Asset is one file attached to a release.
+type Asset struct {
+	Name string `json:"name"`
+	URL  string `json:"browser_download_url"`
+	Size int64  `json:"size"`
+}
+
+// LatestRelease asks GitHub for the newest release: releases/latest for a
+// release build, the newest of the recent releases for a pre-release
+// build. It reads release metadata only; downloads are Updater's.
 func LatestRelease(ctx context.Context, version string) (Release, error) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, "GET", releasesURL(), nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", releasesURL(version), nil)
 	if err != nil {
 		return Release{}, err
 	}
@@ -52,14 +74,48 @@ func LatestRelease(ctx context.Context, version string) (Release, error) {
 	if resp.StatusCode != 200 {
 		return Release{}, fmt.Errorf("update check: %s", resp.Status)
 	}
-	var r Release
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&r); err != nil {
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return Release{}, err
+	}
+	r, err := parseReleases(b)
+	if err != nil {
 		return Release{}, err
 	}
 	if r.URL == "" {
 		r.URL = "https://github.com/some-du6e/yoloslackgoclient/releases/tag/" + r.Tag
 	}
 	return r, nil
+}
+
+// parseReleases reads one release object, or a list of them (the newest
+// non-draft release with a version tag wins).
+func parseReleases(b []byte) (Release, error) {
+	t := bytes.TrimSpace(b)
+	if len(t) == 0 || t[0] != '[' {
+		var r Release
+		err := json.Unmarshal(t, &r)
+		return r, err
+	}
+	var list []Release
+	if err := json.Unmarshal(t, &list); err != nil {
+		return Release{}, err
+	}
+	var best Release
+	var bv semver
+	for _, r := range list {
+		v, ok := parseSemver(r.Tag)
+		if r.Draft || !ok {
+			continue
+		}
+		if best.Tag == "" || compareSemver(v, bv) > 0 {
+			best, bv = r, v
+		}
+	}
+	if best.Tag == "" {
+		return Release{}, errors.New("update check: no published release")
+	}
+	return best, nil
 }
 
 // Newer reports whether release tag latest is a newer semantic version than

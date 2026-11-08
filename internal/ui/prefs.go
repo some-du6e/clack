@@ -26,6 +26,9 @@ type prefs struct {
 	// Advanced); UpdateDismissed is the release whose banner was closed.
 	NoUpdateCheck   bool   `json:"no_update_check,omitempty"`
 	UpdateDismissed string `json:"update_dismissed,omitempty"`
+	// NoUpdateDownload turns off "Download updates automatically" (on by
+	// default): a newer release then only shows its release page.
+	NoUpdateDownload bool `json:"no_update_download,omitempty"`
 	// Realtime is the live-updates choice (Slack's websocket): nil until
 	// the user answers the first-run banner, which means off (realtime.go).
 	Realtime *bool `json:"realtime,omitempty"`

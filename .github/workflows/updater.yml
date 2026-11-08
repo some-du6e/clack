@@ -1,0 +1,123 @@
+name: updater
+# The auto-updater on real runners: asset choice, download/resume/checksum
+# against a local fake releases server, the helper's wait-and-swap, and
+# the macOS dmg path (hdiutil, ditto) on each OS. On Windows, the helper
+# also runs a real Inno Setup upgrade with the installer test's flags.
+on:
+  push:
+    paths:
+      - 'internal/desktop/**'
+      - 'internal/ui/desktop.go'
+      - 'internal/ui/update_banner_test.go'
+      - 'cmd/clack/**'
+      - 'packaging/windows/**'
+      - '.github/workflows/updater.yml'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  desktop-tests:
+    name: tests-${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: updater tests
+        run: go test -count=1 -v -run 'Install|Asset|Release|Download|Sums|Prepare|Apply|WaitPID|Newer' ./internal/desktop
+
+  windows-installer-upgrade:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: build v0.0.1 and v0.0.2
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($v in '0.0.1', '0.0.2') {
+            go build -trimpath -ldflags="-s -w -H windowsgui -X main.version=v$v" -o "build\$v\Clack.exe" .\cmd\clack
+            if ($LASTEXITCODE -ne 0) { throw "go build $v" }
+          }
+      - name: installers
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "choco install innosetup failed" }
+          }
+          foreach ($v in '0.0.1', '0.0.2') {
+            & $iscc /Qp "/DAppVersion=$v" "/DAppVersionNum=$v.0" "/DSourceExe=$PWD\build\$v\Clack.exe" "/DOutputDir=$PWD\dist" packaging\windows\clack.iss
+            if ($LASTEXITCODE -ne 0) { throw "iscc $v failed" }
+          }
+          Get-ChildItem dist
+      - name: install v0.0.1, upgrade through the update helper
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $flags = '/VERYSILENT', '/CURRENTUSER', '/SUPPRESSMSGBOXES', '/NORESTART'
+          $p = Start-Process -Wait -PassThru -FilePath (Get-Item dist\Clack-0.0.1-windows-amd64-setup.exe).FullName -ArgumentList $flags
+          if ($p.ExitCode -ne 0) { throw "setup 0.0.1 exited $($p.ExitCode)" }
+          $app = Join-Path $env:LOCALAPPDATA 'Programs\Clack'
+          $exe = Join-Path $app 'Clack.exe'
+          $v = (& $exe -version | Out-String).Trim(); Write-Host "installed: $v"
+          if (-not $v.Contains('v0.0.1')) { throw "want v0.0.1, got $v" }
+          if (-not (Test-Path "$app\unins000.exe")) { throw "no unins000.exe: DetectInstall would call this portable" }
+          # what StartHelper does: a temp copy of the running exe with a plan
+          $h = Join-Path $env:RUNNER_TEMP 'clack-update-helper-ci'
+          New-Item -ItemType Directory -Force $h | Out-Null
+          Copy-Item $exe "$h\clack-updater.exe"
+          $setup = (Get-Item dist\Clack-0.0.2-windows-amd64-setup.exe).FullName
+          $plan = @{ pid = 0; tag = 'v0.0.2'; run = @($setup) + $flags + @("/LOG=$h\setup.log"); relaunch = @($exe, '-version') } | ConvertTo-Json
+          Set-Content -Path "$h\plan.json" -Value $plan -Encoding utf8NoBOM
+          Get-Content "$h\plan.json"
+          $p = Start-Process -Wait -PassThru -FilePath "$h\clack-updater.exe" -ArgumentList '-apply-update', "$h\plan.json"
+          Get-Content "$h\update.log"
+          if ($p.ExitCode -ne 0) { throw "helper exited $($p.ExitCode)" }
+          $v = (& $exe -version | Out-String).Trim(); Write-Host "after the update: $v"
+          if (-not $v.Contains('v0.0.2')) { throw "want v0.0.2, got $v" }
+          if (-not (Select-String -Path "$h\update.log" -Pattern 'installed v0.0.2' -Quiet)) { throw "update.log" }
+          $u = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{71A683CE-53A9-4BFE-877D-F9A6A1CA70FA}_is1'
+          if ($u.DisplayVersion -ne '0.0.2') { throw "DisplayVersion is '$($u.DisplayVersion)'" }
+          Start-Process -Wait -FilePath "$app\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
+      - name: portable swap through the update helper
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:RUNNER_TEMP 'portable\Clack'
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          Copy-Item build\0.0.1\Clack.exe "$dir\Clack.exe"
+          $stage = Join-Path $env:RUNNER_TEMP 'portable\.clack-update-ci'
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          Copy-Item build\0.0.2\Clack.exe "$stage\Clack.exe"
+          $h = Join-Path $env:RUNNER_TEMP 'clack-update-helper-portable'
+          New-Item -ItemType Directory -Force $h | Out-Null
+          Copy-Item "$dir\Clack.exe" "$h\clack-updater.exe"
+          $plan = @{ pid = 0; tag = 'v0.0.2'; stage = $stage; swap = @{ target = "$dir\Clack.exe"; new = "$stage\Clack.exe" } } | ConvertTo-Json
+          Set-Content -Path "$h\plan.json" -Value $plan -Encoding utf8NoBOM
+          $p = Start-Process -Wait -PassThru -FilePath "$h\clack-updater.exe" -ArgumentList '-apply-update', "$h\plan.json"
+          Get-Content "$h\update.log"
+          if ($p.ExitCode -ne 0) { throw "helper exited $($p.ExitCode)" }
+          $v = (& "$dir\Clack.exe" -version | Out-String).Trim(); Write-Host "portable after the update: $v"
+          if (-not $v.Contains('v0.0.2')) { throw "want v0.0.2, got $v" }
+          if (Test-Path $stage) { throw "stage left behind" }
+          if (Test-Path "$dir\Clack.exe.clack-old") { throw "old exe left behind" }
