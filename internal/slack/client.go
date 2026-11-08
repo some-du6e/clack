@@ -142,6 +142,9 @@ type Client struct {
 
 	agentOnce sync.Once
 	agentVer  string // realtime agent_version (methods.go)
+
+	sess *desktopSession // desktop sessions only (desktop.go)
+	dpop *dpopBinding    // DPoP-bound desktop sessions only (dpop.go)
 }
 
 // New builds a client with a tuned, keep-alive HTTP/2 transport.
@@ -156,7 +159,12 @@ func New(c Creds) *Client {
 		ent = strings.TrimSuffix(c.EnterpriseURL, "/") + "/api/"
 	}
 	cl := &Client{Creds: c, base: base, ent: ent, sem: make(chan struct{}, MaxConcurrent), learned: map[string]bool{}}
-	cl.HTTP = &http.Client{Transport: tr, Timeout: 60 * time.Second, CheckRedirect: cl.checkRedirect}
+	var rt http.RoundTripper = tr
+	if c.Desktop() {
+		cl.sess = newDesktopSession(c)
+		rt = &desktopTransport{base: tr, c: cl}
+	}
+	cl.HTTP = &http.Client{Transport: rt, Timeout: 60 * time.Second, CheckRedirect: cl.checkRedirect}
 	if isLoopback(base) {
 		cl.EdgeURL = base + "edge/" // a local fake (internal/fakeslack) serves the edge API too
 	}
@@ -263,7 +271,13 @@ var RateLimited = errors.New("slack: rate limited")
 // the leading suspect for Enterprise Grid ending the session everywhere the
 // moment Clack signed in (docs/SIGNOUT-AUDIT.md). The Creds field stays so
 // existing creds.json files still load.
+//
+// A desktop session is different: its cookies are Clack's own and follow
+// Slack's Set-Cookie, so it sends all of them, d-s included (desktop.go).
 func (c *Client) cookieHeader() string {
+	if c.sess != nil {
+		return c.sess.header()
+	}
 	return "d=" + c.Creds.Cookie
 }
 

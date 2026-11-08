@@ -2,6 +2,7 @@ package slack
 
 import (
 	"errors"
+	"net/http"
 	"net/url"
 )
 
@@ -15,3 +16,9 @@ func loadOrCreateDPoPKey(dir, domain string) (*dpopKey, error) { return nil, nil
 func (k *dpopKey) proof(method string, u *url.URL, withJWK bool) (string, error) {
 	return "", errors.New("dpop: not implemented")
 }
+
+// dpopBinding signs a bound session's requests. Not implemented yet: nil.
+type dpopBinding struct{}
+
+func (b *dpopBinding) sign(req *http.Request) (*http.Request, error) { return req, nil }
+func (b *dpopBinding) observe(resp *http.Response)                   {}

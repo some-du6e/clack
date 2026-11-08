@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 )
 
 // Slack ties a session to the browser that signed in. When the same d
@@ -52,7 +54,11 @@ func CleanUserAgent(ua string) string {
 }
 
 // userAgent is what this client sends: the session's own browser if known.
+// A desktop session always sends Slack desktop's, the one it signed in with.
 func (c *Client) userAgent() string {
+	if c.Creds.Desktop() {
+		return desktopUA()
+	}
 	if ua := CleanUserAgent(c.Creds.UserAgent); ua != "" {
 		return ua
 	}
@@ -125,8 +131,27 @@ const (
 	slackChrome         = "156.0.8078.49"
 )
 
-// DesktopUserAgent is Slack desktop's user agent on this OS.
-func DesktopUserAgent() string { return desktopUserAgent(runtime.GOOS, linuxUAInfo()) }
+// DesktopUserAgent is Slack desktop's user agent on this OS (read once:
+// os-release and the desktop session don't change while Clack runs, and
+// the user agent mustn't either).
+func DesktopUserAgent() string { return desktopUA() }
+
+var desktopUA = sync.OnceValue(func() string { return desktopUserAgent(runtime.GOOS, linuxUAInfo()) })
+
+// publicUA is the user agent of fetches without credentials (GetNoCreds).
+var publicUA atomic.Value // string
+
+// SetPublicUserAgent makes credential-free fetches (Slack's CDNs, its
+// image proxy) send ua, so a desktop session presents one identity
+// everywhere. "" restores the browser fallback (UserAgent).
+func SetPublicUserAgent(ua string) { publicUA.Store(ua) }
+
+func publicUserAgent() string {
+	if ua, _ := publicUA.Load().(string); ua != "" {
+		return ua
+	}
+	return UserAgent
+}
 
 // desktopUserAgent builds the user agent the way Slack desktop does (o3 in
 // main.bundle.cjs, @808076): Electron's default

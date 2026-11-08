@@ -53,7 +53,7 @@ func (t *Taut) saveAccounts(m map[string]storedAccount) error {
 }
 
 func (t *Taut) currentAccount() storedAccount {
-	c := t.app.C.Creds
+	c := t.app.C.SessionCreds() // a desktop session's cookies as rotated
 	t.app.S.RLock()
 	name, domain := t.app.S.TeamName, t.app.S.TeamDomain
 	t.app.S.RUnlock()
@@ -174,6 +174,12 @@ func (t *Taut) checkAuth(ctx context.Context, a storedAccount) string {
 	c := a.Creds
 	if c.Token == "" || c.Cookie == "" {
 		return "invalid"
+	}
+	if c.Desktop() {
+		// A desktop session's cookies rotate with every answer and only
+		// its own Client follows them (and its DPoP binding): a one-off
+		// check from here would send stale ones with the wrong identity.
+		return "unknown"
 	}
 	base := strings.TrimSuffix(firstNonEmpty(c.TeamURL, "https://slack.com/"), "/") + "/api/auth.test"
 	// A saved account's cookie only goes to slack.com (or the API origin

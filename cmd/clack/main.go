@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"gioui.org/app"
@@ -137,8 +138,30 @@ func main() {
 		return
 	}
 	images := imgcache.New(imgcache.PublicFetch, filepath.Join(cfg, "cache", "img"), nil)
+	// The live session. A desktop session's client saves its rotated
+	// cookies to creds.json, but only while it is the live one: after a
+	// sign-out or an account switch, a late write from the old client must
+	// not bring its credentials back.
+	var (
+		liveMu sync.Mutex
+		live   *slack.Client
+	)
+	setLive := func(c *slack.Client) {
+		liveMu.Lock()
+		old := live
+		live = c
+		liveMu.Unlock()
+		if old != nil && old != c {
+			old.PersistSession(nil)
+		}
+	}
 	opts := ui.Options{ConfigDir: cfg, Dark: *dark, Started: started, NoRealtime: *noRealtime,
-		SignOut: func() { _ = os.Remove(*credsPath) },
+		SignOut: func() {
+			setLive(nil)
+			liveMu.Lock()
+			_ = os.Remove(*credsPath)
+			liveMu.Unlock()
+		},
 		OnWindowEvent: func(e event.Event) {
 			desktop.SetWindowIcon(e, icon.PNG32, icon.PNG64, icon.PNG128, icon.PNG512)
 		},
@@ -165,6 +188,20 @@ func main() {
 	cacheDir := filepath.Join(cfg, "cache")
 	connect := func(creds slack.Creds) {
 		c := slack.New(creds)
+		if creds.Desktop() {
+			slack.SetPublicUserAgent(slack.DesktopUserAgent())
+			c.PersistSession(func(nc slack.Creds) error {
+				liveMu.Lock()
+				defer liveMu.Unlock()
+				if live != c {
+					return nil
+				}
+				return slack.WriteCreds(*credsPath, nc)
+			})
+		} else {
+			slack.SetPublicUserAgent("")
+		}
+		setLive(c)
 		st := store.New(cacheDir)
 		svc := core.New(c, st)
 		images.SetFetcher(func(ctx context.Context, raw string) ([]byte, error) {
@@ -224,6 +261,12 @@ func main() {
 	}
 	go func() {
 		err := a.Run()
+		liveMu.Lock()
+		c := live
+		liveMu.Unlock()
+		if c != nil {
+			c.FlushSession() // a desktop session's last rotated cookies
+		}
 		tray.Close()
 		inst.Close()
 		if err != nil {

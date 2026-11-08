@@ -185,7 +185,7 @@ func GetNoCreds(ctx context.Context, raw string, max int64) ([]byte, string, err
 	if err != nil {
 		return nil, "", err
 	}
-	req.Header.Set("User-Agent", UserAgent)
+	req.Header.Set("User-Agent", publicUserAgent())
 	resp, err := PublicHTTP.Do(req)
 	if err != nil {
 		return nil, "", err

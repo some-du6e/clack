@@ -318,7 +318,7 @@ func (t *Taut) cookie(op string, a []json.RawMessage) any {
 		Value string `json:"value"`
 	}
 	jsonArg(a, 0, &q)
-	d := t.app.C.Creds.Cookie
+	d := t.app.C.SessionCookie()
 	if dec, err := url.QueryUnescape(d); err == nil {
 		d = dec
 	}
@@ -343,7 +343,7 @@ func (t *Taut) cookie(op string, a []json.RawMessage) any {
 		if q.Name != "d" || q.Value == "" {
 			return false
 		}
-		t.app.C.Creds.Cookie = url.QueryEscape(q.Value)
+		t.app.C.SetSessionCookie(url.QueryEscape(q.Value))
 		return true
 	case "remove":
 		return q.Name != "d"
