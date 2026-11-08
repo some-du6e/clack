@@ -176,6 +176,11 @@ type Style struct {
 	// at 2x. Measured on Lato 15px #d1d2d3 on #1a1d21 against Chrome: 0.235
 	// matches ink within ±1% at 1x and 2x. 0 = off.
 	LightTextFade float32
+	// LightEmbolden grows light glyphs (light-on-dark bodies) by
+	// LightEmbolden·(1 - 1/pxPerDp) px: nothing at 1x, where linear-light
+	// blending already makes them heavy enough, and up to it at high scales,
+	// where that excess fades and dark-mode bodies came out ~7% light at 2x.
+	LightEmbolden float32
 
 	// Embolden strokes glyph outlines with this width (in pixels, at any
 	// scale) to match the
@@ -224,6 +229,10 @@ type Options struct {
 	Edited bool // append "(edited)" after the last text block
 	Muted  bool // system message: body in the secondary color
 	Dim    bool // pending/failed: draw at reduced opacity
+	// Secondary draws the body in the secondary text color (Text3) but
+	// keeps mentions as pills: read Activity rows. Muted is for system
+	// messages, which also turn member mentions into plain names.
+	Secondary bool
 	// MaxWidth caps the content width in Dp (0 = no cap beyond the constraints).
 	MaxWidth float32
 	// Compact uses 13px/18px text (previews, reply bars, search results).
@@ -234,6 +243,17 @@ type Options struct {
 	// Elements, if set, draws the doc's interactive elements (see
 	// Elements). Use a comparable (pointer) implementation.
 	Elements Elements
+}
+
+// lightEmbolden is the extra outline (px) for glyph color c at scale pxPerDp.
+func (s *Style) lightEmbolden(c color.NRGBA, pxPerDp float32) float32 {
+	if s.LightEmbolden <= 0 || pxPerDp <= 1 {
+		return 0
+	}
+	if y := (0.299*float32(c.R) + 0.587*float32(c.G) + 0.114*float32(c.B)) / 255; y < 0.6 {
+		return 0
+	}
+	return s.LightEmbolden * (1 - 1/pxPerDp)
 }
 
 // textColor applies LightTextFade to light glyph colors at scale pxPerDp.

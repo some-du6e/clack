@@ -504,8 +504,12 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 			// no stroke tessellation (theme.EmboldenedShape).
 			var emb clip.PathSpec
 			embOK := false
-			if st.Embolden > 0 {
-				emb, embOK = st.emboldenedOf(f.sh, st.Embolden)
+			embW := st.Embolden
+			if embW == 0 {
+				embW = st.lightEmbolden(col, v.laidPx)
+			}
+			if embW > 0 {
+				emb, embOK = st.emboldenedOf(f.sh, embW)
 			}
 			path, bm := st.pathOf(f.sh, !embOK)
 			if embOK {
@@ -518,13 +522,13 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 			paint.ColorOp{Color: st.textColor(col, v.laidPx)}.Add(ops)
 			paint.PaintOp{}.Add(ops)
 			cs.Pop()
-			if st.Embolden > 0 && !embOK { // fallback-font run
+			if embW > 0 && !embOK { // fallback-font run
 				// Browsers render Lato visibly heavier than Gio's linear
 				// coverage; a hairline stroke of the outline matches it.
 				// Width is in pixels, not dp: measured against Chrome, the
 				// missing ink is ~0.45px at both 1x and 2x (thinning comes
 				// from coverage at the pixel level, not from glyph size).
-				paint.FillShape(ops, col, clip.Stroke{Path: path, Width: st.Embolden}.Op())
+				paint.FillShape(ops, col, clip.Stroke{Path: path, Width: embW}.Op())
 			}
 			if f.sh.color {
 				bm.Add(ops)

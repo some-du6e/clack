@@ -14,7 +14,7 @@ import (
 func (l *lay) bodyStyle() flowStyle {
 	p := &l.st.Palette
 	col := p.Text
-	if l.opts.Muted {
+	if l.opts.Muted || l.opts.Secondary {
 		col = p.Text3
 	}
 	size, lh := l.st.TextSize, l.st.LineHeight
