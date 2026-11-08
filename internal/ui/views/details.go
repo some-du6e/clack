@@ -1036,8 +1036,8 @@ func (d *ChannelDetails) richText(gtx C, rk, raw string, blocks []richtext.Block
 	return d.para(gtx, 15, 22, wReg, d.p.Text, 0, raw)
 }
 
-// createdField: "Created by" / "<name> on May 17, 2026", the name a link;
-// the row opens the creator's profile.
+// createdField: "Created by" / "<name> on May 17, 2026" in plain text, like
+// Slack; the row opens the creator's profile.
 func (d *ChannelDetails) createdField(gtx C, cv core.Conv) D {
 	name := ""
 	if cv.Creator != "" {
@@ -1054,7 +1054,7 @@ func (d *ChannelDetails) createdField(gtx C, cv core.Conv) D {
 					if name == "" {
 						return D{}
 					}
-					return d.para(gtx, 15, 22, wReg, d.p.Link, 1, name)
+					return d.para(gtx, 15, 22, wReg, d.p.Text, 1, name) // Slack: plain text (the whole row is the button)
 				}),
 				layout.Flexed(1, func(gtx C) D {
 					s := date
