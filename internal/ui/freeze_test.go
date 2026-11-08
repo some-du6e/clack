@@ -16,6 +16,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/fakeslack"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/uiguard"
 )
@@ -147,7 +148,8 @@ func TestStartupStatesNeverBlock(t *testing.T) {
 				acct[k] = v
 			}
 			fs.SetPrefs(acct)
-			home := t.TempDir()
+			t.Cleanup(composer.ResetPlainTextMode) // ui.json's plain_text_mode is process-wide
+			home := freezeHome(t)
 			switch v := st.ui.(type) {
 			case nil:
 			case string:
@@ -302,6 +304,26 @@ func clickAppearance(t *testing.T, e *perfEnv, frame func(string)) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	a.overlays = nil
+}
+
+// freezeHome is a config dir for one state. Not t.TempDir: the session's
+// background writers (sidebar and metadata caches, ui.json) may still land
+// a file just after the test ends, so removal retries for a moment.
+func freezeHome(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "clack-freeze-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		for i := 0; i < 20; i++ {
+			if os.RemoveAll(dir) == nil {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	})
+	return dir
 }
 
 func writeFile(t *testing.T, p string, b []byte) {

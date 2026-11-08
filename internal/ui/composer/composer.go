@@ -87,6 +87,9 @@ var plainTextLocal *bool
 // markup" (Slack's plain_text_mode) for every composer.
 func SetPlainTextMode(on bool) { plainTextLocal = &on }
 
+// ResetPlainTextMode forgets the local choice (the account pref applies).
+func ResetPlainTextMode() { plainTextLocal = nil }
+
 // PlainTextMode reports the effective setting: the local choice, else the
 // pref Slack sent (off by default: live formatting, like Slack).
 func PlainTextMode(a *core.App) bool {
