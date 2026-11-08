@@ -410,79 +410,10 @@ func (p *prefsModal) btn(k string) *widget.Clickable {
 
 func (p *prefsModal) page(gtx layout.Context, sec string) layout.Dimensions {
 	a := p.a
-	c := &a.th.C
-	w := gtx.Constraints.Max.X
-	y := 0
-	heading := func(t string) {
-		at(gtx, image.Pt(0, y), image.Pt(w, gtx.Dp(24)), func(gtx layout.Context) layout.Dimensions {
-			return a.th.Label(gtx, 18, theme.Bold, c.Fg, t) // Slack's section h2: 700 18px/24
-		})
-		y += gtx.Dp(30)
-	}
-	// option draws a radio (round) or checkbox (square) row.
-	option := func(key, label, hint string, on, radio bool, do func()) {
-		b := p.btn(key)
-		rowH := gtx.Dp(28)
-		if hint != "" {
-			rowH = gtx.Dp(44)
-		}
-		at(gtx, image.Pt(0, y), image.Pt(w, rowH), func(gtx layout.Context) layout.Dimensions {
-			return clickArea(gtx, b, nil, func(gtx layout.Context) layout.Dimensions {
-				s := gtx.Dp(18)
-				r := image.Rect(0, gtx.Dp(3), s, gtx.Dp(3)+s)
-				rad := gtx.Dp(4)
-				if radio {
-					rad = s / 2
-				}
-				if on {
-					theme.RRect(gtx, r, rad, c.Link)
-					if radio {
-						theme.Circle(gtx, r.Min.Add(image.Pt(s/2, s/2)), s*4/9, c.Bg)
-					} else {
-						at(gtx, r.Min, image.Pt(s, s), func(gtx layout.Context) layout.Dimensions {
-							return icons.Get("check")(gtx, 18, c.SendText)
-						})
-					}
-				} else {
-					theme.RRect(gtx, r, rad, c.Bg)
-					theme.Border(gtx, r, rad, gtx.Dp(1), c.BorderStrong)
-				}
-				at(gtx, image.Pt(gtx.Dp(28), 0), image.Pt(w-gtx.Dp(28), gtx.Dp(24)), func(gtx layout.Context) layout.Dimensions {
-					return a.th.Label(gtx, 15, theme.Regular, c.Fg, label)
-				})
-				if hint != "" {
-					at(gtx, image.Pt(gtx.Dp(28), gtx.Dp(22)), image.Pt(w-gtx.Dp(28), gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {
-						return a.th.Label(gtx, 13, theme.Regular, c.FgMuted, hint)
-					})
-				}
-				return layout.Dimensions{Size: image.Pt(w, rowH)}
-			})
-		})
-		if clicked(b) {
-			do()
-			a.Invalidate()
-		}
-		y += rowH + gtx.Dp(4)
-	}
-	gap := func() { y += gtx.Dp(14) }
-
+	f := p.form(gtx)
+	heading, option, gap := f.heading, f.option, f.gap
 	if sec == "appearance" {
-		heading("Theme")
-		option("light", "Light", "", !a.th.Dark, true, func() {
-			if a.th.Dark {
-				a.ToggleDark()
-			}
-		})
-		option("dark", "Dark", "", a.th.Dark, true, func() {
-			if !a.th.Dark {
-				a.ToggleDark()
-			}
-		})
-		gap()
-		heading("Emoji")
-		style := a.th.EmojiStyle
-		option("apple", "Apple", "Slack's default emoji set", style == "" || style == "apple", true, func() { a.setEmojiStyle("apple") })
-		option("google", "Google", "", style == "google", true, func() { a.setEmojiStyle("google") })
+		return p.appearancePage(gtx)
 	}
 	if sec == "navigation" {
 		heading("Sidebar")
@@ -497,10 +428,7 @@ func (p *prefsModal) page(gtx layout.Context, sec string) layout.Dimensions {
 	}
 	if sec == "advanced" {
 		heading("Advanced")
-		at(gtx, image.Pt(0, y), image.Pt(w, gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {
-			return a.th.Label(gtx, 13, theme.Regular, c.FgMuted, "Plugin settings appear as their own tabs.")
-		})
-		y += gtx.Dp(28)
+		f.note("Plugin settings appear as their own tabs.", false, 1)
 		gap()
 		heading("Live updates")
 		rtHint := "Opens Slack's realtime connection. Off: messages refresh every 20 s"
@@ -508,26 +436,19 @@ func (p *prefsModal) page(gtx layout.Context, sec string) layout.Dimensions {
 			rtHint = "Turned off with -no-realtime or CLACK_NO_REALTIME"
 		}
 		option("realtime", "Live updates (typing, presence, instant messages)", rtHint, a.realtimeOn(), false, a.toggleRealtime)
-		at(gtx, image.Pt(gtx.Dp(28), y), image.Pt(w-gtx.Dp(28), gtx.Dp(40)), func(gtx layout.Context) layout.Dimensions {
-			return a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: c.FgMuted, MaxLines: 2},
-				"Clack shares your browser's Slack session. On some Enterprise Grid workspaces Slack can sign that session out everywhere if it notices.")
-		})
-		y += gtx.Dp(44)
+		f.note("Clack shares your browser's Slack session. On some Enterprise Grid workspaces Slack can sign that session out everywhere if it notices.", true, 2)
 		gap()
 		heading("Updates")
 		option("updates", "Check for updates", "Shows a banner when a new Clack release is on GitHub. Nothing downloads on its own.", a.updateChecksOn(), false, a.toggleUpdateChecks)
 		if buildVersion != "" {
-			at(gtx, image.Pt(gtx.Dp(28), y), image.Pt(w-gtx.Dp(28), gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {
-				return a.th.Label(gtx, 13, theme.Regular, c.FgMuted, "You have Clack "+buildVersion)
-			})
-			y += gtx.Dp(28)
+			f.note("You have Clack "+buildVersion, true, 1)
 		}
 	}
 	if sec == "notifications" || sec == "availability" {
 		heading("Notifications")
 		option("notify", "Desktop notifications for DMs and mentions", "Muted conversations never notify", a.notifyOn(), false, a.toggleNotify)
 	}
-	return layout.Dimensions{Size: image.Pt(w, y)}
+	return f.dims()
 }
 
 // setEmojiStyle goes through setUserPrefByApi (Slack's emoji_style pref),
