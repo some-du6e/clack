@@ -616,7 +616,7 @@ func (v *libraryPage) row(gtx layout.Context, w int, e pluginlib.Entry) layout.D
 	b := k.btn("lib.act." + key)
 	hit := b.Clicked(gtx)
 	at(gtx, image.Pt(w-gtx.Dp(12)-bw, (h-gtx.Dp(28))/2), image.Pt(bw, gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
-		return popups.Button(gtx, p.a.th, b, kind, popups.BtnSmall, label, "", bw)
+		return popups.Button(gtx, p.a.th, b, kind, popups.BtnSmall, label, "", 96)
 	})
 	if hit && kind != popups.BtnDisabled {
 		switch state {
