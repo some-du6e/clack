@@ -903,8 +903,11 @@ Every component taut's `elements.ts` exposes is registered under Slack's names a
 | patched sender (~15 nodes), unchanged frame | 1.6–4.2 µs | 0 |
 | patched sender, forced relayout | 12–25 µs | 0 |
 | patched sender, new tree from JS (parse + build + layout) | 50–100 µs | ~400 |
+| message list frame (3 rows), no CSS | 42 µs | 21 |
+| same, Slick MessageLogger's CSS installed, no row deleted | 46.5 µs | 21 |
+| same, every row and all its parts under `.slick-ml-deleted *` | 62 µs | 21 |
 
-The unpatched path doesn't inline: it makes two calls, which exceeds Go's inline budget. It is one atomic load plus an indirect call. Owners' row-layout allocation counts are unchanged; a test pins them, e.g. messages at 6 per row frame.
+List-frame numbers are from `bench-compare` (base and head interleaved on one runner, 2026-11-08): the native-parts CSS (§5.2) left the no-CSS and idle-CSS frames unchanged and added 3% (2 µs) to the every-row-red frame, with no new allocations. The unpatched path doesn't inline: it makes two calls, which exceeds Go's inline budget. It is one atomic load plus an indirect call. Owners' row-layout allocation counts are unchanged; a test pins them, e.g. messages at 6 per row frame.
 
 ## 8. Left to do
 - **Live verification on Slack.** Blocked on 2026-11-07: the test account's session was revoked (creds and the `whatever` browser profile both get `invalid_auth`). The engine was checked visually only with `cmd/slackc-demo` (hand-written trees). taut-api's CI acceptance suite loads all 40 plugins.
