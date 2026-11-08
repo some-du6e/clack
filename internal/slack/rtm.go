@@ -106,10 +106,12 @@ func (r *RTM) once(ctx context.Context) error {
 	t0 := time.Now()
 	h := http.Header{}
 	h.Set("Cookie", r.c.cookieHeader())
-	// Clack's own User-Agent and no Origin: only browsers send Origin on a
-	// handshake (it is how a server tells which page opened the socket), and
-	// the gateway takes token-and-cookie sockets without one (Slack's own
-	// SDKs dial it with none). No browser cache headers either (ua.go).
+	// Clack's own User-Agent and no Origin: Origin is how a server tells
+	// which web page opened a socket, so only browsers send it. Nothing in
+	// this code or Slack's docs says the gateway needs one, and Slack's SDKs
+	// dial it without one. If it ever did, the dial would fail (a refused
+	// handshake), which is far cheaper than a disguise Grid signs out for.
+	// No browser Pragma/Cache-Control either (ua.go).
 	HonestHeaders(h)
 	dctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	conn, _, err := websocket.Dial(dctx, u, &websocket.DialOptions{HTTPHeader: h, HTTPClient: r.c.HTTP, CompressionMode: websocket.CompressionContextTakeover})
