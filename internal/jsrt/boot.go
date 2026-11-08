@@ -21,6 +21,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/slack/tlsfp"
 )
 
 // bootScripts are the browser environment (js/env.js …), vendored React
@@ -572,7 +574,7 @@ func (r *Runtime) startFetch(id int, method, url string, headers [][2]string, bo
 		do := r.opts.Fetch
 		if do == nil {
 			do = func(ctx context.Context, req *http.Request) (*http.Response, error) {
-				return http.DefaultClient.Do(req)
+				return tlsfp.Client.Do(req)
 			}
 		}
 		resp, err := do(ctx, req)

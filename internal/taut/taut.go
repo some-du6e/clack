@@ -42,6 +42,8 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/jsrt"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/slack/tlsfp"
 )
 
 // honestFetch makes plugin and account requests to Slack say they are
@@ -155,7 +157,7 @@ func New(o Options) (*Taut, error) {
 		o.LifecycleTimeout = 5 * time.Second
 	}
 	if o.Fetch == nil {
-		client := &http.Client{Timeout: 60 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		client := &http.Client{Transport: tlsfp.Mixed, Timeout: 60 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 10 {
 				return errors.New("stopped after 10 redirects")
 			}

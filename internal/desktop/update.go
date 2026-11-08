@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/slack/tlsfp"
 )
 
 // ReleasesURL is the GitHub API for Clack's newest published release
@@ -42,7 +44,7 @@ func LatestRelease(ctx context.Context, version string) (Release, error) {
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "clack/"+version)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := tlsfp.Client.Do(req)
 	if err != nil {
 		return Release{}, err
 	}

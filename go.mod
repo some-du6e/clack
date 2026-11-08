@@ -16,13 +16,16 @@ require (
 	github.com/pion/rtcp v1.2.20
 	github.com/pion/rtp v1.10.6
 	github.com/pion/webrtc/v4 v4.2.26
+	github.com/refraction-networking/utls v1.8.2
 	github.com/thesyncim/goh264 v0.0.0-20260714162114-14b36a2bfcc4
 	golang.org/x/image v0.33.0
 	golang.org/x/sys v0.41.0
 )
 
 require (
+	github.com/andybalholm/brotli v1.0.6 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/klauspost/compress v1.17.4 // indirect
 	github.com/pion/datachannel v1.6.3 // indirect
 	github.com/pion/ice/v4 v4.4.8 // indirect
 	github.com/pion/logging v0.2.4 // indirect
@@ -46,6 +49,6 @@ require (
 	github.com/go-text/typesetting v0.3.5
 	github.com/tetratelabs/wazero v1.11.0
 	golang.org/x/exp/shiny v0.0.0-20250408133849-7e4ce0ab07d0 // indirect
-	golang.org/x/net v0.50.0 // indirect
+	golang.org/x/net v0.50.0
 	golang.org/x/text v0.34.0
 )

@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/jsrt"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/slack/tlsfp"
 )
 
 // Plugin files, under Dir/plugins:
@@ -1081,7 +1083,7 @@ func (s *Slick) download(ctx context.Context, u string) (string, error) {
 	}
 	do := s.t.FetchFunc()
 	if do == nil {
-		do = func(ctx context.Context, r *http.Request) (*http.Response, error) { return http.DefaultClient.Do(r) }
+		do = func(ctx context.Context, r *http.Request) (*http.Response, error) { return tlsfp.Client.Do(r) }
 	}
 	res, err := do(ctx, req)
 	if err != nil {

@@ -178,6 +178,16 @@ func (e *MagicRedirectError) Error() string {
 // fresh one). Tests point it at an httptest server.
 var magicTransport http.RoundTripper
 
+// magicClient is the sign-in exchange's own client: its own cookie jar,
+// the API transport (newTransport: OpenSSL ClientHello, HTTP/1.1).
+func magicClient(jar http.CookieJar) *http.Client {
+	tr := magicTransport
+	if tr == nil {
+		tr = newTransport()
+	}
+	return &http.Client{Jar: jar, Transport: honestTransport{tr}, Timeout: magicTimeout, CheckRedirect: magicRedirect}
+}
+
 // magicTimeout bounds each request of the sign-in exchange.
 const magicTimeout = 30 * time.Second
 
@@ -212,11 +222,7 @@ func LoginMagic(ctx context.Context, sets []MagicTokenSet, cfg MagicConfig) (Cre
 		return Creds{}, errors.New("the sign-in link has no tokens")
 	}
 	jar, _ := cookiejar.New(nil)
-	tr := magicTransport
-	if tr == nil {
-		tr = newTransport()
-	}
-	hc := &http.Client{Jar: jar, Transport: honestTransport{tr}, Timeout: magicTimeout, CheckRedirect: magicRedirect}
+	hc := magicClient(jar)
 	var (
 		res     *magicResult
 		resBase string

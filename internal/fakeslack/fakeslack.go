@@ -35,6 +35,8 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/slack/tlsfp"
 )
 
 // Size sets how big the workspace is.
@@ -662,7 +664,7 @@ func (s *Server) Fetch(ctx context.Context, raw string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := tlsfp.Client.Do(req)
 	if err != nil {
 		return nil, err
 	}

@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/slack/tlsfp"
 )
 
 // Creds is the on-disk credential file (~/.config/clack/creds.json).
@@ -148,7 +150,7 @@ type Client struct {
 	dpop *dpopBinding    // DPoP-bound desktop sessions only (dpop.go)
 }
 
-// New builds a client with a tuned, keep-alive HTTP/2 transport.
+// New builds a client with a keep-alive HTTP/1.1 transport (newTransport).
 func New(c Creds) *Client {
 	tr := newTransport()
 	base := "https://slack.com/api/"
@@ -175,16 +177,16 @@ func New(c Creds) *Client {
 	return cl
 }
 
+// apiDialer makes the API transport's TLS connections (tlsfp): the
+// ClientHello that Grid doesn't sign out for, system roots, HTTPS_PROXY.
+var apiDialer = &tlsfp.Dialer{Proxy: http.ProxyFromEnvironment}
+
+// newTransport is the transport for everything that carries credentials:
+// Web API calls, edgeapi, downloads and uploads, the realtime socket's
+// handshake and the sign-in exchange. HTTP/1.1 with the OpenSSL
+// ClientHello (tlsfp), keep-alive, 16 connections per host.
 func newTransport() *http.Transport {
-	return &http.Transport{
-		Proxy:               http.ProxyFromEnvironment,
-		DialContext:         (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-		ForceAttemptHTTP2:   true,
-		MaxIdleConns:        64,
-		MaxIdleConnsPerHost: 16,
-		IdleConnTimeout:     5 * time.Minute,
-		TLSHandshakeTimeout: 10 * time.Second,
-	}
+	return tlsfp.NewTransport(apiDialer)
 }
 
 // isLoopback reports whether u's host is localhost or a loopback address.

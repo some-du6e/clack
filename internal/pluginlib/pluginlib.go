@@ -29,6 +29,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/slack/tlsfp"
 )
 
 // DefaultIndexURL is the published index (the `plugins` release's index.json).
@@ -164,7 +166,8 @@ func New(o Options) *Library {
 // redirects (GitHub release downloads redirect to its object storage).
 func plainClient() *http.Client {
 	return &http.Client{
-		Timeout: 60 * time.Second,
+		Transport: tlsfp.Mixed,
+		Timeout:   60 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 5 {
 				return errors.New("too many redirects")

@@ -7,6 +7,8 @@ import (
 	"net/netip"
 	"syscall"
 	"time"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/slack/tlsfp"
 )
 
 // Credential-free fetches (PublicHTTP) only dial public addresses: a Slack
@@ -58,14 +60,15 @@ func dialControl(network, address string, _ syscall.RawConn) error {
 
 // publicTransport dials public addresses only and ignores HTTP(S)_PROXY:
 // a proxy would dial the target itself and bypass the address check (and a
-// local proxy is itself a loopback address).
-var publicTransport = &http.Transport{
-	Proxy: nil,
-	DialContext: (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second,
-		Control: dialControl}).DialContext,
-	ForceAttemptHTTP2:     true,
-	MaxIdleConns:          32,
-	IdleConnTimeout:       90 * time.Second,
-	TLSHandshakeTimeout:   10 * time.Second,
-	ResponseHeaderTimeout: 20 * time.Second,
-}
+// local proxy is itself a loopback address). TLS runs on top of the
+// guarded dial with the same ClientHello as the API (tlsfp): these are
+// Slack's CDNs, and a session's traffic shouldn't look like two clients.
+var publicTransport = func() *http.Transport {
+	t := tlsfp.NewTransport(publicDialer)
+	t.IdleConnTimeout = 90 * time.Second
+	t.ResponseHeaderTimeout = 20 * time.Second
+	return t
+}()
+
+var publicDialer = &tlsfp.Dialer{Dial: (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second,
+	Control: dialControl}).DialContext}

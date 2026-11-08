@@ -34,7 +34,8 @@ type KV interface {
 // Options configures a Runtime. Every field is optional.
 type Options struct {
 	// Fetch performs fetch() requests (and api.fetch built on it). nil means
-	// http.DefaultClient.Do. Called on its own goroutine; ctx is cancelled
+	// tlsfp.Client.Do (Slack hosts get Clack's Slack ClientHello, others Go's
+	// default transport). Called on its own goroutine; ctx is cancelled
 	// by AbortSignal.
 	Fetch func(ctx context.Context, req *http.Request) (*http.Response, error)
 	// Storage returns the backing store for a namespace: "localStorage" or

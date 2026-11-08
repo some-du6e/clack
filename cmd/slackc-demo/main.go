@@ -30,6 +30,8 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/slack/tlsfp"
 )
 
 type section struct {
@@ -166,7 +168,7 @@ func fetch(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := tlsfp.Client.Do(req)
 	if err != nil {
 		return nil, err
 	}

@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/slack/tlsfp"
 )
 
 // Which hosts get what. Message content (files, unfurls, blocks, bot icons,
@@ -71,7 +73,7 @@ func SlackOwnedHost(host string) bool {
 	if !ok {
 		return false
 	}
-	for _, d := range []string{"slack.com", "slack-edge.com", "slack-imgs.com", "slack-files.com"} {
+	for _, d := range tlsfp.SlackDomains {
 		if hostIs(h, d) {
 			return true
 		}

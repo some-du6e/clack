@@ -31,6 +31,8 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/slack/tlsfp"
 )
 
 // Preferences > Slick, drawn natively from slick.Settings and matched to
@@ -2221,7 +2223,7 @@ func fetchSlickThemes(dir string) (int, error) {
 		if err != nil {
 			return nil, err
 		}
-		res, err := http.DefaultClient.Do(req)
+		res, err := tlsfp.Client.Do(req)
 		if err != nil {
 			return nil, err
 		}
