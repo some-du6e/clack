@@ -150,10 +150,10 @@ func haikuSend(t *testing.T, e *svEnv, logKeys bool) {
 	t.Logf("route before Enter: %s", e.a.router.Current())
 	t0 := time.Now()
 	e.rt.Queue(key.Event{Name: key.NameReturn, State: key.Press}, key.Event{Name: key.NameReturn, State: key.Release})
-	ok := e.wait(12*time.Second, func() bool {
+	opened := e.wait(12*time.Second, func() bool {
 		return probe(`return !!document.querySelector('dialog.slick-haiku-dialog')`) == "true"
 	})
-	if !ok {
+	if !opened {
 		t.Logf("body: %s", probe(`return document.body.innerHTML.slice(0, 2000)`))
 		direct := probe(`return await Promise.race([__taut.sendCheck({kind:'channel',channelId:'` + ttGen + `',blocks:[]}).then(String), new Promise((r) => setTimeout(() => r('pending'), 1500))])`)
 		t.Logf("a direct sendCheck now: %s", direct)

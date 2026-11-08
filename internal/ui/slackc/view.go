@@ -121,7 +121,8 @@ type nodeState struct {
 	rangeDrag        bool
 	focused          bool
 	autoFocused      bool
-	tag              int // focus tag for non-editor focusables (address used)
+	jsFocused        bool // a JS focus() in a modal dialog was applied
+	tag              int  // focus tag for non-editor focusables (address used)
 	filters          []event.Filter
 	focusVal         string // input value when focused (change fires on blur if it differs)
 	chkNode          *Node
