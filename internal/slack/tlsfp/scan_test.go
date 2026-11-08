@@ -99,7 +99,9 @@ func f(tr *http.Transport) {
 		}
 	}
 	for _, v := range scanFile(t, p, "internal/slack/tlsfp/transport.go") {
-		if v.rule != "websocket.Dial without HTTPClient" && v.rule != "calls http.Get" && v.rule != "imports golang.org/x/net/http2" {
+		switch v.rule {
+		case "websocket.Dial without HTTPClient", "calls http.Get", "imports golang.org/x/net/http2", "http.Client without Transport":
+		default:
 			t.Errorf("transport.go may %s", v.rule)
 		}
 	}

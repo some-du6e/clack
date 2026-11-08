@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math/big"
 	"net"
 	"net/http"
@@ -267,6 +268,7 @@ func NewServer(t testing.TB, h http.Handler, cert tls.Certificate) *Server {
 	}
 	srv.Listener = &recordingListener{Listener: ln, s: s}
 	srv.EnableHTTP2 = true
+	srv.Config.ErrorLog = log.New(io.Discard, "", 0) // refused handshakes are the point of some tests
 	srv.TLS = &tls.Config{Certificates: []tls.Certificate{cert}}
 	srv.StartTLS()
 	s.Server = srv
