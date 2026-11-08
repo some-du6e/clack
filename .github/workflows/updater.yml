@@ -86,6 +86,7 @@ jobs:
             Stop-Process -Id $srv.Id -ErrorAction SilentlyContinue
             Remove-Item Env:CLACK_UPDATE_URL, Env:CLACK_HOME -ErrorAction SilentlyContinue
           }
+          exit 0 # the failure case's expected exit 1 would otherwise end the step
       - name: installers
         run: |
           $ErrorActionPreference = 'Stop'
