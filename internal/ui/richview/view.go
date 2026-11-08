@@ -41,6 +41,7 @@ type View struct {
 	call     op.CallOp
 	recorded bool
 	pending  []int32 // imgs (>=0) or ^frag index of images not yet decoded
+	live     []int32 // frags of animated emoji: drawn every frame, not recorded
 
 	// Slack components (comps.go): the mode the layout was made in, each
 	// component's state and its props/natives receiver.
@@ -262,6 +263,13 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 		}
 	}
 	v.call.Add(gtx.Ops)
+	for _, i := range v.live {
+		if f := &v.d.frags[i]; st.Images != nil {
+			if img, ok := st.Images.Get(f.url, f.size); ok {
+				drawImage(gtx.Ops, img, image.Rect(int(f.x+0.5), f.y, int(f.x+0.5)+f.size, f.y+f.size), [4]int{}, false)
+			}
+		}
+	}
 	if len(v.d.comps) > 0 {
 		v.layoutComps(gtx, st)
 	}
@@ -435,6 +443,7 @@ func (v *View) anyReady(st *Style) bool {
 func (v *View) record(st *Style) {
 	v.ops.Reset()
 	v.pending = v.pending[:0]
+	v.live = v.live[:0]
 	ops := &v.ops
 	m := op.Record(ops)
 	v.paint(ops, st, 0, nil)
@@ -483,6 +492,10 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 		}
 		switch f.kind {
 		case fImage:
+			if comp == 0 && animated(st.Images, f.url, f.size) {
+				v.live = append(v.live, int32(i)) // a recording would freeze it
+				continue
+			}
 			var img paint.ImageOp
 			ok := false
 			if st.Images != nil {

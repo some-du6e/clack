@@ -91,3 +91,11 @@ func (v *View) emojiTip(gtx layout.Context, st *Style) {
 	t.Pop()
 	op.Defer(gtx.Ops, m.Stop())
 }
+
+// animator is implemented by imgcache.Cache: images that change over time.
+type animator interface{ Animated(url string, px int) bool }
+
+func animated(imgs Images, url string, px int) bool {
+	a, ok := imgs.(animator)
+	return ok && a.Animated(url, px)
+}

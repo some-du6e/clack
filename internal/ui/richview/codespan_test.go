@@ -186,3 +186,33 @@ func TestEmojiTooltip(t *testing.T) {
 		t.Fatal("still hovering an emoji over plain text")
 	}
 }
+
+type animImages struct{ *fakeImages }
+
+func (animImages) Animated(url string, px int) bool { return url == "https://e.test/party.gif" }
+
+// Animated emoji are drawn every frame (asking the cache for the current
+// frame), not frozen in the recorded ops; still emoji stay recorded.
+func TestAnimatedEmojiDrawnLive(t *testing.T) {
+	imgs := animImages{newFakeImages()}
+	imgs.ready = true
+	st := NewStyle(sharedShaper(), imgs, LightPalette())
+	d := doc(para(txt("party "), rt.Span{Kind: rt.Emoji, ID: "party", URL: "https://e.test/party.gif"},
+		rt.Span{Kind: rt.Emoji, ID: "smile", URL: "https://e.test/smile.png"}))
+	v := New(d, Options{})
+	var ops op.Ops
+	frame := func() {
+		ops.Reset()
+		v.Layout(testGtx(&ops, 400), st, &recHandler{})
+	}
+	frame()
+	if len(v.live) != 1 || v.d.frags[v.live[0]].url != "https://e.test/party.gif" {
+		t.Fatalf("live frags %v", v.live)
+	}
+	n := imgs.gets
+	frame()
+	frame()
+	if got := imgs.gets - n; got != 2 {
+		t.Fatalf("%d image lookups over 2 frames, want 2 (the animated emoji only)", got)
+	}
+}
