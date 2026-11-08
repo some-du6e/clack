@@ -326,6 +326,12 @@ func fileUpdated(it *fileItem) int64 {
 
 func (f *Files) open(it fileItem) {
 	switch {
+	case it.isCanvas() && it.ID != "":
+		if co, ok := f.h.(interface{ OpenCanvasFull(id string) }); ok {
+			co.OpenCanvasFull(it.ID)
+			return
+		}
+		f.h.Toast("Opening canvases isn't supported yet")
 	case it.isImage() && it.URL != "":
 		f.h.OpenLightbox(richtext.Image{URL: it.URL, Alt: it.title(), W: it.ThumbW, H: it.ThumbH, Title: it.title(), Proxy: true}, core.Message{})
 	case len(it.Channels) > 0:
