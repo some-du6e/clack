@@ -327,6 +327,15 @@ func (c *Client) Prefs(ctx context.Context) (map[string]json.RawMessage, error) 
 	return r.Prefs, err
 }
 
+// SetPref writes one user pref the way Slack's setUserPrefByApi does:
+// users.prefs.set with name and value. Slack's client JSON-encodes the
+// JSON-typed prefs (ia_theme, …) and sends every other value as its plain
+// form value ("true", "3", "default"), so value arrives here already
+// serialized.
+func (c *Client) SetPref(ctx context.Context, name, value string) error {
+	return c.Call(ctx, "users.prefs.set", url.Values{"name": {name}, "value": {value}}, nil)
+}
+
 // Command is a slash command from commands.list.
 type Command struct {
 	Name    string         `json:"name"`

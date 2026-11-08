@@ -53,6 +53,9 @@ type Store struct {
 	Muted map[string]bool
 	// Prefs is the curated set of user prefs that change rendering.
 	Prefs Prefs
+	// RawPrefs is users.prefs.get's whole map (memory only: Preferences
+	// reads the keys it shows from it; Prefs is what the disk cache keeps).
+	RawPrefs map[string]json.RawMessage
 	// ThreadsUnread / ThreadMentions mirror client.counts "threads".
 	ThreadsUnread  bool
 	ThreadMentions int
@@ -95,20 +98,27 @@ func (s *Store) PutName(id, name string) {
 
 // Prefs are the user preferences the UI needs for rendering.
 type Prefs struct {
-	EmojiStyle        string   `json:"emoji_style"` // apple | google
-	EmojiMode         string   `json:"emoji_mode,omitempty"`
-	SkinTone          string   `json:"skin_tone,omitempty"`
-	Time24            bool     `json:"time24"`
-	DisplayRealNames  bool     `json:"display_real_names"`
-	Jumbomoji         bool     `json:"jumbomoji"`
-	ConvertEmoticons  bool     `json:"convert_emoticons"`
-	SidebarBehavior   string   `json:"sidebar_behavior,omitempty"`
-	ChannelSort       string   `json:"channel_sort,omitempty"`
-	Locale            string   `json:"locale,omitempty"`
-	Theme             string   `json:"theme,omitempty"`
-	DarkMode          string   `json:"dark_mode,omitempty"`
-	SidebarTheme      string   `json:"sidebar_theme,omitempty"`
-	MessagesTheme     string   `json:"messages_theme,omitempty"`
+	EmojiStyle       string `json:"emoji_style"` // apple | google
+	EmojiMode        string `json:"emoji_mode,omitempty"`
+	SkinTone         string `json:"skin_tone,omitempty"`
+	Time24           bool   `json:"time24"`
+	DisplayRealNames bool   `json:"display_real_names"`
+	Jumbomoji        bool   `json:"jumbomoji"`
+	ConvertEmoticons bool   `json:"convert_emoticons"`
+	SidebarBehavior  string `json:"sidebar_behavior,omitempty"`
+	ChannelSort      string `json:"channel_sort,omitempty"`
+	Locale           string `json:"locale,omitempty"`
+	Theme            string `json:"theme,omitempty"`
+	DarkMode         string `json:"dark_mode,omitempty"`
+	SidebarTheme     string `json:"sidebar_theme,omitempty"`
+	MessagesTheme    string `json:"messages_theme,omitempty"`
+	// IATheme is Slack's 2026 theme, users.prefs ia_theme: a JSON string
+	// {primary,highlight1,highlight2,important:{palette,custom},
+	// brightness, sidebarInverted, useCustomHex} (theme.ParseIATheme).
+	IATheme string `json:"ia_theme,omitempty"`
+	// NoWindowGradients is window_background_gradients=false (Appearance >
+	// "Show gradients": a flat chrome instead of Slack's conic gradient).
+	NoWindowGradients bool     `json:"no_window_gradients,omitempty"`
 	EnterIsSpecial    bool     `json:"enter_is_special_in_tbt"`
 	ShowTyping        bool     `json:"show_typing"`
 	ColorNames        bool     `json:"color_names_in_list"`
@@ -138,6 +148,17 @@ func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
 		_ = json.Unmarshal(raw[k], &v)
 		return v
 	}
+	// jsonStr is a JSON-typed pref: Slack sends it as a string holding
+	// JSON; an object is taken as is.
+	jsonStr := func(k string) string {
+		if v := str(k); v != "" {
+			return v
+		}
+		if r := raw[k]; len(r) > 0 && r[0] == '{' {
+			return string(r)
+		}
+		return ""
+	}
 	boolean := func(k string, def bool) bool {
 		v, ok := raw[k]
 		if !ok {
@@ -161,6 +182,7 @@ func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
 		Theme: str("theme"), DarkMode: str("dark_mode"), SidebarTheme: str("sidebar_theme"), MessagesTheme: str("messages_theme"),
 		EnterIsSpecial: boolean("enter_is_special_in_tbt", false), ShowTyping: boolean("show_typing", true),
 		ColorNames: boolean("color_names_in_list", true),
+		IATheme:    jsonStr("ia_theme"), NoWindowGradients: !boolean("window_background_gradients", true),
 	}
 	p.HideInactiveConvs = p.SidebarBehavior == "hide_inactive_channels"
 	// Slack calls the Google set "android"/"google"; everything else is Apple.
@@ -237,6 +259,13 @@ func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
 	}
 	sort.Strings(p.Muted)
 	return p, muted
+}
+
+// SetRawPrefs keeps users.prefs.get's whole map (memory only).
+func (s *Store) SetRawPrefs(raw map[string]json.RawMessage) {
+	s.mu.Lock()
+	s.RawPrefs = raw
+	s.mu.Unlock()
 }
 
 // SetPrefs installs parsed prefs (and the emoji style used for rendering).

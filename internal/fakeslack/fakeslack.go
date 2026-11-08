@@ -85,6 +85,62 @@ type Server struct {
 	Calls   map[string]*atomic.Int64
 	// Latency is added to every API call (not images), to model a network.
 	Latency time.Duration
+
+	prefsMu sync.Mutex
+	prefs   map[string]any // users.prefs.get; users.prefs.set writes it
+}
+
+// DefaultPrefs are the fake account's users.prefs (Slack's defaults for the
+// keys Clack reads; JSON-typed prefs are strings holding JSON, as Slack
+// sends them).
+func DefaultPrefs() map[string]any {
+	return map[string]any{"emoji_mode": "default", "time24": false, "display_real_names": false,
+		"emoji_use": `{"smile":10,"tada":7,"+1":30,"fire":5,"eyes":9}`, "muted_channels": "",
+		"ia_theme":                    `{"primary":{"palette":"aubergine"},"highlight1":{"palette":"aubergine"},"highlight2":{"palette":"jade"},"important":{"palette":"aubergine"},"brightness":6,"sidebarInverted":true,"useCustomHex":false}`,
+		"window_background_gradients": true,
+	}
+}
+
+// Pref returns the fake account's pref (what users.prefs.get serves).
+func (s *Server) Pref(name string) (any, bool) {
+	s.prefsMu.Lock()
+	defer s.prefsMu.Unlock()
+	v, ok := s.prefs[name]
+	return v, ok
+}
+
+// SetPrefs merges prefs into the account (test setup; no pref_change).
+func (s *Server) SetPrefs(kv map[string]any) {
+	s.prefsMu.Lock()
+	defer s.prefsMu.Unlock()
+	for k, v := range kv {
+		s.prefs[k] = v
+	}
+}
+
+// setPref is users.prefs.set: Slack keeps a pref's type, so a value
+// written as "true" to a boolean pref reads back as true. New keys keep
+// the form string, except "true"/"false" and integers.
+func (s *Server) setPref(name, value string) {
+	s.prefsMu.Lock()
+	defer s.prefsMu.Unlock()
+	var v any = value
+	switch s.prefs[name].(type) {
+	case bool:
+		v = value == "true" || value == "1"
+	case int, float64:
+		if n, err := strconv.Atoi(value); err == nil {
+			v = n
+		}
+	case string:
+	default:
+		if value == "true" || value == "false" {
+			v = value == "true"
+		} else if n, err := strconv.Atoi(value); err == nil {
+			v = n
+		}
+	}
+	s.prefs[name] = v
 }
 
 // Start serves a workspace of the given size on a loopback port.
@@ -99,7 +155,8 @@ func Start(sz Size) (*Server, error) {
 // Serve serves on ln.
 func Serve(ln net.Listener, sz Size) *Server {
 	s := &Server{Size: sz, ln: ln, URL: "http://" + ln.Addr().String() + "/",
-		imgs: map[string][]byte{}, hist: map[string][]slack.Message{}, Calls: map[string]*atomic.Int64{}}
+		imgs: map[string][]byte{}, hist: map[string][]slack.Message{}, Calls: map[string]*atomic.Int64{},
+		prefs: DefaultPrefs()}
 	s.generate()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", s.api)
@@ -141,7 +198,7 @@ func Remote(url string, sz Size) *Server {
 	if !strings.HasSuffix(url, "/") {
 		url += "/"
 	}
-	return &Server{Size: sz, URL: url, Calls: map[string]*atomic.Int64{}}
+	return &Server{Size: sz, URL: url, Calls: map[string]*atomic.Int64{}, prefs: DefaultPrefs()}
 }
 
 // CallCount returns how often method was called.
@@ -466,8 +523,34 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			map[string]any{"channel_section_id": "L0FAKEDM", "name": "", "type": "direct_messages"})
 		return ok("channel_sections", secs)
 	case "users.prefs.get":
-		return ok("prefs", map[string]any{"emoji_mode": "default", "time24": false, "display_real_names": false,
-			"emoji_use": `{"smile":10,"tada":7,"+1":30,"fire":5,"eyes":9}`, "muted_channels": ""})
+		s.prefsMu.Lock()
+		m := make(map[string]any, len(s.prefs))
+		for k, v := range s.prefs {
+			m[k] = v
+		}
+		s.prefsMu.Unlock()
+		return ok("prefs", m)
+	case "users.prefs.set":
+		if n := f.Get("name"); n != "" {
+			s.setPref(n, f.Get("value"))
+		} else if ps := f.Get("prefs"); ps != "" { // setMultipleUserPrefsByApi
+			var kv map[string]any
+			if json.Unmarshal([]byte(ps), &kv) != nil {
+				return map[string]any{"ok": false, "error": "invalid_prefs"}
+			}
+			for k, v := range kv {
+				switch v := v.(type) {
+				case string:
+					s.setPref(k, v)
+				default:
+					b, _ := json.Marshal(v)
+					s.setPref(k, string(b))
+				}
+			}
+		} else {
+			return map[string]any{"ok": false, "error": "invalid_name"}
+		}
+		return ok()
 	case "team.info":
 		return ok("team", map[string]any{"id": TeamID, "name": "Fake Club", "domain": "fakeclub",
 			"icon": map[string]any{"image_88": s.URL + "img/88x88/team.png"}})

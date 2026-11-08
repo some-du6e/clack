@@ -422,7 +422,11 @@ func (a *App) Boot(ctx context.Context) error {
 	loadPrefs := func() error {
 		raw, err := a.C.Prefs(ctx)
 		if err == nil {
-			a.S.SetPrefs(store.ParsePrefs(raw))
+			a.installPrefs(raw)
+			if a.S.HasCachedPrefs() { // the first frame drew the cached copy
+				p := a.Prefs()
+				a.emit(Event{Type: "prefs", Prefs: &p})
+			}
 		}
 		return err
 	}

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
-	"github.com/some-du6e/yoloslackgoclient/internal/store"
 )
 
 var mentionRe = regexp.MustCompile(`<@([UW][A-Z0-9]+)`)
@@ -177,7 +176,7 @@ func (a *App) handle(ev slack.Event) {
 			a.refreshCountsSoon()
 		case "pref_change":
 			if raw, err := a.C.Prefs(ctx); err == nil {
-				a.S.SetPrefs(store.ParsePrefs(raw))
+				a.installPrefs(raw)
 				p := a.Prefs()
 				a.emit(Event{Type: "prefs", Prefs: &p})
 			}
