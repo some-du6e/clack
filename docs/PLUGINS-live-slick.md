@@ -36,7 +36,7 @@ Legend: ✅ works as in Slick on real Slack · ⚠️ partly (what's missing is 
 | Censorship | ⚠️ | pending live | Channel and thread bodies are masked (CI). Search cards and Activity rows aren't. Notifications go through live-taut's `02c9fbb`. |
 | ChannelListTyping | ⚠️ | pending live | Source filter fixed (`94efea3`). The sidebar row has no `Channel` patch point. |
 | CharacterCounter | ✅ | "43/40,000" beside the send button, following the text | |
-| ChatTabs | ❌ | blocks every send while HaikuWarning is on | Bisected live. Fix in progress (`live-slick-fix-dialog`). Its main half no longer throws (`ac3ef8a`). No tab-bar patch point. |
+| ChatTabs | ⚠️ | blocked every send while HaikuWarning was on (bisected live) | Fixed in `815933f`: its main half's `before-input-event` added window key listeners, and Clack fed them the composer's Enter. Plugins' window key listeners now get only the keys no widget took, as on Slack's page. Its main half no longer throws (`ac3ef8a`). No tab-bar patch point. Live re-check pending. |
 | ClearURLs | ⚠️ | pending live (the one test send was cut short by the pause) | Strips tracking parameters on send in CI. Paste-time cleaning needs a Quill-style composer. |
 | Click2Load | ❌ | — | Clack never creates iframes. It now starts past its prototype check (`6451875`). |
 | CopyReacted | ⚠️ | not seen in the Threads view; channel view pending | |
@@ -46,7 +46,7 @@ Legend: ✅ works as in Slick on real Slack · ⚠️ partly (what's missing is 
 | CustomSounds | ❌ | — | Clack plays no notification sounds through JS. It starts now, then `load()` returns for `loader === 'electron'`. |
 | DeArrow | ⚠️ | pending live | Works through taut-ui's YouTube card patch points (CI `TestSlickViewDeArrow`). |
 | Experiments | ⚠️ | its Preferences tab renders and saves | Empty catalogue: Clack has no Slack experiments. |
-| HaikuWarning | ⚠️ | ✅ alone: "Found a haiku in your message!", Keep editing returns the text, nothing sent | With ChatTabs on, the dialog never opens and sends hang (fix in progress). The dialog is drawn top-left, not as a centred modal (same fix). Needed native Compression Streams, `pipeTo` and `atob`. |
+| HaikuWarning | ✅ (live alone; combined with ChatTabs in CI) | "Found a haiku in your message!", Keep editing returns the text, nothing sent | The dialog was drawn top-left. `showModal()` is now a real modal (`da3c2d4`): top layer, centred over a `::backdrop` that blocks the page, focus inside, Escape fires `cancel` then `close`. The ChatTabs combination is fixed (`815933f`). Needed native Compression Streams, `pipeTo` and `atob`. Centred-dialog look: live re-check pending. |
 | HcaStatus | ⚠️ | pending live | The auth.hackclub.com lookup works and its class reaches the sender. The name underline (`text-decoration`) isn't drawn. |
 | HuddleMuteDetector | ❌ | — | No huddles. |
 | HumanCount | ✅ | header count shows (17, same as Slack) | Guest exclusion fixed (`8086322`). |
@@ -114,4 +114,6 @@ Related theme fixes: importing selects the theme (`fcc7ac9`); pausing Slick keep
 | `5aac9fb` … `e898996` | slick, taut, jsrt, slack | fix-taut: thunk timeout, `.promise` tier, guest count, component sources, media/iframe prototypes, `status_text_canonical`, local timezone |
 | `279f419`, `f801d44` | ui, theme, views, richview, css | fix-theme: native palettes follow Slack design tokens |
 
-Still open: ChatTabs blocking send checks and modal `<dialog>` layout (`live-slick-fix-dialog`). Then the *pending live* rows, the Plugin Library's Slick entries, and origin/taut-ui's patch points, once the session issue is resolved.
+| `815933f`, `da3c2d4`, `4e3fca4`, `aafbd3e` | ui, slackc, jsrt, taut | fix-dialog: plugin window key listeners swallowed the composer's Enter (ChatTabs); modal `<dialog>`; a send check whose task the watchdog killed can't hold a message forever (ignored after 10 s with nothing open for the user) |
+
+Still open: the *pending live* rows, the Plugin Library's Slick entries, and origin/taut-ui's patch points, once the session issue is resolved.
