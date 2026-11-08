@@ -107,7 +107,11 @@ func (s *sidebarState) rebuild(m *model) {
 			rows = append(rows, sbRow{kind: sbGap, gap: 10})
 		}
 		rows = append(rows, sbRow{kind: sbHeading, key: sec.ID, label: sec.Name, icon: sectionIcon(sec.Type), emoji: sec.EmojiURL, section: sec.ID})
-		col := s.collapsed[sec.ID]
+		col, seen := s.collapsed[sec.ID]
+		if !seen { // first sight: Slack's saved state (channel_sections "c")
+			col = sec.Collapsed
+			s.collapsed[sec.ID] = col
+		}
 		for _, id := range sec.Rows {
 			c := m.conv(id)
 			if c == nil {

@@ -9,25 +9,12 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/store"
 )
 
-// Which DMs the sidebar shows, as Slack decides it (checked against the
-// test account on 2026-11-08):
-//
-//   - users.conversations lists every DM and group DM the viewer ever had and
-//     carries no is_open. Slack's sidebar lists only the open ones: sidebar.dms
-//     (what the current web client calls) and client.userBoot's is_open list
-//     agree exactly; closed DMs are the rest.
-//   - With sidebar_behavior "hide_inactive_channels" (Slack's default filter,
-//     "Active only") Slack also hides conversations with no new activity in
-//     the past 30 days. Unread DMs and DMs opened this session stay.
-//   - A closed DM comes back when it gets a new message (or im_open /
-//     mpim_open from another client, or Clack opening it).
-//
-// Until sidebar.dms answers (older sessions, errors) every DM counts as open,
-// which was Clack's behaviour before.
-
-// InactiveAfter is how long a conversation may go without activity before
-// Slack's "Active only" filter hides it.
-const InactiveAfter = 30 * 24 * time.Hour
+// Which DMs and group DMs are sidebar candidates (Slack's rule, see
+// sidebar_rules.go): open ones (is_open), plus closed ones with unread
+// messages. users.conversations lists closed DMs too and carries no is_open;
+// sidebar.dms does (it agrees with client.userBoot's is_open list). A closed
+// DM also reopens on a new message, im_open / mpim_open, or Clack opening it.
+// Until sidebar.dms answers every DM counts as open (Clack's old behaviour).
 
 type dmState struct {
 	known    bool                 // sidebar.dms answered
@@ -143,40 +130,6 @@ func (a *App) reopenActive() bool {
 		}
 	}
 	return changed
-}
-
-// dmInSidebar applies Slack's rules (see the top of this file) to a DM or
-// group DM in a default section.
-func (a *App) dmInSidebar(ch string, created int64, hideInactive bool, now time.Time) bool {
-	if !a.dmOpen(ch) {
-		return false
-	}
-	if !hideInactive {
-		return true
-	}
-	a.mu.Lock()
-	_, opened := a.dms.openedAt[ch]
-	a.mu.Unlock()
-	e, _ := a.S.Count(ch)
-	if opened || e.HasUnreads || e.MentionCount > 0 {
-		return true
-	}
-	last := tsSeconds(e.Latest)
-	if created > last {
-		last = created
-	}
-	if last == 0 {
-		return true // nothing to judge by
-	}
-	return now.Sub(time.Unix(last, 0)) <= InactiveAfter
-}
-
-func tsSeconds(ts string) int64 {
-	if i := strings.IndexByte(ts, '.'); i >= 0 {
-		ts = ts[:i]
-	}
-	n, _ := strconv.ParseInt(ts, 10, 64)
-	return n
 }
 
 // isDM reports whether ch is a DM or group DM.

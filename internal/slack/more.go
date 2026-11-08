@@ -10,6 +10,24 @@ import (
 	"sync"
 )
 
+// ExperimentGroups returns the viewer's experiment assignments
+// (experiments.getByUser): experiment name -> group ("on", "without_edu", …).
+func (c *Client) ExperimentGroups(ctx context.Context) (map[string]string, error) {
+	var r struct {
+		Assignments map[string]struct {
+			Group string `json:"group"`
+		} `json:"assignments"`
+	}
+	if err := c.Call(ctx, "experiments.getByUser", nil, &r); err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(r.Assignments))
+	for k, v := range r.Assignments {
+		out[k] = v.Group
+	}
+	return out, nil
+}
+
 // SidebarDM is one direct message or group DM from sidebar.dms.
 type SidebarDM struct {
 	ID       string `json:"id"`

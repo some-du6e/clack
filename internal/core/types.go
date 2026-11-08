@@ -119,6 +119,8 @@ type Section struct {
 	Emoji    string // Slack emoji name ("" when the section has none)
 	EmojiURL string // its image (custom or standard), "" when unknown
 	Channels []string
+	// Collapsed is the user's saved collapsed state (channel_sections pref "c").
+	Collapsed bool
 }
 
 // Count is a conversation's unread state. DMs count every unread message

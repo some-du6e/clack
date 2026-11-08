@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
-	"github.com/some-du6e/yoloslackgoclient/internal/store"
 )
 
 // Synthetic fixtures only: ids, names and timestamps are made up.
@@ -81,7 +80,7 @@ func TestClosedDMReappearsOnNewMessage(t *testing.T) {
 	// realtime: a new message in closed D2 reopens it
 	a.handle(rtm("message", map[string]any{"channel": "D2", "user": "U2", "ts": tsAgo(-time.Minute), "text": "hi"}))
 	next(t, evs, "sidebar_changed")
-	if got := sectionsByType(a)["direct_messages"]; got != "D1,D2,D3" {
+	if got := sectionsByType(a)["direct_messages"]; got != "D2,D1,D3" { // newest first (dm_recency_sort_rollout)
 		t.Fatalf("after a message: %q", got)
 	}
 	// polling: counts show a newer message in closed D4
@@ -121,30 +120,6 @@ func TestDMOpenCloseEvents(t *testing.T) {
 	}
 	if _, ok := a.Conv("D1"); !ok {
 		t.Error("im_close forgot the conversation")
-	}
-}
-
-func TestActiveOnlyHidesInactiveDMs(t *testing.T) {
-	a, _ := testApp(t)
-	a.S.PutUsers([]slack.User{{ID: "U3", Name: "carol"}, {ID: "U4", Name: "dave"}})
-	old := time.Now().Add(-90 * 24 * time.Hour).Unix()
-	a.S.PutConv(slack.Conversation{ID: "D1", IsIM: true, User: "U1", Created: old})
-	a.S.PutConv(slack.Conversation{ID: "D2", IsIM: true, User: "U2", Created: old})
-	a.S.PutConv(slack.Conversation{ID: "D3", IsIM: true, User: "U3", Created: old})
-	a.S.PutConv(slack.Conversation{ID: "D4", IsIM: true, User: "U4", Created: time.Now().Add(-24 * time.Hour).Unix()})
-	a.S.SetCounts(&slack.Counts{IMs: []slack.CountEntry{
-		{ID: "D1", Latest: tsAgo(40 * 24 * time.Hour)},                                                         // inactive: hidden
-		{ID: "D2", Latest: tsAgo(3 * 24 * time.Hour)},                                                          // active
-		{ID: "D3", Latest: tsAgo(60 * 24 * time.Hour), HasUnreads: true, LastRead: tsAgo(61 * 24 * time.Hour)}, // unread: kept
-	}})
-	a.S.SetPrefs(store.Prefs{SidebarBehavior: "hide_inactive_channels", HideInactiveConvs: true}, nil)
-	close(a.ready)
-	if got := sectionsByType(a)["direct_messages"]; got != "D2,D3,D4" { // Bob B, carol, dave (new DM)
-		t.Fatalf("Active only: %q", got)
-	}
-	a.S.SetPrefs(store.Prefs{}, nil) // "All conversations"
-	if got := sectionsByType(a)["direct_messages"]; got != "D1,D2,D3,D4" {
-		t.Errorf("all conversations: %q", got)
 	}
 }
 
