@@ -1275,6 +1275,8 @@ T.sendCheck = async (ctx) => {
   }
   return true
 }
+/** Go → JS: whether a dialog a pending send check may be waiting on is open */
+T.sendCheckWaiting = () => !!G.document?.querySelector?.('dialog[open], [role=dialog], [role=alertdialog], [aria-modal=true]')
 T.transformLink = (url, ctx) => {
   let r = url
   for (const t of linkTransforms) {

@@ -525,12 +525,69 @@ func (t *Taut) SendCheck(ctx context.Context, c ComposerContext) bool {
 	if err != nil {
 		return true
 	}
-	var ok bool
-	if err := rt.call(ctx, "sendCheck", &ok, c); err != nil {
-		t.logf("taut: send check: %v", err)
+	type result struct {
+		ok  bool
+		err error
+	}
+	done := make(chan result, 1)
+	cctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		var ok bool
+		err := rt.call(cctx, "sendCheck", &ok, c)
+		done <- result{ok, err}
+	}()
+	// A check may wait for the user as long as they take (HaikuWarning's
+	// dialog). But when the runtime's watchdog interrupts a task, QuickJS
+	// leaves the promises that task would have settled pending forever, so
+	// a check it hit (or a promise checks share, like HaikuWarning's
+	// dictionary) never answers. Once that has happened, a check that stays
+	// pending with nothing open for the user fails like a check that threw:
+	// it is ignored.
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+	var idle time.Duration
+	for {
+		select {
+		case r := <-done:
+			if r.err != nil {
+				t.logf("taut: send check: %v", r.err)
+				return true
+			}
+			return r.ok
+		case <-tick.C:
+			if rt.rt.Interrupts() == 0 || t.sendCheckWaiting(ctx, rt) {
+				idle = 0
+				continue
+			}
+			idle += time.Second
+			if idle >= sendCheckGrace {
+				t.logf("taut: send check: pending %v with nothing open for the user after the JS runtime interrupted a task (an interrupted promise never settles); ignoring it", idle)
+				return true
+			}
+		}
+	}
+}
+
+// sendCheckGrace is how long a send check may stay pending with nothing
+// open for the user once the runtime has interrupted a task.
+var sendCheckGrace = 10 * time.Second
+
+// sendCheckWaiting reports whether something a pending send check may be
+// waiting on is open: a plugin overlay (api.modal's confirm, alert,
+// openModal) or a dialog in the document (an open <dialog>, role=dialog).
+// A runtime too busy to answer counts as waiting.
+func (t *Taut) sendCheckWaiting(ctx context.Context, rt *runtime) bool {
+	if len(t.Overlays()) > 0 {
 		return true
 	}
-	return ok
+	pctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	var open bool
+	if err := rt.call(pctx, "sendCheckWaiting", &open); err != nil {
+		return true
+	}
+	return open
 }
 
 // HasSendTransforms reports whether TransformSendBlocks changes anything.
