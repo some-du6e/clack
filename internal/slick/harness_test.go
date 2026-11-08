@@ -207,7 +207,7 @@ func newHarness(t *testing.T) *harness {
 		App: app, Dir: filepath.Join(h.dir, "taut"), CredsPath: filepath.Join(h.dir, "creds.json"), UI: h.ui.hooks(), NoAutoStart: true,
 		CacheDir: filepath.Join(os.TempDir(), "clack-slick-test-cache"), Fetch: h.fetch,
 		Log: func(level, msg string) {
-			if level == "error" || level == "warn" {
+			if level == "error" || level == "warn" || comboLogAll {
 				t.Logf("js %s: %s", level, msg)
 			}
 		},

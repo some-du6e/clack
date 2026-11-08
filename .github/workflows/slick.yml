@@ -19,6 +19,10 @@ on:
         description: "slick git ref (branch, tag or sha); empty = SLICK_PIN"
         required: false
         default: ""
+      run:
+        description: "go test -run pattern for internal/slick (empty = every test)"
+        required: false
+        default: ""
 
 # Slick is third-party code (GPLv3) built and run here: by default CI uses the
 # reviewed commit SLICK_PIN; dispatch with ref=main (or any ref) to test upstream.
@@ -77,9 +81,10 @@ jobs:
       - name: slick unit + acceptance tests
         env:
           SLICK_PLUGINS_DIR: ${{ github.workspace }}/dist/slick-plugins
+          RUN: ${{ inputs.run }}
         run: |
           set -o pipefail
-          go test -count=1 -timeout 20m -v ./internal/slick/... 2>&1 | tee dist/slick-test.log
+          go test -count=1 -timeout 20m -v ${RUN:+-run "$RUN"} ./internal/slick/... 2>&1 | tee dist/slick-test.log
       - name: acceptance summary
         if: ${{ !cancelled() }}
         run: |
