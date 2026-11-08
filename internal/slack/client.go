@@ -36,7 +36,72 @@ type Creds struct {
 	// copied from. Clack sends it so Slack sees the same browser it signed
 	// in (see ua.go); empty means Chrome on this OS.
 	UserAgent string `json:"user_agent,omitempty"`
+
+	// Session is "" for a session pasted from the browser and
+	// SessionDesktop for one Clack signed in to itself with a slack://
+	// magic-login link (LoginMagic). Desktop sessions present as Slack
+	// desktop and follow every cookie Slack sets (desktop.go).
+	Session string `json:"session,omitempty"`
+	// Cookies are the other slack.com cookies Slack vended to a desktop
+	// session (lc, d-s, uc, …) in Cookie-header form ("lc=…; uc=…"), kept
+	// up to date as Slack rotates them. Cookie still holds d. A string, not
+	// a slice, so Creds stays comparable. Unused for pasted sessions.
+	Cookies string `json:"cookies,omitempty"`
+	// DPoP means the session is bound to this machine's DPoP key for
+	// slack.com (dpop.go): every request to it carries a proof.
+	DPoP bool `json:"dpop,omitempty"`
 }
+
+// SessionDesktop marks Creds that came from desktop-style sign-in.
+const SessionDesktop = "desktop"
+
+// StoredCookie is one cookie of a desktop session, scoped to .slack.com.
+type StoredCookie struct {
+	Name, Value string
+}
+
+// encodeCookies and decodeCookies convert Creds.Cookies.
+func encodeCookies(cs []StoredCookie) string {
+	parts := make([]string, 0, len(cs))
+	for _, k := range cs {
+		parts = append(parts, k.Name+"="+k.Value)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func decodeCookies(s string) []StoredCookie {
+	var out []StoredCookie
+	for _, p := range strings.Split(s, ";") {
+		k, v, ok := strings.Cut(strings.TrimSpace(p), "=")
+		if ok && k != "" && validCookieName(k) && validCookieValue(v) {
+			out = append(out, StoredCookie{Name: k, Value: v})
+		}
+	}
+	return out
+}
+
+func validCookieName(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c <= 0x20 || c >= 0x7f || strings.IndexByte("()<>@,;:\\\"/[]?={}", c) >= 0 {
+			return false
+		}
+	}
+	return s != ""
+}
+
+func validCookieValue(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < 0x21 || c > 0x7e || c == '"' || c == ';' || c == ',' || c == '\\' {
+			return false
+		}
+	}
+	return true
+}
+
+// Desktop reports whether c is Clack's own desktop-style session.
+func (c Creds) Desktop() bool { return c.Session == SessionDesktop }
 
 // entMethods must be called with the org token on the enterprise host
 // (they answer team_is_restricted on the team host). Everything else goes to
@@ -81,15 +146,7 @@ type Client struct {
 
 // New builds a client with a tuned, keep-alive HTTP/2 transport.
 func New(c Creds) *Client {
-	tr := &http.Transport{
-		Proxy:               http.ProxyFromEnvironment,
-		DialContext:         (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-		ForceAttemptHTTP2:   true,
-		MaxIdleConns:        64,
-		MaxIdleConnsPerHost: 16,
-		IdleConnTimeout:     5 * time.Minute,
-		TLSHandshakeTimeout: 10 * time.Second,
-	}
+	tr := newTransport()
 	base := "https://slack.com/api/"
 	if c.TeamURL != "" {
 		base = strings.TrimSuffix(c.TeamURL, "/") + "/api/"
@@ -104,6 +161,18 @@ func New(c Creds) *Client {
 		cl.EdgeURL = base + "edge/" // a local fake (internal/fakeslack) serves the edge API too
 	}
 	return cl
+}
+
+func newTransport() *http.Transport {
+	return &http.Transport{
+		Proxy:               http.ProxyFromEnvironment,
+		DialContext:         (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2:   true,
+		MaxIdleConns:        64,
+		MaxIdleConnsPerHost: 16,
+		IdleConnTimeout:     5 * time.Minute,
+		TLSHandshakeTimeout: 10 * time.Second,
+	}
 }
 
 // isLoopback reports whether u's host is localhost or a loopback address.

@@ -31,6 +31,9 @@ type SignInInput struct {
 	// recommended: Slack can end a session it sees from a different
 	// browser; see ua.go).
 	UserAgent string
+	// Link, when set, is a slack:// magic-login link: callers sign in with
+	// LoginMagic instead of SignIn (no token or cookie is pasted).
+	Link string
 }
 
 // SignIn validates pasted credentials with auth.test only. It never loads

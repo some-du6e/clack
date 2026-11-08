@@ -2,6 +2,7 @@ package slack
 
 import (
 	"net/http"
+	"os"
 	"regexp"
 	"runtime"
 	"strings"
@@ -110,4 +111,98 @@ func clientHints(ua string) map[string]string {
 		"sec-ch-ua-mobile":   mobile,
 		"sec-ch-ua-platform": `"` + plat + `"`,
 	}
+}
+
+// Slack desktop's identity. Desktop sessions (Creds.Session ==
+// SessionDesktop) send this user agent on every request and the socket,
+// because their sign-in said ssb=1 with it: switching to a browser user
+// agent afterwards is the kind of mismatch Grid's anomaly checks look for.
+// Values are from slack-desktop-4.53.276 (Electron 45.1.0, Chrome
+// 156.0.8078.49; docs/DESKTOP-SIGNIN.md).
+const (
+	SlackDesktopVersion = "4.53.276"
+	slackElectron       = "45.1.0"
+	slackChrome         = "156.0.8078.49"
+)
+
+// DesktopUserAgent is Slack desktop's user agent on this OS.
+func DesktopUserAgent() string { return desktopUserAgent(runtime.GOOS, linuxUAInfo()) }
+
+// desktopUserAgent builds the user agent the way Slack desktop does (o3 in
+// main.bundle.cjs, @808076): Electron's default
+// "Mozilla/5.0 (<platform>) AppleWebKit/537.36 (KHTML, like Gecko)
+// Slack/<ver> Chrome/<chrome> Electron/<electron> Safari/537.36", with
+// "; <distro> <release>[; <desktop>]" added inside the parentheses on Linux
+// (module 65726 "Mo"), then " Sonic Slack_SSB/<ver>". The Snap, Flatpak and
+// GovEnvironment markers don't apply to Clack.
+func desktopUserAgent(goos, linux string) string {
+	plat := "X11; Linux x86_64" + linux
+	switch goos {
+	case "darwin":
+		plat = "Macintosh; Intel Mac OS X 10_15_7"
+	case "windows":
+		plat = "Windows NT 10.0; Win64; x64"
+	}
+	return "Mozilla/5.0 (" + plat + ") AppleWebKit/537.36 (KHTML, like Gecko) Slack/" + SlackDesktopVersion +
+		" Chrome/" + slackChrome + " Electron/" + slackElectron + " Safari/537.36 Sonic Slack_SSB/" + SlackDesktopVersion
+}
+
+// uaStrip is the character class Slack desktop removes from the distro
+// parts of its user agent.
+var uaStrip = regexp.MustCompile(`[()<>@,;:\\/\[\]?={}\t\n\r]`)
+
+// linuxUAInfo is Slack desktop's Linux user agent addition: NAME (or ID)
+// and VERSION_ID from os-release, and XDG_CURRENT_DESKTOP.
+func linuxUAInfo() string {
+	if runtime.GOOS != "linux" {
+		return ""
+	}
+	var b []byte
+	for _, p := range []string{"/etc/os-release", "/usr/lib/os-release"} {
+		if d, err := os.ReadFile(p); err == nil {
+			b = d
+			break
+		}
+	}
+	return linuxUAFrom(string(b), os.Getenv("XDG_CURRENT_DESKTOP"))
+}
+
+func linuxUAFrom(osRelease, desktop string) string {
+	kv := map[string]string{}
+	for _, l := range strings.Split(osRelease, "\n") {
+		k, v, ok := strings.Cut(strings.TrimSpace(l), "=")
+		if !ok || k == "" || strings.HasPrefix(k, "#") {
+			continue
+		}
+		if len(v) >= 2 && (v[0] == '"' && v[len(v)-1] == '"' || v[0] == '\'' && v[len(v)-1] == '\'') {
+			v = v[1 : len(v)-1]
+		}
+		kv[k] = v
+	}
+	name := kv["NAME"]
+	if name == "" {
+		name = kv["ID"]
+	}
+	if name == "" {
+		return ""
+	}
+	rel := kv["VERSION_ID"]
+	if rel == "" {
+		rel = "unversioned"
+	}
+	s := "; " + uaStrip.ReplaceAllString(name, "") + " " + uaStrip.ReplaceAllString(rel, "")
+	if desktop = uaStrip.ReplaceAllString(desktop, ""); desktop != "" {
+		s += "; " + desktop
+	}
+	return printableASCII(s)
+}
+
+func printableASCII(s string) string {
+	b := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x20 && s[i] <= 0x7e {
+			b = append(b, s[i])
+		}
+	}
+	return string(b)
 }

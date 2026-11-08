@@ -10,18 +10,22 @@ import (
 )
 
 // Session secrets must never reach logs, error strings or crash output:
-// xoxc/xoxd/xoxe/xoxp/xoxb tokens, the d and d-s cookies, and token=
+// xoxc/xoxd/xoxe/xoxp/xoxb tokens, the d, d-s and lc cookies, magic-login
+// link tokens (magic-login/<tok>, magic_tokens=, <i>.tokens=), and token=
 // query or form values (the realtime gateway URL carries the token).
 
-var secretRE = regexp.MustCompile(`xox[a-z]-[^\s"'&;,)<>\]]+|\b(?i:token|enterprise_token|d|d-s)=[^\s"'&;,)<>\]]+`)
+var secretRE = regexp.MustCompile(`xox[a-z]-[^\s"'&;,)<>\]]+|\b(?i:token|enterprise_token|d|d-s|lc|magic_tokens|tokens)=[^\s"'&;,)<>\]]+|(?i:magic-login/)[A-Za-z0-9_-]+`)
 
 // Redact replaces anything that looks like a Slack token or session cookie
 // in s with a placeholder.
 func Redact(s string) string {
-	if !strings.Contains(s, "xox") && !strings.Contains(s, "=") {
+	if !strings.Contains(s, "xox") && !strings.Contains(s, "=") && !strings.Contains(s, "agic-login/") {
 		return s
 	}
 	return secretRE.ReplaceAllStringFunc(s, func(m string) string {
+		if i := strings.IndexByte(m, '/'); i >= 0 && strings.HasPrefix(strings.ToLower(m), "magic-login/") {
+			return m[:i+1] + "REDACTED"
+		}
 		if i := strings.IndexByte(m, '='); i >= 0 && !strings.HasPrefix(strings.ToLower(m), "xox") {
 			return m[:i+1] + "REDACTED"
 		}
@@ -82,6 +86,7 @@ func (c Creds) redacted() any {
 	type plain Creds // drops the methods so fmt doesn't recurse
 	p := plain(c)
 	p.Token, p.Cookie, p.CookieDS, p.EnterpriseToken = mask(p.Token), mask(p.Cookie), mask(p.CookieDS), mask(p.EnterpriseToken)
+	p.Cookies = mask(p.Cookies)
 	return p
 }
 
@@ -100,7 +105,7 @@ func (c Creds) Format(f fmt.State, verb rune) {
 func (in SignInInput) redacted() any {
 	type plain SignInInput
 	p := plain(in)
-	p.Token, p.OrgToken, p.Cookie, p.CookieDS = mask(p.Token), mask(p.OrgToken), mask(p.Cookie), mask(p.CookieDS)
+	p.Token, p.OrgToken, p.Cookie, p.CookieDS, p.Link = mask(p.Token), mask(p.OrgToken), mask(p.Cookie), mask(p.CookieDS), mask(p.Link)
 	return p
 }
 
