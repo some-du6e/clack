@@ -47,8 +47,8 @@ func fakeApp(t *testing.T, prefs map[string]any) (*App, *core.App, *fakeslack.Se
 	return a, ca, fs
 }
 
-// waitFor drains posted work until ok or a timeout.
-func waitFor(t *testing.T, a *App, what string, ok func() bool) {
+// waitTheme drains posted work until ok or a timeout.
+func waitTheme(t *testing.T, a *App, what string, ok func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
 	for !ok() {
@@ -136,7 +136,7 @@ func TestAccountThemeWriteBack(t *testing.T) {
 	if a.accountTheme() != lagoon.Theme { // applied at once
 		t.Fatalf("not applied: %+v", a.accountTheme())
 	}
-	waitFor(t, a, "ia_theme on the fake", func() bool {
+	waitTheme(t, a, "ia_theme on the fake", func() bool {
 		v, _ := fs.Pref("ia_theme")
 		s, _ := v.(string)
 		got, ok := theme.ParseIATheme(s)
@@ -151,7 +151,7 @@ func TestAccountThemeWriteBack(t *testing.T) {
 	// dark mode: Slack never saves an inverted sidebar from dark mode
 	a.th.SetDark(true)
 	a.setAccountTheme(lagoon.Theme)
-	waitFor(t, a, "sidebarInverted=false", func() bool {
+	waitTheme(t, a, "sidebarInverted=false", func() bool {
 		v, _ := fs.Pref("ia_theme")
 		s, _ := v.(string)
 		return strings.Contains(s, `"sidebarInverted":false`)
@@ -159,7 +159,7 @@ func TestAccountThemeWriteBack(t *testing.T) {
 	a.th.SetDark(false)
 
 	a.setWindowGradients(false)
-	waitFor(t, a, "window_background_gradients", func() bool {
+	waitTheme(t, a, "window_background_gradients", func() bool {
 		v, _ := fs.Pref("window_background_gradients")
 		return v == false
 	})
@@ -175,7 +175,7 @@ func TestAccountThemeWriteFails(t *testing.T) {
 	fs.Close() // the write can't reach Slack
 	before := a.accountTheme()
 	a.setAccountTheme(theme.ThemePresets[3].Theme)
-	waitFor(t, a, "revert", func() bool { return a.accountTheme() == before })
+	waitTheme(t, a, "revert", func() bool { return a.accountTheme() == before })
 }
 
 // plt_ramps.go is generated from slackvars.go: keep them in step.
