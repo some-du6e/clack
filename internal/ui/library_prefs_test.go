@@ -178,13 +178,13 @@ func TestLibraryMergesTautAndSlick(t *testing.T) {
 	}
 	wait("the index", func() bool { return lp.ix != nil && !lp.loading })
 
-	// one list, both systems, Taut's and Slick's category order
+	// one list, both systems, Taut's and Slick's category order, by name within one
 	es := libraryEntries(lp.ix)
 	var got []string
 	for _, e := range es {
 		got = append(got, e.System+":"+e.ID+"@"+e.CategoryLabel)
 	}
-	want := []string{"taut:LibTest@Messages", "slick:LibSlick@Messages", "slick:LibOff@Privacy", "taut:LibOther@Fun", "slick:LibClub@Hack Club Specialities"}
+	want := []string{"slick:LibSlick@Messages", "taut:LibTest@Messages", "slick:LibOff@Privacy", "taut:LibOther@Fun", "slick:LibClub@Hack Club Specialities"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("entries\n got %v\nwant %v", got, want)
 	}
@@ -201,10 +201,10 @@ func TestLibraryMergesTautAndSlick(t *testing.T) {
 	if lp.sourceLine() != "<https://github.com/jeremy46231/taut/tree/6fe5123e3b4cffaa|Taut 6fe5123> and <https://github.com/3kh0/slick/tree/f52d55dbd458feb0|Slick f52d55d>" {
 		t.Errorf("source line %q", lp.sourceLine())
 	}
-	if c := libraryCredit(es[0]); c != "<https://jeremywoolley.com|Jeremy>, Rowan" {
+	if c := libraryCredit(es[1]); c != "<https://jeremywoolley.com|Jeremy>, Rowan" {
 		t.Errorf("taut credit %q", c)
 	}
-	if c := libraryCredit(es[1]); c != "synthetic-dev" {
+	if c := libraryCredit(es[0]); c != "synthetic-dev" {
 		t.Errorf("slick credit (contributors) %q", c)
 	}
 	lp.s.filter = pluginlib.Slick
@@ -214,7 +214,7 @@ func TestLibraryMergesTautAndSlick(t *testing.T) {
 		}
 	}
 	lp.s.filter = "all"
-	if !libraryMatches(es[1], []string{"slick", "messages"}) || libraryMatches(es[0], []string{"slick"}) {
+	if !libraryMatches(es[0], []string{"slick", "messages"}) || libraryMatches(es[1], []string{"slick"}) {
 		t.Error("search doesn't match on the system name")
 	}
 	r.save("library-light", r.frame(dialog))
