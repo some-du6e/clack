@@ -110,6 +110,7 @@ type Tab struct {
 	Label, Title string // Title: what to show (file title, "Bookmarks", "Deleted file", …)
 	FileID       string // canvas / list tabs
 	Deleted      bool   // the tab's file is gone
+	Unread       bool   // a canvas the viewer never opened (no last_read): Slack's blue tab dot
 	Bookmarks    []Bookmark
 }
 
@@ -178,29 +179,30 @@ const (
 var stripHighlight = strings.NewReplacer("", "", "", "")
 
 type browseFileRaw struct {
-	ID         string   `json:"id"`
-	Created    int64    `json:"created"`
-	Timestamp  int64    `json:"timestamp"`
-	Updated    int64    `json:"updated"`
-	Name       string   `json:"name"`
-	Title      string   `json:"title"`
-	Mimetype   string   `json:"mimetype"`
-	Filetype   string   `json:"filetype"`
-	PrettyType string   `json:"pretty_type"`
-	User       string   `json:"user"`
-	Size       int64    `json:"size"`
-	URLPrivate string   `json:"url_private"`
-	Permalink  string   `json:"permalink"`
-	Thumb360   string   `json:"thumb_360"`
-	Thumb360W  int      `json:"thumb_360_w"`
-	Thumb360H  int      `json:"thumb_360_h"`
-	ThumbPDF   string   `json:"thumb_pdf"`
-	ThumbVideo string   `json:"thumb_video"`
-	Channels   []string `json:"channels"`
-	Groups     []string `json:"groups"`
-	IMs        []string `json:"ims"`
-	Mode       string   `json:"mode"`
-	IsDeleted  bool     `json:"is_deleted"`
+	ID         string          `json:"id"`
+	Created    int64           `json:"created"`
+	Timestamp  int64           `json:"timestamp"`
+	Updated    int64           `json:"updated"`
+	LastRead   json.RawMessage `json:"last_read"` // ms number; absent/null/0 = never opened by the viewer
+	Name       string          `json:"name"`
+	Title      string          `json:"title"`
+	Mimetype   string          `json:"mimetype"`
+	Filetype   string          `json:"filetype"`
+	PrettyType string          `json:"pretty_type"`
+	User       string          `json:"user"`
+	Size       int64           `json:"size"`
+	URLPrivate string          `json:"url_private"`
+	Permalink  string          `json:"permalink"`
+	Thumb360   string          `json:"thumb_360"`
+	Thumb360W  int             `json:"thumb_360_w"`
+	Thumb360H  int             `json:"thumb_360_h"`
+	ThumbPDF   string          `json:"thumb_pdf"`
+	ThumbVideo string          `json:"thumb_video"`
+	Channels   []string        `json:"channels"`
+	Groups     []string        `json:"groups"`
+	IMs        []string        `json:"ims"`
+	Mode       string          `json:"mode"`
+	IsDeleted  bool            `json:"is_deleted"`
 }
 
 func (r *browseFileRaw) file() File {
@@ -780,7 +782,7 @@ func (a *App) Tabs(ctx context.Context, ch string) ([]Tab, error) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			title, deleted, err := a.tabFileTitle(ctx, t.FileID)
+			title, deleted, unread, err := a.tabFileTitle(ctx, t.FileID)
 			if err != nil {
 				log.Printf("tabs %s: files.info %s: %v", ch, t.FileID, err)
 				return
@@ -790,6 +792,7 @@ func (a *App) Tabs(ctx context.Context, ch string) ([]Tab, error) {
 			} else if title != "" {
 				t.Title = title
 			}
+			t.Unread = unread && !deleted && t.Type == "canvas"
 		}(&out[i])
 	}
 	wg.Wait()
@@ -797,22 +800,24 @@ func (a *App) Tabs(ctx context.Context, ch string) ([]Tab, error) {
 	return out, nil
 }
 
-// tabFileTitle returns a tab file's title, or deleted when it is gone.
-func (a *App) tabFileTitle(ctx context.Context, fileID string) (title string, deleted bool, err error) {
+// tabFileTitle returns a tab file's title, or deleted when it is gone, and
+// unread when the viewer never opened it (files.info has no last_read).
+func (a *App) tabFileTitle(ctx context.Context, fileID string) (title string, deleted, unread bool, err error) {
 	var r struct {
 		File browseFileRaw `json:"file"`
 	}
 	err = a.C.Call(ctx, "files.info", url.Values{"file": {fileID}}, &r)
 	if isCode(err, "file_not_found", "file_deleted") {
-		return "", true, nil
+		return "", true, false, nil
 	}
 	if err != nil {
-		return "", false, err
+		return "", false, false, err
 	}
 	if r.File.Mode == "tombstone" || r.File.IsDeleted {
-		return "", true, nil
+		return "", true, false, nil
 	}
-	return firstNonEmpty(r.File.Title, r.File.Name), false, nil
+	lr := strings.TrimSpace(string(r.File.LastRead))
+	return firstNonEmpty(r.File.Title, r.File.Name), false, lr == "" || lr == "null" || lr == "0", nil
 }
 
 // RemoveTab deletes a tab from a channel's tab bar (conversations.removeTab;
