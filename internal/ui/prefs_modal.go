@@ -502,6 +502,9 @@ func (p *prefsModal) page(gtx layout.Context, sec string) layout.Dimensions {
 		})
 		y += gtx.Dp(28)
 		gap()
+		heading("Input options")
+		option("plaintext", "Format messages with markup", "The text formatting toolbar won’t show in the composer.", a.plainTextOn(), false, a.togglePlainText)
+		gap()
 		heading("Live updates")
 		rtHint := "Opens Slack's realtime connection. Off: messages refresh every 20 s"
 		if a.opts.NoRealtime {

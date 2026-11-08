@@ -95,21 +95,25 @@ func (s *Store) PutName(id, name string) {
 
 // Prefs are the user preferences the UI needs for rendering.
 type Prefs struct {
-	EmojiStyle        string   `json:"emoji_style"` // apple | google
-	EmojiMode         string   `json:"emoji_mode,omitempty"`
-	SkinTone          string   `json:"skin_tone,omitempty"`
-	Time24            bool     `json:"time24"`
-	DisplayRealNames  bool     `json:"display_real_names"`
-	Jumbomoji         bool     `json:"jumbomoji"`
-	ConvertEmoticons  bool     `json:"convert_emoticons"`
-	SidebarBehavior   string   `json:"sidebar_behavior,omitempty"`
-	ChannelSort       string   `json:"channel_sort,omitempty"`
-	Locale            string   `json:"locale,omitempty"`
-	Theme             string   `json:"theme,omitempty"`
-	DarkMode          string   `json:"dark_mode,omitempty"`
-	SidebarTheme      string   `json:"sidebar_theme,omitempty"`
-	MessagesTheme     string   `json:"messages_theme,omitempty"`
-	EnterIsSpecial    bool     `json:"enter_is_special_in_tbt"`
+	EmojiStyle       string `json:"emoji_style"` // apple | google
+	EmojiMode        string `json:"emoji_mode,omitempty"`
+	SkinTone         string `json:"skin_tone,omitempty"`
+	Time24           bool   `json:"time24"`
+	DisplayRealNames bool   `json:"display_real_names"`
+	Jumbomoji        bool   `json:"jumbomoji"`
+	ConvertEmoticons bool   `json:"convert_emoticons"`
+	SidebarBehavior  string `json:"sidebar_behavior,omitempty"`
+	ChannelSort      string `json:"channel_sort,omitempty"`
+	Locale           string `json:"locale,omitempty"`
+	Theme            string `json:"theme,omitempty"`
+	DarkMode         string `json:"dark_mode,omitempty"`
+	SidebarTheme     string `json:"sidebar_theme,omitempty"`
+	MessagesTheme    string `json:"messages_theme,omitempty"`
+	EnterIsSpecial   bool   `json:"enter_is_special_in_tbt"`
+	// PlainTextMode is Preferences > Advanced > "Format messages with
+	// markup": the composer keeps markup as typed (no live formatting, no
+	// toolbar) and formats it when the message is sent.
+	PlainTextMode     bool     `json:"plain_text_mode"`
 	ShowTyping        bool     `json:"show_typing"`
 	ColorNames        bool     `json:"color_names_in_list"`
 	FrequentEmoji     []string `json:"frequent_emoji,omitempty"`
@@ -160,7 +164,8 @@ func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
 		SidebarBehavior: str("sidebar_behavior"), ChannelSort: str("channel_sort"), Locale: str("locale"),
 		Theme: str("theme"), DarkMode: str("dark_mode"), SidebarTheme: str("sidebar_theme"), MessagesTheme: str("messages_theme"),
 		EnterIsSpecial: boolean("enter_is_special_in_tbt", false), ShowTyping: boolean("show_typing", true),
-		ColorNames: boolean("color_names_in_list", true),
+		PlainTextMode: boolean("plain_text_mode", false),
+		ColorNames:    boolean("color_names_in_list", true),
 	}
 	p.HideInactiveConvs = p.SidebarBehavior == "hide_inactive_channels"
 	// Slack calls the Google set "android"/"google"; everything else is Apple.
