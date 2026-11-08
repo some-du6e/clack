@@ -1,8 +1,28 @@
 # Sign-out audit (v0.1.0-alpha.2)
 
-## Status (2026-11-08): cause NOT yet found
+## Root cause (2026-11-08): Go's TLS ClientHello
 
-**Read this first.** The "browser disguise" conclusion this section used to state was refuted by round 4. A build of this branch (84bcdf7), which sends only the honest `Clack/…` User-Agent and no browser headers, still signed the test account out everywhere. `clack login` alone did it: the exchange, the token page and one workspace `auth.test`. The session ended about 9 s after login finished, before the app had started.
+**Read this first.** Hack Club's Enterprise Grid ends a user's Slack session everywhere (browser, desktop app, every client) a few seconds after it sees the session's cookie and token on a TLS connection made by Go's `crypto/tls`. The trigger is the ClientHello fingerprint (JA3/JA4). HTTP headers, cookies, the User-Agent and HTTP/2 are not. This was proven live on the project's own test account, with the user's consent, by changing one variable at a time:
+
+| | client | TLS seen by Slack | requests | session afterwards |
+|---|---|---|---|---|
+| A | Clack (Go): alpha.1, alpha.2, desktop rounds 2–4; any User-Agent (browser, Slack desktop, honest `Clack/…`); also with `GODEBUG=http2client=0` (HTTP/1.1) | Go `crypto/tls` | the sign-in exchange, `app.slack.com/auth`, `auth.test` | **signed out everywhere** within about 20 s, every time |
+| B | Python `urllib` (OpenSSL 3.0.13, HTTP/1.1), including runs with Clack's exact User-Agent and the same six cookies | OpenSSL 3.0.13 | `GET slack.com/api/auth.loginMagicBulk?magic_tokens=…&ssb=1`, `GET app.slack.com/auth?app=client&return_to=%2Fclient%2F<T>&teams=&iframe=1`, `POST hackclub.slack.com/api/auth.test` | **alive** 120 s+ |
+| C | the same Clack binary as A (84bcdf7), same requests, routed through mitmproxy | OpenSSL (mitmproxy's, Python) | Go's request bytes, unchanged | **alive** 120 s+ |
+
+C is decisive: the only thing that changed between A and C is who made the TLS handshake.
+
+**The fix (branch `tls-fp`).** Every TLS connection Clack makes to a Slack host now presents the ClientHello that survived in B. It is the exact 517-byte record Python urllib sent, embedded as `internal/slack/tlsfp/openssl-3.0.13.bin` and replayed through uTLS (`github.com/refraction-networking/utls`). All of them speak HTTP/1.1 only, as B did. That covers the Web API, edgeapi, downloads and uploads, the realtime socket's handshake, the sign-in exchange, CDN fetches, and plugin fetches to Slack hosts. For `slack.com` the hello Clack builds is the recording byte for byte, apart from the random, session id and x25519 key share, which are new on every connection (`TestHelloIsTheRecording`). For other Slack hosts only the SNI differs, and OpenSSL's padding rule keeps the hello at 512 bytes (`TestHelloForSlackHosts`). Certificates are verified exactly as `crypto/tls` does (`TestVerification`, `TestSSLCertFile`). `TestOnlyTLSFPDials` fails the build if any other code makes its own TLS connection or HTTP transport. Details: docs/SECURITY.md C-19 and docs/NATIVE.md "Connections to Slack".
+
+What uTLS can't do is fail closed, never weaker. The recording offers `encrypt_then_mac` and `post_handshake_auth`, and uTLS sends them as the same empty extensions without implementing either. It also lists DHE suites and x448/ffdhe groups that uTLS can't complete. Slack negotiates TLS 1.3 with x25519 and an AEAD suite, where none of these apply. A server that picked one of them would fail the handshake rather than get a weaker connection.
+
+The orchestrator still has to confirm the fix live (a `tls-fp` build signing in and staying signed in for at least 120 s). Until then, treat the root cause as proven and the fix as built but not yet confirmed live.
+
+The status below is from before the root cause was found, kept as written.
+
+## Status before the root cause (2026-11-08)
+
+The "browser disguise" conclusion this section used to state was refuted by round 4. A build of this branch (84bcdf7), which sends only the honest `Clack/…` User-Agent and no browser headers, still signed the test account out everywhere. `clack login` alone did it: the exchange, the token page and one workspace `auth.test`. The session ended about 9 s after login finished, before the app had started.
 
 Live tests on the project's own test account, with the user's consent:
 

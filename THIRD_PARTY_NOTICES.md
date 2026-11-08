@@ -9,6 +9,8 @@ Clack is MIT licensed (see `LICENSE`). It includes or links the following third-
 | [Lato](https://www.latofonts.com) fonts (`assets/fonts`) | UI font | SIL Open Font License 1.1 (`assets/fonts/OFL.txt`) |
 | [emoji-data](https://github.com/iamcal/emoji-data) (`internal/emoji/standard.json`) | standard emoji table | MIT |
 | [coder/websocket](https://github.com/coder/websocket) | realtime gateway | ISC |
+| [uTLS](https://github.com/refraction-networking/utls) (`refraction-networking/utls`, a fork of Go's crypto/tls) | the TLS handshake toward Slack (`internal/slack/tlsfp`) | BSD-3-Clause |
+| [andybalholm/brotli](https://github.com/andybalholm/brotli), [klauspost/compress](https://github.com/klauspost/compress) (zstd) | linked by uTLS for certificate compression | MIT; BSD-3-Clause |
 | [wazero](https://github.com/tetratelabs/wazero) | WebAssembly runtime for plugins | Apache-2.0 |
 | [QuickJS-NG](https://github.com/quickjs-ng/quickjs) (compiled to `internal/jsrt` wasm) | JS engine for plugins | MIT (`internal/jsrt/vendor/LICENSE.quickjs-ng`) |
 | [React](https://react.dev), react-reconciler, scheduler (`internal/jsrt/vendor`) | plugin UI rendering | MIT (`internal/jsrt/vendor/LICENSE.*`) |

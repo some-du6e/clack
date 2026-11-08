@@ -116,8 +116,8 @@ What isn't verified yet: whether this session survives you signing out in the br
 
 ### Advanced: paste a token
 
-> [!WARNING]
-> **This way Clack shares your browser's Slack session. It is not a separate sign-in.** If Slack sees that session used in a way it finds unusual, it can sign it out **everywhere**: the browser, the desktop app and Clack. This happened to a tester on Hack Club's Enterprise Grid with v0.1.0-alpha.1 and v0.1.0-alpha.2, the moment they clicked Sign in. Those versions claimed to be a browser (a Chrome User-Agent and client hints) from a client that plainly isn't one, and that is what Grid reacts to ([docs/SIGNOUT-AUDIT.md](docs/SIGNOUT-AUDIT.md)). Clack now always says it is Clack. Use an account you can sign back in to all the same.
+> [!NOTE]
+> **This way Clack shares your browser's Slack session. It is not a separate sign-in.** Earlier versions got sessions signed out **everywhere** (the browser, the desktop app and Clack) on Hack Club's Enterprise Grid, a few seconds after signing in. The cause was found: Grid reacts to Go's TLS handshake. This release connects to Slack with OpenSSL's handshake instead, which Grid leaves alone ([docs/SIGNOUT-AUDIT.md](docs/SIGNOUT-AUDIT.md)). Slack can still end a shared session for its own reasons, so use an account you can sign back in to.
 
 Click **Advanced: paste a token instead** on the sign-in screen (or press Enter at `clack login`'s link prompt). Fill in your workspace, the `xoxc-` **token**, the **`d` cookie** (`xoxd-…`) and, optionally, the org token (Enterprise Grid workspaces such as Hack Club). Don't paste `d-s`: Clack never sends it on a pasted session. Clack only checks them with `auth.test`: it never loads Slack web pages with your cookie and never calls a sign-out API, so your browser session stays signed in.
 
@@ -131,7 +131,7 @@ Paste that JSON into the Token field. Clack picks out the workspace token, the o
 
 ### Either way
 
-Every request Clack makes to Slack, whichever way you signed in, says what it is: `User-Agent: Clack/<version> (+https://github.com/some-du6e/yoloslackgoclient)`. It sends no browser or Slack desktop User-Agent, no `sec-ch-ua` client hints, no `Sec-Fetch-*` and no `Origin` or `Referer`. Clack doesn't ask for your browser's user agent, and an old `creds.json` that has one is read and the value ignored.
+Every connection Clack makes to Slack uses the TLS handshake of OpenSSL 3.0.13 (the one Python sends) over HTTP/1.1, not Go's, which Enterprise Grid signed sessions out for. Every request says what it is: `User-Agent: Clack/<version> (+https://github.com/some-du6e/yoloslackgoclient)`. It sends no browser or Slack desktop User-Agent, no `sec-ch-ua` client hints, no `Sec-Fetch-*` and no `Origin` or `Referer`. Clack doesn't ask for your browser's user agent, and an old `creds.json` that has one is read and the value ignored.
 
 Credentials are saved to `~/.config/clack/creds.json`, readable only by you (mode 600 in a 700 directory; an owner-only ACL on Windows). They only ever go to https slack.com hosts. "Sign out on this device" deletes that file and nothing else.
 
