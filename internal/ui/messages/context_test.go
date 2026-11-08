@@ -262,8 +262,8 @@ func TestContextMenuOnSelection(t *testing.T) {
 	e.r.Queue(
 		pointer.Event{Kind: pointer.Move, Position: a, Source: pointer.Mouse, Time: e.clock},
 		pointer.Event{Kind: pointer.Press, Position: a, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Time: e.clock + 10*time.Millisecond},
-		pointer.Event{Kind: pointer.Drag, Position: a.Add(f32.Pt(20, 0)), Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Time: e.clock + 30*time.Millisecond},
-		pointer.Event{Kind: pointer.Drag, Position: b, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Time: e.clock + 50*time.Millisecond},
+		pointer.Event{Kind: pointer.Move, Position: a.Add(f32.Pt(20, 0)), Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Time: e.clock + 30*time.Millisecond},
+		pointer.Event{Kind: pointer.Move, Position: b, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Time: e.clock + 50*time.Millisecond},
 		pointer.Event{Kind: pointer.Release, Position: b, Source: pointer.Mouse, Time: e.clock + 70*time.Millisecond},
 	)
 	for k := 0; k < 3; k++ {
