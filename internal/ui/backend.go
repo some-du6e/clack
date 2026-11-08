@@ -452,7 +452,7 @@ func (b *backend) handle(a *App, ev core.Event) {
 			}
 			changed = true
 		}
-	case "conv", "conv_removed", "sidebar_changed", "resync", "team", "prefs":
+	case "conv", "conv_removed", "sidebar_changed", "resync", "team": // "prefs" is handled above (it resnapshots too)
 		b.resnapshot(a)
 	case "auth_failed":
 		// core stopped all traffic on a dead session: back to sign-in
