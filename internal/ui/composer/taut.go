@@ -113,6 +113,9 @@ type prepareSendArgs struct {
 	DraftID         string          `json:"draftId,omitempty"`
 	ViewContext     string          `json:"viewContext,omitempty"`
 	FileIDs         []string        `json:"fileIds,omitempty"`
+	// SlashCommandAppID picks the app whose command a plugin turned the
+	// message into (NativeAtChannel: at-channel's /channel).
+	SlashCommandAppID string `json:"slashCommandAppId,omitempty"`
 }
 
 // sendMessageArgs is the chat.postMessage-shaped sendMessage thunk.

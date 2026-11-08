@@ -659,6 +659,15 @@ func (c *Composer) schedule(t time.Time) {
 	c.clearAfterSend()
 	go func() {
 		ctx := context.Background()
+		// Slack checks the keywords before scheduling too (broadcast.go)
+		if used := deltaKeywords(doc.Delta()); len(used) > 0 {
+			j := &sendJob{api: api, ch: ch, ts: ts}
+			if msg, no := j.prohibited(ctx, ch, ts, used); no {
+				api.localEphemeral(ch, ts, msg)
+				c.restore(doc)
+				return
+			}
+		}
 		text, blocks := transformBlocks(ctx, text, blocks)
 		_, err := api.scheduleMessage(ctx, ch, ts, text, blocks, broadcast, t.Unix())
 		if err != nil {
@@ -746,6 +755,9 @@ type outgoing struct {
 	text      string
 	blocks    json.RawMessage
 	broadcast bool
+	// delta is the delta a plugin handed back to the composer's
+	// prepareAndSendMessage (bChannel's "/bchannel …"); nil: doc's
+	delta map[string]any
 }
 
 // send posts the message (with any attached files) through Slack's
@@ -762,13 +774,16 @@ func (c *Composer) send(o *outgoing) {
 		if hasFiles {
 			c.later(func() {
 				c.att.SetUploading(false)
+				if isProhibitedBroadcast(err) {
+					return // Slackbot said why; the files stay attached
+				}
 				if err != nil {
 					c.h.Toast("Upload failed: " + err.Error())
 					return
 				}
 				c.att.Clear()
 			})
-		} else if err != nil {
+		} else if err != nil && !isProhibitedBroadcast(err) { // Slackbot already said why
 			c.later(func() { c.h.Toast("Message not sent: " + err.Error()) })
 		}
 		if err != nil {
@@ -789,19 +804,22 @@ type sendJob struct {
 }
 
 func (j *sendJob) run(ctx context.Context) error {
+	delta := j.o.delta
+	if delta == nil {
+		delta = j.o.doc.Delta()
+	}
+	args := prepareSendArgs{ChannelID: j.ch, ReplyToTs: j.ts, Delta: delta, Text: j.o.text, Blocks: j.o.blocks,
+		ShouldBroadcast: j.o.broadcast, Broadcast: j.o.broadcast, DraftID: j.draftID, ViewContext: j.view}
 	if t := currentTaut(); t.ThunkPatched(thPrepareAndSend) {
-		args := prepareSendArgs{ChannelID: j.ch, ReplyToTs: j.ts, Delta: j.o.doc.Delta(), Text: j.o.text, Blocks: j.o.blocks,
-			ShouldBroadcast: j.o.broadcast, Broadcast: j.o.broadcast, DraftID: j.draftID, ViewContext: j.view}
 		for _, p := range j.prepared {
 			args.FileIDs = append(args.FileIDs, p.ID)
 		}
 		_, err := taut.Dispatch(ctx, t, thPrepareAndSend, args, func(ctx context.Context, a prepareSendArgs) (any, error) {
-			broadcast := (a.ShouldBroadcast || a.Broadcast) && a.ReplyToTs != ""
-			return nil, j.deliver(ctx, a.ChannelID, a.ReplyToTs, a.Text, a.Blocks, broadcast)
+			return nil, j.prepareAndSend(ctx, a) // broadcast.go
 		})
 		return err
 	}
-	return j.deliver(ctx, j.ch, j.ts, j.o.text, j.o.blocks, j.o.broadcast)
+	return j.prepareAndSend(ctx, args)
 }
 
 // deliver is prepareAndSendMessage's native: share the files with the
@@ -865,7 +883,8 @@ func (c *Composer) sendViaJS(o *outgoing) {
 // prepareAndSend is the prepareAndSendMessage({delta, channelId,
 // replyToTs, shouldBroadcast}) MessagePaneInput and InputContainer pass
 // to JS. It sends the message the composer handed to sendViaJS, with a
-// plugin's shouldBroadcast override (SlimMessageBox).
+// plugin's shouldBroadcast override (SlimMessageBox) and delta (bChannel
+// turns the message into its /bchannel command; sendJob runs it as one).
 func (c *Composer) prepareAndSend(opts slackc.Props) {
 	o := c.pending
 	c.pending = nil
@@ -874,6 +893,9 @@ func (c *Composer) prepareAndSend(opts slackc.Props) {
 	}
 	if opts.Has("shouldBroadcast") {
 		o.broadcast = opts.Bool("shouldBroadcast") && c.ts != ""
+	}
+	if d := opts.Map("delta"); d != nil {
+		o.delta = map[string]any(d)
 	}
 	c.checkThenSend(o)
 }

@@ -53,6 +53,9 @@ type slickEnv struct {
 	trees map[uint64][]byte
 
 	why func() string // what to log when until times out
+	// fetch answers plugin fetches outside the fake API (a JSON body, ok);
+	// set it in startSlick's before
+	fetch func(req *http.Request) (string, bool)
 }
 
 // slickHost is the composer's Host over the synthetic core and a real
@@ -121,6 +124,11 @@ func startSlick(t *testing.T, name string, opts map[string]any, before func(e *s
 		Fetch: func(ctx context.Context, req *http.Request) (*http.Response, error) {
 			if strings.HasPrefix(req.URL.String(), fs.srv.URL) {
 				return http.DefaultClient.Do(req.WithContext(ctx))
+			}
+			if e.fetch != nil {
+				if body, ok := e.fetch(req); ok {
+					return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
+				}
 			}
 			return &http.Response{StatusCode: 404, Header: http.Header{}, Body: io.NopCloser(bytes.NewReader(nil)), Request: req}, nil
 		},
@@ -336,13 +344,14 @@ func TestSlickViewCharacterCounter(t *testing.T) {
 }
 
 // TestSlickViewbChannel: where bChannel relays (its /bchannel command is
-// installed and the viewer can't @channel), the @ rows offer every
-// broadcast keyword, @everyone too outside #general.
+// installed and Slack's canUserAtChannelInChannelById says no), the @ rows
+// offer every broadcast keyword, @everyone too outside #general.
 func TestSlickViewbChannel(t *testing.T) {
 	e := startSlick(t, "bChannel", nil, func(e *slickEnv) {
 		e.slack.mu.Lock()
 		e.slack.reply = map[string]any{"commands.list": map[string]any{"ok": true,
-			"commands": map[string]any{"/bchannel": map[string]any{"name": "/bchannel", "desc": "Relay @channel", "type": "app"}}}}
+			"commands": map[string]any{"/bchannel": map[string]any{"name": "/bchannel", "desc": "Relay @channel", "type": "app"}}},
+			"edge/permissions/info": noBroadcastPerms} // Slack refuses @channel here
 		e.slack.mu.Unlock()
 	})
 	e.patched("TextyAutocomplete")

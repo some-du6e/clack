@@ -411,7 +411,8 @@ func (b *backend) handle(a *App, ev core.Event) {
 		if ev.Count != nil {
 			changed = b.setCount(ev.Channel, *ev.Count)
 		}
-		if ev.Msg != nil && ev.Msg.User != b.selfID && !ev.Msg.System {
+		// (ephemerals, e.g. Slackbot's "you can't @channel here", never notify)
+		if ev.Msg != nil && ev.Msg.User != b.selfID && !ev.Msg.System && !b.core.Interactive().Ephemeral(ev.Channel, ev.TS) {
 			cur := a.router.Current().Channel()
 			c := m.conv(ev.Channel)
 			direct := ev.ConvKind == "im" || ev.ConvKind == "mpim"

@@ -168,6 +168,9 @@ type Autocomplete struct {
 	cmdLoading bool
 	emojiIdx   *emojiIndex
 	emoLoading bool
+	// the viewer's @channel/@everyone permissions here (permissions/info)
+	perms       core.BroadcastPerms
+	permLoading bool
 }
 
 type acAccept struct {
@@ -509,6 +512,15 @@ func (ac *Autocomplete) load(t acTrigger) {
 	defer ac.mu.Unlock()
 	switch t.Kind {
 	case acUser:
+		if !ac.perms.Known && !ac.permLoading {
+			ac.permLoading = true
+			go func() {
+				// a failed lookup leaves them unknown: no keyword is offered,
+				// as in Slack (the send check asks again)
+				p, _ := api.broadcastPerms(ac.ctx, ac.channelID)
+				ac.land(func() { ac.perms = p })
+			}()
+		}
 		if ac.members == nil && !ac.memLoading {
 			ac.memLoading = true
 			go ac.loadMembers(api)
@@ -877,24 +889,28 @@ func rankUsers(q string, users []core.User, boost map[string]bool, members map[s
 	return out
 }
 
-// rankBroadcasts lists @here, @channel and @everyone that start with q.
-// IMs get none; @everyone only shows in the workspace's general channel.
+// rankBroadcasts lists @here, @channel and @everyone that start with q,
+// all the conversation kind can carry: IMs get none, @everyone only shows
+// in the workspace's general channel. Who may use them is rankKeywords'
+// filter (memberSources.rank).
 func rankBroadcasts(q, convKind string, general bool) []acItem {
 	if convKind == "im" {
 		return nil
 	}
+	return rankKeywords(q, func(id string) bool { return id != core.KeywordEveryone || general })
+}
+
+// rankKeywords lists the broadcast keywords keep allows that start with q.
+func rankKeywords(q string, keep func(id string) bool) []acItem {
 	q = strings.ToLower(q)
 	all := []struct{ id, hint string }{
-		{"here", "Notify every online member in this channel."},
-		{"channel", "Notify everyone in this channel."},
-		{"everyone", "Notify everyone in your workspace."},
+		{core.KeywordHere, "Notify every online member in this channel."},
+		{core.KeywordChannel, "Notify everyone in this channel."},
+		{core.KeywordEveryone, "Notify everyone in your workspace."},
 	}
 	var out []acItem
 	for _, b := range all {
-		if b.id == "everyone" && !general {
-			continue
-		}
-		if !strings.HasPrefix(b.id, q) {
+		if !keep(b.id) || !strings.HasPrefix(b.id, q) {
 			continue
 		}
 		out = append(out, acItem{
