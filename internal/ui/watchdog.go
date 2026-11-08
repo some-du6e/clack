@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/openurl"
 )
 
 // The frame watchdog: field diagnosis for freezes.
@@ -97,6 +98,20 @@ func (w *watchdog) notePage(p string) {
 	if cur := w.page.Load(); cur == nil || *cur != p {
 		w.page.Store(&p)
 	}
+}
+
+// showFreezeReports is Help > Show Freeze Reports: the folder in Finder (or
+// a toast when there are none). Any goroutine.
+func (a *App) showFreezeReports() {
+	if a.opts.ConfigDir == "" {
+		return
+	}
+	dir := filepath.Join(a.opts.ConfigDir, "freeze-reports")
+	if ents, err := os.ReadDir(dir); err != nil || len(ents) == 0 {
+		a.Post(func() { a.Toast("No freeze reports: Clack hasn't frozen on this computer") })
+		return
+	}
+	_ = openurl.OpenFolder(dir)
 }
 
 // run is the watchdog goroutine.
