@@ -105,6 +105,9 @@ func (b *backend) start(a *App) {
 	// Live updates only when the user opted in (realtime.go); core polls
 	// otherwise. Set before Boot so the socket is never opened unasked.
 	b.core.SetRealtime(a.realtimeOn())
+	if b.core.S.HasCachedPrefs() { // the cached account theme paints the first frame
+		a.applyAccountPrefs(b.core.Prefs())
+	}
 	go func() {
 		t0 := time.Now()
 		if err := b.core.Boot(b.ctx); err != nil {
@@ -200,6 +203,7 @@ func (b *backend) resnapshot(a *App) {
 // apply replaces the model from a snapshot.
 func (b *backend) apply(a *App, s core.Snapshot) {
 	m := &b.m
+	a.applyAccountPrefs(s.Prefs)
 	b.selfID = s.Self.ID
 	b.domain = s.Team.Domain
 	b.teamID = s.Team.ID
@@ -346,6 +350,10 @@ func (b *backend) handle(a *App, ev core.Event) {
 	m := &b.m
 	changed := false
 	switch ev.Type {
+	case "prefs":
+		if ev.Prefs != nil {
+			a.applyAccountPrefs(*ev.Prefs)
+		}
 	case "draft":
 		b.loadDrafts(a)
 	case "typing":

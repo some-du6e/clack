@@ -27,6 +27,7 @@ type prefsModal struct {
 	slick   *slickPage             // Preferences > Slick's tabs
 	tabSubs map[string]*slackc.Sub // plugin Preferences tabs (RenderPreferencesTab)
 	tabGen  int                    // App.tautGen the tab subs belong to
+	scroll  prefsScroll            // Clack's own pages scroll (prefs_form.go)
 }
 
 // pagePositioned is a page widget that needs its window origin (dropdowns).
@@ -346,7 +347,7 @@ func (p *prefsModal) section1(gtx layout.Context, id string, org image.Point) la
 	if d, ok := p.pluginTab(gtx, id); ok {
 		return d
 	}
-	return p.page(gtx, id)
+	return p.scrolled(gtx, id, func(gtx layout.Context) layout.Dimensions { return p.page(gtx, id) })
 }
 
 // navItem draws one tab button at y; label is a string, or lel a plugin's

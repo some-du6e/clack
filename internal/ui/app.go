@@ -142,7 +142,8 @@ type App struct {
 	winSize     image.Point
 	sbBase      color.NRGBA
 	sbPal       theme.Palette
-	styleVer    uint64 // slackc.Styles.Version the palette was derived at
+	styleVer    uint64    // slackc.Styles.Version the palette was derived at
+	acct        acctTheme // the Slack account's theme (theme_account.go)
 	shaperCh    chan [2]*text.Shaper
 	explorer    *explorer.Explorer    // native file chooser (set in onWindow)
 	tautGen     int                   // bumps when a (new) plugin runtime attaches
@@ -214,6 +215,7 @@ func (a *App) Run() error {
 	)
 	a.winLive.Store(a.win)
 	go a.updateLoop()
+	a.watchOSTheme()
 	if a.images != nil {
 		a.images.SetInvalidate(a.win.Invalidate)
 		a.th.Images = a.images
@@ -535,9 +537,10 @@ func (a *App) view(r Route, mk func() View) View {
 // ToggleDark flips light/dark mode and persists the choice.
 func (a *App) ToggleDark() { a.setDark(!a.th.Dark) }
 
-// setDark goes through Taut's setUserPrefByApi thunk (Slack's dark_mode
-// pref) so plugins see the change; the native applies it locally only
-// (Clack's theme is a local setting, the account pref is left alone).
+// setDark goes through Taut's setUserPrefByApi thunk (dark_mode) so
+// plugins see the change; the native applies it locally only. Slack keeps
+// light/dark per device in localStorage ("userTheme"), not in users.prefs,
+// so there is no account pref to write (theme_account.go).
 func (a *App) setDark(dark bool) {
 	v := "light"
 	if dark {

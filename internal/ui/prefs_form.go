@@ -4,6 +4,7 @@ import (
 	"image"
 
 	"gioui.org/layout"
+	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
@@ -117,4 +118,26 @@ func (f *prefsForm) optionAt(key, label, hint string, on, radio, enabled bool, d
 		a.Invalidate()
 	}
 	f.y += rowH + gtx.Dp(4)
+}
+
+// prefsScroll scrolls Clack's own pages (Slack's panel scrolls past its
+// 603px); the position resets when the section changes.
+type prefsScroll struct {
+	list widget.List
+	sec  string
+}
+
+func (p *prefsModal) scrolled(gtx layout.Context, sec string, w layout.Widget) layout.Dimensions {
+	s := &p.scroll
+	s.list.Axis = layout.Vertical
+	if s.sec != sec {
+		s.sec = sec
+		s.list.Position = layout.Position{}
+	}
+	return s.list.List.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+		gtx.Constraints.Min = image.Point{}
+		d := w(gtx)
+		d.Size.Y += gtx.Dp(24) // room under the last row
+		return d
+	})
 }
