@@ -336,6 +336,7 @@ func oneLine(s string) string {
 type chTab struct {
 	key, label, icon string
 	fileID           string
+	unread           bool // Slack's blue dot on the tab icon (unopened canvas)
 }
 
 func (a *App) channelTabs(ch string) []chTab {
@@ -382,6 +383,13 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 				at(gtx, image.Pt(gtx.Dp(8), (sz.Y-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
 					return icons.Get(icon)(gtx, 16, col)
 				})
+				if t.unread {
+					// Slack's p-channel_tab_unread_badge: 12px, 2px ring in the
+					// header background around the blue dot, on the icon's corner.
+					ctr := image.Pt(gtx.Dp(8+16-2), (sz.Y-gtx.Dp(16))/2+gtx.Dp(2))
+					theme.Circle(gtx, ctr, gtx.Dp(12), c.Bg)
+					theme.Circle(gtx, ctr, gtx.Dp(8), c.Link)
+				}
 				at(gtx, image.Pt(gtx.Dp(28), 0), image.Pt(lw+2, sz.Y), func(gtx layout.Context) layout.Dimensions {
 					return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
 						return a.th.Label(gtx, 13, theme.Bold, col, t.label)

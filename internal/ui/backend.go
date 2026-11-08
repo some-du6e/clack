@@ -36,6 +36,12 @@ type backend struct {
 	teamID string
 	ext    map[string]*convInfo // ResolveConv results for convs outside the sidebar
 
+	// unsent drafts (drafts.list, refreshed on "draft" events), UI goroutine
+	// only: Slack's "✎ N" on Drafts & sent and the pencil on channel rows.
+	draftN     int
+	draftChans map[string]bool
+	draftSeq   int
+
 	tabCache  map[string][]chTab
 	bookmarks map[string][]core.Bookmark
 	fetched   map[string]time.Time
@@ -114,6 +120,39 @@ func (b *backend) start(a *App) {
 				b.opened(ch) // restored route: fetch tabs + facepile
 			}
 			b.saveCache()
+			b.loadDrafts(a)
+		})
+	}()
+}
+
+// loadDrafts refetches the unsent drafts for the sidebar's draft markers.
+// UI goroutine; the call runs in the background.
+func (b *backend) loadDrafts(a *App) {
+	b.draftSeq++
+	seq := b.draftSeq
+	go func() {
+		ctx, cancel := context.WithTimeout(b.ctx, 15*time.Second)
+		defer cancel()
+		ds, err := b.core.Drafts(ctx)
+		if err != nil {
+			return
+		}
+		n, chans := 0, map[string]bool{}
+		for _, d := range ds {
+			if d.DateScheduled != 0 {
+				continue // scheduled messages live in the Scheduled tab
+			}
+			n++
+			if d.Channel != "" && d.ThreadTS == "" {
+				chans[d.Channel] = true
+			}
+		}
+		a.Post(func() {
+			if seq != b.draftSeq {
+				return
+			}
+			b.draftN, b.draftChans = n, chans
+			a.Invalidate()
 		})
 	}()
 }
@@ -300,6 +339,8 @@ func (b *backend) handle(a *App, ev core.Event) {
 	m := &b.m
 	changed := false
 	switch ev.Type {
+	case "draft":
+		b.loadDrafts(a)
 	case "typing":
 		if os.Getenv("CLACK_TYPINGLOG") != "" { // ids only
 			log.Printf("ui: typing ch=%s user=%s self=%v", ev.Channel, ev.UserID, ev.UserID == b.selfID)
@@ -460,7 +501,7 @@ func (b *backend) opened(ch string) {
 			if label == "" {
 				continue
 			}
-			tabs = append(tabs, chTab{key: "tab:" + t.ID, label: label, icon: icon, fileID: t.FileID})
+			tabs = append(tabs, chTab{key: "tab:" + t.ID, label: label, icon: icon, fileID: t.FileID, unread: t.Unread})
 			bms = append(bms, t.Bookmarks...)
 		}
 		var members []string
