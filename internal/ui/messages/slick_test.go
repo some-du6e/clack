@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"image/color"
 	"io"
 	"net/http"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/slick"
 	"github.com/some-du6e/yoloslackgoclient/internal/store"
 	"github.com/some-du6e/yoloslackgoclient/internal/taut"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
@@ -341,12 +343,14 @@ func TestSlickViewBetterBlock(t *testing.T) {
 // plugin's .slick-ml-deleted row (MessageWrapper), and an edited one is
 // marked .slick-ml-edited.
 func TestSlickViewMessageLogger(t *testing.T) {
-	const ch, tsGone, tsEdit = "C0LOGGED", "1700000501.000100", "1700000502.000200"
+	const ch, tsGone, tsEdit, tsRich = "C0LOGGED", "1700000501.000100", "1700000502.000200", "1700009503.000300"
 	e := newSlickEnv(t, func(s *store.Store) {
 		s.PutConv(slack.Conversation{ID: ch, Name: "logged", IsChannel: true, IsMember: true, NumMembers: 3})
 		s.SetLatest(ch, []slack.Message{
 			{Type: "message", TS: tsGone, User: "UALICE", Text: "this synthetic note will vanish"},
 			{Type: "message", TS: tsEdit, User: "UBOB", Text: "first synthetic draft"},
+			{Type: "message", TS: tsRich, User: "UALICE", Text: "plainword boldword …", Blocks: cssRowBlocks(),
+				Reactions: []slack.Reaction{{Name: "tada", Count: 3, Users: []string{"UBOB", tSelf, "UALICE"}}}},
 		}, false)
 	})
 	e.install(t, "MessageLogger", nil)
@@ -370,6 +374,49 @@ func TestSlickViewMessageLogger(t *testing.T) {
 	inject(map[string]any{"type": "message", "subtype": "message_changed", "channel": ch, "hidden": true, "ts": "1700000511.000100",
 		"message":          map[string]any{"type": "message", "user": "UBOB", "text": "second synthetic draft", "ts": tsEdit, "edited": map[string]any{"user": "UBOB", "ts": "1700000511.000000"}},
 		"previous_message": map[string]any{"type": "message", "user": "UBOB", "text": "first synthetic draft", "ts": tsEdit}})
+	// MessageLogger's red deleted style reaches every native part of the
+	// row, as ".slick-ml-deleted *" does in Slack's DOM.
+	inject(map[string]any{"type": "message", "subtype": "message_deleted", "channel": ch, "hidden": true, "ts": "1700000512.000100", "deleted_ts": tsRich,
+		"previous_message": map[string]any{"type": "message", "user": "UALICE", "text": "plainword boldword …", "ts": tsRich, "blocks": json.RawMessage(cssRowBlocks())}})
+	e.waitFor(t, "the rich deleted message kept", f, func() bool {
+		r := v.s.rows[tsRich]
+		return r != nil && itemHeight(v.s, tsRich) > 0 && strings.Contains(rowText(r), "codeword") && e.ui.anyTree(tsRich)
+	})
+	red := color.NRGBA{R: 0xe0, G: 0x1e, B: 0x5a, A: 0xff}
+	var labels map[string]color.NRGBA
+	e.waitFor(t, "every part of the deleted row red", func() {
+		labels = map[string]color.NRGBA{}
+		labelMu.Lock()
+		labelHook = func(txt string, s textStyle) { labels[txt] = s.col }
+		f()
+		labelHook = nil
+		labelMu.Unlock()
+	}, func() bool {
+		ok := labels[clock(tsTime(tsRich))] == red && labels["alice"] == red
+		v.s.rows[tsRich].rv.Runs(func(r richview.Run) {
+			if r.Color != red {
+				ok = false
+			}
+		})
+		return ok
+	})
+	v.s.rows[tsRich].rv.Runs(func(r richview.Run) {
+		if r.Color != red {
+			t.Errorf("deleted row: %q painted %v", r.Text, r.Color)
+		}
+	})
+	if c := labels["bob"]; c == red {
+		t.Error("the sender of a row that isn't deleted is red")
+	}
+	// the row that wasn't deleted keeps its colors
+	if r := v.s.rows[tsEdit]; r != nil {
+		r.rv.Runs(func(r richview.Run) {
+			if r.Color == red {
+				t.Errorf("a row that isn't deleted: %q red", r.Text)
+			}
+		})
+	}
+
 	e.waitFor(t, "the edited message drawn with its new text, marked edited", f, func() bool {
 		return strings.Contains(rowText(v.s.rows[tsEdit]), "second synthetic draft") && e.ui.anyTree("slick-ml-edited")
 	})
@@ -380,6 +427,42 @@ func TestSlickViewMessageLogger(t *testing.T) {
 	e.waitFor(t, "the edit history (original text) under the edited message", f, func() bool {
 		return e.ui.anyTree("slick-ml-edited-original") && e.ui.anyTree("first synthetic draft")
 	})
+}
+
+// MessageLogger's opacity deleted style: the deleted row's natives are
+// drawn under its wrapper's opacity 0.5, the others at 1.
+func TestSlickViewMessageLoggerOpacity(t *testing.T) {
+	const ch, tsGone, tsKept = "C0LOGGED2", "1700000521.000100", "1700000522.000200"
+	e := newSlickEnv(t, func(s *store.Store) {
+		s.PutConv(slack.Conversation{ID: ch, Name: "logged-two", IsChannel: true, IsMember: true, NumMembers: 3})
+		s.SetLatest(ch, []slack.Message{
+			{Type: "message", TS: tsGone, User: "UALICE", Text: "a synthetic note that fades"},
+			{Type: "message", TS: tsKept, User: "UBOB", Text: "a synthetic note that stays"},
+		}, false)
+	})
+	e.install(t, "MessageLogger", map[string]any{"deletedStyle": "opacity"})
+	patched(t, "MessageWrapper")
+	v := NewChannelView(e.h, ch)
+	v.Preview = true
+	f := frameFn(v)
+	e.waitFor(t, "rows drawn through the plugin", f, func() bool { return v.s.rows[tsGone] != nil && e.ui.anyTree(tsGone) })
+	raw, _ := json.Marshal(map[string]any{"type": "message", "subtype": "message_deleted", "channel": ch, "hidden": true, "ts": "1700000530.000100", "deleted_ts": tsGone,
+		"previous_message": map[string]any{"type": "message", "user": "UALICE", "text": "a synthetic note that fades", "ts": tsGone}})
+	e.app.Inject(slack.Event{Type: "message", Subtype: "message_deleted", Channel: json.RawMessage(`"` + ch + `"`), Raw: raw})
+	var op map[string]float32
+	e.waitFor(t, "the deleted row drawn at opacity 0.5", func() {
+		op = map[string]float32{}
+		labelMu.Lock()
+		labelHook = func(txt string, _ textStyle) { op[txt] = slackc.EffectiveOpacity() }
+		f()
+		labelHook = nil
+		labelMu.Unlock()
+	}, func() bool {
+		return e.ui.anyTree("slick-ml-deleted") && op["alice"] == 0.5
+	})
+	if o, ok := op["bob"]; !ok || o != 1 {
+		t.Errorf("the row that wasn't deleted is drawn at opacity %v (drawn %v)", o, ok)
+	}
 }
 
 // QuickJoin: a channel you can join, mentioned in a message, gets a Join

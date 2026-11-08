@@ -422,6 +422,19 @@ func popHost() {
 	}
 }
 
+// EffectiveOpacity is the product of the CSS opacity of every element on
+// the stack: what a native drawn now is multiplied by (host boxes and
+// Styled.Wrap apply it). 1 with no CSS.
+func EffectiveOpacity() float32 {
+	o := float32(1)
+	for i := range stack {
+		if st := stack[i].style; st != nil && st.Opacity < 1 {
+			o *= max(st.Opacity, 0)
+		}
+	}
+	return o
+}
+
 // stackParent is the innermost element on the stack (nil at the root),
 // the CSS parent of a host tree's top-level nodes.
 func stackParent() (css.Element, *css.Style, uint64) {
