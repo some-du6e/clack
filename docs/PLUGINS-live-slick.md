@@ -92,7 +92,7 @@ Clack converts theme JSON exactly as Slick's `themeToCss` does. Until `279f419` 
 | Hot Dog Stand | ⚠️ | red chrome, yellow sidebar and header. Message list pending a re-shot after `a4aa0ac`. |
 | i hate myself | ⚠️ | its raw CSS restyles Preferences (borders, tilted Done button). Message list pending a re-shot after `a4aa0ac` (before it, dark text sat on Slack's dark list). |
 | Material, Nord, Verdant | pending live | covered by `internal/ui/theme_tokens_test.go` (Nord) |
-| Custom CSS (user.css) | pending live | Order theme → user.css is fixed (`00d5efe`). user.css overriding a theme token: `TestThemeTokensUserCSS`. |
+| Custom CSS (user.css) | ✅ (CI), live pending | A user rule recolours a native widget over an equally specific `!important` theme rule, `display:none` hides a native element, and removing it restores the theme (`TestUserCSSStylesNativeWidgets`, `2865f2c`). Theme → user.css order fixed (`00d5efe`). A user.css token override recolours the native palette (`TestThemeTokensUserCSS`). |
 
 On `6da798a` the pane background, sidebar and window matched every measured theme exactly, but the message list itself still painted Slack's `#1a1d21`. `a4aa0ac` makes the list follow the tokens (unit test `TestMessageColorsFollowTokens`). Re-shooting the themes on that build is pending live, and each ⚠️ above becomes ✅ when it shows the list themed.
 
