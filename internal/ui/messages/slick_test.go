@@ -392,24 +392,32 @@ func TestSlickViewMessageLogger(t *testing.T) {
 		labelHook = nil
 		labelMu.Unlock()
 	}, func() bool {
+		r := v.s.rows[tsRich]
+		if r == nil || r.rv == nil {
+			return false
+		}
 		ok := labels[clock(tsTime(tsRich))] == red && labels["alice"] == red
-		v.s.rows[tsRich].rv.Runs(func(r richview.Run) {
+		n := 0
+		r.rv.Runs(func(r richview.Run) {
+			n++
 			if r.Color != red {
 				ok = false
 			}
 		})
-		return ok
+		return ok && n > 0
 	})
-	v.s.rows[tsRich].rv.Runs(func(r richview.Run) {
-		if r.Color != red {
-			t.Errorf("deleted row: %q painted %v", r.Text, r.Color)
-		}
-	})
+	if r := v.s.rows[tsRich]; r != nil && r.rv != nil {
+		r.rv.Runs(func(r richview.Run) {
+			if r.Color != red {
+				t.Errorf("deleted row: %q painted %v", r.Text, r.Color)
+			}
+		})
+	}
 	if c := labels["bob"]; c == red {
 		t.Error("the sender of a row that isn't deleted is red")
 	}
 	// the row that wasn't deleted keeps its colors
-	if r := v.s.rows[tsEdit]; r != nil {
+	if r := v.s.rows[tsEdit]; r != nil && r.rv != nil {
 		r.rv.Runs(func(r richview.Run) {
 			if r.Color == red {
 				t.Errorf("a row that isn't deleted: %q red", r.Text)
