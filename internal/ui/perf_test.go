@@ -174,7 +174,7 @@ func copyTree(tb testing.TB, src, dst string) {
 func startEnv(tb testing.TB, fs *fakeslack.Server, home string) *perfEnv {
 	e := &perfEnv{tb: tb, fs: fs, home: home, size: image.Pt(1440, 900), now: time.Now(), start: time.Now()}
 	images := imgcache.New(fs.Fetch, "", nil)
-	e.a = New(Options{ConfigDir: home, Started: e.start}, images)
+	e.a = New(Options{ConfigDir: home, Started: e.start, NoRealtime: true}, images) // no first-run live-updates banner shifting the layout
 	cache := filepath.Join(home, "cache")
 	svc := core.New(slack.New(fs.Creds()), store.New(cache))
 	e.a.Attach(svc, cache)

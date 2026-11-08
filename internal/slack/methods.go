@@ -246,10 +246,19 @@ func (c *Client) WebSocketURL(ctx context.Context, fallback bool) string {
 		Routing  string `json:"routing_context"`
 	}
 	err := c.Call(ctx, "client.getWebSocketURL", nil, &r)
-	// The URL gets the token appended, so only wss:// Slack hosts are used.
-	if err == nil && slackURL(r.Primary, "wss") && !fallback {
+	// The URL gets the token appended, so only wss:// Slack hosts are used
+	// (or, for tests against internal/fakeslack, this client's own loopback
+	// API origin).
+	okURL := func(raw string) bool {
+		if slackURL(raw, "wss") {
+			return true
+		}
+		pu, perr := url.Parse(raw)
+		return perr == nil && isLoopback(c.base) && (pu.Scheme == "ws" || pu.Scheme == "wss") && c.credsOK(pu)
+	}
+	if err == nil && okURL(r.Primary) && !fallback {
 		base = r.Primary
-	} else if err == nil && slackURL(r.Fallback, "wss") && fallback {
+	} else if err == nil && okURL(r.Fallback) && fallback {
 		base = r.Fallback
 	}
 	tok := c.Creds.Token
