@@ -35,7 +35,7 @@ func (e *Editor) keyFilters() []event.Filter {
 		key.Filter{Focus: e, Name: "C", Required: sc, Optional: key.ModShift | key.ModAlt},
 		key.Filter{Focus: e, Name: "I", Required: sc},
 		key.Filter{Focus: e, Name: "U", Required: sc, Optional: key.ModShift},
-		key.Filter{Focus: e, Name: "V", Required: sc, Optional: key.ModShift},
+		key.Filter{Focus: e, Name: "V", Required: sc, Optional: key.ModShift | key.ModAlt},
 		key.Filter{Focus: e, Name: "X", Required: sc, Optional: key.ModShift},
 		key.Filter{Focus: e, Name: "Y", Required: sc},
 		key.Filter{Focus: e, Name: "Z", Required: sc, Optional: key.ModShift},
@@ -168,7 +168,12 @@ func (e *Editor) shortcut(gtx layout.Context, name key.Name, shift, alt bool) bo
 			e.deleteSel()
 		}
 	case "V":
+		// Shift: paste and match style (plain text), like Slack.
 		e.plainPaste = shift
+		e.richRead = nil
+		if !shift {
+			e.richRead = startClipHTML()
+		}
 		gtx.Execute(clipboard.ReadCmd{Tag: e})
 		e.emit(EvPasted)
 	case "Z":

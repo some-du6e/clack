@@ -1375,3 +1375,98 @@ func TestBaseSheet(t *testing.T) {
 		t.Fatal("not empty with only the base sheet left")
 	}
 }
+
+// TestHasPluginForms: every :has() shape the Slick and Taut plugins and
+// Slick's themes use (child, descendant, next and later sibling, a
+// sibling's child, state inside, lists, nested in :is/:not, descendant
+// selectors inside, the :has() element as an ancestor or the subject).
+func TestHasPluginForms(t *testing.T) {
+	sel := n("button").with("aria-selected", "true")
+	tab1 := n("div.slick-chat-tabs__tab", sel)
+	tab2 := n("div.slick-chat-tabs__tab", n("button").with("aria-selected", "false"))
+	bar := n("div.slick-chat-tabs", tab1, tab2)
+	pv := n("div.p-view_contents.p-view_contents--primary", bar, n("div.body"))
+	pvBare := n("div.p-view_contents.p-view_contents--primary", n("div.body"), n("div.slick-chat-tabs-inner", n("div.slick-chat-tabs")))
+	layout := n("div.slick-chat-tabs-layout", pv)
+
+	vh := n("div.p-view_header")
+	vhAlone := n("div.p-view_header")
+	filler := n("div.p-context_bar_v2__filler")
+	cb := n("div.p-context_bar_v2", filler)
+	filler2 := n("div.p-context_bar_v2__filler")
+	cb2 := n("div.p-context_bar_v2", filler2)
+	hook := n("div.p-autoclog__hook", n("span.slick-online-count"))
+	vi := n("div.c-virtual_list__item", n("div").with("data-qa", "reply_container"))
+	viDeep := n("div.c-virtual_list__item", n("div", n("div").with("data-qa", "reply_container")))
+	focused := n("a.name").state(StateFocusVisible)
+	sb := n("nav.p-channel_sidebar", n("div", focused))
+	plain := n("a.name")
+	sbIdle := n("nav.p-channel_sidebar", plain)
+
+	// StreamerMode's sidebar rows: item:has(~ hot):not(:has(~ heading.hot, ~ heading ~ hot))
+	i1 := n("li.item")
+	l1 := n("ul", i1, n("li.item.hot"), n("li.heading"), n("li.item"))
+	j1 := n("li.item")
+	l2 := n("ul", j1, n("li.item.hot"), n("li.heading"), n("li.item.hot"))
+
+	stackName := n("span").with("data-qa", "dms-channel-sender-name")
+	dms := n("div", n("span.c-base_icon_image_stacked"), stackName).with("data-qa", "dms_channel")
+	selName := n("span").with("data-qa", "dms-channel-sender-name")
+	dmsSel := n("div", n("span.c-base_icon_image_stacked"), n("i.p-activity_ia4_page__item--selected"), selName).with("data-qa", "dms_channel")
+
+	pop := n("div.c-popover__content", n("div.c-menu__items", n("div").with("role", "menuitemcheckbox")))
+	popFlat := n("div.c-popover__content", n("div").with("role", "menuitemcheckbox"))
+	lockSug := n("div.c-search_autocomplete__suggestion_item", n("span.c-channel_icon", n("svg").with("data-qa", "lock-filled")))
+	mpimSug := n("div.c-search_autocomplete__suggestion_item").with("data-type", "mpim")
+	pubSug := n("div.c-search_autocomplete__suggestion_item", n("span.c-channel_icon", n("svg").with("data-qa", "channel")))
+	composer := n("div.scope", n("div.c-texty_input"))
+	composerFiles := n("div.scope", n("div.c-pending_files"))
+
+	_ = n("body", layout, n("div", pvBare), n("div", vh, n("div.wrap", n("div.p-threads_view"))), n("div", vhAlone, n("div.wrap")),
+		n("div", cb, n("div.taut-haiku-context-bar")), n("div", cb2, n("div.other"), n("div.taut-haiku-context-bar")),
+		hook, vi, viDeep, sb, sbIdle, l1, l2, dms, dmsSel, pop, popFlat, lockSug, mpimSug, pubSug, composer, composerFiles)
+
+	cases := []struct {
+		sel  string
+		el   *fakeEl
+		want bool
+	}{
+		// Slick ChatTabs
+		{".slick-chat-tabs-layout .p-view_contents--primary:has(> .slick-chat-tabs)", pv, true},
+		{".slick-chat-tabs-layout .p-view_contents--primary:has(> .slick-chat-tabs)", pvBare, false},
+		{".p-view_contents--primary:has(> .slick-chat-tabs)", pvBare, false},
+		{".p-view_contents--primary:has(.slick-chat-tabs)", pvBare, true},
+		{".slick-chat-tabs__tab:has([aria-selected=true])", tab1, true},
+		{".slick-chat-tabs__tab:has([aria-selected=true])", tab2, false},
+		// themes
+		{".p-view_header:has(~ * > .p-threads_view)", vh, true},
+		{".p-view_header:has(~ * > .p-threads_view)", vhAlone, false},
+		{".c-virtual_list__item:has(> [data-qa=reply_container])", vi, true},
+		{".c-virtual_list__item:has(> [data-qa=reply_container])", viDeep, false},
+		{".c-popover__content:has(.c-menu__items [role=menuitemcheckbox])", pop, true},
+		{".c-popover__content:has(.c-menu__items [role=menuitemcheckbox])", popFlat, false},
+		// Taut HaikuWarning, Slick OnlineCount
+		{".p-context_bar_v2:has(+ .taut-haiku-context-bar) > .p-context_bar_v2__filler", filler, true},
+		{".p-context_bar_v2:has(+ .taut-haiku-context-bar) > .p-context_bar_v2__filler", filler2, false},
+		{".p-autoclog__hook:has(> .slick-online-count)", hook, true},
+		// StreamerMode
+		{".p-channel_sidebar:is(:hover, :has(:focus-visible)) .name", focused, true},
+		{".p-channel_sidebar:is(:hover, :has(:focus-visible)) .name", plain, false},
+		{".item:has(~ .item.hot):not(:has(~ .heading.hot, ~ .heading ~ .item.hot))", i1, true},
+		{".item:has(~ .item.hot):not(:has(~ .heading.hot, ~ .heading ~ .item.hot))", j1, false},
+		{`[data-qa="dms_channel"]:not(:has(.p-activity_ia4_page__item--selected)):has(.c-base_icon_image_stacked) [data-qa="dms-channel-sender-name"]`, stackName, true},
+		{`[data-qa="dms_channel"]:not(:has(.p-activity_ia4_page__item--selected)):has(.c-base_icon_image_stacked) [data-qa="dms-channel-sender-name"]`, selName, false},
+		{`.c-search_autocomplete__suggestion_item:is(:has(.c-channel_icon svg[data-qa^="lock"]), [data-type="mpim"])`, lockSug, true},
+		{`.c-search_autocomplete__suggestion_item:is(:has(.c-channel_icon svg[data-qa^="lock"]), [data-type="mpim"])`, mpimSug, true},
+		{`.c-search_autocomplete__suggestion_item:is(:has(.c-channel_icon svg[data-qa^="lock"]), [data-type="mpim"])`, pubSug, false},
+		// SlimMessageBox
+		{".scope:not(:has(.c-wysiwyg_container__attachments, .p-message_input__attachments, .c-pending_files))", composer, true},
+		{".scope:not(:has(.c-wysiwyg_container__attachments, .p-message_input__attachments, .c-pending_files))", composerFiles, false},
+	}
+	for _, tc := range cases {
+		got := has(eng(tc.sel+" { color: red }").Cascade(tc.el, 0, nil, testEnv), "color")
+		if got != tc.want {
+			t.Errorf("%s on %s.%v: got %v", tc.sel, tc.el.tag, tc.el.classes, got)
+		}
+	}
+}
