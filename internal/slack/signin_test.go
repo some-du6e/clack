@@ -46,7 +46,7 @@ func TestExpandPastedTeams(t *testing.T) {
 	if err := expandPastedTeams(&in); err != nil {
 		t.Fatal(err)
 	}
-	if in.Token != "xoxc-team" || in.OrgToken != "xoxc-org" || in.Workspace != "https://hackclub.slack.com/" {
+	if in.Token != "xoxc-team" || in.OrgToken != "xoxc-org" || in.OrgURL != "https://hackclub.enterprise.slack.com/" || in.Workspace != "https://hackclub.slack.com/" {
 		t.Fatalf("got %+v", in)
 	}
 	bare := SignInInput{Workspace: "hackclub", Token: "xoxc-abc"}

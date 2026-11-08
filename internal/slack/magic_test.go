@@ -223,6 +223,18 @@ func TestLoginMagicGridTokens(t *testing.T) {
 	if c.Token != "xoxc-vended-1-2-3abc" || c.EnterpriseToken != "xoxc-org-1-2-3abcd" || c.EnterpriseID != "E1" || c.EnterpriseURL != "https://hackclub.enterprise.slack.com/" {
 		t.Errorf("grid creds: team %q org %q %q", c.Token, c.EnterpriseToken, c.EnterpriseURL)
 	}
+	// One auth.test, with the workspace token: the org token is never sent
+	// to auth.test (every Grid sign-out so far followed that call).
+	var tests []string
+	for _, r := range f.requests() {
+		if r.URL.Path == "/api/auth.test" {
+			r.ParseForm()
+			tests = append(tests, r.Header.Get("X-Orig-Host")+" "+r.FormValue("token"))
+		}
+	}
+	if strings.Join(tests, ",") != "hackclub.slack.com xoxc-vended-1-2-3abc" {
+		t.Errorf("auth.test calls = %v, want one with the workspace token", tests)
+	}
 }
 
 func TestLoginMagicErrors(t *testing.T) {
@@ -360,23 +372,28 @@ func TestDesktopUserAgent(t *testing.T) {
 	}
 }
 
-// The token page's config: the exchange's team first, then the org token,
-// at most two, and nothing but xoxc- values.
+// The token page's config: the exchange's team first, the org token and
+// address apart, and nothing but xoxc- values.
 func TestParseIncomingConfig(t *testing.T) {
 	page := []byte(`<script>sessionStorage.incomingConfig = JSON.stringify({"teams":{` +
-		`"E1":{"id":"E1","token":"xoxc-org-1"},` +
+		`"E1":{"id":"E1","url":"https:\/\/hackclub.enterprise.slack.com\/","token":"xoxc-org-1"},` +
 		`"T2":{"id":"T2","token":"xoxc-two-1"},` +
 		`"T1":{"id":"T1","token":"xoxc-one-1","enterprise_api_token":"xoxc-org-1"},` +
 		`"T3":{"id":"T3","token":"xoxb-bot-1"}}}); </script>`)
-	if got := strings.Join(parseIncomingConfig(page, "T1"), " "); got != "xoxc-one-1 xoxc-org-1" {
-		t.Errorf("T1: %q", got)
+	got := parseIncomingConfig(page, "T1")
+	if strings.Join(got.Team, " ") != "xoxc-one-1 xoxc-two-1" || got.Org != "xoxc-org-1" || got.OrgURL != "https://hackclub.enterprise.slack.com/" {
+		t.Errorf("T1: %+v", got)
 	}
-	if got := strings.Join(parseIncomingConfig(page, "t2"), " "); got != "xoxc-two-1 xoxc-org-1" {
-		t.Errorf("t2: %q", got)
+	if got := parseIncomingConfig(page, "t2"); strings.Join(got.Team, " ") != "xoxc-two-1 xoxc-one-1" {
+		t.Errorf("t2: %+v", got)
+	}
+	evil := []byte(`incomingConfig = JSON.stringify({"teams":{"E1":{"id":"E1","url":"https://evil.example/","token":"xoxc-org-1"},"T1":{"id":"T1","token":"xoxc-one-1"}}})`)
+	if got := parseIncomingConfig(evil, "T1"); got.OrgURL != "" {
+		t.Errorf("off-Slack org url kept: %+v", got)
 	}
 	for _, bad := range []string{"", "<html>no config</html>", "incomingConfig = JSON.stringify({not json", `incomingConfig = JSON.stringify({"teams":{"T1":{"token":"xoxp-1"}}})`} {
-		if got := parseIncomingConfig([]byte(bad), "T1"); len(got) != 0 {
-			t.Errorf("%q: %q", bad, got)
+		if got := parseIncomingConfig([]byte(bad), "T1"); len(got.Team) != 0 || got.Org != "" {
+			t.Errorf("%q: %+v", bad, got)
 		}
 	}
 }

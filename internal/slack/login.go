@@ -25,6 +25,7 @@ type SignInInput struct {
 	Workspace string // "hackclub", "hackclub.slack.com" or a URL
 	Token     string // xoxc-… workspace token
 	OrgToken  string // optional xoxc-… org (Enterprise Grid) token
+	OrgURL    string // the org's https://….enterprise.slack.com/ (from the pasted JSON)
 	Cookie    string // value of the d cookie (xoxd-…)
 	CookieDS  string // ignored: d-s is never kept or sent (Client.cookieHeader)
 	// UserAgent is navigator.userAgent of the same browser (optional but
@@ -87,20 +88,20 @@ func SignIn(ctx context.Context, in SignInInput) (Creds, error) {
 		if !strings.HasPrefix(org, "xoxc-") {
 			return Creds{}, errors.New("the org token should start with xoxc-")
 		}
-		oc := c
-		oc.Token = org
-		if a.EnterpriseID != "" {
-			oc.TeamURL = c.TeamURL // auth.test answers on any host for the org token
+		// The org token is never checked with auth.test (or sent anywhere
+		// but the org's own host): every Grid sign-out so far followed an
+		// auth.test with the org token on the workspace host, and Slack's
+		// own client never makes that call (docs/SIGNOUT-AUDIT.md). The
+		// workspace's auth.test already names the org.
+		if a.EnterpriseID == "" {
+			return Creds{}, errors.New("that workspace isn't part of an Enterprise Grid org; leave Org token empty")
 		}
-		oa, err := New(oc).AuthTest(ctx)
-		if err != nil {
-			return Creds{}, fmt.Errorf("Slack rejected the org token: %w", err)
+		ou := strings.TrimSpace(in.OrgURL)
+		if !slackURL(ou, "https") || !strings.Contains(strings.ToLower(ou), ".enterprise.slack.com") {
+			return Creds{}, errors.New("Clack needs the org's address along with the org token: paste the JSON from the console snippet into Token instead of typing the tokens")
 		}
 		c.EnterpriseToken = org
-		c.EnterpriseID = oa.TeamID
-		if slackURL(oa.URL, "https") {
-			c.EnterpriseURL = oa.URL
-		}
+		c.EnterpriseURL = strings.TrimSuffix(ou, "/") + "/"
 	}
 	return c, nil
 }
@@ -205,6 +206,7 @@ func expandPastedTeams(in *SignInInput) error {
 	}
 	if org != nil && org.Token != "" {
 		in.OrgToken = org.Token
+		in.OrgURL = org.URL
 	} else if strings.HasPrefix(strings.TrimSpace(in.OrgToken), "[") || strings.HasPrefix(strings.TrimSpace(in.OrgToken), "{") {
 		in.OrgToken = ""
 	}

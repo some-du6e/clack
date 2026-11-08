@@ -266,13 +266,13 @@ func LoginMagic(ctx context.Context, sets []MagicTokenSet, cfg MagicConfig) (Cre
 	}
 	c.Cookies = encodeCookies(withoutCookie(cookies, "d")) // d lives in Cookie
 	sess := &magicSession{hc: hc, ua: ua, dpop: dpop}
-	toks := []string{}
+	var toks pageTokens
 	for _, t := range []string{res.Token, res.APIToken} {
 		if strings.HasPrefix(t, "xoxc-") {
-			toks = append(toks, t)
+			toks.Team = append(toks.Team, t)
 		}
 	}
-	if len(toks) == 0 {
+	if len(toks.Team) == 0 {
 		var err error
 		if toks, err = sess.bootTokens(ctx, res.Team.ID); err != nil {
 			return Creds{}, err
@@ -452,115 +452,115 @@ var incomingConfigRe = regexp.MustCompile(`incomingConfig\s*=\s*JSON\.stringify\
 // Slack web page Clack loads with a session cookie, and never with a cookie
 // copied from the browser. No other page is tried, in particular never
 // <team>/ssb/redirect (docs/SIGNOUT-AUDIT.md).
-func (s *magicSession) bootTokens(ctx context.Context, teamID string) ([]string, error) {
+func (s *magicSession) bootTokens(ctx context.Context, teamID string) (pageTokens, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, authPage(teamID), nil)
 	if err != nil {
-		return nil, scrubErr(err)
+		return pageTokens{}, scrubErr(err)
 	}
 	desktopNavHeaders(req.Header, s.ua)
 	resp, err := s.do(req)
 	if err != nil {
-		return nil, fmt.Errorf("Clack has its own session now but couldn't load Slack's token page (app.slack.com/auth): %w", scrubErr(err))
+		return pageTokens{}, fmt.Errorf("Clack has its own session now but couldn't load Slack's token page (app.slack.com/auth): %w", scrubErr(err))
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	resp.Body.Close()
 	if err != nil {
-		return nil, scrubErr(err)
+		return pageTokens{}, scrubErr(err)
 	}
 	toks := parseIncomingConfig(b, teamID)
-	if len(toks) == 0 {
-		return nil, fmt.Errorf("Slack gave Clack its own session cookie, but its token page (app.slack.com/auth, HTTP %d) had no tokens in it, so Clack has no token to call Slack with. "+
+	if len(toks.Team) == 0 {
+		return pageTokens{}, fmt.Errorf("Slack gave Clack its own session cookie, but its token page (app.slack.com/auth, HTTP %d) had no tokens in it, so Clack has no token to call Slack with. "+
 			"Clack doesn't try any other page. Use Advanced (paste a token) for now", resp.StatusCode)
 	}
 	return toks, nil
 }
 
+// pageTokens is what the token page hands a session: workspace token(s),
+// teamID's first, and the org's token and address on Grid.
+type pageTokens struct {
+	Team   []string
+	Org    string
+	OrgURL string
+}
+
 // parseIncomingConfig reads the teams map from authPage's
-// "incomingConfig = JSON.stringify({...})" and returns teamID's token, then
-// any other workspace token, then the org token(s). Only xoxc- values count.
-func parseIncomingConfig(page []byte, teamID string) []string {
+// "incomingConfig = JSON.stringify({...})". Only xoxc- tokens count, and an
+// org address only on an https enterprise.slack.com host.
+func parseIncomingConfig(page []byte, teamID string) pageTokens {
+	var out pageTokens
 	loc := incomingConfigRe.FindIndex(page)
 	if loc == nil {
-		return nil
+		return out
 	}
 	var cfg struct {
 		Teams map[string]struct {
 			ID         string `json:"id"`
+			URL        string `json:"url"`
 			Token      string `json:"token"`
 			Enterprise string `json:"enterprise_api_token"`
 		} `json:"teams"`
 	}
 	if err := json.NewDecoder(bytes.NewReader(page[loc[1]:])).Decode(&cfg); err != nil {
-		return nil
+		return out
 	}
-	var first, workspaces, orgs []string
-	for key, t := range cfg.Teams {
+	keys := make([]string, 0, len(cfg.Teams))
+	for k := range cfg.Teams {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys) // map order is random; keep the choice stable
+	var first, others []string
+	for _, k := range keys {
+		t := cfg.Teams[k]
 		id := t.ID
 		if id == "" {
-			id = key
+			id = k
 		}
-		if strings.HasPrefix(t.Token, "xoxc-") {
-			switch {
-			case strings.EqualFold(id, teamID):
-				first = append(first, t.Token)
-			case strings.HasPrefix(id, "E"):
-				orgs = append(orgs, t.Token)
-			default:
-				workspaces = append(workspaces, t.Token)
+		if strings.HasPrefix(id, "E") {
+			if strings.HasPrefix(t.Token, "xoxc-") && out.Org == "" {
+				out.Org = t.Token
 			}
-		}
-		if strings.HasPrefix(t.Enterprise, "xoxc-") {
-			orgs = append(orgs, t.Enterprise)
-		}
-	}
-	sort.Strings(workspaces) // map order is random; keep the choice stable
-	sort.Strings(orgs)
-	var out []string
-	seen := map[string]bool{}
-	for _, t := range append(append(first, workspaces...), orgs...) {
-		if !seen[t] {
-			seen[t] = true
-			out = append(out, t)
-		}
-	}
-	// fillFromAuthTest checks at most two: the workspace token and one org token.
-	if len(first)+len(workspaces) > 0 && len(orgs) > 0 && len(out) > 2 {
-		out = []string{out[0], orgs[0]}
-	}
-	return out
-}
-
-// fillFromAuthTest checks the token(s) with auth.test on the team host and
-// fills in the ids. Grid boot pages can carry the org (E) token as well as
-// the workspace (T) one; at most two tokens are checked.
-func (s *magicSession) fillFromAuthTest(ctx context.Context, c *Creds, toks []string) error {
-	if len(toks) > 2 {
-		toks = toks[:2]
-	}
-	for _, tok := range toks {
-		a, err := s.authTest(ctx, c.TeamURL, tok)
-		if err != nil {
-			return err
-		}
-		if strings.HasPrefix(a.TeamID, "E") {
-			c.EnterpriseToken, c.EnterpriseID = tok, a.TeamID
-			if slackURL(a.URL, "https") {
-				c.EnterpriseURL = a.URL
+			if slackURL(t.URL, "https") && strings.Contains(strings.ToLower(t.URL), ".enterprise.slack.com") && out.OrgURL == "" {
+				out.OrgURL = strings.TrimSuffix(t.URL, "/") + "/"
 			}
 			continue
 		}
-		if c.Token == "" {
-			c.Token, c.Team, c.UserID = tok, a.TeamID, a.UserID
-			if a.EnterpriseID != "" && c.EnterpriseID == "" {
-				c.EnterpriseID = a.EnterpriseID
-			}
-			if slackURL(a.URL, "https") {
-				c.TeamURL = a.URL
+		if strings.HasPrefix(t.Token, "xoxc-") {
+			if strings.EqualFold(id, teamID) {
+				first = append(first, t.Token)
+			} else {
+				others = append(others, t.Token)
 			}
 		}
+		if strings.HasPrefix(t.Enterprise, "xoxc-") && out.Org == "" {
+			out.Org = t.Enterprise
+		}
 	}
-	if c.Token == "" {
+	out.Team = append(first, others...)
+	return out
+}
+
+// fillFromAuthTest checks the workspace token with one auth.test on the team
+// host and fills in the ids. The org token is never sent to auth.test: every
+// Grid sign-out so far, this live test's included (docs/DESKTOP-SIGNIN.md),
+// followed an auth.test with the org token on the workspace host, and Slack's
+// own client never makes that call. The workspace's auth.test names the org.
+func (s *magicSession) fillFromAuthTest(ctx context.Context, c *Creds, pt pageTokens) error {
+	if len(pt.Team) == 0 {
 		return errors.New("Clack got its own Slack session, but only for the org, not a workspace. Sign in to a workspace in the browser and get a new link")
+	}
+	a, err := s.authTest(ctx, c.TeamURL, pt.Team[0])
+	if err != nil {
+		return err
+	}
+	if strings.HasPrefix(a.TeamID, "E") {
+		return errors.New("Slack's token page gave the org token where the workspace token should be; get a new link and try again")
+	}
+	c.Token, c.Team, c.UserID, c.EnterpriseID = pt.Team[0], a.TeamID, a.UserID, a.EnterpriseID
+	if slackURL(a.URL, "https") {
+		c.TeamURL = a.URL
+	}
+	if pt.Org != "" && a.EnterpriseID != "" && pt.OrgURL != "" {
+		c.EnterpriseToken, c.EnterpriseURL = pt.Org, pt.OrgURL
 	}
 	return nil
 }

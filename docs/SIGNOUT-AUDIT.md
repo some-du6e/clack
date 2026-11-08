@@ -138,3 +138,18 @@ Checked from the orchestrator with one `auth.test` on a session that has survive
 So a pasted `d-s` is stale the moment it's copied, while the browser keeps sending the newest one. Clack (alpha.1 and alpha.2) sent the pasted one on every request, starting with the Sign in `auth.test`. Slack then saw the same session presenting a last-seen stamp older than the one it had just issued, which is what a cloned cookie looks like. The session that survived never sends `d-s`. This promotes suspect #2 (with #1's rotation mechanism) to the top.
 
 Change: Clack never sends or stores `d-s` (`Client.cookieHeader`, Taut's `checkAuth`), and the sign-in card, CLI and README no longer ask for it. Still unconfirmed: we can't test it on the affected account without risking another sign-out.
+
+## Live result, 2026-11-08: the org-token auth.test
+
+With the user's consent we ran desktop sign-in on the project's own test account (Hack Club Grid). Details are in docs/DESKTOP-SIGNIN.md.
+
+| run | what Clack (or the browser) did | session afterwards |
+|---|---|---|
+| Clack round 1 | exchange; `/ssb/first` (no token, so it stopped) | browser still signed in |
+| clean Chrome, same vended session | exchange; full web client incl. `app.slack.com/auth` | browser still signed in |
+| Python helper, all day | `auth.test` and Web API calls with the **workspace** token | never signed out |
+| Clack round 2 | exchange; `app.slack.com/auth`; `auth.test` with the workspace token **and with the org (E) token on the workspace host** | **signed out everywhere**: the browser and Clack's own new session, within seconds |
+
+Alpha.1 and alpha.2 also called `auth.test` with the org token on the workspace host the moment Sign in was clicked (suspect #3 above). Every sign-out followed that call, and nothing that skipped it was signed out. Slack's own client never makes it. Suspect #3 is now the leading cause, ahead of `d-s`.
+
+Change: neither sign-in path sends the org token to `auth.test` any more. The workspace token's `auth.test` names the org (`enterprise_id`), and the org's token and address come from the token page (desktop) or the pasted JSON (Advanced). A typed org token without its address is refused, so it can never be used on the workspace host.
