@@ -173,6 +173,7 @@ type App struct {
 	switchAt   time.Time             // navigation time, for the channel-switch latency log
 	switchTo   Route
 	winLive    atomic.Pointer[app.Window] // a.win once Run made it, for other goroutines
+	inval      chan struct{}              // redraw requests for invalidator (cap 1: they coalesce)
 	update     updateState                // "Update available" banner
 	rtAsk      realtimeState              // first-run "Live updates are off" banner
 	updatesOff atomic.Bool                // prefs.NoUpdateCheck, for updateLoop
@@ -198,7 +199,9 @@ func New(opts Options, images *imgcache.Cache) *App {
 		images: images,
 		clicks: clickables{},
 		views:  map[Route]View{},
+		inval:  make(chan struct{}, 1),
 	}
+	go a.invalidator()
 	a.sidebar.width = theme.SidebarW
 	a.secondary.width = theme.SecondaryW
 	a.keys = a.defaultShortcuts()
@@ -212,9 +215,7 @@ func New(opts Options, images *imgcache.Cache) *App {
 		sh := theme.NewShaper() // one collection serves both modes
 		a.shaperCh <- [2]*text.Shaper{sh, sh}
 		a.timing("shapers ready", t)
-		if w := a.winLive.Load(); w != nil {
-			w.Invalidate() // the first frames painted the background only
-		}
+		a.Invalidate() // the first frames painted the background only
 	}()
 	if opts.Login != nil {
 		a.login = newLoginScreen()
@@ -231,10 +232,30 @@ func (a *App) Post(f func()) {
 	a.Invalidate()
 }
 
-// Invalidate requests a redraw (safe from any goroutine).
+// Invalidate requests a redraw. It is safe from any goroutine, including the
+// UI goroutine mid-layout and AppKit callbacks: it never calls into Gio itself.
+//
+// Gio's Window.Invalidate holds the window's invMu while it calls
+// driver.Invalidate, and on macOS that wakes the loop with runOnMain, which runs
+// inline when already on the main thread and re-locks invMu in nextEvent. So a
+// Window.Invalidate from the main thread (layout, or the swipe hook in
+// nav_darwin.go) deadlocks the app for good, before any frame finishes and so
+// before the freeze watchdog can report it. That was the macOS launch
+// beachball. Only invalidator, on its own goroutine, may call it.
 func (a *App) Invalidate() {
-	if a.win != nil {
-		a.win.Invalidate()
+	select {
+	case a.inval <- struct{}{}:
+	default: // one is already queued; it covers this one
+	}
+}
+
+// invalidator forwards Invalidate requests to the window from a goroutine that
+// is never the main thread (see Invalidate).
+func (a *App) invalidator() {
+	for range a.inval {
+		if w := a.winLive.Load(); w != nil {
+			w.Invalidate()
+		}
 	}
 }
 
@@ -251,7 +272,7 @@ func (a *App) Run() error {
 	go a.updateLoop()
 	a.watchOSTheme()
 	if a.images != nil {
-		a.images.SetInvalidate(a.win.Invalidate)
+		a.images.SetInvalidate(a.Invalidate)
 		a.th.Images = a.images
 	}
 	if installHooks != nil {

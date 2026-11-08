@@ -65,7 +65,10 @@ func (w *window) invalidate() {
 	ww := w.w
 	w.mu.Unlock()
 	if ww != nil {
-		ww.Invalidate()
+		// Not inline: callers include the main window's frame, and on macOS a
+		// Window.Invalidate from the main thread deadlocks on Gio's invMu
+		// (see ui.App.Invalidate).
+		go ww.Invalidate()
 	}
 }
 
