@@ -23,6 +23,14 @@ contents:
     dst: /usr/bin/clack
     file_info:
       mode: 0755
+  - src: ./LICENSE
+    dst: /usr/share/doc/clack/LICENSE
+    file_info:
+      mode: 0644
+  - src: ./THIRD_PARTY_NOTICES.md
+    dst: /usr/share/doc/clack/THIRD_PARTY_NOTICES.md
+    file_info:
+      mode: 0644
   - src: ./packaging/linux/clack.desktop
     dst: /usr/share/applications/clack.desktop
     file_info:

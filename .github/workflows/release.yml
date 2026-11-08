@@ -19,8 +19,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: existing tag to (re)publish, e.g. v0.1.0
-        required: true
+        description: existing tag to (re)publish, e.g. v0.1.0; leave empty for a dry run of the chosen branch (builds and checks every package, publishes nothing)
+        required: false
 
 permissions:
   contents: read # write only in publish
@@ -132,6 +132,8 @@ jobs:
           "$nfpm" pkg -f packaging/linux/nfpm.yaml -p deb -t "dist/clack_${VERSION}_${ARCH}.deb"
           "$nfpm" pkg -f packaging/linux/nfpm.yaml -p rpm -t "dist/clack-${VERSION}.${{ matrix.rpmarch }}.rpm"
           dpkg-deb -I dist/*.deb && dpkg-deb -c dist/*.deb
+          dpkg-deb -c dist/*.deb | grep -q './usr/share/doc/clack/LICENSE$' && dpkg-deb -c dist/*.deb | grep -q './usr/share/doc/clack/THIRD_PARTY_NOTICES.md$'
+          rpm -qpl dist/*.rpm | grep -qx /usr/share/doc/clack/LICENSE && rpm -qpl dist/*.rpm | grep -qx /usr/share/doc/clack/THIRD_PARTY_NOTICES.md
           rpm -qip dist/*.rpm && rpm -qpl dist/*.rpm && rpm -qp --requires --recommends dist/*.rpm
       - name: AppImage
         run: |
@@ -146,6 +148,8 @@ jobs:
             install -Dm644 assets/icon/clack-$n.png $app/usr/share/icons/hicolor/${n}x${n}/apps/clack.png
           done
           install -Dm644 assets/icon/clack.svg $app/usr/share/icons/hicolor/scalable/apps/clack.svg
+          install -Dm644 LICENSE $app/usr/share/doc/clack/LICENSE
+          install -Dm644 THIRD_PARTY_NOTICES.md $app/usr/share/doc/clack/THIRD_PARTY_NOTICES.md
           cp assets/icon/clack-256.png $app/clack.png
           ln -s clack.png $app/.DirIcon
           tool="$RUNNER_TEMP/appimagetool"
@@ -160,6 +164,7 @@ jobs:
           "$img" --appimage-extract >/dev/null
           find squashfs-root | sort
           test -x squashfs-root/AppRun && test -x squashfs-root/usr/bin/clack && test -f squashfs-root/clack.desktop
+          test -f squashfs-root/usr/share/doc/clack/LICENSE && test -f squashfs-root/usr/share/doc/clack/THIRD_PARTY_NOTICES.md
           squashfs-root/AppRun -version | grep -qF "$TAG"
           APPIMAGE_EXTRACT_AND_RUN=1 "$img" -version | grep -qF "$TAG"
       # Install the packages on clean distros: dependencies resolve, the binary
@@ -228,8 +233,11 @@ jobs:
             cgo=0; cc=; if [ $arch = amd64 ]; then cgo=1; cc=x86_64-w64-mingw32-gcc; fi
             CGO_ENABLED=$cgo CC=$cc GOOS=windows GOARCH=$arch go build -trimpath -ldflags="-s -w -H windowsgui -X main.version=$TAG" -o build/windows-$arch/Clack/Clack.exe ./cmd/clack
             cp packaging/windows/README.txt build/windows-$arch/Clack/README.txt
+            cp LICENSE build/windows-$arch/Clack/LICENSE.txt
+            cp THIRD_PARTY_NOTICES.md build/windows-$arch/Clack/THIRD_PARTY_NOTICES.md
             (cd build/windows-$arch && zip -9 -r "../../dist/Clack-${VERSION}-windows-$arch.zip" Clack)
-            unzip -l "dist/Clack-${VERSION}-windows-$arch.zip"
+            unzip -l "dist/Clack-${VERSION}-windows-$arch.zip" | tee /dev/stderr | grep -q 'Clack/LICENSE.txt'
+            unzip -l "dist/Clack-${VERSION}-windows-$arch.zip" | grep -q 'Clack/THIRD_PARTY_NOTICES.md'
           done
       - name: check resources in Clack.exe
         run: |
@@ -402,6 +410,7 @@ jobs:
           mkdir -p $app/Contents/MacOS $app/Contents/Resources
           cp build/clack $app/Contents/MacOS/clack
           cp assets/icon/clack.icns $app/Contents/Resources/clack.icns
+          cp LICENSE THIRD_PARTY_NOTICES.md $app/Contents/Resources/
           sed "s/@VERSION@/$NUM/g" packaging/macos/Info.plist > $app/Contents/Info.plist
           printf 'APPL????' > $app/Contents/PkgInfo
           plutil -lint $app/Contents/Info.plist
@@ -431,6 +440,7 @@ jobs:
           t=$(mktemp -d)
           ditto -x -k "dist/Clack-${VERSION}-macos-universal.zip" "$t"
           codesign --verify --deep --strict "$t/Clack.app"
+          test -f "$t/Clack.app/Contents/Resources/LICENSE" && test -f "$t/Clack.app/Contents/Resources/THIRD_PARTY_NOTICES.md"
           "$t/Clack.app/Contents/MacOS/clack" -version | grep -F "$TAG"
           hdiutil verify "dist/Clack-${VERSION}-macos-universal.dmg"
           mnt=$(mktemp -d)
