@@ -102,7 +102,7 @@ func main() {
 	unregURL := flag.Bool("unregister-url-handler", false, "remove Clack's slack:// handler registration (Windows) and exit")
 	noRealtime := flag.Bool("no-realtime", os.Getenv("CLACK_NO_REALTIME") != "", "never open Slack's realtime connection (poll instead), whatever Preferences says; also CLACK_NO_REALTIME=1")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: clack [flags] [slack://link]\n       clack login [workspace]   (sign in with your token and d cookie)\n\n")
+		fmt.Fprintf(os.Stderr, "usage: clack [flags] [slack://link]\n       clack login [slack://…/magic-login/… | workspace]   (sign in with a Slack link, or paste a token and d cookie)\n\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -173,17 +173,24 @@ func main() {
 	creds, err := slack.ReadCreds(*credsPath)
 	ui.SetVersion(version)
 	a := ui.New(opts, images)
+	// A slack:// link is a navigation, except a magic-login link, which
+	// is Slack's browser handing "the Slack app" a sign-in: that signs in
+	// (on the sign-in screen only; see ui.App.SignInWithLink).
+	openLink := func(u string) {
+		if slack.IsMagicLink(u) {
+			a.SignInWithLink(u)
+			return
+		}
+		a.OpenURL(u)
+	}
 	inst, lerr := desktop.Listen(cfg, func(r desktop.Request) {
 		a.Raise()
 		if r.URL != "" {
-			a.OpenURL(r.URL)
+			openLink(r.URL)
 		}
 	})
 	if lerr != nil {
 		log.Printf("desktop: single instance: %v", lerr)
-	}
-	if link != "" {
-		a.OpenURL(link)
 	}
 	cacheDir := filepath.Join(cfg, "cache")
 	connect := func(creds slack.Creds) {
@@ -221,7 +228,15 @@ func main() {
 		a.Attach(svc, cacheDir)
 	}
 	login := func(in slack.SignInInput) error {
-		c, err := slack.SignIn(context.Background(), in)
+		var (
+			c   slack.Creds
+			err error
+		)
+		if in.Link != "" {
+			c, err = signInWithLink(in.Link, filepath.Dir(*credsPath))
+		} else {
+			c, err = slack.SignIn(context.Background(), in)
+		}
 		if err != nil {
 			return err
 		}
@@ -236,6 +251,9 @@ func main() {
 		a.SetLoginHandler(login) // for "Sign out" → sign back in
 	} else {
 		a.SetLogin(login)
+	}
+	if link != "" {
+		openLink(link)
 	}
 	// Taut's api.accounts: switch to other saved credentials.
 	a.SetSwitchAccount(func(c slack.Creds) {
@@ -279,7 +297,7 @@ func main() {
 	for e := range app.Events {
 		if u, ok := e.(app.URLEvent); ok && u.URL != nil {
 			a.Raise()
-			a.OpenURL(u.URL.String())
+			openLink(u.URL.String())
 		}
 	}
 }
@@ -299,6 +317,19 @@ func checkUpdate(ctx context.Context) (ui.UpdateInfo, bool, error) {
 	return ui.UpdateInfo{Tag: r.Tag, URL: r.URL}, desktop.Newer(r.Tag, cur), nil
 }
 
+// signInWithLink is desktop-style sign-in: trade a slack:// magic-login
+// link for Clack's own session. DPoP keys, when Slack asks for a binding,
+// live next to creds.json (dir), owner-only.
+func signInWithLink(link, dir string) (slack.Creds, error) {
+	sets, err := slack.ParseMagicLink(link)
+	if err != nil {
+		return slack.Creds{}, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	return slack.LoginMagic(ctx, sets, slack.MagicConfig{DPoPDir: dir})
+}
+
 func loginCLI(path, workspace string) error {
 	in := bufio.NewReader(os.Stdin)
 	ask := func(prompt string) string {
@@ -314,6 +345,29 @@ func loginCLI(path, workspace string) error {
 		}
 		defer func() { setEcho(true); fmt.Println() }()
 		return ask(prompt)
+	}
+	// `clack login slack://…/magic-login/…`, or the link pasted at the
+	// first prompt: desktop-style sign-in, Clack's own session.
+	link := workspace
+	if link == "" {
+		fmt.Println("Sign in with a Slack link: in your browser, open " + "https://slack.com/ssb/add?s=1&v=" + slack.SlackDesktopVersion)
+		fmt.Println("and sign in. When Slack offers to open the Slack app, copy that slack:// link (right-click, Copy Link).")
+		fmt.Println("(Or press Enter to paste a token and cookie from the browser instead.)")
+		link = askSecret("Sign-in link (slack://…): ")
+	}
+	if slack.IsMagicLink(link) {
+		creds, err := signInWithLink(link, filepath.Dir(path))
+		if err != nil {
+			return err
+		}
+		if err := slack.WriteCreds(path, creds); err != nil {
+			return err
+		}
+		fmt.Printf("Signed in as %s on %s with Clack's own session. Credentials saved to %s\n", creds.UserID, creds.TeamURL, path)
+		return nil
+	}
+	if link != "" && strings.HasPrefix(strings.ToLower(link), "slack://") {
+		return slack.ErrNotMagicLink
 	}
 	if workspace == "" {
 		workspace = ask("Workspace (e.g. hackclub): ")

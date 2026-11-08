@@ -63,7 +63,11 @@ RestartApplications=no
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "slackurl"; Description: "Open slack:// links with Clack"; GroupDescription: "Links:"
+; Off by default: the Slack desktop app also owns slack:// (it re-registers
+; on every start), and taking the scheme from it silently is rude. Clack only
+; needs it to receive sign-in links straight from the browser; copying the
+; link into Clack's sign-in screen works without it (README "Sign in").
+Name: "slackurl"; Description: "Open slack:// links with Clack (the Slack desktop app also claims these)"; GroupDescription: "Links:"; Flags: unchecked
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
