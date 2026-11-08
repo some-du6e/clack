@@ -564,3 +564,9 @@ func parseHex(s string) (color.NRGBA, bool) {
 func PaletteSwatch(name string, dark bool) color.NRGBA {
 	return namedRamp(name, dark)[shadeIndex("70")]
 }
+
+// PaletteShade is shade i (Slack's order 0, 5, 10, 20…100) of a named
+// palette's ramp in the mode.
+func PaletteShade(name string, i int, dark bool) color.NRGBA {
+	return namedRamp(name, dark)[i]
+}
