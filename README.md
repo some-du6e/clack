@@ -99,7 +99,7 @@ There are no screenshots in this repo on purpose: any real screenshot would show
 
 Clack signs in with the token and cookies of your own signed-in Slack session, the same values other third-party Slack clients use. Start Clack (or run `clack login`) and fill in your workspace, the `xoxc-` **token**, the **`d` cookie** (`xoxd-…`) and, optionally, the org token (Enterprise Grid workspaces such as Hack Club) and the `d-s` cookie. Clack only checks them with `auth.test`: it never loads Slack web pages with your cookie and never calls a sign-out API, so your browser session stays signed in. They're saved to `~/.config/clack/creds.json`, readable only by you (mode 600 in a 700 directory; an owner-only ACL on Windows). They are only ever sent to https slack.com hosts. "Sign out on this device" deletes that file and nothing else.
 
-The quickest way to get them: open Slack in the browser you'll copy from, open DevTools (F12) on that tab, and run this in the Console. It copies your user agent and the tokens Slack's own page keeps in `localStorage`:
+The quickest way to get them: open Slack in the browser you'll copy from, open DevTools (F12) on that tab, and run this in the Console. It copies your user agent and the tokens Slack's own page keeps in `localStorage`. The sign-in screen shows the same snippet with a Copy button:
 
 ```js
 copy(JSON.stringify({ua: navigator.userAgent, teams: JSON.parse(localStorage.localConfig_v2).teams}))
