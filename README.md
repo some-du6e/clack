@@ -158,3 +158,7 @@ Clack follows the [Hack Club scraping policy](https://news.hackclub.com/news/scr
 - Only metadata is cached on disk: the user directory, the custom emoji map, usergroups and your prefs (`~/.config/clack/cache/meta.json`), plus avatar and emoji images.
 - Files and thumbnails from `files.slack.com` are fetched into a memory-only cache and never saved.
 - Clack makes the same kind of requests the official client makes: on demand, rate-limited, no crawling.
+
+## License
+
+MIT. See [LICENSE](LICENSE). Third-party components and their licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
