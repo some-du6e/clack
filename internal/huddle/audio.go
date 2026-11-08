@@ -219,6 +219,7 @@ func (o *opusDec) decode(pkt []byte) (pcm []int16, err error) {
 	// transpiled build) is dropped, with a fresh decoder for the next one
 	defer func() {
 		if r := recover(); r != nil {
+			opusAborts.Add(1)
 			pcm, err = nil, fmt.Errorf("opus decoder: %v", r)
 			if d, ferr := newOpusDec(); ferr == nil {
 				o.d = d.d

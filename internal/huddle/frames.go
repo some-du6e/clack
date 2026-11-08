@@ -174,14 +174,19 @@ type subscribeReq struct {
 	AudioHost  string
 	AudioMuted bool
 	AttendeeID string
-	Receive    []uint32 // one per video m-section, in SDP order (0 = none)
+	Receive    []uint32    // one per video m-section, in SDP order (0 = none)
+	Video      *streamDesc // your camera, while published (videosend.go)
 }
 
 func encodeSubscribe(s subscribeReq) []byte {
 	var w pbw
 	frameHeader(&w, ftSubscribe)
 	w.msg(6, func(w *pbw) {
-		w.uint(1, streamRX)     // duplex
+		if s.Video != nil {
+			w.uint(1, streamDuplex)
+		} else {
+			w.uint(1, streamRX) // duplex
+		}
 		w.msg(2, func(w *pbw) { // the audio send stream
 			w.uint(1, 1)   // stream_id
 			w.uint(2, 15)  // framerate
@@ -192,6 +197,18 @@ func encodeSubscribe(s subscribeReq) []byte {
 			w.str(8, s.AttendeeID)
 			w.uint(9, mediaAudio)
 		})
+		if v := s.Video; v != nil { // then the camera, as the SDK's toStreamDescriptor writes it
+			w.msg(2, func(w *pbw) {
+				w.uint(1, uint64(v.StreamID))
+				w.uint(2, uint64(v.Framerate))
+				w.uint(3, uint64(v.MaxBitrateKbps))
+				w.str(4, v.TrackLabel)
+				w.uint(6, uint64(v.GroupID))
+				w.uint(7, uint64(v.AvgBitrateBps))
+				w.str(8, v.AttendeeID)
+				w.uint(9, uint64(v.MediaType))
+			})
+		}
 		for _, id := range s.Receive {
 			w.uint(3, uint64(id))
 		}

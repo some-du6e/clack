@@ -66,7 +66,11 @@ jobs:
 
   macos:
     # the cgo/Objective-C side: AVFoundation permission checks (TCC), Core
-    # Audio through miniaudio, and the session against the fake Chime
+    # Audio through miniaudio, the AVFoundation camera and VideoToolbox
+    # encoder glue (VideoToolbox must encode synthetic frames headless), and
+    # the session against the fake Chime. The runner has no camera and no one
+    # to answer a TCC prompt, so capture itself only runs on a real Mac; the
+    # fake-Chime camera test publishes the test pattern through VideoToolbox.
     runs-on: macos-latest
     env:
       MACOSX_DEPLOYMENT_TARGET: '11.0'
@@ -79,12 +83,15 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: vet
-        run: go vet ./internal/huddle/... ./internal/ui/huddleui/...
+        run: go vet ./internal/huddle/... ./internal/ui/huddleui/... ./internal/ui/openurl/...
       - name: opus on arm64 (the transpiled libopus was generated on linux/amd64)
         run: go test -count=1 -v -run 'TestOpus' ./internal/huddle
+      - name: VideoToolbox + camera publish
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v -run 'TestVTEncode|TestFakeCamera|TestPCMEncoderRoundTrip' ./internal/huddle
       - name: test
         if: ${{ !cancelled() }}
-        run: go test -count=1 -v ./internal/huddle/... ./internal/ui/huddleui/... 2>&1 | tee test.log | grep -E '^(=== RUN|--- |ok|FAIL|panic)|opus' ; test "${PIPESTATUS[0]}" = 0
+        run: go test -count=1 -v ./internal/huddle/... ./internal/ui/huddleui/... ./internal/ui/openurl/... 2>&1 | tee test.log | grep -E '^(=== RUN|--- |ok|FAIL|panic)|opus' ; test "${PIPESTATUS[0]}" = 0
       - name: permission checks from inside an .app bundle
         if: ${{ !cancelled() }}
         run: |
@@ -103,4 +110,5 @@ jobs:
             AVPERM_EXPECT=$kind $app/Contents/MacOS/clack -test.v -test.run 'TestBundleUsage|TestRequestAnswersOnce'
           done
       - name: build the demo
+        if: ${{ !cancelled() }}
         run: CGO_ENABLED=1 go build -trimpath -o dist/huddle-demo ./cmd/huddle-demo
