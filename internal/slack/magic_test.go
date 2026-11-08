@@ -274,6 +274,19 @@ func TestLoginMagicErrors(t *testing.T) {
 		t.Errorf("redirect: %v", err)
 	}
 
+	// Nor is one to /ssb/redirect, even on Slack.
+	f.exchange = func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://hackclub.slack.com/ssb/redirect?x=1", http.StatusFound)
+	}
+	if _, err := LoginMagic(ctx, sets, MagicConfig{}); err == nil || !strings.Contains(err.Error(), "/ssb/redirect") {
+		t.Errorf("redirect to /ssb/redirect: %v", err)
+	}
+	for _, r := range f.requests() {
+		if strings.HasPrefix(r.URL.Path, "/ssb/redirect") {
+			t.Errorf("loaded %s", r.URL.Path)
+		}
+	}
+
 	// A token set built by hand still can't go anywhere but slack.com.
 	if _, err := LoginMagic(ctx, []MagicTokenSet{{Tokens: []string{"a"}, BaseDomain: "evil.com"}}, MagicConfig{}); err == nil {
 		t.Error("hand-built set for evil.com accepted")
@@ -288,16 +301,16 @@ func TestLoginMagicNoTokenOnPage(t *testing.T) {
 	f.bootHTML = "<html>nothing here</html>"
 	sets, _ := ParseMagicLink("slack://T08PSQ7BQ/magic-login/abc")
 	_, err := LoginMagic(context.Background(), sets, MagicConfig{})
-	if err == nil || !strings.Contains(err.Error(), "couldn't find its token") {
+	if err == nil || !strings.Contains(err.Error(), "had no \"api_token\"") || !strings.Contains(err.Error(), "app.slack.com/ssb/first") {
 		t.Errorf("err = %v", err)
 	}
-	// Tried the desktop boot page, then the team's /ssb/redirect once; no
-	// auth.test without a token.
+	// Only the desktop boot page: never /ssb/redirect or any other page,
+	// and no auth.test without a token.
 	var paths []string
 	for _, r := range f.requests() {
 		paths = append(paths, r.Header.Get("X-Orig-Host")+r.URL.Path)
 	}
-	if strings.Join(paths, " ") != "slack.com/api/auth.loginMagicBulk app.slack.com/ssb/first hackclub.slack.com/ssb/redirect" {
+	if strings.Join(paths, " ") != "slack.com/api/auth.loginMagicBulk app.slack.com/ssb/first" {
 		t.Errorf("requests = %v", paths)
 	}
 }
