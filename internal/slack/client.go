@@ -32,6 +32,10 @@ type Creds struct {
 	UserID          string `json:"user_id"`
 	TeamURL         string `json:"team_url"`       // e.g. https://hackclub.slack.com/
 	EnterpriseURL   string `json:"enterprise_url"` // e.g. https://hackclub.enterprise.slack.com/
+	// UserAgent is navigator.userAgent of the browser the session was
+	// copied from. Clack sends it so Slack sees the same browser it signed
+	// in (see ua.go); empty means Chrome on this OS.
+	UserAgent string `json:"user_agent,omitempty"`
 }
 
 // entMethods must be called with the org token on the enterprise host
@@ -70,6 +74,9 @@ type Client struct {
 
 	// EdgeURL is the edge cache API base (tests point it at a fake server).
 	EdgeURL string
+
+	agentOnce sync.Once
+	agentVer  string // realtime agent_version (methods.go)
 }
 
 // New builds a client with a tuned, keep-alive HTTP/2 transport.
@@ -145,6 +152,12 @@ func (c *Client) checkRedirect(req *http.Request, via []*http.Request) error {
 		if !slackOwnedURL(req.URL) {
 			return fmt.Errorf("slack: refusing redirect off Slack to %q", req.URL.Hostname())
 		}
+	}
+	// A file download redirected to a Slack page (sign-in, /ssb/…): stop.
+	// Loading Slack's web pages with the cookie from outside the browser
+	// can end the session.
+	if (req.Method == "" || req.Method == http.MethodGet) && cookieURL(req.URL) && !FileURL(req.URL) {
+		return ErrNotAFile
 	}
 	return nil
 }
@@ -372,7 +385,7 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 		req.Header.Set("Content-Type", ctype)
 		req.Header.Set("Cookie", c.cookieHeader())
 		req.Header.Set("Origin", "https://app.slack.com")
-		req.Header.Set("User-Agent", UserAgent)
+		c.browserHeaders(req.Header)
 		resp, err := c.HTTP.Do(req)
 		if err != nil {
 			return scrubErr(err)
@@ -436,14 +449,48 @@ func (c *Client) Download(ctx context.Context, rawURL string) (*http.Response, e
 	if !c.credsOK(req.URL) {
 		return nil, ErrUntrustedHost
 	}
+	if cookieURL(req.URL) && !FileURL(req.URL) {
+		return nil, ErrNotAFile
+	}
 	req.Header.Set("Cookie", c.cookieHeader())
-	req.Header.Set("User-Agent", UserAgent)
+	c.browserHeaders(req.Header)
 	resp, err := c.HTTP.Do(req)
-	return resp, scrubErr(err)
+	if err != nil {
+		return resp, scrubErr(err)
+	}
+	if ct := resp.Header.Get("Content-Type"); strings.HasPrefix(ct, "text/html") {
+		// a file URL that answers with a page (usually a redirect to
+		// sign-in): don't hand Slack's HTML to an image decoder, and don't
+		// keep loading it
+		resp.Body.Close()
+		return nil, ErrNotAFile
+	}
+	return resp, nil
 }
 
-// UserAgent mimics a desktop Chrome so Slack serves the normal web payloads.
-const UserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
+// ErrNotAFile is returned by Download for a slack.com URL that isn't a file
+// (a workspace web page, /ssb/…, /signin, a permalink). Clack never loads
+// Slack's web pages with the session cookie: fetching them from outside the
+// browser can end the session everywhere (see README "Sign in").
+var ErrNotAFile = errors.New("slack: not a file URL; refusing to load a Slack page with the session cookie")
+
+// FileURL reports whether u is one of Slack's file hosts or file paths,
+// the only slack.com GETs that carry the session cookie (Download).
+func FileURL(u *url.URL) bool {
+	if u == nil {
+		return false
+	}
+	h := strings.ToLower(u.Hostname())
+	if h == "files.slack.com" || (strings.HasPrefix(h, "files-") && strings.HasSuffix(h, ".slack.com")) {
+		return true
+	}
+	for _, p := range []string{"/files-pri/", "/files-tmb/", "/files-pri-safe/", "/files-origin/"} {
+		if strings.HasPrefix(u.Path, p) {
+			return true
+		}
+	}
+	return false
+}
 
 // UploadBytes sends file contents to an upload URL from
 // files.getUploadURLExternal. progress (may be nil) is called as the body
@@ -481,7 +528,7 @@ func (c *Client) UploadBytes(ctx context.Context, uploadURL, filename string, da
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	req.Header.Set("Cookie", c.cookieHeader())
 	req.Header.Set("Origin", "https://app.slack.com")
-	req.Header.Set("User-Agent", UserAgent)
+	c.browserHeaders(req.Header)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return scrubErr(err)

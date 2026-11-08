@@ -23,6 +23,9 @@ type prefs struct {
 	// Advanced); UpdateDismissed is the release whose banner was closed.
 	NoUpdateCheck   bool   `json:"no_update_check,omitempty"`
 	UpdateDismissed string `json:"update_dismissed,omitempty"`
+	// Realtime is the live-updates choice (Slack's websocket): nil until
+	// the user answers the first-run banner, which means off (realtime.go).
+	Realtime *bool `json:"realtime,omitempty"`
 }
 
 func (a *App) prefsPath() string {

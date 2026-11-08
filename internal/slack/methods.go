@@ -218,6 +218,19 @@ func (c *Client) EmojiList(ctx context.Context) (map[string]string, error) {
 	return r.Emoji, err
 }
 
+// agentVersion is the start_args agent_version: the web client sends its
+// build timestamp (a recent unix time, the same on every reconnect; seen on
+// app.slack.com 2026-11-08: 1794091057, about 2 h before the page loaded).
+// Clack can't know Slack's current build, so it uses its start time minus
+// a few hours, fixed for the life of the client instead of a new value on
+// every dial (the gateway refuses values that aren't plausible builds).
+func (c *Client) agentVersion() string {
+	c.agentOnce.Do(func() {
+		c.agentVer = strconv.FormatInt(time.Now().Add(-3*time.Hour).Unix(), 10)
+	})
+	return c.agentVer
+}
+
 // WebSocketURL builds the realtime gateway URL the web client uses
 // (verified against app.slack.com: org token, gateway_server from
 // client.getWebSocketURL's routing_context, and a real agent_version; the
@@ -255,7 +268,7 @@ func (c *Client) WebSocketURL(ctx context.Context, fallback bool) string {
 		"token":        {tok},
 		"sync_desync":  {"1"},
 		"slack_client": {"desktop"},
-		"start_args": {"?agent=client&org_wide_aware=true&agent_version=" + strconv.FormatInt(time.Now().Unix(), 10) +
+		"start_args": {"?agent=client&org_wide_aware=true&agent_version=" + c.agentVersion() +
 			"&eac_cache_ts=true&cache_ts=0&name_tagging=true&only_self_subteams=true&connect_only=true&ms_latest=true"},
 		"no_query_on_subscribe": {"1"},
 		"flannel":               {"3"},

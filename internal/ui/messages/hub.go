@@ -528,7 +528,7 @@ func (hb *hub) apply(ev core.Event) bool {
 		// loading anything until the connection is back or Retry.
 		hb.authFailed.Store(true)
 		return true
-	case "resync", "connection":
+	case "resync", "connection", "poll":
 		if ev.Type == "connection" && ev.Connected {
 			hb.authFailed.Store(false)
 		}

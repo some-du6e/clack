@@ -94,7 +94,20 @@ There are no screenshots in this repo on purpose: any real screenshot would show
 
 ## Sign in
 
+> [!WARNING]
+> **Clack shares your browser's Slack session. It is not a separate sign-in.** If Slack sees that session used in a way it finds unusual, it can sign it out **everywhere**: the browser, the desktop app and Clack. This happened three times to a tester on Hack Club's Enterprise Grid with v0.1.0-alpha.1. Copy everything below from **one** browser, include that browser's user agent and the `d-s` cookie, and leave live updates off unless you accept the risk. Use an account you can sign back in to.
+
 Clack signs in with the token and cookies of your own signed-in Slack session, the same values other third-party Slack clients use. Start Clack (or run `clack login`) and fill in your workspace, the `xoxc-` **token**, the **`d` cookie** (`xoxd-…`) and, optionally, the org token (Enterprise Grid workspaces such as Hack Club) and the `d-s` cookie. Clack only checks them with `auth.test`: it never loads Slack web pages with your cookie and never calls a sign-out API, so your browser session stays signed in. They're saved to `~/.config/clack/creds.json`, readable only by you (mode 600 in a 700 directory; an owner-only ACL on Windows). They are only ever sent to https slack.com hosts. "Sign out on this device" deletes that file and nothing else.
+
+The quickest way to get them: open Slack in the browser you'll copy from, open DevTools (F12) on that tab, and run this in the Console. It copies your user agent and the tokens Slack's own page keeps in `localStorage`:
+
+```js
+copy(JSON.stringify({ua: navigator.userAgent, teams: JSON.parse(localStorage.localConfig_v2).teams}))
+```
+
+Paste that JSON into the Token field. Clack picks out the workspace token, the org token, the workspace URL and the user agent. `d` and `d-s` are HttpOnly, so copy them from DevTools > Application > Cookies > `https://app.slack.com`. From then on Clack sends that browser's User-Agent (and its Chrome client hints) with every request. Without one, it uses current Chrome on your OS.
+
+**Live updates are off until you turn them on.** On first run a banner asks. You can also switch them in Preferences > Advanced > Live updates. While they're off, Clack never opens Slack's realtime websocket. It refreshes unread counts and the open conversation and threads over the Web API every 20 seconds instead. You can read and send, but there's no typing indicator, presence, instant delivery, desktop notifications, huddle events or slash-command modals. `clack -no-realtime` (or `CLACK_NO_REALTIME=1`) keeps the socket closed whatever the setting says.
 
 Clack never calls Slack's sign-out or token-revoke methods. "Sign out on this device" only deletes `creds.json`; your Slack session in the browser and other apps is not affected.
 

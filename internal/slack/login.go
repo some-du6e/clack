@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 )
 
@@ -26,6 +27,10 @@ type SignInInput struct {
 	OrgToken  string // optional xoxc-… org (Enterprise Grid) token
 	Cookie    string // value of the d cookie (xoxd-…)
 	CookieDS  string // optional value of the d-s cookie
+	// UserAgent is navigator.userAgent of the same browser (optional but
+	// recommended: Slack can end a session it sees from a different
+	// browser; see ua.go).
+	UserAgent string
 }
 
 // SignIn validates pasted credentials with auth.test only. It never loads
@@ -59,6 +64,11 @@ func SignIn(ctx context.Context, in SignInInput) (Creds, error) {
 		return Creds{}, errors.New("the d cookie should start with xoxd-")
 	}
 	c := Creds{Token: tok, Cookie: ck, CookieDS: cleanCookie(in.CookieDS, "d-s"), TeamURL: "https://" + ws + "/"}
+	if v := strings.TrimSpace(in.UserAgent); v != "" {
+		if c.UserAgent = CleanUserAgent(v); c.UserAgent == "" {
+			return Creds{}, errors.New("the user agent should be your browser's navigator.userAgent, starting with Mozilla/5.0 (")
+		}
+	}
 	a, err := New(c).AuthTest(ctx)
 	if err != nil {
 		return Creds{}, fmt.Errorf("Slack rejected the token and cookie: %w", err)
@@ -131,11 +141,39 @@ func expandPastedTeams(in *SignInInput) error {
 	}
 	var teams []pastedTeam
 	if strings.HasPrefix(raw, "{") {
-		var one pastedTeam
-		if err := json.Unmarshal([]byte(raw), &one); err != nil {
+		// {"ua": navigator.userAgent, "teams": [...] or {...}} (the README
+		// snippet), or a single team object
+		var wrap struct {
+			UA    string          `json:"ua"`
+			Teams json.RawMessage `json:"teams"`
+		}
+		if err := json.Unmarshal([]byte(raw), &wrap); err != nil {
 			return errors.New("couldn't read the pasted JSON; copy it again with the console snippet")
 		}
-		teams = []pastedTeam{one}
+		if wrap.UA != "" && strings.TrimSpace(in.UserAgent) == "" {
+			in.UserAgent = wrap.UA
+		}
+		switch t := strings.TrimSpace(string(wrap.Teams)); {
+		case strings.HasPrefix(t, "["):
+			if json.Unmarshal(wrap.Teams, &teams) != nil {
+				return errors.New("couldn't read the pasted JSON; copy it again with the console snippet")
+			}
+		case strings.HasPrefix(t, "{"): // localConfig_v2.teams is a map by id
+			var m map[string]pastedTeam
+			if json.Unmarshal(wrap.Teams, &m) != nil {
+				return errors.New("couldn't read the pasted JSON; copy it again with the console snippet")
+			}
+			for _, v := range m {
+				teams = append(teams, v)
+			}
+			sort.Slice(teams, func(i, j int) bool { return teams[i].ID < teams[j].ID })
+		default:
+			var one pastedTeam
+			if err := json.Unmarshal([]byte(raw), &one); err != nil {
+				return errors.New("couldn't read the pasted JSON; copy it again with the console snippet")
+			}
+			teams = []pastedTeam{one}
+		}
 	} else if err := json.Unmarshal([]byte(raw), &teams); err != nil {
 		return errors.New("couldn't read the pasted JSON; copy it again with the console snippet")
 	}

@@ -489,6 +489,18 @@ func (p *prefsModal) page(gtx layout.Context, sec string) layout.Dimensions {
 		})
 		y += gtx.Dp(28)
 		gap()
+		heading("Live updates")
+		rtHint := "Opens Slack's realtime connection. Off: messages refresh every 20 s"
+		if a.opts.NoRealtime {
+			rtHint = "Turned off with -no-realtime or CLACK_NO_REALTIME"
+		}
+		option("realtime", "Live updates (typing, presence, instant messages)", rtHint, a.realtimeOn(), false, a.toggleRealtime)
+		at(gtx, image.Pt(gtx.Dp(28), y), image.Pt(w-gtx.Dp(28), gtx.Dp(40)), func(gtx layout.Context) layout.Dimensions {
+			return a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: c.FgMuted, MaxLines: 2},
+				"Clack shares your browser's Slack session. On some Enterprise Grid workspaces Slack can sign that session out everywhere if it notices.")
+		})
+		y += gtx.Dp(44)
+		gap()
 		heading("Updates")
 		option("updates", "Check for updates", "Shows a banner when a new Clack release is on GitHub. Nothing downloads on its own.", a.updateChecksOn(), false, a.toggleUpdateChecks)
 		if buildVersion != "" {

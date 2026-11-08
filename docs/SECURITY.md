@@ -221,6 +221,20 @@ Dependency licenses: gioui.org (Unlicense or MIT), wazero (Apache-2.0), coder/we
 
 Clack never calls `auth.signout` or `auth.revoke`, and never loads Slack web pages with the session cookie. "Sign out on this device" only deletes `creds.json`. See README "Sign in".
 
+Clack runs on a session copied from the user's browser. Slack can end that session everywhere, browser included. It did so three times for one tester running v0.1.0-alpha.1 on Enterprise Grid (2026-11-08). Nothing Clack sends asks for a sign-out. Our best explanation is Slack's session anomaly checks, which on Grid can end a session when its fingerprint changes. Clack's fingerprint did not match the browser's:
+
+| | Slack web client (Chrome, recorded 2026-11-08) | v0.1.0-alpha.1 | Now |
+|---|---|---|---|
+| User-Agent | the browser's own (Chrome 157 on that OS) | always `X11; Linux x86_64 … Chrome/142`, whatever the OS | the browser's own, pasted at sign-in; otherwise Chrome 157 on this OS |
+| `sec-ch-ua*` client hints on API calls | sent | not sent | derived from the User-Agent (Chromium browsers only) |
+| Gateway URL params | `slack_client=desktop`, org token, `gateway_server=T…-2`, `enterprise_id`, `flannel=3`, `agent_version=<build ts>` | the same, except `agent_version` = the current time on every dial | the same, except `agent_version` is fixed per run and a few hours in the past |
+| Socket handshake | `Origin: https://app.slack.com`, `Pragma`/`Cache-Control: no-cache`, all `.slack.com` cookies | Origin, `d` (+ `d-s` if given) | adds Pragma/Cache-Control; `d-s` is now recommended at sign-in |
+| Socket opened | when the page loads | automatically after boot, retrying forever | only after the user opts in; gives up after 8 failed connects |
+| Cookie GETs | the browser loads Slack pages itself | any https `*.slack.com` URL from message content, following redirects | file hosts and file paths only (`files*.slack.com`, `/files-pri/`, `/files-tmb/`), redirects to pages stopped, HTML answers dropped (`ErrNotAFile`) |
+| After sign-out or account switch | — | the old session's socket and loops kept running | `core.Shutdown` stops them |
+
+What still differs and can't be matched without a browser engine: Go's TLS and HTTP/2 handshake (not Chrome's), and the browser's other cookies (`b`, `lc`, …). Agents ran Go's TLS against our test account for days, from the same host and with a matching Linux User-Agent, and were not signed out. Unless the tester's browser was Chrome on Linux, every request Clack made for them carried a User-Agent naming a different OS and Chrome version from the session's own. That is the main fix. The socket is opt-in because we can't test the fix against a real Grid account without risking it.
+
 ## Reporting
 
 Please report vulnerabilities through a private security advisory on this repository, not a public issue.

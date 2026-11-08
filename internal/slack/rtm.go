@@ -43,7 +43,12 @@ func (c *Client) NewRTM() *RTM {
 	return &RTM{c: c, Events: make(chan Event, 1024)}
 }
 
-// Run blocks until ctx is done, reconnecting with exponential backoff.
+// MaxRTMFails is how many short-lived connects in a row Run tries before it
+// gives up (a connection that lasted over a minute resets the count).
+const MaxRTMFails = 8
+
+// Run blocks until ctx is done, reconnecting with exponential backoff, or
+// until MaxRTMFails connects in a row failed or the session ended.
 func (r *RTM) Run(ctx context.Context) {
 	backoff := time.Second
 	for ctx.Err() == nil && !r.c.SignedOut() {
@@ -64,6 +69,12 @@ func (r *RTM) Run(ctx context.Context) {
 			r.fails = 0
 		} else {
 			r.fails++
+		}
+		if r.fails >= MaxRTMFails {
+			// Don't keep hammering the gateway: core falls back to polling.
+			log.Printf("rtm: disconnected (%v); %d failed connects in a row, giving up until live updates are turned on again", err, r.fails)
+			r.fails = 0
+			return
 		}
 		log.Printf("rtm: disconnected (%v), retrying in %s", err, backoff)
 		select {
@@ -95,8 +106,13 @@ func (r *RTM) once(ctx context.Context) error {
 	t0 := time.Now()
 	h := http.Header{}
 	h.Set("Cookie", r.c.cookieHeader())
+	// Chrome's handshake headers on app.slack.com (checked 2026-11-08),
+	// with the session's own browser User-Agent; Chrome sends no client
+	// hints on a websocket.
 	h.Set("Origin", "https://app.slack.com")
-	h.Set("User-Agent", UserAgent)
+	h.Set("User-Agent", r.c.userAgent())
+	h.Set("Pragma", "no-cache")
+	h.Set("Cache-Control", "no-cache")
 	dctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	conn, _, err := websocket.Dial(dctx, u, &websocket.DialOptions{HTTPHeader: h, HTTPClient: r.c.HTTP, CompressionMode: websocket.CompressionContextTakeover})
 	cancel()

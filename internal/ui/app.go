@@ -72,6 +72,9 @@ type Options struct {
 	// OnWindowEvent sees every window event before the UI (cmd/clack:
 	// window icons from the platform view events).
 	OnWindowEvent func(e event.Event)
+	// NoRealtime keeps Slack's realtime websocket closed whatever the
+	// saved preference says (cmd/clack -no-realtime, CLACK_NO_REALTIME=1).
+	NoRealtime bool
 }
 
 // SetLogin shows the sign-in screen, calling login on submit.
@@ -147,6 +150,7 @@ type App struct {
 	switchTo    Route
 	winLive     atomic.Pointer[app.Window] // a.win once Run made it, for other goroutines
 	update      updateState                // "Update available" banner
+	rtAsk       realtimeState              // first-run "Live updates are off" banner
 	updatesOff  atomic.Bool                // prefs.NoUpdateCheck, for updateLoop
 	hud         *huddleui.Controller       // the native huddle (huddle_wire.go)
 }
@@ -343,6 +347,10 @@ func (a *App) frame(gtx layout.Context) {
 		sbW = 0
 	}
 	bannerH := a.updateBannerH(gtx) // the workspace starts below the update banner
+	askRT := a.realtimeAskH(gtx)    // or the live-updates question, which comes first
+	if askRT > 0 {
+		bannerH = askRT
+	}
 	ws := image.Rect(railW, navH+bannerH, sz.X-inset, sz.Y-inset)
 	primary := image.Rect(ws.Min.X+sbW, ws.Min.Y, ws.Max.X, ws.Max.Y)
 	a.primaryOrigin = primary.Min
@@ -370,7 +378,9 @@ func (a *App) frame(gtx layout.Context) {
 	a.layoutTopNav(gtx, navX, sz.X)
 	a.layoutRail(gtx, navH, sz.Y-navH)
 	a.th.Chrome = false
-	if bannerH > 0 {
+	if askRT > 0 {
+		a.layoutRealtimeBanner(gtx, image.Rect(ws.Min.X, navH, ws.Max.X, ws.Min.Y-gtx.Dp(bannerGap)))
+	} else if bannerH > 0 {
 		a.layoutUpdateBanner(gtx, image.Rect(ws.Min.X, navH, ws.Max.X, ws.Min.Y-gtx.Dp(bannerGap)))
 	}
 

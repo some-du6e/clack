@@ -99,6 +99,7 @@ func main() {
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	regURL := flag.Bool("register-url-handler", false, "make Clack the slack:// link handler for this user and exit")
 	unregURL := flag.Bool("unregister-url-handler", false, "remove Clack's slack:// handler registration (Windows) and exit")
+	noRealtime := flag.Bool("no-realtime", os.Getenv("CLACK_NO_REALTIME") != "", "never open Slack's realtime connection (poll instead), whatever Preferences says; also CLACK_NO_REALTIME=1")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: clack [flags] [slack://link]\n       clack login [workspace]   (sign in with your token and d cookie)\n\n")
 		flag.PrintDefaults()
@@ -136,7 +137,7 @@ func main() {
 		return
 	}
 	images := imgcache.New(imgcache.PublicFetch, filepath.Join(cfg, "cache", "img"), nil)
-	opts := ui.Options{ConfigDir: cfg, Dark: *dark, Started: started,
+	opts := ui.Options{ConfigDir: cfg, Dark: *dark, Started: started, NoRealtime: *noRealtime,
 		SignOut: func() { _ = os.Remove(*credsPath) },
 		OnWindowEvent: func(e event.Event) {
 			desktop.SetWindowIcon(e, icon.PNG32, icon.PNG64, icon.PNG128, icon.PNG512)
@@ -281,6 +282,9 @@ func loginCLI(path, workspace string) error {
 	si.OrgToken = askSecret("Org token (xoxc-…, optional, Enterprise Grid only): ")
 	si.Cookie = askSecret("d cookie (xoxd-…): ")
 	si.CookieDS = askSecret("d-s cookie (optional): ")
+	fmt.Println("Clack shares that browser's session. Slack can sign it out everywhere if it sees it from what looks like another browser,")
+	fmt.Println("so give Clack the same browser's user agent (run navigator.userAgent in its DevTools console).")
+	si.UserAgent = ask("User agent (Mozilla/5.0 …, recommended): ")
 	creds, err := slack.SignIn(context.Background(), si)
 	if err != nil {
 		return err

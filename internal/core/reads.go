@@ -22,6 +22,9 @@ import (
 func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 	t0 := time.Now()
 	source := "cache"
+	if before == "" {
+		a.watch(ch, "")
+	}
 	defer func() { log.Printf("history %s: %s (%s)", ch, time.Since(t0).Round(time.Millisecond), source) }()
 	// Fetch the member count (people, like Slack's header) alongside the history.
 	var countDone chan struct{}
@@ -106,6 +109,7 @@ func (a *App) Refresh(ctx context.Context, ch string) (Page, error) {
 // Replies returns a thread, parent first. Cached threads are live-updated
 // from realtime events; fresh forces a refetch.
 func (a *App) Replies(ctx context.Context, ch, ts string) ([]Message, error) {
+	a.watch(ch, ts)
 	msgs, ok := a.S.Thread(ch, ts)
 	if !ok {
 		if err := a.fetchThread(ctx, ch, ts); err != nil {

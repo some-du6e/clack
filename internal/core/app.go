@@ -49,6 +49,22 @@ type App struct {
 	starred map[string]bool         // starred conversation ids (stars.list)
 	starsOK bool                    // starred was loaded
 	memberN map[string]int          // conversation -> people count (edge users/counts)
+
+	// Realtime (Slack's websocket gateway) is opt-in; see SetRealtime.
+	rtMu      sync.Mutex
+	rtWant    bool               // the user turned live updates on
+	rtBooted  bool               // Boot finished; the transport may run
+	rtStop    context.CancelFunc // stops the running RTM.Run
+	rtDone    chan struct{}      // closed when that Run returned
+	pollEvery time.Duration      // PollInterval, or tests' override
+	pollSeen  map[string]string  // conversation -> counts latest|updated at the last poll
+	watchCh   string             // conversation last opened (History), refreshed every poll
+	watchTh   []watchedThread    // threads last opened (Replies), newest first
+}
+
+type watchedThread struct {
+	ch, ts string
+	at     time.Time
 }
 
 type call struct {
@@ -80,6 +96,177 @@ func New(c *slack.Client, s *store.Store) *App {
 	}
 	a.RTM.OnHello = a.onHello
 	return a
+}
+
+// PollInterval is how often core refreshes unread counts and the open
+// conversations over the Web API while the realtime socket is off or down.
+const PollInterval = 20 * time.Second
+
+// SetRealtime turns Slack's realtime websocket on or off. It is off until
+// the user opts in (the UI asks on first run): on some Enterprise Grid
+// workspaces a connection Slack finds unusual can end the session
+// everywhere, so Clack never opens it unasked. With it off, core polls
+// client.counts and refreshes the open conversations every PollInterval,
+// so reading and sending work, just without live push (typing, presence,
+// huddle events, modals from slash commands). Safe to call before Boot.
+func (a *App) SetRealtime(on bool) {
+	a.rtMu.Lock()
+	a.rtWant = on
+	a.rtMu.Unlock()
+	if on {
+		a.startRealtime()
+	} else {
+		a.stopRealtime()
+	}
+	a.emit(Event{Type: "realtime", Connected: on})
+}
+
+// Realtime reports whether live updates are turned on (not whether the
+// socket is up; see Snapshot.Connected).
+func (a *App) Realtime() bool {
+	a.rtMu.Lock()
+	defer a.rtMu.Unlock()
+	return a.rtWant
+}
+
+func (a *App) startRealtime() {
+	a.rtMu.Lock()
+	defer a.rtMu.Unlock()
+	if !a.rtWant || !a.rtBooted || a.rtStop != nil || a.bg.Err() != nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(a.bg)
+	done := make(chan struct{})
+	a.rtStop, a.rtDone = cancel, done
+	go func() {
+		defer close(done)
+		a.RTM.Run(ctx)
+		// Run doesn't report the drop when it was stopped (ctx cancelled)
+		a.mu.Lock()
+		was := a.connected
+		a.connected = false
+		a.mu.Unlock()
+		if was {
+			a.emit(Event{Type: "connection", Connected: false})
+		}
+		a.rtMu.Lock()
+		if a.rtDone == done { // gave up or the session ended: allow a restart
+			a.rtStop, a.rtDone = nil, nil
+		}
+		a.rtMu.Unlock()
+		cancel()
+	}()
+}
+
+func (a *App) stopRealtime() {
+	a.rtMu.Lock()
+	stop, done := a.rtStop, a.rtDone
+	a.rtStop, a.rtDone = nil, nil
+	a.rtMu.Unlock()
+	if stop == nil {
+		return
+	}
+	stop()
+	<-done
+}
+
+// pollLoop stands in for the realtime socket while it is off or down:
+// unread counts plus a "poll" event that makes the UI refetch the
+// conversations and threads it has open. A handful of ordinary Web API
+// reads every PollInterval, far less than Slack's own client sends.
+func (a *App) pollLoop(ctx context.Context) {
+	every := a.pollEvery
+	if every <= 0 {
+		every = PollInterval
+	}
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		if a.C.SignedOut() {
+			return
+		}
+		if a.RTM.Connected() {
+			continue
+		}
+		cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		a.pollOnce(cctx)
+		cancel()
+	}
+}
+
+// maxPollFetches caps the history refetches of one poll.
+const maxPollFetches = 6
+
+// pollOnce refreshes counts, then refetches the newest page of the open
+// conversation and of cached ones whose counts changed, and the threads
+// opened in the last 15 minutes; then tells the UI ("poll").
+func (a *App) pollOnce(ctx context.Context) {
+	a.refreshCounts(ctx)
+	if ctx.Err() != nil || a.C.SignedOut() {
+		return
+	}
+	a.mu.Lock()
+	if a.pollSeen == nil {
+		a.pollSeen = map[string]string{}
+	}
+	watch := a.watchCh
+	var threads []watchedThread
+	for _, t := range a.watchTh {
+		if time.Since(t.at) < 15*time.Minute {
+			threads = append(threads, t)
+		}
+	}
+	a.mu.Unlock()
+	var fetch []string
+	if watch != "" {
+		fetch = append(fetch, watch)
+	}
+	ids := a.S.TimelineIDs()
+	sort.Strings(ids)
+	for _, id := range ids {
+		e, _ := a.S.Count(id)
+		key := e.Latest + "|" + e.Updated
+		a.mu.Lock()
+		old, seen := a.pollSeen[id]
+		a.pollSeen[id] = key
+		a.mu.Unlock()
+		if seen && old != key && id != watch && len(fetch) < maxPollFetches {
+			fetch = append(fetch, id)
+		}
+	}
+	for _, ch := range fetch {
+		if err := a.loadLatest(ctx, ch); err != nil {
+			log.Printf("poll: history %s: %v", ch, err)
+		}
+	}
+	for _, t := range threads {
+		if err := a.fetchThread(ctx, t.ch, t.ts); err != nil {
+			log.Printf("poll: thread %s: %v", t.ch, err)
+		}
+	}
+	a.emit(Event{Type: "poll"})
+}
+
+// watch remembers what the UI opened, for pollOnce.
+func (a *App) watch(ch, threadTS string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if threadTS == "" {
+		a.watchCh = ch
+		return
+	}
+	th := []watchedThread{{ch: ch, ts: threadTS, at: time.Now()}}
+	for _, t := range a.watchTh {
+		if (t.ch != ch || t.ts != threadTS) && len(th) < 2 {
+			th = append(th, t)
+		}
+	}
+	a.watchTh = th
 }
 
 // onAuthFailed runs once when any call learns the session ended: stop all
@@ -310,7 +497,11 @@ func (a *App) Boot(ctx context.Context) error {
 	log.Printf("boot: ready in %s (cache %s, %s, dm-users=%s); %d conversations, %d sections, %d emoji",
 		time.Since(t0).Round(time.Millisecond), tCache.Round(time.Millisecond), strings.Join(timings, " "),
 		time.Since(tu).Round(time.Millisecond), len(convs), len(sections), a.S.CustomEmoji.Len())
-	go a.RTM.Run(a.bg)
+	a.rtMu.Lock()
+	a.rtBooted = true
+	a.rtMu.Unlock()
+	a.startRealtime()
+	go a.pollLoop(a.bg)
 	go a.pump()
 	go a.prefetch(a.bg)
 	go a.loadExtras(a.bg)  // starred + saved sets
@@ -1117,6 +1308,9 @@ func (a *App) Presence(ctx context.Context, ids []string) map[string]string {
 		return out
 	}
 	a.SubscribePresence(missing)
+	if !a.RTM.Connected() {
+		return out // presence only arrives over the realtime socket
+	}
 	deadline := time.After(1500 * time.Millisecond)
 	for len(missing) > 0 {
 		c := make(chan struct{})

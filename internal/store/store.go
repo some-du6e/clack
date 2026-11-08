@@ -562,6 +562,17 @@ func (s *Store) Timeline(ch string) *Timeline {
 	return &cp
 }
 
+// TimelineIDs lists the conversations with a cached newest window.
+func (s *Store) TimelineIDs() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ids := make([]string, 0, len(s.timelines))
+	for id := range s.timelines {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 // SetLatest replaces the newest window (from a fresh history fetch).
 func (s *Store) SetLatest(ch string, msgs []slack.Message, hasMore bool) {
 	SortAsc(msgs)

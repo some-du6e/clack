@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"image/color"
 	"strings"
 
 	"gioui.org/io/key"
@@ -21,6 +22,7 @@ type loginScreen struct {
 	orgToken  widget.Editor
 	cookie    widget.Editor
 	cookieDS  widget.Editor
+	userAgent widget.Editor
 	submit    widget.Clickable
 	busy      bool
 	err       string
@@ -37,6 +39,8 @@ func newLoginScreen() *loginScreen {
 		ed.Submit = true
 		ed.Mask = '•'
 	}
+	l.userAgent.SingleLine = true // not a secret: shown so it can be checked
+	l.userAgent.Submit = true
 	return l
 }
 
@@ -50,7 +54,7 @@ func (a *App) layoutLogin(gtx layout.Context) {
 		l.focused = true
 	}
 	submit := l.submit.Clicked(gtx)
-	for _, ed := range []*widget.Editor{&l.workspace, &l.token, &l.orgToken, &l.cookie, &l.cookieDS} {
+	for _, ed := range []*widget.Editor{&l.workspace, &l.token, &l.orgToken, &l.cookie, &l.cookieDS, &l.userAgent} {
 		for {
 			e, ok := ed.Update(gtx)
 			if !ok {
@@ -68,6 +72,7 @@ func (a *App) layoutLogin(gtx layout.Context) {
 			OrgToken:  strings.TrimSpace(l.orgToken.Text()),
 			Cookie:    strings.TrimSpace(l.cookie.Text()),
 			CookieDS:  strings.TrimSpace(l.cookieDS.Text()),
+			UserAgent: strings.TrimSpace(l.userAgent.Text()),
 		}
 		if in.Token == "" || in.Cookie == "" {
 			l.err = "Paste your token and d cookie first."
@@ -93,8 +98,9 @@ func (a *App) layoutLogin(gtx layout.Context) {
 		}
 	}
 
-	w, h := gtx.Dp(440), gtx.Dp(700)
-	r := image.Rect((sz.X-w)/2, (sz.Y-h)/2, (sz.X+w)/2, (sz.Y+h)/2)
+	w, h := gtx.Dp(460), gtx.Dp(830)
+	top := max(gtx.Dp(8), (sz.Y-h)/2)
+	r := image.Rect((sz.X-w)/2, top, (sz.X+w)/2, top+h)
 	theme.Shadow(gtx, r, gtx.Dp(12), gtx.Dp(12), theme.WithAlpha(lc.PanelShadow, 0x60))
 	theme.RRect(gtx, r, gtx.Dp(12), lc.Bg)
 	x := r.Min.X + gtx.Dp(32)
@@ -104,10 +110,19 @@ func (a *App) layoutLogin(gtx layout.Context) {
 		return th.Label(gtx, 28, theme.Black, lc.Fg, "Sign in to Slack")
 	})
 	y += gtx.Dp(44)
-	at(gtx, image.Pt(x, y), image.Pt(cw, gtx.Dp(70)), func(gtx layout.Context) layout.Dimensions {
-		return th.Para(gtx, 15, 22, theme.Regular, lc.FgMuted, "Paste the token and cookies from your own Slack session. "+AppName+" only checks them with Slack and never signs that session out.")
+	// The session-sharing warning: Clack runs on the browser's own session,
+	// and Slack (Enterprise Grid especially) can end a session it sees used
+	// from somewhere unexpected, in every app at once.
+	wr := image.Rect(x, y, x+cw, y+gtx.Dp(118))
+	theme.RRect(gtx, wr, gtx.Dp(6), bannerWarn)
+	theme.Border(gtx, wr, gtx.Dp(6), gtx.Dp(1), color.NRGBA{R: 0xe8, G: 0xb3, B: 0x2c, A: 0xff})
+	at(gtx, image.Pt(x+gtx.Dp(12), y+gtx.Dp(8)), image.Pt(cw-gtx.Dp(24), gtx.Dp(104)), func(gtx layout.Context) layout.Dimensions {
+		return th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: lc.Fg, MaxLines: 6},
+			AppName+" shares the session of the browser you copy these from: it is not a separate sign-in. "+
+				"If Slack sees that session used in a way it finds unusual, it can sign it out everywhere, browser included "+
+				"(this has happened on Enterprise Grid). Paste the same browser's user agent, and leave live updates off unless you accept that risk.")
 	})
-	y += gtx.Dp(88)
+	y += gtx.Dp(130)
 	field := func(label string, ed *widget.Editor, hint string) {
 		at(gtx, image.Pt(x, y), image.Pt(cw, gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
 			return th.Label(gtx, 15, theme.Bold, lc.Fg, label)
@@ -135,7 +150,8 @@ func (a *App) layoutLogin(gtx layout.Context) {
 	field("Token", &l.token, "xoxc-… or the copied JSON")
 	field("Org token (optional)", &l.orgToken, "xoxc-… (Enterprise Grid)")
 	field("d cookie", &l.cookie, "xoxd-…")
-	field("d-s cookie (optional)", &l.cookieDS, "")
+	field("d-s cookie (recommended)", &l.cookieDS, "the d-s cookie next to d")
+	field("Browser user agent (recommended)", &l.userAgent, "navigator.userAgent from that browser")
 	br := image.Rect(x, y, x+cw, y+gtx.Dp(44))
 	atExact(gtx, br.Min, br.Size(), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, &l.submit, func(gtx layout.Context, s image.Point, hov bool) {

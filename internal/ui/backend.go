@@ -96,6 +96,9 @@ func (b *backend) start(a *App) {
 			a.Post(func() { b.handle(a, ev) })
 		}
 	}()
+	// Live updates only when the user opted in (realtime.go); core polls
+	// otherwise. Set before Boot so the socket is never opened unasked.
+	b.core.SetRealtime(a.realtimeOn())
 	go func() {
 		t0 := time.Now()
 		if err := b.core.Boot(b.ctx); err != nil {
@@ -128,6 +131,10 @@ func (b *backend) stop() {
 		b.unsub()
 	}
 	_ = b.core.Close()
+	// Every caller drops this backend (quit, sign out, account switch):
+	// stop core's socket and loops too, or the old session keeps a second
+	// realtime connection open next to the new one.
+	b.core.Shutdown()
 	b.saveCache()
 }
 
