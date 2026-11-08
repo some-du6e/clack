@@ -211,7 +211,7 @@ func TestMarkupModeFollowsSlackPref(t *testing.T) {
 	if PlainTextMode(c.api.a) {
 		t.Fatal("markup mode on by default")
 	}
-	s.SetPrefs(store.Prefs{PlainTextMode: true})
+	s.SetPrefs(store.Prefs{PlainTextMode: true}, nil)
 	if !PlainTextMode(c.api.a) {
 		t.Error("Slack's plain_text_mode ignored")
 	}
