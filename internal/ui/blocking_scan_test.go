@@ -133,8 +133,11 @@ func checkExecGuarded(t *testing.T, uf uiFile, execName string) {
 		}
 		// keep the stack balanced: push a placeholder for every other node
 		stack = append(stack, nil)
-		if sel, ok := n.(*ast.SelectorExpr); ok {
-			if id, ok := sel.X.(*ast.Ident); ok && id.Name == execName {
+		// exec.Command, CommandContext, LookPath: calls only (exec.ExitError
+		// and *exec.Cmd are just types)
+		if call, ok := n.(*ast.CallExpr); ok {
+			sel, _ := call.Fun.(*ast.SelectorExpr)
+			if id, ok := selIdent(sel); ok && id.Name == execName {
 				guarded := false
 				for i := len(stack) - 1; i >= 0; i-- {
 					if stack[i] != nil {
@@ -150,6 +153,14 @@ func checkExecGuarded(t *testing.T, uf uiFile, execName string) {
 		}
 		return true
 	})
+}
+
+func selIdent(sel *ast.SelectorExpr) (*ast.Ident, bool) {
+	if sel == nil {
+		return nil, false
+	}
+	id, ok := sel.X.(*ast.Ident)
+	return id, ok
 }
 
 // callsOffUI reports whether body calls uiguard.OffUI directly (not in a

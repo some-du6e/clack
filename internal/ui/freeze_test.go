@@ -330,6 +330,7 @@ func TestOSSchemeFollow(t *testing.T) {
 			t.Errorf("osSchemeDark = %v, %v", got, ok)
 		}
 	}
+	a.flushPrefs()
 	if v := uiguard.Violations(); len(v) > 0 {
 		t.Errorf("blocking calls on the UI goroutine: %v", v)
 	}

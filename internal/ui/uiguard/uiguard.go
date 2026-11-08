@@ -26,6 +26,10 @@ func MarkUI() { uiGID.Store(goid()) }
 // Unmark forgets the UI goroutine (tests).
 func Unmark() { uiGID.Store(0) }
 
+// Marked reports whether a UI goroutine is marked (false in headless tests
+// that never call MarkUI).
+func Marked() bool { return uiGID.Load() != 0 }
+
 // OnUI reports whether the caller is the UI goroutine.
 func OnUI() bool {
 	g := uiGID.Load()

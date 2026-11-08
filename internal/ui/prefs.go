@@ -132,6 +132,12 @@ type prefsSaver struct {
 
 func (s *prefsSaver) save(path string, b []byte) {
 	s.mu.Lock()
+	if !s.busy && !uiguard.Marked() {
+		// no window (headless tests and tools): nothing to keep responsive
+		s.mu.Unlock()
+		writePrefsFile(path, b)
+		return
+	}
 	s.path, s.pending = path, b
 	if s.busy {
 		s.mu.Unlock()
