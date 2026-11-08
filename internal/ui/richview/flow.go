@@ -41,7 +41,10 @@ type frag struct {
 	p0, p1 int32  // plain text byte range
 	alt    bool   // image frag has text fallback in plain (":name:")
 	comp   int16  // component tag (index+1 into display.comps), 0 = static
-	tip    int16  // emoji: index+1 into display.tips (its :name: tooltip)
+	part   uint8  // CSS part (css.go), 0 = none
+	boxed  bool   // its part's background is a deco box (code, pill)
+	weight font.Weight
+	tip    int16 // emoji: index+1 into display.tips (its :name: tooltip)
 }
 
 type boxKind uint8
@@ -71,6 +74,8 @@ type box struct {
 	perCorner bool
 	corners   [4]int
 	comp      int16 // component tag, 0 = static
+	part      uint8 // CSS part (css.go): its background (or color, colFill) replaces fill
+	colFill   bool  // fill is the part's text color (list markers)
 }
 
 type imgPrim struct {
@@ -185,6 +190,7 @@ type deco struct {
 	face   faceKey
 	self   bool
 	comp   int16
+	part   uint8
 }
 
 type item struct {
@@ -202,6 +208,7 @@ type item struct {
 	brk    bool // break opportunity after this item (CJK, images)
 	alt    bool
 	comp   int16
+	part   uint8
 	tip    int16
 }
 
@@ -242,6 +249,12 @@ type lay struct {
 	expandAt *richtext.Attachment
 	// titleFrags is a YouTube card's title frags [from, to) (compBlock).
 	titleFrags [2]int
+	// CSS parts (css.go), nil while no CSS is installed: ctr is the
+	// current container's element path, curPart the part new items get.
+	css     *cssParts
+	ctr     partPath
+	curPart uint8
+	inBlock bool // inside a .p-rich_text_block
 }
 
 func (l *lay) dp(v float32) int      { return int(v*l.scale + 0.5) }
@@ -289,7 +302,7 @@ func (l *lay) addText(s string, fs *flowStyle, k faceKey, col color.NRGBA, st ri
 		p0, p1 := l.plainAdd(sg.text)
 		ep := fs.emoji
 		l.items = append(l.items, item{kind: itImage, face: k, w: float32(ep + 2*l.dp(1)), url: l.st.emojiURL(sg.stem), size: ep,
-			deco: dc, target: tg, p0: p0, p1: p1, brk: true, alt: true})
+			deco: dc, target: tg, p0: p0, p1: p1, brk: true, alt: true, part: l.curPart})
 	}
 }
 
@@ -303,7 +316,7 @@ func (l *lay) addTextRun(s string, fs *flowStyle, k faceKey, col color.NRGBA, st
 		w := s[start:end]
 		sh := l.st.word(k, w)
 		p0, p1 := l.plainAdd(w)
-		l.items = append(l.items, item{kind: itWord, sh: sh, face: k, w: sh.adv, col: col, style: st, deco: dc, target: tg, p0: p0, p1: p1})
+		l.items = append(l.items, item{kind: itWord, sh: sh, face: k, w: sh.adv, col: col, style: st, deco: dc, target: tg, p0: p0, p1: p1, part: l.curPart})
 		start = -1
 	}
 	for i := 0; i < len(s); {
@@ -329,7 +342,7 @@ func (l *lay) addTextRun(s string, fs *flowStyle, k faceKey, col color.NRGBA, st
 			// Collapse runs of spaces outside pre/rich text? Slack uses
 			// pre-wrap everywhere, so spaces are preserved.
 			p0, p1 := l.plainAdd(s[i : i+sz])
-			l.items = append(l.items, item{kind: itSpace, face: k, w: sp.adv * float32(n), col: col, style: st, deco: dc, target: tg, p0: p0, p1: p1})
+			l.items = append(l.items, item{kind: itSpace, face: k, w: sp.adv * float32(n), col: col, style: st, deco: dc, target: tg, p0: p0, p1: p1, part: l.curPart})
 		case isCJK(r):
 			flush(i)
 			start = i
@@ -350,15 +363,24 @@ func (l *lay) addTextRun(s string, fs *flowStyle, k faceKey, col color.NRGBA, st
 }
 
 func (l *lay) addPad(w float32, dc int16, k faceKey) {
-	l.items = append(l.items, item{kind: itPad, w: w, deco: dc, face: k, target: -1})
+	l.items = append(l.items, item{kind: itPad, w: w, deco: dc, face: k, target: -1, part: l.curPart})
 }
 
 // addSpans converts spans into items.
 func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
+	ctrPart := l.curPart
+	if l.css != nil {
+		defer func() { l.curPart = ctrPart }()
+	}
 	p := &l.st.Palette
 	for i := range spans {
 		sp := &spans[i]
 		st := sp.Style
+		var pt uint8
+		if l.css != nil {
+			pt = l.spanPart(sp)
+			l.curPart = pt
+		}
 		col := fs.col
 		size := fs.size
 		base := fs.face
@@ -370,6 +392,9 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			col = p.CodeText
 		}
 		k := l.faceFor(base, size, st)
+		if pt != 0 {
+			k = l.partFace(k, pt)
+		}
 		noAt := false
 		n0 := len(l.items)
 		var cmp int16 // a mention pill laid out as a Slack component
@@ -399,7 +424,7 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 				l.d.tips = append(l.d.tips, ":"+sp.ID+":")
 				tip = int16(len(l.d.tips))
 			}
-			l.items = append(l.items, item{kind: itImage, face: k, w: float32(ep + 2*l.dp(1)), url: sp.URL, size: ep, deco: -1, target: -1, p0: p0, p1: p1, brk: true, alt: true, tip: tip})
+			l.items = append(l.items, item{kind: itImage, face: k, w: float32(ep + 2*l.dp(1)), url: sp.URL, size: ep, deco: -1, target: -1, p0: p0, p1: p1, brk: true, alt: true, tip: tip, part: pt})
 			continue
 		case richtext.InlineImage:
 			if sp.URL == "" {
@@ -407,7 +432,7 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			}
 			p0, p1 := l.plainAdd(sp.Text)
 			ip := max(fs.emoji, l.dp(16))
-			l.items = append(l.items, item{kind: itImage, face: k, w: float32(ip + 2*l.dp(1)), url: sp.URL, size: ip, deco: -1, target: -1, p0: p0, p1: p1, brk: true})
+			l.items = append(l.items, item{kind: itImage, face: k, w: float32(ip + 2*l.dp(1)), url: sp.URL, size: ip, deco: -1, target: -1, p0: p0, p1: p1, brk: true, part: pt})
 			continue
 		case richtext.ColorSwatch:
 			if c := parseColor(sp.Text, color.NRGBA{}); c.A > 0 && !uipref.Get().HideHexSwatch {
@@ -450,13 +475,16 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			if sp.Kind == richtext.Broadcast {
 				bg, fg = p.SelfMentionBg, p.SelfMentionText
 				k = l.faceFor(base, size, st|richtext.Bold)
+				if pt != 0 {
+					k = l.partFace(k, pt)
+				}
 			}
 			col = fg
 			pad, padV := l.dpf(2), l.dpf(1)
 			if fs.pre || st&richtext.Code != 0 {
 				pad, padV = 0, 0
 			}
-			l.decos = append(l.decos, deco{kind: 1, bg: bg, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, self: sp.Self || sp.Kind == richtext.Broadcast})
+			l.decos = append(l.decos, deco{kind: 1, bg: bg, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, self: sp.Self || sp.Kind == richtext.Broadcast, part: pt})
 			dc = int16(len(l.decos) - 1)
 			if l.mode&modePills != 0 && !l.inAtt && (sp.Kind == richtext.User || sp.Kind == richtext.Channel) {
 				kind := compUser
@@ -479,10 +507,10 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			}
 		}
 		if st&richtext.Code != 0 && !fs.pre && dc < 0 {
-			l.decos = append(l.decos, deco{kind: 2, bg: p.CodeBg, border: p.CodeBorder, padL: l.dpf(3), padR: l.dpf(3), padT: l.dpf(2), padB: l.dpf(1), radius: l.dp(3), target: tg, face: k})
+			l.decos = append(l.decos, deco{kind: 2, bg: p.CodeBg, border: p.CodeBorder, padL: l.dpf(3), padR: l.dpf(3), padT: l.dpf(2), padB: l.dpf(1), radius: l.dp(3), target: tg, face: k, part: pt})
 			dc = int16(len(l.decos) - 1)
 		} else if st&richtext.Highlight != 0 && dc < 0 {
-			l.decos = append(l.decos, deco{kind: 3, bg: p.Highlight, face: k, target: -1})
+			l.decos = append(l.decos, deco{kind: 3, bg: p.Highlight, face: k, target: -1, part: pt})
 			dc = int16(len(l.decos) - 1)
 		}
 		if dc >= 0 && l.decos[dc].padL > 0 {
@@ -572,9 +600,10 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 
 	emit := func(it *item, sh *shaped, w float32, p0, p1 int32) {
 		if it.kind == itImage {
-			d.frags = append(d.frags, frag{kind: fImage, x: float32(x0) + x + l.dpf(1), w: float32(it.size), size: it.size, url: it.url, target: it.target, p0: p0, p1: p1, alt: it.alt, comp: it.comp, tip: it.tip})
+			d.frags = append(d.frags, frag{kind: fImage, x: float32(x0) + x + l.dpf(1), w: float32(it.size), size: it.size, url: it.url, target: it.target, p0: p0, p1: p1, alt: it.alt, comp: it.comp, tip: it.tip, part: it.part})
 		} else if it.kind == itWord {
-			d.frags = append(d.frags, frag{kind: fText, x: float32(x0) + x, w: w, size: int(it.face.size >> 6), sh: sh, col: it.col, style: it.style, target: it.target, p0: p0, p1: p1, comp: it.comp})
+			d.frags = append(d.frags, frag{kind: fText, x: float32(x0) + x, w: w, size: int(it.face.size >> 6), sh: sh, col: it.col, style: it.style, target: it.target, p0: p0, p1: p1, comp: it.comp,
+				part: it.part, boxed: it.deco >= 0, weight: it.face.f.Weight})
 		}
 		x += w
 	}
@@ -727,9 +756,9 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 				rr = image.Rect(int(r.x+0.5), cy, int(r.x+0.5)+sw, cy+sw)
 				d.boxes = append(d.boxes, box{kind: bBorder, r: rr, radius: dc.radius, fill: dc.bg, stroke: dc.border, bw: l.dp(1), target: -1})
 			case 2:
-				d.boxes = append(d.boxes, box{kind: bBorder, r: rr, radius: dc.radius, fill: dc.bg, stroke: dc.border, bw: l.dp(1), target: -1})
+				d.boxes = append(d.boxes, box{kind: bBorder, r: rr, radius: dc.radius, fill: dc.bg, stroke: dc.border, bw: l.dp(1), target: -1, part: dc.part})
 			default:
-				bx := box{kind: bFill, r: rr, radius: dc.radius, fill: dc.bg, target: dc.target, comp: dc.comp}
+				bx := box{kind: bFill, r: rr, radius: dc.radius, fill: dc.bg, target: dc.target, comp: dc.comp, part: dc.part}
 				if dc.kind == 1 && !dc.self {
 					bx.hover = l.st.Palette.MentionHoverBg
 				}
@@ -776,7 +805,7 @@ func (l *lay) ellipsize(ln *lineInfo, x0 int, maxW float32, fs *flowStyle) {
 		ex = last.x + last.w
 		ty = last.y
 	}
-	d.frags = append(d.frags, frag{kind: fText, x: ex, w: ell.adv, size: fs.size, sh: ell, col: fs.col, target: -1, top: ln.top, bot: ln.bot, line: int32(len(d.lines) - 1), y: ty, p0: int32(len(d.plain)), p1: int32(len(d.plain))})
+	d.frags = append(d.frags, frag{kind: fText, x: ex, w: ell.adv, size: fs.size, sh: ell, col: fs.col, target: -1, top: ln.top, bot: ln.bot, line: int32(len(d.lines) - 1), y: ty, p0: int32(len(d.plain)), p1: int32(len(d.plain)), part: l.curPart})
 	ln.f1 = len(d.frags)
 }
 
@@ -789,6 +818,9 @@ func (l *lay) textFlow(spans []richtext.Span, x, y, w int, fs *flowStyle) (int, 
 // plainFlow lays out a plain string in one style.
 func (l *lay) plainFlow(s string, x, y, w int, fs *flowStyle, tg int16) (int, int) {
 	k := l.faceFor(fs.face, fs.size, 0)
+	if l.curPart != 0 {
+		k = l.partFace(k, l.curPart)
+	}
 	l.noPlain = fs.noSelect
 	l.addText(s, fs, k, fs.col, 0, -1, tg)
 	l.noPlain = false

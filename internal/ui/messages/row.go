@@ -117,6 +117,14 @@ type row struct {
 	replyAvs        []replyAv    // the reply bar's ReplyBarAvatars
 	replyN          int          // … drawn in the last frame
 
+	// Slackbot custom response drawn as the team (custom_response.go)
+	custom         bool
+	crName, crIcon string
+	crTag          crHoverTag
+	crHovered      bool
+	crTip          popups.TipState
+	crTipText      string // the badge tooltip's text while hovered
+
 	// what the header drew last frame (CSS may replace both)
 	avDrawn   string // the avatar's picture: a CSS background-image wins
 	nameShown string // the sender label: ::before + name (unless font-size 0) + ::after
@@ -572,6 +580,7 @@ func (r *row) layoutWrapper(gtx layout.Context, p slackc.Props) layout.Dimension
 		r.growPills()
 	}
 	r.resolve(rc)
+	r.customResponse(rc)
 	switch {
 	case rc.parent:
 		return r.layoutMessage(gtx, nil)
@@ -659,6 +668,9 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 	eph := ephemeral(rc, m)
 	if eph {
 		y += r.labelLine(gtx, rc, cx, y, "eye", "Only visible to you")
+	} else if m.SlackbotCustomResponse() && !r.custom && !(m.Pinned && !rc.thread) {
+		// MessageLabels' custom_response label (pencil), which the reskin drops
+		y += r.labelLine(gtx, rc, cx, y, "edit", "Custom response")
 	}
 	r.col = image.Pt(cx, y)
 	g := at(gtx, 0, y, func(gtx layout.Context) layout.Dimensions {
@@ -795,6 +807,9 @@ func (r *row) layoutAvatar(gtx layout.Context, p slackc.Props) layout.Dimensions
 		s = dp(gtx, float32(p.IntOr("size", int(mt.avatar))))
 		url = avatarURL(rc.h, p, r.m.User, url)
 	}
+	if r.custom { // BaseMessageAvatar: the TeamIcon, no profile card
+		return r.layoutTeamAvatar(gtx, p, s)
+	}
 	st := avatarClass.EnterClass(gtx, btnState(gtx, &r.avatarBtn), 0, slackc.ExtraClass(p))
 	defer st.Leave()
 	if st.Hidden() {
@@ -883,7 +898,7 @@ func (r *row) layoutCompactTS(gtx layout.Context, p slackc.Props) layout.Dimensi
 	sz := measure(gtx, rc.th, s, ts)
 	at(gtx, box.X-sz.X, 0, func(gtx layout.Context) layout.Dimensions {
 		if st.Active() {
-			return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, s, ts) })
+			return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return decoLabel(gtx, rc.th, st, s, ts) })
 		}
 		return label(gtx, rc.th, s, ts)
 	})
@@ -1220,15 +1235,25 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 	if st.Hidden() {
 		return layout.Dimensions{}
 	}
-	if ctxclick.Clicked(gtx, &r.nameBtn) && r.m.User != "" {
+	if ctxclick.Clicked(gtx, &r.nameBtn) && r.m.User != "" && !r.custom {
 		rc.h.OpenProfile(rc.origin(image.Point{}), r.m.User)
 	}
-	bs := senderBtnClass.Enter(gtx, btnState(gtx, &r.nameBtn), 0)
+	var bs slackc.Styled
+	if r.custom { // not interactive: a span, no button (custom_response.go)
+		bs = senderNameClass.Enter(gtx, 0, 0)
+	} else {
+		bs = senderBtnClass.Enter(gtx, btnState(gtx, &r.nameBtn), 0)
+	}
 	var nd layout.Dimensions
 	if !bs.Hidden() {
-		if bs.Active() {
+		switch active := bs.Active(); {
+		case active && r.custom:
+			nd = bs.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return r.nameSpan(gtx, bs) })
+		case active:
 			nd = bs.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return r.nameButton(gtx, bs) })
-		} else {
+		case r.custom:
+			nd = r.nameSpan(gtx, bs)
+		default:
 			nd = r.nameButton(gtx, bs)
 		}
 	}
@@ -1246,6 +1271,9 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 	}
 	baseline := nd.Size.Y - nd.Baseline
 	xx := nd.Size.X
+	if r.custom {
+		xx += r.customBadge(gtx, xx, nd.Size.Y)
+	}
 	if r.bot && r.m.User != "USLACKBOT" { // Slack shows no APP tag on Slackbot
 		xx += dp(gtx, mt.badgeGap)
 		s := textStyle{size: 10, weight: theme.Bold, col: c.BadgeText}
@@ -1311,7 +1339,7 @@ func (r *row) layoutTimestamp(gtx layout.Context, p slackc.Props) layout.Dimensi
 	tsS := textStyle{size: float32(st.FontSize(12)), col: st.Color(r.rc.c.Text2)}
 	tsText := clock(tsTime(r.m.TS))
 	if st.Active() {
-		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return label(gtx, r.rc.th, tsS, tsText) })
+		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return decoLabel(gtx, r.rc.th, st, tsS, tsText) })
 	}
 	return label(gtx, r.rc.th, tsS, tsText)
 }
@@ -1322,11 +1350,18 @@ func (r *row) labelLine(gtx layout.Context, rc *rowCtx, x, y int, icon, txt stri
 	lh := dp(gtx, 19)
 	is := dp(gtx, 14)
 	// icon right-aligned in the 36px gutter box that starts at x=20
+	ls := labelsClass.Enter(gtx, 0, 0)
+	defer ls.Leave()
+	if ls.Hidden() {
+		return 0
+	}
 	at(gtx, dp(gtx, 56)-is, y+(lh-is)/2, func(gtx layout.Context) layout.Dimensions {
-		return icons.Get(icon)(gtx, unit.Dp(14), c.PinIcon)
+		return icons.Get(icon)(gtx, unit.Dp(14), ls.Color(c.PinIcon))
 	})
+	ts := labelsTextClass.Enter(gtx, 0, 0)
+	defer ts.Leave()
 	at(gtx, dp(gtx, 64), y, func(gtx layout.Context) layout.Dimensions {
-		return label(gtx, rc.th, textStyle{size: 13, col: c.Muted70, lineH: 19}, txt)
+		return styledLabel(gtx, rc.th, ts, textStyle{size: 13, col: c.Muted70, lineH: 19}, txt)
 	})
 	return dp(gtx, 20)
 }
@@ -1340,12 +1375,19 @@ func (r *row) broadcastLine(gtx layout.Context, rc *rowCtx, x, y int) int {
 	if r.broadcastBtn.Clicked(gtx) {
 		rc.h.OpenThread(r.m.Channel, r.m.ThreadTS)
 	}
+	ps := preambleClass.Enter(gtx, 0, 0)
+	defer ps.Leave()
+	if ps.Hidden() {
+		return 0
+	}
 	pd := at(gtx, x, y, func(gtx layout.Context) layout.Dimensions {
-		return label(gtx, rc.th, textStyle{size: 15, col: c.Text2, lineH: 22}, "replied to ")
+		return styledLabel(gtx, rc.th, ps, textStyle{size: 15, col: c.Text2, lineH: 22}, "replied to ")
 	})
+	ls := preambleLinkClass.Enter(gtx, btnState(gtx, &r.broadcastBtn), 0)
+	defer ls.Leave()
 	at(gtx, x+pd.Size.X, y, func(gtx layout.Context) layout.Dimensions {
 		return r.broadcastBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return label(gtx, rc.th, textStyle{size: 15, weight: theme.Bold, col: c.Link, lineH: 22}, "a thread")
+			return styledLabel(gtx, rc.th, ls, textStyle{size: 15, weight: theme.Bold, col: c.Link, lineH: 22}, "a thread")
 		})
 	})
 	return h
@@ -1674,16 +1716,18 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 		return r.rv.Layout(gtx, rc.st, &r.handler)
 	})
 	ts := clock(tsTime(m.TS))
-	tsS := textStyle{size: 12, col: c.TimeSystem, lineH: 19}
+	tst := tsClass.Enter(gtx, 0, 0)
+	tsS := cssText(tst, textStyle{size: 12, col: c.TimeSystem, lineH: 19})
 	tsz := measure(gtx, rc.th, tsS, ts)
 	if body.Size.Y <= dp(gtx, 22) && body.Size.X+dp(gtx, 8)+tsz.X <= cw {
-		at(gtx, cx+body.Size.X+dp(gtx, 8), y+dp(gtx, 1), func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, tsS, ts) })
+		at(gtx, cx+body.Size.X+dp(gtx, 8), y+dp(gtx, 1), func(gtx layout.Context) layout.Dimensions { return styledLabel(gtx, rc.th, tst, tsS, ts) })
 		y += max(body.Size.Y, dp(gtx, 20))
 	} else {
 		y += body.Size.Y
-		at(gtx, cx, y, func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, tsS, ts) })
+		at(gtx, cx, y, func(gtx layout.Context) layout.Dimensions { return styledLabel(gtx, rc.th, tst, tsS, ts) })
 		y += tsz.Y
 	}
+	tst.Leave()
 	if len(m.Reactions) > 0 {
 		y += dp(gtx, 4)
 		y += r.reactionBar(gtx, image.Pt(cx, y), image.Point{}, cw)
@@ -1713,6 +1757,11 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 	bx := x - dp(gtx, 5)
 	if r.threadBtn.Clicked(gtx) {
 		rc.h.OpenThread(m.Channel, m.TS)
+	}
+	bs := replyBarClass.Enter(gtx, btnState(gtx, &r.threadBtn), 0)
+	defer bs.Leave()
+	if bs.Hidden() {
+		return 0
 	}
 	at(gtx, bx, y-dp(gtx, 4), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Exact(image.Pt(bw, bh))
@@ -1752,9 +1801,11 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 				n = strconv.Itoa(count) + " replies"
 			}
 			ty := (bh - dp(gtx, 18)) / 2
+			cs := replyCountClass.Enter(gtx, 0, 0)
 			nd := at(gtx, ax, ty, func(gtx layout.Context) layout.Dimensions {
-				return label(gtx, rc.th, textStyle{size: 13, weight: theme.Bold, col: c.Link, lineH: 18}, n)
+				return styledLabel(gtx, rc.th, cs, textStyle{size: 13, weight: theme.Bold, col: c.Link, lineH: 18}, n)
 			})
+			cs.Leave()
 			ax += nd.Size.X + dp(gtx, 8)
 			desc := ""
 			if hov {
@@ -1762,10 +1813,12 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 			} else if latest != "" {
 				desc = "Last reply " + ago(tsTime(latest), rc.now)
 			}
+			ds := replyDescClass.Enter(gtx, 0, 0)
 			at(gtx, ax, ty, func(gtx layout.Context) layout.Dimensions {
 				gtx.Constraints.Max.X = bw - ax - dp(gtx, 28)
-				return label(gtx, rc.th, textStyle{size: 13, col: c.Text2, lineH: 18}, desc)
+				return styledLabel(gtx, rc.th, ds, textStyle{size: 13, col: c.Text2, lineH: 18}, desc)
 			})
+			ds.Leave()
 			if hov {
 				is := dp(gtx, 18)
 				at(gtx, bw-pad-is, (bh-is)/2, func(gtx layout.Context) layout.Dimensions {

@@ -2,10 +2,18 @@
 
 package ui
 
-import "golang.org/x/sys/windows/registry"
+import (
+	"time"
 
-// osPrefersDark reads Windows' app mode (AppsUseLightTheme 0 = dark).
+	"golang.org/x/sys/windows/registry"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uiguard"
+)
+
+// osPrefersDark reads Windows' app mode (AppsUseLightTheme 0 = dark). A
+// registry read is quick, but it's still I/O: watcher goroutine only.
 func osPrefersDark() (dark, ok bool) {
+	uiguard.OffUI("osPrefersDark")
 	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`, registry.QUERY_VALUE)
 	if err != nil {
 		return false, false
@@ -16,4 +24,15 @@ func osPrefersDark() (dark, ok bool) {
 		return false, false
 	}
 	return v == 0, true
+}
+
+func startOSSchemeWatcher() {
+	go func() {
+		for {
+			if dark, ok := osPrefersDark(); ok {
+				setOSScheme(dark)
+			}
+			time.Sleep(5 * time.Second)
+		}
+	}()
 }

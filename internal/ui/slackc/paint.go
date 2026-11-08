@@ -1287,6 +1287,14 @@ func drawDecoration(ops *op.Ops, d css.TextDecoration, col color.NRGBA, x, base,
 	}
 }
 
+// DrawDecoration draws text-decoration lines d (underline, line-through,
+// overline; straight or wavy) in col under a run of text at x (px), w
+// wide, on baseline base, in font size fs px. For natives that record
+// their own text ops (richview's message body).
+func DrawDecoration(ops *op.Ops, d css.TextDecoration, col color.NRGBA, x, base, w, fs float32) {
+	drawDecoration(ops, d, col, x, base, w, fs)
+}
+
 // Decorate draws st's text-decoration (underline, line-through, overline;
 // straight or wavy) under a native widget's text run: x and w in px, base
 // the baseline, fg the text's color (for currentColor). Natives call it for

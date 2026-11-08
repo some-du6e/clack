@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync"
+	"sync/atomic"
 )
 
 // Linux: Gio reads only UTF8_STRING (X11) or text/plain (Wayland), so the
@@ -15,9 +17,23 @@ import (
 
 var errClipNoHTML = errors.New("no html on the clipboard")
 
+// clipHTMLSupported runs on the key press (UI goroutine), so the PATH
+// lookups happen once in the background; until they answer, a paste just
+// tries (the read fails fast without the tools).
 func clipHTMLSupported() bool {
-	return (os.Getenv("WAYLAND_DISPLAY") != "" && attHave("wl-paste")) ||
-		(os.Getenv("DISPLAY") != "" && attHave("xclip"))
+	clipTools.once.Do(func() {
+		go func() {
+			clipTools.ok.Store((os.Getenv("WAYLAND_DISPLAY") != "" && attHave("wl-paste")) ||
+				(os.Getenv("DISPLAY") != "" && attHave("xclip")))
+			clipTools.known.Store(true)
+		}()
+	})
+	return !clipTools.known.Load() || clipTools.ok.Load()
+}
+
+var clipTools struct {
+	once      sync.Once
+	ok, known atomic.Bool
 }
 
 func clipReadHTML(ctx context.Context) ([]byte, error) {

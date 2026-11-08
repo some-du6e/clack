@@ -34,6 +34,7 @@ func TestFormatWithMarkupPref(t *testing.T) {
 	if !a.plainTextOn() || !composer.PlainTextMode(a.Core()) {
 		t.Fatal("toggle didn't turn markup mode on")
 	}
+	a.flushPrefs() // ui.json is written in the background
 	b, err := os.ReadFile(a.prefsPath())
 	if err != nil {
 		t.Fatal(err)

@@ -629,7 +629,8 @@ func (p *prefsModal) advancedPage(f *prefsForm) {
 	f.option("realtime", "Live updates (typing, presence, instant messages)", rtHint, a.realtimeOn(), false, a.toggleRealtime)
 	f.note("Clack shares your browser's Slack session. On some Enterprise Grid workspaces Slack can sign that session out everywhere if it notices.", true, 2)
 	f.subheading("Updates")
-	f.option("updates", "Check for updates", "Shows a banner when a new Clack release is on GitHub. Nothing downloads on its own.", a.updateChecksOn(), false, a.toggleUpdateChecks)
+	f.option("updates", "Check for updates", "Shows a banner when a new Clack release is on GitHub.", a.updateChecksOn(), false, a.toggleUpdateChecks)
+	f.optionAt("update_download", "Download updates automatically", "Fetched in the background and checked. Installs only when you click Install and restart.", a.updateDownloadsOn(), false, a.updateChecksOn(), a.toggleUpdateDownloads)
 	if buildVersion != "" {
 		f.note("You have Clack "+buildVersion, true, 1)
 	}

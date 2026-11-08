@@ -26,10 +26,12 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/yoloslackgoclient/internal/slick"
 	"github.com/some-du6e/yoloslackgoclient/internal/taut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/huddleui"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uiguard"
 )
 
 // AppName is the product name (Karim picked "Clack" on 2026-11-06). The
@@ -66,9 +68,20 @@ type Options struct {
 	SwitchAccount func(c slack.Creds)
 	// CheckUpdate asks whether a newer release exists (cmd/clack: GitHub
 	// Releases). Called off the UI goroutine while Preferences > Advanced >
-	// "Check for updates" is on; ok=true shows the "Update available"
-	// banner. Nil: no update checks (dev builds).
+	// "Check for updates" is on; ok=true shows the update banner. Nil: no
+	// update checks (dev builds).
 	CheckUpdate func(ctx context.Context) (u UpdateInfo, ok bool, err error)
+	// DownloadUpdate fetches and verifies release u in the background
+	// (cmd/clack: the package for this install, checked against the
+	// release's SHA256SUMS) while "Download updates automatically" is on.
+	// nil error: the banner offers "Install and restart". Nil: the banner
+	// only links the release page.
+	DownloadUpdate func(ctx context.Context, u UpdateInfo) error
+	// InstallUpdate installs the downloaded u, called only from the
+	// banner's "Install and restart" click. nil error: Clack quits and the
+	// update helper starts the new version; ErrUpdateManual: the system
+	// installer opened instead.
+	InstallUpdate func(u UpdateInfo) error
 	// OnWindowEvent sees every window event before the UI (cmd/clack:
 	// window icons from the platform view events).
 	OnWindowEvent func(e event.Event)
@@ -139,24 +152,31 @@ type App struct {
 	clipboard   string
 	prefs       prefs
 	prefsDirty  bool
-	notify      notifier
-	focused     bool
-	winSize     image.Point
-	sbBase      color.NRGBA
-	sbPal       theme.Palette
-	styleVer    uint64    // slackc.Styles.Version the palette was derived at
-	acct        acctTheme // the Slack account's theme (theme_account.go)
-	shaperCh    chan [2]*text.Shaper
-	explorer    *explorer.Explorer    // native file chooser (set in onWindow)
-	tautGen     int                   // bumps when a (new) plugin runtime attaches
-	tautTabs    []taut.PreferencesTab // plugins' Preferences tabs
-	switchAt    time.Time             // navigation time, for the channel-switch latency log
-	switchTo    Route
-	winLive     atomic.Pointer[app.Window] // a.win once Run made it, for other goroutines
-	update      updateState                // "Update available" banner
-	rtAsk       realtimeState              // first-run "Live updates are off" banner
-	updatesOff  atomic.Bool                // prefs.NoUpdateCheck, for updateLoop
-	hud         *huddleui.Controller       // the native huddle (huddle_wire.go)
+	prefsSave   prefsSaver // ui.json writer (prefs.go)
+	slickMode   struct {   // slickSetDark's worker (taut_wire.go)
+		mu   sync.Mutex
+		s    *slick.Slick
+		dark bool
+		busy bool
+	}
+	notify     notifier
+	focused    bool
+	winSize    image.Point
+	sbBase     color.NRGBA
+	sbPal      theme.Palette
+	styleVer   uint64    // slackc.Styles.Version the palette was derived at
+	acct       acctTheme // the Slack account's theme (theme_account.go)
+	shaperCh   chan [2]*text.Shaper
+	explorer   *explorer.Explorer    // native file chooser (set in onWindow)
+	tautGen    int                   // bumps when a (new) plugin runtime attaches
+	tautTabs   []taut.PreferencesTab // plugins' Preferences tabs
+	switchAt   time.Time             // navigation time, for the channel-switch latency log
+	switchTo   Route
+	winLive    atomic.Pointer[app.Window] // a.win once Run made it, for other goroutines
+	update     updateState                // "Update available" banner
+	rtAsk      realtimeState              // first-run "Live updates are off" banner
+	updatesOff atomic.Bool                // prefs.NoUpdateCheck, for updateLoop
+	hud        *huddleui.Controller       // the native huddle (huddle_wire.go)
 
 	swipe         swiper          // trackpad history swipes (swipe.go, nav.go)
 	swipeNow      swipeState      // this frame's swipe progress, for the arrow
@@ -164,6 +184,7 @@ type App struct {
 	ptrBtns       pointer.Buttons // mouse buttons held, for back/forward (navButtons)
 	railOverflow  []string        // tabs under the rail's More (layoutRail)
 	teamIconShown string          // the last workspace icon URL that drew (kept while a new one loads)
+	mbar          menuBar         // the macOS menu bar's state (macmenu.go)
 }
 
 // New creates the app. Call Run on the UI goroutine (main).
@@ -182,6 +203,7 @@ func New(opts Options, images *imgcache.Cache) *App {
 	a.secondary.width = theme.SecondaryW
 	a.keys = a.defaultShortcuts()
 	a.loadPrefs()
+	a.settleThemeSync()
 	// The shaper (font parsing + system font index) is the slowest part of
 	// startup; build it while the window and GPU context come up.
 	a.shaperCh = make(chan [2]*text.Shaper, 1)
@@ -190,6 +212,9 @@ func New(opts Options, images *imgcache.Cache) *App {
 		sh := theme.NewShaper() // one collection serves both modes
 		a.shaperCh <- [2]*text.Shaper{sh, sh}
 		a.timing("shapers ready", t)
+		if w := a.winLive.Load(); w != nil {
+			w.Invalidate() // the first frames painted the background only
+		}
 	}()
 	if opts.Login != nil {
 		a.login = newLoginScreen()
@@ -238,41 +263,64 @@ func (a *App) Run() error {
 	if startNavGlue != nil {
 		startNavGlue(a)
 	}
+	a.startMenuBar()
 	if a.data != nil {
 		a.data.start(a)
 	}
 	var ops op.Ops
+	uiguard.MarkUI() // this goroutine handles every window event (uiguard)
+	wd := newWatchdog(a.opts.ConfigDir, a.opts.Started)
+	go wd.run()
 	for {
 		ev := a.win.Event()
+		// The OS waits while this goroutine handles ev (macOS: the AppKit
+		// main thread, every event and frame), so the watchdog times it.
+		wd.begin(&stageEvent)
 		if a.opts.OnWindowEvent != nil {
 			a.opts.OnWindowEvent(ev)
 		}
 		if onEvent != nil {
 			onEvent(ev)
 		}
+		if menuViewEvent != nil {
+			menuViewEvent(ev)
+		}
 		switch e := ev.(type) {
 		case app.DestroyEvent:
+			wd.end()
+			wd.stop()
 			if a.hud != nil {
 				a.hud.Close() // leave the huddle cleanly (Chime LEAVE)
 			}
 			if a.data != nil {
-				a.data.stop()
+				select { // plugins' stop hooks, the metadata cache
+				case <-a.data.stop():
+				case <-time.After(5 * time.Second):
+				}
 			}
+			a.flushPrefs() // the window is gone: nothing waits on this
 			return e.Err
 		case app.ConfigEvent:
 			a.focused = e.Config.Focused
 		case app.FrameEvent:
 			t0 := time.Now()
-			if a.th.Shaper == nil {
-				a.timing("first FrameEvent", a.opts.Started)
-				sh := <-a.shaperCh
-				a.th.SetShapers(sh[0], sh[1])
-				a.timing("shaper waited", t0)
+			if a.th.Shaper == nil && !a.takeShaper() {
+				// The shaper (fonts) is still loading: paint the window's
+				// background and come back when it's ready, instead of
+				// waiting here (that would hold the OS's main thread).
+				wd.next(&stageShaper)
+				gtx := app.NewContext(&ops, e)
+				a.grad.layout(gtx, a.th.C.ChromeA, a.th.C.ChromeB)
+				e.Frame(gtx.Ops)
+				break
 			}
 			// patch points (slackc) are shared with the huddle call window
 			slackc.LockFrame()
+			wd.next(&stagePosted)
 			a.drain()
-			gtx := app.NewContext(&ops, e)
+			wd.next(&stageLayout)
+			wd.notePage(a.router.Current().Page())
+			gtx := a.newContext(&ops, e)
 			before := a.router.Current()
 			a.frame(gtx)
 			if a.router.Current() != before {
@@ -280,11 +328,12 @@ func (a *App) Run() error {
 				// was computed): lay out again so the new page never shows
 				// one frame with the old layout. Layout is ~2 ms.
 				ops.Reset()
-				gtx = app.NewContext(&ops, e)
+				gtx = a.newContext(&ops, e)
 				a.frame(gtx)
 			}
 			slackc.UnlockFrame()
 			tl := time.Now()
+			wd.next(&stageSubmit)
 			e.Frame(gtx.Ops)
 			if !a.firstPaint {
 				a.timing("first layout", t0)
@@ -303,6 +352,20 @@ func (a *App) Run() error {
 				log.Printf("ui: first frame painted %v after start (%d sidebar rows)", time.Since(a.opts.Started).Round(time.Millisecond), a.sidebar.rowCount)
 			}
 		}
+		wd.end()
+	}
+}
+
+// takeShaper installs the text shaper once New's goroutine built it, without
+// waiting. UI goroutine.
+func (a *App) takeShaper() bool {
+	select {
+	case sh := <-a.shaperCh:
+		a.timing("first FrameEvent", a.opts.Started)
+		a.th.SetShapers(sh[0], sh[1])
+		return true
+	default:
+		return false
 	}
 }
 
@@ -332,12 +395,24 @@ func (a *App) drain() {
 	}
 }
 
+// newContext is app.NewContext at View > Zoom's scale (Slack's zoom
+// level), so everything lays out larger or smaller.
+func (a *App) newContext(ops *op.Ops, e app.FrameEvent) layout.Context {
+	gtx := app.NewContext(ops, e)
+	if f := a.zoomFactor(); f != 1 {
+		gtx.Metric.PxPerDp *= f
+		gtx.Metric.PxPerSp *= f
+	}
+	return gtx
+}
+
 // frame lays out the whole window.
 func (a *App) frame(gtx layout.Context) {
 	sz := gtx.Constraints.Max
 	a.pxPerDp = gtx.Metric.PxPerDp
 	a.winSize = sz
 	a.syncThemeTokens()
+	a.syncMenuBar()
 
 	if a.login != nil {
 		a.grad.layout(gtx, a.th.C.ChromeA, a.th.C.ChromeB)
@@ -553,8 +628,10 @@ func (a *App) view(r Route, mk func() View) View {
 
 // ---- dark mode / title ----
 
-// ToggleDark flips light/dark mode and persists the choice.
-func (a *App) ToggleDark() { a.setDark(!a.th.Dark) }
+// ToggleDark flips light/dark mode and persists the choice. Like picking
+// Light or Dark in Appearance it ends "Sync with OS setting" (else the OS
+// scheme would put the old mode back at the next start).
+func (a *App) ToggleDark() { a.pickMode(!a.th.Dark) }
 
 // setDark goes through Taut's setUserPrefByApi thunk (dark_mode) so
 // plugins see the change; the native applies it locally only. Slack keeps
@@ -570,9 +647,7 @@ func (a *App) setDark(dark bool) {
 			on := argStr(args, "value") == "dark"
 			a.Post(func() {
 				a.th.SetDark(on)
-				if s := a.Slick(); s != nil {
-					s.SetDark(on) // themes with a "mode" apply only in it
-				}
+				a.slickSetDark(a.Slick(), on) // themes with a "mode" apply only in it
 				a.savePrefs()
 				a.Invalidate()
 			})

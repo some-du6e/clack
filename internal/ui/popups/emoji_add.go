@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"gioui.org/io/key"
@@ -28,6 +29,7 @@ import (
 	_ "golang.org/x/image/webp"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uiguard"
 )
 
 // Measured from the 2026 Slack client's "Add emoji" dialog (addemoji.png,
@@ -127,7 +129,9 @@ func NewAddEmojiModal(h Host) *Modal {
 		}
 	}
 	s.words = emojiAddWords(team, bold)
-	s.chooser, s.hasChooser = emojiAddChooser()
+	// The PATH lookup is file I/O: it runs once in the background. Until it
+	// answers, "Upload Image" shows (the usual case) and pick waits for it.
+	s.chooser, s.hasChooser = emojiChooserCached()
 	s.modal = NewModal(h, ModalOpts{
 		Title: "Add emoji",
 		Body:  s.layout,
@@ -264,8 +268,35 @@ func (s *emojiAddModal) save() {
 
 // ---- image ----
 
-// emojiAddChooser finds the platform's native file chooser.
+var emojiChooser struct {
+	once sync.Once
+	done chan struct{}
+	cmd  emojiAddCmd
+	ok   bool
+}
+
+// emojiChooserCached starts the chooser lookup (first call) and returns its
+// answer if it's in; before that it says there is one.
+func emojiChooserCached() (emojiAddCmd, bool) {
+	emojiChooser.once.Do(func() {
+		emojiChooser.done = make(chan struct{})
+		go func() {
+			emojiChooser.cmd, emojiChooser.ok = emojiAddChooser()
+			close(emojiChooser.done)
+		}()
+	})
+	select {
+	case <-emojiChooser.done:
+		return emojiChooser.cmd, emojiChooser.ok
+	default:
+		return emojiAddCmd{}, true
+	}
+}
+
+// emojiAddChooser finds the platform's native file chooser (off the UI
+// goroutine: PATH lookups).
 func emojiAddChooser() (emojiAddCmd, bool) {
+	uiguard.OffUI("exec.LookPath (emoji chooser)")
 	var cands []emojiAddCmd
 	switch runtime.GOOS {
 	case "darwin":
@@ -391,6 +422,14 @@ func (s *emojiAddModal) pick() {
 	s.busy = true
 	c := s.chooser
 	run(s.h, func(context.Context) (emojiAddFile, error) {
+		uiguard.OffUI("exec (emoji chooser)")
+		if c.name == "" { // opened before the lookup answered
+			<-emojiChooser.done
+			if !emojiChooser.ok {
+				return emojiAddFile{}, emojiAddErrNoChooser
+			}
+			c = emojiChooser.cmd
+		}
 		out, err := exec.Command(c.name, c.args...).Output()
 		if err != nil {
 			var ee *exec.ExitError

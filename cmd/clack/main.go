@@ -75,6 +75,14 @@ func migrateConfig(old, dir string) {
 }
 
 func main() {
+	// The update helper (a temp copy of Clack started by "Install and
+	// restart"): it waits for Clack to exit, installs, relaunches.
+	if len(os.Args) == 3 && os.Args[1] == "-apply-update" {
+		if err := desktop.ApplyUpdate(os.Args[2]); err != nil {
+			os.Exit(1)
+		}
+		return
+	}
 	// Last line of defence: no token or cookie reaches the log, whatever
 	// an error string quotes.
 	log.SetOutput(slack.RedactWriter(os.Stderr))
@@ -169,7 +177,8 @@ func main() {
 		},
 	}
 	if desktop.Released(version) || os.Getenv("CLACK_UPDATE_URL") != "" {
-		opts.CheckUpdate = checkUpdate
+		u := newUpdates(filepath.Join(cfg, "cache", "updates"))
+		opts.CheckUpdate, opts.DownloadUpdate, opts.InstallUpdate = u.check, u.download, u.install
 	}
 
 	creds, err := slack.ReadCreds(*credsPath)
@@ -195,7 +204,10 @@ func main() {
 		log.Printf("desktop: single instance: %v", lerr)
 	}
 	cacheDir := filepath.Join(cfg, "cache")
-	connect := func(creds slack.Creds) {
+	// build makes the session's client, store and core: it reads the
+	// metadata cache and the DPoP key, so after sign-in or an account
+	// switch it runs off the UI goroutine and only Attach is posted.
+	build := func(creds slack.Creds) *core.App {
 		c := slack.New(creds)
 		if creds.Desktop() {
 			c.PersistSession(func(nc slack.Creds) error {
@@ -230,8 +242,9 @@ func main() {
 			}
 			return imgcache.PublicFetch(ctx, raw)
 		})
-		a.Attach(svc, cacheDir)
+		return svc
 	}
+	connect := func(creds slack.Creds) { a.Attach(build(creds), cacheDir) }
 	login := func(in slack.SignInInput) error {
 		var (
 			c   slack.Creds
@@ -248,7 +261,8 @@ func main() {
 		if err := slack.WriteCreds(*credsPath, c); err != nil {
 			return err
 		}
-		a.Post(func() { connect(c) })
+		svc := build(c) // the sign-in goroutine, not the UI's
+		a.Post(func() { a.Attach(svc, cacheDir) })
 		return nil
 	}
 	if err == nil {
@@ -261,16 +275,20 @@ func main() {
 		openLink(link)
 	}
 	// Taut's api.accounts: switch to other saved credentials.
+	// Called on the UI goroutine: the file writes and build run off it.
 	a.SetSwitchAccount(func(c slack.Creds) {
-		if err := slack.CheckCredsHosts(c); err != nil {
-			log.Printf("accounts: %v", err)
-			return
-		}
-		if err := slack.WriteCreds(*credsPath, c); err != nil {
-			log.Printf("accounts: %v", err)
-			return
-		}
-		connect(c)
+		go func() {
+			if err := slack.CheckCredsHosts(c); err != nil {
+				log.Printf("accounts: %v", err)
+				return
+			}
+			if err := slack.WriteCreds(*credsPath, c); err != nil {
+				log.Printf("accounts: %v", err)
+				return
+			}
+			svc := build(c)
+			a.Post(func() { a.Attach(svc, cacheDir) })
+		}()
 	})
 	if os.Getenv("CLACK_TIMING") != "" || os.Getenv("YOLOSLACK_TIMING") != "" {
 		log.Printf("timing: main ready: %v", time.Since(started).Round(100*time.Microsecond))
@@ -315,21 +333,6 @@ func main() {
 			}()
 		}
 	}
-}
-
-// checkUpdate asks GitHub Releases whether a newer Clack is out. It reads
-// release metadata only. CLACK_UPDATE_URL points it at another releases
-// API (testing); CLACK_UPDATE_AS pretends to be another version.
-func checkUpdate(ctx context.Context) (ui.UpdateInfo, bool, error) {
-	cur := version
-	if v := os.Getenv("CLACK_UPDATE_AS"); v != "" {
-		cur = v
-	}
-	r, err := desktop.LatestRelease(ctx, cur)
-	if err != nil {
-		return ui.UpdateInfo{}, false, err
-	}
-	return ui.UpdateInfo{Tag: r.Tag, URL: r.URL}, desktop.Newer(r.Tag, cur), nil
 }
 
 // signInWithLink is desktop-style sign-in: trade a slack:// magic-login

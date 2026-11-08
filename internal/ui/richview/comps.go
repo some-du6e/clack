@@ -274,7 +274,9 @@ func (c *compRef) box() *compBox { return &c.v.d.comps[c.i] }
 func (c *compRef) paint(gtx layout.Context, s slackc.Styled) layout.Dimensions {
 	b := c.box()
 	var fg *color.NRGBA
-	if s.Has("color") {
+	// a pill is one color (its slug's); a card's text keeps each part's
+	// own (css.go), e.g. its title link's
+	if (b.kind == compUser || b.kind == compChannel) && s.Has("color") {
 		col := s.Color(color.NRGBA{})
 		fg = &col
 	}

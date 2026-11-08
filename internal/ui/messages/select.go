@@ -227,7 +227,7 @@ func (s *listState) selectedText(h Host) string {
 			b.WriteByte('\n')
 		}
 		if it.header && (i > i0 || a == 0) {
-			b.WriteString(r.name)
+			b.WriteString(r.senderName())
 			b.WriteString("  ")
 			b.WriteString(clock(tsTime(r.m.TS)))
 			b.WriteByte('\n')

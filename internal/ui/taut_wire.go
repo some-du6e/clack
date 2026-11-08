@@ -47,6 +47,35 @@ func (b *backend) startTaut(a *App) {
 	if b.core == nil || b.taut != nil {
 		return
 	}
+	t, s := b.buildTaut(a, a.th.Dark, b.teamID, a.router.Current().Channel())
+	b.installTaut(a, t, s)
+}
+
+// startTautAsync is startTaut for boot: taut.New and slick.New read the
+// plugin config, settings, themes and installed plugins from disk and
+// convert the Slick theme's CSS, so they run on a goroutine and only the
+// install is posted to the UI goroutine.
+func (b *backend) startTautAsync(a *App) {
+	if b.core == nil || b.taut != nil || b.tautStarting {
+		return
+	}
+	b.tautStarting = true
+	dark, team, ch := a.th.Dark, b.teamID, a.router.Current().Channel()
+	go func() {
+		t, s := b.buildTaut(a, dark, team, ch)
+		a.Post(func() {
+			b.tautStarting = false
+			if a.data != b || b.taut != nil || b.cancel == nil || b.ctx.Err() != nil {
+				go closeTaut(s, t) // stopped (sign-out, quit) meanwhile
+				return
+			}
+			b.installTaut(a, t, s)
+		})
+	}()
+}
+
+// buildTaut makes the plugin runtimes (any goroutine). nil on error.
+func (b *backend) buildTaut(a *App, dark bool, team, channel string) (*taut.Taut, *slick.Slick) {
 	t0 := time.Now()
 	// The runtime's patched names, kept so the reset Attached posts can't
 	// lose them: a plugin may register its patches (SetPatched) before the
@@ -131,6 +160,17 @@ func (b *backend) startTaut(a *App) {
 	})
 	if err != nil {
 		log.Printf("taut: %v", err)
+		return nil, nil
+	}
+	if envFlag("TIMING") {
+		log.Printf("timing: taut.New %v (js runtime started: %v)", time.Since(t0).Round(10*time.Microsecond), t.Started())
+	}
+	return t, b.buildSlick(a, t, dark, team, channel)
+}
+
+// installTaut hooks the runtimes into the UI (UI goroutine).
+func (b *backend) installTaut(a *App, t *taut.Taut, s *slick.Slick) {
+	if t == nil {
 		return
 	}
 	b.taut = t
@@ -138,9 +178,17 @@ func (b *backend) startTaut(a *App) {
 	messages.SetTaut(t) // message list thunks, patched message views
 	composer.SetTaut(t) // composer buttons, send checks/transforms, drafts
 	blockkit.SetTaut(t) // sendActions, executeAppAction, submitView, blocksFormatFetcher
-	b.startSlick(a, t)
-	if envFlag("TIMING") {
-		log.Printf("timing: taut.New %v (js runtime started: %v)", time.Since(t0).Round(10*time.Microsecond), t.Started())
+	if s != nil {
+		b.slick = s
+		a.slickSetDark(s, a.th.Dark)     // if the mode changed while it started
+		a.slickRoute(a.router.Current()) // likewise the route
+		go func() {                      // repaint Preferences > Slick on change
+			ch, stop := s.Subscribe()
+			defer stop()
+			for range ch {
+				a.Invalidate()
+			}
+		}()
 	}
 	go b.watchTaut(a, t)
 }
@@ -155,18 +203,32 @@ func (b *backend) watchTaut(a *App, t *taut.Taut) {
 }
 
 func (b *backend) stopTaut() {
-	if b.slick != nil { // Slick runs on Taut's runtime: close it first
-		_ = b.slick.Close()
-		b.slick = nil
-	}
+	s, t := b.slick, b.taut
+	b.detachTaut()
+	closeTaut(s, t)
+}
+
+// detachTaut unhooks the plugin runtime from the UI (UI goroutine).
+func (b *backend) detachTaut() {
+	b.slick = nil
 	if b.taut != nil {
 		popups.SetTaut(nil)
 		messages.SetTaut(nil)
 		composer.SetTaut(nil)
-		_ = b.taut.Close()
 		b.taut = nil
 		slackc.SetBridge(nil)
 		slackc.Reset()
+	}
+}
+
+// closeTaut stops Slick and Taut's runtime (any goroutine; it can take
+// seconds: each plugin's stop hook runs).
+func closeTaut(s *slick.Slick, t *taut.Taut) {
+	if s != nil { // Slick runs on Taut's runtime: close it first
+		_ = s.Close()
+	}
+	if t != nil {
+		_ = t.Close()
 	}
 }
 
@@ -182,7 +244,7 @@ func (a *App) switchAccount(c slack.Creds) {
 		return
 	}
 	if a.data != nil {
-		a.data.stop()
+		_ = a.data.stop()
 		a.data = nil
 	}
 	a.views = map[Route]View{}
@@ -220,7 +282,7 @@ func (a *App) SignedOut() bool {
 // showLogin returns to the sign-in screen without deleting credentials.
 func (a *App) showLogin() {
 	if a.data != nil {
-		a.data.stop()
+		_ = a.data.stop()
 		a.data = nil
 	}
 	a.views = map[Route]View{}
@@ -313,27 +375,53 @@ func argStr(args map[string]any, k string) string {
 	return ""
 }
 
-// startSlick starts Slick plugins on Taut's runtime. slick.New reads
-// settings.json, themes and cached plugin metadata only; with no plugin on,
-// no JS starts (themes and custom CSS are converted in Go).
-func (b *backend) startSlick(a *App, t *taut.Taut) {
+// buildSlick starts Slick plugins on Taut's runtime (any goroutine).
+// slick.New reads settings.json, themes and cached plugin metadata only;
+// with no plugin on, no JS starts (themes and custom CSS are converted in
+// Go).
+func (b *backend) buildSlick(a *App, t *taut.Taut, dark bool, team, channel string) *slick.Slick {
 	t0 := time.Now()
 	s, err := slick.New(slick.Options{Taut: t, OpenURL: openURL, OpenFile: a.openFilePath})
 	if err != nil {
 		log.Printf("slick: %v", err)
-		return
+		return nil
 	}
-	b.slick = s
-	s.SetDark(a.th.Dark)
-	s.SetRoute(b.teamID, a.router.Current().Channel())
+	s.SetDark(dark)
+	s.SetRoute(team, channel)
 	if envFlag("TIMING") {
 		log.Printf("timing: slick.New %v (js runtime started: %v)", time.Since(t0).Round(10*time.Microsecond), t.Started())
 	}
-	go func() { // repaint Preferences > Slick on change
-		ch, stop := s.Subscribe()
-		defer stop()
-		for range ch {
-			a.Invalidate()
+	return s
+}
+
+// slickSetDark tells Slick the mode off the UI goroutine (a mode change
+// re-applies the Slick theme, which converts and parses its CSS). Changes
+// are applied in order; the latest wins.
+func (a *App) slickSetDark(s *slick.Slick, dark bool) {
+	if s == nil {
+		return
+	}
+	a.slickMode.mu.Lock()
+	a.slickMode.s, a.slickMode.dark = s, dark
+	if a.slickMode.busy {
+		a.slickMode.mu.Unlock()
+		return
+	}
+	a.slickMode.busy = true
+	a.slickMode.mu.Unlock()
+	go func() {
+		for {
+			a.slickMode.mu.Lock()
+			s, dark := a.slickMode.s, a.slickMode.dark
+			a.slickMode.mu.Unlock()
+			s.SetDark(dark)
+			a.slickMode.mu.Lock()
+			if a.slickMode.s == s && a.slickMode.dark == dark {
+				a.slickMode.busy = false
+				a.slickMode.mu.Unlock()
+				return
+			}
+			a.slickMode.mu.Unlock()
 		}
 	}()
 }

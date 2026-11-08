@@ -100,8 +100,10 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 	}
 	if len(a.Pretext) > 0 {
 		fs := l.bodyStyle()
+		ct := l.enter(attPretextClass)
 		l.addSpans(a.Pretext, &fs)
 		h, _ := l.flow(x, y, w, &fs)
+		l.leave(ct)
 		y += h + l.dp(4)
 		l.plainAdd("\n")
 	}
@@ -123,7 +125,9 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 		}
 	}
 	if a.ServiceName != "" && !a.IsShare {
+		ct := l.enter(attServiceClass)
 		row(l.iconRow(a.ServiceIcon, a.ServiceName, cx, cy, cw, l.dp(16), font.Black, 15, p.Text, l.d.addTarget(target{kind: tLink, url: a.FromURL, underline: true})))
+		l.leave(ct)
 	}
 	if a.AuthorName != "" {
 		var tg int16 = -1
@@ -143,18 +147,23 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 		if l.inAtt && a.AuthorIcon != "" {
 			l.authorImg = len(l.d.imgs) + 1 // drawn as ConnectedBaseAvatar (comps.go)
 		}
+		ct := l.enter(attAuthorClass)
 		row(l.iconRow(a.AuthorIcon, name, cx, cy, cw, ic, weight, 15, p.Text, tg))
+		l.leave(ct)
 	}
 	if len(a.Title) > 0 {
 		fs := l.bodyStyle()
 		fs.face.Weight = font.Bold
 		fs.col = p.Link
 		var tg int16 = -1
+		ct := l.enter(attTitleClass)
 		if a.TitleLink != "" {
 			tg = l.d.addTarget(target{kind: tLink, url: a.TitleLink, underline: true})
+			l.enter(linkClass)
 		}
 		l.addSpansTarget(a.Title, &fs, tg)
 		h, _ := l.flow(cx, cy, cw, &fs)
+		l.leave(ct)
 		row(h)
 		l.plainAdd("\n")
 	}
@@ -173,13 +182,17 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 			}
 		}
 		l.expandAt = k
+		ct := l.enter(attTextClass)
 		row(l.blocks(text, cx, cy, cw, false))
+		l.leave(ct)
 		l.expandAt = nil
 		l.plainAdd("\n")
 	}
 	if len(b.Fields) > 0 {
 		cy += l.dp(4)
+		ct := l.enter(attFieldsClass)
 		row(l.fields(b.Fields, b.FieldShort, cx, cy, cw))
+		l.leave(ct)
 	}
 	if a.Image != nil {
 		cy += l.dp(6)
@@ -196,6 +209,8 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 	}
 	if len(a.Footer) > 0 || a.TS > 0 || (a.IsShare && a.ShareChannel != "") {
 		cy += l.dp(4)
+		ct := l.enter(attFooterClass)
+		defer l.leave(ct)
 		fs := l.small(p.Text2)
 		fs.size = l.sp(12)
 		fx := cx
@@ -249,8 +264,21 @@ func (l *lay) addSpansTarget(spans []richtext.Span, fs *flowStyle, tg int16) {
 			continue
 		}
 		k := l.faceFor(fs.face, fs.size, sp.Style)
-		l.addText(sp.Text, fs, k, fs.col, sp.Style, -1, tg)
+		l.addTextPart(&sp, fs, k, tg)
 	}
+}
+
+// addTextPart is addText for a span of the flow's color, tagged with the
+// span's CSS part.
+func (l *lay) addTextPart(sp *richtext.Span, fs *flowStyle, k faceKey, tg int16) {
+	if l.css == nil {
+		l.addText(sp.Text, fs, k, fs.col, sp.Style, -1, tg)
+		return
+	}
+	ctr := l.curPart
+	l.curPart = l.spanPart(sp)
+	l.addText(sp.Text, fs, l.partFace(k, l.curPart), fs.col, sp.Style, -1, tg)
+	l.curPart = ctr
 }
 
 // addSpansPlain is addSpans where links keep the flow color (footers).
@@ -260,7 +288,7 @@ func (l *lay) addSpansPlain(spans []richtext.Span, fs *flowStyle) {
 		case richtext.Link:
 			tg := l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true})
 			k := l.faceFor(fs.face, fs.size, sp.Style)
-			l.addText(sp.Text, fs, k, fs.col, sp.Style, -1, tg)
+			l.addTextPart(&sp, fs, k, tg)
 		default:
 			l.addSpans([]richtext.Span{sp}, fs)
 		}
@@ -325,9 +353,11 @@ func (l *lay) videoCard(a *richtext.Attachment, x, y, w int) int {
 		fs.col = p.Text
 		fs.lineH = l.dp(18.75)
 		fs.maxLines, fs.ellipsis = 2, true
+		ct := l.enter(attTitleClass)
 		l.addSpansTarget(a.Title, &fs, cardT)
 		f0 := len(l.d.frags)
 		h, _ := l.flow(x+pad, cy, cw-2*pad, &fs)
+		l.leave(ct)
 		if l.inAtt && l.mode&modeAtts != 0 && isYouTube(a) {
 			l.titleFrags = [2]int{f0, len(l.d.frags)} // AttachmentTitle (comps.go)
 		}
@@ -344,7 +374,9 @@ func (l *lay) videoCard(a *richtext.Attachment, x, y, w int) int {
 			ix += s + l.dp(8)
 		}
 		fs.maxLines, fs.ellipsis, fs.noSelect = 1, true, true
+		ct := l.enter(attServiceClass)
 		h, _ := l.plainFlow(a.ServiceName, ix, cy, x+cw-pad-ix, &fs, -1)
+		l.leave(ct)
 		cy += max(h, l.dp(16))
 	}
 	cy += pad
@@ -394,8 +426,10 @@ func (l *lay) unfurl(a *richtext.Attachment, x, y, w int) int {
 		fs.col = p.Text
 		fs.maxLines, fs.ellipsis = 2, true
 		fs.lineH = l.dp(18.75)
+		ct := l.enter(attTitleClass)
 		l.addSpansTarget(a.Title, &fs, cardT)
 		h, _ := l.flow(cx, cy, cw, &fs)
+		l.leave(ct)
 		cy += h + l.dp(4)
 		l.plainAdd("\n")
 	}
@@ -403,6 +437,7 @@ func (l *lay) unfurl(a *richtext.Attachment, x, y, w int) int {
 		fs := l.small(p.CardText)
 		fs.lineH = l.dp(16.25)
 		fs.maxLines, fs.ellipsis = 2, true
+		ct := l.enter(attTextClass)
 		for i := range a.Text {
 			if i > 0 {
 				l.addText(" ", &fs, l.faceFor(fs.face, fs.size, 0), fs.col, 0, -1, -1)
@@ -413,6 +448,7 @@ func (l *lay) unfurl(a *richtext.Attachment, x, y, w int) int {
 			}
 		}
 		h, _ := l.flow(cx, cy, cw, &fs)
+		l.leave(ct)
 		cy += h
 		l.plainAdd("\n")
 	}
@@ -439,7 +475,9 @@ func (l *lay) unfurl(a *richtext.Attachment, x, y, w int) int {
 			ix += s + l.dp(8)
 		}
 		fs.maxLines, fs.ellipsis = 1, true
+		ct := l.enter(attServiceClass)
 		h, _ := l.plainFlow(a.ServiceName, ix, cy, cx+cw-ix, &fs, -1)
+		l.leave(ct)
 		cy += max(h, l.dp(16))
 	}
 	cy += pad

@@ -1,0 +1,77 @@
+name: bench-compare
+# Before/after benchmarks on one runner: the CSS engine, slackc and the
+# message list frame (with and without plugin CSS), for the pushed commit
+# and a base ref, interleaved so both see the same machine. benchstat
+# prints the comparison. Shared runners vary by 2x between jobs, so
+# numbers from separate bench-css/bench-slackc runs don't compare.
+# (A benchmark that logs puts its result on the next line; awk rejoins it.)
+on:
+  # dispatching needs the file on the default branch; until then it runs
+  # when it changes (rerun the run for fresh numbers)
+  push:
+    paths:
+      - ".github/workflows/bench-compare.yml"
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "base ref (branch, tag or sha)"
+        required: false
+        default: "ui"
+      count:
+        description: "rounds per side"
+        required: false
+        default: "6"
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: base worktree
+        env:
+          BASE: ${{ inputs.base || 'ui' }}
+        run: |
+          git fetch -q origin "$BASE"
+          git worktree add -q /tmp/base FETCH_HEAD
+          git -C /tmp/base log --oneline -1
+          git log --oneline -1
+          # benchmarks the base doesn't have yet (they only use APIs it has)
+          for f in internal/ui/messages/css_bench_test.go; do
+            [ -f "/tmp/base/$f" ] || cp "$f" "/tmp/base/$f"
+          done
+      - name: benchmarks, interleaved
+        env:
+          COUNT: ${{ inputs.count || '6' }}
+        run: |
+          go install golang.org/x/perf/cmd/benchstat@latest
+          mkdir -p /tmp/out
+          run() {
+            (cd "$1" && go test -run '^$' -bench . -benchmem -count 1 ./internal/ui/slackc/css/ ./internal/ui/slackc/ \
+              && go test -run '^$' -bench 'BenchmarkListFrame' -benchmem -benchtime 1s -count 1 ./internal/ui/messages/) 2>/dev/null \
+              | awk '/^Benchmark/ && !/ns\/op/ {name=$1; next} name != "" && /ns\/op/ {print name "\t" $0; name=""; next} /^(Benchmark|goos|goarch|pkg|cpu)/' >> "$2"
+          }
+          for i in $(seq 1 "$COUNT"); do
+            run /tmp/base /tmp/out/base.txt
+            run "$GITHUB_WORKSPACE" /tmp/out/head.txt
+          done
+          ~/go/bin/benchstat /tmp/out/base.txt /tmp/out/head.txt | tee /tmp/out/benchstat.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: bench-compare
+          path: /tmp/out/

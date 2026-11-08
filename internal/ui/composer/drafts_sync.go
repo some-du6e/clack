@@ -19,15 +19,16 @@ import (
 // message contents to disk.
 
 // draftSyncDelay is the typing pause before a draft is saved.
-const draftSyncDelay = 1500 * time.Millisecond
+var draftSyncDelay = 1500 * time.Millisecond
 
 // draftSync is one composer's server-draft state.
 type draftSync struct {
-	timer  *time.Timer
-	synced uint64 // editor version last saved (UI goroutine)
-	mu     sync.Mutex
-	id     string // server draft id (Dr…), "" before the first save
-	gen    uint64 // bumps on every queued op so stale results are dropped
+	timer     *time.Timer
+	synced    uint64 // editor version last saved (UI goroutine)
+	syncedAtt uint64 // Composer.attVer last saved (UI goroutine)
+	mu        sync.Mutex
+	id        string // server draft id (Dr…), "" before the first save
+	gen       uint64 // bumps on every queued op so stale results are dropped
 }
 
 // serverDraftIDs keeps each composer key's server draft id across composer
@@ -72,13 +73,17 @@ func (c *Composer) syncDraftSoon() {
 // in the editor now (UI goroutine; the network work runs in a goroutine).
 func (c *Composer) syncDraftNow() {
 	v := c.ed.Version()
-	if v == c.dsync.synced {
+	if v == c.dsync.synced && c.attVer == c.dsync.syncedAtt {
 		return
 	}
-	c.dsync.synced = v
-	if c.ed.Empty() {
+	c.dsync.synced, c.dsync.syncedAtt = v, c.attVer
+	files := c.att.draftFileIDs()
+	if c.ed.Empty() && c.att.Len() == 0 {
 		c.deleteServerDraft("composer_cleared")
 		return
+	}
+	if c.ed.Empty() && len(files) == 0 {
+		return // only files still uploading: saved once they have ids
 	}
 	d := c.ed.Doc()
 	args := draftSyncArgs{
@@ -89,6 +94,7 @@ func (c *Composer) syncDraftNow() {
 		Broadcast: c.broadcast && c.ts != "",
 		Blocks:    d.RichTextBlocks(),
 		Text:      d.Mrkdwn(),
+		FileIDs:   files,
 	}
 	if ops, ok := d.Delta()["ops"].([]any); ok {
 		args.Ops = ops
@@ -112,7 +118,7 @@ func (c *Composer) deleteServerDraft(reason string) {
 	if c.dsync.timer != nil {
 		c.dsync.timer.Stop()
 	}
-	c.dsync.synced = c.ed.Version()
+	c.dsync.synced, c.dsync.syncedAtt = c.ed.Version(), c.attVer
 	id := c.serverDraftID()
 	c.bumpDraftGen()
 	if id == "" {

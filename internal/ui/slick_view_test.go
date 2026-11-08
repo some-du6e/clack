@@ -63,13 +63,16 @@ type svEnv struct {
 	menus []svMenu
 }
 
-func newSV(t *testing.T) *svEnv {
+// newSV starts the shell; setup runs before Taut and Slick start (home is
+// CLACK_HOME, so <home>/slick is Slick's directory).
+func newSV(t *testing.T, setup ...func(home string, a *App, ca *core.App)) *svEnv {
 	t.Helper()
 	dir := os.Getenv("SLICK_PLUGINS_DIR")
 	if dir == "" {
 		t.Skip("SLICK_PLUGINS_DIR not set: the ui-slick workflow builds Slick's plugins and runs this")
 	}
-	a, ca := ttApp(t, t.TempDir())
+	home := t.TempDir()
+	a, ca := ttApp(t, home)
 	ca.C.EdgeURL = "http://127.0.0.1:1/edge/" // never the real edge API
 	ca.S.PutUsers([]slack.User{
 		{ID: svAlice, Name: "alice", RealName: "Alice Example", Profile: slack.Profile{DisplayName: "alice", RealName: "Alice Example"}},
@@ -93,6 +96,9 @@ func newSV(t *testing.T) *svEnv {
 	}
 	m.version++
 
+	for _, f := range setup {
+		f(home, a, ca)
+	}
 	e := &svEnv{t: t, a: a, ca: ca, dir: dir, ops: new(op.Ops), rt: new(input.Router), sz: image.Pt(1280, 860), trees: map[uint64][]byte{}}
 	deliverTap = e.record
 	sbMenuTap = e.menu

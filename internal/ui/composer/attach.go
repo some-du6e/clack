@@ -44,6 +44,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uiguard"
 )
 
 // Attachments: the + menu, file pickers, clipboard images and the chip row
@@ -104,8 +105,10 @@ type attChip struct {
 	// (Slack's pendingFile title), guarded by attachments.mu: plugins
 	// rename it (updatePendingFile, attach_pending.go). Starts as name.
 	title string
-	data  []byte
+	data  []byte // nil for a file restored from a server draft (already uploaded)
 	kind  attKind
+	// thumbURL is Slack's thumbnail of a restored file (draft_files.go).
+	thumbURL string
 
 	// Guarded by attachments.mu.
 	sending   bool
@@ -130,7 +133,10 @@ type attChip struct {
 // call from any goroutine except Layout, Menu and the picker modal, which
 // run on the UI goroutine.
 type attachments struct {
-	h Host
+	h    Host
+	core *core.App // the session the files were uploaded to
+
+	onChange func() // guarded by mu: the owning composer's attChanged (draft_files.go)
 
 	mu        sync.Mutex
 	chips     []*attChip
@@ -145,7 +151,7 @@ type attachments struct {
 }
 
 func newAttachments(h Host) *attachments {
-	a := &attachments{h: h}
+	a := &attachments{h: h, core: h.Core()}
 	registerAttachments(a)
 	return a
 }
@@ -230,6 +236,7 @@ func (a *attachments) Clear() {
 	a.mu.Unlock()
 	a.h.Invalidate()
 	pendingChanged()
+	a.notify()
 }
 
 // Add attaches a file held in memory. Over-limit files are rejected with a
@@ -254,6 +261,7 @@ func (a *attachments) add(name string, data []byte) bool {
 	go a.prepare(c) // upload the bytes now, like Slack; send just shares them
 	a.h.Invalidate()
 	pendingChanged()
+	a.notify()
 	return true
 }
 
@@ -307,6 +315,7 @@ func (a *attachments) prepare(c *attChip) {
 	a.mu.Unlock()
 	a.h.Invalidate()
 	pendingChanged() // its Slack file id (state.files)
+	a.notify()       // … which the draft carries now
 }
 
 // uploadBatch returns the files to share on send: PrepareUpload handles (for
@@ -365,6 +374,7 @@ func (a *attachments) remove(c *attChip) {
 	a.mu.Unlock()
 	a.h.Invalidate()
 	pendingChanged()
+	a.notify()
 }
 
 // attCheckAdd applies Slack's limits to one more file of size bytes when
@@ -545,7 +555,7 @@ func attThumbnail(data []byte, px int) (*image.RGBA, error) {
 }
 
 func (a *attachments) makeThumb(c *attChip, px int) {
-	img, err := attThumbnail(c.data, px)
+	img, err := attThumbnail(a.thumbBytes(c), px)
 	a.mu.Lock()
 	c.thumbBusy = false
 	if err != nil {
@@ -712,7 +722,12 @@ func attParseLines(out string) []string {
 	return paths
 }
 
-func attHave(tool string) bool { _, err := exec.LookPath(tool); return err == nil }
+// attHave looks tool up in PATH (file system reads: off the UI goroutine).
+func attHave(tool string) bool {
+	uiguard.OffUI("exec.LookPath " + tool)
+	_, err := exec.LookPath(tool)
+	return err == nil
+}
 
 // addPaths reads files from disk into memory (any goroutine).
 func (a *attachments) addPaths(paths []string) {
@@ -884,6 +899,7 @@ func attParseAppleData(out string) ([]byte, error) {
 
 // attRun runs a tool and returns at most limit bytes of its stdout.
 func attRun(ctx context.Context, limit int64, name string, args ...string) ([]byte, error) {
+	uiguard.OffUI("exec " + name)
 	cmd := exec.CommandContext(ctx, name, args...)
 	out, err := cmd.StdoutPipe()
 	if err != nil {
@@ -917,6 +933,7 @@ type attView struct {
 	sent      int64
 	ptotal    int64
 	asImage   bool
+	size      int64 // bytes (or Slack's size of a restored file)
 }
 
 // Layout draws the chip row (zero size when empty). The constraints carry
@@ -937,7 +954,7 @@ func (a *attachments) Layout(gtx layout.Context) layout.Dimensions {
 		}
 		views[i] = attView{c: c, name: c.name, title: c.title, thumb: c.thumb, thumbPx: c.thumbPx, sending: c.sending,
 			preparing: c.preparing, sent: c.sent, ptotal: c.ptotal,
-			asImage: c.kind.Image && !c.thumbBad}
+			asImage: c.kind.Image && !c.thumbBad, size: c.size()}
 		anySending = anySending || c.sending || c.preparing
 	}
 	a.mu.Unlock()

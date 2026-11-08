@@ -8,9 +8,12 @@ import (
 	"image"
 	"os"
 	"os/exec"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uiguard"
 )
 
 func write(ctx context.Context, img image.Image) error {
+	uiguard.OffUI("exec wl-copy/xclip (copy image)")
 	var args []string
 	switch {
 	case os.Getenv("WAYLAND_DISPLAY") != "" && have("wl-copy"):
@@ -32,6 +35,7 @@ func write(ctx context.Context, img image.Image) error {
 }
 
 func have(name string) bool {
+	uiguard.OffUI("exec.LookPath " + name)
 	_, err := exec.LookPath(name)
 	return err == nil
 }

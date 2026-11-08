@@ -3,6 +3,7 @@ package composer
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"sync/atomic"
 	"time"
 
@@ -63,6 +64,33 @@ func currentTaut() *taut.Taut { return tautRef.Load() }
 // (inline markup parsing, link transforms). Plugins answer in well under a
 // millisecond; a wedged plugin must not freeze typing.
 const tautSyncTimeout = 150 * time.Millisecond
+
+// tautSyncOff is when synchronous plugin calls may run again (unix ns).
+// tautSyncTrip timeouts in a row turn them all off for tautSyncPause: the
+// timeout is per call, and a parse runs per line, so a wedged plugin would
+// otherwise cost 150 ms per line on every frame. (One slow call, e.g. the
+// runtime's first, doesn't trip it.)
+var (
+	tautSyncOff   atomic.Int64
+	tautSyncSlow  atomic.Int32
+	tautSyncTrip  = int32(3)
+	tautSyncPause = 30 * time.Second
+)
+
+func tautSyncAllowed() bool { return time.Now().UnixNano() >= tautSyncOff.Load() }
+
+// tautSyncDone counts timeouts and trips the breaker.
+func tautSyncDone(ctx context.Context, what string) {
+	if ctx.Err() == nil {
+		tautSyncSlow.Store(0)
+		return
+	}
+	if tautSyncSlow.Add(1) >= tautSyncTrip {
+		tautSyncSlow.Store(0)
+		tautSyncOff.Store(time.Now().Add(tautSyncPause).UnixNano())
+		log.Printf("composer: plugin %s timed out (%v) %d times in a row; skipping plugin markup and link transforms for %v", what, tautSyncTimeout, tautSyncTrip, tautSyncPause)
+	}
+}
 
 // ---- Slack's argument shapes ----
 
@@ -341,24 +369,28 @@ func tautSendCheck(m SendCheck, done func(ok bool)) {
 
 // tautLinkTransform runs composer.addLinkTransform (ClearURLs) on one URL.
 func tautLinkTransform(u string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), tautSyncTimeout)
-	defer cancel()
 	t := currentTaut()
-	if t == nil {
+	if t == nil || !tautSyncAllowed() {
 		return u
 	}
-	return t.TransformLink(ctx, u, linkSource)
+	ctx, cancel := context.WithTimeout(context.Background(), tautSyncTimeout)
+	defer cancel()
+	out := t.TransformLink(ctx, u, linkSource)
+	tautSyncDone(ctx, "link transform")
+	return out
 }
 
 // tautInlineMarkup runs composer.patchInlineMarkup's parse (RealMarkdown).
 func tautInlineMarkup(line string) []MarkupSpan {
-	ctx, cancel := context.WithTimeout(context.Background(), tautSyncTimeout)
-	defer cancel()
 	t := currentTaut()
-	if t == nil {
+	if t == nil || !tautSyncAllowed() {
 		return nil
 	}
-	return fromTautSpans(t.ParseInlineMarkup(ctx, line))
+	ctx, cancel := context.WithTimeout(context.Background(), tautSyncTimeout)
+	defer cancel()
+	spans := t.ParseInlineMarkup(ctx, line)
+	tautSyncDone(ctx, "inline markup")
+	return fromTautSpans(spans)
 }
 
 // fromTautSpans converts taut's spans (rune offsets, JSON format) to the

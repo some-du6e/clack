@@ -6,7 +6,10 @@ import (
 	"strings"
 
 	"gioui.org/f32"
+	"gioui.org/io/pointer"
+	"gioui.org/layout"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/ctxclick"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
 )
@@ -141,4 +144,23 @@ func (s *listState) messageMenu(h Host, r *row, at image.Point) *popups.Menu {
 // channel, everyone).
 func isMemberID(id string) bool {
 	return len(id) > 1 && (strings.HasPrefix(id, "U") || strings.HasPrefix(id, "W"))
+}
+
+// noMenuOn takes the context presses on tag without opening a menu: a
+// Slackbot custom response's sender (the team's icon and name) is not
+// interactive in Slack, so a right-click there opens neither the member
+// menu nor the message's (custom_response.go). The body still gets the
+// message menu.
+func (r *row) noMenuOn(gtx layout.Context, tag *ctxTag) {
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: tag, Kinds: pointer.Press})
+		if !ok {
+			return
+		}
+		if e, ok := ev.(pointer.Event); ok && ctxclick.Press(e) {
+			if l := r.rc.list; l != nil {
+				l.ctx.taken = true
+			}
+		}
+	}
 }

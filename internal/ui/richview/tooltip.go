@@ -2,6 +2,7 @@ package richview
 
 import (
 	"image"
+	"image/color"
 	"time"
 
 	"gioui.org/f32"
@@ -10,7 +11,12 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 )
+
+// tooltipClass is Slack's tooltip box (a portal under <body>).
+var tooltipClass = slackc.Class("c-tooltip__tip c-tooltip__tip--top", "role", "tooltip")
 
 // EmojiTipDelay is how long the pointer rests on an emoji before Slack
 // shows its :name: (the emoji's delay="300" tooltip).
@@ -70,8 +76,15 @@ func (v *View) emojiTip(gtx layout.Context, st *Style) {
 		r = r.Add(image.Pt(-r.Min.X, 0))
 	}
 	p := &st.Palette
+	// Slack's tooltip is a portal under <body> (.c-tooltip__tip), so a
+	// row's rules don't reach it but a plugin's tooltip rule does.
+	bg, fg, o := tooltipStyle(p)
 	m := op.Record(gtx.Ops)
-	paint.FillShape(gtx.Ops, p.TooltipBg, clip.UniformRRect(r, l.dp(8)).Op(gtx.Ops))
+	var opac paint.OpacityStack
+	if o < 1 {
+		opac = paint.PushOpacity(gtx.Ops, max(o, 0))
+	}
+	paint.FillShape(gtx.Ops, bg, clip.UniformRRect(r, l.dp(8)).Op(gtx.Ops))
 	var path clip.Path
 	path.Begin(gtx.Ops)
 	ax, ay := float32(cx), float32(f.y-gap)
@@ -79,17 +92,27 @@ func (v *View) emojiTip(gtx layout.Context, st *Style) {
 	path.LineTo(f32.Pt(ax+float32(ar), ay-float32(ar)))
 	path.LineTo(f32.Pt(ax, ay))
 	path.Close()
-	paint.FillShape(gtx.Ops, p.TooltipBg, clip.Outline{Path: path.End()}.Op())
+	paint.FillShape(gtx.Ops, bg, clip.Outline{Path: path.End()}.Op())
 	bm := st.spaceOf(k)
 	base := r.Min.Y + padY + int((float32(lh)-(bm.asc+bm.desc))/2+bm.asc+0.5)
 	t := op.Offset(image.Pt(r.Min.X+padX, base)).Push(gtx.Ops)
 	glyphs, _ := st.pathOf(sh, true)
 	cs := clip.Outline{Path: glyphs}.Op().Push(gtx.Ops)
-	paint.ColorOp{Color: p.TooltipText}.Add(gtx.Ops)
+	paint.ColorOp{Color: fg}.Add(gtx.Ops)
 	paint.PaintOp{}.Add(gtx.Ops)
 	cs.Pop()
 	t.Pop()
+	if o < 1 {
+		opac.Pop()
+	}
 	op.Defer(gtx.Ops, m.Stop())
+}
+
+// tooltipStyle is the emoji tooltip's colors and opacity: Slack's, or a
+// plugin's .c-tooltip__tip rule.
+func tooltipStyle(p *Palette) (bg, fg color.NRGBA, opacity float32) {
+	ts := slackc.BodyScope().Child(tooltipClass, 0)
+	return ts.Background(p.TooltipBg), ts.Color(p.TooltipText), ts.Opacity()
 }
 
 // animator is implemented by imgcache.Cache: images that change over time.

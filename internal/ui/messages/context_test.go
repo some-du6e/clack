@@ -14,6 +14,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/unit"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/ctxclick"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
@@ -72,8 +73,7 @@ type ctxEnv struct {
 
 func newCtxEnv(t *testing.T) *ctxEnv {
 	t.Helper()
-	app, _ := newTestApp(t)
-	app.S.SetLatest(tGen, []slack.Message{
+	return newCtxEnvIn(t, tGen, []slack.Message{
 		{Type: "message", TS: tsCtxLink, User: "UALICE", Text: "see <https://example.com/doc|the doc> and ask <@UBOB> in <#" + tGen + "> today please"},
 		{Type: "message", TS: tsCtxFile, User: "UBOB", Files: []slack.File{{
 			ID: "F0CTX1", Name: "report.pdf", Title: "report.pdf", Mimetype: "application/pdf", Filetype: "pdf", PrettyType: "PDF", Size: 2048,
@@ -81,12 +81,27 @@ func newCtxEnv(t *testing.T) *ctxEnv {
 			URLPrivateDownload: "https://files.slack.com/files-pri/T0266FRGM-F0CTX1/download/report.pdf",
 			Permalink:          "https://hackclub.slack.com/files/UBOB/F0CTX1/report.pdf",
 		}}},
-	}, false)
+	})
+}
+
+// newCtxEnvIn shows msgs in channel ch (created unless it is #general).
+func newCtxEnvIn(t *testing.T, ch string, msgs []slack.Message) *ctxEnv {
+	t.Helper()
+	app, _ := newTestApp(t)
+	if ch != tGen {
+		app.S.PutConv(slack.Conversation{ID: ch, Name: "ctx", IsChannel: true, IsMember: true, NumMembers: 3})
+	}
+	app.S.SetLatest(ch, msgs, false)
 	e := &ctxEnv{t: t, h: &ctxHost{coreHost: coreHost{app: app, th: theme.New(false)}}, now: time.Now()}
-	e.v = NewChannelView(e.h, tGen)
+	e.v = NewChannelView(e.h, ch)
 	e.v.Preview = true
-	until(t, 5*time.Second, "both rows laid out", e.frame, func() bool {
-		return e.row(tsCtxLink) != nil && e.row(tsCtxFile) != nil
+	until(t, 5*time.Second, "the rows laid out", e.frame, func() bool {
+		for _, m := range msgs {
+			if e.row(m.TS) == nil {
+				return false
+			}
+		}
+		return true
 	})
 	for k := 0; k < 3; k++ {
 		e.frame()
@@ -329,5 +344,33 @@ func TestContextMenuMacCtrlClick(t *testing.T) {
 	e.press(e.find(tsCtxFile, "the file card", onFile), pointer.ButtonPrimary, key.ModCtrl)
 	if m := e.menu(2, "Ctrl+click on a file"); !hasLabel(m, "Download") {
 		t.Errorf("Ctrl+click on a file: %q", labels(m))
+	}
+}
+
+// A Slackbot custom response's sender (the team's icon and name) has no
+// right-click menu, as in Slack; its body still opens the message menu.
+func TestContextMenuCustomResponseSender(t *testing.T) {
+	const ch, ts = "C0CTXCR", "1700000900.000100"
+	e := newCtxEnvIn(t, ch, []slack.Message{
+		{Type: "message", TS: ts, User: tBot, Subtype: core.SubtypeSlackbotResponse, Text: "a synthetic automated answer"},
+	})
+	r := e.row(ts)
+	if !r.custom {
+		t.Fatal("the row isn't drawn as a custom response")
+	}
+	s := e.v.s
+	top := s.pos[s.sel.keyIdx[ts]]
+	for _, p := range []f32.Point{
+		f32.Pt(float32(r.bodyRect.Min.X+4), float32(top+r.bodyRect.Min.Y-10)), // the team name, above the body
+		f32.Pt(float32(r.bodyRect.Min.X-30), float32(top+r.bodyRect.Min.Y)),   // the team icon in the gutter
+	} {
+		e.rightClick(p)
+		if ms := e.h.menus(); len(ms) != 0 {
+			t.Errorf("right-click on the custom sender at %v opened %q", p, labels(ms[0]))
+		}
+	}
+	e.rightClick(e.find(ts, "body text", onText))
+	if m := e.menu(0, "right-click on the custom response's body"); !hasLabel(m, "Add reaction…") {
+		t.Errorf("body menu %q, want the message menu", labels(m))
 	}
 }

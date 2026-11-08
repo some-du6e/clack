@@ -2,7 +2,8 @@
 // carries text only, so the image goes through the platform: wl-copy or
 // xclip on Linux (the tools the composer pastes images with), NSPasteboard
 // on macOS, and user32 (CF_DIB plus the registered "PNG" format) on
-// Windows. Write blocks, so call it off the UI goroutine.
+// Windows. Write blocks (exec, or AppKit's main thread on macOS), so call
+// it off the UI goroutine: it reports a UI-goroutine caller to uiguard.
 package clipimg
 
 import (
@@ -11,6 +12,8 @@ import (
 	"errors"
 	"image"
 	"image/png"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uiguard"
 )
 
 // ErrUnsupported means this system has no way to put an image on the
@@ -19,6 +22,7 @@ var ErrUnsupported = errors.New("copying images isn't supported on this system")
 
 // Write replaces the clipboard with img.
 func Write(ctx context.Context, img image.Image) error {
+	uiguard.OffUI("clipimg.Write")
 	if img == nil || img.Bounds().Empty() {
 		return errors.New("empty image")
 	}

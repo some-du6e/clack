@@ -28,12 +28,30 @@ type acctTheme struct {
 	gradients bool
 }
 
-// restyle is theme.Theme.Restyle: the account theme, then the sheets.
+// restyle is theme.Theme.Restyle: the account theme, then the sheets. It
+// runs on the UI goroutine whenever the palette is rebuilt; the theme's
+// colours come from theme.FieldsAsync's cache, computed off the UI
+// goroutine (a custom-hex theme is ~250 HCT solves). A theme that isn't
+// ready within acctThemeWait applies on a later frame instead.
 func (a *App) restyle(t *theme.Theme, p *theme.Palette) {
 	if a.acct.set {
-		theme.ApplyIATheme(p, a.acct.t, t.Dark, a.acct.gradients)
+		if f, ok := theme.FieldsAsync(a.acct.t, t.Dark, a.acct.gradients, acctThemeWait, a.refreshTheme); ok {
+			theme.ApplyIAFields(p, f, t.Dark)
+		}
 	}
 	restyleFromSheets(t, p)
+}
+
+// acctThemeWait bounds how long a palette rebuild waits for the account
+// theme's colours (normally ~1 ms).
+const acctThemeWait = 30 * time.Millisecond
+
+// refreshTheme rebuilds the palette on the UI goroutine (any goroutine).
+func (a *App) refreshTheme() {
+	a.Post(func() {
+		a.th.Refresh()
+		a.Invalidate()
+	})
 }
 
 // accountTheme is the theme Appearance shows (Slack's default when the
@@ -156,6 +174,22 @@ func (a *App) themeSyncOn() bool {
 	return a.prefs.Dark == nil && !a.opts.Dark
 }
 
+// settleThemeSync pins "Sync with OS setting" in the prefs at start.
+// savePrefs writes "dark" on every save, and it did before theme_sync
+// existed (alpha.7 and older, where light was the default), so "dark" in
+// ui.json is not a choice by itself: without theme_sync, the first save
+// (a route change) turned sync off for every later start, and a Mac in
+// dark mode left Clack light, where Slick's dark-only themes (AMOLED,
+// Catppuccin, Nord…) don't apply. An old dark:false is that default, so
+// sync is on; dark:true was picked (Ctrl+Shift+Y, the menu), so it stays.
+func (a *App) settleThemeSync() {
+	if a.prefs.ThemeSync != nil || a.opts.Dark {
+		return
+	}
+	on := a.prefs.Dark == nil || !*a.prefs.Dark
+	a.prefs.ThemeSync = &on
+}
+
 // setThemeSync turns OS sync on or off; on applies the OS mode now.
 func (a *App) setThemeSync(on bool) {
 	a.prefs.ThemeSync = &on
@@ -177,28 +211,20 @@ func (a *App) pickMode(dark bool) {
 	}
 }
 
-// followOSTheme applies the OS colour scheme when syncing.
+// followOSTheme applies the OS colour scheme when syncing. It reads the
+// watcher's atomic (osscheme.go): no OS call on the UI goroutine.
 func (a *App) followOSTheme() {
 	if !a.themeSyncOn() {
 		return
 	}
-	if dark, ok := osPrefersDark(); ok && dark != a.th.Dark {
+	if dark, ok := osSchemeDark(); ok && dark != a.th.Dark {
 		a.setDark(dark)
 	}
 }
 
-// watchOSTheme polls the OS scheme (no portable change signal: the
-// portal, the registry and AppleInterfaceStyle are read) and wakes the UI
-// only when it changes; followOSTheme applies it if sync is on.
+// watchOSTheme wakes the UI when the OS scheme changes (the platform
+// watcher runs off the UI goroutine); followOSTheme applies it if sync is
+// on.
 func (a *App) watchOSTheme() {
-	go func() {
-		last, seen := false, false
-		for {
-			if dark, ok := osPrefersDark(); ok && (!seen || dark != last) {
-				last, seen = dark, true
-				a.Post(a.followOSTheme)
-			}
-			time.Sleep(5 * time.Second)
-		}
-	}()
+	onOSScheme(func() { a.Post(a.followOSTheme) })
 }

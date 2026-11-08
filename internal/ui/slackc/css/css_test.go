@@ -1325,6 +1325,57 @@ func TestWavyDecoration(t *testing.T) {
 	}
 }
 
+// The base sheet (Slack's own rules, SetBase) comes first in source order,
+// competes by specificity and importance, and never makes the engine
+// non-empty.
+func TestBaseSheet(t *testing.T) {
+	e := NewEngine()
+	e.SetBase(`.c-link { color: ` + NativeValue + ` } :where(b) { font-weight: ` + NativeValue + ` }`)
+	if !e.Empty() {
+		t.Fatal("the base sheet alone made the engine non-empty")
+	}
+	link := n("a.c-link")
+	if got := val(t, e.Cascade(link, 0, nil, testEnv), "color"); got != NativeValue {
+		t.Fatalf("base rule: %q", got)
+	}
+	cases := []struct {
+		css, want string
+	}{
+		{`.row a { color: red }`, "red"},                      // more specific
+		{`.c-link { color: red }`, "red"},                     // same specificity, later
+		{`* { color: red }`, NativeValue},                     // less specific
+		{`* { color: red !important }`, "red"},                // important
+		{`:where(.x) .c-link, .c-link { color: red }`, "red"}, // any matching selector
+		{`.slick-ml-deleted * { color: #e01e5a !important }`, "#e01e5a"},
+	}
+	link.parent = n("div.row.slick-ml-deleted")
+	for _, tc := range cases {
+		e.Set("p", tc.css)
+		if e.Empty() {
+			t.Fatal("a plugin sheet left the engine empty")
+		}
+		if got := val(t, e.Cascade(link, 0, nil, testEnv), "color"); got != tc.want {
+			t.Errorf("%s: got %q want %q", tc.css, got, tc.want)
+		}
+	}
+	// a UA-like :where() base rule loses to any author rule
+	e.Set("p", `* { font-weight: 300 }`)
+	if got := val(t, e.Cascade(n("b"), 0, nil, testEnv), "font-weight"); got != "300" {
+		t.Errorf("b: got %q", got)
+	}
+	// NativeValue computes as unset: the parent's color
+	e.Set("p", `.row { color: red }`)
+	ps := Compute(&Cascaded{Decls: Decls{{Prop: "color", Value: "red"}}}, nil, testEnv)
+	c := e.Cascade(link, 0, nil, testEnv)
+	if st := Compute(&c, &ps, testEnv); st.Color != (color.NRGBA{R: 255, A: 255}) {
+		t.Errorf("native value computed %v, want the inherited red", st.Color)
+	}
+	e.Remove("p")
+	if !e.Empty() {
+		t.Fatal("not empty with only the base sheet left")
+	}
+}
+
 // TestHasPluginForms: every :has() shape the Slick and Taut plugins and
 // Slick's themes use (child, descendant, next and later sibling, a
 // sibling's child, state inside, lists, nested in :is/:not, descendant

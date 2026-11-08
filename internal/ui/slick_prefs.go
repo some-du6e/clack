@@ -2071,10 +2071,34 @@ func (p *slickPage) themeCard(gtx layout.Context, w int, t slick.ThemeCard) layo
 		}
 	}
 	if clicked(b) && !removing && !t.Selected {
-		id := t.ID
-		p.write(func(ctx context.Context, s *slick.Slick) error { return s.SetTheme(id) })
+		p.pickTheme(t)
 	}
 	return d
+}
+
+// pickTheme selects a theme card. A theme made for one mode (Slick's
+// "Only in dark mode": AMOLED, Catppuccin, Nord… are all dark-only) is
+// installed only in that mode, as in Slick, so picking it while Clack is
+// in the other mode would change nothing on screen. Picking it switches
+// Clack to its mode (Appearance's Light/Dark choice, which ends "Sync
+// with OS"); switching back later turns the theme off again, like Slick.
+func (p *slickPage) pickTheme(t slick.ThemeCard) {
+	if t.Mode != "" && (t.Mode == "dark") != p.a.th.Dark {
+		p.a.pickMode(t.Mode == "dark")
+		p.themeStatus = fmt.Sprintf("%s is a %s mode theme, so %s switched to %s mode.", t.Name, t.Mode, AppName, titleWord(t.Mode))
+	} else {
+		p.themeStatus = ""
+	}
+	id := t.ID
+	p.write(func(ctx context.Context, s *slick.Slick) error { return s.SetTheme(id) })
+}
+
+// titleWord is "Dark" for "dark".
+func titleWord(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 // themePreview draws Slick's preview strip: a 32% sidebar pane with three
@@ -2169,8 +2193,7 @@ func (p *slickPage) importTheme() {
 }
 
 // downloadThemes fetches Slick's themes/*.json from its repository into
-// <slick dir>/themes (Clack doesn't ship them). Slick reads bundled themes
-// at start, so they appear after Clack restarts.
+// <slick dir>/themes (Clack doesn't ship them) and reloads them.
 func (p *slickPage) downloadThemes() {
 	s := p.a.Slick()
 	if s == nil {
@@ -2181,12 +2204,15 @@ func (p *slickPage) downloadThemes() {
 	a := p.a
 	go func() {
 		n, err := fetchSlickThemes(dir)
+		if err == nil {
+			s.ReloadThemes() // the cards show now, no restart
+		}
 		a.Post(func() {
 			switch {
 			case err != nil:
 				p.downloadState = "Couldn’t download the themes: " + err.Error()
 			default:
-				p.downloadState = fmt.Sprintf("Downloaded %d themes. Restart %s to use them.", n, AppName)
+				p.downloadState = fmt.Sprintf("Downloaded %d themes.", n)
 			}
 			a.Invalidate()
 		})

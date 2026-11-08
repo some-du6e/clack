@@ -164,3 +164,44 @@ func TestGridWorkspaceIconAndRotation(t *testing.T) {
 		t.Errorf("two workspaces: icon team %s, want the org", got)
 	}
 }
+
+// A Slackbot custom response's sender, as Slack's reskin draws it: the org
+// on Enterprise Grid (selfTeamIds.enterpriseId || teamId), with its name and
+// the icon for a 36px avatar; the workspace's until the org has been read.
+func TestCustomResponseTeam(t *testing.T) {
+	a, f := testApp(t)
+	a.C.Creds.EnterpriseID, a.C.Creds.Team = "E1", "T1"
+	a.S.Lock()
+	a.S.TeamID, a.S.TeamName = "T1", "Synthetic Workspace"
+	a.S.Unlock()
+	a.setTeamIcon("T1", icon("https://img.example/ws-88.png"))
+	if name, ic := a.CustomResponseTeam(36); name != "Synthetic Workspace" || ic != "https://img.example/ws-88.png" {
+		t.Errorf("before the org is read: %q %q, want the workspace's", name, ic)
+	}
+	// two workspaces: the rail asks for the org, and so do custom responses
+	a.S.PutUsers([]slack.User{{ID: "USELF", Name: "me", EnterpriseUser: &slack.EnterpriseUser{Teams: []string{"T1", "T2"}}}})
+	f.reply["team.prefs.get"] = `{"ok":true,"prefs":{}}`
+	f.reply["team.info"] = `{"ok":true,"team":{"id":"E1","name":"Synthetic Org","icon":{"image_88":"https://img.example/org-88.png"}}}`
+	a.refreshTeamIcon(context.Background())
+	if got := f.last("team.info").Get("team"); got != "E1" {
+		t.Errorf("team.info for %q, want the org", got)
+	}
+	if name, ic := a.CustomResponseTeam(36); name != "Synthetic Org" || ic != "https://img.example/org-88.png" {
+		t.Errorf("custom response sender %q %q, want the org's", name, ic)
+	}
+	// the experiment gates it; Slack's force overrides (and BringBackSlackbot) turn it off
+	if !a.CustomResponseReskin() {
+		t.Error("reskin_custom_responses should default to on (Hack Club has it)")
+	}
+	a.SetExperimentGroup("reskin_custom_responses", "off")
+	if a.CustomResponseReskin() || a.Experiment("filter_dormant_channels") != "on" {
+		t.Error("SetExperimentGroup: the group didn't change, or the other defaults were lost")
+	}
+	// isCustomResponse needs Slackbot as the author, not just the subtype
+	if m := a.message("C1", &slack.Message{TS: "1.1", User: "USLACKBOT", Subtype: SubtypeSlackbotResponse}); !m.CustomResponse() {
+		t.Error("Slackbot's slackbot_response isn't a custom response")
+	}
+	if m := a.message("C1", &slack.Message{TS: "1.2", User: "UOTHER", Subtype: SubtypeSlackbotResponse}); m.CustomResponse() {
+		t.Error("a slackbot_response from someone else is drawn as the team")
+	}
+}

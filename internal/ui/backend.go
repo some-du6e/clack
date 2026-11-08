@@ -21,10 +21,12 @@ import (
 // backend adapts the in-process core service to the shell's model. Model
 // mutations happen on the UI goroutine only (via App.Post).
 type backend struct {
-	core      *core.App
-	taut      *taut.Taut   // Taut plugins (nil until boot)
-	slick     *slick.Slick // Slick plugins, on Taut's runtime (nil until boot)
-	cacheFile string       // sidebar metadata cache (names/kinds/order only)
+	core  *core.App
+	taut  *taut.Taut   // Taut plugins (nil until boot)
+	slick *slick.Slick // Slick plugins, on Taut's runtime (nil until boot)
+	// tautStarting: startTautAsync is building the runtimes
+	tautStarting bool
+	cacheFile    string // sidebar metadata cache (names/kinds/order only)
 
 	m       model
 	started bool
@@ -115,7 +117,7 @@ func (b *backend) start(a *App) {
 			log.Printf("ui: boot: %v", err)
 			a.Post(func() { a.Toast("Couldn't connect to Slack: " + err.Error()) })
 		}
-		a.Post(func() { b.startTaut(a); b.startBlockkit(a) })
+		a.Post(func() { b.startTautAsync(a); b.startBlockkit(a) })
 		snap := b.core.Snapshot()
 		log.Printf("ui: core ready %v after boot start (%d convs)", time.Since(t0).Round(time.Millisecond), len(snap.Convs))
 		a.Post(func() {
@@ -164,8 +166,14 @@ func (b *backend) loadDrafts(a *App) {
 	}()
 }
 
-func (b *backend) stop() {
-	b.stopTaut()
+// stop drops this backend (quit, sign out, account switch, session
+// ended). UI goroutine: it detaches the UI and stops core's traffic at
+// once, and closes the rest in the background, because closing Taut runs
+// every plugin's stop hook (seconds with a slow plugin) and core.Close
+// writes the metadata cache. The channel closes when all of it is done.
+func (b *backend) stop() <-chan struct{} {
+	s, t := b.slick, b.taut
+	b.detachTaut()
 	b.stopBlockkit()
 	if b.cancel != nil {
 		b.cancel()
@@ -173,12 +181,18 @@ func (b *backend) stop() {
 	if b.unsub != nil {
 		b.unsub()
 	}
-	_ = b.core.Close()
-	// Every caller drops this backend (quit, sign out, account switch):
-	// stop core's socket and loops too, or the old session keeps a second
-	// realtime connection open next to the new one.
+	// Every caller drops this backend: stop core's socket and loops too,
+	// or the old session keeps a second realtime connection open next to
+	// the new one.
 	b.core.Shutdown()
 	b.saveCache()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		closeTaut(s, t)
+		_ = b.core.Close()
+	}()
+	return done
 }
 
 // resnapshot rebuilds the model off the UI goroutine (sidebar_changed,
@@ -784,7 +798,7 @@ func (b *backend) permalink(ch, ts string) string {
 }
 
 func (b *backend) signOut() {
-	b.stop()
+	_ = b.stop()
 	if b.onSignOut != nil {
 		b.onSignOut()
 	}

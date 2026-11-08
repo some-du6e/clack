@@ -5,10 +5,15 @@ package openurl
 
 import (
 	"errors"
+	"log"
 	"net/url"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uiguard"
 )
 
 // ErrRefused is returned for links Clack won't hand to the OS.
@@ -64,6 +69,7 @@ func Check(raw string) (string, error) {
 
 // command is the OS command for an already-checked URL.
 func command(u string) *exec.Cmd {
+	uiguard.OffUI("exec (open a link)") // exec.Command looks the tool up in PATH
 	switch runtime.GOOS {
 	case "darwin":
 		return exec.Command("open", u)
@@ -74,16 +80,51 @@ func command(u string) *exec.Cmd {
 	}
 }
 
-// Open checks raw and opens it without blocking.
+// OpenFolder shows an existing directory in the file manager (Finder,
+// Explorer, xdg-open), without blocking. dir must be absolute.
+func OpenFolder(dir string) error {
+	if !filepath.IsAbs(dir) || strings.ContainsAny(dir, "\x00\r\n") {
+		return ErrRefused
+	}
+	dir = filepath.Clean(dir)
+	go func() {
+		if st, err := os.Stat(dir); err != nil || !st.IsDir() {
+			return
+		}
+		uiguard.OffUI("exec (open a folder)")
+		var cmd *exec.Cmd
+		switch runtime.GOOS {
+		case "darwin":
+			cmd = exec.Command("open", dir)
+		case "windows":
+			cmd = exec.Command("explorer", dir)
+		default:
+			cmd = exec.Command("xdg-open", dir)
+		}
+		if err := cmd.Start(); err != nil {
+			log.Printf("openurl: %v", err)
+			return
+		}
+		_ = cmd.Wait()
+	}()
+	return nil
+}
+
+// Open checks raw and opens it without blocking: the browser starts on
+// another goroutine (exec looks the tool up in PATH and forks, which the
+// UI goroutine must never wait for). Only Check's error is returned.
 func Open(raw string) error {
 	u, err := Check(raw)
 	if err != nil {
 		return err
 	}
-	cmd := command(u)
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	go func() { _ = cmd.Wait() }()
+	go func() {
+		cmd := command(u)
+		if err := cmd.Start(); err != nil {
+			log.Printf("openurl: %v", err)
+			return
+		}
+		_ = cmd.Wait()
+	}()
 	return nil
 }

@@ -536,12 +536,7 @@ func (t IATheme) Fields(dark, gradients bool) map[string]color.NRGBA {
 // what Slack's default theme gives, so the default theme keeps Clack's
 // measured palette exactly. gradients is window_background_gradients.
 func ApplyIATheme(p *Palette, t IATheme, dark, gradients bool) {
-	def := DefaultIATheme.Fields(dark, true)
-	for k, v := range t.Fields(dark, gradients) {
-		if def[k] != v {
-			*accountFields[k](p) = v
-		}
-	}
+	ApplyIAFields(p, CachedFields(t, dark, gradients), dark)
 }
 
 func parseHex(s string) (color.NRGBA, bool) {

@@ -49,6 +49,17 @@ var (
 	flexHeaderClass  = slackc.Class("p-flexpane_header")
 	flexControlClass = slackc.Class("c-button-unstyled c-icon_button c-icon_button--size_medium c-icon_button--default p-flexpane_header__control", "aria-label", "Close").Tag("button")
 
+	// the reply bar (ThreadReplies) and its parts
+	replyBarClass   = slackc.Class("c-message__reply_bar c-message_kit__thread_replies")
+	replyCountClass = slackc.Class("c-link--button c-message__reply_count", "data-qa", "reply_bar_count").Tag("button")
+	replyDescClass  = slackc.Class("c-message__reply_bar_description").Tag("span")
+	// the label line above the name ("Pinned by …", "Only visible to you")
+	labelsClass     = slackc.Class("c-message_kit__labels")
+	labelsTextClass = slackc.Class("c-message_kit__labels__text").Tag("span")
+	// "replied to a thread" under a broadcast reply's name
+	preambleClass     = slackc.Class("c-message__broadcast_preamble").Tag("span")
+	preambleLinkClass = slackc.Class("c-link c-message__broadcast_preamble_link").Tag("a")
+
 	mrkdwnClass        = slackc.Class("p-mrkdwn_element")
 	memberLinkClass    = slackc.Class("c-link c-member_slug c-member_slug--link").Tag("button")
 	channelEntityClass = slackc.Class("c-inline_channel_entity").Tag("span")
