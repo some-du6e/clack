@@ -1,8 +1,8 @@
 // Package pluginlib is Clack's plugin Library: the official Taut and Slick
 // plugins, built by upstream's own build in CI
 // (.github/workflows/plugin-library.yml) and published with an index.json as
-// the assets of the Clack repo's `plugins` pre-release. Preferences > Taut >
-// Library and Preferences > Slick > Library list them; installing one
+// the assets of the Clack repo's `plugins` pre-release. Preferences >
+// Plugins > Browse lists them; installing one
 // downloads its bundle, checks its sha256 and imports it through Taut or
 // Slick as a user plugin (the bundle lands in that system's plugins/ dir).
 //
