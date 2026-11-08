@@ -132,7 +132,7 @@ func (a *App) layoutLogin(gtx layout.Context) {
 		y += gtx.Dp(56)
 	}
 	field("Workspace", &l.workspace, "hackclub")
-	field("Token", &l.token, "xoxc-…")
+	field("Token", &l.token, "xoxc-… or the copied JSON")
 	field("Org token (optional)", &l.orgToken, "xoxc-… (Enterprise Grid)")
 	field("d cookie", &l.cookie, "xoxd-…")
 	field("d-s cookie (optional)", &l.cookieDS, "")

@@ -2,6 +2,7 @@ package slack
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -31,6 +32,9 @@ type SignInInput struct {
 // web pages and never calls any sign-out method, so the browser session the
 // values came from is left alone.
 func SignIn(ctx context.Context, in SignInInput) (Creds, error) {
+	if err := expandPastedTeams(&in); err != nil {
+		return Creds{}, err
+	}
 	ws := strings.TrimSpace(in.Workspace)
 	ws = strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(ws, "https://"), "http://"), "/")
 	if ws == "" {
@@ -103,4 +107,65 @@ func cleanCookie(v, name string) string {
 		v = url.QueryEscape(v)
 	}
 	return v
+}
+
+// pastedTeam is one entry of the JSON the DevTools snippet copies from the
+// user's own signed-in Slack tab (localStorage.localConfig_v2.teams).
+type pastedTeam struct {
+	Name  string `json:"name"`
+	ID    string `json:"id"`
+	URL   string `json:"url"`
+	Token string `json:"token"`
+}
+
+// expandPastedTeams lets the Token (or Org token) field take the snippet's
+// JSON instead of a bare xoxc token: it picks the workspace token (T…), the
+// org token (E…) and the workspace URL from it.
+func expandPastedTeams(in *SignInInput) error {
+	raw := strings.TrimSpace(in.Token)
+	if !strings.HasPrefix(raw, "[") && !strings.HasPrefix(raw, "{") {
+		raw = strings.TrimSpace(in.OrgToken)
+		if !strings.HasPrefix(raw, "[") && !strings.HasPrefix(raw, "{") {
+			return nil
+		}
+	}
+	var teams []pastedTeam
+	if strings.HasPrefix(raw, "{") {
+		var one pastedTeam
+		if err := json.Unmarshal([]byte(raw), &one); err != nil {
+			return errors.New("couldn't read the pasted JSON; copy it again with the console snippet")
+		}
+		teams = []pastedTeam{one}
+	} else if err := json.Unmarshal([]byte(raw), &teams); err != nil {
+		return errors.New("couldn't read the pasted JSON; copy it again with the console snippet")
+	}
+	want := strings.ToLower(strings.TrimSpace(in.Workspace))
+	var team, org *pastedTeam
+	for i := range teams {
+		t := &teams[i]
+		switch {
+		case strings.HasPrefix(t.ID, "E"):
+			if org == nil {
+				org = t
+			}
+		case strings.HasPrefix(t.ID, "T"):
+			host := strings.ToLower(t.URL)
+			if team == nil || (want != "" && strings.Contains(host, want)) {
+				team = t
+			}
+		}
+	}
+	if team == nil || team.Token == "" {
+		return errors.New("the pasted JSON has no workspace (T…) token; make sure you're signed in to the workspace in that tab")
+	}
+	in.Token = team.Token
+	if team.URL != "" {
+		in.Workspace = team.URL
+	}
+	if org != nil && org.Token != "" {
+		in.OrgToken = org.Token
+	} else if strings.HasPrefix(strings.TrimSpace(in.OrgToken), "[") || strings.HasPrefix(strings.TrimSpace(in.OrgToken), "{") {
+		in.OrgToken = ""
+	}
+	return nil
 }

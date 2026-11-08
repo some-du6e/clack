@@ -40,3 +40,21 @@ func TestCleanCookie(t *testing.T) {
 		t.Errorf("d-s = %q", got)
 	}
 }
+
+func TestExpandPastedTeams(t *testing.T) {
+	in := SignInInput{Workspace: "hackclub", Token: `[{"name":"Hack Club","id":"E1","url":"https://hackclub.enterprise.slack.com/","token":"xoxc-org"},{"name":"Hack Club","id":"T1","url":"https://hackclub.slack.com/","token":"xoxc-team"}]`, Cookie: "xoxd-1"}
+	if err := expandPastedTeams(&in); err != nil {
+		t.Fatal(err)
+	}
+	if in.Token != "xoxc-team" || in.OrgToken != "xoxc-org" || in.Workspace != "https://hackclub.slack.com/" {
+		t.Fatalf("got %+v", in)
+	}
+	bare := SignInInput{Workspace: "hackclub", Token: "xoxc-abc"}
+	if err := expandPastedTeams(&bare); err != nil || bare.Token != "xoxc-abc" {
+		t.Fatalf("bare token changed: %+v %v", bare, err)
+	}
+	bad := SignInInput{Token: `[{"id":"E1","token":"xoxc-org"}]`}
+	if err := expandPastedTeams(&bad); err == nil {
+		t.Fatal("want error without a T… team")
+	}
+}
