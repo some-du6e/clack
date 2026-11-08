@@ -118,6 +118,16 @@ func (s *desktopSession) setCookie(v string) {
 	}
 }
 
+// unbind forgets the DPoP binding (Slack said dpop-unbind) and saves that.
+func (s *desktopSession) unbind() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.base.DPoP != "" {
+		s.base.DPoP = ""
+		s.changedLocked(true)
+	}
+}
+
 // absorb takes in the cookies a slack.com response set. A cookie Slack
 // deletes (Max-Age<=0, an expiry in the past, or an empty value) is
 // dropped, except d: Clack keeps sending its last d, and if the session

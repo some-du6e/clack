@@ -211,6 +211,12 @@ func main() {
 		setLive(c)
 		st := store.New(cacheDir)
 		svc := core.New(c, st)
+		// After core.New (which listens for the session ending): a bound
+		// session whose DPoP key won't load sends nothing and goes back to
+		// the sign-in screen.
+		if err := c.EnableDPoP(filepath.Dir(*credsPath)); err != nil {
+			log.Printf("slack: %v", err)
+		}
 		images.SetFetcher(func(ctx context.Context, raw string) ([]byte, error) {
 			// https slack.com hosts (files.slack.com, …) need the session
 			// cookie and stay in memory (core.Fetch). Everything else is

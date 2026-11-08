@@ -47,9 +47,10 @@ type Creds struct {
 	// up to date as Slack rotates them. Cookie still holds d. A string, not
 	// a slice, so Creds stays comparable. Unused for pasted sessions.
 	Cookies string `json:"cookies,omitempty"`
-	// DPoP means the session is bound to this machine's DPoP key for
-	// slack.com (dpop.go): every request to it carries a proof.
-	DPoP bool `json:"dpop,omitempty"`
+	// DPoP, set, is the base domain (e.g. slack.com) whose DPoP key this
+	// desktop session is bound to (dpop.go): its API and websocket requests
+	// carry a proof signed with <config>/dpop-keys/<DPoP>.pem.
+	DPoP string `json:"dpop,omitempty"`
 }
 
 // SessionDesktop marks Creds that came from desktop-style sign-in.
@@ -162,6 +163,9 @@ func New(c Creds) *Client {
 	var rt http.RoundTripper = tr
 	if c.Desktop() {
 		cl.sess = newDesktopSession(c)
+		if c.DPoP != "" {
+			cl.dpop = cl.newDPoPBinding() // sends nothing until EnableDPoP
+		}
 		rt = &desktopTransport{base: tr, c: cl}
 	}
 	cl.HTTP = &http.Client{Transport: rt, Timeout: 60 * time.Second, CheckRedirect: cl.checkRedirect}
@@ -456,6 +460,9 @@ func (c *Client) post(ctx context.Context, method, u, ctype string, body []byte,
 	var se *Error
 	if errors.As(err, &se) && authCodes[se.Code] {
 		c.markAuth(se.Code)
+	}
+	if se != nil && c.dpop != nil {
+		c.dpop.failCode(se.Code)
 	}
 	return err
 }

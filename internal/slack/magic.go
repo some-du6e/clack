@@ -150,9 +150,8 @@ func magicBase(h string) (string, error) {
 
 // MagicConfig is optional context for LoginMagic.
 type MagicConfig struct {
-	// DPoPDir is where per-domain DPoP keys live (next to creds.json).
-	// Empty: token sets that ask for DPoP sign in unbound, as Slack desktop
-	// itself does when it has no secure key storage.
+	// DPoPDir is where per-domain DPoP keys live (next to creds.json). A
+	// link that asks for DPoP fails to sign in without one.
 	DPoPDir string
 }
 
@@ -232,7 +231,10 @@ func LoginMagic(ctx context.Context, sets []MagicTokenSet, cfg MagicConfig) (Cre
 			}
 		}
 		var key *dpopKey
-		if s.RequiresDPoP && cfg.DPoPDir != "" {
+		if s.RequiresDPoP && cfg.DPoPDir == "" {
+			return Creds{}, errors.New("this sign-in link asks for a DPoP key, and Clack has nowhere to keep one (no config directory)")
+		}
+		if s.RequiresDPoP {
 			k, err := loadOrCreateDPoPKey(cfg.DPoPDir, s.BaseDomain)
 			if err != nil {
 				return Creds{}, fmt.Errorf("couldn't set up the DPoP key Slack asked for: %w", err)
@@ -257,7 +259,9 @@ func LoginMagic(ctx context.Context, sets []MagicTokenSet, cfg MagicConfig) (Cre
 	}
 	c := Creds{
 		Session: SessionDesktop, Cookie: d, TeamURL: res.Team.URL, Team: res.Team.ID,
-		DPoP: dpop != nil,
+	}
+	if dpop != nil {
+		c.DPoP = resBase
 	}
 	c.Cookies = encodeCookies(withoutCookie(cookies, "d")) // d lives in Cookie
 	sess := &magicSession{hc: hc, ua: ua, dpop: dpop}
@@ -317,9 +321,9 @@ func magicExchange(ctx context.Context, hc *http.Client, ua string, s MagicToken
 	if key != nil {
 		// The binding proof carries the public key (Slack desktop passes it
 		// to loadURL as an extra header; main.bundle.cjs @952921).
-		p, err := key.proof(http.MethodGet, req.URL, true)
+		p, err := key.proof(http.MethodGet, req.URL, false)
 		if err != nil {
-			return nil, err
+			return nil, &DPoPError{Reason: "Clack couldn't sign the binding proof (" + err.Error() + ")"}
 		}
 		req.Header.Set("Dpop", p)
 	}
@@ -410,14 +414,20 @@ type magicSession struct {
 }
 
 func (s *magicSession) do(req *http.Request) (*http.Response, error) {
-	if s.dpop != nil {
+	if s.dpop != nil && dpopApplies(req) {
 		p, err := s.dpop.proof(req.Method, req.URL, false)
 		if err != nil {
-			return nil, err
+			return nil, &DPoPError{Reason: "Clack couldn't sign a proof (" + err.Error() + ")"}
 		}
 		req.Header.Set("Dpop", p)
 	}
-	return s.hc.Do(req)
+	resp, err := s.hc.Do(req)
+	if err == nil && s.dpop != nil && resp.StatusCode == http.StatusUnauthorized &&
+		strings.Contains(strings.ToLower(resp.Header.Get("WWW-Authenticate")), "dpop") {
+		resp.Body.Close()
+		return nil, &DPoPError{Reason: "Slack rejected its proof while signing in (HTTP 401)"}
+	}
+	return resp, err
 }
 
 // apiTokenRe finds the session token in Slack's boot page: the web client's
