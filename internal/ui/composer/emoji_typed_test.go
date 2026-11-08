@@ -119,10 +119,12 @@ func TestTypedSkinTones(t *testing.T) {
 	if u := d.Attrs[2].Atom.Uni; u != "👍🏻" {
 		t.Errorf("skin-tone-2 unicode = %q", u)
 	}
-	// A custom emoji has no tones: the tone stays its own emoji.
+	// A custom emoji has no tones: the tone has nothing to apply to and
+	// stays text.
 	e = emojiEditor(map[string]string{"sho": shoURL})
 	edType(e, ":sho::skin-tone-4:")
-	if got := atomsOf(e.Doc()); strings.Join(got, ",") != "sho,skin-tone-4" {
+	wantRunes(t, e.Doc(), "￼:skin-tone-4:")
+	if got := atomsOf(e.Doc()); strings.Join(got, ",") != "sho" {
 		t.Fatalf("custom + tone atoms = %v", got)
 	}
 }
