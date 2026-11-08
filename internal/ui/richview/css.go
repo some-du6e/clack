@@ -331,6 +331,8 @@ func (v *View) boxFill(b *box) color.NRGBA {
 	switch {
 	case b.colFill && ps.hasCol: // list markers: currentColor
 		fill = ps.col
+	case !b.colFill && ps.hasBg && b.comp != 0:
+		fill = color.NRGBA{} // a pill: its component's Wrap paints the CSS background
 	case !b.colFill && ps.hasBg:
 		fill = ps.bg
 	}
