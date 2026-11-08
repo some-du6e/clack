@@ -252,13 +252,13 @@ func TestThemeTokensPrimaryViewBackground(t *testing.T) {
 	eng = css.NewEngine()
 	eng.Set("slick:user", ".p-message_pane{background:#123456}")
 	th = tkThemed(eng, false)
-	def := theme.Flatten(theme.LightPalette)
 	if th.C.Bg != tkHex(0x123456) {
 		t.Fatalf("Bg = %v", th.C.Bg)
 	}
-	c := th.C
-	c.Bg = def.Bg
-	if c != def {
+	// Flatten pre-mixes translucent fields over Bg, so those follow it
+	want := theme.LightPalette
+	want.Bg = tkHex(0x123456)
+	if th.C != theme.Flatten(want) {
 		t.Error("a pane background changed other fields")
 	}
 	// a lone gradient (i hate myself) has no colour: the pane keeps its token
