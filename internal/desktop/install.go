@@ -71,14 +71,15 @@ var WindowsSetupArgs = []string{"/VERYSILENT", "/CURRENTUSER", "/SUPPRESSMSGBOXE
 // replace both (and see every command an install would run).
 var (
 	runCmd = func(ctx context.Context, name string, args ...string) error {
-		out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+		c := exec.CommandContext(ctx, name, args...)
+		out, err := waitDelay(c).CombinedOutput()
 		if err != nil && len(out) > 0 {
 			return fmt.Errorf("%s: %w: %s", filepath.Base(name), err, strings.TrimSpace(string(out)))
 		}
 		return err
 	}
 	startCmd = func(name string, args ...string) error {
-		c := exec.Command(name, args...)
+		c := waitDelay(exec.Command(name, args...))
 		detach(c)
 		if err := c.Start(); err != nil {
 			return err
@@ -87,6 +88,14 @@ var (
 	}
 	lookPath = exec.LookPath
 )
+
+// waitDelay bounds how long Wait (Run, Output) waits for a child's stdio
+// after it exits or its context ends: a grandchild that inherited the
+// pipes would otherwise hold Wait forever.
+func waitDelay(c *exec.Cmd) *exec.Cmd {
+	c.WaitDelay = 5 * time.Second
+	return c
+}
 
 const stagePrefix = ".clack-update-"
 

@@ -422,5 +422,6 @@ func setEcho(on bool) bool {
 	}
 	cmd := exec.Command("stty", arg)
 	cmd.Stdin = os.Stdin
+	cmd.WaitDelay = 2 * time.Second // never wait on a child's inherited pipes
 	return cmd.Run() == nil
 }

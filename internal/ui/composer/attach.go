@@ -891,24 +891,44 @@ func attParseAppleData(out string) ([]byte, error) {
 // attRun runs a tool and returns at most limit bytes of its stdout.
 func attRun(ctx context.Context, limit int64, name string, args ...string) ([]byte, error) {
 	uiguard.OffUI("exec " + name)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
-	out, err := cmd.StdoutPipe()
+	// Stdout through Go's copier (not StdoutPipe) so WaitDelay applies: a
+	// child that exits or is killed while a grandchild still holds its
+	// stdout can't keep us waiting.
+	out := &attCapped{limit: limit, over: cancel}
+	cmd.Stdout = out
+	cmd.WaitDelay = attWaitDelay
+	err := cmd.Run()
+	if out.tooBig {
+		return nil, errAttTooBig
+	}
 	if err != nil {
 		return nil, err
 	}
-	if err := cmd.Start(); err != nil {
-		return nil, err
+	return out.b, nil
+}
+
+// attWaitDelay bounds every tool's Wait after it exits or is killed.
+const attWaitDelay = 2 * time.Second
+
+// attCapped keeps at most limit bytes and kills the tool past them.
+type attCapped struct {
+	b      []byte
+	limit  int64
+	tooBig bool
+	over   func()
+}
+
+func (w *attCapped) Write(p []byte) (int, error) {
+	if int64(len(w.b)+len(p)) > w.limit {
+		w.tooBig = true
+		w.over()
+		return 0, errAttTooBig
 	}
-	b, rerr := io.ReadAll(io.LimitReader(out, limit+1))
-	if int64(len(b)) > limit {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		return nil, errAttTooBig
-	}
-	if err := cmd.Wait(); err != nil {
-		return nil, err
-	}
-	return b, rerr
+	w.b = append(w.b, p...)
+	return len(p), nil
 }
 
 // ---- chip row ----

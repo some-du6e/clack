@@ -58,6 +58,8 @@ func attNativePick(ctx context.Context) (paths []string, ok bool, err error) {
 	if runtime.GOOS != "darwin" || !attHave("osascript") {
 		return nil, false, nil
 	}
-	out, err := exec.CommandContext(ctx, "osascript", "-e", attMacChooseScript).Output()
+	c := exec.CommandContext(ctx, "osascript", "-e", attMacChooseScript)
+	c.WaitDelay = attWaitDelay
+	out, err := c.Output()
 	return attPickResult(out, err)
 }

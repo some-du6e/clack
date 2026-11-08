@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -429,5 +430,56 @@ func TestTakeShaperDoesNotWait(t *testing.T) {
 	a.shaperCh <- sh
 	if !a.takeShaper() || a.th.Shaper == nil {
 		t.Fatal("didn't install the ready shaper")
+	}
+}
+
+// Startup with every external tool Clack might run replaced by one that
+// hangs and leaves a child holding its stdout (the shape of the pre-fix
+// freeze: `defaults` exec'd on the UI goroutine at launch). The first
+// frames, boot and Preferences must not wait on any of them, and
+// `defaults` is never run at all.
+func TestStartupWithHangingTools(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell scripts")
+	}
+	bin := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "ran")
+	script := "#!/bin/sh\necho \"$0 $*\" >> " + marker + "\n(sleep 60) &\nsleep 60\n"
+	for _, tool := range []string{"defaults", "osascript", "pngpaste", "open", "xdg-open", "wl-paste", "xclip", "zenity", "kdialog", "dpkg-query", "rpm", "stty", "xdg-mime"} {
+		writeFile(t, filepath.Join(bin, tool), []byte(script))
+		if err := os.Chmod(filepath.Join(bin, tool), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	// the OS scheme read itself (the watcher's) answers without exec
+	done := make(chan struct{})
+	go func() { osPrefersDark(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("osPrefersDark is stuck")
+	}
+
+	fs, err := fakeslack.Start(fakeslack.Small)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { fs.Close() })
+	fs.SetPrefs(acctDefaults)
+	t.Cleanup(composer.ResetPlainTextMode)
+	home := freezeHome(t) // fresh: nothing saved, so Sync with OS is on
+	t0 := time.Now()
+	r := runFreezeSession(t, fs, home, freezeState{name: "hanging-tools", prefs: true}, false)
+	t.Logf("startup and Preferences with hanging tools: %v, slowest frame %v (%s)", time.Since(t0).Round(time.Millisecond), r.worst.Round(time.Millisecond), r.worstAt)
+	if b, err := os.ReadFile(marker); err == nil {
+		for _, l := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+			if strings.Contains(l, "/defaults") {
+				t.Errorf("ran %s", l)
+			} else {
+				t.Logf("ran (off the UI goroutine) %s", l)
+			}
+		}
 	}
 }

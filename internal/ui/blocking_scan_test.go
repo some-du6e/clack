@@ -320,3 +320,101 @@ func takesLayoutContext(ft *ast.FuncType) bool {
 	}
 	return false
 }
+
+// TestEveryExecSetsWaitDelay (the whole module): every function that makes
+// an exec.Cmd bounds its Wait with Cmd.WaitDelay (directly, or through a
+// waitDelay helper). Without it, Output/Run wait for the stdio copiers until
+// every holder of the pipe exits: a killed child whose grandchild kept
+// stdout open blocks forever. And nothing runs macOS' `defaults`: the
+// pre-fix osPrefersDark did, on the UI goroutine at every launch with
+// "Sync with OS" on (2026-11-08).
+func TestEveryExecSetsWaitDelay(t *testing.T) {
+	var files []string
+	for _, root := range []string{"../../cmd", "../../internal"} {
+		err := filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() && strings.HasSuffix(p, ".go") && !strings.HasSuffix(p, "_test.go") {
+				files = append(files, p)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	n := 0
+	for _, p := range files {
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, p, nil, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatal(err)
+		}
+		execName, ok := importsPath(f, "os/exec")
+		if !ok {
+			continue
+		}
+		var stack []ast.Node
+		ast.Inspect(f, func(nd ast.Node) bool {
+			if nd == nil {
+				stack = stack[:len(stack)-1]
+				return true
+			}
+			stack = append(stack, nd)
+			call, ok := nd.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, _ := call.Fun.(*ast.SelectorExpr)
+			id, ok := selIdent(sel)
+			if !ok || id.Name != execName || (sel.Sel.Name != "Command" && sel.Sel.Name != "CommandContext") {
+				return true
+			}
+			n++
+			if len(call.Args) > 0 {
+				arg := call.Args[0]
+				if sel.Sel.Name == "CommandContext" && len(call.Args) > 1 {
+					arg = call.Args[1]
+				}
+				if lit, ok := arg.(*ast.BasicLit); ok && lit.Value == `"defaults"` {
+					t.Errorf("%s: execs defaults (read the appearance in process: osdark_darwin.m)", fset.Position(call.Pos()))
+				}
+			}
+			var fn ast.Node // the innermost function
+			for i := len(stack) - 1; i >= 0 && fn == nil; i-- {
+				switch stack[i].(type) {
+				case *ast.FuncDecl, *ast.FuncLit:
+					fn = stack[i]
+				}
+			}
+			if fn == nil || !setsWaitDelay(fn) {
+				t.Errorf("%s: %s.%s without Cmd.WaitDelay in the same function", fset.Position(call.Pos()), execName, sel.Sel.Name)
+			}
+			return true
+		})
+	}
+	if n < 10 {
+		t.Fatalf("found only %d exec.Command calls: is the scan looking in the right place?", n)
+	}
+}
+
+func setsWaitDelay(fn ast.Node) bool {
+	found := false
+	ast.Inspect(fn, func(nd ast.Node) bool {
+		switch x := nd.(type) {
+		case *ast.AssignStmt:
+			for _, l := range x.Lhs {
+				if s, ok := l.(*ast.SelectorExpr); ok && s.Sel.Name == "WaitDelay" {
+					found = true
+				}
+			}
+		case *ast.CallExpr:
+			if id, ok := x.Fun.(*ast.Ident); ok && id.Name == "waitDelay" {
+				found = true
+			}
+		}
+		return !found
+	})
+	return found
+}
