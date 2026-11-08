@@ -76,10 +76,10 @@ func (d *malgoDevice) Start(capture func([]int16), playback func([]int16)) error
 			d.play = dev
 		}
 	}
-	if d.cap == nil && d.play == nil && len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	// Every side that was asked for and failed is reported (the session
+	// opens the microphone and the speakers separately, so it can tell the
+	// user which one is broken).
+	return errors.Join(errs...)
 }
 
 func (d *malgoDevice) Close() {

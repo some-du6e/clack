@@ -133,12 +133,14 @@ type micFramer struct {
 	buf  []int16
 	out  chan []int16
 	drop int
+	w    micWatch
 }
 
 func newMicFramer() *micFramer { return &micFramer{out: make(chan []int16, 16)} }
 
 func (m *micFramer) write(pcm []int16) {
 	m.mu.Lock()
+	m.note(pcm, time.Now())
 	m.buf = append(m.buf, pcm...)
 	for len(m.buf) >= frameSamples {
 		f := make([]int16, frameSamples)

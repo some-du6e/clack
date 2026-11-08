@@ -5,11 +5,13 @@ import (
 	"image/color"
 	"time"
 
+	"gioui.org/layout"
 	"gioui.org/unit"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/huddle"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/openurl"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
@@ -20,11 +22,18 @@ func (c *Controller) BarHeight(gtx C) int {
 	if !c.Active() {
 		return 0
 	}
+	if s := c.Session(); s != nil && s.State().Mic.Problem() {
+		return gtx.Dp(112 + barMicRow)
+	}
 	return gtx.Dp(112)
 }
 
+// barMicRow is the bar's microphone warning row (dp).
+const barMicRow = 30
+
 type barState struct {
 	mic, deaf, open, leave, title widget.Clickable
+	micRow, micFix                widget.Clickable
 }
 
 // LayoutBar draws the huddle bar that sits at the bottom of the sidebar
@@ -70,8 +79,16 @@ func (c *Controller) layoutBar(gtx C, th *theme.Theme, h int) D {
 			c.Leave()
 		}
 	}
-	if b.open.Clicked(gtx) || b.title.Clicked(gtx) {
-		c.OpenWindow()
+	if b.open.Clicked(gtx) || b.title.Clicked(gtx) || b.micRow.Clicked(gtx) {
+		c.OpenWindow() // the window's banner says more
+	}
+	note, micBad := micNoteFor(st)
+	if b.micFix.Clicked(gtx) && micBad {
+		if note.settings != "" {
+			_ = openurl.OpenSettings(note.settings)
+		} else if s != nil {
+			s.RetryMic()
+		}
 	}
 
 	pad := gtx.Dp(8)
@@ -144,6 +161,41 @@ func (c *Controller) layoutBar(gtx C, th *theme.Theme, h int) D {
 		x += av + gtx.Dp(4)
 	}
 
+	// the microphone warning: short text (opens the window), and a fix
+	// button: the privacy settings, or try again
+	if micBad && s != nil {
+		ry := y1 + av + gtx.Dp(6)
+		rh := gtx.Dp(22)
+		fix := "Settings"
+		if note.settings == "" {
+			fix = "Retry"
+		}
+		fw := labelSize(gtx, th, 12, theme.Bold, fix).X + gtx.Dp(14)
+		rw := card.Max.X - gtx.Dp(10) - x0 - fw - gtx.Dp(6)
+		at(gtx, image.Pt(x0, ry), image.Pt(rw, rh), func(gtx C) D {
+			return button(gtx, &b.micRow, image.Pt(rw, rh), nil, func(gtx C) D {
+				iconAt(gtx, image.Pt(gtx.Dp(14), rh), "warning", 14, hudWarn)
+				g := gtx
+				g.Constraints = layout.Constraints{Max: image.Pt(max(0, rw-gtx.Dp(20)), rh)}
+				txt := micShort(st.Mic)
+				ls := labelSize(gtx, th, 12, theme.Bold, txt)
+				at(g, image.Pt(gtx.Dp(20), (rh-ls.Y)/2), image.Pt(min(ls.X, rw-gtx.Dp(20)), ls.Y), func(gtx C) D {
+					return th.Label(gtx, 12, theme.Bold, hudWarn, txt)
+				})
+				return D{Size: image.Pt(rw, rh)}
+			})
+		})
+		at(gtx, image.Pt(card.Max.X-gtx.Dp(10)-fw, ry), image.Pt(fw, rh), func(gtx C) D {
+			return button(gtx, &b.micFix, image.Pt(fw, rh), func(gtx C, hov bool) {
+				bg := hudBtn
+				if hov {
+					bg = hudBtnHover
+				}
+				theme.RRect(gtx, image.Rectangle{Max: image.Pt(fw, rh)}, gtx.Dp(5), bg)
+			}, func(gtx C) D { centerLabel(gtx, th, image.Pt(fw, rh), 12, theme.Bold, hudWhite, fix); return D{} })
+		})
+	}
+
 	// controls
 	bh, bw := gtx.Dp(28), gtx.Dp(32)
 	y2 := card.Max.Y - bh - gtx.Dp(8)
@@ -169,13 +221,16 @@ func (c *Controller) layoutBar(gtx C, th *theme.Theme, h int) D {
 		})
 	}
 	mic, deaf := "mic", "headphones"
-	if st.Muted {
+	if st.Muted || micBad {
 		mic = "mic-off"
 	}
 	if st.Deafened {
 		deaf = "headphones-off"
 	}
-	ctl(x0, &b.mic, mic, !st.Muted && s != nil)
+	ctl(x0, &b.mic, mic, !st.Muted && !micBad && s != nil)
+	if micBad && s != nil {
+		warnBadge(gtx, image.Pt(x0+bw, y2), gtx.Dp(12))
+	}
 	ctl(x0+bw+gtx.Dp(6), &b.deaf, deaf, st.Deafened)
 	ctl(x0+2*(bw+gtx.Dp(6)), &b.open, "expand", false)
 	lw := gtx.Dp(64)

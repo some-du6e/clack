@@ -88,6 +88,32 @@ func command(u string) *exec.Cmd {
 // inherited stdio open).
 const waitDelay = 2 * time.Second
 
+// settingsPages are the system settings pages Clack opens: the privacy
+// panes where the user lets it use the microphone and camera (huddles).
+var settingsPages = map[string]bool{
+	"x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone": true,
+	"x-apple.systempreferences:com.apple.preference.security?Privacy_Camera":     true,
+	"ms-settings:privacy-microphone":                                             true,
+	"ms-settings:privacy-webcam":                                                 true,
+}
+
+// OpenSettings opens one of the fixed system settings pages above, without
+// blocking (like Open). Anything else is ErrRefused.
+func OpenSettings(u string) error {
+	if !settingsPages[u] {
+		return ErrRefused
+	}
+	go func() {
+		cmd := command(u)
+		if err := cmd.Start(); err != nil {
+			log.Printf("openurl: %v", err)
+			return
+		}
+		_ = cmd.Wait()
+	}()
+	return nil
+}
+
 // OpenFolder shows an existing directory in the file manager (Finder,
 // Explorer, xdg-open), without blocking. dir must be absolute.
 func OpenFolder(dir string) error {

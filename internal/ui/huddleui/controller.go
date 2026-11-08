@@ -58,6 +58,9 @@ type Controller struct {
 	// Chime demo, tests). Set before the first Start.
 	Client huddle.Caller
 	SelfID string
+	// Tweak edits the session options before each join (the demo fakes
+	// microphone permission answers with it).
+	Tweak func(*huddle.Options)
 
 	mu      sync.Mutex
 	s       *huddle.Session
@@ -238,7 +241,7 @@ func (c *Controller) options(app *core.App) huddle.Options {
 	if c.Client != nil {
 		client = c.Client
 	}
-	return huddle.Options{
+	o := huddle.Options{
 		Client: client,
 		SelfID: c.selfID(),
 		// Audio & video > When joining a huddle… "Mute my microphone"
@@ -261,6 +264,10 @@ func (c *Controller) options(app *core.App) huddle.Options {
 		},
 		OnEnd: func(err error) { go c.ended(err) },
 	}
+	if c.Tweak != nil {
+		c.Tweak(&o)
+	}
+	return o
 }
 
 // onSession runs on session goroutines when the huddle's state changed.

@@ -8,6 +8,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"image"
 	"image/color"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/huddle"
+	"github.com/some-du6e/yoloslackgoclient/internal/huddle/avperm"
 	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/store"
@@ -53,8 +55,9 @@ func main() {
 	dur := flag.Duration("for", 0, "quit after this long (0 = when the window closes)")
 	muted := flag.Bool("muted", false, "join muted")
 	captions := flag.Bool("captions", true, "show live captions")
+	mic := flag.String("mic", "ok", "the microphone: ok (a tone), denied, restricted, failed or silent")
 	flag.Parse()
-	if os.Getenv("CLACK_HUDDLE_TONE") == "" {
+	if *mic == "ok" && os.Getenv("CLACK_HUDDLE_TONE") == "" {
 		os.Setenv("CLACK_HUDDLE_TONE", "440") // a synthetic microphone
 	}
 	var clip []byte
@@ -82,6 +85,9 @@ func main() {
 
 	ctl := huddleui.New(h)
 	ctl.Client, ctl.SelfID = fake.Caller(), huddle.FakeSelfUser
+	if *mic != "ok" {
+		ctl.Tweak = func(o *huddle.Options) { fakeMic(o, *mic) }
+	}
 
 	go func() {
 		w := new(app.Window)
@@ -158,4 +164,29 @@ func main() {
 		}
 	}()
 	app.Main()
+}
+
+// fakeMic answers the microphone permission and opens a fake sound card,
+// to show the huddle UI's microphone notices.
+func fakeMic(o *huddle.Options, mode string) {
+	answer := avperm.Authorized
+	switch mode {
+	case "denied":
+		answer = avperm.Denied
+	case "restricted":
+		answer = avperm.Restricted
+	}
+	o.MicAccess = func() <-chan avperm.Status {
+		ch := make(chan avperm.Status, 1)
+		ch <- answer
+		return ch
+	}
+	n := 0
+	o.OpenAudio = func(func(string, ...any)) (huddle.Device, error) {
+		n++
+		if mode == "failed" && n > 1 { // the speakers open, the microphone doesn't
+			return nil, errors.New("no capture device")
+		}
+		return huddle.NewToneDevice(0), nil // silence
+	}
 }

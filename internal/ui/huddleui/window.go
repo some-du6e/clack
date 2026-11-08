@@ -35,6 +35,7 @@ type window struct {
 	vids   videoOps
 	clicks map[string]*widget.Clickable
 	picker bool
+	mic    micBanner
 	notice string
 	noteAt time.Time
 	full   bool
@@ -213,6 +214,13 @@ func (w *window) layout(gtx C) {
 		w.stage(gtx, s, st, stage, now)
 	}
 	w.bottomBar(gtx, s, st, image.Rect(0, sz.Y-barH, sz.X, sz.Y))
+	if n, ok := w.mic.visible(st); ok && stage.Dx() > gtx.Dp(40) {
+		w.mic.handle(gtx, s, st, n)
+		bw := min(stage.Dx()-gtx.Dp(24), gtx.Dp(480))
+		at(gtx, image.Pt((sz.X-bw)/2, stage.Min.Y+gtx.Dp(12)), image.Pt(bw, stage.Dy()), func(gtx C) D {
+			return layoutMicBanner(gtx, w.th, &w.mic, n, bw)
+		})
+	}
 	if w.notice != "" && now.Sub(w.noteAt) < 4*time.Second {
 		ns := labelSize(gtx, w.th, 13, theme.Bold, w.notice)
 		pad := gtx.Dp(10)
@@ -227,6 +235,7 @@ func (w *window) layout(gtx C) {
 func (w *window) handle(gtx C, s *huddle.Session, st huddle.State) {
 	if w.click("mic").Clicked(gtx) {
 		s.SetMuted(!st.Muted)
+		w.mic.dismissed = huddle.MicOK // a broken mic: show why again
 	}
 	if w.click("deafen").Clicked(gtx) {
 		s.SetDeafened(!st.Deafened)
@@ -526,12 +535,13 @@ type ctl struct {
 	on       bool // lit (mic on)
 	wide     int  // dp; 0 = 40
 	label    string
+	warn     bool // the warning badge (the microphone doesn't work)
 }
 
 func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 	mic := ctl{id: "mic", icon: "mic", on: true}
-	if st.Muted {
-		mic = ctl{id: "mic", icon: "mic-off"}
+	if st.Muted || st.Mic.Problem() {
+		mic = ctl{id: "mic", icon: "mic-off", warn: st.Mic.Problem()}
 	}
 	deaf := ctl{id: "deafen", icon: "headphones"}
 	if st.Deafened {
@@ -577,6 +587,9 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 					centerLabel(gtx, w.th, image.Pt(cw, h), 15, theme.Bold, hudWhite, c.label)
 				} else {
 					iconAt(gtx, image.Pt(cw, h), c.icon, 20, fg)
+				}
+				if c.warn {
+					warnBadge(gtx, image.Pt(cw, 0), gtx.Dp(14))
 				}
 				return D{}
 			})
