@@ -39,6 +39,12 @@
 	<false/>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>
 	<true/>
+	<!-- TCC: without these macOS never asks, and huddle capture gets
+	     silence (Core Audio) or kills the app (AVCaptureDevice). -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Clack uses your microphone so people can hear you in huddles.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Clack uses your camera when you turn on video in a huddle.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © Clack contributors</string>
 	<key>CFBundleURLTypes</key>

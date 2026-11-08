@@ -24,6 +24,8 @@ import (
 	"github.com/pion/interceptor"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/huddle/avperm"
 )
 
 // Phase is where the session is.
@@ -92,9 +94,12 @@ type State struct {
 	Muted         bool
 	Deafened      bool
 	CaptionsOn    bool
+	Mic           MicStatus     // MicStatus.Problem: tell the user
+	MicErr        string        // why, for MicFailed and MicSilent
 	Participants  []Participant // you first, then by join order
 	Videos        []Video
-	Captions      []Caption // most recent last
+	Captions      []Caption    // most recent last
+	Camera        CameraStatus // yours (SetCamera)
 }
 
 // Options configure a session.
@@ -105,8 +110,16 @@ type Options struct {
 	// Device is the sound card; nil opens the system default (or a test
 	// tone when CLACK_HUDDLE_TONE=<hz> is set).
 	Device Device
-	Muted  bool
-	Logf   func(format string, args ...any)
+	// MicAccess replaces the OS permission request for the default
+	// microphone, and OpenAudio replaces opening the default sound card
+	// (once for the speakers, once for the microphone): tests, the demo.
+	MicAccess func() <-chan avperm.Status
+	OpenAudio func(logf func(string, ...any)) (Device, error)
+	Muted     bool
+	// OpenCamera replaces the system camera for SetCamera (tests, the demo:
+	// NewTestCamera); nil = the default camera behind the OS permission.
+	OpenCamera func(logf func(string, ...any)) (Camera, error)
+	Logf       func(format string, args ...any)
 	// OnChange is called (from any goroutine, coalesced) when State or a
 	// video frame changed.
 	OnChange func()
@@ -119,30 +132,34 @@ type Options struct {
 
 // Session is a joined huddle. Its methods are safe for concurrent use.
 type Session struct {
-	o    Options
-	join *joinInfo
-	dev  Device
-	play playBuffer
-	mic  *micFramer
+	o      Options
+	join   *joinInfo
+	dev    Device // speakers (and the microphone for Options.Device)
+	micDev Device // the default microphone, once the OS allowed it
+	play   playBuffer
+	mic    *micFramer
 
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	mu       sync.Mutex
-	phase    Phase
-	err      error
-	muted    bool
-	deafened bool
-	captions bool
-	people   map[string]*Participant // by user id
-	order    []string
-	byAtt    map[string]string // attendee id -> people key (user id, or "U…/<attendee>" for a second device)
-	streamAt map[uint32]string // audio stream id -> attendee id
-	sources  map[uint32]streamDesc
-	lines    []Caption
-	sinks    map[string]*videoSink // by video key
-	ended    bool
-	leaving  bool // LEAVE sent: a closing socket is expected, not a drop
+	mu        sync.Mutex
+	phase     Phase
+	err       error
+	muted     bool
+	deafened  bool
+	captions  bool
+	micStatus MicStatus
+	micErr    string
+	people    map[string]*Participant // by user id
+	order     []string
+	byAtt     map[string]string // attendee id -> people key (user id, or "U…/<attendee>" for a second device)
+	streamAt  map[uint32]string // audio stream id -> attendee id
+	sources   map[uint32]streamDesc
+	lines     []Caption
+	sinks     map[string]*videoSink // by video key
+	cam       camPipe               // your camera (videosend.go)
+	ended     bool
+	leaving   bool // LEAVE sent: a closing socket is expected, not a drop
 
 	// connection (replaced on reconnect)
 	conn     *websocket.Conn
@@ -197,32 +214,6 @@ func Join(ctx context.Context, o Options, channel string) (*Session, error) {
 	s.openDevice()
 	go s.run()
 	return s, nil
-}
-
-func (s *Session) openDevice() {
-	dev := s.o.Device
-	if dev == nil {
-		if hz, _ := strconv.ParseFloat(os.Getenv("CLACK_HUDDLE_TONE"), 64); hz > 0 {
-			dev = NewToneDevice(hz)
-		} else if openDefaultDevice != nil {
-			d, err := openDefaultDevice(s.o.Logf)
-			if err != nil {
-				s.o.Logf("huddle: audio device: %v", err)
-			} else {
-				dev = d
-			}
-		}
-	}
-	if dev == nil {
-		dev = newNullDevice()
-	}
-	if err := dev.Start(s.mic.write, s.play.pull); err != nil {
-		s.o.Logf("huddle: audio device: %v (no audio IO)", err)
-		dev.Close()
-		dev = newNullDevice()
-		_ = dev.Start(s.mic.write, s.play.pull)
-	}
-	s.dev = dev
 }
 
 // person returns (creating) the participant for user id. Callers hold mu
@@ -289,11 +280,13 @@ func (s *Session) SelfAttendee() string { return s.join.Attendee.AttendeeID }
 
 // State returns a snapshot.
 func (s *Session) State() State {
+	cam := s.CameraStatus()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := State{Phase: s.phase, Err: s.err, RoomID: s.join.RoomID, Channel: s.join.Channel,
 		ThreadChannel: s.join.ThreadCh, ThreadTS: s.join.ThreadTS, Name: s.join.Name,
-		SelfAttendee: s.join.Attendee.AttendeeID, Muted: s.muted, Deafened: s.deafened, CaptionsOn: s.captions}
+		SelfAttendee: s.join.Attendee.AttendeeID, Muted: s.muted, Deafened: s.deafened, CaptionsOn: s.captions,
+		Mic: s.micStatus, MicErr: s.micErr}
 	if s.join.DateStart > 0 {
 		st.Started = time.Unix(s.join.DateStart, 0)
 	}
@@ -303,6 +296,7 @@ func (s *Session) State() State {
 		p := *s.people[id]
 		if p.Self {
 			p.Muted = s.muted
+			p.Camera = cam.State == CameraOn
 		}
 		st.Participants = append(st.Participants, p)
 	}
@@ -319,11 +313,15 @@ func (s *Session) State() State {
 		return st.Videos[i].Key < st.Videos[j].Key
 	})
 	st.Captions = append(st.Captions, s.lines...)
+	st.Camera = cam
 	return st
 }
 
 // Frame returns the newest picture of a video (State().Videos[i].Key).
 func (s *Session) Frame(key string) VideoFrame {
+	if key == SelfVideoKey {
+		return s.cam.preview.latest()
+	}
 	s.mu.Lock()
 	v := s.sinks[key]
 	s.mu.Unlock()
@@ -445,9 +443,16 @@ func (s *Session) finish(err error) {
 	s.err = err
 	s.mu.Unlock()
 	s.cancel()
+	s.closeCamera()
 	s.closeConn()
-	if s.dev != nil {
-		s.dev.Close()
+	s.mu.Lock()
+	mic := s.micDev
+	s.micDev = nil
+	s.mu.Unlock()
+	for _, d := range []Device{s.dev, mic} {
+		if d != nil {
+			d.Close()
+		}
 	}
 	s.doneOnce.Do(func() { close(s.doneCh) })
 	if s.o.OnEnd != nil {
@@ -748,11 +753,14 @@ func (s *Session) setupMedia(turn *turnCreds) error {
 		_ = pc.Close()
 		return err
 	}
-	// The first video section is the (unused) local camera.
-	if _, err := pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly}); err != nil {
+	// The first video section is the local camera: recvonly until
+	// SetCamera(true) gives it the camera track (sendrecv).
+	camT, err := pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly})
+	if err != nil {
 		_ = pc.Close()
 		return err
 	}
+	s.cameraAttach(api, pc, camT)
 	pc.OnTrack(s.onTrack)
 	pc.OnConnectionStateChange(func(st webrtc.PeerConnectionState) {
 		s.o.Logf("huddle: peer connection %s", st)
@@ -808,7 +816,8 @@ func (s *Session) subscribe(first bool) error {
 	s.mu.Unlock()
 	ackCh := s.wait(ftSubscribeAck)
 	if err := s.send(encodeSubscribe(subscribeReq{SDP: sdp, AudioHost: s.join.Meeting.MediaPlacement.AudioHostURL,
-		AudioMuted: muted, AttendeeID: s.join.Attendee.AttendeeID, Receive: append([]uint32(nil), s.slots...)})); err != nil {
+		AudioMuted: muted, AttendeeID: s.join.Attendee.AttendeeID, Receive: append([]uint32(nil), s.slots...),
+		Video: s.cameraDesc()})); err != nil {
 		return err
 	}
 	ack, err := s.await(ackCh, 15*time.Second, "SUBSCRIBE_ACK")
@@ -857,7 +866,8 @@ func (s *Session) sendAudio(done <-chan struct{}) {
 		select {
 		case <-done:
 			return
-		case <-t.C:
+		case now := <-t.C:
+			s.checkMic(now)
 		}
 		pcm := silence
 		select {
@@ -993,6 +1003,9 @@ func (s *Session) recvAudio(track *webrtc.TrackRemote, done <-chan struct{}) {
 		}
 		pcm, err := dec.decode(pkt.Payload)
 		if err != nil {
+			if n := opusAborts.Load(); n == 1 || n%500 == 0 {
+				s.o.Logf("huddle: %v (%d so far)", err, n)
+			}
 			continue
 		}
 		s.play.push(pcm)
@@ -1022,8 +1035,8 @@ func (s *Session) Stats() string {
 		vids = append(vids, fmt.Sprintf("%s: %d pkts %d frames", k, v.packets.Load(), v.decoded.Load()))
 	}
 	sort.Strings(vids)
-	return fmt.Sprintf("audio out %d, in %d (lost %d, level %.3f); video [%s]", s.stats.audioOut, s.stats.audioIn,
-		s.stats.audioLost, s.stats.inLevel, strings.Join(vids, "; "))
+	return fmt.Sprintf("audio out %d, in %d (lost %d, level %.3f); video [%s]; camera out %d", s.stats.audioOut, s.stats.audioIn,
+		s.stats.audioLost, s.stats.inLevel, strings.Join(vids, "; "), s.cam.sent.Load())
 }
 
 // ---- signaling state ----
