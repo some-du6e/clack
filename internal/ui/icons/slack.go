@@ -7,7 +7,9 @@ import "strings"
 // resolves such a name to an icon in this set.
 
 // SlackFallback is drawn for Slack names with no counterpart: a quiet dot
-// rather than the red "missing" box.
+// rather than the red "missing" box. Each such name is logged once and
+// listed by Missing, so a plugin icon the set lacks shows up in test logs
+// instead of passing as a dot.
 const SlackFallback = "dot"
 
 // slackIconNames maps Slack icon names to Clack icon names where they
@@ -194,7 +196,10 @@ func slackLookup(name string) (string, bool) {
 // itself when registered, then the alias table, then the name without a
 // -filled/-outline/-small… suffix, else SlackFallback.
 func Slack(name string) string {
-	n, _ := slackLookup(name)
+	n, ok := slackLookup(name)
+	if !ok {
+		noteMissing(name, n) // logged once; Missing lists it for tests
+	}
 	return n
 }
 

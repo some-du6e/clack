@@ -1,6 +1,9 @@
 package icons
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestAllIconsParse(t *testing.T) {
 	for _, n := range Names() {
@@ -55,6 +58,10 @@ func TestSlackNames(t *testing.T) {
 	}
 	if got := Slack("no-such-icon"); got != SlackFallback {
 		t.Errorf("fallback: %q", got)
+	}
+	Get("no-such-clack-icon")
+	if m := strings.Join(Missing(), " "); !strings.Contains(m, "no-such-icon") || !strings.Contains(m, "no-such-clack-icon") {
+		t.Errorf("Missing() = %q: placeholder draws aren't recorded", m)
 	}
 	if n := testing.AllocsPerRun(100, func() { _ = Slack("notifications-off"); _ = Slack("trash-small") }); n != 0 {
 		t.Errorf("Slack allocates: %v", n)

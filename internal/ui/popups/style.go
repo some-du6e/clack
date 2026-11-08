@@ -54,10 +54,13 @@ type Colors struct {
 	Focus, FocusRing     color.NRGBA // input focus #1264a3 + rgba(18,100,163,.3)
 	InputBorder          color.NRGBA
 	Aubergine            color.NRGBA // active tab underline #83388a
-	Presence, Away       color.NRGBA
-	Badge, BadgeText     color.NRGBA
-	Placeholder          color.NRGBA
-	Lightbox             color.NRGBA
+	// c-tabs__tab (the emoji picker's Emoji | GIFs row): active / hovered
+	// label, inactive label, inactive icon, and the row's 1px bottom line.
+	TabFg, TabFg2, TabIcon, TabLine color.NRGBA
+	Presence, Away                  color.NRGBA
+	Badge, BadgeText                color.NRGBA
+	Placeholder                     color.NRGBA
+	Lightbox                        color.NRGBA
 }
 
 func rgb(v uint32) color.NRGBA {
@@ -95,7 +98,8 @@ var lightColors = Colors{
 	Focus:       rgb(0x1264a3), FocusRing: rgba(0x1264a3, .3),
 	InputBorder: rgba(0x1d1c1d, .3),
 	Aubergine:   rgb(0x83388a),
-	Presence:    rgb(0x2bac76), Away: rgb(0x616061),
+	TabFg:       rgb(0x1d1c1d), TabFg2: rgb(0x454447), TabIcon: rgb(0x616061), TabLine: rgba(0x5e5d60, .13),
+	Presence: rgb(0x2bac76), Away: rgb(0x616061),
 	Badge: rgb(0x7c3085), BadgeText: rgb(0xffffff),
 	Placeholder: rgb(0x5e5d60),
 	Lightbox:    rgba(0x000000, .7),
@@ -126,7 +130,8 @@ var darkColors = Colors{
 	Focus:       rgb(0x1d9bd1), FocusRing: rgba(0x1d9bd1, .3),
 	InputBorder: rgba(0xd1d2d3, .3),
 	Aubergine:   rgb(0xd29bd6),
-	Presence:    rgb(0x2bac76), Away: rgb(0xababad),
+	TabFg:       rgb(0xf8f8f8), TabFg2: rgb(0xb9babd), TabIcon: rgb(0xababad), TabLine: rgba(0x797c81, .30),
+	Presence: rgb(0x2bac76), Away: rgb(0xababad),
 	Badge: rgb(0xcd2553), BadgeText: rgb(0xffffff),
 	Placeholder: rgb(0x9a9b9e),
 	Lightbox:    rgba(0x000000, .7),
@@ -197,6 +202,10 @@ var popupTokens = []struct {
 	{func(c *Colors) *color.NRGBA { return &c.InputBorder }, theme.Both("var(--dt_color-otl-pry)")},
 	{func(c *Colors) *color.NRGBA { return &c.Placeholder }, theme.Both("var(--dt_color-content-ter)")},
 	{func(c *Colors) *color.NRGBA { return &c.Aubergine }, theme.Both("var(--dt_color-theme-base-pry)")},
+	{func(c *Colors) *color.NRGBA { return &c.TabFg }, theme.Both("var(--dt_color-content-pry)")},
+	{func(c *Colors) *color.NRGBA { return &c.TabFg2 }, theme.Both("var(--dt_color-content-sec)")},
+	{func(c *Colors) *color.NRGBA { return &c.TabIcon }, theme.Both("rgb(var(--sk_foreground_max_solid))")},
+	{func(c *Colors) *color.NRGBA { return &c.TabLine }, theme.Both("var(--dt_color-otl-ter)")},
 	{func(c *Colors) *color.NRGBA { return &c.Badge }, theme.Both("var(--dt_color-theme-base-imp)")},
 	{func(c *Colors) *color.NRGBA { return &c.BadgeText }, theme.Both("var(--dt_color-theme-content-imp)")},
 }

@@ -448,40 +448,117 @@ func (p *EmojiPicker) gifEmpty(gtx layout.Context, th *theme.Theme, cl *Colors, 
 	})
 }
 
-// gifTabIcon draws the "Emoji | GIFs" tab icons (tab 0 Emoji, 1 GIFs) in
-// their active / inactive looks: Emoji is a yellow face when active and an
-// outline face otherwise; GIFs is a light blue tile with a face when
-// active and an outline tile otherwise.
-func gifTabIcon(gtx layout.Context, tab int, active bool, col color.NRGBA) layout.Dimensions {
-	switch {
-	case tab == 0 && active:
-		return emojiGlyph(gtx, epGlyphEmojiTab, 20, col)
-	case tab == 1 && !active:
-		return emojiGlyph(gtx, epGlyphGif, 20, col)
-	}
+// epTabIcon draws the "Emoji | GIFs" tab icons (tab 0 Emoji, 1 GIFs) the
+// way Slack's EmojiIcon and GifIcon do (p-emoji_and_gif_picker_custom_icons,
+// client-boot-shared, 2026-11): the active tab, and an inactive one while
+// hovered, shows the coloured icon, a skin-tone disc (#f2c744 by default)
+// with a turned grin or a #9ed6fa tile with a wink, inked in ink (#1d1c1d;
+// the page background for a hovered inactive tab in dark mode). Other
+// inactive tabs show the line icon (a smile, a tile with a folded corner)
+// in ink (--sk_foreground_max_solid).
+func epTabIcon(gtx layout.Context, tab int, coloured bool, ink color.NRGBA, tone int) layout.Dimensions {
 	px := dp(gtx, 20)
-	e := &epPen{gtx: gtx, s: float32(px) / 20, col: col}
-	if tab == 0 { // outline face
+	e := &epPen{gtx: gtx, s: float32(px) / 20, col: ink}
+	switch {
+	case tab == 0 && coloured:
 		e.begin()
-		e.circle(10, 10, 8.2)
-		e.strokeW(1.4)
+		e.circle(10, 10, 9)
+		e.fillC(epToneDisc(tone))
 		e.begin()
-		e.arc(10, 10.2, 4.4, 30, 150, true)
-		e.strokeW(1.4)
-		e.dot(7.4, 8.1, 1)
-		e.dot(12.6, 8.1, 1)
-	} else { // filled GIF tile
+		e.circle(10, 10, 8.25)
+		e.stroke()
+		// the face turned ~18° clockwise: eyes and an open grin
+		e.dot(8.58, 6.88, 1.5)
+		e.dot(13.34, 8.4, 1.5)
 		e.begin()
-		e.rrect(1.6, 1.6, 18.4, 18.4, 3.4)
+		e.move(5.9, 9.75)
+		e.cube(6.05, 9.48, 6.36, 9.33, 6.67, 9.42)
+		e.line(13.43, 11.58)
+		e.cube(13.85, 11.71, 14.04, 12.14, 13.92, 12.52)
+		e.cube(13.6, 13.52, 11.8, 15.78, 8.69, 14.79)
+		e.cube(5.61, 13.81, 5.39, 10.95, 5.72, 9.91)
+		e.close()
+		e.fill()
+	case tab == 0:
+		e.begin()
+		e.circle(10, 10, 8.25)
+		e.stroke()
+		e.dot(7.5, 8, 1.5)
+		e.dot(12.5, 8, 1.5)
+		e.begin()
+		e.move(6.9, 12)
+		e.cube(7.4, 13.5, 8.71, 14.25, 10.03, 14.25)
+		e.cube(11.34, 14.25, 12.66, 13.5, 13.15, 12)
+		e.stroke()
+	case coloured:
+		e.begin()
+		e.rrect(1.5, 1.5, 18.5, 18.5, 3)
 		e.fillC(rgb(0x9ed6fa))
 		e.begin()
-		e.rrect(1.6, 1.6, 18.4, 18.4, 3.4)
-		e.strokeW(1.6)
+		e.rrect(1.5, 1.5, 18.5, 18.5, 3)
+		e.stroke()
+		e.dot(12.5, 8.5, 1.5)
 		e.begin()
-		e.arc(10, 10.4, 4, 30, 150, true)
-		e.strokeW(1.5)
-		e.dot(7.6, 8.3, 1)
-		e.dot(12.4, 8.3, 1)
+		e.move(6.9, 12.5)
+		e.cube(7.4, 14, 8.71, 14.75, 10.03, 14.75)
+		e.cube(11.34, 14.75, 12.66, 14, 13.15, 12.5)
+		e.stroke()
+		e.begin() // winking eye
+		e.move(7.04, 7.54)
+		e.line(9.04, 8.68)
+		e.line(7.04, 9.54)
+		e.strokeW(1)
+	default:
+		// a tile with its top-right corner folded down
+		e.begin()
+		e.move(4.5, 1.63)
+		e.line(12.42, 1.63)
+		e.cube(13.32, 1.63, 14.18, 2.03, 14.75, 2.73)
+		e.line(17.61, 6.23)
+		e.cube(18.05, 6.77, 18.29, 7.44, 18.29, 8.13)
+		e.line(18.29, 15.42)
+		e.cube(18.29, 17.07, 16.95, 18.42, 15.29, 18.42)
+		e.line(4.5, 18.42)
+		e.cube(2.84, 18.42, 1.5, 17.07, 1.5, 15.42)
+		e.line(1.5, 4.63)
+		e.cube(1.5, 2.97, 2.84, 1.63, 4.5, 1.63)
+		e.close()
+		e.stroke()
+		e.begin() // the flap
+		e.move(12.86, 3.6)
+		e.line(12.86, 6.9)
+		e.cube(12.86, 7.53, 13.37, 8.05, 14, 8.05)
+		e.line(16.48, 8.05)
+		e.cube(17.4, 8.05, 17.95, 6.95, 17.4, 6.2)
+		e.line(14.93, 2.91)
+		e.cube(14.25, 2, 12.86, 2.5, 12.86, 3.6)
+		e.close()
+		e.strokeW(1.7)
+		e.dot(7.43, 8.54, 1.48)
+		e.dot(12.36, 8.54, 1.48)
+		e.begin()
+		e.move(6.84, 12.49)
+		e.cube(7.32, 13.97, 8.62, 14.71, 9.92, 14.71)
+		e.cube(11.22, 14.71, 12.52, 13.97, 13.01, 12.49)
+		e.stroke()
 	}
 	return layout.Dimensions{Size: image.Pt(px, px)}
+}
+
+// epToneDisc is the Emoji tab's disc for the preferred skin tone
+// (p-emoji_and_gif_picker_custom_icons--skin_tone_N; 0 and 1 are yellow).
+func epToneDisc(tone int) color.NRGBA {
+	switch tone {
+	case 2:
+		return rgb(0xffdbbe)
+	case 3:
+		return rgb(0xe6b892)
+	case 4:
+		return rgb(0xd4a37c)
+	case 5:
+		return rgb(0xc18e65)
+	case 6:
+		return rgb(0xb47f55)
+	}
+	return rgb(0xf2c744)
 }

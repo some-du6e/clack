@@ -22,7 +22,8 @@ import (
 // 0 10px 15px -3px rgba(0,0,0,.098).
 //
 //	y   0.. 50  "Emoji | GIFs" tabs, 15/700; active: #1d1c1d + 2px #83388a
-//	            bottom bar, inactive #454447; 1px #eaeaea line under both
+//	            bottom bar, inactive #454447; 1px otl-ter line under both
+//	            (layoutTop has the dark values and Slack's icon states)
 //	y  50.. 96  category tabs: 32×28 tiles radius 4 at x 10 + 34i, y 60;
 //	            20px icons #868686, active tile #dddddd with #1d1c1d icon
 //	y  96..146  search input at x 18, y 103, 326×36, radius 8, 15px,
@@ -753,9 +754,15 @@ func (p *EmojiPicker) layoutBody(gtx layout.Context, th *theme.Theme, cl *Colors
 	}
 }
 
+// layoutTop draws the "Emoji | GIFs" tab row (c-tabs__tab in
+// p-emoji_and_gif_pickers_container): 15px bold labels, content-sec
+// inactive and content-pry when active or hovered, a 20px icon 4px left of
+// the label (epTabIcon), the active tab's 2px --dt_color-theme-base-pry
+// underline (a theme's accent; aubergine by default) over the row's 1px
+// --dt_color-otl-ter line.
 func (p *EmojiPicker) layoutTop(gtx layout.Context, th *theme.Theme, cl *Colors, w int) {
 	hh := dp(gtx, epTopH)
-	fill(gtx, image.Rect(0, hh-maxInt(1, dp(gtx, 1)), w, hh), cl.Selected)
+	fill(gtx, image.Rect(0, hh-maxInt(1, dp(gtx, 1)), w, hh), theme.Over(cl.TabLine, cl.Bg))
 	half := w / 2
 	for i := 0; i < 2; i++ {
 		x0, tw := 0, half
@@ -763,22 +770,34 @@ func (p *EmojiPicker) layoutTop(gtx layout.Context, th *theme.Theme, cl *Colors,
 			x0, tw = half, w-half
 		}
 		active := (i == 1) == p.gifMode
-		label, col := "Emoji", cl.Fg2
+		hov := p.topTabs[i].Hovered()
+		label, col := "Emoji", cl.TabFg2
 		if i == 1 {
 			label = "GIFs"
 		}
+		if active || hov {
+			col = cl.TabFg
+		}
+		// the coloured icon is inked #1d1c1d; a hovered inactive one takes
+		// the page background in dark mode (Slack's --dark rule)
+		ink := cl.TabIcon
 		if active {
-			col = cl.Fg
+			ink = rgb(0x1d1c1d)
+		} else if hov {
+			ink = rgb(0x1d1c1d)
+			if th.Dark {
+				ink = cl.Bg
+			}
 		}
 		at(gtx, image.Pt(x0, 0), func(gtx layout.Context) layout.Dimensions {
 			return clickBox(gtx, &p.topTabs[i], nil, func(gtx layout.Context) layout.Dimensions {
 				lw := textW(gtx, th, 15, theme.Bold, label)
-				ig := dp(gtx, 20)
-				x := (tw - (ig + dp(gtx, 6) + lw)) / 2
+				ig, gap := dp(gtx, 20), dp(gtx, 4)
+				x := (tw - (ig + gap + lw)) / 2
 				at(gtx, image.Pt(x, (hh-ig)/2), func(gtx layout.Context) layout.Dimensions {
-					return gifTabIcon(gtx, i, active, col)
+					return epTabIcon(gtx, i, active || hov, ink, p.tone)
 				})
-				at(gtx, image.Pt(x+ig+dp(gtx, 6), 0), func(gtx layout.Context) layout.Dimensions {
+				at(gtx, image.Pt(x+ig+gap, 0), func(gtx layout.Context) layout.Dimensions {
 					return vcenter(loose(gtx, image.Pt(lw+1, hh)), hh, func(gtx layout.Context) layout.Dimensions {
 						return text(gtx, th, 15, theme.Bold, col, label)
 					})

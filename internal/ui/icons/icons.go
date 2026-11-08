@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"log"
 	"math"
 	"sort"
 	"strings"
@@ -44,22 +45,59 @@ const view = 20
 
 var registry = map[string]*def{}
 
-// s and f build stroked (1.5 units) and filled parts.
-// 1.75 (not Slack's 1.5): Gio blends in linear light, so thin antialiased
-// strokes read lighter than Chrome's; measured against the real client.
-func s(d string) part                { return part{d: d, stroke: 1.75} }
+// s and f build stroked (1.5 units, Slack's own weight: its glyphs are
+// 1.5-unit lines outlined into fills) and filled parts. Strokes are drawn
+// theme.StrokeGamma pixels wider or thinner so Gio's linear-light edges
+// carry Chrome's ink (see draw).
+func s(d string) part                { return part{d: d, stroke: 1.5} }
 func sw(w float32, d string) part    { return part{d: d, stroke: w} }
 func f(d string) part                { return part{d: d} }
 func reg(name string, parts ...part) { registry[name] = &def{parts: parts} }
 
 // Get returns the named icon, or a visible placeholder box for unknown names
-// (so a typo shows up on screen instead of panicking).
+// (so a typo shows up on screen instead of panicking). Unknown names are
+// logged once and listed by Missing.
 func Get(name string) Icon {
 	d, ok := registry[name]
 	if !ok {
+		noteMissing(name, "missing")
 		d = registry["missing"]
 	}
 	return d.draw
+}
+
+var missing struct {
+	sync.Mutex
+	names map[string]bool
+}
+
+// noteMissing records (and logs, once per name) an icon name drawn as the
+// placeholder drawn.
+func noteMissing(name, drawn string) {
+	missing.Lock()
+	defer missing.Unlock()
+	if missing.names[name] {
+		return
+	}
+	if missing.names == nil {
+		missing.names = map[string]bool{}
+	}
+	missing.names[name] = true
+	log.Printf("icons: no icon for %q, drawing %q", name, drawn)
+}
+
+// Missing lists the icon names (Clack or Slack) that were asked for and
+// drawn as a placeholder, sorted. Tests use it to fail on icons a view or
+// plugin names that the set lacks.
+func Missing() []string {
+	missing.Lock()
+	defer missing.Unlock()
+	out := make([]string, 0, len(missing.names))
+	for n := range missing.names {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Has reports whether name is registered.
@@ -84,6 +122,7 @@ func (d *def) draw(gtx layout.Context, size unit.Dp, col color.NRGBA) layout.Dim
 	})
 	px := gtx.Dp(size)
 	sc := float32(px) / view
+	gam := theme.StrokeGamma(col)
 	for i, p := range d.parts {
 		var path theme.PathPen // cached by content: Gio tessellates each icon stroke once
 		path.Begin(gtx.Ops)
@@ -104,10 +143,19 @@ func (d *def) draw(gtx layout.Context, size unit.Dp, col color.NRGBA) layout.Dim
 			}
 		}
 		spec := path.End()
-		if p.stroke > 0 {
-			paint.FillShape(gtx.Ops, col, clip.Stroke{Path: spec, Width: p.stroke * sc}.Op())
-		} else {
+		switch {
+		case p.stroke > 0:
+			w := max(p.stroke*sc+gam, p.stroke*sc/2)
+			paint.FillShape(gtx.Ops, col, clip.Stroke{Path: spec, Width: w}.Op())
+		default:
 			paint.FillShape(gtx.Ops, col, clip.Outline{Path: spec}.Op())
+			// Dark-on-light fills lose gam/2 px of ink per edge too; an
+			// outline stroke gives it back. (Light-on-dark fills would need
+			// an erosion Gio has no op for, so the set draws dots and small
+			// marks as strokes instead.)
+			if gam > 0 {
+				paint.FillShape(gtx.Ops, col, clip.Stroke{Path: spec, Width: gam}.Op())
+			}
 		}
 	}
 	return layout.Dimensions{Size: image.Pt(px, px)}
@@ -163,13 +211,18 @@ func gear(cx, cy, ro, ri float32, teeth int) string {
 	return b.String()
 }
 
+// dots are 1.5-radius discs, drawn as rings stroked onto themselves so
+// they get StrokeGamma like lines.
 func dots(pts ...float32) []part {
 	var out []part
 	for i := 0; i+1 < len(pts); i += 2 {
-		out = append(out, f(circle(pts[i], pts[i+1], 1.5)))
+		out = append(out, disc(pts[i], pts[i+1], 1.5))
 	}
 	return out
 }
+
+// disc is a filled circle of radius r as a stroke (see dots).
+func disc(cx, cy, r float32) part { return sw(r, circle(cx, cy, r/2)) }
 
 // Convenience accessors for the most common icons.
 var (
@@ -229,9 +282,9 @@ func init() {
 	reg("check", s("M4.5 10.5 L8.25 14 L15.5 6.25"))
 	// Slack's rail To-dos circle: outer Ø≈17 with a ~1.5px stroke.
 	reg("check-circle", sw(1.5, circle(10, 10, 7.6)), sw(1.5, "M6.6 10.3 L8.9 12.5 L13.4 7.6"))
-	// rail To-dos: white on the dark rail reads heavier in Gio's linear
-	// blending, so the rail set strokes at 1.25 (Slack ink: 91 vs 109 at 1.5).
-	reg("todos", sw(1.25, circle(10, 10, 7.75)), sw(1.25, "M6.6 10.3 L8.9 12.5 L13.4 7.6"))
+	// rail To-dos. (White on the dark rail used to be drawn at 1.25 by hand
+	// to cancel Gio's linear-light weight; StrokeGamma does that now.)
+	reg("todos", s(circle(10, 10, 7.75)), s("M6.6 10.3 L8.9 12.5 L13.4 7.6"))
 	// active rail To-dos: Slack fills the circle and cuts the check out (the
 	// check runs the other way round, so nonzero winding leaves a hole).
 	reg("todos-filled", f(circle(10, 10, 8.4)+" M5.4 11 L9 14.4 L14.8 8.2 L13.2 6.6 L9 11.4 L7 9.4 Z"))
@@ -371,14 +424,28 @@ func init() {
 	reg("bookmark-add", s("M5.75 3.25 H10 M15.25 9 V16.75 L10 13.25 L4.75 16.75 V4.25 A1 1 0 0 1 5.75 3.25"), s("M15 1.75 V6.75 M12.5 4.25 H17.5"))
 
 	// composer
-	reg("bold", sw(1.9, "M6 3.9 H10.6 A3.05 3.05 0 0 1 10.6 10 H6 Z M6 10 H11.3 A3.05 3.05 0 0 1 11.3 16.1 H6 Z"))
-	reg("italic", s("M8.75 4 H14 M6 16 H11.25 M11.6 4 L8.4 16"))
-	reg("strike", s("M3.75 10 H16.25"), s("M13.4 6.3 C12.9 4.9 11.6 4 10 4 C8 4 6.6 5.1 6.6 6.6 C6.6 7.8 7.3 8.6 8.6 9.2"), s("M13.3 12.4 C13.5 12.8 13.6 13.2 13.6 13.6 C13.6 15.1 12.1 16 10 16 C8.1 16 6.7 15.2 6.3 13.8"))
-	reg("list-bullet", s("M8 5.5 H16.25 M8 10 H16.25 M8 14.5 H16.25"), f(circle(4.5, 5.5, 1.2)), f(circle(4.5, 10, 1.2)), f(circle(4.5, 14.5, 1.2)))
-	reg("list-ordered", s("M8.5 5.5 H16.25 M8.5 10 H16.25 M8.5 14.5 H16.25"), sw(1.1, "M3.6 3.9 L4.6 3.4 V7.1 M3.4 8.9 A1.1 1.1 0 0 1 5.5 9.3 C5.5 10 3.4 10.9 3.4 11.6 H5.6 M3.4 13 H5.5 L4.3 14.3 A1.1 1.1 0 1 1 3.4 16"))
-	reg("quote", s("M4.5 4 V16"), s("M8 6 H16 M8 10 H16 M8 14 H13"))
-	reg("code", s("M7 5.5 L2.75 10 L7 14.5 M13 5.5 L17.25 10 L13 14.5"))
-	reg("code-block", s(rrect(2.75, 3.75, 14.5, 12.5, 1.75)), s("M8.25 7.75 L6 10 L8.25 12.25 M11.75 7.75 L14 10 L11.75 12.25"))
+	// The formatting bar, redrawn on the centerlines of Slack's own glyphs
+	// (bold, italic, underline, strikethrough, paragraph, link,
+	// numbered-list, bulleted-list, quote, code, code-block, divider):
+	// 1.5-unit lines with round ends; the B's bowls and the italic stem are
+	// heavier, the list digits lighter, as in Slack's.
+	reg("bold", sw(2.4, "M5.25 9.3 V3.1 H10.6 A3.1 3.1 0 0 1 10.6 9.3 H5.25 Z M5.25 9.3 H11.22 A3.78 3.78 0 0 1 11.22 16.85 H5.25 Z"))
+	reg("italic", s("M7.75 2.75 H15.25 M4.75 17.25 H12.25"), sw(1.95, "M11.45 2.75 L8.55 17.25"))
+	reg("underline", s("M5.5 2.38 V10.38 A4.5 4.5 0 0 0 14.5 10.38 V2.38 M2.75 17.87 H17.25"))
+	reg("strike", s("M2.75 10.25 H17.25"),
+		s("M14.25 5.5 C13.9 4.2 12.8 3.3 11.5 3 C10.5 2.7 9.4 2.75 8.5 3 C6.6 3.5 5.5 5.3 5.8 7.1 C6.05 8.6 7.6 10.25 11 10.25"),
+		s("M14 13.25 C14.35 14.05 14.25 14.95 13.8 15.65 C13.3 16.35 12.5 16.85 11.55 17.1 C10.35 17.4 9.2 17.3 8.1 17 C6.9 16.65 6.05 15.8 5.75 14.6"))
+	reg("paragraph", s("M8 10.25 H7.25 C5 10.25 3.25 8.6 3.25 6.25 C3.25 3.9 5 2.25 7.25 2.25 M8 17.75 V2.25 H16.75 M13 2.25 V17.75"))
+	// two open links, point-symmetric about the centre
+	reg("link", s("M10 5 L11.775 3.275 A3.5 3.5 0 0 1 16.725 8.225 L13.543 11.407 A3.5 3.5 0 0 1 8.48 11.29 M10 15 L8.225 16.725 A3.5 3.5 0 0 1 3.275 11.775 L6.457 8.593 A3.5 3.5 0 0 1 11.52 8.71"))
+	reg("list-ordered", s("M7.75 4.25 H17.75 M7.75 10.75 H17.75 M7.75 17.25 H17.75"),
+		sw(1, "M2.1 3 L3.5 2.5 V6.5 M2 6.5 H5"), sw(1, "M2.4 14.6 A1.25 1.25 0 0 1 4.75 14.25 C4.75 15.1 3.2 16.5 2.5 17.5 H5"))
+	reg("list-bullet", s("M7.75 3 H17.75 M7.75 10 H17.75 M7.75 17 H17.75"), disc(3, 3, 1), disc(3, 10, 1), disc(3, 17, 1))
+	reg("quote", s("M2.75 2.75 V17.25 M6.75 3.75 H15.25 M6.75 10.25 H17.25 M6.75 16.25 H14.25"))
+	reg("code", s("M11.84 3.93 L8.15 16.07 M4.95 6.77 L1.74 9.98 L4.95 13.2 M15.05 6.77 L18.26 9.98 L15.05 13.2"))
+	// an open box with a slanted </> over its top-left corner
+	reg("code-block", s("M8.5 2.5 L6 10 M3.25 12.75 V16.25 A1 1 0 0 0 4.25 17.25 H17.25 A1 1 0 0 0 18.25 16.25 V4.75 A1 1 0 0 0 17.25 3.75 H15.25 M11 4 L13 6.25 L11 8.5 M3.5 4 L1.5 6.25 L3.5 8.5"))
+	reg("divider", s("M2.25 9.95 H17.75 M4.75 5.75 V3.25 H15.25 V5.75 M4.75 14.25 V16.75 H15.25 V14.25"))
 	reg("attach", s("M15.2 9.4 L9.7 14.9 A3.2 3.2 0 0 1 5.1 10.4 L10.9 4.6 A2.15 2.15 0 0 1 13.95 7.65 L8.3 13.3 A1.1 1.1 0 0 1 6.75 11.75 L11.9 6.6"))
 	reg("mic", s("M7.5 4.75 A2.5 2.5 0 0 1 12.5 4.75 V9.75 A2.5 2.5 0 0 1 7.5 9.75 Z"), s("M4.5 9.25 A5.5 5.5 0 0 0 15.5 9.25 M10 14.75 V17.25"))
 	reg("video", s("M2.75 6.25 A1.25 1.25 0 0 1 4 5 H11.75 A1.25 1.25 0 0 1 13 6.25 V13.75 A1.25 1.25 0 0 1 11.75 15 H4 A1.25 1.25 0 0 1 2.75 13.75 Z"), s("M13 8.75 L17.25 6.5 V13.5 L13 11.25"))
