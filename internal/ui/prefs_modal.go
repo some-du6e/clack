@@ -10,6 +10,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/pluginlib"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
@@ -20,16 +21,17 @@ import (
 // prefs_sections.go and prefs_appearance.go). Changes apply immediately,
 // like Slack.
 type prefsModal struct {
-	a       *App
-	clicks  map[string]*widget.Clickable
-	section string
-	avail   pagePositioned // popups.AvailabilityPage when linked
-	org     originTracker
-	taut    *tautPage              // Preferences > Taut, made on first view
-	slick   *slickPage             // Preferences > Slick's tabs
-	library *libraryPage           // Preferences > Plugin library (Taut's and Slick's)
-	tabSubs map[string]*slackc.Sub // plugin Preferences tabs (RenderPreferencesTab)
-	tabGen  int                    // App.tautGen the tab subs belong to
+	a        *App
+	clicks   map[string]*widget.Clickable
+	section  string
+	avail    pagePositioned // popups.AvailabilityPage when linked
+	org      originTracker
+	taut     *tautPage              // Taut's plugin pages and its custom CSS / config.json / About screens
+	slick    *slickPage             // Themes (Slick's page) and Plugin settings' Slick state
+	plugins  *pluginsPage           // Preferences > Plugins: installed (both systems) and Browse (the library)
+	settings *pluginSettingsPage    // Preferences > Plugin settings
+	tabSubs  map[string]*slackc.Sub // plugin Preferences tabs (RenderPreferencesTab)
+	tabGen   int                    // App.tautGen the tab subs belong to
 
 	pend      map[string]any // values just written, shown until the write lands
 	scroll    prefsScroll    // the page
@@ -71,9 +73,13 @@ var prefsNav = []struct{ id, label, icon, slackIcon string }{
 // prefsAliases maps Slack's tab ids for sections Clack named first.
 var prefsAliases = map[string]string{"tab_rail": "navigation", "themes": "appearance"}
 
-// prefsSection is the section id to show for a requested one.
+// prefsSection is the section id to show for a requested one (Slack's
+// aliases, and the plugin tabs' ids from before they merged).
 func prefsSection(id string) string {
 	if v, ok := prefsAliases[id]; ok {
+		return v
+	}
+	if v, ok := oldPluginTabs[id]; ok {
 		return v
 	}
 	return id
@@ -102,11 +108,10 @@ func (a *App) openPrefsSection(section string) {
 		})
 }
 
-// showPrefs opens the Preferences dialog on section (a Clack section,
-// "taut", or a plugin tab id). It is openPrefsModal's native and
-// UIHooks.OpenPreferences.
+// showPrefs opens the Preferences dialog on section (a Clack section, a
+// plugin tab id, or an old id like "taut" or "library"). It is
+// openPrefsModal's native and UIHooks.OpenPreferences.
 func (a *App) showPrefs(section string) {
-	section = prefsSection(section)
 	if section == "" {
 		section = "notifications"
 	}
@@ -114,7 +119,8 @@ func (a *App) showPrefs(section string) {
 		a.openPrefsMenu()
 		return
 	}
-	p := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}, section: section}
+	p := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}}
+	p.selectTab(section)
 	if mkAvailability != nil {
 		p.avail = mkAvailability(a)
 	}
@@ -134,8 +140,8 @@ func (p *prefsModal) close() {
 	if p.slick != nil {
 		p.slick.close()
 	}
-	if p.library != nil {
-		p.library.close()
+	if p.plugins != nil {
+		p.plugins.close()
 	}
 	for k, s := range p.tabSubs {
 		s.Close()
@@ -143,19 +149,20 @@ func (p *prefsModal) close() {
 	}
 }
 
-// extraNav is Clack's Taut tab and the plugins' own Preferences tabs,
-// drawn after Slack's tabs[] (kept out of tabsProps: plugins patching Tabs
-// expect "advanced" last).
+// extraNav is Clack's plugin tabs (Plugins, Themes, Plugin settings: Taut
+// and Slick as one system, plugins_prefs.go) below a divider, then the
+// plugins' own Preferences tabs, drawn after Slack's tabs[] (kept out of
+// tabsProps: plugins patching Tabs expect "advanced" last). Themes is
+// Slick's and only shows while Slick runs.
 func (p *prefsModal) extraNav() []navExtra {
-	out := []navExtra{{id: "taut", label: "Taut", icon: "code"}}
-	if p.a.Slick() != nil { // Slick's tabs, a divider above the first
-		for i, t := range slickTabs {
-			out = append(out, navExtra{id: t.id, label: t.label, icon: t.icon, divider: i == 0})
+	var out []navExtra
+	for _, t := range pluginNav {
+		if t.id == themesTabID && p.a.Slick() == nil {
+			continue
 		}
+		t.divider = len(out) == 0
+		out = append(out, t)
 	}
-	// one Library for both systems, after Slick's Install plugins (or after
-	// Taut when Slick isn't running)
-	out = append(out, libraryTab)
 	for _, t := range p.a.tautTabs {
 		icon := "settings" // none: the host (Advanced) tab's icon, like Slick
 		if t.Icon != "" {
@@ -377,17 +384,13 @@ func (p *prefsModal) section1(gtx layout.Context, id string, org image.Point) la
 		p.avail.SetOrigin(org)
 		return p.avail.Layout(gtx)
 	}
-	if isSlickTab(id) {
-		return p.slickPage().layout(gtx, id)
-	}
-	if id == "taut" {
-		return p.tautPage().layout(gtx)
-	}
-	if id == libraryTabID {
-		if p.library == nil {
-			p.library = newLibraryPage(p.a, p.selectTab)
-		}
-		return p.library.layout(gtx)
+	switch prefsSection(id) {
+	case pluginsTabID:
+		return p.pluginsPage().layout(gtx)
+	case pluginSettingsTabID:
+		return p.settingsPage().layout(gtx)
+	case themesTabID:
+		return p.slickPage().layout(gtx, themesTabID)
 	}
 	if d, ok := p.pluginTab(gtx, id); ok {
 		return d
@@ -410,20 +413,37 @@ func (p *prefsModal) slickPage() *slickPage {
 	return p.slick
 }
 
-// selectTab switches the dialog to a tab, as a click on it would; "taut:ID"
-// and "slick_plugins:ID" open a plugin's page there (the Library's
-// Settings button).
+func (p *prefsModal) pluginsPage() *pluginsPage {
+	if p.plugins == nil {
+		p.plugins = newPluginsPage(p.a, p.tautPage(), p.selectTab)
+	}
+	return p.plugins
+}
+
+func (p *prefsModal) settingsPage() *pluginSettingsPage {
+	if p.settings == nil {
+		p.settings = &pluginSettingsPage{a: p.a, s: p.slickPage(), taut: p.tautPage()}
+	}
+	return p.settings
+}
+
+// selectTab switches the dialog to a tab, as a click on it would. Old
+// plugin tab ids land on their new home: "library" and "slick_install" on
+// Plugins > Browse; "taut:ID" and "slick_plugins:ID" open a plugin's own
+// page under Plugins (the Library's Settings button).
 func (p *prefsModal) selectTab(target string) {
 	id, plugin, _ := strings.Cut(target, ":")
 	switch {
 	case id == "taut" && plugin != "":
-		p.tautPage().go_("plugin", plugin)
+		p.pluginsPage().openPlugin(pluginlib.Taut, plugin)
 	case id == "slick_plugins" && plugin != "":
-		sp := p.slickPage()
-		sp.layoutTab(id) // entering the tab resets it; then open the plugin
-		sp.open = plugin
+		p.pluginsPage().openPlugin(pluginlib.Slick, plugin)
+	case id == libraryTabID || id == "slick_install":
+		p.pluginsPage().setMode("browse")
+	case id == "taut" || id == "slick_plugins":
+		p.pluginsPage().setMode("installed")
 	}
-	p.section = id
+	p.section = prefsSection(id)
 	p.a.Invalidate()
 }
 

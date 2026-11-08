@@ -26,16 +26,16 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
-// Preferences > Taut, drawn natively from taut.Settings. Same screens and
-// metrics as Taut's own settings tab (its README and source): a header
-// line, Appearance / Advanced / About rows, a search box, filter pills and
-// the plugins by category (checkbox, bold name, one-line description,
-// warning and caret). A plugin opens its page: description, meta line,
-// "Turn on", errors, Settings (one control per option kind, a reset
-// button, React editors through Bridge.RenderEditor), and Data (the
+// Taut's settings screens, drawn natively from taut.Settings with the
+// metrics of Taut's own settings tab (its README and source). Clack shows
+// Taut and Slick as one plugin system (plugins_prefs.go): a Taut plugin's
+// row in Preferences > Plugins opens its page here (description, meta
+// line, "Turn on", errors, Settings with one control per option kind, a
+// reset button, React editors through Bridge.RenderEditor, and Data: the
 // plugin's data panel through Bridge.RenderDataPanel, clear data/cache,
-// update code, delete). Appearance has the custom CSS box; Advanced
-// installs plugins (file or URL) and edits config.json.
+// update code, delete), and Preferences > Plugin settings opens the custom
+// CSS box, config.json and About. The main screen (header, rows, search,
+// pills, plugins by category) is Taut's own list, kept for its tests.
 
 type tautPage struct {
 	a       *App
@@ -440,7 +440,7 @@ func (p *tautPage) mainScreen(f *flow, t *taut.Taut, s taut.Settings) {
 	}
 	if s.ConfigError != "" {
 		f.put(0, func(gtx layout.Context) layout.Dimensions {
-			return p.alert(gtx, "Can't read config.json: "+s.ConfigError+". Fix it under Advanced.")
+			return p.alert(gtx, "Can't read config.json: "+s.ConfigError+". Fix it under Plugin settings.")
 		})
 		f.gap(16)
 	}
@@ -1427,7 +1427,7 @@ func (p *tautPage) editorBar(f *flow, k, saveLabel string, dirty bool, save, dis
 
 func (p *tautPage) appearanceScreen(f *flow, t *taut.Taut, s taut.Settings) {
 	cl := p.colors()
-	p.subScreen(f, "Appearance", "Taut")
+	p.subScreen(f, "Taut custom CSS", "Plugin settings")
 	p.legend(f, "Custom CSS")
 	note := "Saved to `" + filepath.Join(t.Dir(), "user.css") + "`. It styles " + AppName + "'s Slack class names, like Taut's custom CSS."
 	f.put(0, func(gtx layout.Context) layout.Dimensions { return p.mrkdwn(gtx, "css.note", note, false, cl.fg2) })
@@ -1453,16 +1453,8 @@ func (p *tautPage) appearanceScreen(f *flow, t *taut.Taut, s taut.Settings) {
 
 func (p *tautPage) advancedScreen(f *flow, t *taut.Taut, s taut.Settings) {
 	cl := p.colors()
-	p.subScreen(f, "Advanced", "Taut")
-	p.legend(f, "Install a plugin")
-	p.muted(f, "Add a pre-built plugin from a .js file or a link. Only install code you trust! Plugins can do anything you can do in Slack.")
-	f.gap(16)
-	p.importControls(f, "")
-	if p.errText != "" && p.errFor != "cfg" {
-		f.gap(8)
-		f.put(0, func(gtx layout.Context) layout.Dimensions { return p.alert(gtx, p.errText) })
-	}
-	p.fieldGap(f)
+	// installing is Preferences > Plugins' "Install from file or URL"
+	p.subScreen(f, "Taut config.json", "Plugin settings")
 	p.legend(f, "config.json")
 	path := filepath.Join(t.Dir(), "config.json")
 	note := "Saved to `" + path + "`. Edits made here or in a text editor apply right away."
@@ -1519,7 +1511,7 @@ func (p *tautPage) advancedScreen(f *flow, t *taut.Taut, s taut.Settings) {
 func (p *tautPage) aboutScreen(f *flow, t *taut.Taut, s taut.Settings) {
 	cl := p.colors()
 	hc := t.IsHackClub()
-	p.subScreen(f, "About", "Taut")
+	p.subScreen(f, "About Taut", "Plugin settings")
 	p.legend(f, "Taut")
 	about := tautMrkdwnHere("<https://github.com/jeremy46231/taut|Taut> is a client mod for Slack, made by <@U06UYA5GMB5> (GPLv3 or later). "+
 		AppName+" runs Taut plugins unmodified on its own native implementation of the Taut API; no Taut code is included. Come say hi in <#C0A057686SF>.", hc)

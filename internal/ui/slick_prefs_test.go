@@ -38,8 +38,15 @@ func TestSlickNoPluginsStartup(t *testing.T) {
 	}
 	// every Slick tab draws from the Go model, without JS
 	p := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}}
+	var ids []string // the plugin tabs, both Plugins modes, and the old ids
+	for _, tab := range pluginNav {
+		ids = append(ids, tab.id)
+	}
 	for _, tab := range slickTabs {
-		p.section = tab.id
+		ids = append(ids, tab.id)
+	}
+	for _, id := range append(ids, libraryTabID, "taut") {
+		p.selectTab(id)
 		gtx := ttContext(new(op.Ops), image.Pt(800, 560))
 		a.slackcFrame(gtx)
 		p.layout(gtx)

@@ -690,6 +690,13 @@ func (p *slickPage) overview(f *flow, st slick.Settings) {
 	if len(failing) > 0 {
 		p.notice(f, strings.Join(failing, ", ")+" could not start. Open them under Plugins to see why.", true)
 	}
+	p.aboutCards(f)
+}
+
+// aboutCards are Slick's overview cards (Version, Credits, Links), also
+// shown under Preferences > Plugin settings.
+func (p *slickPage) aboutCards(f *flow) {
+	cl := p.colors()
 	p.card(f, "Version", "", nil, []func(gtx layout.Context, w int) layout.Dimensions{
 		func(gtx layout.Context, w int) layout.Dimensions {
 			return p.field(gtx, w, "Slick", "Clack’s own implementation of Slick’s plugin API", "", false, func(gtx layout.Context, _ int) layout.Dimensions {
@@ -811,10 +818,20 @@ func (p *slickPage) filters(st slick.Settings) []slick.Filter {
 }
 
 func (p *slickPage) toolbar(gtx layout.Context, st slick.Settings) layout.Dimensions {
-	cl := p.colors()
 	w := gtx.Constraints.Max.X
 	top, bottom := gtx.Dp(2), gtx.Dp(10)
-	fs := p.filters(st)
+	d := at(gtx, image.Pt(0, top), image.Pt(w, 1<<20), func(gtx layout.Context) layout.Dimensions {
+		return p.searchBar(gtx, &p.query, "Search plugins", p.filters(st))
+	})
+	return layout.Dimensions{Size: image.Pt(w, top+d.Size.Y+bottom)}
+}
+
+// searchBar is Slick's toolbar row: the search box (search icon, 34px
+// inset) with the filter chips beside it, or below when they don't fit.
+// The chips select p.filter.
+func (p *slickPage) searchBar(gtx layout.Context, q *widget.Editor, placeholder string, fs []slick.Filter) layout.Dimensions {
+	cl := p.colors()
+	w := gtx.Constraints.Max.X
 	chipW := func(f slick.Filter) int {
 		return gtx.Dp(24) + p.a.th.Measure(gtx, 13, theme.Bold, f.Label) + gtx.Dp(6) + p.a.th.Measure(gtx, 13, theme.Regular, strconv.Itoa(f.Count))
 	}
@@ -832,27 +849,25 @@ func (p *slickPage) toolbar(gtx layout.Context, st slick.Settings) layout.Dimens
 	} else {
 		chipsX, chipsY = searchW+gtx.Dp(12), (inputH-gtx.Dp(28))/2
 	}
-	at(gtx, image.Pt(0, top), image.Pt(searchW, inputH), func(gtx layout.Context) layout.Dimensions {
-		d := p.sinput(gtx, &p.query, searchW, inputH, gtx.Dp(34), "Search plugins", false)
+	at(gtx, image.Point{}, image.Pt(searchW, inputH), func(gtx layout.Context) layout.Dimensions {
+		d := p.sinput(gtx, q, searchW, inputH, gtx.Dp(34), placeholder, false)
 		at(gtx, image.Pt(gtx.Dp(10), (inputH-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
 			return icons.Get("search")(gtx, 16, cl.ter)
 		})
 		return d
 	})
-	x, y := chipsX, top+chipsY
+	x, y := chipsX, chipsY
 	for _, f := range fs {
 		cw := chipW(f)
 		if x+cw > w && x > chipsX {
 			x, y = chipsX, y+gtx.Dp(28+8)
 		}
-		f := f
 		at(gtx, image.Pt(x, y), image.Pt(cw, gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
 			return p.chip(gtx, f, cw)
 		})
 		x += cw + gtx.Dp(6)
 	}
-	h := max(top+inputH, y+gtx.Dp(28)) + bottom
-	return layout.Dimensions{Size: image.Pt(w, h)}
+	return layout.Dimensions{Size: image.Pt(w, max(inputH, y+gtx.Dp(28)))}
 }
 
 func (p *slickPage) chip(gtx layout.Context, f slick.Filter, w int) layout.Dimensions {

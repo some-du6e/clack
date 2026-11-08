@@ -102,7 +102,7 @@ func TestTautNoPluginsStartup(t *testing.T) {
 	if n != 0 || s.RuntimeError != "" {
 		t.Errorf("settings: %d plugins, runtime error %q", n, s.RuntimeError)
 	}
-	p := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}, section: "taut"}
+	p := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}, section: pluginsTabID}
 	gtx := ttContext(new(op.Ops), image.Pt(800, 560))
 	a.slackcFrame(gtx)
 	p.layout(gtx)
@@ -247,7 +247,7 @@ func TestTautPrefsRender(t *testing.T) {
 		r.win = w
 		defer w.Release()
 	}
-	p := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}, section: "taut"}
+	p := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}, section: pluginsTabID}
 	defer p.close()
 	draw := func(gtx layout.Context) { p.layout(gtx) }
 	page := func() *tautPage { return p.taut }
@@ -265,6 +265,9 @@ func TestTautPrefsRender(t *testing.T) {
 			mode = "dark"
 		}
 		r.save("main-off-"+mode, r.settle(draw, 0, nil))
+		// custom CSS, config.json and About open from Plugin settings
+		p.section = pluginSettingsTabID
+		r.save("plugin-settings-"+mode, r.settle(draw, 0, nil))
 		page().go_("advanced", "")
 		r.save("advanced-"+mode, r.settle(draw, 0, nil))
 		page().go_("appearance", "")
@@ -272,6 +275,7 @@ func TestTautPrefsRender(t *testing.T) {
 		page().go_("about", "")
 		r.save("about-"+mode, r.settle(draw, 0, nil))
 		page().go_("main", "")
+		p.section = pluginsTabID
 	}
 	a.th.SetDark(false)
 
@@ -298,9 +302,9 @@ func TestTautPrefsRender(t *testing.T) {
 		return true
 	})
 	r.save("main-on-light", r.frame(draw))
-	page().query.SetText("emoji")
+	p.plugins.s.query.SetText("emoji")
 	r.save("main-search-light", r.frame(draw))
-	page().query.SetText("")
+	p.plugins.s.query.SetText("")
 
 	var editors, panels, kinds = 0, 0, map[string]int{}
 	for _, c := range tt.Settings().Categories {
