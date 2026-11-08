@@ -4,6 +4,7 @@ name: bench-compare
 # and a base ref, interleaved so both see the same machine. benchstat
 # prints the comparison. Shared runners vary by 2x between jobs, so
 # numbers from separate bench-css/bench-slackc runs don't compare.
+# (A benchmark that logs puts its result on the next line; awk rejoins it.)
 on:
   # dispatching needs the file on the default branch; until then it runs
   # when it changes (rerun the run for fresh numbers)
@@ -61,7 +62,8 @@ jobs:
           mkdir -p /tmp/out
           run() {
             (cd "$1" && go test -run '^$' -bench . -benchmem -count 1 ./internal/ui/slackc/css/ ./internal/ui/slackc/ \
-              && go test -run '^$' -bench 'BenchmarkListFrame' -benchmem -benchtime 1s -count 1 ./internal/ui/messages/) 2>/dev/null | grep -E '^(Benchmark|goos|goarch|pkg|cpu)' >> "$2"
+              && go test -run '^$' -bench 'BenchmarkListFrame' -benchmem -benchtime 1s -count 1 ./internal/ui/messages/) 2>/dev/null \
+              | awk '/^Benchmark/ && !/ns\/op/ {name=$1; next} name != "" && /ns\/op/ {print name "\t" $0; name=""; next} /^(Benchmark|goos|goarch|pkg|cpu)/' >> "$2"
           }
           for i in $(seq 1 "$COUNT"); do
             run /tmp/base /tmp/out/base.txt
