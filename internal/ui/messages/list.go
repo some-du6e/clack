@@ -346,8 +346,10 @@ func (s *listState) build(h Host, now time.Time) {
 		if s.thread {
 			if i == 0 && m.TS == s.ts {
 				s.items = append(s.items, item{kind: itMsg, idx: i, header: true, key: m.TS})
-				n := len(msgs) - 1
-				s.items = append(s.items, item{kind: itReplies, idx: n, key: "replies"})
+				// Slack shows no "N replies" divider until there is a reply.
+				if n := len(msgs) - 1; n > 0 {
+					s.items = append(s.items, item{kind: itReplies, idx: n, key: "replies"})
+				}
 				prev, prevT = nil, t
 				continue
 			}

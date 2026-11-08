@@ -73,6 +73,7 @@ type row struct {
 	avatar    string
 	statusURL string
 	bot       bool
+	agent     bool // AGENT badge instead of APP (core.User.Agent)
 
 	needChan bool // body mentions channels not resolved yet
 
@@ -219,6 +220,7 @@ func (r *row) resolve(rc *rowCtx) {
 		r.blocksOv, r.tailOv = 0, [2]uintptr{}
 	}
 	r.name, r.avatar, r.statusURL, r.bot = m.Name, m.Avatar, "", m.IsBot || (m.BotID != "" && m.User == "")
+	r.agent = false
 	if m.User != "" && rc.h.Core() != nil {
 		if u, ok := rc.h.Core().User(m.User); ok {
 			if r.name == "" {
@@ -234,6 +236,7 @@ func (r *row) resolve(rc *rowCtx) {
 			if u.IsBot {
 				r.bot = true
 			}
+			r.agent = u.Agent
 		} else {
 			ensureUser(rc.h, m.User)
 		}
@@ -845,11 +848,15 @@ func (r *row) layoutColumn(gtx layout.Context) layout.Dimensions {
 	y := 0
 	if rc.header {
 		var d layout.Dimensions
+		// The name/time line sits 2px lower than its 22px box would put it:
+		// Slack's name ink starts 4px above the avatar's top, ours 6px.
+		t := op.Offset(image.Pt(0, dp(gtx, 2))).Push(gtx.Ops)
 		if rc.thread {
 			d = slackc.Component(gtx, "ThreadSenderAndTimestampGeneric", r, (*row).threadSenderProps, (*row).layoutThreadSender)
 		} else {
 			d = slackc.Component(gtx, "BaseBroadcastPreamble", r, (*row).preambleProps, (*row).layoutPreamble)
 		}
+		t.Pop()
 		y += max(d.Size.Y, dp(gtx, mt.nameLine))
 	}
 	if m.Broadcast && !rc.thread && m.ThreadTS != "" && m.ThreadTS != m.TS {
@@ -1183,12 +1190,17 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 	if r.bot && r.m.User != "USLACKBOT" { // Slack shows no APP tag on Slackbot
 		xx += dp(gtx, mt.badgeGap)
 		s := textStyle{size: 10, weight: theme.Bold, col: c.BadgeText}
-		sz := measure(gtx, rc.th, s, "APP")
+		// Slack's BaseAppBadge: AGENT for agent apps, else APP.
+		badge := "APP"
+		if r.agent {
+			badge = "AGENT"
+		}
+		sz := measure(gtx, rc.th, s, badge)
 		bw := sz.X + dp(gtx, 6)
 		bh := dp(gtx, 14)
 		top := baseline - dp(gtx, 11)
 		rrect(gtx.Ops, image.Rect(xx, top, xx+bw, top+bh), dp(gtx, 2), c.BadgeBg)
-		at(gtx, xx+dp(gtx, 3), top+(bh-sz.Y)/2, func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, s, "APP") })
+		at(gtx, xx+dp(gtx, 3), top+(bh-sz.Y)/2, func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, s, badge) })
 		xx += bw
 	}
 	if r.statusURL != "" {
@@ -1350,8 +1362,8 @@ func (r *row) reactionPills(gtx layout.Context) layout.Dimensions {
 	return layout.Dimensions{Size: image.Pt(w, ar.Max.Y)}
 }
 
-// layoutAddButton is ReactionAddButton (.c-reaction_add): drawn on hover,
-// its space always kept.
+// layoutAddButton is ReactionAddButton (.c-reaction_add): always drawn
+// after the pills, like Slack (34×24, rgba(29,28,29,.06), not only on hover).
 func (r *row) layoutAddButton(gtx layout.Context, _ slackc.Props) layout.Dimensions {
 	rc := r.rc
 	ph := dp(gtx, mt.reactH)
@@ -1361,9 +1373,6 @@ func (r *row) layoutAddButton(gtx layout.Context, _ slackc.Props) layout.Dimensi
 		// with this message's channel/ts (OwlMode may redirect it)
 		h := rc.h
 		h.ShowOverlay(popups.NewReactionPicker(h, rc.origin(image.Point{}), r.src.Channel, r.src.TS, r.src.ThreadTS, nil))
-	}
-	if !rc.hovered {
-		return layout.Dimensions{Size: size}
 	}
 	st := reactionAddClass.Enter(gtx, btnState(gtx, &r.addReact), 0)
 	defer st.Leave()

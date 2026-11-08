@@ -54,6 +54,17 @@ func darkTextFade() float32 {
 	return 0
 }
 
+// darkTextEmbolden is richview's Style.LightEmbolden for dark mode: light
+// bodies match Chrome unemboldened at 1x but were 7% light at 2x; ~0.17px
+// at 2x closes it (round-1 slope ~4.5% per 0.1px), i.e. 0.34·(1-1/scale).
+// CLACK_DARK_TEXT_EMB overrides it for tuning.
+func darkTextEmbolden() float32 {
+	if v, err := strconv.ParseFloat(os.Getenv("CLACK_DARK_TEXT_EMB"), 32); err == nil {
+		return float32(v)
+	}
+	return 0.34
+}
+
 // styles holds one richview.Style per shaper (one per window).
 type styleEntry struct {
 	st   *richview.Style
@@ -91,11 +102,12 @@ func styleForTheme(th *theme.Theme, images *imgcache.Cache) *richview.Style {
 		// 620.5k. Both interpolate to ~0.45px, so richview applies the
 		// stroke in pixels: theme.BodyEmbolden is that 0.45px.
 		e.st.Embolden = theme.BodyEmboldenFor(theme.LightPalette.Fg)
-		e.st.LightTextFade = 0
+		e.st.LightTextFade, e.st.LightEmbolden = 0, 0
 		if th.Dark {
 			e.st.SetPalette(richview.DarkPalette())
 			e.st.Embolden = theme.BodyEmboldenFor(theme.DarkPalette.Fg)
 			e.st.LightTextFade = darkTextFade()
+			e.st.LightEmbolden = darkTextEmbolden()
 		} else {
 			e.st.SetPalette(richview.LightPalette())
 		}
