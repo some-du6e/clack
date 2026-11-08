@@ -13,10 +13,6 @@ import (
 // Plugins that are fine alone can break each other: the acceptance suite
 // loads one at a time, so these run real built plugins together.
 
-// comboLogAll, when set, makes newHarness log every JS log line (not only
-// errors and warnings).
-var comboLogAll bool
-
 // probeJS runs an async function body with a short deadline and reports
 // how long the JS thread took to answer.
 func probeJS(h *harness, body string, d time.Duration) (string, time.Duration, error) {
@@ -36,40 +32,21 @@ func probeJS(h *harness, body string, d time.Duration) (string, time.Duration, e
 	return string(out), time.Since(t0), err
 }
 
-type comboSetup struct {
-	main     bool // import ChatTabs' main half
-	mount    bool // render ClientPrimaryView (ChatTabs' tab bar) like the shell
-	shortcut bool // closeShortcut(true), as the tab bar asks with 2+ tabs
-	keys     bool // send a few window keydowns through before-input-event
-}
-
-// HaikuWarning's send check with ChatTabs (renderer + main half) enabled:
-// on Slack the haiku opens HaikuWarning's dialog; Clack hung the send.
+// HaikuWarning's send check with ChatTabs enabled: its renderer (the tab
+// bar mounted on ClientPrimaryView, its 250 ms route poll) and its main
+// half with closeShortcut wired (before-input-event on the window's keys).
+// On Slack the haiku opens HaikuWarning's dialog. Live, Clack never showed
+// it: the shell's key forwarding for ChatTabs' window listeners took the
+// composer's Enter (TestSlickViewHaikuWarningWithChatTabs in internal/ui
+// covers that path); this one keeps the runtime side honest.
 func TestHaikuWarningWithChatTabs(t *testing.T) {
-	dir := pluginsDir(t)
-	comboLogAll = true
-	t.Cleanup(func() { comboLogAll = false })
-	variants := []struct {
-		name string
-		c    comboSetup
-	}{
-		{"full", comboSetup{main: true, mount: true, shortcut: true, keys: true}},
-		{"renderer-only", comboSetup{}},
-		{"main-unmounted", comboSetup{main: true}},
-		{"main-mounted", comboSetup{main: true, mount: true}},
-		{"main-shortcut", comboSetup{main: true, shortcut: true}},
-	}
-	for _, v := range variants {
-		t.Run(v.name, func(t *testing.T) { haikuWithChatTabs(t, dir, v.c) })
-	}
+	haikuWithChatTabs(t, pluginsDir(t))
 }
 
-func haikuWithChatTabs(t *testing.T, dir string, c comboSetup) {
+func haikuWithChatTabs(t *testing.T, dir string) {
 	h := newHarness(t)
 	h.importFile(filepath.Join(dir, "ChatTabs.js"))
-	if c.main {
-		h.importFile(filepath.Join(dir, "ChatTabs.main.js"))
-	}
+	h.importFile(filepath.Join(dir, "ChatTabs.main.js"))
 	h.importFile(filepath.Join(dir, "HaikuWarning.js"))
 	h.s.SetRoute(teamID, chGen)
 	for _, id := range []string{"ChatTabs", "HaikuWarning"} {
@@ -81,20 +58,11 @@ func haikuWithChatTabs(t *testing.T, dir string, c comboSetup) {
 		}
 	}
 	time.Sleep(150 * time.Millisecond)
-	if c.mount {
-		h.render(7, "ClientPrimaryView", map[string]any{"$key": "main", "windowId": "main"})
-		time.Sleep(600 * time.Millisecond)
-		h.ui.mu.Lock()
-		tree := string(h.ui.trees[7])
-		h.ui.mu.Unlock()
-		t.Logf("ClientPrimaryView tree has tab bar: %v (%d bytes)", strings.Contains(tree, "slick-chat-tabs"), len(tree))
-	}
-	if c.shortcut {
-		h.js(`await S.callMain('ChatTabs', 'closeShortcut', [true])`)
-	}
-	if c.keys {
-		h.js(`for (const key of ['a', 'Enter', 'w']) { window.dispatchEvent(new KeyboardEvent('keydown', { key, cancelable: true })); window.dispatchEvent(new KeyboardEvent('keyup', { key })) }`)
-	}
+	h.render(7, "ClientPrimaryView", map[string]any{"$key": "main", "windowId": "main"})
+	h.waitTree(t, 7, "ChatTabs' tab layout", func(nodes []any) bool { return strings.Contains(jsonOf(nodes), "slick-chat-tabs-layout") })
+	h.js(`await S.callMain('ChatTabs', 'closeShortcut', [true])`)
+	// keys through before-input-event, as the shell forwards them
+	h.js(`for (const key of ['a', 'Enter']) { window.dispatchEvent(new KeyboardEvent('keydown', { key, cancelable: true })); window.dispatchEvent(new KeyboardEvent('keyup', { key })) }`)
 	if out, d, err := probeJS(h, `
 		const enc = new Response(new Blob([new TextEncoder().encode('hello stream')]).stream().pipeThrough(new CompressionStream('gzip')))
 		const gz = new Uint8Array(await enc.arrayBuffer())
