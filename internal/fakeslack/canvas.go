@@ -129,6 +129,17 @@ func (s *Server) EditCanvasAsOther(id, markdown string) {
 	s.pushDocumentUpdate(id)
 }
 
+// ViewCanvasAsOther pushes file_opened (open) or file_closed for user, as
+// Slack does when someone else opens or leaves a canvas.
+func (s *Server) ViewCanvasAsOther(id, user string, open bool) {
+	typ := "file_closed"
+	if open {
+		typ = "file_opened"
+	}
+	s.Push(map[string]any{"type": typ, "file": map[string]string{"id": id}, "viewer": map[string]string{"user_id": user},
+		"event_ts": fmt.Sprintf("%d.000200", time.Now().Unix())})
+}
+
 // Push sends a realtime event to every connected socket.
 func (s *Server) Push(ev any) {
 	b, _ := json.Marshal(ev)

@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -109,8 +110,9 @@ func IsCanvasFile(filetype, mode, prettyType string) bool {
 // canvasState is per-App canvas bookkeeping (kept off App's struct).
 type canvasState struct {
 	mu       sync.Mutex
-	open     map[string]int  // file id -> open views
-	pending  map[string]bool // a refetch is scheduled
+	open     map[string]int             // file id -> open views
+	pending  map[string]bool            // a refetch is scheduled
+	viewers  map[string]map[string]bool // file id -> users viewing it (files.open, file_opened/closed)
 	watching bool
 }
 
@@ -120,7 +122,7 @@ func (a *App) canvases() *canvasState {
 	if v, ok := canvasStates.Load(a); ok {
 		return v.(*canvasState)
 	}
-	v, _ := canvasStates.LoadOrStore(a, &canvasState{open: map[string]int{}, pending: map[string]bool{}})
+	v, _ := canvasStates.LoadOrStore(a, &canvasState{open: map[string]int{}, pending: map[string]bool{}, viewers: map[string]map[string]bool{}})
 	return v.(*canvasState)
 }
 
@@ -286,8 +288,81 @@ func (a *App) OpenCanvas(ctx context.Context, id string) error {
 	if !first {
 		return nil
 	}
-	return a.C.Call(ctx, "files.open", url.Values{"file_id": {id}, "supports_read_only_check": {"true"},
-		"last_updated": {strconv.FormatInt(time.Now().UnixMilli(), 10)}}, nil)
+	var r struct {
+		Viewers []struct {
+			UserID string `json:"user_id"`
+		} `json:"viewers"`
+	}
+	if err := a.C.Call(ctx, "files.open", url.Values{"file_id": {id}, "supports_read_only_check": {"true"},
+		"last_updated": {strconv.FormatInt(time.Now().UnixMilli(), 10)}}, &r); err != nil {
+		return err
+	}
+	vs := map[string]bool{}
+	var ids []string
+	for _, v := range r.Viewers {
+		if v.UserID != "" {
+			vs[v.UserID] = true
+			ids = append(ids, v.UserID)
+		}
+	}
+	st.mu.Lock()
+	st.viewers[id] = vs
+	st.mu.Unlock()
+	a.EnsureUsers(ctx, ids)
+	a.emit(Event{Type: "canvas_viewers", ID: id})
+	return nil
+}
+
+// CanvasViewers lists the other people viewing an open canvas (Slack's
+// facepile in the canvas header), in a stable order.
+func (a *App) CanvasViewers(id string) []string {
+	st := a.canvases()
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	self := a.S.SelfID()
+	var out []string
+	for u := range st.viewers[id] {
+		if u != self {
+			out = append(out, u)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// canvasViewerEvent applies file_opened / file_closed {file: {id},
+// viewer: {user_id}} to the viewer lists of open canvases.
+func (a *App) canvasViewerEvent(ev slack.Event) {
+	var e struct {
+		File struct {
+			ID string `json:"id"`
+		} `json:"file"`
+		Viewer struct {
+			UserID string `json:"user_id"`
+		} `json:"viewer"`
+	}
+	if json.Unmarshal(ev.Raw, &e) != nil || e.File.ID == "" || e.Viewer.UserID == "" || !a.CanvasOpen(e.File.ID) {
+		return
+	}
+	st := a.canvases()
+	st.mu.Lock()
+	vs := st.viewers[e.File.ID]
+	if vs == nil {
+		vs = map[string]bool{}
+		st.viewers[e.File.ID] = vs
+	}
+	if ev.Type == "file_opened" {
+		vs[e.Viewer.UserID] = true
+	} else {
+		delete(vs, e.Viewer.UserID)
+	}
+	st.mu.Unlock()
+	if ev.Type == "file_opened" {
+		ctx, cancel := context.WithTimeout(a.bg, 15*time.Second)
+		a.EnsureUsers(ctx, []string{e.Viewer.UserID})
+		cancel()
+	}
+	a.emit(Event{Type: "canvas_viewers", ID: e.File.ID})
 }
 
 // CloseCanvas undoes OpenCanvas (files.close once the last view closes).
@@ -300,6 +375,7 @@ func (a *App) CloseCanvas(ctx context.Context, id string) error {
 	last := st.open[id] == 0
 	if last {
 		delete(st.open, id)
+		delete(st.viewers, id)
 	}
 	st.mu.Unlock()
 	if !last {
@@ -329,6 +405,10 @@ func (a *App) watchCanvases() {
 		case ev, ok := <-evs:
 			if !ok {
 				return
+			}
+			if ev.Type == "file_opened" || ev.Type == "file_closed" {
+				a.canvasViewerEvent(ev)
+				continue
 			}
 			if id := canvasEventFile(ev); id != "" && a.CanvasOpen(id) {
 				a.canvasChanged(id)

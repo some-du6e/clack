@@ -251,7 +251,16 @@ func TestLiveUpdate(t *testing.T) {
 	settle(t, s, v, "the rebuilt blocks", func() bool {
 		return len(v.blocks) > 0 && v.blocks[len(v.blocks)-1].b.Kind == canvas.Heading2
 	})
+	// someone else opens it: their face joins the header
+	fs.ViewCanvasAsOther(fakeslack.CanvasChannel, "U0FAKE00002", true)
+	settle(t, s, v, "the viewer facepile", func() bool { return len(h.a.CanvasViewers(fakeslack.CanvasChannel)) == 1 })
+	for i := 0; i < 20; i++ {
+		s.frame(func(gtx layout.Context) { v.Layout(gtx) })
+		time.Sleep(15 * time.Millisecond)
+	}
 	s.shot("canvas-live-update", s.frame(func(gtx layout.Context) { v.Layout(gtx) }))
+	fs.ViewCanvasAsOther(fakeslack.CanvasChannel, "U0FAKE00002", false)
+	settle(t, s, v, "the viewer leaving", func() bool { return len(h.a.CanvasViewers(fakeslack.CanvasChannel)) == 0 })
 }
 
 func TestCanvasLinkID(t *testing.T) {

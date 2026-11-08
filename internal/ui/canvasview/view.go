@@ -152,6 +152,9 @@ func (v *View) goLive() {
 				if ev.Type == "canvas" && ev.ID == v.id {
 					v.load(true)
 				}
+				if ev.Type == "canvas_viewers" && ev.ID == v.id {
+					v.h.Invalidate()
+				}
 			case <-tick.C:
 				if time.Since(time.UnixMilli(v.lastSeen.Load())) > 6*time.Second {
 					cc, ccancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -525,7 +528,8 @@ func (v *View) layoutHeader(gtx layout.Context, d *core.CanvasDoc, x0, cw int) l
 		}
 		x += ah + gtx.Dp(8)
 	}
-	at(gtx, image.Pt(x, y), image.Pt(max(1, x0+cw-x), ah), func(gtx layout.Context) layout.Dimensions {
+	fw := v.layoutViewers(gtx, image.Pt(x0+cw, y), ah)
+	at(gtx, image.Pt(x, y), image.Pt(max(1, x0+cw-fw-x), ah), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, ah, func(gtx layout.Context) layout.Dimensions {
 			return th.Text(gtx, theme.LabelOpts{Font: theme.Font(theme.Regular), Size: 13, Color: c.FgMuted, MaxLines: 1}, line)
 		})
@@ -535,6 +539,55 @@ func (v *View) layoutHeader(gtx layout.Context, d *core.CanvasDoc, x0, cw int) l
 		y += v.edit.layoutToolbar(gtx, v, image.Pt(x0, y), cw)
 	}
 	return layout.Dimensions{Size: image.Pt(gtx.Constraints.Min.X, y)}
+}
+
+// layoutViewers draws the facepile of the other people viewing the canvas
+// right-aligned to end (top-left y), ah tall; it returns its width.
+func (v *View) layoutViewers(gtx layout.Context, end image.Point, ah int) int {
+	a := v.h.Core()
+	if a == nil {
+		return 0
+	}
+	ids := a.CanvasViewers(v.id)
+	if len(ids) == 0 {
+		return 0
+	}
+	th := v.h.Theme()
+	shown := ids
+	if len(shown) > 3 {
+		shown = shown[:3]
+	}
+	step := ah - gtx.Dp(4)
+	ring := gtx.Dp(2)
+	w := step*(len(shown)-1) + ah
+	more := ""
+	if n := len(ids) - len(shown); n > 0 {
+		more = "+" + itoa(n)
+		w += gtx.Dp(6) + th.Measure(gtx, 12, theme.Bold, more)
+	}
+	x := end.X - w
+	for i := len(shown) - 1; i >= 0; i-- { // the first viewer on top
+		px := x + i*step
+		r := image.Rect(px-ring, end.Y-ring, px+ah+ring, end.Y+ah+ring)
+		theme.RRect(gtx, r, gtx.Dp(7), th.C.Bg)
+		u, _ := a.User(shown[i])
+		if img, ok := v.h.Images().Get(u.Avatar, ah); ok && u.Avatar != "" {
+			at(gtx, image.Pt(px, end.Y), image.Pt(ah, ah), func(gtx layout.Context) layout.Dimensions {
+				return theme.Image(gtx, img, image.Pt(ah, ah), gtx.Dp(5))
+			})
+		} else {
+			theme.RRect(gtx, image.Rect(px, end.Y, px+ah, end.Y+ah), gtx.Dp(5), th.C.Skeleton)
+		}
+	}
+	if more != "" {
+		mx := x + step*(len(shown)-1) + ah + gtx.Dp(6)
+		at(gtx, image.Pt(mx, end.Y), image.Pt(end.X-mx+2, ah), func(gtx layout.Context) layout.Dimensions {
+			return vcenter(gtx, ah, func(gtx layout.Context) layout.Dimensions {
+				return th.Label(gtx, 12, theme.Bold, th.C.FgMuted, more)
+			})
+		})
+	}
+	return w + gtx.Dp(12)
 }
 
 // ago is Slack's relative time for "Last edited".
