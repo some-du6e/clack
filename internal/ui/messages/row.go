@@ -21,6 +21,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/ctxclick"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/hovercard"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
@@ -81,7 +82,8 @@ type row struct {
 	needChan bool // body mentions channels not resolved yet
 
 	nameBtn, avatarBtn widget.Clickable
-	nameCtx, avatarCtx ctxTag // right-click → the member context menu
+	nameHov, avatarHov hovercard.Trigger // Slack's ProfileHoverTrigger on both
+	nameCtx, avatarCtx ctxTag            // right-click → the member context menu
 	threadBtn          widget.Clickable
 	broadcastBtn       widget.Clickable
 	addReact           widget.Clickable
@@ -838,6 +840,7 @@ func (r *row) avatarButton(gtx layout.Context, url string, size image.Point) lay
 		return layout.Dimensions{Size: size}
 	})
 	contextArea(gtx, &r.avatarCtx, d.Size)
+	r.avatarHov.Layout(gtx, r.hoverUser(), d.Size)
 	return d
 }
 
@@ -1323,7 +1326,17 @@ func (r *row) nameButton(gtx layout.Context, bs slackc.Styled) layout.Dimensions
 		return d
 	})
 	contextArea(gtx, &r.nameCtx, d.Size)
+	r.nameHov.Layout(gtx, r.hoverUser(), d.Size)
 	return d
+}
+
+// hoverUser is the member whose hover card the sender's name and avatar
+// open (the one their click opens; none for a custom-response sender).
+func (r *row) hoverUser() string {
+	if r.custom {
+		return ""
+	}
+	return r.m.User
 }
 
 // layoutTimestamp is the header's Timestamp ("3:04 PM").

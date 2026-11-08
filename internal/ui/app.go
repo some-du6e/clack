@@ -131,6 +131,7 @@ type App struct {
 	ptrTag          int
 	ptrWin          image.Point
 	ptrOK           bool
+	hover           profileHover // the profile hover card (hover_card.go)
 	overlays        []Overlay
 	slackc          slackcState
 	toast           toastState
@@ -445,6 +446,7 @@ func (a *App) frame(gtx layout.Context) {
 	navArea := a.navGestures(gtx)
 	defer navArea.Pop()
 	a.readRootPointer(gtx)
+	a.hoverBegin(gtx) // before any widget reads keys (Escape)
 	a.slackcFrame(gtx)
 	a.keys.process(gtx, a)
 	a.updateTitle()
@@ -539,6 +541,7 @@ func (a *App) frame(gtx layout.Context) {
 	client.Leave()
 
 	a.layoutSwipe(gtx, primary)
+	a.layoutHoverCard(gtx) // above the content, under the overlays
 	a.layoutOverlays(gtx)
 	a.slackcOverlays(gtx)
 	a.layoutToast(gtx)

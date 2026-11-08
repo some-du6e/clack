@@ -62,6 +62,41 @@ const (
 	SelfID       = "U0SELF0001"
 )
 
+// Fixed profile variants for profile-card tests. They're outside the
+// generated directory (so they never shift the random fixtures) and
+// users/info serves them by id.
+const (
+	ProfileID     = "U0FAKEPROF" // every card field: pronouns, title, status, Berlin time
+	AdminID       = "U0FAKEADMN" // a workspace admin ("Workspace Admin" banner)
+	DeactivatedID = "U0FAKEGONE" // a deactivated account
+	SlackbotID    = "USLACKBOT"
+)
+
+// variants are the fixed users above.
+func (s *Server) variants() []slack.User {
+	img := func(px int, n string) string {
+		return s.URL + "img/" + strconv.Itoa(px) + "x" + strconv.Itoa(px) + "/" + n + ".png"
+	}
+	prof := func(display, real, title, n string) slack.Profile {
+		return slack.Profile{DisplayName: display, RealName: real, Title: title, Team: TeamID, Fields: json.RawMessage(`{}`),
+			Image24: img(24, n), Image32: img(32, n), Image48: img(48, n), Image72: img(72, n), Image192: img(192, n), Image512: img(512, n)}
+	}
+	p := prof("robin", "Robin Example", "Synthetic Fixture Wrangler", "prof")
+	p.Pronouns = "they/them"
+	p.StatusText = "Out sailing for the afternoon"
+	p.StatusEmoji = ":sailboat:"
+	a := prof("avery.admin", "Avery Admin", "Keeps the lights on", "admn")
+	g := prof("gone.user", "Gone User", "Former fixture", "gone")
+	b := prof("Slackbot", "Slackbot", "", "slackbot")
+	return []slack.User{
+		{ID: ProfileID, TeamID: TeamID, Name: "robin", RealName: "Robin Example", TZ: "Europe/Berlin", TZLabel: "Central European Time", TZOffset: 3600, Profile: p, Presence: "active"},
+		{ID: AdminID, TeamID: TeamID, Name: "avery.admin", RealName: "Avery Admin", IsAdmin: true, TZ: "America/Los_Angeles", TZOffset: -28800, Profile: a},
+		{ID: DeactivatedID, TeamID: TeamID, Name: "gone.user", RealName: "Gone User", Deleted: true, TZ: "America/New_York", TZOffset: -18000, Profile: g},
+		// Slack serves Slackbot with is_bot false
+		{ID: SlackbotID, TeamID: TeamID, Name: "slackbot", RealName: "Slackbot", Profile: b, Presence: "active"},
+	}
+}
+
 // Server is a running fake.
 type Server struct {
 	Size Size
@@ -752,6 +787,11 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 func (s *Server) userByID(id string) (slack.User, bool) {
 	if id == SelfID {
 		return s.users[0], true
+	}
+	for _, u := range s.variants() {
+		if u.ID == id {
+			return u, true
+		}
 	}
 	if strings.HasPrefix(id, "U0FAKE") {
 		if n, err := strconv.Atoi(id[6:]); err == nil && n < len(s.users) {

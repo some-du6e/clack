@@ -268,6 +268,11 @@ func (p *pump) Layout(gtx layout.Context) layout.Dimensions {
 
 func (p *pump) Dismissed() bool { return p.done }
 
+// Invisible: the pump draws nothing, so it doesn't count as a popup that
+// covers the window (the profile hover card still opens; its own fetch
+// starts a pump).
+func (p *pump) Invisible() bool { return true }
+
 // Dismiss is what the root calls on Escape when the (invisible) pump is the
 // topmost overlay. Escape is meant for the popup the user sees, so forward
 // it to the topmost visible popups overlay, then re-arm a fresh pump if work
