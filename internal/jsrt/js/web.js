@@ -1857,7 +1857,7 @@
       if (ws.writer) return Promise.reject(new TypeError("Failed to execute 'pipeTo' on 'ReadableStream': Cannot pipe to a locked stream"));
       const reader = this.getReader(), writer = dest.getWriter();
       return new Promise((resolve, reject) => {
-        let shutting = false, lastWrite = Promise.resolve();
+        let shutting = false, lastWrite = Promise.resolve(), pendingRead = Promise.resolve();
         const finish = (isErr, err) => {
           if (signal) signal.removeEventListener('abort', onAbort);
           writer.releaseLock();
@@ -1872,7 +1872,12 @@
             try { p = action ? Promise.resolve(action()) : Promise.resolve(); } catch (e) { p = Promise.reject(e); }
             p.then(() => finish(isErr, err), (e) => finish(true, e));
           };
-          lastWrite.then(go, go);
+          // Chunks already read are still written before the action (spec:
+          // "if any chunks have been read but not yet written, write them"):
+          // a pre-closed source (Blob.stream()) closes while its only read
+          // is still resolving.
+          const flushed = () => lastWrite.then(go, go);
+          pendingRead.then(flushed, flushed);
         };
         const onAbort = () => {
           const err = signal.reason;
@@ -1896,12 +1901,13 @@
           if (shutting) return;
           writer.ready.then(() => {
             if (shutting) return;
-            return reader.read().then(({ value, done }) => {
-              if (done || shutting) return;
+            pendingRead = reader.read().then(({ value, done }) => {
+              if (done || ws.state !== 'writable') return;
               lastWrite = writer.write(value);
               lastWrite.catch(() => {});
-              pump();
+              if (!shutting) pump();
             });
+            return pendingRead;
           }).catch(() => {});
         };
         pump();

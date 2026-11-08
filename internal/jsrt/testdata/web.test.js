@@ -1147,3 +1147,11 @@ test('CompressionStream / DecompressionStream: gzip, deflate, deflate-raw round 
   await assertThrows(() => new Response(new Blob([new Uint8Array([1, 2, 3, 4])]).stream().pipeThrough(new DecompressionStream('gzip'))).text());
   assertEq(typeof globalThis.DecompressionStream, 'function');
 });
+
+test('pipeTo writes the chunk of a source that is already closed (Blob.stream()) before closing the destination', async () => {
+  const got = await new Response(new Blob(['abc']).stream().pipeThrough(new TransformStream())).text();
+  assertEq(got, 'abc');
+  const parts = [];
+  await new Blob([new Uint8Array([1, 2, 3])]).stream().pipeTo(new WritableStream({ write(c) { parts.push(...c); } }));
+  assertEq(parts, [1, 2, 3]);
+});
