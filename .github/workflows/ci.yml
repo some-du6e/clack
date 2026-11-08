@@ -86,7 +86,9 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: macOS-only tests (system fonts, AppKit glue)
-        run: go test -count=1 -v -run 'TestCodeRunsHaveOutlines|TestCodeSpanAfterEmoji|TestInlineCodeDraws' ./internal/ui/theme ./internal/ui/richview ./internal/ui/composer
+        run: |
+          go test -count=1 -v -run 'TestCodeRunsHaveOutlines|TestCodeSpanAfterEmoji|TestInlineCodeDraws' ./internal/ui/theme ./internal/ui/richview ./internal/ui/composer
+          go test -count=1 -v -run 'TestSwipe|TestNav' ./internal/ui
       - name: build
         if: ${{ !cancelled() }}
         run: |

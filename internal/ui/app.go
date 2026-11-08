@@ -154,6 +154,11 @@ type App struct {
 	rtAsk       realtimeState              // first-run "Live updates are off" banner
 	updatesOff  atomic.Bool                // prefs.NoUpdateCheck, for updateLoop
 	hud         *huddleui.Controller       // the native huddle (huddle_wire.go)
+
+	swipe    swiper          // trackpad history swipes (swipe.go, nav.go)
+	swipeNow swipeState      // this frame's swipe progress, for the arrow
+	navTag   int             // the window-wide scroll handler (navGestures)
+	ptrBtns  pointer.Buttons // mouse buttons held, for back/forward (navButtons)
 }
 
 // New creates the app. Call Run on the UI goroutine (main).
@@ -223,6 +228,9 @@ func (a *App) Run() error {
 	}
 	if onWindow != nil {
 		onWindow(a)
+	}
+	if startNavGlue != nil {
+		startNavGlue(a)
 	}
 	if a.data != nil {
 		a.data.start(a)
@@ -331,6 +339,9 @@ func (a *App) frame(gtx layout.Context) {
 		return
 	}
 
+	// first: an ancestor of every other input area (popped at the end)
+	navArea := a.navGestures(gtx)
+	defer navArea.Pop()
 	a.readRootPointer(gtx)
 	a.slackcFrame(gtx)
 	a.keys.process(gtx, a)
@@ -425,6 +436,7 @@ func (a *App) frame(gtx layout.Context) {
 	ia.Leave()
 	client.Leave()
 
+	a.layoutSwipe(gtx, primary)
 	a.layoutOverlays(gtx)
 	a.slackcOverlays(gtx)
 	a.layoutToast(gtx)
