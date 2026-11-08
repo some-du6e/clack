@@ -113,7 +113,10 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		// popups take window coordinates; the pointer is on the kebab (this
 		// header is also drawn inside views' panes, where offsets differ)
 		_ = kebabX
-		a.openChannelMenu(ch, a.PointerPos())
+		// Slack opens it right-aligned 6px inside the kebab's right edge, its
+		// top at y 74 (the header is always 40px down and its kebab sits 14px
+		// from the panel's right inset, here and in a split pane).
+		a.openChannelMenu(ch, image.Pt(a.winSize.X-gtx.Dp(theme.PanelInset)-gtx.Dp(14)-gtx.Dp(6), gtx.Dp(theme.TopNavH)+gtx.Dp(34)))
 	}
 	if clicked(a.clicks.get("hdr.search")) {
 		a.openSearch("in:<#" + ch + ">")
