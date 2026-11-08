@@ -159,7 +159,7 @@ clack 'slack://channel?team=T0266FRGM&id=C0266FRGV'   # open a Slack link
 
 Only one Clack runs per user. Starting it again, or opening a `slack://` link, brings the running window to the front and opens the link there (`slack://channel?id=C…[&thread_ts=…]`, `slack://user?id=U…`, `slack://open`). A `slack://…/magic-login/…` or `slack://login-v2/…` link signs in instead, from the sign-in screen only. Instances with different `CLACK_HOME`s are separate. On Windows, Clack also puts an icon in the notification area: click it to bring the window back, or right-click it to quit.
 
-Release builds check GitHub Releases for a newer version once at start and then twice a day. If there is one, a blue "A new version of Clack is available" banner appears with a **View release** button that opens the release page in your browser. Clack never downloads or installs anything by itself. Turn the check off in **Preferences → Advanced → Check for updates**.
+Release builds check GitHub Releases for a newer version 15 s after start and then twice a day (pre-release builds follow pre-releases). If one is out, Clack downloads the package that matches your install in the background and checks it against the release's `SHA256SUMS`. Then a blue banner says "Clack X is ready to install" with **Install and restart** and **Later**. Nothing installs until you click. Turn the download off in **Preferences → Advanced → Download updates automatically**, and the check off with **Check for updates**. Releases aren't code-signed yet, so the checksum catches a broken download but not a compromised release (see docs/SECURITY.md D-3).
 
 Config lives in `~/.config/clack` (`%AppData%\clack` on Windows, `~/Library/Application Support/clack` on macOS). Set `CLACK_HOME` to keep it elsewhere. Config from the old name (`yoloslack`) is copied over on first start. Set `CLACK_TIMING=1` to log startup timings, `CLACK_FRAMELOG=1` to log every frame, and `CLACK_NOEMBOLDEN=1` to skip the text-weight correction (faster on machines without a GPU).
 
@@ -172,6 +172,28 @@ If the window stops responding for more than 2 seconds (a beachball on macOS), C
 - Windows: `%AppData%\clack\freeze-reports\`
 
 Each `freeze-<date>-<time>.txt` holds the Clack version, what the window was doing (layout, posted work or the GPU submit), your `ui.json` settings, and the stack of every goroutine, plus how long the freeze lasted once it ended. It has no message text, and tokens and cookies are redacted. On macOS, **Help → Show Freeze Reports** opens the folder in Finder. To report a freeze, attach the newest file to a GitHub issue. The log also prints the report's path. Clack keeps the 10 most recent reports.
+
+### If Clack won't open
+
+A Clack that freezes or crashes at launch can still update itself from a terminal:
+
+```sh
+clack --update            # find the newest release, ask, download, verify, install
+clack --update --check    # only say whether there is a newer one
+clack --update --yes      # don't ask
+```
+
+The binary to run depends on how you installed Clack:
+
+| install | command |
+|---|---|
+| macOS | `/Applications/Clack.app/Contents/MacOS/clack --update` |
+| Windows installer | `Start-Process -Wait -NoNewWindow "$env:LOCALAPPDATA\Programs\Clack\Clack.exe" -ArgumentList '--update'` (PowerShell) |
+| Windows portable | the same, with the path of your `Clack.exe` |
+| AppImage | `./Clack-<ver>-x86_64.AppImage --update` |
+| .deb / .rpm | `clack --update` |
+
+It opens no window and doesn't read your settings (`ui.json`), your sign-in or your workspace theme, so whatever is freezing the app stays out of it, and it sends nothing to Slack. It picks the release the same way the in-app banner does. It downloads the package for your install from GitHub only, checks it against the release's `SHA256SUMS` and prints each step. Then it installs the package the same way **Install and restart** does: it replaces `Clack.app` or the AppImage in place, runs the Windows installer silently, swaps the portable `Clack.exe`, or runs `apt`/`dnf` behind a password prompt. A Windows install finishes a moment after the command exits, because Windows can't replace a running `Clack.exe`. Start Clack yourself afterwards. The exit code is 0 when Clack was updated or was already up to date, and 1 with an `update failed:` message otherwise (for example a checksum mismatch, no network, or an install type it can't update).
 
 ## Build
 

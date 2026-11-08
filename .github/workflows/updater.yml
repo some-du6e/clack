@@ -9,6 +9,7 @@ on:
       - 'internal/desktop/**'
       - 'internal/ui/desktop.go'
       - 'internal/ui/update_banner_test.go'
+      - 'README.md'
       - 'cmd/clack/**'
       - 'packaging/windows/**'
       - '.github/workflows/updater.yml'
@@ -38,7 +39,7 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
       - name: updater tests
-        run: go test -count=1 -v -run 'Install|Asset|Release|Download|Sums|Prepare|Apply|WaitPID|Newer' ./internal/desktop
+        run: go test -count=1 -v -run 'Install|Asset|Release|Download|Sums|Prepare|Apply|WaitPID|Newer|UpdateCLI' ./internal/desktop
 
   windows-installer-upgrade:
     runs-on: windows-latest
@@ -62,6 +63,30 @@ jobs:
             go build -trimpath -ldflags="-s -w -H windowsgui -X main.version=v$v" -o "build\$v\Clack.exe" .\cmd\clack
             if ($LASTEXITCODE -ne 0) { throw "go build $v" }
           }
+      - name: Clack.exe --update from the terminal (no window, exit codes)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $d = Join-Path $env:RUNNER_TEMP 'fakeapi'
+          New-Item -ItemType Directory -Force $d | Out-Null
+          Set-Content -Path "$d\latest.json" -Value '{"tag_name":"v0.0.1"}' -Encoding utf8NoBOM
+          $srv = Start-Process -PassThru -NoNewWindow python -ArgumentList '-m', 'http.server', '8765', '--bind', '127.0.0.1', '--directory', $d
+          Start-Sleep 3
+          try {
+            $env:CLACK_HOME = Join-Path $env:RUNNER_TEMP 'clackhome'
+            $env:CLACK_UPDATE_URL = 'http://127.0.0.1:8765/latest.json'
+            $out = (& build\0.0.1\Clack.exe --update --check 2>&1 | Out-String); $code = $LASTEXITCODE
+            Write-Host $out
+            if ($code -ne 0 -or -not $out.Contains('Clack is up to date')) { throw "up to date: exit $code" }
+            $env:CLACK_UPDATE_URL = 'http://127.0.0.1:8765/missing.json'
+            $out = (& build\0.0.1\Clack.exe --update --yes 2>&1 | Out-String); $code = $LASTEXITCODE
+            Write-Host $out
+            if ($code -eq 0 -or -not $out.Contains('update failed')) { throw "failure: exit $code" }
+            if (Test-Path "$env:CLACK_HOME\ui.json") { throw "--update wrote ui.json" }
+          } finally {
+            Stop-Process -Id $srv.Id -ErrorAction SilentlyContinue
+            Remove-Item Env:CLACK_UPDATE_URL, Env:CLACK_HOME -ErrorAction SilentlyContinue
+          }
+          exit 0 # the failure case's expected exit 1 would otherwise end the step
       - name: installers
         run: |
           $ErrorActionPreference = 'Stop'

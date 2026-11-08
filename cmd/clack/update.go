@@ -96,5 +96,6 @@ func (u *updates) install(info ui.UpdateInfo) error {
 	if err != nil {
 		return err
 	}
-	return desktop.StartHelper(plan)
+	_, err = desktop.StartHelper(plan)
+	return err
 }

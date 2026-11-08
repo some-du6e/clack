@@ -83,6 +83,13 @@ func main() {
 		}
 		return
 	}
+	// `clack --update`: download and install the newest release from the
+	// terminal, for a Clack that won't open. Before everything else: no
+	// window, config, credentials or Slack.
+	if wantsUpdateCLI(os.Args[1:]) {
+		attachConsole()
+		os.Exit(updateCLI(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+	}
 	// Last line of defence: no token or cookie reaches the log, whatever
 	// an error string quotes.
 	log.SetOutput(slack.RedactWriter(os.Stderr))
