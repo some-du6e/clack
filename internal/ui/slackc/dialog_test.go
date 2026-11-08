@@ -71,7 +71,7 @@ func (e *dialogEnv) box(k int64) *box {
 	return v.byK[k]
 }
 
-func near(a, b float32) bool { return math.Abs(float64(a-b)) <= 1 }
+func within1(a, b float32) bool { return math.Abs(float64(a-b)) <= 1 }
 
 // HaikuWarning's dialog: document.createElement('dialog') in
 // document.body, its own width/padding/border and a ::backdrop colour,
@@ -94,10 +94,10 @@ func TestModalDialogCentredOverBackdrop(t *testing.T) {
 	if !d.topLayer || d.st.Position != css.PosFixed {
 		t.Errorf("modal dialog: top layer %v, position %v; want the top layer, fixed", d.topLayer, d.st.Position)
 	}
-	if !near(d.w, 520) {
+	if !within1(d.w, 520) {
 		t.Errorf("width %v, want 520", d.w)
 	}
-	if !near(d.x, float32(e.w)/2-d.w/2) || !near(d.y, float32(e.h)/2-d.h/2) {
+	if !within1(d.x, float32(e.w)/2-d.w/2) || !within1(d.y, float32(e.h)/2-d.h/2) {
 		t.Errorf("dialog at (%v, %v) %vx%v; want centred in the %dx%d window", d.x, d.y, d.w, d.h, e.w, e.h)
 	}
 	if d.h <= 48 || d.h > float32(e.h) {
@@ -135,7 +135,7 @@ func TestModalDialogUADefaults(t *testing.T) {
 	if d.bd[0] != 3 || d.pad[0] != d.st.FontSize {
 		t.Errorf("border %v padding %v; want 3px (medium) and 1em", d.bd, d.pad)
 	}
-	if !near(d.x, float32(e.w)/2-d.w/2) || !near(d.y, float32(e.h)/2-d.h/2) {
+	if !within1(d.x, float32(e.w)/2-d.w/2) || !within1(d.y, float32(e.h)/2-d.h/2) {
 		t.Errorf("dialog at (%v, %v) %vx%v; want centred in the window", d.x, d.y, d.w, d.h)
 	}
 	if d.backdrop == nil || d.backdrop.st.Background.Color != (color.NRGBA{A: 0x1a}) {
@@ -160,7 +160,7 @@ func TestNonModalAndClosedDialog(t *testing.T) {
 	if d.topLayer || d.backdrop != nil || d.st.Position != css.PosAbsolute {
 		t.Errorf("non-modal dialog: top layer %v, backdrop %v, position %v; want absolute in place", d.topLayer, d.backdrop != nil, d.st.Position)
 	}
-	if !near(d.x, float32(e.w)/2-d.w/2) || !near(d.y, 100) {
+	if !within1(d.x, float32(e.w)/2-d.w/2) || !within1(d.y, 100) {
 		t.Errorf("non-modal dialog at (%v, %v) %vx%v; want centred across the body at y=100", d.x, d.y, d.w, d.h)
 	}
 	if closed := e.box(5); closed != nil && closed.st.Display != css.DisplayNone {
