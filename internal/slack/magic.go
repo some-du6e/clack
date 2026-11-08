@@ -1,6 +1,7 @@
 package slack
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -273,14 +274,14 @@ func LoginMagic(ctx context.Context, sets []MagicTokenSet, cfg MagicConfig) (Cre
 	}
 	if len(toks) == 0 {
 		var err error
-		if toks, err = sess.bootTokens(ctx); err != nil {
+		if toks, err = sess.bootTokens(ctx, res.Team.ID); err != nil {
 			return Creds{}, err
 		}
 	}
 	if err := sess.fillFromAuthTest(ctx, &c, toks); err != nil {
 		return Creds{}, err
 	}
-	// The cookies again: the boot page and auth.test may have rotated them.
+	// The cookies again: the token page and auth.test may have rotated them.
 	all := jarCookies(jar, "https://"+resBase+"/", c.TeamURL, c.EnterpriseURL)
 	if v := cookieValue(all, "d"); v != "" {
 		c.Cookie = v
@@ -430,58 +431,103 @@ func (s *magicSession) do(req *http.Request) (*http.Response, error) {
 	return resp, err
 }
 
-// apiTokenRe finds the session token in Slack's boot page: the web client's
-// boot data embeds it as "api_token":"xoxc-…".
-var apiTokenRe = regexp.MustCompile(`"api_token"\s*:\s*"(xoxc-[A-Za-z0-9-]{10,400})"`)
+// authPage is the hidden page Slack's web client loads, with nothing but the
+// session cookie, to learn the session's tokens ("auth_fetch" then
+// "lc_ingest" in its beacons). Slack desktop's window runs that same web
+// client, so after the exchange this is how its session gets a token.
+// Observed live on 2026-11-08 with a freshly vended session in a clean
+// browser: the page sets sessionStorage.incomingConfig to the same
+// {"teams": {id: {id, url, domain, token, …}}} map Slack keeps in
+// localStorage.localConfig_v2; Grid adds enterprise_api_token.
+func authPage(teamID string) string {
+	return "https://app.slack.com/auth?app=client&return_to=" + url.QueryEscape("/client/"+teamID) + "&teams=&iframe=1"
+}
 
-// bootPage is where Slack desktop's main window goes after a fresh sign-in
-// (EL(), main:29770 in docs/DESKTOP-SIGNIN.md; main.bundle.cjs @1131045).
-const bootPage = "https://app.slack.com/ssb/first?redir=%2Fssb%2Fclient"
+// incomingConfigRe finds the start of the config object on authPage.
+var incomingConfigRe = regexp.MustCompile(`incomingConfig\s*=\s*JSON\.stringify\(`)
 
-// bootTokens loads the page Slack desktop's main window opens after a fresh
-// sign-in and reads the xoxc token(s) from it. This is the one place Clack
-// loads a Slack web page with a session cookie, and it is only ever this
-// session's own cookie, freshly vended to Clack, sent with Slack desktop's
-// user agent: the same request Slack desktop makes at this point.
-//
-// Evidence: after the exchange, Slack desktop loads the Sonic boot URL,
-// bootPage, and the web app it boots hands the main process the teams it
-// signed in to, tokens included (ADD_NEW_TEAMS, payload fields
-// name/team_name/team_url/token, @1338… "uL"). The desktop bundle doesn't
-// show how the web app gets the token; reading "api_token" from the page is
-// how other third-party clients do it, and is unverified against this flow.
-//
-// No other page is tried. In particular never <team>/ssb/redirect: Slack
-// desktop doesn't load it, and loading it with a session cookie is the first
-// suspect for an earlier sign-out (docs/SIGNOUT-AUDIT.md).
-func (s *magicSession) bootTokens(ctx context.Context) ([]string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, bootPage, nil)
+// bootTokens loads authPage with this session's own, freshly vended cookie
+// and Slack desktop's user agent, and returns the xoxc tokens it hands out:
+// teamID's workspace token first, then the org (E) token. It is the one
+// Slack web page Clack loads with a session cookie, and never with a cookie
+// copied from the browser. No other page is tried, in particular never
+// <team>/ssb/redirect (docs/SIGNOUT-AUDIT.md).
+func (s *magicSession) bootTokens(ctx context.Context, teamID string) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, authPage(teamID), nil)
 	if err != nil {
 		return nil, scrubErr(err)
 	}
 	desktopNavHeaders(req.Header, s.ua)
 	resp, err := s.do(req)
 	if err != nil {
-		return nil, fmt.Errorf("Clack has its own session now but couldn't load Slack's desktop boot page (app.slack.com/ssb/first) to read its token: %w", scrubErr(err))
+		return nil, fmt.Errorf("Clack has its own session now but couldn't load Slack's token page (app.slack.com/auth): %w", scrubErr(err))
 	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	resp.Body.Close()
 	if err != nil {
 		return nil, scrubErr(err)
 	}
-	var toks []string
-	seen := map[string]bool{}
-	for _, m := range apiTokenRe.FindAllSubmatch(b, 16) {
-		if t := string(m[1]); !seen[t] {
-			seen[t] = true
-			toks = append(toks, t)
-		}
-	}
+	toks := parseIncomingConfig(b, teamID)
 	if len(toks) == 0 {
-		return nil, fmt.Errorf("Slack gave Clack its own session cookie, but its desktop boot page (app.slack.com/ssb/first, HTTP %d) had no \"api_token\":\"xoxc-…\" in it, so Clack has no token to call Slack with. "+
-			"Clack doesn't try any other page. Use Advanced (paste a token) for now; this step of desktop sign-in is unverified", resp.StatusCode)
+		return nil, fmt.Errorf("Slack gave Clack its own session cookie, but its token page (app.slack.com/auth, HTTP %d) had no tokens in it, so Clack has no token to call Slack with. "+
+			"Clack doesn't try any other page. Use Advanced (paste a token) for now", resp.StatusCode)
 	}
 	return toks, nil
+}
+
+// parseIncomingConfig reads the teams map from authPage's
+// "incomingConfig = JSON.stringify({...})" and returns teamID's token, then
+// any other workspace token, then the org token(s). Only xoxc- values count.
+func parseIncomingConfig(page []byte, teamID string) []string {
+	loc := incomingConfigRe.FindIndex(page)
+	if loc == nil {
+		return nil
+	}
+	var cfg struct {
+		Teams map[string]struct {
+			ID         string `json:"id"`
+			Token      string `json:"token"`
+			Enterprise string `json:"enterprise_api_token"`
+		} `json:"teams"`
+	}
+	if err := json.NewDecoder(bytes.NewReader(page[loc[1]:])).Decode(&cfg); err != nil {
+		return nil
+	}
+	var first, workspaces, orgs []string
+	for key, t := range cfg.Teams {
+		id := t.ID
+		if id == "" {
+			id = key
+		}
+		if strings.HasPrefix(t.Token, "xoxc-") {
+			switch {
+			case strings.EqualFold(id, teamID):
+				first = append(first, t.Token)
+			case strings.HasPrefix(id, "E"):
+				orgs = append(orgs, t.Token)
+			default:
+				workspaces = append(workspaces, t.Token)
+			}
+		}
+		if strings.HasPrefix(t.Enterprise, "xoxc-") {
+			orgs = append(orgs, t.Enterprise)
+		}
+	}
+	sort.Strings(workspaces) // map order is random; keep the choice stable
+	sort.Strings(orgs)
+	var out []string
+	seen := map[string]bool{}
+	for _, t := range append(append(first, workspaces...), orgs...) {
+		if !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	// fillFromAuthTest checks at most two: the workspace token and one org token.
+	if len(first)+len(workspaces) > 0 && len(orgs) > 0 && len(out) > 2 {
+		out = []string{out[0], orgs[0]}
+	}
+	return out
 }
 
 // fillFromAuthTest checks the token(s) with auth.test on the team host and

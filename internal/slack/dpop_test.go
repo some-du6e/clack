@@ -144,7 +144,7 @@ func TestLoginMagicDPoP(t *testing.T) {
 		t.Errorf("creds DPoP %q", c.DPoP)
 	}
 	reqs := f.requests()[n0:]
-	want := []string{"https://slack.com/api/auth.loginMagicBulk", "https://app.slack.com/ssb/first", "https://hackclub.slack.com/api/auth.test"}
+	want := []string{"https://slack.com/api/auth.loginMagicBulk", "https://app.slack.com/auth", "https://hackclub.slack.com/api/auth.test"}
 	if len(reqs) != len(want) {
 		t.Fatalf("%d requests", len(reqs))
 	}

@@ -175,7 +175,7 @@ func dpopApplies(req *http.Request) bool {
 	if strings.HasSuffix(p, "/api/auth.loginMagicBulk") {
 		return false
 	}
-	return strings.HasPrefix(p, "/api/") || strings.EqualFold(req.URL.Hostname(), "edgeapi.slack.com") || p == "/ssb/first"
+	return strings.HasPrefix(p, "/api/") || strings.EqualFold(req.URL.Hostname(), "edgeapi.slack.com") || p == "/auth" && strings.EqualFold(req.URL.Hostname(), "app.slack.com")
 }
 
 func isWebsocket(req *http.Request) bool {

@@ -223,7 +223,7 @@ Dependency licenses: gioui.org (Unlicense or MIT), wazero (Apache-2.0), coder/we
 
 Clack never calls `auth.signout` or `auth.revoke`. "Sign out on this device" only deletes `creds.json`. See README "Sign in".
 
-Clack loads one Slack web page with a session cookie: during desktop sign-in, `https://app.slack.com/ssb/first?redir=/ssb/client`, with the cookie Slack has just vended to Clack and Slack desktop's user agent, to read the session's token. That is the page Slack desktop loads at the same point. It loads nothing else, never `/ssb/redirect`, and never any page with a cookie copied from the browser.
+Clack loads one Slack web page with a session cookie: during desktop sign-in, `https://app.slack.com/auth?app=client&return_to=/client/<team>&teams=&iframe=1`, with the cookie Slack has just vended to Clack and Slack desktop's user agent, to read the session's tokens. That is the hidden page Slack's own web client (and so Slack desktop's window) loads with a fresh session to get its tokens. It loads nothing else, never `/ssb/redirect`, and never any page with a cookie copied from the browser.
 
 The recommended sign-in (README "Sign in with a Slack link") gives Clack its own session, so the fingerprint problem below doesn't apply to it: Slack vended that session to a client that says it is Slack desktop, and Clack keeps saying so (`DesktopUserAgent`), sends every cookie Slack set, follows their rotation, and signs DPoP proofs if the link asked for them. Whether Slack keeps that session when the browser signs out isn't verified yet (docs/DESKTOP-SIGNIN.md, "As built"). The rest of this section is about pasted sessions (Advanced).
 
@@ -248,7 +248,7 @@ Please report vulnerabilities through a private security advisory on this reposi
 ## Open items
 
 - Keychain storage (C-14), which would also cover the DPoP key (C-17).
-- A live test of desktop sign-in on a throwaway account: the token on `/ssb/first`, DPoP on Grid, and whether the session survives a browser sign-out (docs/DESKTOP-SIGNIN.md).
+- A live test of desktop sign-in on a throwaway account: DPoP on Grid, and whether the session survives a browser sign-out (docs/DESKTOP-SIGNIN.md).
 - Isolating plugins from each other (S-16) would need a JS realm per plugin.
 - Plugin `fetch` can reach localhost and LAN addresses (no CORS, by design). Consider the PublicFetch address check for plugin traffic, behind a per-plugin opt-out for local development servers.
 - A top-level LICENSE and a third-party notices file in releases (SC-8).

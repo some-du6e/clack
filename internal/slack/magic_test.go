@@ -123,7 +123,7 @@ func (f *fakeDesktopSlack) requests() []*http.Request {
 
 func newFakeDesktopSlack(t *testing.T) *fakeDesktopSlack {
 	f := &fakeDesktopSlack{rotateDS: 1794000000,
-		bootHTML: `<html><script>var boot_data = {"api_token":"xoxc-vended-1-2-3abc","team_id":"T08PSQ7BQ"};</script></html>`}
+		bootHTML: `<html><script>(function(){ if (!window.parent) return; sessionStorage.incomingConfig = JSON.stringify({"teams":{"T08PSQ7BQ":{"id":"T08PSQ7BQ","name":"Hack Club","url":"https:\/\/hackclub.slack.com\/","domain":"hackclub","token":"xoxc-vended-1-2-3abc"}}}); window.parent.postMessage('gantry_auth_notify', "https:\/\/app.slack.com"); })();</script></html>`}
 	f.exchange = func(w http.ResponseWriter, r *http.Request) {
 		http.SetCookie(w, &http.Cookie{Name: "d", Value: "xoxd-vended%2Fabc", Domain: ".slack.com", Path: "/", Secure: true, HttpOnly: true})
 		http.SetCookie(w, &http.Cookie{Name: "lc", Value: "1794000000", Domain: ".slack.com", Path: "/", Secure: true})
@@ -138,7 +138,7 @@ func newFakeDesktopSlack(t *testing.T) *fakeDesktopSlack {
 		switch {
 		case r.URL.Path == "/api/auth.loginMagicBulk":
 			f.exchange(w, r)
-		case r.URL.Path == "/ssb/first" && host == "app.slack.com":
+		case r.URL.Path == "/auth" && host == "app.slack.com":
 			if c, err := r.Cookie("d"); err != nil || c.Value != "xoxd-vended%2Fabc" {
 				w.Write([]byte("<html>sign in</html>"))
 				return
@@ -185,7 +185,7 @@ func TestLoginMagicExchange(t *testing.T) {
 	}
 	reqs := f.requests()
 	if len(reqs) != 3 {
-		t.Fatalf("%d requests, want exchange, boot page, auth.test", len(reqs))
+		t.Fatalf("%d requests, want exchange, token page, auth.test", len(reqs))
 	}
 	ex := reqs[0]
 	if ex.Method != http.MethodGet || ex.Header.Get("X-Orig-Host") != "slack.com" || ex.Header.Get("X-Orig-Scheme") != "https" ||
@@ -203,8 +203,9 @@ func TestLoginMagicExchange(t *testing.T) {
 			t.Errorf("%s sent client hints", r.URL.Path)
 		}
 	}
-	if q := reqs[1]; q.URL.Path != "/ssb/first" || q.URL.Query().Get("redir") != "/ssb/client" || q.Header.Get("X-Orig-Host") != "app.slack.com" {
-		t.Errorf("boot page = %s?%s on %s", q.URL.Path, q.URL.RawQuery, q.Header.Get("X-Orig-Host"))
+	if q := reqs[1]; q.URL.Path != "/auth" || q.URL.RawQuery != "app=client&return_to=%2Fclient%2FT08PSQ7BQ&teams=&iframe=1" || q.Header.Get("X-Orig-Host") != "app.slack.com" ||
+		!strings.Contains(q.Header.Get("Cookie"), "d=xoxd-vended%2Fabc") {
+		t.Errorf("token page = %s?%s on %s", q.URL.Path, q.URL.RawQuery, q.Header.Get("X-Orig-Host"))
 	}
 	if q := reqs[2]; q.URL.Path != "/api/auth.test" || q.Header.Get("X-Orig-Host") != "hackclub.slack.com" || !strings.Contains(q.Header.Get("Cookie"), "d=xoxd-vended%2Fabc") {
 		t.Errorf("auth.test = %s on %s cookie %q", q.URL.Path, q.Header.Get("X-Orig-Host"), q.Header.Get("Cookie"))
@@ -213,7 +214,7 @@ func TestLoginMagicExchange(t *testing.T) {
 
 func TestLoginMagicGridTokens(t *testing.T) {
 	f := newFakeDesktopSlack(t)
-	f.bootHTML = `{"api_token":"xoxc-org-1-2-3abcd"} {"api_token":"xoxc-vended-1-2-3abc"}`
+	f.bootHTML = `<html><script>(function(){ if (!window.parent) return; sessionStorage.incomingConfig = JSON.stringify({"teams":{"E1":{"id":"E1","url":"https:\/\/hackclub.enterprise.slack.com\/","token":"xoxc-org-1-2-3abcd"},"T08PSQ7BQ":{"id":"T08PSQ7BQ","url":"https:\/\/hackclub.slack.com\/","token":"xoxc-vended-1-2-3abc","enterprise_api_token":"xoxc-org-1-2-3abcd"},"T999":{"id":"T999","token":"xoxc-other-1-2-3abc"}}}); window.parent.postMessage('gantry_auth_notify', "https:\/\/app.slack.com"); })();</script></html>`
 	sets, _ := ParseMagicLink("slack://T08PSQ7BQ/magic-login/abc")
 	c, err := LoginMagic(context.Background(), sets, MagicConfig{})
 	if err != nil {
@@ -301,16 +302,16 @@ func TestLoginMagicNoTokenOnPage(t *testing.T) {
 	f.bootHTML = "<html>nothing here</html>"
 	sets, _ := ParseMagicLink("slack://T08PSQ7BQ/magic-login/abc")
 	_, err := LoginMagic(context.Background(), sets, MagicConfig{})
-	if err == nil || !strings.Contains(err.Error(), "had no \"api_token\"") || !strings.Contains(err.Error(), "app.slack.com/ssb/first") {
+	if err == nil || !strings.Contains(err.Error(), "had no tokens") || !strings.Contains(err.Error(), "app.slack.com/auth") {
 		t.Errorf("err = %v", err)
 	}
-	// Only the desktop boot page: never /ssb/redirect or any other page,
+	// Only the token page: never /ssb/redirect or any other page,
 	// and no auth.test without a token.
 	var paths []string
 	for _, r := range f.requests() {
 		paths = append(paths, r.Header.Get("X-Orig-Host")+r.URL.Path)
 	}
-	if strings.Join(paths, " ") != "slack.com/api/auth.loginMagicBulk app.slack.com/ssb/first" {
+	if strings.Join(paths, " ") != "slack.com/api/auth.loginMagicBulk app.slack.com/auth" {
 		t.Errorf("requests = %v", paths)
 	}
 }
@@ -356,5 +357,26 @@ func TestDesktopUserAgent(t *testing.T) {
 	}
 	if clientHints(DesktopUserAgent()) != nil {
 		t.Error("Slack desktop sends no client hints")
+	}
+}
+
+// The token page's config: the exchange's team first, then the org token,
+// at most two, and nothing but xoxc- values.
+func TestParseIncomingConfig(t *testing.T) {
+	page := []byte(`<script>sessionStorage.incomingConfig = JSON.stringify({"teams":{` +
+		`"E1":{"id":"E1","token":"xoxc-org-1"},` +
+		`"T2":{"id":"T2","token":"xoxc-two-1"},` +
+		`"T1":{"id":"T1","token":"xoxc-one-1","enterprise_api_token":"xoxc-org-1"},` +
+		`"T3":{"id":"T3","token":"xoxb-bot-1"}}}); </script>`)
+	if got := strings.Join(parseIncomingConfig(page, "T1"), " "); got != "xoxc-one-1 xoxc-org-1" {
+		t.Errorf("T1: %q", got)
+	}
+	if got := strings.Join(parseIncomingConfig(page, "t2"), " "); got != "xoxc-two-1 xoxc-org-1" {
+		t.Errorf("t2: %q", got)
+	}
+	for _, bad := range []string{"", "<html>no config</html>", "incomingConfig = JSON.stringify({not json", `incomingConfig = JSON.stringify({"teams":{"T1":{"token":"xoxp-1"}}})`} {
+		if got := parseIncomingConfig([]byte(bad), "T1"); len(got) != 0 {
+			t.Errorf("%q: %q", bad, got)
+		}
 	}
 }

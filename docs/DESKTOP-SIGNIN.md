@@ -440,3 +440,13 @@ Still unverified (needs a live test, with consent, on a throwaway account):
   `https://slack.com/ssb/add?s=1&v=4.53.276`, the URL Slack desktop's
   "Sign in to Another Workspace" opens. Whether a first sign-in from there
   ends in a copyable `slack://…/magic-login/…` link is unverified.
+
+## Live test, 2026-11-08 (meclod, Hack Club Grid)
+
+With the user's consent, on the project's own test account:
+
+- **Getting a link.** Slack's `https://slack.com/ssb/add?s=1&v=4.53.276` lists workspaces; "Open in Slack" goes to `hackclub.enterprise.slack.com/?is_ssb_browser_signin=1`, whose "Launch Hack Club in Slack" opens `https://hackclub.slack.com/ssb/signin_redirect`. That page navigates to `slack://T0266FRGM/magic-login/<token>?id=1`: the classic form, no `host=` and **no `dpop=1`** on this org.
+- **The exchange works.** Both Clack and a clean browser got `ok: true` from `auth.loginMagicBulk?magic_tokens=z-app-T0266FRGM-<token>&ssb=1`. Slack set `d`, `d-s`, `lc`, `b`, `x` and `utm`. `token_results` holds `ok`, `user`, `redir` (`https://hackclub.slack.com/messages`) and `team` (id, name, url, domain, enterprise ids, icons). **No token.**
+- **`/ssb/first` has no token.** It's a marketing landing page (`ssb-landing-core`). In a browser it stays put; in Slack desktop it hands over to the web client.
+- **Where the token comes from.** In a clean browser holding only the vended cookies, loading `redir` goes to `app.slack.com/client/T0266FRGM`. Its web client then loads the hidden page `https://app.slack.com/auth?app=client&return_to=%2Fclient%2FT0266FRGM&teams=&iframe=1` (beacons `auth_stale`, `auth_fetch`, `lc_ingest`). That page sets `sessionStorage.incomingConfig = JSON.stringify({"teams": {…}})`, with one entry per team (`id`, `name`, `url`, `domain`, `token`) for both the org (E…) and the workspace (T…), plus `enterprise_api_token`. Clack now reads its tokens there (`bootTokens`, `parseIncomingConfig`).
+- The browser session the link came from stayed signed in throughout.
