@@ -29,4 +29,8 @@ patch("internal/slack/client.go",
 	return cl
 }""")
 patch("internal/ui/app.go", "\t\ta.win.Option(app.Title(t))\n", "\t\tif a.win != nil {\n\t\t\ta.win.Option(app.Title(t))\n\t\t}\n")
+# HEAD's harness starts the app with NoRealtime (the sign-out fix's opt-in
+# realtime socket; no first-run banner shifting the layout). The baseline
+# has no such option: give it the field, unused.
+patch("internal/ui/app.go", "type Options struct {\n", "type Options struct {\n\tNoRealtime bool // perf harness: HEAD's option, unused in the baseline\n")
 print("patch-base: ok")
