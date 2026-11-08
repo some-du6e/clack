@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync"
+	"sync/atomic"
 )
 
 // Linux: Gio reads only UTF8_STRING (X11) or text/plain (Wayland), so the
