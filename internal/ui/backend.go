@@ -259,7 +259,12 @@ func (b *backend) apply(a *App, s core.Snapshot) {
 	m.Convs = convs
 	m.Sections = m.Sections[:0]
 	for _, sec := range s.Sections {
-		ss := sbSection{ID: sec.ID, Name: sec.Name, Type: sec.Type, Emoji: sec.Emoji}
+		ss := sbSection{ID: sec.ID, Name: sec.Name, Type: sec.Type, Emoji: sec.Emoji, EmojiURL: sec.EmojiURL, Collapsed: sec.Collapsed}
+		for _, id := range sec.CollapsedChannels {
+			if convs[id] != nil {
+				ss.CollapsedRows = append(ss.CollapsedRows, id)
+			}
+		}
 		for _, id := range sec.Channels {
 			if c := convs[id]; c != nil {
 				ss.Rows = append(ss.Rows, id)
@@ -376,7 +381,9 @@ func (b *backend) handle(a *App, ev core.Event) {
 			a.applyAccountPrefs(*ev.Prefs)
 			uipref.Set(*ev.Prefs)
 		}
-		changed = true // the sidebar filter (sidebar_behavior) may change
+		// core's sidebar rules read sidebar_behavior, channel_sort,
+		// boost_mentions…: rebuild the sections from a fresh snapshot
+		b.resnapshot(a)
 	case "draft":
 		b.loadDrafts(a)
 	case "typing":

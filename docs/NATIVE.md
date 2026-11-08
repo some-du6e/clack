@@ -300,6 +300,15 @@ Toast(text string)
 `popups.Overlay`: `interface{ Layout(gtx layout.Context) layout.Dimensions; Dismissed() bool }` (popups agent owns the concrete types; ui root just stacks and draws them, and routes Escape/outside clicks).
 Each feature package exports a constructor and a widget with `Layout(gtx layout.Context) layout.Dimensions`, e.g. `messages.NewChannelView(h Host, channelID string) *ChannelView`, `messages.NewThreadView(h, ch, ts)`, `composer.New(h Host, channelID, threadTS string) *Composer`, `views.NewActivity(h)` …, and `popups.NewEmojiPicker(h, onPick) Overlay` etc.
 
+### Rich paste (`internal/ui/composer/paste*.go`)
+Ctrl/Cmd+V keeps formatting like Slack's composer. Gio v0.10.3's `clipboard.ReadCmd` only delivers plain text on every OS (X11 asks for `UTF8_STRING`, Wayland for `text/plain`, macOS reads the string type, Windows `CF_UNICODETEXT`), so the key press also starts an HTML read off the UI goroutine. The editor waits up to 300 ms for it after the text arrives, checking once per frame without blocking, so Clack can still answer selection requests when it owns the clipboard. Then it pastes plain text.
+- **macOS** (`paste_darwin.go`, cgo): NSPasteboard `public.html` (browsers, Notes, Word); if absent, `public.rtf` / `com.apple.flat-rtfd` (TextEdit, Pages) converted to HTML by AppKit's `NSAttributedString` writer.
+- **Windows** (`paste_windows.go`): the registered `HTML Format` (CF_HTML) via user32; the header's offsets are parsed by `cfHTML`.
+- **Linux** (`paste_linux.go`): `text/html` via `wl-paste` (Wayland) or `xclip` (X11), the same tools as image paste. Without them: plain text only.
+- **Others** (Android, iOS, BSDs, macOS without cgo): plain text only.
+
+`docFromHTML` converts to the composer `Doc`: `ul`/`ol`/`li` (nested, Slack's `data-indent`, Word's `mso-list` paragraphs), `b`/`strong`, `i`/`em`, `s`/`del`, `u`, `code`, `pre`, `a[href]`, `blockquote`, `br`/`p`/block elements, plus CSS `font-weight`/`font-style`/`text-decoration` (Google Docs, AppKit classes). Headings become bold lines. Emoji images keep their shortcode or unicode alt text; other images, scripts, styles and hidden elements are dropped. Untrusted input: links must be http(s) with a host (no userinfo) or `mailto:`, at most 4 KiB; over 2 MiB of HTML or 40,000 runes, the paste falls back to plain text. Plain text with list lines (`- `, `* `, `+ `, `•`, `◦`, `1.`, `1)`) becomes a list (`docFromPlainText`), nested by indentation. Ctrl/Cmd+Shift+V (and Cmd+Opt+Shift+V) is paste and match style: plain text, no list detection. Code blocks and inline code always take plain text.
+
 ## Interactive apps (`internal/ui/blockkit`, `core.Interactive`)
 
 `a.Interactive()` (internal/core/interactive.go) is the service; blockkit draws. Every call shape was read from Slack's web client (gantry-v2, 2026-11) and the ones marked live were tested on Hack Club:

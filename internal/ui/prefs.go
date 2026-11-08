@@ -1,10 +1,13 @@
 package ui
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
 )
 
 // prefs are UI-only settings persisted to <config>/ui.json (no message
@@ -29,6 +32,9 @@ type prefs struct {
 	// ThemeSync is Appearance's "Sync with OS setting" (Slack keeps it in
 	// localStorage, per device). nil: on while Dark was never chosen.
 	ThemeSync *bool `json:"theme_sync,omitempty"`
+	// PlainText is Preferences > Advanced > "Format messages with markup"
+	// (Slack's plain_text_mode); nil follows the pref Slack sent.
+	PlainText *bool `json:"plain_text_mode,omitempty"`
 }
 
 func (a *App) prefsPath() string {
@@ -68,6 +74,9 @@ func (a *App) loadPrefs() {
 	}
 	a.lastChannel = a.prefs.LastChannel
 	a.th.EmojiStyle = a.prefs.EmojiStyle
+	if a.prefs.PlainText != nil {
+		composer.SetPlainTextMode(*a.prefs.PlainText)
+	}
 	a.sidebar.hidden = a.prefs.SidebarHidden
 	if a.prefs.Route != "" {
 		a.router.Push(Route(a.prefs.Route))
@@ -125,4 +134,24 @@ func (a *App) toggleNotify() {
 	v := !a.notifyOn()
 	a.prefs.Notifications = &v
 	a.savePrefs()
+}
+
+// plainTextOn is "Format messages with markup" (Slack's plain_text_mode):
+// off by default, so the composer formats markup live.
+func (a *App) plainTextOn() bool { return composer.PlainTextMode(a.Core()) }
+
+// togglePlainText flips it through setUserPrefByApi (like emoji_style),
+// applied locally and kept in ui.json.
+func (a *App) togglePlainText() {
+	v := !a.plainTextOn()
+	a.dispatch("setUserPrefByApi", map[string]any{"pref": "plain_text_mode", "value": v},
+		func(ctx context.Context, args map[string]any) (any, error) {
+			a.Post(func() {
+				composer.SetPlainTextMode(v)
+				a.prefs.PlainText = &v
+				a.savePrefs()
+				a.Invalidate()
+			})
+			return nil, nil
+		})
 }

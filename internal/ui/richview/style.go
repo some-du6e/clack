@@ -82,6 +82,7 @@ type Palette struct {
 	FileIconBg, FileIconPDF        color.NRGBA
 	FileIconZip, FileIconText      color.NRGBA
 	PlayBg, PlayFg                 color.NRGBA
+	TooltipBg, TooltipText         color.NRGBA // emoji :name: tooltips
 }
 
 func rgb(r, g, b uint8) color.NRGBA { return color.NRGBA{R: r, G: g, B: b, A: 255} }
@@ -131,6 +132,7 @@ func LightPalette() Palette {
 		Danger: rgb(224, 30, 90), DangerText: rgb(255, 255, 255),
 		FileIconBg: rgba(29, 28, 29, 0.04), FileIconPDF: rgb(224, 30, 90), FileIconZip: rgb(97, 96, 97), FileIconText: rgb(97, 96, 97),
 		PlayBg: rgba(0, 0, 0, 0.4), PlayFg: rgb(255, 255, 255),
+		TooltipBg: rgb(29, 28, 29), TooltipText: rgb(255, 255, 255),
 	}.flat()
 }
 
@@ -151,6 +153,7 @@ func DarkPalette() Palette {
 	p.ButtonBorder, p.ButtonHoverBg = rgba(232, 232, 232, 0.3), rgb(34, 37, 41)
 	p.Primary = rgb(0, 122, 90)
 	p.Highlight = rgba(242, 199, 68, 0.3)
+	p.TooltipBg, p.TooltipText = rgb(232, 232, 232), rgb(26, 29, 33)
 	return p.flat()
 }
 
@@ -198,7 +201,7 @@ func NewStyle(sh *text.Shaper, imgs Images, p Palette) *Style {
 	return &Style{
 		Shaper: sh, Images: imgs, Palette: p,
 		Face:     theme.Typeface,
-		Mono:     "Roboto Mono, Monaco, Menlo, Consolas, \"Courier New\", monospace",
+		Mono:     "Roboto Mono, " + theme.MonoTypeface + ", Monaco, Menlo, Consolas, \"Courier New\", monospace",
 		TextSize: 15, LineHeight: 22, Embolden: 0.3,
 		gen:   1,
 		words: make(map[wordKey]*shaped, 4096),

@@ -45,15 +45,6 @@ func (a *App) Edit(ctx context.Context, ch, ts, text string, blocks json.RawMess
 // Delete deletes a message.
 func (a *App) Delete(ctx context.Context, ch, ts string) error { return a.C.Delete(ctx, ch, ts) }
 
-// React adds or removes the viewer's reaction (idempotent).
-func (a *App) React(ctx context.Context, ch, ts, name string, add bool) error {
-	err := a.C.React(ctx, ch, ts, strings.Trim(name, ":"), add)
-	if isCode(err, "already_reacted", "no_reaction") {
-		return nil
-	}
-	return err
-}
-
 // Mark moves the read cursor of ch to ts and returns the new unread state.
 // Marking an earlier ts keeps the conversation unread (see MarkUnread).
 func (a *App) Mark(ctx context.Context, ch, ts string) (Count, error) {
@@ -282,9 +273,13 @@ func (a *App) Leave(ctx context.Context, ch string) error {
 	if err := a.C.Call(ctx, m, url.Values{"channel": {ch}}, nil); err != nil {
 		return err
 	}
-	a.S.Lock()
-	delete(a.S.Convs, ch)
-	a.S.Unlock()
+	if m == "conversations.close" {
+		a.markDMClosed(ch) // still known (search, switcher); back on a new message
+	} else {
+		a.S.Lock()
+		delete(a.S.Convs, ch)
+		a.S.Unlock()
+	}
 	a.emit(Event{Type: "conv_removed", Channel: ch})
 	return nil
 }
@@ -312,6 +307,7 @@ func (a *App) OpenDM(ctx context.Context, users ...string) (Conv, error) {
 	}
 	a.EnsureUsers(ctx, append(users, c.User))
 	a.S.PutConv(c)
+	a.openDM(c.ID)
 	v := a.conv(&c)
 	a.emit(Event{Type: "conv", Channel: c.ID, Conv: &v})
 	return v, nil

@@ -106,6 +106,9 @@ type listState struct {
 	tip     string
 	tipRect image.Rectangle
 	tipItem int
+	tipURL  string    // the hovered reaction's emoji image
+	tipKey  string    // which pill (item key + name), to time the delay
+	tipAt   time.Time // when the pointer reached it
 
 	lastTyping time.Time
 
@@ -778,9 +781,17 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 	if rc.hovered {
 		for k := range r.pills {
 			if k < len(r.reactRects) && k < len(r.m.Reactions) && r.pills[k].btn.Hovered() {
-				s.tip = reactionTip(h, &r.m.Reactions[k], rc.selfID)
+				re := &r.m.Reactions[k]
+				s.tip = reactionTip(h, re, rc.selfID)
 				s.tipRect = r.reactRects[k] // row-local; positioned in overlays
 				s.tipItem = i
+				s.tipURL = re.URL
+				if s.tipURL == "" && h.Core() != nil {
+					s.tipURL, _, _ = h.Core().Emoji(re.Name)
+				}
+				if key := s.items[i].key + "\x00" + re.Name; key != s.tipKey {
+					s.tipKey, s.tipAt = key, rc.now
+				}
 			}
 		}
 	}
@@ -916,9 +927,15 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 	}
 
 	// reaction tooltip
-	if s.tip != "" && s.tipItem >= s.visible[0] && s.tipItem < s.visible[1] {
-		r := s.tipRect.Add(image.Pt(0, s.pos[s.tipItem]))
-		tooltip(gtx, th, c, s.tip, image.Pt((r.Min.X+r.Max.X)/2, r.Min.Y-dp(gtx, 6)), size)
+	if s.tip == "" {
+		s.tipKey = ""
+	} else if s.tipItem >= s.visible[0] && s.tipItem < s.visible[1] {
+		if wait := s.tipAt.Add(reactionTipDelay); rc.now.Before(wait) {
+			gtx.Execute(op.InvalidateCmd{At: wait})
+		} else {
+			r := s.tipRect.Add(image.Pt(0, s.pos[s.tipItem]))
+			reactionTooltip(gtx, h, th, c, s.tip, s.tipURL, image.Pt((r.Min.X+r.Max.X)/2, r.Min.Y-dp(gtx, 6)), size)
+		}
 	}
 
 	// jump to recent

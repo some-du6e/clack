@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/jsrt"
+	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 )
 
 // Regression tests for bugs found running Taut's plugins live in Clack
@@ -165,5 +166,24 @@ func TestSlackMessage(t *testing.T) {
 	var nilT *Taut
 	if nilT.SlackMessage(chGen, "1700000001.000100") != nil {
 		t.Error("nil Taut")
+	}
+}
+
+// Edge profiles carry avatar_hash and no image_* URLs; the members mirror
+// fills them in like Slack's client (WhoReacted drew no reactor avatars).
+func TestMemberAvatarURLs(t *testing.T) {
+	h := newHarness(t)
+	h.app.S.PutUsers([]slack.User{{ID: "UAVATAR1", Name: "ava", TeamID: teamID, Profile: slack.Profile{AvatarHash: "g5d230ad5be8"}},
+		{ID: "UAVATAR2", Name: "own", Profile: slack.Profile{AvatarHash: "abc", Image48: "https://example.com/own-48.png"}}})
+	var got struct{ A24, A48, B48, B24 string }
+	h.jsInto(`
+		const m = T.redux.getStore().getState().members
+		return { A24: m.UAVATAR1?.profile?.image_24 ?? '', A48: m.UAVATAR1?.profile?.image_48 ?? '',
+			B48: m.UAVATAR2?.profile?.image_48 ?? '', B24: m.UAVATAR2?.profile?.image_24 ?? '' }`, &got)
+	if got.A24 != "https://ca.slack-edge.com/"+teamID+"-UAVATAR1-g5d230ad5be8-24" || got.A48 == "" {
+		t.Errorf("filled URLs: %+v", got)
+	}
+	if got.B48 != "https://example.com/own-48.png" || got.B24 == "" {
+		t.Errorf("Slack's own URLs are kept, missing ones filled: %+v", got)
 	}
 }

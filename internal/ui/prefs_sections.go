@@ -388,11 +388,11 @@ func (p *prefsModal) homePage(f *prefsForm) {
 	f.radio("sidebar_behavior", "", "All", "")
 	f.gap()
 	f.heading("Sort conversations by:")
+	// core's sidebar rules sort by channel_sort (sectionSort)
 	sort := p.prefStr("channel_sort")
-	f.off("sort.default", "A–Z", "", sort == "" || sort == "default", true)
-	f.off("sort.recent", "Most recent", "", sort == "recent", true)
-	f.off("sort.priority", "Priority", "", sort == "priority", true)
-	f.na()
+	f.option("pref.channel_sort=default", "A–Z", "", sort == "" || sort == "default", true, func() { p.setPref("channel_sort", "default") })
+	f.radio("channel_sort", "recent", "Most recent", "")
+	f.radio("channel_sort", "priority", "Priority", "")
 	f.gap()
 	f.heading("Always show in the sidebar:")
 	for _, v := range []struct{ k, label string }{
@@ -404,21 +404,15 @@ func (p *prefsModal) homePage(f *prefsForm) {
 	f.na()
 	f.gap()
 	f.heading("Sidebar Organization")
-	for _, v := range []struct {
-		k, label string
-		def      bool
-	}{
-		{"show_sidebar_avatars", "Show profile photos next to DMs", true},
-		{"separate_private_channels", "Separate private channels from public ones in sidebar", false},
-		{"undo_channel_intermix", "Separate direct messages and apps from channels in sidebar", false},
-		{"boost_unreads", "Move unread items to top of sections", false},
-		{"boost_mentions", "Move items with unread mentions to top of sections", false},
-		{"online_first_dms_on", "Move online users to the top of the DM section", false},
-		{"show_muted_items_outside_sidebar_menus", "Display muted items outside of sidebar menus", false},
-	} {
-		f.off(v.k, v.label, "", p.prefBool(v.k, v.def), false)
-	}
-	f.na()
+	// core's sidebar rules apply these (internal/core/sidebar_rules.go)
+	f.off("show_sidebar_avatars", "Show profile photos next to DMs", "", p.prefBool("show_sidebar_avatars", true), false)
+	f.check("separate_private_channels", "Separate private channels from public ones in sidebar", "", false, false)
+	f.check("undo_channel_intermix", "Separate direct messages and apps from channels in sidebar", "", false, false)
+	f.off("boost_unreads", "Move unread items to top of sections", "", p.prefBool("boost_unreads", false), false)
+	f.check("boost_mentions", "Move items with unread mentions to top of sections", "", false, false)
+	f.off("online_first_dms_on", "Move online users to the top of the DM section", "", p.prefBool("online_first_dms_on", false), false)
+	f.check("show_muted_items_outside_sidebar_menus", "Display muted items outside of sidebar menus", "", false, false)
+	f.muted("Profile photos, unreads first and online first: "+naNote, false)
 }
 
 func (p *prefsModal) messagesPage(f *prefsForm) {
@@ -619,7 +613,8 @@ func (p *prefsModal) advancedPage(f *prefsForm) {
 	a := p.a
 	f.heading("Input options")
 	f.check("enter_is_special_in_tbt", "When typing code with ```, Enter should not send the message", "With this checked, use Shift+Enter to send", false, false)
-	f.off("plain_text_mode", "Format messages with markup", "The text formatting toolbar won’t show in the composer", p.prefBool("plain_text_mode", false), false)
+	// the composer's own toggle (prefs.go): live markup follows it
+	f.option("plaintext", "Format messages with markup", "The text formatting toolbar won’t show in the composer.", a.plainTextOn(), false, a.togglePlainText)
 	f.off("copy_messages_as_markdown", "Copy message text as Markdown", "", p.prefBool("copy_messages_as_markdown", false), false)
 	f.off("disable_smart_symbols", "Enable smart quotes and symbols", "", !p.prefBool("disable_smart_symbols", false), false)
 	f.na()

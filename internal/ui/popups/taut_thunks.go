@@ -124,6 +124,11 @@ func tautMenu(h Host, m *Menu, thunk, id string) {
 			return
 		}
 		if items, ok := tautMenuItems(h, raw, base); ok {
+			// the thunk's template is what Slack's MenuFromTemplate renders,
+			// so it becomes the menu's base too (a patched MenuFromTemplate
+			// is fed m.orig and would put the native items back)
+			m.orig = items
+			m.tplFrom = nil
 			m.setItems(items)
 			h.Invalidate()
 		}
@@ -163,14 +168,29 @@ func React(h Host, ch, ts, name string, add bool) {
 	}
 	args := tautReactArgs{ReactionKey: reactionKey(ch, ts), Name: name, Add: add}
 	t := tautFor("submitAddOrRemoveReaction")
-	do(h, "", func(ctx context.Context) error {
+	// core.React shows the change at once and rolls it back on failure;
+	// the toast says why.
+	run(h, func(ctx context.Context) (struct{}, error) {
 		if t == nil {
 			_, err := native(ctx, args)
-			return err
+			return struct{}{}, err
 		}
 		_, err := taut.Dispatch(ctx, t, "submitAddOrRemoveReaction", args, native)
-		return tautErr(err)
+		return struct{}{}, tautErr(err)
+	}, func(_ struct{}, err error) {
+		if err != nil {
+			h.Toast(reactionError(add, err))
+		}
 	})
+}
+
+// reactionError is the toast for a failed reaction.
+func reactionError(add bool, err error) string {
+	verb := "add"
+	if !add {
+		verb = "remove"
+	}
+	return "Couldn't " + verb + " the reaction: " + errText(err)
 }
 
 type tautReactArgs struct {

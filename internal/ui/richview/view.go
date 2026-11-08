@@ -43,6 +43,7 @@ type View struct {
 	call     op.CallOp
 	recorded bool
 	pending  []int32 // imgs (>=0) or ^frag index of images not yet decoded
+	live     []int32 // frags of animated emoji: drawn every frame, not recorded
 
 	// Slack components (comps.go): the mode the layout was made in, each
 	// component's state and its props/natives receiver.
@@ -61,6 +62,9 @@ type View struct {
 	lastTap  time.Duration
 	tapCount int
 	hovering bool
+	ptr      f32.Point // last pointer position (view coordinates)
+	tipFrag  int       // emoji frag under the pointer, -1 none
+	tipAt    time.Time // when the pointer reached it (gtx.Now)
 
 	// Origin, if set by the owner, is added to click anchors so they are in
 	// window coordinates.
@@ -119,7 +123,7 @@ func (v *View) LineAt(off int32) (int32, int32) {
 
 // New returns a View for doc.
 func New(doc richtext.Doc, o Options) *View {
-	v := &View{hover: -1, press: -1}
+	v := &View{hover: -1, press: -1, tipFrag: -1}
 	v.Set(doc, o)
 	return v
 }
@@ -132,6 +136,7 @@ func (v *View) Set(doc richtext.Doc, o Options) {
 	v.cs = v.cs[:0]
 	v.selA, v.selB = 0, 0
 	v.hover, v.press = -1, -1
+	v.tipFrag = -1
 }
 
 // SetOptions changes only the options (e.g. edited flag, pending state).
@@ -260,6 +265,13 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 		}
 	}
 	v.call.Add(gtx.Ops)
+	for _, i := range v.live {
+		if f := &v.d.frags[i]; st.Images != nil {
+			if img, ok := st.Images.Get(f.url, f.size); ok {
+				drawImage(gtx.Ops, img, image.Rect(int(f.x+0.5), f.y, int(f.x+0.5)+f.size, f.y+f.size), [4]int{}, false)
+			}
+		}
+	}
 	if len(v.d.comps) > 0 {
 		v.layoutComps(gtx, st)
 	}
@@ -274,6 +286,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	if v.opts.Dim {
 		opac.Pop()
 	}
+	v.emojiTip(gtx, st)
 
 	// Input areas: the whole view takes text-selection input; clickable
 	// things show the hand cursor.
@@ -359,6 +372,7 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 	}
 	v.d.reset()
 	v.laidPf = uipref.Gen()
+	v.tipFrag = -1
 	if v.expanded == nil {
 		v.expanded = map[*richtext.Attachment]bool{}
 	}
@@ -432,6 +446,7 @@ func (v *View) anyReady(st *Style) bool {
 func (v *View) record(st *Style) {
 	v.ops.Reset()
 	v.pending = v.pending[:0]
+	v.live = v.live[:0]
 	ops := &v.ops
 	m := op.Record(ops)
 	v.paint(ops, st, 0, nil)
@@ -481,6 +496,10 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 		}
 		switch f.kind {
 		case fImage:
+			if comp == 0 && animated(st.Images, f.url, f.size) {
+				v.live = append(v.live, int32(i)) // a recording would freeze it
+				continue
+			}
 			var img paint.ImageOp
 			ok := false
 			if st.Images != nil {
@@ -769,8 +788,13 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 			case pointer.Enter, pointer.Move:
 				v.hovering = true
 				v.hover = v.targetAt(e.Position)
+				v.ptr = e.Position
+				if f := v.emojiAt(e.Position); f != v.tipFrag {
+					v.tipFrag, v.tipAt = f, gtx.Now
+				}
 			case pointer.Leave:
 				v.hovering = false
+				v.tipFrag = -1
 				if !v.dragging {
 					v.hover = -1
 				}

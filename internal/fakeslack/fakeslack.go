@@ -85,6 +85,9 @@ type Server struct {
 	Calls   map[string]*atomic.Int64
 	// Latency is added to every API call (not images), to model a network.
 	Latency time.Duration
+	// Hook, when set, sees every API call first; ok=true answers it with
+	// out (tests: hold a call back, fail it). Set it before the calls.
+	Hook func(method string, form url.Values) (out any, ok bool)
 
 	prefsMu sync.Mutex
 	prefs   map[string]any // users.prefs.get; users.prefs.set writes it
@@ -107,6 +110,8 @@ func DefaultPrefs() map[string]any {
 		"a11y_animations": true, "underline_links": false, "locale": "en-US",
 		"who_can_see_account_by_searching_email": "EVERYONE", "who_can_share_contact_card": "EVERYONE",
 		"vip_users": "", "priority_dnd_override": false, "sidebar_behavior": "",
+		"separate_private_channels": false, "undo_channel_intermix": false,
+		"boost_mentions": false, "show_muted_items_outside_sidebar_menus": false, "plain_text_mode": false,
 		"huddles_mute_by_default": false, "huddles_set_status": true, "huddles_disconnect_on_lock": true,
 		"all_notifications_prefs": `{"channels":{},"global":{"global_desktop":"mentions_dms","global_mobile":"mentions_dms",` +
 			`"global_keywords":"","no_text_in_notifications":false,"push_idle_wait":0,"threads_everything":true,` +
@@ -519,7 +524,14 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	out := s.handle(method, form, edge)
+	var out any
+	hooked := false
+	if s.Hook != nil {
+		out, hooked = s.Hook(method, form)
+	}
+	if !hooked {
+		out = s.handle(method, form, edge)
+	}
 	if out == nil {
 		out = map[string]any{"ok": true}
 	}
@@ -563,6 +575,21 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			}
 		}
 		return ok("channels", chans, "ims", ims, "mpims", []any{}, "threads", map[string]any{"has_unreads": true, "mention_count": 2})
+	case "sidebar.dms": // every generated DM is open
+		var ims, mpdms []map[string]any
+		for _, c := range s.convs {
+			switch {
+			case c.IsIM:
+				ims = append(ims, map[string]any{"id": c.ID, "user": c.User, "is_open": true, "is_im": true})
+			case c.IsMPIM:
+				mpdms = append(mpdms, map[string]any{"id": c.ID, "is_open": true, "is_mpim": true})
+			}
+		}
+		return ok("ims", ims, "mpdms", mpdms)
+	case "experiments.getByUser": // the sidebar experiments as a real account has them (2026-11-08)
+		g := func(group string) map[string]any { return map[string]any{"group": group} }
+		return ok("assignments", map[string]any{"filter_dormant_channels": g("on"), "improve_mute_pref": g("on"),
+			"dm_recency_sort_rollout": g("without_edu")})
 	case "users.channelSections.list":
 		var secs []map[string]any
 		ids := s.ChannelIDs()

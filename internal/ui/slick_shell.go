@@ -14,7 +14,9 @@ package ui
 //     BaseChannelSuffix (ChannelListTyping's typing indicator). Under a
 //     patch each level hands the next to JS as a child slot, so a context a
 //     plugin provides at one level reaches the levels inside it.
-//   - ClientPrimaryView (ChatTabs' tab bar above the primary view).
+//   - ClientPrimaryView > RenderedViewContents (ChatTabs: its layout
+//     around the primary view, its tab bar first inside
+//     .p-view_contents--primary), whose child is the view's body slot.
 //   - ProgressiveDisclosureSuccessCoachmarkWrapper (ShowSendingBot): Clack
 //     has no coachmarks, so it is an empty point.
 //
@@ -46,8 +48,7 @@ import (
 func (a *App) sidebarProps() slackc.Props {
 	s := &a.sidebar
 	m := a.model()
-	if cur := a.router.Current().Channel(); s.rows == nil || s.builtFor != m.version || s.cur != cur {
-		s.cur = cur
+	if s.rows == nil || s.builtFor != m.version {
 		s.rebuild(m)
 	}
 	if s.propRows == nil || s.propsGen != s.gen {
@@ -631,22 +632,72 @@ func (a *App) sbMenuDo(ch, key string) func() {
 	return nil
 }
 
-// ---- ClientPrimaryView (ChatTabs) ----
+// ---- ClientPrimaryView > RenderedViewContents (ChatTabs) ----
 
 func (a *App) primaryViewProps() slackc.Props {
 	return slackc.Props{"$key": "main", "windowId": "main"}
 }
 
-// layoutPrimaryView is the primary view (channel or page). Under a patch
-// a plugin may draw above it (ChatTabs' tab bar), so its window origin is
+// layoutPrimaryView is the primary view (channel or page): Slack's
+// ClientPrimaryView, which draws its view through RenderedViewContents
+// (the .p-view_contents--primary element). The view fills the panel.
+//
+// Under a patch a plugin may draw above it, so its window origin is
 // learned from the pointer instead of the panel's.
 func (a *App) layoutPrimaryView(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	if p != nil {
 		a.pvOrigin.track(gtx, a)
 		a.primaryOrigin = a.pvOrigin.get(a.primaryOrigin)
 	}
+	gtx.Constraints.Min = gtx.Constraints.Max
+	return slackc.Component(gtx, "RenderedViewContents", a, (*App).viewContentsProps, (*App).layoutViewContents)
+}
+
+// viewContentsProps: Slack's RenderedViewContents for the primary view.
+// Its children are the view's body (the channel or page) as a native
+// slot, so what a plugin puts beside them (ChatTabs' tab bar, before
+// them) lands inside .p-view_contents--primary, as in Slack. The JS side
+// draws the component as Slack does, a div with the view's classes around
+// its children (internal/taut/js/04_react.js, SHAPES); the slot fills
+// what that div leaves (a flex item of the view's column).
+func (a *App) viewContentsProps() slackc.Props {
+	return slackc.Props{
+		"$key":      "primary",
+		"className": "p-workspace__primary_view",
+		"viewType":  "primary",
+		"children":  slackc.Child(viewBodySlot, slackc.Props{"style": viewBodyStyle}, a.layoutViewBody),
+	}
+}
+
+// viewBodySlot names the native body inside RenderedViewContents. Slack's
+// children there are the routed view's own components, which Clack draws
+// as one widget; the name is Clack's, so it matches no Slack patch.
+const viewBodySlot = "ClackPrimaryViewBody"
+
+// viewBodyStyle makes the body slot take the view's remaining height
+// (whatever a plugin adds above it, or its padding, comes off it).
+var viewBodyStyle = map[string]any{"flex": "1 1 0", "minHeight": 0, "minWidth": 0}
+
+// layoutViewContents is RenderedViewContents' native: the
+// .p-view_contents--primary element around the body. Under a patch the
+// JS side draws the element itself and calls the body slot; this native
+// then only draws until JS delivers that tree.
+func (a *App) layoutViewContents(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	pv := clsPrimaryView.Enter(gtx, 0, 0)
 	defer pv.Leave()
+	return a.drawViewBody(gtx)
+}
+
+// layoutViewBody is the body slot under a patch. A plugin may draw above
+// it or pad the view (ChatTabs' tab bar), so its origin is learned from
+// the pointer too.
+func (a *App) layoutViewBody(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+	a.vbOrigin.track(gtx, a)
+	a.primaryOrigin = a.vbOrigin.get(a.primaryOrigin)
+	return a.drawViewBody(gtx)
+}
+
+func (a *App) drawViewBody(gtx layout.Context) layout.Dimensions {
 	r := a.router.Current()
 	if r.Page() == "c" {
 		a.layoutChannel(gtx, r.Channel())

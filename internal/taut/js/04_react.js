@@ -144,6 +144,32 @@ function textyInputRender(render) {
   }
 }
 
+/** Slack's own layout for the view wrapper, in a layer so any plugin or theme rule beats it */
+const VIEW_CONTENTS_CSS =
+  '@layer clack-slack { .p-view_contents { position: relative; display: flex; flex-direction: column; box-sizing: border-box; height: 100%; min-width: 0; min-height: 0 } }'
+let viewContentsStyled = false
+
+/**
+ * RenderedViewContents' render, as Slack's: a div with the view's classes
+ * (p-view_contents p-view_contents--<viewType> plus className) and
+ * containerRef around its children. Clack's view body comes in as a child
+ * slot, so whatever a patch puts beside it is inside the view element
+ * (`.p-view_contents--primary:has(> …)` sees it) and positioned against it.
+ */
+function viewContentsRender() {
+  return function RenderedViewContents(props) {
+    if (!viewContentsStyled) {
+      viewContentsStyled = true
+      setStyle(VIEW_CONTENTS_CSS, 'clack:view-contents')
+    }
+    const { className, containerRef, viewType, children } = props || {}
+    const classes = ['p-view_contents']
+    if (typeof viewType === 'string' && viewType) classes.push(`p-view_contents--${viewType}`)
+    for (const c of String(className || '').split(/\s+/)) if (c && !classes.includes(c)) classes.push(c)
+    return G.React.createElement('div', { className: classes.join(' '), ref: containerRef }, children)
+  }
+}
+
 /**
  * name → how its native is shaped: `render` wraps the native's render,
  * `memoOf` makes the component look like memo(memoOf) (React still sees a
@@ -151,6 +177,7 @@ function textyInputRender(render) {
  */
 const SHAPES = {
   TextyInput: { render: textyInputRender, memoOf: TextyInput },
+  RenderedViewContents: { render: viewContentsRender },
 }
 
 /** name → feed(props) → {state, props}: the data a shaped native shows, from whoever draws it */
@@ -190,7 +217,7 @@ const KNOWN_COMPONENTS = ('MessageBackground;MessageWrapper;MessageListItem;Sear
   // names Slick's plugins patch (docs/PLUGINS-components.md §9)
   'AboutPage;ActivityDM;ActivityRowContentDense;ActivityRowContentDetailed;ActivityRowContentMultiLine;ActivityRowContentSingleLine;' +
   'ActivityThread;AppDetailsOverflow;AttachmentTitle;BaseChannelSuffix;BaseDrawRenderer;BaseMessageAvatar;BaseSearch;BaseVisuallyHiddenMessageText;' +
-  'ChannelContextMenu;ChannelSidebar;ClientPrimaryView;CodeChannelEntityCard;ConnectedChannel;Channel;Content;ContextMenuTriggerWithKeyboardFocus;' +
+  'ChannelContextMenu;ChannelSidebar;ClientPrimaryView;RenderedViewContents;CodeChannelEntityCard;ConnectedChannel;Channel;Content;ContextMenuTriggerWithKeyboardFocus;' +
   'DmsChannel;DmsList;DmsListItem;EditFileDialogTitle;EditProfileFormPane;FileFieldset;GifListItem;GifPicker;HuddleBottomBarContent;' +
   'HuddleInviteWindowWithPreviewContent;HuddleMiniPanel;HuddleMvaWindowTitle;HuddleRecordingIndicator;LocalTimeRow;MemberProfileBaseEntity;' +
   'MemberSlug;Menu;Message;MessageActionsMenu;MessageAttachmentYouTube;MessageFile;MessageFiles;MessageKitAttachments;MessageText;' +

@@ -118,13 +118,25 @@ type Prefs struct {
 	IATheme string `json:"ia_theme,omitempty"`
 	// NoWindowGradients is window_background_gradients=false (Appearance >
 	// "Show gradients": a flat chrome instead of Slack's conic gradient).
-	NoWindowGradients bool     `json:"no_window_gradients,omitempty"`
-	EnterIsSpecial    bool     `json:"enter_is_special_in_tbt"`
+	NoWindowGradients bool `json:"no_window_gradients,omitempty"`
+	EnterIsSpecial    bool `json:"enter_is_special_in_tbt"`
+	// PlainTextMode is Preferences > Advanced > "Format messages with
+	// markup": the composer keeps markup as typed (no live formatting, no
+	// toolbar) and formats it when the message is sent.
+	PlainTextMode     bool     `json:"plain_text_mode"`
 	ShowTyping        bool     `json:"show_typing"`
 	ColorNames        bool     `json:"color_names_in_list"`
 	FrequentEmoji     []string `json:"frequent_emoji,omitempty"`
 	Muted             []string `json:"muted"`
 	HideInactiveConvs bool     `json:"hide_inactive"`
+	// Sidebar rules (see internal/core/sidebar_rules.go): the
+	// channel_sections pref (section id -> {"sidebar": filter, "sort": …,
+	// "c": collapsed}) and the prefs that group and hide rows.
+	SectionPrefs     map[string]map[string]string `json:"section_prefs,omitempty"`
+	ShowMutedOutside bool                         `json:"show_muted_outside,omitempty"` // show_muted_items_outside_sidebar_menus
+	BoostMentions    bool                         `json:"boost_mentions,omitempty"`
+	SeparatePrivate  bool                         `json:"separate_private,omitempty"`
+	UndoIntermix     bool                         `json:"undo_intermix,omitempty"` // undo_channel_intermix
 	// Notifications: global defaults and per-conversation overrides
 	// (users.prefs.get all_notifications_prefs).
 	GlobalDesktop string                   `json:"global_desktop,omitempty"` // everything | mentions_dms | nothing
@@ -161,6 +173,34 @@ type ChannelNotify struct {
 	Muted             bool   `json:"muted,omitempty"`
 	FollowAllThreads  bool   `json:"follow_all_threads,omitempty"`
 	SuppressAtChannel bool   `json:"suppress_at_channel,omitempty"`
+}
+
+// parseSectionPrefs reads the channel_sections pref, a JSON object of
+// section id -> {pref: value}; values become strings ("c":"0", "sidebar":"hid").
+func parseSectionPrefs(s string) map[string]map[string]string {
+	if s == "" {
+		return nil
+	}
+	var raw map[string]map[string]any
+	if json.Unmarshal([]byte(s), &raw) != nil {
+		return nil
+	}
+	out := make(map[string]map[string]string, len(raw))
+	for id, kv := range raw {
+		m := make(map[string]string, len(kv))
+		for k, v := range kv {
+			switch x := v.(type) {
+			case string:
+				m[k] = x
+			case nil:
+			default:
+				b, _ := json.Marshal(x)
+				m[k] = string(b)
+			}
+		}
+		out[id] = m
+	}
+	return out
 }
 
 // ParsePrefs extracts Prefs (and the muted set) from users.prefs.get.
@@ -215,8 +255,9 @@ func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
 		SidebarBehavior: str("sidebar_behavior"), ChannelSort: str("channel_sort"), Locale: str("locale"),
 		Theme: str("theme"), DarkMode: str("dark_mode"), SidebarTheme: str("sidebar_theme"), MessagesTheme: str("messages_theme"),
 		EnterIsSpecial: boolean("enter_is_special_in_tbt", false), ShowTyping: boolean("show_typing", true),
-		ColorNames: boolean("color_names_in_list", true),
-		IATheme:    jsonStr("ia_theme"), NoWindowGradients: !boolean("window_background_gradients", true),
+		ColorNames:    boolean("color_names_in_list", true),
+		PlainTextMode: boolean("plain_text_mode", false),
+		IATheme:       jsonStr("ia_theme"), NoWindowGradients: !boolean("window_background_gradients", true),
 		UnderlineLinks: boolean("underline_links", false), NoAnimations: !boolean("a11y_animations", true),
 		HideHexSwatch:  boolean("hide_hex_swatch", false),
 		NoInternalImgs: !boolean("expand_internal_inline_imgs", true), NoInlineImgs: !boolean("expand_inline_imgs", true),
@@ -224,6 +265,11 @@ func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
 		MarkReadImmediately: boolean("mark_msgs_read_immediately", false), StartAtOldest: boolean("start_scroll_at_oldest", false),
 	}
 	p.HideInactiveConvs = p.SidebarBehavior == "hide_inactive_channels"
+	p.ShowMutedOutside = boolean("show_muted_items_outside_sidebar_menus", false)
+	p.BoostMentions = boolean("boost_mentions", false)
+	p.SeparatePrivate = boolean("separate_private_channels", false)
+	p.UndoIntermix = boolean("undo_channel_intermix", false)
+	p.SectionPrefs = parseSectionPrefs(str("channel_sections"))
 	// Slack calls the Google set "android"/"google"; everything else is Apple.
 	switch p.EmojiMode {
 	case "android", "google":
@@ -874,6 +920,9 @@ func (s *Store) NoteMessage(ch string, m *slack.Message, mentionsSelf bool) slac
 	e.HasUnreads = true
 	c := s.Convs[ch]
 	isDM := c != nil && (c.IsIM || c.IsMPIM) || strings.HasPrefix(ch, "D")
+	if isDM && c != nil && c.IsMPIM && s.Muted[ch] {
+		isDM = false // a muted group DM badges on mentions only (Slack's unreadHighlightCnt)
+	}
 	if mentionsSelf || isDM {
 		e.MentionCount++
 	}

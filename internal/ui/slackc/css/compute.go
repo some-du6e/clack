@@ -572,7 +572,7 @@ func copyProp(prop string, cx *cctx, src *Style) {
 		st.WordSpacing = src.WordSpacing
 	case "text-align":
 		st.TextAlign = src.TextAlign
-	case "text-decoration-line":
+	case "text-decoration-line", "text-decoration-style":
 		st.TextDecoration = src.TextDecoration
 	case "text-decoration-color":
 		st.DecoColor = src.DecoColor
@@ -1313,9 +1313,18 @@ func (cx *cctx) apply(prop, v string) bool {
 		default:
 			return false
 		}
+	case "text-decoration-style":
+		switch k {
+		case "wavy":
+			st.TextDecoration |= DecoWavy
+		case "solid", "double", "dotted", "dashed":
+			st.TextDecoration &^= DecoWavy
+		default:
+			return false
+		}
 	case "text-decoration-line":
 		if k == "none" {
-			st.TextDecoration = 0
+			st.TextDecoration &^= DecoLines
 			return true
 		}
 		var d TextDecoration
@@ -1335,7 +1344,7 @@ func (cx *cctx) apply(prop, v string) bool {
 				return false
 			}
 		}
-		st.TextDecoration = d
+		st.TextDecoration = d | st.TextDecoration&^DecoLines
 	case "text-decoration-color":
 		if k == "currentcolor" {
 			st.DecoColor = color.NRGBA{}
@@ -2746,7 +2755,7 @@ resize appearance caret-color accent-color clip clip-path clip-rule mask mask-im
 mask-mode mask-origin mask-clip mask-composite mask-type -webkit-mask -webkit-mask-image -webkit-mask-size -webkit-mask-position
 -webkit-mask-repeat -webkit-mask-composite -webkit-mask-box-image isolation backface-visibility perspective perspective-origin
 transform-style transform-box direction unicode-bidi writing-mode text-orientation hyphens tab-size text-indent
-text-underline-offset text-underline-position text-decoration-style text-decoration-thickness text-decoration-skip-ink
+text-underline-offset text-underline-position text-decoration-thickness text-decoration-skip-ink
 text-decoration-skip text-emphasis text-emphasis-style text-emphasis-color text-emphasis-position text-justify text-align-last
 quotes counter-reset counter-increment counter-set orphans widows page-break-before page-break-after page-break-inside
 break-before break-after break-inside columns column-count column-width column-rule column-rule-width column-rule-style

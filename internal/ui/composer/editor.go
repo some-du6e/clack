@@ -147,6 +147,8 @@ type Editor struct {
 	clipText   string
 	clipDoc    *Doc
 	plainPaste bool
+	richRead   *clipRead     // HTML read started by Ctrl/Cmd+V
+	pendPaste  *pendingPaste // plain text waiting for richRead
 
 	events  []EditorEvent
 	filters []event.Filter
@@ -186,6 +188,13 @@ type Editor struct {
 	viewH     int
 	contentH  int
 	caretRect image.Rectangle
+
+	// emoji resolves typed ":name:" shortcodes (emoji_typed.go); nil
+	// leaves them as text.
+	emoji emojiLookup
+	// plainText is Slack's plain_text_mode ("Format messages with
+	// markup"): no live markup, the characters stay as typed.
+	plainText bool
 }
 
 // NewEditor returns an empty editor.
@@ -666,7 +675,43 @@ func (e *Editor) typeAt(lo, hi int, s string) {
 	e.commit()
 	if utf8.RuneCountInString(s) == 1 {
 		e.autoformat()
+	} else {
+		// Several runes in one input event (an IME commit, a fast
+		// batch): shortcodes they close still convert.
+		e.convertEmoji(lo, end)
 	}
+}
+
+// convertEmoji converts the shortcodes whose closing ':' lies in
+// [from, to), keeping the literal text as its own undo step. The caret
+// and anchor follow the edits.
+func (e *Editor) convertEmoji(from, to int) bool {
+	if e.emoji == nil {
+		return false
+	}
+	literal := e.snap()
+	eds := convertEmojiRange(e.doc, from, to, e.emoji)
+	if len(eds) == 0 {
+		return false
+	}
+	for _, ed := range eds {
+		e.anchor, e.caret = ed.mapPos(e.anchor), ed.mapPos(e.caret)
+	}
+	e.pushUndo(literal)
+	e.redo = e.redo[:0]
+	e.lastKind = edOther
+	e.commit()
+	return true
+}
+
+// ConvertEmoji converts every complete shortcode in the document (the
+// custom emoji set landed after they were typed). It reports a change.
+func (e *Editor) ConvertEmoji() bool {
+	e.init()
+	if !hasShortcodeColon(e.doc) {
+		return false
+	}
+	return e.convertEmoji(0, e.doc.Len())
 }
 
 // autoformat applies live markdown after a typed rune, keeping the literal
@@ -677,6 +722,19 @@ func (e *Editor) autoformat() {
 		return
 	}
 	r := e.doc.Runes[c-1]
+	if r == ':' && e.emoji != nil {
+		literal := e.snap()
+		if ed, ok := convertEmojiAt(e.doc, c-1, e.emoji); ok {
+			e.pushUndo(literal)
+			e.anchor, e.caret = ed.mapPos(e.anchor), ed.mapPos(e.caret)
+			e.lastKind = edOther
+			e.commit()
+		}
+		return
+	}
+	if e.plainText {
+		return // "Format messages with markup": markup stays as typed
+	}
 	custom := InlineMarkup != nil
 	if r != ' ' && r != '`' && r != '*' && r != '_' && r != '~' && !(custom && markupTrigger(r)) {
 		return
@@ -688,6 +746,16 @@ func (e *Editor) autoformat() {
 			e.anchor, e.caret = nc, nc
 			e.lastKind = edOther
 			e.commit()
+			return
+		}
+	}
+	if r == '`' {
+		if nc, ok := autoformatFence(e.doc, c); ok {
+			e.pushUndo(literal)
+			e.anchor, e.caret = nc, nc
+			e.lastKind = edOther
+			e.commit()
+			e.setPending(0)
 			return
 		}
 	}
@@ -709,9 +777,18 @@ func (e *Editor) autoformat() {
 
 // paste inserts clipboard text: the rich copy if it is ours, a link on the
 // selection if it is a single URL, plain text otherwise.
-func (e *Editor) paste(s string) {
+func (e *Editor) paste(s string) { e.pasteHTML(s, "") }
+
+// pasteHTML is paste with the clipboard's HTML, if any: the rich copy if
+// it is ours, a link on the selection if the text is a single URL, the
+// HTML's formatting, a list if the text looks like one, else plain text.
+// Code blocks and inline code take plain text, as does Shift (paste and
+// match style).
+func (e *Editor) pasteHTML(s, html string) {
 	e.init()
-	plain := e.plainPaste
+	// Under "Format messages with markup" the composer shows no
+	// formatting, so pastes go in as text like typing does.
+	plain := e.plainPaste || e.plainText
 	e.plainPaste = false
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	if s == "" {
@@ -730,9 +807,26 @@ func (e *Editor) paste(s string) {
 	a := e.typingAttr(lo, hi)
 	d.Delete(lo, hi)
 	var end int
-	if !plain && e.clipDoc != nil && s == strings.ReplaceAll(e.clipText, "\r\n", "\n") {
+	line := d.LineOf(lo)
+	own := !plain && e.clipDoc != nil && s == strings.ReplaceAll(e.clipText, "\r\n", "\n")
+	var rich *Doc
+	if !plain && !own && a.Style&Code == 0 && d.Lines[line].Kind != CodeBlock {
+		if html != "" {
+			rich = docFromHTML(html)
+		}
+		if rich == nil {
+			rich = docFromPlainText(s, lo == d.LineStart(line))
+		}
+	}
+	switch {
+	case own:
 		end = d.InsertDoc(lo, e.clipDoc)
-	} else {
+	case rich != nil:
+		end = e.pasteRich(lo, rich)
+		if LinkTransforms != nil {
+			end = transformPastedLinks(d, lo, end)
+		}
+	default:
 		end = d.Insert(lo, s, Attr{Style: a.Style})
 		if LinkTransforms != nil && a.Style&Code == 0 {
 			end = transformPastedLinks(d, lo, end)
@@ -740,6 +834,7 @@ func (e *Editor) paste(s string) {
 	}
 	e.anchor, e.caret = end, end
 	e.commit()
+	e.convertEmoji(lo, end) // pasted ":name:" shortcodes, like Slack
 }
 
 // edIsURL reports whether s is a single http(s) URL token.
@@ -780,6 +875,7 @@ func (e *Editor) Update(gtx layout.Context) (EditorEvent, bool) {
 	if ev, ok := e.pop(); ok {
 		return ev, true
 	}
+	e.flushPaste(gtx)
 	e.processPointer(gtx)
 	if len(e.events) == 0 {
 		e.processKeys(gtx)
@@ -932,7 +1028,7 @@ func (e *Editor) processKeys(gtx layout.Context) {
 			b, err := io.ReadAll(rc)
 			rc.Close()
 			if err == nil {
-				e.paste(string(b))
+				e.receivePaste(gtx, string(b))
 			}
 		case key.SelectionEvent:
 			if e.ime.echoOK && key.Range(ev) == e.ime.echo {

@@ -51,6 +51,9 @@ type Cache struct {
 
 	sem chan struct{}
 	ctx context.Context
+
+	wakeAt time.Time // the next animation frame's repaint (anim.go)
+	wakeT  *time.Timer
 }
 
 type key struct {
@@ -64,6 +67,7 @@ type entry struct {
 	size image.Point
 	n    int   // decoded bytes
 	used int64 // unix seconds of the last Get (idle eviction)
+	anim *anim // frames of an animated GIF (anim.go), else nil
 }
 
 // IdleAfter: images not asked for in this long are dropped by a sweep every
@@ -165,8 +169,14 @@ func (c *Cache) Get(url string, sizePx int) (paint.ImageOp, bool) {
 	if el, ok := c.entries[k]; ok {
 		c.lru.MoveToFront(el)
 		e := el.Value.(*entry)
-		e.used = time.Now().Unix()
+		now := time.Now()
+		e.used = now.Unix()
 		op := e.op
+		if a := e.anim; a != nil {
+			i, next := a.frameAt(now)
+			op = a.frames[i]
+			c.wakeLocked(next)
+		}
 		c.mu.Unlock()
 		return op, true
 	}
@@ -220,7 +230,7 @@ func (c *Cache) startLocked(k key) {
 
 func (c *Cache) load(k key) {
 	c.sem <- struct{}{}
-	op, sz, n, err := c.loadImage(k)
+	op, sz, n, an, err := c.loadImage(k)
 	<-c.sem
 	c.mu.Lock()
 	delete(c.inflight, k)
@@ -228,7 +238,7 @@ func (c *Cache) load(k key) {
 		c.failed[k] = time.Now()
 	} else {
 		delete(c.failed, k)
-		e := &entry{k: k, op: op, size: sz, n: n, used: time.Now().Unix()}
+		e := &entry{k: k, op: op, size: sz, n: n, used: time.Now().Unix(), anim: an}
 		c.entries[k] = c.lru.PushFront(e)
 		c.bytes += n
 		c.evict()
@@ -248,18 +258,41 @@ func (c *Cache) evict() {
 	}
 }
 
-func (c *Cache) loadImage(k key) (paint.ImageOp, image.Point, int, error) {
+func (c *Cache) loadImage(k key) (paint.ImageOp, image.Point, int, *anim, error) {
 	data, save, err := c.raw(k.url)
 	if err != nil {
-		return paint.ImageOp{}, image.Point{}, 0, err
+		return paint.ImageOp{}, image.Point{}, 0, nil, err
+	}
+	if isGIF(data) {
+		if err := checkSize(data); err != nil {
+			return paint.ImageOp{}, image.Point{}, 0, nil, err
+		}
+		frames, delays, err := decodeGIF(data, k.size, k.size <= 0 || k.size > MaxAnimPx)
+		if err != nil {
+			return paint.ImageOp{}, image.Point{}, 0, nil, err
+		}
+		save()
+		first := paint.NewImageOp(frames[0])
+		if len(frames) == 1 {
+			return first, frames[0].Bounds().Size(), len(frames[0].Pix), nil, nil
+		}
+		a := &anim{start: time.Now()}
+		n := 0
+		for i, f := range frames {
+			a.frames = append(a.frames, paint.NewImageOp(f))
+			a.total += delays[i]
+			a.ends = append(a.ends, a.total)
+			n += len(f.Pix)
+		}
+		return first, frames[0].Bounds().Size(), n, a, nil
 	}
 	img, err := Decode(data)
 	if err != nil {
-		return paint.ImageOp{}, image.Point{}, 0, err
+		return paint.ImageOp{}, image.Point{}, 0, nil, err
 	}
 	save() // only bytes that decoded as an image reach the disk tier
 	rgba := Scale(img, k.size)
-	return paint.NewImageOp(rgba), rgba.Bounds().Size(), len(rgba.Pix), nil
+	return paint.NewImageOp(rgba), rgba.Bounds().Size(), len(rgba.Pix), nil, nil
 }
 
 // MaxPixels bounds the decoded size of one image (width × height), so a
@@ -275,15 +308,23 @@ var ErrTooBig = errors.New("imgcache: image dimensions too large")
 
 // Decode decodes data after checking its header's dimensions.
 func Decode(data []byte) (image.Image, error) {
-	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
-	if err != nil {
+	if err := checkSize(data); err != nil {
 		return nil, err
-	}
-	if cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > MaxSide || cfg.Height > MaxSide || cfg.Width*cfg.Height > MaxPixels {
-		return nil, ErrTooBig
 	}
 	img, _, err := image.Decode(bytes.NewReader(data))
 	return img, err
+}
+
+// checkSize reads the header's dimensions only.
+func checkSize(data []byte) error {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > MaxSide || cfg.Height > MaxSide || cfg.Width*cfg.Height > MaxPixels {
+		return ErrTooBig
+	}
+	return nil
 }
 
 // raw returns the encoded bytes from disk (DiskOK URLs only: avatars and

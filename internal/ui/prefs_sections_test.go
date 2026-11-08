@@ -134,6 +134,11 @@ func TestPrefsRoundTrip(t *testing.T) {
 		user("enter_is_special_in_tbt", true, func() bool { return ca.Prefs().EnterIsSpecial }),
 		user("confirm_clear_all_unreads", false, func() bool { return !ca.PrefBool("confirm_clear_all_unreads", true) }),
 		user("sidebar_behavior", "hide_read_channels", func() bool { return ca.Prefs().SidebarBehavior == "hide_read_channels" }),
+		user("channel_sort", "recent", func() bool { return ca.Prefs().ChannelSort == "recent" }),
+		user("separate_private_channels", true, func() bool { return ca.Prefs().SeparatePrivate }),
+		user("undo_channel_intermix", true, func() bool { return ca.Prefs().UndoIntermix }),
+		user("boost_mentions", true, func() bool { return ca.Prefs().BoostMentions }),
+		user("show_muted_items_outside_sidebar_menus", true, func() bool { return ca.Prefs().ShowMutedOutside }),
 		user("who_can_see_account_by_searching_email", "NO_ONE", func() bool { return ca.PrefString("who_can_see_account_by_searching_email") == "NO_ONE" }),
 		user("who_can_share_contact_card", "TEAM_MEMBERS", func() bool { return ca.PrefString("who_can_share_contact_card") == "TEAM_MEMBERS" }),
 		user("priority_dnd_override", true, func() bool { return ca.PrefBool("priority_dnd_override", false) }),
@@ -236,36 +241,18 @@ func TestWantsNotify(t *testing.T) {
 	}
 }
 
-// Home > Filter conversations by (sidebar_behavior).
-func TestSidebarBehaviorFilter(t *testing.T) {
-	now := time.Unix(1_800_000_000, 0)
-	old := "1700000000.000100" // > 30 days before now
-	recent := "1799999000.000100"
-	read := &convInfo{ID: "C1", Latest: recent}
-	unread := &convInfo{ID: "C2", Unread: true, Latest: recent}
-	mention := &convInfo{ID: "C3", Unread: true, Mentions: 1}
-	dormant := &convInfo{ID: "C4", Latest: old}
-	for _, c := range []struct {
-		behavior, sec string
-		c             *convInfo
-		cur           string
-		want          bool
-	}{
-		{"", "channels", dormant, "", true},
-		{"hide_read_channels", "channels", read, "", false},
-		{"hide_read_channels", "channels", unread, "", true},
-		{"hide_read_channels", "channels", read, "C1", true}, // the open one stays
-		{"show_mentions_only", "channels", unread, "", false},
-		{"show_mentions_only", "channels", mention, "", true},
-		{"hide_read_channels_unless_starred", "stars", read, "", true},
-		{"hide_read_channels_unless_starred", "channels", read, "", false},
-		{"hide_inactive_channels", "channels", read, "", true},
-		{"hide_inactive_channels", "channels", dormant, "", false},
-		{"hide_inactive_channels", "channels", &convInfo{ID: "C5"}, "", true}, // no activity known
-	} {
-		if got := sbShows(c.behavior, c.sec, c.c, c.cur, now); got != c.want {
-			t.Errorf("%q %s %s cur=%q: %v, want %v", c.behavior, c.sec, c.c.ID, c.cur, got, c.want)
-		}
+// Home's sidebar prefs (sidebar_behavior, channel_sort, boost_mentions…)
+// are applied by core's sidebar rules (internal/core/sidebar_rules.go and
+// its tests); a "prefs" event rebuilds the sidebar from a fresh snapshot.
+func TestPrefsEventResnapshots(t *testing.T) {
+	a, ca, _ := fakePrefsApp(t)
+	b := a.data
+	b.handle(a, core.Event{Type: "prefs", Prefs: func() *core.Prefs { p := ca.Prefs(); return &p }()})
+	b.snapMu.Lock()
+	pending := b.snapPending
+	b.snapMu.Unlock()
+	if !pending {
+		t.Fatal("a prefs event didn't rebuild the sidebar")
 	}
 }
 

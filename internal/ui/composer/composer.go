@@ -55,6 +55,7 @@ type Composer struct {
 	lastTyping time.Time
 	typingOn   bool // typing reported since the composer was last empty
 	lastVer    uint64
+	emojiVer   uint64 // custom emoji set version the doc was last scanned at
 
 	// Server draft sync (syncDraftCreate / syncDraftUpdates /
 	// deleteDraftApi): see drafts_sync.go.
@@ -76,6 +77,23 @@ type Composer struct {
 	wPane, wInput layout.Widget
 	wEditor, wAtt layout.Widget
 	keyS, draftS  string
+}
+
+// plainTextLocal is the "Format messages with markup" choice made in
+// Clack's Preferences; until then Slack's plain_text_mode pref decides.
+var plainTextLocal *bool
+
+// SetPlainTextMode sets Preferences > Advanced > "Format messages with
+// markup" (Slack's plain_text_mode) for every composer.
+func SetPlainTextMode(on bool) { plainTextLocal = &on }
+
+// PlainTextMode reports the effective setting: the local choice, else the
+// pref Slack sent (off by default: live formatting, like Slack).
+func PlainTextMode(a *core.App) bool {
+	if plainTextLocal != nil {
+		return *plainTextLocal
+	}
+	return a != nil && coreAPI{a}.plainTextMode()
 }
 
 // showFormatting is Slack's "Show formatting" (Aa) toggle; one setting for
@@ -118,6 +136,11 @@ func NewEdit(h Host, m core.Message, onDone func()) *Composer {
 
 func (c *Composer) init() {
 	c.ed = NewEditor()
+	if c.api.a != nil {
+		warmEmoji()
+		c.ed.emoji = c.lookupEmoji
+		c.emojiVer = c.api.emojiVersion()
+	}
 	c.ac = newAutocomplete(c.h, c.ch)
 	bindAutocomplete(c.ed, c.ac, c.h.Invalidate)
 	c.ac.later, c.ac.thread = c.later, c.ts != ""
@@ -160,11 +183,48 @@ func (c *Composer) Close() {
 func (c *Composer) emojiAtom(name string) *Atom {
 	name = strings.Trim(name, ":")
 	url, txt, _ := c.api.emoji(name)
-	a := &Atom{Kind: AtomEmoji, ID: name, Text: ":" + name + ":", URL: url}
-	if txt != "" && !strings.HasPrefix(txt, ":") {
-		a.Uni = txt
+	return emojiAtomFrom(name, url, txt)
+}
+
+// lookupEmoji resolves a typed shortcode against the loaded set: the
+// custom map (aliases followed) then the standard table, both O(1).
+func (c *Composer) lookupEmoji(name string) (*Atom, bool) {
+	url, txt, ok := c.api.emoji(name)
+	if !ok {
+		return nil, false
 	}
-	return a
+	return emojiAtomFrom(name, url, txt), true
+}
+
+// syncEmojiSet converts shortcodes typed before the custom emoji set they
+// name had loaded (or changed): once per new set version.
+func (c *Composer) syncEmojiSet() {
+	if c.api.a == nil {
+		return
+	}
+	if v := c.api.emojiVersion(); v != c.emojiVer {
+		c.emojiVer = v
+		if c.ed.ConvertEmoji() {
+			c.h.Invalidate()
+		}
+	}
+}
+
+// prepareSend is the document submit serializes: a copy with every
+// remaining ":name:" shortcode as an emoji (Slack converts on send too)
+// and, under "Format messages with markup", the typed markup parsed into
+// formatting the way Slack's send does.
+func (c *Composer) prepareSend(d *Doc) *Doc {
+	doc := d.Clone()
+	var look emojiLookup
+	if c.api.a != nil {
+		look = c.lookupEmoji
+	}
+	convertEmojiRange(doc, 0, doc.Len(), look)
+	if PlainTextMode(c.api.a) && c.api.a != nil {
+		doc = parseMarkup(doc, c.api.resolver())
+	}
+	return doc
 }
 
 // ---- layout ----
@@ -189,6 +249,8 @@ func (c *Composer) Layout(gtx layout.Context) layout.Dimensions {
 		c.focusReq = false
 		c.ed.Focus(gtx)
 	}
+	c.ed.plainText = PlainTextMode(c.api.a)
+	c.syncEmojiSet()
 	c.handleEditor(gtx)
 	c.handleActions(gtx)
 
@@ -317,7 +379,7 @@ func applyPick(ed *Editor, it acItem, start, end int) {
 func (c *Composer) chromeState(gtx layout.Context) chromeState {
 	st := chromeState{
 		Focused:        c.ed.Focused(gtx),
-		ShowFormatting: showFormatting,
+		ShowFormatting: showFormatting && !c.ed.plainText, // Slack hides the toolbar under markup mode
 		Active:         c.ed.ActiveStyle(),
 		Block:          c.ed.ActiveBlock(),
 		Link:           c.ed.ActiveLink(),
@@ -569,7 +631,7 @@ func (c *Composer) schedule(t time.Time) {
 		c.h.Toast("Pick a time in the future")
 		return
 	}
-	doc := c.ed.Doc().Clone()
+	doc := c.prepareSend(c.ed.Doc())
 	text, blocks := doc.Mrkdwn(), doc.RichTextBlocks()
 	api, ch, ts := c.api, c.ch, c.ts
 	broadcast := c.broadcast && ts != ""
@@ -599,7 +661,7 @@ func (c *Composer) submit() {
 		}
 		return
 	}
-	doc := d.Clone()
+	doc := c.prepareSend(d)
 	text := doc.Mrkdwn()
 	blocks := doc.RichTextBlocks()
 	api, ch, ts := c.api, c.ch, c.ts
@@ -627,7 +689,7 @@ func (c *Composer) submit() {
 	// Slash commands (only when the message starts with a known command
 	// or any /word; Slack sends unknown /words as commands too).
 	if c.att.Len() == 0 {
-		plain := strings.TrimSpace(doc.Text())
+		plain := strings.TrimSpace(d.Text()) // as typed: markup mode must not eat a command's * or _
 		if strings.HasPrefix(plain, "/") && !strings.HasPrefix(plain, "//") {
 			cmd, rest, _ := strings.Cut(plain, " ")
 			c.clearAfterSend()

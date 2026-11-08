@@ -91,6 +91,16 @@ var knownAuthors = map[string]Author{
 	"adryd":   {"adryd", "", "https://adryd.com"},
 }
 
+// KnownAuthors are the people Taut's plugins credit by key, by name.
+func KnownAuthors() []Author {
+	out := make([]Author, 0, len(knownAuthors))
+	for _, a := range knownAuthors {
+		out = append(out, a)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
 func resolveAuthors(raw json.RawMessage) ([]Author, string) {
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
