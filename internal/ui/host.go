@@ -76,6 +76,10 @@ func (a *App) Forward() {
 func (a *App) afterRoute(prev, r Route) {
 	a.slickRoute(r)
 	ch := r.Channel()
+	a.trackPreviewRoute(prev, r)
+	if a.data != nil && a.data.core != nil {
+		a.data.core.SetSelected(ch) // Slack's currentlySelectedId: a previewed channel gets a sidebar row
+	}
 	if prev.Channel() != ch {
 		// leaving a channel closes its thread/details pane (Slack keeps the
 		// pane only within the same conversation).

@@ -60,7 +60,18 @@ const (
 	TeamID       = "T0FAKE0001"
 	EnterpriseID = "E0FAKE0001"
 	SelfID       = "U0SELF0001"
+
+	// PreviewChannelID is a public channel the viewer isn't in; opening it
+	// shows Slack's join pane. ArchivedChannelID is an archived one.
+	PreviewChannelID  = "C0OTHER00001"
+	ArchivedChannelID = "C0OTHER00002"
 )
+
+// JoinCall is one conversations.join the fake answered.
+type JoinCall struct {
+	Channel      string
+	ExpirationTS string // "" for a permanent join
+}
 
 // Server is a running fake.
 type Server struct {
@@ -71,8 +82,15 @@ type Server struct {
 	ln    net.Listener
 	users []slack.User
 	convs []slack.Conversation
-	emoji map[string]string
-	words []string
+
+	// others are channels the viewer is not in (channel previews):
+	// conversations.info answers them with is_member false, and
+	// conversations.join moves them into convs (Joins records each call).
+	convMu sync.Mutex
+	others []slack.Conversation
+	Joins  []JoinCall
+	emoji  map[string]string
+	words  []string
 
 	imgMu sync.Mutex
 	imgs  map[string][]byte
@@ -373,6 +391,77 @@ func (s *Server) generate() {
 		s.convs = append(s.convs, slack.Conversation{ID: fmt.Sprintf("D0FAKE%05d", i), IsIM: true, User: s.users[i+1].ID,
 			IsOpen: true, Created: now - int64(r.Intn(1e7)), Priority: r.Float64()})
 	}
+	// channels the viewer isn't in (fixed names: screenshot tests read them)
+	s.others = []slack.Conversation{
+		{ID: PreviewChannelID, Name: "lounge-preview", IsChannel: true, Created: now - 9e7, Creator: s.users[1].ID,
+			NumMembers: 4210, ContextTeamID: TeamID, Topic: &slack.Purpose{Value: "Say hi"},
+			Purpose: &slack.Purpose{Value: "A channel you can read before joining. Ask questions, share what you made."}},
+		{ID: ArchivedChannelID, Name: "old-hackathon", IsChannel: true, IsArchived: true, Created: now - 2e8,
+			Creator: s.users[2].ID, NumMembers: 37, ContextTeamID: TeamID, Purpose: &slack.Purpose{Value: "Archived."}},
+	}
+}
+
+// conv finds a conversation by id: the viewer's, then the others.
+func (s *Server) conv(id string) (slack.Conversation, bool) {
+	s.convMu.Lock()
+	defer s.convMu.Unlock()
+	for _, c := range s.convs {
+		if c.ID == id {
+			return c, true
+		}
+	}
+	for _, c := range s.others {
+		if c.ID == id {
+			return c, true
+		}
+	}
+	return slack.Conversation{}, false
+}
+
+// join is conversations.join: an unarchived channel the viewer isn't in
+// moves into its conversations.
+func (s *Server) join(f url.Values) any {
+	id := f.Get("channel")
+	s.convMu.Lock()
+	defer s.convMu.Unlock()
+	s.Joins = append(s.Joins, JoinCall{Channel: id, ExpirationTS: f.Get("expiration_ts")})
+	for _, c := range s.convs {
+		if c.ID == id {
+			return ok("channel", c, "already_in_channel", true)
+		}
+	}
+	for i, c := range s.others {
+		if c.ID != id {
+			continue
+		}
+		if c.IsArchived {
+			return map[string]any{"ok": false, "error": "is_archived"}
+		}
+		c.IsMember = true
+		s.others = append(s.others[:i], s.others[i+1:]...)
+		s.convs = append(s.convs, c)
+		return ok("channel", c)
+	}
+	return map[string]any{"ok": false, "error": "channel_not_found"}
+}
+
+// SetProperties replaces a conversation's properties (posting_restricted_to
+// …) in what conversations.info and users.conversations answer.
+func (s *Server) SetProperties(id string, props json.RawMessage) {
+	s.convMu.Lock()
+	defer s.convMu.Unlock()
+	for i := range s.convs {
+		if s.convs[i].ID == id {
+			s.convs[i].Properties = props
+		}
+	}
+}
+
+// JoinCalls returns the conversations.join calls so far.
+func (s *Server) JoinCalls() []JoinCall {
+	s.convMu.Lock()
+	defer s.convMu.Unlock()
+	return append([]JoinCall(nil), s.Joins...)
 }
 
 func title(s string) string {
@@ -563,7 +652,10 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	case "auth.test":
 		return ok("url", s.URL, "team", "Fake Club", "user", "self", "team_id", TeamID, "user_id", SelfID, "enterprise_id", EnterpriseID)
 	case "users.conversations":
-		return ok("channels", s.convs, "response_metadata", map[string]string{"next_cursor": ""})
+		s.convMu.Lock()
+		cs := append([]slack.Conversation(nil), s.convs...)
+		s.convMu.Unlock()
+		return ok("channels", cs, "response_metadata", map[string]string{"next_cursor": ""})
 	case "client.counts":
 		var chans, ims []slack.CountEntry
 		for i, c := range s.convs {
@@ -596,7 +688,7 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	case "experiments.getByUser": // the sidebar experiments as a real account has them (2026-11-08)
 		g := func(group string) map[string]any { return map[string]any{"group": group} }
 		return ok("assignments", map[string]any{"filter_dormant_channels": g("on"), "improve_mute_pref": g("on"),
-			"dm_recency_sort_rollout": g("without_edu"), "reskin_custom_responses": g("on")})
+			"dm_recency_sort_rollout": g("without_edu"), "reskin_custom_responses": g("on"), "temp_join_channel": g("on")})
 	case "users.channelSections.list":
 		var secs []map[string]any
 		ids := s.ChannelIDs()
@@ -615,7 +707,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 				"channel_ids_page": map[string]any{"channel_ids": ids[lo:hi], "count": hi - lo}})
 		}
 		secs = append(secs, map[string]any{"channel_section_id": "L0FAKECH", "name": "", "type": "channels"},
-			map[string]any{"channel_section_id": "L0FAKEDM", "name": "", "type": "direct_messages"})
+			map[string]any{"channel_section_id": "L0FAKEDM", "name": "", "type": "direct_messages"},
+			map[string]any{"channel_section_id": "L0FAKETMP", "name": "", "type": "temporary_channels"})
 		return ok("channel_sections", secs)
 	case "users.prefs.get":
 		s.prefsMu.Lock()
@@ -689,12 +782,12 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	case "conversations.replies":
 		return ok("messages", []any{}, "has_more", false)
 	case "conversations.info":
-		for _, c := range s.convs {
-			if c.ID == f.Get("channel") {
-				return ok("channel", c)
-			}
+		if c, found := s.conv(f.Get("channel")); found {
+			return ok("channel", c)
 		}
 		return map[string]any{"ok": false, "error": "channel_not_found"}
+	case "conversations.join":
+		return s.join(f)
 	case "chat.postMessage":
 		ts := fmt.Sprintf("%d.%06d", time.Now().Unix(), time.Now().Nanosecond()/1000)
 		return ok("ts", ts, "channel", f.Get("channel"), "message", map[string]any{"type": "message", "ts": ts, "user": SelfID, "text": f.Get("text")})

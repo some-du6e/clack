@@ -147,13 +147,17 @@ type App struct {
 	firstPaint  bool
 	frameStats  frameStats
 	lastChannel string
-	pxPerDp     float32
-	chTab       map[string]int
-	clipboard   string
-	prefs       prefs
-	prefsDirty  bool
-	prefsSave   prefsSaver // ui.json writer (prefs.go)
-	slickMode   struct {   // slickSetDark's worker (taut_wire.go)
+	// previewFrom is the channel-browser route previewFromCh was opened
+	// from ("Back to All channels", joinpane.go)
+	previewFrom   Route
+	previewFromCh string
+	pxPerDp       float32
+	chTab         map[string]int
+	clipboard     string
+	prefs         prefs
+	prefsDirty    bool
+	prefsSave     prefsSaver // ui.json writer (prefs.go)
+	slickMode     struct {   // slickSetDark's worker (taut_wire.go)
 		mu   sync.Mutex
 		s    *slick.Slick
 		dark bool

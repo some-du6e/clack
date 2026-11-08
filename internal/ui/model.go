@@ -48,6 +48,8 @@ type convInfo struct {
 	Members        []string
 	Muted          bool
 	Archived       bool
+	Preview        bool   // a channel the viewer isn't in (core.Conv.Preview): the join pane
+	Purpose        string // the join pane's description
 	Unread         bool
 	Mentions       int
 	Self           bool // DM with yourself

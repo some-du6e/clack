@@ -56,6 +56,8 @@ type App struct {
 	icon      teamIconState           // the rail's workspace icon (team_icon.go)
 	rxn       reactState              // the viewer's reactions in flight (reactions.go)
 	drafts    draftCache              // the viewer's server drafts (drafts.go), memory only
+	selected  string                  // the open conversation (SetSelected, preview.go)
+	temp      map[string]int64        // temporary memberships: channel -> expiration_ts (preview.go)
 
 	// Realtime (Slack's websocket gateway) is opt-in; see SetRealtime.
 	rtMu      sync.Mutex
@@ -757,6 +759,9 @@ func (a *App) Snapshot() Snapshot {
 	selfID := a.S.Self.ID
 	prefs := a.S.Prefs
 	a.S.RUnlock()
+	if c, ok := a.selectedExt(); ok { // a previewed channel's row (preview.go)
+		cs = append(cs, c)
+	}
 	convs := make([]Conv, 0, len(cs))
 	ids := []string{selfID}
 	for _, c := range cs {
@@ -901,7 +906,9 @@ func (a *App) conv(c *slack.Conversation) Conv {
 		v.NumMembers = n // people, as Slack's header counts them (no bots/apps)
 	}
 	v.Starred = a.starred[c.ID]
+	v.TempUntil = a.temp[c.ID]
 	a.mu.Unlock()
+	v.Preview = a.isPreviewConv(c)
 	return v
 }
 
@@ -1165,17 +1172,27 @@ func (a *App) sections(convs []Conv) []Section {
 	for _, c := range convs {
 		names[c.ID] = a.sortName(c)
 	}
-	secOf := assignSections(ordered, starred)
-	// Slack's candidates: closed DMs leave every section (sidebar_rules.go)
+	var temp map[string]bool // temporary memberships, under temp_join_channel (preview.go)
+	if a.TempJoinEnabled() {
+		temp = a.tempChannels(time.Now())
+	}
+	secOf := assignSections(ordered, starred, temp)
+	sel := a.selectedID()
+	// Slack's candidates: closed DMs leave every section (sidebar_rules.go),
+	// except the open one (currentlySelectedId, preview.go)
 	isDMKind := func(id string) bool {
 		c, ok := a.S.Conv(id)
 		return ok && (c.IsIM || c.IsMPIM)
 	}
-	visibleDM := func(id string) bool { return !isDMKind(id) || a.dmCandidate(id) }
+	visibleDM := func(id string) bool { return id == sel || !isDMKind(id) || a.dmCandidate(id) }
 	for _, s := range ordered {
 		switch s.Type {
-		case "salesforce_records", "slack_connect", "temporary_channels", "agents":
+		case "salesforce_records", "slack_connect", "agents":
 			if len(s.ChannelIDsPage.ChannelIDs) == 0 {
+				continue
+			}
+		case "temporary_channels": // shown while the viewer has a temporary channel (lJBI)
+			if len(s.ChannelIDsPage.ChannelIDs) == 0 && len(temp) == 0 {
 				continue
 			}
 		}
@@ -1184,8 +1201,18 @@ func (a *App) sections(convs []Conv) []Section {
 			sv.EmojiURL, _, _ = a.S.Emoji(strings.Trim(sv.Emoji, ":"))
 		}
 		ids := s.ChannelIDsPage.ChannelIDs
-		if s.Type == "stars" { // starred membership comes from stars.list
+		switch s.Type {
+		case "stars": // starred membership comes from stars.list
 			ids = append(append([]string(nil), ids...), starred...)
+		case "temporary_channels": // membership comes from the temporary channel store
+			ids = append([]string(nil), ids...)
+			for id := range temp {
+				ids = append(ids, id)
+			}
+			sort.Strings(ids)
+			if sv.Name == "" {
+				sv.Name = "Temporary channels"
+			}
 		}
 		for _, id := range ids {
 			if s.Type == "direct_messages" && a.isAppDM(id) {
@@ -1197,7 +1224,7 @@ func (a *App) sections(convs []Conv) []Section {
 			if secOf[id] != s.ID {
 				continue // Slack files it in another section (starred first)
 			}
-			if _, ok := a.S.Conv(id); ok && !assigned[id] {
+			if _, ok := a.sidebarConv(id); ok && !assigned[id] {
 				sv.Channels = append(sv.Channels, id)
 				assigned[id] = true
 			}

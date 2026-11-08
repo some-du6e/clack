@@ -862,56 +862,13 @@ func (m *mirror) channel(c *slack.Conversation) map[string]any {
 	return e
 }
 
-type restriction struct {
-	Type []string `json:"type"`
-	User []string `json:"user"`
-}
-
 // restrictions reports whether the viewer can't post at the top level /
-// can't reply in threads (Slack's posting_restricted_to /
-// threads_restricted_to properties), the source of readOnlyChannels and
-// threadOnlyChannels.
+// can't reply in threads, the source of readOnlyChannels and
+// threadOnlyChannels. The rule is Slack's (core/posting.go:
+// setPostingPermissions + computeChannelPostingPermissions).
 func (m *mirror) restrictions(c *slack.Conversation) (postRestricted, threadRestricted bool) {
-	if len(c.Properties) == 0 {
-		return false, false
-	}
-	var p struct {
-		Posting *restriction `json:"posting_restricted_to"`
-		Threads *restriction `json:"threads_restricted_to"`
-	}
-	if json.Unmarshal(c.Properties, &p) != nil {
-		return false, false
-	}
-	self, _ := m.t.app.S.User(m.t.app.S.SelfID())
-	blocked := func(r *restriction) bool {
-		if r == nil || (len(r.Type) == 0 && len(r.User) == 0) {
-			return false
-		}
-		id := m.t.app.S.SelfID()
-		for _, u := range r.User {
-			if u == id {
-				return false
-			}
-		}
-		for _, t := range r.Type {
-			switch t {
-			case "ra": // regular accounts and up
-				if self == nil || (!self.IsRestricted && !self.IsUltraRestricted) {
-					return false
-				}
-			case "admin":
-				if self != nil && (self.IsAdmin || self.IsOwner) {
-					return false
-				}
-			case "owner":
-				if self != nil && self.IsOwner {
-					return false
-				}
-			}
-		}
-		return true
-	}
-	return blocked(p.Posting), blocked(p.Threads)
+	p := m.t.app.PostingFor(c)
+	return p.ReadOnly || p.ThreadOnly, p.ReadOnly
 }
 
 func (m *mirror) member(u *slack.User) map[string]any {

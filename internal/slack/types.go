@@ -193,8 +193,10 @@ type User struct {
 }
 
 type EnterpriseUser struct {
-	ID    string   `json:"id,omitempty"`
-	Teams []string `json:"teams,omitempty"`
+	ID      string   `json:"id,omitempty"`
+	Teams   []string `json:"teams,omitempty"`
+	IsAdmin bool     `json:"is_admin,omitempty"`
+	IsOwner bool     `json:"is_owner,omitempty"`
 }
 
 type Profile struct {
@@ -257,6 +259,14 @@ type Conversation struct {
 	Priority      float64         `json:"priority,omitempty"`
 	IsOpen        bool            `json:"is_open,omitempty"`
 	ContextTeamID string          `json:"context_team_id,omitempty"`
+
+	// Posting permissions as the server states them; nil when absent, and
+	// then they come from properties.posting_restricted_to /
+	// threads_restricted_to (core/posting.go).
+	IsReadOnly         *bool  `json:"is_read_only,omitempty"`
+	IsThreadOnly       *bool  `json:"is_thread_only,omitempty"`
+	IsNonThreadable    bool   `json:"is_non_threadable,omitempty"`
+	ConversationHostID string `json:"conversation_host_id,omitempty"`
 }
 
 type Purpose struct {
