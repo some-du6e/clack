@@ -400,8 +400,8 @@ func (v *Threads) footer(gtx C, failed bool) D {
 	return D{Size: image.Pt(gtx.Constraints.Min.X, gtx.Dp(16))}
 }
 
-// people is the participants line: "Just you", "Ada, Grace and you", or
-// "Ada, Grace, Linus and 4 others".
+// people is the participants line: "Just you", "Ada and you", "Ada,
+// Grace, and you", or "Ada, Grace, Linus, and 4 others".
 func (v *Threads) people(root *core.Message, replies []core.Message) string {
 	self := v.selfID()
 	seen := map[string]bool{}
@@ -450,9 +450,12 @@ func (v *Threads) people(root *core.Message, replies []core.Message) string {
 	case len(names) == 1:
 		return names[0]
 	case len(names) > 4:
-		return strings.Join(names[:3], ", ") + " and " + strconv.Itoa(len(names)-3) + " others"
+		return strings.Join(names[:3], ", ") + ", and " + strconv.Itoa(len(names)-3) + " others"
+	case len(names) == 2:
+		return names[0] + " and " + names[1]
 	}
-	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
+	// Slack (en-US list format): "Shroud, Lachlan, and you".
+	return strings.Join(names[:len(names)-1], ", ") + ", and " + names[len(names)-1]
 }
 
 // thrTime is the message timestamp: relative for the last few hours
@@ -483,7 +486,9 @@ func thrTime(t, now time.Time) (s string, next time.Duration) {
 		}
 		return strconv.Itoa(h) + " hours ago", left
 	case sameDay(t, now):
-		return clock(t), 0
+		return "Today at " + clock(t), 0 // Slack's Threads view (measured)
+	case sameDay(t, now.AddDate(0, 0, -1)):
+		return "Yesterday at " + clock(t), 0
 	}
 	return actStamp(t), 0
 }

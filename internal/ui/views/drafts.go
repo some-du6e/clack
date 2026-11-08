@@ -1371,13 +1371,13 @@ func (d *Drafts) eduCard(gtx C) D {
 		rrect(gtx, image.Rect(0, 0, w, h), gtx.Dp(12), bg)
 		g := gtx
 		g.Constraints = layout.Exact(image.Pt(w, h))
-		layout.Inset{Top: 20, Left: 24, Right: 64, Bottom: 24}.Layout(g, func(gtx C) D {
+		// measured: title at (24, 45), body right under it at (24, 69)
+		layout.Inset{Top: 45, Left: 24, Right: 64, Bottom: 24}.Layout(g, func(gtx C) D {
 			gtx.Constraints.Min = image.Point{}
 			return col(gtx,
 				layout.Rigid(func(gtx C) D {
 					return d.para(gtx, 18, 24, wBlack, d.p.Text, 1, "All your outgoing messages")
 				}),
-				vgap(4),
 				layout.Rigid(func(gtx C) D {
 					return d.para(gtx, 15, 22, wReg, d.p.Text, 2, "Everything you send, draft, and schedule can now be found here.")
 				}),

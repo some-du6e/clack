@@ -280,7 +280,9 @@ func (b *base) msgBodyMuted(gtx C, m *core.Message, compact, muted bool, maxLine
 		// a plugin's text patch can keep the length: key on the text
 		ver += ":p" + strconv.FormatUint(uint64(textHash(m.Text)), 36)
 	}
-	return b.richDoc(gtx, key, ver, m.Doc, richview.Options{Edited: m.Edited, Compact: compact, Muted: m.System || muted}, maxLines)
+	// muted (read Activity rows) only dims the body: mentions keep their
+	// pills like Slack; Muted is for system messages.
+	return b.richDoc(gtx, key, ver, m.Doc, richview.Options{Edited: m.Edited, Compact: compact, Muted: m.System, Secondary: muted && !m.System}, maxLines)
 }
 
 // richDoc draws any document under a stable key.

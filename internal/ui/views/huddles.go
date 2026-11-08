@@ -427,11 +427,13 @@ func (v *Huddles) hero(gtx C) D {
 	fill(gtx, image.Rect(0, 0, w, hair), v.p.Border)
 	fill(gtx, image.Rect(0, h-hair, w, h), v.p.Border)
 	illW, illH := gtx.Dp(272), gtx.Dp(196)
-	textW := max(0, min(gtx.Dp(561), w-gtx.Dp(48+44)))
+	// Slack (1440×900): text block at +76/+66 inside the banner (a 561px
+	// column inset 32/22, padded 44).
+	textW := max(0, min(gtx.Dp(561-44), w-gtx.Dp(76+44)))
 	func() {
-		defer opOffset(gtx, image.Pt(gtx.Dp(48), gtx.Dp(48))).Pop()
+		defer opOffset(gtx, image.Pt(gtx.Dp(76), gtx.Dp(66))).Pop()
 		g := gtx
-		g.Constraints = layout.Constraints{Max: image.Pt(textW, h-gtx.Dp(96))}
+		g.Constraints = layout.Constraints{Max: image.Pt(textW, h-gtx.Dp(66+22))}
 		col(g,
 			layout.Rigid(func(gtx C) D {
 				return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D {
@@ -448,7 +450,7 @@ func (v *Huddles) hero(gtx C) D {
 		)
 	}()
 	if w > gtx.Dp(760) {
-		x := min(gtx.Dp(48)+textW+gtx.Dp(20), w-illW-gtx.Dp(56))
+		x := min(gtx.Dp(76)+textW+gtx.Dp(20), w-illW-gtx.Dp(56))
 		func() {
 			defer opOffset(gtx, image.Pt(x, (h-illH)/2)).Pop()
 			v.illustration(gtx, image.Pt(illW, illH))
@@ -670,7 +672,7 @@ func (v *Huddles) faces(gtx C, r huddleRoom) D {
 func (v *Huddles) tiles(gtx C) D {
 	gap := gtx.Dp(12)
 	tw := min(gtx.Dp(301), (gtx.Constraints.Max.X-2*gap)/3)
-	th := gtx.Dp(258)
+	th := gtx.Dp(239) // Slack: 301×239 cards
 	const cols = 3
 	rows := (len(v.sugUsers) + cols - 1) / cols
 	y := 0
