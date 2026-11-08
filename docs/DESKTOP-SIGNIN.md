@@ -132,7 +132,8 @@ GET https://<basedomain>/api/auth.loginMagicBulk?magic_tokens=<tok1>,<tok2>&ssb=
 Electron UA with a trailing ` Sonic Slack_SSB/4.53.276` marker (and
 `Snap`/`Flatpak`/`GovEnvironment` suffixes where relevant). So the desktop
 session is explicitly tagged as a desktop/SSB client in the UA — the opposite
-of Clack's current approach of impersonating the browser's UA.
+of Clack's current approach of impersonating the browser's UA. (Clack sends
+neither in the end: its own `Clack/<version>` UA, see "As built" below.)
 
 **Optional DPoP binding** (`main:26030`–`main:26072`, and `main:23435`–`main:23468`).
 When the token set has `requiresDpop`, the app:
@@ -289,7 +290,9 @@ drift and get signed out.
 
 ## 6. Risks and policy
 
-- **Detection.** The honest version of this flow identifies itself (`ssb=1`,
+- **Detection.** (Overtaken on 2026-11-08: from Go, the `Slack_SSB` UA was
+  itself what got the session signed out, and Clack now sends its own UA. See
+  "As built" and "Rounds 2 and 3".) The honest version of this flow identifies itself (`ssb=1`,
   `Slack_SSB` UA). If Clack sends `auth.loginMagicBulk?...&ssb=1` but then uses
   a *browser* UA for subsequent calls, that mismatch is exactly the kind of
   anomaly that has been signing Karim out. If Clack adopts desktop sign-in it
@@ -396,7 +399,7 @@ Add a desktop sign-in path alongside the existing paste flow:
 ## As built (2026-11-07)
 
 Code: `internal/slack/magic.go` (link parsing, the exchange), `desktop.go`
-(the cookie jar), `dpop.go`, `ua.go` (`DesktopUserAgent`),
+(the cookie jar), `dpop.go`, `ua.go` (`UserAgent`, `HonestHeaders`),
 `internal/ui/login.go`, `cmd/clack/main.go`. Tests use httptest only. No
 request in this work went to Slack.
 
@@ -422,6 +425,17 @@ Differences from the plan:
   yet (see SECURITY.md C-14).
 - **Cookie jar.** Flat, one value per name, sent to every https slack.com
   host. Slack desktop's Chromium jar honours host and path scoping.
+- **User-Agent (changed 2026-11-08).** Clack does not present as Slack
+  desktop. Every request of a desktop session (the exchange, the token page,
+  `auth.test`, the Web API, edgeapi, files, uploads, the realtime handshake
+  and credential-free CDN fetches) sends
+  `Clack/<version> (+https://github.com/some-du6e/yoloslackgoclient)`, the
+  same User-Agent a pasted session sends, with no `sec-ch-ua*`,
+  `Sec-Fetch-*`, `Origin` or `Referer` and no browser `Accept`. The exchange
+  still says `ssb=1`. Sending Slack desktop's Electron User-Agent from Go's
+  TLS stack got the test account signed out everywhere (rounds 2 and 3,
+  below). The plan in §6 assumed a consistent desktop identity was safe, and
+  that was wrong.
 
 Still unverified (needs a live test, with consent, on a throwaway account):
 
@@ -434,8 +448,6 @@ Still unverified (needs a live test, with consent, on a throwaway account):
   websocket and `/ssb/first`; not file downloads), whether Slack sends
   `DPoP-Nonce`, and what a rejection looks like (Clack stops on a 401 with
   a DPoP `WWW-Authenticate` or an error code containing `dpop`);
-- whether Slack desktop sends `sec-ch-ua` client hints (Clack sends none
-  with the desktop user agent);
 - the sign-in page: Clack's "Open sign-in page" opens
   `https://slack.com/ssb/add?s=1&v=4.53.276`, the URL Slack desktop's
   "Sign in to Another Workspace" opens. Whether a first sign-in from there
@@ -450,3 +462,11 @@ With the user's consent, on the project's own test account:
 - **`/ssb/first` has no token.** It's a marketing landing page (`ssb-landing-core`). In a browser it stays put; in Slack desktop it hands over to the web client.
 - **Where the token comes from.** In a clean browser holding only the vended cookies, loading `redir` goes to `app.slack.com/client/T0266FRGM`. Its web client then loads the hidden page `https://app.slack.com/auth?app=client&return_to=%2Fclient%2FT0266FRGM&teams=&iframe=1` (beacons `auth_stale`, `auth_fetch`, `lc_ingest`). That page sets `sessionStorage.incomingConfig = JSON.stringify({"teams": {…}})`, with one entry per team (`id`, `name`, `url`, `domain`, `token`) for both the org (E…) and the workspace (T…), plus `enterprise_api_token`. Clack now reads its tokens there (`bootTokens`, `parseIncomingConfig`).
 - The browser session the link came from stayed signed in throughout.
+
+### Rounds 2 and 3, and the control
+
+- **Round 2** (Go, Slack desktop's `Mozilla/5.0 (…) Slack/4.53.276 Chrome/… Electron/45.1.0 Safari/537.36 Sonic Slack_SSB/4.53.276` User-Agent): exchange, `app.slack.com/auth`, `auth.test` with the workspace token and with the org token on the workspace host. **Signed out everywhere** within seconds, the browser included.
+- **Round 3** (Go, same User-Agent, no org-token `auth.test`): exchange, `app.slack.com/auth`, `auth.test` with the workspace token. **Signed out everywhere** within 15 s.
+- **Control** (Python, default `Python-urllib/3.x`, no client hints, no `Origin`, a plain cookie jar): the same three requests, `auth.loginMagicBulk?magic_tokens=…&ssb=1`, then `GET https://app.slack.com/auth?app=client&return_to=%2Fclient%2F<T>&teams=&iframe=1`, then `auth.test` with the workspace token. **Both sessions alive** 100+ s later.
+
+So neither the token page nor the vended cookies were the trigger. A Go client that claims to be Slack desktop (or Chrome) was. Clack now sends its own User-Agent everywhere (As built, "User-Agent"; docs/SIGNOUT-AUDIT.md "Result").

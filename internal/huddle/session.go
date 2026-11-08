@@ -553,7 +553,10 @@ func (s *Session) connect() error {
 	dctx, cancel := context.WithTimeout(s.ctx, 15*time.Second)
 	conn, _, err := websocket.Dial(dctx, signalingURL(ji.Meeting.MediaPlacement.SignalingURL), &websocket.DialOptions{
 		Subprotocols: []string{"_aws_wt_session", ji.Attendee.JoinToken},
-		HTTPHeader:   map[string][]string{"Origin": {"https://app.slack.com"}},
+		// Chime, not Slack: this socket carries no Slack cookie or token, and
+		// Chime's signaling may check Origin (Slack's web client sends this
+		// one). Requests to Slack itself never send Origin (slack/ua.go).
+		HTTPHeader: map[string][]string{"Origin": {"https://app.slack.com"}},
 	})
 	cancel()
 	if err != nil {

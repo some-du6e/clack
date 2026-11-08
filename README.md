@@ -110,26 +110,28 @@ Instead of copying, you can let the browser open Clack with the link, if Clack h
 
 From a terminal: `clack login 'slack://T…/magic-login/…'`, or `clack login` and paste the link at the prompt. A running Clack also accepts `clack 'slack://T…/magic-login/…'`.
 
-After that, Clack presents itself as Slack desktop 4.53.276 on your OS (its User-Agent, on every request and the realtime socket). It sends every cookie Slack set for the session (`d`, `lc`, `d-s`, …), takes in each new value Slack sends back, and saves them to `creds.json` (soon after `d` changes, within 30 s for the rest, and at exit). If the link asked for DPoP (`dpop=1`), Clack keeps a P-256 key for that domain in `~/.config/clack/dpop-keys/` and signs a proof for each API and socket request. If Slack rejects a proof, or the key is gone, Clack stops talking to Slack and asks you to sign in again.
+After that, Clack sends every cookie Slack set for the session (`d`, `lc`, `d-s`, …), takes in each new value Slack sends back, and saves them to `creds.json` (soon after `d` changes, within 30 s for the rest, and at exit). If the link asked for DPoP (`dpop=1`), Clack keeps a P-256 key for that domain in `~/.config/clack/dpop-keys/` and signs a proof for each API and socket request. If Slack rejects a proof, or the key is gone, Clack stops talking to Slack and asks you to sign in again.
 
 What isn't verified yet: whether this session survives you signing out in the browser (it should, it's a separate session), how Enterprise Grid treats DPoP, and whether Slack's desktop boot page always has the token Clack reads from it. See [docs/DESKTOP-SIGNIN.md](docs/DESKTOP-SIGNIN.md).
 
 ### Advanced: paste a token
 
 > [!WARNING]
-> **This way Clack shares your browser's Slack session. It is not a separate sign-in.** If Slack sees that session used in a way it finds unusual, it can sign it out **everywhere**: the browser, the desktop app and Clack. This happened four times to a tester on Hack Club's Enterprise Grid, with v0.1.0-alpha.1 and v0.1.0-alpha.2, the moment they clicked Sign in. The leading suspect is the `d-s` cookie, which those versions sent and which Clack no longer sends at all ([docs/SIGNOUT-AUDIT.md](docs/SIGNOUT-AUDIT.md)). That isn't confirmed yet, so use an account you can sign back in to.
+> **This way Clack shares your browser's Slack session. It is not a separate sign-in.** If Slack sees that session used in a way it finds unusual, it can sign it out **everywhere**: the browser, the desktop app and Clack. This happened to a tester on Hack Club's Enterprise Grid with v0.1.0-alpha.1 and v0.1.0-alpha.2, the moment they clicked Sign in. Those versions claimed to be a browser (a Chrome User-Agent and client hints) from a client that plainly isn't one, and that is what Grid reacts to ([docs/SIGNOUT-AUDIT.md](docs/SIGNOUT-AUDIT.md)). Clack now always says it is Clack. Use an account you can sign back in to all the same.
 
 Click **Advanced: paste a token instead** on the sign-in screen (or press Enter at `clack login`'s link prompt). Fill in your workspace, the `xoxc-` **token**, the **`d` cookie** (`xoxd-…`) and, optionally, the org token (Enterprise Grid workspaces such as Hack Club). Don't paste `d-s`: Clack never sends it on a pasted session. Clack only checks them with `auth.test`: it never loads Slack web pages with your cookie and never calls a sign-out API, so your browser session stays signed in.
 
-The quickest way to get them: open Slack in the browser you'll copy from, open DevTools (F12) on that tab, and run this in the Console. It copies your user agent and the tokens Slack's own page keeps in `localStorage`. The sign-in screen shows the same snippet with a Copy button:
+The quickest way to get them: open Slack in the browser you'll copy from, open DevTools (F12) on that tab, and run this in the Console. It copies the tokens Slack's own page keeps in `localStorage`. The sign-in screen shows the same snippet with a Copy button:
 
 ```js
-copy(JSON.stringify({ua: navigator.userAgent, teams: JSON.parse(localStorage.localConfig_v2).teams}))
+copy(JSON.stringify({teams: JSON.parse(localStorage.localConfig_v2).teams}))
 ```
 
-Paste that JSON into the Token field. Clack picks out the workspace token, the org token, the workspace URL and the user agent. `d` is HttpOnly, so copy it from DevTools > Application > Cookies > `https://app.slack.com`. Leave `d-s` alone: Slack resets it to the current time on every response, so a copy is stale at once, and sending an older one than the browser's looks like a cloned cookie. From then on Clack sends that browser's User-Agent (and its Chrome client hints) with every request. Without one, it uses current Chrome on your OS.
+Paste that JSON into the Token field. Clack picks out the workspace token, the org token and the workspace URL. (JSON from the older snippet, with a `"ua"` in it, still works; the user agent is ignored.) `d` is HttpOnly, so copy it from DevTools > Application > Cookies > `https://app.slack.com`. Leave `d-s` alone: Slack resets it to the current time on every response, so a copy is stale at once, and sending an older one than the browser's looks like a cloned cookie.
 
 ### Either way
+
+Every request Clack makes to Slack, whichever way you signed in, says what it is: `User-Agent: Clack/<version> (+https://github.com/some-du6e/yoloslackgoclient)`. It sends no browser or Slack desktop User-Agent, no `sec-ch-ua` client hints, no `Sec-Fetch-*` and no `Origin` or `Referer`. Clack doesn't ask for your browser's user agent, and an old `creds.json` that has one is read and the value ignored.
 
 Credentials are saved to `~/.config/clack/creds.json`, readable only by you (mode 600 in a 700 directory; an owner-only ACL on Windows). They only ever go to https slack.com hosts. "Sign out on this device" deletes that file and nothing else.
 
