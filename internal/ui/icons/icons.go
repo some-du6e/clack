@@ -229,6 +229,9 @@ func init() {
 	// rail To-dos: white on the dark rail reads heavier in Gio's linear
 	// blending, so the rail set strokes at 1.25 (Slack ink: 91 vs 109 at 1.5).
 	reg("todos", sw(1.25, circle(10, 10, 7.75)), sw(1.25, "M6.6 10.3 L8.9 12.5 L13.4 7.6"))
+	// active rail To-dos: Slack fills the circle and cuts the check out (the
+	// check runs the other way round, so nonzero winding leaves a hole).
+	reg("todos-filled", f(circle(10, 10, 8.4)+" M5.4 11 L9 14.4 L14.8 8.2 L13.2 6.6 L9 11.4 L7 9.4 Z"))
 	reg("x-circle", s(circle(10, 10, 6.75)), s("M7.5 7.5 L12.5 12.5 M12.5 7.5 L7.5 12.5"))
 	reg("plus-circle", s(circle(10, 10, 6.75)), s("M10 6.75 V13.25 M6.75 10 H13.25"))
 	reg("warning", s("M10 3.5 L17 16 H3 Z"), s("M10 8 V11.5"), f(circle(10, 13.75, 0.9)))
