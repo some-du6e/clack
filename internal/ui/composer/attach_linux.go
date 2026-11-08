@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/godbus/dbus/v5"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uiguard"
 )
 
 // attExplorerUsable reports whether the xdg-desktop-portal FileChooser is
@@ -93,6 +95,7 @@ func attClipVia(ctx context.Context, explicit bool, list []string, get func(typ 
 // attNativePick runs zenity or kdialog. ok is false when neither is
 // installed (or there's no display); paths is nil when the user cancelled.
 func attNativePick(ctx context.Context) (paths []string, ok bool, err error) {
+	uiguard.OffUI("exec zenity/kdialog")
 	if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
 		return nil, false, nil
 	}

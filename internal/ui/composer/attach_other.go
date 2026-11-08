@@ -6,6 +6,8 @@ import (
 	"context"
 	"os/exec"
 	"runtime"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uiguard"
 )
 
 // macOS: clipboard images via pngpaste (if installed) or osascript, and an
@@ -52,6 +54,7 @@ end repeat
 return out`
 
 func attNativePick(ctx context.Context) (paths []string, ok bool, err error) {
+	uiguard.OffUI("exec osascript")
 	if runtime.GOOS != "darwin" || !attHave("osascript") {
 		return nil, false, nil
 	}

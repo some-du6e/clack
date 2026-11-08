@@ -44,6 +44,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uiguard"
 )
 
 // Attachments: the + menu, file pickers, clipboard images and the chip row
@@ -712,7 +713,12 @@ func attParseLines(out string) []string {
 	return paths
 }
 
-func attHave(tool string) bool { _, err := exec.LookPath(tool); return err == nil }
+// attHave looks tool up in PATH (file system reads: off the UI goroutine).
+func attHave(tool string) bool {
+	uiguard.OffUI("exec.LookPath " + tool)
+	_, err := exec.LookPath(tool)
+	return err == nil
+}
 
 // addPaths reads files from disk into memory (any goroutine).
 func (a *attachments) addPaths(paths []string) {
@@ -884,6 +890,7 @@ func attParseAppleData(out string) ([]byte, error) {
 
 // attRun runs a tool and returns at most limit bytes of its stdout.
 func attRun(ctx context.Context, limit int64, name string, args ...string) ([]byte, error) {
+	uiguard.OffUI("exec " + name)
 	cmd := exec.CommandContext(ctx, name, args...)
 	out, err := cmd.StdoutPipe()
 	if err != nil {

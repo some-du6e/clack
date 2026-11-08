@@ -122,7 +122,7 @@ func warmHome(tb testing.TB, fs *fakeslack.Server) string {
 		e.waitReady()
 		e.openChannel(fs.ChannelIDs()[1])
 		e.settle(300 * time.Millisecond)
-		e.a.data.stop() // saves sidebar.json and meta.json
+		<-e.a.data.stop() // saves sidebar.json and meta.json
 		e.shutdown()
 		frozen, err := os.MkdirTemp("", "clack-perf-warm-frozen-")
 		if err != nil {

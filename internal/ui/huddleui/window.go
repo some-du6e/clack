@@ -75,7 +75,10 @@ func (w *window) close() {
 	ww := w.w
 	w.mu.Unlock()
 	if ww != nil {
-		ww.Perform(system.ActionClose)
+		// Not from here: callers include the main window's frame, and on
+		// macOS one window's Perform waits for the main thread, which is
+		// waiting for that frame (deadlock).
+		go ww.Perform(system.ActionClose)
 	}
 }
 
@@ -244,13 +247,22 @@ func (w *window) handle(gtx C, s *huddle.Session, st huddle.State) {
 		}
 	}
 	if w.click("thread").Clicked(gtx) {
-		if st.ThreadTS != "" {
-			ch := firstNonEmpty(st.ThreadChannel, st.Channel)
-			w.c.h.OpenThread(ch, st.ThreadTS)
-		} else {
-			w.c.h.Navigate("c/" + st.Channel)
+		h := w.c.h
+		open := func() {
+			if st.ThreadTS != "" {
+				h.OpenThread(firstNonEmpty(st.ThreadChannel, st.Channel), st.ThreadTS)
+			} else {
+				h.Navigate("c/" + st.Channel)
+			}
+			h.Invalidate()
 		}
-		w.c.h.Invalidate()
+		// The main window's state belongs to its UI goroutine: hand it over
+		// (this is the huddle window's goroutine).
+		if p, ok := h.(interface{ Post(func()) }); ok {
+			p.Post(open)
+		} else {
+			open()
+		}
 	}
 	if w.click("leave").Clicked(gtx) {
 		w.c.Leave()

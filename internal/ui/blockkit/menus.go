@@ -4,9 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"image"
-	"net/url"
-	"os/exec"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -18,26 +15,14 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/openurl"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
-// openURL opens http(s)/mailto links in the browser.
-func openURL(u string) {
-	if pu, err := url.Parse(u); err != nil || (pu.Scheme != "http" && pu.Scheme != "https" && pu.Scheme != "mailto") {
-		return
-	}
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("open", u)
-	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", u)
-	default:
-		cmd = exec.Command("xdg-open", u)
-	}
-	go func() { _ = cmd.Run() }()
-}
+// openURL opens http(s)/mailto links in the browser (openurl checks them
+// and starts the browser off the UI goroutine).
+func openURL(u string) { _ = openurl.Open(u) }
 
 // ---- overflow (popups' menu, Slack's look) ----
 

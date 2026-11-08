@@ -164,8 +164,14 @@ func (b *backend) loadDrafts(a *App) {
 	}()
 }
 
-func (b *backend) stop() {
-	b.stopTaut()
+// stop drops this backend (quit, sign out, account switch, session
+// ended). UI goroutine: it detaches the UI and stops core's traffic at
+// once, and closes the rest in the background, because closing Taut runs
+// every plugin's stop hook (seconds with a slow plugin) and core.Close
+// writes the metadata cache. The channel closes when all of it is done.
+func (b *backend) stop() <-chan struct{} {
+	s, t := b.slick, b.taut
+	b.detachTaut()
 	b.stopBlockkit()
 	if b.cancel != nil {
 		b.cancel()
@@ -173,12 +179,18 @@ func (b *backend) stop() {
 	if b.unsub != nil {
 		b.unsub()
 	}
-	_ = b.core.Close()
-	// Every caller drops this backend (quit, sign out, account switch):
-	// stop core's socket and loops too, or the old session keeps a second
-	// realtime connection open next to the new one.
+	// Every caller drops this backend: stop core's socket and loops too,
+	// or the old session keeps a second realtime connection open next to
+	// the new one.
 	b.core.Shutdown()
 	b.saveCache()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		closeTaut(s, t)
+		_ = b.core.Close()
+	}()
+	return done
 }
 
 // resnapshot rebuilds the model off the UI goroutine (sidebar_changed,
@@ -784,7 +796,7 @@ func (b *backend) permalink(ch, ts string) string {
 }
 
 func (b *backend) signOut() {
-	b.stop()
+	_ = b.stop()
 	if b.onSignOut != nil {
 		b.onSignOut()
 	}

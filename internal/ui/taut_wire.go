@@ -155,18 +155,32 @@ func (b *backend) watchTaut(a *App, t *taut.Taut) {
 }
 
 func (b *backend) stopTaut() {
-	if b.slick != nil { // Slick runs on Taut's runtime: close it first
-		_ = b.slick.Close()
-		b.slick = nil
-	}
+	s, t := b.slick, b.taut
+	b.detachTaut()
+	closeTaut(s, t)
+}
+
+// detachTaut unhooks the plugin runtime from the UI (UI goroutine).
+func (b *backend) detachTaut() {
+	b.slick = nil
 	if b.taut != nil {
 		popups.SetTaut(nil)
 		messages.SetTaut(nil)
 		composer.SetTaut(nil)
-		_ = b.taut.Close()
 		b.taut = nil
 		slackc.SetBridge(nil)
 		slackc.Reset()
+	}
+}
+
+// closeTaut stops Slick and Taut's runtime (any goroutine; it can take
+// seconds: each plugin's stop hook runs).
+func closeTaut(s *slick.Slick, t *taut.Taut) {
+	if s != nil { // Slick runs on Taut's runtime: close it first
+		_ = s.Close()
+	}
+	if t != nil {
+		_ = t.Close()
 	}
 }
 
@@ -182,7 +196,7 @@ func (a *App) switchAccount(c slack.Creds) {
 		return
 	}
 	if a.data != nil {
-		a.data.stop()
+		_ = a.data.stop()
 		a.data = nil
 	}
 	a.views = map[Route]View{}
@@ -220,7 +234,7 @@ func (a *App) SignedOut() bool {
 // showLogin returns to the sign-in screen without deleting credentials.
 func (a *App) showLogin() {
 	if a.data != nil {
-		a.data.stop()
+		_ = a.data.stop()
 		a.data = nil
 	}
 	a.views = map[Route]View{}
