@@ -447,13 +447,6 @@ func (p *prefsModal) btn(k string) *widget.Clickable {
 }
 
 func (p *prefsModal) page(gtx layout.Context, sec string) layout.Dimensions {
-	fn := pageFns[sec]
-	if sec == "availability" { // popups' page isn't linked: notifications
-		fn = (*prefsModal).notificationsPage
-	}
-	if fn == nil {
-		return layout.Dimensions{}
-	}
 	if p.scrollFor != sec {
 		p.scroll, p.scrollFor = prefsScroll{}, sec
 	}
@@ -463,6 +456,13 @@ func (p *prefsModal) page(gtx layout.Context, sec string) layout.Dimensions {
 			d.Size.Y += gtx.Dp(24)
 			return d
 		})
+	}
+	fn := pageFns[sec]
+	if sec == "availability" { // popups' page isn't linked: notifications
+		fn = (*prefsModal).notificationsPage
+	}
+	if fn == nil {
+		return layout.Dimensions{}
 	}
 	return p.scroll.layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		f := p.form(gtx)
