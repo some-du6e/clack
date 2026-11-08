@@ -76,9 +76,9 @@ Clack's `slackc.Render(gtx, name, props, native)` has to reproduce these rules e
 | 53 | ActivityRowContentSenderAvatarLayout | patch | ShowSendingBot | views/activity.go:`(*Activity).actAvatarOf` | views | drawn |
 | 54 | ActivityPrivacyBlurredName | patch | StreamerMode | views/activity.go:`(*Activity).rowContent` (name) | views | no blur variant |
 | 55 | RimetoProfilePresence | patch | LastSeen | popups/profile_view.go:`(*ProfileView).body` (presence) | pop | drawn |
-| 56 | MemberProfileHoverCard | patch | LastSeen, ShinigamiEyes | popups/profile_card.go:`ProfileCard` (click-open, no hover) | pop | drawn |
+| 56 | MemberProfileHoverCard | patch | LastSeen, ShinigamiEyes | popups/profile_card.go:`ProfileCard` (on hover: `NewHoverProfileCard`, on click: `NewProfileCard`) | pop | drawn |
 | 57 | BasePresence | patch | LastSeen | popups/util.go:`presenceDot`; sidebar.go:`(*App).presenceDot`; views/kit.go:`avatarPresence` | pop/shell/views | private copies |
-| 58 | LocalTime | patch | LastSeen | popups/util.go:`localTime` via profile_card.go `pfIconLine` | pop | drawn |
+| 58 | LocalTime | patch | LastSeen | popups/profile_card.go:`pfLocalTimeLabel` via `pfIconLine` | pop | drawn |
 | 59 | RimetoMemberProfileOverflowMenu | patch | AdminBackend, Nicknames | popups/profile_card.go:`pfMoreItems` (+ profile_view.go `pfPaneMenu`) | pop | drawn |
 | 60 | EditAudioButton | patch | CustomNameRecording | missing (profile_view.go only has an "Add name pronunciation" link row) | pop | **missing** |
 | 61 | CaptionsSubmenu | patch | HuddleActivity | missing (no huddle call UI) | views | **missing** |
@@ -388,7 +388,7 @@ Taut's own infra patches these at module load, so its patches sit innermost (app
 #### MemberProfileHoverCard
 - **LastSeen** P/LastSeen.tsx:95-102. Reads `memberId`. Context wrap (Surface `{userId, card: true}`).
 - **ShinigamiEyes** (disabled) P/ShinigamiEyes.disabled.tsx:108-246. Reads `memberId, header: ReactNode` and overrides `header = <>{header}{trust-level div + audit log list of MrkdwnElement}</>`.
-- **Clack**: popups/profile_card.go:`ProfileCard` (`NewProfileCard`, `content`), **pop**. It must take a `header` ReactNode slot. Clack opens the card on click only; Slack's opens on hover.
+- **Clack**: popups/profile_card.go:`ProfileCard` (`NewHoverProfileCard`, `NewProfileCard`, `content`), **pop**. It takes a `header` ReactNode slot. The hover card and the click card are the same component tree (ProfileHoverCard → MemberProfileHoverCard → MemberProfileBaseEntity, LocalTime, Presence → BasePresence, RimetoMemberProfileOverflowMenu), so a patch reaches both. internal/ui/hovercard is Slack's HoverCardTrigger/ProfileHoverTrigger timing and placement; it isn't a component boundary (no plugin patches HoverCardTrigger).
 
 #### BasePresence
 - **LastSeen** P/LastSeen.tsx:104-123. Reads `showText, isActive, isSelf, className`. Inside a non-card Surface with showText, not active and not self, it renders `<>{Original showText=false}<span.padding_left_50.taut-last-seen aria-hidden>Last seen {ago}</span></>`.
@@ -911,7 +911,7 @@ List-frame numbers are from `bench-compare` (base and head interleaved on one ru
 
 ## 8. Left to do
 - **Live verification on Slack.** Blocked on 2026-11-07: the test account's session was revoked (creds and the `whatever` browser profile both get `invalid_auth`). The engine was checked visually only with `cmd/slackc-demo` (hand-written trees). taut-api's CI acceptance suite loads all 40 plugins.
-- **Surfaces Clack doesn't have**, so plugins patching them change nothing: huddle call UI (rows 61–65), Block Kit modal views (ViewBlocks), the profile hover card on hover (it opens on click).
+- **Surfaces Clack doesn't have**, so plugins patching them change nothing: huddle call UI (rows 61–65), Block Kit modal views (ViewBlocks).
 - **Thunk dispatch (`taut.Dispatch`)** in the owners: typing, markLastRead, sends, reactions, menus, autocomplete (docs/PLUGINS-taut.md). Also UIHooks.Input / ThreadPane / SetLocalDraft / PreferencesTabs: the Preferences > Taut tab UI and plugin settings editors (Bridge.RenderEditor) belong to ui-shell.
 - **core.Message gaps:** no `metadata`, `bot_profile`, raw `blocks` or `attachments`. This blocks ShowRealUser relay-bot detection, OwlMode, and `blocks` in search props.
 - **Ordering CSS on natives:** SlimMessageBox's one-line composer layout relies on `order`/`flex` rules, which natives with fixed positions don't apply.

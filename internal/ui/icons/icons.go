@@ -216,6 +216,9 @@ func init() {
 	reg("history-back", s("M3.6 11 A6.5 6.5 0 1 0 5.2 5.6"), s("M2.8 3.6 L4.7 6.3 L7.6 5.2"), s("M10 6.5 V10 L12.5 12"))
 	reg("find", s("M2.5 5.5 H9 M2.5 9.5 H6.5 M2.5 13.5 H7"), s(circle(12.75, 11.25, 3.5)), s("M15.3 13.8 L17.5 16"))
 	reg("clock", s(circle(10, 10, 6.75)), s("M10 6 V10 L12.75 11.75"))
+	// the hover card's "Deactivated account" banner and Slackbot's "Built by Slack" row
+	reg("archive-filled", f(rrect(3, 3.75, 14, 3.75, 1)), f(rrect(4, 8.5, 12, 7.75, 1)))
+	reg("slack-logo", sw(2.5, "M8.25 3.75 V10.5 M11.75 9.5 V16.25 M9.5 8.25 H16.25 M3.75 11.75 H10.5"))
 	reg("help", s(circle(10, 10, 6.75)), s("M7.9 7.9 A2.15 2.15 0 1 1 11.2 9.7 C10.5 10.15 10 10.6 10 11.4 V11.75"), f(circle(10, 14, 0.95)))
 	reg("info", s(circle(10, 10, 6.75)), s("M10 9.25 V14"), f(circle(10, 6.6, 0.95)))
 	reg("close", s("M5.25 5.25 L14.75 14.75 M14.75 5.25 L5.25 14.75"))
