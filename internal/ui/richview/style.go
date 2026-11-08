@@ -198,7 +198,7 @@ func NewStyle(sh *text.Shaper, imgs Images, p Palette) *Style {
 	return &Style{
 		Shaper: sh, Images: imgs, Palette: p,
 		Face:     theme.Typeface,
-		Mono:     "Roboto Mono, Monaco, Menlo, Consolas, \"Courier New\", monospace",
+		Mono:     "Roboto Mono, " + theme.MonoTypeface + ", Monaco, Menlo, Consolas, \"Courier New\", monospace",
 		TextSize: 15, LineHeight: 22, Embolden: 0.3,
 		gen:   1,
 		words: make(map[wordKey]*shaped, 4096),
