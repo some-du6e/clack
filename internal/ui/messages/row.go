@@ -1238,16 +1238,17 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 	} else {
 		bs = senderBtnClass.Enter(gtx, btnState(gtx, &r.nameBtn), 0)
 	}
-	name := r.nameButton
-	if r.custom {
-		name = r.nameSpan
-	}
 	var nd layout.Dimensions
 	if !bs.Hidden() {
-		if bs.Active() {
-			nd = bs.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return name(gtx, bs) })
-		} else {
-			nd = name(gtx, bs)
+		switch active := bs.Active(); {
+		case active && r.custom:
+			nd = bs.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return r.nameSpan(gtx, bs) })
+		case active:
+			nd = bs.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return r.nameButton(gtx, bs) })
+		case r.custom:
+			nd = r.nameSpan(gtx, bs)
+		default:
+			nd = r.nameButton(gtx, bs)
 		}
 	}
 	// a plugin's text-decoration on the sender (IdvStatus' wavy underline)
