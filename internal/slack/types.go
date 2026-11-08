@@ -188,6 +188,13 @@ type User struct {
 	Updated           int64   `json:"updated,omitempty"`
 	Profile           Profile `json:"profile"`
 	Presence          string  `json:"presence,omitempty"`
+	// EnterpriseUser lists the Grid workspaces the user belongs to.
+	EnterpriseUser *EnterpriseUser `json:"enterprise_user,omitempty"`
+}
+
+type EnterpriseUser struct {
+	ID    string   `json:"id,omitempty"`
+	Teams []string `json:"teams,omitempty"`
 }
 
 type Profile struct {

@@ -1,6 +1,9 @@
 package ui
 
-import "github.com/some-du6e/yoloslackgoclient/internal/richtext"
+import (
+	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+)
 
 // model is the shell's view of the workspace, rebuilt from core snapshots
 // and events (never per frame).
@@ -8,6 +11,7 @@ type model struct {
 	version int
 
 	TeamName, TeamIcon string
+	Rail               core.RailState // the left rail (core/rail.go)
 	SelfID             string
 	SelfName           string
 	SelfAvatar         string

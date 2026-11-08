@@ -161,6 +161,7 @@ type Snapshot struct {
 	Prefs        Prefs
 	EmojiCount   int
 	EnterpriseID string
+	Rail         RailState // the left rail from Navigation prefs and experiments (rail.go)
 }
 
 // Page is a window of a conversation's history.

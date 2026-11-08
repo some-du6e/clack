@@ -105,6 +105,20 @@ func (a *App) handle(ev slack.Event) {
 				a.emit(Event{Type: "user", UserID: u.ID, User: &u})
 			}
 		}
+	case "team_icon_change":
+		a.onTeamIconChange(ev.Raw)
+	case "team_rename":
+		var e struct {
+			Name   string `json:"name"`
+			TeamID string `json:"team_id"`
+		}
+		_ = json.Unmarshal(ev.Raw, &e)
+		a.S.Lock()
+		if e.Name != "" && (e.TeamID == "" || e.TeamID == a.S.TeamID) {
+			a.S.TeamName = e.Name
+		}
+		a.S.Unlock()
+		a.emit(Event{Type: "team"})
 	case "emoji_changed":
 		var e struct {
 			Subtype string   `json:"subtype"`

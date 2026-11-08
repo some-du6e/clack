@@ -167,6 +167,7 @@ type MenuItem struct {
 	Label    string
 	Icon     string
 	Hint     string // shortcut text on the right
+	Subtitle string // second line under the label (the rail's More menu)
 	Danger   bool
 	Divider  bool // draws a separator instead of an item
 	Disabled bool

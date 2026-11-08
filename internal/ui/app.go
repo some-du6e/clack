@@ -129,37 +129,38 @@ type App struct {
 	mu      sync.Mutex
 	pending []func()
 
-	title       string
-	firstPaint  bool
-	frameStats  frameStats
-	lastChannel string
-	pxPerDp     float32
-	chTab       map[string]int
-	clipboard   string
-	prefs       prefs
-	prefsDirty  bool
-	notify      notifier
-	focused     bool
-	winSize     image.Point
-	sbBase      color.NRGBA
-	sbPal       theme.Palette
-	styleVer    uint64 // slackc.Styles.Version the palette was derived at
-	shaperCh    chan [2]*text.Shaper
-	explorer    *explorer.Explorer    // native file chooser (set in onWindow)
-	tautGen     int                   // bumps when a (new) plugin runtime attaches
-	tautTabs    []taut.PreferencesTab // plugins' Preferences tabs
-	switchAt    time.Time             // navigation time, for the channel-switch latency log
-	switchTo    Route
-	winLive     atomic.Pointer[app.Window] // a.win once Run made it, for other goroutines
-	update      updateState                // "Update available" banner
-	rtAsk       realtimeState              // first-run "Live updates are off" banner
-	updatesOff  atomic.Bool                // prefs.NoUpdateCheck, for updateLoop
-	hud         *huddleui.Controller       // the native huddle (huddle_wire.go)
-
-	swipe    swiper          // trackpad history swipes (swipe.go, nav.go)
-	swipeNow swipeState      // this frame's swipe progress, for the arrow
-	navTag   int             // the window-wide scroll handler (navGestures)
-	ptrBtns  pointer.Buttons // mouse buttons held, for back/forward (navButtons)
+	title         string
+	firstPaint    bool
+	frameStats    frameStats
+	lastChannel   string
+	railOverflow  []string // tabs under the rail's More (layoutRail)
+	teamIconShown string   // the last workspace icon URL that drew (kept while a new one loads)
+	pxPerDp       float32
+	chTab         map[string]int
+	clipboard     string
+	prefs         prefs
+	prefsDirty    bool
+	notify        notifier
+	focused       bool
+	winSize       image.Point
+	sbBase        color.NRGBA
+	sbPal         theme.Palette
+	styleVer      uint64 // slackc.Styles.Version the palette was derived at
+	shaperCh      chan [2]*text.Shaper
+	explorer      *explorer.Explorer    // native file chooser (set in onWindow)
+	tautGen       int                   // bumps when a (new) plugin runtime attaches
+	tautTabs      []taut.PreferencesTab // plugins' Preferences tabs
+	switchAt      time.Time             // navigation time, for the channel-switch latency log
+	switchTo      Route
+	winLive       atomic.Pointer[app.Window] // a.win once Run made it, for other goroutines
+	update        updateState                // "Update available" banner
+	rtAsk         realtimeState              // first-run "Live updates are off" banner
+	updatesOff    atomic.Bool                // prefs.NoUpdateCheck, for updateLoop
+	hud           *huddleui.Controller       // the native huddle (huddle_wire.go)
+	swipe         swiper                     // trackpad history swipes (swipe.go, nav.go)
+	swipeNow      swipeState                 // this frame's swipe progress, for the arrow
+	navTag        int                        // the window-wide scroll handler (navGestures)
+	ptrBtns       pointer.Buttons            // mouse buttons held, for back/forward (navButtons)
 }
 
 // New creates the app. Call Run on the UI goroutine (main).

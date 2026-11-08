@@ -127,6 +127,14 @@ type Prefs struct {
 	BoostMentions    bool                         `json:"boost_mentions,omitempty"`
 	SeparatePrivate  bool                         `json:"separate_private,omitempty"`
 	UndoIntermix     bool                         `json:"undo_intermix,omitempty"` // undo_channel_intermix
+	// Tab rail (internal/core/rail.go): Preferences > Navigation.
+	TabRailCustomization map[string]bool `json:"tab_rail_customization,omitempty"` // tab -> shown in the rail
+	TabRailOrder         []string        `json:"tab_rail_order,omitempty"`         // tab_rail_customization_order
+	TabRailOrderSet      bool            `json:"tab_rail_order_set,omitempty"`     // the order pref parsed as an array
+	HasUploaded          bool            `json:"has_uploaded,omitempty"`
+	HasStarredItem       bool            `json:"has_starred_item,omitempty"`
+	ActivityDMsOptOut    bool            `json:"activity_dms_opt_out,omitempty"`
+	CompactRail          bool            `json:"compact_rail,omitempty"` // ia4_compact_mode
 	// Notifications: global defaults and per-conversation overrides
 	// (users.prefs.get all_notifications_prefs).
 	GlobalDesktop string                   `json:"global_desktop,omitempty"` // everything | mentions_dms | nothing
@@ -209,6 +217,27 @@ func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
 	p.SeparatePrivate = boolean("separate_private_channels", false)
 	p.UndoIntermix = boolean("undo_channel_intermix", false)
 	p.SectionPrefs = parseSectionPrefs(str("channel_sections"))
+	if s := str("tab_rail_customization"); s != "" {
+		var m map[string]bool
+		if json.Unmarshal([]byte(s), &m) == nil && len(m) > 0 {
+			p.TabRailCustomization = m
+		}
+	}
+	if s := str("tab_rail_customization_order"); s != "" {
+		var order []any
+		if json.Unmarshal([]byte(s), &order) == nil {
+			p.TabRailOrderSet = true
+			for _, v := range order {
+				if t, ok := v.(string); ok {
+					p.TabRailOrder = append(p.TabRailOrder, t)
+				}
+			}
+		}
+	}
+	p.HasUploaded = boolean("has_uploaded", false)
+	p.HasStarredItem = boolean("has_starred_item", false)
+	p.ActivityDMsOptOut = boolean("activity_dms_opt_out", false)
+	p.CompactRail = boolean("ia4_compact_mode", false)
 	// Slack calls the Google set "android"/"google"; everything else is Apple.
 	switch p.EmojiMode {
 	case "android", "google":

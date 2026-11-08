@@ -31,6 +31,7 @@ type MenuItem struct {
 	Label    string
 	Icon     string // icons registry name ("" = no icon column)
 	Hint     string // right-aligned shortcut, e.g. "Ctrl+Shift+S"
+	Subtitle string // a 13px second line under the label (Slack's More menu rows)
 	Right    string // right-aligned value text before the chevron ("On")
 	Danger   bool
 	Disabled bool
@@ -204,6 +205,8 @@ func (m *Menu) rowHeight(gtx layout.Context, th *theme.Theme, i, w int) int {
 			return it.Widget(gtx, false)
 		})
 		return d.Size.Y
+	case it.Subtitle != "":
+		return dp(gtx, 52)
 	}
 	return dp(gtx, 28)
 }
@@ -554,7 +557,12 @@ func (m *Menu) itemRow(gtx layout.Context, th *theme.Theme, cl *Colors, st slack
 		}
 		fg = st.Color(fg)
 		x := dp(gtx, 24)
-		if it.Icon != "" {
+		if it.Icon != "" && it.Subtitle != "" { // Slack's p-more_menu_icon: 20px
+			at(gtx, image.Pt(x, (sz.Y-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions {
+				return icon(gtx, it.Icon, 20, fg)
+			})
+			x += dp(gtx, 36)
+		} else if it.Icon != "" {
 			at(gtx, image.Pt(x, (sz.Y-dp(gtx, 18))/2), func(gtx layout.Context) layout.Dimensions {
 				return icon(gtx, it.Icon, 18, fg)
 			})
@@ -606,12 +614,24 @@ func (m *Menu) itemRow(gtx layout.Context, th *theme.Theme, cl *Colors, st slack
 		if lw < 1 {
 			lw = 1
 		}
-		at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints = layout.Constraints{Max: image.Pt(lw, sz.Y)}
-			return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 15, theme.Regular, fg, it.Label)
+		if it.Subtitle != "" {
+			sub := hint
+			at(gtx, image.Pt(x, dp(gtx, 8)), func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints = layout.Constraints{Max: image.Pt(lw, dp(gtx, 20))}
+				return text(gtx, th, 15, theme.Bold, fg, it.Label)
 			})
-		})
+			at(gtx, image.Pt(x, dp(gtx, 28)), func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints = layout.Constraints{Max: image.Pt(lw, dp(gtx, 18))}
+				return text(gtx, th, 13, theme.Regular, sub, it.Subtitle)
+			})
+		} else {
+			at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints = layout.Constraints{Max: image.Pt(lw, sz.Y)}
+				return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
+					return text(gtx, th, 15, theme.Regular, fg, it.Label)
+				})
+			})
+		}
 		if !it.Disabled {
 			pointerCursor(gtx, sz)
 		}
