@@ -112,13 +112,12 @@ func (s *sidebarState) rebuild(m *model) {
 			col = sec.Collapsed
 			s.collapsed[sec.ID] = col
 		}
-		for _, id := range sec.Rows {
-			c := m.conv(id)
-			if c == nil {
-				continue
-			}
-			// collapsed sections still show unread and the selected conv
-			if col && !c.Unread && c.Mentions == 0 {
+		ids := sec.Rows
+		if col { // collapsed: Slack's unread rows (core's CollapsedChannels)
+			ids = sec.CollapsedRows
+		}
+		for _, id := range ids {
+			if m.conv(id) == nil {
 				continue
 			}
 			rows = append(rows, sbRow{kind: sbConv, key: id, section: sec.ID})

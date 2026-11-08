@@ -1067,8 +1067,8 @@ func (a *App) CustomEmoji() map[string]string { return a.S.CustomEmoji.Snapshot(
 // orderSections is Slack's updatedOrderedChannelSectionList (modern.vendor
 // @14759265): follow next_channel_section_id from every section nothing
 // points to (or from the first, if all are pointed to), longest chain first,
-// then keep each section's first position; sections left over (a cycle not
-// reachable from a head) keep their API order after them.
+// and keep each section's first position. Sections outside every chain get
+// position 0, so they sort with the first one (lodash sortBy quirk).
 func orderSections(secs []slack.Section) []slack.Section {
 	if len(secs) == 0 {
 		return nil
@@ -1111,22 +1111,25 @@ func orderSections(secs []slack.Section) []slack.Section {
 		chains = append(chains, chain)
 	}
 	sort.SliceStable(chains, func(i, j int) bool { return len(chains[i]) > len(chains[j]) })
-	var out []slack.Section
-	placed := map[string]bool{}
+	index := map[string]int{}
 	for _, ch := range chains {
 		for _, id := range ch {
-			if !placed[id] {
-				placed[id] = true
-				out = append(out, byID[id])
+			if _, ok := index[id]; !ok {
+				index[id] = len(index)
 			}
 		}
 	}
+	// sortBy(sections, s => index[s.id] || 0): sections outside every chain
+	// tie with the first one and keep their API order (stable sort).
+	var out []slack.Section
+	seen := map[string]bool{}
 	for _, s := range secs {
-		if !placed[s.ID] {
-			placed[s.ID] = true
-			out = append(out, s)
+		if !seen[s.ID] {
+			seen[s.ID] = true
+			out = append(out, byID[s.ID])
 		}
 	}
+	sort.SliceStable(out, func(i, j int) bool { return index[out[i].ID] < index[out[j].ID] })
 	return out
 }
 
@@ -1148,8 +1151,9 @@ func (a *App) sections(convs []Conv) []Section {
 	a.mu.Unlock()
 	names := map[string]string{}
 	for _, c := range convs {
-		names[c.ID] = strings.ToLower(c.Name)
+		names[c.ID] = a.sortName(c)
 	}
+	secOf := assignSections(ordered, starred)
 	// Slack's candidates: closed DMs leave every section (sidebar_rules.go)
 	isDMKind := func(id string) bool {
 		c, ok := a.S.Conv(id)
@@ -1177,6 +1181,9 @@ func (a *App) sections(convs []Conv) []Section {
 			}
 			if !visibleDM(id) {
 				continue
+			}
+			if secOf[id] != s.ID {
+				continue // Slack files it in another section (starred first)
 			}
 			if _, ok := a.S.Conv(id); ok && !assigned[id] {
 				sv.Channels = append(sv.Channels, id)

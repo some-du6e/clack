@@ -191,3 +191,93 @@ func TestOrderSectionsLikeSlack(t *testing.T) {
 		t.Errorf("cycle = %s", got)
 	}
 }
+
+func TestNumericCollationAndGroupDMNames(t *testing.T) {
+	a, _ := testApp(t)
+	a.S.PutUsers([]slack.User{{ID: "U3", Name: "carol"}})
+	a.S.PutConv(slack.Conversation{ID: "C10", Name: "proj-10", IsChannel: true})
+	a.S.PutConv(slack.Conversation{ID: "C11", Name: "proj-2", IsChannel: true})
+	a.S.PutConv(slack.Conversation{ID: "C12", Name: "Proj-3", IsChannel: true})
+	// group DM sorts by the other members' names ("alice,carol"), not mpdm-…
+	a.S.PutConv(slack.Conversation{ID: "G1", Name: "mpdm-me--zed-1", IsMPIM: true, Members: []string{"USELF", "U1", "U3"}})
+	close(a.ready)
+	a.setExperiments(map[string]string{}) // alphabetical DMs
+	got := sectionsByType(a)
+	if got["channels"] != "C1,C11,C12,C10" { // general, proj-2, Proj-3, proj-10 (Intl.Collator numeric)
+		t.Errorf("channels = %s", got["channels"])
+	}
+	if got["direct_messages"] != "D1,G1" { // "Alice" < "Alice,carol"
+		t.Errorf("dms = %s", got["direct_messages"])
+	}
+}
+
+func TestCollapsedSectionKeepsUnreadMuted(t *testing.T) {
+	a := rulesApp(t, store.Prefs{SidebarBehavior: "hide_inactive_channels"})
+	a.S.SetCounts(&slack.Counts{Channels: []slack.CountEntry{
+		{ID: "C1", Latest: "100.0", LastRead: "100.0"},
+		{ID: "C4", Latest: "70.0", LastRead: "1.0", HasUnreads: true}, // muted, unread, no mention
+		{ID: "C5", Latest: "80.0", LastRead: "10.0", HasUnreads: true},
+	}})
+	for _, s := range a.Snapshot().Sections {
+		if s.Type != "channels" {
+			continue
+		}
+		if c := strings.Join(s.Channels, ","); strings.Contains(c, "C4") {
+			t.Errorf("expanded: muted C4 should be hidden: %s", c)
+		}
+		if c := strings.Join(s.CollapsedChannels, ","); c != "C5,C4" { // news, then muted quiet
+			t.Errorf("collapsed rows = %s", c)
+		}
+	}
+}
+
+func TestStarredWinsSectionAssignment(t *testing.T) {
+	a, _ := testApp(t)
+	a.S.PutConv(slack.Conversation{ID: "C2", Name: "both", IsChannel: true})
+	a.S.PutConv(slack.Conversation{ID: "C3", Name: "two-custom", IsChannel: true})
+	sec := func(id, typ, next string, chans ...string) slack.Section {
+		x := slack.Section{ID: id, Type: typ, Name: id, Next: next}
+		x.ChannelIDsPage.ChannelIDs = chans
+		return x
+	}
+	// L1 (custom) sits above Starred and lists C2; C2 is starred
+	a.S.Sections = []slack.Section{sec("L1", "standard", "L2", "C2", "C3"), sec("L2", "stars", "L3"), sec("L3", "standard", "L4", "C3"), sec("L4", "channels", "")}
+	a.setStarred("C2", true)
+	close(a.ready)
+	got := map[string]string{}
+	for _, s := range a.Snapshot().Sections {
+		got[s.ID] = strings.Join(s.Channels, ",")
+	}
+	if got["L2"] != "C2" || strings.Contains(got["L1"], "C2") {
+		t.Errorf("starred C2 should be in Starred only: %v", got)
+	}
+	if got["L1"] != "C3" || got["L3"] != "" { // equal rank: the first listing wins
+		t.Errorf("C3 in two custom sections: %v", got)
+	}
+}
+
+func TestArchivedDMAndMutedGroupDMBadge(t *testing.T) {
+	a, _ := testApp(t)
+	a.S.PutConv(slack.Conversation{ID: "D2", IsIM: true, User: "U2", IsArchived: true})
+	a.S.PutConv(slack.Conversation{ID: "G1", Name: "mpdm-a--b-1", IsMPIM: true})
+	a.S.SetPrefs(store.Prefs{}, map[string]bool{"G1": true})
+	close(a.ready)
+	if got := sectionsByType(a)["direct_messages"]; strings.Contains(got, "D2") {
+		t.Errorf("archived DM listed: %s", got)
+	}
+	e := a.S.NoteMessage("G1", &slack.Message{TS: "5.0", User: "U1", Text: "hi"}, false)
+	if e.MentionCount != 0 || !e.HasUnreads {
+		t.Errorf("muted group DM badge: %+v", e)
+	}
+}
+
+func TestOrderSectionsUnreachableTail(t *testing.T) {
+	var out []string
+	for _, s := range orderSections([]slack.Section{{ID: "A", Next: "B"}, {ID: "B"}, {ID: "X", Next: "Y"}, {ID: "Y", Next: "X"}}) {
+		out = append(out, s.ID)
+	}
+	// X and Y form a cycle no head reaches: index 0, like the first section
+	if got := strings.Join(out, ","); got != "A,X,Y,B" {
+		t.Errorf("order = %s", got)
+	}
+}

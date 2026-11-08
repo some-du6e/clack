@@ -846,6 +846,9 @@ func (s *Store) NoteMessage(ch string, m *slack.Message, mentionsSelf bool) slac
 	e.HasUnreads = true
 	c := s.Convs[ch]
 	isDM := c != nil && (c.IsIM || c.IsMPIM) || strings.HasPrefix(ch, "D")
+	if isDM && c != nil && c.IsMPIM && s.Muted[ch] {
+		isDM = false // a muted group DM badges on mentions only (Slack's unreadHighlightCnt)
+	}
 	if mentionsSelf || isDM {
 		e.MentionCount++
 	}

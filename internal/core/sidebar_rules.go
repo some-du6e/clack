@@ -6,6 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/text/collate"
+	"golang.org/x/text/language"
+
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/store"
 )
@@ -163,7 +166,9 @@ type rowState struct {
 
 // keepRow is lJBI's per-row filter for a row in a section with filter f
 // (not in edit mode; Clack has no drafts or huddle state in core).
-func keepRow(r rowState, f string, windowHidden bool, p store.Prefs, e sidebarExp) bool {
+// collapsed is the section's state R: a collapsed section keeps its unread
+// rows only, muted ones included.
+func keepRow(r rowState, f string, windowHidden, collapsed bool, p store.Prefs, e sidebarExp) bool {
 	hideDormant := f == filterActive
 	showRead := f == filterAll
 	hideAllButMentions := f == filterMentions
@@ -172,16 +177,16 @@ func keepRow(r rowState, f string, windowHidden bool, p store.Prefs, e sidebarEx
 	if e.improveMute {
 		hideMuted = !p.ShowMutedOutside
 	}
-	if e.improveMute && r.badge {
+	if e.improveMute && r.badge && !collapsed {
 		return true
 	}
 	if e.filterDormant && hideDormant && r.dormant {
 		return false
 	}
-	if e.improveMute && hideMuted && r.muted {
+	if e.improveMute && hideMuted && r.muted && !collapsed {
 		return false
 	}
-	if showRead {
+	if showRead && !collapsed {
 		return true
 	}
 	if !e.improveMute && r.badge {
@@ -193,7 +198,7 @@ func keepRow(r rowState, f string, windowHidden bool, p store.Prefs, e sidebarEx
 	if hideRead && hideAllButMentions && !r.badge {
 		return false
 	}
-	if hideRead && !r.unread {
+	if (hideRead || collapsed) && !r.unread {
 		return false
 	}
 	return true
@@ -265,7 +270,8 @@ type sortRow struct {
 // DMs do not apply: Clack has no inviter, and online-first sorting needs a
 // team under 50 people).
 func sortGroup(r sortRow, inDMSection bool, sortOrder, self string, p store.Prefs) int {
-	mention := p.BoostMentions && r.badge && sortOrder != "priority"
+	// lJBI: l=s&&G&&!v; v needs blended priorities (programmable_sidebar, off)
+	mention := p.BoostMentions && r.badge
 	if r.kind == "private" && p.SeparatePrivate {
 		if mention {
 			return grpPrivateMentions
@@ -310,7 +316,13 @@ func sortSectionRows(rows []sortRow, inDMSection bool, sortOrder, self string, p
 	for _, r := range rows {
 		keys[r.id] = key{r.muted, sortGroup(r, inDMSection, sortOrder, self, p)}
 	}
-	alpha := func(a, b sortRow) int { return strings.Compare(a.name, b.name) }
+	col := collate.New(language.AmericanEnglish, collate.Numeric) // QJub: Intl.Collator("en-US",{numeric:true})
+	alpha := func(a, b sortRow) int {
+		if a.name == b.name {
+			return 0
+		}
+		return col.CompareString(a.name, b.name)
+	}
 	cmp := alpha
 	switch sortOrder {
 	case "recent":
@@ -373,6 +385,9 @@ func (a *App) dmCandidate(id string) bool {
 	if !ok {
 		return false
 	}
+	if c.IsArchived {
+		return false
+	}
 	if c.IsIM {
 		if systemDMUsers[c.User] {
 			return false
@@ -406,6 +421,7 @@ func (a *App) applySectionRules(out []Section, names map[string]string, now time
 			cutoff = windowCutoff(f, now)
 		}
 		rows := make([]sortRow, 0, len(sec.Channels))
+		expanded, folded := map[string]bool{}, map[string]bool{}
 		for _, id := range sec.Channels {
 			c, ok := a.S.Conv(id)
 			if !ok {
@@ -427,12 +443,21 @@ func (a *App) applySectionRules(out []Section, names map[string]string, now time
 				r.kind = "channel"
 			}
 			windowHidden := cutoff > 0 && (c.IsIM || c.IsMPIM) && hasCount && (cnt.Latest == "" || tsFloat(cnt.Latest) < float64(cutoff))
-			if !keepRow(r.rowState, f, windowHidden, p, e) {
-				continue
+			expanded[id] = keepRow(r.rowState, f, windowHidden, false, p, e)
+			folded[id] = keepRow(r.rowState, f, windowHidden, true, p, e)
+			if expanded[id] || folded[id] {
+				rows = append(rows, r)
 			}
-			rows = append(rows, r)
 		}
-		sec.Channels = sortSectionRows(rows, inDM, order, self, p)
+		sec.Channels, sec.CollapsedChannels = []string{}, nil
+		for _, id := range sortSectionRows(rows, inDM, order, self, p) {
+			if expanded[id] {
+				sec.Channels = append(sec.Channels, id)
+			}
+			if folded[id] {
+				sec.CollapsedChannels = append(sec.CollapsedChannels, id)
+			}
+		}
 	}
 }
 
@@ -443,4 +468,98 @@ func (a *App) sectionCollapsed(s slack.Section) bool {
 	c := a.S.Prefs.SectionPrefs[s.ID]["c"]
 	a.S.RUnlock()
 	return c == "1" || c == "true"
+}
+
+// sectionRank is lJBI's R: which section wins when a conversation is in
+// several (higher wins; any other type ends the search).
+var sectionRank = map[string]int{"stars": 3, "standard": 2, "user_group": 1}
+
+// assignSections picks each conversation's section like lJBI: starred ones
+// go to Starred; a single listing wins; several pick the highest rank among
+// the leading starred/custom/user-group sections; "" leaves it to the
+// default buckets.
+func assignSections(ordered []slack.Section, starred []string) map[string]string {
+	starsID := ""
+	in := map[string][]slack.Section{}
+	isStar := map[string]bool{}
+	for _, id := range starred {
+		isStar[id] = true
+	}
+	for _, s := range ordered {
+		if s.Type == "stars" {
+			if starsID == "" {
+				starsID = s.ID
+			}
+			for _, id := range s.ChannelIDsPage.ChannelIDs {
+				isStar[id] = true
+			}
+			continue
+		}
+		for _, id := range s.ChannelIDsPage.ChannelIDs {
+			in[id] = append(in[id], s)
+		}
+	}
+	out := map[string]string{}
+	if starsID != "" {
+		for id := range isStar {
+			out[id] = starsID
+		}
+	}
+	for id, list := range in {
+		if _, ok := out[id]; ok {
+			continue
+		}
+		if len(list) == 1 {
+			out[id] = list[0].ID
+			continue
+		}
+		best := -1
+		for i := range list {
+			r, ok := sectionRank[list[i].Type]
+			if !ok {
+				break
+			}
+			if best < 0 || sectionRank[list[best].Type] < r {
+				best = i
+			}
+		}
+		if best >= 0 {
+			out[id] = list[best].ID
+		}
+	}
+	return out
+}
+
+// sortName is the name Slack sorts a row by (lJBI channelNamesMap): the
+// channel or person name; for a group DM the other members' names, sorted
+// and joined with ",".
+func (a *App) sortName(c Conv) string {
+	if c.Kind != "mpim" {
+		return c.Name
+	}
+	self := a.S.SelfID()
+	var names []string
+	if len(c.Members) > 0 {
+		for _, m := range c.Members {
+			if m != self {
+				names = append(names, a.S.UserName(m))
+			}
+		}
+	} else { // mpdm-alice--bob--me-1: handles, minus our own
+		selfName := ""
+		if u, ok := a.S.User(self); ok {
+			selfName = u.Name
+		}
+		h := strings.TrimPrefix(c.Name, "mpdm-")
+		if i := strings.LastIndex(h, "-"); i > 0 {
+			h = h[:i]
+		}
+		for _, n := range strings.Split(h, "--") {
+			if n != "" && n != selfName {
+				names = append(names, n)
+			}
+		}
+	}
+	collate.New(language.AmericanEnglish, collate.Numeric).SortStrings(names)
+	return strings.Join(names, ",")
 }

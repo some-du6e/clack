@@ -31,6 +31,7 @@ type sbSection struct {
 	EmojiURL              string   // the section emoji's image ("" = Slack's default icon)
 	Collapsed             bool     // saved collapsed state (seeds the sidebar's toggle once)
 	Rows                  []string // conv ids
+	CollapsedRows         []string // what shows while collapsed (unread rows, muted included)
 }
 
 type convInfo struct {
