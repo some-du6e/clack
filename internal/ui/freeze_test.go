@@ -187,6 +187,7 @@ type freezeResult struct {
 
 func runFreezeSession(t *testing.T, fs *fakeslack.Server, home string, st freezeState, warm bool) freezeResult {
 	t.Helper()
+	t.Setenv("CLACK_HOME", home) // Taut's and Slick's dirs, per state
 	uiguard.Reset()
 	uiguard.MarkUI()
 	defer uiguard.Unmark()

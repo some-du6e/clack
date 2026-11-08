@@ -26,6 +26,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/yoloslackgoclient/internal/slick"
 	"github.com/some-du6e/yoloslackgoclient/internal/taut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/huddleui"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
@@ -151,24 +152,30 @@ type App struct {
 	prefs       prefs
 	prefsDirty  bool
 	prefsSave   prefsSaver // ui.json writer (prefs.go)
-	notify      notifier
-	focused     bool
-	winSize     image.Point
-	sbBase      color.NRGBA
-	sbPal       theme.Palette
-	styleVer    uint64    // slackc.Styles.Version the palette was derived at
-	acct        acctTheme // the Slack account's theme (theme_account.go)
-	shaperCh    chan [2]*text.Shaper
-	explorer    *explorer.Explorer    // native file chooser (set in onWindow)
-	tautGen     int                   // bumps when a (new) plugin runtime attaches
-	tautTabs    []taut.PreferencesTab // plugins' Preferences tabs
-	switchAt    time.Time             // navigation time, for the channel-switch latency log
-	switchTo    Route
-	winLive     atomic.Pointer[app.Window] // a.win once Run made it, for other goroutines
-	update      updateState                // "Update available" banner
-	rtAsk       realtimeState              // first-run "Live updates are off" banner
-	updatesOff  atomic.Bool                // prefs.NoUpdateCheck, for updateLoop
-	hud         *huddleui.Controller       // the native huddle (huddle_wire.go)
+	slickMode   struct {   // slickSetDark's worker (taut_wire.go)
+		mu   sync.Mutex
+		s    *slick.Slick
+		dark bool
+		busy bool
+	}
+	notify     notifier
+	focused    bool
+	winSize    image.Point
+	sbBase     color.NRGBA
+	sbPal      theme.Palette
+	styleVer   uint64    // slackc.Styles.Version the palette was derived at
+	acct       acctTheme // the Slack account's theme (theme_account.go)
+	shaperCh   chan [2]*text.Shaper
+	explorer   *explorer.Explorer    // native file chooser (set in onWindow)
+	tautGen    int                   // bumps when a (new) plugin runtime attaches
+	tautTabs   []taut.PreferencesTab // plugins' Preferences tabs
+	switchAt   time.Time             // navigation time, for the channel-switch latency log
+	switchTo   Route
+	winLive    atomic.Pointer[app.Window] // a.win once Run made it, for other goroutines
+	update     updateState                // "Update available" banner
+	rtAsk      realtimeState              // first-run "Live updates are off" banner
+	updatesOff atomic.Bool                // prefs.NoUpdateCheck, for updateLoop
+	hud        *huddleui.Controller       // the native huddle (huddle_wire.go)
 
 	swipe         swiper          // trackpad history swipes (swipe.go, nav.go)
 	swipeNow      swipeState      // this frame's swipe progress, for the arrow
@@ -639,9 +646,7 @@ func (a *App) setDark(dark bool) {
 			on := argStr(args, "value") == "dark"
 			a.Post(func() {
 				a.th.SetDark(on)
-				if s := a.Slick(); s != nil {
-					s.SetDark(on) // themes with a "mode" apply only in it
-				}
+				a.slickSetDark(a.Slick(), on) // themes with a "mode" apply only in it
 				a.savePrefs()
 				a.Invalidate()
 			})

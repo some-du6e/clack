@@ -21,10 +21,12 @@ import (
 // backend adapts the in-process core service to the shell's model. Model
 // mutations happen on the UI goroutine only (via App.Post).
 type backend struct {
-	core      *core.App
-	taut      *taut.Taut   // Taut plugins (nil until boot)
-	slick     *slick.Slick // Slick plugins, on Taut's runtime (nil until boot)
-	cacheFile string       // sidebar metadata cache (names/kinds/order only)
+	core  *core.App
+	taut  *taut.Taut   // Taut plugins (nil until boot)
+	slick *slick.Slick // Slick plugins, on Taut's runtime (nil until boot)
+	// tautStarting: startTautAsync is building the runtimes
+	tautStarting bool
+	cacheFile    string // sidebar metadata cache (names/kinds/order only)
 
 	m       model
 	started bool
@@ -115,7 +117,7 @@ func (b *backend) start(a *App) {
 			log.Printf("ui: boot: %v", err)
 			a.Post(func() { a.Toast("Couldn't connect to Slack: " + err.Error()) })
 		}
-		a.Post(func() { b.startTaut(a); b.startBlockkit(a) })
+		a.Post(func() { b.startTautAsync(a); b.startBlockkit(a) })
 		snap := b.core.Snapshot()
 		log.Printf("ui: core ready %v after boot start (%d convs)", time.Since(t0).Round(time.Millisecond), len(snap.Convs))
 		a.Post(func() {
