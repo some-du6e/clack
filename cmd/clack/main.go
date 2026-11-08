@@ -299,10 +299,20 @@ func main() {
 	}()
 	// app.Events replaces app.Main: macOS delivers slack:// links opened
 	// while Clack runs (or that launched it) as URLEvents.
+	//
+	// The loop body runs synchronously inside the OS's open-URL callback,
+	// on the main thread (macOS: application:openURLs:, gio_onOpenURI;
+	// Windows: the window procedure). a.Raise is Window.Perform, which
+	// queues work for the main thread and waits for it, so calling it here
+	// deadlocked: Clack beachballed when a browser handed it a sign-in link
+	// while it was running (2026-11-08). Do nothing here but hand off.
 	for e := range app.Events {
 		if u, ok := e.(app.URLEvent); ok && u.URL != nil {
-			a.Raise()
-			openLink(u.URL.String())
+			link := u.URL.String()
+			go func() {
+				a.Raise()
+				openLink(link)
+			}()
 		}
 	}
 }
