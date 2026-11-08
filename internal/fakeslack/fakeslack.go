@@ -116,6 +116,8 @@ type Server struct {
 	files   map[string]*UploadedFile // files.getUploadURLExternal + upload
 	shared  []SharedFiles            // files.completeUploadExternal calls
 	nextID  int
+
+	chans chanState // conversations.create and friends (channels.go)
 }
 
 // DefaultPrefs are the fake account's users.prefs (Slack's defaults for the
@@ -655,7 +657,7 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		s.convMu.Lock()
 		cs := append([]slack.Conversation(nil), s.convs...)
 		s.convMu.Unlock()
-		return ok("channels", cs, "response_metadata", map[string]string{"next_cursor": ""})
+		return ok("channels", append(cs, s.Created()...), "response_metadata", map[string]string{"next_cursor": ""})
 	case "client.counts":
 		var chans, ims []slack.CountEntry
 		for i, c := range s.convs {
@@ -703,8 +705,10 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			if i == 0 {
 				typ = "stars"
 			}
-			secs = append(secs, map[string]any{"channel_section_id": fmt.Sprintf("L0FAKE%02d", i), "name": n, "type": typ,
-				"channel_ids_page": map[string]any{"channel_ids": ids[lo:hi], "count": hi - lo}})
+			id := fmt.Sprintf("L0FAKE%02d", i)
+			chs := append(s.SectionInserts(id), ids[lo:hi]...)
+			secs = append(secs, map[string]any{"channel_section_id": id, "name": n, "type": typ,
+				"channel_ids_page": map[string]any{"channel_ids": chs, "count": len(chs)}})
 		}
 		secs = append(secs, map[string]any{"channel_section_id": "L0FAKECH", "name": "", "type": "channels"},
 			map[string]any{"channel_section_id": "L0FAKEDM", "name": "", "type": "direct_messages"},
@@ -770,7 +774,7 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	case "usergroups.list":
 		var gs []slack.Usergroup
 		for i := 0; i < s.Size.Usergroups; i++ {
-			gs = append(gs, slack.Usergroup{ID: fmt.Sprintf("S0FAKE%05d", i), Handle: s.words[i%len(s.words)] + strconv.Itoa(i),
+			gs = append(gs, slack.Usergroup{ID: fmt.Sprintf("S0FAKE%05d", i), Handle: s.usergroupHandle(i),
 				Name: title(s.words[(i*7)%len(s.words)]), Description: s.words[(i*3)%len(s.words)], UserCount: i % 50})
 		}
 		return ok("usergroups", gs)
@@ -783,6 +787,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return ok("messages", []any{}, "has_more", false)
 	case "conversations.info":
 		if c, found := s.conv(f.Get("channel")); found {
+			return ok("channel", c)
+		}
+		if c, found := s.createdConv(f.Get("channel")); found {
 			return ok("channel", c)
 		}
 		return map[string]any{"ok": false, "error": "channel_not_found"}
@@ -837,6 +844,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return ok("huddles", []any{})
 	}
 	if out, handled := s.handleDrafts(method, f); handled {
+		return out
+	}
+	if out, handled := s.handleChannels(method, f); handled {
 		return out
 	}
 	return nil

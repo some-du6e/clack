@@ -53,7 +53,8 @@ type sidebarState struct {
 	drag      gesture.Drag
 	dragX     float32
 	dragW     float32
-	hover     bool // pointer over the sidebar (.p-channel_sidebar:hover)
+	hover     bool            // pointer over the sidebar (.p-channel_sidebar:hover)
+	headTags  map[string]*int // section headings' right-click tags (create_channel.go)
 
 	// ChannelSidebar (slick_shell.go)
 	gen       int   // bumped by every rebuild
@@ -411,6 +412,9 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 	})
 	if conv != nil {
 		a.sbRowInput(gtx, conv.ID, btn, image.Pt(w, d.Size.Y))
+	}
+	if r.kind == sbHeading {
+		a.sbHeadingControls(gtx, r, btn.Hovered(), image.Pt(w, d.Size.Y))
 	}
 	if clicked(btn) {
 		switch r.kind {
