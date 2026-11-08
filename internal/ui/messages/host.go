@@ -28,6 +28,13 @@ type Host interface {
 	popups.Host
 }
 
+// CanvasOpener is optional: the ui root shows canvases natively (canvas
+// files in messages, links to canvases).
+type CanvasOpener interface {
+	OpenCanvas(id string)
+	OpenCanvasLink(url string) bool
+}
+
 // SignInHost is optional: the ui root's sign-in screen, shown by the
 // list's "Sign in again" link once core reports the session ended.
 type SignInHost interface {
@@ -130,6 +137,9 @@ func (r *richHandler) OpenURL(url string) {
 	if blockkit.OpenWorkflowLink(r.h, url, r.m.Channel, r.m.TS) {
 		return
 	}
+	if co, ok := r.h.(CanvasOpener); ok && co.OpenCanvasLink(url) {
+		return
+	}
 	if ch, ts, ok := slackLink(url); ok {
 		if ts != "" {
 			r.h.Navigate("c/" + ch + "/t/" + ts)
@@ -151,6 +161,10 @@ func (r *richHandler) OpenImage(img richtext.Image) {
 	r.h.OpenLightbox(img, *r.m)
 }
 func (r *richHandler) OpenFile(f *richtext.File) {
+	if co, ok := r.h.(CanvasOpener); ok && f.ID != "" && core.IsCanvasFile(f.Type, "", f.PrettyType) {
+		co.OpenCanvas(f.ID)
+		return
+	}
 	if f.IsImage && f.Thumb != nil {
 		img := *f.Thumb
 		if f.URL != "" {

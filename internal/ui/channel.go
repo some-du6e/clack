@@ -56,6 +56,10 @@ func (a *App) layoutChannel(gtx layout.Context, ch string) layout.Dimensions {
 		atExact(gtx, body.Min, body.Size(), dm.LayoutBody)
 		return layout.Dimensions{Size: sz}
 	}
+	if v := a.canvasTabView(ch); v != nil { // a canvas tab (mount_features_canvas.go)
+		atExact(gtx, body.Min, body.Size(), v.Layout)
+		return layout.Dimensions{Size: sz}
+	}
 	cv := a.convoFor(ch, "")
 	atExact(gtx, body.Min, body.Size(), func(gtx layout.Context) layout.Dimensions {
 		mp := clsMessagePane.Enter(gtx, 0, 0)
@@ -428,6 +432,8 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 			}
 			if t.key == "messages" {
 				a.chTab[ch] = 0
+			} else if t.icon == "canvas" && t.fileID != "" {
+				a.chTab[ch] = i // the canvas opens in the channel's body
 			} else {
 				a.chTab[ch] = 0
 				a.openTab(ch, t.key)

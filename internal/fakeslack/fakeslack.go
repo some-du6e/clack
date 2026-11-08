@@ -295,6 +295,7 @@ func Serve(ln net.Listener, sz Size) *Server {
 	mux.HandleFunc("/api/", s.api)
 	mux.HandleFunc("/img/", s.img)
 	mux.HandleFunc("/ws", s.ws)
+	mux.HandleFunc("/files-pri/", s.filesPri) // canvas exports (canvas.go)
 	s.srv = &http.Server{Handler: mux}
 	go s.srv.Serve(ln)
 	return s
@@ -690,6 +691,9 @@ func ok(kv ...any) map[string]any {
 }
 
 func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMessage) any {
+	if out, handled := s.handleCanvases(method, f); handled { // canvas.go
+		return out
+	}
 	switch method {
 	case "auth.test":
 		return ok("url", s.URL, "team", "Fake Club", "user", "self", "team_id", TeamID, "user_id", SelfID, "enterprise_id", EnterpriseID)
@@ -996,6 +1000,8 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	defer c.CloseNow()
 	ctx := r.Context()
 	_ = c.Write(ctx, websocket.MessageText, []byte(`{"type":"hello"}`))
+	s.addSocket(c) // Push (canvas.go)
+	defer s.dropSocket(c)
 	for {
 		if _, _, err := c.Read(ctx); err != nil {
 			return
