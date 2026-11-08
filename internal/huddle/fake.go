@@ -273,16 +273,18 @@ func (f *fakeChime) chatter(ctx context.Context, send func(int, func(*pbw))) {
 // streams you publish (under your attendee id, as Chime lists them).
 func (f *fakeChime) index(w *pbw, mine []streamDesc) {
 	w.msg(8, func(w *pbw) {
-		w.msg(2, func(w *pbw) {
-			w.uint(1, shareStream)
-			w.uint(3, 1500)
-			w.uint(6, 3)
-			w.str(8, fakeRemoteAtt+"#content")
-			w.uint(9, mediaVideo)
-			w.str(10, "E1-R0FAKEROOM-"+fakeRemote)
-			w.uint(11, 320)
-			w.uint(12, 180)
-		})
+		if len(f.clip) > 0 { // NewFake(nil): nobody shares
+			w.msg(2, func(w *pbw) {
+				w.uint(1, shareStream)
+				w.uint(3, 1500)
+				w.uint(6, 3)
+				w.str(8, fakeRemoteAtt+"#content")
+				w.uint(9, mediaVideo)
+				w.str(10, "E1-R0FAKEROOM-"+fakeRemote)
+				w.uint(11, 320)
+				w.uint(12, 180)
+			})
+		}
 		for _, v := range mine {
 			w.msg(2, func(w *pbw) {
 				w.uint(1, uint64(v.StreamID))
@@ -484,6 +486,9 @@ func (f *fakeChime) sendTone(t *webrtc.TrackLocalStaticSample) {
 }
 
 func (f *fakeChime) sendClip(t *webrtc.TrackLocalStaticSample) {
+	if len(f.clip) == 0 {
+		return
+	}
 	tick := time.NewTicker(time.Second / 15)
 	defer tick.Stop()
 	for i := 0; !f.left.Load(); i++ {
