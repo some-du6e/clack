@@ -131,6 +131,7 @@ func (a *App) macMenus() []menubar.Menu {
 			{ID: "menuitem-open-help-center", Title: "Open Help Center", Do: func() { openURL(helpCenter) }},
 			sep,
 			{ID: "menuitem-release-notes", Title: "Release Notes", Do: func() { openURL(releasesPage) }},
+			{ID: "menuitem-freeze-reports", Title: "Show Freeze Reports", Do: a.showFreezeReports},
 			{ID: "menuitem-about-slack", Title: "About " + AppName, Role: "orderFrontStandardAboutPanel:"},
 		}},
 	}

@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uiguard"
 )
 
 // prefs are UI-only settings persisted to <config>/ui.json (no message
@@ -88,7 +90,8 @@ func (a *App) loadPrefs() {
 	}
 }
 
-// savePrefs writes prefs synchronously (cheap, tiny file).
+// savePrefs snapshots prefs on the UI goroutine and writes ui.json in the
+// background (prefsSaver).
 func (a *App) savePrefs() {
 	p := a.prefsPath()
 	if p == "" {
@@ -110,6 +113,69 @@ func (a *App) savePrefs() {
 		}
 	}
 	b, _ := json.MarshalIndent(a.prefs, "", "  ")
+	a.prefsSave.save(p, b)
+}
+
+// flushPrefs waits until ui.json is written (exit, tests).
+func (a *App) flushPrefs() { a.prefsSave.flush() }
+
+// prefsSaver writes ui.json off the UI goroutine: savePrefs runs on every
+// Preferences click, and a slow disk (a sleeping drive, a busy iCloud or
+// antivirus scan) must not hold the frame. The latest bytes win.
+type prefsSaver struct {
+	mu      sync.Mutex
+	path    string
+	pending []byte
+	busy    bool
+	done    chan struct{} // closed when the writer goes idle
+}
+
+func (s *prefsSaver) save(path string, b []byte) {
+	s.mu.Lock()
+	if !s.busy && !uiguard.Marked() {
+		// no window (headless tests and tools): nothing to keep responsive
+		s.mu.Unlock()
+		writePrefsFile(path, b)
+		return
+	}
+	s.path, s.pending = path, b
+	if s.busy {
+		s.mu.Unlock()
+		return
+	}
+	s.busy = true
+	s.done = make(chan struct{})
+	s.mu.Unlock()
+	go s.loop()
+}
+
+func (s *prefsSaver) loop() {
+	for {
+		s.mu.Lock()
+		b, p := s.pending, s.path
+		s.pending = nil
+		if b == nil {
+			s.busy = false
+			close(s.done)
+			s.mu.Unlock()
+			return
+		}
+		s.mu.Unlock()
+		writePrefsFile(p, b)
+	}
+}
+
+func (s *prefsSaver) flush() {
+	s.mu.Lock()
+	busy, d := s.busy, s.done
+	s.mu.Unlock()
+	if busy {
+		<-d
+	}
+}
+
+func writePrefsFile(p string, b []byte) {
+	uiguard.OffUI("ui.json write")
 	_ = os.MkdirAll(filepath.Dir(p), 0o700)
 	tmp := p + ".tmp"
 	if os.WriteFile(tmp, b, 0o600) == nil {

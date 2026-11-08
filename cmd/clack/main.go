@@ -204,7 +204,10 @@ func main() {
 		log.Printf("desktop: single instance: %v", lerr)
 	}
 	cacheDir := filepath.Join(cfg, "cache")
-	connect := func(creds slack.Creds) {
+	// build makes the session's client, store and core: it reads the
+	// metadata cache and the DPoP key, so after sign-in or an account
+	// switch it runs off the UI goroutine and only Attach is posted.
+	build := func(creds slack.Creds) *core.App {
 		c := slack.New(creds)
 		if creds.Desktop() {
 			c.PersistSession(func(nc slack.Creds) error {
@@ -239,8 +242,9 @@ func main() {
 			}
 			return imgcache.PublicFetch(ctx, raw)
 		})
-		a.Attach(svc, cacheDir)
+		return svc
 	}
+	connect := func(creds slack.Creds) { a.Attach(build(creds), cacheDir) }
 	login := func(in slack.SignInInput) error {
 		var (
 			c   slack.Creds
@@ -257,7 +261,8 @@ func main() {
 		if err := slack.WriteCreds(*credsPath, c); err != nil {
 			return err
 		}
-		a.Post(func() { connect(c) })
+		svc := build(c) // the sign-in goroutine, not the UI's
+		a.Post(func() { a.Attach(svc, cacheDir) })
 		return nil
 	}
 	if err == nil {
@@ -270,16 +275,20 @@ func main() {
 		openLink(link)
 	}
 	// Taut's api.accounts: switch to other saved credentials.
+	// Called on the UI goroutine: the file writes and build run off it.
 	a.SetSwitchAccount(func(c slack.Creds) {
-		if err := slack.CheckCredsHosts(c); err != nil {
-			log.Printf("accounts: %v", err)
-			return
-		}
-		if err := slack.WriteCreds(*credsPath, c); err != nil {
-			log.Printf("accounts: %v", err)
-			return
-		}
-		connect(c)
+		go func() {
+			if err := slack.CheckCredsHosts(c); err != nil {
+				log.Printf("accounts: %v", err)
+				return
+			}
+			if err := slack.WriteCreds(*credsPath, c); err != nil {
+				log.Printf("accounts: %v", err)
+				return
+			}
+			svc := build(c)
+			a.Post(func() { a.Attach(svc, cacheDir) })
+		}()
 	})
 	if os.Getenv("CLACK_TIMING") != "" || os.Getenv("YOLOSLACK_TIMING") != "" {
 		log.Printf("timing: main ready: %v", time.Since(started).Round(100*time.Microsecond))

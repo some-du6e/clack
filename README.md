@@ -163,6 +163,16 @@ Release builds check GitHub Releases for a newer version once at start and then 
 
 Config lives in `~/.config/clack` (`%AppData%\clack` on Windows, `~/Library/Application Support/clack` on macOS). Set `CLACK_HOME` to keep it elsewhere. Config from the old name (`yoloslack`) is copied over on first start. Set `CLACK_TIMING=1` to log startup timings, `CLACK_FRAMELOG=1` to log every frame, and `CLACK_NOEMBOLDEN=1` to skip the text-weight correction (faster on machines without a GPU).
 
+### If Clack freezes
+
+If the window stops responding for more than 2 seconds (a beachball on macOS), Clack writes a freeze report and keeps running. Reports go to `freeze-reports/` in the config directory:
+
+- macOS: `~/Library/Application Support/clack/freeze-reports/`
+- Linux: `~/.config/clack/freeze-reports/`
+- Windows: `%AppData%\clack\freeze-reports\`
+
+Each `freeze-<date>-<time>.txt` holds the Clack version, what the window was doing (layout, posted work or the GPU submit), your `ui.json` settings, and the stack of every goroutine, plus how long the freeze lasted once it ended. It has no message text, and tokens and cookies are redacted. On macOS, **Help → Show Freeze Reports** opens the folder in Finder. To report a freeze, attach the newest file to a GitHub issue. The log also prints the report's path. Clack keeps the 10 most recent reports.
+
 ## Build
 
 Every push runs gofmt, vet and the tests in GitHub Actions, then builds Linux (cgo; Gio needs Wayland/X11/GL headers), Windows (cross-compiled, no cgo) and macOS binaries. A `v*` tag runs `.github/workflows/release.yml`, which builds the packages listed under [Install](#install) (the macOS app as a universal arm64 + x86-64 binary, the Windows installer with Inno Setup, the `.deb`/`.rpm` with nfpm, the AppImage with appimagetool), installs and checks them on the CI runners, and publishes them with `SHA256SUMS` as a GitHub Release. Tags with a `-` (`v0.4.0-rc.1`) become pre-releases. The packaging files are in `packaging/`.

@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"strings"
+	"time"
 
 	"gioui.org/layout"
 
@@ -23,7 +24,7 @@ func (p *prefsModal) appearancePage(gtx layout.Context) layout.Dimensions {
 	f.note("Choose if Slack’s appearance should be light or dark, or follow your computer’s settings.", false, 1)
 	f.option("mode.light", "Light", "", !sync && !a.th.Dark, true, func() { a.pickMode(false) })
 	f.option("mode.dark", "Dark", "", !sync && a.th.Dark, true, func() { a.pickMode(true) })
-	_, osOK := osPrefersDark()
+	_, osOK := osSchemeDark() // the watcher's atomic: never an OS call in layout
 	hint := ""
 	if !osOK {
 		hint = "Your desktop doesn't report a colour scheme, so this stays light"
@@ -169,7 +170,8 @@ func (p *prefsModal) presetTile(gtx layout.Context, f *prefsForm, col int, pr th
 	tw := (f.w - 2*gapX) / 3
 	th := gtx.Dp(40)
 	b := p.btn("preset." + pr.ID)
-	fields := pr.Theme.Fields(a.th.Dark, true)
+	// cached and computed off the UI goroutine; a tile draws once it's in
+	fields, _ := theme.FieldsAsync(pr.Theme, a.th.Dark, true, time.Millisecond, a.Invalidate)
 	at(gtx, image.Pt(col*(tw+gapX), f.y), image.Pt(tw, th), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, b, func(gtx layout.Context, s image.Point, hov bool) {
 			r := image.Rectangle{Max: s}

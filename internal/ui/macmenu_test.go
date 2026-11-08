@@ -127,6 +127,7 @@ Help [help]
   Open Help Center||→
   ---
   Release Notes||→
+  Show Freeze Reports||→
   About Clack||orderFrontStandardAboutPanel:
 `
 
