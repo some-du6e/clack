@@ -668,10 +668,35 @@
     requestSubmit() { this.submit(); }
     reset() { for (const e of this.elements) { delete e._val; delete e._chk; } markDirty(this); }
     get open() { return this.hasAttribute('open'); }
-    set open(v) { this.toggleAttribute('open', !!v); }
-    show() { this.open = true; }
-    showModal() { this.open = true; }
-    close(rv) { this.open = false; if (rv !== undefined) this.returnValue = rv; dispatchSynthetic(this, 'close', {}); }
+    set open(v) { if (!v && this._modal) leaveTopLayer(this); this.toggleAttribute('open', !!v); }
+    // <dialog>: show() opens it in place; showModal() puts it in the top
+    // layer (serialized as "modal", which slackc centres over a backdrop
+    // that keeps clicks from the page); Escape cancels the topmost one.
+    show() {
+      if (this.localName !== 'dialog') return;
+      if (this.hasAttribute('open')) {
+        if (this._modal) throw new DOMException("Failed to execute 'show' on 'HTMLDialogElement': The dialog is already open as a modal dialog, and therefore cannot be opened as a non-modal dialog.", 'InvalidStateError');
+        return;
+      }
+      this.open = true;
+    }
+    showModal() {
+      if (this.localName !== 'dialog') return;
+      if (this.hasAttribute('open')) {
+        if (this._modal) return;
+        throw new DOMException("Failed to execute 'showModal' on 'HTMLDialogElement': The dialog is already open as a non-modal dialog, and therefore cannot be opened as a modal dialog.", 'InvalidStateError');
+      }
+      if (!this.isConnected) throw new DOMException("Failed to execute 'showModal' on 'HTMLDialogElement': The element is not in a Document.", 'InvalidStateError');
+      this._modal = true;
+      this._prevFocus = activeEl;
+      if (!topLayer.includes(this)) topLayer.push(this);
+      this.open = true;
+      dialogFocus(this);
+    }
+    close(rv) { if (this.localName === 'dialog') closeDialog(this, rv); }
+    requestClose(rv) { if (this.localName === 'dialog' && this.hasAttribute('open') && dispatchSynthetic(this, 'cancel', { cancelable: true })) closeDialog(this, rv); }
+    get returnValue() { return this._rv ?? ''; }
+    set returnValue(v) { this._rv = String(v); }
     showPopover() { this._popover = true; markDirty(this); }
     hidePopover() { this._popover = false; markDirty(this); }
     togglePopover(f) { this._popover = f === undefined ? !this._popover : !!f; markDirty(this); return this._popover; }
@@ -1150,6 +1175,44 @@
   jr.focusElement = focusElement;
   jr.activeElement = () => activeEl;
 
+  // ---- <dialog> top layer ----
+  const topLayer = [];
+  const leaveTopLayer = (d) => {
+    d._modal = false;
+    const i = topLayer.indexOf(d);
+    if (i >= 0) topLayer.splice(i, 1);
+    markDirty(d);
+  };
+  // the topmost open modal dialog still in the document
+  const topModal = () => {
+    for (let i = topLayer.length - 1; i >= 0; i--) {
+      const d = topLayer[i];
+      if (d._modal && d.hasAttribute('open') && d.isConnected) return d;
+    }
+    return null;
+  };
+  jr.topModal = topModal;
+  const focusableSel = 'button:not([disabled]),input:not([disabled]):not([type=hidden]),select:not([disabled]),textarea:not([disabled]),a[href],summary,[tabindex]:not([tabindex="-1"]),[contenteditable]:not([contenteditable=false])';
+  // the dialog focusing steps: an autofocus descendant, else the first
+  // focusable one, else the dialog itself
+  const dialogFocus = (d) => {
+    let el = d.hasAttribute('autofocus') ? d : d.querySelector('[autofocus]');
+    if (!el || el.disabled) el = d.querySelector(focusableSel) || d;
+    focusElement(el);
+  };
+  const closeDialog = (d, rv) => {
+    if (!d.hasAttribute('open')) return;
+    const wasModal = !!d._modal;
+    const prev = d._prevFocus;
+    d._prevFocus = null;
+    if (wasModal) leaveTopLayer(d);
+    d.toggleAttribute('open', false);
+    if (rv !== undefined) d.returnValue = rv;
+    if (wasModal && activeEl && (activeEl === d || d.contains(activeEl))) focusElement(prev && prev.isConnected ? prev : null);
+    // the close event is queued, as in browsers
+    G.setTimeout(() => dispatchSynthetic(d, 'close', { cancelable: false }), 0);
+  };
+
   // ---- events from Go ----
   // target: host node k (0 = document); ev: parsed event JSON
   let hovered = null;
@@ -1206,6 +1269,10 @@
     } else if (ev.type === 'keydown' && ev.key === 'Enter' && t.localName === 'input' && isTextInput(t)) {
       const f = t.form;
       if (f) dispatchSynthetic(f, 'submit', {});
+    } else if (ev.type === 'keydown' && ev.key === 'Escape' && !ev.repeat) {
+      // a close request: cancel (cancelable), then close
+      const d = topModal();
+      if (d && dispatchSynthetic(d, 'cancel', { cancelable: true })) closeDialog(d);
     }
   };
 
@@ -1973,7 +2040,7 @@
       if (ls) for (const k of ls.keys()) addOn(k);
       if (n._onp) for (const k in n._onp) if (typeof n._onp[k] === 'function') addOn(k);
       const kids = ln === 'textarea' ? '' : serChildren(n);
-      out = '{"t":' + J(ln) + ',"k":' + n._k + ',"p":' + J(p) + (on ? ',"on":{' + on + '}' : '') + (kids ? ',"c":[' + kids + ']' : '') + (n === activeEl ? ',"focus":true' : '') + '}';
+      out = '{"t":' + J(ln) + ',"k":' + n._k + ',"p":' + J(p) + (on ? ',"on":{' + on + '}' : '') + (kids ? ',"c":[' + kids + ']' : '') + (n === activeEl ? ',"focus":true' : '') + (n._modal && ln === 'dialog' && n.hasAttribute('open') ? ',"modal":true' : '') + '}';
     }
     n._j = out;
     return out;

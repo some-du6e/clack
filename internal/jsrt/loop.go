@@ -35,6 +35,8 @@ type Runtime struct {
 	goid     atomic.Int64 // JS thread goroutine id
 	deadline atomic.Int64 // unix nanos; the running task is interrupted after it (0 = none)
 
+	interrupts atomic.Uint64 // watchdog interrupts (Interrupts)
+
 	// JS-thread-only state below.
 	eng        *engine
 	js         *Ctx
@@ -266,6 +268,12 @@ func (r *Runtime) checkpoint() {
 	r.flushRender()
 	r.eng.gcFloor()
 }
+
+// Interrupts counts the times the watchdog interrupted JS (a task over
+// Options.Timeout, or Close). QuickJS settles nothing an interrupted
+// Promise job would have settled, so whatever awaits it waits forever;
+// callers waiting on a promise can use this to stop. Any goroutine.
+func (r *Runtime) Interrupts() uint64 { return r.interrupts.Load() }
 
 // interrupted is polled by the engine's interrupt handler.
 func (r *Runtime) interrupted() bool {

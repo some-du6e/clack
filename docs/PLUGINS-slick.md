@@ -134,6 +134,10 @@ Behaviour checks (synthetic workspace, fake Slack API, no network): HumanCount (
 
 Results are in the latest `slick` run's "acceptance summary" step (`ACCEPT n/53 pass: …`).
 
+Plugins that work alone can break each other, and the acceptance suite loads one at a time, so combinations found live get their own tests: `TestHaikuWarningWithChatTabs` (internal/slick: the send check with ChatTabs' renderer, main half, tab bar and Ctrl+W wired) and `TestSlickViewHaikuWarningWithChatTabs` (internal/ui: the real composer and key routing). With ChatTabs on, its window `keydown` listener made the shell forward keys to JS from a catch-all key filter that ran first in the frame, so it took the composer's Enter: nothing was sent and no send check ran. Window/document key listeners now get only the keys no widget took.
+
+Send checks may wait for the user as long as they like. But a task the jsrt watchdog interrupts leaves the promises it would have settled pending forever (QuickJS), so once that has happened a send check still pending with nothing open for the user (no plugin modal, no open dialog) for 10 s is ignored like a check that threw, and logged.
+
 ## Known gaps
 
 - Component boundaries: plugins patch ~58 names Taut's catalogue didn't have (PLUGINS-components.md §9). Patches register and render through slackc, but the UI owners still have to call `slackc.Render` at those boundaries for them to show in Clack's native views.

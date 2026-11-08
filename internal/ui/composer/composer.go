@@ -180,7 +180,10 @@ func (c *Composer) Layout(gtx layout.Context) layout.Dimensions {
 	c.st.Images = c.emojiImage
 	c.st.PlaceholderText = ""
 
-	if c.focusReq {
+	// Not in a measure pass (gtx.Disabled(): a patched boundary above the
+	// composer, ChatTabs' ClientPrimaryView, measures it first), where a
+	// FocusCmd goes nowhere and the request would be lost.
+	if c.focusReq && gtx.Source.Enabled() {
 		c.focusReq = false
 		c.ed.Focus(gtx)
 	}

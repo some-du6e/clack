@@ -108,6 +108,7 @@ func newEngine(r *Runtime) (*engine, error) {
 	hb.NewFunctionBuilder().WithGoModuleFunction(api.GoModuleFunc(e.hostCall), []api.ValueType{i32, i32, i32, i32, i32}, []api.ValueType{i32}).Export("host_call")
 	hb.NewFunctionBuilder().WithGoModuleFunction(api.GoModuleFunc(func(_ context.Context, _ api.Module, st []uint64) {
 		if r.interrupted() {
+			r.interrupts.Add(1)
 			st[0] = 1
 		} else {
 			st[0] = 0

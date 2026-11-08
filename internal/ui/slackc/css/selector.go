@@ -70,6 +70,8 @@ const (
 	pcNthOfType
 	pcNthLastOfType
 	pcLang
+	pcModal // a dialog opened with showModal()
+	pcOpen  // an open <dialog> or <details>
 )
 
 type pseudoClass struct {
@@ -91,9 +93,9 @@ var simplePseudo = map[string]pcKind{
 	"defined": pcAlways, "valid": pcAlways, "in-range": pcAlways, "user-valid": pcNever,
 	"visited": pcNever, "target": pcNever, "target-within": pcNever, "indeterminate": pcNever,
 	"default": pcNever, "invalid": pcNever, "out-of-range": pcNever, "user-invalid": pcNever,
-	"autofill": pcNever, "-webkit-autofill": pcNever, "fullscreen": pcNever, "modal": pcNever,
+	"autofill": pcNever, "-webkit-autofill": pcNever, "fullscreen": pcNever, "modal": pcModal,
 	"popover-open": pcNever, "playing": pcNever, "paused": pcNever, "blank": pcNever,
-	"open": pcNever, "closed": pcNever, "picture-in-picture": pcNever, "current": pcNever,
+	"open": pcOpen, "closed": pcNever, "picture-in-picture": pcNever, "current": pcNever,
 	"past": pcNever, "future": pcNever, "host": pcNever, "-webkit-full-screen": pcNever,
 	"window-inactive": pcNever, "-webkit-scrollbar": pcNever, "horizontal": pcNever, "vertical": pcNever,
 	"decrement": pcNever, "increment": pcNever, "start": pcNever, "end": pcNever,
@@ -104,11 +106,12 @@ var pseudoElements = map[string]Pseudo{
 	"before": PseudoBefore, "after": PseudoAfter,
 	"placeholder": PseudoPlaceholder, "-webkit-input-placeholder": PseudoPlaceholder,
 	"-ms-input-placeholder": PseudoPlaceholder,
+	"backdrop":              PseudoBackdrop,
 }
 
 // never-matching but valid pseudo-elements (Chrome accepts any ::-webkit-*).
 var neverElements = map[string]bool{
-	"selection": true, "marker": true, "backdrop": true, "first-line": true, "first-letter": true,
+	"selection": true, "marker": true, "first-line": true, "first-letter": true,
 	"file-selector-button": true, "cue": true, "grammar-error": true, "spelling-error": true,
 	"target-text": true, "view-transition": true, "view-transition-group": true,
 	"view-transition-image-pair": true, "view-transition-old": true, "view-transition-new": true,
@@ -874,6 +877,15 @@ func matchPseudo(pc *pseudoClass, el Element, anchor Element) bool {
 		return st&StateHover != 0
 	case pcFocus:
 		return st&StateFocus != 0
+	case pcModal:
+		m, ok := el.(interface{ Modal() bool })
+		return ok && m.Modal()
+	case pcOpen:
+		if t := el.Tag(); t != "dialog" && t != "details" {
+			return false
+		}
+		_, ok := el.Attr("open")
+		return ok
 	case pcFocusVisible:
 		return st&StateFocusVisible != 0
 	case pcFocusWithin:
