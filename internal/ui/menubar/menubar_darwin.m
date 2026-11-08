@@ -358,7 +358,10 @@ static void dump(NSMutableString *out, NSMenu *m, int depth) {
 		NSString *act = it.action != nil ? NSStringFromSelector(it.action) : @"";
 		NSString *tgt = it.target != nil ? NSStringFromClass([it.target class]) : @"nil";
 		NSString *impl = @"";
-		if (it.action != nil && it.target == nil) {
+		if (it.submenu != nil) { // AppKit's own submenuAction: opens it
+			act = @"";
+			tgt = @"nil";
+		} else if (it.action != nil && it.target == nil) {
 			BOOL ok = [NSApplication instancesRespondToSelector:it.action] || [NSWindow instancesRespondToSelector:it.action] ||
 					  (g != nil && [g instancesRespondToSelector:it.action]);
 			impl = ok ? @" ok" : @" MISSING";
