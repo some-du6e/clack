@@ -971,9 +971,14 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 		y = dp(gtx, 4)
 	}
 	s.tbRow, s.tbSize, s.tbHov = r, size, -1
-	// Right-aligned: measure first (a plugin may add to the toolbar).
+	// Right-aligned: measure first (a plugin may add to the toolbar). The
+	// card is absolutely positioned in Slack, so it shrink-wraps: unbounded
+	// width makes a patched (block-level) root as wide as its content
+	// instead of the whole list (OwlMode's patch drew it at the left edge).
 	rec := op.Record(gtx.Ops)
-	d := slackc.Component(gtx, "MessageActions", s, (*listState).actionsProps, (*listState).layoutActions)
+	g := gtx
+	g.Constraints = layout.Constraints{Max: image.Pt(1<<24, gtx.Constraints.Max.Y)}
+	d := slackc.Component(g, "MessageActions", s, (*listState).actionsProps, (*listState).layoutActions)
 	call := rec.Stop()
 	x := size.X - dp(gtx, mt.toolbarRight) - d.Size.X
 	t := op.Offset(image.Pt(x, y)).Push(gtx.Ops)

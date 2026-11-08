@@ -318,6 +318,8 @@ func (p *painter) input(b *box, r rectF, visible bool) {
 	if truthy(b.n.P["autoFocus"]) && !ns.autoFocused {
 		ns.autoFocused = true
 		gtx.Execute(key.FocusCmd{Tag: ed})
+	} else if modalFocus(b, ns) {
+		gtx.Execute(key.FocusCmd{Tag: ed})
 	}
 	// keys the editor doesn't report: Escape, and arrows in one-line inputs
 	if ns.filters == nil {
@@ -441,6 +443,27 @@ func typedText(a, b string) string {
 	return ""
 }
 
+// modalFocus reports a JS focus (el.focus(), the dialog focusing steps of
+// showModal()) of b inside an open modal dialog that key focus hasn't
+// followed yet. JS focus elsewhere stays JS-side, so a plugin can't take
+// the composer's keys; in a modal dialog the page is inert, as in browsers.
+func modalFocus(b *box, ns *nodeState) bool {
+	if !b.n.Focus {
+		ns.jsFocused = false
+		return false
+	}
+	if ns.jsFocused {
+		return false
+	}
+	for x := b; x != nil; x = x.parent {
+		if x.topLayer {
+			ns.jsFocused = true
+			return true
+		}
+	}
+	return false
+}
+
 // focusArea registers a non-editor focusable for key focus and Tab.
 func (p *painter) focusArea(b *box, r rectF) {
 	v, s := p.v, p.s
@@ -452,6 +475,8 @@ func (p *painter) focusArea(b *box, r rectF) {
 	ar.Pop()
 	if truthy(b.n.P["autoFocus"]) && !ns.autoFocused {
 		ns.autoFocused = true
+		s.gtx.Execute(key.FocusCmd{Tag: &ns.tag})
+	} else if modalFocus(b, ns) {
 		s.gtx.Execute(key.FocusCmd{Tag: &ns.tag})
 	}
 	v.keyEvents(s, b)

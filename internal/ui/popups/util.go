@@ -90,7 +90,35 @@ func lookupUser(h Host, id string) (core.User, bool) {
 	if h.Core() == nil || id == "" {
 		return core.User{}, false
 	}
-	return h.Core().User(id)
+	u, ok := h.Core().User(id)
+	if ok {
+		u = memberView(u)
+	}
+	return u, ok
+}
+
+// memberView applies plugins' member patches (patchSlice('members'):
+// Nicknames, StreamerMode…) as Slack's components read them from the
+// store. Unpatched it returns u unchanged.
+func memberView(u core.User) core.User {
+	t := tautRT.Load()
+	if t == nil || u.ID == "" || !t.SlicePatched("members") {
+		return u
+	}
+	mf, ok := t.MemberView(u.ID)
+	if !ok {
+		return u
+	}
+	if mf.Name != "" {
+		u.Name = mf.Name
+	}
+	if mf.RealName != "" {
+		u.RealName = mf.RealName
+	}
+	if mf.Avatar != "" {
+		u.Avatar, u.Avatar192, u.Avatar512 = mf.Avatar, mf.Avatar, mf.Avatar
+	}
+	return u
 }
 
 // convTitle is how the sidebar names a conversation ("general", a DM

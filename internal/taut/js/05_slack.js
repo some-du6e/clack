@@ -1249,17 +1249,34 @@ T.transformSendBlocks = (blocks) => {
   }
   return result
 }
-/** Go → JS: false keeps the message in the composer */
+/** the outgoing message's blocks: the composer passes them; else read the registered input */
+function sendCheckBlocks(c) {
+  if (Array.isArray(c.blocks)) return c.blocks
+  try {
+    const where = { channelId: c.channelId, ...(c.threadTs ? { viewContext: 'THREADS_FLEXPANE' } : {}) }
+    const contents = getInputProxy(where)?.getContents()
+    return contents ? deltaToBlocks(contents) : []
+  } catch {
+    return []
+  }
+}
+/** Go → JS: false keeps the message in the composer. Checks are Taut's (blocks, {channelId, threadTs}) */
 T.sendCheck = async (ctx) => {
+  if (!sendChecks.size) return true
+  const c = decode(ctx) || {}
+  const blocks = sendCheckBlocks(c)
+  const context = { channelId: c.channelId, ...(c.threadTs ? { threadTs: c.threadTs } : {}) }
   for (const check of [...sendChecks]) {
     try {
-      if ((await check(decode(ctx))) === false) return false
+      if ((await check(blocks, context)) === false) return false
     } catch (err) {
       error('Send check failed:', err)
     }
   }
   return true
 }
+/** Go → JS: whether a dialog a pending send check may be waiting on is open */
+T.sendCheckWaiting = () => !!G.document?.querySelector?.('dialog[open], [role=dialog], [role=alertdialog], [aria-modal=true]')
 T.transformLink = (url, ctx) => {
   let r = url
   for (const t of linkTransforms) {

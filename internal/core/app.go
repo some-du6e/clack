@@ -49,6 +49,7 @@ type App struct {
 	starred map[string]bool         // starred conversation ids (stars.list)
 	starsOK bool                    // starred was loaded
 	memberN map[string]int          // conversation -> people count (edge users/counts)
+	memberG map[string]int          // conversation -> guests among them (edge users/counts)
 
 	// Realtime (Slack's websocket gateway) is opt-in; see SetRealtime.
 	rtMu      sync.Mutex
@@ -76,7 +77,7 @@ type call struct {
 func New(c *slack.Client, s *store.Store) *App {
 	a := &App{C: c, S: s, ready: make(chan struct{}), inflight: map[string]*call{}, subs: map[*sub]struct{}{},
 		presSeen: map[string]time.Time{}, files: newFileCache(fileCacheBytes), pending: map[string]*pendingSend{},
-		saved: map[string]bool{}, starred: map[string]bool{}, memberN: map[string]int{}}
+		saved: map[string]bool{}, starred: map[string]bool{}, memberN: map[string]int{}, memberG: map[string]int{}}
 	if s.SelfID() == "" {
 		s.Lock()
 		s.Self.ID = c.Creds.UserID

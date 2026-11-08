@@ -51,8 +51,10 @@ class LazyMap {
         self.entries.set(String(key), null)
         return true
       },
+      // Slack's store keeps a slice's real keys on its prototype too, and
+      // plugins scan them there (LastSeen: Object.keys(Object.getPrototypeOf(messages)))
       getPrototypeOf() {
-        return Object.prototype
+        return self.protoView()
       },
     }
     this.proxy = new Proxy(this.target, this.handler)
@@ -66,6 +68,8 @@ class LazyMap {
       error(`reading ${this.name}.${key} failed`, err)
     }
     if (v !== null && typeof v === 'object') v = harden(v)
+    // a channel's messages keep their timestamps on the prototype too, like Slack's
+    if (this.name === 'messages' && v !== null && typeof v === 'object' && !Array.isArray(v)) v = withKeyProto(v)
     this.entries.set(key, v)
     return v
   }
@@ -86,6 +90,17 @@ class LazyMap {
     }
     return this.keys
   }
+  /** an object whose own (lazy) properties are the slice's entries, served as its prototype */
+  protoView() {
+    const keys = this.allKeys()
+    if (this.proto && this.protoKeys === keys) return this.proto
+    const proto = Object.create(Object.prototype)
+    for (const k of keys) {
+      Object.defineProperty(proto, k, { get: () => this.handler.get(this.target, k), enumerable: true, configurable: true })
+    }
+    this.proto, this.protoKeys = proto, keys
+    return proto
+  }
   /** drops `keys` (or everything) so they're read again, and gives the slice a new identity */
   invalidate(keys) {
     if (!keys) {
@@ -100,6 +115,17 @@ class LazyMap {
     }
     this.proxy = new Proxy(this.target, this.handler)
   }
+}
+
+/** o with a prototype holding the same entries (Slack's nested slices look like this) */
+function withKeyProto(o) {
+  if (Object.getPrototypeOf(o) !== Object.prototype) return o
+  const proto = Object.create(Object.prototype)
+  for (const k of Object.keys(o)) proto[k] = o[k]
+  try {
+    Object.setPrototypeOf(o, proto)
+  } catch {}
+  return o
 }
 
 /** entries are shared by every reader, so they're frozen like Slack's immutable state */
@@ -546,6 +572,26 @@ function waitForThunkCreator(name) {
     w.add(resolve)
   })
 }
+/** waitForThunkCreator that rejects with `message` after `ms` and drops its waiter (Slick gives up after 30 s; Taut waits) */
+function waitForThunkWithin(name, ms, message) {
+  const known = thunkCreators.get(name)
+  if (known) return Promise.resolve(known)
+  return new Promise((resolve, reject) => {
+    let w = thunkWaiters.get(name)
+    if (!w) thunkWaiters.set(name, (w = new Set()))
+    const waiters = w
+    const waiter = (creator) => {
+      clearTimeout(timer)
+      resolve(creator)
+    }
+    const timer = setTimeout(() => {
+      waiters.delete(waiter)
+      if (!waiters.size && thunkWaiters.get(name) === waiters) thunkWaiters.delete(name)
+      reject(new Error(message))
+    }, ms)
+    waiters.add(waiter)
+  })
+}
 async function dispatchThunk(name, ...args) {
   const creator = await waitForThunkCreator(name)
   return dispatch(creator(...args))
@@ -599,7 +645,24 @@ T.dispatchThunk = async (name, args, nativeId, sync) => {
     }
   }
   const result = await dispatch(creator(...decode(args || [])))
-  return encode(result)
+  return encode(await completeTier(result))
+}
+
+/**
+ * Slack's autocomplete thunks return tiered results: the local rows, with the
+ * complete tier as `.promise` (PrivateChannelMapper adds its rows there). Go
+ * gets one answer and keeps its native rows meanwhile, so it gets the complete
+ * tier, or the local rows when that tier fails or isn't a list.
+ */
+async function completeTier(result) {
+  if (!Array.isArray(result) || typeof result.promise?.then !== 'function') return result
+  try {
+    const all = await result.promise
+    return Array.isArray(all) ? all : result
+  } catch (err) {
+    warn('a thunk result tier failed', err)
+    return result
+  }
 }
 
 // ---- React hooks ----
@@ -694,4 +757,4 @@ defineModule('redux-store', {
   }),
 })
 
-Object.assign(T, { redux, store, getState, getRawState, dispatch, defineThunk, nativeThunk, onAction, setLocalSlice, refresh })
+Object.assign(T, { redux, store, getState, getRawState, dispatch, defineThunk, nativeThunk, waitForThunkWithin, onAction, setLocalSlice, refresh })

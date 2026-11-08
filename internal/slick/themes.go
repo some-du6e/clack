@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -31,9 +33,14 @@ type Theme struct {
 
 const themeSelector = ":root,html,body,.sk-client-theme--dark,.sk-client-theme--light"
 
-func scalarVars(m map[string]any) bool {
-	for _, v := range m {
-		switch v.(type) {
+// variables is Slick's variables(): an object of strings and numbers.
+func variables(v any) bool {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return false
+	}
+	for _, x := range m {
+		switch x.(type) {
 		case string, float64:
 		default:
 			return false
@@ -42,50 +49,83 @@ func scalarVars(m map[string]any) bool {
 	return true
 }
 
-// validTheme is Slick's isThemeJson.
+// validTheme is Slick's isThemeJson. A key that is present counts, even as
+// null: Slick checks `!== undefined`, so `"palette": null` is rejected.
 func validTheme(raw json.RawMessage) bool {
-	var probe map[string]json.RawMessage
-	if json.Unmarshal(raw, &probe) != nil || probe == nil {
+	var v map[string]any
+	if json.Unmarshal(raw, &v) != nil || v == nil {
 		return false
 	}
-	var t Theme
-	if json.Unmarshal(raw, &t) != nil {
+	for _, k := range []string{"name", "description"} {
+		if x, ok := v[k]; ok {
+			if _, isString := x.(string); !isString {
+				return false
+			}
+		}
+	}
+	if m, ok := v["mode"]; ok && m != "dark" && m != "light" {
 		return false
 	}
-	if t.Mode != "" && t.Mode != "dark" && t.Mode != "light" {
-		return false
+	if p, ok := v["palette"]; ok {
+		ramps, isObject := p.(map[string]any)
+		if !isObject {
+			return false
+		}
+		for _, shades := range ramps {
+			if !variables(shades) {
+				return false
+			}
+		}
 	}
-	for _, shades := range t.Palette {
-		if !scalarVars(shades) {
+	for _, k := range []string{"sidebar", "vars"} {
+		if x, ok := v[k]; ok && !variables(x) {
 			return false
 		}
 	}
-	if !scalarVars(t.Sidebar) || !scalarVars(t.Vars) {
-		return false
-	}
-	if len(t.CSS) > 0 {
-		var s string
-		var list []string
-		if json.Unmarshal(t.CSS, &s) != nil && json.Unmarshal(t.CSS, &list) != nil {
+	if c, ok := v["css"]; ok {
+		switch c := c.(type) {
+		case string:
+		case []any:
+			for _, e := range c {
+				if _, isString := e.(string); !isString {
+					return false
+				}
+			}
+		default:
 			return false
 		}
 	}
 	for _, k := range []string{"palette", "sidebar", "vars", "css"} {
-		if _, ok := probe[k]; ok {
+		if _, ok := v[k]; ok {
 			return true
 		}
 	}
 	return false
 }
 
+// varString is JavaScript's String(value) for a theme value.
 func varString(v any) string {
 	switch x := v.(type) {
 	case string:
 		return x
 	case float64:
-		return fmt.Sprint(x)
+		return jsNumber(x)
 	}
 	return fmt.Sprint(v)
+}
+
+// jsNumber formats a number as JavaScript's Number.prototype.toString does:
+// the shortest round-trip digits, positional below 1e21 and from 1e-6,
+// exponent form outside that (1e+21, 1.5e-7).
+func jsNumber(x float64) string {
+	if x == 0 {
+		return "0"
+	}
+	if a := math.Abs(x); a >= 1e21 || a < 1e-6 {
+		mant, exp, _ := strings.Cut(strconv.FormatFloat(x, 'e', -1, 64), "e")
+		return mant + "e" + exp[:1] + strings.TrimLeft(exp[1:], "0")
+	}
+	return strconv.FormatFloat(x, 'f', -1, 64)
 }
 
 // themeCSS is Slick's themeToCss: palette, sidebar and vars as !important
@@ -171,12 +211,16 @@ func ParseTheme(data []byte, filename string) (json.RawMessage, error) {
 	name, _ := m["name"].(string)
 	name = strings.TrimSpace(name)
 	if name == "" {
-		// a display name only: the file's base name, no directories
+		// a display name only: the file's base name, no directories, no
+		// .json (any case, like Slick's /\.json$/i)
 		base := filename
 		if i := strings.LastIndexAny(base, `/\`); i >= 0 {
 			base = base[i+1:]
 		}
-		name = strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(base, ".json"), ".JSON"))
+		if n := len(base); n >= 5 && strings.EqualFold(base[n-5:], ".json") {
+			base = base[:n-5]
+		}
+		name = strings.TrimSpace(base)
 	}
 	if r := []rune(name); len(r) > 100 {
 		name = string(r[:100])

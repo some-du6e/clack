@@ -121,7 +121,8 @@ type nodeState struct {
 	rangeDrag        bool
 	focused          bool
 	autoFocused      bool
-	tag              int // focus tag for non-editor focusables (address used)
+	jsFocused        bool // a JS focus() in a modal dialog was applied
+	tag              int  // focus tag for non-editor focusables (address used)
 	filters          []event.Filter
 	focusVal         string // input value when focused (change fires on blur if it differs)
 	chkNode          *Node
@@ -134,6 +135,8 @@ type nodeState struct {
 type extraTree struct {
 	boxes []*box
 	used  uint64
+	up    css.Element // the roots' CSS parent (nil: the patched component's box)
+	upKey uint64
 }
 
 // scope is one independent layout root: the View's tree, or a subtree a
@@ -594,7 +597,13 @@ func (s *scope) callNative(gtx layout.Context, b *box) layout.Dimensions {
 	v := s.v
 	var chain [64]*box
 	n := 0
-	for p := b.parent; p != nil && n < len(chain); p = p.parent {
+	// Climb to the root of b's tree, or to the root of the extra tree it
+	// belongs to when that root is anchored (up): the elements above an
+	// anchored root are the ones already on the stack.
+	for p := b; p.up == nil && n < len(chain); {
+		if p = p.parent; p == nil {
+			break
+		}
 		if p.isElem() {
 			chain[n] = p
 			n++
@@ -606,7 +615,7 @@ func (s *scope) callNative(gtx layout.Context, b *box) layout.Dimensions {
 	}
 	var d layout.Dimensions
 	prev := curRender
-	b.rctx = renderCtx{view: v, fr: &v.fr, st: &b.st, n: b.n}
+	b.rctx = renderCtx{view: v, fr: &v.fr, st: &b.st, n: b.n, depth: len(stack)}
 	curRender = &b.rctx
 	switch slot, isSlot := SlotOf(b.n); {
 	case isSlot:
@@ -777,10 +786,18 @@ func (v *View) layoutNodes(gtx layout.Context, fr *frame, nodes []*Node, parent 
 	if v.extra == nil {
 		v.extra = map[*Node]*extraTree{}
 	}
+	up, upKey := nativeAnchor()
 	x := v.extra[nodes[0]]
+	restyled := x == nil || x.up != up || x.upKey != upKey
 	if x == nil {
 		x = &extraTree{boxes: v.buildBoxes(nodes, pb)}
 		v.extra[nodes[0]] = x
+	}
+	if restyled {
+		x.up, x.upKey = up, upKey
+		for _, b := range x.boxes {
+			b.up = up
+		}
 		e := cssEnv()
 		ps := st
 		if ps == nil && pb != nil {
@@ -796,12 +813,33 @@ func (v *View) layoutNodes(gtx layout.Context, fr *frame, nodes []*Node, parent 
 	}
 	x.used = v.frameNo
 	s := v.sub(subKey{b: pb, kind: 2, ptr: nodes[0]}, pb, st)
-	if s.boxes == nil {
+	if s.boxes == nil || restyled {
 		s.boxes = x.boxes
 		s.root.lk = x.boxes
 		s.ok = false
 	}
+	if up != nil {
+		// The stack already ends in the native's own elements; pushing
+		// pb would put the patched component's host chain on top of them.
+		return v.runSub(gtx, s, nil)
+	}
 	return v.runSub(gtx, s, pb)
+}
+
+// nativeAnchor is the CSS parent for nodes a native lays out after
+// entering its own elements (ClassDef.Enter), as Slack's DOM has them:
+// TextyButtons' Original draws .c-texty_buttons and lays the
+// TextyButtonOverflow children out inside it, so SlimMessageBox's
+// `.c-texty_buttons [data-qa=emoji_toolbar_button]` reaches the emoji
+// button. nil when the native entered nothing (or none is drawing): the
+// nodes keep the patched component's box as their parent.
+func nativeAnchor() (css.Element, uint64) {
+	c := curRender
+	if c == nil || len(stack) <= c.depth {
+		return nil, 0
+	}
+	e := &stack[len(stack)-1]
+	return e.el, e.key
 }
 
 type textKey struct {

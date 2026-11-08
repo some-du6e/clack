@@ -1,0 +1,131 @@
+name: plugin-library
+# Clack's plugin Library (Preferences > Taut / Slick > Library): builds every
+# official Taut and Slick plugin with upstream's own build (Taut's
+# `build:user-plugin`, Slick's build via internal/slick/build/build.mjs) from
+# upstream main, checks them with Clack's acceptance suites, and publishes the
+# bundles plus index.json (name, description, category, authors, upstream repo
+# + commit, sha256) and both projects' GPLv3 LICENSE files as the assets of the
+# `plugins` pre-release. internal/pluginlib downloads from there and checks
+# each sha256. The bundles are third-party GPLv3 code: never committed here.
+#
+# Tracks upstream: weekly, on demand, and when this workflow changes (the
+# publish job runs for main, ui and live-taut only).
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      taut_ref:
+        description: "taut git ref"
+        required: false
+        default: "main"
+      slick_ref:
+        description: "slick git ref"
+        required: false
+        default: "main"
+  push:
+    paths:
+      - ".github/workflows/plugin-library.yml"
+      - ".github/scripts/plugin-index.mjs"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plugin-library
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # runs third-party code (upstream builds, plugin statics): read-only token, no caches
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - name: clone taut and slick
+        env:
+          TAUT_REF: ${{ inputs.taut_ref || 'main' }}
+          SLICK_REF: ${{ inputs.slick_ref || 'main' }}
+        run: |
+          set -eu
+          for r in "$TAUT_REF" "$SLICK_REF"; do case "$r" in -*|"") echo "bad ref: $r" >&2; exit 1;; esac; done
+          git clone -q https://github.com/jeremy46231/taut /tmp/taut
+          git -C /tmp/taut checkout -q "$TAUT_REF"
+          git clone -q https://github.com/3kh0/slick /tmp/slick
+          git -C /tmp/slick checkout -q "$SLICK_REF"
+          git -C /tmp/taut log --oneline -1
+          git -C /tmp/slick log --oneline -1
+      - name: "install deps (no scripts, so no electron download)"
+        run: |
+          (cd /tmp/taut && npm ci --ignore-scripts --no-audit --no-fund)
+          (cd /tmp/slick && bun install --frozen-lockfile --ignore-scripts)
+      - name: build every Taut plugin with build:user-plugin
+        working-directory: /tmp/taut
+        run: |
+          set -eu
+          mkdir -p "$GITHUB_WORKSPACE/dist/taut-plugins"
+          for f in plugins/*.ts plugins/*.tsx; do
+            name=$(basename "$f"); name=${name%.tsx}; name=${name%.ts}
+            npm run -s build:user-plugin -- "$f" "$GITHUB_WORKSPACE/dist/taut-plugins/$name.js"
+          done
+          ls "$GITHUB_WORKSPACE/dist/taut-plugins" | wc -l
+      - name: build every Slick plugin with Slick's build
+        run: |
+          set -o pipefail
+          mkdir -p dist/slick-plugins
+          node internal/slick/build/build.mjs /tmp/slick dist/slick-plugins 2>&1 | tail -5
+      - name: index.json, licenses, release notes
+        run: node .github/scripts/plugin-index.mjs /tmp/taut dist/taut-plugins /tmp/slick dist/slick-plugins dist/library
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false # this job runs third-party code; never share its Go cache
+      - name: acceptance (Taut and Slick suites against these exact bundles)
+        env:
+          TAUT_PLUGINS_DIR: ${{ github.workspace }}/dist/taut-plugins
+          SLICK_PLUGINS_DIR: ${{ github.workspace }}/dist/slick-plugins
+        run: |
+          set -o pipefail
+          go test -count=1 -timeout 20m ./internal/taut/... ./internal/slick/... 2>&1 | tail -40
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: plugin-library
+          path: dist/library
+
+  publish:
+    needs: build
+    if: github.event_name != 'push' || contains(fromJSON('["main","ui","live-taut"]'), github.ref_name)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: plugin-library
+          path: library
+      - name: publish the `plugins` pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          cd library
+          test -s index.json
+          if ! gh release view plugins >/dev/null 2>&1; then
+            gh release create plugins --title "Plugin library (Taut + Slick, GPLv3)" --notes-file RELEASE_NOTES.md \
+              --prerelease --latest=false --target "$GITHUB_SHA"
+          fi
+          gh release edit plugins --notes-file RELEASE_NOTES.md --prerelease --latest=false
+          # bundles and licenses first, index.json last: a client never sees an index naming missing files
+          ls | grep -v -e '^index.json$' -e '^RELEASE_NOTES.md$' | xargs gh release upload plugins --clobber
+          gh release upload plugins index.json --clobber
+          # drop assets of plugins that are gone upstream
+          keep=" $(ls | tr '\n' ' ') "
+          gh release view plugins --json assets -q '.assets[].name' | while read -r a; do
+            case "$keep" in *" $a "*) ;; *) gh release delete-asset plugins "$a" -y ;; esac
+          done

@@ -294,22 +294,12 @@ function onMessageSendDelta(transform) {
   }
 }
 
-// addSendCheck(check(blocks, {channelId, threadTs})): Taut's composer send
-// checks get the composer context, which carries the outgoing blocks.
+// addSendCheck(check(blocks, {channelId, threadTs})): Taut's send checks have
+// the same signature (the composer's outgoing blocks and context).
 function addSendCheck(check) {
-  return TA.composer.addSendCheck(async (ctx) => {
-    let blocks = Array.isArray(ctx?.blocks) ? ctx.blocks : null
-    if (!blocks) {
-      try {
-        const contents = T.getExport((e) => typeof e === 'function' && e.name === 'getInputProxy')?.({ channelId: ctx?.channelId })?.getContents?.()
-        blocks = T.deltaToBlocks(toDelta(contents?.contents ?? contents ?? []))
-      } catch {
-        blocks = []
-      }
-    }
-    const context = { channelId: ctx?.channelId, ...(ctx?.threadTs ? { threadTs: ctx.threadTs } : {}) }
+  return TA.composer.addSendCheck(async (blocks, context) => {
     try {
-      return (await check(blocks, context)) !== false
+      return (await check(Array.isArray(blocks) ? blocks : [], context ?? {})) !== false
     } catch (err) {
       console.error(`[slick] send check ${label(check)} failed; ignoring it:`, err)
       return true
@@ -343,6 +333,15 @@ async function bridgeFetch(url, init) {
   return { status: res.status, body: await res.text() }
 }
 
+// Slick's redux.ts: a thunk Slack never defines rejects after THUNK_WAIT_MS instead of waiting forever
+S.thunkWaitMs = 30_000
+const waitForThunkCreator = (name) =>
+  T.waitForThunkWithin(name, S.thunkWaitMs, `[slick] timed out waiting for Slack thunk: ${name}`)
+async function dispatchThunk(name, ...args) {
+  const creator = await waitForThunkCreator(name)
+  return T.dispatch(creator(...args))
+}
+
 function createScopedAPI(entry, id, scope) {
   const tracked =
     (fn) =>
@@ -352,7 +351,7 @@ function createScopedAPI(entry, id, scope) {
   const storage = new ScopedStorage(blobStore(`plugin:${id}`))
   const fileBlob = blobStore(`plugin:${id}`)
   const integrations = {
-    redux: () => ({ ...TA.redux, patchState: tracked(TA.redux.patchState), patchSlice: tracked(TA.redux.patchSlice), patchThunk: tracked(TA.redux.patchThunk) }),
+    redux: () => ({ ...TA.redux, waitForThunkCreator, dispatchThunk, patchState: tracked(TA.redux.patchState), patchSlice: tracked(TA.redux.patchSlice), patchThunk: tracked(TA.redux.patchThunk) }),
     rtm: () => ({ on: tracked(onRtm) }),
     messages: () => ({ ...messagesBase, injectMessages: tracked(messagesBase.injectMessages) }),
     members: () => membersBase,

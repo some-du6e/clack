@@ -22,16 +22,34 @@ const COMPONENT_SOURCES = {
   HuddleLinkJoinGate: 'canJoinByExternalHuddleLink',
 }
 /**
- * components plugins pick out by their real implementation source
- * (Function.prototype.toString, which ignores a toString override), e.g.
- * Slick's BetterGifs `isGifPicker`: a one-argument function whose code
- * mentions these markers, like Slack's own
+ * code a component's source mentions, as Slack's own does, for plugins that
+ * pick components out by it: Slick's BetterGifs `isGifPicker` (a one-argument
+ * function mentioning these) and ChannelListTyping's `isSidebarChannel`
  */
 const REAL_SOURCES = {
   GifPicker: '"gif-picker-host", e.onGifSelected, e.emojiSearchQuery',
   // Slick's ChannelListTyping: {displayName: 'Channel', filter: isSidebarChannel}
   Channel: '"getSidebarChannelUiInfo"',
 }
+
+/**
+ * The source Clack's stand-ins for Slack's code show. In Slack the source is
+ * the code, so `fn.toString()` and `Function.prototype.toString.call(fn)`
+ * agree; plugins use both (Slick's filters call the latter to skip
+ * overrides), so the shown source is served by Function.prototype.toString.
+ */
+const shownSources = new WeakMap()
+const realFnToString = Function.prototype.toString
+const fnToString = {
+  toString() {
+    const src = shownSources.get(this)
+    return src !== undefined ? src : realFnToString.call(this)
+  },
+}.toString
+shownSources.set(fnToString, realFnToString.call(realFnToString))
+Object.defineProperty(Function.prototype, 'toString', { value: fnToString, writable: true, configurable: true, enumerable: false })
+/** makes `fn`'s source `src` for both toString paths */
+const showSource = (fn, src) => void shownSources.set(fn, src)
 
 // ---- shapes: Slack components plugins pick out by more than their name ----
 
@@ -183,6 +201,9 @@ const rawNatives = new Map() // name → the unpatched native component
 const wrappers = new Map() // name → the patch-following component plugins get
 const componentNames = new WeakMap()
 
+let slotCtx
+const slotContext = () => (slotCtx ??= G.React.createContext(null))
+
 function nativeFor(name) {
   let c = rawNatives.get(name)
   if (c) return c
@@ -194,14 +215,13 @@ function nativeFor(name) {
     return el
   }
   const shape = SHAPES[name]
-  let inner = shape?.render ? shape.render(render) : render
-  if (REAL_SOURCES[name]) {
-    // compiled from text, so its real source carries the markers
-    inner = new Function('render', `return function (e) { void [${REAL_SOURCES[name]}]; return render(e) }`)(render)
-  }
+  const inner = shape?.render ? shape.render(render) : render
   const marker = COMPONENT_SOURCES[name]
-  const src = `function(e){let{className:t,...n}=e;return(0,r.jsx)("div",{className:(0,a.A)(${marker || `"c-${name.replace(/[A-Z]/g, (m, i) => (i ? '_' : '') + m.toLowerCase())}"`},t),...n})}`
-  inner.toString = () => src
+  const real = REAL_SOURCES[name] ? `void [${REAL_SOURCES[name]}];` : ''
+  showSource(
+    inner,
+    `function(e){${real}let{className:t,...n}=e;return(0,r.jsx)("div",{className:(0,a.A)(${marker || `"c-${name.replace(/[A-Z]/g, (m, i) => (i ? '_' : '') + m.toLowerCase())}"`},t),...n})}`
+  )
   if (ANONYMOUS.has(name)) {
     c = React.memo(inner)
     named('', inner)
@@ -258,6 +278,10 @@ function originalObject(name) {
     const raw = nativeFor(name)
     // what replacers get as `Original`, a component they render like any other
     o = function Original(props) {
+      // a slot's <Original> rendered with new props (BetterTypingIndicator's
+      // <Original firstTyper={…}/>) keeps its slot, so Go still draws the native
+      const slot = G.React.useContext(slotContext())
+      if (slot && slot.name === name && (props == null || props.$slot === undefined)) props = { ...props, $slot: slot.slot }
       return G.React.createElement(raw, props)
     }
     o.displayName = name
@@ -297,11 +321,20 @@ function slackComponent(name) {
   w = function Wrapped(props) {
     const C = composed.use() || compose(name)
     // `__original` opts one render out of patching
+    let el
     if (props && props.__original) {
       const { __original, ...rest } = props
-      return React.createElement(nativeFor(name), rest)
+      el = React.createElement(nativeFor(name), rest)
+    } else {
+      el = React.createElement(C, props)
     }
-    return React.createElement(C, props)
+    // a Go slot (decode's $slot) tells its Original the slot even if a patch
+    // drops the prop; any other instance clears it for what it renders
+    const outer = React.useContext(slotContext())
+    const slotId = props?.$slot
+    const mine = React.useMemo(() => (slotId !== undefined ? { name, slot: slotId } : null), [slotId])
+    if (mine || outer) el = React.createElement(slotContext().Provider, { value: mine }, el)
+    return el
   }
   w.displayName = name
   componentNames.set(w, name)

@@ -110,6 +110,7 @@ type Slick struct {
 	mem       memStore    // storage of plugins that keep messages (messages.go)
 	openLimit rateLimit   // shell.openExternal
 	picking   atomic.Bool // a native file picker is open
+	styleMu   sync.Mutex  // serializes applyStyles' UI calls (sheet order)
 
 	changeMu sync.Mutex
 	changeCh map[chan struct{}]struct{}
@@ -421,23 +422,24 @@ func (s *Slick) localStorage(key string) (string, bool) {
 
 // ---- styles: theme and custom CSS (no JS) ----
 
-// applyStyles hands the selected theme's CSS and user.css to the UI.
+// applyStyles hands the selected theme's CSS and user.css to the UI. Both
+// stay while Slick is paused: Slick's installTheme and user CSS never read
+// the global switch, which only stops plugins. The theme always comes
+// first and user.css after it, so custom CSS wins over the theme as in
+// Slick's bootstrap (installTheme, then setStyle(userCss, 'user')).
 func (s *Slick) applyStyles() {
 	ui := s.t.UIHooks()
 	if ui.SetStyle == nil {
 		return
 	}
+	s.styleMu.Lock()
+	defer s.styleMu.Unlock()
 	s.mu.Lock()
 	css := ""
-	if s.cfg.globallyEnabled() {
-		if th, ok := s.themeLocked(s.cfg.theme()); ok && (th.Mode == "" || (th.Mode == "dark") == s.dark.Load()) {
-			css = themeCSS(th)
-		}
+	if th, ok := s.themeLocked(s.cfg.theme()); ok && (th.Mode == "" || (th.Mode == "dark") == s.dark.Load()) {
+		css = themeCSS(th)
 	}
 	user := s.userCSS
-	if !s.cfg.globallyEnabled() {
-		user = ""
-	}
 	prev := s.styled
 	s.styled = css
 	s.mu.Unlock()
@@ -447,6 +449,11 @@ func (s *Slick) applyStyles() {
 				ui.RemoveStyle("slick:theme")
 			}
 		} else {
+			// a new sheet is appended: take user.css out first so it lands
+			// after the theme again (a replaced sheet keeps its place)
+			if prev == "" && ui.RemoveStyle != nil {
+				ui.RemoveStyle("slick:user")
+			}
 			ui.SetStyle("slick:theme", css)
 		}
 	}

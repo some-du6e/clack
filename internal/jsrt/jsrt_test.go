@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -356,3 +357,40 @@ globalThis.__runTests = async () => {
   return out;
 };
 `
+
+// TestLocalTimeZone: Date's local time is the host's zone, the same one Intl
+// uses (Slick's OfficeHours builds its windows with getHours/setHours). It
+// runs itself again with TZ pinned to a zone that isn't UTC.
+func TestLocalTimeZone(t *testing.T) {
+	if os.Getenv("JSRT_TZ_CHILD") == "" {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestLocalTimeZone$", "-test.count=1", "-test.v")
+		cmd.Env = append(os.Environ(), "JSRT_TZ_CHILD=1", "TZ=America/New_York")
+		out, err := cmd.CombinedOutput()
+		if err != nil || !strings.Contains(string(out), "--- PASS: TestLocalTimeZone") {
+			t.Fatalf("TZ=America/New_York: %v\n%s", err, out)
+		}
+		return
+	}
+	if time.Local.String() != "America/New_York" {
+		t.Fatalf("child zone %q", time.Local)
+	}
+	r := newTest(t)
+	got := evalString(t, r, `JSON.stringify((() => {
+		const winter = new Date(Date.UTC(2026, 0, 15, 17, 0)), summer = new Date(Date.UTC(2026, 6, 4, 13, 30))
+		const set = new Date(Date.UTC(2026, 10, 7, 12, 0)); set.setHours(9, 0, 0, 0)
+		return {
+			zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+			winter: [winter.getTimezoneOffset(), winter.getHours(), winter.getDate()],
+			summer: [summer.getTimezoneOffset(), summer.getHours(), summer.getDay()],
+			local: new Date(2026, 6, 4, 9, 30).getTime() === summer.getTime(),
+			setHours: set.toISOString(),
+			parsed: new Date('2026-01-15T12:00:00').getTime() === winter.getTime(),
+			str: winter.toString().includes('GMT-0500'),
+			intl: winter.toLocaleTimeString('en-US') === winter.toLocaleTimeString('en-US', { timeZone: 'America/New_York' }),
+		}
+	})())`)
+	want := `{"zone":"America/New_York","winter":[300,12,15],"summer":[240,9,6],"local":true,"setHours":"2026-11-07T14:00:00.000Z","parsed":true,"str":true,"intl":true}`
+	if got != want {
+		t.Errorf("local time\n got %s\nwant %s", got, want)
+	}
+}

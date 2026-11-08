@@ -222,6 +222,7 @@ var (
 	richStyle  *richview.Style
 	richShaper *text.Shaper
 	richDark   bool
+	richGen    uint64 // th.Gen the palette was set at (stylesheet tokens)
 )
 
 func (b *base) style() *richview.Style {
@@ -236,13 +237,17 @@ func (b *base) style() *richview.Style {
 			p = richview.DarkPalette()
 		}
 		richStyle, richShaper, richDark = richview.NewStyle(b.th.Shaper, imgs, p), b.th.Shaper, dark
+		richGen = 0
 	}
-	if dark != richDark {
-		richDark = dark
+	if dark != richDark || richGen != b.th.Gen {
+		richDark, richGen = dark, b.th.Gen
 		if dark {
 			richStyle.SetPalette(richview.DarkPalette())
 		} else {
 			richStyle.SetPalette(richview.LightPalette())
+		}
+		if p, ok := richview.Themed(b.th); ok {
+			richStyle.SetPalette(p)
 		}
 	}
 	return richStyle

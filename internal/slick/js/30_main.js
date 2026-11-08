@@ -211,6 +211,9 @@ class EventEmitter {
   removeListener(e, f) {
     return this.off(e, f)
   }
+  listenerCount(e) {
+    return this.#l.get(e)?.length ?? 0
+  }
   emit(e, ...a) {
     const ls = this.#l.get(e) ?? []
     for (const f of [...ls]) f(...a)
@@ -391,7 +394,82 @@ function syncNotificationPatch() {
 
 // ---- the renderer side of main.call / main.on ----
 
-const fakeSender = Object.freeze({ id: 1, isDestroyed: () => false, send() {}, session: {}, executeJavaScript: async (code) => (0, eval)(code) })
+// Electron's WebContents for Clack's one Slack window: rpc handlers get it
+// as `sender` (event.sender in Slick's slick:plugin-rpc handler), window()
+// as window.webContents. 'before-input-event' sees the window's keydown and
+// keyup (preventDefault keeps the key from the page). Clack's window is never
+// destroyed or navigated while main halves run, so 'destroyed' and
+// 'did-start-navigation' listeners are kept and never called.
+const toInput = (ev) => ({
+  type: ev.type === 'keydown' ? 'keyDown' : 'keyUp',
+  key: ev.key,
+  code: ev.code,
+  isAutoRepeat: !!ev.repeat,
+  isComposing: !!ev.isComposing,
+  shift: !!ev.shiftKey,
+  control: !!ev.ctrlKey,
+  alt: !!ev.altKey,
+  meta: !!ev.metaKey,
+  location: ev.location ?? 0,
+  modifiers: [ev.shiftKey && 'shift', ev.ctrlKey && 'control', ev.altKey && 'alt', ev.metaKey && 'meta', ev.repeat && 'isautorepeat'].filter(Boolean),
+})
+class WebContents extends EventEmitter {
+  id = 1
+  // ses.fetch: the same path as MainCtx.net.fetch (no Slack cookie added)
+  session = Object.freeze({ fetch: (input, init) => pageFetch(input, init) })
+  #onKey = (ev) => {
+    let prevented = false
+    const event = {
+      preventDefault: () => void (prevented = true),
+      get defaultPrevented() {
+        return prevented
+      },
+    }
+    try {
+      this.emit('before-input-event', event, toInput(ev))
+    } catch (err) {
+      console.error('[slick] before-input-event listener threw:', err)
+    }
+    if (prevented) {
+      ev.preventDefault()
+      ev.stopImmediatePropagation()
+    }
+  }
+  #keys = false
+  #syncKeys() {
+    const want = this.listenerCount('before-input-event') > 0
+    if (want === this.#keys) return
+    this.#keys = want
+    for (const type of ['keydown', 'keyup']) G[want ? 'addEventListener' : 'removeEventListener']?.(type, this.#onKey, true)
+  }
+  on(e, f) {
+    super.on(e, f)
+    if (e === 'before-input-event') this.#syncKeys()
+    return this
+  }
+  off(e, f) {
+    super.off(e, f)
+    if (e === 'before-input-event') this.#syncKeys()
+    return this
+  }
+  getURL() {
+    return G.location?.href ?? 'https://app.slack.com/client'
+  }
+  getTitle() {
+    return G.document?.title ?? 'Slack'
+  }
+  isDestroyed() {
+    return false
+  }
+  isLoading() {
+    return false
+  }
+  send() {}
+  async executeJavaScript(code) {
+    return (0, eval)(code)
+  }
+}
+const fakeSender = Object.freeze(new WebContents())
 
 async function callMain(id, method, args) {
   const entry = plugins.get(id)

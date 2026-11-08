@@ -333,6 +333,7 @@ func profileHoverTrigger(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 type rvStyleEntry struct {
 	st   *richview.Style
 	dark bool
+	gen  uint64 // th.Gen the palette was set at (stylesheet tokens)
 }
 
 var (
@@ -357,14 +358,17 @@ func richStyle(th *theme.Theme) *richview.Style {
 		e.dark = !th.Dark // force the palette below
 		rvStyles[th.Shaper] = e
 	}
-	if e.dark != th.Dark {
-		e.dark = th.Dark
+	if e.dark != th.Dark || e.gen != th.Gen {
+		e.dark, e.gen = th.Dark, th.Gen
 		if th.Dark {
 			e.st.SetPalette(richview.DarkPalette())
 			e.st.Embolden = theme.BodyEmboldenFor(theme.DarkPalette.Fg)
 		} else {
 			e.st.SetPalette(richview.LightPalette())
 			e.st.Embolden = theme.BodyEmboldenFor(theme.LightPalette.Fg)
+		}
+		if p, ok := richview.Themed(th); ok {
+			e.st.SetPalette(p)
 		}
 	}
 	return e.st

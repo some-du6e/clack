@@ -589,7 +589,6 @@ func (s *Slick) SetGlobalEnabled(ctx context.Context, on bool) error {
 	if err != nil {
 		return err
 	}
-	s.applyStyles()
 	s.reconcileAll(ctx)
 	s.changed()
 	return nil
@@ -635,7 +634,8 @@ func (s *Slick) SetTheme(id string) error {
 	return nil
 }
 
-// ImportTheme adds a theme JSON file and returns its id ("imported:…").
+// ImportTheme adds a theme JSON file, selects it (Slick's importTheme sets
+// config.theme) and returns its id ("imported:…").
 func (s *Slick) ImportTheme(data []byte, filename string) (string, error) {
 	if len(data) > 256*1024 {
 		return "", errors.New("Theme files must be smaller than 256 KiB.")
@@ -647,11 +647,18 @@ func (s *Slick) ImportTheme(data []byte, filename string) (string, error) {
 	id := "imported:" + newUUID()
 	s.mu.Lock()
 	s.cfg.ImportedThemes[id] = t
+	prev := s.cfg.Theme
+	s.cfg.Theme = id
 	err = s.saveConfigLocked()
+	if err != nil {
+		delete(s.cfg.ImportedThemes, id)
+		s.cfg.Theme = prev
+	}
 	s.mu.Unlock()
 	if err != nil {
 		return "", err
 	}
+	s.applyStyles()
 	s.changed()
 	return id, nil
 }
@@ -1112,4 +1119,21 @@ func writeJSON(path string, v any) error {
 		return err
 	}
 	return writeFileAtomic(path, b, 0o600)
+}
+
+// InstalledSHA256 is the hex sha256 of plugin id's renderer and main half
+// ("" for a file that isn't installed), for the plugin Library.
+func (s *Slick) InstalledSHA256(id string) (renderer, main string) {
+	if !pluginID.MatchString(id) {
+		return "", ""
+	}
+	sum := func(name string) string {
+		b, err := os.ReadFile(s.path("plugins", name))
+		if err != nil {
+			return ""
+		}
+		h := sha256.Sum256(b)
+		return hex.EncodeToString(h[:])
+	}
+	return sum(id + ".js"), sum(id + ".main.js")
 }

@@ -642,6 +642,9 @@ func (b *box) focusable() bool {
 	if b.n == nil || b.kind != kElem || b.disabled() {
 		return false
 	}
+	if b.topLayer {
+		return true // a modal dialog takes focus when nothing in it can
+	}
 	if ti, ok := b.n.AttrString("tabindex"); ok {
 		n, err := strconv.Atoi(ti)
 		return err == nil && n >= -1

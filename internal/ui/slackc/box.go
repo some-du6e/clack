@@ -76,6 +76,16 @@ type box struct {
 	nprops     Props     // n.P plus "children" (the rendered children) for natives
 	rctx       renderCtx // curRender while this native draws
 
+	// topLayer: a modal <dialog> (showModal): positioned against the
+	// window and painted above everything else in its tree, over
+	// backdrop (its ::backdrop), which covers the window.
+	topLayer bool
+	backdrop *box
+
+	// up is the CSS parent of an extra tree's root laid out inside the
+	// elements a native entered (nativeAnchor); nil: parent.
+	up css.Element
+
 	tc  *textCache // text node shaping cache
 	svg *svgDoc
 
@@ -220,6 +230,9 @@ func (b *box) Attr(name string) (string, bool) {
 }
 
 func (b *box) Parent() css.Element {
+	if b.up != nil {
+		return b.up
+	}
 	p := b.parent
 	for p != nil && (p.kind == kAnon || p.kind == kPseudo) {
 		p = p.parent
@@ -273,6 +286,15 @@ func (b *box) TypeIndex() (int, int) {
 }
 
 func (b *box) State() css.State { return b.state }
+
+// Modal reports an open <dialog> JS showed with showModal() (:modal).
+func (b *box) Modal() bool {
+	if b.kind != kElem || b.n == nil || !b.n.Modal || b.n.T != "dialog" {
+		return false
+	}
+	_, open := b.n.AttrString("open")
+	return open
+}
 
 func (b *box) Kids() []css.Element {
 	if !b.ekidsOK {
@@ -498,6 +520,7 @@ func (v *View) computeStyle(b *box, parent *css.Style, e *css.Env) {
 	n := b.n
 	b.ph = nil
 	b.before, b.after = nil, nil
+	b.topLayer, b.backdrop = false, nil
 	b.listMarker = 0
 	b.key = mix(uint64(n.K)*0x9e3779b97f4a7c15 ^ v.root<<17 ^ uint64(v.styleGen)<<1 ^ uint64(b.n.index))
 	b.native, b.hostFn = false, nil
@@ -525,6 +548,7 @@ func (v *View) computeStyle(b *box, parent *css.Style, e *css.Env) {
 		b.set = 0
 		v.uaDefaults(b, nil, parent)
 		v.uaPost(b, nil, parent)
+		v.topLayerStyle(b, e)
 		return
 	}
 	c := Styles.Cascade(b, css.PseudoNone, n.Style, *e)
@@ -559,6 +583,34 @@ func (v *View) computeStyle(b *box, parent *css.Style, e *css.Env) {
 		}
 	}
 	v.uaPost(b, &c, parent)
+	v.topLayerStyle(b, e)
+}
+
+// topLayerStyle puts an open modal dialog in the top layer and computes
+// its ::backdrop (UA: a 10% black veil over the window). ::backdrop
+// inherits from no element.
+func (v *View) topLayerStyle(b *box, e *css.Env) {
+	if !b.Modal() || b.st.Display == css.DisplayNone {
+		return
+	}
+	b.topLayer = true
+	if b.st.Position != css.PosFixed {
+		// top layer boxes are absolutely positioned against the window
+		b.st.Position = css.PosFixed
+	}
+	var bs css.Style
+	var c *css.Cascaded
+	if !Styles.Empty() {
+		bc := Styles.Cascade(b, css.PseudoBackdrop, nil, *e)
+		c = &bc
+		bs = css.Compute(&bc, nil, *e)
+	} else {
+		bs = css.Initial(e.Fg)
+	}
+	if !has(c, "background", "background-color") {
+		bs.Background.Color = color.NRGBA{A: 0x1a}
+	}
+	b.backdrop = &box{kind: kPseudo, parent: b, v: v, st: bs}
 }
 
 func markerFor(v string, def int8) int8 {
@@ -785,6 +837,107 @@ func (v *View) uaDefaults(b *box, c *css.Cascaded, parent *css.Style) {
 		if !has(c, "cursor") {
 			st.Cursor = css.CursorDefault
 		}
+	case "dialog":
+		v.uaDialog(b, c, em)
+	}
+}
+
+// uaDialog is the HTML UA stylesheet for <dialog>: closed ones aren't
+// rendered; an open one is absolutely positioned, centred across its
+// containing block, sized to its content, with a border and 1em of
+// padding on Canvas colours; a modal one (:modal) is fixed, centred both
+// ways in the window, at most the window less 2em + 6px, and scrolls.
+//
+//	dialog:not([open]) { display: none }
+//	dialog { position: absolute; inset-inline: 0; width: fit-content; height: fit-content;
+//	         margin: auto; border: solid; padding: 1em; background: Canvas; color: CanvasText }
+//	dialog:modal { position: fixed; overflow: auto; inset-block: 0;
+//	               max-width: calc(100% - 6px - 2em); max-height: calc(100% - 6px - 2em) }
+func (v *View) uaDialog(b *box, c *css.Cascaded, em float32) {
+	st := &b.st
+	if _, open := b.n.AttrString("open"); !open {
+		if !has(c, "display") {
+			st.Display = css.DisplayNone
+		}
+		return
+	}
+	modal := b.Modal()
+	if !has(c, "position") {
+		st.Position = css.PosAbsolute
+		if modal {
+			st.Position = css.PosFixed
+		}
+	}
+	if !has(c, "inset", "inset-inline", "inset-inline-start", "left") {
+		st.Left = css.Zero
+	}
+	if !has(c, "inset", "inset-inline", "inset-inline-end", "right") {
+		st.Right = css.Zero
+	}
+	if modal {
+		if !has(c, "inset", "inset-block", "inset-block-start", "top") {
+			st.Top = css.Zero
+		}
+		if !has(c, "inset", "inset-block", "inset-block-end", "bottom") {
+			st.Bottom = css.Zero
+		}
+		if !has(c, "overflow", "overflow-x") {
+			st.OverflowX = css.OverflowAuto
+		}
+		if !has(c, "overflow", "overflow-y") {
+			st.OverflowY = css.OverflowAuto
+		}
+		limit := css.Length{Pct: 100, Px: -(2*em + 6)}
+		if !has(c, "max-width", "max-inline-size") {
+			st.MaxWidth = limit
+		}
+		if !has(c, "max-height", "max-block-size") {
+			st.MaxHeight = limit
+		}
+	}
+	if !has(c, "width", "inline-size") {
+		st.Width = css.Length{Kind: css.LenFitContent}
+	}
+	if !has(c, "height", "block-size") {
+		st.Height = css.Length{Kind: css.LenFitContent}
+	}
+	sides := [4][]string{
+		{"margin", "margin-top", "margin-block", "margin-block-start"},
+		{"margin", "margin-right", "margin-inline", "margin-inline-end"},
+		{"margin", "margin-bottom", "margin-block", "margin-block-end"},
+		{"margin", "margin-left", "margin-inline", "margin-inline-start"},
+	}
+	for i, props := range sides {
+		if !has(c, props...) {
+			st.Margin[i] = css.Auto
+		}
+	}
+	pads := [4][]string{
+		{"padding", "padding-top", "padding-block", "padding-block-start"},
+		{"padding", "padding-right", "padding-inline", "padding-inline-end"},
+		{"padding", "padding-bottom", "padding-block", "padding-block-end"},
+		{"padding", "padding-left", "padding-inline", "padding-inline-start"},
+	}
+	for i, props := range pads {
+		if !has(c, props...) {
+			st.Padding[i] = css.Px(em)
+		}
+	}
+	th := env().Theme
+	if !has(c, "color") && th != nil {
+		st.Color = th.C.Fg
+	}
+	if !has(c, "border", "border-width", "border-style", "border-color", "border-top", "border-right", "border-bottom", "border-left",
+		"border-top-width", "border-right-width", "border-bottom-width", "border-left-width",
+		"border-top-style", "border-right-style", "border-bottom-style", "border-left-style") {
+		for i := 0; i < 4; i++ {
+			st.BorderWidth[i] = 3 // medium
+			st.BorderStyle[i] = css.BorderSolid
+			st.BorderColor[i] = st.Color
+		}
+	}
+	if !has(c, "background", "background-color") && th != nil {
+		st.Background.Color = th.C.Bg
 	}
 }
 

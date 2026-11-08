@@ -166,6 +166,32 @@ test('window, matchMedia, getComputedStyle, canvas', () => {
   el.remove();
 });
 
+test('body carries sk-client-theme--dark/--light with the color scheme', async () => {
+  const body = document.body.classList;
+  assert(body.contains('sk-client-theme--light') && !body.contains('sk-client-theme--dark'), document.body.className);
+  const x = document.createElement('div');
+  x.className = 'x';
+  document.body.appendChild(x);
+  const seen = [];
+  const mo = new MutationObserver((records) => { for (const r of records) seen.push(r.attributeName); });
+  mo.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  globalThis.__clack.setViewport(innerWidth, innerHeight, devicePixelRatio, true);
+  try {
+    assert(body.contains('sk-client-theme--dark') && !body.contains('sk-client-theme--light'), document.body.className);
+    assert(x.matches('.sk-client-theme--dark .x') && !x.matches('.sk-client-theme--light .x'));
+    assert(matchMedia('(prefers-color-scheme: dark)').matches);
+    // Slick's theme.ts re-checks its mode gate from a MutationObserver on body's class
+    await sleep(0);
+    assert(seen.includes('class'), seen.join());
+  } finally {
+    globalThis.__clack.setViewport(innerWidth, innerHeight, devicePixelRatio, false);
+  }
+  assert(body.contains('sk-client-theme--light') && !body.contains('sk-client-theme--dark'), document.body.className);
+  assert(!x.matches('.sk-client-theme--dark .x') && x.matches('.sk-client-theme--light .x'));
+  mo.disconnect();
+  x.remove();
+});
+
 test('structuredClone and language extras', () => {
   const src = { a: [1, { b: new Date(0) }], m: new Map([[1, 'x']]), s: new Set([1]), u: new Uint8Array([1, 2]) };
   src.self = src;
@@ -211,4 +237,38 @@ test('unhandledrejection reaches window and can be prevented', async () => {
   await sleep(5);
   window.removeEventListener('unhandledrejection', h);
   assertEq(got && got.message, 'nobody catches me');
+});
+
+test('src and media members live on the classes browsers put them on', async () => {
+  // Click2Load wraps HTMLIFrameElement.prototype.src; CustomSounds wraps HTMLMediaElement.prototype.play
+  const d = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'src');
+  assert(d && d.get && d.set && d.configurable, 'iframe src descriptor');
+  const play = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'play');
+  assert(play && typeof play.value === 'function' && play.configurable, 'media play descriptor');
+  assertEq(Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'src'), undefined);
+  assertEq(Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'play'), undefined);
+  assertEq(document.createElement('div').src, undefined);
+  assertEq(document.createElement('div').play, undefined);
+  for (const tag of ['img', 'iframe', 'audio', 'video', 'script', 'source', 'embed', 'input', 'track']) {
+    const el = document.createElement(tag);
+    el.src = 'https://example.com/' + tag;
+    assertEq(el.getAttribute('src'), 'https://example.com/' + tag);
+    assertEq(el.src, 'https://example.com/' + tag);
+  }
+  // a wrapped setter sees iframe src writes, and the original still works
+  const seen = [];
+  Object.defineProperty(HTMLIFrameElement.prototype, 'src', { ...d, set(v) { seen.push(v); d.set.call(this, v); } });
+  try {
+    const f = document.createElement('iframe');
+    f.src = 'https://www.youtube.com/embed/x';
+    assertEq(seen, ['https://www.youtube.com/embed/x']);
+    assertEq(f.getAttribute('src'), 'https://www.youtube.com/embed/x');
+  } finally {
+    Object.defineProperty(HTMLIFrameElement.prototype, 'src', d);
+  }
+  const a = new Audio('https://example.com/ding.mp3');
+  assert(a instanceof HTMLMediaElement && a.paused && a.currentTime === 0 && a.canPlayType('audio/mpeg') === '');
+  let rejected = false;
+  await a.play().catch(() => { rejected = true; });
+  assert(rejected, 'play() rejects without media playback');
 });

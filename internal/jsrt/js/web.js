@@ -343,17 +343,15 @@
   };
   def(G, 'btoa', function btoa(data) {
     need(arguments, 1, 'btoa', 'Window');
-    const s = String(data);
-    for (let i = 0; i < s.length; i++) {
-      if (s.charCodeAt(i) > 255) throw new DOMException("Failed to execute 'btoa' on 'Window': The string to be encoded contains characters outside of the Latin1 range.", 'InvalidCharacterError');
-    }
-    return b64encode(fromLatin1(s));
+    const r = H.btoa(String(data));
+    if (typeof r !== 'string') throw new DOMException("Failed to execute 'btoa' on 'Window': The string to be encoded contains characters outside of the Latin1 range.", 'InvalidCharacterError');
+    return r;
   });
   def(G, 'atob', function atob(data) {
     need(arguments, 1, 'atob', 'Window');
-    const b = b64decode(String(data));
-    if (!b) throw new DOMException("Failed to execute 'atob' on 'Window': The string to be decoded is not correctly encoded.", 'InvalidCharacterError');
-    return latin1(b);
+    const r = H.atob(String(data));
+    if (typeof r !== 'string') throw new DOMException("Failed to execute 'atob' on 'Window': The string to be decoded is not correctly encoded.", 'InvalidCharacterError');
+    return r;
   });
 
   // ---- percent-encoding ----
@@ -1857,7 +1855,7 @@
       if (ws.writer) return Promise.reject(new TypeError("Failed to execute 'pipeTo' on 'ReadableStream': Cannot pipe to a locked stream"));
       const reader = this.getReader(), writer = dest.getWriter();
       return new Promise((resolve, reject) => {
-        let shutting = false, lastWrite = Promise.resolve();
+        let shutting = false, lastWrite = Promise.resolve(), pendingRead = Promise.resolve();
         const finish = (isErr, err) => {
           if (signal) signal.removeEventListener('abort', onAbort);
           writer.releaseLock();
@@ -1872,7 +1870,12 @@
             try { p = action ? Promise.resolve(action()) : Promise.resolve(); } catch (e) { p = Promise.reject(e); }
             p.then(() => finish(isErr, err), (e) => finish(true, e));
           };
-          lastWrite.then(go, go);
+          // Chunks already read are still written before the action (spec:
+          // "if any chunks have been read but not yet written, write them"):
+          // a pre-closed source (Blob.stream()) closes while its only read
+          // is still resolving.
+          const flushed = () => lastWrite.then(go, go);
+          pendingRead.then(flushed, flushed);
         };
         const onAbort = () => {
           const err = signal.reason;
@@ -1896,12 +1899,13 @@
           if (shutting) return;
           writer.ready.then(() => {
             if (shutting) return;
-            return reader.read().then(({ value, done }) => {
-              if (done || shutting) return;
+            pendingRead = reader.read().then(({ value, done }) => {
+              if (done || ws.state !== 'writable') return;
               lastWrite = writer.write(value);
               lastWrite.catch(() => {});
-              pump();
+              if (!shutting) pump();
             });
+            return pendingRead;
           }).catch(() => {});
         };
         pump();
@@ -2325,6 +2329,51 @@
     get readable() { return this.#t.readable; }
     get writable() { return this.#t.writable; }
   }
+  // CompressionStream / DecompressionStream: the chunks are collected and
+  // (de)compressed natively in Go when the writable side closes.
+  const zFormat = (f, who) => {
+    const s = String(f);
+    if (s !== 'gzip' && s !== 'deflate' && s !== 'deflate-raw') throw new TypeError(`Failed to construct '${who}': Unsupported compression format: '${s}'`);
+    return s;
+  };
+  const zStream = (mode, format) => {
+    const parts = [];
+    let n = 0;
+    return new TransformStream({
+      transform(chunk) {
+        const b = toBytes(chunk);
+        if (!b) throw new TypeError("Failed to execute 'write' on 'WritableStreamDefaultWriter': The provided value is not of type '(ArrayBuffer or ArrayBufferView)'.");
+        parts.push(b.slice());
+        n += b.length;
+      },
+      flush(c) {
+        const all = new Uint8Array(n);
+        let o = 0;
+        for (const p of parts) { all.set(p, o); o += p.length; }
+        parts.length = 0;
+        const out = toBytes(H.zlib(mode, format, all));
+        if (out && out.length) c.enqueue(new Uint8Array(out));
+      },
+    });
+  };
+  class CompressionStream {
+    #t;
+    constructor(format) {
+      need(arguments, 1, null, 'CompressionStream');
+      this.#t = zStream('c', zFormat(format, 'CompressionStream'));
+    }
+    get readable() { return this.#t.readable; }
+    get writable() { return this.#t.writable; }
+  }
+  class DecompressionStream {
+    #t;
+    constructor(format) {
+      need(arguments, 1, null, 'DecompressionStream');
+      this.#t = zStream('d', zFormat(format, 'DecompressionStream'));
+    }
+    get readable() { return this.#t.readable; }
+    get writable() { return this.#t.writable; }
+  }
   const countSize = function size() { return 1; };
   const byteSize = function size(chunk) { return chunk.byteLength; };
   class CountQueuingStrategy {
@@ -2351,6 +2400,7 @@
     ReadableStream, ReadableStreamDefaultReader, ReadableStreamBYOBReader, ReadableStreamDefaultController, ReadableByteStreamController,
     WritableStream, WritableStreamDefaultWriter, WritableStreamDefaultController, TransformStream, TransformStreamDefaultController,
     TextEncoderStream, TextDecoderStream, CountQueuingStrategy, ByteLengthQueuingStrategy,
+    CompressionStream, DecompressionStream,
   })) expose(n, C);
 
   // ---- Headers ----

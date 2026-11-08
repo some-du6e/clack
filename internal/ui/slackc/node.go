@@ -26,6 +26,10 @@ type Node struct {
 	// Focus marks the node JS focused (el.focus(), autoFocus): the layout
 	// engine moves key focus to it.
 	Focus bool
+	// Modal marks a <dialog> JS opened with showModal(): it is in the top
+	// layer, centred over the window above a ::backdrop that keeps the
+	// pointer from the page (not an attribute: plugins don't see it).
+	Modal bool
 
 	// P holds every prop as decoded JSON, minus className, id, style and
 	// children. "@" props are decoded with DecodeProps ($fn/$gofn/$el).
@@ -98,6 +102,7 @@ type rawNode struct {
 	V  string                     `json:"v"`
 	K  int64                      `json:"k"`
 	F  bool                       `json:"focus"`
+	M  bool                       `json:"modal"`
 	P  map[string]json.RawMessage `json:"p"`
 	On map[string]int64           `json:"on"`
 	C  []json.RawMessage          `json:"c"`
@@ -204,7 +209,7 @@ func parseNode(parent *Node, b []byte) (*Node, error) {
 	if err := json.Unmarshal(b, &r); err != nil {
 		return nil, err
 	}
-	n := &Node{T: r.T, N: r.N, V: r.V, K: r.K, Focus: r.F, On: r.On, parent: parent}
+	n := &Node{T: r.T, N: r.N, V: r.V, K: r.K, Focus: r.F, Modal: r.M, On: r.On, parent: parent}
 	if n.T == "" {
 		n.T = "div"
 	}

@@ -21,6 +21,35 @@ var overlays struct {
 	sync.Mutex
 	m     map[uint64][]*Node
 	views map[uint64]*View
+	modal map[uint64]bool // roots with an open modal <dialog>
+}
+
+// ModalOpen reports whether an open modal <dialog> (showModal) is on
+// screen: the page under it is inert, so the shell's own shortcuts stand
+// down and keys go to the dialog. Any goroutine; cheap.
+func ModalOpen() bool {
+	overlays.Lock()
+	defer overlays.Unlock()
+	for _, m := range overlays.modal {
+		if m {
+			return true
+		}
+	}
+	return false
+}
+
+func hasModal(nodes []*Node) bool {
+	for _, n := range nodes {
+		if n.Modal && n.T == "dialog" {
+			if _, open := n.AttrString("open"); open {
+				return true
+			}
+		}
+		if hasModal(n.C) {
+			return true
+		}
+	}
+	return false
 }
 
 func deliverOverlay(root uint64, nodes []*Node) bool {
@@ -32,7 +61,9 @@ func deliverOverlay(root uint64, nodes []*Node) bool {
 	if overlays.m == nil {
 		overlays.m = map[uint64][]*Node{}
 		overlays.views = map[uint64]*View{}
+		overlays.modal = map[uint64]bool{}
 	}
+	overlays.modal[root] = hasModal(nodes)
 	if len(nodes) == 0 {
 		delete(overlays.m, root)
 		if v := overlays.views[root]; v != nil {
@@ -135,6 +166,7 @@ func KeepOverlays(open []uint64) {
 	for id := range overlays.m {
 		if !keep[id] {
 			delete(overlays.m, id)
+			delete(overlays.modal, id)
 			if v := overlays.views[id]; v != nil {
 				v.Close()
 				delete(overlays.views, id)
