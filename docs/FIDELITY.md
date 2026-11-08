@@ -61,9 +61,9 @@ Measured equal (within 1px), so no change is needed:
 
 Not fixed here, because the difference is data or a feature rather than a style:
 
-- Slack's onboarding row ("2 tasks left") and the top-bar avatar/status button appear only in some sessions.
-- Huddle system rows ("You joined the huddle…") are Slack's own render of `huddle_thread` messages; that belongs to the huddles agent.
-- The AGENT badge on agent bots: Clack labels every bot APP.
+- Slack's onboarding row ("2 tasks left") appears only in some sessions.
+- The top-bar "avatar" is Slack's agent launcher ("Open 24Bot" + "More agents"), driven by the ai_apps prefs and an AI-apps fetch (round 2).
+- Huddle system rows ("You joined the huddle…") are Slack's own render of `huddle_thread` messages (round 2).
 
 ## Region diff score (light, 1×, mean |Δ| 0–255 and % of pixels off by more than 24)
 
@@ -79,3 +79,46 @@ Same window, same channel, the chrome regions that don't depend on message conte
 | tabs | 12.00 / 10.6% | 10.08 / 9.4% |
 
 ² The top nav got slightly worse even though the search pill now matches Slack's 633px: Clack still lacks Slack's top-bar avatar button, and the narrower pill exposes more gradient. Not investigated further.
+
+## Round 2 (2026-11-08, branch `fidelity2` from `ui`@402a63d)
+
+The same method (my own CDP window on Slack, the CI build on a private Xvfb). Screens: every view, the emoji picker, the profile card, Preferences, the team, channel and message menus, the details dialog, App Home, plus the round-1 leftovers.
+
+| # | P | element | property | Slack | Clack before (ui@402a63d) | after | package |
+|---|---|---|---|---|---|---|---|
+| 21 | P1 | Activity, read rows | mentions | `@clod` pill (#1264A3 on rgba(255,198,0,.18), r 3) on read rows too | read rows rendered `Muted` (system-message mode): "clod", no @, no pill | pill kept (richview `Options.Secondary`: Text3 colour only) | views, richview |
+| 22 | P1 | Activity | day grouping | no divider for today, then a 50px "Yesterday" / "Monday, November 3rd" row (700 13px/18 #454447 at 16,16) | none | dividers before each older day | views |
+| 23 | P1 | Activity, detailed row | height / status | 97px (name at +14, avatar at +18, footer 9px under the body, 14px bottom); nothing on the right when read | 92px; grey check circle on every read row | 97px, no check | views |
+| 24 | P1 | Files results | list | one list of `c-pillow_file` rows: 65px each (66 the last), shared 1px #E8E8E8 dividers, radius 12 on the outer corners only | separate 59px cards with 8px gaps | one 65px-row list | views |
+| 25 | P1 | message reactions | add-reaction button | always after the pills: 34×24, rgba(29,28,29,.06), fully round | hover only | always | messages |
+| 26 | P1 | message menu | items / anchor | no "Forward message…" (it's on the toolbar); top 32px above the kebab's centre | Forward item; top at the pointer | matches | popups, messages |
+| 27 | P1 | channel menu | items / anchor | no "Mute channel" (the bell does it); 300 wide, right edge 6px inside the kebab, top y 74 | Mute row; at the pointer (10px high, 5px left) | matches | popups, ui |
+| 28 | P1 | Preferences | frame | 800×700 at (320,100): 76px header (title 900 22/36 at 28,20) with a 1px line under it, no footer; nav 205×29 items every 33px at (16,17), 15px icons, selected r 4; page at (249,21), sections 700 18px | 70px header, no line, a Done footer, 184px nav 24px higher, 15px bold titles at x≈228 | matches | popups (`ModalOpts.Flush`), ui |
+| 29 | P2 | team menu | position | 320 wide at (58, 91) | (86, 82) | (58, 91) | ui |
+| 30 | P2 | Huddles page | banner text / cards | text block at +76/+66 in the banner; DM cards 301×239 | +48/+48; 258 tall | matches | views |
+| 31 | P2 | Drafts & sent | banner | title 900 18px at (24,45), body right under it | title at y 20, 4px gap | matches | views |
+| 32 | P2 | Drafts markers | sidebar | "✎ N" (13px pencil + 400 13px count, 8px from the edge) on Drafts & sent; 13px pencil on conversations with a draft | none | from drafts.list, refreshed on `draft` events | ui |
+| 33 | P2 | To-dos / Saved empty | layout | 157×140 SVG illustration, 24px gap, 900 18/24 title, 15/22 text | 64px icon only, text 32px higher | the 157×140 box kept (SVG not drawn: no SVG decoder) | views |
+| 34 | P2 | Saved | header | no line under "Saved" when empty | line | none when empty | views |
+| 35 | P2 | Directories | People | no invite hero; filters Title, Location, Workspaces, More | "Invite your team" hero + Department | matches | views |
+| 36 | P2 | Threads view | stamps / participants | "Today at 2:46 PM", "Yesterday at 4:26 PM"; "Shroud, Shroud, and you" | "2:46 PM", "Nov 6th at 4:26 PM"; no Oxford comma | matches | views |
+| 37 | P2 | channel tabs | unread dot | 12px badge (blue dot in a 2px background ring) on the icon of a canvas the viewer never opened | none | from files.info (no `last_read`) | core, ui |
+| 38 | P2 | message header | name/time y | name ink 4px above the avatar's top | 6px | 2px lower | messages |
+| 39 | P2 | thread pane | empty thread | no "0 replies" divider | divider | hidden | messages |
+| 40 | P2 | APP / AGENT badge | label | Slack's BaseAppBadge: AGENT when the bot user's `agent_status` is `consistently_an_agent` (edge users/info carries it) | APP always | AGENT for agents | slack, core, messages |
+| 41 | P2 | rail, active To-dos | glyph | filled circle with the check cut out | outline | `todos-filled` | icons |
+| 42 | P2 | App Home / app DMs | content / header | blocks at (24, 31) under the tabs, 969 wide; header keeps only bell + kebab; active Home tab icon filled | (20, 16); member count, Huddle, search; outline icon | matches | blockkit, ui |
+| 43 | P3 | details dialog | Created by | name in plain text | blue link | plain | views |
+| 44 | P2 | dark message bodies, 2× | ink vs Chrome | — | −5…−7% | −0.5…−1.3% (richview `LightEmbolden` 0.34·(1−1/scale): none at 1×) | richview, messages |
+
+Measured equal or within 1–2px: DMs view, Ctrl+K, channel details frame (580×765, tabs, field cards), team menu items (28px rows), the message menu's items, icons and hints, the emoji picker card (361×518 with the Emoji | GIFs row: Slack shows it once the team prefs load, `allow_native_gif_picker`).
+
+Not done in round 2:
+
+- **Search results:** not compared. Slack's Enter in the search box opened the top suggestion's DM (a write; I closed it again), so I stopped there.
+- **Block Kit modals:** not compared; they only open from an app interaction (a write).
+- **Image viewer:** Slack measured (1384×844 card at 28,28, r 8, 70% black over a blurred copy, 35×32 zoom controls bottom-left); Clack's not opened (no image near the bottom of the test channel).
+- **Profile:** a click opens Slack's full profile pane (nested below the tabs, like a thread); not compared field by field. The hover card is from round 1.
+- **Emoji picker anchor:** Slack's composer picker sits at x = composer − 3 with its bottom 31px above the button; Clack's is ~55px higher and 18px left.
+- **Huddle system rows:** Slack deletes the `huddle_thread` message after the huddle ends, so there was nothing to measure without starting a call.
+- **Agent launcher** in the top bar (see above); the Files sort uses "Last updated" (Slack: "Recently viewed", needs view times); Slack's empty-state illustrations are SVGs.

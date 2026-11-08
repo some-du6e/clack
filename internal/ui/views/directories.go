@@ -73,7 +73,8 @@ var (
 		desc bool
 	}{{"name", false}, {"name", true}, {"member_count", true}, {"date_create", true}}
 
-	dirHeroTitle = [3]string{"Invite your team to Slack", "", "Assemble your dream team"}
+	// People shows no invite hero (Slack doesn't for members who can't invite).
+	dirHeroTitle = [3]string{"", "", "Assemble your dream team"}
 	dirHeroBody  = [3]string{
 		"Bring your team members into Slack to start working better together. Send invites via email, or get a handy link to share.",
 		"",
@@ -90,7 +91,7 @@ type dirFilter struct {
 }
 
 var dirFilters = [3][]dirFilter{
-	{{"", "Title", true}, {"", "Location", true}, {"", "Workspaces", true}, {"", "Department", true}, {"filter", "More", true}},
+	{{"", "Title", true}, {"", "Location", true}, {"", "Workspaces", true}, {"filter", "More", true}}, // Slack 2026: no Department button
 	{{"", "All channels", true}, {"", "Any channel type", true}, {"", "Workspaces", true}, {"", "Organizations", true}},
 	{{"", "Workspaces", true}, {"", "Exclude deactivated", false}},
 }
@@ -763,7 +764,7 @@ func (d *Directories) filterBar(gtx C, t int) D {
 // for filters core can't apply yet.
 func (d *Directories) filterMenu(t, i int) *dirDropdown {
 	switch {
-	case t == dirTabPeople && i == 4:
+	case t == dirTabPeople && i == 3: // More
 		return &d.acct
 	case t == dirTabChannels && i == 0:
 		return &d.chanScope

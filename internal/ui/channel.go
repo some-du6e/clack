@@ -97,7 +97,14 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	btn := gtx.Dp(28)
 	y := (h - btn) / 2
 	kebabX := 0
-	for _, k := range []string{"kebab", "search", "bell"} {
+	// Slack's app DMs keep only the bell and the kebab: no search, Huddle
+	// or member count.
+	appDM := conv != nil && conv.Kind == "app"
+	hdrBtns := []string{"kebab", "search", "bell"}
+	if appDM {
+		hdrBtns = []string{"kebab", "bell"}
+	}
+	for _, k := range hdrBtns {
 		k := k
 		right -= btn
 		if k == "kebab" {
@@ -116,7 +123,10 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		// popups take window coordinates; the pointer is on the kebab (this
 		// header is also drawn inside views' panes, where offsets differ)
 		_ = kebabX
-		a.openChannelMenu(ch, a.PointerPos())
+		// Slack opens it right-aligned 6px inside the kebab's right edge, its
+		// top at y 74 (the header is always 40px down and its kebab sits 14px
+		// from the panel's right inset, here and in a split pane).
+		a.openChannelMenu(ch, image.Pt(a.winSize.X-gtx.Dp(theme.PanelInset)-gtx.Dp(14)-gtx.Dp(6), gtx.Dp(theme.TopNavH)+gtx.Dp(34)))
 	}
 	if clicked(a.clicks.get("hdr.search")) {
 		a.openSearch("in:<#" + ch + ">")
@@ -125,60 +135,62 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		a.openNotifPrefs(ch)
 	}
 
-	// Huddle split button (94×28: 74 + 20); Slack 2026's --polish variant
-	// has no outline, only hover fills. Slack's mint pill with faces and
-	// "Huddle N" while a huddle is on (huddleui).
-	hud := a.huddles()
-	hud.Seed()
-	hw := gtx.Dp(94)
-	live := hud.HeaderLive(ch)
-	if live {
-		hw = hud.HeaderPillWidth(gtx, a.th, ch)
-	}
-	right -= hw
-	if live {
-		at(gtx, image.Pt(right, y), image.Pt(hw, btn), func(gtx layout.Context) layout.Dimensions {
-			return hud.HeaderPill(gtx, a.th, ch, btn)
-		})
-	} else {
-		at(gtx, image.Pt(right, y), image.Pt(hw, btn), func(gtx layout.Context) layout.Dimensions {
-			r := image.Rect(0, 0, hw, btn)
-			at(gtx, image.Pt(0, 0), image.Pt(gtx.Dp(74), btn), func(gtx layout.Context) layout.Dimensions {
-				return clickArea(gtx, a.clicks.get("hdr.huddle"), func(gtx layout.Context, s image.Point, hov bool) {
-					if hov {
-						theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(8), c.BgHover)
-					}
-				}, func(gtx layout.Context) layout.Dimensions {
-					at(gtx, image.Pt(gtx.Dp(8), (btn-gtx.Dp(18))/2), image.Pt(gtx.Dp(18), gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {
-						return icons.Get("huddle")(gtx, 18, c.FgMuted)
-					})
-					at(gtx, image.Pt(gtx.Dp(30), 0), image.Pt(gtx.Dp(44), btn), func(gtx layout.Context) layout.Dimensions {
-						return vcenter(gtx, btn, func(gtx layout.Context) layout.Dimensions {
-							return a.th.Label(gtx, 13, theme.Bold, c.FgMuted, "Huddle")
+	if !appDM {
+		// Huddle split button (94×28: 74 + 20); Slack 2026's --polish variant
+		// has no outline, only hover fills. Slack's mint pill with faces and
+		// "Huddle N" while a huddle is on (huddleui).
+		hud := a.huddles()
+		hud.Seed()
+		hw := gtx.Dp(94)
+		live := hud.HeaderLive(ch)
+		if live {
+			hw = hud.HeaderPillWidth(gtx, a.th, ch)
+		}
+		right -= hw
+		if live {
+			at(gtx, image.Pt(right, y), image.Pt(hw, btn), func(gtx layout.Context) layout.Dimensions {
+				return hud.HeaderPill(gtx, a.th, ch, btn)
+			})
+		} else {
+			at(gtx, image.Pt(right, y), image.Pt(hw, btn), func(gtx layout.Context) layout.Dimensions {
+				r := image.Rect(0, 0, hw, btn)
+				at(gtx, image.Pt(0, 0), image.Pt(gtx.Dp(74), btn), func(gtx layout.Context) layout.Dimensions {
+					return clickArea(gtx, a.clicks.get("hdr.huddle"), func(gtx layout.Context, s image.Point, hov bool) {
+						if hov {
+							theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(8), c.BgHover)
+						}
+					}, func(gtx layout.Context) layout.Dimensions {
+						at(gtx, image.Pt(gtx.Dp(8), (btn-gtx.Dp(18))/2), image.Pt(gtx.Dp(18), gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {
+							return icons.Get("huddle")(gtx, 18, c.FgMuted)
 						})
+						at(gtx, image.Pt(gtx.Dp(30), 0), image.Pt(gtx.Dp(44), btn), func(gtx layout.Context) layout.Dimensions {
+							return vcenter(gtx, btn, func(gtx layout.Context) layout.Dimensions {
+								return a.th.Label(gtx, 13, theme.Bold, c.FgMuted, "Huddle")
+							})
+						})
+						return layout.Dimensions{Size: image.Pt(gtx.Dp(74), btn)}
 					})
-					return layout.Dimensions{Size: image.Pt(gtx.Dp(74), btn)}
 				})
-			})
-			at(gtx, image.Pt(gtx.Dp(74), 0), image.Pt(gtx.Dp(20), btn), func(gtx layout.Context) layout.Dimensions {
-				return clickArea(gtx, a.clicks.get("hdr.huddlemore"), nil, func(gtx layout.Context) layout.Dimensions {
-					at(gtx, image.Pt(gtx.Dp(1), (btn-gtx.Dp(14))/2), image.Pt(gtx.Dp(14), gtx.Dp(14)), func(gtx layout.Context) layout.Dimensions {
-						return icons.Get("chevron-down")(gtx, 14, c.FgMuted)
+				at(gtx, image.Pt(gtx.Dp(74), 0), image.Pt(gtx.Dp(20), btn), func(gtx layout.Context) layout.Dimensions {
+					return clickArea(gtx, a.clicks.get("hdr.huddlemore"), nil, func(gtx layout.Context) layout.Dimensions {
+						at(gtx, image.Pt(gtx.Dp(1), (btn-gtx.Dp(14))/2), image.Pt(gtx.Dp(14), gtx.Dp(14)), func(gtx layout.Context) layout.Dimensions {
+							return icons.Get("chevron-down")(gtx, 14, c.FgMuted)
+						})
+						return layout.Dimensions{Size: image.Pt(gtx.Dp(20), btn)}
 					})
-					return layout.Dimensions{Size: image.Pt(gtx.Dp(20), btn)}
 				})
+				return layout.Dimensions{Size: r.Size()}
 			})
-			return layout.Dimensions{Size: r.Size()}
-		})
+		}
+		if clicked(a.clicks.get("hdr.huddle")) {
+			hud.Start(ch)
+		}
+		right -= gtx.Dp(6)
 	}
-	if clicked(a.clicks.get("hdr.huddle")) {
-		hud.Start(ch)
-	}
-	right -= gtx.Dp(6)
 
 	// member facepile (up to 3 avatars, 20px, overlapped) + count: Slack's
 	// BaseAvatarStack, whose width a plugin may change (HumanCount).
-	if conv != nil && conv.Kind != "im" && conv.NumMembers > 0 {
+	if conv != nil && conv.Kind != "im" && !appDM && conv.NumMembers > 0 {
 		call, d := measured(gtx, func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(max(right-x, 0), btn)}
 			return slackc.Component(gtx, "BaseAvatarStack", hdrStack{a: a, ch: ch, conv: conv, btn: btn}, hdrStack.props, hdrStack.layout)
@@ -339,6 +351,7 @@ func oneLine(s string) string {
 type chTab struct {
 	key, label, icon string
 	fileID           string
+	unread           bool // Slack's blue dot on the tab icon (unopened canvas)
 }
 
 func (a *App) channelTabs(ch string) []chTab {
@@ -381,10 +394,19 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 				icon := t.icon
 				if t.key == "messages" && i == cur {
 					icon = "messages-filled" // Slack fills the active Messages bubble
+				} else if i == cur && icons.Has(icon+"-filled") {
+					icon += "-filled" // and the active Home (app DMs) etc.
 				}
 				at(gtx, image.Pt(gtx.Dp(8), (sz.Y-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
 					return icons.Get(icon)(gtx, 16, col)
 				})
+				if t.unread {
+					// Slack's p-channel_tab_unread_badge: 12px, 2px ring in the
+					// header background around the blue dot, on the icon's corner.
+					ctr := image.Pt(gtx.Dp(8+16-2), (sz.Y-gtx.Dp(16))/2+gtx.Dp(2))
+					theme.Circle(gtx, ctr, gtx.Dp(12), c.Bg)
+					theme.Circle(gtx, ctr, gtx.Dp(8), c.Link)
+				}
 				at(gtx, image.Pt(gtx.Dp(28), 0), image.Pt(lw+2, sz.Y), func(gtx layout.Context) layout.Dimensions {
 					return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
 						return a.th.Label(gtx, 13, theme.Bold, col, t.label)

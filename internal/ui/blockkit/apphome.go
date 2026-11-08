@@ -251,7 +251,8 @@ func (d *AppDM) LayoutBody(gtx C) D {
 		}
 		return d.list.Layout(gtx, 1, func(gtx C, _ int) D {
 			w := min(sz.X-dp(gtx, 40), dp(gtx, 1000))
-			return layout.Inset{Left: unit.Dp(20), Right: unit.Dp(20), Top: unit.Dp(16), Bottom: unit.Dp(24)}.Layout(gtx, func(gtx C) D {
+			// Slack: blocks at (24, 31) under the tabs, 969 wide at 1440 (45 right).
+			return layout.Inset{Left: unit.Dp(24), Right: unit.Dp(45), Top: unit.Dp(31), Bottom: unit.Dp(24)}.Layout(gtx, func(gtx C) D {
 				gtx.Constraints = layout.Constraints{Max: image.Pt(w, 1<<20)}
 				return d.surf.Layout(gtx)
 			})

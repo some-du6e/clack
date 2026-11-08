@@ -82,6 +82,7 @@ type User struct {
 	Guest                            bool
 	Color, Presence                  string // Presence: active | away | ""
 	Huddle                           bool
+	Agent                            bool // agent_status consistently_an_agent: Slack labels the sender AGENT, not APP
 }
 
 // Conv is a sidebar conversation.

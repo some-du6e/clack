@@ -46,6 +46,9 @@ type ModalOpts struct {
 	// PadX and HeadH override the side padding (default 28) and header
 	// height (default 70) in dp; Slack's link dialog uses 24 / 68.
 	PadX, HeadH float32
+	// Flush draws the body across the card's full width (from x 0) with no
+	// bottom padding: bodies that lay out their own columns (Preferences).
+	Flush bool
 }
 
 // Modal is a centered dialog over a dimmed backdrop.
@@ -174,7 +177,10 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 			footH++
 		}
 	}
-	bodyW := w - 2*padX
+	bodyW, bodyX := w-2*padX, padX
+	if m.o.Flush {
+		bodyW, bodyX = w, 0
+	}
 	// measure the body
 	var bodyH int
 	if m.o.Body != nil {
@@ -190,7 +196,7 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 		bodyH = maxBody
 	}
 	h := headH + bodyH + footH
-	if len(m.o.Buttons) == 0 {
+	if len(m.o.Buttons) == 0 && !m.o.Flush {
 		h += dp(gtx, 28)
 	}
 	pos := image.Pt((win.X-w)/2, (win.Y-h)/2)
@@ -218,7 +224,7 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 				}
 				// body
 				if m.o.Body != nil {
-					at(gtx, pos.Add(image.Pt(padX, headH)), func(gtx layout.Context) layout.Dimensions {
+					at(gtx, pos.Add(image.Pt(bodyX, headH)), func(gtx layout.Context) layout.Dimensions {
 						gtx.Constraints = layout.Constraints{Min: image.Pt(bodyW, 0), Max: image.Pt(bodyW, bodyH)}
 						if !scroll {
 							gtx.Constraints.Min.X = 0

@@ -600,8 +600,14 @@ func (f *Files) body(gtx C) D {
 		if k > len(vis)-8 {
 			f.loadMore()
 		}
-		return layout.Inset{Left: 35, Right: 35, Bottom: 8}.Layout(gtx, func(gtx C) D {
-			return f.card(gtx, &f.items[vis[k]])
+		// Slack stacks the results as one list: rows share their 1px
+		// dividers, only the first and last get the 12px corners.
+		bottom := unit.Dp(0)
+		if k == len(vis)-1 {
+			bottom = 8
+		}
+		return layout.Inset{Left: 35, Right: 35, Bottom: bottom}.Layout(gtx, func(gtx C) D {
+			return f.card(gtx, &f.items[vis[k]], k == 0, k == len(vis)-1)
 		})
 	})
 }
@@ -936,15 +942,23 @@ func (f *Files) clicksOf(id string) *fileClicks {
 	return c
 }
 
-// card: white, radius 12, 1px #1d1c1d@.1, padding 12, h 66; 36px type
-// tile, 15px bold name, 13px #616061 meta; owner avatar, star, kebab.
-func (f *Files) card(gtx C, it *fileItem) D {
+// card is one row of Slack's c-pillow_file list: white, 1px #1d1c1d@.1
+// top line (plus the bottom one on the last row), radius 12 on the list's
+// outer corners only, 65px tall (66 for the last); 36px type tile, 15px
+// bold name, 13px #616061 meta; owner avatar, star, kebab.
+func (f *Files) card(gtx C, it *fileItem, first, last bool) D {
 	c := f.clicksOf(it.ID)
 	return c.row.Layout(gtx, func(gtx C) D {
 		pointerCursor(gtx)
 		m := op.Record(gtx.Ops)
-		d := layout.UniformInset(12).Layout(gtx, func(gtx C) D {
+		bw := max(1, gtx.Dp(1))
+		h := gtx.Dp(65)
+		if last {
+			h += bw
+		}
+		d := layout.Inset{Left: 12, Right: 12}.Layout(gtx, func(gtx C) D {
 			gtx.Constraints.Min.X = gtx.Constraints.Max.X
+			gtx.Constraints.Min.Y = 0
 			return row(gtx, layout.Middle,
 				layout.Rigid(func(gtx C) D { return f.fileTile(gtx, it, 36) }),
 				hgap(12),
@@ -967,12 +981,35 @@ func (f *Files) card(gtx C, it *fileItem) D {
 			)
 		})
 		call := m.Stop()
-		r := image.Rectangle{Max: d.Size}
+		r := image.Rectangle{Max: image.Pt(d.Size.X, h)}
 		rad := gtx.Dp(12)
-		rrect(gtx, r, rad, f.p.Surface)
-		call.Add(gtx.Ops)
-		border(gtx, r, rad, max(1, gtx.Dp(1)), f.p.CardLine)
-		return d
+		var tr, br int
+		if first {
+			tr = rad
+		}
+		if last {
+			br = rad
+		}
+		// frame: the row in the line colour, then the surface inset by 1px
+		// (no bottom inset between rows: the next row's top line divides).
+		in := image.Rect(r.Min.X+bw, r.Min.Y+bw, r.Max.X-bw, r.Max.Y)
+		if last {
+			in.Max.Y -= bw
+		}
+		func() {
+			defer clip.RRect{Rect: r, NW: tr, NE: tr, SW: br, SE: br}.Push(gtx.Ops).Pop()
+			fill(gtx, r, theme.Over(f.p.CardLine, f.p.Surface))
+		}()
+		func() {
+			defer clip.RRect{Rect: in, NW: max(tr-bw, 0), NE: max(tr-bw, 0), SW: max(br-bw, 0), SE: max(br-bw, 0)}.Push(gtx.Ops).Pop()
+			fill(gtx, in, f.p.Surface)
+		}()
+		// the content centred in the 64px under the top line
+		func() {
+			defer op.Offset(image.Pt(0, bw+(gtx.Dp(64)-d.Size.Y)/2)).Push(gtx.Ops).Pop()
+			call.Add(gtx.Ops)
+		}()
+		return D{Size: r.Size()}
 	})
 }
 

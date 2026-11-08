@@ -149,7 +149,7 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	}
 	items = append(items,
 		MenuItem{Label: "Organize", Sub: []MenuItem{pin}},
-		MenuItem{Label: "Forward message…", Do: func() { h.ShowOverlay(NewForwardModal(h, m)) }},
+		// no "Forward message…" here: Slack keeps it on the hover toolbar
 		MenuItem{Label: "Connect to apps", Sub: connectToApps(h, m)},
 	)
 	if own {

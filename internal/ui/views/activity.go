@@ -198,7 +198,7 @@ type Activity struct {
 		until time.Time
 		btn   widget.Clickable
 	}
-	vis   []int // indices into the page after client-side filters
+	vis   []int // indices into the page after client-side filters; -1-i is Slack's day divider before item i
 	visN  int
 	dirty bool
 	w     watcher
@@ -881,6 +881,8 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 	if dots {
 		v.dots = [4]int{}
 	}
+	var lastDay time.Time
+	now := time.Now()
 	for i := range page.Items {
 		it := &page.Items[i]
 		key := actKey(it)
@@ -916,6 +918,14 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 		}
 		if q != "" && !strings.Contains(r.d.hay, q) {
 			continue
+		}
+		// Slack groups the feed by day: no divider for today, then
+		// "Yesterday", "Monday, November 3rd", … before each day's first row.
+		if t := tsTime(it.FeedTS); !t.IsZero() {
+			if !sameDay(t, now) && (lastDay.IsZero() || !sameDay(t, lastDay)) {
+				v.vis = append(v.vis, -1-i)
+			}
+			lastDay = t
 		}
 		v.vis = append(v.vis, i)
 	}
@@ -1172,6 +1182,12 @@ func (v *Activity) items(gtx C) D {
 			return v.footer(gtx, failed)
 		}
 		idx := v.vis[i]
+		if idx < 0 {
+			if j := -1 - idx; j < len(page.Items) {
+				return v.dayDivider(gtx, tsTime(page.Items[j].FeedTS))
+			}
+			return D{}
+		}
 		if idx >= len(page.Items) {
 			return D{}
 		}
@@ -1181,6 +1197,20 @@ func (v *Activity) items(gtx C) D {
 		v.load(actMore)
 	}
 	return d
+}
+
+// dayDivider is Slack's p-activity_page__date_divider: a 50px row with the
+// day in 700 13px/18 (#454447) at (16, 16) on the list background.
+func (v *Activity) dayDivider(gtx C, t time.Time) D {
+	h := gtx.Dp(50)
+	w := gtx.Constraints.Max.X
+	func() {
+		defer op.Offset(image.Pt(gtx.Dp(16), gtx.Dp(16))).Push(gtx.Ops).Pop()
+		g := gtx
+		g.Constraints = layout.Constraints{Max: image.Pt(max(w-gtx.Dp(32), 0), gtx.Dp(18))}
+		v.th.Layout(g, theme.TextStyle{Size: 13, Weight: theme.Bold, Color: v.p.Sec, LineHeight: 18, MaxLines: 1}, draftsDay(t))
+	}()
+	return D{Size: image.Pt(w, h)}
 }
 
 func (v *Activity) avSize() unit.Dp {
@@ -1777,10 +1807,12 @@ func (v *Activity) rowContent(gtx C, r *actRow) D {
 func (v *Activity) detailedContent(gtx C, r *actRow) D {
 	d, unread := r.cur, r.unread
 	bodyCol, when := r.bodyCol, v.rowWhen(gtx, d)
-	return layout.Inset{Top: 12, Bottom: 12, Left: 16, Right: 20}.Layout(gtx, func(gtx C) D {
+	// Slack's detailed row: name at +14, avatar at +18, footer 9px under
+	// the body, 14px bottom padding (97px for a two-line row).
+	return layout.Inset{Top: 14, Bottom: 14, Left: 16, Right: 20}.Layout(gtx, func(gtx C) D {
 		return row(gtx, layout.Start,
 			layout.Rigid(func(gtx C) D {
-				return layout.Inset{Top: 6}.Layout(gtx, func(gtx C) D {
+				return layout.Inset{Top: 4}.Layout(gtx, func(gtx C) D {
 					return slackc.Component(gtx, "ActivityRowContentSenderAvatarLayout", r, (*actRow).avatarProps, (*actRow).layoutAvatar)
 				})
 			}),
@@ -1813,12 +1845,15 @@ func (v *Activity) detailedContent(gtx C, r *actRow) D {
 						if d.foot == "" {
 							return D{}
 						}
-						return layout.Inset{Top: 8}.Layout(gtx, func(gtx C) D { return v.actFooter(gtx, d) })
+						return layout.Inset{Top: 9}.Layout(gtx, func(gtx C) D { return v.actFooter(gtx, d) })
 					}),
 				)
 			}),
 			hgap(8),
 			layout.Rigid(func(gtx C) D {
+				if !unread { // Slack's detailed rows show nothing here once read
+					return D{}
+				}
 				return layout.Inset{Top: 5, Bottom: 2}.Layout(gtx, func(gtx C) D { return v.actStatus(gtx, r.count, unread) })
 			}),
 		)

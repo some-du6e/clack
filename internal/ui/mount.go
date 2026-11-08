@@ -26,6 +26,9 @@ var (
 	onWindow func(a *App)
 	onEvent  func(e event.Event)
 	mkModal  func(a *App, title string, body layout.Widget, done func()) Overlay
+	// mkPrefsModal is Slack's Preferences dialog frame: 800 wide, 76px
+	// header, no footer, a full-width body that draws its own columns.
+	mkPrefsModal func(a *App, title string, body layout.Widget, done func()) Overlay
 	// mkEditComposer opens an edit composer for one of the viewer's messages.
 	mkEditComposer func(a *App, m core.Message, onDone func()) composerView
 )

@@ -135,13 +135,15 @@ func NewChannelMenu(h Host, anchor image.Point, convID string) *Menu {
 			h.Toast("Split view isn't supported yet")
 		}},
 		Sep(),
-		MenuItem{Widget: actLabelRow(h, func() string {
+	)
+	if dm { // Slack's channel menu has no mute row (that's the header bell)
+		items = append(items, MenuItem{Widget: actLabelRow(h, func() string {
 			if actIsMuted(h, convID) {
 				return unmuteLabel
 			}
 			return muteLabel
-		}), Do: func() { actToggleMute(h, convID, noun) }},
-	)
+		}), Do: func() { actToggleMute(h, convID, noun) }})
+	}
 	if dm {
 		items = append(items, MenuItem{Label: "Close conversation", Do: func() { actLeave(h, convID, "Conversation closed") }})
 	} else {

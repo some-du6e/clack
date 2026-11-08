@@ -206,7 +206,7 @@ func (a *App) layoutSidebarNative(gtx layout.Context, p slackc.Props) layout.Dim
 		})
 	})
 	if clicked(a.clicks.get("sb.team")) {
-		a.openTeamMenu(image.Pt(gtx.Dp(theme.RailW)+gtx.Dp(16), gtx.Dp(theme.TopNavH)+gtx.Dp(42)))
+		a.openTeamMenu(image.Pt(gtx.Dp(theme.RailW)-gtx.Dp(12), gtx.Dp(theme.TopNavH)+gtx.Dp(51))) // Slack: menu at (58, 91)
 	}
 	for i, b := range []string{"compose", "settings"} {
 		x := sz.X - gtx.Dp(8) - gtx.Dp(28)*(i+1) - gtx.Dp(6)*i
@@ -526,6 +526,34 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 			call.Add(gtx.Ops)
 			t.Pop()
 			right -= bd.Size.X + gtx.Dp(6)
+		}
+		// unsent drafts: "✎ N" on Drafts & sent (Slack's p-outbox_link__badge,
+		// 13px pencil + 400 13px count, 8px from the edge) and a 13px pencil
+		// on conversations with a draft.
+		if d := a.data; d != nil {
+			pencil := func(x int) {
+				at(gtx, image.Pt(x, (rowH-gtx.Dp(13))/2), image.Pt(gtx.Dp(13), gtx.Dp(13)), func(gtx layout.Context) layout.Dimensions {
+					return icons.Get("edit")(gtx, 13, fg)
+				})
+			}
+			switch {
+			case r.kind == sbLink && r.key == "drafts" && d.draftN > 0:
+				num := strconv.Itoa(d.draftN)
+				nw := a.th.Measure(gtx, 13, theme.Regular, num)
+				right = rw - gtx.Dp(8) - nw
+				at(gtx, image.Pt(right, 0), image.Pt(nw+2, rowH), func(gtx layout.Context) layout.Dimensions {
+					return vcenter(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
+						return a.th.Label(gtx, 13, theme.Regular, fg, num)
+					})
+				})
+				right -= gtx.Dp(3) + gtx.Dp(13)
+				pencil(right)
+				right -= gtx.Dp(6)
+			case conv != nil && rs.mentions == 0 && d.draftChans[conv.ID]:
+				right = rw - gtx.Dp(8) - gtx.Dp(13)
+				pencil(right)
+				right -= gtx.Dp(6)
+			}
 		}
 		if conv != nil {
 			// a huddle is on here: Slack's headphones + head count

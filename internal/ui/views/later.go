@@ -701,7 +701,13 @@ func (s *savedBase) savedEmpty(gtx C, title, body string, btn *widget.Clickable,
 		gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(420))
 		gtx.Constraints.Min = image.Point{}
 		return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
-			layout.Rigid(func(gtx C) D { return s.icon(gtx, "check-circle", 64, s.p.Accent) }),
+			layout.Rigid(func(gtx C) D {
+				// Slack's illustration is a 157×140 SVG (empty-later-light);
+				// keep its box so the title lands where Slack's does.
+				g := gtx
+				g.Constraints = layout.Exact(image.Pt(gtx.Dp(157), gtx.Dp(140)))
+				return layout.Center.Layout(g, func(gtx C) D { return s.icon(gtx, "check-circle", 64, s.p.Accent) })
+			}),
 			vgap(24),
 			layout.Rigid(func(gtx C) D {
 				return s.th.Layout(gtx, theme.TextStyle{Size: 18, LineHeight: 24, Weight: wBlack, Color: s.p.Text, Align: text.Middle}, title)
@@ -1380,7 +1386,10 @@ func (s *Saved) Layout(gtx C) D {
 					return s.para(gtx, 18, 24, wBlack, s.p.Text, 1, "Saved")
 				})
 			})
-			fill(gtx, image.Rect(0, h-hl, w, h), s.p.Border)
+			// Slack's empty Saved page has no line under the header.
+			if _, loaded, _ := s.feed.first.get(); !loaded || len(s.feed.items) > 0 {
+				fill(gtx, image.Rect(0, h-hl, w, h), s.p.Border)
+			}
 			return D{Size: image.Pt(w, h)}
 		}),
 		layout.Flexed(1, s.layoutList),

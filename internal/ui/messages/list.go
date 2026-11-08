@@ -346,8 +346,10 @@ func (s *listState) build(h Host, now time.Time) {
 		if s.thread {
 			if i == 0 && m.TS == s.ts {
 				s.items = append(s.items, item{kind: itMsg, idx: i, header: true, key: m.TS})
-				n := len(msgs) - 1
-				s.items = append(s.items, item{kind: itReplies, idx: n, key: "replies"})
+				// Slack shows no "N replies" divider until there is a reply.
+				if n := len(msgs) - 1; n > 0 {
+					s.items = append(s.items, item{kind: itReplies, idx: n, key: "replies"})
+				}
 				prev, prevT = nil, t
 				continue
 			}
@@ -1067,6 +1069,9 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 			h.Toast("Lists aren't supported yet")
 		case tbMore:
 			mm := m
+			// Slack's menu top sits 32px above the kebab's centre (16 above
+			// the button), its right edge 3px left of the centre.
+			anchor = anchor.Add(image.Pt(-dp(gtx, 2), -dp(gtx, 32)))
 			h.ShowOverlay(popups.NewMessageMenuOpts(h, anchor, m, popups.MessageMenuOpts{
 				Delete:  func(ctx context.Context, ch, ts string) error { return deleteMessage(ctx, app, ch, ts) },
 				OnEdit:  func() { s.startEdit(h, mm.TS) },
