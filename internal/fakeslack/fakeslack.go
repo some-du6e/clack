@@ -91,6 +91,13 @@ type Server struct {
 
 	prefsMu sync.Mutex
 	prefs   map[string]any // users.prefs.get; users.prefs.set writes it
+
+	// drafts and uploads (drafts.go)
+	draftMu sync.Mutex
+	drafts  map[string]*Draft        // drafts.create/update/delete/list
+	files   map[string]*UploadedFile // files.getUploadURLExternal + upload
+	shared  []SharedFiles            // files.completeUploadExternal calls
+	nextID  int
 }
 
 // DefaultPrefs are the fake account's users.prefs (Slack's defaults for the
@@ -222,7 +229,7 @@ func Start(sz Size) (*Server, error) {
 func Serve(ln net.Listener, sz Size) *Server {
 	s := &Server{Size: sz, ln: ln, URL: "http://" + ln.Addr().String() + "/",
 		imgs: map[string][]byte{}, hist: map[string][]slack.Message{}, Calls: map[string]*atomic.Int64{},
-		prefs: DefaultPrefs()}
+		prefs: DefaultPrefs(), drafts: map[string]*Draft{}, files: map[string]*UploadedFile{}}
 	s.generate()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", s.api)
@@ -589,7 +596,7 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	case "experiments.getByUser": // the sidebar experiments as a real account has them (2026-11-08)
 		g := func(group string) map[string]any { return map[string]any{"group": group} }
 		return ok("assignments", map[string]any{"filter_dormant_channels": g("on"), "improve_mute_pref": g("on"),
-			"dm_recency_sort_rollout": g("without_edu")})
+			"dm_recency_sort_rollout": g("without_edu"), "reskin_custom_responses": g("on")})
 	case "users.channelSections.list":
 		var secs []map[string]any
 		ids := s.ChannelIDs()
@@ -735,6 +742,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return ok("results", []any{}, "failed_ids", []string{})
 	case "edge/huddles/list":
 		return ok("huddles", []any{})
+	}
+	if out, handled := s.handleDrafts(method, f); handled {
+		return out
 	}
 	return nil
 }

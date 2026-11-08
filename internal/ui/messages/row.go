@@ -116,6 +116,14 @@ type row struct {
 	replyAvs        []replyAv    // the reply bar's ReplyBarAvatars
 	replyN          int          // … drawn in the last frame
 
+	// Slackbot custom response drawn as the team (custom_response.go)
+	custom         bool
+	crName, crIcon string
+	crTag          crHoverTag
+	crHovered      bool
+	crTip          popups.TipState
+	crTipText      string // the badge tooltip's text while hovered
+
 	// what the header drew last frame (CSS may replace both)
 	avDrawn   string // the avatar's picture: a CSS background-image wins
 	nameShown string // the sender label: ::before + name (unless font-size 0) + ::after
@@ -571,6 +579,7 @@ func (r *row) layoutWrapper(gtx layout.Context, p slackc.Props) layout.Dimension
 		r.growPills()
 	}
 	r.resolve(rc)
+	r.customResponse(rc)
 	switch {
 	case rc.parent:
 		return r.layoutMessage(gtx, nil)
@@ -658,6 +667,9 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 	eph := ephemeral(rc, m)
 	if eph {
 		y += r.labelLine(gtx, rc, cx, y, "eye", "Only visible to you")
+	} else if m.SlackbotCustomResponse() && !r.custom && !(m.Pinned && !rc.thread) {
+		// MessageLabels' custom_response label (pencil), which the reskin drops
+		y += r.labelLine(gtx, rc, cx, y, "edit", "Custom response")
 	}
 	r.col = image.Pt(cx, y)
 	g := at(gtx, 0, y, func(gtx layout.Context) layout.Dimensions {
@@ -793,6 +805,9 @@ func (r *row) layoutAvatar(gtx layout.Context, p slackc.Props) layout.Dimensions
 	if p != nil {
 		s = dp(gtx, float32(p.IntOr("size", int(mt.avatar))))
 		url = avatarURL(rc.h, p, r.m.User, url)
+	}
+	if r.custom { // BaseMessageAvatar: the TeamIcon, no profile card
+		return r.layoutTeamAvatar(gtx, p, s)
 	}
 	st := avatarClass.EnterClass(gtx, btnState(gtx, &r.avatarBtn), 0, slackc.ExtraClass(p))
 	defer st.Leave()
@@ -1214,15 +1229,25 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 	if st.Hidden() {
 		return layout.Dimensions{}
 	}
-	if r.nameBtn.Clicked(gtx) && r.m.User != "" {
+	if r.nameBtn.Clicked(gtx) && r.m.User != "" && !r.custom {
 		rc.h.OpenProfile(rc.origin(image.Point{}), r.m.User)
 	}
-	bs := senderBtnClass.Enter(gtx, btnState(gtx, &r.nameBtn), 0)
+	var bs slackc.Styled
+	if r.custom { // not interactive: a span, no button (custom_response.go)
+		bs = senderNameClass.Enter(gtx, 0, 0)
+	} else {
+		bs = senderBtnClass.Enter(gtx, btnState(gtx, &r.nameBtn), 0)
+	}
 	var nd layout.Dimensions
 	if !bs.Hidden() {
-		if bs.Active() {
+		switch active := bs.Active(); {
+		case active && r.custom:
+			nd = bs.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return r.nameSpan(gtx, bs) })
+		case active:
 			nd = bs.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return r.nameButton(gtx, bs) })
-		} else {
+		case r.custom:
+			nd = r.nameSpan(gtx, bs)
+		default:
 			nd = r.nameButton(gtx, bs)
 		}
 	}
@@ -1240,6 +1265,9 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 	}
 	baseline := nd.Size.Y - nd.Baseline
 	xx := nd.Size.X
+	if r.custom {
+		xx += r.customBadge(gtx, xx, nd.Size.Y)
+	}
 	if r.bot && r.m.User != "USLACKBOT" { // Slack shows no APP tag on Slackbot
 		xx += dp(gtx, mt.badgeGap)
 		s := textStyle{size: 10, weight: theme.Bold, col: c.BadgeText}

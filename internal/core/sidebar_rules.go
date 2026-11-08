@@ -76,11 +76,35 @@ func (a *App) experiment(name string) string {
 	return g[name]
 }
 
+// Experiment returns the viewer's group for a Slack experiment
+// (experiments.getByUser), or the test account's from 2026-11-08 before
+// that call answers.
+func (a *App) Experiment(name string) string { return a.experiment(name) }
+
+// SetExperimentGroup sets one experiment's group, over what
+// experiments.getByUser answered (or the defaults), as Slack's
+// force_* overrides do.
+func (a *App) SetExperimentGroup(name, group string) {
+	a.mu.Lock()
+	g := make(map[string]string, len(defaultExperimentGroups)+1)
+	src := a.expGroups
+	if src == nil {
+		src = defaultExperimentGroups
+	}
+	for k, v := range src {
+		g[k] = v
+	}
+	g[name] = group
+	a.mu.Unlock()
+	a.setExperiments(g)
+}
+
 // defaultExperimentGroups mirrors defaultSidebarExp for the rail's
 // experiments (rail.go).
 var defaultExperimentGroups = map[string]string{
 	"filter_dormant_channels": "on", "improve_mute_pref": "on", "dm_recency_sort_rollout": "without_edu",
 	"activity_inbox": "on", "agent_tasks": "on", "agents_landing_page": "on", "later_todos": "on",
+	"reskin_custom_responses": "on", // Slackbot custom responses as the team (CustomResponseReskin)
 }
 
 func (a *App) sidebarExperiments() sidebarExp {

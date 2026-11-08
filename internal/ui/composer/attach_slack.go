@@ -38,7 +38,7 @@ func attMime(name string) string { return mime.TypeByExtension(filepath.Ext(name
 func (it attItem) file() slackc.Props {
 	v := it.v
 	m := attMime(v.name)
-	return slackc.Props{"name": v.name, "title": v.title, "size": len(v.c.data), "mimetype": m, "type": m}
+	return slackc.Props{"name": v.name, "title": v.title, "size": v.size, "mimetype": m, "type": m}
 }
 
 func (it attItem) pendingID() string { return attPendingID(it.v.c.id) }

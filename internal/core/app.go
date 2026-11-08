@@ -55,6 +55,7 @@ type App struct {
 	expGroups map[string]string       // every experiment group (experiments.getByUser)
 	icon      teamIconState           // the rail's workspace icon (team_icon.go)
 	rxn       reactState              // the viewer's reactions in flight (reactions.go)
+	drafts    draftCache              // the viewer's server drafts (drafts.go), memory only
 
 	// Realtime (Slack's websocket gateway) is opt-in; see SetRealtime.
 	rtMu      sync.Mutex
@@ -471,6 +472,7 @@ func (a *App) Boot(ctx context.Context) error {
 			a.S.TeamID, a.S.TeamName, a.S.TeamDomain = r.Team.ID, r.Team.Name, r.Team.Domain
 			a.S.Unlock()
 			a.setTeamIcon(r.Team.ID, r.Team.Icon)
+			a.setTeamName(r.Team.ID, r.Team.Name)
 		}
 		return err
 	})
