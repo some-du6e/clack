@@ -443,6 +443,7 @@ func (s *scope) layout() {
 	for _, b := range s.boxes {
 		setScope(b, s)
 	}
+	root.lk = flatContents(s.boxes)
 	maxW := float32(cs.Max.X)
 	if cs.Max.X >= 1<<24 {
 		maxW = inf
@@ -494,6 +495,33 @@ func (s *scope) layout() {
 		s.dims.Baseline = h - int(math.Round(float64(root.base)))
 	}
 	v.layGen = saveGen
+}
+
+// flatContents is a scope's top-level boxes with display:contents ones
+// replaced by their layout kids, as buildLayoutKids does below the root:
+// a contents wrapper around a tree's top (Slick ChatTabs' layout div)
+// leaves its children laid out against the scope, so percentages and
+// flex sizes resolve as in a browser. boxes itself when there are none.
+func flatContents(boxes []*box) []*box {
+	n := -1
+	for i, b := range boxes {
+		if b.kind != kText && b.st.Display == css.DisplayContents {
+			n = i
+			break
+		}
+	}
+	if n < 0 {
+		return boxes
+	}
+	out := append(make([]*box, 0, len(boxes)+4), boxes[:n]...)
+	for _, b := range boxes[n:] {
+		if b.kind != kText && b.st.Display == css.DisplayContents {
+			out = append(out, b.lk...) // its pseudos and kids, contents already flattened
+			continue
+		}
+		out = append(out, b)
+	}
+	return out
 }
 
 // inlineRoot reports a scope whose in-flow top-level boxes are all

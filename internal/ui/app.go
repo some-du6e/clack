@@ -108,6 +108,7 @@ type App struct {
 	searchPill      image.Rectangle // window coords, for anchoring the search popover
 	primaryOrigin   image.Point     // window position of the primary panel
 	pvOrigin        originTracker   // ClientPrimaryView's origin under a patch
+	vbOrigin        originTracker   // the primary view body's, inside a patched RenderedViewContents
 	sbMenu          sbMenus         // sidebar row menus (slick_shell.go)
 	secondaryOrigin image.Point     // window position of the secondary pane
 	chBodyW         int             // >0: layoutChannel's messages+composer width (nested secondary pane)
@@ -455,6 +456,9 @@ func (a *App) layoutPrimary(gtx layout.Context) layout.Dimensions {
 	if nested {
 		primW, secTop = sz.X, gtx.Dp(theme.HeaderH)+gtx.Dp(theme.TabsH)
 	}
+	// the panel's window origin: a.primaryOrigin becomes the body's when a
+	// plugin draws above it, the secondary pane stays at the panel's
+	panelOrigin := a.primaryOrigin
 	atExact(gtx, image.Pt(0, 0), image.Pt(primW, sz.Y), func(gtx layout.Context) layout.Dimensions {
 		defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
 		if nested { // the channel's messages + composer stop at the nested pane
@@ -471,7 +475,7 @@ func (a *App) layoutPrimary(gtx layout.Context) layout.Dimensions {
 		pane := image.Rect(x, secTop, sz.X, sz.Y)
 		theme.Shadow(gtx, pane.Add(image.Pt(0, gtx.Dp(4))), 0, gtx.Dp(12), theme.WithAlpha(a.th.C.PanelShadow, 0x1a))
 		theme.Fill(gtx, pane, a.th.C.Bg)
-		a.secondaryOrigin = a.primaryOrigin.Add(pane.Min)
+		a.secondaryOrigin = panelOrigin.Add(pane.Min)
 		atExact(gtx, pane.Min, pane.Size(), func(gtx layout.Context) layout.Dimensions {
 			defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
 			sv := clsSecondary.Enter(gtx, 0, 0)
@@ -490,7 +494,7 @@ func (a *App) layoutPrimary(gtx layout.Context) layout.Dimensions {
 		theme.Shadow(gtx, pane, 0, gtx.Dp(8), theme.WithAlpha(a.th.C.PanelShadow, 0x30))
 		theme.Fill(gtx, pane, a.th.C.Bg)
 		theme.Fill(gtx, image.Rect(x, 0, x+gtx.Dp(1), sz.Y), a.th.C.Border)
-		a.secondaryOrigin = a.primaryOrigin.Add(image.Pt(x+gtx.Dp(1), 0))
+		a.secondaryOrigin = panelOrigin.Add(image.Pt(x+gtx.Dp(1), 0))
 		atExact(gtx, image.Pt(x+gtx.Dp(1), 0), image.Pt(secW-gtx.Dp(1), sz.Y), func(gtx layout.Context) layout.Dimensions {
 			defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
 			sv := clsSecondary.Enter(gtx, 0, 0)
