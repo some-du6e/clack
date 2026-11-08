@@ -425,8 +425,13 @@ jobs:
           plutil -lint $app/Contents/Info.plist
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' $app/Contents/Info.plist)" = slack
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' $app/Contents/Info.plist)" = "$NUM"
-          codesign --force --deep --sign - $app
+          # huddles: macOS only asks for the mic/camera with these strings
+          /usr/libexec/PlistBuddy -c 'Print :NSMicrophoneUsageDescription' $app/Contents/Info.plist
+          /usr/libexec/PlistBuddy -c 'Print :NSCameraUsageDescription' $app/Contents/Info.plist
+          plutil -lint packaging/macos/Clack.entitlements
+          codesign --force --deep --sign - --entitlements packaging/macos/Clack.entitlements $app
           codesign -dv --verbose=2 $app
+          codesign -d --entitlements - --xml $app | grep -F com.apple.security.device.audio-input
           codesign --verify --deep --strict --verbose=2 $app
           find $app | sort
       - name: zip + dmg

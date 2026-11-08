@@ -7,9 +7,12 @@ package composer
 // indent, blockquote, code-block, header); mentions, channels, broadcasts
 // and emoji are embeds. Only built for plugins (a patched composer).
 //
-// The embed names (slackuser, slackchannel, slackusergroup, slackbroadcast,
-// slackemoji) are Clack's: plugins that need exact blocks get them from
-// the "blocks" Clack passes next to the delta.
+// The embed names (slackuser, slackchannel, slackusergroup, slackemoji)
+// are Clack's: plugins that need exact blocks get them from the "blocks"
+// Clack passes next to the delta. Broadcasts (@channel, @here, @everyone)
+// are Slack's own mention ops, {insert: "@here", attributes:
+// {slackmention: {id: "BKhere", label: "@here"}}} (Slack's B7wc
+// isOpMention / getMentionOpIdText), because plugins read their ids.
 func (d *Doc) Delta() map[string]any {
 	ops := make([]any, 0, 8)
 	line := 0
@@ -56,6 +59,15 @@ func (d *Doc) Delta() map[string]any {
 			continue
 		}
 		a := d.Attrs[i]
+		if a.Atom != nil && a.Atom.Kind == AtomBroadcast {
+			// Slack's mention op: the label as text, slackmention says what
+			// it is (NativeAtChannel and bChannel look for id "BKchannel")
+			label := "@" + a.Atom.ID
+			ops = append(ops, map[string]any{"insert": label, "attributes": map[string]any{
+				"slackmention": map[string]any{"id": broadcastRowID(a.Atom.ID), "label": label}}})
+			i++
+			continue
+		}
 		if a.Atom != nil {
 			ops = append(ops, map[string]any{"insert": deltaEmbed(a.Atom)})
 			i++
@@ -116,8 +128,6 @@ func deltaEmbed(a *Atom) map[string]any {
 		return map[string]any{"slackchannel": v}
 	case AtomUsergroup:
 		return map[string]any{"slackusergroup": v}
-	case AtomBroadcast:
-		return map[string]any{"slackbroadcast": v}
 	case AtomEmoji:
 		e := map[string]any{"name": a.ID}
 		if a.Uni != "" {

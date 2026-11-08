@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Code-signing entitlements for Clack.app. The release signs ad-hoc without
+  the hardened runtime, where macOS ignores these and TCC (Info.plist's
+  NSMicrophoneUsageDescription/NSCameraUsageDescription) alone decides.
+  Under the hardened runtime (codesign -o runtime, needed to notarize) the
+  microphone and camera are refused without them, so they're signed in now.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<key>com.apple.security.device.camera</key>
+	<true/>
+</dict>
+</plist>

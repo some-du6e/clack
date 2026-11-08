@@ -150,8 +150,9 @@ var paletteTokens = []struct {
 	{func(p *Palette) *color.NRGBA { return &p.Send }, Both("var(--TextyTheme-send-bg)")},
 	{func(p *Palette) *color.NRGBA { return &p.SendText }, Both("var(--TextyTheme-send-fg)")},
 	{func(p *Palette) *color.NRGBA { return &p.Danger }, Both("var(--dt_color-base-inv-imp)")},
-	{func(p *Palette) *color.NRGBA { return &p.Tooltip }, Both("rgb(var(--sk_inverted_background))")},
-	{func(p *Palette) *color.NRGBA { return &p.TooltipText }, Both("rgb(var(--sk_inverted_foreground))")},
+	// .c-tooltip__tip: --sk_tooltip-background: var(--dt_color-base-inv-pry)
+	{func(p *Palette) *color.NRGBA { return &p.Tooltip }, Both("var(--dt_color-base-inv-pry)")},
+	{func(p *Palette) *color.NRGBA { return &p.TooltipText }, Both("var(--dt_color-content-inv-pry)")},
 }
 
 // ApplyTokens lays the overridden tokens over p (an unflattened

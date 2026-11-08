@@ -119,6 +119,7 @@ Not done in round 2:
 - **Block Kit modals:** not compared; they only open from an app interaction (a write).
 - **Image viewer:** Slack measured (1384×844 card at 28,28, r 8, 70% black over a blurred copy, 35×32 zoom controls bottom-left); Clack's not opened (no image near the bottom of the test channel).
 - **Profile:** a click opens Slack's full profile pane (nested below the tabs, like a thread); not compared field by field. The hover card is from round 1.
+- **Profile hover card:** resting on a message author's name or avatar (threads included) or an @mention opens it after Slack's 350ms; leaving closes it after 250ms unless the pointer reaches the card; its bottom-left sits 12px above the trigger, flipped below near the top (internal/ui/hovercard, from Slack's HoverCardTrigger/ProfileHoverTrigger/Popover source). Member lists don't open it yet: it's not confirmed which of Slack's lists use ProfileHoverTrigger. Apps/bots get the member card, not Slack's AppHoverCard. Slack Connect users don't get the external-org banner (core.User has no team).
 - **Emoji picker anchor:** Slack's composer picker sits at x = composer − 3 with its bottom 31px above the button; Clack's is ~55px higher and 18px left.
 - **Huddle system rows:** Slack deletes the `huddle_thread` message after the huddle ends, so there was nothing to measure without starting a call.
 - **Agent launcher** in the top bar (see above); the Files sort uses "Last updated" (Slack: "Recently viewed", needs view times); Slack's empty-state illustrations are SVGs.

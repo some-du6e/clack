@@ -266,12 +266,111 @@ func init() {
 	}
 }
 
-// colorsOf returns the token set for th.
+// colorsOf returns the token set for th: the measured one, or with a
+// stylesheet overriding Slack's tokens (a Slick theme, user.css) that set
+// with the tokens laid over it, as Slack's own components read them.
 func colorsOf(th *theme.Theme) *colors {
+	if c := themedKitColors(th); c != nil {
+		return c
+	}
 	if th != nil && th.Dark {
 		return &darkColors
 	}
 	return &lightColors
+}
+
+// kitTokens is the Slack token behind each field (Slack's stylesheet,
+// 2026-11-08: .c-button--outline background var(--dt_color-base-pry),
+// border var(--dt_color-otl-sec); .c-button--primary
+// var(--dt_color-base-inv-hgl-2); .c-input_text border
+// var(--dt_color-otl-pry); .c-tooltip__tip var(--dt_color-base-inv-pry) /
+// var(--dt_color-content-inv-pry); menu highlight
+// var(--sk_menu-item_highlight-background, var(--dt_color-base-inv-hgl-1))).
+// lin marks lines and rings that stay translucent (alpha corrected for
+// Gio's linear blend); other translucent values are flattened over Bg.
+var kitTokens = []struct {
+	f   func(*colors) *color.NRGBA
+	tok theme.Tok
+	lin bool
+}{
+	{func(c *colors) *color.NRGBA { return &c.Bg }, theme.Both("var(--dt_color-base-pry)"), false},
+	{func(c *colors) *color.NRGBA { return &c.BgAlt }, theme.Both("var(--dt_color-base-sec)"), false},
+	{func(c *colors) *color.NRGBA { return &c.BgHover }, theme.Both("var(--dt_color-base-pry-hover)"), false},
+	{func(c *colors) *color.NRGBA { return &c.Fg }, theme.Both("var(--dt_color-content-pry)"), false},
+	{func(c *colors) *color.NRGBA { return &c.Fg2 }, theme.Both("var(--dt_color-content-sec)"), false},
+	{func(c *colors) *color.NRGBA { return &c.Fg3 }, theme.Both("var(--dt_color-content-ter)"), false},
+	{func(c *colors) *color.NRGBA { return &c.Muted }, theme.Both("var(--dt_color-content-sec)"), false},
+	{func(c *colors) *color.NRGBA { return &c.Divider }, theme.Both("var(--dt_color-otl-ter)"), true},
+	{func(c *colors) *color.NRGBA { return &c.Backdrop }, theme.Both("var(--dt_color-base-modal)"), true},
+	{func(c *colors) *color.NRGBA { return &c.Highlight }, theme.Both("var(--sk_menu-item_highlight-background) | var(--dt_color-base-inv-hgl-1)"), false},
+	{func(c *colors) *color.NRGBA { return &c.HighText }, theme.Both("var(--sk_menu-item_highlight-color) | var(--dt_color-content-inv-pry)"), false},
+	{func(c *colors) *color.NRGBA { return &c.Danger }, theme.Both("var(--dt_color-content-imp)"), false},
+	{func(c *colors) *color.NRGBA { return &c.DangerBg }, theme.Both("var(--dt_color-base-inv-imp)"), false},
+	{func(c *colors) *color.NRGBA { return &c.Link }, theme.Both("var(--dt_color-content-hgl-1)"), false},
+	{func(c *colors) *color.NRGBA { return &c.Primary }, theme.Both("var(--dt_color-base-inv-hgl-2)"), false},
+	{func(c *colors) *color.NRGBA { return &c.BtnBorder }, theme.Both("var(--dt_color-otl-sec)"), true},
+	{func(c *colors) *color.NRGBA { return &c.BtnBg }, theme.Both("var(--dt_color-base-pry)"), false},
+	{func(c *colors) *color.NRGBA { return &c.BtnHover }, theme.Both("var(--dt_color-base-pry-hover)"), false},
+	{func(c *colors) *color.NRGBA { return &c.GhostHover }, theme.Both("var(--dt_color-base-pry-hover)"), true},
+	{func(c *colors) *color.NRGBA { return &c.Tooltip }, theme.Both("var(--dt_color-base-inv-pry)"), false},
+	{func(c *colors) *color.NRGBA { return &c.TooltipText }, theme.Both("var(--dt_color-content-inv-pry)"), false},
+	{func(c *colors) *color.NRGBA { return &c.Focus }, theme.Both("var(--dt_color-otl-hgl-1)"), false},
+	{func(c *colors) *color.NRGBA { return &c.FocusRing }, theme.Both("var(--dt_color-otl-hgl-1-sec)"), true},
+	{func(c *colors) *color.NRGBA { return &c.InputBorder }, theme.Both("var(--dt_color-otl-pry)"), true},
+	{func(c *colors) *color.NRGBA { return &c.Placeholder }, theme.Both("var(--dt_color-content-ter)"), false},
+	{func(c *colors) *color.NRGBA { return &c.Error }, theme.Both("var(--dt_color-content-imp)"), false},
+	{func(c *colors) *color.NRGBA { return &c.Check }, theme.Both("var(--dt_color-base-inv-hgl-1)"), false},
+	{func(c *colors) *color.NRGBA { return &c.CheckText }, theme.Both("var(--dt_color-content-inv-pry)"), false},
+	{func(c *colors) *color.NRGBA { return &c.CheckBorder }, theme.Both("var(--dt_color-otl-sec)"), true},
+	{func(c *colors) *color.NRGBA { return &c.Skeleton }, theme.Both("var(--dt_color-base-ter)"), false},
+}
+
+var (
+	kitTokMu  sync.Mutex
+	kitTokTh  *theme.Theme
+	kitTokGen uint64
+	kitTok    *colors
+)
+
+// themedKitColors is the mode's set with the overridden tokens laid over
+// it, cached per theme generation (a rebuild allocates, so a set a caller
+// holds stays valid); nil when no stylesheet overrides a token.
+func themedKitColors(th *theme.Theme) *colors {
+	if th == nil || th.Tokens == nil || !th.Tokens.Overridden() {
+		return nil
+	}
+	kitTokMu.Lock()
+	defer kitTokMu.Unlock()
+	if kitTok != nil && kitTokTh == th && kitTokGen == th.Gen {
+		return kitTok
+	}
+	c := lightColors
+	if th.Dark {
+		c = darkColors
+	}
+	type setF struct {
+		p   *color.NRGBA
+		lin bool
+	}
+	var set []setF
+	for _, f := range kitTokens {
+		if theme.SetTok(th.Tokens, f.f(&c), f.tok, th.Dark) {
+			set = append(set, setF{f.f(&c), f.lin})
+		}
+	}
+	for _, x := range set { // Bg is first: the rest mix over it
+		switch {
+		case x.p.A == 0xff:
+		case x.p == &c.Bg:
+			*x.p = theme.Over(*x.p, th.C.Bg)
+		case x.lin:
+			*x.p = theme.LinearAlpha(*x.p, c.Bg)
+		default:
+			*x.p = theme.Over(*x.p, c.Bg)
+		}
+	}
+	kitTok, kitTokTh, kitTokGen = &c, th, th.Gen
+	return kitTok
 }
 
 // ---- layout helpers ----

@@ -148,12 +148,17 @@ func (a *App) handle(ev slack.Event) {
 		"group_rename", "channel_unarchive", "im_open", "mpim_open":
 		var e struct {
 			Channel slack.Conversation `json:"channel"`
+			TempExp *int64             `json:"temp_membership_expiration_ts"`
 		}
 		_ = json.Unmarshal(ev.Raw, &e)
 		id := firstNonEmpty(e.Channel.ID, ch)
 		switch ev.Type {
 		case "im_created", "mpim_joined", "im_open", "mpim_open": // Slack marks these open
 			a.openDM(id) // before refreshConv, whose "conv" event resnapshots the sidebar
+		case "channel_joined", "group_joined": // channelJoined: a "Join…" membership (preview.go)
+			if e.TempExp != nil {
+				a.setTemp(id, *e.TempExp)
+			}
 		}
 		a.refreshConv(ctx, id)
 	case "im_close", "mpim_close":
@@ -174,9 +179,7 @@ func (a *App) handle(ev slack.Event) {
 		}
 		a.emit(Event{Type: "sidebar_changed"})
 	case "channel_left", "group_left", "channel_archive", "group_archive", "channel_deleted":
-		a.S.Lock()
-		delete(a.S.Convs, ch)
-		a.S.Unlock()
+		a.dropMembership(ch, ev.Type == "channel_archive" || ev.Type == "group_archive")
 		a.emit(Event{Type: "conv_removed", Channel: ch})
 	case "pin_added", "pin_removed":
 		var e struct {

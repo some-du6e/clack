@@ -364,8 +364,18 @@ function decode(v) {
   // a native sub-part Go passes as a child or prop: a patchable Slack component carrying its slot id
   if (v.$slot !== undefined && typeof v.n === 'string') return G.React.createElement(slackComponent(v.n), { ...decode(v.p || {}), $slot: v.$slot, key: v.k ?? v.$slot })
   const out = {}
-  for (const k in v) out[k] = decode(v[k])
+  for (const k in v) out[k] = k === 'delta' ? reviveDelta(decode(v[k])) : decode(v[k])
   return out
+}
+/**
+ * Slack hands composer deltas around as Quill Delta instances, and plugins
+ * build on them (`new delta.constructor().insert('/channel ')` in
+ * NativeAtChannel, `new (delta.constructor)(ops)` in bChannel), so a
+ * `delta` coming from Go becomes the runtime's Delta (05_slack.js).
+ */
+function reviveDelta(d) {
+  const D = T.Delta
+  return D && d && typeof d === 'object' && Array.isArray(d.ops) && !(d instanceof D) ? new D(d.ops) : d
 }
 
 /** React elements inside payloads (menu labels, toast content) are kept in JS and rendered on request */

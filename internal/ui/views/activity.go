@@ -33,7 +33,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
-const actMentionTypes = "at_user,at_user_group,at_channel,at_everyone,keyword"
+const actMentionTypes = "at_user,at_user_group,at_channel,at_everyone,keyword,unjoined_channel_mention"
 
 // Tabs. "" types means core's "all" view; DMs filters "all" client-side.
 var (
@@ -56,11 +56,11 @@ var actFilters = [...]actFilter{
 	{label: "DMs", icon: "dms", dm: true},
 	{label: "Mentions", icon: "at", types: actMentionTypes, trail: "chevron-down"},
 	{label: "Threads", icon: "threads", types: "thread_v2"},
-	{label: "Channels set to “all new posts”", icon: "hash", off: true},
+	{label: "Channels set to “all new posts”", icon: "hash", types: "channel"},
 	{label: "Reactions", icon: "emoji", types: "message_reaction"},
-	{label: "Invitations", icon: "user-plus", types: "internal_channel_invite,external_channel_invite"},
+	{label: "Invitations", icon: "user-plus", types: "internal_channel_invite,external_channel_invite,external_dm_invite,quietly_added_to_channel"},
 	{label: "Apps", icon: "apps", types: "bot_dm_bundle"},
-	{label: "Reminders", icon: "remind", off: true},
+	{label: "Reminders", icon: "remind", types: "saved_reminder"},
 }
 
 const actFilterReactions = 4
@@ -714,6 +714,66 @@ func actIsMention(t string) bool {
 	return false
 }
 
+// actAlertLabel is Slack's footer for a generic_system_alert category.
+func actAlertLabel(category string) string {
+	switch category {
+	case "CHANNEL":
+		return "Channel"
+	case "USER_GROUP":
+		return "User group"
+	case "EXTERNAL_CHANNEL":
+		return "External channel"
+	case "WORKFLOW":
+		return "Workflow"
+	case "INVITATION":
+		return "Invitation"
+	}
+	return "Notification"
+}
+
+// actFallbackText is the body of an item whose message didn't load (or
+// that has none): what happened, never an empty row.
+func actFallbackText(it *core.ActivityItem, place string) string {
+	if t := oneLine(it.Text); t != "" {
+		return t
+	}
+	in := ""
+	if place != "" {
+		in = " in " + place
+	}
+	switch {
+	case it.Type == "channel":
+		if it.Count > 1 {
+			return strconv.Itoa(it.Count) + " new posts" + in
+		}
+		return "New post" + in
+	case it.Type == "dm" || it.Type == "mpdm" || it.Type == "bot_dm_bundle":
+		if it.Count > 1 {
+			return strconv.Itoa(it.Count) + " new messages"
+		}
+		return "New message"
+	case it.Type == "thread_v2":
+		return "New reply" + in
+	case it.Type == "message_reaction":
+		return "Reacted to your message" + in
+	case actIsMention(it.Type) || it.Type == "unjoined_channel_mention" || it.Type == "code_review_requested":
+		return "Mentioned you" + in
+	case it.Type == "list_record_assigned":
+		return "Assigned you a list item"
+	case it.Type == "list_record_edited":
+		return "Updated a list item"
+	case it.Type == "list_user_mentioned":
+		return "Mentioned you in a list item"
+	case it.Type == "list_todo_notification":
+		return "A list item needs your attention"
+	case it.Type == "list_approval_request":
+		return "Requested your approval on a list item"
+	case it.Type == "list_approval_reviewed":
+		return "Reviewed your approval request"
+	}
+	return "New activity" + in
+}
+
 func actReplies(n int, adj string) string {
 	w := "replies"
 	if n == 1 {
@@ -809,8 +869,31 @@ func (v *Activity) describe(it *core.ActivityItem, refs map[string]core.ConvRef)
 	}
 	d.name, d.avatar = name, av
 	d.prev = v.preview(it.Msg)
+	// actor: the person behind a non-message item (inviter, invitee,
+	// assigner); it names the row when there is no message author.
+	actor, actorAv := it.ActorName, ""
+	if it.Actor != "" {
+		if u, ok := v.user(it.Actor); ok {
+			actor, actorAv = displayName(u), u.Avatar
+		} else if actor == "" {
+			actor = v.userName(it.Actor)
+		}
+	}
+	useActor := func() {
+		if actor != "" {
+			d.name, d.avatar = actor, actorAv
+		}
+	}
+	// body sets the text of a row without a message (detailed body and
+	// dense preview).
+	body := func(s string) {
+		d.body = s
+		if it.Msg == nil || d.invite {
+			d.prev = s
+		}
+	}
 	switch {
-	case actIsMention(it.Type):
+	case actIsMention(it.Type) || it.Type == "unjoined_channel_mention" || it.Type == "code_review_requested":
 		d.footIcon = "at"
 		d.foot = "Mention in " + place
 		if it.Type == "keyword" {
@@ -830,16 +913,77 @@ func (v *Activity) describe(it *core.ActivityItem, refs map[string]core.ConvRef)
 				d.avatar = u.Avatar
 			}
 		}
-	case it.Type == "internal_channel_invite" || it.Type == "external_channel_invite":
+	case it.Type == "channel":
+		// a channel set to "all new posts": Slack's "Post in #channel"
+		// (ActivityRowContent footer) under the message.
+		d.footIcon, d.foot = "hash", "Post in "+place
+		if d.dm {
+			d.footIcon, d.foot = "dms", "Direct message"
+		}
+		if it.Count > 1 && d.prev != "" {
+			d.prev = strconv.Itoa(it.Count) + " new posts · " + d.prev
+		}
+	case it.Type == "internal_channel_invite" || it.Type == "quietly_added_to_channel":
 		d.invite, d.footIcon, d.foot = true, "user-plus", "Invitation to "+d.title
-		if d.name != "" {
-			d.body = d.name + " invited you to join " + d.title
-		} else {
+		if it.Type == "quietly_added_to_channel" {
+			useActor()
+		}
+		verb := " invited you to join "
+		if it.Type == "quietly_added_to_channel" {
+			verb = " added you to "
+		}
+		switch {
+		case d.name != "":
+			body(d.name + verb + d.title)
+		case it.Type == "quietly_added_to_channel":
 			d.name = d.title
-			d.body = "You were invited to join " + d.title
+			body("You were added to " + d.title)
+		default:
+			d.name = d.title
+			body("You were invited to join " + d.title)
 		}
 		d.tile = d.avatar == ""
-		d.prev = d.body
+	case it.Type == "external_channel_invite" || it.Type == "external_dm_invite" || it.Type == "shared_workspace_invite":
+		d.invite = true
+		useActor()
+		ch := d.title
+		if it.Title != "" {
+			ch = "#" + strings.TrimPrefix(it.Title, "#")
+		}
+		who := firstNonEmpty(actor, "Someone")
+		if it.Team != "" {
+			who += " from " + it.Team
+		}
+		s := who + " invited you to "
+		switch {
+		case it.Type == "external_dm_invite":
+			s += "direct message"
+		case ch != "":
+			s += ch
+		default:
+			s += "a channel"
+		}
+		if it.Text != "" {
+			s += ": " + oneLine(it.Text)
+		}
+		body(s + ".")
+		d.footIcon, d.foot = "user-plus", "Slack Connect Invitation"
+		if d.name == "" {
+			d.name = firstNonEmpty(it.Team, ch, "Slack Connect")
+		}
+		d.tile = d.avatar == ""
+	case it.Type == "team_joiner_invite":
+		d.invite = true
+		if d.name == "" {
+			useActor()
+		}
+		body("Joined your workspace. A welcome from you will help them get started.")
+		d.footIcon, d.foot = "user-plus", "Workspace invitation"
+	case it.Type == "prejoin_dm_welcome_party_alert":
+		d.invite = true
+		useActor()
+		body("Was invited to join " + firstNonEmpty(v.teamName(), "the workspace") + " \u2014 take a second to say hello.")
+		d.footIcon, d.foot = "user-plus", "Workspace invitation"
 	case it.Type == "bot_dm_bundle":
 		if d.name == "" {
 			d.name = d.title
@@ -849,18 +993,64 @@ func (v *Activity) describe(it *core.ActivityItem, refs map[string]core.ConvRef)
 			d.prev = strconv.Itoa(it.Count) + " new messages · " + d.prev
 		}
 	case it.Type == "list_record_assigned":
+		useActor()
 		d.footIcon, d.foot = "list-view", "Assigned to you in a list"
 	case it.Type == "list_user_mentioned":
+		useActor()
 		d.footIcon, d.foot = "list-view", "Mention in a list"
-	default:
+	case it.Type == "list_record_edited":
+		useActor()
+		d.footIcon, d.foot = "list-view", "Updated in a list"
+	case it.Type == "list_todo_notification":
+		d.footIcon, d.foot = "list-view", "To-do in a list"
+	case it.Type == "list_approval_request" || it.Type == "list_approval_reviewed":
+		useActor()
+		d.footIcon, d.foot = "list-view", "Approval in a list"
+		if it.Type == "list_approval_reviewed" {
+			d.foot = "Approval reviewed in a list"
+		}
+	case it.Type == "saved_reminder":
+		d.footIcon, d.foot = "clock", "Reminder"
+		if it.Msg != nil && place != "" {
+			d.foot = "Reminder from " + place
+		}
+		if it.Msg == nil {
+			d.name = "Reminder"
+			body(firstNonEmpty(oneLine(it.Text), "You asked to be reminded about this."))
+		}
+	case it.Type == "calendar_upcoming_event":
+		d.footIcon, d.foot = "calendar", "Upcoming event"
+		d.name = firstNonEmpty(it.Title, "Upcoming event")
+		body(firstNonEmpty(oneLine(it.Text), "Starting soon"))
+	case it.Type == "generic_system_alert" || it.Type == "example_user_alert":
+		d.name, d.avatar = "Slack", ""
+		d.footIcon, d.foot = "bell", actAlertLabel(it.Title)
+		body(firstNonEmpty(oneLine(it.Text), "Notification"))
+	default: // dm, mpdm and anything new
 		if d.dm {
 			d.footIcon, d.foot = "dms", "Direct message"
 		} else if place != "" {
 			d.foot = "In " + place
 		}
 	}
+	// Never an empty row: a name, some text and a footer for every item.
+	if d.name == "" {
+		useActor()
+	}
 	if d.name == "" {
 		d.name = d.title
+	}
+	if d.name == "" {
+		d.name = "Slack"
+	}
+	if d.avatar == "" && !d.tile && it.Msg == nil && it.Actor == "" && it.Author == "" {
+		d.tile = true
+	}
+	if it.Msg == nil && d.body == "" {
+		body(actFallbackText(it, place))
+	}
+	if d.foot == "" {
+		d.footIcon, d.foot = "bell", "Activity"
 	}
 	d.hay = strings.ToLower(d.name + "\n" + d.prev + "\n" + d.title + "\n" + d.foot)
 	return d

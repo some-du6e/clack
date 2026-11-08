@@ -584,15 +584,15 @@ func (p *EmojiPicker) position(gtx layout.Context, sz, win image.Point) image.Po
 }
 
 // epCard paints the picker card with Slack's two-layer shadow.
-func epCard(gtx layout.Context, cl *Colors, dark bool, r image.Rectangle, rad int) {
+func epCard(cl *Colors, dark bool) cardLook {
 	sh, ring := rgba(0x000000, .098), rgba(0x5e5d60, .13)
 	if dark {
 		sh, ring = rgba(0x000000, .3), cl.Ring
 	}
-	softShadow(gtx, r.Inset(dp(gtx, 3)), rad, dp(gtx, 10), dp(gtx, 15), sh)
-	softShadow(gtx, r.Inset(dp(gtx, 4)), rad, dp(gtx, 4), dp(gtx, 6), sh)
-	rrect(gtx, r.Inset(-1), rad+1, ring)
-	rrect(gtx, r, rad, cl.Bg)
+	return cardLook{fill: cl.Bg, ring: ring, shadow: func(gtx layout.Context, r image.Rectangle, rad int) {
+		softShadow(gtx, r.Inset(dp(gtx, 3)), rad, dp(gtx, 10), dp(gtx, 15), sh)
+		softShadow(gtx, r.Inset(dp(gtx, 4)), rad, dp(gtx, 4), dp(gtx, 6), sh)
+	}}
 }
 
 // Layout draws the picker.
@@ -685,12 +685,11 @@ func (p *EmojiPicker) layoutCard(gtx layout.Context, _ slackc.Props) layout.Dime
 	if st.Hidden() {
 		return layout.Dimensions{Size: win}
 	}
-	t := op.Offset(pos).Push(gtx.Ops)
-	st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
+	// the card: .c-menu's rule (a theme's background and border) over
+	// the picker's own look
+	styledCardLook(gtx, st, epCard(cl, th.Dark), pos, sz, dp(gtx, 6), func(gtx layout.Context) {
 		p.layoutBody(gtx, th, cl, sz)
-		return layout.Dimensions{Size: sz}
 	})
-	t.Pop()
 	return layout.Dimensions{Size: win}
 }
 
@@ -698,7 +697,6 @@ func (p *EmojiPicker) layoutCard(gtx layout.Context, _ slackc.Props) layout.Dime
 func (p *EmojiPicker) layoutBody(gtx layout.Context, th *theme.Theme, cl *Colors, sz image.Point) {
 	rad := dp(gtx, 6)
 	local := image.Rectangle{Max: sz}
-	epCard(gtx, cl, th.Dark, local, rad)
 	p.block.Layout(gtx, local)
 
 	for i := range p.topTabs {

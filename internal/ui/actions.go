@@ -19,7 +19,7 @@ func (a *App) openTeamMenu(anchor image.Point) {
 		{Label: "Toggle dark mode", Icon: "moon", Hint: "Ctrl+Shift+Y", Do: a.ToggleDark},
 		{Divider: true},
 		{Label: "All unreads", Icon: "unreads", Hint: "Ctrl+Shift+A", Do: func() { a.Navigate("unreads") }},
-		{Label: "Browse channels", Icon: "hash", Do: func() { a.sidebarAction("add-channels") }},
+		{Label: "Browse channels", Icon: "hash", Do: func() { a.Navigate("directories?tab=channels") }},
 		{Label: "Directories", Icon: "directories", Do: func() { a.Navigate("directories") }},
 		{Divider: true},
 		{Label: "Sign out of " + a.teamName() + " on this device", Danger: true, Do: a.signOut},
@@ -178,8 +178,8 @@ func (a *App) openTab(ch, key string) {
 
 func (a *App) sidebarAction(key string) {
 	switch key {
-	case "add-channels":
-		a.Navigate("directories?tab=channels")
+	case "add-channels": // Slack: a menu, Create a new channel / Browse channels
+		a.openAddChannelsMenu(a.ptrWin)
 	case "browse-people":
 		a.Navigate("directories?tab=people")
 	case "add-apps":

@@ -46,9 +46,17 @@ Clack ports these rules from Slack's own web client, not from guesses. The imple
   - Muted rows come after the rest.
   - A group DM sorts by the other members' names joined with `,`.
 
+- **The open conversation** (lJBI `currentlySelectedId`, `internal/core/preview.go`)
+  - It is always a candidate, even when the viewer isn't a member (a previewed channel) or it is archived, so it gets a row while it's open. It lands in its section or the default bucket.
+  - Its row is never filtered out, in a collapsed section too.
+  - The UI reports it with `core.SetSelected` on every route change.
+- **Temporary channels** (`temp_join_channel`; client-boot `+7BQ`, `26kz` temporaryChannelStore)
+  - A "Join…" membership (conversations.join `expiration_ts`, or `channel_joined.temp_membership_expiration_ts`) goes to the Temporary channels section, after Starred, or to the default bucket when there is no such section.
+  - The section shows only while the viewer has a temporary channel.
+
 ## Not ported
 
-- Drafts, huddles and the currently open conversation keeping a row visible (core has no such state).
+- Drafts and huddles keeping a row visible (core has no such state).
 - Slack Connect section placement.
 - Hiding the Slackbot DM when the Slackbot link shows.
 - Starred section empty states.

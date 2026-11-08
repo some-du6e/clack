@@ -146,8 +146,9 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 
 	if !appDM {
 		// Huddle split button (94×28: 74 + 20); Slack 2026's --polish variant
-		// has no outline, only hover fills. Slack's mint pill with faces and
-		// "Huddle N" while a huddle is on (huddleui).
+		// has no outline, only hover fills. While a huddle is on, huddleui
+		// draws Slack's live button: mint with faces, headphones and a bare
+		// count, or solid jade with the leave headphones when you're in it.
 		hud := a.huddles()
 		hud.Seed()
 		hw := gtx.Dp(94)
