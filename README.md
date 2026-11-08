@@ -102,11 +102,11 @@ This is how Slack's desktop app signs in. You sign in in your browser, Slack's p
 
 1. Start Clack. The sign-in screen opens on **Sign in with a Slack link**.
 2. Click **Open sign-in page** (or open `https://slack.com/ssb/add?s=1&v=4.53.276` yourself) and sign in to your workspace in the browser.
-3. When Slack offers to open the Slack app, right-click that link ("Open Slack", "launch the app"), choose **Copy Link**, paste it into **Sign-in link** and press **Sign in**.
+3. When Slack offers to open the Slack app, click it and let the browser open Clack. On macOS that works out of the box. On Windows, tick "Open slack:// links with Clack" in the installer (or run `Clack.exe -register-url-handler` once); on Linux, run `clack --register-url-handler` once. If you can see the `slack://` link itself, you can paste it into **Sign-in link** instead. Slack's page usually doesn't show it, though.
 
 The link works once, for a few minutes. If it has expired, sign in on the page again. Treat it like a password until then. Workspaces with single sign-on may send you back to the browser to finish.
 
-Instead of copying, you can let the browser open Clack with the link, if Clack handles `slack://` links. Clack never takes them by itself. Run `clack --register-url-handler` once (on Linux it runs `xdg-mime default clack.desktop x-scheme-handler/slack`; on Windows it writes the per-user `slack` URL keys). The Slack desktop app claims `slack://` too and re-claims it whenever it starts, so with both installed whichever registered last wins, and a link may open the wrong app. Copying the link avoids that. A link that reaches Clack while it's already signed in does nothing but show a note: any web page can make your browser open a `slack://` link, and one for someone else's account must not swap yours. Sign out first.
+Letting the browser open Clack needs Clack to handle `slack://` links. On macOS the app declares the scheme, so it works as soon as Clack is installed. Elsewhere Clack never takes them by itself. Run `clack --register-url-handler` once (on Linux it runs `xdg-mime default clack.desktop x-scheme-handler/slack`; on Windows it writes the per-user `slack` URL keys). The Slack desktop app claims `slack://` too and re-claims it whenever it starts, so with both installed whichever registered last wins, and a link may open the wrong app. A link that reaches Clack while it's already signed in does nothing but show a note: any web page can make your browser open a `slack://` link, and one for someone else's account must not swap yours. Sign out first.
 
 From a terminal: `clack login 'slack://T…/magic-login/…'`, or `clack login` and paste the link at the prompt. A running Clack also accepts `clack 'slack://T…/magic-login/…'`.
 

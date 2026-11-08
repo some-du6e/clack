@@ -365,8 +365,8 @@ func (a *App) layoutLoginLink(gtx layout.Context, x, y, colW, gap int) (int, int
 	ly += a.loginPara(gtx, x, ly, colW, small, desktopSignInURL) + gtx.Dp(16)
 	ly += a.loginPara(gtx, x, ly, colW, body, "2. When Slack offers to open the Slack app, either:") + gtx.Dp(6)
 	ind := gtx.Dp(16)
-	ly += a.loginPara(gtx, x+ind, ly, colW-ind, body, "• right-click its “Open Slack” link (or “launch the app”), choose Copy Link, and paste it here, or") + gtx.Dp(6)
-	ly += a.loginPara(gtx, x+ind, ly, colW-ind, body, "• let the browser open "+AppName+". That only works if "+AppName+" handles slack:// links: run clack --register-url-handler once. If the Slack desktop app is installed too, the two take turns owning those links, so copying is simpler.") + gtx.Dp(16)
+	ly += a.loginPara(gtx, x+ind, ly, colW-ind, body, "• click it and let the browser open "+AppName+". On a Mac that works right away. On Windows, tick “Open slack:// links with Clack” in the installer; on Linux, run clack --register-url-handler once. If the Slack desktop app is installed too, the link may open it instead.") + gtx.Dp(6)
+	ly += a.loginPara(gtx, x+ind, ly, colW-ind, body, "• or, if you can see the slack:// link itself, paste it here.") + gtx.Dp(16)
 	ly += a.loginPara(gtx, x, ly, colW, body, "3. The link works once, for a few minutes. If it has expired, sign in on the page again for a new one.")
 
 	fx, fy := x+colW+gap, y
