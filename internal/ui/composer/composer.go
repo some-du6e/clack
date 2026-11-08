@@ -60,6 +60,13 @@ type Composer struct {
 	// Server draft sync (syncDraftCreate / syncDraftUpdates /
 	// deleteDraftApi): see drafts_sync.go.
 	dsync draftSync
+	// the files in the draft (draft_files.go): attVer counts changes to
+	// them; touched is set once the user (or a restore) filled the
+	// composer, after which server drafts no longer restore into it;
+	// srvGen is the core.DraftsGen last looked at.
+	attVer  uint64
+	touched bool
+	srvGen  uint64
 
 	setBroadcastFn func(bool) // bound once: the plugin buttons' broadcast.set
 
@@ -144,7 +151,12 @@ func (c *Composer) init() {
 	c.ac = newAutocomplete(c.h, c.ch)
 	bindAutocomplete(c.ed, c.ac, c.h.Invalidate)
 	c.ac.later, c.ac.thread = c.later, c.ts != ""
-	c.att = newAttachments(c.h)
+	if c.edit == nil { // the conversation's files, kept across composers
+		c.att = attachmentsFor(draftKey(c.ch, c.ts), c.h)
+		c.att.setOnChange(c.attChanged)
+	} else {
+		c.att = newAttachments(c.h)
+	}
 	typingHub(c.h.Core()).addHost(c.h) // listen for typing events
 	c.initIDs()
 	c.wPane, c.wInput = c.layoutPaneBody, c.layoutInputBody
@@ -234,6 +246,7 @@ func (c *Composer) prepareSend(d *Doc) *Doc {
 // edit composers draw just the box.
 func (c *Composer) Layout(gtx layout.Context) layout.Dimensions {
 	runRestores()
+	c.maybeRestoreServerDraft()
 	syncHooks()
 	th := c.h.Theme()
 	if c.st.Shaper != th.Shaper || c.st.Shaper == nil {
@@ -483,6 +496,7 @@ func (c *Composer) changed() {
 	if c.edit != nil {
 		return
 	}
+	c.touched = true
 	c.saveDraft()
 	c.syncDraftSoon()
 	if c.ed.Empty() {
@@ -957,13 +971,13 @@ func clearDraft(ch, ts string) {
 	drafts.Unlock()
 }
 
-// HasDraft reports whether a channel or thread has an unsent draft (for
-// the sidebar's draft pencil).
+// HasDraft reports whether a channel or thread has an unsent draft, text
+// or files (for the sidebar's draft pencil).
 func HasDraft(ch, ts string) bool {
 	drafts.Lock()
-	defer drafts.Unlock()
 	_, ok := drafts.m[draftKey(ch, ts)]
-	return ok
+	drafts.Unlock()
+	return ok || storedFiles(draftKey(ch, ts))
 }
 
 // setBroadcast sets the thread composer's "Also send to" checkbox (a

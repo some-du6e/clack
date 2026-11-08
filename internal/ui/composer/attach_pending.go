@@ -67,7 +67,7 @@ func pendingChanged() { currentTaut().PendingFilesChanged() }
 
 // pendingLocked is c as taut's PendingFile. Call with attachments.mu held.
 func (c *attChip) pendingLocked() taut.PendingFile {
-	p := taut.PendingFile{ID: attPendingID(c.id), Name: c.name, Title: c.title, Size: int64(len(c.data)), Mimetype: attMime(c.name)}
+	p := taut.PendingFile{ID: attPendingID(c.id), Name: c.name, Title: c.title, Size: c.size(), Mimetype: attMime(c.name)}
 	if c.prepared != nil {
 		p.FileID = c.prepared.ID
 	}

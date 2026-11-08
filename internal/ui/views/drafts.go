@@ -1173,11 +1173,6 @@ func (d *Drafts) deleteDraft(dr *core.Draft) {
 }
 
 func (d *Drafts) sendDraft(dr *core.Draft) {
-	if dr.Files > 0 {
-		// SendDraft posts the text and blocks only.
-		d.h.Toast("Drafts with files can’t be sent from here yet; open the conversation to send it")
-		return
-	}
 	id := dr.ID
 	d.remove(id)
 	d.run(draftsDone{okMsg: "Message sent", errMsg: "Message not sent", unhide: []string{id}},
@@ -1585,7 +1580,7 @@ func (d *Drafts) draftCard(gtx C, dr *core.Draft, scheduled bool) D {
 	}
 	prev := oneLine(richtext.PlainText(dr.Doc))
 	if prev == "" && dr.Files > 0 {
-		prev = plural(dr.Files, "file")
+		prev = draftFilesLine(dr)
 	}
 	return d.dlHoverRow(gtx, &r.dlRowState, dlRowOpts{
 		Content: func(gtx C) D {
@@ -1670,4 +1665,24 @@ func draftsSendText(t time.Time) string {
 		return "Send " + t.Format("Monday, January 2") + " at " + clock(t)
 	}
 	return "Send " + t.Format("January 2, 2006") + " at " + clock(t)
+}
+
+// draftFilesLine previews a draft that is only files: their names, as
+// drafts.list describes them, else how many there are.
+func draftFilesLine(dr *core.Draft) string {
+	var names []string
+	for _, f := range dr.FileInfo {
+		n := f.Title
+		if n == "" {
+			n = f.Name
+		}
+		if n == "" {
+			return plural(dr.Files, "file")
+		}
+		names = append(names, n)
+	}
+	if len(names) == 0 {
+		return plural(dr.Files, "file")
+	}
+	return strings.Join(names, ", ")
 }

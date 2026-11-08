@@ -33,6 +33,7 @@ type draftRaw struct {
 	IsSent        bool            `json:"is_sent"`
 	IsDeleted     bool            `json:"is_deleted"`
 	FileIDs       []string        `json:"file_ids"`
+	Files         []slack.File    `json:"files"` // the file objects behind FileIDs
 }
 
 type draftDest struct {
@@ -51,7 +52,119 @@ func (a *App) draftOf(d *draftRaw) Draft {
 		dst := d.Destinations[0]
 		v.Channel, v.Users, v.ThreadTS, v.Broadcast = dst.ChannelID, dst.UserIDs, dst.ThreadTS, dst.Broadcast
 	}
+	byID := make(map[string]slack.File, len(d.Files))
+	for _, f := range d.Files {
+		byID[f.ID] = f
+	}
+	ids := d.FileIDs
+	if len(ids) == 0 {
+		for _, f := range d.Files {
+			ids = append(ids, f.ID)
+		}
+		v.FileIDs, v.Files = ids, len(ids)
+	}
+	for _, id := range ids {
+		f, ok := byID[id]
+		if !ok {
+			f = slack.File{ID: id}
+		}
+		v.FileInfo = append(v.FileInfo, DraftFile{ID: id, Name: f.Name, Title: f.Title, Mimetype: f.Mimetype,
+			PrettyType: f.PrettyType, Size: f.Size, Thumb: f.Thumb360})
+	}
 	return v
+}
+
+// ---- the viewer's drafts, as last seen (memory only) ----
+
+// draftCache mirrors the server drafts: filled by Drafts (drafts.list),
+// kept current by SaveDraft/DeleteDraft and the draft_* realtime events
+// (other devices). Composers restore from it (DraftFor).
+type draftCache struct {
+	byID map[string]Draft
+	gen  uint64
+}
+
+func (a *App) putDraft(d Draft) {
+	if d.ID == "" {
+		return
+	}
+	a.mu.Lock()
+	if a.drafts.byID == nil {
+		a.drafts.byID = map[string]Draft{}
+	}
+	if old, ok := a.drafts.byID[d.ID]; ok {
+		d.FileInfo = mergeFileInfo(d.FileInfo, old.FileInfo) // a reply may carry ids but not the file objects
+	}
+	a.drafts.byID[d.ID] = d
+	a.drafts.gen++
+	a.mu.Unlock()
+}
+
+// mergeFileInfo fills files known only by id from what was seen before.
+func mergeFileInfo(cur, old []DraftFile) []DraftFile {
+	for i, f := range cur {
+		if f.Name != "" {
+			continue
+		}
+		for _, o := range old {
+			if o.ID == f.ID && o.Name != "" {
+				cur[i] = o
+				break
+			}
+		}
+	}
+	return cur
+}
+
+func (a *App) dropDraft(id string) {
+	a.mu.Lock()
+	if _, ok := a.drafts.byID[id]; ok {
+		delete(a.drafts.byID, id)
+		a.drafts.gen++
+	}
+	a.mu.Unlock()
+}
+
+// DraftsGen changes whenever the known drafts do (cheap; for the UI to
+// notice drafts arriving after a composer opened).
+func (a *App) DraftsGen() uint64 {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.drafts.gen
+}
+
+// DraftFor is the unsent, unscheduled draft for a conversation (threadTS
+// "") or a thread, as last seen: what Slack's composer restores, text and
+// attached files, when it opens there. A DM draft addressed by user ids
+// only matches that DM. The newest wins.
+func (a *App) DraftFor(ch, threadTS string) (Draft, bool) {
+	dmUser := ""
+	if c, ok := a.S.Conv(ch); ok && c.IsIM {
+		dmUser = c.User
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	var best Draft
+	found := false
+	for _, d := range a.drafts.byID {
+		if d.DateScheduled != 0 || d.ThreadTS != threadTS {
+			continue
+		}
+		if d.Channel != ch && !(d.Channel == "" && dmUser != "" && len(d.Users) == 1 && d.Users[0] == dmUser) {
+			continue
+		}
+		if !found || draftNewer(d, best) {
+			best, found = d, true
+		}
+	}
+	return best, found
+}
+
+func draftNewer(a, b Draft) bool {
+	if a.LastUpdated != b.LastUpdated {
+		return a.LastUpdated > b.LastUpdated
+	}
+	return a.DateCreated > b.DateCreated
 }
 
 // Drafts lists unsent drafts, including scheduled ones (DateScheduled > 0).
@@ -64,6 +177,7 @@ func (a *App) Drafts(ctx context.Context) ([]Draft, error) {
 	}
 	var out []Draft
 	ids := []string{}
+	byID := map[string]Draft{}
 	for i := range res.Drafts {
 		d := &res.Drafts[i]
 		if d.IsSent || d.IsDeleted {
@@ -72,7 +186,12 @@ func (a *App) Drafts(ctx context.Context) ([]Draft, error) {
 		v := a.draftOf(d)
 		ids = append(ids, v.Users...)
 		out = append(out, v)
+		byID[v.ID] = v
 	}
+	a.mu.Lock()
+	a.drafts.byID = byID
+	a.drafts.gen++
+	a.mu.Unlock()
 	a.EnsureUsers(ctx, ids)
 	return out, nil
 }
@@ -99,7 +218,11 @@ func (a *App) saveDraft(ctx context.Context, o DraftOpts, scheduleAt int64) (Dra
 		return Draft{}, errors.New("core: draft needs a channel or users")
 	}
 	blocks := o.Blocks
-	if len(blocks) == 0 {
+	switch {
+	case len(blocks) > 0:
+	case o.Text == "" && len(o.FileIDs) > 0:
+		blocks = json.RawMessage(`[]`) // files only
+	default:
 		blocks = textBlocks(o.Text)
 	}
 	dest, _ := json.Marshal([]draftDest{{ChannelID: o.Channel, UserIDs: o.Users, ThreadTS: o.ThreadTS, Broadcast: o.Broadcast}})
@@ -117,7 +240,7 @@ func (a *App) saveDraft(ctx context.Context, o DraftOpts, scheduleAt int64) (Dra
 		}
 		id = res.Draft.ID
 		if scheduleAt == 0 {
-			return a.draftOf(&res.Draft), nil
+			return a.savedDraft(&res.Draft, o), nil
 		}
 	}
 	p.Del("client_msg_id")
@@ -133,12 +256,31 @@ func (a *App) saveDraft(ctx context.Context, o DraftOpts, scheduleAt int64) (Dra
 	if res.Draft.ID == "" {
 		res.Draft.ID = id
 	}
-	return a.draftOf(&res.Draft), nil
+	return a.savedDraft(&res.Draft, o), nil
 }
 
-// DeleteDraft deletes a draft (or cancels a scheduled message).
+// savedDraft is the draft drafts.create/update answered, completed from
+// what was sent when the reply leaves parts out, and remembered.
+func (a *App) savedDraft(r *draftRaw, o DraftOpts) Draft {
+	if len(r.Destinations) == 0 {
+		r.Destinations = []draftDest{{ChannelID: o.Channel, UserIDs: o.Users, ThreadTS: o.ThreadTS, Broadcast: o.Broadcast}}
+	}
+	if r.FileIDs == nil && len(r.Files) == 0 {
+		r.FileIDs = append([]string{}, o.FileIDs...)
+	}
+	d := a.draftOf(r)
+	a.putDraft(d)
+	return d
+}
+
+// DeleteDraft deletes a draft (or cancels a scheduled message). The files
+// stay (skip_file_deletion), as when Slack's composer is cleared or sends.
 func (a *App) DeleteDraft(ctx context.Context, id string) error {
-	return a.C.Call(ctx, "drafts.delete", url.Values{"draft_id": {id}, "client_last_updated_ts": {msNow()}, "skip_file_deletion": {"true"}}, nil)
+	err := a.C.Call(ctx, "drafts.delete", url.Values{"draft_id": {id}, "client_last_updated_ts": {msNow()}, "skip_file_deletion": {"true"}}, nil)
+	if err == nil || isCode(err, "draft_not_found") {
+		a.dropDraft(id)
+	}
+	return err
 }
 
 // SendDraft posts a draft now (optimistically, like Send) and deletes it.
@@ -158,6 +300,19 @@ func (a *App) SendDraft(ctx context.Context, id string) (Message, error) {
 				return Message{}, err
 			}
 			ch = c.ID
+		}
+		if len(d.FileIDs) > 0 {
+			// the files were uploaded with the draft: share them with its
+			// text as their comment, like the composer's send
+			o := UploadOpts{Channel: ch, ThreadTS: d.ThreadTS, Comment: d.Text}
+			for _, f := range d.FileInfo {
+				o.Prepared = append(o.Prepared, PreparedUpload{ID: f.ID, Name: f.Name, Title: firstNonEmpty(f.Title, f.Name), Size: f.Size})
+			}
+			if _, err := a.Upload(ctx, o); err != nil {
+				return Message{}, err
+			}
+			_ = a.DeleteDraft(ctx, id)
+			return Message{Channel: ch, ThreadTS: d.ThreadTS, Text: d.Text}, nil
 		}
 		m, err := a.Send(ctx, SendOpts{Channel: ch, Text: d.Text, ThreadTS: d.ThreadTS, Broadcast: d.Broadcast, Blocks: d.Blocks})
 		if err != nil {
@@ -238,6 +393,14 @@ func (a *App) onDraftEvent(typ string, raw json.RawMessage) {
 		if ev.ID == "" {
 			ev.ID = d.ID
 		}
+	}
+	switch {
+	case typ == "draft_delete" || typ == "draft_send" || (e.Draft != nil && (e.Draft.IsSent || e.Draft.IsDeleted)):
+		if ev.ID != "" {
+			a.dropDraft(ev.ID)
+		}
+	case ev.Draft != nil:
+		a.putDraft(*ev.Draft)
 	}
 	a.emit(ev)
 }

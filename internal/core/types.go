@@ -388,6 +388,15 @@ type Draft struct {
 	LastUpdated           string
 	Files                 int
 	FileIDs               []string
+	FileInfo              []DraftFile // the attached files as drafts.list describes them (by FileIDs order when known)
+}
+
+// DraftFile is a file attached to a draft: uploaded but not shared yet
+// (files.getUploadURLExternal + upload, no files.completeUploadExternal).
+type DraftFile struct {
+	ID, Name, Title, Mimetype, PrettyType string
+	Size                                  int64
+	Thumb                                 string // thumb_360 for images ("" for other files)
 }
 
 // DraftOpts create (ID == "") or update a draft. Without Blocks, Text is
