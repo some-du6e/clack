@@ -317,6 +317,15 @@ jobs:
           }
           if (Test-Path "$env:USERPROFILE\Desktop\Clack.lnk") { throw "desktop shortcut created without the task" }
           $k = 'HKCU:\Software\Classes\slack'
+          # slack:// is opt-in (the slackurl task is unchecked): Slack desktop also claims it
+          if (Test-Path $k) { throw "slack:// handler registered without the slackurl task" }
+          Start-Process -Wait -FilePath "$app\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
+          for ($i = 0; ($i -lt 60) -and (Test-Path $exe); $i++) { Start-Sleep 1 }
+          if (Test-Path $exe) { throw "Clack.exe still there after the first uninstall" }
+          Start-Sleep 3
+          # again with the slackurl task: the handler is registered, then removed on uninstall
+          $p = Start-Process -Wait -PassThru -FilePath $setup -ArgumentList '/VERYSILENT', '/CURRENTUSER', '/SUPPRESSMSGBOXES', '/NORESTART', '/MERGETASKS="slackurl"', "/LOG=$PWD\install2.log"
+          if ($p.ExitCode -ne 0) { Get-Content install2.log; throw "setup with slackurl exited $($p.ExitCode)" }
           $want = @{
             "$k"                    = 'URL:slack Protocol'
             "$k\DefaultIcon"        = "`"$exe`",0"
@@ -344,7 +353,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $setup = (Get-Item "dist\Clack-$env:VERSION-windows-amd64-setup.exe").FullName
-          Start-Process -Wait -FilePath $setup -ArgumentList '/VERYSILENT', '/CURRENTUSER', '/SUPPRESSMSGBOXES', '/NORESTART'
+          Start-Process -Wait -FilePath $setup -ArgumentList '/VERYSILENT', '/CURRENTUSER', '/SUPPRESSMSGBOXES', '/NORESTART', '/MERGETASKS="slackurl"'
           $app = Join-Path $env:LOCALAPPDATA 'Programs\Clack'
           $cmd = 'HKCU:\Software\Classes\slack\shell\open\command'
           Set-Item $cmd -Value '"C:\Other\slack.exe" "%1"'
