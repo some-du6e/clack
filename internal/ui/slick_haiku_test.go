@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"gioui.org/io/key"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/jsrt"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
 )
 
 // svJS evaluates an async function body in the shared runtime with a
@@ -80,6 +82,51 @@ func TestSlickViewHaikuWarningWithChatTabs(t *testing.T) {
 	}
 	t.Logf("window key listeners: keydown=%v keyup=%v", e.a.Taut().Bridge().WantsEvent("keydown"), e.a.Taut().Bridge().WantsEvent("keyup"))
 
+	// what the composer asks and what JS answers
+	type scCall struct {
+		at   time.Duration
+		m    composer.SendCheck
+		done chan bool
+	}
+	var calls []*scCall
+	var callsMu sync.Mutex
+	tStart := time.Now()
+	e.frame() // syncHooks installs taut's check
+	if composer.SendChecks == nil {
+		t.Fatal("the composer has no send check with HaikuWarning on")
+	}
+	orig := composer.SendChecks
+	composer.SendChecks = func(m composer.SendCheck, done func(bool)) {
+		c := &scCall{at: time.Since(tStart), m: m, done: make(chan bool, 1)}
+		callsMu.Lock()
+		calls = append(calls, c)
+		callsMu.Unlock()
+		orig(m, func(ok bool) { c.done <- ok; done(ok) })
+	}
+	t.Cleanup(func() { composer.SendChecks = orig })
+	probe(`const orig = __taut.sendCheck; globalThis.__scLog = []
+		__taut.sendCheck = async (c) => {
+			const e = { t0: Date.now(), c: JSON.stringify(c).slice(0, 400) }
+			__scLog.push(e)
+			try { const r = await orig(c); e.r = r; return r } catch (x) { e.err = String(x); throw x } finally { e.t1 = Date.now() }
+		}`)
+	defer func() {
+		t.Logf("route %s; JS send checks: %s", e.a.router.Current(), probe(`return __scLog.map((e) => ({ ...e, ms: e.t1 ? e.t1 - e.t0 : 'pending' }))`))
+		callsMu.Lock()
+		for _, c := range calls {
+			select {
+			case ok := <-c.done:
+				t.Logf("composer send check at %v: %q -> %v", c.at, c.m.Text, ok)
+			default:
+				t.Logf("composer send check at %v: %q still pending", c.at, c.m.Text)
+			}
+		}
+		if len(calls) == 0 {
+			t.Logf("the composer never ran a send check")
+		}
+		callsMu.Unlock()
+	}()
+
 	cv := e.a.convos[ttGen+"/"]
 	if cv == nil || cv.comp == nil {
 		t.Fatal("no #general composer")
@@ -89,6 +136,7 @@ func TestSlickViewHaikuWarningWithChatTabs(t *testing.T) {
 	e.frame()
 	e.typeKeys("an old silent pond a frog jumps into the pond splash silence again")
 	e.frame()
+	t.Logf("route before Enter: %s", e.a.router.Current())
 	t0 := time.Now()
 	e.rt.Queue(key.Event{Name: key.NameReturn, State: key.Press}, key.Event{Name: key.NameReturn, State: key.Release})
 	ok := e.wait(12*time.Second, func() bool {
