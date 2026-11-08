@@ -20,6 +20,7 @@ import (
 	"gioui.org/op/paint"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
 )
 
 // View lays out and draws one Doc. Keep one View per message and reuse it
@@ -35,6 +36,7 @@ type View struct {
 	laidSp  float32
 	laidGen uint32
 	laidEl  uint32 // Options.Elements version the layout was made with
+	laidPf  uint32 // uipref.Gen the layout was made with (jumbomoji, swatches, link underlines, inline media)
 	dirty   bool
 
 	ops      op.Ops
@@ -202,7 +204,7 @@ func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimension
 	if el := v.opts.Elements; el != nil && el.ElementsVersion() != v.laidEl {
 		v.dirty = true
 	}
-	if v.dirty || w != v.laidW || gtx.Metric.PxPerDp != v.laidPx || gtx.Metric.PxPerSp != v.laidSp || st.gen != v.laidGen || mode != v.laidMode {
+	if v.dirty || w != v.laidW || gtx.Metric.PxPerDp != v.laidPx || gtx.Metric.PxPerSp != v.laidSp || st.gen != v.laidGen || mode != v.laidMode || uipref.Gen() != v.laidPf {
 		v.relayout(st, w, gtx.Metric.PxPerDp, gtx.Metric.PxPerSp)
 	} else if len(v.pending) > 0 && v.anyReady(st) {
 		v.recorded = false
@@ -356,10 +358,11 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 		v.laidEl = el.ElementsVersion()
 	}
 	v.d.reset()
+	v.laidPf = uipref.Gen()
 	if v.expanded == nil {
 		v.expanded = map[*richtext.Attachment]bool{}
 	}
-	l := lay{st: st, d: &v.d, scale: pxdp, spx: pxsp, jumbo: v.doc.Jumbo, opts: v.opts, mode: mode, cs: &v.cs, expanded: v.expanded}
+	l := lay{st: st, d: &v.d, scale: pxdp, spx: pxsp, jumbo: v.doc.Jumbo && uipref.Get().Jumbomoji, opts: v.opts, mode: mode, cs: &v.cs, expanded: v.expanded}
 	if l.scale <= 0 {
 		l.scale = 1
 	}
@@ -470,6 +473,7 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 		}
 		drawImage(ops, img, im.r, im.radii, !im.fit)
 	}
+	ul := uipref.Get().UnderlineLinks
 	for i := range v.d.frags {
 		f := &v.d.frags[i]
 		if f.comp != comp {
@@ -543,6 +547,8 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 				if f.style&richtext.Underline != 0 {
 					underline(ops, f, st)
 				}
+			} else if ul && f.target >= 0 && int(f.target) < len(v.d.targets) && v.d.targets[f.target].kind == tLink {
+				underline(ops, f, st) // Accessibility > "Underline links to websites"
 			}
 		}
 	}

@@ -109,11 +109,7 @@ func (a *App) defaultShortcuts() *shortcuts {
 			a.markRead(ch)
 		}
 	})
-	add("Shift+Esc", "Mark all as read", func(a *App) {
-		if a.data != nil {
-			a.data.markAllRead()
-		}
-	})
+	add("Shift+Esc", "Mark all as read", func(a *App) { a.confirmMarkAllRead() })
 	return s
 }
 

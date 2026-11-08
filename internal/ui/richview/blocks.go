@@ -9,6 +9,7 @@ import (
 	"gioui.org/unit"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
 )
 
 func (l *lay) bodyStyle() flowStyle {
@@ -126,7 +127,7 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 }
 
 func isImageFile(b *richtext.Block) bool {
-	return b.Kind == richtext.FileBlock && b.File != nil && b.File.IsImage && b.File.Thumb != nil
+	return b.Kind == richtext.FileBlock && b.File != nil && b.File.IsImage && b.File.Thumb != nil && !uipref.Get().NoInternalImgs
 }
 
 func (l *lay) block(b *richtext.Block, x, y, w int, edited bool) int {

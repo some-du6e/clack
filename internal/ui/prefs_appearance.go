@@ -13,7 +13,7 @@ import (
 // appearancePage is Preferences > Appearance, laid out like Slack's
 // "themes" tab: Color Mode (Light / Dark / System), Themes (Slack's
 // presets and the custom theme's four roles), Darker sidebars, Window
-// gradient, then Emoji. Theme choices are written to the account like
+// gradient, then Clack's local emoji set. Theme choices are written to the account like
 // Slack does (theme_account.go); the colour mode stays on this device.
 func (p *prefsModal) appearancePage(gtx layout.Context) layout.Dimensions {
 	a := p.a
@@ -152,7 +152,8 @@ func (p *prefsModal) appearancePage(gtx layout.Context) layout.Dimensions {
 	})
 	f.gap()
 
-	f.heading("Emoji")
+	f.heading("Emoji set")
+	f.note("A Clack setting on this computer (Slack's own emoji options are under Messages & media).", false, 1)
 	style := a.th.EmojiStyle
 	f.option("apple", "Apple", "Slack's default emoji set", style == "" || style == "apple", true, func() { a.setEmojiStyle("apple") })
 	f.option("google", "Google", "", style == "google", true, func() { a.setEmojiStyle("google") })
