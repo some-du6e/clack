@@ -321,7 +321,16 @@ type ActivityItem struct {
 	Msg               *Message
 	Root              *Message // thread parent, for thread items
 	Reaction          *ActivityReaction
-	Count             int // unread replies / bundled messages
+	Count             int // unread replies / bundled messages / posts
+
+	// Items that aren't (only) a message: the person behind it when that
+	// isn't the message author (inviter, invitee, assigner), and the
+	// payload's own text.
+	Actor     string // user id
+	ActorName string // when the payload names a user outside the workspace
+	Title     string // invite channel name, calendar title, alert category
+	Team      string // Slack Connect invite: the inviting organisation
+	Text      string // alert text, invite message, reminder detail
 }
 
 type ActivityReaction struct {

@@ -602,46 +602,12 @@ var activityTypes = map[string]string{
 	// the web client's Activity inbox list (2026-11)
 	"all":       "at_user,at_user_group,at_channel,at_everyone,keyword,list_record_assigned,list_user_mentioned,list_todo_notification,list_approval_request,list_approval_reviewed,unjoined_channel_mention,thread_v2,message_reaction,bot_dm_bundle,dm,prejoin_dm_welcome_party_alert,internal_channel_invite,external_channel_invite,external_dm_invite,quietly_added_to_channel,channel,saved_reminder,list_record_edited",
 	"dms":       "dm",
-	"mentions":  "at_user,at_user_group,at_channel,at_everyone,keyword",
+	"mentions":  "at_user,at_user_group,at_channel,at_everyone,keyword,unjoined_channel_mention",
 	"threads":   "thread_v2",
 	"reactions": "message_reaction",
-	"invites":   "internal_channel_invite,external_channel_invite",
+	"invites":   "internal_channel_invite,external_channel_invite,external_dm_invite,quietly_added_to_channel",
+	"channels":  "channel",
 	"apps":      "bot_dm_bundle",
-}
-
-type msgRef struct {
-	TS           string `json:"ts"`
-	Channel      string `json:"channel"`
-	ThreadTS     string `json:"thread_ts"`
-	AuthorUserID string `json:"author_user_id"`
-	User         string `json:"user"`
-}
-
-type activityRaw struct {
-	IsUnread bool   `json:"is_unread"`
-	FeedTS   string `json:"feed_ts"`
-	Key      string `json:"key"`
-	Item     struct {
-		Type     string  `json:"type"`
-		Message  *msgRef `json:"message"`
-		Reaction *struct {
-			User string `json:"user"`
-			Name string `json:"name"`
-		} `json:"reaction"`
-		Channel    string `json:"channel"`
-		BundleInfo *struct {
-			UnreadCount int `json:"unread_count"`
-			Payload     struct {
-				Message     *msgRef `json:"message"`
-				ThreadEntry *struct {
-					ChannelID      string `json:"channel_id"`
-					LatestTS       string `json:"latest_ts"`
-					ThreadTS       string `json:"thread_ts"`
-					UnreadMsgCount int    `json:"unread_msg_count"`
-				} `json:"thread_entry"`
-			} `json:"payload"`
-		} `json:"bundle_info"`
-	} `json:"item"`
 }
 
 // Activity loads the Activity view (activity.feed, hydrated with
@@ -681,65 +647,6 @@ func (a *App) Activity(ctx context.Context, o ActivityOpts) (ActivityPage, error
 	}
 	log.Printf("activity: %d items in %s", len(items), time.Since(t0).Round(time.Millisecond))
 	return ActivityPage{Items: items, Next: res.Meta.NextCursor, Convs: a.convRefs(chans)}, nil
-}
-
-// activityItems converts feed entries and hydrates their messages (one
-// messages.list round trip for everything not cached).
-func (a *App) activityItems(ctx context.Context, raws []activityRaw) []ActivityItem {
-	items := make([]ActivityItem, 0, len(raws))
-	want := map[string][]string{}
-	for _, raw := range raws {
-		it := ActivityItem{Key: raw.Key, Type: raw.Item.Type, FeedTS: raw.FeedTS, Unread: raw.IsUnread, Channel: raw.Item.Channel}
-		ref := raw.Item.Message
-		if bi := raw.Item.BundleInfo; bi != nil {
-			it.Count = bi.UnreadCount
-			if ref == nil {
-				ref = bi.Payload.Message
-			}
-			if te := bi.Payload.ThreadEntry; te != nil {
-				ref = &msgRef{Channel: te.ChannelID, TS: te.LatestTS, ThreadTS: te.ThreadTS}
-				if te.UnreadMsgCount > 0 {
-					it.Count = te.UnreadMsgCount
-				}
-			}
-		}
-		if ref != nil {
-			it.Channel, it.TS, it.ThreadTS = ref.Channel, ref.TS, ref.ThreadTS
-			it.Author = firstNonEmpty(ref.AuthorUserID, ref.User)
-			if it.Channel != "" && it.TS != "" {
-				want[it.Channel] = append(want[it.Channel], it.TS)
-			}
-			if it.ThreadTS != "" && it.ThreadTS != it.TS {
-				want[it.Channel] = append(want[it.Channel], it.ThreadTS)
-			}
-		}
-		if rx := raw.Item.Reaction; rx != nil {
-			it.Reaction = &ActivityReaction{User: rx.User, Name: rx.Name}
-			it.Reaction.URL, _, _ = a.S.Emoji(rx.Name)
-		}
-		items = append(items, it)
-	}
-	got := a.hydrate(ctx, want)
-	ids := []string{}
-	for i := range items {
-		ids = append(ids, items[i].Author)
-		if items[i].Reaction != nil {
-			ids = append(ids, items[i].Reaction.User)
-		}
-	}
-	a.EnsureUsers(ctx, ids)
-	for i := range items {
-		it := &items[i]
-		if m, ok := got[it.Channel+"/"+it.TS]; ok {
-			it.Msg = a.messagePtr(it.Channel, &m)
-		}
-		if it.ThreadTS != "" && it.ThreadTS != it.TS {
-			if m, ok := got[it.Channel+"/"+it.ThreadTS]; ok {
-				it.Root = a.messagePtr(it.Channel, &m)
-			}
-		}
-	}
-	return items
 }
 
 // ---- threads view ----

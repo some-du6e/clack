@@ -368,3 +368,20 @@ func textHash(s string) uint32 {
 	}
 	return h
 }
+
+func firstNonEmpty(s ...string) string {
+	for _, x := range s {
+		if x != "" {
+			return x
+		}
+	}
+	return ""
+}
+
+// teamName is the workspace's name ("" before boot).
+func (b *base) teamName() string {
+	s := b.h.Core().S
+	s.RLock()
+	defer s.RUnlock()
+	return s.TeamName
+}
