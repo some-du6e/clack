@@ -3,8 +3,10 @@ package ui
 import (
 	"image"
 	"image/color"
+	"io"
 	"strings"
 
+	"gioui.org/io/clipboard"
 	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -65,7 +67,9 @@ func (a *App) layoutLogin(gtx layout.Context) {
 	}
 	submit := l.submit.Clicked(gtx)
 	if l.copy.Clicked(gtx) {
-		a.copyText(signInSnippet)
+		// Written here, not with a.copyText: frame returns before keys.process
+		// (which flushes a.clipboard) while the sign-in screen is up.
+		gtx.Execute(clipboard.WriteCmd{Type: "application/text", Data: io.NopCloser(strings.NewReader(signInSnippet))})
 		l.copied = true
 	}
 	for _, ed := range []*widget.Editor{&l.workspace, &l.token, &l.orgToken, &l.cookie, &l.cookieDS, &l.userAgent} {
