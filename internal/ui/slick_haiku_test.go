@@ -51,9 +51,23 @@ func (e *svEnv) typeKeys(s string) {
 // in document.body, like Slick on Slack. Clack cleared the composer and
 // the send never settled.
 func TestSlickViewHaikuWarningWithChatTabs(t *testing.T) {
+	t.Run("alone", func(t *testing.T) { haikuThroughComposer(t, false) })
+	t.Run("with-ChatTabs", func(t *testing.T) { haikuThroughComposer(t, true) })
+}
+
+func haikuThroughComposer(t *testing.T, chatTabs bool) {
 	e := newSV(t)
-	e.install("ChatTabs", nil)
+	if chatTabs {
+		e.install("ChatTabs", nil)
+	}
 	e.install("HaikuWarning", nil)
+	if chatTabs {
+		chatTabsTwoTabs(t, e)
+	}
+	haikuSend(t, e, chatTabs)
+}
+
+func chatTabsTwoTabs(t *testing.T, e *svEnv) {
 	e.until(8*time.Second, "the tab bar", func() bool { return e.tree(`slick-chat-tabs`, `data-tab-count`) != "" })
 	// a second tab, so the tab bar asks the main half for Ctrl+W
 	e.until(8*time.Second, "ChatTabs' getTemplate on #random's trigger", func() bool {
@@ -68,7 +82,9 @@ func TestSlickViewHaikuWarningWithChatTabs(t *testing.T) {
 	e.dismissOverlays()
 	e.click(ttGen)
 	e.until(5*time.Second, "#general again", func() bool { return string(e.a.router.Current()) == "c/"+ttGen })
+}
 
+func haikuSend(t *testing.T, e *svEnv, logKeys bool) {
 	rt, err := e.a.Taut().JS()
 	if err != nil {
 		t.Fatal(err)
@@ -127,6 +143,10 @@ func TestSlickViewHaikuWarningWithChatTabs(t *testing.T) {
 		callsMu.Unlock()
 	}()
 
+	if logKeys {
+		probe(`globalThis.__keys = []; window.addEventListener('keydown', (e) => __keys.push(e.key + '@' + (e.target?.localName ?? '?')), true)`)
+		defer func() { t.Logf("keydowns JS saw: %s", probe(`return __keys.join(' ')`)) }()
+	}
 	cv := e.a.convos[ttGen+"/"]
 	if cv == nil || cv.comp == nil {
 		t.Fatal("no #general composer")
