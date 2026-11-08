@@ -1676,16 +1676,18 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 		return r.rv.Layout(gtx, rc.st, &r.handler)
 	})
 	ts := clock(tsTime(m.TS))
-	tsS := textStyle{size: 12, col: c.TimeSystem, lineH: 19}
+	tst := tsClass.Enter(gtx, 0, 0)
+	tsS := cssText(tst, textStyle{size: 12, col: c.TimeSystem, lineH: 19})
 	tsz := measure(gtx, rc.th, tsS, ts)
 	if body.Size.Y <= dp(gtx, 22) && body.Size.X+dp(gtx, 8)+tsz.X <= cw {
-		at(gtx, cx+body.Size.X+dp(gtx, 8), y+dp(gtx, 1), func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, tsS, ts) })
+		at(gtx, cx+body.Size.X+dp(gtx, 8), y+dp(gtx, 1), func(gtx layout.Context) layout.Dimensions { return styledLabel(gtx, rc.th, tst, tsS, ts) })
 		y += max(body.Size.Y, dp(gtx, 20))
 	} else {
 		y += body.Size.Y
-		at(gtx, cx, y, func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, tsS, ts) })
+		at(gtx, cx, y, func(gtx layout.Context) layout.Dimensions { return styledLabel(gtx, rc.th, tst, tsS, ts) })
 		y += tsz.Y
 	}
+	tst.Leave()
 	if len(m.Reactions) > 0 {
 		y += dp(gtx, 4)
 		y += r.reactionBar(gtx, image.Pt(cx, y), image.Point{}, cw)
