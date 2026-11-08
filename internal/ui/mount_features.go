@@ -128,6 +128,12 @@ func init() {
 		popups.SignOut = func() { a.signOut() }
 	}
 	mkStatusModal = func(a *App) Overlay { return popups.NewSetStatusModal(a) }
+	mkCreateChannel = func(a *App, section string) Overlay {
+		return popups.NewCreateChannelModal(a, popups.CreateChannelOpts{Section: section})
+	}
+	mkMenuAt = func(a *App, anchor image.Rectangle, side int, width float32, items []MenuItem) Overlay {
+		return popups.NewMenuOpts(a, toPopupItems(items), popups.MenuOpts{Anchor: anchor, Side: popups.Side(side), Width: width})
+	}
 	mkMenu = func(a *App, anchor image.Point, items []MenuItem) Overlay {
 		return popups.NewMenu(a, anchor, toPopupItems(items))
 	}

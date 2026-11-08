@@ -49,6 +49,14 @@ type ModalOpts struct {
 	// Flush draws the body across the card's full width (from x 0) with no
 	// bottom padding: bodies that lay out their own columns (Preferences).
 	Flush bool
+	// TitleIcon and TitleAfter follow Title on its line (Slack's "Add
+	// people to 🔒 plans": a channel icon and name).
+	TitleIcon, TitleAfter string
+	// Subtitle is a 15px line under the title, after SubtitleIcon (the
+	// create-channel modal's "# name" on its visibility step).
+	Subtitle, SubtitleIcon string
+	// FooterNote sits at the footer's left ("Step 1 of 2").
+	FooterNote string
 }
 
 // Modal is a centered dialog over a dimmed backdrop.
@@ -166,6 +174,11 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 	if m.o.HeadH > 0 {
 		headH = dp(gtx, m.o.HeadH)
 	}
+	subH := 0
+	if m.o.Subtitle != "" {
+		subH = dp(gtx, 22)
+		headH += subH
+	}
 	footPad := dp(gtx, 20)
 	if m.o.Border {
 		footPad = dp(gtx, 24)
@@ -213,10 +226,42 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 				m.block.Layout(gtx, local)
 
 				// header
-				at(gtx, pos.Add(image.Pt(padX, (headH-dp(gtx, 30))/2)), func(gtx layout.Context) layout.Dimensions {
-					gtx.Constraints = layout.Constraints{Max: image.Pt(w-padX-dp(gtx, 64), dp(gtx, 30))}
-					return para(gtx, th, 22, 30, theme.Black, cl.Fg, m.o.Title, 1)
+				ty := (headH - subH - dp(gtx, 30)) / 2
+				at(gtx, pos.Add(image.Pt(padX, ty)), func(gtx layout.Context) layout.Dimensions {
+					maxW := w - padX - dp(gtx, 64)
+					gtx.Constraints = layout.Constraints{Max: image.Pt(maxW, dp(gtx, 30))}
+					d := para(gtx, th, 22, 30, theme.Black, cl.Fg, m.o.Title, 1)
+					if m.o.TitleIcon == "" && m.o.TitleAfter == "" {
+						return d
+					}
+					x := d.Size.X
+					if m.o.TitleIcon != "" {
+						at(gtx, image.Pt(x, dp(gtx, 6)), func(gtx layout.Context) layout.Dimensions {
+							return icon(gtx, m.o.TitleIcon, 20, cl.Fg)
+						})
+						x += dp(gtx, 22)
+					}
+					at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
+						gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, maxW-x), dp(gtx, 30))}
+						return para(gtx, th, 22, 30, theme.Black, cl.Fg, m.o.TitleAfter, 1)
+					})
+					return d
 				})
+				if m.o.Subtitle != "" {
+					at(gtx, pos.Add(image.Pt(padX, ty+dp(gtx, 30))), func(gtx layout.Context) layout.Dimensions {
+						x := 0
+						if m.o.SubtitleIcon != "" {
+							at(gtx, image.Pt(0, (subH-dp(gtx, 15))/2), func(gtx layout.Context) layout.Dimensions {
+								return icon(gtx, m.o.SubtitleIcon, 15, cl.Fg2)
+							})
+							x = dp(gtx, 17)
+						}
+						return at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
+							gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, w-2*padX-x), subH)}
+							return para(gtx, th, 15, 22, theme.Regular, cl.Fg2, m.o.Subtitle, 1)
+						})
+					})
+				}
 				if !m.o.NoClose {
 					at(gtx, pos.Add(image.Pt(w-dp(gtx, 20)-dp(gtx, 36), (headH-dp(gtx, 36))/2)), func(gtx layout.Context) layout.Dimensions {
 						return iconButton(gtx, &m.close, "close", 36, 20, cl.Fg2, cl.BgHover, 8)
@@ -243,6 +288,15 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 					if m.o.Border {
 						fill(gtx, image.Rect(pos.X, fy, pos.X+w, fy+1), cl.Ring)
 						fy++
+					}
+					if m.o.FooterNote != "" {
+						at(gtx, image.Pt(pos.X+padX, fy+footPad), func(gtx layout.Context) layout.Dimensions {
+							bh := dp(gtx, 36)
+							gtx.Constraints = layout.Constraints{Max: image.Pt(w/2, bh)}
+							return vcenter(gtx, bh, func(gtx layout.Context) layout.Dimensions {
+								return text(gtx, th, 15, theme.Regular, cl.Fg3, m.o.FooterNote)
+							})
+						})
 					}
 					x := pos.X + w - padX
 					for i := len(m.o.Buttons) - 1; i >= 0; i-- {
