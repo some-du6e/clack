@@ -10,6 +10,56 @@ import (
 	"sync"
 )
 
+// SidebarDM is one direct message or group DM from sidebar.dms.
+type SidebarDM struct {
+	ID       string `json:"id"`
+	User     string `json:"user,omitempty"`
+	IsOpen   bool   `json:"is_open"`
+	IsIM     bool   `json:"is_im,omitempty"`
+	IsMPIM   bool   `json:"is_mpim,omitempty"`
+	LastRead string `json:"last_read,omitempty"`
+}
+
+// SidebarDMs lists every DM and group DM the viewer has, each with its
+// is_open flag (sidebar.dms, on the enterprise host). Slack's own sidebar
+// shows only the open ones: users.conversations returns closed DMs too and
+// has no is_open. It follows response_metadata.next_cursor if Slack ever
+// pages the answer.
+func (c *Client) SidebarDMs(ctx context.Context) ([]SidebarDM, error) {
+	var all []SidebarDM
+	cursor := ""
+	for i := 0; i < 50; i++ {
+		p := url.Values{}
+		if cursor != "" {
+			p.Set("cursor", cursor)
+		}
+		var r struct {
+			IMs   []SidebarDM `json:"ims"`
+			MPDMs []SidebarDM `json:"mpdms"`
+			MPIMs []SidebarDM `json:"mpims"`
+			Meta  struct {
+				NextCursor string `json:"next_cursor"`
+			} `json:"response_metadata"`
+		}
+		if err := c.Call(ctx, "sidebar.dms", p, &r); err != nil {
+			return all, err
+		}
+		for _, d := range r.IMs {
+			d.IsIM = true
+			all = append(all, d)
+		}
+		for _, d := range append(r.MPDMs, r.MPIMs...) {
+			d.IsMPIM = true
+			all = append(all, d)
+		}
+		if r.Meta.NextCursor == "" || r.Meta.NextCursor == cursor {
+			break
+		}
+		cursor = r.Meta.NextCursor
+	}
+	return all, nil
+}
+
 // SectionsAll lists sidebar sections, following the top-level cursor and
 // each section's channel_ids_page cursor so big sections are complete.
 func (c *Client) SectionsAll(ctx context.Context) ([]Section, error) {

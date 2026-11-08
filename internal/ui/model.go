@@ -28,6 +28,7 @@ type model struct {
 
 type sbSection struct {
 	ID, Name, Type, Emoji string
+	EmojiURL              string   // the section emoji's image ("" = Slack's default icon)
 	Rows                  []string // conv ids
 }
 

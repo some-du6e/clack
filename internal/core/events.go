@@ -134,8 +134,30 @@ func (a *App) handle(ev slack.Event) {
 			Channel slack.Conversation `json:"channel"`
 		}
 		_ = json.Unmarshal(ev.Raw, &e)
-		a.refreshConv(ctx, firstNonEmpty(e.Channel.ID, ch))
-	case "channel_left", "group_left", "channel_archive", "group_archive", "channel_deleted", "im_close":
+		id := firstNonEmpty(e.Channel.ID, ch)
+		switch ev.Type {
+		case "im_created", "mpim_joined", "im_open", "mpim_open": // Slack marks these open
+			a.openDM(id) // before refreshConv, whose "conv" event resnapshots the sidebar
+		}
+		a.refreshConv(ctx, id)
+	case "im_close", "mpim_close":
+		// Closed from some client: out of the sidebar until a new message,
+		// but still a known conversation (search, switcher, history).
+		var e struct {
+			ConvertedTo string `json:"converted_to"`
+		}
+		_ = json.Unmarshal(ev.Raw, &e)
+		a.markDMClosed(ch)
+		if e.ConvertedTo != "" { // group DM turned into a private channel
+			a.S.Lock()
+			delete(a.S.Convs, ch)
+			a.S.Unlock()
+			a.emit(Event{Type: "conv_removed", Channel: ch})
+			a.refreshConv(ctx, e.ConvertedTo)
+			return
+		}
+		a.emit(Event{Type: "sidebar_changed"})
+	case "channel_left", "group_left", "channel_archive", "group_archive", "channel_deleted":
 		a.S.Lock()
 		delete(a.S.Convs, ch)
 		a.S.Unlock()
@@ -352,6 +374,11 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	}
 	if _, known := a.S.Conv(ch); !known {
 		a.refreshConv(ctx, ch)
+	}
+	if !isReply || m.Subtype == "thread_broadcast" {
+		if a.reopenActive() { // a new message brings a closed DM back
+			a.emit(Event{Type: "sidebar_changed"})
+		}
 	}
 	if needsFileInfo(&m) {
 		go a.fillFiles(ch, m.TS)

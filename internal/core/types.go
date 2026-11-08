@@ -115,8 +115,9 @@ type ConvRef struct {
 // Section is a sidebar section in display order.
 type Section struct {
 	ID, Name string
-	Type     string // stars | channels | direct_messages | standard | apps | …
-	Emoji    string
+	Type     string // stars | channels | direct_messages | standard | recent_apps | apps | …
+	Emoji    string // Slack emoji name ("" when the section has none)
+	EmojiURL string // its image (custom or standard), "" when unknown
 	Channels []string
 }
 

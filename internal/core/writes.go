@@ -282,9 +282,13 @@ func (a *App) Leave(ctx context.Context, ch string) error {
 	if err := a.C.Call(ctx, m, url.Values{"channel": {ch}}, nil); err != nil {
 		return err
 	}
-	a.S.Lock()
-	delete(a.S.Convs, ch)
-	a.S.Unlock()
+	if m == "conversations.close" {
+		a.markDMClosed(ch) // still known (search, switcher); back on a new message
+	} else {
+		a.S.Lock()
+		delete(a.S.Convs, ch)
+		a.S.Unlock()
+	}
 	a.emit(Event{Type: "conv_removed", Channel: ch})
 	return nil
 }
@@ -312,6 +316,7 @@ func (a *App) OpenDM(ctx context.Context, users ...string) (Conv, error) {
 	}
 	a.EnsureUsers(ctx, append(users, c.User))
 	a.S.PutConv(c)
+	a.openDM(c.ID)
 	v := a.conv(&c)
 	a.emit(Event{Type: "conv", Channel: c.ID, Conv: &v})
 	return v, nil

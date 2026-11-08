@@ -121,7 +121,8 @@ var entMethods = map[string]bool{
 	"subscriptions.thread.add": true, "subscriptions.thread.remove": true, "subscriptions.thread.mark": true,
 	"messages.list": true, "search.modules.people": true, "search.modules.channels": true,
 	"search.modules.messages": true, "search.modules.files": true, "commands.list": true,
-	"bots.info": true, // the team host answers bots_not_found for org apps (verified)
+	"sidebar.dms": true, // team host: team_is_restricted (verified 2026-11-08)
+	"bots.info":   true, // the team host answers bots_not_found for org apps (verified)
 }
 
 // MaxConcurrent bounds in-flight Web API requests (be gentle with rate limits).
