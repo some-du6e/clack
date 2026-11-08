@@ -9,6 +9,7 @@ import (
 	"gioui.org/unit"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 )
 
 func (l *lay) bodyStyle() flowStyle {
@@ -80,10 +81,77 @@ func (l *lay) addEdited() {
 	p := &l.st.Palette
 	k := faceKey{f: font.Font{Typeface: l.st.Face}, size: fixedPx(l.sp(13))}
 	sp := l.st.spaceOf(faceKey{f: font.Font{Typeface: l.st.Face}, size: fixedPx(l.sp(15))})
-	l.items = append(l.items, item{kind: itSpace, w: sp.adv, deco: -1, target: -1, p0: int32(len(l.d.plain)), p1: int32(len(l.d.plain))})
+	l.items = append(l.items, item{kind: itSpace, w: sp.adv, deco: -1, target: -1, p0: int32(len(l.d.plain)), p1: int32(len(l.d.plain)), part: l.curPart})
+	var pt uint8
+	if l.css != nil {
+		pp := l.ctr.with(editedClass)
+		pt = l.partFor(&pp)
+		k = l.partFace(k, pt)
+	}
 	w := l.st.word(k, "(edited)")
 	n := int32(len(l.d.plain))
-	l.items = append(l.items, item{kind: itWord, sh: w, face: k, w: w.adv, col: p.Edited, deco: -1, target: -1, p0: n, p1: n})
+	l.items = append(l.items, item{kind: itWord, sh: w, face: k, w: w.adv, col: p.Edited, deco: -1, target: -1, p0: n, p1: n, part: pt})
+}
+
+// richBlock enters Slack's .p-rich_text_block (once: blocks nested in a
+// quote stay in it) and then d; restore with leave.
+func (l *lay) richBlock(d *slackc.ClassDef) partPath {
+	old := l.ctr
+	if l.css == nil {
+		return old
+	}
+	if !l.inBlock {
+		l.ctr = l.ctr.with(richBlockClass)
+	}
+	l.ctr = l.ctr.with(d)
+	l.curPart = l.partFor(&l.ctr)
+	return old
+}
+
+// block lays out one block in its Slack container (css.go).
+func (l *lay) block(b *richtext.Block, x, y, w int, edited bool) int {
+	if l.css == nil {
+		return l.block1(b, x, y, w, edited)
+	}
+	var old partPath
+	inB := l.inBlock
+	switch b.Kind {
+	case richtext.Paragraph:
+		old = l.richBlock(richSectionClass)
+	case richtext.Preformatted:
+		old = l.richBlock(preClass)
+	case richtext.Quote:
+		old = l.richBlock(quoteClass)
+	case richtext.List:
+		d := listBulletClass
+		if b.Ordered {
+			d = listOrderedClass
+		}
+		old = l.richBlock(d)
+	case richtext.Tombstone:
+		old = l.enter(tombstoneClass)
+	case richtext.Header:
+		old = l.enter(headerClass)
+	case richtext.Context:
+		old = l.enter(contextBlkClass)
+		l.enter(mrkdwnElemClass)
+	case richtext.Section:
+		old = l.enter(sectionBlkClass)
+	case richtext.AttachmentBlock:
+		old = l.enter(attachmentClass)
+	case richtext.FileBlock:
+		old = l.enter(fileMetaClass)
+	default:
+		old = l.ctr
+	}
+	switch b.Kind {
+	case richtext.Paragraph, richtext.Preformatted, richtext.Quote, richtext.List:
+		l.inBlock = true
+	}
+	h := l.block1(b, x, y, w, edited)
+	l.inBlock = inB
+	l.leave(old)
+	return h
 }
 
 // blocks lays out bs at (x, y) in width w and returns the height.
@@ -129,7 +197,7 @@ func isImageFile(b *richtext.Block) bool {
 	return b.Kind == richtext.FileBlock && b.File != nil && b.File.IsImage && b.File.Thumb != nil
 }
 
-func (l *lay) block(b *richtext.Block, x, y, w int, edited bool) int {
+func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 	p := &l.st.Palette
 	switch b.Kind {
 	case richtext.Paragraph:
@@ -165,7 +233,7 @@ func (l *lay) block(b *richtext.Block, x, y, w int, edited bool) int {
 			fs.col = p.Text2
 		}
 		bi := len(l.d.boxes)
-		l.d.boxes = append(l.d.boxes, box{kind: bBorder, fill: p.PreBg, stroke: p.PreBorder, bw: l.dp(1), radius: l.dp(4), target: -1})
+		l.d.boxes = append(l.d.boxes, box{kind: bBorder, fill: p.PreBg, stroke: p.PreBorder, bw: l.dp(1), radius: l.dp(4), target: -1, part: l.curPart})
 		l.addSpans(b.Spans, &fs)
 		if edited {
 			l.addEdited()
@@ -303,6 +371,7 @@ func (l *lay) list(b *richtext.Block, x, y, w int, edited bool) int {
 		if i > 0 {
 			l.plainAdd("\n")
 		}
+		li := l.enter(listItemClass)
 		l.addSpans(it, &fs)
 		if edited && i == len(b.Items)-1 {
 			l.addEdited()
@@ -338,7 +407,7 @@ func (l *lay) list(b *richtext.Block, x, y, w int, edited bool) int {
 			k := l.faceFor(fs.face, fs.size, 0)
 			wd := l.st.word(k, label)
 			gapW := l.dpf(8)
-			l.d.frags = append(l.d.frags, frag{kind: fText, x: float32(cx) - gapW - wd.adv, y: baseline, w: wd.adv, size: fs.size, sh: wd, col: fs.col, target: -1, top: y, bot: y + fs.lineH, line: -1, p0: -1, p1: -1})
+			l.d.frags = append(l.d.frags, frag{kind: fText, x: float32(cx) - gapW - wd.adv, y: baseline, w: wd.adv, size: fs.size, sh: wd, col: fs.col, target: -1, top: y, bot: y + fs.lineH, line: -1, p0: -1, p1: -1, part: l.curPart})
 		} else {
 			// disc, circle, square by level (Slack cycles every 3).
 			r := l.dpf(2.75)
@@ -352,8 +421,9 @@ func (l *lay) list(b *richtext.Block, x, y, w int, edited bool) int {
 			case 2:
 				kind = bSquare
 			}
-			l.d.boxes = append(l.d.boxes, box{kind: kind, r: rect, fill: fs.col, bw: l.dp(1), target: -1})
+			l.d.boxes = append(l.d.boxes, box{kind: kind, r: rect, fill: fs.col, bw: l.dp(1), target: -1, part: l.curPart, colFill: true})
 		}
+		l.leave(li)
 		y += h
 	}
 	if b.Border {
@@ -416,11 +486,14 @@ func (l *lay) section(b *richtext.Block, x, y, w int, edited bool) int {
 		h = l.blocks(b.Children, x, y, tw, false)
 	} else if len(b.Spans) > 0 {
 		fs := l.bodyStyle()
+		st := l.enter(sectionTextClass)
+		l.enter(mrkdwnElemClass)
 		l.addSpans(b.Spans, &fs)
 		if edited {
 			l.addEdited()
 		}
 		h, _ = l.flow(x, y, tw, &fs)
+		l.leave(st)
 	}
 	if len(b.Fields) > 0 {
 		if h > 0 {

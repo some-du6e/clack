@@ -20,6 +20,7 @@ import (
 	"gioui.org/op/paint"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 )
 
 // View lays out and draws one Doc. Keep one View per message and reuse it
@@ -47,6 +48,10 @@ type View struct {
 	laidMode uint8
 	cs       []compState
 	refs     []compRef
+
+	// css: plugin/user CSS on the body's parts (css.go); empty while no
+	// CSS is installed.
+	css cssParts
 
 	hover    int16 // hovered target
 	press    int16 // target under the press
@@ -201,6 +206,11 @@ func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimension
 	mode := compMode()
 	if el := v.opts.Elements; el != nil && el.ElementsVersion() != v.laidEl {
 		v.dirty = true
+	}
+	if relay, rec := v.css.sync(slackc.CurrentScope()); relay {
+		v.dirty = true
+	} else if rec {
+		v.recorded = false
 	}
 	if v.dirty || w != v.laidW || gtx.Metric.PxPerDp != v.laidPx || gtx.Metric.PxPerSp != v.laidSp || st.gen != v.laidGen || mode != v.laidMode {
 		v.relayout(st, w, gtx.Metric.PxPerDp, gtx.Metric.PxPerSp)
@@ -360,6 +370,11 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 		v.expanded = map[*richtext.Attachment]bool{}
 	}
 	l := lay{st: st, d: &v.d, scale: pxdp, spx: pxsp, jumbo: v.doc.Jumbo, opts: v.opts, mode: mode, cs: &v.cs, expanded: v.expanded}
+	v.css.parts = v.css.parts[:0]
+	if v.css.scope.Active() {
+		l.css = &v.css
+		l.curPart = l.partFor(&l.ctr)
+	}
 	if l.scale <= 0 {
 		l.scale = 1
 	}
@@ -439,10 +454,14 @@ func (v *View) record(st *Style) {
 // paint draws the primitives tagged comp (0: the static content, which
 // also tracks images still loading); fg, if set, recolors text.
 func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
+	css := len(v.css.parts) > 0
 	for i := range v.d.boxes {
 		if b := &v.d.boxes[i]; b.layer == 0 && b.comp == comp {
-			drawBox(ops, b)
+			v.drawBox(ops, b, css)
 		}
+	}
+	if css {
+		v.partBackgrounds(func(r image.Rectangle, c color.NRGBA) { fillRadii(ops, r, [4]int{}, c) }, comp)
 	}
 	for i := range v.d.imgs {
 		im := &v.d.imgs[i]
@@ -489,6 +508,12 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 				continue
 			}
 			r := image.Rect(int(f.x+0.5), f.y, int(f.x+0.5)+f.size, f.y+f.size)
+			if ps := v.css.get(f.part); ps != nil && ps.alpha < 1 {
+				o := paint.PushOpacity(ops, max(ps.alpha, 0))
+				drawImage(ops, img, r, [4]int{}, false)
+				o.Pop()
+				continue
+			}
 			drawImage(ops, img, r, [4]int{}, false)
 		case fText:
 			if f.sh == nil || len(f.sh.glyphs) == 0 {
@@ -497,6 +522,8 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 			col := f.col
 			if fg != nil {
 				col = *fg
+			} else if css && f.part != 0 {
+				col = v.textCol(f)
 			}
 			// Browsers render Lato visibly heavier than Gio's linear
 			// coverage. Dark text gets the missing ink (st.Embolden px,
@@ -544,13 +571,52 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 					underline(ops, f, st)
 				}
 			}
+			if css && f.part != 0 {
+				v.partDeco(ops, i, col)
+			}
 		}
 	}
 	for i := range v.d.boxes {
 		if b := &v.d.boxes[i]; b.layer == 1 && b.comp == comp {
-			drawBox(ops, b)
+			v.drawBox(ops, b, css)
 		}
 	}
+}
+
+// drawBox draws b, with its CSS part's fill when it has one.
+func (v *View) drawBox(ops *op.Ops, b *box, css bool) {
+	if !css || b.part == 0 {
+		drawBox(ops, b)
+		return
+	}
+	bb := *b
+	bb.fill = v.boxFill(b)
+	if ps := v.css.get(b.part); ps != nil {
+		bb.stroke = mulAlpha(bb.stroke, ps.alpha)
+	}
+	drawBox(ops, &bb)
+}
+
+// partDeco draws the text-decoration CSS gives frag i's part (its own or
+// propagated from the row), joined over the space to the next word of
+// the same part on the line.
+func (v *View) partDeco(ops *op.Ops, i int, col color.NRGBA) {
+	f := &v.d.frags[i]
+	ps := v.css.get(f.part)
+	if ps == nil || ps.deco.Lines() == 0 {
+		return
+	}
+	w := f.w
+	if j := i + 1; j < len(v.d.frags) {
+		if n := &v.d.frags[j]; n.kind == fText && n.line == f.line && n.part == f.part && n.x > f.x {
+			w = n.x - f.x
+		}
+	}
+	dc := col
+	if ps.decoCol.A > 0 {
+		dc = mulAlpha(ps.decoCol, ps.alpha)
+	}
+	slackc.DrawDecoration(ops, ps.deco, dc, f.x, float32(f.y), w, float32(f.size))
 }
 
 func underline(ops *op.Ops, f *frag, st *Style) {

@@ -16,6 +16,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -184,8 +185,15 @@ type textStyle struct {
 	maxLines int
 }
 
+// labelHook, when set (tests), sees every label drawn: the native parts'
+// text and the style CSS left them.
+var labelHook func(txt string, s textStyle)
+
 // label draws txt; returns dims with Baseline set.
 func label(gtx layout.Context, th *theme.Theme, s textStyle, txt string) layout.Dimensions {
+	if labelHook != nil {
+		labelHook(txt, s)
+	}
 	f := font.Font{Typeface: theme.Typeface, Weight: s.weight}
 	if s.italic {
 		f.Style = font.Italic
@@ -248,3 +256,43 @@ func drawEmoji(gtx layout.Context, h Host, url string, r image.Rectangle) bool {
 func shaperOf(h Host) *text.Shaper { return h.Theme().Shaper }
 
 func f32pt(p image.Point) f32.Point { return f32.Pt(float32(p.X), float32(p.Y)) }
+
+// cssText is s under a native's CSS: color, font-weight and font-style
+// where a rule wins over the native's own (slackc's base sheet decides).
+func cssText(st slackc.Styled, s textStyle) textStyle {
+	if st.Style() == nil {
+		return s
+	}
+	s.col = st.Color(s.col)
+	if st.Has("font-weight") {
+		s.weight = font.Weight(st.FontWeight(400) - 400)
+	}
+	s.italic = st.Italic(s.italic)
+	return s
+}
+
+// decoLabel is label in cssText(st, s), with the text-decoration CSS
+// gives the text (its own or propagated from the row).
+func decoLabel(gtx layout.Context, th *theme.Theme, st slackc.Styled, s textStyle, txt string) layout.Dimensions {
+	if st.Style() == nil {
+		return label(gtx, th, s, txt)
+	}
+	s = cssText(st, s)
+	d := label(gtx, th, s, txt)
+	if lines, dc := st.Deco(); lines.Lines() != 0 && d.Size.X > 0 {
+		if dc.A == 0 {
+			dc = s.col
+		}
+		slackc.DrawDecoration(gtx.Ops, lines, dc, 0, float32(d.Size.Y-d.Baseline), float32(d.Size.X), s.size*gtx.Metric.PxPerSp)
+	}
+	return d
+}
+
+// styledLabel is decoLabel inside the native's box effects (st.Wrap:
+// opacity, background, margins…). The zero Styled is label.
+func styledLabel(gtx layout.Context, th *theme.Theme, st slackc.Styled, s textStyle, txt string) layout.Dimensions {
+	if !st.Active() {
+		return decoLabel(gtx, th, st, s, txt)
+	}
+	return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return decoLabel(gtx, th, st, s, txt) })
+}

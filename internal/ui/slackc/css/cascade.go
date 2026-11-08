@@ -12,6 +12,7 @@ import (
 type engineImpl struct {
 	mu     sync.Mutex // serializes Set/Remove
 	sheets []keyedSheet
+	base   *sheet // SetBase: first in the cascade, never makes the engine non-empty
 	snap   atomic.Pointer[snapshot]
 }
 
@@ -75,6 +76,28 @@ func (e *Engine) Set(key, src string) {
 	e.rebuild()
 }
 
+// SetBase installs the base sheet: the page's own stylesheet, which comes
+// before every keyed sheet in source order and competes with them by
+// importance and specificity as usual. It doesn't count for Empty: with
+// only the base sheet installed, callers skip all CSS work. Clack uses it
+// for Slack's own rules on native widgets (value NativeValue: "the
+// widget's own value"), so a plugin rule beats them exactly when it would
+// beat Slack's stylesheet in the browser.
+func (e *Engine) SetBase(src string) {
+	sh := parseSheet(src)
+	im := &e.impl
+	im.mu.Lock()
+	defer im.mu.Unlock()
+	im.base = sh
+	e.rebuild()
+}
+
+// NativeValue is a base-sheet value meaning "the native widget's own
+// value": the widget keeps its built-in look for the property, and its
+// descendants don't inherit an ancestor's CSS value through it. It is
+// invalid for Compute (the property computes as unset).
+const NativeValue = "-clack-native"
+
 // Remove drops the sheet under key.
 func (e *Engine) Remove(key string) {
 	im := &e.impl
@@ -133,7 +156,11 @@ func (e *Engine) rebuild() {
 	}
 	var order uint64
 	total := 0
-	for _, ks := range im.sheets {
+	all := im.sheets
+	if im.base != nil {
+		all = append([]keyedSheet{{key: "\x00base", sh: im.base}}, im.sheets...)
+	}
+	for _, ks := range all {
 		for _, r := range ks.sh.rules {
 			order++
 			lr, ok := rank[r.layer]
@@ -160,7 +187,9 @@ func (e *Engine) rebuild() {
 					key:  lr<<48 | uint64(sel.spec)<<24 | ord,
 					ikey: (maxRank-lr)<<48 | uint64(sel.spec)<<24 | ord}
 				s.idx[sel.pseudo].add(en)
-				total++
+				if ks.sh != im.base {
+					total++
+				}
 			}
 		}
 	}

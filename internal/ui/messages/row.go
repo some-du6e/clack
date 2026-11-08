@@ -871,7 +871,7 @@ func (r *row) layoutCompactTS(gtx layout.Context, p slackc.Props) layout.Dimensi
 	sz := measure(gtx, rc.th, s, ts)
 	at(gtx, box.X-sz.X, 0, func(gtx layout.Context) layout.Dimensions {
 		if st.Active() {
-			return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, s, ts) })
+			return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return decoLabel(gtx, rc.th, st, s, ts) })
 		}
 		return label(gtx, rc.th, s, ts)
 	})
@@ -1299,7 +1299,7 @@ func (r *row) layoutTimestamp(gtx layout.Context, p slackc.Props) layout.Dimensi
 	tsS := textStyle{size: float32(st.FontSize(12)), col: st.Color(r.rc.c.Text2)}
 	tsText := clock(tsTime(r.m.TS))
 	if st.Active() {
-		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return label(gtx, r.rc.th, tsS, tsText) })
+		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return decoLabel(gtx, r.rc.th, st, tsS, tsText) })
 	}
 	return label(gtx, r.rc.th, tsS, tsText)
 }
@@ -1310,11 +1310,18 @@ func (r *row) labelLine(gtx layout.Context, rc *rowCtx, x, y int, icon, txt stri
 	lh := dp(gtx, 19)
 	is := dp(gtx, 14)
 	// icon right-aligned in the 36px gutter box that starts at x=20
+	ls := labelsClass.Enter(gtx, 0, 0)
+	defer ls.Leave()
+	if ls.Hidden() {
+		return 0
+	}
 	at(gtx, dp(gtx, 56)-is, y+(lh-is)/2, func(gtx layout.Context) layout.Dimensions {
-		return icons.Get(icon)(gtx, unit.Dp(14), c.PinIcon)
+		return icons.Get(icon)(gtx, unit.Dp(14), ls.Color(c.PinIcon))
 	})
+	ts := labelsTextClass.Enter(gtx, 0, 0)
+	defer ts.Leave()
 	at(gtx, dp(gtx, 64), y, func(gtx layout.Context) layout.Dimensions {
-		return label(gtx, rc.th, textStyle{size: 13, col: c.Muted70, lineH: 19}, txt)
+		return styledLabel(gtx, rc.th, ts, textStyle{size: 13, col: c.Muted70, lineH: 19}, txt)
 	})
 	return dp(gtx, 20)
 }
@@ -1328,12 +1335,19 @@ func (r *row) broadcastLine(gtx layout.Context, rc *rowCtx, x, y int) int {
 	if r.broadcastBtn.Clicked(gtx) {
 		rc.h.OpenThread(r.m.Channel, r.m.ThreadTS)
 	}
+	ps := preambleClass.Enter(gtx, 0, 0)
+	defer ps.Leave()
+	if ps.Hidden() {
+		return 0
+	}
 	pd := at(gtx, x, y, func(gtx layout.Context) layout.Dimensions {
-		return label(gtx, rc.th, textStyle{size: 15, col: c.Text2, lineH: 22}, "replied to ")
+		return styledLabel(gtx, rc.th, ps, textStyle{size: 15, col: c.Text2, lineH: 22}, "replied to ")
 	})
+	ls := preambleLinkClass.Enter(gtx, btnState(gtx, &r.broadcastBtn), 0)
+	defer ls.Leave()
 	at(gtx, x+pd.Size.X, y, func(gtx layout.Context) layout.Dimensions {
 		return r.broadcastBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return label(gtx, rc.th, textStyle{size: 15, weight: theme.Bold, col: c.Link, lineH: 22}, "a thread")
+			return styledLabel(gtx, rc.th, ls, textStyle{size: 15, weight: theme.Bold, col: c.Link, lineH: 22}, "a thread")
 		})
 	})
 	return h
@@ -1702,6 +1716,11 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 	if r.threadBtn.Clicked(gtx) {
 		rc.h.OpenThread(m.Channel, m.TS)
 	}
+	bs := replyBarClass.Enter(gtx, btnState(gtx, &r.threadBtn), 0)
+	defer bs.Leave()
+	if bs.Hidden() {
+		return 0
+	}
 	at(gtx, bx, y-dp(gtx, 4), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Exact(image.Pt(bw, bh))
 		return r.threadBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -1740,9 +1759,11 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 				n = strconv.Itoa(count) + " replies"
 			}
 			ty := (bh - dp(gtx, 18)) / 2
+			cs := replyCountClass.Enter(gtx, 0, 0)
 			nd := at(gtx, ax, ty, func(gtx layout.Context) layout.Dimensions {
-				return label(gtx, rc.th, textStyle{size: 13, weight: theme.Bold, col: c.Link, lineH: 18}, n)
+				return styledLabel(gtx, rc.th, cs, textStyle{size: 13, weight: theme.Bold, col: c.Link, lineH: 18}, n)
 			})
+			cs.Leave()
 			ax += nd.Size.X + dp(gtx, 8)
 			desc := ""
 			if hov {
@@ -1750,10 +1771,12 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 			} else if latest != "" {
 				desc = "Last reply " + ago(tsTime(latest), rc.now)
 			}
+			ds := replyDescClass.Enter(gtx, 0, 0)
 			at(gtx, ax, ty, func(gtx layout.Context) layout.Dimensions {
 				gtx.Constraints.Max.X = bw - ax - dp(gtx, 28)
-				return label(gtx, rc.th, textStyle{size: 13, col: c.Text2, lineH: 18}, desc)
+				return styledLabel(gtx, rc.th, ds, textStyle{size: 13, col: c.Text2, lineH: 18}, desc)
 			})
+			ds.Leave()
 			if hov {
 				is := dp(gtx, 18)
 				at(gtx, bw-pad-is, (bh-is)/2, func(gtx layout.Context) layout.Dimensions {

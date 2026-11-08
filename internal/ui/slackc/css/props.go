@@ -221,6 +221,9 @@ func expandDecl(name, val string, imp bool, out Decls) Decls {
 	if !knownLonghand(name) {
 		return out
 	}
+	if val == NativeValue { // a base-sheet rule (SetBase): kept for the cascade
+		return append(out, Decl{Prop: name, Value: val, Important: imp})
+	}
 	if !validLonghand(name, val) {
 		return out
 	}

@@ -67,10 +67,46 @@ type nativeStyle struct {
 	style  css.Style
 	set    propSet // properties a rule set on this element
 	inh    propSet // inherited properties some rule set on it or an ancestor
+	native propSet // properties Slack's own rule (base sheet) keeps native here
+	deco   decoProp
 	key    uint64
 	before *css.Style
 	after  *css.Style
 }
+
+// decoProp is the text decoration an element draws on its text: its own
+// text-decoration and what its ancestors propagate to it (CSS decorations
+// aren't inherited, but every in-flow inline descendant's text gets them).
+type decoProp struct {
+	lines css.TextDecoration // line bits and DecoWavy
+	col   color.NRGBA        // zero: the text's own color (currentColor)
+}
+
+func (d decoProp) merge(own decoProp) decoProp {
+	if own.lines.Lines() == 0 {
+		return d
+	}
+	if d.lines.Lines() == 0 {
+		return own
+	}
+	return decoProp{lines: d.lines | own.lines, col: own.col}
+}
+
+// ownDeco is the decoration st (an element some rule styled) starts.
+func ownDeco(st *css.Style, colorSet bool) decoProp {
+	if st == nil || st.TextDecoration.Lines() == 0 {
+		return decoProp{}
+	}
+	d := decoProp{lines: st.TextDecoration, col: st.DecoColor}
+	if d.col.A == 0 && colorSet {
+		d.col = st.Color
+	}
+	return d
+}
+
+// atomicTag reports elements that are atomic inlines (decorations don't
+// propagate into them).
+func atomicTag(tag string) bool { return tag == "button" || tag == "img" || tag == "input" }
 
 type nativeEl struct {
 	def    *ClassDef
@@ -151,6 +187,7 @@ type stackEntry struct {
 	el    css.Element
 	style *css.Style
 	inh   propSet
+	deco  decoProp
 	key   uint64
 }
 
@@ -172,6 +209,9 @@ type nsKey struct {
 	extra  string
 	parent uint64
 }
+
+// maxNativeStyles bounds the native style cache.
+const maxNativeStyles = 1 << 15
 
 func resetNativeStyles() {
 	nsMu.Lock()
@@ -222,8 +262,68 @@ func (d *ClassDef) enterX(st css.State, mods uint64, ak, av, extra string) Style
 		k.parent = parent.key
 	}
 	ns := lookupNative(k, parent)
-	stack = append(stack, stackEntry{el: &ns.el, style: &ns.style, inh: ns.inh, key: ns.key})
+	stack = append(stack, ns.entry())
 	return Styled{s: ns}
+}
+
+func (ns *nativeStyle) entry() stackEntry {
+	return stackEntry{el: &ns.el, style: &ns.style, inh: ns.inh, deco: ns.deco, key: ns.key}
+}
+
+// Child is the style of a native part drawn inside s that isn't pushed on
+// the element stack: a run of text, a link or a list item a native lays
+// out itself (richview's message body). It matches selectors and inherits
+// exactly like an element nested in s ("s d"), and is cached like Enter.
+// The zero Styled (no CSS) has zero children.
+func (s Styled) Child(d *ClassDef, mods uint64) Styled {
+	if s.s == nil {
+		return Styled{}
+	}
+	pe := s.s.entry()
+	return Styled{s: lookupNative(nsKey{def: d, mods: mods, parent: pe.key}, &pe)}
+}
+
+// Scope is the innermost element on the stack, the parent of the natives
+// a widget is about to draw (see Styled.Child). Zero while no CSS is
+// installed.
+type Scope struct {
+	e   stackEntry
+	ver uint64
+	ok  bool
+}
+
+// CurrentScope captures the element stack's top (one atomic load while no
+// CSS is installed).
+func CurrentScope() Scope {
+	if Styles.Empty() {
+		return Scope{}
+	}
+	sc := Scope{ver: Styles.Version(), ok: true}
+	if n := len(stack); n > 0 {
+		sc.e = stack[n-1]
+	}
+	return sc
+}
+
+// Same reports that two scopes give their children the same styles (the
+// same element in the same stylesheet generation).
+func (sc Scope) Same(o Scope) bool {
+	return sc.ok == o.ok && sc.ver == o.ver && sc.e.key == o.e.key && sc.e.el == o.e.el
+}
+
+// Active reports that CSS is installed (the scope can style children).
+func (sc Scope) Active() bool { return sc.ok }
+
+// Child is Styled.Child under the scope's element.
+func (sc Scope) Child(d *ClassDef, mods uint64) Styled {
+	if !sc.ok {
+		return Styled{}
+	}
+	var pe *stackEntry
+	if sc.e.el != nil {
+		pe = &sc.e
+	}
+	return Styled{s: lookupNative(nsKey{def: d, mods: mods, parent: sc.e.key}, pe)}
 }
 
 func lookupNative(k nsKey, parent *stackEntry) *nativeStyle {
@@ -242,16 +342,25 @@ func lookupNative(k nsKey, parent *stackEntry) *nativeStyle {
 	ns = &nativeStyle{el: nativeEl{def: k.def, mods: k.mods, st: k.st, attrK: k.attrK, attrV: k.attrV, extra: strings.Fields(k.extra)}}
 	var ps *css.Style
 	var pinh propSet
+	var pdeco decoProp
 	if parent != nil {
 		ns.el.parent = parent.el
 		ps = parent.style
 		pinh = parent.inh
+		pdeco = parent.deco
 	}
 	e := cssEnv()
 	c := Styles.Cascade(&ns.el, css.PseudoNone, nil, e)
 	ns.style = css.Compute(&c, ps, e)
-	ns.set = propsOf(&c)
-	ns.inh = pinh&inheritedMask | ns.set&inheritedMask
+	ns.set, ns.native = propsOf(&c), nativesOf(&c)
+	// An inherited property Slack's own rule gives the widget (its link
+	// color, its bold name) stops an ancestor's value here, for its
+	// descendants too.
+	ns.inh = (pinh&^ns.native | ns.set) & inheritedMask
+	if atomicTag(k.def.tag) {
+		pdeco = decoProp{}
+	}
+	ns.deco = pdeco.merge(ownDeco(&ns.style, ns.set&propBits["color"] != 0))
 	if b := Styles.Cascade(&ns.el, css.PseudoBefore, nil, e); len(b.Decls) > 0 {
 		s := css.Compute(&b, &ns.style, e)
 		if s.HasContent {
@@ -266,6 +375,11 @@ func lookupNative(k nsKey, parent *stackEntry) *nativeStyle {
 	}
 	ns.key = mix(uint64(len(nsCache)+1)*0x9e3779b97f4a7c15 ^ k.parent)
 	nsMu.Lock()
+	if len(nsCache) >= maxNativeStyles {
+		// natives under per-row host nodes (and their parts) add entries
+		// per row: start over rather than grow without bound
+		nsCache = map[nsKey]*nativeStyle{}
+	}
 	nsCache[k] = ns
 	nsMu.Unlock()
 	return ns
@@ -284,10 +398,22 @@ func (s Styled) Leave() {
 // pushHost / popHost let the host-tree layout put its nodes on the stack.
 func pushHost(el css.Element, st *css.Style, set propSet, key uint64) {
 	var inh propSet
+	var deco decoProp
 	if len(stack) > 0 {
 		inh = stack[len(stack)-1].inh & inheritedMask
+		deco = stack[len(stack)-1].deco
 	}
-	stack = append(stack, stackEntry{el: el, style: st, inh: inh | set&inheritedMask, key: key})
+	if st != nil {
+		switch st.Display {
+		case css.DisplayInlineBlock, css.DisplayInlineFlex, css.DisplayInlineGrid:
+			deco = decoProp{}
+		}
+		if el != nil && atomicTag(el.Tag()) {
+			deco = decoProp{}
+		}
+		deco = deco.merge(ownDeco(st, set&propBits["color"] != 0))
+	}
+	stack = append(stack, stackEntry{el: el, style: st, inh: inh | set&inheritedMask, deco: deco, key: key})
 }
 
 func popHost() {
@@ -451,6 +577,16 @@ func (s Styled) Size(gtx layout.Context, def image.Point) image.Point {
 	return def
 }
 
+// Deco is the text decoration the widget's text gets: its own
+// text-decoration and the ones its ancestors propagate (a struck-through
+// row strikes its body). col is zero for the text's own color.
+func (s Styled) Deco() (lines css.TextDecoration, col color.NRGBA) {
+	if s.s == nil {
+		return 0, color.NRGBA{}
+	}
+	return s.s.deco.lines, s.s.deco.col
+}
+
 // Opacity returns the CSS opacity (1 when unset).
 func (s Styled) Opacity() float32 {
 	if s.Has("opacity") {
@@ -536,11 +672,24 @@ func init() {
 	}
 }
 
+// propsOf is the properties a plugin or user rule set (Slack's own rules
+// in the base sheet, NativeValue, aren't CSS values for the native).
 func propsOf(c *css.Cascaded) propSet {
 	var s propSet
 	for _, d := range c.Decls {
-		if b, ok := propBits[d.Prop]; ok {
+		if b, ok := propBits[d.Prop]; ok && d.Value != css.NativeValue {
 			s |= b
+		}
+	}
+	return s
+}
+
+// nativesOf is the properties Slack's own rule won for the element.
+func nativesOf(c *css.Cascaded) propSet {
+	var s propSet
+	for _, d := range c.Decls {
+		if d.Value == css.NativeValue {
+			s |= propBits[d.Prop]
 		}
 	}
 	return s

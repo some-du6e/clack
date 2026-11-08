@@ -552,6 +552,7 @@ func (v *View) computeStyle(b *box, parent *css.Style, e *css.Env) {
 		return
 	}
 	c := Styles.Cascade(b, css.PseudoNone, n.Style, *e)
+	stripNative(&c)
 	b.st = css.Compute(&c, parent, *e)
 	b.set = propsOf(&c)
 	v.uaDefaults(b, &c, parent)
