@@ -11,6 +11,8 @@ import (
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/ctxclick"
 )
 
 // Cross-message text selection: the list (an ancestor of every row) owns
@@ -93,7 +95,7 @@ func offsetIn(r *row, local f32.Point) int32 {
 func (s *listState) selPointer(gtx layout.Context, h Host, e pointer.Event, size image.Point) {
 	switch e.Kind {
 	case pointer.Press:
-		if e.Buttons != pointer.ButtonPrimary {
+		if !ctxclick.Primary(e) { // right-clicks keep the selection for its menu
 			return
 		}
 		i, r, local := s.rowAt(e.Position)

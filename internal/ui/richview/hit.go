@@ -1,0 +1,87 @@
+package richview
+
+import (
+	"image"
+
+	"gioui.org/f32"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+)
+
+// HitKind is what a point of the view is over (context menus).
+type HitKind uint8
+
+const (
+	HitNone      HitKind = iota // plain text or empty space
+	HitLink                     // a link (URL)
+	HitUser                     // a user mention (ID)
+	HitChannel                  // a channel link (ID)
+	HitUsergroup                // a user group mention (ID)
+	HitImage                    // an image block, attachment image or thumb (Image)
+	HitFile                     // a file card or gallery image (File)
+	HitButton                   // a Block Kit or attachment button
+	HitCard                     // a whole-card link (URL)
+	HitOther                    // another clickable (Show more)
+)
+
+// Hit describes the point HitAt was asked about.
+type Hit struct {
+	Kind  HitKind
+	URL   string
+	ID    string
+	Image *richtext.Image
+	File  *richtext.File
+	// Emoji is the :name: of the emoji image under the point, EmojiURL its
+	// image ("" when the point isn't on an emoji image).
+	Emoji, EmojiURL string
+	// Text is true when the point is on a glyph of text.
+	Text bool
+}
+
+// HitAt reports what is at p (View coordinates, after the first Layout).
+func (v *View) HitAt(p f32.Point) Hit {
+	var h Hit
+	pt := image.Pt(int(p.X), int(p.Y))
+	for i := range v.d.frags {
+		f := &v.d.frags[i]
+		switch f.kind {
+		case fText:
+			if !h.Text && pt.In(fragRect(f)) {
+				h.Text = true
+			}
+		case fImage:
+			if h.EmojiURL == "" && f.url != "" && p.X >= f.x && p.X < f.x+float32(f.size) && p.Y >= float32(f.y) && p.Y < float32(f.y+f.size) {
+				h.EmojiURL = f.url
+				if f.tip > 0 && int(f.tip) <= len(v.d.tips) {
+					h.Emoji = v.d.tips[f.tip-1]
+				}
+			}
+		}
+	}
+	t := v.targetAt(p)
+	if t < 0 || int(t) >= len(v.d.targets) {
+		return h
+	}
+	tg := &v.d.targets[t]
+	switch tg.kind {
+	case tLink:
+		h.Kind, h.URL = HitLink, tg.url
+	case tUser:
+		h.Kind, h.ID = HitUser, tg.id
+	case tChannel:
+		h.Kind, h.ID = HitChannel, tg.id
+	case tUsergroup:
+		h.Kind, h.ID = HitUsergroup, tg.id
+	case tImage:
+		h.Kind, h.Image = HitImage, tg.img
+	case tFile:
+		h.Kind, h.File = HitFile, tg.file
+	case tButton:
+		h.Kind = HitButton
+	case tCard:
+		h.Kind, h.URL = HitCard, tg.url
+	default:
+		h.Kind = HitOther
+	}
+	return h
+}

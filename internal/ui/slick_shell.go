@@ -36,6 +36,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/taut"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/ctxclick"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
@@ -299,12 +300,12 @@ func (a *App) sbRowInput(gtx layout.Context, id string, btn *widget.Clickable, s
 		if !ok {
 			break
 		}
-		if e, ok := ev.(pointer.Event); ok && e.Buttons.Contain(pointer.ButtonSecondary) {
+		if e, ok := ev.(pointer.Event); ok && ctxclick.Press(e) {
 			a.openSidebarMenu(id, a.ptrWin, a.sbMenu.gts[id])
 		}
 	}
 	if sbRowNested() {
-		if btn.Clicked(gtx) {
+		if ctxclick.Clicked(gtx, btn) {
 			clickedSet[btn] = true
 		}
 		g := gtx

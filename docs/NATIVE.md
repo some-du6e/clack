@@ -312,6 +312,25 @@ Toast(text string)
 `popups.Overlay`: `interface{ Layout(gtx layout.Context) layout.Dimensions; Dismissed() bool }` (popups agent owns the concrete types; ui root just stacks and draws them, and routes Escape/outside clicks).
 Each feature package exports a constructor and a widget with `Layout(gtx layout.Context) layout.Dimensions`, e.g. `messages.NewChannelView(h Host, channelID string) *ChannelView`, `messages.NewThreadView(h, ch, ts)`, `composer.New(h Host, channelID, threadTS string) *Composer`, `views.NewActivity(h)` …, and `popups.NewEmojiPicker(h, onPick) Overlay` etc.
 
+### Context menus (right-click)
+A context click is a secondary press, a two-finger tap on a Mac trackpad (AppKit sends it as a right click), or **Ctrl+click on macOS**, which AppKit sends as a primary press with Control held. `internal/ui/ctxclick` decides: `Press(e)` for a context press, `Primary(e)` for an ordinary primary press, and `Clicked(gtx, btn)` for a `widget.Clickable` click that ignores macOS Ctrl+clicks. `clickArea`, richview's links and selection, the message list's selection, the sidebar rows and slackc's `ContextMenuTrigger` all use it. As in Chromium on a Mac, a Ctrl+click opens the menu and doesn't click. The menus come from Slack's web client and desktop shell (build a84662d2d135, 2026-11-08). popups/actions_context.go cites the modules.
+
+| where | menu |
+|---|---|
+| a message (body text, gutter, time, reactions, toolbar) | `popups.NewMessageContextMenu`: Slack's MessageActionsContextMenu > MessageActionsMenu (`menuUsageLocation: "context"`). It has the hover toolbar's group (Add reaction… R, Reply in thread / Reply to thread / View thread T, Forward message… F, Add to-do / Complete to-do A), then More actions |
+| text selected in the list | `NewTextSelectionMenu`: Copy text (⌘C / Ctrl+C), Search in Slack |
+| a link | `NewLinkMenu`, the desktop shell's link menu: Copy Link (Copy Email Address for `mailto:`), Open Link, plus Copy Image / Copy Image URL when the link holds an image |
+| an image or emoji | `NewImageMenu`: Copy Image, Copy Image URL. `internal/ui/clipimg` writes the image with wl-copy/xclip, NSPasteboard or CF_DIB+PNG |
+| a file card, gallery image or video | `NewFileMenu`, Slack's FileContextMenuTrigger groups (media gallery). Clack has no Save for later, file details, external link, folders, sections, transcripts, edit or delete for files, so those rows are left out |
+| a user mention, the sender's name or avatar | `NewMemberMenu` (MemberContextMenu) |
+| a Slackbot custom response's sender (team icon and name) | nothing: Slack draws it non-interactive (`noMenuOn` takes the press); its body still gets the message menu |
+| a channel link, the header title | `NewChannelContextMenu` (ChannelContextMenu{id}): the channel menu at the pointer |
+| a user group mention | the link menu for `<team>.slack.com/admin/user_groups` (Slack's href) |
+| a sidebar conversation row | the shell's sidebar menu (`openSidebarMenu`) |
+| a Threads view message | `NewMessageContextMenu` with `InThreadsView` |
+
+The message list sees every context press in its ancestor handler. Rows with their own menu (the name and avatar) mark the press taken; otherwise `messages/context.go` opens the menu after the rows lay out, picked from `richview.View.HitAt`. One difference from Slack: Slack's list leaves a click on plain text to the shell, whose menu is empty off macOS (on macOS Chromium selects the word and shows the selection menu), while Clack opens the message's menu.
+
 ### Rich paste (`internal/ui/composer/paste*.go`)
 Ctrl/Cmd+V keeps formatting like Slack's composer. Gio v0.10.3's `clipboard.ReadCmd` only delivers plain text on every OS (X11 asks for `UTF8_STRING`, Wayland for `text/plain`, macOS reads the string type, Windows `CF_UNICODETEXT`), so the key press also starts an HTML read off the UI goroutine. The editor waits up to 300 ms for it after the text arrives, checking once per frame without blocking, so Clack can still answer selection requests when it owns the clipboard. Then it pastes plain text.
 - **macOS** (`paste_darwin.go`, cgo): NSPasteboard `public.html` (browsers, Notes, Word); if absent, `public.rtf` / `com.apple.flat-rtfd` (TextEdit, Pages) converted to HTML by AppKit's `NSAttributedString` writer.

@@ -11,6 +11,7 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/ctxclick"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
@@ -233,7 +234,7 @@ func (c *clickCatcher) layout(gtx layout.Context, sz image.Point) catch {
 		p := image.Pt(int(pe.Position.X+.5), int(pe.Position.Y+.5))
 		switch pe.Kind {
 		case pointer.Press:
-			if pe.Buttons.Contain(pointer.ButtonSecondary) {
+			if ctxclick.Press(pe) { // right-click, or Ctrl+click on macOS
 				r.secondary, r.pos = true, p
 				c.pressed = false
 			} else if pe.Buttons.Contain(pointer.ButtonPrimary) || pe.Buttons == 0 {

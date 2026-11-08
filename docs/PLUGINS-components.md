@@ -431,7 +431,7 @@ Clack has no huddle call window, event log, captions menu, or alert banners. vie
 
 #### withKeyboardFocusContext(ContextMenuTrigger)
 - `api.menu.ContextMenu` (menu.tsx:43-53) renders it with `getTemplate: () => template, desktopAppOnly: false, showSlackKitContextMenuOnDesktop: true, children`. Users: PrivateChannel :567,578-586 (`template: [{key:'taut-private-channel__name', label, click}]`). Declared props also include `width?, menuAriaLabel?, isDisabled?`.
-- **Clack**: popups/menu.go:`NewMenu` at the pointer, on secondary click of the child, **pop**.
+- **Clack**: popups/menu.go:`NewMenu` at the pointer, on a secondary click of the child (or Ctrl+click on macOS, `ctxclick.Press`), **pop**.
 
 ### 1.11 Preferences
 

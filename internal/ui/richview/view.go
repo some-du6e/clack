@@ -20,6 +20,7 @@ import (
 	"gioui.org/op/paint"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/ctxclick"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
 )
@@ -876,8 +877,10 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 				v.dragging = false
 				v.press = -1
 			case pointer.Press:
-				if e.Buttons != pointer.ButtonPrimary || v.inSlot(e.Position) {
-					continue // element widgets take their own presses
+				if !ctxclick.Primary(e) || v.inSlot(e.Position) {
+					// element widgets take their own presses; a macOS
+					// Ctrl+click opens the owner's context menu instead
+					continue
 				}
 				v.press = v.targetAt(e.Position)
 				v.pressPos = e.Position

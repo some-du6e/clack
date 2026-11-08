@@ -126,7 +126,9 @@ func (r *row) layoutTeamAvatar(gtx layout.Context, p slackc.Props, s int) layout
 	size := image.Pt(s, s)
 	gtx.Constraints = layout.Exact(size)
 	draw := func(gtx layout.Context) layout.Dimensions {
+		r.noMenuOn(gtx, &r.avatarCtx) // no member (or message) menu on this sender
 		drawTeamIcon(gtx, r.rc.h, url, r.crName, image.Rectangle{Max: size}, r.rc.c)
+		contextArea(gtx, &r.avatarCtx, size)
 		return layout.Dimensions{Size: size}
 	}
 	if st.Active() {
@@ -194,7 +196,10 @@ func (r *row) nameSpan(gtx layout.Context, bs slackc.Styled) layout.Dimensions {
 		return layout.Dimensions{Size: image.Pt(0, dp(gtx, nameS.lineH)), Baseline: dp(gtx, 5)}
 	}
 	r.nameShown = before + r.crName + after
-	return label(gtx, r.rc.th, nameS, r.crName)
+	r.noMenuOn(gtx, &r.nameCtx) // a right-click on the name opens nothing
+	d := label(gtx, r.rc.th, nameS, r.crName)
+	contextArea(gtx, &r.nameCtx, d.Size)
+	return d
 }
 
 // crHoverTag is the info badge's hover target.

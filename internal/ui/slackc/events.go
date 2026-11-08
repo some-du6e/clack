@@ -15,6 +15,7 @@ import (
 	"gioui.org/text"
 	"gioui.org/unit"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/ctxclick"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
@@ -370,7 +371,7 @@ func (s *scope) press(pe *pointer.Event) {
 	btn := buttonIndex(pe.Buttons)
 	v.dispatchPointer(s, t, "pointerdown", pe, btn)
 	v.dispatchPointer(s, t, "mousedown", pe, btn)
-	if btn == 2 {
+	if btn == 2 || ctxclick.Press(*pe) { // macOS: Ctrl+click is a contextmenu too
 		v.dispatchPointer(s, t, "contextmenu", pe, btn)
 	}
 }

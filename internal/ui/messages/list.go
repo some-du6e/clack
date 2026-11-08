@@ -21,6 +21,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/taut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/ctxclick"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
@@ -94,6 +95,7 @@ type listState struct {
 
 	pointer   f32.Point
 	pointerIn bool
+	ctx       ctxPress // this frame's context-menu press (context.go)
 	hoverIdx  int
 
 	tb       [tbCount]widget.Clickable
@@ -458,6 +460,9 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 				s.pointerIn = true
 				s.pointer = e.Position
 			}
+			if ctxclick.Press(e) {
+				s.ctx = ctxPress{pos: e.Position, ok: true}
+			}
 			s.selPointer(gtx, h, e, size)
 		}
 	}
@@ -550,6 +555,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		s.unreadSeen = ui < 0 || (ui >= s.visible[0] && ui < s.visible[1])
 	}
 
+	s.contextMenu(h, origin)
 	s.overlays(gtx, h, rc, size)
 	s.layoutScrollbar(gtx, c, size, now)
 	area.Pop()

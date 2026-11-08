@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"gioui.org/gesture"
+	"gioui.org/io/event"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -33,6 +34,8 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/ctxclick"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
@@ -91,6 +94,7 @@ func (c *thrCard) msg(ts string) *thrMsg {
 // ThreadSenderAndTimestampGeneric) through method expressions.
 type thrMsg struct {
 	hv          gesture.Hover
+	ctx         struct{ _ byte } // right-click target: the message's context menu
 	v           *Threads
 	m           *core.Message
 	top         unit.Dp
@@ -725,6 +729,15 @@ func (v *Threads) newLine(gtx C, w int) {
 func (v *Threads) msg(gtx C, s *thrMsg, m *core.Message, top unit.Dp) D {
 	hv := &s.hv
 	hovered := hv.Update(gtx.Source)
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: &s.ctx, Kinds: pointer.Press})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(pointer.Event); ok && ctxclick.Press(e) {
+			v.messageMenu(*m)
+		}
+	}
 	name, av := v.authorOf(m)
 	stamp, next := thrTime(tsTime(m.TS), gtx.Now)
 	if next > 0 {
@@ -770,8 +783,27 @@ func (v *Threads) msg(gtx C, s *thrMsg, m *core.Message, top unit.Dp) D {
 	call.Add(gtx.Ops)
 	st := clip.Rect(r).Push(gtx.Ops)
 	hv.Add(gtx.Ops)
+	pass := pointer.PassOp{}.Push(gtx.Ops)
+	event.Op(gtx.Ops, &s.ctx)
+	pass.Pop()
 	st.Pop()
 	return d
+}
+
+// messageMenu opens m's message actions menu at the pointer, as Slack's
+// Threads view list does on a right-click (MessageActionsContextMenu with
+// messageContainerType threads_view: "View thread").
+func (v *Threads) messageMenu(m core.Message) {
+	ph, ok := v.h.(popups.Host)
+	if !ok {
+		v.h.OpenMessageMenu(image.Point{}, m)
+		return
+	}
+	var at image.Point
+	if pp, ok := v.h.(interface{ PointerPos() image.Point }); ok {
+		at = pp.PointerPos()
+	}
+	ph.ShowOverlay(popups.NewMessageContextMenu(ph, at, m, popups.InThreadsView, popups.MessageMenuOpts{}))
 }
 
 // replyPicture draws Slack's unfocused inline thread composer (h 144,

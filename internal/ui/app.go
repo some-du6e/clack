@@ -123,6 +123,7 @@ type App struct {
 	pvOrigin        originTracker   // ClientPrimaryView's origin under a patch
 	vbOrigin        originTracker   // the primary view body's, inside a patched RenderedViewContents
 	sbMenu          sbMenus         // sidebar row menus (slick_shell.go)
+	hdrCtx          map[string]*int // channel header title right-click tags (channel.go)
 	secondaryOrigin image.Point     // window position of the secondary pane
 	chBodyW         int             // >0: layoutChannel's messages+composer width (nested secondary pane)
 	convos          map[string]*convo
