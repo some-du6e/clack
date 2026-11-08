@@ -154,6 +154,7 @@ func TestPostingRestrictedRoadblock(t *testing.T) {
 	}
 	cp := *cv
 	cp.Properties = json.RawMessage(`{"posting_restricted_to":{"type":["admin"]},"threads_restricted_to":{"type":["admin"]}}`)
+	fs.SetProperties(ch, cp.Properties) // a refetch (conversations.info) agrees
 	svc.S.PutConv(cp)
 	e.openChannel(ch)
 	c := e.a.convoFor(ch, "")
@@ -169,6 +170,7 @@ func TestPostingRestrictedRoadblock(t *testing.T) {
 
 	// thread-only: the channel composer is blocked, thread replies aren't
 	cp.Properties = json.RawMessage(`{"posting_restricted_to":{"type":["admin"]}}`)
+	fs.SetProperties(ch, cp.Properties) // a refetch (conversations.info) agrees
 	svc.S.PutConv(cp)
 	c.postAt = time.Time{}
 	e.until("thread-only still blocks the channel composer", 5*time.Second, func() bool { return rb() == announceOnlyMessage })
@@ -181,6 +183,7 @@ func TestPostingRestrictedRoadblock(t *testing.T) {
 
 	// lifted: the composer is back
 	cp.Properties = nil
+	fs.SetProperties(ch, nil)
 	svc.S.PutConv(cp)
 	c.postAt = time.Time{}
 	e.until("composer unblocked", 5*time.Second, func() bool { return rb() == "" })

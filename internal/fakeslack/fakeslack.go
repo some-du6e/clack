@@ -445,6 +445,18 @@ func (s *Server) join(f url.Values) any {
 	return map[string]any{"ok": false, "error": "channel_not_found"}
 }
 
+// SetProperties replaces a conversation's properties (posting_restricted_to
+// …) in what conversations.info and users.conversations answer.
+func (s *Server) SetProperties(id string, props json.RawMessage) {
+	s.convMu.Lock()
+	defer s.convMu.Unlock()
+	for i := range s.convs {
+		if s.convs[i].ID == id {
+			s.convs[i].Properties = props
+		}
+	}
+}
+
 // JoinCalls returns the conversations.join calls so far.
 func (s *Server) JoinCalls() []JoinCall {
 	s.convMu.Lock()
