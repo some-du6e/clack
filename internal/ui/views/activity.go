@@ -758,6 +758,18 @@ func actFallbackText(it *core.ActivityItem, place string) string {
 		return "Reacted to your message" + in
 	case actIsMention(it.Type) || it.Type == "unjoined_channel_mention" || it.Type == "code_review_requested":
 		return "Mentioned you" + in
+	case it.Type == "list_record_assigned":
+		return "Assigned you a list item"
+	case it.Type == "list_record_edited":
+		return "Updated a list item"
+	case it.Type == "list_user_mentioned":
+		return "Mentioned you in a list item"
+	case it.Type == "list_todo_notification":
+		return "A list item needs your attention"
+	case it.Type == "list_approval_request":
+		return "Requested your approval on a list item"
+	case it.Type == "list_approval_reviewed":
+		return "Reviewed your approval request"
 	}
 	return "New activity" + in
 }
