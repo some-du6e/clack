@@ -5,12 +5,17 @@ import (
 	"image/color"
 	"strings"
 
+	"gioui.org/io/event"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
+	"gioui.org/op/clip"
 	"gioui.org/unit"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/ctxclick"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
@@ -264,6 +269,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	if clicked(a.clicks.get("hdr.title")) {
 		a.OpenDetails(ch)
 	}
+	a.headerTitleMenu(gtx, ch, image.Rect(x, (h-gtx.Dp(32))/2, x+titleW, (h+gtx.Dp(32))/2))
 	x += titleW + gtx.Dp(16)
 
 	// topic (13px muted) in the remaining space.
@@ -443,4 +449,30 @@ func (a *App) convTitle(conv *convInfo, ch string) string {
 		return ch
 	}
 	return conv.displayName()
+}
+
+// headerTitleMenu opens the channel menu at the pointer on a right-click
+// (or macOS Ctrl+click) of the header's title (r, header coordinates):
+// Slack wraps the title in ChannelContextMenu{id}.
+func (a *App) headerTitleMenu(gtx layout.Context, ch string, r image.Rectangle) {
+	tag := a.hdrCtx[ch]
+	if tag == nil {
+		if a.hdrCtx == nil {
+			a.hdrCtx = map[string]*int{}
+		}
+		tag = new(int)
+		a.hdrCtx[ch] = tag
+	}
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: tag, Kinds: pointer.Press})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(pointer.Event); ok && ctxclick.Press(e) {
+			a.ShowOverlay(popups.NewChannelContextMenu(a, a.ptrWin, ch))
+		}
+	}
+	defer clip.Rect(r).Push(gtx.Ops).Pop()
+	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+	event.Op(gtx.Ops, tag)
 }

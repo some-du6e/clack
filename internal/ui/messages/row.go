@@ -20,6 +20,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/ctxclick"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
@@ -804,7 +805,7 @@ func (r *row) layoutAvatar(gtx layout.Context, p slackc.Props) layout.Dimensions
 	url = st.BackgroundImage(url)
 	r.avDrawn = url
 	// Clicked before Layout: Clickable.Layout consumes pending clicks.
-	if r.avatarBtn.Clicked(gtx) && r.m.User != "" {
+	if ctxclick.Clicked(gtx, &r.avatarBtn) && r.m.User != "" {
 		rc.h.OpenProfile(rc.origin(image.Point{}), r.m.User)
 	}
 	size := image.Pt(s, s)
@@ -829,15 +830,20 @@ func (r *row) avatarButton(gtx layout.Context, url string, size image.Point) lay
 type ctxTag struct{ _ byte }
 
 // memberMenuOn opens Slack's member context menu (popups.NewMemberMenu,
-// which plugins like Nicknames extend) when tag got a right-click.
+// which plugins like Nicknames extend) when tag got a right-click (or a
+// macOS Ctrl+click), and tells the list the press is taken so it doesn't
+// open the message's menu as well.
 func (r *row) memberMenuOn(gtx layout.Context, tag *ctxTag) {
 	for {
 		ev, ok := gtx.Event(pointer.Filter{Target: tag, Kinds: pointer.Press})
 		if !ok {
 			return
 		}
-		if e, ok := ev.(pointer.Event); ok && e.Buttons.Contain(pointer.ButtonSecondary) && r.m.User != "" {
+		if e, ok := ev.(pointer.Event); ok && ctxclick.Press(e) && r.m.User != "" {
 			h := r.rc.h
+			if l := r.rc.list; l != nil {
+				l.ctx.taken = true
+			}
 			h.ShowOverlay(popups.NewMemberMenu(h, r.rc.origin(image.Pt(int(e.Position.X), int(e.Position.Y))), r.m.User))
 		}
 	}
@@ -1214,7 +1220,7 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 	if st.Hidden() {
 		return layout.Dimensions{}
 	}
-	if r.nameBtn.Clicked(gtx) && r.m.User != "" {
+	if ctxclick.Clicked(gtx, &r.nameBtn) && r.m.User != "" {
 		rc.h.OpenProfile(rc.origin(image.Point{}), r.m.User)
 	}
 	bs := senderBtnClass.Enter(gtx, btnState(gtx, &r.nameBtn), 0)

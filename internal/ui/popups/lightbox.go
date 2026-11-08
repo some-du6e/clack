@@ -792,29 +792,8 @@ func (lb *Lightbox) download() {
 	if name == "" {
 		name = it.img.Title
 	}
-	c := h.Core()
-	viaCore := c != nil && (it.img.Proxy || it.file != nil || lbSlackHost(src))
 	lb.busy = true
-	run(h, func(ctx context.Context) (string, error) {
-		var data []byte
-		var err error
-		if viaCore {
-			data, _, err = c.Fetch(ctx, src)
-		} else {
-			data, err = lbGet(ctx, src)
-		}
-		if err != nil {
-			return "", err
-		}
-		return lbSave(name, src, data)
-	}, func(p string, err error) {
-		lb.busy = false
-		if err != nil {
-			h.Toast("Couldn't download: " + errText(err))
-			return
-		}
-		h.Toast("Saved to " + p)
-	})
+	saveDownload(h, src, name, it.img.Proxy || it.file != nil, func() { lb.busy = false })
 }
 
 // lbSlackHost reports whether raw is on Slack's own hosts, which core.Fetch

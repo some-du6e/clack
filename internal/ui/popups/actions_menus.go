@@ -65,6 +65,10 @@ func actCopy(h Host, s, msg string) func(gtx layout.Context) {
 
 // NewChannelMenu builds the channel header menu (right-aligned to anchor).
 func NewChannelMenu(h Host, anchor image.Point, convID string) *Menu {
+	return newChannelMenu(h, anchor, convID, true)
+}
+
+func newChannelMenu(h Host, anchor image.Point, convID string, alignRight bool) *Menu {
 	var c core.Conv
 	if a := h.Core(); a != nil {
 		c, _ = a.Conv(convID)
@@ -155,7 +159,7 @@ func NewChannelMenu(h Host, anchor image.Point, convID string) *Menu {
 			Confirm(h, "Leave #"+name+"?", msg, "Leave channel", true, nil, func() { actLeave(h, convID, "You left #"+name) })
 		}})
 	}
-	m := NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(anchor), AlignRight: true, Wraps: []MenuWrap{
+	m := NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(anchor), AlignRight: alignRight, Wraps: []MenuWrap{
 		// Slack's channel context menu: ChatTabs marks the channel, then
 		// extends the trigger's getTemplate ("Open in new Slick tab")
 		{Name: "ChannelContextMenu", Props: slackc.Props{"id": convID}},

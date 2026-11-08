@@ -26,6 +26,7 @@ import (
 type MessageMenuOpts struct {
 	OnEdit  func() // start inline editing (own messages)
 	OnReply func() // open the thread composer
+	OnTodo  func() // the hover toolbar's Add to-do (context menus)
 	// Delete, when set, deletes for "Delete message…" (ui-messages routes
 	// it through Taut's chatDeleteFetcher); else DeleteMessage, else
 	// popups dispatches chatDeleteFetcher over core.Delete.

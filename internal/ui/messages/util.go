@@ -142,8 +142,8 @@ func permalink(domain, ch, ts string) string {
 }
 
 // openURL opens a link in the system browser without blocking (http,
-// https and mailto only; see openurl.Check).
-func openURL(u string) { _ = openurl.Open(u) }
+// https and mailto only; see openurl.Check). A var so tests can catch it.
+var openURL = func(u string) { _ = openurl.Open(u) }
 
 // avatarRadius is Slack's clamp(4px, min(22.222%, 12px), 12px).
 func avatarRadius(px int) int {

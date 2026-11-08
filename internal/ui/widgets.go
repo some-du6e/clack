@@ -11,6 +11,7 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/ctxclick"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
@@ -32,7 +33,7 @@ func clicked(c *widget.Clickable) bool {
 // clickArea lays out w as a clickable with a pointer cursor; bg(hovered,
 // pressed) paints behind it. Check clicked(c) afterwards.
 func clickArea(gtx layout.Context, c *widget.Clickable, bg func(gtx layout.Context, sz image.Point, hovered bool), w layout.Widget) layout.Dimensions {
-	if c.Clicked(gtx) {
+	if ctxclick.Clicked(gtx, c) { // a macOS Ctrl+click is a right-click, not a click
 		clickedSet[c] = true
 	}
 	return c.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
