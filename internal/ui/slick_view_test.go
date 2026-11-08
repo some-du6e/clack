@@ -396,33 +396,23 @@ func TestSlickViewChatTabs(t *testing.T) {
 	e := newSV(t)
 	e.install("ChatTabs", nil)
 	e.until(5*time.Second, "ChatTabs' patches", func() bool {
-		return slackc.Patched("ClientPrimaryView") && slackc.Patched("RenderedViewContents") && slackc.Patched("ConnectedChannel") &&
+		return slackc.Patched("ClientPrimaryView") && slackc.Patched("ConnectedChannel") &&
 			slackc.Patched("ChannelContextMenu") && slackc.Patched("ContextMenuTriggerWithKeyboardFocus")
 	})
 	// the layout around the primary view, the view itself inside it
 	e.until(8*time.Second, "the tab layout around the primary view", func() bool {
 		return e.tree("slick-chat-tabs-layout", `"n":"ClientPrimaryView"`) != ""
 	})
-	// the bar inside the view element, ahead of the body
-	e.until(8*time.Second, "the tab bar inside .p-view_contents--primary", func() bool {
-		tr := e.tree("p-view_contents--primary", `slick-chat-tabs`, `data-tab-count`, `"n":"`+viewBodySlot+`"`)
-		return tr != "" && strings.Index(tr, `data-tab-count`) < strings.Index(tr, `"n":"`+viewBodySlot+`"`)
-	})
-	// its height measured (ResizeObserver over the bar Clack laid out) into
-	// the variable the view's :has(> .slick-chat-tabs) padding reads, on
-	// the layout's inline style (the geometry: slackc's TestViewContentsTabBar)
-	heightVar := regexp.MustCompile(`"--slick-chat-tabs-height":"([0-9.]+)px"`)
-	var barH float64
-	e.until(8*time.Second, "the bar's laid-out height in --slick-chat-tabs-height", func() bool {
-		m := heightVar.FindStringSubmatch(e.tree("slick-chat-tabs-layout", "--slick-chat-tabs-height"))
-		if m == nil {
-			return false
-		}
-		barH, _ = strconv.ParseFloat(m[1], 64)
-		return barH > 0
-	})
-	if barH < 20 || barH > 120 {
-		t.Errorf("--slick-chat-tabs-height %vpx, want the bar's row height", barH)
+	e.until(8*time.Second, "the tab bar", func() bool { return e.tree(`slick-chat-tabs`, `data-tab-count`) != "" })
+	// Slick since f52f03a: the bar inside the view element (RenderedViewContents),
+	// ahead of the body (older ChatTabs, as ui-taut's pinned Slick, draw it
+	// in ClientPrimaryView's tree)
+	inView := slackc.Patched("RenderedViewContents")
+	if inView {
+		e.until(8*time.Second, "the tab bar inside .p-view_contents--primary", func() bool {
+			tr := e.tree("p-view_contents--primary", `slick-chat-tabs`, `data-tab-count`, `"n":"`+viewBodySlot+`"`)
+			return tr != "" && strings.Index(tr, `data-tab-count`) < strings.Index(tr, `"n":"`+viewBodySlot+`"`)
+		})
 	}
 	if len(e.a.convos) == 0 {
 		t.Error("the channel view didn't draw inside the patched primary view")
@@ -463,6 +453,26 @@ func TestSlickViewChatTabs(t *testing.T) {
 	e.until(8*time.Second, "two tabs, general and random", func() bool {
 		return e.tree("slick-chat-tabs__tab", `data-tab-count":2`) != "" || e.tree("slick-chat-tabs__tab", "random", "general") != ""
 	})
+
+	// with two tabs the strip unfolds (one tab: an empty, collapsed bar):
+	// its height measured (ResizeObserver over the bar Clack laid out) into
+	// the variable the view's :has(> .slick-chat-tabs) padding reads, on
+	// the layout's inline style (the geometry: slackc's TestViewContentsTabBar)
+	heightVar := regexp.MustCompile(`"--slick-chat-tabs-height":"([0-9.]+)px"`)
+	if inView {
+		var barH float64
+		e.until(8*time.Second, "the bar's laid-out height in --slick-chat-tabs-height", func() bool {
+			m := heightVar.FindStringSubmatch(e.tree("slick-chat-tabs-layout", "--slick-chat-tabs-height"))
+			if m == nil {
+				return false
+			}
+			barH, _ = strconv.ParseFloat(m[1], 64)
+			return barH > 0
+		})
+		if barH < 20 || barH > 120 {
+			t.Errorf("--slick-chat-tabs-height %vpx, want the bar's row height", barH)
+		}
+	}
 
 	// the rows still navigate on click while they're inside ChatTabs' tree
 	e.dismissOverlays()
