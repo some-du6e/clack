@@ -61,7 +61,7 @@ func TestPrepareMacDMG(t *testing.T) {
 		t.Errorf("dmg still attached:\n%s", out)
 	}
 	realRun := runCmd
-	rc := record(t) // don't really `open` the app
+	rc := record(t)  // don't really `open` the app
 	runCmd = realRun // but do run ditto for the zip below
 	if err := applyPlan(Plan{Swap: p.Swap, Stage: p.Stage, Relaunch: p.Relaunch}, time.Second); err != nil {
 		t.Fatal(err)
