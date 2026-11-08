@@ -63,8 +63,10 @@ jobs:
       - name: vet
         run: go vet ./internal/huddle/... ./internal/ui/huddleui/... ./internal/ui/openurl/...
       - name: VideoToolbox + camera publish
-        run: go test -count=1 -v -gcflags=all=-d=checkptr=0 -run 'TestVTEncode|TestFakeCamera|TestPCMEncoderRoundTrip' ./internal/huddle
+        run: go test -count=1 -v -gcflags=all=-d=checkptr=0 -run 'TestOpusRoundTrip|TestVTEncode|TestFakeCamera|TestPCMEncoderRoundTrip' ./internal/huddle
       - name: test
+        if: ${{ !cancelled() }}
         run: go test -count=1 -gcflags=all=-d=checkptr=0 ./internal/huddle/... ./internal/ui/openurl/...
       - name: demo
+        if: ${{ !cancelled() }}
         run: CGO_ENABLED=1 go build -trimpath -o dist/huddle-demo ./cmd/huddle-demo

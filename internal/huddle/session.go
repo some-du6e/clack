@@ -992,7 +992,7 @@ func (s *Session) recvAudio(track *webrtc.TrackRemote, done <-chan struct{}) {
 			gap := pkt.SequenceNumber - last - 1
 			if gap > 0 && gap < 5 {
 				for i := uint16(0); i < gap; i++ {
-					if pcm, err := dec.decode(nil); err == nil {
+					if pcm, err := dec.decodeSafe(nil); err == nil {
 						s.play.push(pcm)
 					}
 				}
@@ -1007,8 +1007,11 @@ func (s *Session) recvAudio(track *webrtc.TrackRemote, done <-chan struct{}) {
 		if len(pkt.Payload) == 0 {
 			continue
 		}
-		pcm, err := dec.decode(pkt.Payload)
+		pcm, err := dec.decodeSafe(pkt.Payload)
 		if err != nil {
+			if n := opusAborts.Load(); n == 1 || n%500 == 0 {
+				s.o.Logf("huddle: %v (%d so far)", err, n)
+			}
 			continue
 		}
 		s.play.push(pcm)
