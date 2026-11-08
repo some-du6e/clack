@@ -60,7 +60,7 @@ const (
 
 // EmojiPickerSize is the picker card size in dp (361×518 with the
 // "Emoji | GIFs" row, 361×468 without it), for callers that anchor it.
-func EmojiPickerSize() image.Point { return image.Pt(epW, epH-epTopH+int(gifRowH())) }
+func EmojiPickerSize() image.Point { return image.Pt(epW, epH-epTopH+gifRowH()) }
 
 // gifAvail is whether Slack's GIF picker is available to this account:
 // 0 unknown, 1 yes, 2 no, 3 probing. Slack hides the "Emoji | GIFs" row
@@ -71,7 +71,7 @@ var gifAvail atomic.Int32
 
 // gifRowH is the height (dp) of the "Emoji | GIFs" row: 0 until GIFs are
 // known to work.
-func gifRowH() float32 {
+func gifRowH() int {
 	if gifAvail.Load() == 1 {
 		return epTopH
 	}
@@ -215,7 +215,7 @@ type EmojiPicker struct {
 
 	// GIFs tab (emoji_gif.go)
 	gifMode      bool
-	topH         float32 // dp height of the "Emoji | GIFs" row this frame (0 when GIFs are unavailable)
+	topH         int // dp height of the "Emoji | GIFs" row this frame (0 when GIFs are unavailable)
 	gif          gifPanel
 	onGif        func(g Gif)
 	gifCh, gifTS string
