@@ -21,8 +21,8 @@ import (
 //     debounced like Chromium's cookie store, which commits about every 30
 //     seconds, and soon (credsFlushSoon) when d or the set of cookies
 //     changes;
-//   - every request and the realtime socket carry Slack desktop's user agent
-//     (DesktopUserAgent), the one the session signed in with.
+//   - every request and the realtime socket carry Clack's own User-Agent,
+//     the same one the session signed in with (ua.go): never Slack desktop's.
 //
 // The jar is flat: one value per cookie name, sent to every https slack.com
 // host, which is how Slack scopes its session cookies (.slack.com). A
@@ -30,8 +30,8 @@ import (
 // slack.com hosts; it never leaves slack.com.
 //
 // Pasted (browser) sessions don't use any of this: they send d only, never
-// d-s, with the browser's user agent, and ignore Set-Cookie, exactly as
-// before (see cookieHeader and docs/SIGNOUT-AUDIT.md).
+// d-s, with the same Clack User-Agent, and ignore Set-Cookie (see
+// cookieHeader and docs/SIGNOUT-AUDIT.md).
 
 // Debounce of writing a desktop session's rotated cookies to disk.
 var (

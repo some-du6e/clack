@@ -32,6 +32,11 @@ type MagicTokenSet struct {
 	RequiresDPoP bool     // the link said dpop=1 (see dpop.go)
 }
 
+// SlackDesktopVersion is the Slack desktop release whose sign-in flow Clack
+// follows (docs/DESKTOP-SIGNIN.md); the browser sign-in page takes it as v=.
+// It is never part of Clack's User-Agent (ua.go).
+const SlackDesktopVersion = "4.53.276"
+
 // teamIDPattern is Slack desktop's team id pattern (module 66008 in
 // 4.53.276: (E|T)[A-Z0-9]{8,50}). It is matched case-insensitively and
 // upper-cased, as Slack does, because KDE's kde-open lowercases the host of
@@ -196,8 +201,9 @@ type magicResult struct {
 
 // LoginMagic trades the link's tokens for Clack's own session. For each
 // token set it GETs https://<base>/api/auth.loginMagicBulk?magic_tokens=…&ssb=1
-// with a dedicated client and cookie jar (Slack desktop's request, its user
-// agent, and a DPoP binding proof when the set asks for one), keeps the
+// with a dedicated client and cookie jar (Slack desktop's request, but with
+// Clack's own User-Agent, ua.go, and a DPoP binding proof when the set asks
+// for one), keeps the
 // cookies Slack vends, then finds the session's xoxc token (bootToken) and
 // checks it with auth.test. The returned Creds hold only what Slack issued
 // to this client: no cookie or token from the browser.
@@ -210,8 +216,7 @@ func LoginMagic(ctx context.Context, sets []MagicTokenSet, cfg MagicConfig) (Cre
 	if tr == nil {
 		tr = newTransport()
 	}
-	hc := &http.Client{Jar: jar, Transport: tr, Timeout: magicTimeout, CheckRedirect: magicRedirect}
-	ua := DesktopUserAgent()
+	hc := &http.Client{Jar: jar, Transport: honestTransport{tr}, Timeout: magicTimeout, CheckRedirect: magicRedirect}
 	var (
 		res     *magicResult
 		resBase string
@@ -242,7 +247,7 @@ func LoginMagic(ctx context.Context, sets []MagicTokenSet, cfg MagicConfig) (Cre
 			}
 			key = k
 		}
-		r, err := magicExchange(ctx, hc, ua, s, key)
+		r, err := magicExchange(ctx, hc, s, key)
 		if err != nil {
 			return Creds{}, err
 		}
@@ -265,7 +270,7 @@ func LoginMagic(ctx context.Context, sets []MagicTokenSet, cfg MagicConfig) (Cre
 		c.DPoP = resBase
 	}
 	c.Cookies = encodeCookies(withoutCookie(cookies, "d")) // d lives in Cookie
-	sess := &magicSession{hc: hc, ua: ua, dpop: dpop}
+	sess := &magicSession{hc: hc, dpop: dpop}
 	var toks pageTokens
 	for _, t := range []string{res.Token, res.APIToken} {
 		if strings.HasPrefix(t, "xoxc-") {
@@ -312,13 +317,13 @@ func bannedPage(u *url.URL) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimRight(u.Path, "/")), "/ssb/redirect")
 }
 
-func magicExchange(ctx context.Context, hc *http.Client, ua string, s MagicTokenSet, key *dpopKey) (*magicResult, error) {
+func magicExchange(ctx context.Context, hc *http.Client, s MagicTokenSet, key *dpopKey) (*magicResult, error) {
 	u := "https://" + s.BaseDomain + "/api/auth.loginMagicBulk?magic_tokens=" + strings.Join(s.Tokens, ",") + "&ssb=1"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, scrubErr(err)
 	}
-	desktopNavHeaders(req.Header, ua)
+	HonestHeaders(req.Header)
 	if key != nil {
 		// The binding proof carries the public key (Slack desktop passes it
 		// to loadURL as an extra header; main.bundle.cjs @952921).
@@ -398,19 +403,9 @@ func magicError(code string) error {
 	return fmt.Errorf("Slack didn't accept the sign-in link (%s); get a new one and try again", code)
 }
 
-// desktopNavHeaders are the headers of Slack desktop's page loads (the
-// exchange is a navigation in a hidden window, and the boot page is the main
-// window's): its user agent and a browser's navigation Accept.
-func desktopNavHeaders(h http.Header, ua string) {
-	h.Set("User-Agent", ua)
-	h.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
-	h.Set("Accept-Language", "en-US,en;q=0.9")
-}
-
 // magicSession is the sign-in exchange's client after the cookies landed.
 type magicSession struct {
 	hc   *http.Client
-	ua   string
 	dpop *dpopKey
 }
 
@@ -447,7 +442,7 @@ func authPage(teamID string) string {
 var incomingConfigRe = regexp.MustCompile(`incomingConfig\s*=\s*JSON\.stringify\(`)
 
 // bootTokens loads authPage with this session's own, freshly vended cookie
-// and Slack desktop's user agent, and returns the xoxc tokens it hands out:
+// and Clack's own User-Agent, and returns the xoxc tokens it hands out:
 // teamID's workspace token first, then the org (E) token. It is the one
 // Slack web page Clack loads with a session cookie, and never with a cookie
 // copied from the browser. No other page is tried, in particular never
@@ -457,7 +452,7 @@ func (s *magicSession) bootTokens(ctx context.Context, teamID string) (pageToken
 	if err != nil {
 		return pageTokens{}, scrubErr(err)
 	}
-	desktopNavHeaders(req.Header, s.ua)
+	HonestHeaders(req.Header)
 	resp, err := s.do(req)
 	if err != nil {
 		return pageTokens{}, fmt.Errorf("Clack has its own session now but couldn't load Slack's token page (app.slack.com/auth): %w", scrubErr(err))
@@ -572,8 +567,7 @@ func (s *magicSession) authTest(ctx context.Context, teamURL, tok string) (*Auth
 		return nil, scrubErr(err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Origin", "https://app.slack.com")
-	req.Header.Set("User-Agent", s.ua)
+	HonestHeaders(req.Header)
 	resp, err := s.do(req)
 	if err != nil {
 		return nil, scrubErr(err)

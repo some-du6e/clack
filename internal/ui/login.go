@@ -38,7 +38,6 @@ type loginScreen struct {
 	token     widget.Editor
 	orgToken  widget.Editor
 	cookie    widget.Editor
-	userAgent widget.Editor
 	submit    widget.Clickable
 	copy      widget.Clickable
 	copied    bool
@@ -57,10 +56,10 @@ type loginScreen struct {
 var desktopSignInURL = "https://slack.com/ssb/add?s=1&v=" + slack.SlackDesktopVersion
 
 // signInSnippet runs in the DevTools console of the user's own signed-in Slack
-// tab. It copies the browser's user agent and the teams map Slack's page keeps
-// in localStorage (workspace and org tokens, URLs); SignIn reads that JSON from
-// the Token field. It sends nothing anywhere.
-const signInSnippet = `copy(JSON.stringify({ua: navigator.userAgent, teams: JSON.parse(localStorage.localConfig_v2).teams}))`
+// tab. It copies the teams map Slack's page keeps in localStorage (workspace
+// and org tokens, URLs); SignIn reads that JSON from the Token field. It sends
+// nothing anywhere. No user agent: Clack sends only its own (slack.UserAgent).
+const signInSnippet = `copy(JSON.stringify({teams: JSON.parse(localStorage.localConfig_v2).teams}))`
 
 func newLoginScreen() *loginScreen {
 	l := &loginScreen{}
@@ -75,8 +74,6 @@ func newLoginScreen() *loginScreen {
 		ed.Submit = true
 		ed.Mask = '•'
 	}
-	l.userAgent.SingleLine = true // not a secret: shown so it can be checked
-	l.userAgent.Submit = true
 	return l
 }
 
@@ -116,7 +113,7 @@ func (a *App) layoutLogin(gtx layout.Context) {
 			linkSubmit = true
 		}
 	}
-	for _, ed := range []*widget.Editor{&l.workspace, &l.token, &l.orgToken, &l.cookie, &l.userAgent} {
+	for _, ed := range []*widget.Editor{&l.workspace, &l.token, &l.orgToken, &l.cookie} {
 		for {
 			e, ok := ed.Update(gtx)
 			if !ok {
@@ -142,7 +139,6 @@ func (a *App) layoutLogin(gtx layout.Context) {
 			Token:     strings.TrimSpace(l.token.Text()),
 			OrgToken:  strings.TrimSpace(l.orgToken.Text()),
 			Cookie:    strings.TrimSpace(l.cookie.Text()),
-			UserAgent: strings.TrimSpace(l.userAgent.Text()),
 		}
 		if in.Token == "" || in.Cookie == "" {
 			l.err = "Paste your token and d cookie first."
@@ -405,7 +401,7 @@ func (a *App) layoutLoginPaste(gtx layout.Context, x, y, colW, gap int) (int, in
 		copyTxt = "Copied"
 	}
 	ly += a.loginSmallButton(gtx, x, ly, &l.copy, copyTxt).Y + gtx.Dp(16)
-	ly += a.loginPara(gtx, x, ly, colW, body, "2. Paste what it copied into Token. That fills in the org token and user agent for you.") + gtx.Dp(12)
+	ly += a.loginPara(gtx, x, ly, colW, body, "2. Paste what it copied into Token. That fills in the org token for you.") + gtx.Dp(12)
 	ly += a.loginPara(gtx, x, ly, colW, body, "3. The d cookie is HttpOnly, so the snippet can't read it. Copy its value from DevTools → Application → Cookies → https://app.slack.com. Leave d-s out: Clack doesn't use it.")
 
 	fx, fy := x+colW+gap, y
@@ -413,7 +409,6 @@ func (a *App) layoutLoginPaste(gtx layout.Context, x, y, colW, gap int) (int, in
 	fy += a.loginField(gtx, fx, fy, colW, "Token", &l.token, "xoxc-… or the copied JSON")
 	fy += a.loginField(gtx, fx, fy, colW, "Org token (optional)", &l.orgToken, "filled in from the JSON")
 	fy += a.loginField(gtx, fx, fy, colW, "d cookie", &l.cookie, "xoxd-…")
-	fy += a.loginField(gtx, fx, fy, colW, "Browser user agent (optional)", &l.userAgent, "filled in from the JSON")
 	txt := "Sign in"
 	if l.busy {
 		txt = "Signing in…"

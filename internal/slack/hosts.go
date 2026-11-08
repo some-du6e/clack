@@ -158,7 +158,7 @@ func PublicFetchURL(raw string) bool {
 // sends cookies, and follows redirects only to URLs PublicFetchURL allows,
 // so a proxied or CDN URL can't bounce the request to a sender's host.
 // Its transport dials public addresses only (netguard.go).
-var PublicHTTP = &http.Client{Timeout: 45 * time.Second, Transport: publicTransport, CheckRedirect: publicRedirect}
+var PublicHTTP = &http.Client{Timeout: 45 * time.Second, Transport: honestTransport{publicTransport}, CheckRedirect: publicRedirect}
 
 func publicRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) >= 10 {
@@ -185,7 +185,7 @@ func GetNoCreds(ctx context.Context, raw string, max int64) ([]byte, string, err
 	if err != nil {
 		return nil, "", err
 	}
-	req.Header.Set("User-Agent", publicUserAgent())
+	HonestHeaders(req.Header)
 	resp, err := PublicHTTP.Do(req)
 	if err != nil {
 		return nil, "", err

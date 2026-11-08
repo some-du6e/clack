@@ -32,9 +32,9 @@ type Creds struct {
 	UserID          string `json:"user_id"`
 	TeamURL         string `json:"team_url"`       // e.g. https://hackclub.slack.com/
 	EnterpriseURL   string `json:"enterprise_url"` // e.g. https://hackclub.enterprise.slack.com/
-	// UserAgent is navigator.userAgent of the browser the session was
-	// copied from. Clack sends it so Slack sees the same browser it signed
-	// in (see ua.go); empty means Chrome on this OS.
+	// UserAgent is legacy: older builds kept the pasted browser's
+	// navigator.userAgent here. It is still read from old creds.json files
+	// and never sent: every request carries Clack's own UserAgent() (ua.go).
 	UserAgent string `json:"user_agent,omitempty"`
 
 	// Session is "" for a session pasted from the browser and
@@ -160,13 +160,13 @@ func New(c Creds) *Client {
 		ent = strings.TrimSuffix(c.EnterpriseURL, "/") + "/api/"
 	}
 	cl := &Client{Creds: c, base: base, ent: ent, sem: make(chan struct{}, MaxConcurrent), learned: map[string]bool{}}
-	var rt http.RoundTripper = tr
+	var rt http.RoundTripper = honestTransport{tr} // Clack's own User-Agent on everything, hops included (ua.go)
 	if c.Desktop() {
 		cl.sess = newDesktopSession(c)
 		if c.DPoP != "" {
 			cl.dpop = cl.newDPoPBinding() // sends nothing until EnableDPoP
 		}
-		rt = &desktopTransport{base: tr, c: cl}
+		rt = &desktopTransport{base: rt, c: cl}
 	}
 	cl.HTTP = &http.Client{Transport: rt, Timeout: 60 * time.Second, CheckRedirect: cl.checkRedirect}
 	if isLoopback(base) {
@@ -495,8 +495,7 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 		}
 		req.Header.Set("Content-Type", ctype)
 		req.Header.Set("Cookie", c.cookieHeader())
-		req.Header.Set("Origin", "https://app.slack.com")
-		c.browserHeaders(req.Header)
+		HonestHeaders(req.Header) // no Origin, no client hints (ua.go)
 		resp, err := c.HTTP.Do(req)
 		if err != nil {
 			return scrubErr(err)
@@ -564,7 +563,7 @@ func (c *Client) Download(ctx context.Context, rawURL string) (*http.Response, e
 		return nil, ErrNotAFile
 	}
 	req.Header.Set("Cookie", c.cookieHeader())
-	c.browserHeaders(req.Header)
+	HonestHeaders(req.Header)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return resp, scrubErr(err)
@@ -638,8 +637,7 @@ func (c *Client) UploadBytes(ctx context.Context, uploadURL, filename string, da
 	req.ContentLength = total
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	req.Header.Set("Cookie", c.cookieHeader())
-	req.Header.Set("Origin", "https://app.slack.com")
-	c.browserHeaders(req.Header)
+	HonestHeaders(req.Header)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return scrubErr(err)

@@ -198,6 +198,7 @@ func (t *Taut) checkAuth(ctx context.Context, a storedAccount) string {
 	}
 	// d only, never d-s: see slack.Client.cookieHeader.
 	req.Header.Set("Cookie", "d="+cookie)
+	slack.HonestHeaders(req.Header) // Clack's own User-Agent, as on every Slack request
 	res, err := t.opts.Fetch(ctx, req)
 	if err != nil {
 		return "unknown"

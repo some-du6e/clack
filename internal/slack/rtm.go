@@ -106,13 +106,11 @@ func (r *RTM) once(ctx context.Context) error {
 	t0 := time.Now()
 	h := http.Header{}
 	h.Set("Cookie", r.c.cookieHeader())
-	// Chrome's handshake headers on app.slack.com (checked 2026-11-08),
-	// with the session's own browser User-Agent; Chrome sends no client
-	// hints on a websocket.
-	h.Set("Origin", "https://app.slack.com")
-	h.Set("User-Agent", r.c.userAgent())
-	h.Set("Pragma", "no-cache")
-	h.Set("Cache-Control", "no-cache")
+	// Clack's own User-Agent and no Origin: only browsers send Origin on a
+	// handshake (it is how a server tells which page opened the socket), and
+	// the gateway takes token-and-cookie sockets without one (Slack's own
+	// SDKs dial it with none). No browser cache headers either (ua.go).
+	HonestHeaders(h)
 	dctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	conn, _, err := websocket.Dial(dctx, u, &websocket.DialOptions{HTTPHeader: h, HTTPClient: r.c.HTTP, CompressionMode: websocket.CompressionContextTakeover})
 	cancel()

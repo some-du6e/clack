@@ -41,7 +41,19 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/jsrt"
+	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 )
+
+// honestToSlack gives a request to one of Slack's hosts Clack's own
+// headers (slack.HonestHeaders). Other hosts get what the plugin set.
+func honestToSlack(req *http.Request) {
+	if req != nil && req.URL != nil && slack.SlackOwnedHost(req.URL.Hostname()) {
+		if req.Header == nil {
+			req.Header = http.Header{}
+		}
+		slack.HonestHeaders(req.Header)
+	}
+}
 
 // HackClubIDs are the Hack Club enterprise grid and its workspace;
 // hackClubOnly plugins run only there.
@@ -133,10 +145,24 @@ func New(o Options) (*Taut, error) {
 		o.LifecycleTimeout = 5 * time.Second
 	}
 	if o.Fetch == nil {
-		client := &http.Client{Timeout: 60 * time.Second}
+		client := &http.Client{Timeout: 60 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return errors.New("stopped after 10 redirects")
+			}
+			honestToSlack(req) // a hop onto Slack carries the hop's copied headers
+			return nil
+		}}
 		o.Fetch = func(ctx context.Context, req *http.Request) (*http.Response, error) {
 			return client.Do(req.WithContext(ctx))
 		}
+	}
+	// Plugin and account requests to Slack say they are Clack, like every
+	// other request Clack makes there: no browser User-Agent, client hints,
+	// Origin or Referer, whatever a plugin set (slack.HonestHeaders).
+	inner := o.Fetch
+	o.Fetch = func(ctx context.Context, req *http.Request) (*http.Response, error) {
+		honestToSlack(req)
+		return inner(ctx, req)
 	}
 	if err := os.MkdirAll(filepath.Join(o.Dir, "plugins"), 0o700); err != nil {
 		return nil, fmt.Errorf("taut: %w", err)

@@ -28,10 +28,6 @@ type SignInInput struct {
 	OrgURL    string // the org's https://….enterprise.slack.com/ (from the pasted JSON)
 	Cookie    string // value of the d cookie (xoxd-…)
 	CookieDS  string // ignored: d-s is never kept or sent (Client.cookieHeader)
-	// UserAgent is navigator.userAgent of the same browser (optional but
-	// recommended: Slack can end a session it sees from a different
-	// browser; see ua.go).
-	UserAgent string
 	// Link, when set, is a slack:// magic-login link: callers sign in with
 	// LoginMagic instead of SignIn (no token or cookie is pasted).
 	Link string
@@ -68,11 +64,6 @@ func SignIn(ctx context.Context, in SignInInput) (Creds, error) {
 		return Creds{}, errors.New("the d cookie should start with xoxd-")
 	}
 	c := Creds{Token: tok, Cookie: ck, TeamURL: "https://" + ws + "/"} // d-s is never kept or sent (Client.cookieHeader)
-	if v := strings.TrimSpace(in.UserAgent); v != "" {
-		if c.UserAgent = CleanUserAgent(v); c.UserAgent == "" {
-			return Creds{}, errors.New("the user agent should be your browser's navigator.userAgent, starting with Mozilla/5.0 (")
-		}
-	}
 	a, err := New(c).AuthTest(ctx)
 	if err != nil {
 		return Creds{}, fmt.Errorf("Slack rejected the token and cookie: %w", err)
@@ -145,17 +136,14 @@ func expandPastedTeams(in *SignInInput) error {
 	}
 	var teams []pastedTeam
 	if strings.HasPrefix(raw, "{") {
-		// {"ua": navigator.userAgent, "teams": [...] or {...}} (the README
-		// snippet), or a single team object
+		// {"teams": [...] or {...}} (the README snippet), or a single team
+		// object. Older snippets also copied "ua" (navigator.userAgent): it
+		// is accepted and ignored, since Clack only sends its own (ua.go).
 		var wrap struct {
-			UA    string          `json:"ua"`
 			Teams json.RawMessage `json:"teams"`
 		}
 		if err := json.Unmarshal([]byte(raw), &wrap); err != nil {
 			return errors.New("couldn't read the pasted JSON; copy it again with the console snippet")
-		}
-		if wrap.UA != "" && strings.TrimSpace(in.UserAgent) == "" {
-			in.UserAgent = wrap.UA
 		}
 		switch t := strings.TrimSpace(string(wrap.Teams)); {
 		case strings.HasPrefix(t, "["):

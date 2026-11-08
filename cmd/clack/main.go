@@ -78,6 +78,8 @@ func main() {
 	// Last line of defence: no token or cookie reaches the log, whatever
 	// an error string quotes.
 	log.SetOutput(slack.RedactWriter(os.Stderr))
+	// Every request to Slack names this build: "Clack/<version> (+…)".
+	slack.SetVersion(version)
 	// Finder on old macOS versions passes -psn_<n>; the flag package
 	// would reject it.
 	args := os.Args[:1]
@@ -196,7 +198,6 @@ func main() {
 	connect := func(creds slack.Creds) {
 		c := slack.New(creds)
 		if creds.Desktop() {
-			slack.SetPublicUserAgent(slack.DesktopUserAgent())
 			c.PersistSession(func(nc slack.Creds) error {
 				liveMu.Lock()
 				defer liveMu.Unlock()
@@ -205,8 +206,6 @@ func main() {
 				}
 				return slack.WriteCreds(*credsPath, nc)
 			})
-		} else {
-			slack.SetPublicUserAgent("")
 		}
 		setLive(c)
 		st := store.New(cacheDir)
@@ -384,9 +383,6 @@ func loginCLI(path, workspace string) error {
 	si.Token = askSecret("Token (xoxc-…): ")
 	si.OrgToken = askSecret("Org token (xoxc-…, optional, Enterprise Grid only): ")
 	si.Cookie = askSecret("d cookie (xoxd-…): ")
-	fmt.Println("Clack shares that browser's session. Slack can sign it out everywhere if it sees it from what looks like another browser,")
-	fmt.Println("so give Clack the same browser's user agent (run navigator.userAgent in its DevTools console).")
-	si.UserAgent = ask("User agent (Mozilla/5.0 …, recommended): ")
 	creds, err := slack.SignIn(context.Background(), si)
 	if err != nil {
 		return err
