@@ -458,12 +458,6 @@ func propsID(p slackc.Props) uintptr {
 	return reflect.ValueOf(p).Pointer()
 }
 
-// sameOverride reports a plugin's msg override that is the one already
-// applied, decoded again from a later tree (same content, new maps).
-func sameOverride(msg, applied slackc.Props) bool {
-	return msg != nil && applied != nil && reflect.DeepEqual(msg, applied)
-}
-
 // applySlackMessage returns src with the sender, blocks and attachments a
 // plugin set on msg (ShowRealUser's relay-bot fix rewrites user, drops
 // bot_id/username/icons and rewrites forwarded attachments' authors).

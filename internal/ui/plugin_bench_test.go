@@ -42,6 +42,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -79,7 +80,9 @@ type benchEnv struct {
 	mu         sync.Mutex
 	trees      map[uint64][]byte
 	deliveries int
+	same       int // deliveries identical to the root's previous tree
 	perRoot    map[uint64]int
+	calls      benchCalls
 	styles     map[string]string
 	doc        []byte
 	nextRoot   uint64
@@ -179,6 +182,9 @@ func benchStart(t *testing.T, fs *fakeslack.Server) *benchEnv {
 
 func (e *benchEnv) record(root uint64, tree []byte) {
 	e.mu.Lock()
+	if bytes.Equal(e.trees[root], tree) {
+		e.same++
+	}
 	e.trees[root] = append([]byte(nil), tree...)
 	e.deliveries++
 	if e.perRoot == nil {
@@ -381,7 +387,9 @@ func (e *benchEnv) idle(d time.Duration) (deliveries, wakeups int, cpuPerSec flo
 	e.settle(time.Second)
 	e.mu.Lock()
 	before := maps.Clone(e.perRoot)
+	same0 := e.same
 	e.mu.Unlock()
+	c0 := e.calls.snapshot()
 	n0 := e.delivered()
 	for dl := time.Now().Add(d); time.Now().Before(dl); {
 		e.frame()
@@ -399,12 +407,13 @@ func (e *benchEnv) idle(d time.Duration) (deliveries, wakeups int, cpuPerSec flo
 				again[r] = e.trees[r]
 			}
 		}
-		e.t.Logf("idle: %d deliveries to %d roots: %s", deliveries, len(again), idleShapes(again))
+		e.t.Logf("idle: %d deliveries (%d identical to the root's last) to %d roots: %s; Go→JS meanwhile: %s",
+			deliveries, e.same-same0, len(again), idleShapes(again), e.calls.since(c0))
 		e.mu.Unlock()
 	}
-	c0 := procCPU()
+	cpu0 := procCPU()
 	time.Sleep(2 * time.Second)
-	cpuPerSec = float64((procCPU() - c0).Microseconds()) / 1000 / 2
+	cpuPerSec = float64((procCPU() - cpu0).Microseconds()) / 1000 / 2
 	return
 }
 
@@ -506,26 +515,25 @@ func (e *benchEnv) typingSilenced() bool {
 	return calls == 0
 }
 
-// notificationShown dispatches showNotification and reports whether the
-// native showed it with its text (a plugin may drop it, or pass it on
-// without the message: both silence what it says).
-func (e *benchEnv) notificationShown(title, msg string) bool {
-	type args struct {
-		Title   string `json:"title"`
-		Message string `json:"message"`
-		Channel string `json:"channel,omitempty"`
-	}
-	shown := 0
-	native := func(ctx context.Context, a args) (any, error) {
-		if a.Message != "" {
-			shown++
+// notificationShown sends a new message's notification the way Clack
+// does (backend.go: showNotification with the Slack message, then
+// notificationText) and reports whether the desktop notification would
+// show text: a plugin may drop it or blank the message.
+func (e *benchEnv) notificationShown(ch, user, text string) bool {
+	ts := fmt.Sprintf("%d.%06d", time.Now().Unix(), time.Now().Nanosecond()/1000)
+	msg := map[string]any{"type": "message", "channel": ch, "ts": ts, "text": text, "user": user}
+	args := map[string]any{"title": "Bench", "message": msg, "body": text, "channelId": ch, "ts": ts}
+	shown := false
+	native := func(ctx context.Context, a map[string]any) (any, error) {
+		if _, t, ok := notificationText(a, msg, text); ok && t != "" {
+			shown = true
 		}
 		return nil, nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, _ = taut.Dispatch(ctx, e.tt, "showNotification", args{title, msg, fakeslack.BenchSlackbotDMID}, native)
-	return shown > 0
+	_, _ = taut.Dispatch(ctx, e.tt, "showNotification", args, native)
+	return shown
 }
 
 var fnRef = regexp.MustCompile(`"onClick":\{"\$fn":(\d+)\}`)
@@ -589,7 +597,8 @@ var benchScenarios = map[string]benchScenario{
 					return false
 				})
 				if !ok {
-					return false, "no tree with " + want + " after opening the thread"
+					return false, fmt.Sprintf("no new tree with %s after opening the thread (pane %v, ThreadSenderAndTimestampGeneric patched %v, %d trees)",
+						want, e.a.secondary.kind == secThread, slackc.Patched("ThreadSenderAndTimestampGeneric"), len(e.trees))
 				}
 				return true, ""
 			}},
@@ -718,6 +727,7 @@ var benchScenarios = map[string]benchScenario{
 			}},
 			{"a haiku is held for a confirmation", func(e *benchEnv) (bool, string) {
 				text := "an old silent pond a frog jumps into the pond splash silence again"
+				e.settle(3 * time.Second) // Taut's syllable dictionary loads from GitHub at start
 				done := make(chan bool, 1)
 				go func() {
 					ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
@@ -832,10 +842,10 @@ var benchScenarios = map[string]benchScenario{
 				if l, ok := hasLabel(items, re); ok {
 					return true, "channel menu: " + l
 				}
-				if e.tt.ThunkPatched("joinChannel") {
+				if e.tt.ThunkPatched("joinChannel") || e.tt.ThunkPatched("joinCodeChannel") {
 					return true, "joins from channel links (patches joinChannel)"
 				}
-				return false, labels(items)
+				return false, "menu: " + labels(items)
 			}},
 		},
 		notes: "Taut's adds Join channel to the channel menu; Slick's joins from a link to the channel (double-click, hover card). The check passes on either.",
@@ -887,10 +897,10 @@ var benchScenarios = map[string]benchScenario{
 				return ok, "marked: " + e.fs.Marked(fakeslack.BenchSlackbotDMID)
 			}},
 			{"its notification is silenced, others aren't", func(e *benchEnv) (bool, string) {
-				if e.notificationShown("Slackbot", slackbotNotice) && e.notificationShown("Slackbot", "A new slash command /deploy was added to this workspace by Bob.") {
+				if e.notificationShown(fakeslack.BenchSlackbotDMID, fakeslack.SlackbotID, slackbotNotice) {
 					return false, "the notice's notification was shown"
 				}
-				if !e.notificationShown("alice", "lunch?") {
+				if !e.notificationShown(fakeslack.BenchSlackbotDMID, fakeslack.SlackbotID, "your reminder: lunch") {
 					return false, "an ordinary notification was dropped"
 				}
 				return true, ""
@@ -945,7 +955,7 @@ var benchScenarios = map[string]benchScenario{
 				return ok, ""
 			}},
 			{"notifications are silenced", func(e *benchEnv) (bool, string) {
-				ok := e.wait(5*time.Second, func() bool { return !e.notificationShown("alice", "secret dm") })
+				ok := e.wait(5*time.Second, func() bool { return !e.notificationShown(fakeslack.BenchSlackbotDMID, e.c.Authors[0], "secret dm") })
 				return ok, ""
 			}},
 		},
@@ -1162,6 +1172,8 @@ func benchVariant(t *testing.T, ix *pluginlib.Index, entry pluginlib.Entry, sc b
 		t.Fatal(err)
 	}
 
+	e.settle(300 * time.Millisecond)
+	slackc.SetBridge(countingBridge{e.tt.Bridge(), &e.calls}) // the runtime is up: Attached has run
 	e.openBench()
 	e.loadAll()
 	t.Logf("%s %s: %d messages loaded", entry.System, entry.ID, e.loadedMessages(fakeslack.BenchChannelID))
@@ -1365,4 +1377,58 @@ func idleShapes(trees map[uint64][]byte) string {
 	}
 	sort.Strings(out)
 	return strings.Join(out, " ")
+}
+
+// benchCalls counts what the UI asks of the plugin runtime (diagnostics:
+// whether an idle re-render starts in Go or in JS).
+type benchCalls struct {
+	render, renderIn, renderFn, rects, dispatch, unmount atomic.Int64
+}
+
+type benchCallCounts [6]int64
+
+func (c *benchCalls) snapshot() benchCallCounts {
+	return benchCallCounts{c.render.Load(), c.renderIn.Load(), c.renderFn.Load(), c.rects.Load(), c.dispatch.Load(), c.unmount.Load()}
+}
+
+func (c *benchCalls) since(b benchCallCounts) string {
+	n := c.snapshot()
+	return fmt.Sprintf("Render %d RenderIn %d RenderFn %d SetRects %d Dispatch %d Unmount %d",
+		n[0]-b[0], n[1]-b[1], n[2]-b[2], n[3]-b[3], n[4]-b[4], n[5]-b[5])
+}
+
+// countingBridge is the plugin bridge, counted.
+type countingBridge struct {
+	*taut.Bridge
+	c *benchCalls
+}
+
+func (b countingBridge) Render(root uint64, name string, props []byte) {
+	b.c.render.Add(1)
+	b.Bridge.Render(root, name, props)
+}
+
+func (b countingBridge) RenderIn(root, parent uint64, parentK int64, name string, props []byte) {
+	b.c.renderIn.Add(1)
+	b.Bridge.RenderIn(root, parent, parentK, name, props)
+}
+
+func (b countingBridge) RenderFn(root uint64, fn int64, args []byte) {
+	b.c.renderFn.Add(1)
+	b.Bridge.RenderFn(root, fn, args)
+}
+
+func (b countingBridge) SetRects(r map[int64][4]float32) {
+	b.c.rects.Add(1)
+	b.Bridge.SetRects(r)
+}
+
+func (b countingBridge) Dispatch(target int64, ev []byte) {
+	b.c.dispatch.Add(1)
+	b.Bridge.Dispatch(target, ev)
+}
+
+func (b countingBridge) Unmount(root uint64) {
+	b.c.unmount.Add(1)
+	b.Bridge.Unmount(root)
 }
