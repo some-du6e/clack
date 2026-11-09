@@ -48,6 +48,9 @@ type Size struct {
 	Usergroups int
 	History    int // messages per channel (conversations.history pages through them)
 	Unread     int // channels with unreads (core prefetches these)
+	// Gallery adds #blockkit-gallery (GalleryChannelID, bkgallery.go):
+	// every Block Kit fixture, from each area's gallery file.
+	Gallery bool
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -181,6 +184,10 @@ type Server struct {
 
 	histMu sync.Mutex
 	hist   map[string][]slack.Message // channel -> all messages, newest first
+
+	bkMu      sync.Mutex
+	bkActions []BlockActionCall // blocks.actions, in order (bkgallery_elements.go)
+	bkSuggest []url.Values      // blocks.suggestions forms
 
 	// Calls counts requests per method (atomic adds).
 	callsMu sync.Mutex
@@ -348,6 +355,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 		imgs: map[string][]byte{}, hist: map[string][]slack.Message{}, Calls: map[string]*atomic.Int64{},
 		prefs: DefaultPrefs(), drafts: map[string]*Draft{}, files: map[string]*UploadedFile{}}
 	s.generate()
+	if sz.Gallery {
+		s.addGallery()
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", s.api)
 	mux.HandleFunc("/img/", s.img)
@@ -752,6 +762,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return out
 	}
 	if out, handled := s.handleSections(method, f); handled { // sections.go
+		return out
+	}
+	if out, handled := s.handleBlockActions(method, f); handled { // bkgallery_elements.go
 		return out
 	}
 	switch method {

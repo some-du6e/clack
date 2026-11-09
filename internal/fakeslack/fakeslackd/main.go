@@ -20,6 +20,7 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:8930", "listen address (loopback)")
 	creds := flag.String("creds", "", "write credentials for the fake here")
 	small := flag.Bool("small", false, "small workspace instead of Hack Club sized")
+	gallery := flag.Bool("gallery", false, "add #blockkit-gallery (every Block Kit fixture)")
 	flag.Parse()
 	ln, err := net.Listen("tcp", *addr)
 	if err != nil {
@@ -29,6 +30,7 @@ func main() {
 	if *small {
 		sz = fakeslack.Small
 	}
+	sz.Gallery = *gallery
 	s := fakeslack.Serve(ln, sz)
 	if *creds != "" {
 		if err := s.WriteCreds(*creds); err != nil {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"image"
 	"log"
 	"sync"
@@ -16,13 +17,19 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
 // maxVisible is how many elements of an actions block a message shows
-// before "+ N more" (Slack's renderer).
-const maxVisible = 5
+// before "+ N more", and truncateAt how many it takes to truncate: Slack's
+// Actions block shows every element up to six and, from seven, the first
+// five and "+ {len-5} more".
+const (
+	maxVisible = 5
+	truncateAt = 7
+)
 
 // attachment is a legacy attachment's interactive parts.
 type attachment struct {
@@ -83,10 +90,15 @@ type Message struct {
 	ws     map[string]*ew
 	legacy map[*ew]*legacyRef
 	more   map[string]bool   // actions block expanded
-	errs   map[string]string // block id (or "att:N") → action error
-	ver    atomic.Uint32
-	gtx    layout.Context
-	ops    op.Ops
+	errs   map[string]string // block id (or "att:N") → the failed action's server message ("" for none)
+	busy   map[string]int    // block id (or "att:N") → actions in flight
+	errTap map[string]*tap   // the warning icon (hover shows the message)
+	tips   map[string]*popups.TipState
+	// statusAt is where block bid's status icons were drawn in its slot.
+	statusAt map[string]image.Point
+	ver      atomic.Uint32
+	gtx      layout.Context
+	ops      op.Ops
 }
 
 type legacyRef struct {
@@ -150,6 +162,10 @@ func (me *Message) setMessage(m *core.Message) {
 	me.legacy = map[*ew]*legacyRef{}
 	me.more = map[string]bool{}
 	me.errs = map[string]string{}
+	me.busy = map[string]int{}
+	me.errTap = map[string]*tap{}
+	me.tips = map[string]*popups.TipState{}
+	me.statusAt = map[string]image.Point{}
 	me.ver.Add(1)
 }
 
@@ -184,7 +200,37 @@ func (me *Message) channel() string {
 	return me.m.Channel
 }
 func (me *Message) modal() bool { return false }
-func (me *Message) changed()    { me.ver.Add(1); me.h.Invalidate() }
+
+// loading reports an action of block bid in flight.
+func (me *Message) loading(bid string) bool {
+	if me.busy[bid] > 0 {
+		return true
+	}
+	for w, lr := range me.legacy {
+		if w.bid == bid && me.busy["att:"+itoa(lr.att.ID)] > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// begin marks block key loading and clears its error; the returned func
+// settles it (Slack's useBlockKitInteractiveState).
+func (me *Message) begin(key string) func(err error) {
+	delete(me.errs, key)
+	me.busy[key]++
+	me.changed()
+	return func(err error) {
+		if me.busy[key]--; me.busy[key] <= 0 {
+			delete(me.busy, key)
+		}
+		if err != nil {
+			me.errs[key] = serverMessage(err)
+		}
+		me.changed()
+	}
+}
+func (me *Message) changed() { me.ver.Add(1); me.h.Invalidate() }
 func (me *Message) base() core.BlockAction {
 	return me.h.Core().Interactive().MessageContainer(&me.m, 0)
 }
@@ -207,11 +253,11 @@ func (me *Message) fire(w *ew, action json.RawMessage, done func(error)) {
 	key := w.bid
 	if lr := me.legacy[w]; lr != nil {
 		key = "att:" + itoa(lr.att.ID)
-		delete(me.errs, key)
-		me.sendLegacy(w, lr, done)
+		settle := me.begin(key)
+		me.sendLegacy(w, lr, func(err error) { settle(err); done(err) })
 		return
 	}
-	delete(me.errs, key)
+	settle := me.begin(key)
 	attID := 0
 	if a := me.attOf(w.bid); a != nil {
 		attID = a.ID
@@ -220,9 +266,7 @@ func (me *Message) fire(w *ew, action json.RawMessage, done func(error)) {
 	b.Action = action
 	b.State = me.vals.JSON(true)
 	sendAction(me.h, b, func(err error) {
-		if err != nil {
-			me.errs[key] = errMessage(err)
-		}
+		settle(err)
 		done(err)
 	})
 }
@@ -252,13 +296,9 @@ func (me *Message) sendLegacy(w *ew, lr *legacyRef, done func(error)) {
 	if me.m.BotProfile != nil {
 		x.BotUserID = me.m.BotProfile.UserID
 	}
-	key := "att:" + itoa(lr.att.ID)
 	run(me.h, 15*time.Second, func(ctx context.Context) (string, error) {
 		return ix.AttachmentActionSend(ctx, x)
 	}, func(_ string, err error) {
-		if err != nil {
-			me.errs[key] = errMessage(err)
-		}
 		done(err)
 	})
 }
@@ -357,10 +397,13 @@ func (me *Message) ElementsSize(bs []richtext.Button, maxW int, accessory bool, 
 		if w == nil {
 			return image.Point{}, false
 		}
-		if stacks(w.e) {
-			return image.Pt(maxW, w.size(gtx, maxW, true).Y+me.errH(gtx, w.bid)), true
+		if stacks(w.e) && !w.dialogMulti() {
+			return image.Pt(maxW, w.size(gtx, maxW, true).Y+me.statusRowH(gtx, w.bid)), true
 		}
 		sz := w.size(gtx, maxW/2, true)
+		if iw := me.statusW(gtx, w.bid, maxW); iw > 0 {
+			sz.X += iw
+		}
 		return sz, false
 	}
 	return me.run(gtx, bs, maxW, false), false
@@ -375,26 +418,127 @@ func (me *Message) LayoutElements(gtx layout.Context, bs []richtext.Button, acce
 			return D{Size: sz}
 		}
 		esz := sz
-		if stacks(w.e) {
-			esz.Y -= me.errH(gtx, w.bid)
+		if stacks(w.e) && !w.dialogMulti() {
+			// checkboxes / radios: the status icons go under the options
+			esz.Y -= me.statusRowH(gtx, w.bid)
+			w.slot = image.Point{}
+			w.layout(fixed(gtx, esz), esz)
+			at(gtx, image.Pt(0, esz.Y+dp(gtx, 4)), func(gtx C) D { me.status(gtx, w.bid, sz.X, dp(gtx, 20)); return D{} })
+			return D{Size: sz}
 		}
+		// a section accessory: the icons sit before the element
+		if iw := me.statusW(gtx, w.bid, sz.X); iw > 0 {
+			esz.X -= iw
+			me.status(gtx, w.bid, iw, esz.Y)
+			w.slot = image.Pt(iw, 0)
+			at(gtx, image.Pt(iw, 0), func(gtx C) D { return w.layout(fixed(gtx, esz), esz) })
+			return D{Size: sz}
+		}
+		w.slot = image.Point{}
 		w.layout(fixed(gtx, esz), esz)
-		if msg := me.errs[w.bid]; msg != "" && stacks(w.e) {
-			at(gtx, image.Pt(0, esz.Y+dp(gtx, 4)), func(gtx C) D {
-				return errorLine(gtx, me.h.Theme(), colorsOf(me.h.Theme()), sz.X, msg)
-			})
-		}
 		return D{Size: sz}
 	}
 	me.run(gtx, bs, sz.X, true)
 	return D{Size: sz}
 }
 
-func (me *Message) errH(gtx C, bid string) int {
-	if me.errs[bid] != "" {
+// statusW is the width of block bid's status icons (spinner, warning
+// with a known error's text) plus their 8px gap; 0 when idle.
+func (me *Message) statusW(gtx C, bid string, maxW int) int {
+	w := 0
+	if me.busy[bid] > 0 {
+		w += dp(gtx, 20)
+	}
+	if msg, ok := me.errs[bid]; ok {
+		if w > 0 {
+			w += dp(gtx, 4)
+		}
+		w += dp(gtx, 16)
+		if t := knownActionError(msg); t != "" {
+			w += dp(gtx, 4) + measure(gtx, me.h.Theme(), 13, theme.Regular, t)
+		}
+	}
+	if w == 0 {
+		return 0
+	}
+	return min(w+dp(gtx, 8), maxW)
+}
+
+func (me *Message) statusRowH(gtx C, bid string) int {
+	if me.statusW(gtx, bid, 1<<20) > 0 {
 		return dp(gtx, 24)
 	}
 	return 0
+}
+
+// status draws block bid's icons in a w×h slot (vertically centred):
+// Slack's p-block-kit-element__loading spinner while its action is in
+// flight, and after a failure the p-block_kit_element__error warning,
+// whose tooltip is the server's message (none without one) and whose
+// text is shown only for the errors Slack knows (action_disabled, …).
+func (me *Message) status(gtx C, bid string, w, h int) {
+	th := me.h.Theme()
+	cl := colorsOf(th)
+	x := 0
+	if me.busy[bid] > 0 {
+		s := dp(gtx, 20)
+		at(gtx, image.Pt(x, (h-s)/2), func(gtx C) D { spinner(gtx, s, cl.Text2); return D{} })
+		x += s + dp(gtx, 4)
+	}
+	msg, ok := me.errs[bid]
+	if !ok {
+		return
+	}
+	is := dp(gtx, 16)
+	t := me.errTap[bid]
+	if t == nil {
+		t = &tap{}
+		me.errTap[bid] = t
+	}
+	tip := me.tips[bid]
+	if tip == nil {
+		tip = &popups.TipState{MaxWidth: 200}
+		me.tips[bid] = tip
+	}
+	at(gtx, image.Pt(x, (h-is)/2), func(gtx C) D {
+		icon(gtx, "warning", 16, cl.ErrorText)
+		t.clicked(gtx, me.h)
+		t.add(gtx, image.Pt(is, is))
+		if msg != "" {
+			popups.Tooltip(gtx, th, tip, t.g.Hovered(), image.Pt(is, is), popups.Above, firstNonEmpty(knownActionError(msg), msg), "")
+		}
+		return D{}
+	})
+	if kt := knownActionError(msg); kt != "" {
+		at(gtx, image.Pt(x+is+dp(gtx, 4), 0), func(gtx C) D {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(max(0, w-x-is-dp(gtx, 4)), h)}
+			return vcenter(gtx, h, func(gtx C) D { return label(gtx, th, 13, theme.Regular, cl.ErrorText, kt) })
+		})
+	}
+}
+
+// knownActionError is getKnownActionErrorMessage: the text Slack shows
+// beside the warning for the error messages it knows.
+func knownActionError(msg string) string {
+	switch msg {
+	case "workflow_shutdown":
+		return "Legacy workflows are no longer available."
+	case "seamless_user_not_mapped":
+		return "You don’t have access to customer management"
+	case "action_disabled":
+		return "This action isn’t available"
+	}
+	return ""
+}
+
+// serverMessage is what an action error leaves for the tooltip: the
+// response's message field (data.message in Slack's client).
+func serverMessage(err error) string {
+	var ae *core.ActionError
+	if errors.As(err, &ae) {
+		return ae.Server
+	}
+	return ""
 }
 
 // run lays out (and with draw, paints) an actions block / attachment
@@ -418,7 +562,7 @@ func (me *Message) run(gtx C, bs []richtext.Button, maxW int, draw bool) image.P
 	n := len(ws)
 	expanded := me.more[bid]
 	hidden := 0
-	if n > maxVisible && !expanded {
+	if n >= truncateAt && !expanded {
 		hidden = n - maxVisible
 		n = maxVisible
 	}
@@ -443,13 +587,14 @@ func (me *Message) run(gtx C, bs []richtext.Button, maxW int, draw bool) image.P
 		if sz.X == 0 {
 			continue
 		}
-		place(sz, func(gtx C) { w.layout(gtx, sz) })
+		place(sz, func(gtx C) { w.slot = image.Pt(x, y); w.layout(gtx, sz) })
 	}
 	if hidden > 0 {
 		txt := "+ " + itoa(hidden) + " more"
 		sz := image.Pt(measure(gtx, th, 13, theme.Bold, txt)+2*dp(gtx, 12), dp(gtx, 28))
 		mw := ws[0]
 		place(sz, func(gtx C) {
+			mw.moreAt = image.Pt(x, y)
 			if mw.more.clicked(gtx, me.h) {
 				me.more[bid] = true
 				me.changed()
@@ -458,14 +603,15 @@ func (me *Message) run(gtx C, bs []richtext.Button, maxW int, draw bool) image.P
 			mw.more.add(gtx, sz)
 		})
 	}
-	h := y + rowH
-	if msg := me.errs[bid]; msg != "" {
-		if draw {
-			at(gtx, image.Pt(0, h+dp(gtx, 4)), func(gtx C) D { return errorLine(gtx, th, colorsOf(th), maxW, msg) })
-		}
-		h += dp(gtx, 24)
-		wMax = maxW
+	// the block's status icons follow its elements (p-action_block__icons)
+	if iw := me.statusW(gtx, bid, maxW); iw > 0 {
+		lh := rowH
+		place(image.Pt(iw-gap, max(lh, dp(gtx, 28))), func(gtx C) {
+			me.statusAt[bid] = image.Pt(x, y)
+			me.status(gtx, bid, iw-gap, max(lh, dp(gtx, 28)))
+		})
 	}
+	h := y + rowH
 	return image.Pt(max(wMax, 1), h)
 }
 

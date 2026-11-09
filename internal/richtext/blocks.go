@@ -438,6 +438,9 @@ func (c *builder) element(e *bk, blockID string) (Button, bool) {
 		}
 	case "overflow":
 		btn.Text = "⋮"
+	case "icon_button":
+		// drawn by blockkit (a 28px icon with the text as its tooltip)
+		btn.Text = PlainText(Doc{Blocks: []Block{{Kind: Paragraph, Spans: c.textSpans(e.textObj())}}})
 	case "static_select", "external_select", "users_select", "conversations_select", "channels_select",
 		"multi_static_select", "multi_external_select", "multi_users_select", "multi_conversations_select", "multi_channels_select":
 		btn.Kind = "select"

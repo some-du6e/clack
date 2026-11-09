@@ -152,6 +152,10 @@ type BlockAction struct {
 type ActionError struct {
 	Code    string // Slack's error code (post_error, invalid_container, …)
 	Message string // human text, e.g. "App took too long to respond…"
+	// Server is the response's own "message" field ("" when it had
+	// none): Slack's actions block shows exactly that as the warning
+	// icon's tooltip, and no tooltip without it.
+	Server string
 }
 
 func (e *ActionError) Error() string {
@@ -632,7 +636,7 @@ func actionErr(err error) error {
 			Message string `json:"message"`
 		}
 		if json.Unmarshal(se.Body, &body) == nil && body.Message != "" {
-			ae.Message = body.Message
+			ae.Message, ae.Server = body.Message, body.Message
 		}
 		return ae
 	}
