@@ -109,6 +109,9 @@ var defaultExperimentGroups = map[string]string{
 	"sidebar_section_search": "on", "add_channels_channel_sections_slackathon": "on", "mute_channel_edu": "on",
 	// code channels (codechannel.go), as experiments.getByUser had them on 2026-11-08
 	"session_channels": "on", "session_channel_views": "on", "code_channels_naming": "on",
+	// Advanced > "Enable smart quotes and symbols" shows in the live dialog
+	// (iZ.w gates it), so composer_smart_symbols is on
+	"composer_smart_symbols": "on",
 }
 
 func (a *App) sidebarExperiments() sidebarExp {

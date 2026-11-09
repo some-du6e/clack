@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -206,3 +207,60 @@ func (a *App) TeamURL() string {
 	}
 	return "https://" + d + ".slack.com/"
 }
+
+// WorkflowAppAuth is one app in Preferences > Connected accounts > "Apps
+// connected through workflows" (apps.auth.external.userAuths.get apps).
+type WorkflowAppAuth struct {
+	AppID, Name, Icon string
+}
+
+// WorkflowAppAuths is Slack's fetchUserAuth (reason fetch_user_auth):
+// the third-party accounts the viewer set up through workflows, by app.
+func (a *App) WorkflowAppAuths(ctx context.Context) ([]WorkflowAppAuth, error) {
+	var r struct {
+		Apps map[string]struct {
+			AppName    string `json:"app_name"`
+			AppIconURL string `json:"app_icon_url"`
+		} `json:"apps"`
+	}
+	if err := a.C.Call(ctx, "apps.auth.external.userAuths.get", url.Values{"reason": {"fetch_user_auth"}}, &r); err != nil {
+		return nil, err
+	}
+	out := make([]WorkflowAppAuth, 0, len(r.Apps))
+	for id, ap := range r.Apps {
+		out = append(out, WorkflowAppAuth{AppID: id, Name: ap.AppName, Icon: ap.AppIconURL})
+	}
+	slices.SortFunc(out, func(x, y WorkflowAppAuth) int {
+		return strings.Compare(strings.ToLower(x.Name), strings.ToLower(y.Name))
+	})
+	return out, nil
+}
+
+// EmailVerified is users.emailVerificationStatus.get is_verified (Privacy
+// & visibility lists blocked invitations only for a verified email).
+func (a *App) EmailVerified(ctx context.Context) (bool, error) {
+	var r struct {
+		IsVerified bool `json:"is_verified"`
+	}
+	err := a.C.Call(ctx, "users.emailVerificationStatus.get", url.Values{"reason": {"privacy-visibility/use-email-verification-status"}}, &r)
+	return r.IsVerified, err
+}
+
+// BlockedInviteEmails is users.listIgnoredUsers emails: the people whose
+// Slack Connect invitations the viewer blocked.
+func (a *App) BlockedInviteEmails(ctx context.Context) ([]string, error) {
+	var r struct {
+		Emails []string `json:"emails"`
+	}
+	err := a.C.Call(ctx, "users.listIgnoredUsers", url.Values{"reason": {"privacy-visibility/use-blocked-emails-list"}}, &r)
+	return r.Emails, err
+}
+
+// UnblockInvites is users.removeUserBlock: invitations from email arrive
+// again.
+func (a *App) UnblockInvites(ctx context.Context, email string) error {
+	return a.C.Call(ctx, "users.removeUserBlock", url.Values{"email": {email}, "reason": {"privacy-visibility/remove-user-block"}}, nil)
+}
+
+// HiddenUsers is users.prefs hidden_users (People you've hidden).
+func (a *App) HiddenUsers() []string { return SearchExcludedChannels(a.PrefString("hidden_users")) }

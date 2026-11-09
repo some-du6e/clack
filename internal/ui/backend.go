@@ -144,8 +144,12 @@ func (b *backend) maybePresencePrompt(a *App) {
 	if !b.core.PrefBool("confirm_user_marked_away", false) { // !0!==pref: only when Slack sent true
 		return
 	}
+	parent := b.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
 	go func() {
-		ctx, cancel := context.WithTimeout(b.ctx, 15*time.Second)
+		ctx, cancel := context.WithTimeout(parent, 15*time.Second)
 		defer cancel()
 		away, err := b.core.ManuallyAway(ctx)
 		if err != nil || !away {
@@ -156,7 +160,7 @@ func (b *backend) maybePresencePrompt(a *App) {
 				if !b.m.SelfActive {
 					b.togglePresence()
 				} else {
-					go func() { _ = b.core.SetPresence(b.ctx, "auto") }()
+					go func() { _ = b.core.SetPresence(parent, "auto") }()
 				}
 			})
 		})

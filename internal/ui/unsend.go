@@ -20,8 +20,8 @@ func (a *App) UnsendLast(ch, threadTS string, put func(*composer.Doc)) {
 		return
 	}
 	svc := a.data.core
-	self := a.model().SelfID
 	go func() {
+		self := svc.S.SelfID()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		m, ok := lastOwnMessage(ctx, svc, ch, threadTS, self)

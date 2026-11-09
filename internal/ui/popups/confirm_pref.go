@@ -179,3 +179,14 @@ func ConfirmPrefModal(h Host, title, body, cancel, action, dontShow, pref string
 		return prefCheckRow(h, &box, dontShow, func() bool { return off })(gtx)
 	}, onOK)
 }
+
+// PressDefault presses the modal's last enabled button (what Enter does
+// with EnterSubmits): the confirmation's action.
+func (m *Modal) PressDefault() {
+	for i := len(m.o.Buttons) - 1; i >= 0; i-- {
+		if b := m.o.Buttons[i]; b.enabled() {
+			m.press(b)
+			return
+		}
+	}
+}

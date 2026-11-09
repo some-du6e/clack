@@ -296,6 +296,38 @@ func (f *prefsForm) listRow(key, avatar, name, action string, do func()) {
 	f.y += rh + gtx.Dp(4)
 }
 
+// listRowIcon is a 36px row (an avatar when given, the name) with
+// Slack's times-circle icon button at the right (aria-label label):
+// Privacy & visibility's blocked invitations and hidden people.
+func (f *prefsForm) listRowIcon(key, avatar, name, label string, do func()) {
+	gtx, a := f.gtx, f.p.a
+	c := &a.th.C
+	f.record("list", "row."+key, name+" · "+label, false, true)
+	rh := gtx.Dp(36)
+	x := 0
+	if avatar != "" {
+		s := gtx.Dp(24)
+		at(gtx, image.Pt(0, f.y+(rh-s)/2), image.Pt(s, s), func(gtx layout.Context) layout.Dimensions {
+			return a.avatar(gtx, avatar, name, s, gtx.Dp(6))
+		})
+		x = s + gtx.Dp(10)
+	}
+	at(gtx, image.Pt(x, f.y), image.Pt(f.w-x-gtx.Dp(40), rh), func(gtx layout.Context) layout.Dimensions {
+		return vcenter(gtx, rh, func(gtx layout.Context) layout.Dimensions {
+			return a.th.Label(gtx, 15, theme.Bold, c.Fg, name)
+		})
+	})
+	b := f.p.btn("row." + key)
+	at(gtx, image.Pt(f.w-gtx.Dp(28), f.y+(rh-gtx.Dp(24))/2), image.Pt(gtx.Dp(24), gtx.Dp(24)), func(gtx layout.Context) layout.Dimensions {
+		return iconButton(gtx, b, "x-circle", 24, 18, c.FgMuted, c.BgHover, 6)
+	})
+	if clicked(b) && do != nil {
+		do()
+		a.Invalidate()
+	}
+	f.y += rh + gtx.Dp(4)
+}
+
 // notifyCheck is a checkbox bound to a global notification pref
 // (all_notifications_prefs.global, def when absent), written with
 // users.prefs.setNotifications like Slack's NotificationsGlobalPrefCheckbox.

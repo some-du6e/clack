@@ -575,8 +575,10 @@ func (p *prefsModal) audioVideoPage(f *prefsForm) {
 	// Set my status "In a huddle" is on Availability (availability_prefs_section)
 	f.subheading("When joining a huddle…")
 	f.check("huddles_mute_by_default", "Mute my microphone", "", false, false)
-	f.off("huddles_cc_by_default", "Automatically turn on captions when you’re in a huddle", "", p.prefBool("huddles_cc_by_default", false), false)
-	f.off("huddles_show_shouty_rooster", "Send a warning if you’re starting a huddle in a channel with more than 150 members", "", p.prefBool("huddles_show_shouty_rooster", true), false)
+	// a joined huddle starts with captions shown (huddleui options → huddle.Options.Captions)
+	f.check("huddles_cc_by_default", "Automatically turn on captions when you’re in a huddle", "", false, false)
+	// "Start a huddle in this channel?" over 150 members (huddleui.Controller.shoutyRooster)
+	f.check("huddles_show_shouty_rooster", "Send a warning if you’re starting a huddle in a channel with more than 150 members", "", true, false)
 	f.off("video_background_filter", "Blur your video background when you’re in a huddle with your camera on", "", false, false)
 	f.off("huddles_show_join_preview", "Show audio and video preview", "", p.prefBool("huddles_show_join_preview", true), false)
 	f.na()
@@ -612,7 +614,7 @@ func (p *prefsModal) connectedPage(f *prefsForm) {
 	f.gap()
 	f.subheading("Apps connected through workflows")
 	f.muted("Accounts from third-parties that you setup while creating and using workflows, functions, and apps", false)
-	f.muted("Listing connected accounts: "+naNote, false)
+	p.connectedList(f) // apps.auth.external.userAuths.get (prefs_lists.go)
 }
 
 // ---- Privacy & visibility ----
@@ -640,7 +642,7 @@ func (p *prefsModal) privacyPage(f *prefsForm) {
 	f.radio("who_can_see_account_by_searching_email", "NO_ONE", "No one", "")
 	f.subheading("Preferences only apply to this workspace")
 	f.muted("To make sure no one can search for you, you’ll need to change this preference across all your workspaces.", false)
-	f.button("find_workspaces", "Find my workspaces", false, nil)
+	f.button("find_workspaces", "Find my workspaces", true, func() { prefsOpenURL(findWorkspacesURL) })
 	f.hr()
 	f.subheading("Contact sharing")
 	f.para("Choose who’s allowed to share your contact info — so they can introduce you to people outside " + team + ".")
@@ -651,12 +653,12 @@ func (p *prefsModal) privacyPage(f *prefsForm) {
 	f.hr()
 	f.subheading("Invitations you’ve blocked")
 	f.para("You’ve stopped receiving Slack Connect invitations from these people.")
-	f.muted("Listing them needs a verified email address: "+naNote, false)
+	p.blockedSection(f)
 	f.hr()
 	f.subheading("People you’ve hidden")
 	f.para("You won’t get notifications or see messages from these people.")
 	f.link("hidden_help", "Learn more", slackHelp("16905395872019"))
-	f.muted("Listing them: "+naNote, false)
+	p.hiddenSection(f)
 }
 
 // ---- Advanced ----

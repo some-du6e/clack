@@ -43,6 +43,7 @@ type prefsModal struct {
 	mobileOvr *bool                     // Notifications > "Set up mobile overrides" (nil: on when the levels differ)
 	nav       reorderList               // Navigation's tab listbox (prefs_reorder.go)
 	picker    channelPicker             // Advanced > Exclude these channels (prefs_picker.go)
+	lists     prefsLists                // Connected accounts and Privacy's fetched lists (prefs_lists.go)
 	themeTab  string                    // Appearance: "slack" or "custom" ("": Slack's default for the theme)
 	hexEd     map[string]*widget.Editor // Appearance > Custom theme hex fields
 }

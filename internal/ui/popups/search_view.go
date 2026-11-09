@@ -337,7 +337,7 @@ func NewSearchView(h Host, query string) *SearchView {
 		}
 	}
 	srRecordQuery(query)
-	v := &SearchView{h: h, q: srParse(query), tab: tab, sortBy: srDefaultSort(h.Core()), menuCard: -1, sess: core.NewSearchSession()}
+	v := &SearchView{h: h, q: srParse(query), tab: tab, sortBy: DefaultSearchSort(h.Core()), menuCard: -1, sess: core.NewSearchSession()}
 	v.list.Axis = layout.Vertical
 	return v
 }
@@ -944,10 +944,10 @@ func (v *SearchView) sortMenu(gtx layout.Context) {
 // srSortPref is the search_sort value for a sort (cX/T kK).
 var srSortPref = map[string]string{"score": "relevantMessages", "timestamp": "recentMessages", "oldest": "timestamp_asc"}
 
-// srDefaultSort is a new search's sort: with stick_user_sort ("Last
+// DefaultSearchSort is a new search's sort: with stick_user_sort ("Last
 // used:") the search_sort pref (mfHU WJ: timestamp means newest, score
 // and not_set most relevant), otherwise Most relevant.
-func srDefaultSort(c *core.App) string {
+func DefaultSearchSort(c *core.App) string {
 	if c == nil || !c.PrefBool("stick_user_sort", false) {
 		return "score"
 	}
