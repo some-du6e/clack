@@ -159,7 +159,8 @@ func (p *prefsModal) customTheme(f *prefsForm, cur theme.IATheme) {
 	f.buttons(prefsButton{"theme_share", "Share", true, func() {
 		a.copyText("Check out my Slack theme: " + strings.Join(hexes, ","))
 		a.Toast("Copied")
-	}}, prefsButton{"theme_import", "Import", false, nil}, prefsButton{"theme_surprise", "Surprise me", false, nil})
+	}}, prefsButton{"theme_import", "Import", true, func() { p.importTheme() }}, // prefs_a.go
+		prefsButton{"theme_surprise", "Surprise me", true, func() { a.setAccountTheme(theme.SurpriseTheme(surpriseRand)) }})
 	gtx := f.gtx
 	colW := (f.w - gtx.Dp(16)) / 2
 	for i, r := range customRoles {
@@ -182,7 +183,7 @@ func (p *prefsModal) customTheme(f *prefsForm, cur theme.IATheme) {
 			a.setAccountTheme(t)
 		})
 	}
-	f.muted("Import, Surprise me and the colour square: "+naNote, false)
+	f.muted("The colour square: "+naNote, false)
 }
 
 // setRoleHex gives customRoles[i] its own colour: the theme becomes a

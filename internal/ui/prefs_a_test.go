@@ -502,3 +502,40 @@ func TestPrefsEmailForwarding(t *testing.T) {
 		t.Fatalf("after delete %v %v", ts, err)
 	}
 }
+
+// Appearance > Custom theme: Import applies a theme string to ia_theme
+// and turns window gradients off; Surprise me writes a random palette
+// theme (useCustomHex, Slack's randomizeTheme).
+func TestPrefsAuditAppliedRoundTripThemeButtons(t *testing.T) {
+	a, _, fs := fakePrefsApp(t)
+	p := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}, themeTab: "custom"}
+	for _, r := range pageRows(t, a, p, "appearance") {
+		if (r.Label == "Import" || r.Label == "Surprise me") && !r.Enabled {
+			t.Fatalf("%s greyed", r.Label)
+		}
+	}
+	if p.applyThemeString("nope") {
+		t.Fatal("junk imported")
+	}
+	if !p.applyThemeString("#124426, #350D36, #EEB317, #392104") {
+		t.Fatal("import refused")
+	}
+	iaTheme := func() theme.IATheme {
+		v, _ := fs.Pref("ia_theme")
+		s, _ := v.(string)
+		th, _ := theme.ParseIATheme(s)
+		return th
+	}
+	waitFor(t, a, "imported", func() bool {
+		g, _ := fs.Pref("window_background_gradients")
+		th := iaTheme()
+		return th.UseCustomHex && th.Primary.Custom == "#124426" && th.Important.Custom == "#392104" && g == false
+	})
+	pageRows(t, a, p, "appearance")
+	p.clicks["button.theme_surprise"].Click()
+	pageRows(t, a, p, "appearance")
+	waitFor(t, a, "surprise", func() bool {
+		th := iaTheme()
+		return th.UseCustomHex && th.Primary.Custom == "" && th.Primary.Palette != ""
+	})
+}

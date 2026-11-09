@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"image"
+	"math/rand/v2"
 	"strconv"
 	"strings"
 	"time"
@@ -670,4 +671,25 @@ func (p *prefsModal) emailForwarding(f *prefsForm) {
 				}))
 		})
 	}
+}
+
+// surpriseRand drives Surprise me (tests seed it).
+var surpriseRand = rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0x5eed))
+
+// importTheme is ThemeImportHexButton: the Import theme modal; a valid
+// string becomes the account theme (theme.ImportThemeString) and turns
+// window_background_gradients off, like Slack's Apply.
+func (p *prefsModal) importTheme() {
+	p.a.ShowOverlay(popups.NewThemeImportModal(p.a, p.applyThemeString))
+}
+
+func (p *prefsModal) applyThemeString(s string) bool {
+	a := p.a
+	t, ok := theme.ImportThemeString(a.accountTheme(), s)
+	if !ok {
+		return false
+	}
+	a.setAccountTheme(t)
+	a.setWindowGradients(false)
+	return true
 }
