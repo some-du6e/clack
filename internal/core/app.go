@@ -1308,7 +1308,7 @@ func (a *App) sections(convs []Conv) []Section {
 			if !visibleDM(c.ID) {
 				continue // closed (or inactive): Slack keeps it out of the sidebar
 			}
-			if a.isAppDM(c.ID) {
+			if a.isAppDM(c.ID) && !a.AgentInDMSidebar(c.ID) {
 				if !a.emptyDM(c.ID) { // Slack hides app DMs that never had a message (e.g. Slackbot)
 					apps = append(apps, c.ID)
 				}
@@ -1348,6 +1348,34 @@ func hasSectionType(secs []slack.Section, typ string) bool {
 
 // isAppDM reports whether ch is a DM with Slackbot, the "Slack" system
 // bot or an app (these sort under Apps, as in Slack).
+// AgentInDMSidebar is uXg5 oK (isAgentInDmSidebar, getDefaultSectionType
+// files the DM under Direct messages instead of Apps): agents_in_dm_sidebar
+// on, the agent not hidden there (shouldHideAgentsInDmSidebar:
+// agents_in_dm_sidebar_pref on and Navigation > "Show Agents in direct
+// messages" off, users.prefs hide_agents_in_dm_list), and an eligible agent
+// DM: with support_lots_of_agents off, a bot member Slack badges AGENT
+// (/ly8 hh) that isn't an Agentforce bot; with it on, the member's
+// agent_status.
+func (a *App) AgentInDMSidebar(ch string) bool {
+	if a.experiment("agents_in_dm_sidebar") != "on" || a.HideAgentsInDMs() {
+		return false
+	}
+	c, ok := a.S.Conv(ch)
+	if !ok || !c.IsIM {
+		return false
+	}
+	u, ok := a.User(c.User)
+	if !ok || u.Agentforce {
+		return false
+	}
+	return a.memberIsAgent(u)
+}
+
+// HideAgentsInDMs is shouldHideAgentsInDmSidebar.
+func (a *App) HideAgentsInDMs() bool {
+	return a.experiment("agents_in_dm_sidebar_pref") == "on" && a.PrefBool("hide_agents_in_dm_list", false)
+}
+
 func (a *App) isAppDM(ch string) bool {
 	c, ok := a.S.Conv(ch)
 	if !ok || !c.IsIM {

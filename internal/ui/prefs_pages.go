@@ -275,8 +275,11 @@ func (p *prefsModal) navigationPage(f *prefsForm) {
 	f.gap()
 	f.subheading("App agents & assistants")
 	f.off("show_ai_apps", "Show AI Agents in top bar", "", p.prefBool("show_ai_apps", true), false)
-	f.off("hide_agents_in_dm_list", "Show Agents in direct messages", "", !p.prefBool("hide_agents_in_dm_list", false), false)
-	f.na()
+	f.muted("Show AI Agents in top bar: "+naNote, false)
+	if c != nil && c.Experiment("agents_in_dm_sidebar") == "on" && c.Experiment("agents_in_dm_sidebar_pref") == "on" { // Mq && n7
+		// off: agent DMs go back under Apps (core.AgentInDMSidebar)
+		f.check("hide_agents_in_dm_list", "Show Agents in direct messages", "", false, true)
+	}
 }
 
 // setRailTab is setTabRailCustomizationByTabName: tab_rail_customization

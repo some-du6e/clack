@@ -112,6 +112,9 @@ var defaultExperimentGroups = map[string]string{
 	// Advanced > "Enable smart quotes and symbols" shows in the live dialog
 	// (iZ.w gates it), so composer_smart_symbols is on
 	"composer_smart_symbols": "on",
+	// Navigation > "Show Agents in direct messages" shows in the live
+	// dialog (TabRail: Mq && n7)
+	"agents_in_dm_sidebar": "on", "agents_in_dm_sidebar_pref": "on",
 }
 
 func (a *App) sidebarExperiments() sidebarExp {

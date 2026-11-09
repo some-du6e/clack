@@ -934,7 +934,7 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			"dm_recency_sort_rollout": g("without_edu"), "reskin_custom_responses": g("on"), "temp_join_channel": g("on"),
 			"sidebar_section_search": g("on"), "add_channels_channel_sections_slackathon": g("on"), "mute_channel_edu": g("on"),
 			"session_channels": g("on"), "session_channel_views": g("on"), "code_channels_naming": g("on"),
-			"composer_smart_symbols": g("on")})
+			"composer_smart_symbols": g("on"), "agents_in_dm_sidebar": g("on"), "agents_in_dm_sidebar_pref": g("on")})
 	case "users.prefs.get":
 		s.prefsMu.Lock()
 		m := make(map[string]any, len(s.prefs))

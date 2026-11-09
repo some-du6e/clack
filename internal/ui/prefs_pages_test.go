@@ -86,7 +86,7 @@ var slackPages = map[string][]want{
 		lg("Configure these tabs in the navigation bar:"), ckOff("Home"), ck("DMs"), ckOff("Activity"), ck("Files"),
 		btnOff("Move up"), btnOff("Move down"),
 		lg("Navigation Tab Appearance"), rd("Icons & text"), rd("Icons only"),
-		lg("App agents & assistants"), ckOff("Show AI Agents in top bar"), ckOff("Show Agents in direct messages"),
+		lg("App agents & assistants"), ckOff("Show AI Agents in top bar"), ck("Show Agents in direct messages"),
 	},
 	"sidebar": {
 		lg("Channel organization"), ckOff("Show suggestions for getting started in new channels"), ckOff("Sort channels into sidebar sections automatically"),

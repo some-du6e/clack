@@ -97,6 +97,13 @@ func TestPrefsAuditAppliedRoundTripB(t *testing.T) {
 	p.moveActive(p.navTabs(), 1)
 	waitFor(t, a, "moved down", func() bool { return ca.Rail().Available[1] == moved[0] })
 
+	// Navigation > Show Agents in direct messages: hide_agents_in_dm_list
+	// is the box's negation (core.AgentInDMSidebar files agent DMs by it)
+	p.setPref("hide_agents_in_dm_list", true)
+	waitFor(t, a, "agents hidden", func() bool { v, _ := fs.Pref("hide_agents_in_dm_list"); return v == true && ca.HideAgentsInDMs() })
+	p.setPref("hide_agents_in_dm_list", false)
+	waitFor(t, a, "agents shown", func() bool { return !ca.HideAgentsInDMs() })
+
 	// Advanced > Enable smart quotes and symbols: disable_smart_symbols
 	p.setPref("disable_smart_symbols", true)
 	waitFor(t, a, "smart symbols off", func() bool { v, _ := fs.Pref("disable_smart_symbols"); return v == true && !composer.SmartSymbols(ca) })
