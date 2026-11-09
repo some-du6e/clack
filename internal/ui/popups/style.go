@@ -833,6 +833,13 @@ func splitKeys(s string) []string { return shortcut.Chips(s) }
 // field draws a bordered single-line input (Slack c-input_text) with an
 // optional leading icon and a placeholder. h in dp, radius 8.
 func field(gtx layout.Context, th *theme.Theme, ed *widget.Editor, placeholder string, leadIcon string, h, size float32) layout.Dimensions {
+	return fieldOn(gtx, th, ed, placeholder, leadIcon, h, size, colorsOf(th).Bg)
+}
+
+// fieldOn is field with its own background (c-input_text's
+// var(--dt_color-base-pry) where Clack's palette has it, e.g. the emoji
+// picker's search).
+func fieldOn(gtx layout.Context, th *theme.Theme, ed *widget.Editor, placeholder string, leadIcon string, h, size float32, bg color.NRGBA) layout.Dimensions {
 	var state css.State
 	if gtx.Focused(ed) {
 		state = css.StateFocus | css.StateFocusVisible
@@ -846,11 +853,11 @@ func field(gtx layout.Context, th *theme.Theme, ed *widget.Editor, placeholder s
 		return layout.Dimensions{}
 	}
 	return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
-		return fieldNative(gtx, th, st, ed, placeholder, leadIcon, h, size)
+		return fieldNative(gtx, th, st, ed, placeholder, leadIcon, h, size, bg)
 	})
 }
 
-func fieldNative(gtx layout.Context, th *theme.Theme, st slackc.Styled, ed *widget.Editor, placeholder string, leadIcon string, h, size float32) layout.Dimensions {
+func fieldNative(gtx layout.Context, th *theme.Theme, st slackc.Styled, ed *widget.Editor, placeholder string, leadIcon string, h, size float32, bg color.NRGBA) layout.Dimensions {
 	cl := colorsOf(th)
 	w := gtx.Constraints.Max.X
 	hh := dp(gtx, h)
@@ -864,10 +871,10 @@ func fieldNative(gtx layout.Context, th *theme.Theme, st slackc.Styled, ed *widg
 		ring, one := dp(gtx, 5), maxInt(1, dp(gtx, 1))
 		rrect(gtx, r.Inset(-ring), rad+ring, cl.FocusRing)
 		rrect(gtx, r.Inset(-one), rad+one, cl.Focus)
-		rrect(gtx, r, rad, cl.Bg)
+		rrect(gtx, r, rad, bg)
 	} else {
 		rrect(gtx, r, rad, cl.InputBorder)
-		rrect(gtx, r.Inset(1), rad-1, cl.Bg)
+		rrect(gtx, r.Inset(1), rad-1, bg)
 	}
 	x := dp(gtx, 12)
 	if leadIcon != "" {

@@ -744,7 +744,8 @@ func (p *EmojiPicker) layoutBody(gtx layout.Context, th *theme.Theme, cl *Colors
 	p.layoutCats(gtx, th, cl)
 	at(gtx, image.Pt(dp(gtx, epInputX), dp(gtx, epInputY)), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Exact(image.Pt(sz.X-2*dp(gtx, epInputX), dp(gtx, epInputH)))
-		return field(gtx, th, &p.ed, "Search all emoji", "", epInputH, 15)
+		// c-input_text on --dt_color-base-pry (the card's primary background)
+		return fieldOn(gtx, th, &p.ed, "Search all emoji", "", epInputH, 15, cl.EmojiBg)
 	})
 	foot := dp(gtx, epFootH)
 	p.layoutList(gtx, th, cl, image.Rect(0, dp(gtx, epListY), sz.X, sz.Y-foot))
