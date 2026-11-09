@@ -1,0 +1,155 @@
+{
+  "answers": [
+    {
+      "patterns": ["status", "progress", "update", "eta", "where are we", "how's it going", "hows it going", "done yet", "almost done"],
+      "tasks": [
+        {"title": "Read the PR #217 timeline", "detail": "quillfeather/order-portal", "output": "4 commits, 1 review"},
+        {"title": "Checked the latest CI run", "output": "38 passed, 0 failed"},
+        {"title": "Listed what's left", "output": "1 approval from theo-lindqvist"}
+      ],
+      "text": "*PR #217 is close.* The fix is pushed, CI is green and the CHANGELOG is updated.\n• Rounding bug: fixed (integer cents)\n• Tests: 6 new cases, all passing\n• Waiting on: a final approval from theo-lindqvist\nOnce Theo approves, it can merge."
+    },
+    {
+      "patterns": ["bug", "what's wrong", "whats wrong", "broken", "rounding", "issue", "penny", "overcharg*", "extra cent"],
+      "tasks": [
+        {"title": "Reproduced an order of 12 reams", "detail": "Ultra Bright 24lb, 7.5% bulk discount", "output": "expected $99.34, got $99.35"},
+        {"title": "Traced it to applyBulkDiscount", "detail": "src/pricing/discount.ts", "output": "107.40 * 0.075 = 8.054999999999999"}
+      ],
+      "text": "On orders of 10 or more reams, the bulk discount was computed in floating point. A discount that should be exactly *$8.055* came out as `8.054999999999999`, so it rounded *down* to $8.05 instead of up to $8.06.\nThe customer paid one cent more than they should have. Small, but it happens on every order where the discount lands on a half cent."
+    },
+    {
+      "patterns": ["test*", "coverage", "edge case*", "spec", "ci"],
+      "tasks": [
+        {"title": "Ran src/pricing/discount.test.ts", "output": "14 passed"},
+        {"title": "Ran the full suite", "output": "38 passed, 0 failed, 2.1s"},
+        {"title": "Listed the new cases", "detail": "6 added in PR #217"}
+      ],
+      "text": "All green. The 6 new cases in `discount.test.ts` cover:\n• exactly 10 reams (the discount threshold)\n• 9 reams (no discount)\n• discounts that land on a half cent, which round up\n• 500 reams, to check nothing overflows\n• a $0.00 line item\n• mixed carts where only one line qualifies"
+    },
+    {
+      "patterns": ["merge*", "deploy*", "ship*", "release", "prod", "production", "live", "launch"],
+      "tasks": [
+        {"title": "Checked merge requirements", "output": "CI passing, 1 approval needed"},
+        {"title": "Checked for conflicts with main", "output": "none"}
+      ],
+      "text": "It can merge as soon as theo-lindqvist approves. The order portal deploys from `main` automatically, so customers would see correct totals within a few minutes of the merge.\nI won't merge it myself: the repo requires a human approval, and I think that's a good rule."
+    },
+    {
+      "patterns": ["review*", "theo", "approv*", "feedback", "comment*", "naming"],
+      "tasks": [
+        {"title": "Read theo-lindqvist's review", "output": "1 comment, on naming"},
+        {"title": "Renamed toCents to dollarsToCents", "detail": "src/pricing/discount.ts"},
+        {"title": "Replied on the review thread"}
+      ],
+      "text": "Theo left one comment: `toCents` was ambiguous about which direction it converts. I renamed it to `dollarsToCents` and added a short doc comment.\nI've re-requested his review. Nothing else is outstanding."
+    },
+    {
+      "patterns": ["explain", "how does", "how did", "how do", "why", "walk me through", "cents", "float*", "fix", "integer*"],
+      "tasks": [
+        {"title": "Summarized the diff", "detail": "src/pricing/discount.ts", "output": "+31 −12"},
+        {"title": "Drafted an example with real numbers"}
+      ],
+      "text": "Computers store most decimals approximately, the way 1/3 can't be written exactly as 0.333…. So `107.40 * 0.075` lands just under 8.055, and rounding goes the wrong way.\nThe fix does all the pricing math in *integer cents*: 10740 cents × 75 ÷ 1000 = 805.5 cents, which rounds half up to 806 cents, exactly. The total is converted back to dollars once, at the very end, just for display."
+    },
+    {
+      "patterns": ["joke", "funny", "paper", "ream*", "pun*", "laugh", "lol"],
+      "tasks": [
+        {"title": "Searched the codebase for humor", "output": "0 results"},
+        {"title": "Wrote one myself", "detail": "reviewed it twice"}
+      ],
+      "text": "Why did the ream of paper get the bulk discount? Because it came in 500 strong. I'll keep working on that one.\nWhile I'm here: the customers we overcharged now get exactly *one cent* back. Very small, very correct."
+    },
+    {
+      "patterns": ["thank*", "thx", "ty", "nice work", "great job", "good job", "good bot"],
+      "tasks": [
+        {"title": "Noted your feedback"},
+        {"title": "Checked for anything else open on PR #217", "output": "nothing"}
+      ],
+      "text": "Happy to help. I'll post here when Theo's review comes in or if CI changes."
+    },
+    {
+      "patterns": [],
+      "tasks": [
+        {"title": "Read your message"},
+        {"title": "Checked it against PR #217", "detail": "quillfeather/order-portal"}
+      ],
+      "text": "I'm focused on *PR #217*, which fixes the bulk discount rounding on orders of 10+ reams. I can tell you the status, explain the bug or the fix, run the tests, or summarize the review.\nWhat would you like to know?"
+    }
+  ],
+  "progress": [
+    {
+      "card": "Reproduced the rounding bug",
+      "detail": "12 reams of Ultra Bright 24lb at 7.5% off",
+      "output": "expected $99.34, got $99.35",
+      "text": "Found it. Orders of 10+ reams are rounding a half-cent discount down instead of up. The cause is floating point math in `src/pricing/discount.ts`.",
+      "who": "priya",
+      "reply": "i KNEW it was the computer and not my math"
+    },
+    {
+      "card": "Wrote a failing test",
+      "detail": "src/pricing/discount.test.ts",
+      "output": "1 failed: expected 99.34, received 99.35"
+    },
+    {
+      "card": "Pushed 2 commits",
+      "detail": "Move pricing math to integer cents · Round half up in applyBulkDiscount",
+      "output": "opened PR #217",
+      "text": "Opened *PR #217: Fix the bulk discount rounding on 10+ reams*. The new test passes now.",
+      "ci": "success"
+    },
+    {
+      "card": "Added 6 test cases",
+      "detail": "thresholds, half cents, 500 reams, mixed carts",
+      "output": "37 passed, 1 failed",
+      "text": "One existing test failed: an old invoice snapshot still expected the overcharged total. It was asserting the bug. Fixing the snapshot next.",
+      "ci": "failure",
+      "who": "theo",
+      "reply": "a test that protected the bug. honestly that's the most loyal thing in this building"
+    },
+    {
+      "card": "Fixed the stale invoice snapshot",
+      "detail": "src/pricing/__snapshots__/invoice.snap",
+      "output": "38 passed, 0 failed",
+      "ci": "success"
+    },
+    {
+      "card": "Addressed review from theo-lindqvist",
+      "detail": "renamed toCents to dollarsToCents",
+      "output": "re-requested review",
+      "text": "Theo's naming comment is addressed. That was the only open thread.",
+      "ci": "success",
+      "who": "theo",
+      "reply": "approved. ship the penny"
+    },
+    {
+      "card": "Updated CHANGELOG.md",
+      "detail": "Fixed: bulk discount rounding on orders of 10+ reams",
+      "output": "1 file changed"
+    },
+    {
+      "card": "Checked past orders for the same bug",
+      "detail": "orders of 10+ reams since March",
+      "output": "1,284 orders, 37 overcharged by $0.01",
+      "text": "37 customers were overcharged by one cent each. I've put the list in the PR description so someone can decide on refunds.",
+      "who": "priya",
+      "reply": "37 customers owed a penny. that's 37 reasons to call them. thank you inkwell"
+    },
+    {
+      "card": "Rebased on main",
+      "detail": "no conflicts",
+      "output": "branch is up to date",
+      "ci": "success"
+    },
+    {
+      "card": "Checked PR #217",
+      "detail": "quillfeather/order-portal",
+      "output": "CI passing, ready to merge"
+    }
+  ],
+  "prompts": [
+    {"title": "What's the status?", "message": "What's the status of PR #217?"},
+    {"title": "Explain the bug", "message": "Can you explain the rounding bug in plain English?"},
+    {"title": "Run the tests", "message": "Run the tests and tell me what they cover."},
+    {"title": "When can we ship?", "message": "When can we merge and deploy the fix?"}
+  ]
+}

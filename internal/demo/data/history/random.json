@@ -1,0 +1,69 @@
+[
+  {"at": "-4 09:30", "by": "kip", "text": "startup idea: paper-as-a-service. you don't OWN the paper. you subscribe to it. monthly. no cap this is the future", "reactions": ["thinking_face gordon", "x bev", "stonks-paper kip"],
+   "replies": [
+     {"at": "+2m", "by": "bev", "text": "What happens to the paper when the subscription ends"},
+     {"at": "+3m", "by": "kip", "text": "you print it back"},
+     {"at": "+4m", "by": "priya", "text": "That's just selling paper with extra steps."},
+     {"at": "+5m", "by": "kip", "text": "extra steps = engagement :rocket:"},
+     {"at": "+9m", "by": "gordon", "text": "Kip I want you to know I respect the hustle. Please put it in the Quillies form under Innovation."}
+   ]},
+  {"at": "-4 12:15", "by": "nadia", "text": "Got a quarter back from the vending machine. It's Canadian. That's the third one this month. Who is loading Canadian quarters into the machine. Why. What do they want.", "reactions": ["eyes kip dale", "thinking_face theo"],
+   "replies": [
+     {"at": "+3m", "by": "theo", "text": "The vending company restocks it. They're from Ontario."},
+     {"at": "+5m", "by": "nadia", "text": "That's what they WANT you to think, Theo."},
+     {"at": "+6m", "by": "kip", "text": "it's laundering loonies"},
+     {"at": "+8m", "by": "marisol", "text": "A quarter is a quarter. Please stop putting it in the petty cash."},
+     {"at": "+9m", "by": "bev", "text": "It is not a quarter. It is $0.18 at today's rate. I've adjusted the ledger."}
+   ]},
+  {"at": "-4 16:05", "by": "dale", "text": "Fresh batch of Hurst Family Apiary wildflower honey available at my desk. $12 a jar. Coworker discount available.", "files": [{"image": "honey", "name": "hurst_honey_batch_7.png"}],
+   "reactions": ["honey-pot-dale dale gordon ruth", "bee kip"],
+   "replies": [
+     {"at": "+4m", "by": "priya", "text": "The coworker discount on the tag is $12."},
+     {"at": "+5m", "by": "dale", "text": "Correct. The discount is that I'll sell it to you."},
+     {"at": "+6m", "by": "priya", "text": "Incredible."},
+     {"at": "+20m", "by": "jordan", "text": "I bought one, it's really good actually :honey_pot:", "reactions": ["honey-pot-dale dale"]}
+   ]},
+  {"at": "-3 13:10", "by": "bev", "text": "Mr. Pemberton has found the empty Ultra Bright box I brought home. He has not left it in 26 hours.", "files": [{"image": "pemberton", "name": "mr_pemberton_reviews_the_box.png"}],
+   "reactions": ["mr-pemberton bev nadia kip marisol ruth jordan", "heart ruth nadia", "crown kip"],
+   "replies": [
+     {"at": "+2m", "by": "nadia", "text": "He looks like he's about to fire me"},
+     {"at": "+3m", "by": "bev", "text": "He is. He's reviewing everyone's expense reports."},
+     {"at": "+5m", "by": "kip", "text": "mr pemberton for regional VP"},
+     {"at": "+6m", "by": "gordon", "text": "Can Mr. Pemberton be a Quillies presenter? Over video? I'm being serious."},
+     {"at": "+8m", "by": "bev", "text": "His fee is three treats and a written apology for calling him \"chunky\" at the summer picnic, Gordon."},
+     {"at": "+9m", "by": "gordon", "text": "Done and done. I'm sorry Mr. Pemberton :pray:", "reactions": ["mr-pemberton bev"]},
+     {"at": "+15m", "by": "marisol", "text": "This is the most productive thread in the history of this channel."}
+   ]},
+  {"at": "-3 16:40", "by": "theo", "text": "PSA: Prinny is not \"possessed\". Prinny is a PR-7 with a firmware from 2017 and a fragile ego.", "reactions": ["prinny kip nadia", "joy priya"]},
+  {"at": "-3 16:42", "by": "nadia", "text": "Then why does it only jam when Gordon prints", "reactions": ["eyes kip marisol"]},
+  {"at": "-3 16:43", "by": "theo", "text": "…I don't have an answer for that.", "reactions": ["prinny theo"]},
+  {"at": "-2 10:03", "by": "nadia", "text": "Who took my strawberry yogurt. It had my NAME on it. I left a note.", "files": [{"image": "yogurt-note", "name": "fridge_notice.png"}],
+   "reactions": ["yogurt-alert nadia bev kip marisol", "rotating_light dale", "scream kip"],
+   "replies": [
+     {"at": "+5m", "by": "dale", "text": "As Volunteer Safety Marshal I am opening an investigation. Food safety is safety.", "reactions": ["safety-whistle dale"]},
+     {"at": "+6m", "by": "marisol", "text": "Dale, that is not what food safety means."},
+     {"at": "+8m", "by": "dale", "text": "I'll need everyone's whereabouts between 8:15 and 9:55."},
+     {"at": "+9m", "by": "kip", "text": "i was on a call with my startup mentor (my cousin)"},
+     {"at": "+11m", "by": "wendell", "text": "Warehouse doesn't come upstairs for yogurt. We have our own fridge. It works."},
+     {"at": "+14m", "by": "gordon", "text": "This office runs on TRUST, people. And labels. Mostly trust."},
+     {"at": "+21m", "by": "dale", "text": "Preliminary finding: the thief prefers strawberry. Investigation ongoing.", "reactions": ["face_palm priya bev", "joy kip"]}
+   ]},
+  {"at": "-2 14:22", "by": "kip", "text": "update on my startups: paper-as-a-service is pivoting to envelope NFTs. each envelope gets a token. you can lick the token", "reactions": ["skull priya marisol", "x bev"]},
+  {"at": "-2 14:25", "by": "ruth", "text": "Kip, I love your creativity, but please don't lick anything in the office :heart:", "reactions": ["joy nadia"]},
+  {"at": "-1 09:05", "by": "jordan", "text": "Does anyone know if the good stapler is actually real? I keep hearing about it.", "reactions": ["eyes marisol"],
+   "replies": [
+     {"at": "+1m", "by": "marisol", "text": "It is real."},
+     {"at": "+2m", "by": "bev", "text": "I've seen it once. In 2022."},
+     {"at": "+4m", "by": "kip", "text": "the good stapler is a state of mind"},
+     {"at": "+6m", "by": "marisol", "text": "It's a Fenwick 40-sheet and it's not a state of mind, it's in my drawer, and it's staying there."}
+   ]},
+  {"at": "-1 13:30", "by": "nadia", "text": "The vending machine just made eye contact with me. I know machines don't have eyes. The B4 slot does.", "reactions": ["eyes kip theo", "see_no_evil ruth"]},
+  {"at": "-1 17:15", "by": "dale", "text": "Yogurt investigation update: I've installed a sign-in sheet on the fridge.", "reactions": ["memo marisol", "upside_down_face priya"]},
+  {"at": "1h50m", "by": "kip", "text": "new idea: uber but for staples. you tap the app and someone walks over and staples your thing", "reactions": ["thinking_face gordon", "x marisol"]},
+  {"at": "1h48m", "by": "marisol", "text": "That's me. I'm the app.", "reactions": ["joy bev nadia priya", "crown kip"]},
+  {"at": "14m", "by": "nadia", "text": "It happened again. My yogurt is gone. The sign-in sheet says \"Mr. Yogurt\".", "reactions": ["yogurt-alert nadia bev kip", "rotating_light dale"]},
+  {"at": "12m", "by": "dale", "text": "Nobody leave the building.", "reactions": ["safety-whistle dale", "joy kip"]},
+  {"at": "11m", "by": "priya", "text": "I have a 2pm.", "reactions": ["sweat_smile bev"]},
+  {"at": "8m", "by": "kip", "text": "mr yogurt is giving main character energy ngl"},
+  {"at": "4m", "by": "bev", "text": "For the record, Mr. Pemberton has an alibi. He was at home. In the box.", "reactions": ["mr-pemberton nadia ruth"]}
+]

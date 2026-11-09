@@ -60,7 +60,7 @@ func Start(opts Options) (*Session, error) {
 		opts.Logf = func(string, ...any) {}
 	}
 	// a nearly empty generated workspace: the world answers the rest
-	fs, err := fakeslack.Start(fakeslack.Size{Users: 1})
+	fs, err := fakeslack.Start(fakeslack.Size{Users: 3}) // generate() reads users[2]
 	if err != nil {
 		return nil, err
 	}

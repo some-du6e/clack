@@ -1,0 +1,65 @@
+[
+  {"at": "-4 07:05", "by": "wendell", "text": "Board's updated. Read it. It's not decorative.",
+   "files": [{"image": "whiteboard", "name": "warehouse_board.png"}],
+   "pinned": "wendell", "reactions": ["+1 dale ruth", "big-linda kip"]},
+  {"at": "-4 07:40", "by": "wendell", "text": "Whoever upstairs keeps taking our pallets: they're not furniture. You cannot put a plant on a pallet and call it a \"standing desk\".",
+   "replies": [
+     {"at": "+20m", "by": "kip", "text": "ok but hear me out. pallet desks. we sell them. no cap"},
+     {"at": "+22m", "by": "wendell", "text": "No."},
+     {"at": "+40m", "by": "gordon", "text": "Wendell, upstairs and downstairs are ONE TEAM :raised_hands: (I have the pallet. It's for my office plant. I'll bring it back)"},
+     {"at": "+41m", "by": "wendell", "text": "Bring it back today."}
+   ], "reactions": ["eyes priya marisol"]},
+  {"at": "-4 13:15", "by": "ruth", "text": "Hi warehouse friends! :wave: Reminder that *Feelings & Forklifts* is due by Friday for everyone, yes even upstairs. Module 3 is Safe Spaces, Safe Aisles. It's only 40 minutes and there's a quiz with a fun prize!",
+   "files": [{"pdf": "training-pdf", "name": "Feelings_and_Forklifts_Training.pdf", "title": "Feelings & Forklifts: Module 3", "pages": 12}],
+   "replies": [
+     {"at": "+10m", "by": "wendell", "text": "What's the prize"},
+     {"at": "+12m", "by": "ruth", "text": "A certificate! (Laminated, if Lamby holds up :sparkles:)"},
+     {"at": "+13m", "by": "wendell", "text": "Lamby won't hold up."}
+   ], "reactions": ["memo dale ruth", "grimacing wendell"]},
+  {"at": "-3 06:58", "by": "wendell", "text": "Truck from the mill is early. Rosa and Dez on dock 2. Anybody in a tie stay off the dock."},
+  {"at": "-3 10:30", "by": "dale", "text": ":safety-whistle: Unannounced safety inspection at 11:00. That was the announcement.",
+   "replies": [
+     {"at": "+4m", "by": "wendell", "text": "You can't announce an unannounced inspection, Dale."},
+     {"at": "+5m", "by": "dale", "text": "Technically it was unannounced until I announced it."},
+     {"at": "+38m", "by": "dale", "text": "Inspection complete. Findings: one (1) aisle sign is 2 inches too low. One (1) box of Ultra Bright has a dented corner. Big Linda's horn is \"unenthusiastic\"."},
+     {"at": "+40m", "by": "wendell", "text": "Big Linda's horn is fine. You blew your whistle at her for nine minutes."},
+     {"at": "+41m", "by": "dale", "text": "She needed to hear it."},
+     {"at": "+43m", "by": "wendell", "text": "You also blew it at Rosa."},
+     {"at": "+44m", "by": "dale", "text": "Rosa was walking briskly. I've made a note in the log. And a note in her favor. Brisk is efficient."},
+     {"at": "+50m", "by": "wendell", "text": "Inspection over. Get off my floor."}
+   ], "reactions": ["safety-whistle dale", "joy priya bev kip", "skull nadia"]},
+  {"at": "-3 14:22", "by": "dale", "text": "Also, for anyone on the dock: I have honey for sale. Hurst Family Apiary. Locally sourced, ethically buzzed. :honey-pot-dale: $12 a jar.",
+   "reactions": ["honey_pot ruth", "bee kip"]},
+  {"at": "-2 09:10", "by": "wendell", "text": "Big Linda's back from service. New hydraulics. Rosa put a bow on her. Nobody touch the bow.",
+   "files": [{"image": "big-linda", "name": "big_linda_bow.png"}],
+   "reactions": ["big-linda wendell kip gordon dale nadia", "heart ruth marisol", "tada gordon"]},
+  {"at": "-2 09:31", "by": "gordon", "text": "BIG LINDA :big-linda: :heart: does she want to be in the Quillies?? \"Most Lifting Spirit\"?",
+   "replies": [
+     {"at": "+6m", "by": "wendell", "text": "She's a forklift, Gordon."},
+     {"at": "+7m", "by": "gordon", "text": "She's FAMILY Wendell"},
+     {"at": "+15m", "by": "wendell", "text": "Fine. But she's not wearing a sash. Sash is a hazard."},
+     {"at": "+16m", "by": "dale", "text": "Confirmed. Sashes are a snag hazard per section 7."}
+   ], "reactions": ["quillie gordon", "laughing bev"]},
+  {"at": "-2 15:40", "by": "wendell", "text": "Somebody upstairs labeled a pallet \"MINE (GORDON)\". It's still our pallet."},
+  {"at": "-1 07:12", "by": "wendell", "text": "Ultra Bright 24 lb restock in. 60 cases. Stacked in aisle 4. Sales, stop telling customers we're out.",
+   "reactions": ["ultra-bright priya dale nadia", "package jordan"]},
+  {"at": "-1 07:30", "by": "priya", "text": "Reserving 20 cases for my Thursday account. Don't let Dale near them.",
+   "edited": "+3m",
+   "replies": [
+     {"at": "+8m", "by": "dale", "text": "There is no reservation system for cases, Priya. I checked the handbook."},
+     {"at": "+9m", "by": "priya", "text": "There is now. It's called me getting here at 7."},
+     {"at": "+20m", "by": "wendell", "text": "First come first served. Both of you stay out of aisle 4 unless you're wearing a vest."}
+   ], "reactions": ["eyes kip nadia", "stonks-paper priya"]},
+  {"at": "-1 11:45", "by": "ruth", "text": "Three of you still haven't started Feelings & Forklifts! I won't say who :slightly_smiling_face: (Wendell, Kip, Gordon)",
+   "reactions": ["sweat_smile kip", "grimacing gordon"]},
+  {"at": "-1 11:49", "by": "wendell", "text": "I've driven a forklift for 22 years. I have feelings about it. Done.", "reactions": ["100 dale theo", "heart ruth"]},
+  {"at": "-1 15:02", "by": "wendell", "text": "Getting the floor clean for Friday since Denise is walking through. That means upstairs: no \"borrowing\" the pallet jack for the cake.",
+   "replies": [
+     {"at": "+12m", "by": "marisol", "text": "The cake is on a rolling cart this year. A proper one. With brakes."},
+     {"at": "+14m", "by": "dale", "text": "I'll inspect the brakes."},
+     {"at": "+15m", "by": "marisol", "text": "Of course you will."}
+   ]},
+  {"at": "2h40m", "by": "wendell", "text": "Days since last forklift incident: 3. Let's keep it that way through Friday.", "reactions": ["big-linda dale ruth kip", "muscle gordon"]},
+  {"at": "1h50m", "by": "dale", "text": "Reminder: the dock door closes at 4. If you are on the wrong side of it at 4:01, that is a lesson. :safety-whistle:"},
+  {"at": "55m", "by": "wendell", "text": "Pallet's back. Thanks Gordon. The plant can stay. It's doing better down here anyway.", "reactions": ["palm_tree gordon", "joy marisol bev"]}
+]

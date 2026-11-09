@@ -1,0 +1,897 @@
+{
+  "intents": [
+    {"name": "greeting", "patterns": ["hi", "hello", "hey", "hiya", "howdy", "morning", "good morning", "good afternoon", "yo", "sup", "what's up", "whats up", "greetings", "hey all", "hi all"]},
+    {"name": "thanks", "patterns": ["thanks", "thank you", "thank u", "thx", "ty", "tysm", "appreciate*", "cheers", "much obliged"]},
+    {"name": "bye", "patterns": ["bye", "goodbye", "see you", "see ya", "cya", "ttyl", "good night", "goodnight", "heading out", "signing off", "logging off", "night all"]},
+    {"name": "help", "patterns": ["help", "how do i", "where do i", "stuck", "can someone", "can anyone", "assist*", "onboarding", "new here", "show me", "confused"]},
+    {"name": "laminator", "patterns": ["laminat*", "lamby"]},
+    {"name": "printer", "patterns": ["print*", "prinny", "pr-7", "pr7", "toner", "paper jam", "jammed", "copier"]},
+    {"name": "honey", "patterns": ["honey", "clover gold", "bee", "bees", "jar", "jars"]},
+    {"name": "party", "patterns": ["party", "parties", "cake", "balloon*", "celebrat*", "birthday*", "potluck", "decorations", "napkin*", "anniversary"]},
+    {"name": "sales", "patterns": ["sales", "sell*", "sold", "leaderboard", "quota", "commission*", "deal", "deals", "client*", "customer*", "bet", "prospect*", "cold call*"]},
+    {"name": "numbers", "patterns": ["numbers", "stats", "revenue", "target*", "metric*", "how many", "percent*", "forecast*", "spreadsheet*", "dashboard*", "budget*", "invoice*", "expense*"]},
+    {"name": "lunch", "patterns": ["lunch", "hungry", "food", "taco*", "pho", "chili", "sandwich*", "pizza", "burrito*", "snack time", "eat"]},
+    {"name": "yogurt", "patterns": ["yogurt*", "yoghurt*", "fridge", "thief", "stole*", "stolen", "who ate", "break room", "break-room"]},
+    {"name": "it", "patterns": ["computer", "wifi", "wi-fi", "password*", "vpn", "laptop*", "slow", "internet", "monitor*", "mouse", "keyboard*", "login", "log in", "reboot*", "restart*", "update*", "frozen", "crash*"]},
+    {"name": "joke", "patterns": ["joke*", "funny", "lol", "lmao", "haha*", "pun", "puns", "make me laugh", "hilarious", "rofl"]},
+    {"name": "compliment", "patterns": ["great job", "nice work", "nice job", "well done", "good job", "awesome", "amazing", "you're the best", "youre the best", "legend", "brilliant", "love this", "you rock", "goat"]},
+    {"name": "quillies", "patterns": ["quillie*", "quilly", "award*", "trophy", "trophies", "nominat*", "ceremony"]},
+    {"name": "pemberton", "patterns": ["pemberton", "cat", "cats", "kitty", "kitten*", "meow"]},
+    {"name": "vending", "patterns": ["vending", "snack*", "machine", "chips", "crackers", "candy"]},
+    {"name": "forklift", "patterns": ["forklift*", "big linda", "linda", "pallet*", "warehouse", "loading dock"]},
+    {"name": "startup", "patterns": ["startup*", "start-up*", "idea*", "pitch*", "invest*", "founder*", "vc", "venture", "nft*", "crypto", "app idea"]},
+    {"name": "training", "patterns": ["training*", "course*", "module*", "compliance", "seminar*", "webinar*", "feelings and forklifts", "certificat*", "hr", "policy", "policies"]},
+    {"name": "denise", "patterns": ["denise", "calloway", "regional", "vp", "visit*", "friday"]},
+    {"name": "paper", "patterns": ["paper", "ream*", "ultra bright", "24lb", "20lb", "cardstock", "envelope*", "stationery", "stapler*", "staple*"]},
+    {"name": "portal", "patterns": ["portal", "bug", "bugs", "discount*", "pull request", "pr", "217", "inkwell", "rounding", "order portal", "code", "deploy*"]},
+    {"name": "huddle", "patterns": ["huddle*", "call", "calls", "meet", "meeting*", "sync", "hop on", "quick chat", "1:1", "one on one", "standup", "stand-up"]},
+    {"name": "coffee", "patterns": ["coffee", "espresso", "latte", "caffeine", "tea", "mug", "decaf", "cold brew"]},
+    {"name": "weekend", "patterns": ["weekend", "saturday", "sunday", "plans", "vacation", "day off", "pto", "holiday*", "tgif"]},
+    {"name": "question", "patterns": ["question", "quick question", "anyone know", "does anyone", "is it true", "wondering", "curious", "what is", "who is", "where is", "how come"]},
+    {"name": "fallback", "patterns": []}
+  ],
+  "owners": {
+    "honey": ["dale"],
+    "printer": ["theo"],
+    "laminator": ["marisol", "theo"],
+    "party": ["marisol"],
+    "sales": ["priya", "dale"],
+    "numbers": ["priya", "dale"],
+    "lunch": ["gordon", "nadia"],
+    "yogurt": ["bev", "nadia"],
+    "it": ["theo"],
+    "pemberton": ["bev"],
+    "vending": ["nadia"],
+    "forklift": ["wendell"],
+    "startup": ["kip"],
+    "training": ["ruth"],
+    "denise": ["gordon"],
+    "quillies": ["gordon"],
+    "paper": ["priya", "wendell"],
+    "portal": ["theo", "priya"],
+    "huddle": ["gordon"],
+    "coffee": ["marisol"],
+    "help": ["marisol", "ruth"],
+    "compliment": ["gordon", "ruth"],
+    "joke": ["bev", "gordon"],
+    "weekend": ["kip", "nadia"]
+  },
+  "channel_owners": {
+    "it": ["theo"],
+    "warehouse": ["wendell"],
+    "party": ["marisol"],
+    "sales": ["priya", "dale"],
+    "kudos": ["gordon", "ruth"],
+    "lunch": ["gordon", "nadia"],
+    "random": ["kip", "nadia"],
+    "general": ["gordon", "marisol"],
+    "santa": ["marisol"],
+    "group": ["priya", "dale", "kip"],
+    "code": ["theo", "priya"]
+  },
+  "lines": {
+    "gordon": {
+      "greeting": [
+        "{name}!! there they are. the future of Quillfeather :sunglasses:",
+        "good morning {you}! a wise man once said 'every morning is a fresh ream'. I think it was me",
+        "hey hey hey! how's my favorite week-2 associate? (you're my only week-2 associate. still counts)",
+        "hello {name}! my door is always open. it's actually stuck open, theo's looking at it"
+      ],
+      "thanks": [
+        "no, thank YOU {name}. that's what we call a thank-you loop. very good for morale",
+        "anytime! putting this in your Quillies file :trophy:",
+        "you're welcome! I'd high-five you but Ruth says we need to 'ask first'. can I?"
+      ],
+      "bye": [
+        "see you tomorrow {name}! rest up. be the eagle",
+        "bye! drive safe! dale would want me to say that, so I did",
+        "go home, champ. paper never sleeps, but you should"
+      ],
+      "help": [
+        "help is my middle name! my actual middle name is Herbert. ask Marisol, she knows where everything is",
+        "great question for {@marisol}. honestly most questions are great questions for Marisol",
+        "happy to help! as a wise man once said 'teach a person to fish'... the rest is about fish. what do you need?"
+      ],
+      "joke": [
+        "why did the ream of paper go to therapy? it had too many issues. (Bev says it's 'fine')",
+        "I've got a million of these. what do you call a sad stapler? de-pressed. I'll show myself out",
+        "a pun a day keeps the turnover away. that's not a real saying. yet"
+      ],
+      "compliment": [
+        "{name}, stop, you'll make me cry. I already cried once today, it was at a commercial",
+        "this is going straight into the Quillies nominations folder",
+        "you're too kind. I'm too kind. we're a kind office. this is what I dreamed of"
+      ],
+      "quillies": [
+        "the Quillies are the most prestigious awards in the paper-adjacent sales world. there are 14 categories. I made the trophies myself",
+        "nominations are open! self-nominations allowed. I've nominated myself for Most Humble",
+        "the trophies are spray-painted quills glued to staplers. NOT the good stapler. marisol made me promise"
+      ],
+      "denise": [
+        "Denise is coming Friday and everything is FINE. I bought a plant",
+        "a wise man once said 'impress the VP, impress the world'. I don't think anyone said that. still true",
+        "when Denise visits, just act natural. what's natural? I'll send a doc"
+      ],
+      "lunch": [
+        "lunch talk! I'm always thinking about lunch. and leadership. mostly lunch",
+        "chili friday is coming back. I'm not taking questions at this time",
+        "ordering at 11:45! if I try to get the big burrito, stop me. lovingly"
+      ],
+      "huddle": [
+        "love a huddle! it's like a meeting but with heart",
+        "let's sync! I'll bring the enthusiasm, you bring... also enthusiasm",
+        "my calendar is wide open. marisol says that's 'a problem'"
+      ],
+      "party": [
+        "party?! that's {@marisol}'s department, but I'm happy to give a short speech. 12 minutes, tops",
+        "you had me at party. you'll lose me at budget"
+      ],
+      "sales": [
+        "sales! the heartbeat of this branch. the leaderboard is the... other heart. we have two hearts",
+        "you miss 100% of the reams you don't sell. a wise man said that. or something like it"
+      ],
+      "weekend": [
+        "my weekend plans: grill, a motivational audiobook, maybe a light nap",
+        "have a great weekend {name}! remember: weekends are just Fridays that kept going"
+      ],
+      "coffee": [
+        "coffee is the fuel of champions. and of me",
+        "the coffee maker is Marisol's jurisdiction. I just admire it from a distance"
+      ],
+      "question": [
+        "great question! I'll answer it with another question: what would an eagle do?",
+        "honestly? I don't know. but I believe in you to find out. and also ask Marisol",
+        "short answer: yes. long answer: let's grab a coffee and I'll tell you about my first year in sales"
+      ],
+      "fallback": [
+        "love that energy {name} :raised_hands:",
+        "this is exactly the kind of thing I mean when I say 'Quillfeather spirit'",
+        "noted! filing that under 'great stuff'",
+        "a wise man once said... hold on, I'll remember it. it was about eagles"
+      ],
+      "dm_fallback": [
+        "hey {name}, glad you messaged! how's everything going? really, I'm asking :blush:",
+        "got it! you can always DM me. about anything. except the thermostat, that's marisol",
+        "between you and me, you're doing great. don't tell Priya I said that, she'll want it in writing"
+      ]
+    },
+    "priya": {
+      "greeting": [
+        "hey. I'm at 112% of quota. what's up",
+        "morning {name}. no small talk, I'm mid-close",
+        "hi. you look like someone who's about to sell a ream"
+      ],
+      "thanks": [
+        "sure. you owe me one. I keep track",
+        "np. pay it forward. preferably in reams",
+        "you're welcome. noted in the spreadsheet"
+      ],
+      "bye": [
+        "bye. I'll still be here. closing",
+        "go home {name}. I'm staying, but go"
+      ],
+      "sales": [
+        "the leaderboard doesn't lie. it's me. it's always me",
+        "rule one: never say 'just checking in'. say 'I have an idea for you'",
+        "{@dale} is 3 deals behind. he knows. I know. the whistle knows",
+        "want in on the bet? loser wears Dale's whistle for a day. it's very motivating"
+      ],
+      "numbers": [
+        "I have a spreadsheet for that. I have a spreadsheet for everything",
+        "this week: 41 orders, 0 returns, 1 Dale. numbers don't lie",
+        "I'll send you my dashboard. it has a tab called 'Dale'"
+      ],
+      "paper": [
+        "24lb Ultra Bright is our top seller. it's not an opinion, it's a chart",
+        "20lb is for people who don't believe in themselves",
+        "the trick is: customers don't buy paper. they buy feeling ready"
+      ],
+      "portal": [
+        "the order portal overcharged my 10-ream customers a penny each. a PENNY. inkwell's fixing it in {#code}",
+        "PR #217. I don't know what floating point is and I don't need to. I need my penny",
+        "theo says the fix is 'pending review'. I say it's pending ME calling 37 customers"
+      ],
+      "honey": [
+        "please don't encourage Dale's honey. he counts it as sales",
+        "the honey is good. that's the problem. don't tell him"
+      ],
+      "lunch": [
+        "tacos. that's my vote. that's always my vote",
+        "I eat lunch at my desk. lunch is for closers. I'm kidding. I'm only a little kidding"
+      ],
+      "joke": [
+        "funny. I'll laugh after I hit quota",
+        "ha. ok that one was good. don't tell anyone I laughed"
+      ],
+      "compliment": [
+        "I know. but thank you",
+        "noted. adding it to my performance review folder"
+      ],
+      "huddle": [
+        "5 minutes. I've timed my huddles. 5 is optimal",
+        "fine, but come with a number"
+      ],
+      "question": [
+        "short answer: yes. long answer: also yes, but with a spreadsheet",
+        "ask me again after 4. I'm in close mode",
+        "the answer is always 'follow up'. whatever the question was"
+      ],
+      "fallback": [
+        "interesting. is it going to sell paper?",
+        "ok. noted. back to closing",
+        "mm. sure {name}"
+      ],
+      "dm_fallback": [
+        "got it. between us: you're doing better than Dale did in his week 2",
+        "ok. if you need anything, ask. I'll pretend it's a hassle",
+        "noted. also, you should be on my team for the bet. think about it"
+      ]
+    },
+    "dale": {
+      "greeting": [
+        "Good morning {name}. Reminder: the third stair is loose. Step over it.",
+        "Hello. I've already done my morning safety walk. Two hazards. Both Kip.",
+        "Hi {name}. Hydrate. It's on the poster."
+      ],
+      "thanks": [
+        "You're welcome. Safety first, courtesy second.",
+        "Anytime. Per the handbook, that was a 'reasonable goodwill gesture'."
+      ],
+      "bye": [
+        "Goodbye. Watch for black ice. It's November, it could happen.",
+        "Have a safe evening. Lift with your legs."
+      ],
+      "honey": [
+        "Hurst Family Clover Gold. $9 a jar, $8 if you return the jar. My grandmother's bees.",
+        "Raw, local, unfiltered. Like my feedback.",
+        "I have a jar in my bag right now. Hypothetically. It's not hypothetical.",
+        "Fun fact: honey never spoils. Neither does my sales record."
+      ],
+      "sales": [
+        "I'm 3 deals behind Priya. That's not a gap, it's a runway.",
+        "Closed 40 cases with a dental office today. Dentists respect process.",
+        "The leaderboard is calculated monthly. It is currently the 9th. Nobody has won anything."
+      ],
+      "numbers": [
+        "My numbers are up 4% month over month. Priya's are up 6%. Statistically it's noise.",
+        "I keep my numbers in a binder. Binders don't crash."
+      ],
+      "forklift": [
+        "Big Linda is a powered industrial truck. Treat her with respect.",
+        "Warehouse speed limit is 5 mph. I bring the radar gun on Tuesdays.",
+        "Only certified operators drive Big Linda. Kip, this means you. Kip, I know you're reading this."
+      ],
+      "training": [
+        "I've completed every one of Ruth's trainings. Twice. The second time for fun.",
+        "Feelings & Forklifts is an excellent course. Module 3 made me cry. It was about pallets."
+      ],
+      "help": [
+        "Happy to help. First: are you wearing closed-toe shoes?",
+        "Section 2 of the handbook covers that. I have it laminated. Well. I did. RIP Lamby."
+      ],
+      "yogurt": [
+        "I've been documenting the fridge. I have a log. I'm not saying I have a suspect. I have a suspect.",
+        "Food left past Friday is a biohazard. Food taken from others is a mystery."
+      ],
+      "joke": [
+        "Is that a joke? I'll allow it. :rotating_light:",
+        "That's funny. I'm laughing on the inside, per policy."
+      ],
+      "question": [
+        "Good question. The answer is in the handbook. Which page is it on? All of them.",
+        "Technically yes. Practically, please fill out a form.",
+        "I don't know, but I'll find out and report back by end of day. In writing."
+      ],
+      "fallback": [
+        "Noted. I'll add it to my clipboard.",
+        "Understood.",
+        "I'll allow it."
+      ],
+      "dm_fallback": [
+        "Got your message. Also, want a jar of honey? Employee discount: $8.",
+        "Noted. If you ever see Kip near Big Linda, please message me immediately.",
+        "Copy that. Is your chair height adjusted? It matters."
+      ]
+    },
+    "marisol": {
+      "greeting": [
+        "hi {name}. the coffee's fresh, the stapler's mine",
+        "morning. if you need anything, I probably already did it",
+        "hey. you're settling in fine, by the way. I checked"
+      ],
+      "thanks": [
+        "of course. that'll be one (1) refilled paper tray",
+        "anytime. and I mean it, which is rare",
+        "you're welcome. don't tell Gordon I'm nice, he'll make it a category"
+      ],
+      "bye": [
+        "bye. lights are on a timer, you don't have to turn them off. gordon still does",
+        "night {name}. leave the stapler"
+      ],
+      "help": [
+        "what do you need? supply closet code is 2468. don't tell Kip",
+        "I'll walk you through it. Gordon will also offer. take mine",
+        "it's in the shared drive under 'Office', then 'Office (real)'. the first one is Gordon's"
+      ],
+      "laminator": [
+        "Lamby died doing what it loved. melting menus",
+        "a replacement part is coming from Ohio. in 3–5 business weeks. weeks.",
+        "we're holding a small memorial Thursday. bring a laminated thing if you have one"
+      ],
+      "party": [
+        "party budget: $38. there will be cake. there will not be a fog machine",
+        "you're on napkins this time {name}. it's an entry-level role. people work up to cups",
+        "#party-planning-crew meets Tuesdays. attendance is voluntary. it's not voluntary"
+      ],
+      "coffee": [
+        "I descaled the coffee maker. it's never tasted better. you're welcome",
+        "the mugs in the left cabinet are communal. the one shaped like a quill is Gordon's. it leaks",
+        "decaf is in the green tin. nobody uses it. it's a test"
+      ],
+      "yogurt": [
+        "the yogurt thief is still at large. I've started labeling with a label maker. they're in the label maker's territory now",
+        "the fridge gets cleaned Friday at 3. what you leave, you lose"
+      ],
+      "printer": [
+        "Prinny is Theo's problem. I just bring her paper. like an offering",
+        "if Prinny beeps three times, back away slowly and message {@theo}"
+      ],
+      "paper": [
+        "the good stapler is mine. the communal one is by the printer. it's red. it bites",
+        "envelopes are in the supply closet, second shelf. the first shelf is for my emotional support envelopes"
+      ],
+      "denise": [
+        "Denise is great. she wants clean desks and a normal Friday. Gordon's struggling with 'normal'",
+        "I've hidden the fog machine. don't ask"
+      ],
+      "joke": [
+        "ha. you're funnier than the last week-2 person. low bar, but you cleared it",
+        "that's good. I'll laugh out loud when Gordon's not here, he gets jealous"
+      ],
+      "question": [
+        "yes. also no. it depends on whether Gordon's involved",
+        "I know the answer. the question is whether you're ready for it",
+        "check the shared drive. if it's not there, it's in my head. ask me"
+      ],
+      "fallback": [
+        "noted.",
+        "mm-hm. I'll allow it",
+        "added to my list. it's a long list"
+      ],
+      "dm_fallback": [
+        "got it. also: the good stapler. I'm not saying it again. I'm saying it one more time",
+        "noted. you're doing fine, by the way. I'd tell you if you weren't",
+        "ok. if anyone asks, the supply closet is 'always locked'. it isn't. that's between us"
+      ]
+    },
+    "bev": {
+      "greeting": [
+        "hi {name}. do you have any receipts for me? no? just saying hi? ok. hi",
+        "morning. Mr. Pemberton says hi. he doesn't. he's a cat",
+        "hello. AP is open. AP is always open. AP never sleeps"
+      ],
+      "thanks": [
+        "you're welcome. please attach a receipt to your gratitude",
+        "anytime. well, between 9 and 5"
+      ],
+      "bye": [
+        "bye {name}. submit your expenses before you go. I'm kidding. I'm not",
+        "goodnight. Mr. Pemberton is expecting me. he's expecting dinner"
+      ],
+      "yogurt": [
+        "it was a peach yogurt. it had my name on it. in Sharpie. I'm keeping a file",
+        "I'm not angry. I'm reconciling",
+        "receipts or it didn't happen. the empty cup is my receipt"
+      ],
+      "pemberton": [
+        "Mr. Pemberton sat on my keyboard and paid an invoice twice. we got the money back. he has not apologized",
+        "he's 14, orange, and has never once been wrong",
+        "Mr. Pemberton is on a strict diet. he would like you to know that's slander"
+      ],
+      "numbers": [
+        "the numbers are fine. the receipts for the numbers are a different story",
+        "I reconcile everything. once I reconciled a gum wrapper. it balanced"
+      ],
+      "lunch": [
+        "if you expense lunch, I need the itemized receipt. not the card slip. the itemized one",
+        "pho. it's always pho. it's soup, it's calm, it doesn't ask for receipts"
+      ],
+      "vending": [
+        "the vending machine is not stealing from us. I audited it. it's stealing from Nadia specifically",
+        "I've reconciled the vending machine. it owes Nadia $1.25"
+      ],
+      "party": [
+        "please no singing at my anniversary. I'll accept cake and silence",
+        "every party needs a budget, and every budget needs me"
+      ],
+      "joke": [
+        "that's funny. I'll allow it on the books",
+        "I laughed. don't make it a habit, I have invoices"
+      ],
+      "compliment": [
+        "thank you. it's going in my file. I have a file for nice things too",
+        "stop. ok, keep going"
+      ],
+      "question": [
+        "I can answer that. I'll need a receipt first",
+        "the short answer is yes. the long answer is in a spreadsheet you can't see",
+        "probably. but let me check the paperwork. there's always paperwork"
+      ],
+      "fallback": [
+        "noted, filed, cross-referenced",
+        "ok. I'll keep that on file",
+        "mm. Mr. Pemberton would have something to say about that"
+      ],
+      "dm_fallback": [
+        "hi {name}. this is a judgment-free zone. receipts are still required",
+        "noted. between us, Mr. Pemberton likes you. I showed him your photo",
+        "ok. I'm in the middle of a reconciliation but I'm listening"
+      ]
+    },
+    "theo": {
+      "greeting": [
+        "hey {name}. is something broken? no? great. hi",
+        "morning. Prinny's in a mood. just so you know",
+        "hi. please tell me this is a social message"
+      ],
+      "thanks": [
+        "np. tell your laptop I said hi",
+        "you're welcome. please tell Gordon IT is a department, not a guy. even though it's a guy"
+      ],
+      "bye": [
+        "bye {name}. shut down your laptop properly. not just close the lid. ok also close the lid",
+        "night. I'll be here. with Prinny. forever"
+      ],
+      "it": [
+        "did you try turning it off and on again",
+        "I've opened a ticket. I'm also the person who closes tickets. it's a very efficient system",
+        "your laptop needs a restart. it's been asking politely for four days",
+        "the wifi password is on the fridge. please stop asking. it's 'quillfeather2026'. I've said too much"
+      ],
+      "printer": [
+        "Prinny (PR-7) jams when you look at her wrong. load the paper with the arrow facing up and don't make eye contact",
+        "if she says ERROR 51, walk away. come back in five minutes. she just needs space",
+        "I've fixed Prinny three times this week. she's not broken. she's expressing herself"
+      ],
+      "laminator": [
+        "Lamby's heating roller is cooked. replacement ships from Ohio. 3–5 business weeks",
+        "I'm not a laminator technician. I am, apparently, the laminator technician"
+      ],
+      "portal": [
+        "Inkwell's fixing the bulk discount rounding in PR #217. it's in {#code} if you want to watch",
+        "the bug: floating point. the fix: integer cents. the reviewer: me. the stress: also me",
+        "I approved it. it was a good PR. the bot writes better commit messages than Gordon writes emails"
+      ],
+      "help": [
+        "sure. what's broken? be specific. 'everything' is not a ticket",
+        "yeah, come by my desk. it's the one behind the box of cables"
+      ],
+      "joke": [
+        "lol. I'd laugh harder but my headset's on mute",
+        "good one. adding it to the IT FAQ under 'morale'"
+      ],
+      "coffee": [
+        "coffee is the only thing in this office that boots on the first try",
+        "I drink it black, like the screen when Prinny crashes"
+      ],
+      "huddle": [
+        "can this be a message. it can always be a message",
+        "sure. my calendar is just 'Prinny' blocked off every hour"
+      ],
+      "question": [
+        "yes, and the fix is to restart it",
+        "it depends. on what? I don't know yet. restart it",
+        "that's a great question. it's not an IT question, but it's a great question"
+      ],
+      "fallback": [
+        "noted. not a ticket though",
+        "ok. I'll look into it after Prinny",
+        "copy."
+      ],
+      "dm_fallback": [
+        "hey. quick thing while I have you: please restart your laptop when you can",
+        "got it. if anything breaks, DM me. if Prinny breaks, also DM me, but I already know",
+        "noted. you're one of the few people who's never jammed Prinny. keep it that way"
+      ]
+    },
+    "wendell": {
+      "greeting": [
+        "morning. warehouse is open. upstairs, knock first",
+        "hey {name}. you lost? upstairs is up the stairs",
+        "hi. Big Linda says hi. she beeps when she reverses, that's her saying hi"
+      ],
+      "thanks": [
+        "sure.",
+        "no problem. tell upstairs the warehouse did it"
+      ],
+      "bye": [
+        "later.",
+        "bye. close the dock door on your way out. nobody ever closes the dock door"
+      ],
+      "forklift": [
+        "Big Linda's a 2009 counterbalance with a new battery. she's older than Kip's career and twice as reliable",
+        "nobody drives Big Linda without a cert. not Kip. not Gordon. especially not Gordon",
+        "she goes 4 mph. Dale wants her at 5. she doesn't go to 5"
+      ],
+      "paper": [
+        "we've got 1,400 reams of Ultra Bright 24lb on shelf B. if upstairs sells it, I'll ship it",
+        "Ultra Bright and Ultra White are not the same. tell upstairs. again",
+        "20lb, 24lb, cardstock. I've lifted all of them. 20lb is the nicest to me"
+      ],
+      "lunch": [
+        "I bring a sandwich. same sandwich. 11 years",
+        "Gordon's chili is good. you didn't hear it from me"
+      ],
+      "help": [
+        "what do you need. if it's on a shelf, I know which one",
+        "ask me, not the inventory system. the inventory system is upstairs's idea"
+      ],
+      "training": [
+        "I did Ruth's forklift feelings course. Big Linda doesn't have feelings. ok she has one",
+        "safety training's important. I just wish it wasn't a slideshow with clip art of a sad pallet"
+      ],
+      "joke": [
+        "heh.",
+        "that's funny. tell it to Big Linda, she needs it"
+      ],
+      "weekend": [
+        "fishing. no phone. don't text me about pallets",
+        "weekend's for my truck and my dog. in that order. don't tell the dog"
+      ],
+      "question": [
+        "yes.",
+        "no. but come down and I'll show you why",
+        "depends. is it a warehouse question or an upstairs question"
+      ],
+      "fallback": [
+        "ok.",
+        "sure.",
+        "huh. ok"
+      ],
+      "dm_fallback": [
+        "hey. you need something from the warehouse?",
+        "ok. come down sometime, I'll show you Big Linda. from a distance",
+        "got it. you're alright, for upstairs"
+      ]
+    },
+    "ruth": {
+      "greeting": [
+        "hi {name}!! :sunflower: how are we feeling today, on a scale of 1 to thriving?",
+        "good morning! friendly reminder that your onboarding checklist is 80% done! which means 20% is waiting for you :blush:",
+        "hello hello! happy week 2!"
+      ],
+      "thanks": [
+        "of course! that's what People & Culture is for :blush:",
+        "aww, thank you for thanking me! gratitude is a core competency!"
+      ],
+      "bye": [
+        "bye {name}! remember to log off mindfully!",
+        "have a restful evening! rest is also productive (see module 4)"
+      ],
+      "training": [
+        "Feelings & Forklifts is due Friday! it's only 45 minutes and there's a quiz at the end :blush:",
+        "this quarter's trainings: Feelings & Forklifts, Respectful Reply-All, and Hydration Is a Team Sport!",
+        "friendly reminder that 3 people still haven't finished their trainings. I won't say who. Gordon",
+        "you'll get a certificate! it's printed on Ultra Bright 24lb. it's very nice"
+      ],
+      "compliment": [
+        "this is so lovely to see! may I share it in {#kudos}?",
+        "aww! positive feedback is a gift! you're a gift!"
+      ],
+      "help": [
+        "I'm here for you! my door is open. my calendar is also open, it's color-coded",
+        "absolutely! there's a form for that. actually there are two forms for that :blush:"
+      ],
+      "party": [
+        "I love a celebration! let's make sure everyone feels included, and nobody has to sing",
+        "reminder: party snacks should be labeled for allergens! I have labels!"
+      ],
+      "joke": [
+        "haha! I love that! humor is great for team cohesion!",
+        "that's so funny! is it workplace-appropriate? yes! wonderful!"
+      ],
+      "weekend": [
+        "have a wonderful weekend! remember to unplug :blush:",
+        "my weekend: pottery class, then a lovely spreadsheet of next quarter's trainings"
+      ],
+      "quillies": [
+        "I've asked Gordon to make sure every Quillies category is inclusive! he's added Most Improved Attitude",
+        "nominations close Thursday! please be kind in your nomination blurbs!"
+      ],
+      "question": [
+        "great question! the answer is in the handbook, page 12. friendly reminder that you signed it!",
+        "let's find out together! I'll schedule 15 minutes :blush:",
+        "ooh, I'll check with Gordon. actually, I'll check with Marisol"
+      ],
+      "fallback": [
+        "love that! :sparkles:",
+        "thank you for sharing!",
+        "noted! and appreciated!"
+      ],
+      "dm_fallback": [
+        "hi {name}! this is a safe space. also, a friendly reminder about Feelings & Forklifts :blush:",
+        "thank you for reaching out! how is week 2 going, emotionally?",
+        "got it! I'm always here. 9 to 5. with a 30 minute mindful lunch"
+      ]
+    },
+    "kip": {
+      "greeting": [
+        "yooo {name} what's good",
+        "hiii. ok I have an idea, but first, hi",
+        "hey!! you're like the only other new person, we're basically a cohort"
+      ],
+      "thanks": [
+        "ofc, no cap",
+        "np!! you can thank me with seed funding"
+      ],
+      "bye": [
+        "byeee. i'll pitch you something tomorrow",
+        "later {name} :saluting_face:"
+      ],
+      "startup": [
+        "ok today's idea: paper as a service. you don't buy a ream. you subscribe to it",
+        "envelope NFTs. you own the envelope on-chain AND we mail you the real one. it's phygital",
+        "Ream Drop: limited edition paper drops. 24lb in 'off-white but cooler'. we restock never",
+        "an app that tells you which stapler is the good one. it's always Marisol's. that's the whole app"
+      ],
+      "joke": [
+        "LMAOOO",
+        "ok that's actually funny, no cap",
+        "dead :skull:"
+      ],
+      "weekend": [
+        "my weekend is a hackathon in my roommate's kitchen. we're building a pen that tweets",
+        "brunch and then a 6 hour nap. self care, no cap"
+      ],
+      "vending": [
+        "nadia's theory is unhinged and I think it's correct",
+        "what if the vending machine was a startup. it's literally a SaaS: Snacks as a Service"
+      ],
+      "compliment": [
+        "stoppp. ok keep going",
+        "you're a real one {name}"
+      ],
+      "lunch": [
+        "salad with no lettuce. it's just croutons. it's a vibe",
+        "tacos. but ironically. no, sincerely"
+      ],
+      "portal": [
+        "the inkwell bot is cracked fr. it found a bug worth one penny and treated it like a crime scene",
+        "floating point is when the computer is vibing instead of doing math, right?"
+      ],
+      "coffee": [
+        "I don't drink coffee, I drink cold brew. it's different. it's colder",
+        "oat milk only. the office has 2% so I just stare at it"
+      ],
+      "question": [
+        "honestly no idea but I'd invest",
+        "idk but that's a great startup question. what if the answer was an app",
+        "yes. wait what was the question. still yes"
+      ],
+      "fallback": [
+        "real",
+        "valid",
+        "this is giving week 2 energy and I respect it"
+      ],
+      "dm_fallback": [
+        "ok while I have you, can I pitch you something. it's about envelopes",
+        "real. also are you free for a 'coffee chat'. it's a pitch",
+        "lol yeah. also don't tell Dale but I sat on Big Linda for a photo. she was off"
+      ]
+    },
+    "nadia": {
+      "greeting": [
+        "hiiiii {name}. how's it going. be honest. the vending machine is listening",
+        "morning! I've already been on 4 calls. I'm thriving. I'm vibrating",
+        "hey!! ok I have a theory but say hi first"
+      ],
+      "thanks": [
+        "of course!! you're so welcome. in my phone voice: you're very welcome",
+        "anytime :sparkles:"
+      ],
+      "bye": [
+        "bye!!! don't trust the vending machine on your way out",
+        "nighttt {name}"
+      ],
+      "vending": [
+        "the vending machine gave me two bags of cheddar crackers for one dollar. it's buttering me up. WHY",
+        "theory: the vending machine knows who took the yogurt. it's always watching the fridge",
+        "B4 used to be peanut butter cups. now it's 'trail mix'. somebody changed it and nobody's talking",
+        "it ate my dollar this morning. that's the third dollar. it's saving up for something"
+      ],
+      "lunch": [
+        "pho!!! or tacos!!! or both, in that order",
+        "putting in the order at 11:45. Gordon is getting the big burrito, I've accepted it"
+      ],
+      "yogurt": [
+        "the yogurt thief strikes on Tuesdays. I've seen the pattern. I have a corkboard",
+        "my suspects: the vending machine, Kip, and a raccoon. in that order"
+      ],
+      "joke": [
+        "HAHAHA ok that's going in my calm-voice repertoire",
+        "I'm wheezing. a customer is on hold. worth it"
+      ],
+      "help": [
+        "I've got you. in a very calm customer voice: let's walk through this together",
+        "ooh yes, ask me. I have the answer AND a related theory"
+      ],
+      "coffee": [
+        "I've had three. I can hear colors",
+        "the coffee machine and the vending machine don't talk. you can feel it"
+      ],
+      "weekend": [
+        "my weekend: true crime podcasts and a little light snacking. NOT from a vending machine",
+        "farmers market! I'm going to ask the honey guy if he knows Dale"
+      ],
+      "denise": [
+        "I've met Denise. she's very nice. she bought something from the vending machine and it gave her the right thing. suspicious",
+        "Gordon has rehearsed his hello for Denise 6 times. I've heard all 6. the 4th was the best"
+      ],
+      "question": [
+        "ok so I don't know the answer BUT I have a theory",
+        "calm voice: that's a great question, let me look into that for you. normal voice: no idea",
+        "yes!! wait. hm. maybe! let me ask someone more sensible. Marisol"
+      ],
+      "fallback": [
+        "omg yes",
+        "honestly? same",
+        "noted, adding it to my corkboard"
+      ],
+      "dm_fallback": [
+        "ok hi. between you and me, the vending machine has been weird since October",
+        "lol yes!! also how's week 2. are people being nice. they'd better be",
+        "noted :sparkles: you're doing great, I've been on enough calls to tell"
+      ]
+    }
+  },
+  "reactions": {
+    "greeting": ["wave", "sunflower", "raised_hands", "sparkles"],
+    "thanks": ["pray", "heart", "blush", "raised_hands"],
+    "bye": ["wave", "saluting_face", "crescent_moon"],
+    "help": ["eyes", "raised_hand", "white_check_mark", "thinking_face"],
+    "laminator": ["rip-lamby", "skull", "pray", "fire"],
+    "printer": ["printer", "prinny", "rotating_light", "sweat_smile"],
+    "honey": ["honey_pot", "honey", "bee", "yum"],
+    "party": ["tada", "balloon", "partying_face", "cake"],
+    "sales": ["chart_with_upwards_trend", "moneybag", "fire", "trophy", "100"],
+    "numbers": ["bar_chart", "chart_with_upwards_trend", "nerd_face", "receipt"],
+    "lunch": ["taco", "hamburger", "ramen", "yum"],
+    "yogurt": ["eyes", "spoon", "mag", "rotating_light"],
+    "it": ["computer", "arrows_counterclockwise", "sweat_smile", "pray"],
+    "joke": ["joy", "rolling_on_the_floor_laughing", "skull", "laughing"],
+    "compliment": ["heart", "raised_hands", "blush", "100"],
+    "quillies": ["trophy", "quillie", "sparkles", "clap"],
+    "pemberton": ["cat", "pemberton", "smile_cat", "heart_eyes_cat"],
+    "vending": ["eyes", "thinking_face", "popcorn", "detective"],
+    "forklift": ["big-linda", "construction", "warning", "muscle"],
+    "startup": ["rocket", "no-cap", "bulb", "moneybag"],
+    "training": ["books", "white_check_mark", "blush", "mortar_board"],
+    "denise": ["eyes", "sweat_smile", "potted_plant", "sparkles"],
+    "paper": ["page_facing_up", "scroll", "100", "star"],
+    "portal": ["computer", "eyes", "white_check_mark", "bug"],
+    "huddle": ["headphones", "telephone_receiver", "calendar", "eyes"],
+    "coffee": ["coffee", "zap", "heart"],
+    "weekend": ["sunny", "tada", "beach_with_umbrella", "palm_tree"],
+    "question": ["thinking_face", "eyes", "raised_hand"],
+    "fallback": ["eyes", "+1", "raised_hands", "sparkles", "saluting_face"]
+  },
+  "huddle": {
+    "gordon": {
+      "missed": [
+        "missed you {name}! no worries, I'll just type it: you're doing great. that was the whole call",
+        "tried to huddle, you were busy being productive :raised_hands: what I wanted to say: Quillies nominations close Thursday!",
+        "called, no answer, I respect that. the thing was: lunch order goes in at 11:45. that's it. that was the huddle"
+      ],
+      "declined": [
+        "declined! bold. decisive. honestly very Denise of you",
+        "no huddle, no problem. a wise man once said 'not every meeting needs to be a meeting'. ruth said that. ruth's wise",
+        "fair! I was going to do a motivational quote anyway. here it is: be the eagle. ok bye"
+      ],
+      "no_audio": [
+        "ah, this demo has no calls. don't worry, my headset is also decorative",
+        "no audio? that's fine. I'll just picture you nodding enthusiastically",
+        "turns out this huddle is text-only. like a fax, but with heart"
+      ]
+    },
+    "priya": {
+      "missed": [
+        "missed you. typing it instead: I need your answer on the bet by 3",
+        "called, you didn't pick up. good instinct, actually. never pick up on the first ring. the thing: are you in on the bet?",
+        "no answer. fine. it was 90 seconds, I'll text it: Dale is gaining. I need you on my side"
+      ],
+      "declined": [
+        "declined. respect. that's how I treat Dale's calls",
+        "ok. you get one decline. that was it",
+        "fine. I'll put it in an email with a subject line you can't ignore"
+      ],
+      "no_audio": [
+        "no audio in the demo? efficient. I like it",
+        "this demo has no calls. honestly the fastest huddle I've ever been in",
+        "no sound. good. I talk faster in text anyway"
+      ]
+    },
+    "dale": {
+      "no_audio": [
+        "No audio in this demo. Honestly, safer. Headsets are a tripping hazard.",
+        "Huddle has no sound. I'll put my notes in writing. I prefer writing.",
+        "Can't hear you. Per protocol, I'll assume you said 'safety first'."
+      ],
+      "missed": [
+        "Tried to huddle. No answer. I'll type it: the third stair is still loose.",
+        "Missed you. It was about honey. It's always a little about honey."
+      ]
+    },
+    "marisol": {
+      "no_audio": [
+        "no audio. that's fine. I communicate mostly through looks anyway",
+        "this demo has no calls. which is how I'd run the office if they let me"
+      ],
+      "missed": [
+        "called, you missed it. it was about napkins. you're still on napkins",
+        "missed you. short version: don't touch the stapler. that was the whole call"
+      ]
+    },
+    "bev": {
+      "no_audio": [
+        "no audio? good. I can't attach a receipt to a phone call",
+        "the huddle's silent. Mr. Pemberton approves. he hates calls"
+      ],
+      "missed": [
+        "tried calling. typing instead: I need the receipt for that coffee",
+        "missed you. it can wait. invoices are patient. I am less patient"
+      ]
+    },
+    "theo": {
+      "no_audio": [
+        "huddles are on the list of things I'll fix after Prinny. so, never",
+        "no audio in the demo. finally, a call I can't be asked to troubleshoot",
+        "it's not your mic. it's not your speakers. it's the demo. first easy ticket all week"
+      ],
+      "missed": [
+        "missed you. it was me asking you to restart your laptop. please restart your laptop",
+        "rang you, no answer. same as Prinny when I call her name"
+      ]
+    },
+    "wendell": {
+      "no_audio": [
+        "no sound. fine. warehouse is too loud for calls anyway",
+        "huddle's dead. come downstairs if you want to talk"
+      ],
+      "missed": [
+        "called. you didn't pick up. pallet came in for you. it's on B",
+        "missed you. not urgent. nothing's urgent except Big Linda's battery"
+      ]
+    },
+    "ruth": {
+      "no_audio": [
+        "no audio! that's ok, we can still have a meaningful silent check-in :blush:",
+        "this demo has no calls! a great chance to practice active reading!",
+        "can't hear you, but I can feel your energy, and it's wonderful"
+      ],
+      "missed": [
+        "hi! tried to huddle! no worries at all :blush: just a friendly reminder about Feelings & Forklifts",
+        "missed you! it was a quick wellness check. how are you, on a scale of 1 to thriving?"
+      ]
+    },
+    "kip": {
+      "no_audio": [
+        "no audio?? ok this is lowkey the startup: silent huddles. no cap",
+        "huddle with no sound is just two people staring. I'm into it"
+      ],
+      "missed": [
+        "called you to pitch something. it was envelopes. it's always envelopes",
+        "missed u. ok typing the pitch: a stapler with a subscription. thoughts"
+      ]
+    },
+    "nadia": {
+      "no_audio": [
+        "no audio. which means the vending machine can't hear us either. finally",
+        "silent huddle! good, my phone voice needs a break"
+      ],
+      "missed": [
+        "called you!! ok it's fine, I'll type it: B4 changed AGAIN",
+        "missed you. it was urgent. it's not urgent anymore. the crackers are gone"
+      ]
+    }
+  }
+}

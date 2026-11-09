@@ -1,0 +1,37 @@
+[
+  {"at": "-4 11:00", "by": "marisol", "text": "Party Planning Crew, first meeting is in the conference room at 2. Agenda: holiday party, Quillies cake, and who keeps putting \"karaoke\" on the agenda.", "reactions": ["calendar ruth bev kip", "eyes gordon"]},
+  {"at": "-4 11:02", "by": "gordon", "text": "Agenda item: karaoke machine :headphones:", "edited": "+1m", "reactions": ["x marisol bev", "joy kip"]},
+  {"at": "-4 15:30", "by": "marisol", "text": "Here's the plan from today. Edit away, but please don't delete other people's lines (Gordon).", "files": [{"canvas": "F0DEMOCANV1"}],
+   "reactions": ["memo ruth bev kip", "white_check_mark ruth"]},
+  {"at": "-4 15:41", "by": "bev", "text": "Budget for the whole party is $600. Every dollar needs a receipt. I will be checking.", "reactions": ["moneybag marisol", "+1 ruth", "sweat_smile kip"]},
+  {"at": "-3 10:20", "by": "ruth", "text": "Theme thoughts! I'd love something inclusive that everyone can enjoy. Ideas welcome :sparkles:", "reactions": ["thinking_face marisol kip"],
+   "replies": [
+     {"at": "+3m", "by": "kip", "text": "y2k. no cap. everyone loves y2k"},
+     {"at": "+5m", "by": "gordon", "text": "\"A Night at the Quillies.\" Red carpet. Black tie optional. Karaoke mandatory."},
+     {"at": "+6m", "by": "ruth", "text": "Mandatory karaoke isn't very inclusive, Gordon!"},
+     {"at": "+8m", "by": "bev", "text": "Winter Wonderland is cheap. We already own the snowflakes from 2023.", "reactions": ["snowflake marisol ruth"]},
+     {"at": "+10m", "by": "marisol", "text": "Winter Wonderland it is. Kip can have a Y2K corner. Gordon can have a karaoke *corner*, singular, optional."},
+     {"at": "+11m", "by": "gordon", "text": "A corner is all I ask :pray:", "reactions": ["joy kip"]},
+     {"at": "+14m", "by": "kip", "text": "y2k corner is gonna eat"}
+   ]},
+  {"at": "-3 13:15", "by": "kip", "text": "can we get a DJ. my roommate's friend djs. his name is DJ Ream Team. he's free (he wants $300)", "reactions": ["x bev", "eyes marisol"]},
+  {"at": "-3 13:17", "by": "bev", "text": "That's half the budget.", "reactions": ["100 marisol"]},
+  {"at": "-3 13:18", "by": "kip", "text": "ok he can do $40 and pizza", "reactions": ["pizza kip", "thinking_face marisol"]},
+  {"at": "-3 13:20", "by": "marisol", "text": "Pizza and $40 I can work with. Get a receipt from DJ Ream Team.", "reactions": ["white_check_mark bev"]},
+  {"at": "-2 09:40", "by": "gordon", "text": "Found a karaoke machine on sale! $189! Pre-owned! Just has one sticky button!", "reactions": ["x marisol bev ruth", "grimacing kip"]},
+  {"at": "-2 09:43", "by": "bev", "text": "No.", "reactions": ["joy marisol kip ruth"]},
+  {"at": "-2 14:05", "by": "ruth", "text": "I added a quiet room to the plan for anyone who needs a break from the festivities :heart: Also a nametag table.", "reactions": ["heart marisol bev", "+1 kip"]},
+  {"at": "-1 10:30", "by": "marisol", "text": "Quillies cake is confirmed for Friday. Here's the mockup from Wexley Falls Bakery.", "files": [{"image": "cake", "name": "quillies_cake_mockup.png"}],
+   "reactions": ["cake ruth kip bev gordon", "quillie gordon", "star ruth"],
+   "replies": [
+     {"at": "+2m", "by": "gordon", "text": "IT'S BEAUTIFUL. Can the quill be edible?"},
+     {"at": "+4m", "by": "marisol", "text": "It is fondant. It is technically edible."},
+     {"at": "+5m", "by": "bev", "text": "$54 with the quill. Receipt received. Thank you Marisol.", "reactions": ["moneybag marisol"]},
+     {"at": "+6m", "by": "kip", "text": "dibs on the quill"},
+     {"at": "+7m", "by": "gordon", "text": "The quill goes to the Grand Quillie winner, Kip."},
+     {"at": "+8m", "by": "kip", "text": "then i'm going for the grand quillie"}
+   ]},
+  {"at": "-1 15:50", "by": "gordon", "text": "Not to bring it up again but the karaoke machine is now $149.", "reactions": ["x marisol bev", "joy ruth kip"]},
+  {"at": "3h", "by": "marisol", "text": "Party To-dos are in the plan canvas. Kip: DJ receipt. Ruth: nametags. Bev: snowflakes from storage. Gordon: nothing. Please do nothing, Gordon.", "reactions": ["white_check_mark ruth bev kip", "okayest-boss gordon"]},
+  {"at": "2h50m", "by": "gordon", "text": "Doing nothing. Enthusiastically. :saluting_face:", "reactions": ["joy marisol ruth"]}
+]
