@@ -38,6 +38,7 @@ type Message struct {
 	Room           json.RawMessage `json:"room,omitempty"` // huddles
 	Channel        string          `json:"channel,omitempty"`
 	Inviter        string          `json:"inviter,omitempty"`
+	StreamingState string          `json:"streaming_state,omitempty"` // chat.startStream: in_progress | completed | errored
 }
 
 // PinnedInfo says who pinned a message (history / messages.list).

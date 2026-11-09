@@ -760,7 +760,7 @@ func (c *chrome) layoutTypingNames(gtx layout.Context, p slackc.Props) layout.Di
 	th := c.f.h.Theme()
 	s := textStyle{Size: 10.5, LineHeight: 16, Color: c.fpal.typing, MaxLines: 1}
 	maxW := gtx.Constraints.Max.X
-	if p == nil {
+	if p == nil || c.cur.TypingStatus != "" {
 		return crText(gtx, th.Shaper, 0, 0, maxW, s, c.cur.Typing)
 	}
 	if p.Bool("severalPeopleAreTyping") {

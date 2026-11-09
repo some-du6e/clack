@@ -452,6 +452,11 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 		st.TypingIDs, st.TypingNames = typingHub(c.h.Core()).typers(c.ch, c.ts, c.api.self().ID)
 	}
 	st.Typing = typingLine(st.TypingNames)
+	if uipref.Get().ShowTyping {
+		if name, status := typingHub(c.h.Core()).assistantLine(c.ch, c.ts, c.api.self().ID); status != "" {
+			st.Typing, st.TypingStatus = name+" "+status, status // AiAppStatusIndicator
+		}
+	}
 	st.ScrolledTop = c.ed.scrollY > 0
 	st.ScrolledBottom = c.ed.scrollY+c.ed.viewH < c.ed.contentH
 	if st.ThreadTS != "" && slackc.Patched(tautButtons) {

@@ -754,6 +754,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleSections(method, f); handled { // sections.go
 		return out
 	}
+	if out, handled := s.handleAgents(method, f); handled { // agents.go
+		return out
+	}
 	switch method {
 	case "auth.test":
 		return ok("url", s.URL, "team", "Fake Club", "user", "self", "team_id", TeamID, "user_id", SelfID, "enterprise_id", EnterpriseID)
