@@ -360,33 +360,51 @@ func (f *prefsForm) headingLink(t, label, url string) {
 // button is Slack's outline button (36px, 700 15px); disabled it greys
 // and ignores clicks.
 func (f *prefsForm) button(key, label string, enabled bool, do func()) {
+	f.buttons(prefsButton{key, label, enabled, do})
+}
+
+// prefsButton is one button of a row.
+type prefsButton struct {
+	key, label string
+	enabled    bool
+	do         func()
+}
+
+// buttons draws outline buttons side by side, 8px apart (Slack's Theme
+// colors Share / Import / Surprise me).
+func (f *prefsForm) buttons(bs ...prefsButton) {
 	gtx, a := f.gtx, f.p.a
 	c := &a.th.C
-	f.record("button", "button."+key, label, false, enabled)
-	b := f.p.btn("button." + key)
-	bw := a.th.Measure(gtx, 15, theme.Bold, label) + gtx.Dp(32)
 	bh := gtx.Dp(36)
-	fg := c.Fg
-	if !enabled {
-		fg = c.FgSubtle
-	}
-	at(gtx, image.Pt(0, f.y), image.Pt(bw, bh), func(gtx layout.Context) layout.Dimensions {
-		return clickArea(gtx, b, func(gtx layout.Context, s image.Point, hov bool) {
-			r := image.Rectangle{Max: s}
-			if hov && enabled {
-				theme.RRect(gtx, r, gtx.Dp(8), c.BgHover)
-			}
-			theme.Border(gtx, r, gtx.Dp(8), gtx.Dp(1), c.BorderStrong)
-		}, func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints = layout.Exact(image.Pt(bw, bh))
-			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return a.th.Label(gtx, 15, theme.Bold, fg, label)
+	x := 0
+	for _, pb := range bs {
+		pb := pb
+		f.record("button", "button."+pb.key, pb.label, false, pb.enabled)
+		b := f.p.btn("button." + pb.key)
+		bw := a.th.Measure(gtx, 15, theme.Bold, pb.label) + gtx.Dp(32)
+		fg := c.Fg
+		if !pb.enabled {
+			fg = c.FgSubtle
+		}
+		at(gtx, image.Pt(x, f.y), image.Pt(bw, bh), func(gtx layout.Context) layout.Dimensions {
+			return clickArea(gtx, b, func(gtx layout.Context, s image.Point, hov bool) {
+				r := image.Rectangle{Max: s}
+				if hov && pb.enabled {
+					theme.RRect(gtx, r, gtx.Dp(8), c.BgHover)
+				}
+				theme.Border(gtx, r, gtx.Dp(8), gtx.Dp(1), c.BorderStrong)
+			}, func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints = layout.Exact(image.Pt(bw, bh))
+				return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return a.th.Label(gtx, 15, theme.Bold, fg, pb.label)
+				})
 			})
 		})
-	})
-	if clicked(b) && enabled && do != nil {
-		do()
-		a.Invalidate()
+		if clicked(b) && pb.enabled && pb.do != nil {
+			pb.do()
+			a.Invalidate()
+		}
+		x += bw + gtx.Dp(8)
 	}
 	f.y += bh + gtx.Dp(12)
 }

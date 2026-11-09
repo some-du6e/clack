@@ -152,12 +152,10 @@ func (p *prefsModal) customTheme(f *prefsForm, cur theme.IATheme) {
 	for i, r := range customRoles {
 		hexes[i] = cur.RoleHex(r.key, a.th.Dark)
 	}
-	f.button("theme_share", "Share", true, func() {
+	f.buttons(prefsButton{"theme_share", "Share", true, func() {
 		a.copyText("Check out my Slack theme: " + strings.Join(hexes, ","))
 		a.Toast("Copied")
-	})
-	f.button("theme_import", "Import", false, nil)
-	f.button("theme_surprise", "Surprise me", false, nil)
+	}}, prefsButton{"theme_import", "Import", false, nil}, prefsButton{"theme_surprise", "Surprise me", false, nil})
 	gtx := f.gtx
 	colW := (f.w - gtx.Dp(16)) / 2
 	for i, r := range customRoles {

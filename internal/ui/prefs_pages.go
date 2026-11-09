@@ -284,8 +284,8 @@ func (p *prefsModal) navigationPage(f *prefsForm) {
 			})
 		}
 		i := indexOf(r.Available, p.navSel)
-		f.button("rail.up", "Move up", i > 0, func() { p.moveRailTab(r.Available, i, -1) })
-		f.button("rail.down", "Move down", i >= 0 && i < len(r.Available)-1, func() { p.moveRailTab(r.Available, i, 1) })
+		f.buttons(prefsButton{"rail.up", "Move up", i > 0, func() { p.moveRailTab(r.Available, i, -1) }},
+			prefsButton{"rail.down", "Move down", i >= 0 && i < len(r.Available)-1, func() { p.moveRailTab(r.Available, i, 1) }})
 	}
 	f.gap()
 	f.subheading("Navigation Tab Appearance")
