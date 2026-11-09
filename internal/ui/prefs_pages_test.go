@@ -70,7 +70,7 @@ var slackPages = map[string][]want{
 		lg("Also notify you about:"), ck("Thread replies"), ck("Messages from VIPs, even if notifications are paused"), ck("New huddles"),
 		ck("Set up mobile overrides"),
 		lg("Channel keywords"), {"input", "", false},
-		h2("Reminders"), lg("Set a default time for reminder notifications:"), selOff("9:00 AM"),
+		h2("Reminders"), lg("Set a default time for reminder notifications:"), sel("9:00 AM"),
 		lg("When you’re not active on desktop…"), sel("As soon as I’m inactive"),
 		ck("If I’m not active for more than 2 weeks, send me a mobile notification, summarizing activity I’ve missed"),
 		btn("Set Email Notifications"),
@@ -119,7 +119,7 @@ var slackPages = map[string][]want{
 		lg("Bring emails into Slack"), btnOff("Get a Forwarding Address"),
 	},
 	"language_region": {
-		lg("Language"), selOff("English (US)"), lg("Time zone"), ckOff("Set time zone automatically"),
+		lg("Language"), selOff("English (US)"), lg("Time zone"), ck("Set time zone automatically"), selOff("(UTC-08:00) Pacific Time (US and Canada)"),
 		lg("Keyboard layout"), selOff("English (US)"), lg("Spellcheck"), ckOff("Enable spellcheck on your messages and canvases"),
 	},
 	"accessibility": {

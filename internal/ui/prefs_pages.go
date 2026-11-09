@@ -155,9 +155,8 @@ func (p *prefsModal) notificationsPage(f *prefsForm) {
 	f.hr()
 
 	f.heading("Reminders")
-	f.selectBox("reminders", "Set a default time for reminder notifications:", "9:00 AM", false, nil)
+	p.reminderTimePref(f) // prefs_a.go
 	f.muted("Reminders you set for a specific day (like “tomorrow”) will be sent at the time you select.", false)
-	f.na()
 	f.gap()
 	f.subheading("When you’re not active on desktop…")
 	f.para("Send notifications to my mobile devices:")
@@ -538,12 +537,7 @@ func (p *prefsModal) languagePage(f *prefsForm) {
 	f.muted("Choose the language you’d like to use with Slack.", false)
 	f.hr()
 	f.subheading("Time zone")
-	f.off("set_tz_automatically", "Set time zone automatically", "", p.prefBool("set_tz_automatically", true), false)
-	tz := p.prefStr("tz")
-	if tz == "" {
-		tz = "Not set"
-	}
-	f.selectBox("tz", "", tz, false, nil)
+	p.timezonePref(f) // prefs_a.go
 	f.muted("Slack uses your time zone to send summary and notification emails, for times in your activity feeds, and for reminders.", false)
 	f.hr()
 	f.selectBox("keyboard_layout", "Keyboard layout", "English (US)", false, nil)

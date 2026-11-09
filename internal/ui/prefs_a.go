@@ -10,7 +10,11 @@ import (
 	"gioui.org/op"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
 )
 
 // prefsA is the state of the rows that make Notifications, VIP, Home,
@@ -180,4 +184,116 @@ func (p *prefsModal) quickReactionsPref(f *prefsForm) {
 		}})
 	}
 	f.buttons(bs...)
+}
+
+// timezonePref is Slack's TimezonePref: "Set time zone automatically"
+// (on: the detected zone is written to tz at once, and core keeps it in
+// step at sign-in, MaybeUpdateTimezone) and the time zone select with
+// Slack's labels, disabled while automatic.
+func (p *prefsModal) timezonePref(f *prefsForm) {
+	auto := p.prefBool("set_tz_automatically", false)
+	f.option("pref.set_tz_automatically", "Set time zone automatically", "", auto, false, func() {
+		p.setPref("set_tz_automatically", !auto)
+		if !auto {
+			if z := core.DetectTimezone(); z != "" {
+				p.setPref("tz", z)
+			}
+		}
+	})
+	tz := p.prefStr("tz")
+	label := core.TimezoneLabel(tz)
+	if label == "" {
+		label = core.TimezoneLabel(core.DefaultTZ)
+	}
+	labels := make([]string, len(core.SlackTimezones))
+	sel := -1
+	for i, z := range core.SlackTimezones {
+		labels[i] = z.Label
+		if z.ID == tz {
+			sel = i
+		}
+	}
+	p.selectList(f, "tz", label, !auto, func(anchor image.Rectangle) {
+		p.a.ShowOverlay(popups.NewOptionList(p.a, anchor, labels, sel, func(i int) {
+			p.setPref("tz", core.SlackTimezones[i].ID)
+		}))
+	})
+}
+
+// selectList is selectBox (Slack's select) for a long list: a click calls
+// open with the box's window rectangle (the listbox scrolls).
+func (p *prefsModal) selectList(f *prefsForm, key, value string, enabled bool, open func(anchor image.Rectangle)) {
+	gtx, a := f.gtx, f.p.a
+	c := &a.th.C
+	f.record("select", "sel."+key, value, false, enabled)
+	b := p.btn("sel." + key)
+	bw, bh := f.w, gtx.Dp(36)
+	fg := c.Fg
+	if !enabled {
+		fg = c.FgSubtle
+	}
+	at(gtx, image.Pt(0, f.y), image.Pt(bw, bh), func(gtx layout.Context) layout.Dimensions {
+		return clickArea(gtx, b, func(gtx layout.Context, s image.Point, hov bool) {
+			r := image.Rectangle{Max: s}
+			theme.RRect(gtx, r, gtx.Dp(8), c.Bg)
+			bc := c.BorderStrong
+			if hov && enabled {
+				bc = c.Fg
+			}
+			theme.Border(gtx, r, gtx.Dp(8), gtx.Dp(1), bc)
+		}, func(gtx layout.Context) layout.Dimensions {
+			at(gtx, image.Pt(gtx.Dp(12), 0), image.Pt(bw-gtx.Dp(40), bh), func(gtx layout.Context) layout.Dimensions {
+				return vcenter(gtx, bh, func(gtx layout.Context) layout.Dimensions {
+					return a.th.Label(gtx, 15, theme.Regular, fg, value)
+				})
+			})
+			at(gtx, image.Pt(bw-gtx.Dp(28), (bh-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
+				return icons.Get("caret-down")(gtx, 16, fg)
+			})
+			return layout.Dimensions{Size: image.Pt(bw, bh)}
+		})
+	})
+	if clicked(b) && enabled {
+		// the box under the pointer, in window coordinates
+		ptr, local := a.PointerPos(), image.Pt(bw/2, bh/2)
+		if h := b.History(); len(h) > 0 {
+			local = h[len(h)-1].Position
+		}
+		o := ptr.Sub(local)
+		open(image.Rect(o.X, o.Y, o.X+bw, o.Y+bh))
+	}
+	f.y += bh + gtx.Dp(12)
+}
+
+// reminderTimePref is Slack's RemindersPreferences: a half-hour time
+// select writing reminder_notification_time ("H:mm", unset: 9:00). Slack's
+// servers send day-only reminders (/remind … tomorrow) at that time.
+func (p *prefsModal) reminderTimePref(f *prefsForm) {
+	f.subheading("Set a default time for reminder notifications:")
+	mins := reminderMinutes(p.prefStr("reminder_notification_time"))
+	label := uipref.Clock(time.Date(2000, 1, 1, 0, mins, 0, 0, time.UTC))
+	p.selectList(f, "reminder_notification_time", label, true, func(anchor image.Rectangle) {
+		anchor.Max.X = anchor.Min.X + f.gtx.Dp(200) // Slack's width: 200
+		p.a.ShowOverlay(popups.NewTimePicker(p.a, anchor, mins, 0, 30, func(m int) {
+			p.setPref("reminder_notification_time", strconv.Itoa(m/60)+":"+pad2(m%60))
+		}))
+	})
+}
+
+// reminderMinutes parses "H:mm" (Slack's default "9:00").
+func reminderMinutes(v string) int {
+	h, m, ok := strings.Cut(v, ":")
+	hh, err1 := strconv.Atoi(h)
+	mm, err2 := strconv.Atoi(m)
+	if !ok || err1 != nil || err2 != nil || hh < 0 || hh > 23 || mm < 0 || mm > 59 {
+		return 9 * 60
+	}
+	return hh*60 + mm
+}
+
+func pad2(n int) string {
+	if n < 10 {
+		return "0" + strconv.Itoa(n)
+	}
+	return strconv.Itoa(n)
 }

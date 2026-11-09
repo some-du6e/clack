@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"reflect"
 	"sync"
 	"testing"
@@ -295,5 +296,74 @@ func TestPrefsAuditAppliedRoundTripMessages(t *testing.T) {
 	waitFor(t, a, "frequent", func() bool {
 		v, _ := fs.Pref("user_customized_quick_reactions_use_frequently_used_emoji")
 		return v == true
+	})
+}
+
+// Notifications > Reminders and Language & region > Time zone:
+// reminder_notification_time is written as Slack's "H:mm"; the time zone
+// select shows Slack's labels and writes tz; with set_tz_automatically
+// the detected zone (mapped through Slack's tables) is written, at once
+// and at sign-in (MaybeUpdateTimezone).
+func TestPrefsAuditAppliedRoundTripTime(t *testing.T) {
+	a, ca, fs := fakePrefsApp(t)
+	p := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}}
+	if reminderMinutes("") != 540 || reminderMinutes("13:30") != 810 || reminderMinutes("x") != 540 {
+		t.Fatal("reminderMinutes")
+	}
+	p.setPref("reminder_notification_time", "13:30")
+	waitFor(t, a, "reminder time", func() bool {
+		v, _ := fs.Pref("reminder_notification_time")
+		return v == "13:30" && ca.PrefString("reminder_notification_time") == "13:30"
+	})
+	found := false
+	for _, r := range pageRows(t, a, p, "notifications") {
+		if r.Key == "sel.reminder_notification_time" && r.Label == "1:30 PM" && r.Enabled {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the reminder select doesn't show 1:30 PM")
+	}
+
+	old := core.TestSystemZone
+	t.Cleanup(func() { core.TestSystemZone = old })
+	core.TestSystemZone = "Asia/Calcutta" // Slack lists it as Asia/Kolkata
+	if z := core.DetectTimezone(); z != "Asia/Kolkata" {
+		t.Fatalf("detected %q", z)
+	}
+	if z, err := ca.MaybeUpdateTimezone(context.Background()); err != nil || z != "Asia/Kolkata" {
+		t.Fatalf("MaybeUpdateTimezone %q %v", z, err)
+	}
+	waitFor(t, a, "tz detected", func() bool { v, _ := fs.Pref("tz"); return v == "Asia/Kolkata" })
+	if _, err := ca.RefreshPrefs(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	click := func(key string) {
+		pageRows(t, a, p, "language_region")
+		p.clicks[key].Click()
+		pageRows(t, a, p, "language_region")
+	}
+	click("pref.set_tz_automatically") // off: the select opens
+	waitFor(t, a, "auto off", func() bool { v, _ := fs.Pref("set_tz_automatically"); return v == false })
+	var sel prefsDrawn
+	for _, r := range pageRows(t, a, p, "language_region") {
+		if r.Key == "sel.tz" {
+			sel = r
+		}
+	}
+	if !sel.Enabled || sel.Label != "(UTC+05:30) Chennai, Kolkata, Mumbai, New Delhi" {
+		t.Fatalf("tz select %+v", sel)
+	}
+	p.setPref("tz", core.SlackTimezones[0].ID)
+	waitFor(t, a, "tz picked", func() bool { v, _ := fs.Pref("tz"); return v == "Pacific/Midway" })
+	if z, _ := ca.MaybeUpdateTimezone(context.Background()); z != "" {
+		t.Fatalf("wrote %q with set_tz_automatically off", z)
+	}
+	core.TestSystemZone = "Europe/Paris"
+	click("pref.set_tz_automatically") // on: the detected zone at once
+	waitFor(t, a, "auto on", func() bool {
+		v, _ := fs.Pref("set_tz_automatically")
+		z, _ := fs.Pref("tz")
+		return v == true && z == "Europe/Brussels" // intl_api_manual comes first
 	})
 }
