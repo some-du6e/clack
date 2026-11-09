@@ -1,8 +1,8 @@
 // Package huddleui is Clack's huddle UI: the huddle bar at the bottom of the
 // sidebar, the channel header's huddle button, and the huddle window (a
-// second native window with participant tiles, speaking rings, screen
-// shares and video, captions and the call controls). The media session
-// itself is internal/huddle.
+// second native window with participant tiles drawn like Slack's
+// HuddlePeerTile (tile.go), screen shares and video, captions and the call
+// controls). The media session itself is internal/huddle.
 //
 // Like Slack, a start or join runs the startEventLog thunk, leaving runs
 // stopHuddle and stopEventLog, and notices go through enqueueHuddleToast,
@@ -234,6 +234,81 @@ func (c *Controller) Start(channel string) {
 		}
 		c.changed()
 	}()
+}
+
+// Slack's huddle entry points (DF8l's su enum), passed as startHuddle's
+// entryPoint.
+const (
+	EntryHeaderButton  = "channel_header_huddle_button"
+	EntryHeaderMenu    = "channel_header_huddle_menu"
+	EntryMemberCard    = "member_card_huddle_button"
+	EntryMemberProfile = "member_profile_huddle_button"
+	EntryShortcut      = "keyboard_shortcut_join_huddle"
+	EntryCreateMenu    = "global_create_menu"
+	EntryHuddlesPage   = "huddles_page_start_huddle"
+)
+
+// startArgs is Slack's startHuddle thunk argument (what BetterHuddles
+// reads: channelId, muted, entryPoint).
+type startArgs struct {
+	ChannelID  string `json:"channelId,omitempty"`
+	Muted      bool   `json:"muted"`
+	EntryPoint string `json:"entryPoint,omitempty"`
+}
+
+// Begin is a start or join click (or shortcut, or /huddle) in channel:
+// Slack's startHuddle thunk, so a plugin that wraps it (BetterHuddles)
+// sees every start, with Start as the native. Without a wrapper it's
+// Start. Any goroutine.
+func (c *Controller) Begin(channel, entry string) {
+	if channel == "" {
+		return
+	}
+	tt := c.taut()
+	if !tt.ThunkPatched("startHuddle") {
+		c.Start(channel)
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_, err := taut.Dispatch(ctx, tt, "startHuddle", startArgs{ChannelID: channel, EntryPoint: entry},
+			func(ctx context.Context, a startArgs) (any, error) {
+				if a.ChannelID != "" {
+					c.post(func() { c.Start(a.ChannelID) })
+				}
+				return nil, nil
+			})
+		if err != nil {
+			log.Printf("huddle: startHuddle %s: %v", channel, err)
+			c.toast("Couldn't start the huddle: "+errText(err), "headphones")
+		}
+	}()
+}
+
+// ShortcutToggle is Slack's Cmd/Ctrl+Shift+H (toggleHuddleInCurrentView, "Toggle
+// huddles start / stop"): leave the huddle you're in, else start or join
+// the one in channel (the conversation on screen; nothing without one).
+func (c *Controller) ShortcutToggle(channel string) {
+	if c.Active() {
+		c.mu.Lock()
+		joining := c.s == nil
+		c.mu.Unlock()
+		if !joining {
+			c.Leave()
+		}
+		return
+	}
+	c.Begin(channel, EntryShortcut)
+}
+
+// post runs f on the ui root's goroutine when it has one (Post), else now.
+func (c *Controller) post(f func()) {
+	if p, ok := c.h.(interface{ Post(func()) }); ok {
+		p.Post(f)
+		return
+	}
+	f()
 }
 
 func errText(err error) string {

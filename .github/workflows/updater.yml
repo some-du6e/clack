@@ -3,12 +3,19 @@ name: updater
 # against a local fake releases server, the helper's wait-and-swap, and
 # the macOS dmg path (hdiutil, ditto) on each OS. On Windows, the helper
 # also runs a real Inno Setup upgrade with the installer test's flags.
+# The UI side (when checks run, Check now, Check for Updates… in the
+# menus) runs on each OS, and prefs-shots renders Preferences > Advanced >
+# Updates in each state.
 on:
   push:
     paths:
       - 'internal/desktop/**'
       - 'internal/ui/desktop.go'
-      - 'internal/ui/update_banner_test.go'
+      - 'internal/ui/update_*.go'
+      - 'internal/ui/macmenu*.go'
+      - 'internal/ui/actions.go'
+      - 'internal/ui/prefs_sections.go'
+      - 'internal/ui/popups/actions_menus.go'
       - 'README.md'
       - 'cmd/clack/**'
       - 'packaging/windows/**'
@@ -40,6 +47,35 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
       - name: updater tests
         run: go test -count=1 -v -run 'Install|Asset|Release|Download|Sums|Prepare|Apply|WaitPID|Newer|UpdateCLI' ./internal/desktop
+      - name: update checks in the UI (schedule, Check now, menus)
+        run: go test -count=1 -v -run 'TestUpdate|TestCheckForUpdatesMenus|TestMacMenu' ./internal/ui
+
+  prefs-shots:
+    # Preferences > Advanced > Updates in each state, light and dark
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb
+      - name: Updates screenshots
+        env:
+          UPDATE_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$UPDATE_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -v -run 'TestUpdatePrefsShots$' ./internal/ui/
+          ls "$UPDATE_SHOTS_DIR"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: update-prefs-shots
+          path: dist/shots
 
   windows-installer-upgrade:
     runs-on: windows-latest

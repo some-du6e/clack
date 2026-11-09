@@ -24,6 +24,9 @@ var (
 	SignOut func()
 	// OpenOwnProfile opens the viewer's full profile.
 	OpenOwnProfile func()
+	// CheckForUpdates is the workspace menu's "Check for updates…" (Linux
+	// and Windows, where Clack has no menu bar). Nil: no item.
+	CheckForUpdates func()
 )
 
 // actDNDUntil is when the viewer's notification snooze ends (zero = not
@@ -418,6 +421,11 @@ func NewTeamMenu(h Host, anchor image.Point) *Menu {
 		{Label: "Invite people to " + team.Name, Do: actToast(h, "Invites aren't supported in yoloslack")},
 		Sep(),
 		{Label: "Preferences", Do: actPreferences(h)},
+	}
+	if f := CheckForUpdates; f != nil {
+		items = append(items, MenuItem{Key: "check-for-updates", Label: "Check for updates…", Do: f})
+	}
+	items = append(items, []MenuItem{
 		{Label: "Tools", Sub: []MenuItem{
 			{Label: "Workflows", Do: actToast(h, "Workflows aren't supported in yoloslack")},
 			{Label: "Analytics", Do: actToast(h, "Analytics aren't supported in yoloslack")},
@@ -427,7 +435,7 @@ func NewTeamMenu(h Host, anchor image.Point) *Menu {
 		{Label: "Join or leave workspaces", External: true, Do: actToast(h, "Manage workspaces at app.slack.com")},
 		{Label: "Sign out", Do: actSignOut(h)},
 		{Label: "Open the Slack App", Do: actToast(h, "You're already in a Slack app")},
-	}
+	}...)
 	return NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(anchor), Width: 320})
 }
 

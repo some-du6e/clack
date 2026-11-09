@@ -45,6 +45,8 @@ func (a *App) handle(ev slack.Event) {
 		if ok && changed { // the echo of the viewer's own (optimistic) reaction changes nothing
 			a.emitUpdate(e.Item.Channel, &m)
 		}
+	case "ai_assistant_status", "ai_assistant_threads_suggested_prompts":
+		a.onAssistant(ctx, ev) // agent.go
 	case "user_typing":
 		var e struct {
 			User     string `json:"user"`
@@ -306,7 +308,11 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 			m.ReplyCount, m.ReplyUsers, m.LatestReply = old.ReplyCount, old.ReplyUsers, old.LatestReply
 		}
 		if _, found := a.S.Mutate(ch, m.TS, func(x *slack.Message) { *x = m }); !found {
-			a.S.Upsert(ch, m)
+			if m.ThreadTS != "" && m.ThreadTS != m.TS && m.Subtype != "thread_broadcast" {
+				a.S.AddReply(ch, m) // a streamed reply (chat.appendStream) is a thread message, not a channel one
+			} else {
+				a.S.Upsert(ch, m)
+			}
 		}
 		a.emitUpdate(ch, &m)
 		return

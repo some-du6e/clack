@@ -65,6 +65,7 @@ const (
 	FileBlock
 	Tombstone
 	Table // Block Kit table: Rows of cells (first row is the header row Slack draws bold)
+	Agent // plan / task_card / context_actions: Buttons[0] names the block (agent.go); Spans is the text fallback
 )
 
 // Block is one vertical unit of a document.

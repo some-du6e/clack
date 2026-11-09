@@ -422,8 +422,8 @@ func (e *bkEnv) shot(name string) {
 // calls waits for n blocks.actions calls and returns them.
 func (e *bkEnv) calls(n int) []fakeslack.BlockActionCall {
 	e.t.Helper()
-	e.until(fmt.Sprintf("%d blocks.actions calls", n), 10*time.Second, func() bool { return len(e.fs.BlockActions()) >= n })
-	cs := e.fs.BlockActions()
+	e.until(fmt.Sprintf("%d blocks.actions calls", n), 10*time.Second, func() bool { return len(e.fs.BlockActionCalls()) >= n })
+	cs := e.fs.BlockActionCalls()
 	if len(cs) != n {
 		e.t.Fatalf("%d blocks.actions calls, want %d", len(cs), n)
 	}
@@ -434,7 +434,7 @@ func (e *bkEnv) calls(n int) []fakeslack.BlockActionCall {
 func (e *bkEnv) noNewCall(n int, d time.Duration, why string) {
 	e.t.Helper()
 	e.settle(d)
-	if got := len(e.fs.BlockActions()); got != n {
+	if got := len(e.fs.BlockActionCalls()); got != n {
 		e.t.Errorf("%s: %d blocks.actions calls, want %d", why, got, n)
 	}
 }

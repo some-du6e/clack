@@ -115,6 +115,7 @@ var (
 // Interactive reports whether m has elements blockkit makes live.
 func Interactive(m *core.Message) bool {
 	return bytes.Contains(m.Blocks, []byte(`"action_id"`)) || bytes.Contains(m.Blocks, []byte(`"actions"`)) ||
+		hasAgentBlocks(m.Blocks) || hasAgentBlocks(m.Attachments) || // agent.go
 		bytes.Contains(m.Attachments, []byte(`"actions"`)) || bytes.Contains(m.Attachments, []byte(`"action_id"`))
 }
 
@@ -392,6 +393,9 @@ func (me *Message) scratch(m unit.Metric, maxW int) layout.Context {
 
 func (me *Message) ElementsSize(bs []richtext.Button, maxW int, accessory bool, m unit.Metric) (image.Point, bool) {
 	gtx := me.scratch(m, maxW)
+	if len(bs) == 1 && isAgentKind(bs[0].Kind) { // agent.go
+		return me.agentRun(gtx, &bs[0], maxW), false
+	}
 	if accessory && len(bs) == 1 {
 		w := me.widgetFor(&bs[0])
 		if w == nil {
@@ -412,6 +416,10 @@ func (me *Message) ElementsSize(bs []richtext.Button, maxW int, accessory bool, 
 func (me *Message) LayoutElements(gtx layout.Context, bs []richtext.Button, accessory bool) layout.Dimensions {
 	drain()
 	sz := gtx.Constraints.Max
+	if len(bs) == 1 && isAgentKind(bs[0].Kind) { // agent.go
+		me.agentRun(gtx, &bs[0], sz.X)
+		return D{Size: sz}
+	}
 	if accessory && len(bs) == 1 {
 		w := me.widgetFor(&bs[0])
 		if w == nil {

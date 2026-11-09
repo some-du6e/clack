@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"context"
 	"runtime"
 	"time"
 
@@ -49,7 +48,8 @@ func (a *App) macMenus() []menubar.Menu {
 		{ID: "menuitem-about-slack", Title: "About " + AppName, Role: "orderFrontStandardAboutPanel:"},
 	}
 	if a.opts.CheckUpdate != nil {
-		app = append(app, menubar.Item{ID: "menuitem-update-status", Title: "Check for Updates…", Do: a.checkUpdateNow})
+		// update_check.go: the banner if there's one, else a toast
+		app = append(app, menubar.Item{ID: "menuitem-update-status", Title: "Check for Updates…", Do: on(a.checkUpdatesNotify)})
 	}
 	app = append(app,
 		sep,
@@ -249,31 +249,10 @@ func (a *App) showShortcutsHelp() {
 	a.Toast("Keyboard shortcuts: Ctrl+K switch, Ctrl+Shift+A unreads, Alt+↑/↓ channels, Ctrl+. side pane")
 }
 
-// checkUpdateNow is Slack's "Check for Updates…": ask GitHub Releases now
-// and say what it found. A newer release shows the update banner, or its
-// page when the banner is turned off or was dismissed for it.
-func (a *App) checkUpdateNow() {
-	if a.opts.CheckUpdate == nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	info, ok, err := a.opts.CheckUpdate(ctx)
-	cancel()
-	a.Post(func() {
-		switch {
-		case err != nil:
-			a.Toast("Couldn't check for updates. Try again later.")
-		case !ok:
-			a.Toast(AppName + " is up to date.")
-		default:
-			a.update.info = info
-			if a.prefs.NoUpdateCheck || a.prefs.UpdateDismissed == info.Tag {
-				openURL(info.URL)
-			}
-			a.Toast("A new version of " + AppName + " is available: " + info.Tag)
-		}
-	})
-}
+// checkUpdatesNotify is Slack's "Check for Updates…" (Clack > on macOS,
+// the workspace menu elsewhere): a check now, its answer in the banner
+// or a toast. UI goroutine.
+func (a *App) checkUpdatesNotify() { a.checkForUpdates(true) }
 
 // zoomFactors are Slack's zoom levels -3…5 (the main process's fN: Actual
 // Size is level 0).

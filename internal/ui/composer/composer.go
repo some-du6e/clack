@@ -452,6 +452,11 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 		st.TypingIDs, st.TypingNames = typingHub(c.h.Core()).typers(c.ch, c.ts, c.api.self().ID)
 	}
 	st.Typing = typingLine(st.TypingNames)
+	if uipref.Get().ShowTyping {
+		if name, status := typingHub(c.h.Core()).assistantLine(c.ch, c.ts, c.api.self().ID); status != "" {
+			st.Typing, st.TypingStatus = name+" "+status, status // AiAppStatusIndicator
+		}
+	}
 	st.ScrolledTop = c.ed.scrollY > 0
 	st.ScrolledBottom = c.ed.scrollY+c.ed.viewH < c.ed.contentH
 	if st.ThreadTS != "" && slackc.Patched(tautButtons) {
@@ -689,6 +694,10 @@ func (c *Composer) schedule(t time.Time) {
 
 // ---- sending ----
 
+// slashHuddler is the ui root's /huddle: start or join the huddle in a
+// conversation (internal/ui/huddleui through ui/huddle_wire.go).
+type slashHuddler interface{ SlashHuddle(channel string) }
+
 func (c *Composer) submit() {
 	d := c.ed.Doc()
 	if d.Empty() && c.att.Len() == 0 {
@@ -729,6 +738,13 @@ func (c *Composer) submit() {
 		plain := strings.TrimSpace(d.Text()) // as typed: markup mode must not eat a command's * or _
 		if strings.HasPrefix(plain, "/") && !strings.HasPrefix(plain, "//") {
 			cmd, rest, _ := strings.Cut(plain, " ")
+			if hs, ok := c.h.(slashHuddler); ok && strings.EqualFold(cmd, "/huddle") && ts == "" {
+				// /huddle starts or joins the huddle here (Slack's
+				// startHuddle), like the header button
+				c.clearAfterSend()
+				hs.SlashHuddle(ch)
+				return
+			}
 			c.clearAfterSend()
 			go func() {
 				res, err := api.command(context.Background(), core.CommandOpts{Channel: ch, Command: cmd, Text: strings.TrimSpace(rest), ThreadTS: ts})

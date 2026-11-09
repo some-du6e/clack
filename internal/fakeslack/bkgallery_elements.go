@@ -13,7 +13,8 @@ import (
 // clicking them:
 //
 //   - blocks.actions {service_id, app_id, service_team_id, actions,
-//     container, client_token, state} is recorded (BlockActions) and
+//     container, client_token, state} is recorded (BlockActionCalls, and
+//     BlockActions' raw forms for agents.go's tests) and
 //     answered ok. An action_id ending "_slow" answers after 1.5 s (the
 //     block's loading state), "_fail" answers ok:false error=post_error
 //     with a message (the warning icon's tooltip), "_disabled" answers
@@ -33,8 +34,9 @@ type BlockActionCall struct {
 	State     map[string]any // {"values": …}, nil when not sent
 }
 
-// BlockActions returns the blocks.actions calls so far, oldest first.
-func (s *Server) BlockActions() []BlockActionCall {
+// BlockActionCalls returns the blocks.actions calls so far, oldest
+// first, decoded (BlockActions, agents.go, has the raw forms).
+func (s *Server) BlockActionCalls() []BlockActionCall {
 	s.bkMu.Lock()
 	defer s.bkMu.Unlock()
 	return append([]BlockActionCall(nil), s.bkActions...)
@@ -64,6 +66,10 @@ func (s *Server) handleBlockActions(method string, f url.Values) (any, bool) {
 		s.bkMu.Lock()
 		s.bkActions = append(s.bkActions, c)
 		s.bkMu.Unlock()
+		r := s.agentRec() // agents.go's recorder sees every call too
+		r.mu.Lock()
+		r.actions = append(r.actions, f)
+		r.mu.Unlock()
 		aid := ""
 		if len(c.Actions) > 0 {
 			aid, _ = c.Actions[0]["action_id"].(string)

@@ -86,6 +86,8 @@ func (a *App) defaultShortcuts() *shortcuts {
 	add("Ctrl+Shift+L", "Channel browser", func(a *App) { a.Navigate(channelsRoute) })
 	add("Ctrl+Shift+D", "Toggle sidebar", func(a *App) { a.toggleSidebar() })
 	add("Ctrl+Shift+Y", "Toggle dark mode", func(a *App) { a.ToggleDark() })
+	// Slack's mod+shift+h (menuitem-huddle-action): "Toggle huddles start / stop"
+	add("Ctrl+Shift+H", "Toggle huddle", func(a *App) { a.toggleHuddle() })
 	add("Ctrl+N", "Compose", func(a *App) { a.compose() })
 	add("Ctrl+Shift+N", "New canvas", func(a *App) { a.CreateCanvas() }) // the Create menu's Canvas hint
 	add("Ctrl+,", "Preferences", func(a *App) { a.openPrefs() })

@@ -3,7 +3,6 @@ package huddleui
 import (
 	"image"
 	"image/color"
-	"math"
 	"strings"
 	"sync"
 	"time"
@@ -12,7 +11,6 @@ import (
 	"gioui.org/io/system"
 	"gioui.org/layout"
 	"gioui.org/op"
-	"gioui.org/op/paint"
 	"gioui.org/unit"
 	"gioui.org/widget"
 
@@ -39,7 +37,8 @@ type window struct {
 	notice string
 	noteAt time.Time
 	full   bool
-	cam    camUI // window_camera.go
+	cam    camUI        // window_camera.go
+	phase  huddle.Phase // this frame's (tiles: your spinner until connected)
 }
 
 // OpenWindow shows the huddle window (creating it), when you're in a huddle.
@@ -329,6 +328,7 @@ func (w *window) stage(gtx C, s *huddle.Session, st huddle.State, r image.Rectan
 		}
 	}
 	selfCam(st, cams) // your own tile shows your (mirrored) preview
+	w.phase = st.Phase
 	area := r.Inset(gtx.Dp(12))
 	if share != nil {
 		// the share takes the stage; the people sit in a column on the right
@@ -348,26 +348,24 @@ func (w *window) stage(gtx C, s *huddle.Session, st huddle.State, r image.Rectan
 		drawP := slackc.Props{"$key": "huddle-draw-" + share.Key, "huddleId": s.RoomID(), "screenShareId": share.Key,
 			"isScreenSharing": true, "width": sr.Dx(), "height": sr.Dy()}
 		at(gtx, sr.Min, sr.Size(), func(gtx C) D { return slackc.Render(gtx, "BaseDrawRenderer", drawP, noNative) })
-		name := w.c.userName(share.UserID)
-		if name != "" {
-			lbl := name + "'s screen"
-			ls := labelSize(gtx, w.th, 12, theme.Bold, lbl)
-			chip := image.Rect(sr.Min.X+gtx.Dp(8), sr.Max.Y-ls.Y-gtx.Dp(16), sr.Min.X+gtx.Dp(20)+ls.X, sr.Max.Y-gtx.Dp(8))
-			theme.RRect(gtx, chip, gtx.Dp(6), hudShade)
-			at(gtx, image.Pt(chip.Min.X+gtx.Dp(6), chip.Min.Y+gtx.Dp(4)), ls, func(gtx C) D {
-				return w.th.Label(gtx, 12, theme.Bold, hudWhite, lbl)
-			})
-		}
-		tile := min(col, (area.Dy()-gtx.Dp(8)*(len(ps)-1))/max(len(ps), 1))
+		// no presenter label on the shared screen: Slack names the presenter
+		// only on a screen share tile's footer in the grid
+		n := len(ps) + len(st.Invites)
+		tile := min(col, (area.Dy()-gtx.Dp(8)*(n-1))/max(n, 1))
 		y := area.Min.Y
-		for _, p := range ps {
+		for i := 0; i < n; i++ {
 			if y+tile > area.Max.Y {
 				break
 			}
-			w.tile(gtx, s, p, cams[p.AttendeeID], image.Rect(area.Max.X-col, y, area.Max.X-col+tile, y+tile), now)
+			tr := image.Rect(area.Max.X-col, y, area.Max.X-col+tile, y+tile)
+			if i < len(ps) {
+				w.tile(gtx, s, ps[i], cams[ps[i].AttendeeID], tr, now)
+			} else {
+				w.inviteTile(gtx, st.Invites[i-len(ps)], tr)
+			}
 			y += tile + gtx.Dp(8)
 		}
-	} else if n := len(ps); n > 0 {
+	} else if n := len(ps) + len(st.Invites); n > 0 {
 		gap := gtx.Dp(8)
 		best, bc := 0, 1
 		for cols := 1; cols <= n; cols++ {
@@ -379,13 +377,18 @@ func (w *window) stage(gtx C, s *huddle.Session, st huddle.State, r image.Rectan
 		}
 		best = min(best, gtx.Dp(220))
 		rows := (n + bc - 1) / bc
-		for i, p := range ps {
+		for i := 0; i < n; i++ {
 			row, col := i/bc, i%bc
 			inRow := min(bc, n-row*bc)
 			x0 := area.Min.X + (area.Dx()-(inRow*best+(inRow-1)*gap))/2
 			y0 := area.Min.Y + (area.Dy()-(rows*best+(rows-1)*gap))/2
 			x, y := x0+col*(best+gap), y0+row*(best+gap)
-			w.tile(gtx, s, p, cams[p.AttendeeID], image.Rect(x, y, x+best, y+best), now)
+			tr := image.Rect(x, y, x+best, y+best)
+			if i < len(ps) {
+				w.tile(gtx, s, ps[i], cams[ps[i].AttendeeID], tr, now)
+			} else {
+				w.inviteTile(gtx, st.Invites[i-len(ps)], tr)
+			}
 		}
 	}
 	if st.CaptionsOn {
@@ -394,83 +397,6 @@ func (w *window) stage(gtx C, s *huddle.Session, st huddle.State, r image.Rectan
 	if w.picker {
 		w.emojiPicker(gtx, r)
 	}
-}
-
-func (w *window) tile(gtx C, s *huddle.Session, p huddle.Participant, cam string, r image.Rectangle, now time.Time) {
-	rad := gtx.Dp(8)
-	sz := r.Size()
-	key := "tile:" + p.UserID + "/" + p.AttendeeID
-	at(gtx, r.Min, sz, func(gtx C) D {
-		return button(gtx, w.click(key), sz, func(gtx C, hov bool) {
-			theme.RRect(gtx, image.Rectangle{Max: sz}, rad, hudTileBg)
-			drawn := false
-			if cam != "" {
-				if img, ok := w.vids.get(s, cam); ok {
-					theme.Image(gtx, img, sz, rad)
-					drawn = true
-				}
-			}
-			if !drawn {
-				avatar(gtx, w.th, w.c.h.Images(), w.c.avatarURL(p.UserID, sz.X), sz, rad)
-			}
-			if p.Speaking(now) {
-				theme.Border(gtx, image.Rectangle{Max: sz}, rad, gtx.Dp(3), hudGreen)
-				at(gtx, image.Pt(gtx.Dp(8), sz.Y-gtx.Dp(28)), sz, func(gtx C) D { return speakingBars(gtx, now) })
-			}
-			if p.Muted {
-				d := gtx.Dp(24)
-				c := image.Pt(sz.X-gtx.Dp(8)-d/2, sz.Y-gtx.Dp(8)-d/2)
-				theme.Circle(gtx, c, d, hudShade)
-				at(gtx, c.Sub(image.Pt(d/2, d/2)), image.Pt(d, d), func(gtx C) D {
-					iconAt(gtx, image.Pt(d, d), "mic-off", 14, hudWhite)
-					return D{}
-				})
-			}
-			if hov || !p.InMedia {
-				name := w.c.userName(p.UserID)
-				if p.Self {
-					name += " (you)"
-				}
-				if !p.InMedia {
-					name += " · connecting"
-				}
-				ls := labelSize(gtx, w.th, 12, theme.Bold, name)
-				chip := image.Rect(gtx.Dp(6), gtx.Dp(6), gtx.Dp(18)+ls.X, gtx.Dp(14)+ls.Y)
-				if chip.Max.X > sz.X-gtx.Dp(6) {
-					chip.Max.X = sz.X - gtx.Dp(6)
-				}
-				theme.RRect(gtx, chip, gtx.Dp(6), hudShade)
-				at(gtx, image.Pt(chip.Min.X+gtx.Dp(6), chip.Min.Y+gtx.Dp(4)), chip.Size(), func(gtx C) D {
-					return w.th.Label(gtx, 12, theme.Bold, hudWhite, name)
-				})
-			}
-			if p.Reaction != "" {
-				if age := now.Sub(p.ReactedAt); age < 4*time.Second {
-					w.reaction(gtx, p.Reaction, sz, age)
-				}
-			}
-		}, nil)
-	})
-}
-
-// reaction floats the emoji up the tile and fades it.
-func (w *window) reaction(gtx C, name string, sz image.Point, age time.Duration) {
-	t := float32(age) / float32(4*time.Second)
-	es := gtx.Dp(unit.Dp(36 + 8*float32(math.Sin(float64(t)*math.Pi))))
-	y := int(float32(sz.Y-es)/2 - t*float32(sz.Y)/4)
-	txt := w.emojiText(name)
-	m := op.Record(gtx.Ops)
-	gtx2 := gtx
-	gtx2.Constraints = layout.Constraints{Max: image.Pt(sz.X, es*2)}
-	d := w.th.Label(gtx2, unit.Sp(float32(es)/gtx.Metric.PxPerSp), theme.Regular, hudWhite, txt)
-	call := m.Stop()
-	alpha := uint8(255)
-	if t > 0.7 {
-		alpha = uint8(255 * (1 - (t-0.7)/0.3))
-	}
-	defer op.Offset(image.Pt((sz.X-d.Size.X)/2, y)).Push(gtx.Ops).Pop()
-	defer paint.PushOpacity(gtx.Ops, float32(alpha)/255).Pop()
-	call.Add(gtx.Ops)
 }
 
 // emojiText turns an emoji name into its character ("+1" → 👍) when Slack

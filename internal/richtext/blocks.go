@@ -12,6 +12,7 @@ import (
 
 // bk is a generic Block Kit block / element / rich_text node.
 type bk struct {
+	bkAgent          // plan, task_card (agent.go)
 	Type      string `json:"type"`
 	BlockID   string `json:"block_id"`
 	Elements  []bk   `json:"elements"`
@@ -399,6 +400,8 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		return append(out, FromMrkdwn(c.r, markdownToMrkdwn(b.textString()))...)
 	case "table":
 		return append(out, c.table(b))
+	case "plan", "task_card", "context_actions":
+		return c.agentBlock(out, b)
 	}
 	if t := b.textObj(); t != nil {
 		return append(out, c.textBlocks(t)...)

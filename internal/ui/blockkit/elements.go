@@ -362,18 +362,6 @@ func (w *ew) layoutButton(gtx C, sz image.Point) {
 	w.main.add(gtx, sz)
 }
 
-// iconButtonIcons is Slack's Block Kit icon name → icon (deriveIconName).
-var iconButtonIcons = map[string]string{"archive": "archive", "book": "book", "bookmark": "bookmark", "bot": "bot", "bug": "bug",
-	"calendar": "calendar", "call": "call", "caret-left": "caret-left", "caret-right": "caret-right", "check": "check",
-	"clipboard": "copy", "code": "code", "comment": "comment", "compass": "explore", "copy": "copy", "cube": "blocks",
-	"download": "download", "edit": "edit", "email": "email", "eye-closed": "eye-closed", "eye-open": "eye-open", "file": "file",
-	"flag": "flag", "folder": "folder", "gear": "settings", "globe": "globe", "heart": "heart", "help": "help", "image": "image",
-	"info": "info", "key": "key", "lightbulb": "emoji-objects", "link": "link", "map": "map", "mobile": "mobile",
-	"new-window": "new-window", "pin": "pin", "plus": "plus", "refine": "refine", "refresh": "refresh", "rocket": "rocket",
-	"save": "save", "screen": "screen", "share": "share", "sparkle": "sparkles", "star": "star", "star-filled": "star-filled",
-	"tag": "tag", "thumbs-down": "thumbs-down", "thumbs-up": "thumbs-up", "trash": "trash", "upload": "file-upload",
-	"user": "user", "warning": "warning"}
-
 // layoutIconButton is Slack's icon_button: a borderless 28px
 // c-icon_button (size smedium) with the text as its tooltip; it sends
 // {type, action_id, block_id, icon, text, value}.
@@ -394,7 +382,7 @@ func (w *ew) layoutIconButton(gtx C, sz image.Point) {
 	if hov && !off {
 		rrect(gtx, image.Rectangle{Max: sz}, dp(gtx, 4), cl.Hover)
 	}
-	name := iconButtonIcons[w.e.Icon]
+	name := blockKitIconNames[w.e.Icon] // agenticons.go
 	fg := cl.Text2
 	if hov {
 		fg = cl.Text
@@ -403,7 +391,7 @@ func (w *ew) layoutIconButton(gtx C, sz image.Point) {
 		fg = cl.DisText
 	}
 	is := dp(gtx, 18)
-	at(gtx, image.Pt((sz.X-is)/2, (sz.Y-is)/2), func(gtx C) D { return icon(gtx, name, 18, fg) })
+	at(gtx, image.Pt((sz.X-is)/2, (sz.Y-is)/2), func(gtx C) D { return agentIcon(gtx, name, 18, fg) })
 	w.main.add(gtx, sz)
 	popups.Tooltip(gtx, th, &w.tip, hov, sz, popups.Above, textOf(w.e.Text), "")
 }
