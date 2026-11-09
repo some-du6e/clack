@@ -185,13 +185,7 @@ func newChannelMenu(h Host, anchor image.Point, convID string, alignRight bool) 
 	case dm:
 		items = append(items, MenuItem{Label: "Close conversation", Do: func() { actLeave(h, convID, "Conversation closed") }})
 	default:
-		items = append(items, MenuItem{Label: "Leave channel", Danger: true, Do: func() {
-			msg := "You can rejoin this channel at any time."
-			if c.Kind == "private" {
-				msg = "You won't be able to rejoin this private channel unless someone invites you."
-			}
-			Confirm(h, "Leave #"+name+"?", msg, "Leave channel", true, nil, func() { actLeave(h, convID, "You left #"+name) })
-		}})
+		items = append(items, MenuItem{Label: "Leave channel", Danger: true, Do: func() { leaveChannel(h, convID, c.Kind, name) }})
 	}
 	m := NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(anchor), AlignRight: alignRight, Wraps: []MenuWrap{
 		// Slack's channel context menu: ChatTabs marks the channel, then
@@ -240,13 +234,7 @@ func ChannelMenuAction(h Host, convID, key string) func() {
 		if name == "" {
 			name = convID
 		}
-		return func() {
-			msg := "You can rejoin this channel at any time."
-			if c.Kind == "private" {
-				msg = "You won't be able to rejoin this private channel unless someone invites you."
-			}
-			Confirm(h, "Leave #"+name+"?", msg, "Leave channel", true, nil, func() { actLeave(h, convID, "You left #"+name) })
-		}
+		return func() { leaveChannel(h, convID, c.Kind, name) }
 	}
 	return nil
 }
@@ -387,6 +375,18 @@ func actLabelRow(h Host, label func() string) func(gtx layout.Context, hl bool) 
 		})
 		return layout.Dimensions{Size: sz}
 	}
+}
+
+// leaveChannel is Slack's maybeLeaveChannel (boot-shared): a public
+// channel is left at once; a private one asks first with LeaveChannel
+// ("Leave <name>", Cancel / Leave Channel).
+func leaveChannel(h Host, convID, kind, name string) {
+	if kind != "private" {
+		actLeave(h, convID, "You left #"+name)
+		return
+	}
+	Confirm(h, "Leave "+name, "When you leave a private channel, you’ll no longer be able to see any of its messages. To rejoin this channel later, you’ll need to be invited.",
+		"Leave Channel", true, nil, func() { actLeave(h, convID, "You left "+name) })
 }
 
 func actLeave(h Host, convID, okMsg string) {

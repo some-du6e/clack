@@ -646,7 +646,14 @@ func (d *ChannelDetails) update(gtx C) {
 	// Leave / join / hide.
 	name := inf.Conv.Name
 	if d.leaveRow.Clicked(gtx) {
-		d.confirmLeave, d.editing = true, false
+		// Slack's maybeLeaveChannel: a public channel is left at once, a
+		// private one asks first
+		d.editing = false
+		if inf.Conv.Kind == "private" {
+			d.confirmLeave = true
+		} else if !d.leavePending {
+			d.startLeave()
+		}
 	}
 	if d.leaveNo.Clicked(gtx) {
 		d.confirmLeave = false
@@ -1353,11 +1360,9 @@ func (d *ChannelDetails) leaveField(gtx C, inf core.ChannelDetails) D {
 			})
 		})
 	}
-	note := "You can rejoin at any time."
-	if cv.Kind == "private" {
-		note = "You won’t be able to rejoin unless someone invites you."
-	}
-	yes := "Leave"
+	// Slack's LeaveChannel text (only private channels ask)
+	note := "When you leave a private channel, you’ll no longer be able to see any of its messages. To rejoin this channel later, you’ll need to be invited."
+	yes := "Leave Channel"
 	if d.leavePending {
 		yes = "Leaving…"
 	}
@@ -1366,8 +1371,8 @@ func (d *ChannelDetails) leaveField(gtx C, inf core.ChannelDetails) D {
 			layout.Flexed(1, func(gtx C) D {
 				return dirFill(gtx, func(gtx C) D {
 					return col(gtx,
-						layout.Rigid(func(gtx C) D { return d.para(gtx, 15, 22, wBold, d.p.Text, 1, "Leave #"+cv.Name+"?") }),
-						layout.Rigid(func(gtx C) D { return d.para(gtx, 13, 18, wReg, d.p.Muted, 2, note) }),
+						layout.Rigid(func(gtx C) D { return d.para(gtx, 15, 22, wBold, d.p.Text, 1, "Leave "+cv.Name) }),
+						layout.Rigid(func(gtx C) D { return d.para(gtx, 13, 18, wReg, d.p.Muted, 3, note) }),
 					)
 				})
 			}),

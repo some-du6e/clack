@@ -342,3 +342,34 @@ func TestChannelTopicEditModal(t *testing.T) {
 		t.Errorf("setTopic calls %q", topics)
 	}
 }
+
+// Leaving a public channel is immediate (Slack's maybeLeaveChannel asks
+// only for private ones); the channel is then a preview again, and Join
+// brings it back.
+func TestChannelLeaveRejoin(t *testing.T) {
+	e, fs := previewEnv(t)
+	ch := fakeslack.PreviewChannelID
+	e.openChannel(ch)
+	c := e.a.convoFor(ch, "")
+	e.until("join pane", 20*time.Second, func() bool { return e.a.footerFor(c) == footPreview && c.jp != nil })
+	e.a.joinPreview(c, "")
+	e.until("joined", 10*time.Second, func() bool {
+		ci := e.a.model().conv(ch)
+		return ci != nil && !ci.Preview && e.a.footerFor(c) == footNone
+	})
+	n := len(e.a.overlays)
+	popups.ChannelMenuAction(e.a, ch, "leave")()
+	e.until("conversations.leave", 10*time.Second, func() bool { return slices.Contains(fs.LeaveCalls(), ch) })
+	for _, o := range e.a.overlays[n:] {
+		if _, ok := o.(*popups.Modal); ok && !o.Dismissed() {
+			t.Error("leaving a public channel asked for confirmation")
+		}
+	}
+	e.openChannel(ch)
+	c = e.a.convoFor(ch, "")
+	e.until("a preview again", 20*time.Second, func() bool { return e.a.footerFor(c) == footPreview && c.jp != nil })
+	e.settle(150 * time.Millisecond)
+	e.shot("channel-left-preview")
+	e.a.joinPreview(c, "")
+	e.until("rejoined", 10*time.Second, func() bool { return len(fs.JoinCalls()) == 2 && e.a.footerFor(c) == footNone })
+}

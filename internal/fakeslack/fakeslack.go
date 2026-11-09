@@ -189,6 +189,7 @@ type Server struct {
 	convMu sync.Mutex
 	others []slack.Conversation
 	Joins  []JoinCall
+	Leaves []string // conversations.leave calls (LeaveCalls)
 	// listFilters: every edge users/list filter (UserListFilters).
 	listFilters []string
 	emoji       map[string]string
@@ -579,6 +580,35 @@ func (s *Server) join(f url.Values) any {
 	return map[string]any{"ok": false, "error": "channel_not_found"}
 }
 
+// leave is conversations.leave: the channel goes back to the ones the
+// viewer isn't in (a preview again), recorded in Leaves.
+func (s *Server) leave(f url.Values) any {
+	id := f.Get("channel")
+	s.convMu.Lock()
+	defer s.convMu.Unlock()
+	s.Leaves = append(s.Leaves, id)
+	for i, c := range s.convs {
+		if c.ID != id {
+			continue
+		}
+		if c.IsGeneral {
+			return map[string]any{"ok": false, "error": "cant_leave_general"}
+		}
+		c.IsMember = false
+		s.convs = append(s.convs[:i], s.convs[i+1:]...)
+		s.others = append(s.others, c)
+		return ok()
+	}
+	return ok("not_in_channel", true)
+}
+
+// LeaveCalls returns the channels conversations.leave was called for.
+func (s *Server) LeaveCalls() []string {
+	s.convMu.Lock()
+	defer s.convMu.Unlock()
+	return append([]string(nil), s.Leaves...)
+}
+
 // SetProperties replaces a conversation's properties (posting_restricted_to
 // …) in what conversations.info and users.conversations answer.
 func (s *Server) SetProperties(id string, props json.RawMessage) {
@@ -961,6 +991,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return map[string]any{"ok": false, "error": "channel_not_found"}
 	case "conversations.join":
 		return s.join(f)
+	case "conversations.leave":
+		return s.leave(f)
 	case "chat.postMessage":
 		ts := fmt.Sprintf("%d.%06d", time.Now().Unix(), time.Now().Nanosecond()/1000)
 		msg := map[string]any{"type": "message", "ts": ts, "user": SelfID, "text": f.Get("text")}
