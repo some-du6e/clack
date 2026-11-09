@@ -91,7 +91,17 @@ func imageSendEnv(t *testing.T, dark bool) (*perfEnv, string) {
 	e.openChannel(ch)
 	e.until("the channel's history", 20*time.Second, func() bool { return e.loadedMessages(ch) > 0 })
 	e.settle(800 * time.Millisecond)
+	e.toLatest()
 	return e, ch
+}
+
+// toLatest scrolls the open channel to its newest message.
+func (e *perfEnv) toLatest() {
+	for i := 0; i < 12; i++ {
+		e.scroll(e.listPoint(), 20000)
+		e.frame()
+	}
+	e.settle(300 * time.Millisecond)
 }
 
 // composer is the open channel's composer.
@@ -160,6 +170,7 @@ func TestImageSendShots(t *testing.T) {
 				t.Fatalf("after Enter the composer holds %d files and %q", cb.Attached(), cb.DocText())
 			}
 			e.until("the placeholder", 5*time.Second, func() bool { watch(); return len(cids) == 1 })
+			e.toLatest()
 			e.sendShot("image-send-2-placeholder-" + mode)
 			checkRows := func(cid string, wantText bool) {
 				t.Helper()
@@ -187,6 +198,7 @@ func TestImageSendShots(t *testing.T) {
 				return len(rs) == 1 && !rs[0].Pending
 			})
 			e.settle(1500 * time.Millisecond) // the thumbnail from the fake's /img
+			e.toLatest()
 			if rs := e.rowsFor(ch, cids[0]); len(rs) != 1 {
 				t.Errorf("%d rows for the send, want one", len(rs))
 			}
@@ -199,6 +211,7 @@ func TestImageSendShots(t *testing.T) {
 			e.key(key.NameReturn, 0)
 			e.frame()
 			e.until("the second placeholder", 5*time.Second, func() bool { watch(); return len(cids) == 2 })
+			e.toLatest()
 			e.sendShot("image-send-4-placeholder-image-only-" + mode)
 			e.until("the second shared message", 15*time.Second, func() bool {
 				watch()
@@ -207,6 +220,7 @@ func TestImageSendShots(t *testing.T) {
 				return len(rs) == 1 && !rs[0].Pending
 			})
 			e.settle(1500 * time.Millisecond)
+			e.toLatest()
 			e.sendShot("image-send-5-final-image-only-" + mode)
 			if n := len(e.fs.Shared()); n != 2 {
 				t.Errorf("%d shares, want 2", n)
