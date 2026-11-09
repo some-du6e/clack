@@ -287,6 +287,13 @@ func (s *Server) handleCanvases(method string, f url.Values) (any, bool) {
 				"url_private": s.URL + "files-pri/" + TeamID + "-" + id + "/report.pdf",
 				"permalink":   "https://fake.slack.com/files/U0FAKE00002/" + id + "/report.pdf"}), true
 		}
+		if id == CodeHTMLFileID && s.Size.CodeChannels { // the code channel's html view (codechannels.go)
+			return ok("file", map[string]any{"id": id, "name": "report.html", "title": "Login redirect report", "mimetype": "text/html",
+				"filetype": "html", "pretty_type": "HTML", "mode": "hosted", "user": CodeAgentID, "size": 2048,
+				"url_private":          s.URL + "files-pri/" + TeamID + "-" + id + "/report.html",
+				"url_private_download": s.URL + "files-pri/" + TeamID + "-" + id + "/download/report.html",
+				"permalink":            "https://fake.slack.com/files/" + CodeAgentID + "/" + id + "/report.html"}), true
+		}
 		cs.mu.Lock()
 		defer cs.mu.Unlock()
 		if c, okc := cs.byID[id]; okc {

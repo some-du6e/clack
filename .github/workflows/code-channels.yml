@@ -1,17 +1,22 @@
 name: code-channels
 # Code channels (Slack Code): the core model and status rules
-# (internal/core/codechannel_test.go), the shell's render test, and
-# screenshots of a code channel in each agent status plus the archived
-# and preview cases, light and dark, rendered headlessly over an offline
-# core with the fakeslack fixtures. Synthetic only: nothing here talks to
-# Slack.
+# (internal/core/codechannel_test.go, codediff_test.go), the shell's render
+# test, the details pane's tests, and screenshots of a code channel in each
+# agent status plus the archived and preview cases and of every details
+# pane view (diff, PR conversation, PR split/unified with the file tree,
+# Block Kit, canvas, html), light and dark, rendered headlessly over an
+# offline core or fakeslack. Synthetic only: nothing here talks to Slack.
 on:
   push:
     paths:
       - "internal/core/codechannel*.go"
+      - "internal/core/codediff*.go"
+      - "internal/core/codehighlight.go"
+      - "internal/core/interactive.go"
       - "internal/core/app.go"
       - "internal/core/events.go"
       - "internal/fakeslack/codechannels.go"
+      - "internal/fakeslack/canvas.go"
       - "internal/ui/codechannel*.go"
       - "internal/ui/icons/codechannel.go"
       - "internal/ui/channel.go"
@@ -21,6 +26,13 @@ on:
       - "internal/ui/messages/list.go"
       - "internal/richtext/blocks.go"
       - "internal/ui/richview/blocks.go"
+      - "internal/ui/richview/flow.go"
+      - "internal/ui/messages/host.go"
+      - "internal/ui/secondary.go"
+      - "internal/ui/app.go"
+      - "internal/ui/desktop.go"
+      - "internal/ui/blockkit/surface.go"
+      - "internal/ui/blockkit/thunks.go"
       - ".github/workflows/code-channels.yml"
   workflow_dispatch:
 
@@ -48,14 +60,16 @@ jobs:
           go test -count=1 -v -run 'TestParseCodeChannel|TestCodeChannel|TestSnapshotAndSections' ./internal/core/
           go test -count=1 ./internal/richtext/
       - name: render
-        run: xvfb-run -a go test -count=1 -v -run 'TestCodeChannelsShell$' ./internal/ui/
+        run: |
+          xvfb-run -a go test -count=1 -v -run 'TestCodeChannelsShell$|TestCodeChannelPane$|TestCodeChannelPaneLinks$' ./internal/ui/
+          xvfb-run -a go test -count=1 ./internal/ui/blockkit/ ./internal/ui/richview/ ./internal/ui/messages/
       - name: screenshots
         env:
           CODE_SHOTS_DIR: ${{ github.workspace }}/dist/shots
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$CODE_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestCodeChannelShots$|TestCodeChannelsFakeslack$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestCodeChannelShots$|TestCodeChannelsFakeslack$|TestCodeChannelPaneFakeslack$' ./internal/ui/
           ls "$CODE_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

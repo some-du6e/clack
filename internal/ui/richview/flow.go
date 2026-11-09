@@ -484,7 +484,10 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 				l.privateChannel(sp, fs, k, pt)
 				continue
 			}
-			if sp.Kind != richtext.Broadcast && !sp.Off { // Off: a channel the viewer can't see, not a link
+			if sp.Kind == richtext.Channel && sp.URL != "" && !sp.Off {
+				// a channel-tab slug (tab_id): the link opens the tab
+				tg = l.d.addTarget(target{kind: tLink, url: sp.URL})
+			} else if sp.Kind != richtext.Broadcast && !sp.Off { // Off: a channel the viewer can't see, not a link
 				tg = l.d.addTarget(target{kind: kind, id: sp.ID})
 			}
 			bg, fg := p.MentionBg, p.MentionText

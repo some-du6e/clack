@@ -54,8 +54,12 @@ type CodeChannel struct {
 	CIState        string
 	PRTitle        string
 	ContextBar     []ContextBarItem
-	Views          []CodeChannelView
-	SummaryMessage string // summary_message.message_ts
+	Views          []CodeChannelView // PntH with PR views off (CodeChannelViews applies the experiments)
+	SummaryMessage string            // summary_message.message_ts
+	DiffVersion    int               // diff_file_version (the Code view refetches when it changes)
+
+	allViews     []CodeChannelView // PntH's list before the pull_request filter
+	planCanvases []string          // plan_canvases[].canvas_id
 }
 
 // ContextBarItem is one of code_channel.context_bar_items: a link
@@ -111,6 +115,13 @@ type codeProps struct {
 		ProcessingExpr json.Number       `json:"date_status_processing_expire"`
 	} `json:"agent_session"`
 	CodeChannel map[string]json.RawMessage `json:"code_channel"`
+	Tabz        []struct {
+		ID   string `json:"id"`
+		Type string `json:"type"`
+		Data struct {
+			FileID string `json:"file_id"`
+		} `json:"data"`
+	} `json:"tabz"`
 }
 
 // ParseCodeChannel reads a conversation's properties; nil unless it is a
@@ -163,16 +174,35 @@ func ParseCodeChannel(props json.RawMessage) *CodeChannel {
 	if json.Unmarshal(c["summary_message"], &sm) == nil {
 		cc.SummaryMessage = sm.MessageTS
 	}
-	cc.Views = codeChannelViews(c)
+	canvasTabs := map[string]string{} // getCodeChannelViews' channelTabs: a plan canvas's view id is its canvas tab's
+	for _, t := range p.Tabz {
+		if t.Type == "canvas" && t.Data.FileID != "" && canvasTabs[t.Data.FileID] == "" {
+			canvasTabs[t.Data.FileID] = t.ID
+		}
+	}
+	cc.allViews = codeChannelViews(c, true, canvasTabs)
+	for _, v := range cc.allViews {
+		if v.Type != ViewPullRequest {
+			cc.Views = append(cc.Views, v)
+		}
+	}
+	_ = json.Unmarshal(c["diff_file_version"], &cc.DiffVersion)
+	var plans []struct {
+		CanvasID string `json:"canvas_id"`
+	}
+	_ = json.Unmarshal(c["plan_canvases"], &plans)
+	for _, p := range plans {
+		cc.planCanvases = append(cc.planCanvases, p.CanvasID)
+	}
 	return cc
 }
 
 // codeChannelViews is getCodeChannelViews (PntH.B) with session channels
-// on and PR views off (session_channels_code_tab_pr is off for the test
-// account): agent_session_views without pull requests, agent_views as
-// html, diff_file_id as the Code diff, plan_canvases as canvases; the Code
-// diff first.
-func codeChannelViews(c map[string]json.RawMessage) []CodeChannelView {
+// on: agent_session_views (pull requests only with prViews and a pr_url),
+// agent_views as html, diff_file_id as the Code diff, plan_canvases as
+// canvases; the Code diff first. CodeChannelViews applies the viewer's
+// experiments to the prViews list.
+func codeChannelViews(c map[string]json.RawMessage, prViews bool, canvasTabs map[string]string) []CodeChannelView {
 	var out []CodeChannelView
 	seen := map[string]bool{}
 	add := func(v CodeChannelView) {
@@ -185,7 +215,7 @@ func codeChannelViews(c map[string]json.RawMessage) []CodeChannelView {
 	var views []CodeChannelView
 	_ = json.Unmarshal(c["agent_session_views"], &views)
 	for _, v := range views {
-		if v.Type == ViewPullRequest {
+		if v.Type == ViewPullRequest && (!prViews || v.PRURL == "") {
 			continue
 		}
 		seen[v.ViewID] = true
@@ -212,7 +242,11 @@ func codeChannelViews(c map[string]json.RawMessage) []CodeChannelView {
 	}
 	_ = json.Unmarshal(c["plan_canvases"], &plans)
 	for _, p := range plans {
-		add(CodeChannelView{ViewID: p.CanvasID, Type: ViewCanvas, CanvasID: p.CanvasID})
+		id := p.CanvasID
+		if t := canvasTabs[p.CanvasID]; t != "" {
+			id = t
+		}
+		add(CodeChannelView{ViewID: id, Type: ViewCanvas, CanvasID: p.CanvasID})
 	}
 	for i, v := range out { // the Code diff sorts first
 		if v.ViewID == "code" && i > 0 {

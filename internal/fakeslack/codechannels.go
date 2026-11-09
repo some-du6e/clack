@@ -12,9 +12,11 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/canvas"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 )
 
@@ -31,7 +33,21 @@ const (
 	CodeArchivedID    = "C0CODE00007" // archived when the work was done
 	CodePreviewID     = "C0CODE00008" // a code channel the viewer isn't in
 	codeChannelRecord = "AC:9991336848048:852294937191:"
+
+	// the working channel's views
+	CodeHTMLViewID   = "V0HTML"
+	CodeHTMLFileID   = "F0HTML0001"
+	CodePlanCanvasID = "F0PLAN0001"
+	CodePRURL        = "https://github.com/example/app/pull/482"
 )
+
+func withTabz(props json.RawMessage, tabz []map[string]any) json.RawMessage {
+	var m map[string]any
+	_ = json.Unmarshal(props, &m)
+	m["tabz"] = tabz
+	b, _ := json.Marshal(m)
+	return b
+}
 
 // CodeFixtures is the code channels' data.
 type CodeFixtures struct {
@@ -70,7 +86,7 @@ func CodeChannelFixtures(now time.Time) CodeFixtures {
 	}
 	views := []map[string]any{
 		{"view_id": "V0SUMMARY", "type": "block_kit", "name": "Summary", "content_version": 2},
-		{"view_id": "V0PR", "type": "pull_request", "pr_url": "https://github.com/example/app/pull/482", "name": "#482"},
+		{"view_id": "V0PR", "type": "pull_request", "pr_url": CodePRURL, "name": "#482"},
 	}
 	conv := func(id, name string, p json.RawMessage) slack.Conversation {
 		return slack.Conversation{ID: id, Name: name, IsChannel: true, IsMember: true, Created: now.Add(-6 * 24 * time.Hour).Unix(),
@@ -89,10 +105,17 @@ func CodeChannelFixtures(now time.Time) CodeFixtures {
 	}
 	wCC := map[string]any{"repo": "example/app", "branch": "fix-login-redirect", "pr_status": "open", "ci_state": "pending",
 		"pr_title": "Fix the login redirect loop", "context_bar_items": links, "agent_session_views": views,
-		"agent_views":  []map[string]any{{"view_id": "V0HTML", "file_id": "F0HTML0001", "content_version": 1}},
-		"diff_file_id": "F0DIFF0001", "diff_file_version": 3}
-	add(conv(CodeWorkingID, "fix-login-redirect", props(CodeWorkingID, "processing", "Fix the login redirect loop", wCC,
-		map[string]any{"date_status_processing_expire": now.Add(time.Hour).Unix()})), ts(time.Minute, 300), "processing")
+		"agent_views":  []map[string]any{{"view_id": CodeHTMLViewID, "file_id": CodeHTMLFileID, "content_version": 1}},
+		"diff_file_id": "F0DIFF0001", "diff_file_version": 3,
+		"plan_canvases": []map[string]any{{"canvas_id": CodePlanCanvasID, "date_tabbed": now.Add(-time.Hour).Unix()}}}
+	working := conv(CodeWorkingID, "fix-login-redirect", props(CodeWorkingID, "processing", "Fix the login redirect loop", wCC,
+		map[string]any{"date_status_processing_expire": now.Add(time.Hour).Unix()}))
+	working.Properties = withTabz(working.Properties, []map[string]any{ // the channel tabs a code channel's views are (pX9p)
+		{"id": "code", "type": "code", "label": "Code"},
+		{"id": CodeHTMLViewID, "type": "agent_view", "label": "Preview"},
+		{"id": "Ct" + CodePlanCanvasID, "type": "canvas", "label": "", "data": map[string]any{"file_id": CodePlanCanvasID}},
+	})
+	add(working, ts(time.Minute, 300), "processing")
 	add(conv(CodeWaitingID, "add-dark-mode", props(CodeWaitingID, "suspended", "Add a dark mode toggle",
 		map[string]any{"repo": "example/app", "branch": "dark-mode", "context_bar_items": links[:1]}, nil)), ts(20*time.Minute, 100), "suspended")
 	add(conv(CodeDoneID, "upgrade-deps", props(CodeDoneID, "closed", "Upgrade dependencies",
@@ -122,7 +145,14 @@ func CodeChannelFixtures(now time.Time) CodeFixtures {
 	}
 	diff := "--- a/src/auth/redirect.ts\n+++ b/src/auth/redirect.ts\n@@ -12,7 +12,9 @@\n-  if (next) return next\n+  if (next && !next.startsWith('/login')) {\n+    return next\n+  }\n   return '/home'"
 	db, _ := json.Marshal(diff)
+	slug := func(tab string) string { // a rich_text channel element with a tab_id: a channel-tab slug
+		return `{"type":"channel","channel_id":"` + CodeWorkingID + `","tab_id":"` + tab + `"}`
+	}
+	viewAdded := agent(30*time.Second, 400, "Codebot added views", `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[`+
+		`{"type":"text","text":"Views: "},`+slug("code")+`,{"type":"text","text":" "},`+slug(CodeHTMLViewID)+`]}]}]`)
+	viewAdded.Subtype = "agent_view_added"
 	f.History[CodeWorkingID] = []slack.Message{
+		viewAdded,
 		agent(time.Minute, 300, "Unsupported artifact", `[{"type":"code_diff","block_id":"d1","file":"src/auth/redirect.ts"}]`),
 		agent(2*time.Minute, 200, diff, `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"Here's the change so far:"}]},{"type":"rich_text_preformatted","elements":[{"type":"text","text":`+string(db)+`}]}]}]`),
 		agent(3*time.Minute, 100, "Plan", `[{"type":"plan","block_id":"p1","title":"Fix the login redirect loop","tasks":[`+
@@ -180,22 +210,96 @@ func (s *Server) addCodeChannels() {
 	for id, h := range f.History {
 		s.hist[id] = h
 	}
+	// the plan canvas (a plan_canvases view)
+	cs := s.canvasStore()
+	cs.mu.Lock()
+	now := time.Now().Unix()
+	cs.byID[CodePlanCanvasID] = &FakeCanvas{ID: CodePlanCanvasID, Title: "Plan: fix the login redirect", Creator: CodeAgentID, // no Channel: canvas.go would rewrite the channel's properties
+		Created: now - 3600, Updated: now - 600, Access: map[string]string{}, Doc: canvas.Doc{Blocks: canvas.ParseMarkdown(
+			"# Plan\n\nThe login page sends signed-in users back to `/login`.\n\n- [x] Reproduce the loop\n- [ ] Guard the `next` parameter\n- [ ] Add a regression test", nil)}}
+	cs.order = append(cs.order, CodePlanCanvasID)
+	cs.mu.Unlock()
+}
+
+// CodeDiffFixture is client.codeChannels.getDiff's diff for the working
+// channel: a modified, an added, a renamed and a generated file, and one
+// past the patch renderer's 100-line page.
+func CodeDiffFixture() map[string]any {
+	var long strings.Builder
+	long.WriteString("@@ -0,0 +1,130 @@\n")
+	for i := 1; i <= 130; i++ {
+		long.WriteString(fmt.Sprintf("+export const route%03d = { path: '/r/%d', auth: true } // generated\n", i, i))
+	}
+	files := []map[string]any{
+		{"filename": "src/auth/redirect.ts", "status": "modified", "additions": 5, "deletions": 2, "patch": "@@ -9,10 +9,13 @@ import { session } from './session'\n \n export function nextPath(next?: string): string {\n   // where to go after signing in\n-  if (next) return next\n-  return '/home'\n+  if (next && !next.startsWith('/login')) {\n+    return next\n+  }\n+  const fallback = session.home ?? '/home'\n+  return fallback\n }\n \n export const MAX_REDIRECTS = 3"},
+		{"filename": "src/auth/redirect.test.ts", "status": "added", "additions": 9, "deletions": 0, "patch": "@@ -0,0 +1,9 @@\n+import { nextPath } from './redirect'\n+\n+describe('nextPath', () => {\n+  it(\"ignores /login\", () => {\n+    expect(nextPath('/login?next=/login')).toBe('/home')\n+  })\n+  it('keeps other paths', () => expect(nextPath('/settings')).toBe('/settings'))\n+})\n+"},
+		{"filename": "src/auth/loop.ts", "previous_filename": "src/legacy/loginLoop.ts", "status": "renamed", "additions": 1, "deletions": 1, "patch": "@@ -1,4 +1,4 @@\n-// TODO: remove the legacy loop guard\n+// the loop guard, now next to the redirect\n export function isLoop(path: string): boolean {\n   return path === '/login'\n }"},
+		{"filename": "src/routes/generated.ts", "status": "added", "additions": 130, "deletions": 0, "patch": strings.TrimSuffix(long.String(), "\n")},
+		{"filename": "package-lock.json", "status": "modified", "additions": 2, "deletions": 2, "is_generated": true, "patch": "@@ -1,6 +1,6 @@\n {\n   \"name\": \"example-app\",\n-  \"version\": \"1.4.0\",\n+  \"version\": \"1.4.1\",\n   \"lockfileVersion\": 3,\n-  \"requires\": false\n+  \"requires\": true\n }"},
+	}
+	return map[string]any{"files": files, "truncated": false, "total_commits": 3, "base_branch": "main", "head_branch": "fix-login-redirect"}
+}
+
+// CodePRFixture is client.codeChannels.getPullRequest's answer for #482.
+func CodePRFixture() map[string]any {
+	now := time.Now().Unix()
+	comment := func(id, kind string, at int64, login, body string, anchor map[string]any) map[string]any {
+		c := map[string]any{"id": id, "comment_kind": kind, "review_state": "COMMENTED", "timestamp": at,
+			"comment": map[string]any{"value": body}, "sender": map[string]any{"login": login}}
+		if anchor != nil {
+			c["review_anchor"] = anchor
+		}
+		return c
+	}
+	return map[string]any{
+		"pull_request": map[string]any{"title": "Fix the login redirect loop", "state": "open", "review_decision": "changes_requested", "has_conflicts": false,
+			"body": "Signed-in users who opened /login were sent back to /login forever. `nextPath` now ignores `/login` and falls back to the session's home.\n\nCloses #470."},
+		"diff":     CodeDiffFixture(),
+		"revision": "9f2c1e7",
+		"comments": []map[string]any{
+			comment("c1", "issue_comment", now-7200, "octo-reviewer", "Thanks! Could we keep the old fallback for users without a home?", nil),
+			comment("c2", "review_comment", now-3600, "octo-reviewer", "Nit: `fallback` can be inlined.", map[string]any{"path": "src/auth/redirect.ts", "line": 16, "side": "RIGHT"}),
+			comment("c3", "review_summary", now-3500, "octo-reviewer", "One nit, otherwise looks good.", nil),
+		},
+	}
 }
 
 // handleCodeChannels answers the code channel methods.
 func (s *Server) handleCodeChannels(method string, f url.Values) (any, bool) {
 	switch method {
-	case "client.codeChannels.action", "agents.sessions.stop", "client.codeChannels.getBlockKitView":
+	case "client.codeChannels.action", "agents.sessions.stop", "client.codeChannels.getBlockKitView",
+		"client.codeChannels.getDiff", "client.codeChannels.getPullRequest", "client.codeChannels.getView":
 	default:
 		return nil, false
 	}
 	s.code.mu.Lock()
 	s.code.calls = append(s.code.calls, CodeCall{Method: method, Args: f})
 	s.code.mu.Unlock()
-	if method == "client.codeChannels.getBlockKitView" {
+	switch method {
+	case "client.codeChannels.getBlockKitView":
 		blocks := json.RawMessage(`[{"type":"header","text":{"type":"plain_text","text":"Summary"}},` +
-			`{"type":"section","text":{"type":"mrkdwn","text":"*3 files changed*, 2 checks passing"}}]`)
+			`{"type":"section","text":{"type":"mrkdwn","text":"*5 files changed*, 2 checks passing"}},` +
+			`{"type":"divider"},` +
+			`{"type":"section","fields":[{"type":"mrkdwn","text":"*Branch*\nfix-login-redirect"},{"type":"mrkdwn","text":"*Tests*\n42 passed"}]},` +
+			`{"type":"actions","elements":[{"type":"button","action_id":"rerun","text":{"type":"plain_text","text":"Re-run checks"}}]}]`)
 		return ok("blocks", blocks, "service_id", CodeAgentBotID, "app_id", "A0AGENT0001"), true
+	case "client.codeChannels.getDiff":
+		if f.Get("channel_id") != CodeWorkingID {
+			return ok("diff", map[string]any{"files": []any{}, "truncated": false, "base_branch": "main"}), true
+		}
+		return ok("diff", CodeDiffFixture()), true
+	case "client.codeChannels.getPullRequest":
+		if f.Get("pr_url") != CodePRURL {
+			return map[string]any{"ok": false, "error": "invalid_pr_url"}, true
+		}
+		pr := CodePRFixture()
+		return ok("pull_request", pr["pull_request"], "diff", pr["diff"], "comments", pr["comments"], "revision", pr["revision"]), true
+	case "client.codeChannels.getView":
+		if f.Get("view_id") != CodeHTMLViewID {
+			return map[string]any{"ok": false, "error": "view_not_found"}, true
+		}
+		return ok("html_content", "<!doctype html><h1>Login redirect report</h1><script>alert(1)</script>", "content_version", 1,
+			"csp", map[string]any{"resource_domains": []any{}}), true
 	}
 	return ok(), true
 }

@@ -26,6 +26,7 @@ type bk struct {
 	URL         string          `json:"url"`
 	UserID      string          `json:"user_id"`
 	ChannelID   string          `json:"channel_id"`
+	TabID       string          `json:"tab_id"`     // channel: a channel-tab slug
 	MessageTS   string          `json:"message_ts"` // message_mention
 	AuthorID    string          `json:"author_id"`  // message_mention
 	UsergroupID string          `json:"usergroup_id"`
@@ -762,7 +763,11 @@ func (c *builder) richInline(els []bk, pre bool) []Span {
 		case "usergroup":
 			out = append(out, usergroupSpan(c.r, e.UsergroupID, ""))
 		case "channel":
-			out = append(out, channelSpan(c.r, e.ChannelID, ""))
+			sp := channelSpan(c.r, e.ChannelID, "")
+			if e.TabID != "" { // a channel-tab slug: getChannelTabPermalink
+				sp.URL = "/archives/" + e.ChannelID + "/tabs/" + e.TabID
+			}
+			out = append(out, sp)
 		case "emoji":
 			out = append(out, richEmoji(c.r, e))
 		case "message_mention":

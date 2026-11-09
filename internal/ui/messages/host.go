@@ -35,6 +35,13 @@ type CanvasOpener interface {
 	OpenCanvasLink(url string) bool
 }
 
+// ChannelTabOpener is optional: OpenChannelTabLink handles a channel-tab
+// link (/archives/<C>/tabs/<id>), opening a code channel's view in its
+// details pane (navigateToChannelTabSlug), and reports whether url was one.
+type ChannelTabOpener interface {
+	OpenChannelTabLink(url string) bool
+}
+
 // SignInHost is optional: the ui root's sign-in screen, shown by the
 // list's "Sign in again" link once core reports the session ended.
 type SignInHost interface {
@@ -138,6 +145,9 @@ func (r *richHandler) OpenURL(url string) {
 		return
 	}
 	if co, ok := r.h.(CanvasOpener); ok && co.OpenCanvasLink(url) {
+		return
+	}
+	if to, ok := r.h.(ChannelTabOpener); ok && to.OpenChannelTabLink(url) {
 		return
 	}
 	if ch, ts, ok := slackLink(url); ok {

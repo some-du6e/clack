@@ -102,7 +102,7 @@ type Dialog struct {
 
 // ActionContainer is blocks.actions' container.
 type ActionContainer struct {
-	Type         string // message | message_attachment | view
+	Type         string // message | message_attachment | view | code_channel_view
 	ChannelID    string
 	MessageTS    string
 	ThreadTS     string // sent only for ephemeral messages, like Slack
@@ -117,6 +117,8 @@ func (c ActionContainer) JSON() json.RawMessage {
 	switch c.Type {
 	case "view":
 		m = map[string]any{"type": "view", "view_id": c.ViewID}
+	case "code_channel_view": // a code channel's block_kit view (CodeChannelBlockKitView)
+		m = map[string]any{"type": "code_channel_view", "view_id": c.ViewID, "channel_id": c.ChannelID}
 	case "message_attachment":
 		m = map[string]any{"type": "message_attachment", "message_ts": c.MessageTS, "attachment_id": c.AttachmentID,
 			"channel_id": c.ChannelID, "is_ephemeral": c.IsEphemeral}
