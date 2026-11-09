@@ -735,17 +735,22 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 	case itIntro:
 		return s.intro(gtx, h, c, w)
 	case itReplies:
-		// 18 tall, margin 4 0, padding-left 16; count then a hairline.
-		hh := dp(gtx, 26)
+		// ThreadSeparatorRowGeneric: .p-threads_flexpane__separator is a
+		// 13px/18px count (margin-right 12) and a 1px rule (margin-top 1,
+		// centred: y 13), margin 4px 0, padding-left 16, width
+		// calc(100% - 22px); the row has margin-bottom -2px: 24 tall.
+		hh := dp(gtx, 24)
 		n := it.idx
 		txt := "1 reply"
 		if n != 1 {
 			txt = itoa(n) + " replies"
 		}
 		st := textStyle{size: 13, col: c.Muted70, lineH: 18}
-		d := at(gtx, dp(gtx, 16), dp(gtx, 4), func(gtx layout.Context) layout.Dimensions { return label(gtx, h.Theme(), st, txt) })
+		d := at(gtx, dp(gtx, 16), dp(gtx, 4), func(gtx layout.Context) layout.Dimensions {
+			return lineBox(gtx, st, func(gtx layout.Context) layout.Dimensions { return label(gtx, h.Theme(), st, txt) })
+		})
 		lx := dp(gtx, 16) + d.Size.X + dp(gtx, 12)
-		fill(gtx.Ops, image.Rect(lx, dp(gtx, 13), w-dp(gtx, 16), dp(gtx, 14)), c.PillBorder)
+		fill(gtx.Ops, image.Rect(lx, dp(gtx, 13), w-dp(gtx, 22), dp(gtx, 13)+max(dp(gtx, 1), 1)), c.PillBorder)
 		return layout.Dimensions{Size: image.Pt(w, hh)}
 	}
 	e := &s.snap.msgs[it.idx]

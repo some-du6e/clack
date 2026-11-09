@@ -426,7 +426,9 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 		st.ShowPlaceholder = false
 	case c.ts != "":
 		st.Mode = modeThread
-		st.Placeholder = "Reply to thread…"
+		// Slack's MessageInput: "Reply to thread…" only under the
+		// nested_secondary_view experiment, else "Reply…".
+		st.Placeholder = "Reply…"
 	default:
 		st.Mode = modeChannel
 	}

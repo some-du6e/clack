@@ -229,6 +229,8 @@ type Profile struct {
 	Team               string          `json:"team,omitempty"`
 	Fields             json.RawMessage `json:"fields,omitempty"`
 	HuddleState        string          `json:"huddle_state,omitempty"`
+	HuddleChannel      string          `json:"huddle_state_channel_id,omitempty"`
+	HuddleExpires      int64           `json:"huddle_state_expiration_ts,omitempty"`
 	BotID              string          `json:"bot_id,omitempty"`
 	APIAppID           string          `json:"api_app_id,omitempty"`
 

@@ -197,7 +197,7 @@ func (r *row) nameSpan(gtx layout.Context, bs slackc.Styled) layout.Dimensions {
 	}
 	r.nameShown = before + r.crName + after
 	r.noMenuOn(gtx, &r.nameCtx) // a right-click on the name opens nothing
-	d := label(gtx, r.rc.th, nameS, r.crName)
+	d := lineBox(gtx, nameS, func(gtx layout.Context) layout.Dimensions { return label(gtx, r.rc.th, nameS, r.crName) })
 	contextArea(gtx, &r.nameCtx, d.Size)
 	return d
 }

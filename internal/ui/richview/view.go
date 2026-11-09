@@ -1028,3 +1028,18 @@ func (v *View) activate(t int16, anchor image.Point, h Handler) {
 		}
 	}
 }
+
+// Baselines returns the text baseline of each laid-out line, in px from
+// the view's top (tests: row geometry against Slack's line boxes).
+func (v *View) Baselines() []int {
+	var out []int
+	for _, ln := range v.d.lines {
+		for i := ln.f0; i < ln.f1; i++ {
+			if f := &v.d.frags[i]; f.kind == fText {
+				out = append(out, f.y)
+				break
+			}
+		}
+	}
+	return out
+}

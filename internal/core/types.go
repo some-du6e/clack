@@ -91,7 +91,13 @@ type User struct {
 	Guest                            bool
 	Color, Presence                  string // Presence: active | away | ""
 	Huddle                           bool
-	Agent                            bool // agent_status consistently_an_agent: Slack labels the sender AGENT, not APP
+	// HuddleChannel and HuddleExpires are profile.huddle_state_channel_id
+	// and huddle_state_expiration_ts: the huddle's channel and when the
+	// state lapses (Slack shows the sender's headphones only while both
+	// are set and the time is in the future).
+	HuddleChannel string
+	HuddleExpires int64
+	Agent         bool // agent_status consistently_an_agent: Slack labels the sender AGENT, not APP
 
 	// TeamID is the member's team as Slack's computeLocality reads it
 	// (the org on Enterprise Grid for org members, else team_id).

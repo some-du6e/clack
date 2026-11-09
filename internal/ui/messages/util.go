@@ -82,6 +82,43 @@ func dayLabel(t, now time.Time) string {
 	return s
 }
 
+// threadTime is a thread pane message's time, Slack's THREAD_DETAIL_VIEW
+// format (getCustomTimestampFormat → module QvGr): "Just now" under a
+// minute, then toTimeAgo's "1 minute ago" (under 90 s), "N minutes ago"
+// (rounded, under 45 min), "1 hour ago"; after an hour "Today at 3:04 PM",
+// "Yesterday at 3:04 PM", "Monday at 3:04 PM" within a week, else
+// "Nov 3rd at 3:04 PM" ("Nov 3rd, 2025 at …" in another year).
+func threadTime(t, now time.Time) string {
+	s := now.Sub(t).Seconds()
+	if s < 0 {
+		s = -s
+	}
+	m := s / 60
+	switch {
+	case s < 60:
+		return "Just now"
+	case m < 60:
+		switch {
+		case s < 90:
+			return "1 minute ago"
+		case m < 45:
+			return strconv.Itoa(int(m+0.5)) + " minutes ago"
+		}
+		return "1 hour ago"
+	case sameDay(t, now):
+		return "Today at " + clock(t)
+	case sameDay(t, now.AddDate(0, 0, -1)):
+		return "Yesterday at " + clock(t)
+	case m/60/24 < 7:
+		return t.Format("Monday") + " at " + clock(t)
+	}
+	d := t.Format("Jan 2") + ordinal(t.Day())
+	if t.Year() != now.Year() {
+		d += t.Format(", 2006")
+	}
+	return d + " at " + clock(t)
+}
+
 // ago is the "Last reply …" text, as Slack writes it (measured live):
 // "today at 3:23 PM", "yesterday at 9:05 AM", then "N days ago",
 // "N months ago", "N years ago".
