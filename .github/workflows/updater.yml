@@ -114,7 +114,13 @@ jobs:
           New-Item -ItemType Directory -Force $d | Out-Null
           Set-Content -Path "$d\latest.json" -Value '{"tag_name":"v0.0.1"}' -Encoding utf8NoBOM
           $srv = Start-Process -PassThru -NoNewWindow python -ArgumentList '-m', 'http.server', '8765', '--bind', '127.0.0.1', '--directory', $d
-          Start-Sleep 3
+          # wait until the fake API answers (a fixed 3 s sleep raced python's
+          # startup on a slow runner: connection refused, alpha.24's run)
+          $up = $false
+          for ($i = 0; $i -lt 60 -and -not $up; $i++) {
+            try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 'http://127.0.0.1:8765/latest.json' | Out-Null; $up = $true } catch { Start-Sleep -Milliseconds 500 }
+          }
+          if (-not $up) { throw "fake API on 8765 never came up" }
           try {
             $env:CLACK_HOME = Join-Path $env:RUNNER_TEMP 'clackhome'
             $env:CLACK_UPDATE_URL = 'http://127.0.0.1:8765/latest.json'
