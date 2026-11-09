@@ -97,17 +97,28 @@ func (f *UploadedFile) object(base string) map[string]any {
 	if strings.HasPrefix(mimeOf(f.Name), "image/") {
 		o["thumb_360"] = base + "img/360x360/" + f.ID + ".png"
 		if f.W > 0 && f.H > 0 {
-			o["thumb_360"] = base + f.imgPath()[1:]
 			o["original_w"], o["original_h"] = f.W, f.H
-			tw, th := f.W, f.H
-			if tw > 360 || th > 360 {
-				if tw >= th {
-					tw, th = 360, max(1, th*360/tw)
-				} else {
-					tw, th = max(1, tw*360/th), 360
+			// Slack's thumbs: thumb_360, then each larger size while the
+			// original is bigger than the one before (a 223px paste stops
+			// at thumb_360; a 640px one gets thumb_720 at 640), all served
+			// as the upload's own bytes
+			prev := 0
+			for _, side := range []int{360, 480, 720, 960, 1024} {
+				if prev > 0 && max(f.W, f.H) <= prev {
+					break
 				}
+				tw, th := f.W, f.H
+				if tw > side || th > side {
+					if tw >= th {
+						tw, th = side, max(1, th*side/tw)
+					} else {
+						tw, th = max(1, tw*side/th), side
+					}
+				}
+				k := "thumb_" + strconv.Itoa(side)
+				o[k], o[k+"_w"], o[k+"_h"] = base+f.imgPath()[1:], tw, th
+				prev = side
 			}
-			o["thumb_360_w"], o["thumb_360_h"] = tw, th
 		}
 	}
 	return o

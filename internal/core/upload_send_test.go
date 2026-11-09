@@ -128,6 +128,7 @@ func TestImageOnlySendPlaceholder(t *testing.T) {
 
 	var statuses []string
 	sawLocal, sawReal := false, false
+	var pendBox, realBox [2]int
 	for _, ev := range log.all() {
 		if ev.Msg == nil || ev.ClientMsgID != cid && ev.TS != local {
 			continue
@@ -144,8 +145,10 @@ func TestImageOnlySendPlaceholder(t *testing.T) {
 		}
 		if f.Pending {
 			sawLocal = sawLocal || (f.Thumb != nil && localimg.Is(f.Thumb.URL))
+			pendBox = [2]int{f.Thumb.W, f.Thumb.H}
 		} else if f.Thumb != nil && strings.HasPrefix(f.Thumb.URL, fs.URL) {
 			sawReal = true
+			realBox = [2]int{f.Thumb.W, f.Thumb.H}
 		}
 		if ev.Type == "sent" && (ev.Msg.Pending || status != "") {
 			t.Errorf("confirmed message still pending: %+v status %q", ev.Msg.Pending, status)
@@ -156,6 +159,9 @@ func TestImageOnlySendPlaceholder(t *testing.T) {
 	}
 	if !sawLocal || !sawReal {
 		t.Errorf("placeholder from the File's bytes %v, then the processed file %v", sawLocal, sawReal)
+	}
+	if pendBox != realBox || pendBox != [2]int{640, 400} {
+		t.Errorf("image size %v while pending, %v once shared: the gallery box would jump", pendBox, realBox)
 	}
 	if len(statuses) < 2 || (statuses[0] != "Waiting to upload…" && statuses[0] != "Uploading…") ||
 		statuses[len(statuses)-1] != "Sending…" {

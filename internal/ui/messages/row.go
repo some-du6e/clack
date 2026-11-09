@@ -243,7 +243,11 @@ func (r *row) rvOpts() richview.Options {
 // PendingFilesAtom) isn't faded: only the tiles of uploads still in
 // flight are (richview), so the row doesn't flash when Slack confirms it.
 func (r *row) dimPending() bool {
-	return r.m.Pending && !r.hasFiles
+	if !r.m.Pending {
+		return false
+	}
+	files, _ := docTail(r.m.Doc.Blocks) // not r.hasFiles: setDoc asks before it sets it
+	return !files
 }
 
 func (r *row) growPills() {

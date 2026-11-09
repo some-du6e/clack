@@ -118,7 +118,11 @@ func convertFile(f *slack.File) *File {
 		if f.Mimetype != "" && strings.HasPrefix(strings.ToLower(f.Mimetype), "image/") && localimg.Is(f.Thumb360) {
 			// PendingFilesGalleryGridImage: the File's own bytes
 			out.IsImage = true
-			out.Thumb = &Image{URL: f.Thumb360, Alt: f.Name, W: f.OriginalW, H: f.OriginalH}
+			// sized like the largest thumb Slack will make (thumbs go up
+			// to the original, thumb_1024 at most): the same gallery box
+			// before and after the swap
+			w, h := fitSide(f.OriginalW, f.OriginalH, 1024)
+			out.Thumb = &Image{URL: f.Thumb360, Alt: f.Name, W: w, H: h}
 			return out
 		}
 	}
