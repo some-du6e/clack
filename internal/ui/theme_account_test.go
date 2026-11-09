@@ -208,10 +208,30 @@ func TestAppearancePageDraws(t *testing.T) {
 		gtx := ttContext(new(op.Ops), image.Pt(800, 624))
 		a.slackcFrame(gtx)
 		p.layout(gtx)
-		for _, k := range []string{"mode.light", "mode.dark", "mode.os", "preset.lagoon", "role.primary.ocean", "gradients", "bright.4"} {
+		// a custom-hex preset (Protanopia & Deuteranopia) opens on Slack themes
+		for _, k := range []string{"mode.light", "mode.dark", "mode.os", "themetab.slack", "themetab.custom", "preset.lagoon"} {
 			if _, ok := p.clicks[k]; !ok {
 				t.Errorf("dark=%v: no %s row", dark, k)
 			}
+		}
+		p.themeTab = "custom"
+		p.layout(gtx)
+		ks := []string{"button.theme_share", "gradients"}
+		if !dark { // Darker sidebars: light mode only
+			ks = append(ks, "inverted")
+		}
+		for _, k := range ks {
+			if _, ok := p.clicks[k]; !ok {
+				t.Errorf("dark=%v custom: no %s row", dark, k)
+			}
+		}
+		for _, r := range customRoles {
+			if p.hexEd[r.key] == nil {
+				t.Errorf("dark=%v custom: no %s hex field", dark, r.key)
+			}
+		}
+		if got := p.hexEd["primary"].Text(); got != "#2D0033" {
+			t.Errorf("dark=%v: primary hex %q", dark, got)
 		}
 	}
 }
