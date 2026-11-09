@@ -736,6 +736,22 @@ func TestSlickViewBetterGifs(t *testing.T) {
 	} else {
 		t.Error("GifPicker isn't patched: BetterGifs' {filter: isGifPicker} must match the native's real source (internal/taut REAL_SOURCES)")
 	}
+	// The tab row with BetterGifs installed (it patches the GIF tab's body,
+	// not the row): light and dark, on either tab, next to the plain rows
+	// TestEmojiTabRow draws (icon-shots). Needs a GPU; skipped without.
+	if os.Getenv("SLICK_SHOTS_DIR") != "" {
+		th := e.h.th
+		dark0 := th.Dark
+		defer th.SetDark(dark0)
+		for _, dark := range []bool{false, true} {
+			th.SetDark(dark)
+			for _, gif := range []bool{false, true} {
+				p.gifMode = gif
+				name := fmt.Sprintf("emoji-tabs-bettergifs-%s-%s", map[bool]string{false: "light", true: "dark"}[dark], map[bool]string{false: "emoji", true: "gifs"}[gif])
+				epSaveShot(t, os.Getenv("SLICK_SHOTS_DIR"), name, epTabRowShot(t, th, p, 2))
+			}
+		}
+	}
 }
 
 // ChatTabs: "Open in new Slick tab" in the channel menu (its getTemplate

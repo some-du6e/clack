@@ -29,8 +29,6 @@ const (
 	epGlyphPeace
 	epGlyphFlag
 	epGlyphCustom
-	epGlyphGif
-	epGlyphEmojiTab
 )
 
 // epPen builds clip paths in glyph units.
@@ -51,14 +49,18 @@ func (e *epPen) cube(a, b, c, d, x, y float32) {
 	e.path.CubeTo(e.pt(a, b), e.pt(c, d), e.pt(x, y))
 }
 
-// stroke paints the current path as a 1.75-unit line. The shapes are
-// designed for 1.5 units; Gio's linear-space antialiasing makes thin strokes
-// read lighter than a browser's, so we draw them a little heavier.
+// stroke paints the current path as a 1.5-unit line, Slack's weight.
 // clip.Stroke only does round caps and joins.
-func (e *epPen) stroke() { e.strokeW(1.75) }
+func (e *epPen) stroke() { e.strokeW(1.5) }
 
-func (e *epPen) strokeW(w float32) {
-	paint.FillShape(e.gtx.Ops, e.col, clip.Stroke{Path: e.path.End(), Width: w * e.s}.Op())
+// strokeW paints a w-unit line, theme.StrokeGamma pixels wider or thinner
+// so Gio's linear-light edges carry a browser's ink (as icons does).
+func (e *epPen) strokeW(w float32) { e.strokeWC(w, e.col) }
+
+func (e *epPen) strokeWC(w float32, c color.NRGBA) {
+	px := w * e.s
+	px = max(px+theme.StrokeGamma(c), px/2)
+	paint.FillShape(e.gtx.Ops, c, clip.Stroke{Path: e.path.End(), Width: px}.Op())
 }
 
 func (e *epPen) fill() { e.fillC(e.col) }
@@ -106,11 +108,12 @@ func (e *epPen) seg(x0, y0, x1, y1 float32) {
 	e.stroke()
 }
 
-// dot fills a small circle.
+// dot fills a small circle (as a ring stroked onto itself, so it gets
+// StrokeGamma like the lines).
 func (e *epPen) dot(cx, cy, r float32) {
 	e.begin()
-	e.circle(cx, cy, r)
-	e.fill()
+	e.circle(cx, cy, r/2)
+	e.strokeW(r)
 }
 
 // emojiGlyph draws glyph kind at size dp in col.
@@ -299,27 +302,6 @@ func emojiGlyph(gtx layout.Context, kind int, size float32, col color.NRGBA) lay
 		e.line(4.75, 10.5)
 		e.close()
 		e.fill()
-	case epGlyphGif:
-		e.begin()
-		e.rrect(3, 3, 17, 17, 3.6)
-		e.stroke()
-		e.begin()
-		e.arc(10, 10, 3.6, 30, 150, true)
-		e.stroke()
-		e.dot(7.7, 8.4, .95)
-		e.dot(12.3, 8.4, .95)
-	case epGlyphEmojiTab:
-		e.begin()
-		e.circle(10, 10, 7.4)
-		e.fillC(rgb(0xffcc4d))
-		e.begin()
-		e.circle(10, 10, 7.4)
-		e.strokeW(1.3)
-		e.begin()
-		e.arc(10, 10, 4, 25, 155, true)
-		e.strokeW(1.4)
-		e.dot(7.5, 8.2, 1.05)
-		e.dot(12.5, 8.2, 1.05)
 	}
 	return dims
 }

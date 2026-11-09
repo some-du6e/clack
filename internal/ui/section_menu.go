@@ -132,7 +132,7 @@ func (a *App) markAllReadItem(sec *sbSection) *MenuItem {
 		return nil
 	}
 	id := sec.ID
-	return mi(MenuItem{Key: "channel_section_menu_mark_as_read", Label: "Mark all as read", Icon: "check-circle", Do: func() { a.markSectionRead(id) }})
+	return mi(MenuItem{Key: "channel_section_menu_mark_as_read", Label: "Mark all as read", Icon: "mark-as-read", Do: func() { a.markSectionRead(id) }})
 }
 
 func (a *App) createConversationItem(sec *sbSection) *MenuItem {
@@ -154,8 +154,8 @@ func (a *App) shareItem(sec *sbSection) *MenuItem {
 		return nil
 	}
 	name, emoji, ids := sec.Name, sec.Emoji, append([]string(nil), sec.All...)
-	return mi(MenuItem{Key: "section_menu_visual_updates_share", Label: "Share", Icon: "share", Sub: []MenuItem{
-		{Label: "Share directly", Icon: "share", Subtitle: "Invite to public or private channels",
+	return mi(MenuItem{Key: "section_menu_visual_updates_share", Label: "Share", Icon: "share-message", Sub: []MenuItem{
+		{Label: "Share directly", Icon: "share-message", Subtitle: "Invite to public or private channels",
 			Do: func() { a.Toast("Sharing a section directly isn’t available in " + AppName + " yet") }},
 		{Label: "Copy section link", Icon: "link", Subtitle: "Private channels won’t be visible to people who aren’t already in them",
 			Do: func() { a.copySectionLink(name, emoji, ids) }},
@@ -165,7 +165,7 @@ func (a *App) shareItem(sec *sbSection) *MenuItem {
 func (a *App) browsePageItem(sec *sbSection) *MenuItem {
 	switch sec.Type {
 	case "channels":
-		return mi(MenuItem{Key: "channel_section_menu__channels__browse", Label: "Browse channels", Icon: "search",
+		return mi(MenuItem{Key: "channel_section_menu__channels__browse", Label: "Browse channels", Icon: "channel-search",
 			Do: func() { a.Navigate("directories?tab=channels") }})
 	case "direct_messages":
 		return mi(MenuItem{Key: "channel_sidebar__recent_dms", Label: "Recent direct messages", Do: func() { a.Navigate("dms") }})

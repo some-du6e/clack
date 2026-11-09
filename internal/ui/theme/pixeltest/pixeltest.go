@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"testing"
+	"time"
 
 	"gioui.org/gpu/headless"
 	"gioui.org/op"
@@ -20,6 +21,12 @@ import (
 func Render(t testing.TB, w, h int, ops *op.Ops) *image.RGBA {
 	t.Helper()
 	win, err := headless.NewWindow(w, h)
+	// Mesa's EGL on Xvfb sometimes fails eglInitialize (0x3001) while other
+	// test binaries bring theirs up; it succeeds on a retry.
+	for i := 0; err != nil && i < 5 && os.Getenv("CLACK_PIXEL_TESTS") != ""; i++ {
+		time.Sleep(time.Duration(200*(i+1)) * time.Millisecond)
+		win, err = headless.NewWindow(w, h)
+	}
 	if err != nil {
 		if os.Getenv("CLACK_PIXEL_TESTS") != "" {
 			t.Fatalf("headless GPU: %v", err)

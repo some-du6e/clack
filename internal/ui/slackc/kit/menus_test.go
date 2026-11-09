@@ -128,7 +128,7 @@ func TestClackIcon(t *testing.T) {
 		"arrow-left":               "back",
 		"caret-right":              "caret-right",
 		"caret-up-down":            "caret-up-down",
-		"user-add":                 "user-plus",
+		"user-add":                 "user-add", // Slack's own glyph now (icons)
 		"file-upload":              "file-upload",
 		"glasses-filled":           "glasses-filled",
 		"Close":                    "close",

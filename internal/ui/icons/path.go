@@ -89,7 +89,7 @@ func parsePath(d string) []seg {
 			lastCtrl, cur = q, to
 		case 'A':
 			rx, ry, rot := t.num(), t.num(), t.num()
-			large, sweep := t.num() != 0, t.num() != 0
+			large, sweep := t.flag(), t.flag()
 			to := pt()
 			out = append(out, arc(cur, to, rx, ry, rot, large, sweep)...)
 			cur = to
@@ -224,6 +224,17 @@ func (t *tokenizer) cmd() (byte, bool) {
 		return c, true
 	}
 	return 0, false
+}
+
+// flag reads an arc flag: one 0 or 1, which minified paths run into the
+// next number ("a2 2 0 011 1" is flags 0 and 1, then x 1).
+func (t *tokenizer) flag() bool {
+	t.skip()
+	if t.i < len(t.s) && (t.s[t.i] == '0' || t.s[t.i] == '1') {
+		t.i++
+		return t.s[t.i-1] == '1'
+	}
+	return t.num() != 0
 }
 
 func (t *tokenizer) num() float32 {

@@ -7,7 +7,9 @@ import "strings"
 // resolves such a name to an icon in this set.
 
 // SlackFallback is drawn for Slack names with no counterpart: a quiet dot
-// rather than the red "missing" box.
+// rather than the red "missing" box. Each such name is logged once and
+// listed by Missing, so a plugin icon the set lacks shows up in test logs
+// instead of passing as a dot.
 const SlackFallback = "dot"
 
 // slackIconNames maps Slack icon names to Clack icon names where they
@@ -66,7 +68,6 @@ var slackIconNames = map[string]string{
 	"smile":                      "emoji",
 	"emoji-smile":                "emoji",
 	"emoji-filled":               "emoji",
-	"channel":                    "hash",
 	"hash-filled":                "hash",
 	"private":                    "lock",
 	"padlock":                    "lock",
@@ -90,7 +91,6 @@ var slackIconNames = map[string]string{
 	"notification":               "bell",
 	"bell-slash":                 "bell-off",
 	"calendar-add":               "calendar",
-	"user-add":                   "user-plus",
 	"add-user":                   "user-plus",
 	"person-add":                 "user-plus",
 	"users":                      "people",
@@ -194,7 +194,10 @@ func slackLookup(name string) (string, bool) {
 // itself when registered, then the alias table, then the name without a
 // -filled/-outline/-small… suffix, else SlackFallback.
 func Slack(name string) string {
-	n, _ := slackLookup(name)
+	n, ok := slackLookup(name)
+	if !ok {
+		noteMissing(name, n) // logged once; Missing lists it for tests
+	}
 	return n
 }
 
@@ -211,6 +214,22 @@ func GetSlack(name string) Icon { return Get(Slack(name)) }
 // Icons Slack's plugins name that the base set lacked, redrawn on the
 // same 20×20 grid and stroke.
 func init() {
+	// The sidebar section and Create menus' glyphs, redrawn on the
+	// centerlines of Slack's own (channel, user-add, channel-search,
+	// mark-as-read, share-message, lists, add-channel-canvas; held to
+	// Slack's ink and shape by TestIconsMatchSlack).
+	reg("channel", s("M9 2.75 L6.5 17.25 M13.75 2.75 L11.25 17.25 M3.75 6.75 H17.25 M2.75 13.75 H16.25"))
+	reg("user-add", s("M9 2.75 C10.9 2.75 12.75 4.1 12.75 6.67 C12.75 9.3 10.6 11.1 9 11.1 C7.4 11.1 5.25 9.3 5.25 6.67 C5.25 4.1 7.1 2.75 9 2.75 Z"),
+		s("M12.25 11.8 C11.2 11.4 10.05 11.25 9 11.25 C7.75 11.25 6.2 11.5 4.9 12.15 C3.5 12.8 2.3 13.85 1.85 15.25 C1.5 16.3 2.4 17.25 3.5 17.25 H12.25"),
+		s("M15.5 11.75 V17.25 M12.75 14.5 H18.25"))
+	reg("channel-search", s("M6.25 3.75 L3.75 16.25 M8.7 11.5 L7.75 16.25 M1.75 12.75 H11.25 M2.75 7.25 H6.75"),
+		s(circle(13, 7, 3.25)+" M15.3 9.3 L16.75 10.75"))
+	reg("mark-as-read", s("M10.6 6.6 L12.6 8.55 L16.62 3.25 M12.23 3.36 H4.81 A1.5 1.5 0 0 0 3.31 4.86 V15.15 A1.5 1.5 0 0 0 4.81 16.65 H15.17 A1.5 1.5 0 0 0 16.67 15.15 V8.77"))
+	reg("share-message", s("M2.25 16.25 V14 C2.25 11.6 2.8 9.9 4 8.85 C5.2 7.75 7.1 7.25 9.5 7.25 H10.75 V3.3 L17.65 10 L10.75 16.7 V12.75 H6 C4.5 12.75 3.55 13.2 3 13.85 C2.45 14.5 2.25 15.3 2.25 16.25"))
+	reg("lists", s(rrect(2.25, 2.25, 15.5, 15.5, 3)), s("M4.88 12.78 L6.06 13.92 L8.38 11.67 M10.62 6.36 H15.12 M10.62 10.05 H15.12 M10.62 13.74 H15.12"),
+		f("M6.53 8.83 C6.73 8.83 6.93 8.72 7.27 8.49 C8.12 7.9 8.78 7.17 8.78 6.4 C8.78 5.81 8.3 5.33 7.61 5.33 C6.78 5.33 6.53 6.09 6.53 6.09 C6.53 6.09 6.27 5.33 5.45 5.33 C4.77 5.33 4.28 5.81 4.28 6.4 C4.28 7.17 4.94 7.9 5.79 8.48 C6.13 8.71 6.33 8.83 6.53 8.83 Z"))
+	reg("add-channel-canvas", s("M8.25 2.25 H14.75 A3 3 0 0 1 17.75 5.25 V11.5 L11.5 17.75 H5.25 A3 3 0 0 1 2.25 14.75 V9.25 M11.5 17.75 V12.25 A.75 .75 0 0 1 12.25 11.5 H17.75 M4 1.75 V6.25 M1.75 4 H6.25"))
+
 	reg("eye-closed", s("M2.75 8.25 C5.75 12.75 14.25 12.75 17.25 8.25"), s("M10 11.6 V14.5 M6.1 10.9 L4.75 13.25 M13.9 10.9 L15.25 13.25"))
 	reg("eye-off", s("M2.5 10 C4.4 6.4 7 4.75 10 4.75 C13 4.75 15.6 6.4 17.5 10 C15.6 13.6 13 15.25 10 15.25 C7 15.25 4.4 13.6 2.5 10 Z"), s(circle(10, 10, 2.5)), s("M3.5 3.5 L16.5 16.5"))
 	reg("glasses", s(circle(5.75, 11.75, 3)), s(circle(14.25, 11.75, 3)), s("M8.75 11.25 A1.6 1.6 0 0 1 11.25 11.25"), s("M2.75 11.75 L3.75 6.25 M17.25 11.75 L16.25 6.25"))

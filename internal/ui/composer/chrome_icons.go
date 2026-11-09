@@ -14,8 +14,8 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
-// Composer glyphs the shared icon set lacks (underline, pilcrow, divider,
-// "Aa", the hover emoji, the filled send arrow, the checkbox tick). Drawn
+// Composer glyphs the shared icon set lacks ("Aa", the hover emoji, the
+// filled send arrow, the checkbox tick). Drawn
 // from the spec's descriptions on a 20-unit grid with 1.5-unit strokes like
 // the rest of yoloslack's icons; every function draws at the current origin
 // in a px×px box.
@@ -48,69 +48,16 @@ func (q *crPen) circle(cx, cy, r float32) {
 	q.z()
 }
 
+// stroke paints the path as a w-unit line, theme.StrokeGamma pixels
+// wider or thinner so it carries Chrome's ink (as the icons package does).
 func (q *crPen) stroke(gtx layout.Context, w float32, col color.NRGBA) {
-	paint.FillShape(gtx.Ops, col, clip.Stroke{Path: q.p.End(), Width: w * q.k}.Op())
+	px := w * q.k
+	px = max(px+theme.StrokeGamma(col), px/2)
+	paint.FillShape(gtx.Ops, col, clip.Stroke{Path: q.p.End(), Width: px}.Op())
 }
 
 func (q *crPen) fill(gtx layout.Context, col color.NRGBA) {
 	paint.FillShape(gtx.Ops, col, clip.Outline{Path: q.p.End()}.Op())
-}
-
-// crIconUnderline: a "U" over a horizontal bar.
-func crIconUnderline(gtx layout.Context, px int, col color.NRGBA) {
-	var q crPen
-	q.begin(gtx, px, 20)
-	q.m(6.25, 3.75)
-	q.l(6.25, 9.4)
-	q.c(6.25, 11.7, 7.85, 13.25, 10, 13.25)
-	q.c(12.15, 13.25, 13.75, 11.7, 13.75, 9.4)
-	q.l(13.75, 3.75)
-	q.m(5, 16.5)
-	q.l(15, 16.5)
-	q.stroke(gtx, 1.75, col)
-}
-
-// crIconPilcrow: ¶ with a filled bowl and two stems.
-func crIconPilcrow(gtx layout.Context, px int, col color.NRGBA) {
-	var q crPen
-	q.begin(gtx, px, 20)
-	q.m(10.75, 3)
-	q.l(9.1, 3)
-	q.c(6.97, 3, 5.25, 4.68, 5.25, 6.75)
-	q.c(5.25, 8.82, 6.97, 10.5, 9.1, 10.5)
-	q.l(10.75, 10.5)
-	q.z()
-	q.fill(gtx, col)
-	q.begin(gtx, px, 20)
-	q.m(10.75, 3.75)
-	q.l(10.75, 16.5)
-	q.m(14, 3.75)
-	q.l(14, 16.5)
-	q.m(9.5, 3.75)
-	q.l(15.5, 3.75)
-	q.stroke(gtx, 1.75, col)
-}
-
-// crIconDivider: a full-width rule between the top and bottom halves of a
-// box (two short brackets).
-func crIconDivider(gtx layout.Context, px int, col color.NRGBA) {
-	var q crPen
-	q.begin(gtx, px, 20)
-	q.m(4.5, 6.75)
-	q.l(4.5, 4.75)
-	q.c(4.5, 4.2, 4.95, 3.75, 5.5, 3.75)
-	q.l(14.5, 3.75)
-	q.c(15.05, 3.75, 15.5, 4.2, 15.5, 4.75)
-	q.l(15.5, 6.75)
-	q.m(2.75, 10)
-	q.l(17.25, 10)
-	q.m(4.5, 13.25)
-	q.l(4.5, 15.25)
-	q.c(4.5, 15.8, 4.95, 16.25, 5.5, 16.25)
-	q.l(14.5, 16.25)
-	q.c(15.05, 16.25, 15.5, 15.8, 15.5, 15.25)
-	q.l(15.5, 13.25)
-	q.stroke(gtx, 1.75, col)
 }
 
 // crIconAa: the "Show formatting" glyph, a capital and a small a, with an
@@ -132,19 +79,19 @@ func crIconAa(gtx layout.Context, px int, col color.NRGBA, underline bool) {
 	q.c(13.5, 8.75, 14.3, 8.4, 15.25, 8.4)
 	q.c(16.75, 8.4, 17.75, 9.3, 17.75, 10.8)
 	q.l(17.75, 11.75)
-	q.stroke(gtx, 1.75, col)
+	q.stroke(gtx, 1.5, col)
 	q.begin(gtx, px, 20)
 	q.m(17.75, 11.6)
 	q.l(15.4, 11.6)
 	q.c(13.7, 11.6, 12.6, 12.35, 12.6, 13.4)
 	q.c(12.6, 14.45, 13.45, 15.15, 14.7, 15.15)
 	q.c(16.2, 15.15, 17.75, 14.2, 17.75, 12.6)
-	q.stroke(gtx, 1.75, col)
+	q.stroke(gtx, 1.5, col)
 	if underline {
 		q.begin(gtx, px, 20)
 		q.m(1, 18.25)
 		q.l(19, 18.25)
-		q.stroke(gtx, 1.75, col)
+		q.stroke(gtx, 1.5, col)
 	}
 }
 
@@ -158,7 +105,7 @@ func crIconEmojiHover(gtx layout.Context, px int, disc, ink color.NRGBA) {
 	var q crPen
 	q.begin(gtx, px, 20)
 	q.circle(10, 10, 8.1)
-	q.stroke(gtx, 1.75, ink)
+	q.stroke(gtx, 1.5, ink)
 	q.begin(gtx, px, 20)
 	q.circle(7.6, 8.1, 1.25)
 	q.circle(12.4, 8.1, 1.25)

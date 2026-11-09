@@ -165,7 +165,7 @@ type crBtnInfo struct {
 var crInfo = [crNumBtn]crBtnInfo{
 	crBold:      {tip: "Bold", keys: "Mod+B", icon: icons.Get("bold"), kind: caStyle, style: Bold},
 	crItalic:    {tip: "Italic", keys: "Mod+I", icon: icons.Get("italic"), kind: caStyle, style: Italic},
-	crUnderline: {tip: "Underline", keys: "Mod+U", kind: caStyle, style: Underline},
+	crUnderline: {tip: "Underline", keys: "Mod+U", icon: icons.Get("underline"), kind: caStyle, style: Underline},
 	crStrike:    {tip: "Strikethrough", keys: "Mod+Shift+X", icon: icons.Get("strike"), kind: caStyle, style: Strike},
 	crPara:      {kind: caParagraph},
 	crLink:      {tip: "Link", keys: "Mod+Shift+U", icon: icons.Get("link"), menuIcon: "link", kind: caLink},
@@ -174,7 +174,7 @@ var crInfo = [crNumBtn]crBtnInfo{
 	crQuote:     {tip: "Blockquote", keys: "Mod+Shift+9", icon: icons.Get("quote"), menuIcon: "quote", kind: caBlock, block: Quote},
 	crCode:      {tip: "Code", keys: "Mod+Shift+C", icon: icons.Get("code"), menuIcon: "code", kind: caStyle, style: Code},
 	crCodeBlock: {tip: "Code block", keys: "Mod+Alt+Shift+C", icon: icons.Get("code-block"), menuIcon: "code-block", kind: caBlock, block: CodeBlock},
-	crDivider:   {tip: "Divider", menuIcon: "minus", kind: caDivider},
+	crDivider:   {tip: "Divider", icon: icons.Get("divider"), menuIcon: "divider", kind: caDivider},
 	crFmtMore:   {tip: "More options", icon: icons.Get("more")},
 	crAttach:    {tip: "Attach", icon: icons.Get("plus"), kind: caAttach},
 	crAa:        {kind: caFormatting},
@@ -191,7 +191,7 @@ var crInfo = [crNumBtn]crBtnInfo{
 	crBroadcast: {kind: caBroadcast},
 }
 
-var crIcChevron = icons.Get("chevron-down")
+var crIcChevron, crIcPara = icons.Get("chevron-down"), icons.Get("paragraph")
 
 // crFmtOrder is the formatting bar left to right; crFmtSep marks the
 // buttons preceded by a separator.
@@ -759,7 +759,7 @@ func (c *chrome) icon(gtx layout.Context, st *chromeState, id crBtn, r image.Rec
 		// ¶ (18) at padding 4, then the 20px caret box at margin-left -2
 		// holding a 16px chevron.
 		t := op.Offset(r.Min.Add(image.Pt(gtx.Dp(4), (r.Dy()-is)/2))).Push(gtx.Ops)
-		crIconPilcrow(gtx, is, col)
+		crIcPara(gtx, 18, col)
 		t.Pop()
 		cs := gtx.Dp(16)
 		t = op.Offset(r.Min.Add(image.Pt(gtx.Dp(22), (r.Dy()-cs)/2))).Push(gtx.Ops)
@@ -770,10 +770,6 @@ func (c *chrome) icon(gtx layout.Context, st *chromeState, id crBtn, r image.Rec
 	t := op.Offset(r.Min.Add(image.Pt((r.Dx()-is)/2, (r.Dy()-is)/2))).Push(gtx.Ops)
 	defer t.Pop()
 	switch id {
-	case crUnderline:
-		crIconUnderline(gtx, is, col)
-	case crDivider:
-		crIconDivider(gtx, is, col)
 	case crAa:
 		crIconAa(gtx, is, col, st.ShowFormatting)
 	default:
