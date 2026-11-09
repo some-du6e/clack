@@ -1130,6 +1130,7 @@
     }
     ev.eventPhase = 0;
     ev.currentTarget = null;
+    if (ev.type === 'click' && !ev[kCanceled] && !(ev.button > 0)) nativeActivation(target);
     return !ev[kCanceled];
   };
   // invoke: listeners on a target for a phase (1 capture, 3 bubble), env.js's
@@ -1216,8 +1217,51 @@
   // ---- events from Go ----
   // target: host node k (0 = document); ev: parsed event JSON
   let hovered = null;
+  // ---- links Clack draws natively (slackc/links.go) ----
+  // A click on one, while a window/document click listener exists, comes
+  // with e.native {key, tag, attrs, text, rect, activate}: it is
+  // dispatched at a stand-in element kept per link (the same element for
+  // the same link) in a container outside <body>, connected but never
+  // drawn. The native action is its activation behavior: a click on it
+  // that isn't canceled, Go's or one a plugin dispatches (a replayed
+  // click), calls __clack.nativeActivate(activate).
+  const nativeLinks = new Map(); // key → element, oldest first
+  let nativeBox = null;
+  const nativeLink = (n) => {
+    const key = String(n.key);
+    let el = nativeLinks.get(key);
+    if (!el) {
+      if (!nativeBox) {
+        nativeBox = newElement('div');
+        nativeBox._setAttr('data-clack-native-links', '');
+        nativeBox._setAttr('hidden', '');
+        docHtml.appendChild(nativeBox);
+      }
+      el = newElement(String(n.tag || 'a'));
+      nativeLinks.set(key, el);
+      nativeBox.appendChild(el);
+      if (nativeLinks.size > 256) { const [k0, e0] = nativeLinks.entries().next().value; nativeLinks.delete(k0); e0.remove(); }
+    }
+    const attrs = n.attrs || {};
+    for (const a in attrs) if (el.getAttribute(a) !== String(attrs[a])) el.setAttribute(a, String(attrs[a]));
+    if (n.text != null && el.textContent !== String(n.text)) el.textContent = String(n.text);
+    if (Array.isArray(n.rect)) el._r = n.rect;
+    el._native = n.activate;
+    return el;
+  };
+  const nativeOf = (t) => {
+    if (!nativeBox) return null;
+    for (let n = t; n && n !== nativeBox; n = n.parentNode) if (n._native !== undefined) return n;
+    return null;
+  };
+  const nativeActivation = (t) => {
+    const el = nativeOf(t);
+    if (el && typeof __clack.nativeActivate === 'function') {
+      try { __clack.nativeActivate(el._native); } catch (err) { jr.reportError(err); }
+    }
+  };
   __clack.dispatch = (k, e) => {
-    const target = k ? byK(k) : document;
+    const target = e && e.native ? nativeLink(e.native) : k ? byK(k) : document;
     if (!target) return { defaultPrevented: false, propagationStopped: false };
     if (e.rects) for (const key in e.rects) { const n = byK(+key); if (n) n._r = e.rects[key]; }
     const type = e.type;
@@ -1230,7 +1274,7 @@
     if (type === 'blur') { if (activeEl === target || target === document) focusElement(null); return { defaultPrevented: false, propagationStopped: false }; }
     if (type === 'mouseenter') hovered = target;
     const init = Object.assign({}, e, { bubbles: !nonBubbling.has(type), cancelable: !/^(mouseenter|mouseleave|pointerenter|pointerleave|scroll|input)$/.test(type), composed: true, view: G });
-    delete init.target; delete init.rects; delete init.type;
+    delete init.target; delete init.rects; delete init.type; delete init.native;
     if (type === 'scroll' && e.scrollTop != null) { target.scrollTop = e.scrollTop; target.scrollLeft = e.scrollLeft ?? target.scrollLeft; }
     const ev = makeEvent(type, init);
     def(ev, 'isTrusted', true);
@@ -1255,6 +1299,7 @@
     }, (e) => jr.reportError(e));
   };
   const defaultAction = (t, ev) => {
+    if (nativeOf(t)) return; // a native link's action is its activation (nativeActivation)
     if (ev.type === 'click' && ev.button === 0) {
       const el = t.nodeType === ELEMENT_NODE ? t : t.parentElement;
       if (!el) return;

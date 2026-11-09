@@ -864,10 +864,13 @@ var benchScenarios = map[string]benchScenario{
 				if e.tt.ThunkPatched("joinChannel") || e.tt.ThunkPatched("joinCodeChannel") {
 					return true, "joins from channel links (patches joinChannel)"
 				}
-				return false, fmt.Sprintf("no Join in the channel menu; document double-clicks forwarded to JS: %v", e.tt.Bridge().WantsEvent("dblclick"))
+				if ok, why := e.doubleClickJoins(e.postChannelLink(fakeslack.PreviewChannelID), fakeslack.PreviewChannelID); !ok {
+					return false, "no Join in the channel menu; " + why
+				}
+				return true, "double-clicking a link to the channel joins it"
 			}},
 		},
-		notes: "Taut's adds Join channel to the channel menu; Slick's joins when you double-click a link to the channel in the page, which needs the link in the DOM: Clack draws message links natively, so Slick's has nothing to listen on.",
+		notes: "Taut's adds Join channel to the channel menu; Slick's joins when you double-click a link to the channel in a message (Clack draws the link natively and sends the click to the document's listeners at the link's element).",
 	},
 	"restrictedchannelwarning": {
 		checks: []benchCheck{

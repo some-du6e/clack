@@ -4,6 +4,7 @@ import (
 	"image"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
 )
 
 // FileRect is a file's clickable box on screen: a gallery tile (the "+ N"
@@ -68,6 +69,39 @@ func (s *listState) imageRects() []ImageRect {
 		off := s.origin.Add(image.Pt(r.bodyRect.Min.X, s.pos[i]+r.bodyRect.Min.Y))
 		for _, ir := range r.rv.ImageRects() {
 			out = append(out, ImageRect{TS: r.src.TS, Image: ir.Image, R: ir.R.Add(off)})
+		}
+	}
+	return out
+}
+
+// LinkRect is a link's box on screen (a URL, a mention, a channel), in
+// window coordinates.
+type LinkRect struct {
+	TS string // the message
+	richview.LinkRect
+}
+
+// LinkRects lists the links of the visible messages as of the last
+// frame, in window coordinates.
+func (v *ChannelView) LinkRects() []LinkRect { return v.s.linkRects() }
+
+// LinkRects is ChannelView.LinkRects for the thread.
+func (v *ThreadView) LinkRects() []LinkRect { return v.s.linkRects() }
+
+func (s *listState) linkRects() []LinkRect {
+	var out []LinkRect
+	for i := s.visible[0]; i < s.visible[1] && i < len(s.items); i++ {
+		if s.items[i].kind != itMsg || i >= len(s.heights) || s.heights[i] <= 0 {
+			continue
+		}
+		r := s.rows[s.items[i].key]
+		if r == nil || r.rv == nil || r.edit != nil {
+			continue
+		}
+		off := s.origin.Add(image.Pt(r.bodyRect.Min.X, s.pos[i]+r.bodyRect.Min.Y))
+		for _, lr := range r.rv.LinkRects() {
+			lr.R = lr.R.Add(off)
+			out = append(out, LinkRect{TS: r.src.TS, LinkRect: lr})
 		}
 	}
 	return out
