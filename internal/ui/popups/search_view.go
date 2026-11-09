@@ -190,7 +190,7 @@ const (
 )
 
 var srTabNames = [...]string{"Messages", "Files", "Channels", "People"}
-var srTabIcons = [...]string{"dms", "files", "hash", "people"}
+var srTabIcons = [...]string{"message", "files", "hash", "people"} // Slack's Messages tab: one bubble
 
 // filter pills
 const (

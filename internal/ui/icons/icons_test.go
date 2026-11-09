@@ -53,7 +53,7 @@ func TestSlackNames(t *testing.T) {
 			t.Errorf("Slack icon %q has no counterpart", n)
 		}
 	}
-	if got := Slack("calendar-filled"); got != "calendar" {
+	if got := Slack("paintbrush-filled"); got != "paintbrush" {
 		t.Errorf("suffix fallback: %q", got)
 	}
 	if got := Slack("no-such-icon"); got != SlackFallback {
