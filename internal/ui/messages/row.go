@@ -96,6 +96,9 @@ type row struct {
 
 	// plugin state (patched path only)
 	rc *rowCtx // this frame's inputs, for the natives
+	// truncate: in a thread pane, long Block Kit sections cut at "Show
+	// more" (richview Options.Truncate)
+	truncate bool
 
 	// plugin view of the message (taut patchMessageText…), see applyView
 	viewAt           time.Time
@@ -175,8 +178,13 @@ type rowCtx struct {
 	onReact   func(r *row, name string, add bool)
 }
 
-func newRow(e *entry) *row {
-	r := &row{ts: e.m.TS}
+func newRow(e *entry) *row { return newListRow(e, false) }
+
+// newListRow is a row of a list; thread rows truncate long Block Kit
+// sections behind "Show more" like Slack's thread pane (a channel never
+// does).
+func newListRow(e *entry, thread bool) *row {
+	r := &row{ts: e.m.TS, truncate: thread}
 	r.set(e)
 	return r
 }
@@ -207,7 +215,7 @@ func (r *row) setDoc() {
 
 // rvOpts are the body's richview options.
 func (r *row) rvOpts() richview.Options {
-	return richview.Options{Edited: r.m.Edited, Muted: r.m.System, Dim: r.m.Pending, Channel: r.m.Channel, TS: r.m.TS}
+	return richview.Options{Edited: r.m.Edited, Muted: r.m.System, Dim: r.m.Pending, Channel: r.m.Channel, TS: r.m.TS, Truncate: r.truncate}
 }
 
 func (r *row) growPills() {

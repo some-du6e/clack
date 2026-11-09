@@ -491,6 +491,7 @@ func (s *Server) generate() {
 		s.convs = append(s.convs, slack.Conversation{ID: fmt.Sprintf("D0FAKE%05d", i), IsIM: true, User: s.users[i+1].ID,
 			IsOpen: true, Created: now - int64(r.Intn(1e7)), Priority: r.Float64()})
 	}
+	s.convs = append(s.convs, galleryConv()) // gallery.go
 	// channels the viewer isn't in (fixed names: screenshot tests read them)
 	s.others = []slack.Conversation{
 		{ID: PreviewChannelID, Name: "lounge-preview", IsChannel: true, Created: now - 9e7, Creator: s.users[1].ID,
@@ -893,6 +894,11 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	case "conversations.history":
 		return s.historyPage(f)
 	case "conversations.replies":
+		if f.Get("channel") == GalleryChannelID {
+			if msgs, found := s.galleryReplies(f.Get("ts")); found {
+				return ok("messages", msgs, "has_more", false)
+			}
+		}
 		return ok("messages", []any{}, "has_more", false)
 	case "conversations.info":
 		if c, found := s.conv(f.Get("channel")); found {
@@ -997,7 +1003,11 @@ func (s *Server) historyPage(f url.Values) any {
 	s.histMu.Lock()
 	msgs, okc := s.hist[ch]
 	if !okc {
-		msgs = s.history(ch)
+		if ch == GalleryChannelID {
+			msgs = s.galleryHistory()
+		} else {
+			msgs = s.history(ch)
+		}
 		s.hist[ch] = msgs
 	}
 	s.histMu.Unlock()

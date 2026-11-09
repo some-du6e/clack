@@ -16,7 +16,7 @@ func TestFakeServesBootMethods(t *testing.T) {
 	c := slack.New(s.Creds())
 	ctx := context.Background()
 	convs, err := c.Conversations(ctx)
-	if err != nil || len(convs) != Small.Channels+Small.DMs {
+	if err != nil || len(convs) != Small.Channels+Small.DMs+1 { // + blockkit-gallery
 		t.Fatalf("conversations: %d, %v", len(convs), err)
 	}
 	em, err := c.EmojiList(ctx)

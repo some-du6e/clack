@@ -246,6 +246,12 @@ type Options struct {
 	// Elements, if set, draws the doc's interactive elements (see
 	// Elements). Use a comparable (pointer) implementation.
 	Elements Elements
+	// Truncate cuts long Block Kit section text (and each field) at 300
+	// characters or 5 line breaks with " Show more", as Slack's renderer
+	// does in its thread, activity, threads, unreads, saved and pinned
+	// views (never in a channel). Needs Channel and TS: expanding is kept
+	// for the session under channel/ts/block_id.
+	Truncate bool
 }
 
 // lightEmbolden is the extra outline (px) for glyph color c at scale pxPerDp.
