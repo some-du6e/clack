@@ -107,7 +107,20 @@ func TestCommandModalAndTyping(t *testing.T) {
 	run := func(cmd string) {
 		t.Helper()
 		before := len(fs.CommandApp().Snapshot())
+		// drafts live per process: an earlier test's draft in this
+		// channel (TestBlockKitSurfaces pastes a link) would make the
+		// command a message
+		e.key("A", key.ModShortcut)
+		e.key(key.NameDeleteBackward, 0)
+		e.settle(200 * time.Millisecond)
+		if got := strings.TrimSpace(cb.DocText()); got != "" {
+			t.Fatalf("couldn't clear the composer: %q", got)
+		}
 		e.typeText(cmd)
+		e.settle(200 * time.Millisecond)
+		if got := cb.DocText(); !strings.Contains(got, cmd) {
+			t.Fatalf("typed %q, the composer holds %q", cmd, got)
+		}
 		e.settle(400 * time.Millisecond)
 		for i := 0; i < 3 && len(fs.CommandApp().Snapshot()) == before; i++ {
 			if i > 0 && cb.DocText() == "" {
