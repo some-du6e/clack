@@ -201,7 +201,7 @@ func TestCreateChannelFlow(t *testing.T) {
 	e.typeText("Launch Plan")
 	e.until("name normalized", 5*time.Second, func() bool { return m.Name() == "launch-plan" })
 	e.until("name checked", 5*time.Second, func() bool {
-		return m.Step() == "name" && m.NameError() == "" && fs.CallCount("conversations.validateName") > 0
+		return m.CanNext() && m.NameError() == "" && fs.CallCount("conversations.validateName") > 0
 	})
 	e.settle(1200 * time.Millisecond) // past the 1 s error reveal
 	e.shotTo(t, shots, "2-name-typed")
@@ -216,7 +216,7 @@ func TestCreateChannelFlow(t *testing.T) {
 	}
 
 	m.SetName("launch-plan")
-	e.until("free name checked", 5*time.Second, func() bool { return m.NameError() == "" && m.Name() == "launch-plan" })
+	e.until("free name checked", 5*time.Second, func() bool { return m.CanNext() && m.Name() == "launch-plan" })
 	e.settle(600 * time.Millisecond)
 	e.key(key.NameReturn, 0) // Enter = Next
 	e.until("visibility step", 5*time.Second, func() bool { return m.Step() == "visibility" })
@@ -287,9 +287,11 @@ func TestCreateChannelFlow(t *testing.T) {
 	m2, _ := topOverlay[*popups.CreateChannelModal](a)
 	e.frame()
 	m2.SetName("not-allowed")
-	e.until("checked", 5*time.Second, func() bool { e.frame(); return m2.NameError() == "" && m2.Name() == "not-allowed" })
-	e.settle(600 * time.Millisecond)
+	e.until("checked", 10*time.Second, func() bool { return m2.CanNext() && m2.Name() == "not-allowed" })
 	m2.Next()
+	if m2.Step() != "visibility" {
+		t.Fatalf("Next with a checked free name stayed on %q", m2.Step())
+	}
 	m2.Create()
 	e.until("create error", 10*time.Second, func() bool { return m2.CreateError() != "" })
 	if !strings.Contains(m2.CreateError(), "may limit who can create channels") {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"image"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -36,6 +37,16 @@ func TestDraftKeepsAttachedFiles(t *testing.T) {
 	old := draftSyncDelay
 	draftSyncDelay = 30 * time.Millisecond
 	t.Cleanup(func() { draftSyncDelay = old })
+	// A slow drafts.create, as on a loaded runner: the upload finishing
+	// (and the chip's thumbnail) change the draft again while the first
+	// create is still out. That must update the draft it makes, not create
+	// a second one (this test flaked on exactly that: two files-only drafts).
+	fs.Hook = func(method string, _ url.Values) (any, bool) {
+		if method == "drafts.create" {
+			time.Sleep(200 * time.Millisecond)
+		}
+		return nil, false
+	}
 	ch := fs.ChannelIDs()[0]
 	key := draftKey(ch, "")
 	forget := func() { // what a restart loses: every in-memory draft

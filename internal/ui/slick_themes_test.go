@@ -138,7 +138,7 @@ type svShooter struct {
 }
 
 func newSVShooter(t *testing.T, e *svEnv) *svShooter {
-	w, err := headless.NewWindow(e.sz.X, e.sz.Y)
+	w, err := pixeltest.NewWindow(e.sz.X, e.sz.Y)
 	if err != nil {
 		if os.Getenv("CLACK_PIXEL_TESTS") != "" {
 			t.Fatalf("headless GPU: %v", err)

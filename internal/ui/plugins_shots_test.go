@@ -20,11 +20,11 @@ import (
 	"time"
 
 	"gioui.org/f32"
-	"gioui.org/gpu/headless"
 	"gioui.org/io/pointer"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/fakeslack"
 	"github.com/some-du6e/yoloslackgoclient/internal/pluginlib"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
 )
 
 // synthTaut is a Taut plugin in build:user-plugin's shape.
@@ -126,7 +126,7 @@ func TestPluginsPrefsShots(t *testing.T) {
 	e := startEnv(t, fs, home)
 	dir := os.Getenv("PLUGINS_SHOTS_DIR")
 	if dir != "" && e.gpu == nil {
-		w, err := headless.NewWindow(e.size.X, e.size.Y)
+		w, err := pixeltest.NewWindow(e.size.X, e.size.Y)
 		if err != nil {
 			t.Fatalf("headless window: %v", err)
 		}

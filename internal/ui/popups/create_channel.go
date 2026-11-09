@@ -182,6 +182,11 @@ func (c *CreateChannelModal) SetName(s string) {
 // SetPrivate picks the visibility.
 func (c *CreateChannelModal) SetPrivate(p bool) { c.private = p; c.sync() }
 
+// CanNext reports whether Next would leave the name step: a name whose
+// validateName check came back clean (tests wait on it; NameError alone
+// reads "" while the check is still pending or its error still hidden).
+func (c *CreateChannelModal) CanNext() bool { return c.canNext() }
+
 func (c *CreateChannelModal) canNext() bool {
 	return c.step == 0 && !c.checking && c.code == "" && c.name != ""
 }

@@ -4,6 +4,7 @@
 package pixeltest
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"math"
@@ -15,17 +16,36 @@ import (
 	"gioui.org/op"
 )
 
+// NewWindow is headless.NewWindow, retried: Mesa's EGL on Xvfb sometimes
+// fails eglInitialize (0x3001, EGL_NOT_INITIALIZED) while other test
+// binaries bring theirs up, and succeeds a moment later. Every GPU test
+// opens its window through it. The error after the last try says how
+// many there were, so a runner with no working EGL reads as that, not as
+// a flake.
+func NewWindow(w, h int) (*headless.Window, error) {
+	win, err := headless.NewWindow(w, h)
+	tries := 1
+	for ; err != nil && tries < 6; tries++ {
+		time.Sleep(time.Duration(200*tries) * time.Millisecond)
+		win, err = headless.NewWindow(w, h)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%w (%d tries over %v: no working EGL on this machine)", err, tries, time.Duration(100*tries*(tries-1))*time.Millisecond)
+	}
+	return win, nil
+}
+
 // Render paints ops into a w×h image. Without a GPU context the test is
 // skipped, unless CLACK_PIXEL_TESTS is set (the CI step that installs
 // Mesa), where it fails.
 func Render(t testing.TB, w, h int, ops *op.Ops) *image.RGBA {
 	t.Helper()
-	win, err := headless.NewWindow(w, h)
-	// Mesa's EGL on Xvfb sometimes fails eglInitialize (0x3001) while other
-	// test binaries bring theirs up; it succeeds on a retry.
-	for i := 0; err != nil && i < 5 && os.Getenv("CLACK_PIXEL_TESTS") != ""; i++ {
-		time.Sleep(time.Duration(200*(i+1)) * time.Millisecond)
-		win, err = headless.NewWindow(w, h)
+	var win *headless.Window
+	var err error
+	if os.Getenv("CLACK_PIXEL_TESTS") != "" {
+		win, err = NewWindow(w, h)
+	} else {
+		win, err = headless.NewWindow(w, h) // no GPU expected: skip at once
 	}
 	if err != nil {
 		if os.Getenv("CLACK_PIXEL_TESTS") != "" {

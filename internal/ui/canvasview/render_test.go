@@ -27,6 +27,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/store"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
 )
 
 type testHost struct {
@@ -82,7 +83,7 @@ type shooter struct {
 func newShooter(t *testing.T, sz image.Point) *shooter {
 	s := &shooter{t: t, dir: os.Getenv("CANVAS_SHOTS_DIR"), sz: sz}
 	if s.dir != "" {
-		w, err := headless.NewWindow(sz.X, sz.Y)
+		w, err := pixeltest.NewWindow(sz.X, sz.Y)
 		if err != nil {
 			t.Fatalf("headless window: %v", err)
 		}

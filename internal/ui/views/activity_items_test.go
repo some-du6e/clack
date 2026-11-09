@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"gioui.org/gpu/headless"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
@@ -25,6 +24,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/store"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
 )
 
 func actFeedApp(t *testing.T) *core.App {
@@ -196,7 +196,7 @@ func actShots(t *testing.T, app *core.App) {
 		{"activity-dense-light", false, true, 1500},
 	} {
 		sz := image.Pt(1100, sh.h)
-		win, err := headless.NewWindow(sz.X, sz.Y)
+		win, err := pixeltest.NewWindow(sz.X, sz.Y)
 		if err != nil {
 			t.Fatalf("headless window: %v", err)
 		}

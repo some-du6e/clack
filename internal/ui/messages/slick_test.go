@@ -82,6 +82,7 @@ func newSlickEnv(t *testing.T, seed func(s *store.Store)) *slickEnv {
 	t.Cleanup(func() {
 		SetTaut(nil)
 		slackc.SetBridge(nil)
+		slackc.Reset() // the next env's runtime must get every root rendered again (taut_wire does this on attach)
 		slackc.SetPatched(nil)
 		_ = s.Close()
 		_ = tt.Close()
@@ -649,7 +650,24 @@ func TestSlickViewMessageLoggerThreads(t *testing.T) {
 		r := tv.s.rows[r1]
 		return r != nil && strings.Contains(rowText(r), "reply to delete") && e.ui.anyTree("slick-ml-deleted")
 	})
-	for i := 0; i < 20; i++ { // views re-read injections every viewRefresh
+	// The parent's new reply count reaches the row through the plugin's
+	// messages slice: taut recomputes it in JS and the views re-read it at
+	// most every viewRefresh. Wait for that instead of a fixed few
+	// refreshes (on a loaded runner the JS pass took longer than the 300 ms
+	// this used to give it, and the row still had the old count).
+	settled := func() bool {
+		if cv.s.rows[r1] != nil {
+			return false
+		}
+		for _, it := range cv.s.items {
+			if it.key == r1 {
+				return false
+			}
+		}
+		r := cv.s.rows[p1]
+		return r != nil && r.m.ReplyCount == 0
+	}
+	for dl := time.Now().Add(10 * time.Second); !settled() && time.Now().Before(dl); {
 		both()
 		time.Sleep(15 * time.Millisecond)
 	}

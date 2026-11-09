@@ -48,6 +48,9 @@ type cryptoRand struct{}
 func (cryptoRand) Read(p []byte) (int, error) { return rand.Read(p) }
 
 func (r *Runtime) logError(prefix string, err error) {
+	if r.closed.Load() && errors.Is(err, ErrTimeout) {
+		return // Close interrupted whatever ran: expected, not the script's fault
+	}
 	msg := err.Error()
 	var je *JSError
 	if errors.As(err, &je) && je.Stack != "" {

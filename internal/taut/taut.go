@@ -234,6 +234,16 @@ func (t *Taut) Close() error {
 	t.mirror.stop()
 	if rt != nil {
 		rt.close()
+		// Wait for the JS thread to stop, so nothing it was running
+		// (interrupted by the close) calls Log, Deliver or a host func
+		// after Close returns. jsrt's watchdog bounds a task that ignores
+		// the interrupt; the timer is a backstop.
+		if !rt.rt.OnJSThread() {
+			select {
+			case <-rt.rt.Done():
+			case <-time.After(10 * time.Second):
+			}
+		}
 	}
 	return t.data.flush()
 }

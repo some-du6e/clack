@@ -390,7 +390,7 @@ func pluginEnv(t *testing.T) (*core.App, *fakeSlack, *taut.Taut, *pluginUI, core
 	tt := newTaut(t, app, u.hooks())
 	slackc.SetBridge(tt.Bridge())
 	SetTaut(tt)
-	t.Cleanup(func() { SetTaut(nil); slackc.SetBridge(nil); slackc.SetPatched(nil) })
+	t.Cleanup(func() { SetTaut(nil); slackc.SetBridge(nil); slackc.Reset(); slackc.SetPatched(nil) })
 	return app, api, tt, u, coreHost{app: app, th: theme.New(false)}
 }
 

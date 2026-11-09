@@ -17,13 +17,13 @@ import (
 	"time"
 
 	"gioui.org/f32"
-	"gioui.org/gpu/headless"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/fakeslack"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/hovercard"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
 )
 
 // hcShot saves the window (HOVER_SHOTS_DIR set, in the hover-card
@@ -66,7 +66,7 @@ func TestHoverCardInChannel(t *testing.T) {
 	t.Cleanup(func() { fs.Close() })
 	e := startEnv(t, fs, t.TempDir())
 	if os.Getenv("HOVER_SHOTS_DIR") != "" {
-		w, err := headless.NewWindow(e.size.X, e.size.Y)
+		w, err := pixeltest.NewWindow(e.size.X, e.size.Y)
 		if err != nil {
 			t.Fatalf("headless window: %v", err)
 		}
@@ -235,7 +235,7 @@ func TestHoverCardOverDialog(t *testing.T) {
 	t.Cleanup(func() { fs.Close() })
 	e := startEnv(t, fs, t.TempDir())
 	if os.Getenv("HOVER_SHOTS_DIR") != "" {
-		w, err := headless.NewWindow(e.size.X, e.size.Y)
+		w, err := pixeltest.NewWindow(e.size.X, e.size.Y)
 		if err != nil {
 			t.Fatalf("headless window: %v", err)
 		}

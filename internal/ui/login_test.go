@@ -16,6 +16,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
 )
 
 func loginApp(t *testing.T, login func(slack.SignInInput) error) *App {
@@ -37,7 +38,7 @@ func TestLoginCardFits(t *testing.T) {
 	shots := os.Getenv("LOGIN_SHOTS_DIR")
 	var win *headless.Window
 	if shots != "" {
-		w, err := headless.NewWindow(sz.X, sz.Y)
+		w, err := pixeltest.NewWindow(sz.X, sz.Y)
 		if err != nil {
 			t.Fatalf("headless window: %v", err)
 		}

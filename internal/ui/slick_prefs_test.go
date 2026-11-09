@@ -16,12 +16,12 @@ import (
 	"testing"
 	"time"
 
-	"gioui.org/gpu/headless"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/pluginlib"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
 )
 
 func TestSlickNoPluginsStartup(t *testing.T) {
@@ -120,7 +120,7 @@ func TestSlickPrefsRender(t *testing.T) {
 	shots := os.Getenv("TAUT_SHOTS_DIR")
 	r := &ttRenderer{t: t, a: a, sz: image.Pt(800, 1600), dir: shots}
 	if shots != "" {
-		w, err := headless.NewWindow(r.sz.X, r.sz.Y)
+		w, err := pixeltest.NewWindow(r.sz.X, r.sz.Y)
 		if err != nil {
 			t.Fatalf("headless window: %v", err)
 		}

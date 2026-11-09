@@ -1,0 +1,144 @@
+name: flake-check
+# Runs the tests that used to flake (and failed releases on unrelated
+# commits) 20 times each, so a timing assumption that creeps back shows up
+# here instead of on a tag. Each was made deterministic; see the commit
+# that added this workflow for the root causes:
+#   TestDraftKeepsAttachedFiles (composer)   two drafts.create in flight
+#   TestCreateChannel / ...Flow (core, ui)   boot's stars.list undoing a star;
+#                                            waiting on a check not yet done
+#   TestGalleryElementPayloads (blockkit)    clicking a block still loading
+#   TestCameraUnsupported, TestHuddleShotsTiles (huddle)
+#                                            pion logging after Leave
+#   TestEmojiTooltip, TestInlineCodeDraws    EGL init racing other binaries
+#   TestSlickViewMessageLoggerThreads        reading the plugin's view after
+#                                            a fixed 300 ms
+# Synthetic data only (internal/fakeslack, the fake Chime).
+on:
+  workflow_dispatch:
+    inputs:
+      count:
+        description: "runs per test"
+        required: false
+        default: "20"
+  push:
+    paths:
+      - ".github/workflows/flake-check.yml"
+      - "internal/ui/composer/drafts_sync.go"
+      - "internal/ui/composer/draft_files_test.go"
+      - "internal/core/manage.go"
+      - "internal/core/create_test.go"
+      - "internal/ui/create_channel_test.go"
+      - "internal/ui/popups/create_channel.go"
+      - "internal/ui/blockkit/elements_gallery_test.go"
+      - "internal/huddle/session.go"
+      - "internal/huddle/videosend_test.go"
+      - "internal/ui/theme/pixeltest/**"
+      - "internal/ui/messages/slick_test.go"
+      - "internal/jsrt/loop.go"
+      - "internal/taut/taut.go"
+
+permissions:
+  contents: read
+
+env:
+  COUNT: ${{ inputs.count || '20' }}
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: core (create channel, stars/saved kept across the boot fetch)
+        run: go test -race -count=$COUNT -run 'TestCreateChannel$|TestExtrasKeepEditsMadeMeanwhile$' ./internal/core
+      - name: composer (files-only drafts)
+        run: go test -race -count=$COUNT -run 'TestDraftKeepsAttachedFiles$' ./internal/ui/composer
+      - name: blockkit (element payloads)
+        run: go test -race -count=$COUNT -timeout 30m -run 'TestGalleryElementPayloads$' ./internal/ui/blockkit
+      - name: ui (create channel flow)
+        run: go test -count=$COUNT -timeout 30m -run 'TestCreateChannelFlow$' ./internal/ui
+      - name: slow runner (one CPU)
+        run: |
+          go test -cpu 1 -count=$COUNT -run 'TestCreateChannel$|TestExtrasKeepEditsMadeMeanwhile$' ./internal/core
+          go test -cpu 1 -count=$COUNT -run 'TestDraftKeepsAttachedFiles$' ./internal/ui/composer
+          go test -cpu 1 -count=$COUNT -timeout 30m -run 'TestGalleryElementPayloads$' ./internal/ui/blockkit
+
+  huddle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: huddle (no logging after Leave)
+        run: go test -race -gcflags=all=-d=checkptr=0 -count=$COUNT -run 'TestCameraUnsupported$|TestNoLogAfterLeave$|TestFakeChime$' ./internal/huddle
+
+  pixel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: GPU tests (Mesa llvmpipe; packages in parallel, as in ci.yml before -p 1)
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          CLACK_SHOTS: ${{ runner.temp }}/shots
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$CLACK_SHOTS"
+          xvfb-run -a go test -count=$COUNT -run 'TestCodeSpanAfterEmoji|TestInlineCodeDraws|TestEmojiTooltip|TestReactionTooltipDraws|TestHuddleShotsTiles' \
+            ./internal/ui/richview ./internal/ui/composer ./internal/ui/messages ./internal/ui/huddleui
+
+  slick:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - name: clone slick
+        run: |
+          git clone -q https://github.com/3kh0/slick /tmp/slick
+          git -C /tmp/slick log --oneline -1
+      - name: "install slick deps (no scripts)"
+        working-directory: /tmp/slick
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: build every plugin with slick's build
+        run: |
+          set -o pipefail
+          mkdir -p dist/slick-plugins
+          node internal/slick/build/build.mjs /tmp/slick dist/slick-plugins 2>&1 | tail -5
+          cp -r /tmp/slick/themes dist/slick-plugins/themes
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: MessageLogger threads (and the logger next to it)
+        env:
+          SLICK_PLUGINS_DIR: ${{ github.workspace }}/dist/slick-plugins
+        run: |
+          go test -count=$COUNT -timeout 30m -run 'TestSlickViewMessageLoggerThreads$|TestSlickViewMessageLogger$' ./internal/ui/messages
+          go test -race -cpu 1 -count=$COUNT -timeout 30m -run 'TestSlickViewMessageLoggerThreads$' ./internal/ui/messages

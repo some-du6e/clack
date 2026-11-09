@@ -194,6 +194,23 @@ type Session struct {
 	}
 	doneCh   chan struct{}
 	doneOnce sync.Once
+
+	// logMu/logOff gate o.Logf: once the session has ended, callbacks
+	// still in flight (pion runs OnConnectionStateChange and friends on
+	// their own goroutines, so "peer connection closed" can arrive after
+	// Leave returns) log nothing. finish takes logMu for writing, so a log
+	// call already running completes before Leave returns.
+	logMu  sync.RWMutex
+	logOff bool
+}
+
+// logf is o.Logf until the session has ended.
+func (s *Session) logf(format string, args ...any) {
+	s.logMu.RLock()
+	defer s.logMu.RUnlock()
+	if !s.logOff {
+		s.o.Logf(format, args...)
+	}
 }
 
 // ErrEnded is the end reason when the huddle itself ended (Chime 4410).
@@ -517,6 +534,9 @@ func (s *Session) finish(err error) {
 		}
 	}
 	s.doneOnce.Do(func() { close(s.doneCh) })
+	s.logMu.Lock()
+	s.logOff = true
+	s.logMu.Unlock()
 	if s.o.OnEnd != nil {
 		s.o.OnEnd(err)
 	}
@@ -594,7 +614,7 @@ func (s *Session) run() {
 		}
 		s.phase = Reconnecting
 		s.mu.Unlock()
-		s.o.Logf("huddle: connection lost: %v (reconnecting)", err)
+		s.logf("huddle: connection lost: %v (reconnecting)", err)
 		s.changed()
 		s.closeConn()
 		select {
@@ -657,7 +677,7 @@ func (s *Session) connect() error {
 	s.phase = Connected
 	s.mu.Unlock()
 	s.changed()
-	s.o.Logf("huddle: media connected (attendee %s)", ji.Attendee.AttendeeID)
+	s.logf("huddle: media connected (attendee %s)", ji.Attendee.AttendeeID)
 
 	go s.sendAudio(s.connDone)
 	ping := time.NewTicker(10 * time.Second)
@@ -706,7 +726,7 @@ func (s *Session) readLoop(conn *websocket.Conn) error {
 		}
 		f, err := decodeFrame(b)
 		if err != nil {
-			s.o.Logf("huddle: bad signaling frame: %v", err)
+			s.logf("huddle: bad signaling frame: %v", err)
 			continue
 		}
 		s.handle(f)
@@ -722,7 +742,7 @@ func (s *Session) handle(f *signalFrame) {
 		w <- f
 	}
 	if f.ErrStatus != 0 || f.ErrDesc != "" {
-		s.o.Logf("huddle: signaling error %d: %s (frame %d)", f.ErrStatus, f.ErrDesc, f.Type)
+		s.logf("huddle: signaling error %d: %s (frame %d)", f.ErrStatus, f.ErrDesc, f.Type)
 	}
 	switch f.Type {
 	case ftPingPong:
@@ -740,10 +760,10 @@ func (s *Session) handle(f *signalFrame) {
 			s.onData(m)
 		}
 	case ftNotification:
-		s.o.Logf("huddle: chime notice (%d): %s", f.NoticeLevel, f.Notice)
+		s.logf("huddle: chime notice (%d): %s", f.NoticeLevel, f.Notice)
 	case ftAudioStatus:
 		if f.AudioStatus != 0 && f.AudioStatus != 200 {
-			s.o.Logf("huddle: audio status %d", f.AudioStatus)
+			s.logf("huddle: audio status %d", f.AudioStatus)
 		}
 	}
 }
@@ -825,7 +845,7 @@ func (s *Session) setupMedia(turn *turnCreds) error {
 	s.cameraAttach(api, pc, camT)
 	pc.OnTrack(s.onTrack)
 	pc.OnConnectionStateChange(func(st webrtc.PeerConnectionState) {
-		s.o.Logf("huddle: peer connection %s", st)
+		s.logf("huddle: peer connection %s", st)
 	})
 	s.wmu.Lock()
 	s.pc, s.audio = pc, track
@@ -870,7 +890,7 @@ func (s *Session) subscribe(first bool) error {
 	select {
 	case <-gathered:
 	case <-time.After(10 * time.Second):
-		s.o.Logf("huddle: ICE gathering slow; sending what we have")
+		s.logf("huddle: ICE gathering slow; sending what we have")
 	}
 	sdp := strings.Replace(pc.LocalDescription().SDP, "o=- ", "o=mozilla-chrome ", 1)
 	s.mu.Lock()
@@ -916,7 +936,7 @@ func countVideo(pc *webrtc.PeerConnection) int {
 func (s *Session) sendAudio(done <-chan struct{}) {
 	enc, err := newOpusEnc()
 	if err != nil {
-		s.o.Logf("huddle: opus encoder: %v", err)
+		s.logf("huddle: opus encoder: %v", err)
 		return
 	}
 	silence := make([]int16, frameSamples)
@@ -968,7 +988,7 @@ func (s *Session) sendAudio(done <-chan struct{}) {
 }
 
 func (s *Session) onTrack(track *webrtc.TrackRemote, recv *webrtc.RTPReceiver) {
-	s.o.Logf("huddle: remote %s track ssrc %d codec %s", track.Kind(), track.SSRC(), track.Codec().MimeType)
+	s.logf("huddle: remote %s track ssrc %d codec %s", track.Kind(), track.SSRC(), track.Codec().MimeType)
 	done := s.connDone
 	if track.Kind() == webrtc.RTPCodecTypeAudio {
 		go s.recvAudio(track, done)
@@ -1004,7 +1024,7 @@ func (s *Session) onTrack(track *webrtc.TrackRemote, recv *webrtc.RTPReceiver) {
 	s.wmu.Lock()
 	pc := s.pc
 	s.wmu.Unlock()
-	v := &videoSink{key: key, ssrc: uint32(track.SSRC()), pc: pc, notify: s.changed, logf: s.o.Logf}
+	v := &videoSink{key: key, ssrc: uint32(track.SSRC()), pc: pc, notify: s.changed, logf: s.logf}
 	s.mu.Lock()
 	s.sinks[key] = v
 	s.mu.Unlock()
@@ -1023,7 +1043,7 @@ func (s *Session) onTrack(track *webrtc.TrackRemote, recv *webrtc.RTPReceiver) {
 func (s *Session) recvAudio(track *webrtc.TrackRemote, done <-chan struct{}) {
 	dec, err := newOpusDec()
 	if err != nil {
-		s.o.Logf("huddle: opus decoder: %v", err)
+		s.logf("huddle: opus decoder: %v", err)
 		return
 	}
 	var last uint16
@@ -1066,7 +1086,7 @@ func (s *Session) recvAudio(track *webrtc.TrackRemote, done <-chan struct{}) {
 		pcm, err := dec.decode(pkt.Payload)
 		if err != nil {
 			if n := opusAborts.Load(); n == 1 || n%500 == 0 {
-				s.o.Logf("huddle: %v (%d so far)", err, n)
+				s.logf("huddle: %v (%d so far)", err, n)
 			}
 			continue
 		}
@@ -1080,7 +1100,7 @@ func (s *Session) recvAudio(track *webrtc.TrackRemote, done <-chan struct{}) {
 		s.stats.inLevel = lv
 		s.mu.Unlock()
 		if debugLog && time.Since(logAt) > 3*time.Second {
-			s.o.Logf("huddle: audio in: %d packets, peak level %.3f", s.stats.audioIn, peak)
+			s.logf("huddle: audio in: %d packets, peak level %.3f", s.stats.audioIn, peak)
 			logAt, peak = time.Now(), 0
 		}
 	}
@@ -1201,7 +1221,7 @@ func (s *Session) updateVideos() {
 		return
 	}
 	if err := s.subscribe(false); err != nil {
-		s.o.Logf("huddle: video resubscribe: %v", err)
+		s.logf("huddle: video resubscribe: %v", err)
 	}
 }
 
@@ -1322,10 +1342,10 @@ func (s *Session) onData(m dataMessage) {
 		s.mu.Unlock()
 		s.changed()
 	case pm.MuteRequest != nil && pm.MuteRequest.PeerID == self && known:
-		s.o.Logf("huddle: %s muted you", uid)
+		s.logf("huddle: %s muted you", uid)
 		s.SetMuted(true)
 	case pm.KickNotification != nil && pm.KickNotification.KickedUserID == s.o.SelfID && known:
-		s.o.Logf("huddle: %s removed you from the huddle", uid)
+		s.logf("huddle: %s removed you from the huddle", uid)
 		go s.Leave()
 	}
 }
@@ -1333,7 +1353,7 @@ func (s *Session) onData(m dataMessage) {
 func (s *Session) onTranscript(b []byte) {
 	res, status := decodeTranscript(b)
 	if status != "" {
-		s.o.Logf("huddle: transcription %s", status)
+		s.logf("huddle: transcription %s", status)
 	}
 	if len(res) == 0 {
 		return

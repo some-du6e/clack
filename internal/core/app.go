@@ -45,22 +45,27 @@ type App struct {
 	bg     context.Context
 	stopBG context.CancelFunc
 
-	pending   map[string]*pendingSend // client_msg_id -> optimistic send
-	retired   map[string]string       // confirmed sends' local ts -> real ts (send.go LocalTS)
-	retiredQ  []string                // retired's insertion order (bounded)
-	saved     map[string]bool         // "channel/ts" of saved / to-do messages
-	starred   map[string]bool         // starred conversation ids (stars.list)
-	starsOK   bool                    // starred was loaded
-	memberN   map[string]int          // conversation -> people count (edge users/counts)
-	memberG   map[string]int          // conversation -> guests among them (edge users/counts)
-	dms       dmState                 // which DMs Slack's sidebar shows (dmsidebar.go)
-	exp       *sidebarExp             // experiments the sidebar rules read (nil: defaults)
-	expGroups map[string]string       // every experiment group (experiments.getByUser)
-	icon      teamIconState           // the rail's workspace icon (team_icon.go)
-	rxn       reactState              // the viewer's reactions in flight (reactions.go)
-	drafts    draftCache              // the viewer's server drafts (drafts.go), memory only
-	selected  string                  // the open conversation (SetSelected, preview.go)
-	temp      map[string]int64        // temporary memberships: channel -> expiration_ts (preview.go)
+	pending  map[string]*pendingSend // client_msg_id -> optimistic send
+	retired  map[string]string       // confirmed sends' local ts -> real ts (send.go LocalTS)
+	retiredQ []string                // retired's insertion order (bounded)
+	saved    map[string]bool         // "channel/ts" of saved / to-do messages
+	starred  map[string]bool         // starred conversation ids (stars.list)
+	starsOK  bool                    // starred was loaded
+	// starEdits/savedEdits, non-nil while loadStars/loadSaved is in
+	// flight, record the stars and saves made meanwhile (Star, star_added,
+	// Save), so the list read before them doesn't undo them.
+	starEdits  map[string]bool
+	savedEdits map[string]bool
+	memberN    map[string]int    // conversation -> people count (edge users/counts)
+	memberG    map[string]int    // conversation -> guests among them (edge users/counts)
+	dms        dmState           // which DMs Slack's sidebar shows (dmsidebar.go)
+	exp        *sidebarExp       // experiments the sidebar rules read (nil: defaults)
+	expGroups  map[string]string // every experiment group (experiments.getByUser)
+	icon       teamIconState     // the rail's workspace icon (team_icon.go)
+	rxn        reactState        // the viewer's reactions in flight (reactions.go)
+	drafts     draftCache        // the viewer's server drafts (drafts.go), memory only
+	selected   string            // the open conversation (SetSelected, preview.go)
+	temp       map[string]int64  // temporary memberships: channel -> expiration_ts (preview.go)
 
 	// Realtime (Slack's websocket gateway) is opt-in; see SetRealtime.
 	rtMu      sync.Mutex

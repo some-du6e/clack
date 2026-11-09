@@ -57,7 +57,7 @@ func (s *Session) setMic(m MicStatus, err string) {
 	s.mu.Unlock()
 	if changed {
 		if m.Problem() {
-			s.o.Logf("huddle: microphone %s %s", m, err)
+			s.logf("huddle: microphone %s %s", m, err)
 		}
 		s.changed()
 	}
@@ -70,7 +70,7 @@ func (s *Session) openDevice() {
 		s.micStatus = MicOK
 		if err := dev.Start(s.mic.write, s.play.pull); err != nil {
 			s.micStatus, s.micErr = MicFailed, err.Error()
-			s.o.Logf("huddle: audio device: %v (no audio IO)", err)
+			s.logf("huddle: audio device: %v (no audio IO)", err)
 			dev.Close()
 			dev = newNullDevice()
 			_ = dev.Start(nil, s.play.pull)
@@ -99,14 +99,14 @@ func (s *Session) openAudio() func(func(string, ...any)) (Device, error) {
 
 func (s *Session) openSpeakers() Device {
 	if open := s.openAudio(); open != nil {
-		d, err := open(s.o.Logf)
+		d, err := open(s.logf)
 		if err == nil {
 			if err = d.Start(nil, s.play.pull); err == nil {
 				return d
 			}
 			d.Close()
 		}
-		s.o.Logf("huddle: speakers: %v (you won't hear the huddle)", err)
+		s.logf("huddle: speakers: %v (you won't hear the huddle)", err)
 	}
 	d := newNullDevice() // drains playback at real time
 	_ = d.Start(nil, s.play.pull)
@@ -139,7 +139,7 @@ func (s *Session) openMic() {
 		s.setMic(MicFailed, "this build has no audio support")
 		return
 	}
-	dev, err := open(s.o.Logf)
+	dev, err := open(s.logf)
 	if err == nil {
 		if err = dev.Start(s.mic.write, nil); err != nil {
 			dev.Close()

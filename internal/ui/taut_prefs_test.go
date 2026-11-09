@@ -30,6 +30,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/taut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
 )
 
 const (
@@ -240,7 +241,7 @@ func TestTautPrefsRender(t *testing.T) {
 	shots := os.Getenv("TAUT_SHOTS_DIR")
 	r := &ttRenderer{t: t, a: a, sz: image.Pt(800, 1400), dir: shots}
 	if shots != "" {
-		w, err := headless.NewWindow(r.sz.X, r.sz.Y)
+		w, err := pixeltest.NewWindow(r.sz.X, r.sz.Y)
 		if err != nil {
 			t.Fatalf("headless window: %v", err)
 		}
