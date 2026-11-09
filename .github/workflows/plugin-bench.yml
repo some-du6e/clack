@@ -27,6 +27,10 @@ on:
       - "internal/ui/plugin_bench*"
       - "internal/ui/library_prefs.go"
       - "internal/fakeslack/plugin_bench.go"
+      - "internal/taut/**"
+      - "internal/slick/**"
+      - "internal/jsrt/**"
+      - "internal/ui/messages/**"
       - ".github/workflows/plugin-bench.yml"
 
 permissions:

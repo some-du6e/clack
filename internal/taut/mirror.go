@@ -1216,8 +1216,20 @@ func (m *mirror) messagesFP(ch string) uint64 {
 			fpMsg(h, &tl.Msgs[i])
 		}
 	}
-	for root, msgs := range m.t.app.S.ThreadsIn(ch) {
+	// threads in ts order: a map's order changes from one range to the
+	// next, and an unsorted walk gave a channel with two cached threads a
+	// new fingerprint every sweep, so the mirror re-sent its messages to
+	// JS every 750 ms and every row a messages-reading plugin patched
+	// (ShowRealUser, ShowSendingBot, Slick's Censorship) re-rendered forever
+	threads := m.t.app.S.ThreadsIn(ch)
+	roots := make([]string, 0, len(threads))
+	for root := range threads {
+		roots = append(roots, root)
+	}
+	sort.Strings(roots)
+	for _, root := range roots {
 		h.Write([]byte(root))
+		msgs := threads[root]
 		for i := range msgs {
 			fpMsg(h, &msgs[i])
 		}
