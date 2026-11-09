@@ -822,6 +822,7 @@ func (a *App) userOf(u *slack.User) User {
 		TZLabel: u.TZLabel, IsBot: u.IsBot || u.ID == "USLACKBOT", Deleted: u.Deleted, IsAdmin: u.IsAdmin,
 		IsOwner: u.IsOwner, Guest: u.IsRestricted || u.IsUltraRestricted, Color: u.Color,
 		Huddle: u.Profile.HuddleState == "in_a_huddle", Agent: u.AgentStatus == "consistently_an_agent",
+		HuddleChannel: u.Profile.HuddleChannel, HuddleExpires: u.Profile.HuddleExpires,
 		Stranger: u.IsStranger, BotID: u.Profile.BotID, AppID: u.Profile.APIAppID,
 	}
 	v.TeamID, v.External = a.locality(u)
