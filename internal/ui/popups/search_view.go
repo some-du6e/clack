@@ -337,7 +337,7 @@ func NewSearchView(h Host, query string) *SearchView {
 		}
 	}
 	srRecordQuery(query)
-	v := &SearchView{h: h, q: srParse(query), tab: tab, sortBy: "score", menuCard: -1, sess: core.NewSearchSession()}
+	v := &SearchView{h: h, q: srParse(query), tab: tab, sortBy: DefaultSearchSort(h.Core()), menuCard: -1, sess: core.NewSearchSession()}
 	v.list.Axis = layout.Vertical
 	return v
 }
@@ -901,10 +901,20 @@ func (v *SearchView) moreMenu(gtx layout.Context) {
 	v.openMenu(gtx, v.pillR[srPMore], items, 280)
 }
 
-// sortMenu is "Sorted by …": Most relevant (default), Newest, Oldest.
+// sortMenu is "Sorted by …" (search-filter-sort MessageEntity): Most
+// relevant ("(default)" unless stick_user_sort), Newest, Oldest, then
+// "Edit default", which opens Preferences > Advanced's search options.
+// With stick_user_sort a choice is also kept in users.prefs search_sort
+// (the next search starts from it, mfHU WJ).
 func (v *SearchView) sortMenu(gtx layout.Context) {
-	opts := []struct{ label, val string }{{"Most relevant (default)", "score"}, {"Newest", "timestamp"}, {"Oldest", "oldest"}}
-	items := make([]MenuItem, 0, len(opts))
+	c := v.h.Core()
+	sticky := c != nil && c.PrefBool("stick_user_sort", false)
+	relevant := "Most relevant (default)"
+	if sticky {
+		relevant = "Most relevant"
+	}
+	opts := []struct{ label, val string }{{relevant, "score"}, {"Newest", "timestamp"}, {"Oldest", "oldest"}}
+	items := make([]MenuItem, 0, len(opts)+2)
 	for _, o := range opts {
 		val := o.val
 		items = append(items, MenuItem{Label: o.label, Checked: v.sortBy == val, Do: func() {
@@ -912,9 +922,42 @@ func (v *SearchView) sortMenu(gtx layout.Context) {
 				v.sortBy = val
 				v.search(1)
 			}
+			if sticky {
+				pref := srSortPref[val]
+				run(v.h, func(ctx context.Context) (struct{}, error) { return struct{}{}, c.SetPref(ctx, "search_sort", pref) },
+					func(_ struct{}, err error) {
+						if err != nil {
+							v.h.Toast("Couldn't save that preference: " + errText(err))
+						}
+					})
+			}
 		}})
 	}
+	items = append(items, Sep(), MenuItem{Label: "Edit default", Do: func() {
+		if OpenPreferencesSection != nil {
+			OpenPreferencesSection("advanced")
+		}
+	}})
 	v.openMenu(gtx, v.sortR, items, 240)
+}
+
+// srSortPref is the search_sort value for a sort (cX/T kK).
+var srSortPref = map[string]string{"score": "relevantMessages", "timestamp": "recentMessages", "oldest": "timestamp_asc"}
+
+// DefaultSearchSort is a new search's sort: with stick_user_sort ("Last
+// used:") the search_sort pref (mfHU WJ: timestamp means newest, score
+// and not_set most relevant), otherwise Most relevant.
+func DefaultSearchSort(c *core.App) string {
+	if c == nil || !c.PrefBool("stick_user_sort", false) {
+		return "score"
+	}
+	switch c.PrefString("search_sort") {
+	case "recentMessages", "timestamp":
+		return "timestamp"
+	case "timestamp_asc":
+		return "oldest"
+	}
+	return "score"
 }
 
 // moreActive reports filters that only the More menu sets (the pill

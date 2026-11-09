@@ -44,6 +44,10 @@ type prefs struct {
 	// PlainText is Preferences > Advanced > "Format messages with markup"
 	// (Slack's plain_text_mode); nil follows the pref Slack sent.
 	PlainText *bool `json:"plain_text_mode,omitempty"`
+	// ComposerUpArrow is Accessibility > "Press ↑ in the empty message
+	// field to:" (Slack's localStorage composerUpArrowShortcutBehavior):
+	// 0 unset, 1 focus the message list, 2 only when empty, 3 edit.
+	ComposerUpArrow int `json:"composer_up_arrow_shortcut,omitempty"`
 	// Zoom is View > Zoom's level, -3…5 (Slack's zoomLevel; macmenu.go).
 	Zoom int `json:"zoom,omitempty"`
 }
@@ -209,6 +213,14 @@ func (a *App) toggleNotify() {
 	v := !a.notifyOn()
 	a.prefs.Notifications = &v
 	a.savePrefs()
+}
+
+// setComposerUpArrow is setComposerUpArrowShortcutBehavior: stored on this
+// device (ui.json) and read by every composer.
+func (a *App) setComposerUpArrow(v int) {
+	a.prefs.ComposerUpArrow = v
+	a.savePrefs()
+	a.Invalidate()
 }
 
 // plainTextOn is "Format messages with markup" (Slack's plain_text_mode):

@@ -23,10 +23,13 @@ import (
 // Composer is the message box under a channel or thread, or the inline
 // editor of an existing message (NewEdit).
 type Composer struct {
-	h        Host
-	api      coreAPI
-	ch, ts   string
-	edit     *core.Message // edit mode: the message being edited
+	h      Host
+	api    coreAPI
+	ch, ts string
+	edit   *core.Message // edit mode: the message being edited
+	// unsendBy is when the message just sent stops being unsendable
+	// (Slack's messageEligibleForUnsending, expiryTs = send + 15 s).
+	unsendBy time.Time
 	onDone   func()
 	done     bool
 	ed       *Editor
@@ -48,6 +51,10 @@ type Composer struct {
 	// OnEditLast is called when Up is pressed in an empty composer (Slack
 	// edits your last message). The ui root wires it to the message list.
 	OnEditLast func()
+	// OnFocusList moves keyboard focus to the message list with its newest
+	// message selected (Accessibility > "Press ↑ in the empty message
+	// field to: Move focus to the message list").
+	OnFocusList func()
 
 	// SaveEdit, when set, saves an inline edit instead of core.Edit
 	// (ui/messages routes it through taut.Dispatch("commitMessageEdit")).
@@ -115,6 +122,12 @@ func PlainTextMode(a *core.App) bool {
 // showFormatting is Slack's "Show formatting" (Aa) toggle; one setting for
 // every composer, like Slack's pref.
 var showFormatting = true
+
+// UpArrowShortcut is Accessibility > "Press ↑ in the empty message field
+// to:" (Slack's client-side composerUpArrowShortcutBehavior, uMEH): 0
+// unset, 1 LIST (focus the message list), 2 LIST_IF_EMPTY, 3 EDIT. The ui
+// root sets it from ui.json.
+var UpArrowShortcut = func() int { return 0 }
 
 // SetShowFormatting sets the Aa toggle for every composer (the ui root can
 // restore it from prefs); ShowFormatting reads it.
@@ -285,6 +298,8 @@ func (c *Composer) Layout(gtx layout.Context) layout.Dimensions {
 		c.ed.Focus(gtx)
 	}
 	c.ed.plainText = PlainTextMode(c.api.a)
+	c.ed.smart = SmartSymbols(c.api.a)
+	c.ed.upMode, c.ed.upBrowse = UpArrowShortcut(), c.edit == nil && c.api.a != nil && c.api.upToBrowse()
 	c.syncEmojiSet()
 	c.handleEditor(gtx)
 	c.restoreDroppedFocus(gtx)
@@ -503,6 +518,14 @@ func (c *Composer) handleEditor(gtx layout.Context) {
 		case EvEditLast:
 			if c.edit == nil && c.OnEditLast != nil {
 				c.OnEditLast()
+			}
+		case EvFocusList:
+			if c.edit == nil && c.OnFocusList != nil {
+				c.OnFocusList()
+			}
+		case EvUndoEmpty:
+			if !c.tryUnsend() {
+				c.ed.Undo()
 			}
 		case EvCancel:
 			if c.edit != nil {
@@ -837,8 +860,44 @@ func (c *Composer) send(o *outgoing) {
 		}
 		if err != nil {
 			c.restore(o.doc)
+			return
 		}
+		c.later(func() { c.unsendBy = time.Now().Add(unsendWindow) })
 	}()
+}
+
+// unsendWindow is how long Mod+Z can unsend a message (15e3 ms).
+const unsendWindow = 15 * time.Second
+
+// unsender is the host's undoSendLastMessageInChannel: it unsends the
+// viewer's last message in the conversation (asking first when
+// should_show_unsend_message_confirmation is on) and hands its contents
+// back for the composer.
+type unsender interface {
+	UnsendLast(channel, threadTS string, put func(*Doc))
+}
+
+// tryUnsend is onCmdZWhenEmpty: within the window after a send from this
+// composer, Mod+Z in the empty composer unsends it. false: plain undo.
+func (c *Composer) tryUnsend() bool {
+	u, ok := c.h.(unsender)
+	if !ok || c.edit != nil || c.unsendBy.IsZero() || time.Now().After(c.unsendBy) {
+		return false
+	}
+	c.unsendBy = time.Time{}
+	u.UnsendLast(c.ch, c.ts, c.restore)
+	return true
+}
+
+// DocForMessage is a message's contents as composer text (Slack's
+// getDeltaForMessageObject): its rich text, else its text.
+func DocForMessage(m core.Message) *Doc {
+	d := DocFromRichtext(m.Doc.Blocks)
+	if d == nil || d.Len() == 0 {
+		d = NewDoc()
+		d.Insert(0, m.Text, Attr{})
+	}
+	return d
 }
 
 // sendJob is one outgoing message; run happens off the UI goroutine.

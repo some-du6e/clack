@@ -15,6 +15,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/slick"
 	"github.com/some-du6e/yoloslackgoclient/internal/taut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/openurl"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
 )
 
@@ -131,6 +132,38 @@ func (b *backend) start(a *App) {
 			}
 			b.saveCache()
 			b.loadDrafts(a)
+			b.maybePresencePrompt(a)
+		})
+	}()
+}
+
+// maybePresencePrompt is maybeOpenPresencePromptDialog: once connected,
+// with confirm_user_marked_away on (Advanced > "Ask if I want to toggle my
+// away status when I log in after having set myself away") and the viewer
+// manually away, Slack asks "Set yourself to active?".
+func (b *backend) maybePresencePrompt(a *App) {
+	if !b.core.PrefBool("confirm_user_marked_away", false) { // !0!==pref: only when Slack sent true
+		return
+	}
+	parent := b.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(parent, 15*time.Second)
+		defer cancel()
+		away, err := b.core.ManuallyAway(ctx)
+		if err != nil || !away {
+			return
+		}
+		a.Post(func() {
+			popups.ConfirmAway(a, func() {
+				if !b.m.SelfActive {
+					b.togglePresence()
+				} else {
+					go func() { _ = b.core.SetPresence(parent, "auto") }()
+				}
+			})
 		})
 	}()
 }

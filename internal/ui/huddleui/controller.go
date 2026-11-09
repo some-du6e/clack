@@ -15,6 +15,7 @@ import (
 	"errors"
 	"log"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/taut"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -277,6 +279,56 @@ func (c *Controller) Begin(channel, entry string) {
 	if channel == "" {
 		return
 	}
+	if c.shoutyRooster(channel, func() { c.begin(channel, entry) }) {
+		return
+	}
+	c.begin(channel, entry)
+}
+
+// shoutyRoosterMembers is the member count over which starting a huddle
+// asks first (shouldShowHuddlesShoutyRoosterWarning: !(count <= 150)).
+const shoutyRoosterMembers = 150
+
+// shoutyRooster is shouldShowHuddlesShoutyRoosterWarning and
+// HuddleShoutyRoosterModal: starting (not joining) a huddle in a channel
+// of more than 150 members, with huddles_show_shouty_rooster not false
+// (Audio & video > "Send a warning if you’re starting a huddle in a
+// channel with more than 150 members"), asks "Start a huddle in this
+// channel?" first. It reports whether it asked; OK runs start.
+func (c *Controller) shoutyRooster(channel string, start func()) bool {
+	app := c.h.Core()
+	ph, ok := c.h.(popups.Host)
+	if app == nil || !ok {
+		return false
+	}
+	if _, live := c.Live(channel); live {
+		return false
+	}
+	if s := c.Session(); s != nil && s.Channel() == channel {
+		return false
+	}
+	cv, ok := app.Conv(channel)
+	if !ok || cv.Kind == "im" || cv.Kind == "mpim" || cv.NumMembers <= shoutyRoosterMembers || !app.PrefBool("huddles_show_shouty_rooster", true) {
+		return false
+	}
+	ShoutyRoosterModal(ph, cv, start)
+	return true
+}
+
+// ShoutyRoosterModal is "Start a huddle in this channel?": "You’ll be
+// starting a huddle that all N members of #channel can join.", "Don’t
+// show this message again." (checked = !huddles_show_shouty_rooster,
+// written on change), Cancel / OK.
+func ShoutyRoosterModal(h popups.Host, cv core.Conv, start func()) {
+	body := "You’ll be starting a huddle that every member of #" + cv.Name + " can join."
+	if cv.NumMembers > 1 {
+		body = "You’ll be starting a huddle that all " + strconv.Itoa(cv.NumMembers) + " members of #" + cv.Name + " can join."
+	}
+	popups.ConfirmPrefModal(h, "Start a huddle in this channel?", body, "Cancel", "OK",
+		"Don’t show this message again.", "huddles_show_shouty_rooster", start)
+}
+
+func (c *Controller) begin(channel, entry string) {
 	tt := c.taut()
 	if !tt.ThunkPatched("startHuddle") {
 		c.Start(channel)
@@ -341,7 +393,9 @@ func (c *Controller) options(app *core.App) huddle.Options {
 		Client: client,
 		SelfID: c.selfID(),
 		// Audio & video > When joining a huddle… "Mute my microphone"
-		Muted:    app.PrefBool("huddles_mute_by_default", false),
+		Muted: app.PrefBool("huddles_mute_by_default", false),
+		// "Automatically turn on captions when you’re in a huddle"
+		Captions: app.PrefBool("huddles_cc_by_default", false),
 		Logf:     log.Printf,
 		OnChange: c.onSession,
 		OnPeer: func(ev huddle.PeerEvent) {

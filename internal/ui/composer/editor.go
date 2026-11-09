@@ -92,6 +92,8 @@ const (
 	EvPasted                            // Ctrl+V pressed (text arrives async); probe the clipboard for an image
 	EvFocus                             // gained keyboard focus
 	EvBlur                              // lost keyboard focus
+	EvUndoEmpty                         // Mod+Z in an empty editor: unsend, else undo (the composer decides)
+	EvFocusList                         // Up: move focus to the message list (UpArrowShortcut)
 )
 
 // EditorEvent is reported by Editor.Update.
@@ -203,6 +205,12 @@ type Editor struct {
 	// plainText is Slack's plain_text_mode ("Format messages with
 	// markup"): no live markup, the characters stay as typed.
 	plainText bool
+	// smart is "Enable smart quotes and symbols" (smart_symbols.go).
+	smart bool
+	// upMode is UpArrowShortcut's value and upBrowse
+	// up_to_browse_kb_shortcut, for upArrow.
+	upMode   int
+	upBrowse bool
 }
 
 // NewEditor returns an empty editor.
@@ -682,6 +690,9 @@ func (e *Editor) typeAt(lo, hi int, s string) {
 	e.pendingOK = false
 	e.commit()
 	if utf8.RuneCountInString(s) == 1 && !emoji.MayHaveEmoji(s) {
+		if e.smartSymbols() {
+			return
+		}
 		e.autoformat()
 	} else if !e.composing() {
 		// Several runes in one input event (an IME commit, a fast

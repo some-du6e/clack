@@ -1050,13 +1050,29 @@ func (v *View) inSlot(p f32.Point) bool {
 	return false
 }
 
+// targetText is the text a link target draws (its frags' plain text).
+func (v *View) targetText(t int16) string {
+	var b strings.Builder
+	for i := range v.d.frags {
+		if f := &v.d.frags[i]; f.target == t && f.p1 > f.p0 && int(f.p1) <= len(v.d.plain) {
+			b.WriteString(string(v.d.plain[f.p0:f.p1]))
+		}
+	}
+	return b.String()
+}
+
 func (v *View) activate(t int16, anchor image.Point, h Handler) {
 	tg := &v.d.targets[t]
 	switch tg.kind {
 	case tLink, tCard:
-		if tg.url != "" {
-			h.OpenURL(tg.url)
+		if tg.url == "" {
+			break
 		}
+		if lh, ok := h.(LinkTextHandler); ok && tg.kind == tLink {
+			lh.OpenLink(tg.url, v.targetText(t))
+			break
+		}
+		h.OpenURL(tg.url)
 	case tUser:
 		h.OpenUser(tg.id, anchor)
 	case tChannel:
