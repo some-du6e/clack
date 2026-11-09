@@ -259,6 +259,8 @@ type Server struct {
 	shared  []SharedFiles            // files.share calls
 	nextID  int
 
+	emailTokens []map[string]any // users.emailtoken.* (under prefsMu)
+
 	chans chanState   // conversations.create and friends (channels.go)
 	secs  secState    // sidebar sections, marks, channel notification prefs (sections.go)
 	hud   huddleState // rooms.getLink, huddles.scheduled.new, calendar.* (huddles.go)
@@ -272,6 +274,11 @@ func DefaultPrefs() map[string]any {
 		"emoji_use": `{"smile":10,"tada":7,"+1":30,"fire":5,"eyes":9}`, "muted_channels": "",
 		"ia_theme":                    `{"primary":{"palette":"aubergine"},"highlight1":{"palette":"aubergine"},"highlight2":{"palette":"jade"},"important":{"palette":"aubergine"},"brightness":6,"sidebarInverted":true,"useCustomHex":false}`,
 		"window_background_gradients": true,
+		// Preferences part A (prefs_a.go): Slack's server defaults
+		"show_sidebar_avatars": true, "home_unread_dot": true, "should_show_connect_section": true,
+		"mute_sounds": false, "mute_huddle_sounds": false,
+		"mac_ssb_bullet": true, "mac_ssb_bounce": "", "reminder_notification_time": "9:00",
+		"tz": "America/Los_Angeles", "set_tz_automatically": true, "webapp_spellcheck": true,
 		// Preferences dialog keys Clack wires, at Slack's defaults
 		"display_real_names_override": 0, "mentions_real_names_override": 0, "messages_theme": "default",
 		"show_typing": true, "hide_hex_swatch": false, "jumbomoji": true, "convert_emoticons": true,
@@ -994,6 +1001,39 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			}
 		}
 		return ok()
+	case "users.emailtoken.get", "users.emailtoken.create", "users.emailtoken.delete": // Bring emails into Slack
+		s.prefsMu.Lock()
+		defer s.prefsMu.Unlock()
+		switch method {
+		case "users.emailtoken.create":
+			s.emailTokens = append(s.emailTokens, map[string]any{"token_id": 1000 + len(s.emailTokens),
+				"token": "fake", "email_address": "fake-" + strconv.Itoa(len(s.emailTokens)) + "@fake.slack.com"})
+			return ok("token_id", s.emailTokens[len(s.emailTokens)-1]["token_id"], "token", "fake",
+				"email_address", s.emailTokens[len(s.emailTokens)-1]["email_address"])
+		case "users.emailtoken.delete":
+			keep := s.emailTokens[:0]
+			for _, t := range s.emailTokens {
+				if strconv.Itoa(t["token_id"].(int)) != f.Get("email_token_id") {
+					keep = append(keep, t)
+				}
+			}
+			s.emailTokens = keep
+			return ok()
+		}
+		if len(s.emailTokens) == 0 {
+			return map[string]any{"ok": false, "error": "no_emailtoken"}
+		}
+		return ok("email_forwarding_addresses", s.emailTokens)
+	case "users.priority.getRecommendations": // the VIP page's Recommended list
+		var recs []map[string]any
+		reasons := []string{"manager", "frequent_collaborator", "frequently_used", "skip_level"}
+		for _, u := range s.users {
+			if u.ID == SelfID || u.IsBot || u.Deleted || len(recs) == len(reasons) {
+				continue
+			}
+			recs = append(recs, map[string]any{"user_id": u.ID, "source": "graph", "reason": reasons[len(recs)]})
+		}
+		return ok("users", recs, "request_id", "fake-rec")
 	case "users.priority.add", "users.priority.remove":
 		u := f.Get("user")
 		if u == "" {

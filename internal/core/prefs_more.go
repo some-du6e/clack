@@ -128,7 +128,7 @@ func (a *App) RemoveVIP(ctx context.Context, user string) error {
 
 // AddVIP puts user on the VIP list (users.priority.add).
 func (a *App) AddVIP(ctx context.Context, user string) error {
-	if err := a.C.Call(ctx, "users.priority.add", url.Values{"user": {user}}, nil); err != nil {
+	if err := a.C.Call(ctx, "users.priority.add", url.Values{"user": {user}, "reason": {"add-user-to-priority"}}, nil); err != nil {
 		return err
 	}
 	ids := a.VIPs()

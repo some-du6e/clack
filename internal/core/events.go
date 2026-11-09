@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 )
 
@@ -401,7 +402,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		a.S.Upsert(ch, m)
 	}
 	self := a.S.SelfID()
-	mention := mentionsSelf(&m, self)
+	mention := mentionsSelf(&m, self) || (m.User != self && keywordMention(&m, a.S.HighlightWords()))
 	if !isReply || m.Subtype == "thread_broadcast" {
 		a.S.NoteMessage(ch, &m, mention)
 	} else if m.User != self {
@@ -434,6 +435,29 @@ func mentionsSelf(m *slack.Message, self string) bool {
 		}
 	}
 	return strings.Contains(m.Text, "<!here") || strings.Contains(m.Text, "<!channel") || strings.Contains(m.Text, "<!everyone")
+}
+
+// keywordMention is checkForMentionInMessage's highlight-words test: one
+// of the viewer's Channel keywords (global_keywords) in the text, or in an
+// attachment's title, pretext or text that isn't a link preview.
+func keywordMention(m *slack.Message, words []string) bool {
+	if len(words) == 0 {
+		return false
+	}
+	if len(richtext.LocateHighlightWords(m.Text, words, false)) > 0 {
+		return true
+	}
+	for _, at := range m.Attachments {
+		if at.FromURL != "" {
+			continue
+		}
+		for _, t := range []string{at.Title, at.Pretext, at.Text} {
+			if len(richtext.LocateHighlightWords(t, words, false)) > 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // needsFileInfo reports whether a message carries file stubs that must be

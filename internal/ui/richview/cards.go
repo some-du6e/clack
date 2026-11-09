@@ -449,7 +449,7 @@ func (l *lay) videoCard(a *richtext.Attachment, x, y, w int) int {
 }
 
 func (l *lay) unfurl(a *richtext.Attachment, x, y, w int) int {
-	noImg := uipref.Get().NoInlineImgs // expand_inline_imgs off: the card without its image
+	noImg := uipref.Get().NoInlineImgs || ImageTooLarge(a.Image) // expand_inline_imgs off: the card without its image
 	if isVideoUnfurl(a) && !noImg {
 		return l.videoCard(a, x, y, w)
 	}

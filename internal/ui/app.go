@@ -160,6 +160,7 @@ type App struct {
 	firstPaint  bool
 	frameStats  frameStats
 	lastChannel string
+	dock        dockState // the macOS Dock badge last set (dock.go)
 	// previewFrom is the channel-browser route previewFromCh was opened
 	// from ("Back to All channels", joinpane.go)
 	previewFrom   Route

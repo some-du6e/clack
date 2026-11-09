@@ -11,6 +11,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/shortcut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
 )
 
 // ---- shared Host methods (docs/NATIVE.md) ----
@@ -204,6 +205,9 @@ func (a *App) railBadge(key string) (int, bool) {
 	m := a.model()
 	switch key {
 	case "home":
+		if uipref.Get().NoHomeDot { // home_unread_dot off: +oIJ hides Home's dot and badge
+			return 0, false
+		}
 		return m.Rail.HomeBadge(m.HomeUnread, m.DMCount)
 	case "dms":
 		return m.DMCount, m.DMUnread

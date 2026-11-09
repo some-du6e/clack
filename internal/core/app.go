@@ -23,6 +23,7 @@ type App struct {
 	S   *store.Store
 	RTM *slack.RTM
 
+	prio      prioState // the VIP unreads section's open conversation (prefs_a.go)
 	ready     chan struct{}
 	bootErr   error
 	mu        sync.Mutex
@@ -456,6 +457,8 @@ func (a *App) Boot(ctx context.Context) error {
 		raw, err := a.C.Prefs(ctx)
 		if err == nil {
 			a.installPrefs(raw)
+			// set_tz_automatically keeps tz in step (timezone.go)
+			go func() { _, _ = a.MaybeUpdateTimezone(a.bg) }()
 			if a.S.HasCachedPrefs() { // the first frame drew the cached copy
 				p := a.Prefs()
 				a.emit(Event{Type: "prefs", Prefs: &p})
@@ -1214,9 +1217,28 @@ func (a *App) sections(convs []Conv) []Section {
 		return ok && (c.IsIM || c.IsMPIM)
 	}
 	visibleDM := func(id string) bool { return id == sel || !isDMKind(id) || a.dmCandidate(id) }
+	// External Connections (uSoP getChannelSectionType): with
+	// should_show_connect_section on and a slack_connect section, every
+	// externally shared conversation outside a custom section goes there;
+	// off, the section isn't shown and they stay in Channels / DMs.
+	showConnect := a.connectSectionOn(ordered)
+	connectIdx := -1
+	// VIP unreads: Slack's client-local section, first, taking its
+	// conversations from every other section (prefs_a.go)
+	prio := a.priorityChannels(convs)
+	if len(prio) > 0 && !hasSectionType(ordered, "priority") {
+		ordered = append([]slack.Section{{ID: PrioritySectionID, Name: "VIP unreads", Type: "priority"}}, ordered...)
+	}
+	for id := range prio {
+		assigned[id] = true // nothing else lists them
+	}
 	for _, s := range ordered {
 		switch s.Type {
-		case "salesforce_records", "slack_connect", "agents":
+		case "slack_connect":
+			if !showConnect {
+				continue
+			}
+		case "salesforce_records", "agents":
 			if len(s.ChannelIDsPage.ChannelIDs) == 0 {
 				continue
 			}
@@ -1226,6 +1248,21 @@ func (a *App) sections(convs []Conv) []Section {
 			}
 		}
 		sv := Section{ID: s.ID, Name: s.Name, Type: s.Type, Emoji: s.Emoji, Channels: []string{}, Collapsed: a.sectionCollapsed(s)}
+		if s.Type == "priority" { // VIP unreads: hidden while empty
+			if len(prio) == 0 {
+				continue
+			}
+			for _, c := range convs {
+				if prio[c.ID] {
+					sv.Channels = append(sv.Channels, c.ID)
+				}
+			}
+			if sv.Name == "" {
+				sv.Name = "VIP unreads"
+			}
+			out = append(out, sv)
+			continue
+		}
 		if sv.Emoji != "" {
 			sv.EmojiURL, _, _ = a.S.Emoji(strings.Trim(sv.Emoji, ":"))
 		}
@@ -1268,6 +1305,13 @@ func (a *App) sections(convs []Conv) []Section {
 			dmIdx = len(out)
 		case "stars":
 			sv.Name = "Starred"
+		case "slack_connect":
+			if connectIdx < 0 {
+				connectIdx = len(out)
+			}
+			if sv.Name == "" {
+				sv.Name = "External connections"
+			}
 		case "recent_apps":
 			// Apps sits where the user's section list puts it, not last.
 			appIdx = len(out)
@@ -1303,6 +1347,10 @@ func (a *App) sections(convs []Conv) []Section {
 			out[codeIdx].Channels = append(out[codeIdx].Channels, c.ID)
 			continue
 		}
+		if connectIdx >= 0 && a.extShared(c.ID) && visibleDM(c.ID) { // then Slack Connect, before agents, apps and DMs
+			out[connectIdx].Channels = append(out[connectIdx].Channels, c.ID)
+			continue
+		}
 		switch c.Kind {
 		case "im", "mpim":
 			if !visibleDM(c.ID) {
@@ -1317,6 +1365,12 @@ func (a *App) sections(convs []Conv) []Section {
 			}
 		default:
 			out[chIdx].Channels = append(out[chIdx].Channels, c.ID)
+		}
+	}
+	if connectIdx >= 0 && len(out[connectIdx].Channels) == 0 { // nothing external: no section
+		out = append(out[:connectIdx], out[connectIdx+1:]...)
+		if appIdx > connectIdx {
+			appIdx--
 		}
 	}
 	switch {

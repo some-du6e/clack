@@ -105,7 +105,11 @@ func (p *prefsModal) slackThemes(f *prefsForm, curID string) {
 	gtx, a := f.gtx, f.p.a
 	group := ""
 	col := 0
-	for _, pr := range theme.ThemePresets {
+	presets := theme.ThemePresets
+	if c := a.Core(); c != nil && c.Experiment("miles_davis_themes") == "on" { // TU6L: Miles Davis first
+		presets = append(append([]theme.ThemePreset(nil), theme.MilesDavisPresets...), presets...)
+	}
+	for _, pr := range presets {
 		if pr.Group != group {
 			if col != 0 {
 				f.y += gtx.Dp(48)
@@ -155,7 +159,8 @@ func (p *prefsModal) customTheme(f *prefsForm, cur theme.IATheme) {
 	f.buttons(prefsButton{"theme_share", "Share", true, func() {
 		a.copyText("Check out my Slack theme: " + strings.Join(hexes, ","))
 		a.Toast("Copied")
-	}}, prefsButton{"theme_import", "Import", false, nil}, prefsButton{"theme_surprise", "Surprise me", false, nil})
+	}}, prefsButton{"theme_import", "Import", true, func() { p.importTheme() }}, // prefs_a.go
+		prefsButton{"theme_surprise", "Surprise me", true, func() { a.setAccountTheme(theme.SurpriseTheme(surpriseRand)) }})
 	gtx := f.gtx
 	colW := (f.w - gtx.Dp(16)) / 2
 	for i, r := range customRoles {
@@ -178,7 +183,6 @@ func (p *prefsModal) customTheme(f *prefsForm, cur theme.IATheme) {
 			a.setAccountTheme(t)
 		})
 	}
-	f.muted("Import, Surprise me and the colour square: "+naNote, false)
 }
 
 // setRoleHex gives customRoles[i] its own colour: the theme becomes a
@@ -197,6 +201,11 @@ func (p *prefsModal) setRoleHex(i int, hex string) {
 		}
 	}
 	t.UseCustomHex = true
+	if i == 0 { // ColorPicker: a custom primary sets the brightness (S6)
+		if b := theme.BrightnessFromCustomHex(hex); b > 0 {
+			t.Brightness = b
+		}
+	}
 	a.setAccountTheme(t)
 }
 
@@ -254,11 +263,21 @@ func (p *prefsModal) hexField(f *prefsForm, x, w int, role, label, hex string, s
 				return a.th.Editor(gtx, ed, 15, c.Fg, c.Link)
 			})
 		})
-		at(gtx, image.Pt(w-gtx.Dp(28), (ph-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
-			return icons.Get("edit")(gtx, 16, c.Fg)
+		eb := p.btn("hexedit." + role) // "Edit … color": the colour popover (colorpicker.go)
+		at(gtx, image.Pt(w-gtx.Dp(32), (ph-gtx.Dp(24))/2), image.Pt(gtx.Dp(24), gtx.Dp(24)), func(gtx layout.Context) layout.Dimensions {
+			return clickArea(gtx, eb, nil, func(gtx layout.Context) layout.Dimensions {
+				at(gtx, image.Pt(gtx.Dp(4), gtx.Dp(4)), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
+					return icons.Get("edit")(gtx, 16, c.Fg)
+				})
+				return layout.Dimensions{Size: image.Pt(gtx.Dp(24), gtx.Dp(24))}
+			})
 		})
+		if clicked(eb) {
+			a.ShowOverlay(newColorPopover(a, a.PointerPos(), hex, set))
+		}
 		return layout.Dimensions{Size: r.Max}
 	})
+	f.record("button", "button.hexedit."+role, "Edit "+label+" color", false, true)
 }
 
 // hexColor is "#RRGGBB" as a colour.

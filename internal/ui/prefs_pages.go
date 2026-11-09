@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/huddleui"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/shortcut"
 )
 
@@ -148,15 +149,13 @@ func (p *prefsModal) notificationsPage(f *prefsForm) {
 	f.subheading("Channel keywords")
 	f.para("These act like mentions but can be set for topics that are important to you.")
 	f.link("keywords_help", "Learn more.", slackHelp("201355156"))
-	f.textBox("global_keywords", p.notifyStr("global_keywords"), "")
+	p.keywordsField(f)
 	f.muted("Use commas to separate each keyword. Keywords are not case sensitive.", false)
-	f.na()
 	f.hr()
 
 	f.heading("Reminders")
-	f.selectBox("reminders", "Set a default time for reminder notifications:", "9:00 AM", false, nil)
+	p.reminderTimePref(f) // prefs_a.go
 	f.muted("Reminders you set for a specific day (like “tomorrow”) will be sent at the time you select.", false)
-	f.na()
 	f.gap()
 	f.subheading("When you’re not active on desktop…")
 	f.para("Send notifications to my mobile devices:")
@@ -175,25 +174,44 @@ func (p *prefsModal) notificationsPage(f *prefsForm) {
 	prev := !p.notifyBool("no_text_in_notifications", false)
 	f.option("notify.no_text", "Include a preview of the message in each notification", "(disable this for extra privacy)", prev, false,
 		func() { p.setNotify("no_text_in_notifications", prev) })
-	f.off("mute_sounds", "Mute all messaging sounds from Slack", "", p.prefBool("mute_sounds", false), false)
-	if !p.prefBool("mute_sounds", false) {
-		f.selectBox("desktop_sound", "Notification sound (messages)", soundName(p.notifyStr("desktop_sound"), "Knock Brush"), false, nil)
+	// mute_sounds / mute_huddle_sounds are users.prefs (setUserPrefByApi);
+	// desktop_sound is a global notification pref (setNotifications).
+	// Picking a sound plays it, like Slack's onSelectionChange.
+	muted := p.prefBool("mute_sounds", false)
+	f.option("pref.mute_sounds", "Mute all messaging sounds from Slack", "", muted, false, func() { p.setPref("mute_sounds", !muted) })
+	if !muted {
+		f.selectBox("desktop_sound", "Notification sound (messages)", soundName(p.notifyStr("desktop_sound"), "Knock Brush"), true,
+			soundItems(huddleui.MessageSounds, func(v string) { p.setNotify("desktop_sound", v) }))
 	}
-	f.off("mute_huddle_sounds", "Mute all huddle sounds from Slack", "", p.prefBool("mute_huddle_sounds", false), false)
-	if !p.prefBool("mute_huddle_sounds", false) {
-		f.selectBox("huddle_invite_sound_v2", "Notification sound (huddles)", soundName(p.prefStr("huddle_invite_sound_v2"), "Boop Plus"), false, nil)
+	hmuted := p.prefBool("mute_huddle_sounds", false)
+	f.option("pref.mute_huddle_sounds", "Mute all huddle sounds from Slack", "", hmuted, false, func() { p.setPref("mute_huddle_sounds", !hmuted) })
+	if !hmuted {
+		f.selectBox("huddle_invite_sound_v2", "Notification sound (huddles)", soundName(p.prefStr("huddle_invite_sound_v2"), "Boop Plus"), true,
+			soundItems(huddleui.HuddleSounds, func(v string) { p.setPref("huddle_invite_sound_v2", v) }))
 	}
 	if runtime.GOOS == "darwin" { // MacAppearancePref
-		bounce := p.prefStr("mac_ssb_bounce")
-		f.off("mac_ssb_bullet", "Show a badge on Slack’s icon to indicate new activity", "", p.prefBool("mac_ssb_bullet", true), false)
-		f.off("mac_ssb_bounce", "Bounce Slack’s icon when receiving a notification", "", bounce != "", false)
-		f.off("mac_ssb_bounce_short", "Only bounce it once", "", bounce != "long", false)
+		p.macAppearance(f)
 	}
-	f.na()
+}
+
+// soundItems is a sound select's menu: picking one previews it and saves.
+func soundItems(ss []huddleui.Sound, set func(string)) []MenuItem {
+	var items []MenuItem
+	for _, s := range ss {
+		s := s
+		items = append(items, MenuItem{Label: s.Label, Do: func() {
+			huddleui.PlaySlackSound(s.Value)
+			set(s.Value)
+		}})
+	}
+	return items
 }
 
 // soundName is Slack's label for a notification sound file (def: none set).
 func soundName(v, def string) string {
+	if l := huddleui.SoundLabel(v); l != "" {
+		return l
+	}
 	v = strings.TrimSuffix(v, ".mp3")
 	switch v {
 	case "":
@@ -221,39 +239,18 @@ func (a *App) teamURL(path string) string {
 // ---- VIP ----
 
 func (p *prefsModal) vipPage(f *prefsForm) {
-	a := p.a
 	f.subheading("VIP Notifications")
 	f.check("priority_dnd_override", "Always allow notifications from VIPs",
 		"Still get message notifications from your VIPs, even when general notifications are paused", false, false)
-	f.off("priority_sidebar_section", "Create VIP unreads section", "This section will appear at the top of your sidebar so you never miss a mention or message.", p.prefBool("priority_sidebar_section", false), false)
-	f.na()
+	// isVipSectionPrefEnabled: the row shows under vip_section_pref; core
+	// fills the VIP unreads section (core/prefs_a.go priorityChannels)
+	if c := p.a.Core(); c != nil && c.Experiment("vip_section_pref") == "on" {
+		f.check("priority_sidebar_section", "Create VIP unreads section", "This section will appear at the top of your sidebar so you never miss a mention or message.", false, false)
+	}
 	f.gap()
 	f.subheading("VIP List")
 	f.para("Decide who or what you want prioritized at the top of your Home, DMs and Activity.")
-	f.textBox("vip_search", "", "Search to add people, apps and workflows")
-	f.muted("Adding VIPs isn’t available in Clack yet.", false)
-	c := a.Core()
-	var ids []string
-	if c != nil {
-		ids = c.VIPs()
-	}
-	f.subheading("Added to your VIP list")
-	if len(ids) == 0 {
-		f.muted("No VIPs added yet", false)
-	}
-	for _, id := range ids {
-		id := id
-		name, av := id, ""
-		if u, ok := c.User(id); ok {
-			name, av = u.Name, u.Avatar
-			if u.RealName != "" {
-				name = u.RealName
-			}
-		} else {
-			ensureUserAsync(a, id)
-		}
-		f.listRow("vip."+id, av, name, "Remove", func() { a.removeVIP(id, nil) })
-	}
+	p.vipList(f) // prefs_a.go: search, Added to your VIP list, Recommended
 }
 
 // ---- Navigation (Slack's tab_rail) ----
@@ -313,13 +310,17 @@ var sidebarViews = []struct{ pref, label string }{
 func (p *prefsModal) homePage(f *prefsForm) {
 	f.subheading("Channel organization")
 	f.off("disable_channel_join_banner", "Show suggestions for getting started in new channels", "", !p.prefBool("disable_channel_join_banner", false), false)
-	f.off("disable_auto_channel_sort", "Sort channels into sidebar sections automatically", "", !p.prefBool("disable_auto_channel_sort", false), false)
 	f.na()
+	// Slack's servers file a joined channel into a section (the client
+	// only reads the placement back): the box is the pref's negation.
+	f.check("disable_auto_channel_sort", "Sort channels into sidebar sections automatically", "", false, true)
 	f.hr()
 	f.subheading("Show activity")
-	f.off("enable_home_unread_dot", "Show a dot on the Home icon when there is unread activity", "", p.prefBool("enable_home_unread_dot", true), false)
+	// HomeUnreadDotPreferences: the input is named enable_home_unread_dot
+	// but the pref is home_unread_dot; off, the Home tab shows no dot or
+	// badge (host.go railBadge)
+	f.check("home_unread_dot", "Show a dot on the Home icon when there is unread activity", "", true, false)
 	f.link("home_dot_help", "Learn more", slackHelp("212596808"))
-	f.na()
 	f.gap()
 	f.subheading("Always show in the sidebar:")
 	for _, v := range sidebarViews {
@@ -364,15 +365,18 @@ func (p *prefsModal) homePage(f *prefsForm) {
 	f.hr()
 	f.subheading("Sidebar Organization")
 	// core's sidebar rules apply these (internal/core/sidebar_rules.go)
-	f.off("show_sidebar_avatars", "Show profile photos next to DMs", "", p.prefBool("show_sidebar_avatars", true), false)
+	// SidebarAvatarsPref reads !!show_sidebar_avatars; off, DM rows show a
+	// presence badge (slackc_shell.go)
+	f.check("show_sidebar_avatars", "Show profile photos next to DMs", "", false, false)
 	f.check("separate_private_channels", "Separate private channels from public ones in sidebar", "", false, false)
 	f.check("undo_channel_intermix", "Separate direct messages and apps from channels in sidebar", "", false, false)
 	f.check("boost_mentions", "Move items with unread Mentions to top of sections", "", false, false)
-	f.off("should_show_connect_section", "Organize external conversations into the External Connections section", "", p.prefBool("should_show_connect_section", true), false)
+	// isSlackConnectSectionVisible: core files externally shared
+	// conversations into the slack_connect section (core/app.go sections)
+	f.check("should_show_connect_section", "Organize external conversations into the External Connections section", "", false, false)
 	// improve_mute_pref: the box is the pref's negation
 	f.check("show_muted_items_outside_sidebar_menus", "Hide muted channels from your sidebar", "", false, true)
 	f.muted("You’ll always be able to find them in the channel section menu and they’ll pop up again if someone mentions you.", true)
-	f.muted("Profile photos and External Connections: "+naNote, false)
 }
 
 // ---- Messages & media ----
@@ -419,30 +423,43 @@ func (p *prefsModal) messagesPage(f *prefsForm) {
 	f.subheading("Emoji")
 	f.subheading("Default Skin Tone")
 	f.para("Choose the default skin tone that will be used whenever you use certain emojis in reactions and messages.")
-	tone := p.prefStr("preferred_skin_tone")
-	if tone == "" {
-		tone = "1"
-	}
-	for i, l := range skinTones {
-		v := strconv.Itoa(i + 1)
-		f.option("pref.preferred_skin_tone="+v, l, "", tone == v, true, func() { p.setPref("preferred_skin_tone", v) })
-	}
-	f.off("emoji_mode", "Display emoji as plain text", "", p.prefStr("emoji_mode") == "as_text", false)
-	f.check("jumbomoji", "Show JUMBOMOJI", "Display the jumbo versions of emoji (up to 23 at a time!) in messages without text.", true, false)
-	f.off("convert_emoticons", "Convert my typed emoticons to emoji, so :D becomes 😃", "", p.prefBool("convert_emoticons", true), false)
-	f.off("quick_reactions", "Show one-click reactions on messages", "", p.prefBool("user_customized_quick_reactions_display_feature", true), false)
-	f.muted("Plain-text emoji, emoticons and one-click reactions: "+naNote, false)
+	p.skinTonePicker(f) // prefs_a.go: Slack's ✋ radios
+	// EmojiPref: emoji_mode as_text / default; turning text on also turns
+	// convert_emoticons off (0), and both JUMBOMOJI and emoticons grey
+	// while it's on (JUMBOMOJI also under Compact)
+	asText := p.prefStr("emoji_mode") == "as_text"
+	emoticons := p.prefBool("convert_emoticons", true)
+	f.option("pref.emoji_mode", "Display emoji as plain text", "", asText, false, func() {
+		if asText {
+			p.setPref("emoji_mode", "default")
+			return
+		}
+		kv := map[string]any{"emoji_mode": "as_text"}
+		if emoticons {
+			kv["convert_emoticons"] = 0
+		}
+		p.setPrefs(kv)
+	})
+	jumbo := p.prefBool("jumbomoji", true)
+	f.optionAt("pref.jumbomoji", "Show JUMBOMOJI", "Display the jumbo versions of emoji (up to 23 at a time!) in messages without text.", jumbo, false,
+		!asText && p.prefStr("messages_theme") != "dense", func() { p.setPref("jumbomoji", !jumbo) })
+	f.optionAt("pref.convert_emoticons", "Convert my typed emoticons to emoji, so :D becomes 😃", "", emoticons, false, !asText,
+		func() { p.setPref("convert_emoticons", !emoticons) }) // the composer converts them (composer/emoticon.go)
+	p.quickReactionsPref(f) // prefs_a.go
 	f.hr()
 	f.subheading("Inline media & links")
 	f.check("expand_internal_inline_imgs", "Show images and files uploaded to Slack", "", true, false)
 	f.check("expand_inline_imgs", "Show images and files from linked websites", "", true, false)
-	f.off("obey_inline_img_limit", "Even if they’re larger than 20MB", "", !p.prefBool("obey_inline_img_limit", true), false)
+	// InlineMediaPref: the box is !obey_inline_img_limit, greyed without
+	// expand_inline_imgs (richview imageTooLarge)
+	obey := p.prefBool("obey_inline_img_limit", true)
+	f.optionAt("pref.obey_inline_img_limit", "Even if they’re larger than 20MB", "", !obey, false, p.prefBool("expand_inline_imgs", true),
+		func() { p.setPref("obey_inline_img_limit", !obey) })
 	f.check("expand_non_media_attachments", "Show text previews of linked websites", "", true, false)
 	f.hr()
 	f.subheading("Bring emails into Slack")
 	f.para("You can upload any important email to Slack by forwarding it to a unique email address. Slack will deliver the email, and you can keep it private or share it with your team.")
-	f.button("email_forwarding", "Get a Forwarding Address", false, nil)
-	f.na()
+	p.emailForwarding(f) // prefs_a.go
 }
 
 // ---- Language & region ----
@@ -456,12 +473,7 @@ func (p *prefsModal) languagePage(f *prefsForm) {
 	f.muted("Choose the language you’d like to use with Slack.", false)
 	f.hr()
 	f.subheading("Time zone")
-	f.off("set_tz_automatically", "Set time zone automatically", "", p.prefBool("set_tz_automatically", true), false)
-	tz := p.prefStr("tz")
-	if tz == "" {
-		tz = "Not set"
-	}
-	f.selectBox("tz", "", tz, false, nil)
+	p.timezonePref(f) // prefs_a.go
 	f.muted("Slack uses your time zone to send summary and notification emails, for times in your activity feeds, and for reminders.", false)
 	f.hr()
 	f.selectBox("keyboard_layout", "Keyboard layout", "English (US)", false, nil)

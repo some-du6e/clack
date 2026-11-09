@@ -12,6 +12,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
 )
 
 // The shell's Slack component boundaries and class tags for Taut plugins
@@ -335,7 +336,14 @@ func (e sbEntity) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	}
 	fg := e.fg
 	iy := (rowH - gtx.Dp(16)) / 2
-	if kind == "im" || kind == "app" {
+	if (kind == "im" || kind == "app") && !uipref.Get().SidebarAvatars {
+		// show_sidebar_avatars off: BaseChannelPrefix draws the presence
+		// badge in the icon's place (BaseChannelPrefixPresence)
+		s := gtx.Dp(10)
+		at(gtx, image.Pt((gtx.Dp(16)-s)/2, (rowH-s)/2), image.Pt(gtx.Dp(120), s), func(gtx layout.Context) layout.Dimensions {
+			return slackc.Component(gtx, "BasePresence", sbPresence{a: a, active: conv.Active, sel: e.sel, self: conv.Self, key: conv.ID}, sbPresence.props, sbPresence.layout)
+		})
+	} else if kind == "im" || kind == "app" {
 		at(gtx, image.Pt(0, iy), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
 			return a.avatar(gtx, conv.Avatar, conv.Name, gtx.Dp(16), gtx.Dp(4))
 		})
