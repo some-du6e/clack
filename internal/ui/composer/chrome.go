@@ -112,6 +112,9 @@ type chromeState struct {
 	SelN        int // selected characters
 	// TypingIDs / TypingNames: who Typing names, sorted by name.
 	TypingIDs, TypingNames []string
+	// TypingStatus is an app's assistant status (Typing is then
+	// "<app> <status>", Slack's AiAppStatusIndicator).
+	TypingStatus string
 }
 
 // crBtn names every clickable in the chrome.

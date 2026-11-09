@@ -303,6 +303,9 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 	case richtext.Actions:
 		return l.buttons(b.Buttons, x, y, w)
 
+	case richtext.Agent:
+		return l.agent(b, x, y, w)
+
 	case richtext.Table:
 		return l.table(b, x, y, w)
 

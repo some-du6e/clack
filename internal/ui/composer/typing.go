@@ -15,9 +15,14 @@ import (
 const typingTTL = 6 * time.Second
 
 type typer struct {
-	name  string
-	until time.Time
+	name   string
+	until  time.Time
+	status string // an app's assistant status ("is thinking…"), assistant.threads.setStatus
 }
+
+// assistantTTL is how long an app status lasts without a message
+// (assistant.threads.setStatus: two minutes).
+const assistantTTL = 2 * time.Minute
 
 type typingState struct {
 	mu    sync.Mutex
@@ -77,7 +82,7 @@ func (s *typingState) invalidators() []func() {
 
 func (s *typingState) apply(ev core.Event) {
 	switch ev.Type {
-	case "typing", "message":
+	case "typing", "message", "assistant_status":
 	default:
 		return
 	}
@@ -99,6 +104,20 @@ func (s *typingState) apply(ev core.Event) {
 			name = "Someone"
 		}
 		us[ev.UserID] = typer{name: name, until: time.Now().Add(typingTTL)}
+	case "assistant_status":
+		st, _ := core.AssistantStatusOf(ev)
+		us := s.m[k]
+		if st.Status == "" || (st.StatusType != "" && st.StatusType != "typing") {
+			if us != nil {
+				delete(us, ev.UserID)
+			}
+			break
+		}
+		if us == nil {
+			us = map[string]typer{}
+			s.m[k] = us
+		}
+		us[ev.UserID] = typer{name: firstNonEmptyName(ev.Name), until: time.Now().Add(assistantTTL), status: st.Status}
 	case "message":
 		uid := ev.UserID
 		if uid == "" && ev.Msg != nil {
@@ -124,6 +143,37 @@ func (s *typingState) apply(ev core.Event) {
 	for _, f := range inv {
 		f()
 	}
+}
+
+func firstNonEmptyName(n string) string {
+	if n == "" {
+		return "Someone"
+	}
+	return n
+}
+
+// assistantLine is Slack's AiAppStatusIndicator: when the only typer is
+// an app with a status, "<name> <status>" replaces the typing line.
+func (s *typingState) assistantLine(ch, ts, self string) (name, status string) {
+	if s == nil {
+		return "", ""
+	}
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	us := s.m[draftKey(ch, ts)]
+	n := 0
+	for id, t := range us {
+		if id == self || t.until.Before(now) {
+			continue
+		}
+		n++
+		name, status = t.name, t.status
+	}
+	if n != 1 || status == "" {
+		return "", ""
+	}
+	return name, status
 }
 
 // names returns who is typing in ch/ts (excluding self), sorted.

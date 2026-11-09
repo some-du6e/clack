@@ -41,6 +41,10 @@ type Message struct {
 	Attachments json.RawMessage // legacy attachments / unfurls as sent
 	Metadata    json.RawMessage // app metadata {event_type, event_payload}
 	BotProfile  *BotProfile     // bot_profile of bot messages
+	// StreamingState is an app's chat stream (chat.startStream /
+	// appendStream / stopStream): "in_progress" while open, then
+	// "completed" or "errored" (agent.go).
+	StreamingState string
 }
 
 // SubtypeSlackbotResponse is the subtype of Slackbot's answers to the
