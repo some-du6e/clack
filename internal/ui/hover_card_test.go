@@ -2,7 +2,13 @@ package ui
 
 import (
 	"context"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/op/clip"
+	"gioui.org/op/paint"
+	"gioui.org/widget"
 	"image"
+	"image/color"
 	"image/png"
 	"os"
 	"path/filepath"
@@ -165,15 +171,24 @@ func TestHoverCardInChannel(t *testing.T) {
 	// workspace admin, a deactivated account, Slackbot, and yourself
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	ids := []string{fakeslack.ProfileID, fakeslack.AdminID, fakeslack.DeactivatedID, fakeslack.SlackbotID, fakeslack.SelfID}
+	// an app's bot user and another org's app (AppHoverCard), a Slack
+	// Connect member (the external banner)
+	ids := []string{fakeslack.ProfileID, fakeslack.AdminID, fakeslack.DeactivatedID, fakeslack.SlackbotID, fakeslack.SelfID,
+		fakeslack.AppUserID, fakeslack.ExternalAppUserID, fakeslack.ExternalID}
 	e.a.data.core.EnsureUsers(ctx, ids)
 	for _, id := range ids {
 		anchor := image.Rect(e.a.primaryOrigin.X+60, e.size.Y-180, e.a.primaryOrigin.X+160, e.size.Y-158)
 		ctl.Show(hovercard.Request{Key: id, UserID: id, Anchor: anchor}, time.Now())
 		e.frame()
 		r := e.a.hover.card.Rect()
-		e.move(f32.Pt(float32(r.Min.X+20), float32(r.Min.Y+20))) // rest on the card
-		e.settle(200 * time.Millisecond)
+		// rest on the card near its bottom, which stays 12px above the
+		// trigger while an app card's loading state gives way to its data
+		e.move(f32.Pt(float32(r.Min.X+20), float32(r.Max.Y-20)))
+		e.settle(500 * time.Millisecond) // apps.profile.get, team.info, avatars
+		if e.a.hover.card == nil {
+			t.Fatalf("%s: the card closed while resting on it (%v)", id, r)
+		}
+		r = e.a.hover.card.Rect()
 		if got, _, open := ctl.Open(); !open || got.UserID != id {
 			t.Fatalf("%s: card not open (%+v)", id, got)
 		}
@@ -185,4 +200,69 @@ func TestHoverCardInChannel(t *testing.T) {
 		time.Sleep(hovercard.HideDelay + 50*time.Millisecond)
 		e.frame()
 	}
+}
+
+// hostOverlay is a full-window dialog whose own content has a trigger
+// (like the channel details dialog's Members tab).
+type hostOverlay struct {
+	scrim widget.Clickable
+	trig  hovercard.Trigger
+	user  string
+	done  bool
+}
+
+func (o *hostOverlay) Layout(gtx layout.Context) layout.Dimensions {
+	sz := gtx.Constraints.Max
+	o.scrim.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		paint.FillShape(gtx.Ops, color.NRGBA{A: 0x80}, clip.Rect{Max: sz}.Op())
+		return layout.Dimensions{Size: sz}
+	})
+	defer op.Offset(image.Pt(300, 400)).Push(gtx.Ops).Pop()
+	paint.FillShape(gtx.Ops, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}, clip.Rect{Max: image.Pt(120, 22)}.Op())
+	o.trig.Layout(gtx, o.user, image.Pt(120, 22))
+	return layout.Dimensions{Size: sz}
+}
+func (o *hostOverlay) Dismissed() bool  { return o.done }
+func (o *hostOverlay) HoverCards() bool { return true }
+
+// A dialog whose content has triggers (hoverHost) doesn't block the card,
+// and the card draws above the dialog; any other overlay still blocks it.
+func TestHoverCardOverDialog(t *testing.T) {
+	fs, err := fakeslack.Start(fakeslack.Small)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { fs.Close() })
+	e := startEnv(t, fs, t.TempDir())
+	if os.Getenv("HOVER_SHOTS_DIR") != "" {
+		w, err := headless.NewWindow(e.size.X, e.size.Y)
+		if err != nil {
+			t.Fatalf("headless window: %v", err)
+		}
+		e.gpu = w
+	}
+	e.waitReady()
+	e.openChannel(fs.ChannelIDs()[1])
+	e.settle(300 * time.Millisecond)
+	if _, ok := any(detailsOverlay{}).(hoverHost); !ok {
+		t.Fatal("the channel details dialog doesn't host hover cards")
+	}
+	o := &hostOverlay{user: fakeslack.ProfileID}
+	e.a.ShowOverlay(o)
+	e.frame()
+	e.move(f32.Pt(340, 410))
+	e.frame()
+	time.Sleep(hovercard.ShowDelay + 50*time.Millisecond)
+	e.frame()
+	e.frame()
+	req, _, open := e.a.hover.ctl.Open()
+	if !open || req.UserID != fakeslack.ProfileID {
+		t.Fatalf("no card from the dialog's trigger (open=%v %+v)", open, req)
+	}
+	if !e.a.hover.over {
+		t.Error("the card isn't drawn above the dialog")
+	}
+	hcShot(t, e, "hover-card-over-dialog")
+	o.done = true
+	e.frame()
 }

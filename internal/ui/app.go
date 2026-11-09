@@ -547,6 +547,7 @@ func (a *App) frame(gtx layout.Context) {
 	a.layoutSwipe(gtx, primary)
 	a.layoutHoverCard(gtx) // above the content, under the overlays
 	a.layoutOverlays(gtx)
+	a.layoutHoverCardOver(gtx) // over a dialog whose own list has triggers
 	a.slackcOverlays(gtx)
 	a.layoutToast(gtx)
 	a.rootPointer(gtx)

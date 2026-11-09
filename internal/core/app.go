@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -820,7 +821,9 @@ func (a *App) userOf(u *slack.User) User {
 		TZLabel: u.TZLabel, IsBot: u.IsBot || u.ID == "USLACKBOT", Deleted: u.Deleted, IsAdmin: u.IsAdmin,
 		IsOwner: u.IsOwner, Guest: u.IsRestricted || u.IsUltraRestricted, Color: u.Color,
 		Huddle: u.Profile.HuddleState == "in_a_huddle", Agent: u.AgentStatus == "consistently_an_agent",
+		Stranger: u.IsStranger, BotID: u.Profile.BotID, AppID: u.Profile.APIAppID,
 	}
+	v.TeamID, v.External = a.locality(u)
 	if v.RealName == "​" {
 		v.RealName = ""
 	}
@@ -838,7 +841,40 @@ func (a *App) userOf(u *slack.User) User {
 	a.S.RLock()
 	v.Presence = a.S.Presence[u.ID]
 	a.S.RUnlock()
+	if v.Presence == "" && (u.Presence == "active" || u.Presence == "away") {
+		v.Presence = u.Presence // the user object's own (users.info presence), until presence_change
+	}
 	return v
+}
+
+// locality is Slack's computeLocality (client-boot ppn0): the member's
+// team (the org's id on Enterprise Grid when the user has an
+// enterprise_user, else team_id, else the viewer's team) and whether the
+// member is external: on neither the viewer's team (team_id or
+// enterprise_user.teams) nor its org.
+func (a *App) locality(u *slack.User) (team string, external bool) {
+	cur := firstNonEmpty(a.C.Creds.Team, a.S.TeamID)
+	org := a.C.Creds.EnterpriseID
+	eu := u.EnterpriseUser
+	switch {
+	case org != "" && eu != nil && eu.EnterpriseID != "":
+		team = eu.EnterpriseID
+	case u.TeamID != "":
+		team = u.TeamID
+	case eu != nil && u.ID == eu.ID && eu.EnterpriseID != "":
+		team = eu.EnterpriseID
+	default:
+		team = cur
+	}
+	if cur == "" {
+		return team, false
+	}
+	member := team == cur
+	if eu != nil && slices.Contains(eu.Teams, cur) {
+		member = true
+	}
+	inOrg := org != "" && (team == org || eu != nil && eu.EnterpriseID == org)
+	return team, !member && !inOrg
 }
 
 // User returns a known user (from memory; see EnsureUsers).

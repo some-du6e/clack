@@ -1,12 +1,14 @@
 package ui
 
 import (
+	"context"
 	"time"
 
 	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op/paint"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/blockkit"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/hovercard"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
@@ -19,6 +21,7 @@ type profileHover struct {
 	ctl  hovercard.Controller
 	card *popups.ProfileCard
 	gen  int
+	over bool // drawn above the overlays (the top one hosts the trigger)
 }
 
 // hoverBegin runs at the start of the frame, before any widget reads
@@ -29,6 +32,7 @@ func (a *App) hoverBegin(gtx layout.Context) {
 	h := &a.hover
 	if h.ctl.Pointer == nil {
 		h.ctl.Pointer = a.PointerPos
+		a.installAppCardHooks()
 	}
 	hovercard.SetDefault(&h.ctl)
 	if _, _, open := h.ctl.Open(); !open {
@@ -47,26 +51,77 @@ func (a *App) hoverBegin(gtx layout.Context) {
 
 // hoverBlocked reports whether something other than the card's own menu
 // covers the window: Slack's menus, modals and popovers put an overlay
-// over the page, so no trigger under them gets mouseover.
+// over the page, so no trigger under them gets mouseover. The top overlay
+// may host triggers itself (hoverHost: the channel details dialog's
+// member list): then it doesn't block, and the card draws above it.
 func (a *App) hoverBlocked() bool {
 	if a.login != nil || slackc.HasOverlays() {
 		return true
 	}
-	for _, o := range a.overlays {
-		if o.Dismissed() {
+	top := a.hoverTop()
+	if top == nil {
+		return false
+	}
+	h, ok := top.(hoverHost)
+	return !ok || !h.HoverCards()
+}
+
+// hoverHost is an overlay whose own content has profile triggers.
+type hoverHost interface{ HoverCards() bool }
+
+// HoverCards: the channel details dialog's Members tab has Slack's
+// ProfileHoverTrigger on each name (MediumMemberEntity showHoverCard).
+func (o detailsOverlay) HoverCards() bool { return true }
+
+// hoverTop is the topmost overlay that draws something (nil: none).
+func (a *App) hoverTop() Overlay {
+	for i := len(a.overlays) - 1; i >= 0; i-- {
+		o := a.overlays[i]
+		if o == nil || o.Dismissed() {
 			continue
 		}
 		if inv, ok := o.(interface{ Invisible() bool }); ok && inv.Invisible() {
 			continue // popups' async pump draws nothing
 		}
-		return true
+		return o
 	}
-	return false
+	return nil
+}
+
+// hoverOverOverlay reports whether the card belongs above the overlays
+// this frame (the top overlay hosts the triggers).
+func (a *App) hoverOverOverlay() bool {
+	if a.hover.card != nil && a.hover.card.Holding() {
+		return a.hover.over // keep it where it was while its menu is open
+	}
+	top := a.hoverTop()
+	if top == nil {
+		return false
+	}
+	h, ok := top.(hoverHost)
+	return ok && h.HoverCards()
 }
 
 // layoutHoverCard runs the controller after the content has laid out (so
-// this frame's triggers have reported) and draws the open card.
+// this frame's triggers have reported) and draws the open card, unless
+// the top overlay hosts the triggers (layoutHoverCardOver draws it then).
 func (a *App) layoutHoverCard(gtx layout.Context) {
+	a.hover.over = a.hoverOverOverlay()
+	if a.hover.over {
+		return
+	}
+	a.hoverCardFrame(gtx)
+}
+
+// layoutHoverCardOver draws the card above the overlays when one of them
+// hosts its trigger (after layoutOverlays, so their triggers reported).
+func (a *App) layoutHoverCardOver(gtx layout.Context) {
+	if a.hover.over {
+		a.hoverCardFrame(gtx)
+	}
+}
+
+func (a *App) hoverCardFrame(gtx layout.Context) {
 	h := &a.hover
 	if h.card != nil && h.card.Dismissed() { // a button on it closed it
 		h.ctl.Close()
@@ -81,7 +136,7 @@ func (a *App) layoutHoverCard(gtx layout.Context) {
 		return
 	}
 	if h.card == nil || h.gen != gen {
-		h.card = popups.NewHoverProfileCard(a, req.Anchor, req.UserID)
+		h.card = popups.NewHoverCard(a, req.Anchor, req.UserID, req.BotID)
 		h.gen = gen
 	}
 	g := gtx
@@ -102,4 +157,47 @@ func (a *App) layoutHoverCard(gtx layout.Context) {
 		return
 	}
 	hovercard.Invalidate(gtx, next)
+}
+
+// installAppCardHooks wires the app hover card's actions: About this app
+// opens the app's DM on its About tab, a slash command row types the
+// command into the open conversation's composer.
+func (a *App) installAppCardHooks() {
+	popups.OpenAppAbout = func(uid string) {
+		if a.data == nil || a.data.core == nil {
+			return
+		}
+		c := a.data.core
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			cv, err := c.OpenDM(ctx, uid)
+			a.Post(func() {
+				if err != nil || cv.ID == "" {
+					a.Toast("Couldn't open the app")
+					return
+				}
+				a.Navigate("c/" + cv.ID)
+				if dm := blockkit.AppDMFor(a, cv.ID); dm != nil {
+					dm.SetTab("about")
+				}
+			})
+		}()
+	}
+	popups.ComposerInsert = func(s string) bool {
+		ch := a.router.Current().Channel()
+		if ch == "" {
+			return false
+		}
+		cv := a.convos[ch+"/"]
+		if cv == nil || cv.comp == nil {
+			return false
+		}
+		ins, ok := cv.comp.(interface{ InsertText(string) })
+		if !ok {
+			return false
+		}
+		ins.InsertText(s)
+		return true
+	}
 }
