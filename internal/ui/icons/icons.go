@@ -57,13 +57,21 @@ func reg(name string, parts ...part) { registry[name] = &def{parts: parts} }
 // Get returns the named icon, or a visible placeholder box for unknown names
 // (so a typo shows up on screen instead of panicking). Unknown names are
 // logged once and listed by Missing.
+//
+// Kept small enough to inline: an inlined d.draw method value stays on the
+// caller's stack (row layouts call Get per frame; see messages'
+// TestRowLayoutAllocs), so the miss path lives in getMissing.
 func Get(name string) Icon {
-	d, ok := registry[name]
-	if !ok {
-		noteMissing(name, "missing")
-		d = registry["missing"]
+	if d, ok := registry[name]; ok {
+		return d.draw
 	}
-	return d.draw
+	return getMissing(name)
+}
+
+//go:noinline
+func getMissing(name string) Icon {
+	noteMissing(name, "missing")
+	return registry["missing"].draw
 }
 
 var missing struct {

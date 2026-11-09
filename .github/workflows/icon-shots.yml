@@ -56,7 +56,7 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p dist "$ICON_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestIconsMatchSlack|TestStrokeGamma|TestSlackNames|TestFormatBarShots|TestEmojiTabRow' \
+          xvfb-run -a go test -p 1 -count=1 -v -run 'TestIconsMatchSlack|TestStrokeGamma|TestSlackNames|TestFormatBarShots|TestEmojiTabRow' \
             ./internal/ui/icons/ ./internal/ui/theme/ ./internal/ui/composer/ ./internal/ui/popups/ 2>&1 | tee dist/icon-shots.log
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
