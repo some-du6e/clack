@@ -13,6 +13,7 @@ import (
 	"image/color"
 	"io"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -332,7 +333,7 @@ func (d *ChannelDetails) loadMembers(marker string) {
 		cur, _, _ := d.members.get()
 		prev = append([]core.User(nil), cur.users...)
 	}
-	c, id, self, first := d.h.Core(), d.id, d.selfID(), marker == ""
+	c, id, self := d.h.Core(), d.id, d.selfID()
 	d.members.load(d.h, true, func(ctx context.Context) (cdMembersPage, error) {
 		// Slack's Members tab is people only (MEMBER_LIST filter "everyone
 		// AND NOT bots AND NOT apps"); bots and apps are Agents & apps.
@@ -340,10 +341,7 @@ func (d *ChannelDetails) loadMembers(marker string) {
 		if err != nil {
 			return cdMembersPage{}, err
 		}
-		if first {
-			us = cdSelfFirst(us, self)
-		}
-		return cdMembersPage{users: append(prev, us...), next: next}, nil
+		return cdMembersPage{users: cdSortMembers(append(prev, us...), self), next: next}, nil
 	})
 }
 
@@ -1180,6 +1178,17 @@ func cdBox(b *base, gtx C, rows ...W) D {
 	return dims
 }
 
+// cdLine22 gives w at least one 22px line: Slack's 15/22 field text, whose
+// single lines Gio measures at ~19px (rows came out 3–6px short of
+// Slack's 77, 2026-11-08).
+func cdLine22(gtx C, w W) D {
+	dims := w(gtx)
+	if h := gtx.Sp(22); dims.Size.Y < h && dims.Size.Y > 0 {
+		dims.Size.Y = h
+	}
+	return dims
+}
+
 // cdField is a field row: padding 16px 20px, 15/22 bold label, an
 // optional "Edit" (13/18 bold #1264a3) at the right, the value below.
 func (d *ChannelDetails) cdField(gtx C, label string, edit *widget.Clickable, value W) D {
@@ -1187,23 +1196,25 @@ func (d *ChannelDetails) cdField(gtx C, label string, edit *widget.Clickable, va
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 		return col(gtx,
 			layout.Rigid(func(gtx C) D {
-				return row(gtx, layout.Start,
-					layout.Flexed(1, func(gtx C) D {
-						return dirFill(gtx, func(gtx C) D { return d.para(gtx, 15, 22, wBold, d.p.Text, 1, label) })
-					}),
-					layout.Rigid(func(gtx C) D {
-						if edit == nil {
-							return D{}
-						}
-						return cdLink(&d.base, gtx, edit, 13, "Edit")
-					}),
-				)
+				return cdLine22(gtx, func(gtx C) D {
+					return row(gtx, layout.Start,
+						layout.Flexed(1, func(gtx C) D {
+							return dirFill(gtx, func(gtx C) D { return d.para(gtx, 15, 22, wBold, d.p.Text, 1, label) })
+						}),
+						layout.Rigid(func(gtx C) D {
+							if edit == nil {
+								return D{}
+							}
+							return cdLink(&d.base, gtx, edit, 13, "Edit")
+						}),
+					)
+				})
 			}),
 			layout.Rigid(func(gtx C) D {
 				if value == nil {
 					return D{}
 				}
-				return dirFill(gtx, value)
+				return cdLine22(gtx, func(gtx C) D { return dirFill(gtx, value) })
 			}),
 		)
 	})
@@ -1214,8 +1225,8 @@ func (d *ChannelDetails) cdFieldW(gtx C, label, value W) D {
 	return layout.Inset{Top: 16, Bottom: 16, Left: 20, Right: 20}.Layout(gtx, func(gtx C) D {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 		return col(gtx,
-			layout.Rigid(func(gtx C) D { return dirFill(gtx, label) }),
-			layout.Rigid(func(gtx C) D { return dirFill(gtx, value) }),
+			layout.Rigid(func(gtx C) D { return cdLine22(gtx, func(gtx C) D { return dirFill(gtx, label) }) }),
+			layout.Rigid(func(gtx C) D { return cdLine22(gtx, func(gtx C) D { return dirFill(gtx, value) }) }),
 		)
 	})
 }
@@ -1356,7 +1367,9 @@ func (d *ChannelDetails) leaveField(gtx C, inf core.ChannelDetails) D {
 	if !d.confirmLeave {
 		return d.cdButtonField(gtx, &d.leaveRow, func(gtx C) D {
 			return layout.Inset{Top: 16, Bottom: 16, Left: 20, Right: 20}.Layout(gtx, func(gtx C) D {
-				return dirFill(gtx, func(gtx C) D { return d.para(gtx, 15, 22, wBold, d.p.Red, 1, "Leave channel") })
+				return dirFill(gtx, func(gtx C) D {
+					return cdLine22(gtx, func(gtx C) D { return d.para(gtx, 15, 22, wBold, d.p.Red, 1, "Leave channel") })
+				})
 			})
 		})
 	}
@@ -1588,6 +1601,22 @@ func (d *ChannelDetails) membersTab(gtx C) D {
 			})
 		}),
 	)
+}
+
+// cdSortMembers is the Members list order Slack showed for #clack
+// (2026-11-08): the viewer first, then by display name, case-insensitive
+// ("clod (you)", dodge1, karim, kyto), whatever order the edge list
+// (present_first) returned.
+func cdSortMembers(us []core.User, self string) []core.User {
+	out := cdSelfFirst(append([]core.User(nil), us...), self)
+	rest := out
+	if len(out) > 0 && out[0].ID == self {
+		rest = out[1:]
+	}
+	sort.SliceStable(rest, func(i, j int) bool {
+		return strings.ToLower(displayName(rest[i])) < strings.ToLower(displayName(rest[j]))
+	})
+	return out
 }
 
 // cdSelfFirst moves the viewer to the top, as Slack's members list has it
@@ -2370,7 +2399,7 @@ func (d *ChannelDetails) workspacesField(gtx C, inf core.ChannelDetails) D {
 				return row(gtx, layout.Start,
 					layout.Flexed(1, func(gtx C) D {
 						return dirFill(gtx, func(gtx C) D {
-							return d.para(gtx, 15, 22, wBold, dim, 1, "Workspaces with access to this channel")
+							return cdLine22(gtx, func(gtx C) D { return d.para(gtx, 15, 22, wBold, dim, 1, "Workspaces with access to this channel") })
 						})
 					}),
 					layout.Rigid(func(gtx C) D {
@@ -2398,9 +2427,11 @@ func (d *ChannelDetails) workspacesField(gtx C, inf core.ChannelDetails) D {
 							return layout.Inset{Right: 8}.Layout(gtx, func(gtx C) D { return d.para(gtx, 15, 22, wReg, dim, 1, name) })
 						}))
 				}
-				return row(gtx, layout.Middle, ch...)
+				return cdLine22(gtx, func(gtx C) D { return row(gtx, layout.Middle, ch...) })
 			}),
-			layout.Rigid(func(gtx C) D { return cdLinkReg(&d.base, gtx, &d.orgLearn, 15, "Learn more") }),
+			layout.Rigid(func(gtx C) D {
+				return cdLine22(gtx, func(gtx C) D { return cdLinkReg(&d.base, gtx, &d.orgLearn, 15, "Learn more") })
+			}),
 		)
 	})
 }

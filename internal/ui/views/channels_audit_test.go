@@ -111,3 +111,14 @@ func TestTopicErrors(t *testing.T) {
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+func TestSortMembers(t *testing.T) {
+	us := []core.User{{ID: "UK", Name: "karim"}, {ID: "UF", Name: "filyentity"}, {ID: "USELF", Name: "clod"}, {ID: "UD", Name: "dodge1"}, {ID: "UY", Name: "Kyto"}}
+	var got []string
+	for _, u := range cdSortMembers(us, "USELF") {
+		got = append(got, u.Name)
+	}
+	if strings.Join(got, ",") != "clod,dodge1,filyentity,karim,Kyto" {
+		t.Errorf("order %v", got)
+	}
+}
