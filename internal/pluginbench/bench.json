@@ -1,0 +1,2078 @@
+{
+  "schema": 1,
+  "generated": "2026-11-09T19:19:50Z",
+  "run": "https://github.com/some-du6e/yoloslackgoclient/actions/runs/42679086236",
+  "sources": [
+    "slick 34f2c25",
+    "taut 6fe5123"
+  ],
+  "plugins": [
+    {
+      "name": "Account Switcher",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "AccountSwitcher",
+          "sha256": "53aef6b542de2d7e0359d386ae1e0de017f8500309efdf04f272b50c551ec544",
+          "size": 4612,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "Switch account in the profile menu",
+              "pass": true,
+              "detail": "Switch account"
+            }
+          ],
+          "patched": [
+            "MenuFromTemplate"
+          ],
+          "roots": 1,
+          "initMs": 5.006,
+          "frameUs": 1082,
+          "frameP95Us": 1753,
+          "baseFrameUs": 1019,
+          "scrollCpuMs": 493.443,
+          "baseCpuMs": 507.939,
+          "allocsFrame": 404.5733333333333,
+          "baseAllocs": 402.92,
+          "jsHeapKb": 130.08203125,
+          "goHeapKb": 3744.1484375,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.6175,
+          "baseIdleCpuMs": 0.4465,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-accountswitcher-taut.png"
+        },
+        {
+          "system": "slick",
+          "id": "AccountSwitcher",
+          "sha256": "c1bb32bf75d06adbec699df09b9fa013f66fa01977a09fdda198dbeea4cb7a71",
+          "size": 36483,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "Switch account in the profile menu",
+              "pass": true,
+              "detail": "Switch account"
+            }
+          ],
+          "patched": [
+            "Menu",
+            "MenuFromTemplate"
+          ],
+          "roots": 2,
+          "initMs": 22.364,
+          "frameUs": 1076,
+          "frameP95Us": 1924,
+          "baseFrameUs": 991,
+          "scrollCpuMs": 500.566,
+          "baseCpuMs": 480.779,
+          "allocsFrame": 405.07666666666665,
+          "baseAllocs": 402.82666666666665,
+          "jsHeapKb": 457.404296875,
+          "goHeapKb": 3728.4765625,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 1.5215,
+          "baseIdleCpuMs": 0.3695,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-accountswitcher-slick.png"
+        }
+      ],
+      "winner": "taut",
+      "reason": "works fully, 4.5x faster to load, 3.5x less JS memory"
+    },
+    {
+      "name": "Admin Backend",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "AdminBackend",
+          "sha256": "658c30a1d1564790978a900038413ba494214bc752410b70d4941af75042c44d",
+          "size": 9320,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "admin tools in a member's profile ⋮ menu",
+              "pass": true,
+              "detail": "Open in Identity"
+            }
+          ],
+          "patched": [
+            "MenuFromTemplate",
+            "RimetoMemberProfileOverflowMenu"
+          ],
+          "roots": 2,
+          "initMs": 3.928,
+          "frameUs": 922,
+          "frameP95Us": 1540,
+          "baseFrameUs": 861,
+          "scrollCpuMs": 427.648,
+          "baseCpuMs": 445.697,
+          "allocsFrame": 408.31666666666666,
+          "baseAllocs": 405.5933333333333,
+          "jsHeapKb": 165.2119140625,
+          "goHeapKb": 3723.234375,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.5185,
+          "baseIdleCpuMs": 0.4095,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-adminbackend-taut.png"
+        },
+        {
+          "system": "slick",
+          "id": "AdminBackend",
+          "sha256": "c6e3481753c3d0b401d7a26dbf7045350ebb5867ae7a626a1bddca2aa44cd3f3",
+          "size": 7300,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "admin tools in a member's profile ⋮ menu",
+              "pass": true,
+              "detail": "Open in Identity"
+            }
+          ],
+          "patched": [
+            "MenuFromTemplate",
+            "RimetoMemberProfileOverflowMenu"
+          ],
+          "roots": 2,
+          "initMs": 7.469,
+          "frameUs": 933,
+          "frameP95Us": 1535,
+          "baseFrameUs": 905,
+          "scrollCpuMs": 432.251,
+          "baseCpuMs": 461.24,
+          "allocsFrame": 407.7866666666667,
+          "baseAllocs": 404.49,
+          "jsHeapKb": 180.953125,
+          "goHeapKb": 3568.3671875,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.4995,
+          "baseIdleCpuMs": 0.417,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-adminbackend-slick.png"
+        }
+      ],
+      "winner": "slick",
+      "reason": "works fully in both; costs within noise, smaller bundle (7.1 KB vs 9.1 KB)"
+    },
+    {
+      "name": "Better Typing Indicator",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "BetterTypingIndicator",
+          "sha256": "15d01169f553382a88e33b8e53a8d76ac7a57c49f06bcb4e45c717836f27e96c",
+          "size": 5533,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "names of everyone typing",
+              "pass": true,
+              "detail": "3 of 3 typists named"
+            }
+          ],
+          "patched": [
+            "MessagePaneInput",
+            "ThreadTypingIndicator",
+            "TypingNames"
+          ],
+          "roots": 1,
+          "initMs": 5.049,
+          "frameUs": 717,
+          "frameP95Us": 1151,
+          "baseFrameUs": 543,
+          "scrollCpuMs": 337.737,
+          "baseCpuMs": 294.936,
+          "allocsFrame": 1113.48,
+          "baseAllocs": 412.41333333333336,
+          "jsHeapKb": 398.83984375,
+          "goHeapKb": 17283.234375,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.212,
+          "baseIdleCpuMs": 0.187,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-bettertypingindicator-taut.png"
+        },
+        {
+          "system": "slick",
+          "id": "BetterTypingIndicator",
+          "sha256": "f7d90a020d093a96d4778efe8e92a858790b24dfc2f7952034b294f6b47c6819",
+          "size": 12672,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "names of everyone typing",
+              "pass": true,
+              "detail": "3 of 3 typists named"
+            }
+          ],
+          "patched": [
+            "MessagePaneInput",
+            "ThreadTypingIndicator",
+            "TypingNames"
+          ],
+          "roots": 1,
+          "initMs": 5.821,
+          "frameUs": 718,
+          "frameP95Us": 1124,
+          "baseFrameUs": 523,
+          "scrollCpuMs": 334.072,
+          "baseCpuMs": 269.052,
+          "allocsFrame": 1120.8766666666668,
+          "baseAllocs": 415.01,
+          "jsHeapKb": 521.443359375,
+          "goHeapKb": 17237.2578125,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.2005,
+          "baseIdleCpuMs": 0.1585,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-bettertypingindicator-slick.png"
+        }
+      ],
+      "winner": "taut",
+      "reason": "works fully, 1.3x less JS memory"
+    },
+    {
+      "name": "Censorship",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "Censorship",
+          "sha256": "edc6acf45852160a778a94217553ace5d8f502f3b45c6cde1b3f695f111bf096",
+          "size": 1813,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "\"job\" masked in the message (default terms)",
+              "pass": true,
+              "detail": "the *** fair is on Friday"
+            }
+          ],
+          "roots": 0,
+          "initMs": 5.286,
+          "frameUs": 1255,
+          "frameP95Us": 2152,
+          "baseFrameUs": 983,
+          "scrollCpuMs": 2191.024,
+          "baseCpuMs": 473.757,
+          "allocsFrame": 1388.88,
+          "baseAllocs": 402.8233333333333,
+          "jsHeapKb": 13300.6044921875,
+          "goHeapKb": 36777.9296875,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.6045,
+          "baseIdleCpuMs": 0.4065,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-censorship-taut.png"
+        },
+        {
+          "system": "slick",
+          "id": "Censorship",
+          "sha256": "2ebb07795d461349d271c0be2237e82a48085b6eb0717628a20fe7a0c0f00342",
+          "size": 10033,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "\"job\" masked in the message (default terms)",
+              "pass": true,
+              "detail": "the *** fair is on Friday"
+            }
+          ],
+          "patched": [
+            "ActivityItem",
+            "MessageListItem",
+            "MessageWrapper",
+            "ThreadRootGeneric"
+          ],
+          "roots": 450,
+          "initMs": 11.382,
+          "frameUs": 1517,
+          "frameP95Us": 2444,
+          "baseFrameUs": 985,
+          "scrollCpuMs": 2203.216,
+          "baseCpuMs": 482.208,
+          "allocsFrame": 1820.9566666666667,
+          "baseAllocs": 401.76,
+          "jsHeapKb": 3343.7978515625,
+          "goHeapKb": 28723.15625,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.605,
+          "baseIdleCpuMs": 0.3955,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-censorship-slick.png"
+        }
+      ],
+      "winner": "taut",
+      "reason": "works fully, 2.2x faster to load, 2.0x less frame overhead"
+    },
+    {
+      "name": "Clear URLs",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "ClearURLs",
+          "sha256": "c8766572eb857d1ec89afa13631944cbd796d593e601c11d1caf5ff730442d42",
+          "size": 2523,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "tracking parameters removed from a sent link",
+              "pass": true
+            }
+          ],
+          "roots": 0,
+          "initMs": 2.922,
+          "frameUs": 916,
+          "frameP95Us": 1512,
+          "baseFrameUs": 887,
+          "scrollCpuMs": 427.54,
+          "baseCpuMs": 425.035,
+          "allocsFrame": 409.02666666666664,
+          "baseAllocs": 406.01666666666665,
+          "jsHeapKb": 339.923828125,
+          "goHeapKb": 2952.421875,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.5645,
+          "baseIdleCpuMs": 0.4265,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-clearurls-taut.png"
+        },
+        {
+          "system": "slick",
+          "id": "ClearURLs",
+          "sha256": "825efa1be6c391b6627ada5eda960b6497da1dae0d8301f9b681cc03c0a51111",
+          "size": 15642,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "tracking parameters removed from a sent link",
+              "pass": true
+            }
+          ],
+          "roots": 0,
+          "initMs": 11.513,
+          "frameUs": 918,
+          "frameP95Us": 1505,
+          "baseFrameUs": 858,
+          "scrollCpuMs": 425.623,
+          "baseCpuMs": 432.453,
+          "allocsFrame": 408.6933333333333,
+          "baseAllocs": 404.9766666666667,
+          "jsHeapKb": 520.396484375,
+          "goHeapKb": 3266.7890625,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.499,
+          "baseIdleCpuMs": 0.398,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-clearurls-slick.png"
+        }
+      ],
+      "winner": "taut",
+      "reason": "works fully, 3.9x faster to load, 1.5x less JS memory",
+      "notes": "The rules come from ClearURLs/Rules on GitHub at start, so this check needs the network."
+    },
+    {
+      "name": "Click to Load",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "ClickToLoad",
+          "sha256": "b14136328707e613dfe377b76c44aa34fd6a0851dcf2c21d3eea12030355be4f",
+          "size": 2738,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "hooks media embeds (AttachmentMedia or the document's frames)",
+              "pass": true,
+              "detail": "patches AttachmentMedia"
+            }
+          ],
+          "patched": [
+            "AttachmentMedia"
+          ],
+          "roots": 0,
+          "initMs": 3.398,
+          "frameUs": 1232,
+          "frameP95Us": 1935,
+          "baseFrameUs": 1018,
+          "scrollCpuMs": 530.52,
+          "baseCpuMs": 502.557,
+          "allocsFrame": 448.87,
+          "baseAllocs": 402.3466666666667,
+          "jsHeapKb": 19.7666015625,
+          "goHeapKb": 14169.515625,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.5475,
+          "baseIdleCpuMs": 0.406,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-clicktoload-taut.png"
+        },
+        {
+          "system": "slick",
+          "id": "Click2Load",
+          "sha256": "233556c90322884e8e0b6b92aeb8b714e5bda72ca3a41508a5029f092e784e37",
+          "size": 12880,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "hooks media embeds (AttachmentMedia or the document's frames)",
+              "pass": true,
+              "detail": "watches the document"
+            }
+          ],
+          "roots": 0,
+          "initMs": 10.487,
+          "frameUs": 1035,
+          "frameP95Us": 1726,
+          "baseFrameUs": 996,
+          "scrollCpuMs": 482.415,
+          "baseCpuMs": 513.144,
+          "allocsFrame": 405.53,
+          "baseAllocs": 401.81666666666666,
+          "jsHeapKb": 106.9990234375,
+          "goHeapKb": 2901.3515625,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.523,
+          "baseIdleCpuMs": 0.373,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-clicktoload-slick.png"
+        }
+      ],
+      "winner": "taut",
+      "reason": "works fully, 3.1x faster to load, 5.4x less JS memory",
+      "notes": "Clack draws link unfurls natively and never loads third-party frames, so there is no embed for either variant to hold; the check only sees that the hook is in place."
+    },
+    {
+      "name": "Copy Reacted",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "CopyReacted",
+          "sha256": "f02abdbd6da5a94e2ecd87c2a06b828da403ebf68f68662e4a04a83ace4bcde5",
+          "size": 3854,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "a Copy who reacted button in the reaction bar",
+              "pass": true
+            }
+          ],
+          "patched": [
+            "ReactionAddButton",
+            "ReactionBar"
+          ],
+          "roots": 180,
+          "initMs": 5.248,
+          "frameUs": 1463,
+          "frameP95Us": 2395,
+          "baseFrameUs": 992,
+          "scrollCpuMs": 1362.569,
+          "baseCpuMs": 482.036,
+          "allocsFrame": 2560.0933333333332,
+          "baseAllocs": 403.9433333333333,
+          "jsHeapKb": 4162.962890625,
+          "goHeapKb": 33225.578125,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.5965,
+          "baseIdleCpuMs": 0.457,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-copyreacted-taut.png"
+        },
+        {
+          "system": "slick",
+          "id": "CopyReacted",
+          "sha256": "9a2e1f2a5472d5513ed1eab2afb0fd5e98d92284e8867ede053b59567cd5109b",
+          "size": 5844,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "a Copy who reacted button in the reaction bar",
+              "pass": true
+            }
+          ],
+          "patched": [
+            "ReactionAddButton",
+            "ReactionBar"
+          ],
+          "roots": 180,
+          "initMs": 5.807,
+          "frameUs": 1405,
+          "frameP95Us": 2778,
+          "baseFrameUs": 991,
+          "scrollCpuMs": 1445.374,
+          "baseCpuMs": 483.258,
+          "allocsFrame": 2568.93,
+          "baseAllocs": 402.33666666666664,
+          "jsHeapKb": 4164.990234375,
+          "goHeapKb": 36274.328125,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.5805,
+          "baseIdleCpuMs": 0.41,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-copyreacted-slick.png"
+        }
+      ],
+      "winner": "taut",
+      "reason": "works fully in both; costs within noise, smaller bundle (3.8 KB vs 5.7 KB)"
+    },
+    {
+      "name": "Custom Name Recording",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "CustomNameRecording",
+          "sha256": "ed25c86cec5602c5f0b666427d7fcd851204a1e06161879e47e69c0f07bc5dd8",
+          "size": 3487,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "patches the profile editor's audio button",
+              "pass": true
+            }
+          ],
+          "patched": [
+            "EditAudioButton"
+          ],
+          "roots": 0,
+          "initMs": 4.368,
+          "frameUs": 1228,
+          "frameP95Us": 1953,
+          "baseFrameUs": 1013,
+          "scrollCpuMs": 537.179,
+          "baseCpuMs": 507.157,
+          "allocsFrame": 447.31666666666666,
+          "baseAllocs": 402.4166666666667,
+          "jsHeapKb": 30.060546875,
+          "goHeapKb": 14240.84375,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.536,
+          "baseIdleCpuMs": 0.4855,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-customnamerecording-taut.png"
+        },
+        {
+          "system": "slick",
+          "id": "CustomNameRecording",
+          "sha256": "d4cf8a82598d79d42247fda20532e98fb4462dcde871fb1b33da7aded165c478",
+          "size": 5488,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "patches the profile editor's audio button",
+              "pass": true
+            }
+          ],
+          "patched": [
+            "EditAudioButton"
+          ],
+          "roots": 0,
+          "initMs": 4.813,
+          "frameUs": 1228,
+          "frameP95Us": 1998,
+          "baseFrameUs": 996,
+          "scrollCpuMs": 534.643,
+          "baseCpuMs": 488.77,
+          "allocsFrame": 448.3833333333333,
+          "baseAllocs": 401.23,
+          "jsHeapKb": 46.1767578125,
+          "goHeapKb": 14600.203125,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.59,
+          "baseIdleCpuMs": 0.4865,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-customnamerecording-slick.png"
+        }
+      ],
+      "winner": "taut",
+      "reason": "works fully in both; costs within noise, smaller bundle (3.4 KB vs 5.4 KB)",
+      "notes": "Its button lives in Edit profile, behind a file picker; the bench checks the patch only."
+    },
+    {
+      "name": "Experiments",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "Experiments",
+          "sha256": "40ec105f7a5d24ae01e070a76a3480004f6d5e1800573139b34f21a9d16c3d07",
+          "size": 16196,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "an Experiments tab in Preferences",
+              "pass": true,
+              "detail": "Experiments"
+            }
+          ],
+          "roots": 0,
+          "initMs": 4.278,
+          "frameUs": 632,
+          "frameP95Us": 1065,
+          "baseFrameUs": 524,
+          "scrollCpuMs": 294.695,
+          "baseCpuMs": 271.176,
+          "allocsFrame": 461.62333333333333,
+          "baseAllocs": 414.48,
+          "jsHeapKb": 80.53515625,
+          "goHeapKb": 14372.2421875,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.2785,
+          "baseIdleCpuMs": 0.1775,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-experiments-taut.png"
+        },
+        {
+          "system": "slick",
+          "id": "Experiments",
+          "sha256": "e95600df21ab0420a799f662f2ef100eaa49d32a091ab474d61388f5e40d716b",
+          "size": 16532,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "an Experiments tab in Preferences",
+              "pass": true,
+              "detail": "Experiments"
+            }
+          ],
+          "roots": 0,
+          "initMs": 6.162,
+          "frameUs": 569,
+          "frameP95Us": 946,
+          "baseFrameUs": 532,
+          "scrollCpuMs": 272.404,
+          "baseCpuMs": 270.144,
+          "allocsFrame": 417.79333333333335,
+          "baseAllocs": 415.01666666666665,
+          "jsHeapKb": 119.6787109375,
+          "goHeapKb": 2894.484375,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.22,
+          "baseIdleCpuMs": 0.6315,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-experiments-slick.png"
+        }
+      ],
+      "winner": "slick",
+      "reason": "works fully, 2.9x less frame overhead"
+    },
+    {
+      "name": "Haiku Warning",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "HaikuWarning",
+          "sha256": "6c78d099821aed2898836b6859cb6c23cdb612a7ab0fe36a2b8175d2d8494027",
+          "size": 12087,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "an ordinary message goes out",
+              "pass": true
+            },
+            {
+              "name": "a haiku is held for a confirmation",
+              "pass": false,
+              "detail": "send check answered true without asking"
+            }
+          ],
+          "patched": [
+            "BaseContextBarV2"
+          ],
+          "roots": 1,
+          "initMs": 7.134,
+          "frameUs": 1274,
+          "frameP95Us": 2251,
+          "baseFrameUs": 978,
+          "scrollCpuMs": 1385.018,
+          "baseCpuMs": 482.212,
+          "allocsFrame": 582.67,
+          "baseAllocs": 402.39,
+          "jsHeapKb": 4777.5927734375,
+          "goHeapKb": 39397.578125,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 1002.966,
+          "baseIdleCpuMs": 0.3855,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-haikuwarning-taut.png",
+          "pixelDiff": 0.8257361111111111
+        },
+        {
+          "system": "slick",
+          "id": "HaikuWarning",
+          "sha256": "98b5d3ad17caedc020668d79eedbd980dd63c9ab29dc3736a62cf28e64e3b639",
+          "size": 107857,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "an ordinary message goes out",
+              "pass": true
+            },
+            {
+              "name": "a haiku is held for a confirmation",
+              "pass": true
+            }
+          ],
+          "roots": 0,
+          "initMs": 76.535,
+          "frameUs": 1002,
+          "frameP95Us": 1050,
+          "baseFrameUs": 991,
+          "scrollCpuMs": 448.36,
+          "baseCpuMs": 477.669,
+          "allocsFrame": 206.29666666666665,
+          "baseAllocs": 402.83,
+          "jsHeapKb": 491.47265625,
+          "goHeapKb": 4898.15625,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.4475,
+          "baseIdleCpuMs": 0.3955,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-haikuwarning-slick.png",
+          "pixelDiff": 0.8257361111111111
+        }
+      ],
+      "winner": "slick",
+      "reason": "works fully (Taut passes 1/2 checks), frame overhead 11 µs vs 296 µs, scroll CPU 0.0 ms vs 903 ms",
+      "notes": "Taut's warns only in channels Orpheus is in unless \"Warn even if Orpheus doesn't respond\" is on; the bench turns that on, as Orpheus isn't in the fake workspace."
+    },
+    {
+      "name": "Human Count",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "HumanCount",
+          "sha256": "6510bfb56ec56085a18220435e2e22ffdf8b7972d1f897fd75b5cbd52e80440f",
+          "size": 873,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "the header's member count leaves apps out",
+              "pass": true,
+              "detail": "memberCount 1100 (all members: 1240)"
+            }
+          ],
+          "patched": [
+            "BaseAvatarStack"
+          ],
+          "roots": 1,
+          "initMs": 2.537,
+          "frameUs": 1087,
+          "frameP95Us": 1725,
+          "baseFrameUs": 986,
+          "scrollCpuMs": 497.41,
+          "baseCpuMs": 485.848,
+          "allocsFrame": 569.71,
+          "baseAllocs": 402.82,
+          "jsHeapKb": 48.1064453125,
+          "goHeapKb": 3052,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.6165,
+          "baseIdleCpuMs": 0.381,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-humancount-taut.png"
+        },
+        {
+          "system": "slick",
+          "id": "HumanCount",
+          "sha256": "4e0c15714a930fed044fd5dc8f132b1ca1938a0b26f9cdfdedb0fb71690b66c0",
+          "size": 3133,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "the header's member count leaves apps out",
+              "pass": true,
+              "detail": "memberCount 1100 (all members: 1240)"
+            }
+          ],
+          "patched": [
+            "BaseAvatarStack"
+          ],
+          "roots": 1,
+          "initMs": 4.227,
+          "frameUs": 1090,
+          "frameP95Us": 1775,
+          "baseFrameUs": 1002,
+          "scrollCpuMs": 498.883,
+          "baseCpuMs": 490.645,
+          "allocsFrame": 569.7266666666667,
+          "baseAllocs": 402.83666666666664,
+          "jsHeapKb": 60.1220703125,
+          "goHeapKb": 2680.0625,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.5495,
+          "baseIdleCpuMs": 0.372,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-humancount-slick.png"
+        }
+      ],
+      "winner": "taut",
+      "reason": "works fully in both; costs within noise, smaller bundle (0.9 KB vs 3.1 KB)"
+    },
+    {
+      "name": "Last Seen",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "LastSeen",
+          "sha256": "26864b791003ace4bd3af6b5ece9da0ad4a3de23883332afda2b909136a7b2e7",
+          "size": 5578,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "Last seen on a profile",
+              "pass": true
+            }
+          ],
+          "patched": [
+            "BasePresence",
+            "LocalTime",
+            "MemberProfileHoverCard",
+            "RimetoProfilePresence"
+          ],
+          "roots": 3,
+          "initMs": 52.287,
+          "frameUs": 1223,
+          "frameP95Us": 1965,
+          "baseFrameUs": 1008,
+          "scrollCpuMs": 534.393,
+          "baseCpuMs": 497.268,
+          "allocsFrame": 459.5966666666667,
+          "baseAllocs": 402.29,
+          "jsHeapKb": 711.1328125,
+          "goHeapKb": 19350.6796875,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 1.6285,
+          "baseIdleCpuMs": 0.453,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-lastseen-taut.png",
+          "pixelDiff": 0.000038580246913580246
+        },
+        {
+          "system": "slick",
+          "id": "LastSeen",
+          "sha256": "4280b78c4480f06695cf4245767ed7116823b48fe12528780356360a69ce4f61",
+          "size": 9938,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "Last seen on a profile",
+              "pass": true
+            }
+          ],
+          "patched": [
+            "LocalTime",
+            "MemberProfileHoverCard",
+            "Presence",
+            "ProfileHoverCard",
+            "RimetoProfilePresence"
+          ],
+          "roots": 3,
+          "initMs": 10.152,
+          "frameUs": 1256,
+          "frameP95Us": 2106,
+          "baseFrameUs": 1017,
+          "scrollCpuMs": 541.153,
+          "baseCpuMs": 514.347,
+          "allocsFrame": 448.8466666666667,
+          "baseAllocs": 401.23,
+          "jsHeapKb": 286.0927734375,
+          "goHeapKb": 15444.875,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.6595,
+          "baseIdleCpuMs": 0.438,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-lastseen-slick.png",
+          "pixelDiff": 0.000038580246913580246
+        }
+      ],
+      "winner": "slick",
+      "reason": "works fully, 5.2x faster to load, 2.5x less JS memory"
+    },
+    {
+      "name": "Nicknames",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "Nicknames",
+          "sha256": "a35817f44fc8d8c37158e468e940afddfb3594ae9a0722165a1d3f27801306d0",
+          "size": 5907,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "a nickname replaces the member's name",
+              "pass": true,
+              "detail": "display \"Bench Nick\" real \"Bench Nick\""
+            },
+            {
+              "name": "Set nickname… in the profile ⋮ menu",
+              "pass": true,
+              "detail": "Set nickname..."
+            }
+          ],
+          "patched": [
+            "MenuFromTemplate",
+            "RimetoMemberProfileOverflowMenu"
+          ],
+          "roots": 2,
+          "initMs": 4.182,
+          "frameUs": 654,
+          "frameP95Us": 1104,
+          "baseFrameUs": 532,
+          "scrollCpuMs": 307.175,
+          "baseCpuMs": 296.037,
+          "allocsFrame": 510.6533333333333,
+          "baseAllocs": 413.6,
+          "jsHeapKb": 209.8056640625,
+          "goHeapKb": 15305.296875,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.282,
+          "baseIdleCpuMs": 0.173,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-nicknames-taut.png"
+        },
+        {
+          "system": "slick",
+          "id": "Nicknames",
+          "sha256": "f3a997cccc6b8866989b71d8889bc3436b8ce4b3bdbb64291a4bfa664e6572ff",
+          "size": 10190,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "a nickname replaces the member's name",
+              "pass": true,
+              "detail": "display \"Bench Nick\" real \"Bench Nick\""
+            },
+            {
+              "name": "Set nickname… in the profile ⋮ menu",
+              "pass": true,
+              "detail": "Set nickname…"
+            }
+          ],
+          "patched": [
+            "AppDetailsOverflow",
+            "EditProfileFormPane",
+            "MenuFromTemplate",
+            "RimetoMemberProfileOverflowMenu"
+          ],
+          "roots": 2,
+          "initMs": 5.977,
+          "frameUs": 590,
+          "frameP95Us": 982,
+          "baseFrameUs": 533,
+          "scrollCpuMs": 282.154,
+          "baseCpuMs": 274.177,
+          "allocsFrame": 466.39,
+          "baseAllocs": 415.01666666666665,
+          "jsHeapKb": 267.8896484375,
+          "goHeapKb": 3703.9140625,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.224,
+          "baseIdleCpuMs": 0.178,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-nicknames-slick.png"
+        }
+      ],
+      "winner": "slick",
+      "reason": "works fully, 2.1x less frame overhead"
+    },
+    {
+      "name": "Office Hours",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "OfficeHours",
+          "sha256": "fb04281d53a1236cb61d2de2d5b784967d18d87ea1bfd69c61f7656f3ccaa401",
+          "size": 10895,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "inside an Away window, you're set away",
+              "pass": true,
+              "detail": "users.setPresence calls: 1"
+            }
+          ],
+          "roots": 0,
+          "initMs": 5.741,
+          "frameUs": 925,
+          "frameP95Us": 1568,
+          "baseFrameUs": 845,
+          "scrollCpuMs": 434.091,
+          "baseCpuMs": 424.261,
+          "allocsFrame": 407.73,
+          "baseAllocs": 404.41,
+          "jsHeapKb": 182.9111328125,
+          "goHeapKb": 2905.5625,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.4605,
+          "baseIdleCpuMs": 0.345,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-officehours-taut.png"
+        },
+        {
+          "system": "slick",
+          "id": "OfficeHours",
+          "sha256": "bc0ad3a3374a849a29a8af9752cfed2c92a6b29a3a613da2af8b39555e9a198e",
+          "size": 10073,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "inside an Away window, you're set away",
+              "pass": true,
+              "detail": "users.setPresence calls: 1"
+            }
+          ],
+          "roots": 0,
+          "initMs": 6.792,
+          "frameUs": 909,
+          "frameP95Us": 1512,
+          "baseFrameUs": 859,
+          "scrollCpuMs": 420.695,
+          "baseCpuMs": 416.421,
+          "allocsFrame": 408.79,
+          "baseAllocs": 405.47,
+          "jsHeapKb": 202.630859375,
+          "goHeapKb": 2900.3515625,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.5525,
+          "baseIdleCpuMs": 0.4125,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-officehours-slick.png"
+        }
+      ],
+      "winner": "slick",
+      "reason": "works fully in both; costs within noise, smaller bundle (9.8 KB vs 10.6 KB)"
+    },
+    {
+      "name": "Oneko",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "Oneko",
+          "sha256": "5523c572b1608a00932edca8885045ffbded3de9cf0e997116391a845778f4a3",
+          "size": 5045,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "the cat is in the document",
+              "pass": true
+            },
+            {
+              "name": "it follows the pointer (mousemove forwarded)",
+              "pass": true
+            }
+          ],
+          "roots": 0,
+          "initMs": 3.378,
+          "frameUs": 1153,
+          "frameP95Us": 1846,
+          "baseFrameUs": 986,
+          "scrollCpuMs": 573.241,
+          "baseCpuMs": 476.08,
+          "allocsFrame": 473.00333333333333,
+          "baseAllocs": 402.29,
+          "jsHeapKb": 98.0576171875,
+          "goHeapKb": 2933.4375,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 3.2385,
+          "baseIdleCpuMs": 0.3365,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-oneko-taut.png",
+          "pixelDiff": 0.0007901234567901234
+        },
+        {
+          "system": "slick",
+          "id": "oneko",
+          "sha256": "d3a16d9986094458d5bf72bf42dee85c009c8402c0f0a74b218ab4e839ea8750",
+          "size": 13352,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "the cat is in the document",
+              "pass": true
+            },
+            {
+              "name": "it follows the pointer (mousemove forwarded)",
+              "pass": true
+            }
+          ],
+          "roots": 0,
+          "initMs": 6.255,
+          "frameUs": 1160,
+          "frameP95Us": 1835,
+          "baseFrameUs": 982,
+          "scrollCpuMs": 581.348,
+          "baseCpuMs": 478.601,
+          "allocsFrame": 479.91333333333336,
+          "baseAllocs": 402.29,
+          "jsHeapKb": 150.716796875,
+          "goHeapKb": 3474.5703125,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 10.433,
+          "baseIdleCpuMs": 0.368,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-oneko-slick.png",
+          "pixelDiff": 0.0007901234567901234
+        }
+      ],
+      "winner": "taut",
+      "reason": "works fully, 3.5x less idle CPU"
+    },
+    {
+      "name": "Quick Join",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "QuickJoin",
+          "sha256": "f032c1dbccf5841380a960d9a7cce99153262ba8ca7b50e0611aae539b3ec245",
+          "size": 972,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "Join channel from a channel you're not in",
+              "pass": true,
+              "detail": "channel menu: Join channel"
+            }
+          ],
+          "roots": 0,
+          "initMs": 2.119,
+          "frameUs": 926,
+          "frameP95Us": 1548,
+          "baseFrameUs": 848,
+          "scrollCpuMs": 422.409,
+          "baseCpuMs": 424.764,
+          "allocsFrame": 409.25666666666666,
+          "baseAllocs": 405.4866666666667,
+          "jsHeapKb": 15.0068359375,
+          "goHeapKb": 5120.3828125,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.443,
+          "baseIdleCpuMs": 0.491,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-quickjoin-taut.png"
+        },
+        {
+          "system": "slick",
+          "id": "QuickJoin",
+          "sha256": "4b79243a4e88fa5a3531190571724c7f488b1b126e4ec20383e9e441005b8f55",
+          "size": 7667,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "Join channel from a channel you're not in",
+              "pass": false,
+              "detail": "no Join in the channel menu; document double-clicks forwarded to JS: false"
+            }
+          ],
+          "patched": [
+            "CodeChannelEntityCard"
+          ],
+          "roots": 0,
+          "initMs": 5.075,
+          "frameUs": 1041,
+          "frameP95Us": 1709,
+          "baseFrameUs": 854,
+          "scrollCpuMs": 462.697,
+          "baseCpuMs": 423.502,
+          "allocsFrame": 450.4633333333333,
+          "baseAllocs": 404.94,
+          "jsHeapKb": 63.0888671875,
+          "goHeapKb": 16613.5,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.3935,
+          "baseIdleCpuMs": 0.461,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-quickjoin-slick.png"
+        }
+      ],
+      "winner": "taut",
+      "reason": "works fully (Slick passes 0/1 checks), 2.4x less frame overhead",
+      "notes": "Taut's adds Join channel to the channel menu; Slick's joins when you double-click a link to the channel in the page, which needs the link in the DOM: Clack draws message links natively, so Slick's has nothing to listen on."
+    },
+    {
+      "name": "Restricted Channel Warning",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "RestrictedChannelWarning",
+          "sha256": "68fb9919671c07fedad7a3c676bf798eba096ba74deade816fa6baaf9995727e",
+          "size": 2167,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "admins see the restricted box with Post anyway",
+              "pass": true
+            }
+          ],
+          "patched": [
+            "MessageInputRoadblock"
+          ],
+          "roots": 2,
+          "initMs": 4.553,
+          "frameUs": 1293,
+          "frameP95Us": 1988,
+          "baseFrameUs": 994,
+          "scrollCpuMs": 559.333,
+          "baseCpuMs": 499.863,
+          "allocsFrame": 965.9533333333334,
+          "baseAllocs": 403.02666666666664,
+          "jsHeapKb": 291.66796875,
+          "goHeapKb": 16503.015625,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.5655,
+          "baseIdleCpuMs": 0.3605,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-restrictedchannelwarning-taut.png",
+          "pixelDiff": 0.0024814814814814816
+        },
+        {
+          "system": "slick",
+          "id": "RestrictedChannelWarning",
+          "sha256": "1c4e8da4afea57ecbc945b38748ce768c766efba9e1cf261c0782e69fb0e3ef6",
+          "size": 5196,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "admins see the restricted box with Post anyway",
+              "pass": true
+            }
+          ],
+          "patched": [
+            "MessageInputRoadblock"
+          ],
+          "roots": 2,
+          "initMs": 4.392,
+          "frameUs": 1465,
+          "frameP95Us": 2611,
+          "baseFrameUs": 985,
+          "scrollCpuMs": 2495.663,
+          "baseCpuMs": 486.326,
+          "allocsFrame": 2137.97,
+          "baseAllocs": 402.32666666666665,
+          "jsHeapKb": 4710.7939453125,
+          "goHeapKb": 38445.515625,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.649,
+          "baseIdleCpuMs": 0.3475,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-restrictedchannelwarning-slick.png",
+          "pixelDiff": 0.0024814814814814816
+        }
+      ],
+      "winner": "taut",
+      "reason": "works fully, 1.6x less frame overhead, scroll CPU 59 ms vs 2009 ms"
+    },
+    {
+      "name": "Show Real User",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "ShowRealUser",
+          "sha256": "441060dfc2402e7308121b41f0d04b113adffe58654da2c5393b4c3fc9bbfc31",
+          "size": 3749,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "a relay bot's message credits the person",
+              "pass": true,
+              "detail": "message user \"U0FAKE00009\" (want U0FAKE00009)"
+            }
+          ],
+          "patched": [
+            "ActivityItem",
+            "Blocks",
+            "MessageListItem",
+            "MessageWrapper",
+            "ThreadRootGeneric"
+          ],
+          "roots": 916,
+          "initMs": 7.408,
+          "frameUs": 823,
+          "frameP95Us": 1750,
+          "baseFrameUs": 523,
+          "scrollCpuMs": 1576.505,
+          "baseCpuMs": 272.681,
+          "allocsFrame": 2797.06,
+          "baseAllocs": 415.06,
+          "jsHeapKb": 6396.5712890625,
+          "goHeapKb": 36447.8046875,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.184,
+          "baseIdleCpuMs": 0.1775,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-showrealuser-taut.png"
+        },
+        {
+          "system": "slick",
+          "id": "ShowRealUser",
+          "sha256": "e92d6b0421e846ddc1573cafbe24f7b70086ebf890077017dada0a479e217316",
+          "size": 8479,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "a relay bot's message credits the person",
+              "pass": true,
+              "detail": "message user \"U0FAKE00009\" (want U0FAKE00009)"
+            }
+          ],
+          "patched": [
+            "ActivityItem",
+            "Blocks",
+            "MessageListItem",
+            "MessageWrapper",
+            "ThreadRootGeneric"
+          ],
+          "roots": 916,
+          "initMs": 4.995,
+          "frameUs": 852,
+          "frameP95Us": 1722,
+          "baseFrameUs": 542,
+          "scrollCpuMs": 1655.046,
+          "baseCpuMs": 289.56,
+          "allocsFrame": 2929.6433333333334,
+          "baseAllocs": 414.64666666666665,
+          "jsHeapKb": 6477.2041015625,
+          "goHeapKb": 39753.6171875,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.1875,
+          "baseIdleCpuMs": 0.1735,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-showrealuser-slick.png"
+        }
+      ],
+      "winner": "taut",
+      "reason": "works fully in both; costs within noise, smaller bundle (3.7 KB vs 8.3 KB)"
+    },
+    {
+      "name": "Show Sending Bot",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "ShowSendingBot",
+          "sha256": "517663fef910548ee8257200e1aa105f355ae712e32b0432b0b97cbdad8391b6",
+          "size": 8334,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "the sending app's badge on a person's message",
+              "pass": true,
+              "detail": "taut-sending-bot"
+            }
+          ],
+          "patched": [
+            "ActivityRowContentSenderAvatarLayout",
+            "Blocks",
+            "ConnectedBaseAvatar",
+            "MessageAttachment",
+            "MessageAvatar",
+            "MessageBackground",
+            "MessageKitGutter",
+            "MessageSender",
+            "SearchResult",
+            "ThreadSenderAndTimestampGeneric"
+          ],
+          "roots": 2031,
+          "initMs": 54.491,
+          "frameUs": 1693,
+          "frameP95Us": 3956,
+          "baseFrameUs": 858,
+          "scrollCpuMs": 1903.798,
+          "baseCpuMs": 428.153,
+          "allocsFrame": 5670.25,
+          "baseAllocs": 406.00666666666666,
+          "jsHeapKb": 23064.0703125,
+          "goHeapKb": 99158.921875,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.5595,
+          "baseIdleCpuMs": 0.4255,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-showsendingbot-taut.png"
+        },
+        {
+          "system": "slick",
+          "id": "ShowSendingBot",
+          "sha256": "1c4286906d4ae7b32309dcb3910ce4a10b2bc927766bcad207b814ffe67e405a",
+          "size": 14186,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "the sending app's badge on a person's message",
+              "pass": true,
+              "detail": "slick-sending-bot"
+            }
+          ],
+          "patched": [
+            "ActivityRowContentSenderAvatarLayout",
+            "BaseMessageAvatar",
+            "ConnectedBaseAvatar",
+            "MessageAttachment",
+            "MessageAvatar",
+            "MessageKitGutter",
+            "MessageSender",
+            "ProgressiveDisclosureSuccessCoachmarkWrapper",
+            "SearchResult",
+            "ThreadSenderAndTimestampGeneric"
+          ],
+          "roots": 1728,
+          "initMs": 20.293,
+          "frameUs": 1630,
+          "frameP95Us": 2973,
+          "baseFrameUs": 843,
+          "scrollCpuMs": 1791.117,
+          "baseCpuMs": 418.529,
+          "allocsFrame": 5514.673333333333,
+          "baseAllocs": 405.5566666666667,
+          "jsHeapKb": 22169.947265625,
+          "goHeapKb": 83647.65625,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.559,
+          "baseIdleCpuMs": 0.464,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-showsendingbot-slick.png"
+        }
+      ],
+      "winner": "slick",
+      "reason": "works fully, 2.7x faster to load"
+    },
+    {
+      "name": "Shut Up Slackbot",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "ShutUpSlackbot",
+          "sha256": "8c9c3f390bdb138ce52da7b286d8f39294cdb94e74fda9d8cc350979ad06140a",
+          "size": 2899,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "the slash-command notice is marked read",
+              "pass": true,
+              "detail": "marked: 1794250925.000100"
+            },
+            {
+              "name": "its notification is silenced, others aren't",
+              "pass": true
+            }
+          ],
+          "roots": 0,
+          "initMs": 6.485,
+          "frameUs": 1041,
+          "frameP95Us": 1791,
+          "baseFrameUs": 982,
+          "scrollCpuMs": 484.758,
+          "baseCpuMs": 477.57,
+          "allocsFrame": 405.95,
+          "baseAllocs": 403.37333333333333,
+          "jsHeapKb": 60.1767578125,
+          "goHeapKb": 3562.75,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.6655,
+          "baseIdleCpuMs": 0.4775,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-shutupslackbot-taut.png"
+        },
+        {
+          "system": "slick",
+          "id": "ShutUpSlackbot",
+          "sha256": "ebe1ca4c6f76ace24d7e0ec118552719f4f322220a8d4d8d73cad15e255e3b69",
+          "size": 6608,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "the slash-command notice is marked read",
+              "pass": true,
+              "detail": "marked: 1794250959.000100"
+            },
+            {
+              "name": "its notification is silenced, others aren't",
+              "pass": true
+            }
+          ],
+          "roots": 0,
+          "initMs": 7.721,
+          "frameUs": 1048,
+          "frameP95Us": 1689,
+          "baseFrameUs": 1024,
+          "scrollCpuMs": 481.242,
+          "baseCpuMs": 501.65,
+          "allocsFrame": 405.6,
+          "baseAllocs": 403.07666666666665,
+          "jsHeapKb": 50.796875,
+          "goHeapKb": 2995.890625,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.541,
+          "baseIdleCpuMs": 0.4825,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-shutupslackbot-slick.png"
+        }
+      ],
+      "winner": "taut",
+      "reason": "works fully in both; costs within noise, smaller bundle (2.8 KB vs 6.5 KB)"
+    },
+    {
+      "name": "Silent Typing",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "SilentTyping",
+          "sha256": "80ef43eb4772328c5c05b134ac551959e30aa078d6dc9dc26109649d87ee3aa4",
+          "size": 1203,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "a typing switch in the message box",
+              "pass": true,
+              "detail": "composer button"
+            },
+            {
+              "name": "once on, typing isn't sent",
+              "pass": true,
+              "detail": "after clicking 1 message box button(s)"
+            }
+          ],
+          "patched": [
+            "TautComposerButtons"
+          ],
+          "roots": 2,
+          "initMs": 2.476,
+          "frameUs": 1084,
+          "frameP95Us": 1802,
+          "baseFrameUs": 993,
+          "scrollCpuMs": 498.291,
+          "baseCpuMs": 491.408,
+          "allocsFrame": 437.22,
+          "baseAllocs": 402.82,
+          "jsHeapKb": 51.0888671875,
+          "goHeapKb": 3284.765625,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.464,
+          "baseIdleCpuMs": 0.4935,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-silenttyping-taut.png",
+          "pixelDiff": 0.0002523148148148148
+        },
+        {
+          "system": "slick",
+          "id": "SilentTyping",
+          "sha256": "3ad8ead489876251ed94a4d1470ffc546b33c431118f869cdc9712143cb7a157",
+          "size": 5085,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "a typing switch in the message box",
+              "pass": true,
+              "detail": "in the composer's overflow"
+            },
+            {
+              "name": "once on, typing isn't sent",
+              "pass": true,
+              "detail": "on by default"
+            }
+          ],
+          "patched": [
+            "TextyButtonOverflow"
+          ],
+          "roots": 1,
+          "initMs": 5.255,
+          "frameUs": 1288,
+          "frameP95Us": 2054,
+          "baseFrameUs": 1014,
+          "scrollCpuMs": 560.396,
+          "baseCpuMs": 509.058,
+          "allocsFrame": 639.5466666666666,
+          "baseAllocs": 401.76,
+          "jsHeapKb": 160.505859375,
+          "goHeapKb": 14793.6484375,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.482,
+          "baseIdleCpuMs": 0.3795,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-silenttyping-slick.png",
+          "pixelDiff": 0.0002523148148148148
+        }
+      ],
+      "winner": "taut",
+      "reason": "works fully, 3.0x less frame overhead, 3.1x less JS memory"
+    },
+    {
+      "name": "Slim Message Box",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "SlimMessageBox",
+          "sha256": "3dcbfd6853b8c4890a3cd082674ec8a3aa3d7d2715f015196b56cb6e5837ce25",
+          "size": 7446,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "restyles the message box (TextyButtons, InputContainer)",
+              "pass": true,
+              "detail": "TextyButtons"
+            }
+          ],
+          "patched": [
+            "TautComposerButtons",
+            "TextyButtons"
+          ],
+          "roots": 1,
+          "initMs": 4.503,
+          "frameUs": 658,
+          "frameP95Us": 1067,
+          "baseFrameUs": 534,
+          "scrollCpuMs": 306.57,
+          "baseCpuMs": 280.561,
+          "allocsFrame": 751.1033333333334,
+          "baseAllocs": 414.48,
+          "jsHeapKb": 165.2255859375,
+          "goHeapKb": 14899.9765625,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.2165,
+          "baseIdleCpuMs": 0.1695,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-slimmessagebox-taut.png",
+          "pixelDiff": 0.000408179012345679
+        },
+        {
+          "system": "slick",
+          "id": "SlimMessageBox",
+          "sha256": "7ca5018fcb1dbf0701155842e8ef8facbc2bea75386f8dfed04d1aa1084f417e",
+          "size": 11037,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "restyles the message box (TextyButtons, InputContainer)",
+              "pass": true,
+              "detail": "TextyButtons"
+            }
+          ],
+          "patched": [
+            "TextyButtons"
+          ],
+          "roots": 1,
+          "initMs": 4.689,
+          "frameUs": 667,
+          "frameP95Us": 1092,
+          "baseFrameUs": 533,
+          "scrollCpuMs": 308.089,
+          "baseCpuMs": 289.162,
+          "allocsFrame": 724.2533333333333,
+          "baseAllocs": 414.14666666666665,
+          "jsHeapKb": 193.076171875,
+          "goHeapKb": 15026.1796875,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.1825,
+          "baseIdleCpuMs": 0.196,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-slimmessagebox-slick.png",
+          "pixelDiff": 0.000408179012345679
+        }
+      ],
+      "winner": "taut",
+      "reason": "works fully in both; costs within noise, smaller bundle (7.3 KB vs 10.8 KB)"
+    },
+    {
+      "name": "Streamer Mode",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "StreamerMode",
+          "sha256": "fc15b5d66d49dd6fa9f366b4666d2c7daf54d024636671125da8af6090bb2ef9",
+          "size": 9355,
+          "loaded": true,
+          "errors": [
+            "taut js error: Uncaught Error: Minified React error #31; visit https://react.dev/errors/31?args[]=object%20with%20keys%20%7Bdispatch%2C%20setRects%2C%20setViewport%2C%20setHidden%2C%20callFn%2C%20fnById%2C%20resendDocument%2C%20flush%2C%20createRoot%2C%20render%2C%20unmount%2C%20rootContainer%2C%20p…"
+          ],
+          "errorCount": 1,
+          "checks": [
+            {
+              "name": "private things are blurred (a blur stylesheet)",
+              "pass": true
+            },
+            {
+              "name": "notifications are silenced",
+              "pass": true
+            }
+          ],
+          "patched": [
+            "ActivityItem",
+            "ActivityPrivacyBlurredName",
+            "MessageBackground"
+          ],
+          "roots": 450,
+          "initMs": 7.578,
+          "frameUs": 1420,
+          "frameP95Us": 2245,
+          "baseFrameUs": 1008,
+          "scrollCpuMs": 1392.152,
+          "baseCpuMs": 517.986,
+          "allocsFrame": 1683.8233333333333,
+          "baseAllocs": 402.39666666666665,
+          "jsHeapKb": 4702.5,
+          "goHeapKb": 27313.1640625,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.44,
+          "baseIdleCpuMs": 0.3355,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-streamermode-taut.png",
+          "pixelDiff": 0.0002554012345679012
+        },
+        {
+          "system": "slick",
+          "id": "StreamerMode",
+          "sha256": "d9b99f435a9ccef92aa54bc5c8b62f3b768f9f8d0a4288fd73c4334e89b98e17",
+          "size": 15390,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "private things are blurred (a blur stylesheet)",
+              "pass": true
+            },
+            {
+              "name": "notifications are silenced",
+              "pass": true
+            }
+          ],
+          "patched": [
+            "HelpButton",
+            "MessageBackground"
+          ],
+          "roots": 451,
+          "initMs": 14.492,
+          "frameUs": 1491,
+          "frameP95Us": 2524,
+          "baseFrameUs": 988,
+          "scrollCpuMs": 1417.166,
+          "baseCpuMs": 478.519,
+          "allocsFrame": 1999.4433333333334,
+          "baseAllocs": 402.82,
+          "jsHeapKb": 4135.94921875,
+          "goHeapKb": 27215.7109375,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.38,
+          "baseIdleCpuMs": 0.343,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-streamermode-slick.png",
+          "pixelDiff": 0.0002554012345679012
+        }
+      ],
+      "winner": "slick",
+      "reason": "no console errors (Taut logs 1)"
+    },
+    {
+      "name": "User Pronouns",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "UserPronouns",
+          "sha256": "ab90e904e46dffc5db350c9076103916b86dc705df4e576ff72db16f5351058a",
+          "size": 2131,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "pronouns next to the sender in channel rows",
+              "pass": true,
+              "detail": "7 of 8 people's pronouns shown"
+            },
+            {
+              "name": "pronouns in the thread pane header",
+              "pass": false,
+              "detail": "no new tree with they/them after opening the thread (pane true, ThreadSenderAndTimestampGeneric patched true, 5 trees)"
+            }
+          ],
+          "patched": [
+            "BaseBroadcastPreamble",
+            "ThreadSenderAndTimestampGeneric"
+          ],
+          "roots": 185,
+          "initMs": 5.086,
+          "frameUs": 1407,
+          "frameP95Us": 2262,
+          "baseFrameUs": 976,
+          "scrollCpuMs": 1100.93,
+          "baseCpuMs": 484.605,
+          "allocsFrame": 1732.1166666666666,
+          "baseAllocs": 403.3666666666667,
+          "jsHeapKb": 2947.7373046875,
+          "goHeapKb": 27704.78125,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.465,
+          "baseIdleCpuMs": 0.411,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-userpronouns-taut.png"
+        },
+        {
+          "system": "slick",
+          "id": "UserPronouns",
+          "sha256": "8b58d343615acb62f4552bf662cc8365eebef004fcf7dfa6abed63fc5cd574d1",
+          "size": 4864,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "pronouns next to the sender in channel rows",
+              "pass": true,
+              "detail": "7 of 8 people's pronouns shown"
+            },
+            {
+              "name": "pronouns in the thread pane header",
+              "pass": false,
+              "detail": "no new tree with they/them after opening the thread (pane true, ThreadSenderAndTimestampGeneric patched true, 5 trees)"
+            }
+          ],
+          "patched": [
+            "BaseBroadcastPreamble",
+            "ThreadSenderAndTimestampGeneric"
+          ],
+          "roots": 185,
+          "initMs": 5.236,
+          "frameUs": 1417,
+          "frameP95Us": 2349,
+          "baseFrameUs": 991,
+          "scrollCpuMs": 1140.083,
+          "baseCpuMs": 495.569,
+          "allocsFrame": 1730.2633333333333,
+          "baseAllocs": 402.44666666666666,
+          "jsHeapKb": 3124.62890625,
+          "goHeapKb": 30460.8671875,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.4525,
+          "baseIdleCpuMs": 0.46,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-userpronouns-slick.png"
+        }
+      ],
+      "winner": "taut",
+      "reason": "same results (1/2 checks each) in both; costs within noise, smaller bundle (2.1 KB vs 4.8 KB)"
+    },
+    {
+      "name": "Who Reacted",
+      "variants": [
+        {
+          "system": "taut",
+          "id": "WhoReacted",
+          "sha256": "5d75f71c7550c6374f30ae4e0fa9af4a90f63dbca65c9412f281af5098ad2cad",
+          "size": 2157,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "reactors' avatars inside the reaction pills",
+              "pass": true
+            },
+            {
+              "name": "+N past the avatar limit (7 reactors, 4 shown)",
+              "pass": true
+            }
+          ],
+          "patched": [
+            "Reaction",
+            "UnstyledButton"
+          ],
+          "roots": 360,
+          "initMs": 3.414,
+          "frameUs": 1430,
+          "frameP95Us": 5321,
+          "baseFrameUs": 975,
+          "scrollCpuMs": 1919.172,
+          "baseCpuMs": 483.103,
+          "allocsFrame": 3527.6366666666668,
+          "baseAllocs": 402.29,
+          "jsHeapKb": 6508.072265625,
+          "goHeapKb": 35468.0625,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.794,
+          "baseIdleCpuMs": 0.3805,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-whoreacted-taut.png",
+          "pixelDiff": 0.0029683641975308643
+        },
+        {
+          "system": "slick",
+          "id": "WhoReacted",
+          "sha256": "c2ea1a6ca6f98aef8727ec3eb44a13d834d32de3165cd2c2270e0e57b0b1122c",
+          "size": 4458,
+          "loaded": true,
+          "errorCount": 0,
+          "checks": [
+            {
+              "name": "reactors' avatars inside the reaction pills",
+              "pass": true
+            },
+            {
+              "name": "+N past the avatar limit (7 reactors, 4 shown)",
+              "pass": true
+            }
+          ],
+          "patched": [
+            "Reaction",
+            "UnstyledButton"
+          ],
+          "roots": 360,
+          "initMs": 5.134,
+          "frameUs": 1399,
+          "frameP95Us": 5222,
+          "baseFrameUs": 994,
+          "scrollCpuMs": 1876.685,
+          "baseCpuMs": 485.974,
+          "allocsFrame": 3553.016666666667,
+          "baseAllocs": 402.83666666666664,
+          "jsHeapKb": 6408.236328125,
+          "goHeapKb": 35228.5625,
+          "idleDeliveries": 0,
+          "idleSeconds": 3,
+          "idleCpuMs": 0.56,
+          "baseIdleCpuMs": 0.3845,
+          "idleWakeups": 1,
+          "baseWakeups": 1,
+          "shot": "bench-whoreacted-slick.png",
+          "pixelDiff": 0.0029683641975308643
+        }
+      ],
+      "winner": "taut",
+      "reason": "works fully in both; costs within noise, smaller bundle (2.1 KB vs 4.4 KB)"
+    }
+  ]
+}

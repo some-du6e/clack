@@ -15,7 +15,9 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/text"
+	"gioui.org/unit"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/pluginbench"
 	"github.com/some-du6e/yoloslackgoclient/internal/pluginlib"
 	"github.com/some-du6e/yoloslackgoclient/internal/slick"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
@@ -26,8 +28,11 @@ import (
 // Taut and Slick plugin from the Clack repo's `plugins` release
 // (internal/pluginlib), each built unmodified by its project's own build,
 // with one-click install and update. A plugin both systems have under one
-// name is one row with both tags; Install asks which. An installed Library
-// plugin is an ordinary user plugin in that system's plugins/ dir.
+// name is one row with both tags; Install installs the variant the plugin
+// bench picked (internal/pluginbench, docs/PLUGIN-BENCH.md) and the chevron
+// beside it offers both, the pick first with its reason (without bench
+// data, Install asks which). An installed Library plugin is an ordinary
+// user plugin in that system's plugins/ dir.
 //
 // Neither upstream has a library, so the page is drawn with Slick's
 // settings parts: category cards of hairline-separated rows, badges.
@@ -98,6 +103,8 @@ type libraryPage struct {
 
 	// hosts overrides the systems' install paths (tests)
 	hosts func(system string) (libraryHost, bool)
+	// bench overrides the baked-in plugin bench data (tests)
+	bench *pluginbench.Data
 }
 
 func newLibraryPage(a *App, openTab func(id string)) *libraryPage {
@@ -547,16 +554,19 @@ func (v *libraryPage) body(f *flow, words []string) {
 	}
 }
 
-// libAction is what a row's button does.
+// libAction is what a row's button does; menu, when set, is the chevron
+// beside it (Install's other variants).
 type libAction struct {
 	label string
 	kind  popups.BtnKind
 	do    func()
+	menu  func()
 }
 
 // action: Installing/Updating while busy; Update when an installed entry
-// has an update; Settings when one is installed; else Install, which asks
-// which system when the plugin exists in both and both are running.
+// has an update; Settings when one is installed; else Install. When the
+// plugin exists in both systems and both are running, Install installs the
+// bench's pick and its chevron offers both; with no bench data it asks.
 func (v *libraryPage) action(g libGroup) libAction {
 	installed, updates := v.groupStates(g)
 	for _, e := range g.Entries {
@@ -590,13 +600,71 @@ func (v *libraryPage) action(g libGroup) libAction {
 		}
 		return libAction{label: "Install", kind: popups.BtnPrimary, do: func() { v.installEntry(e, false) }}
 	}
-	return libAction{label: "Install…", kind: popups.BtnPrimary, do: func() {
-		items := []MenuItem{{Label: "Install for", Disabled: true}}
-		for _, e := range choices {
-			items = append(items, MenuItem{Label: systemName(e.System), Subtitle: systemBlurb(e.System), Do: func() { v.installEntry(e, false) }})
+	menu := func() { v.a.menu(v.a.PointerPos(), v.installMenu(choices)) }
+	if w, _, ok := v.benchPick(choices); ok {
+		return libAction{label: "Install", kind: popups.BtnPrimary, do: func() { v.installEntry(w, false) }, menu: menu}
+	}
+	return libAction{label: "Install…", kind: popups.BtnPrimary, do: menu}
+}
+
+// benchPick is the variant of choices the plugin bench picked, with its
+// reason (ok false without bench data for this plugin).
+func (v *libraryPage) benchPick(choices []pluginlib.Entry) (pluginlib.Entry, pluginbench.Pick, bool) {
+	d := v.bench
+	if d == nil {
+		d = pluginbench.Load()
+	}
+	es := make([]pluginbench.Entry, len(choices))
+	for i, e := range choices {
+		es[i] = pluginbench.Entry{System: e.System, ID: e.ID, SHA256: e.SHA256}
+	}
+	p, ok := d.For(es)
+	if !ok {
+		return pluginlib.Entry{}, p, false
+	}
+	for _, e := range choices {
+		if e.System == p.Winner {
+			return e, p, true
 		}
-		v.a.menu(v.a.PointerPos(), items)
-	}}
+	}
+	return pluginlib.Entry{}, p, false
+}
+
+// installMenu is "Install for": the bench's pick first, marked
+// "(recommended)" with its reason, then the other system.
+func (v *libraryPage) installMenu(choices []pluginlib.Entry) []MenuItem {
+	items := []MenuItem{{Label: "Install for", Disabled: true}}
+	order := append([]pluginlib.Entry(nil), choices...)
+	w, pick, ok := v.benchPick(choices)
+	if ok {
+		sort.SliceStable(order, func(i, j int) bool { return order[i].System == w.System && order[j].System != w.System })
+	}
+	for _, e := range order {
+		it := MenuItem{Label: systemName(e.System), Subtitle: systemBlurb(e.System), Do: func() { v.installEntry(e, false) }}
+		if ok && e.System == w.System {
+			it.Label += " (recommended)"
+			it.Subtitle = benchReason(pick)
+		}
+		items = append(items, it)
+	}
+	return items
+}
+
+// benchReason is the pick's reason as one menu line: its first two
+// clauses ("Works fully, 3.9x faster to load"), capitalized.
+func benchReason(p pluginbench.Pick) string {
+	r := p.Reason
+	if r == "" {
+		return "Recommended by the plugin bench"
+	}
+	if parts := strings.Split(r, ", "); len(parts) > 2 {
+		r = strings.Join(parts[:2], ", ")
+	}
+	r = strings.ToUpper(r[:1]) + r[1:]
+	if !p.Exact {
+		r += " (measured on an earlier build)"
+	}
+	return r
 }
 
 // systemBlurb tells the two systems apart in Install's choice.
@@ -697,8 +765,20 @@ func (v *libraryPage) row(gtx layout.Context, w int, g libGroup) layout.Dimensio
 	st.Pop()
 	b := k.btn("lib.act." + key)
 	hit := b.Clicked(gtx)
-	at(gtx, image.Pt(w-gtx.Dp(12)-bw, (h-gtx.Dp(28))/2), image.Pt(bw, gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
-		return popups.Button(gtx, p.a.th, b, act.kind, popups.BtnSmall, act.label, "", 96)
+	bx, by := w-gtx.Dp(12)-bw, (h-gtx.Dp(28))/2
+	mainW := float32(96)
+	if act.menu != nil { // [Install][▾]
+		mainW = 64
+		cb := k.btn("lib.more." + key)
+		if cb.Clicked(gtx) {
+			act.menu()
+		}
+		at(gtx, image.Pt(bx+gtx.Dp(68), by), image.Pt(gtx.Dp(28), gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
+			return popups.Button(gtx, p.a.th, cb, act.kind, popups.BtnSmall, "", "caret-down", 28)
+		})
+	}
+	at(gtx, image.Pt(bx, by), image.Pt(gtx.Dp(unit.Dp(mainW)), gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
+		return popups.Button(gtx, p.a.th, b, act.kind, popups.BtnSmall, act.label, "", mainW)
 	})
 	if hit && act.kind != popups.BtnDisabled && act.do != nil {
 		act.do()

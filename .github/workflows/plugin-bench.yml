@@ -1,0 +1,134 @@
+name: plugin-bench
+# The plugin bench (docs/PLUGIN-BENCH.md): every plugin the Library offers
+# in both Taut and Slick, run unmodified from the published `plugins`
+# release (the bundles users install, same sha256) in the whole client
+# over internal/fakeslack (internal/ui TestPluginBench). Each variant's
+# checks, load time, frame/CPU cost scrolling a 500-message channel, JS
+# heap and idle re-renders go to internal/pluginbench/report, which
+# writes bench.json (baked into the build: Install installs the winner)
+# and the docs table, and fails when a committed winner regressed. The
+# generated files are uploaded as `plugin-bench-data`; commit them to
+# update the Library's picks.
+#
+# The bundles are third-party GPLv3 code run here: read-only token, no
+# Go cache shared with other workflows.
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "comma-separated plugin names (empty = every plugin in both systems)"
+        required: false
+        default: ""
+  schedule:
+    - cron: "41 9 * * 1" # after plugin-library's weekly rebuild
+  push:
+    paths:
+      - "internal/pluginbench/**"
+      - "internal/ui/plugin_bench*"
+      - "internal/ui/library_prefs.go"
+      - "internal/fakeslack/plugin_bench.go"
+      - "internal/taut/**"
+      - "internal/slick/**"
+      - "internal/jsrt/**"
+      - "internal/ui/messages/**"
+      - ".github/workflows/plugin-bench.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plugin-bench-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false # this job runs third-party code; never share its Go cache
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: the published Library (index.json + bundles)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          mkdir -p dist/library
+          for i in 1 2 3; do gh release download plugins -D dist/library --clobber -p 'index.json' -p '*.js' && break; sleep 10; done
+          test -s dist/library/index.json
+          ls dist/library | wc -l
+      - name: bench (shard ${{ matrix.shard }}/5)
+        env:
+          PLUGIN_BENCH_LIBRARY: ${{ github.workspace }}/dist/library
+          PLUGIN_BENCH_OUT: ${{ github.workspace }}/dist/bench
+          PLUGIN_BENCH_SHOTS: ${{ github.workspace }}/dist/shots
+          PLUGIN_BENCH_SHARD: ${{ matrix.shard }}/5
+          PLUGIN_BENCH_ONLY: ${{ inputs.only }}
+          CLACK_PIXEL_TESTS: "1"
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set -o pipefail
+          mkdir -p dist/bench dist/shots
+          xvfb-run -a go test -count=1 -timeout 55m -v -run 'TestPluginBench$' ./internal/ui/ 2>&1 | tee dist/bench-${{ matrix.shard }}.log
+      - name: summary
+        if: ${{ !cancelled() }}
+        run: grep -E 'winner|^\s+(taut|slick) |\[(true|false)\]|console:|--- (PASS|FAIL)' dist/bench-${{ matrix.shard }}.log || true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: plugin-bench-results-${{ matrix.shard }}
+          path: |
+            dist/bench
+            dist/bench-${{ matrix.shard }}.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: plugin-bench-shots-${{ matrix.shard }}
+          path: dist/shots
+
+  report:
+    needs: bench
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: plugin-bench-results-*
+          path: dist/results
+      - name: report (fails when a committed winner regressed)
+        run: |
+          set -o pipefail
+          go run ./internal/pluginbench/report -in dist/results -check \
+            -run "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+      - name: generated data
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p dist/data
+          cp internal/pluginbench/bench.json.new dist/data/bench.json || true
+          cp docs/PLUGIN-BENCH.md.new dist/data/PLUGIN-BENCH.md || true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: plugin-bench-data
+          path: dist/data

@@ -40,6 +40,13 @@ func (a *App) Taut() *taut.Taut {
 // boundary drew). Nil outside tests; set before startTaut.
 var deliverTap func(root uint64, tree []byte)
 
+// styleTap and documentTap see plugins' stylesheets (key, css; "" when
+// removed) and document bodies (tests: the plugin bench). Nil outside tests.
+var (
+	styleTap    func(key, css string)
+	documentTap func(body []byte)
+)
+
 // startTaut connects Taut plugins (internal/taut) to the native UI
 // through slackc. taut.New reads the plugin config only; no JS engine
 // starts unless a plugin is enabled.
@@ -120,10 +127,20 @@ func (b *backend) buildTaut(a *App, dark bool, team, channel string) (*taut.Taut
 				slackc.SetPatched(names)
 				patchMu.Unlock()
 			},
-			ThreadPane:  messages.ThreadPane, // api.threads.usePane (safe off the UI goroutine)
-			CallGo:      slackc.CallGo,
-			SetStyle:    slackc.SetStyle,
-			RemoveStyle: slackc.RemoveStyle,
+			ThreadPane: messages.ThreadPane, // api.threads.usePane (safe off the UI goroutine)
+			CallGo:     slackc.CallGo,
+			SetStyle: func(key, src string) {
+				if f := styleTap; f != nil {
+					f(key, src)
+				}
+				slackc.SetStyle(key, src)
+			},
+			RemoveStyle: func(key string) {
+				if f := styleTap; f != nil {
+					f(key, "")
+				}
+				slackc.RemoveStyle(key)
+			},
 			Overlays: func(o []taut.Overlay) {
 				roots := make([]uint64, len(o))
 				for i, x := range o {
@@ -145,6 +162,9 @@ func (b *backend) buildTaut(a *App, dark bool, team, channel string) (*taut.Taut
 				a.Post(func() { a.switchAccount(c) })
 			},
 			OnDocument: func(body []byte, css []string) {
+				if f := documentTap; f != nil {
+					f(body)
+				}
 				if err := slackc.SetDocument(body, css); err != nil {
 					log.Printf("slackc: document: %v", err)
 				}

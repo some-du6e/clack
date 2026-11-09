@@ -73,6 +73,10 @@ type Size struct {
 	// ThreadHeader adds one thread in a conversation of each kind the
 	// thread pane's header names differently (threadheader.go).
 	ThreadHeader bool
+	// PluginBench adds the plugin bench's channels (plugin_bench.go):
+	// #plugin-bench (500 messages), #admins-only and a Slackbot DM; the
+	// viewer becomes a workspace admin.
+	PluginBench bool
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -441,6 +445,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.ThreadHeader {
 		s.addThreadHeader() // threadheader.go
+	}
+	if sz.PluginBench {
+		s.addPluginBench() // plugin_bench.go
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", s.api)
@@ -1198,6 +1205,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return ok("allowed", allowed, "allowed_per_team", map[string]any{})
 	case "edge/huddles/list":
 		return ok("huddles", []any{})
+	}
+	if out, handled := s.handlePluginBench(method, f); handled && s.Size.PluginBench { // plugin_bench.go
+		return out
 	}
 	if out, handled := s.handleIdentity(method, f); handled && s.Size.Identity { // identity.go
 		return out

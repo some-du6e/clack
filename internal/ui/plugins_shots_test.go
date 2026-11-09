@@ -23,6 +23,7 @@ import (
 	"gioui.org/io/pointer"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/fakeslack"
+	"github.com/some-du6e/yoloslackgoclient/internal/pluginbench"
 	"github.com/some-du6e/yoloslackgoclient/internal/pluginlib"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
 )
@@ -209,6 +210,7 @@ func TestPluginsPrefsShots(t *testing.T) {
 		if len(clear.Entries) != 2 || len(silent.Entries) != 2 {
 			t.Fatalf("dual rows: Clear URLs %d entries, Silent Typing %d", len(clear.Entries), len(silent.Entries))
 		}
+		pp.lib.bench = &pluginbench.Data{} // no bench data: Install asks
 		if act := pp.lib.action(clear); act.label != "Install…" {
 			t.Errorf("Clear URLs (both systems, neither installed): %q", act.label)
 		}
@@ -245,6 +247,46 @@ func TestPluginsPrefsShots(t *testing.T) {
 		e.until("the system choice", 5*time.Second, func() bool { return len(e.a.overlays) > before })
 		shot("plugins-browse-install-choice-" + mode)
 		e.a.dismissTop()
+		e.settle(50 * time.Millisecond)
+
+		// with plugin bench data for the row: Install installs the pick
+		// (Slick here) and the chevron beside it offers both, the pick
+		// first, "(recommended)", with the bench's reason
+		pp.lib.bench = &pluginbench.Data{Schema: 1, Plugins: []pluginbench.Plugin{{
+			Name: "Clear URLs", Winner: pluginlib.Slick, Reason: "works fully, 3.9x faster to load, 1.5x less JS memory",
+			Variants: []pluginbench.Variant{
+				{System: pluginlib.Taut, ID: clear.Entries[0].ID, SHA256: clear.Entries[0].SHA256},
+				{System: pluginlib.Slick, ID: clear.Entries[1].ID, SHA256: clear.Entries[1].SHA256},
+			},
+		}}}
+		if act := pp.lib.action(clear); act.label != "Install" || act.menu == nil {
+			t.Errorf("Clear URLs with bench data: %q (menu %v)", act.label, act.menu != nil)
+		}
+		shot("plugins-browse-bench-" + mode)
+		more := pp.lib.s.k.btn("lib.more." + libKey(clear.first()))
+		e.gpu = nil
+		found = false
+		for x := at.X; x < e.size.X-4 && !found; x += 4 {
+			for _, y := range []int{at.Y, at.Y - 4, at.Y + 4} {
+				e.r.Queue(pointerMove(image.Pt(x, y)))
+				e.frame()
+				e.frame()
+				if more.Hovered() {
+					at, found = image.Pt(x, y), true
+					break
+				}
+			}
+		}
+		e.gpu = gpu
+		if !found {
+			t.Fatal("didn't find Clear URLs' Install chevron")
+		}
+		before = len(e.a.overlays)
+		e.click(at)
+		e.until("the bench's Install for menu", 5*time.Second, func() bool { return len(e.a.overlays) > before })
+		shot("plugins-browse-install-bench-" + mode)
+		e.a.dismissTop()
+		pp.lib.bench = &pluginbench.Data{}
 		e.settle(50 * time.Millisecond)
 		pp.setMode("installed")
 
