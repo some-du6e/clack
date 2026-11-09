@@ -38,19 +38,23 @@ type Stack struct {
 	views []*Surface
 	done  bool
 
-	busy     bool
-	banner   string
-	closeTap tap
-	backTap  tap
-	cancel   tap
-	submit   tap
-	retry    tap
-	list     layout.List
-	tag      int
-	scrim    int
-	focused  bool
-	dialog   *core.Dialog
-	dlgAppID string
+	busy   bool
+	banner string
+	// bannerRetry: the banner is BlockKitModalError's default ("We had
+	// some trouble connecting. Try again?" with the link); an app's
+	// view_error shows alone.
+	bannerRetry bool
+	closeTap    tap
+	backTap     tap
+	cancel      tap
+	submit      tap
+	retry       tap
+	list        layout.List
+	tag         int
+	scrim       int
+	focused     bool
+	dialog      *core.Dialog
+	dlgAppID    string
 }
 
 func newStack(h Host, v *core.View) *Stack {
@@ -62,7 +66,7 @@ func newStack(h Host, v *core.View) *Stack {
 
 func (s *Stack) surface(v *core.View) *Surface {
 	sf := newSurface(s.h, v)
-	sf.onAction = func() { s.banner = "" }
+	sf.onAction = func() { s.banner, s.bannerRetry = "", false }
 	return sf
 }
 
@@ -91,7 +95,7 @@ func (s *Stack) push(v *core.View) {
 	}
 	s.views = append(s.views, s.surface(v))
 	s.list.Position = layout.Position{}
-	s.busy, s.banner = false, ""
+	s.busy, s.banner, s.bannerRetry = false, "", false
 	s.h.Invalidate()
 }
 
@@ -188,7 +192,7 @@ func (s *Stack) back() {
 	}
 	s.closeViews(t.ID, "")
 	s.views = s.views[:len(s.views)-1]
-	s.busy, s.banner = false, ""
+	s.busy, s.banner, s.bannerRetry = false, "", false
 	s.list.Position = layout.Position{}
 }
 
@@ -226,7 +230,7 @@ func (s *Stack) doSubmit() {
 	if !sf.validate() {
 		return
 	}
-	s.busy, s.banner = true, ""
+	s.busy, s.banner, s.bannerRetry = true, "", false
 	if s.dialog != nil {
 		s.submitDialog(sf)
 		return
@@ -241,7 +245,7 @@ func (s *Stack) doSubmit() {
 		}
 		s.busy = false
 		if err != nil {
-			s.banner = "We had some trouble connecting. Try again?"
+			s.failed("")
 			return
 		}
 		if r.Toast != "" {
@@ -254,7 +258,7 @@ func (s *Stack) doSubmit() {
 			}
 			sf.changed()
 			if r.Code != "" && len(r.Errors) == 0 {
-				s.banner = r.ViewError
+				s.failed(r.ViewError)
 			}
 			return
 		case "update":
@@ -278,11 +282,12 @@ func (s *Stack) doSubmit() {
 			return
 		}
 		if r.Code != "" {
-			s.banner = firstNonEmpty(r.ViewError, "Something went wrong. Please try again.")
+			s.failed(r.ViewError)
 			return
 		}
-		// no response_action: this view is done
-		if len(s.views) > 1 && !v.ClearOnClose {
+		// no response_action (handleSubmitResolved): back to the previous
+		// view if this one was pushed, else close
+		if len(s.views) > 1 {
 			s.views = s.views[:len(s.views)-1]
 			s.list.Position = layout.Position{}
 			return
@@ -364,18 +369,26 @@ func (s *Stack) Layout(gtx C) D {
 	if s.banner != "" {
 		bannerH = dp(gtx, 44)
 	}
-	maxBody := win.Y - dp(gtx, 64) - headH - footH - bannerH
+	// .c-dialog__content: max-height 640px (96% under 657px tall),
+	// centered; .p-block_kit_modal .c-dialog__body: min-height 90px,
+	// padding 8px 20px 16px 24px
+	maxH := dp(gtx, 640)
+	if win.Y < dp(gtx, 657) {
+		maxH = win.Y * 96 / 100
+	}
+	maxBody := maxH - headH - footH - bannerH
+	padT, padB := dp(gtx, 8), dp(gtx, 16)
 	// measure the body
-	bw := mw - 2*pad
+	bw := mw - pad - dp(gtx, 20)
 	m := op.Record(gtx.Ops)
 	g := gtx
 	g.Constraints = layout.Constraints{Max: image.Pt(bw, 1<<20)}
 	bd := sf.Layout(g)
 	m.Stop()
-	bodyH := min(bd.Size.Y+dp(gtx, 16), max(maxBody, dp(gtx, 120)))
-	scrolls := bd.Size.Y+dp(gtx, 16) > bodyH
+	content := bd.Size.Y + padT + padB
+	bodyH := min(max(content, dp(gtx, 90)), max(maxBody, dp(gtx, 90)))
 	mh := headH + bannerH + bodyH + footH
-	pos := image.Pt((win.X-mw)/2, max((win.Y-mh)/2, dp(gtx, 32)))
+	pos := image.Pt((win.X-mw)/2, max((win.Y-mh)/2, 0))
 
 	// the card: Slack's c-sk-modal (role dialog), so a theme's
 	// [role=dialog] background and border land on it as in Slack
@@ -401,15 +414,18 @@ func (s *Stack) Layout(gtx C) D {
 				rrect(gtx, rr, dp(gtx, 8), rgba(0xe01e5a, .1))
 				at(gtx, image.Pt(dp(gtx, 12), dp(gtx, 10)), func(gtx C) D { return icon(gtx, "warning", 16, cl.ErrorText) })
 				at(gtx, image.Pt(dp(gtx, 36), 0), func(gtx C) D {
-					gtx.Constraints = layout.Constraints{Max: image.Pt(w-dp(gtx, 120), rr.Dy())}
+					gtx.Constraints = layout.Constraints{Max: image.Pt(w-dp(gtx, 48), rr.Dy())}
 					return vcenter(gtx, rr.Dy(), func(gtx C) D { return label(gtx, th, 15, theme.Regular, cl.Text, s.banner) })
 				})
-				rw := measure(gtx, th, 15, theme.Bold, "Retry")
-				at(gtx, image.Pt(w-dp(gtx, 12)-rw, 0), func(gtx C) D {
-					vcenter(gtx, rr.Dy(), func(gtx C) D { return label(gtx, th, 15, theme.Bold, cl.Link, "Retry") })
-					s.retry.add(gtx, image.Pt(rw, rr.Dy()))
-					return D{}
-				})
+				if s.bannerRetry { // "We had some trouble connecting. <a>Try again?</a>"
+					tw := measure(gtx, th, 15, theme.Regular, s.banner)
+					rw := measure(gtx, th, 15, theme.Regular, "Try again?")
+					at(gtx, image.Pt(dp(gtx, 36)+tw, 0), func(gtx C) D {
+						vcenter(gtx, rr.Dy(), func(gtx C) D { return label(gtx, th, 15, theme.Regular, cl.Link, "Try again?") })
+						s.retry.add(gtx, image.Pt(rw, rr.Dy()))
+						return D{}
+					})
+				}
 				return D{}
 			})
 			y += bannerH
@@ -419,7 +435,7 @@ func (s *Stack) Layout(gtx C) D {
 			defer clip.Rect{Max: image.Pt(mw, bodyH)}.Push(gtx.Ops).Pop()
 			gtx.Constraints = layout.Exact(image.Pt(mw, bodyH))
 			d := s.list.Layout(gtx, 1, func(gtx C, _ int) D {
-				return layout.Inset{Left: unit.Dp(24), Right: unit.Dp(24), Top: unit.Dp(8), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx C) D {
+				return layout.Inset{Left: unit.Dp(24), Right: unit.Dp(20), Top: unit.Dp(8), Bottom: unit.Dp(16)}.Layout(gtx, func(gtx C) D {
 					gtx.Constraints = layout.Constraints{Max: image.Pt(bw, 1<<20)}
 					return sf.Layout(gtx)
 				})
@@ -434,9 +450,8 @@ func (s *Stack) Layout(gtx C) D {
 		y += bodyH
 		// footer
 		if hasFooter {
-			if scrolls {
-				rrect(gtx, image.Rect(0, y, mw, y+max(1, dp(gtx, 1))), 0, cl.FooterBorder)
-			}
+			// .p-block_kit_modal .c-dialog__footer: always a 1px top border
+			rrect(gtx, image.Rect(0, y, mw, y+max(1, dp(gtx, 1))), 0, cl.FooterBorder)
 			s.footer(gtx, image.Pt(0, y), mw, footH, v)
 		}
 	})
@@ -561,13 +576,8 @@ func (s *Stack) footer(gtx C, org image.Point, mw, fh int, v *core.View) {
 		}
 		btn(&s.submit, firstNonEmpty(txt, "Submit"), "primary", v.SubmitDisabled || s.busy)
 	}
-	closeTxt := titleOf(v.Close)
-	if closeTxt == "" {
-		closeTxt = "Cancel"
-		if v.Submit == nil && s.dialog == nil {
-			closeTxt = "Close"
-		}
-	}
+	// renderBackButton: the view's close text, else "Close"
+	closeTxt := firstNonEmpty(titleOf(v.Close), "Close")
 	btn(&s.cancel, closeTxt, "", false)
 }
 
@@ -710,9 +720,18 @@ func (s *Stack) submitDialog(sf *Surface) {
 			return
 		}
 		if err != nil {
-			s.banner = "We had some trouble connecting. Try again?"
+			s.failed("")
 			return
 		}
 		s.close()
 	})
+}
+
+// failed shows BlockKitModalError: the app's view_error, else Slack's
+// "We had some trouble connecting. Try again?" (the link resubmits).
+func (s *Stack) failed(viewError string) {
+	s.banner, s.bannerRetry = viewError, false
+	if viewError == "" {
+		s.banner, s.bannerRetry = "We had some trouble connecting. ", true
+	}
 }

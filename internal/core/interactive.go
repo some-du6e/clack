@@ -754,9 +754,9 @@ func (ix *Interactive) SubmitView(ctx context.Context, viewID string, values jso
 			out.ResponseAction = "errors"
 			return out, nil
 		}
-		if out.ViewError == "" {
-			out.ViewError = submitErrorText(res.Error)
-		}
+		// ViewError stays the app's own: without one the modal shows
+		// BlockKitModalError's default "We had some trouble connecting.
+		// Try again?" (submitErrorText is the dialog-less wording)
 		return out, nil
 	}
 	if v, err := ParseView(res.View); err == nil {

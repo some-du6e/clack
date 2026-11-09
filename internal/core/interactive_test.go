@@ -167,7 +167,7 @@ func TestSubmitView(t *testing.T) {
 		t.Errorf("toast: %+v", r)
 	}
 	f.reply["views.submit"] = `{"ok":false,"error":"view_not_found"}`
-	if r, _ = ix.SubmitView(context.Background(), "V1", nil); r.Code != "view_not_found" || r.ViewError == "" {
+	if r, _ = ix.SubmitView(context.Background(), "V1", nil); r.Code != "view_not_found" || r.ViewError != "" {
 		t.Errorf("failure: %+v", r)
 	}
 	f.reply["views.close"] = `{"ok":true}`
