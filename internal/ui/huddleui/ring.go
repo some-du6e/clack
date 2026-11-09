@@ -17,6 +17,7 @@ import (
 	"github.com/hajimehoshi/go-mp3"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/huddle"
+	"github.com/some-du6e/yoloslackgoclient/internal/slack/tlsfp"
 )
 
 // The invite sound. Slack's playHuddleInviteSound (client-boot ws4B) plays
@@ -165,7 +166,7 @@ func soundBytes(file string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	res, err := http.DefaultClient.Do(req) // a public asset: no cookie, no token
+	res, err := tlsfp.Client.Do(req) // a public asset: no cookie, no token; Slack's ClientHello for its CDN
 	if err != nil {
 		return nil, err
 	}
