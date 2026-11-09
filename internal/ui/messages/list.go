@@ -135,7 +135,7 @@ type listState struct {
 	// hover toolbar state for its natives (MessageActions)
 	tbRow  *row
 	tbSize image.Point
-	tbHov  int // hovered toolbar button, -1 none
+	tbHov  int      // hovered toolbar button, -1 none
 	quick  quickBar // one-click reactions before the buttons (quickreact.go)
 }
 
