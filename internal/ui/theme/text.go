@@ -77,7 +77,8 @@ func envFloat(name string, def float32) float32 {
 //     dimmer chrome text needs more, as on the main pane: dark mode's
 //     rows (#e3ceeb at .8 over #201024, #bca8c3 flat, y=.69) came out
 //     9-11% heavy at 0.15 (feel-shots against Chrome drawing Slack's rows
-//     in the same colours), so k = 0.15 + max(0, .85-y)·0.5 (0.23 there);
+//     in the same colours), +3-6% at 0.23, so k = 0.15 + max(0, .85-y)·0.65
+//     (0.25 there);
 //   - on the dark main pane, the fade grows as the text dims: #b9babd
 //     (topic, y=.73) at 0.26-0.27 and #ababad (timestamps, y=.67) at 0.39,
 //     so k = 0.27 + max(0, .73-y)·2.
@@ -93,7 +94,7 @@ func lightTextColor(c color.NRGBA, pxPerDp float32, w font.Weight, chrome bool) 
 	if y < 0.6 {
 		return c
 	}
-	k := 0.15 + max(0, 0.85-y)*0.5 // light rows -3.5% (1x) / -2.9% (2x) at 0.17
+	k := 0.15 + max(0, 0.85-y)*0.65 // light rows -3.5% (1x) / -2.9% (2x) at 0.17
 	if !chrome {
 		k = 0.27 + max(0, 0.73-y)*2
 	}
