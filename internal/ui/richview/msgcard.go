@@ -28,7 +28,7 @@ func paintIcon(ops *op.Ops, name string, f *frag) {
 	gtx := layout.Context{Ops: ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
 		Constraints: layout.Exact(image.Pt(f.size, f.size))}
 	defer op.Offset(image.Pt(int(f.x+0.5), f.y)).Push(ops).Pop()
-	icons.Get(name)(gtx, unit.Dp(f.size), f.col)
+	icons.GetSlack(name)(gtx, unit.Dp(f.size), f.col) // Slack icon names ("message")
 }
 
 // addIcon adds an inline icon of px at the flow's position.

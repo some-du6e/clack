@@ -102,7 +102,7 @@ func (l *tlLayout) paintSlugIcon(gtx layout.Context, li int, it *tlItem, col col
 	g := gtx
 	g.Metric = unit.Metric{PxPerDp: 1, PxPerSp: 1}
 	g.Constraints = layout.Exact(image.Pt(px, px))
-	icons.Get("message")(g, unit.Dp(px), col)
+	icons.GetSlack("message")(g, unit.Dp(px), col)
 }
 
 // ---- paste ----
