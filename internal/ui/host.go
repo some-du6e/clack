@@ -84,8 +84,20 @@ func (a *App) Forward() {
 	}
 }
 
+// onPlace, set by mount_features.go, feeds the search popover's Recent
+// places (Slack's navigation history: conversations and pages).
+var onPlace func(id, title, icon string)
+
 func (a *App) afterRoute(prev, r Route) {
 	a.slickRoute(r)
+	if onPlace != nil {
+		switch p := r.Page(); {
+		case r.Channel() != "":
+			onPlace(r.Channel(), "", "")
+		case p != "" && p != "search" && p != "c" && pageTitle(r) != "":
+			onPlace("view:"+p, pageTitle(r), pageIcon(p))
+		}
+	}
 	ch := r.Channel()
 	a.trackPreviewRoute(prev, r)
 	if a.data != nil && a.data.core != nil {
@@ -282,6 +294,25 @@ func (a *App) unreadItems() int {
 		}
 	}
 	return n
+}
+
+// pageIcon is a page's Recent places icon.
+func pageIcon(page string) string {
+	switch page {
+	case "later":
+		return "todos"
+	case "dms":
+		return "dms"
+	case "files":
+		return "files"
+	case "drafts":
+		return "send"
+	case "directories":
+		return "directories"
+	case "unreads":
+		return "unreads"
+	}
+	return page
 }
 
 func pageTitle(r Route) string {

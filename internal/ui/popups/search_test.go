@@ -196,10 +196,10 @@ func TestSearchMerge(t *testing.T) {
 func TestSearchParse(t *testing.T) {
 	q := srParse(`deploy  "build failed" in:<#C123|eng> from:@ann has:link IS:thread http://x.y foo:bar`)
 	wantTerms := []string{"deploy", "build failed", "http://x.y", "foo:bar"}
-	if !reflect.DeepEqual(q.Terms, wantTerms) {
-		t.Fatalf("terms = %q", q.Terms)
+	if !reflect.DeepEqual(q.Terms, wantTerms) || !reflect.DeepEqual(q.Quoted, []bool{false, true, false, false}) {
+		t.Fatalf("terms = %q %v", q.Terms, q.Quoted)
 	}
-	wantMods := []srMod{{"in", "<#C123|eng>"}, {"from", "@ann"}, {"has", "link"}, {"is", "thread"}}
+	wantMods := []srMod{{Key: "in", Val: "<#C123|eng>"}, {Key: "from", Val: "@ann"}, {Key: "has", Val: "link"}, {Key: "is", Val: "thread"}}
 	if !reflect.DeepEqual(q.Mods, wantMods) {
 		t.Fatalf("mods = %v", q.Mods)
 	}
@@ -219,7 +219,7 @@ func TestSearchParse(t *testing.T) {
 
 func TestSearchParseEdgeCases(t *testing.T) {
 	q := srParse("from: in:general  ")
-	if len(q.Mods) != 1 || q.Mods[0] != (srMod{"in", "general"}) {
+	if len(q.Mods) != 1 || q.Mods[0] != (srMod{Key: "in", Val: "general"}) {
 		t.Fatalf("mods = %v", q.Mods)
 	}
 	if !reflect.DeepEqual(q.Terms, []string{"from:"}) {
@@ -228,8 +228,9 @@ func TestSearchParseEdgeCases(t *testing.T) {
 	if got := srParse("").String(); got != "" {
 		t.Fatalf("empty = %q", got)
 	}
-	if got := srParse(`in:"my channel" x`); got.Get("in") != `"my channel"` || got.Text() != "x" {
-		t.Fatalf("quoted mod = %+v", got)
+	if got := srParse(`in:"my channel" x`); got.Get("in") != "my channel" || got.Text() != "x" ||
+		got.String() != `x in:"my channel"` {
+		t.Fatalf("quoted mod = %+v %q", got, got.String())
 	}
 }
 
@@ -404,5 +405,81 @@ func TestSearchRecents(t *testing.T) {
 	convs, qs := srRecents()
 	if !reflect.DeepEqual(convs, []string{"C2", "C1"}) || !reflect.DeepEqual(qs, []string{"hello"}) {
 		t.Fatalf("recents = %v %v", convs, qs)
+	}
+}
+
+// Slack's modifiers: "-" excludes words and filters, "quotes" keep exact
+// words and phrases, during:/on:/type:/creator:/with: are modifiers, and
+// the query round-trips terms first then modifiers in their order.
+func TestSearchParseModifiers(t *testing.T) {
+	q := srParse(`deploy -flaky "exact" -"build failed" -from:<@U1> with:<@U2> during:november on:2026-11-08 type:pdfs creator:<@U3> -in:#random`)
+	if !reflect.DeepEqual(q.Terms, []string{"deploy", "-flaky", "exact", "-build failed"}) ||
+		!reflect.DeepEqual(q.Quoted, []bool{false, false, true, true}) {
+		t.Fatalf("terms %q quoted %v", q.Terms, q.Quoted)
+	}
+	want := []srMod{{Key: "from", Val: "<@U1>", Neg: true}, {Key: "with", Val: "<@U2>"}, {Key: "during", Val: "november"},
+		{Key: "on", Val: "2026-11-08"}, {Key: "type", Val: "pdfs"}, {Key: "creator", Val: "<@U3>"}, {Key: "in", Val: "#random", Neg: true}}
+	if !reflect.DeepEqual(q.Mods, want) {
+		t.Fatalf("mods %+v", q.Mods)
+	}
+	if got := q.String(); got != `deploy -flaky "exact" -"build failed" -from:<@U1> with:<@U2> during:november on:2026-11-08 type:pdfs creator:<@U3> -in:#random` {
+		t.Errorf("String = %q", got)
+	}
+	// exclusions are neither searched as text nor highlighted, and an
+	// excluded filter isn't the filter
+	if q.Text() != "deploy exact" || !reflect.DeepEqual(q.Highlights(), []string{"deploy", "exact"}) {
+		t.Errorf("Text %q Highlights %q", q.Text(), q.Highlights())
+	}
+	if q.Get("from") != "" || q.Get("in") != "" || q.Has("in", "#random") {
+		t.Error("an excluded from:/in: reads as the filter")
+	}
+	// setting a filter keeps its exclusion and the quotes
+	q2 := q.Set("from", "<@U9>")
+	if got := q2.String(); !strings.Contains(got, "-from:<@U1>") || !strings.Contains(got, "from:<@U9>") || !strings.Contains(got, `"exact"`) {
+		t.Errorf("Set = %q", got)
+	}
+	if got := srParse(`“curly quotes”`); !reflect.DeepEqual(got.Terms, []string{"curly quotes"}) {
+		t.Errorf("curly quotes: %q", got.Terms)
+	}
+}
+
+// The More menu's Date presets are app.slack.com's after:/before: pairs
+// (captured on 2026-11-08), and the source menu's counts read like
+// Slack's.
+func TestSearchDatePresetsAndCounts(t *testing.T) {
+	now := time.Date(2026, 11, 8, 15, 0, 0, 0, time.UTC)
+	want := map[string][2]string{
+		"Today": {"2026-11-07", "2026-11-09"}, "Yesterday": {"2026-11-06", "2026-11-08"},
+		"Last 7 days": {"2026-11-01", "2026-11-09"}, "Last 30 days": {"2026-10-09", "2026-11-09"},
+		"Last 12 months": {"2025-11-08", "2026-11-09"}, "Last 3 years": {"2023-11-08", "2026-11-09"},
+	}
+	for _, d := range srDateRanges {
+		w := want[d.label]
+		if got := [2]string{srDate(d.from(now)), srDate(d.end(now))}; got != w {
+			t.Errorf("%s: after/before %v, want %v", d.label, got, w)
+		}
+	}
+	if got := srWithRange(srParse("x on:2026-01-01"), "2026-11-01", "2026-11-09").String(); got != "x before:2026-11-09 after:2026-11-01" {
+		t.Errorf("srWithRange = %q", got)
+	}
+	for n, w := range map[int]string{0: "0", 660: "660", 850: "850", 1234: "1.2k", 17040: "17k", 291727: "292k", 1260000: "1.3M"} {
+		if got := srCountShort(n); got != w {
+			t.Errorf("srCountShort(%d) = %q, want %q", n, got, w)
+		}
+	}
+	for n, w := range map[int]string{1: "1 result", 20: "20 results", 291727: "291,727 results", 1000: "1,000 results"} {
+		if got := srResultsLabel(n); got != w {
+			t.Errorf("srResultsLabel(%d) = %q, want %q", n, got, w)
+		}
+	}
+	for _, c := range []struct {
+		page, pages int
+		want        []int
+	}{
+		{1, 15000, []int{1, 2, 3, 4, 5}}, {2, 2, []int{1, 2}}, {7, 9, []int{5, 6, 7, 8, 9}}, {4, 10, []int{2, 3, 4, 5, 6}},
+	} {
+		if got := srPageRange(c.page, c.pages); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("srPageRange(%d, %d) = %v, want %v", c.page, c.pages, got, c.want)
+		}
 	}
 }

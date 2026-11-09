@@ -625,15 +625,20 @@ func TestSlickViewBetterBlock(t *testing.T) {
 		})
 	}
 
-	// message suggestions from search.messages: one by Alice (blocked),
-	// one by Bob, one by an app (its bot user in bot_profile)
+	// message suggestions from search.inline (the popover's Recent
+	// messages): one by Alice (blocked), one by Bob, one by an app (its
+	// bot user in bot_profile)
 	const aliceTS, bobTS, botTS = "1700000101.000100", "1700000102.000100", "1700000103.000100"
-	e.api.set("search.messages", fmt.Sprintf(`{"ok":true,"messages":{"total":3,"matches":[`+
-		`{"type":"message","ts":%q,"user":%q,"text":"example from alice","channel":{"id":%q,"name":"general"}},`+
-		`{"type":"message","ts":%q,"user":%q,"text":"example from bob","channel":{"id":%q,"name":"general"}},`+
-		`{"type":"message","ts":%q,"subtype":"bot_message","bot_id":"B0HELPER01","text":"example from the bot",`+
-		`"bot_profile":{"id":"B0HELPER01","name":"Helper Bot","app_id":%q,"user_id":%q},"channel":{"id":%q,"name":"general"}}]}}`,
-		aliceTS, slAlice, slGen, bobTS, slBob, slGen, botTS, slAppID, slApp, slGen))
+	ext := func(s string) string {
+		return `"extracts":[{"text":"` + s + `","truncated_head":false,"truncated_tail":false}]`
+	}
+	e.api.set("search.inline", fmt.Sprintf(`{"ok":true,"query":"example","pagination":{"total_count":3,"page":1,"per_page":3,"page_count":1},"items":[`+
+		`{"ts":%q,"user":%q,"channel_id":%q,"iid":"I1",%s},`+
+		`{"ts":%q,"user":%q,"channel_id":%q,"iid":"I2",%s},`+
+		`{"ts":%q,"bot_id":"B0HELPER01","channel_id":%q,"iid":"I3",%s,`+
+		`"bot_profile":{"id":"B0HELPER01","name":"Helper Bot","app_id":%q,"user_id":%q}}]}`,
+		aliceTS, slAlice, slGen, ext("example from alice"), bobTS, slBob, slGen, ext("example from bob"),
+		botTS, slGen, ext("example from the bot"), slAppID, slApp))
 	msgRow := func(rows []srRow, ts string) *srRow {
 		for i := range rows {
 			if rows[i].kind == srRMsg && rows[i].msg != nil && rows[i].msg.TS == ts {

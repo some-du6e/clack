@@ -490,8 +490,17 @@ func (a *App) SearchInline(ctx context.Context, o InlineOpts) (SearchResult, err
 		return SearchResult{}, err
 	}
 	var res struct {
-		Pagination searchPagination `json:"pagination"`
-		Items      []struct {
+		Pagination searchPagination  `json:"pagination"`
+		Items      []json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(stripHighlightJSON(raw), &res); err != nil {
+		return SearchResult{}, err
+	}
+	out := SearchResult{Total: res.Pagination.Total, Page: 1, Pages: res.Pagination.PageCount}
+	var users []string
+	chans := map[string]bool{}
+	for _, ir := range res.Items {
+		var it struct {
 			TS        string `json:"ts"`
 			User      string `json:"user"`
 			Channel   string `json:"channel_id"`
@@ -501,18 +510,12 @@ func (a *App) SearchInline(ctx context.Context, o InlineOpts) (SearchResult, err
 				TruncHead bool   `json:"truncated_head"`
 				TruncTail bool   `json:"truncated_tail"`
 			} `json:"extracts"`
-		} `json:"items"`
-	}
-	if err := json.Unmarshal(stripHighlightJSON(raw), &res); err != nil {
-		return SearchResult{}, err
-	}
-	out := SearchResult{Total: res.Pagination.Total, Page: 1, Pages: res.Pagination.PageCount}
-	var users []string
-	chans := map[string]bool{}
-	for _, it := range res.Items {
-		if it.TS == "" || it.Channel == "" {
+		}
+		if json.Unmarshal(ir, &it) != nil || it.TS == "" || it.Channel == "" {
 			continue
 		}
+		var m slack.Message // bot_id / bot_profile / username when Slack sends them
+		_ = json.Unmarshal(ir, &m)
 		text := ""
 		if len(it.Extracts) > 0 {
 			e := it.Extracts[0]
@@ -524,7 +527,7 @@ func (a *App) SearchInline(ctx context.Context, o InlineOpts) (SearchResult, err
 				text += "…"
 			}
 		}
-		m := slack.Message{TS: it.TS, User: it.User, Text: text}
+		m.TS, m.User, m.Text, m.Blocks = it.TS, it.User, text, nil
 		v := a.message(it.Channel, &m)
 		v.Permalink = it.Permalink
 		out.Messages = append(out.Messages, v)
