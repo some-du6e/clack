@@ -390,6 +390,7 @@ func (e *benchEnv) idle(d time.Duration) (deliveries, wakeups int, cpuPerSec flo
 	same0 := e.same
 	e.mu.Unlock()
 	c0 := e.calls.snapshot()
+	e.js(`globalThis.__bench && (globalThis.__bench.inv = {}, globalThis.__bench.refresh = 0, globalThis.__bench.act = {}); 0`)
 	n0 := e.delivered()
 	for dl := time.Now().Add(d); time.Now().Before(dl); {
 		e.frame()
@@ -410,6 +411,7 @@ func (e *benchEnv) idle(d time.Duration) (deliveries, wakeups int, cpuPerSec flo
 		e.t.Logf("idle: %d deliveries (%d identical to the root's last) to %d roots: %s; Go→JS meanwhile: %s",
 			deliveries, e.same-same0, len(again), idleShapes(again), e.calls.since(c0))
 		e.mu.Unlock()
+		e.t.Logf("idle JS: %s", e.js(`JSON.stringify(globalThis.__bench ?? null)`))
 	}
 	cpu0 := procCPU()
 	time.Sleep(2 * time.Second)
@@ -1174,6 +1176,7 @@ func benchVariant(t *testing.T, ix *pluginlib.Index, entry pluginlib.Entry, sc b
 
 	e.settle(300 * time.Millisecond)
 	slackc.SetBridge(countingBridge{e.tt.Bridge(), &e.calls}) // the runtime is up: Attached has run
+	e.js(jsProbe)
 	e.openBench()
 	e.loadAll()
 	t.Logf("%s %s: %d messages loaded", entry.System, entry.ID, e.loadedMessages(fakeslack.BenchChannelID))
@@ -1431,4 +1434,42 @@ func (b countingBridge) Dispatch(target int64, ev []byte) {
 func (b countingBridge) Unmount(root uint64) {
 	b.c.unmount.Add(1)
 	b.Bridge.Unmount(root)
+}
+
+// jsProbe counts, in JS, the mirror's invalidations by slice, redux
+// refreshes and store dispatches (diagnostics for idle re-renders).
+const jsProbe = `(() => {
+  const T = globalThis.__taut
+  if (!T || globalThis.__bench) return
+  const b = (globalThis.__bench = { inv: {}, refresh: 0, act: {} })
+  const inv = T.invalidate
+  T.invalidate = (changes) => {
+    for (const c of changes || []) {
+      const k = c.slice + (c.keys && c.keys.length ? '[' + c.keys.length + ']' : '')
+      b.inv[k] = (b.inv[k] || 0) + 1
+    }
+    return inv(changes)
+  }
+  const rf = T.redux.refresh
+  T.redux.refresh = (...a) => { b.refresh++; return rf(...a) }
+  T.refresh = T.redux.refresh
+  const st = T.redux.getStore()
+  const d = st.dispatch
+  st.dispatch = (a) => {
+    const k = typeof a === 'function' ? 'thunk' : (a && a.type) || '?'
+    b.act[k] = (b.act[k] || 0) + 1
+    return d(a)
+  }
+})()`
+
+func (e *benchEnv) js(src string) string {
+	rt, err := e.tt.JS()
+	if err != nil || rt == nil {
+		return ""
+	}
+	v, err := rt.Eval("bench-probe.js", src)
+	if err != nil {
+		return err.Error()
+	}
+	return fmt.Sprint(v)
 }
