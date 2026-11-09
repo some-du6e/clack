@@ -500,6 +500,9 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 					noAt = true // MemberSlug supressMentionAtSymbol
 				}
 			}
+		case richtext.MessageMention:
+			l.messageMention(sp, fs, k, pt)
+			continue
 		case richtext.Date:
 			if sp.URL != "" {
 				tg = l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true})
@@ -600,7 +603,7 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 
 	emit := func(it *item, sh *shaped, w float32, p0, p1 int32) {
 		if it.kind == itImage {
-			d.frags = append(d.frags, frag{kind: fImage, x: float32(x0) + x + l.dpf(1), w: float32(it.size), size: it.size, url: it.url, target: it.target, p0: p0, p1: p1, alt: it.alt, comp: it.comp, tip: it.tip, part: it.part})
+			d.frags = append(d.frags, frag{kind: fImage, x: float32(x0) + x + l.dpf(1), w: float32(it.size), size: it.size, url: it.url, target: it.target, p0: p0, p1: p1, alt: it.alt, comp: it.comp, tip: it.tip, part: it.part, col: it.col})
 		} else if it.kind == itWord {
 			d.frags = append(d.frags, frag{kind: fText, x: float32(x0) + x, w: w, size: int(it.face.size >> 6), sh: sh, col: it.col, style: it.style, target: it.target, p0: p0, p1: p1, comp: it.comp,
 				part: it.part, boxed: it.deco >= 0, weight: it.face.f.Weight})

@@ -165,6 +165,13 @@ type Attachment struct {
 	Files    []File          `json:"files,omitempty"`
 	MrkdwnIn []string        `json:"mrkdwn_in"`
 	Actions  json.RawMessage `json:"actions,omitempty"`
+
+	// Message permalink unfurls (is_msg_unfurl): the linked message's
+	// author and where it sits (Slack's MessageAttachmentSlackMessage).
+	AuthorID           string `json:"author_id,omitempty"`
+	ChannelTeam        string `json:"channel_team,omitempty"`
+	IsReplyUnfurl      bool   `json:"is_reply_unfurl,omitempty"`
+	IsThreadRootUnfurl bool   `json:"is_thread_root_unfurl,omitempty"`
 }
 
 // User is a (subset of a) Slack user object.

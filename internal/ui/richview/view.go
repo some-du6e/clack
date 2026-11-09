@@ -527,6 +527,10 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 		}
 		switch f.kind {
 		case fImage:
+			if name, ok := strings.CutPrefix(f.url, iconURL); ok { // a vector icon (pills)
+				paintIcon(ops, name, f)
+				continue
+			}
 			if comp == 0 && animated(st.Images, f.url, f.size) {
 				v.live = append(v.live, int32(i)) // a recording would freeze it
 				continue

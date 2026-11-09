@@ -35,6 +35,12 @@ const (
 	// Additions beyond the original contract (append-only):
 	ColorSwatch // rich_text color element: Text is the hex value ("#1D9BD1"); draw a swatch before it
 	InlineImage // small inline image (context block image element): URL, Text = alt text
+	// MessageMention is a message_mention (a pasted Slack message
+	// permalink): Slack's link pill "💬 karim in #clack". Text is the
+	// label, URL the permalink, ID the message ts; Lock draws the private
+	// channel's lock before the channel name, Off is the disabled pill
+	// ("Private message").
+	MessageMention
 )
 
 // Span is one run of inline content.
@@ -45,6 +51,11 @@ type Span struct {
 	URL   string // Link: target. Emoji: image URL (custom or Slack CDN standard).
 	ID    string // User/Channel/Usergroup id; Emoji: name (with ::skin-tone-N); Broadcast: "here"|"channel"|"everyone"; Date: unix seconds
 	Self  bool   // User mention of the viewer, or a broadcast (yellow highlight)
+
+	// Additions (MessageMention only):
+	Lock bool // the label's channel is private (lock icon before its name)
+	Off  bool // the message can't be shown ("Private message", not a link)
+	Pre  int  // MessageMention with Lock: bytes of Text before the channel name
 }
 
 // BlockKind says what a block is.
@@ -134,6 +145,21 @@ type Attachment struct {
 	AuthorSubname  string // e.g. "@handle" next to the author name in unfurls
 	ShareChannelID string // shared message's channel id
 	VideoURL       string // video block: the playable/embeddable URL
+
+	// MsgCard is a message permalink unfurl (is_msg_unfurl) drawn as
+	// Slack's MessageAttachmentSlackMessageCard: 36px avatar, author,
+	// time, the Context line ("Posted in # clack"), then Text and the
+	// message's files (Block.Children). AuthorID is the linked message's
+	// author, MsgTS its ts.
+	MsgCard  bool
+	AuthorID string
+	MsgTS    string
+	// Context is the card's second line: plain spans and at most one
+	// Channel span, drawn as Slack's InlineChannelEntity (hash or, with
+	// ContextLock, lock icon + name). ContextLink is where it links.
+	Context     []Span
+	ContextLock bool
+	ContextLink string
 }
 
 // File is a file shared in a message.
