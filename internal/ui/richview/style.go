@@ -11,6 +11,7 @@ package richview
 import (
 	"image"
 	"image/color"
+	"sync/atomic"
 
 	"gioui.org/font"
 	"gioui.org/layout"
@@ -190,7 +191,7 @@ type Style struct {
 	// browser's heavier text rendering; 0 disables it.
 	Embolden float32
 
-	gen   uint32 // bumped by SetPalette; Views re-record when it changes
+	gen   uint32 // from styleGens on SetPalette/Invalidate; Views re-record when it changes
 	words map[wordKey]*shaped
 	prev  map[wordKey]*shaped // previous generation (see word)
 	space map[faceKey]spaceMetrics
@@ -212,12 +213,17 @@ func NewStyle(sh *text.Shaper, imgs Images, p Palette) *Style {
 // SetPalette switches colors (e.g. dark mode) and makes every View re-record.
 func (s *Style) SetPalette(p Palette) {
 	s.Palette = p
-	s.gen++
+	s.gen = styleGens.Add(1)
 }
+
+// styleGens numbers style generations across every Style: Views compare
+// only the generation, and a View drawn with the dark style after the
+// light one (one Style per shaper) must not see an equal number.
+var styleGens atomic.Uint32
 
 // Invalidate forces every View to re-layout (e.g. after the font changed).
 func (s *Style) Invalidate() {
-	s.gen++
+	s.gen = styleGens.Add(1)
 	s.prev = nil
 	for k := range s.words {
 		delete(s.words, k)
