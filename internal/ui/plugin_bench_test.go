@@ -891,11 +891,19 @@ var benchScenarios = map[string]benchScenario{
 	"showsendingbot": {
 		checks: []benchCheck{
 			{"the sending app's badge on a person's message", func(e *benchEnv) (bool, string) {
-				// the badge is the app's avatar (botId/botProfile, its icon)
+				// the badge is the app's avatar (botId/botProfile) in the
+				// plugin's badge element, beside the person's own avatar
+				var found string
 				ok := e.wait(10*time.Second, func() bool {
-					return e.treeWith(`"`+fakeslack.BenchSenderBotID+`"`) != "" || e.treeWith("bench-sender") != ""
+					for _, cls := range []string{"taut-sending-bot", "slick-sending-bot"} {
+						if e.treeWith(cls, `"`+fakeslack.BenchSenderBotID+`"`) != "" {
+							found = cls
+							return true
+						}
+					}
+					return false
 				})
-				return ok, ""
+				return ok, found
 			}},
 		},
 	},
