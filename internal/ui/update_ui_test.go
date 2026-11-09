@@ -28,7 +28,7 @@ type fakeUpdater struct {
 func updateApp(t *testing.T, f *fakeUpdater) *App {
 	t.Helper()
 	a := New(Options{ConfigDir: t.TempDir(), NoRealtime: true,
-		DownloadUpdate: func(ctx context.Context, u UpdateInfo) error {
+		DownloadUpdate: func(ctx context.Context, u UpdateInfo, progress func(UpdateProgress)) error {
 			f.downloads.Add(1)
 			select {
 			case err := <-f.release:

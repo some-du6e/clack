@@ -78,7 +78,10 @@ type Options struct {
 	// release's SHA256SUMS) while "Download updates automatically" is on.
 	// nil error: Help gets its dot and the restart dialog. Nil: Preferences
 	// only links the release page.
-	DownloadUpdate func(ctx context.Context, u UpdateInfo) error
+	// progress (safe from any goroutine, as often as the downloader
+	// likes) feeds the Preferences row's bar; the UI redraws for it at
+	// most 10 times a second.
+	DownloadUpdate func(ctx context.Context, u UpdateInfo, progress func(UpdateProgress)) error
 	// InstallUpdate installs the downloaded u, called only when the user
 	// chooses to restart (the dialog's Restart Clack, the menus' Restart to
 	// Apply Update, Preferences' Install and restart). nil error: Clack quits and the
@@ -177,39 +180,40 @@ type App struct {
 		dark bool
 		busy bool
 	}
-	notify         notifier
-	focused        bool
-	winSize        image.Point
-	sbBase         color.NRGBA
-	sbPal          theme.Palette
-	styleVer       uint64    // slackc.Styles.Version the palette was derived at
-	acct           acctTheme // the Slack account's theme (theme_account.go)
-	shaperCh       chan [2]*text.Shaper
-	explorer       *explorer.Explorer    // native file chooser (set in onWindow)
-	tautGen        int                   // bumps when a (new) plugin runtime attaches
-	tautTabs       []taut.PreferencesTab // plugins' Preferences tabs
-	switchAt       time.Time             // navigation time, for the channel-switch latency log
-	switchTo       Route
-	winLive        atomic.Pointer[app.Window] // a.win once Run made it, for other goroutines
-	inval          chan struct{}              // redraw requests for invalidator (cap 1: they coalesce)
-	update         updateState                // "Update available" banner
-	rtAsk          realtimeState              // first-run "Live updates are off" banner
-	updatesOff     atomic.Bool                // prefs.NoUpdateCheck, for updateLoop
-	updNow         chan struct{}              // Check now → updateLoop (cap 1)
-	updWake        chan struct{}              // focus came back: is a check due? (cap 1)
-	hud            *huddleui.Controller       // the native huddle (huddle_wire.go)
-	hudOrigin      map[string]*originTracker  // headers' huddle buttons by channel (caret menus)
-	ccStopping     map[string]bool            // code channels whose agent is being stopped (codechannel.go)
-	ccPending      map[string]bool            // context bar actions in flight, "channel:key"
-	starOrigin     map[string]*originTracker  // headers' star buttons by channel (the Move to… menu)
-	skipBody       int                        // tests: frames drawViewBody leaves the body out
-	skipAt         time.Time                  // tests: the frame being skipped
-	noKeepBody     bool                       // tests: no keepBody (KeepFocus alone)
-	body           bodyDraw                   // the primary body's last live draw (keepBody)
-	standIn        bool                       // keepBody's draw is running
-	standIns       int                        // keepBody draws so far
-	missedFrameLog focusLog                   // the missed-frame log line (focus_log.go)
-	panelOrigin    image.Point                // the primary panel's window origin this frame
+	notify           notifier
+	focused          bool
+	winSize          image.Point
+	sbBase           color.NRGBA
+	sbPal            theme.Palette
+	styleVer         uint64    // slackc.Styles.Version the palette was derived at
+	acct             acctTheme // the Slack account's theme (theme_account.go)
+	shaperCh         chan [2]*text.Shaper
+	explorer         *explorer.Explorer    // native file chooser (set in onWindow)
+	tautGen          int                   // bumps when a (new) plugin runtime attaches
+	tautTabs         []taut.PreferencesTab // plugins' Preferences tabs
+	switchAt         time.Time             // navigation time, for the channel-switch latency log
+	switchTo         Route
+	winLive          atomic.Pointer[app.Window] // a.win once Run made it, for other goroutines
+	inval            chan struct{}              // redraw requests for invalidator (cap 1: they coalesce)
+	update           updateState                // "Update available" banner
+	rtAsk            realtimeState              // first-run "Live updates are off" banner
+	updatesOff       atomic.Bool                // prefs.NoUpdateCheck, for updateLoop
+	updNow           chan struct{}              // Check now → updateLoop (cap 1)
+	updWake          chan struct{}              // focus came back: is a check due? (cap 1)
+	updProgressEvery time.Duration              // tests: the progress throttle (default updateProgressEvery)
+	hud              *huddleui.Controller       // the native huddle (huddle_wire.go)
+	hudOrigin        map[string]*originTracker  // headers' huddle buttons by channel (caret menus)
+	ccStopping       map[string]bool            // code channels whose agent is being stopped (codechannel.go)
+	ccPending        map[string]bool            // context bar actions in flight, "channel:key"
+	starOrigin       map[string]*originTracker  // headers' star buttons by channel (the Move to… menu)
+	skipBody         int                        // tests: frames drawViewBody leaves the body out
+	skipAt           time.Time                  // tests: the frame being skipped
+	noKeepBody       bool                       // tests: no keepBody (KeepFocus alone)
+	body             bodyDraw                   // the primary body's last live draw (keepBody)
+	standIn          bool                       // keepBody's draw is running
+	standIns         int                        // keepBody draws so far
+	missedFrameLog   focusLog                   // the missed-frame log line (focus_log.go)
+	panelOrigin      image.Point                // the primary panel's window origin this frame
 
 	swipe         swiper          // trackpad history swipes (swipe.go, nav.go)
 	swipeNow      swipeState      // this frame's swipe progress, for the arrow

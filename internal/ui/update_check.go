@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"gioui.org/layout"
+	"gioui.org/op"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
@@ -330,8 +331,13 @@ func agoText(t, now time.Time) string {
 type updateStatus struct {
 	msg, detail string
 	muted       bool     // msg is a quiet note, not news
-	buttons     []string // the first is primary
+	buttons     []string // the first is primary, unless quiet
+	quiet       bool     // no primary button (Cancel alone)
 	canCheck    bool
+	// bar: a progress bar under the line, filled frac (0..1), or
+	// indeterminate when frac < 0
+	bar  bool
+	frac float32
 }
 
 // updateStatusAt is the row's state at now (UI goroutine).
@@ -347,23 +353,26 @@ func (a *App) updateStatusAt(now time.Time) updateStatus {
 		switch u.phase {
 		case updAvailable:
 			s.msg = AppName + " " + tag + " is available"
+			dl := "Download"
+			if u.dlErr != "" {
+				s.msg, s.detail, dl = "Couldn’t download "+AppName+" "+tag, "The download didn’t work: "+u.dlErr, "Retry"
+			}
 			if a.opts.DownloadUpdate != nil {
-				s.buttons = []string{"Download"}
+				s.buttons = []string{dl}
 			}
 			s.buttons = append(s.buttons, "View release")
-			if u.dlErr != "" {
-				s.detail = "The download didn’t work: " + u.dlErr
-			}
 			return s
 		case updDownloading:
-			s.msg = "Downloading " + AppName + " " + tag + "…"
+			s.msg = updateProgressText(tag, u.prog)
+			s.bar, s.frac = true, u.prog.frac()
+			s.buttons, s.quiet = []string{"Cancel"}, true
 			return s
 		case updReady:
 			s.msg = AppName + " " + tag + " is ready to install"
 			s.buttons = []string{"Install and restart"}
 			return s
 		case updInstalling:
-			return updateStatus{msg: "Installing " + AppName + " " + tag + "…"}
+			return updateStatus{msg: "Installing " + AppName + " " + tag + "…", bar: true, frac: -1}
 		case updManual:
 			s.msg = "Finish installing " + AppName + " " + tag + " in the window that opened, then restart " + AppName
 			return s
@@ -389,9 +398,11 @@ func (a *App) updateStatusAt(now time.Time) updateStatus {
 func (a *App) updateRowClick(label string) {
 	u := &a.update
 	switch label {
-	case "Download":
+	case "Download", "Retry":
 		u.manual = true
 		a.startUpdateDownload(true)
+	case "Cancel":
+		a.cancelUpdateDownload()
 	case "View release":
 		openURL(u.info.URL)
 	case "Install and restart":
@@ -448,6 +459,18 @@ func (p *prefsModal) updateCheckRow(f *prefsForm, st updateStatus) {
 		})
 	}
 	f.y += bh + gtx.Dp(8)
+	if st.bar {
+		// a thin bar under the line, as wide as the row allows (the
+		// composer's upload bar: 4dp, the track the text colour at 15%)
+		h := max(gtx.Dp(4), 2)
+		w := min(f.w-2*x, gtx.Dp(360))
+		if w > 0 {
+			off := op.Offset(image.Pt(x, f.y)).Push(gtx.Ops)
+			theme.ProgressBar(gtx, image.Rect(0, 0, w, h), c.Fg, c.Link, st.frac)
+			off.Pop()
+		}
+		f.y += h + gtx.Dp(10)
+	}
 	if st.detail != "" {
 		f.note(st.detail, true, 2)
 	}
@@ -455,7 +478,7 @@ func (p *prefsModal) updateCheckRow(f *prefsForm, st updateStatus) {
 		bx := x
 		for i, label := range st.buttons {
 			k := popups.BtnOutline
-			if i == 0 {
+			if i == 0 && !st.quiet {
 				k = popups.BtnPrimary
 			}
 			b := p.btn("update_action." + label)

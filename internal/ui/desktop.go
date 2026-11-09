@@ -108,7 +108,14 @@ type updateState struct {
 	manual bool
 	dlErr  string             // the last download failed: why
 	cancel context.CancelFunc // the running download
-	check  updateCheckState   // update_check.go
+	// prog is the running download's progress (update_progress.go);
+	// canceled the tag whose download the user canceled, which only
+	// Download, Retry or a menu check starts again.
+	prog     UpdateProgress
+	sink     *progressSink
+	canceled string
+	gen      int              // counts downloads: a stopped one's late answers are dropped
+	check    updateCheckState // update_check.go
 	// card is Help's "Take action" card; keys its header's Keyboard
 	// shortcuts button (update_ui.go).
 	card, keys, close widget.Clickable
@@ -154,19 +161,36 @@ func (a *App) startUpdateDownload(force bool) {
 	if u.phase != updAvailable || a.opts.DownloadUpdate == nil {
 		return
 	}
-	if !force && (!a.updateDownloadsOn() || a.prefs.NoUpdateCheck && !u.manual) {
+	if !force && (!a.updateDownloadsOn() || a.prefs.NoUpdateCheck && !u.manual || u.canceled == u.info.Tag) {
 		return
 	}
 	info := u.info
 	ctx, cancel := context.WithCancel(context.Background())
-	u.phase, u.cancel = updDownloading, cancel
-	go func() {
-		err := a.opts.DownloadUpdate(ctx, info)
+	u.gen++
+	gen := u.gen
+	u.phase, u.cancel, u.prog, u.canceled = updDownloading, cancel, UpdateProgress{}, ""
+	// progress reaches the UI at most every updateProgressEvery, as one
+	// Post (which redraws) carrying the latest count
+	every := updateProgressEvery
+	if a.updProgressEvery > 0 {
+		every = a.updProgressEvery
+	}
+	sink := newProgressSink(every, func(p UpdateProgress) {
 		a.Post(func() {
-			if u.info.Tag != info.Tag || u.phase != updDownloading {
+			if u.gen == gen && u.phase == updDownloading {
+				u.prog = p
+			}
+		})
+	})
+	u.sink = sink
+	go func() {
+		err := a.opts.DownloadUpdate(ctx, info, sink.report)
+		sink.stop()
+		a.Post(func() {
+			if u.gen != gen || u.info.Tag != info.Tag || u.phase != updDownloading {
 				return
 			}
-			u.cancel = nil
+			u.cancel, u.sink = nil, nil
 			cancel()
 			if err != nil {
 				log.Printf("ui: update download: %v", err)
@@ -244,7 +268,7 @@ func (a *App) toggleUpdateDownloads() {
 }
 
 // stopUpdateDownload cancels a running download (a finished one stays
-// ready to install).
+// ready to install). The partial file stays, so the next one resumes.
 func (a *App) stopUpdateDownload() {
 	u := &a.update
 	if u.phase == updDownloading {
@@ -252,6 +276,23 @@ func (a *App) stopUpdateDownload() {
 			u.cancel()
 			u.cancel = nil
 		}
-		u.phase = updAvailable
+		if u.sink != nil {
+			u.sink.stop()
+			u.sink = nil
+		}
+		u.gen++ // its answer, when it comes, is for a download no one wants
+		u.phase, u.prog = updAvailable, UpdateProgress{}
 	}
+}
+
+// cancelUpdateDownload is the row's Cancel: the download stops and stays
+// stopped for this release until the user asks again (Download, a menu
+// check); the hourly check doesn't restart it.
+func (a *App) cancelUpdateDownload() {
+	u := &a.update
+	if u.phase != updDownloading {
+		return
+	}
+	a.stopUpdateDownload()
+	u.canceled, u.dlErr = u.info.Tag, ""
 }

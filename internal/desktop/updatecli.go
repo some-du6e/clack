@@ -90,16 +90,16 @@ func (c *CLI) Run(ctx context.Context) error {
 		}
 	}
 	u := *c.Updater
-	last := time.Time{}
-	u.Progress = func(done, total int64) {
-		if now := time.Now(); now.Sub(last) >= 500*time.Millisecond || done >= total {
-			last = now
-			pct := 0
-			if total > 0 {
-				pct = int(done * 100 / total)
-			}
-			fmt.Fprintf(out, "\r  downloading %s / %s (%d%%)   ", mb(done), mb(total), pct)
+	u.ProgressEvery = 500 * time.Millisecond
+	u.Progress = func(p Progress) {
+		if p.Stage != StageDownloading {
+			return
 		}
+		pct := 0
+		if p.Total > 0 {
+			pct = int(p.Done * 100 / p.Total)
+		}
+		fmt.Fprintf(out, "\r  downloading %s / %s (%d%%)   ", mb(p.Done), mb(p.Total), pct)
 	}
 	say("Downloading %s…", a.URL)
 	pkg, err := u.Download(ctx, r, a)

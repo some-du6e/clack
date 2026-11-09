@@ -14,6 +14,7 @@ on:
       - 'internal/desktop/**'
       - 'internal/ui/desktop.go'
       - 'internal/ui/update_*.go'
+      - 'internal/ui/theme/progress.go'
       - 'internal/ui/chrome.go'
       - 'internal/ui/slackc_shell.go'
       - 'internal/ui/secondary.go'

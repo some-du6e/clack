@@ -60,8 +60,9 @@ func (u *updates) check(ctx context.Context) (ui.UpdateInfo, bool, error) {
 	return ui.UpdateInfo{Tag: r.Tag, URL: r.URL, Release: r}, desktop.Newer(r.Tag, cur), nil
 }
 
-// download fetches and verifies the package for this install.
-func (u *updates) download(ctx context.Context, info ui.UpdateInfo) error {
+// download fetches and verifies the package for this install, telling
+// progress how far it has got.
+func (u *updates) download(ctx context.Context, info ui.UpdateInfo, progress func(ui.UpdateProgress)) error {
 	r, ok := info.Release.(desktop.Release)
 	if !ok {
 		return errors.New("update: no release")
@@ -70,7 +71,11 @@ func (u *updates) download(ctx context.Context, info ui.UpdateInfo) error {
 	if err != nil {
 		return err
 	}
-	pkg, err := u.dl.Download(ctx, r, a)
+	dl := *u.dl // a stopped download may still be running: each gets its own Progress
+	if progress != nil {
+		dl.Progress = func(p desktop.Progress) { progress(uiProgress(p)) }
+	}
+	pkg, err := dl.Download(ctx, r, a)
 	if err != nil {
 		return err
 	}
@@ -79,6 +84,20 @@ func (u *updates) download(ctx context.Context, info ui.UpdateInfo) error {
 	u.pkg[r.Tag] = pkg
 	u.mu.Unlock()
 	return nil
+}
+
+// uiProgress maps the downloader's stages onto the UI's.
+func uiProgress(p desktop.Progress) ui.UpdateProgress {
+	st := ui.UpdateDownloading
+	switch p.Stage {
+	case desktop.StageVerifying:
+		st = ui.UpdateVerifying
+	case desktop.StageStaging:
+		st = ui.UpdateStaging
+	case desktop.StageReady:
+		st = ui.UpdateStaged
+	}
+	return ui.UpdateProgress{Stage: st, Done: p.Done, Total: p.Total}
 }
 
 // install is the "Install and restart" click.

@@ -315,7 +315,7 @@ func checkApp(t *testing.T, f *fakeCheck, dl *fakeUpdater) *App {
 	t.Helper()
 	opts := Options{ConfigDir: t.TempDir(), NoRealtime: true, CheckUpdate: f.check}
 	if dl != nil {
-		opts.DownloadUpdate = func(ctx context.Context, u UpdateInfo) error {
+		opts.DownloadUpdate = func(ctx context.Context, u UpdateInfo, _ func(UpdateProgress)) error {
 			dl.downloads.Add(1)
 			select {
 			case err := <-dl.release:
@@ -431,15 +431,15 @@ func TestUpdateCheckNowStates(t *testing.T) {
 	if dl.downloads.Load() != 0 {
 		t.Fatal("downloaded with downloads off")
 	}
-	if st := click("update_action.Download"); st.msg != "Downloading Clack v0.1.0-alpha.14…" || len(st.buttons) != 0 {
+	if st := click("update_action.Download"); st.msg != "Downloading Clack v0.1.0-alpha.14…" || strings.Join(st.buttons, "|") != "Cancel" || !st.quiet || !st.bar || st.frac >= 0 {
 		t.Fatalf("downloading: %+v", st)
 	}
 	dl.release <- errors.New("update: the download doesn't match the release's SHA256SUMS")
 	waitUpd(t, a, "the failed download", func() bool { return a.update.phase == updAvailable })
-	if st := prefsRow(a, p); !strings.Contains(st.detail, "SHA256SUMS") || st.buttons[0] != "Download" {
+	if st := prefsRow(a, p); st.msg != "Couldn’t download Clack v0.1.0-alpha.14" || !strings.Contains(st.detail, "SHA256SUMS") || strings.Join(st.buttons, "|") != "Retry|View release" {
 		t.Fatalf("download failed: %+v", st)
 	}
-	click("update_action.Download")
+	click("update_action.Retry")
 	dl.release <- nil
 	waitUpd(t, a, "the download", func() bool { return a.update.phase == updReady })
 	if st := prefsRow(a, p); st.msg != "Clack v0.1.0-alpha.14 is ready to install" || strings.Join(st.buttons, "|") != "Install and restart" || st.detail != "" {
@@ -574,7 +574,7 @@ func TestUpdatePrefsShots(t *testing.T) {
 	dl := &fakeUpdater{release: make(chan error, 1)}
 	a := checkApp(t, f, dl)
 	shots := os.Getenv("UPDATE_SHOTS_DIR")
-	r := &ttRenderer{t: t, a: a, sz: image.Pt(600, 330), dir: shots}
+	r := &ttRenderer{t: t, a: a, sz: image.Pt(600, 380), dir: shots}
 	if shots != "" {
 		w, err := pixeltest.NewWindow(r.sz.X, r.sz.Y)
 		if err != nil {
@@ -586,14 +586,14 @@ func TestUpdatePrefsShots(t *testing.T) {
 	p := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}, section: "advanced"}
 	draw := func(gtx layout.Context) {
 		op.Offset(image.Pt(24, 20)).Push(gtx.Ops)
-		gtx.Constraints = layout.Exact(image.Pt(523, 300))
+		gtx.Constraints = layout.Exact(image.Pt(523, 350))
 		p.updatesSection(p.form(gtx))
 	}
 	now := time.Now().Round(0)
 	info := UpdateInfo{Tag: "v0.1.0-alpha.14", URL: "https://github.com/x"}
 	u := &a.update
 	reset := func() {
-		u.info, u.phase, u.err, u.dlErr = UpdateInfo{}, updNone, "", ""
+		u.info, u.phase, u.err, u.dlErr, u.prog = UpdateInfo{}, updNone, "", "", UpdateProgress{}
 		u.check = updateCheckState{}
 		a.prefs.UpdateCheckedAt = 0
 	}
@@ -611,8 +611,26 @@ func TestUpdatePrefsShots(t *testing.T) {
 		{"available", func() { u.info, u.phase = info, updAvailable }, "Clack v0.1.0-alpha.14 is available"},
 		{"download-failed", func() {
 			u.info, u.phase, u.dlErr = info, updAvailable, "update: the download doesn't match the release's SHA256SUMS"
-		}, "Clack v0.1.0-alpha.14 is available"},
+		}, "Couldn’t download Clack v0.1.0-alpha.14"},
 		{"downloading", func() { u.info, u.phase = info, updDownloading }, "Downloading Clack v0.1.0-alpha.14…"},
+		// a third of the way in (Karim asked to see this)
+		{"downloading-progress", func() {
+			u.info, u.phase = info, updDownloading
+			u.prog = UpdateProgress{Stage: UpdateDownloading, Done: 12_700_000, Total: 37_330_000}
+		}, "Downloading Clack v0.1.0-alpha.14… 34% (12.1 of 35.6 MB)"},
+		{"downloading-unknown-size", func() {
+			u.info, u.phase = info, updDownloading
+			u.prog = UpdateProgress{Stage: UpdateDownloading, Done: 5 << 20}
+		}, "Downloading Clack v0.1.0-alpha.14… 5.0 MB"},
+		{"verifying", func() {
+			u.info, u.phase = info, updDownloading
+			u.prog = UpdateProgress{Stage: UpdateVerifying, Done: 30 << 20, Total: 40 << 20}
+		}, "Verifying Clack v0.1.0-alpha.14 against SHA256SUMS… 75%"},
+		{"staging", func() {
+			u.info, u.phase = info, updDownloading
+			u.prog = UpdateProgress{Stage: UpdateStaging, Done: 40 << 20, Total: 40 << 20}
+		}, "Preparing Clack v0.1.0-alpha.14…"},
+		{"installing", func() { u.info, u.phase = info, updInstalling }, "Installing Clack v0.1.0-alpha.14…"},
 		{"ready", func() { u.info, u.phase = info, updReady }, "Clack v0.1.0-alpha.14 is ready to install"},
 		{"install-failed", func() {
 			u.info, u.phase, u.err = info, updFailed, "update: moving the old copy aside: permission denied"

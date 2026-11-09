@@ -213,22 +213,101 @@ type Updater struct {
 	// (default 5), Backoff the first pause between them (doubling).
 	Attempts int
 	Backoff  time.Duration
-	// Progress, when set, sees the bytes on disk so far and the declared
-	// size (or the cap) as a download runs.
-	Progress func(done, total int64)
+	// Progress, when set, follows a download through its stages (on
+	// Download's goroutine): at most once per ProgressEvery (default
+	// 100ms) while bytes arrive or are hashed, plus every stage change
+	// and each stage's last count. Never once per chunk.
+	Progress      func(Progress)
+	ProgressEvery time.Duration
 }
 
-type progressWriter struct {
-	w           io.Writer
-	done, total int64
-	fn          func(done, total int64)
+// Stage is how far Download has got.
+type Stage int
+
+const (
+	StageDownloading Stage = iota // fetching SHA256SUMS, then the package's bytes
+	StageVerifying                // hashing the download against SHA256SUMS
+	StageStaging                  // moving the verified file into the cache
+	StageReady                    // verified and kept; Download returns next
+)
+
+func (s Stage) String() string {
+	switch s {
+	case StageDownloading:
+		return "downloading"
+	case StageVerifying:
+		return "verifying"
+	case StageStaging:
+		return "staging"
+	case StageReady:
+		return "ready"
+	}
+	return "stage(" + strconv.Itoa(int(s)) + ")"
 }
 
-func (p *progressWriter) Write(b []byte) (int, error) {
-	n, err := p.w.Write(b)
-	p.done += int64(n)
-	p.fn(p.done, p.total)
+// Progress is a download's state. Total is 0 while the size isn't known
+// (the release declared none and the server sent no Content-Length).
+type Progress struct {
+	Stage       Stage
+	Done, Total int64
+}
+
+// reporter throttles Updater.Progress. One download uses it from one
+// goroutine.
+type reporter struct {
+	fn    func(Progress)
+	every time.Duration
+	last  time.Time
+	cur   Progress
+	sent  bool
+	now   func() time.Time // tests
+}
+
+func (u *Updater) reporter() *reporter {
+	every := u.ProgressEvery
+	if every <= 0 {
+		every = 100 * time.Millisecond
+	}
+	return &reporter{fn: u.Progress, every: every, now: time.Now}
+}
+
+// report records p and passes it on when the stage changed, force is set
+// or the interval has passed since the last one.
+func (r *reporter) report(p Progress, force bool) {
+	if r == nil || r.fn == nil {
+		return
+	}
+	changed := !r.sent || p.Stage != r.cur.Stage
+	r.cur = p
+	now := r.now()
+	if !changed && !force && now.Sub(r.last) < r.every {
+		return
+	}
+	r.last, r.sent = now, true
+	r.fn(p)
+}
+
+// progressReader counts the bytes read through it into a reporter.
+type progressReader struct {
+	r     io.Reader
+	rep   *reporter
+	stage Stage
+	done  int64
+	total int64
+}
+
+func (p *progressReader) Read(b []byte) (int, error) {
+	n, err := p.r.Read(b)
+	if n > 0 {
+		p.done += int64(n)
+		p.rep.report(Progress{Stage: p.stage, Done: p.done, Total: p.total}, false)
+	}
 	return n, err
+}
+
+// flush passes on the last count (the throttle may have held it).
+func (p *progressReader) flush() {
+	p.rep.report(Progress{Stage: p.stage, Done: p.done, Total: p.total}, true)
 }
 
 const (
@@ -324,6 +403,8 @@ func (u *Updater) download(ctx context.Context, r Release, a Asset) (string, str
 	if a.Size > u.maxSize() {
 		return "", "", fmt.Errorf("%w: %s is %d bytes", ErrTooLarge, a.Name, a.Size)
 	}
+	rep := u.reporter()
+	rep.report(Progress{Stage: StageDownloading, Total: max(a.Size, 0)}, true)
 	var sums Asset
 	for _, x := range r.Assets {
 		if x.Name == "SHA256SUMS" {
@@ -347,7 +428,8 @@ func (u *Updater) download(ctx context.Context, r Release, a Asset) (string, str
 	}
 	u.prune(r.Tag)
 	dst := filepath.Join(dir, a.Name)
-	if VerifyFile(dst, want) == nil {
+	if _, err := os.Stat(dst); err == nil && verifyFile(dst, want, rep) == nil {
+		rep.report(Progress{Stage: StageReady, Done: rep.cur.Total, Total: rep.cur.Total}, true)
 		return dst, want, nil // downloaded before
 	}
 	_ = os.Remove(dst)
@@ -364,7 +446,7 @@ func (u *Updater) download(ctx context.Context, r Release, a Asset) (string, str
 		backoff = 2 * time.Second
 	}
 	for i := 0; ; i++ {
-		err = u.fetchTo(ctx, a.URL, part, limit, a.Size > 0)
+		err = u.fetchTo(ctx, a.URL, part, limit, a.Size > 0, rep)
 		if err == nil {
 			break
 		}
@@ -382,13 +464,16 @@ func (u *Updater) download(ctx context.Context, r Release, a Asset) (string, str
 			return "", "", ctx.Err()
 		}
 	}
-	if err := VerifyFile(part, want); err != nil {
+	if err := verifyFile(part, want, rep); err != nil {
 		_ = os.Remove(part)
 		return "", "", err
 	}
+	size := rep.cur.Total
+	rep.report(Progress{Stage: StageStaging, Done: size, Total: size}, true)
 	if err := os.Rename(part, dst); err != nil {
 		return "", "", err
 	}
+	rep.report(Progress{Stage: StageReady, Done: size, Total: size}, true)
 	return dst, want, nil
 }
 
@@ -440,7 +525,7 @@ func (u *Updater) fetchSmall(ctx context.Context, raw string, max int64) ([]byte
 
 // fetchTo downloads raw into part, resuming from part's size. limit is the
 // declared size (exact, when exact) or the cap.
-func (u *Updater) fetchTo(ctx context.Context, raw, part string, limit int64, exact bool) error {
+func (u *Updater) fetchTo(ctx context.Context, raw, part string, limit int64, exact bool, rep *reporter) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
 	var offset int64
@@ -486,12 +571,18 @@ func (u *Updater) fetchTo(ctx context.Context, raw, part string, limit int64, ex
 	if err != nil {
 		return err
 	}
-	var w io.Writer = f
-	if u.Progress != nil {
-		w = &progressWriter{w: f, done: offset, total: limit, fn: u.Progress}
-		u.Progress(offset, limit)
+	// the size to show: declared, else what the server says; 0 unknown
+	var size int64
+	switch {
+	case exact:
+		size = limit
+	case resp.ContentLength > 0:
+		size = offset + resp.ContentLength
 	}
-	n, err := io.Copy(w, io.LimitReader(resp.Body, limit-offset+1))
+	body := &progressReader{r: io.LimitReader(resp.Body, limit-offset+1), rep: rep, stage: StageDownloading, done: offset, total: size}
+	body.flush()
+	n, err := io.Copy(f, body)
+	body.flush()
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
@@ -556,14 +647,25 @@ func ParseSums(sums []byte, name string) (string, bool) {
 }
 
 // VerifyFile checks path's SHA-256 against want (hex).
-func VerifyFile(path, want string) error {
+func VerifyFile(path, want string) error { return verifyFile(path, want, nil) }
+
+// verifyFile is VerifyFile, reporting the bytes hashed as StageVerifying.
+func verifyFile(path, want string, rep *reporter) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
+	var size int64
+	if fi, err := f.Stat(); err == nil {
+		size = fi.Size()
+	}
 	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
+	in := &progressReader{r: f, rep: rep, stage: StageVerifying, total: size}
+	in.flush()
+	_, err = io.Copy(h, in)
+	in.flush()
+	if err != nil {
 		return err
 	}
 	if got := hex.EncodeToString(h.Sum(nil)); got != strings.ToLower(want) {
