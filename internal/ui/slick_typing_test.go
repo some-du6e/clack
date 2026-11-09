@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"image"
 	"image/color"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,6 +45,10 @@ func TestSlickViewBetterTypingIndicator(t *testing.T) {
 		typing(c.users...)
 		e.until(6*time.Second, c.name+" through the plugin", func() bool { return e.tree("slick-typing-indicator") != "" })
 		e.wait(600*time.Millisecond, func() bool { return false })
+		if tr := e.tree("slick-typing-indicator"); tr != "" {
+			i := strings.Index(tr, "slick-typing-indicator")
+			t.Logf("%s tree: %s", c.name, tr[max(i-600, 0):min(i+2400, len(tr))])
+		}
 		for _, dark := range []bool{false, true} {
 			e.a.th.SetDark(dark)
 			e.wait(300*time.Millisecond, func() bool { return false })
