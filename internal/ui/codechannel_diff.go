@@ -808,7 +808,7 @@ func (v *codeDiffView) layoutToolbar(gtx layout.Context, files []core.CodeDiffFi
 	if len(files) > 1 && w+gtx.Dp(240) >= gtx.Dp(720) {
 		tb := v.clicks.get("tree")
 		at(gtx, image.Pt(x, top+(h-bs)/2), image.Pt(bs, bs), func(gtx layout.Context) layout.Dimensions {
-			return iconButton(gtx, tb, icons.Slack("sidebar-left"), 28, 16, ccTok(dark, "content-sec"), a.th.C.BgHover, 6)
+			return iconButton(gtx, tb, "sidebar", 28, 16, ccTok(dark, "content-sec"), a.th.C.BgHover, 6)
 		})
 		if clicked(tb) {
 			v.treeOff = !v.treeOff
@@ -818,7 +818,7 @@ func (v *codeDiffView) layoutToolbar(gtx layout.Context, files []core.CodeDiffFi
 	}
 	ob := v.clicks.get("options")
 	at(gtx, image.Pt(x, top+(h-bs)/2), image.Pt(bs, bs), func(gtx layout.Context) layout.Dimensions {
-		return iconButton(gtx, ob, icons.Slack("filters"), 28, 16, ccTok(dark, "content-sec"), a.th.C.BgHover, 6)
+		return iconButton(gtx, ob, "filter-sliders", 28, 16, ccTok(dark, "content-sec"), a.th.C.BgHover, 6)
 	})
 	if clicked(ob) {
 		a.menu(a.PointerPos(), []MenuItem{
