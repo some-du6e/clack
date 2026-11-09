@@ -308,6 +308,29 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	if len(v.d.comps) > 0 {
 		v.layoutComps(gtx, st)
 	}
+	// a hovered message_mention pill's text and icon take Slack's hover
+	// color (.p-rich_text_slug:hover), over the recorded ones
+	if v.hover >= 0 && int(v.hover) < len(v.d.targets) && v.d.targets[v.hover].slug && st.Palette.SlugHoverText.A > 0 {
+		col := st.Palette.SlugHoverText
+		for i := range v.d.frags {
+			f := &v.d.frags[i]
+			if f.target != v.hover {
+				continue
+			}
+			switch f.kind {
+			case fText:
+				if f.sh != nil && len(f.sh.glyphs) > 0 {
+					v.paintGlyphs(gtx.Ops, st, f, col)
+				}
+			case fImage:
+				if name, ok := strings.CutPrefix(f.url, iconURL); ok {
+					g := *f
+					g.col = col
+					paintIcon(gtx.Ops, name, &g)
+				}
+			}
+		}
+	}
 	if v.hover >= 0 && int(v.hover) < len(v.d.targets) && v.d.targets[v.hover].underline {
 		for i := range v.d.frags {
 			f := &v.d.frags[i]
@@ -592,42 +615,7 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 			} else if css && f.part != 0 {
 				col = v.textCol(f)
 			}
-			// Browsers render Lato visibly heavier than Gio's linear
-			// coverage. Dark text gets the missing ink (st.Embolden px,
-			// ~0.45 at 1x and 2x) from an emboldened outline: one fill,
-			// no stroke tessellation (theme.EmboldenedShape).
-			var emb clip.PathSpec
-			embOK := false
-			embW := st.Embolden
-			if embW == 0 {
-				embW = st.lightEmbolden(col, v.laidPx)
-			}
-			if embW > 0 {
-				emb, embOK = st.emboldenedOf(f.sh, embW)
-			}
-			path, bm := st.pathOf(f.sh, !embOK)
-			if embOK {
-				path = emb
-			}
-			// Whole-pixel pen positions: Gio's path cache snaps fractional
-			// offsets, which makes word spacing uneven.
-			t := op.Offset(image.Pt(int(f.x+0.5), f.y)).Push(ops)
-			cs := clip.Outline{Path: path}.Op().Push(ops)
-			paint.ColorOp{Color: st.textColor(col, v.laidPx)}.Add(ops)
-			paint.PaintOp{}.Add(ops)
-			cs.Pop()
-			if embW > 0 && !embOK { // fallback-font run
-				// Browsers render Lato visibly heavier than Gio's linear
-				// coverage; a hairline stroke of the outline matches it.
-				// Width is in pixels, not dp: measured against Chrome, the
-				// missing ink is ~0.45px at both 1x and 2x (thinning comes
-				// from coverage at the pixel level, not from glyph size).
-				paint.FillShape(ops, col, clip.Stroke{Path: path, Width: embW}.Op())
-			}
-			if f.sh.color {
-				bm.Add(ops)
-			}
-			t.Pop()
+			v.paintGlyphs(ops, st, f, col)
 			if f.style&(richtext.Strike|richtext.Underline) != 0 {
 				thick := max(1, f.size/14)
 				if f.style&richtext.Strike != 0 {
@@ -637,7 +625,7 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 				if f.style&richtext.Underline != 0 {
 					underline(ops, f, col)
 				}
-			} else if ul && f.target >= 0 && int(f.target) < len(v.d.targets) && v.d.targets[f.target].kind == tLink {
+			} else if ul && f.target >= 0 && int(f.target) < len(v.d.targets) && v.d.targets[f.target].kind == tLink && !v.d.targets[f.target].slug {
 				underline(ops, f, col) // Accessibility > "Underline links to websites"
 			}
 			if css && f.part != 0 {
@@ -1103,4 +1091,45 @@ func (v *View) Baselines() []int {
 		}
 	}
 	return out
+}
+
+// paintGlyphs paints text frag f in col (emboldened like the static
+// content), at its place.
+func (v *View) paintGlyphs(ops *op.Ops, st *Style, f *frag, col color.NRGBA) {
+	// Browsers render Lato visibly heavier than Gio's linear
+	// coverage. Dark text gets the missing ink (st.Embolden px,
+	// ~0.45 at 1x and 2x) from an emboldened outline: one fill,
+	// no stroke tessellation (theme.EmboldenedShape).
+	var emb clip.PathSpec
+	embOK := false
+	embW := st.Embolden
+	if embW == 0 {
+		embW = st.lightEmbolden(col, v.laidPx)
+	}
+	if embW > 0 {
+		emb, embOK = st.emboldenedOf(f.sh, embW)
+	}
+	path, bm := st.pathOf(f.sh, !embOK)
+	if embOK {
+		path = emb
+	}
+	// Whole-pixel pen positions: Gio's path cache snaps fractional
+	// offsets, which makes word spacing uneven.
+	t := op.Offset(image.Pt(int(f.x+0.5), f.y)).Push(ops)
+	cs := clip.Outline{Path: path}.Op().Push(ops)
+	paint.ColorOp{Color: st.textColor(col, v.laidPx)}.Add(ops)
+	paint.PaintOp{}.Add(ops)
+	cs.Pop()
+	if embW > 0 && !embOK { // fallback-font run
+		// Browsers render Lato visibly heavier than Gio's linear
+		// coverage; a hairline stroke of the outline matches it.
+		// Width is in pixels, not dp: measured against Chrome, the
+		// missing ink is ~0.45px at both 1x and 2x (thinning comes
+		// from coverage at the pixel level, not from glyph size).
+		paint.FillShape(ops, col, clip.Stroke{Path: path, Width: embW}.Op())
+	}
+	if f.sh.color {
+		bm.Add(ops)
+	}
+	t.Pop()
 }
