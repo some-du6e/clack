@@ -602,7 +602,9 @@ func (a *App) BroadcastWarningAdmin() (admin bool, settingsURL string) {
 // checks use to say why a message wasn't sent. It returns the local ts.
 func (a *App) LocalEphemeral(ch, threadTS, text string) string {
 	ts := a.pendingTS(ch, threadTS)
-	m := slack.Message{Type: "message", TS: ts, User: "USLACKBOT", Text: text, ThreadTS: threadTS}
+	// Slack's shape (addEphemeralMessage): user USLACKBOT, is_ephemeral, so
+	// plugins reading the messages slice see what they see in Slack.
+	m := slack.Message{Type: "message", TS: ts, User: "USLACKBOT", Text: text, ThreadTS: threadTS, IsEphemeral: true, Channel: ch}
 	ix := a.Interactive()
 	ix.mu.Lock()
 	ix.ephem[ch+"/"+ts] = threadTS
