@@ -412,7 +412,7 @@ func (a *App) updateMenuItem() (title string, enabled bool) {
 	}
 	switch u.phase {
 	case updDownloading:
-		return updMenuDownload, false
+		return updateMenuProgress(u.prog), false
 	case updAvailable:
 		// Slack greys this out (its updater always downloads next).
 		// Clack's waits for the user when downloads are off or the
