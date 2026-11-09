@@ -2,7 +2,7 @@ package ui
 
 import "strings"
 
-// Route strings (see docs/NATIVE.md): "c/<id>", "c/<id>/t/<ts>",
+// Route strings (see docs/NATIVE.md): "c/<id>", "c/<id>/t/<ts>", "c/<id>/m/<ts>",
 // "activity", "dms", "later", "files", "threads", "huddles", "drafts",
 // "directories", "search?q=", "home".
 type Route string
@@ -24,6 +24,16 @@ func (r Route) Channel() string {
 func (r Route) Thread() string {
 	s := string(r)
 	if i := strings.Index(s, "/t/"); i >= 0 && strings.HasPrefix(s, "c/") {
+		return s[i+3:]
+	}
+	return ""
+}
+
+// Message returns the message ts of c/<id>/m/<ts> routes (a permalink:
+// the channel scrolled to the message, which flashes).
+func (r Route) Message() string {
+	s := string(r)
+	if i := strings.Index(s, "/m/"); i >= 0 && strings.HasPrefix(s, "c/") {
 		return s[i+3:]
 	}
 	return ""

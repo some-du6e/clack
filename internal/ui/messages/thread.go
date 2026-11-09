@@ -3,11 +3,16 @@ package messages
 import (
 	"context"
 	"image"
+	"sort"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/clip"
 	"gioui.org/unit"
 	"gioui.org/widget"
 
@@ -19,7 +24,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
-// ThreadView is the thread pane: header "Thread · #channel", the parent
+// ThreadView is the thread pane: header "Thread" and the conversation, the parent
 // message, an "N replies" divider and the replies. The composer is embedded
 // by the ui root below it.
 type ThreadView struct {
@@ -33,11 +38,14 @@ type ThreadView struct {
 
 	top int // header (+ admin tools) height of the last frame
 
-	bellBtn, moreBtn widget.Clickable
-	bellTip, moreTip popups.TipState
-	follow           *bool                  // the bell's state clicked, until the root message has it
-	followAt         time.Time              // when follow was set
-	failed           atomic.Pointer[string] // the subscribe request's error (set off the UI goroutine)
+	bellBtn, moreBtn, nameBtn widget.Clickable
+	bellTip, moreTip, nameTip popups.TipState
+	nameRect                  image.Rectangle        // the subtitle, view coordinates (last frame)
+	nameSub                   HeaderSubtitle         // what it showed
+	resolving                 bool                   // the conversation is being looked up for the subtitle
+	follow                    *bool                  // the bell's state clicked, until the root message has it
+	followAt                  time.Time              // when follow was set
+	failed                    atomic.Pointer[string] // the subscribe request's error (set off the UI goroutine)
 }
 
 // ContentHeight is the height the pane needs to show the whole thread (header,
@@ -158,31 +166,120 @@ type PrimaryHost interface {
 	PrimaryChannel() string
 }
 
-// channelName is the header's subtitle (Slack's thread Header): "#name",
-// the DM partner's name, or the group DM's. ThreadSubtitle hides it
-// (hideChannelName) when the primary view is the thread's own channel.
-func (v *ThreadView) channelName() string {
+// HeaderSubtitle is the header's conversation name after "Thread":
+// Slack's threads Header (client-boot-shared NCqL). Channels draw
+// InlineChannelEntity (an icon from getChannelIconType, then the name,
+// " (archived)" after an archived one's); a DM the partner's name; a
+// group DM "Direct message with N others" with the members in a tooltip.
+type HeaderSubtitle struct {
+	Icon string // Slack icon name, "" for DMs
+	Text string
+	Tip  string
+	// Link: the name links to the root's permalink (once the root is
+	// loaded, like Slack's permalink prop).
+	Link bool
+}
+
+// subtitle is what the header shows after "Thread", false for nothing:
+// ThreadSubtitle hides it (hideChannelName) when the primary view shows
+// the thread's own channel, and Clack draws nothing until core knows the
+// conversation's name (Slack draws its "Loading…" shimmer then): an
+// unknown or nameless conversation, as a thread opened from Activity can
+// be, is looked up through core (ResolveConv) and an unknown DM partner
+// with users.info.
+func (v *ThreadView) subtitle() (HeaderSubtitle, bool) {
 	if ph, ok := v.h.(PrimaryHost); ok && ph.PrimaryChannel() == v.ch {
-		return ""
+		return HeaderSubtitle{}, false
 	}
 	app := v.h.Core()
 	if app == nil {
-		return ""
+		return HeaderSubtitle{}, false
 	}
 	cv, ok := app.Conv(v.ch)
-	if !ok {
-		return ""
+	if !ok || (cv.Kind == "im" && cv.User == "") || (cv.Kind != "im" && cv.Name == "") {
+		v.resolve(app)
+		return HeaderSubtitle{}, false
 	}
 	switch cv.Kind {
 	case "im":
-		if u, ok := app.User(cv.User); ok {
-			return u.Name
+		u, ok := app.User(cv.User)
+		if !ok || u.Name == "" {
+			ensureUser(v.h, cv.User)
+			return HeaderSubtitle{}, false
 		}
-		return cv.Name
+		return HeaderSubtitle{Text: u.Name}, true
 	case "mpim":
-		return cv.Name
+		for _, id := range cv.Members {
+			if _, ok := app.User(id); !ok {
+				ensureUser(v.h, id)
+			}
+		}
+		n, names := mpimMembers(app, cv)
+		return HeaderSubtitle{Text: "Direct message with " + strconv.Itoa(n-1) + " others", Tip: names}, true
 	}
-	return "#" + cv.Name
+	// getChannelIconType: archived (or frozen) first, then private, else
+	// the channel hash; InlineChannelIcon asks for the filled variant for a
+	// private channel. Shared channels draw the same icons. ChannelName
+	// adds " (archived)".
+	sub := HeaderSubtitle{Icon: "channel", Text: cv.Name}
+	private := cv.Kind == "private"
+	switch {
+	case cv.IsArchived && private:
+		sub.Icon, sub.Text = "archive-filled", cv.Name+" (archived)"
+	case cv.IsArchived:
+		sub.Icon, sub.Text = "archive", cv.Name+" (archived)"
+	case private:
+		sub.Icon = "lock-filled"
+	}
+	return sub, true
+}
+
+// resolve looks the thread's conversation up once (off the UI goroutine).
+func (v *ThreadView) resolve(app *core.App) {
+	if v.resolving {
+		return
+	}
+	v.resolving = true
+	ch, h := v.ch, v.h
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if _, ok := app.ResolveConv(ctx, ch); ok {
+			h.Invalidate()
+		}
+	}()
+}
+
+// mpimMembers is a group DM's member count (the viewer included, Slack's
+// getMpimMembers) and getMpimDisplayNameAlphabetical: the others' names,
+// sorted, comma-separated. Without a member list the mpdm-a--b--c-1 name
+// lists the handles.
+func mpimMembers(app *core.App, cv core.Conv) (int, string) {
+	self := app.Self()
+	var names []string
+	n := len(cv.Members)
+	for _, id := range cv.Members {
+		if id == self.ID {
+			continue
+		}
+		if u, ok := app.User(id); ok && u.Name != "" {
+			names = append(names, u.Name)
+		}
+	}
+	if n == 0 {
+		hs := strings.TrimPrefix(cv.Name, "mpdm-")
+		if i := strings.LastIndexByte(hs, '-'); i > 0 && strings.Trim(hs[i+1:], "0123456789") == "" {
+			hs = hs[:i]
+		}
+		for _, h := range strings.Split(hs, "--") {
+			n++
+			if h != self.Handle {
+				names = append(names, h)
+			}
+		}
+	}
+	sort.Slice(names, func(i, j int) bool { return strings.ToLower(names[i]) < strings.ToLower(names[j]) })
+	return n, strings.Join(names, ", ")
 }
 
 // root is the thread's parent message, once loaded.
@@ -254,16 +351,6 @@ func (v *ThreadView) header(gtx layout.Context, th *theme.Theme, c *colors, w, h
 	d := at(gtx, px, ty, func(gtx layout.Context) layout.Dimensions {
 		return lineBox(gtx, tsT, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, tsT, "Thread") })
 	})
-	if name := v.channelName(); name != "" {
-		// 13px/18px (.p-threads_flexpane__header_channel_name), on the
-		// title's baseline (align-items: baseline).
-		ns := textStyle{size: 13, col: c.Text2, lineH: 18}
-		top := ty + (d.Size.Y - d.Baseline) - cssBaseline(gtx, ns.size, ns.lineH)
-		at(gtx, px+d.Size.X+dp(gtx, 8), top, func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints.Max.X = w - px - d.Size.X - dp(gtx, 120)
-			return lineBox(gtx, ns, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, ns, name) })
-		})
-	}
 	// header controls, right to left 6px apart (p-flexpane_header__primary
 	// --gap): close, ⋮ (SecondaryHeaderMore), the bell
 	// (thread-mute-button), then plugin content in ThreadSearchButton.
@@ -282,11 +369,14 @@ func (v *ThreadView) header(gtx layout.Context, th *theme.Theme, c *colors, w, h
 	rec := op.Record(gtx.Ops)
 	sd := slackc.Component(gtx, "ThreadSearchButton", v, (*ThreadView).searchButtonProps, (*ThreadView).layoutEmpty)
 	call := rec.Stop()
+	end := left // where the title column ends
 	if sd.Size.X > 0 {
-		t := op.Offset(image.Pt(left-gap-sd.Size.X, (hh-sd.Size.Y)/2)).Push(gtx.Ops)
+		end = left - gap - sd.Size.X
+		t := op.Offset(image.Pt(end, (hh-sd.Size.Y)/2)).Push(gtx.Ops)
 		call.Add(gtx.Ops)
 		t.Pop()
 	}
+	v.layoutSubtitle(gtx, th, c, px+d.Size.X+dp(gtx, 8), ty+(d.Size.Y-d.Baseline), end-dp(gtx, 8), rootOK)
 	if v.s.closeBtn.Clicked(gtx) {
 		v.h.CloseSecondary()
 	}
@@ -319,6 +409,72 @@ func (v *ThreadView) header(gtx layout.Context, th *theme.Theme, c *colors, w, h
 		}
 		return v.closeButton(gtx, c, st, bs)
 	})
+}
+
+// layoutSubtitle draws the subtitle from x to at most maxX, on the
+// title's baseline bl (align-items: baseline). Slack's
+// .p-threads_flexpane__header_channel_name: 13px/18px, one line with an
+// ellipsis, foreground at 70% (unchanged on hover, no underline, pointer
+// cursor), the inline icon 1em with 2px after it. It is a link to the
+// root's permalink (getPermalinkForMessage without thread_ts): Clack's
+// c/<id>/m/<ts> route, which opens the channel scrolled to the root and
+// flashes it, the thread pane staying open on its own channel.
+func (v *ThreadView) layoutSubtitle(gtx layout.Context, th *theme.Theme, c *colors, x, bl, maxX int, link bool) {
+	v.nameRect = image.Rectangle{}
+	sub, ok := v.subtitle()
+	if !ok || maxX <= x {
+		return
+	}
+	if link && v.nameBtn.Clicked(gtx) {
+		v.h.Navigate("c/" + v.ch + "/m/" + v.ts)
+	}
+	ns := textStyle{size: 13, col: c.Text2, lineH: 18}
+	top := bl - cssBaseline(gtx, ns.size, ns.lineH)
+	d := at(gtx, x, top, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Constraints{Max: image.Pt(maxX-x, gtx.Sp(unit.Sp(ns.lineH)))}
+		w := func(gtx layout.Context) layout.Dimensions {
+			ix := 0
+			if sub.Icon != "" {
+				is := gtx.Sp(unit.Sp(ns.size))
+				at(gtx, 0, (gtx.Sp(unit.Sp(ns.lineH))-is)/2, func(gtx layout.Context) layout.Dimensions {
+					return icons.Get(icons.Slack(sub.Icon))(gtx, unit.Dp(float32(is)/gtx.Metric.PxPerDp), ns.col)
+				})
+				ix = is + dp(gtx, 2)
+			}
+			g := gtx
+			g.Constraints.Max.X = max(0, gtx.Constraints.Max.X-ix)
+			td := at(g, ix, 0, func(gtx layout.Context) layout.Dimensions {
+				return lineBox(gtx, ns, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, ns, sub.Text) })
+			})
+			sz := image.Pt(ix+td.Size.X, gtx.Sp(unit.Sp(ns.lineH)))
+			if link {
+				defer clip.Rect{Max: sz}.Push(gtx.Ops).Pop()
+				pointer.CursorPointer.Add(gtx.Ops)
+			}
+			return layout.Dimensions{Size: sz}
+		}
+		var d layout.Dimensions
+		if link {
+			d = v.nameBtn.Layout(gtx, w)
+		} else {
+			d = w(gtx)
+		}
+		if sub.Tip != "" {
+			popups.Tooltip(gtx, th, &v.nameTip, v.nameBtn.Hovered(), d.Size, popups.Above, sub.Tip, "")
+		}
+		return d
+	})
+	sub.Link = link
+	v.nameRect, v.nameSub = image.Rectangle{Min: image.Pt(x, top), Max: image.Pt(x, top).Add(d.Size)}, sub
+}
+
+// HeaderName is the header's subtitle as drawn last frame and where it
+// is in window coordinates; ok is false when there is none.
+func (v *ThreadView) HeaderName() (sub HeaderSubtitle, r image.Rectangle, ok bool) {
+	if v.nameRect.Empty() {
+		return HeaderSubtitle{}, image.Rectangle{}, false
+	}
+	return v.nameSub, v.nameRect.Add(v.Origin), true
 }
 
 // headerButton is a 28px header icon button with its tooltip below

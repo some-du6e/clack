@@ -70,6 +70,9 @@ type Size struct {
 	// Files adds #files-gallery: one message per way Slack draws shared
 	// files (files.go).
 	Files bool
+	// ThreadHeader adds one thread in a conversation of each kind the
+	// thread pane's header names differently (threadheader.go).
+	ThreadHeader bool
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -435,6 +438,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.Embeds {
 		s.addEmbedsChannel() // embeds.go
+	}
+	if sz.ThreadHeader {
+		s.addThreadHeader() // threadheader.go
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", s.api)
@@ -907,6 +913,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return out
 	}
 	if out, handled := s.handleFiles(method, f); handled { // files.go
+		return out
+	}
+	if out, handled := s.handleThreadHeader(method, f); handled { // threadheader.go
 		return out
 	}
 	switch method {

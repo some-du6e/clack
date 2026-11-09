@@ -17,6 +17,12 @@ func TestRouteParts(t *testing.T) {
 	if Route("activity").Channel() != "" || Route("activity").Page() != "activity" {
 		t.Fatal("page route")
 	}
+	if m := Route("c/C123/m/1700000000.000100"); m.Channel() != "C123" || m.Message() != "1700000000.000100" || m.Thread() != "" {
+		t.Fatalf("permalink route: %q %q %q", m.Channel(), m.Message(), m.Thread())
+	}
+	if r.Message() != "" {
+		t.Fatalf("thread route message %q", r.Message())
+	}
 }
 
 func TestRouterHistory(t *testing.T) {

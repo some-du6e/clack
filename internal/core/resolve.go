@@ -187,8 +187,11 @@ func (a *App) resolveBots(ctx context.Context, ids []string) []string {
 // ResolveConv returns any conversation by id: the sidebar's, or one looked
 // up with conversations.info (closed DMs, channels opened from search or
 // links), whose IM partner is then fetched. Results are cached in memory.
+// A known channel without a name (a partial object some reply carried) is
+// looked up again, like Slack's getChannelById fetching an unknown stub;
+// a member conversation keeps its place in the sidebar's set.
 func (a *App) ResolveConv(ctx context.Context, id string) (Conv, bool) {
-	if c, ok := a.Conv(id); ok {
+	if c, ok := a.Conv(id); ok && named(c) {
 		return c, true
 	}
 	var c *slack.Conversation
@@ -198,11 +201,10 @@ func (a *App) ResolveConv(ctx context.Context, id string) (Conv, bool) {
 		return err
 	})
 	if err != nil || c == nil {
-		if c2, ok := a.S.ExtConv(id); ok { // a concurrent caller stored it
-			c = c2
-		} else {
-			return Conv{}, false
+		if v, ok := a.Conv(id); ok && (named(v) || err != nil) { // a concurrent caller stored it, or it stays partial
+			return v, true
 		}
+		return Conv{}, false
 	}
 	if c.ID == "" {
 		c.ID = id
@@ -210,9 +212,22 @@ func (a *App) ResolveConv(ctx context.Context, id string) (Conv, bool) {
 	if c.IsIM && c.User != "" {
 		a.EnsureUsers(ctx, []string{c.User})
 	}
-	a.S.PutExtConv(*c)
+	if _, member := a.S.Conv(id); member {
+		a.S.PutConv(*c)
+	} else {
+		a.S.PutExtConv(*c)
+	}
 	if id == a.selectedID() && !c.IsIM {
 		a.emit(Event{Type: "sidebar_changed"}) // the open channel's row (preview.go)
 	}
 	return a.conv(c), true
+}
+
+// named reports whether a conversation has what its name is drawn from:
+// an IM its partner, anything else a name.
+func named(c Conv) bool {
+	if c.Kind == "im" {
+		return c.User != ""
+	}
+	return c.Name != ""
 }
