@@ -149,6 +149,17 @@ func NewMemberMenu(h Host, anchor image.Point, userID string) *Menu {
 	return m
 }
 
+// NewProfileOverflowMenu is a member's profile ⋮ menu (the hover card's
+// and the full profile's), inside RimetoMemberProfileOverflowMenu: the
+// menu AdminBackend and Nicknames add their items to.
+func NewProfileOverflowMenu(h Host, anchor image.Point, userID string) *Menu {
+	u, ok := lookupUser(h, userID)
+	if !ok {
+		u = core.User{ID: userID}
+	}
+	return NewMenuOpts(h, pfMoreItems(h, u, false, nil), pfMenuOpts(userID, MenuOpts{Anchor: pointRect(anchor), AlignRight: true}))
+}
+
 // ---- reactions ----
 
 // reactionKey is Slack's _rxn_key for a message.
