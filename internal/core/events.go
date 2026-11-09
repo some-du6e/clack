@@ -106,6 +106,8 @@ func (a *App) handle(ev slack.Event) {
 		}
 	case "team_icon_change":
 		a.onTeamIconChange(ev.Raw)
+	case "team_pref_change":
+		a.onTeamPrefChange(ev.Raw) // teamprefs.go
 	case "team_rename":
 		var e struct {
 			Name   string `json:"name"`

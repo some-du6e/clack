@@ -459,6 +459,7 @@ func (a *App) Boot(ctx context.Context) error {
 	} else {
 		step("prefs", loadPrefs)
 	}
+	step("team.prefs", func() error { return a.LoadTeamPrefs(ctx) }) // teamprefs.go
 	step("team", func() error {
 		var r struct {
 			Team struct {

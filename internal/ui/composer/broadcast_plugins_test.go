@@ -269,3 +269,132 @@ func TestSlickViewbChannelStandsAside(t *testing.T) {
 		t.Errorf("bChannel relayed where Slack allows (includeAll=%v rows %v)", c.ac.ov.includeAll, rowNames(c))
 	}
 }
+
+// pluginSend runs a channel composer's send of d (with
+// includeBroadcastKeywordWarning) through the installed plugins, the
+// warning answered by r.
+func pluginSend(ctx context.Context, app *core.App, d *Doc, r *confirmRecorder) error {
+	o := &outgoing{doc: d, text: d.Mrkdwn(), blocks: d.RichTextBlocks()}
+	j := &sendJob{api: coreAPI{app}, ch: tChGen, o: o, draftID: tChGen, view: ViewContextMessagePane, warn: true, confirm: r.confirm}
+	return j.run(ctx)
+}
+
+// TestTautNativeAtChannelConfirm: where Slack allows @channel the plugin
+// stands aside and hands Slack's options on, so Slack's "Notify N
+// people?" confirmation (warn_before_at_channel) still comes first:
+// Edit Message posts nothing, Send posts.
+func TestTautNativeAtChannelConfirm(t *testing.T) {
+	e := startPlugin(t, "NativeAtChannel", func(fs *fakeSlack) {
+		atChannelCommands(fs)
+		fs.mu.Lock()
+		delete(fs.reply, "edge/permissions/info") // allowed
+		fs.mu.Unlock()
+		people(fs, 30)
+	})
+	warnPrefs(e.app, map[string]any{"warn_before_at_channel": "always", "loud_channel_mentions_limit": 10000})
+	rt, err := e.tt.JS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitJS(t, rt, "at-channel's /channel in the store", `globalThis.__taut.getRawState()?.slashCommand?.commands?.['`+atChannelApp+`-/channel']`)
+	waitJS(t, rt, "getBroadcastKeywordsForUser allowing @channel", `(() => {
+		const f = globalThis.__taut.getExport((x) => typeof x === 'function' && x.name === 'getBroadcastKeywordsForUser')
+		return f && f(globalThis.__taut.getRawState(), '`+tChGen+`').length > 0
+	})()`)
+
+	cancel := &confirmRecorder{ok: false}
+	if err := pluginSend(e.ctx(), e.app, broadcastDoc("channel"), cancel); !isShoutyRooster(err) {
+		t.Fatalf("Edit Message: %v, want Shouty rooster in effect", err)
+	}
+	if cancel.n() != 1 || len(e.slack.called("chat.postMessage")) != 0 || len(e.slack.called("chat.command")) != 0 {
+		t.Fatalf("Edit Message: %d asks, %d posts, %d commands", cancel.n(), len(e.slack.called("chat.postMessage")), len(e.slack.called("chat.command")))
+	}
+	accept := &confirmRecorder{ok: true}
+	if err := pluginSend(e.ctx(), e.app, broadcastDoc("channel"), accept); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if accept.n() != 1 || len(e.slack.called("chat.postMessage")) != 1 || len(e.slack.called("chat.command")) != 0 {
+		t.Fatalf("Send: %d asks, %d posts, %d commands", accept.n(), len(e.slack.called("chat.postMessage")), len(e.slack.called("chat.command")))
+	}
+}
+
+// TestTautNativeAtChannelRelayNoConfirm: where Slack refuses @channel,
+// NativeAtChannel's /channel relay runs and no confirmation shows (the
+// warning only applies to keywords the viewer may use).
+func TestTautNativeAtChannelRelayNoConfirm(t *testing.T) {
+	r := startPlugin(t, "NativeAtChannel", func(fs *fakeSlack) { atChannelCommands(fs); people(fs, 30) })
+	warnPrefs(r.app, map[string]any{"warn_before_at_channel": "always"})
+	rrt, err := r.tt.JS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitJS(t, rrt, "at-channel's /channel in the store", `globalThis.__taut.getRawState()?.slashCommand?.commands?.['`+atChannelApp+`-/channel']`)
+	waitJS(t, rrt, "getBroadcastKeywordsForUser answering []", `(() => {
+		const f = globalThis.__taut.getExport((x) => typeof x === 'function' && x.name === 'getBroadcastKeywordsForUser')
+		return f && f(globalThis.__taut.getRawState(), '`+tChGen+`').length === 0
+	})()`)
+	never := &confirmRecorder{ok: false}
+	if err := pluginSend(r.ctx(), r.app, broadcastDoc("channel"), never); err != nil {
+		t.Fatalf("relay: %v", err)
+	}
+	if never.n() != 0 {
+		t.Errorf("confirmation shown for a relayed send (%d)", never.n())
+	}
+	if cmds := r.slack.called("chat.command"); len(cmds) != 1 || cmds[0].Get("command") != "/channel" {
+		t.Errorf("chat.command %v", cmds)
+	}
+}
+
+// TestSlickViewbChannelConfirm: bChannel stands aside where Slack allows
+// @channel, so the composer's real send opens Slack's confirmation:
+// Edit Message keeps the message, Send posts it (no /bchannel).
+func TestSlickViewbChannelConfirm(t *testing.T) {
+	e := startSlick(t, "bChannel", nil, func(e *slickEnv) {
+		bChannelCommand(e, nil) // allowed
+		people(e.slack, 30)
+	})
+	warnPrefs(e.app, map[string]any{"warn_before_at_channel": "always"})
+	e.patched("MessagePaneInput")
+	rt, err := e.tt.JS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitJS(t, rt, "/bchannel in the store", `Object.values(globalThis.__taut.getRawState()?.slashCommand?.commands || {}).some((c) => c && c.name === '/bchannel')`)
+	c, frame := e.composer(tChRandom)
+	e.until(8*time.Second, "the composer's send wrapped by bChannel", frame, func() bool { return c.sendJS.ID != 0 })
+	if _, err := e.app.LoadBroadcastPerms(e.ctx(), tChRandom); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var opened []*broadcastWarning
+	onBroadcastWarning = func(d *broadcastWarning) { mu.Lock(); opened = append(opened, d); mu.Unlock() }
+	t.Cleanup(func() { onBroadcastWarning = nil })
+	nth := func(i int) *broadcastWarning {
+		var d *broadcastWarning
+		e.until(10*time.Second, "the confirmation", frame, func() bool {
+			mu.Lock()
+			defer mu.Unlock()
+			if len(opened) > i {
+				d = opened[i]
+			}
+			return d != nil
+		})
+		return d
+	}
+
+	c.ed.SetDoc(broadcastDoc("channel"))
+	c.submit()
+	nth(0).choose(false)
+	e.until(8*time.Second, "the message back after Edit Message", frame, func() bool {
+		return strings.Contains(c.ed.Doc().Text(), "ping")
+	})
+	if n := len(e.slack.called("chat.postMessage")); n != 0 {
+		t.Fatalf("posted after Edit Message (%d)", n)
+	}
+	c.submit()
+	nth(1).choose(true)
+	e.until(10*time.Second, "the post after Send", frame, func() bool { return len(e.slack.called("chat.postMessage")) == 1 })
+	if n := len(e.slack.called("chat.command")); n != 0 {
+		t.Errorf("relayed although allowed (%d chat.command)", n)
+	}
+}
