@@ -14,7 +14,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
-// Composer glyphs the shared icon set lacks ("Aa", the hover emoji, the
+// Composer glyphs the shared icon set lacks (the hover emoji, the
 // filled send arrow, the checkbox tick). Drawn
 // from the spec's descriptions on a 20-unit grid with 1.5-unit strokes like
 // the rest of yoloslack's icons; every function draws at the current origin
@@ -58,41 +58,6 @@ func (q *crPen) stroke(gtx layout.Context, w float32, col color.NRGBA) {
 
 func (q *crPen) fill(gtx layout.Context, col color.NRGBA) {
 	paint.FillShape(gtx.Ops, col, clip.Outline{Path: q.p.End()}.Op())
-}
-
-// crIconAa: the "Show formatting" glyph, a capital and a small a, with an
-// underline bar when formatting is shown.
-func crIconAa(gtx layout.Context, px int, col color.NRGBA, underline bool) {
-	var q crPen
-	q.begin(gtx, px, 20)
-	// A
-	q.m(1.5, 15)
-	q.l(6.1, 3.25)
-	q.l(6.9, 3.25)
-	q.l(11.5, 15)
-	q.m(3.2, 11)
-	q.l(9.8, 11)
-	// a: bowl, then the stem with its top hook
-	q.m(17.75, 11.5)
-	q.l(17.75, 15)
-	q.m(12.9, 9.4)
-	q.c(13.5, 8.75, 14.3, 8.4, 15.25, 8.4)
-	q.c(16.75, 8.4, 17.75, 9.3, 17.75, 10.8)
-	q.l(17.75, 11.75)
-	q.stroke(gtx, 1.5, col)
-	q.begin(gtx, px, 20)
-	q.m(17.75, 11.6)
-	q.l(15.4, 11.6)
-	q.c(13.7, 11.6, 12.6, 12.35, 12.6, 13.4)
-	q.c(12.6, 14.45, 13.45, 15.15, 14.7, 15.15)
-	q.c(16.2, 15.15, 17.75, 14.2, 17.75, 12.6)
-	q.stroke(gtx, 1.5, col)
-	if underline {
-		q.begin(gtx, px, 20)
-		q.m(1, 18.25)
-		q.l(19, 18.25)
-		q.stroke(gtx, 1.5, col)
-	}
 }
 
 // crIconEmojiHover: Slack's hovered emoji button, a yellow disc behind a

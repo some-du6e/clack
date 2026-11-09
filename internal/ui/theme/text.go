@@ -72,8 +72,12 @@ func envFloat(name string, def float32) float32 {
 //
 // Measured at 1x on the embedded Lato vs Chrome (ink with a fixed white
 // reference), regular weight:
-//   - on the aubergine chrome (chrome=true), sidebar rows (#f6e4ff at .9)
-//     match at k≈0.17 whatever the shade;
+//   - on the aubergine chrome (chrome=true), sidebar rows (#f6e4ff at .9
+//     over light mode's aubergine, #e7d2ef flat, y=.85) match at k≈0.15;
+//     dimmer chrome text needs more, as on the main pane: dark mode's
+//     rows (#e3ceeb at .8 over #201024, #bca8c3 flat, y=.69) came out
+//     9-11% heavy at 0.15 (feel-shots against Chrome drawing Slack's rows
+//     in the same colours), so k = 0.15 + max(0, .85-y)·0.5 (0.23 there);
 //   - on the dark main pane, the fade grows as the text dims: #b9babd
 //     (topic, y=.73) at 0.26-0.27 and #ababad (timestamps, y=.67) at 0.39,
 //     so k = 0.27 + max(0, .73-y)·2.
@@ -89,7 +93,7 @@ func lightTextColor(c color.NRGBA, pxPerDp float32, w font.Weight, chrome bool) 
 	if y < 0.6 {
 		return c
 	}
-	k := float32(0.15) // rows -3.5% (1x) / -2.9% (2x) at 0.17
+	k := 0.15 + max(0, 0.85-y)*0.5 // light rows -3.5% (1x) / -2.9% (2x) at 0.17
 	if !chrome {
 		k = 0.27 + max(0, 0.73-y)*2
 	}

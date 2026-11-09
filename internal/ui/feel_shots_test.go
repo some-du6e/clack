@@ -49,7 +49,7 @@ func TestFeelShots(t *testing.T) {
 			}
 			// Karim's screenshot showed 100 drafts: Slack caps the badge at
 			// "99+"; two scheduled messages add Slack's second badge.
-			b.draftN = 100
+			b.draftN, b.schedN = 100, 2
 			if dark {
 				e.a.setDark(true)
 			}
@@ -129,6 +129,24 @@ func TestFeelShots(t *testing.T) {
 		js, _ := json.MarshalIndent(pal, "", "  ")
 		if err := os.WriteFile(filepath.Join(dir, "palette.json"), js, 0o644); err != nil {
 			t.Fatal(err)
+		}
+	}
+}
+
+// Drafts & sent's badge and tooltip text follow Slack's OutboxLinkContent:
+// drafts capped at maxCount 99, scheduled uncapped, the tooltip's plural.
+func TestOutboxBadgeText(t *testing.T) {
+	for n, want := range map[int]string{1: "1", 99: "99", 100: "99+", 1234: "99+"} {
+		if got := outboxCount(n); got != want {
+			t.Errorf("outboxCount(%d) = %q, want %q", n, got, want)
+		}
+	}
+	for _, c := range []struct {
+		d, s int
+		want string
+	}{{1, 0, "1 Draft"}, {100, 0, "100 Drafts"}, {0, 3, "3 Scheduled"}, {2, 1, "2 Drafts\n1 Scheduled"}} {
+		if got := outboxTip(c.d, c.s); got != c.want {
+			t.Errorf("outboxTip(%d, %d) = %q, want %q", c.d, c.s, got, c.want)
 		}
 	}
 }
