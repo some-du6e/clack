@@ -9,8 +9,10 @@ package ui
 
 import (
 	"image"
+	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -286,4 +288,57 @@ func dirTabName(v *views.Directories) string {
 		return ""
 	}
 	return v.Tab()
+}
+
+// "Edit topic" is Slack's stacked modal: a refused save keeps it open
+// with getChannelTopicError's text under the input; the retry closes it.
+func TestChannelTopicEditModal(t *testing.T) {
+	e, fs := previewEnv(t)
+	ch := fakeslackMemberChannel(e)
+	var mu sync.Mutex
+	var topics []string
+	fs.Hook = func(method string, form url.Values) (any, bool) {
+		if method != "conversations.setTopic" {
+			return nil, false
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		topics = append(topics, form.Get("topic"))
+		if len(topics) == 1 {
+			return map[string]any{"ok": false, "error": "restricted_action"}, true
+		}
+		return map[string]any{"ok": true}, true
+	}
+	e.openChannel(ch)
+	e.settle(200 * time.Millisecond)
+	e.a.OpenDetails(ch)
+	e.settle(300 * time.Millisecond)
+	d := topDetails(t, e)
+	d.EditTopic()
+	e.settle(200 * time.Millisecond)
+	if !d.Editing() {
+		t.Fatal("Edit didn't open the topic modal")
+	}
+	if strings.Contains(d.EditText(), "<http") {
+		t.Errorf("the editor shows raw link markup: %q", d.EditText())
+	}
+	e.shot("channel-topic-modal")
+	d.SetEditText("Release notes go here")
+	d.SaveEdit()
+	e.until("the refusal", 10*time.Second, func() bool { return d.EditError() != "" })
+	if !d.Editing() || !strings.Contains(d.EditError(), "don’t have permission to change the channel topic") {
+		t.Errorf("after restricted_action: editing %v, error %q", d.Editing(), d.EditError())
+	}
+	e.settle(150 * time.Millisecond)
+	e.shot("channel-topic-error")
+	// (an identical retry would hit the client's backoff for a request
+	// that just failed: slack.Client.post)
+	d.SetEditText("Release notes go here, again")
+	d.SaveEdit()
+	e.until("the modal closes", 10*time.Second, func() bool { return !d.Editing() })
+	mu.Lock()
+	defer mu.Unlock()
+	if len(topics) != 2 || topics[1] != "Release notes go here, again" {
+		t.Errorf("setTopic calls %q", topics)
+	}
 }

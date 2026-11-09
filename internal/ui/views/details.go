@@ -128,6 +128,10 @@ type ChannelDetails struct {
 	orgLearn                        widget.Clickable // "Workspaces with access": Learn more
 
 	editing      bool
+	editErr      string // the topic modal's error (Slack's getChannelTopicError), shown instead of the hint
+	editScrim    widget.Clickable
+	editDlg      widget.Clickable
+	editClose    widget.Clickable
 	editKind     int // cdEditTopic | cdEditPurpose | cdEditName
 	focusTopic   int
 	confirmLeave bool
@@ -186,6 +190,30 @@ func (d *ChannelDetails) ShowTab(label string) {
 		}
 	}
 }
+
+// EditTopic is the About tab's Topic "Edit": the "Edit topic" modal.
+func (d *ChannelDetails) EditTopic() {
+	if inf, ok, _ := d.info.get(); ok {
+		d.startEdit(cdEditTopic, inf.Conv.Topic)
+	}
+}
+
+// SetEditText replaces the open edit modal's text (tests).
+func (d *ChannelDetails) SetEditText(s string) { d.topicEd.SetText(s) }
+
+// EditText is the open edit modal's text.
+func (d *ChannelDetails) EditText() string { return d.topicEd.Text() }
+
+// SaveEdit is the edit modal's Save.
+func (d *ChannelDetails) SaveEdit() {
+	if d.editing {
+		d.saveTopicNow()
+	}
+}
+
+// Editing reports whether an edit modal is open; EditError is its error.
+func (d *ChannelDetails) Editing() bool     { return d.editing }
+func (d *ChannelDetails) EditError() string { return d.editErr }
 
 // Tab is the selected tab's label.
 func (d *ChannelDetails) Tab() string {
@@ -342,10 +370,62 @@ func (d *ChannelDetails) startEdit(kind int, cur string) {
 	if kind == cdEditName {
 		d.topicEd.MaxLen = 80
 	}
+	d.editErr = ""
+	if kind != cdEditName {
+		cur = cdEditableText(cur)
+	}
 	d.topicEd.SetText(cur)
 	n := d.topicEd.Len()
 	d.topicEd.SetCaret(n, n)
 	d.focusTopic = 3
+}
+
+// cdEditableText is a topic or description as Slack's editor shows it:
+// links as their text (<https://x> and <https://x|https://x> become
+// https://x), the rest of the mrkdwn untouched.
+func cdEditableText(s string) string {
+	var b strings.Builder
+	for {
+		i := strings.Index(s, "<http")
+		if i < 0 {
+			b.WriteString(s)
+			return b.String()
+		}
+		j := strings.IndexByte(s[i:], '>')
+		if j < 0 {
+			b.WriteString(s)
+			return b.String()
+		}
+		inner := s[i+1 : i+j]
+		u, label, hasLabel := strings.Cut(inner, "|")
+		b.WriteString(s[:i])
+		switch {
+		case !hasLabel:
+			b.WriteString(u)
+		case label == u || "http://"+label == u || "https://"+label == u:
+			b.WriteString(label)
+		default:
+			b.WriteString(s[i : i+j+1])
+		}
+		s = s[i+j+1:]
+	}
+}
+
+// cdTopicError is Slack's getChannelTopicError for a setTopic error code.
+func cdTopicError(err error) string {
+	s := err.Error()
+	has := func(code string) bool { return strings.Contains(s, code) }
+	switch {
+	case has("too_long"):
+		return "Channel topics can only include up to 250 characters — please make this topic shorter."
+	case has("restricted_action"), has("user_is_restricted"):
+		return "It looks like you don’t have permission to change the channel topic. Please check with your workspace admin."
+	case has("method_not_supported_for_channel_type"):
+		return "It’s not possible to set a topic here, unfortunately."
+	case has("method_not_supported_for_dm"):
+		return "Regrettably, direct messages do not have topics."
+	}
+	return "It looks like setting the channel topic didn’t work, for some reason. Try again?"
 }
 
 // cdChannelName normalizes a typed channel name the way Slack does:
@@ -360,10 +440,18 @@ func cdChannelName(s string) string {
 func (d *ChannelDetails) saveTopicNow() {
 	t := strings.TrimSpace(d.topicEd.Text())
 	kind := d.editKind
-	d.editing = false
 	if d.topicPending {
 		return
 	}
+	// The topic and description modals stay open until Slack answers
+	// (closing on success, showing the error otherwise); an unchanged
+	// value just closes them.
+	d.editing = kind != cdEditName
+	defer func() {
+		if !d.topicPending {
+			d.editing = false
+		}
+	}()
 	inf, _, _ := d.info.get()
 	c, id := d.h.Core(), d.id
 	var send func(ctx context.Context) error
@@ -444,7 +532,7 @@ func (d *ChannelDetails) update(gtx C) {
 		case d.memFilter.open || d.tabsPerm.open || d.notifMenu.open:
 			d.memFilter.open, d.tabsPerm.open, d.notifMenu.open = false, false, false
 		case d.editing:
-			d.editing = false
+			d.editing, d.editErr = false, ""
 			gtx.Execute(key.FocusCmd{})
 		case d.confirmLeave:
 			d.confirmLeave = false
@@ -527,7 +615,7 @@ func (d *ChannelDetails) update(gtx C) {
 		}
 	}
 	if d.cancelTop.Clicked(gtx) {
-		d.editing = false
+		d.editing, d.editErr = false, ""
 	}
 	if d.saveTopic.Clicked(gtx) && d.editing {
 		d.saveTopicNow()
@@ -535,14 +623,22 @@ func (d *ChannelDetails) update(gtx C) {
 	if d.topicPending {
 		if _, done, err := d.topicOp.get(); done {
 			d.topicPending = false
-			if err != nil {
+			switch {
+			case err == nil:
+				d.editing, d.editErr = false, ""
+			default:
 				prev := d.prevConv
 				d.info.mutate(func(v *core.ChannelDetails) {
 					v.Conv.Topic, v.Conv.TopicDoc = prev.Topic, prev.TopicDoc
 					v.Conv.Purpose, v.Conv.PurposeDoc = prev.Purpose, prev.PurposeDoc
 					v.Conv.Name = prev.Name
 				})
-				d.h.Toast("Couldn’t update the " + cdEditWhat[d.pendKind] + ": " + cdErr(err))
+				if d.pendKind == cdEditTopic && d.editing {
+					d.editErr = cdTopicError(err) // the modal stays open, the error under the input
+				} else {
+					d.editing = false
+					d.h.Toast("Couldn’t update the " + cdEditWhat[d.pendKind] + ": " + cdErr(err))
+				}
 			}
 		}
 	}
@@ -666,7 +762,132 @@ func (d *ChannelDetails) Layout(gtx C) D {
 			layout.Flexed(1, d.bodyArea),
 		)
 	}()
+	if d.editing && (d.editKind == cdEditTopic || d.editKind == cdEditPurpose) {
+		d.editModal(gtx, full)
+	}
 	return D{Size: full}
+}
+
+// editModal is Slack's stacked "Edit topic" / "Edit description" dialog
+// over channel details (520 wide, at 1440×900: 460,336 520×228): the title
+// 22/30 Black at (24, 19), the close button 36×36 16px from the right,
+// the input with its focus ring, the hint (or, for the topic, the save
+// error) 13/18 #5e5d60 under it, then Cancel / Save 80×36 at the bottom
+// right (24px in, 20px up). Enter saves (onTextyEnter).
+func (d *ChannelDetails) editModal(gtx C, full image.Point) {
+	scrim := theme.LinearAlpha(argb(0x991d1c1d), d.p.Bg)
+	d.editScrim.Layout(gtx, func(gtx C) D {
+		fill(gtx, image.Rectangle{Max: full}, scrim)
+		return D{Size: full}
+	})
+	if d.editScrim.Clicked(gtx) {
+		d.editing, d.editErr = false, ""
+		gtx.Execute(key.FocusCmd{})
+		return
+	}
+	w := min(gtx.Dp(520), full.X-gtx.Dp(32))
+	title, hint := "Edit topic", "Let people know what this channel is for."
+	if d.editKind == cdEditTopic {
+		inf, _, _ := d.info.get()
+		hint = "Let people know what #" + inf.Conv.Name + " is focused on right now (ex. a project milestone). Topics are always visible in the header."
+	} else {
+		title = "Edit description"
+	}
+	hintCol := d.p.Muted
+	if d.editErr != "" {
+		hint, hintCol = d.editErr, d.p.Red
+	}
+	inner := w - gtx.Dp(48)
+	m := op.Record(gtx.Ops)
+	dims := layout.Inset{Top: 19, Bottom: 20, Left: 24, Right: 24}.Layout(gtx, func(gtx C) D {
+		gtx.Constraints = layout.Exact(image.Pt(inner, gtx.Constraints.Max.Y))
+		gtx.Constraints.Min.Y = 0
+		return col(gtx,
+			layout.Rigid(func(gtx C) D {
+				return row(gtx, layout.Middle,
+					layout.Flexed(1, func(gtx C) D {
+						return dirFill(gtx, func(gtx C) D { return d.para(gtx, 22, 30, wBlack, d.p.Text, 1, title) })
+					}),
+					layout.Rigid(func(gtx C) D {
+						return layout.Inset{Right: -8}.Layout(gtx, func(gtx C) D { return d.iconButton(gtx, &d.editClose, "close", 36, 20, d.p.Sec) })
+					}),
+				)
+			}),
+			vgap(16),
+			layout.Rigid(d.topicInput),
+			vgap(6),
+			layout.Rigid(func(gtx C) D {
+				if d.editKind == cdEditTopic && d.editErr == "" {
+					// "#name" is bold in Slack's hint
+					inf, _, _ := d.info.get()
+					pre := "Let people know what "
+					return d.richHint(gtx, pre, "#"+inf.Conv.Name, hint[len(pre)+1+len(inf.Conv.Name):], hintCol)
+				}
+				return d.para(gtx, 13, 18, wReg, hintCol, 0, hint)
+			}),
+			vgap(20),
+			layout.Rigid(func(gtx C) D {
+				gtx.Constraints.Min.X = gtx.Constraints.Max.X
+				return layout.E.Layout(gtx, func(gtx C) D {
+					return row(gtx, layout.Middle,
+						layout.Rigid(func(gtx C) D { return d.button(gtx, &d.cancelTop, btnOutline, false, "Cancel") }),
+						hgap(12),
+						layout.Rigid(func(gtx C) D { return d.button(gtx, &d.saveTopic, btnPrimary, false, "Save") }),
+					)
+				})
+			}),
+		)
+	})
+	call := m.Stop()
+	h := dims.Size.Y
+	org := image.Pt((full.X-w)/2, (full.Y-h)/2)
+	defer op.Offset(org).Push(gtx.Ops).Pop()
+	r := image.Rect(0, 0, w, h)
+	rad := gtx.Dp(cdRadius)
+	theme.Shadow(gtx, r, rad, gtx.Dp(24), argb(0x59000000))
+	rrect(gtx, r, rad, d.p.Surface)
+	g := gtx
+	g.Constraints = layout.Exact(r.Max)
+	d.editDlg.Layout(g, func(gtx C) D { return D{Size: r.Max} })
+	call.Add(gtx.Ops)
+	if d.editClose.Clicked(gtx) {
+		d.editing, d.editErr = false, ""
+		gtx.Execute(key.FocusCmd{})
+	}
+}
+
+// richHint is a 13/18 line with one bold run (the hint's #channel).
+func (d *ChannelDetails) richHint(gtx C, pre, bold, post string, col color.NRGBA) D {
+	spans := []richtext.Span{{Kind: richtext.Text, Text: pre}, {Kind: richtext.Text, Text: bold, Style: richtext.Bold}, {Kind: richtext.Text, Text: post}}
+	return d.richDoc(gtx, "edithint/"+d.id, pre+bold+post, richtext.Doc{Blocks: []richtext.Block{{Kind: richtext.Paragraph, Spans: spans}}},
+		richview.Options{Compact: true, Secondary: true}, 0)
+}
+
+// topicInput is the modal's single input: 15/22, padding 8 12, radius 8,
+// the 1px hairline, and Slack's focus ring when focused.
+func (d *ChannelDetails) topicInput(gtx C) D {
+	w := gtx.Constraints.Max.X
+	m := op.Record(gtx.Ops)
+	td := layout.Inset{Top: 8, Bottom: 8, Left: 12, Right: 12}.Layout(gtx, func(gtx C) D {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		gtx.Constraints.Min.Y = gtx.Sp(22)
+		return d.th.Editor(gtx, &d.topicEd, 15, d.p.Text, d.p.Mention)
+	})
+	call := m.Stop()
+	r := image.Rect(0, 0, w, td.Size.Y)
+	rad := gtx.Dp(8)
+	if gtx.Focused(&d.topicEd) {
+		ring := gtx.Dp(5)
+		rrect(gtx, r.Inset(-ring), rad+ring, flatten(theme.WithAlpha(d.p.Link, 0x4d), d.p.Surface))
+		one := max(1, gtx.Dp(1))
+		rrect(gtx, r.Inset(-one), rad+one, d.p.Link)
+	}
+	rrect(gtx, r, rad, d.p.Surface)
+	if !gtx.Focused(&d.topicEd) {
+		border(gtx, r, rad, max(1, gtx.Dp(1)), d.p.Faint)
+	}
+	call.Add(gtx.Ops)
+	return D{Size: r.Size()}
 }
 
 // head draws the header at Slack's absolute positions: channels have the
@@ -1059,18 +1280,12 @@ func (d *ChannelDetails) aboutItems(inf core.ChannelDetails) []W {
 }
 
 func (d *ChannelDetails) topicField(gtx C, cv core.Conv) D {
-	if d.editing && d.editKind == cdEditTopic {
-		return d.cdField(gtx, "Topic", nil, d.topicEditor)
-	}
 	return d.cdField(gtx, "Topic", &d.editTopic, func(gtx C) D {
 		return d.richText(gtx, "topic/"+d.id, cv.Topic, cv.TopicDoc, "Add a topic")
 	})
 }
 
 func (d *ChannelDetails) purposeField(gtx C, cv core.Conv) D {
-	if d.editing && d.editKind == cdEditPurpose {
-		return d.cdField(gtx, "Description", nil, d.topicEditor)
-	}
 	return d.cdField(gtx, "Description", &d.editPurpose, func(gtx C) D {
 		return d.richText(gtx, "purpose/"+d.id, cv.Purpose, cv.PurposeDoc, "Add a description")
 	})
