@@ -100,3 +100,57 @@ Implementation: `internal/core/rail.go` (tabs, order, More), `internal/core/team
   - `team_icon_change` carries the new `icon` object for `team_id` (else `source_team`, else the current team). Slack stores it, and the new URL loads as a new image.
   - Hack Club's icon rotates about every 30 minutes (an app changes it). Clack applies the event live. With the socket off, the poll loop re-reads `team.info` every 10 minutes (`TeamIconRefresh`; Slack itself never polls).
   - The image cache is keyed by URL, and the rail keeps drawing the previous icon until the new URL has loaded.
+
+## Section heading menus and the Create menu
+
+Implementation: `internal/ui/section_menu.go` (templates, actions, toasts), `internal/ui/create_channel.go` (`openCreateMenu`), `internal/ui/popups/section_modals.go` (Rename, Create a section / Manage conversations, Delete, Start a Huddle), `internal/core/section_menu.go` (API calls). Fake: `internal/fakeslack/sections.go`. Tests: `internal/core/section_menu_test.go`, `internal/ui/section_menu_test.go`; screenshots from the `section-menus` workflow. Same build and chunks as above.
+
+- **⋯ menu** (boot-render `o7` getSectionHeadingEllipsisMenuTemplate). It has five groups, joined by `assembleMenuGroups`, which drops empty groups and puts separators between the rest:
+  1. Group 1:
+     - The section name as a heading.
+     - "Search in this section" (custom and Starred sections, `sidebar_section_search`).
+     - "Mark all as read" (only when something in the section is unread).
+     - "Start direct message" (DMs) or "Create a channel" (Channels, custom, Starred).
+     - "Share" ▸ "Share directly" / "Copy section link" (custom sections with conversations).
+     - "Browse channels" / "Recent direct messages" / "Browse apps".
+  2. "Manage section":
+     - "Rename" (custom sections).
+     - "Create a new section". It needs the `ChannelSectionsCreate` permission; without it the row is "Create sidebar section" PAID.
+     - "Manage conversations" (custom and Starred, `add_channels_channel_sections_slackathon`).
+  3. "Section settings": "Filter" ▸ and "Sort" ▸, each showing its current value.
+  4. "Notifications": "Mute all conversations" / "Unmute all conversations" (custom, user-group and temporary sections).
+  5. "Delete section" (custom and Starred, danger), and "Leave all temporary channels".
+- **Right-click** (`o2` getSectionHeadingContextMenuTemplate):
+  - Group 1 again, except the browse row, which appears only for Channels, Apps, Slack Connect and Agents.
+  - "Manage section" ▸ (300px) holds groups 2–5. Its Section settings starts with "Manage VIPs" in the DM section.
+  - Then the rows the filter hides: "Unread conversations" (filter Mentions, or a collapsed section), "Read conversations", "Muted conversations", and "Inactive channels" ▸ ("No messages in at least 30 days", `filter_dormant_channels`).
+- **Filter** (`getFilterPrefItems`):
+  - With `filter_dormant_channels`: "Active only" (with `mute_channel_edu` its description is "New activity within the last 30 days"), "Unreads", "Mentions", "All".
+  - Without it: "All", "Unreads only", "Mentions only".
+  - DM sections never offer Mentions. Under `programmable_sidebar_dm_history`, DM sections offer "1 day", "Last 7 days", "Last 30 days" and "Unreads".
+- **Sort** (`getSortPrefItems`):
+  - Items: "A–Z" ("Alphabetically" without `filter_dormant_channels`), "Recency" ("By most recent", or "By most recent (Default)" for DMs under `dm_recency_sort_rollout`), "Priority".
+  - The submenu row's value reads "A-Z", "Recency" or "Priority".
+- **Persistence** (boot-shared `OHTN` setChannelSectionPrefByApi):
+  - Filter and Sort write `{section: {sidebar|sort: value}}` into the `channel_sections` pref (users.prefs.set).
+  - If a section's filter now differs from what `sidebar_behavior` gives it, and `sidebar_behavior` isn't "hide_read_channels_unless_starred" yet, Slack first pins every section's current filter into the pref, then switches `sidebar_behavior` to that value ("Custom by section").
+  - Entries for sections that no longer exist are dropped on write.
+- **API calls** (client-boot `2A1t`, boot-shared `hW84`, `HKiO`, `IDOy`, `nEGd`, `YvWE`):
+
+  | Item | Call |
+  |---|---|
+  | Create a new section | `users.channelSections.create {name, emoji, next_channel_section_id}` |
+  | Rename | `users.channelSections.set {channel_section_id, name, emoji}` |
+  | Delete section | `users.channelSections.delete {channel_section_id}` (`section_not_found` counts as done) |
+  | Manage conversations | `users.channelSections.channels.bulkUpdate {insert, remove}` (Starred stars or unstars instead) |
+  | Mute all / Unmute all | `users.prefs.setNotifications {name: muted, value, channel_ids, global: false}` |
+  | Mark all as read | `conversations.mark` per unread conversation |
+  | Copy section link | `users.channelSections.createLink` → `{url}` |
+
+- **Toasts**: "Marked N channels as read.", "Muted N channels.", "Deleted X.", "Renamed to X.", each with Undo; also "Section link copied". The plural forms are Slack's ICU strings ("Muted channel." for one).
+- **Create menu** (boot-render `CreateMenu`, `nx8t` useCreateMenuActions): 360px, header "Create".
+  - Rows: "Message", "Channel", "Huddle" ("Start a video or audio chat"), "Canvas" ("Create and share content", Ctrl+Shift+N), "List" ("Track and manage projects"), "Workflow" ("Automate everyday tasks"), "Notes" (`meeting_assistant`), then a separator and "Invite people". "Workspace" appears only on SPF non-work workspaces.
+  - Huddle opens "Start a Huddle" (`HuddleInviteStartModal`) and then Clack's normal huddle start.
+  - Canvas makes a standalone canvas.
+  - Clack has no screens for List, Workflow, Notes or Invite people, so those rows show a toast instead of doing nothing.
+- **Live check** (read-only `experiments.getByUser`, 2026-11-08): on for the test account: `filter_dormant_channels`, `sidebar_section_search`, `add_channels_channel_sections_slackathon`, `mute_channel_edu`, `improve_mute_pref`; `dm_recency_sort_rollout` is `without_edu`; `meeting_assistant` and the `programmable_sidebar*` experiments are unset.

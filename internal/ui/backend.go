@@ -276,7 +276,19 @@ func (b *backend) apply(a *App, s core.Snapshot) {
 	m.Convs = convs
 	m.Sections = m.Sections[:0]
 	for _, sec := range s.Sections {
-		ss := sbSection{ID: sec.ID, Name: sec.Name, Type: sec.Type, Emoji: sec.Emoji, EmojiURL: sec.EmojiURL, Collapsed: sec.Collapsed}
+		ss := sbSection{ID: sec.ID, Name: sec.Name, Type: sec.Type, Emoji: sec.Emoji, EmojiURL: sec.EmojiURL, Collapsed: sec.Collapsed,
+			Filter: sec.Filter, Sort: sec.Sort}
+		known := func(ids []string) []string {
+			var out []string
+			for _, id := range ids {
+				if convs[id] != nil {
+					out = append(out, id)
+				}
+			}
+			return out
+		}
+		ss.All, ss.HiddenRead, ss.HiddenMuted = known(sec.All), known(sec.HiddenRead), known(sec.HiddenMuted)
+		ss.HiddenDormant, ss.HiddenUnread = known(sec.HiddenDormant), known(sec.HiddenUnread)
 		for _, id := range sec.CollapsedChannels {
 			if convs[id] != nil {
 				ss.CollapsedRows = append(ss.CollapsedRows, id)

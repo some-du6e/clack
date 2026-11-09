@@ -115,6 +115,7 @@ var entMethods = map[string]bool{
 	"client.counts": true, "users.channelSections.list": true, "client.getWebSocketURL": true,
 	"users.channelSections.channels.bulkUpdate": true, "users.channelSections.create": true,
 	"users.channelSections.update": true, "users.channelSections.delete": true,
+	"users.channelSections.set": true, "users.channelSections.createLink": true, // the menus (core/section_menu.go)
 	"activity.feed": true, "activity.views": true, "saved.list": true, "saved.add": true, "saved.delete": true,
 	"saved.update": true, "later.list": true, "client.dms": true, "drafts.list": true, "client.init": true,
 	"client.channels": true, "users.prefs.get": true, "users.prefs.set": true, "subscriptions.thread.getView": true,

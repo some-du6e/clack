@@ -105,6 +105,8 @@ var defaultExperimentGroups = map[string]string{
 	"filter_dormant_channels": "on", "improve_mute_pref": "on", "dm_recency_sort_rollout": "without_edu",
 	"activity_inbox": "on", "agent_tasks": "on", "agents_landing_page": "on", "later_todos": "on",
 	"reskin_custom_responses": "on", // Slackbot custom responses as the team (CustomResponseReskin)
+	// the section menus (ui/section_menu.go)
+	"sidebar_section_search": "on", "add_channels_channel_sections_slackathon": "on", "mute_channel_edu": "on",
 }
 
 func (a *App) sidebarExperiments() sidebarExp {
@@ -457,6 +459,10 @@ func (a *App) applySectionRules(out []Section, names map[string]string, now time
 	a.S.RUnlock()
 	e := a.sidebarExperiments()
 	sel := a.selectedID()
+	hideMuted := p.ShowMutedOutside // as in keepRow
+	if e.improveMute {
+		hideMuted = !p.ShowMutedOutside
+	}
 	for i := range out {
 		sec := &out[i]
 		f := sectionFilter(sec.Type, sec.ID, p, e)
@@ -466,7 +472,8 @@ func (a *App) applySectionRules(out []Section, names map[string]string, now time
 		if inDM && isWindowFilter(f) {
 			cutoff = windowCutoff(f, now)
 		}
-		rows := make([]sortRow, 0, len(sec.Channels))
+		all := make([]sortRow, 0, len(sec.Channels))
+		state := map[string]rowState{}
 		expanded, folded := map[string]bool{}, map[string]bool{}
 		for _, id := range sec.Channels {
 			c, ok := a.sidebarConv(id)
@@ -494,14 +501,28 @@ func (a *App) applySectionRules(out []Section, names map[string]string, now time
 			if id == sel { // lJBI: the open conversation's row always shows, collapsed or not
 				expanded[id], folded[id] = true, true
 			}
-			if expanded[id] || folded[id] {
-				rows = append(rows, r)
-			}
+			all = append(all, r)
+			state[id] = r.rowState
 		}
 		sec.Channels, sec.CollapsedChannels = []string{}, nil
-		for _, id := range sortSectionRows(rows, inDM, order, self, p) {
+		sec.Filter, sec.Sort = f, order
+		sec.All, sec.HiddenRead, sec.HiddenMuted, sec.HiddenDormant, sec.HiddenUnread = nil, nil, nil, nil, nil
+		for _, id := range sortSectionRows(all, inDM, order, self, p) {
+			sec.All = append(sec.All, id)
 			if expanded[id] {
 				sec.Channels = append(sec.Channels, id)
+			} else {
+				st := state[id]
+				switch {
+				case st.muted && hideMuted:
+					sec.HiddenMuted = append(sec.HiddenMuted, id)
+				case st.dormant && e.filterDormant && f == filterActive:
+					sec.HiddenDormant = append(sec.HiddenDormant, id)
+				case st.unread:
+					sec.HiddenUnread = append(sec.HiddenUnread, id)
+				default:
+					sec.HiddenRead = append(sec.HiddenRead, id)
+				}
 			}
 			if folded[id] {
 				sec.CollapsedChannels = append(sec.CollapsedChannels, id)

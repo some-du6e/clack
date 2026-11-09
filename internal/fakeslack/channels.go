@@ -35,8 +35,9 @@ import (
 type chanState struct {
 	mu       sync.Mutex
 	created  []slack.Conversation
-	invites  map[string][]string // channel -> users added
-	inserted map[string][]string // section -> channels bulkUpdate put there
+	invites  map[string][]string        // channel -> users added
+	inserted map[string][]string        // section -> channels bulkUpdate put there
+	removed  map[string]map[string]bool // section -> channels bulkUpdate took out
 	starred  map[string]bool
 	seq      int
 }
@@ -192,8 +193,31 @@ func (s *Server) handleChannels(method string, f url.Values) (any, bool) {
 		if s.chans.inserted == nil {
 			s.chans.inserted = map[string][]string{}
 		}
+		if s.chans.removed == nil {
+			s.chans.removed = map[string]map[string]bool{}
+		}
+		for _, it := range rem {
+			if s.chans.removed[it.Section] == nil {
+				s.chans.removed[it.Section] = map[string]bool{}
+			}
+			drop := map[string]bool{}
+			for _, ch := range it.Channels {
+				s.chans.removed[it.Section][ch] = true
+				drop[ch] = true
+			}
+			var keep []string
+			for _, ch := range s.chans.inserted[it.Section] {
+				if !drop[ch] {
+					keep = append(keep, ch)
+				}
+			}
+			s.chans.inserted[it.Section] = keep
+		}
 		for _, it := range ins {
 			s.chans.inserted[it.Section] = append(s.chans.inserted[it.Section], it.Channels...)
+			for _, ch := range it.Channels {
+				delete(s.chans.removed[it.Section], ch)
+			}
 		}
 		s.chans.mu.Unlock()
 		return ok(), true
@@ -203,6 +227,11 @@ func (s *Server) handleChannels(method string, f url.Values) (any, bool) {
 			s.chans.starred = map[string]bool{}
 		}
 		s.chans.starred[f.Get("channel")] = true
+		s.chans.mu.Unlock()
+		return ok(), true
+	case "stars.remove":
+		s.chans.mu.Lock()
+		delete(s.chans.starred, f.Get("channel"))
 		s.chans.mu.Unlock()
 		return ok(), true
 	}
