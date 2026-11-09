@@ -240,10 +240,22 @@ func (v *Activity) pillText(it *core.ActivityItem, dest actDest, title string) (
 		return "Thread in " + g, false
 	case it.Type == "message_reaction":
 		return "Reacted", true
-	case (dest == destList || dest == destFile) && g != "":
+	case dest == destFile && g != "":
 		return "Mention in " + g, false
 	}
 	return g, false
+}
+
+// listPill is the list destination's pill (ActivityListName: the lists
+// icon and the list's title, only for an entry with an item): "Mention in"
+// and the title after the icon; ok false leaves the pill its type icon
+// alone, as Slack's does for the approval entries.
+func (v *Activity) listPill(it *core.ActivityItem) (title string, ok bool) {
+	list, row, _ := actListRow(it)
+	if list == "" || row == "" {
+		return "", false
+	}
+	return v.actListTitle(list), true
 }
 
 // actListTitle is a loaded list's name ("" until it's loaded).
@@ -277,25 +289,47 @@ func (v *Activity) actListRecord(listID, recID, colID string) (title, column str
 	return title, column
 }
 
-// listBody is w4rX ListContent ("" when the list isn't loaded: Slack
-// renders nothing without it either).
-func (v *Activity) listBody(it *core.ActivityItem) string {
-	if it.ListID == "" || it.ListRecord == "" {
-		return ""
+// actListRow is hliv ez: the list, item and column a list entry points
+// at. Only these entries carry an item (the approval entries don't).
+func actListRow(it *core.ActivityItem) (list, row, col string) {
+	switch it.Type {
+	case "list_record_assigned", "list_record_edited", "list_user_mentioned", "list_todo_notification":
+		return it.ListID, it.ListRecord, it.ListColumn
+	case "saved_reminder":
+		if it.ReminderItem == "list_record" {
+			return it.ListID, it.ListRecord, ""
+		}
 	}
-	title, column := v.actListRecord(it.ListID, it.ListRecord, it.ListColumn)
-	if title == "" {
-		return ""
+	return it.ListID, "", ""
+}
+
+// actListBody is w4rX ListContent's sentence around Hi+d ListItemName:
+// the item's title, "Untitled item" until it's known, after the
+// list-item icon (not in "List update:"). ok is false when Slack renders
+// nothing (no item).
+type actListBody struct {
+	pre, item, post string
+	icon            bool
+}
+
+func (v *Activity) listBody(it *core.ActivityItem) (actListBody, bool) {
+	list, row, colID := actListRow(it)
+	if list == "" || row == "" {
+		return actListBody{}, false
 	}
+	title, column := v.actListRecord(list, row, colID)
+	b := actListBody{item: firstNonEmpty(title, "Untitled item"), icon: true}
 	switch it.Type {
 	case "list_user_mentioned":
-		return "@mention • " + column + " • " + title
+		b.pre = "@mention \u2022 " + column + " \u2022 "
 	case "list_record_edited":
-		return "Edited " + title + ": " + column
+		b.pre, b.post = "Edited ", ": "+column
 	case "list_record_assigned":
-		return "Assigned to you: " + title
+		b.pre = "Assigned to you: "
+	default:
+		b.pre, b.icon = "List update: ", false
 	}
-	return "List update: " + title
+	return b, true
 }
 
 // actOthers lists ids without the ones in skip, keeping order and

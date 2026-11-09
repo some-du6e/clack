@@ -119,6 +119,10 @@ type actDesc struct {
 	footEmoji string // reaction emoji image (replaces footIcon)
 	footBold  bool   // footer is a bold label ("App")
 	reacted   bool   // the pill is "Reacted" followed by the emoji
+	pill      bool   // the row has a context pill (its destination is known)
+	footMid   string // an icon inside the pill text (the list destination's lists icon)
+	footTail  string // the pill text after footMid
+	list      *actListBody
 	nameDense string // the sender in Dense rows ("Ana +2")
 	team      string // a Slack Connect inviter's organisation, after the name
 	subtext   string // before the message body ("You: ", "Ana Example: ")
@@ -1009,10 +1013,19 @@ func (v *Activity) describe(it *core.ActivityItem, refs map[string]core.ConvRef)
 		}
 		body("Was invited to join " + v.teamName() + " \u2014 take a second to say hello.")
 	case actIsList(it.Type):
-		if actor != "" {
+		// the sender (hliv EM): assigned_by, edited_by, mentioned_by; the
+		// rest name the message author, which they don't have
+		d.name, d.avatar = "", ""
+		switch it.Type {
+		case "list_record_assigned", "list_record_edited", "list_user_mentioned":
 			d.name, d.avatar = actor, actorAv
 		}
-		body(v.listBody(it))
+		if lb, ok := v.listBody(it); ok {
+			d.list = &lb
+			body(lb.pre + lb.item + lb.post)
+		} else {
+			body("")
+		}
 	default: // mentions, DMs, apps, channel posts
 		if it.Msg != nil && it.Msg.User == self {
 			d.subtext = "You: "
@@ -1027,7 +1040,14 @@ func (v *Activity) describe(it *core.ActivityItem, refs map[string]core.ConvRef)
 
 	// The context pill (withPrefixes, variant "pill") and its type icon.
 	d.foot, d.reacted = v.pillText(it, dest, d.title)
-	if d.foot != "" {
+	if dest == destList && it.Type != "saved_reminder" {
+		d.foot = ""
+		if title, ok := v.listPill(it); ok {
+			d.foot, d.footMid, d.footTail = "Mention in", "lists", title
+		}
+	}
+	d.pill = dest != destUnknown && (d.foot != "" || d.reacted || dest == destList)
+	if d.pill {
 		d.footIcon = actPillIcon(it)
 	}
 	if d.reacted && it.Reaction != nil {
@@ -2261,7 +2281,7 @@ func (v *Activity) detailedContent(gtx C, r *actRow) D {
 					}),
 					layout.Rigid(func(gtx C) D { return v.actBody(gtx, r, 2, bodyCol) }),
 					layout.Rigid(func(gtx C) D {
-						if d.foot == "" {
+						if !d.pill {
 							return D{}
 						}
 						return layout.Inset{Top: 9}.Layout(gtx, func(gtx C) D { return v.actFooter(gtx, d) })
@@ -2303,7 +2323,7 @@ func (v *Activity) denseContent(gtx C, r *actRow) D {
 			}),
 			hgap(8),
 			layout.Rigid(func(gtx C) D {
-				if d.foot == "" {
+				if !d.pill {
 					return D{}
 				}
 				gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(240), full/3)
@@ -2345,7 +2365,9 @@ func (v *Activity) actPill(gtx C, d *actDesc, flex bool) D {
 		w = wBold
 	}
 	text := layout.Rigid(func(gtx C) D { return v.label(gtx, 13, w, v.p.Muted, d.foot) })
-	if flex && !d.reacted {
+	if d.foot == "" {
+		text = layout.Rigid(func(gtx C) D { return D{} })
+	} else if flex && !d.reacted && d.footMid == "" {
 		text = layout.Flexed(1, func(gtx C) D {
 			gtx.Constraints.Min.X = 0
 			return v.para(gtx, 13, 18, w, v.p.Muted, 1, d.foot)
@@ -2359,6 +2381,19 @@ func (v *Activity) actPill(gtx C, d *actDesc, flex bool) D {
 			return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.icon(gtx, icons.Slack(d.footIcon), 16, v.p.Muted) })
 		}),
 		text,
+		layout.Rigid(func(gtx C) D {
+			if d.footMid == "" {
+				return D{}
+			}
+			// ActivityListName: the lists icon, a space, the list's title
+			return layout.Inset{Left: 4}.Layout(gtx, func(gtx C) D { return v.icon(gtx, icons.Slack(d.footMid), 16, v.p.Muted) })
+		}),
+		layout.Rigid(func(gtx C) D {
+			if d.footTail == "" {
+				return D{}
+			}
+			return layout.Inset{Left: 4}.Layout(gtx, func(gtx C) D { return v.label(gtx, 13, w, v.p.Muted, d.footTail) })
+		}),
 		layout.Rigid(func(gtx C) D {
 			if !d.reacted {
 				return D{}
@@ -2381,6 +2416,23 @@ func (v *Activity) actBody(gtx C, r *actRow, lines int, col color.NRGBA) D {
 	d := r.cur
 	if d.lines > 0 {
 		lines = d.lines
+	}
+	if lb := d.list; lb != nil {
+		// ListContent: the sentence around ListItemName (its list-item icon
+		// before the title), one line
+		return row(gtx, layout.Middle,
+			layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wReg, col, lb.pre) }),
+			layout.Rigid(func(gtx C) D {
+				if !lb.icon {
+					return D{}
+				}
+				return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.icon(gtx, icons.Slack("list-item"), 16, col) })
+			}),
+			layout.Flexed(1, func(gtx C) D {
+				gtx.Constraints.Min.X = 0
+				return v.para(gtx, 15, 22, wReg, col, 1, lb.item+lb.post)
+			}),
+		)
 	}
 	if d.invite {
 		if d.body == "" {
@@ -2564,7 +2616,7 @@ func (v *Activity) previewBody(gtx C) D {
 	return v.scrollList(gtx, &v.prevList, 5, func(gtx C, i int) D {
 		switch i {
 		case 0:
-			if d.foot == "" {
+			if !d.pill {
 				return D{Size: image.Pt(0, gtx.Dp(8))}
 			}
 			return layout.Inset{Top: 8, Bottom: 4, Left: 20, Right: 20}.Layout(gtx, func(gtx C) D { return v.actFooter(gtx, d) })

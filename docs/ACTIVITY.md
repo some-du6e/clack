@@ -78,7 +78,8 @@ posts) then the text:
 | invitations | Invitation |
 | joiner / prejoin | Workspace invitation |
 | generic_system_alert | Channel / User group / External channel / Workflow / Invitation / Notification |
-| list items | Mention in {list name} once the list is loaded |
+| list items with an item (assigned, edited, mentioned, to-do) | Mention in ▤ {list title} (the lists icon; the title is empty until the list loads) |
+| list approvals | the type icon alone (no item, so ActivityListName renders nothing) |
 
 Icons: mentions `mentions`, DMs `direct-messages`, apps `apps`, threads
 `threads`, invitations `paper-plane`, reminders `reminder`, alerts and
@@ -103,9 +104,13 @@ ignored, expired, or is no longer available for another reason."; joiner:
 "Accepted your invitation to join Slack — take a second to say hello." or,
 for the reminder, "Joined your workspace. A welcome from you will help them
 get started."; prejoin: "Was invited to join {team} — take a second to say
-hello."; lists (`ListContent`): "@mention • {column} • {item}", "Edited
-{item}: {column}", "Assigned to you: {item}", "List update: {item}"; an
-unknown message is Slack's loading shimmer.
+hello."; lists (`ListContent`, for entries with an item; approvals have none):
+"@mention • {column} • {item}", "Edited {item}: {column}", "Assigned to
+you: {item}", "List update: {item}", where {item} is Hi+d `ListItemName`:
+the list-item icon (not in "List update:") and the item's title, "Untitled
+item" until the list loads; an unknown message is Slack's loading shimmer.
+The to-do and approval entries have no sender (hliv `EM` falls back to the
+message author, which they don't have): Slack's shimmer.
 
 **Status** (Gh4i `getStatusIndicator`, hliv `g_`): unread rows show a count
 badge; the count is the bundle's for dm, mpdm, bot DMs, channel posts and

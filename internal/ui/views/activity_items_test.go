@@ -187,6 +187,13 @@ func TestActivityEveryItemTypeRenders(t *testing.T) {
 		"k-alert":           {"Slack", "Channel", "notifications", "A synthetic channel was archived.", ""},
 		"k-future":          {"Bob Example", "#general", "mentions", "", ""},
 		"k-mine":            {"", "Mention in #general", "mentions", "", "You: "},
+		// list items before their list loads (Hi+d ListItemName: "Untitled
+		// item"; ActivityListName: the lists icon and an empty title)
+		"k-list-assigned": {"Alice Example", "Mention in", "mentions", "Assigned to you: Untitled item", ""},
+		"k-list-edited":   {"Bob Example", "Mention in", "mentions", "Edited Untitled item: ", ""},
+		"k-list-mention":  {"Alice Example", "Mention in", "mentions", "@mention \u2022  \u2022 Untitled item", ""},
+		"k-list-todo":     {"", "Mention in", "mentions", "List update: Untitled item", ""},
+		"k-list-approval": {"", "", "mentions", "", ""},
 	}
 	for i := range page.Items {
 		it := &page.Items[i]
@@ -211,6 +218,19 @@ func TestActivityEveryItemTypeRenders(t *testing.T) {
 		}
 		if it.Msg == nil && !d.invite && it.Channel != "" && key != "k-channel-gone" && key != "k-future-bare" {
 			t.Errorf("%s (%s): no message and no text in its place", key, it.Type)
+		}
+		if strings.HasPrefix(key, "k-list-") {
+			if !d.pill {
+				t.Errorf("%s: no context pill", key)
+			}
+			if key != "k-list-approval" && d.footMid != "lists" {
+				t.Errorf("%s: pill without the lists icon (%q)", key, d.footMid)
+			}
+			// the to-do and approval entries name no one (hliv EM: the
+			// message author): Slack's loading shimmer
+			if (key == "k-list-todo" || key == "k-list-approval") && d.name != "" {
+				t.Errorf("%s: sender %q, want none", key, d.name)
+			}
 		}
 		if key == "k-reaction" && !d.reacted {
 			t.Errorf("%s: the reaction pill isn't Reacted + emoji", key)
