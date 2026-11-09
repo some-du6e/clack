@@ -45,7 +45,7 @@ type MenuItem struct {
 	// Radio is Slack's type:"radio" item (ChannelNotificationPrefMenu): the
 	// check sits in a left gutter, a checked row is link blue, the label
 	// is regular and the Subtitle wraps to two lines.
-	Radio bool
+	Radio    bool
 	External bool // draws an external-link glyph at the right
 
 	Separator bool   // a divider line instead of an item
