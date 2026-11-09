@@ -456,8 +456,9 @@ func (a *App) Boot(ctx context.Context) error {
 		raw, err := a.C.Prefs(ctx)
 		if err == nil {
 			a.installPrefs(raw)
-			go func() { _, _ = a.MaybeUpdateTimezone(a.bg) }() // set_tz_automatically (timezone.go)
-			if a.S.HasCachedPrefs() {                          // the first frame drew the cached copy
+			// set_tz_automatically keeps tz in step (timezone.go)
+			go func() { _, _ = a.MaybeUpdateTimezone(a.bg) }()
+			if a.S.HasCachedPrefs() { // the first frame drew the cached copy
 				p := a.Prefs()
 				a.emit(Event{Type: "prefs", Prefs: &p})
 			}
