@@ -13,19 +13,38 @@ import (
 // sidebar, never seen) arrive as "#C0123…". They are resolved once with
 // conversations.info (core.ChannelInfo) in the background, and rows
 // re-render with the name.
+//
+// A name shows from the frame whose users revision announces it (chanEntry
+// at), for every row at once: one stored while a frame was drawing
+// reached the rows laid out after it and not those before, which kept
+// the raw id, wrapped differently and fixed themselves a frame later (a
+// row 22px off for a frame, then the list jumped; CI run 42663172766).
+
+type chanEntry struct {
+	name string // "" while pending or unknown
+	at   uint64 // the hub users revision that shows it
+}
 
 var (
 	chanMu    sync.Mutex
-	chanNames = map[string]string{} // id -> name; "" while pending or unknown
+	chanNames = map[string]chanEntry{}
+	// chanFrame is the users revision this frame's rows resolve with (set
+	// by layoutList; UI goroutine): names announced after it wait.
+	chanFrame uint64
 )
 
 // channelName returns the display name for id, starting a lookup if needed.
 func channelName(h Host, id string) (string, bool) {
 	chanMu.Lock()
-	n, asked := chanNames[id]
+	e, asked := chanNames[id]
 	chanMu.Unlock()
-	if n != "" {
-		return n, true
+	if asked {
+		// ours to announce, even once the store has the conversation
+		// (ChannelInfo stores it before the lookup returns)
+		if e.name != "" && e.at <= chanFrame {
+			return e.name, true
+		}
+		return "", false
 	}
 	app := h.Core()
 	if app == nil {
@@ -34,11 +53,8 @@ func channelName(h Host, id string) (string, bool) {
 	if r := app.ConvRef(id); r.Name != "" && r.Name != id {
 		return r.Name, true
 	}
-	if asked {
-		return "", false
-	}
 	chanMu.Lock()
-	chanNames[id] = ""
+	chanNames[id] = chanEntry{}
 	chanMu.Unlock()
 	hb := hubFor(h)
 	go func() {
@@ -55,15 +71,25 @@ func channelName(h Host, id string) (string, bool) {
 		if name == "" {
 			return
 		}
-		chanMu.Lock()
-		chanNames[id] = name
-		chanMu.Unlock()
-		hb.mu.Lock()
-		hb.userRv++
-		hb.mu.Unlock()
-		hb.invalidate()
+		announceChannel(hb, id, name)
 	}()
 	return "", false
+}
+
+// announceChannel stores a looked-up name for the next users revision and
+// then makes that revision: no frame sees the name before its rows are
+// told to resolve again.
+func announceChannel(hb *hub, id, name string) {
+	hb.mu.Lock()
+	at := hb.userRv + 1
+	hb.mu.Unlock()
+	chanMu.Lock()
+	chanNames[id] = chanEntry{name: name, at: at}
+	chanMu.Unlock()
+	hb.mu.Lock()
+	hb.userRv++
+	hb.mu.Unlock()
+	hb.invalidate()
 }
 
 // hiddenChannel marks a channel conversations.info doesn't show the viewer.

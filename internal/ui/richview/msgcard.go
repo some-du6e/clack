@@ -39,7 +39,9 @@ func (l *lay) addIcon(name string, px int, k faceKey, col color.NRGBA, dc, tg in
 }
 
 // messageMention lays out a message_mention: the .p-rich_text_slug pill
-// (content-hgl-1 on surf-hgl-1, 3px radius, 1px 2px padding), the
+// (content-hgl-1 on surf-hgl-1, 3px radius, 1px 2px padding; hovered
+// #0b4c8c on #1d9bd133; never underlined: .p-rich_text_slug .c-link and
+// its :hover are text-decoration none, Slack's bv1-13 CSS), the
 // "message" icon (4px gap), the label; a private channel's lock icon goes
 // before its name. Disabled ("Private message"): content-pry on
 // foreground_soft .06, no link.
@@ -50,7 +52,7 @@ func (l *lay) messageMention(sp *richtext.Span, fs *flowStyle, k faceKey, pt uin
 	if sp.Off {
 		bg, fg = rgba(p.Text.R, p.Text.G, p.Text.B, 0.06), p.Text
 	} else if sp.URL != "" {
-		tg = l.d.addTarget(target{kind: tLink, url: sp.URL})
+		tg = l.d.addTarget(target{kind: tLink, url: sp.URL, slug: true})
 	}
 	pad, padV := l.dpf(2), l.dpf(1)
 	l.decos = append(l.decos, deco{kind: 1, bg: bg, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, self: sp.Off, part: pt})

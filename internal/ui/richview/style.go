@@ -67,6 +67,7 @@ type Palette struct {
 	Edited, CardText, CardFooter   color.NRGBA
 	MentionText, MentionBg         color.NRGBA
 	MentionHoverBg                 color.NRGBA
+	SlugHoverText                  color.NRGBA // a hovered message_mention pill's text (0: unchanged)
 	SelfMentionText, SelfMentionBg color.NRGBA
 	CodeText, CodeBg, CodeBorder   color.NRGBA
 	PreBg, PreBorder               color.NRGBA
@@ -120,6 +121,7 @@ func LightPalette() Palette {
 		Text: rgb(29, 28, 29), Text2: rgb(97, 96, 97), Text3: rgb(69, 68, 71), Link: rgb(18, 100, 163),
 		Edited: rgb(134, 134, 134), CardText: rgb(69, 68, 71), CardFooter: rgb(94, 93, 96),
 		MentionText: rgb(18, 100, 163), MentionBg: rgba(54, 197, 240, 0.13), MentionHoverBg: rgba(29, 155, 209, 0.2),
+		SlugHoverText:   rgb(0x0b, 0x4c, 0x8c), // .p-rich_text_slug:hover
 		SelfMentionText: rgb(29, 28, 29), SelfMentionBg: rgba(255, 198, 0, 0.18),
 		CodeText: rgb(192, 19, 67), CodeBg: rgba(29, 28, 29, 0.04), CodeBorder: rgba(29, 28, 29, 0.13),
 		PreBg: rgba(29, 28, 29, 0.04), PreBorder: rgba(29, 28, 29, 0.13),
@@ -144,6 +146,7 @@ func DarkPalette() Palette {
 	p.Edited, p.CardText, p.CardFooter = rgb(134, 134, 134), rgb(209, 210, 211), rgb(171, 171, 173)
 	p.FileIconBg, p.FileIconText = rgba(232, 232, 232, 0.06), rgb(171, 171, 173)
 	p.MentionText, p.MentionBg, p.MentionHoverBg = rgb(29, 155, 209), rgba(29, 155, 209, 0.1), rgba(29, 155, 209, 0.2)
+	p.SlugHoverText = color.NRGBA{} // the dark theme's hover color isn't in the async CSS chunks: keep the pill's own
 	p.SelfMentionText, p.SelfMentionBg = rgb(232, 232, 232), rgba(242, 199, 68, 0.3)
 	p.CodeText, p.CodeBg, p.CodeBorder = rgb(232, 145, 45), rgba(232, 232, 232, 0.04), rgba(232, 232, 232, 0.13)
 	p.PreBg, p.PreBorder = rgba(232, 232, 232, 0.04), rgba(232, 232, 232, 0.13)

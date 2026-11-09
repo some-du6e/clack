@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -381,5 +383,205 @@ func TestPrependKeepsJoinSummaryInPlace(t *testing.T) {
 	}
 	if s.items[j].key == key {
 		t.Errorf("the summary's key didn't change (%s): the test no longer covers a grown summary", key)
+	}
+}
+
+// The page of older history arriving at every point of a fling, one run
+// each (it used to land wherever the network put it, and a header row was
+// drawn 22px too tall for a frame now and then, CI run 42663172766): the
+// request is held until frame k of the fling, then answered.
+func TestFlingPageArrivalEveryFrame(t *testing.T) {
+	for k := 0; k < 12; k++ {
+		t.Run("frame"+itoa(k), func(t *testing.T) {
+			gate := make(chan struct{})
+			var held atomic.Bool
+			hook := func(method string, f url.Values) (any, bool) {
+				if method == "conversations.history" && f.Get("latest") != "" {
+					held.Store(true)
+					<-gate
+				}
+				return nil, false
+			}
+			e := newFlingEnvHook(t, "C0FAKE00001", 1, hook)
+			t.Cleanup(func() {
+				select {
+				case <-gate:
+				default:
+					close(gate)
+				}
+			})
+			until(t, 10*time.Second, "the channel", e.frame, func() bool { return e.v.s.snap.loaded && len(e.v.s.items) > 3 })
+			for i := 0; i < 30; i++ { // users, avatars and images settle
+				e.frame()
+				time.Sleep(5 * time.Millisecond)
+			}
+			e.check("opened")
+			step := float32(-250)
+			f, since := 0, -1
+			n0 := len(e.v.s.snap.msgs)
+			for ; f < 300 && len(e.v.s.snap.msgs) == n0; f++ {
+				if held.Load() && since < 0 {
+					since = f
+				}
+				if since >= 0 && f-since == k {
+					close(gate)
+				}
+				e.wheel(3, step)
+				e.frame()
+				if since >= 0 && f-since > k {
+					time.Sleep(2 * time.Millisecond) // the page is on its way
+				}
+				if e.check("fling up, frame "+itoa(f)) > 0 {
+					e.diag()
+					return
+				}
+			}
+			if len(e.v.s.snap.msgs) == n0 {
+				t.Fatalf("no page arrived (held %v since frame %d)", held.Load(), since)
+			}
+			// frames after the page: still flinging, then idle
+			for i := 0; i < 20; i++ {
+				key, y := e.firstMsg()
+				if i%2 == 0 {
+					e.wheel(3, step)
+				}
+				e.frame()
+				if i%2 == 1 {
+					if ny, ok := e.yOf(key); key != "" && ok && ny != y {
+						t.Errorf("after the page, frame %d: %s moved from %d to %d with no scroll", i, key, y, ny)
+					}
+				}
+				if e.check("after the page, frame "+itoa(i)) > 0 {
+					e.diag()
+					return
+				}
+			}
+		})
+	}
+}
+
+// diag logs a mismatching row's parts, cached and fresh.
+func (e *flingEnv) diag() {
+	s := e.v.s
+	for i := s.visible[0]; i < s.visible[1]; i++ {
+		it := s.items[i]
+		if it.kind != itMsg {
+			continue
+		}
+		want := e.fresh(i)
+		if s.heights[i] == want {
+			continue
+		}
+		r := s.rows[it.key]
+		en := &s.snap.msgs[it.idx]
+		f := newListRow(en, s.thread)
+		rc := s.rc
+		rc.header, rc.hovered, rc.highlight, rc.parent = it.header, false, 0, false
+		gtx := layout.Context{Ops: new(op.Ops), Metric: unit.Metric{PxPerDp: e.scale, PxPerSp: e.scale}, Constraints: layout.Constraints{Min: image.Pt(e.size.X, 0), Max: image.Pt(e.size.X, 1<<20)}, Now: e.now}
+		f.layout(gtx, &rc)
+		e.t.Logf("item %d %s: cached %d col %v body %v name %q nameBL %d plain %d | fresh %d col %v body %v name %q nameBL %d plain %d | hovered %v reactions %d replies %d",
+			i, it.key, s.heights[i], r.col, r.bodyRect, r.name, r.nameBL, r.rv.PlainLen(), want, f.col, f.bodyRect, f.name, f.nameBL, f.rv.PlainLen(),
+			i == s.hoverIdx, len(r.m.Reactions), r.m.ReplyCount)
+	}
+}
+
+// A channel name looked up in the background (a mention of a channel the
+// store doesn't know) shows in every row from the same frame, and the row
+// cut off at the top growing or shrinking with it doesn't move what's
+// under it. The lookup is done by the test, around frames: storing the
+// name and announcing it are two steps, and a frame drawn between them
+// used to show it in the rows laid out after the store and not in those
+// before (a row a line too tall for a frame, then the list jumped: CI run
+// 42663172766, which got there by timing).
+func TestChannelNameArrivesBetweenFrames(t *testing.T) {
+	chanMu.Lock()
+	saved := chanNames
+	chanNames = map[string]chanEntry{} // other tests resolved fakeslack's channels already
+	chanMu.Unlock()
+	t.Cleanup(func() { chanMu.Lock(); chanNames = saved; chanMu.Unlock() })
+	hold := make(chan struct{})
+	t.Cleanup(func() { close(hold) })
+	hook := func(method string, f url.Values) (any, bool) {
+		if method == "conversations.info" {
+			<-hold // names arrive only as the test announces them
+		}
+		return nil, false
+	}
+	e := newFlingEnvHook(t, "C0FAKE00001", 1, hook)
+	until(t, 10*time.Second, "the channel", e.frame, func() bool { return e.v.s.snap.loaded && len(e.v.s.items) > 3 })
+	s := e.v.s
+	// scroll up until the row cut off at the top mentions a channel whose
+	// name is still being looked up
+	pendingAt := func() (string, string) {
+		p := s.list.Position
+		if !p.BeforeEnd || p.Offset <= 0 || p.First >= len(s.items) || s.items[p.First].kind != itMsg {
+			return "", ""
+		}
+		r := s.rows[s.items[p.First].key]
+		if r == nil {
+			return "", ""
+		}
+		for _, b := range r.m.Doc.Blocks {
+			for _, sp := range b.Spans {
+				if rawChannel(&sp) {
+					chanMu.Lock()
+					en, asked := chanNames[sp.ID]
+					chanMu.Unlock()
+					if asked && en.name == "" {
+						return s.items[p.First].key, sp.ID
+					}
+				}
+			}
+		}
+		return "", ""
+	}
+	key, id := "", ""
+	for f := 0; f < 400 && key == ""; f++ {
+		e.wheel(1, -37)
+		e.frame()
+		e.frame()
+		key, id = pendingAt()
+	}
+	if key == "" {
+		t.Fatal("no row with a pending channel name came to the top")
+	}
+	for i := 0; i < 3; i++ {
+		e.frame()
+	}
+	e.check("before the name")
+	akey, ay := e.firstMsg()
+	h0 := itemHeight(s, key)
+	moved := func(when string) {
+		if y, ok := e.yOf(akey); !ok || y != ay {
+			t.Errorf("%s: %s, first on screen, moved from %d to %d (shown %v)", when, akey, ay, y, ok)
+		}
+	}
+	// the lookup's two steps with a frame between them
+	hb := s.hb
+	hb.mu.Lock()
+	at := hb.userRv + 1
+	hb.mu.Unlock()
+	name := strings.Repeat("a-channel-name-far-longer-than-its-id-", 6) + id // wraps onto more lines
+	chanMu.Lock()
+	chanNames[id] = chanEntry{name: name, at: at}
+	chanMu.Unlock()
+	e.frame()
+	e.check("name stored, not announced")
+	moved("name stored, not announced")
+	hb.mu.Lock()
+	hb.userRv++
+	hb.mu.Unlock()
+	for i := 0; i < 3; i++ {
+		e.frame()
+		e.check("name announced, frame " + itoa(i))
+		moved("name announced, frame " + itoa(i))
+	}
+	if r := s.rows[key]; r == nil || !strings.Contains(r.rv.TextRange(0, r.rv.PlainLen()), name) {
+		t.Errorf("the top row doesn't show the announced name")
+	}
+	if h1 := itemHeight(s, key); h1 == h0 {
+		t.Errorf("the top row stayed %dpx with the long name: the test no longer moves anything above the anchor", h0)
+	} else {
+		t.Logf("top row %s: %d → %d px with #%s's name", key, h0, h1, id)
 	}
 }

@@ -113,7 +113,10 @@ type target struct {
 	btn  *richtext.Button
 	// underline on hover (links)
 	underline bool
-	att       *richtext.Attachment // tExpand: the attachment to expand
+	// slug: a message_mention pill (.p-rich_text_slug), never underlined,
+	// not even by the "underline links" preference
+	slug bool
+	att  *richtext.Attachment // tExpand: the attachment to expand
 }
 
 type hit struct {

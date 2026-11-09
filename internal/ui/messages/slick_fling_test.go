@@ -227,3 +227,16 @@ func slickFling(t *testing.T, name string, plugins []string) {
 		}
 	}
 }
+
+// The idle channel and thread (idle_test.go: an image, an unfurl, bots
+// with icons, a message_mention, a thread root) with the real Slick
+// plugins that patch message rows: once loaded nothing re-lays out or
+// keeps asking for frames, pointer away or resting on any row.
+func TestSlickViewIdleRowsStayPut(t *testing.T) {
+	e := newSlickEnv(t, nil)
+	for _, p := range []string{"ShowSendingBot", "BetterBlock", "MessageLogger", "WhoReacted", "LocalTime"} {
+		e.install(t, p, nil)
+	}
+	time.Sleep(300 * time.Millisecond)
+	idleViews(t, e.app, e.h, func() bool { return e.ui.anyTree(`"n":"MessageWrapper"`) })
+}
