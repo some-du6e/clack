@@ -37,7 +37,16 @@ import (
 )
 
 // codeMono is .monospace__lFFWw: "SF Mono", var(--font-family-monospace).
-var codeMono = font.Font{Typeface: font.Typeface("SF Mono, " + theme.MonoTypeface + ", Monaco, Menlo, Consolas, \"Courier New\", monospace")}
+var codeMono = font.Font{Typeface: font.Typeface("SF Mono, " + theme.MonoTypeface + ", Monaco, Menlo, Consolas, Roboto Mono, \"Courier New\", monospace")}
+
+// over is c composited on an opaque bg in sRGB, as a browser blends:
+// Gio blends in linear light, which turns Slack's translucent patch
+// colours far brighter over the dark theme.
+func over(bg, c color.NRGBA) color.NRGBA {
+	a := int(c.A)
+	mix := func(b, f uint8) uint8 { return uint8((int(f)*a + int(b)*(255-a) + 127) / 255) }
+	return color.NRGBA{R: mix(bg.R, c.R), G: mix(bg.G, c.G), B: mix(bg.B, c.B), A: 0xff}
+}
 
 // the patch's colours (.patchLineAdded__fHq5q etc., the same in both modes)
 var (
@@ -75,8 +84,9 @@ type codeDiffView struct {
 
 	parsed map[string][]core.PatchLine
 	toks   map[string][]core.CodeToken
-	cw     int     // the mono font's advance at the current scale
-	cwPx   float32 // the scale cw was measured at
+	widths map[string]int // a token's drawn width (the mono fallback isn't always fixed-pitch)
+	cw     int            // the mono font's advance at the current scale
+	cwPx   float32        // the scale cw was measured at
 }
 
 func newCodeDiffView(a *App, ch, prURL string) *codeDiffView {
@@ -276,6 +286,7 @@ func (v *codeDiffView) Layout(gtx layout.Context) layout.Dimensions {
 	}
 	if v.cwPx != gtx.Metric.PxPerSp {
 		v.cwPx = gtx.Metric.PxPerSp
+		v.widths = map[string]int{}
 		v.cw = v.monoWidth(gtx, "0000000000") / 10
 		if v.cw <= 0 {
 			v.cw = gtx.Sp(7)
@@ -436,8 +447,19 @@ func (v *codeDiffView) codeLine(gtx layout.Context, lang, content string, x, y, 
 		if cx >= x+w {
 			break
 		}
-		n := len([]rune(t.Text))
-		tw := n * v.cw
+		tw, ok := v.widths[t.Text]
+		if !ok {
+			xw, ok := v.widths["\x00x"]
+			if !ok {
+				xw = v.monoWidth(gtx, "x")
+				v.widths["\x00x"] = xw
+			}
+			tw = v.monoWidth(gtx, t.Text+"x") - xw // trailing spaces count
+			if len(v.widths) > 50000 {
+				v.widths = map[string]int{}
+			}
+			v.widths[t.Text] = tw
+		}
 		col := tokColor(dark, t.Kind)
 		at(gtx, image.Pt(cx, y), image.Pt(tw+v.cw, h), func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions { return v.mono(gtx, col, t.Text) })
@@ -984,11 +1006,13 @@ func (v *codeDiffView) layoutUnified(gtx layout.Context, f core.CodeDiffFile, i,
 		})
 		return layout.Dimensions{Size: image.Pt(w, h)}
 	case core.PatchAdded:
-		theme.Fill(gtx, image.Rect(x0, 0, x1, h), patchAddBg)
-		theme.Fill(gtx, image.Rect(x0, 0, x0+2*nw, h), patchAddNumBg)
+		base := ccTok(dark, "base-pry")
+		theme.Fill(gtx, image.Rect(x0, 0, x1, h), over(base, patchAddBg))
+		theme.Fill(gtx, image.Rect(x0, 0, x0+2*nw, h), over(base, patchAddNumBg))
 	case core.PatchRemoved:
-		theme.Fill(gtx, image.Rect(x0, 0, x1, h), patchDelBg)
-		theme.Fill(gtx, image.Rect(x0, 0, x0+2*nw, h), patchDelNumBg)
+		base := ccTok(dark, "base-pry")
+		theme.Fill(gtx, image.Rect(x0, 0, x1, h), over(base, patchDelBg))
+		theme.Fill(gtx, image.Rect(x0, 0, x0+2*nw, h), over(base, patchDelNumBg))
 	}
 	num := func(n, x int) {
 		if n == 0 {
@@ -1051,8 +1075,9 @@ func (v *codeDiffView) layoutSplit(gtx layout.Context, f core.CodeDiffFile, ri, 
 			if left {
 				bg, nb = patchDelBg, patchDelNumBg
 			}
-			theme.Fill(gtx, image.Rect(x, 0, x+half, h), bg)
-			theme.Fill(gtx, image.Rect(x, 0, x+nw, h), nb)
+			base := ccTok(dark, "base-pry")
+			theme.Fill(gtx, image.Rect(x, 0, x+half, h), over(base, bg))
+			theme.Fill(gtx, image.Rect(x, 0, x+nw, h), over(base, nb))
 		}
 		n := l.NewLine
 		if left {

@@ -216,12 +216,12 @@ func (p *codePane) Layout(gtx layout.Context) layout.Dimensions {
 	at(gtx, image.Pt(cx, (hh-bs)/2), image.Pt(bs, bs), func(gtx layout.Context) layout.Dimensions {
 		return iconButton(gtx, closeBtn, "close", 28, 18, c.FgMuted, c.BgHover, 8)
 	})
-	expIcon := "expand-diagonal"
+	expIcon := "expand" // Slack's expand-diagonal
 	if a.secondary.expanded {
-		expIcon = "reduce-diagonal"
+		expIcon = "collapse" // reduce-diagonal
 	}
 	at(gtx, image.Pt(ex, (hh-bs)/2), image.Pt(bs, bs), func(gtx layout.Context) layout.Dimensions {
-		return iconButton(gtx, expBtn, icons.Slack(expIcon), 28, 16, c.FgMuted, c.BgHover, 8)
+		return iconButton(gtx, expBtn, expIcon, 28, 16, c.FgMuted, c.BgHover, 8)
 	})
 	if clicked(closeBtn) {
 		a.secondary.expanded = false
@@ -288,7 +288,7 @@ func (p *codePane) layoutTabs(gtx layout.Context, tabs []paneTab, cur int) layou
 					col = ccTok(a.th.Dark, "content-pry")
 				}
 				at(gtx, image.Pt(gtx.Dp(8), (h-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
-					return icons.Get(icons.Slack(t.icon))(gtx, 16, col)
+					return icons.Get(codeTabIcon(t.icon))(gtx, 16, col)
 				})
 				at(gtx, image.Pt(gtx.Dp(28), 0), image.Pt(lw+1, h), func(gtx layout.Context) layout.Dimensions {
 					return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
@@ -346,6 +346,15 @@ func (p *codePane) body(t paneTab) codeViewBody {
 	p.bodies[t.id] = b
 	p.keys[t.id] = key
 	return b
+}
+
+// codeTabIcon is a view icon (svgIconForView's Slack name) in Clack's set:
+// canvas-content has no own glyph, the canvas one stands in.
+func codeTabIcon(name string) string {
+	if name == "canvas-content" {
+		return "canvas"
+	}
+	return icons.Slack(name)
 }
 
 // ---- view bodies ----
