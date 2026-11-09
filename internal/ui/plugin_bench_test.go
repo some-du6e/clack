@@ -398,7 +398,9 @@ func (e *benchEnv) scrollPass() scrollStats {
 // idle draws frames with no input for d and counts deliveries and frames
 // that asked for another; then measures process CPU with no frames.
 func (e *benchEnv) idle(d time.Duration) (deliveries, wakeups int, cpuPerSec float64) {
-	e.settle(time.Second)
+	// past slackc's sweep of the roots the scroll pass left (unused 5 s,
+	// swept every 2 s): their unmount commits aren't re-renders
+	e.settle(7500 * time.Millisecond)
 	e.mu.Lock()
 	before := maps.Clone(e.perRoot)
 	same0 := e.same
