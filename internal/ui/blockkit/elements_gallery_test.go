@@ -122,6 +122,10 @@ func newBKEnv(t *testing.T, dark bool, shots bool) *bkEnv {
 	if err := a.Boot(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	// element hosts are cached per message across hosts; start clean
+	msgsMu.Lock()
+	msgs, order = map[string]*Message{}, nil
+	msgsMu.Unlock()
 	h := &bkHost{a: a, th: theme.New(dark)}
 	h.img = imgcache.New(func(ctx context.Context, u string) ([]byte, error) {
 		b, _, err := a.Fetch(ctx, u)
@@ -547,11 +551,9 @@ func TestGalleryElementPayloads(t *testing.T) {
 	if !me.loading("bk_buttons_state") {
 		t.Error("slow action: block not loading")
 	}
+	next() // the slow call reached the app (it answers in 1.5 s)
 	e.clickEl("bk_buttons_state", "btn_fail")
-	if got := len(e.fs.BlockActions()); got != n+1 {
-		t.Errorf("a loading block's button sent (%d calls)", got)
-	}
-	next()
+	e.noNewCall(n, 200*time.Millisecond, "a loading block's button")
 	e.until("slow action settles", 5*time.Second, func() bool { return !me.loading("bk_buttons_state") })
 
 	// errors: the server's message is the tooltip; known ones show text
