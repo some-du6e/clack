@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -45,6 +46,11 @@ type flingEnv struct {
 }
 
 func newFlingEnv(t *testing.T, ch string, scale float32) *flingEnv {
+	return newFlingEnvHook(t, ch, scale, nil)
+}
+
+// newFlingEnvHook is newFlingEnv with hook answering API calls first.
+func newFlingEnvHook(t *testing.T, ch string, scale float32, hook func(method string, form url.Values) (any, bool)) *flingEnv {
 	t.Helper()
 	SetTaut(nil)
 	sz := fakeslack.Small
@@ -55,6 +61,9 @@ func newFlingEnv(t *testing.T, ch string, scale float32) *flingEnv {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { fs.Close() })
+	if hook != nil {
+		fs.SetHook(hook)
+	}
 	c := slack.New(fs.Creds())
 	c.EdgeURL = fs.URL + "edge/"
 	s := store.New("")
@@ -297,5 +306,80 @@ func flingThrough(t *testing.T, e *flingEnv) {
 	n := len(e.v.s.items) - 1
 	if y, ok := e.yOf(e.v.s.items[n].key); !ok || y+e.v.s.heights[n] != e.size.Y {
 		t.Errorf("jump to recent: the newest row at %d (shown %v), want its bottom at %d", y, ok, e.size.Y)
+	}
+}
+
+// A page of older history arriving while the first row on screen is a
+// join summary ("A and B have joined") keeps that row where it was, also
+// when the page ends with more joins and the summary grows in front (its
+// key, "g"+its first ts, changes).
+func TestPrependKeepsJoinSummaryInPlace(t *testing.T) {
+	const ch = "C0JOINS001"
+	base := int64(1762600000)
+	ts := func(i int) string { return fmt.Sprintf("%d.%06d", base+int64(i)*60, 100) }
+	var all []map[string]any // oldest first
+	for i := 0; i < 60; i++ {
+		m := map[string]any{"type": "message", "ts": ts(i), "user": fmt.Sprintf("U0FAKE%05d", 1+i%7), "text": fmt.Sprintf("synthetic %d", i)}
+		if i >= 36 && i < 44 { // joins across the page boundary (newest page: 40..59)
+			m["subtype"], m["text"] = "channel_join", "has joined the channel"
+		}
+		all = append(all, m)
+	}
+	hook := func(method string, f url.Values) (any, bool) {
+		if method != "conversations.history" || f.Get("channel") != ch {
+			return nil, false
+		}
+		end := len(all)
+		if l := f.Get("latest"); l != "" {
+			for end > 0 && all[end-1]["ts"].(string) >= l {
+				end--
+			}
+		}
+		lim := 20
+		start := max(0, end-lim)
+		var page []map[string]any
+		for i := end - 1; i >= start; i-- { // newest first, like Slack
+			page = append(page, all[i])
+		}
+		return map[string]any{"ok": true, "messages": page, "has_more": start > 0}, true
+	}
+	e := newFlingEnvHook(t, ch, 1, hook)
+	e.size = image.Pt(900, 400)
+	until(t, 10*time.Second, "the channel", e.frame, func() bool { return e.v.s.snap.loaded && len(e.v.s.snap.msgs) >= 20 })
+	key := "g" + ts(40)
+	s := e.v.s
+	i := s.anchorItem(key)
+	if i < 0 {
+		t.Fatalf("no join summary %s in %d items", key, len(s.items))
+	}
+	// bring the summary to the top of the view (and keep older pages from
+	// loading until it's there)
+	s.lastOlder = time.Now().Add(time.Hour)
+	s.list.Position = layout.Position{BeforeEnd: true, First: i, Offset: -10}
+	e.frame()
+	e.frame()
+	k0, y0 := e.firstMsg()
+	if k0 != key {
+		t.Fatalf("first row %s, want the join summary %s", k0, key)
+	}
+	s.lastOlder = time.Time{}
+	until(t, 10*time.Second, "the older page", e.frame, func() bool { return len(s.snap.msgs) >= 40 })
+	e.frame()
+	j := -1
+	for i := s.visible[0]; i < s.visible[1]; i++ {
+		for _, k := range s.items[i].group {
+			if s.snap.msgs[k].m.TS == ts(40) {
+				j = i
+			}
+		}
+	}
+	if j < 0 {
+		t.Fatalf("the join summary went off screen after the page arrived (first row now %v)", s.items[s.visible[0]].key)
+	}
+	if s.pos[j] != y0 {
+		t.Errorf("join summary moved from %d to %d when the older page arrived", y0, s.pos[j])
+	}
+	if s.items[j].key == key {
+		t.Errorf("the summary's key didn't change (%s): the test no longer covers a grown summary", key)
 	}
 }

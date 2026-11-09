@@ -276,14 +276,9 @@ func (s *listState) sync(h Host, now time.Time) {
 	s.rebuildKeyIdx()
 	s.built = s.snap.rev
 	s.dayKey = dk
-	if anchorTS != "" {
-		for i, it := range s.items {
-			if it.kind == itMsg && s.snap.msgs[it.idx].m.TS == anchorTS {
-				s.list.Position.First = i
-				s.list.Position.Offset = -anchorY
-				break
-			}
-		}
+	if i := s.anchorItem(anchorTS); i >= 0 {
+		s.list.Position.First = i
+		s.list.Position.Offset = -anchorY
 	}
 	if s.pendingJump != "" {
 		for i, it := range s.items {
@@ -326,6 +321,31 @@ func (s *listState) sync(h Host, now time.Time) {
 			delete(s.rows, ts)
 		}
 	}
+}
+
+// anchorItem is the item now showing the message keyed key, -1 if none.
+// Items are matched by key (a join summary's is "g"+its first ts, while
+// its idx is its last message); a summary that grew older joins in front
+// is found by the message it started with.
+func (s *listState) anchorItem(key string) int {
+	if key == "" {
+		return -1
+	}
+	for i, it := range s.items {
+		if it.kind == itMsg && it.key == key {
+			return i
+		}
+	}
+	if ts, ok := strings.CutPrefix(key, "g"); ok {
+		for i, it := range s.items {
+			for _, k := range it.group {
+				if s.snap.msgs[k].m.TS == ts {
+					return i
+				}
+			}
+		}
+	}
+	return -1
 }
 
 // groupable is Slack's isAdjacentMessage (boot-shared Ag38): b continues
