@@ -311,15 +311,20 @@ func (pp *pluginsPage) layout(gtx layout.Context) layout.Dimensions {
 	if pp.mode == "browse" {
 		fs = pp.lib.chips()
 	}
-	m := op.Record(gtx.Ops)
+	// the toolbar stays put; the list scrolls below it, clipped (no fill,
+	// so it sits on whatever the dialog's surface is)
 	g := gtx
 	g.Constraints = layout.Constraints{Max: image.Pt(sz.X-gtx.Dp(8), 1<<20)}
 	pp.toolbarH = pp.toolbar(g, fs, len(ps)).Size.Y
-	bar := m.Stop()
-	p.list.List.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+	lh := max(0, sz.Y-pp.toolbarH)
+	st := op.Offset(image.Pt(0, pp.toolbarH)).Push(gtx.Ops)
+	cl := clip.Rect{Max: image.Pt(sz.X, lh)}.Push(gtx.Ops)
+	lg := gtx
+	lg.Constraints = layout.Exact(image.Pt(sz.X, lh))
+	p.list.List.Layout(lg, 1, func(gtx layout.Context, _ int) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Min: image.Pt(sz.X, 0), Max: image.Pt(sz.X-gtx.Dp(8), 1<<24)}
 		f := &flow{gtx: gtx, w: gtx.Constraints.Max.X}
-		f.y += pp.toolbarH + gtx.Dp(20)
+		f.gap(20)
 		words := strings.Fields(strings.ToLower(p.query.Text()))
 		if pp.mode == "browse" {
 			pp.lib.body(f, words)
@@ -329,9 +334,8 @@ func (pp *pluginsPage) layout(gtx layout.Context) layout.Dimensions {
 		f.gap(24)
 		return layout.Dimensions{Size: image.Pt(sz.X, f.y)}
 	})
-	// pinned above the scrolling list, opaque
-	theme.Fill(gtx, image.Rect(0, 0, sz.X-gtx.Dp(8), pp.toolbarH), p.colors().base)
-	bar.Add(gtx.Ops)
+	cl.Pop()
+	st.Pop()
 	return layout.Dimensions{Size: sz}
 }
 

@@ -26,6 +26,7 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/pluginlib"
 	"github.com/some-du6e/yoloslackgoclient/internal/slick"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
@@ -834,7 +835,7 @@ func (p *slickPage) mentions(s string) string {
 func (p *slickPage) detail(f *flow, s *slick.Slick, st slick.Settings) {
 	cl := p.colors()
 	f.put(0, func(gtx layout.Context) layout.Dimensions {
-		d, c := p.k.linkButtonW(gtx, "back", "All plugins", "back", theme.Bold, 6) // slick-settings__back: 700, gap 6
+		d, c := p.k.linkButtonW(gtx, "back", "Plugins", "back", theme.Bold, 6) // slick-settings__back: 700, gap 6; back to Preferences > Plugins
 		if c {
 			p.open, p.daysOpen = "", ""
 			p.list.Position = p.listBack
@@ -869,17 +870,8 @@ func (p *slickPage) detail(f *flow, s *slick.Slick, st slick.Settings) {
 			d := at(gtx, image.Pt(x, y), image.Pt(1<<20, gtx.Dp(20)), w)
 			x += d.Size.X + gtx.Dp(10)
 		}
-		catIcon := "code"
-		for _, sec := range st.Sections {
-			if sec.Label == pl.CategoryLabel && sec.Icon != "" {
-				catIcon = sec.Icon
-			}
-		}
-		label := pl.CategoryLabel
-		if label == "" {
-			label = "Other"
-		}
-		item(func(gtx layout.Context) layout.Dimensions { return p.badge(gtx, label, catIcon, false) })
+		cat := sharedCategory(pluginlib.Slick, pl.Category) // Taut's and Slick's one taxonomy
+		item(func(gtx layout.Context) layout.Dimensions { return p.badge(gtx, cat.Label, cat.Icon, false) })
 		if pl.User {
 			item(func(gtx layout.Context) layout.Dimensions { return p.badge(gtx, "User plugin", "", false) })
 		}

@@ -18,6 +18,7 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/pluginlib"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/taut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
@@ -402,7 +403,7 @@ func (p *tautPage) findPlugin(s taut.Settings, id string) (taut.PluginInfo, stri
 
 func (p *tautPage) pluginScreen(f *flow, t *taut.Taut, s taut.Settings) {
 	cl := p.colors()
-	pl, group, ok := p.findPlugin(s, p.plugin)
+	pl, _, ok := p.findPlugin(s, p.plugin) // its group: the shared taxonomy below
 	if !ok {
 		p.subScreen(f, "Plugin not found", "Plugins")
 		p.muted(f, p.plugin+" isn't installed any more.")
@@ -415,7 +416,7 @@ func (p *tautPage) pluginScreen(f *flow, t *taut.Taut, s taut.Settings) {
 	}
 	// Taut's PluginHeader: one small mrkdwn line, "Messages · by <authors> ·
 	// user plugin `Id`" (authors are mentions in the Hack Club Slack)
-	meta := []string{mrkdwnEscape(group)}
+	meta := []string{mrkdwnEscape(sharedCategory(pluginlib.Taut, pl.Category).Label)}
 	if a := tautAuthorsMrkdwn(pl, t.IsHackClub()); a != "" {
 		meta = append(meta, "by "+a)
 	}
