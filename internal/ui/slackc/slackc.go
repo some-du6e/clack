@@ -17,6 +17,7 @@
 package slackc
 
 import (
+	"bytes"
 	"image"
 	"sort"
 	"strconv"
@@ -274,7 +275,8 @@ type inst struct {
 	slots map[string]int64
 	view  *View
 	tree  atomic.Pointer[[]*Node]
-	fn    bool // a RenderFn root
+	raw   []byte // the last tree delivered, as JS sent it (rootsMu)
+	fn    bool   // a RenderFn root
 	sub   *Sub
 }
 
@@ -424,13 +426,27 @@ func dropRoot(in *inst, b Bridge) {
 // Deliver installs a new host tree for root (JS → Go, any goroutine) and
 // invalidates the window. Trees for unknown roots are dropped.
 func Deliver(root uint64, tree []byte) error {
+	// JS commits a root again with the same output whenever React
+	// re-renders it for nothing (a portal under it mounted or unmounted,
+	// a context or store update its output ignores): installing that tree
+	// would rebuild the view's boxes (hover states, scroll offsets and
+	// measured natives start over) and cost a frame, every time.
+	rootsMu.Lock()
+	in := roots[root]
+	if in != nil && in.raw != nil && bytes.Equal(in.raw, tree) {
+		rootsMu.Unlock()
+		return nil
+	}
+	rootsMu.Unlock()
 	nodes, err := ParseTree(tree)
 	if err != nil {
 		return err
 	}
-	rootsMu.Lock()
-	in := roots[root]
-	rootsMu.Unlock()
+	if in != nil {
+		rootsMu.Lock()
+		in.raw = append(in.raw[:0], tree...)
+		rootsMu.Unlock()
+	}
 	if in == nil {
 		if deliverOverlay(root, nodes) {
 			invalidate()

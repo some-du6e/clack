@@ -52,9 +52,13 @@ func probeNative(name string, draw func() layout.Dimensions) layout.Dimensions {
 	}
 	probe = outer
 	if name != "" && k != rootUnknown {
-		// drawing nothing this time (a row without files) says nothing
-		// about a root already seen; every change restyles the views
-		if old, ok := nativeRoots.Load(name); !ok || old.(rootKind) != k && !(k == rootEmpty && old.(rootKind) != rootEmpty) {
+		// Learned once: drawing nothing this time (a row without files)
+		// says nothing about a root already seen, and a component whose
+		// root differs from row to row (a person's avatar, a bot's) keeps
+		// the first: every change restyles every view, and flipping
+		// within a frame did that every frame. Only "nothing yet" turns
+		// into a real root.
+		if old, ok := nativeRoots.Load(name); !ok || old.(rootKind) == rootEmpty && k != rootEmpty {
 			nativeRoots.Store(name, k)
 			nativeRootsGen.Add(1)
 			invalidate()
