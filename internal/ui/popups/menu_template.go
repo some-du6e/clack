@@ -102,6 +102,9 @@ func (m *Menu) menuTemplate(items []MenuItem) []any {
 			if it.Icon != "" {
 				e["icon"] = it.Icon
 			}
+			if sc := shortcutProp(&it); sc != nil {
+				e["shortcut"] = sc
+			}
 			if it.Danger {
 				e["danger"] = true
 			}
@@ -183,6 +186,9 @@ func menuFromTemplate(th *theme.Theme, list []any, base []MenuItem) []MenuItem {
 		}
 		if e.Has("icon") {
 			it.Icon, _ = e["icon"].(string)
+		}
+		if e.Has("shortcut") {
+			it.Hint, it.Keys = templateShortcut(e["shortcut"])
 		}
 		if e.Has("danger") {
 			it.Danger = e.Bool("danger")

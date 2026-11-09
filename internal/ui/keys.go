@@ -2,7 +2,6 @@ package ui
 
 import (
 	"io"
-	"runtime"
 	"strings"
 
 	"gioui.org/io/clipboard"
@@ -11,11 +10,12 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/shortcut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 )
 
-// shortcut is one global key binding.
-type shortcut struct {
+// keyBinding is one global key binding.
+type keyBinding struct {
 	name key.Name
 	mods key.Modifiers
 	desc string
@@ -25,93 +25,69 @@ type shortcut struct {
 // shortcuts is the global shortcut registry. Feature packages register more
 // via (*App).RegisterShortcut.
 type shortcuts struct {
-	list []shortcut
+	list []keyBinding
 	tag  int
 }
 
-// RegisterShortcut adds a global binding (e.g. "Ctrl+Shift+K"). Bindings are
-// matched when no focused widget consumes the key.
+// RegisterShortcut adds a global binding (e.g. "Mod+Shift+K": ⇧⌘K on
+// macOS, Ctrl+Shift+K elsewhere; see internal/ui/shortcut). Bindings are
+// matched when no focused widget consumes the key. shortcut.Format(combo)
+// is its hint.
 func (a *App) RegisterShortcut(combo, desc string, do func()) {
 	n, m := parseCombo(combo)
-	a.keys.list = append(a.keys.list, shortcut{name: n, mods: m, desc: desc, do: func(*App) { do() }})
+	a.keys.list = append(a.keys.list, keyBinding{name: n, mods: m, desc: desc, do: func(*App) { do() }})
 }
 
-func parseCombo(s string) (key.Name, key.Modifiers) {
-	var m key.Modifiers
-	parts := strings.Split(s, "+")
-	for _, p := range parts[:len(parts)-1] {
-		switch strings.ToLower(p) {
-		case "ctrl", "cmd", "mod":
-			m |= key.ModShortcut
-		case "shift":
-			m |= key.ModShift
-		case "alt":
-			m |= key.ModAlt
-		}
-	}
-	last := parts[len(parts)-1]
-	switch strings.ToLower(last) {
-	case "up":
-		return key.NameUpArrow, m
-	case "down":
-		return key.NameDownArrow, m
-	case "left":
-		return key.NameLeftArrow, m
-	case "right":
-		return key.NameRightArrow, m
-	case "esc", "escape":
-		return key.NameEscape, m
-	case "enter":
-		return key.NameReturn, m
-	}
-	return key.Name(strings.ToUpper(last)), m
-}
+// parseCombo binds a combo in internal/ui/shortcut's syntax: Mod is ⌘
+// on macOS and Ctrl elsewhere, Ctrl the Control key, Alt Option.
+func parseCombo(s string) (key.Name, key.Modifiers) { return shortcut.Parse(s) }
 
 func (a *App) defaultShortcuts() *shortcuts {
 	s := &shortcuts{}
 	add := func(combo, desc string, do func(a *App)) {
 		n, m := parseCombo(combo)
-		s.list = append(s.list, shortcut{name: n, mods: m, desc: desc, do: do})
+		s.list = append(s.list, keyBinding{name: n, mods: m, desc: desc, do: do})
 	}
-	add("Ctrl+K", "Jump to a conversation", func(a *App) { a.openSwitcher() })
-	add("Ctrl+T", "Jump to a conversation", func(a *App) { a.openSwitcher() })
-	add("Ctrl+G", "Search", func(a *App) { a.openSearch("") })
-	add("Ctrl+F", "Search in conversation", func(a *App) { a.findInConversation() })
-	add("Ctrl+Shift+A", "All unreads", func(a *App) { a.Navigate("unreads") })
-	add("Ctrl+Shift+T", "Threads", func(a *App) { a.Navigate("threads") })
-	add("Ctrl+Shift+K", "DMs", func(a *App) { a.Navigate("dms") })
-	add("Ctrl+Shift+M", "Activity", func(a *App) { a.Navigate("activity") })
-	add("Ctrl+Shift+S", "Later", func(a *App) { a.Navigate("later") })
-	add("Ctrl+Shift+E", "People & user groups", func(a *App) { a.Navigate(peopleRoute) })
-	add("Ctrl+Shift+L", "Channel browser", func(a *App) { a.Navigate(channelsRoute) })
-	add("Ctrl+Shift+D", "Toggle sidebar", func(a *App) { a.toggleSidebar() })
-	add("Ctrl+Shift+Y", "Toggle dark mode", func(a *App) { a.ToggleDark() })
+	add("Mod+K", "Jump to a conversation", func(a *App) { a.openSwitcher() })
+	add("Mod+T", "Jump to a conversation", func(a *App) { a.openSwitcher() })
+	add("Mod+G", "Search", func(a *App) { a.openSearch("") })
+	add("Mod+F", "Search in conversation", func(a *App) { a.findInConversation() })
+	add("Mod+Shift+A", "All unreads", func(a *App) { a.Navigate("unreads") })
+	add("Mod+Shift+T", "Threads", func(a *App) { a.Navigate("threads") })
+	add("Mod+Shift+K", "DMs", func(a *App) { a.Navigate("dms") })
+	add("Mod+Shift+M", "Activity", func(a *App) { a.Navigate("activity") })
+	add("Mod+Shift+S", "Later", func(a *App) { a.Navigate("later") })
+	add("Mod+Shift+E", "People & user groups", func(a *App) { a.Navigate(peopleRoute) })
+	add("Mod+Shift+L", "Channel browser", func(a *App) { a.Navigate(channelsRoute) })
+	add("Mod+Shift+D", "Toggle sidebar", func(a *App) { a.toggleSidebar() })
+	add("Mod+Shift+Y", "Toggle dark mode", func(a *App) { a.ToggleDark() })
 	// Slack's mod+shift+h (menuitem-huddle-action): "Toggle huddles start / stop"
-	add("Ctrl+Shift+H", "Toggle huddle", func(a *App) { a.toggleHuddle() })
-	add("Ctrl+N", "Compose", func(a *App) { a.compose() })
-	add("Ctrl+Shift+N", "New canvas", func(a *App) { a.CreateCanvas() }) // the Create menu's Canvas hint
-	add("Ctrl+,", "Preferences", func(a *App) { a.openPrefs() })
-	add("Ctrl+.", "Toggle the right pane", func(a *App) { a.toggleSecondary() })
+	add("Mod+Shift+H", "Toggle huddle", func(a *App) { a.toggleHuddle() })
+	add("Mod+N", "Compose", func(a *App) { a.compose() })
+	add("Mod+Shift+N", "New canvas", func(a *App) { a.CreateCanvas() }) // the Create menu's Canvas hint
+	add("Mod+,", "Preferences", func(a *App) { a.openPrefs() })
+	add("Mod+.", "Toggle the right pane", func(a *App) { a.toggleSecondary() })
 	// Slack's zoom (View > Actual Size, Zoom In, Zoom Out): Cmd/Ctrl with
 	// 0, = or + (shifted or not, by keyboard), -.
-	add("Ctrl+0", "Actual size", func(a *App) { a.zoom(0) })
+	mod := shortcut.Mod()
+	add("Mod+0", "Actual size", func(a *App) { a.zoom(0) })
 	for _, z := range []struct {
 		name key.Name
 		mods key.Modifiers
 		d    int
 	}{
-		{"=", key.ModShortcut, 1}, {"+", key.ModShortcut, 1}, {"+", key.ModShortcut | key.ModShift, 1},
-		{"-", key.ModShortcut, -1},
+		{"=", mod, 1}, {"+", mod, 1}, {"+", mod | key.ModShift, 1},
+		{"-", mod, -1},
 	} {
 		d := z.d
-		s.list = append(s.list, shortcut{name: z.name, mods: z.mods, desc: "Zoom", do: func(a *App) { a.zoom(d) }})
+		s.list = append(s.list, keyBinding{name: z.name, mods: z.mods, desc: "Zoom", do: func(a *App) { a.zoom(d) }})
 	}
-	for _, b := range navBindings(runtime.GOOS) {
+	for _, b := range navBindings(shortcut.GOOS) {
 		desc, dir := "Back", b.dir
 		if dir > 0 {
 			desc = "Forward"
 		}
-		s.list = append(s.list, shortcut{name: b.name, mods: b.mods, desc: desc, do: func(a *App) { a.navigate(dir) }})
+		s.list = append(s.list, keyBinding{name: b.name, mods: b.mods, desc: desc, do: func(a *App) { a.navigate(dir) }})
 	}
 	add("Alt+Up", "Previous conversation", func(a *App) { a.stepConv(-1, false) })
 	add("Alt+Down", "Next conversation", func(a *App) { a.stepConv(1, false) })

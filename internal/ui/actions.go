@@ -3,6 +3,8 @@ package ui
 import (
 	"image"
 	"strings"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/shortcut"
 )
 
 // Shell actions: menus and commands reachable from the chrome.
@@ -15,15 +17,15 @@ func (a *App) openTeamMenu(anchor image.Point) {
 	items := []MenuItem{
 		{Label: a.teamName(), Disabled: true},
 		{Divider: true},
-		{Label: "Preferences", Icon: "settings", Hint: "Ctrl+,", Do: a.openPrefs},
+		{Label: "Preferences", Icon: "settings", Hint: shortcut.Format("Mod+,"), Do: a.openPrefs},
 	}
 	if f := a.menuCheckForUpdates(); f != nil {
 		items = append(items, MenuItem{Label: "Check for updates…", Do: f})
 	}
 	a.menu(anchor, append(items, []MenuItem{
-		{Label: "Toggle dark mode", Icon: "moon", Hint: "Ctrl+Shift+Y", Do: a.ToggleDark},
+		{Label: "Toggle dark mode", Icon: "moon", Hint: shortcut.Format("Mod+Shift+Y"), Do: a.ToggleDark},
 		{Divider: true},
-		{Label: "All unreads", Icon: "unreads", Hint: "Ctrl+Shift+A", Do: func() { a.Navigate("unreads") }},
+		{Label: "All unreads", Icon: "unreads", Hint: shortcut.Format("Mod+Shift+A"), Do: func() { a.Navigate("unreads") }},
 		{Label: "Browse channels", Icon: "hash", Do: func() { a.Navigate("directories?tab=channels") }},
 		{Label: "Directories", Icon: "directories", Do: func() { a.Navigate("directories") }},
 		{Divider: true},
@@ -52,7 +54,7 @@ func (a *App) openSelfMenu(anchor image.Point) {
 		}},
 		{Divider: true},
 		{Label: "Profile", Icon: "user", Do: func() { a.OpenUserProfile(m.SelfID) }},
-		{Label: "Preferences", Icon: "settings", Hint: "Ctrl+,", Do: a.openPrefs},
+		{Label: "Preferences", Icon: "settings", Hint: shortcut.Format("Mod+,"), Do: a.openPrefs},
 		{Divider: true},
 		{Label: "Sign out on this device", Danger: true, Do: a.signOut},
 	})
@@ -64,7 +66,7 @@ func (a *App) openMoreMenu(anchor image.Point) {
 		{Label: "Huddles", Icon: "huddle", Do: func() { a.Navigate("huddles") }},
 		{Label: "Drafts & sent", Icon: "drafts", Do: func() { a.Navigate("drafts") }},
 		{Label: "Directories", Icon: "directories", Do: func() { a.Navigate("directories") }},
-		{Label: "All unreads", Icon: "unreads", Hint: "Ctrl+Shift+A", Do: func() { a.Navigate("unreads") }},
+		{Label: "All unreads", Icon: "unreads", Hint: shortcut.Format("Mod+Shift+A"), Do: func() { a.Navigate("unreads") }},
 	})
 }
 

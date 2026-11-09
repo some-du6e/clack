@@ -9,6 +9,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/shortcut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -152,7 +153,7 @@ func (a *App) railClick(key string, org image.Point) {
 }
 
 // openRailMore is Slack's More menu (BrowsePeekMenu): the tabs that are not
-// in the rail, with their subtitles and Ctrl+Shift shortcuts, then
+// in the rail, with their subtitles and tab-number shortcuts, then
 // "Customize navigation bar".
 func (a *App) openRailMore(anchor image.Point) {
 	r := a.model().Rail
@@ -161,7 +162,12 @@ func (a *App) openRailMore(anchor image.Point) {
 		t := a.railTabFor(id)
 		hint := ""
 		if i := indexOf(r.Rail, id); i >= 0 && i < 9 { // shortcut: position among the rail tabs
-			hint = "Ctrl Shift " + itoa(i+1)
+			// Slack: ^1 on macOS (Control), Ctrl Shift 1 elsewhere
+			if shortcut.Mac() {
+				hint = shortcut.Format("Ctrl+" + itoa(i+1))
+			} else {
+				hint = shortcut.Format("Ctrl+Shift+" + itoa(i+1))
+			}
 		}
 		key := t.key
 		items = append(items, MenuItem{Label: t.label, Subtitle: t.sub, Icon: t.icon, Hint: hint, Do: func() {

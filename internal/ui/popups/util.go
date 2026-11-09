@@ -295,8 +295,17 @@ func teamDomain(h Host) string {
 		return v.(string)
 	}
 	d := "hackclub"
-	if h.Core() != nil {
-		if s := h.Core().Snapshot().Team.Domain; s != "" {
+	if c := h.Core(); c != nil {
+		// the store, not Snapshot: Snapshot waits for Boot, and this runs
+		// on the UI goroutine (Copy link before boot froze the window)
+		c.S.RLock()
+		s := c.S.TeamDomain
+		c.S.RUnlock()
+		if s == "" {
+			if _, booted := actSnapshot(h); !booted {
+				return d // not known yet: ask again later
+			}
+		} else {
 			d = s
 		}
 	}

@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/shortcut"
 )
 
 // Mods are the modifier keys of a key equivalent.
@@ -85,31 +87,26 @@ var EditRoles = map[string]struct {
 var Sep = Item{Sep: true}
 
 // Accel renders Key and Mods as macOS shows them ("⇧⌘K"), for tests and
-// docs. AppKit orders the symbols ⌃⌥⇧⌘.
+// docs, through Clack's one shortcut formatter (AppKit's ⌃⌥⇧⌘ order).
 func (it Item) Accel() string {
 	if it.Key == "" {
 		return ""
 	}
 	var b strings.Builder
-	if it.Mods&Ctrl != 0 {
-		b.WriteString("⌃")
+	for _, m := range []struct {
+		mod  Mods
+		name string
+	}{{Ctrl, "Ctrl+"}, {Option, "Alt+"}, {Shift, "Shift+"}, {Cmd, "Mod+"}} {
+		if it.Mods&m.mod != 0 {
+			b.WriteString(m.name)
+		}
 	}
-	if it.Mods&Option != 0 {
-		b.WriteString("⌥")
+	k := it.Key
+	if k == "\x7f" {
+		k = "⌦"
 	}
-	if it.Mods&Shift != 0 {
-		b.WriteString("⇧")
-	}
-	if it.Mods&Cmd != 0 {
-		b.WriteString("⌘")
-	}
-	switch it.Key {
-	case "\x7f":
-		b.WriteString("⌦")
-	default:
-		b.WriteString(strings.ToUpper(it.Key))
-	}
-	return b.String()
+	b.WriteString(k)
+	return shortcut.FormatFor("darwin", b.String())
 }
 
 // State is what the menus show that changes while Clack runs.

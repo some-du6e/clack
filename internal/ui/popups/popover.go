@@ -160,8 +160,9 @@ const TipDelay = 450 * time.Millisecond
 
 // Tooltip shows a Slack tooltip for a widget of size sz laid out at the
 // current origin, while hovered. Call it right after laying the widget out.
-// label may contain "\n" for a second (regular weight) line; shortcut like
-// "Ctrl+Shift+K" draws key chips. It draws via op.Defer, above everything.
+// label may contain "\n" for a second (regular weight) line; shortcut, a
+// combo like "Mod+Shift+K" (internal/ui/shortcut), draws key chips. It
+// draws via op.Defer, above everything.
 func Tooltip(gtx layout.Context, th *theme.Theme, st *TipState, hovered bool, sz image.Point, side Side, label, shortcut string) {
 	if !hovered {
 		st.hovered = false

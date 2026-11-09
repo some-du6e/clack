@@ -34,6 +34,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/hovercard"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/shortcut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
@@ -1275,10 +1276,10 @@ func srResultItems(h Host, m core.Message) []MenuItem {
 		}}
 	}
 	return []MenuItem{
-		{Label: "Add to saved", Icon: "bookmark-add", Hint: "Ctrl+Shift+S", Do: func() {
+		{Label: "Add to saved", Icon: "bookmark-add", Hint: shortcut.Format("Mod+Shift+S"), Keys: KeySaveTodos, Do: func() {
 			actDo(h, "Saved for later", func(ctx context.Context, a *core.App) error { return a.Save(ctx, ch, ts, 0) })
 		}},
-		{Label: "Add a reminder", Icon: "remind", Sub: []MenuItem{
+		{Label: "Add a reminder", Icon: "remind", Hint: "M", Keys: KeyRemind, Sub: []MenuItem{
 			{Label: "In 30 mins", Do: remind(actRem30m)},
 			{Label: "In 1 hour", Do: remind(actRem1h)},
 			{Label: "In 3 hours", Do: remind(actRem3h)},
@@ -1287,11 +1288,11 @@ func srResultItems(h Host, m core.Message) []MenuItem {
 		}},
 		follow,
 		Sep(),
-		{Label: "Copy link", Icon: "link", Hint: "L", DoCtx: func(gtx layout.Context) {
+		{Label: "Copy link", Icon: "link", Hint: "L", Keys: KeyCopyLink, DoCtx: func(gtx layout.Context) {
 			copyText(gtx, link)
 			h.Toast("Link copied")
 		}},
-		{Label: "Copy message", Icon: "text-format", Hint: "Ctrl+C", DoCtx: func(gtx layout.Context) {
+		{Label: "Copy message", Icon: "text-format", Hint: shortcut.Format("Mod+C"), Keys: KeyCopyText, DoCtx: func(gtx layout.Context) {
 			copyText(gtx, actMsgText(m))
 		}},
 		Sep(),

@@ -2,6 +2,7 @@ package popups
 
 import (
 	"image"
+	"time"
 
 	"gioui.org/io/key"
 	"gioui.org/layout"
@@ -27,10 +28,14 @@ import (
 type MenuItem struct {
 	// Key is the row's MenuTemplateItem key ("sign-out"); "" derives one
 	// from the label. Plugins find rows by it.
-	Key      string
-	Label    string
-	Icon     string // icons registry name ("" = no icon column)
-	Hint     string // right-aligned shortcut, e.g. "Ctrl+Shift+S"
+	Key   string
+	Label string
+	Icon  string // icons registry name ("" = no icon column)
+	Hint  string // right-aligned shortcut label: shortcut.Format("Mod+Shift+S"), "L"
+	// Keys are the item's key ids while the menu is open (Slack's
+	// shortcut.key: "l", "mod+c"; see menu_keys.go). A press runs the
+	// item and closes the menu.
+	Keys     []string
 	Subtitle string // a 13px second line under the label (Slack's More menu rows)
 	Right    string // right-aligned value text before the chevron ("On")
 	Danger   bool
@@ -105,6 +110,9 @@ type Menu struct {
 	rows   []image.Rectangle // last frame's row rects (window coords)
 	rect   image.Rectangle
 	focus  bool
+
+	typeBuf string    // type-ahead buffer (macOS)
+	typeAt  time.Time // last type-ahead press
 
 	// MenuFromTemplate (menu_template.go)
 	orig    []MenuItem   // the native items
@@ -266,19 +274,9 @@ func (m *Menu) closeSub() {
 }
 
 func (m *Menu) keys(gtx layout.Context) {
+	filters := m.keyFilters()
 	for {
-		e, ok := gtx.Event(
-			key.Filter{Focus: m, Name: key.NameUpArrow},
-			key.Filter{Focus: m, Name: key.NameDownArrow},
-			key.Filter{Focus: m, Name: key.NameLeftArrow},
-			key.Filter{Focus: m, Name: key.NameRightArrow},
-			key.Filter{Focus: m, Name: key.NameReturn},
-			key.Filter{Focus: m, Name: key.NameEnter},
-			key.Filter{Focus: m, Name: key.NameSpace},
-			key.Filter{Focus: m, Name: key.NameEscape},
-			key.Filter{Focus: m, Name: key.NameHome},
-			key.Filter{Focus: m, Name: key.NameEnd},
-		)
+		e, ok := gtx.Event(filters...)
 		if !ok {
 			break
 		}
@@ -287,32 +285,59 @@ func (m *Menu) keys(gtx layout.Context) {
 			continue
 		}
 		a := m.active()
-		switch ke.Name {
-		case key.NameUpArrow:
+		nav := ke.Modifiers == 0
+		switch name := ke.Name; {
+		case !nav:
+			// ⌘↑ isn't navigation, but may be an item shortcut
+		case name == key.NameUpArrow:
+			a.typeBuf = ""
 			a.move(-1)
-		case key.NameDownArrow:
+		case name == key.NameDownArrow:
+			a.typeBuf = ""
 			a.move(1)
-		case key.NameHome:
+		case name == key.NameHome:
+			a.typeBuf = ""
 			a.sel = -1
 			a.move(1)
-		case key.NameEnd:
+		case name == key.NameEnd:
+			a.typeBuf = ""
 			a.sel = -1
 			a.move(-1)
-		case key.NameRightArrow:
+		case name == key.NameRightArrow:
 			if a.sel >= 0 && len(a.items[a.sel].Sub) > 0 {
 				a.openSub(a.sel, true)
 			}
-		case key.NameLeftArrow:
+		case name == key.NameLeftArrow:
 			if a.parent != nil {
 				a.parent.closeSub()
 			}
-		case key.NameReturn, key.NameEnter, key.NameSpace:
+		case name == key.NameReturn, name == key.NameEnter, name == key.NameSpace:
 			a.activate(gtx, a.sel)
-		case key.NameEscape:
+		case name == key.NameEscape:
 			if a.parent != nil {
 				a.parent.closeSub()
 			} else {
 				m.closeAll()
+			}
+		default:
+			nav = false
+		}
+		if m.done {
+			return
+		}
+		// Slack's onMenuKeyDown: an item shortcut runs after navigation
+		// (a key can't be both: nav keys carry no shortcut ids here).
+		if i := a.shortcutMatch(ke); i >= 0 {
+			a.runShortcut(gtx, i)
+			if m.done {
+				return
+			}
+			continue
+		}
+		if MenuTypeAhead && !nav {
+			a.typeAhead(gtx, ke)
+			if m.done {
+				return
 			}
 		}
 	}

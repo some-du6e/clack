@@ -42,6 +42,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/shortcut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/uiguard"
@@ -1455,7 +1456,7 @@ clicks:
 	// hint
 	hint := "Click a file to select it, double-click or Enter to attach. Space selects, Backspace goes up."
 	if n := len(b.order); n > 0 {
-		hint = fmt.Sprintf("%d selected. Ctrl+Enter attaches them.", n)
+		hint = fmt.Sprintf("%d selected. %s attaches them.", n, shortcut.Format("Mod+Enter"))
 	}
 	offset(gtx, 0, hintY, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(w, gtx.Dp(18))}

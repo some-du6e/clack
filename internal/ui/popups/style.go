@@ -19,6 +19,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/shortcut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
@@ -758,23 +759,9 @@ func kbd(gtx layout.Context, th *theme.Theme, label string, dark bool) layout.Di
 	return layout.Dimensions{Size: image.Pt(w, h)}
 }
 
-// splitKeys turns "Ctrl+Shift+K" into chips "Ctrl", "Shift", "K".
-func splitKeys(s string) []string {
-	if s == "" {
-		return nil
-	}
-	if s == "+" {
-		return []string{"+"}
-	}
-	parts := strings.Split(s, "+")
-	out := parts[:0]
-	for _, p := range parts {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
-}
+// splitKeys turns a combo ("Mod+Shift+K") into this platform's key chips:
+// "⌘", "Shift", "K" on macOS; "Ctrl", "Shift", "K" elsewhere.
+func splitKeys(s string) []string { return shortcut.Chips(s) }
 
 // ---- text input ----
 
