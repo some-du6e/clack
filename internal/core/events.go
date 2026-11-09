@@ -186,19 +186,29 @@ func (a *App) handle(ev slack.Event) {
 	case "pin_added", "pin_removed":
 		var e struct {
 			ChannelID string `json:"channel_id"`
+			User      string `json:"user"` // who pinned (or unpinned) it
+			EventTS   string `json:"event_ts"`
 			Item      struct {
-				Channel string        `json:"channel"`
-				Message slack.Message `json:"message"`
+				Channel   string        `json:"channel"`
+				CreatedBy string        `json:"created_by"`
+				Created   int64         `json:"created"`
+				Message   slack.Message `json:"message"`
 			} `json:"item"`
 		}
 		_ = json.Unmarshal(ev.Raw, &e)
 		ch = firstNonEmpty(ch, e.ChannelID, e.Item.Channel)
 		if e.Item.Message.TS != "" {
+			// Slack's extendMessageWithPinnedInfo: pin_added sets the message's
+			// pinned_info {pinned_by, pinned_ts} (MessageLabels' "Pinned by …"),
+			// pin_removed drops it.
+			info := pinnedInfoOf(ch, e.Item.Message.PinnedInfo, firstNonEmpty(e.Item.CreatedBy, e.User), e.Item.Created, e.EventTS)
 			m, ok := a.S.Mutate(ch, e.Item.Message.TS, func(m *slack.Message) {
 				if ev.Type == "pin_added" {
 					m.PinnedTo = []string{ch}
+					m.PinnedInfo = info
 				} else {
 					m.PinnedTo = nil
+					m.PinnedInfo = nil
 				}
 			})
 			if ok {

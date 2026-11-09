@@ -77,7 +77,7 @@ type row struct {
 	avatar    string
 	statusURL string
 	bot       bool
-	agent     bool // AGENT badge instead of APP (core.User.Agent)
+	badge     string // the sender's app badge (core.SenderBadge: APP, AGENT, WORKFLOW…; "" for people)
 
 	needChan bool // body mentions channels not resolved yet
 
@@ -234,9 +234,20 @@ func (r *row) resolve(rc *rowCtx) {
 		r.rv.Set(doc, r.rvOpts())
 		r.blocksOv, r.tailOv = 0, [2]uintptr{}
 	}
+	// Slack's sender: a message with a user is that member's (name,
+	// picture, badge); m.Name/m.Avatar only name user-less senders
+	// (core/sender.go).
 	r.name, r.avatar, r.statusURL, r.bot = m.Name, m.Avatar, "", m.IsBot || (m.BotID != "" && m.User == "")
+	if m.User != "" {
+		r.name, r.avatar = "", ""
+	}
 	coreName := ""
-	r.agent = false
+	r.badge = ""
+	if rc.h.Core() != nil {
+		r.badge = rc.h.Core().SenderBadge(m.User, m.BotID)
+	} else if r.bot {
+		r.badge = core.BadgeApp
+	}
 	if m.User != "" && rc.h.Core() != nil {
 		if u, ok := rc.h.Core().User(m.User); ok {
 			coreName = u.Name
@@ -261,7 +272,6 @@ func (r *row) resolve(rc *rowCtx) {
 			if u.IsBot {
 				r.bot = true
 			}
-			r.agent = u.Agent
 		} else {
 			ensureUser(rc.h, m.User)
 		}
@@ -1277,14 +1287,9 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 	if r.custom {
 		xx += r.customBadge(gtx, xx, nd.Size.Y)
 	}
-	if r.bot && r.m.User != "USLACKBOT" { // Slack shows no APP tag on Slackbot
+	if badge := r.badge; badge != "" && !r.custom { // renderBotLabel: none for people, Slackbot, custom responses
 		xx += dp(gtx, mt.badgeGap)
 		s := textStyle{size: 10, weight: theme.Bold, col: c.BadgeText}
-		// Slack's BaseAppBadge: AGENT for agent apps, else APP.
-		badge := "APP"
-		if r.agent {
-			badge = "AGENT"
-		}
 		sz := measure(gtx, rc.th, s, badge)
 		bw := sz.X + dp(gtx, 6)
 		bh := dp(gtx, 14)
@@ -1383,14 +1388,26 @@ func (r *row) labelLine(gtx layout.Context, rc *rowCtx, x, y int, icon, txt stri
 	if ls.Hidden() {
 		return 0
 	}
-	at(gtx, dp(gtx, 56)-is, y+(lh-is)/2, func(gtx layout.Context) layout.Dimensions {
-		return icons.Get(icon)(gtx, unit.Dp(14), ls.Color(c.PinIcon))
-	})
+	if icon != "pin" {
+		at(gtx, dp(gtx, 56)-is, y+(lh-is)/2, func(gtx layout.Context) layout.Dimensions {
+			return icons.Get(icon)(gtx, unit.Dp(14), ls.Color(c.PinIcon))
+		})
+	}
 	ts := labelsTextClass.Enter(gtx, 0, 0)
 	defer ts.Leave()
-	at(gtx, dp(gtx, 64), y, func(gtx layout.Context) layout.Dimensions {
+	td := at(gtx, dp(gtx, 64), y, func(gtx layout.Context) layout.Dimensions {
 		return styledLabel(gtx, rc.th, ts, textStyle{size: 13, col: c.Muted70, lineH: 19}, txt)
 	})
+	if icon == "pin" {
+		// Slack's thumb-tack-filled glyph at the label's 13px, on the
+		// text's baseline, right-aligned 8px before it (pin_icon.go)
+		em := dp(gtx, 13)
+		base := y + lh*3/4
+		if td.Size.Y > 0 {
+			base = y + td.Size.Y - td.Baseline
+		}
+		drawPin(gtx, image.Pt(dp(gtx, 56)-em, base-em*glyphAscent/glyphUPM), em, ls.Color(c.PinIcon))
+	}
 	return dp(gtx, 20)
 }
 

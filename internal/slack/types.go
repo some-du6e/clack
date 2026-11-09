@@ -75,6 +75,8 @@ type BotProfile struct {
 	TeamID  string `json:"team_id,omitempty"`
 	Icons   Icons  `json:"icons"`
 	Deleted bool   `json:"deleted"`
+	// IsWorkflowBot: a Workflow Builder bot (bots.info), badged WORKFLOW.
+	IsWorkflowBot bool `json:"is_workflow_bot,omitempty"`
 }
 
 type File struct {
@@ -184,7 +186,9 @@ type User struct {
 	IsAppUser         bool    `json:"is_app_user,omitempty"`
 	IsRestricted      bool    `json:"is_restricted,omitempty"`
 	IsUltraRestricted bool    `json:"is_ultra_restricted,omitempty"`
-	AgentStatus       string  `json:"agent_status,omitempty"` // not_an_agent | consistently_an_agent | check_required (bot users)
+	AgentStatus       string  `json:"agent_status,omitempty"`      // not_an_agent | consistently_an_agent | check_required (bot users)
+	IsWorkflowBot     bool    `json:"is_workflow_bot,omitempty"`   // Workflow Builder's bot user: badged WORKFLOW
+	IsAgentforceBot   bool    `json:"is_agentforce_bot,omitempty"` // a Salesforce Agentforce agent: badged AGENTFORCE
 	Updated           int64   `json:"updated,omitempty"`
 	Profile           Profile `json:"profile"`
 	Presence          string  `json:"presence,omitempty"`

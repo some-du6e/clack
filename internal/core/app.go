@@ -823,6 +823,7 @@ func (a *App) userOf(u *slack.User) User {
 		IsOwner: u.IsOwner, Guest: u.IsRestricted || u.IsUltraRestricted, Color: u.Color,
 		Huddle: u.Profile.HuddleState == "in_a_huddle", Agent: u.AgentStatus == "consistently_an_agent",
 		Stranger: u.IsStranger, BotID: u.Profile.BotID, AppID: u.Profile.APIAppID,
+		Workflow: u.IsWorkflowBot, Agentforce: u.IsAgentforceBot, AppUser: u.IsAppUser,
 	}
 	v.TeamID, v.External = a.locality(u)
 	if v.RealName == "​" {
@@ -1023,6 +1024,7 @@ func (a *App) message(ch string, m *slack.Message) Message {
 	}
 	v.Pending, v.Failed = a.pendingState(m)
 	if m.PinnedInfo != nil {
+		// getMessagePinnedInfo (client-boot): the label's pinnedBy is pinned_info.pinned_by
 		v.PinnedBy = m.PinnedInfo.PinnedBy
 		v.Pinned = true
 	}
@@ -1030,38 +1032,7 @@ func (a *App) message(ch string, m *slack.Message) Message {
 	a.mu.Lock()
 	v.Saved = a.saved[v.Channel+"/"+m.TS]
 	a.mu.Unlock()
-	if m.Subtype == "bot_message" || (m.BotID != "" && m.User == "") || m.DisplayAsBot {
-		v.IsBot = true
-	}
-	if m.BotProfile != nil && m.User == "" {
-		v.IsBot = true
-		v.Name = m.BotProfile.Name
-		v.Avatar = firstNonEmpty(m.BotProfile.Icons.Image72, m.BotProfile.Icons.Image48, m.BotProfile.Icons.Image36)
-	}
-	if m.Username != "" && (m.User == "" || m.Subtype == "bot_message") {
-		v.Name = m.Username
-	}
-	if m.Icons != nil {
-		if m.Icons.Emoji != "" {
-			if u, _, ok := a.S.Emoji(strings.Trim(m.Icons.Emoji, ":")); ok {
-				v.Avatar = u
-			}
-		} else if i := firstNonEmpty(m.Icons.Image72, m.Icons.Image64, m.Icons.Image48, m.Icons.Image36); i != "" {
-			v.Avatar = i
-		}
-	}
-	if v.IsBot && m.BotID != "" && (v.Avatar == "" || v.Name == "") {
-		if b, ok := a.S.Bot(m.BotID); ok {
-			if v.Avatar == "" {
-				v.Avatar = b.Icon
-			}
-			if v.Name == "" {
-				v.Name = b.Name
-			}
-		} else {
-			a.S.NoteMissingBot(m.BotID) // resolved in the background (names event)
-		}
-	}
+	a.senderOf(&v, m) // Slack ignores display_as_bot (sender.go)
 	self := a.S.SelfID()
 	for _, re := range m.Reactions {
 		rv := Reaction{Name: re.Name, Count: re.Count, Users: re.Users, URL: re.URL}

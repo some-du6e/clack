@@ -11,6 +11,7 @@ import (
 
 func testSlackMsg() core.Message {
 	return core.Message{TS: "1700000000.000100", Channel: "C1", BotID: "B1", Name: "relay", Avatar: "https://a/48.png",
+		Username: "relay", Icons: &core.SenderIcons{Image48: "https://a/48.png"},
 		Subtype: "bot_message", IsBot: true, Text: "hi *there*", ThreadTS: "1700000000.000100", ReplyCount: 2,
 		ReplyUsers: []string{"U1", "U2"}, LatestReply: "1700000005.000100", Edited: true, EditedTS: "1700000001.000000",
 		Reactions: []core.Reaction{{Name: "tada", Count: 2, Users: []string{"U1", "U2"}}},

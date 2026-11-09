@@ -328,14 +328,17 @@ func (s *listState) sync(h Host, now time.Time) {
 	}
 }
 
+// groupable is Slack's isAdjacentMessage (boot-shared Ag38): b continues
+// a's group. Senders compare as core.Adjacent does (same user; a user-less
+// bot by bot_id, username and msg.icons); a thread parent (reply_count)
+// on either side starts a new group. Pinning doesn't: Slack's Message
+// hides the sender of any adjacent message (shouldHideSenderAndTimestamp)
+// and draws the pinned label above its body.
 func groupable(a, b *core.Message, ta, tb time.Time) bool {
-	if a.System || b.System || a.Subtype != b.Subtype && (a.Subtype == "bot_message" || b.Subtype == "bot_message") {
+	if a.System || b.System || !core.Adjacent(a, b) {
 		return false
 	}
-	if a.User != b.User || a.BotID != b.BotID || a.Name != b.Name || a.Avatar != b.Avatar {
-		return false
-	}
-	if b.Broadcast || a.Pinned || b.Pinned {
+	if b.Broadcast || a.ReplyCount > 0 || b.ReplyCount > 0 {
 		return false
 	}
 	return tb.Sub(ta) < 5*time.Minute && tb.Sub(ta) >= 0

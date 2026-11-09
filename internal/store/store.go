@@ -626,8 +626,10 @@ func (s *Store) ExtConv(id string) (*slack.Conversation, bool) {
 
 // BotInfo is a bot's display metadata (bots.info), cached on disk.
 type BotInfo struct {
-	Name string `json:"name"`
-	Icon string `json:"icon,omitempty"`
+	Name     string `json:"name"`
+	Icon     string `json:"icon,omitempty"`
+	AppID    string `json:"app_id,omitempty"`
+	Workflow bool   `json:"is_workflow_bot,omitempty"` // a Workflow Builder bot (badged WORKFLOW)
 }
 
 func (s *Store) PutBot(id string, b BotInfo) {

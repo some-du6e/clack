@@ -17,9 +17,11 @@ import (
 // Message is a UI-ready message: metadata plus a structured document.
 type Message struct {
 	TS, Channel, User, BotID string
-	Name                     string // display-name override (bots, custom usernames)
-	Avatar                   string // avatar override (bot icons, icon_emoji)
-	Subtype, Text            string // Text: raw mrkdwn (editing, copy, search)
+	Name                     string       // the sender's name when it isn't a member's (user-less bots: username or the bot's name); sender.go
+	Avatar                   string       // the avatar of a user-less sender (icon_emoji, icons, the bot's, Slack's default); sender.go
+	Username                 string       // msg.username as sent (chat.postMessage username)
+	Icons                    *SenderIcons // msg.icons as sent (icon_emoji / icon_url)
+	Subtype, Text            string       // Text: raw mrkdwn (editing, copy, search)
 	ThreadTS, LatestReply    string
 	EditedTS                 string
 	Permalink                string // set on search results
@@ -64,7 +66,8 @@ func (m *Message) CustomResponse() bool {
 // BotProfile is the bot_profile Slack attaches to app messages.
 type BotProfile struct {
 	ID, Name, AppID, UserID, TeamID string
-	Icon                            string // best icon URL
+	Icon                            string      // best icon URL
+	Icons                           SenderIcons // bot_profile.icons as sent
 	Deleted                         bool
 }
 
@@ -91,7 +94,8 @@ type User struct {
 	Guest                            bool
 	Color, Presence                  string // Presence: active | away | ""
 	Huddle                           bool
-	Agent                            bool // agent_status consistently_an_agent: Slack labels the sender AGENT, not APP
+	Agent                            bool // agent_status consistently_an_agent (read for the badge only under support_lots_of_agents; sender.go)
+	Workflow, Agentforce, AppUser    bool // is_workflow_bot, is_agentforce_bot, is_app_user (the sender badge; sender.go)
 
 	// TeamID is the member's team as Slack's computeLocality reads it
 	// (the org on Enterprise Grid for org members, else team_id).
