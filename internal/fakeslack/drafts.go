@@ -12,17 +12,20 @@ import (
 
 // Drafts and file uploads, as Slack's web client uses them:
 //
-//   - files.getUploadURLExternal {filename, length} → {upload_url, file_id};
-//     the bytes go to upload_url (this server's /api/upload/<id>). The file
-//     exists, unshared, from then on.
+//   - files.getUploadURL {filename, length} → {file, upload_url}; the
+//     bytes go to upload_url (this server's /api/upload/<id>) as a
+//     multipart POST, then files.completeUpload {files: [{id, title}]}
+//     finishes it (UploadQueue's eager upload). The file exists, unshared,
+//     from then on.
 //   - drafts.create {blocks, client_msg_id, destinations, file_ids,
 //     attachments, is_from_composer} and drafts.update {draft_id, …,
 //     client_last_updated_ts, date_scheduled} → {draft}; drafts.list
 //     {is_active, limit} → {drafts}; drafts.delete {draft_id,
 //     client_last_updated_ts, skip_file_deletion}. A draft answers its
 //     file_ids and the file objects (files).
-//   - files.completeUploadExternal {files: [{id, title}], channel_id,
-//     thread_ts, initial_comment} shares uploaded files.
+//   - files.share {files: "F1,F2", channel, thread_ts, broadcast, blocks,
+//     comment, client_msg_id, resharing_aware, …} shares completed files
+//     (shareFile, reason send_composer_message).
 //
 // Everything stays in memory.
 
@@ -43,19 +46,25 @@ type Draft struct {
 	SkipFileDeletion bool `json:"-"`
 }
 
-// UploadedFile is a file uploaded with files.getUploadURLExternal.
+// UploadedFile is a file uploaded with files.getUploadURL.
 type UploadedFile struct {
 	ID, Name, Title string
 	Size            int64
 	Bytes           int  // bytes received at upload_url
-	Shared          bool // files.completeUploadExternal shared it
+	Cookie          bool // the upload POST carried a cookie (Slack's XHR sends none)
+	Completed       bool // files.completeUpload finished it
+	Shared          bool // files.share shared it
 	Deleted         bool // a drafts.delete without skip_file_deletion removed it
 }
 
-// SharedFiles is one files.completeUploadExternal call.
+// SharedFiles is one files.share call.
 type SharedFiles struct {
 	Channel, ThreadTS, Comment string
 	IDs, Titles                []string
+	Blocks                     json.RawMessage
+	Broadcast                  string // as sent ("" when absent)
+	ClientMsgID                string
+	Args                       url.Values // everything files.share got
 }
 
 func (s *Server) newID(prefix string) string {
@@ -113,6 +122,10 @@ func (s *Server) draftJSON(d *Draft) map[string]any {
 	return m
 }
 
+// uploadCookieKey carries "the request had a Cookie header" from the
+// HTTP handler into handleDrafts for upload POSTs.
+const uploadCookieKey = "\x00cookie"
+
 func fail(code string) map[string]any { return map[string]any{"ok": false, "error": code} }
 
 // handleDrafts answers the draft and upload methods (handled=false for
@@ -122,17 +135,21 @@ func (s *Server) handleDrafts(method string, f url.Values) (any, bool) {
 	defer s.draftMu.Unlock()
 	now := time.Now()
 	switch {
-	case method == "files.getUploadURLExternal":
+	case method == "files.getUploadURL":
 		n, _ := strconv.ParseInt(f.Get("length"), 10, 64)
+		if f.Get("filename") == "" {
+			return fail("invalid_arguments"), true
+		}
 		id := s.newID("F")
 		s.files[id] = &UploadedFile{ID: id, Name: f.Get("filename"), Title: f.Get("filename"), Size: n}
-		return ok("upload_url", s.URL+"api/upload/"+id, "file_id", id), true
+		return ok("file", id, "upload_url", s.URL+"api/upload/"+id), true
 	case strings.HasPrefix(method, "upload/"):
 		if up := s.files[strings.TrimPrefix(method, "upload/")]; up != nil {
 			up.Bytes = int(up.Size)
+			up.Cookie = f.Get(uploadCookieKey) != ""
 		}
 		return []byte("OK - 1\n"), true
-	case method == "files.completeUploadExternal":
+	case method == "files.completeUpload":
 		var refs []struct {
 			ID    string `json:"id"`
 			Title string `json:"title"`
@@ -140,22 +157,43 @@ func (s *Server) handleDrafts(method string, f url.Values) (any, bool) {
 		if json.Unmarshal([]byte(f.Get("files")), &refs) != nil || len(refs) == 0 {
 			return fail("invalid_arguments"), true
 		}
-		sh := SharedFiles{Channel: f.Get("channel_id"), ThreadTS: f.Get("thread_ts"), Comment: f.Get("initial_comment")}
-		var out []any
 		for _, r := range refs {
 			up := s.files[r.ID]
-			if up == nil || up.Deleted {
+			if up == nil || up.Deleted || up.Bytes == 0 {
 				return fail("file_not_found"), true
 			}
-			up.Shared = true
+			up.Completed = true
 			if r.Title != "" {
 				up.Title = r.Title
 			}
-			sh.IDs, sh.Titles = append(sh.IDs, r.ID), append(sh.Titles, up.Title)
-			out = append(out, map[string]any{"id": up.ID, "title": up.Title, "name": up.Name})
+		}
+		return ok(), true
+	case method == "files.share":
+		ids := strings.Split(f.Get("files"), ",")
+		if f.Get("files") == "" || f.Get("channel") == "" {
+			return fail("invalid_arguments"), true
+		}
+		args := url.Values{}
+		for k, v := range f {
+			if k != uploadCookieKey {
+				args[k] = v
+			}
+		}
+		sh := SharedFiles{Channel: f.Get("channel"), ThreadTS: f.Get("thread_ts"), Comment: f.Get("comment"),
+			Broadcast: f.Get("broadcast"), ClientMsgID: f.Get("client_msg_id"), Args: args}
+		if b := f.Get("blocks"); b != "" {
+			sh.Blocks = json.RawMessage(b)
+		}
+		for _, id := range ids {
+			up := s.files[id]
+			if up == nil || up.Deleted || !up.Completed {
+				return fail("file_not_found"), true
+			}
+			up.Shared = true
+			sh.IDs, sh.Titles = append(sh.IDs, id), append(sh.Titles, up.Title)
 		}
 		s.shared = append(s.shared, sh)
-		return ok("files", out), true
+		return ok(), true
 	case method == "drafts.create":
 		d := &Draft{ID: s.newID("Dr"), ClientMsgID: f.Get("client_msg_id"), DateCreated: now.Unix(),
 			LastUpdatedTS: strconv.FormatInt(now.UnixMilli(), 10), IsFromComposer: f.Get("is_from_composer") == "true"}
@@ -269,7 +307,7 @@ func (s *Server) File(id string) (UploadedFile, bool) {
 	return UploadedFile{}, false
 }
 
-// Shared returns the files.completeUploadExternal calls so far.
+// Shared returns the files.share calls so far.
 func (s *Server) Shared() []SharedFiles {
 	s.draftMu.Lock()
 	defer s.draftMu.Unlock()

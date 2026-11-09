@@ -304,9 +304,10 @@ func (a *App) SendDraft(ctx context.Context, id string) (Message, error) {
 		if len(d.FileIDs) > 0 {
 			// the files were uploaded with the draft: share them with its
 			// text as their comment, like the composer's send
-			o := UploadOpts{Channel: ch, ThreadTS: d.ThreadTS, Comment: d.Text}
+			o := UploadOpts{Channel: ch, ThreadTS: d.ThreadTS, Comment: d.Text, Blocks: d.Blocks, Broadcast: d.Broadcast}
 			for _, f := range d.FileInfo {
-				o.Prepared = append(o.Prepared, PreparedUpload{ID: f.ID, Name: f.Name, Title: firstNonEmpty(f.Title, f.Name), Size: f.Size})
+				// titled on Slack already: no files.edit
+				o.Prepared = append(o.Prepared, PreparedUpload{ID: f.ID, Name: f.Name, Size: f.Size})
 			}
 			if _, err := a.Upload(ctx, o); err != nil {
 				return Message{}, err

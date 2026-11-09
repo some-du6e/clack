@@ -282,9 +282,10 @@ func TestWorkflowLinks(t *testing.T) {
 
 func TestUploadForInput(t *testing.T) {
 	a, f := testApp(t)
-	f.reply["files.getUploadURLExternal"] = `{"ok":true,"upload_url":"` + f.srv.URL + `/upload/x","file_id":"F7"}`
+	f.reply["files.getUploadURL"] = `{"ok":true,"file":"F7","upload_url":"` + f.srv.URL + `/upload/x"}`
 	f.reply["x"] = `{"ok":true}`
-	f.reply["files.completeUploadExternal"] = `{"ok":true,"files":[{"id":"F7","name":"a.txt","title":"a.txt","mimetype":"text/plain"}]}`
+	f.reply["files.completeUpload"] = `{"ok":true}`
+	f.reply["files.info"] = `{"ok":true,"file":{"id":"F7","name":"a.txt","title":"a.txt","mimetype":"text/plain"}}`
 	raw, err := a.Interactive().UploadForInput(context.Background(), UploadFile{Name: "a.txt", Data: []byte("hi")}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -292,8 +293,11 @@ func TestUploadForInput(t *testing.T) {
 	if !strings.Contains(string(raw), `"id":"F7"`) || !strings.Contains(string(raw), "mimetype") {
 		t.Errorf("file: %s", raw)
 	}
-	p := f.last("files.completeUploadExternal")
-	if p.Get("channel_id") != "" || p.Get("files") != `[{"id":"F7","title":"a.txt"}]` {
+	p := f.last("files.completeUpload")
+	if p.Get("channel") != "" || p.Get("files") != `[{"id":"F7","title":"a.txt"}]` {
 		t.Errorf("complete params: %v", p)
+	}
+	if f.last("files.share") != nil {
+		t.Error("a file_input upload was shared")
 	}
 }

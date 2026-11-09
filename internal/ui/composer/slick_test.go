@@ -436,7 +436,7 @@ func TestSlickViewAnonymiseFileNames(t *testing.T) {
 	c.att.Add(real, []byte("\x89PNG synthetic"))
 	var name string
 	e.until(8*time.Second, "the upload slot request", frame, func() bool {
-		calls := e.slack.called("files.getUploadURLExternal")
+		calls := e.slack.called("files.getUploadURL")
 		if len(calls) == 0 {
 			return false
 		}
@@ -536,15 +536,16 @@ func TestSlickViewAnonymiseFileNames(t *testing.T) {
 
 	// the upload follows: the file is shared under the name the chip shows
 	c.submit()
-	e.until(8*time.Second, "the file shared", frame, func() bool { return len(e.slack.called("files.completeUploadExternal")) > 0 })
-	var shared []struct{ ID, Title string }
-	if err := json.Unmarshal([]byte(e.slack.called("files.completeUploadExternal")[0].Get("files")), &shared); err != nil {
-		t.Fatal(err)
+	// (Slack: completeUpload titles it by the uploaded name, then
+	// maybePersistPendingFileData's files.edit renames it before files.share)
+	e.until(8*time.Second, "the file shared", frame, func() bool { return len(e.slack.called("files.share")) > 0 })
+	if sh := e.slack.called("files.share")[0]; sh.Get("files") != "F0TEST" {
+		t.Errorf("shared %v, want F0TEST", sh)
 	}
-	if len(shared) != 1 || shared[0].Title != real {
-		t.Errorf("shared %+v, want one file titled %q", shared, real)
+	if ed := e.slack.called("files.edit"); len(ed) != 1 || ed[0].Get("file") != "F0TEST" || ed[0].Get("title") != real {
+		t.Errorf("files.edit %v, want F0TEST titled %q", ed, real)
 	}
-	if got := e.slack.called("files.getUploadURLExternal"); len(got) != 1 {
+	if got := e.slack.called("files.getUploadURL"); len(got) != 1 {
 		t.Errorf("bytes uploaded %d times, want once", len(got))
 	} else if got[0].Get("filename") != name {
 		t.Errorf("bytes uploaded as %q, want %q", got[0].Get("filename"), name)

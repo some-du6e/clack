@@ -3,6 +3,7 @@ package slack
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/url"
 	"sort"
 	"strconv"
@@ -515,69 +516,101 @@ type UploadFile struct {
 	Data  []byte
 }
 
-// PrepareUpload reserves an upload slot (files.getUploadURLExternal) and
-// sends the bytes. The file is not shared until CompleteUpload.
+// PrepareUpload uploads a file the way Slack's web client does when one is
+// attached (UploadQueue, isEagerUpload): files.getUploadURL {filename,
+// length} returns {file, upload_url}; the bytes go to upload_url as a
+// multipart "file" POST; files.completeUpload {files: [{id, title}]}
+// finishes it without sharing it anywhere. ShareFiles shares it later.
 func (c *Client) PrepareUpload(ctx context.Context, f UploadFile, progress func(sent, total int64)) (string, error) {
 	var r struct {
+		File      string `json:"file"`
+		FileID    string `json:"file_id"` // the public API's name for it
 		UploadURL string `json:"upload_url"`
-		FileID    string `json:"file_id"`
 	}
-	if err := c.Call(ctx, "files.getUploadURLExternal", url.Values{"filename": {f.Name}, "length": {strconv.Itoa(len(f.Data))}}, &r); err != nil {
+	if err := c.Call(ctx, "files.getUploadURL", url.Values{"filename": {f.Name}, "length": {strconv.Itoa(len(f.Data))}}, &r); err != nil {
 		return "", err
+	}
+	id := firstNonEmptyS(r.File, r.FileID)
+	if id == "" || r.UploadURL == "" {
+		return "", errors.New("slack: files.getUploadURL returned no upload slot")
 	}
 	if err := c.UploadBytes(ctx, r.UploadURL, f.Name, f.Data, progress); err != nil {
 		return "", err
 	}
-	return r.FileID, nil
+	title := firstNonEmptyS(f.Title, f.Name)
+	if err := c.CompleteUpload(ctx, []UploadedRef{{ID: id, Title: title}}); err != nil {
+		return "", err
+	}
+	return id, nil
 }
 
-// UploadedRef names a prepared file to share.
+// UploadedRef names an uploaded file: files.completeUpload's files entry.
 type UploadedRef struct {
 	ID    string `json:"id"`
 	Title string `json:"title,omitempty"`
 }
 
-// CompleteUpload shares prepared files (files.completeUploadExternal).
-func (c *Client) CompleteUpload(ctx context.Context, channel, threadTS, comment string, files []UploadedRef) ([]map[string]string, error) {
+// CompleteUpload is files.completeUpload with Slack's eager-upload args
+// (completeUpload: files JSON, no channel): the files are processed but
+// not shared.
+func (c *Client) CompleteUpload(ctx context.Context, files []UploadedRef) error {
 	b, _ := json.Marshal(files)
-	p := url.Values{"files": {string(b)}}
-	if channel != "" {
-		p.Set("channel_id", channel)
-	}
-	if threadTS != "" {
-		p.Set("thread_ts", threadTS)
-	}
-	if strings.TrimSpace(comment) != "" {
-		p.Set("initial_comment", comment)
-	}
-	var r struct {
-		Files []struct {
-			ID    string `json:"id"`
-			Title string `json:"title"`
-			Name  string `json:"name"`
-		} `json:"files"`
-	}
-	if err := c.Call(ctx, "files.completeUploadExternal", p, &r); err != nil {
-		return nil, err
-	}
-	out := make([]map[string]string, 0, len(r.Files))
-	for _, f := range r.Files {
-		out = append(out, map[string]string{"id": f.ID, "title": f.Title, "name": f.Name})
-	}
-	return out, nil
+	return c.Call(ctx, "files.completeUpload", url.Values{"files": {string(b)}}, nil)
 }
 
-// Upload performs the three-step external upload and shares the files.
-func (c *Client) Upload(ctx context.Context, channel, threadTS, comment string, files []UploadFile) ([]map[string]string, error) {
-	var refs []UploadedRef
+// EditFile renames an uploaded file (Slack's editFileApi →
+// files.edit), as maybePersistPendingFileData does when a pending file's
+// title changed after its bytes went up.
+func (c *Client) EditFile(ctx context.Context, id, title string) error {
+	return c.Call(ctx, "files.edit", url.Values{"file": {id}, "title": {title}}, nil)
+}
+
+// ShareOpts is one files.share call: Slack's composer sends attached
+// files this way (shareFile, reason send_composer_message).
+type ShareOpts struct {
+	Files       []string // file ids, in the message's order
+	Channel     string
+	ThreadTS    string
+	Broadcast   bool
+	Blocks      json.RawMessage // the composer's rich_text blocks
+	Comment     string          // plain text, sent only without Blocks
+	ClientMsgID string
+}
+
+// ShareFiles is files.share with the args Slack's shareFile sends: files
+// as a comma list (getFormData joins string arrays), channel, thread_ts,
+// broadcast, blocks, client_msg_id, resharing_aware=true,
+// skip_dlp_user_warning=false, from_share_modal=false; comment only when
+// there are no blocks.
+func (c *Client) ShareFiles(ctx context.Context, o ShareOpts) error {
+	p := url.Values{"files": {strings.Join(o.Files, ",")}, "channel": {o.Channel},
+		"resharing_aware": {"true"}, "skip_dlp_user_warning": {"false"}, "from_share_modal": {"false"}}
+	if o.ThreadTS != "" {
+		p.Set("thread_ts", o.ThreadTS)
+		p.Set("broadcast", strconv.FormatBool(o.Broadcast))
+	}
+	if o.ClientMsgID != "" {
+		p.Set("client_msg_id", o.ClientMsgID)
+	}
+	if len(o.Blocks) > 0 && string(o.Blocks) != "null" {
+		p.Set("blocks", string(o.Blocks))
+	} else if strings.TrimSpace(o.Comment) != "" {
+		p.Set("comment", o.Comment)
+	}
+	return c.Call(ctx, "files.share", p, nil)
+}
+
+// Upload uploads files and shares them in one message.
+func (c *Client) Upload(ctx context.Context, channel, threadTS, comment string, files []UploadFile) error {
+	var ids []string
 	for _, f := range files {
 		id, err := c.PrepareUpload(ctx, f, nil)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		refs = append(refs, UploadedRef{ID: id, Title: firstNonEmptyS(f.Title, f.Name)})
+		ids = append(ids, id)
 	}
-	return c.CompleteUpload(ctx, channel, threadTS, comment, refs)
+	return c.ShareFiles(ctx, ShareOpts{Files: ids, Channel: channel, ThreadTS: threadTS, Comment: comment})
 }
 
 func firstNonEmptyS(s ...string) string {

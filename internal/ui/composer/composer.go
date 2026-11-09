@@ -885,7 +885,7 @@ func (j *sendJob) deliver(ctx context.Context, ch, ts, text string, blocks json.
 		if j.o.doc.Empty() {
 			comment = ""
 		}
-		return sendFiles(ctx, j.api, ch, ts, comment, blocks, j.prepared, j.raw)
+		return sendFiles(ctx, j.api, ch, ts, comment, blocks, broadcast, j.prepared, j.raw)
 	}
 	return postMessage(ctx, j.api, ch, ts, text, blocks, broadcast)
 }

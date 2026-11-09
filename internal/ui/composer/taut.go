@@ -241,11 +241,15 @@ func postMessage(ctx context.Context, api coreAPI, ch, ts, text string, blocks j
 	return err
 }
 
-// sendFiles shares files with the message as their comment: prepared ones
-// (uploaded at attach) by id, raw ones through uploadFiles.
-func sendFiles(ctx context.Context, api coreAPI, ch, ts, comment string, blocks json.RawMessage, prepared []core.PreparedUpload, raw []core.UploadFile) error {
+// sendFiles shares files with the message the way Slack's composer does
+// (files.share with the message's blocks, reason send_composer_message):
+// prepared ones (uploaded at attach) by id, raw ones through uploadFiles.
+// An empty message (comment "") shares the files alone.
+func sendFiles(ctx context.Context, api coreAPI, ch, ts, comment string, blocks json.RawMessage, broadcast bool, prepared []core.PreparedUpload, raw []core.UploadFile) error {
 	if comment != "" {
-		comment, _ = transformBlocks(ctx, comment, blocks)
+		comment, blocks = transformBlocks(ctx, comment, blocks)
+	} else {
+		blocks = nil
 	}
 	if len(raw) > 0 {
 		if t := currentTaut(); t.ThunkPatched(thUploadFiles) {
@@ -263,7 +267,10 @@ func sendFiles(ctx context.Context, api coreAPI, ch, ts, comment string, blocks 
 			}
 			_, err := taut.Dispatch(ctx, t, thUploadFiles, uploadFilesArgs{Files: files, ChannelID: ch, ThreadTs: ts, InitialComment: comment, FileIDs: ids},
 				func(ctx context.Context, a uploadFilesArgs) (any, error) {
-					o := core.UploadOpts{Channel: a.ChannelID, ThreadTS: a.ThreadTs, Comment: a.InitialComment}
+					o := core.UploadOpts{Channel: a.ChannelID, ThreadTS: a.ThreadTs, Comment: a.InitialComment, Broadcast: broadcast}
+					if a.InitialComment == comment {
+						o.Blocks = blocks // a plugin that rewrites the comment sends it as text
+					}
 					for _, f := range a.Files {
 						o.Files = append(o.Files, core.UploadFile{Name: f.Name, Title: f.Name, Data: f.Data})
 					}
@@ -278,7 +285,7 @@ func sendFiles(ctx context.Context, api coreAPI, ch, ts, comment string, blocks 
 			return err
 		}
 	}
-	_, err := api.upload(ctx, core.UploadOpts{Channel: ch, ThreadTS: ts, Comment: comment, Files: raw, Prepared: prepared})
+	_, err := api.upload(ctx, core.UploadOpts{Channel: ch, ThreadTS: ts, Comment: comment, Blocks: blocks, Broadcast: broadcast, Files: raw, Prepared: prepared})
 	return err
 }
 

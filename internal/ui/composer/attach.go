@@ -266,8 +266,8 @@ func (a *attachments) add(name string, data []byte) bool {
 	return true
 }
 
-// prepare uploads a chip's bytes to Slack immediately (getUploadURLExternal
-// + the byte PUT) so sending is instant. Progress drives the chip's bar; a
+// prepare uploads a chip's bytes to Slack immediately (files.getUploadURL,
+// the multipart POST, files.completeUpload) so sending is instant. Progress drives the chip's bar; a
 // failure falls back to uploading at send time (raw Files).
 func (a *attachments) prepare(c *attChip) {
 	if c == nil || a.h.Core() == nil {

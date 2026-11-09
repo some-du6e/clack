@@ -281,7 +281,9 @@ type SendOpts struct {
 // UploadOpts share one or more files (held in memory, never spooled to disk).
 type UploadOpts struct {
 	Channel, ThreadTS, Comment string
-	Files                      []UploadFile     // uploaded now
+	Broadcast                  bool            // a thread reply also sent to the channel
+	Blocks                     json.RawMessage // the message's rich_text blocks (Comment is then unused)
+	Files                      []UploadFile    // uploaded now
 	Prepared                   []PreparedUpload // uploaded earlier with PrepareUpload
 	Progress                   func(sent, total int64)
 }
@@ -465,7 +467,7 @@ type Draft struct {
 }
 
 // DraftFile is a file attached to a draft: uploaded but not shared yet
-// (files.getUploadURLExternal + upload, no files.completeUploadExternal).
+// (files.getUploadURL, the bytes, files.completeUpload; no files.share).
 type DraftFile struct {
 	ID, Name, Title, Mimetype, PrettyType string
 	Size                                  int64

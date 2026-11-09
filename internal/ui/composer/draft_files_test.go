@@ -104,8 +104,8 @@ func TestDraftKeepsAttachedFiles(t *testing.T) {
 		fileID = ds[0].FileIDs[0]
 		return true
 	})
-	if f, ok := fs.File(fileID); !ok || f.Name != name || f.Bytes == 0 || f.Shared {
-		t.Fatalf("the draft's file %s: %+v (want uploaded, unshared)", fileID, f)
+	if f, ok := fs.File(fileID); !ok || f.Name != name || f.Bytes == 0 || !f.Completed || f.Shared || f.Cookie {
+		t.Fatalf("the draft's file %s: %+v (want uploaded with no cookie, completed, unshared)", fileID, f)
 	}
 	if b := string(live()[0].Blocks); b != "[]" {
 		t.Errorf("files-only draft blocks = %s, want []", b)
@@ -135,7 +135,7 @@ func TestDraftKeepsAttachedFiles(t *testing.T) {
 	if c2.att.Len() != 1 || c2.ed.Doc().Text() != "a synthetic caption" {
 		t.Fatalf("after a channel switch: %d files, text %q", c2.att.Len(), c2.ed.Doc().Text())
 	}
-	if n := fs.CallCount("files.getUploadURLExternal"); n != 1 {
+	if n := fs.CallCount("files.getUploadURL"); n != 1 {
 		t.Errorf("uploads = %d, want the one at attach", n)
 	}
 	c2.Close()
@@ -174,7 +174,9 @@ func TestDraftKeepsAttachedFiles(t *testing.T) {
 	c3.submit()
 	until("the file shared and the draft gone", frame3, func() bool { return len(fs.Shared()) == 1 && len(live()) == 0 })
 	sh := fs.Shared()[0]
-	if sh.Channel != ch || len(sh.IDs) != 1 || sh.IDs[0] != fileID || !strings.Contains(sh.Comment, "a synthetic caption") {
+	// files.share with the composer's rich_text blocks, as Slack sends it
+	if sh.Channel != ch || len(sh.IDs) != 1 || sh.IDs[0] != fileID || !strings.Contains(string(sh.Blocks), "a synthetic caption") ||
+		sh.Comment != "" || sh.Args.Get("resharing_aware") != "true" || len(sh.ClientMsgID) != 36 {
 		t.Errorf("shared %+v", sh)
 	}
 	for _, dr := range fs.Drafts() {

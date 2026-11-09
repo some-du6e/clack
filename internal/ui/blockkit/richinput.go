@@ -159,8 +159,8 @@ func mergeRichText(raw json.RawMessage) json.RawMessage {
 //
 // Slack's file_input: a drop zone ("Drag and drop or click to upload"),
 // the accepted types and limit under it, and the chosen files as rows
-// with a remove ×. Files upload right away (files.getUploadURLExternal +
-// upload + files.completeUploadExternal, no channel) and the input's
+// with a remove ×. Files upload right away (files.getUploadURL, the
+// bytes, files.completeUpload; never shared) and the input's
 // value is {"files": [Slack file objects]}.
 
 // PickFiles opens the platform file chooser (set by the ui root); accept
