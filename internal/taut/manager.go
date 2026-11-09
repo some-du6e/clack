@@ -304,7 +304,7 @@ func (t *Taut) loadInJS(ctx context.Context, p *plugin) error {
 		return err
 	}
 	var m Meta
-	if err := rt.call(ctx, "load", &m, p.code); err != nil {
+	if err := rt.load(ctx, p.code, &m); err != nil {
 		return fmt.Errorf("couldn't load: %s", jsMessage(err))
 	}
 	if m.ID != p.id {

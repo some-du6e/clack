@@ -236,6 +236,8 @@ type Server struct {
 	Calls   map[string]*atomic.Int64
 	// Latency is added to every API call (not images), to model a network.
 	Latency time.Duration
+	// ImgLatency is added to every image (avatars, emoji, thumbnails).
+	ImgLatency time.Duration
 	// Emit, when set, receives the realtime events the fake apps send
 	// (view_opened…) instead of the socket: tests running the client
 	// without realtime inject them (core.App.Inject). Set it before the calls.
@@ -1304,6 +1306,9 @@ func slackTSLess(a, b string) bool {
 
 // img serves /img/<w>x<h>/<seed>.png: a deterministic gradient PNG.
 func (s *Server) img(w http.ResponseWriter, r *http.Request) {
+	if s.ImgLatency > 0 {
+		time.Sleep(s.ImgLatency)
+	}
 	parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/img/"), "/", 2)
 	if len(parts) != 2 {
 		http.NotFound(w, r)

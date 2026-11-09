@@ -91,9 +91,20 @@ func storeBC(dir string, k [32]byte, body []byte) {
 // evalBoot evaluates a trusted boot script through the bytecode cache
 // (plain eval when the engine lacks bytecode support).
 func (e *engine) evalBoot(name, src string) error {
+	h, err := e.evalCached(name, src, true)
+	if err == nil {
+		e.release(h)
+	}
+	return err
+}
+
+// evalCached evaluates a classic script through the bytecode cache and
+// returns its completion value's handle (plain eval without bytecode
+// support). mem keeps the bytecode in memory too (boot scripts: every
+// runtime evaluates them); plugins only use the disk copy.
+func (e *engine) evalCached(name, src string, mem bool) (uint32, error) {
 	if e.fns["jr_compile"] == nil || e.fns["jr_eval_bytecode"] == nil {
-		_, err := e.evalChecked(name, src)
-		return err
+		return e.eval(name, src, false)
 	}
 	dir := e.r.opts.CacheDir
 	k := bcKey(name, src)
@@ -106,16 +117,40 @@ func (e *engine) evalBoot(name, src string) error {
 		nfree()
 		if pl == 0 {
 			x := uint32(e.call("jr_exception")) &^ excBit
-			return e.takeError(x)
+			return 0, e.takeError(x)
 		}
 		p, n := unpack(pl)
 		bc = e.read(p, n)
 		e.call("jr_free_js", uint64(p))
 		storeBC(dir, k, bc)
 	}
+	if !mem {
+		bcMu.Lock()
+		delete(bcMem, k)
+		bcMu.Unlock()
+	}
 	bp, bfree := e.tmpBytes(bc)
 	defer bfree()
-	h, err := e.res(uint32(e.call("jr_eval_bytecode", uint64(bp), uint64(len(bc)))))
-	e.release(h)
-	return err
+	return e.res(uint32(e.call("jr_eval_bytecode", uint64(bp), uint64(len(bc)))))
+}
+
+// EvalCached is Eval through the bytecode cache (Options.CacheDir): the
+// script is compiled once and later runtimes, in this process or the next,
+// evaluate the cached QuickJS bytecode instead of parsing the source. The
+// key is the engine build plus name and source, so a changed script or
+// engine compiles again. Same semantics as Eval (a classic sloppy-mode
+// script and its completion value). JS thread only.
+func (c *Ctx) EvalCached(name, src string) (Value, error) {
+	h, err := c.r.eng.evalCached(name, src, false)
+	return c.r.wrap(h), err
+}
+
+// EvalCached is Ctx.EvalCached from any goroutine.
+func (r *Runtime) EvalCached(name, src string) (Value, error) {
+	var v Value
+	err := r.Do(func(js *Ctx) (err error) {
+		v, err = js.EvalCached(name, src)
+		return err
+	})
+	return v, err
 }

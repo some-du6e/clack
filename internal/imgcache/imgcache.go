@@ -1,7 +1,9 @@
 // Package imgcache fetches and decodes images off the UI goroutine and keeps
-// them in a memory LRU. Avatars and emoji (metadata under the Hack Club
-// scraping policy) are also cached on disk; message files and attachments
-// (files.slack.com and anything else) stay in memory only.
+// them in a memory LRU. On disk, in the account's cache directory
+// (SetDir: <cache root>/v1/<team>-<user>/img, dropped on sign-out), it
+// keeps avatars and emoji (DiskOK) and message thumbnails (ThumbOK,
+// files.slack.com/files-tmb), at most DiskLimit bytes, least recently used
+// first out. Full files and third-party images stay in memory only.
 //
 // Get never blocks: it returns (op, true) when the image is ready and
 // otherwise starts a fetch, returns false, and calls invalidate when the
@@ -23,6 +25,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +33,8 @@ import (
 	"gioui.org/op/paint"
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 )
 
 // Fetcher downloads url. For files.slack.com it must authenticate (core.Fetch).
@@ -38,8 +43,12 @@ type Fetcher func(ctx context.Context, url string) ([]byte, error)
 // Cache is safe for concurrent use.
 type Cache struct {
 	fetch      Fetcher
-	dir        string
+	dir        string // the disk tier ("" for none); under mu
 	invalidate func()
+
+	diskLimit int64 // DiskLimit unless SetDiskLimit
+	written   int64 // bytes saved since the last trim (under mu)
+	trimming  bool
 
 	mu       sync.Mutex
 	entries  map[key]*list.Element
@@ -81,6 +90,11 @@ const IdleAfter = 60 * time.Second
 // It was 384 MB, which a long image channel actually filled.
 const DefaultLimit = 64 << 20
 
+// DiskLimit is the disk tier's default size budget. A trim runs at
+// SetDir and after every DiskLimit/16 written, dropping the least recently
+// used files down to 3/4 of the limit.
+const DiskLimit = 384 << 20
+
 // New creates a cache. diskDir may be "" to disable the disk cache.
 // invalidate is called (from any goroutine) when an image becomes ready.
 func New(fetch Fetcher, diskDir string, invalidate func()) *Cache {
@@ -101,9 +115,109 @@ func New(fetch Fetcher, diskDir string, invalidate func()) *Cache {
 		failed:     map[key]time.Time{},
 		sem:        make(chan struct{}, 8),
 		ctx:        context.Background(),
+		diskLimit:  DiskLimit,
 	}
 	go c.sweepLoop()
 	return c
+}
+
+// SetDir moves the disk tier to dir ("" turns it off: sign-out), for the
+// account that's signed in now. The memory tier is dropped with it, so
+// nothing fetched for one account draws for another. It doesn't touch
+// the disk itself; a trim of the new directory starts in the background.
+func (c *Cache) SetDir(dir string) {
+	c.mu.Lock()
+	if dir == c.dir {
+		c.mu.Unlock()
+		return
+	}
+	c.dir = dir
+	c.entries = map[key]*list.Element{}
+	c.lru.Init()
+	c.bytes = 0
+	c.failed = map[key]time.Time{}
+	c.written = 0
+	c.mu.Unlock()
+	if dir != "" {
+		go c.trim(dir)
+	}
+}
+
+// Dir is the disk tier's directory ("" for none).
+func (c *Cache) Dir() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.dir
+}
+
+// SetDiskLimit sets the disk tier's budget in bytes.
+func (c *Cache) SetDiskLimit(n int64) {
+	c.mu.Lock()
+	c.diskLimit = n
+	c.mu.Unlock()
+}
+
+// Pending is how many images are being fetched or decoded now.
+func (c *Cache) Pending() int {
+	if c == nil {
+		return 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.inflight)
+}
+
+// trim drops dir's least recently used files (by modification time; a
+// disk hit refreshes it once a day) until the tier is at 3/4 of its limit.
+func (c *Cache) trim(dir string) {
+	c.mu.Lock()
+	if c.trimming {
+		c.mu.Unlock()
+		return
+	}
+	c.trimming = true
+	limit := c.diskLimit
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		c.trimming = false
+		c.mu.Unlock()
+	}()
+	type f struct {
+		path string
+		size int64
+		mod  time.Time
+	}
+	var fs []f
+	var total int64
+	_ = filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		if strings.HasSuffix(p, ".tmp") && time.Since(info.ModTime()) > time.Hour {
+			_ = os.Remove(p) // a write that never finished
+			return nil
+		}
+		fs = append(fs, f{p, info.Size(), info.ModTime()})
+		total += info.Size()
+		return nil
+	})
+	if total <= limit {
+		return
+	}
+	sort.Slice(fs, func(i, j int) bool { return fs[i].mod.Before(fs[j].mod) })
+	for _, x := range fs {
+		if total <= limit*3/4 {
+			break
+		}
+		if os.Remove(x.path) == nil {
+			total -= x.size
+		}
+	}
 }
 
 func (c *Cache) sweepLoop() {
@@ -327,18 +441,26 @@ func checkSize(data []byte) error {
 	return nil
 }
 
-// raw returns the encoded bytes from disk (DiskOK URLs only: avatars and
-// emoji) or the network, plus a func that saves fetched bytes to the disk
-// tier (a no-op for everything else, e.g. message images and files).
+// raw returns the encoded bytes from disk (DiskOK and ThumbOK URLs only:
+// avatars, emoji, message thumbnails) or the network, plus a func that
+// saves fetched bytes to the disk tier (a no-op for everything else, e.g.
+// full files and third-party images).
 func (c *Cache) raw(u string) ([]byte, func(), error) {
 	nop := func() {}
-	disk := c.dir != "" && DiskOK(u)
+	c.mu.Lock()
+	dir := c.dir
+	c.mu.Unlock()
+	disk := dir != "" && (DiskOK(u) || ThumbOK(u))
 	var path string
 	if disk {
 		h := sha256.Sum256([]byte(u))
 		name := hex.EncodeToString(h[:16])
-		path = filepath.Join(c.dir, name[:2], name)
+		path = filepath.Join(dir, name[:2], name)
 		if b, err := os.ReadFile(path); err == nil && len(b) > 0 {
+			if info, err := os.Stat(path); err == nil && time.Since(info.ModTime()) > 24*time.Hour {
+				now := time.Now()
+				_ = os.Chtimes(path, now, now) // recently used: last out of trim
+			}
 			return b, nop, nil
 		}
 	}
@@ -355,10 +477,39 @@ func (c *Cache) raw(u string) ([]byte, func(), error) {
 		return b, nop, nil
 	}
 	return b, func() {
-		_ = os.MkdirAll(filepath.Dir(path), 0o700)
-		tmp := path + ".tmp"
-		if os.WriteFile(tmp, b, 0o600) == nil {
-			_ = os.Rename(tmp, path)
+		c.mu.Lock()
+		still, limit := c.dir == dir, c.diskLimit
+		c.mu.Unlock()
+		if !still { // signed out or switched accounts meanwhile
+			return
+		}
+		if os.MkdirAll(filepath.Dir(path), 0o700) != nil {
+			return
+		}
+		f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*.tmp") // 0600, never through a symlink
+		if err != nil {
+			return
+		}
+		_, err = f.Write(b)
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+		if err == nil {
+			err = os.Rename(f.Name(), path)
+		}
+		if err != nil {
+			_ = os.Remove(f.Name())
+			return
+		}
+		c.mu.Lock()
+		c.written += int64(len(b))
+		due := c.written > limit/16 && c.dir == dir
+		if due {
+			c.written = 0
+		}
+		c.mu.Unlock()
+		if due {
+			go c.trim(dir)
 		}
 	}, nil
 }
@@ -399,7 +550,11 @@ func Scale(img image.Image, max int) *image.RGBA {
 
 // DiskOK reports whether an image URL may be persisted: avatars and emoji
 // only. Never files.slack.com, slack-files, or third-party unfurl images.
+// (A perfharness build also keeps the loopback fake's images.)
 func DiskOK(raw string) bool {
+	if slack.IsHarnessURL(raw) {
+		return strings.Contains(raw, "/img/")
+	}
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" {
 		return false
@@ -414,6 +569,22 @@ func DiskOK(raw string) bool {
 	case host == "a.slack-edge.com":
 		// standard emoji sheets/images live under /production-standard-emoji-assets/
 		return strings.Contains(u.Path, "emoji")
+	}
+	return false
+}
+
+// ThumbOK reports whether an image URL is a message file's thumbnail
+// (files.slack.com/files-tmb/…, Slack's own resized copies), which the
+// disk tier keeps in the account's cache directory only. Full files
+// (files-pri, downloads) never reach the disk.
+func ThumbOK(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.RawQuery != "" {
+		return false
+	}
+	switch strings.ToLower(u.Hostname()) {
+	case "files.slack.com", "files-edge.slack.com":
+		return strings.HasPrefix(u.Path, "/files-tmb/") && !strings.Contains(u.Path, "..")
 	}
 	return false
 }

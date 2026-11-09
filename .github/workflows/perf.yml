@@ -10,7 +10,12 @@ name: perf
 #   - Go benchmarks of ui and core (boot, cache read, startup, channel
 #     switch, scroll, emoji picker and search, quick switcher, typing and
 #     idle frames, session memory), headless layout + GPU (bench.sh);
-#   - stripped binary size, and size by package (build.sh).
+#   - stripped binary size, and size by package (build.sh);
+#   - the startup timeline (startup.sh): process start to settled (window,
+#     theme, sidebar, messages, Slack's answers, images, plugins) and the
+#     count of visible re-layouts, cold and warm, against a fakeslackd
+#     with network latency; HEAD also without its boot snapshot
+#     (CLACK_NO_BOOT_CACHE=1) for an instrumented "before".
 # The report on the run page leads with the before/after table
 # (compare.py), then each side's full summary (summary.py). Artifacts hold
 # the pprof CPU/heap profiles of both sides. Pushes append HEAD's row to
@@ -93,6 +98,11 @@ jobs:
         run: .github/perf/build.sh base "$RUNNER_TEMP/base-tree" perf-out . || echo "::warning::base client didn't build; the report has head numbers only"
       - name: real process (Xvfb, cold + warm starts, idle RSS), interleaved
         run: .github/perf/process.sh perf-out/fakeslackd perf-out base head
+      - name: startup timeline (150 ms per API call, cold + warm), interleaved
+        env:
+          LATENCY: 150ms
+          IMG_LATENCY: 40ms
+        run: .github/perf/startup.sh perf-out/fakeslackd perf-out base head
       - name: go benchmarks (layout + llvmpipe GPU), interleaved
         env:
           CLACK_BENCH_GPU: "1"
@@ -116,9 +126,11 @@ jobs:
           python3 .github/perf/summary.py perf-out/head "$GITHUB_SHA" "$GITHUB_REF_NAME" > /dev/null
           python3 .github/perf/summary.py perf-out/base "$(git -C "$RUNNER_TEMP/base-tree" rev-parse HEAD)" "baseline $BASE_LABEL" > /dev/null
           python3 .github/perf/compare.py perf-out "$BASE_LABEL" "$GITHUB_REF_NAME (${GITHUB_SHA::7})" > /dev/null
+          LATENCY=150ms IMG_LATENCY=40ms python3 .github/perf/startup.py perf-out "$BASE_LABEL" "$GITHUB_REF_NAME (${GITHUB_SHA::7})" > /dev/null || true
           {
             cat perf-out/compare.md
             echo
+            [ -f perf-out/startup.md ] && cat perf-out/startup.md && echo || true
             cat perf-out/head/summary.md
             echo
             echo "<details><summary>Baseline $BASE_LABEL, full summary</summary>"
@@ -129,6 +141,7 @@ jobs:
             [ -f perf-out/head/fontcheck.md ] && cat perf-out/head/fontcheck.md || true
           } >> "$GITHUB_STEP_SUMMARY"
           cat perf-out/compare.md
+          [ -f perf-out/startup.md ] && cat perf-out/startup.md || true
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

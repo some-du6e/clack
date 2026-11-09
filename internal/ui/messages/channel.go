@@ -1,7 +1,9 @@
 package messages
 
 import (
+	"hash/fnv"
 	"image"
+	"strconv"
 	"time"
 
 	"gioui.org/layout"
@@ -113,4 +115,24 @@ func (v *ChannelView) Refresh() {
 	v.s.m.fetched = time.Time{}
 	v.s.m.mu.Unlock()
 	v.s.hb.ensureLoaded(v.s.m)
+}
+
+// LayoutSig describes what the list drew in its last layout, for the ui
+// root's startup timeline: how many messages it holds, whether the first
+// page arrived, and a hash of the visible rows' keys, positions and
+// heights, which changes whenever a painted row moves or resizes.
+func (v *ChannelView) LayoutSig() (msgs int, loaded bool, sig uint64) {
+	s := v.s
+	h := fnv.New64a()
+	var buf []byte
+	for i := s.visible[0]; i < s.visible[1] && i < len(s.items) && i < len(s.pos) && i < len(s.heights); i++ {
+		buf = append(buf[:0], s.items[i].key...)
+		buf = append(buf, '|')
+		buf = strconv.AppendInt(buf, int64(s.pos[i]), 10)
+		buf = append(buf, '|')
+		buf = strconv.AppendInt(buf, int64(s.heights[i]), 10)
+		buf = append(buf, ';')
+		h.Write(buf)
+	}
+	return len(s.snap.msgs), s.snap.loaded, h.Sum64()
 }

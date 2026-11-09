@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -57,7 +58,7 @@ func migrateConfig(old, dir string) {
 	if _, err := os.Stat(old); err != nil {
 		return
 	}
-	for _, rel := range []string{"creds.json", "ui.json", "cache/sidebar.json", "cache/meta.json"} {
+	for _, rel := range []string{"creds.json", "ui.json"} { // caches moved to cacheRoot (v1, per account)
 		b, err := os.ReadFile(filepath.Join(old, rel))
 		if err != nil {
 			continue
@@ -73,6 +74,60 @@ func migrateConfig(old, dir string) {
 		}
 	}
 	log.Printf("config: migrated %s to %s", old, dir)
+}
+
+// cacheRoot is where the per-account caches live (store.AccountDir):
+// CLACK_CACHE_DIR, else <CLACK_HOME>/cache when CLACK_HOME is set (tests
+// and the perf harness keep everything in one directory), else the OS's
+// user cache directory (~/Library/Caches/Clack, ~/.cache/clack,
+// %LocalAppData%\Clack).
+func cacheRoot(cfg string) string {
+	if d := os.Getenv("CLACK_CACHE_DIR"); d != "" {
+		return d
+	}
+	if os.Getenv("CLACK_HOME") != "" || os.Getenv("YOLOSLACK_HOME") != "" {
+		return filepath.Join(cfg, "cache")
+	}
+	d, err := os.UserCacheDir()
+	if err != nil || d == "" {
+		return filepath.Join(cfg, "cache")
+	}
+	name := "Clack"
+	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
+		name = "clack"
+	}
+	return filepath.Join(d, name)
+}
+
+// migrateLegacyCache moves the caches older builds kept for whoever was
+// signed in last (<config>/cache/{meta.json,img}) into acct, when they
+// were that user's (sidebar.json names its self id), and deletes the rest
+// of them. Off the UI goroutine.
+func migrateLegacyCache(cfg, acct, userID string) {
+	old := filepath.Join(cfg, "cache")
+	side := filepath.Join(old, "sidebar.json")
+	b, err := os.ReadFile(side)
+	if err != nil {
+		return // nothing from before (or already done)
+	}
+	var sc struct{ SelfID string }
+	mine := json.Unmarshal(b, &sc) == nil && sc.SelfID != "" && sc.SelfID == userID
+	if mine && os.MkdirAll(acct, 0o700) == nil {
+		if _, err := os.Stat(filepath.Join(acct, "meta.json")); os.IsNotExist(err) {
+			_ = os.Rename(filepath.Join(old, "meta.json"), filepath.Join(acct, "meta.json"))
+		}
+		if _, err := os.Stat(filepath.Join(acct, "img")); os.IsNotExist(err) {
+			_ = os.Rename(filepath.Join(old, "img"), filepath.Join(acct, "img"))
+		}
+	}
+	_ = os.Remove(side) // its absence means the migration ran
+	log.Printf("cache: moved the old shared cache to the account's (kept: %t)", mine)
+	go func() { // what wasn't this user's, or didn't move (a big image tree: not before the window)
+		for _, n := range []string{"meta.json", "meta.json.tmp", "sidebar.json.tmp"} {
+			_ = os.Remove(filepath.Join(old, n))
+		}
+		_ = os.RemoveAll(filepath.Join(old, "img"))
+	}()
 }
 
 func main() {
@@ -103,6 +158,9 @@ func main() {
 	// on the log writer's goroutine; no line ever waits for the disk. No
 	// token or cookie reaches either, whatever an error string quotes.
 	logs := applog.Start(os.Stderr)
+	// The startup timeline (applog/startup.go) counts from the process
+	// start; its debug lines are on for the first minute.
+	applog.StartTimeline(started)
 	// Go panics nothing recovers and the runtime's fatal errors go to fd 2
 	// only; the runtime also writes them to crash.log next to clack.log,
 	// and the next start copies the trace, redacted, into clack.log.
@@ -169,7 +227,10 @@ func main() {
 	if desktop.Forward(cfg, desktop.Request{URL: link}) {
 		return
 	}
-	images := imgcache.New(imgcache.PublicFetch, filepath.Join(cfg, "cache", "img"), nil)
+	// The image cache's disk tier is the signed-in account's (build sets it).
+	images := imgcache.New(imgcache.PublicFetch, "", nil)
+	croot := cacheRoot(cfg)
+	go store.PurgeOldVersions(croot) // Slack's store_out_of_date: older layouts go
 	// The live session. A desktop session's client saves its rotated
 	// cookies to creds.json, but only while it is the live one: after a
 	// sign-out or an account switch, a late write from the old client must
@@ -191,6 +252,12 @@ func main() {
 		LogDir: logs.Dir(), LogTail: logs.Tail,
 		SignOut: func() {
 			setLive(nil)
+			// the account's images go with its cache (the UI drops the
+			// rest: core.App.DropCache)
+			if d := images.Dir(); d != "" {
+				images.SetDir("")
+				go func() { _ = os.RemoveAll(d) }() // <account dir>/img, set by build
+			}
 			liveMu.Lock()
 			_ = os.Remove(*credsPath)
 			liveMu.Unlock()
@@ -228,8 +295,10 @@ func main() {
 	}
 	cacheDir := filepath.Join(cfg, "cache")
 	// build makes the session's client, store and core: it reads the
-	// metadata cache and the DPoP key, so after sign-in or an account
-	// switch it runs off the UI goroutine and only Attach is posted.
+	// boot snapshot and the DPoP key, so after sign-in or an account
+	// switch it runs off the UI goroutine and only Attach is posted. At
+	// launch it runs before the window opens, which is what lets the first
+	// frame paint the account's theme and sidebar.
 	build := func(creds slack.Creds) *core.App {
 		c := slack.New(creds)
 		if creds.Desktop() {
@@ -243,8 +312,11 @@ func main() {
 			})
 		}
 		setLive(c)
-		st := store.New(cacheDir)
+		acct := store.AccountDir(croot, firstNonEmpty(creds.Team, creds.EnterpriseID), creds.UserID)
+		migrateLegacyCache(cfg, acct, creds.UserID)
+		st := store.New(acct)
 		svc := core.New(c, st)
+		images.SetDir(filepath.Join(acct, "img"))
 		// After core.New (which listens for the session ending): a bound
 		// session whose DPoP key won't load sends nothing and goes back to
 		// the sign-in screen.
@@ -265,6 +337,7 @@ func main() {
 			}
 			return imgcache.PublicFetch(ctx, raw)
 		})
+		svc.LoadBootCache() // the warm first frame (core/bootcache.go)
 		return svc
 	}
 	connect := func(creds slack.Creds) { a.Attach(build(creds), cacheDir) }
@@ -450,4 +523,13 @@ func setEcho(on bool) bool {
 	cmd.Stdin = os.Stdin
 	cmd.WaitDelay = 2 * time.Second // never wait on a child's inherited pipes
 	return cmd.Run() == nil
+}
+
+func firstNonEmpty(ss ...string) string {
+	for _, s := range ss {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
 }

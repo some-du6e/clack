@@ -2,14 +2,14 @@ package ui
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/applog"
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/slick"
@@ -27,7 +27,9 @@ type backend struct {
 	slick *slick.Slick // Slick plugins, on Taut's runtime (nil until boot)
 	// tautStarting: startTautAsync is building the runtimes
 	tautStarting bool
-	cacheFile    string // sidebar metadata cache (names/kinds/order only)
+	// warm: the model was painted from core's boot snapshot and the
+	// network snapshot hasn't replaced it yet (bootcache.go)
+	warm bool
 
 	m       model
 	started bool
@@ -63,15 +65,15 @@ type backend struct {
 	app       *App
 }
 
-// NewBackend wraps a core service. cacheDir holds the UI's sidebar cache.
+// NewBackend wraps a core service. The sidebar's first frame comes from
+// core's boot snapshot (core.LoadBootCache, which cmd/clack runs before the
+// window opens; when it hasn't, this reads it). cacheDir is unused: the
+// account's cache directory is the store's.
 func newBackend(c *core.App, cacheDir string) *backend {
 	b := &backend{core: c, tabCache: map[string][]chTab{}, bookmarks: map[string][]core.Bookmark{},
 		fetched: map[string]time.Time{}, avatars: map[string]string{}, asked: map[string]bool{}}
-	if cacheDir != "" {
-		b.cacheFile = filepath.Join(cacheDir, "sidebar.json")
-	}
 	b.m.Convs = map[string]*convInfo{}
-	b.loadCache()
+	c.LoadBootCache()
 	return b
 }
 
@@ -110,8 +112,22 @@ func (b *backend) start(a *App) {
 	// Live updates only when the user opted in (realtime.go); core polls
 	// otherwise. Set before Boot so the socket is never opened unasked.
 	b.core.SetRealtime(a.realtimeOn())
-	if b.core.S.HasCachedPrefs() { // the cached account theme paints the first frame
-		a.applyAccountPrefs(b.core.Prefs())
+	// A warm start paints the boot snapshot: the account theme, the
+	// sidebar with its sections and unreads, the last channel (its
+	// messages are in core already). Boot's answers replace it below.
+	if snap, ok := b.core.CachedSnapshot(); ok {
+		b.warm = true
+		b.apply(a, snap)
+		applog.SetWarm(true)
+		applog.Mark("sidebar-model", fmt.Sprintf("cached, %d convs", len(snap.Convs)))
+		if a.router.Current() == "" {
+			a.openDefault()
+		}
+	} else {
+		applog.SetWarm(false)
+		if b.core.S.HasCachedPrefs() { // the cached account theme paints the first frame
+			a.applyAccountPrefs(b.core.Prefs())
+		}
 	}
 	go func() {
 		t0 := time.Now()
@@ -123,14 +139,15 @@ func (b *backend) start(a *App) {
 		snap := b.core.Snapshot()
 		log.Printf("ui: core ready %v after boot start (%d convs)", time.Since(t0).Round(time.Millisecond), len(snap.Convs))
 		a.Post(func() {
+			b.warm = false
 			b.apply(a, snap)
+			applog.Mark("sidebar-live", fmt.Sprintf("%d convs", len(snap.Convs)))
 			b.booted = time.Now()
 			if a.router.Current() == "" {
 				a.openDefault()
 			} else if ch := a.router.Current().Channel(); ch != "" {
 				b.opened(ch) // restored route: fetch tabs + facepile
 			}
-			b.saveCache()
 			b.loadDrafts(a)
 			b.maybePresencePrompt(a)
 		})
@@ -220,7 +237,6 @@ func (b *backend) stop() <-chan struct{} {
 	// or the old session keeps a second realtime connection open next to
 	// the new one.
 	b.core.Shutdown()
-	b.saveCache()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -858,78 +874,13 @@ func (b *backend) permalink(ch, ts string) string {
 }
 
 func (b *backend) signOut() {
+	// Sign-out drops the account's disk cache (boot snapshot, messages,
+	// images) before stop's background save could write it again.
+	b.core.DropCache()
 	_ = b.stop()
 	if b.onSignOut != nil {
 		b.onSignOut()
 	}
-}
-
-// ---- sidebar cache (metadata only: names, kinds, order, avatars) ----
-
-type sidebarCache struct {
-	TeamName, TeamIcon, Domain   string
-	SelfID, SelfName, SelfAvatar string
-	Sections                     []sbSection
-	Convs                        []cachedConv
-}
-
-type cachedConv struct {
-	ID, Name, Kind, User, Avatar string
-	Self, Bot, Starred           bool
-	Muted                        bool
-	NumMembers                   int
-}
-
-func (b *backend) loadCache() {
-	if b.cacheFile == "" {
-		return
-	}
-	raw, err := os.ReadFile(b.cacheFile)
-	if err != nil {
-		return
-	}
-	var c sidebarCache
-	if json.Unmarshal(raw, &c) != nil {
-		return
-	}
-	m := &b.m
-	m.TeamName, m.TeamIcon, b.domain = c.TeamName, c.TeamIcon, c.Domain
-	m.SelfID, m.SelfName, m.SelfAvatar, m.SelfActive = c.SelfID, c.SelfName, c.SelfAvatar, true
-	b.selfID = c.SelfID
-	m.Sections = c.Sections
-	for _, cc := range c.Convs {
-		m.Convs[cc.ID] = &convInfo{ID: cc.ID, Name: cc.Name, Kind: cc.Kind, User: cc.User, Avatar: cc.Avatar,
-			Self: cc.Self, Bot: cc.Bot, Starred: cc.Starred, Muted: cc.Muted, NumMembers: cc.NumMembers}
-	}
-	m.version++
-}
-
-func (b *backend) saveCache() {
-	if b.cacheFile == "" || len(b.m.Convs) == 0 {
-		return
-	}
-	m := &b.m
-	c := sidebarCache{TeamName: m.TeamName, TeamIcon: m.TeamIcon, Domain: b.domain, SelfID: m.SelfID,
-		SelfName: m.SelfName, SelfAvatar: m.SelfAvatar, Sections: m.Sections}
-	for _, s := range m.Sections {
-		for _, id := range s.Rows {
-			if cv := m.Convs[id]; cv != nil {
-				c.Convs = append(c.Convs, cachedConv{ID: cv.ID, Name: cv.Name, Kind: cv.Kind, User: cv.User,
-					Avatar: cv.Avatar, Self: cv.Self, Bot: cv.Bot, Starred: cv.Starred, Muted: cv.Muted, NumMembers: cv.NumMembers})
-			}
-		}
-	}
-	raw, err := json.Marshal(c)
-	if err != nil {
-		return
-	}
-	go func() {
-		_ = os.MkdirAll(filepath.Dir(b.cacheFile), 0o700)
-		tmp := b.cacheFile + ".tmp"
-		if os.WriteFile(tmp, raw, 0o600) == nil {
-			_ = os.Rename(tmp, b.cacheFile)
-		}
-	}()
 }
 
 // openURL opens a link in the system browser (http, https and mailto only;
