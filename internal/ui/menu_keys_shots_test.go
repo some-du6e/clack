@@ -47,9 +47,11 @@ func TestMenuKeysShots(t *testing.T) {
 	}{{"darwin", "mac"}, {"linux", "ctrl"}} {
 		shortcut.GOOS = c.goos
 		for _, dark := range []bool{false, true} {
+			a.th.SetDark(dark) // as taut_prefs_test's shots do
+			a.Invalidate()
+			e.settle(1500 * time.Millisecond)
 			if a.th.Dark != dark {
-				a.ToggleDark()
-				e.settle(1500 * time.Millisecond) // the theme reaches every pane
+				t.Fatalf("dark=%v didn't stick", dark)
 			}
 			mode := "light"
 			if dark {
