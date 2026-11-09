@@ -192,15 +192,30 @@ func DrawText(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string) layo
 	return drawText(gtx, sh, o, CleanText(txt), EmboldenFor(o.Color))
 }
 
-// Text draws txt with Slack-matching rendering. Single-line text containing
-// unicode emoji draws them as Slack's CDN images (like the web client's
-// emoji sprites) instead of relying on a color font.
+// Text draws txt with Slack-matching rendering. Unicode emoji draw as
+// Slack's CDN images (like the web client's emoji sprites) instead of
+// relying on a color font: single lines through textWithEmoji, wrapping
+// text through placeholder glyphs (emojislot.go).
 func (t *Theme) Text(gtx layout.Context, o LabelOpts, txt string) layout.Dimensions {
+	return t.text(gtx, o, txt, true)
+}
+
+// text is Text; scan says whether a tofu scan records txt as drawn
+// (Measure's layouts aren't).
+func (t *Theme) text(gtx layout.Context, o LabelOpts, txt string, scan bool) layout.Dimensions {
 	txt = CleanText(txt)
+	if scan {
+		scanText(txt)
+	}
 	o.Color = lightTextColor(o.Color, gtx.Metric.PxPerDp, o.Font.Weight, t.Chrome)
-	if o.MaxLines == 1 && t.Images != nil {
+	if t.Images != nil {
 		if segs := splitEmoji(txt); segs != nil {
-			return t.textWithEmoji(gtx, o, segs)
+			if o.MaxLines == 1 {
+				return t.textWithEmoji(gtx, o, segs)
+			}
+			if face := slotIndex(t.Shaper); face >= 0 {
+				return t.textWithSlots(gtx, o, segs, face)
+			}
 		}
 	}
 	return drawText(gtx, t.Shaper, o, txt, EmboldenFor(o.Color))
@@ -306,6 +321,12 @@ func (t *Theme) textWithEmoji(gtx layout.Context, o LabelOpts, segs []segment) l
 // ---- glyph painting (adapted from gioui.org/widget's Label, MIT/Unlicense) ----
 
 func drawText(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string, emb float32) layout.Dimensions {
+	return drawTextSlots(gtx, sh, o, txt, emb, nil)
+}
+
+// drawTextSlots is drawText recording emoji placeholder glyphs in slots
+// (nil: none) instead of painting them.
+func drawTextSlots(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string, emb float32, slots *slotDraw) layout.Dimensions {
 	emb *= weightEmbolden(o.Font.Weight)
 	if emb == 0 && o.Font.Weight >= font.Black && !noEmbolden && !IsDarkText(o.Color) {
 		emb = lightBlackEmbolden
@@ -329,8 +350,8 @@ func drawText(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string, emb 
 	}, txt)
 	m := op.Record(gtx.Ops)
 	viewport := image.Rectangle{Max: cs.Max}
-	it := glyphIter{viewport: viewport, maxLines: o.MaxLines, col: o.Color, emb: emb} // px, not dp
-	var glyphs [512]text.Glyph                                                        // one batch per line in practice (see paint)
+	it := glyphIter{viewport: viewport, maxLines: o.MaxLines, col: o.Color, emb: emb, slots: slots} // px, not dp
+	var glyphs [512]text.Glyph                                                                      // one batch per line in practice (see paint)
 	line := glyphs[:0]
 	for g, ok := sh.NextGlyph(); ok; g, ok = sh.NextGlyph() {
 		var ok bool
@@ -361,6 +382,7 @@ type glyphIter struct {
 	visible   bool
 	first     bool
 	baseline  int
+	slots     *slotDraw // emoji placeholders (Text's wrapping path), or nil
 }
 
 func (it *glyphIter) process(g text.Glyph) bool {
@@ -411,7 +433,10 @@ func (it *glyphIter) process(g text.Glyph) bool {
 
 func (it *glyphIter) paint(gtx layout.Context, sh *text.Shaper, g text.Glyph, line []text.Glyph) ([]text.Glyph, bool) {
 	ok := it.process(g)
-	if it.visible {
+	ScanGlyph(sh, g)
+	if it.slots.see(g, it.visible) {
+		// an emoji placeholder: the image is drawn instead (textWithSlots)
+	} else if it.visible {
 		if len(line) == 0 {
 			it.lineOff = f32.Point{X: float32(g.X) / 64, Y: float32(g.Y)}.Sub(layout.FPt(it.viewport.Min))
 		}

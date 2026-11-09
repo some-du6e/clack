@@ -36,6 +36,7 @@ var shaperFaces sync.Map // *text.Shaper -> *emboldener
 
 type emboldener struct {
 	faces []*gtfont.Face
+	slot  int // index of the emoji slot face (emojislot.go), -1 if absent
 
 	mu    sync.Mutex
 	runs  map[runKey]*list.Element
@@ -66,7 +67,20 @@ type runGlyph struct {
 const maxRuns = 1500
 
 func registerShaperFaces(sh *text.Shaper, faces []*gtfont.Face) {
-	shaperFaces.Store(sh, &emboldener{faces: faces, runs: map[runKey]*list.Element{}})
+	slot := -1
+	if n := len(faces); n > 0 && faces[n-1] != nil && faces[n-1].Font == parseFace(emojiSlotTTF).Face().Font {
+		slot = n - 1
+	}
+	shaperFaces.Store(sh, &emboldener{faces: faces, slot: slot, runs: map[runKey]*list.Element{}})
+}
+
+// slotIndex is the emoji slot face's index in sh's collection, or -1 when
+// sh wasn't built by NewShaperFor.
+func slotIndex(sh *text.Shaper) int {
+	if v, ok := shaperFaces.Load(sh); ok {
+		return v.(*emboldener).slot
+	}
+	return -1
 }
 
 // EmboldenedShape is sh.Shape(gs) with every contour grown by w/2 pixels

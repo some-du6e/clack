@@ -89,6 +89,7 @@ func (s *Style) shapeNow(k faceKey, str string, keepSpace bool) *shaped {
 	var x0 fixed.Int26_6
 	var adv fixed.Int26_6
 	for g, ok := s.Shaper.NextGlyph(); ok; g, ok = s.Shaper.NextGlyph() {
+		theme.ScanGlyph(s.Shaper, g)
 		if first {
 			first = false
 			x0 = g.X

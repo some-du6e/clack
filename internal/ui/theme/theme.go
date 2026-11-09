@@ -132,8 +132,10 @@ func FacesFor(dark bool) []font.FontFace {
 	for _, f := range srcs {
 		out = append(out, font.FontFace{Font: font.Font{Typeface: Typeface, Weight: f.w, Style: f.s}, Face: parseFace(f.b)})
 	}
-	// after Lato: the first face is the shaper's default
-	return append(out, MonoFaces()...)
+	// after Lato: the first face is the shaper's default. The emoji slot
+	// face goes last (slotIndex reads its index from the collection).
+	out = append(out, MonoFaces()...)
+	return append(out, font.FontFace{Font: font.Font{Typeface: EmojiSlotTypeface}, Face: parseFace(emojiSlotTTF)})
 }
 
 // Faces returns the light-mode collection (compatibility).
@@ -333,7 +335,7 @@ func (t *Theme) Measure(gtx layout.Context, size unit.Sp, weight font.Weight, tx
 	m := op.Record(gtx.Ops)
 	g := gtx
 	g.Constraints = layout.Constraints{Max: image.Pt(1<<20, 1<<20)}
-	d := t.Label(g, size, weight, color.NRGBA{}, txt)
+	d := t.text(g, LabelOpts{Font: Font(weight), Size: size, MaxLines: 1}, txt, false) // = Label, unrecorded
 	m.Stop()
 	return d.Size.X
 }

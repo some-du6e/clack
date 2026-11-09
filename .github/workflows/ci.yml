@@ -88,6 +88,8 @@ jobs:
       - name: macOS-only tests (system fonts, AppKit glue, the menu bar)
         run: |
           go test -count=1 -v -run 'TestCodeRunsHaveOutlines|TestCodeSpanAfterEmoji|TestInlineCodeDraws' ./internal/ui/theme ./internal/ui/richview ./internal/ui/composer
+          go test -count=1 -v -run 'TestEmoji' ./internal/ui/theme
+          go test -count=1 -v -run 'TestOwnProfilePane|TestOtherProfilePane' ./internal/ui/popups
           go test -count=1 -v -run 'TestSwipe|TestNav|TestNativeMenuBar|TestMacMenu|TestMenuState|TestZoom' ./internal/ui
           go test -count=1 -v ./internal/ui/menubar
       - name: macOS freeze guards (no blocking work on the AppKit main thread)

@@ -3,6 +3,7 @@ package popups
 import (
 	"image"
 	"image/color"
+	"strings"
 	"time"
 
 	"gioui.org/layout"
@@ -19,9 +20,15 @@ import (
 // "Edit" link (15/700 #1264a3) on the right for yourself; title 18px;
 // link/info rows 38 apart (presence dot + "Active", clock + local time);
 // buttons 36 tall radius 8 15/700 sharing the row ([Message] [Huddle ▾]
-// [VIP] [⋮], own: [Set a status] [View as ▾] [⋮]); a full-width divider;
-// "Contact information" 15/900 with 36px icon tiles, labels 13/700
-// rgba(29,28,29,.7) and 15px values.
+// [VIP] [⋮], own: [Set a status] [View as ▾] [⋮]); then the profile
+// sections (profile_sections.go).
+//
+// The bio follows Slack's RimetoProfileBio (module DqK0): Name is the
+// member's real_name only (getMemberRealName: no display-name fallback and
+// no presence dot, so a real name of a lone zero-width space draws an
+// empty line with just Edit), Title (18px, line-height 1.5), pronouns ·
+// name pronunciation, the add links for yourself, then presence, status
+// and local time, then the action row.
 
 // ProfileView is the full profile shown in the secondary pane.
 type ProfileView struct {
@@ -35,13 +42,14 @@ type ProfileView struct {
 	closeBtn                     widget.Clickable
 	btn1, btn2, btn3, moreBtn    widget.Clickable // Message|Set a status, Huddle|View as, VIP, ⋮
 	editBtn, pronBtn, nameSndBtn widget.Clickable
-	handleBtn                    widget.Clickable
 
 	paneW   int             // last laid-out width (px)
 	moreBox image.Rectangle // kebab rect in pane coords (last frame)
 	hudBox  image.Rectangle // Huddle button rect in pane coords (last frame)
 
 	editUntil time.Time // EditProfileFormPane is mounted until then
+
+	secs pfSecState // users.profile.getSections (profile_sections.go)
 }
 
 // NewProfileView builds the full profile pane for userID.
@@ -73,6 +81,7 @@ func (v *ProfileView) Layout(gtx layout.Context) layout.Dimensions {
 	}
 	if ok {
 		pfTick(gtx)
+		v.fetchSections()
 	}
 
 	// header
@@ -133,10 +142,6 @@ func (v *ProfileView) clicks(gtx layout.Context, u core.User, ok, self bool) {
 		v.editUntil = gtx.Now.Add(pfEditPaneFor)
 		pfEditProfile(h)
 	}
-	if v.handleBtn.Clicked(gtx) && !pfBlank(u.Handle) {
-		copyText(gtx, "@"+u.Handle)
-		h.Toast("Username copied")
-	}
 	if v.moreBtn.Clicked(gtx) {
 		items := pfMoreItems(h, u, false, nil)
 		h.ShowOverlay(&pfPaneMenu{h: h, items: items, box: v.moreBox, paneW: v.paneW, member: u.ID, app: pfAppID(h, u)})
@@ -174,9 +179,9 @@ func (v *ProfileView) body(gtx layout.Context, th *theme.Theme, cl *Colors, u co
 		return layout.Dimensions{Size: image.Pt(w, y)}
 	}
 
-	// name (+ presence) and Edit for yourself
+	// name (real_name) and Edit for yourself
 	editW := 0
-	if self {
+	if self { // Name's Edit link: !preview && isSelf
 		editW = textW(gtx, th, 15, theme.Bold, "Edit")
 		at(gtx, image.Pt(w-pad-editW, y), func(gtx layout.Context) layout.Dimensions {
 			return clickBox(gtx, &v.editBtn, nil, func(gtx layout.Context) layout.Dimensions {
@@ -188,22 +193,38 @@ func (v *ProfileView) body(gtx layout.Context, th *theme.Theme, cl *Colors, u co
 		editW += dp(gtx, 12)
 	}
 	at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
-		return pfNameLine(gtx, v.h, th, nil, u, 22, 30, 12, maxInt(1, inner-editW))
+		gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, inner-editW), dp(gtx, 30))}
+		return para(gtx, th, 22, 30, theme.Black, cl.Fg, u.RealName, 1)
 	})
 	y += dp(gtx, 30)
 
-	// title
+	// title (.p-r_member_profile__subtitle: 18px, line-height 1.5)
 	if !pfBlank(u.Title) {
 		d := at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(inner, 1<<20)}
-			return para(gtx, th, 18, 26, theme.Regular, cl.Fg, u.Title, 0)
+			return para(gtx, th, 18, 27, theme.Regular, cl.Fg, u.Title, 0)
 		})
 		y += d.Size.Y
 	}
 	y += dp(gtx, 4)
 
-	// pronunciation / pronouns
-	if self {
+	// pronouns · name pronunciation, then the add links (yourself). The
+	// pronunciation link needs the workspace's Name Pronunciation (or
+	// Name Recording) field, from the header section.
+	hd, hdOK := v.secs.header()
+	hdata := pfHeaderDataOf(hd)
+	var pron []string
+	if !pfBlank(u.Pronouns) {
+		pron = append(pron, u.Pronouns)
+	}
+	if !pfBlank(hdata.pronunciation) {
+		pron = append(pron, hdata.pronunciation)
+	}
+	addSound := hdOK && (hdata.hasPronunciation && hdata.editable || hdata.recording) && hdata.recordingFile == "" && pfBlank(hdata.pronunciation)
+	if v.secs.done && v.secs.err != nil {
+		addSound = true // no sections (RimetoProfileLegacyData): offer it
+	}
+	if self && addSound {
 		d := at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
 			return pfLinkRow(gtx, th, cl, &v.nameSndBtn, "Add name pronunciation", rowH)
 		})
@@ -215,17 +236,27 @@ func (v *ProfileView) body(gtx layout.Context, th *theme.Theme, cl *Colors, u co
 		}
 		y += rowH
 	}
-	if !pfBlank(u.Pronouns) {
+	if len(pron) > 0 {
 		at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(inner, rowH)}
 			return vcenter(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
-				return para(gtx, th, 15, 22, theme.Regular, cl.Fg2, u.Pronouns, 1)
+				return para(gtx, th, 15, 22, theme.Regular, cl.Fg2, strings.Join(pron, " · "), 1)
 			})
 		})
 		y += rowH
-	} else if self {
+	}
+	if self && pfBlank(u.Pronouns) {
 		at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
 			return pfLinkRow(gtx, th, cl, &v.pronBtn, "Add pronouns", rowH)
+		})
+		y += rowH
+	}
+
+	// presence, then status (RimetoProfileBio's BioRows)
+	if !u.IsBot { // unknown presence reads as Away, like Slack
+		at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(inner, rowH)}
+			return v.presence(gtx, th, u, rowH)
 		})
 		y += rowH
 	}
@@ -238,15 +269,6 @@ func (v *ProfileView) body(gtx layout.Context, th *theme.Theme, cl *Colors, u co
 			return pfStatusLine(gtx, v.h, th, cl, u, 15, 22, 20)
 		})
 		y += d.Size.Y + dp(gtx, 8)
-	}
-
-	// presence
-	if !u.IsBot { // unknown presence reads as Away, like Slack
-		at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints = layout.Constraints{Max: image.Pt(inner, rowH)}
-			return v.presence(gtx, th, u, rowH)
-		})
-		y += rowH
 	}
 
 	// local time
@@ -285,45 +307,11 @@ func (v *ProfileView) body(gtx layout.Context, th *theme.Theme, cl *Colors, u co
 	})
 	y += d.Size.Y + pad
 
-	// contact information
-	fill(gtx, image.Rect(0, y, w, y+1), cl.Ring)
-	y++
-	y += dp(gtx, 20)
-	y += v.section(gtx, th, cl, y, w, "Contact information")
-	y += dp(gtx, 12)
-	if !pfBlank(u.Handle) {
-		y += v.field(gtx, th, cl, y, inner, "at", "Username", "@"+u.Handle, &v.handleBtn)
-		y += dp(gtx, 12)
+	// sections: Contact information, People, About me, …
+	if !v.secs.done {
+		y += pad
 	}
-	if u.TZLabel != "" || u.TZ != "" {
-		tz := u.TZLabel
-		if tz == "" {
-			tz = u.TZ
-		}
-		y += v.field(gtx, th, cl, y, inner, "globe", "Timezone", tz, nil)
-		y += dp(gtx, 12)
-	}
-	y += dp(gtx, 4)
-
-	// about me
-	if !pfBlank(u.Title) {
-		fill(gtx, image.Rect(0, y, w, y+1), cl.Ring)
-		y++
-		y += dp(gtx, 20)
-		y += v.section(gtx, th, cl, y, w, "About me")
-		y += dp(gtx, 12)
-		lbl := pfFieldLabel(th)
-		at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
-			return text(gtx, th, 13, theme.Bold, lbl, "Title")
-		})
-		y += dp(gtx, 18)
-		d := at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints = layout.Constraints{Max: image.Pt(inner, 1<<20)}
-			return para(gtx, th, 15, 22, theme.Regular, cl.Fg, u.Title, 0)
-		})
-		y += d.Size.Y + pad
-	}
-	y += pad
+	y = v.sections(gtx, th, cl, u, self, y, w)
 	return layout.Dimensions{Size: image.Pt(w, y)}
 }
 
@@ -383,49 +371,6 @@ func (v *ProfileView) audioProps() slackc.Props {
 
 // pfNoNative draws nothing (boundaries Clack has no widget for).
 func pfNoNative(layout.Context, slackc.Props) layout.Dimensions { return layout.Dimensions{} }
-
-// section draws a 15/900 section title at y and returns its height.
-func (v *ProfileView) section(gtx layout.Context, th *theme.Theme, cl *Colors, y, w int, title string) int {
-	pad := dp(gtx, 16)
-	d := at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, w-2*pad), dp(gtx, 22))}
-		return para(gtx, th, 15, 22, theme.Black, cl.Fg, title, 1)
-	})
-	return d.Size.Y
-}
-
-// field draws an icon tile + label + value row at (16, y); value is a link
-// when c is set. Returns its height.
-func (v *ProfileView) field(gtx layout.Context, th *theme.Theme, cl *Colors, y, inner int, ic, label, value string, c *widget.Clickable) int {
-	pad := dp(gtx, 16)
-	tile := dp(gtx, 36)
-	at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
-		r := image.Rect(0, 0, tile, tile)
-		rrect(gtx, r, dp(gtx, 8), cl.Ring)
-		rrect(gtx, r.Inset(1), dp(gtx, 7), cl.BgAlt)
-		at(gtx, image.Pt((tile-dp(gtx, 20))/2, (tile-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions {
-			return icon(gtx, ic, 20, cl.Fg2)
-		})
-		return layout.Dimensions{Size: r.Max}
-	})
-	x := pad + tile + dp(gtx, 8)
-	tw := maxInt(1, inner+pad-x)
-	lbl := pfFieldLabel(th)
-	at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints = layout.Constraints{Max: image.Pt(tw, dp(gtx, 18))}
-		return para(gtx, th, 13, 18, theme.Bold, lbl, label, 1)
-	})
-	at(gtx, image.Pt(x, y+dp(gtx, 18)), func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints = layout.Constraints{Max: image.Pt(tw, dp(gtx, 22))}
-		if c == nil {
-			return para(gtx, th, 15, 22, theme.Regular, cl.Fg, value, 1)
-		}
-		return clickBox(gtx, c, nil, func(gtx layout.Context) layout.Dimensions {
-			return para(gtx, th, 15, 22, theme.Regular, cl.Link, value, 1)
-		})
-	})
-	return maxInt(tile, dp(gtx, 40))
-}
 
 // pfFieldLabel is the profile field label color rgba(29,28,29,.7).
 func pfFieldLabel(th *theme.Theme) color.NRGBA {

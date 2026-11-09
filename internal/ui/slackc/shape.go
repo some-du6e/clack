@@ -148,6 +148,7 @@ func shapeNow(k faceKey, s string) *shaped {
 	first := true
 	var adv fixed.Int26_6
 	for g, ok := sh.NextGlyph(); ok; g, ok = sh.NextGlyph() {
+		theme.ScanGlyph(sh, g)
 		if first {
 			first = false
 			w.asc, w.desc = f26(g.Ascent), f26(g.Descent)
