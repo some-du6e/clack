@@ -170,7 +170,7 @@ func confirmDelete(h Host, m core.Message, del func(ctx context.Context, ch, ts 
 		func() {
 			ch, ts := m.Channel, m.TS
 			actDo(h, "", func(ctx context.Context, _ *core.App) error { return deleteMessage(ctx, h, del, ch, ts) })
-		})
+		}).OldDialog() // BaseDeleteMessageDialog: DeprecatedBaseDialog, focusOnPrimaryButton
 }
 
 // ---- shared helpers (actions_*.go) ----

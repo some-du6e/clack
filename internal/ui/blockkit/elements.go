@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"gioui.org/gesture"
+	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
@@ -45,6 +46,10 @@ type tap struct {
 	g   gesture.Click
 	org image.Point // window position of the target's top-left at the last click
 	sz  image.Point
+	// keys makes the target focusable (the modal's buttons): Enter and
+	// Space press it on release, as widget.Clickable does.
+	keys    bool
+	keyDown key.Name
 }
 
 func (t *tap) clicked(gtx C, h Host) bool {
@@ -59,6 +64,23 @@ func (t *tap) clicked(gtx C, h Host) bool {
 			t.org = pointerAt(h, e.Position).Sub(e.Position)
 		}
 	}
+	for t.keys {
+		e, ok := gtx.Event(key.FocusFilter{Target: t}, key.Filter{Focus: t, Name: key.NameReturn}, key.Filter{Focus: t, Name: key.NameSpace})
+		if !ok {
+			break
+		}
+		switch e := e.(type) {
+		case key.FocusEvent:
+			t.keyDown = ""
+		case key.Event:
+			if e.State == key.Press {
+				t.keyDown = e.Name
+			} else if t.keyDown == e.Name {
+				t.keyDown = ""
+				hit = true
+			}
+		}
+	}
 	return hit
 }
 
@@ -67,6 +89,10 @@ func (t *tap) add(gtx C, sz image.Point) {
 	defer clip.Rect{Max: sz}.Push(gtx.Ops).Pop()
 	t.g.Add(gtx.Ops)
 	pointer.CursorPointer.Add(gtx.Ops)
+	if t.keys {
+		defer pointer.PassOp{}.Push(gtx.Ops).Pop() // key focus only
+		event.Op(gtx.Ops, t)
+	}
 }
 
 func (t *tap) rect() image.Rectangle { return image.Rectangle{Min: t.org, Max: t.org.Add(t.sz)} }

@@ -2,6 +2,7 @@ package popups
 
 import (
 	"context"
+	"gioui.org/io/event"
 	"image"
 	"sort"
 	"strings"
@@ -133,7 +134,8 @@ func NewRenameSectionModal(h Host, id, name, emoji string) *RenameSectionModal {
 	m.ed.SetText(name)
 	m.ed.SetCaret(len([]rune(name)), len([]rune(name)))
 	m.save = &ModalButton{Label: "Save", Kind: BtnPrimary, Enabled: m.CanSave, Do: func() bool { m.Save(); return false }}
-	m.modal = NewModal(h, ModalOpts{Title: "Rename this section", Body: m.layout, Buttons: []*ModalButton{m.save}})
+	m.modal = NewModal(h, ModalOpts{Title: "Rename this section", Body: m.layout, Buttons: []*ModalButton{m.save},
+		FocusStops: func() []event.Tag { return []event.Tag{&m.ed} }})
 	return m
 }
 
@@ -316,7 +318,12 @@ func NewCreateSectionModal(h Host, o CreateSectionOpts) *CreateSectionModal {
 	m.cancel = &ModalButton{Label: "Cancel", Kind: BtnOutline}
 	m.editSel = &ModalButton{Label: "Edit Selections", Kind: BtnOutline, Do: func() bool { m.bump = false; m.sync(); return false }}
 	m.moveConv = &ModalButton{Label: "Move Conversations", Kind: BtnPrimary, Enabled: func() bool { return !m.pending }, Do: func() bool { m.move(); return false }}
-	m.modal = NewModal(h, ModalOpts{Title: "Create a section", Body: m.layout})
+	m.modal = NewModal(h, ModalOpts{Title: "Create a section", Body: m.layout, FocusStops: func() []event.Tag {
+		if m.step == 0 {
+			return []event.Tag{&m.ed}
+		}
+		return nil
+	}})
 	if o.Edit != "" {
 		m.step, m.id, m.name = 1, o.Edit, o.EditName
 	}
@@ -718,9 +725,10 @@ func NewDeleteSectionModal(h Host, name string, onDelete func()) *Modal {
 		line("And don’t worry — you won’t be removed from any channels when you delete this section.", 8, 0)
 		return layout.Dimensions{Size: image.Pt(w, y)}
 	}
-	return NewModal(h, ModalOpts{Title: "Delete this section?", Body: body, Buttons: []*ModalButton{
-		{Label: "Cancel", Kind: BtnOutline},
-		{Label: "Delete", Kind: BtnDanger, Do: func() bool { onDelete(); return true }},
+	del := &ModalButton{Label: "Delete", Kind: BtnDanger, Do: func() bool { onDelete(); return true }}
+	// ConfirmationModal (submit type danger): its submit button autoFocuses
+	return NewModal(h, ModalOpts{Title: "Delete this section?", Body: body, AutoFocus: del, Buttons: []*ModalButton{
+		{Label: "Cancel", Kind: BtnOutline}, del,
 	}})
 }
 
@@ -745,7 +753,7 @@ func NewHuddleStartModal(h Host, cands []SectionConv, start func(ch string)) *Hu
 	m.ed.SingleLine = true
 	m.list.Axis = layout.Vertical
 	sort.SliceStable(m.cands, func(i, j int) bool { return m.cands[i].DM && !m.cands[j].DM })
-	m.modal = NewModal(h, ModalOpts{Title: "Start a Huddle", Body: m.layout, Buttons: []*ModalButton{
+	m.modal = NewModal(h, ModalOpts{Title: "Start a Huddle", Body: m.layout, FocusStops: func() []event.Tag { return []event.Tag{&m.ed} }, Buttons: []*ModalButton{
 		{Label: "Cancel", Kind: BtnOutline},
 		{Label: "Start a Huddle", Kind: BtnPrimary, Enabled: func() bool { return m.pick != "" }, Do: func() bool { m.Start(); return true }},
 	}})

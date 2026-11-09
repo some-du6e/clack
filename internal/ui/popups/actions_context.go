@@ -350,7 +350,7 @@ func ConfirmDeleteFile(h Host, f *richtext.File) {
 		func(gtx layout.Context) layout.Dimensions { return filePillowPreview(gtx, h, f) },
 		func() {
 			actDo(h, "", func(ctx context.Context, a *core.App) error { return a.DeleteFile(ctx, id) })
-		})
+		}).OldDialog() // DeleteFileDialog: DeprecatedBaseDialog, focusOnPrimaryButton
 }
 
 // DownloadFile saves f to the Downloads folder, like the lightbox's

@@ -1,0 +1,74 @@
+name: dialog-keys
+# Slack's keyboard model for every dialog (popups.Modal and the dialogs
+# that draw their own): the focus on open, Enter and Space on the focused
+# button, Escape, Tab / Shift+Tab trapped and wrapping with the focus
+# ring, and the focus going back to the composer, driven through Gio's
+# router; then screenshots of the ring, light and dark. Synthetic only:
+# the fake Slacks in internal/fakeslack and the composer tests, nothing
+# talks to Slack.
+on:
+  push:
+    paths:
+      - "internal/ui/popups/modal*.go"
+      - "internal/ui/popups/style.go"
+      - "internal/ui/popups/actions_*.go"
+      - "internal/ui/popups/section_modals.go"
+      - "internal/ui/popups/create_channel.go"
+      - "internal/ui/refocus/**"
+      - "internal/ui/blockkit/modal*.go"
+      - "internal/ui/blockkit/menus.go"
+      - "internal/ui/blockkit/elements.go"
+      - "internal/ui/composer/broadcast*.go"
+      - "internal/ui/composer/editor.go"
+      - "internal/ui/composer/linkdialog.go"
+      - "internal/ui/views/details.go"
+      - "internal/ui/slackc/kit/overlays.go"
+      - "internal/ui/mount_features.go"
+      - "internal/ui/dialog_keys*.go"
+      - ".github/workflows/dialog-keys.yml"
+  workflow_dispatch:
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb libgl1-mesa-dri libegl-mesa0
+  POPUP_TESTS: "TestModal|TestDeleteMessageKeys|TestDeleteFileKeys|TestDeleteSectionKeys|TestLeavePrivateChannelKeys|TestRenameSectionTab|TestNestedModalFocus"
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: focus return (refocus)
+        run: go test -count=1 -v ./internal/ui/refocus
+      - name: popups dialogs through the router
+        run: go test -count=1 -v -timeout 10m -run "$POPUP_TESTS" ./internal/ui/popups
+      - name: Block Kit confirm and modal
+        run: go test -count=1 -v -timeout 10m -run 'TestConfirmObjectKeys|TestBlockKitModalKeys' ./internal/ui/blockkit
+      - name: Notify N people over a real composer editor
+        run: go test -count=1 -v -timeout 10m -run 'TestBroadcastWarningKeys|TestBroadcastConfirm' ./internal/ui/composer
+      - name: Edit topic over channel details
+        run: go test -count=1 -v -timeout 10m -run 'TestEditTopicKeys' ./internal/ui
+      - name: screenshots (the focus ring, light and dark)
+        env:
+          DIALOG_KEYS_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$DIALOG_KEYS_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestDialogKeysShots$' ./internal/ui/
+          ls -l "$DIALOG_KEYS_SHOTS_DIR"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: dialog-keys-shots
+          path: dist/shots
