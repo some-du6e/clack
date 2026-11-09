@@ -48,6 +48,10 @@ type Size struct {
 	Usergroups int
 	History    int // messages per channel (conversations.history pages through them)
 	Unread     int // channels with unreads (core prefetches these)
+	// Gallery adds the blockkit-gallery fixture (bkgallery.go): the
+	// #blockkit-gallery channel and the areas' conversations, after the
+	// generated ones.
+	Gallery bool
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -187,6 +191,10 @@ type Server struct {
 	Calls   map[string]*atomic.Int64
 	// Latency is added to every API call (not images), to model a network.
 	Latency time.Duration
+	// Emit, when set, receives the realtime events the fake apps send
+	// (view_opened…) instead of the socket: tests running the client
+	// without realtime inject them (core.App.Inject). Set it before the calls.
+	Emit func(ev map[string]any)
 	// Hook, when set, sees every API call first; ok=true answers it with
 	// out (tests: hold a call back, fail it). Set it before the calls.
 	Hook func(method string, form url.Values) (out any, ok bool)
@@ -348,6 +356,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 		imgs: map[string][]byte{}, hist: map[string][]slack.Message{}, Calls: map[string]*atomic.Int64{},
 		prefs: DefaultPrefs(), drafts: map[string]*Draft{}, files: map[string]*UploadedFile{}}
 	s.generate()
+	if sz.Gallery {
+		s.addGalleryConvs() // the blockkit-gallery fixture (bkgallery.go)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", s.api)
 	mux.HandleFunc("/img/", s.img)
@@ -748,6 +759,9 @@ func ok(kv ...any) map[string]any {
 }
 
 func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMessage) any {
+	if out, handled := s.handleGallery(method, f); handled { // bkgallery*.go
+		return out
+	}
 	if out, handled := s.handleCanvases(method, f); handled { // canvas.go
 		return out
 	}
@@ -994,7 +1008,10 @@ func (s *Server) historyPage(f url.Values) any {
 	s.histMu.Lock()
 	msgs, okc := s.hist[ch]
 	if !okc {
-		msgs = s.history(ch)
+		var gallery bool
+		if msgs, gallery = s.galleryHistoryOf(ch); !gallery { // bkgallery.go
+			msgs = s.history(ch)
+		}
 		s.hist[ch] = msgs
 	}
 	s.histMu.Unlock()

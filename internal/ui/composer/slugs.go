@@ -281,3 +281,20 @@ func (c *Composer) resolvePendingSlugs(doc *Doc) {
 		replaceSlugLinks(doc, atoms, c.ed.slugs.pending, nil, nil)
 	}
 }
+
+// PasteText pastes s at the caret as a clipboard paste does (slugs
+// included). For tests and automation.
+func (c *Composer) PasteText(s string) {
+	c.ed.paste(s)
+	c.h.Invalidate()
+}
+
+// HasMessageSlug reports whether the draft holds a message slug.
+func (c *Composer) HasMessageSlug() bool {
+	for _, a := range c.ed.Doc().Attrs {
+		if a.Atom != nil && a.Atom.Kind == AtomMessage {
+			return true
+		}
+	}
+	return false
+}
