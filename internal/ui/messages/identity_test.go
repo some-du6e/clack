@@ -82,13 +82,16 @@ func firstOf(v ...string) string {
 // Slack's web client would (core/sender.go, core/badge.go).
 func TestSenderIdentityRender(t *testing.T) {
 	app, fs, cases := identityApp(t)
+	// one theme switched like the app does (SetDark bumps Gen, which
+	// drops body layouts shaped in the other mode)
+	th := theme.New(false)
 	for _, dark := range []bool{false, true} {
 		name := "light"
 		if dark {
 			name = "dark"
 		}
 		t.Run(name, func(t *testing.T) {
-			th := theme.New(dark)
+			th.SetDark(dark)
 			imgs := imgcache.New(fs.Fetch, "", nil)
 			h := identityHost{coreHost: coreHost{app: app, th: th}, imgs: imgs}
 			v := NewChannelView(h, fakeslack.IdentityChannelID)
@@ -96,7 +99,7 @@ func TestSenderIdentityRender(t *testing.T) {
 			var r input.Router
 			ops := new(op.Ops)
 			now := time.Now()
-			size := image.Pt(760, 1400)
+			size := image.Pt(760, 860)
 			frame := func() {
 				ops.Reset()
 				now = now.Add(20 * time.Millisecond)
