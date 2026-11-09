@@ -188,3 +188,49 @@ func TestPostingRestrictedRoadblock(t *testing.T) {
 	c.postAt = time.Time{}
 	e.until("composer unblocked", 5*time.Second, func() bool { return rb() == "" })
 }
+
+// Where a channel mention's link (messages/channel_links_test.go clicks
+// them: each navigates to c/<id>) lands, per kind of channel in
+// #channel-links: a channel the viewer is in (private or not) opens with
+// its composer, a public one they aren't in with Slack's join pane, an
+// archived one with the archived bar, and one on another workspace of
+// the org with the join pane too.
+func TestChannelLinkTargets(t *testing.T) {
+	sz := fakeslack.Small
+	sz.ChannelLinks = true
+	fs, err := fakeslack.Start(sz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { fs.Close() })
+	e := startEnv(t, fs, t.TempDir())
+	e.waitReady()
+	want := map[string]footerKind{
+		"member":            footNone,
+		"private member":    footNone,
+		"public non-member": footPreview,
+		"archived":          footArchived,
+		"other workspace":   footPreview,
+	}
+	for _, lc := range fs.ChannelLinkCases() {
+		f, ok := want[lc.Name]
+		if !ok {
+			continue // "hidden private" is no link; "in code" is the member channel again
+		}
+		e.openChannel(lc.ID)
+		if got := e.a.router.Current().Channel(); got != lc.ID {
+			t.Errorf("%s: route %q", lc.Name, e.a.router.Current())
+			continue
+		}
+		c := e.a.convoFor(lc.ID, "")
+		e.until(lc.Name+" footer", 20*time.Second, func() bool {
+			if f == footPreview {
+				return e.a.footerFor(c) == f && c.jp != nil && !c.jp.joinRect.Empty()
+			}
+			return e.a.footerFor(c) == f && e.a.convOf(lc.ID) != nil
+		})
+		if ci := e.a.convOf(lc.ID); ci == nil || ci.Name == "" || ci.Name == lc.ID {
+			t.Errorf("%s: header conv %+v", lc.Name, ci)
+		}
+	}
+}

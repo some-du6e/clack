@@ -55,6 +55,9 @@ type Size struct {
 	// registerGalleryConv in gallery.go) after the generated ones;
 	// #blockkit-gallery itself is always there.
 	Gallery bool
+	// ChannelLinks adds #channel-links and the channels its message
+	// mentions (channel_links.go).
+	ChannelLinks bool
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -387,6 +390,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.Gallery {
 		s.addGalleryConvs() // gallery.go
+	}
+	if sz.ChannelLinks {
+		s.addChannelLinks() // channel_links.go
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", s.api)
@@ -1019,7 +1025,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	case "edge/users/list":
 		return ok("results", s.users[:min(len(s.users), 50)], "next_marker", "")
 	case "edge/channels/info":
-		return ok("results", []any{}, "failed_ids", []string{})
+		var up map[string]int
+		_ = json.Unmarshal(edge["updated_ids"], &up)
+		return s.edgeChannelsInfo(up) // channel_links.go
 	case "edge/permissions/info":
 		var ch string
 		_ = json.Unmarshal(edge["channel_id"], &ch)

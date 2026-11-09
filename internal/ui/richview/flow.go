@@ -479,7 +479,12 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 				noAt = true
 				break
 			}
-			if sp.Kind != richtext.Broadcast {
+			if sp.Kind == richtext.Channel && sp.Off && sp.Lock {
+				// BaseMissingChannel's Nonexistent chip (richtext channel.go)
+				l.privateChannel(sp, fs, k, pt)
+				continue
+			}
+			if sp.Kind != richtext.Broadcast && !sp.Off { // Off: a channel the viewer can't see, not a link
 				tg = l.d.addTarget(target{kind: kind, id: sp.ID})
 			}
 			bg, fg := p.MentionBg, p.MentionText
@@ -508,7 +513,10 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 				cmp = l.addComp(compBox{kind: kind, span: *sp})
 				l.decos[dc].comp = cmp
 				if n := l.compState(cmp).name; n != "" && kind == compChannel {
-					txt = "#" + n
+					txt = n
+					if !sp.Lock {
+						txt = "#" + n
+					}
 				}
 				if kind == compUser && l.compState(cmp).noAt {
 					noAt = true // MemberSlug supressMentionAtSymbol
@@ -532,6 +540,11 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 		}
 		if dc >= 0 && l.decos[dc].padL > 0 {
 			l.addPad(l.decos[dc].padL, dc, k)
+		}
+		if sp.Kind == richtext.Channel && sp.Lock {
+			// a private channel the viewer is in: lock-filled, then its
+			// name without "#"
+			l.addIcon("lock-filled", fs.size, k, col, dc, tg)
 		}
 		if noAt {
 			txt = strings.TrimPrefix(txt, "@")

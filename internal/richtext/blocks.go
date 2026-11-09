@@ -698,8 +698,7 @@ func (c *builder) richInline(els []bk, pre bool) []Span {
 		case "usergroup":
 			out = append(out, usergroupSpan(c.r, e.UsergroupID, ""))
 		case "channel":
-			name := firstNonEmpty(c.r.ChannelName(e.ChannelID), e.ChannelID)
-			out = append(out, Span{Kind: Channel, Text: "#" + strings.TrimPrefix(name, "#"), ID: e.ChannelID})
+			out = append(out, channelSpan(c.r, e.ChannelID, ""))
 		case "emoji":
 			out = append(out, richEmoji(c.r, e))
 		case "message_mention":

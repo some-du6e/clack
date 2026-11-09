@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/emoji"
+	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 )
 
@@ -62,7 +63,8 @@ type Store struct {
 	// names of conversations we are not a member of (from search/browse)
 	names       map[string]string
 	prefsCached bool
-	ext         map[string]*slack.Conversation // non-sidebar conversations
+	ext         map[string]*slack.Conversation    // non-sidebar conversations
+	access      map[string]richtext.ChannelAccess // edge channels/info answers for mentioned channels
 	bots        map[string]BotInfo
 
 	// gen counts changes to what the disk cache holds; SaveCache writes
@@ -83,6 +85,40 @@ type Store struct {
 }
 
 // PutName remembers the name of a conversation outside the sidebar.
+// SetChannelAccess records what edge channels/info said about a channel
+// mentioned in a message: visible, private (the viewer is in it) or
+// hidden (in failed_ids). Memory only.
+func (s *Store) SetChannelAccess(id string, acc richtext.ChannelAccess) {
+	if id == "" {
+		return
+	}
+	s.mu.Lock()
+	if s.access == nil {
+		s.access = map[string]richtext.ChannelAccess{}
+	}
+	s.access[id] = acc
+	s.mu.Unlock()
+}
+
+// ChannelAccess is richtext.ChannelAccessResolver: a stored conversation
+// is visible (private ones with the lock), else what edge channels/info
+// said, else unresolved.
+func (s *Store) ChannelAccess(id string) richtext.ChannelAccess {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	c, ok := s.Convs[id]
+	if !ok {
+		c, ok = s.ext[id]
+	}
+	if ok {
+		if c.IsPrivate && !c.IsIM && !c.IsMPIM {
+			return richtext.ChannelPrivate
+		}
+		return richtext.ChannelVisible
+	}
+	return s.access[id]
+}
+
 func (s *Store) PutName(id, name string) {
 	if id == "" || name == "" {
 		return
