@@ -338,8 +338,12 @@ func (l *lay) v3TitleRow(a *richtext.Attachment, title []richtext.Span, author s
 		if len(title) > 0 {
 			ct := l.enter(attTitleClass)
 			l.addSpansTarget(title, &tfs, tg)
+			f0 := len(l.d.frags)
 			th, _ := l.flow(x, y, w, &tfs)
 			l.leave(ct)
+			if l.inAtt && l.mode&modeAtts != 0 && isYouTube(a) {
+				l.titleFrags = [2]int{f0, len(l.d.frags)} // AttachmentTitle (comps.go)
+			}
 			l.plainAdd("\n")
 			h += th
 		}
