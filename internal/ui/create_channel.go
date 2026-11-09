@@ -98,8 +98,8 @@ func (a *App) openCreateMenu(anchor image.Rectangle) {
 		{Key: "compose", Label: "Message", Icon: "compose", Subtitle: "Start a conversation in a DM or channel", Hint: "Ctrl+N", Do: a.compose},
 		{Key: "create-channel", Label: "Channel", Icon: "channel", Subtitle: "Start a group conversation by topic", Do: a.OpenCreateChannel},
 		{Key: "start_huddle", Label: "Huddle", Icon: "headphones", Subtitle: "Start a video or audio chat", Do: a.openHuddleStart},
-		{Key: "create_canvas", Label: "Canvas", Icon: "canvas", Subtitle: "Create and share content", Hint: "Ctrl+Shift+N", Do: a.CreateCanvas},
-		{Key: "create_list", Label: "List", Icon: "list-tab", Subtitle: "Track and manage projects", Do: unavailable("Lists aren’t available")},
+		{Key: "create_canvas", Label: "Canvas", Icon: "add-channel-canvas", Subtitle: "Create and share content", Hint: "Ctrl+Shift+N", Do: a.CreateCanvas},
+		{Key: "create_list", Label: "List", Icon: "lists", Subtitle: "Track and manage projects", Do: unavailable("Lists aren’t available")},
 		{Key: "create-workflow", Label: "Workflow", Icon: "play", Subtitle: "Automate everyday tasks", Do: unavailable("Workflow Builder isn’t available")},
 	}
 	if a.exp("meeting_assistant") == "on" {

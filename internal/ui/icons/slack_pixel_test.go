@@ -51,14 +51,18 @@ func TestIconsMatchSlack(t *testing.T) {
 	if err := json.Unmarshal(raw, &set); err != nil {
 		t.Fatal(err)
 	}
-	// The formatting bar (redrawn on Slack's centerlines): held to Slack's
-	// ink and shape. The others are drawn from their own sketches, so only
+	// The formatting bar and the section/Create menu glyphs (redrawn on
+	// Slack's centerlines): held to Slack's ink and shape. The others are drawn from their own sketches, so only
 	// their weight is reported.
 	strict := [][2]string{
 		{"bold", "bold"}, {"italic", "italic"}, {"underline", "underline"}, {"strike", "strikethrough"},
 		{"paragraph", "paragraph"}, {"link", "link"}, {"list-ordered", "numbered-list"},
 		{"list-bullet", "bulleted-list"}, {"quote", "quote"}, {"code", "code"},
 		{"code-block", "code-block"}, {"divider", "divider"},
+		// the sidebar section and Create menus
+		{"channel", "channel"}, {"user-add", "user-add"}, {"channel-search", "channel-search"},
+		{"mark-as-read", "mark-as-read"}, {"share-message", "share-message"}, {"lists", "lists"},
+		{"add-channel-canvas", "add-channel-canvas"},
 	}
 	report := [][2]string{
 		{"emoji", "emoji"}, {"mention", "mentions"}, {"plus", "plus"}, {"search", "search"},

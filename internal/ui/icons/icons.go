@@ -54,9 +54,11 @@ func sw(w float32, d string) part    { return part{d: d, stroke: w} }
 func f(d string) part                { return part{d: d} }
 func reg(name string, parts ...part) { registry[name] = &def{parts: parts} }
 
-// Get returns the named icon, or a visible placeholder box for unknown names
-// (so a typo shows up on screen instead of panicking). Unknown names are
-// logged once and listed by Missing.
+// Get returns the named icon (a Clack name, or a Slack SvgIcon name the
+// set maps), or a visible placeholder box for unknown names (so a typo
+// shows up on screen instead of panicking). Unknown names are logged once
+// and listed by Missing; TestIconRefsExist fails on any literal name in
+// the code that would draw the box.
 //
 // Kept small enough to inline: an inlined d.draw method value stays on the
 // caller's stack (row layouts call Get per frame; see messages'
@@ -68,8 +70,15 @@ func Get(name string) Icon {
 	return getMissing(name)
 }
 
+// getMissing resolves a name the registry lacks: a Slack SvgIcon name
+// (alias or suffixed) draws its counterpart, anything else the crossed box,
+// logged once.
+//
 //go:noinline
 func getMissing(name string) Icon {
+	if n, ok := slackLookup(name); ok {
+		return registry[n].draw
+	}
 	noteMissing(name, "missing")
 	return registry["missing"].draw
 }
