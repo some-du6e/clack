@@ -423,9 +423,15 @@ func TestSectionMenuActions(t *testing.T) {
 
 	// Share ▸ Copy section link
 	do(custom(), false, "Share", "Copy section link")
-	e.until("link copied", 10*time.Second, func() bool { return a.toast.text == "Section link copied" })
-	if !strings.Contains(a.clipboard, "/section/") || fs.SectionLinks()[0].Get("section_name") != "Projects" {
-		t.Errorf("clipboard %q", a.clipboard)
+	var copied string
+	e.until("link copied", 10*time.Second, func() bool {
+		if _, b, ok := e.r.WriteClipboard(); ok {
+			copied = string(b)
+		}
+		return a.toast.text == "Section link copied" && copied != ""
+	})
+	if !strings.Contains(copied, "/section/") || fs.SectionLinks()[0].Get("section_name") != "Projects" {
+		t.Errorf("clipboard %q", copied)
 	}
 
 	// Create menu: Canvas makes a standalone canvas; Huddle picks a conversation

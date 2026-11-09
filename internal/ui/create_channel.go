@@ -165,7 +165,7 @@ func (a *App) sbHeadingControls(gtx layout.Context, r *sbRow, hovered bool, sz i
 		event.Op(gtx.Ops, tag)
 	}()
 	sec := a.sectionByID(r.key)
-	if sec == nil || a.sectionMenuItems(sec) == nil {
+	if sec == nil { // every section has a ⋯ menu (section_menu.go)
 		return
 	}
 	more, plus := a.clicks.get("sbh.more."+r.key), a.clicks.get("sbh.plus."+r.key)
