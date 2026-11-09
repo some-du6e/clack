@@ -17,6 +17,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/hovercard"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/openurl"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
@@ -946,10 +947,19 @@ func pfSetStatus(h Host) {
 }
 
 // pfMoreItems is the ⋮ menu of the card (withFull adds "View full
-// profile") and of the full profile.
+// profile") and of the full profile: Slack's RimetoMemberProfileOverflowMenu
+// template (gantry-v2-async-client-boot-shared module DqK0, 2026-11-08).
+//
+//	Copy display name: @<display or real name>      (not for apps)
+//	yourself: — View preferences, Account settings ↗ — View your files,
+//	          Set yourself away | Set yourself active
+//	others:   — View files                          (not for bots)
+//	— Copy member ID, Copy link to profile          (clipboard available)
+//
+// Share contact, Report to Slack, Hide <name>, the passkey item and Sign
+// out sit behind workspace settings and experiments Clack doesn't have.
 func pfMoreItems(h Host, u core.User, withFull bool, closeCard func()) []MenuItem {
 	id := u.ID
-	name := pfName(u)
 	var items []MenuItem
 	if withFull {
 		items = append(items, MenuItem{Label: "View full profile", Do: func() {
@@ -959,11 +969,47 @@ func pfMoreItems(h Host, u core.User, withFull bool, closeCard func()) []MenuIte
 			pfOpenFull(h, id)
 		}}, Sep())
 	}
-	items = append(items,
-		MenuItem{Label: "Copy display name", DoCtx: func(gtx layout.Context) {
-			copyText(gtx, name)
+	sep := func() {
+		if n := len(items); n > 0 && !items[n-1].Separator {
+			items = append(items, Sep())
+		}
+	}
+	if mention := pfMentionName(u); mention != "" && !u.IsBot {
+		items = append(items, MenuItem{Key: "copy_display_name", Label: "Copy display name: @" + mention, DoCtx: func(gtx layout.Context) {
+			copyText(gtx, mention)
 			h.Toast("Display name copied")
-		}},
+		}})
+	}
+	files := func(label string) MenuItem {
+		return MenuItem{Label: label, Do: func() { h.Toast("Searching files isn't supported yet") }}
+	}
+	if pfIsSelf(h, id) {
+		sep()
+		items = append(items,
+			MenuItem{Label: "View preferences", Do: actPreferences(h)},
+			MenuItem{Label: "Account settings", External: true, Do: func() {
+				if err := openurl.Open("https://" + teamDomain(h) + ".slack.com/account/settings"); err != nil {
+					h.Toast("Couldn't open the browser: " + errText(err))
+				}
+			}},
+			Sep(),
+			files("View your files"),
+		)
+		if u.Presence == "away" {
+			items = append(items, MenuItem{Label: "Set yourself active", Do: func() {
+				actDo(h, "You're set to active", func(ctx context.Context, a *core.App) error { return a.SetPresence(ctx, "auto") })
+			}})
+		} else {
+			items = append(items, MenuItem{Label: "Set yourself away", Do: func() {
+				actDo(h, "You're set to away", func(ctx context.Context, a *core.App) error { return a.SetPresence(ctx, "away") })
+			}})
+		}
+	} else if !u.IsBot || pfIsSlackbot(u) {
+		sep()
+		items = append(items, files("View files"))
+	}
+	sep()
+	items = append(items,
 		MenuItem{Label: "Copy member ID", DoCtx: func(gtx layout.Context) {
 			copyText(gtx, id)
 			h.Toast("Member ID copied")
@@ -974,6 +1020,18 @@ func pfMoreItems(h Host, u core.User, withFull bool, closeCard func()) []MenuIte
 		}},
 	)
 	return items
+}
+
+// pfMentionName is getMemberMentionName: the display name, else the real
+// name ("" when both are blank).
+func pfMentionName(u core.User) string {
+	switch {
+	case !pfBlank(u.Name):
+		return u.Name
+	case !pfBlank(u.RealName):
+		return u.RealName
+	}
+	return ""
 }
 
 // pfImage draws url as a size-dp square with corner radius rad dp.

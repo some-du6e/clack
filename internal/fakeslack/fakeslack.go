@@ -472,6 +472,7 @@ func (s *Server) generate() {
 		}
 		s.users = append(s.users, u)
 	}
+	s.setupSelfProfile() // profile.go: no random draws
 	// emoji
 	s.emoji = make(map[string]string, s.Size.Emoji+s.Size.Emoji/100)
 	var names []string
@@ -776,6 +777,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	switch method {
 	case "auth.test":
 		return ok("url", s.URL, "team", "Fake Club", "user", "self", "team_id", TeamID, "user_id", SelfID, "enterprise_id", EnterpriseID)
+	case "users.profile.getSections":
+		return s.profileSections(f) // profile.go
 	case "users.conversations":
 		s.convMu.Lock()
 		cs := append([]slack.Conversation(nil), s.convs...)

@@ -136,6 +136,20 @@ var darkColors = Colors{
 // stylesheet overriding Slack's tokens (a Slick theme, user.css) that set
 // with the tokens laid over it.
 func colorsOf(th *theme.Theme) *Colors {
+	c := baseColorsOf(th)
+	if th != nil {
+		def := theme.LightPalette.Presence
+		if th.Dark {
+			def = theme.DarkPalette.Presence
+		}
+		if p := th.C.Presence; p != def && p.A != 0 && p != c.Presence {
+			return withPresence(c, p)
+		}
+	}
+	return c
+}
+
+func baseColorsOf(th *theme.Theme) *Colors {
 	if c := themedColors(th); c != nil {
 		return c
 	}
@@ -143,6 +157,37 @@ func colorsOf(th *theme.Theme) *Colors {
 		return &darkColors
 	}
 	return &lightColors
+}
+
+// Slack paints the active presence dot with the account theme's
+// highlight (.c-presence--active{color: var(--dt_color-theme-base-inv-hgl-2)},
+// modern.vendor CSS 2026-11-08), which theme.ApplyIAFields puts in
+// th.C.Presence when the theme isn't Slack's default. withPresence is c
+// with that colour, cached per (palette, colour).
+var (
+	presMu    sync.Mutex
+	presCache = map[presKey]*Colors{}
+)
+
+type presKey struct {
+	base *Colors
+	col  color.NRGBA
+}
+
+func withPresence(c *Colors, p color.NRGBA) *Colors {
+	presMu.Lock()
+	defer presMu.Unlock()
+	k := presKey{c, p}
+	if v, ok := presCache[k]; ok {
+		return v
+	}
+	if len(presCache) > 32 {
+		presCache = map[presKey]*Colors{}
+	}
+	v := *c
+	v.Presence = p
+	presCache[k] = &v
+	return &v
 }
 
 // popupTokens is the Slack token behind each Colors field, read from the

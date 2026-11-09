@@ -124,6 +124,9 @@ var entMethods = map[string]bool{
 	"search.modules.messages": true, "search.modules.files": true, "commands.list": true,
 	"sidebar.dms": true, // team host: team_is_restricted (verified 2026-11-08)
 	"bots.info":   true, // the team host answers bots_not_found for org apps (verified)
+	// the full profile (popups.ProfileView): team host answers
+	// team_is_restricted (verified 2026-11-08)
+	"users.profile.getSections": true,
 }
 
 // MaxConcurrent bounds in-flight Web API requests (be gentle with rate limits).
