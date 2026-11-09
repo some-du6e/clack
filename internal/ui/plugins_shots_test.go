@@ -36,10 +36,10 @@ func synthTaut(id, name, desc, cat string, broken bool) []byte {
 	return []byte(`(() => {
 const TautPlugin = globalThis.TautPlugin
 class ` + id + ` extends TautPlugin {
-  static id = '` + id + `'
-  static pluginName = '` + name + `'
-  static description = '` + desc + `'
-  static category = '` + cat + `'
+  static id = ` + jsStr(id) + `
+  static pluginName = ` + jsStr(name) + `
+  static description = ` + jsStr(desc) + `
+  static category = ` + jsStr(cat) + `
   static authors = ['jeremy']
   static defaultConfig = { enabled: false }
   ` + start + `
@@ -51,14 +51,15 @@ return ` + id + `
 
 // synthSlick is a Slick renderer in build:plugin's shape.
 func synthSlick(id, name, desc, cat string) []byte {
-	return []byte(`// slick-plugin {"id":"` + id + `","name":"` + name + `","description":"` + desc + `"}
+	hdr, _ := json.Marshal(map[string]string{"id": id, "name": name, "description": desc})
+	return []byte(`// slick-plugin ` + string(hdr) + `
 (globalThis.__slickPlugins ??= []).push((require) => {
 var import_slick = require("$slick");
 class ` + id + ` extends import_slick.SlickPlugin {
-  static id = "` + id + `";
-  static pluginName = "` + name + `";
-  static description = "` + desc + `";
-  static category = "` + cat + `";
+  static id = ` + jsStr(id) + `;
+  static pluginName = ` + jsStr(name) + `;
+  static description = ` + jsStr(desc) + `;
+  static category = ` + jsStr(cat) + `;
   static settings = {};
   static requiredAPIs = [];
   start() {}
@@ -279,4 +280,10 @@ func TestPluginsPrefsShots(t *testing.T) {
 
 func pointerMove(p image.Point) pointer.Event {
 	return pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(float32(p.X), float32(p.Y))}
+}
+
+// jsStr is s as a JS string literal.
+func jsStr(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }
