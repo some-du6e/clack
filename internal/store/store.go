@@ -154,6 +154,17 @@ type Prefs struct {
 	// (Notifications > "Include a preview of the message"): desktop
 	// notifications show no message text.
 	NoTextInNotifications bool `json:"no_text_in_notifications,omitempty"`
+	// NoDesktopPush is global_desktop_push_enabled=false (Notifications >
+	// "Desktop notifications" off): no desktop notifications at all.
+	NoDesktopPush bool `json:"no_desktop_push,omitempty"`
+	// SendOnModEnter is msg_input_send_btn (Advanced > "When writing a
+	// message, press Enter to… Start a new line"): Enter adds a line and
+	// Mod+Enter sends.
+	SendOnModEnter bool `json:"msg_input_send_btn,omitempty"`
+	// HiddenViews are the Home > "Always show in the sidebar" links turned
+	// off: enable_threads_view, enable_huddles_home_view, enable_sent_view,
+	// enable_saved_view, enable_unified_directory_view (=false).
+	HiddenViews []string `json:"hidden_views,omitempty"`
 
 	// Render prefs (Preferences dialog). Named so the zero value is
 	// Slack's default: the disk cache drops false fields.
@@ -299,6 +310,12 @@ func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
 	p.HasStarredItem = boolean("has_starred_item", false)
 	p.ActivityDMsOptOut = boolean("activity_dms_opt_out", false)
 	p.CompactRail = boolean("ia4_compact_mode", false)
+	p.SendOnModEnter = boolean("msg_input_send_btn", false)
+	for _, k := range []string{"enable_threads_view", "enable_huddles_home_view", "enable_sent_view", "enable_saved_view", "enable_unified_directory_view"} {
+		if !boolean(k, true) {
+			p.HiddenViews = append(p.HiddenViews, k)
+		}
+	}
 	// Slack calls the Google set "android"/"google"; everything else is Apple.
 	switch p.EmojiMode {
 	case "android", "google":
@@ -366,6 +383,10 @@ func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
 			_ = json.Unmarshal(n.Global["global_mobile"], &gm)
 			p.GlobalDesktop, p.GlobalMobile = gd, gm
 			p.NoTextInNotifications = truthy(n.Global["no_text_in_notifications"])
+			if r, ok := n.Global["global_desktop_push_enabled"]; ok { // absent: on
+				v := strings.Trim(string(r), `"`)
+				p.NoDesktopPush = v == "false" || v == "0"
+			}
 		}
 	}
 	p.Muted = make([]string, 0, len(muted))

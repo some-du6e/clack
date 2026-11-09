@@ -50,7 +50,7 @@ import (
 func (a *App) sidebarProps() slackc.Props {
 	s := &a.sidebar
 	m := a.model()
-	if s.rows == nil || s.builtFor != m.version {
+	if s.rows == nil || s.builtFor != m.version || s.viewsFor != sbViewsKey() {
 		s.rebuild(m)
 	}
 	if s.propRows == nil || s.propsGen != s.gen {

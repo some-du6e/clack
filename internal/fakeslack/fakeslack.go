@@ -261,9 +261,16 @@ func DefaultPrefs() map[string]any {
 		"separate_private_channels": false, "undo_channel_intermix": false,
 		"boost_mentions": false, "show_muted_items_outside_sidebar_menus": false, "plain_text_mode": false,
 		"huddles_mute_by_default": false, "huddles_set_status": true, "huddles_disconnect_on_lock": true,
+		// Preferences audit (2026-11-08): the rest of the dialog's keys
+		"msg_input_send_btn": false, "ia4_compact_mode": false, "preferred_skin_tone": "",
+		"enable_unread_view": false, "enable_threads_view": true, "enable_huddles_home_view": true,
+		"enable_sent_view": true, "enable_saved_view": true, "enable_unified_directory_view": true,
+		"huddles_allow_smart_notif": true, "inactive_user_summary_notification": false, "activity_dms_opt_out": false,
+		"overloaded_message_enabled": true, "in_prod_surveys_enabled": true,
 		"all_notifications_prefs": `{"channels":{},"global":{"global_desktop":"mentions_dms","global_mobile":"mentions_dms",` +
 			`"global_keywords":"","no_text_in_notifications":false,"push_idle_wait":0,"threads_everything":true,` +
-			`"desktop_sound":"knock_brush.mp3"}}`,
+			`"desktop_sound":"knock_brush.mp3","global_desktop_push_enabled":true,"global_channels_in_activity":false,` +
+			`"global_reminders_in_activity":true}}`,
 	}
 }
 

@@ -95,6 +95,16 @@ func (e *Editor) command(gtx layout.Context, k key.Event) {
 			}
 			return
 		}
+		if uipref.Get().SendOnModEnter {
+			// Advanced > "When writing a message, press Enter to… Start a
+			// new line" (msg_input_send_btn): Mod+Enter sends.
+			if short {
+				e.emit(EvSubmit)
+			} else {
+				e.enter(true)
+			}
+			return
+		}
 		e.enter(mods != 0)
 	case key.NameEscape:
 		e.emit(EvCancel)

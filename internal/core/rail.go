@@ -280,3 +280,38 @@ func (r RailState) HomeBadge(channelsUnread bool, dmCount int) (count int, dot b
 	}
 	return 0, channelsUnread
 }
+
+// RailCustomization is 5ydT.b: tab_rail_customization merged over each
+// tab's default, forced tabs true. Setting one entry and writing the map
+// back is setTabRailCustomizationByTabName.
+func (a *App) RailCustomization() map[string]bool {
+	a.S.RLock()
+	p := a.S.Prefs
+	a.S.RUnlock()
+	f := railFacts{exp: a.experiment, prefs: p}
+	m := map[string]bool{}
+	for _, t := range railDefaultOrder {
+		m[t] = f.railDefault(t)
+	}
+	for t, v := range p.TabRailCustomization {
+		m[t] = v
+	}
+	for _, t := range railDefaultOrder {
+		if railForced(t) {
+			m[t] = true
+		}
+	}
+	return m
+}
+
+// RailOrder is the full tab order (Ozeq.j) tab_rail_customization_order
+// is written as.
+func (a *App) RailOrder() []string {
+	a.S.RLock()
+	p := a.S.Prefs
+	a.S.RUnlock()
+	return railOrder(p)
+}
+
+// RailForced reports a tab Navigation can't turn off (cR2m).
+func RailForced(tab string) bool { return railForced(tab) }

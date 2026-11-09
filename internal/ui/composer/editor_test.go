@@ -675,3 +675,28 @@ func TestEnterIsSpecialInCode(t *testing.T) {
 		t.Fatal("Enter in a paragraph didn't send")
 	}
 }
+
+// Advanced > "When writing a message, press Enter to… Start a new line"
+// (msg_input_send_btn): Enter adds a line, Mod+Enter sends.
+func TestSendOnModEnter(t *testing.T) {
+	t.Cleanup(uipref.Reset)
+	uipref.Set(store.Prefs{SendOnModEnter: true})
+	e := NewEditor()
+	edType(e, "hi")
+	e.events = nil
+	edPress(e, key.NameReturn, 0)
+	if edHas(e, EvSubmit) || len(e.doc.Lines) != 2 {
+		t.Fatalf("Enter: submit=%v lines %d", edHas(e, EvSubmit), len(e.doc.Lines))
+	}
+	edPress(e, key.NameReturn, key.ModShortcut)
+	if !edHas(e, EvSubmit) {
+		t.Fatal("Mod+Enter didn't send")
+	}
+	uipref.Set(store.Prefs{})
+	e = NewEditor()
+	edType(e, "hi")
+	edPress(e, key.NameReturn, 0)
+	if !edHas(e, EvSubmit) {
+		t.Fatal("Enter didn't send with the pref off")
+	}
+}
