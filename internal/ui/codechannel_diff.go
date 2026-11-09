@@ -1184,4 +1184,3 @@ func (v *codeDiffView) layoutTree(gtx layout.Context, files []core.CodeDiffFile)
 		})
 	})
 }
-
