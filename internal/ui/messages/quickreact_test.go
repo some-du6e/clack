@@ -33,7 +33,7 @@ func TestQuickReactionsFollowPrefs(t *testing.T) {
 	if len(q.names) != 0 {
 		t.Fatalf("shown with the pref off: %v", q.names)
 	}
-	on := store.Prefs{MorePrefs: store.MorePrefs{QuickReactions: true}, SkinTone: "3", FrequentEmoji: []string{"tada", "fire", "smile", "eyes"}}
+	on := store.Prefs{MorePrefs: store.MorePrefs{QuickReactions: true}, SkinTone: "3"}
 	set(on, nil)
 	if want := []string{"white_check_mark", "eyes", "raised_hands::skin-tone-3"}; !reflect.DeepEqual(q.names, want) {
 		t.Fatalf("defaults %v, want %v", q.names, want)
@@ -45,7 +45,8 @@ func TestQuickReactionsFollowPrefs(t *testing.T) {
 	if q.names[1] != "heart" || q.tip(0) != ":white_check_mark:" {
 		t.Fatalf("custom %v %q", q.names, q.tip(0))
 	}
-	set(on, map[string]any{"user_customized_quick_reactions_use_frequently_used_emoji": true})
+	set(on, map[string]any{"user_customized_quick_reactions_use_frequently_used_emoji": true,
+		"emoji_use": `{"tada":9,"fire":5,"smile":3,"eyes":1}`})
 	if want := []string{"tada", "fire", "smile"}; !reflect.DeepEqual(q.names, want) {
 		t.Fatalf("frequent %v", q.names)
 	}

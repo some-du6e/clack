@@ -7,8 +7,8 @@
 // of the shell with full-window constraints and routes Escape to Dismiss.
 // Overlays also close themselves on Escape and outside clicks.
 //
-// Scraping policy: nothing here writes message contents to disk. The only
-// file this package persists is the emoji frecency list (emoji names).
+// Scraping policy: nothing here writes message contents to disk (emoji
+// frecency lives in Slack's own frecency pref, core/frecency.go).
 package popups
 
 import (

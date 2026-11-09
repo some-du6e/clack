@@ -41,6 +41,8 @@ type rxnUserArgs struct {
 	Key  string `json:"key"`
 	Name string `json:"name"`
 	Add  *bool  `json:"add,omitempty"`
+	// SkipFrecencyRecord: the emoji picker already recorded the pick.
+	SkipFrecencyRecord bool `json:"skipFrecencyRecord,omitempty"`
 }
 
 // rxnSubmitArgs is submitAddOrRemoveReaction {reactionKey, name, add}.
