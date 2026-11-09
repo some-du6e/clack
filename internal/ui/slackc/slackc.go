@@ -18,6 +18,7 @@ package slackc
 
 import (
 	"image"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -149,6 +150,20 @@ func SetPatched(names []string) {
 		patched.Store(&m)
 	}
 	invalidate()
+}
+
+// PatchedNames lists the components a plugin patches now, sorted.
+func PatchedNames() []string {
+	m := patched.Load()
+	if m == nil {
+		return nil
+	}
+	out := make([]string, 0, len(*m))
+	for n := range *m {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Patched reports whether a plugin patches name. Cheap: an atomic load,

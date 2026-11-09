@@ -30,7 +30,7 @@ func (a *App) OpenURL(uri string) {
 				u := argStr(args, "uri")
 				ok := a.openDeepLink(u)
 				if !ok {
-					log.Printf("ui: deep link not handled: %.80s", u)
+					log.Printf("ui: deep link not handled: %.80s", noQuery(u)) // the query can name a search or a message
 				}
 				return ok, nil
 			})

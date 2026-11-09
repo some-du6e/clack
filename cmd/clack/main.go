@@ -20,6 +20,7 @@ import (
 	"gioui.org/io/event"
 
 	"github.com/some-du6e/yoloslackgoclient/assets/icon"
+	"github.com/some-du6e/yoloslackgoclient/internal/applog"
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/desktop"
 	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
@@ -90,9 +91,12 @@ func main() {
 		attachConsole()
 		os.Exit(updateCLI(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 	}
-	// Last line of defence: no token or cookie reaches the log, whatever
-	// an error string quotes.
-	log.SetOutput(slack.RedactWriter(os.Stderr))
+	// The log goes to stderr (as before) and, redacted, to a rotating file
+	// in the OS's log folder (applog.Dir: ~/Library/Logs/Clack on macOS),
+	// so a Clack started from the Dock keeps its evidence. The file opens
+	// on the log writer's goroutine; no line ever waits for the disk. No
+	// token or cookie reaches either, whatever an error string quotes.
+	logs := applog.Start(os.Stderr)
 	// Every request to Slack names this build: "Clack/<version> (+…)".
 	slack.SetVersion(version)
 	// Finder on old macOS versions passes -psn_<n>; the flag package
@@ -147,6 +151,7 @@ func main() {
 		return
 	}
 
+	log.Printf("clack %s starting (%s/%s, %s)", version, runtime.GOOS, runtime.GOARCH, runtime.Version())
 	cfg := configDir()
 	// One Clack per user (and config dir): a second launch, or the OS
 	// running `clack slack://…` for a link, hands it to the running one.
@@ -173,6 +178,7 @@ func main() {
 		}
 	}
 	opts := ui.Options{ConfigDir: cfg, Dark: *dark, Started: started, NoRealtime: *noRealtime,
+		LogDir: logs.Dir(), LogTail: logs.Tail,
 		SignOut: func() {
 			setLive(nil)
 			liveMu.Lock()
@@ -317,10 +323,13 @@ func main() {
 		}
 		tray.Close()
 		inst.Close()
+		code := 0
 		if err != nil {
-			log.Fatal(err)
+			log.Print(err)
+			code = 1
 		}
-		os.Exit(0)
+		logs.Close(time.Second) // what's still queued for the log file
+		os.Exit(code)
 	}()
 	// app.Events replaces app.Main: macOS delivers slack:// links opened
 	// while Clack runs (or that launched it) as URLEvents.

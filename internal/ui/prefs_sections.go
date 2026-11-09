@@ -629,7 +629,8 @@ func (p *prefsModal) advancedPage(f *prefsForm) {
 	}
 	f.option("realtime", "Live updates (typing, presence, instant messages)", rtHint, a.realtimeOn(), false, a.toggleRealtime)
 	f.note("Clack shares your browser's Slack session. On some Enterprise Grid workspaces Slack can sign that session out everywhere if it notices.", true, 2)
-	p.updatesSection(f) // update_check.go
+	p.updatesSection(f)         // update_check.go
+	p.troubleshootingSection(f) // diagnostics.go
 }
 
 // confirmMarkAllRead is Shift+Esc: with confirm_clear_all_unreads (Mark

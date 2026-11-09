@@ -2,6 +2,7 @@ package composer
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gioui.org/io/event"
@@ -72,6 +73,7 @@ func KeepFocus(gtx layout.Context) {
 		if !gtx.Focused(e) {
 			continue
 		}
+		focusStats.held.Add(1)
 		for { // its focus filter makes it focusable; keep what arrives for its next draw
 			ev, ok := gtx.Event(key.FocusFilter{Target: e})
 			if !ok {
@@ -84,6 +86,17 @@ func KeepFocus(gtx layout.Context) {
 			event.Op(gtx.Ops, e)
 		}()
 	}
+}
+
+// focusStats counts, for the missed-frame log line (ui: focus_log.go),
+// the frames in which KeepFocus held a focused editor's focus, and the
+// drops Gio made anyway that restoreDroppedFocus saw, with how many it
+// gave the focus back for.
+var focusStats struct{ held, dropped, restored atomic.Int64 }
+
+// TakeFocusStats returns the counts since the last call and zeroes them.
+func TakeFocusStats() (held, dropped, restored int64) {
+	return focusStats.held.Swap(0), focusStats.dropped.Swap(0), focusStats.restored.Swap(0)
 }
 
 // nextKeyEvent is the editor's next key event: first what KeepFocus read

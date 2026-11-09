@@ -90,6 +90,12 @@ type Options struct {
 	// NoRealtime keeps Slack's realtime websocket closed whatever the
 	// saved preference says (cmd/clack -no-realtime, CLACK_NO_REALTIME=1).
 	NoRealtime bool
+	// LogDir is the folder of Clack's log file (cmd/clack: applog.Dir),
+	// for Help > Open Logs Folder. "": no log file.
+	LogDir string
+	// LogTail returns up to n of the newest redacted log lines, for Copy
+	// Diagnostics. Called off the UI goroutine. Nil: none.
+	LogTail func(n int) []string
 }
 
 // SetLogin shows the sign-in screen, calling login on submit.
@@ -194,8 +200,7 @@ type App struct {
 	body           bodyDraw                   // the primary body's last live draw (keepBody)
 	standIn        bool                       // keepBody's draw is running
 	standIns       int                        // keepBody draws so far
-	standInsLogged int                        // standIns at the last log line
-	standInLogged  time.Time                  // when it was logged
+	missedFrameLog focusLog                   // the missed-frame log line (focus_log.go)
 	panelOrigin    image.Point                // the primary panel's window origin this frame
 
 	swipe         swiper          // trackpad history swipes (swipe.go, nav.go)
@@ -572,6 +577,7 @@ func (a *App) frame(gtx layout.Context) {
 	a.rootPointer(gtx)
 	a.keys.processGlobal(gtx) // last: only the keys no widget took
 	composer.KeepFocus(gtx)   // a focused editor this frame didn't draw stays focused
+	a.logMissedFrames(gtx)    // after KeepFocus: what it held this frame
 }
 
 // ---- primary panel ----

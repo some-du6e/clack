@@ -128,6 +128,8 @@ Help [help]
   ---
   Release Notes||→
   Show Freeze Reports||→
+  Open Logs Folder||→
+  Copy Diagnostics||→
   About Clack||orderFrontStandardAboutPanel:
 `
 
