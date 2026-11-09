@@ -11,8 +11,8 @@ import (
 )
 
 // prefsForm lays out one Preferences page top to bottom: Slack's section
-// headings (700 18px/24), checkbox and radio rows (18px box, 15px label,
-// 13px hint) and muted notes. Rows keep their own clickables on the modal
+// headings (700 18px/24), checkbox and radio rows (the browser's 13px box,
+// 15px label, hint) and muted notes, in prefsColors. Rows keep their own clickables on the modal
 // (keyed), so a page is just a sequence of calls each frame.
 type prefsForm struct {
 	p   *prefsModal
@@ -71,8 +71,9 @@ func (f *prefsForm) note(text string, indent bool, lines int) {
 	}
 	f.record("text", "", text, false, true)
 	h := gtx.Dp(18) * lines
+	pc := f.p.colors()
 	at(gtx, image.Pt(x, f.y), image.Pt(f.w-x, h+gtx.Dp(2)), func(gtx layout.Context) layout.Dimensions {
-		return a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: a.th.C.FgMuted, MaxLines: lines}, text)
+		return a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: pc.on(a.th, pc.note), MaxLines: lines}, text)
 	})
 	f.y += h + gtx.Dp(10)
 }
@@ -86,7 +87,7 @@ func (f *prefsForm) option(key, label, hint string, on, radio bool, do func()) {
 // (settings Clack shows the way Slack does but can't change yet).
 func (f *prefsForm) optionAt(key, label, hint string, on, radio, enabled bool, do func()) {
 	gtx, a := f.gtx, f.p.a
-	c := &a.th.C
+	pc := f.p.colors()
 	b := f.p.btn(key)
 	kind := "check"
 	if radio {
@@ -94,7 +95,10 @@ func (f *prefsForm) optionAt(key, label, hint string, on, radio, enabled bool, d
 	}
 	f.record(kind, key, label, on, enabled)
 	w := f.w
-	textW := max(1, w-gtx.Dp(28))
+	// the box is the browser's (appearance:auto, 13px) with
+	// .c-input_checkbox's margin-right 12px before the label
+	lx := gtx.Dp(theme.NativeCheckSize + 12)
+	textW := max(1, w-lx)
 	labelLines := 1 + a.th.Measure(gtx, 15, theme.Regular, label)/textW // long labels wrap, like Slack's
 	rowH := gtx.Dp(6) + labelLines*gtx.Dp(22)
 	hintLines := 0
@@ -104,40 +108,25 @@ func (f *prefsForm) optionAt(key, label, hint string, on, radio, enabled bool, d
 	}
 	at(gtx, image.Pt(0, f.y), image.Pt(w, rowH), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, b, nil, func(gtx layout.Context) layout.Dimensions {
-			s := gtx.Dp(18)
-			r := image.Rect(0, gtx.Dp(3), s, gtx.Dp(3)+s)
-			rad := gtx.Dp(4)
-			if radio {
-				rad = s / 2
+			fg, sub := pc.text, pc.subtext
+			st := theme.NativeCheckState{Radio: radio, On: on, Hover: enabled && b.Hovered()}
+			if !enabled { // Slack's .c-input_checkbox--disabled and .c-label--disabled
+				st.Opacity = .38
+				fg = pc.disText
 			}
-			fill := c.Link
-			fg := c.Fg
-			if !enabled {
-				fill = c.FgSubtle
-				fg = c.FgSubtle
-			}
-			if on {
-				theme.RRect(gtx, r, rad, fill)
-				if radio {
-					theme.Circle(gtx, r.Min.Add(image.Pt(s/2, s/2)), s*4/9, c.Bg)
-				} else {
-					at(gtx, r.Min, image.Pt(s, s), func(gtx layout.Context) layout.Dimensions {
-						return icons.Get("check")(gtx, 18, c.SendText)
-					})
-				}
-			} else {
-				theme.RRect(gtx, r, rad, c.Bg)
-				theme.Border(gtx, r, rad, gtx.Dp(1), c.BorderStrong)
-			}
-			at(gtx, image.Pt(gtx.Dp(28), 0), image.Pt(w-gtx.Dp(28), labelLines*gtx.Dp(22)+gtx.Dp(2)), func(gtx layout.Context) layout.Dimensions {
+			// baseline-aligned with the label's first line (.c-label--inline)
+			at(gtx, image.Pt(0, gtx.Dp(4)), image.Pt(gtx.Dp(theme.NativeCheckSize), gtx.Dp(theme.NativeCheckSize)), func(gtx layout.Context) layout.Dimensions {
+				return theme.NativeCheck(gtx, pc.dark, st)
+			})
+			at(gtx, image.Pt(lx, 0), image.Pt(w-lx, labelLines*gtx.Dp(22)+gtx.Dp(2)), func(gtx layout.Context) layout.Dimensions {
 				if labelLines == 1 {
 					return a.th.Label(gtx, 15, theme.Regular, fg, label)
 				}
 				return a.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Color: fg, MaxLines: labelLines + 1}, label)
 			})
 			if hint != "" {
-				at(gtx, image.Pt(gtx.Dp(28), labelLines*gtx.Dp(22)+gtx.Dp(2)), image.Pt(w-gtx.Dp(28), hintLines*gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
-					return a.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Color: c.FgMuted, MaxLines: hintLines + 1}, hint)
+				at(gtx, image.Pt(lx, labelLines*gtx.Dp(22)+gtx.Dp(2)), image.Pt(w-lx, hintLines*gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
+					return a.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Color: sub, MaxLines: hintLines + 1}, hint)
 				})
 			}
 			return layout.Dimensions{Size: image.Pt(w, rowH)}
@@ -182,8 +171,9 @@ func (f *prefsForm) muted(t string, indent bool) {
 	if indent {
 		x = gtx.Dp(28)
 	}
+	pc := f.p.colors() // the dialog's p: rgba(var(--sk_foreground_max),.7)
 	d := at(gtx, image.Pt(x, f.y), image.Pt(f.w-x, gtx.Dp(400)), func(gtx layout.Context) layout.Dimensions {
-		return a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: a.th.C.FgMuted}, t)
+		return a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: pc.on(a.th, pc.note)}, t)
 	})
 	f.y += d.Size.Y + gtx.Dp(10)
 }
@@ -214,26 +204,24 @@ func (f *prefsForm) off(key, label, hint string, on, radio bool) {
 // enabled, a click opens items as a menu at the pointer.
 func (f *prefsForm) selectBox(key, label, value string, enabled bool, items []MenuItem) {
 	gtx, a := f.gtx, f.p.a
-	c := &a.th.C
+	pc := f.p.colors()
 	if label != "" {
 		f.subheading(label)
 	}
 	f.record("select", "sel."+key, value, false, enabled)
 	b := f.p.btn("sel." + key)
 	bw, bh := min(f.w, gtx.Dp(300)), gtx.Dp(36)
-	fg := c.Fg
+	// .c-select_button: base-pry over a 1px otl-pry border (no hover
+	// change), its text the body colour, the caret content-pry
+	fg, ic := pc.text, pc.fieldFg
 	if !enabled {
-		fg = c.FgSubtle
+		fg, ic = pc.disText, pc.disText
 	}
 	at(gtx, image.Pt(0, f.y), image.Pt(bw, bh), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, b, func(gtx layout.Context, s image.Point, hov bool) {
 			r := image.Rectangle{Max: s}
-			theme.RRect(gtx, r, gtx.Dp(8), c.Bg)
-			bc := c.BorderStrong
-			if hov && enabled {
-				bc = c.Fg
-			}
-			theme.Border(gtx, r, gtx.Dp(8), gtx.Dp(1), bc)
+			theme.RRect(gtx, r, gtx.Dp(8), pc.field)
+			theme.Border(gtx, r, gtx.Dp(8), gtx.Dp(1), pc.on(a.th, pc.fieldBorder))
 		}, func(gtx layout.Context) layout.Dimensions {
 			at(gtx, image.Pt(gtx.Dp(12), 0), image.Pt(bw-gtx.Dp(40), bh), func(gtx layout.Context) layout.Dimensions {
 				return vcenter(gtx, bh, func(gtx layout.Context) layout.Dimensions {
@@ -241,7 +229,7 @@ func (f *prefsForm) selectBox(key, label, value string, enabled bool, items []Me
 				})
 			})
 			at(gtx, image.Pt(bw-gtx.Dp(28), (bh-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
-				return icons.Get("caret-down")(gtx, 16, fg)
+				return icons.Get("caret-down")(gtx, 16, ic)
 			})
 			return layout.Dimensions{Size: image.Pt(bw, bh)}
 		})
@@ -257,6 +245,7 @@ func (f *prefsForm) selectBox(key, label, value string, enabled bool, items []Me
 func (f *prefsForm) listRow(key, avatar, name, action string, do func()) {
 	gtx, a := f.gtx, f.p.a
 	c := &a.th.C
+	pc := f.p.colors()
 	f.record("list", "row."+key, name, false, action != "")
 	rh := gtx.Dp(36)
 	s := gtx.Dp(24)
@@ -274,15 +263,18 @@ func (f *prefsForm) listRow(key, avatar, name, action string, do func()) {
 		at(gtx, image.Pt(f.w-aw, f.y+(rh-gtx.Dp(28))/2), image.Pt(aw, gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
 			return clickArea(gtx, b, func(gtx layout.Context, s image.Point, hov bool) {
 				r := image.Rectangle{Max: s}
+				// .c-button--outline: base-pry, otl-sec border, base-sec on hover
+				fill := pc.field
 				if hov {
-					theme.RRect(gtx, r, gtx.Dp(6), c.BgHover)
+					fill = pc.outlineHover
 				}
-				theme.Border(gtx, r, gtx.Dp(6), gtx.Dp(1), c.BorderStrong)
+				theme.RRect(gtx, r, gtx.Dp(6), fill)
+				theme.Border(gtx, r, gtx.Dp(6), gtx.Dp(1), pc.on(a.th, pc.outline))
 			}, func(gtx layout.Context) layout.Dimensions {
 				sz := image.Pt(aw, gtx.Dp(28))
 				at(gtx, image.Pt(gtx.Dp(8), 0), sz, func(gtx layout.Context) layout.Dimensions {
 					return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
-						return a.th.Label(gtx, 13, theme.Bold, c.Fg, action)
+						return a.th.Label(gtx, 13, theme.Bold, pc.fieldFg, action)
 					})
 				})
 				return layout.Dimensions{Size: sz}
@@ -340,7 +332,8 @@ func (f *prefsForm) notifyCheck(name, label, hint string, def bool) {
 func (f *prefsForm) hr() {
 	gtx, a := f.gtx, f.p.a
 	f.y += gtx.Dp(10)
-	theme.Fill(gtx, image.Rect(0, f.y, f.w, f.y+max(1, gtx.Dp(1))), a.th.C.Border)
+	pc := f.p.colors() // hr: rgb(var(--sk_foreground_low_solid))
+	theme.Fill(gtx, image.Rect(0, f.y, f.w, f.y+max(1, gtx.Dp(1))), pc.on(a.th, pc.hr))
 	f.y += gtx.Dp(22)
 }
 
@@ -358,7 +351,7 @@ func (f *prefsForm) link(key, label, url string) {
 	w := a.th.Measure(gtx, 15, theme.Regular, label)
 	at(gtx, image.Pt(0, f.y), image.Pt(w, gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, b, nil, func(gtx layout.Context) layout.Dimensions {
-			return a.th.Label(gtx, 15, theme.Regular, a.th.C.Link, label)
+			return a.th.Label(gtx, 15, theme.Regular, f.p.colors().link, label)
 		})
 	})
 	if clicked(b) {
@@ -380,7 +373,7 @@ func (f *prefsForm) headingLink(t, label, url string) {
 	w := a.th.Measure(gtx, 15, theme.Regular, label)
 	at(gtx, image.Pt(f.w-w, f.y+gtx.Dp(2)), image.Pt(w, gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, b, nil, func(gtx layout.Context) layout.Dimensions {
-			return a.th.Label(gtx, 15, theme.Regular, a.th.C.Link, label)
+			return a.th.Label(gtx, 15, theme.Regular, f.p.colors().link, label)
 		})
 	})
 	if clicked(b) {
@@ -406,7 +399,7 @@ type prefsButton struct {
 // colors Share / Import / Surprise me).
 func (f *prefsForm) buttons(bs ...prefsButton) {
 	gtx, a := f.gtx, f.p.a
-	c := &a.th.C
+	pc := f.p.colors()
 	bh := gtx.Dp(36)
 	x := 0
 	for _, pb := range bs {
@@ -414,17 +407,19 @@ func (f *prefsForm) buttons(bs ...prefsButton) {
 		f.record("button", "button."+pb.key, pb.label, false, pb.enabled)
 		b := f.p.btn("button." + pb.key)
 		bw := a.th.Measure(gtx, 15, theme.Bold, pb.label) + gtx.Dp(32)
-		fg := c.Fg
+		fg := pc.fieldFg // .c-button--outline: content-pry
 		if !pb.enabled {
-			fg = c.FgSubtle
+			fg = pc.disText
 		}
 		at(gtx, image.Pt(x, f.y), image.Pt(bw, bh), func(gtx layout.Context) layout.Dimensions {
 			return clickArea(gtx, b, func(gtx layout.Context, s image.Point, hov bool) {
 				r := image.Rectangle{Max: s}
+				fill := pc.field
 				if hov && pb.enabled {
-					theme.RRect(gtx, r, gtx.Dp(8), c.BgHover)
+					fill = pc.outlineHover
 				}
-				theme.Border(gtx, r, gtx.Dp(8), gtx.Dp(1), c.BorderStrong)
+				theme.RRect(gtx, r, gtx.Dp(8), fill)
+				theme.Border(gtx, r, gtx.Dp(8), gtx.Dp(1), pc.on(a.th, pc.outline))
 			}, func(gtx layout.Context) layout.Dimensions {
 				gtx.Constraints = layout.Exact(image.Pt(bw, bh))
 				return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -445,14 +440,14 @@ func (f *prefsForm) buttons(bs ...prefsButton) {
 // keywords): the value in a bordered box, greyed.
 func (f *prefsForm) textBox(key, value, placeholder string) {
 	gtx, a := f.gtx, f.p.a
-	c := &a.th.C
+	pc := f.p.colors()
 	f.record("select", "text."+key, value, false, false)
 	bh := gtx.Dp(36)
 	at(gtx, image.Pt(0, f.y), image.Pt(f.w, bh), func(gtx layout.Context) layout.Dimensions {
 		r := image.Rectangle{Max: image.Pt(f.w, bh)}
-		theme.RRect(gtx, r, gtx.Dp(8), c.Bg)
-		theme.Border(gtx, r, gtx.Dp(8), gtx.Dp(1), c.BorderStrong)
-		t, col := value, c.FgSubtle
+		theme.RRect(gtx, r, gtx.Dp(8), pc.field) // .c-input_text: base-pry, otl-pry
+		theme.Border(gtx, r, gtx.Dp(8), gtx.Dp(1), pc.on(a.th, pc.fieldBorder))
+		t, col := value, pc.disText
 		if t == "" {
 			t = placeholder
 		}
@@ -474,7 +469,7 @@ func (f *prefsForm) linkDo(key, label string, do func()) {
 	w := a.th.Measure(gtx, 15, theme.Regular, label)
 	at(gtx, image.Pt(0, f.y), image.Pt(w, gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, b, nil, func(gtx layout.Context) layout.Dimensions {
-			return a.th.Label(gtx, 15, theme.Regular, a.th.C.Link, label)
+			return a.th.Label(gtx, 15, theme.Regular, f.p.colors().link, label)
 		})
 	})
 	if clicked(b) && do != nil {

@@ -76,10 +76,17 @@ func (p *prefsModal) themeTabs(f *prefsForm, cur string) {
 		w := a.th.Measure(gtx, 13, theme.Bold, t.label) + gtx.Dp(16)
 		at(gtx, image.Pt(x, f.y), image.Pt(w, h), func(gtx layout.Context) layout.Dimensions {
 			return clickArea(gtx, b, nil, func(gtx layout.Context) layout.Dimensions {
-				fg := c.FgMuted
+				// .c-tabs__tab: content-sec, content-pry when hovered or
+				// active; the active underline is inset 0 -2px 0 0
+				// var(--dt_color-theme-base-pry): the dialog's one
+				// account-theme colour (th.C.Accent)
+				pc := p.colors()
+				fg := pc.on(a.th, pc.tabSec)
+				if t.id == cur || b.Hovered() {
+					fg = pc.fieldFg
+				}
 				if t.id == cur {
-					fg = c.Fg
-					theme.Fill(gtx, image.Rect(0, h-gtx.Dp(2), w, h), c.Link)
+					theme.Fill(gtx, image.Rect(0, h-gtx.Dp(2), w, h), c.Accent)
 				}
 				at(gtx, image.Pt(gtx.Dp(8), 0), image.Pt(w, h), func(gtx layout.Context) layout.Dimensions {
 					return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
@@ -95,7 +102,8 @@ func (p *prefsModal) themeTabs(f *prefsForm, cur string) {
 		}
 		x += w + gtx.Dp(12)
 	}
-	theme.Fill(gtx, image.Rect(0, f.y+h, f.w, f.y+h+max(1, gtx.Dp(1))), c.Border)
+	pc := p.colors() // .c-tabs__tab_menu: inset 0 -1px 0 0 var(--dt_color-otl-ter)
+	theme.Fill(gtx, image.Rect(0, f.y+h, f.w, f.y+h+max(1, gtx.Dp(1))), pc.on(a.th, pc.divider))
 	f.y += h + gtx.Dp(16)
 }
 
@@ -249,10 +257,11 @@ func (p *prefsModal) hexField(f *prefsForm, x, w int, role, label, hex string, s
 	col, _ := hexColor(hex)
 	at(gtx, image.Pt(x, y+gtx.Dp(26)), image.Pt(w, ph), func(gtx layout.Context) layout.Dimensions {
 		r := image.Rectangle{Max: image.Pt(w, ph)}
-		theme.RRect(gtx, r, ph/2, c.Bg)
-		bc := c.BorderStrong
+		pc := p.colors() // an input: base-pry, otl-pry, otl-hgl-1 when focused
+		theme.RRect(gtx, r, ph/2, pc.field)
+		bc := pc.on(a.th, pc.fieldBorder)
 		if focused {
-			bc = c.Link
+			bc = pc.focus
 		}
 		theme.Border(gtx, r, ph/2, gtx.Dp(1), bc)
 		d := gtx.Dp(22)

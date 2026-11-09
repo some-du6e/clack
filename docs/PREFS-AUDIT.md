@@ -67,6 +67,34 @@ real. *Greyed* means the row is drawn the way Slack draws it, disabled, with
   macOS, ISpellChecker on Windows, hunspell dictionaries on Linux) with the
   red underline and suggestions menu.
 
+## Colours (2026-11-09)
+
+Read from Slack's CSS on the public CDN (bv1-13: `client-boot-styles.cf726c4f2eaecc74` for the rules, `slack-kit-gantry-v2-styles.f859766a17f82b2a` for the token values in `:root,.sk-client-theme--light` and `.sk-client-theme--dark`) and checked against `getComputedStyle` in the live dialog (read-only). Values are light / dark.
+
+| Element | Slack | Value |
+| --- | --- | --- |
+| Dialog surface | `.c-sk-modal` `--dt_color-base-pry` | #fff / #1a1d21 (Clack drew #222529 in dark) |
+| Header line | `.p-prefs_dialog__layout` border-top `rgba(var(--sk_foreground_low),.13)` | rgba(29,28,29,.13) / rgba(232,232,232,.13) |
+| Nav row | `.c-tabs__tab_menu--vertical .c-tabs__tab` `--dt_color-content-pry` | #1d1c1d / #f8f8f8 |
+| Nav icon | `.p-prefs_dialog__menu .c-tabs__tab:not(--active) .c-tabs__tab_icon--left` `rgba(var(--sk_foreground_max),.7)` | rgba(29,28,29,.7) / rgba(232,232,232,.7) |
+| Selected row | `--active` `--dt_color-base-inv-hgl-1`, text `--dt_color-content-inv-pry` | #1264a3 + #fff / #0a77a7 + #f8f8f8 (Clack drew #1d9bd1 in dark) |
+| Hover row | `--dt_color-base-pry-hover` over `--dt_color-base-pry` | #4544470f over #fff / #f8f8f814 over #1a1d21 |
+| Headings, labels | body `rgb(var(--sk_primary_foreground))` | #1d1c1d / #d1d2d3 |
+| Notes | `p` `rgba(var(--sk_foreground_max),.7)`; Working hours paragraph and `.c-label--disabled` `--dt_color-content-sec` | #454447 / #b9babd |
+| Hints | `.c-label__subtext` `--dt_color-content-ter` | #5e5d60 / #9a9b9e |
+| `hr` | `rgb(var(--sk_foreground_low_solid))` | #dddddd / #35373b |
+| Checkbox, radio | `appearance:auto`, `accent-color:auto`: the browser's own 13px control in the mode's `color-scheme` | checked #0075ff / #99c8ff (check #fff / #3b3b3b), unchecked border #767676 / #858585, hover #005cc8 / #d1e6ff |
+| Disabled box | `.c-input_checkbox--disabled` opacity .38 | the native box at 38% |
+| Select | `.c-select_button` base-pry, border `--dt_color-otl-pry`, icon content-pry, no hover change | border #7c7a7f / #797c81 |
+| Inputs | `.c-input_text` base-pry, otl-pry, `:focus` `--dt_color-otl-hgl-1` | focus #1264a3 / #2ba5ce |
+| Links | `a`, `.c-link`, `.c-link--button` `--dt_color-content-hgl-1` | #1264a3 / #2ba5ce |
+| Outline button | `.c-button--outline` base-pry, border `--dt_color-otl-sec`, hover `--dt_color-base-sec` | #5e5d6073 / #797c8180 |
+| Primary button | `.c-button--primary` `--dt_color-base-inv-hgl-2`, white | #007a5a / #177e56 |
+| Skin tones | the radio is hidden; the label box has border `rgb(var(--sk_foreground_low_solid))`, radius 6, padding 8; selected border `#1264a3` | |
+| Appearance tabs | `.c-tabs__tab` content-sec, active content-pry, underline `--dt_color-theme-base-pry` | the dialog's one account-theme colour |
+
+None of these except the Appearance tab underline is a `--dt_color-theme-*` token, and Slack's theme module (`getThemeVariables`, gantry-v2-vendors) writes only `--dt_color-theme-*` and the palette ramps. So every account theme (Aubergine, a dark sidebar, custom hexes) leaves the dialog in the same blue and grey in Slack. A stylesheet that overrides the base tokens (a Slick theme like Hot Dog Stand, user.css) recolours it, and Clack reads those overrides (`prefsColorsOf`). Clack's Plugins / Themes / Plugin settings rows and pages use the same tokens. Tests: `TestPrefsColorsMatchSlack`, `TestPrefsColorsIgnoreAccountTheme`, `TestPrefsColorsFollowStylesheetTokens`, `TestNativeCheckPixels`; screenshots from `TestPrefsColorShots` (prefs-colors workflow, `prefs-colors-shots` artifact).
+
 ## Tests
 
 - `TestPrefsPagesMatchSlack` (internal/ui/prefs_pages_test.go) draws every

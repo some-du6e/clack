@@ -82,6 +82,10 @@ type ModalOpts struct {
 	// Class adds Slack classes to the modal element (.c-sk-modal), e.g.
 	// Preferences' p-prefs_dialog__modal, which themes style.
 	Class string
+	// BasePry paints the card with Slack's .c-sk-modal background,
+	// --dt_color-base-pry (BasePryOf), instead of ModalBg's measured
+	// default: Preferences, whose dark surface is #1a1d21.
+	BasePry bool
 	// TitleIcon and TitleAfter follow Title on its line (Slack's "Add
 	// people to 🔒 plans": a channel icon and name).
 	TitleIcon, TitleAfter string
@@ -242,6 +246,13 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 	st := modalClass.EnterClass(gtx, 0, 0, m.o.Class)
 	defer st.Leave()
 	if !st.Hidden() {
+		if m.o.BasePry {
+			if bg := BasePryOf(th); bg != cl.ModalBg {
+				c := *cl
+				c.ModalBg = bg
+				cl = &c
+			}
+		}
 		styledCard(gtx, st, cl, pos, m.rect.Size(), dp(gtx, 8), true, func(gtx layout.Context) {
 			{
 				pos := image.Point{}

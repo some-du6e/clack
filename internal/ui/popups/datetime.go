@@ -183,6 +183,15 @@ func dtHeight(gtx layout.Context, sz dtSize) int {
 // dtField draws a Slack select box w px wide: optional leading icon, the
 // label, optional chevron. open draws the focus ring. Clicks land on btn.
 func dtField(gtx layout.Context, th *theme.Theme, btn *widget.Clickable, w int, sz dtSize, iconName, label string, chevron, open, disabled bool) layout.Dimensions {
+	return dtFieldIn(gtx, th, dtLook{}, btn, w, sz, iconName, label, chevron, open, disabled)
+}
+
+// dtLook overrides a field's fill and border (zero: the defaults), for
+// a field drawn on a surface other than the default card (Preferences'
+// .c-select_button: --dt_color-base-pry over --dt_color-otl-pry).
+type dtLook struct{ bg, border color.NRGBA }
+
+func dtFieldIn(gtx layout.Context, th *theme.Theme, look dtLook, btn *widget.Clickable, w int, sz dtSize, iconName, label string, chevron, open, disabled bool) layout.Dimensions {
 	cl := colorsOf(th)
 	fs, pad, isz, gap, csz := float32(13), float32(8), float32(14), float32(7), float32(14)
 	if sz == dtLarge {
@@ -201,12 +210,18 @@ func dtField(gtx layout.Context, th *theme.Theme, btn *widget.Clickable, w int, 
 			rrect(gtx, r, rad, theme.WithAlpha(dtBorder(th), 0x66))
 		default:
 			b := dtBorder(th)
+			if look.border.A != 0 {
+				b = look.border
+			}
 			if btn.Hovered() {
 				b = cl.Fg2
 			}
 			rrect(gtx, r, rad, b)
 		}
 		bg := cl.Bg
+		if look.bg.A != 0 {
+			bg = look.bg
+		}
 		if disabled {
 			bg = cl.BgAlt
 		}
@@ -254,6 +269,7 @@ type dtDate struct {
 	Plain    bool // no icon or chevron (Pause Notifications' input look)
 	Disabled bool
 	OnChange func()
+	look     dtLook // the field's surface (Preferences)
 
 	btn  widget.Clickable
 	cal  *dtCalendar
@@ -301,6 +317,7 @@ type dtTime struct {
 	NoIcon   bool
 	Disabled bool
 	OnChange func()
+	look     dtLook // the field's surface (Preferences)
 
 	btn  widget.Clickable
 	list *dtTimeList
@@ -331,7 +348,7 @@ func (t *dtTime) Layout(gtx layout.Context, h Host, org image.Point, w int, sz d
 	if t.NoIcon {
 		ic = ""
 	}
-	return dtField(gtx, th, &t.btn, w, sz, ic, dtTimeLabel(t.Mins), true, t.open(), t.Disabled)
+	return dtFieldIn(gtx, th, t.look, &t.btn, w, sz, ic, dtTimeLabel(t.Mins), true, t.open(), t.Disabled)
 }
 
 // ---- calendar popover ----

@@ -137,10 +137,11 @@ func (f *prefsForm) channelPicker(label string) {
 	focused := gtx.Focused(&pk.ed)
 	at(gtx, image.Pt(0, f.y), image.Pt(f.w, boxH), func(gtx layout.Context) layout.Dimensions {
 		r := image.Rectangle{Max: image.Pt(f.w, boxH)}
-		theme.RRect(gtx, r, gtx.Dp(8), c.Bg)
-		bc := c.BorderStrong
+		pc := p.colors() // an input: base-pry, otl-pry; :focus otl-hgl-1
+		theme.RRect(gtx, r, gtx.Dp(8), pc.field)
+		bc := pc.on(a.th, pc.fieldBorder)
 		if focused {
-			bc = c.Link
+			bc = pc.focus
 		}
 		theme.Border(gtx, r, gtx.Dp(8), gtx.Dp(1), bc)
 		for _, t := range toks {
@@ -169,7 +170,7 @@ func (f *prefsForm) channelPicker(label string) {
 			return vcenter(gtx, th, func(gtx layout.Context) layout.Dimensions {
 				gtx.Constraints.Min.X = gtx.Constraints.Max.X
 				if pk.ed.Len() == 0 && len(chosen) == 0 {
-					a.th.Label(gtx, 15, theme.Regular, c.FgSubtle, "Type a channel name…")
+					a.th.Label(gtx, 15, theme.Regular, p.colors().subtext, "Type a channel name…")
 				}
 				return a.th.Editor(gtx, &pk.ed, 15, c.Fg, c.Link)
 			})
