@@ -61,6 +61,9 @@ type Size struct {
 	// CodeChannels adds the code channel fixtures (codechannels.go): one
 	// per agent status, an archived one and one the viewer isn't in.
 	CodeChannels bool
+	// Files adds #files-gallery: one message per way Slack draws shared
+	// files (files.go).
+	Files bool
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -408,6 +411,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.CodeChannels {
 		s.addCodeChannels() // codechannels.go
+	}
+	if sz.Files {
+		s.addFilesChannel() // files.go
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", s.api)
