@@ -27,6 +27,17 @@ import (
 // (their trees draw the rows): once the list settles, every row is as tall
 // as it was before the fling, so no spacing is left between rows.
 func TestSlickViewFlingKeepsRowHeights(t *testing.T) {
+	all := []string{"ShowSendingBot", "BetterBlock", "MessageLogger", "WhoReacted", "LocalTime"}
+	for _, ps := range append([][]string{all}, []string{"LocalTime"}, []string{"ShowSendingBot"}, []string{"BetterBlock"}, []string{"MessageLogger"}, []string{"WhoReacted"}) {
+		name := ps[0]
+		if len(ps) > 1 {
+			name = "all"
+		}
+		t.Run(name, func(t *testing.T) { slickFling(t, name, ps) })
+	}
+}
+
+func slickFling(t *testing.T, name string, plugins []string) {
 	const ch = "C0FLINGS1"
 	users := []string{"UALICE", "UBOB", tSelf}
 	e := newSlickEnv(t, func(s *store.Store) {
@@ -51,12 +62,10 @@ func TestSlickViewFlingKeepsRowHeights(t *testing.T) {
 		}
 		s.SetLatest(ch, msgs, false)
 	})
-	e.install(t, "ShowSendingBot", nil)
-	e.install(t, "BetterBlock", nil)
-	e.install(t, "MessageLogger", nil)
-	e.install(t, "WhoReacted", nil)
-	e.install(t, "LocalTime", nil)
-	patched(t, "MessageKitGutter", "MessageWrapper", "Message", "MessageText", "Reaction", "BaseBroadcastPreamble")
+	for _, p := range plugins {
+		e.install(t, p, nil)
+	}
+	time.Sleep(300 * time.Millisecond)
 
 	v := NewChannelView(e.h, ch)
 	v.Preview = true
@@ -74,13 +83,14 @@ func TestSlickViewFlingKeepsRowHeights(t *testing.T) {
 		v.Layout(gtx)
 		r.Frame(ops)
 	}
+	tag := name
 	shot := func(name string) {
 		if shots == "" || nshot > 40 {
 			return
 		}
 		nshot++
 		img := pixeltest.Render(t, size.X, size.Y, ops)
-		if f, err := os.Create(filepath.Join(shots, "fling-"+name+".png")); err == nil {
+		if f, err := os.Create(filepath.Join(shots, "fling-"+tag+"-"+name+".png")); err == nil {
 			_ = png.Encode(f, img)
 			f.Close()
 		}
@@ -93,17 +103,21 @@ func TestSlickViewFlingKeepsRowHeights(t *testing.T) {
 		}
 	}
 	settle := func() {
-		for i := 0; i < 60; i++ {
+		for i := 0; i < 100; i++ {
 			frame()
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
+	geom := map[string]string{}
 	heights := func() map[string]int {
 		s := v.s
 		out := map[string]int{}
 		for i := s.visible[0]; i < s.visible[1]; i++ {
 			if s.items[i].kind == itMsg && s.pos[i] >= 0 && s.pos[i]+s.heights[i] <= size.Y {
 				out[s.items[i].key] = s.heights[i]
+				if r := s.rows[s.items[i].key]; r != nil {
+					geom[s.items[i].key] = fmt.Sprintf("header %v col %v body %v nameBL %d", s.items[i].header, r.col, r.bodyRect, r.nameBL)
+				}
 			}
 		}
 		return out
@@ -111,6 +125,10 @@ func TestSlickViewFlingKeepsRowHeights(t *testing.T) {
 	e.waitFor(t, "the rows", frame, func() bool { return len(v.s.rows) > 5 })
 	settle()
 	bottom := heights()
+	g0 := map[string]string{}
+	for k, v := range geom {
+		g0[k] = v
+	}
 	shot("0-bottom")
 	if len(bottom) < 5 {
 		t.Fatalf("only %d rows on screen", len(bottom))
@@ -136,7 +154,7 @@ func TestSlickViewFlingKeepsRowHeights(t *testing.T) {
 	shot("4-bottom-again")
 	for k, h := range heights() {
 		if want, ok := bottom[k]; ok && h != want {
-			t.Errorf("row %s: %d tall after the fling, %d before", k, h, want)
+			t.Errorf("row %s: %d tall after the fling, %d before\n\tbefore %s\n\tafter  %s", k, h, want, g0[k], geom[k])
 		}
 	}
 	// and up again: the top rows as they were
