@@ -85,6 +85,7 @@ var slackRef = map[string]string{
 	"emoji-objects":        "emoji-objects",
 	"emoji-objects-filled": "emoji-objects-filled",
 	"enter":                "enter",
+	"eraser":               "eraser",
 	"expand":               "expand-diagonal",
 	"explore":              "explore",
 	"explore-filled":       "explore-filled",

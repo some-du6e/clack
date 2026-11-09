@@ -650,11 +650,13 @@ func (a *App) Activity(ctx context.Context, o ActivityOpts) (ActivityPage, error
 	}
 	limit := o.Limit
 	if limit <= 0 {
-		limit = 30
+		limit = 20
 	}
+	// the web client's params (activity inbox, 2026-11-09)
 	p := url.Values{"limit": {strconv.Itoa(limit)}, "types": {types}, "mode": {"chrono_v1"},
 		"archive_only": {strconv.FormatBool(o.Archived)}, "priority_only": {"false"}, "is_activity_inbox": {"true"},
-		"unread_only": {strconv.FormatBool(o.Unread)}}
+		"unread_only": {strconv.FormatBool(o.Unread)}, "only_salesforce_channels": {"false"},
+		"exclude_automations": {"false"}, "automations_only": {"false"}}
 	if o.Cursor != "" {
 		p.Set("cursor", o.Cursor)
 	}

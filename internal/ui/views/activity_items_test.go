@@ -10,6 +10,7 @@ import (
 	"image/png"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,7 +28,11 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
 )
 
-func actFeedApp(t *testing.T) *core.App {
+func actFeedApp(t *testing.T) *core.App { return actFeedAppWith(t, nil) }
+
+// actFeedAppWith is actFeedApp with rec seeing every API call (method and
+// form) before it's answered.
+func actFeedAppWith(t *testing.T, rec func(method string, form url.Values)) *core.App {
 	t.Helper()
 	feed, err := os.ReadFile("../../core/testdata/activity_feed.json")
 	if err != nil {
@@ -35,7 +40,14 @@ func actFeedApp(t *testing.T) *core.App {
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		switch strings.TrimPrefix(r.URL.Path, "/api/") {
+		method := strings.TrimPrefix(r.URL.Path, "/api/")
+		if rec != nil {
+			if r.ParseMultipartForm(1<<20) != nil {
+				_ = r.ParseForm()
+			}
+			rec(method, r.Form)
+		}
+		switch method {
 		case "activity.feed":
 			_, _ = w.Write(feed)
 		case "messages.list":

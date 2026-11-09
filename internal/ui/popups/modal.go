@@ -26,7 +26,10 @@ type ModalButton struct {
 	Kind    BtnKind // BtnOutline, BtnPrimary, BtnDanger
 	Enabled func() bool
 	// Do runs on click; return true to close the modal.
-	Do    func() bool
+	Do func() bool
+	// Left puts the button at the footer's left edge, apart from the
+	// others (Slack's delete-scheduled-message "Save as Draft").
+	Left  bool
 	click widget.Clickable
 }
 
@@ -333,7 +336,7 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 							})
 						})
 					}
-					x := pos.X + w - padX
+					x, lx := pos.X+w-padX, pos.X+padX
 					for i := len(m.o.Buttons) - 1; i >= 0; i-- {
 						b := m.o.Buttons[i]
 						kind := b.Kind
@@ -343,6 +346,11 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 						call, d := record(gtx, func(gtx layout.Context) layout.Dimensions {
 							return Button(gtx, th, &b.click, kind, BtnMedium, b.Label, "", 80)
 						})
+						if b.Left {
+							macroAt(gtx, call, image.Pt(lx, fy+footPad))
+							lx += d.Size.X + dp(gtx, 12)
+							continue
+						}
 						x -= d.Size.X
 						macroAt(gtx, call, image.Pt(x, fy+footPad))
 						x -= dp(gtx, 12)

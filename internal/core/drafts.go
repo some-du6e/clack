@@ -352,6 +352,42 @@ func (a *App) RescheduleMessage(ctx context.Context, id string, postAt int64) (S
 	return ScheduledMessage{}, errors.New("core: scheduled message not found")
 }
 
+// UnscheduleDraft turns a scheduled message back into a plain draft
+// (Slack's "Cancel schedule and save to drafts" and the delete dialog's
+// "Save as Draft": the draft is updated with dateScheduled 0).
+func (a *App) UnscheduleDraft(ctx context.Context, id string) (Draft, error) {
+	ds, err := a.Drafts(ctx)
+	if err != nil {
+		return Draft{}, err
+	}
+	for _, d := range ds {
+		if d.ID != id {
+			continue
+		}
+		blocks := d.Blocks
+		if len(blocks) == 0 {
+			blocks = textBlocks(d.Text)
+		}
+		dest, _ := json.Marshal([]draftDest{{ChannelID: d.Channel, UserIDs: d.Users, ThreadTS: d.ThreadTS, Broadcast: d.Broadcast}})
+		files, _ := json.Marshal(append([]string{}, d.FileIDs...))
+		p := url.Values{"draft_id": {id}, "blocks": {string(blocks)}, "destinations": {string(dest)}, "file_ids": {string(files)},
+			"attachments": {"[]"}, "is_from_composer": {"false"}, "date_scheduled": {"0"}, "client_last_updated_ts": {msNow()}}
+		var res struct {
+			Draft draftRaw `json:"draft"`
+		}
+		if err := a.C.Call(ctx, "drafts.update", p, &res); err != nil {
+			return Draft{}, err
+		}
+		if res.Draft.ID == "" {
+			res.Draft.ID = id
+		}
+		res.Draft.DateScheduled = 0
+		nd := a.savedDraft(&res.Draft, DraftOpts{ID: id, Channel: d.Channel, Users: d.Users, ThreadTS: d.ThreadTS, Broadcast: d.Broadcast, FileIDs: d.FileIDs})
+		return nd, nil
+	}
+	return Draft{}, errors.New("core: scheduled message not found")
+}
+
 func scheduledOf(d Draft) ScheduledMessage {
 	return ScheduledMessage{ID: d.ID, Channel: d.Channel, ThreadTS: d.ThreadTS, PostAt: d.DateScheduled, DateCreated: d.DateCreated,
 		Text: d.Text, Doc: d.Doc, Blocks: d.Blocks}

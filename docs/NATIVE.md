@@ -191,6 +191,7 @@ func (*App) Typing(ch, threadTS string) error { return a.RTM.Typing(ch, threadTS
 func (*App) UnclearActivity(ctx context.Context, items ...ActivityItem) error
 func (*App) Unpin(ctx context.Context, ch, ts string) error
 func (*App) Unsave(ctx context.Context, ch, ts string) error
+func (*App) UnscheduleDraft(ctx context.Context, id string) (Draft, error)
 func (*App) UpdateSaved(ctx context.Context, ch, ts string, u SavedUpdate) error
 func (*App) Upload(ctx context.Context, o UploadOpts) ([]UploadedFile, error)
 func (*App) Usergroups(ctx context.Context, query string, limit int) ([]Usergroup, error)
