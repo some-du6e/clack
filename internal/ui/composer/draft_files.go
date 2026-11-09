@@ -10,8 +10,9 @@ import (
 
 // Files in drafts, like Slack's composer: a draft keeps its attached files.
 //
-//   - Attaching uploads the bytes at once (attachments.prepare:
-//     files.getUploadURLExternal + the upload, no share), which gives the
+//   - Attaching uploads the bytes at once (attachments.prepare, Slack's
+//     eager upload: files.getUploadURL, the multipart POST,
+//     files.completeUpload; no share), which gives the
 //     file its id. The server draft then carries it: drafts.create /
 //     drafts.update file_ids=["F…"] (createDraftApi sends
 //     file_ids: JSON.stringify(fileIds)), next to the blocks; a draft with
@@ -24,7 +25,7 @@ import (
 //     for its conversation (core.DraftFor): the text, and the files as
 //     chips that are already uploaded (no bytes; Slack's thumb_360 for the
 //     thumbnail). That covers a restart, another device and Drafts & sent.
-//   - Sending shares the files (files.completeUploadExternal) and deletes
+//   - Sending shares the files (files.share with the blocks) and deletes
 //     the draft; removing the last file from an empty composer deletes it
 //     too. drafts.delete keeps the files (skip_file_deletion=true), as
 //     Slack's clearDrafts does on send and on an emptied composer.

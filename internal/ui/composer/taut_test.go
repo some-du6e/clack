@@ -67,10 +67,8 @@ func newFakeSlack(t testing.TB) *fakeSlack {
 			ts := "1700000100." + strings.Repeat("0", 5) + string(rune('0'+n%10))
 			rep = map[string]any{"ok": true, "channel": r.Form.Get("channel"), "ts": ts,
 				"message": map[string]any{"type": "message", "ts": ts, "user": tSelf, "text": r.Form.Get("text")}}
-		case "files.getUploadURLExternal":
-			rep = map[string]any{"ok": true, "upload_url": f.srv.URL + "/upload/F0TEST", "file_id": "F0TEST"}
-		case "files.completeUploadExternal":
-			rep = map[string]any{"ok": true, "files": []map[string]any{{"id": "F0TEST", "title": "x"}}}
+		case "files.getUploadURL":
+			rep = map[string]any{"ok": true, "file": "F0TEST", "upload_url": f.srv.URL + "/upload/F0TEST"}
 		case "edge/permissions/info": // a regular member of a small workspace may @channel and @everyone
 			rep = map[string]any{"ok": true, "allowed": []string{"CAN_AT_CHANNEL", "CAN_AT_EVERYONE"}, "allowed_per_team": map[string]any{}}
 		case "drafts.create", "drafts.update":

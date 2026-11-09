@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -298,27 +299,48 @@ func TestNotifyPrefsAndMute(t *testing.T) {
 
 func TestUploadProgressAndPrepared(t *testing.T) {
 	a, f := testApp(t)
-	f.reply["files.getUploadURLExternal"] = `{"ok":true,"upload_url":"` + f.srv.URL + `/upload/x","file_id":"F9"}`
+	f.reply["files.getUploadURL"] = `{"ok":true,"file":"F9","upload_url":"` + f.srv.URL + `/upload/x"}`
 	f.reply["x"] = `ok`
-	f.reply["files.completeUploadExternal"] = `{"ok":true,"files":[{"id":"F8","title":"pre"},{"id":"F9","title":"a.txt"}]}`
+	f.reply["files.completeUpload"] = `{"ok":true}`
+	f.reply["files.share"] = `{"ok":true}`
 	var calls int
 	var last, total int64
-	out, err := a.Upload(context.Background(), UploadOpts{Channel: "C1", Comment: "c",
+	blocks := json.RawMessage(`[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"c"}]}]}]`)
+	out, err := a.Upload(context.Background(), UploadOpts{Channel: "C1", ThreadTS: "1.5", Comment: "c", Blocks: blocks,
 		Files: []UploadFile{{Name: "a.txt", Data: make([]byte, 200<<10)}}, Prepared: []PreparedUpload{{ID: "F8", Title: "pre"}},
 		Progress: func(s, t int64) { calls++; last, total = s, t }})
-	if err != nil || len(out) != 2 {
+	if err != nil || len(out) != 2 || out[0].ID != "F8" || out[1].ID != "F9" {
 		t.Fatalf("upload: %+v %v", out, err)
 	}
 	if calls < 2 || last != total || total != 200<<10 {
 		t.Errorf("progress: calls=%d last=%d total=%d", calls, last, total)
 	}
-	files := f.last("files.completeUploadExternal").Get("files")
-	if !strings.Contains(files, `"F8"`) || !strings.Contains(files, `"F9"`) {
-		t.Errorf("complete files param: %s", files)
+	// Slack's sequence: getUploadURL {filename, length}, the POST,
+	// completeUpload {files: [{id, title}]}, then one files.share
+	g := f.last("files.getUploadURL")
+	if g.Get("filename") != "a.txt" || g.Get("length") != strconv.Itoa(200<<10) {
+		t.Errorf("getUploadURL params: %v", g)
+	}
+	if c := f.last("files.completeUpload"); c.Get("files") != `[{"id":"F9","title":"a.txt"}]` || c.Get("channel") != "" {
+		t.Errorf("completeUpload params: %v", c)
+	}
+	sh := f.last("files.share")
+	if sh.Get("files") != "F8,F9" || sh.Get("channel") != "C1" || sh.Get("thread_ts") != "1.5" || sh.Get("broadcast") != "false" ||
+		sh.Get("blocks") != string(blocks) || sh.Get("comment") != "" || sh.Get("resharing_aware") != "true" ||
+		sh.Get("skip_dlp_user_warning") != "false" || sh.Get("from_share_modal") != "false" || len(sh.Get("client_msg_id")) != 36 {
+		t.Errorf("files.share params: %v", sh)
 	}
 	pu, err := a.PrepareUpload(context.Background(), UploadFile{Name: "b.txt", Data: []byte("hi")}, nil)
 	if err != nil || pu.ID != "F9" || pu.Size != 2 {
 		t.Errorf("prepare: %+v %v", pu, err)
+	}
+
+	// no blocks: the plain comment; top level: no thread_ts or broadcast
+	if _, err := a.Upload(context.Background(), UploadOpts{Channel: "C1", Comment: "plain", Prepared: []PreparedUpload{{ID: "F8"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if sh := f.last("files.share"); sh.Get("comment") != "plain" || sh.Get("blocks") != "" || sh.Has("thread_ts") || sh.Has("broadcast") {
+		t.Errorf("plain share params: %v", sh)
 	}
 }
 

@@ -6,14 +6,17 @@ import (
 	"image"
 	"net/url"
 	"strings"
+	"time"
 
 	"gioui.org/layout"
+	"gioui.org/op"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/clipimg"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/shortcut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
 // Right-click (context) menus, read from Slack's web client and desktop
@@ -220,14 +223,19 @@ func fetchBytes(ctx context.Context, h Host, src string, viaCore bool) ([]byte, 
 }
 
 // NewFileMenu is Slack's file context menu (FileContextMenuTrigger,
-// "File actions") for f in m, with the media-gallery groups Slack uses in
-// channels and threads, minus what Clack can't do yet (Save for later,
-// file details, external links, folders, sections, transcripts, editing
-// and deleting files):
+// "File actions", buildFileContextMenuItems) for f in m, with the
+// media-gallery templates Slack uses in channels and threads, minus what
+// Clack can't do yet (file details, external links, folders, sections,
+// transcripts, editing):
 //
-//	image: Download | Share file…, Copy link, Copy image | Open in ▸
-//	video: Download, Share file…, Copy link | Open in ▸
-//	other: Share file…, Copy link, Download
+//	image: Download | Share file…, Copy link, Copy image, Save for later |
+//	       Open in ▸ | Delete file
+//	video: Download, Share file…, Copy link, Save for later | Open in ▸ |
+//	       Delete file
+//	other: Share file…, Copy link, Download, Save for later
+//
+// Delete file shows for the uploader's own files (fileActions.delete_file)
+// and asks first (DeleteFileDialog).
 func NewFileMenu(h Host, at image.Point, m core.Message, f *richtext.File) *Menu {
 	share := MenuItem{Label: "Share file…", Do: func() { h.ShowOverlay(NewForwardModal(h, m)) }}
 	link := f.Permalink
@@ -258,7 +266,7 @@ func NewFileMenu(h Host, at image.Point, m core.Message, f *richtext.File) *Menu
 	group := func(g ...MenuItem) {
 		var keep []MenuItem
 		for _, it := range g {
-			if it.Label == "Copy link" && link == "" {
+			if it.Label == "" || it.Label == "Copy link" && link == "" {
 				continue
 			}
 			if it.Label == "Open in" && len(it.Sub) == 0 {
@@ -275,6 +283,8 @@ func NewFileMenu(h Host, at image.Point, m core.Message, f *richtext.File) *Menu
 		items = append(items, keep...)
 	}
 	open := MenuItem{Label: "Open in", Sub: openIn}
+	later := fileLaterItem(h, f)
+	del := fileDeleteItem(h, m, f)
 	switch {
 	case f.IsImage:
 		src := f.URL
@@ -284,18 +294,63 @@ func NewFileMenu(h Host, at image.Point, m core.Message, f *richtext.File) *Menu
 		cp := MenuItem{Label: "Copy image", Do: func() { CopyImage(h, src, true, "Image copied to clipboard") }}
 		group(download)
 		if src != "" {
-			group(share, copyLink, cp)
+			group(share, copyLink, cp, later)
 		} else {
-			group(share, copyLink)
+			group(share, copyLink, later)
 		}
 		group(open)
+		group(del)
 	case f.IsVideo:
-		group(download, share, copyLink)
+		group(download, share, copyLink, later)
 		group(open)
+		group(del)
 	default:
-		group(share, copyLink, download)
+		group(share, copyLink, download, later)
 	}
 	return NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(at), Width: 240})
+}
+
+// fileLaterItem is save_for_later: "Save for later", or "Remove from
+// Later" for a saved file (saveFile / removeFile).
+func fileLaterItem(h Host, f *richtext.File) MenuItem {
+	a := h.Core()
+	if a == nil || f.ID == "" {
+		return MenuItem{}
+	}
+	id := f.ID
+	if a.FileSaved(id) {
+		return MenuItem{Label: "Remove from Later", Do: func() {
+			actDo(h, "", func(ctx context.Context, a *core.App) error { return a.UnsaveFile(ctx, id) })
+		}}
+	}
+	return MenuItem{Label: "Save for later", Do: func() {
+		actDo(h, "", func(ctx context.Context, a *core.App) error { return a.SaveFile(ctx, id) })
+	}}
+}
+
+// fileDeleteItem is delete_file for the uploader's own files: Slack's
+// DeleteFileDialog ("Delete file", "Are you sure you want to delete this
+// file permanently?", the file, "Yes, Delete This File") then files.delete.
+func fileDeleteItem(h Host, m core.Message, f *richtext.File) MenuItem {
+	self := actSelfID(h)
+	owner := f.User
+	if owner == "" {
+		owner = m.User
+	}
+	if self == "" || owner != self || f.ID == "" {
+		return MenuItem{}
+	}
+	return MenuItem{Label: "Delete file", Danger: true, Do: func() { ConfirmDeleteFile(h, f) }}
+}
+
+// ConfirmDeleteFile is DeleteFileDialog for f.
+func ConfirmDeleteFile(h Host, f *richtext.File) {
+	id := f.ID
+	Confirm(h, "Delete file", "Are you sure you want to delete this file permanently?", "Yes, Delete This File", true,
+		func(gtx layout.Context) layout.Dimensions { return filePillowPreview(gtx, h, f) },
+		func() {
+			actDo(h, "", func(ctx context.Context, a *core.App) error { return a.DeleteFile(ctx, id) })
+		})
 }
 
 // DownloadFile saves f to the Downloads folder, like the lightbox's
@@ -392,3 +447,64 @@ func UsergroupLink(h Host) string { return "https://" + teamDomain(h) + ".slack.
 
 // Items are the menu's current rows (after plugins' templates).
 func (m *Menu) Items() []MenuItem { return m.items }
+
+// filePillowPreview is the file pillow DeleteFileDialog shows under its
+// question (margin_top_100): a 36px type tile, the name in 16px Bold and
+// "uploader • time" in 13px muted (customSeparator "•", showYou), in a
+// 12px-radius 1px-ring card with 12px padding.
+func filePillowPreview(gtx layout.Context, h Host, f *richtext.File) layout.Dimensions {
+	th := h.Theme()
+	cl := colorsOf(th)
+	w := gtx.Constraints.Max.X
+	pad, ic := dp(gtx, 12), dp(gtx, 36)
+	tx := pad + ic + pad
+	tw := maxInt(1, w-tx-pad)
+	name := f.Title
+	if name == "" {
+		name = f.Name
+	}
+	detail := ""
+	if u := f.User; u != "" {
+		if u == actSelfID(h) {
+			detail = "You"
+		} else if usr, ok := lookupUser(h, u); ok {
+			detail = userName(usr)
+		}
+	}
+	if f.Created > 0 {
+		when := dayTime(time.Unix(f.Created, 0), time.Now())
+		if detail != "" {
+			detail += "  •  "
+		}
+		detail += when
+	}
+	nc, nd := record(loose(gtx, image.Pt(tw, 1<<20)), func(gtx layout.Context) layout.Dimensions {
+		return para(gtx, th, 16, 20, theme.Bold, cl.Fg, name, 1)
+	})
+	var dc op.CallOp
+	var dd layout.Dimensions
+	if detail != "" {
+		dc, dd = record(loose(gtx, image.Pt(tw, 1<<20)), func(gtx layout.Context) layout.Dimensions {
+			return para(gtx, th, 13, 16, theme.Regular, cl.Muted, detail, 1)
+		})
+	}
+	ht := maxInt(ic, nd.Size.Y+dp(gtx, 4)+dd.Size.Y) + 2*pad
+	label := strings.ToUpper(f.Type)
+	if len(label) > 4 {
+		label = label[:4]
+	}
+	if label == "" {
+		label = "FILE"
+	}
+	rrect(gtx, image.Rect(pad, pad, pad+ic, pad+ic), dp(gtx, 8), cl.Ring)
+	lc, ld := record(loose(gtx, image.Pt(ic, ic)), func(gtx layout.Context) layout.Dimensions {
+		return text(gtx, th, 10, theme.Black, cl.Muted, label)
+	})
+	macroAt(gtx, lc, image.Pt(pad+(ic-ld.Size.X)/2, pad+(ic-ld.Size.Y)/2))
+	macroAt(gtx, nc, image.Pt(tx, pad-dp(gtx, 1)))
+	if detail != "" {
+		macroAt(gtx, dc, image.Pt(tx, pad+nd.Size.Y+dp(gtx, 4)))
+	}
+	stroke(gtx, image.Rect(0, 0, w, ht), dp(gtx, 12), 1, cl.Ring)
+	return layout.Dimensions{Size: image.Pt(w, ht)}
+}

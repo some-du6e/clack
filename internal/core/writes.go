@@ -115,19 +115,29 @@ func tsBefore(t *store.Timeline, ts string) string {
 // every few seconds while the user types.
 func (a *App) Typing(ch, threadTS string) error { return a.RTM.Typing(ch, threadTS) }
 
-// Upload shares files (held in memory, never written to disk): new Files
-// are uploaded first (o.Progress reports bytes across all of them), then
-// they and any Prepared ones are shared in one files.completeUploadExternal.
-// The message arrives as a realtime "message" event; file stubs are filled
-// in by an "update" once Slack has processed the upload.
+// Upload shares files (held in memory, never written to disk) the way
+// Slack's composer sends attached files: new Files are uploaded first
+// (PrepareUpload: files.getUploadURL, the bytes, files.completeUpload;
+// o.Progress reports bytes across all of them), then they and any Prepared
+// ones go out in one files.share with the message's blocks (or its plain
+// comment). The message arrives as a realtime "message" event; file stubs
+// are filled in by an "update" once Slack has processed the upload.
 func (a *App) Upload(ctx context.Context, o UploadOpts) ([]UploadedFile, error) {
 	if len(o.Files) == 0 && len(o.Prepared) == 0 {
 		return nil, errors.New("core: Upload needs a file")
 	}
 	t0 := time.Now()
-	refs := make([]slack.UploadedRef, 0, len(o.Files)+len(o.Prepared))
+	out := make([]UploadedFile, 0, len(o.Files)+len(o.Prepared))
+	ids := make([]string, 0, cap(out))
 	for _, p := range o.Prepared {
-		refs = append(refs, slack.UploadedRef{ID: p.ID, Title: firstNonEmpty(p.Title, p.Name)})
+		if p.Title != "" && p.Name != "" && p.Title != p.Name {
+			// renamed after the upload (completeUpload titled it by name)
+			if err := a.C.EditFile(ctx, p.ID, p.Title); err != nil {
+				return nil, err
+			}
+		}
+		ids = append(ids, p.ID)
+		out = append(out, UploadedFile{ID: p.ID, Name: p.Name, Title: firstNonEmpty(p.Title, p.Name)})
 	}
 	var all, done int64
 	for _, f := range o.Files {
@@ -149,24 +159,23 @@ func (a *App) Upload(ctx context.Context, o UploadOpts) ([]UploadedFile, error) 
 			return nil, err
 		}
 		done += int64(len(f.Data))
-		refs = append(refs, slack.UploadedRef{ID: id, Title: firstNonEmpty(f.Title, f.Name)})
+		ids = append(ids, id)
+		out = append(out, UploadedFile{ID: id, Name: f.Name, Title: firstNonEmpty(f.Title, f.Name)})
 	}
-	res, err := a.C.CompleteUpload(ctx, o.Channel, o.ThreadTS, o.Comment, refs)
+	err := a.C.ShareFiles(ctx, slack.ShareOpts{Files: ids, Channel: o.Channel, ThreadTS: o.ThreadTS, Broadcast: o.Broadcast,
+		Blocks: o.Blocks, Comment: o.Comment, ClientMsgID: clientMsgID()})
 	if err != nil {
 		return nil, err
 	}
-	out := make([]UploadedFile, 0, len(res))
-	for _, f := range res {
-		out = append(out, UploadedFile{ID: f["id"], Name: f["name"], Title: f["title"]})
-	}
-	log.Printf("upload: %d file(s), %d new bytes in %s", len(refs), all, time.Since(t0).Round(time.Millisecond))
+	log.Printf("upload: %d file(s), %d new bytes in %s", len(ids), all, time.Since(t0).Round(time.Millisecond))
 	return out, nil
 }
 
 // PrepareUpload uploads a file's bytes as soon as it is attached
-// (files.getUploadURLExternal + upload) without sharing it; pass the result
-// in UploadOpts.Prepared when sending. progress (may be nil) runs on the
-// calling goroutine. Unshared prepared files expire on Slack's side.
+// (files.getUploadURL, the bytes, files.completeUpload) without sharing
+// it; pass the result in UploadOpts.Prepared when sending. progress (may
+// be nil) runs on the calling goroutine. Unshared prepared files expire on
+// Slack's side.
 func (a *App) PrepareUpload(ctx context.Context, f UploadFile, progress func(sent, total int64)) (PreparedUpload, error) {
 	id, err := a.C.PrepareUpload(ctx, slack.UploadFile{Name: f.Name, Title: f.Title, Data: f.Data}, progress)
 	if err != nil {

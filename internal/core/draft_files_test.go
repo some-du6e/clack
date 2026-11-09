@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/fakeslack"
@@ -77,7 +78,8 @@ func TestDraftFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	sh := fs.Shared()
-	if len(sh) != 1 || sh[0].Channel != ch || len(sh[0].IDs) != 1 || sh[0].IDs[0] != p.ID || sh[0].Comment != "synthetic plot attached" {
+	if len(sh) != 1 || sh[0].Channel != ch || len(sh[0].IDs) != 1 || sh[0].IDs[0] != p.ID ||
+		(sh[0].Comment != "synthetic plot attached" && !strings.Contains(string(sh[0].Blocks), "synthetic plot attached")) {
 		t.Fatalf("shared %+v", sh)
 	}
 	if len(fs.LiveDrafts()) != 0 {

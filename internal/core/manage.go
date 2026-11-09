@@ -308,6 +308,42 @@ const (
 
 func savedKey(ch, ts string) string { return ch + "/" + ts }
 
+// savedFileKey keys saved files in the saved set: savedKey(savedFileKey, id).
+const savedFileKey = "file"
+
+// FileSaved reports whether file id is in Later (Slack's file.saved).
+func (a *App) FileSaved(id string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.saved[savedKey(savedFileKey, id)]
+}
+
+// SaveFile / UnsaveFile add a file to Later or take it out (Slack's
+// saveFile / removeFile: saved.add / saved.delete {item_type: file,
+// item_id}).
+func (a *App) SaveFile(ctx context.Context, id string) error {
+	err := a.C.Call(ctx, "saved.add", url.Values{"item_type": {"file"}, "item_id": {id}}, nil)
+	if err != nil && !isCode(err, "already_saved") {
+		return err
+	}
+	a.markSaved(savedFileKey, id, true)
+	return nil
+}
+
+func (a *App) UnsaveFile(ctx context.Context, id string) error {
+	if err := a.C.Call(ctx, "saved.delete", url.Values{"item_type": {"file"}, "item_id": {id}}, nil); err != nil {
+		return err
+	}
+	a.markSaved(savedFileKey, id, false)
+	return nil
+}
+
+// DeleteFile deletes a file (DeleteFileDialog's deleteFile: files.delete
+// {file}). Slack then sends file_deleted and the message's update.
+func (a *App) DeleteFile(ctx context.Context, id string) error {
+	return a.C.Call(ctx, "files.delete", url.Values{"file": {id}}, nil)
+}
+
 // loadSaved builds the saved/to-do set used for Message.Saved.
 func (a *App) loadSaved(ctx context.Context) error {
 	set := map[string]bool{}
@@ -336,8 +372,11 @@ func (a *App) loadSaved(ctx context.Context) error {
 				return err
 			}
 			for _, it := range r.Items {
-				if it.ItemType == "message" {
+				switch it.ItemType {
+				case "message":
 					set[savedKey(it.ItemID, it.TS)] = true
+				case "file":
+					set[savedKey(savedFileKey, it.ItemID)] = true
 				}
 			}
 			if r.Meta.NextCursor == "" {
@@ -518,6 +557,9 @@ func (a *App) onSavedEvent(ctx context.Context, typ string, raw json.RawMessage)
 		Saved savedRaw `json:"saved"`
 	}
 	_ = json.Unmarshal(raw, &e)
+	if e.Saved.ItemType == "file" && e.Saved.ItemID != "" {
+		a.markSaved(savedFileKey, e.Saved.ItemID, typ != "saved_deleted")
+	}
 	it := savedItemOf(&e.Saved)
 	if it.Channel != "" {
 		a.markSaved(it.Channel, it.TS, typ != "saved_deleted")

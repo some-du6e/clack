@@ -542,6 +542,11 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 		}
 		drawImage(ops, img, im.r, im.radii, !im.fit)
 	}
+	for i := range v.d.boxes { // over images, under text (gallery scrims, video pills)
+		if b := &v.d.boxes[i]; b.layer == 2 && b.comp == comp {
+			v.drawBox(ops, b, css)
+		}
+	}
 	ul := uipref.Get().UnderlineLinks
 	for i := range v.d.frags {
 		f := &v.d.frags[i]

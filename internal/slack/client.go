@@ -614,9 +614,13 @@ func FileURL(u *url.URL) bool {
 }
 
 // UploadBytes sends file contents to an upload URL from
-// files.getUploadURLExternal. progress (may be nil) is called as the body
-// is written: every ~64 KB and once at the end, with the multipart body size
-// as total. It runs on the calling goroutine.
+// files.getUploadURL the way Slack's UploadQueue does: a multipart POST of
+// one "file" part. (Slack's XMLHttpRequest has no withCredentials, so a
+// browser sends no cookie to files.slack.com; Clack keeps sending the
+// session's cookies on every request, as its session tests require.)
+// progress (may be nil) is called as the body is written: every ~64 KB
+// and once at the end, with the multipart body size as total. It runs on
+// the calling goroutine.
 func (c *Client) UploadBytes(ctx context.Context, uploadURL, filename string, data []byte, progress func(sent, total int64)) error {
 	if c.SignedOut() {
 		return ErrSignedOut

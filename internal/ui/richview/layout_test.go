@@ -3,6 +3,8 @@ package richview
 import (
 	"image"
 	"image/color"
+	"math"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -943,10 +945,10 @@ func TestFileImage(t *testing.T) {
 		t.Fatalf("%d imgs", len(v.d.imgs))
 	}
 	im := v.d.imgs[0]
-	// Slack's gallery rule: 600 wide → gallery 574 (medium), landscape cap
-	// 154 → 308x154.
-	if im.r != image.Rect(0, 26, 308, 180) {
-		t.Errorf("image %v, want 308x154 below the name row (Slack gallery size)", im.r)
+	// Slack's gallery v3 (getDimensions, one file): 600 wide → gallery
+	// 574 (medium), landscape cap 154 → 308x154, with no name row above.
+	if im.r != image.Rect(0, 0, 308, 154) {
+		t.Errorf("image %v, want 308x154 at the top (Slack gallery size, no name row)", im.r)
 	}
 	if im.target < 0 || v.d.targets[im.target].kind != tFile || v.d.targets[im.target].file != f {
 		t.Errorf("image target %d", im.target)
@@ -960,10 +962,13 @@ func TestFileImage(t *testing.T) {
 	if !overlay {
 		t.Errorf("no border overlay over the image")
 	}
+	if len(boxesOf(&v.d, bCaret)) != 0 {
+		t.Errorf("a name-row caret above a gallery image")
+	}
 	if string(v.d.plain) != "pic.png" {
 		t.Errorf("plain %q", v.d.plain)
 	}
-	if v.d.size != image.Pt(308, 180) {
+	if v.d.size != image.Pt(308, 154) {
 		t.Errorf("size %v", v.d.size)
 	}
 }
@@ -1012,125 +1017,241 @@ func TestFitSize(t *testing.T) {
 	}
 }
 
-func TestGalleryTiles(t *testing.T) {
-	st := newTestStyle()
+// galleryFiles makes n image file blocks with the given original sizes
+// (cycled).
+func galleryFiles(n int, sizes ...[2]int) ([]*rt.File, []rt.Block) {
 	var files []*rt.File
 	var blocks []rt.Block
-	for _, n := range []string{"a.png", "b.png", "c.png"} {
-		f := &rt.File{Name: n, IsImage: true, Thumb: &rt.Image{URL: "https://files.test/" + n, W: 1000, H: 600}}
+	for i := 0; i < n; i++ {
+		sz := sizes[i%len(sizes)]
+		name := string(rune('a'+i)) + ".png"
+		f := &rt.File{Name: name, IsImage: true, OrigW: sz[0], OrigH: sz[1],
+			Thumb: &rt.Image{URL: "https://files.test/" + name, W: sz[0], H: sz[1]}}
 		files = append(files, f)
 		blocks = append(blocks, fileBlock(f))
 	}
+	return files, blocks
+}
+
+func imgRects(v *View) []image.Rectangle {
+	var out []image.Rectangle
+	for _, im := range v.d.imgs {
+		out = append(out, im.r)
+	}
+	return out
+}
+
+// TestMediaGallery checks Slack's gallery v3 (seRe getDimensions /
+// getProportionalWidthV3 / getGalleryV3MaxVisibleFiles): two files share
+// a height with widths grown from 108, three or four fill one row by their
+// v3 aspects, and past the visible limit the last tile reads "+ N".
+func TestMediaGallery(t *testing.T) {
+	st := newTestStyle()
+	land := [2]int{1000, 600}
+
+	// three landscape files at 600 (gallery 574): one row of 186x140
+	files, blocks := galleryFiles(3, land)
 	v := layoutAt(st, doc(blocks...), Options{}, 600)
-	if len(v.d.imgs) != 3 {
-		t.Fatalf("%d tiles, want 3", len(v.d.imgs))
+	want := []image.Rectangle{image.Rect(0, 0, 186, 140), image.Rect(194, 0, 380, 140), image.Rect(388, 0, 574, 140)}
+	if got := imgRects(v); !reflect.DeepEqual(got, want) {
+		t.Errorf("3 tiles %v, want %v", got, want)
 	}
 	for i, im := range v.d.imgs {
-		if im.r.Dx() != 180 || im.r.Dy() != 180 {
-			t.Errorf("tile %d %v, want 180x180 square", i, im.r)
-		}
-		if im.r.Min.Y != 0 {
-			t.Errorf("tile %d not on the first row at width 600", i)
-		}
 		if tg := v.d.targets[im.target]; tg.kind != tFile || tg.file != files[i] {
 			t.Errorf("tile %d target %+v", i, tg)
 		}
-	}
-	if !(v.d.imgs[0].r.Max.X < v.d.imgs[1].r.Min.X && v.d.imgs[1].r.Max.X < v.d.imgs[2].r.Min.X) {
-		t.Errorf("tiles overlap: %v %v %v", v.d.imgs[0].r, v.d.imgs[1].r, v.d.imgs[2].r)
 	}
 	for _, n := range []string{"a.png", "b.png", "c.png"} {
 		if !strings.Contains(string(v.d.plain), n) {
 			t.Errorf("plain %q lacks %q", v.d.plain, n)
 		}
 	}
+	if v.d.size.Y != 140 {
+		t.Errorf("height %d", v.d.size.Y)
+	}
 
-	// Narrower: the third tile wraps to a second row.
+	// at 400 (gallery 374) only two fit: 183x110 each, the second "+ 2"
 	v = layoutAt(st, doc(blocks...), Options{}, 400)
-	if len(v.d.imgs) != 3 {
-		t.Fatalf("%d tiles", len(v.d.imgs))
+	want = []image.Rectangle{image.Rect(0, 0, 183, 110), image.Rect(191, 0, 374, 110)}
+	if got := imgRects(v); !reflect.DeepEqual(got, want) {
+		t.Errorf("2 of 3 tiles %v, want %v", got, want)
 	}
-	if v.d.imgs[2].r.Min.Y <= v.d.imgs[0].r.Min.Y || v.d.imgs[2].r.Min.X != 0 {
-		t.Errorf("third tile %v did not wrap", v.d.imgs[2].r)
+	plus := findFrag(t, &v.d, "+")
+	if plus.x < 191 || plus.y > 110 {
+		t.Errorf("\"+ 2\" at %v,%v, want on the second tile", plus.x, plus.y)
 	}
-	if v.d.size.Y < 2*180 {
-		t.Errorf("height %d for two rows", v.d.size.Y)
+	findFrag(t, &v.d, "2")
+	var scrim bool
+	for _, b := range boxesOf(&v.d, bFill) {
+		if b.layer == 2 && b.r == want[1] {
+			scrim = true
+		}
+	}
+	if !scrim {
+		t.Errorf("no overflow scrim over the last tile")
+	}
+	// the hidden file still opens from the tile underneath
+	if tg := v.d.targets[v.d.imgs[1].target]; tg.file != files[1] {
+		t.Errorf("overflow tile opens %v", tg.file)
+	}
+
+	// four at 1000 (gallery 936): 228x171 each
+	_, blocks = galleryFiles(4, land)
+	v = layoutAt(st, doc(blocks...), Options{}, 1000)
+	if got := imgRects(v); len(got) != 4 || got[0] != image.Rect(0, 0, 228, 171) || got[3] != image.Rect(708, 0, 936, 171) {
+		t.Errorf("4 tiles %v", got)
+	}
+
+	// six at 1000: four tiles, the fourth "+ 3"
+	_, blocks = galleryFiles(6, land)
+	v = layoutAt(st, doc(blocks...), Options{}, 1000)
+	if n := len(v.d.imgs); n != 4 {
+		t.Errorf("%d tiles for 6 files, want 4", n)
+	}
+	findFrag(t, &v.d, "+")
+	findFrag(t, &v.d, "3")
+
+	// a portrait among landscapes narrows to its 3/4 aspect
+	_, blocks = galleryFiles(3, land, [2]int{600, 1000}, land)
+	v = layoutAt(st, doc(blocks...), Options{}, 1000)
+	got := imgRects(v)
+	if len(got) != 3 || got[1].Dx() >= got[0].Dx() || got[0].Dy() != got[1].Dy() {
+		t.Errorf("mixed aspects %v: the portrait should be narrower at the same height", got)
+	}
+
+	// two at 1000: shared height under the large landscape cap (235)
+	_, blocks = galleryFiles(2, [2]int{1600, 900}, [2]int{800, 800})
+	v = layoutAt(st, doc(blocks...), Options{}, 1000)
+	got = imgRects(v)
+	if len(got) != 2 || got[0].Dy() != got[1].Dy() || got[0].Dy() > 235 || got[0].Dy() < 108 {
+		t.Errorf("pair %v", got)
+	}
+	if got[1].Min.X-got[0].Max.X != 8 {
+		t.Errorf("pair gap %d, want 8", got[1].Min.X-got[0].Max.X)
+	}
+}
+
+func TestGalleryPair(t *testing.T) {
+	// getDimensions with two 1000x600 files in a 374 gallery (tiny): cap
+	// 115, each grows 75 from 108 → 183, height 183/(5/3) = 109.8
+	ws, h := galleryPair(374, [][2]float64{{1000, 600}, {1000, 600}})
+	if ws[0] != 183 || ws[1] != 183 || math.Abs(h-109.8) > 1e-9 {
+		t.Errorf("pair %v x %v", ws, h)
+	}
+	if got := galleryMaxVisible(599); got != 3 {
+		t.Errorf("maxVisible(599) = %d", got)
+	}
+	if got := galleryMaxVisible(223); got != 1 {
+		t.Errorf("maxVisible(223) = %d", got)
+	}
+	ws, h = galleryRow(936, [][2]float64{{4, 3}, {3, 4}, {1, 1}})
+	if math.Abs(ws[0]+ws[1]+ws[2]+16-936) > 1e-9 || math.Abs(ws[0]/h-4.0/3) > 1e-9 || math.Abs(ws[1]/h-0.75) > 1e-9 {
+		t.Errorf("row %v x %v", ws, h)
 	}
 }
 
 func TestVideoCard(t *testing.T) {
 	st := newTestStyle()
-	f := &rt.File{Name: "clip.mp4", IsVideo: true, DurationMS: 83000, Thumb: &rt.Image{URL: "https://files.test/clip.jpg", W: 640, H: 360}}
+	f := &rt.File{Name: "clip.mp4", IsVideo: true, DurationMS: 83000, OrigW: 640, OrigH: 360, Thumb: &rt.Image{URL: "https://files.test/clip.jpg", W: 640, H: 360}}
 	v := layoutAt(st, doc(fileBlock(f)), Options{}, 600)
 	if len(v.d.imgs) != 1 {
 		t.Fatalf("%d imgs", len(v.d.imgs))
 	}
+	// the single-file box (574 gallery, medium landscape cap 154): 273x154,
+	// the poster contained in it
 	r := v.d.imgs[0].r
-	if r != image.Rect(0, 26, 480, 296) {
-		t.Errorf("video thumb %v, want 480x270 below the name row", r)
+	if r.Min != image.Pt(0, 0) || r.Dx() != 273 || r.Dy() < 153 || r.Dy() > 154 {
+		t.Errorf("video poster %v, want 273x154 at the top", r)
 	}
-	circles, plays := boxesOf(&v.d, bCircle), boxesOf(&v.d, bPlay)
-	if len(circles) != 1 || len(plays) != 1 {
-		t.Fatalf("play overlay: %d circles %d triangles", len(circles), len(plays))
+	if n := len(boxesOf(&v.d, bCircle)); n != 0 {
+		t.Errorf("%d play circles; Slack's gallery video has the bottom-left pill", n)
 	}
-	if c := circles[0]; c.layer != 1 || rectCenter(c.r) != rectCenter(r) {
-		t.Errorf("play circle %v not centered over %v (layer %d)", c.r, r, c.layer)
+	plays := boxesOf(&v.d, bPlay)
+	if len(plays) != 1 || plays[0].layer != 2 || plays[0].r.Min.X < 12 || plays[0].r.Max.Y > 154-12 {
+		t.Fatalf("play glyph %+v", plays)
 	}
-	if plays[0].layer != 1 || !image.Pt(240, 161).In(plays[0].r) {
-		t.Errorf("play triangle %v", plays[0].r)
+	d := findFrag(t, &v.d, "1:23")
+	if d.y < 154-12-28 || d.x < 12+16 {
+		t.Errorf("duration at %v,%v, want in the pill 12px from the bottom-left", d.x, d.y)
 	}
-	findFrag(t, &v.d, "1:23")
 	if !strings.Contains(string(v.d.plain), "clip.mp4") {
 		t.Errorf("plain %q", v.d.plain)
 	}
 
-	// Without a thumbnail: a black 16:9 placeholder.
+	// Without a poster: the base-ter tile, still clickable, "Video"
 	f2 := &rt.File{Name: "raw.mov", IsVideo: true}
 	v = layoutAt(st, doc(fileBlock(f2)), Options{}, 600)
 	var ph bool
 	for _, b := range v.d.boxes {
-		if b.kind == bFill && b.r == image.Rect(0, 26, 480, 296) && b.fill == rgb(0, 0, 0) {
+		if b.kind == bFill && b.r == image.Rect(0, 0, 108, 108) && b.fill == st.Palette.Placeholder {
 			ph = true
 		}
 	}
 	if !ph {
-		t.Errorf("no black placeholder; boxes %+v", v.d.boxes)
+		t.Errorf("no 108px placeholder tile; boxes %+v", v.d.boxes)
 	}
-	if len(boxesOf(&v.d, bPlay)) != 1 {
-		t.Errorf("no play triangle without thumbnail")
-	}
-	if v.targetAt(f32.Pt(240, 135)) < 0 {
+	if v.targetAt(f32.Pt(54, 54)) < 0 {
 		t.Errorf("placeholder is not clickable")
 	}
 }
 
 func TestAudioCard(t *testing.T) {
 	st := newTestStyle()
-	f := &rt.File{Title: "Voice memo", IsAudio: true, DurationMS: 5000}
+	// an uploaded audio file: AudioPlayer's header row and scrubber row in
+	// a 426-wide pillow (12 + 36 + 12 + 18 + 12 + 2 = 92)
+	f := &rt.File{Title: "standup.mp3", IsAudio: true, DurationMS: 154000, Size: 900 << 10}
 	v := layoutAt(st, doc(fileBlock(f)), Options{}, 600)
 	cards := boxesOf(&v.d, bBorder)
-	if len(cards) != 1 || cards[0].r != image.Rect(0, 0, 426, 64) || cards[0].radius != 12 {
+	if len(cards) != 1 || cards[0].r != image.Rect(0, 0, 426, 92) || cards[0].radius != 12 {
 		t.Fatalf("audio card %+v", cards)
 	}
 	if tg := cards[0].target; tg < 0 || v.d.targets[tg].kind != tFile || v.d.targets[tg].file != f {
 		t.Errorf("card target %d", cards[0].target)
 	}
-	if cs := boxesOf(&v.d, bCircle); len(cs) != 1 || cs[0].fill != st.Palette.Link {
-		t.Errorf("play circle %+v", cs)
+	cs := boxesOf(&v.d, bCircle)
+	if len(cs) != 2 || cs[0].fill != rgb(0xe6, 0xef, 0xf6) || cs[0].r != image.Rect(13, 13, 49, 49) {
+		t.Errorf("play button %+v", cs)
 	}
 	if len(boxesOf(&v.d, bPlay)) != 1 {
-		t.Errorf("no play triangle")
+		t.Errorf("no play glyph")
 	}
-	findFrag(t, &v.d, "0:05")
-	if name := findFrag(t, &v.d, "memo"); name.target != cards[0].target {
-		t.Errorf("name target %d", name.target)
+	if name := findFrag(t, &v.d, "standup.mp3"); name.target != cards[0].target || name.x != 61 {
+		t.Errorf("name target %d x %v", name.target, name.x)
 	}
-	if v.d.size.Y != 64 {
-		t.Errorf("height %d", v.d.size.Y)
+	findFrag(t, &v.d, "(900")
+	var times int
+	for _, fr := range textFrags(&v.d) {
+		if fr.sh.str == "2:34" {
+			times++
+		}
+	}
+	if times != 2 {
+		t.Errorf("duration shown %d times, want in the header and after the scrubber", times)
+	}
+
+	// a voice clip: the flat player with the waveform (12 + 34 + 12 + 2)
+	clip := &rt.File{Name: "audio_message.webm", IsAudio: true, Subtype: "slack_audio", DurationMS: 5000, Waveform: []int{10, 50, 90, 40}}
+	v = layoutAt(st, doc(fileBlock(clip)), Options{}, 600)
+	if r := boxesOf(&v.d, bBorder)[0].r; r != image.Rect(0, 0, 426, 60) {
+		t.Errorf("voice clip card %v", r)
+	}
+	if cs := boxesOf(&v.d, bCircle); len(cs) != 1 || cs[0].fill != rgb(18, 100, 163) || cs[0].r.Dx() != 34 {
+		t.Errorf("voice clip play button %+v", cs)
+	}
+	var dots int
+	for _, b := range boxesOf(&v.d, bFill) {
+		if b.r.Dx() == 3 && b.r.Dy() >= 6 && b.r.Dy() <= 34 {
+			dots++
+		}
+	}
+	if dots < 40 {
+		t.Errorf("%d waveform dots, want the scrubber full of them", dots)
+	}
+	if d := findFrag(t, &v.d, "0:05"); d.weight != font.Bold {
+		t.Errorf("voice clip duration weight %v, want Bold", d.weight)
 	}
 
 	v = layoutAt(st, doc(fileBlock(&rt.File{Name: "x.mp3", IsAudio: true})), Options{}, 300)
-	findFrag(t, &v.d, "Audio")
 	if r := boxesOf(&v.d, bBorder)[0].r; r.Dx() != 300 {
 		t.Errorf("audio card %v not clamped to width 300", r)
 	}
@@ -1151,34 +1272,36 @@ func TestSnippetCard(t *testing.T) {
 	if card == nil {
 		t.Fatalf("no card")
 	}
-	if card.r.Min != (image.Point{}) || card.r.Dx() != 560 || card.r.Max.Y != d.size.Y {
+	// p-message_file--snippet has no max width; the header is the pillow's
+	// (60 tall), then 3 lines of 19.5 with 4px above and below
+	if card.r.Min != (image.Point{}) || card.r.Dx() != 600 || card.r.Max.Y != d.size.Y || card.r.Dy() != 60+4+3*20+4+1 {
 		t.Errorf("snippet card %v, size %v", card.r, d.size)
 	}
-	var pre *box
-	for i := range d.boxes {
-		if d.boxes[i].perCorner && d.boxes[i].fill == st.Palette.PreBg {
-			pre = &d.boxes[i]
-		}
-	}
-	if pre == nil {
-		t.Fatalf("no preview background")
-	}
-	if pre.corners[0] != 0 || pre.corners[2] == 0 {
-		t.Errorf("preview corners %v, want only bottom rounded", pre.corners)
-	}
-	if !pre.r.In(card.r) {
-		t.Errorf("preview %v outside card %v", pre.r, card.r)
-	}
 	pk, fn := findFrag(t, d, "package"), findFrag(t, d, "func")
-	if pk.size != 12 || fn.top <= pk.top {
-		t.Errorf("preview text size %d, lines %d/%d", pk.size, pk.top, fn.top)
+	if pk.size != 13 || fn.top <= pk.top {
+		t.Errorf("code size %d, lines %d/%d", pk.size, pk.top, fn.top)
 	}
-	if fn.top-pk.top != 2*18 {
-		t.Errorf("blank preview line not kept: %d", fn.top-pk.top)
+	if fn.top-pk.top != 2*20 {
+		t.Errorf("blank line not kept: %d", fn.top-pk.top)
 	}
-	findFrag(t, d, "lines")
+	if pk.x != 1+32+8 {
+		t.Errorf("code at x %v, want after the 32px gutter and 8px padding", pk.x)
+	}
+	one := findFrag(t, d, "1")
+	if one.x >= 33 || one.col == st.Palette.Text {
+		t.Errorf("line number %+v, want in the gutter, dimmed", one)
+	}
+	findFrag(t, d, "3")
+	findFrag(t, d, "Go")
 	if hdr := findFrag(t, d, "main.go"); hdr.target != card.target || hdr.top >= pk.top {
 		t.Errorf("header frag target %d top %d", hdr.target, hdr.top)
+	}
+
+	// a long snippet collapses at 200px under the fade
+	long := &rt.File{Name: "big.txt", IsSnippet: true, Preview: strings.Repeat("line\n", 30)}
+	v = layoutAt(st, doc(fileBlock(long)), Options{}, 600)
+	if h := v.d.size.Y; h != 60+200+1 {
+		t.Errorf("collapsed snippet height %d, want 261", h)
 	}
 }
 
@@ -1205,9 +1328,19 @@ func TestGenericFileCard(t *testing.T) {
 	if name.target != cards[0].target || name.x != 60 {
 		t.Errorf("name frag target %d x %.1f", name.target, name.x)
 	}
-	for _, s := range []string{"·", "2", "KB"} {
-		if mf := findFrag(t, d, s); mf.top <= name.top || mf.col != p.Text2 {
-			t.Errorf("meta %q top %d color %v", s, mf.top, mf.col)
+	// FileSize: the pretty_type alone, no size (Slack drops "· 2 KB")
+	var meta *frag
+	for _, f := range textFrags(d) {
+		if f.sh.str == "PDF" && f.top > name.top {
+			meta = f
+		}
+	}
+	if meta == nil || meta.col != p.Text2 {
+		t.Errorf("meta line %+v, want PDF in Text2 under the name", meta)
+	}
+	for _, f := range textFrags(d) {
+		if f.sh.str == "KB" || f.sh.str == "·" {
+			t.Errorf("meta has %q; Slack shows only the type", f.sh.str)
 		}
 	}
 
@@ -2159,5 +2292,23 @@ func TestFirstBaseline(t *testing.T) {
 	}
 	if b := (&display{}).firstBaseline(); b != -1 {
 		t.Errorf("empty display baseline %d, want -1", b)
+	}
+}
+
+// Two documents: side by side in 328px cells when the gallery is wider
+// than 664, one 426 column when it isn't (mixed_file_format).
+func TestPillowGrid(t *testing.T) {
+	st := newTestStyle()
+	a := &rt.File{Name: "a.pdf", Type: "pdf", PrettyType: "PDF"}
+	b := &rt.File{Name: "b.docx", Type: "docx", PrettyType: "Word Document"}
+	v := layoutAt(st, doc(fileBlock(a), fileBlock(b)), Options{}, 1000)
+	cards := boxesOf(&v.d, bBorder)
+	if len(cards) != 2 || cards[0].r != image.Rect(0, 0, 328, 62) || cards[1].r != image.Rect(336, 0, 664, 62) {
+		t.Errorf("wide grid %v", cards)
+	}
+	v = layoutAt(st, doc(fileBlock(a), fileBlock(b)), Options{}, 600)
+	cards = boxesOf(&v.d, bBorder)
+	if len(cards) != 2 || cards[0].r != image.Rect(0, 0, 426, 62) || cards[1].r != image.Rect(0, 70, 426, 132) {
+		t.Errorf("compact grid %v", cards)
 	}
 }

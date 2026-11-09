@@ -73,7 +73,8 @@ func convertFile(f *slack.File) *File {
 	out := &File{
 		ID: f.ID, Name: f.Name, Title: f.Title, Mime: f.Mimetype, Type: f.Filetype, PrettyType: f.PrettyType,
 		Size: f.Size, URL: SafeURL(f.URLPrivate), Download: SafeURL(f.URLPrivateDownload), Permalink: SafeURL(f.Permalink),
-		Lines: f.Lines, DurationMS: f.DurationMS,
+		Lines: f.Lines, DurationMS: f.DurationMS, OrigW: f.OriginalW, OrigH: f.OriginalH,
+		Subtype: f.Subtype, Waveform: f.AudioWaveSamples, User: f.User, Created: f.Created, IsExternal: f.IsExternal,
 	}
 	if out.Title == out.Name {
 		out.Title = ""
@@ -86,7 +87,10 @@ func convertFile(f *slack.File) *File {
 	case strings.HasPrefix(mime, "video/"):
 		out.IsVideo = true
 		out.URL = SafeURL(firstNonEmpty(f.MP4, f.URLPrivate))
-		out.Thumb = image(f.ThumbVideo, f.Name, f.OriginalW, f.OriginalH)
+		// FileGalleryVideoFile: original_w || thumb_video_w for the box,
+		// thumb_video_w || original_w for the poster's own size
+		out.Thumb = image(f.ThumbVideo, f.Name, firstPos(f.ThumbVideoW, f.OriginalW), firstPos(f.ThumbVideoH, f.OriginalH))
+		out.OrigW, out.OrigH = firstPos(f.OriginalW, f.ThumbVideoW), firstPos(f.OriginalH, f.ThumbVideoH)
 	case strings.HasPrefix(mime, "audio/") || f.Subtype == "slack_audio":
 		out.IsAudio = true
 		if f.MP4 != "" {
@@ -117,10 +121,10 @@ func imageThumb(f *slack.File) *Image {
 		side int
 	}
 	cs := []cand{
-		{f.Thumb1024, 0, 0, 1024},
-		{f.Thumb960, 0, 0, 960},
+		{f.Thumb1024, f.Thumb1024W, f.Thumb1024H, 1024},
+		{f.Thumb960, f.Thumb960W, f.Thumb960H, 960},
 		{f.Thumb720, f.Thumb720W, f.Thumb720H, 720},
-		{f.Thumb480, 0, 0, 480},
+		{f.Thumb480, f.Thumb480W, f.Thumb480H, 480},
 		{f.Thumb360, f.Thumb360W, f.Thumb360H, 360},
 		{f.URLPrivate, f.OriginalW, f.OriginalH, 0},
 	}
@@ -154,6 +158,16 @@ func largestThumb(f *slack.File) *Image {
 		return image(f.ThumbPDF, f.Name, f.ThumbPDFW, f.ThumbPDFH)
 	}
 	return nil
+}
+
+// firstPos returns the first positive value (0 if none).
+func firstPos(v ...int) int {
+	for _, x := range v {
+		if x > 0 {
+			return x
+		}
+	}
+	return 0
 }
 
 // fitSide scales w×h so the longer side is at most side (0: unchanged).

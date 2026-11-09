@@ -12,7 +12,6 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
 )
 
 func (l *lay) bodyStyle() flowStyle {
@@ -235,15 +234,28 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 				l.plainAdd("\n")
 			}
 		}
-		// Gallery: consecutive image files lay out as tiles.
-		if isImageFile(b) && i+1 < len(bs) && isImageFile(&bs[i+1]) {
+		// Slack's FileGallery: consecutive visual files (images, videos)
+		// lay out as one media gallery.
+		if isMediaBlock(b) {
 			gal = gal[:0]
 			j := i
-			for j < len(bs) && isImageFile(&bs[j]) {
+			for j < len(bs) && isMediaBlock(&bs[j]) {
 				gal = append(gal, bs[j].File)
 				j++
 			}
-			y += l.gallery(gal, x, y, w)
+			y += l.mediaGallery(gal, x, y, w)
+			i = j - 1
+			continue
+		}
+		// two or more document pillows: FileGallery's mixed_file_format grid
+		if isPillowBlock(b) && i+1 < len(bs) && isPillowBlock(&bs[i+1]) {
+			gal = gal[:0]
+			j := i
+			for j < len(bs) && isPillowBlock(&bs[j]) {
+				gal = append(gal, bs[j].File)
+				j++
+			}
+			y += l.pillowGrid(gal, x, y, w)
 			i = j - 1
 			continue
 		}
@@ -264,8 +276,15 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 	return y - y0
 }
 
-func isImageFile(b *richtext.Block) bool {
-	return b.Kind == richtext.FileBlock && b.File != nil && b.File.IsImage && b.File.Thumb != nil && !uipref.Get().NoInternalImgs
+// isPillowBlock is a file drawn as a plain pillow (not media, audio or a
+// snippet).
+func isPillowBlock(b *richtext.Block) bool {
+	f := b.File
+	return b.Kind == richtext.FileBlock && f != nil && !mediaFile(f) && !f.IsAudio && !f.IsSnippet && f.Preview == ""
+}
+
+func isMediaBlock(b *richtext.Block) bool {
+	return b.Kind == richtext.FileBlock && mediaFile(b.File)
 }
 
 func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {

@@ -64,6 +64,9 @@ type Size struct {
 	// Views adds the rail list views' fixtures (views.go): followed
 	// threads, scheduled drafts, recorded activity writes.
 	Views bool
+	// Files adds #files-gallery: one message per way Slack draws shared
+	// files (files.go).
+	Files bool
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -247,8 +250,8 @@ type Server struct {
 	// drafts and uploads (drafts.go)
 	draftMu sync.Mutex
 	drafts  map[string]*Draft        // drafts.create/update/delete/list
-	files   map[string]*UploadedFile // files.getUploadURLExternal + upload
-	shared  []SharedFiles            // files.completeUploadExternal calls
+	files   map[string]*UploadedFile // files.getUploadURL + upload + files.completeUpload
+	shared  []SharedFiles            // files.share calls
 	nextID  int
 
 	chans chanState   // conversations.create and friends (channels.go)
@@ -414,6 +417,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.CodeChannels {
 		s.addCodeChannels() // codechannels.go
+	}
+	if sz.Files {
+		s.addFilesChannel() // files.go
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", s.api)
@@ -824,6 +830,9 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		form, _ = url.ParseQuery(string(body))
 		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
 			form = url.Values{}
+		}
+		if strings.HasPrefix(method, "upload/") && r.Header.Get("Cookie") != "" {
+			form.Set(uploadCookieKey, "1")
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")

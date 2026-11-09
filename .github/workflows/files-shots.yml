@@ -1,0 +1,69 @@
+name: files-shots
+# Files in messages, the file menu and uploads, audited against Slack's
+# web client (docs/FILES-AUDIT.md): gallery v3 geometry and the file
+# cards (internal/ui/richview), the upload sequence (files.getUploadURL,
+# the POST, files.completeUpload, files.share) and the file menu's
+# writes, the #files-gallery render test, and screenshots of the whole
+# channel, the file menu, the delete dialog and the viewer, light and
+# dark, rendered headlessly against internal/fakeslack. Synthetic only:
+# nothing here talks to Slack.
+on:
+  push:
+    paths:
+      - "internal/richtext/message.go"
+      - "internal/richtext/types.go"
+      - "internal/slack/more.go"
+      - "internal/slack/client.go"
+      - "internal/core/writes.go"
+      - "internal/core/manage.go"
+      - "internal/fakeslack/files.go"
+      - "internal/fakeslack/drafts.go"
+      - "internal/ui/richview/cards.go"
+      - "internal/ui/richview/blocks.go"
+      - "internal/ui/richview/view.go"
+      - "internal/ui/popups/actions_context.go"
+      - "internal/ui/popups/lightbox.go"
+      - "internal/ui/files_shots_test.go"
+      - "internal/ui/composer/taut.go"
+      - ".github/workflows/files-shots.yml"
+  workflow_dispatch:
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb
+
+permissions:
+  contents: read
+
+jobs:
+  files-shots:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: geometry, uploads and the file menu
+        run: |
+          go test -count=1 -v -run 'TestFileImage|TestMediaGallery|TestGalleryPair|TestGalleryBox|TestVideoCard|TestAudioCard|TestGenericFileCard|TestSnippetCard|TestPillowGrid' ./internal/ui/richview/
+          go test -count=1 -v -run 'TestUploadProgressAndPrepared|TestUploadForInput|TestDraftFiles' ./internal/core/
+          go test -count=1 -v -run 'TestFileMenuLaterAndDelete|TestContextMenuShapes' ./internal/ui/popups/
+      - name: render
+        run: xvfb-run -a go test -count=1 -v -run 'TestFilesChannel$' ./internal/ui/
+      - name: screenshots
+        env:
+          FILES_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$FILES_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestFilesShots$' ./internal/ui/
+          ls -la "$FILES_SHOTS_DIR"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: files-shots
+          path: dist/shots
