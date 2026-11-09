@@ -58,7 +58,7 @@ func (l *lay) messageMention(sp *richtext.Span, fs *flowStyle, k faceKey, pt uin
 	ip := fs.size
 	l.addPad(pad, dc, k)
 	l.addIcon("message", ip, k, fg, dc, tg)
-	l.addPad(l.dpf(4)-l.dpf(2), dc, k) // icon margin-right 4 (the icon item has 1px each side)
+	l.addPad(l.dpf(3), dc, k) // icon margin-right 4 (the icon item ends with 1px)
 	txt := sp.Text
 	if sp.Lock && sp.Pre > 0 && sp.Pre <= len(txt) {
 		l.addText(txt[:sp.Pre], fs, k, fg, sp.Style, dc, tg)
