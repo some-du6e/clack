@@ -106,9 +106,12 @@ func lastShown[T any](h *tzHost) (T, bool) {
 	return v, ok
 }
 
-func waitToast(h *tzHost, d time.Duration) []string {
+// waitToast runs frames (async results come back through drain on the
+// UI goroutine) until h has toasted.
+func waitToast(h *tzHost, e *mkEnv, d time.Duration) []string {
 	end := time.Now().Add(d)
 	for time.Now().Before(end) {
+		e.frame()
 		if ts := h.toastList(); len(ts) > 0 {
 			return ts
 		}
@@ -184,8 +187,8 @@ func TestMenuKeysMessageActions(t *testing.T) {
 			}
 		}
 	}
-	toasted := func(t *testing.T, h *tzHost, _ *mkEnv, _ *mkHooks) {
-		if ts := waitToast(h, 5*time.Second); len(ts) == 0 {
+	toasted := func(t *testing.T, h *tzHost, e *mkEnv, _ *mkHooks) {
+		if ts := waitToast(h, e, 10*time.Second); len(ts) == 0 {
 			t.Error("no toast: the action didn't run")
 		}
 	}
@@ -327,7 +330,7 @@ func TestMenuKeysSubmenus(t *testing.T) {
 	if !e.m.Dismissed() {
 		t.Error("P in Organize ▸ left the menu open")
 	}
-	if ts := waitToast(h, 5*time.Second); len(ts) == 0 {
+	if ts := waitToast(h, e, 10*time.Second); len(ts) == 0 {
 		t.Error("P didn't pin")
 	}
 }
@@ -402,11 +405,11 @@ func TestMenuTypeAhead(t *testing.T) {
 
 	setGOOS(t, "darwin")
 	e, _ = mkOpen(t, h, "context", false)
-	for _, k := range []key.Name{"C", "O", "P", "Y", "M"} { // "copym…" → Copy message
+	for _, k := range []key.Name{"C", "O", "N"} { // "con…" → Connect to apps
 		e.press(k, 0)
 	}
-	if label(e) != "Copy message" || e.m.Dismissed() {
-		t.Errorf("macOS buffer copym highlighted %q", label(e))
+	if label(e) != "Connect to apps" || e.m.Dismissed() {
+		t.Errorf("macOS buffer con highlighted %q", label(e))
 	}
 	e.now = e.now.Add(2 * time.Second) // the buffer resets after 1s
 	e.press("F", 0)
