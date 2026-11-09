@@ -26,6 +26,8 @@ type bk struct {
 	URL         string          `json:"url"`
 	UserID      string          `json:"user_id"`
 	ChannelID   string          `json:"channel_id"`
+	MessageTS   string          `json:"message_ts"` // message_mention
+	AuthorID    string          `json:"author_id"`  // message_mention
 	UsergroupID string          `json:"usergroup_id"`
 	TeamID      string          `json:"team_id"`
 	Name        string          `json:"name"`
@@ -592,6 +594,9 @@ func (c *builder) element(e *bk, blockID string) (Button, bool) {
 		}
 	case "overflow":
 		btn.Text = "⋮"
+	case "icon_button":
+		// drawn by blockkit (a 28px icon with the text as its tooltip)
+		btn.Text = PlainText(Doc{Blocks: []Block{{Kind: Paragraph, Spans: c.textSpans(e.textObj())}}})
 	case "static_select", "external_select", "users_select", "conversations_select", "channels_select",
 		"multi_static_select", "multi_external_select", "multi_users_select", "multi_conversations_select", "multi_channels_select":
 		btn.Kind = "select"
@@ -697,6 +702,8 @@ func (c *builder) richInline(els []bk, pre bool) []Span {
 			out = append(out, Span{Kind: Channel, Text: "#" + strings.TrimPrefix(name, "#"), ID: e.ChannelID})
 		case "emoji":
 			out = append(out, richEmoji(c.r, e))
+		case "message_mention":
+			out = append(out, messageMentionSpan(c.r, e))
 		case "broadcast":
 			out = append(out, broadcastSpan(firstNonEmpty(e.Range, "here")))
 		case "date":

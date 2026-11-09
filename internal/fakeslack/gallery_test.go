@@ -37,7 +37,7 @@ func TestGallery(t *testing.T) {
 	}
 	for i, g := range gs {
 		m := hist[len(hist)-1-i]
-		if m.Text == "" {
+		if m.Text == "" && len(m.Attachments) == 0 { // attachment-only bot messages may have none
 			t.Errorf("%s: no fallback text", g.Name)
 		}
 		d := richtext.FromMessage(galleryRes{}, &m)

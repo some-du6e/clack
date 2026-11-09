@@ -189,7 +189,9 @@ func (c *builder) attachment(a *slack.Attachment) (Block, bool) {
 		FromURL: SafeURL(firstNonEmpty(a.FromURL, a.OriginalURL)),
 	}
 	blk := Block{Kind: AttachmentBlock, Att: att}
-	if a.IsMsgUnfurl || a.IsShare {
+	if a.IsMsgUnfurl {
+		c.msgCard(a, att)
+	} else if a.IsShare {
 		att.IsShare = true
 		if att.AuthorName == "" {
 			att.AuthorName, att.AuthorSubname = a.AuthorSubname, ""

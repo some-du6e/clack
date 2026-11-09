@@ -51,6 +51,10 @@ type Size struct {
 	// Identity adds #identity-fixtures: one message per bot/app sender
 	// case (identity.go). Off by default so other fixtures don't shift.
 	Identity bool
+	// Gallery adds the gallery's extra conversations (an app DM…,
+	// registerGalleryConv in gallery.go) after the generated ones;
+	// #blockkit-gallery itself is always there.
+	Gallery bool
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -194,11 +198,19 @@ type Server struct {
 	histMu sync.Mutex
 	hist   map[string][]slack.Message // channel -> all messages, newest first
 
+	bkMu      sync.Mutex
+	bkActions []BlockActionCall // blocks.actions, in order (bkgallery_elements.go)
+	bkSuggest []url.Values      // blocks.suggestions forms
+
 	// Calls counts requests per method (atomic adds).
 	callsMu sync.Mutex
 	Calls   map[string]*atomic.Int64
 	// Latency is added to every API call (not images), to model a network.
 	Latency time.Duration
+	// Emit, when set, receives the realtime events the fake apps send
+	// (view_opened…) instead of the socket: tests running the client
+	// without realtime inject them (core.App.Inject). Set it before the calls.
+	Emit func(ev map[string]any)
 	// Hook, when set, sees every API call first; ok=true answers it with
 	// out (tests: hold a call back, fail it). Set it before the calls.
 	Hook func(method string, form url.Values) (out any, ok bool)
@@ -362,6 +374,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	s.generate()
 	if sz.Identity {
 		s.addIdentity()
+	}
+	if sz.Gallery {
+		s.addGalleryConvs() // gallery.go
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", s.api)
@@ -765,10 +780,16 @@ func ok(kv ...any) map[string]any {
 }
 
 func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMessage) any {
+	if out, handled := s.handleGallery(method, f); handled { // bkgallery*.go
+		return out
+	}
 	if out, handled := s.handleCanvases(method, f); handled { // canvas.go
 		return out
 	}
 	if out, handled := s.handleSections(method, f); handled { // sections.go
+		return out
+	}
+	if out, handled := s.handleBlockActions(method, f); handled { // bkgallery_elements.go
 		return out
 	}
 	if out, handled := s.handleAgents(method, f); handled { // agents.go
@@ -1041,9 +1062,8 @@ func (s *Server) historyPage(f url.Values) any {
 	s.histMu.Lock()
 	msgs, okc := s.hist[ch]
 	if !okc {
-		if ch == GalleryChannelID {
-			msgs = s.galleryHistory()
-		} else {
+		var gallery bool
+		if msgs, gallery = s.galleryHistoryOf(ch); !gallery { // gallery.go
 			msgs = s.history(ch)
 		}
 		s.hist[ch] = msgs

@@ -1,0 +1,55 @@
+name: bk-elements
+# Block Kit interactive elements against internal/fakeslack's
+# #blockkit-gallery: each element's blocks.actions / blocks.suggestions
+# payload checked against the shapes Slack's web client sends, and every
+# element rendered closed and open, light and dark (llvmpipe under xvfb),
+# uploaded as the bk-elements-shots artifact. Synthetic only: nothing
+# here talks to Slack.
+on:
+  push:
+    paths:
+      - "internal/ui/blockkit/**"
+      - "internal/fakeslack/bkgallery*.go"
+      - "internal/fakeslack/gallery*.go"
+      - "internal/core/interactive*.go"
+      - "internal/richtext/blocks.go"
+      - ".github/workflows/bk-elements.yml"
+  workflow_dispatch:
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb libgl1-mesa-dri libegl-mesa0
+
+permissions:
+  contents: read
+
+jobs:
+  bk-elements:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: payloads (unit + clicked through fakeslack)
+        run: |
+          go test -count=1 -v -run 'TestSlackActionShapes|TestActionPayloads|TestValuesJSON|TestGalleryElementPayloads' ./internal/ui/blockkit
+          go test -count=1 -v -run 'TestBlockAction' ./internal/core
+      - name: screenshots
+        env:
+          BK_ELEMENTS_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$BK_ELEMENTS_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestGalleryElementShots' ./internal/ui/blockkit
+          ls -l "$BK_ELEMENTS_SHOTS_DIR"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: bk-elements-shots
+          path: dist/shots

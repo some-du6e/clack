@@ -68,6 +68,12 @@ func (d *Doc) Delta() map[string]any {
 			i++
 			continue
 		}
+		if a.Atom != nil && a.Atom.Kind == AtomMessage {
+			// Slack's message slug op: the label, slackslug says what it is
+			ops = append(ops, map[string]any{"insert": a.Atom.Text, "attributes": map[string]any{"slackslug": messageSlugDelta(a.Atom)}})
+			i++
+			continue
+		}
 		if a.Atom != nil {
 			ops = append(ops, map[string]any{"insert": deltaEmbed(a.Atom)})
 			i++

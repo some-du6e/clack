@@ -94,6 +94,7 @@ type Element struct {
 	Value string `json:"value"`
 	URL   string `json:"url"`
 	Style string `json:"style"`
+	Icon  string `json:"icon"` // icon_button
 
 	Placeholder         *Text `json:"placeholder"`
 	Confirm             *Confirm
@@ -193,7 +194,7 @@ func isTextInput(t string) bool {
 // stateful elements keep a value in the surface's state.
 func stateful(t string) bool {
 	switch t {
-	case "button", "workflow_button", "overflow", "image", "":
+	case "button", "workflow_button", "icon_button", "overflow", "image", "":
 		return false
 	}
 	return true

@@ -3,6 +3,7 @@ package blockkit
 import (
 	"encoding/json"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -33,6 +34,8 @@ type Value struct {
 	textSet bool
 	Rich    json.RawMessage   // rich_text_input
 	Files   []json.RawMessage // file_input: Slack file objects
+
+	defaulted bool // default_to_current_conversation applied
 }
 
 // initialValue is an element's starting state (its initial_* fields).
@@ -109,7 +112,7 @@ func (v *Value) empty() bool {
 	case "file_input":
 		return len(v.Files) == 0
 	}
-	return v.Text == ""
+	return textValue(v.Type, v.Text) == ""
 }
 
 // fields adds the value's keys to m, the way Slack serializes state
@@ -178,7 +181,7 @@ func (v *Value) fields(m map[string]any) {
 			m["rich_text_value"] = richFromText(v.Text)
 		}
 	case "plain_text_input", "email_text_input", "url_text_input", "number_input":
-		m["value"] = nul(v.Text)
+		m["value"] = nul(textValue(v.Type, v.Text))
 	case "file_input":
 		fs := v.Files
 		if fs == nil {
@@ -273,15 +276,47 @@ func (vs Values) JSON(onlySet bool) json.RawMessage {
 }
 
 // actionPayload is actions[0] of blocks.actions for element e of block
-// b with value v (nil for buttons): the fields Slack's client sends for
-// that element type (type, block_id, action_id, its label/value/style
-// and, for inputs and selects, the selection plus initial_* and
-// placeholder).
+// b with value v (nil for buttons): exactly the object each of Slack's
+// element components hands onAction (gantry-v2 2026-11, camelCase there,
+// snake_cased by the sendActions fetcher). Per type:
+//
+//	button              type block_id action_id text value? style?
+//	icon_button         type block_id action_id icon text value?
+//	static/external     … selected_option|null initial_option? placeholder?
+//	multi_static/ext    … selected_options initial_options? placeholder?
+//	users_select        … selected_user|null initial_user?
+//	multi_users_select  … selected_users initial_users?
+//	conversations_select … selected_conversation|null initial_conversation? response_url_enabled?
+//	multi_conversations … selected_conversations initial_conversations?
+//	channels_select     … selected_channel|null initial_channel? response_url_enabled?
+//	multi_channels      … selected_channels initial_channels?
+//	datepicker          … selected_date|null initial_date?
+//	timepicker          … selected_time|null initial_time? timezone?
+//	datetimepicker      … selected_date_time|null initial_date_time?
+//	checkboxes          … selected_options (no initial_options)
+//	radio_buttons       … selected_option|null initial_option?
+//	text inputs         … value (trimmed)|null initial_value?
+//	rich_text_input     … rich_text_value
+//	file_input          … files
+//
+// Selects carry no placeholder except static/external ones; workflow
+// buttons never send an action (they trip their trigger).
 func actionPayload(blockID string, e *Element, v *Value) json.RawMessage {
 	m := map[string]any{"type": e.Type, "block_id": blockID, "action_id": e.ActionID}
+	raw := func(k string) json.RawMessage { return rawField(e.Raw, k) }
+	setRaw := func(k string) {
+		if r := raw(k); len(r) > 0 && string(r) != "null" {
+			m[k] = r
+		}
+	}
+	if v == nil {
+		v = &Value{Type: e.Type}
+	}
 	switch e.Type {
 	case "button", "workflow_button":
-		if e.Text != nil {
+		if r := raw("text"); len(r) > 0 {
+			m["text"] = r
+		} else if e.Text != nil {
 			m["text"] = e.Text
 		}
 		if e.Value != "" {
@@ -290,68 +325,115 @@ func actionPayload(blockID string, e *Element, v *Value) json.RawMessage {
 		if e.Style != "" {
 			m["style"] = e.Style
 		}
-		if e.URL != "" {
-			m["url"] = e.URL
+	case "icon_button":
+		m["icon"] = e.Icon
+		if r := raw("text"); len(r) > 0 {
+			m["text"] = r
+		} else if e.Text != nil {
+			m["text"] = e.Text
 		}
-		if len(e.Workflow) > 0 {
-			m["workflow"] = e.Workflow
+		if e.Value != "" {
+			m["value"] = e.Value
+		}
+	case "static_select", "external_select":
+		v.fields(m)
+		setRaw("initial_option")
+		setRaw("placeholder")
+	case "multi_static_select", "multi_external_select":
+		v.fields(m)
+		setRaw("initial_options")
+		setRaw("placeholder")
+	case "radio_buttons":
+		v.fields(m)
+		setRaw("initial_option")
+	case "checkboxes":
+		v.fields(m)
+	case "users_select":
+		v.fields(m)
+		setRaw("initial_user")
+	case "multi_users_select":
+		v.fields(m)
+		setRaw("initial_users")
+	case "conversations_select":
+		v.fields(m)
+		setRaw("initial_conversation")
+		if e.ResponseURLEnabled {
+			m["response_url_enabled"] = true
+		}
+	case "multi_conversations_select":
+		v.fields(m)
+		setRaw("initial_conversations")
+	case "channels_select":
+		v.fields(m)
+		setRaw("initial_channel")
+		if e.ResponseURLEnabled {
+			m["response_url_enabled"] = true
+		}
+	case "multi_channels_select":
+		v.fields(m)
+		setRaw("initial_channels")
+	case "datepicker":
+		v.fields(m)
+		setRaw("initial_date")
+	case "timepicker":
+		v.fields(m)
+		setRaw("initial_time")
+		if e.Timezone != "" {
+			m["timezone"] = e.Timezone
+		}
+	case "datetimepicker":
+		v.fields(m)
+		if e.InitialDateTime != 0 {
+			m["initial_date_time"] = e.InitialDateTime
+		}
+	case "plain_text_input", "email_text_input", "url_text_input", "number_input":
+		v.fields(m)
+		if s := e.initialText(); s != "" {
+			m["initial_value"] = s
 		}
 	default:
-		if v != nil {
-			v.fields(m)
-		}
-		if e.Placeholder != nil {
-			m["placeholder"] = e.Placeholder
-		}
-		switch e.Type {
-		case "static_select", "external_select", "radio_buttons":
-			if e.InitialOption != nil {
-				m["initial_option"] = e.InitialOption.payload()
-			}
-		case "multi_static_select", "multi_external_select", "checkboxes":
-			if len(e.InitialOptions) > 0 {
-				ops := make([]json.RawMessage, len(e.InitialOptions))
-				for i := range e.InitialOptions {
-					ops[i] = e.InitialOptions[i].payload()
-				}
-				m["initial_options"] = ops
-			}
-		case "users_select":
-			if e.InitialUser != "" {
-				m["initial_user"] = e.InitialUser
-			}
-		case "conversations_select":
-			if e.InitialConversation != "" {
-				m["initial_conversation"] = e.InitialConversation
-			}
-		case "channels_select":
-			if e.InitialChannel != "" {
-				m["initial_channel"] = e.InitialChannel
-			}
-		case "datepicker":
-			if e.InitialDate != "" {
-				m["initial_date"] = e.InitialDate
-			}
-		case "timepicker":
-			if e.InitialTime != "" {
-				m["initial_time"] = e.InitialTime
-			}
-		case "datetimepicker":
-			if e.InitialDateTime != 0 {
-				m["initial_date_time"] = e.InitialDateTime
-			}
-		}
+		v.fields(m)
 	}
 	b, _ := json.Marshal(m)
 	return b
 }
 
-// overflowPayload is an overflow menu choice: Slack sends the option as
-// selected_option.
+// rawField is key of a JSON object (nil when absent).
+func rawField(obj json.RawMessage, key string) json.RawMessage {
+	if len(obj) == 0 {
+		return nil
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(obj, &m) != nil {
+		return nil
+	}
+	return m[key]
+}
+
+// overflowPayload is an overflow menu choice: Slack's OverflowElement
+// sends selected_option as just {text, value} (no description or url).
 func overflowPayload(blockID string, e *Element, o *Option) json.RawMessage {
-	m := map[string]any{"type": "overflow", "block_id": blockID, "action_id": e.ActionID, "selected_option": o.payload()}
+	text := rawField(o.Raw, "text")
+	if len(text) == 0 {
+		text, _ = json.Marshal(o.Text)
+	}
+	sel := map[string]any{"text": text, "value": o.Value}
+	m := map[string]any{"type": "overflow", "block_id": blockID, "action_id": e.ActionID, "selected_option": sel}
 	b, _ := json.Marshal(m)
 	return b
+}
+
+// textValue is a typed value as Slack records it: trimmed, and a number
+// input's normalized by Number(x).toString() ("007" → "7", "1.50" →
+// "1.5"); "" is null.
+func textValue(typ, s string) string {
+	s = strings.TrimSpace(s)
+	if typ == "number_input" && s != "" && s != "-" && s != "." {
+		if f, err := strconv.ParseFloat(s, 64); err == nil {
+			return strconv.FormatFloat(f, 'f', -1, 64)
+		}
+	}
+	return s
 }
 
 // ---- dates ----
@@ -396,6 +478,19 @@ func dateLabel(s string) string {
 		return s
 	}
 	return t.Format("Jan 2, 2006")
+}
+
+// shortDateLabel is a message datepicker's value: moment's "L"
+// (MM/DD/YYYY in en-US), or "Today".
+func shortDateLabel(s string, now time.Time) string {
+	t, ok := parseDate(s)
+	if !ok {
+		return s
+	}
+	if t.Year() == now.Year() && t.YearDay() == now.YearDay() {
+		return "Today"
+	}
+	return t.Format("01/02/2006")
 }
 
 // timeLabel shows "HH:mm" as Slack does ("3:30 PM").

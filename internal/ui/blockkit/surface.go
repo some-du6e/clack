@@ -17,6 +17,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
@@ -145,6 +146,7 @@ type Surface struct {
 	busy   map[string]bool
 	gen    uint32
 	blkErr map[string]string // block_id → action error under actions blocks
+	flying map[string]int    // block_id → actions in flight (elements disabled)
 	// onAction lets the modal know an action went out (Slack clears a
 	// failed submit's banner on any action).
 	onAction func()
@@ -199,6 +201,7 @@ func (s *Surface) set(v *core.View, keep bool) {
 	s.texts = map[string]*richview.View{}
 	s.errs = map[string]string{}
 	s.blkErr = map[string]string{}
+	s.flying = map[string]int{}
 	s.gen++
 }
 
@@ -299,13 +302,20 @@ func (s *Surface) fire(w *ew, action json.RawMessage, done func(error)) {
 	b.State = s.vals.JSON(false)
 	bid := w.bid
 	delete(s.blkErr, bid)
+	s.flying[bid]++
 	sendAction(s.h, b, func(err error) {
+		if s.flying[bid]--; s.flying[bid] <= 0 {
+			delete(s.flying, bid)
+		}
 		if err != nil {
 			s.blkErr[bid] = errMessage(err)
 		}
 		done(err)
 	})
 }
+
+// loading reports an action of block bid in flight.
+func (s *Surface) loading(bid string) bool { return s.flying[bid] > 0 }
 
 func (s *Surface) widget(b *Block, e *Element) *ew {
 	k := b.BlockID + "\x00" + e.ActionID + "\x00" + e.Type
@@ -619,6 +629,24 @@ func (s *Surface) inputBlock(gtx C, b *Block, key string, w int) int {
 			return v.Layout(gtx, styleFor(th, s.h.Images()), &s.hand)
 		})
 		y += dp(gtx, 4) + d.Size.Y
+	}
+	if s.errs[b.BlockID] == "" && enterHint(b) {
+		// InputBlockContent's p-block_kit_input_block__enter_help_text
+		at(gtx, image.Pt(0, y+dp(gtx, 4)), func(gtx C) D {
+			x := 0
+			if icons.Has("enter") {
+				is := dp(gtx, 13)
+				at(gtx, image.Pt(0, (dp(gtx, 18)-is)/2), func(gtx C) D { return icon(gtx, "enter", 13, cl.Hint) })
+				x = is + dp(gtx, 4)
+			} else {
+				x = label(gtx, th, 13, theme.Regular, cl.Hint, "⏎").Size.X + dp(gtx, 4)
+			}
+			at(gtx, image.Pt(x, 0), func(gtx C) D {
+				return label(gtx, th, 13, theme.Regular, cl.Hint, "Press 'enter' to submit")
+			})
+			return D{}
+		})
+		y += dp(gtx, 4) + dp(gtx, 18)
 	}
 	return y
 }

@@ -93,6 +93,50 @@ func TestBlockActionSend(t *testing.T) {
 	}
 }
 
+// Slack's client puts thread_ts in a message container only for an
+// ephemeral message (gantry-v2 2026-11, both message-container builders:
+// container {type:"message", messageTs, channelId, isEphemeral,
+// ...isEphemeral && thread_ts ? {threadTs} : {}}); a normal thread reply
+// sends none, and message_attachment containers never carry it. (The
+// block_actions payload Slack's server builds for the app is another
+// object; this is what the client sends to blocks.actions.)
+func TestMessageContainerThreadTS(t *testing.T) {
+	a, f := testApp(t)
+	f.reply["blocks.actions"] = `{"ok":true}`
+	ix := a.Interactive()
+	bot := &BotProfile{ID: "B1", AppID: "A1", TeamID: "T9"}
+	send := func(m *Message, att int) map[string]any {
+		t.Helper()
+		b := ix.MessageContainer(m, att)
+		b.Action = json.RawMessage(`{"type":"button","block_id":"b","action_id":"a"}`)
+		if _, err := ix.BlockActionSend(context.Background(), b); err != nil {
+			t.Fatal(err)
+		}
+		var c map[string]any
+		if err := json.Unmarshal([]byte(f.last("blocks.actions").Get("container")), &c); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	reply := &Message{TS: "1700000100.000200", ThreadTS: "1700000000.000100", Channel: "C1", BotID: "B1", BotProfile: bot}
+	if c := send(reply, 0); c["thread_ts"] != nil || c["is_ephemeral"] != false || c["message_ts"] != reply.TS {
+		t.Errorf("thread reply container %v: no thread_ts for a non-ephemeral message", c)
+	}
+	if c := send(reply, 2); c["thread_ts"] != nil || c["type"] != "message_attachment" || c["attachment_id"] != float64(2) {
+		t.Errorf("attachment container %v", c)
+	}
+	eph := &Message{TS: "1700000200.000300", ThreadTS: "1700000000.000100", Channel: "C1", BotID: "B1", BotProfile: bot}
+	ix.mu.Lock()
+	ix.ephem["C1/"+eph.TS] = eph.ThreadTS
+	ix.mu.Unlock()
+	if c := send(eph, 0); c["thread_ts"] != eph.ThreadTS || c["is_ephemeral"] != true {
+		t.Errorf("ephemeral thread container %v", c)
+	}
+	if c := send(eph, 1); c["thread_ts"] != nil || c["is_ephemeral"] != true {
+		t.Errorf("ephemeral attachment container %v: never thread_ts", c)
+	}
+}
+
 func TestViewEvents(t *testing.T) {
 	a, f := testApp(t)
 	f.reply["blocks.actions"] = `{"ok":true}`
@@ -167,7 +211,7 @@ func TestSubmitView(t *testing.T) {
 		t.Errorf("toast: %+v", r)
 	}
 	f.reply["views.submit"] = `{"ok":false,"error":"view_not_found"}`
-	if r, _ = ix.SubmitView(context.Background(), "V1", nil); r.Code != "view_not_found" || r.ViewError == "" {
+	if r, _ = ix.SubmitView(context.Background(), "V1", nil); r.Code != "view_not_found" || r.ViewError != "" {
 		t.Errorf("failure: %+v", r)
 	}
 	f.reply["views.close"] = `{"ok":true}`

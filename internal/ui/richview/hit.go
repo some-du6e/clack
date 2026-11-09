@@ -2,6 +2,7 @@ package richview
 
 import (
 	"image"
+	"strings"
 
 	"gioui.org/f32"
 
@@ -50,7 +51,7 @@ func (v *View) HitAt(p f32.Point) Hit {
 				h.Text = true
 			}
 		case fImage:
-			if h.EmojiURL == "" && f.url != "" && p.X >= f.x && p.X < f.x+float32(f.size) && p.Y >= float32(f.y) && p.Y < float32(f.y+f.size) {
+			if h.EmojiURL == "" && f.url != "" && !strings.HasPrefix(f.url, iconURL) && p.X >= f.x && p.X < f.x+float32(f.size) && p.Y >= float32(f.y) && p.Y < float32(f.y+f.size) {
 				h.EmojiURL = f.url
 				if f.tip > 0 && int(f.tip) <= len(v.d.tips) {
 					h.Emoji = v.d.tips[f.tip-1]

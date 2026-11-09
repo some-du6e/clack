@@ -152,6 +152,10 @@ type BlockAction struct {
 type ActionError struct {
 	Code    string // Slack's error code (post_error, invalid_container, …)
 	Message string // human text, e.g. "App took too long to respond…"
+	// Server is the response's own "message" field ("" when it had
+	// none): Slack's actions block shows exactly that as the warning
+	// icon's tooltip, and no tooltip without it.
+	Server string
 }
 
 func (e *ActionError) Error() string {
@@ -632,7 +636,7 @@ func actionErr(err error) error {
 			Message string `json:"message"`
 		}
 		if json.Unmarshal(se.Body, &body) == nil && body.Message != "" {
-			ae.Message = body.Message
+			ae.Message, ae.Server = body.Message, body.Message
 		}
 		return ae
 	}
@@ -754,9 +758,9 @@ func (ix *Interactive) SubmitView(ctx context.Context, viewID string, values jso
 			out.ResponseAction = "errors"
 			return out, nil
 		}
-		if out.ViewError == "" {
-			out.ViewError = submitErrorText(res.Error)
-		}
+		// ViewError stays the app's own: without one the modal shows
+		// BlockKitModalError's default "We had some trouble connecting.
+		// Try again?" (submitErrorText is the dialog-less wording)
 		return out, nil
 	}
 	if v, err := ParseView(res.View); err == nil {

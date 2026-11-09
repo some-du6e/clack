@@ -15,14 +15,15 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/openurl"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
 // openURL opens http(s)/mailto links in the browser (openurl checks them
-// and starts the browser off the UI goroutine).
-func openURL(u string) { _ = openurl.Open(u) }
+// and starts the browser off the UI goroutine). A var for tests.
+var openURL = func(u string) { _ = openurl.Open(u) }
 
 // ---- overflow (popups' menu, Slack's look) ----
 
@@ -125,12 +126,16 @@ func showConfirm(h Host, c *Confirm, ok, deny func()) {
 	if c.Text != nil {
 		body = textOf(c.Text)
 	}
+	// openConfirm's defaults: "OK", "Cancel", body "Are you sure?"
 	yes, no := textOf(c.Confirm), textOf(c.Deny)
 	if yes == "" {
-		yes = "Yes"
+		yes = "OK"
 	}
 	if no == "" {
 		no = "Cancel"
+	}
+	if c.Text == nil {
+		body = "Are you sure?"
 	}
 	kind := popups.BtnPrimary
 	if c.Style == "danger" {
@@ -140,6 +145,10 @@ func showConfirm(h Host, c *Confirm, ok, deny func()) {
 	var tv *textView
 	if c.Text != nil {
 		tv = newTextView(h, *c.Text)
+	}
+	btns := []*popups.ModalButton{
+		{Label: no, Kind: popups.BtnOutline, Do: func() bool { return true }},
+		{Label: yes, Kind: kind, Do: func() bool { decided = true; ok(); return true }},
 	}
 	m := popups.NewModal(h, popups.ModalOpts{
 		Title: title,
@@ -151,10 +160,7 @@ func showConfirm(h Host, c *Confirm, ok, deny func()) {
 			hh := tv.layout(gtx, gtx.Constraints.Max.X, colorsOf(h.Theme()).Text)
 			return D{Size: image.Pt(gtx.Constraints.Max.X, hh)}
 		},
-		Buttons: []*popups.ModalButton{
-			{Label: no, Kind: popups.BtnOutline, Do: func() bool { return true }},
-			{Label: yes, Kind: kind, Do: func() bool { decided = true; ok(); return true }},
-		},
+		Buttons:      btns,
 		EnterSubmits: true,
 		OnClose: func() {
 			if !decided && deny != nil {
@@ -162,8 +168,15 @@ func showConfirm(h Host, c *Confirm, ok, deny func()) {
 			}
 		},
 	})
+	if modalShown != nil {
+		modalShown(m, btns)
+	}
 	h.ShowOverlay(m)
 }
+
+// modalShown, when set (tests), sees each dialog blockkit opens with its
+// buttons.
+var modalShown func(m popups.Overlay, buttons []*popups.ModalButton)
 
 // ---- select dropdown ----
 
@@ -299,15 +312,18 @@ func (m *selectMenu) refresh() {
 		})
 		return
 	case "users_select":
-		if q == "" {
-			m.items = nil
-			return
-		}
+		// the member searcher allows an empty query (allowEmptyQuery,
+		// includeSelf): opening the menu lists people right away
 		m.busy = true
 		run(h, 10*time.Second, func(ctx context.Context) ([]item, error) {
-			us, err := h.Core().SearchUsers(ctx, q, 20)
-			if err != nil {
-				return nil, err
+			var us []core.User
+			if q == "" {
+				us = directoryUsers(h.Core(), 50)
+			} else {
+				var err error
+				if us, err = h.Core().SearchUsers(ctx, q, 20); err != nil {
+					return nil, err
+				}
 			}
 			var its []item
 			for _, u := range us {
@@ -513,10 +529,9 @@ func (m *selectMenu) pick(i int) {
 		o := *it.opt
 		v.SelectedOption = &o
 	case "multi_static_select", "multi_external_select":
+		// past max_selected_items is allowed: Slack flags it (the alert,
+		// a disabled Go) instead of refusing the pick
 		if m.selected(&it) {
-			return
-		}
-		if w.e.MaxSelectedItems > 0 && len(v.SelectedOptions) >= w.e.MaxSelectedItems {
 			return
 		}
 		v.SelectedOptions = append(append([]Option(nil), v.SelectedOptions...), *it.opt)
@@ -527,15 +542,15 @@ func (m *selectMenu) pick(i int) {
 	case "channels_select":
 		v.SelectedChan = it.id
 	case "multi_users_select":
-		if !contains(v.SelectedUsers, it.id) && (w.e.MaxSelectedItems == 0 || len(v.SelectedUsers) < w.e.MaxSelectedItems) {
+		if !contains(v.SelectedUsers, it.id) {
 			v.SelectedUsers = append(append([]string(nil), v.SelectedUsers...), it.id)
 		}
 	case "multi_conversations_select":
-		if !contains(v.SelectedConvs, it.id) && (w.e.MaxSelectedItems == 0 || len(v.SelectedConvs) < w.e.MaxSelectedItems) {
+		if !contains(v.SelectedConvs, it.id) {
 			v.SelectedConvs = append(append([]string(nil), v.SelectedConvs...), it.id)
 		}
 	case "multi_channels_select":
-		if !contains(v.SelectedChans, it.id) && (w.e.MaxSelectedItems == 0 || len(v.SelectedChans) < w.e.MaxSelectedItems) {
+		if !contains(v.SelectedChans, it.id) {
 			v.SelectedChans = append(append([]string(nil), v.SelectedChans...), it.id)
 		}
 	}
@@ -709,17 +724,7 @@ func (m *selectMenu) Layout(gtx C) D {
 			event.Op(gtx.Ops, &m.tag)
 		}()
 		if empty {
-			msg := "No items found"
-			switch {
-			case m.busy:
-				msg = "Loading…"
-			case m.errMsg != "":
-				msg = m.errMsg
-			case m.base() == "external_select" && len([]rune(m.query)) < m.minQuery():
-				msg = "Type at least " + itoa(m.minQuery()) + " characters to search"
-			case (m.base() == "users_select") && strings.TrimSpace(m.query) == "":
-				msg = "Type to search people"
-			}
+			msg := m.emptyMessage()
 			at(gtx, image.Pt(dp(gtx, 24), padY), func(gtx C) D {
 				gtx.Constraints = layout.Constraints{Max: image.Pt(fw-dp(gtx, 48), dp(gtx, 44))}
 				return vcenter(gtx, dp(gtx, 44), func(gtx C) D { return label(gtx, th, 15, theme.Regular, cl.Text2, msg) })
@@ -786,6 +791,62 @@ func (m *selectMenu) Layout(gtx C) D {
 		return D{Size: r.Max}
 	})
 	return D{Size: win}
+}
+
+// emptyMessage is the element's renderEmptyStateMessage (searched: a
+// query was typed).
+func (m *selectMenu) emptyMessage() string {
+	searched := strings.TrimSpace(m.query) != ""
+	pick := func(yes, no string) string {
+		if searched {
+			return yes
+		}
+		return no
+	}
+	switch {
+	case m.busy:
+		return "Loading…"
+	case m.errMsg != "":
+		return m.errMsg
+	}
+	switch m.base() {
+	case "external_select":
+		if n := m.minQuery(); n > 0 && len([]rune(m.query)) < n {
+			return "Type a minimum of " + itoa(n) + " characters to see options."
+		}
+		return pick("😕 Nothing could be found.", "😕 No result")
+	case "users_select":
+		return pick("😕 No member matches these keywords.", "😕 No member found")
+	case "conversations_select":
+		return pick("😕 No conversation matches these keywords.", "😕 No conversation found")
+	case "channels_select":
+		return pick("😕 No channel matches these keywords.", "😕 No channel found")
+	}
+	return pick("😕 Nothing could be found.", "😕 No result")
+}
+
+// directoryUsers is the people list of an empty users_select query:
+// the cached directory, self included, by name.
+func directoryUsers(c *core.App, n int) []core.User {
+	snap := c.Snapshot()
+	var out []core.User
+	for _, u := range snap.Users {
+		if u.Deleted {
+			continue
+		}
+		out = append(out, u)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := strings.ToLower(firstNonEmpty(out[i].Name, out[i].RealName)), strings.ToLower(firstNonEmpty(out[j].Name, out[j].RealName))
+		if a != b {
+			return a < b
+		}
+		return out[i].ID < out[j].ID
+	})
+	if len(out) > n {
+		out = out[:n]
+	}
+	return out
 }
 
 func hasSubs(its []item) bool {

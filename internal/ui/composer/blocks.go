@@ -248,6 +248,18 @@ type rtOutBroadcast struct {
 	Range string `json:"range"`
 }
 
+// rtOutMessageMention is Slack's createSlugChunkFromOp for a message slug:
+// text is the URL (or the channel id), then url, author_id, thread_ts.
+type rtOutMessageMention struct {
+	Type      string `json:"type"`
+	MessageTS string `json:"message_ts"`
+	ChannelID string `json:"channel_id"`
+	Text      string `json:"text"`
+	URL       string `json:"url,omitempty"`
+	AuthorID  string `json:"author_id,omitempty"`
+	ThreadTS  string `json:"thread_ts,omitempty"`
+}
+
 type rtOutEmoji struct {
 	Type     string `json:"type"`
 	Name     string `json:"name"`
@@ -460,6 +472,9 @@ func rtAtomOut(a *Atom) any {
 	case AtomEmoji:
 		name, tone := rtSplitSkinTone(a.ID)
 		return rtOutEmoji{Type: "emoji", Name: name, Unicode: rtUnicodeHex(a.Uni), SkinTone: tone}
+	case AtomMessage:
+		return rtOutMessageMention{Type: "message_mention", MessageTS: a.ID, ChannelID: a.Channel,
+			Text: firstNonEmpty(a.URL, a.Channel), URL: a.URL, AuthorID: a.Author, ThreadTS: a.Thread}
 	}
 	return rtOutText{Type: "text", Text: rtAtomText(a)}
 }
@@ -795,6 +810,10 @@ func rtAtomMrkdwn(a *Atom) string {
 		return "<!" + a.ID + ">"
 	case AtomEmoji:
 		return ":" + a.ID + ":"
+	case AtomMessage:
+		if a.URL != "" {
+			return "<" + rtEscape(a.URL) + ">"
+		}
 	}
 	return rtEscape(rtAtomText(a))
 }
@@ -1068,6 +1087,9 @@ type rtIn struct {
 	URL         string          `json:"url"`
 	UserID      string          `json:"user_id"`
 	ChannelID   string          `json:"channel_id"`
+	MessageTS   string          `json:"message_ts"` // message_mention
+	AuthorID    string          `json:"author_id"`  // message_mention
+	ThreadTS    string          `json:"thread_ts"`  // message_mention
 	UsergroupID string          `json:"usergroup_id"`
 	Name        string          `json:"name"`
 	Unicode     string          `json:"unicode"`
@@ -1235,7 +1257,7 @@ func (b *rtBuilder) rtJSONInline(l Line, els []rtIn, r AtomResolver, plain bool)
 				a.Link = e.URL
 			}
 			b.text(txt, a)
-		case "user", "channel", "usergroup", "broadcast", "emoji":
+		case "user", "channel", "usergroup", "broadcast", "emoji", "message_mention":
 			at := rtAtomFromJSON(e, r)
 			if at == nil {
 				continue
@@ -1275,6 +1297,12 @@ func rtDateText(e *rtIn) string {
 
 func rtAtomFromJSON(e *rtIn, r AtomResolver) *Atom {
 	switch e.Type {
+	case "message_mention":
+		if e.MessageTS == "" || e.ChannelID == "" {
+			return nil
+		}
+		return &Atom{Kind: AtomMessage, ID: e.MessageTS, Channel: e.ChannelID, Author: e.AuthorID, Thread: e.ThreadTS,
+			URL: e.URL, Text: messageAtomLabel(r, e.ChannelID, e.AuthorID, e.URL)}
 	case "user":
 		if e.UserID == "" {
 			return nil
