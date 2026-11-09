@@ -43,8 +43,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/slack-icons
-          curl -sfL -o /tmp/slack-icons/icons.json https://raw.githubusercontent.com/IzieStratt/slack-datamine-plus/main/build/icons.json
-          curl -sfL https://raw.githubusercontent.com/IzieStratt/slack-datamine-plus/main/build/meta.json | head -c 300; echo
+          curl -sfL --retry 6 --retry-delay 10 --retry-all-errors -o /tmp/slack-icons/icons.json https://raw.githubusercontent.com/IzieStratt/slack-datamine-plus/main/build/icons.json
+          curl -sfL --retry 6 --retry-delay 10 --retry-all-errors https://raw.githubusercontent.com/IzieStratt/slack-datamine-plus/main/build/meta.json | head -c 300; echo
           python3 -c "import json;d=json.load(open('/tmp/slack-icons/icons.json'));print(len(d['icons']),'icons')"
       - name: icons vs Slack, formatting bar, emoji tab row
         env:

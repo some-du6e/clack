@@ -33,7 +33,7 @@ jobs:
       - name: wasi-sdk
         run: |
           v=$WASI_SDK_VERSION
-          curl -fsSL -o /tmp/wasi-sdk.tar.gz "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-$v/wasi-sdk-$v.0-x86_64-linux.tar.gz"
+          curl -fsSL --retry 6 --retry-delay 10 --retry-all-errors -o /tmp/wasi-sdk.tar.gz "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-$v/wasi-sdk-$v.0-x86_64-linux.tar.gz"
           echo "$WASI_SDK_SHA256  /tmp/wasi-sdk.tar.gz" | sha256sum -c -
           tar xzf /tmp/wasi-sdk.tar.gz -C /opt
           echo "WASI_SDK=/opt/wasi-sdk-$v.0-x86_64-linux" >> $GITHUB_ENV
