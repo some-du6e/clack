@@ -157,30 +157,28 @@ func (d *def) draw(gtx layout.Context, size unit.Dp, col color.NRGBA) layout.Dim
 	sc := float32(px) / view
 	gam := theme.StrokeGamma(col)
 	for i, p := range d.parts {
-		var path theme.PathPen // cached by content: Gio tessellates each icon stroke once
-		path.Begin(gtx.Ops)
-		open := false
-		for _, sg := range d.segs[i] {
-			switch sg.op {
-			case 'M':
-				path.MoveTo(sg.p[0].Mul(sc))
-				open = true
-			case 'L':
-				path.LineTo(sg.p[0].Mul(sc))
-			case 'C':
-				path.CubeTo(sg.p[0].Mul(sc), sg.p[1].Mul(sc), sg.p[2].Mul(sc))
-			case 'Z':
-				if open {
-					path.Close()
-				}
-			}
-		}
-		spec := path.End()
+		segs := d.segs[i]
+		spec := pathSpec(gtx, segs, sc)
 		switch {
 		case p.fill && p.stroke > 0:
 			paint.FillShape(gtx.Ops, col, clip.Outline{Path: spec}.Op())
+			// Each subpath's edge is stroked on its own: Gio winds a
+			// stroked closed contour's band by the contour's direction,
+			// so a hole's band (wound the other way) would cancel an
+			// outer band it overlaps.
 			w := max(p.stroke*sc+gam, p.stroke*sc/2)
-			paint.FillShape(gtx.Ops, col, clip.Stroke{Path: spec, Width: w}.Op())
+			for len(segs) > 0 {
+				n := 1
+				for n < len(segs) && segs[n].op != 'M' {
+					n++
+				}
+				sub := spec
+				if n < len(d.segs[i]) {
+					sub = pathSpec(gtx, segs[:n], sc)
+				}
+				paint.FillShape(gtx.Ops, col, clip.Stroke{Path: sub, Width: w}.Op())
+				segs = segs[n:]
+			}
 		case p.stroke > 0:
 			w := max(p.stroke*sc+gam, p.stroke*sc/2)
 			paint.FillShape(gtx.Ops, col, clip.Stroke{Path: spec, Width: w}.Op())
@@ -188,14 +186,38 @@ func (d *def) draw(gtx layout.Context, size unit.Dp, col color.NRGBA) layout.Dim
 			paint.FillShape(gtx.Ops, col, clip.Outline{Path: spec}.Op())
 			// Dark-on-light fills lose gam/2 px of ink per edge too; an
 			// outline stroke gives it back. (Light-on-dark fills would need
-			// an erosion Gio has no op for, so the set draws dots and small
-			// marks as strokes instead.)
+			// an erosion Gio has no op for, so the set draws its fills as
+			// fl parts instead.)
 			if gam > 0 {
 				paint.FillShape(gtx.Ops, col, clip.Stroke{Path: spec, Width: gam}.Op())
 			}
 		}
 	}
 	return layout.Dimensions{Size: image.Pt(px, px)}
+}
+
+// pathSpec records segs scaled by sc (cached by content: Gio tessellates
+// each icon path once).
+func pathSpec(gtx layout.Context, segs []seg, sc float32) clip.PathSpec {
+	var path theme.PathPen
+	path.Begin(gtx.Ops)
+	open := false
+	for _, sg := range segs {
+		switch sg.op {
+		case 'M':
+			path.MoveTo(sg.p[0].Mul(sc))
+			open = true
+		case 'L':
+			path.LineTo(sg.p[0].Mul(sc))
+		case 'C':
+			path.CubeTo(sg.p[0].Mul(sc), sg.p[1].Mul(sc), sg.p[2].Mul(sc))
+		case 'Z':
+			if open {
+				path.Close()
+			}
+		}
+	}
+	return path.End()
 }
 
 // ---- generated shapes ----
