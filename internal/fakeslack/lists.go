@@ -448,9 +448,25 @@ func (s *Server) handleLists(method string, f url.Values) (any, bool) {
 				b, _ := json.Marshal(c)
 				var m map[string]any
 				_ = json.Unmarshal(b, &m)
-				m["properties"] = map[string]any{"tabs": []any{
+				var tabs []any
+				props := map[string]any{}
+				cs := s.canvasStore() // the channel's canvas tabs come first, as canvas.go lists them
+				cs.mu.Lock()
+				for _, id := range cs.order {
+					if cv := cs.byID[id]; cv.Channel == ListTabChan {
+						tabs = append(tabs, map[string]any{"id": "Ct" + cv.ID, "type": "canvas", "label": "",
+							"data": map[string]any{"file_id": cv.ID, "shared_ts": "1762500000.000100"}})
+						if props["canvas"] == nil {
+							props["canvas"] = map[string]any{"file_id": cv.ID, "is_empty": false}
+						}
+					}
+				}
+				cs.mu.Unlock()
+				tabs = append(tabs,
 					map[string]any{"id": "Ct" + ListTodos, "type": "list", "label": "", "data": map[string]any{"file_id": ListTodos}},
-					map[string]any{"id": "Ctfiles", "type": "files", "label": ""}}}
+					map[string]any{"id": "Ctfiles", "type": "files", "label": ""})
+				props["tabs"] = tabs
+				m["properties"] = props
 				addCounts(m, c, f)
 				return ok("channel", m), true
 			}
