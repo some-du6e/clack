@@ -4,6 +4,8 @@ name: bench-compare
 # and a base ref, interleaved so both see the same machine. benchstat
 # prints the comparison. Shared runners vary by 2x between jobs, so
 # numbers from separate bench-css/bench-slackc runs don't compare.
+# Whole-client numbers (real binary, ui/core benchmarks) are perf.yml's;
+# .github/perf/README.md says how the two relate.
 # (A benchmark that logs puts its result on the next line; awk rejoins it.)
 on:
   # dispatching needs the file on the default branch; until then it runs
