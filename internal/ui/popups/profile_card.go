@@ -54,6 +54,7 @@ type ProfileCard struct {
 	avatarBtn, nameBtn                 widget.Clickable
 	msgBtn, huddleBtn, vipBtn, moreBtn widget.Clickable
 	moreLocal                          image.Rectangle // kebab rect, card coords
+	huddleLocal                        image.Rectangle // Huddle button rect, card coords
 	key                                string          // slackc instance key
 }
 
@@ -201,8 +202,11 @@ func (p *ProfileCard) clicks(gtx layout.Context, u core.User) {
 		}
 		return
 	}
-	if p.huddleBtn.Clicked(gtx) {
-		h.Toast("Huddles aren't supported in yoloslack yet")
+	if p.huddleBtn.Clicked(gtx) && !p.huddleLocal.Empty() {
+		if m := pfHuddleMenuAt(gtx, h, u.ID, p.huddleLocal.Add(p.rect.Min), p.Dismiss); m != nil {
+			p.sub = m
+			h.ShowOverlay(m)
+		}
 	}
 	if p.vipBtn.Clicked(gtx) {
 		h.Toast("VIPs aren't supported yet")
@@ -331,6 +335,9 @@ func (p *ProfileCard) content(gtx layout.Context, th *theme.Theme, cl *Colors, u
 		if !p.moreLocal.Empty() {
 			p.moreLocal = p.moreLocal.Add(image.Pt(pad, y))
 		}
+		if !p.huddleLocal.Empty() {
+			p.huddleLocal = p.huddleLocal.Add(image.Pt(pad, y))
+		}
 		y += d.Size.Y
 	}
 	y += pad
@@ -409,6 +416,7 @@ func (p *ProfileCard) column(gtx layout.Context, th *theme.Theme, cl *Colors, u 
 }
 
 func (p *ProfileCard) buttons(gtx layout.Context, th *theme.Theme, u core.User, w int) layout.Dimensions {
+	p.huddleLocal = image.Rectangle{}
 	var specs []pfBtnSpec
 	switch {
 	case u.Deleted:
@@ -421,7 +429,7 @@ func (p *ProfileCard) buttons(gtx layout.Context, th *theme.Theme, u core.User, 
 	default:
 		specs = []pfBtnSpec{
 			{c: &p.msgBtn, label: "Message", lead: "threads"},
-			{c: &p.huddleBtn, label: "Huddle", lead: "headphones", caret: true},
+			{c: &p.huddleBtn, label: "Huddle", lead: "headphones", caret: true, rect: &p.huddleLocal},
 			{c: &p.vipBtn, label: "VIP", lead: "user-plus", vip: true},
 		}
 	}
@@ -945,9 +953,10 @@ func pfSkeleton(gtx layout.Context, th *theme.Theme, cl *Colors, missing bool, i
 type pfBtnSpec struct {
 	c     *widget.Clickable
 	label string
-	lead  string // icon before the label
-	caret bool   // chevron-down after the label
-	vip   bool   // the VIP button (its icon is svg[data-qa="vip"])
+	lead  string           // icon before the label
+	caret bool             // chevron-down after the label
+	vip   bool             // the VIP button (its icon is svg[data-qa="vip"])
+	rect  *image.Rectangle // set to the button's rect in the row (pfBtnRow)
 }
 
 type pfBtnMetrics struct {
@@ -1079,6 +1088,9 @@ func pfBtnRow(gtx layout.Context, th *theme.Theme, size BtnSize, specs []pfBtnSp
 		at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
 			return pfBtn(gtx, th, size, s, bw)
 		})
+		if s.rect != nil {
+			*s.rect = image.Rect(x, 0, x+bw, hh)
+		}
 		x += bw + gap
 	}
 	if kebab == nil {

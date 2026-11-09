@@ -157,9 +157,22 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 			hw = hud.HeaderPillWidth(gtx, a.th, ch)
 		}
 		right -= hw
+		hudAt := image.Pt(right, y)
+		hudOrg := a.hudOrigin[ch]
+		if hudOrg == nil {
+			if a.hudOrigin == nil {
+				a.hudOrigin = map[string]*originTracker{}
+			}
+			hudOrg = &originTracker{}
+			a.hudOrigin[ch] = hudOrg
+		}
+		caretX := gtx.Dp(74) // the caret's x in the button
 		if live {
+			caretX = hud.HeaderCaretX(gtx, a.th, ch)
 			at(gtx, image.Pt(right, y), image.Pt(hw, btn), func(gtx layout.Context) layout.Dimensions {
-				return hud.HeaderPill(gtx, a.th, ch, btn)
+				d := hud.HeaderPill(gtx, a.th, ch, btn)
+				hudOrg.track(gtx, a)
+				return d
 			})
 		} else {
 			at(gtx, image.Pt(right, y), image.Pt(hw, btn), func(gtx layout.Context) layout.Dimensions {
@@ -189,11 +202,20 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 						return layout.Dimensions{Size: image.Pt(gtx.Dp(20), btn)}
 					})
 				})
+				hudOrg.track(gtx, a)
 				return layout.Dimensions{Size: r.Size()}
 			})
 		}
 		if clicked(a.clicks.get("hdr.huddle")) {
 			hud.Start(ch)
+		}
+		if clicked(a.clicks.get("hdr.huddlemore")) || hud.TakeCaret(ch) {
+			// the pointer is on the caret, so the tracker knows the button's
+			// window position (fallback: where it sits in the main pane)
+			fb := image.Pt(a.winSize.X-gtx.Dp(theme.PanelInset)-(sz.X-hudAt.X), gtx.Dp(theme.TopNavH)+hudAt.Y)
+			org := hudOrg.get(fb)
+			caret := image.Rect(caretX, 0, caretX+gtx.Dp(20), btn).Add(org)
+			a.openHuddleMenu(gtx, ch, caret)
 		}
 		right -= gtx.Dp(6)
 	}

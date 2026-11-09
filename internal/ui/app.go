@@ -183,6 +183,7 @@ type App struct {
 	rtAsk      realtimeState              // first-run "Live updates are off" banner
 	updatesOff atomic.Bool                // prefs.NoUpdateCheck, for updateLoop
 	hud        *huddleui.Controller       // the native huddle (huddle_wire.go)
+	hudOrigin  map[string]*originTracker  // headers' huddle buttons by channel (caret menus)
 
 	swipe         swiper          // trackpad history swipes (swipe.go, nav.go)
 	swipeNow      swipeState      // this frame's swipe progress, for the arrow

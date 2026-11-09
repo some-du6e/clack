@@ -39,6 +39,7 @@ type ProfileView struct {
 
 	paneW   int             // last laid-out width (px)
 	moreBox image.Rectangle // kebab rect in pane coords (last frame)
+	hudBox  image.Rectangle // Huddle button rect in pane coords (last frame)
 
 	editUntil time.Time // EditProfileFormPane is mounted until then
 }
@@ -121,8 +122,8 @@ func (v *ProfileView) clicks(gtx layout.Context, u core.User, ok, self bool) {
 	if v.btn2.Clicked(gtx) {
 		if self {
 			h.Toast("Viewing your profile as someone else isn't supported yet")
-		} else {
-			h.Toast("Huddles aren't supported in yoloslack yet")
+		} else if !v.hudBox.Empty() {
+			h.ShowOverlay(&pfPaneMenu{h: h, box: v.hudBox, paneW: v.paneW, member: u.ID, call: true})
 		}
 	}
 	if v.btn3.Clicked(gtx) {
@@ -268,14 +269,18 @@ func (v *ProfileView) body(gtx layout.Context, th *theme.Theme, cl *Colors, u co
 	} else {
 		specs = []pfBtnSpec{
 			{c: &v.btn1, label: "Message", lead: "threads"},
-			{c: &v.btn2, label: "Huddle", lead: "headphones", caret: true},
+			{c: &v.btn2, label: "Huddle", lead: "headphones", caret: true, rect: &v.hudBox},
 			{c: &v.btn3, label: "VIP", lead: "user-plus", vip: true},
 		}
 	}
 	by := y
+	v.hudBox = image.Rectangle{}
 	d := at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
 		rd, kr := pfBtnRow(gtx, th, BtnMedium, specs, &v.moreBtn, inner, true)
 		v.moreBox = kr.Add(image.Pt(pad, by+dp(gtx, 49)-v.list.Position.Offset))
+		if !v.hudBox.Empty() {
+			v.hudBox = v.hudBox.Add(image.Pt(pad, by+dp(gtx, 49)-v.list.Position.Offset))
+		}
 		return rd
 	})
 	y += d.Size.Y + pad
@@ -454,6 +459,7 @@ type pfPaneMenu struct {
 	paneW  int             // pane width in px
 	member string          // whose profile (RimetoMemberProfileOverflowMenu)
 	app    string          // the app's id on an app's profile (AppDetailsOverflow)
+	call   bool            // the Huddle button's call menu (pfHuddleMenu)
 	menu   *Menu
 	done   bool
 }
@@ -466,6 +472,13 @@ func (p *pfPaneMenu) Layout(gtx layout.Context) layout.Dimensions {
 		win := gtx.Constraints.Max
 		off := image.Pt(win.X-dp(gtx, theme.PanelInset)-p.paneW, dp(gtx, theme.TopNavH))
 		a := p.box.Add(off)
+		if p.call {
+			if p.menu = pfHuddleMenuAt(gtx, p.h, p.member, a, nil); p.menu == nil {
+				p.done = true
+				return layout.Dimensions{}
+			}
+			return p.menu.Layout(gtx)
+		}
 		o := MenuOpts{Anchor: a, Side: Below, AlignRight: true}
 		if p.app != "" {
 			o = pfAppMenuOpts(p.app, p.member, o)

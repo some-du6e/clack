@@ -158,6 +158,8 @@ type Server struct {
 	nextID  int
 
 	chans chanState // conversations.create and friends (channels.go)
+
+	hud huddleState // rooms.getLink, huddles.scheduled.new, calendar.* (huddles.go)
 }
 
 // DefaultPrefs are the fake account's users.prefs (Slack's defaults for the
@@ -894,6 +896,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return ok("allowed", allowed, "allowed_per_team", map[string]any{})
 	case "edge/huddles/list":
 		return ok("huddles", []any{})
+	}
+	if out, handled := s.handleHuddles(method, f); handled { // huddles.go
+		return out
 	}
 	if out, handled := s.handleDrafts(method, f); handled {
 		return out

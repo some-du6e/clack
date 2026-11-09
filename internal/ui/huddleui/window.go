@@ -45,7 +45,7 @@ type window struct {
 // OpenWindow shows the huddle window (creating it), when you're in a huddle.
 func (c *Controller) OpenWindow() {
 	c.mu.Lock()
-	if c.win != nil || (c.s == nil && c.joining == "") {
+	if c.NoWindow || c.win != nil || (c.s == nil && c.joining == "") {
 		c.mu.Unlock()
 		return
 	}

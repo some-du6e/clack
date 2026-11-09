@@ -61,6 +61,8 @@ type Controller struct {
 	// Tweak edits the session options before each join (the demo fakes
 	// microphone permission answers with it).
 	Tweak func(*huddle.Options)
+	// NoWindow keeps the huddle window shut (tests: no display).
+	NoWindow bool
 
 	mu      sync.Mutex
 	s       *huddle.Session
@@ -149,13 +151,19 @@ type toastArgs struct {
 }
 
 // toast shows a huddle notice through Slack's enqueueHuddleToast.
-func (c *Controller) toast(text, icon string) {
+func (c *Controller) toast(text, icon string) { c.toastFor(text, icon, 5000) }
+
+// toastFor is toast with Slack's duration (ms); icon "" shows none.
+func (c *Controller) toastFor(text, icon string, ms int) {
 	tt := c.taut()
+	args := toastArgs{Content: text, Duration: ms}
+	if icon != "" {
+		args.SVGIconProps = map[string]any{"name": icon}
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_, _ = taut.Dispatch(ctx, tt, "enqueueHuddleToast",
-			toastArgs{Content: text, SVGIconProps: map[string]any{"name": icon}, Duration: 5000},
+		_, _ = taut.Dispatch(ctx, tt, "enqueueHuddleToast", args,
 			func(ctx context.Context, a toastArgs) (any, error) {
 				c.h.Toast(a.Content)
 				return nil, nil
