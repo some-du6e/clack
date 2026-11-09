@@ -63,10 +63,10 @@ func TestLibraryBenchPick(t *testing.T) {
 	if len(items) != 3 || items[0].Label != "Install for" || !items[0].Disabled {
 		t.Fatalf("menu %+v", items)
 	}
-	if items[1].Label != "Slick" || items[1].Right != "Recommended" || items[1].Subtitle != "Works fully, 3.0x faster to load" {
+	if items[1].Label != "Slick (recommended)" || items[1].Subtitle != "Works fully, 3.0x faster to load" {
 		t.Errorf("first row %+v", items[1])
 	}
-	if items[2].Label != "Taut" || items[2].Right != "" || items[2].Subtitle != systemBlurb(pluginlib.Taut) {
+	if items[2].Label != "Taut" || items[2].Subtitle != systemBlurb(pluginlib.Taut) {
 		t.Errorf("second row %+v", items[2])
 	}
 	if act := v.action(pronouns); act.label != "Install…" || act.menu != nil {

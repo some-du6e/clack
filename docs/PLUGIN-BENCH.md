@@ -8,7 +8,7 @@ slackc's React reconciler mapped to native widgets) over the whole client
 signed in to internal/fakeslack, and the Library's Install button installs
 the winner. In Preferences > Plugins > Browse, the chevron beside Install
 opens "Install for" with both variants: the winner first, marked
-Recommended, with the reason below it.
+"(recommended)", with the reason below it.
 
 Every variant runs in a fresh client, against the same synthetic workspace
 (`fakeslack.Size.PluginBench`: a 500-message #plugin-bench with
@@ -50,7 +50,7 @@ fidelity compares the two variants' screenshots of the same scene with
 each other: **Pixel diff** is the share of the window that differs.
 The screenshots are in the run's `plugin-bench-shots` artifact.
 
-Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T19:09:32Z by [this run](https://github.com/some-du6e/yoloslackgoclient/actions/runs/42679086236).
+Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T19:19:50Z by [this run](https://github.com/some-du6e/yoloslackgoclient/actions/runs/42679086236).
 
 ## Host fixes and gaps the bench found
 

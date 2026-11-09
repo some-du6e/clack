@@ -631,7 +631,7 @@ func (v *libraryPage) benchPick(choices []pluginlib.Entry) (pluginlib.Entry, plu
 }
 
 // installMenu is "Install for": the bench's pick first, marked
-// Recommended with its reason, then the other system.
+// "(recommended)" with its reason, then the other system.
 func (v *libraryPage) installMenu(choices []pluginlib.Entry) []MenuItem {
 	items := []MenuItem{{Label: "Install for", Disabled: true}}
 	order := append([]pluginlib.Entry(nil), choices...)
@@ -642,7 +642,7 @@ func (v *libraryPage) installMenu(choices []pluginlib.Entry) []MenuItem {
 	for _, e := range order {
 		it := MenuItem{Label: systemName(e.System), Subtitle: systemBlurb(e.System), Do: func() { v.installEntry(e, false) }}
 		if ok && e.System == w.System {
-			it.Right = "Recommended"
+			it.Label += " (recommended)"
 			it.Subtitle = benchReason(pick)
 		}
 		items = append(items, it)
@@ -650,11 +650,15 @@ func (v *libraryPage) installMenu(choices []pluginlib.Entry) []MenuItem {
 	return items
 }
 
-// benchReason is the pick's reason as a sentence.
+// benchReason is the pick's reason as one menu line: its first two
+// clauses ("Works fully, 3.9x faster to load"), capitalized.
 func benchReason(p pluginbench.Pick) string {
 	r := p.Reason
 	if r == "" {
 		return "Recommended by the plugin bench"
+	}
+	if parts := strings.Split(r, ", "); len(parts) > 2 {
+		r = strings.Join(parts[:2], ", ")
 	}
 	r = strings.ToUpper(r[:1]) + r[1:]
 	if !p.Exact {

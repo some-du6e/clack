@@ -251,7 +251,7 @@ func TestPluginsPrefsShots(t *testing.T) {
 
 		// with plugin bench data for the row: Install installs the pick
 		// (Slick here) and the chevron beside it offers both, the pick
-		// first, Recommended, with the bench's reason
+		// first, "(recommended)", with the bench's reason
 		pp.lib.bench = &pluginbench.Data{Schema: 1, Plugins: []pluginbench.Plugin{{
 			Name: "Clear URLs", Winner: pluginlib.Slick, Reason: "works fully, 3.9x faster to load, 1.5x less JS memory",
 			Variants: []pluginbench.Variant{

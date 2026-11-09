@@ -203,7 +203,7 @@ slackc's React reconciler mapped to native widgets) over the whole client
 signed in to internal/fakeslack, and the Library's Install button installs
 the winner. In Preferences > Plugins > Browse, the chevron beside Install
 opens "Install for" with both variants: the winner first, marked
-Recommended, with the reason below it.
+"(recommended)", with the reason below it.
 
 Every variant runs in a fresh client, against the same synthetic workspace
 (` + "`fakeslack.Size.PluginBench`" + `: a 500-message #plugin-bench with
