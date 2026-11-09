@@ -467,11 +467,13 @@ func TestSearchViewResults(t *testing.T) {
 			t.Errorf("%s > %s: query %q lacks %s", c.menu, c.item, v.q.String(), c.mod)
 		}
 	}
-	d.until(t, "the filtered search", func() bool { return !v.loading })
-	f := e.fs.SearchForms("search.modules.messages")
-	if q := f[len(f)-1].Get("query"); !strings.HasPrefix(q, fakeslack.SearchWord+" is:thread is:dm") {
-		t.Errorf("filtered query %q", q)
-	}
+	// wait for the request carrying every filter: !v.loading alone can be
+	// true before the last filter's search has gone out (flaked in CI)
+	wantQ := fakeslack.SearchWord + " is:thread is:dm"
+	d.until(t, "the filtered search", func() bool {
+		f := e.fs.SearchForms("search.modules.messages")
+		return !v.loading && len(f) > 0 && strings.HasPrefix(f[len(f)-1].Get("query"), wantQ)
+	})
 	// Exclude bot messages is the search_exclude_bots pref
 	for _, it := range m.items {
 		if it.Label == "Exclude bot messages" {
