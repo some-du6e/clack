@@ -265,7 +265,7 @@ func TestContextMenuOnFile(t *testing.T) {
 	e := newCtxEnv(t)
 	e.rightClick(e.find(tsCtxFile, "the file card", onFile))
 	m := e.menu(0, "right-click on a file")
-	if got := strings.Join(labels(m), "|"); got != "Share file…|Copy link|Download" {
+	if got := strings.Join(labels(m), "|"); got != "Share file…|Copy link|Download|Save for later" {
 		t.Errorf("file menu %q", got)
 	}
 }
