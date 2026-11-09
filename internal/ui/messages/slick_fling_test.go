@@ -6,6 +6,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -122,8 +123,34 @@ func slickFling(t *testing.T, name string, plugins []string) {
 		}
 		return out
 	}
+	// plain rows (one short line, no reactions or replies) as Slack draws
+	// them at 2x: a header row 52px, a continuation 30px
+	slack := func(when string) {
+		s := v.s
+		for i := s.visible[0]; i < s.visible[1]; i++ {
+			it := s.items[i]
+			if it.kind != itMsg || len(it.group) > 0 {
+				continue
+			}
+			var n int
+			if _, err := fmt.Sscanf(it.key[strings.IndexByte(it.key, '.')+1:], "%d", &n); err != nil {
+				continue
+			}
+			if n -= 100; n%4 == 0 || n%5 == 0 || n%11 == 0 {
+				continue
+			}
+			want := 60
+			if it.header {
+				want = 104
+			}
+			if s.heights[i] != want {
+				t.Errorf("%s: plain row %d (header %v) is %dpx, Slack %dpx", when, n, it.header, s.heights[i], want)
+			}
+		}
+	}
 	e.waitFor(t, "the rows", frame, func() bool { return len(v.s.rows) > 5 })
 	settle()
+	slack("opened")
 	bottom := heights()
 	g0 := map[string]string{}
 	for k, v := range geom {
@@ -141,6 +168,7 @@ func slickFling(t *testing.T, name string, plugins []string) {
 		}
 	}
 	settle()
+	slack("at the top")
 	top := heights()
 	shot("2-top")
 	for f := 0; f < 400 && v.s.list.Position.BeforeEnd; f++ {

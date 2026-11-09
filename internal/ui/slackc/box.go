@@ -657,6 +657,9 @@ func (v *View) uaDefaults(b *box, c *css.Cascaded, parent *css.Style) {
 	if b.kind == kComp {
 		if !has(c, "display") {
 			st.Display = css.DisplayInlineBlock
+			if isBlockComponent(b.n.N) {
+				st.Display = css.DisplayBlock
+			}
 		}
 		return
 	}

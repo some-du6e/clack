@@ -602,6 +602,17 @@ func (pl *reactPill) buttonProps() slackc.Props {
 
 // ---- natives ----
 
+// The row's parts whose Slack root element is a block <div>: patched, a
+// plugin's <div><Original/></div> (MessageLogger) or bare <Original/>
+// (BetterBlock) must lay them out as blocks, not inline-block on a line
+// box, which left 3.5dp of strut descent under every row.
+func init() {
+	slackc.SetBlockComponents("MessageWrapper", "ThreadRootGeneric", "Message", "ThreadReplyGeneric",
+		"MessageBackground", "ProgressiveDisclosureSuccessCoachmarkWrapper", "MessageKitGutter",
+		"MessageText", "MessageBlocks", "Blocks", "MessageFiles", "MessageKitAttachments",
+		"ReactionBar", "ThreadReplies")
+}
+
 // layoutWrapper is MessageWrapper / ThreadRootGeneric: a plugin's msg
 // (ShowRealUser) replaces the sender, avatar, badge and blocks drawn.
 func (r *row) layoutWrapper(gtx layout.Context, p slackc.Props) layout.Dimensions {

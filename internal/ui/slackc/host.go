@@ -25,6 +25,27 @@ var hosts struct {
 	warned map[string]bool
 }
 
+// blockComps are the Slack components whose own root element is a block
+// box (a <div>): an "@" node for one is display: block by default, so a
+// plugin's <div><Original/></div> (or a bare <Original/>) lays the native
+// out as a block, the way Slack's DOM does. Other components default to
+// inline-block, and as inline-level boxes they sit on a line box that adds
+// the strut's descent under them (a message row drawn that way grew 3.5dp).
+var blockComps sync.Map // name → true
+
+// SetBlockComponents marks names as components whose Slack root is a block
+// element (their owners call it from init).
+func SetBlockComponents(names ...string) {
+	for _, n := range names {
+		blockComps.Store(n, true)
+	}
+}
+
+func isBlockComponent(name string) bool {
+	_, ok := blockComps.Load(name)
+	return ok
+}
+
 // RegisterHost registers fn for name and any aliases (e.g. "Avatar" and
 // "ConnectedBaseAvatar"). Owners register their widgets here so plugins
 // can render them; later registrations replace earlier ones.
