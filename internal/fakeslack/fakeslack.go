@@ -146,6 +146,12 @@ type Server struct {
 	// request without one). nil: every broadcast permission is allowed.
 	// Set it before the calls.
 	Permissions map[string][]string
+	// TeamPrefs is team.prefs.get's prefs (nil: none; Slack's client then
+	// never warns before @channel and has no large-channel limit), and
+	// ChannelPrefs channels.prefs.get's pref_value by channel and pref
+	// name (missing: {}, enabled). Set them before the calls.
+	TeamPrefs    map[string]any
+	ChannelPrefs map[string]map[string]any
 
 	prefsMu sync.Mutex
 	prefs   map[string]any // users.prefs.get; users.prefs.set writes it
@@ -810,6 +816,19 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		}
 		s.setVIP(u, method == "users.priority.add")
 		return ok()
+	case "team.prefs.get":
+		prefs := s.TeamPrefs
+		if prefs == nil {
+			prefs = map[string]any{}
+		}
+		return ok("prefs", prefs)
+	case "channels.prefs.get":
+		ch, name := f.Get("channel_id"), f.Get("pref_name")
+		var v any = map[string]any{}
+		if p, found := s.ChannelPrefs[ch][name]; found {
+			v = p
+		}
+		return ok("channel_id", ch, "pref_name", name, "pref_value", v)
 	case "team.info":
 		return ok("team", map[string]any{"id": TeamID, "name": "Fake Club", "domain": "fakeclub",
 			"icon": map[string]any{"image_88": s.URL + "img/88x88/team.png"}})
@@ -831,6 +850,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return ok("messages", []any{}, "has_more", false)
 	case "conversations.info":
 		if c, found := s.conv(f.Get("channel")); found {
+			if f.Get("timezone_count") == "true" || f.Get("display_counts") == "true" {
+				return ok("channel", withCounts(c, f))
+			}
 			return ok("channel", c)
 		}
 		if c, found := s.createdConv(f.Get("channel")); found {
@@ -1039,4 +1061,29 @@ func (s *Server) Fetch(ctx context.Context, raw string) ([]byte, error) {
 		return nil, fmt.Errorf("fakeslack: GET %s: %s", raw, resp.Status)
 	}
 	return io.ReadAll(resp.Body)
+}
+
+// withCounts is conversations.info's channel with what the broadcast
+// warning asks for (addCounts).
+func withCounts(c slack.Conversation, f url.Values) map[string]any {
+	b, _ := json.Marshal(c)
+	var m map[string]any
+	_ = json.Unmarshal(b, &m)
+	addCounts(m, c, f)
+	return m
+}
+
+// addCounts adds timezone_count (a stable 1–12 per channel) and
+// display_counts {display_counts, guest_counts} when the request asks.
+func addCounts(m map[string]any, c slack.Conversation, f url.Values) {
+	if f.Get("timezone_count") == "true" {
+		tz := 1
+		for _, r := range c.ID {
+			tz = (tz*31 + int(r)) % 12
+		}
+		m["timezone_count"] = tz + 1
+	}
+	if f.Get("display_counts") == "true" {
+		m["display_counts"] = map[string]int{"display_counts": c.NumMembers, "guest_counts": 0}
+	}
 }

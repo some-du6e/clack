@@ -6,6 +6,7 @@ import (
 	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/layout"
+	"gioui.org/op/clip"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
@@ -32,7 +33,10 @@ type ModalButton struct {
 // ModalOpts configure a modal.
 type ModalOpts struct {
 	Title string
-	Width float32 // dp, default 520
+	// TitleFunc, when set, is asked for the title every frame (a title
+	// that changes while the modal is open).
+	TitleFunc func() string
+	Width     float32 // dp, default 520
 	// Body draws the content; constraints carry the body width.
 	Body    func(gtx layout.Context) layout.Dimensions
 	Buttons []*ModalButton
@@ -60,6 +64,12 @@ type ModalOpts struct {
 	Subtitle, SubtitleIcon string
 	// FooterNote sits at the footer's left ("Step 1 of 2").
 	FooterNote string
+	// Hero is a full-width strip HeroH dp tall above the header, in the
+	// card's rounded top (the broadcast warning's illustration header,
+	// a c-sk-modal_header before the title bar); the close button sits on
+	// it.
+	Hero  func(gtx layout.Context) layout.Dimensions
+	HeroH float32
 }
 
 // Modal is a centered dialog over a dimmed backdrop.
@@ -182,6 +192,10 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 		subH = dp(gtx, 22)
 		headH += subH
 	}
+	heroH := 0
+	if m.o.Hero != nil {
+		heroH = dp(gtx, m.o.HeroH)
+	}
 	footPad := dp(gtx, 20)
 	if m.o.Border {
 		footPad = dp(gtx, 24)
@@ -203,7 +217,7 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 		_, d := record(loose(gtx, image.Pt(bodyW, 1<<20)), m.o.Body)
 		bodyH = d.Size.Y
 	}
-	maxBody := win.Y - 2*dp(gtx, 28) - headH - footH
+	maxBody := win.Y - 2*dp(gtx, 28) - heroH - headH - footH
 	if maxBody < dp(gtx, 60) {
 		maxBody = dp(gtx, 60)
 	}
@@ -211,7 +225,7 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 	if scroll {
 		bodyH = maxBody
 	}
-	h := headH + bodyH + footH
+	h := heroH + headH + bodyH + footH
 	if len(m.o.Buttons) == 0 && !m.o.Flush {
 		h += dp(gtx, 28)
 	}
@@ -226,13 +240,28 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 				pos := image.Point{}
 				local := image.Rectangle{Max: m.rect.Size()}
 				m.block.Layout(gtx, local)
+				if heroH > 0 {
+					r := dp(gtx, 8)
+					rc := clipRRect(gtx, image.Rect(0, 0, w, heroH+r), r) // rounded top; the bottom corners fall under the header
+					st := clip.Rect{Max: image.Pt(w, heroH)}.Push(gtx.Ops)
+					gtx := gtx
+					gtx.Constraints = layout.Exact(image.Pt(w, heroH))
+					m.o.Hero(gtx)
+					st.Pop()
+					rc.Pop()
+					pos.Y = heroH
+				}
 
 				// header
 				ty := (headH - subH - dp(gtx, 30)) / 2
 				at(gtx, pos.Add(image.Pt(padX, ty)), func(gtx layout.Context) layout.Dimensions {
 					maxW := w - padX - dp(gtx, 64)
 					gtx.Constraints = layout.Constraints{Max: image.Pt(maxW, dp(gtx, 30))}
-					d := para(gtx, th, 22, 30, theme.Black, cl.Fg, m.o.Title, 1)
+					title := m.o.Title
+					if m.o.TitleFunc != nil {
+						title = m.o.TitleFunc()
+					}
+					d := para(gtx, th, 22, 30, theme.Black, cl.Fg, title, 1)
 					if m.o.TitleIcon == "" && m.o.TitleAfter == "" {
 						return d
 					}
@@ -265,7 +294,11 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 					})
 				}
 				if !m.o.NoClose {
-					at(gtx, pos.Add(image.Pt(w-dp(gtx, 20)-dp(gtx, 36), (headH-dp(gtx, 36))/2)), func(gtx layout.Context) layout.Dimensions {
+					cy := pos.Y + (headH-dp(gtx, 36))/2
+					if heroH > 0 {
+						cy = dp(gtx, 20) // c-sk-modal__close_button: top 20px, over the hero
+					}
+					at(gtx, image.Pt(w-dp(gtx, 20)-dp(gtx, 36), cy), func(gtx layout.Context) layout.Dimensions {
 						return iconButton(gtx, &m.close, "close", 36, 20, cl.Fg2, cl.BgHover, 8)
 					})
 				}

@@ -15,15 +15,28 @@ import (
 // The send side of @channel / @here / @everyone, in Slack's
 // prepareAndSendMessage order (gantry boot-shared, build a84662d2d135):
 //
-//  1. handleSlashCommand: a message whose delta starts with a /command
+//  0. sendDraftMessage, before the thunk: channels.prefs.get
+//     enable_at_channel (core.LoadBroadcastEnabled). Clack asks only when
+//     the message uses a keyword, the only time the answer is read.
+//  1. includeBroadcastKeywordWarning (the channel composer and scheduled
+//     sends pass it; the thread composer doesn't): shouldWarnBeforeBroadcast
+//     (core.BroadcastWarning) opens the "Notify N people?" dialog
+//     (broadcast_warning.go) and the send stops with "Shouty rooster in
+//     effect", the message still in the composer. Its Send button
+//     dispatches the thunk again with includeBroadcastKeywordWarning
+//     false; Clack's job waits for the answer and goes on.
+//  2. handleSlashCommand: a message whose delta starts with a /command
 //     runs as that command. Clack's composer runs typed commands before
 //     the thunk, so here this is a plugin's rewrite: Taut's
 //     NativeAtChannel turns a message Slack would refuse into at-channel's
 //     "/channel …" (slashCommandAppId set) and calls the original thunk.
-//  2. hasProhibitedKeywords (core.ProhibitedBroadcast): a keyword the
+//  3. hasProhibitedKeywords (core.ProhibitedBroadcast): a keyword the
 //     viewer may not use stops the send, Slackbot says why ("Only visible
 //     to you") and the message goes back in the composer.
-//  3. the post itself (deliver).
+//  4. the post itself (deliver).
+//
+// The relay plugins only rewrite sends Slack would refuse, so 1 never
+// fires for them: the warning needs the keyword to be allowed.
 
 // errProhibitedBroadcast is Slack's ProhibitedBroadcastKeywordInEffect
 // rejection. It may come back through a plugin's thunk as JS error text,
@@ -34,20 +47,50 @@ func isProhibitedBroadcast(err error) bool {
 	return err != nil && strings.Contains(err.Error(), errProhibitedBroadcast.Error())
 }
 
+// errShoutyRooster is Slack's ShoutyRooster rejection ("Shouty rooster in
+// effect"): the broadcast warning was dismissed with Edit Message.
+var errShoutyRooster = errors.New("Shouty rooster in effect")
+
+func isShoutyRooster(err error) bool {
+	return err != nil && strings.Contains(err.Error(), errShoutyRooster.Error())
+}
+
+// isQuietSendStop reports a stopped send that already told the user why
+// (Slackbot's message, or the dialog they closed): no toast.
+func isQuietSendStop(err error) bool { return isProhibitedBroadcast(err) || isShoutyRooster(err) }
+
 // broadcastPermsWait bounds the permission lookup a send may wait for.
 const broadcastPermsWait = 10 * time.Second
+
+// broadcastAsk is what the warning dialog shows.
+type broadcastAsk struct {
+	Channel   string
+	Used      []string // keywords in the message
+	Scheduled bool     // a scheduled send (dateScheduled): the "who'll be online" strings
+}
 
 // prepareAndSend is prepareAndSendMessage's native (and the whole send
 // when no plugin patched it). a is the thunk's options as the plugins
 // left them.
 func (j *sendJob) prepareAndSend(ctx context.Context, a prepareSendArgs) error {
+	used := deltaKeywords(a.Delta)
+	enabled := true
+	if len(used) > 0 {
+		pctx, cancel := context.WithTimeout(ctx, broadcastPermsWait)
+		enabled = j.api.broadcastEnabled(pctx, a.ChannelID)
+		cancel()
+	}
+	if a.IncludeBroadcastKeywordWarning && len(used) > 0 &&
+		!j.confirmed(ctx, broadcastAsk{Channel: a.ChannelID, Used: used}, enabled) {
+		return errShoutyRooster
+	}
 	if !j.files {
 		if cmd, text, ok := deltaCommand(a.Delta); ok {
 			return j.command(ctx, a.ChannelID, a.ReplyToTs, cmd, text)
 		}
 	}
-	if used := deltaKeywords(a.Delta); len(used) > 0 {
-		if msg, no := j.prohibited(ctx, a.ChannelID, a.ReplyToTs, used); no {
+	if len(used) > 0 {
+		if msg, no := j.prohibited(ctx, a.ChannelID, a.ReplyToTs, used, enabled); no {
 			j.api.localEphemeral(a.ChannelID, a.ReplyToTs, msg)
 			return errProhibitedBroadcast
 		}
@@ -56,14 +99,31 @@ func (j *sendJob) prepareAndSend(ctx context.Context, a prepareSendArgs) error {
 	return j.deliver(ctx, a.ChannelID, a.ReplyToTs, a.Text, a.Blocks, broadcast)
 }
 
+// confirmed is step 1: true when no warning is due, else the user's
+// answer to the dialog (false without a dialog to ask through).
+func (j *sendJob) confirmed(ctx context.Context, ask broadcastAsk, enabled bool) bool {
+	pctx, cancel := context.WithTimeout(ctx, broadcastPermsWait)
+	warn := j.api.broadcastWarning(pctx, ask.Channel, ask.Used, enabled)
+	cancel()
+	if !warn {
+		return true
+	}
+	if j.confirm == nil {
+		return false
+	}
+	return j.confirm(ctx, ask)
+}
+
 // prohibited is hasProhibitedKeywords for this send. Permissions that
-// can't be looked up count as not allowed, as in Slack.
-func (j *sendJob) prohibited(ctx context.Context, ch, ts string, used []string) (string, bool) {
+// can't be looked up count as not allowed, as in Slack. enabled is the
+// channel's enable_at_channel.
+func (j *sendJob) prohibited(ctx context.Context, ch, ts string, used []string, enabled bool) (string, bool) {
 	c, _ := j.api.conv(ch)
 	pctx, cancel := context.WithTimeout(ctx, broadcastPermsWait)
 	p, _ := j.api.broadcastPerms(pctx, ch)
 	cancel()
-	return core.ProhibitedBroadcast(core.BroadcastSend{Conv: c, Perms: p, ThreadTS: ts, Used: used, Restricted: j.api.self().Guest})
+	return core.ProhibitedBroadcast(core.BroadcastSend{Conv: c, Perms: p, ThreadTS: ts, Used: used,
+		Disabled: !enabled, Restricted: j.api.self().Guest})
 }
 
 // command runs a slash command a plugin made of the message; its reply

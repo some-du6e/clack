@@ -129,3 +129,32 @@ func (c coreAPI) broadcastPerms(ctx context.Context, ch string) (core.BroadcastP
 
 // localEphemeral shows a Slackbot "Only visible to you" message.
 func (c coreAPI) localEphemeral(ch, threadTS, text string) { c.a.LocalEphemeral(ch, threadTS, text) }
+
+// broadcastEnabled is the channel's enable_at_channel (channels.prefs.get).
+func (c coreAPI) broadcastEnabled(ctx context.Context, ch string) bool {
+	return c.a.LoadBroadcastEnabled(ctx, ch)
+}
+
+// broadcastWarning is shouldWarnBeforeBroadcast for a send using used.
+func (c coreAPI) broadcastWarning(ctx context.Context, ch string, used []string, enabled bool) bool {
+	return c.a.BroadcastWarning(ctx, ch, used, enabled)
+}
+
+// markBroadcastWarningSeen writes last_seen_at_channel_warning.
+func (c coreAPI) markBroadcastWarningSeen(ctx context.Context) error {
+	return c.a.MarkBroadcastWarningSeen(ctx)
+}
+
+// broadcastAudience is conversations.info's display and timezone counts.
+func (c coreAPI) broadcastAudience(ctx context.Context, ch string) (members, timezones int, err error) {
+	return c.a.BroadcastAudience(ctx, ch)
+}
+
+// broadcastWarningAdmin: is the viewer an admin, and the settings URL.
+func (c coreAPI) broadcastWarningAdmin() (bool, string) { return c.a.BroadcastWarningAdmin() }
+
+// memberCount is the cached people count of ch (membershipCounts).
+func (c coreAPI) memberCount(ch string) int {
+	n, _ := c.a.MemberCountCached(ch)
+	return n
+}

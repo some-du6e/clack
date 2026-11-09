@@ -248,6 +248,7 @@ func (s *Server) handleCanvases(method string, f url.Values) (any, bool) {
 				var m map[string]any
 				_ = json.Unmarshal(b, &m)
 				m["properties"] = map[string]any{"tabs": tabs, "canvas": map[string]any{"file_id": tabs[0]["data"].(map[string]any)["file_id"], "is_empty": false}}
+				addCounts(m, c, f)
 				return ok("channel", m), true
 			}
 		}
