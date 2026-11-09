@@ -172,70 +172,103 @@ func acEq(a, b []string) bool {
 	return true
 }
 
+// ranked runs the @ ranking on fixed sources (no core: the bundled
+// model, no frecency).
+func ranked(q string, users []core.User, members map[string]core.User, self string, groups []core.Usergroup, kws []string, kind string) []acItem {
+	src := memberSources{users: users, members: members, selfID: self, groups: groups, keywords: kws, rk: rankCtx{convKind: kind}}
+	return src.rank(q, false)
+}
+
+// Slack's @ rules (docs/AUTOCOMPLETE-RULES.md): real and display names
+// match at word starts (the username doesn't), members of the
+// conversation first, prefix before a word jump, bots and deactivated
+// people down, usergroups and keywords mixed in by the model.
 func TestRankUsers(t *testing.T) {
 	users := []core.User{
-		{ID: "U1", Name: "karim", RealName: "Karim Ahmed", Handle: "karim"},
-		{ID: "U2", Name: "Akari", RealName: "Akari Sato", Handle: "akari"},
-		{ID: "U3", Name: "kara", RealName: "Kara Lee", Handle: "kl"},
-		{ID: "U4", Name: "Bob", RealName: "Robert Kar", Handle: "karbob"},
-		{ID: "U5", Name: "karbot", Handle: "karbot", IsBot: true},
-		{ID: "U6", Name: "kardead", Deleted: true},
-		{ID: "U7", Name: "Zed", RealName: "Kar Zed", Handle: "zed"},
-		{ID: "U8", Name: "karl", RealName: "Karl M", Handle: "karl"},
+		{ID: "U1", Name: "karim", DisplayName: "karim", RealName: "Karim Ahmed", Handle: "karim", DisplaySet: true},
+		{ID: "U2", Name: "Akari", DisplayName: "Akari", RealName: "Akari Sato", Handle: "akari", DisplaySet: true},
+		{ID: "U3", Name: "kara", DisplayName: "kara", RealName: "Kara Lee", Handle: "kl", DisplaySet: true},
+		{ID: "U4", Name: "Bob", DisplayName: "Bob", RealName: "Robert Kar", Handle: "karbob", DisplaySet: true},
+		{ID: "U5", Name: "karbot", RealName: "karbot", Handle: "karbot", IsBot: true},
+		{ID: "U6", Name: "kardead", RealName: "kardead", Deleted: true},
+		{ID: "U7", Name: "Zed", DisplayName: "Zed", RealName: "Kar Zed", Handle: "zed", DisplaySet: true},
+		{ID: "U8", Name: "karl", DisplayName: "karl", RealName: "Karl M", Handle: "karl", DisplaySet: true},
+		{ID: "U9", Name: "Nobody", DisplayName: "Nobody", RealName: "No One", Handle: "karnobody", DisplaySet: true},
 	}
-	boost := map[string]bool{"U8": true}
-	got := acNames(rankUsers("kar", users, boost, nil, "", nil, 50))
-	// display-name prefix: people (boosted first, then shorter, then a-z),
-	// then bots; handle prefix; real-name word prefix; substring.
-	want := []string{"karl", "kara", "karim", "karbot", "Bob", "Zed", "Akari"}
-	if !acEq(got, want) {
-		t.Errorf("rankUsers(kar) = %v, want %v", got, want)
+	got := acNames(ranked("kar", users, nil, "", nil, nil, "channel"))
+	if idx := acIndex(got, "Nobody"); idx >= 0 {
+		t.Errorf("the username matched: %v", got)
 	}
-
-	got = acNames(rankUsers("karim", users, nil, nil, "", nil, 50))
-	if len(got) == 0 || got[0] != "karim" {
-		t.Errorf("exact match not first: %v", got)
+	if acIndex(got, "Akari") >= 0 {
+		t.Errorf("'kar' inside a word matched: %v", got)
 	}
-
-	got = acNames(rankUsers("", users, map[string]bool{"U2": true, "U3": true}, nil, "U1", nil, 50))
-	if !acEq(got, []string{"Akari", "kara", "karim"}) {
-		t.Errorf("empty query = %v", got)
+	for _, n := range []string{"karim", "kara", "karl"} {
+		if acIndex(got, n) > acIndex(got, "Bob") || acIndex(got, n) > acIndex(got, "karbot") || acIndex(got, n) > acIndex(got, "kardead") {
+			t.Errorf("active prefix matches first: %v", got)
+		}
+	}
+	if acIndex(got, "Bob") < 0 || acIndex(got, "Zed") < 0 {
+		t.Errorf("real-name word matches missing: %v", got)
 	}
 
-	members := map[string]core.User{"U2": users[1]}
-	ranked := rankUsers("kar", users, nil, members, "U1", nil, 50)
-	if got := acNames(ranked); got[0] != "Akari" {
-		t.Errorf("channel members first: %v", got)
+	members := map[string]core.User{"U8": users[7], "U4": users[3]}
+	rs := ranked("kar", users, members, "U1", nil, nil, "channel")
+	got = acNames(rs)
+	// members of the conversation first (MEMBER_OF_CURRENT_CHANNEL);
+	// the viewer is one too, but CURRENT_USER_TEXTY puts them after the
+	// other member with an equal match
+	if got[0] != "karl" || got[1] != "karim" || acIndex(got, "Bob") > acIndex(got, "kara") {
+		t.Errorf("conversation members first: %v", got)
 	}
-	for _, it := range ranked {
-		wantNotIn := it.ID != "U2" && it.ID != "U1"
+	for _, it := range rs {
+		wantNotIn := it.ID != "U8" && it.ID != "U4" && it.ID != "U1"
 		if it.NotIn != wantNotIn || it.Self != (it.ID == "U1") {
 			t.Errorf("%s: NotIn=%v Self=%v", it.Name, it.NotIn, it.Self)
 		}
 	}
 
-	it := rankUsers("akari", users, nil, nil, "", nil, 1)[0]
+	it := ranked("akari", users, nil, "", nil, nil, "channel")[0]
 	if it.Atom == nil || it.Atom.Kind != AtomUser || it.Atom.ID != "U2" || it.Atom.Text != "@Akari" || it.Secondary != "Akari Sato" {
 		t.Errorf("user item %+v atom %+v", it, it.Atom)
 	}
+	// an empty @ lists everyone the client knows
+	if got := ranked("", users, nil, "", nil, nil, "channel"); len(got) != 9 {
+		t.Errorf("empty query: %v (everyone; deactivated bots aside)", acNames(got))
+	}
+	dead := append(users, core.User{ID: "B9", Name: "oldbot", RealName: "oldbot", IsBot: true, Deleted: true})
+	if got := acNames(ranked("old", dead, nil, "", nil, nil, "channel")); len(got) != 0 {
+		t.Errorf("deactivated bot listed: %v", got)
+	}
+}
+
+func acIndex(xs []string, s string) int {
+	for i, x := range xs {
+		if x == s {
+			return i
+		}
+	}
+	return -1
 }
 
 func TestRankUsergroupsAndBroadcasts(t *testing.T) {
 	groups := []core.Usergroup{{ID: "S1", Handle: "design", Name: "Design Team"}, {ID: "S2", Handle: "eng", Name: "Engineering"}}
-	users := []core.User{{ID: "U1", Name: "dee", Handle: "dee"}}
-	got := rankUsers("de", users, nil, nil, "", groups, 50)
-	if !acEq(acNames(got), []string{"dee", "Design Team"}) {
+	users := []core.User{{ID: "U1", Name: "dee", DisplayName: "dee", Handle: "dee", DisplaySet: true}}
+	got := ranked("de", users, nil, "", groups, nil, "channel")
+	if acIndex(acNames(got), "dee") < 0 || acIndex(acNames(got), "Design Team") < 0 || len(got) != 2 {
 		t.Fatalf("got %v", acNames(got))
 	}
-	if !got[1].IsGroup() || got[1].Atom.Text != "@design" || got[1].Atom.ID != "S1" || got[1].Secondary != "design" {
-		t.Errorf("group atom %+v", got[1].Atom)
+	for _, g := range got {
+		if g.IsGroup() && (g.Atom.Text != "@design" || g.Atom.ID != "S1" || g.Secondary != "design") {
+			t.Errorf("group atom %+v", g.Atom)
+		}
 	}
-	if got := rankUsers("", nil, nil, nil, "", groups, 50); len(got) != 0 {
-		t.Errorf("empty query lists usergroups: %v", acNames(got))
+	// usergroups match by name words too
+	if got := acNames(ranked("team", nil, nil, "", groups, nil, "channel")); !acEq(got, []string{"Design Team"}) {
+		t.Errorf("by name: %v", got)
 	}
 
 	b := rankBroadcasts("", "channel", false)
-	if !acEq(acNames(b), []string{"here", "channel"}) {
+	if !acEq(acNames(b), []string{"here", "channel"}) && !acEq(acNames(b), []string{"channel", "here"}) {
 		t.Errorf("broadcasts = %v", acNames(b))
 	}
 	b = rankBroadcasts("e", "channel", true)
@@ -244,6 +277,10 @@ func TestRankUsergroupsAndBroadcasts(t *testing.T) {
 	}
 	if len(rankBroadcasts("", "im", true)) != 0 {
 		t.Error("broadcasts in an IM")
+	}
+	// @channel also answers to "group"
+	if got := acNames(rankBroadcasts("gro", "channel", false)); !acEq(got, []string{"channel"}) {
+		t.Errorf("group: %v", got)
 	}
 }
 
@@ -260,36 +297,56 @@ func TestRankChannels(t *testing.T) {
 		{ID: "C6", Name: "genetics", Kind: "channel"},
 		{ID: "C1", Name: "general", Kind: "channel", IsMember: true},
 	}
-	got := rankChannels("gen", convs, hits, 50)
-	want := []string{"gen", "general", "genetics", "proj-gen", "oxygen", "old-gen"}
-	if !acEq(acNames(got), want) {
-		t.Errorf("rankChannels(gen) = %v, want %v", acNames(got), want)
+	src := channelSources{convs: convs, hits: hits}
+	got := src.rank("gen")
+	names := acNames(got)
+	if names[0] != "gen" {
+		t.Errorf("exact name first: %v", names)
 	}
-	if !got[3].Private || got[3].Atom.Text != "#proj-gen" || got[3].Atom.Kind != AtomChannel {
-		t.Errorf("private item %+v", got[3])
+	if acIndex(names, "oxygen") >= 0 {
+		t.Errorf("'gen' inside a word matched: %v", names)
 	}
-	if got[2].Member {
-		t.Error("search hit marked member")
+	if acIndex(names, "general") > acIndex(names, "genetics") {
+		t.Errorf("member channel before a non-member at equal match: %v", names)
 	}
-	if !got[5].Archived {
-		t.Error("archived channel not flagged")
+	if acIndex(names, "proj-gen") < acIndex(names, "general") {
+		t.Errorf("word match after prefix matches: %v", names)
 	}
-	got = rankChannels("", convs, hits, 50)
-	if !acEq(acNames(got), []string{"general", "gen", "oxygen", "proj-gen"}) {
-		t.Errorf("empty = %v", acNames(got))
+	for _, it := range got {
+		switch it.Name {
+		case "proj-gen":
+			if !it.Private || it.Atom.Text != "#proj-gen" || it.Atom.Kind != AtomChannel {
+				t.Errorf("private item %+v", it)
+			}
+		case "genetics":
+			if it.Member {
+				t.Error("search hit marked member")
+			}
+		case "old-gen":
+			if !it.Archived {
+				t.Error("archived channel not flagged")
+			}
+		}
+	}
+	if got := acNames(src.rank("")); len(got) != 6 {
+		t.Errorf("empty = %v (every channel, archived too)", got)
 	}
 }
 
 func TestRankCommands(t *testing.T) {
-	cmds := []core.Command{{Name: "/remind", Desc: "Set a reminder"}, {Name: "/rem"}, {Name: "/giphy"}, {Name: "/feedremind"}}
-	got := rankCommands("rem", cmds, 50)
-	if !acEq(acNames(got), []string{"rem", "remind", "feedremind"}) {
-		t.Errorf("got %v", acNames(got))
+	cmds := []core.Command{{Name: "/remind", Desc: "Set a reminder"}, {Name: "/rem"}, {Name: "/giphy"}, {Name: "/feed", Desc: "Manage RSS feeds"}}
+	got := rankCommands("rem", cmds, rankCtx{})
+	names := acNames(got)
+	if names[0] != "rem" || acIndex(names, "remind") != 1 {
+		t.Errorf("exact command, then prefix: %v", names)
 	}
 	if got[1].Command == nil || got[1].Command.Desc != "Set a reminder" || got[1].Secondary != "Set a reminder" {
 		t.Errorf("command item %+v", got[1])
 	}
-	if len(rankCommands("", cmds, 50)) != 4 {
+	if got := acNames(rankCommands("rss", cmds, rankCtx{})); !acEq(got, []string{"feed"}) {
+		t.Errorf("descriptions match: %v", got)
+	}
+	if len(rankCommands("", cmds, rankCtx{})) != 4 {
 		t.Error("bare / should list every command")
 	}
 }

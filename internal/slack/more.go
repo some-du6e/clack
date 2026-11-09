@@ -290,6 +290,9 @@ type UserSearchOpts struct {
 	SearchEmail      bool
 	TopUsers         []string
 	DefaultWorkspace string
+	// CurrentChannel is the composer's conversation (getRemoteMembers'
+	// current_channel). search_email is only sent when set, as Slack does.
+	CurrentChannel string
 }
 
 // SearchUsersWith is edge users/search with the omniswitcher's args.
@@ -302,7 +305,13 @@ func (c *Client) SearchUsersWith(ctx context.Context, query string, o UserSearch
 	}
 	body := map[string]any{
 		"include_profile_only_users": true, "query": query, "count": o.Count, "fuzz": 1,
-		"enable_workspace_ranking": true, "search_email": o.SearchEmail,
+		"enable_workspace_ranking": true,
+	}
+	if o.SearchEmail {
+		body["search_email"] = true
+	}
+	if o.CurrentChannel != "" {
+		body["current_channel"] = o.CurrentChannel
 	}
 	if o.TopUsers != nil {
 		body["top_users"] = o.TopUsers

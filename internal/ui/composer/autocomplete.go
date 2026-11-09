@@ -11,6 +11,7 @@ import (
 
 	"gioui.org/io/key"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/acrank"
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/emoji"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
@@ -65,6 +66,7 @@ type acItem struct {
 	IsBot      bool
 	Self       bool          // user: the viewer, drawn with "(you)"
 	NotIn      bool          // user: not a member of this conversation ("Not in channel")
+	Deleted    bool          // user: deactivated (Slack's texty search keeps them, ranked down)
 	Status     string        // user: custom status text
 	StatusURL  string        // user: custom status emoji image
 	statusName string        // user: status emoji name, resolved to StatusURL
@@ -90,9 +92,11 @@ type acTrigger struct {
 }
 
 const (
-	acMaxItems  = 25                     // Slack caps every list at 25 rows
-	acDebounce  = 100 * time.Millisecond // network search debounce
-	acSnapEvery = 5 * time.Second        // snapshot refresh while typing
+	acMaxItems = 25 // Slack caps every list at 25 rows
+	// acDebounce: TextyAutocomplete.search runs on every keystroke and
+	// aborts the previous search (AbortController), no debounce.
+	acDebounce  = 0 * time.Millisecond
+	acSnapEvery = 5 * time.Second // snapshot refresh while typing
 )
 
 // Autocomplete state. Everything but the fields under mu belongs to the UI
@@ -114,8 +118,12 @@ type Autocomplete struct {
 	// later runs f on the UI goroutine (the composer's queue); plugin
 	// autocomplete answers land through it. thread marks a thread composer
 	// (autocompleteMembers' isThread).
-	later  func(f func())
-	thread bool
+	later    func(f func())
+	thread   bool
+	threadTS string
+
+	// rk is the ranking context, refreshed with the snapshot (UI goroutine).
+	rk rankCtx
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -292,6 +300,7 @@ func (ac *Autocomplete) accept(i int) {
 		it.Atom = &a
 	}
 	start, end := ac.trig.Start, ac.trig.End
+	ac.recordPick(it, ac.trig)
 	// Suppress the token until the composer replaces it, so an Update that
 	// runs before Accepted is polled doesn't reopen the popup.
 	ac.Dismiss()
@@ -501,6 +510,29 @@ func (ac *Autocomplete) refresh() {
 		ac.conv, ac.haveConv = api.conv(ac.channelID)
 	}
 	ac.known, ac.dmUsers, ac.convs = known, dm, convs
+	kind := ""
+	if ac.haveConv {
+		kind = ac.conv.Kind
+	}
+	ac.rk = rankCtxFrom(api, s, kind)
+	if ac.threadTS != "" {
+		if us := api.a.ThreadUsers(ac.channelID, ac.threadTS); len(us) > 0 {
+			ac.rk.threadUsers = make(map[string]bool, len(us))
+			for _, id := range us {
+				ac.rk.threadUsers[id] = true
+			}
+		}
+	}
+}
+
+// rankCtxLocked is the ranking context with the current frecency (a
+// pick changes it at once).
+func (ac *Autocomplete) rankCtxLocked() rankCtx {
+	r := ac.rk
+	if ac.h != nil && ac.h.Core() != nil {
+		r.frec = ac.h.Core().Frecency()
+	}
+	return r
 }
 
 // load starts the async loads trigger t needs.
@@ -540,7 +572,7 @@ func (ac *Autocomplete) load(t acTrigger) {
 		if q != "" && !ac.askedUsers[q] {
 			ac.askedUsers[q] = true
 			ac.debounced(func() { delete(ac.askedUsers, q) }, func(ctx context.Context) {
-				us, err := api.searchUsers(ctx, q)
+				us, err := api.searchUsers(ctx, q, ac.channelID)
 				if err != nil {
 					ac.land(func() { delete(ac.askedUsers, q) })
 					return
@@ -661,14 +693,14 @@ func (ac *Autocomplete) compute(t acTrigger) []acItem {
 		return ac.ov.keep(ac.channelSourcesLocked().rank(t.Query))
 	case acEmoji:
 		if ac.coreEmoji() {
-			return emojiMatchItems(popups.SearchEmoji(ac.h, t.Query, acMaxItems))
+			return emojiMatchItems(popups.AutocompleteEmoji(ac.h, t.Query, ac.rankCtxLocked().opts(acrank.SourceTexty)))
 		}
 		if ac.emojiIdx == nil {
 			return nil
 		}
 		return ac.emojiIdx.search(t.Query, acMaxItems)
 	case acCommand:
-		return rankCommands(t.Query, ac.commands, acMaxItems)
+		return rankCommands(t.Query, ac.commands, ac.rankCtxLocked())
 	}
 	return nil
 }
@@ -689,385 +721,6 @@ func (ac *Autocomplete) resolveStatusEmoji(items []acItem) {
 			it.StatusURL = url
 		}
 	}
-}
-
-// ---- ranking (pure) ----
-
-// acNow is the clock for status expiry (tests replace it).
-var acNow = time.Now
-
-// Match tiers, best first.
-const (
-	tierExact = iota
-	tierPrefix
-	tierHandle
-	tierWord
-	tierSub
-	tierNone
-)
-
-// userName is the name Slack shows for u.
-func userName(u core.User) string {
-	switch {
-	case u.Name != "":
-		return u.Name
-	case u.RealName != "":
-		return u.RealName
-	}
-	return u.Handle
-}
-
-// userTier rates how well q (lowercase) matches u.
-func userTier(q string, u core.User) int {
-	name, handle, real := strings.ToLower(userName(u)), strings.ToLower(u.Handle), strings.ToLower(u.RealName)
-	// A trailing space ("@karim ", before the surname) shouldn't drop the
-	// match; multi-token queries match word-prefixes across name+real+handle.
-	q = strings.TrimRight(q, " ")
-	if strings.Contains(q, " ") {
-		if allWordsPrefix(name+" "+real+" "+handle, q) {
-			return tierWord
-		}
-		if strings.Contains(name+" "+real, q) {
-			return tierSub
-		}
-		return tierNone
-	}
-	switch {
-	case q == "":
-		return tierPrefix
-	case name == q || handle == q:
-		return tierExact
-	case strings.HasPrefix(name, q):
-		return tierPrefix
-	case strings.HasPrefix(handle, q):
-		return tierHandle
-	case wordPrefix(real, q) || wordPrefix(name, q) || strings.HasPrefix(real, q):
-		return tierWord
-	case allWordsPrefix(name+" "+real+" "+handle, q):
-		// Multi-word queries ("karim h", "hac karim"): every query token is
-		// a word-prefix somewhere in the combined name/handle/real name.
-		return tierWord
-	case strings.Contains(name, q) || strings.Contains(handle, q) || strings.Contains(real, q):
-		return tierSub
-	}
-	return tierNone
-}
-
-// allWordsPrefix reports whether every whitespace-separated token of q is a
-// wordPrefix of s. Only useful for multi-token queries.
-func allWordsPrefix(s, q string) bool {
-	toks := strings.Fields(q)
-	if len(toks) < 2 {
-		return false
-	}
-	for _, t := range toks {
-		if !wordPrefix(s, t) {
-			return false
-		}
-	}
-	return true
-}
-
-// wordPrefix reports whether some word of s (split on space, '-', '_',
-// '.') starts with q.
-func wordPrefix(s, q string) bool {
-	if q == "" {
-		return true
-	}
-	for i := 0; i < len(s); i++ {
-		if (i == 0 || isWordSep(s[i-1])) && strings.HasPrefix(s[i:], q) {
-			return true
-		}
-	}
-	return false
-}
-
-func isWordSep(b byte) bool { return b == ' ' || b == '-' || b == '_' || b == '.' }
-
-// rankUsers ranks people, bots and usergroups for an @ query. Members of
-// the conversation come first (as in Slack), then by match tier: exact
-// display-name/handle match, display-name prefix, handle prefix, real-name
-// word prefix, substring. Within a tier people come before bots and
-// usergroups, boosted users (DM partners) before the rest, then shorter
-// names. Deleted users are dropped. An empty query lists only boosted
-// users and members, then the viewer. members (nil while loading) marks
-// "Not in channel"; selfID marks "(you)".
-func rankUsers(q string, users []core.User, boost map[string]bool, members map[string]core.User, selfID string, groups []core.Usergroup, limit int) []acItem {
-	q = strings.ToLower(q)
-	type cand struct {
-		it    acItem
-		tier  int
-		order int // 0 person, 1 bot, 2 usergroup
-		boost bool
-		self  bool
-		key   string
-	}
-	cs := make([]cand, 0, 32)
-	for _, u := range users {
-		if u.Deleted || u.ID == "" {
-			continue
-		}
-		if q == "" && !boost[u.ID] && u.ID != selfID {
-			continue
-		}
-		tier := userTier(q, u)
-		if tier == tierNone {
-			continue
-		}
-		name := userName(u)
-		_, mem := members[u.ID]
-		order := 0
-		if u.IsBot {
-			order = 1
-		}
-		it := acItem{
-			Kind: acUser, ID: u.ID, Name: name, Secondary: u.RealName, Avatar: u.Avatar,
-			Presence: u.Presence, IsBot: u.IsBot, Member: mem, Self: u.ID == selfID,
-			NotIn: members != nil && !mem && u.ID != selfID,
-			Atom:  &Atom{Kind: AtomUser, ID: u.ID, Text: "@" + name},
-		}
-		if u.StatusExp == 0 || u.StatusExp > acNow().Unix() {
-			it.Status, it.StatusURL, it.statusName = u.StatusText, u.StatusEmojiURL, u.StatusEmoji
-		}
-		cs = append(cs, cand{
-			it: it, tier: tier, order: order, boost: boost[u.ID] || mem, self: it.Self,
-			key: strings.ToLower(name),
-		})
-	}
-	if q != "" {
-		for _, g := range groups {
-			h, n := strings.ToLower(g.Handle), strings.ToLower(g.Name)
-			tier := tierNone
-			switch {
-			case h == q:
-				tier = tierExact
-			case strings.HasPrefix(h, q):
-				tier = tierPrefix
-			case wordPrefix(n, q) || wordPrefix(h, q):
-				tier = tierWord
-			case strings.Contains(h, q) || strings.Contains(n, q):
-				tier = tierSub
-			}
-			if tier == tierNone {
-				continue
-			}
-			name := g.Name
-			if name == "" {
-				name = g.Handle
-			}
-			cs = append(cs, cand{
-				it: acItem{
-					Kind: acUser, ID: g.ID, Name: name, Secondary: g.Handle, Count: g.UserCount,
-					Atom: &Atom{Kind: AtomUsergroup, ID: g.ID, Text: "@" + g.Handle},
-				},
-				tier: tier, order: 2, key: h,
-			})
-		}
-	}
-	sort.SliceStable(cs, func(i, j int) bool {
-		a, b := cs[i], cs[j]
-		if q == "" && a.self != b.self {
-			return b.self
-		}
-		if a.it.Member != b.it.Member {
-			return a.it.Member
-		}
-		if a.tier != b.tier {
-			return a.tier < b.tier
-		}
-		if a.order != b.order {
-			return a.order < b.order
-		}
-		if a.boost != b.boost {
-			return a.boost
-		}
-		if q != "" && len(a.key) != len(b.key) && a.tier <= tierHandle {
-			return len(a.key) < len(b.key)
-		}
-		return a.key < b.key
-	})
-	if len(cs) > limit {
-		cs = cs[:limit]
-	}
-	out := make([]acItem, len(cs))
-	for i := range cs {
-		out[i] = cs[i].it
-	}
-	return out
-}
-
-// rankBroadcasts lists @here, @channel and @everyone that start with q,
-// all the conversation kind can carry: IMs get none, @everyone only shows
-// in the workspace's general channel. Who may use them is rankKeywords'
-// filter (memberSources.rank).
-func rankBroadcasts(q, convKind string, general bool) []acItem {
-	if convKind == "im" {
-		return nil
-	}
-	return rankKeywords(q, func(id string) bool { return id != core.KeywordEveryone || general })
-}
-
-// rankKeywords lists the broadcast keywords keep allows that start with q.
-func rankKeywords(q string, keep func(id string) bool) []acItem {
-	q = strings.ToLower(q)
-	all := []struct{ id, hint string }{
-		{core.KeywordHere, "Notify every online member in this channel."},
-		{core.KeywordChannel, "Notify everyone in this channel."},
-		{core.KeywordEveryone, "Notify everyone in your workspace."},
-	}
-	var out []acItem
-	for _, b := range all {
-		if !keep(b.id) || !strings.HasPrefix(b.id, q) {
-			continue
-		}
-		out = append(out, acItem{
-			Kind: acUser, ID: b.id, Name: b.id, Secondary: b.hint,
-			Atom: &Atom{Kind: AtomBroadcast, ID: b.id, Text: "@" + b.id},
-		})
-	}
-	return out
-}
-
-// rankChannels ranks channels for a # query: sidebar (member) channels and
-// search hits. Tiers: exact, prefix, word prefix (split on '-', '_', '.'),
-// substring; members before non-members, then shorter names; archived
-// channels last. An empty query lists unarchived member channels by
-// sidebar priority, then name.
-func rankChannels(q string, convs []core.Conv, hits []core.ChannelHit, limit int) []acItem {
-	q = strings.ToLower(strings.TrimPrefix(q, "#"))
-	type cand struct {
-		it   acItem
-		tier int
-		prio float64
-		key  string
-	}
-	seen := map[string]bool{}
-	var cs []cand
-	add := func(id, name, kind string, member, archived bool, prio float64) {
-		if id == "" || seen[id] || kind == "im" || kind == "mpim" || (archived && q == "") {
-			return
-		}
-		n := strings.ToLower(name)
-		tier := tierNone
-		switch {
-		case q == "":
-			if !member {
-				return
-			}
-			tier = tierPrefix
-		case n == q:
-			tier = tierExact
-		case strings.HasPrefix(n, q):
-			tier = tierPrefix
-		case wordPrefix(n, q):
-			tier = tierWord
-		case strings.Contains(n, q):
-			tier = tierSub
-		}
-		if tier == tierNone {
-			return
-		}
-		seen[id] = true
-		cs = append(cs, cand{
-			it: acItem{
-				Kind: acChannel, ID: id, Name: name, Private: kind == "private", Member: member, Archived: archived,
-				Atom: &Atom{Kind: AtomChannel, ID: id, Text: "#" + name},
-			},
-			tier: tier, prio: prio, key: n,
-		})
-	}
-	for _, c := range convs {
-		add(c.ID, c.Name, c.Kind, true, c.IsArchived, c.Priority)
-	}
-	for _, h := range hits {
-		add(h.ID, h.Name, h.Kind, h.IsMember, h.IsArchived, 0)
-	}
-	sort.SliceStable(cs, func(i, j int) bool {
-		a, b := cs[i], cs[j]
-		if a.it.Archived != b.it.Archived {
-			return b.it.Archived
-		}
-		if a.tier != b.tier {
-			return a.tier < b.tier
-		}
-		if a.it.Member != b.it.Member {
-			return a.it.Member
-		}
-		if q == "" {
-			if a.prio != b.prio {
-				return a.prio > b.prio
-			}
-			return a.key < b.key
-		}
-		if len(a.key) != len(b.key) {
-			return len(a.key) < len(b.key)
-		}
-		return a.key < b.key
-	})
-	if len(cs) > limit {
-		cs = cs[:limit]
-	}
-	out := make([]acItem, len(cs))
-	for i := range cs {
-		out[i] = cs[i].it
-	}
-	return out
-}
-
-// rankCommands ranks slash commands: name prefix, then substring, then
-// shorter names. Names are stored without the leading '/'.
-func rankCommands(q string, cmds []core.Command, limit int) []acItem {
-	q = strings.ToLower(q)
-	type cand struct {
-		it   acItem
-		tier int
-		key  string
-	}
-	var cs []cand
-	seen := map[string]bool{}
-	for i := range cmds {
-		c := cmds[i]
-		name := strings.TrimPrefix(c.Name, "/")
-		n := strings.ToLower(name)
-		if name == "" || seen[n] {
-			continue
-		}
-		tier := tierNone
-		switch {
-		case n == q:
-			tier = tierExact
-		case strings.HasPrefix(n, q):
-			tier = tierPrefix
-		case strings.Contains(n, q):
-			tier = tierSub
-		}
-		if tier == tierNone {
-			continue
-		}
-		seen[n] = true
-		cs = append(cs, cand{
-			it:   acItem{Kind: acCommand, ID: name, Name: name, Secondary: c.Desc, Command: &c},
-			tier: tier, key: n,
-		})
-	}
-	sort.SliceStable(cs, func(i, j int) bool {
-		a, b := cs[i], cs[j]
-		if a.tier != b.tier {
-			return a.tier < b.tier
-		}
-		if q != "" && len(a.key) != len(b.key) {
-			return len(a.key) < len(b.key)
-		}
-		return a.key < b.key
-	})
-	if len(cs) > limit {
-		cs = cs[:limit]
-	}
-	out := make([]acItem, len(cs))
-	for i := range cs {
-		out[i] = cs[i].it
-	}
-	return out
 }
 
 // coreEmoji reports whether ":" suggestions come from the emoji picker's
@@ -1298,3 +951,19 @@ func (ac *Autocomplete) watchPresence() {
 	}
 	go coreAPI{ac.h.Core()}.subscribePresence(ids)
 }
+
+// wordPrefix reports whether some word of s (split on space, '-', '_',
+// '.') starts with q (the no-core emoji index's word tier).
+func wordPrefix(s, q string) bool {
+	if q == "" {
+		return true
+	}
+	for i := 0; i < len(s); i++ {
+		if (i == 0 || isWordSep(s[i-1])) && strings.HasPrefix(s[i:], q) {
+			return true
+		}
+	}
+	return false
+}
+
+func isWordSep(b byte) bool { return b == ' ' || b == '-' || b == '_' || b == '.' }

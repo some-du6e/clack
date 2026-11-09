@@ -173,7 +173,7 @@ func (c *Composer) init() {
 	}
 	c.ac = newAutocomplete(c.h, c.ch)
 	bindAutocomplete(c.ed, c.ac, c.h.Invalidate)
-	c.ac.later, c.ac.thread = c.later, c.ts != ""
+	c.ac.later, c.ac.thread, c.ac.threadTS = c.later, c.ts != "", c.ts
 	if c.edit == nil { // the conversation's files, kept across composers
 		c.att = attachmentsFor(draftKey(c.ch, c.ts), c.h)
 		c.att.setOnChange(c.attChanged)
