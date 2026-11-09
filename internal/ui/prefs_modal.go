@@ -47,6 +47,10 @@ type pagePositioned interface {
 
 var mkAvailability func(a *App) pagePositioned
 
+// prefsTap sees each Preferences dialog showPrefs opens (tests; nil
+// otherwise).
+var prefsTap func(p *prefsModal)
+
 // prefsNav is Slack's tabs[] for the dialog, in Slack's order. The last
 // id must be "advanced": Taut appends its own tabs only to the Preferences
 // Tabs. Clack's first ids (navigation, appearance) stay; the rest are
@@ -121,6 +125,9 @@ func (a *App) showPrefs(section string) {
 	}
 	p := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}}
 	p.selectTab(section)
+	if prefsTap != nil {
+		prefsTap(p)
+	}
 	if mkAvailability != nil {
 		p.avail = mkAvailability(a)
 	}
@@ -407,7 +414,6 @@ func (p *prefsModal) section1(gtx layout.Context, id string, org image.Point) la
 func (p *prefsModal) tautPage() *tautPage {
 	if p.taut == nil {
 		p.taut = newTautPage(p.a)
-		p.taut.openTab = p.selectTab
 	}
 	return p.taut
 }

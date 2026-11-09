@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"image"
+	"image/color"
 	"sort"
 	"strconv"
 	"strings"
@@ -11,6 +12,8 @@ import (
 
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/clip"
+	"gioui.org/op/paint"
 	"gioui.org/text"
 	"gioui.org/widget"
 
@@ -223,6 +226,7 @@ type pluginsPage struct {
 	mode string       // installed | browse
 
 	toolbarH int
+	selTab   image.Rectangle // the selected mode tab (its underline)
 	inst     *pluginInstaller
 }
 
@@ -302,18 +306,15 @@ func (pp *pluginsPage) layout(gtx layout.Context) layout.Dimensions {
 	p.k.gtxNow = gtx
 	pp.lib.s.k.gtxNow = gtx
 	sz := gtx.Constraints.Max
-	var ps []unifiedPlugin
-	var fs []slick.Filter
+	ps := pp.installed() // Installed's rows, and its count on the tab
+	fs := pp.filters(ps)
 	if pp.mode == "browse" {
 		fs = pp.lib.chips()
-	} else {
-		ps = pp.installed()
-		fs = pp.filters(ps)
 	}
 	m := op.Record(gtx.Ops)
 	g := gtx
 	g.Constraints = layout.Constraints{Max: image.Pt(sz.X-gtx.Dp(8), 1<<20)}
-	pp.toolbarH = pp.toolbar(g, fs).Size.Y
+	pp.toolbarH = pp.toolbar(g, fs, len(ps)).Size.Y
 	bar := m.Stop()
 	p.list.List.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Min: image.Pt(sz.X, 0), Max: image.Pt(sz.X-gtx.Dp(8), 1<<24)}
@@ -334,25 +335,30 @@ func (pp *pluginsPage) layout(gtx layout.Context) layout.Dimensions {
 	return layout.Dimensions{Size: sz}
 }
 
-// toolbar: Installed | Browse and "Install from file or URL", then the
-// shared search with the mode's chips.
-func (pp *pluginsPage) toolbar(gtx layout.Context, fs []slick.Filter) layout.Dimensions {
+// toolbar is Slack's underline tab strip (Installed, Browse) on a
+// hairline with "Install from file or URL" at its right, then the shared
+// search with the mode's filter chips (Slick's toolbar).
+func (pp *pluginsPage) toolbar(gtx layout.Context, fs []slick.Filter, installed int) layout.Dimensions {
 	p := pp.s
+	cl := p.colors()
 	w := gtx.Constraints.Max.X
-	top := gtx.Dp(2)
-	sd := at(gtx, image.Pt(0, top), image.Pt(w, gtx.Dp(32)), pp.segmented)
+	td := pp.modeTabs(gtx, installed)
+	h := td.Size.Y
 	b := p.k.btn("install.open")
 	hit := b.Clicked(gtx)
 	m := op.Record(gtx.Ops)
 	bd := popups.Button(gtx, p.a.th, b, popups.BtnOutline, popups.BtnSmall, "Install from file or URL", "", 0)
 	call := m.Stop()
-	st := op.Offset(image.Pt(w-bd.Size.X, top+(sd.Size.Y-bd.Size.Y)/2)).Push(gtx.Ops)
+	st := op.Offset(image.Pt(w-bd.Size.X, (h-gtx.Dp(1)-bd.Size.Y)/2)).Push(gtx.Ops)
 	call.Add(gtx.Ops)
 	st.Pop()
 	if hit {
 		pp.openInstaller()
 	}
-	y := top + max(sd.Size.Y, bd.Size.Y) + gtx.Dp(12)
+	// the strip's hairline, under the selected tab's underline
+	theme.Fill(gtx, image.Rect(0, h-gtx.Dp(1), w, h), cl.otlTer)
+	pp.modeUnderline(gtx, h)
+	y := h + gtx.Dp(16)
 	chips, placeholder := p, "Search installed plugins"
 	if pp.mode == "browse" {
 		chips, placeholder = pp.lib.s, "Search the plugin library"
@@ -363,51 +369,109 @@ func (pp *pluginsPage) toolbar(gtx layout.Context, fs []slick.Filter) layout.Dim
 	return layout.Dimensions{Size: image.Pt(w, y+d.Size.Y+gtx.Dp(10))}
 }
 
-// segmented is the Installed / Browse switch.
-func (pp *pluginsPage) segmented(gtx layout.Context) layout.Dimensions {
+// pluginModes are the Plugins tab's two views.
+var pluginModes = []struct{ id, label string }{{"installed", "Installed"}, {"browse", "Browse"}}
+
+// modeTabColors are the strip's colours: Slack's horizontal c-tabs
+// (Activity, channel details; views.tabStrip) with the underline from
+// --dt_color-theme-base-pry, so a theme recolours it.
+func (pp *pluginsPage) modeTabColors() (line, hover color.NRGBA) {
+	th := pp.a.th
+	line, hover = rgbT(0x83388a), th.OnBg(hex8(0x611f6912))
+	if th.Dark {
+		line, hover = rgbT(0xe3ceeb), th.OnBg(hex8(0xefe1f514))
+	}
+	if t := th.Tokens; t != nil && t.Overridden() {
+		theme.SetColor(t, &line, "var(--dt_color-theme-base-pry)")
+	}
+	return line, hover
+}
+
+// modeTabs draws Installed (with its count) and Browse (an accent dot
+// while library updates wait): padding 9px 8px, 13px bold, selected in the
+// primary colour, hover tint with rounded top corners. It records where
+// the selected tab is for modeUnderline.
+func (pp *pluginsPage) modeTabs(gtx layout.Context, installed int) layout.Dimensions {
 	p := pp.s
 	cl := p.colors()
-	h, pad, in := gtx.Dp(32), gtx.Dp(14), gtx.Dp(3)
-	segs := []struct{ id, label string }{{"installed", "Installed"}, {"browse", "Browse"}}
-	ws := make([]int, len(segs))
-	total := in
-	for i, s := range segs {
-		ws[i] = p.a.th.Measure(gtx, 13, theme.Bold, s.label) + 2*pad
-		total += ws[i] + in
+	_, hover := pp.modeTabColors()
+	updates := 0
+	if pp.lib.ix != nil {
+		for _, g := range libraryGroups(libraryEntries(pp.lib.ix)) {
+			if _, u := pp.lib.groupStates(g); len(u) > 0 {
+				updates++
+			}
+		}
 	}
-	theme.RRect(gtx, image.Rect(0, 0, total, h), h/2, cl.surf)
-	x := in
-	for i, s := range segs {
-		b := p.k.btn("seg." + s.id)
-		active := pp.mode == s.id
-		sw := ws[i]
-		at(gtx, image.Pt(x, in), image.Pt(sw, h-2*in), func(gtx layout.Context) layout.Dimensions {
-			sh := h - 2*in
+	x, h := 0, gtx.Dp(9+16+8)+gtx.Dp(1)
+	for _, md := range pluginModes {
+		b := p.k.btn("mode." + md.id)
+		sel := pp.mode == md.id
+		count := ""
+		if md.id == "installed" && installed > 0 {
+			count = strconv.Itoa(installed)
+		}
+		lw := p.a.th.Measure(gtx, 13, theme.Bold, md.label)
+		tw := gtx.Dp(8) + lw + gtx.Dp(8)
+		if count != "" {
+			tw += gtx.Dp(6) + p.a.th.Measure(gtx, 13, theme.Regular, count)
+		}
+		dot := md.id == "browse" && updates > 0
+		if dot {
+			tw += gtx.Dp(8 + 8)
+		}
+		at(gtx, image.Pt(x, 0), image.Pt(tw, h-gtx.Dp(1)), func(gtx layout.Context) layout.Dimensions {
+			th := h - gtx.Dp(1)
 			return clickArea(gtx, b, func(gtx layout.Context, sz image.Point, hov bool) {
-				r := image.Rectangle{Max: sz}
-				if active {
-					theme.RRect(gtx, r, sh/2, cl.base)
-					theme.Border(gtx, r, sh/2, gtx.Dp(1), cl.otlTer)
-				} else if hov {
-					theme.RRect(gtx, r, sh/2, cl.hover)
+				if hov && !sel {
+					r := gtx.Dp(8)
+					paintRRectTop(gtx, image.Rectangle{Max: sz}, r, hover)
 				}
 			}, func(gtx layout.Context) layout.Dimensions {
 				fg := cl.sec
-				if active {
+				if sel {
 					fg = cl.pry
 				}
-				at(gtx, image.Pt(pad, 0), image.Pt(sw-2*pad+2, sh), func(gtx layout.Context) layout.Dimensions {
-					return vcenter(gtx, sh, func(gtx layout.Context) layout.Dimensions { return p.k.label(gtx, 13, theme.Bold, fg, s.label) })
+				cx := gtx.Dp(8)
+				at(gtx, image.Pt(cx, gtx.Dp(9)), image.Pt(lw+2, gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
+					return p.k.label(gtx, 13, theme.Bold, fg, md.label)
 				})
-				return layout.Dimensions{Size: image.Pt(sw, sh)}
+				cx += lw
+				if count != "" {
+					cx += gtx.Dp(6)
+					at(gtx, image.Pt(cx, gtx.Dp(9)), image.Pt(tw, gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
+						return p.k.label(gtx, 13, theme.Regular, cl.ter, count)
+					})
+				}
+				if dot {
+					d := gtx.Dp(8)
+					theme.Circle(gtx, image.Pt(tw-gtx.Dp(8)-d/2, gtx.Dp(9)+gtx.Dp(8)), d, p.a.th.C.Mention)
+				}
+				return layout.Dimensions{Size: image.Pt(tw, th)}
 			})
 		})
-		if clicked(b) {
-			pp.setMode(s.id)
+		if sel {
+			pp.selTab = image.Rect(x, 0, x+tw, h)
 		}
-		x += sw + in
+		if clicked(b) {
+			pp.setMode(md.id)
+		}
+		x += tw
 	}
-	return layout.Dimensions{Size: image.Pt(total, h)}
+	return layout.Dimensions{Size: image.Pt(x, h)}
+}
+
+// modeUnderline is the selected tab's 2px underline, over the hairline.
+func (pp *pluginsPage) modeUnderline(gtx layout.Context, h int) {
+	line, _ := pp.modeTabColors()
+	r := pp.selTab
+	theme.Fill(gtx, image.Rect(r.Min.X, h-gtx.Dp(2), r.Max.X, h), line)
+}
+
+// paintRRectTop fills r with its top corners rounded.
+func paintRRectTop(gtx layout.Context, r image.Rectangle, rad int, c color.NRGBA) {
+	rr := clip.RRect{Rect: r, NE: rad, NW: rad}
+	paint.FillShape(gtx.Ops, c, rr.Op(gtx.Ops))
 }
 
 // installedList draws the merged list by category, or why it's empty.

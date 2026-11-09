@@ -17,7 +17,6 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/pluginlib"
 	"github.com/some-du6e/yoloslackgoclient/internal/taut"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 )
 
 // Tests never reach the published Library unless they point it somewhere.
@@ -218,8 +217,8 @@ func TestLibraryMergesTautAndSlick(t *testing.T) {
 	if !libraryMatches(es[0], []string{"slick", "messages"}) || libraryMatches(es[1], []string{"slick"}) {
 		t.Error("search doesn't match on the system name")
 	}
-	r.save("library-light", r.frame(dialog))
-	r.save("library-light-full", r.frame(tall), r.sz.Y)
+	r.save("plugins-browse-light", r.frame(dialog))
+	r.save("plugins-browse-light-full", r.frame(tall), r.sz.Y)
 
 	// install each into its own system
 	byID := func(id string) pluginlib.Entry {
@@ -276,14 +275,14 @@ func TestLibraryMergesTautAndSlick(t *testing.T) {
 	if c := counts(); c["updates"] != 1 {
 		t.Errorf("filters with an update %v", c)
 	}
-	r.save("library-update-light", r.frame(dialog))
+	r.save("plugins-browse-update-light", r.frame(dialog))
 	for _, dark := range []bool{true, false} {
 		a.th.SetDark(dark)
 		mode := map[bool]string{true: "dark", false: "light"}[dark]
-		r.save("library-installed-"+mode+"-full", r.settle(tall, 0, nil), r.sz.Y)
+		r.save("plugins-browse-installed-"+mode+"-full", r.settle(tall, 0, nil), r.sz.Y)
 	}
 	pm.plugins.s.query.SetText("slick") // the search Installed and Browse share
-	r.save("library-search-light", r.frame(dialog))
+	r.save("plugins-browse-search-light", r.frame(dialog))
 	pm.plugins.s.query.SetText("")
 
 	delete(lp.status, "taut/LibTest")
@@ -321,10 +320,10 @@ func TestLibraryMergesTautAndSlick(t *testing.T) {
 	if got := strings.Join(merged, " "); !strings.Contains(got, "taut:LibTest") || !strings.Contains(got, "slick:LibSlick") {
 		t.Errorf("installed list %q", got)
 	}
-	// and Taut's "Plugin library" row comes back to Plugins > Browse
+	// and the old Library tab id comes back to Plugins > Browse
 	pm.plugins.s.open = ""
 	pm.plugins.setMode("installed")
-	pm.taut.openTab(libraryTabID)
+	pm.selectTab(libraryTabID)
 	if pm.section != pluginsTabID || pm.plugins.mode != "browse" {
 		t.Errorf("Taut's library row: section %q mode %q", pm.section, pm.plugins.mode)
 	}
@@ -352,15 +351,6 @@ func TestTautAuthorsMrkdwn(t *testing.T) {
 	}
 	if got := tautMrkdwnHere("say hi in <#C0A057686SF>", false); got != "say hi in <https://hackclub.slack.com/archives/C0A057686SF|#taut on the Hack Club Slack>" {
 		t.Errorf("channel: %q", got)
-	}
-}
-
-// Every Slick tab's icon is registered (Library first drew the "missing" box).
-func TestSlickTabIconsRegistered(t *testing.T) {
-	for _, tab := range slickTabs {
-		if !icons.Has(tab.icon) {
-			t.Errorf("Slick tab %s: icon %q isn't registered", tab.id, tab.icon)
-		}
 	}
 }
 

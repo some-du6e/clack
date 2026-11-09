@@ -34,32 +34,14 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/slack/tlsfp"
 )
 
-// Preferences > Slick, drawn natively from slick.Settings and matched to
-// Slick's own settings UI (its src/app/settings.tsx): four tabs after
-// Slack's (Slick, Plugins, Themes, Install plugins), cards of hairline-
-// separated fields, the sticky search + filter chips, category groups,
-// the plugin detail (settings by type, workspaces, source), theme cards
-// with drawn previews, and the install/update panel. No Slick code is
-// used; metrics and strings follow its UI.
-
-// slickTabs are the Preferences tabs Slick adds (after Slack's).
-var slickTabs = []struct{ id, label, icon string }{
-	{"slick", "Slick", "slick-mark"},
-	{"slick_plugins", "Plugins", "apps"},
-	{"slick_themes", "Themes", "paintbrush"},
-	{"slick_install", "Install plugins", "download"},
-}
-
-func isSlickTab(id string) bool { return strings.HasPrefix(id, "slick") && slickTabIndex(id) >= 0 }
-
-func slickTabIndex(id string) int {
-	for i, t := range slickTabs {
-		if t.id == id {
-			return i
-		}
-	}
-	return -1
-}
+// Slick's settings UI, drawn natively from slick.Settings and matched to
+// Slick's own (its src/app/settings.tsx): cards of hairline-separated
+// fields, the search + filter chips, the plugin detail (settings by type,
+// workspaces, source), theme cards with drawn previews. Clack shows Taut
+// and Slick as one plugin system (plugins_prefs.go): Preferences > Plugins
+// lists Slick's plugins with Taut's and opens a Slick plugin's detail
+// here, Themes is Slick's themes page, and Plugin settings uses its cards.
+// No Slick code is used; metrics and strings follow its UI.
 
 type slickPage struct {
 	a   *App
@@ -81,11 +63,9 @@ type slickPage struct {
 	wsErr         bool
 	daysOpen      string // schedule rule whose days popover is open
 	colorOpen     map[string]bool
-	urlEd         widget.Editor
 	writes        chan func()
 	lastText      map[string]string // text settings: last value saved
 	focusWas      map[*widget.Editor]bool
-	toolbarH      int
 	downloadState string
 }
 
@@ -93,7 +73,6 @@ func newSlickPage(a *App) *slickPage {
 	p := &slickPage{a: a, k: newTautPage(a), filter: "all", colorOpen: map[string]bool{},
 		lastText: map[string]string{}, focusWas: map[*widget.Editor]bool{}}
 	p.query.SingleLine = true
-	p.urlEd.SingleLine, p.urlEd.Submit = true, true
 	p.list.Axis = layout.Vertical
 	return p
 }
@@ -168,7 +147,8 @@ func (p *slickPage) layoutTab(tab string) {
 	}
 }
 
-// layout draws one of Slick's tabs.
+// layout draws Slick's themes page ("slick_themes"), or the plugin detail
+// p.open ("slick_plugins", under Preferences > Plugins).
 func (p *slickPage) layout(gtx layout.Context, tab string) layout.Dimensions {
 	p.layoutTab(tab)
 	s := p.a.Slick()
@@ -180,41 +160,18 @@ func (p *slickPage) layout(gtx layout.Context, tab string) layout.Dimensions {
 	}
 	st := s.Settings()
 	p.k.gtxNow = gtx
-	sticky := tab == "slick_plugins" && p.open == ""
-	var bar op.CallOp
-	if sticky {
-		m := op.Record(gtx.Ops)
-		g := gtx
-		g.Constraints = layout.Constraints{Max: image.Pt(sz.X-gtx.Dp(8), 1<<20)}
-		d := p.toolbar(g, st)
-		bar = m.Stop()
-		p.toolbarH = d.Size.Y
-	}
 	p.list.List.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Min: image.Pt(sz.X, 0), Max: image.Pt(sz.X-gtx.Dp(8), 1<<24)}
 		f := &flow{gtx: gtx, w: gtx.Constraints.Max.X}
-		switch tab {
-		case "slick":
-			p.overview(f, st)
-		case "slick_plugins":
-			if p.open != "" {
-				p.detail(f, s, st)
-			} else {
-				f.y += p.toolbarH + gtx.Dp(20)
-				p.pluginList(f, st)
-			}
-		case "slick_themes":
+		switch {
+		case tab == "slick_themes":
 			p.themes(f, st)
-		case "slick_install":
-			p.install(f, st)
+		case p.open != "":
+			p.detail(f, s, st)
 		}
 		f.gap(24) // panel padding-bottom
 		return layout.Dimensions{Size: image.Pt(sz.X, f.y)}
 	})
-	if sticky { // pinned above the scrolling list, opaque
-		theme.Fill(gtx, image.Rect(0, 0, sz.X-gtx.Dp(8), p.toolbarH), p.colors().base)
-		bar.Add(gtx.Ops)
-	}
 	return layout.Dimensions{Size: sz}
 }
 
@@ -646,53 +603,6 @@ var slickContributors = []string{"BittuBarnwal7479", "IzieStratt", "jeremy46231"
 	"astra-the-boop", "ItsFelix5", "matmanna", "Lordseriouspig", "mpcallahan", "bomberfish", "csd4ni3l", "cloudglides", "EwoudVV",
 	"thirtyseventh-xyz", "ImShyMike", "TheTridentGuy", "alf1e", "RezThePerson", "Fantamomo", "LowPolyPhosphorus", "shuuji3"}
 
-func (p *slickPage) overview(f *flow, st slick.Settings) {
-	cl := p.colors()
-	on, total := 0, len(st.Plugins)
-	var failing []string
-	for _, pl := range st.Plugins {
-		if pl.Enabled {
-			on++
-			if pl.StartError != "" {
-				failing = append(failing, pl.Name)
-			}
-		}
-	}
-	// hero
-	f.put(0, func(gtx layout.Context) layout.Dimensions {
-		s := gtx.Dp(52)
-		r := image.Rect(0, 0, s, s)
-		theme.RRect(gtx, r, gtx.Dp(14), cl.surf)
-		theme.Border(gtx, r, gtx.Dp(14), gtx.Dp(1), cl.otlTer)
-		at(gtx, image.Pt((s-gtx.Dp(30))/2, (s-gtx.Dp(30))/2), image.Pt(gtx.Dp(30), gtx.Dp(30)), func(gtx layout.Context) layout.Dimensions {
-			return icons.Get("slick-mark")(gtx, 30, cl.pry)
-		})
-		sub := fmt.Sprintf("%d of %d plugins on", on, total)
-		if !st.Enabled {
-			sub = "Paused: no plugins are running"
-		}
-		x := s + gtx.Dp(16)
-		m := op.Record(gtx.Ops)
-		td := at(gtx, image.Pt(0, 0), image.Pt(f.w-x, 1<<20), func(gtx layout.Context) layout.Dimensions {
-			d1 := p.a.th.Layout(gtx, theme.TextStyle{Size: 22, LineHeight: 28, Weight: theme.Black, Color: cl.pry, MaxLines: 1}, "Slick")
-			d2 := at(gtx, image.Pt(0, d1.Size.Y), image.Pt(f.w-x, 1<<20), func(gtx layout.Context) layout.Dimensions {
-				return p.k.label(gtx, 14, theme.Regular, cl.sec, sub)
-			})
-			return layout.Dimensions{Size: image.Pt(f.w-x, d1.Size.Y+d2.Size.Y)}
-		})
-		call := m.Stop()
-		st := op.Offset(image.Pt(x, (s-td.Size.Y)/2)).Push(gtx.Ops)
-		call.Add(gtx.Ops)
-		st.Pop()
-		return layout.Dimensions{Size: image.Pt(f.w, s)}
-	})
-	f.gap(24)
-	if len(failing) > 0 {
-		p.notice(f, strings.Join(failing, ", ")+" could not start. Open them under Plugins to see why.", true)
-	}
-	p.aboutCards(f)
-}
-
 // aboutCards are Slick's overview cards (Version, Credits, Links), also
 // shown under Preferences > Plugin settings.
 func (p *slickPage) aboutCards(f *flow) {
@@ -805,27 +715,6 @@ func (p *slickPage) inlineLinks(gtx layout.Context, w int, parts []inlinePart) l
 
 // ---- Plugins: toolbar, list ----
 
-func (p *slickPage) filters(st slick.Settings) []slick.Filter {
-	fs := st.Filters
-	ok := false
-	for _, f := range fs {
-		ok = ok || f.ID == p.filter
-	}
-	if !ok {
-		p.filter = "all"
-	}
-	return fs
-}
-
-func (p *slickPage) toolbar(gtx layout.Context, st slick.Settings) layout.Dimensions {
-	w := gtx.Constraints.Max.X
-	top, bottom := gtx.Dp(2), gtx.Dp(10)
-	d := at(gtx, image.Pt(0, top), image.Pt(w, 1<<20), func(gtx layout.Context) layout.Dimensions {
-		return p.searchBar(gtx, &p.query, "Search plugins", p.filters(st))
-	})
-	return layout.Dimensions{Size: image.Pt(w, top+d.Size.Y+bottom)}
-}
-
 // searchBar is Slick's toolbar row: the search box (search icon, 34px
 // inset) with the filter chips beside it, or below when they don't fit.
 // The chips select p.filter.
@@ -919,144 +808,6 @@ func (p *slickPage) problem(pl slick.PluginInfo, st slick.Settings) (string, boo
 		return "Could not start: " + pl.StartError, true
 	}
 	return "Starting…", false
-}
-
-func (p *slickPage) matches(pl slick.PluginInfo, words []string) bool {
-	switch p.filter {
-	case "on":
-		if !pl.Enabled {
-			return false
-		}
-	case "off":
-		if pl.Enabled {
-			return false
-		}
-	case "user":
-		if !pl.User {
-			return false
-		}
-	case "problems":
-		if !pl.Enabled || pl.StartError == "" {
-			return false
-		}
-	}
-	hay := strings.ToLower(strings.Join([]string{pl.ID, pl.Name, pl.Description, p.mentions(pl.Authors), pl.CategoryLabel}, " "))
-	for _, w := range words {
-		if !strings.Contains(hay, w) {
-			return false
-		}
-	}
-	return true
-}
-
-func (p *slickPage) pluginList(f *flow, st slick.Settings) {
-	words := strings.Fields(strings.ToLower(p.query.Text()))
-	shown := 0
-	for _, sec := range st.Sections {
-		var rows []slick.PluginInfo
-		for _, pl := range sec.Plugins {
-			if p.matches(pl, words) {
-				rows = append(rows, pl)
-			}
-		}
-		if len(rows) == 0 {
-			continue
-		}
-		shown += len(rows)
-		icon := sec.Icon
-		if icon == "" {
-			icon = "code"
-		}
-		on := sec.On
-		fns := make([]func(gtx layout.Context, w int) layout.Dimensions, len(rows))
-		for i, pl := range rows {
-			pl := pl
-			fns[i] = func(gtx layout.Context, w int) layout.Dimensions { return p.pluginRow(gtx, w, pl, st) }
-		}
-		p.card(f, sec.Label, icon, func(gtx layout.Context) layout.Dimensions {
-			if on == 0 {
-				return layout.Dimensions{}
-			}
-			return p.k.label(gtx, 13, theme.Regular, p.colors().ter, strconv.Itoa(on)+" on")
-		}, fns)
-	}
-	if shown == 0 {
-		if q := strings.TrimSpace(p.query.Text()); q != "" {
-			p.empty(f, "No plugins match “"+q+"”.")
-		} else {
-			p.empty(f, "No plugins in this view.")
-		}
-	}
-}
-
-func (p *slickPage) pluginRow(gtx layout.Context, w int, pl slick.PluginInfo, st slick.Settings) layout.Dimensions {
-	cl := p.colors()
-	b := p.k.btn("row." + pl.ID)
-	prob, probErr := p.problem(pl, st)
-	swW, chevW, gap := gtx.Dp(28), gtx.Dp(16), gtx.Dp(14)
-	tx := gtx.Dp(16)
-	tw := w - tx - gtx.Dp(12) - swW - chevW - 2*gap
-	textCol := func(gtx layout.Context) layout.Dimensions {
-		y := 0
-		nd := p.a.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Weight: theme.Bold, Color: cl.pry, MaxLines: 1}, pl.Name)
-		if pl.User {
-			at(gtx, image.Pt(min(nd.Size.X, tw)+gtx.Dp(8), gtx.Dp(1)), image.Pt(gtx.Dp(100), gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {
-				return p.badge(gtx, "User", "", false)
-			})
-		}
-		y += gtx.Dp(22)
-		if pl.Description != "" {
-			d := at(gtx, image.Pt(0, y), image.Pt(tw, 1<<20), func(gtx layout.Context) layout.Dimensions {
-				return p.a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: cl.sec, MaxLines: 2, Wrap: text.WrapWords}, plainMrkdwn(pl.Description))
-			})
-			y += d.Size.Y
-		}
-		if prob != "" {
-			col := cl.ter
-			if probErr {
-				col = cl.imp
-			}
-			y += gtx.Dp(4)
-			d := at(gtx, image.Pt(0, y), image.Pt(tw, 1<<20), func(gtx layout.Context) layout.Dimensions {
-				return p.a.th.Layout(gtx, theme.TextStyle{Size: 12, Weight: theme.Bold, Color: col, Wrap: text.WrapWords}, prob)
-			})
-			y += d.Size.Y
-		}
-		return layout.Dimensions{Size: image.Pt(tw, y)}
-	}
-	m := op.Record(gtx.Ops)
-	td := at(gtx, image.Point{}, image.Pt(tw, 1<<20), textCol)
-	tcall := m.Stop()
-	h := td.Size.Y + gtx.Dp(24)
-	d := clickArea(gtx, b, func(gtx layout.Context, s image.Point, hov bool) {
-		if hov {
-			theme.Fill(gtx, image.Rectangle{Max: s}, cl.hover)
-		}
-	}, func(gtx layout.Context) layout.Dimensions {
-		st := op.Offset(image.Pt(tx, gtx.Dp(12))).Push(gtx.Ops)
-		tcall.Add(gtx.Ops)
-		st.Pop()
-		x := w - gtx.Dp(12) - chevW
-		at(gtx, image.Pt(x, (h-gtx.Dp(16))/2), image.Pt(chevW, chevW), func(gtx layout.Context) layout.Dimensions {
-			return icons.Get("caret-right")(gtx, 16, cl.ter)
-		})
-		return layout.Dimensions{Size: image.Pt(w, h)}
-	})
-	// the switch sits above the row's click area (its clicks don't open the detail)
-	at(gtx, image.Pt(w-gtx.Dp(12)-chevW-gap-swW, (h-gtx.Dp(16))/2), image.Pt(swW, gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
-		d, c := p.sw(gtx, "en."+pl.ID, pl.Enabled, false)
-		if c {
-			p.setEnabled(pl, !pl.Enabled)
-		}
-		return d
-	})
-	if clicked(b) {
-		p.listBack = p.list.Position
-		p.open = pl.ID
-		p.list.Position = layout.Position{}
-		p.a.Invalidate()
-	}
-	return d
 }
 
 var mentionRE = regexp.MustCompile(`<@([UW][A-Z0-9]+)(?:\|([^>]*))?>`)
@@ -2330,112 +2081,6 @@ func (p *slickPage) openCSSEditor(css string) {
 
 // ---- Install ----
 
-func (p *slickPage) install(f *flow, st slick.Settings) {
-	installURL := func() {
-		u := strings.TrimSpace(p.urlEd.Text())
-		if u == "" || p.installing {
-			return
-		}
-		p.installing, p.installStatus = true, ""
-		a := p.a
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-			defer cancel()
-			s := a.Slick()
-			if s == nil {
-				return
-			}
-			code, source, err := s.Download(ctx, u)
-			var pk slick.Peek
-			if err == nil {
-				pk, err = s.Peek(code)
-			}
-			a.Post(func() {
-				p.installing = false
-				if err != nil {
-					p.installStatus = installErr(err)
-					return
-				}
-				// nothing from the file has run yet: ask first, like Slick's warning
-				suffix := ". It will keep itself up to date."
-				if pk.Main {
-					suffix = "." // privileged halves never update by themselves
-				}
-				p.confirmInstall(pk, source, func() {
-					p.urlEd.SetText("")
-					p.runInstall(func(ctx context.Context, s *slick.Slick) (string, error) {
-						return s.InstallDownloaded(ctx, code, source)
-					}, suffix)
-				})
-			})
-		}()
-	}
-	for {
-		ev, ok := p.urlEd.Update(p.k.gtxNow)
-		if !ok {
-			break
-		}
-		if _, ok := ev.(widget.SubmitEvent); ok {
-			installURL()
-		}
-	}
-	p.card(f, "Install plugins", "", nil, []func(gtx layout.Context, w int) layout.Dimensions{
-		func(gtx layout.Context, w int) layout.Dimensions {
-			return p.field(gtx, w, "From a URL", "Plugins installed from a URL are re-downloaded in the background and updated when the file changes.", "", true,
-				func(gtx layout.Context, iw int) layout.Dimensions {
-					h := gtx.Dp(36)
-					bm := op.Record(gtx.Ops)
-					bd, c := p.btn(gtx, "installurl", "Install", popups.BtnPrimary, popups.BtnMedium, p.installing || strings.TrimSpace(p.urlEd.Text()) == "")
-					bcall := bm.Stop()
-					if c {
-						installURL()
-					}
-					inW := iw - bd.Size.X - gtx.Dp(8)
-					p.sinput(gtx, &p.urlEd, inW, h, gtx.Dp(12), "https://example.com/MyPlugin.js", p.installing)
-					st := op.Offset(image.Pt(inW+gtx.Dp(8), (h-bd.Size.Y)/2)).Push(gtx.Ops)
-					bcall.Add(gtx.Ops)
-					st.Pop()
-					return layout.Dimensions{Size: image.Pt(iw, h)}
-				})
-		},
-		func(gtx layout.Context, w int) layout.Dimensions {
-			return p.field(gtx, w, "From a file", "A .js file built with bun run build:plugin.", "", false, func(gtx layout.Context, _ int) layout.Dimensions {
-				d, c := p.btn(gtx, "installfile", "Choose file…", popups.BtnOutline, popups.BtnMedium, p.installing)
-				if c {
-					p.installFile()
-				}
-				return d
-			})
-		},
-	})
-	p.card(f, "Updates", "", nil, []func(gtx layout.Context, w int) layout.Dimensions{
-		func(gtx layout.Context, w int) layout.Dimensions {
-			return p.field(gtx, w, "Update URL-installed plugins automatically", "", "", false, func(gtx layout.Context, _ int) layout.Dimensions {
-				d, c := p.sw(gtx, "autoupd", st.AutoUpdates, false)
-				if c {
-					on := !st.AutoUpdates
-					p.write(func(ctx context.Context, s *slick.Slick) error { _ = s.SetAutoUpdates(on); return nil })
-				}
-				return d
-			})
-		},
-		func(gtx layout.Context, w int) layout.Dimensions {
-			return p.field(gtx, w, "Check now", "Fetch the latest version of every plugin installed from a URL.", "", false, func(gtx layout.Context, _ int) layout.Dimensions {
-				d, c := p.btn(gtx, "checkupd", "Check for updates", popups.BtnOutline, popups.BtnMedium, p.installing)
-				if c {
-					p.checkUpdates()
-				}
-				return d
-			})
-		},
-	})
-	p.hint(f, p.installStatus)
-	if p.installStatus != "" {
-		f.gap(12)
-	}
-	p.notice(f, "Plugins you install will have FULL ACCESS to your Slack data. Only install code you trust!", false)
-}
-
 func installErr(err error) string {
 	if err == nil {
 		return ""
@@ -2455,75 +2100,6 @@ func (p *slickPage) pluginName(id string) string {
 		}
 	}
 	return id
-}
-
-func (p *slickPage) installFile() {
-	a := p.a
-	p.installing, p.installStatus = true, ""
-	go func() {
-		files, err := a.pickFiles(".js", false)
-		if err != nil || len(files) == 0 {
-			a.Post(func() {
-				p.installing = false
-				if err != nil {
-					p.installStatus = installErr(err)
-				}
-			})
-			return
-		}
-		s := a.Slick()
-		if s == nil {
-			return
-		}
-		code := files[0].Data
-		pk, err := s.Peek(code)
-		a.Post(func() {
-			p.installing = false
-			if err != nil {
-				p.installStatus = installErr(err)
-				return
-			}
-			p.confirmInstall(pk, "", func() {
-				p.runInstall(func(ctx context.Context, s *slick.Slick) (string, error) { return s.Import(ctx, code) }, ".")
-			})
-		})
-	}()
-}
-
-// confirmInstall asks before a plugin file runs (UI goroutine).
-func (p *slickPage) confirmInstall(pk slick.Peek, source string, ok func()) {
-	p.installing = false
-	title, body, action := slickInstallText(pk, source)
-	p.a.ShowOverlay(popups.Confirm(p.a, title, body, action, pk.Main, nil, ok))
-}
-
-// runInstall runs an install off the UI goroutine and reports it.
-func (p *slickPage) runInstall(install func(ctx context.Context, s *slick.Slick) (string, error), suffix string) {
-	p.installing, p.installStatus = true, ""
-	a := p.a
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
-		s := a.Slick()
-		if s == nil {
-			return
-		}
-		name, err := install(ctx, s)
-		a.Post(func() {
-			p.installing = false
-			if err != nil {
-				p.installStatus = installErr(err)
-				return
-			}
-			p.installStatus = "Installed " + name + suffix
-			for _, pl := range s.Settings().Plugins {
-				if pl.Name == name && pl.HasMain {
-					p.installStatus += " Privileged half: " + slickCapabilities(pl.Capabilities)
-				}
-			}
-			a.Invalidate()
-		})
-	}()
 }
 
 // slickInstallText is the confirmation before installing a plugin file:
