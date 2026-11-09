@@ -473,7 +473,9 @@ func TestPrefsEmailForwarding(t *testing.T) {
 	waitFor(t, a, "emailtoken.get", func() bool { return p.ra.emailsGot })
 	p.clicks["button.email_forwarding"].Click()
 	pageRows(t, a, p, "messages_media")
-	waitFor(t, a, "an address", func() bool { return len(p.ra.emails) == 1 && strings.HasSuffix(p.ra.emails[0].Address, "@fake.slack.com") })
+	waitFor(t, a, "an address", func() bool {
+		return len(p.ra.emails) == 1 && strings.HasSuffix(p.ra.emails[0].Address, "@fake.slack.com")
+	})
 	if ts, err := ca.EmailTokens(context.Background()); err != nil || len(ts) != 1 {
 		t.Fatalf("emailtoken.get: %v %v", ts, err)
 	}
