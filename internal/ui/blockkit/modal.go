@@ -17,6 +17,8 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/refocus"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/shortcut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -55,6 +57,12 @@ type Stack struct {
 	focused     bool
 	dialog      *core.Dialog
 	dlgAppID    string
+	// keyboard (popups' modal model): the ring shows on a focus reached
+	// by Tab; prev had the focus before the stack opened
+	ring  bool
+	prev  event.Tag
+	ptr   int
+	wasUp bool
 }
 
 func newStack(h Host, v *core.View) *Stack {
@@ -209,7 +217,107 @@ func (s *Stack) closeAll() {
 
 func (s *Stack) close() {
 	s.done = true
+	if s.prev != nil { // useRestoreFocus
+		refocus.Restore(s.prev, &s.tag, &s.closeTap, &s.backTap, &s.cancel, &s.submit)
+		s.prev = nil
+	}
 	s.h.Invalidate()
+}
+
+// stops is the tab order: the header (back, close) first, as in Slack's
+// c-dialog, then the footer's Close and Submit. The body's inputs take
+// the focus with the mouse.
+func (s *Stack) stops() []event.Tag {
+	var out []event.Tag
+	if len(s.views) > 1 {
+		out = append(out, &s.backTap)
+	}
+	out = append(out, &s.closeTap, &s.cancel)
+	if v := s.top().view; (v.Submit != nil || s.dialog != nil) && !v.SubmitDisabled && !s.busy {
+		out = append(out, &s.submit)
+	}
+	return out
+}
+
+// keys runs Tab / Shift+Tab (trapped, wrapping) and the initial focus:
+// BlockKitModal transitions the focus to MODAL_ACTIVE_FORM, whose
+// focusOnFormElements picks the first form element in the body, else the
+// submit button, else cancel; with no autoFocus there is no ring.
+func (s *Stack) keys(gtx C) {
+	for _, t := range []*tap{&s.closeTap, &s.backTap, &s.cancel, &s.submit} {
+		t.keys = true
+	}
+	if !s.focused {
+		s.focused = true
+		s.prev = refocus.Last(gtx.Now)
+		st := s.stops()
+		gtx.Execute(key.FocusCmd{Tag: st[len(st)-1]})
+	}
+	for {
+		e, ok := gtx.Event(key.Filter{Name: key.NameTab, Optional: key.ModShift})
+		if !ok {
+			break
+		}
+		ke, ok := e.(key.Event)
+		if !ok || ke.State != key.Press {
+			continue
+		}
+		st := s.stops()
+		cur := -1
+		for i, t := range st {
+			if gtx.Focused(t) {
+				cur = i
+			}
+		}
+		back := ke.Modifiers.Contain(key.ModShift)
+		next := 0
+		switch {
+		case cur < 0 && back:
+			next = len(st) - 1
+		case back:
+			next = (cur - 1 + len(st)) % len(st)
+		case cur >= 0:
+			next = (cur + 1) % len(st)
+		}
+		gtx.Execute(key.FocusCmd{Tag: st[next]})
+		s.ring = true
+		s.h.Invalidate()
+	}
+}
+
+// pointerSeen hides the ring after a mouse press anywhere (pass-through,
+// registered over the card).
+func (s *Stack) pointerSeen(gtx C) {
+	for {
+		e, ok := gtx.Event(pointer.Filter{Target: &s.ptr, Kinds: pointer.Press})
+		if !ok {
+			break
+		}
+		if pe, ok := e.(pointer.Event); ok && pe.Kind == pointer.Press {
+			s.ring = false
+		}
+	}
+	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+	defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
+	event.Op(gtx.Ops, &s.ptr)
+}
+
+// ringAt draws the focus ring around a focused button at r.
+func (s *Stack) ringAt(gtx C, t *tap, r image.Rectangle) {
+	if s.ring && gtx.Focused(t) {
+		popups.FocusRing(gtx, s.h.Theme(), r, dp(gtx, 8))
+	}
+}
+
+// FocusedButton names the stack's focused button ("" for none) and
+// whether it shows the ring (tests).
+func (s *Stack) FocusedButton(gtx C) (string, bool) {
+	for name, t := range map[string]*tap{"close": &s.closeTap, "back": &s.backTap, "cancel": &s.cancel, "submit": &s.submit} {
+		if gtx.Focused(t) {
+			return name, s.ring
+		}
+	}
+	return "", false
 }
 
 func (s *Stack) closeViews(id, root string) {
@@ -321,13 +429,18 @@ func (s *Stack) Layout(gtx C) D {
 		event.Op(gtx.Ops, &s.scrim)
 	}()
 
-	if !s.focused {
-		s.focused = true
-		gtx.Execute(key.FocusCmd{Tag: &s.tag})
+	s.keys(gtx)
+	// command+enter submits (BlockKitModal's Mousetrap binding: the meta
+	// key, ⌘ on macOS)
+	cmd := key.ModSuper
+	if shortcut.GOOS == "darwin" {
+		cmd = key.ModCommand
 	}
 	for {
 		e, ok := gtx.Event(key.Filter{Focus: &s.tag, Name: key.NameEscape},
-			key.Filter{Name: key.NameReturn, Required: key.ModShortcut})
+			key.Filter{Focus: &s.closeTap, Name: key.NameEscape}, key.Filter{Focus: &s.backTap, Name: key.NameEscape},
+			key.Filter{Focus: &s.cancel, Name: key.NameEscape}, key.Filter{Focus: &s.submit, Name: key.NameEscape},
+			key.Filter{Name: key.NameReturn, Required: cmd})
 		if !ok {
 			break
 		}
@@ -392,6 +505,7 @@ func (s *Stack) Layout(gtx C) D {
 
 	// the card: Slack's c-sk-modal (role dialog), so a theme's
 	// [role=dialog] background and border land on it as in Slack
+	defer s.pointerSeen(gtx)
 	st := popups.ModalClass.Enter(gtx, 0, 0)
 	defer st.Leave()
 	if st.Hidden() {
@@ -465,6 +579,7 @@ func (s *Stack) header(gtx C, mw, hh int, v *core.View) {
 	if len(s.views) > 1 {
 		bs := dp(gtx, 36)
 		at(gtx, image.Pt(dp(gtx, 16), (hh-bs)/2), func(gtx C) D {
+			s.ringAt(gtx, &s.backTap, image.Rect(0, 0, bs, bs))
 			if s.backTap.g.Hovered() {
 				rrect(gtx, image.Rect(0, 0, bs, bs), dp(gtx, 8), cl.BgHover)
 			}
@@ -493,6 +608,7 @@ func (s *Stack) header(gtx C, mw, hh int, v *core.View) {
 		return vcenter(gtx, hh, func(gtx C) D { return label(gtx, th, 22, theme.Black, cl.Text, title) })
 	})
 	at(gtx, image.Pt(mw-dp(gtx, 16)-cs, (hh-cs)/2), func(gtx C) D {
+		s.ringAt(gtx, &s.closeTap, image.Rect(0, 0, cs, cs))
 		if s.closeTap.g.Hovered() {
 			rrect(gtx, image.Rect(0, 0, cs, cs), dp(gtx, 8), cl.BgHover)
 		}
@@ -561,6 +677,9 @@ func (s *Stack) footer(gtx C, org image.Point, mw, fh int, v *core.View) {
 		right -= w
 		at(gtx, image.Pt(right, y), func(gtx C) D {
 			sz := image.Pt(w, bh)
+			if !disabled {
+				s.ringAt(gtx, t, image.Rectangle{Max: sz})
+			}
 			drawButton(gtx, th, sz, style, txt, 8, 15, t.g.Hovered(), false, disabled)
 			if !disabled {
 				t.add(gtx, sz)

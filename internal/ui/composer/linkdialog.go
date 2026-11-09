@@ -1,6 +1,7 @@
 package composer
 
 import (
+	"gioui.org/io/event"
 	"image"
 	"strings"
 
@@ -54,6 +55,7 @@ func openLinkDialog(h Host, text, url string, onSave func(text, url string), onC
 		PadX:         24, // Slack's link dialog: 24px padding, 68px header → 472px fields
 		HeadH:        68,
 		EnterSubmits: true,
+		FocusStops:   func() []event.Tag { return []event.Tag{&d.text, &d.link} },
 		Buttons: []*popups.ModalButton{
 			{Label: "Cancel", Kind: popups.BtnOutline},
 			{Label: "Save", Kind: popups.BtnPrimary, Enabled: d.canSave, Do: func() bool { d.save(); return true }},

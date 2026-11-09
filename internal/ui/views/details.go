@@ -18,7 +18,9 @@ import (
 	"time"
 
 	"gioui.org/io/clipboard"
+	"gioui.org/io/event"
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -28,6 +30,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/hovercard"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
@@ -134,6 +137,8 @@ type ChannelDetails struct {
 	editScrim    widget.Clickable
 	editDlg      widget.Clickable
 	editClose    widget.Clickable
+	editRing     bool // a focus reached by Tab shows the ring (editModal)
+	editPtr      int
 	editKind     int // cdEditTopic | cdEditPurpose | cdEditName
 	focusTopic   int
 	confirmLeave bool
@@ -362,9 +367,103 @@ const (
 
 var cdEditWhat = map[int]string{cdEditTopic: "topic", cdEditPurpose: "description", cdEditName: "channel name"}
 
+// Escape closes the innermost open layer (a menu, the stacked edit
+// dialog, the leave confirmation) or else the dialog, as Slack's topmost
+// modal takes Escape; it reports whether the details dialog stays open.
+// The root's Esc calls it through the overlay's Dismiss.
+func (d *ChannelDetails) Escape() bool {
+	switch {
+	case d.memFilter.open || d.tabsPerm.open || d.notifMenu.open:
+		d.memFilter.open, d.tabsPerm.open, d.notifMenu.open = false, false, false
+	case d.editing:
+		d.editing, d.editErr = false, ""
+	case d.confirmLeave:
+		d.confirmLeave = false
+	default:
+		d.closed = true
+	}
+	d.h.Invalidate()
+	return !d.closed
+}
+
+// editStops is the edit dialog's tab order (ChannelTopicDialog is a
+// DeprecatedBaseDialog: the header's close button, the input, Cancel,
+// Save), trapped and wrapping.
+func (d *ChannelDetails) editStops() []any {
+	return []any{&d.editClose, &d.topicEd, &d.cancelTop, &d.saveTopic}
+}
+
+// editKeys runs Tab / Shift+Tab in the edit dialog.
+func (d *ChannelDetails) editKeys(gtx C) {
+	if !d.editing || (d.editKind != cdEditTopic && d.editKind != cdEditPurpose) {
+		return
+	}
+	for {
+		ev, ok := gtx.Event(key.Filter{Name: key.NameTab, Optional: key.ModShift})
+		if !ok {
+			break
+		}
+		e, ok := ev.(key.Event)
+		if !ok || e.State != key.Press {
+			continue
+		}
+		st := d.editStops()
+		cur := -1
+		for i, t := range st {
+			if gtx.Focused(t) {
+				cur = i
+			}
+		}
+		next := 0
+		back := e.Modifiers.Contain(key.ModShift)
+		switch {
+		case cur < 0 && back:
+			next = len(st) - 1
+		case back:
+			next = (cur - 1 + len(st)) % len(st)
+		case cur >= 0:
+			next = (cur + 1) % len(st)
+		}
+		gtx.Execute(key.FocusCmd{Tag: st[next]})
+		d.editRing = true
+		d.h.Invalidate()
+	}
+}
+
+// ringed draws w with Slack's focus ring under it when c has a focus the
+// keyboard gave it.
+func (d *ChannelDetails) ringed(gtx C, c *widget.Clickable, w layout.Widget) D {
+	m := op.Record(gtx.Ops)
+	dims := w(gtx)
+	call := m.Stop()
+	if d.editRing && gtx.Focused(c) {
+		popups.FocusRingColors(gtx, d.p.Link, flatten(theme.WithAlpha(d.p.Link, 0x4d), d.p.Surface), image.Rectangle{Max: dims.Size}, gtx.Dp(8))
+	}
+	call.Add(gtx.Ops)
+	return dims
+}
+
+// EditFocus names what holds the key focus in the edit dialog ("close",
+// "input", "cancel", "save" or "") and whether the ring shows (tests).
+func (d *ChannelDetails) EditFocus(gtx C) (string, bool) {
+	for i, t := range d.editStops() {
+		if gtx.Focused(t) {
+			return [...]string{"close", "input", "cancel", "save"}[i], d.editRing
+		}
+	}
+	return "", false
+}
+
 // startEdit opens the inline editor for kind with its current value.
 func (d *ChannelDetails) startEdit(kind int, cur string) {
 	d.editing, d.editKind, d.confirmLeave = true, kind, false
+	d.editRing = false
+	// The topic and description inputs are Texty fields whose onEnter
+	// (onTextyEnter) returns true: Texty then inserts a newline, and the
+	// dialog's Enter→go skips contentEditable targets, so Enter never
+	// saves there. The channel name stays a one-line input.
+	d.topicEd.SingleLine = kind == cdEditName
+	d.topicEd.Submit = kind == cdEditName
 	d.topicEd.MaxLen = 250
 	if kind == cdEditName {
 		d.topicEd.MaxLen = 80
@@ -527,18 +626,11 @@ func (d *ChannelDetails) update(gtx C) {
 		if !ok || e.State != key.Press {
 			continue
 		}
-		switch {
-		case d.memFilter.open || d.tabsPerm.open || d.notifMenu.open:
-			d.memFilter.open, d.tabsPerm.open, d.notifMenu.open = false, false, false
-		case d.editing:
-			d.editing, d.editErr = false, ""
+		if d.Escape() {
 			gtx.Execute(key.FocusCmd{})
-		case d.confirmLeave:
-			d.confirmLeave = false
-		default:
-			d.closed = true
 		}
 	}
+	d.editKeys(gtx)
 	if d.scrim.Clicked(gtx) || d.closeBtn.Clicked(gtx) {
 		d.closed = true
 	}
@@ -779,7 +871,8 @@ func (d *ChannelDetails) Layout(gtx C) D {
 // 22/30 Black at (24, 19), the close button 36×36 16px from the right,
 // the input with its focus ring, the hint (or, for the topic, the save
 // error) 13/18 #5e5d60 under it, then Cancel / Save 80×36 at the bottom
-// right (24px in, 20px up). Enter saves (onTextyEnter).
+// right (24px in, 20px up). Enter adds a line (onTextyEnter); Tab cycles
+// close, input, Cancel, Save; Escape closes this dialog only.
 func (d *ChannelDetails) editModal(gtx C, full image.Point) {
 	scrim := theme.LinearAlpha(argb(0x991d1c1d), d.p.Bg)
 	d.editScrim.Layout(gtx, func(gtx C) D {
@@ -791,6 +884,20 @@ func (d *ChannelDetails) editModal(gtx C, full image.Point) {
 		gtx.Execute(key.FocusCmd{})
 		return
 	}
+	defer func() { // last, over the dialog: a mouse press hides the ring
+		for {
+			ev, ok := gtx.Event(pointer.Filter{Target: &d.editPtr, Kinds: pointer.Press})
+			if !ok {
+				break
+			}
+			if pe, ok := ev.(pointer.Event); ok && pe.Kind == pointer.Press {
+				d.editRing = false
+			}
+		}
+		defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+		defer clip.Rect{Max: full}.Push(gtx.Ops).Pop()
+		event.Op(gtx.Ops, &d.editPtr)
+	}()
 	w := min(gtx.Dp(520), full.X-gtx.Dp(32))
 	title, hint := "Edit topic", "Let people know what this channel is for."
 	if d.editKind == cdEditTopic {
@@ -815,7 +922,9 @@ func (d *ChannelDetails) editModal(gtx C, full image.Point) {
 						return dirFill(gtx, func(gtx C) D { return d.para(gtx, 22, 30, wBlack, d.p.Text, 1, title) })
 					}),
 					layout.Rigid(func(gtx C) D {
-						return layout.Inset{Right: -8}.Layout(gtx, func(gtx C) D { return d.iconButton(gtx, &d.editClose, "close", 36, 20, d.p.Sec) })
+						return layout.Inset{Right: -8}.Layout(gtx, func(gtx C) D {
+							return d.ringed(gtx, &d.editClose, func(gtx C) D { return d.iconButton(gtx, &d.editClose, "close", 36, 20, d.p.Sec) })
+						})
 					}),
 				)
 			}),
@@ -836,9 +945,13 @@ func (d *ChannelDetails) editModal(gtx C, full image.Point) {
 				gtx.Constraints.Min.X = gtx.Constraints.Max.X
 				return layout.E.Layout(gtx, func(gtx C) D {
 					return row(gtx, layout.Middle,
-						layout.Rigid(func(gtx C) D { return d.button(gtx, &d.cancelTop, btnOutline, false, "Cancel") }),
+						layout.Rigid(func(gtx C) D {
+							return d.ringed(gtx, &d.cancelTop, func(gtx C) D { return d.button(gtx, &d.cancelTop, btnOutline, false, "Cancel") })
+						}),
 						hgap(12),
-						layout.Rigid(func(gtx C) D { return d.button(gtx, &d.saveTopic, btnPrimary, false, "Save") }),
+						layout.Rigid(func(gtx C) D {
+							return d.ringed(gtx, &d.saveTopic, func(gtx C) D { return d.button(gtx, &d.saveTopic, btnPrimary, false, "Save") })
+						}),
 					)
 				})
 			}),

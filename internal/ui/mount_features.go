@@ -85,13 +85,13 @@ func init() {
 		return nil
 	}
 	openDetails = func(a *App, ch string) bool {
-		a.ShowOverlay(detailsOverlay{views.NewChannelDetails(a, ch)})
+		a.ShowOverlay(detailsOverlay{d: views.NewChannelDetails(a, ch), a: a})
 		return true
 	}
 	openDetailsTab = func(a *App, ch, tab string) bool {
 		d := views.NewChannelDetails(a, ch)
 		d.ShowTab(tab)
-		a.ShowOverlay(detailsOverlay{d})
+		a.ShowOverlay(detailsOverlay{d: d, a: a})
 		return true
 	}
 	mkProfile = func(a *App, user string) View { return popups.NewProfileView(a, user) }
@@ -163,7 +163,19 @@ func init() {
 
 // detailsOverlay shows views.ChannelDetails (a centered modal dialog, as
 // in Slack 2026) on the overlay stack.
-type detailsOverlay struct{ d *views.ChannelDetails }
+type detailsOverlay struct {
+	d *views.ChannelDetails
+	a *App
+}
+
+// Dismiss is the root's Esc: it closes the innermost layer only (a menu,
+// the stacked Edit topic dialog), like Slack's topmost modal. The root
+// drops the overlay right after, so one still open shows itself again.
+func (o detailsOverlay) Dismiss() {
+	if o.d.Escape() && o.a != nil {
+		o.a.ShowOverlay(o)
+	}
+}
 
 func (o detailsOverlay) Layout(gtx layout.Context) layout.Dimensions { return o.d.Layout(gtx) }
 func (o detailsOverlay) Dismissed() bool                             { return o.d.Closed() }

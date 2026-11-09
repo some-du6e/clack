@@ -260,11 +260,20 @@ func confirmationModal(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 		if showSubmit {
 			btns = append(btns, st.submit)
 		}
+		// Slack's ConfirmationModal: autoFocus on submit, or on Cancel
+		// with shouldAutoFocusCancel
+		focus := st.submit
+		if p.Bool("shouldAutoFocusCancel") || !showSubmit {
+			focus = st.cancel
+		}
+		if !showCancel && focus == st.cancel {
+			focus = nil
+		}
 		st.m = popups.NewModal(ph, popups.ModalOpts{
-			Title:        title,
-			Buttons:      btns,
-			EnterSubmits: showSubmit,
-			OnClose:      func() { st.h.Call("onClose") },
+			Title:     title,
+			Buttons:   btns,
+			AutoFocus: focus,
+			OnClose:   func() { st.h.Call("onClose") },
 			Body: func(gtx layout.Context) layout.Dimensions {
 				gtx.Constraints.Min = image.Point{}
 				th := thm()

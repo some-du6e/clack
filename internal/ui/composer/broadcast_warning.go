@@ -193,13 +193,18 @@ func openBroadcastWarning(h Host, api coreAPI, ask broadcastAsk, done func(ok bo
 	if d.conv.Kind == "private" {
 		icon = "lock"
 	}
+	edit := &popups.ModalButton{Label: "Edit Message", Kind: popups.BtnOutline}
 	opts := popups.ModalOpts{
 		TitleFunc: func() string { return d.copy().Title },
 		Body:      d.layoutBody,
 		Hero:      d.layoutHero,
 		HeroH:     226,
+		// MessagePaneInputBroadcastWarning: "Edit Message" has autoFocus,
+		// so Enter or Space right after the composer's Enter goes back to
+		// editing; Send needs Tab (or a click)
+		AutoFocus: edit,
 		Buttons: []*popups.ModalButton{
-			{Label: "Edit Message", Kind: popups.BtnOutline},
+			edit,
 			{Label: cp.Button, Kind: popups.BtnPrimary, Do: func() bool { d.setSent(); return true }},
 		},
 		OnClose: func() {

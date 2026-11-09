@@ -635,6 +635,16 @@ const (
 // It carries .c-button (--primary/--outline/--danger/--disabled, --small/
 // --medium, --icon for icon-only buttons) for plugin CSS.
 func Button(gtx layout.Context, th *theme.Theme, c *widget.Clickable, kind BtnKind, size BtnSize, label, iconName string, minW float32) layout.Dimensions {
+	return button(gtx, th, c, kind, size, label, iconName, minW, false)
+}
+
+// FocusButton is Button with Slack's keyboard focus ring when ring is set
+// (.c-button--focus-visible:focus), for dialogs that run their own focus.
+func FocusButton(gtx layout.Context, th *theme.Theme, c *widget.Clickable, kind BtnKind, size BtnSize, label, iconName string, minW float32, ring bool) layout.Dimensions {
+	return button(gtx, th, c, kind, size, label, iconName, minW, ring)
+}
+
+func button(gtx layout.Context, th *theme.Theme, c *widget.Clickable, kind BtnKind, size BtnSize, label, iconName string, minW float32, ring bool) layout.Dimensions {
 	var mods uint64 = 1 << kind // BtnOutline … BtnDisabled
 	if size == BtnMedium {
 		mods |= 1 << 5
@@ -650,17 +660,45 @@ func Button(gtx layout.Context, th *theme.Theme, c *widget.Clickable, kind BtnKi
 	} else if c.Hovered() {
 		state = css.StateHover
 	}
+	if ring && kind != BtnDisabled {
+		state |= css.StateFocus | css.StateFocusVisible
+	} else {
+		ring = false
+	}
 	st := buttonClass.Enter(gtx, state, mods)
 	defer st.Leave()
 	if st.Hidden() {
 		return layout.Dimensions{}
 	}
 	return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
-		return buttonNative(gtx, th, st, c, kind, size, label, iconName, minW)
+		return buttonNative(gtx, th, st, c, kind, size, label, iconName, minW, ring)
 	})
 }
 
-func buttonNative(gtx layout.Context, th *theme.Theme, st slackc.Styled, c *widget.Clickable, kind BtnKind, size BtnSize, label, iconName string, minW float32) layout.Dimensions {
+// focusRing draws Slack's keyboard focus ring around r (radius rad):
+// box-shadow 0 0 0 1px var(--dt_color-otl-hgl-1), 0 0 0 5px of it at 30%
+// (.c-button--focus-visible:focus), under whatever is drawn next.
+func focusRing(gtx layout.Context, cl *Colors, r image.Rectangle, rad int) {
+	FocusRingColors(gtx, cl.Focus, cl.FocusRing, r, rad)
+}
+
+// FocusRing is focusRing in th's colors, for dialogs drawn outside popups.
+func FocusRing(gtx layout.Context, th *theme.Theme, r image.Rectangle, rad int) {
+	focusRing(gtx, colorsOf(th), r, rad)
+}
+
+// FocusRingColors draws the ring with a given solid (1px) and halo (5px)
+// color.
+// Both are drawn outside r only (box-shadows), so a transparent icon
+// button keeps its own background.
+func FocusRingColors(gtx layout.Context, solid, halo color.NRGBA, r image.Rectangle, rad int) {
+	hw := dp(gtx, 5)
+	one := max(1, dp(gtx, 1))
+	stroke(gtx, r.Inset(-hw), rad+hw, hw-one, halo)
+	stroke(gtx, r.Inset(-one), rad+one, one, solid)
+}
+
+func buttonNative(gtx layout.Context, th *theme.Theme, st slackc.Styled, c *widget.Clickable, kind BtnKind, size BtnSize, label, iconName string, minW float32, ring bool) layout.Dimensions {
 	cl := colorsOf(th)
 	h, fs, rad, pad, isz := float32(28), float32(13), float32(4), float32(12), float32(16)
 	if size == BtnMedium {
@@ -700,6 +738,13 @@ func buttonNative(gtx layout.Context, th *theme.Theme, st slackc.Styled, c *widg
 	sz := st.Size(gtx, image.Pt(w, hh))
 	w, hh = sz.X, sz.Y
 	bg, fg = st.Background(bg), st.Color(fg)
+	if ring {
+		// outline buttons drop their border while the ring shows
+		// (.c-button--outline.c-button--focus-visible:focus: border 1px
+		// transparent, background-clip initial)
+		focusRing(gtx, cl, image.Rectangle{Max: sz}, dp(gtx, rad))
+		border = color.NRGBA{}
+	}
 	draw := func(gtx layout.Context) layout.Dimensions {
 		r := image.Rectangle{Max: sz}
 		hovered := c.Hovered() && kind != BtnDisabled

@@ -24,6 +24,7 @@ import (
 	"gioui.org/unit"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/emoji"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/refocus"
 )
 
 // Editor is the composer's WYSIWYG rich text editor over a *Doc. Input
@@ -1153,6 +1154,9 @@ func (e *Editor) updateSnippet(gtx layout.Context, start, end int) {
 // scrolls.
 func (e *Editor) Layout(gtx layout.Context, st EditorStyle) layout.Dimensions {
 	e.init()
+	if refocus.Take(gtx, e) { // a modal that opened over it closed
+		e.Focus(gtx)
+	}
 	e.st = st
 	e.hasStyle = st.Shaper != nil
 	e.metric = gtx.Metric
@@ -1206,6 +1210,7 @@ func (e *Editor) Layout(gtx layout.Context, st EditorStyle) layout.Dimensions {
 	event.Op(gtx.Ops, e)
 	key.InputHintOp{Tag: e, Hint: key.HintText}.Add(gtx.Ops)
 	e.noteLive(gtx) // editor_focus.go
+	refocus.Note(gtx, e)
 	e.scroller.Add(gtx.Ops)
 	e.clicker.Add(gtx.Ops)
 	e.dragger.Add(gtx.Ops)

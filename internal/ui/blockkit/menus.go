@@ -160,8 +160,12 @@ func showConfirm(h Host, c *Confirm, ok, deny func()) {
 			hh := tv.layout(gtx, gtx.Constraints.Max.X, colorsOf(h.Theme()).Text)
 			return D{Size: image.Pt(gtx.Constraints.Max.X, hh)}
 		},
-		Buttons:      btns,
-		EnterSubmits: true,
+		Buttons: btns,
+		// AttachmentActionConfirmDialog is a DeprecatedBaseDialog with no
+		// focusOnPrimaryButton: react-modal focuses the dialog itself, so
+		// Enter and Space do nothing until Tab reaches a button (the close
+		// button first, from the header)
+		CloseFirst: true,
 		OnClose: func() {
 			if !decided && deny != nil {
 				deny()

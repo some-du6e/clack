@@ -2,6 +2,7 @@ package popups
 
 import (
 	"context"
+	"gioui.org/io/event"
 	"image"
 	"image/color"
 	"strconv"
@@ -128,7 +129,15 @@ func NewCreateChannelModal(h Host, o CreateChannelOpts) *CreateChannelModal {
 	c.back = &ModalButton{Label: "Back", Kind: BtnOutline, Do: func() bool { c.Back(); return false }}
 	c.create = &ModalButton{Label: "Create", Kind: BtnPrimary, Enabled: func() bool { return !c.creating }, Do: func() bool { c.Create(); return false }}
 	c.okay = &ModalButton{Label: "Okay", Kind: BtnPrimary}
-	c.modal = NewModal(h, ModalOpts{Title: ccTitle, Body: c.layout})
+	c.modal = NewModal(h, ModalOpts{Title: ccTitle, Body: c.layout, FocusStops: func() []event.Tag {
+		if c.step == 0 {
+			return []event.Tag{&c.ed}
+		}
+		if c.private { // a radio group is one tab stop: the checked radio
+			return []event.Tag{&c.privBtn}
+		}
+		return []event.Tag{&c.pubBtn}
+	}})
 	if o.Name != "" {
 		c.SetName(o.Name)
 	}
@@ -516,7 +525,7 @@ func NewAddPeopleModal(h Host, ch core.Conv) *AddPeopleModal {
 	p.skip = &ModalButton{Label: ccSkip, Kind: BtnOutline}
 	p.add = &ModalButton{Label: ccAdd, Kind: BtnPrimary, Enabled: func() bool { return !p.adding }, Do: func() bool { p.Add(); return false }}
 	p.modal = NewModal(h, ModalOpts{Title: ccInviteTitle, TitleIcon: ic, TitleAfter: ch.Name, Body: p.layout,
-		Buttons: []*ModalButton{p.skip}})
+		Buttons: []*ModalButton{p.skip}, FocusStops: func() []event.Tag { return []event.Tag{&p.ed} }})
 	return p
 }
 

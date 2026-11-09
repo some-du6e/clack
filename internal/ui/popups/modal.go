@@ -4,7 +4,6 @@ import (
 	"image"
 
 	"gioui.org/io/event"
-	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 	"gioui.org/widget"
@@ -45,9 +44,33 @@ type ModalOpts struct {
 	Buttons []*ModalButton
 	// Border draws a footer top border (long, scrolling bodies).
 	Border bool
-	// EnterSubmits makes Enter activate the last enabled button.
+	// EnterSubmits gives the last enabled button the focus on open when
+	// AutoFocus is nil (Slack's focusOnPrimaryButton), so Enter and Space
+	// press it.
 	EnterSubmits bool
-	OnClose      func()
+	// AutoFocus is the button focused on open, with its focus ring (Slack's
+	// autoFocus, visibleAutoFocus): the destructive or primary action in
+	// most confirmations, "Edit Message" in "Notify N people?". nil (and no
+	// EnterSubmits) focuses the dialog itself, as react-modal focuses
+	// .c-sk-modal: Enter and Space then do nothing until Tab reaches a
+	// button.
+	AutoFocus *ModalButton
+	// QuietFocus focuses AutoFocus without the ring (Slack's old dialogs
+	// that focus the go button from focusOnFormElements, no autoFocus).
+	QuietFocus bool
+	// FocusStops are the body's focusable widgets (fields, pickers) in
+	// tab order; Tab and Shift+Tab cycle them with the footer buttons and
+	// the close button, trapped inside the modal (react-modal's scopeTab).
+	FocusStops func() []event.Tag
+	// CloseFirst puts the close button first in the tab order, before the
+	// body: Slack's DeprecatedBaseDialog renders it in the header (Delete
+	// message, Delete file, Edit topic, Block Kit confirms). c-sk-modal
+	// renders it after the footer (the default).
+	CloseFirst bool
+	// OnCmdEnter runs on ⌘Enter (Block Kit modals bind command+enter to
+	// submit).
+	OnCmdEnter func()
+	OnClose    func()
 	// NoClose hides the header close button.
 	NoClose bool
 	// PadX and HeadH override the side padding (default 28) and header
@@ -86,12 +109,24 @@ type Modal struct {
 	list  layout.List
 	rect  image.Rectangle
 	focus bool
+	// keyboard focus (focus.go)
+	ring   bool      // the focused button shows Slack's focus ring
+	prev   event.Tag // focused before the modal opened (refocus)
+	last   event.Tag // the stop that had the focus last
+	wasTop bool
+	ptr    int // pointer tag: a press anywhere hides the ring
+	frames int
 }
 
 // NewModal builds a modal; show it with h.ShowOverlay.
 func NewModal(h Host, o ModalOpts) *Modal {
 	m := &Modal{h: h, o: o}
-	m.onClose = o.OnClose
+	m.onClose = func() {
+		m.giveBackFocus()
+		if o.OnClose != nil {
+			o.OnClose()
+		}
+	}
 	m.list.Axis = layout.Vertical
 	return m
 }
@@ -118,40 +153,8 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 	cl := colorsOf(th)
 	win := gtx.Constraints.Max
 	gtx.Constraints.Min = image.Point{} // robust to roots passing Exact constraints
-	if !m.focus {
-		gtx.Execute(key.FocusCmd{Tag: m})
-		m.focus = true
-	}
-	// keys: Escape anywhere, Enter when asked.
-	for {
-		var e event.Event
-		var ok bool
-		if isTop(m) {
-			e, ok = gtx.Event(key.Filter{Name: key.NameEscape}, key.Filter{Focus: m, Name: key.NameReturn}, key.Filter{Focus: m, Name: key.NameEnter})
-		} else {
-			e, ok = gtx.Event(key.Filter{Focus: m, Name: key.NameReturn}, key.Filter{Focus: m, Name: key.NameEnter})
-		}
-		if !ok {
-			break
-		}
-		ke, ok := e.(key.Event)
-		if !ok || ke.State != key.Press {
-			continue
-		}
-		switch ke.Name {
-		case key.NameEscape:
-			m.Dismiss()
-			return layout.Dimensions{}
-		default:
-			if m.o.EnterSubmits {
-				for i := len(m.o.Buttons) - 1; i >= 0; i-- {
-					if b := m.o.Buttons[i]; b.enabled() {
-						m.press(b)
-						break
-					}
-				}
-			}
-		}
+	if m.keys(gtx) {
+		return layout.Dimensions{}
 	}
 	if m.done {
 		return layout.Dimensions{}
@@ -235,6 +238,7 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 	pos := image.Pt((win.X-w)/2, (win.Y-h)/2)
 	m.rect = image.Rectangle{Min: pos, Max: pos.Add(image.Pt(w, h))}
 	keyTarget(gtx, m, m.rect)
+	defer m.pointerSeen(gtx) // over the card, so it sees presses on it
 	st := modalClass.EnterClass(gtx, 0, 0, m.o.Class)
 	defer st.Leave()
 	if !st.Hidden() {
@@ -302,6 +306,9 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 						cy = dp(gtx, 20) // c-sk-modal__close_button: top 20px, over the hero
 					}
 					at(gtx, image.Pt(w-dp(gtx, 20)-dp(gtx, 36), cy), func(gtx layout.Context) layout.Dimensions {
+						if m.ringOn(gtx, &m.close) {
+							focusRing(gtx, cl, image.Rectangle{Max: image.Pt(dp(gtx, 36), dp(gtx, 36))}, dp(gtx, 8))
+						}
 						return iconButton(gtx, &m.close, "close", 36, 20, cl.Fg2, cl.BgHover, 8)
 					})
 				}
@@ -343,8 +350,9 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 						if !b.enabled() {
 							kind = BtnDisabled
 						}
+						ring := kind != BtnDisabled && m.ringOn(gtx, &b.click)
 						call, d := record(gtx, func(gtx layout.Context) layout.Dimensions {
-							return Button(gtx, th, &b.click, kind, BtnMedium, b.Label, "", 80)
+							return button(gtx, th, &b.click, kind, BtnMedium, b.Label, "", 80, ring)
 						})
 						if b.Left {
 							macroAt(gtx, call, image.Pt(lx, fy+footPad))
@@ -370,9 +378,15 @@ func Confirm(h Host, title, textBody, action string, danger bool, body layout.Wi
 	if danger {
 		kind = BtnDanger
 	}
+	ok := &ModalButton{Label: action, Kind: kind, Do: func() bool {
+		if onOK != nil {
+			onOK()
+		}
+		return true
+	}}
 	m := NewModal(h, ModalOpts{
-		Title:        title,
-		EnterSubmits: true,
+		Title:     title,
+		AutoFocus: ok, // ConfirmationModal: autoFocus on submit
 		Body: func(gtx layout.Context) layout.Dimensions {
 			cl := colorsOf(th)
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -390,16 +404,16 @@ func Confirm(h Host, title, textBody, action string, danger bool, body layout.Wi
 				}),
 			)
 		},
-		Buttons: []*ModalButton{
-			{Label: "Cancel", Kind: BtnOutline},
-			{Label: action, Kind: kind, Do: func() bool {
-				if onOK != nil {
-					onOK()
-				}
-				return true
-			}},
-		},
+		Buttons: []*ModalButton{{Label: "Cancel", Kind: BtnOutline}, ok},
 	})
 	h.ShowOverlay(m)
+	return m
+}
+
+// OldDialog marks m as one of Slack's DeprecatedBaseDialog dialogs (Delete
+// message, Delete file, Block Kit confirms): the close button comes first
+// in the tab order, from the header. Call it before the first frame.
+func (m *Modal) OldDialog() *Modal {
+	m.o.CloseFirst = true
 	return m
 }
