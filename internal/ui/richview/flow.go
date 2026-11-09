@@ -68,7 +68,7 @@ type box struct {
 	fill   color.NRGBA
 	stroke color.NRGBA
 	bw     int
-	layer  uint8 // 0 = under text, 1 = above images (overlays)
+	layer  uint8 // 0 = under text, 1 = above images and text (overlays), 2 = above images, under text (scrims, pills)
 	target int16 // hover-highlight target (-1 none)
 	hover  color.NRGBA
 	// perCorner uses corners (NW NE SE SW) instead of radius.

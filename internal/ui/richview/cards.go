@@ -892,12 +892,12 @@ func (l *lay) videoPill(f *richtext.File, r image.Rectangle) {
 	if pr.Max.X > r.Max.X-l.dp(4) || pr.Min.Y < r.Min.Y {
 		return
 	}
-	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: pr, radius: l.dp(4), fill: rgba(29, 28, 29, 0.8), target: -1, layer: 1})
-	l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: pr, radius: l.dp(4), stroke: rgba(255, 255, 255, 0.13), bw: l.dp(1), target: -1, layer: 1})
+	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: pr, radius: l.dp(4), fill: rgba(29, 28, 29, 0.8), target: -1, layer: 2})
+	l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: pr, radius: l.dp(4), stroke: rgba(255, 255, 255, 0.13), bw: l.dp(1), target: -1, layer: 2})
 	// play-filled, 16px: a triangle in the glyph's 10x12 box
 	ix := pr.Min.X + l.dp(5)
 	cy := pr.Min.Y + ph/2
-	l.d.boxes = append(l.d.boxes, box{kind: bPlay, r: image.Rect(ix+l.dp(4), cy-l.dp(6), ix+l.dp(14), cy+l.dp(6)), fill: rgb(255, 255, 255), target: -1, layer: 1})
+	l.d.boxes = append(l.d.boxes, box{kind: bPlay, r: image.Rect(ix+l.dp(4), cy-l.dp(6), ix+l.dp(14), cy+l.dp(6)), fill: rgb(255, 255, 255), target: -1, layer: 2})
 	l.plainFlow(txt, ix+l.dp(16)+l.dp(4), pr.Min.Y+(ph-fs.lineH)/2, tw+l.dp(2), &fs, -1)
 }
 
@@ -910,7 +910,7 @@ func (l *lay) galleryOverflow(r image.Rectangle, n int) {
 	if lum(p.Panel) < 0.5 {
 		scrim, fg = rgba(209, 210, 211, 0.5), p.Panel
 	}
-	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: l.dp(8), fill: scrim, target: -1, layer: 1})
+	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: l.dp(8), fill: scrim, target: -1, layer: 2})
 	txt := "+ " + strconv.Itoa(n)
 	fs := flowStyle{face: font.Font{Typeface: l.st.Face, Weight: font.Black}, size: l.sp(22), lineH: l.dp(30),
 		col: fg, emoji: l.dp(22), maxLines: 1, noSelect: true}
@@ -1096,6 +1096,41 @@ func (l *lay) fileIcon(f *richtext.File, x, y, s int) {
 	k := l.faceFor(fs.face, fs.size, 0)
 	tw := int(l.measure(label, k) + 0.5)
 	l.plainFlow(label, x+(s-tw)/2, y+(s-fs.lineH)/2, s, &fs, -1)
+}
+
+// pillowGrid is FileGallery's mixed_file_format grid for several pillows:
+// 40px columns with 8px gutters (repeat(auto-fit, 40px)), each file
+// spanning 7 (328px); at a gallery of 664px or less
+// (c-file_gallery__mixed_file_format--compact) one column of pillows at
+// most 426 wide. Rows and columns are 8px apart.
+func (l *lay) pillowGrid(files []*richtext.File, x, y, w int) int {
+	sc := float64(l.scale)
+	if sc <= 0 {
+		sc = 1
+	}
+	gw := math.Max(math.Min(float64(w)/sc-26, 1000), 1)
+	perRow, cell := 1, l.dp(426)
+	if gw > 664 {
+		cols := int((gw + galleryGap) / (40 + galleryGap))
+		perRow = max(1, cols/7)
+		cell = l.dp(7*40 + 6*galleryGap)
+	}
+	gap := l.dp(galleryGap)
+	y0, rowH := y, 0
+	for i, f := range files {
+		col := i % perRow
+		if i > 0 && col == 0 {
+			y += rowH + gap
+			rowH = 0
+			l.plainAdd("\n")
+		} else if i > 0 {
+			l.plainAdd(" ")
+		}
+		cx := x + col*(cell+gap)
+		h := l.genericFile(f, cx, y, min(cell, x+w-cx))
+		rowH = max(rowH, h)
+	}
+	return y + rowH - y0
 }
 
 // pillowMeta is FileSize's line under a file pillow's name: the

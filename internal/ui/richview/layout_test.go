@@ -1083,7 +1083,7 @@ func TestMediaGallery(t *testing.T) {
 	findFrag(t, &v.d, "2")
 	var scrim bool
 	for _, b := range boxesOf(&v.d, bFill) {
-		if b.layer == 1 && b.r == want[1] {
+		if b.layer == 2 && b.r == want[1] {
 			scrim = true
 		}
 	}
@@ -1167,7 +1167,7 @@ func TestVideoCard(t *testing.T) {
 		t.Errorf("%d play circles; Slack's gallery video has the bottom-left pill", n)
 	}
 	plays := boxesOf(&v.d, bPlay)
-	if len(plays) != 1 || plays[0].layer != 1 || plays[0].r.Min.X < 12 || plays[0].r.Max.Y > 154-12 {
+	if len(plays) != 1 || plays[0].layer != 2 || plays[0].r.Min.X < 12 || plays[0].r.Max.Y > 154-12 {
 		t.Fatalf("play glyph %+v", plays)
 	}
 	d := findFrag(t, &v.d, "1:23")
@@ -2292,5 +2292,23 @@ func TestFirstBaseline(t *testing.T) {
 	}
 	if b := (&display{}).firstBaseline(); b != -1 {
 		t.Errorf("empty display baseline %d, want -1", b)
+	}
+}
+
+// Two documents: side by side in 328px cells when the gallery is wider
+// than 664, one 426 column when it isn't (mixed_file_format).
+func TestPillowGrid(t *testing.T) {
+	st := newTestStyle()
+	a := &rt.File{Name: "a.pdf", Type: "pdf", PrettyType: "PDF"}
+	b := &rt.File{Name: "b.docx", Type: "docx", PrettyType: "Word Document"}
+	v := layoutAt(st, doc(fileBlock(a), fileBlock(b)), Options{}, 1000)
+	cards := boxesOf(&v.d, bBorder)
+	if len(cards) != 2 || cards[0].r != image.Rect(0, 0, 328, 62) || cards[1].r != image.Rect(336, 0, 664, 62) {
+		t.Errorf("wide grid %v", cards)
+	}
+	v = layoutAt(st, doc(fileBlock(a), fileBlock(b)), Options{}, 600)
+	cards = boxesOf(&v.d, bBorder)
+	if len(cards) != 2 || cards[0].r != image.Rect(0, 0, 426, 62) || cards[1].r != image.Rect(0, 70, 426, 132) {
+		t.Errorf("compact grid %v", cards)
 	}
 }

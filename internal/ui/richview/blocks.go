@@ -247,6 +247,18 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 			i = j - 1
 			continue
 		}
+		// two or more document pillows: FileGallery's mixed_file_format grid
+		if isPillowBlock(b) && i+1 < len(bs) && isPillowBlock(&bs[i+1]) {
+			gal = gal[:0]
+			j := i
+			for j < len(bs) && isPillowBlock(&bs[j]) {
+				gal = append(gal, bs[j].File)
+				j++
+			}
+			y += l.pillowGrid(gal, x, y, w)
+			i = j - 1
+			continue
+		}
 		y += l.block(b, x, y, w, i == edited)
 	}
 	if edited < 0 && top && l.opts.Edited {
@@ -262,6 +274,13 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 		y += bottom
 	}
 	return y - y0
+}
+
+// isPillowBlock is a file drawn as a plain pillow (not media, audio or a
+// snippet).
+func isPillowBlock(b *richtext.Block) bool {
+	f := b.File
+	return b.Kind == richtext.FileBlock && f != nil && !mediaFile(f) && !f.IsAudio && !f.IsSnippet && f.Preview == ""
 }
 
 func isMediaBlock(b *richtext.Block) bool {
