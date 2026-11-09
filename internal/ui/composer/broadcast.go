@@ -57,7 +57,9 @@ func isShoutyRooster(err error) bool {
 
 // isQuietSendStop reports a stopped send that already told the user why
 // (Slackbot's message, or the dialog they closed): no toast.
-func isQuietSendStop(err error) bool { return isProhibitedBroadcast(err) || isShoutyRooster(err) }
+func isQuietSendStop(err error) bool {
+	return isProhibitedBroadcast(err) || isShoutyRooster(err) || isCommandFailed(err)
+}
 
 // broadcastPermsWait bounds the permission lookup a send may wait for.
 const broadcastPermsWait = 10 * time.Second
@@ -86,7 +88,8 @@ func (j *sendJob) prepareAndSend(ctx context.Context, a prepareSendArgs) error {
 	}
 	if !j.files {
 		if cmd, text, ok := deltaCommand(a.Delta); ok {
-			return j.command(ctx, a.ChannelID, a.ReplyToTs, cmd, text)
+			return j.command(ctx, core.CommandOpts{Channel: a.ChannelID, ThreadTS: a.ReplyToTs, Command: cmd, Text: text,
+				AppID: a.SlashCommandAppID})
 		}
 	}
 	if len(used) > 0 {
@@ -127,16 +130,10 @@ func (j *sendJob) prohibited(ctx context.Context, ch, ts string, used []string, 
 }
 
 // command runs a slash command a plugin made of the message; its reply
-// shows as Slackbot's ephemeral, as in Slack.
-func (j *sendJob) command(ctx context.Context, ch, ts, cmd, text string) error {
-	res, err := j.api.command(ctx, core.CommandOpts{Channel: ch, Command: cmd, Text: text, ThreadTS: ts})
-	if err != nil {
-		return err
-	}
-	if res.Response != "" {
-		j.api.localEphemeral(ch, ts, res.Response)
-	}
-	return nil
+// or failure shows as Slackbot's ephemeral, as in Slack (runCommand).
+func (j *sendJob) command(ctx context.Context, o core.CommandOpts) error {
+	_, err := runCommand(ctx, j.api, o)
+	return err
 }
 
 // ---- Slack's delta ----

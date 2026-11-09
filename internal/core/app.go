@@ -39,6 +39,7 @@ type App struct {
 	countsTimer *time.Timer
 	cmdCache    []slack.Command
 	cmdAt       time.Time
+	cmdFailed   failedCommands // executeCommand's recently failed (command.go)
 
 	files *fileCache
 

@@ -238,6 +238,9 @@ type Interactive struct {
 	started atomic.Bool
 	stop    func()
 	lastTok int64
+	// feedback is the slash command feedback ephemerals by type
+	// (command.go): "channel/ts" each.
+	feedback map[string][]string
 }
 
 var interactiveIndex sync.Map // *App → *Interactive

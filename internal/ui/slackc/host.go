@@ -2,7 +2,9 @@ package slackc
 
 import (
 	"image"
+	"image/color"
 	"log"
+	"math"
 	"strings"
 	"sync"
 
@@ -235,6 +237,62 @@ func LayoutElement(gtx layout.Context, e Element) layout.Dimensions {
 		parent = e.Nodes[0].parent
 	}
 	return c.view.layoutNodes(gtx, c.fr, e.Nodes, parent, c.st)
+}
+
+// InheritText is the text style a native's own DOM gives a React-node
+// prop it wraps, which the prop's nodes inherit (TypingNames' <b>{name}</b>
+// inside .p-notification_bar__section: 10.5px, 1rem line height,
+// foreground_max, bold). Zero fields keep the render context's value.
+type InheritText struct {
+	Size, LineHeight float32 // CSS px
+	Weight           int     // 100..900
+	Color            color.NRGBA
+}
+
+// LayoutElementText is LayoutElement with the nodes' CSS parent styled
+// by t, as if the native had drawn its own element around them.
+func LayoutElementText(gtx layout.Context, e Element, t InheritText) layout.Dimensions {
+	c := curRender
+	if c == nil || len(e.Nodes) == 0 {
+		return layout.Dimensions{}
+	}
+	parent := c.n
+	if e.Nodes[0].parent != nil {
+		parent = e.Nodes[0].parent
+	}
+	var st css.Style
+	if c.st != nil {
+		st = *c.st
+	} else {
+		st = css.Initial(cssEnv().Fg)
+	}
+	if t.Size > 0 {
+		st.FontSize = t.Size
+	}
+	if t.LineHeight > 0 {
+		st.LineHeight = css.Px(t.LineHeight)
+	}
+	if t.Weight > 0 {
+		st.FontWeight = t.Weight
+	}
+	if t.Color.A > 0 {
+		st.Color = t.Color
+	}
+	// The element the native stands for, on the native stack too: natives
+	// among the nodes (MemberLink's Enter) and the nodes laid out after
+	// one take their inherited text from the stack (nativeAnchor), not
+	// from the host box, and inside a native's own elements (the
+	// composer's) that chain ends in the root's 15px.
+	el, _, pk := stackParent()
+	var set propSet
+	for _, k := range []string{"font-size", "font-weight", "line-height", "color"} {
+		set |= propBits[k]
+	}
+	h := uint64(math.Float32bits(st.FontSize))<<32 ^ uint64(st.FontWeight)<<16 ^ uint64(math.Float32bits(st.LineHeight.Px)) ^
+		uint64(st.Color.R)<<56 ^ uint64(st.Color.G)<<48 ^ uint64(st.Color.B)<<40
+	pushHost(el, &st, set, mix(pk^h^0x7e47c0de))
+	defer popHost()
+	return c.view.layoutNodes(gtx, c.fr, e.Nodes, parent, &st)
 }
 
 // Items splits children into their flex items, for a native whose Slack

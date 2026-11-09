@@ -250,7 +250,7 @@ func TestTypersSorted(t *testing.T) {
 	if len(ids) != 2 || ids[0] != "U1" || names[0] != "Amy" || ids[1] != "U2" || names[1] != "Zed" {
 		t.Fatalf("typers = %v %v", ids, names)
 	}
-	if got := typingLine(names); got != "Amy and Zed are typing…" {
+	if got := typingLine(names); got != "Amy and Zed are typing" {
 		t.Fatalf("line %q", got)
 	}
 }

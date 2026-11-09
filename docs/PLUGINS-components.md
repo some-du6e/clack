@@ -60,7 +60,7 @@ Clack's `slackc.Render(gtx, name, props, native)` has to reproduce these rules e
 | 37 | BaseContextBarV2 | patch | HaikuWarning, OwlMode | missing (no bar between list and composer; conversation.go:`layoutConvo`) | comp | **missing** |
 | 38 | MessageInputRoadblock | patch | RestrictedChannelWarning | composer/slack.go:`layoutRoadblock` + ui/joinpane.go:`composerRoadblock` (announce-only message when `readOnlyChannels`/`threadOnlyChannels` say so) | comp | drawn |
 | 39 | ThreadTypingIndicator | patch | BetterTypingIndicator | composer/chrome.go:`(*chrome).layoutHint` (+ typing.go `typingText`) | comp | text only |
-| 40 | TypingNames | patch | BetterTypingIndicator | composer/chrome.go:`layoutHint`; composer/typing.go:`typingText` | comp | text only |
+| 40 | TypingNames | patch | BetterTypingIndicator | composer/chrome_slack.go:`layoutTypingNames` (firstTyper/secondTyper element slots in the bar's 10.5px style, `slackc.LayoutElementText`) | comp | drawn |
 | 41 | texty_input_with_autocomplete | lazy | richTextInput | composer/editor.go:`Editor` + autocomplete.go | comp | drawn |
 | 42 | CharacterCount | lazy | richTextInput (OfficeHours) | missing | comp | **missing** |
 | 43 | ComposerLinkModal | rendered registry, prototype `saveLink` | links infra (ClearURLs) | composer/linkdialog.go:`openLinkDialog` | comp | drawn |
@@ -314,7 +314,7 @@ Taut's own infra patches these at module load, so its patches sit innermost (app
 
 #### TypingNames
 - **BetterTypingIndicator** P/BetterTypingIndicator.tsx:142-258. Reads `firstTyper?: ReactNode, secondTyper?: ReactNode, severalPeopleAreTyping?: boolean`. It computes typers from `state.typing` (`{channelId, threadTs, memberId, memberIsSelf}`) and names from `getPrefCompliantMemberName`. Then it renders `<span.taut-typing-indicator>` with a hidden `span.taut-typing-indicator__sample` ("typing **typing**") and `<Original firstTyper={MemberLinks joined ', '} secondTyper={last} severalPeopleAreTyping={false}/>`. Names may be truncated, and an overflow becomes `Tooltip(tip names) > span "N others"`. It measures with `ResizeObserver`, `getComputedStyle` (fontFamily, fontSize, letterSpacing, fontWeight) and `OffscreenCanvas.measureText`, and uses the `I18n('notification_bar')` and `I18n('today')` phrases.
-- **Clack**: composer/chrome.go:`layoutHint` with composer/typing.go:`typingText` (a plain string), **comp**. It must become a component rendering `firstTyper`/`secondTyper` ReactNode slots in a "<b>A</b> and <b>B</b> are typing" template. The plugin also needs the DOM measurement APIs to work on that node: `clientWidth`, computed font and `ResizeObserver` (taut-ui).
+- **Clack**: composer/chrome_slack.go:`layoutTypingNames`, **comp**. It renders the `firstTyper`/`secondTyper` slots (text or elements) in Slack's "<b>A</b> and <b>B</b> are typing" template; element slots and the plugin's own nodes inherit `.p-notification_bar__section`'s 10.5px / 1rem / foreground_max (bold inside the `<b>`) through `slackc.LayoutElementText`. The plugin's DOM measurement (`clientWidth`, computed font, `ResizeObserver`) is taut-ui's.
 
 #### texty_input_with_autocomplete
 - **richTextInput** :25 (used by OfficeHours `ReplyEditor`). Passes `ref` (instance `getContents() → {contents: ops}`), `windowRef, id, initialText: {contents: ops}, placeholder, ariaLabel, onTextChange, isDisabled, disableTags, size: "medium", useWysiwyg, enterCreatesNewlineOverride, completeOnEmoji, completeOnMembers, completeOnChannels`.

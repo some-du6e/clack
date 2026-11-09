@@ -447,7 +447,8 @@ func (a *App) SetDND(ctx context.Context, minutes int) error {
 }
 
 // Command runs a slash command. /shrug, /me and /topic are handled
-// locally like the official client; others go through chat.command.
+// locally like the official client; others go through chat.command
+// (command.go: client_token, so a modal the app opens shows here).
 func (a *App) Command(ctx context.Context, o CommandOpts) (CommandResult, error) {
 	cmd := o.Command
 	if !strings.HasPrefix(cmd, "/") {
@@ -465,15 +466,5 @@ func (a *App) Command(ctx context.Context, o CommandOpts) (CommandResult, error)
 	case "/topic":
 		return CommandResult{}, a.SetTopic(ctx, o.Channel, o.Text)
 	}
-	p := url.Values{"channel": {o.Channel}, "command": {cmd}, "text": {o.Text}, "disp": {cmd}}
-	if o.ThreadTS != "" {
-		p.Set("thread_ts", o.ThreadTS)
-	}
-	var res struct {
-		Response string `json:"response"`
-	}
-	if err := a.C.Call(ctx, "chat.command", p, &res); err != nil {
-		return CommandResult{}, err
-	}
-	return CommandResult{Response: res.Response, ResponseDoc: a.Mrkdwn(res.Response)}, nil
+	return a.serverCommand(ctx, cmd, o) // command.go
 }

@@ -13,7 +13,7 @@ func TestTime24AndShowTyping(t *testing.T) {
 	t.Cleanup(uipref.Reset)
 	at := time.Date(2026, 11, 8, 17, 30, 0, 0, time.Local)
 	uipref.Set(store.Prefs{ShowTyping: true})
-	if clock(at) != "5:30 PM" || shortClock(at) != "5:30" || typingText([]string{"Ann"}) != "Ann is typing…" {
+	if clock(at) != "5:30 PM" || shortClock(at) != "5:30" || typingText([]string{"Ann"}) != "Ann is typing" {
 		t.Fatalf("defaults: %q %q", clock(at), shortClock(at))
 	}
 	uipref.Set(store.Prefs{Time24: true})

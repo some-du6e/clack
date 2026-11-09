@@ -92,7 +92,7 @@ type chromeState struct {
 	// hash/lock icon + name), "Message Karim" (DM), "Reply…".
 	Placeholder     string
 	ShowPlaceholder bool
-	Typing          string // "Karim is typing…" for the hint bar, "" none
+	Typing          string // "Karim is typing" for the hint bar, "" none
 	// ScrolledTop / ScrolledBottom: editor content is scrolled under the
 	// top / there is more below; draws the 1px edge separators.
 	ScrolledTop, ScrolledBottom bool
@@ -115,8 +115,9 @@ type chromeState struct {
 	// TypingIDs / TypingNames: who Typing names, sorted by name.
 	TypingIDs, TypingNames []string
 	// TypingStatus is an app's assistant status (Typing is then
-	// "<app> <status>", Slack's AiAppStatusIndicator).
-	TypingStatus string
+	// "<app> <status>", Slack's AiAppStatusIndicator), TypingAgent the
+	// app's name (bold).
+	TypingStatus, TypingAgent string
 }
 
 // crBtn names every clickable in the chrome.
@@ -235,9 +236,11 @@ func crMakePal(th *theme.Theme) crPal {
 	c := &th.C
 	ink := c.Fg // #1d1c1d in light, Slack's tints are this ink at an alpha
 	ter := rgb(0x5e5d60)
+	// .p-notification_bar__section: sk_foreground_max_solid, 97,96,97
+	// light and 171,171,173 dark (slack-kit-gantry-v2-styles)
 	typing := rgb(0x616061)
 	if th.Dark {
-		ter, typing = c.FgSubtle, c.FgMuted
+		ter, typing = c.FgSubtle, rgb(0xababad)
 	}
 	var p crPal
 	p.bg = c.Bg
@@ -1194,10 +1197,13 @@ func (c *chrome) placeholder(gtx layout.Context, th *theme.Theme, p *crPal, st *
 	crText(gtx, th.Shaper, org.X, org.Y, tw, s, ph)
 }
 
-// layoutHint draws the 24px bar under the box: the typing indicator on the
-// left (10.5/16 #616061), or "Shift + Return to add a new line" on the
+// layoutHint draws the 24px bar under the box (.p-notification_bar: 24px,
+// 12px left padding, inside the pane): the typing indicator on the left
+// (.p-notification_bar__section: .7em = 10.5px, 1rem line height,
+// sk_foreground_max_solid), or "Shift + Return to add a new line" on the
 // right (bold keys, 70% ink, ending 8px inside) once there's something to
-// send.
+// send. A plugin's TypingNames (BetterTypingIndicator) is laid out in that
+// section's text style, as it is in Slack's DOM.
 func (c *chrome) layoutHint(gtx layout.Context, th *theme.Theme, p *crPal, st *chromeState, box image.Rectangle) {
 	ty := box.Max.Y + (gtx.Dp(24)-gtx.Dp(16))/2
 	maxW := box.Dx() - gtx.Dp(20)
@@ -1205,14 +1211,15 @@ func (c *chrome) layoutHint(gtx layout.Context, th *theme.Theme, p *crPal, st *c
 		t := op.Offset(image.Pt(box.Min.X+gtx.Dp(12), ty)).Push(gtx.Ops)
 		g := gtx
 		g.Constraints = layout.Constraints{Max: image.Pt(max(maxW, 0), gtx.Dp(16))}
+		bar := c.barText()
 		switch e, patched := kid(c.f.inputP, "ThreadTypingIndicator"); {
 		case st.Mode == modeThread && patched:
-			slackc.LayoutElement(g, e)
+			slackc.LayoutElementText(g, e, bar)
 		case st.Mode == modeThread:
 			slackc.Component(g, "ThreadTypingIndicator", c, (*chrome).threadTypingProps, (*chrome).layoutThreadTyping)
 		default:
 			if e, patched := kid(c.f.inputP, "TypingNames"); patched {
-				slackc.LayoutElement(g, e)
+				slackc.LayoutElementText(g, e, bar)
 			} else {
 				slackc.Component(g, "TypingNames", c, (*chrome).typingNamesProps, (*chrome).layoutTypingNames)
 			}

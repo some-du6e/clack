@@ -537,10 +537,18 @@ type Command struct {
 
 type CommandOpts struct {
 	Channel, Command, Text, ThreadTS string
+	// AppID is executeCommand's slashCommandAppId: the app whose command
+	// a plugin turned the message into (chat.command app_id).
+	AppID string
+	// TeamID is slashCommandApplicableTeamId (chat.command team_id).
+	TeamID string
 }
 
 type CommandResult struct {
 	Msg         *Message
 	Response    string
 	ResponseDoc []richtext.Block
+	// KeepInput is chat.command's keep_input: the composer gets the
+	// command back.
+	KeepInput bool
 }

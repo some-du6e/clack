@@ -83,7 +83,7 @@ func (v *ChannelView) EditLast() bool { return v.s.editLast(v.h) }
 // Edit starts inline editing of message ts (message menu "Edit message").
 func (v *ChannelView) Edit(ts string) { v.s.startEdit(v.h, ts) }
 
-// Typing returns the "X is typing…" text for this channel ("" if nobody).
+// Typing returns the "X is typing" text for this channel ("" if nobody).
 func (v *ChannelView) Typing() string { return typingText(v.s.snap.typing) }
 
 // ScrollToBottom jumps to the newest message (e.g. after sending).
