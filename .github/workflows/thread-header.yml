@@ -1,0 +1,54 @@
+name: thread-header
+# The thread pane's header after "Thread" (Slack's threads Header): the
+# conversation name per kind, its permalink click and the lookup of a
+# conversation core doesn't hold, against internal/fakeslack's thread
+# header fixtures; then window and pane screenshots per kind, light and
+# dark, rendered headlessly. Synthetic only: nothing here talks to Slack.
+on:
+  push:
+    paths:
+      - "internal/ui/messages/thread*.go"
+      - "internal/ui/thread_header_test.go"
+      - "internal/ui/route*.go"
+      - "internal/ui/host.go"
+      - "internal/core/resolve.go"
+      - "internal/fakeslack/threadheader.go"
+      - ".github/workflows/thread-header.yml"
+  workflow_dispatch:
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb libgl1-mesa-dri libegl-mesa0
+
+permissions:
+  contents: read
+
+jobs:
+  thread-header:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: header per conversation, click, lookup
+        run: |
+          go test -count=1 -v -run 'TestThreadHeader' ./internal/ui/messages/
+          go test -count=1 -v -run 'TestRouteParts' ./internal/ui/
+      - name: from Activity, with screenshots
+        env:
+          THREAD_HEADER_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          GALLIUM_DRIVER: llvmpipe
+        run: |
+          mkdir -p "$THREAD_HEADER_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -v -run 'TestThreadHeaderFromActivity' ./internal/ui/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: thread-header-shots
+          path: dist/shots

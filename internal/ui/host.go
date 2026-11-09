@@ -114,6 +114,13 @@ func (a *App) afterRoute(prev, r Route) {
 	if ts := r.Thread(); ts != "" {
 		a.OpenThread(ch, ts)
 	}
+	if ts := r.Message(); ts != "" {
+		// a permalink: the channel scrolled to the message, flashed
+		// (ChannelView.Highlight; a thread pane on ch stays open)
+		if h, ok := a.convoFor(ch, "").list.(interface{ Highlight(string) }); ok {
+			h.Highlight(ts)
+		}
+	}
 	if ch != "" {
 		a.lastChannel = ch
 		if a.data != nil {
