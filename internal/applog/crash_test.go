@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 	"time"
@@ -46,6 +47,9 @@ func TestCrashReachesTheLog(t *testing.T) {
 	}
 
 	// the next run copies it into the log and starts crash.log afresh
+	// (this process's crash output then holds crash.log open: Windows can't
+	// remove an open file, so hand it back before TempDir's cleanup)
+	t.Cleanup(func() { debug.SetCrashOutput(nil, debug.CrashOptions{}) })
 	l := start(dir, nil, io.Discard)
 	if err := l.captureCrashes("next run"); err != nil {
 		t.Fatal(err)
