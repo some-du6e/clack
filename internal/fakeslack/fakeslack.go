@@ -158,6 +158,7 @@ type Server struct {
 	nextID  int
 
 	chans chanState // conversations.create and friends (channels.go)
+	secs  secState  // sidebar sections, marks, channel notification prefs (sections.go)
 }
 
 // DefaultPrefs are the fake account's users.prefs (Slack's defaults for the
@@ -694,6 +695,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleCanvases(method, f); handled { // canvas.go
 		return out
 	}
+	if out, handled := s.handleSections(method, f); handled { // sections.go
+		return out
+	}
 	switch method {
 	case "auth.test":
 		return ok("url", s.URL, "team", "Fake Club", "user", "self", "team_id", TeamID, "user_id", SelfID, "enterprise_id", EnterpriseID)
@@ -713,6 +717,7 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 					e.MentionCount = 1 + i%4
 				}
 			}
+			e.LastRead, e.HasUnreads, e.MentionCount = s.applyMark(c.ID, e.LastRead, e.Latest, e.HasUnreads, e.MentionCount)
 			if c.IsIM {
 				ims = append(ims, e)
 			} else {
@@ -734,30 +739,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	case "experiments.getByUser": // the sidebar experiments as a real account has them (2026-11-08)
 		g := func(group string) map[string]any { return map[string]any{"group": group} }
 		return ok("assignments", map[string]any{"filter_dormant_channels": g("on"), "improve_mute_pref": g("on"),
-			"dm_recency_sort_rollout": g("without_edu"), "reskin_custom_responses": g("on"), "temp_join_channel": g("on")})
-	case "users.channelSections.list":
-		var secs []map[string]any
-		ids := s.ChannelIDs()
-		per := max(1, len(ids)/6)
-		names := []string{"Starred", "Hack Club", "Projects", "Events", "Random stuff", "Bots"}
-		for i, n := range names {
-			lo, hi := i*per, min(len(ids), (i+1)*per)
-			if i == len(names)-1 {
-				hi = len(ids)
-			}
-			typ := "standard"
-			if i == 0 {
-				typ = "stars"
-			}
-			id := fmt.Sprintf("L0FAKE%02d", i)
-			chs := append(s.SectionInserts(id), ids[lo:hi]...)
-			secs = append(secs, map[string]any{"channel_section_id": id, "name": n, "type": typ,
-				"channel_ids_page": map[string]any{"channel_ids": chs, "count": len(chs)}})
-		}
-		secs = append(secs, map[string]any{"channel_section_id": "L0FAKECH", "name": "", "type": "channels"},
-			map[string]any{"channel_section_id": "L0FAKEDM", "name": "", "type": "direct_messages"},
-			map[string]any{"channel_section_id": "L0FAKETMP", "name": "", "type": "temporary_channels"})
-		return ok("channel_sections", secs)
+			"dm_recency_sort_rollout": g("without_edu"), "reskin_custom_responses": g("on"), "temp_join_channel": g("on"),
+			"sidebar_section_search": g("on"), "add_channels_channel_sections_slackathon": g("on"), "mute_channel_edu": g("on")})
 	case "users.prefs.get":
 		s.prefsMu.Lock()
 		m := make(map[string]any, len(s.prefs))

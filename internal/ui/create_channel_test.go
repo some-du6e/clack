@@ -111,12 +111,12 @@ func TestCreateChannelEntryPoints(t *testing.T) {
 
 	// the rail's + (Create menu)
 	a.openCreateMenu(image.Rect(0, 0, 36, 36))
-	if s := menuLabels(got); s != "Create | Message | Channel" {
+	if s := menuLabels(got); !strings.HasPrefix(s, "Create | Message | Channel | Huddle | Canvas") {
 		t.Errorf("Create menu: %s", s)
 	}
 	opens("rail + → Channel", pick("Channel"))
 
-	// section headings
+	// section headings (the whole menus: section_menu_test.go)
 	byType := map[string]*sbSection{}
 	for i := range a.model().Sections {
 		s := &a.model().Sections[i]
@@ -124,12 +124,7 @@ func TestCreateChannelEntryPoints(t *testing.T) {
 			byType[s.Type] = s
 		}
 	}
-	for typ, want := range map[string]string{
-		"channels":        "Channels | Create a channel | Browse channels",
-		"standard":        byTypeName(byType, "standard") + " | Create a channel",
-		"stars":           "Starred | Create a channel",
-		"direct_messages": "",
-	} {
+	for typ, want := range map[string]bool{"channels": true, "standard": true, "stars": true, "direct_messages": false} {
 		sec := byType[typ]
 		if sec == nil {
 			t.Errorf("no %s section", typ)
@@ -137,11 +132,15 @@ func TestCreateChannelEntryPoints(t *testing.T) {
 		}
 		got = nil
 		a.openSectionMenu(sec.ID, image.Pt(10, 10))
-		if s := menuLabels(got); s != want {
-			t.Errorf("%s heading menu: %q, want %q", typ, s, want)
+		has := strings.Contains(menuLabels(got), "| Create a channel |")
+		if has != want {
+			t.Errorf("%s heading menu %q: Create a channel %v, want %v", typ, menuLabels(got), has, want)
 		}
-		if want != "" {
+		if want {
 			opens(typ+" heading → Create a channel", pick("Create a channel"))
+		}
+		if typ == "channels" && !strings.Contains(menuLabels(got), "Browse channels") {
+			t.Errorf("Channels heading menu has no Browse channels: %s", menuLabels(got))
 		}
 	}
 

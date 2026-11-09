@@ -22,6 +22,7 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/text"
 	"gioui.org/unit"
+	"gioui.org/widget"
 	"gioui.org/x/explorer"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
@@ -716,12 +717,29 @@ func (a *App) layoutOverlays(gtx layout.Context) {
 type toastState struct {
 	text  string
 	until time.Time
+	undo  func()            // ToastUndo's action ("" button when nil)
+	btn   *widget.Clickable // its "Undo"
 }
 
 // Toast shows a short message at the bottom of the window.
 func (a *App) Toast(text string) {
 	a.toast = toastState{text: text, until: time.Now().Add(3500 * time.Millisecond)}
 	a.Invalidate()
+}
+
+// ToastUndo is Slack's toast with an "Undo" button (sections deleted,
+// conversations muted or marked read); undo runs once, on click.
+func (a *App) ToastUndo(text string, undo func()) {
+	a.toast = toastState{text: text, until: time.Now().Add(6 * time.Second), undo: undo, btn: new(widget.Clickable)}
+	a.Invalidate()
+}
+
+// undoToast clicks the toast's Undo (tests).
+func (a *App) undoToast() {
+	if u := a.toast.undo; u != nil {
+		a.toast = toastState{}
+		u()
+	}
 }
 
 func (a *App) layoutToast(gtx layout.Context) {
@@ -734,13 +752,21 @@ func (a *App) layoutToast(gtx layout.Context) {
 		return
 	}
 	gtx.Execute(op.InvalidateCmd{At: a.toast.until})
+	if a.toast.btn != nil && a.toast.btn.Clicked(gtx) {
+		a.undoToast()
+		return
+	}
 	sz := gtx.Constraints.Max
 	c := &a.th.C
 	tw := a.th.Measure(gtx, 15, theme.Bold, a.toast.text)
-	if max := sz.X - gtx.Dp(80); tw > max {
+	uw := 0
+	if a.toast.undo != nil {
+		uw = a.th.Measure(gtx, 15, theme.Bold, "Undo") + gtx.Dp(16)
+	}
+	if max := sz.X - gtx.Dp(80) - uw; tw > max {
 		tw = max
 	}
-	w, h := tw+gtx.Dp(32), gtx.Dp(44)
+	w, h := tw+uw+gtx.Dp(32), gtx.Dp(44)
 	r := image.Rect((sz.X-w)/2, sz.Y-h-gtx.Dp(28), (sz.X+w)/2, sz.Y-gtx.Dp(28))
 	theme.Shadow(gtx, r, gtx.Dp(8), gtx.Dp(6), theme.WithAlpha(c.PanelShadow, 0x40))
 	theme.RRect(gtx, r, gtx.Dp(8), c.Tooltip)
@@ -749,6 +775,15 @@ func (a *App) layoutToast(gtx layout.Context) {
 			return a.th.Label(gtx, 15, theme.Bold, c.TooltipText, a.toast.text)
 		})
 	})
+	if a.toast.undo != nil {
+		at(gtx, image.Pt(r.Max.X-gtx.Dp(16)-uw+gtx.Dp(16), r.Min.Y), image.Pt(uw-gtx.Dp(16), h), func(gtx layout.Context) layout.Dimensions {
+			return a.toast.btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
+					return a.th.Label(gtx, 15, theme.Bold, c.Link, "Undo")
+				})
+			})
+		})
+	}
 }
 
 // ---- frame stats (for the speed report) ----

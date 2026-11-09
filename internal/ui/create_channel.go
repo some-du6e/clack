@@ -9,6 +9,7 @@ import (
 	"gioui.org/op/clip"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/ctxclick"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 )
 
 // Where Slack's web client (build a84662d2d135, 2026-11-08) opens its
@@ -18,17 +19,14 @@ import (
 //   - The Channels section's footer row "Add channels" (boot-render, the
 //     sidebar's add-more link): a menu with "Create a new channel" and
 //     "Browse channels" (entryPoint channel_sidebar_add_more).
-//   - A section heading's ⋯ and right-click menus
-//     (getSectionHeadingEllipsisMenuTemplate / …ContextMenuTemplate): the
-//     section's name, then "Create a channel" for Channels, custom and
-//     Starred sections (the new channel stays in that section), and
-//     "Browse channels" for Channels.
+//   - A section heading's ⋯ and right-click menus: "Create a channel" for
+//     Channels, custom and Starred sections (the new channel stays in that
+//     section), and "Browse channels" for Channels (section_menu.go has
+//     the whole menus).
 //   - The Channels heading's hover "+" (SectionMenuPlusButton, tooltip
 //     "Create a channel"): straight to the modal.
-//   - The rail's "+" (the IA4 Create menu, 360px, header "Create"):
-//     "Message" (Start a conversation in a DM or channel, Ctrl+N) and
-//     "Channel" (Start a group conversation by topic). Huddle, Canvas, List
-//     and Workflow rows are left out: Clack can't create those.
+//   - The rail's "+" (the IA4 Create menu): "Channel" (openCreateMenu has
+//     the whole menu).
 //   - The channel browser's "Create Channel" (Directories → Channels).
 
 var (
@@ -68,33 +66,60 @@ func (a *App) openAddChannelsMenu(anchor image.Point) {
 	})
 }
 
-// openCreateMenu is the rail "+" Create menu.
+// openCreateMenu is the rail "+" Create menu (boot-render CreateMenu +
+// nx8t useCreateMenuActions; 360px, header "Create"). Rows and gates:
+//
+//   - Message (compose; "Start a conversation in a DM or channel", Ctrl+N).
+//   - Channel (channel; "Start a group conversation by topic"), for users
+//     who may create channels.
+//   - Huddle (headphones; "Start a video or audio chat"; huddles enabled,
+//     not frontline): Slack opens HuddleInviteStartModal, "Start a
+//     Huddle", and starts the huddle in the picked conversation.
+//   - Canvas (add-channel-canvas; "Create and share content", Ctrl+Shift+N
+//     on paid teams): createAndOpenDocInNewWindow, a standalone canvas.
+//   - List (lists; "Track and manage projects"; lists enabled).
+//   - Workflow (play; "Automate everyday tasks"; who may build workflows):
+//     Workflow Builder.
+//   - Notes (microphone; "Record meeting notes"; meeting_assistant, off for
+//     the test account).
+//   - a separator, then "Invite people" (user-add) for users who may
+//     invite; "Workspace" only on SPF non-work workspaces.
+//
+// Clack draws every row the account has. Lists, Workflow Builder, meeting
+// notes and invitations have no Clack screens yet, so those rows say so in
+// a toast, like Clack's other unavailable features, instead of doing
+// nothing.
 func (a *App) openCreateMenu(anchor image.Rectangle) {
-	a.menuAt(anchor, 2, 360, []MenuItem{
-		{Label: "Create", Disabled: true},
-		{Label: "Message", Icon: "compose", Subtitle: "Start a conversation in a DM or channel", Hint: "Ctrl+N", Do: a.compose},
-		{Label: "Channel", Icon: "channel", Subtitle: "Start a group conversation by topic", Do: a.OpenCreateChannel},
-	})
+	unavailable := func(what string) func() {
+		return func() { a.Toast(what + " in " + AppName + " yet") }
+	}
+	items := []MenuItem{
+		{Label: "Create", Header: true},
+		{Key: "compose", Label: "Message", Icon: "compose", Subtitle: "Start a conversation in a DM or channel", Hint: "Ctrl+N", Do: a.compose},
+		{Key: "create-channel", Label: "Channel", Icon: "channel", Subtitle: "Start a group conversation by topic", Do: a.OpenCreateChannel},
+		{Key: "start_huddle", Label: "Huddle", Icon: "headphones", Subtitle: "Start a video or audio chat", Do: a.openHuddleStart},
+		{Key: "create_canvas", Label: "Canvas", Icon: "canvas", Subtitle: "Create and share content", Hint: "Ctrl+Shift+N", Do: a.CreateCanvas},
+		{Key: "create_list", Label: "List", Icon: "list-tab", Subtitle: "Track and manage projects", Do: unavailable("Lists aren’t available")},
+		{Key: "create-workflow", Label: "Workflow", Icon: "play", Subtitle: "Automate everyday tasks", Do: unavailable("Workflow Builder isn’t available")},
+	}
+	if a.exp("meeting_assistant") == "on" {
+		items = append(items, MenuItem{Key: "create-notes", Label: "Notes", Icon: "microphone", Subtitle: "Record meeting notes",
+			Do: unavailable("Meeting notes aren’t available")})
+	}
+	items = append(items, MenuItem{Divider: true},
+		MenuItem{Key: "invite", Label: "Invite people", Icon: "user-add", Do: unavailable("Inviting people isn’t available")})
+	a.menuAt(anchor, 2, 360, items)
 }
 
-// sectionMenuItems is what a section heading's menu offers here.
-func (a *App) sectionMenuItems(sec *sbSection) []MenuItem {
-	var items []MenuItem
-	switch sec.Type {
-	case "channels", "standard", "stars":
-		id := sec.ID
-		if sec.Type == "channels" {
-			id = ""
-		}
-		items = append(items, MenuItem{Label: "Create a channel", Icon: "channel", Do: func() { a.openCreateChannel(id) }})
+// openHuddleStart is the Create menu's Huddle: "Start a Huddle" picks the
+// conversation, then the huddle starts there (StartHuddle, the same path
+// as a channel header's huddle button).
+func (a *App) openHuddleStart() {
+	if a.Core() == nil {
+		a.Toast("Sign in to start a huddle")
+		return
 	}
-	if sec.Type == "channels" {
-		items = append(items, MenuItem{Label: "Browse channels", Icon: "search", Do: func() { a.Navigate("directories?tab=channels") }})
-	}
-	if len(items) == 0 {
-		return nil
-	}
-	return append([]MenuItem{{Label: sec.Name, Disabled: true}}, items...)
+	a.ShowOverlay(popups.NewHuddleStartModal(a, a.sidebarConvs(), a.StartHuddle))
 }
 
 func (a *App) sectionByID(id string) *sbSection {
@@ -105,17 +130,6 @@ func (a *App) sectionByID(id string) *sbSection {
 		}
 	}
 	return nil
-}
-
-// openSectionMenu opens a heading's menu at anchor.
-func (a *App) openSectionMenu(id string, anchor image.Point) {
-	sec := a.sectionByID(id)
-	if sec == nil {
-		return
-	}
-	if items := a.sectionMenuItems(sec); items != nil {
-		a.menu(anchor, items)
-	}
 }
 
 // sbHeadingTag is a heading's right-click tag.
@@ -142,7 +156,7 @@ func (a *App) sbHeadingControls(gtx layout.Context, r *sbRow, hovered bool, sz i
 			break
 		}
 		if e, ok := ev.(pointer.Event); ok && ctxclick.Press(e) {
-			a.openSectionMenu(r.key, a.ptrWin)
+			a.openSectionContextMenu(r.key, a.ptrWin)
 		}
 	}
 	func() {
