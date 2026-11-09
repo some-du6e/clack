@@ -97,6 +97,9 @@ type Options struct {
 	// LogTail returns up to n of the newest redacted log lines, for Copy
 	// Diagnostics. Called off the UI goroutine. Nil: none.
 	LogTail func(n int) []string
+	// Demo, when set, is the "Demo workspace" banner's text (`clack
+	// demo`): it stays above the workspace and the title says (Demo).
+	Demo string
 }
 
 // SetLogin shows the sign-in screen, calling login on submit.
@@ -495,7 +498,9 @@ func (a *App) frame(gtx layout.Context) {
 	if a.sidebar.hidden || pageOwnsWorkspace(a.router.Current()) {
 		sbW = 0
 	}
-	bannerH := a.realtimeAskH(gtx) // the workspace starts below the live-updates question
+	bannerH := a.realtimeAskH(gtx)   // the workspace starts below the live-updates question
+	demoH := a.demoBannerHeight(gtx) // `clack demo` (demo_banner.go)
+	bannerH += demoH
 	ws := image.Rect(railW, navH+bannerH, sz.X-inset, sz.Y-inset)
 	primary := image.Rect(ws.Min.X+sbW, ws.Min.Y, ws.Max.X, ws.Max.Y)
 	a.primaryOrigin = primary.Min
@@ -523,8 +528,11 @@ func (a *App) frame(gtx layout.Context) {
 	a.layoutTopNav(gtx, navX, sz.X)
 	a.layoutRail(gtx, navH, sz.Y-navH)
 	a.th.Chrome = false
-	if bannerH > 0 {
-		a.layoutRealtimeBanner(gtx, image.Rect(ws.Min.X, navH, ws.Max.X, ws.Min.Y-gtx.Dp(bannerGap)))
+	if demoH > 0 {
+		a.layoutDemoBanner(gtx, image.Rect(ws.Min.X, navH, ws.Max.X, navH+demoH-gtx.Dp(bannerGap)))
+	}
+	if bannerH > demoH {
+		a.layoutRealtimeBanner(gtx, image.Rect(ws.Min.X, navH+demoH, ws.Max.X, ws.Min.Y-gtx.Dp(bannerGap)))
 	}
 
 	// workspace: sidebar (translucent) + primary panel, one rounded unit

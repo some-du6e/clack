@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strings"
 	"sync/atomic"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/slack/tlsfp"
 )
 
 // Clack tells Slack what it is. Every request it makes to Slack (Web API,
@@ -87,6 +89,9 @@ func HonestHeaders(h http.Header) {
 type honestTransport struct{ base http.RoundTripper }
 
 func (t honestTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if err := tlsfp.CheckURL(req.URL); err != nil { // `clack demo`: loopback only
+		return nil, err
+	}
 	if !honestAlready(req.Header) {
 		r := req.Clone(req.Context()) // a RoundTripper mustn't change the caller's request
 		HonestHeaders(r.Header)

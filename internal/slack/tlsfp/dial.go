@@ -36,6 +36,9 @@ type Dialer struct {
 }
 
 func (d *Dialer) tcp(ctx context.Context, network, addr string) (net.Conn, error) {
+	if err := CheckAddr(addr); err != nil { // loopback.go
+		return nil, err
+	}
 	if d.Dial != nil {
 		return d.Dial(ctx, network, addr)
 	}
@@ -67,7 +70,7 @@ func (d *Dialer) DialTLSContext(ctx context.Context, network, addr string) (net.
 // proxy d.Proxy picks for https://addr.
 func (d *Dialer) conn(ctx context.Context, network, addr string) (net.Conn, error) {
 	var pu *url.URL
-	if d.Proxy != nil {
+	if d.Proxy != nil && !IsLoopbackOnly() {
 		var err error
 		pu, err = d.Proxy(&http.Request{Method: http.MethodConnect, URL: &url.URL{Scheme: "https", Host: addr}, Header: http.Header{}})
 		if err != nil {

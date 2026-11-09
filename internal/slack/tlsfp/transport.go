@@ -37,7 +37,7 @@ func NewTransport(d *Dialer) *http.Transport {
 			// https goes through DialTLSContext, which does its own
 			// CONNECT: Go's transport would run crypto/tls inside the
 			// tunnel instead of our dialer.
-			if d.Proxy == nil || r.URL.Scheme == "https" {
+			if d.Proxy == nil || r.URL.Scheme == "https" || IsLoopbackOnly() {
 				return nil, nil
 			}
 			return d.Proxy(r)
@@ -77,6 +77,9 @@ type mixed struct {
 }
 
 func (m mixed) RoundTrip(r *http.Request) (*http.Response, error) {
+	if err := CheckURL(r.URL); err != nil { // loopback.go
+		return nil, err
+	}
 	if r.URL != nil && SlackHost(r.URL.Hostname()) {
 		return m.slack.RoundTrip(r)
 	}
