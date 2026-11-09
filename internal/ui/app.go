@@ -195,6 +195,7 @@ type App struct {
 	updWake        chan struct{}              // focus came back: is a check due? (cap 1)
 	hud            *huddleui.Controller       // the native huddle (huddle_wire.go)
 	hudOrigin      map[string]*originTracker  // headers' huddle buttons by channel (caret menus)
+	starOrigin     map[string]*originTracker  // headers' star buttons by channel (the Move to… menu)
 	skipBody       int                        // tests: frames drawViewBody leaves the body out
 	skipAt         time.Time                  // tests: the frame being skipped
 	noKeepBody     bool                       // tests: no keepBody (KeepFocus alone)

@@ -19,6 +19,12 @@ import (
 var (
 	// OpenChannelDetails opens the channel details pane for convID.
 	OpenChannelDetails func(convID string)
+	// OpenChannelSettings opens channel details on its Settings tab (the
+	// channel menu's "Edit settings").
+	OpenChannelSettings func(convID string)
+	// MoveChannel opens the "Move to…" section picker for convID at anchor
+	// (window coordinates; the channel menu's "Move channel").
+	MoveChannel func(convID string, anchor image.Point)
 	// OpenPreferences opens the preferences view.
 	OpenPreferences func()
 	// SignOut signs out (forgets credentials).
@@ -130,13 +136,30 @@ func newChannelMenu(h Host, anchor image.Point, convID string, alignRight bool) 
 			return starLabel
 		}), Do: func() { actToggleStar(h, convID, noun) }},
 	}
-	if !dm {
-		items = append(items, MenuItem{Label: "Move channel", Do: actToast(h, "Moving channels between sections isn't supported yet")})
+	if !dm && !c.Preview {
+		items = append(items, MenuItem{Label: "Move channel", Do: func() {
+			if MoveChannel != nil {
+				MoveChannel(convID, anchor)
+				return
+			}
+			h.Toast("Moving channels between sections isn't supported yet")
+		}})
+	}
+	if c.Preview {
+		// Slack's menu for a channel you aren't in: no Star, Move or Leave
+		// (C08E083LZ9A, 2026-11-08).
+		items = items[:2]
 	}
 	items = append(items,
 		Sep(),
-		MenuItem{Label: "Add a workflow", Do: actToast(h, "Workflows aren't supported in yoloslack")},
-		MenuItem{Label: "Edit settings", Do: actToast(h, "Channel settings aren't supported yet")},
+		MenuItem{Label: "Add a workflow", Do: actToast(h, "Workflows aren't supported in Clack yet")},
+		MenuItem{Label: "Edit settings", Do: func() {
+			if OpenChannelSettings != nil {
+				OpenChannelSettings(convID)
+				return
+			}
+			details()
+		}},
 		Sep(),
 		MenuItem{Label: "Open in split view", Icon: "panel-right", Do: func() {
 			// ui-shell's *ui.App exposes OpenSplit (right-hand pane).
@@ -156,9 +179,12 @@ func newChannelMenu(h Host, anchor image.Point, convID string, alignRight bool) 
 			return muteLabel
 		}), Do: func() { actToggleMute(h, convID, noun) }})
 	}
-	if dm {
+	switch {
+	case c.Preview:
+		items = items[:len(items)-1] // the trailing separator: no Leave
+	case dm:
 		items = append(items, MenuItem{Label: "Close conversation", Do: func() { actLeave(h, convID, "Conversation closed") }})
-	} else {
+	default:
 		items = append(items, MenuItem{Label: "Leave channel", Danger: true, Do: func() {
 			msg := "You can rejoin this channel at any time."
 			if c.Kind == "private" {

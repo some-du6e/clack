@@ -220,7 +220,10 @@ type Directories struct {
 	confNo  widget.Clickable
 	menuID  string // channel whose Join/Leave caret menu is open
 	rowMenu dirDropdown
-	purp    map[string]string // plainPurpose cache
+	purp    map[string]string   // plainPurpose cache
+	reset   [3]widget.Clickable // the filter bar's "Reset" (People, Channels)
+	// purpSpans caches purposes as rich first-line spans (purposeSpans).
+	purpSpans richLineCache
 	// Channel filters (server-side, core.ChannelBrowseOpts): membership
 	// scope and channel type.
 	chanScope dirDropdown
@@ -361,6 +364,22 @@ func (d *Directories) update(gtx C) {
 	}
 	if d.sorts[t].update(gtx) {
 		d.load(t, q)
+	}
+	if d.reset[t].Clicked(gtx) {
+		// Slack's "Reset": every filter back to its default, sort too
+		changed := d.sorts[t].sel != 0
+		d.sorts[t].sel = 0
+		switch t {
+		case dirTabPeople:
+			changed = changed || d.acct.sel != 0
+			d.acct.sel = 0
+		case dirTabChannels:
+			changed = changed || d.chanScope.sel != 0 || d.chanType.sel != 0
+			d.chanScope.sel, d.chanType.sel = 0, 0
+		}
+		if changed {
+			d.load(t, q)
+		}
 	}
 	switch t {
 	case dirTabPeople:
@@ -750,6 +769,11 @@ func (d *Directories) filterBar(gtx C, t int) D {
 			ch = append(ch,
 				layout.Rigid(func(gtx C) D { return dirFilterBtn(&d.base, gtx, c, icon, f.label, f.caret) }),
 				hgap(8))
+		}
+		if t != dirTabGroups {
+			// Slack: "Reset", 13px link, 8px after the last filter (shown
+			// with the defaults too; C0CFT52NEGM's browser, 2026-11-08)
+			ch = append(ch, layout.Rigid(func(gtx C) D { return cdLinkReg(&d.base, gtx, &d.reset[t], 13, "Reset") }))
 		}
 		ch = append(ch,
 			layout.Flexed(1, func(gtx C) D { return D{Size: image.Pt(gtx.Constraints.Min.X, 0)} }),
@@ -1287,10 +1311,16 @@ func (d *Directories) chanMeta(gtx C, ch core.ChannelHit) D {
 	if ch.NumMembers > 0 {
 		add(layout.Rigid(func(gtx C) D { return d.label(gtx, 13, wReg, d.p.Sec, dirMembers(ch.NumMembers)) }))
 	}
-	if p := d.plainPurpose(ch.Purpose); p != "" {
-		add(layout.Flexed(1, func(gtx C) D {
-			return dirFill(gtx, func(gtx C) D { return d.label(gtx, 13, wReg, d.p.Sec, p) })
-		}))
+	if strings.TrimSpace(ch.Purpose) != "" {
+		if spans := d.purposeSpans(gtx.Now, ch.Purpose); len(spans) > 0 {
+			add(layout.Flexed(1, func(gtx C) D {
+				return dirFill(gtx, func(gtx C) D { return d.spanLine(gtx, spans, 13, d.p.Sec) })
+			}))
+		} else if p := d.plainPurpose(ch.Purpose); p != "" {
+			add(layout.Flexed(1, func(gtx C) D {
+				return dirFill(gtx, func(gtx C) D { return d.label(gtx, 13, wReg, d.p.Sec, p) })
+			}))
+		}
 	}
 	return row(gtx, layout.Middle, parts...)
 }
@@ -1302,6 +1332,19 @@ func (d *Directories) joinedColor() color.NRGBA {
 		return d.p.Presence
 	}
 	return d.p.Green
+}
+
+// purposeSpans is a purpose's first line as rich spans (Slack's browser
+// rows render the purpose's mrkdwn: emoji, channel names, links).
+func (d *Directories) purposeSpans(now time.Time, raw string) []richtext.Span {
+	c := d.h.Core()
+	if c == nil {
+		return nil
+	}
+	if d.purpSpans == nil || len(d.purpSpans) > 2000 {
+		d.purpSpans = richLineCache{}
+	}
+	return d.purpSpans.get(raw, c.Mrkdwn, now)
 }
 
 // plainPurpose renders a purpose's mrkdwn (<#C…>, <@U…>, <url|label>) to

@@ -81,6 +81,12 @@ func init() {
 		a.ShowOverlay(detailsOverlay{views.NewChannelDetails(a, ch)})
 		return true
 	}
+	openDetailsTab = func(a *App, ch, tab string) bool {
+		d := views.NewChannelDetails(a, ch)
+		d.ShowTab(tab)
+		a.ShowOverlay(detailsOverlay{d})
+		return true
+	}
 	mkProfile = func(a *App, user string) View { return popups.NewProfileView(a, user) }
 	mkSwitcher = func(a *App) Overlay { return popups.NewQuickSwitcher(a) }
 	mkSearch = func(a *App, q string) Overlay { return popups.NewSearchPopover(a, q, a.searchPill) }
@@ -124,6 +130,10 @@ func init() {
 		popups.OpenFullProfile = func(uid string) { a.OpenUserProfile(uid) }
 		popups.OpenOwnProfile = func() { a.OpenUserProfile(a.model().SelfID) }
 		popups.OpenChannelDetails = func(ch string) { a.OpenDetails(ch) }
+		popups.OpenChannelSettings = func(ch string) { a.OpenDetailsTab(ch, "Settings") }
+		popups.MoveChannel = func(ch string, anchor image.Point) {
+			a.openMoveToMenu(ch, image.Rectangle{Min: anchor, Max: anchor}, true)
+		}
 		popups.OpenPreferences = func() { a.openPrefs() }
 		popups.OpenPreferencesSection = func(sec string) { a.openPrefsSection(sec) }
 		popups.SignOut = func() { a.signOut() }

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
@@ -510,6 +511,52 @@ func (a *App) Members(ctx context.Context, ch, marker string, peopleOnly bool) (
 	return out, next, nil
 }
 
+// ChannelApp is a row of the channel details "Agents & apps" tab: the bot
+// user, its badge (AGENT for agent_status consistently_an_agent, else
+// APP) and the app's tagline (apps.profile.get).
+type ChannelApp struct {
+	User    User
+	Badge   string // core.BadgeAgent | core.BadgeApp
+	Tagline string
+}
+
+// channelAppTaglines bounds the apps.profile.get calls one tab makes.
+const channelAppTaglines = 30
+
+// ChannelApps lists the agents and apps in a channel (edge users/list
+// filter "apps", users_by_realname order), with each app's tagline.
+func (a *App) ChannelApps(ctx context.Context, ch string) ([]ChannelApp, error) {
+	us, _, err := a.C.ChannelApps(ctx, ch, "", 100)
+	if err != nil {
+		return nil, err
+	}
+	a.S.PutUsers(us)
+	out := make([]ChannelApp, len(us))
+	sem := make(chan struct{}, 4)
+	var wg sync.WaitGroup
+	for i := range us {
+		u := a.userOf(&us[i])
+		out[i] = ChannelApp{User: u, Badge: BadgeApp}
+		if u.Agent || u.Agentforce {
+			out[i].Badge = BadgeAgent
+		}
+		if i >= channelAppTaglines || (u.BotID == "" && u.AppID == "") {
+			continue
+		}
+		wg.Add(1)
+		go func(i int, id string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if card, err := a.AppCardOf(ctx, id, ""); err == nil {
+				out[i].Tagline = card.Tagline
+			}
+		}(i, u.ID)
+	}
+	wg.Wait()
+	return out, nil
+}
+
 // Pins lists a conversation's pinned items.
 func (a *App) Pins(ctx context.Context, ch string) ([]Pin, error) {
 	var res struct {
@@ -587,6 +634,16 @@ func (a *App) ChannelInfo(ctx context.Context, ch string) (ChannelDetails, error
 		mgrs = ms
 	}
 	d := ChannelDetails{Conv: a.conv(c), Managers: mgrs, IsMember: c.IsMember || c.IsIM, IsOrgShared: c.IsOrgShared, IsExtShared: c.IsExtShared, LastRead: c.LastRead}
+	d.Teams = c.InternalTeamIDs
+	if len(d.Teams) == 0 && c.ContextTeamID != "" {
+		d.Teams = []string{c.ContextTeamID}
+	}
+	if len(d.Teams) > 8 {
+		d.Teams = d.Teams[:8]
+	}
+	for _, t := range d.Teams {
+		a.EnsureTeam(ctx, t)
+	}
 	if c.Topic != nil {
 		d.TopicSetBy, d.TopicSetAt = c.Topic.Creator, c.Topic.LastSet
 	}

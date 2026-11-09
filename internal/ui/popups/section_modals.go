@@ -242,6 +242,10 @@ type CreateSectionOpts struct {
 	EditName   string
 	Candidates []SectionConv
 	Selected   []string // Edit: the section's conversations
+	// Preselect picks conversations on step 2 of a new section (Slack's
+	// openCreateChannelSectionModal channelIds: "Move channel" and the
+	// header star's "Create new section").
+	Preselect []string
 	// DefaultSort is the user's global sort (channel_sort): default |
 	// recent | priority, tagged "Your default".
 	DefaultSort string
@@ -301,6 +305,9 @@ func NewCreateSectionModal(h Host, o CreateSectionOpts) *CreateSectionModal {
 	}
 	for _, id := range o.Selected {
 		m.picked[id], m.initial[id] = true, true
+	}
+	for _, id := range o.Preselect {
+		m.picked[id] = true
 	}
 	m.create = &ModalButton{Label: "Create and Add Channels", Kind: BtnPrimary, Enabled: m.CanCreate, Do: func() bool { m.Create(); return false }}
 	m.skip = &ModalButton{Label: "Skip", Kind: BtnOutline, Do: func() bool { m.finish(0); return true }}

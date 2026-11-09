@@ -199,12 +199,6 @@ func (a *App) compose() {
 	a.openSwitcher()
 }
 
-func (a *App) toggleStar(ch string) {
-	if a.data != nil {
-		a.data.toggleStar(ch)
-	}
-}
-
 func (a *App) markRead(ch string) {
 	if a.data != nil && ch != "" {
 		a.data.markRead(ch)

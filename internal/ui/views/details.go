@@ -10,6 +10,7 @@ package views
 import (
 	"context"
 	"image"
+	"image/color"
 	"io"
 	"net/url"
 	"strings"
@@ -95,6 +96,7 @@ type ChannelDetails struct {
 
 	managers async[[]string]
 	counts   async[core.MemberCounts]
+	apps     async[[]core.ChannelApp] // Agents & apps (core.ChannelApps)
 	tabList  async[[]core.Tab]
 
 	// Add people (Members tab): an inline people search with Add buttons.
@@ -123,6 +125,7 @@ type ChannelDetails struct {
 	viewProfile, moreMembers        widget.Clickable
 	addApp, addWorkflow             widget.Clickable
 	huddleStart, huddleLink         widget.Clickable
+	orgLearn                        widget.Clickable // "Workspaces with access": Learn more
 
 	editing      bool
 	editKind     int // cdEditTopic | cdEditPurpose | cdEditName
@@ -171,6 +174,22 @@ func NewChannelDetails(h Host, channelID string) *ChannelDetails {
 	}
 	d.setTabs()
 	return d
+}
+
+// ShowTab selects the tab labelled label ("Settings": the channel menu's
+// "Edit settings"); unknown labels keep About.
+func (d *ChannelDetails) ShowTab(label string) {
+	for i, k := range d.tabKinds {
+		if cdTabLabels[k] == label {
+			d.tab.Sel = i
+			return
+		}
+	}
+}
+
+// Tab is the selected tab's label.
+func (d *ChannelDetails) Tab() string {
+	return cdTabLabels[d.tabKinds[min(d.tab.Sel, len(d.tabKinds)-1)]]
 }
 
 // Closed reports whether the dialog was dismissed (views.Closer). It also
@@ -285,11 +304,16 @@ func (d *ChannelDetails) loadMembers(marker string) {
 		cur, _, _ := d.members.get()
 		prev = append([]core.User(nil), cur.users...)
 	}
-	c, id := d.h.Core(), d.id
+	c, id, self, first := d.h.Core(), d.id, d.selfID(), marker == ""
 	d.members.load(d.h, true, func(ctx context.Context) (cdMembersPage, error) {
-		us, next, err := c.Members(ctx, id, marker, false)
+		// Slack's Members tab is people only (MEMBER_LIST filter "everyone
+		// AND NOT bots AND NOT apps"); bots and apps are Agents & apps.
+		us, next, err := c.Members(ctx, id, marker, true)
 		if err != nil {
 			return cdMembersPage{}, err
+		}
+		if first {
+			us = cdSelfFirst(us, self)
 		}
 		return cdMembersPage{users: append(prev, us...), next: next}, nil
 	})
@@ -456,6 +480,10 @@ func (d *ChannelDetails) update(gtx C) {
 		if c.Clicked(gtx) {
 			d.h.Toast(cdUnsupported)
 		}
+	}
+	if d.orgLearn.Clicked(gtx) {
+		// Slack's HelpLink articleId 0x1ac69e1923
+		hostHandler{d.h}.OpenURL("https://slack.com/help/articles/115001399587")
 	}
 	if d.addPeople.Clicked(gtx) {
 		// 1:1 and group DMs: like Slack, adding people opens the group DM of
@@ -736,6 +764,13 @@ func (d *ChannelDetails) head(gtx C, inf core.ChannelDetails, loaded bool) D {
 	dirAt(gtx, image.Pt(gtx.Dp(cdPadX-8), tabY), func(gtx C) D {
 		counts := make([]string, len(d.tabKinds))
 		for i, k := range d.tabKinds {
+			if k == cdApps {
+				// Slack: "Agents & apps 7", users/counts apps
+				if mc, ok, _ := d.counts.get(); ok && mc.Apps > 0 {
+					counts[i] = humanCount(mc.Apps)
+				}
+				continue
+			}
 			if k != cdMembers {
 				continue
 			}
@@ -862,7 +897,7 @@ func (d *ChannelDetails) bodyArea(gtx C) D {
 	case cdAbout:
 		items = d.aboutItems(inf)
 	case cdApps:
-		items = d.sectionItems("Apps", "Bring the tools you need into this channel to pull reports, start calls, file tickets and more.", "Add an App", &d.addApp)
+		items = d.appsItems()
 	case cdAutomations:
 		items = d.sectionItems("Workflows", "Automate routine tasks in this channel with workflows.", "Add a Workflow", &d.addWorkflow)
 	case cdTabs:
@@ -946,6 +981,17 @@ func (d *ChannelDetails) cdField(gtx C, label string, edit *widget.Clickable, va
 	})
 }
 
+// cdFieldW is cdField with a drawn label (no Edit).
+func (d *ChannelDetails) cdFieldW(gtx C, label, value W) D {
+	return layout.Inset{Top: 16, Bottom: 16, Left: 20, Right: 20}.Layout(gtx, func(gtx C) D {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		return col(gtx,
+			layout.Rigid(func(gtx C) D { return dirFill(gtx, label) }),
+			layout.Rigid(func(gtx C) D { return dirFill(gtx, value) }),
+		)
+	})
+}
+
 // cdLink is a bold link button (underlined on hover).
 func cdLink(b *base, gtx C, c *widget.Clickable, size unit.Sp, label string) D {
 	return c.Layout(gtx, func(gtx C) D {
@@ -995,6 +1041,9 @@ func (d *ChannelDetails) aboutItems(inf core.ChannelDetails) []W {
 		items = append(items, cdGap(16), d.cdCard(d.emailsField))
 	default:
 		rows := []W{topic, func(gtx C) D { return d.purposeField(gtx, cv) }}
+		if d.showOrgAccess(inf) {
+			rows = append(rows, func(gtx C) D { return d.workspacesField(gtx, inf) })
+		}
 		if mgr := d.managerIDs(); len(mgr) > 0 {
 			rows = append(rows, func(gtx C) D { return d.managedField(gtx, mgr) })
 		}
@@ -1321,6 +1370,34 @@ func (d *ChannelDetails) membersTab(gtx C) D {
 	)
 }
 
+// cdSelfFirst moves the viewer to the top, as Slack's members list has it
+// ("clod (you)" first, then the others in order).
+func cdSelfFirst(us []core.User, self string) []core.User {
+	for i, u := range us {
+		if u.ID == self && i > 0 {
+			out := make([]core.User, 0, len(us))
+			out = append(out, u)
+			out = append(out, us[:i]...)
+			return append(out, us[i+1:]...)
+		}
+	}
+	return us
+}
+
+// cdMemberNames is MediumMemberEntity's names: the primary is the display
+// name (the real name when none is set) and " (you)" for the viewer; the
+// secondary is the real name, shown only after a display name.
+func cdMemberNames(u core.User, self string) (primary, secondary string) {
+	primary = displayName(u)
+	if u.DisplaySet {
+		secondary = u.RealName
+	}
+	if u.ID == self {
+		primary += " (you)"
+	}
+	return primary, secondary
+}
+
 // filtered matches loaded members by name, real name, handle or title and
 // the All / People / Agents select, cached until any input changes.
 func (d *ChannelDetails) filtered(us []core.User, q string, sel int) []core.User {
@@ -1375,13 +1452,10 @@ func (d *ChannelDetails) memberRow(gtx C, u core.User, self string) D {
 	if c.Clicked(gtx) {
 		d.h.OpenProfile(d.press.at, u.ID)
 	}
-	full := dirFirst(u.RealName, displayName(u))
-	if u.ID == self {
-		full += " (you)"
-	}
-	disp := ""
-	if u.Name != "" && u.Name != u.RealName {
-		disp = u.Name
+	full, disp := cdMemberNames(u, self)
+	manager := false
+	for _, m := range d.managerIDs() {
+		manager = manager || m == u.ID
 	}
 	return d.hoverable(gtx, c, false, 0, func(gtx C) D {
 		return layout.Inset{Top: 12, Bottom: 12, Left: cdPadX, Right: cdPadX}.Layout(gtx, func(gtx C) D {
@@ -1430,9 +1504,36 @@ func (d *ChannelDetails) memberRow(gtx C, u core.User, self string) D {
 						})
 					})
 				}),
+				layout.Rigid(func(gtx C) D {
+					if !manager {
+						return D{}
+					}
+					return layout.Inset{Left: 8}.Layout(gtx, d.managerPill)
+				}),
 			)
 		})
 	})
+}
+
+// managerPill is Slack's p-ia_details_popover__channel_manager_indicator:
+// "Channel Manager" 13/18 regular on #1d1c1d@0.06, padding 4px 8px,
+// radius 16 (C0CFT52NEGM, 2026-11-08).
+func (d *ChannelDetails) managerPill(gtx C) D {
+	m := op.Record(gtx.Ops)
+	td := layout.Inset{Top: 4, Bottom: 4, Left: 8, Right: 8}.Layout(gtx, func(gtx C) D {
+		return d.para(gtx, 13, 18, wReg, d.p.Text, 1, "Channel Manager")
+	})
+	call := m.Stop()
+	rrect(gtx, image.Rectangle{Max: td.Size}, gtx.Dp(16), cdPillBg(&d.base))
+	call.Add(gtx.Ops)
+	return td
+}
+
+// cdPillBg is #1d1c1d@0.06 (light) or #d1d2d3@0.06 over the surface.
+func cdPillBg(b *base) color.NRGBA {
+	c := b.p.Text
+	c.A = 0x0f
+	return c
 }
 
 func (d *ChannelDetails) membersFooter(gtx C, q string, filtering, loaded bool, err error, busy bool, next string, shown int) D {
@@ -1458,6 +1559,121 @@ func (d *ChannelDetails) membersFooter(gtx C, q string, filtering, loaded bool, 
 		return msg("No one matches this filter.")
 	}
 	return D{Size: image.Pt(0, gtx.Dp(16))}
+}
+
+// ---- Agents & apps ----
+
+// appsItems is Slack's Agents & apps tab: a field group headed "Agents and
+// apps" with "Add agents and apps" at the right, then one 60px row per
+// agent or app in the channel (36px icon, bold name and its AGENT/APP
+// badge, the app's tagline in 13/18 #5e5d60). With none, the
+// "Bring the tools…" prompt.
+func (d *ChannelDetails) appsItems() []W {
+	if !d.apps.started() {
+		c, id := d.h.Core(), d.id
+		d.apps.load(d.h, false, func(ctx context.Context) ([]core.ChannelApp, error) { return c.ChannelApps(ctx, id) })
+	}
+	apps, loaded, err := d.apps.get()
+	switch {
+	case !loaded:
+		return []W{cdGap(16), d.cdCard(func(gtx C) D {
+			return layout.Inset{Top: 12, Bottom: 12}.Layout(gtx, func(gtx C) D { return d.skeleton(gtx, 3, 36) })
+		})}
+	case err == nil && len(apps) == 0:
+		return d.sectionItems("Apps", "Bring the tools you need into this channel to pull reports, start calls, file tickets and more.", "Add an App", &d.addApp)
+	}
+	head := func(gtx C) D {
+		return layout.Inset{Top: 16, Left: 20, Right: 20, Bottom: 4}.Layout(gtx, func(gtx C) D {
+			gtx.Constraints.Min.X = gtx.Constraints.Max.X
+			return row(gtx, layout.Middle,
+				layout.Flexed(1, func(gtx C) D {
+					return dirFill(gtx, func(gtx C) D { return d.para(gtx, 15, 22, wBold, d.p.Text, 1, "Agents and apps") })
+				}),
+				layout.Rigid(func(gtx C) D { return cdLink(&d.base, gtx, &d.addApp, 13, "Add agents and apps") }),
+			)
+		})
+	}
+	rows := []W{head}
+	if err != nil {
+		rows = append(rows, func(gtx C) D {
+			return layout.Inset{Top: 8, Bottom: 16, Left: 20, Right: 20}.Layout(gtx, func(gtx C) D {
+				return d.para(gtx, 13, 18, wReg, d.p.Muted, 0, "Couldn’t load agents and apps: "+friendlyErr(err))
+			})
+		})
+	}
+	for i := range apps {
+		ap := apps[i]
+		rows = append(rows, func(gtx C) D { return d.appRow(gtx, ap) })
+	}
+	rows = append(rows, cdGap(16))
+	// one card without hairlines between the rows (Slack's p-field--list)
+	card := func(gtx C) D {
+		return layout.Inset{Left: cdPadX, Right: cdPadX}.Layout(gtx, func(gtx C) D {
+			return cdBox(&d.base, gtx, func(gtx C) D {
+				ch := make([]layout.FlexChild, len(rows))
+				for i, r := range rows {
+					r := r
+					ch[i] = layout.Rigid(func(gtx C) D { gtx.Constraints.Min.X = gtx.Constraints.Max.X; return r(gtx) })
+				}
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx, ch...)
+			})
+		})
+	}
+	return []W{cdGap(16), card, cdGap(24)}
+}
+
+// appRow: padding 12, 36px icon (radius 8), 12px gap; bold 15/22 name with
+// the badge 4px after it; the tagline below. Opens the app's card.
+func (d *ChannelDetails) appRow(gtx C, ap core.ChannelApp) D {
+	u := d.viewUser(ap.User)
+	c := dirClick(d.memberClk, "app:"+u.ID)
+	if c.Clicked(gtx) {
+		d.h.OpenProfile(d.press.at, u.ID)
+	}
+	name := dirFirst(u.RealName, displayName(u))
+	return d.hoverable(gtx, c, false, 0, func(gtx C) D {
+		return layout.Inset{Top: 12, Bottom: 12, Left: 12, Right: 12}.Layout(gtx, func(gtx C) D {
+			return row(gtx, layout.Middle,
+				layout.Rigid(func(gtx C) D { return d.avatar(gtx, u.Avatar, 36) }),
+				hgap(12),
+				layout.Flexed(1, func(gtx C) D {
+					return dirFill(gtx, func(gtx C) D {
+						return layout.Inset{Top: -2, Bottom: -2}.Layout(gtx, func(gtx C) D {
+							return col(gtx,
+								layout.Rigid(func(gtx C) D {
+									return row(gtx, layout.Middle,
+										layout.Rigid(func(gtx C) D { return d.para(gtx, 15, 22, wBold, d.p.Text, 1, name) }),
+										layout.Rigid(func(gtx C) D {
+											return layout.Inset{Left: 4}.Layout(gtx, func(gtx C) D { return cdAppBadge(&d.base, gtx, ap.Badge) })
+										}),
+									)
+								}),
+								layout.Rigid(func(gtx C) D {
+									if ap.Tagline == "" {
+										return D{}
+									}
+									return d.para(gtx, 13, 18, wReg, d.p.Muted, 1, oneLine(ap.Tagline))
+								}),
+							)
+						})
+					})
+				}),
+			)
+		})
+	})
+}
+
+// cdAppBadge is c-app_badge: 10px/12.5 bold #454447 on #1d1c1d@0.06,
+// padding 1px 3px, radius 2.
+func cdAppBadge(b *base, gtx C, label string) D {
+	m := op.Record(gtx.Ops)
+	td := layout.Inset{Top: 1, Bottom: 1, Left: 3, Right: 3}.Layout(gtx, func(gtx C) D {
+		return b.para(gtx, 10, 12.5, wBold, b.p.Sec, 1, label)
+	})
+	call := m.Stop()
+	rrect(gtx, image.Rectangle{Max: td.Size}, gtx.Dp(2), cdPillBg(b))
+	call.Add(gtx.Ops)
+	return td
 }
 
 // ---- Tabs ----
@@ -1661,13 +1877,38 @@ func (d *ChannelDetails) settingsItems() []W {
 			return d.para(gtx, 15, 22, wReg, d.p.Text, 1, "#"+inf.Conv.Name)
 		})
 	}
-	return []W{
-		cdGap(16),
-		d.cdCard(name),
-		cdGap(16),
-		d.cdCard(huddles, tabsPerm, setting("Posting permissions", "Choose who can post in this channel.")),
-		cdGap(24),
+	// Slack shows the rename field (isRenameChannelOptionEnabled) and
+	// Posting permissions (postingPermissions.shouldShow) only to people
+	// who may change them: meclod, a plain member of #clack, sees neither
+	// (2026-11-08). Approximated as creator, channel manager or
+	// workspace admin/owner (rename) and manager or admin (posting).
+	mgr, admin, creator := d.selfRoles()
+	var items []W
+	if mgr || admin || creator {
+		items = append(items, cdGap(16), d.cdCard(name))
 	}
+	rows := []W{huddles, tabsPerm}
+	if mgr || admin {
+		rows = append(rows, setting("Posting permissions", "Choose who can post in this channel."))
+	}
+	return append(items, cdGap(16), d.cdCard(rows...), cdGap(24))
+}
+
+// selfRoles: is the viewer one of the channel's managers, a workspace
+// admin or owner, the channel's creator.
+func (d *ChannelDetails) selfRoles() (manager, admin, creator bool) {
+	self := d.selfID()
+	for _, m := range d.managerIDs() {
+		manager = manager || m == self
+	}
+	if c := d.h.Core(); c != nil {
+		if u, ok := c.User(self); ok {
+			admin = u.IsAdmin || u.IsOwner
+		}
+	}
+	inf, _, _ := d.info.get()
+	creator = self != "" && inf.Conv.Creator == self
+	return manager, admin, creator
 }
 
 // ---- core writes: star, notifications, invite; managers, counts ----
@@ -1877,8 +2118,86 @@ func (d *ChannelDetails) managerIDs() []string {
 }
 
 // managedField: "Managed by" then the managers' names as links.
+// showOrgAccess is permissions.manageOrgAccess.shouldShow: on an
+// Enterprise Grid org, for a channel (not a DM) that isn't shared outside
+// the org.
+func (d *ChannelDetails) showOrgAccess(inf core.ChannelDetails) bool {
+	c := d.h.Core()
+	return c != nil && c.C != nil && c.C.Creds.EnterpriseID != "" && cdGroup(d.kind) == "channel" &&
+		!inf.IsExtShared && len(inf.Teams) > 0
+}
+
+// workspacesField is Slack's ManageOrgAccess field for a member who can't
+// change it (isDisabled): title and text in #1d1c1d@0.7, each workspace's
+// 16px icon and name, "Learn more", and the help icon at the right
+// (padding 16px 20px; C0CFT52NEGM, 2026-11-08).
+func (d *ChannelDetails) workspacesField(gtx C, inf core.ChannelDetails) D {
+	dim := d.p.Text
+	dim.A = 0xb3
+	c := d.h.Core()
+	return layout.Inset{Top: 16, Bottom: 16, Left: 20, Right: 20}.Layout(gtx, func(gtx C) D {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		return col(gtx,
+			layout.Rigid(func(gtx C) D {
+				return row(gtx, layout.Start,
+					layout.Flexed(1, func(gtx C) D {
+						return dirFill(gtx, func(gtx C) D {
+							return d.para(gtx, 15, 22, wBold, dim, 1, "Workspaces with access to this channel")
+						})
+					}),
+					layout.Rigid(func(gtx C) D {
+						return layout.Inset{Top: 4}.Layout(gtx, func(gtx C) D { return d.icon(gtx, "help", 15, d.p.Text) })
+					}),
+				)
+			}),
+			layout.Rigid(func(gtx C) D {
+				ch := make([]layout.FlexChild, 0, 3*len(inf.Teams))
+				for _, t := range inf.Teams {
+					name, icon, _ := c.Team(t, 16)
+					if name == "" {
+						name = t
+					}
+					ch = append(ch,
+						layout.Rigid(func(gtx C) D {
+							s := gtx.Dp(16)
+							if icon == "" {
+								return D{Size: image.Pt(s, s)}
+							}
+							return dirImage(&d.base, gtx, icon, image.Pt(s, s), gtx.Dp(4))
+						}),
+						hgap(4),
+						layout.Rigid(func(gtx C) D {
+							return layout.Inset{Right: 8}.Layout(gtx, func(gtx C) D { return d.para(gtx, 15, 22, wReg, dim, 1, name) })
+						}))
+				}
+				return row(gtx, layout.Middle, ch...)
+			}),
+			layout.Rigid(func(gtx C) D { return cdLinkReg(&d.base, gtx, &d.orgLearn, 15, "Learn more") }),
+		)
+	})
+}
+
+// cdLinkReg is a regular-weight link button (underlined on hover).
+func cdLinkReg(b *base, gtx C, c *widget.Clickable, size unit.Sp, label string) D {
+	return c.Layout(gtx, func(gtx C) D {
+		pointerCursor(gtx)
+		d := b.label(gtx, size, wReg, b.p.Link, label)
+		if c.Hovered() {
+			fill(gtx, image.Rect(0, d.Size.Y-gtx.Dp(2), d.Size.X, d.Size.Y-gtx.Dp(1)), b.p.Link)
+		}
+		return d
+	})
+}
+
 func (d *ChannelDetails) managedField(gtx C, ids []string) D {
-	return d.cdField(gtx, "Managed by", nil, func(gtx C) D {
+	return d.cdFieldW(gtx, func(gtx C) D {
+		// Slack: "Managed by" and a 15px info icon in the link blue
+		return row(gtx, layout.Middle,
+			layout.Rigid(func(gtx C) D { return d.para(gtx, 15, 22, wBold, d.p.Text, 1, "Managed by") }),
+			hgap(4),
+			layout.Rigid(func(gtx C) D { return d.icon(gtx, "info", 15, d.p.Link) }),
+		)
+	}, func(gtx C) D {
 		ch := make([]layout.FlexChild, 0, 2*len(ids))
 		for i, uid := range ids {
 			c := dirClick(d.rowClk, "mgr:"+uid)

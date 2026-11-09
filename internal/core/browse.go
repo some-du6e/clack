@@ -700,10 +700,19 @@ func (a *App) SearchUsergroups(ctx context.Context, o UsergroupOpts) ([]Usergrou
 
 // ---- channel tab bar ----
 
-// builtinTabTitles names built-in tabs that have no label.
+// builtinTabTitles names built-in tabs that have no label, by type.
 var builtinTabTitles = map[string]string{
-	"folder": "Bookmarks", "bookmarks": "Bookmarks", "files": "Files", "workflows": "Workflows",
+	"folder": "Bookmarks", "bookmarks": "Pins", "files": "Files & links", "workflows": "Workflows",
 	"channel_canvas": "Canvas", "canvas": "Untitled", "list": "Untitled list",
+}
+
+// builtinTabIDTitles is Slack's channel tab label switch on the tab id
+// (boot-shared ChannelTabLabel, 2026-11): the built-in tabs keep these
+// names whatever their label says. "bookmarks" is the Pins tab since the
+// 2026 pins/bookmarks merge; only a folder tab without a label is
+// "Bookmarks".
+var builtinTabIDTitles = map[string]string{
+	"bookmarks": "Pins", "pins": "Pins", "files": "Files & links", "workflows": "Workflows", "channel": "Messages",
 }
 
 // tabFileFetchers bounds parallel files.info calls for tab titles.
@@ -741,6 +750,9 @@ func (a *App) Tabs(ctx context.Context, ch string) ([]Tab, error) {
 			continue
 		}
 		t := Tab{ID: r.ID, Type: r.Type, Label: r.Label, Title: r.Label, FileID: r.Data.FileID}
+		if n, ok := builtinTabIDTitles[r.ID]; ok {
+			t.Title = n
+		}
 		if t.Title == "" {
 			t.Title = builtinTabTitles[r.Type]
 		}

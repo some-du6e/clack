@@ -56,6 +56,18 @@ func (a *App) OpenThread(channel, ts string) {
 // way (ui-views draws a modal dialog) and reports true.
 var openDetails func(a *App, ch string) bool
 
+// openDetailsTab is openDetails opening on a tab ("Settings").
+var openDetailsTab func(a *App, ch, tab string) bool
+
+// OpenDetailsTab shows channel details on the tab labelled tab (Slack's
+// channel menu "Edit settings" opens the Settings tab).
+func (a *App) OpenDetailsTab(channel, tab string) {
+	if openDetailsTab != nil && openDetailsTab(a, channel, tab) {
+		return
+	}
+	a.OpenDetails(channel)
+}
+
 // OpenDetails shows channel details (modal from ui-views, else the pane).
 func (a *App) OpenDetails(channel string) {
 	if openDetails != nil && openDetails(a, channel) {

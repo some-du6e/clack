@@ -463,7 +463,7 @@ func TestTabsNoFolderSkipsBookmarks(t *testing.T) {
 	f.reply["conversations.info"] = `{"ok":true,"channel":{"id":"C1","properties":{"tabs":[
 		{"id":"files","type":"files","label":""},{"id":"bookmarks","type":"bookmarks","label":"","is_disabled":true}]}}}`
 	tabs, err := a.Tabs(context.Background(), "C1")
-	if err != nil || len(tabs) != 1 || tabs[0].Title != "Files" {
+	if err != nil || len(tabs) != 1 || tabs[0].Title != "Files & links" {
 		t.Fatalf("tabs: %+v %v", tabs, err)
 	}
 	if f.last("bookmarks.list") != nil || f.last("files.info") != nil {

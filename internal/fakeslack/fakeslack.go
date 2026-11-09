@@ -189,8 +189,10 @@ type Server struct {
 	convMu sync.Mutex
 	others []slack.Conversation
 	Joins  []JoinCall
-	emoji  map[string]string
-	words  []string
+	// listFilters: every edge users/list filter (UserListFilters).
+	listFilters []string
+	emoji       map[string]string
+	words       []string
 
 	imgMu sync.Mutex
 	imgs  map[string][]byte
@@ -587,6 +589,13 @@ func (s *Server) SetProperties(id string, props json.RawMessage) {
 			s.convs[i].Properties = props
 		}
 	}
+}
+
+// UserListFilters returns the filter of every edge users/list call.
+func (s *Server) UserListFilters() []string {
+	s.convMu.Lock()
+	defer s.convMu.Unlock()
+	return append([]string(nil), s.listFilters...)
 }
 
 // JoinCalls returns the conversations.join calls so far.
@@ -1004,6 +1013,23 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	case "edge/users/counts":
 		return ok("counts", map[string]int{"everyone": 1200, "people": 1100, "members": 1150, "guests": 3, "bots": 47, "apps": 12})
 	case "edge/users/list":
+		// filter as Slack's client sends it: "everyone AND NOT bots AND NOT
+		// apps" (channel members, people), "apps" (Agents & apps: the fixed
+		// bot users), anything else everyone.
+		var filter string
+		_ = json.Unmarshal(edge["filter"], &filter)
+		s.convMu.Lock()
+		s.listFilters = append(s.listFilters, filter)
+		s.convMu.Unlock()
+		if filter == "apps" {
+			var bots []slack.User
+			for _, u := range s.variants() {
+				if u.IsBot && u.TeamID == TeamID {
+					bots = append(bots, u)
+				}
+			}
+			return ok("results", bots, "next_marker", "")
+		}
 		return ok("results", s.users[:min(len(s.users), 50)], "next_marker", "")
 	case "edge/channels/info":
 		return ok("results", []any{}, "failed_ids", []string{})

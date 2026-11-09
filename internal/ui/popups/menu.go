@@ -343,6 +343,26 @@ func (m *Menu) keys(gtx layout.Context) {
 	}
 }
 
+// Labels lists the menu's rows for tests and diagnostics: each item's
+// label, "---" for a separator, "[header]" for a heading, "*" for a
+// drawn (Widget) row.
+func (m *Menu) Labels() []string {
+	out := make([]string, 0, len(m.items))
+	for _, it := range m.items {
+		switch {
+		case it.Separator:
+			out = append(out, "---")
+		case it.Header != "":
+			out = append(out, "["+it.Header+"]")
+		case it.Label == "" && it.Widget != nil:
+			out = append(out, "*")
+		default:
+			out = append(out, it.Label)
+		}
+	}
+	return out
+}
+
 // Layout draws the menu (and any open submenu).
 func (m *Menu) Layout(gtx layout.Context) layout.Dimensions {
 	drain()

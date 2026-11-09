@@ -366,6 +366,25 @@ func (c *Client) ChannelMembers(ctx context.Context, ch, marker string, count in
 	return r.Results, r.NextMarker, err
 }
 
+// ChannelApps pages a channel's agents and apps (edge users/list with
+// filter "apps" over the users_by_realname index, as Slack's channel
+// details "Agents & apps" tab and fetchChannelAgents ask for them).
+func (c *Client) ChannelApps(ctx context.Context, ch, marker string, count int) ([]User, string, error) {
+	if count <= 0 {
+		count = 100
+	}
+	body := map[string]any{"channels": []string{ch}, "filter": "apps", "index": "users_by_realname", "count": count}
+	if marker != "" {
+		body["marker"] = marker
+	}
+	var r struct {
+		Results    []User `json:"results"`
+		NextMarker string `json:"next_marker"`
+	}
+	err := c.Edge(ctx, "users/list", body, &r)
+	return r.Results, r.NextMarker, err
+}
+
 // Usergroup is a user group (subteam).
 type Usergroup struct {
 	ID          string `json:"id"`
