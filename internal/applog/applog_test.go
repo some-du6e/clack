@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -261,6 +262,36 @@ func TestStartUnwritableDir(t *testing.T) {
 				t.Errorf("Tail without a file: %q", tail)
 			}
 		})
+	}
+}
+
+// A sink that fails to open after lines and Close are already queued (a
+// slow MkdirAll on Windows): Close returns only after the warning is out.
+func TestCloseWaitsForOpenWarning(t *testing.T) {
+	release := make(chan struct{})
+	var warned atomic.Bool
+	a := NewAsync(func() (io.WriteCloser, error) {
+		<-release
+		return nil, errNoDir
+	}, func(error) {
+		time.Sleep(50 * time.Millisecond)
+		warned.Store(true)
+	}, 64)
+	for i := 0; i < 10; i++ {
+		a.Write([]byte(fmt.Sprintf("line %d\n", i)))
+	}
+	go func() {
+		for len(a.ch) < 11 { // the lines and Close's marker
+			time.Sleep(time.Millisecond)
+		}
+		close(release)
+	}()
+	a.Close(5 * time.Second)
+	if !warned.Load() {
+		t.Error("Close returned before the can't-open warning")
+	}
+	if got := a.Recent(20); len(got) != 10 || got[9] != "line 9" {
+		t.Errorf("Recent: %q", got)
 	}
 }
 
