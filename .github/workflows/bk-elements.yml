@@ -10,6 +10,7 @@ on:
     paths:
       - "internal/ui/blockkit/**"
       - "internal/fakeslack/bkgallery*.go"
+      - "internal/fakeslack/gallery*.go"
       - "internal/core/interactive*.go"
       - "internal/richtext/blocks.go"
       - ".github/workflows/bk-elements.yml"

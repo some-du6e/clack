@@ -123,15 +123,24 @@ func (s *Server) handleBlockActions(method string, f url.Values) (any, bool) {
 	return nil, false
 }
 
-func init() { RegisterGallery("50-elements", galleryElements) }
+func init() { RegisterGalleryMessages("50-elements", galleryElements) }
 
-// GalleryElementsTS lists the elements gallery messages' ts by name, in
-// order (the message with that ts holds that element family).
+// GalleryBotID, GalleryAppID and GalleryBotUserID are the elements
+// gallery's app: its messages carry them (bot_id, bot_profile), so
+// blocks.actions gets a service_id and app_id.
+const (
+	GalleryBotID     = "B0BKGALLRY"
+	GalleryAppID     = "A0BKGALLRY"
+	GalleryBotUserID = "U0BKGALLRY"
+)
+
+// GalleryElementsTS is the elements gallery messages' ts by family name
+// (GalleryElementNames).
 func (s *Server) GalleryElementsTS() map[string]string {
 	out := map[string]string{}
-	for _, m := range s.GalleryMessages() {
-		if strings.HasPrefix(m.ClientMsgID, "bk-elements-") {
-			out[strings.TrimPrefix(m.ClientMsgID, "bk-elements-")] = m.TS
+	for _, e := range s.galleryEntries() {
+		if n, ok := strings.CutPrefix(e.msg.ClientMsgID, "bk-elements-"); ok {
+			out[n] = e.msg.TS
 		}
 	}
 	return out
@@ -287,7 +296,9 @@ func galleryElements(s *Server) []slack.Message {
 	var out []slack.Message
 	for _, name := range GalleryElementNames {
 		b, _ := json.Marshal(msgs[name])
-		out = append(out, slack.Message{Type: "message", Text: "Block Kit gallery: " + name, Blocks: b, ClientMsgID: "bk-elements-" + name})
+		out = append(out, slack.Message{Type: "message", Text: "Block Kit gallery: " + name, Blocks: b, ClientMsgID: "bk-elements-" + name,
+			BotID: GalleryBotID, BotProfile: &slack.BotProfile{ID: GalleryBotID, Name: "Gallery Bot", AppID: GalleryAppID,
+				UserID: GalleryBotUserID, TeamID: TeamID}})
 	}
 	return out
 }

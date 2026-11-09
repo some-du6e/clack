@@ -26,6 +26,8 @@ type bk struct {
 	URL         string          `json:"url"`
 	UserID      string          `json:"user_id"`
 	ChannelID   string          `json:"channel_id"`
+	MessageTS   string          `json:"message_ts"` // message_mention
+	AuthorID    string          `json:"author_id"`  // message_mention
 	UsergroupID string          `json:"usergroup_id"`
 	TeamID      string          `json:"team_id"`
 	Name        string          `json:"name"`
@@ -700,6 +702,8 @@ func (c *builder) richInline(els []bk, pre bool) []Span {
 			out = append(out, Span{Kind: Channel, Text: "#" + strings.TrimPrefix(name, "#"), ID: e.ChannelID})
 		case "emoji":
 			out = append(out, richEmoji(c.r, e))
+		case "message_mention":
+			out = append(out, messageMentionSpan(c.r, e))
 		case "broadcast":
 			out = append(out, broadcastSpan(firstNonEmpty(e.Range, "here")))
 		case "date":

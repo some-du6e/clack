@@ -83,6 +83,9 @@ func (l *lay) small(col color.NRGBA) flowStyle {
 
 func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 	a := b.Att
+	if a.MsgCard {
+		return l.msgCard(b, x, y, w)
+	}
 	if a.IsUnfurl && !a.IsShare && len(b.Fields) == 0 && len(b.Buttons) == 0 && len(b.Children) == 0 {
 		pf := uipref.Get()
 		media := a.Image != nil || a.Thumb != nil || isVideoUnfurl(a)

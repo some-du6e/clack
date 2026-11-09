@@ -149,6 +149,7 @@ type Editor struct {
 
 	clipText   string
 	clipDoc    *Doc
+	slugs      edSlugs // pasted Slack links being resolved (slugs.go)
 	plainPaste bool
 	richRead   *clipRead     // HTML read started by Ctrl/Cmd+V
 	pendPaste  *pendingPaste // plain text waiting for richRead
@@ -838,6 +839,9 @@ func (e *Editor) pasteHTML(s, html string) {
 	e.anchor, e.caret = end, end
 	e.commit()
 	e.convertEmoji(lo, end) // pasted ":name:" shortcodes, like Slack
+	if !plain {
+		e.notePastedLinks(lo, min(e.caret, e.doc.Len())) // Slack links → slugs (slugs.go)
+	}
 }
 
 // edIsURL reports whether s is a single http(s) URL token.

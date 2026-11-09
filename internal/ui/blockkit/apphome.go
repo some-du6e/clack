@@ -128,6 +128,9 @@ func (d *AppDM) load() {
 		if r.v != nil {
 			d.surf = newSurface(d.h, r.v)
 		}
+		// the tab Slack opens from the sidebar (no tab asked for)
+		d.tab = initialTab("", d.home.MessagesTab, d.home.HomeTab)
+		d.dispatchOpen(d.tab)
 		d.h.Invalidate()
 	})
 }
@@ -149,13 +152,48 @@ func homeUpdated(ch string, v *core.View) {
 	d.h.Invalidate()
 }
 
-// Tabs lists the DM's tabs in Slack's order.
+// initialTab is Slack's app tab resolver (module HKzj): the tab asked
+// for ("home", "about", "" / "messages"), falling back to Home or About
+// when the Messages tab is off, and to Messages or About when Home is.
+// A sidebar click asks for none; deep links from an app id ask for Home.
+func initialTab(want string, messages, home bool) string {
+	n := ""
+	switch want {
+	case "home", "app":
+		n = "home"
+	case "about":
+		n = "about"
+	}
+	if !messages && n == "" {
+		if home {
+			return "home"
+		}
+		return "about"
+	}
+	if !home && n == "home" {
+		if messages {
+			return "messages"
+		}
+		return "about"
+	}
+	if n == "" {
+		return "messages"
+	}
+	return n
+}
+
+// OpenTab opens the tab a deep link asks for (Slack's
+// deepLinkFromAppIdToApp: "home" unless the link names one).
+func (d *AppDM) OpenTab(want string) { d.SetTab(initialTab(want, d.home.MessagesTab, d.home.HomeTab)) }
+
+// Tabs lists the DM's tabs in Slack's order: Home and Messages when the
+// app enables them, then About.
 func (d *AppDM) Tabs() []string {
 	var out []string
 	if d.home.HomeTab {
 		out = append(out, "home")
 	}
-	if d.home.MessagesTab || !d.home.HomeTab {
+	if d.home.MessagesTab {
 		out = append(out, "messages")
 	}
 	return append(out, "about")
@@ -174,6 +212,13 @@ func (d *AppDM) SetTab(t string) {
 		return
 	}
 	d.tab = t
+	d.dispatchOpen(t)
+	d.h.Invalidate()
+}
+
+// dispatchOpen tells the app a tab opened (apps.home.dispatchOpenEvent:
+// the app gets app_home_opened) or loads About.
+func (d *AppDM) dispatchOpen(t string) {
 	switch t {
 	case "home", "messages":
 		ch, tab, team := d.ch, t, d.home.AppInstalledTeamID
@@ -186,7 +231,6 @@ func (d *AppDM) SetTab(t string) {
 	case "about":
 		d.loadAbout()
 	}
-	d.h.Invalidate()
 }
 
 var tabLabel = map[string]string{"home": "Home", "messages": "Messages", "about": "About"}

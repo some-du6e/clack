@@ -163,8 +163,9 @@ func TestSharedMessage(t *testing.T) {
 		{Kind: AttachmentBlock, Att: &Attachment{IsShare: true, AuthorName: "alice", AuthorIcon: "https://i.test/al.png", AuthorLink: "https://ws.slack.com/team/U1",
 			ShareChannel: "general", ShareChannelID: "C1", FromURL: "https://ws.slack.com/archives/C1/p1700000000000100", TS: 1700000000,
 			Text: []Block{para(tx("shared text"))}}},
-		{Kind: AttachmentBlock, Att: &Attachment{IsShare: true, AuthorName: "bob", ShareChannel: "random", ShareChannelID: "C2",
-			Text: []Block{para(tx("unfurled "), st("msg", Bold))}},
+		{Kind: AttachmentBlock, Att: &Attachment{IsShare: true, MsgCard: true, AuthorName: "bob", ShareChannel: "random", ShareChannelID: "C2",
+			Text:    []Block{para(tx("unfurled "), st("msg", Bold))},
+			Context: []Span{tx("Posted in "), {Kind: Channel, Text: "random", ID: "C2"}}},
 			Children: []Block{tombstone("This file was deleted.")}},
 	}
 	eq(t, "share", d.Blocks, want)

@@ -207,6 +207,10 @@ type Server struct {
 	Calls   map[string]*atomic.Int64
 	// Latency is added to every API call (not images), to model a network.
 	Latency time.Duration
+	// Emit, when set, receives the realtime events the fake apps send
+	// (view_opened…) instead of the socket: tests running the client
+	// without realtime inject them (core.App.Inject). Set it before the calls.
+	Emit func(ev map[string]any)
 	// Hook, when set, sees every API call first; ok=true answers it with
 	// out (tests: hold a call back, fail it). Set it before the calls.
 	Hook func(method string, form url.Values) (out any, ok bool)
@@ -775,6 +779,9 @@ func ok(kv ...any) map[string]any {
 }
 
 func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMessage) any {
+	if out, handled := s.handleGallery(method, f); handled { // bkgallery*.go
+		return out
+	}
 	if out, handled := s.handleCanvases(method, f); handled { // canvas.go
 		return out
 	}
@@ -1052,9 +1059,8 @@ func (s *Server) historyPage(f url.Values) any {
 	s.histMu.Lock()
 	msgs, okc := s.hist[ch]
 	if !okc {
-		if ch == GalleryChannelID {
-			msgs = s.galleryHistory()
-		} else {
+		var gallery bool
+		if msgs, gallery = s.galleryHistoryOf(ch); !gallery { // gallery.go
 			msgs = s.history(ch)
 		}
 		s.hist[ch] = msgs
