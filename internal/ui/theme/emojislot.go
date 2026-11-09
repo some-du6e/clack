@@ -25,7 +25,8 @@ import (
 //
 // Each emoji now becomes one placeholder rune shaped from emojislot.ttf
 // (one empty glyph, 1.27em wide: the 1.2em image plus Slack's 1px gap;
-// emojislot_gen.py builds it).
+// emojislot_gen.py builds it). The same face also maps the emoji
+// themselves for editors, which must keep the real runes (editoremoji.go).
 // Gio wraps, aligns and truncates the line as usual, and the image is
 // drawn where each placeholder glyph landed.
 
@@ -115,7 +116,10 @@ func (t *Theme) textWithSlots(gtx layout.Context, o LabelOpts, segs []segment, f
 // system font: what Gio picks for an emoji when no image replaced it).
 type TofuStats struct {
 	Glyphs, Notdef, Fallback int
-	Texts                    []string // every string Theme.Text drew, in order
+	// Slots counts blank emoji slot glyphs: placeholders whose image is
+	// drawn over them, or emoji an editor font shaped with no image yet.
+	Slots int
+	Texts []string // every string Theme.Text (and Theme.Editor) drew, in order
 }
 
 var (
@@ -160,12 +164,15 @@ func ScanGlyph(sh *text.Shaper, g text.Glyph) {
 		return
 	}
 	_, fi, gid := splitGlyphID(g.ID)
-	nf := -1
+	nf, slot := -1, -1
 	if v, ok := shaperFaces.Load(sh); ok {
-		nf = len(v.(*emboldener).faces)
+		nf, slot = len(v.(*emboldener).faces), v.(*emboldener).slot
 	}
 	scanMu.Lock()
 	scanStats.Glyphs++
+	if fi == slot && gid == emojiSlotGID {
+		scanStats.Slots++
+	}
 	if gid == 0 && g.Flags&text.FlagParagraphBreak == 0 {
 		scanStats.Notdef++
 	}

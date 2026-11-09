@@ -417,7 +417,9 @@ func (p *painter) input(b *box, r rectF, visible bool) {
 	cs := clip.Rect(image.Rectangle{Max: g.Constraints.Max}).Push(p.ops)
 	selCol := accent()
 	selCol.A = 0x50
-	ed.Layout(g, shaper(), fontFor(st), unit.Sp(st.FontSize), theme.Material(g, p.col(st.Color)), theme.Material(g, selCol))
+	sz := unit.Sp(st.FontSize)
+	d := ed.Layout(g, shaper(), theme.EditorFont(fontFor(st)), sz, theme.Material(g, p.col(st.Color)), theme.Material(g, selCol))
+	theme.EditorEmoji(g, shaper(), ed, sz, d) // emoji as Slack's images (theme/editoremoji.go)
 	cs.Pop()
 	t.Pop()
 }

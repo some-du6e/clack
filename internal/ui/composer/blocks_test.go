@@ -165,7 +165,7 @@ func btCases() []btCase {
 				`{"type":"broadcast","range":"here"},` +
 				`{"type":"text","text":" "},` +
 				`{"type":"emoji","name":"thumbsup","unicode":"1f44d"},` +
-				`{"type":"emoji","name":"wave","unicode":"1f44b-1f3fc","skin_tone":3},` +
+				`{"type":"emoji","name":"wave","unicode":"1f44b-1f3fc"},` +
 				`{"type":"text","text":" "},` +
 				`{"type":"usergroup","usergroup_id":"S789"},` +
 				`{"type":"emoji","name":"partyparrot"}]}`,

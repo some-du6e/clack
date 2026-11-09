@@ -81,10 +81,12 @@ func TestEmojiTofuScan(t *testing.T) {
 	th.Images = nil
 	stop := StartTofuScan()
 	th.Para(testGtx(2*370), 18, 27, Regular, th.C.Fg, scream)
-	if st := stop(); st.Notdef+st.Fallback < 3 {
-		t.Fatalf("without images: %+v, want the three 😱 as tofu or fallback glyphs", st)
+	// (or, where no system font has it, as blank slots: the slot face
+	// maps emoji for editors, emojislot_gen.py)
+	if st := stop(); st.Notdef+st.Fallback+st.Slots < 3 {
+		t.Fatalf("without images: %+v, want the three 😱 as tofu, fallback or blank slot glyphs", st)
 	} else {
-		t.Logf("without images (the old path): %d .notdef, %d system-font glyphs", st.Notdef, st.Fallback)
+		t.Logf("without images (the old path): %d .notdef, %d system-font glyphs, %d blank slots", st.Notdef, st.Fallback, st.Slots)
 	}
 	th.Images = imgs
 	for _, p := range paths {
@@ -133,7 +135,7 @@ func TestEmojiSlotsWrap(t *testing.T) {
 	}
 }
 
-// The slot face is in every theme shaper's collection, maps only its rune
+// The slot face is in every theme shaper's collection, maps its rune (and, for editors, emoji Lato lacks)
 // and is never the default face.
 func TestEmojiSlotFace(t *testing.T) {
 	sh := NewShaperFor(false)

@@ -232,6 +232,16 @@ func (c *Composer) syncEmojiSet() {
 	}
 }
 
+// recordSentEmoji counts the emoji of a sent message as used (Slack's
+// frequently used list follows the emoji you send, typed or picked).
+func recordSentEmoji(d *Doc) {
+	for _, a := range d.Attrs {
+		if a.Atom != nil && a.Atom.Kind == AtomEmoji {
+			popups.RecordEmojiUse(a.Atom.ID)
+		}
+	}
+}
+
 // prepareSend is the document submit serializes: a copy with every
 // remaining ":name:" shortcode as an emoji (Slack converts on send too)
 // and, under "Format messages with markup", the typed markup parsed into
@@ -244,6 +254,7 @@ func (c *Composer) prepareSend(d *Doc) *Doc {
 		look = c.lookupEmoji
 	}
 	convertEmojiRange(doc, 0, doc.Len(), look)
+	convertNativeEmojiRange(doc, 0, doc.Len(), look)
 	if PlainTextMode(c.api.a) && c.api.a != nil {
 		doc = parseMarkup(doc, c.api.resolver())
 	}
@@ -385,6 +396,9 @@ func bindAutocomplete(ed *Editor, ac *Autocomplete, invalidate func()) {
 	ac.Live = func() (*Doc, int) { return ed.Doc(), caretOf(ed) }
 	ac.OnAccept = func(it acItem, start, end int) {
 		applyPick(ed, it, start, end)
+		if it.Kind == acEmoji && ac.coreEmoji() {
+			popups.RecordEmojiUse(it.ID) // frequently used, as in Slack
+		}
 		if invalidate != nil {
 			invalidate()
 		}
@@ -719,6 +733,9 @@ func (c *Composer) submit() {
 	text := doc.Mrkdwn()
 	blocks := doc.RichTextBlocks()
 	api, ch, ts := c.api, c.ch, c.ts
+	if c.api.a != nil {
+		recordSentEmoji(doc)
+	}
 
 	if c.edit != nil {
 		m := c.edit

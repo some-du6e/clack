@@ -48,6 +48,8 @@ type glyphIndex struct {
 	prog text.Flags
 	// clusterAdvance accumulates the advances of glyphs in a glyph cluster.
 	clusterAdvance fixed.Int26_6
+	// clusterX is the X of the first glyph of the current cluster.
+	clusterX fixed.Int26_6
 	// truncated indicates that the text was truncated by the shaper.
 	truncated bool
 	// midCluster tracks whether the next glyph processed is not the first glyph in a
@@ -66,6 +68,7 @@ func (g *glyphIndex) reset() {
 	g.pos = combinedPos{}
 	g.prog = 0
 	g.clusterAdvance = 0
+	g.clusterX = 0
 	g.truncated = false
 	g.midCluster = false
 }
@@ -158,6 +161,7 @@ func (g *glyphIndex) Glyph(gl text.Glyph) {
 	g.prog = gl.Flags & text.FlagTowardOrigin
 	g.pos.towardOrigin = g.prog == text.FlagTowardOrigin
 	if !g.midCluster {
+		g.clusterX = gl.X
 		// Create the text position prior to the glyph.
 		g.pos.x = gl.X
 		g.pos.y = int(gl.Y)
@@ -199,6 +203,14 @@ func (g *glyphIndex) Glyph(gl text.Glyph) {
 		}
 		perRune := width / fixed.Int26_6(positionCount)
 		adjust := fixed.Int26_6(0)
+		// The positions start where the cluster starts: gl is its last
+		// glyph, which in a cluster of several glyphs (a base and a
+		// zero-width mark, an emoji and its skin tone modifier) sits at
+		// the cluster's end. (Clack patch 2, CLACK_PATCHES.md.)
+		origin := gl.X
+		if !g.pos.towardOrigin {
+			origin = g.clusterX
+		}
 		if g.pos.towardOrigin {
 			// If RTL, subtract increments from the width of the cluster
 			// instead of adding.
@@ -206,7 +218,7 @@ func (g *glyphIndex) Glyph(gl text.Glyph) {
 			perRune = -perRune
 		}
 		for i := 1; i <= positionCount; i++ {
-			g.pos.x = gl.X + adjust + perRune*fixed.Int26_6(i)
+			g.pos.x = origin + adjust + perRune*fixed.Int26_6(i)
 			g.pos.runes += runesPerPosition
 			g.pos.lineCol.col += runesPerPosition
 			g.insertPosition(g.pos)

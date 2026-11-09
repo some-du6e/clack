@@ -43,6 +43,7 @@ type std struct {
 
 var (
 	once      sync.Once
+	allStd    []std // the table, in order
 	byName    map[string]*std
 	skinCodes = map[string]string{"2": "1F3FB", "3": "1F3FC", "4": "1F3FD", "5": "1F3FE", "6": "1F3FF"}
 )
@@ -52,6 +53,7 @@ func load() {
 		Emoji []std `json:"emoji"`
 	}
 	_ = json.Unmarshal(StandardData(), &f)
+	allStd = f.Emoji
 	byName = make(map[string]*std, len(f.Emoji)*2)
 	for i := range f.Emoji {
 		e := &f.Emoji[i]

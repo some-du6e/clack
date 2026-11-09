@@ -136,6 +136,65 @@ func convertEmojiRange(d *Doc, from, to int, look emojiLookup) []emojiEdit {
 	return eds
 }
 
+// Native unicode emoji, the way Slack's message input handles them
+// (replaceNativeEmoji in its emoji module): an emoji typed, picked from the
+// OS picker, committed by an IME or pasted becomes the same emoji blot a
+// picked ":name:" would, named after the standard emoji (👍 is "+1", 👍🏽
+// "+1::skin-tone-4"), so it draws as Slack's image and is sent as an emoji
+// element. Like Slack, inline code, links and code blocks keep the text,
+// as does an emoji right after a ZWJ.
+
+const zwj = '\u200d'
+
+// nativeEmojiOK reports whether runes [k, end) may become an emoji atom:
+// plain text on a non-code line.
+func nativeEmojiOK(d *Doc, k, end int) bool {
+	if k > 0 && d.Runes[k-1] == zwj {
+		return false
+	}
+	if l := d.LineOf(k); l < len(d.Lines) && d.Lines[l].Kind == CodeBlock {
+		return false
+	}
+	for i := k; i < end; i++ {
+		if a := d.Attrs[i]; a.Atom != nil || a.Style&Code != 0 || a.Link != "" || d.Runes[i] == '\n' {
+			return false
+		}
+	}
+	return true
+}
+
+// convertNativeEmojiRange converts the unicode emoji starting in
+// [from, to) into emoji atoms. It returns the edits in order.
+func convertNativeEmojiRange(d *Doc, from, to int, look emojiLookup) []emojiEdit {
+	if look == nil {
+		return nil
+	}
+	from, to = d.clamp(from), d.clamp(to)
+	if !emoji.MayHaveEmoji(string(d.Runes[from:to])) {
+		return nil
+	}
+	var eds []emojiEdit
+	for k := from; k < to && k < d.Len(); k++ {
+		if d.Attrs[k].Atom != nil {
+			continue
+		}
+		name, end, ok := emoji.MatchUnicode(d.Runes, k)
+		if !ok || !nativeEmojiOK(d, k, end) {
+			continue
+		}
+		at, ok := look(name)
+		if !ok {
+			continue
+		}
+		d.Delete(k, end)
+		d.InsertAtom(k, at)
+		ed := emojiEdit{start: k, end: end, n: 1}
+		eds = append(eds, ed)
+		to -= ed.end - ed.start - ed.n
+	}
+	return eds
+}
+
 // hasShortcodeColon reports whether d has a ':' outside atoms (a cheap
 // precheck before rescanning for a late emoji set).
 func hasShortcodeColon(d *Doc) bool {

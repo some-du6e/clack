@@ -19,6 +19,7 @@ import (
 	"gioui.org/unit"
 	"golang.org/x/image/math/fixed"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/emoji"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -250,6 +251,7 @@ func tlFont(s Style, mono bool) font.Font {
 	if mono {
 		f.Typeface = Mono
 	}
+	f = theme.EditorFont(f) // unicode emoji shape as blank slots (no tofu)
 	if s&Bold != 0 {
 		f.Weight = font.Bold
 	}
@@ -266,7 +268,7 @@ func tlHeadFont(k BlockKind) font.Font {
 	if k == Header3 {
 		f.Weight = font.Bold
 	}
-	return f
+	return theme.EditorFont(f)
 }
 
 // headPpem is the shaped size of a heading line.
@@ -305,8 +307,9 @@ type tlPara struct {
 	items      []tlItem
 	l0, l1     int // visual lines
 	top, bot   int
-	asc, desc  int // primary font metrics
-	num        int // Ordered: item number
+	raw        []tlRawEmoji // unicode emoji left as text (code, other editors)
+	asc, desc  int          // primary font metrics
+	num        int          // Ordered: item number
 	// boxTop/boxBot is the code block box; set on the last line of a
 	// code block group.
 	boxTop, boxBot int
@@ -318,6 +321,16 @@ type tlLine struct {
 	a, b   int // runes [a, b)
 	top, h int
 	base   int
+}
+
+// tlRawEmoji is a unicode emoji kept as text, runes [q0, q1), that the
+// font shaped as a blank slot glyph (theme.EditorFont): its image is drawn
+// over the slot like an atom's. The message composer turns typed emoji
+// into atoms; these are the ones in inline code and code blocks, and every
+// emoji in editors without an emoji lookup (canvases, Block Kit inputs).
+type tlRawEmoji struct {
+	q0, q1 int
+	stem   string
 }
 
 // tlEmoji is an emoji atom to draw each frame (images arrive async).
@@ -527,6 +540,7 @@ func (l *tlLayout) buildPara(d *Doc, p *tlPara, pi int, k tlKey) {
 		}
 		x += it.w
 		p.items = append(p.items, it)
+		p.raw = l.rawEmoji(p.raw, d.Runes[q:r], q, s)
 		q = r
 	}
 	p.px[n] = x
@@ -562,6 +576,23 @@ func (l *tlLayout) buildPara(d *Doc, p *tlPara, pi int, k tlKey) {
 		a = b
 	}
 	p.l1 = len(l.lines)
+}
+
+// rawEmoji appends the unicode emoji of run rs (starting at doc position
+// q) that s shaped as slot glyphs.
+func (l *tlLayout) rawEmoji(out []tlRawEmoji, rs []rune, q int, s *tlShape) []tlRawEmoji {
+	if !emoji.MayHaveEmoji(string(rs)) {
+		return out
+	}
+	for _, er := range theme.EmojiRuns(rs) {
+		for gi, g := range s.glyphs {
+			if int(s.grune[gi]) == er.Start && theme.IsEmojiSlot(l.sh, g) {
+				out = append(out, tlRawEmoji{q0: q + er.Start, q1: q + er.End, stem: er.Stem})
+				break
+			}
+		}
+	}
+	return out
 }
 
 // canBreak reports whether a line may break before rune q of p.
@@ -694,6 +725,25 @@ func (l *tlLayout) vertical() {
 				}
 			}
 		}
+		for _, r := range p.raw {
+			li := p.l0
+			for li < p.l1 && r.q0 >= l.lines[li].b {
+				li++
+			}
+			if li >= p.l1 {
+				continue
+			}
+			ln := &l.lines[li]
+			x0, x1 := l.vx(li, r.q0), l.vx(li, r.q1)
+			es := (x1 - x0) * 120 / 127 // the 1.2em image in its 1.27em slot
+			x := x0 + (x1-x0-es)/2
+			ey := ln.base - es*4/5
+			l.emojis = append(l.emojis, tlEmoji{
+				rect: image.Rect(x, ey, x+es, ey+es),
+				base: ln.base,
+				atom: &Atom{Kind: AtomEmoji, URL: l.emojiURL(r.stem)},
+			})
+		}
 		if isHeading(p.kind) {
 			y += m.headMargin // 4px bottom margin below the heading
 		}
@@ -707,6 +757,14 @@ func (l *tlLayout) vertical() {
 		}
 	}
 	l.height = y
+}
+
+// emojiURL is Slack's image for an emoji stem in the theme's style.
+func (l *tlLayout) emojiURL(stem string) string {
+	if t := theme.ForShaper(l.sh); t != nil {
+		return t.EmojiURL(stem)
+	}
+	return emoji.CDN + "apple-medium/" + stem + ".png"
 }
 
 // vx is the x of caret position q on visual line li.
@@ -1008,6 +1066,9 @@ func (l *tlLayout) paintRun(gtx layout.Context, li int, it *tlItem, a, b int, co
 func tlPaintGlyphs(gtx layout.Context, sh *text.Shaper, gs []text.Glyph, origin f32.Point, col color.NRGBA, emb ...float32) {
 	if len(gs) == 0 {
 		return
+	}
+	for _, g := range gs {
+		theme.ScanGlyph(sh, g) // a running tofu scan (tests); one atomic load otherwise
 	}
 	t := op.Affine(f32.AffineId().Offset(origin)).Push(gtx.Ops)
 	if len(emb) > 0 && emb[0] > 0 {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/emoji"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 )
 
 // Autocomplete is the @ # : / suggestion popup.
@@ -569,6 +570,9 @@ func (ac *Autocomplete) load(t acTrigger) {
 			})
 		}
 	case acEmoji:
+		if ac.coreEmoji() {
+			break // popups.SearchEmoji indexes the set itself
+		}
 		if ac.emojiIdx == nil && !ac.emoLoading {
 			ac.emoLoading = true
 			go func() {
@@ -656,6 +660,9 @@ func (ac *Autocomplete) compute(t acTrigger) []acItem {
 	case acChannel:
 		return ac.ov.keep(ac.channelSourcesLocked().rank(t.Query))
 	case acEmoji:
+		if ac.coreEmoji() {
+			return emojiMatchItems(popups.SearchEmoji(ac.h, t.Query, acMaxItems))
+		}
 		if ac.emojiIdx == nil {
 			return nil
 		}
@@ -1059,6 +1066,33 @@ func rankCommands(q string, cmds []core.Command, limit int) []acItem {
 	out := make([]acItem, len(cs))
 	for i := range cs {
 		out[i] = cs[i].it
+	}
+	return out
+}
+
+// coreEmoji reports whether ":" suggestions come from the emoji picker's
+// search (popups.SearchEmoji): Slack's emoji autocomplete ranks with the
+// same frecency as its picker's search and shows the preferred skin tone.
+// Without a core (tests) the composer's own index serves.
+func (ac *Autocomplete) coreEmoji() bool { return ac.h != nil && ac.h.Core() != nil }
+
+// emojiMatchItems turns picker search hits into suggestions; the atom
+// carries the skin tone in use, like Slack's.
+func emojiMatchItems(ms []popups.EmojiMatch) []acItem {
+	out := make([]acItem, 0, len(ms))
+	for _, m := range ms {
+		id := m.Toned
+		if id == "" {
+			id = m.Name
+		}
+		uni := ""
+		if !m.Custom {
+			_, uni, _ = emoji.Standard(id)
+		}
+		out = append(out, acItem{
+			Kind: acEmoji, ID: id, Name: m.Name, Avatar: m.URL, Uni: uni,
+			Atom: &Atom{Kind: AtomEmoji, ID: id, Text: ":" + id + ":", URL: m.URL, Uni: uni},
+		})
 	}
 	return out
 }

@@ -10,8 +10,8 @@ To see the whole diff against the release:
     go mod download gioui.org@v0.10.3
     diff -ru "$(go env GOMODCACHE)/gioui.org@v0.10.3" third_party/gioui.org
 
-It should show only `gpu/gpu.go` and these two files (`CLACK_PATCHES.md`,
-`UPSTREAM.patch`).
+It should show only `gpu/gpu.go`, `widget/index.go` and these two files
+(`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
 
@@ -49,3 +49,23 @@ git.sr.ht/~eliasnaur/gio, made on upstream main 2919cda (whose
 its reference image; that test panics on main without the fix and
 passes with it. It has not been sent. Gio wants a `Signed-off-by` line
 (DCO), so whoever sends it adds their own (`git am -s`).
+
+## 2. widget: caret positions inside multi-glyph clusters
+
+`widget/index.go`, `glyphIndex.Glyph`.
+
+When a cluster ends, the index spreads its runes' caret positions over the
+cluster's width, starting from the X of the glyph that ends the cluster.
+For a one-glyph cluster that is the cluster's start. For a cluster of
+several glyphs it isn't: a base plus a zero-width mark (an emoji and its
+skin tone modifier or VS16, combining accents) ends with the mark, which
+sits at the cluster's right edge, so every position in the cluster, and
+`Editor.Regions` for it, came out one cluster-width too far right. In
+Clack the emoji images drawn over `widget.Editor` text (search box,
+`plain_text_input`, theme.Editor) landed on the text after 👋🏾.
+
+Fix: remember the X of the cluster's first glyph and spread the positions
+from there (left-to-right runs; right-to-left keeps upstream's arithmetic).
+
+Test: `internal/ui/theme` `TestThemeEditorEmojiRegions`. Not yet in
+`UPSTREAM.patch`.

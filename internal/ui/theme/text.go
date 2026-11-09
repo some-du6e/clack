@@ -571,6 +571,34 @@ func mayStartEmoji(r rune) bool {
 	return r >= 0x203C || r == '#' || r == '*' || (r >= '0' && r <= '9') || r == 0xA9 || r == 0xAE
 }
 
+// matchEmoji returns the image stem of the longest emoji sequence starting
+// at rs[i] (VS16 ignored) and the index just past it, or "" when none
+// starts there.
+func matchEmoji(rs []rune, i int) (stem string, end int) {
+	r := rs[i]
+	if !mayStartEmoji(r) || !(r >= 0x203C || (i+1 < len(rs) && (rs[i+1] == 0xFE0F || rs[i+1] == 0x20E3))) {
+		return "", 0
+	}
+	emojiOnce.Do(loadEmojiIndex)
+	var kb [16]rune
+	key := kb[:0]
+	for j := i; j < len(rs) && len(key) < emojiMaxLen; j++ {
+		if rs[j] == 0xFE0F {
+			continue
+		}
+		key = append(key, rs[j])
+		if s, ok := emojiIndex[string(key)]; ok {
+			stem, end = s, j+1
+		}
+	}
+	if stem != "" {
+		for end < len(rs) && rs[end] == 0xFE0F {
+			end++
+		}
+	}
+	return stem, end
+}
+
 // splitEmoji returns text/emoji segments, or nil when s has no emoji.
 func splitEmoji(s string) []segment {
 	has := false
@@ -596,32 +624,15 @@ func splitEmoji(s string) []segment {
 	found := false
 	for i := 0; i < len(rs); {
 		r := rs[i]
-		if mayStartEmoji(r) && (r >= 0x203C || (i+1 < len(rs) && (rs[i+1] == 0xFE0F || rs[i+1] == 0x20E3))) {
-			// longest match, ignoring VS16
-			var key []rune
-			best, bestEnd := "", 0
-			for j := i; j < len(rs) && len(key) < emojiMaxLen; j++ {
-				if rs[j] == 0xFE0F {
-					continue
-				}
-				key = append(key, rs[j])
-				if stem, ok := emojiIndex[string(key)]; ok {
-					best, bestEnd = stem, j+1
-				}
+		if best, bestEnd := matchEmoji(rs, i); best != "" {
+			if txt.Len() > 0 {
+				segs = append(segs, segment{text: txt.String()})
+				txt.Reset()
 			}
-			if best != "" {
-				for bestEnd < len(rs) && rs[bestEnd] == 0xFE0F {
-					bestEnd++
-				}
-				if txt.Len() > 0 {
-					segs = append(segs, segment{text: txt.String()})
-					txt.Reset()
-				}
-				segs = append(segs, segment{emoji: best})
-				found = true
-				i = bestEnd
-				continue
-			}
+			segs = append(segs, segment{emoji: best})
+			found = true
+			i = bestEnd
+			continue
 		}
 		txt.WriteRune(r)
 		i++

@@ -340,9 +340,14 @@ func (t *Theme) Measure(gtx layout.Context, size unit.Sp, weight font.Weight, tx
 	return d.Size.X
 }
 
-// Editor draws a widget.Editor with Lato.
+// Editor draws a widget.Editor with Lato. Unicode emoji draw as Slack's
+// emoji images (editoremoji.go).
 func (t *Theme) Editor(gtx layout.Context, e *widget.Editor, size unit.Sp, col, selection color.NRGBA) layout.Dimensions {
-	return e.Layout(gtx, t.Shaper, Font(Regular), size, Material(gtx, col), Material(gtx, selection))
+	f := EditorFont(Font(Regular))
+	scanEditor(gtx, t.Shaper, e, f, size)
+	d := e.Layout(gtx, t.Shaper, f, size, Material(gtx, col), Material(gtx, selection))
+	EditorEmoji(gtx, t.Shaper, e, size, d)
+	return d
 }
 
 // ---- drawing helpers ----

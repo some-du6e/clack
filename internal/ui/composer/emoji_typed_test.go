@@ -236,7 +236,7 @@ func TestEmojiBlocks(t *testing.T) {
 	for _, want := range []string{
 		`{"name":"sho","type":"emoji"}`,
 		`{"name":"smile","type":"emoji","unicode":"1f604"}`,
-		`{"name":"thumbsup","skin_tone":3,"type":"emoji","unicode":"1f44d-1f3fc"}`,
+		`{"name":"thumbsup","type":"emoji","unicode":"1f44d-1f3fc"}`, // Slack: no skin_tone on standard emoji
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("blocks %s\nmissing %s", s, want)

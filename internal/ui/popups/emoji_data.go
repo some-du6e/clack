@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -628,6 +629,10 @@ func epIndexFor(h Host) (*emojiIndex, bool) {
 type EmojiMatch struct {
 	Name, URL string
 	Custom    bool
+	// Toned is the name to insert: Name with the user's skin tone
+	// ("+1::skin-tone-3") when the emoji has tones and one is set, like
+	// Slack's emoji autocomplete; URL is that tone's image.
+	Toned string
 }
 
 var (
@@ -639,9 +644,10 @@ var (
 // ranking (exact, prefix, word boundary, substring; frecency first within
 // each tier, then length, then name).
 // Name is the matched name (an alias when the alias matched), URL the
-// default-tone image.
+// image at the skin tone in use (the picker's, else Slack's pref).
 func SearchEmoji(h Host, query string, limit int) []EmojiMatch {
 	x, _ := epIndexFor(h)
+	tone := epTone(h)
 	epSharedMu.Lock()
 	defer epSharedMu.Unlock()
 	ids, rows := epShared.search(x, query, limit)
@@ -650,7 +656,12 @@ func SearchEmoji(h Host, query string, limit int) []EmojiMatch {
 	}
 	out := make([]EmojiMatch, len(ids))
 	for i, id := range ids {
-		out[i] = EmojiMatch{Name: x.sName[rows[i]], URL: x.urls[id], Custom: x.custom(id)}
+		name := x.sName[rows[i]]
+		m := EmojiMatch{Name: name, URL: x.url(id, tone), Custom: x.custom(id), Toned: name}
+		if tone >= 2 && x.hasSkins(id) {
+			m.Toned = name + "::skin-tone-" + strconv.Itoa(tone)
+		}
+		out[i] = m
 	}
 	return out
 }

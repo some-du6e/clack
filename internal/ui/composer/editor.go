@@ -22,6 +22,8 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/text"
 	"gioui.org/unit"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/emoji"
 )
 
 // Editor is the composer's WYSIWYG rich text editor over a *Doc. Input
@@ -678,13 +680,21 @@ func (e *Editor) typeAt(lo, hi int, s string) {
 	e.lastSpace = edSpace(last) || last == '\n'
 	e.pendingOK = false
 	e.commit()
-	if utf8.RuneCountInString(s) == 1 {
+	if utf8.RuneCountInString(s) == 1 && !emoji.MayHaveEmoji(s) {
 		e.autoformat()
-	} else {
+	} else if !e.composing() {
 		// Several runes in one input event (an IME commit, a fast
-		// batch): shortcodes they close still convert.
+		// batch, an emoji from the OS picker): shortcodes they close
+		// and the unicode emoji they hold still convert.
 		e.convertEmoji(lo, end)
 	}
+}
+
+// composing reports whether an IME composition is open (Slack leaves
+// emoji alone until it is committed).
+func (e *Editor) composing() bool {
+	c := e.ime.composition
+	return c.Start >= 0 && c.End > c.Start
 }
 
 // convertEmoji converts the shortcodes whose closing ':' lies in
@@ -696,6 +706,10 @@ func (e *Editor) convertEmoji(from, to int) bool {
 	}
 	literal := e.snap()
 	eds := convertEmojiRange(e.doc, from, to, e.emoji)
+	for _, ed := range eds {
+		to = ed.mapPos(to)
+	}
+	eds = append(eds, convertNativeEmojiRange(e.doc, from, to, e.emoji)...)
 	if len(eds) == 0 {
 		return false
 	}
@@ -1017,7 +1031,13 @@ func (e *Editor) processKeys(gtx layout.Context) {
 				e.emit(EvBlur)
 			}
 		case key.CompositionEvent:
+			was := e.ime.composition
 			e.ime.composition = key.Range(ev)
+			if was.Start >= 0 && was.End > was.Start && !e.composing() {
+				// committed: its emoji convert now
+				lo, hi := min(was.Start, was.End), max(was.Start, was.End)
+				e.convertEmoji(lo, hi)
+			}
 		case key.Event:
 			if !gtx.Focused(e) || ev.State != key.Press {
 				break

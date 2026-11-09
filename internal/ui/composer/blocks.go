@@ -470,13 +470,34 @@ func rtAtomOut(a *Atom) any {
 	case AtomBroadcast:
 		return rtOutBroadcast{Type: "broadcast", Range: a.ID}
 	case AtomEmoji:
+		// Slack's createEmojiChunkFromOp: a standard emoji is its base name
+		// plus the (toned) unicode, a custom one its name plus skin_tone.
 		name, tone := rtSplitSkinTone(a.ID)
+		if a.Uni != "" {
+			tone = 0
+		}
 		return rtOutEmoji{Type: "emoji", Name: name, Unicode: rtUnicodeHex(a.Uni), SkinTone: tone}
 	case AtomMessage:
 		return rtOutMessageMention{Type: "message_mention", MessageTS: a.ID, ChannelID: a.Channel,
 			Text: firstNonEmpty(a.URL, a.Channel), URL: a.URL, AuthorID: a.Author, ThreadTS: a.Thread}
 	}
 	return rtOutText{Type: "text", Text: rtAtomText(a)}
+}
+
+// rtToneFromUnicode is the skin tone (2-6) of a unicode hex sequence with
+// exactly one tone modifier ("1f44b-1f3fc" → 3), else 0.
+func rtToneFromUnicode(hex string) int {
+	tone := 0
+	for _, p := range strings.Split(strings.ToLower(hex), "-") {
+		switch p {
+		case "1f3fb", "1f3fc", "1f3fd", "1f3fe", "1f3ff":
+			if tone != 0 {
+				return 0 // two-tone pairs keep their base name
+			}
+			tone = int(p[4]-'b') + 2
+		}
+	}
+	return tone
 }
 
 // rtSplitSkinTone splits "wave::skin-tone-3" into "wave", 3.
@@ -1349,8 +1370,14 @@ func rtAtomFromJSON(e *rtIn, r AtomResolver) *Atom {
 			return nil
 		}
 		id := e.Name
-		if e.SkinTone >= 2 && !strings.Contains(id, "::skin-tone-") {
-			id += "::skin-tone-" + strconv.Itoa(e.SkinTone)
+		tone := e.SkinTone
+		if tone < 2 {
+			// Slack sends a standard emoji's tone only in its unicode
+			// (and reads the name back from it)
+			tone = rtToneFromUnicode(e.Unicode)
+		}
+		if tone >= 2 && !strings.Contains(id, "::skin-tone-") {
+			id += "::skin-tone-" + strconv.Itoa(tone)
 		}
 		at := &Atom{Kind: AtomEmoji, ID: id, Text: ":" + id + ":", Uni: rtUnicodeFromHex(e.Unicode)}
 		if r != nil {
