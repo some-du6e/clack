@@ -23,10 +23,11 @@ func TestSlickViewBetterTypingIndicator(t *testing.T) {
 	e.install("BetterTypingIndicator", map[string]any{"showAvatars": false})
 	e.until(5*time.Second, "TypingNames patched", func() bool { return slackc.Patched("TypingNames") })
 	sh := newSVShooter(t, e)
-	cv := e.a.convos[ttGen+"/"]
-	if cv == nil || cv.compRect.Empty() {
-		t.Fatal("no #general composer laid out")
-	}
+	var cv *convo
+	e.until(8*time.Second, "#general's composer laid out", func() bool {
+		cv = e.a.convos[ttGen+"/"]
+		return cv != nil && !cv.compRect.Empty()
+	})
 	typing := func(users ...string) {
 		for _, u := range users {
 			raw, _ := json.Marshal(map[string]any{"type": "user_typing", "channel": ttGen, "user": u})

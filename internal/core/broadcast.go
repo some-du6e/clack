@@ -600,7 +600,15 @@ func (a *App) BroadcastWarningAdmin() (admin bool, settingsURL string) {
 // visible to you") to ch, or to the thread threadTS, on this client
 // alone: Slack's addEphemeralMessage({temporary: true}), which the send
 // checks use to say why a message wasn't sent. It returns the local ts.
+// Callers are off the UI goroutine: Slackbot's profile (name, avatar) is
+// loaded first when the store doesn't have it yet, as Slack's member
+// store always does.
 func (a *App) LocalEphemeral(ch, threadTS, text string) string {
+	if len(a.S.MissingUsers([]string{"USLACKBOT"})) > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		a.EnsureUsers(ctx, []string{"USLACKBOT"})
+		cancel()
+	}
 	ts := a.pendingTS(ch, threadTS)
 	// Slack's shape (addEphemeralMessage): user USLACKBOT, is_ephemeral, so
 	// plugins reading the messages slice see what they see in Slack.
