@@ -135,6 +135,7 @@ func (s *Store) PutName(id, name string) {
 
 // Prefs are the user preferences the UI needs for rendering.
 type Prefs struct {
+	MorePrefs               // prefs_more.go
 	EmojiStyle       string `json:"emoji_style"` // apple | google
 	EmojiMode        string `json:"emoji_mode,omitempty"`
 	SkinTone         string `json:"skin_tone,omitempty"`
@@ -433,6 +434,7 @@ func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
 			}
 		}
 	}
+	p.parseMore(raw, str)
 	p.Muted = make([]string, 0, len(muted))
 	for id := range muted {
 		p.Muted = append(p.Muted, id)

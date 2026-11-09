@@ -23,6 +23,7 @@ import (
 // like Slack.
 type prefsModal struct {
 	a        *App
+	ra       prefsA // part A's editors and state (prefs_a.go)
 	clicks   map[string]*widget.Clickable
 	section  string
 	avail    pagePositioned // popups.AvailabilityPage when linked
@@ -152,6 +153,7 @@ func (a *App) showPrefs(section string) {
 // close unmounts the JS roots the dialog mounted (Taut editors, data
 // panels, plugin tabs).
 func (p *prefsModal) close() {
+	p.ra.close(p)
 	if p.taut != nil {
 		p.taut.close()
 	}

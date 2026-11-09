@@ -377,6 +377,9 @@ func (b *backend) recount() {
 		}
 	}
 	m.HomeCount += m.DMCount
+	if b.app != nil {
+		b.app.updateDock()
+	}
 }
 
 // wantsNotify applies Notifications > Desktop notifications (users.prefs
@@ -410,6 +413,7 @@ func (b *backend) handle(a *App, ev core.Event) {
 		if ev.Prefs != nil {
 			a.applyAccountPrefs(*ev.Prefs)
 			uipref.Set(*ev.Prefs)
+			a.updateDock() // mac_ssb_bullet
 		}
 		// core's sidebar rules read sidebar_behavior, channel_sort,
 		// boost_mentions…: rebuild the sections from a fresh snapshot
@@ -437,7 +441,7 @@ func (b *backend) handle(a *App, ev core.Event) {
 				a.dispatch("showNotification", map[string]any{"title": title, "message": msg, "body": body, "channelId": ev.Channel, "ts": ev.TS},
 					func(ctx context.Context, args map[string]any) (any, error) {
 						if t, b, ok := notificationText(args, msg, body); ok {
-							a.Notify(t, b)
+							a.notifyMessage(t, b)
 						}
 						return nil, nil
 					})

@@ -1214,9 +1214,19 @@ func (a *App) sections(convs []Conv) []Section {
 		return ok && (c.IsIM || c.IsMPIM)
 	}
 	visibleDM := func(id string) bool { return id == sel || !isDMKind(id) || a.dmCandidate(id) }
+	// External Connections (uSoP getChannelSectionType): with
+	// should_show_connect_section on and a slack_connect section, every
+	// externally shared conversation outside a custom section goes there;
+	// off, the section isn't shown and they stay in Channels / DMs.
+	showConnect := a.connectSectionOn(ordered)
+	connectIdx := -1
 	for _, s := range ordered {
 		switch s.Type {
-		case "salesforce_records", "slack_connect", "agents":
+		case "slack_connect":
+			if !showConnect {
+				continue
+			}
+		case "salesforce_records", "agents":
 			if len(s.ChannelIDsPage.ChannelIDs) == 0 {
 				continue
 			}
@@ -1268,6 +1278,13 @@ func (a *App) sections(convs []Conv) []Section {
 			dmIdx = len(out)
 		case "stars":
 			sv.Name = "Starred"
+		case "slack_connect":
+			if connectIdx < 0 {
+				connectIdx = len(out)
+			}
+			if sv.Name == "" {
+				sv.Name = "External connections"
+			}
 		case "recent_apps":
 			// Apps sits where the user's section list puts it, not last.
 			appIdx = len(out)
@@ -1303,6 +1320,10 @@ func (a *App) sections(convs []Conv) []Section {
 			out[codeIdx].Channels = append(out[codeIdx].Channels, c.ID)
 			continue
 		}
+		if connectIdx >= 0 && a.extShared(c.ID) && visibleDM(c.ID) { // then Slack Connect, before agents, apps and DMs
+			out[connectIdx].Channels = append(out[connectIdx].Channels, c.ID)
+			continue
+		}
 		switch c.Kind {
 		case "im", "mpim":
 			if !visibleDM(c.ID) {
@@ -1317,6 +1338,12 @@ func (a *App) sections(convs []Conv) []Section {
 			}
 		default:
 			out[chIdx].Channels = append(out[chIdx].Channels, c.ID)
+		}
+	}
+	if connectIdx >= 0 && len(out[connectIdx].Channels) == 0 { // nothing external: no section
+		out = append(out[:connectIdx], out[connectIdx+1:]...)
+		if appIdx > connectIdx {
+			appIdx--
 		}
 	}
 	switch {

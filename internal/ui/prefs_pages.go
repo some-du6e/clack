@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/huddleui"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/shortcut"
 )
 
@@ -149,9 +150,8 @@ func (p *prefsModal) notificationsPage(f *prefsForm) {
 	f.subheading("Channel keywords")
 	f.para("These act like mentions but can be set for topics that are important to you.")
 	f.link("keywords_help", "Learn more.", slackHelp("201355156"))
-	f.textBox("global_keywords", p.notifyStr("global_keywords"), "")
+	p.keywordsField(f)
 	f.muted("Use commas to separate each keyword. Keywords are not case sensitive.", false)
-	f.na()
 	f.hr()
 
 	f.heading("Reminders")
@@ -176,25 +176,44 @@ func (p *prefsModal) notificationsPage(f *prefsForm) {
 	prev := !p.notifyBool("no_text_in_notifications", false)
 	f.option("notify.no_text", "Include a preview of the message in each notification", "(disable this for extra privacy)", prev, false,
 		func() { p.setNotify("no_text_in_notifications", prev) })
-	f.off("mute_sounds", "Mute all messaging sounds from Slack", "", p.prefBool("mute_sounds", false), false)
-	if !p.prefBool("mute_sounds", false) {
-		f.selectBox("desktop_sound", "Notification sound (messages)", soundName(p.notifyStr("desktop_sound"), "Knock Brush"), false, nil)
+	// mute_sounds / mute_huddle_sounds are users.prefs (setUserPrefByApi);
+	// desktop_sound is a global notification pref (setNotifications).
+	// Picking a sound plays it, like Slack's onSelectionChange.
+	muted := p.prefBool("mute_sounds", false)
+	f.option("pref.mute_sounds", "Mute all messaging sounds from Slack", "", muted, false, func() { p.setPref("mute_sounds", !muted) })
+	if !muted {
+		f.selectBox("desktop_sound", "Notification sound (messages)", soundName(p.notifyStr("desktop_sound"), "Knock Brush"), true,
+			soundItems(huddleui.MessageSounds, func(v string) { p.setNotify("desktop_sound", v) }))
 	}
-	f.off("mute_huddle_sounds", "Mute all huddle sounds from Slack", "", p.prefBool("mute_huddle_sounds", false), false)
-	if !p.prefBool("mute_huddle_sounds", false) {
-		f.selectBox("huddle_invite_sound_v2", "Notification sound (huddles)", soundName(p.prefStr("huddle_invite_sound_v2"), "Boop Plus"), false, nil)
+	hmuted := p.prefBool("mute_huddle_sounds", false)
+	f.option("pref.mute_huddle_sounds", "Mute all huddle sounds from Slack", "", hmuted, false, func() { p.setPref("mute_huddle_sounds", !hmuted) })
+	if !hmuted {
+		f.selectBox("huddle_invite_sound_v2", "Notification sound (huddles)", soundName(p.prefStr("huddle_invite_sound_v2"), "Boop Plus"), true,
+			soundItems(huddleui.HuddleSounds, func(v string) { p.setPref("huddle_invite_sound_v2", v) }))
 	}
 	if runtime.GOOS == "darwin" { // MacAppearancePref
-		bounce := p.prefStr("mac_ssb_bounce")
-		f.off("mac_ssb_bullet", "Show a badge on Slack’s icon to indicate new activity", "", p.prefBool("mac_ssb_bullet", true), false)
-		f.off("mac_ssb_bounce", "Bounce Slack’s icon when receiving a notification", "", bounce != "", false)
-		f.off("mac_ssb_bounce_short", "Only bounce it once", "", bounce != "long", false)
+		p.macAppearance(f)
 	}
-	f.na()
+}
+
+// soundItems is a sound select's menu: picking one previews it and saves.
+func soundItems(ss []huddleui.Sound, set func(string)) []MenuItem {
+	var items []MenuItem
+	for _, s := range ss {
+		s := s
+		items = append(items, MenuItem{Label: s.Label, Do: func() {
+			huddleui.PlaySlackSound(s.Value)
+			set(s.Value)
+		}})
+	}
+	return items
 }
 
 // soundName is Slack's label for a notification sound file (def: none set).
 func soundName(v, def string) string {
+	if l := huddleui.SoundLabel(v); l != "" {
+		return l
+	}
 	v = strings.TrimSuffix(v, ".mp3")
 	switch v {
 	case "":
@@ -348,13 +367,17 @@ var sidebarViews = []struct{ pref, label string }{
 func (p *prefsModal) homePage(f *prefsForm) {
 	f.subheading("Channel organization")
 	f.off("disable_channel_join_banner", "Show suggestions for getting started in new channels", "", !p.prefBool("disable_channel_join_banner", false), false)
-	f.off("disable_auto_channel_sort", "Sort channels into sidebar sections automatically", "", !p.prefBool("disable_auto_channel_sort", false), false)
 	f.na()
+	// Slack's servers file a joined channel into a section (the client
+	// only reads the placement back): the box is the pref's negation.
+	f.check("disable_auto_channel_sort", "Sort channels into sidebar sections automatically", "", false, true)
 	f.hr()
 	f.subheading("Show activity")
-	f.off("enable_home_unread_dot", "Show a dot on the Home icon when there is unread activity", "", p.prefBool("enable_home_unread_dot", true), false)
+	// HomeUnreadDotPreferences: the input is named enable_home_unread_dot
+	// but the pref is home_unread_dot; off, the Home tab shows no dot or
+	// badge (host.go railBadge)
+	f.check("home_unread_dot", "Show a dot on the Home icon when there is unread activity", "", true, false)
 	f.link("home_dot_help", "Learn more", slackHelp("212596808"))
-	f.na()
 	f.gap()
 	f.subheading("Always show in the sidebar:")
 	for _, v := range sidebarViews {
@@ -399,15 +422,18 @@ func (p *prefsModal) homePage(f *prefsForm) {
 	f.hr()
 	f.subheading("Sidebar Organization")
 	// core's sidebar rules apply these (internal/core/sidebar_rules.go)
-	f.off("show_sidebar_avatars", "Show profile photos next to DMs", "", p.prefBool("show_sidebar_avatars", true), false)
+	// SidebarAvatarsPref reads !!show_sidebar_avatars; off, DM rows show a
+	// presence badge (slackc_shell.go)
+	f.check("show_sidebar_avatars", "Show profile photos next to DMs", "", false, false)
 	f.check("separate_private_channels", "Separate private channels from public ones in sidebar", "", false, false)
 	f.check("undo_channel_intermix", "Separate direct messages and apps from channels in sidebar", "", false, false)
 	f.check("boost_mentions", "Move items with unread Mentions to top of sections", "", false, false)
-	f.off("should_show_connect_section", "Organize external conversations into the External Connections section", "", p.prefBool("should_show_connect_section", true), false)
+	// isSlackConnectSectionVisible: core files externally shared
+	// conversations into the slack_connect section (core/app.go sections)
+	f.check("should_show_connect_section", "Organize external conversations into the External Connections section", "", false, false)
 	// improve_mute_pref: the box is the pref's negation
 	f.check("show_muted_items_outside_sidebar_menus", "Hide muted channels from your sidebar", "", false, true)
 	f.muted("You’ll always be able to find them in the channel section menu and they’ll pop up again if someone mentions you.", true)
-	f.muted("Profile photos and External Connections: "+naNote, false)
 }
 
 // ---- Messages & media ----

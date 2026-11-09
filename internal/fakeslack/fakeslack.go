@@ -267,6 +267,12 @@ func DefaultPrefs() map[string]any {
 		"emoji_use": `{"smile":10,"tada":7,"+1":30,"fire":5,"eyes":9}`, "muted_channels": "",
 		"ia_theme":                    `{"primary":{"palette":"aubergine"},"highlight1":{"palette":"aubergine"},"highlight2":{"palette":"jade"},"important":{"palette":"aubergine"},"brightness":6,"sidebarInverted":true,"useCustomHex":false}`,
 		"window_background_gradients": true,
+		// Preferences part A (prefs_a.go): Slack's server defaults
+		"show_sidebar_avatars": true, "home_unread_dot": true, "should_show_connect_section": true,
+		"mute_sounds": false, "mute_huddle_sounds": false,
+		"mac_ssb_bullet": true, "mac_ssb_bounce": "", "reminder_notification_time": "9:00",
+		"tz": "America/Los_Angeles", "set_tz_automatically": true, "webapp_spellcheck": true,
+		"user_customized_quick_reactions_display_feature": 1,
 		// Preferences dialog keys Clack wires, at Slack's defaults
 		"display_real_names_override": 0, "mentions_real_names_override": 0, "messages_theme": "default",
 		"show_typing": true, "hide_hex_swatch": false, "jumbomoji": true, "convert_emoticons": true,

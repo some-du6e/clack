@@ -51,6 +51,9 @@ func FromMessage(r Resolver, m *slack.Message) Doc {
 			d.Blocks = append(d.Blocks, b)
 		}
 	}
+	if h, ok := r.(highlighter); ok { // the viewer's Channel keywords (highlight.go)
+		HighlightDoc(d.Blocks, h.HighlightWords())
+	}
 	return d
 }
 

@@ -49,6 +49,63 @@ var slackSounds = map[string]string{
 	"boop_remix.mp3":                 "boop_remix-fbf4aad.mp3",                 // Boop Plus
 }
 
+// Sound is one of Slack's notification sounds: its pref value and label.
+type Sound struct{ Value, Label string }
+
+// MessageSounds are the Notifications page's "Notification sound
+// (messages)" options in Slack's order: None, then rpMl's $O (the
+// desktop_sound / priority_desktop_sound select).
+var MessageSounds = []Sound{
+	{"none", "None"}, {"b2.mp3", "Ding"}, {"animal_stick.mp3", "Boing"}, {"been_tree.mp3", "Drop"},
+	{"complete_quest_requirement.mp3", "Ta-da"}, {"confirm_delivery.mp3", "Plink"}, {"flitterbug.mp3", "Wow"},
+	{"here_you_go_lighter.mp3", "Here you go"}, {"hi_flowers_hit.mp3", "Hi"}, {"knock_brush.mp3", "Knock Brush"},
+	{"save_and_checkout.mp3", "Whoa!"}, {"item_pickup.mp3", "Yoink"}, {"hummus.mp3", "Hummus"}, {"boop.mp3", "Boop"},
+}
+
+// HuddleSounds are "Notification sound (huddles)": the message sounds
+// and N7's Boop Plus (huddle_invite_sound_v2).
+var HuddleSounds = append(append([]Sound(nil), MessageSounds...), Sound{"boop_remix.mp3", "Boop Plus"})
+
+// SoundLabel is Slack's label for a sound pref value ("" for one it
+// doesn't ship).
+func SoundLabel(v string) string {
+	for _, s := range HuddleSounds {
+		if s.Value == v {
+			return s.Label
+		}
+	}
+	return ""
+}
+
+// PlayHook, when set (tests), gets every sound PlaySlackSound would play
+// instead of the speakers.
+var PlayHook func(file string)
+
+// PlaySlackSound plays one of Slack's sounds once (a pref value like
+// "knock_brush.mp3"), the way Slack's sound playback (3kvt play) does for
+// a notification or a preview in Preferences. "none", "" and unknown
+// names are silence. Any goroutine; returns at once.
+func PlaySlackSound(file string) {
+	cdn, ok := slackSounds[file]
+	if !ok {
+		return
+	}
+	if h := PlayHook; h != nil {
+		h(file)
+		return
+	}
+	go func() {
+		pcm, err := loadSound(cdn)
+		if err != nil {
+			log.Printf("sound %s: %v", file, err)
+			return
+		}
+		if err := huddle.PlaySound(pcm, nil, log.Printf); err != nil {
+			log.Printf("sound %s: %v", file, err)
+		}
+	}()
+}
+
 type ringState struct {
 	mu   sync.Mutex
 	stop chan struct{}
