@@ -1,6 +1,7 @@
 package popups
 
 import (
+	"context"
 	"image"
 	"slices"
 	"strings"
@@ -59,6 +60,26 @@ func (e *mkEnv) press(n key.Name, mods key.Modifiers) {
 	e.frame()
 }
 
+// mkHost is hcEnv with its core booted against the fake Slack, so the
+// menus' actions (mark unread, save, pin) run.
+func mkHost(t *testing.T) *tzHost {
+	t.Helper()
+	h := mkHost(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() { done <- h.a.Boot(ctx) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("boot: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("boot timed out")
+	}
+	return h
+}
+
 func setGOOS(t *testing.T, goos string) {
 	prev := shortcut.GOOS
 	shortcut.GOOS = goos
@@ -102,7 +123,7 @@ func TestMenuKeyCopyLink(t *testing.T) {
 	for _, goos := range []string{"darwin", "linux", "windows"} {
 		t.Run(goos, func(t *testing.T) {
 			setGOOS(t, goos)
-			h := hcEnv(t)
+			h := mkHost(t)
 			m := mkMsg(false)
 			e := newMkEnv(t, NewMessageContextMenu(h, image.Pt(200, 200), m, InChannel, MessageMenuOpts{}))
 			e.press("L", 0)
@@ -117,6 +138,25 @@ func TestMenuKeyCopyLink(t *testing.T) {
 				t.Errorf("toasts %q", ts)
 			}
 		})
+	}
+}
+
+// L before the core has booted still copies (the workspace domain comes
+// from the store, so the UI goroutine never waits for Boot).
+func TestMenuKeyCopyLinkBeforeBoot(t *testing.T) {
+	setGOOS(t, "linux")
+	h := hcEnv(t) // never booted
+	m := mkMsg(false)
+	e := newMkEnv(t, NewMessageContextMenu(h, image.Pt(200, 200), m, InChannel, MessageMenuOpts{}))
+	done := make(chan struct{})
+	go func() { e.press("L", 0); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("L blocked the frame before boot")
+	}
+	if !strings.HasPrefix(e.clip, "https://") || !strings.Contains(e.clip, "/archives/"+m.Channel+"/p") || !e.m.Dismissed() {
+		t.Errorf("clip %q closed %v", e.clip, e.m.Dismissed())
 	}
 }
 
@@ -187,7 +227,7 @@ func TestMenuKeysMessageActions(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.goos+"/"+c.menu+"/"+string(c.name)+"/"+c.mods.String(), func(t *testing.T) {
 			setGOOS(t, c.goos)
-			h := hcEnv(t)
+			h := mkHost(t)
 			e, hooks := mkOpen(t, h, c.menu, c.own)
 			c.check(t, h, e, hooks)
 			if !e.m.Dismissed() {
@@ -249,7 +289,7 @@ func TestMenuKeysIgnored(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.goos+"/"+string(c.name)+"/"+c.mods.String(), func(t *testing.T) {
 			setGOOS(t, c.goos)
-			h := hcEnv(t)
+			h := mkHost(t)
 			e, hooks := mkOpen(t, h, "context", false)
 			e.press(c.name, c.mods)
 			if e.m.Dismissed() {
@@ -266,7 +306,7 @@ func TestMenuKeysIgnored(t *testing.T) {
 // pins once the Organize ▸ submenu has keyboard focus.
 func TestMenuKeysSubmenus(t *testing.T) {
 	setGOOS(t, "linux")
-	h := hcEnv(t)
+	h := mkHost(t)
 	e, _ := mkOpen(t, h, "more", false)
 	e.press("M", 0)
 	if e.m.Dismissed() || e.m.sub == nil || !e.m.sub.kbd || e.m.items[e.m.subIdx].Label != "Add a reminder" {
@@ -294,7 +334,7 @@ func TestMenuKeysSubmenus(t *testing.T) {
 // Arrows, Home/End, Enter and Escape navigate as before.
 func TestMenuKeysNavigation(t *testing.T) {
 	setGOOS(t, "linux")
-	h := hcEnv(t)
+	h := mkHost(t)
 	e, hooks := mkOpen(t, h, "context", false)
 	e.press(key.NameDownArrow, 0)
 	if e.m.sel != 0 {
@@ -337,7 +377,7 @@ func TestMenuTypeAhead(t *testing.T) {
 	}
 
 	setGOOS(t, "linux")
-	h := hcEnv(t)
+	h := mkHost(t)
 	e, _ := mkOpen(t, h, "context", false)
 	e.press("C", 0) // Copy link, Copy message, Connect to apps: cycle
 	first := label(e)
@@ -383,7 +423,7 @@ func TestMenuHintsPerOS(t *testing.T) {
 	}
 	for goos, w := range want {
 		setGOOS(t, goos)
-		h := hcEnv(t)
+		h := mkHost(t)
 		got := map[string]string{}
 		for _, it := range NewMessageContextMenu(h, image.Pt(10, 10), mkMsg(true), InChannel, MessageMenuOpts{}).Items() {
 			got[it.Label] = it.Hint
@@ -402,7 +442,7 @@ func TestMenuHintsPerOS(t *testing.T) {
 // The text selection menu's Copy text runs on ⌘C / Ctrl+C.
 func TestMenuKeysTextSelection(t *testing.T) {
 	setGOOS(t, "darwin")
-	h := hcEnv(t)
+	h := mkHost(t)
 	e := newMkEnv(t, NewTextSelectionMenu(h, image.Pt(100, 100), "selected words"))
 	e.press("C", key.ModCommand)
 	if e.clip != "selected words" || !e.m.Dismissed() {
@@ -414,7 +454,7 @@ func TestMenuKeysTextSelection(t *testing.T) {
 // like Slack's) and their own rows' shortcuts bind too.
 func TestMenuTemplateShortcuts(t *testing.T) {
 	setGOOS(t, "linux")
-	h := hcEnv(t)
+	h := mkHost(t)
 	m := NewMessageContextMenu(h, image.Pt(10, 10), mkMsg(false), InChannel, MessageMenuOpts{})
 	tpl := m.menuTemplate(m.orig)
 	var link slackc.Props
