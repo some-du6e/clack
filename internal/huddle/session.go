@@ -100,6 +100,16 @@ type State struct {
 	Videos        []Video
 	Captions      []Caption    // most recent last
 	Camera        CameraStatus // yours (SetCamera)
+	// Invites are the people the huddle rang who aren't in it (yet), in
+	// the order they were rung: Slack draws them as pending tiles.
+	Invites []Invite
+}
+
+// Invite is one rung person: Status is Slack's invite status ("pending",
+// "joining_soon", "declined"; "missed" and "accepted" don't show).
+type Invite struct {
+	UserID string
+	Status string
 }
 
 // Options configure a session.
@@ -152,6 +162,8 @@ type Session struct {
 	micErr    string
 	people    map[string]*Participant // by user id
 	order     []string
+	invites   map[string]string // user -> invite status (Invite)
+	inviteOrd []string
 	byAtt     map[string]string // attendee id -> people key (user id, or "U…/<attendee>" for a second device)
 	streamAt  map[uint32]string // audio stream id -> attendee id
 	sources   map[uint32]streamDesc
@@ -210,6 +222,7 @@ func Join(ctx context.Context, o Options, channel string) (*Session, error) {
 	for _, u := range ji.Participants {
 		s.person(u)
 	}
+	s.setInvites(ji.Invites)
 	o.Logf("huddle: joined room %s in %s (meeting %s, region %s)", ji.RoomID, channel, ji.Meeting.MeetingID, ji.Meeting.MediaRegion)
 	s.openDevice()
 	go s.run()
@@ -292,8 +305,20 @@ func (s *Session) State() State {
 	}
 	ids := append([]string(nil), s.order...)
 	sort.SliceStable(ids, func(i, j int) bool { return s.people[ids[i]].Self && !s.people[ids[j]].Self })
+	for _, u := range s.inviteOrd {
+		if p := s.people[u]; p != nil && (p.InMedia || p.Self) {
+			continue // here: their tile, not the invite's
+		}
+		switch v := s.invites[u]; v {
+		case "pending", "joining_soon", "declined":
+			st.Invites = append(st.Invites, Invite{UserID: u, Status: v})
+		}
+	}
 	for _, id := range ids {
 		p := *s.people[id]
+		if !p.InMedia && !p.Self && invited(st.Invites, p.UserID) {
+			continue // rung, not here yet: the invite's tile
+		}
 		if p.Self {
 			p.Muted = s.muted
 			p.Camera = cam.State == CameraOn
@@ -315,6 +340,43 @@ func (s *Session) State() State {
 	st.Captions = append(st.Captions, s.lines...)
 	st.Camera = cam
 	return st
+}
+
+func invited(l []Invite, u string) bool {
+	for _, x := range l {
+		if x.UserID == u {
+			return true
+		}
+	}
+	return false
+}
+
+// setInvites replaces the invite statuses (nil: no change). Callers hold
+// mu (or own s exclusively).
+func (s *Session) setInvites(m map[string]string) {
+	if m == nil {
+		return
+	}
+	keep := s.inviteOrd[:0]
+	for _, u := range s.inviteOrd {
+		if _, ok := m[u]; ok {
+			keep = append(keep, u)
+		}
+	}
+	s.inviteOrd = keep
+	have := map[string]bool{}
+	for _, u := range s.inviteOrd {
+		have[u] = true
+	}
+	var add []string
+	for u := range m {
+		if !have[u] && u != s.o.SelfID {
+			add = append(add, u)
+		}
+	}
+	sort.Strings(add)
+	s.inviteOrd = append(s.inviteOrd, add...)
+	s.invites = m
 }
 
 // Frame returns the newest picture of a video (State().Videos[i].Key).
@@ -1334,6 +1396,7 @@ func (s *Session) HandleRoomEvent(name string, raw json.RawMessage) {
 	if r.Name != "" {
 		s.join.Name = r.Name
 	}
+	s.setInvites(r.invites())
 	if r.Participants != nil {
 		in := map[string]bool{}
 		for _, u := range r.Participants {
@@ -1354,6 +1417,7 @@ func (s *Session) HandleRoomEvent(name string, raw json.RawMessage) {
 	case "sh_room_join":
 		if ev.User != "" {
 			s.person(ev.User)
+			delete(s.invites, ev.User) // Slack clears a joiner's invite status
 		}
 	case "sh_room_leave":
 		if ev.User != "" && ev.User != s.o.SelfID {

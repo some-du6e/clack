@@ -42,6 +42,7 @@ type joinInfo struct {
 	Attendee     chimeAttendee
 	Name         string
 	DateStart    int64
+	Invites      map[string]string // user -> last invite status (DM rings)
 }
 
 // participants decodes ["U1",…] or [{"user_id":"U1"},…].
@@ -87,6 +88,42 @@ type roomJSON struct {
 	HuddleLink      string       `json:"huddle_link"`
 	MediaBackend    string       `json:"media_backend_type"`
 	ParticipantHist participants `json:"participant_history"`
+	// The people the huddle rang (Slack's server rings a DM's other member
+	// on rooms.join): user -> "pending", "joining_soon", "declined",
+	// "missed" or "accepted". Slack's huddle window draws a pending tile
+	// for each (HuddlePeerTile's invite status overlay).
+	LastInviteStatus map[string]string `json:"last_invite_status_by_user"`
+	PendingInvitees  json.RawMessage   `json:"pending_invitees"`
+}
+
+// invites is the room's invite statuses: last_invite_status_by_user, and
+// pending_invitees (an object keyed by user, or a list) as "pending" for
+// anyone it doesn't name. nil when the room says nothing about invites.
+func (r roomJSON) invites() map[string]string {
+	if r.LastInviteStatus == nil && len(r.PendingInvitees) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	for u, st := range r.LastInviteStatus {
+		out[u] = st
+	}
+	var byUser map[string]json.RawMessage
+	if json.Unmarshal(r.PendingInvitees, &byUser) == nil {
+		for u := range byUser {
+			if _, ok := out[u]; !ok {
+				out[u] = "pending"
+			}
+		}
+	} else {
+		var list participants
+		_ = json.Unmarshal(r.PendingInvitees, &list)
+		for _, u := range list {
+			if _, ok := out[u]; !ok {
+				out[u] = "pending"
+			}
+		}
+	}
+	return out
 }
 
 // roomsJoin starts or joins the huddle in channel (rooms.join).
@@ -109,7 +146,11 @@ func roomsJoin(ctx context.Context, c Caller, channel, region string) (*joinInfo
 			RootThreadTS    string `json:"root_thread_ts"`
 		} `json:"canvas"`
 	}
-	p := url.Values{"channel_id": {channel}, "regions": {region}}
+	// Slack's joinRoom fetcher: {id?, channel_id, thread_ts?, regions,
+	// multidevice}. There's no ring call: for a DM the server rings the
+	// other member itself (the callee gets huddle_invite, and the room's
+	// last_invite_status_by_user says "pending").
+	p := url.Values{"channel_id": {channel}, "regions": {region}, "multidevice": {"false"}}
 	if err := c.Call(ctx, "rooms.join", p, &res); err != nil {
 		return nil, err
 	}
@@ -140,6 +181,9 @@ func roomsJoin(ctx context.Context, c Caller, channel, region string) (*joinInfo
 		}
 		if ji.DateStart == 0 {
 			ji.DateStart = r.DateStart
+		}
+		if ji.Invites == nil {
+			ji.Invites = r.invites()
 		}
 	}
 	ji.ThreadCh = res.Canvas.ThreadChannelID

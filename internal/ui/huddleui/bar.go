@@ -472,5 +472,5 @@ func (c *Controller) Toggle(ch string) {
 		c.Leave()
 		return
 	}
-	c.Start(ch)
+	c.Begin(ch, EntryHeaderButton)
 }
