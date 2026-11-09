@@ -173,6 +173,7 @@ func (p *picker) layout(gtx layout.Context, v *View, s *session, pos image.Point
 			i, it := i, it
 			y := gtx.Dp(4) + i*rowH
 			clk := &p.clicks[i]
+			hit := clk.Clicked(gtx) // before Layout, which drains a Clickable's events
 			at(gtx, image.Pt(gtx.Dp(4), y), image.Pt(pw-gtx.Dp(8), rowH), func(gtx layout.Context) layout.Dimensions {
 				return clk.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					sz := gtx.Constraints.Max
@@ -217,7 +218,7 @@ func (p *picker) layout(gtx layout.Context, v *View, s *session, pos image.Point
 					return layout.Dimensions{Size: sz}
 				})
 			})
-			if clk.Clicked(gtx) {
+			if hit {
 				p.insert(v, s, it)
 			}
 		}

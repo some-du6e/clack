@@ -144,6 +144,22 @@ func (o *Ops) Reset() {
 	ops.Reset(&o.Internal)
 }
 
+// Checkpoint marks the current end of o (Clack patch 3, see
+// CLACK_PATCHES.md).
+type Checkpoint struct{ c ops.Checkpoint }
+
+// Checkpoint returns o's current state, for Rollback.
+func (o *Ops) Checkpoint() Checkpoint { return Checkpoint{ops.SaveCheckpoint(&o.Internal)} }
+
+// Rollback drops every operation added to o since c and restores the
+// macro and operation stacks to their state at c: a widget that panicked
+// half way through its layout, with transforms and clips pushed and
+// macros recording, leaves o as it was before it started, so its caller
+// can draw something else and pop its own stacks. Macros recorded since c
+// become invalid. It reports false (and does nothing) if o was Reset
+// since c.
+func (o *Ops) Rollback(c Checkpoint) bool { return ops.Rollback(&o.Internal, c.c) }
+
 // Record a macro of operations.
 func Record(o *Ops) MacroOp {
 	m := MacroOp{

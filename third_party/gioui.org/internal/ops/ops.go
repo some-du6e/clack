@@ -495,3 +495,50 @@ func (t OpType) String() string {
 		panic("unknown OpType")
 	}
 }
+
+// Checkpoint is the state of an Ops at one point (Clack patch 3, see
+// CLACK_PATCHES.md): Rollback returns the Ops to it.
+type Checkpoint struct {
+	data, refs, stringRefs int
+	multipOp               bool
+	macro                  uint32
+	stacks                 [_StackKind]uint32
+	version                uint32
+}
+
+// SaveCheckpoint returns o's current checkpoint.
+func SaveCheckpoint(o *Ops) Checkpoint {
+	c := Checkpoint{data: len(o.data), refs: len(o.refs), stringRefs: len(o.stringRefs), multipOp: o.multipOp,
+		macro: o.macroStack.currentID, version: o.version}
+	for i := range o.stacks {
+		c.stacks[i] = o.stacks[i].currentID
+	}
+	return c
+}
+
+// Rollback drops everything written to o since c and restores its macro
+// and op stacks to what they were then, as if the pushes, records and
+// writes since had never happened (a layout that panicked half way). Stack
+// ids keep counting up, so a handle from the dropped part can never match.
+// It reports false (and does nothing) if o was Reset since c or is shorter
+// than c.
+func Rollback(o *Ops, c Checkpoint) bool {
+	if o.version != c.version || len(o.data) < c.data || len(o.refs) < c.refs || len(o.stringRefs) < c.stringRefs {
+		return false
+	}
+	for i := c.refs; i < len(o.refs); i++ {
+		o.refs[i] = nil
+	}
+	for i := c.stringRefs; i < len(o.stringRefs); i++ {
+		o.stringRefs[i] = ""
+	}
+	o.data = o.data[:c.data]
+	o.refs = o.refs[:c.refs]
+	o.stringRefs = o.stringRefs[:c.stringRefs]
+	o.multipOp = c.multipOp
+	o.macroStack.currentID = c.macro
+	for i := range o.stacks {
+		o.stacks[i].currentID = c.stacks[i]
+	}
+	return true
+}

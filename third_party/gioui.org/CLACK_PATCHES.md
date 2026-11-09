@@ -10,7 +10,8 @@ To see the whole diff against the release:
     go mod download gioui.org@v0.10.3
     diff -ru "$(go env GOMODCACHE)/gioui.org@v0.10.3" third_party/gioui.org
 
-It should show only `gpu/gpu.go`, `widget/index.go` and these two files
+It should show only `gpu/gpu.go`, `widget/index.go`, `op/op.go`,
+`internal/ops/ops.go` and these two files
 (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -69,3 +70,27 @@ from there (left-to-right runs; right-to-left keeps upstream's arithmetic).
 
 Test: `internal/ui/theme` `TestThemeEditorEmojiRegions`. Not yet in
 `UPSTREAM.patch`.
+
+## 3. op: Checkpoint and Rollback
+
+`op/op.go` (`Ops.Checkpoint`, `Ops.Rollback`) and `internal/ops/ops.go`
+(`SaveCheckpoint`, `Rollback`). An addition, not a fix: no upstream API
+changes behaviour.
+
+A widget that panics half way through its layout leaves the Ops with
+transforms and clips pushed and macros still recording. Recovering from
+the panic isn't enough: the caller's own deferred `Pop`s then panic with
+"stack push and pop must not cross macro boundary", because the macro
+stack still has the abandoned macro on top. Clack alpha.24 crashed on
+macOS this way when a canvas's block list changed during its layout
+(internal/ui/canvasview, `layoutDoc`).
+
+`Rollback` truncates the op data and references to the checkpoint and
+restores the macro and op stacks' current ids (their counters keep going,
+so a stale handle never matches). canvasview's `View.Layout` takes a
+checkpoint, recovers a panic, rolls back and draws the canvas error state
+in place.
+
+Test: `internal/ui/canvasview` `TestLayoutPanicRecovered` (a panic with
+pushed transforms, clips and an open macro inside a recording parent; the
+parent then pops and stops cleanly).
