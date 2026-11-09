@@ -26,7 +26,6 @@ package ui
 import (
 	"encoding/json"
 	"image"
-	"log"
 	"sync"
 	"time"
 
@@ -782,12 +781,6 @@ func (a *App) keepBody(gtx layout.Context) {
 		return
 	}
 	a.standIns++
-	if a.standInLogged.IsZero() || gtx.Now.Sub(a.standInLogged) > 10*time.Second {
-		// field evidence for what leaves the body out (plugins on: which)
-		log.Printf("ui: the primary view's body was missing from %d frame(s) (route %s, patched ClientPrimaryView=%v RenderedViewContents=%v); drawn in its place",
-			a.standIns-a.standInsLogged, b.route, slackc.Patched("ClientPrimaryView"), slackc.Patched("RenderedViewContents"))
-		a.standInLogged, a.standInsLogged = gtx.Now, a.standIns
-	}
 	defer op.Offset(b.off).Push(gtx.Ops).Pop()
 	defer clip.Rect{Max: b.cons.Max}.Push(gtx.Ops).Pop()
 	g := gtx
@@ -795,4 +788,7 @@ func (a *App) keepBody(gtx layout.Context) {
 	a.standIn = true
 	a.drawViewBody(g)
 	a.standIn = false
+	// field evidence (focus_log.go): did the stand-in keep a focused
+	// composer's focus (its handler is back in this frame)?
+	a.missedFrameLog.standIn(b.route, a.routeComposerFocused(gtx, b.route))
 }

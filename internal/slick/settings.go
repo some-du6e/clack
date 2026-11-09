@@ -286,3 +286,21 @@ func (s *Slick) Code(id string) string {
 
 // Dir is Slick's data directory.
 func (s *Slick) Dir() string { return s.dir }
+
+// Running lists the ids of the plugins running now, sorted (logs and
+// Copy Diagnostics: names only). Nil-safe.
+func (s *Slick) Running() []string {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	var ids []string
+	for _, p := range s.plugins {
+		if p.running {
+			ids = append(ids, p.id)
+		}
+	}
+	s.mu.Unlock()
+	sort.Strings(ids)
+	return ids
+}

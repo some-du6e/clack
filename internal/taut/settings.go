@@ -334,3 +334,21 @@ func (t *Taut) watchFiles(stop <-chan struct{}) {
 		cancel()
 	}
 }
+
+// Running lists the ids of the plugins running now, sorted (logs and
+// Copy Diagnostics: names only). Nil-safe.
+func (t *Taut) Running() []string {
+	if t == nil {
+		return nil
+	}
+	t.mu.Lock()
+	var ids []string
+	for _, p := range t.plugins {
+		if p.running {
+			ids = append(ids, p.id)
+		}
+	}
+	t.mu.Unlock()
+	sort.Strings(ids)
+	return ids
+}

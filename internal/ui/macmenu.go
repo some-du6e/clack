@@ -135,6 +135,8 @@ func (a *App) macMenus() []menubar.Menu {
 			sep,
 			{ID: "menuitem-release-notes", Title: "Release Notes", Do: func() { openURL(releasesPage) }},
 			{ID: "menuitem-freeze-reports", Title: "Show Freeze Reports", Do: a.showFreezeReports},
+			{ID: "menuitem-logs", Title: "Open Logs Folder", Do: a.showLogs},
+			{ID: "menuitem-copy-diagnostics", Title: "Copy Diagnostics", Do: on(a.copyDiagnostics)},
 			{ID: "menuitem-about-slack", Title: "About " + AppName, Role: "orderFrontStandardAboutPanel:"},
 		}},
 	}

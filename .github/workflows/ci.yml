@@ -81,6 +81,20 @@ jobs:
           name: clack-windows-amd64
           path: dist/clack-windows-amd64.exe
 
+  # the log file on Windows: %LOCALAPPDATA% paths, renames while rotating
+  windows-applog:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: applog tests
+        run: go test -count=1 -v ./internal/applog
+
   macos:
     runs-on: macos-latest
     steps:
@@ -96,7 +110,8 @@ jobs:
           go test -count=1 -v -run 'TestCodeRunsHaveOutlines|TestCodeSpanAfterEmoji|TestInlineCodeDraws' ./internal/ui/theme ./internal/ui/richview ./internal/ui/composer
           go test -count=1 -v -run 'TestEmoji' ./internal/ui/theme
           go test -count=1 -v -run 'TestOwnProfilePane|TestOtherProfilePane' ./internal/ui/popups
-          go test -count=1 -v -run 'TestSwipe|TestNav|TestNativeMenuBar|TestMacMenu|TestMenuState|TestZoom' ./internal/ui
+          go test -count=1 -v -run 'TestSwipe|TestNav|TestNativeMenuBar|TestMacMenu|TestMenuState|TestZoom|TestDiagnosticsText|TestMissedFrameLogLine' ./internal/ui
+          go test -count=1 -v ./internal/applog
           go test -count=1 -v ./internal/ui/menubar
       - name: Gio drawLayers fix on Metal (patched passes, stock v0.10.3 panics)
         env:

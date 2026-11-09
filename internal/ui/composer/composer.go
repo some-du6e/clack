@@ -1075,10 +1075,12 @@ func (c *Composer) restoreDroppedFocus(gtx layout.Context) {
 		return
 	}
 	c.focusRestored = true
+	focusStats.dropped.Add(1)
 	if pressCount() != c.focusPress {
 		c.focused = false
 		return
 	}
+	focusStats.restored.Add(1)
 	c.ed.Focus(gtx)
 }
 
