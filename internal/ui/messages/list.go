@@ -130,6 +130,11 @@ type listState struct {
 	sb          scrollbar
 	pendingJump string
 
+	// the list as the last frame left it (anchoring in layoutList)
+	laidOut   bool
+	laidPos   layout.Position
+	laidBuilt uint64
+
 	rc rowCtx // this frame's row inputs (rows keep a pointer to it)
 
 	// hover toolbar state for its natives (MessageActions)
@@ -534,6 +539,17 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		}
 	}
 
+	// The anchor: the first message wholly on screen last frame, while
+	// nothing has moved the list since (no rebuild, no jump).
+	akey, ay := "", 0
+	if s.laidOut && s.built == s.laidBuilt && samePos(s.list.Position, s.laidPos) && s.list.Position.BeforeEnd {
+		for i := s.visible[0]; i < s.visible[1] && i < len(s.items); i++ {
+			if s.items[i].kind == itMsg && s.pos[i] >= 0 {
+				akey, ay = s.items[i].key, s.pos[i]
+				break
+			}
+		}
+	}
 	for i := range s.heights {
 		s.heights[i] = 0
 	}
@@ -541,7 +557,9 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	if h.Core() != nil {
 		selfID = h.Core().Self().ID
 	}
-	s.rc = rowCtx{h: h, th: th, st: st, c: c, now: now, thread: s.thread, list: s, selfID: selfID, usersRev: s.hb.usersRev() + 1,
+	urev := s.hb.usersRev()
+	chanFrame = urev // channel names the rows may show this frame (channels.go)
+	s.rc = rowCtx{h: h, th: th, st: st, c: c, now: now, thread: s.thread, list: s, selfID: selfID, usersRev: urev + 1,
 		origin:    func(p image.Point) image.Point { return s.anchor(h, origin, p) },
 		onReact:   func(r *row, name string, add bool) { s.react(h, r, name, add, selfID) },
 		onRetry:   func(r *row) { s.retry(h, r) },
@@ -552,11 +570,32 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	s.tip = ""
 	ls := listClass.Enter(gtx, 0, 0)
 	defer ls.Leave()
-	s.list.Layout(gtx, len(s.items), func(gtx layout.Context, i int) layout.Dimensions {
-		d := s.layoutItem(gtx, h, rc, i)
-		s.heights[i] = d.Size.Y
-		return d
-	})
+	lay := func() op.CallOp {
+		m := op.Record(gtx.Ops)
+		s.list.Layout(gtx, len(s.items), func(gtx layout.Context, i int) layout.Dimensions {
+			d := s.layoutItem(gtx, h, rc, i)
+			s.heights[i] = d.Size.Y
+			return d
+		})
+		return m.Stop()
+	}
+	before := s.list.Position
+	call := lay()
+	// Nothing scrolled, yet the anchor moved: a row above it changed height
+	// (a channel name or a picture arriving, a plugin's tree). Keep what
+	// the reader is looking at where it was, in this frame: lay out again
+	// with the offset corrected and draw only that.
+	if akey != "" && samePos(s.list.Position, before) {
+		if y, ok := s.yOfKey(akey, size.Y); ok && y != ay {
+			for i := range s.heights {
+				s.heights[i] = 0
+			}
+			s.list.Position.Offset += y - ay
+			call = lay()
+		}
+	}
+	call.Add(gtx.Ops)
+	s.laidOut, s.laidPos, s.laidBuilt = true, s.list.Position, s.built
 
 	// positions of visible items
 	p := s.list.Position
@@ -620,6 +659,25 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		}
 	}
 	return layout.Dimensions{Size: size}
+}
+
+// samePos reports two list positions at the same place.
+func samePos(a, b layout.Position) bool {
+	return a.First == b.First && a.Offset == b.Offset && a.BeforeEnd == b.BeforeEnd
+}
+
+// yOfKey is item key's y in this frame's layout (from Position and the
+// heights just measured), if it is on screen.
+func (s *listState) yOfKey(key string, viewH int) (int, bool) {
+	p := s.list.Position
+	y := -p.Offset
+	for i := p.First; i < len(s.items) && y < viewH; i++ {
+		if s.items[i].key == key {
+			return y, true
+		}
+		y += s.heights[i]
+	}
+	return 0, false
 }
 
 func (s *listState) anchor(h Host, origin, p image.Point) image.Point {

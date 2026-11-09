@@ -232,10 +232,10 @@ func (s *listState) applyView(t *taut.Taut, r *row, now time.Time) {
 	}
 	// keep what only the native knows (pending state, resolved author)
 	mv.Pending, mv.Failed, mv.ClientMsgID = r.src.Pending, r.src.Failed, r.src.ClientMsgID
-	if r.viewed && sameMessage(&r.m, &mv) && r.m.Text == mv.Text {
+	if r.viewed && sameView(&r.m, &mv) && r.m.Text == mv.Text {
 		return
 	}
-	if !r.viewed && sameMessage(&r.src, &mv) && r.src.Text == mv.Text {
+	if !r.viewed && sameView(&r.src, &mv) && r.src.Text == mv.Text {
 		return
 	}
 	r.viewed = true

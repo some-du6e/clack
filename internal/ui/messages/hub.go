@@ -2,6 +2,7 @@ package messages
 
 import (
 	"context"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -384,6 +385,16 @@ func (m *model) remove(ts string) {
 }
 
 func sameMessage(a, b *core.Message) bool {
+	// all of it: a message converted again with names it didn't have
+	// before (a mention, a channel, custom emoji) has the same text and
+	// block count but another doc, and a row keeping its rev would draw
+	// the old one (wrapped differently) until something else refreshed it
+	return reflect.DeepEqual(a, b)
+}
+
+// sameView is the looser test applyView (taut.go) uses on the plugins'
+// view of a message every viewRefresh: the fields a view change shows in.
+func sameView(a, b *core.Message) bool {
 	if a.Text != b.Text || a.EditedTS != b.EditedTS || a.ReplyCount != b.ReplyCount || a.LatestReply != b.LatestReply ||
 		a.Pinned != b.Pinned || a.Pending != b.Pending || len(a.Reactions) != len(b.Reactions) ||
 		len(a.Doc.Blocks) != len(b.Doc.Blocks) || a.Name != b.Name || a.Avatar != b.Avatar {
