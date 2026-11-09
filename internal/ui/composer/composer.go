@@ -23,10 +23,10 @@ import (
 // Composer is the message box under a channel or thread, or the inline
 // editor of an existing message (NewEdit).
 type Composer struct {
-	h        Host
-	api      coreAPI
-	ch, ts   string
-	edit     *core.Message // edit mode: the message being edited
+	h      Host
+	api    coreAPI
+	ch, ts string
+	edit   *core.Message // edit mode: the message being edited
 	// unsendBy is when the message just sent stops being unsendable
 	// (Slack's messageEligibleForUnsending, expiryTs = send + 15 s).
 	unsendBy time.Time

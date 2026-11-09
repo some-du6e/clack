@@ -170,6 +170,7 @@ func (r *richHandler) OpenURL(url string) {
 	}
 	openURL(url)
 }
+
 // OpenLink is a mrkdwn link's click with its text: Slack's
 // suspicious-link warning first (popups.MaybeWarnLink, unless
 // suppress_link_warning), then OpenURL.

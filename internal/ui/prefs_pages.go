@@ -720,5 +720,3 @@ func (p *prefsModal) advancedPage(f *prefsForm) {
 	p.updatesSection(f)         // update_check.go
 	p.troubleshootingSection(f) // diagnostics.go
 }
-
-
