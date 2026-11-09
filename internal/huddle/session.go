@@ -130,6 +130,8 @@ type Options struct {
 	MicAccess func() <-chan avperm.Status
 	OpenAudio func(logf func(string, ...any)) (Device, error)
 	Muted     bool
+	// Captions starts with live captions shown (huddles_cc_by_default).
+	Captions bool
 	// OpenCamera replaces the system camera for SetCamera (tests, the demo:
 	// NewTestCamera); nil = the default camera behind the OS permission.
 	OpenCamera func(logf func(string, ...any)) (Camera, error)
@@ -232,7 +234,7 @@ func Join(ctx context.Context, o Options, channel string) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Session{o: o, join: ji, muted: o.Muted, people: map[string]*Participant{}, byAtt: map[string]string{},
+	s := &Session{o: o, join: ji, muted: o.Muted, captions: o.Captions, people: map[string]*Participant{}, byAtt: map[string]string{},
 		streamAt: map[uint32]string{}, sources: map[uint32]streamDesc{}, sinks: map[string]*videoSink{},
 		waiters: map[int][]chan *signalFrame{}, doneCh: make(chan struct{}), mic: newMicFramer()}
 	s.ctx, s.cancel = context.WithCancel(context.Background())

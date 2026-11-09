@@ -310,7 +310,8 @@ func TestPrefsAuditAppliedRoundTrip(t *testing.T) {
 	})
 	shown := ca.Rail().Available
 	i := indexOf(shown, core.TabDMs)
-	p.moveRailTab(shown, i, -1)
+	p.nav.active = core.TabDMs // the listbox's active option (hovered or arrowed to)
+	p.moveActive(p.navTabs(), -1)
 	waitFor(t, a, "DMs moved up", func() bool {
 		av := ca.Rail().Available
 		return indexOf(av, core.TabDMs) == i-1 && ca.Prefs().TabRailOrderSet

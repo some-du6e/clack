@@ -28,6 +28,7 @@ import (
 	"log"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -199,6 +200,35 @@ type filterSuggestionRaw struct {
 	Checked bool   `json:"checked"`
 }
 
+// withoutExcluded drops the channels of search_exclude_channels (Advanced
+// > "Exclude these channels from search results:", comma-separated ids)
+// from the In suggestions, as parseSuggestions does; Slack's servers
+// leave them out of the results.
+func (a *App) withoutExcluded(in []FilterSuggestion) []FilterSuggestion {
+	ex := SearchExcludedChannels(a.PrefString("search_exclude_channels"))
+	if len(ex) == 0 {
+		return in
+	}
+	out := in[:0:0]
+	for _, f := range in {
+		if !slices.Contains(ex, f.ID) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// SearchExcludedChannels splits search_exclude_channels into ids.
+func SearchExcludedChannels(v string) []string {
+	var out []string
+	for _, id := range strings.Split(v, ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 func filterSuggestions(rs []filterSuggestionRaw) []FilterSuggestion {
 	out := make([]FilterSuggestion, 0, len(rs))
 	for _, r := range rs {
@@ -232,7 +262,7 @@ func (a *App) SearchMessages(ctx context.Context, o SearchOpts) (SearchResult, e
 		return SearchResult{}, err
 	}
 	out := SearchResult{Total: res.Pagination.Total, Page: res.Pagination.Page, Pages: res.Pagination.PageCount,
-		FilterIn: filterSuggestions(res.Filters.In), FilterFrom: filterSuggestions(res.Filters.From)}
+		FilterIn: a.withoutExcluded(filterSuggestions(res.Filters.In)), FilterFrom: filterSuggestions(res.Filters.From)}
 	if out.Page == 0 {
 		out.Page, _ = strconv.Atoi(p.Get("page"))
 	}

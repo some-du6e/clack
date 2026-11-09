@@ -44,6 +44,16 @@ func (c coreAPI) emojiVersion() uint64 { return c.a.S.CustomEmoji.Version() }
 // plainTextMode is Slack's plain_text_mode user pref.
 func (c coreAPI) plainTextMode() bool { return c.a.Prefs().PlainTextMode }
 
+// upToBrowse is users.prefs up_to_browse_kb_shortcut (the old "↑ browses
+// messages" switch, read when the Accessibility choice is unset).
+func (c coreAPI) upToBrowse() bool { return c.a.PrefBool("up_to_browse_kb_shortcut", false) }
+
+// smartSymbols is getSmartSymbolsEnabled: composer_smart_symbols on and
+// disable_smart_symbols unset (smart_symbols.go).
+func (c coreAPI) smartSymbols() bool {
+	return c.a.Experiment("composer_smart_symbols") == "on" && !c.a.PrefBool("disable_smart_symbols", false)
+}
+
 // resolver names users, channels and emoji for the mrkdwn parser.
 func (c coreAPI) resolver() richtext.Resolver { return c.a.S }
 

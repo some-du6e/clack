@@ -141,6 +141,9 @@ func (a *App) convoFor(ch, ts string) *convo {
 	if cv, ok := a.mountComposer(ch, ts).(composerView); ok {
 		c.comp = cv
 		c.comp.SetOnEditLast(func() { a.editLast(c) })
+		if fl, ok := c.comp.(interface{ SetOnFocusList(func()) }); ok {
+			fl.SetOnFocusList(func() { a.focusList(c) })
+		}
 	}
 	a.convos[k] = c
 	a.convoOrder = append(a.convoOrder, k)
@@ -294,6 +297,19 @@ func (a *App) editLast(c *convo) {
 		}
 		a.Post(func() { a.Toast("You haven't sent anything here yet") })
 	}()
+}
+
+// focusList moves keyboard focus to the conversation's message list with
+// the newest message selected (Up in the composer with Accessibility's
+// "Move focus to the message list"); leaving it focuses the composer.
+func (a *App) focusList(c *convo) {
+	if l, ok := c.list.(interface{ FocusNewest(func()) bool }); ok {
+		l.FocusNewest(func() {
+			if c.comp != nil {
+				c.comp.Focus()
+			}
+		})
+	}
 }
 
 // startEdit swaps the conversation's composer for an edit composer on m.

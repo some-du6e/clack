@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/shortcut"
 )
 
@@ -265,27 +264,7 @@ func (p *prefsModal) navigationPage(f *prefsForm) {
 	f.subheading("Configure these tabs in the navigation bar:")
 	f.muted("Select the tabs you want to show, and drag to reorder them. At smaller window sizes, not all selected tabs may appear.", false)
 	if c != nil {
-		r := c.Rail()
-		cust := c.RailCustomization()
-		for _, t := range r.Available {
-			t := t
-			forced := core.RailForced(t)
-			on := forced || cust[t]
-			if v, ok := p.pending("rail:" + t); ok {
-				on, _ = v.(bool)
-			}
-			label := r.Tabs[t].Label
-			if p.navSel == t {
-				label = "› " + label
-			}
-			f.optionAt("rail."+t, label, "", on, false, !forced, func() {
-				p.navSel = t
-				p.setRailTab(t, !on)
-			})
-		}
-		i := indexOf(r.Available, p.navSel)
-		f.buttons(prefsButton{"rail.up", "Move up", i > 0, func() { p.moveRailTab(r.Available, i, -1) }},
-			prefsButton{"rail.down", "Move down", i >= 0 && i < len(r.Available)-1, func() { p.moveRailTab(r.Available, i, 1) }})
+		f.reorderList(p.navTabs())
 	}
 	f.gap()
 	f.subheading("Navigation Tab Appearance")
@@ -317,23 +296,6 @@ func (p *prefsModal) setRailTab(tab string, on bool) {
 	rj, _ := json.Marshal(reasons)
 	done := p.hold("rail:"+tab, on)
 	p.a.setSlackPrefs(map[string]any{"tab_rail_customization": string(mj), "tab_rail_customization_reasons": string(rj)}, done)
-}
-
-// moveRailTab is setTabRailCustomizationOrder: the full order with the
-// tab moved past its neighbour in the list shown.
-func (p *prefsModal) moveRailTab(shown []string, i, d int) {
-	c := p.a.Core()
-	if c == nil || i < 0 || i+d < 0 || i+d >= len(shown) {
-		return
-	}
-	order := c.RailOrder()
-	a, b := indexOf(order, shown[i]), indexOf(order, shown[i+d])
-	if a < 0 || b < 0 {
-		return
-	}
-	order[a], order[b] = order[b], order[a]
-	j, _ := json.Marshal(order)
-	p.setPref("tab_rail_customization_order", string(j))
 }
 
 // ---- Home (Slack's "sidebar" tab) ----
@@ -525,15 +487,24 @@ func (p *prefsModal) accessibilityPage(f *prefsForm) {
 	f.para("You can improve the way you use Slack by learning our handy keyboard shortcuts.")
 	f.linkDo("shortcuts", "handy keyboard shortcuts", p.a.showShortcutsHelp)
 	f.subheading("Press ↑ in the empty message field to:")
-	up := p.prefInt("composer_up_arrow_shortcut", 0)
-	f.off("up.1", "Move focus to the message list", "The most recent message in the list will be selected", up == 1, true)
-	f.off("up.2", "Move focus to the message list, only if the message field is empty", "The most recent message in the list will be selected", up == 2, true)
-	f.off("up.3", "Edit your last message", "The last message you sent will be selected and in editing mode", up == 3, true)
+	// Slack keeps this client-side (localStorage composerUpArrowShortcutBehavior);
+	// Clack keeps it in ui.json. The composer reads it (composer/editor_keys.go upArrow).
+	up := p.a.prefs.ComposerUpArrow
+	for _, o := range []struct {
+		v           int
+		label, hint string
+	}{
+		{1, "Move focus to the message list", "The most recent message in the list will be selected"},
+		{2, "Move focus to the message list, only if the message field is empty", "The most recent message in the list will be selected"},
+		{3, "Edit your last message", "The last message you sent will be selected and in editing mode"},
+	} {
+		v := o.v
+		f.option("up."+strconv.Itoa(v), o.label, o.hint, up == v, true, func() { p.a.setComposerUpArrow(v) })
+	}
 	f.muted("Note: You can always press "+shortcut.Format("Mod+Up")+" to edit your last message.", false)
-	f.na()
 	f.subheading("Lists keyboard interactions")
 	f.para("Choose how you want to use your keyboard with lists.")
-	lk := p.prefStr("lists_keyboard_interaction")
+	lk := p.prefStr("lists_tabbing_navigation_option_type")
 	f.off("lists.tab_nav", "Data entry mode (default)", "Use Tab to move horizontally, Enter to move vertically between cells", lk != "arrow_nav", true)
 	f.off("lists.arrow_nav", "Full keyboard mode (best for assistive technology)", "Use Tab to move between interactive elements, Enter to edit", lk == "arrow_nav", true)
 	f.na()
@@ -545,8 +516,8 @@ func (p *prefsModal) accessibilityPage(f *prefsForm) {
 	f.button("verbosity_reset", "Reset to Default", false, nil)
 	f.subheading("Screen reader announcements")
 	f.off("a11y_dm_read_out", "Automatically read new messages in the current conversation", "", p.prefBool("a11y_dm_read_out", true), false)
-	f.off("a11y_huddles_reactions_read_out_loud", "Read emoji reactions received in a huddle", "", p.prefBool("a11y_huddles_reactions_read_out_loud", true), false)
-	f.off("a11y_huddles_reactions_play_sound", "Play a sound when an emoji is sent or received in a huddle", "", p.prefBool("a11y_huddles_reactions_play_sound", true), false)
+	f.off("a11y_huddles_reactions_read_out_loud", "Read emoji reactions received in a huddle", "", p.prefBool("huddles_reactions_read_out_loud", false), false)
+	f.off("a11y_huddles_reactions_play_sound", "Play a sound when an emoji is sent or received in a huddle", "", p.prefBool("huddles_reactions_play_sound", false), false)
 	f.na()
 	f.para("To change notification sounds, go to Notifications")
 	f.linkDo("to_notifications", "Notifications", func() { p.selectTab("notifications") })
@@ -693,33 +664,39 @@ func (p *prefsModal) privacyPage(f *prefsForm) {
 func (p *prefsModal) advancedPage(f *prefsForm) {
 	a := p.a
 	f.subheading("Input options")
-	f.off("disable_smart_symbols", "Enable smart quotes and symbols", "Type quotation marks \" \" to create curly ones “ ”. Type -- to create an em-dash —. Type ... to create an ellipsis …. Type - and >, or < and - to create arrows → ←", !p.prefBool("disable_smart_symbols", false), false)
+	if c := a.Core(); c != nil && c.Experiment("composer_smart_symbols") == "on" { // iZ.w gates the row
+		// the composer's TextSubstitutions (composer/smart_symbols.go)
+		f.check("disable_smart_symbols", "Enable smart quotes and symbols", "Type quotation marks \" \" to create curly ones “ ”. Type -- to create an em-dash —. Type ... to create an ellipsis …. Type - and >, or < and - to create arrows → ←", false, true)
+	}
 	f.check("enter_is_special_in_tbt", "When typing code with ```, Enter should not send the message.", "With this checked use Shift+Enter to send.", false, false)
 	// the composer's own toggle (prefs.go): live markup follows it
 	f.option("plaintext", "Format messages with markup", "The text formatting toolbar won’t show in the composer.", a.plainTextOn(), false, a.togglePlainText)
 	f.off("disable_link_truncation", "Shorten external links", "When pasting links to places outside Slack, URLs will be shortened.", !p.prefBool("disable_link_truncation", false), false)
-	f.muted("Smart quotes and shortened links: "+naNote, false)
+	f.muted("Shortened links: "+naNote, false)
 	f.subheading("When writing a message, press Enter to…")
 	// msg_input_send_btn: the composer sends on Mod+Enter (editor_keys.go)
 	f.radio2("msg_input_send_btn", false, "Send the message", "")
 	f.radio2("msg_input_send_btn", true, "Start a new line (use "+shortcut.Format("Mod+Enter")+" to send)", "")
 	f.hr()
 	f.subheading("Search options")
-	f.textBox("search_exclude_channels", excludedChannels(p), "Type a channel name…")
-	f.muted("Exclude these channels from search results: "+naNote, false)
+	// search_exclude_channels: the In suggestions drop them (core/search.go)
+	f.channelPicker("Exclude these channels from search results:")
 	f.subheading("Sort option default:")
+	// stick_user_sort: a new search starts from search_sort (popups/search_view.go)
 	sticky := p.prefBool("stick_user_sort", false)
-	f.off("stick_user_sort=false", "Most relevant", "", !sticky, true)
-	f.off("stick_user_sort=true", "Last used:", "Each new search defaults you to the option you last used", sticky, true)
-	f.na()
+	f.option("pref.stick_user_sort=false", "Most relevant", "", !sticky, true, func() { p.setPref("stick_user_sort", false) })
+	f.option("pref.stick_user_sort=true", "Last used:", "Each new search defaults you to the option you last used", sticky, true, func() { p.setPref("stick_user_sort", true) })
 	f.hr()
 	f.subheading("Download location")
 	f.off("download_ask", "Choose location for each download", "Note: this setting is for this computer only and affects all workspaces you are signed in to.", false, false)
 	f.na()
 	f.subheading("Confirmations and warnings")
-	f.off("should_show_unsend_message_confirmation", "Show me a confirmation when I use "+shortcut.Format("Mod+Z")+" to unsend a message I just sent", "", p.prefBool("should_show_unsend_message_confirmation", true), false)
-	f.off("confirm_user_marked_away", "Ask if I want to toggle my away status when I log in after having set myself away", "", p.prefBool("confirm_user_marked_away", true), false)
-	f.off("suppress_link_warning", "Warn me about potentially malicious links", "", !p.prefBool("suppress_link_warning", false), false)
+	// Mod+Z in the empty composer unsends (unsend.go, popups.ConfirmUnsend)
+	f.check("should_show_unsend_message_confirmation", "Show me a confirmation when I use "+shortcut.Format("Mod+Z")+" to unsend a message I just sent", "", true, false)
+	// the "Set yourself to active?" prompt after connecting (backend.maybePresencePrompt)
+	f.check("confirm_user_marked_away", "Ask if I want to toggle my away status when I log in after having set myself away", "", false, false)
+	// "Double-check this link" on a suspicious link (popups.MaybeWarnLink)
+	f.check("suppress_link_warning", "Warn me about potentially malicious links", "", false, true)
 	f.off("hide_sc_files_sharing_speed_bump", "Warn me when sharing files with external organizations", "", !p.prefBool("hide_sc_files_sharing_speed_bump", false), false)
 	f.off("hide_external_members_canvas_sharing_speed_bump", "Warn me when sharing canvases with external organizations", "", !p.prefBool("hide_external_members_canvas_sharing_speed_bump", false), false)
 	f.na()
@@ -744,19 +721,4 @@ func (p *prefsModal) advancedPage(f *prefsForm) {
 	p.troubleshootingSection(f) // diagnostics.go
 }
 
-// excludedChannels is search_exclude_channels as channel names.
-func excludedChannels(p *prefsModal) string {
-	var out []string
-	m := p.a.model()
-	for _, id := range strings.Split(p.prefStr("search_exclude_channels"), ",") {
-		if id = strings.TrimSpace(id); id == "" {
-			continue
-		}
-		if c := m.conv(id); c != nil && c.Name != "" {
-			out = append(out, "#"+c.Name)
-		} else {
-			out = append(out, id)
-		}
-	}
-	return strings.Join(out, ", ")
-}
+

@@ -136,6 +136,8 @@ type listState struct {
 	tbRow  *row
 	tbSize image.Point
 	tbHov  int // hovered toolbar button, -1 none
+
+	kb kbNav // keyboard focus and the selected message (kbnav.go)
 }
 
 var listCache = map[string]*listState{}
@@ -490,6 +492,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		}
 	}
 	s.selKeys(gtx, h)
+	s.kbKeys(gtx, h)
 	event.Op(gtx.Ops, s)
 
 	if !s.snap.loaded && len(s.snap.msgs) == 0 {
@@ -532,6 +535,9 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 				}
 			}
 		}
+	}
+	if k := s.kbIndex(); k >= 0 {
+		s.hoverIdx = k // the keyboard-selected message draws as hovered
 	}
 
 	for i := range s.heights {

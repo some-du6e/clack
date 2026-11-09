@@ -236,6 +236,7 @@ func New(opts Options, images *imgcache.Cache) *App {
 	a.secondary.width = theme.SecondaryW
 	a.keys = a.defaultShortcuts()
 	a.loadPrefs()
+	composer.UpArrowShortcut = func() int { return a.prefs.ComposerUpArrow }
 	a.settleThemeSync()
 	// The shaper (font parsing + system font index) is the slowest part of
 	// startup; build it while the window and GPU context come up.

@@ -43,6 +43,12 @@ type Handler interface {
 	Button(b richtext.Button)
 }
 
+// LinkTextHandler is a Handler that also wants a link's text when it is
+// clicked (Slack's suspicious-link check compares it with the URL).
+type LinkTextHandler interface {
+	OpenLink(url, text string)
+}
+
 // Elements draws Block Kit interactive elements as live widgets
 // (internal/ui/blockkit). With Options.Elements set, every run of
 // elements (an actions block, a section accessory, an attachment's action

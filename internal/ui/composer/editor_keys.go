@@ -119,8 +119,7 @@ func (e *Editor) command(gtx layout.Context, k key.Event) {
 	case key.NameRightArrow:
 		e.moveH(1, word, toLine, shift)
 	case key.NameUpArrow:
-		if mods == 0 && e.doc.Empty() {
-			e.emit(EvEditLast)
+		if (mods == 0 || mods == key.ModShortcut) && e.upArrow(mods == key.ModShortcut) {
 			return
 		}
 		if toLine {
@@ -199,9 +198,12 @@ func (e *Editor) shortcut(gtx layout.Context, name key.Name, shift, alt bool) bo
 		gtx.Execute(clipboard.ReadCmd{Tag: e})
 		e.emit(EvPasted)
 	case "Z":
-		if shift {
+		switch {
+		case shift:
 			e.Redo()
-		} else {
+		case e.doc.Empty():
+			e.emit(EvUndoEmpty) // Slack's onCmdZWhenEmpty: unsend the message just sent
+		default:
 			e.Undo()
 		}
 	case "Y":
@@ -678,4 +680,35 @@ func edNextStop(d *Doc, pos int) int {
 		p++
 	}
 	return min(p, n)
+}
+
+// upArrow is MessageInput.onUpArrow: shouldUpArrowMoveFocusToList, else
+// shouldUpArrowTriggerEdit (Slack, boot-shared, build a84662d2d135). With
+// the Accessibility choice LIST (1) Up at the start of the first line
+// focuses the message list, LIST_IF_EMPTY (2) only in an empty field;
+// unset, up_to_browse_kb_shortcut does what LIST does. Up in an empty
+// field edits your last message with EDIT (3), or unset without
+// up_to_browse; Mod+Up in an empty field always does. It reports whether
+// it handled the key.
+func (e *Editor) upArrow(cmd bool) bool {
+	empty := e.doc.Empty()
+	start := e.caret == 0 && e.anchor == 0
+	var list bool
+	switch e.upMode {
+	case 1:
+		list = start
+	case 2:
+		list = empty
+	case 0:
+		list = e.upBrowse && (empty || start)
+	}
+	if !cmd && list {
+		e.emit(EvFocusList)
+		return true
+	}
+	if empty && (cmd || e.upMode == 3 || e.upMode == 0 && !e.upBrowse) {
+		e.emit(EvEditLast)
+		return true
+	}
+	return false
 }

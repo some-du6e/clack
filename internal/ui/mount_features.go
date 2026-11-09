@@ -36,6 +36,7 @@ type composerBox struct{ *composer.Composer }
 
 func (c composerBox) SetOrigin(p image.Point)                     { c.Origin = p }
 func (c composerBox) SetOnEditLast(f func())                      { c.OnEditLast = f }
+func (c composerBox) SetOnFocusList(f func())                     { c.OnFocusList = f }
 func (c composerBox) Layout(gtx layout.Context) layout.Dimensions { return c.Composer.Layout(gtx) }
 
 func init() {

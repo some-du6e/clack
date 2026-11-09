@@ -374,6 +374,18 @@ func (a *App) SetStatus(ctx context.Context, text, emoji string, expiration int6
 	return a.C.Call(ctx, "users.profile.set", url.Values{"profile": {string(prof)}}, nil)
 }
 
+// ManuallyAway reports the viewer's manual_presence "away" (users.getPresence
+// for the caller: manual_away), what Slack's presence prompt checks.
+func (a *App) ManuallyAway(ctx context.Context) (bool, error) {
+	var r struct {
+		ManualAway bool `json:"manual_away"`
+	}
+	if err := a.C.Call(ctx, "users.getPresence", url.Values{}, &r); err != nil {
+		return false, err
+	}
+	return r.ManualAway, nil
+}
+
 // SetPresence sets "auto" or "away".
 func (a *App) SetPresence(ctx context.Context, presence string) error {
 	if presence != "auto" && presence != "away" {
