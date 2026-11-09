@@ -1149,14 +1149,24 @@ func (c *chrome) placeholder(gtx layout.Context, th *theme.Theme, p *crPal, st *
 		d := crText(gtx, th.Shaper, org.X, org.Y, tw, s, pre[:len(pre)-1])
 		x := org.X + d.Size.X + c.space(gtx, th.Shaper, 0)
 		box := gtx.Dp(20)
-		is := gtx.Dp(16)
-		t := op.Offset(image.Pt(x-gtx.Dp(4)+(box-is)/2, org.Y+(gtx.Dp(22)-is)/2)).Push(gtx.Ops)
 		if st.Private {
+			is := gtx.Dp(16)
+			t := op.Offset(image.Pt(x-gtx.Dp(4)+(box-is)/2, org.Y+(gtx.Dp(22)-is)/2)).Push(gtx.Ops)
 			drawLockIcon(gtx, is, p.ph)
+			t.Pop()
 		} else {
-			drawHashIcon(gtx, is, p.ph)
+			// Slack's c-icon--hash-small: the icon font's U+E125 at the
+			// c-icon:before 20px in a 20px inline box with -4px margins
+			// (placeholder_icon--public). Centred on Chrome's 22px line its
+			// ink ends on the text's baseline (the font's baseline is 17 of
+			// its 20px em, the glyph's foot 1px above), so it is placed on
+			// the label's baseline. Not a stroked #: that drew bolder and
+			// taller than the text.
+			base := org.Y + d.Size.Y - d.Baseline
+			t := op.Offset(image.Pt(x-gtx.Dp(4), base-gtx.Dp(16))).Push(gtx.Ops)
+			icons.Get("hash-small")(gtx, 20, p.ph)
+			t.Pop()
 		}
-		t.Pop()
 		x += box - 2*gtx.Dp(4)
 		crText(gtx, th.Shaper, x, org.Y, org.X+tw-x, s, st.ChannelName)
 		return

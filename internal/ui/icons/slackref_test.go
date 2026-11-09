@@ -263,6 +263,7 @@ var clackOwn = map[string]string{
 	"find":            "the sidebar's find-in-sidebar button; Slack's set has no lines-and-magnifier glyph",
 	"hackclub":        "the Hack Club plugin category's mark",
 	"hand":            "a raised hand (huddles); Slack's set has none",
+	"hash-small":      "Slack's icon-font glyph U+E125 (c-icon--hash-small, iconfont.go), not an SvgIcon",
 	"headphones-off":  "Slack's headphones with a slash (huddle deafen); Slack's set has no headphones-off",
 	"history-back":    "a counter-clockwise clock; Slack's history is drawn as history",
 	"missing":         "the crossed box drawn for unknown names",
