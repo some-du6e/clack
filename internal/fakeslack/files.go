@@ -72,7 +72,9 @@ func (s *Server) fakeImage(id, name string, w, h int) slack.File {
 }
 
 func (s *Server) filesFixtures() []filesFixture {
-	im := func(n, w, h int) slack.File { return s.fakeImage(fmt.Sprintf("F0FILESIMG%02d", n), fmt.Sprintf("photo-%d.png", n), w, h) }
+	im := func(n, w, h int) slack.File {
+		return s.fakeImage(fmt.Sprintf("F0FILESIMG%02d", n), fmt.Sprintf("photo-%d.png", n), w, h)
+	}
 	land, port, sq := [2]int{1600, 900}, [2]int{900, 1600}, [2]int{1000, 1000}
 	ims := func(base int, sizes ...[2]int) []slack.File {
 		var out []slack.File
@@ -93,7 +95,7 @@ func (s *Server) filesFixtures() []filesFixture {
 	clip := slack.File{ID: "F0FILESAUD02", Name: "audio_message.webm", Title: "Audio clip", Mimetype: "audio/webm",
 		Filetype: "webm", PrettyType: "WebM", Subtype: "slack_audio", Size: 60 << 10, Mode: "hosted", DurationMS: 12000,
 		AudioWaveSamples: []int{4, 9, 18, 30, 44, 61, 72, 80, 66, 52, 47, 58, 70, 84, 95, 88, 71, 55, 40, 33, 41, 57, 69, 62, 48, 35, 22, 14, 9, 5},
-		URLPrivate: s.URL + "files-pri/" + TeamID + "-F0FILESAUD02/audio_message.webm", Permalink: s.URL + "files/F0FILESAUD02/audio_message.webm"}
+		URLPrivate:       s.URL + "files-pri/" + TeamID + "-F0FILESAUD02/audio_message.webm", Permalink: s.URL + "files/F0FILESAUD02/audio_message.webm"}
 	pdf := slack.File{ID: "F0FILESPDF01", Name: "q3-report.pdf", Title: "Q3 report", Mimetype: "application/pdf", Filetype: "pdf",
 		PrettyType: "PDF", Size: 312 << 10, Mode: "hosted", ThumbPDF: s.URL + "img/612x792/F0FILESPDF01.png", ThumbPDFW: 612, ThumbPDFH: 792,
 		URLPrivate: s.URL + "files-pri/" + TeamID + "-F0FILESPDF01/q3-report.pdf", Permalink: s.URL + "files/F0FILESPDF01/q3-report.pdf"}
