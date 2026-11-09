@@ -1,16 +1,50 @@
 name: perf
-# Reproducible performance numbers against internal/fakeslack (a synthetic,
-# Hack Club-sized workspace; no Slack traffic). Writes a markdown summary to
-# the run page, uploads pprof CPU/heap profiles, and appends one row per
-# push to docs/perf-history.md on the perf-history branch.
+# Before/after performance numbers for the whole client, against
+# internal/fakeslack (a synthetic, Hack Club-sized workspace; no Slack
+# traffic). Design notes: .github/perf/README.md.
+#
+# What it measures, for HEAD and for a base commit:
+#   - the real binary on Xvfb + llvmpipe against fakeslackd: cold and warm
+#     first paint, core ready, idle RSS / anon RSS / Go heap after 20 s and
+#     95 s, a startup CPU profile (process.sh);
+#   - Go benchmarks of ui and core (boot, cache read, startup, channel
+#     switch, scroll, emoji picker and search, quick switcher, typing and
+#     idle frames, session memory), headless layout + GPU (bench.sh);
+#   - stripped binary size, and size by package (build.sh).
+# The report on the run page leads with the before/after table
+# (compare.py), then each side's full summary (summary.py). Artifacts hold
+# the pprof CPU/heap profiles of both sides. Pushes append HEAD's row to
+# docs/perf-history.md on the perf-history branch.
+#
+# Why it's built this way (it broke for weeks when it wasn't):
+#   - Each side is built entirely from its own tree, own go.mod included
+#     (build.sh). The old base leg overlaid HEAD's internal/fakeslack on the
+#     base tree, so every new fakeslack import (tlsfp/utls) or slack field
+#     broke the base build.
+#   - The fake server is a separate process speaking Slack's wire API, so
+#     one fakeslackd built from HEAD serves both sides: identical workload,
+#     no source coupling. The client-side helpers the perf tests use from
+#     fakeslack (Remote, Creds, Fetch, ChannelIDs, sizes) are tiny and
+#     stable, and each side compiles its own copy.
+#   - HEAD's perf_test.go files are tried on the base tree so both sides run
+#     the same benchmark code; they're white-box, so when they don't compile
+#     there the base's own are used and the report says which. Nothing on
+#     the base side is fatal; a missing number shows as "—".
+#   - Base and head run in one job, interleaved, so they share a runner
+#     (separate runners differ by up to 2x, which made the old two-job
+#     comparison meaningless).
+#   - The default base is the newest v* release tag before HEAD, so the
+#     report answers "what changed since the last release" and the base
+#     never ages out of compatibility with the harness.
 on:
   push:
     branches: [perf, ui, main]
   workflow_dispatch:
     inputs:
       base:
-        description: baseline commit for the before/after comparison
-        default: 4222be3
+        description: "baseline (tag, branch or sha); empty = newest v* release tag before HEAD"
+        required: false
+        default: ""
 
 permissions:
   contents: write # perf-history branch
@@ -25,88 +59,87 @@ concurrency:
 jobs:
   perf:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        variant: [head, base]
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          fetch-depth: 0
-      - name: baseline tree (harness from HEAD, everything else from the base commit)
-        if: matrix.variant == 'base'
+          fetch-depth: 0 # tags (default base) and any dispatched base
+      - name: base tree
+        id: base
         env:
-          BASE: ${{ inputs.base || '4222be3' }}
+          BASE: ${{ inputs.base }}
         run: |
-          keep='^(\.github/perf/|\.github/workflows/perf\.yml|internal/fakeslack/|internal/ui/perf_test\.go|internal/core/perf_test\.go|cmd/clack/debug\.go)'
-          for f in $(git diff --name-only "$BASE" HEAD | grep -Ev "$keep"); do
-            if git cat-file -e "$BASE:$f" 2>/dev/null; then git checkout -q "$BASE" -- "$f"; else git rm -q -f "$f"; fi
-          done
-          python3 .github/perf/patch-base.py
-          git status --short | head -50
+          if [ -z "$BASE" ]; then
+            BASE=$(git describe --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null || echo HEAD^)
+          fi
+          sha=$(git rev-parse -q --verify "$BASE^{commit}" || git rev-parse -q --verify "origin/$BASE^{commit}") || { echo "::error::base $BASE not found"; exit 1; }
+          git worktree add -q --detach "$RUNNER_TEMP/base-tree" "$sha"
+          echo "label=$BASE ($(git rev-parse --short "$sha"))" >> "$GITHUB_OUTPUT"
+          echo "base: $BASE = $(git log --oneline -1 "$sha")"
+          echo "head: $(git log --oneline -1 HEAD)"
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
       - name: deps (Gio, Xvfb, Mesa llvmpipe)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0 mesa-utils
-      - name: build
+      - name: build head
         run: |
-          mkdir -p dist perf-out/process
-          CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o dist/clack-linux-amd64 ./cmd/clack
-          # the process test's binary: same, plus the perfharness tag (accepts the loopback fake)
-          CGO_ENABLED=1 go build -tags perfharness -trimpath -ldflags="-s -w" -o dist/clack-perf ./cmd/clack
-          CGO_ENABLED=1 go build -trimpath -o dist/clack-unstripped ./cmd/clack
-          go build -o dist/fakeslackd ./internal/fakeslack/fakeslackd
-          s=$(stat -c %s dist/clack-linux-amd64)
-          echo "$(awk "BEGIN{printf \"%.1f MB\", $s/1048576}") stripped ($s bytes)" > perf-out/binsize.txt
-      - name: binary size by package
-        run: |
-          go tool nm -size -sort size dist/clack-unstripped | python3 -c '
-          import sys, collections
-          tot = collections.Counter()
-          for l in sys.stdin:
-              f = l.split()
-              if len(f) < 4: continue
-              name = " ".join(f[3:])
-              for p in ("type:", "go:", "go.shape."): name = name.removeprefix(p)
-              head, slash, tail = name.rpartition("/")
-              tot[head + slash + tail.split(".")[0]] += int(f[1])
-          for k, v in tot.most_common(30): print(f"{v/1048576:8.2f} MB  {k}")
-          ' | tee perf-out/binsize-packages.txt
-      - name: real process (Xvfb, cold + warm starts, idle RSS)
-        run: .github/perf/process.sh dist/clack-perf dist/fakeslackd perf-out/process
-      - name: go benchmarks (layout + llvmpipe GPU)
+          mkdir -p perf-out
+          go build -o perf-out/fakeslackd ./internal/fakeslack/fakeslackd
+          .github/perf/build.sh head . perf-out
+          [ -x perf-out/head/ui.test ] && [ -x perf-out/head/core.test ] || { echo "::error::HEAD's perf tests don't compile"; exit 1; }
+      - name: build base (its own tree; HEAD's perf tests if they compile there)
+        run: .github/perf/build.sh base "$RUNNER_TEMP/base-tree" perf-out . || echo "::warning::base client didn't build; the report has head numbers only"
+      - name: real process (Xvfb, cold + warm starts, idle RSS), interleaved
+        run: .github/perf/process.sh perf-out/fakeslackd perf-out base head
+      - name: go benchmarks (layout + llvmpipe GPU), interleaved
         env:
           CLACK_BENCH_GPU: "1"
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
-        run: xvfb-run -a -s "-screen 0 1440x900x24" .github/perf/bench.sh perf-out
-      - name: startup CPU profile (top)
-        run: go tool pprof -top -nodecount 30 dist/clack-unstripped perf-out/process/startup.cpu.pprof > perf-out/process/startup.cpu.top.txt 2>&1 || true
+        run: xvfb-run -a -s "-screen 0 1440x900x24" .github/perf/bench.sh perf-out/fakeslackd perf-out base head
+      - name: startup CPU profiles (top)
+        run: |
+          for s in base head; do
+            [ -f perf-out/$s/process/startup.cpu.pprof ] && go tool pprof -top -nodecount 30 perf-out/$s/process/startup.cpu.pprof > perf-out/$s/process/startup.cpu.top.txt 2>&1 || true
+          done
       - name: Lato coverage vs Slack's own faces (public CDN, no cookie)
-        if: matrix.variant == 'head'
         continue-on-error: true
-        run: pip install -q fonttools brotli && python3 .github/perf/fontcheck.py perf-out
-      - name: summary
+        run: pip install -q fonttools brotli && python3 .github/perf/fontcheck.py perf-out/head
+      - name: report
         env:
           CLACK_BENCH_GPU: "1"
+          BASE_LABEL: ${{ steps.base.outputs.label }}
         run: |
           export RUN_DATE=$(date -u +%Y-%m-%d)
-          ref="${GITHUB_REF_NAME}"; [ "${{ matrix.variant }}" = base ] && ref="baseline ${{ inputs.base || '4222be3' }}"
-          python3 .github/perf/summary.py perf-out "$GITHUB_SHA" "$ref" >> "$GITHUB_STEP_SUMMARY"
-          { echo; echo '### Binary size by package'; echo '```'; cat perf-out/binsize-packages.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-          [ -f perf-out/fontcheck.md ] && cat perf-out/fontcheck.md >> "$GITHUB_STEP_SUMMARY" || true
+          python3 .github/perf/summary.py perf-out/head "$GITHUB_SHA" "$GITHUB_REF_NAME" > /dev/null
+          python3 .github/perf/summary.py perf-out/base "$(git -C "$RUNNER_TEMP/base-tree" rev-parse HEAD)" "baseline $BASE_LABEL" > /dev/null
+          python3 .github/perf/compare.py perf-out "$BASE_LABEL" "$GITHUB_REF_NAME (${GITHUB_SHA::7})" > /dev/null
+          {
+            cat perf-out/compare.md
+            echo
+            cat perf-out/head/summary.md
+            echo
+            echo "<details><summary>Baseline $BASE_LABEL, full summary</summary>"
+            echo
+            cat perf-out/base/summary.md
+            echo
+            echo "</details>"
+            [ -f perf-out/head/fontcheck.md ] && cat perf-out/head/fontcheck.md || true
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat perf-out/compare.md
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
-          name: perf-${{ matrix.variant }}
+          name: perf
           path: |
             perf-out/
-            !perf-out/*.test
+            !perf-out/*/*.test
+            !perf-out/*/clack*
+            !perf-out/fakeslackd
       - name: append to perf-history
-        if: github.event_name == 'push' && matrix.variant == 'head'
+        if: github.event_name == 'push'
         run: |
           git config user.name "clack-perf"
           git config user.email "clack-perf@users.noreply.github.com"
@@ -121,5 +154,5 @@ jobs:
           if [ ! -f "$f" ]; then
             printf '# Clack perf history\n\nOne row per push (perf workflow, GitHub runner, llvmpipe). Paint and RSS are the real binary on Xvfb against fakeslackd.\n\n| date | commit | branch | warm first paint | cold first paint | idle RSS | session heap | channel switch | scroll frame | typing frame / allocs | picker open | binary |\n|---|---|---|---|---|---|---|---|---|---|---|---|\n' > "$f"
           fi
-          cat perf-out/history-row.md >> "$f"
+          cat perf-out/head/history-row.md >> "$f"
           cd ../hist && git add docs/perf-history.md && git commit -qm "perf: ${GITHUB_SHA::7} on ${GITHUB_REF_NAME}" && git push -q origin perf-history
