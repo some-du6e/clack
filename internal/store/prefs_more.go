@@ -32,9 +32,11 @@ type MorePrefs struct {
 	MacBounce string `json:"mac_ssb_bounce,omitempty"` // "", "short", "long"
 	// NoMacBullet is mac_ssb_bullet=false (no "•" dock badge for unreads).
 	NoMacBullet bool `json:"no_mac_bullet,omitempty"`
-	// NoQuickReactions is user_customized_quick_reactions_display_feature
-	// = 0 ("Show one-click reactions on messages" off).
-	NoQuickReactions bool `json:"no_quick_reactions,omitempty"`
+	// QuickReactions is user_customized_quick_reactions_display_feature
+	// = 1 ("Show one-click reactions on messages"; shouldDisplayUsers-
+	// QuickReactions: 2 waits on a server space Clack doesn't load, absent
+	// is off).
+	QuickReactions bool `json:"quick_reactions,omitempty"`
 	// Dense is messages_theme=dense (Compact).
 	Dense bool `json:"dense,omitempty"`
 }
@@ -72,9 +74,7 @@ func (p *Prefs) parseMore(raw map[string]json.RawMessage, str func(string) strin
 	p.NoTZAuto = !boolean("set_tz_automatically", true)
 	p.MacBounce = str("mac_ssb_bounce")
 	p.NoMacBullet = !boolean("mac_ssb_bullet", true)
-	if v, ok := raw["user_customized_quick_reactions_display_feature"]; ok {
-		p.NoQuickReactions = strings.Trim(string(v), `"`) == "0" || string(v) == "false"
-	}
+	p.QuickReactions = strings.Trim(string(raw["user_customized_quick_reactions_display_feature"]), `"`) == "1"
 	p.Dense = str("messages_theme") == "dense"
 }
 
@@ -95,4 +95,11 @@ func (s *Store) HighlightWords() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.Prefs.Keywords
+}
+
+// EmojiAsText is emoji_mode=as_text (richtext's emoji texter).
+func (s *Store) EmojiAsText() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.Prefs.EmojiAsText
 }

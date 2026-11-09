@@ -488,16 +488,37 @@ func (p *prefsModal) messagesPage(f *prefsForm) {
 		v := strconv.Itoa(i + 1)
 		f.option("pref.preferred_skin_tone="+v, l, "", tone == v, true, func() { p.setPref("preferred_skin_tone", v) })
 	}
-	f.off("emoji_mode", "Display emoji as plain text", "", p.prefStr("emoji_mode") == "as_text", false)
-	f.check("jumbomoji", "Show JUMBOMOJI", "Display the jumbo versions of emoji (up to 23 at a time!) in messages without text.", true, false)
-	f.off("convert_emoticons", "Convert my typed emoticons to emoji, so :D becomes 😃", "", p.prefBool("convert_emoticons", true), false)
-	f.off("quick_reactions", "Show one-click reactions on messages", "", p.prefBool("user_customized_quick_reactions_display_feature", true), false)
-	f.muted("Plain-text emoji, emoticons and one-click reactions: "+naNote, false)
+	// EmojiPref: emoji_mode as_text / default; turning text on also turns
+	// convert_emoticons off (0), and both JUMBOMOJI and emoticons grey
+	// while it's on (JUMBOMOJI also under Compact)
+	asText := p.prefStr("emoji_mode") == "as_text"
+	emoticons := p.prefBool("convert_emoticons", true)
+	f.option("pref.emoji_mode", "Display emoji as plain text", "", asText, false, func() {
+		if asText {
+			p.setPref("emoji_mode", "default")
+			return
+		}
+		kv := map[string]any{"emoji_mode": "as_text"}
+		if emoticons {
+			kv["convert_emoticons"] = 0
+		}
+		p.setPrefs(kv)
+	})
+	jumbo := p.prefBool("jumbomoji", true)
+	f.optionAt("pref.jumbomoji", "Show JUMBOMOJI", "Display the jumbo versions of emoji (up to 23 at a time!) in messages without text.", jumbo, false,
+		!asText && p.prefStr("messages_theme") != "dense", func() { p.setPref("jumbomoji", !jumbo) })
+	f.optionAt("pref.convert_emoticons", "Convert my typed emoticons to emoji, so :D becomes 😃", "", emoticons, false, !asText,
+		func() { p.setPref("convert_emoticons", !emoticons) }) // the composer converts them (composer/emoticon.go)
+	p.quickReactionsPref(f) // prefs_a.go
 	f.hr()
 	f.subheading("Inline media & links")
 	f.check("expand_internal_inline_imgs", "Show images and files uploaded to Slack", "", true, false)
 	f.check("expand_inline_imgs", "Show images and files from linked websites", "", true, false)
-	f.off("obey_inline_img_limit", "Even if they’re larger than 20MB", "", !p.prefBool("obey_inline_img_limit", true), false)
+	// InlineMediaPref: the box is !obey_inline_img_limit, greyed without
+	// expand_inline_imgs (richview imageTooLarge)
+	obey := p.prefBool("obey_inline_img_limit", true)
+	f.optionAt("pref.obey_inline_img_limit", "Even if they’re larger than 20MB", "", !obey, false, p.prefBool("expand_inline_imgs", true),
+		func() { p.setPref("obey_inline_img_limit", !obey) })
 	f.check("expand_non_media_attachments", "Show text previews of linked websites", "", true, false)
 	f.hr()
 	f.subheading("Bring emails into Slack")

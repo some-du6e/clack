@@ -751,6 +751,9 @@ func (e *Editor) autoformat() {
 		}
 		return
 	}
+	if r == ' ' && e.convertEmoticon(c-1) { // convert_emoticons (emoticon.go)
+		return
+	}
 	if e.plainText {
 		return // "Format messages with markup": markup stays as typed
 	}

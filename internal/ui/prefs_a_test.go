@@ -12,6 +12,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/huddleui"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
 )
 
@@ -224,4 +225,75 @@ func TestPrefsAuditAppliedRoundTripHome(t *testing.T) {
 	})
 	p.setPref("disable_auto_channel_sort", true)
 	waitFor(t, a, "disable_auto_channel_sort", func() bool { v, _ := fs.Pref("disable_auto_channel_sort"); return v == true })
+}
+
+// Messages & media > Emoji and Inline media: emoji_mode as_text turns
+// emoji into their text (and convert_emoticons off, like EmojiPref);
+// convert_emoticons is what the composer reads; obey_inline_img_limit
+// decides whether a linked image over 20MB expands; one-click reactions
+// write 1/0 and the custom slots.
+func TestPrefsAuditAppliedRoundTripMessages(t *testing.T) {
+	a, ca, fs := fakePrefsApp(t)
+	t.Cleanup(uipref.Reset)
+	p := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}}
+	click := func(page, key string) {
+		t.Helper()
+		pageRows(t, a, p, page)
+		b, ok := p.clicks[key]
+		if !ok {
+			t.Fatalf("no %s on %s", key, page)
+		}
+		b.Click()
+		pageRows(t, a, p, page)
+	}
+	click("messages_media", "pref.emoji_mode")
+	waitFor(t, a, "emoji as text", func() bool {
+		m, _ := fs.Pref("emoji_mode")
+		e, _ := fs.Pref("convert_emoticons")
+		return m == "as_text" && e == false && ca.Prefs().EmojiAsText && !ca.Prefs().ConvertEmoticons
+	})
+	doc := richtext.FromMessage(ca.S, &slack.Message{Text: "hi :wave::skin-tone-2: :tada:"})
+	if got := richtext.SpansText(doc.Blocks[0].Spans); got != "hi :wave::skin-tone-2: :tada:" || doc.Jumbo {
+		t.Fatalf("as text: %q jumbo=%v", got, doc.Jumbo)
+	}
+	for _, sp := range doc.Blocks[0].Spans {
+		if sp.Kind == richtext.Emoji {
+			t.Fatalf("an emoji span with emoji_mode as_text: %+v", sp)
+		}
+	}
+	rows := pageRows(t, a, p, "messages_media")
+	for _, r := range rows {
+		if (r.Label == "Show JUMBOMOJI" || r.Label == "Convert my typed emoticons to emoji, so :D becomes 😃") && r.Enabled {
+			t.Errorf("%q enabled with emoji as text", r.Label)
+		}
+	}
+	click("messages_media", "pref.emoji_mode")
+	waitFor(t, a, "emoji back", func() bool { m, _ := fs.Pref("emoji_mode"); return m == "default" && !ca.Prefs().EmojiAsText })
+	click("messages_media", "pref.convert_emoticons")
+	waitFor(t, a, "emoticons on", func() bool { return ca.Prefs().ConvertEmoticons })
+
+	// obey_inline_img_limit: the box is its negation
+	uipref.Set(ca.Prefs())
+	big := &richtext.Image{URL: "https://x/big.png", Bytes: 0x1400000 + 1}
+	if !richview.ImageTooLarge(big) {
+		t.Fatal("a 20MB+ image expands with the limit on")
+	}
+	click("messages_media", "pref.obey_inline_img_limit")
+	waitFor(t, a, "limit off", func() bool { v, _ := fs.Pref("obey_inline_img_limit"); return v == false && ca.Prefs().LargeImgs })
+	uipref.Set(ca.Prefs())
+	if richview.ImageTooLarge(big) {
+		t.Fatal("a 20MB+ image held back with the limit off")
+	}
+
+	// one-click reactions
+	click("messages_media", "pref.quick_reactions")
+	waitFor(t, a, "quick reactions", func() bool {
+		v, _ := fs.Pref("user_customized_quick_reactions_display_feature")
+		return normNum(v) == float64(1) && ca.Prefs().QuickReactions
+	})
+	click("messages_media", "pref.quick_reactions=frequently_used_emoji_quick_reactions")
+	waitFor(t, a, "frequent", func() bool {
+		v, _ := fs.Pref("user_customized_quick_reactions_use_frequently_used_emoji")
+		return v == true
+	})
 }

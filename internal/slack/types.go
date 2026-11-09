@@ -154,6 +154,7 @@ type Attachment struct {
 	ImageURL      string            `json:"image_url"`
 	ImageWidth    int               `json:"image_width"`
 	ImageHeight   int               `json:"image_height"`
+	ImageBytes    int64             `json:"image_bytes,omitempty"`
 	ThumbURL      string            `json:"thumb_url"`
 	ThumbWidth    int               `json:"thumb_width"`
 	ThumbHeight   int               `json:"thumb_height"`

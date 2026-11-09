@@ -136,6 +136,7 @@ type listState struct {
 	tbRow  *row
 	tbSize image.Point
 	tbHov  int // hovered toolbar button, -1 none
+	quick  quickBar // one-click reactions before the buttons (quickreact.go)
 }
 
 var listCache = map[string]*listState{}
@@ -1065,6 +1066,7 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 		y = dp(gtx, 4)
 	}
 	s.tbRow, s.tbSize, s.tbHov = r, size, -1
+	s.quick.prepare(h, s.ch, r)
 	// Right-aligned: measure first (a plugin may add to the toolbar). The
 	// card is absolutely positioned in Slack, so it shrink-wraps: unbounded
 	// width makes a patched (block-level) root as wide as its content
@@ -1079,9 +1081,13 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 	call.Add(gtx.Ops)
 	t.Pop()
 	s.tbRect, s.tbFor = image.Rectangle{Min: image.Pt(x, y), Max: image.Pt(x, y).Add(d.Size)}, idx
+	if i := s.quick.hov; i >= 0 {
+		bs := dp(gtx, mt.toolbarBtn)
+		tooltip(gtx, th, c, s.quick.tip(i), image.Pt(x+dp(gtx, mt.toolbarPad)+i*bs+bs/2, y-dp(gtx, 4)), size)
+	}
 	if i := s.tbHov; i >= 0 {
 		bs := dp(gtx, mt.toolbarBtn)
-		bx := x + dp(gtx, mt.toolbarPad) + i*bs
+		bx := x + dp(gtx, mt.toolbarPad) + (len(s.quick.names)+i)*bs
 		tip := tbTips[i]
 		if i == tbTodo && r.src.Saved {
 			tip = "Remove from to-dos"
@@ -1120,10 +1126,18 @@ func (s *listState) actionsCard(gtx layout.Context, st slackc.Styled) layout.Dim
 	c := s.rc.c
 	bs := dp(gtx, mt.toolbarBtn)
 	pad := dp(gtx, mt.toolbarPad)
-	size := image.Pt(pad*2+tbCount*bs, bs+2*pad)
+	nq := len(s.quick.names)
+	size := image.Pt(pad*2+(nq+tbCount)*bs, bs+2*pad)
 	shadowCard(gtx.Ops, image.Rectangle{Max: size}, dp(gtx, 12), dp(gtx, 1), st.Background(c.Bg), c.PillBorder, c.Shadow)
-	for i := 0; i < tbCount; i++ {
+	s.quick.hov = -1
+	for i := 0; i < nq; i++ {
 		at(gtx, pad+i*bs, pad, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Exact(image.Pt(bs, bs))
+			return s.quickButton(gtx, i)
+		})
+	}
+	for i := 0; i < tbCount; i++ {
+		at(gtx, pad+(nq+i)*bs, pad, func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Exact(image.Pt(bs, bs))
 			if i == tbAddReact {
 				return slackc.Component(gtx, "MessageActionButtonReaction", s, (*listState).reactionButtonProps, (*listState).layoutReactionButton)

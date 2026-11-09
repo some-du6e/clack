@@ -279,3 +279,36 @@ func highlightSpans(spans []Span, ws [][]rune) []Span {
 	}
 	return out
 }
+
+// emojiTexter is a Resolver that knows the viewer's emoji_mode.
+type emojiTexter interface{ EmojiAsText() bool }
+
+// EmojiToText is convertEmojiToText (boot-shared BaseRichText, under
+// shouldRenderEmojiAsText, emoji_mode=as_text): every emoji becomes its
+// text, ":name:" (":name::skin-tone-N:"), keeping its style.
+func EmojiToText(blocks []Block) {
+	for i := range blocks {
+		b := &blocks[i]
+		emojiSpansToText(b.Spans)
+		for _, it := range b.Items {
+			emojiSpansToText(it)
+		}
+		for _, f := range b.Fields {
+			emojiSpansToText(f)
+		}
+		for _, row := range b.Rows {
+			for _, cell := range row {
+				emojiSpansToText(cell)
+			}
+		}
+		EmojiToText(b.Children)
+	}
+}
+
+func emojiSpansToText(spans []Span) {
+	for i := range spans {
+		if sp := &spans[i]; sp.Kind == Emoji && sp.ID != "" {
+			*sp = Span{Kind: Text, Text: ":" + sp.ID + ":", Style: sp.Style}
+		}
+	}
+}

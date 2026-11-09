@@ -51,6 +51,10 @@ func FromMessage(r Resolver, m *slack.Message) Doc {
 			d.Blocks = append(d.Blocks, b)
 		}
 	}
+	if e, ok := r.(emojiTexter); ok && e.EmojiAsText() { // emoji_mode as_text (highlight.go)
+		EmojiToText(d.Blocks)
+		d.Jumbo = false
+	}
 	if h, ok := r.(highlighter); ok { // the viewer's Channel keywords (highlight.go)
 		HighlightDoc(d.Blocks, h.HighlightWords())
 	}
@@ -252,6 +256,9 @@ func (c *builder) attachment(a *slack.Attachment) (Block, bool) {
 			blk.FieldShort = append(blk.FieldShort, f.Short)
 		}
 		att.Image = image(a.ImageURL, "", a.ImageWidth, a.ImageHeight)
+		if att.Image != nil {
+			att.Image.Bytes = a.ImageBytes // obey_inline_img_limit (isImageTooLarge)
+		}
 		if att.Image == nil {
 			att.Thumb = image(a.ThumbURL, "", a.ThumbWidth, a.ThumbHeight)
 		}

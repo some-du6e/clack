@@ -112,10 +112,10 @@ var slackPages = map[string][]want{
 		ck("Display color swatches next to hexadecimal values"),
 		lg("Emoji"), lg("Default Skin Tone"), rd("No skin tone"), rd("light skin tone"), rd("medium-light skin tone"), rd("medium skin tone"),
 		rd("medium-dark skin tone"), rd("dark skin tone"),
-		ckOff("Display emoji as plain text"), ck("Show JUMBOMOJI"), ckOff("Convert my typed emoticons to emoji, so :D becomes 😃"),
-		ckOff("Show one-click reactions on messages"),
+		ck("Display emoji as plain text"), ck("Show JUMBOMOJI"), ck("Convert my typed emoticons to emoji, so :D becomes 😃"),
+		ck("Show one-click reactions on messages"),
 		lg("Inline media & links"), ck("Show images and files uploaded to Slack"), ck("Show images and files from linked websites"),
-		ckOff("Even if they’re larger than 20MB"), ck("Show text previews of linked websites"),
+		ck("Even if they’re larger than 20MB"), ck("Show text previews of linked websites"),
 		lg("Bring emails into Slack"), btnOff("Get a Forwarding Address"),
 	},
 	"language_region": {

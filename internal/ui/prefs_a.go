@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"strconv"
 	"strings"
 	"time"
 
@@ -122,4 +123,61 @@ func (p *prefsModal) keywordsField(f *prefsForm) {
 		})
 		f.y += gtx.Dp(24)
 	}
+}
+
+// quickReactionsPref is Slack's QuickReactionsPref: the display checkbox
+// (user_customized_quick_reactions_display_feature 1/0), then "My most
+// frequently used emoji" / "Custom" and the three custom slots, each
+// opening the emoji picker (user_customized_quick_reactions_emoji_N, and
+// _has_customized once one is picked). The hover toolbar draws them
+// (messages/quickreact.go).
+func (p *prefsModal) quickReactionsPref(f *prefsForm) {
+	on := p.prefInt("user_customized_quick_reactions_display_feature", 0) == 1
+	f.option("pref.quick_reactions", "Show one-click reactions on messages", "", on, false, func() {
+		v := 0
+		if !on {
+			v = 1
+		}
+		p.setPref("user_customized_quick_reactions_display_feature", v)
+	})
+	if !on {
+		return
+	}
+	freq := p.prefBool("user_customized_quick_reactions_use_frequently_used_emoji", false)
+	hint := ""
+	if freq {
+		hint = "The emoji shown will change based on your usage."
+	}
+	f.option("pref.quick_reactions=frequently_used_emoji_quick_reactions", "My most frequently used emoji", hint, freq, true,
+		func() { p.setPref("user_customized_quick_reactions_use_frequently_used_emoji", true) })
+	hint = ""
+	if !freq {
+		hint = "Click below to choose the emoji you’d like."
+	}
+	f.option("pref.quick_reactions=custom", "Custom", hint, !freq, true,
+		func() { p.setPref("user_customized_quick_reactions_use_frequently_used_emoji", false) })
+	if freq {
+		return
+	}
+	var bs []prefsButton
+	for i, def := range [3]string{"white_check_mark", "eyes", "raised_hands"} {
+		i := i
+		name := strings.Trim(p.prefStr("user_customized_quick_reactions_emoji_"+strconv.Itoa(i+1)), ":")
+		if name == "" {
+			name = def
+		}
+		bs = append(bs, prefsButton{"quick_reaction_" + strconv.Itoa(i+1), ":" + name + ":", true, func() {
+			if mkEmojiPicker == nil {
+				return
+			}
+			p.a.ShowOverlay(mkEmojiPicker(p.a, p.a.PointerPos(), func(n string) {
+				kv := map[string]any{"user_customized_quick_reactions_emoji_" + strconv.Itoa(i+1): strings.Trim(n, ":")}
+				if !p.prefBool("user_customized_quick_reactions_has_customized", false) {
+					kv["user_customized_quick_reactions_has_customized"] = true
+				}
+				p.setPrefs(kv)
+			}))
+		}})
+	}
+	f.buttons(bs...)
 }

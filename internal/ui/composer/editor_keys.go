@@ -85,6 +85,9 @@ func (e *Editor) command(gtx layout.Context, k key.Event) {
 	}
 	switch k.Name {
 	case key.NameReturn, key.NameEnter:
+		if e.anchor == e.caret {
+			e.convertEmoticon(e.caret) // onEnter: convert_emoticons (emoticon.go)
+		}
 		if e.inCode() && uipref.Get().EnterIsSpecial {
 			// Advanced > "When typing code with ```, Enter should not send
 			// the message" (enter_is_special_in_tbt): Shift+Enter sends.
