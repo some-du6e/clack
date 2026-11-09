@@ -975,7 +975,7 @@ func pfMoreItems(h Host, u core.User, withFull bool, closeCard func()) []MenuIte
 		}
 	}
 	if mention := pfMentionName(u); mention != "" && !u.IsBot {
-		items = append(items, MenuItem{Label: "Copy display name: @" + mention, DoCtx: func(gtx layout.Context) {
+		items = append(items, MenuItem{Key: "copy_display_name", Label: "Copy display name: @" + mention, DoCtx: func(gtx layout.Context) {
 			copyText(gtx, mention)
 			h.Toast("Display name copied")
 		}})
