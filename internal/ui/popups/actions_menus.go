@@ -185,7 +185,7 @@ func newChannelMenu(h Host, anchor image.Point, convID string, alignRight bool) 
 	case dm:
 		items = append(items, MenuItem{Label: "Close conversation", Do: func() { actLeave(h, convID, "Conversation closed") }})
 	default:
-		items = append(items, MenuItem{Label: "Leave channel", Danger: true, Do: func() { leaveChannel(h, convID, c.Kind, name) }})
+		items = append(items, MenuItem{Label: "Leave channel", Danger: true, Do: func() { leaveChannel(h, convID, c.Kind, name, c.IsGeneral) }})
 	}
 	m := NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(anchor), AlignRight: alignRight, Wraps: []MenuWrap{
 		// Slack's channel context menu: ChatTabs marks the channel, then
@@ -234,7 +234,7 @@ func ChannelMenuAction(h Host, convID, key string) func() {
 		if name == "" {
 			name = convID
 		}
-		return func() { leaveChannel(h, convID, c.Kind, name) }
+		return func() { leaveChannel(h, convID, c.Kind, name, c.IsGeneral) }
 	}
 	return nil
 }
@@ -377,10 +377,22 @@ func actLabelRow(h Host, label func() string) func(gtx layout.Context, hl bool) 
 	}
 }
 
-// leaveChannel is Slack's maybeLeaveChannel (boot-shared): a public
-// channel is left at once; a private one asks first with LeaveChannel
-// ("Leave <name>", Cancel / Leave Channel).
-func leaveChannel(h Host, convID, kind, name string) {
+// leaveChannel is Slack's maybeLeaveChannel (boot-shared): the workspace's
+// general channel can't be left (LeaveChannelError CANT_LEAVE_GENERAL: an
+// alert, OK only); a public channel is left at once; a private one asks
+// first with LeaveChannel ("Leave <name>", Cancel / Leave Channel).
+func leaveChannel(h Host, convID, kind, name string, general bool) {
+	if general {
+		m := NewModal(h, ModalOpts{Title: "Membership is required in #" + name, EnterSubmits: true,
+			Body: func(gtx layout.Context) layout.Dimensions {
+				th := h.Theme()
+				return para(gtx, th, 15, 22, theme.Regular, colorsOf(th).Fg,
+					"Every workspace has one channel that contains all the members of this workspace — this is that channel for you.", 0)
+			},
+			Buttons: []*ModalButton{{Label: "OK", Kind: BtnPrimary, Do: func() bool { return true }}}})
+		h.ShowOverlay(m)
+		return
+	}
 	if kind != "private" {
 		actLeave(h, convID, "You left #"+name)
 		return
