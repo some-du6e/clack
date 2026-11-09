@@ -2315,9 +2315,7 @@ func (v *Activity) detailedContent(gtx C, r *actRow) D {
 										hgap(8),
 										layout.Rigid(func(gtx C) D {
 											// entry_name_timestamp: 54px wide, padding-top 2px
-											g := gtx
-											g.Constraints = layout.Exact(image.Pt(gtx.Dp(54), gtx.Dp(20)))
-											return layout.Inset{Top: 2}.Layout(g, func(gtx C) D { return v.para(gtx, 13, 18, wReg, v.p.Muted, 1, when) })
+											return layout.Inset{Top: 2}.Layout(gtx, func(gtx C) D { return v.actTime(gtx, when, false) })
 										}),
 									)
 								}),
@@ -2382,7 +2380,8 @@ func (v *Activity) denseContent(gtx C, r *actRow) D {
 					gtx.Constraints = layout.Exact(image.Pt(lead, gtx.Dp(30)))
 					return row(gtx, layout.Middle,
 						layout.Flexed(1, func(gtx C) D {
-							gtx.Constraints.Min.X = 0
+							// __user: flex 1, so the status sits at the leading block's end
+							gtx.Constraints.Min.X = gtx.Constraints.Max.X
 							return row(gtx, layout.Middle,
 								layout.Rigid(func(gtx C) D {
 									return slackc.Component(gtx, "ActivityRowContentSenderAvatarLayout", r, (*actRow).avatarProps, (*actRow).layoutAvatar)
@@ -2416,6 +2415,9 @@ func (v *Activity) denseContent(gtx C, r *actRow) D {
 						layout.Flexed(1, func(gtx C) D {
 							gtx.Constraints.Min.X = gtx.Constraints.Max.X
 							if m := r.msg(); m != nil && !d.invite && len(m.Doc.Blocks) > 0 {
+								// __message: one 15px/22px line
+								gtx.Constraints.Min.Y, gtx.Constraints.Max.Y = gtx.Dp(22), gtx.Dp(22)
+								defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
 								return v.actBody(gtx, r, 1, bodyCol)
 							}
 							return layout.W.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wReg, bodyCol, d.prev) })
@@ -2446,11 +2448,10 @@ func (v *Activity) denseContent(gtx C, r *actRow) D {
 						}),
 						layout.Rigid(func(gtx C) D {
 							return layout.Inset{Left: centreGap}.Layout(gtx, func(gtx C) D {
-								gtx.Constraints = layout.Exact(image.Pt(gtx.Dp(54), gtx.Dp(18)))
 								if hov {
-									return D{Size: gtx.Constraints.Min}
+									return D{Size: image.Pt(gtx.Dp(54), gtx.Dp(18))}
 								}
-								return layout.E.Layout(gtx, func(gtx C) D { return v.label(gtx, 13, wReg, v.p.Muted, when) })
+								return v.actTime(gtx, when, true)
 							})
 						}),
 					)
@@ -2598,7 +2599,7 @@ func (v *Activity) actBody(gtx C, r *actRow, lines int, col color.NRGBA) D {
 	if d.subtext == "" {
 		return r.preview(gtx, lines)
 	}
-	return row(gtx, layout.Start,
+	return row(gtx, layout.Middle,
 		layout.Rigid(func(gtx C) D { return v.para(gtx, 15, 22, wReg, col, 1, d.subtext) }),
 		layout.Flexed(1, func(gtx C) D { return r.preview(gtx, lines) }),
 	)
@@ -3314,4 +3315,26 @@ func (v *Activity) setDense(dense bool) {
 		_, err := c.SetActivityDensity(ctx, dense)
 		return err
 	}, func() { v.dense, v.dirty = was, true })
+}
+
+// actTime is the rows' 54px timestamp column (white-space: nowrap, no
+// ellipsis): a time that fits sits at its start, or its end when end is
+// set (Dense: text-align end); a longer one ("Nov 14, 2023") overflows to
+// the right as Chrome draws it.
+func (v *Activity) actTime(gtx C, when string, end bool) D {
+	w := gtx.Dp(54)
+	lg := gtx
+	lg.Constraints = layout.Constraints{Max: image.Pt(1<<20, gtx.Dp(18))}
+	m := op.Record(gtx.Ops)
+	d := v.label(lg, 13, wReg, v.p.Muted, when)
+	call := m.Stop()
+	x := 0
+	if end && d.Size.X < w {
+		x = w - d.Size.X
+	}
+	func() {
+		defer op.Offset(image.Pt(x, 0)).Push(gtx.Ops).Pop()
+		call.Add(gtx.Ops)
+	}()
+	return D{Size: image.Pt(w, max(d.Size.Y, gtx.Dp(18)))}
 }
