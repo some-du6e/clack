@@ -148,9 +148,12 @@ func TestSlickViewThemeOverlays(t *testing.T) {
 		}
 		e.until(10*time.Second, "no theme", func() bool { return !e.s.ThemeApplies() })
 		mode := map[bool]string{false: "light", true: "dark"}[dark]
-		want := svOverlayWant{id: "slack", dialog: map[bool]string{false: "#ffffff", true: "#222529"}[dark]}
-		e.checkPrefs(sh, want, "Slack ("+mode+")", "overlay-slack-prefs-"+mode)
-		e.checkMenu(sh, want, "Slack ("+mode+")", "overlay-slack-menu-"+mode)
+		// Preferences is .c-sk-modal (--dt_color-base-pry, #1a1d21 in
+		// dark), menus .c-menu (--dt_color-ctr-pry)
+		prefs := svOverlayWant{id: "slack", dialog: map[bool]string{false: "#ffffff", true: "#1a1d21"}[dark]}
+		menu := svOverlayWant{id: "slack", dialog: map[bool]string{false: "#ffffff", true: "#222529"}[dark]}
+		e.checkPrefs(sh, prefs, "Slack ("+mode+")", "overlay-slack-prefs-"+mode)
+		e.checkMenu(sh, menu, "Slack ("+mode+")", "overlay-slack-menu-"+mode)
 	}
 
 	for _, w := range svOverlayWants {

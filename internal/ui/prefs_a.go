@@ -115,13 +115,14 @@ func (p *prefsModal) keywordsField(f *prefsForm) {
 	bh := gtx.Dp(36)
 	at(gtx, image.Pt(0, f.y), image.Pt(f.w, bh), func(gtx layout.Context) layout.Dimensions {
 		rr := image.Rectangle{Max: image.Pt(f.w, bh)}
-		theme.RRect(gtx, rr, gtx.Dp(8), c.Bg)
-		bc := c.BorderStrong
+		pc := p.colors() // .c-input_text: base-pry, otl-pry; :focus otl-hgl-1
+		theme.RRect(gtx, rr, gtx.Dp(8), pc.field)
+		bc := pc.on(a.th, pc.fieldBorder)
 		switch {
 		case r.kwMax:
 			bc = c.Danger
 		case focused:
-			bc = c.Link
+			bc = pc.focus
 		}
 		theme.Border(gtx, rr, gtx.Dp(8), gtx.Dp(1), bc)
 		at(gtx, image.Pt(gtx.Dp(12), 0), image.Pt(f.w-gtx.Dp(24), bh), func(gtx layout.Context) layout.Dimensions {
@@ -241,19 +242,16 @@ func (p *prefsModal) selectList(f *prefsForm, key, value string, enabled bool, o
 	f.record("select", "sel."+key, value, false, enabled)
 	b := p.btn("sel." + key)
 	bw, bh := f.w, gtx.Dp(36)
+	pc := p.colors() // .c-select_button, as selectBox
 	fg := c.Fg
 	if !enabled {
-		fg = c.FgSubtle
+		fg = pc.disText
 	}
 	at(gtx, image.Pt(0, f.y), image.Pt(bw, bh), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, b, func(gtx layout.Context, s image.Point, hov bool) {
 			r := image.Rectangle{Max: s}
-			theme.RRect(gtx, r, gtx.Dp(8), c.Bg)
-			bc := c.BorderStrong
-			if hov && enabled {
-				bc = c.Fg
-			}
-			theme.Border(gtx, r, gtx.Dp(8), gtx.Dp(1), bc)
+			theme.RRect(gtx, r, gtx.Dp(8), pc.field)
+			theme.Border(gtx, r, gtx.Dp(8), gtx.Dp(1), pc.on(a.th, pc.fieldBorder))
 		}, func(gtx layout.Context) layout.Dimensions {
 			at(gtx, image.Pt(gtx.Dp(12), 0), image.Pt(bw-gtx.Dp(40), bh), func(gtx layout.Context) layout.Dimensions {
 				return vcenter(gtx, bh, func(gtx layout.Context) layout.Dimensions {
@@ -261,7 +259,11 @@ func (p *prefsModal) selectList(f *prefsForm, key, value string, enabled bool, o
 				})
 			})
 			at(gtx, image.Pt(bw-gtx.Dp(28), (bh-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
-				return icons.Get("caret-down")(gtx, 16, fg)
+				ic := pc.fieldFg // .c-select_button__icon: content-pry
+				if !enabled {
+					ic = fg
+				}
+				return icons.Get("caret-down")(gtx, 16, ic)
 			})
 			return layout.Dimensions{Size: image.Pt(bw, bh)}
 		})
@@ -314,16 +316,26 @@ func pad2(n int) string {
 // skinTonePicker is EmojiSkinTonePickerRadioGroup: six radios side by
 // side, each with :hand: in its tone (:wave: while hovered), the tone's
 // name as its label for assistive tech (skinTones), preferred_skin_tone
-// "1"…"6".
+// "1"…"6". Slack hides the radio itself (.p-emoji_skin_tone_picker_radio_button
+// {opacity:0}): each tone is its label box, .…__container{border:1px solid
+// rgb(var(--sk_foreground_low_solid)); border-radius:6px; padding:8px;
+// margin-right:12px}, :hover rgba(var(--sk_foreground_min),.04), and
+// --selected{border-color:#1264a3} (a literal, the same in dark).
 func (p *prefsModal) skinTonePicker(f *prefsForm) {
 	gtx, a := f.gtx, p.a
-	c := &a.th.C
+	pc := p.colors()
 	tone := p.prefStr("preferred_skin_tone")
 	if tone == "" {
 		tone = "1"
 	}
-	cell := gtx.Dp(64)
-	h := gtx.Dp(40)
+	es := gtx.Dp(26)
+	h := es + 2*gtx.Dp(8) + 2*max(1, gtx.Dp(1))
+	cell := h + gtx.Dp(12)
+	hover := hex8(0x1d1c1d0a)
+	if a.th.Dark {
+		hover = hex8(0xe8e8e80a)
+	}
+	hover = pc.on(a.th, hover)
 	for i, l := range skinTones {
 		v := strconv.Itoa(i + 1)
 		key := "pref.preferred_skin_tone=" + v
@@ -341,23 +353,19 @@ func (p *prefsModal) skinTonePicker(f *prefsForm) {
 		if co := a.Core(); co != nil {
 			url, _, _ = co.Emoji(name)
 		}
-		at(gtx, image.Pt(i*cell, f.y), image.Pt(cell, h), func(gtx layout.Context) layout.Dimensions {
+		at(gtx, image.Pt(i*cell, f.y), image.Pt(h, h), func(gtx layout.Context) layout.Dimensions {
 			return clickArea(gtx, b, func(gtx layout.Context, s image.Point, hov bool) {
-				if on {
-					theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(8), c.BgHover)
+				r := image.Rectangle{Max: s}
+				if hov {
+					theme.RRect(gtx, r, gtx.Dp(6), hover)
 				}
+				bc := pc.on(a.th, pc.hr)
+				if on {
+					bc = hex8(0x1264a3ff)
+				}
+				theme.Border(gtx, r, gtx.Dp(6), max(1, gtx.Dp(1)), bc)
 			}, func(gtx layout.Context) layout.Dimensions {
-				s := gtx.Dp(18)
-				r := image.Rect(gtx.Dp(6), (h-s)/2, gtx.Dp(6)+s, (h+s)/2)
-				if on {
-					theme.Circle(gtx, r.Min.Add(image.Pt(s/2, s/2)), s, c.Link)
-					theme.Circle(gtx, r.Min.Add(image.Pt(s/2, s/2)), s*4/9, c.Bg)
-				} else {
-					theme.RRect(gtx, r, s/2, c.Bg)
-					theme.Border(gtx, r, s/2, gtx.Dp(1), c.BorderStrong)
-				}
-				es := gtx.Dp(26)
-				at(gtx, image.Pt(gtx.Dp(30), (h-es)/2), image.Pt(es, es), func(gtx layout.Context) layout.Dimensions {
+				at(gtx, image.Pt((h-es)/2, (h-es)/2), image.Pt(es, es), func(gtx layout.Context) layout.Dimensions {
 					if url != "" {
 						if img, ok := a.images.Get(url, es*2); ok {
 							return theme.Image(gtx, img, image.Pt(es, es), 0)
@@ -365,7 +373,7 @@ func (p *prefsModal) skinTonePicker(f *prefsForm) {
 					}
 					return layout.Dimensions{Size: image.Pt(es, es)}
 				})
-				return layout.Dimensions{Size: image.Pt(cell, h)}
+				return layout.Dimensions{Size: image.Pt(h, h)}
 			})
 		})
 		if clicked(b) && !on {
@@ -569,10 +577,11 @@ func (p *prefsModal) textField(f *prefsForm, key string, ed *widget.Editor, plac
 	bh := gtx.Dp(36)
 	at(gtx, image.Pt(0, f.y), image.Pt(f.w, bh), func(gtx layout.Context) layout.Dimensions {
 		rr := image.Rectangle{Max: image.Pt(f.w, bh)}
-		theme.RRect(gtx, rr, gtx.Dp(8), c.Bg)
-		bc := c.BorderStrong
+		pc := p.colors() // .c-input_text
+		theme.RRect(gtx, rr, gtx.Dp(8), pc.field)
+		bc := pc.on(a.th, pc.fieldBorder)
 		if focused {
-			bc = c.Link
+			bc = pc.focus
 		}
 		theme.Border(gtx, rr, gtx.Dp(8), gtx.Dp(1), bc)
 		at(gtx, image.Pt(gtx.Dp(10), (bh-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
@@ -584,7 +593,7 @@ func (p *prefsModal) textField(f *prefsForm, key string, ed *widget.Editor, plac
 				if ed.Len() == 0 && !focused {
 					at(gtx, image.Point{}, image.Pt(gtx.Constraints.Max.X, bh), func(gtx layout.Context) layout.Dimensions {
 						return vcenter(gtx, bh, func(gtx layout.Context) layout.Dimensions {
-							return a.th.Label(gtx, 15, theme.Regular, c.FgSubtle, placeholder)
+							return a.th.Label(gtx, 15, theme.Regular, p.colors().subtext, placeholder)
 						})
 					})
 				}

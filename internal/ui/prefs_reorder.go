@@ -256,22 +256,12 @@ func (f *prefsForm) reorderList(opts []reorderOption) {
 					return icons.Get("reorder")(gtx, 20, c.FgMuted)
 				})
 			}
-			// checkbox
-			s := gtx.Dp(18)
-			cb := image.Rect(gtx.Dp(32), y+(rowH-s)/2, gtx.Dp(32)+s, y+(rowH-s)/2+s)
-			fill := c.Link
-			if o.disabled {
-				fill = c.FgSubtle
-			}
-			if o.selected {
-				theme.RRect(gtx, cb, gtx.Dp(4), fill)
-				at(gtx, cb.Min, image.Pt(s, s), func(gtx layout.Context) layout.Dimensions {
-					return icons.Get("check")(gtx, 18, c.SendText)
-				})
-			} else {
-				theme.RRect(gtx, cb, gtx.Dp(4), c.Bg)
-				theme.Border(gtx, cb, gtx.Dp(4), gtx.Dp(1), c.BorderStrong)
-			}
+			// checkbox: the browser's (appearance:auto), like every
+			// checkbox in the dialog
+			s := gtx.Dp(theme.NativeCheckSize)
+			at(gtx, image.Pt(gtx.Dp(32)+(gtx.Dp(18)-s)/2, y+(rowH-s)/2), image.Pt(s, s), func(gtx layout.Context) layout.Dimensions {
+				return theme.NativeCheck(gtx, a.th.Dark, theme.NativeCheckState{On: o.selected, Disabled: o.disabled, Hover: i == act && l.hovered})
+			})
 			x := gtx.Dp(60)
 			if o.icon != "" {
 				at(gtx, image.Pt(x, y+(rowH-gtx.Dp(20))/2), image.Pt(gtx.Dp(20), gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {

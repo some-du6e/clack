@@ -333,9 +333,20 @@ func TestThemeTokensOverlaysHotDogStand(t *testing.T) {
 		if c := popups.ColorsOf(th); c.Bg != bg || c.ModalBg != bg {
 			t.Errorf("dark=%v: default card %v / modal %v, want %v", dark, c.Bg, c.ModalBg, bg)
 		}
-		want := prefsTabColors{text: th.C.Fg, active: th.C.Link, activeText: th.C.SendText, hover: th.C.BgHover}
+		// Preferences is painted with .c-sk-modal's --dt_color-base-pry
+		pry := map[bool]color.NRGBA{false: tkHex(0xffffff), true: tkHex(0x1a1d21)}[dark]
+		if got := popups.BasePryOf(th); got != pry {
+			t.Errorf("dark=%v: Preferences surface %v, want base-pry %v", dark, got, pry)
+		}
+		// slack-kit's token sheet: base-inv-hgl-1, content-inv-pry, content-pry
+		want := prefsTabColors{text: tkHex(0x1d1c1d), active: tkHex(0x1264a3), activeText: tkHex(0xffffff),
+			hover: theme.Over(color.NRGBA{0x45, 0x44, 0x47, 0x0f}, tkHex(0xffffff))}
+		if dark {
+			want = prefsTabColors{text: tkHex(0xf8f8f8), active: tkHex(0x0a77a7), activeText: tkHex(0xf8f8f8),
+				hover: theme.Over(color.NRGBA{0xf8, 0xf8, 0xf8, 0x14}, tkHex(0x1a1d21))}
+		}
 		if got := prefsTabColorsOf(th); got != want {
-			t.Errorf("dark=%v: prefs tabs %+v, want the measured %+v", dark, got, want)
+			t.Errorf("dark=%v: prefs tabs %+v, want Slack's %+v", dark, got, want)
 		}
 	}
 }

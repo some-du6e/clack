@@ -3,6 +3,7 @@ package popups
 import (
 	"context"
 	"image"
+	"image/color"
 	"strconv"
 	"strings"
 
@@ -27,6 +28,48 @@ import (
 // cxSetWorkingHours (Slack applies preferences immediately).
 
 type avNavItem struct{ id, label, icon string }
+
+// prefsLook is the Preferences surface and the tokens the page's controls
+// take, from Slack's stylesheets (client-boot-styles cf726c4f2eaecc74 for
+// the rules, slack-kit-gantry-v2-styles f859766a17f82b2a for the values),
+// matching getComputedStyle in the live dialog (2026-11-09):
+//
+//	.c-sk-modal, .c-select_button    background var(--dt_color-base-pry)   #fff / #1a1d21
+//	.c-select_button                 border var(--dt_color-otl-pry)        #7c7a7f / #797c81
+//	the Working hours paragraph      var(--dt_color-content-sec)           #454447 / #b9babd
+//	.c-label--disabled               var(--dt_color-content-sec)
+//	hr                               rgb(var(--sk_foreground_low_solid))   #dddddd / #35373b
+//
+// None is an account-theme token; a stylesheet overriding them (a Slick
+// theme, user.css) recolours them.
+type prefsLook struct {
+	surface, fieldBorder, para, hr color.NRGBA
+	dark                           bool
+}
+
+func prefsLookOf(th *theme.Theme) prefsLook {
+	l := prefsLook{surface: rgb(0xffffff), fieldBorder: rgb(0x7c7a7f), para: rgb(0x454447), hr: rgb(0xdddddd)}
+	if th != nil && th.Dark {
+		l = prefsLook{surface: rgb(0x1a1d21), fieldBorder: rgb(0x797c81), para: rgb(0xb9babd), hr: rgb(0x35373b), dark: true}
+	}
+	if th == nil || th.Tokens == nil || !th.Tokens.Overridden() {
+		return l
+	}
+	t := th.Tokens
+	theme.SetColor(t, &l.surface, "var(--dt_color-base-pry)")
+	theme.SetColor(t, &l.fieldBorder, "var(--dt_color-otl-pry)")
+	theme.SetColor(t, &l.para, "var(--dt_color-content-sec)")
+	if theme.SetColor(t, &l.hr, "rgb(var(--sk_foreground_low_solid))") && l.hr.A != 0xff {
+		l.hr = theme.Over(l.hr, l.surface)
+	}
+	return l
+}
+
+// BasePryOf is --dt_color-base-pry, the background of Slack's .c-sk-modal
+// and of its inputs and select buttons: #fff in light, #1a1d21 in dark
+// (slack-kit's token sheet), or a stylesheet's override. ModalBg keeps
+// #222529 in dark for the other modals, whose fields are drawn on it.
+func BasePryOf(th *theme.Theme) color.NRGBA { return prefsLookOf(th).surface }
 
 var avNav = [...]avNavItem{
 	{"availability", "Availability", "clock"},
@@ -311,6 +354,9 @@ func (p *avPrefs) layout(gtx layout.Context) layout.Dimensions {
 func (p *avPrefs) page(gtx layout.Context, org image.Point, cx, bw int) int {
 	th := p.h.Theme()
 	cl := colorsOf(th)
+	pl := prefsLookOf(th)
+	look := dtLook{bg: pl.surface, border: pl.fieldBorder}
+	p.from.look, p.to.look = look, look
 	cw := maxInt(1, bw-cx)
 	at(gtx, image.Pt(cx, dp(gtx, 32)-dp(gtx, 14)), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, dp(gtx, 28), func(gtx layout.Context) layout.Dimensions {
@@ -318,12 +364,12 @@ func (p *avPrefs) page(gtx layout.Context, org image.Point, cx, bw int) int {
 		})
 	})
 	avText(gtx, th, cx, dp(gtx, 87), 15, cw, "Working hours", true)
-	p.para(gtx, th, cl, cx, dp(gtx, 102), cw, "You’ll only receive notifications in the hours you choose. Outside of those times, notifications will be paused except for VIPs.")
+	p.para(gtx, th, pl.para, cx, dp(gtx, 102), cw, "You’ll only receive notifications in the hours you choose. Outside of those times, notifications will be paused except for VIPs.")
 	avText(gtx, th, cx, dp(gtx, 165), 15, cw, "Allow notifications:", true)
 
 	sy := dp(gtx, 185)
 	at(gtx, image.Pt(cx, sy), func(gtx layout.Context) layout.Dimensions {
-		return dtField(gtx, th, &p.daysBtn, dp(gtx, 160), dtLarge, "", avDaysLabel(p.hr.Days), true, false, !p.loaded)
+		return dtFieldIn(gtx, th, look, &p.daysBtn, dp(gtx, 160), dtLarge, "", avDaysLabel(p.hr.Days), true, false, !p.loaded)
 	})
 	tx := cx + dp(gtx, 160+16)
 	at(gtx, image.Pt(tx, sy), func(gtx layout.Context) layout.Dimensions {
@@ -336,10 +382,10 @@ func (p *avPrefs) page(gtx layout.Context, org image.Point, cx, bw int) int {
 	at(gtx, image.Pt(tx, sy), func(gtx layout.Context) layout.Dimensions {
 		return p.to.Layout(gtx, p.h, org.Add(image.Pt(tx, sy)), dp(gtx, 130), dtLarge)
 	})
-	fill(gtx, image.Rect(cx, dp(gtx, 236), bw, dp(gtx, 236)+maxInt(1, dp(gtx, 1))), cl.Tab)
+	fill(gtx, image.Rect(cx, dp(gtx, 236), bw, dp(gtx, 236)+maxInt(1, dp(gtx, 1))), pl.hr)
 
 	avText(gtx, th, cx, dp(gtx, 268), 15, cw, "Automatic statuses", true)
-	p.para(gtx, th, cl, cx, dp(gtx, 283), cw, "Let people know when responses might be delayed. If you already have a status set, Slack won’t change it.")
+	p.para(gtx, th, pl.para, cx, dp(gtx, 283), cw, "Let people know when responses might be delayed. If you already have a status set, Slack won’t change it.")
 	avText(gtx, th, cx, dp(gtx, 346), 15, cw, "Set status to:", true)
 	rows := [3]struct {
 		emoji, bold, rest string
@@ -354,7 +400,10 @@ func (p *avPrefs) page(gtx layout.Context, org image.Point, cx, bw int) int {
 		rh := dp(gtx, 26)
 		at(gtx, image.Pt(cx, cy-rh/2), func(gtx layout.Context) layout.Dimensions {
 			draw := func(gtx layout.Context) layout.Dimensions {
-				actCheckbox(gtx, cl, image.Pt(0, (rh-dp(gtx, 16))/2), r.on)
+				// Slack's c-input_checkbox is the browser's own (appearance:auto)
+				at(gtx, image.Pt(0, (rh-dp(gtx, theme.NativeCheckSize))/2), func(gtx layout.Context) layout.Dimensions {
+					return theme.NativeCheck(gtx, pl.dark, theme.NativeCheckState{On: r.on, Hover: p.checks[i].Hovered()})
+				})
 				at(gtx, image.Pt(dp(gtx, 25), (rh-dp(gtx, 22))/2), func(gtx layout.Context) layout.Dimensions {
 					return emojiImage(gtx, p.h, r.emoji, 22)
 				})
@@ -371,19 +420,21 @@ func (p *avPrefs) page(gtx layout.Context, org image.Point, cx, bw int) int {
 			return clickBox(gtx, &p.checks[i], nil, draw)
 		})
 	}
-	fill(gtx, image.Rect(cx, dp(gtx, 463), bw, dp(gtx, 463)+maxInt(1, dp(gtx, 1))), cl.Tab)
+	fill(gtx, image.Rect(cx, dp(gtx, 463), bw, dp(gtx, 463)+maxInt(1, dp(gtx, 1))), pl.hr)
 
 	avText(gtx, th, cx, dp(gtx, 495), 15, cw, "Additional options", true)
 	avText(gtx, th, cx, dp(gtx, 529), 15, cw, "Turn on focus mode when:", true)
 	{
+		// .c-input_checkbox--disabled: the native box at opacity .38, its
+		// .c-label--disabled label in --dt_color-content-sec
 		cy := dp(gtx, 558)
-		sz := dp(gtx, 16)
-		box := image.Rect(cx, cy-sz/2, cx+sz, cy-sz/2+sz)
-		rrect(gtx, box, dp(gtx, 4), theme.WithAlpha(cl.Fg, 0x33))
-		rrect(gtx, box.Inset(1), dp(gtx, 4)-1, cl.BgAlt)
+		sz := dp(gtx, theme.NativeCheckSize)
+		at(gtx, image.Pt(cx, cy-sz/2), func(gtx layout.Context) layout.Dimensions {
+			return theme.NativeCheck(gtx, pl.dark, theme.NativeCheckState{Opacity: .38})
+		})
 		at(gtx, image.Pt(cx+dp(gtx, 25), cy-dp(gtx, 12)), func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, dp(gtx, 24), func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 15, theme.Regular, cl.Muted, "Your calendar has a focus block")
+				return text(gtx, th, 15, theme.Regular, pl.para, "Your calendar has a focus block")
 			})
 		})
 	}
@@ -433,10 +484,10 @@ func openPreferences(h Host, section string) {
 	h.ShowOverlay(NewPreferencesModal(h, section))
 }
 
-// para draws a 15/22 #454447 paragraph with its top at y.
-func (p *avPrefs) para(gtx layout.Context, th *theme.Theme, cl *Colors, x, y, w int, s string) {
+// para draws a 15/22 paragraph (--dt_color-content-sec) with its top at y.
+func (p *avPrefs) para(gtx layout.Context, th *theme.Theme, col color.NRGBA, x, y, w int, s string) {
 	at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(w, 1<<20)}
-		return para(gtx, th, 15, 22, theme.Regular, cl.Fg2, s, 0)
+		return para(gtx, th, 15, 22, theme.Regular, col, s, 0)
 	})
 }

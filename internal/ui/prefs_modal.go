@@ -46,6 +46,7 @@ type prefsModal struct {
 	picker    channelPicker             // Advanced > Exclude these channels (prefs_picker.go)
 	lists     prefsLists                // Connected accounts and Privacy's fetched lists (prefs_lists.go)
 	themeTab  string                    // Appearance: "slack" or "custom" ("": Slack's default for the theme)
+	pcc       prefsColorsCache          // colors()
 	hexEd     map[string]*widget.Editor // Appearance > Custom theme hex fields
 }
 
@@ -243,7 +244,8 @@ func (p *prefsModal) tabs(gtx layout.Context, tp slackc.Props) layout.Dimensions
 	w := gtx.Constraints.Max.X
 	navW := gtx.Dp(205 + 16)
 	h := gtx.Dp(624)
-	theme.Fill(gtx, image.Rect(0, 0, w, max(1, gtx.Dp(1))), a.th.C.Border)
+	pc := p.colors()
+	theme.Fill(gtx, image.Rect(0, 0, w, max(1, gtx.Dp(1))), pc.on(a.th, pc.line))
 	navT := op.Offset(image.Pt(gtx.Dp(16), gtx.Dp(17))).Push(gtx.Ops)
 	org := p.org.get(image.Point{})
 	g := gtx
@@ -316,7 +318,7 @@ func (p *prefsModal) tabs(gtx layout.Context, tp slackc.Props) layout.Dimensions
 			}
 			if it.divider {
 				y += gtx.Dp(17)
-				theme.Fill(gtx, image.Rect(0, y-gtx.Dp(9), navW-gtx.Dp(16), y-gtx.Dp(8)), p.a.th.OnBg(otlTer(p.a.th.Dark)))
+				theme.Fill(gtx, image.Rect(0, y-gtx.Dp(9), navW-gtx.Dp(16), y-gtx.Dp(8)), pc.on(p.a.th, pc.divider))
 			}
 			if p.navItem(gtx, y, navW, it.id, it.label, nil, it.icon, cur == it.id) {
 				if tp != nil && tp.Has("onTabChange") && list != nil {
@@ -488,7 +490,7 @@ func (p *prefsModal) navItem(gtx layout.Context, y, navW int, id, label string, 
 	if st.Hidden() {
 		return false
 	}
-	tc := prefsTabColorsOf(a.th)
+	pc := p.colors()
 	ih := gtx.Dp(29) // Slack: 205×29, radius 4, 15px icon at (9, 7), label at x 32
 	at(gtx, image.Pt(0, y), image.Pt(navW-gtx.Dp(16), ih), func(gtx layout.Context) layout.Dimensions {
 		// Slack's .c-tabs__tab has border-radius 4px: a theme's background
@@ -496,19 +498,29 @@ func (p *prefsModal) navItem(gtx layout.Context, y, navW int, id, label string, 
 		return st.WrapRounded(gtx, 4, func(gtx layout.Context) layout.Dimensions {
 			return clickArea(gtx, b, func(gtx layout.Context, s image.Point, hov bool) {
 				if cur {
-					theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(4), st.Background(tc.active))
+					theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(4), st.Background(pc.tabActive))
 				} else if hov {
-					theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(4), st.Background(tc.hover))
+					theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(4), st.Background(pc.tabHover))
 				}
 			}, func(gtx layout.Context) layout.Dimensions {
-				fg := tc.text
+				fg, ic := pc.tabText, pc.tabIcon
 				if cur {
-					fg = tc.activeText
+					fg, ic = pc.tabActiveText, pc.tabActiveText
 				}
 				fg = st.Color(fg)
+				if !cur && !st.Has("color") {
+					// .p-prefs_dialog__menu .c-tabs__tab:not(.c-tabs__tab--active)
+					// .c-tabs__tab_icon--left: rgba(var(--sk_foreground_max),.7)
+					ic = pc.on(a.th, ic)
+					if b.Hovered() {
+						ic = theme.Over(pc.tabIcon, pc.tabHover)
+					}
+				} else {
+					ic = fg
+				}
 				if icon != "" {
 					at(gtx, image.Pt(gtx.Dp(9), gtx.Dp(7)), image.Pt(gtx.Dp(15), gtx.Dp(15)), func(gtx layout.Context) layout.Dimensions {
-						return icons.Get(icon)(gtx, 15, fg)
+						return icons.Get(icon)(gtx, 15, ic)
 					})
 				}
 				at(gtx, image.Pt(gtx.Dp(32), 0), image.Pt(navW, ih), func(gtx layout.Context) layout.Dimensions {
@@ -594,12 +606,16 @@ func (a *App) openPrefsMenu() {
 // var(--dt_color-base-inv-hgl-1), color var(--dt_color-content-inv-pry);
 // :hover: var(--dt_color-base-pry-hover) over var(--dt_color-base-pry)),
 // so a theme's tokens recolour them; with none overridden they are the
-// measured ones. A theme's raw rule on the tab still wins (Styled).
+// token sheet's (prefsLight, prefsDark). A theme's raw rule on the tab
+// still wins (Styled).
 type prefsTabColors struct{ text, active, activeText, hover color.NRGBA }
 
 func prefsTabColorsOf(th *theme.Theme) prefsTabColors {
-	c := &th.C
-	tc := prefsTabColors{text: c.Fg, active: c.Link, activeText: c.SendText, hover: c.BgHover}
+	d := prefsLight
+	if th.Dark {
+		d = prefsDark
+	}
+	tc := prefsTabColors{text: d.tabText, active: d.tabActive, activeText: d.tabActiveText, hover: d.tabHover}
 	t := th.Tokens
 	if t == nil || !t.Overridden() {
 		return tc
@@ -614,12 +630,4 @@ func prefsTabColorsOf(th *theme.Theme) prefsTabColors {
 		tc.hover = theme.Over(h, base)
 	}
 	return tc
-}
-
-// otlTer is Slack's --dt_color-otl-ter (hairlines).
-func otlTer(dark bool) color.NRGBA {
-	if dark {
-		return hex8(0x797c814d)
-	}
-	return hex8(0x5e5d6021)
 }

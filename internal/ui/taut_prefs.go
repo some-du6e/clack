@@ -39,7 +39,8 @@ import (
 
 type tautPage struct {
 	a       *App
-	screen  string // main (none: the list is Preferences > Plugins) | plugin | appearance | advanced | about
+	pcc     prefsColorsCache // colors()
+	screen  string           // main (none: the list is Preferences > Plugins) | plugin | appearance | advanced | about
 	plugin  string
 	list    widget.List
 	clicks  map[string]*widget.Clickable
@@ -145,24 +146,31 @@ func (p *tautPage) run(busy string, f func(ctx context.Context, t *taut.Taut) er
 	}()
 }
 
-// ---- colors and drawing primitives (Slack's measured values) ----
+// ---- colors and drawing primitives (the Preferences dialog's tokens) ----
 
 type tpColors struct {
 	fg, fg2, fg3, link, err, warn, border, borderHover, check, checkBorder, bg, hover, pillBg, pillFg, focus, codeBg color.NRGBA
 }
 
+// colors are Clack's plugin pages' colours, the Slack tokens the rest of
+// Preferences is painted with (prefsColors): body text, content-sec and
+// content-ter notes, content-hgl-1 links, otl-pry field borders on base-pry,
+// otl-hgl-1 focus, and the browser's checkbox.
 func (p *tautPage) colors() tpColors {
-	c := &p.a.th.C
-	if p.a.th.Dark {
-		return tpColors{fg: c.Fg, fg2: rgbT(0xababad), fg3: rgbT(0x9a9b9e), link: rgbT(0x1d9bd1), err: rgbT(0xe01e5a), warn: rgbT(0xe8912d),
-			border: p.a.th.OnBg(rgbaT(0xd1d2d3, .3)), borderHover: p.a.th.OnBg(rgbaT(0xd1d2d3, .5)), check: rgbT(0x1d9bd1),
-			checkBorder: p.a.th.OnBg(rgbaT(0xd1d2d3, .5)), bg: c.Bg, hover: p.a.th.OnBg(rgbaT(0xd1d2d3, .04)),
-			pillBg: p.a.th.OnBg(rgbaT(0x1d9bd1, .15)), pillFg: rgbT(0x1d9bd1), focus: rgbT(0x1d9bd1), codeBg: p.a.th.OnBg(rgbaT(0xd1d2d3, .04))}
+	th := p.a.th
+	c := &th.C
+	pc := p.pcc.get(th)
+	o := func(v color.NRGBA) color.NRGBA { return pc.on(th, v) }
+	cl := tpColors{fg: c.Fg, fg2: pc.disText, fg3: pc.subtext, link: pc.link, err: rgbT(0xe01e5a), warn: rgbT(0xe8912d),
+		border: o(pc.fieldBorder), check: theme.NativeAccent(th.Dark), bg: pc.field, focus: pc.focus}
+	if th.Dark {
+		cl.borderHover, cl.checkBorder, cl.hover = o(rgbaT(0xd1d2d3, .5)), o(rgbaT(0xd1d2d3, .5)), o(rgbaT(0xd1d2d3, .04))
+		cl.pillBg, cl.pillFg, cl.codeBg = o(rgbaT(0x1d9bd1, .15)), rgbT(0x1d9bd1), o(rgbaT(0xd1d2d3, .04))
+	} else {
+		cl.borderHover, cl.checkBorder, cl.hover = o(rgbaT(0x1d1c1d, .5)), o(rgbaT(0x1d1c1d, .5)), o(rgbaT(0x1d1c1d, .04))
+		cl.pillBg, cl.pillFg, cl.codeBg = o(rgbaT(0x1d9bd1, .1)), rgbT(0x1264a3), o(rgbaT(0x1d1c1d, .04))
 	}
-	return tpColors{fg: c.Fg, fg2: rgbT(0x454447), fg3: rgbT(0x5e5d60), link: rgbT(0x1264a3), err: rgbT(0xe01e5a), warn: rgbT(0xe8912d),
-		border: p.a.th.OnBg(rgbaT(0x1d1c1d, .3)), borderHover: p.a.th.OnBg(rgbaT(0x1d1c1d, .5)), check: rgbT(0x1264a3),
-		checkBorder: p.a.th.OnBg(rgbaT(0x1d1c1d, .5)), bg: c.Bg, hover: p.a.th.OnBg(rgbaT(0x1d1c1d, .04)),
-		pillBg: p.a.th.OnBg(rgbaT(0x1d9bd1, .1)), pillFg: rgbT(0x1264a3), focus: rgbT(0x1264a3), codeBg: p.a.th.OnBg(rgbaT(0x1d1c1d, .04))}
+	return cl
 }
 
 func rgbT(v uint32) color.NRGBA {
@@ -232,29 +240,15 @@ func (p *tautPage) linkButtonW(gtx layout.Context, k, label, icon string, weight
 
 // checkbox is Slack's 16px checkbox; reports a toggle.
 func (p *tautPage) checkbox(gtx layout.Context, k string, on bool) (layout.Dimensions, bool) {
-	cl := p.colors()
 	b := p.btn(k)
 	s := gtx.Dp(16)
 	d := clickArea(gtx, b, nil, func(gtx layout.Context) layout.Dimensions {
-		r := image.Rect(0, 0, s, s)
-		rad := gtx.Dp(4)
-		if on {
-			fill := cl.check
-			if b.Hovered() {
-				fill = theme.Mix(fill, rgbT(0), .1)
-			}
-			theme.RRect(gtx, r, rad, fill)
-			at(gtx, image.Pt(gtx.Dp(1), gtx.Dp(1)), image.Pt(gtx.Dp(14), gtx.Dp(14)), func(gtx layout.Context) layout.Dimensions {
-				return icons.Get("check")(gtx, 14, rgbT(0xffffff))
-			})
-		} else {
-			bc := cl.checkBorder
-			if b.Hovered() {
-				bc = cl.fg2
-			}
-			theme.RRect(gtx, r, rad, cl.bg)
-			theme.Border(gtx, r, rad, gtx.Dp(1), bc)
-		}
+		// the browser's checkbox, as on Slack's own pages, centred in the
+		// 16px slot the rows lay out around
+		n := gtx.Dp(theme.NativeCheckSize)
+		at(gtx, image.Pt((s-n)/2, (s-n)/2), image.Pt(n, n), func(gtx layout.Context) layout.Dimensions {
+			return theme.NativeCheck(gtx, p.a.th.Dark, theme.NativeCheckState{On: on, Hover: b.Hovered()})
+		})
 		return layout.Dimensions{Size: image.Pt(s, s)}
 	})
 	return d, clicked(b)
