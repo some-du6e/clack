@@ -1937,9 +1937,11 @@ func (d *ChannelDetails) muted(cv core.Conv) bool {
 }
 
 // Notification levels of the bell menu (Slack's desktop values).
+// Slack's ChannelNotificationPrefMenu (source channel_details): All new
+// posts, Just mentions, then Mute and hide (improve_mute_pref) — no "Off".
 var (
-	cdNotifKeys   = []string{"everything", "mentions_dms", "nothing"}
-	cdNotifLabels = []string{"All new posts", "Just mentions", "Off"}
+	cdNotifKeys   = []string{"everything", "mentions_dms"}
+	cdNotifLabels = []string{"All new posts", "Just mentions"}
 )
 
 // notifLevel is the effective desktop level index (the override, else the
@@ -2012,11 +2014,14 @@ func (d *ChannelDetails) updateWrites(gtx C, inf core.ChannelDetails, loaded boo
 	if group != "im" {
 		dd := &d.notifMenu
 		mute := "Mute channel"
-		if d.muted(cv) {
-			mute = "Unmute channel"
+		if c.Experiment("improve_mute_pref") == "on" {
+			mute = "Mute and hide"
 		}
 		dd.labels = append(append(dd.labels[:0], cdNotifLabels...), mute)
 		dd.sel = d.notifLevel()
+		if d.muted(cv) {
+			dd.sel = len(cdNotifKeys) // the mute radio is the checked one
+		}
 		if dd.update(gtx) {
 			n := d.notify()
 			switch pick := dd.sel; {
@@ -2033,6 +2038,9 @@ func (d *ChannelDetails) updateWrites(gtx C, inf core.ChannelDetails, loaded boo
 				setNotify(n, &m)
 			}
 			dd.sel = d.notifLevel()
+			if d.muted(cv) {
+				dd.sel = len(cdNotifKeys)
+			}
 		}
 	}
 	if d.notifPending {

@@ -95,7 +95,9 @@ func headerStarIcon(st chSectionState) (icon, emojiURL string) {
 		if icons.Has("section") {
 			return "section", ""
 		}
-		return "star-filled", "" // until icons has Slack's section glyph
+		// Slack's "section" glyph is the one its sidebar draws on custom
+		// section headings; Clack draws those with sectionIcon's
+		return sectionIcon("standard"), ""
 	case st.starred:
 		return "star-filled", ""
 	}

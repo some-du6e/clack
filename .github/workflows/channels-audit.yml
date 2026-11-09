@@ -15,6 +15,7 @@ on:
       - "internal/ui/views/directories.go"
       - "internal/ui/views/spanline.go"
       - "internal/ui/popups/actions_menus.go"
+      - "internal/ui/popups/notify_menu.go"
       - ".github/workflows/channels-audit.yml"
   workflow_dispatch:
 
@@ -43,7 +44,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$PREVIEW_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestChannelHeaderMoveTo$|TestChannelPreviewHeaderAndMenu$|TestChannelPreviewJoin$|TestChannelDetailsMembersAndApps$|TestChannelBrowserShot$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestChannelHeaderMoveTo$|TestChannelPreviewHeaderAndMenu$|TestChannelPreviewJoin$|TestChannelDetailsMembersAndApps$|TestChannelBrowserShot$|TestChannelBellMenu$' ./internal/ui/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

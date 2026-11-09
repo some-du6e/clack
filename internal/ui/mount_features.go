@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"strings"
 
 	"gioui.org/layout"
 	"gioui.org/x/explorer"
@@ -69,7 +70,13 @@ func init() {
 		case "threads":
 			return views.NewThreads(a)
 		case "directories":
-			return views.NewDirectories(a)
+			d := views.NewDirectories(a)
+			// "Browse channels" (Add channels, the ⊕ menu) and "Browse all
+			// people" open their tab: directories?tab=channels
+			if i, ok := directoriesTab[routeArg(r, "tab")]; ok {
+				d.ShowTab(i)
+			}
+			return d
 		case "search":
 			return popups.NewSearchView(a, r.Query())
 		case "saved":
@@ -194,4 +201,22 @@ func (a *App) ThreadPane(ch, ts string) layout.Widget {
 	return func(gtx layout.Context) layout.Dimensions {
 		return a.layoutConvo(gtx, a.convoFor(ch, ts), a.ptrWin)
 	}
+}
+
+// directoriesTab maps directories?tab= to the Directories tab index.
+var directoriesTab = map[string]int{"people": 0, "channels": 1, "groups": 2, "usergroups": 2, "external": 3, "invitations": 4}
+
+// routeArg is a route's name= query value ("" when absent).
+func routeArg(r Route, name string) string {
+	s := string(r)
+	i := strings.IndexByte(s, '?')
+	if i < 0 {
+		return ""
+	}
+	for _, kv := range strings.Split(s[i+1:], "&") {
+		if k, v, ok := strings.Cut(kv, "="); ok && k == name {
+			return v
+		}
+	}
+	return ""
 }

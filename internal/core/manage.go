@@ -131,6 +131,12 @@ func (a *App) Mute(ctx context.Context, ch string, muted bool) error {
 	return a.setNotifications(ctx, ch, []notifyPref{{Name: "muted", Value: strconv.FormatBool(muted)}})
 }
 
+// TempMute mutes ch until the Unix time until (Slack's "Temporarily
+// mute…": temp_mute_expiration_ts, unsynced; useTempMute in boot-shared).
+func (a *App) TempMute(ctx context.Context, ch string, until int64) error {
+	return a.setNotifications(ctx, ch, []notifyPref{{Name: "temp_mute_expiration_ts", Value: strconv.FormatInt(until, 10)}})
+}
+
 // SetNotifyPrefs writes a conversation's notification override. Desktop
 // and Mobile: everything | mentions_dms | nothing ("" leaves them alone).
 // Verified: with sync=true Slack makes mobile follow desktop and rejects an

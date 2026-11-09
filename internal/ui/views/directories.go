@@ -270,6 +270,9 @@ func (d *Directories) ShowTab(i int) {
 	d.closeMenus()
 }
 
+// Tab is the selected tab's label ("Channels").
+func (d *Directories) Tab() string { return dirTabLabels[d.tab.Sel] }
+
 func (d *Directories) closeMenus() {
 	for i := range d.sorts {
 		d.sorts[i].open = false

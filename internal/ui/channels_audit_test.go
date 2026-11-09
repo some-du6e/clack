@@ -82,8 +82,8 @@ func TestChannelHeaderMoveTo(t *testing.T) {
 	if st.custom == nil || st.custom.ID != "L0FAKE01" || st.starred {
 		t.Fatalf("sections of %s: custom %+v starred %v", ch, st.custom, st.starred)
 	}
-	if icon, _ := headerStarIcon(st); icon == "star" {
-		t.Errorf("a channel in a custom section shows the plain star")
+	if icon, _ := headerStarIcon(st); icon != sectionIcon("standard") && icon != "section" {
+		t.Errorf("a channel in a custom section shows %q, not the section glyph", icon)
 	}
 	items := e.a.moveToItems(ch, st)
 	want := "Move to… | Starred | Hack Club | Projects | Events | Random stuff | Bots |  | Create new section | Remove from section"
@@ -225,5 +225,65 @@ func TestChannelBrowserShot(t *testing.T) {
 	e, _ := previewEnv(t)
 	e.a.Navigate("directories?tab=channels")
 	e.settle(1500 * time.Millisecond)
+	v, ok := e.a.views[Route("directories?tab=channels")].(*views.Directories)
+	if !ok || v.Tab() != "Channels" {
+		t.Fatalf("Browse channels opened %T on %q", e.a.views[Route("directories?tab=channels")], dirTabName(v))
+	}
 	e.shot("channel-browser")
+}
+
+// The header bell is Slack's ChannelNotificationPrefMenu: the level
+// radios write users.prefs.setNotifications, "1 hour" a temporary mute.
+func TestChannelBellMenu(t *testing.T) {
+	e, _ := previewEnv(t)
+	ch := fakeslackMemberChannel(e)
+	e.openChannel(ch)
+	e.settle(200 * time.Millisecond)
+	e.a.openNotifPrefs(ch)
+	e.settle(150 * time.Millisecond)
+	m, ok := topOverlay[*popups.Menu](e.a)
+	if !ok {
+		t.Fatal("the bell opened no menu")
+	}
+	want := "[Notify you about…] | All new posts | Just mentions | Mute and hide | --- | More options"
+	if got := strings.Join(m.Labels(), " | "); got != want {
+		t.Errorf("bell menu:\n got %s\nwant %s", got, want)
+	}
+	e.shot("channel-bell-menu")
+	e.key(key.NameEscape, 0)
+	e.settle(100 * time.Millisecond)
+
+	pick := func(items []popups.MenuItem, label string) popups.MenuItem {
+		for _, it := range items {
+			if it.Label == label {
+				return it
+			}
+			for _, s := range it.Sub {
+				if s.Label == label {
+					return s
+				}
+			}
+		}
+		t.Fatalf("no %q row", label)
+		return popups.MenuItem{}
+	}
+	c := e.a.Core()
+	pick(popups.ChannelNotifyItems(e.a, ch), "All new posts").Do()
+	e.until("desktop everything", 10*time.Second, func() bool { return c.NotifyPrefs(ch).Desktop == "everything" })
+	if it := pick(popups.ChannelNotifyItems(e.a, ch), "All new posts"); !it.Checked {
+		t.Error("All new posts isn't checked after choosing it")
+	}
+	before := time.Now().Unix()
+	pick(popups.ChannelNotifyItems(e.a, ch), "1 hour").Do()
+	e.until("temp_mute_expiration_ts", 10*time.Second, func() bool {
+		exp := c.NotifyPrefs(ch).TempMuteExp
+		return exp >= before+3500 && exp <= before+3700
+	})
+}
+
+func dirTabName(v *views.Directories) string {
+	if v == nil {
+		return ""
+	}
+	return v.Tab()
 }
