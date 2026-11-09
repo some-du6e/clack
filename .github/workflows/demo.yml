@@ -1,0 +1,85 @@
+name: demo
+# `clack demo` (internal/demo): the workspace's data and drawn art, the
+# world and bot tests, the loopback-only guard, a headless end-to-end
+# smoke test of the real UI on the demo (sidebar, a channel, a bot's
+# reply to a posted message, a Block Kit button round trip, the code
+# channel) and screenshots of the demo, light and dark. Synthetic only:
+# the demo runs fakeslack on 127.0.0.1 and nothing here talks to Slack.
+on:
+  push:
+    paths:
+      - "internal/demo/**"
+      - "cmd/clack/demo.go"
+      - "cmd/clack/main.go"
+      - "internal/ui/demo_*.go"
+      - "internal/fakeslack/**"
+      - "internal/slack/tlsfp/**"
+      - "internal/slack/ua.go"
+      - ".github/workflows/demo.yml"
+  workflow_dispatch:
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb libgl1-mesa-dri libegl-mesa0
+
+permissions:
+  contents: read
+
+jobs:
+  demo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: vet
+        run: go vet ./internal/demo/ ./cmd/clack/ ./internal/slack/tlsfp/ ./internal/fakeslack/
+      - name: demo package (race)
+        run: go test -race -count=1 -v ./internal/demo/
+      - name: loopback guard and transports
+        run: |
+          go test -count=1 -v -run 'TestDemoRefusesNonLoopbackHosts' ./internal/demo/
+          go test -count=1 ./internal/slack/tlsfp/ ./internal/fakeslack/
+      - name: cmd/clack demo flags
+        run: go test -count=1 -v -run 'TestDemo' ./cmd/clack/
+      - name: smoke (headless UI on the demo)
+        run: xvfb-run -a go test -count=1 -v -run 'TestDemoSmoke$' ./internal/ui/
+      - name: screenshots (Mesa llvmpipe)
+        env:
+          CLACK_DEMO_SHOTS: ${{ github.workspace }}/dist/shots
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$CLACK_DEMO_SHOTS"
+          xvfb-run -a go test -count=1 -timeout 20m -v -run 'TestDemoShots$|TestDemoSmoke$' ./internal/ui/
+          ls -la "$CLACK_DEMO_SHOTS"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: demo-shots
+          path: dist/shots
+      - name: clack demo --help (the release binary's path)
+        run: |
+          CGO_ENABLED=1 go build -trimpath -o dist/clack ./cmd/clack
+          CLACK_DEMO_HOME="$RUNNER_TEMP/demo-home" ./dist/clack demo --help 2>&1 | tee help.txt
+          grep -q 'Quillfeather' help.txt
+          ./dist/clack --demo --help >/dev/null 2>&1
+      - name: clack demo launches (10 s under Xvfb, then quit)
+        env:
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          export CLACK_DEMO_HOME="$RUNNER_TEMP/demo-home"
+          xvfb-run -a timeout 10s ./dist/clack demo --speed 5 -v > demo.log 2>&1 || code=$?
+          cat demo.log
+          # timeout's 124 is the expected end; anything else is a crash
+          test "${code:-0}" = 124
+          grep -q 'demo (linux/amd64): Quillfeather Paper Co. on http://127.0.0.1:' demo.log
+          ! grep -qi 'panic' demo.log
+          test -f "$CLACK_DEMO_HOME/.clack-demo"
+          test ! -e "$HOME/.config/clack/creds.json"

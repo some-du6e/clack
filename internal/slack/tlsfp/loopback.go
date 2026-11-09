@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"net/url"
+	"sync"
 	"sync/atomic"
 )
 
@@ -22,7 +23,12 @@ var ErrNotLoopback = errors.New("demo mode: refusing to connect to a non-loopbac
 
 // LoopbackOnly turns loopback-only mode on for the rest of the process.
 // There is no way back.
-func LoopbackOnly() { loopbackOnly.Store(true) }
+func LoopbackOnly() {
+	loopbackOnly.Store(true)
+	lockOnce.Do(lockDefaultTransport) // transport.go
+}
+
+var lockOnce sync.Once
 
 // IsLoopbackOnly reports whether LoopbackOnly was called.
 func IsLoopbackOnly() bool { return loopbackOnly.Load() }

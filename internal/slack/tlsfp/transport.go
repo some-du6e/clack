@@ -1,7 +1,9 @@
 package tlsfp
 
 import (
+	"context"
 	"crypto/tls"
+	"net"
 	"net/http"
 	"net/url"
 	"time"
@@ -90,5 +92,28 @@ func (m mixed) CloseIdleConnections() {
 	m.slack.CloseIdleConnections()
 	if c, ok := m.other.(interface{ CloseIdleConnections() }); ok {
 		c.CloseIdleConnections()
+	}
+}
+
+// lockDefaultTransport is LoopbackOnly's part for Go's default transport,
+// which Mixed sends non-Slack hosts through and the few dials that don't
+// come through this package use: no proxy, and a dial to any host that
+// isn't loopback fails. It must run before the transport's first request
+// (`clack demo` calls LoopbackOnly first thing).
+func lockDefaultTransport() {
+	t, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return
+	}
+	t.Proxy = nil
+	dial := t.DialContext
+	if dial == nil {
+		dial = (&net.Dialer{Timeout: 10 * time.Second}).DialContext
+	}
+	t.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if err := CheckAddr(addr); err != nil {
+			return nil, err
+		}
+		return dial(ctx, network, addr)
 	}
 }
