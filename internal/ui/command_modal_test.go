@@ -170,8 +170,10 @@ func TestCommandModalAndTyping(t *testing.T) {
 	run("/ticket timeout")
 	want := "*/ticket* failed because the app did not respond. Please try again or contact the app developer."
 	e.until("Slackbot's failure note", 15*time.Second, func() bool { return hasEphemeral(a, ch, want) })
-	e.scroll(e.listPoint(), 6000)
-	e.settle(1500 * time.Millisecond)
+	for i := 0; i < 3; i++ { // to the newest row, past late image loads
+		e.scroll(e.listPoint(), 6000)
+		e.settle(800 * time.Millisecond)
+	}
 	shots("command-failed", false)
 
 	// typing: one, two, several (user_typing on the socket)
