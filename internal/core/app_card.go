@@ -32,6 +32,10 @@ type AppCard struct {
 	HomeOrgID    string // enterprise_id (home_enterprise_id)
 	External     bool   // isAppExternal: the app's top-level team isn't the viewer's
 	Commands     []AppCommand
+	// ShownAsAgent is legacy_app.is_shown_as_agent (Slack keeps the raw
+	// app_profile as legacy_app): isAppShownAsAgent, the AGENT badge's
+	// app rule (badge.go).
+	ShownAsAgent bool
 }
 
 // TopTeam is the app's top-level team (getAppTopLevelTeamId:
@@ -182,6 +186,7 @@ func (a *App) appCardOf(raw json.RawMessage, botID string) AppCard {
 		IsWorkflow    bool                           `json:"is_workflow_app"`
 		IsPublished   bool                           `json:"is_directory_published"`
 		IsDistributed bool                           `json:"is_distributed"`
+		ShownAsAgent  bool                           `json:"is_shown_as_agent"`
 		Icons         icons                          `json:"icons"`
 		CommandsAny   json.RawMessage                `json:"commands"`
 		BotUser       *struct{ ID, Username string } `json:"bot_user"`
@@ -203,7 +208,7 @@ func (a *App) appCardOf(raw json.RawMessage, botID string) AppCard {
 	_ = json.Unmarshal(raw, &r)
 	c := AppCard{AppID: r.ID, BotID: botID, Name: r.Name, Tagline: r.Desc, Color: strings.TrimPrefix(r.Color, "#"),
 		HomeTeamID: r.TeamID, HomeOrgID: r.EnterpriseID, Workflow: r.IsWorkflow,
-		Published: r.IsPublished, Distributed: r.IsDistributed, AppType: "xoxp"}
+		Published: r.IsPublished, Distributed: r.IsDistributed, AppType: "xoxp", ShownAsAgent: r.ShownAsAgent}
 	switch {
 	case r.IsXoxa:
 		c.AppType = "xoxa"

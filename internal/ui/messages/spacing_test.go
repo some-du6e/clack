@@ -124,8 +124,14 @@ func TestMessageGeometryChannel(t *testing.T) {
 		ts := spacingTS
 		until(t, 5*time.Second, "the rows", f, func() bool { return v.s.rows[ts.m3] != nil && itemHeight(v.s, ts.m3) > 0 })
 		f()
-		// The root is a header row (with its reply bar); m1..m3 continue it.
-		for _, m := range []string{ts.m1, ts.m2, ts.m3} {
+		// The root is a header row (with its reply bar). Slack never groups
+		// a message onto one with replies (isAdjacentMessage: reply_count on
+		// either side breaks the group, core.Adjacent / groupable), so m1
+		// starts a new group and m2, m3 continue it.
+		m1 := geomOf(t, v.s, ts.m1)
+		checkRow(t, "channel header after a thread root", rowGeom{h: px(52, scale), colX: m1.colX, colY: m1.colY, bodyBL: m1.bodyBL, nameBL: m1.nameBL},
+			52, 64, 4, 42.8, 20.8, scale)
+		for _, m := range []string{ts.m2, ts.m3} {
 			// 4 + 22 + 4: the line at 4, baseline 4+16.8
 			checkRow(t, "channel continuation "+m, geomOf(t, v.s, m), 30, 64, 4, 20.8, 0, scale)
 		}

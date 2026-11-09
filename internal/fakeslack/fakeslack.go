@@ -48,6 +48,9 @@ type Size struct {
 	Usergroups int
 	History    int // messages per channel (conversations.history pages through them)
 	Unread     int // channels with unreads (core prefetches these)
+	// Identity adds #identity-fixtures: one message per bot/app sender
+	// case (identity.go). Off by default so other fixtures don't shift.
+	Identity bool
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -138,6 +141,9 @@ func (s *Server) appProfile(bot, app string) (map[string]any, bool) {
 			m["image_"+strconv.Itoa(px)] = s.URL + "img/" + strconv.Itoa(px) + "x" + strconv.Itoa(px) + "/" + n + ".png"
 		}
 		return m
+	}
+	if p, ok := s.identityAppProfile(bot, app); ok && s.Size.Identity {
+		return p, true
 	}
 	switch {
 	case bot == AppBotID || app == AppAppID:
@@ -354,6 +360,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 		imgs: map[string][]byte{}, hist: map[string][]slack.Message{}, Calls: map[string]*atomic.Int64{},
 		prefs: DefaultPrefs(), drafts: map[string]*Draft{}, files: map[string]*UploadedFile{}}
 	s.generate()
+	if sz.Identity {
+		s.addIdentity()
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", s.api)
 	mux.HandleFunc("/img/", s.img)
@@ -985,6 +994,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	case "edge/huddles/list":
 		return ok("huddles", []any{})
 	}
+	if out, handled := s.handleIdentity(method, f); handled && s.Size.Identity { // identity.go
+		return out
+	}
 	if out, handled := s.handleHuddles(method, f); handled { // huddles.go
 		return out
 	}
@@ -1004,6 +1016,13 @@ func (s *Server) userByID(id string) (slack.User, bool) {
 	for _, u := range s.variants() {
 		if u.ID == id {
 			return u, true
+		}
+	}
+	if s.Size.Identity {
+		for _, u := range s.identityUsers() {
+			if u.ID == id {
+				return u, true
+			}
 		}
 	}
 	if strings.HasPrefix(id, "U0FAKE") {

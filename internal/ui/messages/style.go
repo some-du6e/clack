@@ -275,6 +275,12 @@ func drawAvatar(gtx layout.Context, h Host, url string, r image.Rectangle, c *co
 
 func paintAvatar(gtx layout.Context, imgs *imgcache.Cache, url string, r image.Rectangle, c *colors) {
 	radius := avatarRadius(r.Dx())
+	if isDefaultBotAvatar(url) {
+		if img, ok := defaultBotAvatarImage(); ok {
+			richview.DrawImage(gtx.Ops, img, r, radius, true)
+			return
+		}
+	}
 	if url != "" && imgs != nil {
 		if img, ok := imgs.Get(url, r.Dx()); ok {
 			richview.DrawImage(gtx.Ops, img, r, radius, true)
