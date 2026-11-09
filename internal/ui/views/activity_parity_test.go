@@ -5,19 +5,24 @@ package views
 // context menu), clicks, and realtime deletes. Synthetic feed only.
 
 import (
+	"encoding/json"
 	"image"
+	"image/png"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"gioui.org/f32"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
+	"gioui.org/op"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
 )
 
 func actItem(t *testing.T, v *Activity, key string) *core.ActivityItem {
@@ -244,5 +249,126 @@ func TestActivityParityShots(t *testing.T) {
 		clearRow.Do()
 		e.frame()
 		vaShot(t, e, "activity-clear-before", dark)
+	}
+}
+
+// The Dense/Detailed choice is Slack's global Activity pref: it loads from
+// activity.views (prefs.density) and the header toggle writes
+// activity.prefs.update {density}.
+func TestActivityDensityPersists(t *testing.T) {
+	actViewsDensity = "dense"
+	defer func() { actViewsDensity = "compact" }()
+	v, _, e, log := vaActivity(t, false)
+	e.until(t, "the saved Dense layout", func() bool { return v.dense })
+	v.seg[0].Click() // Detailed
+	e.frame()
+	if v.dense {
+		t.Fatal("still Dense after picking Detailed")
+	}
+	e.until(t, "activity.prefs.update", func() bool {
+		return log.count("activity.prefs.update", func(f url.Values) bool { return f.Get("density") == "compact" }) == 1
+	})
+	v.seg[1].Click() // Dense
+	e.frame()
+	e.until(t, "activity.prefs.update dense", func() bool {
+		return log.count("activity.prefs.update", func(f url.Values) bool { return f.Get("density") == "dense" }) == 1
+	})
+	if !v.dense {
+		t.Error("not Dense after picking Dense")
+	}
+}
+
+// Dense rows are Slack's single line: 50px each, the type icon after the
+// sender, the time in a 54px column at the right.
+func TestActivityDenseRowLikeSlack(t *testing.T) {
+	v, _, e, _ := vaActivity(t, false)
+	v.dense = true
+	e.frame()
+	var ops op.Ops
+	for _, key := range []string{"k-at-user", "k-dm", "k-reaction", "k-list-assigned"} {
+		it := actItem(t, v, key)
+		gtx := actFrame(&ops, image.Pt(1100, 400))
+		gtx.Constraints = layout.Constraints{Min: image.Pt(1100, 0), Max: image.Pt(1100, 400)}
+		if h := v.row(gtx, it, 3).Size.Y; h != int(actDenseH) {
+			t.Errorf("%s: dense row %dpx, want %d", key, h, int(actDenseH))
+		}
+	}
+}
+
+// actRefKeys are the rows the side-by-sides compare (unread and read, one
+// per kind of footer).
+var actRefKeys = []string{"k-at-user", "k-thread", "k-reaction-many", "k-dm", "k-channel", "k-invite", "k-reminder", "k-mine", "k-at-channel"}
+
+// actRefRow is one row's text as the reference page builds it
+// (.github/scripts/activity_ref.py renders it with Slack's markup and
+// shipping CSS next to Clack's screenshot).
+type actRefRow struct {
+	Key, Name, Body, Sub, Time, Loc, LocIcon, FootIcon, TypeIcon, Emoji string
+	FootPre, FootName, FootPost, FootNameIcon                           string
+	FootText, LocOn, Unread, React                                      bool
+	Count                                                               int
+}
+
+// TestActivitySideBySide (ACTIVITY_SHOTS_DIR) saves Clack's rows for
+// actRefKeys in Dense and Detailed, light and dark, 1100px wide, and their
+// text in activity-ref-rows.json for the reference page.
+func TestActivitySideBySide(t *testing.T) {
+	dir := os.Getenv("ACTIVITY_SHOTS_DIR")
+	if dir == "" {
+		t.Skip("ACTIVITY_SHOTS_DIR not set")
+	}
+	const w = 1100
+	var rows []actRefRow
+	for _, dark := range []bool{false, true} {
+		for _, dense := range []bool{false, true} {
+			v, _, e, _ := vaActivity(t, dark)
+			v.dense = dense
+			e.frame()
+			var ops op.Ops
+			gtx := actFrame(&ops, image.Pt(w, 4000))
+			y := 0
+			for i, key := range actRefKeys {
+				it := actItem(t, v, key)
+				func() {
+					defer op.Offset(image.Pt(0, y)).Push(gtx.Ops).Pop()
+					g := gtx
+					g.Constraints = layout.Constraints{Min: image.Pt(w, 0), Max: image.Pt(w, 400)}
+					y += v.row(g, it, i+3).Size.Y
+				}()
+				if dark || dense {
+					continue
+				}
+				d := v.rowFor(actKey(it)).d
+				rows = append(rows, actRefRow{Key: key, Name: d.name, Body: firstNonEmpty(d.body, d.prev), Sub: d.subtext, Time: d.when,
+					Loc: d.loc, LocIcon: d.locIcon, LocOn: d.locOn, FootIcon: d.footIcon, TypeIcon: d.typeIcon, FootText: d.footText,
+					FootPre: d.ft.pre, FootName: d.ft.name, FootPost: d.ft.post, FootNameIcon: d.ft.nameIcon,
+					Unread: v.isUnread(it, actKey(it)), Count: actUnreadCount(it), React: d.subReact, Emoji: d.footAlt})
+			}
+			win, err := pixeltest.NewWindow(w, y)
+			if err != nil {
+				t.Fatalf("headless window: %v", err)
+			}
+			if err := win.Frame(&ops); err != nil {
+				t.Fatalf("frame: %v", err)
+			}
+			img := image.NewRGBA(image.Rect(0, 0, w, y))
+			if err := win.Screenshot(img); err != nil {
+				t.Fatalf("screenshot: %v", err)
+			}
+			win.Release()
+			name := "clack-" + map[bool]string{false: "detailed", true: "dense"}[dense] + "-" + map[bool]string{false: "light", true: "dark"}[dark] + ".png"
+			f, err := os.Create(filepath.Join(dir, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := png.Encode(f, img); err != nil {
+				t.Fatal(err)
+			}
+			_ = f.Close()
+		}
+	}
+	b, _ := json.MarshalIndent(rows, "", " ")
+	if err := os.WriteFile(filepath.Join(dir, "activity-ref-rows.json"), b, 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

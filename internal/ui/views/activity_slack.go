@@ -164,38 +164,102 @@ func (v *Activity) appConv(it *core.ActivityItem, kind string) bool {
 	return ok && u.IsBot
 }
 
-// actPillIcon is aJri PillTypeIcon: the Slack icon before the pill text
-// ("" for reactions and channel posts).
-func actPillIcon(it *core.ActivityItem) string {
-	if it.Type == "message_reaction" || it.Type == "channel" {
-		return ""
-	}
-	if it.Type == "saved_reminder" {
-		return "reminder"
-	}
+// actIconType is Gjwd getActivityIconType (gantry client-boot-render's
+// build, the one Slack's shipping CSS pairs with): the item's icon kind.
+// Saved reminders resolve without their channel, as the rows call it.
+func actIconType(it *core.ActivityItem) string {
 	switch {
-	case actMentionType(it.Type):
-		return "mentions"
+	case actMentionType(it.Type) || it.Type == "code_review_requested":
+		return "at_mention"
 	case it.Type == "bot_dm" || it.Type == "bot_dm_bundle":
-		return "apps"
+		return "app"
 	case it.Type == "dm" || it.Type == "mpdm":
-		return "direct-messages"
+		return "dm"
 	case it.Type == "thread_v2":
-		return "threads"
+		return "thread"
 	case actInviteType(it.Type) || it.Type == "shared_workspace_invite" || it.Type == "team_joiner_invite":
-		return "paper-plane"
+		return "invite"
+	case it.Type == "message_reaction":
+		return "reaction"
+	case it.Type == "saved_reminder":
+		switch it.ReminderItem {
+		case "file":
+			return "file"
+		case "list_record", "list_record_field":
+			return "list"
+		case "canvas_section":
+			return "canvas"
+		}
+		return "later"
+	case it.Type == "channel":
+		return "channel"
 	case it.Type == "generic_system_alert" || it.Type == "prejoin_dm_welcome_party_alert":
-		return "notifications"
+		return "notification"
 	}
-	return "mentions" // Z1's default
+	return "at_mention"
 }
 
-// destName is withPrefixes' {channel}: the destination as the pill names
-// it (M in aJri).
+// actIconName is Gjwd _F: the Slack icon for an icon kind.
+func actIconName(kind string) string {
+	switch kind {
+	case "at_mention":
+		return "mentions"
+	case "dm":
+		return "direct-messages"
+	case "app":
+		return "apps"
+	case "reaction":
+		return "reaction"
+	case "invite":
+		return "paper-plane"
+	case "thread":
+		return "threads"
+	case "channel":
+		return "channel"
+	case "list":
+		return "lists"
+	case "canvas":
+		return "canvas"
+	case "file":
+		return "file"
+	case "reminder":
+		return "reminder"
+	case "later":
+		return "bookmark"
+	case "notification":
+		return "notifications"
+	}
+	return ""
+}
+
+// actStandaloneIcon is Gjwd PJ: the kinds whose icon leads the Detailed
+// row's footer (ActivityDecoupledTypeIcon, 16px).
+func actStandaloneIcon(kind string) bool {
+	switch kind {
+	case "thread", "at_mention", "invite", "list", "canvas", "file", "reminder", "later":
+		return true
+	}
+	return false
+}
+
+// actFooterDest is 0S4w bi: the destinations the footer (and the Dense
+// row's location) names.
+func actFooterDest(d actDest) bool {
+	switch d {
+	case destChannel, destMPDM, destDM, destApp, destList, destInvite, destWorkspaceInvite, destFile:
+		return true
+	}
+	return false
+}
+
+// destName is VeYL's destination label (M) with the layout revisions on:
+// "Direct message", "App", "Invitation", "Workspace invitation", "To-do"
+// or "Later", the group's or channel's name, the list's or file's title,
+// the alert category.
 func (v *Activity) destName(it *core.ActivityItem, dest actDest, title string) string {
 	switch dest {
 	case destDM:
-		return "Direct Message"
+		return "Direct message"
 	case destApp:
 		return "App"
 	case destInvite:
@@ -217,45 +281,72 @@ func (v *Activity) destName(it *core.ActivityItem, dest actDest, title string) s
 	return ""
 }
 
-// pillText is the grouped row's context pill: withPrefixes with variant
-// "pill" (the grouped flag on). The reaction pill is "Reacted" followed by
-// the emoji (emoji true).
-func (v *Activity) pillText(it *core.ActivityItem, dest actDest, title string) (text string, emoji bool) {
-	if dest == destUnknown {
-		return "", false
-	}
-	g := v.destName(it, dest, title)
-	switch {
-	case it.Type == "saved_reminder":
-		if actReminderSource(it.ReminderItem) {
-			return strings.TrimSpace("Reminder from " + g), false
-		}
-		return "Reminder", false
-	case actMentionType(it.Type):
-		if it.Type == "keyword" {
-			return "Keyword in " + g, false
-		}
-		return "Mention in " + g, false
-	case it.Type == "thread_v2":
-		return "Thread in " + g, false
-	case it.Type == "message_reaction":
-		return "Reacted", true
-	case dest == destFile && g != "":
-		return "Mention in " + g, false
-	}
-	return g, false
+// actFoot is the Detailed row's footer text (VeYL getFooterContent with
+// the layout revisions on): plain text, then the destination in bold
+// (activity_row_content__footer_name), then plain text.
+type actFoot struct {
+	pre, name, post string
+	nameIcon        string // an icon inside the name (a list's lists icon)
 }
 
-// listPill is the list destination's pill (ActivityListName: the lists
-// icon and the list's title, only for an entry with an item): "Mention in"
-// and the title after the icon; ok false leaves the pill its type icon
-// alone, as Slack's does for the approval entries.
-func (v *Activity) listPill(it *core.ActivityItem) (title string, ok bool) {
-	list, row, _ := actListRow(it)
-	if list == "" || row == "" {
-		return "", false
+func (f actFoot) text() string { return f.pre + f.name + f.post }
+
+// footerText is getFooterContent: "Reminder from {source}" or "Reminder",
+// "Mention in {channel}" (+ " thread"), "Thread in {channel}", the bare
+// destination for reactions, posts, DMs and apps, "Mention in {list}" for
+// list items, and "Invitation" / "Workspace invitation" unbolded. ok false
+// is no text (a destination the footer doesn't name).
+func (v *Activity) footerText(it *core.ActivityItem, dest actDest, title string) (actFoot, bool) {
+	if !actFooterDest(dest) {
+		return actFoot{}, false
 	}
-	return v.actListTitle(list), true
+	g := v.destName(it, dest, title)
+	var icon string
+	if dest == destList {
+		list, row, _ := actListRow(it)
+		if list == "" || row == "" {
+			return actFoot{}, false // getFooterContent: a list entry without an item says nothing
+		}
+		icon = "lists"
+	}
+	f := actFoot{name: g, nameIcon: icon}
+	switch {
+	case it.Type == "saved_reminder":
+		if !actReminderSource(it.ReminderItem) {
+			return actFoot{pre: "Reminder"}, true
+		}
+		f.pre = "Reminder from "
+	case actMentionType(it.Type) || it.Type == "code_review_requested":
+		f.pre = "Mention in "
+		if it.ThreadTS != "" {
+			f.post = " thread"
+		}
+	case it.Type == "thread_v2":
+		f.pre = "Thread in "
+	case it.Type == "message_reaction":
+	case dest == destList || dest == destFile:
+		f.pre = "Mention in "
+	case dest == destChannel:
+	case dest == destInvite || dest == destWorkspaceInvite:
+		return actFoot{pre: g}, true // H, outside the bold span
+	}
+	return f, true
+}
+
+// location is the Dense row's location column (variant "footer" outside
+// Detailed): the destination's label alone.
+func (v *Activity) location(it *core.ActivityItem, dest actDest, title string) (text, icon string, ok bool) {
+	if !actFooterDest(dest) {
+		return "", "", false
+	}
+	if dest == destList {
+		list, row, _ := actListRow(it)
+		if list == "" || row == "" {
+			return "", "", false
+		}
+		icon = "lists"
+	}
+	return v.destName(it, dest, title), icon, true
 }
 
 // actListTitle is a loaded list's name ("" until it's loaded).
@@ -349,9 +440,9 @@ func actOthers(ids []string, skip ...string) []string {
 	return out
 }
 
-// reactionSender is wM7g ReactionSender: the reactor, with "& others"
-// (Detailed) or "+{n}" (Dense) when other people reacted to the message
-// too. Everyone who reacted, minus the viewer and the reactor.
+// reactionSender is laKt ReactionSender with density "dense" (both
+// rows pass it): the reactor, "{name} +{n}" when other people reacted to
+// the message too. Everyone who reacted, minus the viewer and the reactor.
 func (v *Activity) reactionSender(it *core.ActivityItem, d *actDesc) {
 	var users []string
 	if m := it.Msg; m != nil {
@@ -375,11 +466,12 @@ func (v *Activity) reactionSender(it *core.ActivityItem, d *actDesc) {
 	if u, ok := v.user(main); ok {
 		d.avatar = u.Avatar
 	}
-	d.nameDense = d.name
+	// both rows pass density "dense" to the sender (U5s4), so Detailed
+	// reads "{name} +{count}" too
 	if n := len(actOthers(users, v.selfID(), main)); n > 0 {
-		d.nameDense = d.name + " +" + strconv.Itoa(n)
-		d.name += " & others"
+		d.name += " +" + strconv.Itoa(n)
 	}
+	d.nameDense = d.name
 }
 
 // threadSender is wM7g ThreadSender: the reply's author, then the other
@@ -390,16 +482,10 @@ func (v *Activity) threadSender(it *core.ActivityItem, d *actDesc, author string
 		return
 	}
 	o := actOthers(it.Root.ReplyUsers, v.selfID(), author, "USLACKBOT")
-	d.nameDense = d.name
-	switch len(o) {
-	case 0:
-		return
-	case 1:
-		d.name += " and " + v.userName(o[0])
-	default:
-		d.name += " & " + strconv.Itoa(len(o)) + " others"
+	if len(o) > 0 { // density "dense" in both rows: "{name} +{count}"
+		d.name += " +" + strconv.Itoa(len(o))
 	}
-	d.nameDense += " +" + strconv.Itoa(len(o))
+	d.nameDense = d.name
 }
 
 // actUnreadCount is the status badge's number (hliv g_): a bundle's

@@ -4,8 +4,11 @@ name: activity-shots
 # item type) in Detailed and Dense, light and dark, plus the hover bar,
 # the item menu and the "Clear all before" dialog, runs the Activity
 # parity tests (core against internal/fakeslack's feed, the view's
-# clicks, menus and filters) and uploads the screenshots. Nothing here
-# talks to Slack.
+# clicks, menus and filters) and uploads the screenshots. The side-*.png
+# side-by-sides put Clack's Dense and Detailed rows next to the same rows
+# in Slack's markup under Slack's shipping CSS (client-boot-styles, the
+# public CDN file) and design tokens (.github/scripts/activity_ref.py).
+# Nothing here talks to Slack's API or opens the Slack client.
 on:
   push:
     paths:
@@ -16,6 +19,9 @@ on:
       - "internal/fakeslack/activity.go"
       - "internal/fakeslack/views.go"
       - "internal/ui/popups/activity_exports.go"
+      - "internal/ui/views/kit.go"
+      - "internal/ui/theme/account.go"
+      - ".github/scripts/activity_ref.py"
       - ".github/workflows/activity-shots.yml"
   workflow_dispatch:
 
@@ -37,7 +43,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: gio deps
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS fonts-lato
       - name: activity feed screenshots
         env:
           ACTIVITY_SHOTS_DIR: ${{ github.workspace }}/dist/shots
@@ -46,8 +52,15 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
         run: |
           mkdir -p "$ACTIVITY_SHOTS_DIR"
-          go test -count=1 -v -run 'TestActivityItemShapes|TestActivityFakeslack|TestActivityClearBefore|TestActivityFeedParams' ./internal/core
+          go test -count=1 -v -run 'TestActivityItemShapes|TestActivityFakeslack|TestActivityClearBefore|TestActivityFeedParams|TestActivityDensityRoundTrip' ./internal/core
           xvfb-run -a go test -count=1 -v -run 'TestActivity' ./internal/ui/views
+      - name: side-by-sides with Slack's CSS
+        run: |
+          python3 -m pip install --quiet pillow
+          mkdir -p /tmp/slack-ref
+          curl -sfL --compressed --retry 5 -o /tmp/slack-ref/client-boot-styles.css https://a.slack-edge.com/bv1-13-br/client-boot-styles.cf726c4f2eaecc74.min.css
+          curl -sfL --retry 5 -o /tmp/slack-ref/icons.json https://raw.githubusercontent.com/IzieStratt/slack-datamine-plus/main/build/icons.json
+          python3 .github/scripts/activity_ref.py dist/shots /tmp/slack-ref/client-boot-styles.css internal/ui/slackc/css/slackvars.go /tmp/slack-ref/icons.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

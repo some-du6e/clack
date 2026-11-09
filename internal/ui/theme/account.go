@@ -487,6 +487,7 @@ var accountFields = map[string]func(*Palette) *color.NRGBA{
 	"SidebarDivider": func(p *Palette) *color.NRGBA { return &p.SidebarDivider }, "SidebarButton": func(p *Palette) *color.NRGBA { return &p.SidebarButton },
 	"Badge": func(p *Palette) *color.NRGBA { return &p.Badge }, "BadgeText": func(p *Palette) *color.NRGBA { return &p.BadgeText },
 	"Accent": func(p *Palette) *color.NRGBA { return &p.Accent }, "Presence": func(p *Palette) *color.NRGBA { return &p.Presence },
+	"ThemeImp": func(p *Palette) *color.NRGBA { return &p.ThemeImp }, "ThemeImpText": func(p *Palette) *color.NRGBA { return &p.ThemeImpText },
 }
 
 // Fields computes the theme's colour for each Palette field it drives
@@ -531,6 +532,10 @@ func (t IATheme) Fields(dark, gradients bool) map[string]color.NRGBA {
 	out["BadgeText"] = t.contentToken(t.Important, "content-imp", side)
 	// the main pane is in the root mode
 	out["Accent"] = t.token(pr, "base-pry", root)
+	// --dt_color-theme-base-imp / -content-imp: themed unread badges and
+	// dots (Activity's count badge, its tabs' dots)
+	out["ThemeImp"] = t.token(pr, "base-imp", root)
+	out["ThemeImpText"] = t.token(pr, "content-imp", root)
 	out["Presence"] = t.baseToken(t.Highlight2, "base-inv-hgl-2", root)
 	return out
 }

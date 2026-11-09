@@ -43,31 +43,35 @@ type Palette struct {
 	Overlay      color.NRGBA // modal scrim
 	PanelShadow  color.NRGBA
 
-	Link               color.NRGBA
-	Accent             color.NRGBA // focus rings, selected tab underline, blue buttons
-	Mention            color.NRGBA // @user pill text
-	MentionBg          color.NRGBA
-	SelfMention        color.NRGBA // @you / @here background
-	Highlight          color.NRGBA // message highlight (jump-to, pinned)
-	CodeFg             color.NRGBA
-	CodeBg             color.NRGBA
-	CodeBorder         color.NRGBA
-	PreBg              color.NRGBA
-	QuoteBar           color.NRGBA
-	NewLine            color.NRGBA // "New" unread divider (red)
-	Send               color.NRGBA // send button green
-	SendText           color.NRGBA
-	Danger             color.NRGBA
-	Warning            color.NRGBA
-	Presence           color.NRGBA // active dot
-	PresenceAway       color.NRGBA
-	Reaction           color.NRGBA
-	ReactionSelf       color.NRGBA
-	ReactionSelfBorder color.NRGBA
-	Tooltip            color.NRGBA
-	TooltipText        color.NRGBA
-	Selection          color.NRGBA // text selection
-	ScrollThumb        color.NRGBA
+	Link   color.NRGBA
+	Accent color.NRGBA // focus rings, selected tab underline, blue buttons
+	// ThemeImp and ThemeImpText are --dt_color-theme-base-imp and
+	// -theme-content-imp when an account theme changes them (zero with
+	// Slack's default theme: packages keep their own default then).
+	ThemeImp, ThemeImpText color.NRGBA
+	Mention                color.NRGBA // @user pill text
+	MentionBg              color.NRGBA
+	SelfMention            color.NRGBA // @you / @here background
+	Highlight              color.NRGBA // message highlight (jump-to, pinned)
+	CodeFg                 color.NRGBA
+	CodeBg                 color.NRGBA
+	CodeBorder             color.NRGBA
+	PreBg                  color.NRGBA
+	QuoteBar               color.NRGBA
+	NewLine                color.NRGBA // "New" unread divider (red)
+	Send                   color.NRGBA // send button green
+	SendText               color.NRGBA
+	Danger                 color.NRGBA
+	Warning                color.NRGBA
+	Presence               color.NRGBA // active dot
+	PresenceAway           color.NRGBA
+	Reaction               color.NRGBA
+	ReactionSelf           color.NRGBA
+	ReactionSelfBorder     color.NRGBA
+	Tooltip                color.NRGBA
+	TooltipText            color.NRGBA
+	Selection              color.NRGBA // text selection
+	ScrollThumb            color.NRGBA
 }
 
 // SearchTint is the extra rgba(131,56,138,.08) layer on Slack's search pill.

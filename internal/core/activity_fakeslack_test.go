@@ -148,3 +148,34 @@ func TestActivityClearBefore(t *testing.T) {
 		t.Errorf("cleared items %d, archived %v", len(cleared.Items), fs.ActivityArchived())
 	}
 }
+
+// The layout toggle round-trips through Slack's global prefs:
+// activity.views' prefs.density, activity.prefs.update {density}.
+func TestActivityDensityRoundTrip(t *testing.T) {
+	a, fs := actFake(t)
+	ctx := context.Background()
+	dense, ok, err := a.ActivityDensity(ctx)
+	if err != nil || !ok || dense {
+		t.Fatalf("first read: dense %v ok %v err %v, want Detailed", dense, ok, err)
+	}
+	saved, err := a.SetActivityDensity(ctx, true)
+	if err != nil || !saved {
+		t.Fatalf("SetActivityDensity: saved %v err %v", saved, err)
+	}
+	ws := fs.ActivityWrites()
+	if len(ws) != 1 || ws[0].Method != "activity.prefs.update" || ws[0].Form.Get("density") != "dense" {
+		t.Fatalf("writes %+v", ws)
+	}
+	if dense, ok, _ := a.ActivityDensity(ctx); !ok || !dense {
+		t.Errorf("after saving Dense: dense %v ok %v", dense, ok)
+	}
+	// without activity_global_settings Slack keeps the All view's density
+	// in the page only, and reads the All view's own density
+	a.SetExperimentGroup("activity_global_settings", "off")
+	if saved, err := a.SetActivityDensity(ctx, false); saved || err != nil {
+		t.Errorf("flag off: saved %v err %v, want nothing written", saved, err)
+	}
+	if len(fs.ActivityWrites()) != 1 {
+		t.Errorf("flag off wrote: %+v", fs.ActivityWrites())
+	}
+}
