@@ -10,27 +10,16 @@ import (
 )
 
 // The composer autocomplete's shared state, as Slack's web client keeps
-// it (docs/AUTOCOMPLETE-RULES.md):
+// it (docs/AUTOCOMPLETE-RULES.md). The frecency cache is the "frecency"
+// pref (frecency.go: FrecencyCache, RecordFrecency); this file adds:
 //
-//   - the frecency cache is the "frecency" user pref (RI+6/W3UT). A pick
-//     in any list records {id, text} into it (recordFrecencyEvent) and
-//     the pref is saved with users.prefs.set at most once a minute
-//     (setFrecencyByApi through createThrottledThunk(…, 6e4): leading and
-//     trailing). Emoji ids are "E"+unicode or "E"+custom name.
-//   - the ranking model comes from search.autocomplete.model (sPSO's
+//   - the ranking model from search.autocomplete.model (sPSO's
 //     AutocompleteModelCache, refreshed after 28 h); until it lands, or
 //     when the workspace has none, the bundled autocompleteFallback.
-//   - the navigation history (when each conversation was last open) feeds
+//   - the navigation history (when each conversation was last open) for
 //     HISTORY_AGE_DECAY_*.
 type acState struct {
 	mu sync.Mutex
-
-	frec     *acrank.Frecency
-	frecRaw  string // the pref text frec was parsed from
-	frecDirt bool   // local picks not saved yet
-	saving   bool
-	lastSave time.Time
-	timer    *time.Timer
 
 	model   acrank.Weights
 	modelAt time.Time
@@ -39,90 +28,10 @@ type acState struct {
 	history map[string]float64 // conversation id → unix seconds last opened
 }
 
-// acFrecThrottle is setFrecencyByApi's throttle.
-var acFrecThrottle = 60 * time.Second
-
 // acModelTTL is AutocompleteCache's timeout (1008e5 ms).
 const acModelTTL = 28 * time.Hour
 
 func (a *App) ac() *acState { return &a.acs }
-
-// Frecency returns the frecency cache (read-only: Record makes copies).
-func (a *App) Frecency() *acrank.Frecency {
-	st := a.ac()
-	raw, _ := a.Pref("frecency")
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	if st.frec == nil || (!st.frecDirt && string(raw) != st.frecRaw) {
-		st.frec, st.frecRaw = acrank.ParseFrecency(raw), string(raw)
-	}
-	return st.frec
-}
-
-// RecordFrecency is recordFrecencyEvent: id was picked for text (the
-// typed token, trigger included; "" for a visit).
-func (a *App) RecordFrecency(id, text string) {
-	if id == "" {
-		return
-	}
-	f := a.Frecency()
-	st := a.ac()
-	st.mu.Lock()
-	st.frec = f.Record(id, text, time.Now())
-	st.frecDirt = true
-	st.mu.Unlock()
-	a.saveFrecencySoon()
-}
-
-// saveFrecencySoon saves now when the last save is a minute old, else
-// once the minute is up (lodash throttle, leading and trailing).
-func (a *App) saveFrecencySoon() {
-	st := a.ac()
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	if st.timer != nil || st.saving {
-		return
-	}
-	wait := acFrecThrottle - time.Since(st.lastSave)
-	if wait < 0 {
-		wait = 0
-	}
-	st.timer = time.AfterFunc(wait, a.saveFrecency)
-}
-
-func (a *App) saveFrecency() {
-	st := a.ac()
-	st.mu.Lock()
-	st.timer = nil
-	if !st.frecDirt || st.frec == nil {
-		st.mu.Unlock()
-		return
-	}
-	b, _ := st.frec.MarshalJSON()
-	st.frecDirt, st.saving, st.lastSave = false, true, time.Now()
-	st.mu.Unlock()
-	ctx, cancel := context.WithTimeout(a.bgCtx(), 30*time.Second)
-	err := a.C.SetPref(ctx, "frecency", string(b))
-	cancel()
-	st.mu.Lock()
-	st.saving = false
-	if err != nil {
-		st.frecDirt = true // try again with the next pick
-	} else {
-		q, _ := json.Marshal(string(b)) // users.prefs.get returns JSON prefs as strings
-		st.frecRaw = string(q)
-		a.S.Lock()
-		if a.S.RawPrefs != nil {
-			a.S.RawPrefs["frecency"] = q
-		}
-		a.S.Unlock()
-	}
-	again := st.frecDirt && err == nil
-	st.mu.Unlock()
-	if again {
-		a.saveFrecencySoon()
-	}
-}
 
 func (a *App) bgCtx() context.Context {
 	if a.bg != nil {
@@ -215,4 +124,18 @@ func (a *App) ThreadUsers(ch, ts string) []string {
 		}
 	}
 	return append([]string{au}, ids...)
+}
+
+// KnownUsers is every user the store has loaded (Slack's @ list matches
+// all members in its store: getAllMembers), people and bots, deactivated
+// ones included.
+func (a *App) KnownUsers() []User {
+	ids := a.S.UserIDs()
+	out := make([]User, 0, len(ids))
+	for _, id := range ids {
+		if u, ok := a.User(id); ok {
+			out = append(out, u)
+		}
+	}
+	return out
 }

@@ -6,6 +6,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/frecency"
 )
 
 var t0 = time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
@@ -120,45 +122,6 @@ func TestScoreEmojiName(t *testing.T) {
 	}
 }
 
-func TestFrecencyRecordAndHits(t *testing.T) {
-	f := ParseFrecency([]byte(`"{\"kar\":{\"id\":\"U2\",\"count\":3,\"visits\":[1]},\"U2\":{\"id\":\"U2\",\"count\":2,\"visits\":[1]}}"`))
-	if len(f.Keys) != 2 || f.Keys[0] != "kar" {
-		t.Fatalf("parse: %+v", f.Keys)
-	}
-	g := f.Record("U1", "@kar", t0)
-	if e := g.M["kar"]; !e.List || len(e.Recs) != 2 || e.Recs[1].ID != "U1" {
-		t.Fatalf("record under the text: %+v", e)
-	}
-	if r := g.M["U1"].Recs[0]; r.Reduced == nil || !*r.Reduced || r.Count != 1 {
-		t.Fatalf("first id record is _reduced: %+v", r)
-	}
-	g = g.Record("U1", "@kar", t0.Add(time.Minute))
-	if r := g.M["U1"].Recs[0]; r.Reduced != nil || r.Count != 2 || len(r.Visits) != 2 {
-		t.Fatalf("countVisit drops _reduced: %+v", r)
-	}
-	if f.M["kar"].List {
-		t.Fatal("Record changed the original")
-	}
-	h := g.hitsFor("ka", t0.Add(time.Minute))
-	if _, ok := h["U1"]; !ok || h["U1"].exact {
-		t.Errorf("'ka' is inside 'kar': %+v", h)
-	}
-	if !g.hitsFor("kar", t0)["U1"].exact {
-		t.Error("exact query key")
-	}
-	b, _ := g.MarshalJSON()
-	if back := ParseFrecency(b); len(back.Keys) != len(g.Keys) {
-		t.Errorf("round trip: %s", b)
-	}
-	// ten visits at most
-	for i := 0; i < 12; i++ {
-		g = g.Record("U1", "", t0.Add(time.Duration(i)*time.Hour))
-	}
-	if n := len(g.M["U1"].Recs[0].Visits); n != 10 {
-		t.Errorf("visits kept: %d", n)
-	}
-}
-
 func names(cs []Cand, rs []Result) []string {
 	out := make([]string, len(rs))
 	for i, r := range rs {
@@ -248,9 +211,9 @@ func TestRankFrecency(t *testing.T) {
 	if got := names(cs, Rank("ale", cs, o)); got[0] != "alex" {
 		t.Fatalf("shorter name first without frecency: %v", got)
 	}
-	f := ParseFrecency(nil)
+	f := frecency.Parse(nil)
 	for i := 0; i < 4; i++ {
-		f = f.Record("U2", "@ale", t0.Add(-time.Duration(i)*time.Hour))
+		f.Record("U2", "@ale", t0.Add(-time.Duration(i)*time.Hour))
 	}
 	o.Frecency = f
 	if got := names(cs, Rank("ale", cs, o)); got[0] != "alexis" {
@@ -326,9 +289,9 @@ func TestRankEmoji(t *testing.T) {
 	if idx(got, "sweat_smile") < idx(got, "smirk_cat") {
 		t.Errorf("word-start substring after prefix: %v", got)
 	}
-	f := ParseFrecency(nil)
+	f := frecency.Parse(nil)
 	for i := 0; i < 5; i++ {
-		f = f.Record("E1f605", ":smi", t0.Add(-time.Duration(i)*time.Minute))
+		f.Record("E1f605", ":smi", t0.Add(-time.Duration(i)*time.Minute))
 	}
 	o.Frecency = f
 	if got := names(cs, Rank("smi", cs, o)); got[0] != "sweat_smile" {

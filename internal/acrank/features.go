@@ -69,7 +69,7 @@ func modelScore(e *entry, rawQ, nq string, numResults int, now float64, o Option
 
 	// ---- common (I) ----
 	bonus := 0.0
-	for _, v := range e.fs.bonus {
+	for _, v := range e.bonus {
 		bonus += v
 	}
 	add("FRECENCY_BONUS", bonus)
@@ -86,7 +86,7 @@ func modelScore(e *entry, rawQ, nq string, numResults int, now float64, o Option
 	add("FRECENCY_LOG_HIT_COUNT", math.Log1p(e.fs.hitCount))
 	add("FRECENCY_LOG_ITEM_COUNT", math.Log1p(e.fs.itemCount))
 	add("FUZZY_SCORE", e.score)
-	fz, hasFz := e.fs.bonus["fuzzyScoreBonus"]
+	fz, hasFz := e.bonus["fuzzyScoreBonus"]
 	add("FUZZY_SCORE_50", b2f(hasFz && fz == 50))
 	add("FUZZY_SCORE_25", b2f(hasFz && fz == 25))
 	add("FUZZY_SCORE_ALL", b2f(hasFz && fz != 0 && fz < 25))

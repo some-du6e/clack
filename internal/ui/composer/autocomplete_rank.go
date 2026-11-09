@@ -6,7 +6,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/acrank"
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
+	"github.com/some-du6e/yoloslackgoclient/internal/frecency"
 )
 
 // The @ # and / lists are ranked by Slack's Searcher, ported in
@@ -32,7 +32,7 @@ func userName(u core.User) string {
 // frecency pref, the model, the navigation history, the viewer's DMs
 // and read state, and the experiments Slack's Searcher checks.
 type rankCtx struct {
-	frec    *acrank.Frecency
+	frec    *frecency.Cache
 	weights acrank.Weights
 	history map[string]float64
 	ims     map[string]core.Conv // user id → DM
@@ -67,7 +67,7 @@ func rankCtxFrom(api coreAPI, s core.Snapshot, convKind string) rankCtx {
 		return r
 	}
 	a := api.a
-	r.frec = a.Frecency()
+	r.frec = a.FrecencyCache()
 	r.weights = a.AutocompleteModel()
 	r.history = a.ViewHistory()
 	r.selfTeams = s.Self.Teams
@@ -314,40 +314,29 @@ func rankCommands(q string, cmds []core.Command, r rankCtx) []acItem {
 	return out
 }
 
-// frecencyID is getResultFrecencyId: the row's item id (emoji: "E" +
-// unicode or name; commands: "/name").
-func (ac *Autocomplete) frecencyID(it acItem) string {
+// frecencyID is getResultFrecencyId: the row's item id (commands:
+// "/name"; keywords: "BKhere").
+func frecencyID(it acItem) string {
 	switch {
 	case it.Kind == acCommand:
 		return "/" + it.ID
-	case it.Kind == acEmoji:
-		return emojiFrecencyID(ac.h, it.ID)
 	case it.IsBroadcast():
 		return broadcastRowID(it.ID)
 	}
 	return it.ID
 }
 
-// recordPick is TextyAutocomplete.handleSelect's
-// recordFrecencyEvent({id, text: matchText}).
+// recordPick is TextyAutocomplete.handleSelect's recordFrecencyEvent
+// {id: the completer's frecency id, text: matchText}; emoji go through
+// recordEmojiFrecencyEvent ("E"+unicode or "E"+name).
 func (ac *Autocomplete) recordPick(it acItem, t acTrigger) {
 	if ac.h == nil || ac.h.Core() == nil {
 		return
 	}
-	id := ac.frecencyID(it)
-	if id == "" {
+	trig := map[acKind]string{acUser: "@", acChannel: "#", acEmoji: ":", acCommand: "/"}[t.Kind]
+	if it.Kind == acEmoji {
+		ac.h.Core().RecordEmojiFrecency(it.ID, trig+t.Query)
 		return
 	}
-	trig := map[acKind]string{acUser: "@", acChannel: "#", acEmoji: ":", acCommand: "/"}[t.Kind]
-	coreAPI{ac.h.Core()}.recordFrecency(id, trig+t.Query)
-}
-
-// emojiFrecencyID maps an emoji row's id (its name, maybe with a skin
-// tone) to Slack's emoji frecency id.
-func emojiFrecencyID(h Host, name string) string {
-	if h == nil || h.Core() == nil {
-		return ""
-	}
-	id, _ := popups.EmojiFrecencyIDFor(h, name)
-	return id
+	coreAPI{ac.h.Core()}.recordFrecency(frecencyID(it), trig+t.Query)
 }

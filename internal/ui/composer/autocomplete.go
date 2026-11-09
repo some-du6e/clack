@@ -481,7 +481,11 @@ func (ac *Autocomplete) refresh() {
 	ac.snapAt = time.Now()
 	api := coreAPI{ac.h.Core()}
 	s := api.snapshot()
-	known := make(map[string]core.User, len(s.Users)+1)
+	all := api.a.KnownUsers()
+	known := make(map[string]core.User, len(all)+len(s.Users)+1)
+	for _, u := range all {
+		known[u.ID] = u
+	}
 	for id, u := range s.Users {
 		known[id] = u
 	}
@@ -530,7 +534,7 @@ func (ac *Autocomplete) refresh() {
 func (ac *Autocomplete) rankCtxLocked() rankCtx {
 	r := ac.rk
 	if ac.h != nil && ac.h.Core() != nil {
-		r.frec = ac.h.Core().Frecency()
+		r.frec = ac.h.Core().FrecencyCache()
 	}
 	return r
 }
@@ -603,7 +607,7 @@ func (ac *Autocomplete) load(t acTrigger) {
 		}
 	case acEmoji:
 		if ac.coreEmoji() {
-			break // popups.SearchEmoji indexes the set itself
+			break // popups.AutocompleteEmoji indexes the set itself
 		}
 		if ac.emojiIdx == nil && !ac.emoLoading {
 			ac.emoLoading = true
@@ -723,10 +727,10 @@ func (ac *Autocomplete) resolveStatusEmoji(items []acItem) {
 	}
 }
 
-// coreEmoji reports whether ":" suggestions come from the emoji picker's
-// search (popups.SearchEmoji): Slack's emoji autocomplete ranks with the
-// same frecency as its picker's search and shows the preferred skin tone.
-// Without a core (tests) the composer's own index serves.
+// coreEmoji reports whether ":" suggestions come from
+// popups.AutocompleteEmoji (Slack's autocompleteEmoji: the emoji index,
+// the shared frecency pref and the autocomplete model, at the preferred
+// skin tone). Without a core (tests) the composer's own index serves.
 func (ac *Autocomplete) coreEmoji() bool { return ac.h != nil && ac.h.Core() != nil }
 
 // emojiMatchItems turns picker search hits into suggestions; the atom

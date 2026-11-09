@@ -400,13 +400,9 @@ func bindAutocomplete(ed *Editor, ac *Autocomplete, invalidate func()) {
 	ed.Intercept = ac.Key
 	ac.Live = func() (*Doc, int) { return ed.Doc(), caretOf(ed) }
 	ac.OnAccept = func(it acItem, start, end int) {
-		q := ac.trig.Query
+		// the pick's recordFrecencyEvent ran in Autocomplete.accept
+		// (recordPick), for every list
 		applyPick(ed, it, start, end)
-		if it.Kind == acEmoji && ac.coreEmoji() {
-			// texty's onSelect: recordFrecencyEvent {id: the completer's
-			// frecency id, text: the matched text}
-			ac.h.Core().RecordEmojiFrecency(it.ID, q)
-		}
 		if invalidate != nil {
 			invalidate()
 		}

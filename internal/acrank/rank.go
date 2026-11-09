@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/frecency"
 )
 
 // Kind is a candidate's entity type.
@@ -87,9 +89,9 @@ type Cand struct {
 // Options are the Searcher options (getAllOptions merged with the thunk's).
 type Options struct {
 	Source   string
-	Limit    int // 25
-	Frecency *Frecency
-	Weights  Weights // nil: FallbackWeights
+	Limit    int             // 25
+	Frecency *frecency.Cache // the "frecency" pref (nil: empty)
+	Weights  Weights         // nil: FallbackWeights
 	Now      time.Time
 
 	// HasChannel: the composer has a current conversation (sort.
@@ -121,6 +123,15 @@ type Result struct {
 	BestName string
 }
 
+// frecScore is what scoreItems adds to a result (frecency.Scored).
+type frecScore struct {
+	raw, score               float64
+	weightHit, weightItem    float64
+	hitCount, itemCount      float64
+	logHitScaled, logItemSca float64
+	origIndex                int
+}
+
 // entity CTR defaults (AutocompleteFeatures, used while the offline
 // features are empty, as they are for Hack Club).
 var entityCtr = map[Kind]float64{Member: .132, Channel: .148, Emoji: .094}
@@ -147,6 +158,7 @@ type entry struct {
 	sortName  string
 	firstWord string // commands: firstWordOfRawQuery
 	fs        frecScore
+	bonus     map[string]float64
 	model     float64
 	inChannel bool // isMemberOfCurrentChannel (prepSuggestions)
 }
@@ -238,11 +250,24 @@ func Rank(query string, cands []Cand, o Options) []Result {
 	for i, e := range list {
 		ids[i] = e.c.ID
 	}
-	fss := o.Frecency.scoreItems(m, ids, o.Now, func(i int, fs *frecScore) map[string]float64 {
-		return bonusPoints(list[i], m, o)
-	})
-	for i := range list {
-		list[i].fs = fss[i]
+	sums := make(map[string]float64, len(list))
+	for _, e := range list {
+		e.bonus = bonusPoints(e, m, o)
+		t := 0.0
+		for _, v := range e.bonus {
+			t += v
+		}
+		sums[e.c.ID] = t
+	}
+	fc := o.Frecency
+	if fc == nil {
+		fc = frecency.Parse(nil)
+	}
+	scored := fc.ScoreItems(fc.Hits(m, o.Now), ids, o.Now, func(id string) float64 { return sums[id] })
+	for i, sc := range scored {
+		list[i].fs = frecScore{raw: sc.RawFrecencyScore, score: sc.FrecencyScore, weightHit: sc.WeightHitVisits,
+			weightItem: sc.WeightItemVisits, hitCount: float64(sc.HitCount), itemCount: float64(sc.ItemCount),
+			logHitScaled: sc.LogHitCountScaled, logItemSca: sc.LogItemCountScaled, origIndex: sc.Index}
 	}
 	if len(list) >= cut {
 		sort.SliceStable(list, func(i, j int) bool {

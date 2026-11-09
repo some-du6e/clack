@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/acrank"
+	"github.com/some-du6e/yoloslackgoclient/internal/core"
 )
 
 // AutocompleteEmoji is the composer's ":" list as Slack builds it
@@ -29,7 +30,7 @@ func AutocompleteEmoji(h Host, query string, o acrank.Options) []EmojiMatch {
 		if !epMayMatch(names, q) {
 			continue
 		}
-		cands = append(cands, acrank.Cand{Kind: acrank.Emoji, ID: EmojiFrecencyID(x, id), Name: names[0], Names: names})
+		cands = append(cands, acrank.Cand{Kind: acrank.Emoji, ID: core.EmojiFrecencyID(names[0]), Name: names[0], Names: names})
 		ids = append(ids, id)
 	}
 	rs := acrank.Rank(query, cands, o)
@@ -47,29 +48,6 @@ func AutocompleteEmoji(h Host, query string, o acrank.Options) []EmojiMatch {
 		out = append(out, m)
 	}
 	return out
-}
-
-// EmojiFrecencyID is constructEmojiFrecencyId: "E" + the unicode code
-// points of a standard emoji, "E" + the name of a custom one.
-func EmojiFrecencyID(x *emojiIndex, id int32) string {
-	if int(id) < x.nStd && x.std.image[id] != "" {
-		return "E" + x.std.image[id]
-	}
-	return "E" + x.names[id]
-}
-
-// EmojiFrecencyIDFor maps an emoji name (":x:" and a skin tone suffix
-// allowed) to its frecency id; ok is false for an unknown name.
-func EmojiFrecencyIDFor(h Host, name string) (string, bool) {
-	x, _ := epIndexFor(h)
-	if x == nil {
-		return "", false
-	}
-	id, ok := x.lookup(name)
-	if !ok {
-		return "", false
-	}
-	return EmojiFrecencyID(x, id), true
 }
 
 // epMayMatch is emojiMayMatchOnName's mask test: every query letter
