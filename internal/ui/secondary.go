@@ -21,6 +21,7 @@ const (
 	secSplit
 	secHelp   // the Help flexpane (update_ui.go)
 	secSearch // search in channel (⌘F, popups.SearchInChannel)
+	secCode   // a code channel's details pane (codechannel_pane.go)
 )
 
 // secondaryState is the resizable right-hand pane (thread, channel details,
@@ -33,9 +34,12 @@ type secondaryState struct {
 	view    View
 	width   int  // dp
 	hidden  bool // Ctrl+. toggles without forgetting what was open
-	drag    gesture.Drag
-	dragX   float32
-	dragW   float32
+	// expanded is the code channel pane's "Expand view": Slack switches the
+	// window to single-column mode, the pane taking the whole panel.
+	expanded bool
+	drag     gesture.Drag
+	dragX    float32
+	dragW    float32
 }
 
 func (s *secondaryState) open() bool { return s.kind != secNone && !s.hidden }

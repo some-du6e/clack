@@ -152,6 +152,9 @@ type Surface struct {
 	onAction func()
 	// initial is the state when the view was shown (speedbump on close).
 	initial string
+	// fixed is the action base of a surface that isn't a Slack view (a
+	// code channel's block_kit view): its container and app ids.
+	fixed *core.BlockAction
 }
 
 // dirty reports whether the user changed any input since the view was
@@ -283,7 +286,21 @@ func (s *Surface) changed() {
 	}
 }
 func (s *Surface) base() core.BlockAction {
+	if s.fixed != nil {
+		return *s.fixed
+	}
 	return s.h.Core().Interactive().ViewContainer(s.view)
+}
+
+// NewCodeChannelSurface is CodeChannelBlockKitView's surface: the view's
+// blocks (client.codeChannels.getBlockKitView), whose actions go out
+// through sendActions with the view's service_id and app_id and Slack's
+// container {type: code_channel_view, view_id, channelId}.
+func NewCodeChannelSurface(h Host, blocks json.RawMessage, ch, viewID, serviceID, appID string) *Surface {
+	s := newSurface(h, &core.View{ID: viewID, Type: "code_channel_view", Blocks: blocks, ChannelID: ch})
+	s.fixed = &core.BlockAction{ServiceID: serviceID, AppID: appID,
+		Container: core.ActionContainer{Type: "code_channel_view", ChannelID: ch, ViewID: viewID}}
+	return s
 }
 
 func (s *Surface) clearErr(bid string) {

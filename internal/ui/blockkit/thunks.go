@@ -37,6 +37,8 @@ func containerArgs(c core.ActionContainer) map[string]any {
 	switch c.Type {
 	case "view":
 		m["view_id"] = c.ViewID
+	case "code_channel_view":
+		m["view_id"], m["channelId"] = c.ViewID, c.ChannelID
 	default:
 		m["messageTs"], m["channelId"], m["isEphemeral"] = c.MessageTS, c.ChannelID, c.IsEphemeral
 		if c.Type == "message_attachment" {
