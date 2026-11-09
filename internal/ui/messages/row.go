@@ -113,6 +113,7 @@ type row struct {
 
 	msgOv           uintptr      // Message / ThreadReplyGeneric msg override applied
 	wrapMsg         slackc.Props // MessageWrapper's override (what msgOv falls back to)
+	ovMsg           slackc.Props // Message / ThreadReplyGeneric's override (msgOv's)
 	textOv          slackc.Props // MessageText's msg override (nil = none)
 	filesOv, attsOv slackc.Props // MessageFiles / MessageKitAttachments msg overrides
 	tailOv          [2]uintptr   // file / attachment filters applied (propsIDs)
@@ -213,6 +214,7 @@ func (r *row) set(e *entry) {
 	r.src, r.m = e.m, e.m
 	r.wrapOv, r.blocksOv, r.srcMsg, r.msg = 0, 0, nil, nil
 	r.msgOv, r.wrapMsg, r.textOv, r.filesOv, r.attsOv = 0, nil, nil, nil, nil
+	r.ovMsg = nil
 	r.setDoc()
 	r.growPills()
 }
@@ -606,7 +608,14 @@ func (pl *reactPill) buttonProps() slackc.Props {
 // (ShowRealUser) replaces the sender, avatar, badge and blocks drawn.
 func (r *row) layoutWrapper(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	rc := r.rc
-	if msg := p.Map("msg"); propsID(msg) != r.wrapOv {
+	if msg := p.Map("msg"); propsID(msg) != r.wrapOv && sameOverride(msg, r.wrapMsg) {
+		// the same override in a newly delivered tree: every delivery
+		// decodes fresh maps, and treating that as a change rebuilt the
+		// row's message props, which re-rendered the inner roots, which
+		// re-delivered this one (ShowRealUser, Slick's Censorship: rows
+		// re-rendering forever)
+		r.wrapOv, r.wrapMsg = propsID(msg), msg
+	} else if propsID(msg) != r.wrapOv {
 		r.wrapOv = propsID(msg)
 		if r.wrapOv == propsID(r.srcMsg) { // our own props, before JS answered
 			r.wrapOv = 0
@@ -644,8 +653,13 @@ func (r *row) layoutMessage(gtx layout.Context, p slackc.Props) layout.Dimension
 		if r.ownMsg(msg) {
 			id = 0
 		}
-		if id != r.msgOv {
-			r.msgOv = id
+		if id != r.msgOv && id != 0 && sameOverride(msg, r.ovMsg) {
+			r.msgOv, r.ovMsg = id, msg // same content, new decode (see layoutWrapper)
+		} else if id != r.msgOv {
+			r.msgOv, r.ovMsg = id, nil
+			if id != 0 {
+				r.ovMsg = msg
+			}
 			switch {
 			case id != 0:
 				r.m = applySlackMessage(rc.h.Core(), &r.src, msg)

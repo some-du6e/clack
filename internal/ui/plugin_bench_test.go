@@ -29,6 +29,7 @@ import (
 	"image/png"
 	"io"
 	"log"
+	"maps"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -78,6 +79,7 @@ type benchEnv struct {
 	mu         sync.Mutex
 	trees      map[uint64][]byte
 	deliveries int
+	perRoot    map[uint64]int
 	styles     map[string]string
 	doc        []byte
 	nextRoot   uint64
@@ -91,7 +93,7 @@ type benchLog struct {
 	buf   []byte
 }
 
-var benchConsole = regexp.MustCompile(`taut js (error|warn): |slick: `)
+var benchConsole = regexp.MustCompile(`taut js (error|warn): |taut: [^\n]*(Error|error|failed)|slick: `)
 
 func (l *benchLog) Write(p []byte) (int, error) {
 	l.mu.Lock()
@@ -179,6 +181,10 @@ func (e *benchEnv) record(root uint64, tree []byte) {
 	e.mu.Lock()
 	e.trees[root] = append([]byte(nil), tree...)
 	e.deliveries++
+	if e.perRoot == nil {
+		e.perRoot = map[uint64]int{}
+	}
+	e.perRoot[root]++
 	e.mu.Unlock()
 }
 
@@ -243,6 +249,12 @@ func (e *benchEnv) rootsWith(sub string) map[uint64]bool {
 // render renders a Slack component through the plugin bridge at a fresh
 // root and returns its tree once delivered.
 func (e *benchEnv) render(name string, props any) []*slackc.Node {
+	nodes, _ := slackc.ParseTree(e.renderRaw(name, props))
+	return nodes
+}
+
+// renderRaw is render's tree as delivered.
+func (e *benchEnv) renderRaw(name string, props any) []byte {
 	e.mu.Lock()
 	e.nextRoot++
 	root := e.nextRoot
@@ -257,8 +269,7 @@ func (e *benchEnv) render(name string, props any) []*slackc.Node {
 		return tree != nil
 	})
 	e.tt.Bridge().Unmount(root)
-	nodes, _ := slackc.ParseTree(tree)
-	return nodes
+	return tree
 }
 
 func findComp(nodes []*slackc.Node, name string) *slackc.Node {
@@ -368,6 +379,9 @@ func (e *benchEnv) scrollPass() scrollStats {
 // that asked for another; then measures process CPU with no frames.
 func (e *benchEnv) idle(d time.Duration) (deliveries, wakeups int, cpuPerSec float64) {
 	e.settle(time.Second)
+	e.mu.Lock()
+	before := maps.Clone(e.perRoot)
+	e.mu.Unlock()
 	n0 := e.delivered()
 	for dl := time.Now().Add(d); time.Now().Before(dl); {
 		e.frame()
@@ -377,6 +391,17 @@ func (e *benchEnv) idle(d time.Duration) (deliveries, wakeups int, cpuPerSec flo
 		time.Sleep(16 * time.Millisecond)
 	}
 	deliveries = e.delivered() - n0
+	if deliveries > 0 {
+		e.mu.Lock()
+		again := map[uint64][]byte{}
+		for r, n := range e.perRoot {
+			if n > before[r] {
+				again[r] = e.trees[r]
+			}
+		}
+		e.t.Logf("idle: %d deliveries to %d roots: %s", deliveries, len(again), idleShapes(again))
+		e.mu.Unlock()
+	}
 	c0 := procCPU()
 	time.Sleep(2 * time.Second)
 	cpuPerSec = float64((procCPU() - c0).Microseconds()) / 1000 / 2
@@ -482,7 +507,8 @@ func (e *benchEnv) typingSilenced() bool {
 }
 
 // notificationShown dispatches showNotification and reports whether the
-// native ran.
+// native showed it with its text (a plugin may drop it, or pass it on
+// without the message: both silence what it says).
 func (e *benchEnv) notificationShown(title, msg string) bool {
 	type args struct {
 		Title   string `json:"title"`
@@ -490,7 +516,12 @@ func (e *benchEnv) notificationShown(title, msg string) bool {
 		Channel string `json:"channel,omitempty"`
 	}
 	shown := 0
-	native := func(ctx context.Context, a args) (any, error) { shown++; return nil, nil }
+	native := func(ctx context.Context, a args) (any, error) {
+		if a.Message != "" {
+			shown++
+		}
+		return nil, nil
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_, _ = taut.Dispatch(ctx, e.tt, "showNotification", args{title, msg, fakeslack.BenchSlackbotDMID}, native)
@@ -503,23 +534,13 @@ var fnRef = regexp.MustCompile(`"onClick":\{"\$fn":(\d+)\}`)
 // (Taut's composer.addButton row): how a user turns on a plugin whose
 // switch lives there.
 func (e *benchEnv) clickComposerButtons() int {
-	nodes := e.render("TautComposerButtons", map[string]any{"placement": "end", "context": map[string]any{"kind": "channel", "channelId": fakeslack.BenchChannelID}})
+	tree := e.renderRaw("TautComposerButtons", map[string]any{"placement": "end", "context": map[string]any{"kind": "channel", "channelId": fakeslack.BenchChannelID}})
 	n := 0
-	var walk func([]*slackc.Node)
-	walk = func(ns []*slackc.Node) {
-		for _, x := range ns {
-			if x.IsComponent() && x.N == "ComposerButton" {
-				b, _ := json.Marshal(x.P)
-				if m := fnRef.FindSubmatch(b); m != nil {
-					id, _ := strconv.ParseInt(string(m[1]), 10, 64)
-					e.tt.Bridge().Call(id, []byte("[]"), nil)
-					n++
-				}
-			}
-			walk(x.C)
-		}
+	for _, m := range fnRef.FindAllSubmatch(tree, -1) {
+		id, _ := strconv.ParseInt(string(m[1]), 10, 64)
+		e.tt.Bridge().Call(id, []byte("[]"), nil)
+		n++
 	}
-	walk(nodes)
 	return n
 }
 
@@ -532,7 +553,7 @@ func (e *benchEnv) userName(id string) (display, real string) {
 
 func (e *benchEnv) threadWithPronouns() string {
 	for _, ts := range e.c.Threads {
-		if m, ok := e.tt.MessageView(fakeslack.BenchChannelID, ts); ok && e.c.Pronouns[m.User] != "" {
+		if e.c.Pronouns[e.c.ThreadBy[ts]] != "" {
 			return ts
 		}
 	}
@@ -556,8 +577,7 @@ var benchScenarios = map[string]benchScenario{
 			}},
 			{"pronouns in the thread pane header", func(e *benchEnv) (bool, string) {
 				ts := e.threadWithPronouns()
-				m, _ := e.tt.MessageView(fakeslack.BenchChannelID, ts)
-				want := e.c.Pronouns[m.User]
+				want := e.c.Pronouns[e.c.ThreadBy[ts]]
 				before := e.rootsWith(`"v":"` + want + `"`)
 				e.a.OpenThread(fakeslack.BenchChannelID, ts)
 				ok := e.wait(8*time.Second, func() bool {
@@ -687,6 +707,8 @@ var benchScenarios = map[string]benchScenario{
 		},
 	},
 	"haikuwarning": {
+		opts:  map[string]map[string]any{pluginlib.Taut: {"anyChannel": true}},
+		notes: "Taut's warns only in channels Orpheus is in unless \"Warn even if Orpheus doesn't respond\" is on; the bench turns that on, as Orpheus isn't in the fake workspace.",
 		checks: []benchCheck{
 			{"an ordinary message goes out", func(e *benchEnv) (bool, string) {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -803,6 +825,9 @@ var benchScenarios = map[string]benchScenario{
 		checks: []benchCheck{
 			{"Join channel from a channel you're not in", func(e *benchEnv) (bool, string) {
 				re := regexp.MustCompile(`(?i)^join`)
+				e.openChannel(fakeslack.PreviewChannelID)
+				e.wait(10*time.Second, func() bool { c, ok := e.a.data.core.Conv(fakeslack.PreviewChannelID); return ok && c.Name != "" })
+				e.settle(300 * time.Millisecond)
 				items := e.menuItems(popups.NewChannelMenu(e.a, image.Pt(300, 200), fakeslack.PreviewChannelID), func(it []popups.MenuItem) bool { _, ok := hasLabel(it, re); return ok })
 				if l, ok := hasLabel(items, re); ok {
 					return true, "channel menu: " + l
@@ -862,7 +887,7 @@ var benchScenarios = map[string]benchScenario{
 				return ok, "marked: " + e.fs.Marked(fakeslack.BenchSlackbotDMID)
 			}},
 			{"its notification is silenced, others aren't", func(e *benchEnv) (bool, string) {
-				if e.notificationShown("Slackbot", "A new slash command /deploy was added to this workspace by Bob.") {
+				if e.notificationShown("Slackbot", slackbotNotice) && e.notificationShown("Slackbot", "A new slash command /deploy was added to this workspace by Bob.") {
 					return false, "the notice's notification was shown"
 				}
 				if !e.notificationShown("alice", "lunch?") {
@@ -1321,4 +1346,23 @@ func pixelDiff(a, b *image.RGBA) float64 {
 		}
 	}
 	return float64(n) / float64(r.Dx()*r.Dy())
+}
+
+var compName = regexp.MustCompile(`"n":"([A-Za-z0-9_]+)"`)
+
+// idleShapes names the components in the delivered trees (diagnostics
+// for a variant that keeps re-rendering).
+func idleShapes(trees map[uint64][]byte) string {
+	count := map[string]int{}
+	for _, tr := range trees {
+		if m := compName.FindSubmatch(tr); m != nil {
+			count[string(m[1])]++
+		}
+	}
+	var out []string
+	for k, n := range count {
+		out = append(out, fmt.Sprintf("%s×%d", k, n))
+	}
+	sort.Strings(out)
+	return strings.Join(out, " ")
 }

@@ -39,6 +39,7 @@ type BenchCase struct {
 	Reacted     []string          // ts of messages with reactions
 	Censored    []string          // ts of messages containing "job"
 	Threads     []string          // ts of thread roots
+	ThreadBy    map[string]string // thread root ts → its sender
 	Relayed     map[string]string // ts → the person a relay bot posted for
 	SentByBot   []string          // ts of person messages an app sent
 	OldestTS    string
@@ -74,7 +75,7 @@ func (s *Server) Bench() BenchCase {
 			authors = append(authors, without[i])
 		}
 	}
-	c := BenchCase{Authors: authors, Pronouns: map[string]string{}, Relayed: map[string]string{}}
+	c := BenchCase{Authors: authors, Pronouns: map[string]string{}, Relayed: map[string]string{}, ThreadBy: map[string]string{}}
 	for _, id := range with {
 		if u, ok := s.userByID(id); ok {
 			c.Pronouns[id] = u.Profile.Pronouns
@@ -96,6 +97,7 @@ func (s *Server) Bench() BenchCase {
 		}
 		if i%20 == 0 {
 			c.Threads = append(c.Threads, ts)
+			c.ThreadBy[ts] = authors[(i/3)%len(authors)]
 		}
 	}
 	c.OldestTS, c.NewestTS = benchTS(0), benchTS(BenchMessages-1)
@@ -179,8 +181,69 @@ func benchReplyTS(root string, n int) string {
 	return fmt.Sprintf("%s.%06d", sec, 900000+n)
 }
 
-// handlePluginBench answers conversations.replies for the bench threads.
+// handlePluginBench answers conversations.replies for the bench threads,
+// bots.info and messages.list for the bench's bots (the app behind a
+// person's message, ShowSendingBot), and search.messages "from:<@U>"
+// (Last Seen's latest message).
 func (s *Server) handlePluginBench(method string, f url.Values) (any, bool) {
+	switch method {
+	case "bots.info":
+		var out []slack.BotProfile
+		for _, id := range strings.Split(f.Get("bots")+","+f.Get("bot"), ",") {
+			switch id {
+			case BenchSenderBotID:
+				out = append(out, slack.BotProfile{ID: BenchSenderBotID, Name: BenchSenderBot, AppID: "A0PLUGSEND", TeamID: TeamID, Icons: s.identityIcons("bench-sender")})
+			case BenchRelayBotID:
+				out = append(out, slack.BotProfile{ID: BenchRelayBotID, Name: "at-channel", AppID: "A08G06U6SJG", TeamID: TeamID})
+			}
+		}
+		if len(out) == 0 {
+			return nil, false
+		}
+		return map[string]any{"ok": true, "bots": out}, true
+	case "messages.list":
+		var want []struct {
+			Channel    string   `json:"channel"`
+			Timestamps []string `json:"timestamps"`
+		}
+		if json.Unmarshal([]byte(f.Get("message_ids")), &want) != nil {
+			return nil, false
+		}
+		out := map[string][]map[string]any{}
+		s.histMu.Lock()
+		for _, w := range want {
+			for _, m := range s.hist[w.Channel] {
+				for _, ts := range w.Timestamps {
+					if m.TS == ts {
+						e := map[string]any{"ts": m.TS, "user": m.User, "text": m.Text, "type": "message"}
+						if m.BotID == BenchSenderBotID {
+							e["bot_id"], e["app_id"] = m.BotID, "A0PLUGSEND"
+						}
+						out[w.Channel] = append(out[w.Channel], e)
+					}
+				}
+			}
+		}
+		s.histMu.Unlock()
+		return map[string]any{"ok": true, "messages": out}, true
+	case "search.messages":
+		q := f.Get("query")
+		u, ok := strings.CutPrefix(q, "from:<@")
+		if !ok {
+			return nil, false
+		}
+		u, _, _ = strings.Cut(u, ">")
+		var matches []map[string]any
+		s.histMu.Lock()
+		for _, m := range s.hist[BenchChannelID] { // newest first
+			if m.User == u {
+				matches = append(matches, map[string]any{"ts": m.TS, "user": m.User, "text": m.Text, "channel": map[string]any{"id": BenchChannelID, "name": "plugin-bench"}})
+				break
+			}
+		}
+		s.histMu.Unlock()
+		return map[string]any{"ok": true, "query": q, "messages": map[string]any{"total": len(matches), "matches": matches}}, true
+	}
 	if method != "conversations.replies" || f.Get("channel") != BenchChannelID {
 		return nil, false
 	}

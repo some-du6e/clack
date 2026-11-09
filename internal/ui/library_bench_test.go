@@ -74,6 +74,10 @@ func TestLibraryBenchPick(t *testing.T) {
 	}
 	// another version of the same ids: still the pick, flagged
 	ix.Plugins[1].SHA256 = "b2"
+	who = libraryGroups(libraryEntries(ix))[0]
+	if who.first().ID != "WhoReacted" {
+		who = libraryGroups(libraryEntries(ix))[1]
+	}
 	if _, p, ok := v.benchPick(v.installChoices(who)); !ok || p.Exact || !strings.Contains(benchReason(p), "earlier build") {
 		t.Errorf("other version: %+v %v", p, ok)
 	}
