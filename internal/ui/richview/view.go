@@ -81,7 +81,9 @@ type View struct {
 
 	// expanded: attachments whose collapsed text was expanded (truncate.go)
 	expanded map[*richtext.Attachment]bool
-	redraw   bool // ask for a frame after this frame's events
+	// collapsed: image blocks hidden with their title-row toggle
+	collapsed map[*richtext.Image]bool
+	redraw    bool // ask for a frame after this frame's events
 
 	// External hands text selection to the owner (cross-message selection
 	// in a list): the View still handles clicks and hover but never changes
@@ -398,7 +400,11 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 	if v.expanded == nil {
 		v.expanded = map[*richtext.Attachment]bool{}
 	}
-	l := lay{st: st, d: &v.d, scale: pxdp, spx: pxsp, jumbo: v.doc.Jumbo && uipref.Get().Jumbomoji, opts: v.opts, mode: mode, cs: &v.cs, expanded: v.expanded}
+	if v.collapsed == nil {
+		v.collapsed = map[*richtext.Image]bool{}
+	}
+	l := lay{st: st, d: &v.d, scale: pxdp, spx: pxsp, jumbo: v.doc.Jumbo && uipref.Get().Jumbomoji, opts: v.opts, mode: mode, cs: &v.cs,
+		expanded: v.expanded, collapsed: v.collapsed}
 	v.css.parts = v.css.parts[:0]
 	if v.css.scope.Active() {
 		l.css = &v.css
@@ -1020,11 +1026,36 @@ func (v *View) activate(t int16, anchor image.Point, h Handler) {
 		if tg.btn != nil {
 			h.Button(*tg.btn)
 		}
+	case tCollapse:
+		if tg.img != nil && v.collapsed != nil {
+			v.collapsed[tg.img] = !v.collapsed[tg.img]
+			v.dirty = true
+			v.redraw = true
+		}
 	case tExpand:
-		if tg.att != nil && v.expanded != nil {
+		if tg.id != "" {
+			setKitExpanded(tg.id, !kitIsExpanded(tg.id))
+			v.dirty = true
+			v.redraw = true
+		} else if tg.att != nil && v.expanded != nil {
 			v.expanded[tg.att] = !v.expanded[tg.att]
 			v.dirty = true
 			v.redraw = true
 		}
 	}
+}
+
+// Baselines returns the text baseline of each laid-out line, in px from
+// the view's top (tests: row geometry against Slack's line boxes).
+func (v *View) Baselines() []int {
+	var out []int
+	for _, ln := range v.d.lines {
+		for i := ln.f0; i < ln.f1; i++ {
+			if f := &v.d.frags[i]; f.kind == fText {
+				out = append(out, f.y)
+				break
+			}
+		}
+	}
+	return out
 }

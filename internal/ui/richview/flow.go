@@ -57,7 +57,8 @@ const (
 	bSquare // small filled square
 	bPlay   // play triangle
 	bChevron
-	bCaret // small filled down-pointing triangle
+	bCaret      // small filled down-pointing triangle
+	bCaretRight // small filled right-pointing triangle
 )
 
 type box struct {
@@ -98,8 +99,9 @@ const (
 	tImage
 	tFile
 	tButton
-	tCard   // whole-card click (opens URL)
-	tExpand // attachment "Show more" / "Show less" (id: attachment number)
+	tCard     // whole-card click (opens URL)
+	tExpand   // attachment "Show more" / "Show less" (id: attachment number)
+	tCollapse // image block's hide / show toggle (img: the image)
 )
 
 type target struct {
@@ -247,6 +249,11 @@ type lay struct {
 	// state); expandAt is the one being laid out (truncate.go).
 	expanded map[*richtext.Attachment]bool
 	expandAt *richtext.Attachment
+	// expandKey, when set, is the section whose "Show more" is being laid
+	// out (its key in kitExpanded).
+	expandKey string
+	// collapsed holds the image blocks hidden with their toggle (View state).
+	collapsed map[*richtext.Image]bool
 	// titleFrags is a YouTube card's title frags [from, to) (compBlock).
 	titleFrags [2]int
 	// CSS parts (css.go), nil while no CSS is installed: ctr is the
@@ -442,7 +449,9 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 				l.addPad(l.dpf(4), -1, k)
 			}
 		case richtext.Link:
-			if sp.URL == expandURL { // attachment Show more / Show less (truncate.go)
+			if sp.URL == expandURL && l.expandKey != "" { // section Show more / Show less (truncate.go)
+				tg = l.d.addTarget(target{kind: tExpand, id: l.expandKey, underline: true})
+			} else if sp.URL == expandURL { // attachment Show more / Show less (truncate.go)
 				tg = l.d.addTarget(target{kind: tExpand, att: l.expandAt, underline: true})
 			} else {
 				tg = l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true})

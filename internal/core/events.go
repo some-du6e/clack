@@ -188,19 +188,29 @@ func (a *App) handle(ev slack.Event) {
 	case "pin_added", "pin_removed":
 		var e struct {
 			ChannelID string `json:"channel_id"`
+			User      string `json:"user"` // who pinned (or unpinned) it
+			EventTS   string `json:"event_ts"`
 			Item      struct {
-				Channel string        `json:"channel"`
-				Message slack.Message `json:"message"`
+				Channel   string        `json:"channel"`
+				CreatedBy string        `json:"created_by"`
+				Created   int64         `json:"created"`
+				Message   slack.Message `json:"message"`
 			} `json:"item"`
 		}
 		_ = json.Unmarshal(ev.Raw, &e)
 		ch = firstNonEmpty(ch, e.ChannelID, e.Item.Channel)
 		if e.Item.Message.TS != "" {
+			// Slack's extendMessageWithPinnedInfo: pin_added sets the message's
+			// pinned_info {pinned_by, pinned_ts} (MessageLabels' "Pinned by …"),
+			// pin_removed drops it.
+			info := pinnedInfoOf(ch, e.Item.Message.PinnedInfo, firstNonEmpty(e.Item.CreatedBy, e.User), e.Item.Created, e.EventTS)
 			m, ok := a.S.Mutate(ch, e.Item.Message.TS, func(m *slack.Message) {
 				if ev.Type == "pin_added" {
 					m.PinnedTo = []string{ch}
+					m.PinnedInfo = info
 				} else {
 					m.PinnedTo = nil
+					m.PinnedInfo = nil
 				}
 			})
 			if ok {
@@ -291,6 +301,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	var e struct {
 		Subtype   string         `json:"subtype"`
 		Message   *slack.Message `json:"message"`
+		Previous  *slack.Message `json:"previous_message"`
 		DeletedTS string         `json:"deleted_ts"`
 	}
 	if json.Unmarshal(ev.Raw, &e) != nil {
@@ -303,22 +314,28 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		}
 		m := *e.Message
 		a.EnsureUsers(ctx, referencedUsers([]slack.Message{m}))
-		if old, ok := a.S.Find(ch, m.TS); ok && m.ReplyCount == 0 && old.ReplyCount > 0 {
-			// RTM edits may omit thread metadata; keep it.
-			m.ReplyCount, m.ReplyUsers, m.LatestReply = old.ReplyCount, old.ReplyUsers, old.LatestReply
-		}
+		// Slack's messageChanged is replaceMessages (replace: true, client-boot
+		// z+/K processAndMergeMessages): the event's message replaces the
+		// stored one wholesale, thread metadata included. When a thread's
+		// last reply is deleted the parent's message_changed has no
+		// reply_count, and the reply bar goes; a deleted parent with
+		// replies arrives here as subtype "tombstone".
 		if _, found := a.S.Mutate(ch, m.TS, func(x *slack.Message) { *x = m }); !found {
-			if m.ThreadTS != "" && m.ThreadTS != m.TS && m.Subtype != "thread_broadcast" {
-				a.S.AddReply(ch, m) // a streamed reply (chat.appendStream) is a thread message, not a channel one
-			} else {
-				a.S.Upsert(ch, m)
-			}
+			a.putLocal(ch, m) // a reply goes to its (cached) thread, never the channel
 		}
 		a.emitUpdate(ch, &m)
 		return
 	case "message_deleted":
+		// Slack's setMessageDeleted just removes the message; the parent's
+		// reply_count / latest_reply come with the parent's message_changed.
+		thread := ""
+		if e.Previous != nil && e.Previous.ThreadTS != e.DeletedTS {
+			thread = e.Previous.ThreadTS
+		} else if old, ok := a.S.Find(ch, e.DeletedTS); ok && old.ThreadTS != old.TS {
+			thread = old.ThreadTS
+		}
 		a.S.Remove(ch, e.DeletedTS)
-		a.emit(Event{Type: "delete", Channel: ch, TS: e.DeletedTS})
+		a.emit(Event{Type: "delete", Channel: ch, TS: e.DeletedTS, ThreadTS: thread})
 		return
 	case "message_replied":
 		if e.Message == nil {

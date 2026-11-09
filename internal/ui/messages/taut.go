@@ -264,11 +264,17 @@ type injState struct {
 }
 
 func (s *listState) refreshInjected(t *taut.Taut, now time.Time) (changed bool) {
-	if s.thread || now.Sub(s.inj.at) < viewRefresh {
+	if now.Sub(s.inj.at) < viewRefresh {
 		return false
 	}
 	s.inj.at = now
-	msgs := t.InjectedMessages(s.ch)
+	all := t.InjectedMessages(s.ch)
+	msgs := all[:0:0]
+	for i := range all {
+		if s.injVisible(&all[i]) {
+			msgs = append(msgs, all[i])
+		}
+	}
 	keys := ""
 	for i := range msgs {
 		keys += msgs[i].TS + ","
@@ -280,22 +286,52 @@ func (s *listState) refreshInjected(t *taut.Taut, now time.Time) (changed bool) 
 	return true
 }
 
-// mergeInjected inserts the injected messages into s.snap.msgs in ts order.
+// injVisible reports whether an injected message belongs in this list, by
+// the same rule as Slack's channelHistory (inHistory): the channel shows
+// top-level messages and broadcasts, a thread its own replies. A deleted
+// reply a logger keeps stays in its thread.
+func (s *listState) injVisible(m *core.Message) bool {
+	if s.thread {
+		return m.ThreadTS == s.ts && m.TS != s.ts
+	}
+	return m.ThreadTS == "" || m.ThreadTS == m.TS || m.Broadcast
+}
+
+// mergeInjected inserts the injected messages into s.snap.msgs in ts order,
+// skipping any the snapshot already has (same ts or client_msg_id).
 func (s *listState) mergeInjected() {
 	if len(s.inj.msgs) == 0 {
 		return
 	}
-	out := make([]entry, 0, len(s.snap.msgs)+len(s.inj.msgs))
+	have := make(map[string]bool, len(s.snap.msgs))
+	for i := range s.snap.msgs {
+		m := &s.snap.msgs[i].m
+		have[m.TS] = true
+		if m.ClientMsgID != "" {
+			have["c:"+m.ClientMsgID] = true
+		}
+	}
+	inj := make([]core.Message, 0, len(s.inj.msgs))
+	for _, m := range s.inj.msgs {
+		if have[m.TS] || m.ClientMsgID != "" && have["c:"+m.ClientMsgID] {
+			continue
+		}
+		inj = append(inj, m)
+	}
+	if len(inj) == 0 {
+		return
+	}
+	out := make([]entry, 0, len(s.snap.msgs)+len(inj))
 	j := 0
 	for i := range s.snap.msgs {
-		for j < len(s.inj.msgs) && tsLess(s.inj.msgs[j].TS, s.snap.msgs[i].m.TS) {
-			out = append(out, entry{m: s.inj.msgs[j], rev: 1})
+		for j < len(inj) && tsLess(inj[j].TS, s.snap.msgs[i].m.TS) {
+			out = append(out, entry{m: inj[j], rev: 1})
 			j++
 		}
 		out = append(out, s.snap.msgs[i])
 	}
-	for ; j < len(s.inj.msgs); j++ {
-		out = append(out, entry{m: s.inj.msgs[j], rev: 1})
+	for ; j < len(inj); j++ {
+		out = append(out, entry{m: inj[j], rev: 1})
 	}
 	s.snap.msgs = out
 }

@@ -1,0 +1,58 @@
+name: sender-identity
+# Bot and app senders as Slack draws them: avatar precedence, the
+# APP/AGENT/WORKFLOW badge, the username override, grouping and the
+# pinned label. Core rule tests, render tests over fakeslack's identity
+# fixtures, and screenshots of #identity-fixtures in light and dark
+# (GPU, synthetic data only: nothing here talks to Slack).
+on:
+  push:
+    paths:
+      - "internal/core/sender*.go"
+      - "internal/core/badge.go"
+      - "internal/core/app.go"
+      - "internal/core/app_card.go"
+      - "internal/core/events.go"
+      - "internal/fakeslack/**"
+      - "internal/ui/messages/**"
+      - "internal/ui/richview/style.go"
+      - ".github/workflows/sender-identity.yml"
+  workflow_dispatch:
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb libgl1-mesa-dri libegl-mesa0
+
+permissions:
+  contents: read
+
+jobs:
+  sender-identity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: core rules
+        run: |
+          go test -count=1 -v -run 'TestSenderIdentity|TestSenderIconsPick|TestSenderBadge|TestAdjacent|TestPinEventPinnedBy' ./internal/core
+          go test -count=1 -v -run 'TestStyleGenerationsAreDistinct' ./internal/ui/richview
+      - name: render tests and screenshots
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          IDENTITY_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+        run: |
+          mkdir -p "$IDENTITY_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -v -run 'TestSenderIdentityRender|TestSlackMessageUserWinsOverBotProfile|TestPinGlyphLean' ./internal/ui/messages
+          ls -la "$IDENTITY_SHOTS_DIR"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: sender-identity-shots
+          path: dist/shots

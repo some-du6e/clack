@@ -604,3 +604,81 @@ func TestSlickViewWhoReacted(t *testing.T) {
 		return e.ui.anyTree("slick-wr__av") && e.ui.anyTree("alice-48.png")
 	})
 }
+
+// MessageLogger and threads (Karim, alpha.15): a deleted reply the logger
+// keeps stays in its thread (it showed up in the channel), and a deleted
+// parent with replies is Slack's tombstone, which the logger replaces with
+// its kept copy through the messages slice, as in Slack (Clack drew a
+// Slackbot message and the logger only recoloured it).
+func TestSlickViewMessageLoggerThreads(t *testing.T) {
+	const ch = "C0LOGTHRD"
+	const p1, r1 = "1700001000.000100", "1700001001.000100" // a thread whose reply is deleted
+	const p2, r2 = "1700002000.000100", "1700002001.000100" // a thread whose parent is deleted
+	e := newSlickEnv(t, func(s *store.Store) {
+		s.PutConv(slack.Conversation{ID: ch, Name: "logthreads", IsChannel: true, IsMember: true, NumMembers: 3})
+		s.SetLatest(ch, []slack.Message{
+			{Type: "message", TS: p1, ThreadTS: p1, User: "UALICE", Text: "synthetic thread one", ReplyCount: 1, ReplyUsers: []string{"UBOB"}, LatestReply: r1},
+			{Type: "message", TS: p2, ThreadTS: p2, User: "UALICE", Text: "synthetic parent to delete", ReplyCount: 1, ReplyUsers: []string{"UBOB"}, LatestReply: r2},
+		}, false)
+		s.SetThread(ch, p1, []slack.Message{
+			{Type: "message", TS: p1, ThreadTS: p1, User: "UALICE", Text: "synthetic thread one", ReplyCount: 1, ReplyUsers: []string{"UBOB"}, LatestReply: r1},
+			{Type: "message", TS: r1, ThreadTS: p1, User: "UBOB", Text: "synthetic reply to delete"},
+		})
+	})
+	e.install(t, "MessageLogger", nil)
+	patched(t, "MessageWrapper")
+	cv := NewChannelView(e.h, ch)
+	cv.Preview = true
+	tv := NewThreadView(e.h, ch, p1)
+	fc, ft := frameFn(cv), frameFn(tv)
+	both := func() { fc(); ft() }
+	e.waitFor(t, "the channel and the thread drawn", both, func() bool {
+		return cv.s.rows[p1] != nil && cv.s.rows[p2] != nil && tv.s.rows[r1] != nil
+	})
+	inject := func(ev map[string]any) {
+		raw, _ := json.Marshal(ev)
+		e.app.Inject(slack.Event{Type: "message", Subtype: ev["subtype"].(string), Channel: json.RawMessage(`"` + ch + `"`), Raw: raw})
+	}
+
+	// delete the reply: Slack's message_deleted, then the parent's message_changed without thread metadata
+	inject(map[string]any{"type": "message", "subtype": "message_deleted", "channel": ch, "hidden": true, "ts": "1700001010.000100", "deleted_ts": r1,
+		"previous_message": map[string]any{"type": "message", "user": "UBOB", "text": "synthetic reply to delete", "ts": r1, "thread_ts": p1}})
+	inject(map[string]any{"type": "message", "subtype": "message_changed", "channel": ch, "hidden": true, "ts": "1700001010.000200",
+		"message": map[string]any{"type": "message", "user": "UALICE", "text": "synthetic thread one", "ts": p1}})
+	e.waitFor(t, "the kept reply in its thread, marked deleted", both, func() bool {
+		r := tv.s.rows[r1]
+		return r != nil && strings.Contains(rowText(r), "reply to delete") && e.ui.anyTree("slick-ml-deleted")
+	})
+	for i := 0; i < 20; i++ { // views re-read injections every viewRefresh
+		both()
+		time.Sleep(15 * time.Millisecond)
+	}
+	if cv.s.rows[r1] != nil {
+		t.Error("the deleted reply shows in the channel")
+	}
+	for _, it := range cv.s.items {
+		if it.key == r1 {
+			t.Error("the deleted reply is an item of the channel list")
+		}
+	}
+	if r := cv.s.rows[p1]; r == nil || r.m.ReplyCount != 0 {
+		t.Errorf("the parent's reply count after its only reply went: %+v", r)
+	}
+
+	// delete the parent: Slack turns it into a tombstone (it has a reply)
+	inject(map[string]any{"type": "message", "subtype": "message_changed", "channel": ch, "hidden": true, "ts": "1700002010.000100",
+		"message": map[string]any{"type": "message", "subtype": "tombstone", "hidden": true, "user": "USLACKBOT", "text": "This message was deleted.",
+			"ts": p2, "thread_ts": p2, "reply_count": 1, "reply_users": []string{"UBOB"}, "latest_reply": r2},
+		"previous_message": map[string]any{"type": "message", "user": "UALICE", "text": "synthetic parent to delete", "ts": p2, "thread_ts": p2,
+			"reply_count": 1, "reply_users": []string{"UBOB"}, "latest_reply": r2}})
+	e.waitFor(t, "the logger's kept parent in place of the tombstone", both, func() bool {
+		r := cv.s.rows[p2]
+		return r != nil && strings.Contains(rowText(r), "parent to delete") && !r.m.Tombstone
+	})
+	if m, ok := e.app.S.Find(ch, p2); !ok || m.Subtype != "tombstone" || m.User != "USLACKBOT" || m.ReplyCount != 1 {
+		t.Errorf("core's copy of the deleted parent: %+v, want Slack's tombstone with its reply", m)
+	}
+	if r := cv.s.rows[p2]; r == nil || r.m.ReplyCount != 1 {
+		t.Errorf("the kept parent lost its reply bar: %+v", r)
+	}
+}

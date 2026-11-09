@@ -1,6 +1,8 @@
 package richview
 
 import (
+	"sync"
+
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 )
 
@@ -119,6 +121,59 @@ func withExpander(bs []richtext.Block, more bool) []richtext.Block {
 		}
 	}
 	return append(bs, richtext.Block{Kind: richtext.Paragraph, Spans: []richtext.Span{link}})
+}
+
+// Block Kit section text truncates the same way (WithTextTruncation:
+// maxCharacters 300, maxNewlines 5) where Options.Truncate is set: the
+// section's text and each of its fields on their own, all expanded
+// together. Slack keeps the state in its expandables store under
+// "blockText" + message ts + block_id for the session; kitExpanded is
+// that store.
+var (
+	kitExpMu    sync.Mutex
+	kitExpanded = map[string]bool{}
+)
+
+func kitIsExpanded(key string) bool {
+	kitExpMu.Lock()
+	defer kitExpMu.Unlock()
+	return kitExpanded[key]
+}
+
+func setKitExpanded(key string, on bool) {
+	kitExpMu.Lock()
+	defer kitExpMu.Unlock()
+	if on {
+		kitExpanded[key] = true
+	} else {
+		delete(kitExpanded, key)
+	}
+}
+
+// kitTruncKey is the expandables key of section b in this layout ("" =
+// the section doesn't truncate here).
+func (l *lay) kitTruncKey(b *richtext.Block) string {
+	if !l.opts.Truncate || !b.Kit || b.Expand || l.inAtt {
+		return ""
+	}
+	id := b.BlockID
+	if id == "" {
+		id = "\x00" // Slack falls back to the block index; one per message is enough here
+	}
+	return "blockText/" + l.opts.Channel + "/" + l.opts.TS + "/" + id
+}
+
+// kitTruncate is section text (or one field) as Slack shows it: cut with
+// " Show more" while key isn't expanded, "Show less" after it when it is.
+func kitTruncate(bs []richtext.Block, key string) []richtext.Block {
+	short, cut := truncateBlocks(bs, attMaxChars, attMaxNewlines)
+	if !cut {
+		return bs
+	}
+	if kitIsExpanded(key) {
+		return withExpander(append([]richtext.Block(nil), bs...), false)
+	}
+	return withExpander(short, true)
 }
 
 // expandURL marks the expander link (never a real URL).

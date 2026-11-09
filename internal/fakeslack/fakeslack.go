@@ -48,8 +48,12 @@ type Size struct {
 	Usergroups int
 	History    int // messages per channel (conversations.history pages through them)
 	Unread     int // channels with unreads (core prefetches these)
-	// Gallery adds #blockkit-gallery (GalleryChannelID, bkgallery.go):
-	// every Block Kit fixture, from each area's gallery file.
+	// Identity adds #identity-fixtures: one message per bot/app sender
+	// case (identity.go). Off by default so other fixtures don't shift.
+	Identity bool
+	// Gallery adds the gallery's extra conversations (an app DM…,
+	// registerGalleryConv in gallery.go) after the generated ones;
+	// #blockkit-gallery itself is always there.
 	Gallery bool
 }
 
@@ -142,6 +146,9 @@ func (s *Server) appProfile(bot, app string) (map[string]any, bool) {
 		}
 		return m
 	}
+	if p, ok := s.identityAppProfile(bot, app); ok && s.Size.Identity {
+		return p, true
+	}
 	switch {
 	case bot == AppBotID || app == AppAppID:
 		return map[string]any{"id": AppAppID, "name": "Deploy Bot", "desc": "Ships builds and posts release notes",
@@ -164,6 +171,12 @@ func (s *Server) appProfile(bot, app string) (map[string]any, bool) {
 type Server struct {
 	Size Size
 	URL  string // http://127.0.0.1:port/
+
+	// OnPost, when set, runs inside chat.postMessage before it answers,
+	// with the posted form and the new message (tests push the realtime
+	// echo from it, so it reaches the client before the reply). Set it
+	// before the first post.
+	OnPost func(f url.Values, msg map[string]any)
 
 	srv   *http.Server
 	ln    net.Listener
@@ -355,8 +368,11 @@ func Serve(ln net.Listener, sz Size) *Server {
 		imgs: map[string][]byte{}, hist: map[string][]slack.Message{}, Calls: map[string]*atomic.Int64{},
 		prefs: DefaultPrefs(), drafts: map[string]*Draft{}, files: map[string]*UploadedFile{}}
 	s.generate()
+	if sz.Identity {
+		s.addIdentity()
+	}
 	if sz.Gallery {
-		s.addGallery()
+		s.addGalleryConvs() // gallery.go
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", s.api)
@@ -501,6 +517,7 @@ func (s *Server) generate() {
 		s.convs = append(s.convs, slack.Conversation{ID: fmt.Sprintf("D0FAKE%05d", i), IsIM: true, User: s.users[i+1].ID,
 			IsOpen: true, Created: now - int64(r.Intn(1e7)), Priority: r.Float64()})
 	}
+	s.convs = append(s.convs, galleryConv()) // gallery.go
 	// channels the viewer isn't in (fixed names: screenshot tests read them)
 	s.others = []slack.Conversation{
 		{ID: PreviewChannelID, Name: "lounge-preview", IsChannel: true, Created: now - 9e7, Creator: s.users[1].ID,
@@ -906,6 +923,11 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	case "conversations.history":
 		return s.historyPage(f)
 	case "conversations.replies":
+		if f.Get("channel") == GalleryChannelID {
+			if msgs, found := s.galleryReplies(f.Get("ts")); found {
+				return ok("messages", msgs, "has_more", false)
+			}
+		}
 		return ok("messages", []any{}, "has_more", false)
 	case "conversations.info":
 		if c, found := s.conv(f.Get("channel")); found {
@@ -922,7 +944,17 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return s.join(f)
 	case "chat.postMessage":
 		ts := fmt.Sprintf("%d.%06d", time.Now().Unix(), time.Now().Nanosecond()/1000)
-		return ok("ts", ts, "channel", f.Get("channel"), "message", map[string]any{"type": "message", "ts": ts, "user": SelfID, "text": f.Get("text")})
+		msg := map[string]any{"type": "message", "ts": ts, "user": SelfID, "text": f.Get("text")}
+		if th := f.Get("thread_ts"); th != "" {
+			msg["thread_ts"] = th
+		}
+		if cid := f.Get("client_msg_id"); cid != "" {
+			msg["client_msg_id"] = cid // Slack's reply carries it, as does the echo
+		}
+		if s.OnPost != nil {
+			s.OnPost(f, msg)
+		}
+		return ok("ts", ts, "channel", f.Get("channel"), "message", msg)
 	case "edge/users/info":
 		var up map[string]int
 		_ = json.Unmarshal(edge["updated_ids"], &up)
@@ -976,6 +1008,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	case "edge/huddles/list":
 		return ok("huddles", []any{})
 	}
+	if out, handled := s.handleIdentity(method, f); handled && s.Size.Identity { // identity.go
+		return out
+	}
 	if out, handled := s.handleHuddles(method, f); handled { // huddles.go
 		return out
 	}
@@ -997,6 +1032,13 @@ func (s *Server) userByID(id string) (slack.User, bool) {
 			return u, true
 		}
 	}
+	if s.Size.Identity {
+		for _, u := range s.identityUsers() {
+			if u.ID == id {
+				return u, true
+			}
+		}
+	}
 	if strings.HasPrefix(id, "U0FAKE") {
 		if n, err := strconv.Atoi(id[6:]); err == nil && n < len(s.users) {
 			return s.users[n], true
@@ -1010,7 +1052,11 @@ func (s *Server) historyPage(f url.Values) any {
 	s.histMu.Lock()
 	msgs, okc := s.hist[ch]
 	if !okc {
-		msgs = s.history(ch)
+		if ch == GalleryChannelID {
+			msgs = s.galleryHistory()
+		} else {
+			msgs = s.history(ch)
+		}
 		s.hist[ch] = msgs
 	}
 	s.histMu.Unlock()
@@ -1083,9 +1129,10 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	}
 	defer c.CloseNow()
 	ctx := r.Context()
-	_ = c.Write(ctx, websocket.MessageText, []byte(`{"type":"hello"}`))
+	// registered before hello: once the client is connected, Push reaches it
 	s.addSocket(c) // Push (canvas.go)
 	defer s.dropSocket(c)
+	_ = c.Write(ctx, websocket.MessageText, []byte(`{"type":"hello"}`))
 	for {
 		if _, _, err := c.Read(ctx); err != nil {
 			return

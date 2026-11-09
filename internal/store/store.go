@@ -626,8 +626,10 @@ func (s *Store) ExtConv(id string) (*slack.Conversation, bool) {
 
 // BotInfo is a bot's display metadata (bots.info), cached on disk.
 type BotInfo struct {
-	Name string `json:"name"`
-	Icon string `json:"icon,omitempty"`
+	Name     string `json:"name"`
+	Icon     string `json:"icon,omitempty"`
+	AppID    string `json:"app_id,omitempty"`
+	Workflow bool   `json:"is_workflow_bot,omitempty"` // a Workflow Builder bot (badged WORKFLOW)
 }
 
 func (s *Store) PutBot(id string, b BotInfo) {
@@ -836,6 +838,31 @@ func (s *Store) Find(ch, ts string) (slack.Message, bool) {
 		}
 	}
 	return slack.Message{}, false
+}
+
+// ClientMsgIDs lists the client_msg_ids of ch's cached messages (timeline
+// and threads).
+func (s *Store) ClientMsgIDs(ch string) map[string]bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := map[string]bool{}
+	if t := s.timelines[ch]; t != nil {
+		for i := range t.Msgs {
+			if id := t.Msgs[i].ClientMsgID; id != "" {
+				out[id] = true
+			}
+		}
+	}
+	for k, th := range s.threads {
+		if strings.HasPrefix(k, ch+"/") {
+			for i := range th {
+				if id := th[i].ClientMsgID; id != "" {
+					out[id] = true
+				}
+			}
+		}
+	}
+	return out
 }
 
 // ---- threads ----

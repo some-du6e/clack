@@ -17,6 +17,16 @@ import (
 // Theme returns the shared theme.
 func (a *App) Theme() *theme.Theme { return a.th }
 
+// PrimaryChannel is the channel the primary view shows ("" when it isn't a
+// channel): the thread header hides its channel name for it
+// (messages.PrimaryHost).
+func (a *App) PrimaryChannel() string {
+	if r := a.router.Current(); r.Page() == "c" {
+		return r.Channel()
+	}
+	return ""
+}
+
 // Images returns the shared image cache.
 func (a *App) Images() *imgcache.Cache { return a.images }
 

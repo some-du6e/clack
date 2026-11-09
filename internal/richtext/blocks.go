@@ -55,6 +55,7 @@ type bk struct {
 	} `json:"initial_option"`
 	ImageWidth      int      `json:"image_width"`
 	ImageHeight     int      `json:"image_height"`
+	ImageBytes      int64    `json:"image_bytes"`
 	VideoURL        string   `json:"video_url"`
 	ThumbnailURL    string   `json:"thumbnail_url"`
 	AuthorName      string   `json:"author_name"`
@@ -71,6 +72,7 @@ type bk struct {
 	ExternalID string   `json:"external_id"`
 	FileID     string   `json:"file_id"`
 	Source     string   `json:"source"`
+	Expand     bool     `json:"expand"` // section: never truncate
 	CallID     string   `json:"call_id"`
 	Call       *struct {
 		V1 struct {
@@ -88,7 +90,7 @@ type bk struct {
 type textObj struct {
 	Type     string `json:"type"`
 	Text     string `json:"text"`
-	Emoji    bool   `json:"emoji"`
+	Emoji    *bool  `json:"emoji"` // plain_text: false keeps :name: as typed (Slack stores true when unset)
 	Verbatim bool   `json:"verbatim"`
 }
 
@@ -166,11 +168,28 @@ func parseBlocks(raw json.RawMessage) []bk {
 		return nil
 	}
 	var bs []bk
-	if json.Unmarshal(raw, &bs) != nil {
+	if json.Unmarshal(raw, &bs) == nil {
+		return bs
+	}
+	// One malformed block shouldn't drop the rest: decode them one by one;
+	// the bad ones become Slack's "This content could not be displayed."
+	var parts []json.RawMessage
+	if json.Unmarshal(raw, &parts) != nil {
 		return nil
+	}
+	bs = bs[:0]
+	for _, p := range parts {
+		var b bk
+		if json.Unmarshal(p, &b) != nil {
+			b = bk{Type: badBlock}
+		}
+		bs = append(bs, b)
 	}
 	return bs
 }
+
+// badBlock marks a block that didn't decode.
+const badBlock = "\x00bad"
 
 // textBlocks converts a Block Kit text object.
 func (c *builder) textBlocks(t *textObj) []Block {
@@ -179,6 +198,9 @@ func (c *builder) textBlocks(t *textObj) []Block {
 	}
 	if t.Type == "mrkdwn" {
 		return FromMrkdwn(c.r, t.Text)
+	}
+	if t.Emoji != nil && !*t.Emoji {
+		return []Block{{Kind: Paragraph, Spans: plainSpansNoEmoji(t.Text)}}
 	}
 	return []Block{{Kind: Paragraph, Spans: plainSpans(c.r, t.Text)}}
 }
@@ -193,6 +215,20 @@ func plainSpans(r Resolver, s string) []Span {
 			out = append(out, Span{Kind: Break})
 		}
 		out = append(out, emojify(r, unescape(ln), 0)...)
+	}
+	return out
+}
+
+// plainSpansNoEmoji is plain_text with "emoji": false: :name: stays text.
+func plainSpansNoEmoji(s string) []Span {
+	var out []Span
+	for i, ln := range strings.Split(s, "\n") {
+		if i > 0 {
+			out = append(out, Span{Kind: Break})
+		}
+		if ln = unescape(ln); ln != "" {
+			out = append(out, Span{Kind: Text, Text: ln})
+		}
 	}
 	return out
 }
@@ -266,9 +302,30 @@ func flatten(bs []Block) []Span {
 func (c *builder) blocks(bs []bk) []Block {
 	var out []Block
 	for i := range bs {
+		n := len(out)
 		out = c.block(out, &bs[i])
+		if kitLayout(bs[i].Type) {
+			for j := n; j < len(out); j++ {
+				out[j].Kit = true
+			}
+		}
 	}
 	return out
+}
+
+// kitLayout reports whether t is a Block Kit layout block richview draws
+// with Slack's p-*_block margins (rich_text has none of its own).
+func kitLayout(t string) bool {
+	switch t {
+	case "section", "context", "header", "divider", "image", "actions", "table", "input", badBlock:
+		return true
+	}
+	return false
+}
+
+// unsupported is Slack's per-block error fallback.
+func unsupported() Block {
+	return Block{Kind: Unsupported, Spans: []Span{{Kind: Text, Text: "This content could not be displayed."}}}
 }
 
 func (c *builder) block(out []Block, b *bk) []Block {
@@ -276,7 +333,7 @@ func (c *builder) block(out []Block, b *bk) []Block {
 	case "rich_text":
 		return append(out, c.richText(b.Elements)...)
 	case "section":
-		blk := Block{Kind: Section}
+		blk := Block{Kind: Section, BlockID: b.BlockID, Expand: b.Expand}
 		tb := c.textBlocks(b.textObj())
 		if len(tb) == 1 && tb[0].Kind == Paragraph {
 			blk.Spans = tb[0].Spans
@@ -299,6 +356,9 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		}
 		return append(out, blk)
 	case "context":
+		// Slack's Context is a wrapping flex row of its elements (each
+		// image or text its own box): Children keeps them apart, Spans
+		// has them joined for plain-text consumers.
 		blk := Block{Kind: Context}
 		for i := range b.Elements {
 			e := &b.Elements[i]
@@ -306,9 +366,17 @@ func (c *builder) block(out []Block, b *bk) []Block {
 			if e.Type == "image" {
 				if img := c.imageOf(e); img != nil {
 					ss = []Span{{Kind: InlineImage, Text: e.AltText, URL: img.URL}}
+					blk.Children = append(blk.Children, Block{Kind: ImageBlock, Image: img})
 				}
 			} else {
-				ss = c.textSpans(&textObj{Type: e.Type, Text: e.textString()})
+				t := &textObj{Type: e.Type, Text: e.textString()}
+				if o := e.textObj(); o != nil {
+					t.Emoji = o.Emoji
+				}
+				ss = c.textSpans(t)
+				if len(ss) > 0 {
+					blk.Children = append(blk.Children, Block{Kind: Paragraph, Spans: ss})
+				}
 			}
 			if len(ss) == 0 {
 				continue
@@ -333,11 +401,12 @@ func (c *builder) block(out []Block, b *bk) []Block {
 	case "image":
 		img := c.imageOf(b)
 		if img == nil {
-			return out
+			return append(out, unsupported())
 		}
 		if b.Title != nil {
 			img.Title = unescape(b.Title.Text)
 		}
+		img.Bytes = b.ImageBytes
 		return append(out, Block{Kind: ImageBlock, Image: img})
 	case "actions":
 		blk := Block{Kind: Actions}
@@ -397,11 +466,13 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		}
 		return append(out, blk)
 	case "markdown":
-		return append(out, FromMrkdwn(c.r, markdownToMrkdwn(b.textString()))...)
+		return append(out, markdownBlocks(c.r, b.textString())...)
 	case "table":
 		return append(out, c.table(b))
 	case "plan", "task_card", "context_actions":
 		return c.agentBlock(out, b)
+	case badBlock:
+		return append(out, unsupported())
 	}
 	if t := b.textObj(); t != nil {
 		return append(out, c.textBlocks(t)...)
@@ -409,16 +480,96 @@ func (c *builder) block(out []Block, b *bk) []Block {
 	return out
 }
 
-var mdBoldRe = regexp.MustCompile(`\*\*([^*\n]+)\*\*`)
-
-// markdownToMrkdwn handles the common differences of the "markdown" block
-// (standard Markdown) from mrkdwn: **bold** and [label](url).
-func markdownToMrkdwn(s string) string {
-	s = mdBoldRe.ReplaceAllString(s, "*$1*")
-	return mdLinkRe.ReplaceAllString(s, "<$2|$1>")
+// markdownBlocks converts a "markdown" block (standard Markdown, which
+// Slack draws with its rich text styles): ATX headings in bold, - * + and
+// 1. lists (nested by two-space indents), ``` fences, > quotes, and the
+// inline differences from mrkdwn (**bold** / __bold__, *italic*,
+// ~~strike~~, [label](url), ![alt](url)).
+func markdownBlocks(r Resolver, s string) []Block {
+	var out []Block
+	var para []string
+	flush := func() {
+		if len(para) > 0 {
+			out = append(out, FromMrkdwn(r, strings.Join(para, "\n"))...)
+			para = para[:0]
+		}
+	}
+	lines := strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
+	for i := 0; i < len(lines); i++ {
+		ln := lines[i]
+		t := strings.TrimSpace(ln)
+		switch {
+		case strings.HasPrefix(t, "```"):
+			flush()
+			var code []string
+			for i++; i < len(lines) && !strings.HasPrefix(strings.TrimSpace(lines[i]), "```"); i++ {
+				code = append(code, lines[i])
+			}
+			out = append(out, Block{Kind: Preformatted, Spans: preSpans(r, strings.Join(code, "\n"))})
+		case mdHeadRe.MatchString(t):
+			flush()
+			h := mdHeadRe.FindStringSubmatch(t)[1]
+			ss := flatten(FromMrkdwn(r, mdInline(h)))
+			for k := range ss {
+				ss[k].Style |= Bold
+			}
+			out = append(out, Block{Kind: Paragraph, Spans: ss})
+		case mdItemRe.MatchString(ln):
+			flush()
+			m := mdItemRe.FindStringSubmatch(ln)
+			indent := len(strings.ReplaceAll(m[1], "\t", "  ")) / 2
+			ordered := m[2] != "-" && m[2] != "*" && m[2] != "+"
+			item := flatten(FromMrkdwn(r, mdInline(m[3])))
+			if n := len(out); n > 0 && out[n-1].Kind == List && out[n-1].Indent == indent && out[n-1].Ordered == ordered {
+				out[n-1].Items = append(out[n-1].Items, item)
+				continue
+			}
+			blk := Block{Kind: List, Ordered: ordered, Indent: indent, Items: [][]Span{item}}
+			if ordered {
+				if v, err := strconv.Atoi(strings.TrimRight(m[2], ".)")); err == nil && v > 1 {
+					blk.Offset = v - 1
+				}
+			}
+			out = append(out, blk)
+		case t == "":
+			flush()
+		default:
+			para = append(para, mdInline(ln))
+		}
+	}
+	flush()
+	return out
 }
 
-var mdLinkRe = regexp.MustCompile(`\[([^\]\n|<>]+)\]\((https?://[^)\s<>|]+)\)`)
+var (
+	mdHeadRe   = regexp.MustCompile(`^#{1,6}\s+(.*?)\s*#*$`)
+	mdItemRe   = regexp.MustCompile(`^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$`)
+	mdBoldRe   = regexp.MustCompile(`\*\*([^*\n]+)\*\*|__([^_\n]+)__`)
+	mdItalRe   = regexp.MustCompile(`(^|[^*\w])\*([^*\s](?:[^*\n]*[^*\s])?)\*($|[^*\w])`)
+	mdStrikeRe = regexp.MustCompile(`~~([^~\n]+)~~`)
+	mdImageRe  = regexp.MustCompile(`!\[([^\]\n|<>]*)\]\((https?://[^)\s<>|]+)\)`)
+	mdLinkRe   = regexp.MustCompile(`\[([^\]\n|<>]+)\]\((https?://[^)\s<>|]+)\)`)
+)
+
+// mdInline rewrites one line of Markdown inline syntax as mrkdwn, leaving
+// `code` spans alone.
+func mdInline(s string) string {
+	parts := strings.Split(s, "`")
+	for i := 0; i < len(parts); i += 2 { // even parts are outside code
+		if i == len(parts)-1 && i > 0 && len(parts)%2 == 0 {
+			break // an unclosed backtick: the rest is literal
+		}
+		p := parts[i]
+		p = mdBoldRe.ReplaceAllStringFunc(p, func(m string) string { return "\x01" + m[2:len(m)-2] + "\x01" })
+		p = mdItalRe.ReplaceAllString(p, "${1}_${2}_${3}")
+		p = strings.ReplaceAll(p, "\x01", "*")
+		p = mdStrikeRe.ReplaceAllString(p, "~$1~")
+		p = mdImageRe.ReplaceAllString(p, "<$2|$1>")
+		p = mdLinkRe.ReplaceAllString(p, "<$2|$1>")
+		parts[i] = p
+	}
+	return strings.Join(parts, "`")
+}
 
 func (c *builder) imageOf(b *bk) *Image {
 	u := b.ImageURL

@@ -76,8 +76,9 @@ type row struct {
 	name      string
 	avatar    string
 	statusURL string
+	huddle    string // the huddle channel while the sender is in one (headphones by the name)
 	bot       bool
-	agent     bool // AGENT badge instead of APP (core.User.Agent)
+	badge     string // the sender's app badge (core.SenderBadge: APP, AGENT, WORKFLOW…; "" for people)
 
 	needChan bool // body mentions channels not resolved yet
 
@@ -96,6 +97,9 @@ type row struct {
 
 	// plugin state (patched path only)
 	rc *rowCtx // this frame's inputs, for the natives
+	// truncate: in a thread pane, long Block Kit sections cut at "Show
+	// more" (richview Options.Truncate)
+	truncate bool
 
 	// plugin view of the message (taut patchMessageText…), see applyView
 	viewAt           time.Time
@@ -128,6 +132,8 @@ type row struct {
 	crTipText      string // the badge tooltip's text while hovered
 
 	// what the header drew last frame (CSS may replace both)
+	compactBL int    // the compact time's baseline, gutter-local (tests)
+	nameBL    int    // the sender line's baseline, column-local (tests)
 	avDrawn   string // the avatar's picture: a CSS background-image wins
 	nameShown string // the sender label: ::before + name (unless font-size 0) + ::after
 }
@@ -175,8 +181,29 @@ type rowCtx struct {
 	onReact   func(r *row, name string, add bool)
 }
 
-func newRow(e *entry) *row {
-	r := &row{ts: e.m.TS}
+// padX is the gutter's side padding: 20 in a channel, 16 in a thread
+// (mt). contentX is where the body column starts: padX + 36 + 8.
+func (rc *rowCtx) padX() float32 {
+	if rc.thread {
+		return mt.padX
+	}
+	return mt.chanPadX
+}
+
+func (rc *rowCtx) contentX() float32 {
+	if rc.thread {
+		return mt.contentX
+	}
+	return mt.chanContentX
+}
+
+func newRow(e *entry) *row { return newListRow(e, false) }
+
+// newListRow is a row of a list; thread rows truncate long Block Kit
+// sections behind "Show more" like Slack's thread pane (a channel never
+// does).
+func newListRow(e *entry, thread bool) *row {
+	r := &row{ts: e.m.TS, truncate: thread}
 	r.set(e)
 	return r
 }
@@ -207,7 +234,7 @@ func (r *row) setDoc() {
 
 // rvOpts are the body's richview options.
 func (r *row) rvOpts() richview.Options {
-	return richview.Options{Edited: r.m.Edited, Muted: r.m.System, Dim: r.m.Pending, Channel: r.m.Channel, TS: r.m.TS}
+	return richview.Options{Edited: r.m.Edited, Muted: r.m.System, Dim: r.m.Pending, Channel: r.m.Channel, TS: r.m.TS, Truncate: r.truncate}
 }
 
 func (r *row) growPills() {
@@ -234,9 +261,21 @@ func (r *row) resolve(rc *rowCtx) {
 		r.rv.Set(doc, r.rvOpts())
 		r.blocksOv, r.tailOv = 0, [2]uintptr{}
 	}
+	// Slack's sender: a message with a user is that member's (name,
+	// picture, badge); m.Name/m.Avatar only name user-less senders
+	// (core/sender.go).
 	r.name, r.avatar, r.statusURL, r.bot = m.Name, m.Avatar, "", m.IsBot || (m.BotID != "" && m.User == "")
+	r.huddle = ""
+	if m.User != "" {
+		r.name, r.avatar = "", ""
+	}
 	coreName := ""
-	r.agent = false
+	r.badge = ""
+	if rc.h.Core() != nil {
+		r.badge = rc.h.Core().SenderBadge(m.User, m.BotID)
+	} else if r.bot {
+		r.badge = core.BadgeApp
+	}
 	if m.User != "" && rc.h.Core() != nil {
 		if u, ok := rc.h.Core().User(m.User); ok {
 			coreName = u.Name
@@ -258,10 +297,13 @@ func (r *row) resolve(rc *rowCtx) {
 				r.avatar = u.Avatar
 			}
 			r.statusURL = u.StatusEmojiURL
+			// qeNM: in_a_huddle with a channel and an unexpired state.
+			if u.Huddle && u.HuddleChannel != "" && u.HuddleExpires > 0 && time.Unix(u.HuddleExpires, 0).After(rc.now) {
+				r.huddle = u.HuddleChannel
+			}
 			if u.IsBot {
 				r.bot = true
 			}
-			r.agent = u.Agent
 		} else {
 			ensureUser(rc.h, m.User)
 		}
@@ -618,6 +660,9 @@ func (r *row) layoutMessage(gtx layout.Context, p slackc.Props) layout.Dimension
 			r.resolve(rc)
 		}
 	}
+	if r.m.Tombstone {
+		return r.tombstoneLayout(gtx, rc)
+	}
 	if r.m.System && !rc.parent {
 		return r.systemLayout(gtx, rc)
 	}
@@ -631,7 +676,7 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 	c := rc.c
 	m := &r.m
 	w := gtx.Constraints.Max.X
-	cx := dp(gtx, mt.contentX)
+	cx := dp(gtx, rc.contentX())
 	padTop := mt.padTop
 	if rc.parent {
 		padTop = 20
@@ -727,14 +772,17 @@ func (r *row) paintBackground(gtx layout.Context, content op.CallOp, size image.
 // slots, and the body column.
 func (r *row) layoutGutter(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	w := gtx.Constraints.Max.X
-	padX := dp(gtx, mt.padX)
-	cx := dp(gtx, mt.contentX)
+	padX := dp(gtx, r.rc.padX())
+	cx := dp(gtx, r.rc.contentX())
+	// The column's right edge: the gutter's right padding less
+	// gutter__right's -8px margin plus its padding-right (8 in a channel:
+	// w-20; 0 in a thread, padding-right 24: w-16).
 	cw := w - cx - padX
+	if r.rc.thread {
+		cw = w - cx - dp(gtx, 16)
+	}
 	if cw < dp(gtx, 80) {
 		cw = dp(gtx, 80)
-	}
-	if r.rc.thread {
-		cw = w - cx - dp(gtx, 24)
 	}
 	gs := gutterClass.Enter(gtx, 0, 0)
 	defer gs.Leave()
@@ -899,14 +947,33 @@ func (r *row) layoutCompactTS(gtx layout.Context, p slackc.Props) layout.Dimensi
 	ts := shortClock(tsTime(r.m.TS))
 	s := textStyle{size: float32(st.FontSize(12)), col: st.Color(rc.c.Text2), lineH: 22}
 	sz := measure(gtx, rc.th, s, ts)
-	at(gtx, box.X-sz.X, 0, func(gtx layout.Context) layout.Dimensions {
+	// The 12px time is inline in a 15px/22px line (the timestamp div
+	// inherits .c-message_kit__message's font, margin -4px 0 puts its line
+	// where the body's is), so it sits on the body's baseline: the 15px
+	// strut's, not a 12px line's.
+	rec := op.Record(gtx.Ops)
+	d := at(gtx, 0, 0, func(gtx layout.Context) layout.Dimensions {
 		if st.Active() {
 			return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return decoLabel(gtx, rc.th, st, s, ts) })
 		}
 		return label(gtx, rc.th, s, ts)
 	})
+	call := rec.Stop()
+	dy := strutBaseline(gtx) - (d.Size.Y - d.Baseline)
+	t := op.Offset(image.Pt(box.X-sz.X, dy)).Push(gtx.Ops)
+	call.Add(gtx.Ops)
+	t.Pop()
+	r.compactBL = dy + d.Size.Y - d.Baseline
 	return layout.Dimensions{Size: box}
 }
+
+// Lato's vertical metrics (hhea 1974/-426 per 2000 em; Slack's Slack-Lato
+// woff2 has the same hhea, which is what Chrome lays out with on macOS).
+const latoAsc, latoDesc = 0.987, 0.213
+
+// strutBaseline is the baseline of a 15px/22px line (the message font)
+// from its top.
+func strutBaseline(gtx layout.Context) int { return cssBaseline(gtx, 15, 22) }
 
 // layoutColumn is the gutter's right side: name line, body, reactions,
 // thread bar. Returns its height.
@@ -917,15 +984,15 @@ func (r *row) layoutColumn(gtx layout.Context) layout.Dimensions {
 	y := 0
 	if rc.header {
 		var d layout.Dimensions
-		// The name/time line sits 2px lower than its 22px box would put it:
-		// Slack's name ink starts 4px above the avatar's top, ours 6px.
-		t := op.Offset(image.Pt(0, dp(gtx, 2))).Push(gtx.Ops)
+		// The sender line is the column's first 15px/22px line (inline in
+		// .c-message_kit__gutter__right, 4px below the row top), the body's
+		// first line right under it: baselines at 4+16.8 and 26+16.8.
 		if rc.thread {
 			d = slackc.Component(gtx, "ThreadSenderAndTimestampGeneric", r, (*row).threadSenderProps, (*row).layoutThreadSender)
 		} else {
 			d = slackc.Component(gtx, "BaseBroadcastPreamble", r, (*row).preambleProps, (*row).layoutPreamble)
 		}
-		t.Pop()
+		r.nameBL = d.Size.Y - d.Baseline
 		y += max(d.Size.Y, dp(gtx, mt.nameLine))
 	}
 	if m.Broadcast && !rc.thread && m.ThreadTS != "" && m.ThreadTS != m.TS {
@@ -1277,14 +1344,9 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 	if r.custom {
 		xx += r.customBadge(gtx, xx, nd.Size.Y)
 	}
-	if r.bot && r.m.User != "USLACKBOT" { // Slack shows no APP tag on Slackbot
+	if badge := r.badge; badge != "" && !r.custom { // renderBotLabel: none for people, Slackbot, custom responses
 		xx += dp(gtx, mt.badgeGap)
 		s := textStyle{size: 10, weight: theme.Bold, col: c.BadgeText}
-		// Slack's BaseAppBadge: AGENT for agent apps, else APP.
-		badge := "APP"
-		if r.agent {
-			badge = "AGENT"
-		}
 		sz := measure(gtx, rc.th, s, badge)
 		bw := sz.X + dp(gtx, 6)
 		bh := dp(gtx, 14)
@@ -1293,7 +1355,27 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 		at(gtx, xx+dp(gtx, 3), top+(bh-sz.Y)/2, func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, s, badge) })
 		xx += bw
 	}
-	if r.statusURL != "" {
+	if r.huddle != "" {
+		// BaseHuddleStatus in .c-custom_status (margin-left 4px): the 20px
+		// p-huddle_status_icon (vertical-align top, margin-top 2px) with
+		// the headphones glyph; a huddle in another channel gets the
+		// --other --no_theme circle (#1d1c1d21).
+		xx += dp(gtx, 4)
+		bs := dp(gtx, 20)
+		top := baseline - strutBaseline(gtx) + dp(gtx, 2)
+		if r.huddle != r.m.Channel {
+			bg := color.NRGBA{R: 0x1d, G: 0x1c, B: 0x1d, A: 0x21}
+			if rc.th.Dark {
+				bg = color.NRGBA{R: 0xe8, G: 0xe8, B: 0xe8, A: 0x21}
+			}
+			rrect(gtx.Ops, image.Rect(xx, top, xx+bs, top+bs), bs/2, bg)
+		}
+		is := dp(gtx, 16)
+		at(gtx, xx+(bs-is)/2, top+(bs-is)/2, func(gtx layout.Context) layout.Dimensions {
+			return icons.Get(icons.Slack("headphones"))(gtx, unit.Dp(16), c.Text)
+		})
+		xx += bs
+	} else if r.statusURL != "" {
 		s := dp(gtx, mt.statusEmoji)
 		xx += dp(gtx, 4)
 		top := baseline - s + dp(gtx, 3)
@@ -1318,7 +1400,7 @@ func (r *row) nameButton(gtx layout.Context, bs slackc.Styled) layout.Dimensions
 			h := dp(gtx, nameS.lineH)
 			return layout.Dimensions{Size: image.Pt(0, h), Baseline: dp(gtx, 5)}
 		}
-		d := label(gtx, r.rc.th, nameS, r.name)
+		d := lineBox(gtx, nameS, func(gtx layout.Context) layout.Dimensions { return label(gtx, r.rc.th, nameS, r.name) })
 		if r.nameBtn.Hovered() {
 			base := d.Size.Y - d.Baseline
 			fill(gtx.Ops, image.Rect(0, base+dp(gtx, 2), d.Size.X, base+dp(gtx, 3)), nameS.col)
@@ -1365,7 +1447,17 @@ func (r *row) layoutTimestamp(gtx layout.Context, p slackc.Props) layout.Dimensi
 		return layout.Dimensions{}
 	}
 	tsS := textStyle{size: float32(st.FontSize(12)), col: st.Color(r.rc.c.Text2)}
-	tsText := clock(tsTime(r.m.TS))
+	t := tsTime(r.m.TS)
+	tsText := clock(t)
+	if r.rc.thread {
+		// ThreadSenderAndTimestampGeneric: customTimestampFormat
+		// THREAD_DETAIL_VIEW, re-rendered every minute.
+		now := r.rc.now
+		tsText = threadTime(t, now)
+		if age := now.Sub(t); age >= 0 && age < time.Hour {
+			gtx.Execute(op.InvalidateCmd{At: now.Add(time.Minute - age%time.Minute)})
+		}
+	}
 	if st.Active() {
 		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return decoLabel(gtx, r.rc.th, st, tsS, tsText) })
 	}
@@ -1383,14 +1475,26 @@ func (r *row) labelLine(gtx layout.Context, rc *rowCtx, x, y int, icon, txt stri
 	if ls.Hidden() {
 		return 0
 	}
-	at(gtx, dp(gtx, 56)-is, y+(lh-is)/2, func(gtx layout.Context) layout.Dimensions {
-		return icons.Get(icon)(gtx, unit.Dp(14), ls.Color(c.PinIcon))
-	})
+	if icon != "pin" {
+		at(gtx, dp(gtx, 56)-is, y+(lh-is)/2, func(gtx layout.Context) layout.Dimensions {
+			return icons.Get(icon)(gtx, unit.Dp(14), ls.Color(c.PinIcon))
+		})
+	}
 	ts := labelsTextClass.Enter(gtx, 0, 0)
 	defer ts.Leave()
-	at(gtx, dp(gtx, 64), y, func(gtx layout.Context) layout.Dimensions {
+	td := at(gtx, dp(gtx, 64), y, func(gtx layout.Context) layout.Dimensions {
 		return styledLabel(gtx, rc.th, ts, textStyle{size: 13, col: c.Muted70, lineH: 19}, txt)
 	})
+	if icon == "pin" {
+		// Slack's thumb-tack-filled glyph at the label's 13px, on the
+		// text's baseline, right-aligned 8px before it (pin_icon.go)
+		em := dp(gtx, 13)
+		base := y + lh*3/4
+		if td.Size.Y > 0 {
+			base = y + td.Size.Y - td.Baseline
+		}
+		drawPin(gtx, image.Pt(dp(gtx, 56)-em, base-em*glyphAscent/glyphUPM), em, ls.Color(c.PinIcon))
+	}
 	return dp(gtx, 20)
 }
 
@@ -1717,8 +1821,8 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	c := rc.c
 	m := &r.m
 	w := gtx.Constraints.Max.X
-	padX := dp(gtx, mt.padX)
-	cx := dp(gtx, mt.contentX)
+	padX := dp(gtx, rc.padX())
+	cx := dp(gtx, rc.contentX())
 	cw := w - cx - padX - dp(gtx, 20)
 	rec := op.Record(gtx.Ops)
 	icon := "info"
@@ -1768,6 +1872,58 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	if rc.hovered {
 		fill(gtx.Ops, image.Rect(0, 0, w, h), c.Hover)
 	}
+	content.Add(gtx.Ops)
+	r.height = h
+	return layout.Dimensions{Size: image.Pt(w, h)}
+}
+
+// tombstoneLayout is Slack's MessageTombstone (boot-shared 2X8J): a
+// deleted message that still has replies (subtype "tombstone", user
+// USLACKBOT, hidden) draws c-message_kit__tombstone: the 36px placeholder
+// with the trash icon where the avatar goes, "This message was deleted."
+// in c-message_kit__tombstone__text, then the reply bar. No author, no
+// timestamp, no hover actions. A plugin view (Message Logger's kept copy)
+// replaces r.m and so draws as the message instead.
+func (r *row) tombstoneLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
+	c := rc.c
+	m := &r.m
+	w := gtx.Constraints.Max.X
+	padX := dp(gtx, mt.padX)
+	cx := dp(gtx, mt.contentX)
+	cw := w - cx - padX
+	if rc.thread {
+		cw = w - cx - dp(gtx, 24)
+	}
+	cw = max(cw, dp(gtx, 80))
+	rec := op.Record(gtx.Ops)
+	top := dp(gtx, mt.padTop)
+	av := dp(gtx, mt.avatar)
+	sq := image.Rect(padX, top, padX+av, top+av)
+	rrect(gtx.Ops, sq, dp(gtx, 8), c.BadgeBg)
+	is := dp(gtx, 20)
+	at(gtx, padX+(av-is)/2, top+(av-is)/2, func(gtx layout.Context) layout.Dimensions {
+		return icons.Get("trash")(gtx, unit.Dp(20), c.Text2)
+	})
+	r.handler.h, r.handler.m, r.handler.anchor = rc.h, m, rc.origin
+	y := top
+	body := at(gtx, cx, y, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
+		return r.rv.Layout(gtx, rc.st, &r.handler)
+	})
+	r.bodyRect = image.Rectangle{Min: image.Pt(cx, y), Max: image.Pt(cx+body.Size.X, y+body.Size.Y)}
+	y += max(body.Size.Y, dp(gtx, mt.nameLine)) + dp(gtx, mt.bodyMarginBottom)
+	r.reactRects = r.reactRects[:0]
+	r.addRect = image.Rectangle{}
+	if m.ReplyCount > 0 && !rc.thread && (m.ThreadTS == "" || m.ThreadTS == m.TS) {
+		y += dp(gtx, 4)
+		d := at(gtx, cx, y, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
+			return slackc.Component(gtx, "ThreadReplies", r, (*row).repliesProps, (*row).layoutThreadReplies)
+		})
+		y += d.Size.Y
+	}
+	h := max(y, top+av) + dp(gtx, mt.padBottom)
+	content := rec.Stop()
 	content.Add(gtx.Ops)
 	r.height = h
 	return layout.Dimensions{Size: image.Pt(w, h)}
@@ -1900,10 +2056,10 @@ func reactionTip(h Host, re *core.Reaction, selfID string) string {
 func skeleton(gtx layout.Context, c *colors, i int) layout.Dimensions {
 	w := gtx.Constraints.Max.X
 	h := dp(gtx, 60)
-	padX := dp(gtx, mt.padX)
+	padX := dp(gtx, mt.chanPadX)
 	a := dp(gtx, mt.avatar)
 	rrect(gtx.Ops, image.Rect(padX, dp(gtx, 8), padX+a, dp(gtx, 8)+a), avatarRadius(a), c.Skeleton)
-	cx := dp(gtx, mt.contentX)
+	cx := dp(gtx, mt.chanContentX)
 	widths := []int{120, 90, 160}
 	nw := dp(gtx, float32(widths[i%3]))
 	rrect(gtx.Ops, image.Rect(cx, dp(gtx, 10), cx+nw, dp(gtx, 22)), dp(gtx, 6), c.Skeleton)

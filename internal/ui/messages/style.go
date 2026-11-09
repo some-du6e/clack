@@ -115,9 +115,20 @@ func flatten(c colors) colors {
 	return c
 }
 
-// metrics are the row geometry in dp, measured from the 2026 client.
+// metrics are the row geometry in dp, from Slack's CSS (bv1-13, 2026-11-08):
+//
+//   - channel rows: .p-message_pane_message__message .c-message_kit__gutter
+//     { padding: 8px 20px } (chanPadX, content at 20+36+8 = 64)
+//   - thread rows: .c-message_kit__thread_message .c-message_kit__gutter
+//     { padding: 8px 24px 8px 16px }, root padding-top 20 (padX, contentX)
+//   - .c-message_kit__gutter__right { margin: -12px -8px -16px -16px;
+//     padding: 8px 8px 8px 16px }: the column starts 4px below the row top
+//     and adds nothing below; .c-message_kit__blocks--rich_text
+//     { margin-bottom: 4px } (bodyMarginBottom). A one-line continuation
+//     row is 4 + 22 + 4 = 30, a header row max(4+22+22+4, 8+36+8) = 52.
 var mt = struct {
 	padX, avatar, gap, contentX   float32
+	chanPadX, chanContentX        float32
 	headPadTop, padTop, padBottom float32
 	nameLine, bodyMarginBottom    float32
 	tsGap, badgeGap               float32
@@ -130,6 +141,7 @@ var mt = struct {
 	statusEmoji                   float32
 }{
 	padX: 16, avatar: 36, gap: 8, contentX: 60,
+	chanPadX: 20, chanContentX: 64,
 	headPadTop: 8, padTop: 8, padBottom: 8,
 	nameLine: 22, bodyMarginBottom: 4,
 	tsGap: 8, badgeGap: 4,
@@ -206,6 +218,37 @@ func label(gtx layout.Context, th *theme.Theme, s textStyle, txt string) layout.
 	return th.Text(gtx, theme.LabelOpts{Font: f, Size: unit.Sp(s.size), LineHeight: unit.Sp(s.lineH), MaxLines: n, Color: s.col}, txt)
 }
 
+// cssBaseline is where Chrome puts a size/lineH line's baseline from the
+// line box top: half the leading above the glyphs ((lineH - content)/2,
+// content = Lato's hhea ascent + descent), then the ascent.
+func cssBaseline(gtx layout.Context, size, lineH float32) int {
+	sp := gtx.Metric.PxPerSp
+	return int((lineH*sp-(latoAsc+latoDesc)*size*sp)/2 + latoAsc*size*sp + 0.5)
+}
+
+// lineBox draws a one-line label (w, in style s) as a CSS line box lineH
+// tall. Gio starts the first line at the font's ascent and puts all of
+// LineHeight's leading below it; Chrome splits it above and below, which
+// for 15px/22px Lato is 2px lower. Returns the box with its baseline.
+func lineBox(gtx layout.Context, s textStyle, w layout.Widget) layout.Dimensions {
+	if s.lineH <= 0 {
+		return w(gtx)
+	}
+	m := op.Record(gtx.Ops)
+	d := w(gtx)
+	call := m.Stop()
+	if d.Size.Y == 0 {
+		call.Add(gtx.Ops)
+		return d
+	}
+	bl := cssBaseline(gtx, s.size, s.lineH)
+	t := op.Offset(image.Pt(0, bl-(d.Size.Y-d.Baseline))).Push(gtx.Ops)
+	call.Add(gtx.Ops)
+	t.Pop()
+	h := max(gtx.Sp(unit.Sp(s.lineH)), bl)
+	return layout.Dimensions{Size: image.Pt(d.Size.X, h), Baseline: h - bl}
+}
+
 // measure returns the width of single-line text.
 func measure(gtx layout.Context, th *theme.Theme, s textStyle, txt string) image.Point {
 	m := op.Record(gtx.Ops)
@@ -232,6 +275,12 @@ func drawAvatar(gtx layout.Context, h Host, url string, r image.Rectangle, c *co
 
 func paintAvatar(gtx layout.Context, imgs *imgcache.Cache, url string, r image.Rectangle, c *colors) {
 	radius := avatarRadius(r.Dx())
+	if isDefaultBotAvatar(url) {
+		if img, ok := defaultBotAvatarImage(); ok {
+			richview.DrawImage(gtx.Ops, img, r, radius, true)
+			return
+		}
+	}
 	if url != "" && imgs != nil {
 		if img, ok := imgs.Get(url, r.Dx()); ok {
 			richview.DrawImage(gtx.Ops, img, r, radius, true)

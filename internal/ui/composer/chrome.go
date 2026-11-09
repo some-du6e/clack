@@ -87,7 +87,7 @@ type chromeState struct {
 	ChannelName   string
 	Private, IsDM bool
 	// Placeholder is "Message general" (channel: drawn as "Message " + the
-	// hash/lock icon + name), "Message Karim" (DM), "Reply to thread…".
+	// hash/lock icon + name), "Message Karim" (DM), "Reply…".
 	Placeholder     string
 	ShowPlaceholder bool
 	Typing          string // "Karim is typing…" for the hint bar, "" none
@@ -197,9 +197,6 @@ var crIcChevron = icons.Get("chevron-down")
 var crFmtOrder = [...]crBtn{crBold, crItalic, crUnderline, crStrike, crPara, crLink, crOrdered, crBullet, crQuote, crCode, crCodeBlock, crDivider}
 
 var crFmtSep = [len(crFmtOrder)]bool{5: true, 8: true}
-
-// crFmtMaxHidden keeps B I U S ¶ on the bar however narrow it gets.
-const crFmtMaxHidden = 7
 
 // crFootOverflow is what the footer's ⋯ holds on narrow composers.
 var crFootOverflow = [...]crBtn{crVideo, crAudio, crShortcut}
@@ -485,9 +482,17 @@ func (c *chrome) Layout(gtx layout.Context, h Host, st chromeState, input, attac
 	}
 	c.f.W, c.f.maxY, c.f.margin, c.f.hintH = W, gtx.Constraints.Max.Y, margin, hintH
 
+	// .p-threads_footer__input_container { margin: 12px 16px 0 } (0 on top
+	// under a plugin's context bar, --context_bar_showing): the reply box
+	// sits 12px under the last reply. The channel composer's top margin is
+	// 0.
+	top := 0
+	if st.Mode == modeThread && !st.SquareTop {
+		top = gtx.Dp(12)
+	}
 	bg := gtx
-	bg.Constraints = layout.Constraints{Max: image.Pt(max(W-2*margin, 0), gtx.Constraints.Max.Y)}
-	t := op.Offset(image.Pt(margin, 0)).Push(gtx.Ops)
+	bg.Constraints = layout.Constraints{Max: image.Pt(max(W-2*margin, 0), max(gtx.Constraints.Max.Y-top, 0))}
+	t := op.Offset(image.Pt(margin, top)).Push(gtx.Ops)
 	var bd layout.Dimensions
 	if e, patched := kid(inputP, "WysiwygContainer"); patched {
 		bd = slackc.LayoutElement(bg, e)
@@ -495,8 +500,21 @@ func (c *chrome) Layout(gtx layout.Context, h Host, st chromeState, input, attac
 		bd = slackc.Component(bg, "WysiwygContainer", c, (*chrome).wysiwygProps, (*chrome).layoutWysiwyg)
 	}
 	t.Pop()
-	boxH := max(bd.Size.Y, 0)
-	box := image.Rect(margin, 0, margin+bd.Size.X, boxH)
+	if top > 0 {
+		// what the natives recorded is relative to the box's top
+		d := image.Pt(0, top)
+		for id := range c.rect {
+			if c.shown&(1<<id) != 0 {
+				c.rect[id] = c.rect[id].Add(d)
+			}
+		}
+		c.inputOff = c.inputOff.Add(d)
+		if c.f.boxOK {
+			c.f.box = c.f.box.Add(d)
+		}
+	}
+	boxH := max(bd.Size.Y, 0) + top
+	box := image.Rect(margin, top, margin+bd.Size.X, boxH)
 	if c.f.boxOK {
 		box.Min.X, box.Max.X = c.f.box.Min.X, c.f.box.Max.X
 	}
@@ -769,10 +787,11 @@ func (c *chrome) icon(gtx layout.Context, st *chromeState, id crBtn, r image.Rec
 // crBar is the formatting bar's spacing in pixels.
 type crBar struct {
 	pad, btn, para, m, sepW, sepM int
+	slot                          int // Slack's 36px per button when deciding the overflow
 }
 
 func crBarOf(gtx layout.Context) crBar {
-	return crBar{pad: gtx.Dp(4), btn: gtx.Dp(28), para: gtx.Dp(44), m: gtx.Dp(2), sepW: max(gtx.Dp(1), 1), sepM: gtx.Dp(4)}
+	return crBar{pad: gtx.Dp(4), btn: gtx.Dp(28), para: gtx.Dp(44), m: gtx.Dp(2), sepW: max(gtx.Dp(1), 1), sepM: gtx.Dp(4), slot: gtx.Dp(36)}
 }
 
 // width is the bar's content width with the last k buttons folded into ⋯.
@@ -797,14 +816,22 @@ func (b crBar) width(k int) int {
 	return x - b.m + b.pad
 }
 
-// hidden is how many trailing buttons must fold into ⋯ to fit avail.
+// hidden is how many trailing buttons fold into ⋯ in a box avail wide
+// inside its border. Slack's sticky Composer (module bpQI) counts slots,
+// not pixels: getAvailableButtonSlots is floor((width - trailingWidth) /
+// 36), width being the bar's AutoSizer width (the box less the formatting
+// row's 4px padding each side; nothing trails it there). Every button
+// shows while the slots hold them all (a bar of 432px: a box of 442 with
+// its border); otherwise getReducedButtonGroups keeps the first slots-1
+// and ⋯ takes the last slot, down to ⋯ alone.
 func (b crBar) hidden(avail int) int {
-	for k := 0; k < crFmtMaxHidden; k++ {
-		if b.width(k) <= avail {
-			return k
-		}
+	n := len(crFmtOrder)
+	slot := max(b.slot, 1)
+	slots := (avail - 2*b.pad) / slot
+	if slots >= n {
+		return 0
 	}
-	return crFmtMaxHidden
+	return n - max(slots-1, 0)
 }
 
 func (c *chrome) layoutBar(gtx layout.Context, th *theme.Theme, p *crPal, st *chromeState, x0, innerW, top int) {

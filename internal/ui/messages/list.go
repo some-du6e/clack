@@ -328,14 +328,17 @@ func (s *listState) sync(h Host, now time.Time) {
 	}
 }
 
+// groupable is Slack's isAdjacentMessage (boot-shared Ag38): b continues
+// a's group. Senders compare as core.Adjacent does (same user; a user-less
+// bot by bot_id, username and msg.icons); a thread parent (reply_count)
+// on either side starts a new group. Pinning doesn't: Slack's Message
+// hides the sender of any adjacent message (shouldHideSenderAndTimestamp)
+// and draws the pinned label above its body.
 func groupable(a, b *core.Message, ta, tb time.Time) bool {
-	if a.System || b.System || a.Subtype != b.Subtype && (a.Subtype == "bot_message" || b.Subtype == "bot_message") {
+	if a.System || b.System || a.Tombstone || b.Tombstone || !core.Adjacent(a, b) {
 		return false
 	}
-	if a.User != b.User || a.BotID != b.BotID || a.Name != b.Name || a.Avatar != b.Avatar {
-		return false
-	}
-	if b.Broadcast || a.Pinned || b.Pinned {
+	if b.Broadcast || a.ReplyCount > 0 || b.ReplyCount > 0 {
 		return false
 	}
 	return tb.Sub(ta) < 5*time.Minute && tb.Sub(ta) >= 0
@@ -735,17 +738,22 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 	case itIntro:
 		return s.intro(gtx, h, c, w)
 	case itReplies:
-		// 18 tall, margin 4 0, padding-left 16; count then a hairline.
-		hh := dp(gtx, 26)
+		// ThreadSeparatorRowGeneric: .p-threads_flexpane__separator is a
+		// 13px/18px count (margin-right 12) and a 1px rule (margin-top 1,
+		// centred: y 13), margin 4px 0, padding-left 16, width
+		// calc(100% - 22px); the row has margin-bottom -2px: 24 tall.
+		hh := dp(gtx, 24)
 		n := it.idx
 		txt := "1 reply"
 		if n != 1 {
 			txt = itoa(n) + " replies"
 		}
 		st := textStyle{size: 13, col: c.Muted70, lineH: 18}
-		d := at(gtx, dp(gtx, 16), dp(gtx, 4), func(gtx layout.Context) layout.Dimensions { return label(gtx, h.Theme(), st, txt) })
+		d := at(gtx, dp(gtx, 16), dp(gtx, 4), func(gtx layout.Context) layout.Dimensions {
+			return lineBox(gtx, st, func(gtx layout.Context) layout.Dimensions { return label(gtx, h.Theme(), st, txt) })
+		})
 		lx := dp(gtx, 16) + d.Size.X + dp(gtx, 12)
-		fill(gtx.Ops, image.Rect(lx, dp(gtx, 13), w-dp(gtx, 16), dp(gtx, 14)), c.PillBorder)
+		fill(gtx.Ops, image.Rect(lx, dp(gtx, 13), w-dp(gtx, 22), dp(gtx, 13)+max(dp(gtx, 1), 1)), c.PillBorder)
 		return layout.Dimensions{Size: image.Pt(w, hh)}
 	}
 	e := &s.snap.msgs[it.idx]
@@ -755,7 +763,7 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 	}
 	r, ok := s.rows[it.key]
 	if !ok {
-		r = newRow(e)
+		r = newListRow(e, s.thread)
 		s.rows[it.key] = r
 	} else if len(it.group) > 0 && r.rev != e.rev {
 		r.set(e)
@@ -927,7 +935,7 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 	// hover toolbar
 	s.tbFor = -1
 	if s.hoverIdx >= 0 && s.hoverIdx < len(s.items) && s.items[s.hoverIdx].kind == itMsg {
-		if r := s.rows[s.items[s.hoverIdx].key]; r != nil && !s.sel.dragging && r.edit == nil && len(s.items[s.hoverIdx].group) == 0 && !r.m.Pending && !r.m.Failed {
+		if r := s.rows[s.items[s.hoverIdx].key]; r != nil && !s.sel.dragging && r.edit == nil && len(s.items[s.hoverIdx].group) == 0 && !r.m.Pending && !r.m.Failed && !r.m.Tombstone {
 			s.toolbar(gtx, h, rc, r, s.hoverIdx, size)
 		}
 	}
@@ -1226,7 +1234,7 @@ func (s *listState) startEdit(h Host, ts string) {
 		if i < 0 {
 			return
 		}
-		r = newRow(&s.snap.msgs[i])
+		r = newListRow(&s.snap.msgs[i], s.thread)
 		s.rows[ts] = r
 	}
 	if r.edit != nil {

@@ -31,7 +31,8 @@ type Message struct {
 	PinnedInfo     *PinnedInfo     `json:"pinned_info,omitempty"`
 	ClientMsgID    string          `json:"client_msg_id,omitempty"`
 	Hidden         bool            `json:"hidden,omitempty"`
-	Root           *Message        `json:"root,omitempty"` // thread_broadcast
+	IsEphemeral    bool            `json:"is_ephemeral,omitempty"` // Slack's addEphemeralMessage (local, never from history)
+	Root           *Message        `json:"root,omitempty"`         // thread_broadcast
 	ReplyBroadcast bool            `json:"reply_broadcast,omitempty"`
 	Upload         bool            `json:"upload,omitempty"`
 	DisplayAsBot   bool            `json:"display_as_bot,omitempty"`
@@ -76,6 +77,8 @@ type BotProfile struct {
 	TeamID  string `json:"team_id,omitempty"`
 	Icons   Icons  `json:"icons"`
 	Deleted bool   `json:"deleted"`
+	// IsWorkflowBot: a Workflow Builder bot (bots.info), badged WORKFLOW.
+	IsWorkflowBot bool `json:"is_workflow_bot,omitempty"`
 }
 
 type File struct {
@@ -185,7 +188,9 @@ type User struct {
 	IsAppUser         bool    `json:"is_app_user,omitempty"`
 	IsRestricted      bool    `json:"is_restricted,omitempty"`
 	IsUltraRestricted bool    `json:"is_ultra_restricted,omitempty"`
-	AgentStatus       string  `json:"agent_status,omitempty"` // not_an_agent | consistently_an_agent | check_required (bot users)
+	AgentStatus       string  `json:"agent_status,omitempty"`      // not_an_agent | consistently_an_agent | check_required (bot users)
+	IsWorkflowBot     bool    `json:"is_workflow_bot,omitempty"`   // Workflow Builder's bot user: badged WORKFLOW
+	IsAgentforceBot   bool    `json:"is_agentforce_bot,omitempty"` // a Salesforce Agentforce agent: badged AGENTFORCE
 	Updated           int64   `json:"updated,omitempty"`
 	Profile           Profile `json:"profile"`
 	Presence          string  `json:"presence,omitempty"`
@@ -230,6 +235,8 @@ type Profile struct {
 	Team               string          `json:"team,omitempty"`
 	Fields             json.RawMessage `json:"fields,omitempty"`
 	HuddleState        string          `json:"huddle_state,omitempty"`
+	HuddleChannel      string          `json:"huddle_state_channel_id,omitempty"`
+	HuddleExpires      int64           `json:"huddle_state_expiration_ts,omitempty"`
 	BotID              string          `json:"bot_id,omitempty"`
 	APIAppID           string          `json:"api_app_id,omitempty"`
 

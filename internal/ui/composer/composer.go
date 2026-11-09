@@ -426,7 +426,9 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 		st.ShowPlaceholder = false
 	case c.ts != "":
 		st.Mode = modeThread
-		st.Placeholder = "Reply to thread…"
+		// Slack's MessageInput: "Reply to thread…" only under the
+		// nested_secondary_view experiment, else "Reply…".
+		st.Placeholder = "Reply…"
 	default:
 		st.Mode = modeChannel
 	}
@@ -1048,3 +1050,10 @@ func (c *Composer) setBroadcast(on bool) {
 	c.broadcast = on
 	c.h.Invalidate()
 }
+
+// FocusTag is the key-focus tag of the composer's editor (tests check
+// that nothing takes focus from it).
+func (c *Composer) FocusTag() any { return c.ed }
+
+// DocText is the composer's text as plain characters (tests).
+func (c *Composer) DocText() string { return c.ed.Doc().Text() }

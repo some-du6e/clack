@@ -34,15 +34,17 @@ func slackMessage(m *core.Message) slackc.Props {
 	set("user", m.User)
 	set("bot_id", m.BotID)
 	set("subtype", m.Subtype)
-	set("username", m.Name)
+	// username and icons as Slack sent them; a user-less bot with neither
+	// gets its resolved avatar as bot_profile icons (as Slack's store bot
+	// would supply them to ConnectedBaseAvatar).
+	set("username", m.Username)
+	if m.Username == "" && m.User == "" && m.BotProfile == nil {
+		set("username", m.Name)
+	}
 	set("thread_ts", m.ThreadTS)
 	set("client_msg_id", m.ClientMsgID)
-	if m.Avatar != "" {
-		icons := slackc.Props{"image_36": m.Avatar, "image_48": m.Avatar, "image_72": m.Avatar}
-		p["icons"] = icons
-		if m.BotID != "" {
-			p["bot_profile"] = slackc.Props{"id": m.BotID, "name": m.Name, "icons": icons}
-		}
+	if ic := m.Icons.Map(); ic != nil {
+		p["icons"] = slackc.Props(ic)
 	}
 	if bp := m.BotProfile; bp != nil {
 		prof := slackc.Props{"id": bp.ID, "name": bp.Name, "deleted": bp.Deleted}
@@ -51,12 +53,15 @@ func slackMessage(m *core.Message) slackc.Props {
 				prof[k] = v
 			}
 		}
-		if bp.Icon != "" {
+		if ic := bp.Icons.Map(); ic != nil {
+			prof["icons"] = slackc.Props(ic)
+		} else if bp.Icon != "" {
 			prof["icons"] = slackc.Props{"image_36": bp.Icon, "image_48": bp.Icon, "image_72": bp.Icon}
-		} else if old, ok := p["bot_profile"].(slackc.Props); ok && old["icons"] != nil {
-			prof["icons"] = old["icons"]
 		}
 		p["bot_profile"] = prof
+	} else if m.BotID != "" && m.User == "" && m.Avatar != "" {
+		av := slackc.Props{"image_36": m.Avatar, "image_48": m.Avatar, "image_72": m.Avatar}
+		p["bot_profile"] = slackc.Props{"id": m.BotID, "name": m.Name, "icons": av}
 	}
 	if len(m.Metadata) > 2 {
 		var md any
@@ -462,12 +467,30 @@ func applySlackMessage(app *core.App, src *core.Message, msg slackc.Props) core.
 	m.User = msg.StrOr("user", "")
 	m.BotID = msg.StrOr("bot_id", "")
 	m.Subtype = msg.StrOr("subtype", "")
-	m.Name = msg.StrOr("username", "")
-	m.Avatar = ""
-	for _, ic := range []slackc.Props{msg.Map("icons"), msg.Map("bot_profile").Map("icons")} {
-		if u := iconURL(ic); u != "" {
-			m.Avatar = u
-			break
+	m.Username = msg.StrOr("username", "")
+	m.Icons = core.SenderIconsOf(msg.Map("icons"))
+	senderSame := m.User == src.User && m.BotID == src.BotID && m.Username == src.Username && core.SameIcons(m.Icons, src.Icons)
+	switch {
+	case m.User != "":
+		// Slack's sender is the member's: username, icons and bot_profile
+		// aren't read (getMsgSenderEntity, ConnectedBaseAvatar).
+		m.Name, m.Avatar = "", ""
+	case senderSame:
+		// unchanged: keep core's resolved name and avatar (emoji, bot, default)
+	default:
+		m.Name = m.Username
+		if m.Name == "" {
+			m.Name = msg.Map("bot_profile").StrOr("name", "")
+		}
+		m.Avatar = ""
+		for _, ic := range []slackc.Props{msg.Map("icons"), msg.Map("bot_profile").Map("icons")} {
+			if u := iconURL(ic); u != "" {
+				m.Avatar = u
+				break
+			}
+		}
+		if m.Avatar == "" && m.BotID == src.BotID {
+			m.Avatar = src.Avatar
 		}
 	}
 	if src.BotID != "" && m.BotID == "" || m.Subtype != "bot_message" && src.Subtype == "bot_message" {
@@ -484,13 +507,16 @@ func applySlackMessage(app *core.App, src *core.Message, msg slackc.Props) core.
 // icons, icons, or the userId's profile image). def is the native's own
 // avatar for user (kept while the props name the same user).
 func avatarURL(h Host, p slackc.Props, user, def string) string {
-	if u := iconURL(p.Map("botProfile").Map("icons")); u != "" {
-		return u
-	}
-	if u := iconURL(p.Map("icons")); u != "" {
-		return u
-	}
 	id := p.StrOr("userId", user)
+	if id == "" { // ConnectedBaseAvatar: icons or botProfile only without a userId
+		if u := iconURL(p.Map("icons")); u != "" {
+			return u
+		}
+		if u := iconURL(p.Map("botProfile").Map("icons")); u != "" {
+			return u
+		}
+		return def
+	}
 	if id == user && def != "" {
 		return def
 	}

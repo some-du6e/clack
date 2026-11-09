@@ -287,7 +287,10 @@ func (b *base) msgBodyMuted(gtx C, m *core.Message, compact, muted bool, maxLine
 	}
 	// muted (read Activity rows) only dims the body: mentions keep their
 	// pills like Slack; Muted is for system messages.
-	return b.richDoc(gtx, key, ver, m.Doc, richview.Options{Edited: m.Edited, Compact: compact, Muted: m.System, Secondary: muted && !m.System}, maxLines)
+	// Activity, Threads and Later are Slack's activity / all_threads /
+	// starred_message block contexts: long sections truncate.
+	return b.richDoc(gtx, key, ver, m.Doc, richview.Options{Edited: m.Edited, Compact: compact, Muted: m.System, Secondary: muted && !m.System,
+		Channel: m.Channel, TS: m.TS, Truncate: true}, maxLines)
 }
 
 // richDoc draws any document under a stable key.

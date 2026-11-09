@@ -17,9 +17,11 @@ import (
 // Message is a UI-ready message: metadata plus a structured document.
 type Message struct {
 	TS, Channel, User, BotID string
-	Name                     string // display-name override (bots, custom usernames)
-	Avatar                   string // avatar override (bot icons, icon_emoji)
-	Subtype, Text            string // Text: raw mrkdwn (editing, copy, search)
+	Name                     string       // the sender's name when it isn't a member's (user-less bots: username or the bot's name); sender.go
+	Avatar                   string       // the avatar of a user-less sender (icon_emoji, icons, the bot's, Slack's default); sender.go
+	Username                 string       // msg.username as sent (chat.postMessage username)
+	Icons                    *SenderIcons // msg.icons as sent (icon_emoji / icon_url)
+	Subtype, Text            string       // Text: raw mrkdwn (editing, copy, search)
 	ThreadTS, LatestReply    string
 	EditedTS                 string
 	Permalink                string // set on search results
@@ -27,15 +29,19 @@ type Message struct {
 	PinnedBy                 string // who pinned it (when Pinned)
 	IsBot, Edited, Pinned    bool
 	Broadcast, System        bool // System: join/leave/topic… drawn compactly
-	Pending                  bool // optimistic local send not yet confirmed (TS is local)
-	Failed                   bool // optimistic send failed: offer Resend / DiscardPending
-	Saved                    bool // in the viewer's Saved / To-dos
-	FollowingThread          bool // the viewer follows this thread (root messages)
-	ReplyCount               int
-	ReplyUsers               []string
-	Reactions                []Reaction
-	Huddle                   json.RawMessage
-	Doc                      richtext.Doc
+	// Tombstone: a deleted message kept for its replies (Slack's subtype
+	// "tombstone", user USLACKBOT, hidden): drawn as Slack's
+	// MessageTombstone, never as a Slackbot message.
+	Tombstone       bool
+	Pending         bool // optimistic local send not yet confirmed (TS is local)
+	Failed          bool // optimistic send failed: offer Resend / DiscardPending
+	Saved           bool // in the viewer's Saved / To-dos
+	FollowingThread bool // the viewer follows this thread (root messages)
+	ReplyCount      int
+	ReplyUsers      []string
+	Reactions       []Reaction
+	Huddle          json.RawMessage
+	Doc             richtext.Doc
 	// Raw Slack data for plugins (Taut): memory only, never written to disk.
 	Blocks      json.RawMessage // Block Kit blocks as sent
 	Attachments json.RawMessage // legacy attachments / unfurls as sent
@@ -68,7 +74,8 @@ func (m *Message) CustomResponse() bool {
 // BotProfile is the bot_profile Slack attaches to app messages.
 type BotProfile struct {
 	ID, Name, AppID, UserID, TeamID string
-	Icon                            string // best icon URL
+	Icon                            string      // best icon URL
+	Icons                           SenderIcons // bot_profile.icons as sent
 	Deleted                         bool
 }
 
@@ -95,7 +102,14 @@ type User struct {
 	Guest                            bool
 	Color, Presence                  string // Presence: active | away | ""
 	Huddle                           bool
-	Agent                            bool // agent_status consistently_an_agent: Slack labels the sender AGENT, not APP
+	// HuddleChannel and HuddleExpires are profile.huddle_state_channel_id
+	// and huddle_state_expiration_ts: the huddle's channel and when the
+	// state lapses (Slack shows the sender's headphones only while both
+	// are set and the time is in the future).
+	HuddleChannel                 string
+	HuddleExpires                 int64
+	Agent                         bool // agent_status consistently_an_agent (read for the badge only under support_lots_of_agents; sender.go)
+	Workflow, Agentforce, AppUser bool // is_workflow_bot, is_agentforce_bot, is_app_user (the sender badge; sender.go)
 
 	// TeamID is the member's team as Slack's computeLocality reads it
 	// (the org on Enterprise Grid for org members, else team_id).

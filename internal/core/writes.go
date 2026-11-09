@@ -232,6 +232,11 @@ func (a *App) SubscribeThread(ctx context.Context, ch, threadTS string, follow b
 	}
 	err := a.C.Call(ctx, m, url.Values{"channel": {ch}, "thread_ts": {threadTS}}, nil)
 	if err == nil {
+		// The root's subscribed flag now, as the thread_subscribed event
+		// would set it (it may come late or, on some workspaces, not at all).
+		if msg, ok := a.S.Mutate(ch, threadTS, func(m *slack.Message) { m.Subscribed = follow }); ok {
+			a.emitUpdate(ch, &msg)
+		}
 		a.refreshCountsSoon()
 	}
 	return err

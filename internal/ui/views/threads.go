@@ -6,7 +6,7 @@ package views
 // and a white card (radius 12, 1px #dddddd) holding the root message,
 // "Show N more replies", the latest replies and an inline composer.
 // Until it's clicked the composer is a cheap picture of Slack's (toolbar,
-// "Reply to thread…", "Also send to", footer); the click swaps in the
+// "Reply…", "Also send to", footer); the click swaps in the
 // real composer (internal/ui/composer) for that card. Threads with unread
 // replies get a black-weight channel name and Slack's red "New" line
 // above the first unread reply; opening a thread (its replies link or its
@@ -808,7 +808,7 @@ func (v *Threads) messageMenu(m core.Message) {
 
 // replyPicture draws Slack's unfocused inline thread composer (h 144,
 // radius 8, 1px #1d1c1d@.13): formatting toolbar with icons at 30% alpha,
-// "Reply to thread…", the "Also send to" checkbox row and the footer with
+// "Reply…", the "Also send to" checkbox row and the footer with
 // the send button disabled. It costs nothing per card; a click swaps in
 // the real composer (or opens the thread pane when the Host can't host
 // one).
@@ -837,7 +837,7 @@ func (v *Threads) replyPicture(gtx C, c *thrCard) D {
 			defer op.Offset(image.Pt(gtx.Dp(12), gtx.Dp(38+8))).Push(gtx.Ops).Pop()
 			g := gtx
 			g.Constraints = layout.Constraints{Max: image.Pt(max(0, w-gtx.Dp(24)), gtx.Dp(22))}
-			v.para(g, 15, 22, wReg, soft, 1, "Reply to thread…")
+			v.para(g, 15, 22, wReg, soft, 1, "Reply…")
 		}()
 
 		// "Also send to #channel": 13px checkbox (12px right margin), 12px/18px label.
