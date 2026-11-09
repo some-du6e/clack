@@ -148,6 +148,12 @@ type Conv struct {
 	// TempUntil: a temporary membership's expiration_ts ("Join…"), 0 when
 	// the membership is permanent.
 	TempUntil int64
+	// Code is set for a code channel (codechannel.go); CodeStatus is its
+	// effective agent status (active | processing | suspended | closed |
+	// stale) and AgentName its agent's name ("Agent" when unknown).
+	Code       *CodeChannel
+	CodeStatus string
+	AgentName  string
 }
 
 // ConvRef describes a conversation that may not be in the sidebar
@@ -299,12 +305,22 @@ type SearchOpts struct {
 	Query       string
 	Page, Count int
 	Sort        string // score (default) | timestamp | oldest
+	Module      string // "messages" (default) | "dms"
+	Context     string // search_context ("" = the module's results tab)
+	ExactOnly   bool   // More > Exact matches only
+	Session     SearchSession
+	// InChannel is search in channel (⌘F): the query runs as
+	// "in:<#InChannel> …" with count 10.
+	InChannel      string
+	RecentChannels []string // recent_channels
+	ActiveCID      string   // request_context.active_cid: the open view
 }
 
 type SearchResult struct {
-	Messages           []Message
-	Total, Page, Pages int
-	Convs              map[string]ConvRef
+	Messages             []Message
+	Total, Page, Pages   int
+	Convs                map[string]ConvRef
+	FilterIn, FilterFrom []FilterSuggestion // filter_suggestions
 }
 
 // ChannelHit is a channel search / browse result.

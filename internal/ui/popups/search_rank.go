@@ -128,6 +128,7 @@ const (
 	srKConv srKind = iota // a sidebar conversation (channel, private, mpim)
 	srKUser               // a person (DM opened or created on Enter)
 	srKChan               // a channel from the directory (maybe not a member)
+	srKFile               // a file or canvas (search.autocomplete.files)
 )
 
 // srCand is a quick-switcher candidate.
@@ -286,19 +287,26 @@ func srMerge(local, remote []srCand, total, reserve int) []srCand {
 
 // ---- query parsing ----
 
-// srModKeys are the modifiers Slack's search.messages understands.
+// srModKeys are the modifiers Slack's search understands (the filters
+// menus write in:, from:, with:, has:, is:, type:, before:, after:,
+// on:; people type to:, during: and creator: too).
 var srModKeys = map[string]bool{
 	"in": true, "from": true, "to": true, "with": true, "before": true, "after": true,
-	"on": true, "during": true, "has": true, "is": true,
+	"on": true, "during": true, "has": true, "is": true, "type": true, "creator": true,
 }
 
-// srMod is one key:value modifier.
-type srMod struct{ Key, Val string }
+// srMod is one key:value modifier; Neg is the "-" exclusion
+// (-from:@ann, -in:#random).
+type srMod struct {
+	Key, Val string
+	Neg      bool
+}
 
 // srQuery is a parsed search query: free terms and modifiers, in order.
 type srQuery struct {
-	Terms []string // words; quoted phrases keep their spaces (no quotes)
-	Mods  []srMod
+	Terms  []string // words; quoted phrases keep their spaces (no quotes); "-word" excludes
+	Quoted []bool   // Terms[i] was "quoted" (an exact phrase or word)
+	Mods   []srMod
 }
 
 // srTokens splits q on spaces, keeping "quoted phrases" together (quotes
@@ -309,9 +317,9 @@ func srTokens(q string) []string {
 	inQ := false
 	for _, r := range q {
 		switch {
-		case r == '"':
+		case r == '"' || r == '“' || r == '”':
 			inQ = !inQ
-			b.WriteRune(r)
+			b.WriteRune('"')
 		case unicode.IsSpace(r) && !inQ:
 			if b.Len() > 0 {
 				out = append(out, b.String())
@@ -331,40 +339,89 @@ func srTokens(q string) []string {
 func srParse(q string) srQuery {
 	var out srQuery
 	for _, t := range srTokens(q) {
-		if k, v, ok := strings.Cut(t, ":"); ok && v != "" && srModKeys[strings.ToLower(k)] {
-			out.Mods = append(out.Mods, srMod{Key: strings.ToLower(k), Val: v})
+		neg := len(t) > 1 && t[0] == '-'
+		body := t
+		if neg {
+			body = t[1:]
+		}
+		if k, v, ok := strings.Cut(body, ":"); ok && v != "" && srModKeys[strings.ToLower(k)] {
+			out.Mods = append(out.Mods, srMod{Key: strings.ToLower(k), Val: strings.Trim(v, `"`), Neg: neg})
 			continue
 		}
+		quoted := strings.Contains(t, `"`)
 		t = strings.Trim(t, `"`)
-		if strings.TrimSpace(t) != "" {
+		if neg && quoted {
+			t = "-" + strings.Trim(t[1:], `"`)
+		}
+		if strings.TrimSpace(strings.TrimPrefix(t, "-")) != "" {
 			out.Terms = append(out.Terms, t)
+			out.Quoted = append(out.Quoted, quoted)
 		}
 	}
 	return out
 }
 
+func (q srQuery) quoted(i int) bool { return i < len(q.Quoted) && q.Quoted[i] }
+
 // String rebuilds the query: terms first, then modifiers.
 func (q srQuery) String() string {
 	parts := make([]string, 0, len(q.Terms)+len(q.Mods))
-	for _, t := range q.Terms {
-		if strings.ContainsAny(t, " \t") {
-			t = `"` + t + `"`
+	for i, t := range q.Terms {
+		if q.quoted(i) || strings.ContainsAny(t, " \t") {
+			if strings.HasPrefix(t, "-") && q.quoted(i) {
+				t = `-"` + t[1:] + `"`
+			} else {
+				t = `"` + t + `"`
+			}
 		}
 		parts = append(parts, t)
 	}
 	for _, m := range q.Mods {
-		parts = append(parts, m.Key+":"+m.Val)
+		v := m.Val
+		if strings.ContainsAny(v, " \t") {
+			v = `"` + v + `"`
+		}
+		k := m.Key
+		if m.Neg {
+			k = "-" + k
+		}
+		parts = append(parts, k+":"+v)
 	}
 	return strings.Join(parts, " ")
 }
 
-// Text is the free text part (terms joined by spaces).
-func (q srQuery) Text() string { return strings.Join(q.Terms, " ") }
+// Text is the free text part (terms joined by spaces), exclusions left
+// out: what the Channels and People tabs search for.
+func (q srQuery) Text() string {
+	var parts []string
+	for _, t := range q.Terms {
+		if !strings.HasPrefix(t, "-") {
+			parts = append(parts, t)
+		}
+	}
+	return strings.Join(parts, " ")
+}
 
-// Get returns the first value of key ("" if absent).
+// Highlights are the terms results highlight (not the exclusions).
+func (q srQuery) Highlights() []string {
+	var out []string
+	for _, t := range q.Terms {
+		if !strings.HasPrefix(t, "-") {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// withMods is q's terms with mods.
+func (q srQuery) withMods(mods []srMod) srQuery {
+	return srQuery{Terms: q.Terms, Quoted: q.Quoted, Mods: mods}
+}
+
+// Get returns the first (non-excluded) value of key ("" if absent).
 func (q srQuery) Get(key string) string {
 	for _, m := range q.Mods {
-		if m.Key == key {
+		if m.Key == key && !m.Neg {
 			return m.Val
 		}
 	}
@@ -374,7 +431,7 @@ func (q srQuery) Get(key string) string {
 // Has reports whether key:val is present (case-insensitive value).
 func (q srQuery) Has(key, val string) bool {
 	for _, m := range q.Mods {
-		if m.Key == key && strings.EqualFold(m.Val, val) {
+		if m.Key == key && !m.Neg && strings.EqualFold(m.Val, val) {
 			return true
 		}
 	}
@@ -383,44 +440,44 @@ func (q srQuery) Has(key, val string) bool {
 
 // Set replaces every key modifier with key:val (val "" removes them).
 func (q srQuery) Set(key, val string) srQuery {
-	out := srQuery{Terms: q.Terms}
+	var mods []srMod
 	added := false
 	for _, m := range q.Mods {
-		if m.Key == key {
+		if m.Key == key && !m.Neg {
 			if !added && val != "" {
-				out.Mods = append(out.Mods, srMod{key, val})
+				mods = append(mods, srMod{Key: key, Val: val})
 				added = true
 			}
 			continue
 		}
-		out.Mods = append(out.Mods, m)
+		mods = append(mods, m)
 	}
 	if !added && val != "" {
-		out.Mods = append(out.Mods, srMod{key, val})
+		mods = append(mods, srMod{Key: key, Val: val})
 	}
-	return out
+	return q.withMods(mods)
 }
 
 // Toggle adds key:val, or removes it when present (other values of the
 // same key are kept: has:link and has:pin can coexist).
 func (q srQuery) Toggle(key, val string) srQuery {
-	out := srQuery{Terms: q.Terms}
+	var mods []srMod
 	found := false
 	for _, m := range q.Mods {
-		if m.Key == key && strings.EqualFold(m.Val, val) {
+		if m.Key == key && !m.Neg && strings.EqualFold(m.Val, val) {
 			found = true
 			continue
 		}
-		out.Mods = append(out.Mods, m)
+		mods = append(mods, m)
 	}
 	if !found {
-		out.Mods = append(out.Mods, srMod{key, val})
+		mods = append(mods, srMod{Key: key, Val: val})
 	}
-	return out
+	return q.withMods(mods)
 }
 
 // ClearMods drops every modifier.
-func (q srQuery) ClearMods() srQuery { return srQuery{Terms: q.Terms} }
+func (q srQuery) ClearMods() srQuery { return q.withMods(nil) }
 
 // srRefID extracts the id from Slack refs: "<#C123|name>" → "C123",
 // "<@U1>" → "U1"; other values return "".
@@ -586,6 +643,45 @@ func RecordRecentConversation(id string) {
 	srMu.Lock()
 	srRecentConvs = srPush(srRecentConvs, id, srMaxRecentConvs, false)
 	srMu.Unlock()
+}
+
+// srPlace is a page in Recent places (Slack's view-navigation rows).
+type srPlace struct{ title, icon string }
+
+var (
+	srPlaces  = map[string]srPlace{} // "view:<page>" -> its row
+	srCurrent string                 // the open place: Recent places leaves it out
+)
+
+// RecordRecentPlace is the ui root's navigation hook: id is a
+// conversation id or "view:<page>" with the page's title and icon.
+// Slack's Recent places is this history, newest first, without the
+// place you are on.
+func RecordRecentPlace(id, title, icon string) {
+	if id == "" {
+		return
+	}
+	srMu.Lock()
+	if strings.HasPrefix(id, "view:") {
+		srPlaces[id] = srPlace{title, icon}
+	}
+	srCurrent = id
+	srRecentConvs = srPush(srRecentConvs, id, srMaxRecentConvs, false)
+	srMu.Unlock()
+}
+
+// srPlaceOf returns a recorded page's row.
+func srPlaceOf(id string) (srPlace, bool) {
+	srMu.Lock()
+	defer srMu.Unlock()
+	p, ok := srPlaces[id]
+	return p, ok
+}
+
+func srCurrentPlace() string {
+	srMu.Lock()
+	defer srMu.Unlock()
+	return srCurrent
 }
 
 // srRecordQuery remembers a submitted search (memory only).

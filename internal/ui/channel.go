@@ -83,21 +83,27 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	}
 	h := sz.Y
 	x := gtx.Dp(18) // Slack: 28px star button at +18, title icon at +54
-	// star
-	starred := conv != nil && conv.Starred
-	star := "star"
-	if starred {
-		star = "star-filled"
-	}
-	at(gtx, image.Pt(x, (h-gtx.Dp(28))/2), image.Pt(gtx.Dp(28), gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
-		col := c.Fg
+	if conv != nil && conv.Code != nil {
+		// a code channel: ViewHeaderCodeIcon where the star goes (Slack
+		// shows no star for code channels)
+		at(gtx, image.Pt(x, (h-gtx.Dp(28))/2), image.Pt(gtx.Dp(28), gtx.Dp(28)), a.codeHeaderTile)
+	} else {
+		// star
+		starred := conv != nil && conv.Starred
+		star := "star"
 		if starred {
-			col = c.Warning
+			star = "star-filled"
 		}
-		return iconButton(gtx, a.clicks.get("hdr.star"), star, 28, 20, col, c.BgHover, 8)
-	})
-	if clicked(a.clicks.get("hdr.star")) {
-		a.toggleStar(ch)
+		at(gtx, image.Pt(x, (h-gtx.Dp(28))/2), image.Pt(gtx.Dp(28), gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
+			col := c.Fg
+			if starred {
+				col = c.Warning
+			}
+			return iconButton(gtx, a.clicks.get("hdr.star"), star, 28, 20, col, c.BgHover, 8)
+		})
+		if clicked(a.clicks.get("hdr.star")) {
+			a.toggleStar(ch)
+		}
 	}
 	x += gtx.Dp(34) // title button at +52
 
@@ -139,7 +145,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		a.openChannelMenu(ch, image.Pt(a.winSize.X-gtx.Dp(theme.PanelInset)-gtx.Dp(14)-gtx.Dp(6), gtx.Dp(theme.TopNavH)+gtx.Dp(34)))
 	}
 	if clicked(a.clicks.get("hdr.search")) {
-		a.openSearch("in:<#" + ch + ">")
+		a.searchInChannel(ch) // Slack's searchInChannel: the ⌘F pane
 	}
 	if clicked(a.clicks.get("hdr.bell")) {
 		a.openNotifPrefs(ch)

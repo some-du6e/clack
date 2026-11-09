@@ -64,6 +64,7 @@ type App struct {
 	icon       teamIconState     // the rail's workspace icon (team_icon.go)
 	rxn        reactState        // the viewer's reactions in flight (reactions.go)
 	drafts     draftCache        // the viewer's server drafts (drafts.go), memory only
+	dnd        dndState          // the viewer's Do Not Disturb (dnd.go)
 	selected   string            // the open conversation (SetSelected, preview.go)
 	temp       map[string]int64  // temporary memberships: channel -> expiration_ts (preview.go)
 
@@ -955,6 +956,9 @@ func (a *App) conv(c *slack.Conversation) Conv {
 	v.TempUntil = a.temp[c.ID]
 	a.mu.Unlock()
 	v.Preview = a.isPreviewConv(c)
+	if cc := codeChannelOf(c); cc != nil {
+		v.Code, v.CodeStatus, v.AgentName = cc, a.codeStatusOf(c, cc), a.AgentName(cc)
+	}
 	return v
 }
 
@@ -1177,9 +1181,15 @@ func (a *App) sections(convs []Conv) []Section {
 	secs := append([]slack.Section(nil), a.S.Sections...)
 	a.S.RUnlock()
 	ordered := orderSections(secs)
+	// Slack's local sections (client-boot z/Q): with session_channels on, a
+	// missing Code channels section is made on the client and spliced in
+	// at the front of the ordered list.
+	if a.sessionChannelsOn() && !hasSectionType(ordered, "coding_channels") {
+		ordered = append([]slack.Section{{ID: LocalCodingChannelsID, Name: "Code channels", Type: "coding_channels"}}, ordered...)
+	}
 	assigned := map[string]bool{}
 	var out []Section
-	chIdx, dmIdx, appIdx := -1, -1, -1
+	chIdx, dmIdx, appIdx, codeIdx := -1, -1, -1, -1
 	a.mu.Lock()
 	var starred []string
 	for id := range a.starred {
@@ -1261,6 +1271,13 @@ func (a *App) sections(convs []Conv) []Section {
 			// Apps sits where the user's section list puts it, not last.
 			appIdx = len(out)
 			sv.Name = "Apps"
+		case "coding_channels":
+			if codeIdx < 0 {
+				codeIdx = len(out)
+			}
+			if sv.Name == "" {
+				sv.Name = "Code channels"
+			}
 		}
 		out = append(out, sv)
 	}
@@ -1279,6 +1296,10 @@ func (a *App) sections(convs []Conv) []Section {
 	}
 	for _, c := range convs {
 		if assigned[c.ID] {
+			continue
+		}
+		if c.Code != nil && codeIdx >= 0 { // getDefaultSectionType: code channels before any other bucket
+			out[codeIdx].Channels = append(out[codeIdx].Channels, c.ID)
 			continue
 		}
 		switch c.Kind {
@@ -1309,6 +1330,19 @@ func (a *App) sections(convs []Conv) []Section {
 	// each section from prefs and experiments (sidebar_rules.go).
 	a.applySectionRules(out, names, time.Now())
 	return out
+}
+
+// LocalCodingChannelsID is the id Slack gives its client-made Code
+// channels section (WHwP: local_coding_channels).
+const LocalCodingChannelsID = "local_coding_channels"
+
+func hasSectionType(secs []slack.Section, typ string) bool {
+	for _, s := range secs {
+		if s.Type == typ {
+			return true
+		}
+	}
+	return false
 }
 
 // isAppDM reports whether ch is a DM with Slackbot, the "Slack" system

@@ -52,9 +52,9 @@ type Span struct {
 	ID    string // User/Channel/Usergroup id; Emoji: name (with ::skin-tone-N); Broadcast: "here"|"channel"|"everyone"; Date: unix seconds
 	Self  bool   // User mention of the viewer, or a broadcast (yellow highlight)
 
-	// Additions (MessageMention only):
+	// Additions (MessageMention and Channel; channel.go):
 	Lock bool // the label's channel is private (lock icon before its name)
-	Off  bool // the message can't be shown ("Private message", not a link)
+	Off  bool // the message or channel can't be shown ("Private message", "Private channel"): not a link
 	Pre  int  // MessageMention with Lock: bytes of Text before the channel name
 }
 
@@ -81,6 +81,10 @@ const (
 	// decode, an image block without an image): Slack's per-block error
 	// fallback, "This content could not be displayed."
 	Unsupported
+	// UnknownBlock is a block whose type Slack's client doesn't know (an
+	// agent's newer artifact type, say): UnsupportedBlockFallback (l2Ua),
+	// a card reading "This message can’t be fully displayed."
+	UnknownBlock
 )
 
 // Block is one vertical unit of a document.

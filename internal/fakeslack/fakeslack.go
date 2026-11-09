@@ -55,6 +55,12 @@ type Size struct {
 	// registerGalleryConv in gallery.go) after the generated ones;
 	// #blockkit-gallery itself is always there.
 	Gallery bool
+	// ChannelLinks adds #channel-links and the channels its message
+	// mentions (channel_links.go).
+	ChannelLinks bool
+	// CodeChannels adds the code channel fixtures (codechannels.go): one
+	// per agent status, an archived one and one the viewer isn't in.
+	CodeChannels bool
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -197,6 +203,8 @@ type Server struct {
 
 	histMu sync.Mutex
 	hist   map[string][]slack.Message // channel -> all messages, newest first
+	code   codeCalls                  // code channel API calls (codechannels.go)
+	codeFx *CodeFixtures
 
 	bkMu      sync.Mutex
 	bkActions []BlockActionCall // blocks.actions, in order (bkgallery_elements.go)
@@ -262,9 +270,16 @@ func DefaultPrefs() map[string]any {
 		"separate_private_channels": false, "undo_channel_intermix": false,
 		"boost_mentions": false, "show_muted_items_outside_sidebar_menus": false, "plain_text_mode": false,
 		"huddles_mute_by_default": false, "huddles_set_status": true, "huddles_disconnect_on_lock": true,
+		// Preferences audit (2026-11-08): the rest of the dialog's keys
+		"msg_input_send_btn": false, "ia4_compact_mode": false, "preferred_skin_tone": "",
+		"enable_unread_view": false, "enable_threads_view": true, "enable_huddles_home_view": true,
+		"enable_sent_view": true, "enable_saved_view": true, "enable_unified_directory_view": true,
+		"huddles_allow_smart_notif": true, "inactive_user_summary_notification": false, "activity_dms_opt_out": false,
+		"overloaded_message_enabled": true, "in_prod_surveys_enabled": true,
 		"all_notifications_prefs": `{"channels":{},"global":{"global_desktop":"mentions_dms","global_mobile":"mentions_dms",` +
 			`"global_keywords":"","no_text_in_notifications":false,"push_idle_wait":0,"threads_everything":true,` +
-			`"desktop_sound":"knock_brush.mp3"}}`,
+			`"desktop_sound":"knock_brush.mp3","global_desktop_push_enabled":true,"global_channels_in_activity":false,` +
+			`"global_reminders_in_activity":true}}`,
 	}
 }
 
@@ -388,6 +403,12 @@ func Serve(ln net.Listener, sz Size) *Server {
 	if sz.Gallery {
 		s.addGalleryConvs() // gallery.go
 	}
+	if sz.ChannelLinks {
+		s.addChannelLinks() // channel_links.go
+	}
+	if sz.CodeChannels {
+		s.addCodeChannels() // codechannels.go
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", s.api)
 	mux.HandleFunc("/img/", s.img)
@@ -400,6 +421,7 @@ func Serve(ln net.Listener, sz Size) *Server {
 
 // Close stops the server.
 func (s *Server) Close() error {
+	searchLogs.Delete(s)
 	if s.srv == nil {
 		return nil
 	}
@@ -799,6 +821,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleCanvases(method, f); handled { // canvas.go
 		return out
 	}
+	if out, handled := s.handleSearch(method, f); handled { // search.go
+		return out
+	}
 	if out, handled := s.handleSections(method, f); handled { // sections.go
 		return out
 	}
@@ -852,7 +877,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		g := func(group string) map[string]any { return map[string]any{"group": group} }
 		return ok("assignments", map[string]any{"filter_dormant_channels": g("on"), "improve_mute_pref": g("on"),
 			"dm_recency_sort_rollout": g("without_edu"), "reskin_custom_responses": g("on"), "temp_join_channel": g("on"),
-			"sidebar_section_search": g("on"), "add_channels_channel_sections_slackathon": g("on"), "mute_channel_edu": g("on")})
+			"sidebar_section_search": g("on"), "add_channels_channel_sections_slackathon": g("on"), "mute_channel_edu": g("on"),
+			"session_channels": g("on"), "session_channel_views": g("on"), "code_channels_naming": g("on")})
 	case "users.prefs.get":
 		s.prefsMu.Lock()
 		m := make(map[string]any, len(s.prefs))
@@ -1019,7 +1045,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	case "edge/users/list":
 		return ok("results", s.users[:min(len(s.users), 50)], "next_marker", "")
 	case "edge/channels/info":
-		return ok("results", []any{}, "failed_ids", []string{})
+		var up map[string]int
+		_ = json.Unmarshal(edge["updated_ids"], &up)
+		return s.edgeChannelsInfo(up) // channel_links.go
 	case "edge/permissions/info":
 		var ch string
 		_ = json.Unmarshal(edge["channel_id"], &ch)
@@ -1035,6 +1063,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return out
 	}
 	if out, handled := s.handleHuddles(method, f); handled { // huddles.go
+		return out
+	}
+	if out, handled := s.handleCodeChannels(method, f); handled && s.Size.CodeChannels { // codechannels.go
 		return out
 	}
 	if out, handled := s.handleDrafts(method, f); handled {
@@ -1061,6 +1092,9 @@ func (s *Server) userByID(id string) (slack.User, bool) {
 				return u, true
 			}
 		}
+	}
+	if s.codeFx != nil && id == s.codeFx.Agent.ID {
+		return s.codeFx.Agent, true
 	}
 	if strings.HasPrefix(id, "U0FAKE") {
 		if n, err := strconv.Atoi(id[6:]); err == nil && n < len(s.users) {

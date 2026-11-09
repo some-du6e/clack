@@ -107,6 +107,8 @@ var defaultExperimentGroups = map[string]string{
 	"reskin_custom_responses": "on", // Slackbot custom responses as the team (CustomResponseReskin)
 	// the section menus (ui/section_menu.go)
 	"sidebar_section_search": "on", "add_channels_channel_sections_slackathon": "on", "mute_channel_edu": "on",
+	// code channels (codechannel.go), as experiments.getByUser had them on 2026-11-08
+	"session_channels": "on", "session_channel_views": "on", "code_channels_naming": "on",
 }
 
 func (a *App) sidebarExperiments() sidebarExp {

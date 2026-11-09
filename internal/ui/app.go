@@ -195,6 +195,8 @@ type App struct {
 	updWake        chan struct{}              // focus came back: is a check due? (cap 1)
 	hud            *huddleui.Controller       // the native huddle (huddle_wire.go)
 	hudOrigin      map[string]*originTracker  // headers' huddle buttons by channel (caret menus)
+	ccStopping     map[string]bool            // code channels whose agent is being stopped (codechannel.go)
+	ccPending      map[string]bool            // context bar actions in flight, "channel:key"
 	skipBody       int                        // tests: frames drawViewBody leaves the body out
 	skipAt         time.Time                  // tests: the frame being skipped
 	noKeepBody     bool                       // tests: no keepBody (KeepFocus alone)
@@ -593,7 +595,7 @@ func (a *App) layoutPrimary(gtx layout.Context) layout.Dimensions {
 	// Slack 2026 nests a channel's thread/profile pane inside the channel
 	// view, below its header and tabs (p-ia4_client--nested-secondary-view):
 	// the header and tabs keep the full width.
-	nested := secW > 0 && a.router.Current().Page() == "c" && (a.secondary.kind == secThread || a.secondary.kind == secProfile)
+	nested := secW > 0 && a.router.Current().Page() == "c" && (a.secondary.kind == secThread || a.secondary.kind == secProfile || a.secondary.kind == secSearch)
 	primW, secTop := mainW, 0
 	if nested {
 		primW, secTop = sz.X, gtx.Dp(theme.HeaderH)+gtx.Dp(theme.TabsH)

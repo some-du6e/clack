@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -83,18 +84,7 @@ func (a *App) GlobalNotifyString(name string) string {
 // name, value (as text), global=true, sync=false. Prefs are re-read so
 // all_notifications_prefs shows the change, and a "prefs" event fires.
 func (a *App) SetGlobalNotifyPref(ctx context.Context, name string, value any) error {
-	var v string
-	switch x := value.(type) {
-	case string:
-		v = x
-	case bool:
-		v = strconv.FormatBool(x)
-	case int:
-		v = strconv.Itoa(x)
-	default:
-		b, _ := json.Marshal(x)
-		v = string(b)
-	}
+	v := notifyValue(value)
 	err := a.C.Call(ctx, "users.prefs.setNotifications", url.Values{"name": {name}, "value": {v},
 		"global": {"true"}, "sync": {"false"}}, nil)
 	if err != nil {
@@ -164,4 +154,55 @@ func (a *App) setRawPref(name string, value any) {
 	a.installPrefs(raw)
 	p := a.Prefs()
 	a.emit(Event{Type: "prefs", Prefs: &p})
+}
+
+// SetGlobalNotifyPrefs writes several global notification prefs in one
+// users.prefs.setNotifications (prefs=[{name,value}], global=true), like
+// Slack's setNotificationsMultiGlobalPrefsByApi ("What to notify you
+// about" sets global_desktop and global_mobile together).
+func (a *App) SetGlobalNotifyPrefs(ctx context.Context, kv map[string]any) error {
+	type nv struct {
+		Name  string `json:"name"`
+		Value string `json:"value"`
+	}
+	var list []nv
+	for k, v := range kv {
+		list = append(list, nv{k, notifyValue(v)})
+	}
+	sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
+	b, _ := json.Marshal(list)
+	if err := a.C.Call(ctx, "users.prefs.setNotifications", url.Values{"prefs": {string(b)}, "global": {"true"}}, nil); err != nil {
+		return err
+	}
+	if _, err := a.RefreshPrefs(ctx); err == nil {
+		p := a.Prefs()
+		a.emit(Event{Type: "prefs", Prefs: &p})
+	}
+	return nil
+}
+
+// notifyValue is a notification pref's value as setNotifications takes it.
+func notifyValue(value any) string {
+	switch x := value.(type) {
+	case string:
+		return x
+	case bool:
+		return strconv.FormatBool(x)
+	case int:
+		return strconv.Itoa(x)
+	}
+	b, _ := json.Marshal(value)
+	return string(b)
+}
+
+// TeamURL is the workspace's web address (https://<domain>.slack.com/),
+// "" before the first users.prefs/team load.
+func (a *App) TeamURL() string {
+	a.S.RLock()
+	d := a.S.TeamDomain
+	a.S.RUnlock()
+	if d == "" {
+		return ""
+	}
+	return "https://" + d + ".slack.com/"
 }

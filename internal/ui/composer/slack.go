@@ -402,7 +402,15 @@ func (c *Composer) contextBarProps() slackc.Props {
 	return p
 }
 
+// ContextBar, when set, draws Slack's own context bar for a conversation
+// (the shell's code channel bar, ContextBarAgentChannelContent); it
+// returns zero dimensions where there is none.
+var ContextBar func(gtx layout.Context, h Host, ch, ts string) layout.Dimensions
+
 func (c *Composer) layoutContextBar(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	if ContextBar != nil && c.edit == nil {
+		return ContextBar(gtx, c.h, c.ch, c.ts)
+	}
 	return layout.Dimensions{}
 }
 

@@ -143,7 +143,7 @@ func (a *App) openChannelMenu(ch string, anchor image.Point) {
 		}},
 		{Label: "Mark as read", Icon: "check", Hint: "Esc", Do: func() { a.markRead(ch) }},
 		{Divider: true},
-		{Label: "Search in channel", Icon: "search", Do: func() { a.openSearch("in:<#" + ch + ">") }},
+		{Label: "Search in channel", Icon: "search", Do: func() { a.searchInChannel(ch) }},
 	}
 	if conv != nil && (conv.Kind == "channel" || conv.Kind == "private") {
 		items = append(items, MenuItem{Divider: true}, MenuItem{Label: "Leave channel", Danger: true, Do: func() {

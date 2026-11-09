@@ -525,15 +525,7 @@ func token(r Resolver, inner string, format bool) []Span {
 	case strings.HasPrefix(target, "@"):
 		return []Span{userSpan(r, target[1:], label)}
 	case strings.HasPrefix(target, "#"):
-		id := target[1:]
-		name := label
-		if name == "" {
-			name = r.ChannelName(id)
-		}
-		if name == "" {
-			name = id
-		}
-		return []Span{{Kind: Channel, Text: "#" + strings.TrimPrefix(name, "#"), ID: id}}
+		return []Span{channelSpan(r, target[1:], label)}
 	case strings.HasPrefix(target, "!subteam^"):
 		id := strings.TrimPrefix(target, "!subteam^")
 		return []Span{usergroupSpan(r, id, label)}

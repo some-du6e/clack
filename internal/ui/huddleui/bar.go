@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/widget"
 
@@ -20,6 +21,11 @@ import (
 // BarHeight is the sidebar huddle bar's height (0 when you're not in a
 // huddle), so the sidebar can leave room for it.
 func (c *Controller) BarHeight(gtx C) int {
+	return c.cardHeight(gtx, c.h.Theme(), gtx.Constraints.Max.X) + c.barHeight(gtx)
+}
+
+// barHeight is the huddle bar's own height, without the invite card.
+func (c *Controller) barHeight(gtx C) int {
 	if !c.Active() {
 		return 0
 	}
@@ -41,7 +47,22 @@ type barState struct {
 // while you're in a huddle: where it is, who's talking, and mic / deafen /
 // window / leave. Size it with BarHeight.
 func (c *Controller) LayoutBar(gtx C, th *theme.Theme) D {
-	h := c.BarHeight(gtx)
+	// an incoming invite without its window: Slack's HuddleInvite card,
+	// above the bar
+	if inv := c.cardInvite(); inv != nil {
+		w := gtx.Constraints.Max.X
+		d := layoutCard(gtx, th, c, c.view(inv), &c.card, w, false)
+		if h := c.barHeight(gtx); h > 0 {
+			defer op.Offset(image.Pt(0, d.Size.Y)).Push(gtx.Ops).Pop()
+			gtx.Constraints.Max.Y = max(0, gtx.Constraints.Max.Y-d.Size.Y)
+			c.layoutBarOnly(gtx, th, h)
+		}
+		return D{Size: image.Pt(w, d.Size.Y+c.barHeight(gtx))}
+	}
+	return c.layoutBarOnly(gtx, th, c.barHeight(gtx))
+}
+
+func (c *Controller) layoutBarOnly(gtx C, th *theme.Theme, h int) D {
 	if h == 0 {
 		return D{}
 	}
@@ -148,6 +169,15 @@ func (c *Controller) layoutBar(gtx C, th *theme.Theme, h int) D {
 			avatar(gtx, th, c.h.Images(), c.avatarURL(p.UserID, av), image.Pt(av, av), rad)
 			if p.Speaking(now) {
 				theme.Border(gtx, image.Rectangle{Max: image.Pt(av, av)}, rad, gtx.Dp(2), hudGreenLight)
+			}
+			if p.Sticker != "" { // PeerTile's p-peer_tile__sticky_reaction
+				d := gtx.Dp(14)
+				theme.Circle(gtx, image.Pt(av-d/2+gtx.Dp(3), d/2-gtx.Dp(3)), d, hudWhite)
+				txt := c.emojiText(p.Sticker)
+				at(gtx, image.Pt(av-d+gtx.Dp(3), -gtx.Dp(3)), image.Pt(d, d), func(gtx C) D {
+					centerLabel(gtx, th, image.Pt(d, d), 9, theme.Regular, hudInk, txt)
+					return D{}
+				})
 			}
 			if p.Muted {
 				d := gtx.Dp(12)

@@ -69,6 +69,24 @@ func (l *lay) messageMention(sp *richtext.Span, fs *flowStyle, k faceKey, pt uin
 	l.addPad(pad, dc, k)
 }
 
+// privateChannel is BaseMissingChannel's Nonexistent chip, a channel the
+// viewer can't see (not a link): span.c-missing_channel--private,
+// rgba(foreground_low, .13) behind rgba(foreground_max, .7) text, radius
+// 3, padding 0 2px 1px 0, the lock icon and "Private channel" 4px apart.
+// (Not ported: its tooltip, "You don’t have access to this channel (ex.
+// it’s private or in a workspace you’re not a part of), so its name isn’t
+// shown", which needs a wrapping tooltip.)
+func (l *lay) privateChannel(sp *richtext.Span, fs *flowStyle, k faceKey, pt uint8) {
+	p := &l.st.Palette
+	fg := rgba(p.Text.R, p.Text.G, p.Text.B, 0.7)
+	l.decos = append(l.decos, deco{kind: 1, bg: p.CodeBorder, padR: l.dpf(2), padB: l.dpf(1), radius: l.dp(3), target: -1, face: k, self: true, part: pt})
+	dc := int16(len(l.decos) - 1)
+	l.addIcon("lock", fs.size, k, fg, dc, -1)
+	l.addPad(l.dpf(3), dc, k) // gap 4 (the icon item ends with 1px)
+	l.addText(sp.Text, fs, k, fg, sp.Style, dc, -1)
+	l.addPad(l.dpf(2), dc, k)
+}
+
 // cardTime is AttachmentFooterTimestamp's compactTime: the time today,
 // "Yesterday"/"Tomorrow" next to it, else the date.
 func cardTime(ts string) string {

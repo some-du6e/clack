@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"strconv"
 
 	"gioui.org/layout"
 
@@ -20,6 +21,22 @@ type prefsForm struct {
 	y   int
 }
 
+// prefsDrawn is one thing a page drew, in order: tests read a page back
+// through prefsModal.rec (nil outside tests).
+type prefsDrawn struct {
+	Kind    string // h2, legend, text, check, radio, select, button, link, list
+	Key     string // the row's clickable key ("" for text)
+	Label   string
+	On      bool // checkbox/radio state
+	Enabled bool // false: shown the way Slack does, greyed (naNote)
+}
+
+func (f *prefsForm) record(kind, key, label string, on, enabled bool) {
+	if f.p.rec != nil {
+		*f.p.rec = append(*f.p.rec, prefsDrawn{Kind: kind, Key: key, Label: label, On: on, Enabled: enabled})
+	}
+}
+
 func (p *prefsModal) form(gtx layout.Context) *prefsForm {
 	return &prefsForm{p: p, gtx: gtx, w: gtx.Constraints.Max.X}
 }
@@ -32,6 +49,7 @@ func (f *prefsForm) dims() layout.Dimensions {
 // heading is a section title (Slack's h2: 700 18px/24, 30px stride).
 func (f *prefsForm) heading(t string) {
 	gtx, a := f.gtx, f.p.a
+	f.record("h2", "", t, false, true)
 	at(gtx, image.Pt(0, f.y), image.Pt(f.w, gtx.Dp(24)), func(gtx layout.Context) layout.Dimensions {
 		return a.th.Label(gtx, 18, theme.Bold, a.th.C.Fg, t)
 	})
@@ -51,6 +69,7 @@ func (f *prefsForm) note(text string, indent bool, lines int) {
 	if lines < 1 {
 		lines = 1
 	}
+	f.record("text", "", text, false, true)
 	h := gtx.Dp(18) * lines
 	at(gtx, image.Pt(x, f.y), image.Pt(f.w-x, h+gtx.Dp(2)), func(gtx layout.Context) layout.Dimensions {
 		return a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: a.th.C.FgMuted, MaxLines: lines}, text)
@@ -69,11 +88,20 @@ func (f *prefsForm) optionAt(key, label, hint string, on, radio, enabled bool, d
 	gtx, a := f.gtx, f.p.a
 	c := &a.th.C
 	b := f.p.btn(key)
-	rowH := gtx.Dp(28)
-	if hint != "" {
-		rowH = gtx.Dp(44)
+	kind := "check"
+	if radio {
+		kind = "radio"
 	}
+	f.record(kind, key, label, on, enabled)
 	w := f.w
+	textW := max(1, w-gtx.Dp(28))
+	labelLines := 1 + a.th.Measure(gtx, 15, theme.Regular, label)/textW // long labels wrap, like Slack's
+	rowH := gtx.Dp(6) + labelLines*gtx.Dp(22)
+	hintLines := 0
+	if hint != "" { // Slack's c-label__subtext: 15/22 under the label, wrapped
+		hintLines = 1 + a.th.Measure(gtx, 15, theme.Regular, hint)/textW
+		rowH += gtx.Dp(2) + hintLines*gtx.Dp(22)
+	}
 	at(gtx, image.Pt(0, f.y), image.Pt(w, rowH), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, b, nil, func(gtx layout.Context) layout.Dimensions {
 			s := gtx.Dp(18)
@@ -101,12 +129,15 @@ func (f *prefsForm) optionAt(key, label, hint string, on, radio, enabled bool, d
 				theme.RRect(gtx, r, rad, c.Bg)
 				theme.Border(gtx, r, rad, gtx.Dp(1), c.BorderStrong)
 			}
-			at(gtx, image.Pt(gtx.Dp(28), 0), image.Pt(w-gtx.Dp(28), gtx.Dp(24)), func(gtx layout.Context) layout.Dimensions {
-				return a.th.Label(gtx, 15, theme.Regular, fg, label)
+			at(gtx, image.Pt(gtx.Dp(28), 0), image.Pt(w-gtx.Dp(28), labelLines*gtx.Dp(22)+gtx.Dp(2)), func(gtx layout.Context) layout.Dimensions {
+				if labelLines == 1 {
+					return a.th.Label(gtx, 15, theme.Regular, fg, label)
+				}
+				return a.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Color: fg, MaxLines: labelLines + 1}, label)
 			})
 			if hint != "" {
-				at(gtx, image.Pt(gtx.Dp(28), gtx.Dp(22)), image.Pt(w-gtx.Dp(28), gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {
-					return a.th.Label(gtx, 13, theme.Regular, c.FgMuted, hint)
+				at(gtx, image.Pt(gtx.Dp(28), labelLines*gtx.Dp(22)+gtx.Dp(2)), image.Pt(w-gtx.Dp(28), hintLines*gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
+					return a.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Color: c.FgMuted, MaxLines: hintLines + 1}, hint)
 				})
 			}
 			return layout.Dimensions{Size: image.Pt(w, rowH)}
@@ -125,6 +156,7 @@ const naNote = "Not available in Clack yet"
 // subheading is a group legend (Slack's fieldset legend: 700 15px/22).
 func (f *prefsForm) subheading(t string) {
 	gtx, a := f.gtx, f.p.a
+	f.record("legend", "", t, false, true)
 	at(gtx, image.Pt(0, f.y), image.Pt(f.w, gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
 		return a.th.Label(gtx, 15, theme.Bold, a.th.C.Fg, t)
 	})
@@ -134,6 +166,7 @@ func (f *prefsForm) subheading(t string) {
 // para is body text (15px/22), wrapped to the page width.
 func (f *prefsForm) para(t string) {
 	gtx, a := f.gtx, f.p.a
+	f.record("text", "", t, false, true)
 	d := at(gtx, image.Pt(0, f.y), image.Pt(f.w, gtx.Dp(400)), func(gtx layout.Context) layout.Dimensions {
 		return a.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Color: a.th.C.Fg}, t)
 	})
@@ -144,6 +177,7 @@ func (f *prefsForm) para(t string) {
 // row's label).
 func (f *prefsForm) muted(t string, indent bool) {
 	gtx, a := f.gtx, f.p.a
+	f.record("text", "", t, false, true)
 	x := 0
 	if indent {
 		x = gtx.Dp(28)
@@ -184,6 +218,7 @@ func (f *prefsForm) selectBox(key, label, value string, enabled bool, items []Me
 	if label != "" {
 		f.subheading(label)
 	}
+	f.record("select", "sel."+key, value, false, enabled)
 	b := f.p.btn("sel." + key)
 	bw, bh := min(f.w, gtx.Dp(300)), gtx.Dp(36)
 	fg := c.Fg
@@ -222,6 +257,7 @@ func (f *prefsForm) selectBox(key, label, value string, enabled bool, items []Me
 func (f *prefsForm) listRow(key, avatar, name, action string, do func()) {
 	gtx, a := f.gtx, f.p.a
 	c := &a.th.C
+	f.record("list", "row."+key, name, false, action != "")
 	rh := gtx.Dp(36)
 	s := gtx.Dp(24)
 	at(gtx, image.Pt(0, f.y+(rh-s)/2), image.Pt(s, s), func(gtx layout.Context) layout.Dimensions {
@@ -258,4 +294,167 @@ func (f *prefsForm) listRow(key, avatar, name, action string, do func()) {
 		}
 	}
 	f.y += rh + gtx.Dp(4)
+}
+
+// notifyCheck is a checkbox bound to a global notification pref
+// (all_notifications_prefs.global, def when absent), written with
+// users.prefs.setNotifications like Slack's NotificationsGlobalPrefCheckbox.
+func (f *prefsForm) notifyCheck(name, label, hint string, def bool) {
+	on := f.p.notifyBool(name, def)
+	f.option("notify."+name, label, hint, on, false, func() { f.p.setNotify(name, !on) })
+}
+
+// hr is Slack's <hr> between a page's groups.
+func (f *prefsForm) hr() {
+	gtx, a := f.gtx, f.p.a
+	f.y += gtx.Dp(10)
+	theme.Fill(gtx, image.Rect(0, f.y, f.w, f.y+max(1, gtx.Dp(1))), a.th.C.Border)
+	f.y += gtx.Dp(22)
+}
+
+// prefsOpenURL opens Preferences links in the browser (tests swap it).
+var prefsOpenURL = openURL
+
+// slackHelp is a Slack Help Center article.
+func slackHelp(id string) string { return "https://slack.com/help/articles/" + id }
+
+// link is a 15px link on its own line (Slack's "Learn more", "Get help").
+func (f *prefsForm) link(key, label, url string) {
+	gtx, a := f.gtx, f.p.a
+	f.record("link", "link."+key, label, false, true)
+	b := f.p.btn("link." + key)
+	w := a.th.Measure(gtx, 15, theme.Regular, label)
+	at(gtx, image.Pt(0, f.y), image.Pt(w, gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
+		return clickArea(gtx, b, nil, func(gtx layout.Context) layout.Dimensions {
+			return a.th.Label(gtx, 15, theme.Regular, a.th.C.Link, label)
+		})
+	})
+	if clicked(b) {
+		prefsOpenURL(url)
+	}
+	f.y += gtx.Dp(28)
+}
+
+// headingLink is a page heading with a help link at its right (Slack's
+// "Messaging defaults" … "About notifications").
+func (f *prefsForm) headingLink(t, label, url string) {
+	gtx, a := f.gtx, f.p.a
+	f.record("h2", "", t, false, true)
+	at(gtx, image.Pt(0, f.y), image.Pt(f.w, gtx.Dp(24)), func(gtx layout.Context) layout.Dimensions {
+		return a.th.Label(gtx, 18, theme.Bold, a.th.C.Fg, t)
+	})
+	f.record("link", "link."+label, label, false, true)
+	b := f.p.btn("link." + label)
+	w := a.th.Measure(gtx, 15, theme.Regular, label)
+	at(gtx, image.Pt(f.w-w, f.y+gtx.Dp(2)), image.Pt(w, gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
+		return clickArea(gtx, b, nil, func(gtx layout.Context) layout.Dimensions {
+			return a.th.Label(gtx, 15, theme.Regular, a.th.C.Link, label)
+		})
+	})
+	if clicked(b) {
+		prefsOpenURL(url)
+	}
+	f.y += gtx.Dp(30)
+}
+
+// button is Slack's outline button (36px, 700 15px); disabled it greys
+// and ignores clicks.
+func (f *prefsForm) button(key, label string, enabled bool, do func()) {
+	f.buttons(prefsButton{key, label, enabled, do})
+}
+
+// prefsButton is one button of a row.
+type prefsButton struct {
+	key, label string
+	enabled    bool
+	do         func()
+}
+
+// buttons draws outline buttons side by side, 8px apart (Slack's Theme
+// colors Share / Import / Surprise me).
+func (f *prefsForm) buttons(bs ...prefsButton) {
+	gtx, a := f.gtx, f.p.a
+	c := &a.th.C
+	bh := gtx.Dp(36)
+	x := 0
+	for _, pb := range bs {
+		pb := pb
+		f.record("button", "button."+pb.key, pb.label, false, pb.enabled)
+		b := f.p.btn("button." + pb.key)
+		bw := a.th.Measure(gtx, 15, theme.Bold, pb.label) + gtx.Dp(32)
+		fg := c.Fg
+		if !pb.enabled {
+			fg = c.FgSubtle
+		}
+		at(gtx, image.Pt(x, f.y), image.Pt(bw, bh), func(gtx layout.Context) layout.Dimensions {
+			return clickArea(gtx, b, func(gtx layout.Context, s image.Point, hov bool) {
+				r := image.Rectangle{Max: s}
+				if hov && pb.enabled {
+					theme.RRect(gtx, r, gtx.Dp(8), c.BgHover)
+				}
+				theme.Border(gtx, r, gtx.Dp(8), gtx.Dp(1), c.BorderStrong)
+			}, func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints = layout.Exact(image.Pt(bw, bh))
+				return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return a.th.Label(gtx, 15, theme.Bold, fg, pb.label)
+				})
+			})
+		})
+		if clicked(b) && pb.enabled && pb.do != nil {
+			pb.do()
+			a.Invalidate()
+		}
+		x += bw + gtx.Dp(8)
+	}
+	f.y += bh + gtx.Dp(12)
+}
+
+// textBox is a read-only stand-in for one of Slack's text fields (Channel
+// keywords): the value in a bordered box, greyed.
+func (f *prefsForm) textBox(key, value, placeholder string) {
+	gtx, a := f.gtx, f.p.a
+	c := &a.th.C
+	f.record("select", "text."+key, value, false, false)
+	bh := gtx.Dp(36)
+	at(gtx, image.Pt(0, f.y), image.Pt(f.w, bh), func(gtx layout.Context) layout.Dimensions {
+		r := image.Rectangle{Max: image.Pt(f.w, bh)}
+		theme.RRect(gtx, r, gtx.Dp(8), c.Bg)
+		theme.Border(gtx, r, gtx.Dp(8), gtx.Dp(1), c.BorderStrong)
+		t, col := value, c.FgSubtle
+		if t == "" {
+			t = placeholder
+		}
+		at(gtx, image.Pt(gtx.Dp(12), 0), image.Pt(f.w-gtx.Dp(24), bh), func(gtx layout.Context) layout.Dimensions {
+			return vcenter(gtx, bh, func(gtx layout.Context) layout.Dimensions {
+				return a.th.Label(gtx, 15, theme.Regular, col, t)
+			})
+		})
+		return layout.Dimensions{Size: r.Max}
+	})
+	f.y += bh + gtx.Dp(8)
+}
+
+// linkDo is link with an action in Clack (another tab, a dialog).
+func (f *prefsForm) linkDo(key, label string, do func()) {
+	gtx, a := f.gtx, f.p.a
+	f.record("link", "link."+key, label, false, true)
+	b := f.p.btn("link." + key)
+	w := a.th.Measure(gtx, 15, theme.Regular, label)
+	at(gtx, image.Pt(0, f.y), image.Pt(w, gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
+		return clickArea(gtx, b, nil, func(gtx layout.Context) layout.Dimensions {
+			return a.th.Label(gtx, 15, theme.Regular, a.th.C.Link, label)
+		})
+	})
+	if clicked(b) && do != nil {
+		do()
+		a.Invalidate()
+	}
+	f.y += gtx.Dp(28)
+}
+
+// radio2 is a radio row bound to a boolean users.prefs value (Slack's
+// value="true"/"false" radios: msg_input_send_btn).
+func (f *prefsForm) radio2(name string, value bool, label, hint string) {
+	on := f.p.prefBool(name, false) == value
+	f.option("pref."+name+"="+strconv.FormatBool(value), label, hint, on, true, func() { f.p.setPref(name, value) })
 }

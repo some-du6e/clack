@@ -38,6 +38,12 @@ type prefsModal struct {
 	scroll    prefsScroll    // the page
 	scrollFor string         // the section scroll belongs to
 	navScroll prefsScroll
+
+	rec       *[]prefsDrawn             // tests: every row the page draws (prefs_form.go)
+	mobileOvr *bool                     // Notifications > "Set up mobile overrides" (nil: on when the levels differ)
+	navSel    string                    // Navigation: the tab Move up / Move down act on
+	themeTab  string                    // Appearance: "slack" or "custom" ("": Slack's default for the theme)
+	hexEd     map[string]*widget.Editor // Appearance > Custom theme hex fields
 }
 
 // pagePositioned is a page widget that needs its window origin (dropdowns).

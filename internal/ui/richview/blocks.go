@@ -88,6 +88,8 @@ func (l *lay) margins(b *richtext.Block) (top, first, bottom int) {
 		return l.dp(8), 0, l.dp(8)
 	case richtext.Unsupported:
 		return 0, 0, l.dp(6)
+	case richtext.UnknownBlock:
+		return l.dp(8), 0, l.dp(8)
 	}
 	return 0, 0, 0
 }
@@ -226,7 +228,12 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 		b := &bs[i]
 		if i > 0 {
 			y += l.gapBetween(&bs[i-1], b)
-			l.plainAdd("\n")
+			// cleanHTMLForExternal adds a <br> after a section only when
+			// it doesn't already end in one (a trailing "\n" text is a
+			// <br>), so a block break never doubles a newline
+			if n := len(l.d.plain); n == 0 || l.d.plain[n-1] != '\n' {
+				l.plainAdd("\n")
+			}
 		}
 		// Gallery: consecutive image files lay out as tiles.
 		if isImageFile(b) && i+1 < len(bs) && isImageFile(&bs[i+1]) {
@@ -305,13 +312,18 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 		}
 		bi := len(l.d.boxes)
 		l.d.boxes = append(l.d.boxes, box{kind: bBorder, fill: p.PreBg, stroke: p.PreBorder, bw: l.dp(1), radius: l.dp(4), target: -1, part: l.curPart})
+		c0 := int32(len(l.d.plain))
 		l.addSpans(b.Spans, &fs)
+		c1 := int32(len(l.d.plain))
 		if edited {
 			l.addEdited()
 		}
-		h, _ := l.flow(x+padL, y+pad, w-padL-pad, &fs)
+		// .c-mrkdwn__pre[data-copy-code-block]{padding-right:32px}: room
+		// for CopyCodeBlockButton (codecopy.go)
+		h, _ := l.flow(x+padL, y+pad, w-padL-l.dp(copyPadR), &fs)
 		hh := h + 2*pad
 		l.d.boxes[bi].r = image.Rect(x, y, x+w, y+hh)
+		l.d.codes = append(l.d.codes, codeRun{p0: c0, p1: c1, block: true, r: l.d.boxes[bi].r})
 		if bar >= 0 {
 			l.d.boxes[bar].r = image.Rect(x-l.dp(14), y, x-l.dp(10), y+hh)
 		}
@@ -374,6 +386,21 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 		fs.col = Over(color.NRGBA{R: p.Text.R, G: p.Text.G, B: p.Text.B, A: 128}, p.Panel)
 		l.addSpans(b.Spans, &fs)
 		h, _ := l.flow(x, y, w, &fs)
+		return h
+
+	case richtext.UnknownBlock:
+		// UnsupportedBlockFallback: .fallback (width 100%, max 426px) around
+		// an entity card (1px border, radius 12, base-pry) with .content:
+		// 13px content-sec, line-height 1.25, padding 12px.
+		cw := min(w, l.dp(426))
+		pad := l.dp(12)
+		fs := l.bodyStyle()
+		fs.size, fs.lineH, fs.col = l.sp(13), l.dp(16), p.Text2
+		l.addSpans(b.Spans, &fs)
+		th, _ := l.flow(x+pad, y+pad, cw-2*pad, &fs)
+		h := th + 2*pad
+		r := image.Rect(x, y, x+cw, y+h)
+		l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: r, fill: p.Panel, stroke: p.Border, bw: l.dp(1), radius: l.dp(12), target: -1})
 		return h
 
 	case richtext.Context:

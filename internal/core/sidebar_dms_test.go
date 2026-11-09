@@ -161,11 +161,12 @@ func TestSectionOrderFollowsLinkedList(t *testing.T) {
 			t.Errorf("built-in section got an emoji: %q", s.EmojiURL)
 		}
 	}
-	if got := strings.Join(order, ","); got != "recent_apps,standard,direct_messages,channels,stars" {
+	// coding_channels: Slack's client-made Code channels section, spliced in first
+	if got := strings.Join(order, ","); got != "coding_channels,recent_apps,standard,direct_messages,channels,stars" {
 		t.Fatalf("section order = %s", got)
 	}
 	// alphabetical within each section; app DMs in the Apps slot
-	if got := strings.Join(chans, " "); got != "Apps=DAPP Projects=C3,C2 Direct messages=D1 Channels=C1,C4 Starred=" {
+	if got := strings.Join(chans, " "); got != "Code channels= Apps=DAPP Projects=C3,C2 Direct messages=D1 Channels=C1,C4 Starred=" {
 		t.Errorf("section contents = %s", got)
 	}
 }

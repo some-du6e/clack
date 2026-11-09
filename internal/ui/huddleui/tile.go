@@ -38,6 +38,11 @@ import (
 //     own tile shows your name too (no "(you)").
 //   - a reaction: HuddlePopoverReaction, a white pill at the top left (8px
 //     in, 32px tall, padding 4px 10px, 20px emoji) that springs in.
+//   - a sticker (raise hand, Be right back…): the same white pill, kept
+//     while it's on, with the sticker's label (13px bold) when the tile is
+//     at least 100px; on a small tile a 32×28 pill with only the emoji.
+//     Audio-only is the label alone, white on base-inv. Yours is a button
+//     ("Click to remove sticker").
 //   - not connected: Slack's white spinner over a 70% black dim.
 //   - rung but not here (invite status): the avatar at 50% opacity and a
 //     white pill at the top left with paper-plane ("Invited"), clock
@@ -110,7 +115,9 @@ func (w *window) tile(gtx C, s *huddle.Session, p huddle.Participant, cam string
 			if hov {
 				w.namePill(gtx, sz, w.c.userName(p.UserID), p.Muted, speaking, ink, now)
 			}
-			if p.Reaction != "" {
+			if p.Sticker != "" { // a sticker wins over a passing reaction (ta || te)
+				w.stickerPill(gtx, p, sz)
+			} else if p.Reaction != "" {
 				if age := now.Sub(p.ReactedAt); age < 4*time.Second {
 					w.reactionPill(gtx, p.Reaction, sz, age)
 				}
@@ -270,6 +277,78 @@ func (w *window) reactionPill(gtx C, name string, sz image.Point, age time.Durat
 		return D{}
 	})
 	gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(33 * time.Millisecond)})
+}
+
+// stickerPill is HuddlePeerTile's p-huddle_peer_tile__sticky_emoji_container.
+func (w *window) stickerPill(gtx C, p huddle.Participant, sz image.Point) {
+	small := sz.X <= gtx.Dp(100)
+	label := ""
+	if !small {
+		label = w.c.stickerLabel(p.Sticker)
+	}
+	audioOnly := stickerBase(p.Sticker) == "speaker" && !small
+	es := gtx.Dp(20)
+	h := gtx.Dp(32)
+	x0 := gtx.Dp(8)
+	var r image.Rectangle
+	if small {
+		h = gtx.Dp(28)
+		x0 = gtx.Dp(4)
+		r = image.Rect(x0, x0, x0+gtx.Dp(32), x0+h)
+	} else {
+		pw := gtx.Dp(10)*2 + es
+		lw := 0
+		if label != "" {
+			lw = labelSize(gtx, w.th, 13, theme.Bold, label).X + gtx.Dp(8)
+			pw += lw
+		}
+		if audioOnly {
+			pw -= es + gtx.Dp(4) // the icon hides, the label loses its left padding
+		}
+		pw = min(pw, sz.X-gtx.Dp(24))
+		r = image.Rect(x0, x0, x0+pw, x0+h)
+	}
+	if r.Dx() <= 0 {
+		return
+	}
+	bg, fg := hudWhite, hudInk
+	if audioOnly {
+		bg, fg = hudInk, hudWhite
+	}
+	draw := func(gtx C, hov bool) {
+		rr := image.Rectangle{Max: r.Size()}
+		pillShadow(gtx, rr)
+		theme.RRect(gtx, rr, rr.Dy()/2, bg)
+		x := gtx.Dp(10)
+		if small {
+			x = (rr.Dx() - es) / 2
+		}
+		if !audioOnly {
+			txt := w.emojiText(p.Sticker)
+			at(gtx, image.Pt(x, (rr.Dy()-es)/2), image.Pt(es, es), func(gtx C) D {
+				centerLabel(gtx, w.th, image.Pt(es, es), unit.Sp(float32(es)/gtx.Metric.PxPerSp*0.9), theme.Regular, hudInk, txt)
+				return D{}
+			})
+			x += es + gtx.Dp(4)
+		}
+		if label != "" {
+			ls := labelSize(gtx, w.th, 13, theme.Bold, label)
+			tw := max(0, rr.Dx()-x-gtx.Dp(10))
+			defer clip.Rect(image.Rect(x, 0, x+tw, rr.Dy())).Push(gtx.Ops).Pop()
+			at(gtx, image.Pt(x, (rr.Dy()-ls.Y)/2), ls, func(gtx C) D { return w.th.Label(gtx, 13, theme.Bold, fg, label) })
+		}
+	}
+	at(gtx, r.Min, r.Size(), func(gtx C) D {
+		if p.Self { // "Click to remove sticker"
+			cl := w.click("sticker:self")
+			if cl.Clicked(gtx) {
+				go func() { _ = w.c.ToggleHand() }()
+			}
+			return button(gtx, cl, r.Size(), draw, nil)
+		}
+		draw(gtx, false)
+		return D{Size: r.Size()}
+	})
 }
 
 // inviteTile is a rung person who isn't in the huddle (yet).

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/emoji"
+	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 )
 
@@ -62,7 +63,8 @@ type Store struct {
 	// names of conversations we are not a member of (from search/browse)
 	names       map[string]string
 	prefsCached bool
-	ext         map[string]*slack.Conversation // non-sidebar conversations
+	ext         map[string]*slack.Conversation    // non-sidebar conversations
+	access      map[string]richtext.ChannelAccess // edge channels/info answers for mentioned channels
 	bots        map[string]BotInfo
 
 	// gen counts changes to what the disk cache holds; SaveCache writes
@@ -83,6 +85,40 @@ type Store struct {
 }
 
 // PutName remembers the name of a conversation outside the sidebar.
+// SetChannelAccess records what edge channels/info said about a channel
+// mentioned in a message: visible, private (the viewer is in it) or
+// hidden (in failed_ids). Memory only.
+func (s *Store) SetChannelAccess(id string, acc richtext.ChannelAccess) {
+	if id == "" {
+		return
+	}
+	s.mu.Lock()
+	if s.access == nil {
+		s.access = map[string]richtext.ChannelAccess{}
+	}
+	s.access[id] = acc
+	s.mu.Unlock()
+}
+
+// ChannelAccess is richtext.ChannelAccessResolver: a stored conversation
+// is visible (private ones with the lock), else what edge channels/info
+// said, else unresolved.
+func (s *Store) ChannelAccess(id string) richtext.ChannelAccess {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	c, ok := s.Convs[id]
+	if !ok {
+		c, ok = s.ext[id]
+	}
+	if ok {
+		if c.IsPrivate && !c.IsIM && !c.IsMPIM {
+			return richtext.ChannelPrivate
+		}
+		return richtext.ChannelVisible
+	}
+	return s.access[id]
+}
+
 func (s *Store) PutName(id, name string) {
 	if id == "" || name == "" {
 		return
@@ -154,6 +190,17 @@ type Prefs struct {
 	// (Notifications > "Include a preview of the message"): desktop
 	// notifications show no message text.
 	NoTextInNotifications bool `json:"no_text_in_notifications,omitempty"`
+	// NoDesktopPush is global_desktop_push_enabled=false (Notifications >
+	// "Desktop notifications" off): no desktop notifications at all.
+	NoDesktopPush bool `json:"no_desktop_push,omitempty"`
+	// SendOnModEnter is msg_input_send_btn (Advanced > "When writing a
+	// message, press Enter to… Start a new line"): Enter adds a line and
+	// Mod+Enter sends.
+	SendOnModEnter bool `json:"msg_input_send_btn,omitempty"`
+	// HiddenViews are the Home > "Always show in the sidebar" links turned
+	// off: enable_threads_view, enable_huddles_home_view, enable_sent_view,
+	// enable_saved_view, enable_unified_directory_view (=false).
+	HiddenViews []string `json:"hidden_views,omitempty"`
 
 	// Render prefs (Preferences dialog). Named so the zero value is
 	// Slack's default: the disk cache drops false fields.
@@ -299,6 +346,12 @@ func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
 	p.HasStarredItem = boolean("has_starred_item", false)
 	p.ActivityDMsOptOut = boolean("activity_dms_opt_out", false)
 	p.CompactRail = boolean("ia4_compact_mode", false)
+	p.SendOnModEnter = boolean("msg_input_send_btn", false)
+	for _, k := range []string{"enable_threads_view", "enable_huddles_home_view", "enable_sent_view", "enable_saved_view", "enable_unified_directory_view"} {
+		if !boolean(k, true) {
+			p.HiddenViews = append(p.HiddenViews, k)
+		}
+	}
 	// Slack calls the Google set "android"/"google"; everything else is Apple.
 	switch p.EmojiMode {
 	case "android", "google":
@@ -366,6 +419,10 @@ func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
 			_ = json.Unmarshal(n.Global["global_mobile"], &gm)
 			p.GlobalDesktop, p.GlobalMobile = gd, gm
 			p.NoTextInNotifications = truthy(n.Global["no_text_in_notifications"])
+			if r, ok := n.Global["global_desktop_push_enabled"]; ok { // absent: on
+				v := strings.Trim(string(r), `"`)
+				p.NoDesktopPush = v == "false" || v == "0"
+			}
 		}
 	}
 	p.Muted = make([]string, 0, len(muted))
