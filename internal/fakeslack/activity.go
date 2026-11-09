@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
@@ -21,6 +22,9 @@ import (
 //     archive / unarchive clear and restore it, clearBefore {before_ts}
 //     clears everything older, markAllRead reads everything; all are
 //     recorded (ActivityWrites).
+//   - activity.views answers the default saved views and the global prefs
+//     ({sort, density}); activity.prefs.update {density, sort} changes
+//     them (recorded too).
 
 // The Activity fixture's messages, in ViewsChannel and the first DM.
 var activityMsgs = []slack.Message{
@@ -88,6 +92,7 @@ func ActivityKeys() []string {
 type activityState struct {
 	read     map[string]bool // true read, false unread (overrides the fixture)
 	archived map[string]bool
+	density  string // activity.prefs.update's density ("" = "compact")
 }
 
 func (v *viewsState) act() *activityState {
@@ -151,6 +156,26 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 			}
 		}
 		return ok("messages", out), true
+	case "activity.views":
+		v.mu.Lock()
+		d := v.act().density
+		v.mu.Unlock()
+		if d == "" {
+			d = "compact"
+		}
+		var views []map[string]any
+		for i, t := range []string{"all", "dms", "mentions", "threads"} {
+			views = append(views, map[string]any{"id": "Vw0FAKE" + strconv.Itoa(i), "view_type": t, "position": i, "density": d, "sort": "newest"})
+		}
+		return ok("views", views, "prefs", map[string]any{"sort": "newest", "density": d}), true
+	case "activity.prefs.update":
+		v.mu.Lock()
+		v.writes = append(v.writes, ActivityWrite{Method: method, Form: f})
+		if d := f.Get("density"); d != "" {
+			v.act().density = d
+		}
+		v.mu.Unlock()
+		return ok(), true
 	case "activity.markRead", "activity.markUnread", "activity.archive", "activity.unarchive", "activity.markAllRead", "activity.clearBefore":
 		v.mu.Lock()
 		v.writes = append(v.writes, ActivityWrite{Method: method, Form: f})

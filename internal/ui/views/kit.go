@@ -82,6 +82,12 @@ type pal struct {
 	Meta        color.NRGBA // metadata text (#616061)
 	Ring        color.NRGBA // popover/tile rings (#1d1c1d@.13)
 	Page        color.NRGBA // gray page background (#f8f8f8)
+
+	// Activity's pressed quick filter (Unreads):
+	// .p-activity_ia4_page__filter_bar--active, light-dark(...) and its
+	// :hover.
+	QuickBg, QuickBorder, QuickFg                color.NRGBA
+	QuickHoverBg, QuickHoverBorder, QuickHoverFg color.NRGBA
 }
 
 // Light values are Slack's design tokens (--dt_color-*), measured in the
@@ -128,6 +134,13 @@ var lightPal = pal{
 	Meta:        rgb(0x616061),
 	Ring:        argb(0x211d1c1d),
 	Page:        rgb(0xf8f8f8),
+
+	QuickBg:          rgb(0xe3f8ff),    // base-hgl-1
+	QuickBorder:      argb(0x330e9dd3), // otl-hgl-1-sec
+	QuickFg:          rgb(0x1264a3),    // content-hgl-1
+	QuickHoverBg:     rgb(0xe3f8ff),    // base-hgl-1
+	QuickHoverBorder: rgb(0x1264a3),    // content-hgl-1
+	QuickHoverFg:     rgb(0x1264a3),
 }
 
 // Dark values follow Slack's dark mode tokens.
@@ -175,6 +188,13 @@ var darkPal = pal{
 	Meta:        rgb(0x9a9b9e),
 	Ring:        argb(0x4d797c81),
 	Page:        rgb(0x1a1d21), // base-sec
+
+	QuickBg:          rgb(0x05241b), // base-hgl-2
+	QuickBorder:      rgb(0x083f2e), // plt-jade-10
+	QuickFg:          rgb(0x8dd2b5), // plt-jade-80
+	QuickHoverBg:     rgb(0x001a2d), // base-hgl-1
+	QuickHoverBorder: rgb(0x2ba5ce), // content-hgl-1
+	QuickHoverFg:     rgb(0x2ba5ce),
 }
 
 // Gio composites in linear RGB while browsers blend in sRGB, so a
@@ -192,12 +212,57 @@ func palOf(th *theme.Theme) *pal {
 		flatLight, flatDark = flatPal(lightPal), flatPal(darkPal)
 	})
 	if p := themedPal(th); p != nil {
-		return p
+		return accountPal(th, p)
 	}
 	if th != nil && th.Dark {
-		return &flatDark
+		return accountPal(th, &flatDark)
 	}
-	return &flatLight
+	return accountPal(th, &flatLight)
+}
+
+var (
+	acctMu  sync.Mutex
+	acctTh  *theme.Theme
+	acctGen uint64
+	acctIn  *pal
+	acctOut pal
+)
+
+// accountPal lays the account's Slack theme (ia_theme, applied to th.C by
+// the ui root) over p where it changes Slack's --dt_color-theme-* tokens:
+// theme-base-pry (the selected tab's underline), theme-base-imp and
+// theme-content-imp (unread dots and count badges). With Slack's default
+// theme p is returned as is.
+func accountPal(th *theme.Theme, p *pal) *pal {
+	if th == nil {
+		return p
+	}
+	def := theme.LightPalette
+	if th.Dark {
+		def = theme.DarkPalette
+	}
+	tab := th.C.Accent != def.Accent
+	imp := th.C.ThemeImp.A != 0
+	if !tab && !imp {
+		return p
+	}
+	acctMu.Lock()
+	defer acctMu.Unlock()
+	if acctTh != th || acctGen != th.Gen || acctIn != p {
+		o := *p
+		if tab {
+			o.TabLine = th.C.Accent
+		}
+		if imp {
+			o.Accent, o.Badge = th.C.ThemeImp, th.C.ThemeImp
+			if th.C.ThemeImpText.A != 0 {
+				o.AccentText = th.C.ThemeImpText
+			}
+		}
+		acctTh, acctGen, acctIn, acctOut = th, th.Gen, p, o
+	}
+	cp := acctOut
+	return &cp
 }
 
 func flatPal(p pal) pal {
@@ -205,6 +270,7 @@ func flatPal(p pal) pal {
 		&p.TabHover, &p.Pressed, &p.CardLine, &p.SegLine, &p.Ring} {
 		*c = flatten(*c, p.Bg)
 	}
+	p.QuickBorder = flatten(p.QuickBorder, p.QuickBg)
 	return p
 }
 
@@ -857,15 +923,21 @@ func (b *base) linkButton(gtx C, c *widget.Clickable, size unit.Sp, label string
 }
 
 // filterButton is the outline quick-filter toggle ("Unreads"): h 32,
-// padding 0 8px, radius 8, 13px bold with a 16px icon; pressed state is
-// #e3f8ff with a #1264a3 border, text and icon.
+// padding 0 8px, radius 8, 13px bold with a 16px icon; pressed, Slack's
+// p-activity_ia4_page__filter_bar--active: light base-hgl-1 with an
+// otl-hgl-1-sec border and content-hgl-1 text, dark base-hgl-2 with jade
+// border and text (plt-jade-10 / -80); hovered, base-hgl-1 with a
+// content-hgl-1 border and text in both.
 func (b *base) filterButton(gtx C, t *toggle, icon, label string) D {
 	return t.Layout(gtx, func(gtx C) D {
 		pointerCursor(gtx)
-		on := t.Value
+		on, hov := t.Value, t.Hovered()
 		fg := b.p.Text
 		if on {
-			fg = b.p.PillOnFg
+			fg = b.p.QuickFg
+			if hov {
+				fg = b.p.QuickHoverFg
+			}
 		}
 		m := op.Record(gtx.Ops)
 		d := layout.Inset{Left: 8, Right: 8}.Layout(gtx, func(gtx C) D {
@@ -888,12 +960,16 @@ func (b *base) filterButton(gtx C, t *toggle, icon, label string) D {
 		call := m.Stop()
 		r := image.Rectangle{Max: d.Size}
 		rad := gtx.Dp(8)
-		if on {
-			rrect(gtx, r, rad, b.p.PillOnBg)
-			border(gtx, r, rad, max(1, gtx.Dp(1)), b.p.PillOnFg)
-		} else {
+		switch {
+		case on && hov:
+			rrect(gtx, r, rad, b.p.QuickHoverBg)
+			border(gtx, r, rad, max(1, gtx.Dp(1)), b.p.QuickHoverBorder)
+		case on:
+			rrect(gtx, r, rad, b.p.QuickBg)
+			border(gtx, r, rad, max(1, gtx.Dp(1)), b.p.QuickBorder)
+		default:
 			rrect(gtx, r, rad, b.p.Bg)
-			if t.Hovered() {
+			if hov {
 				rrect(gtx, r, rad, b.p.Hover)
 			}
 			border(gtx, r, rad, max(1, gtx.Dp(1)), b.p.Border)

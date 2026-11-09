@@ -104,7 +104,10 @@ func (a *App) SetExperimentGroup(name, group string) {
 var defaultExperimentGroups = map[string]string{
 	"filter_dormant_channels": "on", "improve_mute_pref": "on", "dm_recency_sort_rollout": "without_edu",
 	"activity_inbox": "on", "agent_tasks": "on", "agents_landing_page": "on", "later_todos": "on",
-	"reskin_custom_responses": "on", // Slackbot custom responses as the team (CustomResponseReskin)
+	// the Activity page's layout toggle sits in its header (5Ns/ XW; the
+	// live audit, docs/VIEWS-AUDIT.md): its density is the global pref
+	"activity_global_settings": "on",
+	"reskin_custom_responses":  "on", // Slackbot custom responses as the team (CustomResponseReskin)
 	// the section menus (ui/section_menu.go)
 	"sidebar_section_search": "on", "add_channels_channel_sections_slackathon": "on", "mute_channel_edu": "on",
 	// code channels (codechannel.go), as experiments.getByUser had them on 2026-11-08

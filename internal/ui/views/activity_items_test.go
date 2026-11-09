@@ -28,6 +28,9 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
 )
 
+// actViewsDensity is the layout the fake activity.views answers.
+var actViewsDensity = "compact"
+
 // actFeedLen is the number of entries in testdata/activity_feed.json.
 const actFeedLen = 38
 
@@ -55,6 +58,9 @@ func actFeedAppWith(t *testing.T, rec func(method string, form url.Values)) *cor
 			_, _ = w.Write(feed)
 		case "messages.list":
 			_, _ = w.Write([]byte(`{"ok":true,"messages":{}}`)) // k-channel-gone stays unhydrated
+		case "activity.views": // the saved layout (fetchActivityViews: prefs.density)
+			_, _ = w.Write([]byte(`{"ok":true,"views":[{"id":"V1","view_type":"all","density":"` + actViewsDensity +
+				`"}],"prefs":{"sort":"newest","density":"` + actViewsDensity + `"}}`))
 		default:
 			_, _ = w.Write([]byte(`{"ok":true}`))
 		}
@@ -152,48 +158,50 @@ func TestActivityEveryItemTypeRenders(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	page := actPage(v)
-	// Slack's strings for each row (activity_slack.go cites the modules):
-	// the sender, the context pill (with its icon) and the text drawn
-	// instead of a message ("-" = none).
-	type want struct{ name, foot, icon, body, sub string }
+	// Slack's strings for each row (activity_slack.go cites the modules;
+	// gantry boot-render's ActivityRowContentMultiLine / SingleLine with the
+	// layout revisions on): the sender, the Detailed footer's text and its
+	// 16px type icon, the Dense row's 20px type icon, the text drawn
+	// instead of a message, and the subtext before the message.
+	type want struct{ name, foot, icon, dense, body, sub string }
 	cases := map[string]want{
-		"k-channel":         {"Bob Example", "#general", "", "", ""},
-		"k-channel-many":    {"Alice Example", "#general", "", "", ""},
-		"k-channel-gone":    {"", "#general", "", "", ""},
-		"k-dm":              {"Alice Example", "Direct Message", "direct-messages", "", ""},
-		"k-at-user":         {"Alice Example", "Mention in #general", "mentions", "", ""},
-		"k-at-channel":      {"Bob Example", "Mention in #general", "mentions", "", ""},
-		"k-at-everyone":     {"Bob Example", "Mention in #general", "mentions", "", ""},
-		"k-at-group":        {"Alice Example", "Mention in #general", "mentions", "", ""},
-		"k-keyword":         {"Bob Example", "Keyword in #general", "mentions", "", ""},
-		"k-thread":          {"Bob Example and Alice Example", "Thread in #general", "threads", "", ""},
-		"k-thread-many":     {"Bob Example & 2 others", "Thread in #general", "threads", "", ""},
-		"k-reaction":        {"Bob Example", "Reacted", "", "", "You: "},
-		"k-reaction-many":   {"Alice Example & others", "Reacted", "", "", "You: "},
-		"k-bot":             {"", "App", "apps", "", ""},
-		"k-mpdm":            {"Alice Example", "Alice Example, Bob Example", "direct-messages", "", ""},
-		"k-invite":          {"Alice Example", "Invitation", "paper-plane", "invited you to #random", ""},
-		"k-quiet":           {"Alice Example", "Invitation", "paper-plane", "invited you to #random", ""},
-		"k-unjoined":        {"Bob Example", "Mention in #random", "mentions", "", ""},
-		"k-ext-channel":     {"eve", "Invitation", "paper-plane", "invited you to #partners", ""},
-		"k-ext-dm":          {"Eve Example", "Invitation", "paper-plane", "invited you to direct message", ""},
-		"k-ext-revoked":     {"eve", "Invitation", "paper-plane", "You received an invitation that has been ignored, expired, or is no longer available for another reason.", ""},
-		"k-joiner":          {"Bob Example", "Workspace invitation", "paper-plane", "Accepted your invitation to join Slack \u2014\u00a0take a second to say hello.", ""},
-		"k-joiner-reminder": {"Bob Example", "Workspace invitation", "paper-plane", "Joined your workspace. A welcome from you will help them get started.", ""},
-		"k-prejoin":         {"Bob Example", "Workspace invitation", "notifications", "Was invited to join Synthetic Club \u2014 take a second to say hello.", ""},
-		"k-reminder":        {"Reminder", "Reminder from #general", "reminder", "", "Alice Example: "},
-		"k-reminder-plain":  {"Reminder", "Reminder", "reminder", "water the synthetic plants", ""},
-		"k-reminder-file":   {"Reminder", "Reminder from", "reminder", "You set a reminder about this file", ""},
-		"k-alert":           {"Slack", "Channel", "notifications", "A synthetic channel was archived.", ""},
-		"k-future":          {"Bob Example", "#general", "mentions", "", ""},
-		"k-mine":            {"", "Mention in #general", "mentions", "", "You: "},
+		"k-channel":         {"Bob Example", "#general", "", "channel", "", ""},
+		"k-channel-many":    {"Alice Example", "#general", "", "channel", "", ""},
+		"k-channel-gone":    {"", "#general", "", "channel", "", ""},
+		"k-dm":              {"Alice Example", "Direct message", "", "direct-messages", "", ""},
+		"k-at-user":         {"Alice Example", "Mention in #general", "mentions", "mentions", "", ""},
+		"k-at-channel":      {"Bob Example", "Mention in #general", "mentions", "mentions", "", ""},
+		"k-at-everyone":     {"Bob Example", "Mention in #general", "mentions", "mentions", "", ""},
+		"k-at-group":        {"Alice Example", "Mention in #general", "mentions", "mentions", "", ""},
+		"k-keyword":         {"Bob Example", "Mention in #general", "mentions", "mentions", "", ""},
+		"k-thread":          {"Bob Example +1", "Thread in #general", "threads", "threads", "", ""},
+		"k-thread-many":     {"Bob Example +2", "Thread in #general", "threads", "threads", "", ""},
+		"k-reaction":        {"Bob Example", "#general", "", "reaction", "", ""},
+		"k-reaction-many":   {"Alice Example +1", "#general", "", "reaction", "", ""},
+		"k-bot":             {"", "App", "", "apps", "", ""},
+		"k-mpdm":            {"Alice Example", "Alice Example, Bob Example", "", "direct-messages", "", ""},
+		"k-invite":          {"Alice Example", "Invitation", "paper-plane", "paper-plane", "invited you to #random", ""},
+		"k-quiet":           {"Alice Example", "Invitation", "paper-plane", "paper-plane", "invited you to #random", ""},
+		"k-unjoined":        {"Bob Example", "Mention in #random", "mentions", "mentions", "", ""},
+		"k-ext-channel":     {"eve", "Invitation", "paper-plane", "paper-plane", "invited you to #partners", ""},
+		"k-ext-dm":          {"Eve Example", "Invitation", "paper-plane", "paper-plane", "invited you to direct message", ""},
+		"k-ext-revoked":     {"eve", "Invitation", "paper-plane", "paper-plane", "You received an invitation that has been ignored, expired, or is no longer available for another reason.", ""},
+		"k-joiner":          {"Bob Example", "Workspace invitation", "paper-plane", "paper-plane", "Accepted your invitation to join Slack \u2014\u00a0take a second to say hello.", ""},
+		"k-joiner-reminder": {"Bob Example", "Workspace invitation", "paper-plane", "paper-plane", "Joined your workspace. A welcome from you will help them get started.", ""},
+		"k-prejoin":         {"Bob Example", "Workspace invitation", "", "notifications", "Was invited to join Synthetic Club \u2014 take a second to say hello.", ""},
+		"k-reminder":        {"Reminder", "Reminder from #general", "bookmark", "bookmark", "", "Alice Example: "},
+		"k-reminder-plain":  {"Reminder", "", "bookmark", "bookmark", "water the synthetic plants", ""},
+		"k-reminder-file":   {"Reminder", "Reminder from ", "file", "file", "You set a reminder about this file", ""},
+		"k-alert":           {"Slack", "", "", "notifications", "A synthetic channel was archived.", ""},
+		"k-future":          {"Bob Example", "#general", "mentions", "mentions", "", ""},
+		"k-mine":            {"", "Mention in #general", "mentions", "mentions", "", "You: "},
 		// list items before their list loads (Hi+d ListItemName: "Untitled
-		// item"; ActivityListName: the lists icon and an empty title)
-		"k-list-assigned": {"Alice Example", "Mention in", "mentions", "Assigned to you: Untitled item", ""},
-		"k-list-edited":   {"Bob Example", "Mention in", "mentions", "Edited Untitled item: ", ""},
-		"k-list-mention":  {"Alice Example", "Mention in", "mentions", "@mention \u2022  \u2022 Untitled item", ""},
-		"k-list-todo":     {"", "Mention in", "mentions", "List update: Untitled item", ""},
-		"k-list-approval": {"", "", "mentions", "", ""},
+		// item"; the footer's lists icon and an empty title)
+		"k-list-assigned": {"Alice Example", "Mention in ", "mentions", "mentions", "Assigned to you: Untitled item", ""},
+		"k-list-edited":   {"Bob Example", "Mention in ", "mentions", "mentions", "Edited Untitled item: ", ""},
+		"k-list-mention":  {"Alice Example", "Mention in ", "mentions", "mentions", "@mention \u2022  \u2022 Untitled item", ""},
+		"k-list-todo":     {"", "Mention in ", "mentions", "mentions", "List update: Untitled item", ""},
+		"k-list-approval": {"", "", "mentions", "mentions", "", ""},
 	}
 	for i := range page.Items {
 		it := &page.Items[i]
@@ -204,10 +212,13 @@ func TestActivityEveryItemTypeRenders(t *testing.T) {
 				t.Errorf("%s: name %q, want %q", key, d.name, w.name)
 			}
 			if d.foot != w.foot {
-				t.Errorf("%s: pill %q, want %q", key, d.foot, w.foot)
+				t.Errorf("%s: footer %q, want %q", key, d.foot, w.foot)
 			}
 			if d.footIcon != w.icon {
-				t.Errorf("%s: pill icon %q, want %q", key, d.footIcon, w.icon)
+				t.Errorf("%s: footer icon %q, want %q", key, d.footIcon, w.icon)
+			}
+			if d.typeIcon != w.dense {
+				t.Errorf("%s: dense type icon %q, want %q", key, d.typeIcon, w.dense)
 			}
 			if d.body != w.body {
 				t.Errorf("%s: body %q, want %q", key, d.body, w.body)
@@ -223,8 +234,8 @@ func TestActivityEveryItemTypeRenders(t *testing.T) {
 			if !d.pill {
 				t.Errorf("%s: no context pill", key)
 			}
-			if key != "k-list-approval" && d.footMid != "lists" {
-				t.Errorf("%s: pill without the lists icon (%q)", key, d.footMid)
+			if key != "k-list-approval" && d.ft.nameIcon != "lists" {
+				t.Errorf("%s: footer without the lists icon (%q)", key, d.ft.nameIcon)
 			}
 			// the to-do and approval entries name no one (hliv EM: the
 			// message author): Slack's loading shimmer
@@ -232,14 +243,14 @@ func TestActivityEveryItemTypeRenders(t *testing.T) {
 				t.Errorf("%s: sender %q, want none", key, d.name)
 			}
 		}
-		if key == "k-reaction" && !d.reacted {
-			t.Errorf("%s: the reaction pill isn't Reacted + emoji", key)
+		if (key == "k-reaction" || key == "k-reaction-many") && !d.subReact {
+			t.Errorf("%s: no Reacted subtext", key)
 		}
-		if key == "k-reaction-many" && d.nameDense != "Alice Example +1" {
-			t.Errorf("%s: dense name %q", key, d.nameDense)
+		if (key == "k-ext-channel" || key == "k-reminder-plain") && d.locOn != (key == "k-ext-channel") {
+			t.Errorf("%s: dense location shown %v", key, d.locOn)
 		}
-		if key == "k-thread-many" && d.nameDense != "Bob Example +2" {
-			t.Errorf("%s: dense name %q", key, d.nameDense)
+		if key == "k-dm" && (d.loc != "Direct message" || !d.locOn) {
+			t.Errorf("%s: dense location %q", key, d.loc)
 		}
 		if (key == "k-channel" || key == "k-channel-many") && it.Msg == nil {
 			t.Errorf("%s: the channel post wasn't hydrated", key)
@@ -313,9 +324,10 @@ func actShots(t *testing.T, app *core.App) {
 }
 
 // A reaction whose emoji has no image in the store (a custom one Clack
-// doesn't know): Slack's pill still shows the emoji. aJri hands vbPY's
-// Emoji ":name:" with renderEmojiFallback, which draws an <img> with no
-// src and that alt text, clipped to the 16px emoji box ("Reacted :ta").
+// doesn't know): Slack still shows the emoji. QTZf ReactionContent and
+// ActivityDecoupledTypeIcon hand vbPY's Emoji ":name:" with
+// renderEmojiFallback, which draws an <img> with no src and that alt
+// text, clipped to the emoji box ("Reacted :ta").
 func TestActivityReactionWithoutEmojiImage(t *testing.T) {
 	app := actFeedApp(t)
 	v := NewActivity(&slickHost{app: app, th: theme.New(false)})
@@ -337,22 +349,17 @@ func TestActivityReactionWithoutEmojiImage(t *testing.T) {
 	unknown := *known
 	unknown.Reaction = &core.ActivityReaction{User: known.Reaction.User, Name: "tada_custom"}
 	dk, du := v.describe(known, page.Convs), v.describe(&unknown, page.Convs)
-	if !du.reacted || du.foot != "Reacted" || du.footEmoji != "" || du.footAlt != ":tada_custom:" {
-		t.Fatalf("pill %q reacted %v image %q alt %q, want Reacted + :tada_custom:", du.foot, du.reacted, du.footEmoji, du.footAlt)
+	if !du.subReact || du.typeIcon != "reaction" || du.footEmoji != "" || du.footAlt != ":tada_custom:" {
+		t.Fatalf("subReact %v type %q image %q alt %q, want the :tada_custom: alt text", du.subReact, du.typeIcon, du.footEmoji, du.footAlt)
 	}
-	pill := func(d *actDesc) image.Point {
+	icon := func(d *actDesc) image.Point {
 		gtx := actFrame(&ops, sz)
 		gtx.Constraints.Min = image.Point{}
-		return v.actPill(gtx, d, false).Size
+		return v.actTypeIcon(gtx, d).Size
 	}
 	// the alt text takes the image's place and size, nothing wider
-	if a, b := pill(&du), pill(&dk); a != b {
-		t.Errorf("pill with the alt text %v, with the image %v", a, b)
-	}
-	noEmoji := du
-	noEmoji.footAlt = ""
-	if a, b := pill(&du), pill(&noEmoji); a != b {
-		t.Errorf("pill with the alt text %v, with the reaction icon %v", a, b)
+	if a, b := icon(&du), icon(&dk); a != b {
+		t.Errorf("type icon with the alt text %v, with the image %v", a, b)
 	}
 	gtx := actFrame(&ops, sz)
 	gtx.Constraints.Min = image.Point{}

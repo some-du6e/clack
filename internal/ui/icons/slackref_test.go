@@ -154,6 +154,8 @@ var slackRef = map[string]string{
 	"list-view":            "list-view",
 	"lists":                "lists",
 	"list-item":            "list-item",
+	"table":                "table",
+	"menu":                 "menu",
 	"lock":                 "lock",
 	"lock-filled":          "lock-filled",
 	"magic-wand":           "magic-wand",

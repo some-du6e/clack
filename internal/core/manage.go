@@ -548,6 +548,53 @@ func (a *App) ClearActivityBefore(ctx context.Context, beforeTS string, f *Activ
 	return a.C.Call(ctx, "activity.clearBefore", p, nil)
 }
 
+// ActivityDensity reads the Activity page's layout the way Slack's
+// fetchActivityViews does: activity.views answers the saved views (each
+// with its density) and, with activity_global_settings on, the global
+// prefs whose density applies to every view (formatFilterViewState,
+// getDensityFromApiDensity: "dense", else Detailed). ok is false when
+// neither says.
+func (a *App) ActivityDensity(ctx context.Context) (dense, ok bool, err error) {
+	var res struct {
+		Views []struct {
+			ViewType string `json:"view_type"`
+			Density  string `json:"density"`
+		} `json:"views"`
+		Prefs *struct {
+			Density string `json:"density"`
+		} `json:"prefs"`
+	}
+	if err := a.C.Call(ctx, "activity.views", url.Values{}, &res); err != nil {
+		return false, false, err
+	}
+	if a.Experiment("activity_global_settings") == "on" && res.Prefs != nil && res.Prefs.Density != "" {
+		return res.Prefs.Density == "dense", true, nil
+	}
+	for _, v := range res.Views {
+		if v.ViewType == "all" && v.Density != "" {
+			return v.Density == "dense", true, nil
+		}
+	}
+	return false, false, nil
+}
+
+// SetActivityDensity saves the layout toggle. With activity_global_settings
+// on (the toggle in the page header) Slack writes the global prefs:
+// activity.prefs.update {density: "dense"|"compact"}
+// (updateAllActivityViewsByApi). Without it the All view's density only
+// lives in the page (updateActivityViewsByApi skips the API for the All
+// view), so there is nothing to write: saved reports which happened.
+func (a *App) SetActivityDensity(ctx context.Context, dense bool) (saved bool, err error) {
+	if a.Experiment("activity_global_settings") != "on" {
+		return false, nil
+	}
+	d := "compact"
+	if dense {
+		d = "dense"
+	}
+	return true, a.C.Call(ctx, "activity.prefs.update", url.Values{"density": {d}}, nil)
+}
+
 // MarkAllActivityRead marks every unread item of a view read. It tries
 // activity.markAllRead and falls back to marking each unread item.
 func (a *App) MarkAllActivityRead(ctx context.Context, view string) error {

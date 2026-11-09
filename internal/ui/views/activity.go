@@ -48,7 +48,7 @@ var (
 	actTabLabels = []string{"All", "DMs", "Mentions", "Threads"}
 	actTabIcons  = []string{"", "dms", "at", "threads"}
 	actTabTypes  = []string{"", "", actMentionTypes, "thread_v2"}
-	actSegIcons  = []string{"list-view", "list-bullet"} // Detailed, Dense
+	actSegIcons  = []string{"table", "menu"} // Detailed, Dense (ActivityFilterLayoutToggle's icons)
 )
 
 // actFilter is one checkbox row of the filter menu.
@@ -116,18 +116,23 @@ type actDesc struct {
 	prev      string // one-line preview (dense rows)
 	foot      string // "Mention in #general"
 	footIcon  string
-	footEmoji string // reaction emoji image (replaces footIcon)
-	footAlt   string // the reaction's ":name:", drawn when footEmoji is ""
-	footBold  bool   // footer is a bold label ("App")
-	reacted   bool   // the pill is "Reacted" followed by the emoji
-	pill      bool   // the row has a context pill (its destination is known)
-	footMid   string // an icon inside the pill text (the list destination's lists icon)
-	footTail  string // the pill text after footMid
+	footEmoji string  // reaction emoji image (replaces footIcon)
+	footAlt   string  // the reaction's ":name:", drawn when footEmoji is ""
+	footBold  bool    // footer is a bold label ("App")
+	reacted   bool    // the pill is "Reacted" followed by the emoji
+	pill      bool    // the row has a footer (text or its type icon)
+	footText  bool    // the footer has text (ft)
+	ft        actFoot // the footer's text parts
+	loc       string  // Dense: the location column
+	locIcon   string  // Dense: an icon before loc (a list's lists icon)
+	locOn     bool
+	typeIcon  string // Dense: the 20px type icon after the status
 	list      *actListBody
 	nameDense string // the sender in Dense rows ("Ana +2")
 	team      string // a Slack Connect inviter's organisation, after the name
 	subtext   string // before the message body ("You: ", "Ana Example: ")
 	lines     int    // the body's line cap (0: the density's)
+	subReact  bool   // ReactionContent's "Reacted {emoji} to:" / "Reacted to:"
 	avatar    string
 	tile      bool // channel tile instead of an avatar
 	at        time.Time
@@ -227,6 +232,9 @@ type Activity struct {
 	patchOn  bool
 	wmu      sync.Mutex      // serializes core activity writes
 	listsReq map[string]bool // lists asked for so list rows can name their item
+	// densityReq: the saved layout was asked for (activity.views);
+	// densitySet: the user picked one since, which wins over the answer.
+	densityReq, densitySet bool
 
 	// undo is the "cleared" snackbar after Clear, with its Undo link.
 	undo struct {
@@ -351,6 +359,7 @@ func (v *Activity) Layout(gtx C) D {
 	v.frame()
 	v.w.watch(v.h, actMatch)
 	v.watchItems()
+	v.loadDensity()
 	if !v.data.started() {
 		v.load(actFresh)
 	}
@@ -966,7 +975,9 @@ func (v *Activity) describe(it *core.ActivityItem, refs map[string]core.ConvRef)
 		}
 	case it.Type == "message_reaction":
 		v.reactionSender(it, &d)
-		d.subtext, d.lines = "You: ", 1 // ReactionContent without the layout revisions
+		// QTZf ReactionContent with the layout revisions: "Reacted
+		// {emoji} to:" in Detailed, "Reacted to:" in Dense; one line
+		d.subReact, d.lines = true, 1
 	case it.Type == "thread_v2":
 		v.threadSender(it, &d, author)
 		if it.Msg != nil && it.Msg.User == self {
@@ -1039,23 +1050,25 @@ func (v *Activity) describe(it *core.ActivityItem, refs map[string]core.ConvRef)
 		d.tile = true
 	}
 
-	// The context pill (withPrefixes, variant "pill") and its type icon.
-	d.foot, d.reacted = v.pillText(it, dest, d.title)
-	if dest == destList && it.Type != "saved_reminder" {
-		d.foot = ""
-		if title, ok := v.listPill(it); ok {
-			d.foot, d.footMid, d.footTail = "Mention in", "lists", title
-		}
+	// The footer (Detailed) and the location and type icon (Dense), as
+	// ActivityRowContentMultiLine / SingleLine draw them.
+	icon := actEntryKind(it)
+	if f, ok := v.footerText(it, dest, d.title); ok {
+		d.ft, d.footText = f, true
 	}
-	d.pill = dest != destUnknown && (d.foot != "" || d.reacted || dest == destList)
-	if d.pill {
-		d.footIcon = actPillIcon(it)
+	if actStandaloneIcon(icon) {
+		d.footIcon = actIconName(icon)
 	}
-	if d.reacted && it.Reaction != nil {
+	d.pill = d.footText || d.footIcon != ""
+	d.foot = d.ft.text()
+	d.loc, d.locIcon, d.locOn = v.location(it, dest, d.title)
+	if dest != destUnknown {
+		d.typeIcon = actIconName(icon)
+	}
+	if icon == "reaction" && it.Reaction != nil {
 		d.footEmoji = it.Reaction.URL
 		d.footAlt = actEmojiText(it.Reaction.Name)
 	}
-	d.footBold = dest == destApp && d.foot == "App"
 	d.hay = strings.ToLower(d.name + "\n" + d.prev + "\n" + d.title + "\n" + d.foot)
 	return d
 }
@@ -1139,8 +1152,8 @@ func (v *Activity) head(gtx C) D {
 						sel = 1
 					}
 					d, c := v.segmented(gtx, v.seg[:], actSegIcons, sel)
-					if c >= 0 {
-						v.dense = c == 1
+					if c >= 0 && v.dense != (c == 1) {
+						v.setDense(c == 1)
 					}
 					return d
 				}),
@@ -1746,7 +1759,11 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 	}
 	if sel || r.click.Hovered() || r.bar.Hovered() {
 		y := -gtx.Dp(25)
-		if i == v.list.Position.First {
+		if v.dense {
+			// activity_single_line_row_content__actions_toggle: centred on
+			// the row (top 50%, translateY(-50%)), right -4px
+			y = (d.Size.Y - gtx.Dp(40)) / 2
+		} else if i == v.list.Position.First {
 			// Keep the first visible row's bar inside the list's clip.
 			y = min(max(y, v.list.Position.Offset), d.Size.Y-gtx.Dp(40))
 		}
@@ -1843,7 +1860,11 @@ func (r *actRow) itemBody(gtx C, st slackc.Styled, sel bool) D {
 			bg = v.p.SelBg
 		}
 		if r.click.Hovered() {
-			bg = v.actHover(bg)
+			// bordered separators: a hovered row is base-pry under the
+			// base-pry-hover overlay, read or not (selected rows keep theirs)
+			if !sel {
+				bg = v.actHover(v.p.Bg)
+			}
 		}
 		fill(gtx, rect, st.Background(bg))
 		call.Add(gtx.Ops)
@@ -1899,6 +1920,9 @@ func (r *actRow) layoutAvatar(gtx C, p slackc.Props) D {
 	}
 	if e, ok := slackc.PropChildren(p); ok {
 		return slackc.LayoutElement(gtx, e)
+	}
+	if !r.unread { // entry_avatar / single_line avatar: opacity .8 until unread
+		defer paint.PushOpacity(gtx.Ops, 0.8).Pop()
 	}
 	if !st.Active() {
 		return r.v.actAvatarOf(gtx, r.cur, r.avSize())
@@ -2234,65 +2258,82 @@ func (v *Activity) rowWhen(gtx C, d *actDesc) string {
 
 // rowContent is the inside of an ActivityItem: the row's colours and
 // time for this frame, then the Slack boundaries Slack renders there
-// (rowKind).
+// (rowKind). Read rows: sender and body content-sec, 400; unread:
+// content-pry, the sender 900 in Detailed (activity_multi_line_row_content
+// --unread) and 700 in Dense (activity_single_line_row_content--unread).
 func (v *Activity) rowContent(gtx C, r *actRow) D {
 	nameW, nameCol, bodyCol := wReg, v.p.Sec, v.p.Sec
 	if r.unread {
 		nameW, nameCol, bodyCol = wBlack, v.p.Text, v.p.Text
+		if v.dense {
+			nameW = wBold
+		}
 	}
 	r.nameW, r.nameCol, r.nameMax, r.bodyCol = nameW, nameCol, 0, bodyCol
 	r.pm, r.count = nil, actUnreadCount(r.it)
 	return r.rowKind(gtx)
 }
 
-// detailedContent is Slack's Detailed row (ActivityRowContentDetailed's
-// native).
+// detailedContent is ActivityRowContentMultiLine (gantry boot-render
+// U5s4, CSS activity_multi_line_row_content*): the container's padding
+// 12px 20px 12px 16px (grouped, bordered separators); avatar padding-top
+// 6px; the stack padding-top 2px: name row 22px (sender, 8px, a 54px
+// 13px timestamp), the body (15px/22px, 2 lines), the footer (padding-top
+// 8px, 13px/18px: the 16px type icon, 4px, the text); then the status
+// column (padding 5px 0 2px), 8px from the stack.
 func (v *Activity) detailedContent(gtx C, r *actRow) D {
 	d, unread := r.cur, r.unread
 	bodyCol, when := r.bodyCol, v.rowWhen(gtx, d)
-	// Slack's detailed row: name at +14, avatar at +18, footer 9px under
-	// the body, 14px bottom padding (97px for a two-line row).
-	return layout.Inset{Top: 14, Bottom: 14, Left: 16, Right: 20}.Layout(gtx, func(gtx C) D {
+	return layout.Inset{Top: 12, Bottom: 12, Left: 16, Right: 20}.Layout(gtx, func(gtx C) D {
 		return row(gtx, layout.Start,
 			layout.Rigid(func(gtx C) D {
-				return layout.Inset{Top: 4}.Layout(gtx, func(gtx C) D {
+				return layout.Inset{Top: 6}.Layout(gtx, func(gtx C) D {
 					return slackc.Component(gtx, "ActivityRowContentSenderAvatarLayout", r, (*actRow).avatarProps, (*actRow).layoutAvatar)
 				})
 			}),
 			hgap(8),
 			layout.Flexed(1, func(gtx C) D {
-				return col(gtx,
-					layout.Rigid(func(gtx C) D {
-						g := gtx
-						g.Constraints.Min.Y = gtx.Dp(22)
-						return row(g, layout.Middle,
-							layout.Rigid(func(gtx C) D {
-								return slackc.Component(gtx, "ActivityPrivacyBlurredName", r, (*actRow).nameProps, (*actRow).layoutName)
-							}),
-							layout.Rigid(func(gtx C) D {
-								if d.team == "" { // InviteSenderName: the inviter's organisation (Detailed)
-									return D{}
-								}
-								return layout.Inset{Left: 4}.Layout(gtx, func(gtx C) D { return v.para(gtx, 15, 22, wReg, r.nameCol, 1, d.team) })
-							}),
-							hgap(8),
-							layout.Rigid(func(gtx C) D {
-								return layout.Inset{Top: 2}.Layout(gtx, func(gtx C) D { return v.para(gtx, 13, 18, wReg, v.p.Muted, 1, when) })
-							}),
-						)
-					}),
-					layout.Rigid(func(gtx C) D { return v.actBody(gtx, r, 2, bodyCol) }),
-					layout.Rigid(func(gtx C) D {
-						if !d.pill {
-							return D{}
-						}
-						return layout.Inset{Top: 9}.Layout(gtx, func(gtx C) D { return v.actFooter(gtx, d) })
-					}),
-				)
+				return layout.Inset{Top: 2}.Layout(gtx, func(gtx C) D {
+					return col(gtx,
+						layout.Rigid(func(gtx C) D {
+							g := gtx
+							g.Constraints.Min.Y = gtx.Dp(22)
+							return row(g, layout.Middle,
+								layout.Flexed(1, func(gtx C) D {
+									gtx.Constraints.Min.X = 0
+									return row(gtx, layout.Middle,
+										layout.Rigid(func(gtx C) D {
+											gtx.Constraints.Max.X = max(0, gtx.Constraints.Max.X-gtx.Dp(62))
+											return slackc.Component(gtx, "ActivityPrivacyBlurredName", r, (*actRow).nameProps, (*actRow).layoutName)
+										}),
+										layout.Rigid(func(gtx C) D {
+											if d.team == "" { // InviteSenderName: the inviter's organisation (Detailed)
+												return D{}
+											}
+											return layout.Inset{Left: 4}.Layout(gtx, func(gtx C) D { return v.para(gtx, 15, 22, wReg, r.nameCol, 1, d.team) })
+										}),
+										hgap(8),
+										layout.Rigid(func(gtx C) D {
+											// entry_name_timestamp: 54px wide, padding-top 2px
+											return layout.Inset{Top: 2}.Layout(gtx, func(gtx C) D { return v.actTime(gtx, when, false) })
+										}),
+									)
+								}),
+							)
+						}),
+						layout.Rigid(func(gtx C) D { return v.actBody(gtx, r, 2, bodyCol) }),
+						layout.Rigid(func(gtx C) D {
+							if !d.pill {
+								return D{}
+							}
+							return layout.Inset{Top: 8}.Layout(gtx, func(gtx C) D { return v.actFooter(gtx, d, unread) })
+						}),
+					)
+				})
 			}),
 			hgap(8),
 			layout.Rigid(func(gtx C) D {
-				if !unread { // Slack's detailed rows show nothing here once read
+				if !unread { // read rows: the replied / reacted marks, else nothing
 					return D{}
 				}
 				return layout.Inset{Top: 5, Bottom: 2}.Layout(gtx, func(gtx C) D { return v.actStatus(gtx, r.count, unread) })
@@ -2301,116 +2342,176 @@ func (v *Activity) detailedContent(gtx C, r *actRow) D {
 	})
 }
 
-// denseContent is Slack's Dense layout: one 22px line per item. The
-// spec didn't measure it (switching saves a Slack pref), so it is derived
-// from the Detailed row: same 16/20 side padding and status column, the
-// 20px compact avatar, the sender (15px, 900 when unread), the context
-// ("Mention in #general", 13px muted with its 16px icon) and the one-line
-// preview, then the time pushed to the right.
+// actDenseH is the Dense row's height: activity_row_content_container
+// --dense --design-v3, 50px (padding 10px 12px; the grouped container's
+// sides 20px), its bottom border included.
+const actDenseH unit.Dp = 50
+
+// denseContent is ActivityRowContentSingleLine (gantry boot-render U5s4,
+// CSS activity_single_line_row_content*), one line, 8px gaps: the leading
+// block (200px; 100px in a container 300px or narrower) with the 20px
+// avatar, the sender (15px, flexible, ellipsis) and the status (the unread
+// badge, then the 20px type icon); then the centre (gaps 16px, 4px at
+// 625px or narrower): the message (15px, one line), the location (13px,
+// 100px wide, 224px from 800px) and the time (13px, 54px, right-aligned,
+// hidden while the row is hovered).
 func (v *Activity) denseContent(gtx C, r *actRow) D {
 	d, unread := r.cur, r.unread
 	bodyCol, when := r.bodyCol, v.rowWhen(gtx, d)
-	return layout.Inset{Top: 8, Bottom: 8, Left: 16, Right: 20}.Layout(gtx, func(gtx C) D {
-		g := gtx
-		g.Constraints.Min.Y = gtx.Dp(22)
-		full := gtx.Constraints.Max.X
-		return row(g, layout.Middle,
-			layout.Rigid(func(gtx C) D {
-				return slackc.Component(gtx, "ActivityRowContentSenderAvatarLayout", r, (*actRow).avatarProps, (*actRow).layoutAvatar)
-			}),
-			hgap(8),
-			layout.Rigid(func(gtx C) D {
-				r.nameMax = min(gtx.Constraints.Max.X, gtx.Dp(200), full/4)
-				return slackc.Component(gtx, "ActivityPrivacyBlurredName", r, (*actRow).nameProps, (*actRow).layoutName)
-			}),
-			hgap(8),
-			layout.Rigid(func(gtx C) D {
-				if !d.pill {
-					return D{}
-				}
-				gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(240), full/3)
-				return layout.Inset{Right: 8}.Layout(gtx, func(gtx C) D { return v.actContext(gtx, d) })
-			}),
-			layout.Flexed(1, func(gtx C) D {
-				gtx.Constraints.Min.X = gtx.Constraints.Max.X
-				if m := r.msg(); m != nil && !d.invite && len(m.Doc.Blocks) > 0 {
-					// The message's first line, drawn like the detailed body
-					// (emoji images, mentions) and clipped to one line.
-					return v.actBody(gtx, r, 1, bodyCol)
-				}
-				return layout.W.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wReg, bodyCol, d.prev) })
-			}),
-			hgap(12),
-			layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wReg, v.p.Muted, when) }),
-			hgap(8),
-			layout.Rigid(func(gtx C) D { return v.actStatus(gtx, r.count, unread) }),
-		)
+	hov := r.click.Hovered() || r.bar.Hovered()
+	g := gtx
+	g.Constraints = layout.Exact(image.Pt(gtx.Constraints.Max.X, gtx.Dp(actDenseH))) // the bottom border is drawn inside
+	return layout.Inset{Left: 20, Right: 20}.Layout(g, func(gtx C) D {
+		cw := gtx.Constraints.Max.X
+		lead, locW, centreGap := gtx.Dp(200), gtx.Dp(100), unit.Dp(16)
+		switch {
+		case cw <= gtx.Dp(300):
+			lead = gtx.Dp(100)
+		case cw >= gtx.Dp(800):
+			locW = gtx.Dp(224)
+		}
+		if cw <= gtx.Dp(625) {
+			centreGap = 4
+		}
+		return layout.W.Layout(gtx, func(gtx C) D {
+			gtx.Constraints.Min.X = gtx.Constraints.Max.X
+			return row(gtx, layout.Middle,
+				layout.Rigid(func(gtx C) D {
+					gtx.Constraints = layout.Exact(image.Pt(lead, gtx.Dp(30)))
+					return row(gtx, layout.Middle,
+						layout.Flexed(1, func(gtx C) D {
+							// __user: flex 1, so the status sits at the leading block's end
+							gtx.Constraints.Min.X = gtx.Constraints.Max.X
+							return row(gtx, layout.Middle,
+								layout.Rigid(func(gtx C) D {
+									return slackc.Component(gtx, "ActivityRowContentSenderAvatarLayout", r, (*actRow).avatarProps, (*actRow).layoutAvatar)
+								}),
+								hgap(8),
+								layout.Flexed(1, func(gtx C) D {
+									gtx.Constraints.Min.X = 0
+									r.nameMax = gtx.Constraints.Max.X
+									return slackc.Component(gtx, "ActivityPrivacyBlurredName", r, (*actRow).nameProps, (*actRow).layoutName)
+								}),
+							)
+						}),
+						layout.Rigid(func(gtx C) D {
+							if !unread {
+								return D{}
+							}
+							return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return v.actStatus(gtx, r.count, unread) })
+						}),
+						layout.Rigid(func(gtx C) D {
+							if d.typeIcon == "" {
+								return D{}
+							}
+							return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return v.actTypeIcon(gtx, d) })
+						}),
+					)
+				}),
+				hgap(8),
+				layout.Flexed(1, func(gtx C) D {
+					gtx.Constraints.Min.X = 0
+					return row(gtx, layout.Middle,
+						layout.Flexed(1, func(gtx C) D {
+							gtx.Constraints.Min.X = gtx.Constraints.Max.X
+							if m := r.msg(); m != nil && !d.invite && len(m.Doc.Blocks) > 0 {
+								// __message: one 15px/22px line
+								gtx.Constraints.Min.Y, gtx.Constraints.Max.Y = gtx.Dp(22), gtx.Dp(22)
+								defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
+								return v.actBody(gtx, r, 1, bodyCol)
+							}
+							return layout.W.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wReg, bodyCol, d.prev) })
+						}),
+						layout.Rigid(func(gtx C) D {
+							if !d.locOn {
+								return D{}
+							}
+							return layout.Inset{Left: centreGap}.Layout(gtx, func(gtx C) D {
+								gtx.Constraints = layout.Exact(image.Pt(locW, gtx.Dp(18)))
+								w := wReg
+								if unread {
+									w = wBold
+								}
+								return row(gtx, layout.Middle,
+									layout.Rigid(func(gtx C) D {
+										if d.locIcon == "" {
+											return D{}
+										}
+										return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.icon(gtx, icons.Slack(d.locIcon), 13, v.p.Muted) })
+									}),
+									layout.Flexed(1, func(gtx C) D {
+										gtx.Constraints.Min.X = 0
+										return v.para(gtx, 13, 18, w, v.p.Muted, 1, d.loc)
+									}),
+								)
+							})
+						}),
+						layout.Rigid(func(gtx C) D {
+							return layout.Inset{Left: centreGap}.Layout(gtx, func(gtx C) D {
+								if hov {
+									return D{Size: image.Pt(gtx.Dp(54), gtx.Dp(18))}
+								}
+								return v.actTime(gtx, when, true)
+							})
+						}),
+					)
+				}),
+			)
+		})
 	})
 }
 
-// actContext is the context pill as an inline, natural-width label for
-// Dense rows.
-func (v *Activity) actContext(gtx C, d *actDesc) D {
-	return v.actPill(gtx, d, false)
+// actTypeIcon is the Dense row's ActivityDecoupledTypeIcon: a 20px box,
+// content-ter, holding the type's 20px icon or the reaction's emoji.
+func (v *Activity) actTypeIcon(gtx C, d *actDesc) D {
+	s := gtx.Dp(20)
+	g := gtx
+	g.Constraints = layout.Exact(image.Pt(s, s))
+	return layout.Center.Layout(g, func(gtx C) D {
+		if d.typeIcon == "reaction" {
+			if d.footEmoji != "" {
+				return v.emojiImg(gtx, d.footEmoji, 16)
+			}
+			return v.emojiAlt(gtx, d.footAlt, 16)
+		}
+		return v.icon(gtx, icons.Slack(d.typeIcon), 20, v.p.Muted)
+	})
 }
 
-// actFooter draws the context pill (withPrefixes "pill"): the 16px type
-// icon (PillTypeIcon), 4px gap, the 13px/18px muted text; a reaction's
-// is "Reacted" and the emoji. "App" is bold.
-func (v *Activity) actFooter(gtx C, d *actDesc) D {
-	return v.actPill(gtx, d, true)
-}
-
-func (v *Activity) actPill(gtx C, d *actDesc, flex bool) D {
-	w := wReg
-	if d.footBold {
-		w = wBold
-	}
-	text := layout.Rigid(func(gtx C) D { return v.label(gtx, 13, w, v.p.Muted, d.foot) })
-	if d.foot == "" {
-		text = layout.Rigid(func(gtx C) D { return D{} })
-	} else if flex && !d.reacted && d.footMid == "" {
-		text = layout.Flexed(1, func(gtx C) D {
-			gtx.Constraints.Min.X = 0
-			return v.para(gtx, 13, 18, w, v.p.Muted, 1, d.foot)
-		})
-	}
-	return row(gtx, layout.Middle,
+// actFooter draws the Detailed footer (activity_multi_line_row_content
+// __entry_footer): 13px/18px content-ter; the 16px type icon and 4px when
+// the type has one; the text with the destination in bold
+// (activity_row_content__footer_name, 700), a list's lists icon before
+// its title.
+func (v *Activity) actFooter(gtx C, d *actDesc, unread bool) D {
+	f := d.ft
+	ch := []layout.FlexChild{
 		layout.Rigid(func(gtx C) D {
 			if d.footIcon == "" {
 				return D{}
 			}
 			return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.icon(gtx, icons.Slack(d.footIcon), 16, v.p.Muted) })
 		}),
-		text,
-		layout.Rigid(func(gtx C) D {
-			if d.footMid == "" {
-				return D{}
-			}
-			// ActivityListName: the lists icon, a space, the list's title
-			return layout.Inset{Left: 4}.Layout(gtx, func(gtx C) D { return v.icon(gtx, icons.Slack(d.footMid), 16, v.p.Muted) })
-		}),
-		layout.Rigid(func(gtx C) D {
-			if d.footTail == "" {
-				return D{}
-			}
-			return layout.Inset{Left: 4}.Layout(gtx, func(gtx C) D { return v.label(gtx, 13, w, v.p.Muted, d.footTail) })
-		}),
-		layout.Rigid(func(gtx C) D {
-			if !d.reacted {
-				return D{}
-			}
-			return layout.Inset{Left: 4}.Layout(gtx, func(gtx C) D {
-				if d.footEmoji != "" {
-					return v.emojiImg(gtx, d.footEmoji, 16)
-				}
-				if d.footAlt != "" {
-					return v.emojiAlt(gtx, d.footAlt, 16)
-				}
-				return v.icon(gtx, icons.Slack("reaction"), 16, v.p.Muted)
-			})
-		}),
-	)
+	}
+	if d.footText {
+		if f.pre != "" {
+			ch = append(ch, layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wReg, v.p.Muted, f.pre) }))
+		}
+		if f.nameIcon != "" {
+			ch = append(ch, layout.Rigid(func(gtx C) D {
+				return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.icon(gtx, icons.Slack(f.nameIcon), 13, v.p.Muted) })
+			}))
+		}
+		if f.name != "" {
+			ch = append(ch, layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wBold, v.p.Muted, f.name) }))
+		}
+		if f.post != "" {
+			ch = append(ch, layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wReg, v.p.Muted, f.post) }))
+		}
+	}
+	g := gtx
+	g.Constraints.Min.Y = gtx.Dp(18)
+	return row(g, layout.Middle, ch...)
 }
 
 // actEmojiText is the text aJri gives the reaction's Emoji (":name:"),
@@ -2478,10 +2579,27 @@ func (v *Activity) actBody(gtx C, r *actRow, lines int, col color.NRGBA) D {
 		}
 		return v.shimmerLine(gtx, 240)
 	}
+	if d.subReact {
+		pre := []layout.FlexChild{layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wReg, col, "Reacted ") })}
+		if !v.dense {
+			pre = append(pre, layout.Rigid(func(gtx C) D {
+				if d.footEmoji != "" {
+					return v.emojiImg(gtx, d.footEmoji, 16)
+				}
+				return v.emojiAlt(gtx, d.footAlt, 16)
+			}), layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wReg, col, " ") }))
+		}
+		pre = append(pre,
+			layout.Rigid(func(gtx C) D {
+				return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wReg, col, "to:") })
+			}),
+			layout.Flexed(1, func(gtx C) D { return r.preview(gtx, lines) }))
+		return row(gtx, layout.Middle, pre...)
+	}
 	if d.subtext == "" {
 		return r.preview(gtx, lines)
 	}
-	return row(gtx, layout.Start,
+	return row(gtx, layout.Middle,
 		layout.Rigid(func(gtx C) D { return v.para(gtx, 15, 22, wReg, col, 1, d.subtext) }),
 		layout.Flexed(1, func(gtx C) D { return r.preview(gtx, lines) }),
 	)
@@ -2651,7 +2769,7 @@ func (v *Activity) previewBody(gtx C) D {
 			if !d.pill {
 				return D{Size: image.Pt(0, gtx.Dp(8))}
 			}
-			return layout.Inset{Top: 8, Bottom: 4, Left: 20, Right: 20}.Layout(gtx, func(gtx C) D { return v.actFooter(gtx, d) })
+			return layout.Inset{Top: 8, Bottom: 4, Left: 20, Right: 20}.Layout(gtx, func(gtx C) D { return v.actFooter(gtx, d, false) })
 		case 1:
 			if it.Root == nil {
 				return D{}
@@ -3156,4 +3274,67 @@ func (v *Activity) ensureLists(page *core.ActivityPage) {
 			v.h.Invalidate()
 		}()
 	}
+}
+
+// loadDensity reads the saved layout once (core ActivityDensity: Slack's
+// activity.views prefs / All view density) and applies it unless the
+// toggle was used meanwhile.
+func (v *Activity) loadDensity() {
+	if v.densityReq {
+		return
+	}
+	v.densityReq = true
+	c := v.h.Core()
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		dense, ok, err := c.ActivityDensity(ctx)
+		if err != nil || !ok {
+			return
+		}
+		v.notes.mu.Lock()
+		v.notes.fns = append(v.notes.fns, func() {
+			if !v.densitySet && v.dense != dense {
+				v.dense, v.dirty = dense, true
+				v.rows = map[string]*actRow{}
+			}
+		})
+		v.notes.mu.Unlock()
+		v.h.Invalidate()
+	}()
+}
+
+// setDense is the layout toggle (ActivityFilterLayoutToggle in the
+// header): the page switches at once and Slack's global prefs are
+// written (core SetActivityDensity: activity.prefs.update {density}); a
+// failed write puts the old layout back.
+func (v *Activity) setDense(dense bool) {
+	was := v.dense
+	v.dense, v.densitySet, v.dirty = dense, true, true
+	v.write("Couldn’t save the layout: ", func(ctx context.Context, c *core.App) error {
+		_, err := c.SetActivityDensity(ctx, dense)
+		return err
+	}, func() { v.dense, v.dirty = was, true })
+}
+
+// actTime is the rows' 54px timestamp column (white-space: nowrap, no
+// ellipsis): a time that fits sits at its start, or its end when end is
+// set (Dense: text-align end); a longer one ("Nov 14, 2023") overflows to
+// the right as Chrome draws it.
+func (v *Activity) actTime(gtx C, when string, end bool) D {
+	w := gtx.Dp(54)
+	lg := gtx
+	lg.Constraints = layout.Constraints{Max: image.Pt(1<<20, gtx.Dp(18))}
+	m := op.Record(gtx.Ops)
+	d := v.label(lg, 13, wReg, v.p.Muted, when)
+	call := m.Stop()
+	x := 0
+	if end && d.Size.X < w {
+		x = w - d.Size.X
+	}
+	func() {
+		defer op.Offset(image.Pt(x, 0)).Push(gtx.Ops).Pop()
+		call.Add(gtx.Ops)
+	}()
+	return D{Size: image.Pt(w, max(d.Size.Y, gtx.Dp(18)))}
 }
