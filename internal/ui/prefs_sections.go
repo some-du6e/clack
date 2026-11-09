@@ -15,6 +15,7 @@ import (
 	"gioui.org/op/clip"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/shortcut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -370,7 +371,7 @@ func ensureUserAsync(a *App, id string) {
 func (p *prefsModal) navigationPage(f *prefsForm) {
 	a := p.a
 	f.heading("Sidebar")
-	f.option("sidebar", "Show the sidebar", "Ctrl+Shift+D toggles it", !a.sidebar.hidden, false, func() {
+	f.option("sidebar", "Show the sidebar", shortcut.Format("Mod+Shift+D")+" toggles it", !a.sidebar.hidden, false, func() {
 		a.sidebar.hidden = !a.sidebar.hidden
 		a.savePrefs()
 	})

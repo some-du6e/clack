@@ -10,6 +10,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/ctxclick"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/shortcut"
 )
 
 // Where Slack's web client (build a84662d2d135, 2026-11-08) opens its
@@ -95,10 +96,10 @@ func (a *App) openCreateMenu(anchor image.Rectangle) {
 	}
 	items := []MenuItem{
 		{Label: "Create", Header: true},
-		{Key: "compose", Label: "Message", Icon: "compose", Subtitle: "Start a conversation in a DM or channel", Hint: "Ctrl+N", Do: a.compose},
+		{Key: "compose", Label: "Message", Icon: "compose", Subtitle: "Start a conversation in a DM or channel", Hint: shortcut.Format("Mod+N"), Do: a.compose},
 		{Key: "create-channel", Label: "Channel", Icon: "channel", Subtitle: "Start a group conversation by topic", Do: a.OpenCreateChannel},
 		{Key: "start_huddle", Label: "Huddle", Icon: "headphones", Subtitle: "Start a video or audio chat", Do: a.openHuddleStart},
-		{Key: "create_canvas", Label: "Canvas", Icon: "canvas", Subtitle: "Create and share content", Hint: "Ctrl+Shift+N", Do: a.CreateCanvas},
+		{Key: "create_canvas", Label: "Canvas", Icon: "canvas", Subtitle: "Create and share content", Hint: shortcut.Format("Mod+Shift+N"), Do: a.CreateCanvas},
 		{Key: "create_list", Label: "List", Icon: "list-tab", Subtitle: "Track and manage projects", Do: unavailable("Lists aren’t available")},
 		{Key: "create-workflow", Label: "Workflow", Icon: "play", Subtitle: "Automate everyday tasks", Do: unavailable("Workflow Builder isn’t available")},
 	}

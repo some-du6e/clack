@@ -11,14 +11,15 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/shortcut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
 // Message "More actions" menu (msgmenu.png / ownmenu.png / submenu.png):
-// Edit message (own) | sep | Mark unread U | Add to saved Ctrl+Shift+S |
-// Add a reminder ▸ | reply notifications | sep | Copy link L | Copy message
-// Ctrl+C | sep | Organize ▸ | Forward | Reply in thread | Connect to apps ▸
+// Edit message E (own) | sep | Mark unread U | Add to saved ⇧⌘S | Add a
+// reminder M ▸ | reply notifications | sep | Copy link L | Copy message ⌘C
+// sep | Organize ▸ | Forward | Reply in thread | Connect to apps ▸
 // | sep | Delete message… (own, danger). Icons only on the first groups,
 // like Slack.
 
@@ -83,7 +84,7 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 
 	var items []MenuItem
 	if own {
-		items = append(items, MenuItem{Label: "Edit message", Icon: "edit", Hint: "E", Do: func() {
+		items = append(items, MenuItem{Label: "Edit message", Icon: "edit", Hint: "E", Keys: KeyEdit, Do: func() {
 			if o.OnEdit != nil {
 				o.OnEdit()
 				return
@@ -111,40 +112,40 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 		}}
 	}
 	items = append(items,
-		MenuItem{Label: "Mark unread", Icon: "mark-unread", Hint: "U", Do: func() {
+		MenuItem{Label: "Mark unread", Icon: "mark-unread", Hint: "U", Keys: KeyMarkUnread, Do: func() {
 			actDo(h, "Marked unread", func(ctx context.Context, a *core.App) error {
 				_, err := a.MarkUnread(ctx, ch, ts)
 				return err
 			})
 		}},
-		MenuItem{Label: "Add to saved", Icon: "bookmark-add", Hint: "Ctrl+Shift+S", Do: func() {
+		MenuItem{Label: "Add to saved", Icon: "bookmark-add", Hint: shortcut.Format("Mod+Shift+S"), Keys: KeySaveTodos, Do: func() {
 			actDo(h, "Saved for later", func(ctx context.Context, a *core.App) error { return a.Save(ctx, ch, ts, 0) })
 		}},
-		MenuItem{Label: "Add a reminder", Icon: "remind", Sub: []MenuItem{
+		MenuItem{Label: "Add a reminder", Icon: "remind", Hint: "M", Keys: KeyRemind, Sub: []MenuItem{
 			{Label: "In 30 mins", Do: remind(actRem30m)},
 			{Label: "In 1 hour", Do: remind(actRem1h)},
 			{Label: "In 3 hours", Do: remind(actRem3h)},
 			{Label: "Tomorrow at 9:00 AM", Do: remind(actRemTomorrow)},
 			{Label: "Monday at 9:00 AM", Do: remind(actRemMonday)},
-			{Label: "Custom…", Hint: "M", Do: func() { h.ShowOverlay(actNewReminderModal(h, ch, ts)) }},
+			{Label: "Custom…", Do: func() { h.ShowOverlay(actNewReminderModal(h, ch, ts)) }},
 		}},
 		follow,
 		Sep(),
-		MenuItem{Label: "Copy link", Icon: "link", Hint: "L", DoCtx: func(gtx layout.Context) {
+		MenuItem{Label: "Copy link", Icon: "link", Hint: "L", Keys: KeyCopyLink, DoCtx: func(gtx layout.Context) {
 			copyText(gtx, link())
 			h.Toast("Link copied")
 		}},
-		MenuItem{Label: "Copy message", Icon: "text-format", Hint: "Ctrl+C", DoCtx: func(gtx layout.Context) {
+		MenuItem{Label: "Copy message", Icon: "text-format", Hint: shortcut.Format("Mod+C"), Keys: KeyCopyText, DoCtx: func(gtx layout.Context) {
 			copyText(gtx, actMsgText(m))
 		}},
 		Sep(),
 	)
 
-	pin := MenuItem{Label: "Pin to channel", Icon: "pin", Hint: "P", Do: func() {
+	pin := MenuItem{Label: "Pin to channel", Icon: "pin", Hint: "P", Keys: KeyPin, Do: func() {
 		actDo(h, "Message pinned", func(ctx context.Context, a *core.App) error { return a.Pin(ctx, ch, ts) })
 	}}
 	if m.Pinned {
-		pin = MenuItem{Label: "Un-pin from channel", Icon: "unpin", Hint: "P", Do: func() {
+		pin = MenuItem{Label: "Un-pin from channel", Icon: "unpin", Hint: "P", Keys: KeyPin, Do: func() {
 			actDo(h, "Message unpinned", func(ctx context.Context, a *core.App) error { return a.Unpin(ctx, ch, ts) })
 		}}
 	}
@@ -154,7 +155,7 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 		MenuItem{Label: "Connect to apps", Sub: connectToApps(h, m)},
 	)
 	if own {
-		items = append(items, Sep(), MenuItem{Label: "Delete message…", Hint: "delete", Danger: true, Do: func() { confirmDelete(h, m, o.Delete) }})
+		items = append(items, Sep(), MenuItem{Label: "Delete message…", Hint: "delete", Keys: KeyDelete(), Danger: true, Do: func() { confirmDelete(h, m, o.Delete) }})
 	}
 	return items
 }

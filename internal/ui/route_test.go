@@ -40,7 +40,7 @@ func TestRouterHistory(t *testing.T) {
 }
 
 func TestParseCombo(t *testing.T) {
-	n, m := parseCombo("Ctrl+Shift+A")
+	n, m := parseCombo("Mod+Shift+A")
 	if n != "A" || m != key.ModShortcut|key.ModShift {
 		t.Fatalf("%q %v", n, m)
 	}

@@ -1,0 +1,82 @@
+name: menu-keys
+# Menu item keys (L = Copy link, U, E, R, T, F, A, M, P, ⌘C, ⇧⌘S, Delete)
+# and per-platform shortcut hints (⌘C on macOS, Ctrl+C elsewhere), driven
+# through Gio's router, plus screenshots of the message context menu with
+# both hint styles, light and dark. Synthetic only: the fake Slack in
+# internal/fakeslack, nothing talks to Slack.
+on:
+  push:
+    paths:
+      - "internal/ui/shortcut/**"
+      - "internal/ui/popups/menu*.go"
+      - "internal/ui/popups/actions_*.go"
+      - "internal/ui/popups/search_view.go"
+      - "internal/ui/popups/style.go"
+      - "internal/ui/popups/popover.go"
+      - "internal/ui/keys.go"
+      - "internal/ui/menu_keys*.go"
+      - "internal/ui/menubar/**"
+      - "internal/ui/composer/chrome.go"
+      - "internal/ui/slackc/kit/menus.go"
+      - ".github/workflows/menu-keys.yml"
+  workflow_dispatch:
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb libgl1-mesa-dri libegl-mesa0
+  MENU_TESTS: "TestMenuKey|TestMenuTypeAhead|TestMenuHintsPerOS|TestMenuTemplateShortcuts|TestContextMenuShapes|TestMessageContextMenuThreadAction|TestMenuTemplate"
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: formatter table, key ids, no hard-coded hints
+        run: go test -count=1 -v ./internal/ui/shortcut
+      - name: menu keys through the router
+        run: go test -count=1 -v -timeout 15m -run "$MENU_TESTS" ./internal/ui/popups
+      - name: bindings and the menu bar's accelerators
+        run: |
+          go test -count=1 -v -run 'TestParseCombo|TestNav|TestCreateChannelEntryPoints' ./internal/ui
+          go test -count=1 -v ./internal/ui/menubar
+      - name: screenshots (mac glyphs and Ctrl, light and dark)
+        env:
+          MENU_KEYS_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$MENU_KEYS_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestMenuKeysShots$' ./internal/ui/
+          ls -l "$MENU_KEYS_SHOTS_DIR"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: menu-keys-shots
+          path: dist/shots
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: native macOS (Mod is ⌘, the delete key is Backspace)
+        run: |
+          go test -count=1 -v ./internal/ui/shortcut
+          go test -count=1 -v -timeout 15m -run "$MENU_TESTS" ./internal/ui/popups
+          go test -count=1 -v -run 'TestParseCombo|TestNav' ./internal/ui
+          go test -count=1 -v ./internal/ui/menubar

@@ -88,6 +88,7 @@ func menuItems(tpl []any, fire fireFunc) []popups.MenuItem {
 		if ic := it.StrOr("icon", ""); ic != "" {
 			mi.Icon = clackIcon(ic)
 		}
+		mi.Hint, mi.Keys = popups.TemplateShortcut(it["shortcut"])
 		if typ == "radio" || typ == "checkbox" {
 			mi.Checked = it.Bool("checked")
 		}

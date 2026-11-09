@@ -12,7 +12,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/clipimg"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/ctxclick"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/shortcut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 )
 
@@ -32,6 +32,7 @@ import (
 //     (Slack's file menu, its media-gallery groups in channels).
 //   - With text selected in a message, TextSelectionContextMenu: Copy text
 //     (⌘C / Ctrl+C) and Search in Slack.
+//   - Menu item keys: menu_keys.go.
 
 // MessageContext says where a message's context menu opened.
 type MessageContext uint8
@@ -78,7 +79,7 @@ func ctxHoverItems(h Host, at image.Point, m core.Message, where MessageContext,
 	var items []MenuItem
 	ch, ts := m.Channel, m.TS
 	if !m.System {
-		items = append(items, MenuItem{Label: "Add reaction…", Icon: "add-reaction", Hint: "R", Do: func() {
+		items = append(items, MenuItem{Label: "Add reaction…", Icon: "add-reaction", Hint: "R", Keys: KeyReact, Do: func() {
 			h.ShowOverlay(NewReactionPicker(h, at, ch, ts, m.ThreadTS, nil))
 		}})
 	}
@@ -91,7 +92,7 @@ func ctxHoverItems(h Host, at image.Point, m core.Message, where MessageContext,
 		case m.ReplyCount > 0 || isReply:
 			label = "Reply to thread"
 		}
-		items = append(items, MenuItem{Label: label, Icon: "threads", Hint: "T", Do: func() {
+		items = append(items, MenuItem{Label: label, Icon: "threads", Hint: "T", Keys: KeyComment, Do: func() {
 			if o.OnReply != nil {
 				o.OnReply()
 				return
@@ -103,10 +104,10 @@ func ctxHoverItems(h Host, at image.Point, m core.Message, where MessageContext,
 			h.OpenThread(ch, root)
 		}})
 	}
-	items = append(items, MenuItem{Label: "Forward message…", Icon: "forward-msg", Hint: "F", Do: func() {
+	items = append(items, MenuItem{Label: "Forward message…", Icon: "forward-msg", Hint: "F", Keys: KeyShare, Do: func() {
 		h.ShowOverlay(NewForwardModal(h, m))
 	}})
-	todo := MenuItem{Label: "Add to-do", Icon: "todo-add", Hint: "A"}
+	todo := MenuItem{Label: "Add to-do", Icon: "todo-add", Hint: "A", Keys: KeyLaterTodos}
 	if m.Saved {
 		todo.Label, todo.Icon = "Complete to-do", "check"
 	}
@@ -341,12 +342,8 @@ func saveDownload(h Host, src, name string, viaCore bool, done func()) {
 // puts on the clipboard. ("Explain this" needs Slack AI; the "Switch to
 // default menu" hint points at a preference Clack doesn't have.)
 func NewTextSelectionMenu(h Host, at image.Point, text string) *Menu {
-	hint := "Ctrl+C"
-	if ctxclick.Mac {
-		hint = "⌘C"
-	}
 	items := []MenuItem{
-		{Label: "Copy text", Icon: "text-format", Hint: hint, DoCtx: func(gtx layout.Context) { copyText(gtx, text) }},
+		{Label: "Copy text", Icon: "text-format", Hint: shortcut.Format("Mod+C"), Keys: KeyCopyText, DoCtx: func(gtx layout.Context) { copyText(gtx, text) }},
 		{Label: "Search in Slack", Icon: "search", Do: func() {
 			if q := ctxSearchQuery(text); q != "" {
 				h.Navigate("search?q=" + url.QueryEscape(q))

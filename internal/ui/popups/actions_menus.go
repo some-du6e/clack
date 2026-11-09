@@ -10,6 +10,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/shortcut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
@@ -745,7 +746,7 @@ func NewComposerPlusMenu(h Host, anchor image.Point, onAction func(action string
 	items := []MenuItem{
 		{Label: "File, canvas, or list", Icon: "files", Do: act("files")},
 		{Label: "GIF", Icon: "image", Do: act("gif")},
-		{Label: "Text snippet", Icon: "code-block", Hint: "Ctrl+Shift+Enter", Do: act("snippet")},
+		{Label: "Text snippet", Icon: "code-block", Hint: shortcut.Format("Mod+Shift+Enter"), Do: act("snippet")},
 		{Label: "Workflow", Icon: "workflow", Do: act("workflow")},
 		{Label: "Upload from your computer", Icon: "upload", Do: act("upload")},
 	}

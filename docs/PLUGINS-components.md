@@ -123,6 +123,7 @@ Clack's `slackc.Render(gtx, name, props, native)` has to reproduce these rules e
 Shared Slack shapes used below:
 - `SlackMessage` = `{channel, ts, thread_ts?, user, bot_id?, app_id?, bot_profile?: {id, app_id, team_id, name, icons}, subtype?, text, blocks?, blocksProcessed?, attachments?: [{author_link, author_id, author_name, author_icon, author_subname, channel_id, ts}], files?, metadata?: {event_type, event_payload: {source_user_id?, poster?}}, reply_count?, latest_reply?, source_team_id?, edited?, taut_bot_id?}`.
 - `MenuTemplateItem` = `{key: string, label?: ReactNode, description?: ReactNode, type?: 'submenu'|'separator'|'header'|'custom'|'radio'|'checkbox', checked?, template?: MenuTemplateItem[], icon?: string, click?(e?), disabled?, danger?}` (elements.ts:82-96).
+  - Clack also sends and reads Slack's `shortcut?: string | {label: string, key: string | string[]}`: native rows carry their hint and key ids (`{label: "L", key: ["l"]}`, `{label: "⌘C", key: ["mod+c"]}`), and a plugin row with `{label, key}` binds that key while the menu is open (popups/menu_keys.go).
 - `Member` = `{id, name, real_name, profile: {display_name, real_name, image_24, image_48, pronouns, bot_id, api_app_id}}`.
 - "Context wrap" means the patch renders `<Ctx.Provider value=…><Original {...props}/></Ctx.Provider>`. That is invisible, but it requires Clack to render the plugin subtree **inside** the native component's subtree, so that descendants patched later can read the context.
 

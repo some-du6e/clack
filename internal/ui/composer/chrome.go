@@ -17,6 +17,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/shortcut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
@@ -159,17 +160,17 @@ type crBtnInfo struct {
 // Package vars initialize after the icons package's init has registered
 // its icons, so icons.Get is safe here (and resolved once, not per frame).
 var crInfo = [crNumBtn]crBtnInfo{
-	crBold:      {tip: "Bold", keys: "Ctrl+B", icon: icons.Get("bold"), kind: caStyle, style: Bold},
-	crItalic:    {tip: "Italic", keys: "Ctrl+I", icon: icons.Get("italic"), kind: caStyle, style: Italic},
-	crUnderline: {tip: "Underline", keys: "Ctrl+U", kind: caStyle, style: Underline},
-	crStrike:    {tip: "Strikethrough", keys: "Ctrl+Shift+X", icon: icons.Get("strike"), kind: caStyle, style: Strike},
+	crBold:      {tip: "Bold", keys: "Mod+B", icon: icons.Get("bold"), kind: caStyle, style: Bold},
+	crItalic:    {tip: "Italic", keys: "Mod+I", icon: icons.Get("italic"), kind: caStyle, style: Italic},
+	crUnderline: {tip: "Underline", keys: "Mod+U", kind: caStyle, style: Underline},
+	crStrike:    {tip: "Strikethrough", keys: "Mod+Shift+X", icon: icons.Get("strike"), kind: caStyle, style: Strike},
 	crPara:      {kind: caParagraph},
-	crLink:      {tip: "Link", keys: "Ctrl+Shift+U", icon: icons.Get("link"), menuIcon: "link", kind: caLink},
-	crOrdered:   {tip: "Ordered list", keys: "Ctrl+Shift+7", icon: icons.Get("list-ordered"), menuIcon: "list-ordered", kind: caBlock, block: Ordered},
-	crBullet:    {tip: "Bulleted list", keys: "Ctrl+Shift+8", icon: icons.Get("list-bullet"), menuIcon: "list-bullet", kind: caBlock, block: Bullet},
-	crQuote:     {tip: "Blockquote", keys: "Ctrl+Shift+9", icon: icons.Get("quote"), menuIcon: "quote", kind: caBlock, block: Quote},
-	crCode:      {tip: "Code", keys: "Ctrl+Shift+C", icon: icons.Get("code"), menuIcon: "code", kind: caStyle, style: Code},
-	crCodeBlock: {tip: "Code block", keys: "Ctrl+Alt+Shift+C", icon: icons.Get("code-block"), menuIcon: "code-block", kind: caBlock, block: CodeBlock},
+	crLink:      {tip: "Link", keys: "Mod+Shift+U", icon: icons.Get("link"), menuIcon: "link", kind: caLink},
+	crOrdered:   {tip: "Ordered list", keys: "Mod+Shift+7", icon: icons.Get("list-ordered"), menuIcon: "list-ordered", kind: caBlock, block: Ordered},
+	crBullet:    {tip: "Bulleted list", keys: "Mod+Shift+8", icon: icons.Get("list-bullet"), menuIcon: "list-bullet", kind: caBlock, block: Bullet},
+	crQuote:     {tip: "Blockquote", keys: "Mod+Shift+9", icon: icons.Get("quote"), menuIcon: "quote", kind: caBlock, block: Quote},
+	crCode:      {tip: "Code", keys: "Mod+Shift+C", icon: icons.Get("code"), menuIcon: "code", kind: caStyle, style: Code},
+	crCodeBlock: {tip: "Code block", keys: "Mod+Alt+Shift+C", icon: icons.Get("code-block"), menuIcon: "code-block", kind: caBlock, block: CodeBlock},
 	crDivider:   {tip: "Divider", menuIcon: "minus", kind: caDivider},
 	crFmtMore:   {tip: "More options", icon: icons.Get("more")},
 	crAttach:    {tip: "Attach", icon: icons.Get("plus"), kind: caAttach},
@@ -436,7 +437,7 @@ func (c *chrome) openMore(h Host, st *chromeState, id crBtn) {
 		items = append(items, popups.MenuItem{
 			Label:    inf.tip,
 			Icon:     inf.menuIcon,
-			Hint:     inf.keys,
+			Hint:     shortcut.Format(inf.keys),
 			Disabled: c.disabled(st, b),
 			Do: func() {
 				c.emit(c.actionFor(b, anchor))
