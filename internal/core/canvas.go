@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/url"
 	"sort"
 	"strconv"
@@ -193,6 +194,10 @@ func (a *App) Canvas(ctx context.Context, id string) (*CanvasDoc, error) {
 	}
 	doc, err := canvas.Parse(src)
 	if err != nil {
+		var pe *canvas.PanicError
+		if errors.As(err, &pe) {
+			log.Printf("core: canvas %s: %v (recovered)\n%s", id, pe, pe.Stack)
+		}
 		return nil, err
 	}
 	a.resolveCanvasSpans(&doc)

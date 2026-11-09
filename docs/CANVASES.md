@@ -30,6 +30,8 @@ Around it, Web API methods: `files.info`, `files.open` (`{file_id, supports_read
 - `file_opened` / `file_closed`: viewers.
 - The message subtypes `channel_canvas_updated` / `tabbed_canvas_updated` and the event `file_channel_canvas_reset`.
 
+**Title.** A canvas has no title apart from its document. Quip derives it (`extractTitleMetadata` in `quip-collab-webapp`): a TITLE-style section if there is one, else the first non-empty heading, else the first five words of the first text section (new-document default content skipped), else "Untitled". `files.info`'s `title` is that projection, and the export has no separate title element: #clack's canvas opens with a plain `<h1 id>`, then a `<p class="default-content line">`. So Clack draws an opening heading once, as the title, with the byline under it (it was also drawn as the first block, so the title showed twice). A canvas that opens with anything else keeps the file's title above it. Editing that heading is what renames the canvas in Slack.
+
 **Header.** The canvas header toolbar has "Open in side panel" (full view), "More actions" (…), the comments button, "Ask Slackbot" and "Ask Agentforce" (both behind experiments). Strings: "Open in full view", "Open in side panel", "Open in new window", "Copy link to canvas", "Created by {name}", "Last edited", "Edited by {memberName} {date}".
 
 ## What Clack does

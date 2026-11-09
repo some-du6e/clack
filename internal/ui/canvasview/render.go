@@ -477,6 +477,7 @@ func (v *View) drawMarker(gtx layout.Context, b *blk, x, lineH int) {
 	case canvas.Check:
 		bs := gtx.Dp(16)
 		r := image.Rect(x+(gut-bs)/2-gtx.Dp(2), (lineH-bs)/2, x+(gut-bs)/2-gtx.Dp(2)+bs, (lineH-bs)/2+bs)
+		toggled := b.check.Clicked(gtx) // before Layout, which drains a Clickable's events
 		at(gtx, r.Min, r.Size(), func(gtx layout.Context) layout.Dimensions {
 			s := gtx.Constraints.Max
 			editable := v.edit.canEdit(v)
@@ -497,7 +498,7 @@ func (v *View) drawMarker(gtx layout.Context, b *blk, x, lineH int) {
 			}
 			return b.check.Layout(gtx, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: s} })
 		})
-		if b.check.Clicked(gtx) {
+		if toggled {
 			v.edit.toggleCheck(v, b)
 		}
 	}

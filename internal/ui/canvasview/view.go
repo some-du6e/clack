@@ -2,7 +2,10 @@ package canvasview
 
 import (
 	"context"
+	"fmt"
 	"image"
+	"log"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -14,6 +17,7 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/canvas"
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
@@ -36,6 +40,7 @@ type View struct {
 
 	// UI goroutine only
 	shown   *core.CanvasDoc // the doc the blocks were built from
+	crashed error           // a recovered layout panic: the error state until Try again
 	blocks  []*blk
 	title   *richview.View
 	list    layout.List
@@ -102,6 +107,18 @@ func (v *View) load(keep bool) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
+		defer func() { // a panic fetching or parsing shows the error state, not a crash
+			if r := recover(); r != nil {
+				log.Printf("canvasview: panic loading canvas %s (recovered): %v\n%s", v.id, r, debug.Stack())
+				v.mu.Lock()
+				if gen == v.gen {
+					v.loading = false
+					v.doc, v.err = nil, fmt.Errorf("canvas: %v", r)
+				}
+				v.mu.Unlock()
+				v.h.Invalidate()
+			}
+		}()
 		d, err := a.Canvas(ctx, v.id)
 		if err == nil {
 			ids := []string{d.Info.Creator}
@@ -202,8 +219,68 @@ func (v *View) post(f func()) {
 	v.h.Invalidate()
 }
 
-// Layout draws the view filling the constraints.
-func (v *View) Layout(gtx layout.Context) layout.Dimensions {
+// Layout draws the view filling the constraints. A panic anywhere in the
+// canvas's layout (a bug, or a document Clack doesn't expect) is caught
+// here: the frame's ops are rolled back to before the view started, the
+// panic and its stack go to the log (internal/applog's file), and the
+// view shows Slack's "Couldn't load this canvas" with Try again instead
+// of taking the app down.
+func (v *View) Layout(gtx layout.Context) (dims layout.Dimensions) {
+	if v.crashed != nil {
+		return v.layoutCrashed(gtx)
+	}
+	cp := gtx.Ops.Checkpoint()
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		if !gtx.Ops.Rollback(cp) {
+			panic(r) // the ops were reset under us: nothing safe to draw on
+		}
+		v.crash(r, debug.Stack())
+		dims = v.layoutCrashed(gtx)
+	}()
+	return v.layout(gtx)
+}
+
+// crash records a recovered panic: logged with its stack, the editing
+// session dropped, the blocks rebuilt from the document on Try again.
+func (v *View) crash(r any, stack []byte) {
+	log.Printf("canvasview: panic drawing canvas %s (recovered): %v\n%s", v.id, r, stack)
+	v.crashed = fmt.Errorf("canvas: %v", r)
+	v.edit = newEditState()
+	v.shown, v.blocks, v.title = nil, nil, nil
+	// the list was mid-child ("unfinished child" on its next Layout)
+	v.list = layout.List{Axis: layout.Vertical, Position: layout.Position{First: v.list.Position.First, Offset: v.list.Position.Offset}}
+	v.mu.Lock()
+	v.queue = nil
+	v.mu.Unlock()
+}
+
+// layoutCrashed is the error state after a recovered panic; Try again
+// reloads the canvas and lays it out afresh.
+func (v *View) layoutCrashed(gtx layout.Context) layout.Dimensions {
+	v.lastSeen.Store(time.Now().UnixMilli())
+	sz := gtx.Constraints.Max
+	gtx.Constraints.Min = sz
+	th := v.h.Theme()
+	theme.Fill(gtx, image.Rectangle{Max: sz}, th.C.Bg)
+	top := 0
+	if v.mode != Tab { // the side panel keeps its close button, the full view its bar
+		top = gtx.Dp(theme.HeaderH)
+		v.layoutBar(gtx, v.Doc(), image.Pt(sz.X, top))
+	}
+	defer op.Offset(image.Pt(0, top)).Push(gtx.Ops).Pop()
+	g := gtx
+	g.Constraints = layout.Exact(image.Pt(sz.X, max(0, sz.Y-top)))
+	if v.layoutError(g, v.crashed) {
+		v.crashed = nil
+	}
+	return layout.Dimensions{Size: sz}
+}
+
+func (v *View) layout(gtx layout.Context) layout.Dimensions {
 	v.lastSeen.Store(time.Now().UnixMilli())
 	v.mu.Lock()
 	q := v.queue
@@ -242,7 +319,8 @@ func (v *View) Layout(gtx layout.Context) layout.Dimensions {
 	defer clip.Rect{Max: body.Size()}.Push(gtx.Ops).Pop()
 	switch {
 	case d == nil && err != nil:
-		return v.layoutError(gtx, err)
+		v.layoutError(gtx, err)
+		return layout.Dimensions{Size: gtx.Constraints.Max}
 	case d == nil:
 		_ = loading
 		return v.layoutSkeleton(gtx)
@@ -282,10 +360,11 @@ func (v *View) layoutBar(gtx layout.Context, d *core.CanvasDoc, size image.Point
 		w := gtx.Dp(28)
 		x -= w
 		clk := v.btn("bar." + bb.key)
+		hit := clk.Clicked(gtx) // before Layout, which drains a Clickable's events
 		at(gtx, image.Pt(x, (size.Y-w)/2), image.Pt(w, w), func(gtx layout.Context) layout.Dimensions {
 			return iconButton(gtx, th, clk, bb.icon, 18)
 		})
-		if clk.Clicked(gtx) {
+		if hit {
 			v.barAction(bb.key)
 		}
 		x -= gtx.Dp(4)
@@ -295,6 +374,7 @@ func (v *View) layoutBar(gtx layout.Context, d *core.CanvasDoc, size image.Point
 		w := lw + gtx.Dp(24)
 		x -= w + gtx.Dp(4)
 		clk := v.btn("bar.share")
+		share := clk.Clicked(gtx)
 		at(gtx, image.Pt(x, (size.Y-gtx.Dp(28))/2), image.Pt(w, gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
 			s := gtx.Constraints.Max
 			bg := c.Bg
@@ -310,7 +390,7 @@ func (v *View) layoutBar(gtx layout.Context, d *core.CanvasDoc, size image.Point
 			})
 			return clk.Layout(gtx, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: s} })
 		})
-		if clk.Clicked(gtx) {
+		if share {
 			v.act.Share(v.id)
 		}
 	}
@@ -388,7 +468,9 @@ var copyText = func(h Host, s string) { h.Toast("Link copied") }
 // SetCopy installs the shell's clipboard writer.
 func SetCopy(f func(h Host, s string)) { copyText = f }
 
-func (v *View) layoutError(gtx layout.Context, err error) layout.Dimensions {
+// layoutError is Slack's canvas error state; it reports whether Try
+// again was clicked (the canvas is reloading).
+func (v *View) layoutError(gtx layout.Context, err error) (retried bool) {
 	th := v.h.Theme()
 	sz := gtx.Constraints.Max
 	msg := "Couldn't load this canvas"
@@ -402,6 +484,7 @@ func (v *View) layoutError(gtx layout.Context, err error) layout.Dimensions {
 	at(gtx, image.Pt((sz.X-w)/2, y), image.Pt(w+2, gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
 		return th.Label(gtx, 15, theme.Bold, th.C.Fg, msg)
 	})
+	retry := v.retry.Clicked(gtx) // before Layout, which drains a Clickable's events
 	lw := th.Measure(gtx, 13, theme.Bold, "Try again")
 	bw := lw + gtx.Dp(24)
 	at(gtx, image.Pt((sz.X-bw)/2, y+gtx.Dp(36)), image.Pt(bw, gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
@@ -414,10 +497,11 @@ func (v *View) layoutError(gtx layout.Context, err error) layout.Dimensions {
 		})
 		return v.retry.Layout(gtx, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: s} })
 	})
-	if v.retry.Clicked(gtx) {
+	if retry {
 		v.load(false)
+		return true
 	}
-	return layout.Dimensions{Size: sz}
+	return false
 }
 
 // layoutSkeleton is the loading state: a title bar and text lines.
@@ -460,32 +544,78 @@ func (v *View) column(gtx layout.Context, w int) (x, cw int) {
 func (v *View) layoutDoc(gtx layout.Context, d *core.CanvasDoc) layout.Dimensions {
 	sz := gtx.Constraints.Max
 	x0, cw := v.column(gtx, sz.X)
-	n := len(v.blocks) + 2 // header, blocks, bottom space
 	v.edit.events(gtx, v)
 	defer v.edit.layoutFloatingToolbar(gtx, v)
+	// The rows are this snapshot of the blocks. Handlers that run during
+	// the list's layout (a click that starts or ends an edit, Escape in
+	// the editor) add and remove blocks; that shows from the next frame.
+	// Indexing v.blocks itself with a count taken before them read past
+	// its end when a click dropped the empty new-block row (alpha.24's
+	// crash on opening a short canvas: a click under the text, then one on
+	// it).
+	blocks := append([]*blk(nil), v.blocks...)
+	defer func() {
+		if !sameBlks(blocks, v.blocks) {
+			v.h.Invalidate()
+		}
+	}()
+	// A canvas's title is its document's title section (Quip's
+	// extractTitleMetadata): a heading that opens the document is drawn
+	// once, as the title, with the byline under it; it is not repeated as
+	// the first block.
+	var title *blk
+	rows := blocks
+	if titleSection(blocks) {
+		title, rows = blocks[0], blocks[1:]
+	}
+	n := len(rows) + 2 // header, blocks, bottom space
 	return v.list.Layout(gtx, n, func(gtx layout.Context, i int) layout.Dimensions {
 		gtx.Constraints.Min.X = sz.X
 		switch {
 		case i == 0:
-			return v.layoutHeader(gtx, d, x0, cw)
+			return v.layoutHeader(gtx, d, x0, cw, title)
 		case i == n-1:
 			below := image.Pt(sz.X, max(gtx.Dp(96), sz.Y/3))
 			v.edit.belowArea(gtx, v, below)
 			return layout.Dimensions{Size: below}
 		}
-		b := v.blocks[i-1]
+		b := rows[i-1]
 		defer op.Offset(image.Pt(x0, 0)).Push(gtx.Ops).Pop()
 		g := gtx
 		g.Constraints = layout.Constraints{Min: image.Pt(cw, 0), Max: image.Pt(cw, sz.Y*8)}
-		dim := v.layoutBlock(g, b, i-1 == 0)
+		dim := v.layoutBlock(g, b, title == nil && i-1 == 0)
 		dim.Size.X = sz.X
 		return dim
 	})
 }
 
-// layoutHeader: the canvas title (Slack's large title at the top of the
-// document) and the byline: the author's avatar and name, last edited.
-func (v *View) layoutHeader(gtx layout.Context, d *core.CanvasDoc, x0, cw int) layout.Dimensions {
+// titleSection reports whether the document opens with its title
+// section: a heading with text. Quip names a canvas after its first
+// heading (else the start of its first paragraph), and Slack draws that
+// heading where it is, once; the export has no separate title.
+func titleSection(bs []*blk) bool {
+	if len(bs) == 0 || bs[0].b == nil {
+		return false
+	}
+	b := bs[0].b
+	switch b.Kind {
+	case canvas.Heading1, canvas.Heading2, canvas.Heading3:
+	default:
+		return false
+	}
+	for _, s := range b.Spans {
+		if s.Kind != richtext.Text || strings.TrimSpace(s.Text) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// layoutHeader: the canvas title at the top of the document and the
+// byline under it (the author's avatar and name, last edited). The title
+// is the document's own opening heading, tb, when it has one (drawn and
+// edited as that block); otherwise the file's title.
+func (v *View) layoutHeader(gtx layout.Context, d *core.CanvasDoc, x0, cw int, tb *blk) layout.Dimensions {
 	th := v.h.Theme()
 	c := &th.C
 	y := gtx.Dp(36)
@@ -495,6 +625,13 @@ func (v *View) layoutHeader(gtx layout.Context, d *core.CanvasDoc, x0, cw int) l
 	if v.edit != nil && v.edit.renaming {
 		h := v.edit.layoutRename(gtx, v, image.Pt(x0, y), cw)
 		y += h
+	} else if tb != nil {
+		func() {
+			defer op.Offset(image.Pt(x0, y)).Push(gtx.Ops).Pop()
+			g := gtx
+			g.Constraints = layout.Constraints{Min: image.Pt(cw, 0), Max: image.Pt(cw, gtx.Constraints.Max.Y)}
+			y += v.layoutBlock(g, tb, true).Size.Y
+		}()
 	} else {
 		if v.title == nil {
 			sp := d.Info.TitleSpans
@@ -656,6 +793,18 @@ func itoa(n int) string {
 		b[i] = '-'
 	}
 	return string(b[i:])
+}
+
+func sameBlks(a, b []*blk) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func withStyle(sp []richtext.Span, st richtext.Style) []richtext.Span {
