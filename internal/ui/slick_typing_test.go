@@ -45,9 +45,11 @@ func TestSlickViewBetterTypingIndicator(t *testing.T) {
 		typing(c.users...)
 		e.until(6*time.Second, c.name+" through the plugin", func() bool { return e.tree("slick-typing-indicator") != "" })
 		e.wait(600*time.Millisecond, func() bool { return false })
-		if tr := e.tree("slick-typing-indicator"); tr != "" {
-			i := strings.Index(tr, "slick-typing-indicator")
-			t.Logf("%s tree: %s", c.name, tr[max(i-600, 0):min(i+2400, len(tr))])
+		logTree := func() {
+			if tr := e.tree("slick-typing-indicator"); tr != "" {
+				i := strings.Index(tr, "slick-typing-indicator")
+				t.Logf("%s tree: %s", c.name, tr[max(i-600, 0):min(i+2400, len(tr))])
+			}
 		}
 		for _, dark := range []bool{false, true} {
 			e.a.th.SetDark(dark)
@@ -64,6 +66,7 @@ func TestSlickViewBetterTypingIndicator(t *testing.T) {
 			}
 			t.Logf("%s%s: ink rows %d..%d of the bar's %d..%d", c.name, mode, top, bottom, bar.Min.Y, bar.Max.Y)
 			if h := bottom - top + 1; h > 12 {
+				logTree()
 				t.Errorf("%s%s: the typing line's ink is %dpx tall; 10.5px text is ~10px (a name at the 15px body size again?)", c.name, mode, h)
 			}
 			if top <= bar.Min.Y || bottom >= bar.Max.Y-1 {

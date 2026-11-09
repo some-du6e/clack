@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"log"
+	"math"
 	"strings"
 	"sync"
 
@@ -277,6 +278,20 @@ func LayoutElementText(gtx layout.Context, e Element, t InheritText) layout.Dime
 	if t.Color.A > 0 {
 		st.Color = t.Color
 	}
+	// The element the native stands for, on the native stack too: natives
+	// among the nodes (MemberLink's Enter) and the nodes laid out after
+	// one take their inherited text from the stack (nativeAnchor), not
+	// from the host box, and inside a native's own elements (the
+	// composer's) that chain ends in the root's 15px.
+	el, _, pk := stackParent()
+	var set propSet
+	for _, k := range []string{"font-size", "font-weight", "line-height", "color"} {
+		set |= propBits[k]
+	}
+	h := uint64(math.Float32bits(st.FontSize))<<32 ^ uint64(st.FontWeight)<<16 ^ uint64(math.Float32bits(st.LineHeight.Px)) ^
+		uint64(st.Color.R)<<56 ^ uint64(st.Color.G)<<48 ^ uint64(st.Color.B)<<40
+	pushHost(el, &st, set, mix(pk^h^0x7e47c0de))
+	defer popHost()
 	return c.view.layoutNodes(gtx, c.fr, e.Nodes, parent, &st)
 }
 
