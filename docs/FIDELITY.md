@@ -115,7 +115,7 @@ Measured equal or within 1–2px: DMs view, Ctrl+K, channel details frame (580×
 
 Not done in round 2:
 
-- **Search results:** not compared. Slack's Enter in the search box opened the top suggestion's DM (a write; I closed it again), so I stopped there.
+- **Search results:** compared on 2026-11-08 (search-audit), see docs/SEARCH.md. Don't press Enter in Slack's search box: it opens the top suggestion, once a stranger's DM. Click "Show results for:" instead.
 - **Block Kit modals:** not compared; they only open from an app interaction (a write).
 - **Image viewer:** Slack measured (1384×844 card at 28,28, r 8, 70% black over a blurred copy, 35×32 zoom controls bottom-left); Clack's not opened (no image near the bottom of the test channel).
 - **Profile:** a click opens Slack's full profile pane (nested below the tabs, like a thread); not compared field by field. The hover card is from round 1.

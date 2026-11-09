@@ -92,6 +92,16 @@ func (a *App) OpenSearchInChannel(ch string) {
 	a.Invalidate()
 }
 
+// searchInChannel opens the search in channel pane, or (without the
+// popups feature) the search box scoped to the channel.
+func (a *App) searchInChannel(ch string) {
+	if mkSearchInChannel != nil {
+		a.OpenSearchInChannel(ch)
+		return
+	}
+	a.openSearch("in:<#" + ch + ">")
+}
+
 // OpenSplit opens a conversation route ("c/<id>" or "c/<id>/t/<ts>") in the
 // right-hand pane next to the current one (Slack's "Open in split view").
 func (a *App) OpenSplit(route string) {

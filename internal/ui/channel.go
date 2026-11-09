@@ -139,7 +139,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		a.openChannelMenu(ch, image.Pt(a.winSize.X-gtx.Dp(theme.PanelInset)-gtx.Dp(14)-gtx.Dp(6), gtx.Dp(theme.TopNavH)+gtx.Dp(34)))
 	}
 	if clicked(a.clicks.get("hdr.search")) {
-		a.openSearch("in:<#" + ch + ">")
+		a.searchInChannel(ch) // Slack's searchInChannel: the ⌘F pane
 	}
 	if clicked(a.clicks.get("hdr.bell")) {
 		a.openNotifPrefs(ch)
