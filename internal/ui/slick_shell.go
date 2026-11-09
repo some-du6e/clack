@@ -701,8 +701,13 @@ func (a *App) layoutViewBody(gtx layout.Context, _ slackc.Props) layout.Dimensio
 }
 
 func (a *App) drawViewBody(gtx layout.Context) layout.Dimensions {
-	if a.skipBody > 0 { // tests: a frame whose tree left the body out
-		a.skipBody--
+	// tests: frames whose tree left the body out (every call in the frame:
+	// under a patch it's measured, then drawn; never the stand-in)
+	if !a.standIn && (a.skipBody > 0 || gtx.Now.Equal(a.skipAt)) {
+		if !gtx.Now.Equal(a.skipAt) {
+			a.skipBody--
+			a.skipAt = gtx.Now
+		}
 		return layout.Dimensions{Size: gtx.Constraints.Max}
 	}
 	r := a.router.Current()

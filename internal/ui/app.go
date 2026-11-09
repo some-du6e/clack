@@ -189,6 +189,7 @@ type App struct {
 	hud            *huddleui.Controller       // the native huddle (huddle_wire.go)
 	hudOrigin      map[string]*originTracker  // headers' huddle buttons by channel (caret menus)
 	skipBody       int                        // tests: frames drawViewBody leaves the body out
+	skipAt         time.Time                  // tests: the frame being skipped
 	noKeepBody     bool                       // tests: no keepBody (KeepFocus alone)
 	body           bodyDraw                   // the primary body's last live draw (keepBody)
 	standIn        bool                       // keepBody's draw is running
