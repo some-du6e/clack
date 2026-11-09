@@ -169,6 +169,10 @@ func (r *Runtime) signal() {
 
 func (r *Runtime) onJSThread() bool { return r.goid.Load() == curGoid() }
 
+// OnJSThread reports whether the caller runs on the JS thread (inside a
+// task, a HostFunc or a Post): waiting there for Done would never return.
+func (r *Runtime) OnJSThread() bool { return r.onJSThread() }
+
 func curGoid() int64 {
 	var buf [64]byte
 	b := buf[:runtime.Stack(buf[:], false)]

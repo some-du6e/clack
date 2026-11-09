@@ -7,12 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"gioui.org/gpu/headless"
-
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/fakeslack"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/blockkit"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
 )
 
 // Block Kit surfaces on the fake Slack's blockkit-gallery (synthetic data
@@ -30,7 +29,7 @@ func TestBlockKitSurfaces(t *testing.T) {
 	dir := os.Getenv("BK_SURFACES_SHOTS_DIR")
 	e := startEnv(t, fs, t.TempDir())
 	if dir != "" && e.gpu == nil {
-		w, err := headless.NewWindow(e.size.X, e.size.Y)
+		w, err := pixeltest.NewWindow(e.size.X, e.size.Y)
 		if err != nil {
 			t.Fatalf("headless window: %v", err)
 		}

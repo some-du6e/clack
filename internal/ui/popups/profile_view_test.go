@@ -20,6 +20,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/fakeslack"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
 )
 
 // pvImages serves a flat tile for every image URL (no network in tests)
@@ -115,7 +116,7 @@ func pvGPU(t *testing.T) *headless.Window {
 	if os.Getenv("PROFILE_SHOTS_DIR") == "" {
 		return nil
 	}
-	w, err := headless.NewWindow(pvW, pvH)
+	w, err := pixeltest.NewWindow(pvW, pvH)
 	if err != nil {
 		t.Fatalf("headless window: %v", err)
 	}

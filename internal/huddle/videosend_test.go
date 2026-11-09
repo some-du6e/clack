@@ -2,9 +2,11 @@ package huddle
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -184,5 +186,42 @@ func TestCameraUnsupported(t *testing.T) {
 		func() string { return s.State().Camera.State.String() })
 	if CameraSupported() {
 		t.Error("CameraSupported() with no backend")
+	}
+}
+
+// Nothing logs through Options.Logf once Leave has returned: pion runs
+// OnConnectionStateChange on its own goroutine, and its "peer connection
+// closed" used to reach a test's t.Logf after the test ended (a panic:
+// TestCameraUnsupported, TestHuddleShotsTiles).
+func TestNoLogAfterLeave(t *testing.T) {
+	clip, err := os.ReadFile("testdata/testsrc-320x180.h264")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fk := NewFake(clip, t.Errorf)
+	defer fk.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var left atomic.Bool
+	var late atomic.Value
+	logf := func(format string, args ...any) {
+		if left.Load() {
+			late.Store(fmt.Sprintf(format, args...))
+			return
+		}
+		t.Logf(format, args...)
+	}
+	s, err := Join(ctx, Options{Client: fk.Caller(), SelfID: fakeSelf, Device: NewToneDevice(440), Logf: logf}, "C0TEST")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 5*time.Second, "connected", func() bool { return s.State().Phase == Connected },
+		func() string { return s.State().Phase.String() })
+	s.Leave()
+	left.Store(true)
+	s.logf("huddle: peer connection %s", "closed") // what a late pion callback does
+	time.Sleep(200 * time.Millisecond)             // and anything else still winding down
+	if v := late.Load(); v != nil {
+		t.Errorf("logged after Leave returned: %q", v)
 	}
 }

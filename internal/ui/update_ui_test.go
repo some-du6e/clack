@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
 	"image"
 	"os"
 	"strings"
@@ -10,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"gioui.org/gpu/headless"
 	"gioui.org/layout"
 	"gioui.org/op"
 
@@ -311,7 +311,7 @@ func TestUpdateUIShots(t *testing.T) {
 	big := image.Pt(760, 420)
 	r := &ttRenderer{t: t, a: a, sz: big, dir: shots}
 	if shots != "" {
-		w, err := headless.NewWindow(big.X, big.Y)
+		w, err := pixeltest.NewWindow(big.X, big.Y)
 		if err != nil {
 			t.Fatalf("headless window: %v", err)
 		}

@@ -24,7 +24,7 @@ import (
 //     channel, username or user group handle).
 //   - conversations.create {name, validate_name, is_private, team_id} →
 //     {channel}, after the same checks. Tests make it answer
-//     restricted_action with Server.Hook.
+//     restricted_action with Server.SetHook.
 //   - conversations.invite {channel, users} records who was added.
 //   - users.channelSections.channels.bulkUpdate {insert, remove} moves
 //     channels into custom sections (users.channelSections.list shows it).

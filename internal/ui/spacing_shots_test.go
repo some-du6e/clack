@@ -22,6 +22,7 @@ import (
 	"gioui.org/gpu/headless"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
 )
 
 const shotChan = "C0CLACK001"
@@ -72,7 +73,7 @@ func TestSpacingShots(t *testing.T) {
 			}
 			var win *headless.Window
 			if dir != "" {
-				w, err := headless.NewWindow(e.sz.X, e.sz.Y)
+				w, err := pixeltest.NewWindow(e.sz.X, e.sz.Y)
 				if err != nil {
 					t.Fatalf("headless window: %v", err)
 				}

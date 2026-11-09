@@ -151,12 +151,12 @@ func TestHuddleScheduleModal(t *testing.T) {
 	}
 
 	// an API error shows Slack's message and keeps the modal open
-	fs.Hook = func(method string, _ url.Values) (any, bool) {
+	fs.SetHook(func(method string, _ url.Values) (any, bool) {
 		if method == "huddles.scheduled.new" {
 			return map[string]any{"ok": false, "error": "too_many_invitees"}, true
 		}
 		return nil, false
-	}
+	})
 	s = NewHuddleScheduleModal(h, "C0SCHED001")
 	hsPump(t, "the calendar check", func() bool { return s.calLoaded })
 	s.Submit()
@@ -164,7 +164,7 @@ func TestHuddleScheduleModal(t *testing.T) {
 	if s.Error() != "Too many people to invite to one huddle. Remove some and try again." || s.Dismissed() {
 		t.Errorf("error %q, dismissed %v", s.Error(), s.Dismissed())
 	}
-	fs.Hook = nil
+	fs.SetHook(nil)
 
 	// without a calendar: Slack's notice, and Schedule does nothing
 	fs.SetCalendarConnected(false)

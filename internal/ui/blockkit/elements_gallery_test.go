@@ -43,6 +43,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/store"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
 )
 
 // ---- host ----
@@ -151,7 +152,7 @@ func newBKEnv(t *testing.T, dark bool, shots bool) *bkEnv {
 	if shots {
 		e.dir = os.Getenv("BK_ELEMENTS_SHOTS_DIR")
 		if e.dir != "" {
-			w, err := headless.NewWindow(e.size.X, e.size.Y)
+			w, err := pixeltest.NewWindow(e.size.X, e.size.Y)
 			if err != nil {
 				t.Fatalf("headless window: %v", err)
 			}
@@ -323,6 +324,17 @@ func (e *bkEnv) hover(p image.Point) {
 	e.h.ptr = p
 	e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(float32(p.X), float32(p.Y))})
 	e.frame()
+}
+
+// idle waits until no action of block bid is in flight. A block is
+// disabled meanwhile (Slack's useBlockKitInteractiveState), and next()
+// returns once the fake has the call, before its answer reaches the UI: a
+// click on the block's next element before that is ignored, as in Slack
+// (on a slow runner the answer came after the click, and the menu the test
+// expected never opened).
+func (e *bkEnv) idle(bid string) {
+	e.t.Helper()
+	e.until("block "+bid+" idle", 10*time.Second, func() bool { return !e.message().loading(bid) })
 }
 
 func (e *bkEnv) clickEl(bid, aid string) *ew {
@@ -520,11 +532,13 @@ func TestGalleryElementPayloads(t *testing.T) {
 		t.Error("button still disabled after a second")
 	}
 
+	e.idle("bk_buttons")
 	e.clickEl("bk_buttons", "btn_primary")
 	sameJSON(t, "primary", next().Actions[0], map[string]any{"type": "button", "block_id": "bk_buttons", "action_id": "btn_primary",
 		"text": pt("Approve"), "value": "yes", "style": "primary"})
 
 	// url button: the action (no url field), then the link
+	e.idle("bk_buttons")
 	e.clickEl("bk_buttons", "btn_url")
 	sameJSON(t, "url button", next().Actions[0], map[string]any{"type": "button", "block_id": "bk_buttons", "action_id": "btn_url",
 		"text": pt("Open docs"), "value": "url"})
@@ -534,6 +548,7 @@ func TestGalleryElementPayloads(t *testing.T) {
 
 	// confirm: nothing until Delete
 	e.modals = nil
+	e.idle("bk_buttons")
 	e.clickEl("bk_buttons", "btn_confirm")
 	if len(e.modals) != 1 || e.modals[0][0].Label != "Keep it" || e.modals[0][1].Label != "Delete" || e.modals[0][1].Kind != popups.BtnDanger {
 		t.Fatalf("confirm dialog buttons: %+v", e.modals)
@@ -621,6 +636,7 @@ func TestGalleryElementPayloads(t *testing.T) {
 
 	// external select: min_query_length 0 asks on open; typing asks again
 	before := len(e.fs.Suggestions())
+	e.idle("bk_selects")
 	e.clickEl("bk_selects", "external_any")
 	e.until("suggestions on open", 5*time.Second, func() bool { return len(e.fs.Suggestions()) > before })
 	f := e.fs.Suggestions()[before]
@@ -642,6 +658,7 @@ func TestGalleryElementPayloads(t *testing.T) {
 
 	// external with the default min_query_length (3): nothing until 3 chars
 	before = len(e.fs.Suggestions())
+	e.idle("bk_selects")
 	e.clickEl("bk_selects", "external_groups")
 	sm, _ = topOverlay[*selectMenu](e)
 	if got := sm.emptyMessage(); got != "Type a minimum of 3 characters to see options." {
@@ -674,6 +691,7 @@ func TestGalleryElementPayloads(t *testing.T) {
 	sameJSON(t, "default_to_current_conversation", dig(c.State, "values", "bk_people", "convs_current"),
 		map[string]any{"type": "conversations_select", "selected_conversation": fakeslack.GalleryChannelID})
 	e.closeOverlays()
+	e.idle("bk_people")
 	e.clickEl("bk_people", "channels_one")
 	sm, _ = topOverlay[*selectMenu](e)
 	e.until("channels listed", 5*time.Second, func() bool { return len(sm.items) > 0 })
@@ -731,6 +749,7 @@ func TestGalleryElementPayloads(t *testing.T) {
 		"action_id": "multi_static", "selected_options": []any{opt("Apple", "apple"), opt("Banana", "banana")},
 		"initial_options": []any{opt("Apple", "apple")}})
 	e.closeOverlays()
+	e.idle("bk_multi")
 	w, r = e.widget("bk_multi", "multi_users")
 	e.click(center(r))
 	e.modals[len(e.modals)-1][1].Do()

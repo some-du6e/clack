@@ -30,13 +30,13 @@ func newReactEnv(t *testing.T) *reactEnv {
 	}
 	t.Cleanup(func() { fs.Close() })
 	e := &reactEnv{fs: fs, calls: make(chan url.Values, 4), answer: make(chan map[string]any)}
-	fs.Hook = func(method string, form url.Values) (any, bool) {
+	fs.SetHook(func(method string, form url.Values) (any, bool) {
 		if method != "reactions.add" && method != "reactions.remove" {
 			return nil, false
 		}
 		e.calls <- form
 		return <-e.answer, true
-	}
+	})
 	e.a = New(slack.New(fs.Creds()), store.New(""))
 	t.Cleanup(func() { shutdown(e.a) })
 	ctx := context.Background()

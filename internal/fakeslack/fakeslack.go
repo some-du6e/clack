@@ -211,9 +211,10 @@ type Server struct {
 	// (view_opened…) instead of the socket: tests running the client
 	// without realtime inject them (core.App.Inject). Set it before the calls.
 	Emit func(ev map[string]any)
-	// Hook, when set, sees every API call first; ok=true answers it with
-	// out (tests: hold a call back, fail it). Set it before the calls.
-	Hook func(method string, form url.Values) (out any, ok bool)
+	// hook (SetHook) sees every API call first; ok=true answers it with
+	// out (tests: hold a call back, fail it).
+	hookMu sync.Mutex
+	hook   func(method string, form url.Values) (out any, ok bool)
 
 	// Permissions are permissions/info's answers by channel_id ("" for a
 	// request without one). nil: every broadcast permission is allowed.
@@ -358,6 +359,15 @@ func (s *Server) setPref(name, value string) {
 }
 
 // Start serves a workspace of the given size on a loopback port.
+// SetHook makes f see every API call first; ok=true answers it with out
+// (tests: hold a call back, fail it). nil removes it. Safe while calls are
+// in flight (a booted client keeps loading in the background).
+func (s *Server) SetHook(f func(method string, form url.Values) (out any, ok bool)) {
+	s.hookMu.Lock()
+	s.hook = f
+	s.hookMu.Unlock()
+}
+
 func Start(sz Size) (*Server, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -754,8 +764,11 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	var out any
 	hooked := false
-	if s.Hook != nil {
-		out, hooked = s.Hook(method, form)
+	s.hookMu.Lock()
+	hook := s.hook
+	s.hookMu.Unlock()
+	if hook != nil {
+		out, hooked = hook(method, form)
 	}
 	if !hooked {
 		out = s.handle(method, form, edge)

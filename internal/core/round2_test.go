@@ -390,3 +390,46 @@ func TestAddToDM(t *testing.T) {
 		t.Error("AddToDM on a channel should fail")
 	}
 }
+
+// A star or save made while the boot's stars.list / saved.list is in
+// flight survives the (older) list landing after it. TestCreateChannel
+// flaked on this: "Starred" stars the new channel right after Boot, and
+// the boot extras then replaced the starred set with one read before.
+func TestExtrasKeepEditsMadeMeanwhile(t *testing.T) {
+	a, f := testApp(t)
+	f.reply["stars.list"] = `{"ok":true,"items":[{"type":"channel","channel":"C9"}],"paging":{"pages":1}}`
+	f.reply["saved.list"] = `{"ok":true,"saved_items":[{"item_id":"C9","item_type":"message","ts":"9.000001"}]}`
+	f.reply["stars.add"] = `{"ok":true}`
+	f.reply["stars.remove"] = `{"ok":true}`
+	entered, release := make(chan string, 4), make(chan struct{})
+	hold := func(url.Values) { entered <- "list"; <-release }
+	f.hooks["stars.list"], f.hooks["saved.list"] = hold, hold
+	done := make(chan struct{})
+	go func() { a.loadStars(context.Background()); close(done) }()
+	<-entered
+	if err := a.Star(context.Background(), "C1", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Star(context.Background(), "C9", false); err != nil {
+		t.Fatal(err)
+	}
+	release <- struct{}{}
+	<-done
+	if !a.Starred("C1") || a.Starred("C9") {
+		t.Errorf("after stars.list: C1 starred=%v (want true), C9 starred=%v (want false)", a.Starred("C1"), a.Starred("C9"))
+	}
+
+	done = make(chan struct{})
+	go func() { a.loadSaved(context.Background()); close(done) }()
+	<-entered
+	a.markSaved("C1", "1.000001", true)
+	a.markSaved("C9", "9.000001", false)
+	close(release) // both saved.list pages
+	<-done
+	a.mu.Lock()
+	s1, s9 := a.saved[savedKey("C1", "1.000001")], a.saved[savedKey("C9", "9.000001")]
+	a.mu.Unlock()
+	if !s1 || s9 {
+		t.Errorf("after saved.list: C1 saved=%v (want true), C9 saved=%v (want false)", s1, s9)
+	}
+}

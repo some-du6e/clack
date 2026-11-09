@@ -40,6 +40,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/store"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
 )
 
 var (
@@ -186,7 +187,7 @@ func startEnv(tb testing.TB, fs *fakeslack.Server, home string) *perfEnv {
 	}
 	e.a.data.start(e.a)
 	if os.Getenv("CLACK_BENCH_GPU") != "" {
-		w, err := headless.NewWindow(e.size.X, e.size.Y)
+		w, err := pixeltest.NewWindow(e.size.X, e.size.Y)
 		if err != nil {
 			tb.Logf("no GPU renderer (%v): layout only", err)
 		} else {

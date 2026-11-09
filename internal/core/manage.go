@@ -24,6 +24,14 @@ import (
 // loadStars reads starred conversations (stars.list lives on the team host).
 func (a *App) loadStars(ctx context.Context) error {
 	set := map[string]bool{}
+	a.mu.Lock()
+	a.starEdits = map[string]bool{}
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		a.starEdits = nil
+		a.mu.Unlock()
+	}()
 	page := 1
 	for page <= 10 {
 		var r struct {
@@ -49,6 +57,13 @@ func (a *App) loadStars(ctx context.Context) error {
 		page++
 	}
 	a.mu.Lock()
+	for ch, on := range a.starEdits {
+		if on {
+			set[ch] = true
+		} else {
+			delete(set, ch)
+		}
+	}
 	a.starred, a.starsOK = set, true
 	a.mu.Unlock()
 	return nil
@@ -67,6 +82,9 @@ func (a *App) setStarred(ch string, on bool) {
 		a.starred[ch] = true
 	} else {
 		delete(a.starred, ch)
+	}
+	if a.starEdits != nil {
+		a.starEdits[ch] = on
 	}
 	a.mu.Unlock()
 }
@@ -287,6 +305,14 @@ func savedKey(ch, ts string) string { return ch + "/" + ts }
 // loadSaved builds the saved/to-do set used for Message.Saved.
 func (a *App) loadSaved(ctx context.Context) error {
 	set := map[string]bool{}
+	a.mu.Lock()
+	a.savedEdits = map[string]bool{}
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		a.savedEdits = nil
+		a.mu.Unlock()
+	}()
 	for _, f := range []string{SavedFilterSaved, SavedFilterTodos} {
 		cursor := ""
 		for page := 0; page < 10; page++ {
@@ -315,6 +341,13 @@ func (a *App) loadSaved(ctx context.Context) error {
 		}
 	}
 	a.mu.Lock()
+	for k, on := range a.savedEdits {
+		if on {
+			set[k] = true
+		} else {
+			delete(set, k)
+		}
+	}
 	a.saved = set
 	a.mu.Unlock()
 	return nil
@@ -326,6 +359,9 @@ func (a *App) markSaved(ch, ts string, on bool) {
 		a.saved[savedKey(ch, ts)] = true
 	} else {
 		delete(a.saved, savedKey(ch, ts))
+	}
+	if a.savedEdits != nil {
+		a.savedEdits[savedKey(ch, ts)] = on
 	}
 	a.mu.Unlock()
 	if m, ok := a.S.Find(ch, ts); ok {

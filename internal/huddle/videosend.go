@@ -161,7 +161,7 @@ func (s *Session) applyCamera(gen uint64) {
 		case errors.Is(err, errCameraDenied):
 			st.State = CameraDenied
 		}
-		s.o.Logf("huddle: camera: %v", err)
+		s.logf("huddle: camera: %v", err)
 		s.cameraOff()
 		c.mu.Lock()
 		if gen == c.gen {
@@ -204,7 +204,7 @@ func (s *Session) cameraOn(gen uint64) error {
 		return fmt.Errorf("publish: %w", err)
 	}
 	s.setCamStatus(gen, CameraStatus{State: CameraOn})
-	s.o.Logf("huddle: camera on")
+	s.logf("huddle: camera on")
 	return nil
 }
 
@@ -213,7 +213,7 @@ func (s *Session) cameraOn(gen uint64) error {
 // (CLACK_HUDDLE_TESTCAM), or the system default.
 func (s *Session) openCamera() (Camera, error) {
 	if s.o.OpenCamera != nil {
-		return s.o.OpenCamera(s.o.Logf)
+		return s.o.OpenCamera(s.logf)
 	}
 	if testCamEnv() {
 		w, h := testCamSize()
@@ -237,7 +237,7 @@ func (s *Session) openCamera() (Camera, error) {
 	default:
 		return nil, fmt.Errorf("can't ask for camera access: %s", st)
 	}
-	return openDefaultCamera(s.o.Logf)
+	return openDefaultCamera(s.logf)
 }
 
 // cameraAttach is setupMedia's hook for each new peer connection: t is the
@@ -250,7 +250,7 @@ func (s *Session) cameraAttach(api *webrtc.API, pc *webrtc.PeerConnection, t *we
 	c.api, c.pc, c.trans, c.sender = api, pc, t, nil
 	if c.want && c.cam != nil {
 		if err := s.attachLocked(); err != nil {
-			s.o.Logf("huddle: camera: %v", err)
+			s.logf("huddle: camera: %v", err)
 		}
 	}
 }
@@ -323,14 +323,14 @@ func (s *Session) cameraOff() {
 	c.preview.clear()
 	if sender != nil && pc != nil {
 		if err := pc.RemoveTrack(sender); err != nil {
-			s.o.Logf("huddle: camera: remove track: %v", err)
+			s.logf("huddle: camera: remove track: %v", err)
 		}
 		if s.ctx.Err() == nil {
 			if err := s.subscribe(false); err != nil {
-				s.o.Logf("huddle: camera off: resubscribe: %v", err)
+				s.logf("huddle: camera off: resubscribe: %v", err)
 			}
 		}
-		s.o.Logf("huddle: camera off")
+		s.logf("huddle: camera off")
 	}
 	s.changed()
 }
@@ -418,15 +418,15 @@ func (s *Session) onCameraFrame(f *CameraFrame) {
 			c.enc.Close()
 			c.enc = nil
 		}
-		enc, err := newVideoEncoder(f.W, f.H, camFPS, camBitrate, s.o.Logf)
+		enc, err := newVideoEncoder(f.W, f.H, camFPS, camBitrate, s.logf)
 		if err != nil {
 			if time.Since(c.errAt) > 10*time.Second {
 				c.errAt = time.Now()
-				s.o.Logf("huddle: camera encoder: %v", err)
+				s.logf("huddle: camera encoder: %v", err)
 			}
 			return
 		}
-		s.o.Logf("huddle: camera %dx%d, %s H.264", f.W, f.H, enc.Name())
+		s.logf("huddle: camera %dx%d, %s H.264", f.W, f.H, enc.Name())
 		c.enc, c.encBps = enc, camBitrate
 		c.encSize = [2]int{f.W, f.H}
 		c.keyReq.Store(true)
@@ -446,7 +446,7 @@ func (s *Session) onCameraFrame(f *CameraFrame) {
 		}
 		if err != nil && time.Since(c.errAt) > 10*time.Second {
 			c.errAt = time.Now()
-			s.o.Logf("huddle: camera encode: %v", err)
+			s.logf("huddle: camera encode: %v", err)
 		}
 		return
 	}

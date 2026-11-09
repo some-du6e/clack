@@ -12,13 +12,13 @@ import (
 	"testing"
 	"time"
 
-	"gioui.org/gpu/headless"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/menubar"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
 )
 
 // rateLimited is desktop.RateLimitError's shape.
@@ -576,7 +576,7 @@ func TestUpdatePrefsShots(t *testing.T) {
 	shots := os.Getenv("UPDATE_SHOTS_DIR")
 	r := &ttRenderer{t: t, a: a, sz: image.Pt(600, 330), dir: shots}
 	if shots != "" {
-		w, err := headless.NewWindow(r.sz.X, r.sz.Y)
+		w, err := pixeltest.NewWindow(r.sz.X, r.sz.Y)
 		if err != nil {
 			t.Fatalf("headless window: %v", err)
 		}

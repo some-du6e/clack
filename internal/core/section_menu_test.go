@@ -136,12 +136,12 @@ func TestSectionLifecycle(t *testing.T) {
 	fs, a := bootFake(t)
 	ctx := context.Background()
 	var forms = map[string][]url.Values{}
-	fs.Hook = func(m string, f url.Values) (any, bool) {
+	fs.SetHook(func(m string, f url.Values) (any, bool) {
 		if strings.HasPrefix(m, "users.channelSections.") {
 			forms[m] = append(forms[m], f)
 		}
 		return nil, false
-	}
+	})
 	id, err := a.CreateSection(ctx, "Launch", ":rocket:", "L0FAKE02")
 	if err != nil {
 		t.Fatal(err)
@@ -214,12 +214,12 @@ func TestMuteMany(t *testing.T) {
 	fs, a := bootFake(t)
 	ctx := context.Background()
 	var form url.Values
-	fs.Hook = func(m string, f url.Values) (any, bool) {
+	fs.SetHook(func(m string, f url.Values) (any, bool) {
 		if m == "users.prefs.setNotifications" {
 			form = f
 		}
 		return nil, false
-	}
+	})
 	ids := fs.ChannelIDs()[:3]
 	if err := a.MuteMany(ctx, ids, true); err != nil {
 		t.Fatal(err)

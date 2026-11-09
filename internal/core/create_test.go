@@ -117,12 +117,12 @@ func TestCreateChannel(t *testing.T) {
 	fs, a := bootFake(t)
 	ctx := context.Background()
 	var forms []url.Values
-	fs.Hook = func(method string, f url.Values) (any, bool) {
+	fs.SetHook(func(method string, f url.Values) (any, bool) {
 		if method == "conversations.create" {
 			forms = append(forms, f)
 		}
 		return nil, false
-	}
+	})
 
 	c, err := a.CreateChannel(ctx, CreateChannelOpts{Name: "launch-plan"})
 	if err != nil {
@@ -165,12 +165,12 @@ func TestCreateChannel(t *testing.T) {
 	if _, err := a.CreateChannel(ctx, CreateChannelOpts{Name: "launch-plan"}); ChannelNameCode(err) != NameTaken {
 		t.Errorf("duplicate: %v", err)
 	}
-	fs.Hook = func(method string, f url.Values) (any, bool) {
+	fs.SetHook(func(method string, f url.Values) (any, bool) {
 		if method == "conversations.create" {
 			return map[string]any{"ok": false, "error": "restricted_action"}, true
 		}
 		return nil, false
-	}
+	})
 	if _, err := a.CreateChannel(ctx, CreateChannelOpts{Name: "nope"}); ChannelNameCode(err) != NameRestricted {
 		t.Errorf("restricted: %v", err)
 	}

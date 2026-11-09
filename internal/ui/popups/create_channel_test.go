@@ -187,12 +187,12 @@ func TestCreateChannelModalSteps(t *testing.T) {
 // "Okay", which closes.
 func TestCreateChannelModalCreateError(t *testing.T) {
 	h, fs := ccEnv(t)
-	fs.Hook = func(method string, f url.Values) (any, bool) {
+	fs.SetHook(func(method string, f url.Values) (any, bool) {
 		if method == "conversations.create" {
 			return map[string]any{"ok": false, "error": "restricted_action"}, true
 		}
 		return nil, false
-	}
+	})
 	m := NewCreateChannelModal(h, CreateChannelOpts{Name: "launch"})
 	ccUntil(t, m, "check", func() bool { return !m.checking })
 	m.Next()

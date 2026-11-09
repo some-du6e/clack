@@ -18,10 +18,10 @@ import (
 	"testing"
 	"time"
 
-	"gioui.org/gpu/headless"
 	"gioui.org/io/key"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/fakeslack"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
 )
 
 func previewEnv(t *testing.T) (*perfEnv, *fakeslack.Server) {
@@ -32,7 +32,7 @@ func previewEnv(t *testing.T) (*perfEnv, *fakeslack.Server) {
 	t.Cleanup(func() { fs.Close() })
 	e := startEnv(t, fs, t.TempDir())
 	if dir := os.Getenv("PREVIEW_SHOTS_DIR"); dir != "" && e.gpu == nil {
-		w, err := headless.NewWindow(e.size.X, e.size.Y)
+		w, err := pixeltest.NewWindow(e.size.X, e.size.Y)
 		if err != nil {
 			t.Fatalf("headless window: %v", err)
 		}
