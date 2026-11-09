@@ -138,6 +138,11 @@ type extraTree struct {
 	used  uint64
 	up    css.Element // the roots' CSS parent (nil: the patched component's box)
 	upKey uint64
+	// ps is the parent style the boxes were styled with (psOK: one was
+	// given): a different one (LayoutElementText, a theme change)
+	// restyles them.
+	ps   css.Style
+	psOK bool
 }
 
 // scope is one independent layout root: the View's tree, or a subtree a
@@ -824,13 +829,16 @@ func (v *View) layoutNodes(gtx layout.Context, fr *frame, nodes []*Node, parent 
 	}
 	up, upKey := nativeAnchor()
 	x := v.extra[nodes[0]]
-	restyled := x == nil || x.up != up || x.upKey != upKey
+	restyled := x == nil || x.up != up || x.upKey != upKey || st != nil && (!x.psOK || !sameStyleShallow(&x.ps, st))
 	if x == nil {
 		x = &extraTree{boxes: v.buildBoxes(nodes, pb)}
 		v.extra[nodes[0]] = x
 	}
 	if restyled {
 		x.up, x.upKey = up, upKey
+		if st != nil {
+			x.ps, x.psOK = *st, true
+		}
 		for _, b := range x.boxes {
 			b.up = up
 		}

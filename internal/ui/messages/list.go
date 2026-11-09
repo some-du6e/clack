@@ -1322,7 +1322,7 @@ func threadRoot(m *core.Message) string {
 	return m.TS
 }
 
-// typingText is Slack's "X is typing…" line.
+// typingText is Slack's TypingNames line ("X is typing", no ellipsis).
 func typingText(names []string) string {
 	if !uipref.Get().ShowTyping { // show_typing off
 		return ""
@@ -1331,11 +1331,11 @@ func typingText(names []string) string {
 	case 0:
 		return ""
 	case 1:
-		return names[0] + " is typing…"
+		return names[0] + " is typing"
 	case 2:
-		return names[0] + " and " + names[1] + " are typing…"
+		return names[0] + " and " + names[1] + " are typing"
 	}
-	return "Several people are typing…"
+	return "Several people are typing"
 }
 
 // startEdit replaces the body of message ts with the inline edit composer.

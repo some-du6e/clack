@@ -491,7 +491,7 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 	st.Typing = typingLine(st.TypingNames)
 	if uipref.Get().ShowTyping {
 		if name, status := typingHub(c.h.Core()).assistantLine(c.ch, c.ts, c.api.self().ID); status != "" {
-			st.Typing, st.TypingStatus = name+" "+status, status // AiAppStatusIndicator
+			st.Typing, st.TypingStatus, st.TypingAgent = name+" "+status, status, name // AiAppStatusIndicator
 		}
 	}
 	st.ScrolledTop = c.ed.scrollY > 0
@@ -795,14 +795,12 @@ func (c *Composer) submit() {
 			}
 			c.clearAfterSend()
 			go func() {
-				res, err := api.command(context.Background(), core.CommandOpts{Channel: ch, Command: cmd, Text: strings.TrimSpace(rest), ThreadTS: ts})
-				if err != nil {
-					c.later(func() { c.h.Toast(cmd + " failed: " + err.Error()) })
+				// handleSlashCommand: the reply or the failure is
+				// Slackbot's ephemeral; the app's modal arrives as
+				// view_opened for the command's client_token
+				res, err := runCommand(context.Background(), api, core.CommandOpts{Channel: ch, Command: cmd, Text: strings.TrimSpace(rest), ThreadTS: ts})
+				if err == nil && res.KeepInput {
 					c.restore(doc)
-					return
-				}
-				if res.Response != "" {
-					c.later(func() { c.h.Toast(res.Response) })
 				}
 			}()
 			return
@@ -1163,6 +1161,10 @@ func (c *Composer) restoreDroppedFocus(gtx layout.Context) {
 // FocusTag is the key-focus tag of the composer's editor (tests check
 // that nothing takes focus from it).
 func (c *Composer) FocusTag() any { return c.ed }
+
+// TypingLine is the typing indicator's text under the composer as last
+// laid out ("" none; tests).
+func (c *Composer) TypingLine() string { return c.ui.cur.Typing }
 
 // DocText is the composer's text as plain characters (tests).
 func (c *Composer) DocText() string { return c.ed.Doc().Text() }

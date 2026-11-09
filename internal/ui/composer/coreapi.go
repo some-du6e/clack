@@ -140,6 +140,11 @@ func (c coreAPI) broadcastPerms(ctx context.Context, ch string) (core.BroadcastP
 // localEphemeral shows a Slackbot "Only visible to you" message.
 func (c coreAPI) localEphemeral(ch, threadTS, text string) { c.a.LocalEphemeral(ch, threadTS, text) }
 
+// commandFeedback is a slash command's reply or failure as Slackbot's
+// temporary ephemeral; clearCommandFeedback removes the earlier ones.
+func (c coreAPI) commandFeedback(ch, threadTS, text string) { c.a.CommandFeedback(ch, threadTS, text) }
+func (c coreAPI) clearCommandFeedback(thread bool)          { c.a.ClearCommandFeedback(thread) }
+
 // broadcastEnabled is the channel's enable_at_channel (channels.prefs.get).
 func (c coreAPI) broadcastEnabled(ctx context.Context, ch string) bool {
 	return c.a.LoadBroadcastEnabled(ctx, ch)

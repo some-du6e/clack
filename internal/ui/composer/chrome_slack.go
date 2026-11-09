@@ -3,6 +3,7 @@ package composer
 import (
 	"image"
 	"image/color"
+	"strings"
 
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
 // chrome_slack.go: the chrome's Slack boundaries (slack.go has the tree).
@@ -753,55 +755,85 @@ func (c *chrome) typingNamesProps() slackc.Props {
 	return p
 }
 
-// layoutTypingNames draws the typing line. Unpatched: Clack's text.
-// Under a patch it fills Slack's template with firstTyper/secondTyper,
-// which may be text or elements (BetterTypingIndicator's member links).
+// typingText is .p-notification_bar__section's text: font-size .7em of
+// the pane's 15px, line-height 1rem, sk_foreground_max_solid; names in
+// TypingNames' <b>.
+func (c *chrome) typingText(bold bool) textStyle {
+	s := textStyle{Size: 10.5, LineHeight: 16, Color: c.fpal.typing, MaxLines: 1}
+	if bold {
+		s.Weight = theme.Bold
+	}
+	return s
+}
+
+// barText is that section's style for plugin nodes laid out in it.
+func (c *chrome) barText() slackc.InheritText {
+	return slackc.InheritText{Size: 10.5, LineHeight: 16, Weight: 400, Color: c.fpal.typing}
+}
+
+// layoutTypingNames is Slack's TypingNames: "<b>{name}</b> is typing",
+// "<b>{name}</b> and <b>{other_name}</b> are typing", or "Several people
+// are typing", one line in the bar's section style (no ellipsis; the
+// section clips with text-overflow: ellipsis). Under a patch firstTyper
+// and secondTyper may be elements (BetterTypingIndicator's member links):
+// they are laid out inside the template's <b>, inheriting its bold and
+// the section's size and colour, like any text name. An app's assistant
+// status is AiAppStatusIndicator's "<b>{app}</b> {status}".
 func (c *chrome) layoutTypingNames(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	th := c.f.h.Theme()
-	s := textStyle{Size: 10.5, LineHeight: 16, Color: c.fpal.typing, MaxLines: 1}
 	maxW := gtx.Constraints.Max.X
-	if p == nil || c.cur.TypingStatus != "" {
-		return crText(gtx, th.Shaper, 0, 0, maxW, s, c.cur.Typing)
-	}
-	if p.Bool("severalPeopleAreTyping") {
-		return crText(gtx, th.Shaper, 0, 0, maxW, s, "Several people are typing…")
-	}
-	if !p.Has("firstTyper") {
-		return layout.Dimensions{}
-	}
-	sp := c.space(gtx, th.Shaper, 2)
 	x, h := 0, 0
-	part := func(prop, txt string) {
-		if x >= maxW {
-			return
-		}
-		var d layout.Dimensions
-		if prop != "" {
-			if e, ok := p.Elem(prop); ok {
-				t := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
-				g := gtx
-				g.Constraints = layout.Constraints{Max: image.Pt(maxW-x, gtx.Constraints.Max.Y)}
-				d = slackc.LayoutElement(g, e)
-				t.Pop()
-			} else {
-				d = crText(gtx, th.Shaper, x, 0, maxW-x, s, p.StrOr(prop, ""))
-			}
-		} else {
-			d = crText(gtx, th.Shaper, x, 0, maxW-x, s, txt)
-		}
+	add := func(d layout.Dimensions) {
 		x += d.Size.X
 		h = max(h, d.Size.Y)
 	}
-	part("firstTyper", "")
-	x += sp
-	if p.Has("secondTyper") {
-		part("", "and")
+	sp := c.space(gtx, th.Shaper, 2) // a 10.5px space
+	text := func(s string, bold bool) {
+		if strings.HasPrefix(s, " ") {
+			x += sp
+			s = s[1:]
+		}
+		if x < maxW && s != "" {
+			add(crText(gtx, th.Shaper, x, 0, maxW-x, c.typingText(bold), s))
+		}
+	}
+	name := func(prop string) {
+		if x >= maxW {
+			return
+		}
+		if e, ok := p.Elem(prop); ok {
+			t := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
+			g := gtx
+			g.Constraints = layout.Constraints{Max: image.Pt(maxW-x, gtx.Constraints.Max.Y)}
+			in := c.barText()
+			in.Weight = 700 // <b>
+			d := slackc.LayoutElementText(g, e, in)
+			t.Pop()
+			add(d)
+			return
+		}
+		text(p.StrOr(prop, ""), true)
+	}
+	if c.cur.TypingStatus != "" {
+		text(c.cur.TypingAgent, true)
+		text(" "+c.cur.TypingStatus, false)
+		return layout.Dimensions{Size: image.Pt(min(x, maxW), h)}
+	}
+	if p == nil {
+		p = c.typingNamesProps()
+	}
+	switch {
+	case p.Bool("severalPeopleAreTyping"):
+		text("Several people are typing", false)
+	case p.Has("firstTyper") && p.Has("secondTyper"):
+		name("firstTyper")
+		text(" and", false)
 		x += sp
-		part("secondTyper", "")
-		x += sp
-		part("", "are typing…")
-	} else {
-		part("", "is typing…")
+		name("secondTyper")
+		text(" are typing", false)
+	case p.Has("firstTyper"):
+		name("firstTyper")
+		text(" is typing", false)
 	}
 	return layout.Dimensions{Size: image.Pt(min(x, maxW), h)}
 }

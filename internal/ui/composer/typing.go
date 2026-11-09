@@ -10,8 +10,9 @@ import (
 
 // The typing hub listens to core's realtime typing events once per
 // core.App and answers "who is typing here" for the hint bar under the
-// composer ("Karim is typing…").
+// composer ("Karim is typing").
 
+// typingTTL is removeOldTypingRecords' 6e3 ms for other people.
 const typingTTL = 6 * time.Second
 
 type typer struct {
@@ -129,19 +130,49 @@ func (s *typingState) apply(ev core.Event) {
 	}
 	inv := s.invalidators()
 	if s.timer == nil {
-		s.timer = time.AfterFunc(typingTTL+100*time.Millisecond, func() {
-			s.mu.Lock()
-			s.timer = nil
-			inv := s.invalidators()
-			s.mu.Unlock()
-			for _, f := range inv {
-				f()
-			}
-		})
+		s.timer = time.AfterFunc(typingTick, s.tick)
 	}
 	s.mu.Unlock()
 	for _, f := range inv {
 		f()
+	}
+}
+
+// typingTick is Slack's maybeStartTimer interval: checkTypingMap runs
+// every second while anyone is typing, and removeOldTypingRecords drops
+// records 6 s after they started (5 s for the viewer's own).
+const typingTick = time.Second
+
+// tick is checkTypingMap: expire the old records, repaint when one went,
+// and stop once nobody is typing (clearTypingCleanupInterval).
+func (s *typingState) tick() {
+	now := time.Now()
+	s.mu.Lock()
+	gone, live := false, false
+	for k, us := range s.m {
+		for id, t := range us {
+			if !t.until.After(now) {
+				delete(us, id)
+				gone = true
+			} else {
+				live = true
+			}
+		}
+		if len(us) == 0 {
+			delete(s.m, k)
+		}
+	}
+	if live {
+		s.timer = time.AfterFunc(typingTick, s.tick)
+	} else {
+		s.timer = nil
+	}
+	inv := s.invalidators()
+	s.mu.Unlock()
+	if gone {
+		for _, f := range inv {
+			f()
+		}
 	}
 }
 
@@ -222,17 +253,19 @@ func (b byName) Swap(i, j int) {
 	b.names[i], b.names[j] = b.names[j], b.names[i]
 }
 
-// typingLine formats Slack's typing indicator text.
+// typingLine is Slack's TypingNames text (notification_bar):
+// "<b>{name}</b> is typing", "<b>{name}</b> and <b>{other_name}</b> are
+// typing", "Several people are typing", with no trailing ellipsis.
 func typingLine(names []string) string {
 	switch len(names) {
 	case 0:
 		return ""
 	case 1:
-		return names[0] + " is typing…"
+		return names[0] + " is typing"
 	case 2:
-		return names[0] + " and " + names[1] + " are typing…"
+		return names[0] + " and " + names[1] + " are typing"
 	default:
-		return "Several people are typing…"
+		return "Several people are typing"
 	}
 }
 

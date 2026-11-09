@@ -2,6 +2,7 @@ package slackc
 
 import (
 	"image"
+	"image/color"
 	"log"
 	"strings"
 	"sync"
@@ -235,6 +236,48 @@ func LayoutElement(gtx layout.Context, e Element) layout.Dimensions {
 		parent = e.Nodes[0].parent
 	}
 	return c.view.layoutNodes(gtx, c.fr, e.Nodes, parent, c.st)
+}
+
+// InheritText is the text style a native's own DOM gives a React-node
+// prop it wraps, which the prop's nodes inherit (TypingNames' <b>{name}</b>
+// inside .p-notification_bar__section: 10.5px, 1rem line height,
+// foreground_max, bold). Zero fields keep the render context's value.
+type InheritText struct {
+	Size, LineHeight float32 // CSS px
+	Weight           int     // 100..900
+	Color            color.NRGBA
+}
+
+// LayoutElementText is LayoutElement with the nodes' CSS parent styled
+// by t, as if the native had drawn its own element around them.
+func LayoutElementText(gtx layout.Context, e Element, t InheritText) layout.Dimensions {
+	c := curRender
+	if c == nil || len(e.Nodes) == 0 {
+		return layout.Dimensions{}
+	}
+	parent := c.n
+	if e.Nodes[0].parent != nil {
+		parent = e.Nodes[0].parent
+	}
+	var st css.Style
+	if c.st != nil {
+		st = *c.st
+	} else {
+		st = css.Initial(cssEnv().Fg)
+	}
+	if t.Size > 0 {
+		st.FontSize = t.Size
+	}
+	if t.LineHeight > 0 {
+		st.LineHeight = css.Px(t.LineHeight)
+	}
+	if t.Weight > 0 {
+		st.FontWeight = t.Weight
+	}
+	if t.Color.A > 0 {
+		st.Color = t.Color
+	}
+	return c.view.layoutNodes(gtx, c.fr, e.Nodes, parent, &st)
 }
 
 // Items splits children into their flex items, for a native whose Slack
