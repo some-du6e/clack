@@ -606,11 +606,14 @@ func (pl *reactPill) buttonProps() slackc.Props {
 // plugin's <div><Original/></div> (MessageLogger) or bare <Original/>
 // (BetterBlock) must lay them out as blocks, not inline-block on a line
 // box, which left 3.5dp of strut descent under every row.
+// BaseVisuallyHiddenMessageText is Slack's offscreen span (absolutely
+// positioned, no space in the flow): drawn empty, a zero-height block
+// takes none either, where an empty inline-block made an 18dp line.
 func init() {
 	slackc.SetBlockComponents("MessageWrapper", "ThreadRootGeneric", "Message", "ThreadReplyGeneric",
 		"MessageBackground", "ProgressiveDisclosureSuccessCoachmarkWrapper", "MessageKitGutter",
 		"MessageText", "MessageBlocks", "Blocks", "MessageFiles", "MessageKitAttachments",
-		"ReactionBar", "ThreadReplies")
+		"ReactionBar", "ThreadReplies", "CodeChannelEntityCard", "BaseVisuallyHiddenMessageText")
 }
 
 // layoutWrapper is MessageWrapper / ThreadRootGeneric: a plugin's msg

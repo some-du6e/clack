@@ -26,7 +26,7 @@ var hosts struct {
 }
 
 // blockComps are the Slack components whose own root element is a block
-// box (a <div>): an "@" node for one is display: block by default, so a
+// box (a <div>, or out of the flow like an offscreen span): an "@" node for one is display: block by default, so a
 // plugin's <div><Original/></div> (or a bare <Original/>) lays the native
 // out as a block, the way Slack's DOM does. Other components default to
 // inline-block, and as inline-level boxes they sit on a line box that adds

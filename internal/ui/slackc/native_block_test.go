@@ -33,3 +33,20 @@ func TestWrappedBlockNativeAddsNoLine(t *testing.T) {
 		}
 	}
 }
+
+// BaseVisuallyHiddenMessageText (Slack's offscreen span, out of flow)
+// drawn empty under a bare <Original/> (BetterBlock) takes no space.
+func TestEmptyNativeTakesNoSpace(t *testing.T) {
+	SetBlockComponents("BaseVisuallyHiddenMessageText")
+	SetStyle("test:wrap", `.slick-ml-deleted { color: red }`)
+	defer RemoveStyle("test:wrap")
+	empty := func(gtx layout.Context, _ Props) layout.Dimensions { return layout.Dimensions{} }
+	v := NewView(950)
+	var d layout.Dimensions
+	for i := 0; i < 2; i++ {
+		d = v.Layout(testGtx(600, 400), mustTree(t, `{"t":"@","n":"BaseVisuallyHiddenMessageText","k":2}`), "BaseVisuallyHiddenMessageText", nil, empty)
+	}
+	if d.Size.Y != 0 {
+		t.Errorf("the view is %d tall around an empty native", d.Size.Y)
+	}
+}
