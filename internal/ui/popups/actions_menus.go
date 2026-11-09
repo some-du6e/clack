@@ -25,9 +25,13 @@ var (
 	SignOut func()
 	// OpenOwnProfile opens the viewer's full profile.
 	OpenOwnProfile func()
-	// CheckForUpdates is the workspace menu's "Check for updates…" (Linux
-	// and Windows, where Clack has no menu bar). Nil: no item.
+	// CheckForUpdates is the workspace menu's update item (Linux and
+	// Windows, where Clack has no menu bar). Nil: no item.
 	CheckForUpdates func()
+	// UpdateItemLabel is that item's title for the update's state (Slack's
+	// "Check for Updates…", "Downloading Update", "Restart to Apply
+	// Update"…) and whether it can be chosen. Nil: "Check for Updates…".
+	UpdateItemLabel func() (string, bool)
 )
 
 // actDNDUntil is when the viewer's notification snooze ends (zero = not
@@ -424,7 +428,11 @@ func NewTeamMenu(h Host, anchor image.Point) *Menu {
 		{Label: "Preferences", Do: actPreferences(h)},
 	}
 	if f := CheckForUpdates; f != nil {
-		items = append(items, MenuItem{Key: "check-for-updates", Label: "Check for updates…", Do: f})
+		label, ok := "Check for Updates…", true
+		if UpdateItemLabel != nil {
+			label, ok = UpdateItemLabel()
+		}
+		items = append(items, MenuItem{Key: "check-for-updates", Label: label, Disabled: !ok, Do: f})
 	}
 	items = append(items, []MenuItem{
 		{Label: "Tools", Sub: []MenuItem{

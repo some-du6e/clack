@@ -21,7 +21,8 @@ import (
 // (Preferences > Advanced > Updates), Clack > Check for Updates… on macOS
 // and the workspace menu's item elsewhere. Every check runs on
 // updateLoop's goroutine; results come back to the UI goroutine through
-// Post. desktop.go has the banner and the download/install phases.
+// Post. desktop.go has the download/install phases, update_ui.go what
+// they look like (Slack desktop's Help dot, dialog and menu titles).
 
 const (
 	updateFirst = 15 * time.Second // after launch, so it doesn't slow startup
@@ -185,8 +186,10 @@ func (a *App) nudgeUpdates() {
 
 // checkForUpdates is "Check now" and the menus' Check for Updates…: a
 // check right away, even with "Check for updates" off. notify (the
-// menus) says what it found in a toast or the banner; the Preferences
-// row shows it in place. UI goroutine.
+// menus) answers like Slack's manual check: a message box when there's
+// nothing new or the check failed, else the download starts (the menus
+// say Downloading Update, then Help gets its dot). The Preferences row
+// shows it in place. UI goroutine.
 func (a *App) checkForUpdates(notify bool) {
 	if a.opts.CheckUpdate == nil {
 		if notify {
@@ -211,7 +214,7 @@ func (a *App) checkForUpdates(notify bool) {
 // Preferences.
 type updateCheckState struct {
 	checking bool   // a manual check is running
-	notify   bool   // a menu asked: toast the answer
+	notify   bool   // a menu asked: answer in a message box
 	upToDate bool   // the last answer: nothing newer
 	err      string // the last manual check failed: why, in plain words
 	at       time.Time
@@ -237,16 +240,27 @@ func (a *App) updateChecked(r updateResult) {
 			break // automatic: logged; Preferences keeps the last answer
 		}
 		c.err = updateErrText(r.err, r.at)
-		if notify {
-			a.Toast(c.err)
+		if notify { // Slack's yR
+			a.updateMessageBox("Couldn’t update "+AppName, c.err)
 		}
 	case r.ok:
 		c.err, c.upToDate, c.at = "", false, r.at
 		a.updateFound(r.info, r.manual)
+		if notify && a.update.phase == updAvailable {
+			// Slack's manual check downloads what it finds; Clack's
+			// does too when automatic downloads are off. Without a
+			// downloader (a package-managed install), Preferences has
+			// the release page.
+			if a.opts.DownloadUpdate != nil {
+				a.startUpdateDownload(true)
+			} else {
+				a.openPrefsSection("advanced")
+			}
+		}
 	default:
 		c.err, c.upToDate, c.at = "", true, r.at
-		if notify {
-			a.Toast("You’re up to date. " + AppName + " " + buildVersion + " is the newest version.")
+		if notify { // Slack's yI
+			a.updateMessageBox("You’re all good", "You’ve got the latest version of "+AppName+"; thanks for staying on the ball.")
 		}
 	}
 	a.Invalidate()
@@ -390,8 +404,8 @@ func (a *App) updateRowClick(label string) {
 func (p *prefsModal) updatesSection(f *prefsForm) {
 	a := p.a
 	f.subheading("Updates")
-	f.option("updates", "Check for updates", "Shows a banner when a new Clack release is on GitHub.", a.updateChecksOn(), false, a.toggleUpdateChecks)
-	f.optionAt("update_download", "Download updates automatically", "Fetched in the background and checked. Installs only when you click Install and restart.", a.updateDownloadsOn(), false, a.updateChecksOn(), a.toggleUpdateDownloads)
+	f.option("updates", "Check for updates", "Looks for a new Clack release on GitHub every hour.", a.updateChecksOn(), false, a.toggleUpdateChecks)
+	f.optionAt("update_download", "Download updates automatically", "Fetched in the background and checked, then Help shows a dot. Installs only when you choose Restart Clack.", a.updateDownloadsOn(), false, a.updateChecksOn(), a.toggleUpdateDownloads)
 	if buildVersion != "" {
 		f.note("You have Clack "+buildVersion, true, 1)
 	}
@@ -458,9 +472,9 @@ func (p *prefsModal) updateCheckRow(f *prefsForm, st updateStatus) {
 	}
 }
 
-// menuCheckForUpdates is the workspace menu's "Check for updates…" on
-// Linux and Windows (macOS has it in the menu bar), nil without update
-// checks.
+// menuCheckForUpdates is the workspace menu's update item on Linux and
+// Windows (macOS has it in the menu bar), nil without update checks. It
+// does what its title says (updateMenuItem).
 func (a *App) menuCheckForUpdates() func() {
 	return a.menuCheckForUpdatesOn(runtime.GOOS)
 }
@@ -469,5 +483,5 @@ func (a *App) menuCheckForUpdatesOn(goos string) func() {
 	if goos == "darwin" || a.opts.CheckUpdate == nil {
 		return nil
 	}
-	return a.checkUpdatesNotify
+	return a.updateMenuClick
 }

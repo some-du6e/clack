@@ -19,6 +19,7 @@ const (
 	secDetails
 	secProfile
 	secSplit
+	secHelp // the Help flexpane (update_ui.go)
 )
 
 // secondaryState is the resizable right-hand pane (thread, channel details,

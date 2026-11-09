@@ -273,8 +273,8 @@ func TestUpdateLoopSchedule(t *testing.T) {
 	f.set(UpdateInfo{Tag: "v0.1.0-alpha.14", URL: "https://github.com/r/v0.1.0-alpha.14"}, true, nil)
 	a.checkForUpdates(false)
 	waitUpd(t, a, "Check now with checks off", func() bool { return a.update.info.Tag == "v0.1.0-alpha.14" })
-	if !a.updateBannerShown() {
-		t.Error("Check now found an update with checks off: no banner")
+	if a.update.phase == updNone || !a.update.manual {
+		t.Errorf("Check now found an update with checks off: phase %d, manual %v", a.update.phase, a.update.manual)
 	}
 	a.toggleUpdateChecks()
 
@@ -467,14 +467,17 @@ func keysOf(m map[string]*widget.Clickable) []string {
 }
 
 // Clack > Check for Updates… (macOS) and the workspace menu's item
-// (Linux, Windows) run the same check and answer in a toast or the
-// banner.
+// (Linux, Windows) run the same check and answer like Slack's manual
+// check (yI, yR): a message box when there's nothing new or it failed;
+// a newer release downloads (even with downloads off), the item says
+// Downloading Update, then Restart to Apply Update, which installs.
 func TestCheckForUpdatesMenus(t *testing.T) {
 	SetVersion("v0.1.0-alpha.12")
 	t.Cleanup(func() { SetVersion("") })
 	f := &fakeCheck{}
 	f.set(UpdateInfo{}, false, nil)
-	a := checkApp(t, f, nil)
+	dl := &fakeUpdater{release: make(chan error, 1)}
+	a := checkApp(t, f, dl)
 	startLoop(t, a, updateSched{}, time.Now())
 	var item *menubar.Item
 	eachItem(a.macMenus(), func(it menubar.Item) {
@@ -488,36 +491,52 @@ func TestCheckForUpdatesMenus(t *testing.T) {
 	if app := a.macMenus()[0]; app.Kind != "app" || app.Items[1].ID != "menuitem-update-status" {
 		t.Error("Check for Updates… isn't right after About Clack")
 	}
+	menuTitle := func() (string, bool) {
+		t.Helper()
+		title, ok := a.updateMenuItem()
+		st := a.menuState(menuKey{update: title, updateOff: !ok}) // signed out: the update item is the shell's own
+		return st.Titles[menuUpdate], !st.Disabled[menuUpdate]
+	}
 	item.Do() // menubar runs it on its own goroutine: it only posts
 	waitUpd(t, a, "the menu's check", func() bool { return f.calls.Load() == 1 && !a.update.check.checking })
-	if a.toast.text != "You’re up to date. Clack v0.1.0-alpha.12 is the newest version." {
-		t.Errorf("up-to-date toast %q", a.toast.text)
+	if got := a.updateBoxShown(); got != "You’re all good" {
+		t.Errorf("up to date: message box %q", got)
 	}
-	// an error: the toast says why
+	// an error: "Couldn’t update Clack", saying why; it replaces the first box
 	f.set(UpdateInfo{}, false, offline)
 	item.Do()
 	waitUpd(t, a, "the failing check", func() bool { return f.calls.Load() == 2 && !a.update.check.checking })
-	if !strings.HasPrefix(a.toast.text, "Couldn’t reach GitHub") {
-		t.Errorf("error toast %q", a.toast.text)
+	if got := a.updateBoxShown(); got != "Couldn’t update Clack" || !strings.HasPrefix(a.update.check.err, "Couldn’t reach GitHub") {
+		t.Errorf("error: message box %q (%q)", got, a.update.check.err)
 	}
-	// a newer release, dismissed before and checks off: the banner anyway
-	a.prefs.UpdateDismissed = "v0.1.0-alpha.14"
+	if n := len(a.overlays); n != 2 || !a.overlays[0].Dismissed() {
+		t.Errorf("%d overlays, the first dismissed: %v", n, n > 0 && a.overlays[0].Dismissed())
+	}
+	a.update.box.(dismisser).Dismiss()
+
+	// a newer release with downloads and checks off: the menu's check
+	// downloads it anyway, without a message box
+	a.toggleUpdateDownloads()
 	a.toggleUpdateChecks()
-	a.toast.text = ""
 	f.set(newerInfo, true, nil)
 	item.Do()
-	waitUpd(t, a, "the newer release", func() bool { return a.update.info.Tag == "v0.1.0-alpha.14" })
-	if !a.updateBannerShown() || a.toast.text != "" {
-		t.Errorf("found: banner %v, toast %q", a.updateBannerShown(), a.toast.text)
+	waitUpd(t, a, "the newer release", func() bool { return a.update.phase == updDownloading })
+	if got := a.updateBoxShown(); got != "" {
+		t.Errorf("found: message box %q", got)
 	}
-	if msg, _ := a.updateBannerText(); msg != "A new version of Clack is available: v0.1.0-alpha.14" {
-		t.Errorf("banner %q", msg)
+	if title, ok := menuTitle(); title != "Downloading Update" || ok {
+		t.Errorf("downloading: %q enabled %v", title, ok)
 	}
-	// × hides it again
-	a.update.dismiss.Click()
-	bannerFrame(a)
-	if a.updateBannerShown() {
-		t.Error("× didn't hide the manual banner")
+	if a.updatePending() {
+		t.Error("the Help dot before the download finished")
+	}
+	dl.release <- nil
+	waitUpd(t, a, "the download", func() bool { return a.update.phase == updReady })
+	if title, ok := menuTitle(); title != "Restart to Apply Update" || !ok || !a.updatePending() {
+		t.Errorf("ready: %q enabled %v, pending %v", title, ok, a.updatePending())
+	}
+	if dl.installs.Load() != 0 {
+		t.Fatal("installed without the user choosing to")
 	}
 
 	// Linux and Windows: the workspace menu's item; macOS has the menu bar
@@ -527,12 +546,11 @@ func TestCheckForUpdatesMenus(t *testing.T) {
 	if (&App{}).menuCheckForUpdatesOn("linux") != nil {
 		t.Error("an item without update checks (dev build)")
 	}
-	calls := f.calls.Load()
-	f.set(UpdateInfo{}, false, nil)
+	// Restart to Apply Update restarts right away (Slack's restart-to-apply)
 	a.menuCheckForUpdatesOn("linux")()
-	waitUpd(t, a, "the workspace menu's check", func() bool { return f.calls.Load() == calls+1 && !a.update.check.checking })
-	if !strings.HasPrefix(a.toast.text, "You’re up to date") {
-		t.Errorf("workspace menu toast %q", a.toast.text)
+	waitUpd(t, a, "the restart", func() bool { return dl.quits == 1 })
+	if dl.installs.Load() != 1 {
+		t.Errorf("%d installs", dl.installs.Load())
 	}
 	// no update checks: no menu bar item either
 	if hasItem((&App{}).macMenus(), "menuitem-update-status") {

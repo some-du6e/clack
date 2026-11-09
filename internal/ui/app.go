@@ -70,17 +70,18 @@ type Options struct {
 	SwitchAccount func(c slack.Creds)
 	// CheckUpdate asks whether a newer release exists (cmd/clack: GitHub
 	// Releases). Called off the UI goroutine while Preferences > Advanced >
-	// "Check for updates" is on; ok=true shows the update banner. Nil: no
-	// update checks (dev builds).
+	// "Check for updates" is on; ok=true starts the update's download
+	// (update_ui.go shows it). Nil: no update checks (dev builds).
 	CheckUpdate func(ctx context.Context) (u UpdateInfo, ok bool, err error)
 	// DownloadUpdate fetches and verifies release u in the background
 	// (cmd/clack: the package for this install, checked against the
 	// release's SHA256SUMS) while "Download updates automatically" is on.
-	// nil error: the banner offers "Install and restart". Nil: the banner
+	// nil error: Help gets its dot and the restart dialog. Nil: Preferences
 	// only links the release page.
 	DownloadUpdate func(ctx context.Context, u UpdateInfo) error
-	// InstallUpdate installs the downloaded u, called only from the
-	// banner's "Install and restart" click. nil error: Clack quits and the
+	// InstallUpdate installs the downloaded u, called only when the user
+	// chooses to restart (the dialog's Restart Clack, the menus' Restart to
+	// Apply Update, Preferences' Install and restart). nil error: Clack quits and the
 	// update helper starts the new version; ErrUpdateManual: the system
 	// installer opened instead.
 	InstallUpdate func(u UpdateInfo) error
@@ -486,11 +487,7 @@ func (a *App) frame(gtx layout.Context) {
 	if a.sidebar.hidden || pageOwnsWorkspace(a.router.Current()) {
 		sbW = 0
 	}
-	bannerH := a.updateBannerH(gtx) // the workspace starts below the update banner
-	askRT := a.realtimeAskH(gtx)    // or the live-updates question, which comes first
-	if askRT > 0 {
-		bannerH = askRT
-	}
+	bannerH := a.realtimeAskH(gtx) // the workspace starts below the live-updates question
 	ws := image.Rect(railW, navH+bannerH, sz.X-inset, sz.Y-inset)
 	primary := image.Rect(ws.Min.X+sbW, ws.Min.Y, ws.Max.X, ws.Max.Y)
 	a.primaryOrigin = primary.Min
@@ -518,10 +515,8 @@ func (a *App) frame(gtx layout.Context) {
 	a.layoutTopNav(gtx, navX, sz.X)
 	a.layoutRail(gtx, navH, sz.Y-navH)
 	a.th.Chrome = false
-	if askRT > 0 {
+	if bannerH > 0 {
 		a.layoutRealtimeBanner(gtx, image.Rect(ws.Min.X, navH, ws.Max.X, ws.Min.Y-gtx.Dp(bannerGap)))
-	} else if bannerH > 0 {
-		a.layoutUpdateBanner(gtx, image.Rect(ws.Min.X, navH, ws.Max.X, ws.Min.Y-gtx.Dp(bannerGap)))
 	}
 
 	// workspace: sidebar (translucent) + primary panel, one rounded unit
