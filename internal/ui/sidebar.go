@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"strconv"
+	"strings"
 
 	"gioui.org/font"
 	"gioui.org/gesture"
@@ -16,6 +17,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
 )
 
 type sbKind uint8
@@ -47,7 +49,8 @@ type sidebarState struct {
 	hidden    bool
 	list      widget.List
 	rows      []sbRow
-	builtFor  int // model version
+	builtFor  int    // model version
+	viewsFor  string // sbViewsKey the rows were built with
 	collapsed map[string]bool
 	rowCount  int
 	drag      gesture.Drag
@@ -72,6 +75,13 @@ var sbLinks = []sbRow{
 	{kind: sbLink, key: "saved", label: "Saved", icon: "saved"},
 	{kind: sbLink, key: "directories", label: "Directories", icon: "directories"},
 }
+
+// sbViewPref is each link's Preferences > Home pref (off: hidden).
+var sbViewPref = map[string]string{"threads": "enable_threads_view", "huddles": "enable_huddles_home_view",
+	"drafts": "enable_sent_view", "saved": "enable_saved_view", "directories": "enable_unified_directory_view"}
+
+// sbViewsKey is the links turned off, for rebuilding when they change.
+func sbViewsKey() string { return strings.Join(uipref.Get().HiddenViews, ",") }
 
 func sectionIcon(typ string) string {
 	switch typ {
@@ -101,7 +111,13 @@ func (s *sidebarState) rebuild(m *model) {
 	if s.collapsed == nil {
 		s.collapsed = map[string]bool{}
 	}
-	rows := append(s.rows[:0], sbLinks...)
+	rows := s.rows[:0]
+	s.viewsFor = sbViewsKey()
+	for _, l := range sbLinks { // Home > "Always show in the sidebar"
+		if !strings.Contains(","+s.viewsFor+",", ","+sbViewPref[l.key]+",") {
+			rows = append(rows, l)
+		}
+	}
 	rows = append(rows, sbRow{kind: sbDivider, gap: 24})
 	for i, sec := range m.Sections {
 		if i > 0 {
@@ -182,7 +198,7 @@ func (a *App) layoutSidebarNative(gtx layout.Context, p slackc.Props) layout.Dim
 	}
 	c := a.sidebarPalette()
 	m := a.model()
-	if a.sidebar.rows == nil || a.sidebar.builtFor != m.version {
+	if a.sidebar.rows == nil || a.sidebar.builtFor != m.version || a.sidebar.viewsFor != sbViewsKey() {
 		a.sidebar.rebuild(m)
 		for i := range a.sidebar.rows {
 			r := &a.sidebar.rows[i]

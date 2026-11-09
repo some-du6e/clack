@@ -22,7 +22,7 @@ func (nopNotifier) NotifyActions(string, string, []string, func(string)) error {
 
 // Notify shows a desktop notification if enabled.
 func (a *App) Notify(title, body string) {
-	if !a.notifyOn() {
+	if !a.notifyOn() || uipref.Get().NoDesktopPush { // Notifications > Desktop notifications
 		return
 	}
 	if uipref.Get().NoTextInNotifications { // Notifications: no message preview
