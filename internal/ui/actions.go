@@ -20,7 +20,8 @@ func (a *App) openTeamMenu(anchor image.Point) {
 		{Label: "Preferences", Icon: "settings", Hint: shortcut.Format("Mod+,"), Do: a.openPrefs},
 	}
 	if f := a.menuCheckForUpdates(); f != nil {
-		items = append(items, MenuItem{Label: "Check for updates…", Do: f})
+		label, ok := a.updateMenuItem()
+		items = append(items, MenuItem{Label: label, Disabled: !ok, Do: f})
 	}
 	a.menu(anchor, append(items, []MenuItem{
 		{Label: "Toggle dark mode", Icon: "moon", Hint: shortcut.Format("Mod+Shift+Y"), Do: a.ToggleDark},

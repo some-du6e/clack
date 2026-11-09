@@ -50,6 +50,9 @@ func (a *App) toggleRealtime() { a.setRealtime(!a.realtimeOn()) }
 
 const realtimeBannerH = unit.Dp(64)
 
+// bannerGap is the space between the banner and the workspace.
+const bannerGap = unit.Dp(6)
+
 // realtimeAskH is the height of the first-run banner (with its gap), 0
 // once the user chose or when it is forced off.
 func (a *App) realtimeAskH(gtx layout.Context) int {

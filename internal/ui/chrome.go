@@ -257,7 +257,7 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 	rs.Leave()
 	place(gtx, call, image.Pt(width-gtx.Dp(8)-d.Size.X, (h-d.Size.Y)/2))
 	if clicked(a.clicks.get("nav.help")) {
-		a.showShortcutsHelp()
+		a.helpClick() // update_ui.go: the Help flexpane while an update waits
 	}
 }
 

@@ -3,15 +3,20 @@ name: updater
 # against a local fake releases server, the helper's wait-and-swap, and
 # the macOS dmg path (hdiutil, ditto) on each OS. On Windows, the helper
 # also runs a real Inno Setup upgrade with the installer test's flags.
-# The UI side (when checks run, Check now, Check for Updates… in the
-# menus) runs on each OS, and prefs-shots renders Preferences > Advanced >
-# Updates in each state.
+# The UI side (when checks run, Check now, the menus' update item, the
+# Help dot, Help's Take action card and the restart dialog, Slack
+# desktop's presentation) runs on each OS, and prefs-shots renders
+# Preferences > Advanced > Updates and the update UI in each state, plus
+# the whole window against the fake Slack.
 on:
   push:
     paths:
       - 'internal/desktop/**'
       - 'internal/ui/desktop.go'
       - 'internal/ui/update_*.go'
+      - 'internal/ui/chrome.go'
+      - 'internal/ui/slackc_shell.go'
+      - 'internal/ui/secondary.go'
       - 'internal/ui/macmenu*.go'
       - 'internal/ui/actions.go'
       - 'internal/ui/prefs_sections.go'
@@ -51,7 +56,9 @@ jobs:
         run: go test -count=1 -v -run 'TestUpdate|TestCheckForUpdatesMenus|TestMacMenu' ./internal/ui
 
   prefs-shots:
-    # Preferences > Advanced > Updates in each state, light and dark
+    # Preferences > Advanced > Updates and the update UI (Help dot, Take
+    # action card, restart dialog, message boxes) in each state, light and
+    # dark; then the whole window against the fake Slack
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -62,14 +69,15 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: gio deps
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb libgl1-mesa-dri libegl-mesa0
       - name: Updates screenshots
         env:
           UPDATE_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$UPDATE_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestUpdatePrefsShots$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestUpdatePrefsShots$|TestUpdateUIShots$|TestUpdateAppShots$' ./internal/ui/
           ls "$UPDATE_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

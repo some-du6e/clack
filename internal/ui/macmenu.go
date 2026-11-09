@@ -18,8 +18,9 @@ import (
 // Preferences, New Message, the Go menu, Hide Sidebar, Find, Search, Sign
 // Out, the recent views in History). Slack sorts each menu by the items'
 // order and puts a separator before every order that is a multiple of 10;
-// the separators below are those. Items Clack has no feature for are left
-// out: Check for Updates' auto-update states, Settings & Administration,
+// the separators below are those. The update item takes Slack's titles
+// for each update state (update_ui.go). Items Clack has no feature for are
+// left out: Settings & Administration,
 // Workspace, Reload, Force Reload, Toggle Privacy Mode, New Channel, New
 // Canvas, Invite People, Workflow Builder, Downloads, Keyboard Navigation,
 // What's New, Troubleshooting, Contact Us, Give Feedback, Developer.
@@ -49,8 +50,9 @@ func (a *App) macMenus() []menubar.Menu {
 		{ID: "menuitem-about-slack", Title: "About " + AppName, Role: "orderFrontStandardAboutPanel:"},
 	}
 	if a.opts.CheckUpdate != nil {
-		// update_check.go: the banner if there's one, else a toast
-		app = append(app, menubar.Item{ID: "menuitem-update-status", Title: "Check for Updates…", Do: on(a.checkUpdatesNotify)})
+		// Slack's dY: Check for Updates…, Downloading Update, Restart to
+		// Apply Update…; menuState retitles it (update_ui.go)
+		app = append(app, menubar.Item{ID: menuUpdate, Title: updMenuCheck, Do: on(a.updateMenuClick)})
 	}
 	app = append(app,
 		sep,
@@ -138,7 +140,10 @@ func (a *App) macMenus() []menubar.Menu {
 	}
 }
 
-const menuSignOutTeam = "menuitem-sign-out-team"
+const (
+	menuSignOutTeam = "menuitem-sign-out-team"
+	menuUpdate      = "menuitem-update-status"
+)
 
 // menuWorkspaceOnly are the web client's items: Slack shows them only with
 // a workspace open, Clack greys them out on the sign-in screen.
@@ -159,6 +164,8 @@ type menuKey struct {
 	cur                          Route
 	depth, pos                   int
 	tick                         int64 // conversation names load later: refresh every 2 s
+	update                       string
+	updateOff                    bool // the update item is greyed out
 }
 
 // menuBar is the installed menu bar's state (macOS only).
@@ -191,6 +198,10 @@ func (a *App) syncMenuBar() {
 		cur: a.router.Current(), depth: len(a.router.stack), pos: a.router.pos,
 		tick: time.Now().Unix() / 2,
 	}
+	if a.opts.CheckUpdate != nil {
+		t, ok := a.updateMenuItem()
+		k.update, k.updateOff = t, !ok
+	}
 	if k == a.mbar.last {
 		return
 	}
@@ -200,6 +211,10 @@ func (a *App) syncMenuBar() {
 
 func (a *App) menuState(k menuKey) *menubar.State {
 	s := &menubar.State{Disabled: map[string]bool{}, Titles: map[string]string{}}
+	if k.update != "" { // also on the sign-in screen: the shell's own item
+		s.Titles[menuUpdate] = k.update
+		s.Disabled[menuUpdate] = k.updateOff
+	}
 	if !k.signedIn {
 		for id := range menuWorkspaceOnly {
 			s.Disabled[id] = true
@@ -253,8 +268,8 @@ func (a *App) showShortcutsHelp() {
 }
 
 // checkUpdatesNotify is Slack's "Check for Updates…" (Clack > on macOS,
-// the workspace menu elsewhere): a check now, its answer in the banner
-// or a toast. UI goroutine.
+// the workspace menu elsewhere): a check now, answered like Slack's
+// manual check (update_check.go). UI goroutine.
 func (a *App) checkUpdatesNotify() { a.checkForUpdates(true) }
 
 // zoomFactors are Slack's zoom levels -3…5 (the main process's fN: Actual

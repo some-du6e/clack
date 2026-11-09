@@ -268,7 +268,9 @@ func (h navHelp) layout(gtx layout.Context, _ slackc.Props) layout.Dimensions {
 	col := st.Color(a.th.C.ChromeText)
 	return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(h.b, h.b)}
-		return a.chromeButton(gtx, h.org, btn, "help", 26, 20, col, 4)
+		d := a.chromeButton(gtx, h.org, btn, "help", 26, 20, col, 4)
+		a.helpBadge(gtx, d.Size.X) // a downloaded update (update_ui.go)
+		return d
 	})
 }
 
