@@ -35,3 +35,24 @@ func TestDecide(t *testing.T) {
 		t.Errorf("regressions %v", regs)
 	}
 }
+
+// The baked-in data parses, names a winner and a reason for every plugin,
+// and For finds a plugin by its variants' ids.
+func TestEmbedded(t *testing.T) {
+	d := Load()
+	if len(d.Plugins) == 0 {
+		t.Skip("no bench data baked in yet")
+	}
+	for _, p := range d.Plugins {
+		if p.Winner == "" || p.Reason == "" || p.Variant(p.Winner) == nil {
+			t.Errorf("%s: winner %q reason %q", p.Name, p.Winner, p.Reason)
+		}
+		var es []Entry
+		for _, v := range p.Variants {
+			es = append(es, Entry{System: v.System, ID: v.ID, SHA256: v.SHA256})
+		}
+		if pk, ok := d.For(es); !ok || pk.Winner != p.Winner || !pk.Exact {
+			t.Errorf("%s: For = %+v %v", p.Name, pk, ok)
+		}
+	}
+}

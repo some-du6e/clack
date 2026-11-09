@@ -201,8 +201,9 @@ Many plugins in Clack's Library ship in both Taut and Slick. The bench runs
 each variant, unmodified, in Clack's real plugin host (QuickJS on wazero,
 slackc's React reconciler mapped to native widgets) over the whole client
 signed in to internal/fakeslack, and the Library's Install button installs
-the winner. Preferences > Plugins > Browse still offers the other variant
-under "Install for", with the winner first and the reason below.
+the winner. In Preferences > Plugins > Browse, the chevron beside Install
+opens "Install for" with both variants: the winner first, marked
+Recommended, with the reason below it.
 
 Every variant runs in a fresh client, against the same synthetic workspace
 (` + "`fakeslack.Size.PluginBench`" + `: a 500-message #plugin-bench with
