@@ -4,7 +4,7 @@ Clack is MIT licensed (see `LICENSE`). It includes or links the following third-
 
 | Component | Used for | License |
 |---|---|---|
-| [Gio](https://gioui.org) (`gioui.org`, `gioui.org/x`, `gioui.org/shader`) | GPU UI toolkit | Unlicense OR MIT |
+| [Gio](https://gioui.org) (`gioui.org`, `gioui.org/x`, `gioui.org/shader`; `gioui.org` v0.10.3 is built from a patched copy in `third_party/gioui.org`, see its `CLACK_PATCHES.md`) | GPU UI toolkit | Unlicense OR MIT |
 | [go-text/typesetting](https://github.com/go-text/typesetting) | text shaping | Unlicense OR BSD-3-Clause |
 | [Lato](https://www.latofonts.com) fonts (`assets/fonts`) | UI font | SIL Open Font License 1.1 (`assets/fonts/OFL.txt`) |
 | [emoji-data](https://github.com/iamcal/emoji-data) (`internal/emoji/standard.json`) | standard emoji table | MIT |

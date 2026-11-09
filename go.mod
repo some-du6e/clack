@@ -52,3 +52,7 @@ require (
 	golang.org/x/net v0.50.0
 	golang.org/x/text v0.34.0
 )
+
+// Gio v0.10.3 with a fix for an index-out-of-range panic in gpu.drawLayers
+// (third_party/gioui.org/CLACK_PATCHES.md). Drop when upstream has it.
+replace gioui.org => ./third_party/gioui.org
