@@ -378,7 +378,12 @@ func (d *Directories) update(gtx C) {
 		}
 	}
 	if d.action[t].Clicked(gtx) || d.heroBtn[t].Clicked(gtx) {
-		d.h.Toast(cdUnsupported)
+		// Slack's channel browser "Create Channel" opens the create modal
+		if cc, ok := d.h.(interface{ OpenCreateChannel() }); ok && t == dirTabChannels {
+			cc.OpenCreateChannel()
+		} else {
+			d.h.Toast(cdUnsupported)
+		}
 	}
 	if d.heroClose[t].Clicked(gtx) {
 		d.heroOff[t] = true

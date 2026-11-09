@@ -247,13 +247,18 @@ func (a *App) MarkThread(ctx context.Context, ch, threadTS, ts string) error {
 }
 
 // Join joins a channel and adds it to the sidebar.
-func (a *App) Join(ctx context.Context, ch string) (Conv, error) {
+func (a *App) Join(ctx context.Context, ch string) (Conv, error) { return a.join(ctx, ch, 0) }
+
+// join is conversations.join, with expiration_ts for a temporary
+// membership (JoinFor).
+func (a *App) join(ctx context.Context, ch string, exp int64) (Conv, error) {
 	var res struct {
 		Channel slack.Conversation `json:"channel"`
 	}
-	if err := a.C.Call(ctx, "conversations.join", url.Values{"channel": {ch}}, &res); err != nil {
+	if err := a.C.Call(ctx, "conversations.join", joinParams(ch, exp), &res); err != nil {
 		return Conv{}, err
 	}
+	a.setTemp(ch, exp)
 	c := res.Channel
 	if full, err := a.C.ConversationInfo(ctx, ch); err == nil {
 		c = *full
@@ -276,9 +281,7 @@ func (a *App) Leave(ctx context.Context, ch string) error {
 	if m == "conversations.close" {
 		a.markDMClosed(ch) // still known (search, switcher); back on a new message
 	} else {
-		a.S.Lock()
-		delete(a.S.Convs, ch)
-		a.S.Unlock()
+		a.dropMembership(ch, false)
 	}
 	a.emit(Event{Type: "conv_removed", Channel: ch})
 	return nil

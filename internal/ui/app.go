@@ -131,6 +131,7 @@ type App struct {
 	ptrTag          int
 	ptrWin          image.Point
 	ptrOK           bool
+	hover           profileHover // the profile hover card (hover_card.go)
 	overlays        []Overlay
 	slackc          slackcState
 	toast           toastState
@@ -147,13 +148,17 @@ type App struct {
 	firstPaint  bool
 	frameStats  frameStats
 	lastChannel string
-	pxPerDp     float32
-	chTab       map[string]int
-	clipboard   string
-	prefs       prefs
-	prefsDirty  bool
-	prefsSave   prefsSaver // ui.json writer (prefs.go)
-	slickMode   struct {   // slickSetDark's worker (taut_wire.go)
+	// previewFrom is the channel-browser route previewFromCh was opened
+	// from ("Back to All channels", joinpane.go)
+	previewFrom   Route
+	previewFromCh string
+	pxPerDp       float32
+	chTab         map[string]int
+	clipboard     string
+	prefs         prefs
+	prefsDirty    bool
+	prefsSave     prefsSaver // ui.json writer (prefs.go)
+	slickMode     struct {   // slickSetDark's worker (taut_wire.go)
 		mu   sync.Mutex
 		s    *slick.Slick
 		dark bool
@@ -445,6 +450,7 @@ func (a *App) frame(gtx layout.Context) {
 	navArea := a.navGestures(gtx)
 	defer navArea.Pop()
 	a.readRootPointer(gtx)
+	a.hoverBegin(gtx) // before any widget reads keys (Escape)
 	a.slackcFrame(gtx)
 	a.keys.process(gtx, a)
 	a.updateTitle()
@@ -539,6 +545,7 @@ func (a *App) frame(gtx layout.Context) {
 	client.Leave()
 
 	a.layoutSwipe(gtx, primary)
+	a.layoutHoverCard(gtx) // above the content, under the overlays
 	a.layoutOverlays(gtx)
 	a.slackcOverlays(gtx)
 	a.layoutToast(gtx)

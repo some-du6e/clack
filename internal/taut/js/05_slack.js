@@ -826,6 +826,7 @@ class Delta {
     return new Delta(out)
   }
 }
+T.Delta = Delta // decode revives Go's deltas as this (00_core.js)
 const cleanAttrs = (a) => {
   const o = {}
   for (const [k, v] of Object.entries(a || {})) if (v !== null && v !== undefined && v !== false) o[k] = v
@@ -839,6 +840,16 @@ function styleOf(attrs) {
   for (const [a, k] of Object.entries(STYLE_ATTRS)) if (attrs[a]) s[k] = true
   return Object.keys(s).length ? s : undefined
 }
+/** a Slack mention op's element: its insert is the label, attributes.slackmention {id, label} says what it is */
+function mentionElement(m) {
+  const id = typeof m?.id === 'string' ? m.id : ''
+  if (!id || id === 'UNVERIFIED') return null
+  if (id.startsWith('BK')) return { type: 'broadcast', range: id.slice(2) }
+  if (/^[UW]/.test(id)) return { type: 'user', user_id: id }
+  if (/^S/.test(id)) return { type: 'usergroup', usergroup_id: id }
+  if (/^[CG]/.test(id)) return { type: 'channel', channel_id: id }
+  return null
+}
 /** one line's inline ops as rich_text elements */
 function inlineElements(ops) {
   const out = []
@@ -847,6 +858,11 @@ function inlineElements(ops) {
     const style = styleOf(a)
     if (typeof op.insert === 'string') {
       if (!op.insert) continue
+      const mention = mentionElement(a.slackmention)
+      if (mention) {
+        out.push(mention)
+        continue
+      }
       if (a.link) out.push({ type: 'link', url: a.link, text: op.insert, ...(style ? { style } : {}) })
       else {
         const last = out[out.length - 1]
@@ -971,7 +987,8 @@ function blocksToDelta(blocks) {
           d.insert({ slackusergroup: { id: e.usergroup_id } })
           break
         case 'broadcast':
-          d.insert({ slackbroadcast: { range: e.range } })
+          // Slack's mention op (NativeAtChannel and bChannel read slackmention.id)
+          d.insert('@' + e.range, { slackmention: { id: 'BK' + e.range, label: '@' + e.range } })
           break
         case 'date':
           d.insert({ slackdate: { timestamp: e.timestamp, format: e.format, fallback: e.fallback } })
@@ -1525,23 +1542,27 @@ const getPrefCompliantMemberName = named('getPrefCompliantMemberName', (state, m
   return display || real || member.name || ''
 })
 
-/** @channel/@here/@everyone the viewer may use in a conversation */
-const getBroadcastKeywordsForUser = named('getBroadcastKeywordsForUser', (state, channelId) => {
-  const ch = state?.channels?.[channelId]
-  if (!ch) return []
-  const props = ch.properties || {}
-  const out = []
-  const isAdmin = (() => {
-    const m = state?.members?.[state?.bootData?.user_id]
-    return !!(m?.is_admin || m?.is_owner)
-  })()
-  const restricted = props.at_channel_restricted && !isAdmin
-  const hereRestricted = props.at_here_restricted && !isAdmin
-  if (!restricted) out.push({ id: 'BKchannel', name: 'channel', is_broadcast_keyword: true })
-  if (!hereRestricted) out.push({ id: 'BKhere', name: 'here', is_broadcast_keyword: true })
-  if (ch.is_general && !restricted) out.push({ id: 'BKeveryone', name: 'everyone', is_broadcast_keyword: true })
-  return out
-})
+/**
+ * Slack's broadcast keyword selectors. Slack decides them from the
+ * permission system (permissions/info CAN_AT_CHANNEL / CAN_AT_EVERYONE),
+ * never from channel properties; Clack's core holds those permissions, so
+ * the three ask it. Unknown permissions answer false and start a lookup.
+ */
+const broadcastInfo = (channelId) => (channelId && goOr(null, 'broadcast', String(channelId))) || { keywords: [], atChannel: false, atEveryone: false }
+const BROADCAST_KEYWORDS = {
+  BKchannel: { name: 'channel', description: 'Notify everyone in this channel.' },
+  BKhere: { name: 'here', description: 'Notify every online member in this channel.' },
+  BKeveryone: { name: 'everyone', description: 'Notify everyone in your workspace.' },
+}
+const broadcastKeyword = (id) => ({ id, ...BROADCAST_KEYWORDS[id], is_broadcast_keyword: true })
+/** whether the viewer may @channel / @here in a conversation */
+const canUserAtChannelInChannelById = named('canUserAtChannelInChannelById', (state, channelId) => !!broadcastInfo(channelId).atChannel)
+/** whether the viewer may @everyone there (only #general) */
+const canUserAtEveryoneInChannelById = named('canUserAtEveryoneInChannelById', (state, channelId) => !!broadcastInfo(channelId).atEveryone)
+/** @channel/@here/@everyone the viewer may use in a conversation, as autocomplete rows' items */
+const getBroadcastKeywordsForUser = named('getBroadcastKeywordsForUser', (state, channelId) =>
+  (broadcastInfo(channelId).keywords || []).map((k) => broadcastKeyword('BK' + k))
+)
 
 /** composers Clack's native UI registered, by Slack's {viewContext, channelId} */
 const inputs = new Map()
@@ -1702,6 +1723,8 @@ defineModule('slack-exports', {
   I18n,
   getPrefCompliantMemberName,
   getBroadcastKeywordsForUser,
+  canUserAtChannelInChannelById,
+  canUserAtEveryoneInChannelById,
   getInputProxy,
   isInputRegistered,
   isThreadViewContext,

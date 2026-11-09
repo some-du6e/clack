@@ -227,7 +227,11 @@ func (f *Files) update(gtx C) {
 		f.h.Toast("File settings aren't supported yet")
 	}
 	if f.plus.Clicked(gtx) || f.newBtn.Clicked(gtx) || f.emptyNew.Clicked(gtx) {
-		f.h.Toast("Creating canvases and lists isn't supported yet")
+		if cc, ok := f.h.(interface{ CreateCanvas() }); ok && filesNav[f.nav].kind != "lists" {
+			cc.CreateCanvas()
+		} else {
+			f.h.Toast("Creating lists isn't supported yet")
+		}
 	}
 	if f.tplToggle.Clicked(gtx) {
 		f.tplOpen = !f.tplOpen
@@ -326,6 +330,12 @@ func fileUpdated(it *fileItem) int64 {
 
 func (f *Files) open(it fileItem) {
 	switch {
+	case it.isCanvas() && it.ID != "":
+		if co, ok := f.h.(interface{ OpenCanvasFull(id string) }); ok {
+			co.OpenCanvasFull(it.ID)
+			return
+		}
+		f.h.Toast("Opening canvases isn't supported yet")
 	case it.isImage() && it.URL != "":
 		f.h.OpenLightbox(richtext.Image{URL: it.URL, Alt: it.title(), W: it.ThumbW, H: it.ThumbH, Title: it.title(), Proxy: true}, core.Message{})
 	case len(it.Channels) > 0:

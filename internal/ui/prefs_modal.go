@@ -88,7 +88,7 @@ func prefsSection(id string) string {
 // Slack's Preferences classes (taut's settings CSS targets them).
 var (
 	clsPrefsTabs  = slackc.Class("c-tabs p-prefs_dialog__tabs c-tabs--vertical")
-	clsPrefsMenu  = slackc.Class("c-tabs__tab_menu p-prefs_dialog__menu", "role", "tablist")
+	clsPrefsMenu  = slackc.Class("p-prefs_dialog__menu c-tabs__tab_menu c-tabs__tab_menu--vertical", "role", "tablist")
 	clsPrefsTab   = slackc.Class("c-button-unstyled c-tabs__tab js-tab", "role", "tab").Tag("button").Mods("c-tabs__tab--active")
 	clsPrefsPanel = slackc.Class("c-tabs__tab_panel p-prefs_dialog__panel", "role", "tabpanel")
 )
@@ -239,6 +239,9 @@ func (p *prefsModal) tabs(gtx layout.Context, tp slackc.Props) layout.Dimensions
 	var content slackc.Element
 	ownContent := true
 	ms := clsPrefsMenu.Enter(gtx, 0, 0)
+	if ms.Has("background-color") { // a theme's .p-prefs_dialog__menu (Material)
+		theme.Fill(gtx, image.Rect(-gtx.Dp(16), 0, navW, h-gtx.Dp(17)), ms.Background(color.NRGBA{}))
+	}
 	// 15 sections plus Taut's and Slick's tabs outgrow the dialog: the
 	// nav scrolls.
 	ng := gtx
@@ -313,6 +316,9 @@ func (p *prefsModal) tabs(gtx layout.Context, tp slackc.Props) layout.Dimensions
 		gtx.Constraints.Min = image.Point{}
 		ps := clsPrefsPanel.Enter(gtx, 0, 0)
 		defer ps.Leave()
+		if ps.Has("background-color") { // a theme's .p-prefs_dialog__panel (Material)
+			theme.Fill(gtx, image.Rectangle{Max: gtx.Constraints.Max}, ps.Background(color.NRGBA{}))
+		}
 		if !ownContent {
 			return slackc.LayoutElement(gtx, content)
 		}
@@ -451,7 +457,6 @@ func (p *prefsModal) selectTab(target string) {
 // label element. Reports a click.
 func (p *prefsModal) navItem(gtx layout.Context, y, navW int, id, label string, lel *slackc.Element, icon string, cur bool) bool {
 	a := p.a
-	c := &a.th.C
 	b := p.btn("nav." + id)
 	var mods uint64
 	if cur {
@@ -462,19 +467,22 @@ func (p *prefsModal) navItem(gtx layout.Context, y, navW int, id, label string, 
 	if st.Hidden() {
 		return false
 	}
+	tc := prefsTabColorsOf(a.th)
 	ih := gtx.Dp(29) // Slack: 205×29, radius 4, 15px icon at (9, 7), label at x 32
 	at(gtx, image.Pt(0, y), image.Pt(navW-gtx.Dp(16), ih), func(gtx layout.Context) layout.Dimensions {
-		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
+		// Slack's .c-tabs__tab has border-radius 4px: a theme's background
+		// on the tab (.c-tabs__tab--active) rounds with it
+		return st.WrapRounded(gtx, 4, func(gtx layout.Context) layout.Dimensions {
 			return clickArea(gtx, b, func(gtx layout.Context, s image.Point, hov bool) {
 				if cur {
-					theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(4), c.Link)
+					theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(4), st.Background(tc.active))
 				} else if hov {
-					theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(4), c.BgHover)
+					theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(4), st.Background(tc.hover))
 				}
 			}, func(gtx layout.Context) layout.Dimensions {
-				fg := c.Fg
+				fg := tc.text
 				if cur {
-					fg = c.SendText
+					fg = tc.activeText
 				}
 				fg = st.Color(fg)
 				if icon != "" {
@@ -557,6 +565,34 @@ func (a *App) openPrefsMenu() {
 		{Label: map[bool]string{true: "✓ Desktop notifications", false: "Desktop notifications"}[a.notifyOn()], Icon: "bell", Do: a.toggleNotify},
 		{Label: map[bool]string{true: "Show sidebar", false: "Hide sidebar"}[a.sidebar.hidden], Icon: "sidebar", Hint: "Ctrl+Shift+D", Do: func() { a.sidebar.hidden = !a.sidebar.hidden }},
 	})
+}
+
+// prefsTabColors are the vertical tab's colours. Slack paints them from
+// tokens (.c-tabs__tab_menu--vertical .c-tabs__tab: color
+// var(--dt_color-content-pry); --active: background-color
+// var(--dt_color-base-inv-hgl-1), color var(--dt_color-content-inv-pry);
+// :hover: var(--dt_color-base-pry-hover) over var(--dt_color-base-pry)),
+// so a theme's tokens recolour them; with none overridden they are the
+// measured ones. A theme's raw rule on the tab still wins (Styled).
+type prefsTabColors struct{ text, active, activeText, hover color.NRGBA }
+
+func prefsTabColorsOf(th *theme.Theme) prefsTabColors {
+	c := &th.C
+	tc := prefsTabColors{text: c.Fg, active: c.Link, activeText: c.SendText, hover: c.BgHover}
+	t := th.Tokens
+	if t == nil || !t.Overridden() {
+		return tc
+	}
+	theme.SetColor(t, &tc.text, "var(--dt_color-content-pry)")
+	theme.SetColor(t, &tc.active, "var(--dt_color-base-inv-hgl-1)")
+	theme.SetColor(t, &tc.activeText, "var(--dt_color-content-inv-pry)")
+	// the hover tint over the tab's base, either of them the theme's
+	h, hOwn, hOK := t.Color("var(--dt_color-base-pry-hover)")
+	base, bOwn, bOK := t.Color("var(--dt_color-base-pry)")
+	if hOK && bOK && (hOwn || bOwn) {
+		tc.hover = theme.Over(h, base)
+	}
+	return tc
 }
 
 // otlTer is Slack's --dt_color-otl-ter (hairlines).

@@ -198,5 +198,8 @@ func (a *App) ResolveConv(ctx context.Context, id string) (Conv, bool) {
 		a.EnsureUsers(ctx, []string{c.User})
 	}
 	a.S.PutExtConv(*c)
+	if id == a.selectedID() && !c.IsIM {
+		a.emit(Event{Type: "sidebar_changed"}) // the open channel's row (preview.go)
+	}
 	return a.conv(c), true
 }

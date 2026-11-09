@@ -3,7 +3,7 @@ name: huddle
 # tool; not shipped). The app itself builds in ci.yml.
 on:
   push:
-    paths: ['internal/huddle/**', 'internal/ui/huddleui/**', 'cmd/huddle-demo/**', 'go.mod', 'go.sum', '.github/workflows/huddle.yml']
+    paths: ['internal/huddle/**', 'internal/ui/huddleui/**', 'internal/ui/openurl/**', 'cmd/huddle-demo/**', 'packaging/macos/**', 'go.mod', 'go.sum', '.github/workflows/huddle.yml']
   workflow_dispatch:
 jobs:
   huddle:
@@ -40,9 +40,75 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
       - name: vet
         run: go vet ./internal/ui/huddleui/... ./cmd/huddle-demo/...
+      - name: test
+        run: go test -count=1 ./internal/ui/huddleui/... ./internal/ui/openurl/...
+      - name: pictures (Mesa llvmpipe)
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          CLACK_SHOTS: ${{ github.workspace }}/dist/shots
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          sudo apt-get install -y -qq xvfb libgl1-mesa-dri libegl-mesa0
+          xvfb-run -a go test -count=1 -v -run 'TestHuddleShots|TestMicNoteFor|TestHeader' ./internal/ui/huddleui
+          ls -la dist/shots
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: huddle-shots
+          path: dist/shots
       - name: build
         run: CGO_ENABLED=1 go build -trimpath -o dist/huddle-demo ./cmd/huddle-demo
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: huddle-demo-linux-amd64
           path: dist/huddle-demo
+
+  macos:
+    # the cgo/Objective-C side: AVFoundation permission checks (TCC), Core
+    # Audio through miniaudio, the AVFoundation camera and VideoToolbox
+    # encoder glue (VideoToolbox must encode synthetic frames headless), and
+    # the session against the fake Chime. The runner has no camera and no one
+    # to answer a TCC prompt, so capture itself only runs on a real Mac; the
+    # fake-Chime camera test publishes the test pattern through VideoToolbox.
+    runs-on: macos-latest
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: vet
+        run: go vet ./internal/huddle/... ./internal/ui/huddleui/... ./internal/ui/openurl/...
+      - name: opus on arm64 (the transpiled libopus was generated on linux/amd64)
+        run: go test -count=1 -v -run 'TestOpus' ./internal/huddle
+      - name: VideoToolbox + camera publish
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v -run 'TestVTEncode|TestFakeCamera|TestPCMEncoderRoundTrip' ./internal/huddle
+      - name: test
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v ./internal/huddle/... ./internal/ui/huddleui/... ./internal/ui/openurl/... 2>&1 | tee test.log | grep -E '^(=== RUN|--- |ok|FAIL|panic)|opus' ; test "${PIPESTATUS[0]}" = 0
+      - name: permission checks from inside an .app bundle
+        if: ${{ !cancelled() }}
+        run: |
+          set -eu
+          go test -c -o build/avperm.test ./internal/huddle/avperm
+          for kind in usage nousage; do
+            app=build/$kind/Clack.app
+            mkdir -p $app/Contents/MacOS
+            cp build/avperm.test $app/Contents/MacOS/clack
+            sed "s/@VERSION@/0.0.1/g" packaging/macos/Info.plist > $app/Contents/Info.plist
+            if [ $kind = nousage ]; then
+              /usr/libexec/PlistBuddy -c 'Delete :NSMicrophoneUsageDescription' -c 'Delete :NSCameraUsageDescription' $app/Contents/Info.plist
+            fi
+            plutil -lint $app/Contents/Info.plist
+            codesign --force --sign - --entitlements packaging/macos/Clack.entitlements $app
+            AVPERM_EXPECT=$kind $app/Contents/MacOS/clack -test.v -test.run 'TestBundleUsage|TestRequestAnswersOnce'
+          done
+      - name: build the demo
+        if: ${{ !cancelled() }}
+        run: CGO_ENABLED=1 go build -trimpath -o dist/huddle-demo ./cmd/huddle-demo

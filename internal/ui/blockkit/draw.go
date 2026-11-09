@@ -123,6 +123,74 @@ var (
 )
 
 func colorsOf(th *theme.Theme) colors {
+	if th.Tokens != nil && th.Tokens.Overridden() {
+		return themedColors(th)
+	}
+	return measuredColors(th)
+}
+
+// bkTokens is the Slack token behind blockkit's own fields (Block Kit's
+// elements are Slack's c-input_text, c-select, c-input_checkbox…):
+// popups.ApplyTokens covers the embedded popup palette.
+var bkTokens = []struct {
+	f   func(*colors) *color.NRGBA
+	tok theme.Tok
+}{
+	{func(c *colors) *color.NRGBA { return &c.Text }, theme.Both("var(--dt_color-content-pry)")},
+	{func(c *colors) *color.NRGBA { return &c.InputText }, theme.Both("var(--dt_color-content-pry)")},
+	{func(c *colors) *color.NRGBA { return &c.Text2 }, theme.Both("var(--dt_color-content-sec)")},
+	{func(c *colors) *color.NRGBA { return &c.Hint }, theme.Both("var(--dt_color-content-ter)")},
+	{func(c *colors) *color.NRGBA { return &c.Placeholder }, theme.Both("var(--dt_color-content-ter)")},
+	{func(c *colors) *color.NRGBA { return &c.SelectBorder }, theme.Both("var(--dt_color-otl-pry)")},
+	{func(c *colors) *color.NRGBA { return &c.CheckBorder }, theme.Both("var(--dt_color-otl-sec)")},
+	{func(c *colors) *color.NRGBA { return &c.Check }, theme.Both("var(--dt_color-base-inv-hgl-1)")},
+	{func(c *colors) *color.NRGBA { return &c.ErrorText }, theme.Both("var(--dt_color-content-imp)")},
+	{func(c *colors) *color.NRGBA { return &c.Hover }, theme.Both("var(--dt_color-base-pry-hover)")},
+	{func(c *colors) *color.NRGBA { return &c.FooterBorder }, theme.Both("var(--dt_color-otl-ter)")},
+}
+
+var (
+	tokMu  sync.Mutex
+	tokTh  *theme.Theme
+	tokGen uint64
+	tokCol colors
+)
+
+// themedColors is the measured palette with the stylesheets' overridden
+// tokens laid over it, cached per theme generation. The Block Kit modal is
+// Slack's .c-sk-modal (and its inputs and buttons sit on it), so its
+// surface is --dt_color-base-pry, not the menus' --dt_color-ctr-pry.
+func themedColors(th *theme.Theme) colors {
+	tokMu.Lock()
+	defer tokMu.Unlock()
+	if tokTh == th && tokGen == th.Gen && tokCol.Colors != nil {
+		return tokCol
+	}
+	c := measuredColors(th)
+	pc := *c.Colors
+	c.Colors = &pc
+	popups.ApplyTokens(&pc, th)
+	t := th.Tokens
+	if theme.SetColor(t, &pc.Bg, "var(--dt_color-base-pry)") && pc.Bg.A != 0xff {
+		pc.Bg = theme.Over(pc.Bg, th.C.Bg)
+	}
+	for _, f := range bkTokens {
+		if theme.SetTok(t, f.f(&c), f.tok, th.Dark) {
+			switch p := f.f(&c); p {
+			case &c.CheckBorder, &c.FooterBorder:
+				*p = theme.LinearAlpha(*p, pc.Bg)
+			default:
+				if p.A != 0xff {
+					*p = theme.Over(*p, pc.Bg)
+				}
+			}
+		}
+	}
+	tokCol, tokTh, tokGen = c, th, th.Gen
+	return c
+}
+
+func measuredColors(th *theme.Theme) colors {
 	i := 0
 	if th.Dark {
 		i = 1

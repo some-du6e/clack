@@ -115,6 +115,9 @@ type convo struct {
 	compH    int
 	fitH     int             // thread content height the composer was placed under (0: bottom)
 	compRect image.Rectangle // window coords (emoji picker anchor)
+	jp       *joinPane       // the join pane / archived bar in place of the composer (joinpane.go)
+	post     core.Posting    // posting restrictions, cached at postAt
+	postAt   time.Time
 }
 
 func (a *App) convoFor(ch, ts string) *convo {
@@ -177,6 +180,22 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 	}
 	compH := 0
 	var call op.CallOp
+	foot := a.footerFor(c)
+	if foot != footNone {
+		// a preview or an archived channel: Slack's footer, no composer
+		comp = nil
+		m := op.Record(gtx.Ops)
+		g := gtx
+		g.Constraints = layout.Constraints{Min: image.Pt(sz.X, 0), Max: image.Pt(sz.X, sz.Y*6/10)}
+		compY := sz.Y - c.compH
+		if fit > 0 {
+			compY = fit
+		}
+		d := a.layoutFooter(g, c, foot, origin.Add(image.Pt(0, compY)))
+		call = m.Stop()
+		compH = d.Size.Y
+		c.compH = compH
+	}
 	if comp != nil {
 		// Edit composers draw just the box: give them the same side and
 		// bottom margins as the normal composer (20px channel, 16px thread).
@@ -193,7 +212,7 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 			compY = fit
 		}
 		comp.SetOrigin(origin.Add(image.Pt(mx, compY)))
-		a.appDMRoadblock(c, comp)
+		a.composerRoadblock(c, comp)
 		m := op.Record(gtx.Ops)
 		g := gtx
 		g.Constraints = layout.Constraints{Min: image.Pt(sz.X-2*mx, 0), Max: image.Pt(sz.X-2*mx, sz.Y*6/10)}
@@ -225,7 +244,7 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 		defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
 		return c.list.Layout(gtx)
 	})
-	if comp != nil {
+	if comp != nil || foot != footNone {
 		t := op.Offset(image.Pt(0, listH)).Push(gtx.Ops)
 		call.Add(gtx.Ops)
 		t.Pop()

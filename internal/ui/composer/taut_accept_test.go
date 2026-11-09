@@ -39,7 +39,9 @@ var fetchStubs = map[string]string{
 	"https://raw.githubusercontent.com/ClearURLs/Rules/": `{"providers":{"globalRules":{"urlPattern":".*","rules":["utm_[a-z]+"],"rawRules":[],"exceptions":[]}}}`,
 }
 
-func startPlugin(t *testing.T, name string) *pluginEnv {
+// startPlugin installs Taut plugin name; before sets fake API answers
+// first.
+func startPlugin(t *testing.T, name string, before ...func(fs *fakeSlack)) *pluginEnv {
 	t.Helper()
 	dir := os.Getenv("TAUT_PLUGINS_DIR")
 	if dir == "" {
@@ -50,6 +52,9 @@ func startPlugin(t *testing.T, name string) *pluginEnv {
 		t.Fatal(err)
 	}
 	app, fs := syntheticApp(t)
+	for _, f := range before {
+		f(fs)
+	}
 	e := &pluginEnv{t: t, app: app, slack: fs, trees: map[uint64][]byte{}}
 	tdir := t.TempDir()
 	tt, err := taut.New(taut.Options{

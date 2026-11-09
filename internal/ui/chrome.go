@@ -438,7 +438,8 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 		by += gtx.Dp(52)
 	}
 	if clicked(a.clicks.get("rail.new")) {
-		a.compose()
+		org := image.Pt(x0, top+height-gtx.Dp(164)+gtx.Dp(4)) // the + button (first in the strip)
+		a.openCreateMenu(image.Rectangle{Min: org, Max: org.Add(image.Pt(cs, cs))})
 	}
 	if clicked(a.clicks.get("rail.theme")) {
 		a.ToggleDark()

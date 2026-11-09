@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/jsrt"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 )
@@ -28,6 +29,24 @@ func (t *Taut) installHost(r *runtime) {
 	// Slack's hasSlackbotCustomResponseInThread over core's cached replies
 	sync("slackbotCustomResponseInThread", func(a []json.RawMessage) (any, error) {
 		return t.app.SlackbotCustomResponseInThread(strArg(a, 0), strArg(a, 1), strArg(a, 2)), nil
+	})
+
+	// Slack's broadcast keyword selectors (getBroadcastKeywordsForUser,
+	// canUserAtChannelInChannelById, canUserAtEveryoneInChannelById) over
+	// core's cached permissions/info. Never blocks: unknown permissions
+	// answer false and start a lookup, like Slack's selectors.
+	sync("broadcast", func(a []json.RawMessage) (any, error) {
+		ch := strArg(a, 0)
+		c, ok := t.app.Conv(ch)
+		if !ok {
+			return map[string]any{"keywords": []string{}, "atChannel": false, "atEveryone": false}, nil
+		}
+		p := t.app.BroadcastPerms(ch)
+		kw := core.BroadcastKeywords(c, p)
+		if kw == nil {
+			kw = []string{}
+		}
+		return map[string]any{"keywords": kw, "atChannel": core.CanAtChannel(c, p), "atEveryone": core.CanAtEveryone(c, p), "known": p.Known}, nil
 	})
 
 	// ---- what plugins patched (Go keeps cheap flags for the UI) ----

@@ -20,8 +20,12 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/pion/rtcp"
+	"github.com/pion/rtp/codecs"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
+	"github.com/pion/webrtc/v4/pkg/media/samplebuilder"
+	"github.com/thesyncim/goh264"
 )
 
 const (
@@ -57,6 +61,7 @@ type fakeChime struct {
 	clip     [][]byte // H.264 access units
 	mu       sync.Mutex
 	pc       *webrtc.PeerConnection
+	api      *webrtc.API
 	video    *webrtc.TrackLocalStaticSample
 	gotToken atomic.Bool
 	joined   atomic.Bool
@@ -67,6 +72,31 @@ type fakeChime struct {
 	peak     atomic.Int64 // level * 1000
 	reacji   atomic.Value // string
 	sending  atomic.Bool
+	cam      fakeCamIn
+}
+
+// fakeCamIn is what the fake saw of your camera: the SUBSCRIBE send side
+// and the H.264 RTP on the camera m-section, decoded.
+type fakeCamIn struct {
+	mu      sync.Mutex
+	duplex  uint32
+	desc    []streamDesc // video send streams of the last SUBSCRIBE
+	subs    []subscribeSeen
+	pkts    atomic.Int64
+	frames  atomic.Int64
+	keys    atomic.Int64
+	keysPLI atomic.Int64 // keyframes after the fake's PLI
+	pliSent atomic.Bool
+	w, h    atomic.Int32
+	pt      atomic.Int32
+	ssrc    atomic.Uint32
+	mime    atomic.Value // string
+}
+
+type subscribeSeen struct {
+	Duplex uint32
+	Video  []streamDesc
+	SDP    string
 }
 
 func (f *fakeChime) send(ctx context.Context, c *websocket.Conn, typ int, body func(w *pbw)) {
@@ -104,23 +134,14 @@ func (f *fakeChime) serve(w http.ResponseWriter, r *http.Request) {
 		case ftJoin:
 			f.joined.Store(true)
 			send(ftJoinAck, func(w *pbw) { w.msg(5, func(w *pbw) {}) }) // no TURN: direct on loopback
-			send(ftIndex, func(w *pbw) {
-				w.msg(8, func(w *pbw) {
-					w.msg(2, func(w *pbw) {
-						w.uint(1, shareStream)
-						w.uint(3, 1500)
-						w.uint(6, 3)
-						w.str(8, fakeRemoteAtt+"#content")
-						w.uint(9, mediaVideo)
-						w.str(10, "E1-R0FAKEROOM-"+fakeRemote)
-						w.uint(11, 320)
-						w.uint(12, 180)
-					})
-					w.uint(4, 2)
-				})
-			})
+			send(ftIndex, func(w *pbw) { f.index(w, nil) })
 		case ftSubscribe:
-			sdp, recv := parseSubscribe(b)
+			sub := parseSubscribe(b)
+			sdp, recv := sub.SDP, sub.Recv
+			f.cam.mu.Lock()
+			f.cam.duplex, f.cam.desc = sub.Duplex, sub.Video
+			f.cam.subs = append(f.cam.subs, subscribeSeen{Duplex: sub.Duplex, Video: sub.Video, SDP: sub.SDP})
+			f.cam.mu.Unlock()
 			answer, ssrc, err := f.negotiate(sdp, recv)
 			if err != nil {
 				f.errf("fake chime: negotiate: %v", err)
@@ -136,11 +157,20 @@ func (f *fakeChime) serve(w http.ResponseWriter, r *http.Request) {
 							w.uint(2, uint64(ssrc))
 						})
 					}
+					for _, v := range sub.Video { // SdkStreamAllocation for what you send
+						w.msg(2, func(w *pbw) {
+							w.str(1, v.TrackLabel)
+							w.uint(2, uint64(v.StreamID))
+							w.uint(3, uint64(v.GroupID))
+						})
+					}
 				})
 			})
 			if f.subs.Load() == 1 {
 				go f.chatter(ctx, send)
 			}
+			// like Chime: a published camera shows in everyone's INDEX
+			send(ftIndex, func(w *pbw) { f.index(w, sub.Video) })
 		case ftAudioControl:
 			f.muted.Store(parseMute(b))
 		case ftPingPong:
@@ -239,15 +269,64 @@ func (f *fakeChime) chatter(ctx context.Context, send func(int, func(*pbw))) {
 	}
 }
 
-func parseSubscribe(b []byte) (sdp string, recv []uint32) {
+// index is the fake's INDEX: the remote screen share, plus the video
+// streams you publish (under your attendee id, as Chime lists them).
+func (f *fakeChime) index(w *pbw, mine []streamDesc) {
+	w.msg(8, func(w *pbw) {
+		if len(f.clip) > 0 { // NewFake(nil): nobody shares
+			w.msg(2, func(w *pbw) {
+				w.uint(1, shareStream)
+				w.uint(3, 1500)
+				w.uint(6, 3)
+				w.str(8, fakeRemoteAtt+"#content")
+				w.uint(9, mediaVideo)
+				w.str(10, "E1-R0FAKEROOM-"+fakeRemote)
+				w.uint(11, 320)
+				w.uint(12, 180)
+			})
+		}
+		for _, v := range mine {
+			w.msg(2, func(w *pbw) {
+				w.uint(1, uint64(v.StreamID))
+				w.uint(2, uint64(v.Framerate))
+				w.uint(3, uint64(v.MaxBitrateKbps))
+				w.uint(6, uint64(v.GroupID))
+				w.str(8, v.AttendeeID)
+				w.uint(9, mediaVideo)
+				w.str(10, "E1-R0FAKEROOM-"+fakeSelf)
+			})
+		}
+		w.uint(4, 2)
+	})
+}
+
+type parsedSubscribe struct {
+	Duplex uint32
+	Audio  []streamDesc
+	Video  []streamDesc
+	Recv   []uint32
+	SDP    string
+}
+
+func parseSubscribe(b []byte) (p parsedSubscribe) {
+	p.Duplex = streamRX
 	_ = pbEach(b[1:], func(f pbField) error {
 		if f.num == 6 {
 			return pbEach(f.b, func(g pbField) error {
 				switch g.num {
+				case 1:
+					p.Duplex = g.u32()
+				case 2:
+					d := decodeStream(g.b)
+					if d.MediaType == mediaVideo {
+						p.Video = append(p.Video, d)
+					} else {
+						p.Audio = append(p.Audio, d)
+					}
 				case 3:
-					recv = pbUints(recv, g)
+					p.Recv = pbUints(p.Recv, g)
 				case 4:
-					sdp = g.str()
+					p.SDP = g.str()
 				}
 				return nil
 			})
@@ -287,7 +366,8 @@ func (f *fakeChime) negotiate(offer string, recv []uint32) (string, uint32, erro
 		se := webrtc.SettingEngine{}
 		se.SetIncludeLoopbackCandidate(true)
 		se.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4})
-		pc, err := webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithSettingEngine(se)).NewPeerConnection(webrtc.Configuration{})
+		f.api = webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithSettingEngine(se))
+		pc, err := f.api.NewPeerConnection(webrtc.Configuration{})
 		if err != nil {
 			return "", 0, err
 		}
@@ -319,9 +399,36 @@ func (f *fakeChime) negotiate(offer string, recv []uint32) (string, uint32, erro
 		if err != nil {
 			return "", 0, err
 		}
-		if _, err := pc.AddTrack(vt); err != nil {
+		// Chime sends a stream on the video m-section whose receive slot
+		// asked for it (never on your camera's, slot 0)
+		var tr *webrtc.RTPTransceiver
+		i := 0
+		for _, t := range pc.GetTransceivers() {
+			if t.Kind() != webrtc.RTPCodecTypeVideo {
+				continue
+			}
+			if i < len(recv) && recv[i] == shareStream {
+				tr = t
+			}
+			i++
+		}
+		if tr == nil {
+			return "", 0, errors.New("no m-section for the share")
+		}
+		sender, err := f.api.NewRTPSender(vt, pc.SCTP().Transport())
+		if err != nil {
 			return "", 0, err
 		}
+		if err := tr.SetSender(sender, vt); err != nil {
+			return "", 0, err
+		}
+		go func() { // drain RTCP (pion's interceptors want it read)
+			for {
+				if _, _, err := sender.ReadRTCP(); err != nil {
+					return
+				}
+			}
+		}()
 		f.video = vt
 	}
 	ans, err := pc.CreateAnswer(nil)
@@ -379,6 +486,9 @@ func (f *fakeChime) sendTone(t *webrtc.TrackLocalStaticSample) {
 }
 
 func (f *fakeChime) sendClip(t *webrtc.TrackLocalStaticSample) {
+	if len(f.clip) == 0 {
+		return
+	}
 	tick := time.NewTicker(time.Second / 15)
 	defer tick.Stop()
 	for i := 0; !f.left.Load(); i++ {
@@ -390,6 +500,10 @@ func (f *fakeChime) sendClip(t *webrtc.TrackLocalStaticSample) {
 }
 
 func (f *fakeChime) onTrack(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+	if track.Kind() == webrtc.RTPCodecTypeVideo {
+		f.recvCamera(track)
+		return
+	}
 	if track.Kind() != webrtc.RTPCodecTypeAudio {
 		return
 	}
@@ -406,6 +520,51 @@ func (f *fakeChime) onTrack(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
 		if pcm, err := dec.decode(pkt.Payload); err == nil {
 			if lv := int64(level(pcm) * 1000); lv > f.peak.Load() {
 				f.peak.Store(lv)
+			}
+		}
+	}
+}
+
+// recvCamera decodes your camera like a Chime receiver would, and after a
+// few pictures asks for a keyframe (PLI) to check you answer it.
+func (f *fakeChime) recvCamera(track *webrtc.TrackRemote) {
+	c := &f.cam
+	c.pt.Store(int32(track.PayloadType()))
+	c.ssrc.Store(uint32(track.SSRC()))
+	c.mime.Store(track.Codec().MimeType)
+	sb := samplebuilder.New(512, &codecs.H264Packet{}, track.Codec().ClockRate, samplebuilder.WithMaxTimeDelay(time.Second))
+	dec := goh264.NewDecoder()
+	for {
+		pkt, _, err := track.ReadRTP()
+		if err != nil {
+			return
+		}
+		c.pkts.Add(1)
+		sb.Push(pkt)
+		for s := sb.Pop(); s != nil; s = sb.Pop() {
+			key := hasIDR(s.Data)
+			frames, err := dec.DecodeFrames(s.Data)
+			if err != nil {
+				continue
+			}
+			for _, fr := range frames {
+				c.frames.Add(1)
+				c.w.Store(int32(fr.Width))
+				c.h.Store(int32(fr.Height))
+			}
+			if key {
+				c.keys.Add(1)
+				if c.pliSent.Load() {
+					c.keysPLI.Add(1)
+				}
+			}
+			if c.frames.Load() >= 5 && c.pliSent.CompareAndSwap(false, true) {
+				f.mu.Lock()
+				pc := f.pc
+				f.mu.Unlock()
+				if pc != nil {
+					_ = pc.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: uint32(track.SSRC())}})
+				}
 			}
 		}
 	}
@@ -501,4 +660,14 @@ func (x *Fake) Close() {
 	}
 	x.f.mu.Unlock()
 	testSettings = nil
+}
+
+// lastSub is the last SUBSCRIBE the fake got.
+func (f *fakeChime) lastSub() subscribeSeen {
+	f.cam.mu.Lock()
+	defer f.cam.mu.Unlock()
+	if len(f.cam.subs) == 0 {
+		return subscribeSeen{}
+	}
+	return f.cam.subs[len(f.cam.subs)-1]
 }

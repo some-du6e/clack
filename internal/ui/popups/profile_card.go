@@ -12,6 +12,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/hovercard"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
@@ -41,6 +42,12 @@ type ProfileCard struct {
 	rect   image.Rectangle
 	focus  bool
 
+	// hover: the card opened by resting on a trigger (hovercard). It has no
+	// scrim, never takes focus and sits above anchorR (hovercard.Place).
+	hover   bool
+	anchorR image.Rectangle
+	sub     Overlay // a menu the card opened (holds a hover card open)
+
 	asked   bool // EnsureUsers started
 	missing bool // EnsureUsers finished without the user
 
@@ -58,29 +65,58 @@ func NewProfileCard(h Host, anchor image.Point, userID string) *ProfileCard {
 	return p
 }
 
+// NewHoverProfileCard is the card the ui root draws while the pointer
+// rests on a profile trigger whose window bounds are anchor (Slack's
+// ProfileHoverTrigger: the card's bottom-left corner 12px above the
+// trigger's top-left, flipped below it when there's no room). The root
+// draws it under the overlays and closes it through hovercard.
+func NewHoverProfileCard(h Host, anchor image.Rectangle, userID string) *ProfileCard {
+	p := &ProfileCard{h: h, id: userID, anchorR: anchor, anchor: anchor.Min, hover: true, key: nextKey("hovercard")}
+	pfSubscribe(h, userID)
+	return p
+}
+
+// Rect is the card's bounds in window coordinates (after a Layout).
+func (p *ProfileCard) Rect() image.Rectangle { return p.rect }
+
+// Holding reports whether a menu the card opened is still showing (a hover
+// card stays open under it, like Slack's: the menu is inside the trigger).
+func (p *ProfileCard) Holding() bool { return p.sub != nil && !p.sub.Dismissed() }
+
+// UserID is the member the card shows.
+func (p *ProfileCard) UserID() string { return p.id }
+
 // Layout draws the card.
 func (p *ProfileCard) Layout(gtx layout.Context) layout.Dimensions {
 	drain()
 	if p.done {
 		return layout.Dimensions{}
 	}
-	stacked(gtx, p)
 	th := p.h.Theme()
 	cl := colorsOf(th)
 	win := gtx.Constraints.Max
-	if !p.focus {
-		gtx.Execute(key.FocusCmd{Tag: p})
-		p.focus = true
-	}
-	if isTop(p) && escape(gtx, nil) {
-		p.Dismiss()
-		return layout.Dimensions{}
-	}
-	if p.scrim.Layout(gtx) {
-		p.Dismiss()
-		return layout.Dimensions{}
+	if !p.hover {
+		stacked(gtx, p)
+		if !p.focus {
+			gtx.Execute(key.FocusCmd{Tag: p})
+			p.focus = true
+		}
+		if isTop(p) && escape(gtx, nil) {
+			p.Dismiss()
+			return layout.Dimensions{}
+		}
+		if p.scrim.Layout(gtx) {
+			p.Dismiss()
+			return layout.Dimensions{}
+		}
 	}
 	u, ok := lookupUser(p.h, p.id)
+	if ok && u.Deleted {
+		dc := *cl
+		dc.Bg = cl.BgAlt // .p-member_profile_hover_card__container_deleted: #f8f8f8
+		dc.Fg = theme.WithAlpha(cl.Fg, 0xb3)
+		cl = &dc
+	}
 	if !ok && !p.asked && p.h.Core() != nil && p.id != "" {
 		p.asked = true
 		pfEnsure(p.h, p.id, func(found bool) { p.missing = !found })
@@ -121,25 +157,28 @@ func (p *ProfileCard) Layout(gtx layout.Context) layout.Dimensions {
 			return childrenOr(gtx, pp, "MemberProfileHoverCard", hover, content)
 		})
 	})
-	pos := place(pointRect(p.anchor), d.Size, win, dp(gtx, 8), Below)
+	var pos image.Point
+	if p.hover {
+		pos = hovercard.Place(p.anchorR, d.Size, win, dp(gtx, hovercard.OffsetY), dp(gtx, hovercard.AllowanceX), dp(gtx, hovercard.AllowanceY))
+	} else {
+		pos = place(pointRect(p.anchor), d.Size, win, dp(gtx, 8), Below)
+	}
 	p.rect = image.Rectangle{Min: pos, Max: pos.Add(d.Size)}
 	rad := dp(gtx, 8)
 	st := pfCardClass.Enter(gtx, 0, 0)
 	if !st.Hidden() {
-		at(gtx, pos, func(gtx layout.Context) layout.Dimensions {
-			return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
-				local := image.Rectangle{Max: d.Size}
-				card(gtx, cl, local, rad)
-				p.block.Layout(gtx, local)
-				cs := clipRRect(gtx, local, rad)
-				call.Add(gtx.Ops)
-				cs.Pop()
-				return d
-			})
+		styledCard(gtx, st, cl, pos, d.Size, rad, false, func(gtx layout.Context) {
+			local := image.Rectangle{Max: d.Size}
+			p.block.Layout(gtx, local)
+			cs := clipRRect(gtx, local, rad)
+			call.Add(gtx.Ops)
+			cs.Pop()
 		})
 	}
 	st.Leave()
-	keyTarget(gtx, p, p.rect)
+	if !p.hover {
+		keyTarget(gtx, p, p.rect)
+	}
 	return layout.Dimensions{Size: win}
 }
 
@@ -152,6 +191,9 @@ func (p *ProfileCard) clicks(gtx layout.Context, u core.User) {
 	}
 	if p.msgBtn.Clicked(gtx) {
 		p.Dismiss()
+		if pfIsSlackbot(u) {
+			return
+		}
 		if pfIsSelf(h, u.ID) {
 			pfSetStatus(h)
 		} else {
@@ -167,7 +209,9 @@ func (p *ProfileCard) clicks(gtx layout.Context, u core.User) {
 	}
 	if p.moreBtn.Clicked(gtx) {
 		items := pfMoreItems(h, u, true, p.Dismiss)
-		h.ShowOverlay(NewMenuOpts(h, items, pfMenuOpts(u.ID, MenuOpts{Anchor: p.moreLocal.Add(p.rect.Min), Side: Below})))
+		m := NewMenuOpts(h, items, pfMenuOpts(u.ID, MenuOpts{Anchor: p.moreLocal.Add(p.rect.Min), Side: Below}))
+		p.sub = m
+		h.ShowOverlay(m)
 	}
 }
 
@@ -188,7 +232,7 @@ func (p *ProfileCard) hoverProps(th *theme.Theme, cl *Colors, u core.User, w int
 			return p.header(gtx, th, cl, u, true, w)
 		}),
 		"localTime": slackc.Child("LocalTime", pfLocalTimeProps(u), func(gtx layout.Context, _ slackc.Props) layout.Dimensions {
-			return pfIconLine(gtx, th, cl, "clock", localTime(u, gtx.Now)+" local time", 15, 22)
+			return pfIconLine(gtx, th, cl, "clock", pfLocalTimeLabel(p.h, u, gtx.Now), 15, 22)
 		}),
 	}
 }
@@ -213,6 +257,14 @@ func pfLocalTimeProps(u core.User) slackc.Props {
 
 // content draws the card body at the origin (card coords). pp holds the
 // plugin's MemberProfileHoverCard props (nil when unpatched).
+//
+// Slack's MemberProfileHoverCard (client-boot-shared VoM7): the header
+// slot, MemberProfileBaseEntity (banner, avatar, name, presence, title,
+// pronouns), then .p-member_profile_hover_card__secondary (border-top,
+// padding 0 16 16, a 16px ::before spacer): the custom status, then
+// Slackbot's "Built by Slack" row or LocalTime (margin-top 4), then
+// MemberProfileButtons (margin-top 12, hidden for Slackbot). The spacer's
+// margin collapses with the first child's.
 func (p *ProfileCard) content(gtx layout.Context, th *theme.Theme, cl *Colors, u core.User, ok bool, w int, pp slackc.Props) layout.Dimensions {
 	pad := dp(gtx, 16)
 	var hd layout.Dimensions
@@ -229,35 +281,72 @@ func (p *ProfileCard) content(gtx layout.Context, th *theme.Theme, cl *Colors, u
 	// secondary block
 	fill(gtx, image.Rect(0, y, w, y+1), cl.Ring)
 	y++
-	if ok && pfHasClock(u) {
-		y += dp(gtx, 16)
+	y += pad // the ::before spacer
+	inner := w - 2*pad
+	first := true
+	margin := func(m int) {
+		if !first {
+			y += m
+		}
+		first = false
+	}
+	if !ok {
+		rrect(gtx, image.Rect(pad, y, pad+dp(gtx, 120), y+dp(gtx, 28)), dp(gtx, 4), cl.Selected)
+		y += dp(gtx, 28) + pad
+		return layout.Dimensions{Size: image.Pt(w, y)}
+	}
+	if pfHasStatus(u, gtx.Now) {
+		margin(0)
 		d := at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints = layout.Constraints{Max: image.Pt(w-2*pad, 1<<20)}
+			gtx.Constraints = layout.Constraints{Max: image.Pt(inner, 1<<20)}
+			return pfCardStatus(gtx, p.h, th, cl, u)
+		})
+		y += d.Size.Y
+	}
+	slackbot := pfIsSlackbot(u)
+	switch {
+	case slackbot:
+		margin(0)
+		d := at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(inner, 1<<20)}
+			return pfIconLine(gtx, th, cl, "slack-logo", "Built by Slack", 15, 22)
+		})
+		y += d.Size.Y
+	case pfHasClock(u):
+		margin(dp(gtx, 4))
+		d := at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(inner, 1<<20)}
 			return slotOr(gtx, pp, "localTime", "LocalTime", func() slackc.Props { return pfLocalTimeProps(u) },
 				func(gtx layout.Context, _ slackc.Props) layout.Dimensions {
-					return pfIconLine(gtx, th, cl, "clock", localTime(u, gtx.Now)+" local time", 15, 22)
+					return pfIconLine(gtx, th, cl, "clock", pfLocalTimeLabel(p.h, u, gtx.Now), 15, 22)
 				})
 		})
 		y += d.Size.Y
 	}
-	y += dp(gtx, 12)
-	if ok {
+	if !slackbot {
+		margin(dp(gtx, 12))
 		d := at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
-			return p.buttons(gtx, th, u, w-2*pad)
+			return p.buttons(gtx, th, u, inner)
 		})
-		p.moreLocal = p.moreLocal.Add(image.Pt(pad, y))
+		if !p.moreLocal.Empty() {
+			p.moreLocal = p.moreLocal.Add(image.Pt(pad, y))
+		}
 		y += d.Size.Y
-	} else {
-		rrect(gtx, image.Rect(pad, y, pad+dp(gtx, 120), y+dp(gtx, 28)), dp(gtx, 4), cl.Selected)
-		y += dp(gtx, 28)
 	}
 	y += pad
 	return layout.Dimensions{Size: image.Pt(w, y)}
 }
 
-// header is the primary block (avatar, name, presence, pronouns, title,
-// status), full card width, paddings included.
+// header is MemberProfileBaseEntity's primary block: Slack's
+// MemberProfileHoverBanner (Workspace Owner / Workspace Admin /
+// Deactivated account) across the top, then avatar, name, presence,
+// pronouns and title, full card width, paddings included.
 func (p *ProfileCard) header(gtx layout.Context, th *theme.Theme, cl *Colors, u core.User, ok bool, w int) layout.Dimensions {
+	bh := 0
+	if ok {
+		bh = pfBanner(gtx, th, cl, u, w).Size.Y
+	}
+	defer op.Offset(image.Pt(0, bh)).Push(gtx.Ops).Pop()
 	pad := dp(gtx, 16)
 	av := dp(gtx, 72)
 	colX := pad + av + dp(gtx, 12)
@@ -285,7 +374,7 @@ func (p *ProfileCard) header(gtx layout.Context, th *theme.Theme, cl *Colors, u 
 		}
 		return p.column(gtx, th, cl, u, colW)
 	})
-	y := pad + maxInt(av, cd.Size.Y-2*m4) + pad
+	y := bh + pad + maxInt(av, cd.Size.Y-2*m4) + pad
 	return layout.Dimensions{Size: image.Pt(w, y)}
 }
 
@@ -306,27 +395,30 @@ func (p *ProfileCard) column(gtx layout.Context, th *theme.Theme, cl *Colors, u 
 		y += lineH
 	}
 	if !pfBlank(u.Title) {
+		col := cl.Fg2
+		if u.Deleted { // .p-member_profile_base_entity__title_deleted: color inherit
+			col = cl.Fg
+		}
 		d := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(colW, 1<<20)}
-			return para(gtx, th, 15, 22, theme.Regular, cl.Fg2, u.Title, 0)
+			return para(gtx, th, 15, 22, theme.Regular, col, u.Title, 0)
 		})
 		y += maxInt(d.Size.Y, lineH)
-	}
-	if pfHasStatus(u, gtx.Now) {
-		d := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints = layout.Constraints{Max: image.Pt(colW, 1<<20)}
-			return pfStatusLine(gtx, p.h, th, cl, u, 15, 22, 18)
-		})
-		y += d.Size.Y
 	}
 	return layout.Dimensions{Size: image.Pt(colW, maxInt(y, lineH))}
 }
 
 func (p *ProfileCard) buttons(gtx layout.Context, th *theme.Theme, u core.User, w int) layout.Dimensions {
 	var specs []pfBtnSpec
-	if pfIsSelf(p.h, u.ID) {
+	switch {
+	case u.Deleted:
+		// MemberProfileButtons for a deactivated member: the message button
+		// reads "View Message History"; no huddle (renderSecondaryButton
+		// returns null) and no VIP.
+		specs = []pfBtnSpec{{c: &p.msgBtn, label: "View Message History", lead: "threads"}}
+	case pfIsSelf(p.h, u.ID):
 		specs = []pfBtnSpec{{c: &p.msgBtn, label: "Set a status", lead: "emoji"}}
-	} else {
+	default:
 		specs = []pfBtnSpec{
 			{c: &p.msgBtn, label: "Message", lead: "threads"},
 			{c: &p.huddleBtn, label: "Huddle", lead: "headphones", caret: true},
@@ -334,12 +426,118 @@ func (p *ProfileCard) buttons(gtx layout.Context, th *theme.Theme, u core.User, 
 		}
 	}
 	kebab := &p.moreBtn
-	if len(specs) > 1 {
+	if len(specs) > 1 || u.Deleted {
 		kebab = nil // Slack's card shows only [Message] [Huddle ▾] [VIP]
 	}
 	d, kr := pfBtnRow(gtx, th, BtnSmall, specs, kebab, w, false)
 	p.moreLocal = kr
 	return d
+}
+
+// pfIsSlackbot reports whether u is Slackbot (Slack's isSlackbot by id:
+// its card says "Built by Slack" and has no buttons).
+func pfIsSlackbot(u core.User) bool { return u.ID == "USLACKBOT" }
+
+// pfBanner is Slack's MemberProfileHoverBanner (client-boot-shared B0lO)
+// across the card's top: "Workspace Owner", else "Workspace Admin", else
+// (deactivated) an archive icon and "Deactivated account". Padding 8px
+// 16px, 13px bold, one line. Light: rgba(29,28,29,.04) (deactivated .13,
+// text .7); dark: #ddd behind the same dark text.
+func pfBanner(gtx layout.Context, th *theme.Theme, cl *Colors, u core.User, w int) layout.Dimensions {
+	var label, ic string
+	switch {
+	case u.IsOwner && !u.Deleted:
+		label = "Workspace Owner"
+	case u.IsAdmin && !u.Deleted:
+		label = "Workspace Admin"
+	case u.Deleted:
+		label, ic = "Deactivated account", "archive-filled"
+	default:
+		return layout.Dimensions{}
+	}
+	fg := rgb(0x1d1c1d)
+	bg := rgba(0x1d1c1d, 0.04)
+	if u.Deleted {
+		fg = rgba(0x1d1c1d, 0.7)
+		bg = rgba(0x1d1c1d, 0.13)
+	}
+	if th != nil && th.Dark {
+		bg = rgb(0xdddddd)
+	}
+	padX, padY := dp(gtx, 16), dp(gtx, 8)
+	lh := dp(gtx, 18)
+	h := padY + lh + padY
+	fill(gtx, image.Rect(0, 0, w, h), bg)
+	x := padX
+	if ic != "" {
+		at(gtx, image.Pt(x, padY+(lh-dp(gtx, 12))/2-dp(gtx, 1)), func(gtx layout.Context) layout.Dimensions {
+			return icon(gtx, ic, 12, fg)
+		})
+		x += dp(gtx, 12) + dp(gtx, 8)
+	}
+	at(gtx, image.Pt(x, padY), func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, w-x-padX), lh)}
+		return para(gtx, th, 13, 18, theme.Bold, fg, label, 1)
+	})
+	return layout.Dimensions{Size: image.Pt(w, h)}
+}
+
+// pfCardStatus is the card's custom status (BaseCustomStatus with
+// .p-member_profile_hover_card__status): a 20px emoji, a space, and the
+// text on one line, cut with an ellipsis.
+func pfCardStatus(gtx layout.Context, h Host, th *theme.Theme, cl *Colors, u core.User) layout.Dimensions {
+	maxW := gtx.Constraints.Max.X
+	lineH := dp(gtx, 22)
+	x := 0
+	if u.StatusEmoji != "" || u.StatusEmojiURL != "" {
+		at(gtx, image.Pt(0, (lineH-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions {
+			return pfStatusEmoji(gtx, h, u, 20)
+		})
+		x = dp(gtx, 20) + dp(gtx, 4)
+	}
+	if !pfBlank(u.StatusText) {
+		at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, maxW-x), lineH)}
+			return para(gtx, th, 15, 22, theme.Regular, cl.Fg, u.StatusText, 1)
+		})
+	}
+	return layout.Dimensions{Size: image.Pt(maxW, lineH)}
+}
+
+// pfLocalTimeLabel is Slack's LocalTime text (useProfileMemberLocalTime
+// with useAtlasI18nLocalTimeLabels): "3:42 PM local time", or "3:42 PM
+// (tomorrow) local time" / "(yesterday)" when the member's date differs
+// from the viewer's (the viewer's profile time zone, not the machine's).
+func pfLocalTimeLabel(h Host, u core.User, now time.Time) string {
+	t := pfInZone(u, now)
+	s := clock(t)
+	if h != nil && h.Core() != nil {
+		me := h.Core().Self()
+		if me.TZ != "" || me.TZOffset != 0 {
+			mine := pfInZone(me, now)
+			ty, tm, td := t.Date()
+			my, mm, md := mine.Date()
+			a := time.Date(ty, tm, td, 0, 0, 0, 0, time.UTC)
+			b := time.Date(my, mm, md, 0, 0, 0, 0, time.UTC)
+			switch {
+			case a.After(b):
+				return s + " (tomorrow) local time"
+			case a.Before(b):
+				return s + " (yesterday) local time"
+			}
+		}
+	}
+	return s + " local time"
+}
+
+// pfInZone is now in u's time zone (tz, else its offset).
+func pfInZone(u core.User, now time.Time) time.Time {
+	if u.TZ != "" {
+		if loc, err := time.LoadLocation(u.TZ); err == nil {
+			return now.In(loc)
+		}
+	}
+	return now.UTC().Add(time.Duration(u.TZOffset) * time.Second)
 }
 
 // ---- Slack boundaries (BasePresence, overflow menu, classes) ----
@@ -642,7 +840,9 @@ func pfNameLine(gtx layout.Context, h Host, th *theme.Theme, c *widget.Clickable
 	cl := colorsOf(th)
 	lineH := dp(gtx, lh)
 	name := pfName(u)
-	hasDot := !u.IsBot // unknown presence draws the hollow ring, like Slack
+	// unknown presence draws the hollow ring, like Slack; a deactivated
+	// member has none (MemberProfileBaseEntity: !isDeactivated)
+	hasDot := !u.IsBot && !u.Deleted
 	reserve := 0
 	if hasDot {
 		reserve = dp(gtx, dot) + dp(gtx, 6)

@@ -21,6 +21,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/ctxclick"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/hovercard"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
 )
@@ -68,9 +69,11 @@ type View struct {
 	lastTap  time.Duration
 	tapCount int
 	hovering bool
-	ptr      f32.Point // last pointer position (view coordinates)
-	tipFrag  int       // emoji frag under the pointer, -1 none
-	tipAt    time.Time // when the pointer reached it (gtx.Now)
+	ptr      f32.Point  // last pointer position (view coordinates)
+	tipFrag  int        // emoji frag under the pointer, -1 none
+	tipAt    time.Time  // when the pointer reached it (gtx.Now)
+	hovMen   mentionKey // the @mention last reported to the hover card
+	hovOn    bool
 
 	// Origin, if set by the owner, is added to click anchors so they are in
 	// window coordinates.
@@ -229,6 +232,7 @@ func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimension
 		v.record(st)
 	}
 	v.events(gtx, st, h)
+	v.hoverCard()
 
 	// Slack's .p-rich_text_block > .p-rich_text_section, for CSS.
 	bs := richBlockClass.Enter(gtx, 0, 0)
@@ -884,6 +888,9 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 				}
 				v.press = v.targetAt(e.Position)
 				v.pressPos = e.Position
+				if c := hovercard.Default(); c != nil && v.isMention(v.press) {
+					c.Pressed(mentionKey{v, v.press}) // Slack's handleClick closes the card
+				}
 				v.moved = false
 				if v.External {
 					v.dragging = true
@@ -938,6 +945,43 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 			}
 		}
 	}
+}
+
+// mentionKey identifies one @mention of a View to the hover card.
+type mentionKey struct {
+	v *View
+	t int16
+}
+
+func (v *View) isMention(t int16) bool {
+	return t >= 0 && int(t) < len(v.d.targets) && v.d.targets[t].kind == tUser && v.d.targets[t].id != ""
+}
+
+// hoverCard reports the @mention under the pointer to the profile hover
+// card: Slack's MemberLink is a ProfileHoverTrigger, anchored at the
+// mention's bounds (all its line boxes when it wraps).
+func (v *View) hoverCard() {
+	c := hovercard.Default()
+	if c == nil {
+		return
+	}
+	t := v.hover
+	on := v.hovering && v.isMention(t)
+	k := mentionKey{v, t}
+	if v.hovOn && (!on || k != v.hovMen) {
+		c.Left(v.hovMen)
+	}
+	v.hovOn, v.hovMen = on, k
+	if !on {
+		return
+	}
+	var r image.Rectangle
+	for i := range v.d.frags {
+		if f := &v.d.frags[i]; f.target == t {
+			r = r.Union(fragRect(f))
+		}
+	}
+	c.Report(k, v.d.targets[t].id, r, v.ptr)
 }
 
 // inSlot reports whether p is on an element run drawn by Options.Elements.

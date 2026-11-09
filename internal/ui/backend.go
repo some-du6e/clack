@@ -232,13 +232,15 @@ func (b *backend) apply(a *App, s core.Snapshot) {
 	m.SelfActive = s.Self.Presence != "away"
 	m.Connected = s.Connected
 	convs := make(map[string]*convInfo, len(s.Convs))
+	open := a.router.Current().Channel()
 	for i := range s.Convs {
 		c := &s.Convs[i]
-		if c.IsArchived {
+		if c.IsArchived && c.ID != open { // the open one keeps its row (core SetSelected)
 			continue
 		}
 		ci := &convInfo{ID: c.ID, Name: c.Name, Kind: c.Kind, User: c.User, Topic: c.Topic,
-			NumMembers: c.NumMembers, Members: c.Members, Muted: c.Muted, TopicSpans: firstSpans(c.TopicDoc)}
+			NumMembers: c.NumMembers, Members: c.Members, Muted: c.Muted, TopicSpans: firstSpans(c.TopicDoc),
+			Archived: c.IsArchived, Preview: c.Preview, Purpose: c.Purpose}
 		if old := m.Convs[c.ID]; old != nil {
 			// keep what opened() fetched (count, facepile) across snapshots
 			if ci.NumMembers == 0 {
@@ -409,7 +411,8 @@ func (b *backend) handle(a *App, ev core.Event) {
 		if ev.Count != nil {
 			changed = b.setCount(ev.Channel, *ev.Count)
 		}
-		if ev.Msg != nil && ev.Msg.User != b.selfID && !ev.Msg.System {
+		// (ephemerals, e.g. Slackbot's "you can't @channel here", never notify)
+		if ev.Msg != nil && ev.Msg.User != b.selfID && !ev.Msg.System && !b.core.Interactive().Ephemeral(ev.Channel, ev.TS) {
 			cur := a.router.Current().Channel()
 			c := m.conv(ev.Channel)
 			direct := ev.ConvKind == "im" || ev.ConvKind == "mpim"
@@ -635,7 +638,7 @@ func (b *backend) resolved(ch string) *convInfo {
 			return
 		}
 		ci := &convInfo{ID: c.ID, Name: c.Name, Kind: c.Kind, User: c.User, Topic: c.Topic, NumMembers: c.NumMembers,
-			TopicSpans: firstSpans(c.TopicDoc)}
+			TopicSpans: firstSpans(c.TopicDoc), Archived: c.IsArchived, Preview: c.Preview, Purpose: c.Purpose}
 		if c.Kind == "im" {
 			if u, ok := b.core.User(c.User); ok {
 				ci.Name, ci.Avatar, ci.Bot, ci.Active = u.Name, u.Avatar, u.IsBot, u.Presence == "active"

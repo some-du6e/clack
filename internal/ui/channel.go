@@ -56,6 +56,10 @@ func (a *App) layoutChannel(gtx layout.Context, ch string) layout.Dimensions {
 		atExact(gtx, body.Min, body.Size(), dm.LayoutBody)
 		return layout.Dimensions{Size: sz}
 	}
+	if v := a.canvasTabView(ch); v != nil { // a canvas tab (mount_features_canvas.go)
+		atExact(gtx, body.Min, body.Size(), v.Layout)
+		return layout.Dimensions{Size: sz}
+	}
 	cv := a.convoFor(ch, "")
 	atExact(gtx, body.Min, body.Size(), func(gtx layout.Context) layout.Dimensions {
 		mp := clsMessagePane.Enter(gtx, 0, 0)
@@ -142,8 +146,9 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 
 	if !appDM {
 		// Huddle split button (94×28: 74 + 20); Slack 2026's --polish variant
-		// has no outline, only hover fills. Slack's mint pill with faces and
-		// "Huddle N" while a huddle is on (huddleui).
+		// has no outline, only hover fills. While a huddle is on, huddleui
+		// draws Slack's live button: mint with faces, headphones and a bare
+		// count, or solid jade with the leave headphones when you're in it.
 		hud := a.huddles()
 		hud.Seed()
 		hw := gtx.Dp(94)
@@ -427,6 +432,8 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 			}
 			if t.key == "messages" {
 				a.chTab[ch] = 0
+			} else if t.icon == "canvas" && t.fileID != "" {
+				a.chTab[ch] = i // the canvas opens in the channel's body
 			} else {
 				a.chTab[ch] = 0
 				a.openTab(ch, t.key)
@@ -438,7 +445,7 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 		return iconButton(gtx, a.clicks.get("tab.add"), "plus", 28, 18, c.FgMuted, c.BgHover, 6)
 	})
 	if clicked(a.clicks.get("tab.add")) {
-		a.Toast("Adding canvases and lists isn't supported yet")
+		a.addTabMenu(ch) // mount_features_canvas.go
 	}
 	return layout.Dimensions{Size: sz}
 }
