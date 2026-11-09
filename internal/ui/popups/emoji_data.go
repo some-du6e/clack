@@ -385,9 +385,7 @@ func (s *epSearcher) loadFrecency() {
 		return
 	}
 	now := time.Now()
-	epFrecMu.Lock()
-	v := epFrecVer
-	epFrecMu.Unlock()
+	v := epFrecVersion()
 	if v == s.frecV && !s.frecAt.IsZero() && now.Sub(s.frecAt) < epFrecTTL {
 		return
 	}
@@ -582,6 +580,7 @@ func epStdIndex(style string) *emojiIndex {
 // called on the UI goroutine.
 func epIndexFor(h Host) (*emojiIndex, bool) {
 	epNoteUse()
+	epNoteCore(h)
 	style := epStyle(h)
 	var custom map[string]string
 	if h != nil && h.Core() != nil {

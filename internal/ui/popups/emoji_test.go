@@ -4,7 +4,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/emoji"
 )
@@ -216,57 +215,48 @@ func TestEmojiSearchFrecencyBoost(t *testing.T) {
 	}
 }
 
+// Slack's EmojiList rows: per group a 1px empty-header-row and a 27px
+// group row, 33px emoji rows, the last one 43 (getRowHeight); si is the
+// screen row index the cells' data-color-index derives from.
 func TestEmojiLayoutRows(t *testing.T) {
 	var lists epLists
 	lists[epGroupFrequent] = []int32{1, 2, 3}
 	lists[epGroupSmileys] = []int32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
-	rows, at, total := epLayoutRows(nil, &lists, false, 26, 2, 33)
+	rows, at, total := epLayoutRows(nil, &lists, false, 27, 1, 33, 10)
 	type r struct {
-		y, start int32
-		list, n  uint8
+		y, start, si int32
+		list, n      uint8
 	}
-	want := []r{{0, 0, 0, 0}, {26, 0, 0, 3}, {59, 0, 1, 0}, {87, 0, 1, 9}, {120, 9, 1, 1}}
+	want := []r{{0, 0, 1, 0, 0}, {28, 0, 2, 0, 3}, {61, 0, 4, 1, 0}, {89, 0, 5, 1, 9}, {122, 9, 6, 1, 1}}
 	if len(rows) != len(want) {
 		t.Fatalf("rows = %+v", rows)
 	}
 	for i, w := range want {
 		g := rows[i]
-		if (r{g.y, g.start, g.list, g.n}) != w {
+		if (r{g.y, g.start, g.si, g.list, g.n}) != w {
 			t.Errorf("row %d = %+v, want %+v", i, g, w)
 		}
 	}
-	if total != 153 || at[epGroupFrequent] != 0 || at[epGroupSmileys] != 2 || at[epGroupCustom] != -1 {
+	if total != 165 || at[epGroupFrequent] != 0 || at[epGroupSmileys] != 2 || at[epGroupCustom] != -1 {
 		t.Errorf("total %d at %v", total, at)
 	}
+	// the live picker's tints: Frequently Used's first cell 0 (green),
+	// Smileys' first (grinning) 3 (#eea6fc)
+	if epCellTint(int(rows[1].si)*epCols) != epTints[0] || epCellTint(int(rows[3].si)*epCols) != epTints[3] {
+		t.Error("data-color-index")
+	}
 	lists[epGroupSearch] = make([]int32, 20)
-	rows, at, total = epLayoutRows(rows, &lists, true, 26, 2, 33)
-	if len(rows) != 4 || rows[3].n != 2 || at[epGroupSearch] != 0 || at[epGroupFrequent] != -1 || total != 26+3*33 {
+	rows, at, total = epLayoutRows(rows, &lists, true, 27, 1, 33, 10)
+	if len(rows) != 4 || rows[3].n != 2 || at[epGroupSearch] != 0 || at[epGroupFrequent] != -1 || total != 28+3*33+10 {
 		t.Errorf("search rows = %+v total %d", rows, total)
 	}
 }
 
-func TestEmojiFrecency(t *testing.T) {
-	now := time.Unix(1_800_000_000, 0)
-	h := func(d time.Duration) int64 { return now.Add(-d).Unix() }
-	m := map[string]*epUse{
-		"a": {N: 5, T: []int64{h(time.Hour)}},                        // 500
-		"b": {N: 10, T: []int64{h(100 * 24 * time.Hour)}},            // 0: too old
-		"c": {N: 2, T: []int64{h(2 * time.Hour), h(48 * time.Hour)}}, // 160
-		"d": {N: 4, T: []int64{h(10 * 24 * time.Hour)}},              // 80
-	}
-	if got := strings.Join(epTopFrecency(m, now, 18), ","); got != "a,c,d" {
-		t.Errorf("top = %s", got)
-	}
-	if got := strings.Join(epTopFrecency(m, now, 1), ","); got != "a" {
-		t.Errorf("top 1 = %s", got)
-	}
+func TestEmojiParseTone(t *testing.T) {
 	for in, want := range map[string]int{"": 1, "1": 1, "3": 3, "skin-tone-4": 4, "9": 1} {
 		if got := epParseTone(in); got != want {
 			t.Errorf("epParseTone(%q) = %d, want %d", in, got, want)
 		}
-	}
-	if got := epBaseName(":thumbsup::skin-tone-3:"); got != "thumbsup" {
-		t.Errorf("epBaseName = %q", got)
 	}
 }
 
@@ -317,7 +307,7 @@ func TestEmojiBigIndex(t *testing.T) {
 	}
 	var lists epLists
 	lists[epGroupCustom] = x.group[epGroupCustom]
-	rows, _, _ := epLayoutRows(nil, &lists, false, 26, 2, 33)
+	rows, _, _ := epLayoutRows(nil, &lists, false, 27, 1, 33, 10)
 	if want := 1 + (len(x.group[epGroupCustom])+8)/9; len(rows) != want {
 		t.Errorf("rows = %d, want %d", len(rows), want)
 	}

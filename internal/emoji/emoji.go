@@ -209,3 +209,39 @@ func (c *Custom) Resolve(name, style string) (url, text string, ok bool) {
 	}
 	return "", "", false
 }
+
+// StdEmoji is one standard emoji: its names (primary first) and its
+// image stem, Slack's lower-case unicode ("1f44d", "263a-fe0f").
+type StdEmoji struct {
+	Names   []string
+	Unicode string
+}
+
+// StandardList returns the standard emoji in table order (a fresh slice
+// sharing the name slices; don't modify them).
+func StandardList() []StdEmoji {
+	once.Do(load)
+	out := make([]StdEmoji, len(allStd))
+	for i := range allStd {
+		out[i] = StdEmoji{Names: allStd[i].Names, Unicode: allStd[i].Image}
+	}
+	return out
+}
+
+// IsStandard reports whether name (without a skin tone) is a standard
+// emoji name or one of the aliases Slack accepts.
+func IsStandard(name string) bool {
+	once.Do(load)
+	_, ok := byName[name]
+	return ok
+}
+
+// StandardUnicode is a standard emoji's image stem / unicode ("1f44d"),
+// "" when name is not standard.
+func StandardUnicode(name string) string {
+	once.Do(load)
+	if e, ok := byName[name]; ok {
+		return e.Image
+	}
+	return ""
+}

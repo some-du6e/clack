@@ -2,6 +2,7 @@ package popups
 
 import (
 	"image"
+	"image/color"
 	"strconv"
 	"strings"
 
@@ -28,10 +29,17 @@ import (
 //	            20px icons #868686, active tile #dddddd with #1d1c1d icon
 //	y  96..146  search input at x 18, y 103, 326×36, radius 8, 15px,
 //	            focus ring 1px #1264a3 + 4px rgba(18,100,163,.3)
-//	y 146..458  list: group headings 26 tall (13/700 at x 20, sticky,
-//	            bg rgba(255,255,255,.95)), 2px between groups; rows 33 tall,
-//	            9 cells 36×32 radius 6 from x 15, 22px images; hover
-//	            rgba(247,233,34,.7), keyboard selection rgba(155,223,88,.7)
+//	y 146..458  list (virtual rows, getRowHeight): each group is a 1px
+//	            empty-header-row, a 27px heading row (13/700 at x 21 in a
+//	            24px line) and 33px emoji rows (the list's last one 43);
+//	            9 cells 36×32 radius 6 from x 15, 22px images. The sticky
+//	            heading is 26 tall (text at x 20, bg primary at .95). The
+//	            hovered or keyboard-selected cell is tinted by its
+//	            data-color-index, (9 × screen row + column) mod 6: #9bdf58,
+//	            #95d3fe, #f7e922, #eea6fc, #ffd58f, #d3d1ff at .7 (both
+//	            modes). The scrollbar thumb (8px, radius 4, min 36,
+//	            primary foreground at .52) shows while the pointer is over
+//	            the list.
 //	y 458..518  footer #f8f8f8, 1px rgba(0,0,0,.15) top border: idle
 //	            "Add Emoji" (85×28 at 14,16) or the hovered emoji (32px at
 //	            13,14, name 14.4/700 and aliases 12.8/400 #616061 at x 57);
@@ -47,9 +55,11 @@ const (
 	epInputH       = 36 // measured: 326×36 at (18,103)
 	epListY        = 146
 	epFootH        = 60
-	epHdrH         = 26
-	epHdrGap       = 2
+	epHdrH         = 27 // heading row (getRowHeight "group")
+	epHdrGap       = 1  // the empty-header-row before every group
+	epStickyH      = 26 // the sticky heading band
 	epRowH         = 33
+	epLastExtra    = 10 // the list's last emoji row is 43
 	epCellX        = 15
 	epCellW        = 36
 	epCellH        = 32
@@ -66,6 +76,7 @@ func EmojiPickerSize() image.Point { return image.Pt(epW, epH) }
 type epRow struct {
 	y     int32
 	start int32
+	si    int32 // Slack's screen row index (data-color-index)
 	list  uint8
 	n     uint8
 }
@@ -79,31 +90,31 @@ var epNoCell = epCell{-1, -1}
 type epLists = [epNumGroups + 1][]int32
 
 // epLayoutRows flattens lists into heading + emoji rows (search: only the
-// search list). It returns the rows, each group's heading row (-1 when
+// search list). A heading row is gap + hdr tall (Slack's 1px
+// empty-header-row and its 27px group row), emoji rows rowH, the last one
+// rowH + last. It returns the rows, each group's heading row (-1 when
 // absent) and the total height. Heights are px.
-func epLayoutRows(dst []epRow, lists *epLists, search bool, hdr, gap, rowH int) ([]epRow, [epNumGroups + 1]int32, int) {
+func epLayoutRows(dst []epRow, lists *epLists, search bool, hdr, gap, rowH, last int) ([]epRow, [epNumGroups + 1]int32, int) {
 	dst = dst[:0]
 	var heads [epNumGroups + 1]int32
 	for i := range heads {
 		heads[i] = -1
 	}
-	y := 0
+	y, si := 0, int32(0)
 	add := func(g int) {
 		ids := lists[g]
 		if len(ids) == 0 {
 			return
 		}
-		h := hdr
-		if len(dst) > 0 {
-			h += gap
-		}
 		heads[g] = int32(len(dst))
-		dst = append(dst, epRow{y: int32(y), list: uint8(g)})
-		y += h
+		dst = append(dst, epRow{y: int32(y), si: si + 1, list: uint8(g)})
+		y += gap + hdr
+		si += 2 // empty-header-row, group
 		for s := 0; s < len(ids); s += epCols {
 			n := minInt(epCols, len(ids)-s)
-			dst = append(dst, epRow{y: int32(y), start: int32(s), list: uint8(g), n: uint8(n)})
+			dst = append(dst, epRow{y: int32(y), start: int32(s), si: si, list: uint8(g), n: uint8(n)})
 			y += rowH
+			si++
 		}
 	}
 	if search {
@@ -112,6 +123,9 @@ func epLayoutRows(dst []epRow, lists *epLists, search bool, hdr, gap, rowH int) 
 		for g := 0; g < epNumGroups; g++ {
 			add(g)
 		}
+	}
+	if len(dst) > 0 && dst[len(dst)-1].n > 0 {
+		y += last
 	}
 	return dst, heads, y
 }
@@ -257,29 +271,16 @@ func (p *EmojiPicker) refreshIndex() {
 	p.rowsDirty = true
 }
 
+// loadFrequent fills Frequently Used from getFrequentlyUsedEmoji's names
+// (duplicates kept, as Slack's list can repeat a default); names the
+// index doesn't have yet (custom emoji still loading) are skipped until
+// the full index arrives.
 func (p *EmojiPicker) loadFrequent() {
 	p.freq = p.freq[:0]
-	add := func(names []string) {
-		for _, n := range names {
-			id, ok := p.idx.lookup(n)
-			if !ok {
-				continue
-			}
-			dup := false
-			for _, f := range p.freq {
-				if f == id {
-					dup = true
-					break
-				}
-			}
-			if !dup && len(p.freq) < epFrequentMax {
-				p.freq = append(p.freq, id)
-			}
+	for _, n := range epFrequentNames(p.h) {
+		if id, ok := p.idx.lookup(n); ok {
+			p.freq = append(p.freq, id)
 		}
-	}
-	add(epFrequentNames(p.h))
-	if len(p.freq) == 0 {
-		add(epDefaultFrequent)
 	}
 	p.lists[epGroupFrequent] = p.freq
 }
@@ -291,7 +292,7 @@ func (p *EmojiPicker) ensureRows(gtx layout.Context) {
 	p.rowsDirty = false
 	p.rowsScale = gtx.Metric.PxPerDp
 	p.rows, p.groupRow, p.totalH = epLayoutRows(p.rows, &p.lists, p.searching,
-		dp(gtx, epHdrH), dp(gtx, epHdrGap), dp(gtx, epRowH))
+		dp(gtx, epHdrH), dp(gtx, epHdrGap), dp(gtx, epRowH), dp(gtx, epLastExtra))
 }
 
 func (p *EmojiPicker) setQuery(gtx layout.Context, q string) {
@@ -388,7 +389,7 @@ func (p *EmojiPicker) clickTab(i int) {
 	if p.rowsDirty {
 		// rows are rebuilt with px metrics in Layout; the heading index
 		// doesn't depend on them.
-		_, heads, _ := epLayoutRows(nil, &p.lists, false, 1, 0, 1)
+		_, heads, _ := epLayoutRows(nil, &p.lists, false, 1, 0, 1, 0)
 		p.groupRow = heads
 	}
 	if r := p.groupRow[i]; r >= 0 {
@@ -405,7 +406,7 @@ func (p *EmojiPicker) ensureVisible(gtx layout.Context, i int) {
 	scroll := p.scrollTop()
 	top := int(p.rows[i].y)
 	bot := top + p.rowHeight(i)
-	sticky := dp(gtx, epHdrH)
+	sticky := dp(gtx, epStickyH)
 	var nt int
 	switch {
 	case top < scroll+sticky:
@@ -498,7 +499,7 @@ func (p *EmojiPicker) pickCell(c epCell, keep bool) {
 		return
 	}
 	name := p.emojiName(id)
-	RecordEmojiUse(name)
+	epRecordUse(p.h, name, p.query)
 	if !keep {
 		p.Dismiss()
 	}
@@ -584,13 +585,13 @@ func (p *EmojiPicker) position(gtx layout.Context, sz, win image.Point) image.Po
 	return clampPt(image.Pt((win.X-sz.X)/2, win.Y-sz.Y-dp(gtx, 120)), sz, win, m)
 }
 
-// epCard paints the picker card with Slack's two-layer shadow.
-func epCard(cl *Colors, dark bool) cardLook {
-	sh, ring := rgba(0x000000, .098), rgba(0x5e5d60, .13)
-	if dark {
-		sh, ring = rgba(0x000000, .3), cl.Ring
-	}
-	return cardLook{fill: cl.Bg, ring: ring, shadow: func(gtx layout.Context, r image.Rectangle, rad int) {
+// epCard paints the picker card: p-emoji_and_gif_pickers_container's
+// rgb(var(--sk_primary_background)) and box-shadow 0 0 0 1px
+// var(--dt_color-otl-ter), 0 4px 6px -4px #00000019, 0 10px 15px -3px
+// #00000019 (the same literals in dark mode).
+func epCard(cl *Colors, _ bool) cardLook {
+	sh, ring := rgba(0x000000, .098), cl.TabLine
+	return cardLook{fill: cl.EmojiBg, ring: ring, shadow: func(gtx layout.Context, r image.Rectangle, rad int) {
 		softShadow(gtx, r.Inset(dp(gtx, 3)), rad, dp(gtx, 10), dp(gtx, 15), sh)
 		softShadow(gtx, r.Inset(dp(gtx, 4)), rad, dp(gtx, 4), dp(gtx, 6), sh)
 	}}
@@ -762,7 +763,7 @@ func (p *EmojiPicker) layoutBody(gtx layout.Context, th *theme.Theme, cl *Colors
 // --dt_color-otl-ter line.
 func (p *EmojiPicker) layoutTop(gtx layout.Context, th *theme.Theme, cl *Colors, w int) {
 	hh := dp(gtx, epTopH)
-	fill(gtx, image.Rect(0, hh-maxInt(1, dp(gtx, 1)), w, hh), theme.Over(cl.TabLine, cl.Bg))
+	fill(gtx, image.Rect(0, hh-maxInt(1, dp(gtx, 1)), w, hh), theme.Over(cl.TabLine, cl.EmojiBg))
 	half := w / 2
 	for i := 0; i < 2; i++ {
 		x0, tw := 0, half
@@ -786,7 +787,7 @@ func (p *EmojiPicker) layoutTop(gtx layout.Context, th *theme.Theme, cl *Colors,
 		} else if hov {
 			ink = rgb(0x1d1c1d)
 			if th.Dark {
-				ink = cl.Bg
+				ink = cl.EmojiBg
 			}
 		}
 		at(gtx, image.Pt(x0, 0), func(gtx layout.Context) layout.Dimensions {
@@ -824,19 +825,16 @@ func (p *EmojiPicker) layoutCats(gtx layout.Context, th *theme.Theme, cl *Colors
 	for i := 0; i < epNumGroups; i++ {
 		x := dp(gtx, epCatX) + i*dp(gtx, epCatStep)
 		at(gtx, image.Pt(x, dp(gtx, epCatY)), func(gtx layout.Context) layout.Dimensions {
+			// .p-emoji_picker__group_tab: the active tile is
+			// sk_foreground_low_solid (radius 4); hover only darkens the
+			// icon to sk_primary_foreground (no tile)
 			d := clickBox(gtx, &p.cats[i], func(gtx layout.Context, s image.Point, hovered bool) {
-				switch {
-				case i == active:
+				if i == active {
 					rrect(gtx, image.Rectangle{Max: s}, dp(gtx, 4), cl.Tab)
-				case hovered:
-					rrect(gtx, image.Rectangle{Max: s}, dp(gtx, 4), cl.BgHover)
 				}
 			}, func(gtx layout.Context) layout.Dimensions {
-				// Slack's inactive tabs are #868686, but Gio's linear-space
-				// antialiasing makes thin strokes read lighter; #616061
-				// matches the real client's look on screen.
-				col := cl.Muted
-				if i == active {
+				col := cl.EmojiCatIcon
+				if i == active || p.cats[i].Hovered() {
 					col = cl.Fg
 				}
 				at(gtx, image.Pt((sz.X-ig)/2, (sz.Y-ig)/2), func(gtx layout.Context) layout.Dimensions {
@@ -885,7 +883,7 @@ func (p *EmojiPicker) gridEvents(gtx layout.Context) {
 
 // hitTest maps a viewport point to a cell (none over the sticky heading).
 func (p *EmojiPicker) hitTest(gtx layout.Context, pt image.Point) epCell {
-	if !p.ptrIn || len(p.rows) == 0 || pt.Y < dp(gtx, epHdrH) || pt.Y >= p.viewH {
+	if !p.ptrIn || len(p.rows) == 0 || pt.Y < dp(gtx, epStickyH) || pt.Y >= p.viewH {
 		return epNoCell
 	}
 	i := p.rowAt(p.scrollTop() + pt.Y)
@@ -941,38 +939,35 @@ func (p *EmojiPicker) layoutList(gtx layout.Context, th *theme.Theme, cl *Colors
 	}
 
 	// sticky group heading
-	hdr := dp(gtx, epHdrH)
+	hdr, band := dp(gtx, epHdrH), dp(gtx, epStickyH)
 	first := minInt(maxInt(pos.First, 0), len(p.rows)-1)
 	fr := p.rows[first]
-	bandTop := int(fr.y) + p.rowHeight(first) - hdr - scroll // heading band top if first is a heading
+	bandTop := int(fr.y) + p.rowHeight(first) - hdr - scroll // heading row top if first is a heading
 	if fr.n != 0 || bandTop < 0 {
 		hy := 0
 		for k := first + 1; k < len(p.rows) && int(p.rows[k].y)-scroll < vh; k++ {
 			if p.rows[k].n == 0 {
-				if top := int(p.rows[k].y) + p.rowHeight(k) - hdr - scroll; top < hdr {
-					hy = top - hdr
+				if top := int(p.rows[k].y) + p.rowHeight(k) - hdr - scroll; top < band {
+					hy = top - band
 				}
 				break
 			}
 		}
-		bg := cl.Bg
-		bg.A = 242
+		bg := cl.EmojiBg
+		bg.A = 242 // rgba(primary background, .95)
 		m := dp(gtx, 6)
-		fill(gtx, image.Rect(m, hy, vw-m, hy+hdr), bg)
-		p.headingText(gtx, th, cl, int(fr.list), hy, vw)
+		fill(gtx, image.Rect(m, hy, vw-m, hy+band), bg)
+		p.headingText(gtx, th, cl, int(fr.list), dp(gtx, 20), hy, band, vw)
 	}
 
-	// scrollbar thumb
-	if p.totalH > vh {
-		tb := maxInt(dp(gtx, 24), vh*vh/p.totalH)
+	// scrollbar thumb (supports_custom_scrollbar: only while hovered)
+	if p.totalH > vh && p.ptrIn {
+		tb := maxInt(dp(gtx, 36), vh*vh/p.totalH)
 		ty := 0
 		if span := p.totalH - vh; span > 0 {
 			ty = minInt(maxInt(scroll, 0), span) * (vh - tb) / span
 		}
-		col := rgba(0x1d1c1d, .35)
-		if th.Dark {
-			col = rgba(0xffffff, .3)
-		}
+		col := theme.WithAlpha(cl.Fg, 133) // .52
 		x := vw - dp(gtx, 12)
 		rrect(gtx, image.Rect(x, ty, x+dp(gtx, 8), ty+tb), dp(gtx, 4), col)
 	}
@@ -1001,9 +996,10 @@ func (p *EmojiPicker) layoutList(gtx layout.Context, th *theme.Theme, cl *Colors
 	pass.Pop()
 }
 
-func (p *EmojiPicker) headingText(gtx layout.Context, th *theme.Theme, cl *Colors, list, y, w int) {
-	hb := dp(gtx, epHdrH)
-	at(gtx, image.Pt(dp(gtx, 20), y), func(gtx layout.Context) layout.Dimensions {
+// headingText draws group list's name centred in an hb-tall line at
+// (x, y).
+func (p *EmojiPicker) headingText(gtx layout.Context, th *theme.Theme, cl *Colors, list, x, y, hb, w int) {
+	at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(loose(gtx, image.Pt(w-dp(gtx, 40), hb)), hb, func(gtx layout.Context) layout.Dimensions {
 			return text(gtx, th, 13, theme.Bold, cl.Fg, epGroupNames[list])
 		})
@@ -1018,20 +1014,24 @@ func (p *EmojiPicker) layoutRow(gtx layout.Context, i int) layout.Dimensions {
 	w := gtx.Constraints.Max.X
 	h := p.rowHeight(i)
 	if r.n == 0 {
-		p.headingText(gtx, th, cl, int(r.list), h-dp(gtx, epHdrH), w)
+		// .p-emoji_picker__heading: margin 0 6px in the row's 7+8px
+		// padding, line-height 1.5rem at the 27px row's top
+		p.headingText(gtx, th, cl, int(r.list), dp(gtx, 21), h-dp(gtx, epHdrH), dp(gtx, 24), w)
 		return layout.Dimensions{Size: image.Pt(w, h)}
 	}
 	cw, ch, isz := dp(gtx, epCellW), dp(gtx, epCellH), dp(gtx, epImgSz)
 	x0, y0, rad := dp(gtx, epCellX), dp(gtx, 1), dp(gtx, 6)
 	im := p.h.Images()
+	// one tinted cell: the hovered one, else the keyboard selection
+	lit := p.hover
+	if lit.row < 0 {
+		lit = p.sel
+	}
 	for j, id := range p.rowIDs(r) {
 		x := x0 + j*cw
 		cell := image.Rect(x, y0, x+cw, y0+ch)
-		if p.sel.row == i && p.sel.col == j {
-			rrect(gtx, cell, rad, cl.EmojiSelect)
-		}
-		if p.hover.row == i && p.hover.col == j {
-			rrect(gtx, cell, rad, cl.EmojiHover)
+		if lit.row == i && lit.col == j {
+			rrect(gtx, cell, rad, epCellTint(int(r.si)*epCols+j))
 		}
 		if img, ok := im.Get(p.idx.url(id, p.tone), isz); ok {
 			t := op.Offset(image.Pt(x+(cw-isz)/2, y0+(ch-isz)/2)).Push(gtx.Ops)
@@ -1055,6 +1055,17 @@ func (p *EmojiPicker) layoutEmpty(gtx layout.Context, th *theme.Theme, cl *Color
 	})
 }
 
+// epTints are .p-emoji_picker__list_item[data-color-index] :hover and
+// .key_selection backgrounds (no dark-mode override).
+var epTints = [6]color.NRGBA{
+	rgba(0x9bdf58, .7), rgba(0x95d3fe, .7), rgba(0xf7e922, .7),
+	rgba(0xeea6fc, .7), rgba(0xffd58f, .7), rgba(0xd3d1ff, .7),
+}
+
+// epCellTint is EmojiListEmojiItem's dataColorIndex: index % 6, where
+// index is 9 × the screen row + the column.
+func epCellTint(index int) color.NRGBA { return epTints[index%6] }
+
 // drawEmoji draws id at size dp with the current skin tone.
 func (p *EmojiPicker) drawEmoji(gtx layout.Context, id int32, tone int, size float32) layout.Dimensions {
 	px := dp(gtx, size)
@@ -1068,12 +1079,10 @@ func (p *EmojiPicker) drawEmoji(gtx layout.Context, id int32, tone int, size flo
 func (p *EmojiPicker) layoutFooter(gtx layout.Context, th *theme.Theme, cl *Colors, r image.Rectangle) {
 	defer op.Offset(r.Min).Push(gtx.Ops).Pop()
 	w, h := r.Dx(), r.Dy()
-	fill(gtx, image.Rect(0, 0, w, h), cl.BgAlt)
-	border := rgba(0x000000, .15)
-	if th.Dark {
-		border = cl.Ring
-	}
-	fill(gtx, image.Rect(0, 0, w, maxInt(1, dp(gtx, 1))), border)
+	// .p-emoji_picker__footer: sk_foreground_min_solid, border-top 1px
+	// #00000026 in both modes
+	fill(gtx, image.Rect(0, 0, w, h), cl.EmojiFoot)
+	fill(gtx, image.Rect(0, 0, w, maxInt(1, dp(gtx, 1))), rgba(0x000000, .15))
 
 	right := p.layoutTone(gtx, th, cl, w, h)
 
@@ -1088,7 +1097,8 @@ func (p *EmojiPicker) layoutFooter(gtx layout.Context, th *theme.Theme, cl *Colo
 			p.h.ShowOverlay(NewAddEmojiModal(p.h))
 			return
 		}
-		at(gtx, image.Pt(dp(gtx, 14), (h-dp(gtx, 28))/2), func(gtx layout.Context) layout.Dimensions {
+		// .p-emoji_picker__add_custom_emoji: bottom 14.5px, left 14px
+		at(gtx, image.Pt(dp(gtx, 14), h-dp(gtx, 14.5)-dp(gtx, 28)), func(gtx layout.Context) layout.Dimensions {
 			return Button(gtx, th, &p.addBtn, BtnOutline, BtnSmall, "Add Emoji", "", 85)
 		})
 		return
@@ -1108,16 +1118,19 @@ func (p *EmojiPicker) layoutFooter(gtx layout.Context, th *theme.Theme, cl *Colo
 		}
 		p.prevAlias = b.String()
 	}
-	is := dp(gtx, 32)
-	at(gtx, image.Pt(dp(gtx, 13), (h-is)/2), func(gtx layout.Context) layout.Dimensions {
+	// .p-emoji_picker__preview (padding .3rem 0 0 .7rem): the 32px
+	// c-emoji__large in preview_img (padding .7rem .5rem 0 .1rem) at
+	// (12.8, 17.1); preview_text (14.4/700 sk_foreground_max_solid) at
+	// x 57.2, its name line at 13.5 and the aliases (12.8/400) at 28.9.
+	at(gtx, image.Pt(dp(gtx, 12.8), dp(gtx, 17.1)), func(gtx layout.Context) layout.Dimensions {
 		return p.drawEmoji(gtx, id, p.tone, 32)
 	})
-	tx := dp(gtx, 57)
+	tx := dp(gtx, 57.2)
 	tw := maxInt(w-right-tx-dp(gtx, 8), dp(gtx, 20))
-	at(gtx, image.Pt(tx, dp(gtx, 13)), func(gtx layout.Context) layout.Dimensions {
+	at(gtx, image.Pt(tx, dp(gtx, 13.5)), func(gtx layout.Context) layout.Dimensions {
 		return text(loose(gtx, image.Pt(tw, dp(gtx, 20))), th, 14.4, theme.Bold, cl.Muted, p.prevName)
 	})
-	at(gtx, image.Pt(tx, dp(gtx, 31)), func(gtx layout.Context) layout.Dimensions {
+	at(gtx, image.Pt(tx, dp(gtx, 28.9)), func(gtx layout.Context) layout.Dimensions {
 		return text(loose(gtx, image.Pt(tw, dp(gtx, 18))), th, 12.8, theme.Regular, cl.Muted, p.prevAlias)
 	})
 }
@@ -1135,23 +1148,22 @@ func (p *EmojiPicker) layoutTone(gtx layout.Context, th *theme.Theme, cl *Colors
 		}
 	}
 	if !p.toneOpen {
+		// .p-emoji_picker_skintone (padding 3px; bottom 14.5px, right
+		// 16px) > toggle_btn (1px clear border, padding 2px 3px): the 22px
+		// hand, then the label (14.4/700, margin 0 3px); no hover style
 		const label = "Skin Tone"
 		lw := textW(gtx, th, 14.4, theme.Bold, label)
-		bh, ig, pad := dp(gtx, 32), dp(gtx, 22), dp(gtx, 8)
-		bw := pad + ig + dp(gtx, 4) + lw + pad
-		x := w - dp(gtx, 18) - bw
-		at(gtx, image.Pt(x, (h-bh)/2), func(gtx layout.Context) layout.Dimensions {
-			return clickBox(gtx, &p.toneBtn, func(gtx layout.Context, s image.Point, hovered bool) {
-				if hovered {
-					rrect(gtx, image.Rectangle{Max: s}, dp(gtx, 4), theme.WithAlpha(cl.Fg, 0x10))
-				}
-			}, func(gtx layout.Context) layout.Dimensions {
+		bh, ig, in, gap := dp(gtx, 28), dp(gtx, 22), dp(gtx, 4), dp(gtx, 3)
+		bw := in + ig + gap + lw + gap + in
+		x := w - dp(gtx, 19) - bw
+		at(gtx, image.Pt(x, h-dp(gtx, 14.5)-bh), func(gtx layout.Context) layout.Dimensions {
+			return clickBox(gtx, &p.toneBtn, nil, func(gtx layout.Context) layout.Dimensions {
 				if okHand {
-					at(gtx, image.Pt(pad, (bh-ig)/2), func(gtx layout.Context) layout.Dimensions {
+					at(gtx, image.Pt(in, (bh-ig)/2), func(gtx layout.Context) layout.Dimensions {
 						return p.drawEmoji(gtx, hand, p.tone, epImgSz)
 					})
 				}
-				at(gtx, image.Pt(pad+ig+dp(gtx, 4), 0), func(gtx layout.Context) layout.Dimensions {
+				at(gtx, image.Pt(in+ig+gap, 0), func(gtx layout.Context) layout.Dimensions {
 					return vcenter(loose(gtx, image.Pt(lw+1, bh)), bh, func(gtx layout.Context) layout.Dimensions {
 						return text(gtx, th, 14.4, theme.Bold, cl.Fg2, label)
 					})
@@ -1159,7 +1171,7 @@ func (p *EmojiPicker) layoutTone(gtx layout.Context, th *theme.Theme, cl *Colors
 				return layout.Dimensions{Size: image.Pt(bw, bh)}
 			})
 		})
-		return bw + dp(gtx, 18)
+		return bw + dp(gtx, 19)
 	}
 	cell := dp(gtx, 30)
 	ig := dp(gtx, epImgSz)
@@ -1169,7 +1181,7 @@ func (p *EmojiPicker) layoutTone(gtx layout.Context, th *theme.Theme, cl *Colors
 			p.tone = t
 			p.toneOpen = false
 			p.prevID = -1
-			epSetTone(t)
+			epSetTone(p.h, t)
 		}
 	}
 	for t := 1; t <= 6; t++ {

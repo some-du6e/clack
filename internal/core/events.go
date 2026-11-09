@@ -30,6 +30,13 @@ func (a *App) handle(ev slack.Event) {
 	switch ev.Type {
 	case "message":
 		a.onMessage(ctx, ch, ev)
+	case "search_frecency": // handleSearchFrecencyPrefsUpdate
+		var e struct {
+			Value string `json:"value"`
+		}
+		if json.Unmarshal(ev.Raw, &e) == nil && e.Value == "updated" {
+			_ = a.LoadFrecencyPrefs(ctx)
+		}
 	case "reaction_added", "reaction_removed":
 		var e struct {
 			User     string `json:"user"`

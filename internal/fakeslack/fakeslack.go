@@ -279,6 +279,12 @@ type Server struct {
 func DefaultPrefs() map[string]any {
 	return map[string]any{"emoji_mode": "default", "time24": false, "display_real_names": false,
 		"emoji_use": `{"smile":10,"tada":7,"+1":30,"fire":5,"eyes":9}`, "muted_channels": "",
+		// Slack's frecency store (internal/frecency): emoji the account
+		// reacted with, a query it typed, and a channel record
+		"frecency": `{"E1f44d":{"id":"E1f44d","count":6,"visits":[1762500000000,1762510000000]},` +
+			`"E1f389":{"id":"E1f389","count":4,"visits":[1762520000000]},"ta":{"id":"E1f389","count":2,"visits":[1762520000000]},` +
+			`"E1f525":{"id":"E1f525","count":2,"visits":[1762530000000],"_reduced":true},` +
+			`"C0GENERAL":{"id":"C0GENERAL","count":12,"visits":[1762540000000]}}`,
 		"ia_theme":                    `{"primary":{"palette":"aubergine"},"highlight1":{"palette":"aubergine"},"highlight2":{"palette":"jade"},"important":{"palette":"aubergine"},"brightness":6,"sidebarInverted":true,"useCustomHex":false}`,
 		"window_background_gradients": true,
 		// Preferences part A (prefs_a.go): Slack's server defaults

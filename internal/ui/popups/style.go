@@ -58,10 +58,16 @@ type Colors struct {
 	// c-tabs__tab (the emoji picker's Emoji | GIFs row): active / hovered
 	// label, inactive label, inactive icon, and the row's 1px bottom line.
 	TabFg, TabFg2, TabIcon, TabLine color.NRGBA
-	Presence, Away                  color.NRGBA
-	Badge, BadgeText                color.NRGBA
-	Placeholder                     color.NRGBA
-	Lightbox                        color.NRGBA
+	// The emoji picker (p-emoji_and_gif_pickers_container): its body is
+	// rgb(var(--sk_primary_background)), the footer
+	// rgb(var(--sk_foreground_min_solid)), inactive category icons
+	// rgb(var(--sk_foreground_high_solid)) (light: drawn #616061, which
+	// reads as Slack's #868686 through Gio's linear-light antialiasing).
+	EmojiBg, EmojiFoot, EmojiCatIcon color.NRGBA
+	Presence, Away                   color.NRGBA
+	Badge, BadgeText                 color.NRGBA
+	Placeholder                      color.NRGBA
+	Lightbox                         color.NRGBA
 }
 
 func rgb(v uint32) color.NRGBA {
@@ -100,6 +106,7 @@ var lightColors = Colors{
 	InputBorder: rgba(0x1d1c1d, .3),
 	Aubergine:   rgb(0x83388a),
 	TabFg:       rgb(0x1d1c1d), TabFg2: rgb(0x454447), TabIcon: rgb(0x616061), TabLine: rgba(0x5e5d60, .13),
+	EmojiBg: rgb(0xffffff), EmojiFoot: rgb(0xf8f8f8), EmojiCatIcon: rgb(0x616061),
 	Presence: rgb(0x2bac76), Away: rgb(0x616061),
 	Badge: rgb(0x7c3085), BadgeText: rgb(0xffffff),
 	Placeholder: rgb(0x5e5d60),
@@ -132,6 +139,8 @@ var darkColors = Colors{
 	InputBorder: rgba(0xd1d2d3, .3),
 	Aubergine:   rgb(0xd29bd6),
 	TabFg:       rgb(0xf8f8f8), TabFg2: rgb(0xb9babd), TabIcon: rgb(0xababad), TabLine: rgba(0x797c81, .30),
+	// .sk-client-theme--dark: 26,29,33 / 34,37,41 / 129,131,133
+	EmojiBg: rgb(0x1a1d21), EmojiFoot: rgb(0x222529), EmojiCatIcon: rgb(0x818385),
 	Presence: rgb(0x2bac76), Away: rgb(0xababad),
 	Badge: rgb(0xcd2553), BadgeText: rgb(0xffffff),
 	Placeholder: rgb(0x9a9b9e),
@@ -252,6 +261,8 @@ var popupTokens = []struct {
 	{func(c *Colors) *color.NRGBA { return &c.TabFg2 }, theme.Both("var(--dt_color-content-sec)")},
 	{func(c *Colors) *color.NRGBA { return &c.TabIcon }, theme.Both("rgb(var(--sk_foreground_max_solid))")},
 	{func(c *Colors) *color.NRGBA { return &c.TabLine }, theme.Both("var(--dt_color-otl-ter)")},
+	{func(c *Colors) *color.NRGBA { return &c.EmojiBg }, theme.Both("rgb(var(--sk_primary_background))")},
+	{func(c *Colors) *color.NRGBA { return &c.EmojiFoot }, theme.Both("rgb(var(--sk_foreground_min_solid))")},
 	{func(c *Colors) *color.NRGBA { return &c.Badge }, theme.Both("var(--dt_color-theme-base-imp)")},
 	{func(c *Colors) *color.NRGBA { return &c.BadgeText }, theme.Both("var(--dt_color-theme-content-imp)")},
 }
@@ -847,10 +858,13 @@ func fieldNative(gtx layout.Context, th *theme.Theme, st slackc.Styled, ed *widg
 	rad := dp(gtx, 8)
 	focused := gtx.Focused(ed)
 	if focused {
-		ring := dp(gtx, 4)
+		// .c-input_text:focus: the border turns clear and box-shadow
+		// 0 0 0 1px <focus>, 0 0 0 5px <focus at 30%> rings the box
+		// outside it (measured on the emoji picker's search, 2026-11-09)
+		ring, one := dp(gtx, 5), maxInt(1, dp(gtx, 1))
 		rrect(gtx, r.Inset(-ring), rad+ring, cl.FocusRing)
-		rrect(gtx, r, rad, cl.Focus)
-		rrect(gtx, r.Inset(1), rad-1, cl.Bg)
+		rrect(gtx, r.Inset(-one), rad+one, cl.Focus)
+		rrect(gtx, r, rad, cl.Bg)
 	} else {
 		rrect(gtx, r, rad, cl.InputBorder)
 		rrect(gtx, r.Inset(1), rad-1, cl.Bg)

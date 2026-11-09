@@ -17,7 +17,7 @@ import (
 // user_customized_quick_reactions_display_feature is 1 (Messages & media >
 // "Show one-click reactions on messages"; shouldDisplayUsersQuickReactions,
 // boot-shared 5j0l). The three emoji (setUsersFrequentOrCustomized-
-// QuickReactions, vD/I) are the viewer's three most used ones with
+// QuickReactions, vD/I) are the first three of getFrequentlyUsedEmoji with
 // user_customized_quick_reactions_use_frequently_used_emoji, else the ones
 // they picked (user_customized_quick_reactions_emoji_1…3), else Slack's
 // defaults ✅ 👀 🙌; the preferred skin tone applies (QMob). Not on Slackbot's
@@ -50,7 +50,8 @@ func (q *quickBar) prepare(h Host, ch string, r *row) {
 	var picks []string
 	switch {
 	case app.PrefBool("user_customized_quick_reactions_use_frequently_used_emoji", false):
-		picks = append(picks, p.FrequentEmoji[:min(3, len(p.FrequentEmoji))]...)
+		f := app.FrequentlyUsedEmoji() // getFrequentlyUsedEmoji, as the picker's
+		picks = append(picks, f[:min(3, len(f))]...)
 	default:
 		q.customized = app.PrefBool("user_customized_quick_reactions_has_customized", false)
 		for i := range quickDefaults {
