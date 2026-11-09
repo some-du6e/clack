@@ -1,0 +1,102 @@
+From 0ff4fccd22802ddb9017e188e5ce510603469d00 Mon Sep 17 00:00:00 2001
+From: some-du6e <103129948+some-du6e@users.noreply.github.com>
+Date: Sun, 8 Nov 2026 22:31:34 -0600
+Subject: [PATCH] gpu: drop opacity layers covered by a full-window opaque
+ paint
+
+When a uniform opaque color paint covers the whole viewport and no
+opacity layer is open, drawOps.collect discards the image ops recorded
+so far and turns the paint into the clear color. It kept the opacity
+layers, though, and the layers pushed and popped earlier in the frame
+still refer to ranges of the discarded ops. drawLayers then reads and
+replaces ops past the end of the new, shorter list:
+
+	panic: runtime error: index out of range [609] with length 135
+	gioui.org/gpu.(*renderer).drawLayers  gpu/gpu.go:872
+
+On Metal the panic is followed by "active render pass" from EndFrame.
+
+The opacity stack is empty when the ops are discarded, so every layer
+recorded so far has ended and is covered by the opaque paint; drop them
+along with the ops. As a guard, drawLayers also skips any layer whose
+range of ops is empty or out of bounds instead of panicking.
+---
+ gpu/gpu.go                                    |   9 +++++++
+ .../refs/TestOpaqueFillAfterOpacityLayer.png  | Bin 0 -> 383 bytes
+ gpu/internal/rendertest/render_test.go        |  23 ++++++++++++++++++
+ 3 files changed, 32 insertions(+)
+ create mode 100644 gpu/internal/rendertest/refs/TestOpaqueFillAfterOpacityLayer.png
+
+diff --git a/gpu/gpu.go b/gpu/gpu.go
+index bd8950f..0630564 100644
+--- a/gpu/gpu.go
++++ b/gpu/gpu.go
+@@ -849,6 +849,11 @@ func (r *renderer) drawLayers(layers []opacityLayer, ops []imageOp) {
+ 	r.layerFBOs.resize(r.ctx, driver.TextureFormatSRGBA, r.layers.sizes)
+ 	for _, l := range slices.Backward(layers) {
+ 
++		if l.opStart >= l.opEnd || l.opEnd > len(ops) {
++			// Not a valid range of ops; skip it rather than index out of
++			// bounds while a render pass is open.
++			continue
++		}
+ 		if fbo != l.place.Idx {
+ 			if fbo != -1 {
+ 				r.ctx.EndRenderPass()
+@@ -1112,6 +1117,10 @@ loop:
+ 				// The image is a uniform opaque color and takes up the whole screen.
+ 				// Scrap images up to and including this image and set clear color.
+ 				d.imageOps = d.imageOps[:0]
++				// The opacity stack is empty, so every layer recorded so far
++				// has ended and is covered by this image. Drop them as well;
++				// their op ranges index the scrapped imageOps.
++				d.layers = d.layers[:0]
+ 				d.clearColor = mat.color.Opaque()
+ 				d.clear = true
+ 				continue
+diff --git a/gpu/internal/rendertest/refs/TestOpaqueFillAfterOpacityLayer.png b/gpu/internal/rendertest/refs/TestOpaqueFillAfterOpacityLayer.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..2211663131ef7bbee3979edfdc2e4fe09c868845
+GIT binary patch
+literal 383
+zcmeAS@N?(olHy`uVBq!ia0vp^4Is?H1SEZ8zRh7^V080zaSW-L^XBqJPG&<MR!7yC
+z?C`DK#a$d}c6)*wDmJ{Bc~kiLYW6$p7$O)qFeR`a;A#+M&}Il@SVMn->MsrTYfHcV
+y`#o>(eRfKnaw9$MHE;N9W=cKvMx24+|Nj&bR;K!SD`bEH%i!ti=d#Wzp$Pz6Mro-4
+
+literal 0
+HcmV?d00001
+
+diff --git a/gpu/internal/rendertest/render_test.go b/gpu/internal/rendertest/render_test.go
+index 18b9ad6..15fc885 100644
+--- a/gpu/internal/rendertest/render_test.go
++++ b/gpu/internal/rendertest/render_test.go
+@@ -504,3 +504,26 @@ func lerp(a, b f32color.RGBA, p float32) f32color.RGBA {
+ 		A: a.A*(1-p) + b.A*p,
+ 	}
+ }
++
++func TestOpaqueFillAfterOpacityLayer(t *testing.T) {
++	run(t, func(ops *op.Ops) {
++		// More ops before the layer than after the fill below, so a stale
++		// layer range indexes past the remaining ops.
++		for i := range 8 {
++			paint.FillShape(ops, red, clip.Rect(image.Rect(i*16, 0, i*16+8, 8)).Op())
++		}
++		opc := paint.PushOpacity(ops, .5)
++		paint.FillShape(ops, green, clip.Rect(image.Rect(16, 16, 48, 48)).Op())
++		opc.Pop()
++		// Fill screen to exercise the glClear optimization: the ops and
++		// opacity layers above are covered and dropped.
++		paint.FillShape(ops, blue, clip.Rect{Max: image.Pt(128, 128)}.Op())
++		opc = paint.PushOpacity(ops, .5)
++		paint.FillShape(ops, white, clip.Rect(image.Rect(64, 64, 96, 96)).Op())
++		opc.Pop()
++	}, func(r result) {
++		r.expect(4, 4, colornames.Blue)
++		r.expect(32, 32, colornames.Blue)
++		r.expect(120, 120, colornames.Blue)
++	})
++}
+-- 
+2.43.0
+

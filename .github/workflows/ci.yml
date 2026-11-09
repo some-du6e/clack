@@ -37,6 +37,12 @@ jobs:
         run: |
           sudo apt-get install -y -qq xvfb libgl1-mesa-dri libegl-mesa0
           xvfb-run -a go test -count=1 -run 'TestCodeSpanAfterEmoji|TestInlineCodeDraws|TestEmojiTooltip|TestReactionTooltipDraws' ./internal/ui/richview ./internal/ui/composer ./internal/ui/messages
+      - name: Gio drawLayers fix (patched passes, stock v0.10.3 panics)
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: .github/scripts/gio-layer-fix.sh xvfb-run -a
       - name: sign-out stops all traffic (50 runs, race detector)
         run: go test -race -count=50 -run 'TestAuthFailedStopsCore$' ./internal/core
       - name: build
@@ -92,6 +98,10 @@ jobs:
           go test -count=1 -v -run 'TestOwnProfilePane|TestOtherProfilePane' ./internal/ui/popups
           go test -count=1 -v -run 'TestSwipe|TestNav|TestNativeMenuBar|TestMacMenu|TestMenuState|TestZoom' ./internal/ui
           go test -count=1 -v ./internal/ui/menubar
+      - name: Gio drawLayers fix on Metal (patched passes, stock v0.10.3 panics)
+        env:
+          CLACK_PIXEL_TESTS: "1"
+        run: .github/scripts/gio-layer-fix.sh
       - name: macOS freeze guards (no blocking work on the AppKit main thread)
         run: |
           go test -count=1 -v ./internal/ui/uiguard
