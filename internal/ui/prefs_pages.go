@@ -239,7 +239,6 @@ func (a *App) teamURL(path string) string {
 // ---- VIP ----
 
 func (p *prefsModal) vipPage(f *prefsForm) {
-	a := p.a
 	f.subheading("VIP Notifications")
 	f.check("priority_dnd_override", "Always allow notifications from VIPs",
 		"Still get message notifications from your VIPs, even when general notifications are paused", false, false)
@@ -248,30 +247,7 @@ func (p *prefsModal) vipPage(f *prefsForm) {
 	f.gap()
 	f.subheading("VIP List")
 	f.para("Decide who or what you want prioritized at the top of your Home, DMs and Activity.")
-	f.textBox("vip_search", "", "Search to add people, apps and workflows")
-	f.muted("Adding VIPs isn’t available in Clack yet.", false)
-	c := a.Core()
-	var ids []string
-	if c != nil {
-		ids = c.VIPs()
-	}
-	f.subheading("Added to your VIP list")
-	if len(ids) == 0 {
-		f.muted("No VIPs added yet", false)
-	}
-	for _, id := range ids {
-		id := id
-		name, av := id, ""
-		if u, ok := c.User(id); ok {
-			name, av = u.Name, u.Avatar
-			if u.RealName != "" {
-				name = u.RealName
-			}
-		} else {
-			ensureUserAsync(a, id)
-		}
-		f.listRow("vip."+id, av, name, "Remove", func() { a.removeVIP(id, nil) })
-	}
+	p.vipList(f) // prefs_a.go: search, Added to your VIP list, Recommended
 }
 
 // ---- Navigation (Slack's tab_rail) ----

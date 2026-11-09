@@ -984,6 +984,16 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			}
 		}
 		return ok()
+	case "users.priority.getRecommendations": // the VIP page's Recommended list
+		var recs []map[string]any
+		reasons := []string{"manager", "frequent_collaborator", "frequently_used", "skip_level"}
+		for _, u := range s.users {
+			if u.ID == SelfID || u.IsBot || u.Deleted || len(recs) == len(reasons) {
+				continue
+			}
+			recs = append(recs, map[string]any{"user_id": u.ID, "source": "graph", "reason": reasons[len(recs)]})
+		}
+		return ok("users", recs, "request_id", "fake-rec")
 	case "users.priority.add", "users.priority.remove":
 		u := f.Get("user")
 		if u == "" {

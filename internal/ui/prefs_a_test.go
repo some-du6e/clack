@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -398,4 +399,66 @@ func TestPrefsSkinToneHandsAndMilesDavis(t *testing.T) {
 	if id := theme.MilesDavisPresets[0].Theme.PresetID(); id != "miles-kind-of-blue" {
 		t.Fatalf("PresetID %q", id)
 	}
+}
+
+// VIP: Recommended comes from users.priority.getRecommendations (up to
+// six who aren't VIPs, with Slack's reason line); Add and a search pick
+// are users.priority.add, and the person joins "Added to your VIP list".
+func TestPrefsAuditAppliedRoundTripVIP(t *testing.T) {
+	a, ca, fs := fakePrefsApp(t)
+	p := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}}
+	pageRows(t, a, p, "vip")
+	waitFor(t, a, "recommendations", func() bool { return len(p.ra.vipRecs) > 0 })
+	rows := pageRows(t, a, p, "vip")
+	var rec string
+	sawReason := false
+	for _, r := range rows {
+		if strings.HasPrefix(r.Key, "row.vip_rec.") && rec == "" {
+			rec = strings.TrimPrefix(r.Key, "row.vip_rec.")
+		}
+		if r.Kind == "text" && r.Label == "Your manager" {
+			sawReason = true
+		}
+	}
+	if rec == "" || !sawReason {
+		t.Fatalf("no recommendation rows: %s", dumpRows(rows))
+	}
+	p.clicks["row.vip_rec."+rec].Click()
+	pageRows(t, a, p, "vip")
+	waitFor(t, a, "recommended VIP added", func() bool {
+		v, _ := fs.Pref("vip_users")
+		vs, _ := v.(string)
+		return strings.Contains(vs, rec) && reflect.DeepEqual(ca.VIPs(), []string{rec})
+	})
+	rows = pageRows(t, a, p, "vip")
+	added := false
+	for _, r := range rows {
+		if r.Key == "row.vip."+rec {
+			added = true
+		}
+		if r.Key == "row.vip_rec."+rec {
+			t.Fatal("a VIP still listed as recommended")
+		}
+	}
+	if !added {
+		t.Fatalf("not under Added: %s", dumpRows(rows))
+	}
+	// search: the fake's directory answers users/search
+	p.ra.vipQ.SetText("a")
+	p.searchVIPs("a")
+	waitFor(t, a, "search hits", func() bool { return len(p.ra.vipHits) > 0 })
+	rows = pageRows(t, a, p, "vip")
+	var hit string
+	for _, r := range rows {
+		if strings.HasPrefix(r.Key, "row.vip_add.") {
+			hit = strings.TrimPrefix(r.Key, "row.vip_add.")
+			break
+		}
+	}
+	if hit == "" || hit == rec {
+		t.Fatalf("no search result row (or a VIP offered): %q %s", hit, dumpRows(rows))
+	}
+	p.clicks["row.vip_add."+hit].Click()
+	pageRows(t, a, p, "vip")
+	waitFor(t, a, "searched VIP added", func() bool { return len(ca.VIPs()) == 2 && ca.VIPs()[1] == hit })
 }

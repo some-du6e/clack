@@ -80,7 +80,7 @@ var slackPages = map[string][]want{
 	},
 	"vip": {
 		lg("VIP Notifications"), ck("Always allow notifications from VIPs"), ckOff("Create VIP unreads section"),
-		lg("VIP List"), selOff(""), lg("Added to your VIP list"),
+		lg("VIP List"), {"input", "", false}, lg("Added to your VIP list"),
 	},
 	"navigation": {
 		lg("Configure these tabs in the navigation bar:"), ckOff("Home"), ck("DMs"), ckOff("Activity"), ck("Files"),

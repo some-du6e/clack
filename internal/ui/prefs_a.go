@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"image"
 	"strconv"
 	"strings"
@@ -27,6 +28,13 @@ type prefsA struct {
 	kwDirty bool
 	kwMax   bool   // over Slack's 100 keywords: not saved
 	bounce  string // MacAppearancePref's local "short"/"long"
+
+	vipQ       *widget.Editor // VIP > "Search to add people, apps and workflows"
+	vipGen     int            // the search in flight
+	vipHits    []core.User
+	vipRecs    []core.VIPRecommendation
+	vipRecsSet bool     // asked users.priority.getRecommendations
+	vipShown   []string // the six recommendations picked when they came (Slack keeps them)
 }
 
 // close flushes a keyword edit still waiting on its debounce (Slack's
@@ -361,4 +369,224 @@ func (p *prefsModal) skinTonePicker(f *prefsForm) {
 		}
 	}
 	f.y += h + gtx.Dp(12)
+}
+
+// vipList is PrefsSectionVIP's list half: the member search (members,
+// Slackbot, bots and workflows; not you, agents or current VIPs; picking
+// one is users.priority.add), then "Added to your VIP list" with Remove,
+// and "Recommended" (users.priority.getRecommendations, up to six who
+// aren't VIPs yet) with Add and Slack's reason line.
+func (p *prefsModal) vipList(f *prefsForm) {
+	r := &p.ra
+	a := p.a
+	c := a.Core()
+	if r.vipQ == nil {
+		r.vipQ = &widget.Editor{SingleLine: true}
+	}
+	if !r.vipRecsSet && c != nil {
+		r.vipRecsSet = true
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			recs, err := c.VIPRecommendations(ctx)
+			a.Post(func() {
+				if err == nil {
+					r.vipRecs = recs
+					r.vipShown = nil
+				}
+				a.Invalidate()
+			})
+		}()
+	}
+	var vips []string
+	if c != nil {
+		vips = c.VIPs()
+	}
+	isVIP := map[string]bool{}
+	for _, id := range vips {
+		isVIP[id] = true
+	}
+	for {
+		e, ok := r.vipQ.Update(f.gtx)
+		if !ok {
+			break
+		}
+		if _, ok := e.(widget.ChangeEvent); ok {
+			p.searchVIPs(strings.TrimSpace(r.vipQ.Text()))
+		}
+	}
+	p.textField(f, "vip_search", r.vipQ, "Search to add people, apps and workflows")
+	if strings.TrimSpace(r.vipQ.Text()) != "" {
+		self := a.model().SelfID
+		n := 0
+		for _, u := range r.vipHits {
+			if u.ID == self || isVIP[u.ID] || u.Agent || n == 8 {
+				continue
+			}
+			n++
+			u := u
+			f.listRow("vip_add."+u.ID, u.Avatar, vipName(u), "Add", func() {
+				r.vipQ.SetText("")
+				r.vipHits = nil
+				p.addVIP(u.ID, vipName(u))
+			})
+		}
+	}
+	name := func(id string) (string, string) {
+		if c != nil {
+			if u, ok := c.User(id); ok {
+				return vipName(u), u.Avatar
+			}
+		}
+		ensureUserAsync(a, id)
+		return id, ""
+	}
+	if r.vipShown == nil && r.vipRecs != nil { // the first six who aren't VIPs, as Slack picks them
+		r.vipShown = []string{}
+		for _, rec := range r.vipRecs {
+			if !isVIP[rec.User] && len(r.vipShown) < 6 {
+				r.vipShown = append(r.vipShown, rec.User)
+			}
+		}
+	}
+	reason := map[string]string{}
+	for _, rec := range r.vipRecs {
+		reason[rec.User] = rec.Reason
+	}
+	var recs []string
+	for _, id := range r.vipShown {
+		if !isVIP[id] {
+			recs = append(recs, id)
+		}
+	}
+	if len(vips) == 0 && len(recs) == 0 {
+		f.subheading("Added to your VIP list")
+		f.muted("No VIPs added yet", false)
+		return
+	}
+	if len(vips) > 0 {
+		f.subheading("Added to your VIP list")
+		for _, id := range vips {
+			id := id
+			n, av := name(id)
+			f.listRow("vip."+id, av, n, "Remove", func() { a.removeVIP(id, nil) })
+		}
+	}
+	if len(vips) > 0 && len(recs) > 0 {
+		f.hr()
+	}
+	if len(recs) > 0 {
+		f.subheading("Recommended")
+		for _, id := range recs {
+			id := id
+			n, av := name(id)
+			f.listRow("vip_rec."+id, av, n, "Add", func() { p.addVIP(id, n) })
+			if d := vipReason(reason[id]); d != "" {
+				f.muted(d, true)
+			}
+		}
+	}
+}
+
+// vipReason is 5Ta/'s description for a recommendation.
+func vipReason(r string) string {
+	switch r {
+	case "frequent_collaborator":
+		return "Frequent collaborator"
+	case "frequently_used":
+		return "Frequently used"
+	case "manager":
+		return "Your manager"
+	case "skip_level":
+		return "Your manager’s manager"
+	}
+	return ""
+}
+
+func vipName(u core.User) string {
+	if u.RealName != "" {
+		return u.RealName
+	}
+	return u.Name
+}
+
+// searchVIPs runs the member search for q (the newest answer wins).
+func (p *prefsModal) searchVIPs(q string) {
+	r := &p.ra
+	r.vipGen++
+	gen := r.vipGen
+	c := p.a.Core()
+	if q == "" || c == nil {
+		r.vipHits = nil
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		us, err := c.SearchUsers(ctx, q, 20)
+		p.a.Post(func() {
+			if err == nil && gen == r.vipGen {
+				r.vipHits = us
+				p.a.Invalidate()
+			}
+		})
+	}()
+}
+
+// addVIP is the priority thunk's add: users.priority.add, then Slack's
+// toast "Added <name> to VIPs".
+func (p *prefsModal) addVIP(id, name string) {
+	a := p.a
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		err := errNoCore
+		if c := a.Core(); c != nil {
+			err = c.AddVIP(ctx, id)
+		}
+		a.Post(func() {
+			if err != nil {
+				a.Toast("Hmm, something went wrong. Try again?")
+				return
+			}
+			a.Toast("Added " + name + " to VIPs")
+			a.Invalidate()
+		})
+	}()
+}
+
+// textField is an editable 36px field with a placeholder.
+func (p *prefsModal) textField(f *prefsForm, key string, ed *widget.Editor, placeholder string) {
+	gtx, a := f.gtx, p.a
+	c := &a.th.C
+	focused := gtx.Focused(ed)
+	f.record("input", "text."+key, ed.Text(), false, true)
+	bh := gtx.Dp(36)
+	at(gtx, image.Pt(0, f.y), image.Pt(f.w, bh), func(gtx layout.Context) layout.Dimensions {
+		rr := image.Rectangle{Max: image.Pt(f.w, bh)}
+		theme.RRect(gtx, rr, gtx.Dp(8), c.Bg)
+		bc := c.BorderStrong
+		if focused {
+			bc = c.Link
+		}
+		theme.Border(gtx, rr, gtx.Dp(8), gtx.Dp(1), bc)
+		at(gtx, image.Pt(gtx.Dp(10), (bh-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
+			return icons.Get("search")(gtx, 16, c.FgMuted)
+		})
+		at(gtx, image.Pt(gtx.Dp(34), 0), image.Pt(f.w-gtx.Dp(44), bh), func(gtx layout.Context) layout.Dimensions {
+			return vcenter(gtx, bh, func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints.Min.X = gtx.Constraints.Max.X
+				if ed.Len() == 0 && !focused {
+					at(gtx, image.Point{}, image.Pt(gtx.Constraints.Max.X, bh), func(gtx layout.Context) layout.Dimensions {
+						return vcenter(gtx, bh, func(gtx layout.Context) layout.Dimensions {
+							return a.th.Label(gtx, 15, theme.Regular, c.FgSubtle, placeholder)
+						})
+					})
+				}
+				return a.th.Editor(gtx, ed, 15, c.Fg, c.Link)
+			})
+		})
+		return layout.Dimensions{Size: rr.Max}
+	})
+	f.y += bh + gtx.Dp(8)
 }
