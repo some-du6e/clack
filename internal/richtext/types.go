@@ -192,6 +192,12 @@ type File struct {
 	Preview                                 string
 	Lines                                   int
 	DurationMS                              int
+	OrigW, OrigH                            int    // original_w/h (videos: original, else thumb_video)
+	Subtype                                 string // "slack_audio", "slack_video" (clips)
+	Waveform                                []int  // audio_wave_samples (0..100)
+	User                                    string // uploader
+	Created                                 int64  // unix seconds
+	IsExternal                              bool
 }
 
 // Doc is a whole message body.

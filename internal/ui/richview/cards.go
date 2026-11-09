@@ -540,26 +540,28 @@ func fileName(f *richtext.File) string {
 
 func (l *lay) file(f *richtext.File, x, y, w int) int {
 	switch {
-	case f.IsImage && f.Thumb != nil && !uipref.Get().NoInternalImgs: // expand_internal_inline_imgs
-		nh := l.fileNameRow(f, x, y, w)
-		tg := l.d.addTarget(target{kind: tFile, file: f})
-		bw, bh := galleryBox(f.Thumb.W, f.Thumb.H, w, l)
-		iw, ih := fitSize(f.Thumb.W, f.Thumb.H, bw, bh, l)
-		bh = max(ih, l.dp(108))
-		r := image.Rect(x, y+nh, x+iw, y+nh+bh)
-		rad := l.dp(8)
-		l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: f.Thumb.URL, radii: [4]int{rad, rad, rad, rad}, target: tg, px: max(iw, ih), fit: bh != ih})
-		l.d.hits = append(l.d.hits, hit{r: r, t: tg})
-		l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: r, radius: rad, stroke: l.st.Palette.Border, bw: l.dp(1), target: -1, layer: 1})
-		return nh + bh
-	case f.IsVideo:
-		return l.video(f, x, y, w)
+	case mediaFile(f):
+		return l.mediaGallery([]*richtext.File{f}, x, y, w)
 	case f.IsAudio:
 		return l.audio(f, x, y, w)
 	case f.IsSnippet || f.Preview != "":
 		return l.snippet(f, x, y, w)
 	}
 	return l.genericFile(f, x, y, w)
+}
+
+// mediaFile reports whether f lays out in Slack's media gallery (gallery
+// v3, isMediaGalleryViewContext in channels and threads): images with a
+// thumbnail (unless expand_internal_inline_imgs is off) and playable
+// videos (fileIsImage / fileIsPlayableVideo).
+func mediaFile(f *richtext.File) bool {
+	if f == nil {
+		return false
+	}
+	if f.IsVideo {
+		return true
+	}
+	return f.IsImage && f.Thumb != nil && !uipref.Get().NoInternalImgs
 }
 
 // galleryCaps is Slack's media-gallery v3 max image height (CSS px) per
@@ -571,130 +573,357 @@ var galleryCaps = [4][3]float64{
 	{115, 206, 154}, // tiny
 }
 
+// Gallery v3 constants (seRe): the 8px gutter, the 108px minimum tile, and
+// the flex gallery's width cap (FileGallery: min(width, 936); 716 under the
+// attachments_and_unfurls_max_width experiment).
+const (
+	galleryGap    = 8
+	galleryMinBox = 108
+	galleryMaxW   = 936
+)
+
+func galleryBreakpoint(gw float64) int {
+	switch {
+	case gw >= 636:
+		return 0
+	case gw >= 472:
+		return 1
+	case gw >= 448:
+		return 2
+	}
+	return 3
+}
+
+// galleryOrient is getGalleryV3ImageType: 0 landscape, 1 portrait, 2 square.
+func galleryOrient(w, h float64) int {
+	switch {
+	case w > h:
+		return 0
+	case w < h:
+		return 1
+	}
+	return 2
+}
+
+// galleryAspect is getGalleryV3AspectRatio: 4/3, 3/4 or 1 by orientation.
+func galleryAspect(w, h float64) float64 {
+	return [3]float64{4.0 / 3, 0.75, 1}[galleryOrient(w, h)]
+}
+
+// galleryMaxVisible is getGalleryV3MaxVisibleFiles: how many tiles fit in
+// a gallery gw CSS px wide before the last one becomes "+ N".
+func galleryMaxVisible(gw float64) int {
+	switch {
+	case gw >= 600:
+		return 4
+	case gw >= 448:
+		return 3
+	case gw >= 224:
+		return 2
+	}
+	return 1
+}
+
+// galleryWidth is the media gallery's width in CSS px for a message w
+// device px wide: the content width minus 26px (measured), at most 936.
+func (l *lay) galleryWidth(w int) float64 {
+	sc := float64(l.scale)
+	if sc <= 0 {
+		sc = 1
+	}
+	return math.Max(math.Min(float64(w)/sc-26, galleryMaxW), 1)
+}
+
 // galleryBox is the box (device px) Slack gives a single inline image of
-// iw×ih (thumb px) in a message w device px wide: the gallery is the content
-// width minus 26px, at most 1000px; the height is capped by the breakpoint
-// table, the width follows the aspect, both at least 108px (but never wider
-// than the message).
+// iw×ih (thumb px) in a message w device px wide (getDimensions with one
+// file): the height is capped by the breakpoint table, the width follows
+// the aspect, both at least 108px (but never wider than the message).
 func galleryBox(iw, ih, w int, l *lay) (int, int) {
 	sc := float64(l.scale)
 	if sc <= 0 {
 		sc = 1
 	}
-	gw := math.Min(float64(w)/sc-26, 1000)
+	gw := l.galleryWidth(w)
 	if iw <= 0 || ih <= 0 {
 		return max(min(w, l.dp(360)), 1), l.dp(240)
 	}
 	fw, fh := float64(iw), float64(ih)
-	bp := 3
-	switch {
-	case gw >= 636:
-		bp = 0
-	case gw >= 472:
-		bp = 1
-	case gw >= 448:
-		bp = 2
-	}
-	o := 2 // square
-	if fw > fh {
-		o = 0
-	} else if fw < fh {
-		o = 1
-	}
+	bw, bh := gallerySingle(gw, fw, fh)
+	return max(min(int(bw*sc+0.5), w), 1), int(bh*sc + 0.5)
+}
+
+// gallerySingle is getDimensions for one file (isContainer): the box in
+// CSS px for a thumb fw×fh in a gallery gw wide.
+func gallerySingle(gw, fw, fh float64) (float64, float64) {
+	fw, fh = math.Max(fw, 1), math.Max(fh, 1)
 	s := fw / fh
-	d := math.Max(math.Min(fw, gw), 108)
-	u := math.Max(math.Floor(math.Min(math.Min(d/s, galleryCaps[bp][o]), fh)), 108)
-	d = math.Max(math.Min(math.Floor(u*s), d), 108)
-	bw := min(int(d*sc+0.5), w)
-	return max(bw, 1), int(u*sc + 0.5)
+	c := galleryCaps[galleryBreakpoint(gw)][galleryOrient(fw, fh)]
+	d := math.Max(math.Min(fw, gw), galleryMinBox)
+	u := math.Max(math.Floor(math.Min(math.Min(d/s, c), fh)), galleryMinBox)
+	d = math.Max(math.Min(math.Floor(u*s), d), galleryMinBox)
+	return d, u
 }
 
-// fileNameRow is the "name.png ▾" line above image and video files.
-func (l *lay) fileNameRow(f *richtext.File, x, y, w int) int {
-	p := &l.st.Palette
-	fs := l.small(p.Text)
-	fs.col.A = uint8(float32(fs.col.A) * 0.7)
-	fs.lineH = l.dp(22)
-	fs.maxLines, fs.ellipsis = 1, true
-	name := fileName(f)
-	k := l.faceFor(fs.face, fs.size, 0)
-	nw := min(int(l.measure(name, k)+0.999), w-l.dp(28))
-	l.plainFlow(name, x, y, nw+l.dp(2), &fs, -1)
-	cx := x + nw + l.dp(4) + l.dp(10)
-	cy := y + l.dp(11)
-	l.d.boxes = append(l.d.boxes, box{kind: bCaret, r: image.Rect(cx-l.dp(4), cy-l.dp(2), cx+l.dp(4), cy+l.dp(3)), fill: p.Text3, target: -1})
-	return l.dp(26)
-}
-
-// gallery lays out several image files as square tiles.
-func (l *lay) gallery(files []*richtext.File, x, y, w int) int {
-	gap := l.dp(8)
-	n := len(files)
-	tile := l.dp(180)
-	if n == 2 {
-		tile = min((w-gap)/2, l.dp(240))
+// galleryPair is getDimensions for two files (isContainer): each tile's
+// width and their shared height, in CSS px, for original sizes dims.
+func galleryPair(gw float64, dims [][2]float64) ([]float64, float64) {
+	r := len(dims)
+	avail := gw - float64(r-1)*galleryGap
+	o := make([][2]float64, r)
+	for i, d := range dims {
+		o[i] = [2]float64{math.Max(d[0], 1), math.Max(d[1], 1)}
 	}
-	if tile*2+gap > w {
-		tile = (w - gap) / 2
-	}
-	if tile < 1 {
-		tile = 1
-	}
-	cx, cy := x, y
-	for i, f := range files {
-		if i > 0 && cx+tile > x+w {
-			cx = x
-			cy += tile + gap
+	tall := 0
+	hs := make([]float64, r)
+	for i, d := range o {
+		if d[0] < galleryMinBox {
+			hs[i] = math.Max(galleryMinBox*d[1]/d[0], galleryMinBox)
+		} else {
+			hs[i] = math.Max(d[1], galleryMinBox)
 		}
-		r := image.Rect(cx, cy, cx+tile, cy+tile)
-		tg := l.d.addTarget(target{kind: tFile, file: f})
-		url := ""
+		if hs[i] > hs[tall] {
+			tall = i
+		}
+	}
+	uw, uh := math.Max(o[tall][0], galleryMinBox), math.Max(o[tall][1], galleryMinBox)
+	cap := math.Min(hs[tall], galleryCaps[galleryBreakpoint(gw)][galleryOrient(uw, uh)])
+	grow := make([]float64, r)
+	sum := 0.0
+	for i, d := range o {
+		grow[i] = math.Max(math.Min(cap*(d[0]/d[1]), d[0])-galleryMinBox, 0)
+		sum += grow[i]
+	}
+	extra := math.Min(avail-galleryMinBox*float64(r), sum)
+	ws := make([]float64, r)
+	h := galleryMinBox * 1.0
+	for i, d := range o {
+		ws[i] = galleryMinBox
+		if sum > 0 && extra > 0 {
+			ws[i] = math.Floor(galleryMinBox + grow[i]/sum*extra)
+		}
+		h = math.Max(h, math.Min(math.Min(ws[i]/(d[0]/d[1]), d[1]), cap))
+	}
+	return ws, h
+}
+
+// galleryRow is getProportionalWidthV3 for three or more tiles: widths in
+// proportion to each tile's v3 aspect (4/3, 3/4, 1) filling the gallery,
+// all one height.
+func galleryRow(gw float64, dims [][2]float64) ([]float64, float64) {
+	avail := gw - float64(len(dims)-1)*galleryGap
+	sum := 0.0
+	for _, d := range dims {
+		sum += galleryAspect(d[0], d[1])
+	}
+	ws := make([]float64, len(dims))
+	for i, d := range dims {
+		ws[i] = galleryAspect(d[0], d[1]) / sum * avail
+	}
+	return ws, avail / sum
+}
+
+// galleryDims is getFileDimensions with the media gallery on: a lone image
+// sizes from its thumbnail, several from their originals; videos from
+// thumb_video (or the original, or 108).
+func galleryDims(f *richtext.File, single bool) [2]float64 {
+	w, h := f.OrigW, f.OrigH
+	switch {
+	case f.IsVideo:
+		if f.Thumb != nil && f.Thumb.W > 0 && f.Thumb.H > 0 {
+			w, h = f.Thumb.W, f.Thumb.H
+		}
+		if w <= 0 || h <= 0 {
+			w, h = galleryMinBox, galleryMinBox
+		}
+	case single || w <= 0 || h <= 0:
 		if f.Thumb != nil {
-			url = f.Thumb.URL
+			w, h = f.Thumb.W, f.Thumb.H
 		}
-		rad := l.dp(8)
-		l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: url, radii: [4]int{rad, rad, rad, rad}, target: tg, px: tile})
-		l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: r, radius: rad, stroke: rgba(0, 0, 0, 0.1), bw: l.dp(1), target: -1, layer: 1})
-		l.d.hits = append(l.d.hits, hit{r: r, t: tg})
-		l.plainAdd(fileName(f))
-		l.plainAdd("\n")
-		cx += tile + gap
 	}
-	return cy + tile - y
+	return [2]float64{float64(w), float64(h)}
 }
 
-func (l *lay) video(f *richtext.File, x, y, w int) int {
+// mediaGallery is Slack's FileGallery for visual files in a channel or
+// thread (c-file_gallery__flex): one file at its single-image size, two
+// side by side at a shared height (getDimensions), three or more in one
+// row proportional to their v3 aspects; past getGalleryV3MaxVisibleFiles
+// the last tile carries the "+ N" overlay (FileGalleryOverflowOverlay).
+// There's no file name above the tiles.
+func (l *lay) mediaGallery(files []*richtext.File, x, y, w int) int {
+	if len(files) == 0 {
+		return 0
+	}
+	gw := l.galleryWidth(w)
+	shown, over := files, 0
+	if mv := galleryMaxVisible(gw); len(files) > mv {
+		shown, over = files[:mv], len(files)-mv+1
+	}
+	dims := make([][2]float64, len(shown))
+	for i, f := range shown {
+		dims[i] = galleryDims(f, len(shown) == 1)
+	}
+	var ws []float64
+	var h float64
+	switch len(shown) {
+	case 1:
+		bw, bh := gallerySingle(gw, dims[0][0], dims[0][1])
+		ws, h = []float64{bw}, bh
+	case 2:
+		ws, h = galleryPair(gw, dims)
+	default:
+		ws, h = galleryRow(gw, dims)
+	}
+	sc := float64(l.scale)
+	if sc <= 0 {
+		sc = 1
+	}
+	px := func(v float64) int { return int(math.Floor(v*sc + 0.5)) }
+	th := min(px(h), 1<<20)
+	if len(shown) == 1 {
+		th = galleryClampH(th, w, px(ws[0]))
+	}
+	cx := 0.0
+	for i, f := range shown {
+		x0, x1 := x+px(cx), x+px(cx+ws[i])
+		if len(shown) == 1 {
+			x1 = min(x1, x+w)
+		}
+		r := image.Rect(x0, y, max(x1, x0+1), y+th)
+		if i > 0 {
+			l.plainAdd("\n")
+		}
+		l.galleryTile(f, r, dims[i], len(shown), i == len(shown)-1 && over > 0, over, len(files) == 1)
+		cx += ws[i] + galleryGap
+	}
+	return th
+}
+
+// galleryClampH keeps a lone tile's height when the message is narrower
+// than the tile (the box was already clamped to w).
+func galleryClampH(h, w, bw int) int {
+	if bw > w && bw > 0 {
+		return max(h*w/bw, 1)
+	}
+	return h
+}
+
+// galleryTile draws one gallery tile in r: the image (or video poster)
+// covering the tile, or contained at its own size when it is smaller than
+// the tile (c-file_gallery_image_file__smaller_than_container), on Slack's
+// base-ter fill with the inset 1px otl-ter outline, radius 8; videos get
+// the play pill; the overflow tile the "+ N" scrim.
+func (l *lay) galleryTile(f *richtext.File, r image.Rectangle, dim [2]float64, n int, overflow bool, count int, alone bool) {
 	p := &l.st.Palette
-	nh := l.fileNameRow(f, x, y, w)
-	y += nh
 	tg := l.d.addTarget(target{kind: tFile, file: f})
-	var h int
-	var r image.Rectangle
-	if f.Thumb != nil {
-		h = l.image(f.Thumb, x, y, min(w, l.dp(480)), l.dp(360), l.dp(8), tg)
-		r = l.d.imgs[len(l.d.imgs)-1].r
-	} else {
-		r = image.Rect(x, y, x+min(w, l.dp(480)), y+l.dp(270))
-		h = r.Dy()
-		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: l.dp(8), fill: rgb(0, 0, 0), target: -1})
-		l.d.hits = append(l.d.hits, hit{r: r, t: tg})
+	rad := l.dp(8)
+	radii := [4]int{rad, rad, rad, rad}
+	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: rad, fill: p.Placeholder, target: -1})
+	if f.Thumb != nil && f.Thumb.URL != "" {
+		sc := float64(l.scale)
+		if sc <= 0 {
+			sc = 1
+		}
+		ow, oh := dim[0]*sc, dim[1]*sc
+		if !f.IsVideo && n > 1 && f.Thumb.W > 0 && f.Thumb.H > 0 && (f.OrigW <= 0 || f.OrigH <= 0) {
+			ow, oh = float64(f.Thumb.W)*sc, float64(f.Thumb.H)*sc
+		}
+		ir := r
+		smaller := ow < float64(r.Dx()) || oh < float64(r.Dy())
+		if n > 2 {
+			smaller = false // aspect-ratio tiles always cover
+		}
+		if smaller || (f.IsVideo && n <= 2) {
+			// getImageDimensionsForContainer: fit, never upscaled, centered
+			k := math.Min(math.Min(float64(r.Dx())/math.Max(ow, 1), float64(r.Dy())/math.Max(oh, 1)), 1)
+			iw, ih := int(ow*k+0.5), int(oh*k+0.5)
+			c := r.Min.Add(r.Max).Div(2)
+			ir = image.Rect(c.X-iw/2, c.Y-ih/2, c.X-iw/2+iw, c.Y-ih/2+ih).Intersect(r)
+			if ir.Dx() < r.Dx() || ir.Dy() < r.Dy() {
+				radii = [4]int{}
+				if ir == r {
+					radii = [4]int{rad, rad, rad, rad}
+				}
+			}
+		}
+		if ir.Empty() {
+			ir = r
+		}
+		l.d.imgs = append(l.d.imgs, imgPrim{r: ir, url: f.Thumb.URL, radii: radii, target: tg, px: max(ir.Dx(), ir.Dy())})
 	}
-	l.playOverlay(r)
-	if f.DurationMS > 0 {
-		fs := l.small(p.PlayFg)
-		fs.size = l.sp(12)
-		txt := durationText(f.DurationMS)
-		tw := int(l.measure(txt, l.faceFor(fs.face, fs.size, 0))) + l.dp(12)
-		br := image.Rect(r.Min.X+l.dp(8), r.Max.Y-l.dp(8)-l.dp(20), r.Min.X+l.dp(8)+tw, r.Max.Y-l.dp(8))
-		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: br, radius: l.dp(4), fill: p.PlayBg, target: -1, layer: 1})
-		fs.lineH = br.Dy()
-		fs.noSelect = true
-		l.plainFlow(txt, br.Min.X+l.dp(6), br.Min.Y, tw, &fs, -1)
+	l.d.hits = append(l.d.hits, hit{r: r, t: tg})
+	l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: r, radius: rad, stroke: p.Border, bw: l.dp(1), target: -1, layer: 1})
+	l.plainAdd(fileName(f))
+	if f.IsVideo && !overflow {
+		l.videoPill(f, r)
 	}
-	return nh + h
+	if overflow {
+		l.galleryOverflow(r, count)
+	}
 }
 
-// playOverlay draws the round play button centered on r.
+// videoPill is the media gallery video's play control at rest
+// (p-video_controls_overlay__controls__pill--gallery_v3): 8px margin plus
+// 4px padding from the bottom-left corner, 28 tall, at least 56 wide,
+// padding 2px 4px, #1d1c1d at .8 with a 1px otl-inv-ter border, radius 4;
+// a 16px play glyph, then the duration in 13px bold 4px after it ("Video"
+// with no duration). Tiles ≤154px wide use the x-small pill (64 wide, 4px
+// gap).
+func (l *lay) videoPill(f *richtext.File, r image.Rectangle) {
+	txt := "Video"
+	if f.IsAudio {
+		txt = "Audio"
+	}
+	if f.DurationMS > 0 {
+		txt = durationText(f.DurationMS)
+	}
+	fs := flowStyle{face: font.Font{Typeface: l.st.Face, Weight: font.Bold}, size: l.sp(13), lineH: l.dp(18),
+		col: rgb(255, 255, 255), emoji: l.dp(13), maxLines: 1, noSelect: true}
+	tw := int(l.measure(txt, l.faceFor(fs.face, fs.size, 0)) + 0.999)
+	xs := r.Dx() <= l.dp(154)
+	pw := l.dp(1) + l.dp(4) + l.dp(16) + l.dp(4) + tw + l.dp(4) + l.dp(1)
+	pw = max(pw, l.dp(56))
+	if xs {
+		pw = max(pw, l.dp(64))
+	}
+	ph := l.dp(28)
+	x0 := r.Min.X + l.dp(12)
+	y1 := r.Max.Y - l.dp(12)
+	pr := image.Rect(x0, y1-ph, x0+pw, y1)
+	if pr.Max.X > r.Max.X-l.dp(4) || pr.Min.Y < r.Min.Y {
+		return
+	}
+	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: pr, radius: l.dp(4), fill: rgba(29, 28, 29, 0.8), target: -1, layer: 1})
+	l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: pr, radius: l.dp(4), stroke: rgba(255, 255, 255, 0.13), bw: l.dp(1), target: -1, layer: 1})
+	// play-filled, 16px: a triangle in the glyph's 10x12 box
+	ix := pr.Min.X + l.dp(5)
+	cy := pr.Min.Y + ph/2
+	l.d.boxes = append(l.d.boxes, box{kind: bPlay, r: image.Rect(ix+l.dp(4), cy-l.dp(6), ix+l.dp(14), cy+l.dp(6)), fill: rgb(255, 255, 255), target: -1, layer: 1})
+	l.plainFlow(txt, ix+l.dp(16)+l.dp(4), pr.Min.Y+(ph-fs.lineH)/2, tw+l.dp(2), &fs, -1)
+}
+
+// galleryOverflow is FileGalleryOverflowOverlay on the last tile: a scrim
+// of sk_foreground_high at .5 (radius 8) and "+ N" centered in 22px Black
+// sk_primary_background (white on light, the pane color on dark).
+func (l *lay) galleryOverflow(r image.Rectangle, n int) {
+	p := &l.st.Palette
+	scrim, fg := rgba(29, 28, 29, 0.5), rgb(255, 255, 255)
+	if lum(p.Panel) < 0.5 {
+		scrim, fg = rgba(209, 210, 211, 0.5), p.Panel
+	}
+	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: l.dp(8), fill: scrim, target: -1, layer: 1})
+	txt := "+ " + strconv.Itoa(n)
+	fs := flowStyle{face: font.Font{Typeface: l.st.Face, Weight: font.Black}, size: l.sp(22), lineH: l.dp(30),
+		col: fg, emoji: l.dp(22), maxLines: 1, noSelect: true}
+	tw := int(l.measure(txt, l.faceFor(fs.face, fs.size, 0)) + 0.999)
+	l.plainFlow(txt, r.Min.X+(r.Dx()-tw)/2, r.Min.Y+(r.Dy()-fs.lineH)/2, tw+l.dp(2), &fs, -1)
+}
+
+// lum is a color's relative brightness, 0..1.
+func lum(c color.NRGBA) float64 {
+	return (0.299*float64(c.R) + 0.587*float64(c.G) + 0.114*float64(c.B)) / 255
+}
+
+// playOverlay draws the round play button centered on r (video unfurls).
 func (l *lay) playOverlay(r image.Rectangle) {
 	p := &l.st.Palette
 	c := r.Min.Add(r.Max).Div(2)
@@ -772,6 +1001,20 @@ func (l *lay) fileIcon(f *richtext.File, x, y, s int) {
 	l.plainFlow(label, x+(s-tw)/2, y+(s-fs.lineH)/2, s, &fs, -1)
 }
 
+// pillowMeta is FileSize's line under a file pillow's name: the
+// pretty_type ("PDF", "Zip", "Plain Text"; Slack's "Arugula" posts read
+// "Post"). Slack shows no size here.
+func pillowMeta(f *richtext.File) string {
+	t := f.PrettyType
+	if t == "" {
+		t = strings.ToUpper(f.Type)
+	}
+	if t == "Arugula" {
+		t = "Post"
+	}
+	return t
+}
+
 func (l *lay) genericFile(f *richtext.File, x, y, w int) int {
 	p := &l.st.Palette
 	cw := min(w, l.dp(426))
@@ -787,17 +1030,8 @@ func (l *lay) genericFile(f *richtext.File, x, y, w int) int {
 	fs.size, fs.lineH = l.sp(16), l.dp(20)
 	fs.maxLines, fs.ellipsis = 1, true
 	l.plainFlow(fileName(f), tx, y+pad-l.dp(1), x+cw-tx-pad, &fs, tg)
-	meta := f.PrettyType
-	if meta == "" {
-		meta = strings.ToUpper(f.Type)
-	}
-	if s := sizeText(f.Size); s != "" {
-		if meta != "" {
-			meta += " · "
-		}
-		meta += s
-	}
 	ms := l.small(p.Text2)
+	meta := pillowMeta(f)
 	ms.maxLines, ms.ellipsis, ms.noSelect = 1, true, true
 	l.plainFlow(meta, tx, y+pad+l.dp(20), x+cw-tx-pad, &ms, -1)
 	return h

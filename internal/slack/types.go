@@ -108,6 +108,16 @@ type File struct {
 	Thumb360H          int             `json:"thumb_360_h"`
 	Thumb720W          int             `json:"thumb_720_w"`
 	Thumb720H          int             `json:"thumb_720_h"`
+	Thumb480W          int             `json:"thumb_480_w"`
+	Thumb480H          int             `json:"thumb_480_h"`
+	Thumb960W          int             `json:"thumb_960_w"`
+	Thumb960H          int             `json:"thumb_960_h"`
+	Thumb1024W         int             `json:"thumb_1024_w"`
+	Thumb1024H         int             `json:"thumb_1024_h"`
+	ThumbVideoW        int             `json:"thumb_video_w"`
+	ThumbVideoH        int             `json:"thumb_video_h"`
+	User               string          `json:"user,omitempty"`
+	Created            int64           `json:"created,omitempty"`
 	Preview            string          `json:"preview"`
 	PreviewHighlight   string          `json:"preview_highlight"`
 	Lines              int             `json:"lines"`
