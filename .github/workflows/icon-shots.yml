@@ -4,7 +4,9 @@ name: icon-shots
 # CDN; never committed), draws Clack's icons through Gio's GPU renderer
 # (Mesa llvmpipe) and compares their ink and shape with Slack's glyphs
 # rasterized the way Chrome does, in the composer's light and dark inks at
-# 1x and 2x (TestIconsMatchSlack). Also screenshots the composer's
+# 1x and 2x (TestIconsMatchSlack: every icon the code draws, within 6% of
+# Slack's ink at 2x and 10% at 1x; contact sheets icons-vs-slack-{dark,light}-{1,2}x.png and
+# icons-vs-slack.tsv in the icon-shots artifact). Also screenshots the composer's
 # formatting bar (TestFormatBarShots) and the emoji picker's Emoji | GIFs
 # row (TestEmojiTabRow). The ui-slick job adds the same row with BetterGifs
 # installed (emoji-tabs-bettergifs-*.png in ui-slick-theme-shots).
@@ -17,6 +19,8 @@ on:
       - "internal/ui/composer/formatbar_shot_test.go"
       - "internal/ui/popups/emoji*.go"
       - "internal/ui/popups/style.go"
+      - "internal/ui/popups/search_view.go"
+      - "internal/ui/blockkit/agenticons.go"
       - ".github/workflows/icon-shots.yml"
   workflow_dispatch:
 
@@ -56,7 +60,7 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p dist "$ICON_SHOTS_DIR"
-          xvfb-run -a go test -p 1 -count=1 -v -run 'TestIconsMatchSlack|TestStrokeGamma|TestSlackNames|TestFormatBarShots|TestEmojiTabRow' \
+          xvfb-run -a go test -p 1 -count=1 -v -run 'TestIconsMatchSlack|TestIconCoverage|TestIconRefsExist|TestStrokeGamma|TestSlackNames|TestFormatBarShots|TestEmojiTabRow' \
             ./internal/ui/icons/ ./internal/ui/theme/ ./internal/ui/composer/ ./internal/ui/popups/ 2>&1 | tee dist/icon-shots.log
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

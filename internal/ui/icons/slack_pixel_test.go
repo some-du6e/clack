@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/draw"
 	"image/png"
 	"math"
 	"os"
@@ -20,6 +21,9 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/unit"
+	"golang.org/x/image/font"
+	"golang.org/x/image/font/basicfont"
+	"golang.org/x/image/math/fixed"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
 )
@@ -29,13 +33,22 @@ import (
 // (exact area coverage, blended in sRGB), at the composer's 18dp in Slack's
 // dark (#b9babd on #222529) and light (#454447 on #f8f8f8) toolbar inks,
 // at 1x and 2x. Ink is Σ(pixel-bg)/(ink-bg) on the green channel, so a
-// stroke that is too heavy or too thin shows up whatever its shape; shape
-// is the L1 distance between the two normalized ink maps.
+// stroke that is too heavy or too thin, or a glyph drawn smaller, shows up
+// whatever its shape; shape is the L1 distance between the two normalized
+// ink maps.
+//
+// Every icon in slackRef is held to its Slack glyph: ink within inkTol (6%
+// at 2x, 10% at 1x) and shape within shapeTol in both inks at both scales. Every icon name the
+// code uses (TestIconRefsExist's scan, the -filled variants the rail and
+// tabs draw when selected, Block Kit's icon_button names) must be in
+// slackRef or clackOwn.
 //
 // Slack's glyphs aren't in the repo: CI downloads the icon set the public
 // web client ships (the Iconify JSON slack-datamine-plus extracts, see the
 // icon-shots workflow) and points CLACK_SLACK_ICONS at it. ICON_SHOTS_DIR
-// gets side-by-side strips (Slack above, Clack below).
+// gets a contact sheet per ink and scale (each cell: Slack left, Clack
+// right, the name and Clack's ink ratio below, red when out of tolerance)
+// and icons-vs-slack.tsv with every measurement.
 func TestIconsMatchSlack(t *testing.T) {
 	path := os.Getenv("CLACK_SLACK_ICONS")
 	if path == "" {
@@ -51,24 +64,11 @@ func TestIconsMatchSlack(t *testing.T) {
 	if err := json.Unmarshal(raw, &set); err != nil {
 		t.Fatal(err)
 	}
-	// The formatting bar and the section/Create menu glyphs (redrawn on
-	// Slack's centerlines): held to Slack's ink and shape. The others are drawn from their own sketches, so only
-	// their weight is reported.
-	strict := [][2]string{
-		{"bold", "bold"}, {"italic", "italic"}, {"underline", "underline"}, {"strike", "strikethrough"},
-		{"paragraph", "paragraph"}, {"link", "link"}, {"list-ordered", "numbered-list"},
-		{"list-bullet", "bulleted-list"}, {"quote", "quote"}, {"code", "code"},
-		{"code-block", "code-block"}, {"divider", "divider"},
-		// the sidebar section and Create menus
-		{"channel", "channel"}, {"user-add", "user-add"}, {"channel-search", "channel-search"},
-		{"mark-as-read", "mark-as-read"}, {"share-message", "share-message"}, {"lists", "lists"},
-		{"add-channel-canvas", "add-channel-canvas"},
+	names := make([]string, 0, len(slackRef))
+	for n := range slackRef {
+		names = append(names, n)
 	}
-	report := [][2]string{
-		{"emoji", "emoji"}, {"mention", "mentions"}, {"plus", "plus"}, {"search", "search"},
-		{"close", "close"}, {"edit", "edit"}, {"threads", "threads"}, {"bell", "notifications"},
-		{"video", "video"}, {"mic", "microphone"}, {"slash", "slash-box"}, {"more", "ellipsis-horizontal-filled"},
-	}
+	sort.Strings(names)
 	inks := []struct {
 		name   string
 		fg, bg color.NRGBA
@@ -78,40 +78,121 @@ func TestIconsMatchSlack(t *testing.T) {
 	}
 	const size = 18
 	shots := os.Getenv("ICON_SHOTS_DIR")
+	tsv := []string{"icon\tslack\tink\tscale\tratio\tshape"}
+	worst := map[string]float64{}
 	for _, ink := range inks {
 		for _, scale := range []int{1, 2} {
 			px := size * scale
-			pairs := append(append([][2]string{}, strict...), report...)
-			var row [2][]*image.RGBA
+			var cells []sheetCell
 			var lines []string
-			for i, pr := range pairs {
-				body, ok := set.Icons[pr[1]]
+			for _, n := range names {
+				sn := slackRef[n]
+				body, ok := set.Icons[sn]
 				if !ok {
-					t.Errorf("Slack's set has no %q", pr[1])
+					t.Errorf("%s: Slack's set has no %q", n, sn)
+					continue
+				}
+				if !Has(n) {
+					t.Errorf("slackRef lists %q, which isn't registered", n)
 					continue
 				}
 				ref := slackRaster(t, body.Body, px, ink.fg, ink.bg)
-				got := clackRaster(t, pr[0], px, scale, ink.fg, ink.bg)
-				ri, gi := inkOf(ref, ink.fg, ink.bg), inkOf(got, ink.fg, ink.bg)
-				ratio := gi / ri
+				got := clackRaster(t, n, px, scale, ink.fg, ink.bg)
+				ratio := inkOf(got, ink.fg, ink.bg) / inkOf(ref, ink.fg, ink.bg)
 				shape := shapeDiff(ref, got, ink.fg, ink.bg)
-				lines = append(lines, fmt.Sprintf("%-13s ink %.3f shape %.2f", pr[0], ratio, shape))
-				if i < len(strict) {
-					if math.Abs(ratio-1) > 0.08 {
-						t.Errorf("%s %dx %s: ink %.3f of Slack's %s (want within 8%%)", ink.name, scale, pr[0], ratio, pr[1])
-					}
-					if shape > 0.35 {
-						t.Errorf("%s %dx %s: shape differs from Slack's %s by %.2f (want ≤ 0.35)", ink.name, scale, pr[0], pr[1], shape)
-					}
+				tol := inkTol[scale-1]
+				bad := math.Abs(ratio-1) > tol || shape > shapeTol
+				if bad {
+					t.Errorf("%s %dx %s: ink %.3f of Slack's %s, shape %.2f (want ink within %.0f%%, shape ≤ %.2f)", ink.name, scale, n, ratio, sn, shape, tol*100, shapeTol)
 				}
-				row[0], row[1] = append(row[0], ref), append(row[1], got)
+				worst[n] = max(worst[n], math.Abs(ratio-1))
+				lines = append(lines, fmt.Sprintf("%-20s %-28s ink %.3f shape %.2f", n, sn, ratio, shape))
+				tsv = append(tsv, fmt.Sprintf("%s\t%s\t%s\t%d\t%.3f\t%.3f", n, sn, ink.name, scale, ratio, shape))
+				cells = append(cells, sheetCell{n, ref, got, ratio, bad})
 			}
 			t.Logf("%s %dx (Clack/Slack):\n%s", ink.name, scale, strings.Join(lines, "\n"))
 			if shots != "" {
-				writeStrip(t, filepath.Join(shots, fmt.Sprintf("icons-vs-slack-%s-%dx.png", ink.name, scale)), row, px, ink.bg)
+				writeSheet(t, filepath.Join(shots, fmt.Sprintf("icons-vs-slack-%s-%dx.png", ink.name, scale)), cells, px, ink.fg, ink.bg)
 			}
 		}
 	}
+	if shots != "" {
+		if err := os.WriteFile(filepath.Join(shots, "icons-vs-slack.tsv"), []byte(strings.Join(tsv, "\n")+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var far []string
+	for _, n := range names {
+		if worst[n] > 0.05 {
+			far = append(far, fmt.Sprintf("%s %.1f%%", n, worst[n]*100))
+		}
+	}
+	t.Logf("%d icons against Slack's; ink off by more than 5%% anywhere: %s", len(names), strings.Join(far, ", "))
+}
+
+// The tolerances TestIconsMatchSlack holds every slackRef icon to. Ink
+// is held to 6% at 2x, where it measures the drawing. At 1x (18px) the
+// pixel phase of each line and Gio's linear-light blending against
+// Chrome's sRGB move ink by up to ~9% whatever the shape: quote (drawn on
+// Slack's centrelines since the emoji-tabs work) reads 0.938 in dark at
+// 1x and 0.996 at 2x, bookmark 0.908 and 0.984, plus-filled 1.097 in
+// light at 1x and 1.007 at 2x, all within 1% of Slack's geometry when both
+// are rasterized Chrome's way. So 1x gets 10%.
+var inkTol = [2]float64{0.10, 0.06} // 1x, 2x
+
+const shapeTol = 0.35
+
+// TestIconCoverage checks that every icon the code draws is held to a
+// Slack glyph (slackRef) or is one of Clack's own (clackOwn), and that the
+// two tables name registered icons. It needs no GPU or download.
+func TestIconCoverage(t *testing.T) {
+	for n, sn := range slackRef {
+		if !Has(n) {
+			t.Errorf("slackRef[%q] (Slack's %q): not registered", n, sn)
+		}
+		if _, ok := clackOwn[n]; ok {
+			t.Errorf("%q is in both slackRef and clackOwn", n)
+		}
+	}
+	for n := range clackOwn {
+		if !Has(n) {
+			t.Errorf("clackOwn[%q]: not registered", n)
+		}
+	}
+	for _, n := range drawnIcons(t) {
+		_, ok := slackRef[n]
+		_, own := clackOwn[n]
+		if !ok && !own {
+			t.Errorf("icon %q is drawn but has no Slack glyph in slackRef (or a reason in clackOwn)", n)
+		}
+	}
+}
+
+// drawnIcons is every registered icon the code can draw: the literal names
+// TestIconRefsExist finds (resolved through Slack's names), their -filled
+// variants (the rail and the channel tabs draw name+"-filled" when
+// selected); the scan includes the Slack names Block Kit's icon_button
+// maps to.
+func drawnIcons(t *testing.T) []string {
+	refs, _ := iconRefs(t)
+	seen := map[string]bool{}
+	add := func(name string) {
+		if n, ok := slackLookup(name); ok {
+			seen[n] = true
+			if Has(n + "-filled") {
+				seen[n+"-filled"] = true
+			}
+		}
+	}
+	for _, r := range refs {
+		add(r.name)
+	}
+	out := make([]string, 0, len(seen))
+	for n := range seen {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func nrgb(v uint32) color.NRGBA {
@@ -273,22 +354,39 @@ func shapeDiff(ref, got *image.RGBA, fg, bg color.NRGBA) float64 {
 	return diff / tot
 }
 
-// writeStrip saves rows of px×px tiles with 8px gaps.
-func writeStrip(t *testing.T, path string, rows [2][]*image.RGBA, px int, bg color.NRGBA) {
+type sheetCell struct {
+	name     string
+	ref, got *image.RGBA
+	ratio    float64
+	bad      bool
+}
+
+// writeSheet saves a contact sheet: per icon, Slack's glyph and Clack's
+// side by side with the name and ink ratio below (red when out of
+// tolerance).
+func writeSheet(t *testing.T, path string, cells []sheetCell, px int, fg, bg color.NRGBA) {
 	t.Helper()
-	const gap = 8
-	n := len(rows[0])
-	img := image.NewRGBA(image.Rect(0, 0, gap+n*(px+gap), gap+2*(px+gap)))
-	for i := 0; i < len(img.Pix); i += 4 {
-		img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = bg.R, bg.G, bg.B, 0xff
-	}
-	for r := range rows {
-		for i, tile := range rows[r] {
-			o := image.Pt(gap+i*(px+gap), gap+r*(px+gap))
-			for y := 0; y < px; y++ {
-				copy(img.Pix[img.PixOffset(o.X, o.Y+y):], tile.Pix[tile.PixOffset(0, y):tile.PixOffset(px, y)])
-			}
+	const cols, gap, cw = 10, 8, 140
+	face := basicfont.Face7x13
+	ch := px + gap + 16
+	rows := (len(cells) + cols - 1) / cols
+	img := image.NewRGBA(image.Rect(0, 0, gap+cols*cw, gap+rows*ch))
+	draw.Draw(img, img.Bounds(), image.NewUniform(bg), image.Point{}, draw.Src)
+	for i, c := range cells {
+		o := image.Pt(gap+(i%cols)*cw, gap+(i/cols)*ch)
+		draw.Draw(img, image.Rectangle{Min: o, Max: o.Add(image.Pt(px, px))}, c.ref, image.Point{}, draw.Src)
+		o2 := o.Add(image.Pt(px+4, 0))
+		draw.Draw(img, image.Rectangle{Min: o2, Max: o2.Add(image.Pt(px, px))}, c.got, image.Point{}, draw.Src)
+		lc := image.NewUniform(fg)
+		if c.bad {
+			lc = image.NewUniform(color.NRGBA{R: 0xe0, G: 0x1e, B: 0x5a, A: 0xff})
 		}
+		label := c.name
+		if len(label) > 14 {
+			label = label[:14]
+		}
+		d := font.Drawer{Dst: img, Src: lc, Face: face, Dot: fixed.P(o.X, o.Y+px+13)}
+		d.DrawString(fmt.Sprintf("%s %.2f", label, c.ratio))
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
