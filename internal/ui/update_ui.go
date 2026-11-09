@@ -120,7 +120,7 @@ func (p *helpPane) Layout(gtx layout.Context) layout.Dimensions {
 		c    *widget.Clickable
 		x    int
 		icon string
-	}{{&u.close, cx, "close"}, {&u.keys, kx, "keyboard"}} {
+	}{{&u.close, cx, "close"}, {&u.keys, kx, icons.Slack("keyboard")}} {
 		at(gtx, image.Pt(b.x, (hh-bs)/2), image.Pt(bs, bs), func(gtx layout.Context) layout.Dimensions {
 			return iconButton(gtx, b.c, b.icon, 28, 18, c.FgMuted, c.BgHover, 8)
 		})
@@ -168,7 +168,7 @@ func (p *helpPane) actionables(gtx layout.Context) layout.Dimensions {
 	lh := gtx.Dp(18) // 13px, line-height 1.38463
 	muted := theme.WithAlpha(c.Fg, 0xb3)
 	at(gtx, image.Pt(x0, y+(lh-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
-		return icons.Get("notifications")(gtx, 16, muted)
+		return icons.Get(icons.Slack("notifications"))(gtx, 16, muted)
 	})
 	at(gtx, image.Pt(x0+gtx.Dp(20), y), image.Pt(w-x0*2, lh), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
