@@ -49,7 +49,7 @@ func TestMenuKeysShots(t *testing.T) {
 		for _, dark := range []bool{false, true} {
 			a.th.SetDark(dark) // as taut_prefs_test's shots do
 			a.Invalidate()
-			e.settle(1500 * time.Millisecond)
+			e.settle(6 * time.Second) // llvmpipe frames are slow; tokens restyle over several
 			if a.th.Dark != dark {
 				t.Fatalf("dark=%v didn't stick", dark)
 			}
