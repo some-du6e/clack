@@ -182,6 +182,13 @@ func benchStart(t *testing.T, fs *fakeslack.Server) *benchEnv {
 
 func (e *benchEnv) record(root uint64, tree []byte) {
 	e.mu.Lock()
+	if e.calls.gone(root) {
+		// the commit unmounting a root slackc swept (rows the scroll pass
+		// left behind): cleanup, not a re-render
+		delete(e.trees, root)
+		e.mu.Unlock()
+		return
+	}
 	if bytes.Equal(e.trees[root], tree) {
 		e.same++
 	}
@@ -883,8 +890,11 @@ var benchScenarios = map[string]benchScenario{
 	},
 	"showsendingbot": {
 		checks: []benchCheck{
-			{"the sending app's name on a person's message", func(e *benchEnv) (bool, string) {
-				ok := e.waitTree(10*time.Second, fakeslack.BenchSenderBot)
+			{"the sending app's badge on a person's message", func(e *benchEnv) (bool, string) {
+				// the badge is the app's avatar (botId/botProfile, its icon)
+				ok := e.wait(10*time.Second, func() bool {
+					return e.treeWith(`"`+fakeslack.BenchSenderBotID+`"`) != "" || e.treeWith("bench-sender") != ""
+				})
 				return ok, ""
 			}},
 		},
@@ -1386,6 +1396,15 @@ func idleShapes(trees map[uint64][]byte) string {
 // whether an idle re-render starts in Go or in JS).
 type benchCalls struct {
 	render, renderIn, renderFn, rects, dispatch, unmount atomic.Int64
+
+	mu       sync.Mutex
+	unmapped map[uint64]bool // roots unmounted (ids are never reused)
+}
+
+func (c *benchCalls) gone(root uint64) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.unmapped[root]
 }
 
 type benchCallCounts [6]int64
@@ -1433,6 +1452,12 @@ func (b countingBridge) Dispatch(target int64, ev []byte) {
 
 func (b countingBridge) Unmount(root uint64) {
 	b.c.unmount.Add(1)
+	b.c.mu.Lock()
+	if b.c.unmapped == nil {
+		b.c.unmapped = map[uint64]bool{}
+	}
+	b.c.unmapped[root] = true
+	b.c.mu.Unlock()
 	b.Bridge.Unmount(root)
 }
 
