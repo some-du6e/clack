@@ -229,8 +229,8 @@ func (f *Files) update(gtx C) {
 	if f.plus.Clicked(gtx) || f.newBtn.Clicked(gtx) || f.emptyNew.Clicked(gtx) {
 		if cc, ok := f.h.(interface{ CreateCanvas() }); ok && filesNav[f.nav].kind != "lists" {
 			cc.CreateCanvas()
-		} else {
-			f.h.Toast("Creating lists isn't supported yet")
+		} else if cl, ok := f.h.(interface{ NewListMenu() }); ok {
+			cl.NewListMenu() // mount_features_lists.go
 		}
 	}
 	if f.tplToggle.Clicked(gtx) {
@@ -336,14 +336,18 @@ func (f *Files) open(it fileItem) {
 			return
 		}
 		f.h.Toast("Opening canvases isn't supported yet")
+	case it.isList() && it.ID != "":
+		if lo, ok := f.h.(interface{ OpenListFull(id string) }); ok {
+			lo.OpenListFull(it.ID) // mount_features_lists.go
+			return
+		}
+		f.h.Toast("Opening lists isn't supported yet")
 	case it.isImage() && it.URL != "":
 		f.h.OpenLightbox(richtext.Image{URL: it.URL, Alt: it.title(), W: it.ThumbW, H: it.ThumbH, Title: it.title(), Proxy: true}, core.Message{})
 	case len(it.Channels) > 0:
 		f.h.Navigate("c/" + it.Channels[0])
 	case it.isCanvas():
 		f.h.Toast("Opening canvases isn't supported yet")
-	case it.isList():
-		f.h.Toast("Opening lists isn't supported yet")
 	default:
 		f.h.Toast("Opening this file isn't supported yet")
 	}

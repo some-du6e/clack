@@ -42,6 +42,13 @@ type ChannelTabOpener interface {
 	OpenChannelTabLink(url string) bool
 }
 
+// ListOpener is optional: the ui root shows lists natively (list files in
+// messages, links to lists and their items).
+type ListOpener interface {
+	OpenList(id string)
+	OpenListLink(url string) bool
+}
+
 // SignInHost is optional: the ui root's sign-in screen, shown by the
 // list's "Sign in again" link once core reports the session ended.
 type SignInHost interface {
@@ -150,6 +157,9 @@ func (r *richHandler) OpenURL(url string) {
 	if to, ok := r.h.(ChannelTabOpener); ok && to.OpenChannelTabLink(url) {
 		return
 	}
+	if lo, ok := r.h.(ListOpener); ok && lo.OpenListLink(url) {
+		return
+	}
 	if ch, ts, ok := slackLink(url); ok {
 		if ts != "" {
 			r.h.Navigate("c/" + ch + "/t/" + ts)
@@ -173,6 +183,10 @@ func (r *richHandler) OpenImage(img richtext.Image) {
 func (r *richHandler) OpenFile(f *richtext.File) {
 	if co, ok := r.h.(CanvasOpener); ok && f.ID != "" && core.IsCanvasFile(f.Type, "", f.PrettyType) {
 		co.OpenCanvas(f.ID)
+		return
+	}
+	if lo, ok := r.h.(ListOpener); ok && f.ID != "" && core.IsListFile(f.Type, "", f.PrettyType) {
+		lo.OpenList(f.ID)
 		return
 	}
 	if f.IsImage && f.Thumb != nil {

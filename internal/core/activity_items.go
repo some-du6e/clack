@@ -223,6 +223,9 @@ func activityItem(raw *activityRaw) (ActivityItem, *msgRef) {
 	for _, l := range []*actListPayload{in.List, in.ListEdit, in.ListMention, in.ListTodo, in.ListApproval} {
 		if l != nil {
 			it.Actor = firstNonEmpty(it.Actor, l.AssignedBy, l.EditedBy, l.MentionedBy, l.UserID)
+			if it.ListID == "" {
+				it.ListID, it.ListRecord = l.ListID, l.RowID
+			}
 		}
 	}
 	if sr := in.SavedReminder; sr != nil {

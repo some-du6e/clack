@@ -870,6 +870,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleGallery(method, f); handled { // bkgallery*.go
 		return out
 	}
+	if out, handled := s.handleLists(method, f); handled { // lists.go
+		return out
+	}
 	if out, handled := s.handleCanvases(method, f); handled { // canvas.go
 		return out
 	}

@@ -404,6 +404,9 @@ type ActivityItem struct {
 	Title     string // invite channel name, calendar title, alert category
 	Team      string // Slack Connect invite: the inviting organisation
 	Text      string // alert text, invite message, reminder detail
+
+	// list_* items: the list and the item (list_*_payload list_id, row_id).
+	ListID, ListRecord string
 }
 
 type ActivityReaction struct {
