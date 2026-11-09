@@ -1,14 +1,21 @@
 name: activity-shots
 # Renders the Activity feed headlessly from the synthetic fixture
 # (internal/core/testdata/activity_feed.json: one entry per activity.feed
-# item type) in Detailed and Dense, light and dark, and uploads the
-# screenshots. Nothing here talks to Slack.
+# item type) in Detailed and Dense, light and dark, plus the hover bar,
+# the item menu and the "Clear all before" dialog, runs the Activity
+# parity tests (core against internal/fakeslack's feed, the view's
+# clicks, menus and filters) and uploads the screenshots. Nothing here
+# talks to Slack.
 on:
   push:
     paths:
       - "internal/ui/views/activity*.go"
       - "internal/core/activity*.go"
       - "internal/core/testdata/activity_feed.json"
+      - "internal/core/manage.go"
+      - "internal/fakeslack/activity.go"
+      - "internal/fakeslack/views.go"
+      - "internal/ui/popups/activity_exports.go"
       - ".github/workflows/activity-shots.yml"
   workflow_dispatch:
 
@@ -34,12 +41,13 @@ jobs:
       - name: activity feed screenshots
         env:
           ACTIVITY_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          VIEWS_SHOTS_DIR: ${{ github.workspace }}/dist/shots
           LIBGL_ALWAYS_SOFTWARE: "1"
           GALLIUM_DRIVER: llvmpipe
         run: |
           mkdir -p "$ACTIVITY_SHOTS_DIR"
-          go test -count=1 -v -run 'TestActivityItemShapes' ./internal/core
-          xvfb-run -a go test -count=1 -v -run 'TestActivityEveryItemTypeRenders' ./internal/ui/views
+          go test -count=1 -v -run 'TestActivityItemShapes|TestActivityFakeslack|TestActivityClearBefore|TestActivityFeedParams' ./internal/core
+          xvfb-run -a go test -count=1 -v -run 'TestActivity' ./internal/ui/views
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

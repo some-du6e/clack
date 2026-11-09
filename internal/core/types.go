@@ -405,8 +405,13 @@ type ActivityItem struct {
 	Team      string // Slack Connect invite: the inviting organisation
 	Text      string // alert text, invite message, reminder detail
 
-	// list_* items: the list and the item (list_*_payload list_id, row_id).
-	ListID, ListRecord string
+	// list_* items: the list, the item and the column (list_*_payload
+	// list_id, row_id, column_id).
+	ListID, ListRecord, ListColumn string
+
+	JoinerReminder bool   // team_joiner_invite_payload.is_reminder
+	InviteStatus   string // Slack Connect invite: "revoked", "expired", ...
+	ReminderItem   string // saved_reminder_payload.item_type: message, file, list_record, canvas_section, reminder
 }
 
 type ActivityReaction struct {

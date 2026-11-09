@@ -1,5 +1,5 @@
 {
-  "_comment": "Synthetic activity.feed: one entry per item type the Slack web client handles (client-boot /29I, 2026-11). Shapes only; every id, ts and string is made up. Channels: C1 #general, C2 #random (not joined). D1 is a DM with U1. Messages 1700000101.* … live in the test store.",
+  "_comment": "Synthetic activity.feed: one entry per item type the Slack web client handles (client-boot /29I, 2026-11). Shapes only; every id, ts and string is made up. Channels: C1 #general, C2 #random (not joined). D1 is a DM with U1, G1 a group DM with U1 and U2. Messages 1700000101.* … live in the test store.",
   "ok": true,
   "items": [
     {"key": "k-channel", "feed_ts": "1700000101.000100", "is_unread": true, "is_archived": false,
@@ -63,6 +63,20 @@
     {"key": "k-future", "feed_ts": "1700000131.000100", "is_unread": true,
      "item": {"type": "some_future_type", "some_future_payload": {"channel_id": "C1", "message_ts": "1700000131.000100", "user_id": "U2"}}},
     {"key": "k-future-bare", "feed_ts": "1700000132.000100", "is_unread": true,
-     "item": {"type": "another_future_type"}}
+     "item": {"type": "another_future_type"}},
+    {"key": "k-reaction-many", "feed_ts": "1700000133.000100", "is_unread": true,
+     "item": {"type": "message_reaction", "message": {"ts": "1700000132.000100", "channel": "C1"}, "reaction": {"user": "U1", "name": "tada"}}},
+    {"key": "k-thread-many", "feed_ts": "1700000136.000100", "is_unread": false,
+     "item": {"type": "thread_v2", "bundle_info": {"payload": {"thread_entry": {"channel_id": "C1", "latest_ts": "1700000135.000100", "thread_ts": "1700000134.000100", "unread_msg_count": 0}}}}},
+    {"key": "k-mpdm", "feed_ts": "1700000138.000100", "is_unread": true,
+     "item": {"type": "mpdm", "bundle_info": {"unread_count": 2, "payload": {"dm_entry": {"latest_message": {"ts": "1700000137.000100", "channel": "G1"}}}}}},
+    {"key": "k-joiner-reminder", "feed_ts": "1700000139.000100", "is_unread": true,
+     "item": {"type": "team_joiner_invite", "team_joiner_invite_payload": {"channel_id": "C1", "joiner_notification_message_ts": "1700000120.000100", "is_reminder": true}}},
+    {"key": "k-ext-revoked", "feed_ts": "1700000140.000100", "is_unread": false,
+     "item": {"type": "external_channel_invite", "invite": {"id": "I3", "invite_type": "channel", "status": "revoked", "channel": {"id": "C9EXU", "name": "old-partners"}, "team": {"id": "T9", "name": "Example Co"}, "inviting_user": {"id": "U9EXT", "name": "eve", "profile": {"real_name": "Eve Example", "display_name": "eve"}}}}},
+    {"key": "k-reminder-file", "feed_ts": "1700000141.000100", "is_unread": true,
+     "item": {"type": "saved_reminder", "saved_reminder_payload": {"item_type": "file", "item_id": "F9"}}},
+    {"key": "k-mine", "feed_ts": "1700000143.000100", "is_unread": false,
+     "item": {"type": "at_user_group", "message": {"ts": "1700000142.000100", "channel": "C1", "author_user_id": "USELF"}}}
   ]
 }

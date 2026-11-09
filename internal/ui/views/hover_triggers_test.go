@@ -74,7 +74,7 @@ func TestHoverTriggerActivityReaction(t *testing.T) {
 	v := NewActivity(h)
 	var ops op.Ops
 	deadline := time.Now().Add(10 * time.Second)
-	for len(actPage(v).Items) < 31 {
+	for len(actPage(v).Items) < actFeedLen {
 		if time.Now().After(deadline) {
 			t.Fatal("feed never loaded")
 		}

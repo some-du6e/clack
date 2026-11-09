@@ -527,6 +527,27 @@ func (a *App) activityEach(ctx context.Context, method string, items []ActivityI
 	return nil
 }
 
+// ActivityFilters narrow activity.clearBefore to a view's filters (uby+
+// o in the web client: the fetcher snake-cases the keys).
+type ActivityFilters struct {
+	EntryTypes  []string `json:"entry_types,omitempty"`
+	ChannelIDs  []string `json:"channel_ids,omitempty"`
+	UnreadOnly  bool     `json:"unread_only,omitempty"`
+	ArchiveOnly bool     `json:"archive_only,omitempty"`
+}
+
+// ClearActivityBefore clears every item older than beforeTS (a feed_ts),
+// as Slack's "Clear all before…" does (ClearAllBeforeDialog:
+// activity.clearBefore {before_ts, filters}). f nil clears the whole inbox.
+func (a *App) ClearActivityBefore(ctx context.Context, beforeTS string, f *ActivityFilters) error {
+	p := url.Values{"before_ts": {beforeTS}}
+	if f != nil {
+		b, _ := json.Marshal(f)
+		p.Set("filters", string(b))
+	}
+	return a.C.Call(ctx, "activity.clearBefore", p, nil)
+}
+
 // MarkAllActivityRead marks every unread item of a view read. It tries
 // activity.markAllRead and falls back to marking each unread item.
 func (a *App) MarkAllActivityRead(ctx context.Context, view string) error {

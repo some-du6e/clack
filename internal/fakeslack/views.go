@@ -20,8 +20,7 @@ import (
 //     (ThreadMarks) and clears the unread reply.
 //   - drafts.list carries a draft, a scheduled message and a scheduled
 //     thread reply (Drafts & sent: the Drafts and Scheduled tabs).
-//   - activity.markRead, activity.markUnread, activity.archive and
-//     activity.unarchive are recorded (ActivityWrites).
+//   - the Activity inbox: activity.feed and its writes (activity.go).
 
 // ViewsChannel is the channel the views fixtures live in.
 const ViewsChannel = "C0FAKE00000"
@@ -42,11 +41,12 @@ type ActivityWrite struct {
 }
 
 type viewsState struct {
-	mu     sync.Mutex
-	marks  []ThreadMark
-	writes []ActivityWrite
-	read   bool // the unread thread was marked read
-	seeded bool
+	mu       sync.Mutex
+	marks    []ThreadMark
+	writes   []ActivityWrite
+	read     bool // the unread thread was marked read
+	seeded   bool
+	activity *activityState // activity.go
 }
 
 var viewsStates sync.Map // *Server -> *viewsState
@@ -156,14 +156,9 @@ func (s *Server) handleViews(method string, f url.Values) (any, bool) {
 		}
 		v.mu.Unlock()
 		return ok(), true
-	case "activity.markRead", "activity.markUnread", "activity.archive", "activity.unarchive", "activity.markAllRead":
-		v.mu.Lock()
-		v.writes = append(v.writes, ActivityWrite{Method: method, Form: f})
-		v.mu.Unlock()
-		return ok(), true
 	case "drafts.list":
 		s.SeedViewDrafts()
 		return nil, false // the drafts handler answers
 	}
-	return nil, false
+	return s.handleActivity(method, f)
 }

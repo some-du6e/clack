@@ -281,7 +281,7 @@ func vaActivity(t *testing.T, dark bool) (*Activity, *vaHost, *vaEnv, *callLog) 
 	v := NewActivity(h)
 	e := &vaEnv{size: image.Pt(1200, 900)}
 	e.draw = func(gtx layout.Context) { v.Layout(gtx) }
-	e.until(t, "the activity feed", func() bool { return len(actPage(v).Items) >= 31 })
+	e.until(t, "the activity feed", func() bool { return len(actPage(v).Items) >= actFeedLen })
 	e.frame()
 	return v, h, e, log
 }

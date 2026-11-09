@@ -12,23 +12,30 @@ import (
 	"context"
 	"image"
 	"image/color"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"gioui.org/f32"
 	"gioui.org/font"
+	"gioui.org/io/event"
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+	"gioui.org/op/paint"
 	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/ctxclick"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/hovercard"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
@@ -111,6 +118,11 @@ type actDesc struct {
 	footIcon  string
 	footEmoji string // reaction emoji image (replaces footIcon)
 	footBold  bool   // footer is a bold label ("App")
+	reacted   bool   // the pill is "Reacted" followed by the emoji
+	nameDense string // the sender in Dense rows ("Ana +2")
+	team      string // a Slack Connect inviter's organisation, after the name
+	subtext   string // before the message body ("You: ", "Ana Example: ")
+	lines     int    // the body's line cap (0: the density's)
 	avatar    string
 	tile      bool // channel tile instead of an avatar
 	at        time.Time
@@ -124,11 +136,12 @@ type actDesc struct {
 }
 
 type actRow struct {
-	click             widget.Clickable
-	bar               widget.Clickable // hover area of the action bar
-	mark, clear, more widget.Clickable
-	d                 actDesc
-	built             bool
+	click widget.Clickable
+	bar   widget.Clickable // hover area of the action bar
+	btns  [actBtnMore + 1]widget.Clickable
+	ctx   struct{} // the row's context-menu press target
+	d     actDesc
+	built bool
 
 	// This frame's row context, read by the Slack boundaries
 	// (ActivityItem and its parts) through method expressions.
@@ -207,7 +220,8 @@ type Activity struct {
 	hideRead map[string]bool
 	notes    actNotes
 	patchOn  bool
-	wmu      sync.Mutex // serializes core activity writes
+	wmu      sync.Mutex      // serializes core activity writes
+	listsReq map[string]bool // lists asked for so list rows can name their item
 
 	// undo is the "cleared" snackbar after Clear, with its Undo link.
 	undo struct {
@@ -271,11 +285,19 @@ func (v *Activity) watchItems() {
 	ch, _ := v.h.Core().Subscribe()
 	go func() {
 		for ev := range ch {
-			if ev.Type != "activity" || ev.Activity == nil {
+			if ev.Type != "activity" {
 				continue
 			}
+			// handleActivityRTMEvent: activity_deleted drops the entry,
+			// activity_updated carries it (activity_invalidated reloads,
+			// through the watcher).
 			v.notes.mu.Lock()
-			v.notes.items = append(v.notes.items, *ev.Activity)
+			switch {
+			case ev.Name == "activity_deleted" && ev.ID != "":
+				v.notes.gone = append(v.notes.gone, ev.ID)
+			case ev.Activity != nil:
+				v.notes.items = append(v.notes.items, *ev.Activity)
+			}
 			v.notes.mu.Unlock()
 			v.h.Invalidate()
 		}
@@ -286,13 +308,26 @@ func (v *Activity) watchItems() {
 // server's read state replaces any local override for that row.
 func (v *Activity) applyPatches() {
 	v.notes.mu.Lock()
-	items := v.notes.items
-	v.notes.items = nil
+	items, gone := v.notes.items, v.notes.gone
+	v.notes.items, v.notes.gone = nil, nil
 	v.notes.mu.Unlock()
-	if len(items) == 0 {
+	if len(items) == 0 && len(gone) == 0 {
 		return
 	}
 	v.data.mutate(func(p *core.ActivityPage) {
+		if len(gone) > 0 {
+			drop := map[string]bool{}
+			for _, k := range gone {
+				drop[k] = true
+			}
+			kept := p.Items[:0:0]
+			for i := range p.Items {
+				if it := &p.Items[i]; !drop[actKey(it)] && !drop[it.Key] {
+					kept = append(kept, *it)
+				}
+			}
+			p.Items = kept
+		}
 		for _, in := range items {
 			key := actKey(&in)
 			for i := range p.Items {
@@ -786,49 +821,6 @@ func actAlertLabel(category string) string {
 	return "Notification"
 }
 
-// actFallbackText is the body of an item whose message didn't load (or
-// that has none): what happened, never an empty row.
-func actFallbackText(it *core.ActivityItem, place string) string {
-	if t := oneLine(it.Text); t != "" {
-		return t
-	}
-	in := ""
-	if place != "" {
-		in = " in " + place
-	}
-	switch {
-	case it.Type == "channel":
-		if it.Count > 1 {
-			return strconv.Itoa(it.Count) + " new posts" + in
-		}
-		return "New post" + in
-	case it.Type == "dm" || it.Type == "mpdm" || it.Type == "bot_dm_bundle":
-		if it.Count > 1 {
-			return strconv.Itoa(it.Count) + " new messages"
-		}
-		return "New message"
-	case it.Type == "thread_v2":
-		return "New reply" + in
-	case it.Type == "message_reaction":
-		return "Reacted to your message" + in
-	case actIsMention(it.Type) || it.Type == "unjoined_channel_mention" || it.Type == "code_review_requested":
-		return "Mentioned you" + in
-	case it.Type == "list_record_assigned":
-		return "Assigned you a list item"
-	case it.Type == "list_record_edited":
-		return "Updated a list item"
-	case it.Type == "list_user_mentioned":
-		return "Mentioned you in a list item"
-	case it.Type == "list_todo_notification":
-		return "A list item needs your attention"
-	case it.Type == "list_approval_request":
-		return "Requested your approval on a list item"
-	case it.Type == "list_approval_reviewed":
-		return "Reviewed your approval request"
-	}
-	return "New activity" + in
-}
-
 func actReplies(n int, adj string) string {
 	w := "replies"
 	if n == 1 {
@@ -904,15 +896,17 @@ func (v *Activity) describe(it *core.ActivityItem, refs map[string]core.ConvRef)
 		}
 	}
 	d.dm = isDMKind(kind) || strings.HasPrefix(it.Channel, "D")
-	place := d.title
-	switch kind {
-	case "im":
-		place = "direct message"
-	case "mpim":
-		place = "group message"
-	}
+	dest := v.destOf(it, kind)
+
+	// The sender (ActivityRowContentSenderName): the message's author, or
+	// the person behind an item without one.
 	name, av := v.authorOf(it.Msg)
+	author := ""
+	if it.Msg != nil {
+		author = it.Msg.User
+	}
 	if it.Author != "" {
+		author = firstNonEmpty(author, it.Author)
 		if name == "" {
 			name = v.userName(it.Author)
 		}
@@ -922,10 +916,6 @@ func (v *Activity) describe(it *core.ActivityItem, refs map[string]core.ConvRef)
 			}
 		}
 	}
-	d.name, d.avatar = name, av
-	d.prev = v.preview(it.Msg)
-	// actor: the person behind a non-message item (inviter, invitee,
-	// assigner); it names the row when there is no message author.
 	actor, actorAv := it.ActorName, ""
 	if it.Actor != "" {
 		if u, ok := v.user(it.Actor); ok {
@@ -934,179 +924,116 @@ func (v *Activity) describe(it *core.ActivityItem, refs map[string]core.ConvRef)
 			actor = v.userName(it.Actor)
 		}
 	}
-	useActor := func() {
+	if name == "" && actor != "" {
+		name, av = actor, actorAv
+	}
+	if author == "USLACKBOT" && it.Type != "message_reaction" && it.Type != "thread_v2" {
+		name = "Slackbot"
+	}
+	d.name, d.avatar = name, av
+	d.prev = v.preview(it.Msg)
+	self := v.selfID()
+
+	// body sets the text Slack draws instead of a message.
+	body := func(s string) {
+		d.body, d.invite = s, true
+		d.prev = s
+	}
+	switch {
+	case it.Type == "generic_system_alert":
+		d.name, d.avatar = "Slack", ""
+		body(oneLine(it.Text))
+	case it.Type == "saved_reminder":
+		d.name, d.avatar = "Reminder", ""
+		switch {
+		case it.Msg != nil:
+			// ReminderMessage: "{author}: " before the message
+			if u, ok := v.user(it.Msg.User); ok {
+				d.subtext = firstNonEmpty(u.RealName, displayName(u)) + ": "
+			} else if name != "" {
+				d.subtext = name + ": "
+			}
+			d.lines = 1
+		case it.ReminderItem == "file":
+			body("You set a reminder about this file")
+		default:
+			body(oneLine(it.Text))
+		}
+	case it.Type == "message_reaction":
+		v.reactionSender(it, &d)
+		d.subtext, d.lines = "You: ", 1 // ReactionContent without the layout revisions
+	case it.Type == "thread_v2":
+		v.threadSender(it, &d, author)
+		if it.Msg != nil && it.Msg.User == self {
+			d.subtext = "You: "
+		}
+	case actExternal(it.Type):
+		// InviteSenderName: "{user} from {team}", else "Slack Connect
+		// Invitation"; ExternalInviteContent for the body.
+		d.name, d.avatar = firstNonEmpty(actor, "Slack Connect Invitation"), actorAv
+		if actor != "" {
+			d.team = it.Team
+		}
+		switch {
+		case it.InviteStatus == "revoked" || it.InviteStatus == "expired" || actor == "":
+			body("You received an invitation that has been ignored, expired, or is no longer available for another reason.")
+		case it.Type == "external_dm_invite":
+			body("invited you to direct message")
+		case it.Title != "":
+			body("invited you to #" + strings.TrimPrefix(it.Title, "#"))
+		default:
+			body("")
+		}
+		d.tile = d.avatar == ""
+	case it.Type == "internal_channel_invite" || it.Type == "quietly_added_to_channel":
+		// InviteContent: the message text becomes "invited you to <#C>".
+		if it.Type == "quietly_added_to_channel" && actor != "" {
+			d.name, d.avatar = actor, actorAv
+		}
+		body("invited you to " + d.title)
+		d.tile = d.avatar == ""
+	case it.Type == "shared_workspace_invite":
+		body("")
+	case it.Type == "team_joiner_invite":
 		if actor != "" {
 			d.name, d.avatar = actor, actorAv
 		}
-	}
-	// body sets the text of a row without a message (detailed body and
-	// dense preview).
-	body := func(s string) {
-		d.body = s
-		if it.Msg == nil || d.invite {
-			d.prev = s
+		if it.JoinerReminder {
+			body("Joined your workspace. A welcome from you will help them get started.")
+		} else {
+			body("Accepted your invitation to join Slack \u2014\u00a0take a second to say hello.")
 		}
-	}
-	switch {
-	case actIsMention(it.Type) || it.Type == "unjoined_channel_mention" || it.Type == "code_review_requested":
-		d.footIcon = "at"
-		d.foot = "Mention in " + place
-		if it.Type == "keyword" {
-			d.foot = "Keyword in " + place
-		}
-		if d.dm && it.Type == "at_user" {
-			d.footIcon, d.foot = "dms", "Mention in "+place
-		}
-	case it.Type == "thread_v2":
-		d.footIcon, d.foot = "threads", "Thread in "+place
-	case it.Type == "message_reaction":
-		d.footIcon, d.foot = "emoji", "Reaction in "+place
-		if r := it.Reaction; r != nil {
-			d.footEmoji = r.URL
-			d.name, d.avatar = v.userName(r.User), ""
-			if u, ok := v.user(r.User); ok {
-				d.avatar = u.Avatar
-			}
-		}
-	case it.Type == "channel":
-		// a channel set to "all new posts": Slack's "Post in #channel"
-		// (ActivityRowContent footer) under the message.
-		d.footIcon, d.foot = "hash", "Post in "+place
-		if d.dm {
-			d.footIcon, d.foot = "dms", "Direct message"
-		}
-		if it.Count > 1 && d.prev != "" {
-			d.prev = strconv.Itoa(it.Count) + " new posts · " + d.prev
-		}
-	case it.Type == "internal_channel_invite" || it.Type == "quietly_added_to_channel":
-		d.invite, d.footIcon, d.foot = true, "user-plus", "Invitation to "+d.title
-		if it.Type == "quietly_added_to_channel" {
-			useActor()
-		}
-		verb := " invited you to join "
-		if it.Type == "quietly_added_to_channel" {
-			verb = " added you to "
-		}
-		switch {
-		case d.name != "":
-			body(d.name + verb + d.title)
-		case it.Type == "quietly_added_to_channel":
-			d.name = d.title
-			body("You were added to " + d.title)
-		default:
-			d.name = d.title
-			body("You were invited to join " + d.title)
-		}
-		d.tile = d.avatar == ""
-	case it.Type == "external_channel_invite" || it.Type == "external_dm_invite" || it.Type == "shared_workspace_invite":
-		d.invite = true
-		useActor()
-		ch := d.title
-		if it.Title != "" {
-			ch = "#" + strings.TrimPrefix(it.Title, "#")
-		}
-		who := firstNonEmpty(actor, "Someone")
-		if it.Team != "" {
-			who += " from " + it.Team
-		}
-		s := who + " invited you to "
-		switch {
-		case it.Type == "external_dm_invite":
-			s += "direct message"
-		case ch != "":
-			s += ch
-		default:
-			s += "a channel"
-		}
-		if it.Text != "" {
-			s += ": " + oneLine(it.Text)
-		}
-		body(s + ".")
-		d.footIcon, d.foot = "user-plus", "Slack Connect Invitation"
-		if d.name == "" {
-			d.name = firstNonEmpty(it.Team, ch, "Slack Connect")
-		}
-		d.tile = d.avatar == ""
-	case it.Type == "team_joiner_invite":
-		d.invite = true
-		if d.name == "" {
-			useActor()
-		}
-		body("Joined your workspace. A welcome from you will help them get started.")
-		d.footIcon, d.foot = "user-plus", "Workspace invitation"
 	case it.Type == "prejoin_dm_welcome_party_alert":
-		d.invite = true
-		useActor()
-		body("Was invited to join " + firstNonEmpty(v.teamName(), "the workspace") + " \u2014 take a second to say hello.")
-		d.footIcon, d.foot = "user-plus", "Workspace invitation"
-	case it.Type == "bot_dm_bundle":
-		if d.name == "" {
-			d.name = d.title
+		if actor != "" {
+			d.name, d.avatar = actor, actorAv
 		}
-		d.foot, d.footBold = "App", true
-		if it.Count > 1 && d.prev != "" {
-			d.prev = strconv.Itoa(it.Count) + " new messages · " + d.prev
+		body("Was invited to join " + v.teamName() + " \u2014 take a second to say hello.")
+	case actIsList(it.Type):
+		if actor != "" {
+			d.name, d.avatar = actor, actorAv
 		}
-	case it.Type == "list_record_assigned":
-		useActor()
-		d.footIcon, d.foot = "list-view", "Assigned to you in a list"
-	case it.Type == "list_user_mentioned":
-		useActor()
-		d.footIcon, d.foot = "list-view", "Mention in a list"
-	case it.Type == "list_record_edited":
-		useActor()
-		d.footIcon, d.foot = "list-view", "Updated in a list"
-	case it.Type == "list_todo_notification":
-		d.footIcon, d.foot = "list-view", "To-do in a list"
-	case it.Type == "list_approval_request" || it.Type == "list_approval_reviewed":
-		useActor()
-		d.footIcon, d.foot = "list-view", "Approval in a list"
-		if it.Type == "list_approval_reviewed" {
-			d.foot = "Approval reviewed in a list"
-		}
-	case it.Type == "saved_reminder":
-		d.footIcon, d.foot = "clock", "Reminder"
-		if it.Msg != nil && place != "" {
-			d.foot = "Reminder from " + place
-		}
-		if it.Msg == nil {
-			d.name = "Reminder"
-			body(firstNonEmpty(oneLine(it.Text), "You asked to be reminded about this."))
-		}
-	case it.Type == "calendar_upcoming_event":
-		d.footIcon, d.foot = "calendar", "Upcoming event"
-		d.name = firstNonEmpty(it.Title, "Upcoming event")
-		body(firstNonEmpty(oneLine(it.Text), "Starting soon"))
-	case it.Type == "generic_system_alert" || it.Type == "example_user_alert":
-		d.name, d.avatar = "Slack", ""
-		d.footIcon, d.foot = "bell", actAlertLabel(it.Title)
-		body(firstNonEmpty(oneLine(it.Text), "Notification"))
-	default: // dm, mpdm and anything new
-		if d.dm {
-			d.footIcon, d.foot = "dms", "Direct message"
-		} else if place != "" {
-			d.foot = "In " + place
+		body(v.listBody(it))
+	default: // mentions, DMs, apps, channel posts
+		if it.Msg != nil && it.Msg.User == self {
+			d.subtext = "You: "
 		}
 	}
-	// Never an empty row: a name, some text and a footer for every item.
-	if d.name == "" {
-		useActor()
-	}
-	if d.name == "" {
-		d.name = d.title
-	}
-	if d.name == "" {
-		d.name = "Slack"
+	if d.nameDense == "" {
+		d.nameDense = d.name
 	}
 	if d.avatar == "" && !d.tile && it.Msg == nil && it.Actor == "" && it.Author == "" {
 		d.tile = true
 	}
-	if it.Msg == nil && d.body == "" {
-		body(actFallbackText(it, place))
+
+	// The context pill (withPrefixes, variant "pill") and its type icon.
+	d.foot, d.reacted = v.pillText(it, dest, d.title)
+	if d.foot != "" {
+		d.footIcon = actPillIcon(it)
 	}
-	if d.foot == "" {
-		d.footIcon, d.foot = "bell", "Activity"
+	if d.reacted && it.Reaction != nil {
+		d.footEmoji = it.Reaction.URL
 	}
+	d.footBold = dest == destApp && d.foot == "App"
 	d.hay = strings.ToLower(d.name + "\n" + d.prev + "\n" + d.title + "\n" + d.foot)
 	return d
 }
@@ -1128,6 +1055,7 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 	}
 	var lastDay time.Time
 	now := time.Now()
+	v.ensureLists(page)
 	for i := range page.Items {
 		it := &page.Items[i]
 		key := actKey(it)
@@ -1716,7 +1644,10 @@ func (v *Activity) actEmpty(gtx C) D {
 func (v *Activity) footer(gtx C, failed bool) D {
 	switch {
 	case v.paging:
-		return v.skeleton(gtx, 2, v.avSize())
+		// ActivityRowLoader: Slack's loading spinner under the last row.
+		return layout.Inset{Top: 12, Bottom: 16}.Layout(gtx, func(gtx C) D {
+			return layout.Center.Layout(gtx, func(gtx C) D { return actSpinner(gtx, gtx.Dp(20), v.p.Muted) })
+		})
 	case failed:
 		return layout.Inset{Top: 12, Bottom: 16}.Layout(gtx, func(gtx C) D {
 			return layout.Center.Layout(gtx, func(gtx C) D {
@@ -1748,23 +1679,33 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 		}
 	}
 	unread := v.isUnread(it, key)
-	if r.mark.Clicked(gtx) {
-		if unread {
+	for b := range r.btns {
+		if !ctxclick.Clicked(gtx, &r.btns[b]) {
+			continue
+		}
+		switch actBtn(b) {
+		case actBtnMarkRead:
 			v.markRead(it, key)
-		} else {
+			unread = false
+		case actBtnMarkUnread:
 			v.markUnread(it, key)
-		}
-		unread = !unread
-	}
-	if r.clear.Clicked(gtx) {
-		if v.showCleared {
-			v.unclear(it, key) // the archive's X restores the item
-		} else {
+			unread = true
+		case actBtnClear:
 			v.clear(it, key)
+		case actBtnRestore:
+			v.unclear(it, key)
+		case actBtnMore:
+			v.actMenuOpen(v.pointerAt(), *it, key, unread)
 		}
 	}
-	if r.more.Clicked(gtx) && it.Msg != nil {
-		v.h.OpenMessageMenu(image.Point{}, *it.Msg)
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: &r.ctx, Kinds: pointer.Press})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(pointer.Event); ok && ctxclick.Press(e) {
+			v.actMenuOpen(v.pointerAt(), *it, key, unread)
+		}
 	}
 	if v.dirty {
 		// A click above changed rows (or the pane) already drawn this
@@ -1841,7 +1782,7 @@ func (r *actRow) layoutItem(gtx C, p slackc.Props) D {
 			om := msgOverride(it.Msg, mp)
 			r.pd = r.d
 			if n, av := v.authorOf(&om); n != "" {
-				r.pd.name, r.pd.avatar = n, av
+				r.pd.name, r.pd.avatar, r.pd.nameDense = n, av, n
 			}
 			r.cur = &r.pd
 		}
@@ -1884,6 +1825,11 @@ func (r *actRow) itemBody(gtx C, st slackc.Styled, sel bool) D {
 		}
 		fill(gtx, rect, st.Background(bg))
 		call.Add(gtx.Ops)
+		cl := clip.Rect(rect).Push(gtx.Ops)
+		pass := pointer.PassOp{}.Push(gtx.Ops)
+		event.Op(gtx.Ops, &r.ctx)
+		pass.Pop()
+		cl.Pop()
 		h := max(1, gtx.Dp(1))
 		fill(gtx, image.Rect(0, dims.Size.Y-h, dims.Size.X, dims.Size.Y), v.p.Border)
 		return dims
@@ -1974,6 +1920,12 @@ func (r *actRow) nameText(gtx C, st slackc.Styled, blur bool) D {
 	col := st.Color(r.nameCol)
 	size := st.FontSize(15)
 	name := r.cur.name
+	if v.dense && r.cur.nameDense != "" {
+		name = r.cur.nameDense
+	}
+	if name == "" { // the sender isn't known yet: Slack's loading shimmer
+		return v.shimmerLine(gtx, 120)
+	}
 	if r.nameMax > 0 {
 		gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, r.nameMax)
 	}
@@ -2223,6 +2175,7 @@ type actNotes struct {
 	msgs  []string
 	fns   []func()            // reverts of failed writes (Activity)
 	items []core.ActivityItem // realtime activity items (Activity)
+	gone  []string            // keys of realtime activity_deleted items
 }
 
 func (n *actNotes) add(h Host, s string) {
@@ -2266,7 +2219,7 @@ func (v *Activity) rowContent(gtx C, r *actRow) D {
 		nameW, nameCol, bodyCol = wBlack, v.p.Text, v.p.Text
 	}
 	r.nameW, r.nameCol, r.nameMax, r.bodyCol = nameW, nameCol, 0, bodyCol
-	r.pm, r.count = nil, r.it.Count
+	r.pm, r.count = nil, actUnreadCount(r.it)
 	return r.rowKind(gtx)
 }
 
@@ -2294,21 +2247,19 @@ func (v *Activity) detailedContent(gtx C, r *actRow) D {
 							layout.Rigid(func(gtx C) D {
 								return slackc.Component(gtx, "ActivityPrivacyBlurredName", r, (*actRow).nameProps, (*actRow).layoutName)
 							}),
+							layout.Rigid(func(gtx C) D {
+								if d.team == "" { // InviteSenderName: the inviter's organisation (Detailed)
+									return D{}
+								}
+								return layout.Inset{Left: 4}.Layout(gtx, func(gtx C) D { return v.para(gtx, 15, 22, wReg, r.nameCol, 1, d.team) })
+							}),
 							hgap(8),
 							layout.Rigid(func(gtx C) D {
 								return layout.Inset{Top: 2}.Layout(gtx, func(gtx C) D { return v.para(gtx, 13, 18, wReg, v.p.Muted, 1, when) })
 							}),
 						)
 					}),
-					layout.Rigid(func(gtx C) D {
-						if r.msg() != nil && !d.invite {
-							return r.preview(gtx, 2)
-						}
-						if d.body == "" {
-							return D{}
-						}
-						return v.para(gtx, 15, 22, wReg, bodyCol, 2, d.body)
-					}),
+					layout.Rigid(func(gtx C) D { return v.actBody(gtx, r, 2, bodyCol) }),
 					layout.Rigid(func(gtx C) D {
 						if d.foot == "" {
 							return D{}
@@ -2335,7 +2286,7 @@ func (v *Activity) detailedContent(gtx C, r *actRow) D {
 // ("Mention in #general", 13px muted with its 16px icon) and the one-line
 // preview, then the time pushed to the right.
 func (v *Activity) denseContent(gtx C, r *actRow) D {
-	it, d, unread := r.it, r.cur, r.unread
+	d, unread := r.cur, r.unread
 	bodyCol, when := r.bodyCol, v.rowWhen(gtx, d)
 	return layout.Inset{Top: 8, Bottom: 8, Left: 16, Right: 20}.Layout(gtx, func(gtx C) D {
 		g := gtx
@@ -2360,10 +2311,10 @@ func (v *Activity) denseContent(gtx C, r *actRow) D {
 			}),
 			layout.Flexed(1, func(gtx C) D {
 				gtx.Constraints.Min.X = gtx.Constraints.Max.X
-				if m := r.msg(); m != nil && !d.invite && !(it.Type == "bot_dm_bundle" && it.Count > 1) && len(m.Doc.Blocks) > 0 {
+				if m := r.msg(); m != nil && !d.invite && len(m.Doc.Blocks) > 0 {
 					// The message's first line, drawn like the detailed body
 					// (emoji images, mentions) and clipped to one line.
-					return r.preview(gtx, 1)
+					return v.actBody(gtx, r, 1, bodyCol)
 				}
 				return layout.W.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wReg, bodyCol, d.prev) })
 			}),
@@ -2375,49 +2326,91 @@ func (v *Activity) denseContent(gtx C, r *actRow) D {
 	})
 }
 
-// actContext is the footer as an inline, natural-width label for Dense
-// rows.
+// actContext is the context pill as an inline, natural-width label for
+// Dense rows.
 func (v *Activity) actContext(gtx C, d *actDesc) D {
+	return v.actPill(gtx, d, false)
+}
+
+// actFooter draws the context pill (withPrefixes "pill"): the 16px type
+// icon (PillTypeIcon), 4px gap, the 13px/18px muted text; a reaction's
+// is "Reacted" and the emoji. "App" is bold.
+func (v *Activity) actFooter(gtx C, d *actDesc) D {
+	return v.actPill(gtx, d, true)
+}
+
+func (v *Activity) actPill(gtx C, d *actDesc, flex bool) D {
 	w := wReg
 	if d.footBold {
 		w = wBold
 	}
+	text := layout.Rigid(func(gtx C) D { return v.label(gtx, 13, w, v.p.Muted, d.foot) })
+	if flex && !d.reacted {
+		text = layout.Flexed(1, func(gtx C) D {
+			gtx.Constraints.Min.X = 0
+			return v.para(gtx, 13, 18, w, v.p.Muted, 1, d.foot)
+		})
+	}
 	return row(gtx, layout.Middle,
 		layout.Rigid(func(gtx C) D {
-			switch {
-			case d.footEmoji != "":
-				return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.emojiImg(gtx, d.footEmoji, 16) })
-			case d.footIcon != "":
-				return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.icon(gtx, d.footIcon, 16, v.p.Muted) })
+			if d.footIcon == "" {
+				return D{}
 			}
-			return D{}
+			return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.icon(gtx, icons.Slack(d.footIcon), 16, v.p.Muted) })
 		}),
-		layout.Rigid(func(gtx C) D { return v.label(gtx, 13, w, v.p.Muted, d.foot) }),
+		text,
+		layout.Rigid(func(gtx C) D {
+			if !d.reacted {
+				return D{}
+			}
+			return layout.Inset{Left: 4}.Layout(gtx, func(gtx C) D {
+				if d.footEmoji != "" {
+					return v.emojiImg(gtx, d.footEmoji, 16)
+				}
+				return v.icon(gtx, icons.Slack("reaction"), 16, v.p.Muted)
+			})
+		}),
 	)
 }
 
-// actFooter draws the row footer: 16px type icon (or the reaction emoji),
-// 4px gap, 13px/18px muted context; "App" style labels are bold.
-func (v *Activity) actFooter(gtx C, d *actDesc) D {
-	w := wReg
-	if d.footBold {
-		w = wBold
+// actBody is ActivityRowContentDetails' message: the subtext ("You: ")
+// then the message clipped to lines (the item's own cap when it has one),
+// or the text Slack draws instead of a message, or Slack's loading
+// shimmer while the message isn't known.
+func (v *Activity) actBody(gtx C, r *actRow, lines int, col color.NRGBA) D {
+	d := r.cur
+	if d.lines > 0 {
+		lines = d.lines
 	}
-	return row(gtx, layout.Middle,
-		layout.Rigid(func(gtx C) D {
-			switch {
-			case d.footEmoji != "":
-				return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.emojiImg(gtx, d.footEmoji, 16) })
-			case d.footIcon != "":
-				return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.icon(gtx, d.footIcon, 16, v.p.Muted) })
-			}
+	if d.invite {
+		if d.body == "" {
 			return D{}
-		}),
-		layout.Flexed(1, func(gtx C) D {
-			gtx.Constraints.Min.X = 0
-			return v.para(gtx, 13, 18, w, v.p.Muted, 1, d.foot)
-		}),
+		}
+		return v.para(gtx, 15, 22, wReg, col, lines, d.body)
+	}
+	if r.msg() == nil {
+		if r.it.Channel == "" {
+			return D{}
+		}
+		return v.shimmerLine(gtx, 240)
+	}
+	if d.subtext == "" {
+		return r.preview(gtx, lines)
+	}
+	return row(gtx, layout.Start,
+		layout.Rigid(func(gtx C) D { return v.para(gtx, 15, 22, wReg, col, 1, d.subtext) }),
+		layout.Flexed(1, func(gtx C) D { return r.preview(gtx, lines) }),
 	)
+}
+
+// shimmerLine is Slack's loading placeholder (applyShimmer) for a body
+// whose message hasn't loaded: one rounded bar.
+func (v *Activity) shimmerLine(gtx C, width unit.Dp) D {
+	w := min(gtx.Constraints.Max.X, gtx.Dp(width))
+	h := gtx.Dp(22)
+	bar := image.Rect(0, gtx.Dp(5), w, h-gtx.Dp(5))
+	rrect(gtx, bar, gtx.Dp(4), v.p.Skel)
+	return D{Size: image.Pt(w, h)}
 }
 
 // actStatus is the right column: the unread count pill, or the gray
@@ -2452,10 +2445,15 @@ func (v *Activity) actAvatarOf(gtx C, d *actDesc, size unit.Dp) D {
 	return D{Size: sz}
 }
 
-// hoverBar is the row's floating action bar: 104x40 at the top-right,
-// straddling the row's top border; three 32x32 buttons with 18px icons.
+// hoverBar is the row's floating action bar (ActivityRowContentActions):
+// at the top-right, straddling the row's top border; 32x32 buttons with
+// 18px icons, 4px padding, as many as the item has (hoverButtons).
 func (v *Activity) hoverBar(gtx C, r *actRow, unread bool, rowW, y int) {
-	bw, bh := gtx.Dp(104), gtx.Dp(40)
+	btns := v.hoverButtons(r.it, unread)
+	if len(btns) == 0 {
+		return
+	}
+	bw, bh := gtx.Dp(8)+len(btns)*gtx.Dp(32), gtx.Dp(40)
 	x := max(0, rowW-bw-gtx.Dp(16))
 	defer op.Offset(image.Pt(x, y)).Push(gtx.Ops).Pop()
 	g := gtx
@@ -2466,22 +2464,30 @@ func (v *Activity) hoverBar(gtx C, r *actRow, unread bool, rowW, y int) {
 		theme.Shadow(gtx, rect, rad, gtx.Dp(3), argb(0x14000000))
 		rrect(gtx, rect, rad, v.p.Surface)
 		border(gtx, rect, rad, max(1, gtx.Dp(1)), v.p.Border)
-		markIcon := "check"
-		if !unread {
-			markIcon = "mark-unread"
-		}
 		func() {
 			defer op.Offset(image.Pt(gtx.Dp(4), gtx.Dp(4))).Push(gtx.Ops).Pop()
 			g := gtx
 			g.Constraints.Min = image.Point{}
-			row(g, layout.Middle,
-				layout.Rigid(func(gtx C) D { return v.iconButton(gtx, &r.mark, markIcon, 32, 18, v.p.Text) }),
-				layout.Rigid(func(gtx C) D { return v.iconButton(gtx, &r.clear, "close", 32, 18, v.p.Text) }),
-				layout.Rigid(func(gtx C) D { return v.iconButton(gtx, &r.more, "more", 32, 18, v.p.Text) }),
-			)
+			ch := make([]layout.FlexChild, 0, len(btns))
+			for _, b := range btns {
+				b := b
+				icon, _ := actBtnIcon(b)
+				ch = append(ch, layout.Rigid(func(gtx C) D {
+					return v.iconButton(gtx, &r.btns[b], icons.Slack(icon), 32, 18, v.p.Text)
+				}))
+			}
+			row(g, layout.Middle, ch...)
 		}()
 		return D{Size: rect.Max}
 	})
+}
+
+// pointerAt is where the pointer is, for menus opened from a press.
+func (v *Activity) pointerAt() image.Point {
+	if pp, ok := v.h.(interface{ PointerPos() image.Point }); ok {
+		return pp.PointerPos()
+	}
+	return image.Point{}
 }
 
 // ---- preview pane ----
@@ -3012,4 +3018,58 @@ func (b *base) actPill(gtx C, r *core.Reaction) D {
 	layout.W.Layout(g, func(gtx C) D { return b.label(gtx, 11, wBold, fg, cnt) })
 	st.Pop()
 	return D{Size: image.Pt(w, h)}
+}
+
+// actSpinner is Slack's loading ring (a 3/4 arc turning once a second) in
+// a d-pixel box; it keeps frames coming while drawn.
+func actSpinner(gtx C, d int, c color.NRGBA) D {
+	t := float64(gtx.Now.UnixMilli()%1000) / 1000
+	r := float32(d)/2 - float32(gtx.Dp(2))/2
+	ctr := f32.Pt(float32(d)/2, float32(d)/2)
+	a0 := float32(t * 2 * math.Pi)
+	var p clip.Path
+	p.Begin(gtx.Ops)
+	p.MoveTo(f32.Pt(ctr.X+r*float32(math.Cos(float64(a0))), ctr.Y+r*float32(math.Sin(float64(a0)))))
+	p.ArcTo(ctr, ctr, 1.5*math.Pi)
+	st := clip.Stroke{Path: p.End(), Width: float32(gtx.Dp(2))}.Op().Push(gtx.Ops)
+	paint.ColorOp{Color: c}.Add(gtx.Ops)
+	paint.PaintOp{}.Add(gtx.Ops)
+	st.Pop()
+	gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(33 * time.Millisecond)})
+	return D{Size: image.Pt(d, d)}
+}
+
+// ensureLists loads the lists list items point at (ListContent and the
+// pill read the list's record and column names), then redraws those rows.
+func (v *Activity) ensureLists(page *core.ActivityPage) {
+	c := v.h.Core()
+	for i := range page.Items {
+		id := page.Items[i].ListID
+		if id == "" || v.listsReq[id] || c.CachedList(id) != nil {
+			continue
+		}
+		if v.listsReq == nil {
+			v.listsReq = map[string]bool{}
+		}
+		v.listsReq[id] = true
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			if _, err := c.List(ctx, id); err != nil {
+				return
+			}
+			v.notes.mu.Lock()
+			v.notes.fns = append(v.notes.fns, func() {
+				pg, _, _ := v.data.get()
+				for j := range pg.Items {
+					if pg.Items[j].ListID == id {
+						v.rowFor(actKey(&pg.Items[j])).built = false
+					}
+				}
+				v.dirty = true
+			})
+			v.notes.mu.Unlock()
+			v.h.Invalidate()
+		}()
+	}
 }

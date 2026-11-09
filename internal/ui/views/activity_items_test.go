@@ -28,6 +28,9 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
 )
 
+// actFeedLen is the number of entries in testdata/activity_feed.json.
+const actFeedLen = 38
+
 func actFeedApp(t *testing.T) *core.App { return actFeedAppWith(t, nil) }
 
 // actFeedAppWith is actFeedApp with rec seeing every API call (method and
@@ -68,18 +71,28 @@ func actFeedAppWith(t *testing.T, rec func(method string, form url.Values)) *cor
 		{ID: "USELF", Name: "self", RealName: "Test Self"},
 		{ID: "U1", Name: "alice", RealName: "Alice Example"},
 		{ID: "U2", Name: "bob", RealName: "Bob Example"},
+		{ID: "U3", Name: "carol", RealName: "Carol Example"},
 		{ID: "UB", Name: "synthbot", IsBot: true},
 	})
 	s.PutConv(slack.Conversation{ID: "C1", Name: "general", IsChannel: true, IsMember: true, NumMembers: 3})
 	s.PutConv(slack.Conversation{ID: "C2", Name: "random", IsChannel: true, NumMembers: 3})
 	s.PutConv(slack.Conversation{ID: "D1", IsIM: true, User: "U1", IsMember: true})
+	s.PutConv(slack.Conversation{ID: "G1", IsMPIM: true, Name: "mpdm-self--alice--bob-1", IsMember: true, Members: []string{"USELF", "U1", "U2"}})
 	m := func(ts, user, text string) slack.Message {
 		return slack.Message{Type: "message", TS: ts, User: user, Text: text}
 	}
 	root := m("1700000110.000100", "USELF", "a synthetic thread")
-	root.ThreadTS, root.ReplyCount, root.ReplyUsers = root.TS, 1, []string{"U2"}
+	root.ThreadTS, root.ReplyCount, root.ReplyUsers = root.TS, 2, []string{"U2", "U1"}
 	reply := m("1700000111.000100", "U2", "a synthetic reply")
 	reply.ThreadTS = root.TS
+	// several people reacted to this one (ReactionSender's "& others")
+	liked := m("1700000132.000100", "USELF", "a synthetic message people liked")
+	liked.Reactions = []slack.Reaction{{Name: "tada", Count: 3, Users: []string{"U2", "U1", "USELF"}}}
+	// a thread with three other participants (ThreadSender's "& 2 others")
+	root2 := m("1700000134.000100", "USELF", "a busy synthetic thread")
+	root2.ThreadTS, root2.ReplyCount, root2.ReplyUsers = root2.TS, 3, []string{"U2", "U1", "U3"}
+	reply2 := m("1700000135.000100", "U2", "a busy synthetic reply")
+	reply2.ThreadTS = root2.TS
 	joined := m("1700000120.000100", "U2", "<@U2> has joined the channel")
 	joined.Subtype = "channel_join"
 	s.SetLatest("C1", []slack.Message{
@@ -94,8 +107,12 @@ func actFeedAppWith(t *testing.T, rec func(method string, form url.Values)) *cor
 		m("1700000117.000100", "U1", "<@USELF> please review this synthetic change"),
 		joined,
 		m("1700000131.000100", "U2", "something new and synthetic"),
+		liked, root2, reply2,
+		m("1700000142.000100", "USELF", "<!subteam^S1> my own synthetic ping"),
 	}, false)
 	s.SetThread("C1", root.TS, []slack.Message{root, reply})
+	s.SetThread("C1", root2.TS, []slack.Message{root2, reply2})
+	s.SetLatest("G1", []slack.Message{m("1700000137.000100", "U1", "a synthetic group hello")}, false)
 	s.SetLatest("C2", []slack.Message{
 		m("1700000114.000100", "U1", "<@USELF> join us in random"),
 		m("1700000116.000100", "U2", "<@USELF> over here in random"),
@@ -127,7 +144,7 @@ func TestActivityEveryItemTypeRenders(t *testing.T) {
 	var ops op.Ops
 	sz := image.Pt(1200, 800)
 	deadline := time.Now().Add(10 * time.Second)
-	for len(actPage(v).Items) < 31 {
+	for len(actPage(v).Items) < actFeedLen {
 		if time.Now().After(deadline) {
 			t.Fatalf("feed never loaded (%d items)", len(actPage(v).Items))
 		}
@@ -135,49 +152,74 @@ func TestActivityEveryItemTypeRenders(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	page := actPage(v)
-	want := map[string]struct{ name, foot, body string }{
-		"k-channel":        {"Bob Example", "Post in #general", ""},
-		"k-channel-many":   {"Alice Example", "Post in #general", ""},
-		"k-channel-gone":   {"", "Post in #general", "New post in #general"},
-		"k-dm":             {"Alice Example", "Direct message", ""},
-		"k-at-channel":     {"Bob Example", "Mention in #general", ""},
-		"k-quiet":          {"Alice Example", "Invitation to #random", "Alice Example added you to #random"},
-		"k-invite":         {"Alice Example", "Invitation to #random", "Alice Example invited you to join #random"},
-		"k-unjoined":       {"Bob Example", "Mention in #random", ""},
-		"k-ext-channel":    {"eve", "Slack Connect Invitation", "eve from Example Co invited you to #partners: come chat."},
-		"k-ext-dm":         {"Eve Example", "Slack Connect Invitation", "Eve Example from Example Co invited you to direct message."},
-		"k-joiner":         {"Bob Example", "Workspace invitation", "Joined your workspace. A welcome from you will help them get started."},
-		"k-prejoin":        {"Bob Example", "Workspace invitation", "Was invited to join Synthetic Club — take a second to say hello."},
-		"k-reminder":       {"Alice Example", "Reminder from #general", ""},
-		"k-reminder-plain": {"Reminder", "Reminder", "water the synthetic plants"},
-		"k-calendar":       {"Synthetic standup", "Upcoming event", ""},
-		"k-alert":          {"Slack", "Channel", "A synthetic channel was archived."},
-		"k-future":         {"Bob Example", "In #general", ""},
-		"k-future-bare":    {"Slack", "Activity", "New activity"},
+	// Slack's strings for each row (activity_slack.go cites the modules):
+	// the sender, the context pill (with its icon) and the text drawn
+	// instead of a message ("-" = none).
+	type want struct{ name, foot, icon, body, sub string }
+	cases := map[string]want{
+		"k-channel":         {"Bob Example", "#general", "", "", ""},
+		"k-channel-many":    {"Alice Example", "#general", "", "", ""},
+		"k-channel-gone":    {"", "#general", "", "", ""},
+		"k-dm":              {"Alice Example", "Direct Message", "direct-messages", "", ""},
+		"k-at-user":         {"Alice Example", "Mention in #general", "mentions", "", ""},
+		"k-at-channel":      {"Bob Example", "Mention in #general", "mentions", "", ""},
+		"k-at-everyone":     {"Bob Example", "Mention in #general", "mentions", "", ""},
+		"k-at-group":        {"Alice Example", "Mention in #general", "mentions", "", ""},
+		"k-keyword":         {"Bob Example", "Keyword in #general", "mentions", "", ""},
+		"k-thread":          {"Bob Example and Alice Example", "Thread in #general", "threads", "", ""},
+		"k-thread-many":     {"Bob Example & 2 others", "Thread in #general", "threads", "", ""},
+		"k-reaction":        {"Bob Example", "Reacted", "", "", "You: "},
+		"k-reaction-many":   {"Alice Example & others", "Reacted", "", "", "You: "},
+		"k-bot":             {"", "App", "apps", "", ""},
+		"k-mpdm":            {"Alice Example", "Alice Example, Bob Example", "direct-messages", "", ""},
+		"k-invite":          {"Alice Example", "Invitation", "paper-plane", "invited you to #random", ""},
+		"k-quiet":           {"Alice Example", "Invitation", "paper-plane", "invited you to #random", ""},
+		"k-unjoined":        {"Bob Example", "Mention in #random", "mentions", "", ""},
+		"k-ext-channel":     {"eve", "Invitation", "paper-plane", "invited you to #partners", ""},
+		"k-ext-dm":          {"Eve Example", "Invitation", "paper-plane", "invited you to direct message", ""},
+		"k-ext-revoked":     {"eve", "Invitation", "paper-plane", "You received an invitation that has been ignored, expired, or is no longer available for another reason.", ""},
+		"k-joiner":          {"Bob Example", "Workspace invitation", "paper-plane", "Accepted your invitation to join Slack \u2014\u00a0take a second to say hello.", ""},
+		"k-joiner-reminder": {"Bob Example", "Workspace invitation", "paper-plane", "Joined your workspace. A welcome from you will help them get started.", ""},
+		"k-prejoin":         {"Bob Example", "Workspace invitation", "notifications", "Was invited to join Synthetic Club \u2014 take a second to say hello.", ""},
+		"k-reminder":        {"Reminder", "Reminder from #general", "reminder", "", "Alice Example: "},
+		"k-reminder-plain":  {"Reminder", "Reminder", "reminder", "water the synthetic plants", ""},
+		"k-reminder-file":   {"Reminder", "Reminder from", "reminder", "You set a reminder about this file", ""},
+		"k-alert":           {"Slack", "Channel", "notifications", "A synthetic channel was archived.", ""},
+		"k-future":          {"Bob Example", "#general", "mentions", "", ""},
+		"k-mine":            {"", "Mention in #general", "mentions", "", "You: "},
 	}
 	for i := range page.Items {
 		it := &page.Items[i]
 		key := actKey(it)
 		d := v.describe(it, page.Convs)
-		if d.name == "" || d.foot == "" {
-			t.Errorf("%s (%s): empty row: name %q foot %q", key, it.Type, d.name, d.foot)
-		}
-		if (it.Msg == nil || d.invite) && d.body == "" {
-			t.Errorf("%s (%s): no message and no body", key, it.Type)
-		}
-		if strings.TrimSpace(d.prev) == "" && it.Msg == nil {
-			t.Errorf("%s (%s): empty dense preview", key, it.Type)
-		}
-		if w, ok := want[key]; ok {
+		if w, ok := cases[key]; ok {
 			if w.name != "" && d.name != w.name {
 				t.Errorf("%s: name %q, want %q", key, d.name, w.name)
 			}
 			if d.foot != w.foot {
-				t.Errorf("%s: foot %q, want %q", key, d.foot, w.foot)
+				t.Errorf("%s: pill %q, want %q", key, d.foot, w.foot)
 			}
-			if w.body != "" && d.body != w.body {
+			if d.footIcon != w.icon {
+				t.Errorf("%s: pill icon %q, want %q", key, d.footIcon, w.icon)
+			}
+			if d.body != w.body {
 				t.Errorf("%s: body %q, want %q", key, d.body, w.body)
 			}
+			if d.subtext != w.sub {
+				t.Errorf("%s: subtext %q, want %q", key, d.subtext, w.sub)
+			}
+		}
+		if it.Msg == nil && !d.invite && it.Channel != "" && key != "k-channel-gone" && key != "k-future-bare" {
+			t.Errorf("%s (%s): no message and no text in its place", key, it.Type)
+		}
+		if key == "k-reaction" && !d.reacted {
+			t.Errorf("%s: the reaction pill isn't Reacted + emoji", key)
+		}
+		if key == "k-reaction-many" && d.nameDense != "Alice Example +1" {
+			t.Errorf("%s: dense name %q", key, d.nameDense)
+		}
+		if key == "k-thread-many" && d.nameDense != "Bob Example +2" {
+			t.Errorf("%s: dense name %q", key, d.nameDense)
 		}
 		if (key == "k-channel" || key == "k-channel-many") && it.Msg == nil {
 			t.Errorf("%s: the channel post wasn't hydrated", key)
@@ -187,6 +229,12 @@ func TestActivityEveryItemTypeRenders(t *testing.T) {
 		if hgt := v.row(gtx, it, 1).Size.Y; hgt <= 0 {
 			t.Errorf("%s (%s): row has no height", key, it.Type)
 		}
+	}
+	if got := actUnreadCount(&core.ActivityItem{Type: "dm", Count: 2}); got != 2 {
+		t.Errorf("dm unread count %d, want 2", got)
+	}
+	if got := actUnreadCount(&core.ActivityItem{Type: "at_user", Count: 4}); got != 1 {
+		t.Errorf("mention unread count %d, want 1 (only bundles count messages)", got)
 	}
 	actShots(t, app)
 }
@@ -203,9 +251,10 @@ func actShots(t *testing.T, app *core.App) {
 		dark, dense bool
 		h           int
 	}{
-		{"activity-detailed-light", false, false, 3400},
-		{"activity-detailed-dark", true, false, 3400},
+		{"activity-detailed-light", false, false, 4200},
+		{"activity-detailed-dark", true, false, 4200},
 		{"activity-dense-light", false, true, 1500},
+		{"activity-dense-dark", true, true, 1500},
 	} {
 		sz := image.Pt(1100, sh.h)
 		win, err := pixeltest.NewWindow(sz.X, sz.Y)
@@ -216,7 +265,7 @@ func actShots(t *testing.T, app *core.App) {
 		v.dense = sh.dense
 		var ops op.Ops
 		deadline := time.Now().Add(10 * time.Second)
-		for len(actPage(v).Items) < 31 && time.Now().Before(deadline) {
+		for len(actPage(v).Items) < actFeedLen && time.Now().Before(deadline) {
 			v.Layout(actFrame(&ops, sz))
 			time.Sleep(10 * time.Millisecond)
 		}

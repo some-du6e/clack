@@ -51,11 +51,13 @@ type actPayload struct {
 	InviteeUserID string `json:"invitee_user_id"`
 	UserID        string `json:"user_id"`
 	JoinerTS      string `json:"joiner_notification_message_ts"`
+	IsReminder    bool   `json:"is_reminder"` // team_joiner_invite_payload (TeamJoinerInviteContent)
 }
 
 type actListPayload struct {
 	ListID      string `json:"list_id"`
 	RowID       string `json:"row_id"`
+	ColumnID    string `json:"column_id"`
 	AssignedBy  string `json:"assigned_by"`
 	EditedBy    string `json:"edited_by"`
 	MentionedBy string `json:"mentioned_by"`
@@ -75,6 +77,7 @@ type actInvite struct {
 	Channel      *actNamed `json:"channel"`
 	Team         *actNamed `json:"team"`
 	Message      string    `json:"message"`
+	Status       string    `json:"status"` // "revoked", "expired", ...
 	InvitingUser *struct {
 		ID      string `json:"id"`
 		Name    string `json:"name"`
@@ -195,6 +198,9 @@ func activityItem(raw *activityRaw) (ActivityItem, *msgRef) {
 		}
 	}
 	// channel-pointing payloads
+	if p := in.TeamJoiner; p != nil {
+		it.JoinerReminder = p.IsReminder
+	}
 	for _, p := range []*actPayload{in.QuietlyAdded, in.Unjoined, in.CodeReview, in.TeamJoiner, in.Prejoin} {
 		if p == nil {
 			continue
@@ -214,7 +220,7 @@ func activityItem(raw *activityRaw) (ActivityItem, *msgRef) {
 		if inv.Team != nil {
 			it.Team = inv.Team.Name
 		}
-		it.Text = inv.Message
+		it.Text, it.InviteStatus = inv.Message, inv.Status
 		if u := inv.InvitingUser; u != nil {
 			it.Actor = firstNonEmpty(it.Actor, u.ID)
 			it.ActorName = firstNonEmpty(u.Profile.DisplayName, u.Profile.RealName, u.Name)
@@ -224,12 +230,15 @@ func activityItem(raw *activityRaw) (ActivityItem, *msgRef) {
 		if l != nil {
 			it.Actor = firstNonEmpty(it.Actor, l.AssignedBy, l.EditedBy, l.MentionedBy, l.UserID)
 			if it.ListID == "" {
-				it.ListID, it.ListRecord = l.ListID, l.RowID
+				it.ListID, it.ListRecord, it.ListColumn = l.ListID, l.RowID, l.ColumnID
 			}
 		}
 	}
 	if sr := in.SavedReminder; sr != nil {
-		it.Text = sr.Detail
+		it.Text, it.ReminderItem = sr.Detail, sr.ItemType
+		if sr.ItemType == "list_record" || sr.ItemType == "list_record_field" {
+			it.ListID, it.ListRecord = sr.ItemID, sr.ItemID2
+		}
 		if sr.ItemType == "message" && sr.ItemID != "" && sr.ItemID2 != "" && ref == nil {
 			ref = &msgRef{Channel: sr.ItemID, TS: sr.ItemID2}
 		}
