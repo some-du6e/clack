@@ -92,6 +92,17 @@ type User struct {
 	Color, Presence                  string // Presence: active | away | ""
 	Huddle                           bool
 	Agent                            bool // agent_status consistently_an_agent: Slack labels the sender AGENT, not APP
+
+	// TeamID is the member's team as Slack's computeLocality reads it
+	// (the org on Enterprise Grid for org members, else team_id).
+	// External: a Slack Connect member (neither on the viewer's team nor
+	// in its org); Stranger: users.info is_stranger.
+	TeamID   string
+	External bool
+	Stranger bool
+	// BotID and AppID are a bot user's profile.bot_id and api_app_id
+	// (Slack opens AppHoverCard for them instead of the member card).
+	BotID, AppID string
 }
 
 // Conv is a sidebar conversation.

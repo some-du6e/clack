@@ -33,6 +33,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/hovercard"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
@@ -215,6 +216,10 @@ type srCard struct {
 	tokExp             bool
 	over               bool
 	lines              int
+
+	// Slack's ProfileHoverTrigger on the sender's avatar and name
+	// (SearchResult: BaseAvatar showCard at 36px, MessageSender)
+	avHov, nameHov hovercard.Trigger
 
 	// hover action bar
 	bar, fwd, jump, kebab    widget.Clickable
@@ -1095,7 +1100,9 @@ func (v *SearchView) cardNative(gtx layout.Context, th *theme.Theme, cl *Colors,
 		})
 	}
 	at(gtx, image.Pt(padL, padT+dp(gtx, 2)), func(gtx layout.Context) layout.Dimensions {
-		return srAvatar(gtx, v.h, m, avURL, 36, rp)
+		d := srAvatar(gtx, v.h, m, avURL, 36, rp)
+		c.avHov.LayoutBot(gtx, m.User, srHoverBot(m), d.Size)
+		return d
 	})
 	right := w - padR
 	if c.when != "" {
@@ -1109,9 +1116,11 @@ func (v *SearchView) cardNative(gtx layout.Context, th *theme.Theme, cl *Colors,
 	}
 	d := at(gtx, image.Pt(tx, padT), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, right-tx), nameH)}
-		return vcenter(gtx, nameH, func(gtx layout.Context) layout.Dimensions {
+		d := vcenter(gtx, nameH, func(gtx layout.Context) layout.Dimensions {
 			return text(gtx, th, 15, theme.Black, cl.Fg, name)
 		})
+		c.nameHov.LayoutBot(gtx, m.User, srHoverBot(m), d.Size)
+		return d
 	})
 	srDrawWhere(gtx, v.h, c.where, tx+d.Size.X+dp(gtx, 4), padT, right, nameH, bg)
 	at(gtx, image.Pt(tx, bodyY), func(gtx layout.Context) layout.Dimensions {
@@ -1427,4 +1436,19 @@ func (v *SearchView) personRow(gtx layout.Context, th *theme.Theme, cl *Colors, 
 		})
 	})
 	return layout.Dimensions{Size: image.Pt(px+cw, h)}
+}
+
+// srHoverBot is the bot a result's sender opens AppHoverCard for when the
+// message has no user.
+func srHoverBot(m *core.Message) string {
+	if m.User != "" {
+		return ""
+	}
+	if m.BotID != "" {
+		return m.BotID
+	}
+	if m.BotProfile != nil {
+		return m.BotProfile.ID
+	}
+	return ""
 }

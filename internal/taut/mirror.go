@@ -928,8 +928,12 @@ func (m *mirror) member(u *slack.User) map[string]any {
 	e["_display_name_normalized_lc"] = deburr(strings.ToLower(pr.DisplayName))
 	for k, v := range map[string]any{"deleted": u.Deleted, "is_admin": u.IsAdmin, "is_owner": u.IsOwner, "is_bot": u.IsBot,
 		"is_app_user": u.IsAppUser, "is_restricted": u.IsRestricted, "is_ultra_restricted": u.IsUltraRestricted,
-		"isUnknown": false, "isNonExistent": false, "isExternal": false, "is_stranger": false} {
+		"isUnknown": false, "isNonExistent": false, "isExternal": false, "is_stranger": u.IsStranger} {
 		e[k] = v
+	}
+	// Slack's computeLocality: a Slack Connect member is isExternal
+	if cu, ok := m.t.app.User(u.ID); ok && cu.External {
+		e["isExternal"] = true
 	}
 	if e["team_id"] == nil && m.t.app.C.Creds.EnterpriseID != "" {
 		e["team_id"] = m.t.app.C.Creds.EnterpriseID

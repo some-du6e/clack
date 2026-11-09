@@ -28,6 +28,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/hovercard"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
@@ -142,6 +143,10 @@ type actRow struct {
 	pm    *core.Message
 	tm    *core.Message // the last thread message pm was looked up as
 	count int
+
+	// nameHov is Slack's ProfileHoverTrigger on a reaction row's reactor
+	// (ActivityItemMember in "X reacted to your message").
+	nameHov hovercard.Trigger
 }
 
 // Activity is the Activity view.
@@ -1716,13 +1721,25 @@ func (r *actRow) nameText(gtx C, st slackc.Styled, blur bool) D {
 	if r.nameMax > 0 {
 		gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, r.nameMax)
 	}
+	var d D
 	switch {
 	case blur:
 		return v.blurPara(gtx, size, 22, r.nameW, col, name)
 	case v.dense:
-		return v.label(gtx, size, r.nameW, col, name)
+		d = v.label(gtx, size, r.nameW, col, name)
+	default:
+		d = v.para(gtx, size, 22, r.nameW, col, 1, name)
 	}
-	return v.para(gtx, size, 22, r.nameW, col, 1, name)
+	r.nameHov.Layout(gtx, r.reactor(), d.Size)
+	return d
+}
+
+// reactor is the member a reaction row's name stands for ("" otherwise).
+func (r *actRow) reactor() string {
+	if it := r.it; it != nil && it.Type == "message_reaction" && it.Reaction != nil && r.cur == &r.d {
+		return it.Reaction.User
+	}
+	return ""
 }
 
 // preview is the message body, tagged data-qa="activity-item-message".

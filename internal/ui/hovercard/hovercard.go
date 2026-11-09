@@ -2,6 +2,21 @@
 // card: the card that opens when the pointer rests on a message author's
 // name or avatar, an @mention, or a member in a list.
 //
+// Where Slack has the trigger (2026-11 web client): ProfileHoverTrigger
+// is registered as renderProfileHoverCard (client-boot QvaD yN, boot-render
+// 26v2 CZ.yN.register), and these call it: the message sender's name
+// (/OeL MessageSender, also in search results) and avatar (xc3R
+// BaseAvatar with showCard, isInteractive and size >= 36: message
+// avatars, search result avatars, the DM foreword's 56px avatars), an
+// @mention (ld4x MemberSlug), member lists that pass showHoverCard
+// (LGvk MediumMemberEntity wraps the primary name only: the channel
+// details Members tab, channel managers, the apps tab), the Activity
+// feed's reaction headers (U5s4 ActivityItemMember: "X reacted to your
+// message"), system-message rollups (Nwo1 "X joined", c-message__rollup_
+// member) and file/canvas/list owners. Not: reaction pills and their
+// tooltips, the sidebar's DMs, thread reply-bar facepiles (24px,
+// isInteractive false), huddle participants.
+//
 // Triggers anywhere in the UI report themselves during layout (Trigger, or
 // Report for views that hit-test their own content, like richview's
 // mentions). The ui root owns one Controller: after the content is laid
@@ -67,6 +82,7 @@ const (
 type Request struct {
 	Key    any             // the trigger's identity (stable across frames)
 	UserID string          // the member to show
+	BotID  string          // a bot with no user (Slack's serviceId): AppHoverCard
 	Anchor image.Rectangle // the trigger's bounds in window coordinates
 }
 
@@ -119,14 +135,20 @@ func Report(key any, userID string, local image.Rectangle, ptr f32.Point) {
 
 // Report is the package Report for this controller.
 func (c *Controller) Report(key any, userID string, local image.Rectangle, ptr f32.Point) {
-	if key == c.spent {
+	c.ReportBot(key, userID, "", local, ptr)
+}
+
+// ReportBot is Report for a trigger that may name a bot instead of (or
+// with) a user: Slack's ProfileHoverTrigger takes memberId and serviceId.
+func (c *Controller) ReportBot(key any, userID, botID string, local image.Rectangle, ptr f32.Point) {
+	if key == c.spent || userID == "" && botID == "" {
 		return
 	}
 	off := image.Point{}
 	if c.Pointer != nil {
 		off = c.Pointer().Sub(image.Pt(int(ptr.X+.5), int(ptr.Y+.5)))
 	}
-	c.rep = Request{Key: key, UserID: userID, Anchor: local.Add(off)}
+	c.rep = Request{Key: key, UserID: userID, BotID: botID, Anchor: local.Add(off)}
 	c.hasRep = true
 }
 
@@ -211,7 +233,7 @@ func (c *Controller) Frame(now time.Time, blocked, hold bool) time.Time {
 			c.showAt = now.Add(ShowDelay)
 		} else {
 			c.pending.Anchor = rep.Anchor
-			c.pending.UserID = rep.UserID
+			c.pending.UserID, c.pending.BotID = rep.UserID, rep.BotID
 		}
 		if c.isOpen && c.hideAt.IsZero() {
 			c.hideAt = now.Add(HideDelay)
@@ -325,6 +347,12 @@ type Trigger struct {
 // Layout registers the trigger over size and reports it while hovered.
 // userID "" disables it.
 func (t *Trigger) Layout(gtx layout.Context, userID string, size image.Point) {
+	t.LayoutBot(gtx, userID, "", size)
+}
+
+// LayoutBot is Layout for a sender that may be a bot without a user
+// (botID: the message's bot_id). Both "" disables it.
+func (t *Trigger) LayoutBot(gtx layout.Context, userID, botID string, size image.Point) {
 	c := current
 	for {
 		e, ok := gtx.Event(pointer.Filter{Target: &t.tag, Kinds: pointer.Enter | pointer.Leave | pointer.Move | pointer.Cancel | pointer.Press})
@@ -350,8 +378,8 @@ func (t *Trigger) Layout(gtx layout.Context, userID string, size image.Point) {
 			}
 		}
 	}
-	if t.in && c != nil && userID != "" {
-		c.Report(t, userID, image.Rectangle{Max: size}, t.pos)
+	if t.in && c != nil && (userID != "" || botID != "") {
+		c.ReportBot(t, userID, botID, image.Rectangle{Max: size}, t.pos)
 	}
 	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
 	defer clip.Rect{Max: size}.Push(gtx.Ops).Pop()

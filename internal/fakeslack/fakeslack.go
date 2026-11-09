@@ -81,6 +81,18 @@ const (
 	AdminID       = "U0FAKEADMN" // a workspace admin ("Workspace Admin" banner)
 	DeactivatedID = "U0FAKEGONE" // a deactivated account
 	SlackbotID    = "USLACKBOT"
+
+	// AppUserID is an app's bot user (profile.bot_id AppBotID): Slack
+	// opens AppHoverCard for it. ExternalID is a Slack Connect member of
+	// ExternalTeamID ("Partner Co"), ExternalAppUserID that team's app.
+	AppUserID         = "U0FAKEAPPU"
+	AppBotID          = "B0FAKEAPPB"
+	AppAppID          = "A0FAKEAPPA"
+	ExternalID        = "U0FAKEXTRN"
+	ExternalTeamID    = "T0PARTNER1"
+	ExternalAppUserID = "U0FAKEXAPP"
+	ExternalAppBotID  = "B0FAKEXAPP"
+	ExternalAppAppID  = "A0FAKEXAPP"
 )
 
 // variants are the fixed users above.
@@ -99,13 +111,50 @@ func (s *Server) variants() []slack.User {
 	a := prof("avery.admin", "Avery Admin", "Keeps the lights on", "admn")
 	g := prof("gone.user", "Gone User", "Former fixture", "gone")
 	b := prof("Slackbot", "Slackbot", "", "slackbot")
+	ap := prof("", "Deploy Bot", "", "app")
+	ap.BotID, ap.APIAppID = AppBotID, AppAppID
+	x := prof("sam", "Sam Partner", "Partner Engineer", "xtrn")
+	x.Team = ExternalTeamID
+	xap := prof("", "Partner Bot", "", "xapp")
+	xap.Team, xap.BotID, xap.APIAppID = ExternalTeamID, ExternalAppBotID, ExternalAppAppID
 	return []slack.User{
 		{ID: ProfileID, TeamID: TeamID, Name: "robin", RealName: "Robin Example", TZ: "Europe/Berlin", TZLabel: "Central European Time", TZOffset: 3600, Profile: p, Presence: "active"},
 		{ID: AdminID, TeamID: TeamID, Name: "avery.admin", RealName: "Avery Admin", IsAdmin: true, TZ: "America/Los_Angeles", TZOffset: -28800, Profile: a},
 		{ID: DeactivatedID, TeamID: TeamID, Name: "gone.user", RealName: "Gone User", Deleted: true, TZ: "America/New_York", TZOffset: -18000, Profile: g},
 		// Slack serves Slackbot with is_bot false
 		{ID: SlackbotID, TeamID: TeamID, Name: "slackbot", RealName: "Slackbot", Profile: b, Presence: "active"},
+		{ID: AppUserID, TeamID: TeamID, Name: "deploybot", RealName: "Deploy Bot", IsBot: true, Profile: ap, Presence: "active"},
+		{ID: ExternalID, TeamID: ExternalTeamID, Name: "sam.partner", RealName: "Sam Partner", TZ: "Asia/Tokyo", TZOffset: 32400, Profile: x, Presence: "active"},
+		{ID: ExternalAppUserID, TeamID: ExternalTeamID, Name: "partnerbot", RealName: "Partner Bot", IsBot: true, Profile: xap},
 	}
+}
+
+// appProfile is apps.profile.get's app_profile for the fixed apps (the
+// keys Slack's AppHoverCard reads, as the real method sends them).
+func (s *Server) appProfile(bot, app string) (map[string]any, bool) {
+	icons := func(n string) map[string]any {
+		m := map[string]any{}
+		for _, px := range []int{32, 48, 64, 72, 96, 128, 192, 512} {
+			m["image_"+strconv.Itoa(px)] = s.URL + "img/" + strconv.Itoa(px) + "x" + strconv.Itoa(px) + "/" + n + ".png"
+		}
+		return m
+	}
+	switch {
+	case bot == AppBotID || app == AppAppID:
+		return map[string]any{"id": AppAppID, "name": "Deploy Bot", "desc": "Ships builds and posts release notes",
+			"app_card_color": "1264a3", "app_user_id": AppUserID, "team_id": TeamID, "enterprise_id": EnterpriseID,
+			"is_xoxa_app": false, "is_slack_integration": false, "is_workflow_app": false, "is_directory_published": false,
+			"is_installed": true, "icons": icons("app"), "bot_user": map[string]any{"id": AppUserID, "username": "deploybot"},
+			"auth":     map[string]any{"created_by": AdminID, "date_created": "1700000000"},
+			"commands": map[string]any{"deploy": map[string]any{"desc": "Deploy a branch", "usage": "[branch]"}}}, true
+	case bot == ExternalAppBotID || app == ExternalAppAppID:
+		return map[string]any{"id": ExternalAppAppID, "name": "Partner Bot", "desc": "Partner Co's helpdesk",
+			"app_card_color": "2eb67d", "app_user_id": ExternalAppUserID, "team_id": ExternalTeamID, "enterprise_id": "",
+			"is_directory_published": false, "is_installed": true, "icons": icons("xapp"),
+			"bot_user": map[string]any{"id": ExternalAppUserID, "username": "partnerbot"},
+			"auth":     map[string]any{"created_by": ExternalID}}, true
+	}
+	return nil, false
 }
 
 // Server is a running fake.
@@ -814,8 +863,18 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		}
 		return ok("channel_id", ch, "pref_name", name, "pref_value", v)
 	case "team.info":
+		if f.Get("team") == ExternalTeamID {
+			return ok("team", map[string]any{"id": ExternalTeamID, "name": "Partner Co", "domain": "partnerco",
+				"icon": map[string]any{"image_34": s.URL + "img/34x34/partner.png", "image_44": s.URL + "img/44x44/partner.png",
+					"image_88": s.URL + "img/88x88/partner.png"}})
+		}
 		return ok("team", map[string]any{"id": TeamID, "name": "Fake Club", "domain": "fakeclub",
 			"icon": map[string]any{"image_88": s.URL + "img/88x88/team.png"}})
+	case "apps.profile.get":
+		if p, found := s.appProfile(f.Get("bot"), f.Get("app")); found {
+			return ok("app_profile", p)
+		}
+		return map[string]any{"ok": false, "error": "app_not_found"}
 	case "emoji.list":
 		return ok("emoji", s.emoji)
 	case "usergroups.list":
