@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"strings"
 
+	"gioui.org/f32"
 	"gioui.org/gesture"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
@@ -191,7 +192,7 @@ var crInfo = [crNumBtn]crBtnInfo{
 	crBroadcast: {kind: caBroadcast},
 }
 
-var crIcChevron, crIcPara = icons.Get("chevron-down"), icons.Get("paragraph")
+var crIcChevron, crIcPara, crIcAa = icons.Get("chevron-down"), icons.Get("paragraph"), icons.Get("format")
 
 // crFmtOrder is the formatting bar left to right; crFmtSep marks the
 // buttons preceded by a separator.
@@ -756,27 +757,46 @@ func (c *chrome) tooltip(gtx layout.Context, th *theme.Theme, st *chromeState, i
 func (c *chrome) icon(gtx layout.Context, st *chromeState, id crBtn, r image.Rectangle, col color.NRGBA) {
 	is := gtx.Dp(18)
 	if id == crPara {
-		// ¶ (18) at padding 4, then the 20px caret box at margin-left -2
-		// holding a 16px chevron.
+		// ¶ (18) at padding 4, then the 20px c-menu_item__icon at
+		// margin-left -2 (x 20, y 4), its caret-down svg 20px too.
 		t := op.Offset(r.Min.Add(image.Pt(gtx.Dp(4), (r.Dy()-is)/2))).Push(gtx.Ops)
 		crIcPara(gtx, 18, col)
 		t.Pop()
-		cs := gtx.Dp(16)
-		t = op.Offset(r.Min.Add(image.Pt(gtx.Dp(22), (r.Dy()-cs)/2))).Push(gtx.Ops)
-		crIcChevron(gtx, 16, col)
+		cs := gtx.Dp(20)
+		t = op.Offset(r.Min.Add(image.Pt(gtx.Dp(20), (r.Dy()-cs)/2))).Push(gtx.Ops)
+		crIcChevron(gtx, 20, col)
 		t.Pop()
 		return
 	}
 	t := op.Offset(r.Min.Add(image.Pt((r.Dx()-is)/2, (r.Dy()-is)/2))).Push(gtx.Ops)
-	defer t.Pop()
 	switch id {
 	case crAa:
-		crIconAa(gtx, is, col, st.ShowFormatting)
+		crIcAa(gtx, 18, col) // Slack's formatting glyph
 	default:
 		if f := crInfo[id].icon; f != nil {
 			f(gtx, 18, col)
 		}
 	}
+	t.Pop()
+	if id == crAa && st.ShowFormatting {
+		crAaUnderline(gtx, r, col)
+	}
+}
+
+// crAaUnderline is the Aa button's c-wysiwyg_container__button--
+// composer_active:after while the formatting bar shows: currentColor,
+// 75% of the button wide (21px), 1.5px tall, fully rounded, its bottom 4px
+// above the button's, centred.
+func crAaUnderline(gtx layout.Context, r image.Rectangle, col color.NRGBA) {
+	k := gtx.Metric.PxPerDp
+	w, h := float32(r.Dx())*0.75, 1.5*k
+	x0 := float32(r.Min.X) + (float32(r.Dx())-w)/2
+	y := float32(r.Max.Y) - 4*k - h/2
+	var p clip.Path
+	p.Begin(gtx.Ops)
+	p.MoveTo(f32.Pt(x0+h/2, y))
+	p.LineTo(f32.Pt(x0+w-h/2, y))
+	paint.FillShape(gtx.Ops, col, clip.Stroke{Path: p.End(), Width: h}.Op())
 }
 
 // ---- formatting bar ----
@@ -969,10 +989,10 @@ func (c *chrome) attachButton(gtx layout.Context, th *theme.Theme, p *crPal, st 
 	}
 	bg, ic = c.f.btn.Background(bg), c.f.btn.Color(ic)
 	fillRRect(gtx, r, r.Dx()/2, bg)
-	// Slack's + is a ~13px cross: the registry's plus drawn at 22.
-	is := gtx.Dp(22)
+	// Slack's plus svg at 18px, centred (the 28px button's 5px padding).
+	is := gtx.Dp(18)
 	t := op.Offset(r.Min.Add(image.Pt((r.Dx()-is)/2, (r.Dy()-is)/2))).Push(gtx.Ops)
-	crInfo[crAttach].icon(gtx, 22, ic)
+	crInfo[crAttach].icon(gtx, 18, ic)
 	t.Pop()
 	c.hit(gtx, crAttach, r, true)
 	c.tooltip(gtx, th, st, crAttach, r)
