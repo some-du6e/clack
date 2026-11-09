@@ -175,12 +175,12 @@ func TestCreateChannelFlow(t *testing.T) {
 	}
 	t.Cleanup(func() { fs.Close() })
 	var creates []url.Values
-	fs.Hook = func(method string, f url.Values) (any, bool) {
+	fs.SetHook(func(method string, f url.Values) (any, bool) {
 		if method == "conversations.create" {
 			creates = append(creates, f)
 		}
 		return nil, false
-	}
+	})
 	e := startEnv(t, fs, t.TempDir())
 	e.waitReady()
 	e.settle(300 * time.Millisecond)
@@ -277,12 +277,12 @@ func TestCreateChannelFlow(t *testing.T) {
 	e.until("add people closed", 5*time.Second, func() bool { return add.Dismissed() })
 
 	// a restricted org: the error replaces the content, footer is "Okay"
-	fs.Hook = func(method string, f url.Values) (any, bool) {
+	fs.SetHook(func(method string, f url.Values) (any, bool) {
 		if method == "conversations.create" {
 			return map[string]any{"ok": false, "error": "restricted_action"}, true
 		}
 		return nil, false
-	}
+	})
 	a.OpenCreateChannel()
 	m2, _ := topOverlay[*popups.CreateChannelModal](a)
 	e.frame()

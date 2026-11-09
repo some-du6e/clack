@@ -41,12 +41,12 @@ func TestDraftKeepsAttachedFiles(t *testing.T) {
 	// (and the chip's thumbnail) change the draft again while the first
 	// create is still out. That must update the draft it makes, not create
 	// a second one (this test flaked on exactly that: two files-only drafts).
-	fs.Hook = func(method string, _ url.Values) (any, bool) {
+	fs.SetHook(func(method string, _ url.Values) (any, bool) {
 		if method == "drafts.create" {
 			time.Sleep(200 * time.Millisecond)
 		}
 		return nil, false
-	}
+	})
 	ch := fs.ChannelIDs()[0]
 	key := draftKey(ch, "")
 	forget := func() { // what a restart loses: every in-memory draft
@@ -183,9 +183,9 @@ func TestDraftKeepsAttachedFiles(t *testing.T) {
 		}
 	}
 	until("the composer emptied", frame3, func() bool { return c3.att.Len() == 0 })
-	if _, ok := app2.DraftFor(ch, ""); ok {
-		t.Error("the sent draft is still known")
-	}
+	// core forgets the draft when drafts.delete answers, a moment after the
+	// fake has marked it deleted
+	until("core forgetting the sent draft", frame3, func() bool { _, ok := app2.DraftFor(ch, ""); return !ok })
 	if HasDraft(ch, "") {
 		t.Error("HasDraft after sending")
 	}
