@@ -35,6 +35,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/ctxclick"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/openurl"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
@@ -51,7 +52,9 @@ const (
 
 // Composer toolbar and footer icons; "|" is a group separator.
 var (
-	thrToolbar = []string{"bold", "italic", "strike", "|", "link", "list-ordered", "list-bullet", "|", "quote", "code", "code-block"}
+	// the composer's formatting bar (composer.crFmtOrder): Slack's
+	// sticky formatting bar in the Threads view's reply box
+	thrToolbar = []string{"bold", "italic", "underline", "strike", "paragraph", "|", "link", "list-ordered", "list-bullet", "|", "quote", "code", "code-block", "divider"}
 	thrFooter  = []string{"text-format", "emoji", "at", "|", "video", "mic", "|", "slash"}
 )
 
@@ -117,11 +120,13 @@ type Threads struct {
 	failedCursor string
 	retry        widget.Clickable
 	retryMore    widget.Clickable
+	learn        widget.Clickable // empty state's "Learn about threads"
 
 	// read is the local read state: thread key -> latest reply ts marked
 	// read (Slack's view lags behind subscriptions.thread.mark).
 	read  map[string]string
 	sizes map[int]int // list element heights this frame (composer origins)
+	divAt int         // the item the "You’re up to date" divider sits above (-1: none)
 	notes actNotes
 }
 
@@ -321,18 +326,28 @@ func (v *Threads) body(gtx C) D {
 	case !loaded && n == 0:
 		return layout.Inset{Top: 16}.Layout(gtx, func(gtx C) D { return v.skeleton(gtx, 5, 36) })
 	case err != nil && n == 0:
-		return v.errorState(gtx, err, &v.retry)
+		return v.emptyState(gtx, "", thrErrText, friendlyErr(err), &v.retry, "Try again")
 	case n == 0:
 		return v.empty(gtx)
 	}
 	failed := v.failedCursor != "" && v.failedCursor == page.next
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 	clear(v.sizes)
+	div := v.firstRead(page.items)
+	v.divAt = div
 	d := v.scrollList(gtx, &v.list, n+1, func(gtx C, i int) D {
 		if i >= n {
 			return v.footer(gtx, failed)
 		}
-		d := v.thread(gtx, &page.items[i], page.convs)
+		var d D
+		if i == div {
+			d = layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(v.upToDate),
+				layout.Rigid(func(gtx C) D { return v.thread(gtx, &page.items[i], page.convs) }),
+			)
+		} else {
+			d = v.thread(gtx, &page.items[i], page.convs)
+		}
 		v.sizes[i] = d.Size.Y
 		return d
 	})
@@ -360,34 +375,106 @@ func (v *Threads) placeComposers(gtx C, items []thrItem) {
 	y := gtx.Dp(thrHeadH) - pos.Offset
 	for i := pos.First; i < pos.First+pos.Count && i < len(items); i++ {
 		if c := v.cards[items[i].key]; c != nil && c.comp != nil {
-			c.comp.Origin = org.Add(image.Pt(gtx.Dp(16+4), y+c.compY))
+			cy := y + c.compY
+			if i == v.divAt {
+				cy += gtx.Dp(32 + 20) // the "You’re up to date" divider above it
+			}
+			c.comp.Origin = org.Add(image.Pt(gtx.Dp(16+4), cy))
 		}
 		y += v.sizes[i]
 	}
 }
 
-// empty follows the shared Saved/To-dos empty state: illustration, 18px
-// 900 title, 15px body, centered column w 420. (The spec account had a
-// followed thread, so the copy is ours.)
+// empty is Slack's ThreadsEmptyState: an extended c-empty_state (column
+// max 420 wide) with the large :seedling: emoji, "Tend to your threads"
+// (900 18px/24px, 8px below), the description (15px/22px, 8px below) and
+// the "Learn about threads" help link.
 func (v *Threads) empty(gtx C) D {
+	if v.learn.Clicked(gtx) {
+		go func() { _ = openurl.Open(thrHelpURL) }()
+	}
 	return layout.Center.Layout(gtx, func(gtx C) D {
 		gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(420))
 		gtx.Constraints.Min.X = 0
 		return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
 			layout.Rigid(func(gtx C) D {
-				return layout.Inset{Bottom: 16}.Layout(gtx, func(gtx C) D { return v.icon(gtx, "threads", 64, v.p.Faint) })
-			}),
-			layout.Rigid(func(gtx C) D {
-				return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D {
-					return v.th.Layout(gtx, theme.TextStyle{Size: 18, LineHeight: 24, Weight: wBlack, Color: v.p.Text, Align: text.Middle}, "No threads yet")
+				return layout.Inset{Bottom: 24}.Layout(gtx, func(gtx C) D {
+					if u, _, ok := v.h.Core().Emoji("seedling"); ok && u != "" {
+						return v.emojiImg(gtx, u, 64)
+					}
+					return v.icon(gtx, "threads", 64, v.p.Faint)
 				})
 			}),
 			layout.Rigid(func(gtx C) D {
-				return v.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Color: v.p.Sec, Align: text.Middle},
-					"Threads you’re involved in will be collected right here.")
+				return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D {
+					return v.th.Layout(gtx, theme.TextStyle{Size: 18, LineHeight: 24, Weight: wBlack, Color: v.p.Text, Align: text.Middle}, thrEmptyTitle)
+				})
 			}),
+			layout.Rigid(func(gtx C) D {
+				return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D {
+					return v.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Color: v.p.Sec, Align: text.Middle}, thrEmptyBody)
+				})
+			}),
+			layout.Rigid(func(gtx C) D { return v.linkButton(gtx, &v.learn, 15, "Learn about threads") }),
 		)
 	})
+}
+
+// Slack's Threads view copy (client-threads-view chunk).
+const (
+	thrEmptyTitle = "Tend to your threads"
+	thrEmptyBody  = "Threads you’re involved in will be collected right here."
+	thrErrText    = "Something’s fishy! Slack can’t seem to load your threads."
+	thrUpToDate   = "You’re up to date"
+	// HelpLink articleId 0x1ac6947d87
+	thrHelpURL = "https://slack.com/help/articles/115000769927"
+)
+
+// upToDate is Slack's threads-view Divider ("You’re up to date") before
+// the first thread that was already read when the view loaded, once no
+// thread above it has unread replies (get_rows_and_keys: the divider row
+// goes before firstReadThreadKey unless it's the first thread or a thread
+// above still has replies newer than its initial last read). It's a 1px
+// #dddddd line with the 700 #616061 label on the page background in a
+// rounded pill (padding 4px 12px); margin 32px above, 20px below.
+func (v *Threads) upToDate(gtx C) D {
+	w := gtx.Constraints.Max.X
+	top, bottom := gtx.Dp(32), gtx.Dp(20)
+	lw := v.th.Measure(gtx, 15, wBold, thrUpToDate)
+	pw, ph := lw+gtx.Dp(24), gtx.Dp(22+8)
+	y := top
+	fill(gtx, image.Rect(gtx.Dp(16), y, w-gtx.Dp(16), y+max(1, gtx.Dp(1))), v.p.Border)
+	x := (w - pw) / 2
+	rrect(gtx, image.Rect(x, y-ph/2, x+pw, y+ph/2), ph/2, v.p.Page)
+	func() {
+		defer op.Offset(image.Pt(x+gtx.Dp(12), y-ph/2+gtx.Dp(4))).Push(gtx.Ops).Pop()
+		g := gtx
+		g.Constraints = layout.Constraints{Max: image.Pt(lw+1, gtx.Dp(22))}
+		v.para(g, 15, 22, wBold, v.meta(), 1, thrUpToDate)
+	}()
+	return D{Size: image.Pt(w, top+bottom)}
+}
+
+// firstRead is the index of the thread Slack puts the "You’re up to
+// date" divider before, or -1: the first thread that had no unread
+// replies at load, when it isn't the first one and every thread above it
+// has since been read.
+func (v *Threads) firstRead(items []thrItem) int {
+	for i := range items {
+		if items[i].UnreadCount > 0 {
+			continue
+		}
+		if i == 0 {
+			return -1
+		}
+		for j := 0; j < i; j++ {
+			if v.unread(&items[j]) > 0 {
+				return -1
+			}
+		}
+		return i
+	}
+	return -1
 }
 
 func (v *Threads) footer(gtx C, failed bool) D {
@@ -462,39 +549,44 @@ func (v *Threads) people(root *core.Message, replies []core.Message) string {
 	return strings.Join(names[:len(names)-1], ", ") + ", and " + names[len(names)-1]
 }
 
-// thrTime is the message timestamp: relative for the last few hours
-// ("1 hour ago"), else "11:17 AM" today, else "Nov 4th at 11:17 AM".
-// next is when the text changes (0 = not soon).
+// thrTime is the message timestamp, Slack's message formatter (client-boot
+// QvGr, the Threads view's c-timestamp): "Just now" under a minute, then
+// toTimeAgo ("1 minute ago", "N minutes ago", "1 hour ago" from 45
+// minutes), "Today at 2:46 PM", "Yesterday at …", the weekday within a
+// week ("Saturday at 2:46 PM"), else "Nov 4th at 2:46 PM" (with the year
+// when it isn't this year's). next is when the text changes (0 = not
+// soon).
 func thrTime(t, now time.Time) (s string, next time.Duration) {
 	if t.IsZero() {
 		return "", 0
 	}
 	age := now.Sub(t)
+	if age < 0 {
+		age = -age
+	}
 	switch {
-	case age < 0:
-		return clock(t), 0
 	case age < time.Minute:
-		return "just now", time.Minute - age
+		return "Just now", time.Minute - age
+	case age < 90*time.Second:
+		return "1 minute ago", 90*time.Second - age
+	case age < 45*time.Minute:
+		// toTimeAgo rounds: 2:29 is "2 minutes ago", 2:30 "3 minutes ago"
+		m := int((age + 30*time.Second) / time.Minute)
+		return strconv.Itoa(m) + " minutes ago", time.Duration(m)*time.Minute + 30*time.Second - age
 	case age < time.Hour:
-		m := int(age / time.Minute)
-		left := time.Minute - age%time.Minute
-		if m == 1 {
-			return "1 minute ago", left
-		}
-		return strconv.Itoa(m) + " minutes ago", left
-	case age < 3*time.Hour:
-		h := int(age / time.Hour)
-		left := time.Hour - age%time.Hour
-		if h == 1 {
-			return "1 hour ago", left
-		}
-		return strconv.Itoa(h) + " hours ago", left
+		return "1 hour ago", time.Hour - age
 	case sameDay(t, now):
-		return "Today at " + clock(t), 0 // Slack's Threads view (measured)
+		return "Today at " + clock(t), 0
 	case sameDay(t, now.AddDate(0, 0, -1)):
 		return "Yesterday at " + clock(t), 0
+	case age < 7*24*time.Hour:
+		return t.Format("Monday") + " at " + clock(t), 0
 	}
-	return actStamp(t), 0
+	s = t.Format("Jan 2") + ordinal(t.Day())
+	if t.Year() != now.Year() {
+		s += ", " + strconv.Itoa(t.Year())
+	}
+	return s + " at " + clock(t), 0
 }
 
 // meta is Slack's #616061 for timestamps and participants.
@@ -829,8 +921,9 @@ func (v *Threads) replyPicture(gtx C, c *thrCard) D {
 		rrect(gtx, r, rad, v.p.Bg)
 		border(gtx, r, rad, max(1, gtx.Dp(1)), edge)
 
-		// Toolbar (h 38): 18px icons, ~14px apart, separators between groups.
-		v.thrIcons(gtx, image.Pt(gtx.Dp(8), 0), gtx.Dp(38), thrToolbar, faint)
+		// Toolbar (h 38): 28px buttons 4px apart from x 5, 18px icons;
+		// Paragraph is 44 wide (icon + caret); separators sit 6px clear.
+		v.thrFmtIcons(gtx, gtx.Dp(5), gtx.Dp(38), faint)
 
 		// Editor: padding 8px 12px, 15px/22px placeholder.
 		func() {
@@ -882,6 +975,35 @@ func (v *Threads) replyPicture(gtx C, c *thrCard) D {
 		}()
 		return D{Size: r.Max}
 	})
+}
+
+// thrFmtIcons draws the formatting bar of Slack's sticky toolbar
+// (p-texty_sticky_formatting_bar): 28x28 buttons every 32px, the 44px
+// Paragraph button (icon + 12px caret) and 1px separators with 6px on
+// either side.
+func (v *Threads) thrFmtIcons(gtx C, x, bandH int, col color.NRGBA) {
+	is := gtx.Dp(18)
+	for _, n := range thrToolbar {
+		if n == "|" {
+			x += gtx.Dp(2) // 6px after the last button (which took its 4px gap)
+			fill(gtx, image.Rect(x, bandH/2-gtx.Dp(10), x+max(1, gtx.Dp(1)), bandH/2+gtx.Dp(10)), v.p.Border)
+			x += max(1, gtx.Dp(1)) + gtx.Dp(6)
+			continue
+		}
+		bw := gtx.Dp(28)
+		ix := x + (bw-is)/2
+		if n == "paragraph" {
+			bw = gtx.Dp(44)
+			ix = x + gtx.Dp(5)
+			st := op.Offset(image.Pt(ix+is+gtx.Dp(1), (bandH-gtx.Dp(12))/2)).Push(gtx.Ops)
+			v.icon(gtx, "chevron-down", 12, col)
+			st.Pop()
+		}
+		st := op.Offset(image.Pt(ix, (bandH-is)/2)).Push(gtx.Ops)
+		v.icon(gtx, n, 18, col)
+		st.Pop()
+		x += bw + gtx.Dp(4)
+	}
 }
 
 // thrIcons draws a row of 18px icons in 32px cells (≈14px apart) starting

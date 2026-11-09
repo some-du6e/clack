@@ -133,7 +133,9 @@ var slackIconNames = map[string]string{
 	"chain":                      "link",
 	"arrow-reply":                "reply",
 	"unread":                     "mark-unread",
+	"mark-as-unread":             "mark-unread",
 	"send-later":                 "schedule",
+	"schedule-send":              "schedule",
 	"scheduled":                  "schedule",
 	"document":                   "file",
 	"window":                     "panel-right",
@@ -208,6 +210,10 @@ func init() {
 	// centerlines of Slack's own (channel, user-add, channel-search,
 	// mark-as-read, share-message, lists, add-channel-canvas; held to
 	// Slack's ink and shape by TestIconsMatchSlack).
+	// Activity's "Cleared items" filter: Slack's eraser on the centrelines
+	// of its 1.5-unit outline (body, the band, and the two crumbs).
+	reg("eraser", s("M10.244 4.01 A1.644 1.644 0 0 1 12.569 4.01 L16.345 7.786 A1.644 1.644 0 0 1 16.345 10.111 L10.498 15.96 A1.65 1.65 0 0 1 9.331 16.443 H6.51 A1.65 1.65 0 0 1 5.343 15.96 L2.98 13.596 A1.644 1.644 0 0 1 2.98 11.271 Z"),
+		s("M5.93 9.38 L10.97 14.42"), s("M15.75 16.47 H17.5"), s("M15.75 14.23 L17.39 13.62"))
 	reg("channel", s("M9 2.75 L6.5 17.25 M13.75 2.75 L11.25 17.25 M3.75 6.75 H17.25 M2.75 13.75 H16.25"))
 	reg("user-add", s("M9 2.75 C10.9 2.75 12.75 4.1 12.75 6.67 C12.75 9.3 10.6 11.1 9 11.1 C7.4 11.1 5.25 9.3 5.25 6.67 C5.25 4.1 7.1 2.75 9 2.75 Z"),
 		s("M12.25 11.8 C11.2 11.4 10.05 11.25 9 11.25 C7.75 11.25 6.2 11.5 4.9 12.15 C3.5 12.8 2.3 13.85 1.85 15.25 C1.5 16.3 2.4 17.25 3.5 17.25 H12.25"),

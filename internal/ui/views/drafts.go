@@ -33,6 +33,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
@@ -70,6 +71,7 @@ type draftsOpened struct {
 type draftsRow struct {
 	dlRowState
 	del, edit, sched, send widget.Clickable
+	more                   widget.Clickable // scheduled messages: the ⋮ menu
 }
 
 // draftsEdit is a draft being edited in place: the card holds the
@@ -150,6 +152,13 @@ type Drafts struct {
 	schedOpen  bool
 	schedScrim widget.Clickable
 	schedItems [draftsSchedN]widget.Clickable
+
+	// moreID's scheduled message has its ⋮ menu open: "Cancel schedule
+	// and save to drafts", "Delete message".
+	moreID    string
+	moreOpen  bool
+	moreScrim widget.Clickable
+	moreItems [2]widget.Clickable
 
 	// Header "Edit": select drafts to delete several at once.
 	selecting            bool
@@ -394,10 +403,12 @@ func (d *Drafts) update(gtx C) {
 	}
 	d.updateEdit(gtx)
 	d.updateSched(gtx)
+	d.updateMore(gtx)
 	for k, r := range d.rows {
 		click, edit := r.click.Clicked(gtx), r.edit.Clicked(gtx)
 		del, sched, send := r.del.Clicked(gtx), r.sched.Clicked(gtx), r.send.Clicked(gtx)
-		if !click && !edit && !del && !sched && !send {
+		more := r.more.Clicked(gtx)
+		if !click && !edit && !del && !sched && !send && !more {
 			continue
 		}
 		kind, id, _ := strings.Cut(k, ":")
@@ -417,7 +428,15 @@ func (d *Drafts) update(gtx C) {
 				d.selected[id] = !d.selected[id]
 			}
 		case del:
-			d.deleteDraft(dr)
+			d.confirmDelete(dr)
+		case more:
+			if d.moreOpen && d.moreID == id {
+				d.closeMore()
+			} else {
+				d.closeMore()
+				d.closeSched()
+				d.moreID, d.moreOpen, r.pin = id, true, true
+			}
 		case send:
 			d.sendDraft(dr)
 		case sched:
@@ -1157,13 +1176,9 @@ func (d *Drafts) remove(ids ...string) {
 
 func (d *Drafts) deleteDraft(dr *core.Draft) {
 	id, ch, sched := dr.ID, dr.Channel, dr.DateScheduled > 0
-	msg := "Draft deleted"
-	if sched {
-		msg = "Scheduled message deleted"
-	}
 	d.remove(id)
 	tt := d.tt
-	d.run(draftsDone{okMsg: msg, errMsg: "Couldn’t delete that", unhide: []string{id}},
+	d.run(draftsDone{errMsg: "Couldn’t delete that", unhide: []string{id}},
 		func(ctx context.Context, c *core.App) (*core.Draft, error) {
 			if sched {
 				return nil, c.DeleteScheduled(ctx, ch, id)
@@ -1203,6 +1218,160 @@ func (d *Drafts) scheduleDraft(dr *core.Draft, at time.Time) {
 		func(ctx context.Context, c *core.App) (*core.Draft, error) {
 			_, err := c.RescheduleMessage(ctx, id, ts)
 			return nil, err
+		})
+}
+
+// ---- scheduled message menu and the delete dialog ----
+
+func (d *Drafts) closeMore() {
+	if r, ok := d.rows["d:"+d.moreID]; ok {
+		r.pin = false
+	}
+	d.moreOpen, d.moreID = false, ""
+}
+
+func (d *Drafts) updateMore(gtx C) {
+	if d.moreID == "" {
+		return
+	}
+	if !d.moreOpen {
+		d.closeMore()
+		return
+	}
+	for i := range d.moreItems {
+		if !d.moreItems[i].Clicked(gtx) {
+			continue
+		}
+		id := d.moreID
+		d.closeMore()
+		if dr := d.findDraft(id); dr != nil {
+			if i == 0 {
+				d.unscheduleDraft(dr)
+			} else {
+				d.confirmDelete(dr)
+			}
+		}
+		return
+	}
+}
+
+// moreMenu is the scheduled message's ⋮ menu (DraftItem's renderMenu):
+// "Cancel schedule and save to drafts" and the danger "Delete message".
+func (d *Drafts) moreMenu(gtx C) D {
+	return col(gtx,
+		layout.Rigid(func(gtx C) D {
+			return d.menuItem(gtx, &d.moreItems[0], "", "Cancel schedule and save to drafts", false, false)
+		}),
+		layout.Rigid(func(gtx C) D { return d.dangerItem(gtx, &d.moreItems[1], "Delete message") }),
+	)
+}
+
+// dangerItem is a 32px menu row in Slack's danger red (hover: red fill,
+// white text).
+func (d *Drafts) dangerItem(gtx C, c *widget.Clickable, label string) D {
+	return c.Layout(gtx, func(gtx C) D {
+		pointerCursor(gtx)
+		w, h := gtx.Constraints.Max.X, gtx.Dp(32)
+		fg := d.th.C.Danger
+		if c.Hovered() {
+			fill(gtx, image.Rect(0, 0, w, h), d.th.C.Danger)
+			fg = rgb(0xffffff)
+		}
+		g := gtx
+		g.Constraints = layout.Exact(image.Pt(w, h))
+		layout.Inset{Left: 16, Right: 16}.Layout(g, func(gtx C) D {
+			return layout.W.Layout(gtx, func(gtx C) D { return d.label(gtx, 15, wReg, fg, label) })
+		})
+		return D{Size: image.Pt(w, h)}
+	})
+}
+
+// deleteDialogText is DeleteDraftModal's title, question and buttons.
+// The destination is bold in Slack's question.
+func deleteDialogText(dst draftDest, scheduled, thread, hasDest bool) (title string, q []richtext.Span, del string, saveAsDraft bool) {
+	title, del = "Delete draft?", "Delete Draft"
+	if scheduled {
+		title, del = "Delete scheduled message?", "Delete"
+	}
+	name := dst.name
+	if dst.glyph != "" {
+		name = "#" + name
+	}
+	plain := func(t string) richtext.Span { return richtext.Span{Kind: richtext.Text, Text: t} }
+	bold := richtext.Span{Kind: richtext.Text, Text: name, Style: richtext.Bold}
+	switch {
+	case !hasDest:
+		q = []richtext.Span{plain("Are you sure you want to delete this draft?")}
+	case scheduled && !thread:
+		q = []richtext.Span{plain("Are you sure you want to delete this message to "), bold, plain("?")}
+	case thread:
+		q = []richtext.Span{plain("Are you sure you want to delete this message to a thread in "), bold, plain("?")}
+	default:
+		q = []richtext.Span{plain("Are you sure you want to delete this draft to "), bold, plain("?")}
+	}
+	return title, q, del, scheduled && !thread
+}
+
+// confirmDelete opens Slack's DeleteDraftModal: "Delete draft?" (Cancel,
+// Delete Draft) or "Delete scheduled message?" (Save as Draft on the
+// left, Cancel, Delete).
+func (d *Drafts) confirmDelete(dr *core.Draft) {
+	ph, ok := d.h.(popups.Host)
+	if !ok {
+		d.deleteDraft(dr)
+		return
+	}
+	id := dr.ID
+	dst := d.destOf(dr.Channel, dr.Users, dr.ThreadTS, nil)
+	title, q, del, saveAs := deleteDialogText(dst, dr.DateScheduled > 0, dr.ThreadTS != "", dr.Channel != "" || len(dr.Users) > 0)
+	doc := richtext.Doc{Blocks: []richtext.Block{{Kind: richtext.Paragraph, Spans: q}}}
+	var btns []*popups.ModalButton
+	if saveAs {
+		btns = append(btns, &popups.ModalButton{Label: "Save as Draft", Kind: popups.BtnOutline, Left: true, Do: func() bool {
+			if dr := d.findDraft(id); dr != nil {
+				d.unscheduleDraft(dr)
+			}
+			return true
+		}})
+	}
+	btns = append(btns,
+		&popups.ModalButton{Label: "Cancel", Kind: popups.BtnOutline},
+		&popups.ModalButton{Label: del, Kind: popups.BtnDanger, Do: func() bool {
+			if dr := d.findDraft(id); dr != nil {
+				d.deleteDraft(dr)
+			}
+			return true
+		}})
+	ph.ShowOverlay(popups.NewModal(ph, popups.ModalOpts{
+		Title:        title,
+		EnterSubmits: true,
+		Body: func(gtx C) D {
+			return d.richDoc(gtx, "draft-delete:"+id, title, doc, richview.Options{}, 0)
+		},
+		Buttons: btns,
+	}))
+}
+
+// unscheduleDraft moves a scheduled message back to Drafts (drafts.update
+// with date_scheduled 0).
+func (d *Drafts) unscheduleDraft(dr *core.Draft) {
+	id := dr.ID
+	moved := *dr
+	moved.DateScheduled = 0
+	l := d.all()
+	for i := range l {
+		if l[i].ID == id {
+			l[i] = moved
+		}
+	}
+	d.place(l)
+	d.run(draftsDone{errMsg: "Couldn’t save your draft"},
+		func(ctx context.Context, c *core.App) (*core.Draft, error) {
+			nd, err := c.UnscheduleDraft(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			return &nd, nil
 		})
 }
 
@@ -1574,7 +1743,7 @@ func (d *Drafts) sentRow(gtx C, m *core.Message, first, last bool) D {
 func (d *Drafts) draftCard(gtx C, dr *core.Draft, scheduled bool) D {
 	r := d.rowState("d:" + dr.ID)
 	dst := d.destOf(dr.Channel, dr.Users, dr.ThreadTS, nil)
-	when := listTime(draftTime(dr))
+	when := draftsListTime(draftTime(dr), time.Now())
 	if scheduled {
 		when = draftsSendText(unixTime(dr.DateScheduled))
 	}
@@ -1622,10 +1791,28 @@ func (d *Drafts) draftCard(gtx C, dr *core.Draft, scheduled bool) D {
 			ib := func(c *widget.Clickable, icon string) layout.FlexChild {
 				return layout.Rigid(func(gtx C) D { return d.iconButton(gtx, c, icon, 32, 18, d.p.Sec) })
 			}
-			dims := d.draftsBar(gtx, ib(&r.del, "trash"), ib(&r.edit, "edit"), ib(&r.sched, "clock"), ib(&r.send, "send"))
+			// Slack's DraftItem actions: a draft has Delete draft, Edit
+			// draft, Schedule message and Send message; a scheduled
+			// message has Edit message, Reschedule message, Send message
+			// and a ⋮ menu (a scheduled thread reply has Delete message
+			// up front instead of the menu).
+			var btns []layout.FlexChild
+			thread := dr.ThreadTS != ""
+			if !scheduled || thread {
+				btns = append(btns, ib(&r.del, "trash"))
+			}
+			btns = append(btns, ib(&r.edit, "edit"), ib(&r.sched, "schedule"), ib(&r.send, "send"))
+			if scheduled && !thread {
+				btns = append(btns, ib(&r.more, "kebab"))
+			}
+			dims := d.draftsBar(gtx, btns...)
 			if d.schedOpen && d.schedID == dr.ID {
 				w := unit.Dp(260)
 				d.dropdown(gtx, &d.schedOpen, &d.schedScrim, image.Pt(dims.Size.X-gtx.Dp(w), dims.Size.Y+gtx.Dp(4)), w, d.schedMenu)
+			}
+			if d.moreOpen && d.moreID == dr.ID {
+				w := unit.Dp(300)
+				d.dropdown(gtx, &d.moreOpen, &d.moreScrim, image.Pt(dims.Size.X-gtx.Dp(w), dims.Size.Y+gtx.Dp(4)), w, d.moreMenu)
 			}
 			return dims
 		},
@@ -1649,26 +1836,54 @@ func (d *Drafts) draftsBar(gtx C, btns ...layout.FlexChild) D {
 	return dims
 }
 
-// draftsSendText formats a scheduled time: "Send today at 3:00 PM",
-// "Send tomorrow at 9:00 AM", "Send Monday, November 10 at 9:00 AM".
+// draftsSendText is Slack's DraftDateScheduled: "Send {date} at {time}"
+// with {date_short_pretty} uncapitalized: "today", "tomorrow" or
+// "yesterday", else "Nov 10" (MMM D), with the year when the date is more
+// than about six months away (excludeYearHelper: ±262080 minutes).
 func draftsSendText(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	now := time.Now()
-	switch {
-	case sameDay(t, now):
-		return "Send today at " + clock(t)
-	case sameDay(t, now.AddDate(0, 0, 1)):
-		return "Send tomorrow at " + clock(t)
-	case t.Year() == now.Year():
-		return "Send " + t.Format("Monday, January 2") + " at " + clock(t)
-	}
-	return "Send " + t.Format("January 2, 2006") + " at " + clock(t)
+	return "Send " + shortPrettyDate(t, time.Now()) + " at " + clock(t)
 }
 
-// draftFilesLine previews a draft that is only files: their names, as
-// drafts.list describes them, else how many there are.
+// shortPrettyDate is Slack's {date_short_pretty}, uncapitalized.
+func shortPrettyDate(t, now time.Time) string {
+	switch {
+	case sameDay(t, now):
+		return "today"
+	case sameDay(t, now.AddDate(0, 0, 1)):
+		return "tomorrow"
+	case sameDay(t, now.AddDate(0, 0, -1)):
+		return "yesterday"
+	}
+	d := t.Sub(now)
+	if d < 0 {
+		d = -d
+	}
+	if d < 262080*time.Minute {
+		return t.Format("Jan 2")
+	}
+	return t.Format("Jan 2, 2006")
+}
+
+// draftsListTime is a draft's timestamp (DraftItem): the time today,
+// else the short calendar date ("Nov 7th"; "Nov 7th, 2025" from another
+// year).
+func draftsListTime(t, now time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	if sameDay(t, now) {
+		return clock(t)
+	}
+	s := t.Format("Jan 2") + ordinal(t.Day())
+	if t.Year() != now.Year() {
+		s += ", " + strconv.Itoa(t.Year())
+	}
+	return s
+}
+
 func draftFilesLine(dr *core.Draft) string {
 	var names []string
 	for _, f := range dr.FileInfo {

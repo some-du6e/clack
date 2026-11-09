@@ -61,6 +61,9 @@ type Size struct {
 	// CodeChannels adds the code channel fixtures (codechannels.go): one
 	// per agent status, an archived one and one the viewer isn't in.
 	CodeChannels bool
+	// Views adds the rail list views' fixtures (views.go): followed
+	// threads, scheduled drafts, recorded activity writes.
+	Views bool
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -422,6 +425,7 @@ func Serve(ln net.Listener, sz Size) *Server {
 // Close stops the server.
 func (s *Server) Close() error {
 	searchLogs.Delete(s)
+	viewsStates.Delete(s)
 	if s.srv == nil {
 		return nil
 	}
@@ -1067,6 +1071,11 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	}
 	if out, handled := s.handleCodeChannels(method, f); handled && s.Size.CodeChannels { // codechannels.go
 		return out
+	}
+	if s.Size.Views {
+		if out, handled := s.handleViews(method, f); handled { // views.go
+			return out
+		}
 	}
 	if out, handled := s.handleDrafts(method, f); handled {
 		return out

@@ -106,6 +106,10 @@ var (
 
 func (a *App) openPrefs() { a.openPrefsSection("notifications") }
 
+// OpenPreferences opens Preferences at a section ("notifications"); views
+// call it (Activity's "See all notification settings").
+func (a *App) OpenPreferences(section string) { a.openPrefsSection(section) }
+
 // openPrefsSection opens Preferences on a section through Slack's
 // openPrefsModal thunk (plugins may redirect it; Taut opens its own tab
 // with activeSection "advanced"). popups' OpenPreferencesSection hook and
