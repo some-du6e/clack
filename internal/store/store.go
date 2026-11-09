@@ -905,6 +905,41 @@ func (s *Store) Find(ch, ts string) (slack.Message, bool) {
 	return slack.Message{}, false
 }
 
+// MsgRef names a cached message.
+type MsgRef struct{ Channel, TS string }
+
+// WithFile lists the cached messages (timelines and threads, each once)
+// that carry file id.
+func (s *Store) WithFile(id string) []MsgRef {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []MsgRef
+	seen := map[MsgRef]bool{}
+	add := func(ch string, m *slack.Message) {
+		for i := range m.Files {
+			if m.Files[i].ID == id {
+				if r := (MsgRef{ch, m.TS}); !seen[r] {
+					seen[r] = true
+					out = append(out, r)
+				}
+				return
+			}
+		}
+	}
+	for ch, t := range s.timelines {
+		for i := range t.Msgs {
+			add(ch, &t.Msgs[i])
+		}
+	}
+	for k, th := range s.threads {
+		ch, _, _ := strings.Cut(k, "/")
+		for i := range th {
+			add(ch, &th[i])
+		}
+	}
+	return out
+}
+
 // ClientMsgIDs lists the client_msg_ids of ch's cached messages (timeline
 // and threads).
 func (s *Store) ClientMsgIDs(ch string) map[string]bool {

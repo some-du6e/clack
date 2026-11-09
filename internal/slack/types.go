@@ -93,6 +93,9 @@ type File struct {
 	URLPrivate         string          `json:"url_private"`
 	URLPrivateDownload string          `json:"url_private_download"`
 	Permalink          string          `json:"permalink"`
+	Thumb64            string          `json:"thumb_64,omitempty"`
+	Thumb80            string          `json:"thumb_80,omitempty"`
+	Thumb160           string          `json:"thumb_160,omitempty"`
 	Thumb360           string          `json:"thumb_360"`
 	Thumb480           string          `json:"thumb_480"`
 	Thumb720           string          `json:"thumb_720"`
@@ -130,6 +133,10 @@ type File struct {
 	AudioWaveSamples   []int           `json:"audio_wave_samples"`
 	Subtype            string          `json:"subtype"`
 	FileAccess         string          `json:"file_access,omitempty"`
+	// MediaDisplayType is Slack's media_display_type ("unknown" while an
+	// upload is still being processed). Slack's web client doesn't draw by
+	// it; Clack only reads it to spot unprocessed uploads.
+	MediaDisplayType string `json:"media_display_type,omitempty"`
 }
 
 type AttachmentField struct {

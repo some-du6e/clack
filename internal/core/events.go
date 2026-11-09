@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/url"
 	"regexp"
 	"strings"
@@ -279,6 +280,8 @@ func (a *App) handle(ev slack.Event) {
 		a.onThreadSubscription(ev.Raw, ev.Type == "thread_subscribed")
 	case "star_added", "star_removed":
 		a.onStarEvent(ev.Raw, ev.Type == "star_added")
+	case "file_change", "file_shared", "file_public":
+		go a.onFileChange(ev) // files.info off the event pump
 	default:
 		// sh_room_*, huddle_invite, huddle_invite_cancel (Slack's
 		// huddleInviteCancelRtmHandler), huddle_start…
@@ -332,8 +335,14 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		// last reply is deleted the parent's message_changed has no
 		// reply_count, and the reply bar goes; a deleted parent with
 		// replies arrives here as subtype "tombstone".
+		if old, ok := a.S.Find(ch, m.TS); ok {
+			keepFiles(&m, &old)
+		}
 		if _, found := a.S.Mutate(ch, m.TS, func(x *slack.Message) { *x = m }); !found {
 			a.putLocal(ch, m) // a reply goes to its (cached) thread, never the channel
+		}
+		if needsFileInfo(&m) {
+			go a.fillFiles(ch, m.TS)
 		}
 		a.emitUpdate(ch, &m)
 		return
@@ -367,6 +376,9 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		return
 	}
 	a.EnsureUsers(ctx, referencedUsers([]slack.Message{m}))
+	if needsFileInfo(&m) { // the echo of the viewer's own upload too
+		go a.fillFiles(ch, m.TS)
+	}
 	isReply := m.ThreadTS != "" && m.ThreadTS != m.TS
 	// Echo of our own optimistic send: swap the pending row instead of
 	// announcing a second message.
@@ -403,9 +415,6 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 			a.emit(Event{Type: "sidebar_changed"})
 		}
 	}
-	if needsFileInfo(&m) {
-		go a.fillFiles(ch, m.TS)
-	}
 	v := a.message(ch, &m)
 	cv := a.Count(ch)
 	ev2 := Event{Type: "message", Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, UserID: m.User, Msg: &v, Count: &cv,
@@ -428,47 +437,155 @@ func mentionsSelf(m *slack.Message, self string) bool {
 }
 
 // needsFileInfo reports whether a message carries file stubs that must be
-// completed with files.info (fresh uploads arrive as file_access=check_file_info).
+// completed with files.info.
 func needsFileInfo(m *slack.Message) bool {
-	for _, f := range m.Files {
-		if f.URLPrivate == "" && f.Mode != "tombstone" && f.Mode != "hidden_by_limit" && f.ID != "" {
+	for i := range m.Files {
+		if fileStub(&m.Files[i]) {
 			return true
 		}
 	}
 	return false
 }
 
+// fileStub reports whether f is a file object Slack sent before it had the
+// file: file_access=check_file_info (shouldCheckFileInfo), no url_private,
+// or an upload it hasn't processed yet. A pasted screenshot's message
+// event often beats Slack's processing; its file then has a name and
+// url_private but an empty mimetype, filetype and pretty_type, size 0 and
+// media_display_type "unknown", which draws as a generic "FILE" card.
+// Slack's web client refetches the file on file_change (filesChanged)
+// once processing is done.
+func fileStub(f *slack.File) bool {
+	if f.ID == "" || f.Mode == "tombstone" || f.Mode == "hidden_by_limit" {
+		return false
+	}
+	if f.FileAccess == "check_file_info" || f.URLPrivate == "" {
+		return true
+	}
+	return !f.IsExternal && f.Mimetype == "" && f.Filetype == ""
+}
+
+// fileFillDelays are fillFiles' waits before each files.info round: Slack
+// takes a few seconds to process an upload (thumbnails, mimetype); a
+// file_change after that refetches it too (onFileChange).
+var fileFillDelays = []time.Duration{700 * time.Millisecond, 1400 * time.Millisecond, 2100 * time.Millisecond,
+	3 * time.Second, 5 * time.Second, 8 * time.Second}
+
 // fillFiles completes the file stubs of one message and emits an update.
 func (a *App) fillFiles(ch, ts string) {
-	ctx, cancel := context.WithTimeout(a.bg, 30*time.Second)
+	_ = a.once("files:"+ch+"/"+ts, func() error {
+		ctx, cancel := context.WithTimeout(a.bg, time.Minute)
+		defer cancel()
+		for _, d := range fileFillDelays {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(d): // uploads take a moment to process
+			}
+			m, ok := a.S.Find(ch, ts)
+			if !ok {
+				return nil
+			}
+			files := append([]slack.File(nil), m.Files...)
+			done, changed := true, false
+			for i := range files {
+				if !fileStub(&files[i]) {
+					continue
+				}
+				if f, err := a.fileInfo(ctx, files[i].ID); err == nil {
+					files[i], changed = f, true
+				}
+				if fileStub(&files[i]) {
+					done = false
+				}
+			}
+			if changed {
+				a.setFiles(ch, ts, files)
+			}
+			if done {
+				return nil
+			}
+		}
+		return nil
+	})
+}
+
+// fileInfo is files.info's file object.
+func (a *App) fileInfo(ctx context.Context, id string) (slack.File, error) {
+	var r struct {
+		File slack.File `json:"file"`
+	}
+	if err := a.C.Call(ctx, "files.info", url.Values{"file": {id}}, &r); err != nil {
+		return slack.File{}, err
+	}
+	if r.File.ID == "" {
+		return slack.File{}, errors.New("core: files.info returned no file")
+	}
+	return r.File, nil
+}
+
+// setFiles replaces the files of a cached message (by id; files the
+// message no longer has are left out) and emits an update.
+func (a *App) setFiles(ch, ts string, files []slack.File) {
+	byID := make(map[string]slack.File, len(files))
+	for _, f := range files {
+		byID[f.ID] = f
+	}
+	if upd, ok := a.S.Mutate(ch, ts, func(x *slack.Message) {
+		fs := append([]slack.File(nil), x.Files...)
+		for i := range fs {
+			if f, ok := byID[fs[i].ID]; ok {
+				fs[i] = f
+			}
+		}
+		x.Files = fs
+	}); ok {
+		a.emitUpdate(ch, &upd)
+	}
+}
+
+// onFileChange is Slack's filesChanged / filesShared: the file was
+// processed, renamed or shared, so every loaded message carrying it gets
+// files.info's current object (Slack keeps files in one store by id;
+// Clack keeps copies in the messages).
+func (a *App) onFileChange(ev slack.Event) {
+	id := canvasEventFile(ev)
+	if id == "" {
+		return
+	}
+	refs := a.S.WithFile(id)
+	if len(refs) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(a.bg, 15*time.Second)
 	defer cancel()
-	for attempt := 0; attempt < 3; attempt++ {
-		time.Sleep(time.Duration(attempt+1) * 700 * time.Millisecond) // uploads take a moment to process
-		m, ok := a.S.Find(ch, ts)
-		if !ok {
-			return
-		}
-		files := append([]slack.File(nil), m.Files...)
-		done := true
-		for i := range files {
-			if files[i].URLPrivate != "" || files[i].Mode == "tombstone" || files[i].ID == "" {
-				continue
-			}
-			var r struct {
-				File slack.File `json:"file"`
-			}
-			if err := a.C.Call(ctx, "files.info", url.Values{"file": {files[i].ID}}, &r); err == nil && r.File.ID != "" {
-				files[i] = r.File
-			}
-			if files[i].URLPrivate == "" {
-				done = false
-			}
-		}
-		if upd, ok := a.S.Mutate(ch, ts, func(x *slack.Message) { x.Files = files }); ok {
-			a.emitUpdate(ch, &upd)
-		}
-		if done {
-			return
+	f, err := a.fileInfo(ctx, id)
+	if err != nil {
+		return
+	}
+	for _, r := range refs {
+		a.setFiles(r.Channel, r.TS, []slack.File{f})
+	}
+}
+
+// keepFiles gives m (a message_changed copy) the stored message's complete
+// file objects where m only has stubs of them: Slack's messages don't
+// carry their files' state, its file store does.
+func keepFiles(m, old *slack.Message) {
+	if old == nil || len(old.Files) == 0 || !needsFileInfo(m) {
+		return
+	}
+	byID := make(map[string]*slack.File, len(old.Files))
+	for i := range old.Files {
+		if !fileStub(&old.Files[i]) {
+			byID[old.Files[i].ID] = &old.Files[i]
 		}
 	}
+	fs := append([]slack.File(nil), m.Files...)
+	for i := range fs {
+		if f, ok := byID[fs[i].ID]; ok && fileStub(&fs[i]) {
+			fs[i] = *f
+		}
+	}
+	m.Files = fs
 }

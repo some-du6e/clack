@@ -32,6 +32,17 @@ each way Slack draws a shared file (internal/fakeslack/files.go). The
 | Renamed pending file | `maybePersistPendingFileData` → `editFileApi` → `files.edit` | the title went in completeUploadExternal | `files.edit {file, title}` before the share |
 | Block Kit file_input | uploads without sharing | `completeUploadExternal` with no channel | `PrepareUpload` then `files.info` for the file object |
 
+## Unprocessed uploads (image-click, 2026-11-09)
+
+A pasted screenshot's `message` event often arrives before Slack has processed the upload. Its file has `name`, `url_private` and `permalink`, but `mimetype`, `filetype` and `pretty_type` are empty, `size` is 0, `media_display_type` is `"unknown"` and there are no thumbs. Slack's `fileIsImage` (`mimetype` contains `image/` and an image filetype or a `thumb_360`) says no, so for a moment Slack draws a file card too. The `file_change` that follows (`filesChanged` in boot-render) refetches the file, and the card turns into the image. Clack used to fill only files with no `url_private`, and it ignored `file_change` for messages. Such pastes stayed "FILE image.png" cards that opened the permalink instead of the viewer. Core now:
+
+- treats a hosted file with no mimetype and no filetype (or `file_access: check_file_info`) as a stub, and retries `files.info` for about 20 s while Slack processes it;
+- refetches every loaded message's copy on `file_change` / `file_shared` / `file_public`;
+- keeps the complete file when a `message_changed` copy carries the stub again;
+- also fills the files of the viewer's own echoed messages.
+
+`media_display_type` appears in Slack's client only in its example fixtures and the file schema. Rendering doesn't branch on it.
+
 ## Not changed, or still open
 
 - **Viewer (lightbox):** I didn't change it. The header, actions, zoom, rotate and paging were measured on app.slack.com in an earlier round (popups/lightbox.go), and the shot shows them working over the gallery.
@@ -40,6 +51,7 @@ each way Slack draws a shared file (internal/fakeslack/files.go). The
 - **`files.edit` args:** the method and the thunk (`fileId, title`) are in the source, but the fetcher's argument names are in a chunk I didn't fetch. Clack sends `file` and `title`.
 - **Snippet syntax colours:** Slack renders `preview_highlight` (CodeMirror HTML). Clack draws the plain `preview`. Also not done: the hover "Click to expand" pill and expanding the snippet.
 - **Hover actions on files** (`c-file__actions`: the top-right button group on images and pillows) and the hover swap of the pillow's meta to "View **PDF** in Slack" / "Download **Zip**" (`getActionText`): not done. The menu is on right-click.
+- **Audio and video in place:** clicking the audio player's play button, or a video tile, opens the file's permalink. Clack has no in-message player, and the viewer only shows images.
 - **View file details, external links, folders, sections, transcripts, edit image details:** not in the menu, because Clack has no screens for them.
 - **`attachments_and_unfurls_max_width`:** with this experiment on, Slack caps the flex gallery at 716. Clack always uses 936.
 - **PDF first-page thumbnail:** the PDF pillow uses the icon tile. I didn't check whether Slack's message pillow shows `thumb_pdf` (the `p-file_card__preview` card that does is used on the Files page).

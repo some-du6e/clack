@@ -86,3 +86,25 @@ func (v *View) HitAt(p f32.Point) Hit {
 	}
 	return h
 }
+
+// FileRect is a file's clickable box (a gallery tile, a file card).
+type FileRect struct {
+	File *richtext.File
+	R    image.Rectangle
+}
+
+// FileRects lists the files' clickable boxes in View coordinates (after
+// the first Layout), in layout order. A gallery's "+ N" tile is the box of
+// the file under it.
+func (v *View) FileRects() []FileRect {
+	var out []FileRect
+	for _, h := range v.d.hits {
+		if h.t < 0 || int(h.t) >= len(v.d.targets) || h.r.Empty() {
+			continue
+		}
+		if tg := &v.d.targets[h.t]; tg.kind == tFile && tg.file != nil {
+			out = append(out, FileRect{File: tg.file, R: h.r})
+		}
+	}
+	return out
+}

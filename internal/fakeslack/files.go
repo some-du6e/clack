@@ -2,6 +2,7 @@ package fakeslack
 
 import (
 	"fmt"
+	"net/url"
 	"strconv"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
@@ -12,8 +13,11 @@ import (
 // to six images, a portrait, a video, an image with a video; the audio
 // player and a voice clip; a PDF, a snippet, a zip; two documents in the
 // mixed grid) plus an image the viewer uploaded (its file menu has Delete
-// file). Every image is this server's /img gradient; nothing is a real
-// file. Messages go oldest first: FilesCases order.
+// file), a wide short screenshot and a small one (thumbs only up to
+// thumb_360, like a pasted 1022x125 composer or a 223px crop), and a thread
+// whose replies are a single image and a "+ N" gallery. files.info answers
+// for every file here. Every image is this server's /img gradient;
+// nothing is a real file. Messages go oldest first: FilesCases order.
 
 const (
 	FilesChannelID = "C0FILES0001"
@@ -30,7 +34,11 @@ type filesFixture struct {
 	name, text string
 	user       int // index into s.users; -1 is the viewer
 	files      []slack.File
+	replies    []filesFixture // a thread under it
 }
+
+// FilesThread is the #files-gallery thread's root (FilesCases "thread").
+const FilesThread = "thread"
 
 // FilesCases are the #files-gallery messages in channel order.
 func (s *Server) FilesCases() []FilesCase {
@@ -43,13 +51,18 @@ func (s *Server) FilesCases() []FilesCase {
 
 func filesTS(i int) string { return strconv.Itoa(filesBaseTS+i*60) + ".000100" }
 
-// fakeImage is an image file object with Slack's thumbs (360…1024 with
-// their sizes) drawn by /img.
+// fakeImage is an image file object with Slack's thumbs drawn by /img:
+// thumb_64, _80, _160 and _360 always (thumb_360 at most the original's
+// size), the larger ones (480, 720, 1024, with their sizes) only for an
+// original bigger than them.
 func (s *Server) fakeImage(id, name string, w, h int) slack.File {
 	img := func(px, py int) string {
 		return s.URL + "img/" + strconv.Itoa(px) + "x" + strconv.Itoa(py) + "/" + id + ".png"
 	}
 	fit := func(side int) (int, int) {
+		if max(w, h) <= side {
+			return w, h
+		}
 		if w >= h {
 			return side, max(1, side*h/w)
 		}
@@ -58,12 +71,19 @@ func (s *Server) fakeImage(id, name string, w, h int) slack.File {
 	f := slack.File{ID: id, Name: name, Title: name, Mimetype: "image/png", Filetype: "png", PrettyType: "PNG",
 		Size: int64(w * h / 3), Mode: "hosted", URLPrivate: img(w, h), URLPrivateDownload: img(w, h),
 		Permalink: s.URL + "files/" + id + "/" + name, OriginalW: w, OriginalH: h, Created: filesBaseTS}
+	f.Thumb64 = img(fit(64))
+	f.Thumb80 = img(fit(80))
+	f.Thumb160 = img(fit(160))
 	f.Thumb360W, f.Thumb360H = fit(360)
 	f.Thumb360 = img(f.Thumb360W, f.Thumb360H)
-	f.Thumb480W, f.Thumb480H = fit(480)
-	f.Thumb480 = img(f.Thumb480W, f.Thumb480H)
-	f.Thumb720W, f.Thumb720H = fit(720)
-	f.Thumb720 = img(f.Thumb720W, f.Thumb720H)
+	if max(w, h) > 480 {
+		f.Thumb480W, f.Thumb480H = fit(480)
+		f.Thumb480 = img(f.Thumb480W, f.Thumb480H)
+	}
+	if max(w, h) > 720 {
+		f.Thumb720W, f.Thumb720H = fit(720)
+		f.Thumb720 = img(f.Thumb720W, f.Thumb720H)
+	}
 	if max(w, h) > 720 {
 		f.Thumb1024W, f.Thumb1024H = fit(min(1024, max(w, h)))
 		f.Thumb1024 = img(f.Thumb1024W, f.Thumb1024H)
@@ -112,43 +132,150 @@ func (s *Server) filesFixtures() []filesFixture {
 	own := im(40, 1200, 800)
 	own.Name, own.Title, own.User = "my-screenshot.png", "my-screenshot.png", SelfID
 	mixed := im(30, 1600, 900)
+	// pasted screenshots: Slack names them image.png and, for these, made
+	// no thumb past thumb_360 (the wide one's is 360x44)
+	wide := s.fakeImage("F0FILESIMG41", "image.png", 1022, 125)
+	wide.Thumb480, wide.Thumb480W, wide.Thumb480H = "", 0, 0
+	wide.Thumb720, wide.Thumb720W, wide.Thumb720H = "", 0, 0
+	wide.Thumb1024, wide.Thumb1024W, wide.Thumb1024H = "", 0, 0
+	wide.MediaDisplayType, wide.FileAccess = "unknown", "visible"
+	tiny := s.fakeImage("F0FILESIMG42", "image.png", 223, 150)
+	tiny.MediaDisplayType, tiny.FileAccess = "unknown", "visible"
 	return []filesFixture{
-		{"one image", "One landscape image", 1, ims(1, land)},
-		{"portrait image", "A portrait", 2, ims(2, port)},
-		{"two images", "Two side by side", 3, ims(3, land, sq)},
-		{"three images", "Three in a row", 1, ims(5, land, port, sq)},
-		{"four images", "Four in a row", 2, ims(8, land, land, sq, port)},
-		{"six images", "Six: the fourth tile reads + 3", 3, ims(12, land, land, land, land, sq, port)},
-		{"video", "A video", 1, []slack.File{video}},
-		{"image and video", "An image and a video", 2, []slack.File{mixed, video}},
-		{"audio", "An audio file", 3, []slack.File{audio}},
-		{"voice clip", "", 1, []slack.File{clip}},
-		{"pdf", "The PDF", 2, []slack.File{pdf}},
-		{"snippet", "A snippet", 3, []slack.File{snippet}},
-		{"zip", "A zip", 1, []slack.File{zip}},
-		{"two documents", "Two documents", 2, []slack.File{pdf, doc}},
-		{"own image", "My own upload", -1, []slack.File{own}},
+		{"one image", "One landscape image", 1, ims(1, land), nil},
+		{"portrait image", "A portrait", 2, ims(2, port), nil},
+		{"two images", "Two side by side", 3, ims(3, land, sq), nil},
+		{"three images", "Three in a row", 1, ims(5, land, port, sq), nil},
+		{"four images", "Four in a row", 2, ims(8, land, land, sq, port), nil},
+		{"six images", "Six: the fourth tile reads + 3", 3, ims(12, land, land, land, land, sq, port), nil},
+		{"video", "A video", 1, []slack.File{video}, nil},
+		{"image and video", "An image and a video", 2, []slack.File{mixed, video}, nil},
+		{"audio", "An audio file", 3, []slack.File{audio}, nil},
+		{"voice clip", "", 1, []slack.File{clip}, nil},
+		{"pdf", "The PDF", 2, []slack.File{pdf}, nil},
+		{"snippet", "A snippet", 3, []slack.File{snippet}, nil},
+		{"zip", "A zip", 1, []slack.File{zip}, nil},
+		{"two documents", "Two documents", 2, []slack.File{pdf, doc}, nil},
+		{"own image", "My own upload", -1, []slack.File{own}, nil},
+		{"wide short image", "this too", 1, []slack.File{wide}, nil},
+		{"tiny image", "a small paste", 1, []slack.File{tiny}, nil},
+		{FilesThread, "A thread of images", 2, nil, []filesFixture{
+			{"thread image", "One in the thread", 1, ims(50, land), nil},
+			{"thread gallery", "Six in the thread", 3, ims(51, land, land, land, land, sq, port), nil},
+		}},
 	}
+}
+
+// FilesHistory is #files-gallery's history, oldest first (thread roots
+// carry their reply counts), for tests that seed a store with it.
+func (s *Server) FilesHistory() []slack.Message {
+	var out []slack.Message
+	for i, f := range s.filesFixtures() {
+		out = append(out, s.filesMessage(f, filesTS(i), ""))
+	}
+	return out
+}
+
+// FilesReplies is the thread under the #files-gallery message ts, root
+// first (nil when it has none).
+func (s *Server) FilesReplies(ts string) []slack.Message {
+	for i, f := range s.filesFixtures() {
+		if filesTS(i) != ts || len(f.replies) == 0 {
+			continue
+		}
+		out := []slack.Message{s.filesMessage(f, ts, "")}
+		for j, r := range f.replies {
+			out = append(out, s.filesMessage(r, filesReplyTS(i, j), ts))
+		}
+		return out
+	}
+	return nil
+}
+
+// FilesReplyTS is the ts of the j-th reply under #files-gallery case name.
+func (s *Server) FilesReplyTS(name string, j int) string {
+	for i, f := range s.filesFixtures() {
+		if f.name == name {
+			return filesReplyTS(i, j)
+		}
+	}
+	return ""
+}
+
+func filesReplyTS(i, j int) string { return strconv.Itoa(filesBaseTS+i*60+10*(j+1)) + ".000100" }
+
+func (s *Server) filesMessage(f filesFixture, ts, thread string) slack.Message {
+	user := SelfID
+	if f.user >= 0 {
+		user = s.users[f.user%len(s.users)].ID
+	}
+	files := append([]slack.File(nil), f.files...)
+	for j := range files {
+		if files[j].User == "" {
+			files[j].User = user
+		}
+	}
+	m := slack.Message{Type: "message", TS: ts, User: user, Text: f.text, Files: files,
+		Upload: len(files) > 0, ClientMsgID: "files-" + ts}
+	if thread != "" {
+		m.ThreadTS = thread
+	}
+	if n := len(f.replies); n > 0 {
+		m.ThreadTS, m.ReplyCount = ts, n
+		i := 0
+		for k, x := range s.filesFixtures() {
+			if x.name == f.name {
+				i = k
+			}
+		}
+		m.LatestReply = filesReplyTS(i, n-1)
+		for _, r := range f.replies {
+			m.ReplyUsers = append(m.ReplyUsers, s.users[r.user%len(s.users)].ID)
+		}
+	}
+	return m
+}
+
+// handleFiles answers files.info for the #files-gallery files and
+// conversations.replies for its thread; handled=false passes on.
+func (s *Server) handleFiles(method string, f url.Values) (any, bool) {
+	if !s.Size.Files {
+		return nil, false
+	}
+	switch method {
+	case "files.info":
+		id := f.Get("file")
+		var walk func(fx []filesFixture) (slack.File, bool)
+		walk = func(fx []filesFixture) (slack.File, bool) {
+			for _, c := range fx {
+				for _, file := range c.files {
+					if file.ID == id {
+						return file, true
+					}
+				}
+				if file, found := walk(c.replies); found {
+					return file, true
+				}
+			}
+			return slack.File{}, false
+		}
+		if file, found := walk(s.filesFixtures()); found {
+			return ok("file", file, "comments", []any{}), true
+		}
+	case "conversations.replies":
+		if f.Get("channel") == FilesChannelID {
+			if msgs := s.FilesReplies(f.Get("ts")); msgs != nil {
+				return ok("messages", msgs, "has_more", false), true
+			}
+		}
+	}
+	return nil, false
 }
 
 func (s *Server) addFilesChannel() {
 	s.convs = append(s.convs, slack.Conversation{ID: FilesChannelID, Name: "files-gallery", IsChannel: true, IsMember: true,
 		NumMembers: 6, ContextTeamID: TeamID, Purpose: &slack.Purpose{Value: "File fixtures."}})
-	var msgs []slack.Message
-	for i, f := range s.filesFixtures() {
-		user := SelfID
-		if f.user >= 0 {
-			user = s.users[f.user%len(s.users)].ID
-		}
-		files := append([]slack.File(nil), f.files...)
-		for j := range files {
-			if files[j].User == "" {
-				files[j].User = user
-			}
-		}
-		msgs = append(msgs, slack.Message{Type: "message", TS: filesTS(i), User: user, Text: f.text, Files: files,
-			Upload: true, ClientMsgID: fmt.Sprintf("%08x-files", i)})
-	}
+	msgs := s.FilesHistory()
 	// history is newest first
 	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
 		msgs[i], msgs[j] = msgs[j], msgs[i]

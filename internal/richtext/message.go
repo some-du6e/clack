@@ -110,7 +110,11 @@ func convertFile(f *slack.File) *File {
 // imageThumb picks the thumbnail Slack shows inline (thumb_1024 first, then
 // the next largest) with its pixel size: Slack sizes inline images from the
 // 1024 thumb's dimensions, up to the gallery width. Animated GIFs use the
-// original.
+// original. Small images have no thumb past their own size (a 223px
+// screenshot stops at thumb_360, which is the original's size), so the
+// original (url_private) comes next and the small thumbs last: Slack's
+// fileIsImage draws any image/* file with an image filetype or a
+// thumb_360 inline, whatever its other thumbs.
 func imageThumb(f *slack.File) *Image {
 	if strings.EqualFold(f.Mimetype, "image/gif") && f.URLPrivate != "" && (f.Size == 0 || f.Size <= 8<<20) {
 		return image(f.URLPrivate, f.Name, f.OriginalW, f.OriginalH)
@@ -127,6 +131,9 @@ func imageThumb(f *slack.File) *Image {
 		{f.Thumb480, f.Thumb480W, f.Thumb480H, 480},
 		{f.Thumb360, f.Thumb360W, f.Thumb360H, 360},
 		{f.URLPrivate, f.OriginalW, f.OriginalH, 0},
+		{f.Thumb160, 0, 0, 160},
+		{f.Thumb80, 0, 0, 80},
+		{f.Thumb64, 0, 0, 64},
 	}
 	for _, c := range cs {
 		if c.u == "" {

@@ -199,3 +199,54 @@ func TestPlainText(t *testing.T) {
 	eq(t, "empty", PlainText(Doc{}), "")
 	eq(t, "tombstone", PlainText(Doc{Blocks: []Block{tombstone("This message was deleted.")}}), "This message was deleted.")
 }
+
+// Images Slack draws inline whatever thumbs they carry (fileIsImage:
+// image/* plus an image filetype or thumb_360): a small screenshot with
+// thumbs only up to thumb_360 (the shape of a real 223px paste), a wide
+// short one whose thumb_360 is 44px tall, one with only the small thumbs,
+// and one with no thumbs at all (the original). An upload Slack hasn't
+// processed yet (no mimetype or filetype) isn't an image, as in Slack.
+func TestImageFileThumbs(t *testing.T) {
+	cases := []struct {
+		name, js   string
+		url        string
+		w, h       int
+		notAnImage bool
+	}{
+		{"small paste", `{"id":"F1","name":"image.png","mimetype":"image/png","filetype":"png","mode":"hosted","file_access":"visible",
+			"media_display_type":"unknown","has_rich_preview":false,"is_modified_by_ai":false,"original_w":223,"original_h":150,
+			"url_private":"https://files.slack.com/F1/image.png","thumb_64":"https://files.slack.com/F1/64.png","thumb_80":"https://files.slack.com/F1/80.png",
+			"thumb_160":"https://files.slack.com/F1/160.png","thumb_360":"https://files.slack.com/F1/360.png","thumb_360_w":223,"thumb_360_h":150,
+			"thumb_tiny":"AwAe"}`, "https://files.slack.com/F1/360.png", 223, 150, false},
+		{"wide short", `{"id":"F2","name":"image.png","mimetype":"image/png","filetype":"png","mode":"hosted","original_w":1022,"original_h":125,
+			"url_private":"https://files.slack.com/F2/image.png","thumb_160":"https://files.slack.com/F2/160.png",
+			"thumb_360":"https://files.slack.com/F2/360.png","thumb_360_w":360,"thumb_360_h":44}`, "https://files.slack.com/F2/360.png", 360, 44, false},
+		{"only small thumbs", `{"id":"F3","name":"image.png","mimetype":"image/png","filetype":"png","mode":"hosted","original_w":1022,"original_h":125,
+			"thumb_64":"https://files.slack.com/F3/64.png","thumb_160":"https://files.slack.com/F3/160.png"}`, "https://files.slack.com/F3/160.png", 160, 19, false},
+		{"no thumbs", `{"id":"F4","name":"image.png","mimetype":"image/png","filetype":"png","mode":"hosted","original_w":90,"original_h":40,
+			"url_private":"https://files.slack.com/F4/image.png"}`, "https://files.slack.com/F4/image.png", 90, 40, false},
+		{"unprocessed upload", `{"id":"F5","name":"image.png","title":"image.png","mimetype":"","filetype":"","pretty_type":"","size":0,"mode":"hosted",
+			"media_display_type":"unknown","file_access":"visible","url_private":"https://files.slack.com/F5/image.png"}`, "", 0, 0, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := doc(t, `{"ts":"1.0","text":"","upload":true,"files":[`+tc.js+`]}`)
+			if len(d.Blocks) != 1 || d.Blocks[0].File == nil {
+				t.Fatalf("blocks %+v", d.Blocks)
+			}
+			f := d.Blocks[0].File
+			if tc.notAnImage {
+				if f.IsImage {
+					t.Errorf("an unprocessed upload is an image: %+v", f)
+				}
+				return
+			}
+			if !f.IsImage || f.Thumb == nil {
+				t.Fatalf("not an inline image: %+v", f)
+			}
+			if f.Thumb.URL != tc.url || f.Thumb.W != tc.w || f.Thumb.H != tc.h {
+				t.Errorf("thumb %s %dx%d, want %s %dx%d", f.Thumb.URL, f.Thumb.W, f.Thumb.H, tc.url, tc.w, tc.h)
+			}
+		})
+	}
+}
