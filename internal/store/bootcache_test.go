@@ -1,9 +1,11 @@
 package store
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
@@ -26,7 +28,8 @@ func TestBootSnapshotRoundTripAndDrop(t *testing.T) {
 	if err := s.WriteBoot(d); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.WriteHistory(&HistorySnapshot{Channel: "C1", Msgs: []slack.Message{{TS: "1.000001", User: "U0SELF"}}}); err != nil {
+	att := json.RawMessage(`[{"id":1,"fallback":"x","image_width":640,"image_height":480,"some_field_the_struct_lacks":{"a":1}}]`)
+	if err := s.WriteHistory(&HistorySnapshot{Channel: "C1", Msgs: []slack.Message{{TS: "1.000001", User: "U0SELF", RawAttachments: att}}}); err != nil {
 		t.Fatal(err)
 	}
 	if runtime.GOOS != "windows" {
@@ -54,7 +57,10 @@ func TestBootSnapshotRoundTripAndDrop(t *testing.T) {
 		t.Fatal("a snapshot's emoji slice counts as the whole map")
 	}
 	h := s2.ReadHistory()
-	if h == nil || !s2.SetCachedLatest(h.Channel, h.Msgs, h.HasMore) {
+	if h == nil || len(h.Msgs) != 1 || !strings.Contains(string(h.Msgs[0].RawAttachments), "some_field_the_struct_lacks") {
+		t.Fatalf("history.json lost the attachments as Slack sent them: %+v", h)
+	}
+	if !s2.SetCachedLatest(h.Channel, h.Msgs, h.HasMore) {
 		t.Fatal("history.json didn't install")
 	}
 	if s2.SetCachedLatest("C1", nil, false) {

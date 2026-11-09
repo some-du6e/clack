@@ -168,11 +168,42 @@ func (s *Store) ReadHistory() *HistorySnapshot {
 	if err != nil {
 		return nil
 	}
-	var h HistorySnapshot
-	if json.Unmarshal(b, &h) != nil || h.V != CacheVersion || h.Channel == "" {
+	var d historyDisk
+	if json.Unmarshal(b, &d) != nil || d.V != CacheVersion || d.Channel == "" {
 		return nil
 	}
-	return &h
+	h := &HistorySnapshot{V: d.V, SavedAt: d.SavedAt, Channel: d.Channel, HasMore: d.HasMore, Msgs: make([]slack.Message, 0, len(d.Msgs))}
+	for _, raw := range d.Msgs {
+		var m slack.Message // its UnmarshalJSON keeps the attachments as written
+		if json.Unmarshal(raw, &m) == nil {
+			h.Msgs = append(h.Msgs, m)
+		}
+	}
+	return h
+}
+
+// historyDisk is history.json as written: each message as Slack sent it
+// as far as the client keeps it, attachments included exactly
+// (RawAttachments is what the UI draws; the typed Attachments drop fields).
+type historyDisk struct {
+	V       int               `json:"v"`
+	SavedAt int64             `json:"saved_at"`
+	Channel string            `json:"channel"`
+	Msgs    []json.RawMessage `json:"msgs"`
+	HasMore bool              `json:"has_more,omitempty"`
+}
+
+func marshalMessage(m *slack.Message) (json.RawMessage, error) {
+	b, err := json.Marshal(m)
+	if err != nil || len(m.RawAttachments) == 0 {
+		return b, err
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(b, &obj); err != nil {
+		return nil, err
+	}
+	obj["attachments"] = m.RawAttachments
+	return json.Marshal(obj)
 }
 
 // WriteBoot saves boot.json (atomically, 0600).
@@ -200,7 +231,15 @@ func (s *Store) WriteHistory(h *HistorySnapshot) error {
 		return err
 	}
 	h.V, h.SavedAt = CacheVersion, time.Now().Unix()
-	b, err := json.Marshal(h)
+	d := historyDisk{V: h.V, SavedAt: h.SavedAt, Channel: h.Channel, HasMore: h.HasMore, Msgs: make([]json.RawMessage, 0, len(h.Msgs))}
+	for i := range h.Msgs {
+		raw, err := marshalMessage(&h.Msgs[i])
+		if err != nil {
+			return err
+		}
+		d.Msgs = append(d.Msgs, raw)
+	}
+	b, err := json.Marshal(d)
 	if err != nil {
 		return err
 	}
