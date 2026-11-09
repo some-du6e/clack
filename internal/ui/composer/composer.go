@@ -35,7 +35,10 @@ type Composer struct {
 	att      *attachments
 	st       EditorStyle
 	focusReq bool
-	focused  bool
+	// focus dropped by Gio without a blur (restoreDroppedFocus)
+	focusPress    uint64 // pressCount when last seen focused
+	focusRestored bool   // asked for it back once since
+	focused       bool
 
 	// Origin is the composer's top-left corner in window coordinates. The
 	// parent sets it each frame (Gio has no global transform query); menus
@@ -271,6 +274,7 @@ func (c *Composer) Layout(gtx layout.Context) layout.Dimensions {
 	c.ed.plainText = PlainTextMode(c.api.a)
 	c.syncEmojiSet()
 	c.handleEditor(gtx)
+	c.restoreDroppedFocus(gtx)
 	c.handleActions(gtx)
 
 	// Slack's boundaries (slack.go): MessagePaneInput / InputContainer
@@ -1049,6 +1053,31 @@ func (c *Composer) setBroadcast(on bool) {
 	}
 	c.broadcast = on
 	c.h.Invalidate()
+}
+
+// restoreDroppedFocus is the fallback for a focus Gio dropped anyway
+// (editor_focus.go): the editor got no blur (c.focused, from its
+// FocusEvents) but isn't focused, so its handler vanished for a frame
+// rather than anything taking the focus. It asks for the focus back once,
+// unless the pointer was pressed since it was last focused (a click may
+// have been meant for something else).
+func (c *Composer) restoreDroppedFocus(gtx layout.Context) {
+	if !gtx.Source.Enabled() {
+		return
+	}
+	if c.ed.Focused(gtx) {
+		c.focusPress, c.focusRestored = pressCount(), false
+		return
+	}
+	if !c.focused || c.focusRestored {
+		return
+	}
+	c.focusRestored = true
+	if pressCount() != c.focusPress {
+		c.focused = false
+		return
+	}
+	c.ed.Focus(gtx)
 }
 
 // FocusTag is the key-focus tag of the composer's editor (tests check

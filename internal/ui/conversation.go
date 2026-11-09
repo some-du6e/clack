@@ -13,6 +13,7 @@ import (
 	"gioui.org/op/clip"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
 )
 
 // originTracker learns a widget's window position from pointer events:
@@ -61,6 +62,9 @@ func (a *App) readRootPointer(gtx layout.Context) {
 		if pe, ok := e.(pointer.Event); ok {
 			a.ptrWin = image.Pt(int(pe.Position.X+.5), int(pe.Position.Y+.5))
 			a.ptrOK = true
+			if pe.Kind == pointer.Press {
+				composer.NotePress() // a click may move the focus (editor_focus.go)
+			}
 			a.navButtons(pe)
 			a.globalPointer(gtx, pe)
 		}

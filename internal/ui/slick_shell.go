@@ -26,7 +26,9 @@ package ui
 import (
 	"encoding/json"
 	"image"
+	"log"
 	"sync"
+	"time"
 
 	"gioui.org/io/event"
 	"gioui.org/io/pointer"
@@ -699,7 +701,14 @@ func (a *App) layoutViewBody(gtx layout.Context, _ slackc.Props) layout.Dimensio
 }
 
 func (a *App) drawViewBody(gtx layout.Context) layout.Dimensions {
+	if a.skipBody > 0 { // tests: a frame whose tree left the body out
+		a.skipBody--
+		return layout.Dimensions{Size: gtx.Constraints.Max}
+	}
 	r := a.router.Current()
+	if gtx.Source.Enabled() && !a.standIn {
+		a.body = bodyDraw{at: gtx.Now, route: r, cons: gtx.Constraints, off: a.primaryOrigin.Sub(a.panelOrigin)}
+	}
 	if r.Page() == "c" {
 		a.layoutChannel(gtx, r.Channel())
 	} else {
@@ -734,4 +743,51 @@ func (a *App) layoutShellPoints(gtx layout.Context) {
 	if d.Size != (image.Point{}) {
 		call.Add(gtx.Ops)
 	}
+}
+
+// bodyDraw is the primary view body's last live draw (keepBody).
+type bodyDraw struct {
+	at    time.Time
+	route Route
+	cons  layout.Constraints
+	off   image.Point // its top-left in the primary panel
+}
+
+// bodyKeepFor bounds how long after its last draw a missing body is kept.
+const bodyKeepFor = time.Second
+
+// keepBody runs right after the primary panel's ClientPrimaryView, with
+// gtx at the panel's origin. If the view's body (the conversation: list,
+// composer, header) was drawn recently but not in this frame, and the
+// route is the same, it is drawn again where it was, as it was: Gio
+// forgets a handler absent for one frame, so a focused composer silently
+// loses its focus and a button pressed before the gap gets a reset Cancel
+// when it's back, and the release after it isn't a click ("I have to
+// click like 5 times", "I was getting deselected"). A plugin tree that
+// leaves the body out for a frame (Chat Tabs wraps ClientPrimaryView and
+// RenderedViewContents) did exactly that. The stand-in is a real draw at
+// the same place in the frame (under the overlays), so hit areas stay
+// where the pointer is (no Leave, no Cancel) and nothing flickers.
+func (a *App) keepBody(gtx layout.Context) {
+	b := a.body
+	if a.noKeepBody || b.at.IsZero() || b.at.Equal(gtx.Now) || !gtx.Source.Enabled() {
+		return
+	}
+	if gtx.Now.Sub(b.at) > bodyKeepFor || gtx.Now.Before(b.at) || a.router.Current() != b.route {
+		return
+	}
+	a.standIns++
+	if a.standInLogged.IsZero() || gtx.Now.Sub(a.standInLogged) > 10*time.Second {
+		// field evidence for what leaves the body out (plugins on: which)
+		log.Printf("ui: the primary view's body was missing from %d frame(s) (route %s, patched ClientPrimaryView=%v RenderedViewContents=%v); drawn in its place",
+			a.standIns-a.standInsLogged, b.route, slackc.Patched("ClientPrimaryView"), slackc.Patched("RenderedViewContents"))
+		a.standInLogged, a.standInsLogged = gtx.Now, a.standIns
+	}
+	defer op.Offset(b.off).Push(gtx.Ops).Pop()
+	defer clip.Rect{Max: b.cons.Max}.Push(gtx.Ops).Pop()
+	g := gtx
+	g.Constraints = b.cons
+	a.standIn = true
+	a.drawViewBody(g)
+	a.standIn = false
 }

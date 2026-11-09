@@ -114,6 +114,7 @@ func composerKeepsFocus(t *testing.T, plugins []string) {
 	if lost >= 0 {
 		t.Errorf("the composer lost key focus at idle frame %d (realtime traffic and hover cards only)", lost)
 	}
+	t.Logf("frames the primary body was missing from (stood in): %d", e.a.standIns)
 
 	// typing lands in it
 	st := e.rt.EditorState()
