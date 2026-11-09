@@ -173,18 +173,18 @@ func TestRenderKitchenSink(t *testing.T) {
 			for i, b := range v.blocks {
 				g := gtx
 				g.Constraints = layout.Constraints{Min: image.Pt(700, 0), Max: image.Pt(700, 4000)}
-				dim := v.layoutBlock(g, b, i == 0)
+				dim := v.layoutBlock(g, b, 0)
 				if dim.Size.Y <= 0 && b.b.Kind != canvas.Paragraph {
 					t.Errorf("block %d (kind %d) has no height", i, b.b.Kind)
 				}
 				if _, ok := heights[b.b.Kind]; !ok {
-					heights[b.b.Kind] = dim.Size.Y - space(g, b.b.Kind, i == 0)
+					heights[b.b.Kind] = dim.Size.Y
 				}
 			}
 			if !(heights[canvas.Heading1] > heights[canvas.Heading2] && heights[canvas.Heading2] > heights[canvas.Heading3]) {
 				t.Errorf("heading heights %v", heights)
 			}
-			if heights[canvas.Table] < 3*bodyLine || heights[canvas.Code] < 3*18 {
+			if heights[canvas.Table] < 3*bodyLine || heights[canvas.Code] < 3*codeLine {
 				t.Errorf("table %d code %d", heights[canvas.Table], heights[canvas.Code])
 			}
 			// links: another canvas opens natively, messages route

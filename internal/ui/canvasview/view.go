@@ -49,6 +49,8 @@ type View struct {
 	styles  styleSet
 	handler *handler
 	edit    *editState
+	phView  *richview.View // the empty canvas's placeholder
+	phText  string
 
 	queue []func() // post: run on the UI goroutine at the next frame
 
@@ -431,6 +433,9 @@ func (v *View) barAction(key string) {
 	}
 }
 
+// openMore is the canvas's More options menu, Slack's items Clack can
+// carry out, under Slack's labels: Copy link, Share this canvas, and the
+// split view / full view switch ("Open in split view" in a channel tab).
 func (v *View) openMore() {
 	if v.act.Menu == nil {
 		return
@@ -439,26 +444,27 @@ func (v *View) openMore() {
 	var items []MenuItem
 	if d != nil && d.Info.Permalink != "" {
 		link := d.Info.Permalink
-		items = append(items, MenuItem{Label: "Copy link to canvas", Icon: "link", Do: func() { copyText(v.h, link) }})
-		items = append(items, MenuItem{Label: "Open in browser", Icon: "external", Do: func() {
-			if v.act.OpenURL != nil {
-				v.act.OpenURL(link)
-			}
-		}})
-	}
-	if d != nil && d.Info.Editable {
-		items = append(items, MenuItem{Label: "Rename canvas", Icon: "edit", Do: v.startRename})
+		items = append(items, MenuItem{Label: "Copy link", Icon: "link", Do: func() { copyText(v.h, link) }})
 	}
 	if v.act.Share != nil {
-		items = append(items, MenuItem{Label: "Share canvas", Icon: "share", Do: func() { v.act.Share(v.id) }})
+		items = append(items, MenuItem{Label: "Share this canvas", Icon: "share-message", Do: func() { v.act.Share(v.id) }})
 	}
-	if v.mode == Side && v.act.FullView != nil {
-		items = append(items, MenuItem{Label: "Open in full view", Icon: "expand", Do: v.act.FullView})
+	var view []MenuItem
+	switch {
+	case v.mode == Tab && v.act.SideView != nil:
+		view = append(view, MenuItem{Label: "Open in split view", Icon: "panel-right", Do: v.act.SideView})
+	case v.mode == Side && v.act.FullView != nil:
+		view = append(view, MenuItem{Label: "Open in full view", Icon: "expand", Do: v.act.FullView})
+	case v.mode == Full && v.act.SideView != nil:
+		view = append(view, MenuItem{Label: "Open in side panel", Icon: "panel-right", Do: v.act.SideView})
 	}
-	if v.mode == Full && v.act.SideView != nil {
-		items = append(items, MenuItem{Label: "Open in side panel", Icon: "panel-right", Do: v.act.SideView})
+	if len(items) > 0 && len(view) > 0 {
+		items = append(items, MenuItem{Divider: true})
 	}
-	items = append(items, MenuItem{Label: "Refresh", Icon: "refresh", Do: v.Reload})
+	items = append(items, view...)
+	if len(items) == 0 {
+		return
+	}
 	v.act.Menu(items)
 }
 
@@ -522,30 +528,45 @@ func (v *View) layoutSkeleton(gtx layout.Context) layout.Dimensions {
 	return layout.Dimensions{Size: sz}
 }
 
-// column is the document's content column: Slack centres a canvas at a
-// readable width with generous side padding (less in the side panel).
+// column is the document's content column. Slack's canvas
+// (.parts-screen-children-wrapper) is at most 990px wide, centred, with
+// 96px/94px side padding: an 800px column (Quip's MAX_DOCUMENT_WIDTH).
+// Narrower panes use Quip's smaller paddings (p-quip_loading_skeleton's
+// breakpoints: under 500 "medium" 51px, under 350 28px, under 200 16px).
 func (v *View) column(gtx layout.Context, w int) (x, cw int) {
-	pad := gtx.Dp(48)
-	maxW := gtx.Dp(760)
-	if v.mode == Side || w < gtx.Dp(560) {
-		pad = gtx.Dp(24)
+	pad := 0
+	switch {
+	case w < gtx.Dp(200):
+		pad = gtx.Dp(16)
+	case w < gtx.Dp(350):
+		pad = gtx.Dp(28)
+	case w < gtx.Dp(500):
+		pad = gtx.Dp(51) // --document-padding-medium-horizontal
 	}
-	cw = w - 2*pad
-	if cw > maxW {
-		cw = maxW
+	if pad > 0 {
+		return pad, max(1, w-2*pad)
 	}
-	if cw < gtx.Dp(120) {
-		cw = max(1, w-gtx.Dp(16))
-	}
-	return (w - cw) / 2, cw
+	wrap := min(w, gtx.Dp(990))
+	x0 := (w - wrap) / 2
+	return x0 + gtx.Dp(96), max(1, wrap-gtx.Dp(96)-gtx.Dp(94))
 }
 
-// layoutDoc draws the title, byline and blocks in a scrolling list.
+// docTop is the space above the title: the canvas's header-image
+// container, 100px tall when the canvas has no cover image.
+const docTop = 100
+
+// docBottom is the wrapper's padding-bottom (120px), the room the bottom
+// toolbar floats in.
+const docBottom = 120
+
+// layoutDoc draws the title and blocks in a scrolling list, the floating
+// actions, and (for editors) Slack's bottom toolbar.
 func (v *View) layoutDoc(gtx layout.Context, d *core.CanvasDoc) layout.Dimensions {
 	sz := gtx.Constraints.Max
 	x0, cw := v.column(gtx, sz.X)
 	v.edit.events(gtx, v)
-	defer v.edit.layoutFloatingToolbar(gtx, v)
+	defer v.layoutFloatingActions(gtx)
+	defer v.edit.layoutInsertionToolbar(gtx, v)
 	// The rows are this snapshot of the blocks. Handlers that run during
 	// the list's layout (a click that starts or ends an edit, Escape in
 	// the editor) add and remove blocks; that shows from the next frame.
@@ -561,13 +582,13 @@ func (v *View) layoutDoc(gtx layout.Context, d *core.CanvasDoc) layout.Dimension
 	}()
 	// A canvas's title is its document's title section (Quip's
 	// extractTitleMetadata): a heading that opens the document is drawn
-	// once, as the title, with the byline under it; it is not repeated as
-	// the first block.
+	// once, as the title; it is not repeated as the first block.
 	var title *blk
 	rows := blocks
 	if titleSection(blocks) {
 		title, rows = blocks[0], blocks[1:]
 	}
+	ph := v.placeholder(rows)
 	n := len(rows) + 2 // header, blocks, bottom space
 	return v.list.Layout(gtx, n, func(gtx layout.Context, i int) layout.Dimensions {
 		gtx.Constraints.Min.X = sz.X
@@ -575,18 +596,83 @@ func (v *View) layoutDoc(gtx layout.Context, d *core.CanvasDoc) layout.Dimension
 		case i == 0:
 			return v.layoutHeader(gtx, d, x0, cw, title)
 		case i == n-1:
-			below := image.Pt(sz.X, max(gtx.Dp(96), sz.Y/3))
+			below := image.Pt(sz.X, max(gtx.Dp(docBottom), sz.Y/3))
 			v.edit.belowArea(gtx, v, below)
 			return layout.Dimensions{Size: below}
 		}
 		b := rows[i-1]
+		var prev *blk
+		if i >= 2 {
+			prev = rows[i-2]
+		}
 		defer op.Offset(image.Pt(x0, 0)).Push(gtx.Ops).Pop()
 		g := gtx
 		g.Constraints = layout.Constraints{Min: image.Pt(cw, 0), Max: image.Pt(cw, sz.Y*8)}
-		dim := v.layoutBlock(g, b, title == nil && i-1 == 0)
+		top := gap(gtx, prev, b, true)
+		var dim layout.Dimensions
+		if ph != "" && b == rows[0] && !v.edit.editing(b) {
+			dim = v.layoutPlaceholder(g, b, top, ph)
+		} else {
+			dim = v.layoutBlock(g, b, top)
+		}
 		dim.Size.X = sz.X
 		return dim
 	})
+}
+
+// textPlaceholders are Slack's empty-canvas placeholders; a canvas gets
+// the one its file id picks (getIndexFromFileId in client-boot-shared).
+var textPlaceholders = [...]string{
+	"Go ahead, start writing!",
+	"What\u2019s on the docket for today?",
+	"Once upon a time\u2026",
+	"Time to document your genius!",
+	"Words go here ",
+}
+
+// placeholderFor is Slack's getIndexFromFileId: the file id's last two
+// characters, as a+=16*a+(c-65), modulo the count.
+func placeholderFor(id string) string {
+	a := 0
+	for i := max(0, len(id)-2); i < len(id); i++ {
+		a += 16*a + int(id[i]) - 65
+	}
+	if a < 0 {
+		a = -a
+	}
+	return textPlaceholders[a%len(textPlaceholders)]
+}
+
+// placeholder is the text Slack overlays on an empty canvas (Quip's
+// TextSectionOverlay): shown to editors only, when the document is its
+// title plus one plain paragraph that is empty or unedited default
+// content. Otherwise "".
+func (v *View) placeholder(rows []*blk) string {
+	if !v.edit.canEdit(v) || len(rows) != 1 {
+		return ""
+	}
+	b := rows[0].b
+	if b.Kind != canvas.Paragraph || !(b.Default || strings.TrimSpace(b.Text()) == "") {
+		return ""
+	}
+	return placeholderFor(v.id)
+}
+
+// layoutPlaceholder draws b's line with the placeholder over it
+// (.editor-default-section-text-overlay: 15px in #77757a, #9a9b9e dark);
+// a click on it edits b.
+func (v *View) layoutPlaceholder(gtx layout.Context, b *blk, top int, text string) layout.Dimensions {
+	w := gtx.Constraints.Max.X
+	defer op.Offset(image.Pt(0, top)).Push(gtx.Ops).Pop()
+	if v.phView == nil || v.phText != text {
+		v.phText = text
+		v.phView = richview.New(richtext.Doc{Blocks: []richtext.Block{{Kind: richtext.Paragraph, Spans: []richtext.Span{{Kind: richtext.Text, Text: text}}}}}, richview.Options{})
+	}
+	g := gtx
+	g.Constraints = layout.Constraints{Max: image.Pt(w, gtx.Constraints.Max.Y)}
+	h := max(gtx.Dp(bodyLine), v.phView.Layout(g, v.styles.ph, v.handler).Size.Y)
+	v.edit.textArea(gtx, v, b, image.Rect(0, 0, w, h))
+	return layout.Dimensions{Size: image.Pt(w, top+h)}
 }
 
 // titleSection reports whether the document opens with its title
@@ -611,26 +697,21 @@ func titleSection(bs []*blk) bool {
 	return false
 }
 
-// layoutHeader: the canvas title at the top of the document and the
-// byline under it (the author's avatar and name, last edited). The title
-// is the document's own opening heading, tb, when it has one (drawn and
-// edited as that block); otherwise the file's title.
+// layoutHeader: the canvas title at the top of the document, below the
+// header-image band; Slack draws no byline under it. The title is the
+// document's own opening heading, tb, when it has one (drawn and edited
+// as that block, in the title section's 28px/34px black); otherwise the
+// file's title.
 func (v *View) layoutHeader(gtx layout.Context, d *core.CanvasDoc, x0, cw int, tb *blk) layout.Dimensions {
-	th := v.h.Theme()
-	c := &th.C
-	y := gtx.Dp(36)
-	if v.mode == Side {
-		y = gtx.Dp(24)
-	}
+	y := gtx.Dp(docTop)
 	if v.edit != nil && v.edit.renaming {
-		h := v.edit.layoutRename(gtx, v, image.Pt(x0, y), cw)
-		y += h
+		y += v.edit.layoutRename(gtx, v, image.Pt(x0, y), cw)
 	} else if tb != nil {
 		func() {
 			defer op.Offset(image.Pt(x0, y)).Push(gtx.Ops).Pop()
 			g := gtx
 			g.Constraints = layout.Constraints{Min: image.Pt(cw, 0), Max: image.Pt(cw, gtx.Constraints.Max.Y)}
-			y += v.layoutBlock(g, tb, true).Size.Y
+			y += v.layoutTitleBlock(g, tb)
 		}()
 	} else {
 		if v.title == nil {
@@ -653,49 +734,54 @@ func (v *View) layoutHeader(gtx layout.Context, d *core.CanvasDoc, x0, cw int, t
 			}
 		}()
 	}
-	y += gtx.Dp(10)
-	// byline
-	a := v.h.Core()
-	name := ""
-	avatar := ""
-	if a != nil {
-		if u, ok := a.User(d.Info.Creator); ok {
-			name, avatar = u.Name, u.Avatar
-		}
-	}
-	line := ""
-	if name != "" {
-		line = "Created by " + name
-	}
-	if d.Info.Updated > 0 {
-		if line != "" {
-			line += "  ·  "
-		}
-		line += "Last edited " + ago(time.Unix(d.Info.Updated, 0))
-	}
-	ah := gtx.Dp(20)
-	x := x0
-	if avatar != "" {
-		if img, ok := v.h.Images().Get(avatar, ah); ok {
-			at(gtx, image.Pt(x, y), image.Pt(ah, ah), func(gtx layout.Context) layout.Dimensions {
-				return theme.Image(gtx, img, image.Pt(ah, ah), gtx.Dp(5))
-			})
-		} else {
-			theme.RRect(gtx, image.Rect(x, y, x+ah, y+ah), gtx.Dp(5), c.Skeleton)
-		}
-		x += ah + gtx.Dp(8)
-	}
-	fw := v.layoutViewers(gtx, image.Pt(x0+cw, y), ah)
-	at(gtx, image.Pt(x, y), image.Pt(max(1, x0+cw-fw-x), ah), func(gtx layout.Context) layout.Dimensions {
-		return vcenter(gtx, ah, func(gtx layout.Context) layout.Dimensions {
-			return th.Text(gtx, theme.LabelOpts{Font: theme.Font(theme.Regular), Size: 13, Color: c.FgMuted, MaxLines: 1}, line)
-		})
-	})
-	y += ah + gtx.Dp(20)
-	if d.Info.Editable && v.edit != nil && v.edit.toolbarShown() {
-		y += v.edit.layoutToolbar(gtx, v, image.Pt(x0, y), cw)
-	}
 	return layout.Dimensions{Size: image.Pt(gtx.Constraints.Min.X, y)}
+}
+
+// layoutTitleBlock draws the document's opening heading as the title
+// section (data-section-style 48: 28px/34px, weight 900), or its editor.
+func (v *View) layoutTitleBlock(gtx layout.Context, b *blk) int {
+	w := gtx.Constraints.Max.X
+	if v.edit.editing(b) {
+		return v.edit.layoutEditor(gtx, v, b, 0, w)
+	}
+	if b.rv == nil {
+		return 0
+	}
+	g := gtx
+	g.Constraints = layout.Constraints{Max: image.Pt(w, gtx.Constraints.Max.Y)}
+	h := b.rv.Layout(g, v.styles.title, v.handler).Size.Y
+	if v.edit.canEdit(v) {
+		v.edit.textArea(gtx, v, b, image.Rect(0, 0, w, h))
+	}
+	return h
+}
+
+// layoutFloatingActions is the channel tab's floating More options (⋮)
+// at the canvas's top right (floatingActions: a 32px tile, 2px padding,
+// radius 8, a 1px ring and a 1px-3px shadow; the 28px button inside), with
+// the facepile of the other viewers to its left. The side panel and full
+// view have their bar instead.
+func (v *View) layoutFloatingActions(gtx layout.Context) {
+	if v.mode != Tab {
+		return
+	}
+	th := v.h.Theme()
+	c := &th.C
+	sz := gtx.Constraints.Max
+	tile := gtx.Dp(32)
+	r := image.Rect(sz.X-gtx.Dp(24)-tile, gtx.Dp(24), sz.X-gtx.Dp(24), gtx.Dp(24)+tile)
+	theme.Shadow(gtx, r.Add(image.Pt(0, gtx.Dp(1))), gtx.Dp(8), gtx.Dp(3), theme.WithAlpha(c.PanelShadow, 0x14))
+	theme.RRect(gtx, r, gtx.Dp(8), c.Bg)
+	theme.Border(gtx, r, gtx.Dp(8), gtx.Dp(1), theme.WithAlpha(c.Fg, 0x21))
+	clk := v.btn("float.more")
+	hit := clk.Clicked(gtx) // before Layout, which drains a Clickable's events
+	at(gtx, r.Min.Add(image.Pt(gtx.Dp(2), gtx.Dp(2))), image.Pt(gtx.Dp(28), gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
+		return iconButton(gtx, th, clk, "kebab", 20)
+	})
+	if hit {
+		v.openMore()
+	}
+	v.layoutViewers(gtx, image.Pt(r.Min.X-gtx.Dp(8)+gtx.Dp(12), r.Min.Y+gtx.Dp(6)), gtx.Dp(20))
 }
 
 // layoutViewers draws the facepile of the other people viewing the canvas

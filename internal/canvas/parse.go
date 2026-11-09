@@ -173,7 +173,8 @@ func (p *parser) block(c *html.Node, depth int) []Block {
 			t := strings.TrimSpace(rawText(c, depth))
 			return []Block{{ID: id, Kind: File, Title: t, FileID: fileIDIn(c, depth)}}
 		}
-		return []Block{{ID: id, Kind: Paragraph, Spans: p.inline(c, depth)}}
+		def := hasClass(c, "default-content") && !hasClass(c, "customized-default-content")
+		return []Block{{ID: id, Kind: Paragraph, Spans: p.inline(c, depth), Default: def}}
 	case atom.Hr:
 		return []Block{{ID: id, Kind: Divider}}
 	case atom.Blockquote:

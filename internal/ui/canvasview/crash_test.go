@@ -142,7 +142,7 @@ func TestShortCanvasClickUnderThenOnTitle(t *testing.T) {
 	if len(v.blocks) != 2 {
 		t.Fatalf("%d blocks", len(v.blocks))
 	}
-	for round, title := range []f32.Point{{X: 700, Y: 55}, {X: 600, Y: 45}} {
+	for round, title := range []f32.Point{{X: 700, Y: 118}, {X: 600, Y: 110}} { // the title's line, under the 100px header band
 		r.click(450, 330) // under the text: a new block
 		if v.edit.cur == nil || v.edit.cur.place == nil || len(v.blocks) != 3 {
 			t.Fatalf("round %d: the click under the text didn't start a new block (blocks %d, session %+v)", round, len(v.blocks), v.edit.cur)

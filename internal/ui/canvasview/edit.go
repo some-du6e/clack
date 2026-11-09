@@ -16,6 +16,7 @@ package canvasview
 import (
 	"context"
 	"image"
+	"image/color"
 	"strings"
 	"time"
 
@@ -46,6 +47,7 @@ type editState struct {
 	tool     map[string]*widget.Clickable
 	pick     picker
 	saving   int // edits in flight
+	insBar   int // tag: the bottom toolbar's background
 }
 
 // session is one block being edited.
@@ -88,10 +90,6 @@ func (e *editState) canEdit(v *View) bool {
 func (e *editState) editing(b *blk) bool {
 	return e != nil && e.cur != nil && (e.cur.target == b || e.cur.place == b)
 }
-
-func (e *editState) toolbarShown() bool { return false } // the toolbar floats (layoutFloatingToolbar)
-
-func (e *editState) layoutToolbar(gtx layout.Context, v *View, p image.Point, w int) int { return 0 }
 
 // textArea makes a text block's area start editing on click (links,
 // mentions and selection keep working: the click passes through).
@@ -571,10 +569,12 @@ func (e *editState) layoutEditor(gtx layout.Context, v *View, b *blk, top, w int
 	if kind.IsList() {
 		probe := &blk{b: &canvas.Block{Kind: kind, Level: s.level, Number: max(1, b.b.Number), Checked: s.checked}}
 		x := gtx.Dp(indentDp) * s.level
-		tx = x + gtx.Dp(indentDp)
-		v.drawMarker(gtx, probe, x, lineH)
+		tx = x + v.drawMarker(gtx, probe, x, lineH)
 	}
 	st := editorStyle(th, kind, v.h)
+	if s.target != nil && titleSection(v.blocks) && v.blocks[0] == s.target {
+		st.TextSize, st.LineHeight = titleSize, titleLine // the title section
+	}
 	st.Embolden = v.styles.body.Embolden // richview's ink, so the text doesn't go grey while edited
 	g := gtx
 	g.Constraints = layout.Constraints{Max: image.Pt(max(1, w-tx), gtx.Constraints.Max.Y)}
@@ -584,6 +584,7 @@ func (e *editState) layoutEditor(gtx layout.Context, v *View, b *blk, top, w int
 		d = s.ed.Layout(g, st)
 	}()
 	h := max(d.Size.Y, lineH)
+	e.layoutSelectionBar(gtx, v, s, image.Pt(tx, 0), w-tx)
 	e.pick.update(v, s)
 	if e.pick.active() {
 		cr := s.ed.CaretRect().Add(image.Pt(tx, 0))
@@ -618,14 +619,12 @@ func editorStyle(th *theme.Theme, k canvas.Kind, h Host) composer.EditorStyle {
 	case canvas.Heading3:
 		st.TextSize, st.LineHeight = h3Size, h3Line
 	}
-	st.Color, st.Placeholder, st.Selection, st.Caret = c.Fg, c.FgSubtle, c.Selection, c.Fg
+	ink := docText(th.Dark)
+	st.Color, st.Placeholder, st.Selection, st.Caret = ink, placeholderText(th.Dark), c.Selection, ink
 	st.LinkColor, st.CodeColor, st.CodeBg, st.CodeBorder = c.Link, c.CodeFg, c.CodeBg, c.CodeBorder
 	st.PreBg, st.PreBorder, st.QuoteBar = c.PreBg, c.CodeBorder, c.QuoteBar
 	st.MentionColor, st.MentionBg, st.BroadcastColor, st.BroadcastBg = c.Mention, c.MentionBg, c.Fg, c.SelfMention
-	st.PlaceholderText = "Type something…"
-	if k.IsList() {
-		st.PlaceholderText = "List item"
-	}
+	st.PlaceholderText = "" // Slack's empty line hint offers "/" commands, which Clack has no menu for
 	st.MaxHeight = 0
 	st.EmojiSize = 20
 	if im := h.Images(); im != nil {
@@ -907,125 +906,415 @@ func blocksMarkdown(bs []canvas.Block) string {
 	return b.String()
 }
 
-// ---- the formatting toolbar ----
+// ---- Slack's canvas toolbars ----
+//
+// Slack draws no formatting bar while a block is edited. An editor gets
+// the insertion toolbar at the bottom of the canvas
+// (InsertionToolbarButtons in client-boot-shared: insert, formatting,
+// emoji, file, checklist, table, layouts), and selecting text shows the
+// floating formatting bar over the selection (QuipFloatingFormattingBar,
+// buttons from getButtonsAndFormats' canvas set).
 
-type tool struct {
-	key, icon, tip, label string
+// blockFormat is one of Slack's block formats, with its label
+// (getToolbarButtonLabel / the insertion menus) and icon
+// (getDerivedFormatSvgIcon).
+type blockFormat struct{ key, label, icon string }
+
+var (
+	fmtParagraph = blockFormat{"para", "Paragraph", "paragraph"}
+	fmtH1        = blockFormat{"h1", "Big heading", "heading-1"}
+	fmtH2        = blockFormat{"h2", "Medium heading", "heading-2"}
+	fmtH3        = blockFormat{"h3", "Small heading", "heading-3"}
+	fmtCheck     = blockFormat{"check", "Check list", "checkbox"}
+	fmtOrdered   = blockFormat{"numbered", "Ordered list", "list-ordered"}
+	fmtBullet    = blockFormat{"bullet", "Bulleted list", "list-bullet"}
+	fmtCodeBlock = blockFormat{"codeblock", "Code block", "code-block"}
+	fmtQuote     = blockFormat{"quote", "Blockquote", "quote"}
+	fmtDivider   = blockFormat{}
+)
+
+// selectionMenu is the floating bar's block-style menu (menuItems:
+// paragraph, h1, h2, h3, ─, check-list, ordered-list, bullet-list, ─,
+// code-block, blockquote).
+var selectionMenu = []blockFormat{fmtParagraph, fmtH1, fmtH2, fmtH3, fmtDivider, fmtCheck, fmtOrdered, fmtBullet, fmtDivider, fmtCodeBlock, fmtQuote}
+
+// formattingMenu is the bottom toolbar's Aa menu
+// (InsertionToolbarFormattingMenu, which opens upwards: blockquote, code
+// block, ─, bulleted, ordered, check list, ─, h3, h2, h1, paragraph).
+var formattingMenu = []blockFormat{fmtQuote, fmtCodeBlock, fmtDivider, fmtBullet, fmtOrdered, fmtCheck, fmtDivider, fmtH3, fmtH2, fmtH1, fmtParagraph}
+
+// current is the session's block format key.
+func (s *session) current() string {
+	switch s.kind {
+	case canvas.Heading1:
+		return "h1"
+	case canvas.Heading2:
+		return "h2"
+	case canvas.Heading3:
+		return "h3"
+	case canvas.Bullet:
+		return "bullet"
+	case canvas.Numbered:
+		return "numbered"
+	case canvas.Check:
+		return "check"
+	}
+	switch s.ed.ActiveBlock() {
+	case composer.Quote:
+		return "quote"
+	case composer.CodeBlock:
+		return "codeblock"
+	}
+	return "para"
 }
 
-var tools = []tool{
-	{"bold", "bold", "Bold", ""}, {"italic", "italic", "Italic", ""}, {"strike", "strike", "Strikethrough", ""},
-	{"code", "code", "Code", ""}, {"link", "link", "Link", ""}, {"|", "", "", ""},
-	{"h1", "", "Heading 1", "H1"}, {"h2", "", "Heading 2", "H2"}, {"h3", "", "Heading 3", "H3"}, {"para", "", "Text", "Aa"}, {"|", "", "", ""},
-	{"bullet", "list-bullet", "Bulleted list", ""}, {"numbered", "list-ordered", "Numbered list", ""}, {"check", "todos", "Checklist", ""},
-	{"quote", "quote", "Quote", ""}, {"codeblock", "code-block", "Code block", ""}, {"|", "", "", ""},
-	{"mention", "at", "Mention someone", ""}, {"emoji", "emoji", "Emoji", ""},
+func (s *session) icon() string {
+	for _, f := range selectionMenu {
+		if f.key == s.current() {
+			return f.icon
+		}
+	}
+	return "paragraph"
 }
 
-// layoutFloatingToolbar docks the toolbar at the top of the document while
-// a block is being edited.
-func (e *editState) layoutFloatingToolbar(gtx layout.Context, v *View) {
-	if e == nil || e.cur == nil {
+// openFormatMenu shows formats as a menu with the session's checked.
+func (e *editState) openFormatMenu(v *View, formats []blockFormat) {
+	s := e.cur
+	if s == nil || v.act.Menu == nil {
 		return
 	}
-	s := e.cur
-	th := v.h.Theme()
-	c := &th.C
-	bs := gtx.Dp(28)
-	gap := gtx.Dp(2)
-	w := gtx.Dp(8)
-	for _, t := range tools {
-		if t.key == "|" {
-			w += gtx.Dp(9)
-		} else {
-			w += bs + gap
-		}
-	}
-	w += gtx.Dp(6)
-	sz := gtx.Constraints.Max
-	x := (sz.X - w) / 2
-	r := image.Rect(x, gtx.Dp(8), x+w, gtx.Dp(8)+bs+gtx.Dp(8))
-	theme.Shadow(gtx, r.Add(image.Pt(0, gtx.Dp(2))), gtx.Dp(8), gtx.Dp(8), theme.WithAlpha(c.PanelShadow, 0x30))
-	theme.RRect(gtx, r, gtx.Dp(8), c.BgRaised)
-	theme.Border(gtx, r, gtx.Dp(8), gtx.Dp(1), c.Border)
-	// clicks between the buttons must not reach the background (which
-	// saves); registered under the buttons so they still get theirs
-	area := clip.Rect(r).Push(gtx.Ops)
-	event.Op(gtx.Ops, &e.tool)
-	area.Pop()
-	tx := r.Min.X + gtx.Dp(6)
-	active := s.ed.ActiveStyle()
-	for _, t := range tools {
-		if t.key == "|" {
-			theme.Fill(gtx, image.Rect(tx+gtx.Dp(4), r.Min.Y+gtx.Dp(10), tx+gtx.Dp(5), r.Max.Y-gtx.Dp(10)), c.Border)
-			tx += gtx.Dp(9)
+	cur := s.current()
+	var items []MenuItem
+	for _, f := range formats {
+		if f.key == "" {
+			items = append(items, MenuItem{Divider: true})
 			continue
 		}
-		t := t
-		clk := e.btn(t.key)
-		on := false
-		switch t.key {
-		case "bold":
-			on = active&composer.Bold != 0
-		case "italic":
-			on = active&composer.Italic != 0
-		case "strike":
-			on = active&composer.Strike != 0
-		case "code":
-			on = active&composer.Code != 0
-		case "h1":
-			on = s.kind == canvas.Heading1
-		case "h2":
-			on = s.kind == canvas.Heading2
-		case "h3":
-			on = s.kind == canvas.Heading3
-		case "para":
-			on = s.kind == canvas.Paragraph
-		case "bullet":
-			on = s.kind == canvas.Bullet
-		case "numbered":
-			on = s.kind == canvas.Numbered
-		case "check":
-			on = s.kind == canvas.Check
+		k := f.key
+		items = append(items, MenuItem{Label: f.label, Icon: f.icon, Checked: k == cur, Do: func() { v.post(func() { e.apply(v, k, image.Point{}) }) }})
+	}
+	v.act.Menu(items)
+}
+
+// insertMenu is the bottom toolbar's insert menu (InsertionToolbarMenu):
+// Divider, then the cards and files Clack can't insert yet, which Slack
+// also shows disabled when they aren't available.
+func (e *editState) openInsertMenu(v *View) {
+	if v.act.Menu == nil {
+		return
+	}
+	items := []MenuItem{
+		{Label: "Divider", Icon: "divider", Do: func() { v.post(func() { e.insertDivider(v) }) }},
+		{Divider: true},
+		{Label: "Date", Icon: "calendar", Disabled: true},
+		{Label: "Profile", Icon: "user", Disabled: true},
+		{Label: "Callout", Icon: "callout", Disabled: true},
+		{Label: "Canvas", Icon: "canvas", Disabled: true},
+		{Label: "Image", Icon: "image", Disabled: true},
+		{Label: "File", Icon: "attach", Disabled: true},
+	}
+	v.act.Menu(items)
+}
+
+// insertDivider adds a divider after the block being edited (else at the
+// end): canvases.edit insert_after with canvas markdown's "---".
+func (e *editState) insertDivider(v *View) {
+	after := ""
+	if s := e.cur; s != nil {
+		after = s.id
+		if s.target == nil {
+			after = s.afterID
 		}
+	}
+	if !e.finish(v) {
+		return
+	}
+	if after == "" {
+		for i := len(v.blocks) - 1; i >= 0; i-- {
+			if v.blocks[i].b.ID != "" {
+				after = v.blocks[i].b.ID
+				break
+			}
+		}
+	}
+	div := canvas.Block{Kind: canvas.Divider}
+	ch := core.CanvasChange{Operation: "insert_after", SectionID: after, Markdown: canvas.Markdown(div)}
+	if after == "" {
+		ch.Operation = "insert_at_end"
+	}
+	e.insertLocal(v, after, []canvas.Block{div})
+	e.save(v, func(ctx context.Context, a *core.App) error { return a.EditCanvas(ctx, v.id, ch) })
+	v.h.Invalidate()
+}
+
+// insertion toolbar buttons, in Slack's order.
+type insButton struct {
+	key, icon string
+	primary   bool // the green circular insert button
+}
+
+var insButtons = []insButton{
+	{"insert", "plus", true}, {"formatting", "text-format", false}, {"emoji", "emoji", false},
+	{"file", "attach", false}, {"checklist", "checkbox", false}, {"table", "spreadsheet", false},
+	{"layouts", "column-two", false},
+}
+
+// insEnabled: what Clack can do from the insertion toolbar. Insert file,
+// Insert table and the layouts menu are drawn disabled, as Slack draws
+// them when they aren't available; formatting needs a block being edited
+// (Slack disables it outside a text section).
+func (e *editState) insEnabled(k string) bool {
+	switch k {
+	case "file", "table", "layouts":
+		return false
+	case "formatting":
+		return e.cur != nil
+	}
+	return true
+}
+
+// layoutInsertionToolbar is Slack's .p-quip_insertion_toolbar, shown to
+// anyone who can edit: centred at the canvas's bottom, 18px up (24px in
+// the side panel), on the primary background with a 1px ring and a
+// 0 4px 12px shadow, radius 8, 2px padding; 30px buttons with 20px icons,
+// 5px around the first and 2px around the rest.
+func (e *editState) layoutInsertionToolbar(gtx layout.Context, v *View) {
+	if e == nil || !e.canEdit(v) {
+		return
+	}
+	th := v.h.Theme()
+	c := &th.C
+	sz := gtx.Constraints.Max
+	bw := gtx.Dp(30)
+	inner := gtx.Dp(5) + bw + gtx.Dp(5) + (len(insButtons)-1)*(gtx.Dp(2)+bw+gtx.Dp(2))
+	w, h := inner+2*gtx.Dp(2), bw+2*gtx.Dp(5)+2*gtx.Dp(2)
+	bottom := gtx.Dp(18)
+	if v.mode == Side {
+		bottom = gtx.Dp(24)
+	}
+	x := (sz.X - w) / 2
+	r := image.Rect(x, sz.Y-bottom-h, x+w, sz.Y-bottom)
+	theme.Shadow(gtx, r.Add(image.Pt(0, gtx.Dp(4))), gtx.Dp(8), gtx.Dp(12), theme.WithAlpha(c.PanelShadow, 0x1a))
+	theme.RRect(gtx, r, gtx.Dp(8), c.Bg)
+	theme.Border(gtx, r, gtx.Dp(8), gtx.Dp(1), theme.WithAlpha(c.Fg, 0x21))
+	area := clip.Rect(r).Push(gtx.Ops) // clicks between the buttons don't reach the background
+	event.Op(gtx.Ops, &e.insBar)
+	area.Pop()
+	bx := r.Min.X + gtx.Dp(2) + gtx.Dp(5)
+	by := r.Min.Y + gtx.Dp(2) + gtx.Dp(5)
+	for i, b := range insButtons {
+		if i > 0 {
+			bx += gtx.Dp(2)
+		}
+		b := b
+		on := e.insEnabled(b.key)
+		clk := e.btn("ins." + b.key)
 		hit := clk.Clicked(gtx) // before Layout, which drains a Clickable's events
-		at(gtx, image.Pt(tx, r.Min.Y+gtx.Dp(4)), image.Pt(bs, bs), func(gtx layout.Context) layout.Dimensions {
-			return clk.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				s := gtx.Constraints.Max
-				if on {
-					theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(6), theme.WithAlpha(c.Accent, 0x26))
-				} else if clk.Hovered() {
-					theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(6), c.BgHover)
-				}
-				col := c.FgMuted
-				if on {
-					col = c.Fg
-				}
-				if t.icon != "" {
-					p := gtx.Dp(18)
-					at(gtx, image.Pt((s.X-p)/2, (s.Y-p)/2), image.Pt(p, p), func(gtx layout.Context) layout.Dimensions {
-						return icons.Get(t.icon)(gtx, 18, col)
-					})
-				} else {
-					lw := th.Measure(gtx, 13, theme.Black, t.label)
-					at(gtx, image.Pt((s.X-lw)/2, 0), image.Pt(lw+2, s.Y), func(gtx layout.Context) layout.Dimensions {
-						return vcenter(gtx, s.Y, func(gtx layout.Context) layout.Dimensions {
-							return th.Label(gtx, 13, theme.Black, col, t.label)
-						})
-					})
-				}
-				return layout.Dimensions{Size: s}
+		at(gtx, image.Pt(bx, by), image.Pt(bw, bw), func(gtx layout.Context) layout.Dimensions {
+			s := gtx.Constraints.Max
+			col := c.Fg
+			switch {
+			case b.primary:
+				theme.RRect(gtx, image.Rectangle{Max: s}, s.Y/2, c.Send)
+				col = c.SendText
+			case !on:
+				col = c.FgSubtle
+			case clk.Hovered():
+				theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(8), c.BgHover)
+			}
+			p := gtx.Dp(20)
+			at(gtx, image.Pt((s.X-p)/2, (s.Y-p)/2), image.Pt(p, p), func(gtx layout.Context) layout.Dimensions {
+				return icons.Get(b.icon)(gtx, 20, col)
 			})
+			if !on {
+				return layout.Dimensions{Size: s}
+			}
+			return clk.Layout(gtx, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: s} })
 		})
-		if hit {
-			e.apply(gtx, v, t.key, image.Pt(tx, r.Max.Y))
+		if hit && on {
+			e.insertion(v, b.key, image.Pt(bx, r.Min.Y))
 		}
-		tx += bs + gap
+		bx += bw
+		if i == 0 {
+			bx += gtx.Dp(5)
+		} else {
+			bx += gtx.Dp(2)
+		}
 	}
 }
 
-// apply runs a toolbar button on the session.
-func (e *editState) apply(gtx layout.Context, v *View, k string, anchor image.Point) {
+// insertion runs an insertion toolbar button.
+func (e *editState) insertion(v *View, k string, anchor image.Point) {
+	switch k {
+	case "insert":
+		e.openInsertMenu(v)
+	case "formatting":
+		e.openFormatMenu(v, formattingMenu)
+	case "emoji", "checklist":
+		if e.cur == nil {
+			v.StartNewBlock() // no caret: Slack inserts at the end
+		}
+		if e.cur == nil {
+			return
+		}
+		if k == "checklist" {
+			k = "checktoggle"
+		}
+		e.apply(v, k, anchor)
+	}
+}
+
+// floating formatting bar buttons (the canvas set of
+// getButtonsAndFormats: [menu] [bold italic underline strike] [code]
+// [link callout]).
+type selButton struct {
+	key, icon string
+	menu      bool // the block-style menu trigger: the format's icon and a caret
+}
+
+var selGroups = [][]selButton{
+	{{key: "menu", menu: true}},
+	{{key: "bold", icon: "bold"}, {key: "italic", icon: "italic"}, {key: "underline", icon: "underline"}, {key: "strike", icon: "strike"}},
+	{{key: "code", icon: "code"}},
+	{{key: "link", icon: "link"}, {key: "callout", icon: "callout"}},
+}
+
+// selEnabled: canvases.edit's markdown has no underline, and Clack can't
+// make callouts yet; those two are drawn disabled.
+func selEnabled(k string) bool { return k != "underline" && k != "callout" }
+
+var (
+	floatBg      = color.NRGBA{R: 0x1a, G: 0x1d, B: 0x21, A: 0xff} // .p-composer__body--floating, both themes
+	floatRing    = color.NRGBA{R: 0xe8, G: 0xe8, B: 0xe8, A: 0x40}
+	floatSep     = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x40}
+	floatHover   = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x13}
+	floatPressed = color.NRGBA{R: 0xe8, G: 0xe8, B: 0xe8, A: 0x21}
+	floatOff     = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x4d}
+	white        = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
+)
+
+// layoutSelectionBar floats Slack's formatting bar over the editor's
+// selection (it shows only while text is selected: QuipFloatingFormattingBar
+// needs a non-collapsed, non-empty range). origin is the editor's offset in
+// gtx; it is drawn last (op.Defer), over the document.
+func (e *editState) layoutSelectionBar(gtx layout.Context, v *View, s *session, origin image.Point, w int) {
+	a, b := s.ed.Selection()
+	if a == b {
+		return
+	}
+	lo, hi := min(a, b), max(a, b)
+	r1, r2 := s.ed.PosRect(lo), s.ed.PosRect(hi)
+	bh := gtx.Dp(28) + 2*gtx.Dp(2) + 2*gtx.Dp(2) // buttons, their margins, the body's padding
+	bw := 2 * gtx.Dp(2)
+	for gi, g := range selGroups {
+		if gi > 0 {
+			bw += gtx.Dp(9) // separator: 1px, 4px each side
+		}
+		for _, sb := range g {
+			bw += gtx.Dp(28) + 2*gtx.Dp(2)
+			if sb.menu {
+				bw += gtx.Dp(16)
+			}
+		}
+	}
+	cx := r1.Min.X
+	if r1.Min.Y == r2.Min.Y {
+		cx = (r1.Min.X + r2.Min.X) / 2
+	}
+	x := origin.X + min(max(0, cx-bw/2), max(0, w-bw))
+	y := origin.Y + r1.Min.Y - bh - gtx.Dp(8)
+	m := op.Record(gtx.Ops)
+	func() {
+		defer op.Offset(image.Pt(x, y)).Push(gtx.Ops).Pop()
+		rr := image.Rect(0, 0, bw, bh)
+		theme.Shadow(gtx, rr.Add(image.Pt(0, gtx.Dp(1))), gtx.Dp(8), gtx.Dp(3), color.NRGBA{A: 0x14})
+		theme.RRect(gtx, rr, gtx.Dp(8), floatBg)
+		theme.Border(gtx, rr, gtx.Dp(8), gtx.Dp(1), floatRing)
+		area := clip.Rect(rr).Push(gtx.Ops)
+		event.Op(gtx.Ops, &e.tool)
+		area.Pop()
+		active := s.ed.ActiveStyle()
+		bx := gtx.Dp(2)
+		by := gtx.Dp(2) + gtx.Dp(2)
+		for gi, g := range selGroups {
+			if gi > 0 {
+				theme.Fill(gtx, image.Rect(bx+gtx.Dp(4), (bh-gtx.Dp(20))/2, bx+gtx.Dp(5), (bh+gtx.Dp(20))/2), floatSep)
+				bx += gtx.Dp(9)
+			}
+			for _, sb := range g {
+				sb := sb
+				bx += gtx.Dp(2)
+				w := gtx.Dp(28)
+				if sb.menu {
+					w += gtx.Dp(16)
+				}
+				on := selEnabled(sb.key)
+				pressed := false
+				switch sb.key {
+				case "bold":
+					pressed = active&composer.Bold != 0
+				case "italic":
+					pressed = active&composer.Italic != 0
+				case "strike":
+					pressed = active&composer.Strike != 0
+				case "code":
+					pressed = active&composer.Code != 0
+				case "link":
+					pressed = s.ed.ActiveLink()
+				}
+				clk := e.btn("sel." + sb.key)
+				hit := clk.Clicked(gtx) // before Layout, which drains a Clickable's events
+				at(gtx, image.Pt(bx, by), image.Pt(w, gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
+					sz := gtx.Constraints.Max
+					switch {
+					case !on:
+					case pressed && clk.Hovered():
+						theme.RRect(gtx, image.Rectangle{Max: sz}, gtx.Dp(4), theme.WithAlpha(floatPressed, 0x33))
+					case pressed:
+						theme.RRect(gtx, image.Rectangle{Max: sz}, gtx.Dp(4), floatPressed)
+					case clk.Hovered():
+						theme.RRect(gtx, image.Rectangle{Max: sz}, gtx.Dp(4), floatHover)
+					}
+					col := white
+					if !on {
+						col = floatOff
+					}
+					icon := sb.icon
+					if sb.menu {
+						icon = s.icon()
+					}
+					p := gtx.Dp(18)
+					ix := (gtx.Dp(28) - p) / 2
+					at(gtx, image.Pt(ix, (sz.Y-p)/2), image.Pt(p, p), func(gtx layout.Context) layout.Dimensions {
+						return icons.Get(icon)(gtx, 18, col)
+					})
+					if sb.menu {
+						cp := gtx.Dp(14)
+						at(gtx, image.Pt(ix+p, (sz.Y-cp)/2), image.Pt(cp, cp), func(gtx layout.Context) layout.Dimensions {
+							return icons.Get("caret-down")(gtx, 14, col)
+						})
+					}
+					if !on {
+						return layout.Dimensions{Size: sz}
+					}
+					return clk.Layout(gtx, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: sz} })
+				})
+				if hit && on {
+					if sb.menu {
+						e.openFormatMenu(v, selectionMenu)
+					} else {
+						e.apply(v, sb.key, image.Point{})
+					}
+				}
+				bx += w + gtx.Dp(2)
+			}
+		}
+	}()
+	op.Defer(gtx.Ops, m.Stop())
+}
+
+// apply runs a toolbar or menu action on the session.
+func (e *editState) apply(v *View, k string, anchor image.Point) {
 	s := e.cur
 	if s == nil {
 		return
@@ -1042,6 +1331,14 @@ func (e *editState) apply(gtx layout.Context, v *View, k string, anchor image.Po
 		}
 		if !nk.IsList() {
 			s.level = 0
+		}
+	}
+	plain := func() { // a block format replaces a quote or code line format
+		switch ed.ActiveBlock() {
+		case composer.Quote:
+			ed.ToggleBlock(composer.Quote)
+		case composer.CodeBlock:
+			ed.ToggleBlock(composer.CodeBlock)
 		}
 	}
 	switch k {
@@ -1061,25 +1358,41 @@ func (e *editState) apply(gtx layout.Context, v *View, k string, anchor image.Po
 			v.h.Toast("Select a link's address to make it a link")
 		}
 	case "h1":
+		plain()
 		setKind(canvas.Heading1)
 	case "h2":
+		plain()
 		setKind(canvas.Heading2)
 	case "h3":
+		plain()
 		setKind(canvas.Heading3)
 	case "para":
-		setKind(canvas.Paragraph)
+		plain()
+		s.kind, s.level = canvas.Paragraph, 0
 	case "bullet":
+		plain()
 		setKind(canvas.Bullet)
 	case "numbered":
+		plain()
 		setKind(canvas.Numbered)
 	case "check":
+		plain()
+		if s.kind != canvas.Check {
+			setKind(canvas.Check)
+		}
+	case "checktoggle": // Insert checklist (CHECK_LIST_TOGGLE)
+		plain()
 		setKind(canvas.Check)
 	case "quote":
-		ed.ToggleBlock(composer.Quote)
+		s.kind, s.level = canvas.Paragraph, 0
+		if ed.ActiveBlock() != composer.Quote {
+			ed.ToggleBlock(composer.Quote)
+		}
 	case "codeblock":
-		ed.ToggleBlock(composer.CodeBlock)
-	case "mention":
-		ed.InsertText("@")
+		s.kind, s.level = canvas.Paragraph, 0
+		if ed.ActiveBlock() != composer.CodeBlock {
+			ed.ToggleBlock(composer.CodeBlock)
+		}
 	case "emoji":
 		if ep, ok := v.h.(EmojiPicker); ok {
 			ep.OpenEmojiPicker(anchor, func(name string) { v.post(func() { e.insertEmoji(v, name) }) })
