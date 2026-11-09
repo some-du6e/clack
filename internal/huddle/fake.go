@@ -37,13 +37,41 @@ const (
 	shareStream   = 7
 )
 
-type fakeCaller struct{ signal string }
+type fakeCaller struct {
+	signal string
+	log    *callLog
+}
+
+// FakeCall is one Slack Web API call the fake answered (or refused).
+type FakeCall struct {
+	Method string
+	Params url.Values
+}
+
+type callLog struct {
+	mu    sync.Mutex
+	calls []FakeCall
+}
+
+func (l *callLog) add(method string, p url.Values) {
+	if l == nil {
+		return
+	}
+	cp := url.Values{}
+	for k, v := range p {
+		cp[k] = append([]string(nil), v...)
+	}
+	l.mu.Lock()
+	l.calls = append(l.calls, FakeCall{Method: method, Params: cp})
+	l.mu.Unlock()
+}
 
 // FakeLinkBase is where the fake's rooms.getLink links point:
 // FakeLinkBase + the channel id.
 const FakeLinkBase = "https://app.slack.com/huddle/T0FAKETEAM/"
 
 func (f fakeCaller) Call(ctx context.Context, method string, p url.Values, out any) error {
+	f.log.add(method, p)
 	if method == "rooms.getLink" { // the copy huddle link answer
 		ch := p.Get("channel_id")
 		if ch == "" {
@@ -62,6 +90,11 @@ func (f fakeCaller) Call(ctx context.Context, method string, p url.Values, out a
 			"attendee": map[string]any{"AttendeeId": fakeSelfAtt, "ExternalUserId": "E1-R0FAKEROOM-" + fakeSelf, "JoinToken": fakeToken},
 		}},
 		"huddle": map[string]any{"id": "R0FAKEROOM", "participants": []string{fakeSelf, fakeRemote}, "thread_root_ts": "1700000000.000100", "date_start": time.Now().Unix()},
+	}
+	if strings.HasPrefix(p.Get("channel_id"), "D") {
+		// a new DM huddle: only you so far (the server rings the other
+		// member; FakeRingUpdate is the sh_room_update that says so)
+		res["huddle"] = map[string]any{"id": "R0FAKEROOM", "participants": []string{fakeSelf}, "channels": []string{p.Get("channel_id")}, "date_start": time.Now().Unix()}
 	}
 	b, _ := json.Marshal(res)
 	return json.Unmarshal(b, out)
@@ -637,6 +670,26 @@ func buildFrame(typ int, body func(w *pbw)) []byte {
 type Fake struct {
 	f   *fakeChime
 	srv *httptest.Server
+	log callLog
+}
+
+// FakeRoomID is the fake huddle's room (call) id.
+const FakeRoomID = "R0FAKEROOM"
+
+// Calls is every Slack Web API call the fake got, in order.
+func (x *Fake) Calls() []FakeCall {
+	x.log.mu.Lock()
+	defer x.log.mu.Unlock()
+	return append([]FakeCall(nil), x.log.calls...)
+}
+
+// FakeRingUpdate is the sh_room_update Slack sends while it rings user
+// for the fake room (status "pending", "joining_soon", "declined"…).
+func FakeRingUpdate(channel, user, status string) json.RawMessage {
+	b, _ := json.Marshal(map[string]any{"type": "sh_room_update", "huddle": map[string]any{"channel_id": channel},
+		"room": map[string]any{"id": FakeRoomID, "channels": []string{channel},
+			"last_invite_status_by_user": map[string]string{user: status}}})
+	return b
 }
 
 // FakeRemoteUser is the other person in a Fake huddle; FakeSelfUser is you.
@@ -659,7 +712,7 @@ func NewFake(clip []byte, errf func(string, ...any)) *Fake {
 
 // Caller answers rooms.join with the fake meeting.
 func (x *Fake) Caller() Caller {
-	return fakeCaller{signal: "ws" + strings.TrimPrefix(x.srv.URL, "http") + "/control/m-1"}
+	return fakeCaller{signal: "ws" + strings.TrimPrefix(x.srv.URL, "http") + "/control/m-1", log: &x.log}
 }
 
 // Close stops the fake.

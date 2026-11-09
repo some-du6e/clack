@@ -6,7 +6,6 @@ import (
 	"image"
 	"image/color"
 	"log"
-	"time"
 
 	"gioui.org/io/system"
 	"gioui.org/layout"
@@ -104,57 +103,53 @@ type updateState struct {
 	err   string
 	// later hides the ready banner for this session ("Later"); the
 	// download stays, so the next launch offers it again.
-	later                         bool
+	later bool
+	// manual: a check the user asked for (Check now, Check for
+	// Updates…) found it, so the banner shows even with "Check for
+	// updates" off or after × for this release.
+	manual                        bool
+	dlErr                         string             // the last download failed: why
 	cancel                        context.CancelFunc // the running download
+	check                         updateCheckState   // update_check.go
 	view, dismiss, install, delay widget.Clickable
 	// quit closes Clack after a successful InstallUpdate (tests replace it).
 	quit func()
 }
 
-// updateLoop runs Options.CheckUpdate shortly after start and twice a day
-// while "Check for updates" is on. A newer release downloads in the
-// background when "Download updates automatically" is on and
-// Options.DownloadUpdate is set; nothing is installed without the user.
-func (a *App) updateLoop() {
-	if a.opts.CheckUpdate == nil {
-		return
-	}
-	time.Sleep(15 * time.Second)
-	for {
-		if !a.updatesOff.Load() {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			info, ok, err := a.opts.CheckUpdate(ctx)
-			cancel()
-			if err != nil {
-				log.Printf("ui: update check: %v", err)
-			} else if ok {
-				a.Post(func() { a.updateFound(info) })
-			}
-		}
-		time.Sleep(12 * time.Hour)
-	}
-}
-
-// updateFound takes a check's newer release (UI goroutine).
-func (a *App) updateFound(info UpdateInfo) {
+// updateFound takes a check's newer release (UI goroutine). manual: the
+// user asked for the check, so the banner shows whatever the settings.
+func (a *App) updateFound(info UpdateInfo, manual bool) {
 	u := &a.update
 	if info.Tag == u.info.Tag && u.phase != updAvailable && u.phase != updNone {
+		if manual { // asked again: show it again
+			u.manual, u.later = true, false
+			a.Invalidate()
+		}
 		return // already downloading, ready or installing this one
 	}
 	if u.cancel != nil {
 		u.cancel()
 		u.cancel = nil
 	}
+	same := info.Tag == u.info.Tag
+	if !same {
+		u.dlErr = ""
+	}
+	u.manual = manual || u.manual && same
 	u.info, u.phase, u.err, u.later = info, updAvailable, "", false
-	a.startUpdateDownload()
+	a.startUpdateDownload(false)
 	a.Invalidate()
 }
 
 // startUpdateDownload fetches the available release in the background
-// when downloads are on (UI goroutine).
-func (a *App) startUpdateDownload() {
+// (UI goroutine): when downloads are on, or force (Preferences'
+// Download button).
+func (a *App) startUpdateDownload(force bool) {
 	u := &a.update
-	if u.phase != updAvailable || a.opts.DownloadUpdate == nil || !a.updateDownloadsOn() || a.prefs.NoUpdateCheck {
+	if u.phase != updAvailable || a.opts.DownloadUpdate == nil {
+		return
+	}
+	if !force && (!a.updateDownloadsOn() || a.prefs.NoUpdateCheck && !u.manual) {
 		return
 	}
 	info := u.info
@@ -171,9 +166,11 @@ func (a *App) startUpdateDownload() {
 			if err != nil {
 				log.Printf("ui: update download: %v", err)
 				u.phase = updAvailable // the release page, as without downloads
+				u.dlErr = err.Error()
+				a.Invalidate()
 				return
 			}
-			u.phase = updReady
+			u.phase, u.dlErr = updReady, ""
 			a.Invalidate()
 		})
 	}()
@@ -209,7 +206,8 @@ func (a *App) installUpdate() {
 	}()
 }
 
-// updateChecksOn is Preferences > Advanced > "Check for updates".
+// updateChecksOn is Preferences > Advanced > "Check for updates"
+// (automatic checks; Check now works either way).
 func (a *App) updateChecksOn() bool { return !a.prefs.NoUpdateCheck }
 
 func (a *App) toggleUpdateChecks() {
@@ -217,7 +215,7 @@ func (a *App) toggleUpdateChecks() {
 	a.updatesOff.Store(a.prefs.NoUpdateCheck)
 	if a.prefs.NoUpdateCheck {
 		a.stopUpdateDownload()
-		a.update.info, a.update.phase = UpdateInfo{}, updNone
+		a.update.info, a.update.phase, a.update.manual = UpdateInfo{}, updNone, false
 	}
 	a.savePrefs()
 }
@@ -231,7 +229,7 @@ func (a *App) toggleUpdateDownloads() {
 	if a.prefs.NoUpdateDownload {
 		a.stopUpdateDownload()
 	} else {
-		a.startUpdateDownload()
+		a.startUpdateDownload(false)
 	}
 	a.savePrefs()
 }
@@ -252,12 +250,12 @@ func (a *App) stopUpdateDownload() {
 // updateBannerShown reports whether the banner is up.
 func (a *App) updateBannerShown() bool {
 	u := &a.update
-	if u.info.Tag == "" || a.prefs.NoUpdateCheck {
+	if u.info.Tag == "" || a.prefs.NoUpdateCheck && !u.manual {
 		return false
 	}
 	switch u.phase {
 	case updAvailable, updFailed:
-		return u.info.Tag != a.prefs.UpdateDismissed
+		return u.manual || u.info.Tag != a.prefs.UpdateDismissed
 	case updReady, updManual:
 		return !u.later
 	case updInstalling:
@@ -384,7 +382,7 @@ func (a *App) layoutUpdateBanner(gtx layout.Context, r image.Rectangle) {
 		a.Invalidate()
 	}
 	if clicked(&u.dismiss) { // hidden until a newer release than this one
-		a.prefs.UpdateDismissed = u.info.Tag
+		a.prefs.UpdateDismissed, u.manual = u.info.Tag, false
 		a.savePrefs()
 		a.Invalidate()
 	}

@@ -183,6 +183,8 @@ type App struct {
 	update     updateState                // "Update available" banner
 	rtAsk      realtimeState              // first-run "Live updates are off" banner
 	updatesOff atomic.Bool                // prefs.NoUpdateCheck, for updateLoop
+	updNow     chan struct{}              // Check now → updateLoop (cap 1)
+	updWake    chan struct{}              // focus came back: is a check due? (cap 1)
 	hud        *huddleui.Controller       // the native huddle (huddle_wire.go)
 	hudOrigin  map[string]*originTracker  // headers' huddle buttons by channel (caret menus)
 
@@ -201,12 +203,14 @@ func New(opts Options, images *imgcache.Cache) *App {
 		opts.Started = time.Now()
 	}
 	a := &App{
-		opts:   opts,
-		th:     theme.Bare(opts.Dark),
-		images: images,
-		clicks: clickables{},
-		views:  map[Route]View{},
-		inval:  make(chan struct{}, 1),
+		opts:    opts,
+		th:      theme.Bare(opts.Dark),
+		images:  images,
+		clicks:  clickables{},
+		views:   map[Route]View{},
+		inval:   make(chan struct{}, 1),
+		updNow:  make(chan struct{}, 1),
+		updWake: make(chan struct{}, 1),
 	}
 	go a.invalidator()
 	a.sidebar.width = theme.SidebarW
@@ -276,7 +280,7 @@ func (a *App) Run() error {
 		app.MinSize(800, 500),
 	)
 	a.winLive.Store(a.win)
-	go a.updateLoop()
+	go a.updateLoop(a.updateSchedule(), realUpdateClock())
 	a.watchOSTheme()
 	if a.images != nil {
 		a.images.SetInvalidate(a.Invalidate)
@@ -329,6 +333,9 @@ func (a *App) Run() error {
 			a.flushPrefs() // the window is gone: nothing waits on this
 			return e.Err
 		case app.ConfigEvent:
+			if e.Config.Focused && !a.focused {
+				a.nudgeUpdates() // back from sleep, often: is a check due?
+			}
 			a.focused = e.Config.Focused
 		case app.FrameEvent:
 			t0 := time.Now()

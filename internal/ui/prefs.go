@@ -31,6 +31,11 @@ type prefs struct {
 	// NoUpdateDownload turns off "Download updates automatically" (on by
 	// default): a newer release then only shows its release page.
 	NoUpdateDownload bool `json:"no_update_download,omitempty"`
+	// UpdateCheckedAt is when GitHub last answered an update check, and
+	// UpdateLimitedUntil when its rate limit ends (unix seconds): a
+	// restart waits out both (update_check.go).
+	UpdateCheckedAt    int64 `json:"update_checked_at,omitempty"`
+	UpdateLimitedUntil int64 `json:"update_limited_until,omitempty"`
 	// Realtime is the live-updates choice (Slack's websocket): nil until
 	// the user answers the first-run banner, which means off (realtime.go).
 	Realtime *bool `json:"realtime,omitempty"`

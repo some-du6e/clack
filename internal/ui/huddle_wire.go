@@ -23,6 +23,25 @@ func (a *App) huddles() *huddleui.Controller {
 // Huddles page calls it through its Host).
 func (a *App) StartHuddle(ch string) { a.huddles().Start(ch) }
 
+// SlashHuddle is the composer's /huddle: start or join the huddle in ch
+// (through Slack's startHuddle thunk, like the header button).
+func (a *App) SlashHuddle(ch string) { a.huddles().Begin(ch, "") }
+
+// OpenHuddleStart opens Slack's HuddleInviteStartModal ("Start a Huddle":
+// pick who to huddle with); entry is startHuddle's entry point (the
+// Create menu, the Huddles page's New huddle).
+func (a *App) OpenHuddleStart(entry string) {
+	if a.Core() == nil {
+		a.Toast("Sign in to start a huddle")
+		return
+	}
+	a.ShowOverlay(popups.NewHuddleStartModal(a, a.sidebarConvs(), func(ch string) { a.huddles().Begin(ch, entry) }))
+}
+
+// toggleHuddle is Cmd/Ctrl+Shift+H: leave the huddle you're in, else start
+// or join the one in the conversation on screen.
+func (a *App) toggleHuddle() { a.huddles().ShortcutToggle(a.router.Current().Channel()) }
+
 // CopyText puts text on the clipboard at the next frame (huddleui's copy
 // huddle link answers off the UI goroutine).
 func (a *App) CopyText(s string) {

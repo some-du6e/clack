@@ -198,7 +198,7 @@ func (v *Huddles) update(gtx C) {
 		})
 	}
 	if v.newBtn.Clicked(gtx) || v.heroBtn.Clicked(gtx) {
-		startHuddle(v.h, v.tt, startHuddleArgs{IsStandaloneHuddle: true})
+		newHuddle(v.h, v.tt)
 	}
 	if v.heroX.Clicked(gtx) {
 		v.hideHero = true

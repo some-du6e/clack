@@ -9,7 +9,7 @@ import (
 	"gioui.org/op/clip"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/ctxclick"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/huddleui"
 )
 
 // Where Slack's web client (build a84662d2d135, 2026-11-08) opens its
@@ -114,13 +114,7 @@ func (a *App) openCreateMenu(anchor image.Rectangle) {
 // openHuddleStart is the Create menu's Huddle: "Start a Huddle" picks the
 // conversation, then the huddle starts there (StartHuddle, the same path
 // as a channel header's huddle button).
-func (a *App) openHuddleStart() {
-	if a.Core() == nil {
-		a.Toast("Sign in to start a huddle")
-		return
-	}
-	a.ShowOverlay(popups.NewHuddleStartModal(a, a.sidebarConvs(), a.StartHuddle))
-}
+func (a *App) openHuddleStart() { a.OpenHuddleStart(huddleui.EntryCreateMenu) }
 
 func (a *App) sectionByID(id string) *sbSection {
 	m := a.model()

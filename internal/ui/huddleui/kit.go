@@ -36,12 +36,10 @@ var (
 	hudWhite    = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
 	hudLeave    = color.NRGBA{R: 0xe0, G: 0x1e, B: 0x5a, A: 0xff}
 	hudLeaveHov = color.NRGBA{R: 0xc4, G: 0x11, B: 0x4b, A: 0xff}
-	hudGreen    = color.NRGBA{R: 0x2b, G: 0xac, B: 0x76, A: 0xff}
 	hudMint     = color.NRGBA{R: 0xc6, G: 0xf1, B: 0xdd, A: 0xff} // header "huddle live" pill
 	hudMintDark = color.NRGBA{R: 0x1e, G: 0x51, B: 0x3d, A: 0xff}
 	hudMintInk  = color.NRGBA{R: 0x00, G: 0x5e, B: 0x3d, A: 0xff}
 	hudTileBg   = color.NRGBA{R: 0xf4, G: 0xf3, B: 0xf5, A: 0xff}
-	hudShade    = color.NRGBA{A: 0x99}
 	hudStageA   = color.NRGBA{R: 0xf9, G: 0xd9, B: 0xe9, A: 0xff} // stage gradient (Slack draws a theme picture)
 	hudStageB   = color.NRGBA{R: 0xd5, G: 0xe6, B: 0xf7, A: 0xff}
 )
@@ -148,19 +146,6 @@ func gradient(gtx C, r image.Rectangle, radius int, a, b color.NRGBA) {
 	defer clip.UniformRRect(r, radius).Push(gtx.Ops).Pop()
 	paint.LinearGradientOp{Stop1: layout.FPt(r.Min), Color1: a, Stop2: layout.FPt(image.Pt(r.Max.X, r.Max.Y)), Color2: b}.Add(gtx.Ops)
 	paint.PaintOp{}.Add(gtx.Ops)
-}
-
-// speakingBars is Slack's green "talking" chip (three animated bars).
-func speakingBars(gtx C, now time.Time) D {
-	w, h := gtx.Dp(26), gtx.Dp(20)
-	theme.RRect(gtx, image.Rect(0, 0, w, h), gtx.Dp(6), color.NRGBA{R: 0x1a, G: 0x3d, B: 0x2e, A: 0xe6})
-	ph := now.UnixMilli() / 120
-	for i := 0; i < 4; i++ {
-		bh := gtx.Dp(unit.Dp(3 + float32((int(ph)+i*3)%5)*1.6))
-		x := gtx.Dp(unit.Dp(5 + 4.5*float32(i)))
-		theme.RRect(gtx, image.Rect(x, (h-bh)/2, x+gtx.Dp(2.5), (h+bh)/2), gtx.Dp(1), color.NRGBA{R: 0x5b, G: 0xe0, B: 0x9b, A: 0xff})
-	}
-	return D{Size: image.Pt(w, h)}
 }
 
 // elapsed is "m:ss" or "h:mm:ss".

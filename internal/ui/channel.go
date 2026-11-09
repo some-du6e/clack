@@ -14,6 +14,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/ctxclick"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/huddleui"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
@@ -207,7 +208,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 			})
 		}
 		if clicked(a.clicks.get("hdr.huddle")) {
-			hud.Start(ch)
+			hud.Begin(ch, huddleui.EntryHeaderButton)
 		}
 		if clicked(a.clicks.get("hdr.huddlemore")) || hud.TakeCaret(ch) {
 			// the pointer is on the caret, so the tracker knows the button's

@@ -208,6 +208,22 @@ var huddleThunks = [...]string{"startEventLog", "stopHuddle", "stopEventLog", "e
 // root, through internal/ui/huddleui).
 type huddleStarter interface{ StartHuddle(channel string) }
 
+// huddleStartOpener is the ui root's "Start a Huddle" picker.
+type huddleStartOpener interface{ OpenHuddleStart(entry string) }
+
+// newHuddle is the Huddles page's New Huddle / Start a Huddle
+// (useStartHuddleClick): with Slack's standalone huddles experiment it's
+// startHuddle {isStandaloneHuddle: true}; without it (Clack has no
+// standalone huddles) it opens HuddleInviteStartModal to pick who to
+// huddle with, and the huddle starts there through startHuddle.
+func newHuddle(h Host, tt *taut.Taut) {
+	if o, ok := h.(huddleStartOpener); ok {
+		o.OpenHuddleStart("huddles_page_start_huddle")
+		return
+	}
+	startHuddle(h, tt, startHuddleArgs{IsStandaloneHuddle: true})
+}
+
 // startHuddle starts or joins the huddle in args.ChannelID natively, through
 // Slack's startHuddle thunk when a plugin wraps it (BetterHuddles), else
 // directly. Without a native huddle Host it is huddleAttempt.
