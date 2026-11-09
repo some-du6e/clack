@@ -173,7 +173,39 @@ type Attachment struct {
 	// author, MsgTS its ts.
 	MsgCard  bool
 	AuthorID string
-	MsgTS    string
+
+	// Unfurl fields Slack's MessageAttachment reads (gantry-v2 shared boot
+	// async, 2026-11): ID is the attachment's id (chat.deleteAttachment's
+	// "attachment"), OriginalURL its original_url, ServiceURL service_url.
+	// VideoHTML is set when the attachment has video_html (the player
+	// Slack embeds after its play button), AudioHTML for audio_html;
+	// Thumb then is the video's poster (thumb_url) even with Image set.
+	// ImageBytes is image_bytes. BotID is the attachment's bot_id or, for
+	// a bot's message, the message's (ax2i: attachment.botId ||
+	// msg.bot_id): such attachments draw as the classic v1 card.
+	// LinkedInText: from_url is linked in the message's text or blocks
+	// (djIX shouldShow: such previews follow expand_non_media_attachments).
+	// Hidden is attachment.hidden.
+	// Legacy: made from a message's attachments array (not a video or
+	// call block, a huddle card or a file).
+	Legacy       bool
+	ID           string
+	OriginalURL  string
+	ServiceURL   string
+	VideoHTML    bool
+	AudioHTML    bool
+	OtherHTML    bool
+	ImageBytes   int64
+	BotID        string
+	IsAppUnfurl  bool
+	LinkedInText bool
+	Hidden       bool
+	// Kit: the attachment has Block Kit blocks (Slack draws it as
+	// MessageAttachmentDefaultV2: the color bar and the blocks only);
+	// they are Text[KitFrom:].
+	Kit     bool
+	KitFrom int
+	MsgTS   string
 	// Context is the card's second line: plain spans and at most one
 	// Channel span, drawn as Slack's InlineChannelEntity (hash or, with
 	// ContextLock, lock icon + name). ContextLink is where it links.

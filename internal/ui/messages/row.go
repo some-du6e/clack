@@ -234,7 +234,8 @@ func (r *row) setDoc() {
 
 // rvOpts are the body's richview options.
 func (r *row) rvOpts() richview.Options {
-	return richview.Options{Edited: r.m.Edited, Muted: r.m.System, Dim: r.m.Pending, Channel: r.m.Channel, TS: r.m.TS, Truncate: r.truncate}
+	own := r.rc != nil && r.rc.selfID != "" && r.m.User == r.rc.selfID && r.m.Subtype != "pinned_item" && !r.m.Pending
+	return richview.Options{Edited: r.m.Edited, Muted: r.m.System, Dim: r.m.Pending, Channel: r.m.Channel, TS: r.m.TS, Truncate: r.truncate, Own: own}
 }
 
 func (r *row) growPills() {

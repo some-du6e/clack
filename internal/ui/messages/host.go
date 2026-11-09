@@ -207,6 +207,21 @@ func (r *richHandler) OpenFile(f *richtext.File) {
 		openURL(f.URL)
 	}
 }
+
+// RemoveAttachment is the unfurl's remove button: Slack's
+// BaseDeleteMessageAttachmentDialog ("Remove preview?", the danger
+// "Remove"; Clack has no admin blocklist form), then
+// removeAttachmentsIncludingChildren: the preview goes from the message
+// at once and chat.deleteAttachment tells Slack. A failure shows Slack's
+// "Attachment removing failed!".
+func (r *richHandler) RemoveAttachment(id string) {
+	m := r.m
+	if m == nil || id == "" {
+		return
+	}
+	popups.ConfirmRemovePreview(r.h, m.Channel, m.TS, id)
+}
+
 func (r *richHandler) Button(b richtext.Button) {
 	if b.URL != "" {
 		openURL(b.URL)

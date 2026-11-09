@@ -75,6 +75,7 @@ type box struct {
 	perCorner bool
 	corners   [4]int
 	comp      int16 // component tag, 0 = static
+	tgTo      int16 // > target: targets target..tgTo all hover the box (a card's links)
 	part      uint8 // CSS part (css.go): its background (or color, colFill) replaces fill
 	colFill   bool  // fill is the part's text color (list markers)
 }
@@ -84,9 +85,25 @@ type imgPrim struct {
 	url    string
 	radii  [4]int // NW NE SE SW
 	target int16
-	px     int   // requested decode size
-	fit    bool  // contain (letterbox) instead of cover
-	comp   int16 // component tag, 0 = static
+	px     int         // requested decode size
+	fit    bool        // contain (letterbox) instead of cover
+	comp   int16       // component tag, 0 = static
+	tint   color.NRGBA // an iconURL image: the icon's color
+}
+
+// removeBtn is an unfurl's remove ("x") button (unfurl.go): drawn while
+// its card (or a target inside it) or the button is hovered.
+type removeBtn struct {
+	r         image.Rectangle
+	card, del int16
+	cardTo    int16 // last target made inside the card
+}
+
+// overlayIcon is a vector icon painted over images (video play buttons).
+type overlayIcon struct {
+	r    image.Rectangle
+	name string
+	col  color.NRGBA
 }
 
 type targetKind uint8
@@ -102,6 +119,7 @@ const (
 	tCard     // whole-card click (opens URL)
 	tExpand   // attachment "Show more" / "Show less" (id: attachment number)
 	tCollapse // image block's hide / show toggle (img: the image)
+	tRemove   // an unfurl's remove button (id: the attachment id)
 )
 
 type target struct {
@@ -140,6 +158,9 @@ type display struct {
 	slots   []slot    // interactive element runs drawn by Options.Elements
 	tips    []string  // emoji tooltips (":name:"), frag.tip-1
 	codes   []codeRun // inline code runs and code blocks (codecopy.go)
+	removes []removeBtn
+	// overlayIcons paint over images (unfurl.go's video buttons)
+	overlayIcons []overlayIcon
 }
 
 // slot is a run of interactive elements the owner draws (Options.Elements).
@@ -162,6 +183,8 @@ func (d *display) reset() {
 	d.slots = d.slots[:0]
 	d.tips = d.tips[:0]
 	d.codes = d.codes[:0]
+	d.removes = d.removes[:0]
+	d.overlayIcons = d.overlayIcons[:0]
 }
 
 func (d *display) addTarget(t target) int16 {
@@ -227,6 +250,10 @@ type flowStyle struct {
 	maxLines int
 	ellipsis bool
 	noSelect bool
+	// flatEmoji keeps emoji from making their line taller (Slack's
+	// c-emoji__medium in 13px attachment text: a 22px image with -11px
+	// margins inside the line box).
+	flatEmoji bool
 }
 
 // lay holds per-layout state.
@@ -609,7 +636,7 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 		}
 		for i := lineStart; i < len(d.frags); i++ {
 			if f := &d.frags[i]; f.kind == fImage {
-				if h := f.size + l.dp(4); f.size > lineH0 && h > lh {
+				if h := f.size + l.dp(4); f.size > lineH0 && h > lh && !fs.flatEmoji {
 					lh = h
 				}
 			}

@@ -223,16 +223,39 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 		_, first, _ := l.margins(&bs[0])
 		y += first
 	}
+	skipGap := false
+	prev := -1
 	for i := 0; i < len(bs); i++ {
 		b := &bs[i]
-		if i > 0 {
-			y += l.gapBetween(&bs[i-1], b)
+		if b.Kind == richtext.AttachmentBlock && b.Att != nil && !b.Att.MsgCard && !shown(b.Att) {
+			continue // getVisibleAttachmentsForMessage dropped it
+		}
+		if prev >= 0 {
+			if !skipGap {
+				y += l.gapBetween(&bs[prev], b)
+			}
+			skipGap = false
 			// cleanHTMLForExternal adds a <br> after a section only when
 			// it doesn't already end in one (a trailing "\n" text is a
 			// <br>), so a block break never doubles a newline
 			if n := len(l.d.plain); n == 0 || l.d.plain[n-1] != '\n' {
 				l.plainAdd("\n")
 			}
+		}
+		prev = i
+		// v3 link previews flow in one wrapping row (unfurl.go); their
+		// wrappers hold the 8px under each card.
+		if b.Kind == richtext.AttachmentBlock && isV3(b) && !(l.mode&modeAtts != 0 && !l.inAtt) {
+			var grp []*richtext.Block
+			j := i
+			for j < len(bs) && bs[j].Kind == richtext.AttachmentBlock && isV3(&bs[j]) {
+				grp = append(grp, &bs[j])
+				j++
+			}
+			y += l.v3Group(grp, x, y, w)
+			i, prev = j-1, j-1
+			skipGap = true
+			continue
 		}
 		// Slack's FileGallery: consecutive visual files (images, videos)
 		// lay out as one media gallery.
@@ -244,7 +267,7 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 				j++
 			}
 			y += l.mediaGallery(gal, x, y, w)
-			i = j - 1
+			i, prev = j-1, j-1
 			continue
 		}
 		// two or more document pillows: FileGallery's mixed_file_format grid
@@ -256,7 +279,7 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 				j++
 			}
 			y += l.pillowGrid(gal, x, y, w)
-			i = j - 1
+			i, prev = j-1, j-1
 			continue
 		}
 		y += l.block(b, x, y, w, i == edited)

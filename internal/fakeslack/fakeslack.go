@@ -64,6 +64,9 @@ type Size struct {
 	// Views adds the rail list views' fixtures (views.go): followed
 	// threads, scheduled drafts, recorded activity writes.
 	Views bool
+	// Embeds adds #embeds-gallery: one message per way Slack draws a
+	// link preview (embeds.go).
+	Embeds bool
 	// Files adds #files-gallery: one message per way Slack draws shared
 	// files (files.go).
 	Files bool
@@ -211,9 +214,11 @@ type Server struct {
 	imgs  map[string][]byte
 
 	histMu sync.Mutex
-	hist   map[string][]slack.Message // channel -> all messages, newest first
-	code   codeCalls                  // code channel API calls (codechannels.go)
-	codeFx *CodeFixtures
+	// delAtts: chat.deleteAttachment calls (embeds.go)
+	delAtts []DeletedAttachment
+	hist    map[string][]slack.Message // channel -> all messages, newest first
+	code    codeCalls                  // code channel API calls (codechannels.go)
+	codeFx  *CodeFixtures
 
 	bkMu      sync.Mutex
 	bkActions []BlockActionCall // blocks.actions, in order (bkgallery_elements.go)
@@ -420,6 +425,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.Files {
 		s.addFilesChannel() // files.go
+	}
+	if sz.Embeds {
+		s.addEmbedsChannel() // embeds.go
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", s.api)
@@ -1048,6 +1056,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return s.join(f)
 	case "conversations.leave":
 		return s.leave(f)
+	case "chat.deleteAttachment":
+		return s.deleteAttachment(f)
 	case "chat.postMessage":
 		ts := fmt.Sprintf("%d.%06d", time.Now().Unix(), time.Now().Nanosecond()/1000)
 		msg := map[string]any{"type": "message", "ts": ts, "user": SelfID, "text": f.Get("text")}

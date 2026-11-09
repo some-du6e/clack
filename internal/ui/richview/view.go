@@ -279,7 +279,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	if v.hover >= 0 {
 		for i := range v.d.boxes {
 			b := &v.d.boxes[i]
-			if b.target == v.hover && b.hover.A > 0 {
+			if (b.target == v.hover || b.tgTo > b.target && v.hover > b.target && v.hover <= b.tgTo) && b.hover.A > 0 {
 				switch b.kind {
 				case bBorder:
 					// Card hover: stronger border on top.
@@ -317,6 +317,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 		}
 	}
 	v.drawCopyButtons(gtx, st)
+	v.drawRemoves(gtx, st)
 	if v.opts.Dim {
 		opac.Pop()
 	}
@@ -457,6 +458,11 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 			h = y
 		}
 	}
+	for i := range v.d.removes { // a remove button sits 9px past its card
+		if x := v.d.removes[i].r.Max.X; x > maxX {
+			maxX = x
+		}
+	}
 	if maxX > w {
 		maxX = w
 	}
@@ -525,6 +531,10 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 			fillRadii(ops, im.r, im.radii, st.Palette.Placeholder)
 			continue
 		}
+		if name, ok := strings.CutPrefix(im.url, iconURL); ok { // a vector icon (unfurl footers, placeholders)
+			paintIconAt(ops, name, im.r, im.tint)
+			continue
+		}
 		var img paint.ImageOp
 		ok := false
 		if st.Images != nil {
@@ -545,6 +555,12 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 	for i := range v.d.boxes { // over images, under text (gallery scrims, video pills)
 		if b := &v.d.boxes[i]; b.layer == 2 && b.comp == comp {
 			v.drawBox(ops, b, css)
+		}
+	}
+	if comp == 0 {
+		for i := range v.d.overlayIcons {
+			o := &v.d.overlayIcons[i]
+			paintIconAt(ops, o.name, o.r, o.col)
 		}
 	}
 	ul := uipref.Get().UnderlineLinks
@@ -1070,6 +1086,10 @@ func (v *View) activate(t int16, anchor image.Point, h Handler) {
 	case tButton:
 		if tg.btn != nil {
 			h.Button(*tg.btn)
+		}
+	case tRemove:
+		if rm, ok := h.(AttachmentRemover); ok && tg.id != "" {
+			rm.RemoveAttachment(tg.id)
 		}
 	case tCollapse:
 		if tg.img != nil && v.collapsed != nil {

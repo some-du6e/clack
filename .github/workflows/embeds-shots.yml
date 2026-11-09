@@ -1,0 +1,71 @@
+name: embeds-shots
+# Link previews (unfurls) drawn the way Slack's web client draws them
+# (docs/EMBEDS.md): the richview layout tests (MessageAttachmentDefaultV3
+# routing, the X social card, the generic row card, the video card's play
+# buttons, the v1 color-bar card, expand_non_media_attachments, the remove
+# button), the #embeds-gallery render test with chat.deleteAttachment, and
+# screenshots of each card (light, dark, the X post hovered), the whole
+# channel and the "Remove preview?" dialog, rendered headlessly against
+# internal/fakeslack. Synthetic only: nothing here talks to Slack.
+on:
+  push:
+    paths:
+      - "internal/richtext/message.go"
+      - "internal/richtext/types.go"
+      - "internal/slack/types.go"
+      - "internal/slack/methods.go"
+      - "internal/core/writes.go"
+      - "internal/fakeslack/embeds.go"
+      - "internal/ui/richview/unfurl.go"
+      - "internal/ui/richview/unfurl_test.go"
+      - "internal/ui/richview/cards.go"
+      - "internal/ui/richview/blocks.go"
+      - "internal/ui/richview/view.go"
+      - "internal/ui/richview/flow.go"
+      - "internal/ui/icons/redrawn.go"
+      - "internal/ui/popups/actions_message.go"
+      - "internal/ui/messages/host.go"
+      - "internal/ui/messages/row.go"
+      - "internal/ui/embeds_shots_test.go"
+      - ".github/workflows/embeds-shots.yml"
+  workflow_dispatch:
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb libgl1-mesa-dri libegl-mesa0
+
+permissions:
+  contents: read
+
+jobs:
+  embeds-shots:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: layout
+        run: go test -count=1 -v -run 'TestUnfurlKinds|TestXCard|TestGenericCard|TestVideoServiceCard|TestV1Card|TestNonMediaPref|TestRemoveButton' ./internal/ui/richview/
+      - name: render
+        run: xvfb-run -a go test -count=1 -v -run 'TestEmbedsChannel$' ./internal/ui/
+      - name: screenshots
+        env:
+          EMBEDS_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$EMBEDS_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -v -run 'TestEmbedsCardShots$' ./internal/ui/richview/
+          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestEmbedsShots$' ./internal/ui/
+          ls -la "$EMBEDS_SHOTS_DIR"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: embeds-shots
+          path: dist/shots

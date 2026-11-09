@@ -173,6 +173,29 @@ func confirmDelete(h Host, m core.Message, del func(ctx context.Context, ch, ts 
 		})
 }
 
+// ConfirmRemovePreview is Slack's BaseDeleteMessageAttachmentDialog for
+// an unfurl's remove button: "Remove preview?" with the danger "Remove"
+// (the admin-only "Also block previews from this website" form is not
+// offered), then removeAttachmentsIncludingChildren (core.DeleteAttachment:
+// the preview leaves the message at once, then chat.deleteAttachment).
+// On failure Slack says "Attachment removing failed!".
+func ConfirmRemovePreview(h Host, ch, ts, id string) {
+	Confirm(h, "Remove preview?", "", "Remove", true, nil, func() {
+		a := h.Core()
+		if a == nil {
+			h.Toast("Not connected yet")
+			return
+		}
+		run(h, func(ctx context.Context) (struct{}, error) {
+			return struct{}{}, a.DeleteAttachment(ctx, ch, ts, id)
+		}, func(_ struct{}, err error) {
+			if err != nil {
+				h.Toast("Attachment removing failed!")
+			}
+		})
+	})
+}
+
 // ---- shared helpers (actions_*.go) ----
 
 // actDo runs a core write through do(), toasting when core is missing.

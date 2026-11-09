@@ -179,6 +179,13 @@ func (c *Client) Delete(ctx context.Context, ch, ts string) error {
 	return c.Call(ctx, "chat.delete", url.Values{"channel": {ch}, "ts": {ts}}, nil)
 }
 
+// DeleteAttachment removes one attachment (a link preview) from a
+// message: Slack's deleteSingleAttachment (chat.deleteAttachment
+// {attachment, channel, ts}).
+func (c *Client) DeleteAttachment(ctx context.Context, ch, ts, id string) error {
+	return c.Call(ctx, "chat.deleteAttachment", url.Values{"attachment": {id}, "channel": {ch}, "ts": {ts}}, nil)
+}
+
 func (c *Client) React(ctx context.Context, ch, ts, name string, add bool) error {
 	m := "reactions.remove"
 	if add {
