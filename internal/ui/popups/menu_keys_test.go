@@ -229,6 +229,7 @@ func TestMenuKeysMessageActions(t *testing.T) {
 			setGOOS(t, c.goos)
 			h := mkHost(t)
 			e, hooks := mkOpen(t, h, c.menu, c.own)
+			e.press(c.name, c.mods)
 			c.check(t, h, e, hooks)
 			if !e.m.Dismissed() {
 				t.Error("menu still open")
