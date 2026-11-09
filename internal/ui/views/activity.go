@@ -1052,7 +1052,7 @@ func (v *Activity) describe(it *core.ActivityItem, refs map[string]core.ConvRef)
 
 	// The footer (Detailed) and the location and type icon (Dense), as
 	// ActivityRowContentMultiLine / SingleLine draw them.
-	icon := actIconType(it)
+	icon := actEntryKind(it)
 	if f, ok := v.footerText(it, dest, d.title); ok {
 		d.ft, d.footText = f, true
 	}

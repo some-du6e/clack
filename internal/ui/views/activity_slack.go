@@ -164,10 +164,10 @@ func (v *Activity) appConv(it *core.ActivityItem, kind string) bool {
 	return ok && u.IsBot
 }
 
-// actIconType is Gjwd getActivityIconType (gantry client-boot-render's
+// actEntryKind is Gjwd getActivityIconType (gantry client-boot-render's
 // build, the one Slack's shipping CSS pairs with): the item's icon kind.
 // Saved reminders resolve without their channel, as the rows call it.
-func actIconType(it *core.ActivityItem) string {
+func actEntryKind(it *core.ActivityItem) string {
 	switch {
 	case actMentionType(it.Type) || it.Type == "code_review_requested":
 		return "at_mention"
