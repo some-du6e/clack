@@ -127,6 +127,7 @@ func init() {
 		popups.OpenPreferences = func() { a.openPrefs() }
 		popups.OpenPreferencesSection = func(sec string) { a.openPrefsSection(sec) }
 		popups.SignOut = func() { a.signOut() }
+		popups.CheckForUpdates = a.menuCheckForUpdates()
 	}
 	mkStatusModal = func(a *App) Overlay { return popups.NewSetStatusModal(a) }
 	mkCreateChannel = func(a *App, section string) Overlay {

@@ -71,8 +71,11 @@ func LatestRelease(ctx context.Context, version string) (Release, error) {
 		return Release{}, err
 	}
 	defer resp.Body.Close()
+	if rl := rateLimit(resp, time.Now()); rl != nil {
+		return Release{}, rl
+	}
 	if resp.StatusCode != 200 {
-		return Release{}, fmt.Errorf("update check: %s", resp.Status)
+		return Release{}, &StatusError{Status: resp.Status, Code: resp.StatusCode}
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
@@ -86,6 +89,73 @@ func LatestRelease(ctx context.Context, version string) (Release, error) {
 		r.URL = "https://github.com/some-du6e/yoloslackgoclient/releases/tag/" + r.Tag
 	}
 	return r, nil
+}
+
+// StatusError is a releases API answer other than 200 (and not a rate
+// limit).
+type StatusError struct {
+	Status string // "502 Bad Gateway"
+	Code   int
+}
+
+func (e *StatusError) Error() string { return "update check: " + e.Status }
+
+// HTTPStatus is the status line (ui reads it through an interface).
+func (e *StatusError) HTTPStatus() string { return e.Status }
+
+// RateLimitError is GitHub refusing the check for now: 429, or 403 with
+// the rate limit used up. The unauthenticated API allows 60 requests an
+// hour per IP, shared by everything on the network.
+type RateLimitError struct {
+	Status string
+	Until  time.Time // wall clock; no request before then
+}
+
+func (e *RateLimitError) Error() string {
+	return fmt.Sprintf("update check: %s (rate limited until %s)", e.Status, e.Until.Format(time.RFC3339))
+}
+
+// RetryAt is when GitHub takes requests again (ui reads it through an
+// interface, without importing this package).
+func (e *RateLimitError) RetryAt() time.Time { return e.Until }
+
+// rateLimitWait is the wait when GitHub says "rate limited" without
+// saying until when (its docs: at least a minute; secondary limits
+// clear in a few minutes).
+const rateLimitWait = 10 * time.Minute
+
+// rateLimit reads GitHub's rate-limit answer: 429, or 403 with
+// x-ratelimit-remaining: 0 or a retry-after (a plain 403 is not a rate
+// limit). retry-after (seconds or an HTTP date) wins over
+// x-ratelimit-reset (unix seconds).
+func rateLimit(resp *http.Response, now time.Time) *RateLimitError {
+	h := resp.Header
+	retry := h.Get("Retry-After")
+	switch {
+	case resp.StatusCode == http.StatusTooManyRequests:
+	case resp.StatusCode == http.StatusForbidden && (h.Get("X-RateLimit-Remaining") == "0" || retry != ""):
+	default:
+		return nil
+	}
+	now = now.Round(0)
+	until := time.Time{}
+	if retry != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(retry)); err == nil && n >= 0 {
+			until = now.Add(time.Duration(n) * time.Second)
+		} else if t, err := http.ParseTime(retry); err == nil {
+			until = t
+		}
+	}
+	if until.IsZero() {
+		if n, err := strconv.ParseInt(strings.TrimSpace(h.Get("X-RateLimit-Reset")), 10, 64); err == nil && n > 0 {
+			until = time.Unix(n, 0)
+		}
+	}
+	// nonsense (the past, or days away from a wrong clock): the default
+	if !until.After(now) || until.Sub(now) > 24*time.Hour {
+		until = now.Add(rateLimitWait)
+	}
+	return &RateLimitError{Status: resp.Status, Until: until}
 }
 
 // parseReleases reads one release object, or a list of them (the newest

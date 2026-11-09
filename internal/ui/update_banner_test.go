@@ -69,13 +69,13 @@ func waitPhase(t *testing.T, a *App, want updatePhase) {
 func TestUpdateBannerStates(t *testing.T) {
 	f := &fakeUpdater{release: make(chan error, 1)}
 	a := updateApp(t, f)
-	a.updateFound(UpdateInfo{Tag: "v0.2.0", URL: "https://github.com/x"})
+	a.updateFound(UpdateInfo{Tag: "v0.2.0", URL: "https://github.com/x"}, false)
 	// downloading in the background: no banner yet
 	if a.update.phase != updDownloading || a.updateBannerShown() {
 		t.Fatalf("while downloading: phase %d, shown %v", a.update.phase, a.updateBannerShown())
 	}
 	// the same release found again doesn't download twice
-	a.updateFound(UpdateInfo{Tag: "v0.2.0"})
+	a.updateFound(UpdateInfo{Tag: "v0.2.0"}, false)
 	f.release <- nil
 	waitPhase(t, a, updReady)
 	if n := f.downloads.Load(); n != 1 {
@@ -89,7 +89,7 @@ func TestUpdateBannerStates(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		bannerFrame(a)
 	}
-	a.updateFound(UpdateInfo{Tag: "v0.2.0"})
+	a.updateFound(UpdateInfo{Tag: "v0.2.0"}, false)
 	bannerFrame(a)
 	if n := f.installs.Load(); n != 0 || a.update.phase != updReady {
 		t.Fatalf("installed %d times without the click (phase %d)", n, a.update.phase)
@@ -119,7 +119,7 @@ func TestUpdateBannerFallbacks(t *testing.T) {
 	// a failed (or refused: bad checksum, no package) download shows the release page
 	f := &fakeUpdater{release: make(chan error, 1)}
 	a := updateApp(t, f)
-	a.updateFound(UpdateInfo{Tag: "v0.2.0"})
+	a.updateFound(UpdateInfo{Tag: "v0.2.0"}, false)
 	f.release <- errors.New("update: the download doesn't match the release's SHA256SUMS")
 	waitPhase(t, a, updAvailable)
 	if msg, b := a.updateBannerText(); msg != "A new version of Clack is available: v0.2.0" || strings.Join(b, "|") != "View release" || !a.updateBannerShown() {
@@ -144,7 +144,7 @@ func TestUpdateBannerFallbacks(t *testing.T) {
 	if a2.updateDownloadsOn() {
 		t.Fatal("toggle")
 	}
-	a2.updateFound(UpdateInfo{Tag: "v0.3.0"})
+	a2.updateFound(UpdateInfo{Tag: "v0.3.0"}, false)
 	if a2.update.phase != updAvailable || f2.downloads.Load() != 0 {
 		t.Errorf("downloads off: phase %d, %d downloads", a2.update.phase, f2.downloads.Load())
 	}
@@ -166,7 +166,7 @@ func TestUpdateBannerFallbacks(t *testing.T) {
 	// the system installer opened instead, or the install failed
 	f3 := &fakeUpdater{release: make(chan error, 2), installErr: ErrUpdateManual}
 	a3 := updateApp(t, f3)
-	a3.updateFound(UpdateInfo{Tag: "v0.4.0"})
+	a3.updateFound(UpdateInfo{Tag: "v0.4.0"}, false)
 	f3.release <- nil
 	waitPhase(t, a3, updReady)
 	a3.update.install.Click()

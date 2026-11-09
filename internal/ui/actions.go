@@ -12,10 +12,15 @@ func (a *App) openTeamMenu(anchor image.Point) {
 		a.ShowOverlay(mkTeamMenu(a, anchor))
 		return
 	}
-	a.menu(anchor, []MenuItem{
+	items := []MenuItem{
 		{Label: a.teamName(), Disabled: true},
 		{Divider: true},
 		{Label: "Preferences", Icon: "settings", Hint: "Ctrl+,", Do: a.openPrefs},
+	}
+	if f := a.menuCheckForUpdates(); f != nil {
+		items = append(items, MenuItem{Label: "Check for updates…", Do: f})
+	}
+	a.menu(anchor, append(items, []MenuItem{
 		{Label: "Toggle dark mode", Icon: "moon", Hint: "Ctrl+Shift+Y", Do: a.ToggleDark},
 		{Divider: true},
 		{Label: "All unreads", Icon: "unreads", Hint: "Ctrl+Shift+A", Do: func() { a.Navigate("unreads") }},
@@ -23,7 +28,7 @@ func (a *App) openTeamMenu(anchor image.Point) {
 		{Label: "Directories", Icon: "directories", Do: func() { a.Navigate("directories") }},
 		{Divider: true},
 		{Label: "Sign out of " + a.teamName() + " on this device", Danger: true, Do: a.signOut},
-	})
+	}...))
 }
 
 func (a *App) openSelfMenu(anchor image.Point) {
