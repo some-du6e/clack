@@ -795,10 +795,27 @@ func (t *Taut) InjectedMessages(ch string) []core.Message {
 	if json.Unmarshal(raw, &bucket) != nil {
 		return nil
 	}
+	// The bucket is the mirror of core's messages as plugins left them,
+	// and it may be a frame or two stale: a pending send's local copy
+	// (swapped for the confirmed message since) or a message core already
+	// has under another ts must not come back as "injected" (the message
+	// showed twice after every send with Message Logger on).
+	var cids map[string]bool
 	var out []core.Message
 	for ts, sm := range bucket {
 		if _, have := t.app.S.Find(ch, ts); have {
 			continue
+		}
+		if _, local := t.app.LocalTS(ts); local {
+			continue
+		}
+		if sm.ClientMsgID != "" {
+			if cids == nil {
+				cids = t.app.ClientMsgIDs(ch)
+			}
+			if cids[sm.ClientMsgID] {
+				continue
+			}
 		}
 		m := sm
 		out = append(out, t.app.MessageFromSlack(ch, &m))

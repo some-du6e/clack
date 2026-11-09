@@ -162,6 +162,12 @@ type Server struct {
 	Size Size
 	URL  string // http://127.0.0.1:port/
 
+	// OnPost, when set, runs inside chat.postMessage before it answers,
+	// with the posted form and the new message (tests push the realtime
+	// echo from it, so it reaches the client before the reply). Set it
+	// before the first post.
+	OnPost func(f url.Values, msg map[string]any)
+
 	srv   *http.Server
 	ln    net.Listener
 	users []slack.User
@@ -906,7 +912,17 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return s.join(f)
 	case "chat.postMessage":
 		ts := fmt.Sprintf("%d.%06d", time.Now().Unix(), time.Now().Nanosecond()/1000)
-		return ok("ts", ts, "channel", f.Get("channel"), "message", map[string]any{"type": "message", "ts": ts, "user": SelfID, "text": f.Get("text")})
+		msg := map[string]any{"type": "message", "ts": ts, "user": SelfID, "text": f.Get("text")}
+		if th := f.Get("thread_ts"); th != "" {
+			msg["thread_ts"] = th
+		}
+		if cid := f.Get("client_msg_id"); cid != "" {
+			msg["client_msg_id"] = cid // Slack's reply carries it, as does the echo
+		}
+		if s.OnPost != nil {
+			s.OnPost(f, msg)
+		}
+		return ok("ts", ts, "channel", f.Get("channel"), "message", msg)
 	case "edge/users/info":
 		var up map[string]int
 		_ = json.Unmarshal(edge["updated_ids"], &up)

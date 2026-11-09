@@ -289,6 +289,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	var e struct {
 		Subtype   string         `json:"subtype"`
 		Message   *slack.Message `json:"message"`
+		Previous  *slack.Message `json:"previous_message"`
 		DeletedTS string         `json:"deleted_ts"`
 	}
 	if json.Unmarshal(ev.Raw, &e) != nil {
@@ -301,18 +302,28 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		}
 		m := *e.Message
 		a.EnsureUsers(ctx, referencedUsers([]slack.Message{m}))
-		if old, ok := a.S.Find(ch, m.TS); ok && m.ReplyCount == 0 && old.ReplyCount > 0 {
-			// RTM edits may omit thread metadata; keep it.
-			m.ReplyCount, m.ReplyUsers, m.LatestReply = old.ReplyCount, old.ReplyUsers, old.LatestReply
-		}
+		// Slack's messageChanged is replaceMessages (replace: true, client-boot
+		// z+/K processAndMergeMessages): the event's message replaces the
+		// stored one wholesale, thread metadata included. When a thread's
+		// last reply is deleted the parent's message_changed has no
+		// reply_count, and the reply bar goes; a deleted parent with
+		// replies arrives here as subtype "tombstone".
 		if _, found := a.S.Mutate(ch, m.TS, func(x *slack.Message) { *x = m }); !found {
-			a.S.Upsert(ch, m)
+			a.putLocal(ch, m) // a reply goes to its (cached) thread, never the channel
 		}
 		a.emitUpdate(ch, &m)
 		return
 	case "message_deleted":
+		// Slack's setMessageDeleted just removes the message; the parent's
+		// reply_count / latest_reply come with the parent's message_changed.
+		thread := ""
+		if e.Previous != nil && e.Previous.ThreadTS != e.DeletedTS {
+			thread = e.Previous.ThreadTS
+		} else if old, ok := a.S.Find(ch, e.DeletedTS); ok && old.ThreadTS != old.TS {
+			thread = old.ThreadTS
+		}
 		a.S.Remove(ch, e.DeletedTS)
-		a.emit(Event{Type: "delete", Channel: ch, TS: e.DeletedTS})
+		a.emit(Event{Type: "delete", Channel: ch, TS: e.DeletedTS, ThreadTS: thread})
 		return
 	case "message_replied":
 		if e.Message == nil {

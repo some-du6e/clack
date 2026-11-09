@@ -329,7 +329,7 @@ func (s *listState) sync(h Host, now time.Time) {
 }
 
 func groupable(a, b *core.Message, ta, tb time.Time) bool {
-	if a.System || b.System || a.Subtype != b.Subtype && (a.Subtype == "bot_message" || b.Subtype == "bot_message") {
+	if a.System || b.System || a.Tombstone || b.Tombstone || a.Subtype != b.Subtype && (a.Subtype == "bot_message" || b.Subtype == "bot_message") {
 		return false
 	}
 	if a.User != b.User || a.BotID != b.BotID || a.Name != b.Name || a.Avatar != b.Avatar {
@@ -927,7 +927,7 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 	// hover toolbar
 	s.tbFor = -1
 	if s.hoverIdx >= 0 && s.hoverIdx < len(s.items) && s.items[s.hoverIdx].kind == itMsg {
-		if r := s.rows[s.items[s.hoverIdx].key]; r != nil && !s.sel.dragging && r.edit == nil && len(s.items[s.hoverIdx].group) == 0 && !r.m.Pending && !r.m.Failed {
+		if r := s.rows[s.items[s.hoverIdx].key]; r != nil && !s.sel.dragging && r.edit == nil && len(s.items[s.hoverIdx].group) == 0 && !r.m.Pending && !r.m.Failed && !r.m.Tombstone {
 			s.toolbar(gtx, h, rc, r, s.hoverIdx, size)
 		}
 	}
