@@ -1758,6 +1758,11 @@ func (r *actRow) preview(gtx C, lines int) D {
 func (v *Activity) choose(it *core.ActivityItem, key string, r *actRow) {
 	v.sel, v.selKey, v.selOK, v.selDesc = *it, key, true, r.d
 	v.markRead(it, key)
+	if it.ListID != "" && it.ListRecord != "" { // a list item opens its pane (mount_features_lists.go)
+		if lo, ok := v.h.(interface{ OpenListItem(listID, recID string) }); ok {
+			lo.OpenListItem(it.ListID, it.ListRecord)
+		}
+	}
 	v.prevList.Position = layout.Position{}
 	v.dirty = true
 }

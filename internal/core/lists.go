@@ -756,3 +756,17 @@ func (a *App) CreateList(ctx context.Context, name, templateID string) (string, 
 	}
 	return r.List.ID, nil
 }
+
+// FileTitle is a file's title (attachment and canvas cells), from files.info.
+func (a *App) FileTitle(ctx context.Context, id string) (string, error) {
+	var r struct {
+		File struct {
+			Title string `json:"title"`
+			Name  string `json:"name"`
+		} `json:"file"`
+	}
+	if err := a.C.Call(ctx, "files.info", url.Values{"file": {id}, "count": {"0"}}, &r); err != nil {
+		return "", err
+	}
+	return firstNonEmpty(r.File.Title, r.File.Name), nil
+}

@@ -451,10 +451,9 @@ func TestSectionMenuActions(t *testing.T) {
 	if !ok || len(hm.Matches()) == 0 {
 		t.Fatal("no Start a Huddle picker")
 	}
+	n = fs.CallCount("lists.create")
 	menuFind(t, created, "List").Do()
-	if a.toast.text != "Lists aren’t available in "+AppName+" yet" {
-		t.Errorf("List toast %q", a.toast.text)
-	}
+	e.until("list created", 10*time.Second, func() bool { return fs.CallCount("lists.create") > n })
 }
 
 // With SECTION_MENU_SHOTS_DIR set (the section-menus workflow, under xvfb)

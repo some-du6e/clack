@@ -5,6 +5,8 @@ package icons
 // them). The redrawn ones say so in redrawn.go; the formatting bar and
 // section-menu glyphs are in icons.go and slack.go.
 var slackRef = map[string]string{
+	"spreadsheet":          "spreadsheet",
+	"kanban":               "kanban",
 	"activity":             "notifications",
 	"activity-filled":      "notifications-filled",
 	"add-channel-canvas":   "add-channel-canvas",
