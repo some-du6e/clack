@@ -85,6 +85,10 @@ const (
 	// agent's newer artifact type, say): UnsupportedBlockFallback (l2Ua),
 	// a card reading "This message can’t be fully displayed."
 	UnknownBlock
+	// FileStatus is the line above an optimistic message's files while the
+	// viewer's uploads finish (PendingFilesMetaTextWrapper,
+	// c-message_kit__file__meta): Spans holds "Uploading…" and the like.
+	FileStatus
 )
 
 // Block is one vertical unit of a document.
@@ -230,6 +234,11 @@ type File struct {
 	User                                    string // uploader
 	Created                                 int64  // unix seconds
 	IsExternal                              bool
+	// Pending: the viewer's own upload, not finished yet (drawn at .5
+	// with a spinner, c-pending_files__thumbnail--pending); Percent is its
+	// percentComplete.
+	Pending bool
+	Percent int
 }
 
 // Doc is a whole message body.

@@ -940,7 +940,7 @@ func fileBlock(f *rt.File) rt.Block { return rt.Block{Kind: rt.FileBlock, File: 
 func TestFileImage(t *testing.T) {
 	st := newTestStyle()
 	f := &rt.File{Name: "pic.png", IsImage: true, Thumb: &rt.Image{URL: "https://files.test/pic.png", W: 800, H: 400}}
-	v := layoutAt(st, doc(fileBlock(f)), Options{}, 600)
+	v := layoutAt(st, doc(fileBlock(f)), Options{CompactFiles: true}, 600)
 	if len(v.d.imgs) != 1 {
 		t.Fatalf("%d imgs", len(v.d.imgs))
 	}
@@ -1051,7 +1051,7 @@ func TestMediaGallery(t *testing.T) {
 
 	// three landscape files at 600 (gallery 574): one row of 186x140
 	files, blocks := galleryFiles(3, land)
-	v := layoutAt(st, doc(blocks...), Options{}, 600)
+	v := layoutAt(st, doc(blocks...), Options{CompactFiles: true}, 600)
 	want := []image.Rectangle{image.Rect(0, 0, 186, 140), image.Rect(194, 0, 380, 140), image.Rect(388, 0, 574, 140)}
 	if got := imgRects(v); !reflect.DeepEqual(got, want) {
 		t.Errorf("3 tiles %v, want %v", got, want)
@@ -1071,7 +1071,7 @@ func TestMediaGallery(t *testing.T) {
 	}
 
 	// at 400 (gallery 374) only two fit: 183x110 each, the second "+ 2"
-	v = layoutAt(st, doc(blocks...), Options{}, 400)
+	v = layoutAt(st, doc(blocks...), Options{CompactFiles: true}, 400)
 	want = []image.Rectangle{image.Rect(0, 0, 183, 110), image.Rect(191, 0, 374, 110)}
 	if got := imgRects(v); !reflect.DeepEqual(got, want) {
 		t.Errorf("2 of 3 tiles %v, want %v", got, want)
@@ -1097,14 +1097,14 @@ func TestMediaGallery(t *testing.T) {
 
 	// four at 1000 (gallery 936): 228x171 each
 	_, blocks = galleryFiles(4, land)
-	v = layoutAt(st, doc(blocks...), Options{}, 1000)
+	v = layoutAt(st, doc(blocks...), Options{CompactFiles: true}, 1000)
 	if got := imgRects(v); len(got) != 4 || got[0] != image.Rect(0, 0, 228, 171) || got[3] != image.Rect(708, 0, 936, 171) {
 		t.Errorf("4 tiles %v", got)
 	}
 
 	// six at 1000: four tiles, the fourth "+ 3"
 	_, blocks = galleryFiles(6, land)
-	v = layoutAt(st, doc(blocks...), Options{}, 1000)
+	v = layoutAt(st, doc(blocks...), Options{CompactFiles: true}, 1000)
 	if n := len(v.d.imgs); n != 4 {
 		t.Errorf("%d tiles for 6 files, want 4", n)
 	}
@@ -1113,7 +1113,7 @@ func TestMediaGallery(t *testing.T) {
 
 	// a portrait among landscapes narrows to its 3/4 aspect
 	_, blocks = galleryFiles(3, land, [2]int{600, 1000}, land)
-	v = layoutAt(st, doc(blocks...), Options{}, 1000)
+	v = layoutAt(st, doc(blocks...), Options{CompactFiles: true}, 1000)
 	got := imgRects(v)
 	if len(got) != 3 || got[1].Dx() >= got[0].Dx() || got[0].Dy() != got[1].Dy() {
 		t.Errorf("mixed aspects %v: the portrait should be narrower at the same height", got)
@@ -1121,7 +1121,7 @@ func TestMediaGallery(t *testing.T) {
 
 	// two at 1000: shared height under the large landscape cap (235)
 	_, blocks = galleryFiles(2, [2]int{1600, 900}, [2]int{800, 800})
-	v = layoutAt(st, doc(blocks...), Options{}, 1000)
+	v = layoutAt(st, doc(blocks...), Options{CompactFiles: true}, 1000)
 	got = imgRects(v)
 	if len(got) != 2 || got[0].Dy() != got[1].Dy() || got[0].Dy() > 235 || got[0].Dy() < 108 {
 		t.Errorf("pair %v", got)
@@ -1153,7 +1153,7 @@ func TestGalleryPair(t *testing.T) {
 func TestVideoCard(t *testing.T) {
 	st := newTestStyle()
 	f := &rt.File{Name: "clip.mp4", IsVideo: true, DurationMS: 83000, OrigW: 640, OrigH: 360, Thumb: &rt.Image{URL: "https://files.test/clip.jpg", W: 640, H: 360}}
-	v := layoutAt(st, doc(fileBlock(f)), Options{}, 600)
+	v := layoutAt(st, doc(fileBlock(f)), Options{CompactFiles: true}, 600)
 	if len(v.d.imgs) != 1 {
 		t.Fatalf("%d imgs", len(v.d.imgs))
 	}
@@ -1180,7 +1180,7 @@ func TestVideoCard(t *testing.T) {
 
 	// Without a poster: the base-ter tile, still clickable, "Video"
 	f2 := &rt.File{Name: "raw.mov", IsVideo: true}
-	v = layoutAt(st, doc(fileBlock(f2)), Options{}, 600)
+	v = layoutAt(st, doc(fileBlock(f2)), Options{CompactFiles: true}, 600)
 	var ph bool
 	for _, b := range v.d.boxes {
 		if b.kind == bFill && b.r == image.Rect(0, 0, 108, 108) && b.fill == st.Palette.Placeholder {
@@ -1200,7 +1200,7 @@ func TestAudioCard(t *testing.T) {
 	// an uploaded audio file: AudioPlayer's header row and scrubber row in
 	// a 426-wide pillow (12 + 36 + 12 + 18 + 12 + 2 = 92)
 	f := &rt.File{Title: "standup.mp3", IsAudio: true, DurationMS: 154000, Size: 900 << 10}
-	v := layoutAt(st, doc(fileBlock(f)), Options{}, 600)
+	v := layoutAt(st, doc(fileBlock(f)), Options{CompactFiles: true}, 600)
 	cards := boxesOf(&v.d, bBorder)
 	if len(cards) != 1 || cards[0].r != image.Rect(0, 0, 426, 92) || cards[0].radius != 12 {
 		t.Fatalf("audio card %+v", cards)
@@ -1231,7 +1231,7 @@ func TestAudioCard(t *testing.T) {
 
 	// a voice clip: the flat player with the waveform (12 + 34 + 12 + 2)
 	clip := &rt.File{Name: "audio_message.webm", IsAudio: true, Subtype: "slack_audio", DurationMS: 5000, Waveform: []int{10, 50, 90, 40}}
-	v = layoutAt(st, doc(fileBlock(clip)), Options{}, 600)
+	v = layoutAt(st, doc(fileBlock(clip)), Options{CompactFiles: true}, 600)
 	if r := boxesOf(&v.d, bBorder)[0].r; r != image.Rect(0, 0, 426, 60) {
 		t.Errorf("voice clip card %v", r)
 	}
@@ -1251,7 +1251,7 @@ func TestAudioCard(t *testing.T) {
 		t.Errorf("voice clip duration weight %v, want Bold", d.weight)
 	}
 
-	v = layoutAt(st, doc(fileBlock(&rt.File{Name: "x.mp3", IsAudio: true})), Options{}, 300)
+	v = layoutAt(st, doc(fileBlock(&rt.File{Name: "x.mp3", IsAudio: true})), Options{CompactFiles: true}, 300)
 	if r := boxesOf(&v.d, bBorder)[0].r; r.Dx() != 300 {
 		t.Errorf("audio card %v not clamped to width 300", r)
 	}
@@ -1260,7 +1260,7 @@ func TestAudioCard(t *testing.T) {
 func TestSnippetCard(t *testing.T) {
 	st := newTestStyle()
 	f := &rt.File{Name: "main.go", IsSnippet: true, PrettyType: "Go", Lines: 3, Preview: "package main\n\nfunc main() {}\n"}
-	v := layoutAt(st, doc(fileBlock(f)), Options{}, 600)
+	v := layoutAt(st, doc(fileBlock(f)), Options{CompactFiles: true}, 600)
 	d := &v.d
 	var card *box
 	for i := range d.boxes {
@@ -1299,7 +1299,7 @@ func TestSnippetCard(t *testing.T) {
 
 	// a long snippet collapses at 200px under the fade
 	long := &rt.File{Name: "big.txt", IsSnippet: true, Preview: strings.Repeat("line\n", 30)}
-	v = layoutAt(st, doc(fileBlock(long)), Options{}, 600)
+	v = layoutAt(st, doc(fileBlock(long)), Options{CompactFiles: true}, 600)
 	if h := v.d.size.Y; h != 60+200+1 {
 		t.Errorf("collapsed snippet height %d, want 261", h)
 	}
@@ -1309,7 +1309,7 @@ func TestGenericFileCard(t *testing.T) {
 	st := newTestStyle()
 	p := st.Palette
 	f := &rt.File{Name: "report.pdf", Type: "pdf", PrettyType: "PDF", Size: 2048}
-	v := layoutAt(st, doc(fileBlock(f)), Options{}, 600)
+	v := layoutAt(st, doc(fileBlock(f)), Options{CompactFiles: true}, 600)
 	d := &v.d
 	cards := boxesOf(d, bBorder)
 	if len(cards) != 1 || cards[0].r != image.Rect(0, 0, 426, 62) {
@@ -1345,7 +1345,7 @@ func TestGenericFileCard(t *testing.T) {
 	}
 
 	icons := func(f *rt.File) (color.NRGBA, []string) {
-		v := layoutAt(st, doc(fileBlock(f)), Options{}, 600)
+		v := layoutAt(st, doc(fileBlock(f)), Options{CompactFiles: true}, 600)
 		for _, b := range v.d.boxes {
 			if b.kind == bFill && b.r.Dx() == 36 {
 				return b.fill, fragStrings(&v.d)
@@ -2301,12 +2301,12 @@ func TestPillowGrid(t *testing.T) {
 	st := newTestStyle()
 	a := &rt.File{Name: "a.pdf", Type: "pdf", PrettyType: "PDF"}
 	b := &rt.File{Name: "b.docx", Type: "docx", PrettyType: "Word Document"}
-	v := layoutAt(st, doc(fileBlock(a), fileBlock(b)), Options{}, 1000)
+	v := layoutAt(st, doc(fileBlock(a), fileBlock(b)), Options{CompactFiles: true}, 1000)
 	cards := boxesOf(&v.d, bBorder)
 	if len(cards) != 2 || cards[0].r != image.Rect(0, 0, 328, 62) || cards[1].r != image.Rect(336, 0, 664, 62) {
 		t.Errorf("wide grid %v", cards)
 	}
-	v = layoutAt(st, doc(fileBlock(a), fileBlock(b)), Options{}, 600)
+	v = layoutAt(st, doc(fileBlock(a), fileBlock(b)), Options{CompactFiles: true}, 600)
 	cards = boxesOf(&v.d, bBorder)
 	if len(cards) != 2 || cards[0].r != image.Rect(0, 0, 426, 62) || cards[1].r != image.Rect(0, 70, 426, 132) {
 		t.Errorf("compact grid %v", cards)

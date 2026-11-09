@@ -30,6 +30,8 @@ import (
 	"gioui.org/op/paint"
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/localimg"
 )
 
 // Fetcher downloads url. For files.slack.com it must authenticate (core.Fetch).
@@ -332,6 +334,12 @@ func checkSize(data []byte) error {
 // tier (a no-op for everything else, e.g. message images and files).
 func (c *Cache) raw(u string) ([]byte, func(), error) {
 	nop := func() {}
+	if localimg.Is(u) { // a file the viewer is uploading: memory only
+		if b, ok := localimg.Get(u); ok {
+			return b, nop, nil
+		}
+		return nil, nop, errors.New("imgcache: local image gone")
+	}
 	disk := c.dir != "" && DiskOK(u)
 	var path string
 	if disk {

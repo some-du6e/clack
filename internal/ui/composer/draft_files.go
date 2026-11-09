@@ -88,7 +88,7 @@ func (a *attachments) draftFileIDs() []string {
 	defer a.mu.Unlock()
 	var ids []string
 	for _, c := range a.chips {
-		if !c.sending && c.prepared != nil {
+		if c.prepared != nil {
 			ids = append(ids, c.prepared.ID)
 		}
 	}

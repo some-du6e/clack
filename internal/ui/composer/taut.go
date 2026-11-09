@@ -245,14 +245,23 @@ func postMessage(ctx context.Context, api coreAPI, ch, ts, text string, blocks j
 // (files.share with the message's blocks, reason send_composer_message):
 // prepared ones (uploaded at attach) by id, raw ones through uploadFiles.
 // An empty message (comment "") shares the files alone.
-func sendFiles(ctx context.Context, api coreAPI, ch, ts, comment string, blocks json.RawMessage, broadcast bool, prepared []core.PreparedUpload, raw []core.UploadFile) error {
+func sendFiles(ctx context.Context, api coreAPI, ch, ts, comment string, blocks json.RawMessage, broadcast bool, prepared []core.PreparedUpload, pending []*core.PendingFile, raw []core.UploadFile) error {
 	if comment != "" {
 		comment, blocks = transformBlocks(ctx, comment, blocks)
 	} else {
-		blocks = nil
+		blocks = nil // convertDeltaToBlocks: an empty delta has no blocks, so files.share gets none
 	}
 	if len(raw) > 0 {
 		if t := currentTaut(); t.ThunkPatched(thUploadFiles) {
+			// a plugin's uploadFiles sees uploaded files by id: wait for
+			// the eager uploads still running
+			for _, pf := range pending {
+				p, err := pf.Wait(ctx)
+				if err != nil {
+					return err
+				}
+				prepared = append(prepared, p)
+			}
 			files := make([]taut.File, len(raw))
 			for i, f := range raw {
 				files[i] = taut.File{Name: f.Name, Data: f.Data}
@@ -285,7 +294,8 @@ func sendFiles(ctx context.Context, api coreAPI, ch, ts, comment string, blocks 
 			return err
 		}
 	}
-	_, err := api.upload(ctx, core.UploadOpts{Channel: ch, ThreadTS: ts, Comment: comment, Blocks: blocks, Broadcast: broadcast, Files: raw, Prepared: prepared})
+	_, err := api.upload(ctx, core.UploadOpts{Channel: ch, ThreadTS: ts, Comment: comment, Blocks: blocks, Broadcast: broadcast,
+		Files: raw, Prepared: prepared, Pending: pending})
 	return err
 }
 

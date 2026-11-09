@@ -310,6 +310,9 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 			}
 		}
 	}
+	for i := range v.d.spinners {
+		v.d.spinners[i].draw(gtx, st)
+	}
 	if len(v.d.comps) > 0 {
 		v.layoutComps(gtx, st)
 	}
@@ -577,6 +580,12 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 		}
 		if im.fit {
 			fillRadii(ops, im.r, im.radii, st.Palette.Placeholder)
+		}
+		if im.alpha > 0 && im.alpha < 1 {
+			o := paint.PushOpacity(ops, im.alpha)
+			drawImage(ops, img, im.r, im.radii, !im.fit)
+			o.Pop()
+			continue
 		}
 		drawImage(ops, img, im.r, im.radii, !im.fit)
 	}

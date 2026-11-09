@@ -235,7 +235,15 @@ func (r *row) setDoc() {
 // rvOpts are the body's richview options.
 func (r *row) rvOpts() richview.Options {
 	own := r.rc != nil && r.rc.selfID != "" && r.m.User == r.rc.selfID && r.m.Subtype != "pinned_item" && !r.m.Pending
-	return richview.Options{Edited: r.m.Edited, Muted: r.m.System, Dim: r.m.Pending, Channel: r.m.Channel, TS: r.m.TS, Truncate: r.truncate, Own: own}
+	return richview.Options{Edited: r.m.Edited, Muted: r.m.System, Dim: r.dimPending(), Channel: r.m.Channel, TS: r.m.TS, Truncate: r.truncate, Own: own}
+}
+
+// dimPending reports whether a pending row is drawn at .5. Slack's
+// placeholder for a message with files (appendPlaceholderMessage, drawn by
+// PendingFilesAtom) isn't faded: only the tiles of uploads still in
+// flight are (richview), so the row doesn't flash when Slack confirms it.
+func (r *row) dimPending() bool {
+	return r.m.Pending && !r.hasFiles
 }
 
 func (r *row) growPills() {
@@ -705,7 +713,8 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 	// Record content first; the background depends on the height.
 	rec := op.Record(gtx.Ops)
 	var opac paint.OpacityStack
-	if m.Pending {
+	dim := r.dimPending()
+	if dim {
 		opac = paint.PushOpacity(gtx.Ops, 0.5)
 	}
 	y := dp(gtx, padTop) - dp(gtx, 4)
@@ -725,7 +734,7 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 		return slackc.Component(gtx, "ProgressiveDisclosureSuccessCoachmarkWrapper", r, (*row).coachmarkProps, (*row).layoutCoachmark)
 	})
 	y += g.Size.Y
-	if m.Pending {
+	if dim {
 		opac.Pop()
 	}
 	content := rec.Stop()

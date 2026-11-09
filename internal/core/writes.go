@@ -160,56 +160,120 @@ func tsBefore(t *store.Timeline, ts string) string {
 func (a *App) Typing(ch, threadTS string) error { return a.RTM.Typing(ch, threadTS) }
 
 // Upload shares files (held in memory, never written to disk) the way
-// Slack's composer sends attached files: new Files are uploaded first
-// (PrepareUpload: files.getUploadURL, the bytes, files.completeUpload;
-// o.Progress reports bytes across all of them), then they and any Prepared
-// ones go out in one files.share with the message's blocks (or its plain
-// comment). The message arrives as a realtime "message" event; file stubs
-// are filled in by an "update" once Slack has processed the upload.
+// Slack's composer sends attached files (upload_send.go): the placeholder
+// goes into the conversation at once; then the share waits for every
+// upload: Pending ones (the composer's eager uploads), and new Files
+// uploaded now (PrepareUpload; o.Progress reports bytes across them);
+// renamed Prepared ones get files.edit; finally one files.share with the
+// message's blocks (or its plain comment) and the placeholder's
+// client_msg_id. The realtime echo replaces the placeholder; a failure
+// removes it.
 func (a *App) Upload(ctx context.Context, o UploadOpts) ([]UploadedFile, error) {
-	if len(o.Files) == 0 && len(o.Prepared) == 0 {
+	if len(o.Files) == 0 && len(o.Prepared) == 0 && len(o.Pending) == 0 {
 		return nil, errors.New("core: Upload needs a file")
 	}
 	t0 := time.Now()
-	out := make([]UploadedFile, 0, len(o.Files)+len(o.Prepared))
+	cid := clientMsgID()
+	raws := make([]*PendingFile, len(o.Files))
+	for i, f := range o.Files {
+		raws[i] = NewPendingFile(f.Name, firstNonEmpty(f.Title, f.Name), f.Data)
+	}
+	var ph *filePlaceholder
+	if o.Channel != "" {
+		ph = a.startPlaceholder(ctx, o, raws, cid)
+	}
+	fail := func(err error) ([]UploadedFile, error) {
+		if ph != nil {
+			a.DiscardPending(o.Channel, cid) // cleanUpPlaceholder
+		}
+		return nil, err
+	}
+	slot := func(i int) *phSlot {
+		if ph == nil || i >= len(ph.slots) {
+			return nil
+		}
+		return ph.slots[i]
+	}
+	n := 0
+	out := make([]UploadedFile, 0, len(o.Prepared)+len(o.Pending)+len(o.Files))
 	ids := make([]string, 0, cap(out))
-	for _, p := range o.Prepared {
+	add := func(p PreparedUpload) error {
 		if p.Title != "" && p.Name != "" && p.Title != p.Name {
 			// renamed after the upload (completeUpload titled it by name)
 			if err := a.C.EditFile(ctx, p.ID, p.Title); err != nil {
-				return nil, err
+				return err
 			}
 		}
 		ids = append(ids, p.ID)
 		out = append(out, UploadedFile{ID: p.ID, Name: p.Name, Title: firstNonEmpty(p.Title, p.Name)})
+		return nil
+	}
+	for _, p := range o.Prepared {
+		if err := add(p); err != nil {
+			return fail(err)
+		}
+		n++
+	}
+	for _, pf := range o.Pending {
+		p, err := pf.Wait(ctx)
+		if err != nil {
+			return fail(err)
+		}
+		if s := slot(n); s != nil && !s.done {
+			ph.resolve(s, p)
+		}
+		if err := add(p); err != nil {
+			return fail(err)
+		}
+		n++
 	}
 	var all, done int64
 	for _, f := range o.Files {
 		all += int64(len(f.Data))
 	}
-	for _, f := range o.Files {
-		var prog func(sent, total int64)
-		if o.Progress != nil {
-			base, size := done, int64(len(f.Data))
-			prog = func(sent, total int64) {
+	for i, f := range o.Files {
+		base, size := done, int64(len(f.Data))
+		pf := raws[i]
+		prog := func(sent, total int64) {
+			pf.Progress(sent, total)
+			if o.Progress != nil {
 				if total > 0 {
 					sent = sent * size / total // body bytes -> file bytes
 				}
 				o.Progress(base+sent, all)
 			}
 		}
-		id, err := a.C.PrepareUpload(ctx, slack.UploadFile{Name: f.Name, Title: f.Title, Data: f.Data}, prog)
+		p, err := a.PrepareUpload(ctx, f, prog)
+		pf.Finish(p, err)
 		if err != nil {
-			return nil, err
+			return fail(err)
 		}
-		done += int64(len(f.Data))
-		ids = append(ids, id)
-		out = append(out, UploadedFile{ID: id, Name: f.Name, Title: firstNonEmpty(f.Title, f.Name)})
+		p.Title = firstNonEmpty(f.Title, f.Name)
+		done += size
+		if s := slot(n); s != nil && !s.done {
+			ph.resolve(s, p)
+		}
+		if err := add(p); err != nil {
+			return fail(err)
+		}
+		n++
 	}
+	log.Printf("upload: sharing %d file(s) as %s", len(ids), cid[:8])
 	err := a.C.ShareFiles(ctx, slack.ShareOpts{Files: ids, Channel: o.Channel, ThreadTS: o.ThreadTS, Broadcast: o.Broadcast,
-		Blocks: o.Blocks, Comment: o.Comment, ClientMsgID: clientMsgID()})
+		Blocks: o.Blocks, Comment: o.Comment, ClientMsgID: cid})
 	if err != nil {
-		return nil, err
+		var se *slack.Error
+		if ph != nil && !errors.As(err, &se) && a.sharedAnyway(o.Channel, o.ThreadTS, cid) {
+			// the reply was lost but Slack posted it: confirmed, so a
+			// retry from the composer can't post it twice
+			log.Printf("upload: share %s reply lost (%s); found in history", cid[:8], uploadErrClass(err))
+			return out, nil
+		}
+		log.Printf("upload: share %s failed (%s); placeholder removed", cid[:8], uploadErrClass(err))
+		return fail(err)
+	}
+	if ph != nil {
+		a.degradedRefresh(ph)
 	}
 	log.Printf("upload: %d file(s), %d new bytes in %s", len(ids), all, time.Since(t0).Round(time.Millisecond))
 	return out, nil
@@ -217,15 +281,93 @@ func (a *App) Upload(ctx context.Context, o UploadOpts) ([]UploadedFile, error) 
 
 // PrepareUpload uploads a file's bytes as soon as it is attached
 // (files.getUploadURL, the bytes, files.completeUpload) without sharing
-// it; pass the result in UploadOpts.Prepared when sending. progress (may
-// be nil) runs on the calling goroutine. Unshared prepared files expire on
-// Slack's side.
+// it, then waits until Slack has processed it (awaitProcessed): the
+// result carries files.info's object. Pass it in UploadOpts.Prepared (or
+// through a PendingFile) when sending. progress (may be nil) runs on the
+// calling goroutine. Unshared prepared files expire on Slack's side.
+//
+// Like Slack's UploadQueue, a first failure retries the whole upload once
+// (_retryUpload: a new upload slot); Slack API errors (ok:false) don't.
+// Every step is logged with the file id, sizes and timings only.
 func (a *App) PrepareUpload(ctx context.Context, f UploadFile, progress func(sent, total int64)) (PreparedUpload, error) {
-	id, err := a.C.PrepareUpload(ctx, slack.UploadFile{Name: f.Name, Title: f.Title, Data: f.Data}, progress)
+	id, err := a.uploadOnce(ctx, f, progress)
+	if err != nil && retryableUpload(ctx, err) {
+		log.Printf("upload: first attempt failed (%s); retrying once", uploadErrClass(err))
+		id, err = a.uploadOnce(slack.NoBackoff(ctx), f, progress) // a deliberate retry: past the failure backoff
+	}
 	if err != nil {
+		log.Printf("upload: failed (%s)", uploadErrClass(err))
 		return PreparedUpload{}, err
 	}
-	return PreparedUpload{ID: id, Name: f.Name, Title: f.Title, Size: int64(len(f.Data))}, nil
+	pu := PreparedUpload{ID: id, Name: f.Name, Title: f.Title, Size: int64(len(f.Data))}
+	file, err := a.awaitProcessed(ctx, id)
+	if err != nil {
+		log.Printf("upload: %s processing failed (%s)", id, uploadErrClass(err))
+		return PreparedUpload{}, err
+	}
+	pu.File = file
+	return pu, nil
+}
+
+// uploadOnce is one eager upload attempt: files.getUploadURL {filename,
+// length}, the multipart POST to upload_url, files.completeUpload.
+func (a *App) uploadOnce(ctx context.Context, f UploadFile, progress func(sent, total int64)) (string, error) {
+	t0 := time.Now()
+	var r struct {
+		File      string `json:"file"`
+		FileID    string `json:"file_id"`
+		UploadURL string `json:"upload_url"`
+	}
+	n := len(f.Data)
+	if err := a.C.Call(ctx, "files.getUploadURL", url.Values{"filename": {f.Name}, "length": {strconv.Itoa(n)}}, &r); err != nil {
+		return "", err
+	}
+	id := firstNonEmpty(r.File, r.FileID)
+	if id == "" || r.UploadURL == "" {
+		return "", errors.New("core: files.getUploadURL returned no upload slot")
+	}
+	log.Printf("upload: %s slot for %d bytes", id, n)
+	if err := a.C.UploadBytes(ctx, r.UploadURL, f.Name, f.Data, progress); err != nil {
+		log.Printf("upload: %s POST failed after %s (%s)", id, time.Since(t0).Round(time.Millisecond), uploadErrClass(err))
+		return "", err
+	}
+	log.Printf("upload: %s POST %d bytes in %s", id, n, time.Since(t0).Round(time.Millisecond))
+	if err := a.C.CompleteUpload(ctx, []slack.UploadedRef{{ID: id, Title: firstNonEmpty(f.Title, f.Name)}}); err != nil {
+		log.Printf("upload: %s completeUpload failed (%s)", id, uploadErrClass(err))
+		return "", err
+	}
+	log.Printf("upload: %s complete; processing", id)
+	return id, nil
+}
+
+// retryableUpload: anything but a Slack API error, a sign-out or the
+// caller giving up gets UploadQueue's one automatic retry.
+func retryableUpload(ctx context.Context, err error) bool {
+	var se *slack.Error
+	return ctx.Err() == nil && !errors.As(err, &se) && !errors.Is(err, slack.ErrSignedOut) &&
+		!errors.Is(err, slack.ErrUntrustedHost) && !errors.Is(err, context.Canceled)
+}
+
+// uploadErrClass is a log-safe description of an upload error: the API
+// method and code, the HTTP status, or "network error".
+func uploadErrClass(err error) string {
+	var se *slack.Error
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.As(err, &se):
+		return se.Method + " " + se.Code
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, ErrProcessingTimeout):
+		return "processing timed out"
+	}
+	if _, rest, ok := strings.Cut(err.Error(), ": http "); ok && len(rest) >= 3 {
+		return "http " + rest[:3]
+	}
+	return "network error"
 }
 
 // Pin / Unpin a message.

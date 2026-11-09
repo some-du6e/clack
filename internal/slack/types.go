@@ -40,6 +40,10 @@ type Message struct {
 	Channel        string          `json:"channel,omitempty"`
 	Inviter        string          `json:"inviter,omitempty"`
 	StreamingState string          `json:"streaming_state,omitempty"` // chat.startStream: in_progress | completed | errored
+	// UploadStatus is a placeholder's PendingFilesMetaTextWrapper text
+	// ("Waiting to upload…", "Uploading…", "Sending…") while the viewer's
+	// own files upload: Clack only, never on the wire.
+	UploadStatus string `json:"-"`
 }
 
 // PinnedInfo says who pinned a message (history / messages.list).
@@ -137,6 +141,14 @@ type File struct {
 	// upload is still being processed). Slack's web client doesn't draw by
 	// it; Clack only reads it to spot unprocessed uploads.
 	MediaDisplayType string `json:"media_display_type,omitempty"`
+
+	// Clack only, never on the wire. Pending marks a file of the viewer's
+	// optimistic send whose upload hasn't finished (Slack's pendingUpload
+	// in a placeholder's pendingFiles); its thumbs are localimg URLs.
+	// UploadPercent is its percentComplete (0 = not started, 100 = bytes
+	// sent, processing).
+	Pending       bool `json:"-"`
+	UploadPercent int  `json:"-"`
 }
 
 type AttachmentField struct {

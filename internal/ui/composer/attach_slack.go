@@ -56,7 +56,7 @@ func (it attItem) props() slackc.Props {
 			"title":         it.v.title,
 			"file":          it.file(),
 		},
-		"isUploading": it.v.sending || it.v.preparing,
+		"isUploading": it.v.preparing,
 	}
 }
 

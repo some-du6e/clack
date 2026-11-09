@@ -264,7 +264,17 @@ type Server struct {
 	drafts  map[string]*Draft        // drafts.create/update/delete/list
 	files   map[string]*UploadedFile // files.getUploadURL + upload + files.completeUpload
 	shared  []SharedFiles            // files.share calls
-	nextID  int
+	faultMu sync.Mutex
+	faults  map[string]*Fault // SetFault (faults.go)
+	// DuplicateEvents sends every upload event twice (the files.share
+	// echo, file_created), as a reconnecting socket can.
+	DuplicateEvents bool
+	// ProcessDelay is how long an upload takes to process after
+	// files.completeUpload: files.info answers a stub until then, and
+	// file_created goes out at the end (Slack's eager upload resolves on
+	// it). Negative: never processed. Set it before the uploads.
+	ProcessDelay time.Duration
+	nextID       int
 
 	emailTokens []map[string]any // users.emailtoken.* (under prefsMu)
 
@@ -849,6 +859,15 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	if s.Latency > 0 {
 		time.Sleep(s.Latency)
 	}
+	fault, faulted := s.takeFault(method)
+	if faulted {
+		if fault.Delay > 0 {
+			time.Sleep(fault.Delay)
+		}
+		if !fault.AfterHandle && s.applyFault(w, fault) {
+			return
+		}
+	}
 	body, _ := io.ReadAll(r.Body)
 	var form url.Values
 	var edge map[string]json.RawMessage
@@ -861,6 +880,9 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		}
 		if strings.HasPrefix(method, "upload/") && r.Header.Get("Cookie") != "" {
 			form.Set(uploadCookieKey, "1")
+		}
+		if strings.HasPrefix(method, "upload/") {
+			s.keepUploadBytes(strings.TrimPrefix(method, "upload/"), r.Header.Get("Content-Type"), body)
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -880,6 +902,9 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	}
 	if out == nil {
 		out = map[string]any{"ok": true}
+	}
+	if faulted && fault.AfterHandle && s.applyFault(w, fault) {
+		return // handled, but the client never hears back
 	}
 	if b, ok := out.([]byte); ok {
 		w.Write(b)

@@ -153,25 +153,24 @@ func TestAttConcurrentAddFilesClear(t *testing.T) {
 		t.Fatalf("Files()[0] = %+v", f)
 	}
 
-	// An upload takes the pending files; files added meanwhile survive the
-	// Clear that follows its success.
-	a.SetUploading(true)
-	if a.Len() != 0 || len(a.Files()) != 0 {
-		t.Fatalf("uploading: Len = %d", a.Len())
+	// A send takes every attached file out of the composer at once (Slack
+	// empties it; the placeholder shows them); files attached meanwhile
+	// stay for the next message.
+	b := a.takeForSend()
+	if a.Len() != 0 || len(b.chips) != 8 || len(b.prepared)+len(b.pending)+len(b.raw) != 8 || a.total != 0 {
+		t.Fatalf("take: Len = %d, batch %d/%d/%d/%d", a.Len(), len(b.chips), len(b.prepared), len(b.pending), len(b.raw))
 	}
 	a.Add("late.png", []byte("not really a png"))
-	a.SetUploading(false)
-	a.Clear()
 	if fs := a.Files(); len(fs) != 1 || fs[0].Name != "late.png" {
-		t.Fatalf("after upload: %+v", fs)
+		t.Fatalf("after take: %+v", fs)
 	}
-	// A failed upload puts its files back.
-	a.SetUploading(true)
-	a.SetUploading(false)
-	if a.Len() != 1 {
-		t.Fatalf("after failed upload: Len = %d", a.Len())
+	// A failed send puts its files back, ahead of the late one (the
+	// composer still holds at most 10).
+	a.putBack(b.chips)
+	if fs := a.Files(); len(fs) != 9 || fs[0].Name != "a.txt" || fs[8].Name != "late.png" || a.total != 8*5+16 {
+		t.Fatalf("after put back: %d files, total %d", len(fs), a.total)
 	}
-	a.Clear() // the retried batch finished: its file goes
+	a.Clear()
 	if a.Len() != 0 || a.total != 0 {
 		t.Fatalf("after Clear: Len = %d total = %d", a.Len(), a.total)
 	}

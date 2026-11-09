@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/localimg"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 )
 
@@ -41,8 +42,13 @@ func FromMessage(r Resolver, m *slack.Message) Doc {
 			d.Blocks = append(d.Blocks, b)
 		}
 	}
+	status := m.UploadStatus
 	for i := range m.Files {
 		if !c.used[m.Files[i].ID] {
+			if status != "" { // PendingFilesContent: the meta line, then the gallery
+				d.Blocks = append(d.Blocks, Block{Kind: FileStatus, Spans: []Span{{Kind: Text, Text: status}}})
+				status = ""
+			}
 			d.Blocks = append(d.Blocks, c.fileBlock(&m.Files[i]))
 		}
 	}
@@ -106,6 +112,15 @@ func convertFile(f *slack.File) *File {
 	}
 	if out.Title == out.Name {
 		out.Title = ""
+	}
+	if f.Pending {
+		out.Pending, out.Percent = true, f.UploadPercent
+		if f.Mimetype != "" && strings.HasPrefix(strings.ToLower(f.Mimetype), "image/") && localimg.Is(f.Thumb360) {
+			// PendingFilesGalleryGridImage: the File's own bytes
+			out.IsImage = true
+			out.Thumb = &Image{URL: f.Thumb360, Alt: f.Name, W: f.OriginalW, H: f.OriginalH}
+			return out
+		}
 	}
 	mime := strings.ToLower(f.Mimetype)
 	switch {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -29,6 +30,11 @@ type pendingSend struct {
 	realTS    string // set once confirmed
 	failed    bool
 	confirmed bool
+	// files: a file message's placeholder (Upload): never Failed (Slack
+	// removes it and gives the files back), and release frees its
+	// previews once it is gone.
+	files   bool
+	release func()
 }
 
 // pendingTS returns a local ts that sorts after everything cached in ch.
@@ -159,7 +165,19 @@ func (a *App) confirmPending(ch string, m *slack.Message) bool {
 	p.confirmed, p.failed, p.realTS = true, false, m.TS
 	cid := m.ClientMsgID
 	a.retireLocal(p.ts, m.TS)
+	release := p.release
 	a.mu.Unlock()
+	if p.files {
+		log.Printf("upload: share %s confirmed", cid[:min(8, len(cid))])
+		// the echo may carry stubs of files the placeholder already has
+		// processed (Slack draws them from its file store)
+		if old, ok := a.S.Find(ch, p.ts); ok {
+			keepFiles(m, &old)
+		}
+	}
+	if release != nil {
+		defer release()
+	}
 	time.AfterFunc(2*time.Minute, func() {
 		a.mu.Lock()
 		delete(a.pending, cid)
@@ -181,7 +199,7 @@ func (a *App) Resend(ctx context.Context, ch, clientMsgID string) (Message, erro
 	a.mu.Lock()
 	p, ok := a.pending[clientMsgID]
 	a.mu.Unlock()
-	if !ok || !p.failed {
+	if !ok || !p.failed || p.files {
 		return Message{}, errors.New("core: no failed message to resend")
 	}
 	a.DiscardPending(ch, clientMsgID)
@@ -198,6 +216,9 @@ func (a *App) DiscardPending(ch, clientMsgID string) {
 	a.mu.Unlock()
 	if !ok || p.confirmed {
 		return
+	}
+	if p.release != nil {
+		defer p.release()
 	}
 	a.S.Remove(ch, p.ts)
 	a.emit(Event{Type: "delete", Channel: ch, TS: p.ts, ThreadTS: p.opts.ThreadTS, ClientMsgID: clientMsgID})
