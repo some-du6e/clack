@@ -1197,31 +1197,61 @@ func TestVideoCard(t *testing.T) {
 
 func TestAudioCard(t *testing.T) {
 	st := newTestStyle()
-	f := &rt.File{Title: "Voice memo", IsAudio: true, DurationMS: 5000}
+	// an uploaded audio file: AudioPlayer's header row and scrubber row in
+	// a 426-wide pillow (12 + 36 + 12 + 18 + 12 + 2 = 92)
+	f := &rt.File{Title: "standup.mp3", IsAudio: true, DurationMS: 154000, Size: 900 << 10}
 	v := layoutAt(st, doc(fileBlock(f)), Options{}, 600)
 	cards := boxesOf(&v.d, bBorder)
-	if len(cards) != 1 || cards[0].r != image.Rect(0, 0, 426, 64) || cards[0].radius != 12 {
+	if len(cards) != 1 || cards[0].r != image.Rect(0, 0, 426, 92) || cards[0].radius != 12 {
 		t.Fatalf("audio card %+v", cards)
 	}
 	if tg := cards[0].target; tg < 0 || v.d.targets[tg].kind != tFile || v.d.targets[tg].file != f {
 		t.Errorf("card target %d", cards[0].target)
 	}
-	if cs := boxesOf(&v.d, bCircle); len(cs) != 1 || cs[0].fill != st.Palette.Link {
-		t.Errorf("play circle %+v", cs)
+	cs := boxesOf(&v.d, bCircle)
+	if len(cs) != 2 || cs[0].fill != rgb(0xe6, 0xef, 0xf6) || cs[0].r != image.Rect(13, 13, 49, 49) {
+		t.Errorf("play button %+v", cs)
 	}
 	if len(boxesOf(&v.d, bPlay)) != 1 {
-		t.Errorf("no play triangle")
+		t.Errorf("no play glyph")
 	}
-	findFrag(t, &v.d, "0:05")
-	if name := findFrag(t, &v.d, "memo"); name.target != cards[0].target {
-		t.Errorf("name target %d", name.target)
+	if name := findFrag(t, &v.d, "standup.mp3"); name.target != cards[0].target || name.x != 61 {
+		t.Errorf("name target %d x %v", name.target, name.x)
 	}
-	if v.d.size.Y != 64 {
-		t.Errorf("height %d", v.d.size.Y)
+	findFrag(t, &v.d, "(900")
+	var times int
+	for _, fr := range textFrags(&v.d) {
+		if fr.sh.str == "2:34" {
+			times++
+		}
+	}
+	if times != 2 {
+		t.Errorf("duration shown %d times, want in the header and after the scrubber", times)
+	}
+
+	// a voice clip: the flat player with the waveform (12 + 34 + 12 + 2)
+	clip := &rt.File{Name: "audio_message.webm", IsAudio: true, Subtype: "slack_audio", DurationMS: 5000, Waveform: []int{10, 50, 90, 40}}
+	v = layoutAt(st, doc(fileBlock(clip)), Options{}, 600)
+	if r := boxesOf(&v.d, bBorder)[0].r; r != image.Rect(0, 0, 426, 60) {
+		t.Errorf("voice clip card %v", r)
+	}
+	if cs := boxesOf(&v.d, bCircle); len(cs) != 1 || cs[0].fill != rgb(18, 100, 163) || cs[0].r.Dx() != 34 {
+		t.Errorf("voice clip play button %+v", cs)
+	}
+	var dots int
+	for _, b := range boxesOf(&v.d, bFill) {
+		if b.r.Dx() == 3 && b.r.Dy() >= 6 && b.r.Dy() <= 34 {
+			dots++
+		}
+	}
+	if dots < 40 {
+		t.Errorf("%d waveform dots, want the scrubber full of them", dots)
+	}
+	if d := findFrag(t, &v.d, "0:05"); d.weight != font.Bold {
+		t.Errorf("voice clip duration weight %v, want Bold", d.weight)
 	}
 
 	v = layoutAt(st, doc(fileBlock(&rt.File{Name: "x.mp3", IsAudio: true})), Options{}, 300)
-	findFrag(t, &v.d, "Audio")
 	if r := boxesOf(&v.d, bBorder)[0].r; r.Dx() != 300 {
 		t.Errorf("audio card %v not clamped to width 300", r)
 	}
@@ -1242,34 +1272,36 @@ func TestSnippetCard(t *testing.T) {
 	if card == nil {
 		t.Fatalf("no card")
 	}
-	if card.r.Min != (image.Point{}) || card.r.Dx() != 560 || card.r.Max.Y != d.size.Y {
+	// p-message_file--snippet has no max width; the header is the pillow's
+	// (60 tall), then 3 lines of 19.5 with 4px above and below
+	if card.r.Min != (image.Point{}) || card.r.Dx() != 600 || card.r.Max.Y != d.size.Y || card.r.Dy() != 60+4+3*20+4+1 {
 		t.Errorf("snippet card %v, size %v", card.r, d.size)
 	}
-	var pre *box
-	for i := range d.boxes {
-		if d.boxes[i].perCorner && d.boxes[i].fill == st.Palette.PreBg {
-			pre = &d.boxes[i]
-		}
-	}
-	if pre == nil {
-		t.Fatalf("no preview background")
-	}
-	if pre.corners[0] != 0 || pre.corners[2] == 0 {
-		t.Errorf("preview corners %v, want only bottom rounded", pre.corners)
-	}
-	if !pre.r.In(card.r) {
-		t.Errorf("preview %v outside card %v", pre.r, card.r)
-	}
 	pk, fn := findFrag(t, d, "package"), findFrag(t, d, "func")
-	if pk.size != 12 || fn.top <= pk.top {
-		t.Errorf("preview text size %d, lines %d/%d", pk.size, pk.top, fn.top)
+	if pk.size != 13 || fn.top <= pk.top {
+		t.Errorf("code size %d, lines %d/%d", pk.size, pk.top, fn.top)
 	}
-	if fn.top-pk.top != 2*18 {
-		t.Errorf("blank preview line not kept: %d", fn.top-pk.top)
+	if fn.top-pk.top != 2*20 {
+		t.Errorf("blank line not kept: %d", fn.top-pk.top)
 	}
-	findFrag(t, d, "lines")
+	if pk.x != 1+32+8 {
+		t.Errorf("code at x %v, want after the 32px gutter and 8px padding", pk.x)
+	}
+	one := findFrag(t, d, "1")
+	if one.x >= 33 || one.col == st.Palette.Text {
+		t.Errorf("line number %+v, want in the gutter, dimmed", one)
+	}
+	findFrag(t, d, "3")
+	findFrag(t, d, "Go")
 	if hdr := findFrag(t, d, "main.go"); hdr.target != card.target || hdr.top >= pk.top {
 		t.Errorf("header frag target %d top %d", hdr.target, hdr.top)
+	}
+
+	// a long snippet collapses at 200px under the fade
+	long := &rt.File{Name: "big.txt", IsSnippet: true, Preview: strings.Repeat("line\n", 30)}
+	v = layoutAt(st, doc(fileBlock(long)), Options{}, 600)
+	if h := v.d.size.Y; h != 60+200+1 {
+		t.Errorf("collapsed snippet height %d, want 261", h)
 	}
 }
 

@@ -943,31 +943,128 @@ func (l *lay) cardFrame(x, y, w, h int, tg int16) int {
 	return bi
 }
 
+// audio is Slack's AudioPlayer in a file pillow (c-pillow_file: 12px
+// padding, 1px otl-ter border, radius 12, at most 426 wide). An uploaded
+// audio file has the header row (the 36px play button, #e6eff6 with a
+// #1264a3 glyph, 12px before the name in 15px Bold and "2:34 (900 KB)" in
+// 13px at .7) and, 12px under it, the scrubber (a 4px #ddd track, the
+// paused 12px #868686 thumb) with the duration after it. A voice clip
+// (subtype slack_audio, c-audio_player--audio_message, the flat variant)
+// is one row: the 34px blue play button, the waveform (3px dots 3px
+// apart, min(6+34·sample, 34) tall) and the duration in 13px Bold.
 func (l *lay) audio(f *richtext.File, x, y, w int) int {
 	p := &l.st.Palette
 	cw := min(w, l.dp(426))
-	h := l.dp(64)
+	pad := l.dp(12)
 	tg := l.d.addTarget(target{kind: tFile, file: f})
+	dur := ""
+	if f.DurationMS > 0 {
+		dur = durationText(f.DurationMS)
+	}
+	if f.Subtype == "slack_audio" {
+		bs := l.dp(34)
+		h := pad + bs + pad + l.dp(2)
+		l.cardFrame(x, y, cw, h, tg)
+		cy := y + l.dp(1) + pad
+		bx := x + l.dp(1) + pad
+		l.d.boxes = append(l.d.boxes, box{kind: bCircle, r: image.Rect(bx, cy, bx+bs, cy+bs), fill: rgb(18, 100, 163), target: -1})
+		l.playGlyph(image.Pt(bx+bs/2, cy+bs/2), rgb(255, 255, 255))
+		ts := flowStyle{face: font.Font{Typeface: l.st.Face, Weight: font.Bold}, size: l.sp(13), lineH: l.dp(18), col: p.Text,
+			emoji: l.dp(13), maxLines: 1, noSelect: true}
+		tw := 0
+		if dur != "" {
+			tw = int(l.measure(dur, l.faceFor(ts.face, ts.size, 0)) + 0.999)
+		}
+		sx := bx + bs + l.dp(12)
+		sx1 := x + cw - l.dp(1) - pad - tw - l.dp(4)
+		l.waveform(f.Waveform, sx, cy, sx1-sx, bs)
+		if dur != "" {
+			l.plainFlow(dur, sx1+l.dp(4), cy+(bs-ts.lineH)/2, tw+l.dp(2), &ts, -1)
+		}
+		l.plainAdd(fileName(f))
+		return h
+	}
+	bs := l.dp(36)
+	h := pad + bs + pad + l.dp(18) + pad + l.dp(2)
 	l.cardFrame(x, y, cw, h, tg)
-	s := l.dp(36)
-	cy := y + (h-s)/2
-	l.d.boxes = append(l.d.boxes, box{kind: bCircle, r: image.Rect(x+l.dp(14), cy, x+l.dp(14)+s, cy+s), fill: p.Link, target: -1})
-	t := l.dp(7)
-	cc := image.Pt(x+l.dp(14)+s/2+l.dp(1), cy+s/2)
-	l.d.boxes = append(l.d.boxes, box{kind: bPlay, r: image.Rect(cc.X-t, cc.Y-t, cc.X+t, cc.Y+t), fill: p.PlayFg, target: -1, layer: 1})
-	tx := x + l.dp(14) + s + l.dp(12)
+	bx, by := x+l.dp(1)+pad, y+l.dp(1)+pad
+	l.d.boxes = append(l.d.boxes, box{kind: bCircle, r: image.Rect(bx, by, bx+bs, by+bs), fill: rgb(0xe6, 0xef, 0xf6), target: -1})
+	l.playGlyph(image.Pt(bx+bs/2, by+bs/2), rgb(18, 100, 163))
+	tx := bx + bs + l.dp(12)
+	tw := x + cw - l.dp(1) - pad - tx
 	fs := l.bodyStyle()
 	fs.face.Weight = font.Bold
+	fs.size, fs.lineH = l.sp(15), l.dp(18)
 	fs.maxLines, fs.ellipsis = 1, true
-	l.plainFlow(fileName(f), tx, y+l.dp(11), x+cw-tx-l.dp(12), &fs, tg)
-	meta := "Audio"
-	if f.DurationMS > 0 {
-		meta = durationText(f.DurationMS)
+	l.plainFlow(fileName(f), tx, by, tw, &fs, tg)
+	ms := l.small(p.Text)
+	ms.col.A = uint8(float32(ms.col.A) * 0.7)
+	ms.size, ms.lineH = l.sp(13), l.dp(18)
+	ms.maxLines, ms.ellipsis, ms.noSelect = 1, true, true
+	meta := ""
+	if dur != "" {
+		meta = dur + " "
 	}
-	ms := l.small(p.Text2)
-	ms.noSelect = true
-	l.plainFlow(meta, tx, y+l.dp(33), x+cw-tx-l.dp(12), &ms, -1)
+	if sz := sizeText(f.Size); sz != "" {
+		meta += "(" + sz + ")"
+	}
+	if meta != "" {
+		l.plainFlow(meta, tx, by+l.dp(18), tw, &ms, -1)
+	}
+	// the scrubber row
+	ry := by + bs + l.dp(12)
+	tws := 0
+	if dur != "" {
+		tws = int(l.measure(dur, l.faceFor(ms.face, ms.size, 0)) + 0.999)
+	}
+	t0, t1 := bx+l.dp(4), x+cw-l.dp(1)-pad-tws-l.dp(4)-l.dp(8)
+	mid := ry + l.dp(9)
+	track := rgb(221, 221, 221)
+	if lum(p.Panel) < 0.5 {
+		track = rgba(232, 232, 232, 0.13)
+	}
+	if t1 > t0 {
+		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: image.Rect(t0, mid-l.dp(2), t1, mid+l.dp(2)), radius: l.dp(2), fill: track, target: -1})
+	}
+	th := l.dp(12)
+	l.d.boxes = append(l.d.boxes, box{kind: bCircle, r: image.Rect(t0-l.dp(4), mid-th/2, t0-l.dp(4)+th, mid-th/2+th), fill: rgb(134, 134, 134), target: -1, layer: 1})
+	if dur != "" {
+		l.plainFlow(dur, x+cw-l.dp(1)-pad-tws, ry, tws+l.dp(2), &ms, -1)
+	}
 	return h
+}
+
+// playGlyph draws play-filled centered at c.
+func (l *lay) playGlyph(c image.Point, col color.NRGBA) {
+	l.d.boxes = append(l.d.boxes, box{kind: bPlay, r: image.Rect(c.X-l.dp(4), c.Y-l.dp(6), c.X+l.dp(6), c.Y+l.dp(6)), fill: col, target: -1, layer: 1})
+}
+
+// waveform is AudioWaveform in a scrubber w wide and h tall: the samples
+// (0..100) resampled to one 3px dot every 6px, each min(6+34·s, 34) tall,
+// centered, in sk_foreground_mid at .3.
+func (l *lay) waveform(samples []int, x, y, w, h int) {
+	if w <= 0 {
+		return
+	}
+	step := l.dp(6)
+	n := (w + l.dp(3)) / step
+	if n <= 0 {
+		return
+	}
+	col := rgba(29, 28, 29, 0.3)
+	if lum(l.st.Palette.Panel) < 0.5 {
+		col = rgba(232, 232, 232, 0.3)
+	}
+	for i := 0; i < n; i++ {
+		v := 0.0
+		if len(samples) > 0 {
+			v = float64(samples[i*len(samples)/n]) / 100
+		}
+		dh := l.dp(float32(math.Min(6+34*v, 34)))
+		dx := x + i*step
+		cy := y + h/2
+		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: image.Rect(dx, cy-dh/2, dx+l.dp(3), cy-dh/2+dh), radius: max(1, l.dp(1.5)), fill: col, target: -1})
+	}
 }
 
 func (l *lay) fileIcon(f *richtext.File, x, y, s int) {
@@ -1037,54 +1134,108 @@ func (l *lay) genericFile(f *richtext.File, x, y, w int) int {
 	return h
 }
 
+// snippet is Slack's snippet message file: the file pillow's header (the
+// 36px type tile, the name in 16px Bold, the pretty_type under it) and,
+// edge to edge under it, FileSnippet's CodeMirror lines: 13px monospace at
+// 1.5, a 32px line-number gutter (sk_foreground_min .04, a 1px .13 rule,
+// numbers right-aligned 4px in at .5), the code 8px after it; 4px above
+// the first line and below the last (8px for two lines, 18px for one).
+// Collapsed at 200px (c-pillow_file__snippet--collapsed) with the 40px
+// fade to the pane. Slack's snippet message file has no max width.
 func (l *lay) snippet(f *richtext.File, x, y, w int) int {
 	p := &l.st.Palette
-	cw := min(w, l.dp(560))
+	cw := min(w, l.dp(1000))
 	pad := l.dp(12)
+	ic := l.dp(36)
 	tg := l.d.addTarget(target{kind: tFile, file: f})
 	bi := l.cardFrame(x, y, cw, 0, tg)
-	// header
+	l.fileIcon(f, x+pad, y+pad, ic)
+	tx := x + pad + ic + pad
 	fs := l.bodyStyle()
 	fs.face.Weight = font.Bold
+	fs.size, fs.lineH = l.sp(16), l.dp(20)
 	fs.maxLines, fs.ellipsis = 1, true
-	hh, _ := l.plainFlow(fileName(f), x+pad, y+pad, cw-2*pad, &fs, tg)
-	cy := y + pad + hh
-	meta := f.PrettyType
-	if f.Lines > 0 {
-		if meta != "" {
-			meta += " · "
+	l.plainFlow(fileName(f), tx, y+pad-l.dp(1), x+cw-tx-pad, &fs, tg)
+	ms := l.small(p.Text2)
+	ms.maxLines, ms.ellipsis, ms.noSelect = 1, true, true
+	l.plainFlow(pillowMeta(f), tx, y+pad+l.dp(20), x+cw-tx-pad, &ms, -1)
+	cy := y + pad + ic + pad
+	code := strings.TrimRight(f.Preview, "\n")
+	if code == "" {
+		h := cy - y + l.dp(1)
+		l.d.boxes[bi].r = image.Rect(x, y, x+cw, y+h)
+		return h
+	}
+	lines := strings.Split(code, "\n")
+	top, bot := l.dp(4), l.dp(4)
+	switch len(lines) {
+	case 1:
+		top, bot = l.dp(18), l.dp(18)
+	case 2:
+		top, bot = l.dp(8), l.dp(8)
+	}
+	lh := l.dp(19.5)
+	gw := l.dp(32)
+	inner := image.Rect(x+l.dp(1), cy, x+cw-l.dp(1), cy)
+	codeX := inner.Min.X + gw + l.dp(8)
+	codeW := max(inner.Max.X-l.dp(8)-codeX, 1)
+	cs := flowStyle{face: font.Font{Typeface: l.st.Mono}, size: l.sp(13), lineH: lh, col: p.Text, emoji: l.dp(13), pre: true}
+	ck := l.faceFor(cs.face, cs.size, 0)
+	rows := make([]int, len(lines)) // pre-wrap: visual rows per line
+	total := 0
+	for i, ln := range lines {
+		rows[i] = max(1, int(math.Ceil(float64(l.measure(ln, ck))/float64(codeW))))
+		total += rows[i]
+	}
+	full := top + total*lh + bot
+	ch := min(full, l.dp(200))
+	inner.Max.Y = cy + ch
+	gut := rgba(29, 28, 29, 0.04)
+	rule := rgba(29, 28, 29, 0.13)
+	num := rgba(29, 28, 29, 0.5)
+	if lum(p.Panel) < 0.5 {
+		gut, rule, num = rgba(232, 232, 232, 0.04), rgba(232, 232, 232, 0.13), rgba(209, 210, 211, 0.5)
+	}
+	rr := l.dp(12) - l.dp(1)
+	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: image.Rect(inner.Min.X, cy, inner.Min.X+gw, cy+ch), fill: Over(gut, p.Panel),
+		target: -1, perCorner: true, corners: [4]int{0, 0, 0, rr}})
+	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: image.Rect(inner.Min.X+gw-l.dp(1), cy, inner.Min.X+gw, cy+ch), fill: Over(rule, p.Panel), target: -1})
+	ns := flowStyle{face: font.Font{Typeface: l.st.Mono}, size: l.sp(13), lineH: lh, col: Over(num, p.Panel), emoji: l.dp(13), maxLines: 1, noSelect: true}
+	l.plainAdd("\n")
+	ly := cy + top
+	for i, ln := range lines {
+		if ly+lh > cy+ch {
+			break
 		}
-		meta += strconv.Itoa(f.Lines) + " lines"
+		n := strconv.Itoa(i + 1)
+		nw := int(l.measure(n, l.faceFor(ns.face, ns.size, 0)) + 0.999)
+		l.plainFlow(n, inner.Min.X+gw-l.dp(4)-nw-l.dp(1), ly, nw+l.dp(2), &ns, -1)
+		if ln != "" {
+			cs.maxLines = 0
+			if ly+rows[i]*lh > cy+ch {
+				cs.maxLines = max(1, (cy+ch-ly)/lh)
+			}
+			l.plainFlow(ln, codeX, ly, codeW, &cs, -1)
+		}
+		if i < len(lines)-1 {
+			l.plainAdd("\n")
+		}
+		ly += rows[i] * lh
 	}
-	if meta != "" {
-		ms := l.small(p.Text2)
-		ms.noSelect = true
-		mh, _ := l.plainFlow(meta, x+pad, cy, cw-2*pad, &ms, -1)
-		cy += mh
+	if full > ch { // collapsed: the 40px fade to the pane
+		fh := l.dp(40)
+		for k := 0; k < 8; k++ {
+			a := float32(k+1) / 8
+			c := p.Panel
+			c.A = uint8(a * 255)
+			r := image.Rect(inner.Min.X, cy+ch-fh+k*fh/8, inner.Max.X, cy+ch-fh+(k+1)*fh/8)
+			l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, fill: c, target: -1, layer: 1})
+		}
 	}
-	cy += l.dp(8)
-	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: image.Rect(x, cy, x+cw, cy+l.dp(1)), fill: p.Border, target: -1})
-	cy += l.dp(1)
-	if f.Preview != "" {
-		ps := l.bodyStyle()
-		ps.face = font.Font{Typeface: l.st.Mono}
-		ps.size, ps.lineH, ps.pre = l.sp(12), l.dp(18), true
-		ps.maxLines = 8
-		ps.col = p.Text
-		l.d.boxes = append(l.d.boxes, box{kind: bFill, fill: p.PreBg, target: -1})
-		pb := len(l.d.boxes) - 1
-		l.plainAdd("\n")
-		ph, _ := l.plainFlow(strings.TrimRight(f.Preview, "\n"), x+pad, cy+l.dp(8), cw-2*pad, &ps, -1)
-		ph += l.dp(16)
-		rr := l.dp(12) - l.dp(1)
-		l.d.boxes[pb].r = image.Rect(x+l.dp(1), cy, x+cw-l.dp(1), cy+ph-l.dp(1))
-		l.d.boxes[pb].corners = [4]int{0, 0, rr, rr}
-		l.d.boxes[pb].perCorner = true
-		cy += ph
-	}
-	l.d.boxes[bi].r = image.Rect(x, y, x+cw, cy)
+	h := cy + ch + l.dp(1) - y
+	l.d.boxes[bi].r = image.Rect(x, y, x+cw, y+h)
 	if tg >= 0 {
-		l.d.hits = append(l.d.hits, hit{r: image.Rect(x, y, x+cw, cy), t: tg})
+		l.d.hits = append(l.d.hits, hit{r: image.Rect(x, y, x+cw, y+h), t: tg})
 	}
-	return cy - y
+	return h
 }
