@@ -10,6 +10,7 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/gen2brain/malgo v0.11.27
 	github.com/godbus/dbus/v5 v5.2.4
+	github.com/hajimehoshi/go-mp3 v0.3.4
 	github.com/kazzmir/opus-go v1.4.0
 	github.com/pion/dtls/v3 v3.1.15
 	github.com/pion/interceptor v0.1.51

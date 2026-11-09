@@ -12,9 +12,10 @@ import (
 // The huddle menus' API: rooms.getLink (Copy huddle link),
 // calendar.user.status and calendar.getConnectedCalendars (the Schedule
 // Huddle modal's calendar check), huddles.scheduled.new (Schedule), and
-// conversations.open for a huddle with someone you have no DM with yet.
-// Nothing here starts a call: rooms.join stays the fake Chime's
-// (internal/huddle.NewFake).
+// conversations.open for a huddle with someone you have no DM with yet,
+// rooms.inviteResponse (Decline / Be there soon on an incoming invite) and
+// dnd.info (whether an invite rings). Nothing here starts a call:
+// rooms.join stays the fake Chime's (internal/huddle.NewFake).
 
 // HuddleLinkBase is where rooms.getLink's links point: + the channel id.
 const HuddleLinkBase = "https://app.slack.com/huddle/" + TeamID + "/"
@@ -30,6 +31,22 @@ type huddleState struct {
 	scheduled []ScheduledHuddle
 	opened    []string // conversations.open users
 	ims       map[string]string
+	responses []url.Values // rooms.inviteResponse forms
+	dnd       map[string]any
+}
+
+// InviteResponses returns the rooms.inviteResponse calls so far.
+func (s *Server) InviteResponses() []url.Values {
+	s.hud.mu.Lock()
+	defer s.hud.mu.Unlock()
+	return append([]url.Values(nil), s.hud.responses...)
+}
+
+// SetDND sets what dnd.info answers (nil: notifications on).
+func (s *Server) SetDND(status map[string]any) {
+	s.hud.mu.Lock()
+	s.hud.dnd = status
+	s.hud.mu.Unlock()
 }
 
 // SetCalendarConnected makes calendar.user.status answer with (true, the
@@ -79,6 +96,25 @@ func (s *Server) handleHuddles(method string, f url.Values) (any, bool) {
 			return ok("connected_calendars", []any{}), true
 		}
 		return ok("connected_calendars", []map[string]any{{"id": "primary", "name": "Fake calendar", "is_writable": true}}), true
+	case "rooms.inviteResponse":
+		h.mu.Lock()
+		h.responses = append(h.responses, f)
+		h.mu.Unlock()
+		switch {
+		case f.Get("channel_id") == "" || f.Get("room_id") == "":
+			return map[string]any{"ok": false, "error": "invalid_arguments"}, true
+		case f.Get("response") != "decline" && f.Get("response") != "joining_soon" && f.Get("response") != "accept":
+			return map[string]any{"ok": false, "error": "invalid_response"}, true
+		}
+		return map[string]any{"ok": true}, true
+	case "dnd.info":
+		h.mu.Lock()
+		out := map[string]any{"ok": true, "dnd_enabled": false, "snooze_enabled": false}
+		for k, v := range h.dnd {
+			out[k] = v
+		}
+		h.mu.Unlock()
+		return out, true
 	case "huddles.scheduled.new":
 		h.mu.Lock()
 		h.scheduled = append(h.scheduled, ScheduledHuddle{Form: f})

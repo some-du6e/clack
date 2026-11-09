@@ -15,6 +15,7 @@ import (
 	"errors"
 	"log"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -63,6 +64,13 @@ type Controller struct {
 	Tweak func(*huddle.Options)
 	// NoWindow keeps the huddle window shut (tests: no display).
 	NoWindow bool
+	// Ring plays one of Slack's sounds by file name (the
+	// huddle_invite_sound_v2 pref's value); nil plays it on the default
+	// speakers (ring.go). Tests record it.
+	Ring func(file string)
+	// MissedAfter is how long an invite rings before the "Huddle missed"
+	// notice (0: Slack's 30 s).
+	MissedAfter time.Duration
 
 	mu      sync.Mutex
 	s       *huddle.Session
@@ -72,6 +80,11 @@ type Controller struct {
 	gen     uint64 // bumps on every change, for cheap redraw checks
 
 	win  *window
+	inv  *incoming     // the incoming invite (invite.go)
+	iwin *inviteWindow // its window (invitewin.go)
+	card cardState     // its sidebar card (invitecard.go)
+	ring ringState     // the invite sound (ring.go)
+	hand handState     // auto-lowering your raised hand (hand.go)
 	bar  barState
 	hdr  map[string]*headerState
 	last time.Time
@@ -357,8 +370,9 @@ func (c *Controller) options(app *core.App) huddle.Options {
 func (c *Controller) onSession() {
 	s := c.Session()
 	if s != nil {
+		st := s.State()
+		c.autoLowerHand(s, st)
 		if tt := c.taut(); tt != nil {
-			st := s.State()
 			peers := make(map[string]string, len(st.Participants))
 			for _, p := range st.Participants {
 				if p.AttendeeID != "" && p.InMedia {
@@ -484,23 +498,26 @@ func (c *Controller) Handle(ev core.Event) {
 	if ev.Type != "huddle" {
 		return
 	}
-	if ev.Name == "huddle_invite" {
-		var inv struct {
+	switch ev.Name {
+	case "huddle_invite":
+		c.onInvite(ev.Raw)
+		return
+	case "huddle_invite_cancel": // huddleInviteCancelRtmHandler
+		var e struct {
 			Channel string `json:"channel_id"`
-			Sender  string `json:"sender_user_id"`
 		}
-		if json.Unmarshal(ev.Raw, &inv) == nil && inv.Channel != "" && !c.In(inv.Channel) {
-			who := c.userName(inv.Sender)
-			if who == "" {
-				who = "Someone"
-			}
-			c.toast(who+" invited you to a huddle in "+c.channelTitle(inv.Channel), "headphones")
+		if json.Unmarshal(ev.Raw, &e) == nil && e.Channel != "" {
+			c.clearInvite(e.Channel)
 		}
+		return
+	}
+	if !strings.HasPrefix(ev.Name, "sh_") {
 		return
 	}
 	if s := c.Session(); s != nil {
 		s.HandleRoomEvent(ev.Name, ev.Raw)
 	}
+	c.inviteRoomEvent(ev.Name, ev.Raw)
 	var re roomEvent
 	if json.Unmarshal(ev.Raw, &re) != nil {
 		return

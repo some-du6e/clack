@@ -54,7 +54,11 @@ type Participant struct {
 	Sharing    bool // sharing their screen
 	Reaction   string
 	ReactedAt  time.Time
-	Self       bool
+	// Sticker is their sticky emoji (awareness.go): raised_hand… while
+	// their hand is up, coffee for Be right back, speaker for Audio-only.
+	Sticker   string
+	StickerAt time.Time // their last awareness broadcast
+	Self      bool
 }
 
 // Speaking reports whether the speaking ring should show at now.
@@ -158,6 +162,7 @@ type Session struct {
 	muted     bool
 	deafened  bool
 	captions  bool
+	sticker   string // yours (awareness.go)
 	micStatus MicStatus
 	micErr    string
 	people    map[string]*Participant // by user id
@@ -314,6 +319,7 @@ func (s *Session) State() State {
 			st.Invites = append(st.Invites, Invite{UserID: u, Status: v})
 		}
 	}
+	now := time.Now()
 	for _, id := range ids {
 		p := *s.people[id]
 		if !p.InMedia && !p.Self && invited(st.Invites, p.UserID) {
@@ -322,7 +328,9 @@ func (s *Session) State() State {
 		if p.Self {
 			p.Muted = s.muted
 			p.Camera = cam.State == CameraOn
+			p.Sticker = s.sticker
 		}
+		p.Sticker = stickerAt(p, now)
 		st.Participants = append(st.Participants, p)
 	}
 	for k, v := range s.sinks {
@@ -483,7 +491,11 @@ func (s *Session) Leave() {
 		return
 	}
 	s.leaving = true
+	connected := s.phase == Connected
 	s.mu.Unlock()
+	if connected {
+		s.awarenessClose() // everyone drops your sticker
+	}
 	ack := s.wait(ftLeaveAck)
 	if s.send(encodeLeave()) == nil {
 		select {
@@ -660,6 +672,7 @@ func (s *Session) connect() error {
 	s.o.Logf("huddle: media connected (attendee %s)", ji.Attendee.AttendeeID)
 
 	go s.sendAudio(s.connDone)
+	go s.awarenessOnConnect(s.connDone)
 	ping := time.NewTicker(10 * time.Second)
 	defer ping.Stop()
 	defer close(s.connDone)
@@ -1304,6 +1317,10 @@ func (s *Session) onData(m dataMessage) {
 	}
 	if s.o.OnPeer != nil {
 		s.o.OnPeer(PeerEvent{Topic: m.Topic, Message: pm, Kind: pm.Kind(), SenderAttendeeID: m.SenderAttendee, SelfAttendeeID: self})
+	}
+	if m.Topic == TopicAwareness {
+		s.onAwareness(pm, m.SenderAttendee)
+		return
 	}
 	if m.Topic != TopicData {
 		return
