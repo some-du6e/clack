@@ -14,6 +14,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/huddleui"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
 )
 
@@ -366,4 +367,35 @@ func TestPrefsAuditAppliedRoundTripTime(t *testing.T) {
 		z, _ := fs.Pref("tz")
 		return v == true && z == "Europe/Brussels" // intl_api_manual comes first
 	})
+}
+
+// Messages & media > Default Skin Tone is six :hand: radios (Slack's
+// EmojiSkinTonePickerRadioGroup); Appearance shows the Miles Davis group
+// first only under miles_davis_themes.
+func TestPrefsSkinToneHandsAndMilesDavis(t *testing.T) {
+	a, ca, fs := fakePrefsApp(t)
+	p := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}}
+	pageRows(t, a, p, "messages_media")
+	p.clicks["pref.preferred_skin_tone=4"].Click()
+	pageRows(t, a, p, "messages_media")
+	waitFor(t, a, "tone 4", func() bool { v, _ := fs.Pref("preferred_skin_tone"); return v == "4" && ca.Prefs().SkinTone == "4" })
+	has := func(rows []prefsDrawn, label string) bool {
+		for _, r := range rows {
+			if r.Label == label {
+				return true
+			}
+		}
+		return false
+	}
+	if has(pageRows(t, a, p, "appearance"), theme.MilesDavisGroup) {
+		t.Fatal("Miles Davis themes without the experiment")
+	}
+	ca.SetExperimentGroup("miles_davis_themes", "on")
+	rows := pageRows(t, a, p, "appearance")
+	if !has(rows, theme.MilesDavisGroup) || !has(rows, "Kind of Blue") {
+		t.Fatalf("no Miles Davis group: %s", dumpRows(rows))
+	}
+	if id := theme.MilesDavisPresets[0].Theme.PresetID(); id != "miles-kind-of-blue" {
+		t.Fatalf("PresetID %q", id)
+	}
 }

@@ -105,7 +105,11 @@ func (p *prefsModal) slackThemes(f *prefsForm, curID string) {
 	gtx, a := f.gtx, f.p.a
 	group := ""
 	col := 0
-	for _, pr := range theme.ThemePresets {
+	presets := theme.ThemePresets
+	if c := a.Core(); c != nil && c.Experiment("miles_davis_themes") == "on" { // TU6L: Miles Davis first
+		presets = append(append([]theme.ThemePreset(nil), theme.MilesDavisPresets...), presets...)
+	}
+	for _, pr := range presets {
 		if pr.Group != group {
 			if col != 0 {
 				f.y += gtx.Dp(48)

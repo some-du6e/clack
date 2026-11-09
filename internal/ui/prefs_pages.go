@@ -3,7 +3,6 @@ package ui
 import (
 	"encoding/json"
 	"runtime"
-	"strconv"
 	"strings"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
@@ -479,14 +478,7 @@ func (p *prefsModal) messagesPage(f *prefsForm) {
 	f.subheading("Emoji")
 	f.subheading("Default Skin Tone")
 	f.para("Choose the default skin tone that will be used whenever you use certain emojis in reactions and messages.")
-	tone := p.prefStr("preferred_skin_tone")
-	if tone == "" {
-		tone = "1"
-	}
-	for i, l := range skinTones {
-		v := strconv.Itoa(i + 1)
-		f.option("pref.preferred_skin_tone="+v, l, "", tone == v, true, func() { p.setPref("preferred_skin_tone", v) })
-	}
+	p.skinTonePicker(f) // prefs_a.go: Slack's ✋ radios
 	// EmojiPref: emoji_mode as_text / default; turning text on also turns
 	// convert_emoticons off (0), and both JUMBOMOJI and emoticons grey
 	// while it's on (JUMBOMOJI also under Compact)

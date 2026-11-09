@@ -297,3 +297,68 @@ func pad2(n int) string {
 	}
 	return strconv.Itoa(n)
 }
+
+// skinTonePicker is EmojiSkinTonePickerRadioGroup: six radios side by
+// side, each with :hand: in its tone (:wave: while hovered), the tone's
+// name as its label for assistive tech (skinTones), preferred_skin_tone
+// "1"…"6".
+func (p *prefsModal) skinTonePicker(f *prefsForm) {
+	gtx, a := f.gtx, p.a
+	c := &a.th.C
+	tone := p.prefStr("preferred_skin_tone")
+	if tone == "" {
+		tone = "1"
+	}
+	cell := gtx.Dp(64)
+	h := gtx.Dp(40)
+	for i, l := range skinTones {
+		v := strconv.Itoa(i + 1)
+		key := "pref.preferred_skin_tone=" + v
+		on := tone == v
+		f.record("radio", key, l, on, true)
+		b := p.btn(key)
+		name := "hand"
+		if b.Hovered() && !on {
+			name = "wave"
+		}
+		if i > 0 {
+			name += "::skin-tone-" + v
+		}
+		url := ""
+		if co := a.Core(); co != nil {
+			url, _, _ = co.Emoji(name)
+		}
+		at(gtx, image.Pt(i*cell, f.y), image.Pt(cell, h), func(gtx layout.Context) layout.Dimensions {
+			return clickArea(gtx, b, func(gtx layout.Context, s image.Point, hov bool) {
+				if on {
+					theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(8), c.BgHover)
+				}
+			}, func(gtx layout.Context) layout.Dimensions {
+				s := gtx.Dp(18)
+				r := image.Rect(gtx.Dp(6), (h-s)/2, gtx.Dp(6)+s, (h+s)/2)
+				if on {
+					theme.Circle(gtx, r.Min.Add(image.Pt(s/2, s/2)), s, c.Link)
+					theme.Circle(gtx, r.Min.Add(image.Pt(s/2, s/2)), s*4/9, c.Bg)
+				} else {
+					theme.RRect(gtx, r, s/2, c.Bg)
+					theme.Border(gtx, r, s/2, gtx.Dp(1), c.BorderStrong)
+				}
+				es := gtx.Dp(26)
+				at(gtx, image.Pt(gtx.Dp(30), (h-es)/2), image.Pt(es, es), func(gtx layout.Context) layout.Dimensions {
+					if url != "" {
+						if img, ok := a.images.Get(url, es*2); ok {
+							return theme.Image(gtx, img, image.Pt(es, es), 0)
+						}
+					}
+					return layout.Dimensions{Size: image.Pt(es, es)}
+				})
+				return layout.Dimensions{Size: image.Pt(cell, h)}
+			})
+		})
+		if clicked(b) && !on {
+			p.setPref("preferred_skin_tone", v)
+			a.Invalidate()
+		}
+	}
+	f.y += h + gtx.Dp(12)
+}

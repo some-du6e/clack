@@ -170,6 +170,11 @@ func (t IATheme) PresetID() string {
 			return p.ID
 		}
 	}
+	for _, p := range MilesDavisPresets { // presets_miles.go
+		if p.Theme.sameColors(t) {
+			return p.ID
+		}
+	}
 	return ""
 }
 
