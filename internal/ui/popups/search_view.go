@@ -33,6 +33,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/hovercard"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/shortcut"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
@@ -181,16 +182,47 @@ func srDrawToks(gtx layout.Context, th *theme.Theme, cl *Colors, toks []srTok, l
 
 // ---- results view ----
 
-// search result types (the [Messages ▾] selector)
+// search result types: the [Messages ▾] source menu, in Slack's order
+// (search-view's source list: messages, dms, files, people, channels,
+// canvases), each with its module's total.
 const (
 	srTabMessages = iota
+	srTabDMs
 	srTabFiles
-	srTabChannels
 	srTabPeople
+	srTabChannels
+	srTabCanvases
+	srTabN
 )
 
-var srTabNames = [...]string{"Messages", "Files", "Channels", "People"}
-var srTabIcons = [...]string{"dms", "files", "hash", "people"}
+var srTabNames = [...]string{"Messages", "DMs", "Files", "People", "Channels", "Canvases"}
+var srTabIcons = [...]string{"slack-logo", "dms", "files", "people", "hash", "canvas"}
+var srTabModules = [...]string{core.ModMessages, core.ModDMs, core.ModFiles, core.ModPeople, core.ModChannels, core.ModCanvases}
+
+// srTabOf maps a module name to its tab (-1 unknown).
+func srTabOf(module string) int {
+	for i, m := range srTabModules {
+		if m == module {
+			return i
+		}
+	}
+	return -1
+}
+
+// srCountShort is the source menu's count: 660, 17k, 292k, 1.2M.
+func srCountShort(n int) string {
+	switch {
+	case n < 1000:
+		return strconv.Itoa(n)
+	case n < 10000:
+		s := strconv.FormatFloat(float64(n)/1000, 'f', 1, 64)
+		return strings.TrimSuffix(s, ".0") + "k"
+	case n < 1000000:
+		return strconv.Itoa((n+500)/1000) + "k"
+	}
+	s := strconv.FormatFloat(float64(n)/1e6, 'f', 1, 64)
+	return strings.TrimSuffix(s, ".0") + "M"
+}
 
 // filter pills
 const (
@@ -253,6 +285,13 @@ type SearchView struct {
 	seq     int
 	loading bool
 	err     string
+	sess    core.SearchSession // one per query: every module call shares it
+	exact   bool               // More > Exact matches only (search_exact_matches_only)
+
+	// the source menu's per-tab totals for the query in countQ
+	counts  [srTabN]int
+	countOK [srTabN]bool
+	countQ  string
 
 	msgs  []core.Message
 	cards []srCard
@@ -261,12 +300,20 @@ type SearchView struct {
 	page  int
 	pages int
 
+	fromSugg []core.FilterSuggestion // filter_suggestions.from (With people)
+
 	chans  []core.ChannelHit
 	people []core.User
+	files  []core.File
 	rows   []widget.Clickable
 	btns   []widget.Clickable
 	listY  int
 	rowH   int
+
+	// numbered pagination (Slack's c-pagination)
+	prevBtn, nextBtn widget.Clickable
+	pageBtns         [5]widget.Clickable
+	pageNums         [5]int
 
 	cardX    int // cards' left edge (view coords), last frame
 	menuCard int // card whose More actions menu is open (-1 none)
@@ -282,11 +329,21 @@ func NewSearchView(h Host, query string) *SearchView {
 		}
 	}
 	query = strings.TrimSpace(query)
+	tab := srTabMessages
+	if q, mod, ok := strings.Cut(query, "&module="); ok { // "search?q=…&module=files"
+		query = strings.TrimSpace(q)
+		if t := srTabOf(mod); t >= 0 {
+			tab = t
+		}
+	}
 	srRecordQuery(query)
-	v := &SearchView{h: h, q: srParse(query), sortBy: "score", menuCard: -1}
+	v := &SearchView{h: h, q: srParse(query), tab: tab, sortBy: "score", menuCard: -1, sess: core.NewSearchSession()}
 	v.list.Axis = layout.Vertical
 	return v
 }
+
+// Tab is the selected source (srTabMessages…).
+func (v *SearchView) Tab() int { return v.tab }
 
 // SetOrigin tells the view where its top-left corner is in window
 // coordinates, so its menus and profile cards open next to the clicked
@@ -309,6 +366,7 @@ func (v *SearchView) Query() string { return v.q.String() }
 func (v *SearchView) setQuery(q srQuery) {
 	v.q = q
 	srRecordQuery(q.String())
+	v.sess = core.NewSearchSession() // a new query is a new search session
 	v.search(1)
 }
 
@@ -323,53 +381,86 @@ func (v *SearchView) setTab(t int) {
 func (v *SearchView) reset() {
 	v.msgs, v.cards, v.convs = nil, nil, nil
 	v.total, v.page, v.pages = 0, 0, 0
-	v.chans, v.people = nil, nil
+	v.chans, v.people, v.files = nil, nil, nil
 	v.err = ""
 	v.menuCard = -1
 	v.list.Position = layout.Position{}
 }
 
-// search loads page (1 = a fresh search).
+// srRecentChannels is recent_channels: the recently opened conversations.
+func srRecentChannels() []string {
+	places, _ := srRecents()
+	var out []string
+	for _, id := range places {
+		if !strings.HasPrefix(id, "view:") && len(out) < 20 {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// countTabs fetches every other tab's total for the source menu (Slack
+// fires the modules together, one session).
+func (v *SearchView) countTabs(c *core.App) {
+	q := v.q.String()
+	if strings.TrimSpace(q) == "" || q == v.countQ {
+		return
+	}
+	v.countQ = q
+	v.countOK = [srTabN]bool{}
+	sess := v.sess
+	for t := 0; t < srTabN; t++ {
+		if t == v.tab {
+			continue
+		}
+		tab, mod := t, srTabModules[t]
+		words := strings.TrimSpace(v.q.Text())
+		query := q
+		if tab == srTabChannels || tab == srTabPeople {
+			query = words
+			if query == "" {
+				continue
+			}
+		}
+		run(v.h, func(ctx context.Context) (int, error) { return c.ModuleCount(ctx, mod, query, sess) },
+			func(n int, err error) {
+				if err != nil || v.countQ != q {
+					return
+				}
+				v.counts[tab], v.countOK[tab] = n, true
+			})
+	}
+}
+
+// search loads page (1 = a fresh search) of the selected tab.
 func (v *SearchView) search(page int) {
 	v.seq++
 	seq := v.seq
-	if page <= 1 {
-		v.reset()
-	}
+	v.reset()
 	v.loading = false
 	c := v.h.Core()
 	if c == nil {
 		return
 	}
 	words := strings.TrimSpace(v.q.Text())
+	q := v.q.String()
+	if page <= 1 {
+		v.countTabs(c)
+	}
+	sess := v.sess
+	done := func(total int) {
+		v.counts[v.tab], v.countOK[v.tab] = total, true
+	}
 	switch v.tab {
-	case srTabMessages:
-		q := v.q.String()
+	case srTabMessages, srTabDMs:
 		if strings.TrimSpace(q) == "" {
 			return
 		}
-		srt := v.sortBy
+		o := core.SearchOpts{Query: q, Page: page, Sort: v.sortBy, ExactOnly: v.exact, Session: sess,
+			RecentChannels: srRecentChannels(), Module: srTabModules[v.tab]}
 		v.loading = true
-		run(v.h, func(ctx context.Context) (core.SearchResult, error) {
-			return c.SearchMessages(ctx, core.SearchOpts{Query: q, Page: page, Count: 20, Sort: srt})
-		}, func(res core.SearchResult, err error) {
-			if seq != v.seq {
-				return
-			}
-			v.loading = false
-			if err != nil {
-				v.err = errText(err)
-				return
-			}
-			v.addMessages(res, page)
-		})
-	case srTabChannels:
-		if words == "" {
-			return
-		}
-		v.loading = true
-		run(v.h, func(ctx context.Context) ([]core.ChannelHit, error) { return c.SearchChannels(ctx, words, 50) },
-			func(hs []core.ChannelHit, err error) {
+		run(v.h, func(ctx context.Context) (core.SearchResult, error) { return c.SearchMessages(ctx, o) },
+			func(res core.SearchResult, err error) {
 				if seq != v.seq {
 					return
 				}
@@ -378,17 +469,60 @@ func (v *SearchView) search(page int) {
 					v.err = errText(err)
 					return
 				}
-				v.chans = hs
-				v.total = len(hs)
-				v.growRows(len(hs))
+				v.addMessages(res, page)
+				if v.tab == srTabMessages {
+					v.fromSugg = res.FilterFrom
+				}
+				done(res.Total)
+			})
+	case srTabFiles, srTabCanvases:
+		if strings.TrimSpace(q) == "" {
+			return
+		}
+		o := core.FileSearchOpts{Query: q, Canvases: v.tab == srTabCanvases, Page: page, Session: sess}
+		v.loading = true
+		run(v.h, func(ctx context.Context) (core.FilePage, error) { return c.SearchFiles(ctx, o) },
+			func(fp core.FilePage, err error) {
+				if seq != v.seq {
+					return
+				}
+				v.loading = false
+				if err != nil {
+					v.err = errText(err)
+					return
+				}
+				v.files, v.total, v.page, v.pages = fp.Files, fp.Total, max(fp.Page, 1), fp.Pages
+				v.growRows(len(fp.Files))
+				done(fp.Total)
+			})
+	case srTabChannels:
+		if words == "" {
+			return
+		}
+		v.loading = true
+		run(v.h, func(ctx context.Context) (core.ChannelPage, error) {
+			return c.SearchChannelsTab(ctx, words, page, sess)
+		},
+			func(cp core.ChannelPage, err error) {
+				if seq != v.seq {
+					return
+				}
+				v.loading = false
+				if err != nil {
+					v.err = errText(err)
+					return
+				}
+				v.chans, v.total, v.page, v.pages = cp.Channels, cp.Total, max(cp.Page, 1), cp.Pages
+				v.growRows(len(cp.Channels))
+				done(cp.Total)
 			})
 	case srTabPeople:
 		if words == "" {
 			return
 		}
 		v.loading = true
-		run(v.h, func(ctx context.Context) ([]core.User, error) { return c.SearchUsers(ctx, words, 50) },
-			func(us []core.User, err error) {
+		run(v.h, func(ctx context.Context) (core.PeoplePage, error) { return c.SearchPeopleTab(ctx, words, page, sess) },
+			func(pp core.PeoplePage, err error) {
 				if seq != v.seq {
 					return
 				}
@@ -397,9 +531,9 @@ func (v *SearchView) search(page int) {
 					v.err = errText(err)
 					return
 				}
-				v.people = us
-				v.total = len(us)
-				v.growRows(len(us))
+				v.people, v.total, v.page, v.pages = pp.Users, pp.Total, max(pp.Page, 1), pp.Pages
+				v.growRows(len(pp.Users))
+				done(pp.Total)
 			})
 	}
 }
@@ -425,7 +559,7 @@ func (v *SearchView) addMessages(res core.SearchResult, page int) {
 	if v.page == 0 {
 		v.page = page
 	}
-	terms := v.q.Terms
+	terms := v.q.Highlights()
 	now := time.Now()
 	for i := range res.Messages {
 		m := &res.Messages[i]
@@ -460,13 +594,88 @@ func (v *SearchView) openMenu(gtx layout.Context, r image.Rectangle, items []Men
 	v.h.ShowOverlay(NewMenuOpts(v.h, items, MenuOpts{Anchor: v.win(gtx, r), Width: width}))
 }
 
+// srSourceRow is a source menu row: Slack's radio item with the check
+// hanging left of the label (link blue when selected) and the module's
+// total at the right.
+func srSourceRow(th *theme.Theme, label, count string, sel bool) func(gtx layout.Context, hl bool) layout.Dimensions {
+	return func(gtx layout.Context, hl bool) layout.Dimensions {
+		cl := colorsOf(th)
+		sz := image.Pt(gtx.Constraints.Max.X, dp(gtx, 28))
+		fg, sub := cl.Fg, cl.Fg2
+		if sel {
+			fg = cl.Link
+		}
+		if hl {
+			fill(gtx, image.Rectangle{Max: sz}, cl.Highlight)
+			fg, sub = cl.HighText, cl.HighText
+		}
+		if sel {
+			at(gtx, image.Pt(dp(gtx, 6), (sz.Y-dp(gtx, 16))/2), func(gtx layout.Context) layout.Dimensions {
+				return icon(gtx, "check", 16, fg)
+			})
+		}
+		right := sz.X - dp(gtx, 24)
+		if count != "" {
+			cw := textW(gtx, th, 15, theme.Regular, count)
+			right -= cw
+			at(gtx, image.Pt(right, 0), func(gtx layout.Context) layout.Dimensions {
+				return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
+					return text(gtx, th, 15, theme.Regular, sub, count)
+				})
+			})
+			right -= dp(gtx, 8)
+		}
+		at(gtx, image.Pt(dp(gtx, 24), 0), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, right-dp(gtx, 24)), sz.Y)}
+			return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
+				return text(gtx, th, 15, theme.Regular, fg, label)
+			})
+		})
+		pointerCursor(gtx, sz)
+		return layout.Dimensions{Size: sz}
+	}
+}
+
+// srCheckRow is a More menu checkbox row (Slack's custom checkbox items:
+// the box at the left, the label after it); on reads the live state so
+// the row updates while the menu stays open.
+func srCheckRow(th *theme.Theme, label string, on func() bool) func(gtx layout.Context, hl bool) layout.Dimensions {
+	return func(gtx layout.Context, hl bool) layout.Dimensions {
+		cl := colorsOf(th)
+		sz := image.Pt(gtx.Constraints.Max.X, dp(gtx, 28))
+		fg := cl.Fg
+		if hl {
+			fill(gtx, image.Rectangle{Max: sz}, cl.Highlight)
+			fg = cl.HighText
+		}
+		at(gtx, image.Pt(dp(gtx, 24), (sz.Y-dp(gtx, 16))/2), func(gtx layout.Context) layout.Dimensions {
+			return Checkbox(gtx, th, on(), false, false)
+		})
+		at(gtx, image.Pt(dp(gtx, 48), 0), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, sz.X-dp(gtx, 72)), sz.Y)}
+			return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
+				return text(gtx, th, 15, theme.Regular, fg, label)
+			})
+		})
+		pointerCursor(gtx, sz)
+		return layout.Dimensions{Size: sz}
+	}
+}
+
+// typeMenu is the [Messages ▾] source menu: each tab with its total.
 func (v *SearchView) typeMenu(gtx layout.Context) {
-	items := make([]MenuItem, 0, len(srTabNames))
+	th := v.h.Theme()
+	items := make([]MenuItem, 0, srTabN)
 	for i, n := range srTabNames {
 		t := i
-		items = append(items, MenuItem{Label: n, Icon: srTabIcons[i], Checked: v.tab == i, Do: func() { v.setTab(t) }})
+		count := ""
+		if v.countOK[i] {
+			count = srCountShort(v.counts[i])
+		}
+		items = append(items, MenuItem{Key: srTabModules[i], Label: n, Checked: v.tab == i,
+			Widget: srSourceRow(th, n, count, v.tab == i), Do: func() { v.setTab(t) }})
 	}
-	v.openMenu(gtx, v.pillR[srPType], items, 220)
+	v.openMenu(gtx, v.pillR[srPType], items, 280)
 }
 
 func (v *SearchView) fromMenu(gtx layout.Context) {
@@ -538,49 +747,163 @@ func (v *SearchView) inMenu(gtx layout.Context) {
 	v.openMenu(gtx, v.pillR[srPIn], items, 260)
 }
 
-func (v *SearchView) moreMenu(gtx layout.Context) {
-	now := time.Now()
-	dates := []struct {
-		label string
-		t     time.Time
-	}{
-		{"Today", now}, {"Yesterday", now.AddDate(0, 0, -1)}, {"A week ago", now.AddDate(0, 0, -7)},
-		{"A month ago", now.AddDate(0, -1, 0)}, {"A year ago", now.AddDate(-1, 0, 0)},
-	}
-	sub := func(key string) []MenuItem {
-		cur := v.q.Get(key)
-		out := []MenuItem{{Label: "Any time", Checked: cur == "", Do: func() { v.setQuery(v.q.Set(key, "")) }}, Sep()}
-		for _, d := range dates {
-			val := srDate(d.t)
-			out = append(out, MenuItem{Label: d.label, Right: val, Checked: cur == val, Do: func() { v.setQuery(v.q.Set(key, val)) }})
-		}
-		return out
-	}
-	anchor := v.win(gtx, v.pillR[srPMore])
-	pick := image.Pt(anchor.Min.X, anchor.Max.Y+dp(gtx, 4))
-	items := []MenuItem{
-		{Label: "Before…", Icon: "calendar", Sub: sub("before")},
-		{Label: "After…", Icon: "calendar", Sub: sub("after")},
-		{Label: "On…", Icon: "calendar", Sub: sub("on")},
-		Sep(),
-		{Label: "Has reaction…", Icon: "add-reaction", Do: func() {
-			v.h.OpenEmojiPicker(pick, func(name string) {
-				name = strings.Trim(name, ":")
-				if name != "" {
-					v.setQuery(v.q.Toggle("has", ":"+name+":"))
-				}
-			})
-		}},
-		{Label: "Is pinned", Icon: "pin", Checked: v.q.Has("has", "pin"), Do: func() { v.setQuery(v.q.Toggle("has", "pin")) }},
-		{Label: "Is saved", Icon: "bookmark", Checked: v.q.Has("is", "saved"), Do: func() { v.setQuery(v.q.Toggle("is", "saved")) }},
-		Sep(),
-		{Label: "Clear all filters", Disabled: len(v.q.Mods) == 0, Do: func() { v.setQuery(v.q.ClearMods()) }},
-	}
-	v.openMenu(gtx, v.pillR[srPMore], items, 260)
+// srDateRanges are the Date submenu's presets (search-filters: each is
+// after:<day before the range> before:<day after it>; after: and before:
+// are exclusive).
+var srDateRanges = [...]struct {
+	label     string
+	from, end func(now time.Time) time.Time
+}{
+	{"Today", func(n time.Time) time.Time { return n.AddDate(0, 0, -1) }, func(n time.Time) time.Time { return n.AddDate(0, 0, 1) }},
+	{"Yesterday", func(n time.Time) time.Time { return n.AddDate(0, 0, -2) }, func(n time.Time) time.Time { return n }},
+	{"Last 7 days", func(n time.Time) time.Time { return n.AddDate(0, 0, -7) }, func(n time.Time) time.Time { return n.AddDate(0, 0, 1) }},
+	{"Last 30 days", func(n time.Time) time.Time { return n.AddDate(0, 0, -30) }, func(n time.Time) time.Time { return n.AddDate(0, 0, 1) }},
+	{"Last 12 months", func(n time.Time) time.Time { return n.AddDate(-1, 0, 0) }, func(n time.Time) time.Time { return n.AddDate(0, 0, 1) }},
+	{"Last 3 years", func(n time.Time) time.Time { return n.AddDate(-3, 0, 0) }, func(n time.Time) time.Time { return n.AddDate(0, 0, 1) }},
 }
 
+// srWithRange sets the after:/before: pair of a Date preset ("" both clears).
+func srWithRange(q srQuery, after, before string) srQuery {
+	q = q.Set("on", "").Set("during", "")
+	return q.Set("before", before).Set("after", after)
+}
+
+// srFileTypes are More > File type's rows and their modifiers.
+var srFileTypes = [...]struct{ label, val string }{
+	{"Huddle AI Notes", "huddle_notes"}, {"Lists", "lists"}, {"Canvases & Posts", "canvases"}, {"Documents", "documents"},
+	{"Emails", "emails"}, {"Images", "images"}, {"PDFs", "pdfs"}, {"Presentations", "presentations"},
+	{"Snippets", "snippets"}, {"Spreadsheets", "spreadsheets"}, {"Audio", "audio"}, {"Videos", "videos"},
+}
+
+// srTopReactions are the Reactions submenu's quick picks.
+var srTopReactions = [...]string{"thumbs-up", "slightly_smiling_face", "heart"}
+
+// moreMenu is Slack's More filters menu (search-filters' e8 template):
+// Saved preferences (the search_exclude_bots / search_only_my_channels
+// prefs), then Results: Exact matches only, With people, Message has,
+// Message is, Date, File type, Reactions. Every row maps to the modifier
+// app.slack.com adds (captured 2026-11-08).
+func (v *SearchView) moreMenu(gtx layout.Context) {
+	th := v.h.Theme()
+	c := v.h.Core()
+	pref := func(name string) bool { return c != nil && c.PrefBool(name, false) }
+	setPref := func(name string) func() {
+		return func() {
+			if c == nil {
+				return
+			}
+			val := !pref(name)
+			run(v.h, func(ctx context.Context) (struct{}, error) { return struct{}{}, c.SetPref(ctx, name, val) },
+				func(_ struct{}, err error) {
+					if err != nil {
+						v.h.Toast("Couldn't save that preference: " + errText(err))
+						return
+					}
+					v.search(1)
+				})
+		}
+	}
+	toggle := func(key, val string) func() { return func() { v.setQuery(v.q.Toggle(key, val)) } }
+	check := func(label string, on func() bool, do func()) MenuItem {
+		return MenuItem{Label: label, Widget: srCheckRow(th, label, on), Do: do, KeepOpen: true}
+	}
+	has := func(key, val string) func() bool { return func() bool { return v.q.Has(key, val) } }
+
+	// With people: you, then the people the results came from
+	var with []MenuItem
+	if snap, ok := v.snapshot(); ok && snap.Self.ID != "" {
+		val := "<@" + snap.Self.ID + ">"
+		with = append(with, check(userName(snap.Self)+" (you)", has("with", val), toggle("with", val)))
+		for _, f := range v.fromSugg {
+			if f.ID == snap.Self.ID || len(with) == 8 {
+				continue
+			}
+			name := f.ID
+			if u, ok := lookupUser(v.h, f.ID); ok {
+				name = userName(u)
+			}
+			val := "<@" + f.ID + ">"
+			with = append(with, check(name, has("with", val), toggle("with", val)))
+		}
+	}
+
+	now := time.Now()
+	dates := []MenuItem{{Label: "Any time", Checked: v.q.Get("after") == "" && v.q.Get("before") == "" && v.q.Get("on") == "",
+		Do: func() { v.setQuery(srWithRange(v.q, "", "")) }}}
+	for _, d := range srDateRanges {
+		after, before := srDate(d.from(now)), srDate(d.end(now))
+		dates = append(dates, MenuItem{Label: d.label, Checked: v.q.Get("after") == after && v.q.Get("before") == before,
+			Do: func() { v.setQuery(srWithRange(v.q, after, before)) }})
+	}
+	pick := func(key string) func() {
+		return func() {
+			anchor := v.win(gtx, v.pillR[srPMore])
+			v.h.ShowOverlay(NewDatePicker(v.h, anchor, now, time.Time{}, func(day time.Time) {
+				q := v.q.Set("on", "").Set("during", "")
+				switch key {
+				case "on":
+					q = q.Set("before", "").Set("after", "").Set("on", srDate(day))
+				case "range":
+					q = q.Set("after", srDate(day.AddDate(0, 0, -1))) // the range's first day; Before… ends it
+				default:
+					q = q.Set(key, srDate(day))
+				}
+				v.setQuery(q)
+			}))
+		}
+	}
+	dates = append(dates, Sep(), MenuItem{Label: "On…", Do: pick("on")}, MenuItem{Label: "Before…", Do: pick("before")},
+		MenuItem{Label: "After…", Do: pick("after")}, MenuItem{Label: "Range…", Do: pick("range")})
+
+	var types []MenuItem
+	for _, ft := range srFileTypes {
+		types = append(types, check(ft.label, has("type", ft.val), toggle("type", ft.val)))
+	}
+	var reacts []MenuItem
+	for _, r := range srTopReactions {
+		val := ":" + r + ":"
+		reacts = append(reacts, check(val, has("has", val), toggle("has", val)))
+	}
+	reacts = append(reacts, MenuItem{Label: "More reactions", Do: func() {
+		anchor := v.win(gtx, v.pillR[srPMore])
+		v.h.OpenEmojiPicker(image.Pt(anchor.Min.X, anchor.Max.Y+dp(gtx, 4)), func(name string) {
+			if name = strings.Trim(name, ":"); name != "" {
+				v.setQuery(v.q.Toggle("has", ":"+name+":"))
+			}
+		})
+	}})
+
+	items := []MenuItem{
+		{Header: "Saved preferences"},
+		check("Exclude bot messages", func() bool { return pref("search_exclude_bots") }, setPref("search_exclude_bots")),
+		check("Only my channels", func() bool { return pref("search_only_my_channels") }, setPref("search_only_my_channels")),
+		Sep(),
+		{Header: "Results"},
+		check("Exact matches only", func() bool { return v.exact }, func() { v.exact = !v.exact; v.search(1) }),
+		{Label: "With people", Icon: "user", Sub: with},
+		{Label: "Message has", Icon: "attach", Sub: []MenuItem{
+			check("File", has("has", "file"), toggle("has", "file")),
+			check("Link", has("has", "link"), toggle("has", "link")),
+			check("Action", has("has", "action"), toggle("has", "action")),
+		}},
+		{Label: "Message is", Icon: "message", Sub: []MenuItem{
+			check("A direct message", has("is", "dm"), toggle("is", "dm")),
+			check("In a thread", has("is", "thread"), toggle("is", "thread")),
+			check("Saved", has("is", "saved"), toggle("is", "saved")),
+			check("To-dos", has("is", "todos"), toggle("is", "todos")),
+			check("Pinned", has("has", "pin"), toggle("has", "pin")),
+			check("In Activity", has("in", "activity"), toggle("in", "activity")),
+		}},
+		{Label: "Date", Icon: "calendar", Sub: dates},
+		{Label: "File type", Icon: "file", Sub: types},
+		{Label: "Reactions", Icon: "add-reaction", Sub: reacts},
+	}
+	v.openMenu(gtx, v.pillR[srPMore], items, 280)
+}
+
+// sortMenu is "Sorted by …": Most relevant (default), Newest, Oldest.
 func (v *SearchView) sortMenu(gtx layout.Context) {
-	opts := []struct{ label, val string }{{"Most relevant", "score"}, {"Newest", "timestamp"}, {"Oldest", "oldest"}}
+	opts := []struct{ label, val string }{{"Most relevant (default)", "score"}, {"Newest", "timestamp"}, {"Oldest", "oldest"}}
 	items := make([]MenuItem, 0, len(opts))
 	for _, o := range opts {
 		val := o.val
@@ -591,17 +914,28 @@ func (v *SearchView) sortMenu(gtx layout.Context) {
 			}
 		}})
 	}
-	v.openMenu(gtx, v.sortR, items, 220)
+	v.openMenu(gtx, v.sortR, items, 240)
 }
 
-// moreActive reports modifiers that only the More menu sets.
+// moreActive reports filters that only the More menu sets (the pill
+// draws active).
 func (v *SearchView) moreActive() bool {
+	if v.exact {
+		return true
+	}
+	wk := srLast7(time.Now())
+	self := ""
+	if snap, ok := v.snapshot(); ok {
+		self = "<@" + snap.Self.ID + ">"
+	}
 	for _, m := range v.q.Mods {
 		switch m.Key {
 		case "from", "in":
-			continue
-		case "to":
-			if strings.EqualFold(m.Val, "me") {
+			if !strings.EqualFold(m.Val, "activity") {
+				continue
+			}
+		case "with":
+			if m.Val == self {
 				continue
 			}
 		case "has":
@@ -613,7 +947,7 @@ func (v *SearchView) moreActive() bool {
 				continue
 			}
 		case "after":
-			if m.Val == srLast7(time.Now()) {
+			if m.Val == wk {
 				continue
 			}
 		}
@@ -661,18 +995,20 @@ func (v *SearchView) handle(gtx layout.Context) {
 			v.fromMenu(gtx)
 		case srPIn:
 			v.inMenu(gtx)
-		case srPMe:
-			v.setQuery(v.q.Toggle("to", "me"))
+		case srPMe: // Includes me: with:<@self>
+			if snap, ok := v.snapshot(); ok && snap.Self.ID != "" {
+				v.setQuery(v.q.Toggle("with", "<@"+snap.Self.ID+">"))
+			}
 		case srPLink:
 			v.setQuery(v.q.Toggle("has", "link"))
 		case srPThread:
 			v.setQuery(v.q.Toggle("is", "thread"))
-		case srPWeek:
-			wk := srLast7(time.Now())
-			if v.q.Has("after", wk) {
-				v.setQuery(v.q.Set("after", ""))
+		case srPWeek: // the Date menu's Last 7 days
+			now := time.Now()
+			if v.q.Has("after", srLast7(now)) {
+				v.setQuery(srWithRange(v.q, "", ""))
 			} else {
-				v.setQuery(v.q.Set("after", wk))
+				v.setQuery(srWithRange(v.q, srLast7(now), srDate(now.AddDate(0, 0, 1))))
 			}
 		case srPMore:
 			v.moreMenu(gtx)
@@ -684,8 +1020,26 @@ func (v *SearchView) handle(gtx layout.Context) {
 	if v.feedback.Clicked(gtx) {
 		v.h.Toast("Feedback isn't supported yet")
 	}
+	// pagination
+	if v.prevBtn.Clicked(gtx) && v.page > 1 {
+		v.search(v.page - 1)
+	}
+	if v.nextBtn.Clicked(gtx) && v.page < v.pages {
+		v.search(v.page + 1)
+	}
+	for i := range v.pageBtns {
+		if v.pageBtns[i].Clicked(gtx) && v.pageNums[i] > 0 && v.pageNums[i] != v.page {
+			v.search(v.pageNums[i])
+		}
+	}
 	switch v.tab {
-	case srTabMessages:
+	case srTabFiles, srTabCanvases:
+		for i := range v.files {
+			if v.rows[i].Clicked(gtx) {
+				v.openFile(v.files[i])
+			}
+		}
+	case srTabMessages, srTabDMs:
 		for i := range v.cards {
 			c := &v.cards[i]
 			if c.more.Clicked(gtx) {
@@ -823,9 +1177,8 @@ func (v *SearchView) Layout(gtx layout.Context) layout.Dimensions {
 		count = "Searching…"
 	case v.err != "":
 		count = "Search failed: " + v.err
-	case v.tab == srTabFiles:
 	default:
-		count = plural(v.total, "result")
+		count = srResultsLabel(v.total)
 	}
 	if count != "" {
 		at(gtx, image.Pt(px, cy), func(gtx layout.Context) layout.Dimensions {
@@ -902,7 +1255,11 @@ func (v *SearchView) pillRow(gtx layout.Context, th *theme.Theme, cl *Colors, x,
 	ph := dp(gtx, 28)
 	fill(gtx, image.Rect(x, y+dp(gtx, 4), x+maxInt(1, dp(gtx, 1)), y+ph-dp(gtx, 4)), cl.Divider)
 	x += dp(gtx, 13)
-	x += v.pill(gtx, th, cl, srPMe, x, y, "user", "Includes me", false, v.q.Has("to", "me")) + gap
+	self := ""
+	if snap, ok := v.snapshot(); ok {
+		self = "<@" + snap.Self.ID + ">"
+	}
+	x += v.pill(gtx, th, cl, srPMe, x, y, "user", "Includes me", false, self != "<@>" && v.q.Has("with", self)) + gap
 	x += v.pill(gtx, th, cl, srPLink, x, y, "link", "Has a link", false, v.q.Has("has", "link")) + gap
 	x += v.pill(gtx, th, cl, srPThread, x, y, "threads", "Threads only", false, v.q.Has("is", "thread")) + gap
 	x += v.pill(gtx, th, cl, srPWeek, x, y, "calendar", "Last 7 days", false, v.q.Has("after", srLast7(time.Now()))) + gap
@@ -918,75 +1275,309 @@ func (v *SearchView) pill(gtx layout.Context, th *theme.Theme, cl *Colors, i, x,
 	return d.Size.X
 }
 
+// srResultsLabel is "291,727 results" ({count, plural, =1 {result}
+// other {results}} with the count grouped).
+func srResultsLabel(n int) string {
+	unit := " results"
+	if n == 1 {
+		unit = " result"
+	}
+	d := strconv.Itoa(n)
+	var b strings.Builder
+	for i, c := range d {
+		if i > 0 && (len(d)-i)%3 == 0 {
+			b.WriteByte(',')
+		}
+		b.WriteRune(c)
+	}
+	return b.String() + unit
+}
+
+// srNothingTitle and srNothingDesc are Slack's no-results state
+// (SearchEmptyResults: "Nothing turned up").
+const (
+	srNothingTitle = "Nothing turned up"
+	srNothingDesc  = "You may want to try using different keywords, check for typos, or adjust filters."
+)
+
 func (v *SearchView) results(gtx layout.Context, th *theme.Theme, cl *Colors, px int, sz image.Point) layout.Dimensions {
 	cw := sz.X - 2*px
 	empty := func(title, sub string) layout.Dimensions {
-		at(gtx, image.Pt(px, dp(gtx, 40)), func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints = layout.Constraints{Max: image.Pt(cw, sz.Y)}
-			d := text(gtx, th, 15, theme.Bold, cl.Fg, title)
-			if sub != "" {
-				at(gtx, image.Pt(0, d.Size.Y+dp(gtx, 6)), func(gtx layout.Context) layout.Dimensions {
-					return para(gtx, th, 13, 18, theme.Regular, cl.Fg3, sub, 0)
-				})
-			}
-			return d
+		y := dp(gtx, 72)
+		tw := textW(gtx, th, 18, theme.Black, title)
+		at(gtx, image.Pt(px+(cw-tw)/2, y), func(gtx layout.Context) layout.Dimensions {
+			return text(gtx, th, 18, theme.Black, cl.Fg, title)
 		})
+		if sub != "" {
+			sw := minInt(cw, dp(gtx, 420))
+			at(gtx, image.Pt(px+(cw-sw)/2, y+dp(gtx, 32)), func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints = layout.Constraints{Max: image.Pt(sw, sz.Y)}
+				return paraCentered(gtx, th, 15, 22, cl.Fg2, sub, sw)
+			})
+		}
 		return layout.Dimensions{Size: sz}
 	}
+	n := 0
 	switch v.tab {
-	case srTabFiles:
-		return empty("File search isn't supported yet", "Try searching messages, channels or people instead.")
-	case srTabMessages:
-		if len(v.cards) == 0 {
-			if v.loading || v.err != "" {
-				return layout.Dimensions{Size: sz}
-			}
-			if strings.TrimSpace(v.q.String()) == "" {
-				return empty("Search for messages", "Type a query in the search bar, or pick filters above.")
-			}
-			return empty("No results", "Try different keywords, or remove some filters.")
+	case srTabMessages, srTabDMs:
+		n = len(v.cards)
+	case srTabFiles, srTabCanvases:
+		n = len(v.files)
+	case srTabChannels:
+		n = len(v.chans)
+	case srTabPeople:
+		n = len(v.people)
+	}
+	if n == 0 {
+		if v.loading || v.err != "" {
+			return layout.Dimensions{Size: sz}
 		}
-		d := v.list.Layout(gtx, len(v.cards), func(gtx layout.Context, i int) layout.Dimensions {
-			return at(gtx, image.Pt(px, 0), func(gtx layout.Context) layout.Dimensions {
-				d := v.card(gtx, th, cl, i, cw)
-				v.cards[i].h = d.Size.Y + dp(gtx, 8)
-				return layout.Dimensions{Size: image.Pt(px+cw, v.cards[i].h)}
+		if strings.TrimSpace(v.q.String()) == "" {
+			return layout.Dimensions{Size: sz}
+		}
+		return empty(srNothingTitle, srNothingDesc)
+	}
+	pager := v.pages > 1
+	items := n
+	if pager {
+		items++
+	}
+	switch v.tab {
+	case srTabChannels:
+		v.rowH = dp(gtx, 64)
+	case srTabPeople:
+		v.rowH = dp(gtx, 60)
+	case srTabFiles, srTabCanvases:
+		v.rowH = dp(gtx, 64)
+	}
+	return v.list.Layout(gtx, items, func(gtx layout.Context, i int) layout.Dimensions {
+		if i == n {
+			return v.pagination(gtx, th, cl, sz.X)
+		}
+		switch v.tab {
+		case srTabChannels:
+			return v.chanRow(gtx, th, cl, i, px, cw)
+		case srTabPeople:
+			return v.personRow(gtx, th, cl, i, px, cw)
+		case srTabFiles, srTabCanvases:
+			return v.fileRow(gtx, th, cl, i, px, cw)
+		}
+		return at(gtx, image.Pt(px, 0), func(gtx layout.Context) layout.Dimensions {
+			d := v.card(gtx, th, cl, i, cw)
+			v.cards[i].h = d.Size.Y + dp(gtx, 8)
+			return layout.Dimensions{Size: image.Pt(px+cw, v.cards[i].h)}
+		})
+	})
+}
+
+// paraCentered draws text wrapped in w with each line centered.
+func paraCentered(gtx layout.Context, th *theme.Theme, size, lh float32, c color.NRGBA, s string, w int) layout.Dimensions {
+	words := strings.Fields(s)
+	var lines []string
+	cur := ""
+	for _, wd := range words {
+		try := wd
+		if cur != "" {
+			try = cur + " " + wd
+		}
+		if cur != "" && textW(gtx, th, size, theme.Regular, try) > w {
+			lines = append(lines, cur)
+			cur = wd
+			continue
+		}
+		cur = try
+	}
+	if cur != "" {
+		lines = append(lines, cur)
+	}
+	y := 0
+	for _, ln := range lines {
+		lw := textW(gtx, th, size, theme.Regular, ln)
+		l := ln
+		at(gtx, image.Pt((w-lw)/2, y), func(gtx layout.Context) layout.Dimensions {
+			return vcenter(gtx, dp(gtx, lh), func(gtx layout.Context) layout.Dimensions {
+				return text(gtx, th, size, theme.Regular, c, l)
 			})
 		})
-		if !v.loading && v.page < v.pages && v.list.Position.First+v.list.Position.Count >= len(v.cards)-3 {
-			v.search(v.page + 1)
-		}
-		return d
-	case srTabChannels:
-		if len(v.chans) == 0 {
-			if v.loading || v.err != "" {
-				return layout.Dimensions{Size: sz}
-			}
-			if v.q.Text() == "" {
-				return empty("Search for channels", "Type a channel name in the search bar.")
-			}
-			return empty("No channels found", "Try a different name.")
-		}
-		v.rowH = dp(gtx, 64)
-		return v.list.Layout(gtx, len(v.chans), func(gtx layout.Context, i int) layout.Dimensions {
-			return v.chanRow(gtx, th, cl, i, px, cw)
-		})
-	case srTabPeople:
-		if len(v.people) == 0 {
-			if v.loading || v.err != "" {
-				return layout.Dimensions{Size: sz}
-			}
-			if v.q.Text() == "" {
-				return empty("Search for people", "Type a name in the search bar.")
-			}
-			return empty("No people found", "Try a different name.")
-		}
-		v.rowH = dp(gtx, 60)
-		return v.list.Layout(gtx, len(v.people), func(gtx layout.Context, i int) layout.Dimensions {
-			return v.personRow(gtx, th, cl, i, px, cw)
-		})
+		y += dp(gtx, lh)
 	}
-	return layout.Dimensions{Size: sz}
+	return layout.Dimensions{Size: image.Pt(w, y)}
+}
+
+// srPageRange is getCurrentPageRange: up to five pages around page.
+func srPageRange(page, pages int) []int {
+	if pages <= 0 {
+		return nil
+	}
+	start := max(1, min(page-2, pages-4))
+	var out []int
+	for p := start; p <= pages && len(out) < 5; p++ {
+		out = append(out, p)
+	}
+	return out
+}
+
+// pagination is Slack's Pagination under the results: round caret
+// buttons around up to five page chips (20dp tall, radius 4; the current
+// page white on the highlight blue, the others secondary text), with
+// 40dp of margin above and below (margin_top_100 / margin_bottom_100).
+func (v *SearchView) pagination(gtx layout.Context, th *theme.Theme, cl *Colors, w int) layout.Dimensions {
+	pages := srPageRange(v.page, v.pages)
+	for i := range v.pageNums {
+		v.pageNums[i] = 0
+	}
+	btn := dp(gtx, 28)
+	chipH := dp(gtx, 20)
+	gap := dp(gtx, 4)
+	widths := make([]int, len(pages))
+	total := 2*btn + 2*dp(gtx, 8)
+	for i, p := range pages {
+		widths[i] = maxInt(dp(gtx, 20), textW(gtx, th, 13, theme.Bold, strconv.Itoa(p))+dp(gtx, 12))
+		total += widths[i]
+		if i > 0 {
+			total += gap
+		}
+	}
+	h := dp(gtx, 40)*2 + btn
+	x := (w - total) / 2
+	y := dp(gtx, 40)
+	caret := func(c *widget.Clickable, name string, disabled bool) {
+		at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
+			fg := cl.Fg
+			if disabled {
+				fg = cl.Subtle
+			}
+			return clickBox(gtx, c, nil, func(gtx layout.Context) layout.Dimensions {
+				r := image.Rect(0, 0, btn, btn)
+				if c.Hovered() && !disabled {
+					rrect(gtx, r, btn/2, cl.BgHover)
+				}
+				stroke(gtx, r, btn/2, maxInt(1, dp(gtx, 1)), cl.BtnBorder)
+				is := dp(gtx, 16)
+				at(gtx, image.Pt((btn-is)/2, (btn-is)/2), func(gtx layout.Context) layout.Dimensions {
+					return icon(gtx, name, 16, fg)
+				})
+				return layout.Dimensions{Size: r.Max}
+			})
+		})
+		x += btn + dp(gtx, 8)
+	}
+	caret(&v.prevBtn, "caret-left", v.page <= 1)
+	for i, p := range pages {
+		cur := p == v.page
+		v.pageNums[i] = p
+		cw := widths[i]
+		label := strconv.Itoa(p)
+		c := &v.pageBtns[i]
+		at(gtx, image.Pt(x, y+(btn-chipH)/2), func(gtx layout.Context) layout.Dimensions {
+			return clickBox(gtx, c, nil, func(gtx layout.Context) layout.Dimensions {
+				r := image.Rect(0, 0, cw, chipH)
+				fg := cl.Fg2
+				switch {
+				case cur:
+					rrect(gtx, r, dp(gtx, 4), cl.Highlight)
+					fg = cl.HighText
+				case c.Hovered():
+					rrect(gtx, r, dp(gtx, 4), cl.BgHover)
+					fg = cl.Fg
+				}
+				tw := textW(gtx, th, 13, theme.Bold, label)
+				at(gtx, image.Pt((cw-tw)/2, 0), func(gtx layout.Context) layout.Dimensions {
+					return vcenter(gtx, chipH, func(gtx layout.Context) layout.Dimensions {
+						return text(gtx, th, 13, theme.Bold, fg, label)
+					})
+				})
+				return layout.Dimensions{Size: r.Max}
+			})
+		})
+		x += cw + gap
+	}
+	x += dp(gtx, 8) - gap
+	caret(&v.nextBtn, "caret-right", v.page >= v.pages)
+	return layout.Dimensions{Size: image.Pt(w, h)}
+}
+
+// fileRow is a Files / Canvases result: the type tile, the title, and
+// "Name · date" under it.
+func (v *SearchView) fileRow(gtx layout.Context, th *theme.Theme, cl *Colors, i, px, cw int) layout.Dimensions {
+	f := v.files[i]
+	h := v.rowH
+	return at(gtx, image.Pt(px, 0), func(gtx layout.Context) layout.Dimensions {
+		return clickBox(gtx, &v.rows[i], nil, func(gtx layout.Context) layout.Dimensions {
+			r := image.Rect(0, 0, cw, h-dp(gtx, 8))
+			bg := cl.Bg
+			if v.rows[i].Hovered() {
+				bg = cl.BgHover
+			}
+			rrect(gtx, r, dp(gtx, 12), bg)
+			stroke(gtx, r, dp(gtx, 12), maxInt(1, dp(gtx, 1)), cl.Divider)
+			tile := dp(gtx, 36)
+			ty := (r.Dy() - tile) / 2
+			ic := "files"
+			switch {
+			case f.IsCanvas:
+				ic = "canvas"
+			case f.IsList:
+				ic = "list-tab"
+			case f.IsImage:
+				ic = "image"
+			}
+			rrect(gtx, image.Rect(dp(gtx, 12), ty, dp(gtx, 12)+tile, ty+tile), dp(gtx, 8), cl.BgHover)
+			at(gtx, image.Pt(dp(gtx, 12)+(tile-dp(gtx, 20))/2, ty+(tile-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions {
+				return icon(gtx, ic, 20, cl.Fg2)
+			})
+			tx := dp(gtx, 12) + tile + dp(gtx, 12)
+			tw := maxInt(1, cw-tx-dp(gtx, 12))
+			title := f.Title
+			if title == "" {
+				title = f.Name
+			}
+			at(gtx, image.Pt(tx, ty-dp(gtx, 1)), func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints = layout.Constraints{Max: image.Pt(tw, dp(gtx, 22))}
+				return text(gtx, th, 15, theme.Black, cl.Fg, title)
+			})
+			sub := ""
+			if u, ok := lookupUser(v.h, f.User); ok {
+				sub = userName(u)
+			}
+			if f.Created > 0 {
+				when := srShortDay(time.Unix(f.Created, 0), time.Now())
+				if sub != "" {
+					sub += " · " + when
+				} else {
+					sub = when
+				}
+			}
+			at(gtx, image.Pt(tx, ty+dp(gtx, 20)), func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints = layout.Constraints{Max: image.Pt(tw, dp(gtx, 18))}
+				return text(gtx, th, 13, theme.Regular, cl.Fg2, sub)
+			})
+			return layout.Dimensions{Size: image.Pt(cw, h)}
+		})
+	})
+}
+
+// openFile opens a file result like the Files browser does.
+func (v *SearchView) openFile(f core.File) { srOpenFile(v.h, f) }
+
+// srOpenFile opens a file or canvas result: canvases full screen, images
+// in the lightbox, other files in the conversation they were shared in.
+func srOpenFile(h Host, f core.File) {
+	switch {
+	case f.IsCanvas && f.ID != "":
+		if co, ok := h.(interface{ OpenCanvasFull(id string) }); ok {
+			co.OpenCanvasFull(f.ID)
+			return
+		}
+		h.Toast("Opening canvases isn't supported yet")
+	case f.IsImage && f.URL != "":
+		h.OpenLightbox(richtext.Image{URL: f.URL, Alt: f.Title, W: f.ThumbW, H: f.ThumbH, Title: f.Title, Proxy: true}, core.Message{})
+	case len(f.Channels) > 0:
+		RecordRecentConversation(f.Channels[0])
+		h.Navigate("c/" + f.Channels[0])
+	default:
+		h.Toast("Opening this file isn't supported yet")
+	}
 }
 
 // card draws message result i, width w, at the origin: Slack's

@@ -252,10 +252,11 @@ const (
 
 func (a *App) toggleSidebar() { a.sidebar.hidden = !a.sidebar.hidden }
 
-// findInConversation is ⌘F: search in the open conversation, else search.
+// findInConversation is ⌘F: Slack's search in channel pane for the open
+// conversation (SearchInChannelView), else the search box.
 func (a *App) findInConversation() {
-	if ch := a.router.Current().Channel(); ch != "" {
-		a.openSearch("in:<#" + ch + ">")
+	if ch := a.router.Current().Channel(); ch != "" && mkSearchInChannel != nil {
+		a.OpenSearchInChannel(ch)
 	} else {
 		a.openSearch("")
 	}

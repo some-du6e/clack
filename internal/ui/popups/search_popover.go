@@ -55,6 +55,9 @@ const (
 	srRShow                     // "Show results for: q"
 	srRQuery                    // recent search
 	srRMsg                      // message card
+	srRFile                     // file or canvas
+	srRMore                     // "Show N more" / "Show fewer" (unreads)
+	srRNote                     // a disabled line ("Your recent searches will show up here.")
 )
 
 // srRow is one row of the popover list.
@@ -85,7 +88,9 @@ type srRow struct {
 	tokW  int
 }
 
-func (r *srRow) selectable() bool { return r.kind != srRHeader && r.kind != srRDivider }
+func (r *srRow) selectable() bool {
+	return r.kind != srRHeader && r.kind != srRDivider && r.kind != srRNote
+}
 
 func (r *srRow) key() string {
 	if !r.selectable() {
@@ -103,6 +108,8 @@ func (r *srRow) heightDp() float32 {
 		return 17
 	case srRMsg:
 		return 76
+	case srRMore:
+		return 32
 	}
 	return 40
 }
@@ -149,6 +156,13 @@ type SearchPopover struct {
 	msgs               []core.Message
 	msgConvs           map[string]core.ConvRef
 	msgQ               string
+	files              []core.File // search.autocomplete.files
+	fileQ              string
+	fileByID           map[string]core.File
+
+	histMode    bool // the clock button: the list shows Recent searches
+	unreadsOpen bool // "Show N more" expanded the unreads
+	sess        core.SearchSession
 
 	// Slick boundaries (slick_search.go)
 	full     []srRow         // every row; rows are full minus plugin-hidden ones
@@ -169,7 +183,7 @@ func NewQuickSwitcher(h Host) *SearchPopover {
 // NewSearchPopover opens the popover over the top-nav search pill (pill is
 // the pill's rect in window coords; empty = centered at the top).
 func NewSearchPopover(h Host, query string, pill image.Rectangle) *SearchPopover {
-	p := &SearchPopover{h: h, pill: pill, sel: -1, hover: -1}
+	p := &SearchPopover{h: h, pill: pill, sel: -1, hover: -1, sess: core.NewSearchSession()}
 	p.ed.SingleLine = true
 	p.ed.Submit = true
 	p.list.Axis = layout.Vertical
@@ -332,6 +346,11 @@ func (p *SearchPopover) candRow(c srCand, typing bool) srRow {
 	case srKChan:
 		r.kind, r.icon = srRChan, convIcon(c.ConvK)
 		r.alt = c.Note
+	case srKFile:
+		r.kind, r.icon, r.boxed = srRFile, "files", true
+		if c.ConvK == "canvas" {
+			r.icon = "canvas"
+		}
 	default:
 		r.kind = srRConv
 		if c.ConvK == "mpim" {
@@ -398,52 +417,77 @@ func (p *SearchPopover) setSel(i int) {
 	}
 }
 
+// srUnreadsShown is how many unreads show before "Show N more".
+const srUnreadsShown = 5
+
+// emptyRows is Slack's blank slate (renderBlankSlateSuggestions):
+// "Unreads & drafts" (with Show N more / Show fewer), a divider, then
+// "Recent places": the last five places you went (conversations and
+// pages), without the one you're on. The clock button switches the list
+// to Recent searches.
 func (p *SearchPopover) emptyRows(rows []srRow) []srRow {
-	if len(p.unreads) > 0 {
+	if p.histMode {
+		_, queries := srRecents()
+		if len(queries) == 0 {
+			return append(rows, srRow{kind: srRNote, title: "Your recent searches will show up here."})
+		}
+		rows = append(rows, srRow{kind: srRHeader, title: "Recent searches"})
+		for _, q := range queries {
+			rows = append(rows, srRow{kind: srRQuery, id: q, title: q, icon: "clock"})
+		}
+		return rows
+	}
+	unreads := p.unreads
+	if len(unreads) > 24 {
+		unreads = unreads[:24] // suggestionsForBlankSlateUnreads' cap
+	}
+	if len(unreads) > 0 {
 		rows = append(rows, srRow{kind: srRHeader, title: "Unreads & drafts"})
-		for i, id := range p.unreads {
-			if i == 5 {
+		for i, id := range unreads {
+			if i == srUnreadsShown && !p.unreadsOpen {
 				break
 			}
 			rows = append(rows, p.candRow(p.cands[p.byConv[id]], false))
 		}
-		rows = append(rows, srRow{kind: srRDivider})
+		if more := len(unreads) - srUnreadsShown; more > 0 {
+			t := "Show " + strconv.Itoa(more) + " more"
+			if p.unreadsOpen {
+				t = "Show fewer"
+			}
+			rows = append(rows, srRow{kind: srRMore, id: "unreads-toggle", title: t})
+		}
 	}
-	rows = append(rows, srRow{kind: srRHeader, title: "Recent places"})
-	convs, queries := srRecents()
-	n := 0
-	for _, id := range convs {
-		if n == 5 {
+	places, _ := srRecents()
+	cur := srCurrentPlace()
+	var recent []srRow
+	for _, id := range places {
+		if len(recent) == 5 {
 			break
 		}
+		if id == cur {
+			continue
+		}
+		if pl, ok := srPlaceOf(id); ok {
+			recent = append(recent, srRow{kind: srRPlace, id: strings.TrimPrefix(id, "view:"), title: pl.title, icon: pl.icon, boxed: true})
+			continue
+		}
 		if i, ok := p.byConv[id]; ok {
-			rows = append(rows, p.candRow(p.cands[i], false))
-			n++
+			recent = append(recent, p.candRow(p.cands[i], false))
 			continue
 		}
 		if c := p.h.Core(); c != nil && p.snapOK {
 			ref := c.ConvRef(id)
 			if ref.Name != "" && ref.Kind != "im" && ref.Kind != "mpim" {
-				rows = append(rows, srRow{kind: srRConv, id: id, title: ref.Name, icon: convIcon(ref.Kind)})
-				n++
+				recent = append(recent, srRow{kind: srRConv, id: id, title: ref.Name, icon: convIcon(ref.Kind)})
 			}
 		}
 	}
-	for _, s := range [...]struct{ title, icon, route string }{
-		{"Saved", "bookmark", "later"},
-		{"Threads", "threads", "threads"},
-		{"Activity", "activity", "activity"},
-	} {
-		rows = append(rows, srRow{kind: srRPlace, id: s.route, title: s.title, icon: s.icon, boxed: true})
-	}
-	if len(queries) > 0 {
-		rows = append(rows, srRow{kind: srRDivider}, srRow{kind: srRHeader, title: "Recent searches"})
-		for i, q := range queries {
-			if i == 5 {
-				break
-			}
-			rows = append(rows, srRow{kind: srRQuery, id: q, title: q, icon: "clock"})
+	if len(recent) > 0 {
+		if len(unreads) > 0 {
+			rows = append(rows, srRow{kind: srRDivider})
 		}
+		rows = append(rows, srRow{kind: srRHeader, title: "Recent places"})
+		rows = append(rows, recent...)
 	}
 	return rows
 }
@@ -475,6 +519,23 @@ func (p *SearchPopover) typingRows(rows []srRow, q string, now time.Time) []srRo
 			rc = append(rc, srCand{Kind: srKChan, ID: ch.ID, Name: ch.Name, ConvK: ch.Kind, Note: note, Remote: true})
 		}
 		remote = append(remote, srRank(rc, q, 8, p.rCQ == q)...)
+	}
+	if len(p.files) > 0 {
+		fc := make([]srCand, 0, len(p.files))
+		for _, f := range p.files {
+			title := f.Title
+			if title == "" {
+				title = f.Name
+			}
+			k := "file"
+			if f.IsCanvas {
+				k = "canvas"
+			}
+			fc = append(fc, srCand{Kind: srKFile, ID: f.ID, Name: title, ConvK: k, Remote: true})
+		}
+		remote = append(remote, srRank(fc, q, 4, p.fileQ == q)...)
+	}
+	if len(remote) > 0 {
 		sort.SliceStable(remote, func(i, j int) bool { return remote[i].Tier > remote[j].Tier })
 	}
 	sug := srMerge(local, remote, 5, 2) // Slack: top hit, "Show results", then 4
@@ -490,7 +551,7 @@ func (p *SearchPopover) typingRows(rows []srRow, q string, now time.Time) []srRo
 	}
 	if len(p.msgs) > 0 {
 		rows = append(rows, srRow{kind: srRDivider}, srRow{kind: srRHeader, title: "Recent messages"})
-		terms := srParse(q).Terms
+		terms := srParse(q).Highlights()
 		for i := range p.msgs {
 			if i == 3 {
 				break
@@ -518,6 +579,9 @@ func (p *SearchPopover) onQuery(gtx layout.Context) {
 	} else if p.msgQ != "" && !strings.HasPrefix(strings.ToLower(q), strings.ToLower(p.msgQ)) {
 		p.msgs, p.msgConvs, p.msgQ = nil, nil, ""
 	}
+	if q == "" || (p.fileQ != "" && !strings.HasPrefix(strings.ToLower(q), strings.ToLower(p.fileQ))) {
+		p.files, p.fileQ = nil, ""
+	}
 	p.rebuild(gtx.Now, true)
 }
 
@@ -534,7 +598,8 @@ func (p *SearchPopover) tick(gtx layout.Context) {
 			gtx.Execute(op.InvalidateCmd{At: due})
 		} else {
 			p.dirFired = true
-			run(p.h, func(ctx context.Context) ([]core.User, error) { return c.SearchUsers(ctx, q, 8) },
+			topU, topC := srTop(p)
+			run(p.h, func(ctx context.Context) ([]core.User, error) { return c.OmniSearchUsers(ctx, q, topU) },
 				func(us []core.User, err error) {
 					if p.done || seq != p.seq || err != nil {
 						return
@@ -542,7 +607,7 @@ func (p *SearchPopover) tick(gtx layout.Context) {
 					p.rUsers, p.rUQ = us, q
 					p.rebuild(time.Now(), false)
 				})
-			run(p.h, func(ctx context.Context) ([]core.ChannelHit, error) { return c.SearchChannels(ctx, q, 8) },
+			run(p.h, func(ctx context.Context) ([]core.ChannelHit, error) { return c.OmniSearchChannels(ctx, q, topC) },
 				func(hs []core.ChannelHit, err error) {
 					if p.done || seq != p.seq || err != nil {
 						return
@@ -558,8 +623,10 @@ func (p *SearchPopover) tick(gtx layout.Context) {
 			gtx.Execute(op.InvalidateCmd{At: due})
 		} else {
 			p.msgFired = true
+			sess := p.sess
+			recent := srRecentChannels()
 			run(p.h, func(ctx context.Context) (core.SearchResult, error) {
-				res, err := c.SearchMessages(ctx, core.SearchOpts{Query: q, Count: 3, Sort: "timestamp"})
+				res, err := c.SearchInline(ctx, core.InlineOpts{Query: q, RecentChannels: recent, Session: sess})
 				if err == nil {
 					res.Messages = tautSearchInline(ctx, p.h, q, res.Messages) // free without plugins
 				}
@@ -571,8 +638,42 @@ func (p *SearchPopover) tick(gtx layout.Context) {
 				p.msgs, p.msgConvs, p.msgQ = res.Messages, res.Convs, q
 				p.rebuild(time.Now(), false)
 			})
+			run(p.h, func(ctx context.Context) ([]core.File, error) { return c.AutocompleteFiles(ctx, q) },
+				func(fs []core.File, err error) {
+					if p.done || seq != p.seq || err != nil {
+						return
+					}
+					p.files, p.fileQ = fs, q
+					p.fileByID = map[string]core.File{}
+					for _, f := range fs {
+						p.fileByID[f.ID] = f
+					}
+					p.rebuild(time.Now(), false)
+				})
 		}
 	}
+}
+
+// srTop is top_users / top_channels: the people and channels of your
+// recent conversations, most recent first (Slack's frecency list).
+func srTop(p *SearchPopover) (users, chans []string) {
+	places, _ := srRecents()
+	for _, id := range places {
+		if strings.HasPrefix(id, "view:") {
+			continue
+		}
+		if i, ok := p.byConv[id]; ok {
+			c := p.cands[i]
+			if c.Kind == srKUser {
+				users = append(users, c.ID)
+				continue
+			}
+			if c.ConvK == "channel" || c.ConvK == "private" {
+				chans = append(chans, c.ID)
+			}
+		}
+	}
+	return users, chans
 }
 
 // ---- actions ----
@@ -586,6 +687,10 @@ func (p *SearchPopover) open(route, conv string) {
 func (p *SearchPopover) submit(q string) {
 	q = strings.TrimSpace(q)
 	srRecordQuery(q)
+	if c := p.h.Core(); c != nil && q != "" {
+		run(p.h, func(ctx context.Context) (struct{}, error) { return struct{}{}, c.SaveSearch(ctx, q) },
+			func(struct{}, error) {})
+	}
 	p.Dismiss()
 	p.h.Navigate("search?q=" + url.QueryEscape(q))
 }
@@ -629,6 +734,13 @@ func (p *SearchPopover) activate(i int) {
 		RecordRecentConversation(r.msg.Channel)
 		p.Dismiss()
 		p.h.Navigate(msgRoute(*r.msg))
+	case srRFile:
+		f := p.fileByID[r.id]
+		p.Dismiss()
+		srOpenFile(p.h, f)
+	case srRMore:
+		p.unreadsOpen = !p.unreadsOpen
+		p.rebuild(time.Now(), false)
 	}
 }
 
@@ -720,6 +832,9 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 		case widget.ChangeEvent:
 			if t := p.ed.Text(); t != p.query {
 				p.query = t
+				if strings.TrimSpace(t) != "" {
+					p.histMode = false
+				}
 				p.onQuery(gtx)
 			}
 		case widget.SubmitEvent:
@@ -745,7 +860,9 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 		return layout.Dimensions{}
 	}
 	if p.history.Clicked(gtx) {
-		p.openHistory()
+		p.histMode = !p.histMode
+		p.refocus = true
+		p.rebuild(gtx.Now, true)
 	}
 	if p.feedback.Clicked(gtx) {
 		p.h.Toast("Feedback isn't supported yet")
@@ -932,7 +1049,7 @@ func (p *SearchPopover) inputRow(gtx layout.Context, th *theme.Theme, cl *Colors
 				call.Add(gtx.Ops)
 			} else if p.sel >= 0 && p.sel < len(p.rows) && gtx.Focused(&p.ed) {
 				switch p.rows[p.sel].kind {
-				case srRConv, srRUser, srRChan:
+				case srRConv, srRUser, srRChan, srRFile:
 					qw := textW(gtx, th, 15, theme.Regular, p.query)
 					hint := "— Open"
 					if hw := textW(gtx, th, 15, theme.Regular, hint); qw+dp(gtx, 4)+hw <= tw {
@@ -953,19 +1070,6 @@ func (p *SearchPopover) inputRow(gtx layout.Context, th *theme.Theme, cl *Colors
 	st := clip.Rect(r).Push(gtx.Ops)
 	pointer.CursorText.Add(gtx.Ops)
 	st.Pop()
-}
-
-func (p *SearchPopover) openHistory() {
-	_, qs := srRecents()
-	if len(qs) == 0 {
-		p.h.Toast("No recent searches yet")
-		return
-	}
-	items := []MenuItem{{Header: "Recent searches"}}
-	for _, q := range qs {
-		items = append(items, MenuItem{Label: q, Icon: "clock", Do: func() { p.submit(q) }})
-	}
-	p.h.ShowOverlay(NewMenuOpts(p.h, items, MenuOpts{Anchor: p.historyRect, AlignRight: true}))
 }
 
 func (p *SearchPopover) footer(gtx layout.Context, th *theme.Theme, cl *Colors, sz image.Point) layout.Dimensions {
@@ -1017,6 +1121,29 @@ func (p *SearchPopover) row(gtx layout.Context, th *theme.Theme, cl *Colors, i, 
 	case srRMsg:
 		return slackc.Component(gtx, "SearchResult", srMsgArgs{p: p, th: th, cl: cl, i: i, sz: sz},
 			srMsgArgs.props, srMsgArgs.layout)
+	case srRNote: // c-search_autocomplete__history_empty
+		at(gtx, image.Pt(dp(gtx, 16), 0), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(w-dp(gtx, 32), sz.Y)}
+			return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
+				return text(gtx, th, 15, theme.Regular, cl.Fg3, r.title)
+			})
+		})
+		return layout.Dimensions{Size: sz}
+	case srRMore: // c-search_autocomplete__see_more
+		sel := i == p.sel
+		return p.clicks[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			if sel {
+				fill(gtx, image.Rectangle{Max: sz}, cl.Selected)
+			}
+			at(gtx, image.Pt(dp(gtx, 52), 0), func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints = layout.Constraints{Max: image.Pt(w-dp(gtx, 68), sz.Y)}
+				return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
+					return text(gtx, th, 13, theme.Regular, cl.Link, r.title)
+				})
+			})
+			pointerCursor(gtx, sz)
+			return layout.Dimensions{Size: sz}
+		})
 	}
 	sel := i == p.sel
 	var state css.State
@@ -1286,11 +1413,15 @@ func srDataType(r *srRow) string {
 	case r.kind == srRUser:
 		return "member"
 	case r.kind == srRPlace:
-		return "shortcut"
+		return "view"
 	case r.kind == srRQuery:
 		return "recent_search"
 	case r.kind == srRShow:
-		return "search"
+		return "queryUser" // app.slack.com's "Show results for:" row
+	case r.kind == srRFile && r.icon == "canvas":
+		return "quip"
+	case r.kind == srRFile:
+		return "file"
 	}
 	return ""
 }
