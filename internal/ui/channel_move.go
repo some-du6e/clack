@@ -27,7 +27,6 @@ import (
 	"gioui.org/layout"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
@@ -92,9 +91,6 @@ func headerStarIcon(st chSectionState) (icon, emojiURL string) {
 	}
 	switch {
 	case st.custom != nil && !st.starred:
-		if icons.Has("section") {
-			return "section", ""
-		}
 		// Slack's "section" glyph is the one its sidebar draws on custom
 		// section headings; Clack draws those with sectionIcon's
 		return sectionIcon("standard"), ""

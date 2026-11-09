@@ -84,7 +84,7 @@ func TestChannelHeaderMoveTo(t *testing.T) {
 	if st.custom == nil || st.custom.ID != "L0FAKE01" || st.starred {
 		t.Fatalf("sections of %s: custom %+v starred %v", ch, st.custom, st.starred)
 	}
-	if icon, _ := headerStarIcon(st); icon != sectionIcon("standard") && icon != "section" {
+	if icon, _ := headerStarIcon(st); icon != sectionIcon("standard") {
 		t.Errorf("a channel in a custom section shows %q, not the section glyph", icon)
 	}
 	items := e.a.moveToItems(ch, st)
