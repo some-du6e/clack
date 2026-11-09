@@ -183,7 +183,11 @@ func (w *hw) block(b *Block) {
 		}
 		w.s.WriteString(`</div>`)
 	default:
-		w.s.WriteString(`<p id="` + w.id(b) + `" class="line">`)
+		cls := "line"
+		if b.Default {
+			cls = "default-content line"
+		}
+		w.s.WriteString(`<p id="` + w.id(b) + `" class="` + cls + `">`)
 		w.inline(b.Spans)
 		w.s.WriteString(`</p>`)
 	}

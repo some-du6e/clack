@@ -50,6 +50,12 @@ type Block struct {
 	Columns  [][]Block       // Columns
 	Children []Block         // Quote, Callout
 	Emoji    string          // Callout
+	// Default: a Paragraph that is Quip's default content (class
+	// default-content, e.g. a new canvas's "Time to document your
+	// genius!") the user never edited. Slack draws such a section
+	// transparent (.default-content:not(.customized-default-content)
+	// >.content{opacity:0}) and shows the canvas's placeholder instead.
+	Default bool
 }
 
 // Cell is one table cell; it holds blocks (usually one paragraph).

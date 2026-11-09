@@ -1,6 +1,5 @@
 // Package canvasview draws a Slack canvas natively (docs/CANVASES.md): the
-// header (icon, title, author, last edited, Slack's toolbar buttons) and the
-// document, block by block, with richview laying out the inline text. It
+// title and the document, block by block, with richview laying out the inline text. It
 // keeps the view live (files.open plus the realtime document_update echo,
 // or polling when realtime is off) and edits through core's canvases.edit.
 //
@@ -37,7 +36,7 @@ type Host interface {
 type Mode uint8
 
 const (
-	Tab  Mode = iota // a channel's canvas tab: no top bar of its own
+	Tab  Mode = iota // a channel's canvas tab: no bar, a floating More options
 	Side             // the side panel: a 49px bar with expand / more / close
 	Full             // the main view: a header like a channel's
 )
@@ -53,8 +52,12 @@ type Actions struct {
 	Menu     func(m []MenuItem) // "More actions": the shell's menu at the pointer
 }
 
-// MenuItem is one row of the More actions menu.
+// MenuItem is one row of a canvas menu (More options, the bottom
+// toolbar's insert and formatting menus).
 type MenuItem struct {
 	Label, Icon string
+	Divider     bool // a separator instead of an item
+	Disabled    bool
+	Checked     bool // a radio item's check (the formatting menu's current style)
 	Do          func()
 }

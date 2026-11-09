@@ -306,8 +306,14 @@ func (l *lay) dpf(v float32) float32 { return v * l.scale }
 
 func (l *lay) faceFor(base font.Font, sizePx int, s richtext.Style) faceKey {
 	f := base
-	if s&richtext.Bold != 0 && f.Weight < font.Bold {
-		f.Weight = font.Bold
+	if s&richtext.Bold != 0 {
+		bw := font.Bold
+		if l.st.BoldWeight != 0 {
+			bw = l.st.BoldWeight
+		}
+		if f.Weight < bw {
+			f.Weight = bw
+		}
 	}
 	if s&richtext.Italic != 0 {
 		f.Style = font.Italic

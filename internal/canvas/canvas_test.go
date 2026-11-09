@@ -280,3 +280,31 @@ func TestEditable(t *testing.T) {
 		t.Error("plain code not editable")
 	}
 }
+
+// Quip's default content (a new canvas's "Time to document your genius!")
+// is marked so the view can draw it the way Slack does (transparent);
+// a customized default section is ordinary text.
+func TestParseDefaultContent(t *testing.T) {
+	d, err := Parse(`<div class="quip-canvas-content"><h1 id="temp:C:A">Notes</h1>` +
+		`<p id="temp:C:B" class="default-content line">Time to document your genius!</p>` +
+		`<p id="temp:C:C" class="default-content customized-default-content line">Agenda</p>` +
+		`<p id="temp:C:D" class="line">typed</p></div>`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Blocks) != 4 {
+		t.Fatalf("%d blocks", len(d.Blocks))
+	}
+	for i, want := range []bool{false, true, false, false} {
+		if d.Blocks[i].Default != want {
+			t.Errorf("block %d Default %v", i, d.Blocks[i].Default)
+		}
+	}
+	back, err := Parse(HTML(d, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !back.Blocks[1].Default || back.Blocks[3].Default {
+		t.Errorf("HTML round trip lost the default-content mark")
+	}
+}
