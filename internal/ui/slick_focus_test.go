@@ -124,4 +124,14 @@ func composerKeepsFocus(t *testing.T, plugins []string) {
 	if got := cb.DocText(); !strings.Contains(got, "hello") {
 		t.Errorf("typed after idling, the composer holds %q", got)
 	}
+	// leave no draft behind: drafts live per process, keyed by channel,
+	// and later tests type into #general's composer
+	e.rt.Queue(key.Event{Name: "A", Modifiers: key.ModShortcut, State: key.Press}, key.Event{Name: "A", Modifiers: key.ModShortcut, State: key.Release},
+		key.Event{Name: key.NameDeleteBackward, State: key.Press}, key.Event{Name: key.NameDeleteBackward, State: key.Release})
+	for i := 0; i < 3; i++ {
+		e.frame()
+	}
+	if got := strings.TrimSpace(cb.DocText()); got != "" {
+		t.Errorf("couldn't clear the composer: %q", got)
+	}
 }
