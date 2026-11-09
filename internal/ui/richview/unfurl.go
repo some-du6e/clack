@@ -257,8 +257,11 @@ func (l *lay) v3Card(b *richtext.Block, x, y, w int, narrow bool) int {
 // v3Frame is .c-message_attachment_v3 > .c-message_attachment__body: base-pry,
 // a 1px otl-ter border (otl-sec on hover), radius 12. link makes the whole
 // card a link (iR.Rb: every service but YouTube, Vimeo, Apple Music,
-// Spotify and Loom, when there is a title_link or original_url).
-func (l *lay) v3Frame(a *richtext.Attachment, link bool) (cardT int16, bi int) {
+// Spotify and Loom, when there is a title_link or original_url). The
+// card's hit is registered here, before anything inside it, so the hits
+// laid out in the card (its image, a video's link) sit on top of it
+// (targetAt: later hits win); v3Close sets its box.
+func (l *lay) v3Frame(a *richtext.Attachment, link bool) (cardT int16, bi, hi int) {
 	p := &l.st.Palette
 	cardT = -1
 	if link {
@@ -268,17 +271,32 @@ func (l *lay) v3Frame(a *richtext.Attachment, link bool) (cardT int16, bi int) {
 	}
 	bi = len(l.d.boxes)
 	l.d.boxes = append(l.d.boxes, box{kind: bBorder, fill: p.Panel, stroke: p.Border, bw: l.dp(1), radius: l.dp(12), target: cardT, hover: p.BorderHover})
-	return cardT, bi
+	hi = len(l.d.hits)
+	l.d.hits = append(l.d.hits, hit{t: cardT})
+	return cardT, bi, hi
 }
 
-// v3Close sets the card's box and hit, its hover range (every target made
-// inside the card keeps it hovered, as :hover on the card's ancestor
-// does) and the remove button.
-func (l *lay) v3Close(a *richtext.Attachment, bi int, cardT int16, r image.Rectangle) {
+// v3Close sets the card's box and hit (hi, from v3Frame), its hover range
+// (every target made inside the card keeps it hovered, as :hover on the
+// card's ancestor does) and the remove button.
+func (l *lay) v3Close(a *richtext.Attachment, bi, hi int, cardT int16, r image.Rectangle) {
 	l.d.boxes[bi].r = r
 	l.d.boxes[bi].tgTo = int16(len(l.d.targets) - 1)
-	l.d.hits = append(l.d.hits, hit{r: r, t: cardT})
+	l.d.hits[hi].r = r
 	l.removeButton(a, cardT, r)
+}
+
+// attImage is the click target of an attachment's image_url as
+// AttachmentMedia draws it (AttachmentImage, NANx): its onClick calls
+// preventDefault (so the card's <a> doesn't navigate) and opens the image
+// in Slack's viewer (the media viewer with a mediaItem, not a file). r is
+// the image's box. thumb_url alone is AttachmentThumb, a plain span with
+// no handler, and video_html's poster is AttachmentVideo: neither comes
+// here.
+func (l *lay) attImage(img *richtext.Image, r image.Rectangle) int16 {
+	t := l.d.addTarget(target{kind: tImage, img: img, inCard: true})
+	l.d.hits = append(l.d.hits, hit{r: r, t: t})
+	return t
 }
 
 func firstNonEmpty(v ...string) string {
@@ -492,7 +510,7 @@ func (l *lay) v3Generic(b *richtext.Block, x, y, w int, narrow bool) int {
 		side = l.dp(80)
 	}
 	bw := l.dp(1)
-	cardT, bi := l.v3Frame(a, true)
+	cardT, bi, hi := l.v3Frame(a, true)
 	h := side + 2*bw
 	leftW := w - 2*bw - side
 	pad := l.dp(12)
@@ -524,7 +542,7 @@ func (l *lay) v3Generic(b *richtext.Block, x, y, w int, narrow bool) int {
 	rr := l.dp(12) - bw
 	rb := image.Rect(x+bw+leftW, y+bw, x+bw+leftW+side, y+bw+side)
 	l.v3Side(a, rb, [4]int{0, rr, rr, 0}, cardT)
-	l.v3Close(a, bi, cardT, image.Rect(x, y, x+w, y+h))
+	l.v3Close(a, bi, hi, cardT, image.Rect(x, y, x+w, y+h))
 	if short {
 		return min(h+l.dp(8), l.dp(88))
 	}
@@ -551,7 +569,11 @@ func (l *lay) v3Side(a *richtext.Attachment, r image.Rectangle, radii [4]int, ca
 	if !thumbOnly(a) && !mediaExpanded() {
 		return // the collapsed ExpandableContainer: an empty box
 	}
-	l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: img.URL, radii: radii, target: cardT, px: max(r.Dx(), r.Dy())})
+	tg := cardT // the thumb and a video's poster: the card's link
+	if img == a.Image {
+		tg = l.attImage(img, r)
+	}
+	l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: img.URL, radii: radii, target: tg, px: max(r.Dx(), r.Dy())})
 }
 
 // noImage is no-image-c399e8e.png as a cover background: #eaeaea with
@@ -581,7 +603,7 @@ func (l *lay) fixedCard(b *richtext.Block, x, y, w int) int {
 	k := kindOf(b)
 	bw := l.dp(1)
 	pad := l.dp(12)
-	cardT, bi := l.v3Frame(a, k == akSocial || k == akFlickr)
+	cardT, bi, hi := l.v3Frame(a, k == akSocial || k == akFlickr)
 	cx, cw := x+bw+pad, w-2*bw-2*pad
 	cy := y + bw + pad
 	text := v3Text(a)
@@ -650,7 +672,7 @@ func (l *lay) fixedCard(b *richtext.Block, x, y, w int) int {
 		cy = mr.Max.Y
 	}
 	h := cy + bw - y
-	l.v3Close(a, bi, cardT, image.Rect(x, y, x+w, y+h))
+	l.v3Close(a, bi, hi, cardT, image.Rect(x, y, x+w, y+h))
 	return h
 }
 
@@ -688,15 +710,14 @@ func (l *lay) fixedMedia(a *richtext.Attachment, k attKind, x, y, w int, cardT i
 	if img == nil {
 		return r, true
 	}
-	tg := cardT
-	if k != akSocial && k != akFlickr {
-		tg = l.d.addTarget(target{kind: tImage, img: img})
-	}
+	var tg int16
 	if video {
 		tg = l.d.addTarget(target{kind: tLink, url: firstNonEmpty(a.FromURL, a.TitleLink, a.OriginalURL)})
+		l.d.hits = append(l.d.hits, hit{r: r, t: tg})
+	} else {
+		tg = l.attImage(img, r) // the X/Bluesky, Flickr, video and music cards alike
 	}
 	l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: img.URL, radii: radii, target: tg, px: max(r.Dx(), r.Dy())})
-	l.d.hits = append(l.d.hits, hit{r: r, t: tg})
 	if video && img.W >= 120 && img.H >= 60 || video && (img.W == 0 || img.H == 0) {
 		l.videoButtons(r, a.FromURL != "", tg)
 	}
@@ -777,15 +798,22 @@ func (l *lay) imageCard(a *richtext.Attachment, x, y, w int) int {
 	r := image.Rect(x, y, x+iw+2*bw, y+ih+2*bw)
 	bi := len(l.d.boxes)
 	l.d.boxes = append(l.d.boxes, box{kind: bBorder, fill: p.Panel, stroke: p.BorderHover, bw: bw, radius: l.dp(12), target: cardT, hover: p.BorderHover})
+	hi := len(l.d.hits)
+	l.d.hits = append(l.d.hits, hit{t: cardT})
 	img := a.Image
 	if img == nil {
 		img = a.Thumb
 	}
 	if img != nil && mediaExpanded() {
 		rr := l.dp(12) - bw
-		l.d.imgs = append(l.d.imgs, imgPrim{r: r.Inset(bw), url: img.URL, radii: [4]int{rr, rr, rr, rr}, target: cardT, px: max(iw, ih), fit: true})
+		ir := r.Inset(bw)
+		tg := cardT // a thumb_url alone: the card's link
+		if img == a.Image {
+			tg = l.attImage(img, ir) // the image opens in the viewer, not the link
+		}
+		l.d.imgs = append(l.d.imgs, imgPrim{r: ir, url: img.URL, radii: [4]int{rr, rr, rr, rr}, target: tg, px: max(iw, ih), fit: true})
 	}
-	l.v3Close(a, bi, cardT, r)
+	l.v3Close(a, bi, hi, cardT, r)
 	return r.Dy()
 }
 

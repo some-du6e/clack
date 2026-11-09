@@ -3,10 +3,13 @@ name: embeds-shots
 # (docs/EMBEDS.md): the richview layout tests (MessageAttachmentDefaultV3
 # routing, the X social card, the generic row card, the video card's play
 # buttons, the v1 color-bar card, expand_non_media_attachments, the remove
-# button), the #embeds-gallery render test with chat.deleteAttachment, and
-# screenshots of each card (light, dark, the X post hovered), the whole
-# channel and the "Remove preview?" dialog, rendered headlessly against
-# internal/fakeslack. Synthetic only: nothing here talks to Slack.
+# button, what a click on each attachment image opens: Slack's image viewer
+# or the link), the #embeds-gallery render test with chat.deleteAttachment,
+# a click on a bare image link's unfurl opening the viewer, and screenshots
+# of each card (light, dark, the X post hovered), the whole channel, the
+# "Remove preview?" dialog and the viewer open on an unfurl image, rendered
+# headlessly against internal/fakeslack. Synthetic only: nothing here
+# talks to Slack.
 on:
   push:
     paths:
@@ -18,12 +21,17 @@ on:
       - "internal/fakeslack/embeds.go"
       - "internal/ui/richview/unfurl.go"
       - "internal/ui/richview/unfurl_test.go"
+      - "internal/ui/richview/unfurl_click_test.go"
+      - "internal/ui/richview/hit.go"
       - "internal/ui/richview/cards.go"
       - "internal/ui/richview/blocks.go"
       - "internal/ui/richview/view.go"
       - "internal/ui/richview/flow.go"
       - "internal/ui/icons/redrawn.go"
       - "internal/ui/popups/actions_message.go"
+      - "internal/ui/popups/lightbox.go"
+      - "internal/ui/popups/lightbox_unfurl_test.go"
+      - "internal/ui/messages/file_rects.go"
       - "internal/ui/messages/host.go"
       - "internal/ui/messages/row.go"
       - "internal/ui/embeds_shots_test.go"
@@ -50,9 +58,11 @@ jobs:
       - name: gio deps
         run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
       - name: layout
-        run: go test -count=1 -v -run 'TestUnfurlKinds|TestXCard|TestGenericCard|TestVideoServiceCard|TestV1Card|TestNonMediaPref|TestRemoveButton' ./internal/ui/richview/
+        run: |
+          go test -count=1 -v -run 'TestUnfurlKinds|TestXCard|TestGenericCard|TestVideoServiceCard|TestV1Card|TestNonMediaPref|TestRemoveButton|TestAttachmentImageClicks' ./internal/ui/richview/
+          go test -count=1 -v -run 'TestLightboxUnfurlImage' ./internal/ui/popups/
       - name: render
-        run: xvfb-run -a go test -count=1 -v -run 'TestEmbedsChannel$' ./internal/ui/
+        run: xvfb-run -a go test -count=1 -v -run 'TestEmbedsChannel$|TestEmbedsImageViewer$' ./internal/ui/
       - name: screenshots
         env:
           EMBEDS_SHOTS_DIR: ${{ github.workspace }}/dist/shots

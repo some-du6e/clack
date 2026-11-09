@@ -203,6 +203,30 @@ func (it lbItem) linkURL() string {
 	return it.img.URL
 }
 
+// hosted reports whether it is a Slack file: a shared file, or a
+// files.slack.com image (the Files browser, canvases). Anything else (an
+// unfurl's or attachment's image_url, an image block) is what Slack's
+// AttachmentImage opens as a mediaItem, not a file: MediaViewerActions
+// then draws only its own buttons (Show thread, Open in new window), not
+// the file's (Download, More actions), the header has no "– title"
+// (MediaViewerModalHeader shows it for file ids only), and there is no
+// zoom control (fileIsImage needs a mimetype).
+func (it lbItem) hosted() bool { return it.file != nil || it.img.Proxy }
+
+// windowURL is what "Open in new window" opens: the file's link, or for
+// an image that isn't a file openInNewWindow's image.src, which is the
+// image through Slack's image proxy (getImgProxyUrl with rotate:
+// slack-imgs.com ?c=1&o1=ro; Slack-hosted URLs as they are).
+func (it lbItem) windowURL() string {
+	if it.hosted() {
+		return it.linkURL()
+	}
+	if u := slack.ProxyImage(it.img.URL); u != "" {
+		return u
+	}
+	return it.img.URL
+}
+
 func (lb *Lightbox) cur() lbItem { return lb.items[lb.idx] }
 
 func (lb *Lightbox) go2(i int) {
@@ -232,6 +256,9 @@ func (lb *Lightbox) setZoom(z float32) {
 }
 
 func (lb *Lightbox) wheel(dy float32) {
+	if !lb.cur().hosted() {
+		return // no zoom control for images that aren't files
+	}
 	f := float32(math.Exp(float64(-dy) * 0.02))
 	if f < 0.8 {
 		f = 0.8
@@ -346,9 +373,13 @@ func (lb *Lightbox) keys(gtx layout.Context, top bool) {
 		case key.NameRightArrow:
 			lb.go2(lb.idx + 1)
 		case "+", "=":
-			lb.setZoom(lb.zoom + 0.5)
+			if lb.cur().hosted() {
+				lb.setZoom(lb.zoom + 0.5)
+			}
 		case "-":
-			lb.setZoom(lb.zoom - 0.5)
+			if lb.cur().hosted() {
+				lb.setZoom(lb.zoom - 0.5)
+			}
 		case "0":
 			lb.resetView()
 		}
@@ -397,7 +428,7 @@ func (lb *Lightbox) clicks(gtx layout.Context) {
 		}
 	}
 	if lb.winBtn.Clicked(gtx) {
-		lbOpen(h, lb.cur().linkURL())
+		lbOpen(h, lb.cur().windowURL())
 	}
 	if lb.moreBtn.Clicked(gtx) {
 		it := lb.cur()
@@ -668,6 +699,9 @@ func (lb *Lightbox) subLine(gtx layout.Context) string {
 			b.WriteString(where)
 		}
 	}
+	if !lb.cur().hosted() {
+		return b.String()
+	}
 	if b.Len() > 0 {
 		b.WriteString(" – ")
 	}
@@ -688,7 +722,47 @@ func (lb *Lightbox) footer(gtx layout.Context, th *theme.Theme, panel image.Rect
 		})
 		return image.Rectangle{Min: p, Max: p.Add(d.Size)}
 	}
+	hosted := lb.cur().hosted()
 	x := panel.Min.X + dp(gtx, 12)
+	if hosted {
+		lb.zoomControls(gtx, btn, x, y)
+	}
+
+	// counter
+	if n := len(lb.items); n > 1 {
+		s := strconv.Itoa(lb.idx+1) + " of " + strconv.Itoa(n)
+		w := textW(gtx, th, 13, theme.Bold, s)
+		at(gtx, image.Pt(panel.Min.X+(panel.Dx()-w)/2, y), func(gtx layout.Context) layout.Dimensions {
+			return vcenter(gtx, dp(gtx, 36), func(gtx layout.Context) layout.Dimensions {
+				return text(gtx, th, 13, theme.Bold, white, s)
+			})
+		})
+	}
+
+	x = panel.Max.X - dp(gtx, 12) - dp(gtx, 36)
+	if !hosted {
+		// MediaViewerActions without a file: the thread toggle (only
+		// with a conversation: toggleThread needs the channel and
+		// thread), then Open in new window.
+		btn(x, &lb.winBtn, "external", &lb.tips[5], "Open in new window", "")
+		if lb.m.Channel != "" && lb.m.TS != "" {
+			x -= dp(gtx, 48)
+			btn(x, &lb.threadBtn, "panel-right", &lb.tips[6], "Show thread", "")
+		}
+		return
+	}
+	lb.moreRect = btn(x, &lb.moreBtn, "more", &lb.tips[4], "More actions", "")
+	x -= dp(gtx, 48)
+	btn(x, &lb.winBtn, "external", &lb.tips[5], "Open in new window", "")
+	x -= dp(gtx, 48)
+	btn(x, &lb.threadBtn, "panel-right", &lb.tips[6], "Show thread", "")
+	x -= dp(gtx, 48)
+	btn(x, &lb.dlBtn, "download", &lb.tips[7], "Download", "")
+}
+
+// zoomControls draws Rotate and [− slider +] (and Reset zoom once
+// changed) from x on the footer row y.
+func (lb *Lightbox) zoomControls(gtx layout.Context, btn func(int, *widget.Clickable, string, *TipState, string, string) image.Rectangle, x, y int) {
 	btn(x, &lb.rotBtn, "refresh", &lb.tips[0], "Rotate", "")
 	x += dp(gtx, 44)
 	btn(x, &lb.outBtn, "minus", &lb.tips[1], "Zoom out", "-")
@@ -715,26 +789,6 @@ func (lb *Lightbox) footer(gtx layout.Context, th *theme.Theme, panel image.Rect
 	if lb.zoom != 1 || lb.rot != 0 {
 		btn(x, &lb.resetBtn, "collapse", &lb.tips[3], "Reset zoom", "0")
 	}
-
-	// counter
-	if n := len(lb.items); n > 1 {
-		s := strconv.Itoa(lb.idx+1) + " of " + strconv.Itoa(n)
-		w := textW(gtx, th, 13, theme.Bold, s)
-		at(gtx, image.Pt(panel.Min.X+(panel.Dx()-w)/2, y), func(gtx layout.Context) layout.Dimensions {
-			return vcenter(gtx, dp(gtx, 36), func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 13, theme.Bold, white, s)
-			})
-		})
-	}
-
-	x = panel.Max.X - dp(gtx, 12) - dp(gtx, 36)
-	lb.moreRect = btn(x, &lb.moreBtn, "more", &lb.tips[4], "More actions", "")
-	x -= dp(gtx, 48)
-	btn(x, &lb.winBtn, "external", &lb.tips[5], "Open in new window", "")
-	x -= dp(gtx, 48)
-	btn(x, &lb.threadBtn, "panel-right", &lb.tips[6], "Show thread", "")
-	x -= dp(gtx, 48)
-	btn(x, &lb.dlBtn, "download", &lb.tips[7], "Download", "")
 }
 
 // arrows draws the ‹ › buttons when the message has several images.

@@ -292,10 +292,17 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 	}
 	h := cy - y
 	if thumbW > 0 {
-		tg := l.d.addTarget(target{kind: tImage, img: a.Thumb})
 		s := thumbW
+		tg := int16(-1)
+		if !a.Legacy || a.IsShare {
+			tg = l.d.addTarget(target{kind: tImage, img: a.Thumb})
+			l.d.hits = append(l.d.hits, hit{r: image.Rect(x+w-s, y, x+w, y+s), t: tg})
+		}
+		// A link's thumb_url is AttachmentThumb in MessageAttachmentGeneric
+		// v1: a span with no click handler in a card that isn't a link, so
+		// clicking it does nothing (image_url, AttachmentMedia, opens the
+		// viewer above).
 		l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(x+w-s, y, x+w, y+s), url: a.Thumb.URL, radii: [4]int{8, 8, 8, 8}, target: tg, px: s})
-		l.d.hits = append(l.d.hits, hit{r: image.Rect(x+w-s, y, x+w, y+s), t: tg})
 		if s > h {
 			h = s
 		}
