@@ -24,6 +24,7 @@ type App struct {
 	RTM *slack.RTM
 
 	prio      prioState // the VIP unreads section's open conversation (prefs_a.go)
+	acs       acState   // the composer autocomplete's frecency, model and history (autocomplete.go)
 	ready     chan struct{}
 	bootErr   error
 	mu        sync.Mutex
@@ -838,6 +839,10 @@ func (a *App) userOf(u *slack.User) User {
 		HuddleChannel: u.Profile.HuddleChannel, HuddleExpires: u.Profile.HuddleExpires,
 		Stranger: u.IsStranger, BotID: u.Profile.BotID, AppID: u.Profile.APIAppID,
 		Workflow: u.IsWorkflowBot, Agentforce: u.IsAgentforceBot, AppUser: u.IsAppUser,
+		DisplayName: strings.TrimSpace(u.Profile.DisplayName), FirstName: u.Profile.FirstName, LastName: u.Profile.LastName,
+	}
+	if eu := u.EnterpriseUser; eu != nil {
+		v.EnterpriseID, v.Teams = eu.EnterpriseID, eu.Teams
 	}
 	v.TeamID, v.External = a.locality(u)
 	if v.RealName == "​" {

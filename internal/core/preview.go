@@ -78,6 +78,7 @@ func (a *App) SetSelected(id string) {
 	if old == id {
 		return
 	}
+	a.noteView(id) // the navigation history (autocomplete HISTORY_AGE_DECAY_*)
 	if a.selectionShapesSidebar(old) || a.selectionShapesSidebar(id) {
 		a.emit(Event{Type: "sidebar_changed"})
 	}

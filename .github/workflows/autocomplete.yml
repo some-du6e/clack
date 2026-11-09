@@ -1,0 +1,58 @@
+name: autocomplete
+# The composer's @ # : / lists ranked by Slack's Searcher (internal/acrank,
+# docs/AUTOCOMPLETE-RULES.md): the matcher, emoji scorer and n-gram
+# similarity checked against values from Slack's own modules, the ranking
+# rules over a synthetic workspace on the composer's fake API, and
+# screenshots of each list in light and dark. Nothing here talks to
+# Slack's API.
+on:
+  push:
+    paths:
+      - "internal/acrank/**"
+      - "internal/frecency/**"
+      - "internal/core/autocomplete.go"
+      - "internal/core/frecency.go"
+      - "internal/ui/composer/autocomplete*"
+      - "internal/ui/popups/emoji_ac*"
+      - ".github/workflows/autocomplete.yml"
+  workflow_dispatch:
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb libgl1-mesa-dri libegl-mesa0
+
+permissions:
+  contents: read
+
+jobs:
+  autocomplete:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: ranking tests
+        run: |
+          go test -count=1 -v ./internal/acrank ./internal/frecency
+          go test -count=1 -v -run 'TestAutocompleteEmoji' ./internal/ui/popups
+          go test -count=1 -v -run 'TestRank|TestAutocompleteSlack|TestDetectTrigger|TestAutocompleteKeys|TestBroadcastAutocomplete' ./internal/ui/composer
+      - name: screenshots (Mesa llvmpipe)
+        env:
+          AUTOCOMPLETE_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$AUTOCOMPLETE_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -v -run 'TestAutocompleteShots' ./internal/ui/composer
+          ls -la "$AUTOCOMPLETE_SHOTS_DIR"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: autocomplete-shots
+          path: dist/shots

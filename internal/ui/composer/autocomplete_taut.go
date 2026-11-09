@@ -27,14 +27,16 @@ import (
 // memberSources is everything ranking an @ query needs, copied out from
 // under ac.mu so it can be ranked on any goroutine.
 type memberSources struct {
-	users   []core.User
-	boost   map[string]bool
-	members map[string]core.User
-	selfID  string
-	groups  []core.Usergroup
+	users    []core.User
+	remote   map[string]bool // users the server search returned
+	members  map[string]core.User
+	selfID   string
+	selfTeam string
+	groups   []core.Usergroup
 	// keywords are the broadcast keywords the viewer may use here
 	// (getBroadcastKeywordsForUser)
 	keywords []string
+	rk       rankCtx
 }
 
 // memberSourcesLocked snapshots the @ sources; ac.mu must be held. The
@@ -43,10 +45,14 @@ type memberSources struct {
 func (ac *Autocomplete) memberSourcesLocked() memberSources {
 	src := memberSources{
 		users:   make([]core.User, 0, len(ac.known)+len(ac.members)+len(ac.searched)),
-		boost:   map[string]bool{},
+		remote:  map[string]bool{},
 		members: ac.members,
 		selfID:  ac.selfID,
 		groups:  ac.groups,
+		rk:      ac.rankCtxLocked(),
+	}
+	if self, ok := ac.known[ac.selfID]; ok {
+		src.selfTeam = self.TeamID
 	}
 	seen := map[string]bool{}
 	add := func(u core.User) {
@@ -56,18 +62,18 @@ func (ac *Autocomplete) memberSourcesLocked() memberSources {
 		seen[u.ID] = true
 		src.users = append(src.users, u)
 	}
-	for id, u := range ac.members {
-		src.boost[id] = true
-		add(u)
+	// the store's people: the conversation's members, the ones the
+	// client knows, then the server search's (marked remote for the
+	// fuzzy passthrough). Sorted by id so equal ranks stay put.
+	for _, id := range sortedKeys(ac.members) {
+		add(ac.members[id])
 	}
-	for id := range ac.dmUsers {
-		src.boost[id] = true
+	for _, id := range sortedKeys(ac.known) {
+		add(ac.known[id])
 	}
-	for _, u := range ac.known {
-		add(u)
-	}
-	for _, u := range ac.searched {
-		add(u)
+	for _, id := range sortedKeys(ac.searched) {
+		add(ac.searched[id])
+		src.remote[id] = true
 	}
 	if ac.haveConv {
 		src.keywords = core.BroadcastKeywords(ac.conv, ac.perms)
@@ -78,29 +84,33 @@ func (ac *Autocomplete) memberSourcesLocked() memberSources {
 // rank is the composer's @ ranking. Broadcast keywords are the ones the
 // viewer may use here; includeAll offers every one (Slack's
 // includeAllBroadcastKeywords), @everyone included.
-func (s memberSources) rank(q string, includeAll bool) []acItem {
-	items := rankUsers(q, s.users, s.boost, s.members, s.selfID, s.groups, acMaxItems)
-	if includeAll {
-		return append(items, rankBroadcasts(q, "channel", true)...)
-	}
-	return append(items, rankKeywords(q, func(id string) bool { return slices.Contains(s.keywords, id) })...)
-}
+func (s memberSources) rank(q string, includeAll bool) []acItem { return s.rankMembers(q, includeAll) }
 
 // channelSources is what ranking a # query needs.
 type channelSources struct {
 	convs []core.Conv
 	hits  []core.ChannelHit
+	rk    rankCtx
 }
 
 func (ac *Autocomplete) channelSourcesLocked() channelSources {
 	hits := make([]core.ChannelHit, 0, len(ac.chanHits))
-	for _, h := range ac.chanHits {
-		hits = append(hits, h)
+	for _, id := range sortedKeys(ac.chanHits) {
+		hits = append(hits, ac.chanHits[id])
 	}
-	return channelSources{convs: ac.convs, hits: hits}
+	return channelSources{convs: ac.convs, hits: hits, rk: ac.rankCtxLocked()}
 }
 
-func (s channelSources) rank(q string) []acItem { return rankChannels(q, s.convs, s.hits, acMaxItems) }
+func (s channelSources) rank(q string) []acItem { return s.rankChannels(q) }
+
+func sortedKeys[V any](m map[string]V) []string {
+	ks := make([]string, 0, len(m))
+	for k := range m {
+		ks = append(ks, k)
+	}
+	slices.Sort(ks)
+	return ks
+}
 
 // ---- Slack's shapes ----
 

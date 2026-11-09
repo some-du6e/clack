@@ -87,13 +87,18 @@ func (c coreAPI) scheduleMessage(ctx context.Context, ch, threadTS, text string,
 	return c.a.ScheduleMessage(ctx, core.SendOpts{Channel: ch, ThreadTS: threadTS, Text: text, Blocks: blocks, Broadcast: broadcast}, postAt)
 }
 
-func (c coreAPI) searchUsers(ctx context.Context, q string) ([]core.User, error) {
-	return c.a.SearchUsers(ctx, q, 20)
+// searchUsers and searchChannels are the composer lists' server
+// searches, with Slack's texty-autocomplete args (count 25).
+func (c coreAPI) searchUsers(ctx context.Context, q, channel string) ([]core.User, error) {
+	return c.a.AutocompleteUsers(ctx, q, channel)
 }
 
 func (c coreAPI) searchChannels(ctx context.Context, q string) ([]core.ChannelHit, error) {
-	return c.a.SearchChannels(ctx, q, 20)
+	return c.a.AutocompleteChannels(ctx, q)
 }
+
+// recordFrecency is recordFrecencyEvent (the shared "frecency" pref).
+func (c coreAPI) recordFrecency(id, text string) { c.a.RecordFrecency(id, text) }
 
 func (c coreAPI) usergroups(ctx context.Context) ([]core.Usergroup, error) {
 	return c.a.Usergroups(ctx, "", 0)

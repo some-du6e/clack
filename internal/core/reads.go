@@ -376,6 +376,48 @@ func (a *App) SearchUsers(ctx context.Context, query string, count int) ([]User,
 	return out, nil
 }
 
+// AutocompleteUsers is the composer @ list's server search
+// (getRemoteMembers): edge users/search with count 25, fuzz 1,
+// enable_workspace_ranking, the current channel and default workspace.
+// Deactivated people stay in (Slack's texty search includes them; the
+// ranking demotes them); deactivated bots are dropped later.
+func (a *App) AutocompleteUsers(ctx context.Context, query, channel string) ([]User, error) {
+	if strings.TrimSpace(query) == "" {
+		return nil, nil
+	}
+	us, err := a.C.SearchUsersWith(ctx, query, slack.UserSearchOpts{Count: 25, CurrentChannel: channel,
+		DefaultWorkspace: a.C.Creds.Team})
+	if err != nil {
+		return nil, err
+	}
+	a.S.PutUsers(us)
+	out := make([]User, 0, len(us))
+	ids := make([]string, 0, len(us))
+	for i := range us {
+		out = append(out, a.userOf(&us[i]))
+		if !us[i].Deleted {
+			ids = append(ids, us[i].ID)
+		}
+	}
+	a.SubscribePresence(ids)
+	return out, nil
+}
+
+// AutocompleteChannels is the composer # list's server search
+// (getRemoteChannels): edge channels/search with count 25, fuzz 1 and
+// filter xws (includeFromAnotherTeam).
+func (a *App) AutocompleteChannels(ctx context.Context, query string) ([]ChannelHit, error) {
+	if strings.TrimSpace(query) == "" {
+		return nil, nil
+	}
+	hs, err := a.C.SearchChannelsWith(ctx, query, slack.ChannelSearchOpts{Count: 25, Filter: "xws",
+		DefaultWorkspace: a.C.Creds.Team})
+	if err != nil {
+		return nil, err
+	}
+	return a.channelHits(hs), nil
+}
+
 func (a *App) channelHits(hs []slack.ChannelHit) []ChannelHit {
 	out := make([]ChannelHit, 0, len(hs))
 	for _, h := range hs {

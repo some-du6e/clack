@@ -122,6 +122,13 @@ type User struct {
 	TeamID   string
 	External bool
 	Stranger bool
+	// The autocomplete's matcher and model read these (internal/acrank):
+	// profile display_name as set (Name falls back to the real name),
+	// first_name and last_name, and the Grid enterprise and workspaces
+	// (enterprise_user).
+	DisplayName, FirstName, LastName string
+	EnterpriseID                     string
+	Teams                            []string
 	// BotID and AppID are a bot user's profile.bot_id and api_app_id
 	// (Slack opens AppHoverCard for them instead of the member card).
 	BotID, AppID string
