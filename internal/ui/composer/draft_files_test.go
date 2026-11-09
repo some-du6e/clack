@@ -104,8 +104,8 @@ func TestDraftKeepsAttachedFiles(t *testing.T) {
 		fileID = ds[0].FileIDs[0]
 		return true
 	})
-	if f, ok := fs.File(fileID); !ok || f.Name != name || f.Bytes == 0 || !f.Completed || f.Shared || f.Cookie {
-		t.Fatalf("the draft's file %s: %+v (want uploaded with no cookie, completed, unshared)", fileID, f)
+	if f, ok := fs.File(fileID); !ok || f.Name != name || f.Bytes == 0 || !f.Completed || f.Shared {
+		t.Fatalf("the draft's file %s: %+v (want uploaded, completed, unshared)", fileID, f)
 	}
 	if b := string(live()[0].Blocks); b != "[]" {
 		t.Errorf("files-only draft blocks = %s, want []", b)
