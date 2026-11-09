@@ -27,15 +27,19 @@ type Message struct {
 	PinnedBy                 string // who pinned it (when Pinned)
 	IsBot, Edited, Pinned    bool
 	Broadcast, System        bool // System: join/leave/topic… drawn compactly
-	Pending                  bool // optimistic local send not yet confirmed (TS is local)
-	Failed                   bool // optimistic send failed: offer Resend / DiscardPending
-	Saved                    bool // in the viewer's Saved / To-dos
-	FollowingThread          bool // the viewer follows this thread (root messages)
-	ReplyCount               int
-	ReplyUsers               []string
-	Reactions                []Reaction
-	Huddle                   json.RawMessage
-	Doc                      richtext.Doc
+	// Tombstone: a deleted message kept for its replies (Slack's subtype
+	// "tombstone", user USLACKBOT, hidden): drawn as Slack's
+	// MessageTombstone, never as a Slackbot message.
+	Tombstone       bool
+	Pending         bool // optimistic local send not yet confirmed (TS is local)
+	Failed          bool // optimistic send failed: offer Resend / DiscardPending
+	Saved           bool // in the viewer's Saved / To-dos
+	FollowingThread bool // the viewer follows this thread (root messages)
+	ReplyCount      int
+	ReplyUsers      []string
+	Reactions       []Reaction
+	Huddle          json.RawMessage
+	Doc             richtext.Doc
 	// Raw Slack data for plugins (Taut): memory only, never written to disk.
 	Blocks      json.RawMessage // Block Kit blocks as sent
 	Attachments json.RawMessage // legacy attachments / unfurls as sent

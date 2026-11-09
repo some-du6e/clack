@@ -46,6 +46,8 @@ type App struct {
 	stopBG context.CancelFunc
 
 	pending   map[string]*pendingSend // client_msg_id -> optimistic send
+	retired   map[string]string       // confirmed sends' local ts -> real ts (send.go LocalTS)
+	retiredQ  []string                // retired's insertion order (bounded)
 	saved     map[string]bool         // "channel/ts" of saved / to-do messages
 	starred   map[string]bool         // starred conversation ids (stars.list)
 	starsOK   bool                    // starred was loaded
@@ -1009,6 +1011,7 @@ func (a *App) message(ch string, m *slack.Message) Message {
 		Edited: m.Edited != nil, ThreadTS: m.ThreadTS, ReplyCount: m.ReplyCount, ReplyUsers: m.ReplyUsers,
 		LatestReply: m.LatestReply, Pinned: len(m.PinnedTo) > 0, Huddle: m.Room,
 		Broadcast: m.Subtype == "thread_broadcast" || m.ReplyBroadcast, System: systemSubtypes[m.Subtype],
+		Tombstone: m.Subtype == "tombstone",
 	}
 	if m.Edited != nil {
 		v.EditedTS = m.Edited.TS

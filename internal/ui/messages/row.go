@@ -650,6 +650,9 @@ func (r *row) layoutMessage(gtx layout.Context, p slackc.Props) layout.Dimension
 			r.resolve(rc)
 		}
 	}
+	if r.m.Tombstone {
+		return r.tombstoneLayout(gtx, rc)
+	}
 	if r.m.System && !rc.parent {
 		return r.systemLayout(gtx, rc)
 	}
@@ -1852,6 +1855,58 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	if rc.hovered {
 		fill(gtx.Ops, image.Rect(0, 0, w, h), c.Hover)
 	}
+	content.Add(gtx.Ops)
+	r.height = h
+	return layout.Dimensions{Size: image.Pt(w, h)}
+}
+
+// tombstoneLayout is Slack's MessageTombstone (boot-shared 2X8J): a
+// deleted message that still has replies (subtype "tombstone", user
+// USLACKBOT, hidden) draws c-message_kit__tombstone: the 36px placeholder
+// with the trash icon where the avatar goes, "This message was deleted."
+// in c-message_kit__tombstone__text, then the reply bar. No author, no
+// timestamp, no hover actions. A plugin view (Message Logger's kept copy)
+// replaces r.m and so draws as the message instead.
+func (r *row) tombstoneLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
+	c := rc.c
+	m := &r.m
+	w := gtx.Constraints.Max.X
+	padX := dp(gtx, mt.padX)
+	cx := dp(gtx, mt.contentX)
+	cw := w - cx - padX
+	if rc.thread {
+		cw = w - cx - dp(gtx, 24)
+	}
+	cw = max(cw, dp(gtx, 80))
+	rec := op.Record(gtx.Ops)
+	top := dp(gtx, mt.padTop)
+	av := dp(gtx, mt.avatar)
+	sq := image.Rect(padX, top, padX+av, top+av)
+	rrect(gtx.Ops, sq, dp(gtx, 8), c.BadgeBg)
+	is := dp(gtx, 20)
+	at(gtx, padX+(av-is)/2, top+(av-is)/2, func(gtx layout.Context) layout.Dimensions {
+		return icons.Get("trash")(gtx, unit.Dp(20), c.Text2)
+	})
+	r.handler.h, r.handler.m, r.handler.anchor = rc.h, m, rc.origin
+	y := top
+	body := at(gtx, cx, y, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
+		return r.rv.Layout(gtx, rc.st, &r.handler)
+	})
+	r.bodyRect = image.Rectangle{Min: image.Pt(cx, y), Max: image.Pt(cx+body.Size.X, y+body.Size.Y)}
+	y += max(body.Size.Y, dp(gtx, mt.nameLine)) + dp(gtx, mt.bodyMarginBottom)
+	r.reactRects = r.reactRects[:0]
+	r.addRect = image.Rectangle{}
+	if m.ReplyCount > 0 && !rc.thread && (m.ThreadTS == "" || m.ThreadTS == m.TS) {
+		y += dp(gtx, 4)
+		d := at(gtx, cx, y, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
+			return slackc.Component(gtx, "ThreadReplies", r, (*row).repliesProps, (*row).layoutThreadReplies)
+		})
+		y += d.Size.Y
+	}
+	h := max(y, top+av) + dp(gtx, mt.padBottom)
+	content := rec.Stop()
 	content.Add(gtx.Ops)
 	r.height = h
 	return layout.Dimensions{Size: image.Pt(w, h)}

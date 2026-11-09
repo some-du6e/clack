@@ -31,7 +31,8 @@ type Message struct {
 	PinnedInfo     *PinnedInfo     `json:"pinned_info,omitempty"`
 	ClientMsgID    string          `json:"client_msg_id,omitempty"`
 	Hidden         bool            `json:"hidden,omitempty"`
-	Root           *Message        `json:"root,omitempty"` // thread_broadcast
+	IsEphemeral    bool            `json:"is_ephemeral,omitempty"` // Slack's addEphemeralMessage (local, never from history)
+	Root           *Message        `json:"root,omitempty"`         // thread_broadcast
 	ReplyBroadcast bool            `json:"reply_broadcast,omitempty"`
 	Upload         bool            `json:"upload,omitempty"`
 	DisplayAsBot   bool            `json:"display_as_bot,omitempty"`

@@ -158,6 +158,7 @@ func (a *App) confirmPending(ch string, m *slack.Message) bool {
 	}
 	p.confirmed, p.failed, p.realTS = true, false, m.TS
 	cid := m.ClientMsgID
+	a.retireLocal(p.ts, m.TS)
 	a.mu.Unlock()
 	time.AfterFunc(2*time.Minute, func() {
 		a.mu.Lock()
@@ -215,6 +216,43 @@ func (a *App) pendingState(m *slack.Message) (pending, failed bool) {
 	return false, false
 }
 
+// maxRetired bounds the remembered local ts of confirmed sends.
+const maxRetired = 512
+
+// retireLocal remembers that local ts was replaced by real (caller holds a.mu).
+func (a *App) retireLocal(local, real string) {
+	if a.retired == nil {
+		a.retired = map[string]string{}
+	}
+	if _, ok := a.retired[local]; !ok {
+		a.retiredQ = append(a.retiredQ, local)
+	}
+	a.retired[local] = real
+	for len(a.retiredQ) > maxRetired {
+		delete(a.retired, a.retiredQ[0])
+		a.retiredQ = a.retiredQ[1:]
+	}
+}
+
+// LocalTS reports whether ts is (or was) the local ts of an optimistic
+// send, and the real ts it became once Slack confirmed it (""
+// while pending or failed). Copies of the pending message that outlive
+// the swap (a plugin's cached messages bucket, a view's snapshot) must be
+// dropped, not shown next to the confirmed message.
+func (a *App) LocalTS(ts string) (real string, ok bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if r, done := a.retired[ts]; done {
+		return r, true
+	}
+	for _, p := range a.pending {
+		if p.ts == ts {
+			return p.realTS, true
+		}
+	}
+	return "", false
+}
+
 // isLocalTS reports whether ts belongs to an unconfirmed local message.
 func (a *App) isLocalTS(ts string) bool {
 	a.mu.Lock()
@@ -254,4 +292,10 @@ func (a *App) wasConfirmed(m *slack.Message) bool {
 	defer a.mu.Unlock()
 	p, ok := a.pending[m.ClientMsgID]
 	return ok && p.confirmed && p.realTS == m.TS
+}
+
+// ClientMsgIDs lists the client_msg_ids of the messages core holds for ch
+// (timeline and cached threads), for de-duplicating copies of them.
+func (a *App) ClientMsgIDs(ch string) map[string]bool {
+	return a.S.ClientMsgIDs(ch)
 }
