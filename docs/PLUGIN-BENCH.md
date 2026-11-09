@@ -50,7 +50,7 @@ fidelity compares the two variants' screenshots of the same scene with
 each other: **Pixel diff** is the share of the window that differs.
 The screenshots are in the run's `plugin-bench-shots` artifact.
 
-Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T19:19:50Z by [this run](https://github.com/some-du6e/yoloslackgoclient/actions/runs/42679086236).
+Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this run](https://github.com/some-du6e/yoloslackgoclient/actions/runs/42697545499).
 
 ## Host fixes and gaps the bench found
 
@@ -63,16 +63,38 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T19:19:50Z by [this ru
   ShowSendingBot in both systems and Slick's Censorship "spazzed" while
   nothing happened. Threads are hashed in ts order now
   (internal/taut/mirror.go, TestMessagesFingerprintStable).
-- **Open: Taut StreamerMode's MessageBackground patch** logs
+- **Fixed: Taut StreamerMode's MessageBackground errors.** It logged
   "componentElement MessageBackground: TypeError: not a function" and a
-  React #31 (jsrt's host object rendered as a child) on its first rows in
-  the whole client; the synthetic repro in the Taut harness renders fine,
-  so it depends on the real row props. Its checks still pass.
-- **Open: pronouns in the thread pane header.** Both User Pronouns
-  variants patch ThreadSenderAndTimestampGeneric, but opening a thread in
-  the bench delivers no tree with the root sender's pronouns for either;
-  the channel rows show them. Same result for both, so it doesn't change
-  the pick.
+  React #31 (jsrt's __clack object rendered as a child) on some rows. Not
+  the row props: jsrt released a handle twice. Value.Free released it,
+  and the GC cleanup released the same number again later, by when the
+  engine had handed it to another value (handles are reused, last freed
+  first). Every promise Go settles (a plugin's API calls, thunks) freed its
+  settle functions that way, so componentElement's function, props or
+  element could turn into whatever came next. Free cancels the cleanup now
+  (internal/jsrt/value.go, TestFreedValueNotReleasedTwice,
+  TestPluginGapStreamerModeRows).
+- **Fixed (fixture): pronouns in the thread pane header.** Clack's pane
+  hands ThreadSenderAndTimestampGeneric what Slack's does (msg, adjacent,
+  visible, omitTimestamp, omitLinebreak, keepSenderAccessible,
+  timestampLabel). The bench saw nothing because fakeslack answered the
+  bench threads' conversations.replies with no messages (a generic case
+  ran before the bench's), so the pane never drew a root
+  (TestPluginGapPronounsThread).
+- **Fixed: message_mention in msg.** The msg prop carried blocks rebuilt
+  from Clack's parsed text, where a message_mention is only its label
+  ("alice in #idle"). It carries the message's blocks as Slack sent them
+  now, as Slack's client does; a plugin's changed blocks are parsed like
+  the message, so the pill stays (TestPluginMessageMentionBlocks).
+- **Fixed: clicks on native links.** Clack draws message links natively,
+  so Slick's Quick Join, which listens for clicks on the document and
+  looks for a[data-channel-id], never saw one. While anything listens for
+  clicks on the window or document, a click on a native link (URL,
+  mention, channel, user group) is dispatched at a stand-in element with
+  Slack's tag and attributes, kept per link outside <body>. The link's
+  action is that element's activation behavior: it runs when the click
+  isn't canceled, including a click a plugin replays later
+  (internal/ui/slackc/links.go, TestPluginGapQuickJoinDoubleClick).
 - **Not a host gap: Click to Load.** Clack draws link unfurls natively and
   never loads third-party frames, so there is nothing for either variant
   to hold.
@@ -81,37 +103,37 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T19:19:50Z by [this ru
 
 | Plugin | Winner | Why | Checks (Taut / Slick) | Load ms (Taut / Slick) | Frame +µs (Taut / Slick) | Scroll CPU +ms (Taut / Slick) | JS heap KB (Taut / Slick) | Idle trees (Taut / Slick) |
 |---|---|---|---|---|---|---|---|---|
-| Account Switcher | **Taut** | works fully, 4.5x faster to load, 3.5x less JS memory | 1/1 / 1/1 | 5.0 / 22.4 | 63.0 / 85.0 | 0.0 / 19.8 | 130 / 457 | 0 / 0 |
-| Admin Backend | **Slick** | works fully in both; costs within noise, smaller bundle (7.1 KB vs 9.1 KB) | 1/1 / 1/1 | 3.9 / 7.5 | 61.0 / 28.0 | 0.0 / 0.0 | 165 / 181 | 0 / 0 |
-| Better Typing Indicator | **Taut** | works fully, 1.3x less JS memory | 1/1 / 1/1 | 5.0 / 5.8 | 174 / 195 | 42.8 / 65.0 | 399 / 521 | 0 / 0 |
-| Censorship | **Taut** | works fully, 2.2x faster to load, 2.0x less frame overhead | 1/1 / 1/1 | 5.3 / 11.4 | 272 / 532 | 1717 / 1721 | 13301 / 3344 | 0 / 0 |
-| Clear URLs | **Taut** | works fully, 3.9x faster to load, 1.5x less JS memory | 1/1 / 1/1 | 2.9 / 11.5 | 29.0 / 60.0 | 2.5 / 0.0 | 340 / 520 | 0 / 0 |
-| Click to Load | **Taut** | works fully, 3.1x faster to load, 5.4x less JS memory | 1/1 / 1/1 | 3.4 / 10.5 | 214 / 39.0 | 28.0 / 0.0 | 19.8 / 107 | 0 / 0 |
-| Copy Reacted | **Taut** | works fully in both; costs within noise, smaller bundle (3.8 KB vs 5.7 KB) | 1/1 / 1/1 | 5.2 / 5.8 | 471 / 414 | 881 / 962 | 4163 / 4165 | 0 / 0 |
-| Custom Name Recording | **Taut** | works fully in both; costs within noise, smaller bundle (3.4 KB vs 5.4 KB) | 1/1 / 1/1 | 4.4 / 4.8 | 215 / 232 | 30.0 / 45.9 | 30.1 / 46.2 | 0 / 0 |
-| Experiments | **Slick** | works fully, 2.9x less frame overhead | 1/1 / 1/1 | 4.3 / 6.2 | 108 / 37.0 | 23.5 / 2.3 | 80.5 / 120 | 0 / 0 |
-| Haiku Warning | **Slick** | works fully (Taut passes 1/2 checks), frame overhead 11 µs vs 296 µs, scroll CPU 0.0 ms vs 903 ms | 1/2 / 2/2 | 7.1 / 76.5 | 296 / 11.0 | 903 / 0.0 | 4778 / 491 | 0 / 0 |
-| Human Count | **Taut** | works fully in both; costs within noise, smaller bundle (0.9 KB vs 3.1 KB) | 1/1 / 1/1 | 2.5 / 4.2 | 101 / 88.0 | 11.6 / 8.2 | 48.1 / 60.1 | 0 / 0 |
-| Last Seen | **Slick** | works fully, 5.2x faster to load, 2.5x less JS memory | 1/1 / 1/1 | 52.3 / 10.2 | 215 / 239 | 37.1 / 26.8 | 711 / 286 | 0 / 0 |
-| Nicknames | **Slick** | works fully, 2.1x less frame overhead | 2/2 / 2/2 | 4.2 / 6.0 | 122 / 57.0 | 11.1 / 8.0 | 210 / 268 | 0 / 0 |
-| Office Hours | **Slick** | works fully in both; costs within noise, smaller bundle (9.8 KB vs 10.6 KB) | 1/1 / 1/1 | 5.7 / 6.8 | 80.0 / 50.0 | 9.8 / 4.3 | 183 / 203 | 0 / 0 |
-| Oneko | **Taut** | works fully, 3.5x less idle CPU | 2/2 / 2/2 | 3.4 / 6.3 | 167 / 178 | 97.2 / 103 | 98.1 / 151 | 0 / 0 |
-| Quick Join | **Taut** | works fully (Slick passes 0/1 checks), 2.4x less frame overhead | 1/1 / 0/1 | 2.1 / 5.1 | 78.0 / 187 | 0.0 / 39.2 | 15.0 / 63.1 | 0 / 0 |
-| Restricted Channel Warning | **Taut** | works fully, 1.6x less frame overhead, scroll CPU 59 ms vs 2009 ms | 1/1 / 1/1 | 4.6 / 4.4 | 299 / 480 | 59.5 / 2009 | 292 / 4711 | 0 / 0 |
-| Show Real User | **Taut** | works fully in both; costs within noise, smaller bundle (3.7 KB vs 8.3 KB) | 1/1 / 1/1 | 7.4 / 5.0 | 300 / 310 | 1304 / 1365 | 6397 / 6477 | 0 / 0 |
-| Show Sending Bot | **Slick** | works fully, 2.7x faster to load | 1/1 / 1/1 | 54.5 / 20.3 | 835 / 787 | 1476 / 1373 | 23064 / 22170 | 0 / 0 |
-| Shut Up Slackbot | **Taut** | works fully in both; costs within noise, smaller bundle (2.8 KB vs 6.5 KB) | 2/2 / 2/2 | 6.5 / 7.7 | 59.0 / 24.0 | 7.2 / 0.0 | 60.2 / 50.8 | 0 / 0 |
-| Silent Typing | **Taut** | works fully, 3.0x less frame overhead, 3.1x less JS memory | 2/2 / 2/2 | 2.5 / 5.3 | 91.0 / 274 | 6.9 / 51.3 | 51.1 / 161 | 0 / 0 |
-| Slim Message Box | **Taut** | works fully in both; costs within noise, smaller bundle (7.3 KB vs 10.8 KB) | 1/1 / 1/1 | 4.5 / 4.7 | 124 / 134 | 26.0 / 18.9 | 165 / 193 | 0 / 0 |
-| Streamer Mode | **Slick** | no console errors (Taut logs 1) | 2/2 / 2/2 | 7.6 / 14.5 | 412 / 503 | 874 / 939 | 4702 / 4136 | 0 / 0 |
-| User Pronouns | **Taut** | same results (1/2 checks each) in both; costs within noise, smaller bundle (2.1 KB vs 4.8 KB) | 1/2 / 1/2 | 5.1 / 5.2 | 431 / 426 | 616 / 645 | 2948 / 3125 | 0 / 0 |
-| Who Reacted | **Taut** | works fully in both; costs within noise, smaller bundle (2.1 KB vs 4.4 KB) | 2/2 / 2/2 | 3.4 / 5.1 | 455 / 405 | 1436 / 1391 | 6508 / 6408 | 0 / 0 |
+| Account Switcher | **Taut** | works fully, 4.6x faster to load, 3.5x less JS memory | 1/1 / 1/1 | 3.6 / 16.4 | 67.0 / 94.0 | 0.0 / 30.0 | 130 / 457 | 0 / 0 |
+| Admin Backend | **Slick** | works fully in both; costs within noise, smaller bundle (7.1 KB vs 9.1 KB) | 1/1 / 1/1 | 4.7 / 9.0 | 70.0 / 58.0 | 4.1 / 0.0 | 165 / 181 | 0 / 0 |
+| Better Typing Indicator | **Taut** | works fully in both; costs within noise, smaller bundle (5.4 KB vs 12.4 KB) | 1/1 / 1/1 | 8.5 / 10.0 | 364 / 274 | 105 / 77.2 | 407 / 521 | 0 / 0 |
+| Censorship | **Taut** | works fully, 2.0x faster to load, 2.6x less frame overhead | 1/1 / 1/1 | 5.7 / 11.6 | 213 / 554 | 1632 / 1742 | 11896 / 3663 | 0 / 0 |
+| Clear URLs | **Taut** | works fully, 3.5x faster to load, 1.5x less JS memory | 1/1 / 1/1 | 4.0 / 13.7 | 68.0 / 27.0 | 0.0 / 0.0 | 340 / 520 | 0 / 0 |
+| Click to Load | **Taut** | works fully, 4.2x faster to load, 5.4x less JS memory | 1/1 / 1/1 | 3.8 / 15.8 | 266 / 0.0 | 54.9 / 0.0 | 19.8 / 107 | 0 / 0 |
+| Copy Reacted | **Taut** | works fully in both; costs within noise, smaller bundle (3.8 KB vs 5.7 KB) | 1/1 / 1/1 | 2.8 / 4.1 | 346 / 335 | 566 / 543 | 4165 / 4171 | 0 / 0 |
+| Custom Name Recording | **Taut** | works fully in both; costs within noise, smaller bundle (3.4 KB vs 5.4 KB) | 1/1 / 1/1 | 4.4 / 5.7 | 292 / 216 | 86.5 / 37.5 | 30.1 / 46.2 | 0 / 0 |
+| Experiments | **Slick** | works fully, 3.6x less frame overhead | 1/1 / 1/1 | 6.3 / 9.3 | 189 / 52.0 | 45.0 / 8.0 | 80.5 / 120 | 0 / 0 |
+| Haiku Warning | **Slick** | works fully (Taut passes 1/2 checks), frame overhead 0.0 µs vs 313 µs, scroll CPU 0.0 ms vs 933 ms | 1/2 / 2/2 | 7.6 / 68.0 | 313 / 0.0 | 933 / 0.0 | 307 / 491 | 0 / 0 |
+| Human Count | **Taut** | works fully in both; costs within noise, smaller bundle (0.9 KB vs 3.1 KB) | 1/1 / 1/1 | 2.1 / 3.2 | 103 / 101 | 11.4 / 13.8 | 48.1 / 60.1 | 0 / 0 |
+| Last Seen | **Slick** | works fully, 3.3x faster to load, 2.5x less JS memory | 1/1 / 1/1 | 22.9 / 6.9 | 180 / 152 | 26.8 / 40.4 | 711 / 286 | 0 / 0 |
+| Nicknames | **Taut** | works fully in both; costs within noise, smaller bundle (5.8 KB vs 10.0 KB) | 2/2 / 2/2 | 7.1 / 9.1 | 146 / 107 | 12.7 / 0.0 | 211 / 269 | 0 / 0 |
+| Office Hours | **Taut** | works fully, 6.7x less frame overhead, scroll CPU 0.0 ms vs 77 ms | 1/1 / 1/1 | 6.9 / 7.9 | 48.0 / 320 | 0.0 / 77.0 | 183 / 203 | 0 / 0 |
+| Oneko | **Taut** | works fully, 5.1x less idle CPU | 2/2 / 2/2 | 2.7 / 5.2 | 93.0 / 129 | 35.0 / 65.1 | 96.9 / 152 | 0 / 0 |
+| Quick Join | **Taut** | works fully, 6.5x less frame overhead, 6.9x less JS memory | 1/1 / 1/1 | 2.2 / 6.4 | 29.0 / 189 | 0.0 / 17.5 | 15.0 / 104 | 0 / 0 |
+| Restricted Channel Warning | **Taut** | works fully, scroll CPU 70 ms vs 1828 ms, 2.9x less JS memory | 1/1 / 1/1 | 3.5 / 4.0 | 278 / 408 | 70.0 / 1828 | 292 / 835 | 0 / 0 |
+| Show Real User | **Taut** | works fully in both; costs within noise, smaller bundle (3.7 KB vs 8.3 KB) | 1/1 / 1/1 | 12.6 / 8.9 | 717 / 604 | 1645 / 1670 | 7392 / 8577 | 0 / 0 |
+| Show Sending Bot | **Slick** | works fully, 2.6x faster to load | 1/1 / 1/1 | 66.1 / 25.9 | 815 / 882 | 1500 / 1502 | 23850 / 21247 | 0 / 0 |
+| Shut Up Slackbot | **Slick** | works fully, 2.4x less frame overhead | 2/2 / 2/2 | 6.2 / 7.8 | 76.0 / 32.0 | 13.6 / 0.0 | 60.2 / 50.8 | 0 / 0 |
+| Silent Typing | **Taut** | works fully, 5.2x less frame overhead, 3.1x less JS memory | 2/2 / 2/2 | 2.4 / 3.9 | 30.0 / 156 | 0.0 / 38.0 | 51.1 / 161 | 0 / 0 |
+| Slim Message Box | **Taut** | works fully in both; costs within noise, smaller bundle (7.3 KB vs 10.8 KB) | 1/1 / 1/1 | 6.3 / 7.1 | 215 / 191 | 60.1 / 45.1 | 165 / 193 | 0 / 0 |
+| Streamer Mode | **Slick** | works fully, 9.8x faster to load | 2/2 / 2/2 | 110 / 11.2 | 356 / 478 | 654 / 701 | 4707 / 4143 | 0 / 0 |
+| User Pronouns | **Taut** | works fully in both; costs within noise, smaller bundle (2.1 KB vs 4.8 KB) | 2/2 / 2/2 | 3.7 / 4.6 | 359 / 343 | 491 / 540 | 2993 / 3170 | 0 / 0 |
+| Who Reacted | **Taut** | works fully in both; costs within noise, smaller bundle (2.1 KB vs 4.4 KB) | 2/2 / 2/2 | 7.2 / 4.2 | 353 / 320 | 945 / 840 | 6569 / 6412 | 0 / 0 |
 
 ## Per plugin
 
 ### Account Switcher
 
-**Taut**: works fully, 4.5x faster to load, 3.5x less JS memory.
+**Taut**: works fully, 4.6x faster to load, 3.5x less JS memory.
 
 | | Taut | Slick |
 |---|---|---|
@@ -121,12 +143,12 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T19:19:50Z by [this ru
 | Console errors | none | none |
 | Patches | MenuFromTemplate | Menu, MenuFromTemplate |
 | Host trees delivered | 1 | 2 |
-| Load | 5.0 ms | 22.4 ms |
-| Frame (median / p95) | 1082 / 1753 µs (no plugin: 1019) | 1076 / 1924 µs (no plugin: 991) |
-| Scroll pass CPU | 493 ms (no plugin: 508) | 501 ms (no plugin: 481) |
-| Allocations / frame | 405 (no plugin: 403) | 405 (no plugin: 403) |
-| JS heap / Go heap | +130 KB / +3744 KB | +457 KB / +3728 KB |
-| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.6 ms/s (no plugin: 0.4) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 1.5 ms/s (no plugin: 0.4) |
+| Load | 3.6 ms | 16.4 ms |
+| Frame (median / p95) | 679 / 1205 µs (no plugin: 612) | 697 / 1175 µs (no plugin: 603) |
+| Scroll pass CPU | 331 ms (no plugin: 338) | 342 ms (no plugin: 312) |
+| Allocations / frame | 417 (no plugin: 413) | 415 (no plugin: 415) |
+| JS heap / Go heap | +130 KB / +3659 KB | +457 KB / +3711 KB |
+| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.4 ms/s (no plugin: 0.4) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.5) |
 | Pixel diff | 0.0% (`bench-accountswitcher-taut.png`) | 0.0% (`bench-accountswitcher-slick.png`) |
 
 ### Admin Backend
@@ -141,17 +163,17 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T19:19:50Z by [this ru
 | Console errors | none | none |
 | Patches | MenuFromTemplate, RimetoMemberProfileOverflowMenu | MenuFromTemplate, RimetoMemberProfileOverflowMenu |
 | Host trees delivered | 2 | 2 |
-| Load | 3.9 ms | 7.5 ms |
-| Frame (median / p95) | 922 / 1540 µs (no plugin: 861) | 933 / 1535 µs (no plugin: 905) |
-| Scroll pass CPU | 428 ms (no plugin: 446) | 432 ms (no plugin: 461) |
-| Allocations / frame | 408 (no plugin: 406) | 408 (no plugin: 404) |
-| JS heap / Go heap | +165 KB / +3723 KB | +181 KB / +3568 KB |
-| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.4) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.4) |
+| Load | 4.7 ms | 9.0 ms |
+| Frame (median / p95) | 1067 / 1706 µs (no plugin: 997) | 1071 / 1716 µs (no plugin: 1013) |
+| Scroll pass CPU | 493 ms (no plugin: 489) | 487 ms (no plugin: 495) |
+| Allocations / frame | 408 (no plugin: 405) | 408 (no plugin: 403) |
+| JS heap / Go heap | +165 KB / +3642 KB | +181 KB / +3557 KB |
+| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.3) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.4) |
 | Pixel diff | 0.0% (`bench-adminbackend-taut.png`) | 0.0% (`bench-adminbackend-slick.png`) |
 
 ### Better Typing Indicator
 
-**Taut**: works fully, 1.3x less JS memory.
+**Taut**: works fully in both; costs within noise, smaller bundle (5.4 KB vs 12.4 KB).
 
 | | Taut | Slick |
 |---|---|---|
@@ -161,17 +183,17 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T19:19:50Z by [this ru
 | Console errors | none | none |
 | Patches | MessagePaneInput, ThreadTypingIndicator, TypingNames | MessagePaneInput, ThreadTypingIndicator, TypingNames |
 | Host trees delivered | 1 | 1 |
-| Load | 5.0 ms | 5.8 ms |
-| Frame (median / p95) | 717 / 1151 µs (no plugin: 543) | 718 / 1124 µs (no plugin: 523) |
-| Scroll pass CPU | 338 ms (no plugin: 295) | 334 ms (no plugin: 269) |
-| Allocations / frame | 1113 (no plugin: 412) | 1121 (no plugin: 415) |
-| JS heap / Go heap | +399 KB / +17283 KB | +521 KB / +17237 KB |
-| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.2 ms/s (no plugin: 0.2) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.2 ms/s (no plugin: 0.2) |
+| Load | 8.5 ms | 10.0 ms |
+| Frame (median / p95) | 1337 / 2016 µs (no plugin: 973) | 1322 / 2028 µs (no plugin: 1048) |
+| Scroll pass CPU | 577 ms (no plugin: 472) | 576 ms (no plugin: 499) |
+| Allocations / frame | 1069 (no plugin: 405) | 1076 (no plugin: 405) |
+| JS heap / Go heap | +407 KB / +16868 KB | +521 KB / +17256 KB |
+| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.3) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.4 ms/s (no plugin: 0.3) |
 | Pixel diff | 0.0% (`bench-bettertypingindicator-taut.png`) | 0.0% (`bench-bettertypingindicator-slick.png`) |
 
 ### Censorship
 
-**Taut**: works fully, 2.2x faster to load, 2.0x less frame overhead.
+**Taut**: works fully, 2.0x faster to load, 2.6x less frame overhead.
 
 | | Taut | Slick |
 |---|---|---|
@@ -181,17 +203,17 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T19:19:50Z by [this ru
 | Console errors | none | none |
 | Patches | — | ActivityItem, MessageListItem, MessageWrapper, ThreadRootGeneric |
 | Host trees delivered | 0 | 450 |
-| Load | 5.3 ms | 11.4 ms |
-| Frame (median / p95) | 1255 / 2152 µs (no plugin: 983) | 1517 / 2444 µs (no plugin: 985) |
-| Scroll pass CPU | 2191 ms (no plugin: 474) | 2203 ms (no plugin: 482) |
-| Allocations / frame | 1389 (no plugin: 403) | 1821 (no plugin: 402) |
-| JS heap / Go heap | +13301 KB / +36778 KB | +3344 KB / +28723 KB |
-| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.6 ms/s (no plugin: 0.4) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.6 ms/s (no plugin: 0.4) |
+| Load | 5.7 ms | 11.6 ms |
+| Frame (median / p95) | 1281 / 2455 µs (no plugin: 1068) | 1645 / 2882 µs (no plugin: 1091) |
+| Scroll pass CPU | 2178 ms (no plugin: 546) | 2282 ms (no plugin: 541) |
+| Allocations / frame | 1389 (no plugin: 397) | 1919 (no plugin: 398) |
+| JS heap / Go heap | +11896 KB / +36788 KB | +3663 KB / +38804 KB |
+| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 1.5 ms/s (no plugin: 0.5) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.6 ms/s (no plugin: 0.5) |
 | Pixel diff | 0.0% (`bench-censorship-taut.png`) | 0.0% (`bench-censorship-slick.png`) |
 
 ### Clear URLs
 
-**Taut**: works fully, 3.9x faster to load, 1.5x less JS memory. The rules come from ClearURLs/Rules on GitHub at start, so this check needs the network.
+**Taut**: works fully, 3.5x faster to load, 1.5x less JS memory. The rules come from ClearURLs/Rules on GitHub at start, so this check needs the network.
 
 | | Taut | Slick |
 |---|---|---|
@@ -201,17 +223,17 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T19:19:50Z by [this ru
 | Console errors | none | none |
 | Patches | — | — |
 | Host trees delivered | 0 | 0 |
-| Load | 2.9 ms | 11.5 ms |
-| Frame (median / p95) | 916 / 1512 µs (no plugin: 887) | 918 / 1505 µs (no plugin: 858) |
-| Scroll pass CPU | 428 ms (no plugin: 425) | 426 ms (no plugin: 432) |
-| Allocations / frame | 409 (no plugin: 406) | 409 (no plugin: 405) |
-| JS heap / Go heap | +340 KB / +2952 KB | +520 KB / +3267 KB |
-| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.6 ms/s (no plugin: 0.4) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.4) |
+| Load | 4.0 ms | 13.7 ms |
+| Frame (median / p95) | 1075 / 1816 µs (no plugin: 1007) | 1043 / 1691 µs (no plugin: 1016) |
+| Scroll pass CPU | 499 ms (no plugin: 500) | 487 ms (no plugin: 507) |
+| Allocations / frame | 409 (no plugin: 406) | 407 (no plugin: 405) |
+| JS heap / Go heap | +340 KB / +2966 KB | +520 KB / +3280 KB |
+| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.6 ms/s (no plugin: 0.4) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.6 ms/s (no plugin: 0.4) |
 | Pixel diff | 0.0% (`bench-clearurls-taut.png`) | 0.0% (`bench-clearurls-slick.png`) |
 
 ### Click to Load
 
-**Taut**: works fully, 3.1x faster to load, 5.4x less JS memory. Clack draws link unfurls natively and never loads third-party frames, so there is no embed for either variant to hold; the check only sees that the hook is in place.
+**Taut**: works fully, 4.2x faster to load, 5.4x less JS memory. Clack draws link unfurls natively and never loads third-party frames, so there is no embed for either variant to hold; the check only sees that the hook is in place.
 
 | | Taut | Slick |
 |---|---|---|
@@ -221,12 +243,12 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T19:19:50Z by [this ru
 | Console errors | none | none |
 | Patches | AttachmentMedia | — |
 | Host trees delivered | 0 | 0 |
-| Load | 3.4 ms | 10.5 ms |
-| Frame (median / p95) | 1232 / 1935 µs (no plugin: 1018) | 1035 / 1726 µs (no plugin: 996) |
-| Scroll pass CPU | 531 ms (no plugin: 503) | 482 ms (no plugin: 513) |
-| Allocations / frame | 449 (no plugin: 402) | 406 (no plugin: 402) |
-| JS heap / Go heap | +19.8 KB / +14170 KB | +107 KB / +2901 KB |
-| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.4) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.4) |
+| Load | 3.8 ms | 15.8 ms |
+| Frame (median / p95) | 1334 / 2174 µs (no plugin: 1068) | 1126 / 1901 µs (no plugin: 1141) |
+| Scroll pass CPU | 598 ms (no plugin: 543) | 542 ms (no plugin: 585) |
+| Allocations / frame | 444 (no plugin: 399) | 398 (no plugin: 398) |
+| JS heap / Go heap | +19.8 KB / +14181 KB | +107 KB / +2915 KB |
+| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.6 ms/s (no plugin: 0.4) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.7 ms/s (no plugin: 0.5) |
 | Pixel diff | 0.0% (`bench-clicktoload-taut.png`) | 0.0% (`bench-clicktoload-slick.png`) |
 
 ### Copy Reacted
@@ -241,12 +263,12 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T19:19:50Z by [this ru
 | Console errors | none | none |
 | Patches | ReactionAddButton, ReactionBar | ReactionAddButton, ReactionBar |
 | Host trees delivered | 180 | 180 |
-| Load | 5.2 ms | 5.8 ms |
-| Frame (median / p95) | 1463 / 2395 µs (no plugin: 992) | 1405 / 2778 µs (no plugin: 991) |
-| Scroll pass CPU | 1363 ms (no plugin: 482) | 1445 ms (no plugin: 483) |
-| Allocations / frame | 2560 (no plugin: 404) | 2569 (no plugin: 402) |
-| JS heap / Go heap | +4163 KB / +33226 KB | +4165 KB / +36274 KB |
-| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.6 ms/s (no plugin: 0.5) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.6 ms/s (no plugin: 0.4) |
+| Load | 2.8 ms | 4.1 ms |
+| Frame (median / p95) | 905 / 1979 µs (no plugin: 559) | 916 / 1561 µs (no plugin: 581) |
+| Scroll pass CPU | 860 ms (no plugin: 294) | 846 ms (no plugin: 303) |
+| Allocations / frame | 2610 (no plugin: 416) | 2616 (no plugin: 417) |
+| JS heap / Go heap | +4165 KB / +33364 KB | +4171 KB / +36953 KB |
+| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.3 ms/s (no plugin: 0.4) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.3 ms/s (no plugin: 0.3) |
 | Pixel diff | 0.0% (`bench-copyreacted-taut.png`) | 0.0% (`bench-copyreacted-slick.png`) |
 
 ### Custom Name Recording
@@ -261,17 +283,17 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T19:19:50Z by [this ru
 | Console errors | none | none |
 | Patches | EditAudioButton | EditAudioButton |
 | Host trees delivered | 0 | 0 |
-| Load | 4.4 ms | 4.8 ms |
-| Frame (median / p95) | 1228 / 1953 µs (no plugin: 1013) | 1228 / 1998 µs (no plugin: 996) |
-| Scroll pass CPU | 537 ms (no plugin: 507) | 535 ms (no plugin: 489) |
-| Allocations / frame | 447 (no plugin: 402) | 448 (no plugin: 401) |
-| JS heap / Go heap | +30.1 KB / +14241 KB | +46.2 KB / +14600 KB |
-| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.5) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.6 ms/s (no plugin: 0.5) |
+| Load | 4.4 ms | 5.7 ms |
+| Frame (median / p95) | 1371 / 2373 µs (no plugin: 1079) | 1303 / 2101 µs (no plugin: 1087) |
+| Scroll pass CPU | 609 ms (no plugin: 522) | 579 ms (no plugin: 541) |
+| Allocations / frame | 443 (no plugin: 402) | 447 (no plugin: 401) |
+| JS heap / Go heap | +30.1 KB / +14157 KB | +46.2 KB / +14516 KB |
+| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.6 ms/s (no plugin: 0.4) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.6 ms/s (no plugin: 0.5) |
 | Pixel diff | 0.0% (`bench-customnamerecording-taut.png`) | 0.0% (`bench-customnamerecording-slick.png`) |
 
 ### Experiments
 
-**Slick**: works fully, 2.9x less frame overhead.
+**Slick**: works fully, 3.6x less frame overhead.
 
 | | Taut | Slick |
 |---|---|---|
@@ -281,17 +303,17 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T19:19:50Z by [this ru
 | Console errors | none | none |
 | Patches | — | — |
 | Host trees delivered | 0 | 0 |
-| Load | 4.3 ms | 6.2 ms |
-| Frame (median / p95) | 632 / 1065 µs (no plugin: 524) | 569 / 946 µs (no plugin: 532) |
-| Scroll pass CPU | 295 ms (no plugin: 271) | 272 ms (no plugin: 270) |
-| Allocations / frame | 462 (no plugin: 414) | 418 (no plugin: 415) |
-| JS heap / Go heap | +80.5 KB / +14372 KB | +120 KB / +2894 KB |
-| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.3 ms/s (no plugin: 0.2) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.2 ms/s (no plugin: 0.6) |
+| Load | 6.3 ms | 9.3 ms |
+| Frame (median / p95) | 1168 / 1869 µs (no plugin: 979) | 1048 / 1709 µs (no plugin: 996) |
+| Scroll pass CPU | 516 ms (no plugin: 471) | 481 ms (no plugin: 473) |
+| Allocations / frame | 453 (no plugin: 406) | 408 (no plugin: 406) |
+| JS heap / Go heap | +80.5 KB / +14456 KB | +120 KB / +2910 KB |
+| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.4 ms/s (no plugin: 0.4) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.4 ms/s (no plugin: 0.4) |
 | Pixel diff | 0.0% (`bench-experiments-taut.png`) | 0.0% (`bench-experiments-slick.png`) |
 
 ### Haiku Warning
 
-**Slick**: works fully (Taut passes 1/2 checks), frame overhead 11 µs vs 296 µs, scroll CPU 0.0 ms vs 903 ms. Taut's warns only in channels Orpheus is in unless "Warn even if Orpheus doesn't respond" is on; the bench turns that on, as Orpheus isn't in the fake workspace.
+**Slick**: works fully (Taut passes 1/2 checks), frame overhead 0.0 µs vs 313 µs, scroll CPU 0.0 ms vs 933 ms. Taut's warns only in channels Orpheus is in unless "Warn even if Orpheus doesn't respond" is on; the bench turns that on, as Orpheus isn't in the fake workspace.
 
 | | Taut | Slick |
 |---|---|---|
@@ -302,12 +324,12 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T19:19:50Z by [this ru
 | Console errors | none | none |
 | Patches | BaseContextBarV2 | — |
 | Host trees delivered | 1 | 0 |
-| Load | 7.1 ms | 76.5 ms |
-| Frame (median / p95) | 1274 / 2251 µs (no plugin: 978) | 1002 / 1050 µs (no plugin: 991) |
-| Scroll pass CPU | 1385 ms (no plugin: 482) | 448 ms (no plugin: 478) |
-| Allocations / frame | 583 (no plugin: 402) | 206 (no plugin: 403) |
-| JS heap / Go heap | +4778 KB / +39398 KB | +491 KB / +4898 KB |
-| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 1003 ms/s (no plugin: 0.4) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.4 ms/s (no plugin: 0.4) |
+| Load | 7.6 ms | 68.0 ms |
+| Frame (median / p95) | 1362 / 2332 µs (no plugin: 1049) | 1079 / 1160 µs (no plugin: 1081) |
+| Scroll pass CPU | 1442 ms (no plugin: 509) | 492 ms (no plugin: 521) |
+| Allocations / frame | 627 (no plugin: 403) | 201 (no plugin: 403) |
+| JS heap / Go heap | +307 KB / +36430 KB | +491 KB / +4897 KB |
+| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 878 ms/s (no plugin: 0.4) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.4) |
 | Pixel diff | 82.6% (`bench-haikuwarning-taut.png`) | 82.6% (`bench-haikuwarning-slick.png`) |
 
 ### Human Count
@@ -322,17 +344,17 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T19:19:50Z by [this ru
 | Console errors | none | none |
 | Patches | BaseAvatarStack | BaseAvatarStack |
 | Host trees delivered | 1 | 1 |
-| Load | 2.5 ms | 4.2 ms |
-| Frame (median / p95) | 1087 / 1725 µs (no plugin: 986) | 1090 / 1775 µs (no plugin: 1002) |
-| Scroll pass CPU | 497 ms (no plugin: 486) | 499 ms (no plugin: 491) |
-| Allocations / frame | 570 (no plugin: 403) | 570 (no plugin: 403) |
-| JS heap / Go heap | +48.1 KB / +3052 KB | +60.1 KB / +2680 KB |
-| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.6 ms/s (no plugin: 0.4) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.4) |
+| Load | 2.1 ms | 3.2 ms |
+| Frame (median / p95) | 919 / 1443 µs (no plugin: 816) | 913 / 1488 µs (no plugin: 812) |
+| Scroll pass CPU | 425 ms (no plugin: 414) | 419 ms (no plugin: 406) |
+| Allocations / frame | 580 (no plugin: 410) | 581 (no plugin: 410) |
+| JS heap / Go heap | +48.1 KB / +2725 KB | +60.1 KB / +3034 KB |
+| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.4 ms/s (no plugin: 0.4) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.4) |
 | Pixel diff | 0.0% (`bench-humancount-taut.png`) | 0.0% (`bench-humancount-slick.png`) |
 
 ### Last Seen
 
-**Slick**: works fully, 5.2x faster to load, 2.5x less JS memory.
+**Slick**: works fully, 3.3x faster to load, 2.5x less JS memory.
 
 | | Taut | Slick |
 |---|---|---|
@@ -342,17 +364,17 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T19:19:50Z by [this ru
 | Console errors | none | none |
 | Patches | BasePresence, LocalTime, MemberProfileHoverCard, RimetoProfilePresence | LocalTime, MemberProfileHoverCard, Presence, ProfileHoverCard, RimetoProfilePresence |
 | Host trees delivered | 3 | 3 |
-| Load | 52.3 ms | 10.2 ms |
-| Frame (median / p95) | 1223 / 1965 µs (no plugin: 1008) | 1256 / 2106 µs (no plugin: 1017) |
-| Scroll pass CPU | 534 ms (no plugin: 497) | 541 ms (no plugin: 514) |
-| Allocations / frame | 460 (no plugin: 402) | 449 (no plugin: 401) |
-| JS heap / Go heap | +711 KB / +19351 KB | +286 KB / +15445 KB |
-| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 1.6 ms/s (no plugin: 0.5) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.7 ms/s (no plugin: 0.4) |
+| Load | 22.9 ms | 6.9 ms |
+| Frame (median / p95) | 762 / 1219 µs (no plugin: 582) | 742 / 1224 µs (no plugin: 590) |
+| Scroll pass CPU | 340 ms (no plugin: 313) | 353 ms (no plugin: 312) |
+| Allocations / frame | 473 (no plugin: 415) | 458 (no plugin: 416) |
+| JS heap / Go heap | +711 KB / +19582 KB | +286 KB / +15454 KB |
+| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 1.0 ms/s (no plugin: 0.3) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.4 ms/s (no plugin: 0.3) |
 | Pixel diff | 0.0% (`bench-lastseen-taut.png`) | 0.0% (`bench-lastseen-slick.png`) |
 
 ### Nicknames
 
-**Slick**: works fully, 2.1x less frame overhead.
+**Taut**: works fully in both; costs within noise, smaller bundle (5.8 KB vs 10.0 KB).
 
 | | Taut | Slick |
 |---|---|---|
@@ -363,17 +385,17 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T19:19:50Z by [this ru
 | Console errors | none | none |
 | Patches | MenuFromTemplate, RimetoMemberProfileOverflowMenu | AppDetailsOverflow, EditProfileFormPane, MenuFromTemplate, RimetoMemberProfileOverflowMenu |
 | Host trees delivered | 2 | 2 |
-| Load | 4.2 ms | 6.0 ms |
-| Frame (median / p95) | 654 / 1104 µs (no plugin: 532) | 590 / 982 µs (no plugin: 533) |
-| Scroll pass CPU | 307 ms (no plugin: 296) | 282 ms (no plugin: 274) |
-| Allocations / frame | 511 (no plugin: 414) | 466 (no plugin: 415) |
-| JS heap / Go heap | +210 KB / +15305 KB | +268 KB / +3704 KB |
-| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.3 ms/s (no plugin: 0.2) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.2 ms/s (no plugin: 0.2) |
+| Load | 7.1 ms | 9.1 ms |
+| Frame (median / p95) | 1185 / 2026 µs (no plugin: 1039) | 1091 / 1831 µs (no plugin: 984) |
+| Scroll pass CPU | 532 ms (no plugin: 519) | 497 ms (no plugin: 501) |
+| Allocations / frame | 514 (no plugin: 406) | 465 (no plugin: 405) |
+| JS heap / Go heap | +211 KB / +14894 KB | +269 KB / +3615 KB |
+| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.4 ms/s (no plugin: 0.3) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.3 ms/s (no plugin: 0.3) |
 | Pixel diff | 0.0% (`bench-nicknames-taut.png`) | 0.0% (`bench-nicknames-slick.png`) |
 
 ### Office Hours
 
-**Slick**: works fully in both; costs within noise, smaller bundle (9.8 KB vs 10.6 KB).
+**Taut**: works fully, 6.7x less frame overhead, scroll CPU 0.0 ms vs 77 ms.
 
 | | Taut | Slick |
 |---|---|---|
@@ -383,17 +405,17 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T19:19:50Z by [this ru
 | Console errors | none | none |
 | Patches | — | — |
 | Host trees delivered | 0 | 0 |
-| Load | 5.7 ms | 6.8 ms |
-| Frame (median / p95) | 925 / 1568 µs (no plugin: 845) | 909 / 1512 µs (no plugin: 859) |
-| Scroll pass CPU | 434 ms (no plugin: 424) | 421 ms (no plugin: 416) |
-| Allocations / frame | 408 (no plugin: 404) | 409 (no plugin: 405) |
-| JS heap / Go heap | +183 KB / +2906 KB | +203 KB / +2900 KB |
-| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.3) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.6 ms/s (no plugin: 0.4) |
+| Load | 6.9 ms | 7.9 ms |
+| Frame (median / p95) | 1055 / 1831 µs (no plugin: 1007) | 1338 / 2182 µs (no plugin: 1018) |
+| Scroll pass CPU | 489 ms (no plugin: 501) | 583 ms (no plugin: 506) |
+| Allocations / frame | 408 (no plugin: 405) | 405 (no plugin: 404) |
+| JS heap / Go heap | +183 KB / +2926 KB | +203 KB / +2911 KB |
+| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.6 ms/s (no plugin: 0.4) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.6 ms/s (no plugin: 0.4) |
 | Pixel diff | 0.0% (`bench-officehours-taut.png`) | 0.0% (`bench-officehours-slick.png`) |
 
 ### Oneko
 
-**Taut**: works fully, 3.5x less idle CPU.
+**Taut**: works fully, 5.1x less idle CPU.
 
 | | Taut | Slick |
 |---|---|---|
@@ -404,37 +426,37 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T19:19:50Z by [this ru
 | Console errors | none | none |
 | Patches | — | — |
 | Host trees delivered | 0 | 0 |
-| Load | 3.4 ms | 6.3 ms |
-| Frame (median / p95) | 1153 / 1846 µs (no plugin: 986) | 1160 / 1835 µs (no plugin: 982) |
-| Scroll pass CPU | 573 ms (no plugin: 476) | 581 ms (no plugin: 479) |
-| Allocations / frame | 473 (no plugin: 402) | 480 (no plugin: 402) |
-| JS heap / Go heap | +98.1 KB / +2933 KB | +151 KB / +3475 KB |
-| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 3.2 ms/s (no plugin: 0.3) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 10.4 ms/s (no plugin: 0.4) |
+| Load | 2.7 ms | 5.2 ms |
+| Frame (median / p95) | 924 / 1544 µs (no plugin: 831) | 935 / 1549 µs (no plugin: 806) |
+| Scroll pass CPU | 463 ms (no plugin: 428) | 468 ms (no plugin: 403) |
+| Allocations / frame | 475 (no plugin: 409) | 480 (no plugin: 409) |
+| JS heap / Go heap | +96.9 KB / +2946 KB | +152 KB / +2977 KB |
+| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 3.0 ms/s (no plugin: 0.4) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 13.8 ms/s (no plugin: 0.6) |
 | Pixel diff | 0.1% (`bench-oneko-taut.png`) | 0.1% (`bench-oneko-slick.png`) |
 
 ### Quick Join
 
-**Taut**: works fully (Slick passes 0/1 checks), 2.4x less frame overhead. Taut's adds Join channel to the channel menu; Slick's joins when you double-click a link to the channel in the page, which needs the link in the DOM: Clack draws message links natively, so Slick's has nothing to listen on.
+**Taut**: works fully, 6.5x less frame overhead, 6.9x less JS memory. Taut's adds Join channel to the channel menu; Slick's joins when you double-click a link to the channel in a message (Clack draws the link natively and sends the click to the document's listeners at the link's element).
 
 | | Taut | Slick |
 |---|---|---|
 | Bundle | `QuickJoin` 0.9 KB, sha256 `f032c1dbccf5` | `QuickJoin` 7.5 KB, sha256 `4b79243a4e88` |
 | Loads | yes | yes |
-| Join channel from a channel you're not in | pass: channel menu: Join channel | fail: no Join in the channel menu; document double-clicks forwarded to JS: false |
+| Join channel from a channel you're not in | pass: channel menu: Join channel | pass: double-clicking a link to the channel joins it |
 | Console errors | none | none |
 | Patches | — | CodeChannelEntityCard |
-| Host trees delivered | 0 | 0 |
-| Load | 2.1 ms | 5.1 ms |
-| Frame (median / p95) | 926 / 1548 µs (no plugin: 848) | 1041 / 1709 µs (no plugin: 854) |
-| Scroll pass CPU | 422 ms (no plugin: 425) | 463 ms (no plugin: 424) |
-| Allocations / frame | 409 (no plugin: 405) | 450 (no plugin: 405) |
-| JS heap / Go heap | +15.0 KB / +5120 KB | +63.1 KB / +16614 KB |
-| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.4 ms/s (no plugin: 0.5) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.4 ms/s (no plugin: 0.5) |
+| Host trees delivered | 0 | 1 |
+| Load | 2.2 ms | 6.4 ms |
+| Frame (median / p95) | 1052 / 1742 µs (no plugin: 1023) | 1208 / 1917 µs (no plugin: 1019) |
+| Scroll pass CPU | 490 ms (no plugin: 510) | 532 ms (no plugin: 515) |
+| Allocations / frame | 409 (no plugin: 405) | 452 (no plugin: 405) |
+| JS heap / Go heap | +15.0 KB / +4813 KB | +104 KB / +16740 KB |
+| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.5) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 3.1 ms/s (no plugin: 0.3) |
 | Pixel diff | 0.0% (`bench-quickjoin-taut.png`) | 0.0% (`bench-quickjoin-slick.png`) |
 
 ### Restricted Channel Warning
 
-**Taut**: works fully, 1.6x less frame overhead, scroll CPU 59 ms vs 2009 ms.
+**Taut**: works fully, scroll CPU 70 ms vs 1828 ms, 2.9x less JS memory.
 
 | | Taut | Slick |
 |---|---|---|
@@ -444,12 +466,12 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T19:19:50Z by [this ru
 | Console errors | none | none |
 | Patches | MessageInputRoadblock | MessageInputRoadblock |
 | Host trees delivered | 2 | 2 |
-| Load | 4.6 ms | 4.4 ms |
-| Frame (median / p95) | 1293 / 1988 µs (no plugin: 994) | 1465 / 2611 µs (no plugin: 985) |
-| Scroll pass CPU | 559 ms (no plugin: 500) | 2496 ms (no plugin: 486) |
-| Allocations / frame | 966 (no plugin: 403) | 2138 (no plugin: 402) |
-| JS heap / Go heap | +292 KB / +16503 KB | +4711 KB / +38446 KB |
-| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.6 ms/s (no plugin: 0.4) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.6 ms/s (no plugin: 0.3) |
+| Load | 3.5 ms | 4.0 ms |
+| Frame (median / p95) | 1086 / 1645 µs (no plugin: 808) | 1229 / 5538 µs (no plugin: 821) |
+| Scroll pass CPU | 472 ms (no plugin: 402) | 2237 ms (no plugin: 410) |
+| Allocations / frame | 983 (no plugin: 410) | 2377 (no plugin: 410) |
+| JS heap / Go heap | +292 KB / +16486 KB | +835 KB / +28850 KB |
+| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.4 ms/s (no plugin: 0.4) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.8 ms/s (no plugin: 0.4) |
 | Pixel diff | 0.2% (`bench-restrictedchannelwarning-taut.png`) | 0.2% (`bench-restrictedchannelwarning-slick.png`) |
 
 ### Show Real User
@@ -464,17 +486,17 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T19:19:50Z by [this ru
 | Console errors | none | none |
 | Patches | ActivityItem, Blocks, MessageListItem, MessageWrapper, ThreadRootGeneric | ActivityItem, Blocks, MessageListItem, MessageWrapper, ThreadRootGeneric |
 | Host trees delivered | 916 | 916 |
-| Load | 7.4 ms | 5.0 ms |
-| Frame (median / p95) | 823 / 1750 µs (no plugin: 523) | 852 / 1722 µs (no plugin: 542) |
-| Scroll pass CPU | 1577 ms (no plugin: 273) | 1655 ms (no plugin: 290) |
-| Allocations / frame | 2797 (no plugin: 415) | 2930 (no plugin: 415) |
-| JS heap / Go heap | +6397 KB / +36448 KB | +6477 KB / +39754 KB |
-| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.2 ms/s (no plugin: 0.2) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.2 ms/s (no plugin: 0.2) |
+| Load | 12.6 ms | 8.9 ms |
+| Frame (median / p95) | 1705 / 4536 µs (no plugin: 988) | 1588 / 2742 µs (no plugin: 984) |
+| Scroll pass CPU | 2138 ms (no plugin: 493) | 2152 ms (no plugin: 482) |
+| Allocations / frame | 1769 (no plugin: 403) | 2240 (no plugin: 406) |
+| JS heap / Go heap | +7392 KB / +49212 KB | +8577 KB / +40369 KB |
+| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.4) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.4) |
 | Pixel diff | 0.0% (`bench-showrealuser-taut.png`) | 0.0% (`bench-showrealuser-slick.png`) |
 
 ### Show Sending Bot
 
-**Slick**: works fully, 2.7x faster to load.
+**Slick**: works fully, 2.6x faster to load.
 
 | | Taut | Slick |
 |---|---|---|
@@ -483,39 +505,39 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T19:19:50Z by [this ru
 | the sending app's badge on a person's message | pass: taut-sending-bot | pass: slick-sending-bot |
 | Console errors | none | none |
 | Patches | ActivityRowContentSenderAvatarLayout, Blocks, ConnectedBaseAvatar, MessageAttachment, MessageAvatar, MessageBackground, MessageKitGutter, MessageSender, SearchResult, ThreadSenderAndTimestampGeneric | ActivityRowContentSenderAvatarLayout, BaseMessageAvatar, ConnectedBaseAvatar, MessageAttachment, MessageAvatar, MessageKitGutter, MessageSender, ProgressiveDisclosureSuccessCoachmarkWrapper, SearchResult, ThreadSenderAndTimestampGeneric |
-| Host trees delivered | 2031 | 1728 |
-| Load | 54.5 ms | 20.3 ms |
-| Frame (median / p95) | 1693 / 3956 µs (no plugin: 858) | 1630 / 2973 µs (no plugin: 843) |
-| Scroll pass CPU | 1904 ms (no plugin: 428) | 1791 ms (no plugin: 419) |
-| Allocations / frame | 5670 (no plugin: 406) | 5515 (no plugin: 406) |
-| JS heap / Go heap | +23064 KB / +99159 KB | +22170 KB / +83648 KB |
-| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.6 ms/s (no plugin: 0.4) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.6 ms/s (no plugin: 0.5) |
+| Host trees delivered | 2016 | 1733 |
+| Load | 66.1 ms | 25.9 ms |
+| Frame (median / p95) | 1802 / 3961 µs (no plugin: 987) | 1875 / 3028 µs (no plugin: 993) |
+| Scroll pass CPU | 1986 ms (no plugin: 487) | 1986 ms (no plugin: 484) |
+| Allocations / frame | 5466 (no plugin: 404) | 5349 (no plugin: 406) |
+| JS heap / Go heap | +23850 KB / +100045 KB | +21247 KB / +82109 KB |
+| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.6 ms/s (no plugin: 0.4) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.7 ms/s (no plugin: 0.5) |
 | Pixel diff | 0.0% (`bench-showsendingbot-taut.png`) | 0.0% (`bench-showsendingbot-slick.png`) |
 
 ### Shut Up Slackbot
 
-**Taut**: works fully in both; costs within noise, smaller bundle (2.8 KB vs 6.5 KB).
+**Slick**: works fully, 2.4x less frame overhead.
 
 | | Taut | Slick |
 |---|---|---|
 | Bundle | `ShutUpSlackbot` 2.8 KB, sha256 `8c9c3f390bdb` | `ShutUpSlackbot` 6.5 KB, sha256 `ebe1ca4c6f76` |
 | Loads | yes | yes |
-| the slash-command notice is marked read | pass: marked: 1794250925.000100 | pass: marked: 1794250959.000100 |
+| the slash-command notice is marked read | pass: marked: 1794257857.000100 | pass: marked: 1794257892.000100 |
 | its notification is silenced, others aren't | pass | pass |
 | Console errors | none | none |
 | Patches | — | — |
 | Host trees delivered | 0 | 0 |
-| Load | 6.5 ms | 7.7 ms |
-| Frame (median / p95) | 1041 / 1791 µs (no plugin: 982) | 1048 / 1689 µs (no plugin: 1024) |
-| Scroll pass CPU | 485 ms (no plugin: 478) | 481 ms (no plugin: 502) |
-| Allocations / frame | 406 (no plugin: 403) | 406 (no plugin: 403) |
-| JS heap / Go heap | +60.2 KB / +3563 KB | +50.8 KB / +2996 KB |
-| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.7 ms/s (no plugin: 0.5) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.5) |
+| Load | 6.2 ms | 7.8 ms |
+| Frame (median / p95) | 1129 / 2036 µs (no plugin: 1053) | 1104 / 1729 µs (no plugin: 1072) |
+| Scroll pass CPU | 542 ms (no plugin: 528) | 517 ms (no plugin: 535) |
+| Allocations / frame | 403 (no plugin: 402) | 405 (no plugin: 399) |
+| JS heap / Go heap | +60.2 KB / +3574 KB | +50.8 KB / +3007 KB |
+| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.6 ms/s (no plugin: 0.6) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.5) |
 | Pixel diff | 0.0% (`bench-shutupslackbot-taut.png`) | 0.0% (`bench-shutupslackbot-slick.png`) |
 
 ### Silent Typing
 
-**Taut**: works fully, 3.0x less frame overhead, 3.1x less JS memory.
+**Taut**: works fully, 5.2x less frame overhead, 3.1x less JS memory.
 
 | | Taut | Slick |
 |---|---|---|
@@ -526,12 +548,12 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T19:19:50Z by [this ru
 | Console errors | none | none |
 | Patches | TautComposerButtons | TextyButtonOverflow |
 | Host trees delivered | 2 | 1 |
-| Load | 2.5 ms | 5.3 ms |
-| Frame (median / p95) | 1084 / 1802 µs (no plugin: 993) | 1288 / 2054 µs (no plugin: 1014) |
-| Scroll pass CPU | 498 ms (no plugin: 491) | 560 ms (no plugin: 509) |
-| Allocations / frame | 437 (no plugin: 403) | 640 (no plugin: 402) |
-| JS heap / Go heap | +51.1 KB / +3285 KB | +161 KB / +14794 KB |
-| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.5) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.4) |
+| Load | 2.4 ms | 3.9 ms |
+| Frame (median / p95) | 653 / 1120 µs (no plugin: 623) | 727 / 1158 µs (no plugin: 571) |
+| Scroll pass CPU | 310 ms (no plugin: 330) | 334 ms (no plugin: 296) |
+| Allocations / frame | 453 (no plugin: 414) | 666 (no plugin: 417) |
+| JS heap / Go heap | +51.1 KB / +2524 KB | +161 KB / +14682 KB |
+| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.3 ms/s (no plugin: 0.3) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.3 ms/s (no plugin: 0.3) |
 | Pixel diff | 0.0% (`bench-silenttyping-taut.png`) | 0.0% (`bench-silenttyping-slick.png`) |
 
 ### Slim Message Box
@@ -546,17 +568,17 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T19:19:50Z by [this ru
 | Console errors | none | none |
 | Patches | TautComposerButtons, TextyButtons | TextyButtons |
 | Host trees delivered | 1 | 1 |
-| Load | 4.5 ms | 4.7 ms |
-| Frame (median / p95) | 658 / 1067 µs (no plugin: 534) | 667 / 1092 µs (no plugin: 533) |
-| Scroll pass CPU | 307 ms (no plugin: 281) | 308 ms (no plugin: 289) |
-| Allocations / frame | 751 (no plugin: 414) | 724 (no plugin: 414) |
-| JS heap / Go heap | +165 KB / +14900 KB | +193 KB / +15026 KB |
-| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.2 ms/s (no plugin: 0.2) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.2 ms/s (no plugin: 0.2) |
+| Load | 6.3 ms | 7.1 ms |
+| Frame (median / p95) | 1206 / 1933 µs (no plugin: 991) | 1221 / 1936 µs (no plugin: 1030) |
+| Scroll pass CPU | 532 ms (no plugin: 472) | 535 ms (no plugin: 490) |
+| Allocations / frame | 726 (no plugin: 406) | 702 (no plugin: 406) |
+| JS heap / Go heap | +165 KB / +15203 KB | +193 KB / +15040 KB |
+| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.3) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.3) |
 | Pixel diff | 0.0% (`bench-slimmessagebox-taut.png`) | 0.0% (`bench-slimmessagebox-slick.png`) |
 
 ### Streamer Mode
 
-**Slick**: no console errors (Taut logs 1).
+**Slick**: works fully, 9.8x faster to load.
 
 | | Taut | Slick |
 |---|---|---|
@@ -564,36 +586,36 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T19:19:50Z by [this ru
 | Loads | yes | yes |
 | private things are blurred (a blur stylesheet) | pass | pass |
 | notifications are silenced | pass | pass |
-| Console errors | 1: taut js error: Uncaught Error: Minified React error #31; visit https://react.dev/errors/31?args[]=object%20with%20keys%20%7Bdispatch%2C%20setRects%2C%20setViewport%2C%20setHidden%2C%20callFn%2C%20fnById%2C%20resendDocument%2C%20flush%2C%20createRoot%2C%20render%2C%20unmount%2C%20rootContainer%2C%20p… | none |
+| Console errors | none | none |
 | Patches | ActivityItem, ActivityPrivacyBlurredName, MessageBackground | HelpButton, MessageBackground |
 | Host trees delivered | 450 | 451 |
-| Load | 7.6 ms | 14.5 ms |
-| Frame (median / p95) | 1420 / 2245 µs (no plugin: 1008) | 1491 / 2524 µs (no plugin: 988) |
-| Scroll pass CPU | 1392 ms (no plugin: 518) | 1417 ms (no plugin: 479) |
-| Allocations / frame | 1684 (no plugin: 402) | 1999 (no plugin: 403) |
-| JS heap / Go heap | +4702 KB / +27313 KB | +4136 KB / +27216 KB |
-| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.4 ms/s (no plugin: 0.3) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.4 ms/s (no plugin: 0.3) |
+| Load | 110 ms | 11.2 ms |
+| Frame (median / p95) | 1188 / 2052 µs (no plugin: 832) | 1301 / 2249 µs (no plugin: 823) |
+| Scroll pass CPU | 1074 ms (no plugin: 419) | 1114 ms (no plugin: 414) |
+| Allocations / frame | 1663 (no plugin: 410) | 1971 (no plugin: 410) |
+| JS heap / Go heap | +4707 KB / +27199 KB | +4143 KB / +27750 KB |
+| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.4 ms/s (no plugin: 0.4) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.4) |
 | Pixel diff | 0.0% (`bench-streamermode-taut.png`) | 0.0% (`bench-streamermode-slick.png`) |
 
 ### User Pronouns
 
-**Taut**: same results (1/2 checks each) in both; costs within noise, smaller bundle (2.1 KB vs 4.8 KB).
+**Taut**: works fully in both; costs within noise, smaller bundle (2.1 KB vs 4.8 KB).
 
 | | Taut | Slick |
 |---|---|---|
 | Bundle | `UserPronouns` 2.1 KB, sha256 `ab90e904e46d` | `UserPronouns` 4.8 KB, sha256 `8b58d343615a` |
 | Loads | yes | yes |
 | pronouns next to the sender in channel rows | pass: 7 of 8 people's pronouns shown | pass: 7 of 8 people's pronouns shown |
-| pronouns in the thread pane header | fail: no new tree with they/them after opening the thread (pane true, ThreadSenderAndTimestampGeneric patched true, 5 trees) | fail: no new tree with they/them after opening the thread (pane true, ThreadSenderAndTimestampGeneric patched true, 5 trees) |
+| pronouns in the thread pane header | pass | pass |
 | Console errors | none | none |
 | Patches | BaseBroadcastPreamble, ThreadSenderAndTimestampGeneric | BaseBroadcastPreamble, ThreadSenderAndTimestampGeneric |
-| Host trees delivered | 185 | 185 |
-| Load | 5.1 ms | 5.2 ms |
-| Frame (median / p95) | 1407 / 2262 µs (no plugin: 976) | 1417 / 2349 µs (no plugin: 991) |
-| Scroll pass CPU | 1101 ms (no plugin: 485) | 1140 ms (no plugin: 496) |
-| Allocations / frame | 1732 (no plugin: 403) | 1730 (no plugin: 402) |
-| JS heap / Go heap | +2948 KB / +27705 KB | +3125 KB / +30461 KB |
-| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.4) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.5) |
+| Host trees delivered | 189 | 189 |
+| Load | 3.7 ms | 4.6 ms |
+| Frame (median / p95) | 1177 / 2786 µs (no plugin: 818) | 1165 / 2520 µs (no plugin: 822) |
+| Scroll pass CPU | 911 ms (no plugin: 420) | 947 ms (no plugin: 407) |
+| Allocations / frame | 1784 (no plugin: 409) | 1776 (no plugin: 409) |
+| JS heap / Go heap | +2993 KB / +28666 KB | +3170 KB / +31393 KB |
+| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.5) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.5 ms/s (no plugin: 0.4) |
 | Pixel diff | 0.0% (`bench-userpronouns-taut.png`) | 0.0% (`bench-userpronouns-slick.png`) |
 
 ### Who Reacted
@@ -609,10 +631,10 @@ Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T19:19:50Z by [this ru
 | Console errors | none | none |
 | Patches | Reaction, UnstyledButton | Reaction, UnstyledButton |
 | Host trees delivered | 360 | 360 |
-| Load | 3.4 ms | 5.1 ms |
-| Frame (median / p95) | 1430 / 5321 µs (no plugin: 975) | 1399 / 5222 µs (no plugin: 994) |
-| Scroll pass CPU | 1919 ms (no plugin: 483) | 1877 ms (no plugin: 486) |
-| Allocations / frame | 3528 (no plugin: 402) | 3553 (no plugin: 403) |
-| JS heap / Go heap | +6508 KB / +35468 KB | +6408 KB / +35229 KB |
-| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.8 ms/s (no plugin: 0.4) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.6 ms/s (no plugin: 0.4) |
+| Load | 7.2 ms | 4.2 ms |
+| Frame (median / p95) | 927 / 3044 µs (no plugin: 574) | 905 / 3294 µs (no plugin: 585) |
+| Scroll pass CPU | 1253 ms (no plugin: 308) | 1154 ms (no plugin: 314) |
+| Allocations / frame | 3685 (no plugin: 416) | 3697 (no plugin: 415) |
+| JS heap / Go heap | +6569 KB / +35597 KB | +6412 KB / +35862 KB |
+| Idle | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.4 ms/s (no plugin: 0.4) | 0 trees in 3 s, 1 wakeups (no plugin: 1), CPU 0.4 ms/s (no plugin: 0.3) |
 | Pixel diff | 0.3% (`bench-whoreacted-taut.png`) | 0.3% (`bench-whoreacted-slick.png`) |
