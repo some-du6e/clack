@@ -76,10 +76,11 @@ func (v Variant) Passed() int {
 }
 
 // Rerenders reports a variant that keeps re-rendering with nothing
-// happening: more than one host tree a second over the idle window. That
+// happening: ten or more host trees over the idle window, more than two a
+// second (a loop delivers hundreds; a lookup settling, a few). That
 // disqualifies it (rows that keep getting new trees "spaz").
 func (v Variant) Rerenders() bool {
-	return v.IdleSeconds > 0 && float64(v.IdleDeliveries)/v.IdleSeconds > 1
+	return v.IdleSeconds > 0 && v.IdleDeliveries >= 10 && float64(v.IdleDeliveries)/v.IdleSeconds > 2
 }
 
 // Works is loaded, every check passing, no console errors.

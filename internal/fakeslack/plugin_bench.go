@@ -86,7 +86,7 @@ func (s *Server) Bench() BenchCase {
 		switch {
 		case i%50 == 10:
 			c.Relayed[ts] = authors[(i/3+1)%len(authors)]
-		case i%50 == 30:
+		case benchSentByBot(i):
 			c.SentByBot = append(c.SentByBot, ts)
 		}
 		if i%5 == 0 {
@@ -148,7 +148,7 @@ func (s *Server) addPluginBench() {
 			m.BotProfile = &slack.BotProfile{ID: BenchRelayBotID, Name: "at-channel", AppID: "A08G06U6SJG", TeamID: TeamID}
 			m.Metadata = meta
 		}
-		if i%50 == 30 {
+		if benchSentByBot(i) {
 			meta, _ := json.Marshal(map[string]any{"event_type": "bench_post", "event_payload": map[string]any{}})
 			m.BotID = BenchSenderBotID
 			m.BotProfile = &slack.BotProfile{ID: BenchSenderBotID, Name: BenchSenderBot, AppID: "A0PLUGSEND", TeamID: TeamID,
@@ -272,3 +272,8 @@ func (s *Server) handlePluginBench(method string, f url.Values) (any, bool) {
 	}
 	return ok("messages", out, "has_more", false), true
 }
+
+// benchSentByBot: an app posted message i with a person's token (one in
+// every fifty, and one near the bottom so it's on screen when the channel
+// opens).
+func benchSentByBot(i int) bool { return i%50 == 30 || i == BenchMessages-4 }

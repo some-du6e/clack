@@ -226,8 +226,8 @@ turns it on, then:
   renders of rows scrolling in), minus the plugin-free pass.
 - **JS heap** is QuickJS heap growth from installing the plugin.
 - **Idle trees** are host trees delivered over an idle window (frames
-  drawn, no input, no events) after everything settled. More than one a
-  second means the variant keeps re-rendering, which disqualifies it.
+  drawn, no input, no events) after everything settled. Ten or more, over
+  two a second, means the variant keeps re-rendering, which disqualifies it.
 
 The winner: a variant that loads beats one that doesn't; one that doesn't
 re-render while idle beats one that does; more passing checks beat fewer;
@@ -253,7 +253,7 @@ The screenshots are in the run's ` + "`plugin-bench-shots`" + ` artifact.
 	if d.Run != "" {
 		fmt.Fprintf(&b, " by [this run](%s)", d.Run)
 	}
-	b.WriteString(".\n\n## Results\n\n")
+	b.WriteString(".\n\n## Host fixes and gaps the bench found\n\n" + hostNotes + "\n## Results\n\n")
 	b.WriteString(summaryTable(d))
 	b.WriteString("\n## Per plugin\n")
 	for i := range d.Plugins {
@@ -360,3 +360,29 @@ func short(h string) string {
 	}
 	return h
 }
+
+// hostNotes are what the bench turned up in the host (not per plugin: the
+// APIs Clack emulates), kept with the table so its numbers read right.
+const hostNotes = `- **Fixed: rows re-rendering forever.** The Taut mirror fingerprints a
+  channel's messages to tell JS when they changed; it hashed the cached
+  threads in Go's random map order, so a channel with two or more cached
+  threads looked changed on every 750 ms sweep. The mirror re-sent
+  messages, channelHistory and reactions to JS each time, and every row a
+  messages-reading plugin patched re-rendered: ShowRealUser and
+  ShowSendingBot in both systems and Slick's Censorship "spazzed" while
+  nothing happened. Threads are hashed in ts order now
+  (internal/taut/mirror.go, TestMessagesFingerprintStable).
+- **Open: Taut StreamerMode's MessageBackground patch** logs
+  "componentElement MessageBackground: TypeError: not a function" and a
+  React #31 (jsrt's host object rendered as a child) on its first rows in
+  the whole client; the synthetic repro in the Taut harness renders fine,
+  so it depends on the real row props. Its checks still pass.
+- **Open: pronouns in the thread pane header.** Both User Pronouns
+  variants patch ThreadSenderAndTimestampGeneric, but opening a thread in
+  the bench delivers no tree with the root sender's pronouns for either;
+  the channel rows show them. Same result for both, so it doesn't change
+  the pick.
+- **Not a host gap: Click to Load.** Clack draws link unfurls natively and
+  never loads third-party frames, so there is nothing for either variant
+  to hold.
+`

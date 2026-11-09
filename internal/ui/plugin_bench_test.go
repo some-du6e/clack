@@ -268,6 +268,14 @@ func (e *benchEnv) render(name string, props any) []*slackc.Node {
 
 // renderRaw is render's tree as delivered.
 func (e *benchEnv) renderRaw(name string, props any) []byte {
+	tree, root := e.mount(name, props)
+	e.tt.Bridge().Unmount(root)
+	return tree
+}
+
+// mount is renderRaw leaving the root mounted (its function props stay
+// callable); the caller unmounts it.
+func (e *benchEnv) mount(name string, props any) ([]byte, uint64) {
 	e.mu.Lock()
 	e.nextRoot++
 	root := e.nextRoot
@@ -281,8 +289,7 @@ func (e *benchEnv) renderRaw(name string, props any) []byte {
 		e.mu.Unlock()
 		return tree != nil
 	})
-	e.tt.Bridge().Unmount(root)
-	return tree
+	return tree, root
 }
 
 func findComp(nodes []*slackc.Node, name string) *slackc.Node {
@@ -551,7 +558,8 @@ var fnRef = regexp.MustCompile(`"onClick":\{"\$fn":(\d+)\}`)
 // (Taut's composer.addButton row): how a user turns on a plugin whose
 // switch lives there.
 func (e *benchEnv) clickComposerButtons() int {
-	tree := e.renderRaw("TautComposerButtons", map[string]any{"placement": "end", "context": map[string]any{"kind": "channel", "channelId": fakeslack.BenchChannelID}})
+	tree, root := e.mount("TautComposerButtons", map[string]any{"placement": "end", "context": map[string]any{"kind": "channel", "channelId": fakeslack.BenchChannelID}})
+	defer e.tt.Bridge().Unmount(root)
 	n := 0
 	for _, m := range fnRef.FindAllSubmatch(tree, -1) {
 		id, _ := strconv.ParseInt(string(m[1]), 10, 64)
@@ -854,10 +862,10 @@ var benchScenarios = map[string]benchScenario{
 				if e.tt.ThunkPatched("joinChannel") || e.tt.ThunkPatched("joinCodeChannel") {
 					return true, "joins from channel links (patches joinChannel)"
 				}
-				return false, "menu: " + labels(items)
+				return false, fmt.Sprintf("no Join in the channel menu; document double-clicks forwarded to JS: %v", e.tt.Bridge().WantsEvent("dblclick"))
 			}},
 		},
-		notes: "Taut's adds Join channel to the channel menu; Slick's joins from a link to the channel (double-click, hover card). The check passes on either.",
+		notes: "Taut's adds Join channel to the channel menu; Slick's joins when you double-click a link to the channel in the page, which needs the link in the DOM: Clack draws message links natively, so Slick's has nothing to listen on.",
 	},
 	"restrictedchannelwarning": {
 		checks: []benchCheck{
