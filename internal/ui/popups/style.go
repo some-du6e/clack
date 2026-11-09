@@ -689,11 +689,13 @@ func FocusRing(gtx layout.Context, th *theme.Theme, r image.Rectangle, rad int) 
 
 // FocusRingColors draws the ring with a given solid (1px) and halo (5px)
 // color.
+// Both are drawn outside r only (box-shadows), so a transparent icon
+// button keeps its own background.
 func FocusRingColors(gtx layout.Context, solid, halo color.NRGBA, r image.Rectangle, rad int) {
 	hw := dp(gtx, 5)
-	rrect(gtx, r.Inset(-hw), rad+hw, halo)
 	one := max(1, dp(gtx, 1))
-	rrect(gtx, r.Inset(-one), rad+one, solid)
+	stroke(gtx, r.Inset(-hw), rad+hw, hw-one, halo)
+	stroke(gtx, r.Inset(-one), rad+one, one, solid)
 }
 
 func buttonNative(gtx layout.Context, th *theme.Theme, st slackc.Styled, c *widget.Clickable, kind BtnKind, size BtnSize, label, iconName string, minW float32, ring bool) layout.Dimensions {
