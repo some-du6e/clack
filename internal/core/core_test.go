@@ -197,7 +197,8 @@ func TestSnapshotAndSections(t *testing.T) {
 	for _, v := range snap.Sections {
 		got = append(got, v.Type+":"+v.Name+"="+strings.Join(v.Channels, ","))
 	}
-	want := "stars:Starred=C2|standard:Proj=G3|channels:Channels=C4,C1|direct_messages:Direct messages=D1|standard:Orphan=|apps:Apps=D2"
+	// coding_channels: Slack's client-made Code channels section (session_channels on), spliced in first
+	want := "coding_channels:Code channels=|stars:Starred=C2|standard:Proj=G3|channels:Channels=C4,C1|direct_messages:Direct messages=D1|standard:Orphan=|apps:Apps=D2"
 	if strings.Join(got, "|") != want {
 		t.Errorf("sections:\n got %s\nwant %s", strings.Join(got, "|"), want)
 	}

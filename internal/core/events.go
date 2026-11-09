@@ -266,6 +266,13 @@ func (a *App) handle(ev slack.Event) {
 	case "activity":
 		a.onActivityEvent(ctx, ev.Raw)
 	case "bookmark_added", "bookmark_removed", "channel_updated", "channel_tab_added", "channel_tab_removed":
+		if ev.Type == "channel_updated" { // properties (a code channel's agent session) merge in
+			for _, id := range a.onChannelUpdated(ev.Raw) {
+				if c, ok := a.Conv(id); ok {
+					a.emit(Event{Type: "conv", Channel: id, Conv: &c})
+				}
+			}
+		}
 		// the channel tab bar changed: the UI re-reads Tabs / Bookmarks
 		a.emit(Event{Type: "tabs", Channel: ch, Name: ev.Type, Raw: ev.Raw})
 	case "thread_subscribed", "thread_unsubscribed":

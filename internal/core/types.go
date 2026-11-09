@@ -148,6 +148,12 @@ type Conv struct {
 	// TempUntil: a temporary membership's expiration_ts ("Join…"), 0 when
 	// the membership is permanent.
 	TempUntil int64
+	// Code is set for a code channel (codechannel.go); CodeStatus is its
+	// effective agent status (active | processing | suspended | closed |
+	// stale) and AgentName its agent's name ("Agent" when unknown).
+	Code       *CodeChannel
+	CodeStatus string
+	AgentName  string
 }
 
 // ConvRef describes a conversation that may not be in the sidebar
