@@ -69,7 +69,7 @@ posts) then the text:
 | at_user, at_user_group, at_channel, at_everyone, unjoined mention | Mention in {destination} |
 | keyword | Keyword in {destination} |
 | thread_v2 | Thread in {destination} |
-| message_reaction | Reacted {emoji} |
+| message_reaction | Reacted {emoji} (no image for the emoji: its `:name:` alt text, clipped to the 16px box, from vbPY's `renderEmojiFallback`) |
 | saved_reminder | Reminder from {source} (message, file, canvas, list item), else Reminder |
 | channel post | {#channel} (no "Post in": that is the non-grouped footer) |
 | dm | Direct Message |

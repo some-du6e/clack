@@ -311,3 +311,55 @@ func actShots(t *testing.T, app *core.App) {
 		t.Logf("saved %s", f.Name())
 	}
 }
+
+// A reaction whose emoji has no image in the store (a custom one Clack
+// doesn't know): Slack's pill still shows the emoji. aJri hands vbPY's
+// Emoji ":name:" with renderEmojiFallback, which draws an <img> with no
+// src and that alt text, clipped to the 16px emoji box ("Reacted :ta").
+func TestActivityReactionWithoutEmojiImage(t *testing.T) {
+	app := actFeedApp(t)
+	v := NewActivity(&slickHost{app: app, th: theme.New(false)})
+	var ops op.Ops
+	sz := image.Pt(1200, 800)
+	deadline := time.Now().Add(10 * time.Second)
+	for len(actPage(v).Items) < actFeedLen {
+		if time.Now().After(deadline) {
+			t.Fatalf("feed never loaded (%d items)", len(actPage(v).Items))
+		}
+		v.Layout(actFrame(&ops, sz))
+		time.Sleep(10 * time.Millisecond)
+	}
+	page := actPage(v)
+	known := actItem(t, v, "k-reaction")
+	if known.Reaction == nil || known.Reaction.URL == "" {
+		t.Fatalf("k-reaction's :tada: has no image: %+v", known.Reaction)
+	}
+	unknown := *known
+	unknown.Reaction = &core.ActivityReaction{User: known.Reaction.User, Name: "tada_custom"}
+	dk, du := v.describe(known, page.Convs), v.describe(&unknown, page.Convs)
+	if !du.reacted || du.foot != "Reacted" || du.footEmoji != "" || du.footAlt != ":tada_custom:" {
+		t.Fatalf("pill %q reacted %v image %q alt %q, want Reacted + :tada_custom:", du.foot, du.reacted, du.footEmoji, du.footAlt)
+	}
+	pill := func(d *actDesc) image.Point {
+		gtx := actFrame(&ops, sz)
+		gtx.Constraints.Min = image.Point{}
+		return v.actPill(gtx, d, false).Size
+	}
+	// the alt text takes the image's place and size, nothing wider
+	if a, b := pill(&du), pill(&dk); a != b {
+		t.Errorf("pill with the alt text %v, with the image %v", a, b)
+	}
+	noEmoji := du
+	noEmoji.footAlt = ""
+	if a, b := pill(&du), pill(&noEmoji); a != b {
+		t.Errorf("pill with the alt text %v, with the reaction icon %v", a, b)
+	}
+	gtx := actFrame(&ops, sz)
+	gtx.Constraints.Min = image.Point{}
+	if d := v.emojiAlt(gtx, ":a_much_longer_custom_emoji_name:", 16); d.Size != image.Pt(16, 16) {
+		t.Errorf("alt text box %v, want 16x16 (clipped)", d.Size)
+	}
+	if got := actEmojiText(":already_wrapped:"); got != ":already_wrapped:" {
+		t.Errorf("actEmojiText(:already_wrapped:) = %q", got)
+	}
+}
