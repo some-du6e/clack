@@ -69,16 +69,17 @@ func (c *Controller) huddleItemLabel(channel string) string {
 }
 
 // huddleItem is HuddleButtonMenuItem: leave when you're in channel's
-// huddle, else start or join it (with the member when there's no DM yet).
-func (c *Controller) huddleItem(channel, member string) popups.MenuItem {
+// huddle, else start or join it (with the member when there's no DM yet:
+// startHuddleByMemberId). entry is the startHuddle entry point.
+func (c *Controller) huddleItem(channel, member, entry string) popups.MenuItem {
 	return popups.MenuItem{Key: "huddle_button_menu_item", Label: c.huddleItemLabel(channel), Icon: "headphones", Do: func() {
 		switch {
 		case channel != "" && c.In(channel):
 			c.Leave()
-		case channel != "":
-			c.Start(channel)
 		case member != "":
-			c.StartWith(member)
+			c.StartWithFrom(member, entry)
+		case channel != "":
+			c.Begin(channel, entry)
 		}
 	}}
 }
@@ -95,13 +96,13 @@ func (c *Controller) MenuItems(channel string) []popups.MenuItem {
 	var items []popups.MenuItem
 	if !c.ScheduledHuddles() {
 		if showHuddle {
-			items = append(items, c.huddleItem(channel, ""))
+			items = append(items, c.huddleItem(channel, "", EntryHeaderMenu))
 		}
 		return append(items, c.copyItem(channel))
 	}
 	items = append(items, popups.MenuItem{Header: "Huddle"})
 	if showHuddle {
-		items = append(items, c.huddleItem(channel, ""))
+		items = append(items, c.huddleItem(channel, "", EntryHeaderMenu))
 	}
 	items = append(items, c.copyItem(channel))
 	if c.canSchedule(channel) {
@@ -131,8 +132,14 @@ func (c *Controller) canSchedule(channel string) bool {
 // MemberMenuItems is the profile card's call menu for a person: the
 // huddle item, and Copy huddle link when your DM with them exists.
 func (c *Controller) MemberMenuItems(member string) []popups.MenuItem {
+	return c.MemberMenuItemsFrom(member, EntryMemberCard)
+}
+
+// MemberMenuItemsFrom is MemberMenuItems for an entry point (the full
+// profile's button is member_profile_huddle_button).
+func (c *Controller) MemberMenuItemsFrom(member, entry string) []popups.MenuItem {
 	dm := c.dmWith(member)
-	items := []popups.MenuItem{c.huddleItem(dm, member)}
+	items := []popups.MenuItem{c.huddleItem(dm, member, entry)}
 	if dm != "" {
 		items = append(items, c.copyItem(dm))
 	}
@@ -198,7 +205,10 @@ type memberArgs struct {
 // StartWith starts (or joins) a huddle in your DM with member, opening
 // the DM first when there's none (Slack's startHuddleByMemberId:
 // conversations.open, then startHuddle in it).
-func (c *Controller) StartWith(member string) {
+func (c *Controller) StartWith(member string) { c.StartWithFrom(member, EntryMemberCard) }
+
+// StartWithFrom is StartWith for an entry point.
+func (c *Controller) StartWithFrom(member, entry string) {
 	app := c.h.Core()
 	if app == nil || member == "" {
 		return
@@ -207,7 +217,7 @@ func (c *Controller) StartWith(member string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		_, err := taut.Dispatch(ctx, tt, "startHuddleByMemberId", memberArgs{MemberID: member, EntryPoint: "member_card_huddle_button"},
+		_, err := taut.Dispatch(ctx, tt, "startHuddleByMemberId", memberArgs{MemberID: member, EntryPoint: entry},
 			func(ctx context.Context, a memberArgs) (any, error) {
 				ch := c.dmWith(a.MemberID)
 				if ch == "" {
@@ -219,7 +229,7 @@ func (c *Controller) StartWith(member string) {
 						return nil, errors.New("could not open conversation")
 					}
 				}
-				c.Start(ch)
+				c.Begin(ch, a.EntryPoint)
 				return nil, nil
 			})
 		if err != nil {
