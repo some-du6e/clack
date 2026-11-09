@@ -533,7 +533,12 @@ func checkbox(gtx layout.Context, th *theme.Theme, checked bool) layout.Dimensio
 		})
 		return layout.Dimensions{Size: s}
 	}
-	theme.Border(gtx, image.Rect(gtx.Dp(1), gtx.Dp(1), s.X-gtx.Dp(1), s.Y-gtx.Dp(1)), s.X/2, gtx.Dp(1)+gtx.Dp(1)/2, th.C.FgSubtle)
+	// a 1.5px ring in content-ter (#1d1c1d80)
+	stroke := float32(gtx.Metric.PxPerDp) * 1.5
+	d := float32(s.X) - stroke
+	off := stroke / 2
+	ell := clip.Ellipse{Min: image.Pt(int(off), int(off)), Max: image.Pt(int(off+d+0.5), int(off+d+0.5))}
+	paint.FillShape(gtx.Ops, th.C.FgSubtle, clip.Stroke{Path: ell.Path(gtx.Ops), Width: stroke}.Op())
 	return layout.Dimensions{Size: s}
 }
 

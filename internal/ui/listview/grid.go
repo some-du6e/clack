@@ -256,12 +256,16 @@ func (v *View) layoutLine(gtx layout.Context, d *core.ListDoc, lv *lists.View, l
 		line = shade(th, "gray-10")
 	}
 	theme.Fill(gtx, image.Rect(g.x0+gtx.Dp(4), 0, right, ln.h), bg)
-	theme.Fill(gtx, image.Rect(g.x0+gtx.Dp(4), 0, right, gtx.Dp(1)), line)
-	theme.Fill(gtx, image.Rect(g.x0+gtx.Dp(4), 0, g.x0+gtx.Dp(5), ln.h), edge)
-	theme.Fill(gtx, image.Rect(right-gtx.Dp(1), 0, right, ln.h), edge)
-	if next := idx + 1; next >= len(g.lines) || g.lines[next].kind != lineRow && g.lines[next].kind != lineNew {
-		theme.Fill(gtx, image.Rect(g.x0+gtx.Dp(4), ln.h-gtx.Dp(1), right, ln.h), edge)
-	}
+	// the borders draw over the cells (p-grid_cell border-top, the first
+	// and last cells' outer edges, the last row's bottom)
+	defer func() {
+		theme.Fill(gtx, image.Rect(g.x0+gtx.Dp(4), 0, right, gtx.Dp(1)), line)
+		theme.Fill(gtx, image.Rect(g.x0+gtx.Dp(4), 0, g.x0+gtx.Dp(5), ln.h), edge)
+		theme.Fill(gtx, image.Rect(right-gtx.Dp(1), 0, right, ln.h), edge)
+		if next := idx + 1; next >= len(g.lines) || g.lines[next].kind != lineRow && g.lines[next].kind != lineNew {
+			theme.Fill(gtx, image.Rect(g.x0+gtx.Dp(4), ln.h-gtx.Dp(1), right, ln.h), edge)
+		}
+	}()
 	self := ""
 	if a := v.h.Core(); a != nil {
 		self = a.Self().ID
@@ -305,6 +309,9 @@ func (v *View) layoutLine(gtx layout.Context, d *core.ListDoc, lv *lists.View, l
 				return
 			}
 			cw := gc.w - px - gtx.Dp(8)
+			if gc.c.Type == lists.TodoCompleted { // a centred circle (p-grid_cell--completed)
+				px, cw = (gc.w-gtx.Dp(20))/2, gtx.Dp(20)
+			}
 			if i == 0 && g.hover == idx && !v.edit.active {
 				cw -= gtx.Dp(60) // room for "Open"
 			}
