@@ -83,6 +83,7 @@ func init() {
 	}
 	mkProfile = func(a *App, user string) View { return popups.NewProfileView(a, user) }
 	onPlace = popups.RecordRecentPlace
+	mkSearchInChannel = func(a *App, ch string) View { return popups.NewSearchInChannel(a, ch) }
 	mkSwitcher = func(a *App) Overlay { return popups.NewQuickSwitcher(a) }
 	mkSearch = func(a *App, q string) Overlay { return popups.NewSearchPopover(a, q, a.searchPill) }
 	mkEmojiPicker = func(a *App, anchor image.Point, onPick func(string)) Overlay {

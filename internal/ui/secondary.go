@@ -19,7 +19,8 @@ const (
 	secDetails
 	secProfile
 	secSplit
-	secHelp // the Help flexpane (update_ui.go)
+	secHelp   // the Help flexpane (update_ui.go)
+	secSearch // search in channel (⌘F, popups.SearchInChannel)
 )
 
 // secondaryState is the resizable right-hand pane (thread, channel details,
@@ -70,6 +71,24 @@ func (a *App) OpenDetails(channel string) {
 func (a *App) OpenUserProfile(userID string) {
 	a.secondary = secondaryState{kind: secProfile, user: userID, width: a.secondary.width}
 	a.secondary.view = a.mountProfile(userID)
+	a.Invalidate()
+}
+
+// mkSearchInChannel builds the ⌘F pane (mount_features.go).
+var mkSearchInChannel func(a *App, ch string) View
+
+// OpenSearchInChannel shows Slack's search in channel pane for ch.
+func (a *App) OpenSearchInChannel(ch string) {
+	if mkSearchInChannel == nil || ch == "" {
+		return
+	}
+	if a.secondary.kind == secSearch && a.secondary.channel == ch && !a.secondary.hidden {
+		a.secondary.view = mkSearchInChannel(a, ch) // ⌘F again: a fresh box, focused
+		a.Invalidate()
+		return
+	}
+	a.secondary = secondaryState{kind: secSearch, channel: ch, width: a.secondary.width}
+	a.secondary.view = mkSearchInChannel(a, ch)
 	a.Invalidate()
 }
 

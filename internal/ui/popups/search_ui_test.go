@@ -1,0 +1,667 @@
+package popups
+
+// Search against internal/fakeslack: the popover (blank slate, Recent
+// places, history mode, typing, keyboard, Enter), the results page (the
+// six sources and their counts, the More menu's modifiers, pagination,
+// "Nothing turned up", the Files tab) and search in channel. With
+// SEARCH_SHOTS_DIR set (the search workflow) TestSearchShots also writes
+// light and dark PNGs.
+
+import (
+	"context"
+	"errors"
+	"image"
+	"image/png"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"gioui.org/gpu/headless"
+	"gioui.org/io/input"
+	"gioui.org/io/key"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/op/paint"
+	"gioui.org/unit"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/yoloslackgoclient/internal/fakeslack"
+	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
+	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/yoloslackgoclient/internal/store"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+)
+
+// srEnv is a booted core on fakeslack behind a test host.
+type srEnv struct {
+	h  *tzHost
+	fs *fakeslack.Server
+}
+
+func srNewEnv(t *testing.T, dark bool) *srEnv {
+	t.Helper()
+	fs, err := fakeslack.Start(fakeslack.Small)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { fs.Close() })
+	a := core.New(slack.New(fs.Creds()), store.New(t.TempDir()))
+	t.Cleanup(a.Shutdown)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := a.Boot(ctx); err != nil {
+		t.Fatal(err)
+	}
+	noNet := func(context.Context, string) ([]byte, error) { return nil, errors.New("no network in tests") }
+	th := theme.New(dark)
+	sh := theme.NewShaper()
+	th.SetShapers(sh, sh)
+	srResetRecents()
+	t.Cleanup(srResetRecents)
+	return &srEnv{h: &tzHost{a: a, th: th, im: imgcache.New(noNet, "", nil)}, fs: fs}
+}
+
+// srResetRecents forgets the in-memory MRU lists between tests.
+func srResetRecents() {
+	srMu.Lock()
+	srRecentConvs, srRecentQs, srPlaces, srCurrent = nil, nil, map[string]srPlace{}, ""
+	srMu.Unlock()
+}
+
+// srDrv draws a widget through Gio's router (keys reach focused editors).
+type srDrv struct {
+	r    input.Router
+	ops  op.Ops
+	size image.Point
+	w    interface {
+		Layout(gtx layout.Context) layout.Dimensions
+	}
+	over  func(gtx layout.Context) // drawn after w (menus)
+	texts []string                 // the last scanned frame's text
+	dark  bool
+}
+
+func (d *srDrv) frame() {
+	d.ops.Reset()
+	gtx := layout.Context{Ops: &d.ops, Source: d.r.Source(), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Exact(d.size), Now: time.Now()}
+	slackc.Frame(gtx)
+	bg := rgb(0xffffff)
+	if d.dark {
+		bg = rgb(0x1a1d21)
+	}
+	paint.Fill(&d.ops, bg)
+	d.w.Layout(gtx)
+	if d.over != nil {
+		d.over(gtx)
+	}
+	d.r.Frame(&d.ops)
+}
+
+// scan draws one frame recording its text.
+func (d *srDrv) scan() []string {
+	stop := theme.StartTofuScan()
+	d.frame()
+	d.texts = stop().Texts
+	return d.texts
+}
+
+func (d *srDrv) until(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	slUntil(t, 15*time.Second, what, d.frame, cond)
+}
+
+func (d *srDrv) press(name key.Name) {
+	d.r.Queue(key.Event{Name: name, State: key.Press})
+	d.frame()
+	d.frame()
+}
+
+func srHas(texts []string, s string) bool { return slices.Contains(texts, s) }
+
+func srHasPrefix(texts []string, p string) bool {
+	return slices.ContainsFunc(texts, func(t string) bool { return strings.HasPrefix(t, p) })
+}
+
+func srTitles(rows []srRow, k srRowKind) []string {
+	var out []string
+	for _, r := range rows {
+		if r.kind == k {
+			out = append(out, r.title)
+		}
+	}
+	return out
+}
+
+// The blank slate is Slack's renderBlankSlateSuggestions: Unreads &
+// drafts (five, then "Show N more" / "Show fewer"), Recent places from
+// where you went (pages too) without where you are, and no Recent
+// searches; the clock button switches the list to Recent searches.
+func TestSearchPopoverBlankSlate(t *testing.T) {
+	e := srNewEnv(t, false)
+	chs := e.fs.ChannelIDs()
+	RecordRecentPlace(chs[1], "", "")
+	RecordRecentPlace("view:later", "To-dos", "todos")
+	RecordRecentPlace(chs[2], "", "")
+	RecordRecentPlace("view:activity", "Activity", "activity") // where you are now
+	p := NewQuickSwitcher(e.h)
+	d := &srDrv{size: image.Pt(1280, 800), w: p}
+	d.until(t, "the snapshot", func() bool { return p.snapOK })
+
+	places := []string{}
+	in := false
+	for _, r := range p.rows {
+		if r.kind == srRHeader {
+			in = r.title == "Recent places"
+			continue
+		}
+		if in && r.selectable() {
+			places = append(places, r.title)
+		}
+	}
+	c2, c1 := e.h.a.ConvRef(chs[2]).Name, e.h.a.ConvRef(chs[1]).Name
+	if !slices.Equal(places, []string{c2, "To-dos", c1}) {
+		t.Errorf("Recent places %q, want [%s To-dos %s] (newest first, the open page left out)", places, c2, c1)
+	}
+	for _, bad := range []string{"Saved", "Threads", "Activity"} {
+		if slices.Contains(places, bad) {
+			t.Errorf("Recent places has %q, a page you didn't visit (or the one you're on)", bad)
+		}
+	}
+	if slices.Contains(srTitles(p.rows, srRHeader), "Recent searches") {
+		t.Error("the blank slate lists Recent searches (Slack shows them only in history mode)")
+	}
+	for _, r := range p.rows {
+		if r.kind == srRPlace && r.title == "To-dos" && srDataType(&r) != "view" {
+			t.Errorf("page row data-type %q", srDataType(&r))
+		}
+	}
+
+	// Unreads & drafts: five, then Show N more
+	var ids []string
+	for id := range p.byConv {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	p.unreads = ids[:8]
+	p.rebuild(time.Now(), true)
+	if got := srTitles(p.rows, srRMore); !slices.Equal(got, []string{"Show 3 more"}) {
+		t.Fatalf("more row %q", got)
+	}
+	n := 0
+	for _, r := range p.rows {
+		if r.kind == srRHeader && r.title == "Recent places" {
+			break
+		}
+		if r.kind == srRConv || r.kind == srRUser {
+			n++
+		}
+	}
+	if n != srUnreadsShown {
+		t.Errorf("%d unreads before Show more, want %d", n, srUnreadsShown)
+	}
+	for i := range p.rows {
+		if p.rows[i].kind == srRMore {
+			p.activate(i)
+			break
+		}
+	}
+	if got := srTitles(p.rows, srRMore); !slices.Equal(got, []string{"Show fewer"}) {
+		t.Errorf("after Show more: %q", got)
+	}
+
+	// history mode
+	p.history.Click()
+	d.frame()
+	if got := srTitles(p.rows, srRNote); !slices.Equal(got, []string{"Your recent searches will show up here."}) {
+		t.Errorf("empty history %q", got)
+	}
+	srRecordQuery("zephyr notes")
+	p.rebuild(time.Now(), true)
+	if !slices.Contains(srTitles(p.rows, srRHeader), "Recent searches") || !slices.Contains(srTitles(p.rows, srRQuery), "zephyr notes") {
+		t.Errorf("history rows %+v", srTitles(p.rows, srRQuery))
+	}
+}
+
+// Typing: users/channels from the edge search, Recent messages from
+// search.inline (count 3, extract_len 110), files and canvases from
+// search.autocomplete.files, "Show results for:" after the top hit, and
+// "— Open" next to the query for a place.
+func TestSearchPopoverTyping(t *testing.T) {
+	e := srNewEnv(t, false)
+	p := NewSearchPopover(e.h, fakeslack.SearchWord, image.Rectangle{})
+	d := &srDrv{size: image.Pt(1280, 800), w: p}
+	d.until(t, "the message and file suggestions", func() bool {
+		return len(p.msgs) == 3 && len(p.files) == 1
+	})
+	f := e.fs.SearchForms("search.inline")
+	if len(f) == 0 {
+		t.Fatal("no search.inline")
+	}
+	last := f[len(f)-1]
+	for k, v := range map[string]string{"query": fakeslack.SearchWord, "count": "3", "extract_len": "110", "from_me": "true", "with_me": "true", "page": "1"} {
+		if last.Get(k) != v {
+			t.Errorf("search.inline %s = %q, want %q", k, last.Get(k), v)
+		}
+	}
+	if last.Get("search_session_id") == "" || last.Get("max_ts") == "" {
+		t.Errorf("search.inline without a session or max_ts: %v", last)
+	}
+	if len(e.fs.SearchForms("search.modules.messages")) != 0 {
+		t.Error("the popover searched search.modules.messages (Slack's popover uses search.inline)")
+	}
+	if f := e.fs.SearchForms("search.autocomplete.files"); len(f) == 0 || f[0].Get("include_shares") != "true" {
+		t.Errorf("search.autocomplete.files %v", f)
+	}
+	var file *srRow
+	for i := range p.rows {
+		if p.rows[i].kind == srRFile {
+			file = &p.rows[i]
+		}
+	}
+	if file == nil || file.title != fakeslack.SearchFileTitle || srDataType(file) != "file" {
+		t.Fatalf("file row %+v", file)
+	}
+	if !slices.Contains(srTitles(p.rows, srRHeader), "Recent messages") {
+		t.Error("no Recent messages header")
+	}
+	x := d.scan()
+	if !srHas(x, "Show results for: ") || !srHas(x, fakeslack.SearchWord) {
+		t.Errorf("no Show results row: %q", x)
+	}
+	if p.rows[0].kind == srRShow {
+		// no suggestion matched: Show results is first
+	} else if p.rows[1].kind != srRShow {
+		t.Errorf("Show results isn't right after the top hit: %v", srTitles(p.rows, p.rows[1].kind))
+	}
+}
+
+// Keys: ↓/↑ skip headers and dividers and wrap; Enter on the top hit
+// opens it (Slack's Enter takes the top suggestion); Enter on "Show
+// results for:" opens the results page and remembers the query with
+// search.save.
+func TestSearchPopoverKeys(t *testing.T) {
+	e := srNewEnv(t, false)
+	ch := e.fs.ChannelIDs()[3]
+	name := e.h.a.ConvRef(ch).Name
+	p := NewSearchPopover(e.h, name, image.Rectangle{})
+	d := &srDrv{size: image.Pt(1280, 800), w: p}
+	d.until(t, "the switcher", func() bool { return p.snapOK && len(p.rows) > 2 })
+	d.frame()
+	if p.sel != 0 || p.rows[0].id != ch {
+		t.Fatalf("top hit %+v selected %d, want %s first and selected", p.rows[0], p.sel, ch)
+	}
+	d.press(key.NameDownArrow)
+	if p.sel != 1 || p.rows[1].kind != srRShow {
+		t.Fatalf("↓ selected %d (%v)", p.sel, p.rows[p.sel].kind)
+	}
+	for i := 0; i < len(p.rows)+2; i++ {
+		d.press(key.NameDownArrow)
+		if !p.rows[p.sel].selectable() {
+			t.Fatalf("↓ landed on a %v row", p.rows[p.sel].kind)
+		}
+	}
+	d.press(key.NameUpArrow)
+	if !p.rows[p.sel].selectable() {
+		t.Fatal("↑ landed on a header")
+	}
+	// back to the top: Enter opens it
+	p.setSel(0)
+	d.press(key.NameReturn)
+	if !p.Dismissed() || len(e.h.navs) == 0 || e.h.navs[len(e.h.navs)-1] != "c/"+ch {
+		t.Fatalf("Enter on the top hit: dismissed %v navs %q", p.Dismissed(), e.h.navs)
+	}
+
+	// Enter on Show results for:
+	q := fakeslack.SearchWord + " is:thread"
+	p2 := NewSearchPopover(e.h, q, image.Rectangle{})
+	d2 := &srDrv{size: image.Pt(1280, 800), w: p2}
+	d2.until(t, "the second switcher", func() bool { return p2.snapOK })
+	for i := range p2.rows {
+		if p2.rows[i].kind == srRShow {
+			p2.setSel(i)
+		}
+	}
+	d2.press(key.NameReturn)
+	if got := e.h.navs[len(e.h.navs)-1]; got != "search?q=zephyr+is%3Athread" {
+		t.Errorf("Show results navigated to %q", got)
+	}
+	slUntil(t, 5*time.Second, "search.save", nil, func() bool { return len(e.fs.SavedSearches()) > 0 })
+	if s := e.fs.SavedSearches(); s[0] != q {
+		t.Errorf("search.save terms %q", s)
+	}
+}
+
+// srView loads a results page until its search answered.
+func srView(t *testing.T, e *srEnv, q string, dark bool) (*SearchView, *srDrv) {
+	t.Helper()
+	v := NewSearchView(e.h, q)
+	v.SetOrigin(image.Pt(0, 0))
+	d := &srDrv{size: image.Pt(1280, 800), w: v, dark: dark}
+	d.until(t, "the results", func() bool { return v.started && !v.loading })
+	return v, d
+}
+
+// srMenu returns the last menu the host showed.
+func srMenu(h *tzHost) *Menu {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i := len(h.shown) - 1; i >= 0; i-- {
+		if m, ok := h.shown[i].(*Menu); ok {
+			return m
+		}
+	}
+	return nil
+}
+
+func srLabels(items []MenuItem) []string {
+	var out []string
+	for _, it := range items {
+		switch {
+		case it.Header != "":
+			out = append(out, "# "+it.Header)
+		case it.Separator:
+			out = append(out, "--")
+		default:
+			out = append(out, it.Label)
+		}
+	}
+	return out
+}
+
+// The results page: search.modules.messages pages of 20 with the
+// session's other modules counted for the source menu (Messages, DMs,
+// Files, People, Channels, Canvases), Slack's More menu, numbered pages
+// and the filters' modifiers.
+func TestSearchViewResults(t *testing.T) {
+	e := srNewEnv(t, false)
+	v, d := srView(t, e, fakeslack.SearchWord, false)
+	if v.total != fakeslack.SearchFixtureCount || len(v.cards) != 20 || v.pages != 2 || v.page != 1 {
+		t.Fatalf("page 1: total %d, %d cards, page %d of %d", v.total, len(v.cards), v.page, v.pages)
+	}
+	d.until(t, "every source's count", func() bool {
+		for i := 0; i < srTabN; i++ {
+			if !v.countOK[i] {
+				return false
+			}
+		}
+		return true
+	})
+	if v.counts[srTabDMs] != 1 || v.counts[srTabFiles] != 1 || v.counts[srTabMessages] != fakeslack.SearchFixtureCount {
+		t.Errorf("counts %v", v.counts)
+	}
+	// one session for the query's modules
+	sess := map[string]bool{}
+	for _, m := range []string{"search.modules.messages", "search.modules.dms", "search.modules.files"} {
+		for _, f := range e.fs.SearchForms(m) {
+			sess[f.Get("search_session_id")] = true
+		}
+	}
+	if len(sess) != 1 {
+		t.Errorf("%d search sessions for one query, want 1", len(sess))
+	}
+	x := d.scan()
+	for _, want := range []string{"Results for: ", fakeslack.SearchWord, "Messages", "From", "In", "Includes me", "Has a link",
+		"Threads only", "Last 7 days", "More", "Sorted by ", "Most relevant (default)", "27 results", "Give feedback"} {
+		if !srHas(x, want) {
+			t.Errorf("%q not drawn", want)
+		}
+	}
+
+	// the source menu, in Slack's order with the counts
+	v.typeMenu(layout.Context{Ops: new(op.Ops), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}})
+	m := srMenu(e.h)
+	if m == nil {
+		t.Fatal("no source menu")
+	}
+	if got := srLabels(m.items); !slices.Equal(got, []string{"Messages", "DMs", "Files", "People", "Channels", "Canvases"}) {
+		t.Errorf("source menu %q", got)
+	}
+	mx := (&srDrv{size: image.Pt(600, 400), w: m}).scan()
+	for _, want := range []string{"27", "1"} {
+		if !srHas(mx, want) {
+			t.Errorf("source menu count %q not drawn: %q", want, mx)
+		}
+	}
+
+	// More: Slack's rows
+	v.moreMenu(layout.Context{Ops: new(op.Ops), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}})
+	m = srMenu(e.h)
+	want := []string{"# Saved preferences", "Exclude bot messages", "Only my channels", "--", "# Results", "Exact matches only",
+		"With people", "Message has", "Message is", "Date", "File type", "Reactions"}
+	if got := srLabels(m.items); !slices.Equal(got, want) {
+		t.Errorf("More menu %q\nwant %q", got, want)
+	}
+	sub := func(label string) []MenuItem {
+		for _, it := range m.items {
+			if it.Label == label {
+				return it.Sub
+			}
+		}
+		return nil
+	}
+	if got := srLabels(sub("Message is")); !slices.Equal(got, []string{"A direct message", "In a thread", "Saved", "To-dos", "Pinned", "In Activity"}) {
+		t.Errorf("Message is %q", got)
+	}
+	if got := srLabels(sub("Date")); !slices.Equal(got, []string{"Any time", "Today", "Yesterday", "Last 7 days", "Last 30 days",
+		"Last 12 months", "Last 3 years", "--", "On…", "Before…", "After…", "Range…"}) {
+		t.Errorf("Date %q", got)
+	}
+	for _, c := range []struct {
+		menu, item, mod string
+	}{
+		{"Message is", "In a thread", "is:thread"}, {"Message is", "A direct message", "is:dm"}, {"Message is", "To-dos", "is:todos"},
+		{"Message is", "Pinned", "has:pin"}, {"Message is", "In Activity", "in:activity"}, {"Message has", "Action", "has:action"},
+		{"File type", "Videos", "type:videos"}, {"File type", "Huddle AI Notes", "type:huddle_notes"},
+	} {
+		for _, it := range sub(c.menu) {
+			if it.Label == c.item {
+				it.Do()
+			}
+		}
+		if !strings.Contains(v.q.String(), c.mod) {
+			t.Errorf("%s > %s: query %q lacks %s", c.menu, c.item, v.q.String(), c.mod)
+		}
+	}
+	d.until(t, "the filtered search", func() bool { return !v.loading })
+	f := e.fs.SearchForms("search.modules.messages")
+	if q := f[len(f)-1].Get("query"); !strings.HasPrefix(q, fakeslack.SearchWord+" is:thread is:dm") {
+		t.Errorf("filtered query %q", q)
+	}
+	// Exclude bot messages is the search_exclude_bots pref
+	for _, it := range m.items {
+		if it.Label == "Exclude bot messages" {
+			it.Do()
+		}
+	}
+	slUntil(t, 10*time.Second, "the pref and the new search", d.frame, func() bool {
+		f := e.fs.SearchForms("search.modules.messages")
+		return e.h.a.PrefBool("search_exclude_bots", false) && f[len(f)-1].Get("search_exclude_bots") == "true"
+	})
+
+	// Includes me is with:<@self>
+	v.setQuery(srParse(fakeslack.SearchWord))
+	v.pills[srPMe].Click()
+	d.frame()
+	if !v.q.Has("with", "<@"+fakeslack.SelfID+">") {
+		t.Errorf("Includes me: %q", v.q.String())
+	}
+}
+
+// Pages: Next asks for page 2 (7 results), Previous goes back, and the
+// page chips read 1 2.
+func TestSearchViewPagination(t *testing.T) {
+	e := srNewEnv(t, false)
+	v, d := srView(t, e, fakeslack.SearchWord, false)
+	v.list.Position.First = len(v.cards) // scroll to the pager
+	x := d.scan()
+	if !srHas(x, "1") || !srHas(x, "2") {
+		t.Errorf("page chips not drawn: %q", x)
+	}
+	v.nextBtn.Click()
+	d.frame()
+	d.until(t, "page 2", func() bool { return !v.loading && v.page == 2 })
+	if len(v.cards) != fakeslack.SearchFixtureCount-20 {
+		t.Errorf("page 2: %d cards", len(v.cards))
+	}
+	f := e.fs.SearchForms("search.modules.messages")
+	if f[len(f)-1].Get("page") != "2" {
+		t.Errorf("Next sent page %q", f[len(f)-1].Get("page"))
+	}
+	v.prevBtn.Click()
+	d.frame()
+	d.until(t, "page 1", func() bool { return !v.loading && v.page == 1 && len(v.cards) == 20 })
+}
+
+// No results: Slack's "Nothing turned up" state; the Files tab lists
+// search.modules.files results.
+func TestSearchViewEmptyAndFiles(t *testing.T) {
+	e := srNewEnv(t, false)
+	v, d := srView(t, e, fakeslack.SearchNothing, false)
+	x := d.scan()
+	if !srHas(x, srNothingTitle) || !srHasPrefix(x, "You may want to try using different keywords") {
+		t.Errorf("no-results state not drawn: %q", x)
+	}
+	if srHas(x, "No results") {
+		t.Error("the old invented empty state is still drawn")
+	}
+	v2, d2 := srView(t, e, fakeslack.SearchWord, false)
+	v2.setTab(srTabFiles)
+	d2.until(t, "the files tab", func() bool { return !v2.loading && len(v2.files) == 1 })
+	if x := d2.scan(); !srHas(x, fakeslack.SearchFileTitle) {
+		t.Errorf("file row not drawn: %q", x)
+	}
+	f := e.fs.SearchForms("search.modules.files")
+	if last := f[len(f)-1]; last.Get("search_context") != "desktop_files_tab" || last.Get("count") != "20" {
+		t.Errorf("files tab args %v", last)
+	}
+	_ = v
+}
+
+// Search in channel (⌘F): the pane's header and empty state, then
+// search.modules.messages for in:<#C> with count 10 and
+// search_context search_in_channel.
+func TestSearchInChannel(t *testing.T) {
+	e := srNewEnv(t, false)
+	ch := e.fs.ChannelIDs()[0]
+	v := NewSearchInChannel(e.h, ch)
+	d := &srDrv{size: image.Pt(420, 800), w: v}
+	x := d.scan()
+	name := "#" + e.h.a.ConvRef(ch).Name
+	for _, want := range []string{"Search in " + name, "Not searching in this channel?", "Go to full search (CTRL G)", "Nothing to show yet."} {
+		if !srHas(x, want) {
+			t.Errorf("%q not drawn: %q", want, x)
+		}
+	}
+	v.Search(fakeslack.SearchWord)
+	d.until(t, "the channel's results", func() bool { return !v.loading && len(v.msgs) > 0 })
+	f := e.fs.SearchForms("search.modules.messages")
+	last := f[len(f)-1]
+	for k, w := range map[string]string{"query": "in:<#" + ch + "> " + fakeslack.SearchWord, "count": "10",
+		"search_context": "search_in_channel", "search_exclude_bots": "false", "sort": "score"} {
+		if last.Get(k) != w {
+			t.Errorf("%s = %q, want %q", k, last.Get(k), w)
+		}
+	}
+	for _, m := range v.msgs {
+		if m.Channel != ch {
+			t.Errorf("a result from %s", m.Channel)
+		}
+	}
+	x = d.scan()
+	if !srHas(x, `Search "zephyr" in `+name) || !srHas(x, "View full search") || !srHasPrefix(x, " results found") {
+		t.Errorf("results header not drawn: %q", x)
+	}
+	v.fullBtn.Click()
+	d.frame()
+	if got := e.h.navs[len(e.h.navs)-1]; got != "search?q=in%3A%3C%23"+ch+"%3E+zephyr" {
+		t.Errorf("View full search: %q", got)
+	}
+}
+
+// Screenshots for CI (SEARCH_SHOTS_DIR): the popover blank and typing,
+// the results page, its source and More menus, no results, the Files
+// tab and search in channel, light and dark.
+func TestSearchShots(t *testing.T) {
+	dir := os.Getenv("SEARCH_SHOTS_DIR")
+	if dir == "" {
+		t.Skip("SEARCH_SHOTS_DIR not set")
+	}
+	shot := func(d *srDrv, name string) {
+		t.Helper()
+		w, err := headless.NewWindow(d.size.X, d.size.Y)
+		if err != nil {
+			t.Fatalf("headless window: %v", err)
+		}
+		defer w.Release()
+		d.frame()
+		d.frame()
+		if err := w.Frame(&d.ops); err != nil {
+			t.Fatalf("gpu frame: %v", err)
+		}
+		img := image.NewRGBA(image.Rect(0, 0, d.size.X, d.size.Y))
+		if err := w.Screenshot(img); err != nil {
+			t.Fatal(err)
+		}
+		f, err := os.Create(filepath.Join(dir, name+".png"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if err := png.Encode(f, img); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dark := range []bool{false, true} {
+		mode := map[bool]string{false: "light", true: "dark"}[dark]
+		e := srNewEnv(t, dark)
+		chs := e.fs.ChannelIDs()
+		RecordRecentPlace(chs[1], "", "")
+		RecordRecentPlace("view:later", "To-dos", "todos")
+		RecordRecentPlace(chs[2], "", "")
+
+		p := NewQuickSwitcher(e.h)
+		d := &srDrv{size: image.Pt(1280, 800), w: p, dark: dark}
+		d.until(t, "the snapshot", func() bool { return p.snapOK })
+		shot(d, "search-popover-blank-"+mode)
+
+		p2 := NewSearchPopover(e.h, fakeslack.SearchWord, image.Rectangle{})
+		d = &srDrv{size: image.Pt(1280, 800), w: p2, dark: dark}
+		d.until(t, "suggestions", func() bool { return len(p2.msgs) == 3 && len(p2.files) == 1 })
+		shot(d, "search-popover-typing-"+mode)
+
+		v, dv := srView(t, e, fakeslack.SearchWord, dark)
+		dv.until(t, "counts", func() bool { return v.countOK[srTabDMs] && v.countOK[srTabFiles] })
+		shot(dv, "search-results-"+mode)
+		gtx := layout.Context{Ops: new(op.Ops), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}}
+		v.typeMenu(gtx)
+		m := srMenu(e.h)
+		dv.over = func(gtx layout.Context) { m.Layout(gtx) }
+		shot(dv, "search-results-sources-"+mode)
+		v.moreMenu(gtx)
+		m = srMenu(e.h)
+		shot(dv, "search-results-more-"+mode)
+		dv.over = nil
+		v.list.Position.First = len(v.cards)
+		shot(dv, "search-results-pages-"+mode)
+
+		_, dn := srView(t, e, fakeslack.SearchNothing, dark)
+		shot(dn, "search-results-nothing-"+mode)
+
+		vf, df := srView(t, e, fakeslack.SearchWord, dark)
+		vf.setTab(srTabFiles)
+		df.until(t, "files", func() bool { return !vf.loading && len(vf.files) == 1 })
+		shot(df, "search-results-files-"+mode)
+
+		sc := NewSearchInChannel(e.h, chs[0])
+		ds := &srDrv{size: image.Pt(420, 800), w: sc, dark: dark}
+		shot(ds, "search-in-channel-empty-"+mode)
+		sc.Search(fakeslack.SearchWord)
+		ds.until(t, "in-channel results", func() bool { return !sc.loading && len(sc.msgs) > 0 })
+		shot(ds, "search-in-channel-results-"+mode)
+	}
+}
