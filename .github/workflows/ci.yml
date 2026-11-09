@@ -96,6 +96,8 @@ jobs:
           cache: true
       - name: applog tests
         run: go test -count=1 -v ./internal/applog
+      - name: applog x50 (temporary, applog-flake proof)
+        run: go test -count=50 ./internal/applog
 
   macos:
     runs-on: macos-latest
