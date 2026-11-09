@@ -5,7 +5,7 @@ name: icon-shots
 # (Mesa llvmpipe) and compares their ink and shape with Slack's glyphs
 # rasterized the way Chrome does, in the composer's light and dark inks at
 # 1x and 2x (TestIconsMatchSlack: every icon the code draws, within 6% of
-# Slack's ink; contact sheets icons-vs-slack-{dark,light}-{1,2}x.png and
+# Slack's ink at 2x and 10% at 1x; contact sheets icons-vs-slack-{dark,light}-{1,2}x.png and
 # icons-vs-slack.tsv in the icon-shots artifact). Also screenshots the composer's
 # formatting bar (TestFormatBarShots) and the emoji picker's Emoji | GIFs
 # row (TestEmojiTabRow). The ui-slick job adds the same row with BetterGifs
