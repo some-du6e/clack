@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,26 +18,23 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/pluginlib"
 	"github.com/some-du6e/yoloslackgoclient/internal/slick"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
-// The plugin Library is one Preferences tab, "Plugin library", that lists
-// every official Taut and Slick plugin from the Clack repo's `plugins`
-// release (internal/pluginlib), each built unmodified by its project's own
-// build, tagged with its system, with one-click install and update. An
-// installed Library plugin is an ordinary user plugin in that system's
-// plugins/ dir. Preferences > Taut's "Plugin library" row opens the tab.
+// The plugin Library is Preferences > Plugins > Browse: every official
+// Taut and Slick plugin from the Clack repo's `plugins` release
+// (internal/pluginlib), each built unmodified by its project's own build,
+// with one-click install and update. A plugin both systems have under one
+// name is one row with both tags; Install asks which. An installed Library
+// plugin is an ordinary user plugin in that system's plugins/ dir.
 //
 // Neither upstream has a library, so the page is drawn with Slick's
-// settings parts (it sits in Slick's group of tabs): the toolbar of search
-// and filter chips, category cards of hairline-separated rows, badges.
+// settings parts: category cards of hairline-separated rows, badges.
 
-// libraryTabID is the Library's Preferences tab.
+// libraryTabID is the old Library tab's id: opening it opens Plugins >
+// Browse (Taut's "Plugin library" row, plugins asking for it).
 const libraryTabID = "library"
-
-var libraryTab = navExtra{id: libraryTabID, label: "Plugin library", icon: "bookmark"}
 
 var (
 	pluginLibMu sync.Mutex
@@ -88,7 +84,7 @@ type libraryHost struct {
 	open func(id string)
 }
 
-// libraryPage is Preferences > Plugin library.
+// libraryPage is Preferences > Plugins > Browse.
 type libraryPage struct {
 	a       *App
 	s       *slickPage // drawing parts (cards, chips, badges, inputs) and its toolbar state
@@ -115,48 +111,28 @@ func (v *libraryPage) close() { v.s.close() }
 // Slick both have a WhoReacted).
 func libKey(e pluginlib.Entry) string { return e.System + "/" + e.ID }
 
-// libraryEntries is the index's entries of both systems, grouped by
-// category in Taut's and Slick's category order, by name within one.
+// libraryEntries is the index's entries of both systems, grouped by the
+// shared category (plugin_categories.go) in its order, by name within one.
 func libraryEntries(ix *pluginlib.Index) []pluginlib.Entry {
 	if ix == nil {
 		return nil
 	}
 	out := append(ix.For(pluginlib.Taut), ix.For(pluginlib.Slick)...)
 	sort.SliceStable(out, func(i, j int) bool {
-		ci, cj := libraryCategoryRank(out[i].CategoryLabel), libraryCategoryRank(out[j].CategoryLabel)
+		ci, cj := categoryRank(libCategory(out[i]).Key), categoryRank(libCategory(out[j]).Key)
 		if ci != cj {
 			return ci < cj
-		}
-		if out[i].CategoryLabel != out[j].CategoryLabel {
-			return out[i].CategoryLabel < out[j].CategoryLabel
 		}
 		if ni, nj := strings.ToLower(out[i].Name), strings.ToLower(out[j].Name); ni != nj {
 			return ni < nj
 		}
-		return out[i].System < out[j].System // Taut first
+		return out[i].System < out[j].System // Slick before Taut ("slick" < "taut")
 	})
 	return out
 }
 
-// libraryCategories is Taut's PLUGIN_CATEGORIES and Slick's, merged in
-// their own order (shared/Plugin.ts, src/shared/settings.ts).
-var libraryCategories = []string{"Messages", "Message Box", "Composer", "People", "Channels", "Huddles & sounds",
-	"Privacy", "Look & feel", "App", "Fun", "Hack Club Specialities"}
-
-func libraryCategoryRank(label string) int {
-	for i, l := range libraryCategories {
-		if l == label {
-			return i
-		}
-	}
-	return len(libraryCategories) // Other and unknown labels last
-}
-
-// libraryCategoryIcons are Slick's CATEGORY_ICONS, plus Taut's own keys.
-var libraryCategoryIcons = map[string]string{
-	"messages": "message", "messageBox": "compose", "composer": "compose", "people": "user", "channels": "channel",
-	"sounds": "headphones", "privacy": "lock", "appearance": "paintbrush", "app": "settings", "fun": "emoji", "hackclub": "hackclub",
-}
+// libCategory is an entry's shared category.
+func libCategory(e pluginlib.Entry) pluginCategory { return sharedCategory(e.System, e.Category) }
 
 // host is an entry's system: where Install puts it and how it's found.
 func (v *libraryPage) host(system string) (libraryHost, bool) {
@@ -285,7 +261,7 @@ func (v *libraryPage) installEntry(e pluginlib.Entry, update bool) {
 			case update:
 				v.status[k] = "Updated."
 			default:
-				v.status[k] = "Installed. Turn it on in " + systemName(e.System) + "'s plugin list."
+				v.status[k] = "Installed. Turn it on under Installed."
 			}
 			a.Invalidate()
 		})
@@ -299,16 +275,98 @@ func systemName(sys string) string {
 	return "Taut"
 }
 
-// libraryFilters: All, Taut, Slick, Installed, and Updates while there are some.
-func (v *libraryPage) filters(entries []pluginlib.Entry) []slick.Filter {
-	n := map[string]int{"all": len(entries)}
+// libGroup is one Library listing: a plugin by name, in one system or in
+// both (many plugins exist in Taut and in Slick under the same name).
+type libGroup struct {
+	Entries []pluginlib.Entry // in libraryEntries order: Taut before Slick
+}
+
+func (g libGroup) first() pluginlib.Entry { return g.Entries[0] }
+
+// libNameKey is the name a plugin is listed under ("Clear URLs" and
+// "ClearURLs" are one).
+func libNameKey(name string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(name) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r > 0x7f {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// libraryGroups lists each plugin once: entries with the same name share a
+// row, filed under its Taut entry's category when the two differ.
+func libraryGroups(entries []pluginlib.Entry) []libGroup {
+	var out []libGroup
+	at := map[string]int{}
 	for _, e := range entries {
-		n[e.System]++
+		k := libNameKey(orStr(e.Name, e.ID))
+		if i, ok := at[k]; ok {
+			out[i].Entries = append(out[i].Entries, e)
+			continue
+		}
+		at[k] = len(out)
+		out = append(out, libGroup{Entries: []pluginlib.Entry{e}})
+	}
+	for i := range out { // Taut first within a row
+		sort.SliceStable(out[i].Entries, func(a, b int) bool {
+			return out[i].Entries[a].System == pluginlib.Taut && out[i].Entries[b].System != pluginlib.Taut
+		})
+	}
+	// a row sits under its first (Taut) entry's category
+	sort.SliceStable(out, func(i, j int) bool {
+		if ri, rj := categoryRank(libCategory(out[i].first()).Key), categoryRank(libCategory(out[j].first()).Key); ri != rj {
+			return ri < rj
+		}
+		return strings.ToLower(out[i].first().Name) < strings.ToLower(out[j].first().Name)
+	})
+	return out
+}
+
+// groupStates are the states of a row's entries.
+func (v *libraryPage) groupStates(g libGroup) (installed, updates []pluginlib.Entry) {
+	for _, e := range g.Entries {
 		switch v.state(e) {
 		case pluginlib.Installed:
-			n["installed"]++
+			installed = append(installed, e)
 		case pluginlib.UpdateAvailable:
+			installed = append(installed, e)
+			updates = append(updates, e)
+		}
+	}
+	return installed, updates
+}
+
+// installChoices are a row's entries Install can put in a running system.
+func (v *libraryPage) installChoices(g libGroup) []pluginlib.Entry {
+	var out []pluginlib.Entry
+	for _, e := range g.Entries {
+		if _, ok := v.host(e.System); ok {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// chips are the Browse filter chips: All, Taut, Slick, Installed, and
+// Updates while there are some, counting rows.
+func (v *libraryPage) chips() []slick.Filter {
+	gs := libraryGroups(libraryEntries(v.ix))
+	n := map[string]int{"all": len(gs)}
+	for _, g := range gs {
+		seen := map[string]bool{}
+		for _, e := range g.Entries {
+			if !seen[e.System] {
+				n[e.System]++
+				seen[e.System] = true
+			}
+		}
+		installed, updates := v.groupStates(g)
+		if len(installed) > 0 {
 			n["installed"]++
+		}
+		if len(updates) > 0 {
 			n["updates"]++
 		}
 	}
@@ -327,26 +385,33 @@ func (v *libraryPage) filters(entries []pluginlib.Entry) []slick.Filter {
 	return fs
 }
 
-func (v *libraryPage) matches(e pluginlib.Entry, words []string) bool {
+// matches applies the chip and the search words to a row.
+func (v *libraryPage) matches(g libGroup, words []string) bool {
 	switch v.s.filter {
 	case pluginlib.Taut, pluginlib.Slick:
-		if e.System != v.s.filter {
+		has := false
+		for _, e := range g.Entries {
+			has = has || e.System == v.s.filter
+		}
+		if !has {
 			return false
 		}
-	case "installed":
-		if v.state(e) == pluginlib.NotInstalled {
-			return false
-		}
-	case "updates":
-		if v.state(e) != pluginlib.UpdateAvailable {
+	case "installed", "updates":
+		installed, updates := v.groupStates(g)
+		if v.s.filter == "installed" && len(installed) == 0 || v.s.filter == "updates" && len(updates) == 0 {
 			return false
 		}
 	}
-	return libraryMatches(e, words)
+	for _, e := range g.Entries {
+		if libraryMatches(e, words) {
+			return true
+		}
+	}
+	return false
 }
 
 func libraryMatches(e pluginlib.Entry, words []string) bool {
-	hay := strings.ToLower(strings.Join(append([]string{e.ID, e.Name, e.Description, e.CategoryLabel, systemName(e.System)}, e.Credit()...), " "))
+	hay := strings.ToLower(strings.Join(append([]string{e.ID, e.Name, e.Description, e.CategoryLabel, libCategory(e).Label, systemName(e.System)}, e.Credit()...), " "))
 	for _, w := range words {
 		if !strings.Contains(hay, w) {
 			return false
@@ -374,200 +439,202 @@ func (v *libraryPage) sourceLine() string {
 	return strings.Join(parts, " and ")
 }
 
-// layout draws the Library tab.
-func (v *libraryPage) layout(gtx layout.Context) layout.Dimensions {
+// body draws the Library under Plugins > Browse (the search box and chips
+// are the Plugins toolbar's): its head (Refresh, Update all), the intro,
+// and the rows by category. words is the shared search.
+func (v *libraryPage) body(f *flow, words []string) {
 	p := v.s
 	k := p.k
-	k.gtxNow = gtx
+	k.gtxNow = f.gtx
 	cl := p.colors()
 	if v.ix == nil && !v.loading && v.loadErr == "" {
 		v.load(false)
 	}
-	entries := libraryEntries(v.ix)
-	fs := v.filters(entries)
-	updates := 0
-	for _, e := range entries {
-		if v.state(e) == pluginlib.UpdateAvailable {
-			updates++
+	groups := libraryGroups(libraryEntries(v.ix))
+	var updates []pluginlib.Entry
+	for _, g := range groups {
+		_, u := v.groupStates(g)
+		updates = append(updates, u...)
+	}
+	// Slick's section head: title, actions at the right
+	f.put(0, func(gtx layout.Context) layout.Dimensions {
+		h := gtx.Dp(28)
+		x := f.w - gtx.Dp(2)
+		add := func(key, label string, kind popups.BtnKind, do func()) {
+			b := k.btn(key)
+			hit := b.Clicked(gtx)
+			m := op.Record(gtx.Ops)
+			d := popups.Button(gtx, p.a.th, b, kind, popups.BtnSmall, label, "", 0)
+			call := m.Stop()
+			x -= d.Size.X
+			st := op.Offset(image.Pt(x, (h-d.Size.Y)/2)).Push(gtx.Ops)
+			call.Add(gtx.Ops)
+			st.Pop()
+			x -= gtx.Dp(8)
+			if hit && kind != popups.BtnDisabled {
+				do()
+			}
+		}
+		refresh, rkind := "Refresh", popups.BtnOutline
+		if v.loading {
+			refresh, rkind = "Loading...", popups.BtnDisabled
+		}
+		add("lib.refresh", refresh, rkind, func() { v.load(true) })
+		if len(updates) > 0 {
+			add("lib.updateall", fmt.Sprintf("Update all (%d)", len(updates)), popups.BtnPrimary, func() {
+				for _, e := range updates {
+					v.installEntry(e, true)
+				}
+			})
+		}
+		at(gtx, image.Pt(gtx.Dp(2), 0), image.Pt(max(0, x-gtx.Dp(14)), h), func(gtx layout.Context) layout.Dimensions {
+			return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
+				return k.label(gtx, 15, theme.Bold, cl.pry, "Official plugins")
+			})
+		})
+		return layout.Dimensions{Size: image.Pt(f.w, h)}
+	})
+	f.gap(8)
+	intro := "Every plugin in Taut's and Slick's own repositories, built unmodified by that project's build. They're third-party code under GPLv3 by their authors. Installing one adds it to your installed plugins."
+	if v.ix != nil {
+		if src := v.sourceLine(); src != "" {
+			intro += " Built from " + src + "."
 		}
 	}
-	sz := gtx.Constraints.Max
-	p.list.List.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
-		gtx.Constraints = layout.Constraints{Min: image.Pt(sz.X, 0), Max: image.Pt(sz.X-gtx.Dp(8), 1<<24)}
-		f := &flow{gtx: gtx, w: gtx.Constraints.Max.X}
-		// Slick's section head: title, actions at the right
-		f.put(0, func(gtx layout.Context) layout.Dimensions {
-			h := gtx.Dp(28)
-			x := f.w - gtx.Dp(2)
-			add := func(key, label string, kind popups.BtnKind, do func()) {
-				b := k.btn(key)
-				hit := b.Clicked(gtx)
-				m := op.Record(gtx.Ops)
-				d := popups.Button(gtx, p.a.th, b, kind, popups.BtnSmall, label, "", 0)
-				call := m.Stop()
-				x -= d.Size.X
-				st := op.Offset(image.Pt(x, (h-d.Size.Y)/2)).Push(gtx.Ops)
-				call.Add(gtx.Ops)
-				st.Pop()
-				x -= gtx.Dp(8)
-				if hit && kind != popups.BtnDisabled {
-					do()
-				}
-			}
-			refresh, rkind := "Refresh", popups.BtnOutline
-			if v.loading {
-				refresh, rkind = "Loading...", popups.BtnDisabled
-			}
-			add("lib.refresh", refresh, rkind, func() { v.load(true) })
-			if updates > 0 {
-				add("lib.updateall", fmt.Sprintf("Update all (%d)", updates), popups.BtnPrimary, func() {
-					for _, e := range entries {
-						if v.state(e) == pluginlib.UpdateAvailable {
-							v.installEntry(e, true)
-						}
-					}
-				})
-			}
-			at(gtx, image.Pt(gtx.Dp(2), 0), image.Pt(max(0, x-gtx.Dp(14)), h), func(gtx layout.Context) layout.Dimensions {
-				return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
-					return k.label(gtx, 15, theme.Bold, cl.pry, "Official plugins")
-				})
-			})
-			return layout.Dimensions{Size: image.Pt(f.w, h)}
-		})
-		f.gap(8)
-		intro := "Every plugin in Taut's and Slick's own repositories, built unmodified by that project's build. They're third-party code under GPLv3 by their authors. Installing one adds it as a user plugin of its system; turn it on in that system's plugin list."
-		if v.ix != nil {
-			if src := v.sourceLine(); src != "" {
-				intro += " Built from " + src + "."
-			}
+	f.put(0, func(gtx layout.Context) layout.Dimensions { return k.mrkdwn(gtx, "lib.intro", intro, true, cl.sec) })
+	f.gap(16)
+	if v.loadErr != "" {
+		p.notice(f, v.loadErr, true)
+	}
+	if v.ix == nil {
+		if v.loading {
+			p.hint(f, "Loading the plugin library...")
 		}
-		f.put(0, func(gtx layout.Context) layout.Dimensions { return k.mrkdwn(gtx, "lib.intro", intro, true, cl.sec) })
-		f.gap(16)
-		if v.loadErr != "" {
-			p.notice(f, v.loadErr, true)
+		return
+	}
+	var group []libGroup
+	label, shown := "", 0
+	flush := func() {
+		if len(group) == 0 {
+			return
 		}
-		if v.ix == nil {
-			if v.loading {
-				p.hint(f, "Loading the plugin library...")
-			}
-			return layout.Dimensions{Size: image.Pt(sz.X, f.y)}
+		rows := make([]func(gtx layout.Context, w int) layout.Dimensions, len(group))
+		for i, g := range group {
+			rows[i] = func(gtx layout.Context, w int) layout.Dimensions { return v.row(gtx, w, g) }
 		}
-		// toolbar: Slick's search and filter chips
-		f.put(0, func(gtx layout.Context) layout.Dimensions { return v.toolbar(gtx, fs) })
-		f.gap(20)
-		words := strings.Fields(strings.ToLower(p.query.Text()))
-		var group []pluginlib.Entry
-		label, shown := "", 0
-		flush := func() {
-			if len(group) == 0 {
-				return
-			}
-			rows := make([]func(gtx layout.Context, w int) layout.Dimensions, len(group))
-			for i, e := range group {
-				rows[i] = func(gtx layout.Context, w int) layout.Dimensions { return v.row(gtx, w, e) }
-			}
-			icon := libraryCategoryIcons[group[0].Category]
-			if icon == "" {
-				icon = "code"
-			}
-			p.card(f, orStr(label, "Other"), icon, nil, rows)
-			group = nil
+		c := libCategory(group[0].first())
+		p.card(f, c.Label, c.Icon, nil, rows)
+		group = nil
+	}
+	for _, g := range groups {
+		if !v.matches(g, words) {
+			continue
 		}
-		for _, e := range entries {
-			if !v.matches(e, words) {
-				continue
-			}
-			if e.CategoryLabel != label {
-				flush()
-				label = e.CategoryLabel
-			}
-			group = append(group, e)
-			shown++
+		if l := libCategory(g.first()).Key; l != label {
+			flush()
+			label = l
 		}
-		flush()
-		if shown == 0 {
-			if q := strings.TrimSpace(p.query.Text()); q != "" {
-				p.empty(f, "No plugins match “"+q+"”.")
-			} else {
-				p.empty(f, "No plugins in this view.")
-			}
+		group = append(group, g)
+		shown++
+	}
+	flush()
+	if shown == 0 {
+		if len(words) > 0 {
+			p.empty(f, "No plugins match “"+strings.Join(words, " ")+"”.")
+		} else {
+			p.empty(f, "No plugins in this view.")
 		}
-		f.gap(24)
-		return layout.Dimensions{Size: image.Pt(sz.X, f.y)}
-	})
-	return layout.Dimensions{Size: sz}
+	}
 }
 
-// toolbar is Slick's: the search box (search icon, 34px inset) with the
-// filter chips beside it, or below when they don't fit.
-func (v *libraryPage) toolbar(gtx layout.Context, fs []slick.Filter) layout.Dimensions {
-	p := v.s
-	cl := p.colors()
-	w := gtx.Constraints.Max.X
-	chipW := func(f slick.Filter) int {
-		return gtx.Dp(24) + p.a.th.Measure(gtx, 13, theme.Bold, f.Label) + gtx.Dp(6) + p.a.th.Measure(gtx, 13, theme.Regular, strconv.Itoa(f.Count))
-	}
-	chipsW := 0
-	for i, f := range fs {
-		if i > 0 {
-			chipsW += gtx.Dp(6)
+// libAction is what a row's button does.
+type libAction struct {
+	label string
+	kind  popups.BtnKind
+	do    func()
+}
+
+// action: Installing/Updating while busy; Update when an installed entry
+// has an update; Settings when one is installed; else Install, which asks
+// which system when the plugin exists in both and both are running.
+func (v *libraryPage) action(g libGroup) libAction {
+	installed, updates := v.groupStates(g)
+	for _, e := range g.Entries {
+		if v.busy[libKey(e)] {
+			if len(installed) > 0 {
+				return libAction{label: "Updating...", kind: popups.BtnDisabled}
+			}
+			return libAction{label: "Installing...", kind: popups.BtnDisabled}
 		}
-		chipsW += chipW(f)
 	}
-	inputH := gtx.Dp(36)
-	searchW, chipsX, chipsY := w-chipsW-gtx.Dp(12), 0, 0
-	if searchW < gtx.Dp(220) {
-		searchW, chipsY = w, inputH+gtx.Dp(8)
-	} else {
-		chipsX, chipsY = searchW+gtx.Dp(12), (inputH-gtx.Dp(28))/2
+	switch {
+	case len(updates) > 0:
+		return libAction{label: "Update", kind: popups.BtnPrimary, do: func() {
+			for _, e := range updates {
+				v.installEntry(e, true)
+			}
+		}}
+	case len(installed) > 0:
+		e := installed[0]
+		return libAction{label: "Settings", kind: popups.BtnOutline, do: func() {
+			if h, ok := v.host(e.System); ok && h.open != nil {
+				h.open(e.ID)
+			}
+		}}
 	}
-	at(gtx, image.Point{}, image.Pt(searchW, inputH), func(gtx layout.Context) layout.Dimensions {
-		d := p.sinput(gtx, &p.query, searchW, inputH, gtx.Dp(34), "Search the library", false)
-		at(gtx, image.Pt(gtx.Dp(10), (inputH-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
-			return icons.Get("search")(gtx, 16, cl.ter)
-		})
-		return d
-	})
-	x, y := chipsX, chipsY
-	for _, f := range fs {
-		cw := chipW(f)
-		if x+cw > w && x > chipsX {
-			x, y = chipsX, y+gtx.Dp(28+8)
+	choices := v.installChoices(g)
+	if len(choices) < 2 {
+		e := g.first()
+		if len(choices) == 1 {
+			e = choices[0]
 		}
-		at(gtx, image.Pt(x, y), image.Pt(cw, gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions { return p.chip(gtx, f, cw) })
-		x += cw + gtx.Dp(6)
+		return libAction{label: "Install", kind: popups.BtnPrimary, do: func() { v.installEntry(e, false) }}
 	}
-	return layout.Dimensions{Size: image.Pt(w, max(inputH, y+gtx.Dp(28)))}
+	return libAction{label: "Install…", kind: popups.BtnPrimary, do: func() {
+		items := []MenuItem{{Label: "Install for", Disabled: true}}
+		for _, e := range choices {
+			items = append(items, MenuItem{Label: systemName(e.System), Subtitle: systemBlurb(e.System), Do: func() { v.installEntry(e, false) }})
+		}
+		v.a.menu(v.a.PointerPos(), items)
+	}}
+}
+
+// systemBlurb tells the two systems apart in Install's choice.
+func systemBlurb(sys string) string {
+	if sys == pluginlib.Slick {
+		return "Slick's version of the plugin"
+	}
+	return "Taut's version of the plugin"
 }
 
 // row is a Slick plugin row with the switch swapped for the action:
-// name (15/700) with its system's badge and any flags, the description
+// name (15/700) with a tag per system and any flags, the description
 // (13/18, two lines), "By …" (13, tertiary), the last result, and
 // Install / Update / Settings at the right.
-func (v *libraryPage) row(gtx layout.Context, w int, e pluginlib.Entry) layout.Dimensions {
+func (v *libraryPage) row(gtx layout.Context, w int, g libGroup) layout.Dimensions {
 	p := v.s
 	k := p.k
 	cl := p.colors()
-	key := libKey(e)
-	state := v.state(e)
-	label, kind := "Install", popups.BtnPrimary
-	switch {
-	case v.busy[key]:
-		label, kind = "Installing...", popups.BtnDisabled
-		if state != pluginlib.NotInstalled {
-			label = "Updating..."
-		}
-	case state == pluginlib.UpdateAvailable:
-		label = "Update"
-	case state == pluginlib.Installed:
-		label, kind = "Settings", popups.BtnOutline
-	}
+	e0 := g.first()
+	key := libKey(e0)
+	act := v.action(g)
 	bw := gtx.Dp(96)
 	tx, gap := gtx.Dp(16), gtx.Dp(14)
 	tw := w - tx - gtx.Dp(12) - bw - gap
+	var desc, hc, off bool
+	var credits []string
+	seen := map[string]bool{}
+	for _, e := range g.Entries {
+		desc = desc || e.Description != ""
+		hc = hc || e.HackClubOnly
+		off = off || e.UpstreamDisabled
+		if c := libraryCredit(e); c != "" && !seen[c] {
+			seen[c] = true
+			credits = append(credits, c)
+		}
+	}
 	textCol := func(gtx layout.Context) layout.Dimensions {
-		nd := p.a.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Weight: theme.Bold, Color: cl.pry, MaxLines: 1}, e.Name)
+		nd := p.a.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Weight: theme.Bold, Color: cl.pry, MaxLines: 1}, e0.Name)
 		bx := min(nd.Size.X, tw) + gtx.Dp(8)
 		badge := func(label string, warn bool) {
 			d := at(gtx, image.Pt(bx, gtx.Dp(1)), image.Pt(gtx.Dp(200), gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {
@@ -575,29 +642,44 @@ func (v *libraryPage) row(gtx layout.Context, w int, e pluginlib.Entry) layout.D
 			})
 			bx += d.Size.X + gtx.Dp(6)
 		}
-		badge(systemName(e.System), false)
-		if e.HackClubOnly {
+		for _, e := range g.Entries {
+			badge(systemName(e.System), false)
+		}
+		if hc {
 			badge("Hack Club only", false)
 		}
-		if e.UpstreamDisabled {
+		if off {
 			badge("Off upstream", true)
 		}
 		y := gtx.Dp(22)
-		if e.Description != "" {
+		if desc {
+			d := ""
+			for _, e := range g.Entries {
+				if d == "" {
+					d = e.Description
+				}
+			}
 			y += at(gtx, image.Pt(0, y), image.Pt(tw, 1<<20), func(gtx layout.Context) layout.Dimensions {
-				return p.a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: cl.sec, MaxLines: 2, Wrap: text.WrapWords}, plainMrkdwn(e.Description))
+				return p.a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: cl.sec, MaxLines: 2, Wrap: text.WrapWords}, plainMrkdwn(d))
 			}).Size.Y
 		}
-		if by := libraryCredit(e); by != "" {
+		if len(credits) > 0 {
 			y += gtx.Dp(4)
 			y += at(gtx, image.Pt(0, y), image.Pt(tw, 1<<20), func(gtx layout.Context) layout.Dimensions {
-				return k.mrkdwn(gtx, "lib.by."+key, "By "+by, true, cl.ter)
+				return k.mrkdwn(gtx, "lib.by."+key, "By "+strings.Join(credits, ", "), true, cl.ter)
 			}).Size.Y
 		}
-		if st := v.status[key]; st != "" {
+		for _, e := range g.Entries {
+			st := v.status[libKey(e)]
+			if st == "" {
+				continue
+			}
 			col := cl.ter
-			if v.failed[key] {
+			if v.failed[libKey(e)] {
 				col = cl.imp
+			}
+			if len(g.Entries) > 1 {
+				st = systemName(e.System) + ": " + st
 			}
 			y += gtx.Dp(4)
 			y += at(gtx, image.Pt(0, y), image.Pt(tw, 1<<20), func(gtx layout.Context) layout.Dimensions {
@@ -616,19 +698,10 @@ func (v *libraryPage) row(gtx layout.Context, w int, e pluginlib.Entry) layout.D
 	b := k.btn("lib.act." + key)
 	hit := b.Clicked(gtx)
 	at(gtx, image.Pt(w-gtx.Dp(12)-bw, (h-gtx.Dp(28))/2), image.Pt(bw, gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
-		return popups.Button(gtx, p.a.th, b, kind, popups.BtnSmall, label, "", 96)
+		return popups.Button(gtx, p.a.th, b, act.kind, popups.BtnSmall, act.label, "", 96)
 	})
-	if hit && kind != popups.BtnDisabled {
-		switch state {
-		case pluginlib.NotInstalled:
-			v.installEntry(e, false)
-		case pluginlib.UpdateAvailable:
-			v.installEntry(e, true)
-		default:
-			if h, ok := v.host(e.System); ok && h.open != nil {
-				h.open(e.ID)
-			}
-		}
+	if hit && act.kind != popups.BtnDisabled && act.do != nil {
+		act.do()
 	}
 	return layout.Dimensions{Size: image.Pt(w, h)}
 }

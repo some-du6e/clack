@@ -1,0 +1,53 @@
+name: plugins-shots
+# Renders Preferences > Plugins (Installed, Browse with a plugin both Taut
+# and Slick have and Install's system choice), the "Install from file or
+# URL" dialog and Plugin settings headlessly at 1440x900, light and dark,
+# over the whole client signed in to internal/fakeslack, with synthetic
+# Taut and Slick plugins and a local synthetic plugin library, and uploads
+# the screenshots. Synthetic only: nothing here talks to Slack or reads
+# the published library.
+on:
+  push:
+    paths:
+      - "internal/ui/plugins_prefs*.go"
+      - "internal/ui/plugins_shots_test.go"
+      - "internal/ui/plugin_categories.go"
+      - "internal/ui/library_prefs.go"
+      - "internal/ui/slick_prefs.go"
+      - "internal/ui/taut_prefs.go"
+      - "internal/ui/prefs_modal.go"
+      - ".github/workflows/plugins-shots.yml"
+  workflow_dispatch:
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb
+
+permissions:
+  contents: read
+
+jobs:
+  plugins-shots:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: Preferences > Plugins screenshots
+        env:
+          PLUGINS_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$PLUGINS_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestPluginsPrefsShots$' ./internal/ui/
+          ls "$PLUGINS_SHOTS_DIR"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: plugins-shots
+          path: dist/shots

@@ -1,9 +1,11 @@
 name: ui-taut
 # Builds every Taut plugin with Taut's own `build:user-plugin`, then runs
 # internal/ui's Taut tests: startup cost with no plugins, and Preferences >
-# Taut and Preferences > Slick rendered headlessly (main, Advanced, Appearance, About, every plugin
-# page with its options, React editors and data panels) and the Plugin
-# library (over a local synthetic index) over a synthetic workspace. Screenshots (synthetic data only) are uploaded as an artifact;
+# Plugins (the merged Taut + Slick list, every Taut and Slick plugin page
+# with its options, React editors and data panels; Browse, the Plugin
+# library over a local synthetic index), Themes and Plugin settings
+# (custom CSS, config.json, About) rendered headlessly over a synthetic
+# workspace. Screenshots (synthetic data only) are uploaded as an artifact;
 # the built plugins (GPLv3) are never committed.
 on:
   push:

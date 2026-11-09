@@ -724,6 +724,14 @@ type Peek struct {
 	StoresMessages        bool
 }
 
+// IsPluginFile reports whether code looks like a Slick plugin file (a
+// renderer or a privileged half), without running it. Clack's one install
+// box uses it to tell Slick's files from Taut's.
+func IsPluginFile(code []byte) bool {
+	c := string(code)
+	return strings.Contains(c, rendererMarker) || strings.Contains(c, mainMarker)
+}
+
 // Peek reads a file's header.
 func (s *Slick) Peek(code []byte) (Peek, error) {
 	c := string(code)
