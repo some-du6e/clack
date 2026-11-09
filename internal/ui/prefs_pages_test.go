@@ -237,7 +237,10 @@ type recNotifier struct {
 }
 
 func (r *recNotifier) Notify(string, string) error { r.mu.Lock(); r.n++; r.mu.Unlock(); return nil }
-func (r *recNotifier) count() int                  { r.mu.Lock(); defer r.mu.Unlock(); return r.n }
+func (r *recNotifier) NotifyActions(t, b string, _ []string, _ func(string)) error {
+	return r.Notify(t, b)
+}
+func (r *recNotifier) count() int { r.mu.Lock(); defer r.mu.Unlock(); return r.n }
 
 // The prefs this audit started applying: each row writes Slack's key with
 // Slack's value, core reads it back, and Clack acts on it.
