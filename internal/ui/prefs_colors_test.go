@@ -145,13 +145,13 @@ func TestNativeCheckPixels(t *testing.T) {
 			return color.NRGBA{c.R, c.G, c.B, 0xff}
 		}
 		want := []tkWant{
-			{"checked fill", at(1, 6), tkHex(0x0075ff)},
+			{"checked fill", at(6, 1), tkHex(0x0075ff)},
 			{"unchecked border", at(20, 6), tkHex(0x767676)},
 			{"unchecked fill", at(26, 6), tkHex(0xffffff)},
 		}
 		if dark {
 			want = []tkWant{
-				{"checked fill", at(1, 6), tkHex(0x99c8ff)},
+				{"checked fill", at(6, 1), tkHex(0x99c8ff)},
 				{"unchecked border", at(20, 6), tkHex(0x858585)},
 				{"unchecked fill", at(26, 6), tkHex(0x3b3b3b)},
 			}
