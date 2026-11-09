@@ -373,16 +373,38 @@ const hostNotes = `- **Fixed: rows re-rendering forever.** The Taut mirror finge
   ShowSendingBot in both systems and Slick's Censorship "spazzed" while
   nothing happened. Threads are hashed in ts order now
   (internal/taut/mirror.go, TestMessagesFingerprintStable).
-- **Open: Taut StreamerMode's MessageBackground patch** logs
+- **Fixed: Taut StreamerMode's MessageBackground errors.** It logged
   "componentElement MessageBackground: TypeError: not a function" and a
-  React #31 (jsrt's host object rendered as a child) on its first rows in
-  the whole client; the synthetic repro in the Taut harness renders fine,
-  so it depends on the real row props. Its checks still pass.
-- **Open: pronouns in the thread pane header.** Both User Pronouns
-  variants patch ThreadSenderAndTimestampGeneric, but opening a thread in
-  the bench delivers no tree with the root sender's pronouns for either;
-  the channel rows show them. Same result for both, so it doesn't change
-  the pick.
+  React #31 (jsrt's __clack object rendered as a child) on some rows. Not
+  the row props: jsrt released a handle twice. Value.Free released it,
+  and the GC cleanup released the same number again later, by when the
+  engine had handed it to another value (handles are reused, last freed
+  first). Every promise Go settles (a plugin's API calls, thunks) freed its
+  settle functions that way, so componentElement's function, props or
+  element could turn into whatever came next. Free cancels the cleanup now
+  (internal/jsrt/value.go, TestFreedValueNotReleasedTwice,
+  TestPluginGapStreamerModeRows).
+- **Fixed (fixture): pronouns in the thread pane header.** Clack's pane
+  hands ThreadSenderAndTimestampGeneric what Slack's does (msg, adjacent,
+  visible, omitTimestamp, omitLinebreak, keepSenderAccessible,
+  timestampLabel). The bench saw nothing because fakeslack answered the
+  bench threads' conversations.replies with no messages (a generic case
+  ran before the bench's), so the pane never drew a root
+  (TestPluginGapPronounsThread).
+- **Fixed: message_mention in msg.** The msg prop carried blocks rebuilt
+  from Clack's parsed text, where a message_mention is only its label
+  ("alice in #idle"). It carries the message's blocks as Slack sent them
+  now, as Slack's client does; a plugin's changed blocks are parsed like
+  the message, so the pill stays (TestPluginMessageMentionBlocks).
+- **Fixed: clicks on native links.** Clack draws message links natively,
+  so Slick's Quick Join, which listens for clicks on the document and
+  looks for a[data-channel-id], never saw one. While anything listens for
+  clicks on the window or document, a click on a native link (URL,
+  mention, channel, user group) is dispatched at a stand-in element with
+  Slack's tag and attributes, kept per link outside <body>. The link's
+  action is that element's activation behavior: it runs when the click
+  isn't canceled, including a click a plugin replays later
+  (internal/ui/slackc/links.go, TestPluginGapQuickJoinDoubleClick).
 - **Not a host gap: Click to Load.** Clack draws link unfurls natively and
   never loads third-party frames, so there is nothing for either variant
   to hold.

@@ -133,3 +133,42 @@ func (v *View) ImageRects() []ImageRect {
 	}
 	return out
 }
+
+// LinkRect is a link's box: a URL, an @mention, a channel or a user
+// group mention.
+type LinkRect struct {
+	Kind HitKind // HitLink, HitUser, HitChannel or HitUsergroup
+	ID   string  // the member, channel or user group
+	URL  string  // a link's URL
+	R    image.Rectangle
+}
+
+// LinkRects lists the links' boxes in View coordinates (after the first
+// Layout), in layout order: one per line box a link wraps over.
+func (v *View) LinkRects() []LinkRect {
+	var out []LinkRect
+	for i := range v.d.frags {
+		f := &v.d.frags[i]
+		if f.target < 0 || int(f.target) >= len(v.d.targets) {
+			continue
+		}
+		tg := &v.d.targets[f.target]
+		var k HitKind
+		switch tg.kind {
+		case tLink:
+			k = HitLink
+		case tUser:
+			k = HitUser
+		case tChannel:
+			k = HitChannel
+		case tUsergroup:
+			k = HitUsergroup
+		default:
+			continue
+		}
+		if r := fragRect(f); !r.Empty() {
+			out = append(out, LinkRect{Kind: k, ID: tg.id, URL: tg.url, R: r})
+		}
+	}
+	return out
+}

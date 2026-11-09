@@ -1230,10 +1230,10 @@ func (r *row) layoutBlocks(gtx layout.Context, p slackc.Props) layout.Dimensions
 	tail := [2]uintptr{propsID(r.filesOv), propsID(r.attsOv)}
 	if id != r.blocksOv || tail != r.tailOv {
 		doc := r.m.Doc
-		doc.Blocks = fixChannels(rc.h, doc.Blocks)
 		if id != 0 {
-			doc.Blocks = docBlocks(rc.h.Core(), doc.Blocks, msg)
+			doc.Blocks = docBlocks(rc.h.Core(), doc.Blocks, r.m.Blocks, msg)
 		}
+		doc.Blocks = fixChannels(rc.h, doc.Blocks)
 		doc.Blocks = filterTail(doc.Blocks, r.filesOv, r.attsOv)
 		r.rv.Set(doc, r.rvOpts())
 		r.blocksOv, r.tailOv = id, tail

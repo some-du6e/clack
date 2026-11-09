@@ -15,8 +15,9 @@ import (
 type Value struct{ ref *ref }
 
 type ref struct {
-	r *Runtime
-	h uint32 // engine handle; 0 = undefined
+	r       *Runtime
+	h       uint32 // engine handle; 0 = undefined
+	cleanup runtime.Cleanup
 }
 
 func (r *Runtime) wrap(h uint32) Value {
@@ -24,7 +25,7 @@ func (r *Runtime) wrap(h uint32) Value {
 		return Value{}
 	}
 	x := &ref{r: r, h: h}
-	runtime.AddCleanup(x, func(c cleanupArg) { c.r.releaseLater(c.h) }, cleanupArg{r, h})
+	x.cleanup = runtime.AddCleanup(x, func(c cleanupArg) { c.r.releaseLater(c.h) }, cleanupArg{r, h})
 	return Value{x}
 }
 
@@ -65,6 +66,12 @@ func (v Value) Free() {
 	if v.ref == nil || v.ref.h == 0 {
 		return
 	}
+	// The GC cleanup holds the handle number: left armed, it would release
+	// it again later, when the engine has given the number to another
+	// value (handles are reused, last freed first), and that value's slot
+	// would then hold whatever comes next: a props object turning into
+	// __clack, a function into a non-function.
+	v.ref.cleanup.Stop()
 	if e := v.eng(); e != nil {
 		e.release(v.ref.h)
 	}
@@ -203,11 +210,14 @@ func (v Value) CallThis(this Value, args ...any) (Value, error) {
 	if e == nil {
 		return Value{}, errNoValue
 	}
-	hs, err := v.ref.r.js.handles(args)
+	hs, keep, err := v.ref.r.js.handles(args)
 	if err != nil {
 		return Value{}, err
 	}
 	h, err := e.callFn(v.h(), this.h(), hs)
+	runtime.KeepAlive(keep)
+	runtime.KeepAlive(v.ref)
+	runtime.KeepAlive(this.ref)
 	return v.ref.r.wrap(h), err
 }
 
@@ -226,11 +236,13 @@ func (v Value) New(args ...any) (Value, error) {
 	if e == nil {
 		return Value{}, errNoValue
 	}
-	hs, err := v.ref.r.js.handles(args)
+	hs, keep, err := v.ref.r.js.handles(args)
 	if err != nil {
 		return Value{}, err
 	}
 	h, err := e.construct(v.h(), hs)
+	runtime.KeepAlive(keep)
+	runtime.KeepAlive(v.ref)
 	return v.ref.r.wrap(h), err
 }
 
@@ -436,18 +448,21 @@ func (c *Ctx) Value(x any) (Value, error) {
 	return c.ParseJSON(b)
 }
 
-func (c *Ctx) handles(args []any) ([]uint32, error) {
+// handles converts args to engine handles. The caller keeps the returned
+// Values alive (runtime.KeepAlive) until the engine is done with the
+// handles: a Value collected earlier releases its handle.
+func (c *Ctx) handles(args []any) ([]uint32, []Value, error) {
 	hs := make([]uint32, len(args))
+	keep := make([]Value, len(args))
 	for i, a := range args {
 		v, err := c.Value(a)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		hs[i] = v.h()
-		// keep v alive until the call returns
-		defer runtime.KeepAlive(v.ref)
+		keep[i] = v
 	}
-	return hs, nil
+	return hs, keep, nil
 }
 
 func (c *Ctx) expose(name string, fn HostFunc) {

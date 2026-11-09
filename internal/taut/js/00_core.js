@@ -392,3 +392,10 @@ T.releaseElements = (ids) => {
 }
 
 Object.assign(T, { deepEqual, within, retry, Store, encode, decode })
+
+// a native link's activation (jsrt dom.js nativeActivation): the Go func
+// slackc.ClickLink sent with the click, run as the link's native action
+host.nativeActivate = (activate) => {
+  const fn = decode(activate)
+  if (typeof fn === 'function') fn()
+}

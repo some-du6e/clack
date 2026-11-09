@@ -130,17 +130,17 @@ func TestDocBlocksDropAndReorder(t *testing.T) {
 	p := roundTrip(t, slackMessage(&m))
 	blocks := p.List("blocks")
 	p["blocks"] = blocks[:1]
-	got := docBlocks(nil, m.Doc.Blocks, p)
+	got := docBlocks(nil, m.Doc.Blocks, m.Blocks, p)
 	if len(got) != 3 || got[0].Kind != richtext.Paragraph || got[1].Kind != richtext.FileBlock || got[2].Kind != richtext.AttachmentBlock {
 		t.Errorf("dropped footer: %+v", got)
 	}
 	p["blocks"] = []any{blocks[1], blocks[0]}
-	got = docBlocks(nil, m.Doc.Blocks, p)
+	got = docBlocks(nil, m.Doc.Blocks, m.Blocks, p)
 	if len(got) != 4 || got[0].Kind != richtext.Context || got[1].Kind != richtext.Paragraph {
 		t.Errorf("reordered: %+v", got)
 	}
 	delete(p, "blocks")
-	if got := docBlocks(nil, m.Doc.Blocks, p); len(got) != 4 || &got[0] != &m.Doc.Blocks[0] {
+	if got := docBlocks(nil, m.Doc.Blocks, m.Blocks, p); len(got) != 4 || &got[0] != &m.Doc.Blocks[0] {
 		t.Errorf("no blocks key should keep the doc: %+v", got)
 	}
 }

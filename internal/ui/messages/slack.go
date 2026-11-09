@@ -91,6 +91,12 @@ func slackMessage(m *core.Message) slackc.Props {
 		}
 	}
 	blocks, files, atts := slackDoc(m.Doc)
+	if raw := rawBlocks(m.Blocks); raw != nil {
+		// the blocks as Slack sent them, as the web client's message
+		// carries them: a message_mention, a channel tab slug or any
+		// element the Doc keeps only as text stays itself
+		blocks = raw
+	}
 	if len(blocks) > 0 {
 		p["blocks"] = blocks
 	}
@@ -499,8 +505,47 @@ func applySlackMessage(app *core.App, src *core.Message, msg slackc.Props) core.
 	if t, ok := msg.Str("text"); ok {
 		m.Text = t
 	}
-	m.Doc.Blocks = docBlocks(app, src.Doc.Blocks, msg)
+	m.Doc.Blocks = docBlocks(app, src.Doc.Blocks, src.Blocks, msg)
+	if list, ok := msg["blocks"].([]any); ok && len(src.Blocks) > 0 && !sameSlice(m.Doc.Blocks, src.Doc.Blocks) {
+		// the parts inside get the plugin's blocks (Slack's msg.blocks)
+		if b, err := json.Marshal(jsonable(list)); err == nil {
+			m.Blocks = b
+		}
+	}
 	return m
+}
+
+// sameSlice reports whether a and b are the same slice (docBlocks returns
+// orig itself when nothing changed).
+func sameSlice(a, b []richtext.Block) bool {
+	return len(a) == len(b) && (len(a) == 0 || &a[0] == &b[0])
+}
+
+// rawBlocks is a message's Block Kit blocks as Slack sent them (nil when
+// there are none or they don't parse).
+func rawBlocks(raw json.RawMessage) []any {
+	if len(raw) < 2 || raw[0] != '[' {
+		return nil
+	}
+	var out []any
+	if json.Unmarshal(raw, &out) != nil || len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// sameBlocks reports whether a plugin's msg.blocks are the blocks
+// slackMessage sent (raw), compared as JSON.
+func sameBlocks(list []any, raw json.RawMessage) bool { return sameJSON(list, rawBlocks(raw)) }
+
+// sameJSON reports whether a and b encode to the same JSON (keys sorted).
+func sameJSON(a, b any) bool {
+	x, err := json.Marshal(jsonable(a))
+	if err != nil {
+		return false
+	}
+	y, err := json.Marshal(jsonable(b))
+	return err == nil && string(x) == string(y)
 }
 
 // avatarURL picks the avatar for ConnectedBaseAvatar props (botProfile
@@ -539,15 +584,19 @@ func iconURL(ic slackc.Props) string {
 	return ""
 }
 
-// docBlocks rebuilds a Doc's blocks from msg.blocks / msg.attachments:
-// blocks the native emitted ("clack-i") map back to orig[i] unchanged,
-// blocks a plugin made up are parsed like a Slack message would be, and
-// attachment author fields are taken from msg.attachments. A msg without
-// blocks keeps orig's. Returns orig itself when nothing changed.
-func docBlocks(app *core.App, orig []richtext.Block, msg slackc.Props) []richtext.Block {
+// docBlocks rebuilds a Doc's blocks from msg.blocks / msg.attachments.
+// When the msg went out with the message's real blocks (raw, as Slack
+// sent them), the same blocks back keep orig and any other list is
+// parsed like the message itself: Slack renders msg.blocks. Otherwise
+// blocks the native emitted ("clack-i") map back to orig[i] unchanged
+// and blocks a plugin made up are parsed. Attachment author fields are
+// taken from msg.attachments. A msg without blocks keeps orig's. Returns
+// orig itself when nothing changed.
+func docBlocks(app *core.App, orig []richtext.Block, raw json.RawMessage, msg slackc.Props) []richtext.Block {
 	changed := false
 	var head, tail []richtext.Block // tail: files, attachments, huddle card (not in msg.blocks)
 	var want []int                  // orig indices slackDoc emitted, in order
+	var body []richtext.Block       // orig's blocks from the message's blocks or text
 	for i := range orig {
 		switch orig[i].Kind {
 		case richtext.FileBlock, richtext.AttachmentBlock:
@@ -555,25 +604,41 @@ func docBlocks(app *core.App, orig []richtext.Block, msg slackc.Props) []richtex
 		case richtext.Tombstone:
 			head = append(head, orig[i])
 		default:
+			body = append(body, orig[i])
 			if slackBlock(&orig[i]) != nil {
 				want = append(want, i)
 			}
 		}
 	}
-	if list, ok := msg["blocks"].([]any); ok {
+	if list, ok := msg["blocks"].([]any); ok && rawBlocks(raw) != nil {
+		if sameBlocks(list, raw) {
+			head = append(head, body...)
+		} else {
+			changed = true
+			head = append(head, parseBlocks(app, list)...)
+		}
+	} else if list, ok := msg["blocks"].([]any); ok {
 		changed = len(list) != len(want)
 		for k, v := range list {
 			b := slackc.Props(asMap(v))
 			id := b.StrOr("block_id", "")
 			i, err := strconv.Atoi(strings.TrimPrefix(id, blockIDPrefix))
 			if strings.HasPrefix(id, blockIDPrefix) && err == nil && i >= 0 && i < len(orig) {
-				head = append(head, orig[i])
-				changed = changed || k >= len(want) || want[k] != i
-				continue
+				// orig[i], unless the plugin changed what it says
+				if sb := slackBlock(&orig[i]); sb != nil {
+					sb["block_id"] = id
+					if sameJSON(b, sb) {
+						head = append(head, orig[i])
+						changed = changed || k >= len(want) || want[k] != i
+						continue
+					}
+				}
 			}
 			changed = true
 			head = append(head, parseBlocks(app, []any{b})...)
 		}
+	} else if rawBlocks(raw) != nil {
+		head = append(head, body...)
 	} else {
 		for _, i := range want {
 			head = append(head, orig[i])

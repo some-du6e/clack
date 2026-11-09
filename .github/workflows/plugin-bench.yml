@@ -31,6 +31,9 @@ on:
       - "internal/slick/**"
       - "internal/jsrt/**"
       - "internal/ui/messages/**"
+      - "internal/ui/richview/**"
+      - "internal/ui/slackc/**"
+      - "internal/fakeslack/fakeslack.go"
       - ".github/workflows/plugin-bench.yml"
 
 permissions:
@@ -99,6 +102,37 @@ jobs:
         with:
           name: plugin-bench-shots-${{ matrix.shard }}
           path: dist/shots
+
+  # The host gaps the bench found (internal/ui/plugin_gaps_test.go), each
+  # with the Library's published bundle in the whole client: Streamer
+  # Mode's rows, pronouns in the thread pane, Quick Join's double click.
+  gaps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false # this job runs third-party code; never share its Go cache
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: the published Library (index.json + bundles)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          mkdir -p dist/library
+          for i in 1 2 3; do gh release download plugins -D dist/library --clobber -p 'index.json' -p '*.js' && break; sleep 10; done
+          test -s dist/library/index.json
+      - name: host gap tests
+        env:
+          PLUGIN_BENCH_LIBRARY: ${{ github.workspace }}/dist/library
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a go test -count=1 -timeout 25m -v -run 'TestPluginGap' ./internal/ui/
 
   report:
     needs: bench

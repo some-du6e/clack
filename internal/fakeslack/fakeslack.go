@@ -925,6 +925,13 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleThreadHeader(method, f); handled { // threadheader.go
 		return out
 	}
+	// the bench threads' replies: ahead of the switch, whose
+	// conversations.replies answers every other thread with none
+	if method == "conversations.replies" && s.Size.PluginBench {
+		if out, handled := s.handlePluginBench(method, f); handled { // plugin_bench.go
+			return out
+		}
+	}
 	switch method {
 	case "auth.test":
 		return ok("url", s.URL, "team", "Fake Club", "user", "self", "team_id", TeamID, "user_id", SelfID, "enterprise_id", EnterpriseID)

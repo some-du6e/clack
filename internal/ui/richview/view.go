@@ -1,6 +1,7 @@
 package richview
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"io"
@@ -68,6 +69,10 @@ type View struct {
 	focused  bool
 	lastTap  time.Duration
 	tapCount int
+	// clicks on a link target sent to the DOM (clickLink): its click count
+	clickT   int16
+	clickAt  time.Duration
+	clickN   int
 	hovering bool
 	ptr      f32.Point  // last pointer position (view coordinates)
 	tipFrag  int        // emoji frag under the pointer, -1 none
@@ -993,7 +998,9 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 					}
 					if t := v.targetAt(e.Position); t >= 0 && t == v.press && h != nil {
 						anchor := image.Pt(int(e.Position.X), int(e.Position.Y)).Add(v.Origin)
-						v.activate(t, anchor, h)
+						if !v.clickLink(gtx, t, anchor, e, h) {
+							v.activate(t, anchor, h)
+						}
 					}
 				}
 				v.press = -1
@@ -1061,15 +1068,71 @@ func (v *View) targetText(t int16) string {
 	return b.String()
 }
 
+// clickLink sends a click on a link target to plugins that listen for
+// clicks on the document (slackc.ClickLink), at the element Slack's DOM
+// has for it. It reports whether it did: the link then activates when the
+// click isn't canceled, possibly later (a replayed click), and never
+// twice for one click.
+func (v *View) clickLink(gtx layout.Context, t int16, anchor image.Point, e pointer.Event, h Handler) bool {
+	if !slackc.WantsGlobal("click") {
+		return false
+	}
+	tg := v.d.targets[t]
+	text := v.targetText(t)
+	var l slackc.NativeLink
+	switch tg.kind {
+	case tLink:
+		if tg.url == "" {
+			return false
+		}
+		l.Attrs = map[string]string{"class": "c-link", "href": tg.url, "target": "_blank", "rel": "noopener noreferrer"}
+		if tg.slug {
+			l.Attrs["class"] = "c-link p-rich_text_slug"
+		}
+	case tUser:
+		l.Attrs = map[string]string{"class": "c-link c-member_slug c-member_slug--link", "data-member-id": tg.id, "data-stringify-type": "mention",
+			"href": "/team/" + tg.id}
+	case tChannel:
+		l.Attrs = map[string]string{"class": "c-link c-inline_channel_entity", "data-channel-id": tg.id, "data-stringify-type": "mention",
+			"href": "/archives/" + tg.id}
+	case tUsergroup:
+		l.Tag = "span"
+		l.Attrs = map[string]string{"class": "c-mrkdwn__subteam c-mrkdwn__subteam--link", "data-usergroup-id": tg.id}
+	default:
+		return false
+	}
+	var r image.Rectangle
+	for i := range v.d.frags {
+		if f := &v.d.frags[i]; f.target == t {
+			r = r.Union(fragRect(f))
+		}
+	}
+	l.Rect = r.Add(v.Origin)
+	l.Text = text
+	l.Key = fmt.Sprintf("%p/%d/%s%s", v, t, tg.id, tg.url)
+	// the click count Slack's event carries (detail)
+	if t == v.clickT && e.Time-v.clickAt < 500*time.Millisecond {
+		v.clickN++
+	} else {
+		v.clickN = 1
+	}
+	v.clickT, v.clickAt = t, e.Time
+	return slackc.ClickLink(l, v.clickN, e.Modifiers, gtx.Metric.PxPerDp, func() { v.activateTarget(&tg, text, anchor, h) })
+}
+
 func (v *View) activate(t int16, anchor image.Point, h Handler) {
-	tg := &v.d.targets[t]
+	v.activateTarget(&v.d.targets[t], v.targetText(t), anchor, h)
+}
+
+// activateTarget is a click on tg (text: what it draws).
+func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Handler) {
 	switch tg.kind {
 	case tLink, tCard:
 		if tg.url == "" {
 			break
 		}
 		if lh, ok := h.(LinkTextHandler); ok && tg.kind == tLink {
-			lh.OpenLink(tg.url, v.targetText(t))
+			lh.OpenLink(tg.url, text)
 			break
 		}
 		h.OpenURL(tg.url)
