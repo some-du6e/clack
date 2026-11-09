@@ -155,7 +155,7 @@ func (a *App) layoutHeaderStar(gtx layout.Context, ch string, conv *convInfo, po
 func (a *App) moveToItems(ch string, st chSectionState) []MenuItem {
 	items := []MenuItem{{Header: true, Label: "Move to…"}}
 	if st.stars == nil {
-		items = append(items, MenuItem{Key: "channel_section_select_menu_stars", Label: "Starred", Icon: "star",
+		items = append(items, MenuItem{Key: "channel_section_select_menu_stars", Label: "Starred", Icon: "star", Radio: true,
 			Checked: st.starred, Do: func() { a.moveChannelTo(ch, nil, st) }})
 	}
 	standard := false
@@ -169,7 +169,7 @@ func (a *App) moveToItems(ch string, st chSectionState) []MenuItem {
 		} else {
 			standard = true
 		}
-		items = append(items, MenuItem{Key: "channel_section_select_menu_" + s.ID, Label: s.Name, Icon: icon, Checked: cur,
+		items = append(items, MenuItem{Key: "channel_section_select_menu_" + s.ID, Label: s.Name, Icon: icon, Radio: true, Checked: cur,
 			Do: func() {
 				if !cur {
 					a.moveChannelTo(ch, s, st)
@@ -214,7 +214,9 @@ func (a *App) openMoveToMenu(ch string, anchor image.Rectangle, fromKebab bool) 
 	// it (x 350 for the star at 416, y 87; C0CFT52NEGM at 1440×900).
 	r := anchor
 	if !fromKebab {
+		// (live check against Slack: the menu sat 10px high otherwise)
 		r.Min.X -= a.px(66)
+		r = r.Add(image.Pt(0, a.px(10)))
 	}
 	a.menuAt(r, 0, 280, a.moveToItems(ch, st))
 }

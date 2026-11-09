@@ -175,6 +175,7 @@ type MenuItem struct {
 	Header   bool // a small non-interactive heading row
 	Disabled bool
 	Checked  bool       // a radio item's check
+	Radio    bool       // Slack's radio row: the check in a left gutter, blue when checked (popups.MenuItem.Radio)
 	Sub      []MenuItem // a submenu
 	Do       func()
 }

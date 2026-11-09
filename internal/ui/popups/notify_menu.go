@@ -105,18 +105,18 @@ func ChannelNotifyItems(h Host, ch string) []MenuItem {
 	}
 	return []MenuItem{
 		{Header: "Notify you about…"},
-		{Key: "everything", Label: "All new posts", Subtitle: "Messages and threads you follow", Icon: "bell",
+		{Key: "everything", Label: "All new posts", Subtitle: "Messages and threads you follow", Icon: "bell", Radio: true,
 			Checked: cur == "everything", Do: set("everything")},
-		{Key: "mentions_dms", Label: "Just mentions", Subtitle: mentions, Icon: "bell",
+		{Key: "mentions_dms", Label: "Just mentions", Subtitle: mentions, Icon: "bell", Radio: true,
 			Checked: cur == "mentions_dms", Do: set("mentions_dms")},
-		{Key: "mute", Label: muteLabel, Subtitle: muteDesc, Icon: "bell-off", Checked: muted,
+		{Key: "mute", Label: muteLabel, Subtitle: muteDesc, Icon: "bell-off", Radio: true, Checked: muted,
 			Do: func() { actToggleMute(h, ch, "channel") }},
 		Sep(),
 		{Key: "more_options", Label: "More options", Sub: []MenuItem{
 			{Header: "Temporarily mute…"},
-			{Key: "channel_mute_until_tomorrow", Label: "Until tomorrow", Checked: temp == "tomorrow",
+			{Key: "channel_mute_until_tomorrow", Label: "Until tomorrow", Radio: true, Checked: temp == "tomorrow",
 				Do: tempMute(func() time.Time { return tomorrowAt9(time.Now()) })},
-			{Key: "channel_mute_1_hour", Label: "1 hour", Checked: temp == "1hour",
+			{Key: "channel_mute_1_hour", Label: "1 hour", Radio: true, Checked: temp == "1hour",
 				Do: tempMute(func() time.Time { return time.Now().Add(time.Hour) })},
 			Sep(),
 			{Key: "channel_ctx_menu_edit_default_prefs", Label: "Edit default preferences", Do: func() { openPreferences(h, "notifications") }},
