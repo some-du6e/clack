@@ -135,6 +135,10 @@ type target struct {
 	// not even by the "underline links" preference
 	slug bool
 	att  *richtext.Attachment // tExpand: the attachment to expand
+	// inCard: a tImage inside a v3 link card (unfurl.go). A click opens
+	// the image viewer; a right-click is the card's, as in Slack, where
+	// the image has no context menu of its own.
+	inCard bool
 }
 
 type hit struct {

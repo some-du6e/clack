@@ -175,6 +175,7 @@ type Attachment struct {
 	AudioHTML     string            `json:"audio_html,omitempty"`
 	OtherHTML     string            `json:"other_html,omitempty"`
 	ImageBytes    int64             `json:"image_bytes,omitempty"`
+	MediaType     string            `json:"media_type,omitempty"` // "image" on image-only link unfurls
 	ServiceURL    string            `json:"service_url,omitempty"`
 	BotID         string            `json:"bot_id,omitempty"`
 	IsAppUnfurl   bool              `json:"is_app_unfurl,omitempty"`

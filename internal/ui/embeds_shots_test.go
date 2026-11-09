@@ -11,6 +11,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"image"
 	"os"
 	"testing"
@@ -19,6 +20,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/fakeslack"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/messages"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
 )
@@ -143,6 +145,77 @@ func TestEmbedsChannel(t *testing.T) {
 	}
 }
 
+func (e *perfEnv) channelImages(ch string) []messages.ImageRect {
+	if c := e.a.convos[ch+"/"]; c != nil {
+		if l, ok := c.list.(channelList); ok {
+			return l.ImageRects()
+		}
+	}
+	return nil
+}
+
+// clickUnfurlImage clicks the middle of image url of message ts in
+// #embeds-gallery through the router and checks Slack's image viewer
+// opened on it (recorded by opened) as the top overlay.
+func (e *perfEnv) clickUnfurlImage(t *testing.T, opened func() []openedImage, ts, url string, clock *time.Duration) {
+	t.Helper()
+	var r image.Rectangle
+	for _, ir := range e.channelImages(fakeslack.EmbedsChannelID) {
+		if ir.TS == ts && ir.Image.URL == url {
+			r = ir.R
+		}
+	}
+	if r.Empty() {
+		t.Fatalf("%s isn't on screen as a viewer image (%+v)", url, e.channelImages(fakeslack.EmbedsChannelID))
+	}
+	if r.Dx() < 300 || r.Dy() < 180 {
+		t.Errorf("%s: image box %v, want the 360x225 image card", url, r)
+	}
+	before := len(opened())
+	*clock += 500 * time.Millisecond
+	e.clickAt(r.Min.Add(r.Max).Div(2), *clock)
+	for k := 0; k < 4; k++ {
+		e.frame()
+	}
+	got := opened()
+	if len(got) != before+1 {
+		t.Fatalf("clicking %s didn't open the image viewer", url)
+	}
+	if o := got[len(got)-1]; o.img.URL != url || o.ts != ts {
+		t.Errorf("the viewer opened %s (message %s), want %s (%s)", o.img.URL, o.ts, url, ts)
+	}
+	if n := len(e.a.overlays); n == 0 {
+		t.Errorf("no overlay after opening the viewer")
+	} else if _, ok := e.a.overlays[n-1].(*popups.Lightbox); !ok {
+		t.Errorf("top overlay is %T, not the image viewer", e.a.overlays[n-1])
+	}
+}
+
+// Karim's case: a message linking two PNGs, each unfurled as an
+// image-only attachment (from_url = original_url = image_url). Clicking
+// either image opens it in Clack's image viewer (Slack's
+// AttachmentImage onClick), not the browser.
+func TestEmbedsImageViewer(t *testing.T) {
+	opened := recordLightbox(t)
+	e := embedsEnv(t, image.Pt(1440, 900), false)
+	m := e.embedsMsg("image links")
+	atts := docAtts(m)
+	if len(atts) != 2 {
+		t.Fatalf("image links: %d attachments", len(atts))
+	}
+	var clock time.Duration
+	for _, a := range atts {
+		if a.Image == nil || a.Image.W != 1440 || a.Image.H != 900 || a.OriginalURL != a.Image.URL || a.FromURL != a.Image.URL {
+			t.Fatalf("image links attachment %+v", a)
+		}
+		e.clickUnfurlImage(t, opened, m.TS, a.Image.URL, &clock)
+		e.a.dismissTop()
+		for k := 0; k < 3; k++ {
+			e.frame()
+		}
+	}
+}
+
 func TestEmbedsShots(t *testing.T) {
 	if os.Getenv("EMBEDS_SHOTS_DIR") == "" {
 		t.Skip("EMBEDS_SHOTS_DIR not set (the embeds-shots workflow sets it)")
@@ -160,6 +233,20 @@ func TestEmbedsShots(t *testing.T) {
 			popups.ConfirmRemovePreview(e.a, x.Channel, x.TS, "1")
 			e.embedsShot("embeds-remove-dialog-" + mode)
 			e.a.dismissTop()
+
+			// the image viewer on an unfurl's image (a click on the
+			// first image-only link of "image links"), then the second
+			opened := recordLightbox(t)
+			m := e.embedsMsg("image links")
+			atts := docAtts(m)
+			var clock time.Duration
+			for i, a := range atts {
+				e.settle(300 * time.Millisecond)
+				e.clickUnfurlImage(t, opened, m.TS, a.Image.URL, &clock)
+				e.settle(1500 * time.Millisecond) // the full-size image from the fake's /img
+				e.embedsShot(fmt.Sprintf("embeds-viewer-%d-%s", i+1, mode))
+				e.a.dismissTop()
+			}
 		})
 	}
 }

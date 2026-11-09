@@ -16,7 +16,9 @@ import (
 // image, multi-line text with emoji), a YouTube video (video_html,
 // thumb_url), a GitHub app unfurl (author, fields, footer, color, a
 // bot's), a site with a small thumb, a site with a large image, a
-// text-only site, an image-only link and a Block Kit unfurl. The viewer
+// text-only site, an image-only link, a Block Kit unfurl and a message
+// linking two PNGs (two image-only attachments, Slack's shape for bare
+// image links: from_url = original_url = image_url). The viewer
 // sends the X, small-thumb and text-only ones (their previews get the
 // remove button). Every image is this server's /img gradient; all text is
 // made up. chat.deleteAttachment removes the attachment and is recorded.
@@ -114,6 +116,16 @@ func EmbedsFixtures(base string) []EmbedsFixture {
 		Blocks: json.RawMessage(`[{"type":"section","block_id":"k1","text":{"type":"mrkdwn","text":"*<` + kitURL + `|Issue 77: Previews are too large>*\nOpened by tracker-bot · Priority high"},` +
 			`"accessory":{"type":"image","image_url":"` + img(96, 96, "kit-acc") + `","alt_text":"tracker"}},` +
 			`{"type":"context","block_id":"k2","elements":[{"type":"mrkdwn","text":"Example Tracker · updated today"}]}]`)}
+	// Two links to PNGs, each unfurled the way Slack's unfurler sends a
+	// bare image link: an image-only attachment whose from_url,
+	// original_url and image_url are the same URL, with media_type
+	// "image" (no title, text or service). Both are this server's /img.
+	shot := func(id int, seed string) slack.Attachment {
+		u := img(1440, 900, seed)
+		return slack.Attachment{ID: id, FromURL: u, OriginalURL: u, ImageURL: u, ImageWidth: 1440, ImageHeight: 900,
+			ImageBytes: 214000 + int64(id)*1000, MediaType: "image", Fallback: "1440x900px image"}
+	}
+	shotA, shotB := shot(1, "shot-a"), shot(2, "shot-b")
 	return []EmbedsFixture{
 		{"x post", "<" + xURL + ">", -1, []slack.Attachment{x}},
 		{"youtube", "watch this <" + ytURL + ">", 1, []slack.Attachment{yt}},
@@ -123,6 +135,7 @@ func EmbedsFixtures(base string) []EmbedsFixture {
 		{"text only", "see <" + txtURL + ">", -1, []slack.Attachment{txt}},
 		{"image link", "<" + picURL + ">", 4, []slack.Attachment{pic}},
 		{"block kit", "<" + kitURL + ">", 5, []slack.Attachment{kit}},
+		{"image links", "before <" + shotA.FromURL + "> and after <" + shotB.FromURL + ">", 1, []slack.Attachment{shotA, shotB}},
 	}
 }
 

@@ -75,6 +75,9 @@ func (v *View) HitAt(p f32.Point) Hit {
 		h.Kind, h.ID = HitUsergroup, tg.id
 	case tImage:
 		h.Kind, h.Image = HitImage, tg.img
+		if tg.inCard {
+			h.Kind = HitCard
+		}
 	case tFile:
 		h.Kind, h.File = HitFile, tg.file
 	case tButton:
@@ -104,6 +107,28 @@ func (v *View) FileRects() []FileRect {
 		}
 		if tg := &v.d.targets[h.t]; tg.kind == tFile && tg.file != nil {
 			out = append(out, FileRect{File: tg.file, R: h.r})
+		}
+	}
+	return out
+}
+
+// ImageRect is an image's clickable box: an image block or an attachment
+// image that opens the image viewer.
+type ImageRect struct {
+	Image *richtext.Image
+	R     image.Rectangle
+}
+
+// ImageRects lists the boxes that open the image viewer, in View
+// coordinates (after the first Layout), in layout order.
+func (v *View) ImageRects() []ImageRect {
+	var out []ImageRect
+	for _, h := range v.d.hits {
+		if h.t < 0 || int(h.t) >= len(v.d.targets) || h.r.Empty() {
+			continue
+		}
+		if tg := &v.d.targets[h.t]; tg.kind == tImage && tg.img != nil {
+			out = append(out, ImageRect{Image: tg.img, R: h.r})
 		}
 	}
 	return out
