@@ -65,6 +65,11 @@ type convInfo struct {
 	LastRead       string
 	Latest         string
 	StatusEmoji    string // DM partner's status emoji image (shown after the name)
+	// Code is set for a code channel (core.Conv.Code); CodeStatus is its
+	// agent status and AgentName the agent's name (codechannel.go).
+	Code       *core.CodeChannel
+	CodeStatus string
+	AgentName  string
 }
 
 func (m *model) conv(id string) *convInfo {

@@ -867,9 +867,13 @@ func (s *listState) intro(gtx layout.Context, h Host, c *colors, w int) layout.D
 	th := h.Theme()
 	name := s.ch
 	kind := ""
+	agent := "" // a code channel's agent (CodeChannelForewordDescription)
 	if app := h.Core(); app != nil {
 		if cv, ok := app.Conv(s.ch); ok {
 			name, kind = cv.Name, cv.Kind
+			if cv.Code != nil {
+				agent = cv.AgentName
+			}
 			if kind == "im" {
 				if u, ok := app.User(cv.User); ok {
 					name = u.Name
@@ -889,11 +893,26 @@ func (s *listState) intro(gtx layout.Context, h Host, c *colors, w int) layout.D
 		return label(gtx, th, textStyle{size: 28, weight: theme.Black, col: c.Text, lineH: 36}, title)
 	})
 	y += d.Size.Y + dp(gtx, 8)
+	if agent != "" {
+		// a code channel: Slack's two lines instead of the channel intro and
+		// its buttons; the disclaimer is 12px content-sec, 4px below.
+		sub = "This is a code channel — @" + agent + " can see and respond to every message and file."
+	}
 	d = at(gtx, px, y, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Max.X = w - 2*px
 		return label(gtx, th, textStyle{size: 15, col: c.Text2, lineH: 22}, sub)
 	})
-	y += d.Size.Y + dp(gtx, 16)
+	y += d.Size.Y
+	if agent != "" {
+		y += dp(gtx, 4)
+		d = at(gtx, px, y, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Max.X = w - 2*px
+			return label(gtx, th, textStyle{size: 12, col: c.Text3, lineH: 18},
+				"Content shared here is also processed by "+agent+" according to its terms. "+agent+" uses AI and can make mistakes.")
+		})
+		y += d.Size.Y
+	}
+	y += dp(gtx, 16)
 	return layout.Dimensions{Size: image.Pt(w, y)}
 }
 

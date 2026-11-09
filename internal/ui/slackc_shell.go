@@ -346,6 +346,11 @@ func (e sbEntity) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
 				return slackc.Component(gtx, "BasePresence", sbPresence{a: a, active: conv.Active, sel: e.sel, self: conv.Self, key: conv.ID}, sbPresence.props, sbPresence.layout)
 			})
 		}
+	} else if conv.Code != nil {
+		// a code channel: AgentChannelStatusDot (codechannel.go) in place of the #
+		at(gtx, image.Pt(0, iy), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
+			return a.codeStatusDot(gtx, conv, fg, conv.Muted)
+		})
 	} else {
 		icon := "hash"
 		switch kind {

@@ -36,7 +36,7 @@ type bk struct {
 	Range       string          `json:"range"`
 	Timestamp   json.RawMessage `json:"timestamp"`
 	Format      string          `json:"format"`
-	Fallback    string          `json:"fallback"`
+	Fallback    bkFallback      `json:"fallback"`
 	Value       string          `json:"value"`
 	Indent      int             `json:"indent"`
 	Offset      int             `json:"offset"`
@@ -190,6 +190,46 @@ func parseBlocks(raw json.RawMessage) []bk {
 	return bs
 }
 
+// bkFallback is a "fallback" field: a string (a date element's text) or,
+// on a block, the payload Slack draws when it can't draw the block (one
+// block or a list; resolveFallback).
+type bkFallback struct {
+	Text string
+	raw  json.RawMessage
+}
+
+func (f *bkFallback) UnmarshalJSON(b []byte) error {
+	if len(b) > 0 && b[0] == '"' {
+		return json.Unmarshal(b, &f.Text)
+	}
+	f.raw = append(json.RawMessage(nil), b...)
+	return nil
+}
+
+func (f bkFallback) blocks() []bk {
+	if len(f.raw) == 0 {
+		return nil
+	}
+	var one bk
+	if f.raw[0] == '{' {
+		if json.Unmarshal(f.raw, &one) == nil && one.Type != "" && slackBlockTypes[one.Type] {
+			return []bk{one}
+		}
+		return nil
+	}
+	var list []bk
+	if json.Unmarshal(f.raw, &list) != nil {
+		return nil
+	}
+	out := list[:0]
+	for _, b := range list {
+		if b.Type != "" && slackBlockTypes[b.Type] { // a nested unknown block doesn't recurse
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
 // badBlock marks a block that didn't decode.
 const badBlock = "\x00bad"
 
@@ -323,6 +363,22 @@ func kitLayout(t string) bool {
 		return true
 	}
 	return false
+}
+
+// slackBlockTypes is every block type Slack's client knows (its block
+// type enum, client-boot, build a84662d2d135); any other type draws
+// UnsupportedBlockFallback (UnknownBlock).
+var slackBlockTypes = map[string]bool{}
+
+func init() {
+	for _, t := range strings.Fields(`callout canvas_table context context_actions section image divider actions file
+		message expandable canvas error rich_text call input group header prototype table loading event contact_card
+		share_shortcut share_prompt share_skill share_workflow video message_embed condition channel_set channel_section
+		timeline plan task_card alert card related_automation_decorator carousel data_table container
+		salesforce_record_card search_top_results mcp_app data_visualization layout page auth_provider
+		attachment_reference fallback_canary markdown`) {
+		slackBlockTypes[t] = true
+	}
 }
 
 // unsupported is Slack's per-block error fallback.
@@ -475,6 +531,14 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		return c.agentBlock(out, b)
 	case badBlock:
 		return append(out, unsupported())
+	}
+	if !slackBlockTypes[b.Type] {
+		// SUIRendererItem: no renderer for the type, so the block's own
+		// fallback payload (a block or a list), else UnsupportedBlockFallback
+		if fb := b.Fallback.blocks(); len(fb) > 0 {
+			return append(out, c.blocks(fb)...)
+		}
+		return append(out, Block{Kind: UnknownBlock, Spans: []Span{{Kind: Text, Text: "This message can’t be fully displayed."}}})
 	}
 	if t := b.textObj(); t != nil {
 		return append(out, c.textBlocks(t)...)
@@ -707,7 +771,7 @@ func (c *builder) richInline(els []bk, pre bool) []Span {
 			out = append(out, broadcastSpan(firstNonEmpty(e.Range, "here")))
 		case "date":
 			sec := tsSeconds(e.Timestamp)
-			sp := Span{Kind: Date, Text: e.Fallback, ID: strconv.FormatInt(sec, 10), URL: SafeURL(e.URL)}
+			sp := Span{Kind: Date, Text: e.Fallback.Text, ID: strconv.FormatInt(sec, 10), URL: SafeURL(e.URL)}
 			if sec > 0 && e.Format != "" {
 				sp.Text = FormatDate(time.Unix(sec, 0), e.Format)
 			}

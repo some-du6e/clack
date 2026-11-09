@@ -81,6 +81,10 @@ const (
 	// decode, an image block without an image): Slack's per-block error
 	// fallback, "This content could not be displayed."
 	Unsupported
+	// UnknownBlock is a block whose type Slack's client doesn't know (an
+	// agent's newer artifact type, say): UnsupportedBlockFallback (l2Ua),
+	// a card reading "This message can’t be fully displayed."
+	UnknownBlock
 )
 
 // Block is one vertical unit of a document.

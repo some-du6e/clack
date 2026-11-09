@@ -88,6 +88,8 @@ func (l *lay) margins(b *richtext.Block) (top, first, bottom int) {
 		return l.dp(8), 0, l.dp(8)
 	case richtext.Unsupported:
 		return 0, 0, l.dp(6)
+	case richtext.UnknownBlock:
+		return l.dp(8), 0, l.dp(8)
 	}
 	return 0, 0, 0
 }
@@ -384,6 +386,21 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 		fs.col = Over(color.NRGBA{R: p.Text.R, G: p.Text.G, B: p.Text.B, A: 128}, p.Panel)
 		l.addSpans(b.Spans, &fs)
 		h, _ := l.flow(x, y, w, &fs)
+		return h
+
+	case richtext.UnknownBlock:
+		// UnsupportedBlockFallback: .fallback (width 100%, max 426px) around
+		// an entity card (1px border, radius 12, base-pry) with .content:
+		// 13px content-sec, line-height 1.25, padding 12px.
+		cw := min(w, l.dp(426))
+		pad := l.dp(12)
+		fs := l.bodyStyle()
+		fs.size, fs.lineH, fs.col = l.sp(13), l.dp(16), p.Text2
+		l.addSpans(b.Spans, &fs)
+		th, _ := l.flow(x+pad, y+pad, cw-2*pad, &fs)
+		h := th + 2*pad
+		r := image.Rect(x, y, x+cw, y+h)
+		l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: r, fill: p.Panel, stroke: p.Border, bw: l.dp(1), radius: l.dp(12), target: -1})
 		return h
 
 	case richtext.Context:
