@@ -12,6 +12,7 @@ import (
 	"errors"
 	"image"
 	"image/png"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -451,6 +452,18 @@ func TestSearchViewResults(t *testing.T) {
 		"Last 12 months", "Last 3 years", "--", "On…", "Before…", "After…", "Range…"}) {
 		t.Errorf("Date %q", got)
 	}
+	// Each filter starts its own search; they run concurrently and the
+	// fake records them as they arrive, not as they were sent. On CI the
+	// first filter's request ("zephyr is:thread") arrived after all the
+	// others, so "the last recorded request" never carried every filter.
+	// Hold that one back to get the same order here; only the seq check in
+	// search() may decide which answer the view shows.
+	e.fs.SetHook(func(method string, f url.Values) (any, bool) {
+		if method == "search.modules.messages" && f.Get("query") == fakeslack.SearchWord+" is:thread" {
+			time.Sleep(250 * time.Millisecond)
+		}
+		return nil, false
+	})
 	for _, c := range []struct {
 		menu, item, mod string
 	}{
@@ -467,13 +480,30 @@ func TestSearchViewResults(t *testing.T) {
 			t.Errorf("%s > %s: query %q lacks %s", c.menu, c.item, v.q.String(), c.mod)
 		}
 	}
-	// wait for the request carrying every filter: !v.loading alone can be
-	// true before the last filter's search has gone out (flaked in CI)
-	wantQ := fakeslack.SearchWord + " is:thread is:dm"
-	d.until(t, "the filtered search", func() bool {
-		f := e.fs.SearchForms("search.modules.messages")
-		return !v.loading && len(f) > 0 && strings.HasPrefix(f[len(f)-1].Get("query"), wantQ)
-	})
+	// the view settles on the last filter's search: a request carried every
+	// filter, and the results shown are its (older searches' answers are
+	// dropped by seq whenever they arrive)
+	wantQ := v.q.String()
+	sentFull := func(extra func(url.Values) bool) bool {
+		for _, f := range e.fs.SearchForms("search.modules.messages") {
+			if f.Get("query") == wantQ && (extra == nil || extra(f)) {
+				return true
+			}
+		}
+		return false
+	}
+	d.until(t, "the filtered search", func() bool { return !v.loading && sentFull(nil) })
+	if !strings.HasPrefix(wantQ, fakeslack.SearchWord+" is:thread is:dm is:todos has:pin in:activity has:action type:videos type:huddle_notes") {
+		t.Errorf("final query %q", wantQ)
+	}
+	seq := v.seq
+	time.Sleep(400 * time.Millisecond) // let the held-back answer arrive
+	d.frame()
+	Pump()
+	if v.seq != seq || v.loading || v.q.String() != wantQ {
+		t.Errorf("a late answer changed the view: seq %d→%d loading %v query %q", seq, v.seq, v.loading, v.q.String())
+	}
+	e.fs.SetHook(nil)
 	// Exclude bot messages is the search_exclude_bots pref
 	for _, it := range m.items {
 		if it.Label == "Exclude bot messages" {
@@ -481,8 +511,8 @@ func TestSearchViewResults(t *testing.T) {
 		}
 	}
 	slUntil(t, 10*time.Second, "the pref and the new search", d.frame, func() bool {
-		f := e.fs.SearchForms("search.modules.messages")
-		return e.h.a.PrefBool("search_exclude_bots", false) && f[len(f)-1].Get("search_exclude_bots") == "true"
+		return e.h.a.PrefBool("search_exclude_bots", false) && !v.loading &&
+			sentFull(func(f url.Values) bool { return f.Get("search_exclude_bots") == "true" })
 	})
 
 	// Includes me is with:<@self>
