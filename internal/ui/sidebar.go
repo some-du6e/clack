@@ -95,6 +95,8 @@ func sectionIcon(typ string) string {
 		return "apps"
 	case "coding_channels": // Slack's Code channels heading carries the code glyph
 		return "code"
+	case "priority": // VIP unreads: getIconPrefix's vip glyph
+		return "vip"
 	}
 	return "list-view"
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 )
@@ -72,4 +73,70 @@ func (a *App) CreateEmailToken(ctx context.Context) (EmailToken, error) {
 // DeleteEmailToken is "Disable this address" (users.emailtoken.delete).
 func (a *App) DeleteEmailToken(ctx context.Context, id string) error {
 	return a.C.Call(ctx, "users.emailtoken.delete", url.Values{"email_token_id": {id}, "reason": {"prefs"}}, nil)
+}
+
+// PrioritySectionID is the client-local VIP unreads section (WHwP m1).
+const PrioritySectionID = "priority"
+
+// prioritySectionOn is whether Slack's sidebar has the VIP unreads
+// section: client-boot /yt0 makes it (Uebl, "VIP unreads", ahead of the
+// server's sections) for a paid team with VIPs, and lJBI fills it when
+// vip_section_pref is off, or on with priority_sidebar_section (VIP >
+// "Create VIP unreads section").
+func (a *App) prioritySectionOn() bool {
+	if !paidTeam || len(a.VIPs()) == 0 {
+		return false
+	}
+	return a.experiment("vip_section_pref") != "on" || a.PrefBool("priority_sidebar_section", false)
+}
+
+// priorityEligible is isChannelEligibleForPrioritySection: a DM with a
+// VIP, or a group DM with one, that has an unread mention (in a DM every
+// unread message counts). Slack's other two inputs, an unread mention by
+// a VIP elsewhere and unread thread replies, aren't in Clack's counts.
+func (a *App) priorityEligible(c Conv, vips map[string]bool) bool {
+	if a.Count(c.ID).Mentions == 0 {
+		return false
+	}
+	switch c.Kind {
+	case "im":
+		return vips[c.User]
+	case "mpim":
+		for _, m := range c.Members {
+			if vips[m] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// priorityChannels are the conversations the VIP unreads section takes
+// from every other section (lJBI assigns them first), keeping the open
+// one there while it's shown (PrioritySectionChannelManager).
+func (a *App) priorityChannels(convs []Conv) map[string]bool {
+	out := map[string]bool{}
+	a.prio.mu.Lock()
+	defer a.prio.mu.Unlock()
+	if !a.prioritySectionOn() {
+		a.prio.shown = nil
+		return out
+	}
+	vips := map[string]bool{}
+	for _, id := range a.VIPs() {
+		vips[id] = true
+	}
+	sel := a.selectedID()
+	for _, c := range convs {
+		if a.priorityEligible(c, vips) || (c.ID == sel && a.prio.shown[c.ID]) {
+			out[c.ID] = true
+		}
+	}
+	a.prio.shown = out
+	return out
+}
+
+type prioState struct {
+	mu    sync.Mutex
+	shown map[string]bool
 }

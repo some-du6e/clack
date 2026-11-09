@@ -79,7 +79,7 @@ var slackPages = map[string][]want{
 		ck("Mute all huddle sounds from Slack"), lg("Notification sound (huddles)"), sel("Boop Plus"),
 	},
 	"vip": {
-		lg("VIP Notifications"), ck("Always allow notifications from VIPs"), ckOff("Create VIP unreads section"),
+		lg("VIP Notifications"), ck("Always allow notifications from VIPs"),
 		lg("VIP List"), {"input", "", false}, lg("Added to your VIP list"),
 	},
 	"navigation": {

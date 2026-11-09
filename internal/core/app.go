@@ -23,6 +23,7 @@ type App struct {
 	S   *store.Store
 	RTM *slack.RTM
 
+	prio      prioState // the VIP unreads section's open conversation (prefs_a.go)
 	ready     chan struct{}
 	bootErr   error
 	mu        sync.Mutex
@@ -1222,6 +1223,15 @@ func (a *App) sections(convs []Conv) []Section {
 	// off, the section isn't shown and they stay in Channels / DMs.
 	showConnect := a.connectSectionOn(ordered)
 	connectIdx := -1
+	// VIP unreads: Slack's client-local section, first, taking its
+	// conversations from every other section (prefs_a.go)
+	prio := a.priorityChannels(convs)
+	if len(prio) > 0 && !hasSectionType(ordered, "priority") {
+		ordered = append([]slack.Section{{ID: PrioritySectionID, Name: "VIP unreads", Type: "priority"}}, ordered...)
+	}
+	for id := range prio {
+		assigned[id] = true // nothing else lists them
+	}
 	for _, s := range ordered {
 		switch s.Type {
 		case "slack_connect":
@@ -1238,6 +1248,21 @@ func (a *App) sections(convs []Conv) []Section {
 			}
 		}
 		sv := Section{ID: s.ID, Name: s.Name, Type: s.Type, Emoji: s.Emoji, Channels: []string{}, Collapsed: a.sectionCollapsed(s)}
+		if s.Type == "priority" { // VIP unreads: hidden while empty
+			if len(prio) == 0 {
+				continue
+			}
+			for _, c := range convs {
+				if prio[c.ID] {
+					sv.Channels = append(sv.Channels, c.ID)
+				}
+			}
+			if sv.Name == "" {
+				sv.Name = "VIP unreads"
+			}
+			out = append(out, sv)
+			continue
+		}
 		if sv.Emoji != "" {
 			sv.EmojiURL, _, _ = a.S.Emoji(strings.Trim(sv.Emoji, ":"))
 		}

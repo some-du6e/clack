@@ -242,8 +242,11 @@ func (p *prefsModal) vipPage(f *prefsForm) {
 	f.subheading("VIP Notifications")
 	f.check("priority_dnd_override", "Always allow notifications from VIPs",
 		"Still get message notifications from your VIPs, even when general notifications are paused", false, false)
-	f.off("priority_sidebar_section", "Create VIP unreads section", "This section will appear at the top of your sidebar so you never miss a mention or message.", p.prefBool("priority_sidebar_section", false), false)
-	f.na()
+	// isVipSectionPrefEnabled: the row shows under vip_section_pref; core
+	// fills the VIP unreads section (core/prefs_a.go priorityChannels)
+	if c := p.a.Core(); c != nil && c.Experiment("vip_section_pref") == "on" {
+		f.check("priority_sidebar_section", "Create VIP unreads section", "This section will appear at the top of your sidebar so you never miss a mention or message.", false, false)
+	}
 	f.gap()
 	f.subheading("VIP List")
 	f.para("Decide who or what you want prioritized at the top of your Home, DMs and Activity.")
