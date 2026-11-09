@@ -31,7 +31,10 @@ const (
 type ctxHost struct {
 	coreHost
 	overlays []popups.Overlay
+	navs     []string
 }
+
+func (h *ctxHost) Navigate(r string) { h.navs = append(h.navs, r) }
 
 func (h *ctxHost) ShowOverlay(o popups.Overlay) { h.overlays = append(h.overlays, o) }
 

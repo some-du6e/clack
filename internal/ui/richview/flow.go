@@ -139,6 +139,7 @@ type display struct {
 	comps   []compBox // Slack components (see comps.go)
 	slots   []slot    // interactive element runs drawn by Options.Elements
 	tips    []string  // emoji tooltips (":name:"), frag.tip-1
+	codes   []codeRun // inline code runs and code blocks (codecopy.go)
 }
 
 // slot is a run of interactive elements the owner draws (Options.Elements).
@@ -160,6 +161,7 @@ func (d *display) reset() {
 	d.comps = d.comps[:0]
 	d.slots = d.slots[:0]
 	d.tips = d.tips[:0]
+	d.codes = d.codes[:0]
 }
 
 func (d *display) addTarget(t target) int16 {
@@ -420,8 +422,11 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 				l.addText(txt, fs, k, col, st, -1, -1)
 				continue
 			}
+			// the copy text is the image's data-stringify-emoji, the
+			// Emoji's text prop: ":name:" (with ::skin-tone-N), not the
+			// unicode character
 			alt := sp.Text
-			if alt == "" {
+			if sp.ID != "" {
 				alt = ":" + sp.ID + ":"
 			}
 			p0, p1 := l.plainAdd(alt)
@@ -535,7 +540,11 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			// Inline code wraps normally.
 			txt = strings.ReplaceAll(txt, "\n", " ")
 		}
+		c0 := int32(len(l.d.plain))
 		l.addText(txt, fs, k, col, st, dc, tg)
+		if !fs.pre && st&richtext.Code != 0 {
+			l.addCodeRun(c0, int32(len(l.d.plain)))
+		}
 		if dc >= 0 && l.decos[dc].padR > 0 {
 			l.addPad(l.decos[dc].padR, dc, k)
 		}
