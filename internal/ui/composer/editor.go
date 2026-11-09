@@ -125,6 +125,7 @@ const (
 // Editor is a rich text editor widget. Create it with NewEditor (the zero
 // value also works).
 type Editor struct {
+	missed []event.Event // key events KeepFocus read while it wasn't drawn (editor_focus.go)
 	// Intercept, if set, is offered Enter, Tab, Up, Down, Escape (with
 	// modifiers) before the editor handles them; returning true consumes
 	// the key (used by the autocomplete popup).
@@ -996,7 +997,7 @@ func (e *Editor) onDrag(gtx layout.Context, ev pointer.Event) {
 
 func (e *Editor) processKeys(gtx layout.Context) {
 	for {
-		ev, ok := gtx.Event(e.filters...)
+		ev, ok := e.nextKeyEvent(gtx)
 		if !ok {
 			break
 		}
@@ -1184,6 +1185,7 @@ func (e *Editor) Layout(gtx layout.Context, st EditorStyle) layout.Dimensions {
 	pointer.CursorText.Add(gtx.Ops)
 	event.Op(gtx.Ops, e)
 	key.InputHintOp{Tag: e, Hint: key.HintText}.Add(gtx.Ops)
+	e.noteLive(gtx) // editor_focus.go
 	e.scroller.Add(gtx.Ops)
 	e.clicker.Add(gtx.Ops)
 	e.dragger.Add(gtx.Ops)

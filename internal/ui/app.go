@@ -29,6 +29,7 @@ import (
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/slick"
 	"github.com/some-du6e/yoloslackgoclient/internal/taut"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/huddleui"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
@@ -165,28 +166,37 @@ type App struct {
 		dark bool
 		busy bool
 	}
-	notify     notifier
-	focused    bool
-	winSize    image.Point
-	sbBase     color.NRGBA
-	sbPal      theme.Palette
-	styleVer   uint64    // slackc.Styles.Version the palette was derived at
-	acct       acctTheme // the Slack account's theme (theme_account.go)
-	shaperCh   chan [2]*text.Shaper
-	explorer   *explorer.Explorer    // native file chooser (set in onWindow)
-	tautGen    int                   // bumps when a (new) plugin runtime attaches
-	tautTabs   []taut.PreferencesTab // plugins' Preferences tabs
-	switchAt   time.Time             // navigation time, for the channel-switch latency log
-	switchTo   Route
-	winLive    atomic.Pointer[app.Window] // a.win once Run made it, for other goroutines
-	inval      chan struct{}              // redraw requests for invalidator (cap 1: they coalesce)
-	update     updateState                // "Update available" banner
-	rtAsk      realtimeState              // first-run "Live updates are off" banner
-	updatesOff atomic.Bool                // prefs.NoUpdateCheck, for updateLoop
-	updNow     chan struct{}              // Check now → updateLoop (cap 1)
-	updWake    chan struct{}              // focus came back: is a check due? (cap 1)
-	hud        *huddleui.Controller       // the native huddle (huddle_wire.go)
-	hudOrigin  map[string]*originTracker  // headers' huddle buttons by channel (caret menus)
+	notify         notifier
+	focused        bool
+	winSize        image.Point
+	sbBase         color.NRGBA
+	sbPal          theme.Palette
+	styleVer       uint64    // slackc.Styles.Version the palette was derived at
+	acct           acctTheme // the Slack account's theme (theme_account.go)
+	shaperCh       chan [2]*text.Shaper
+	explorer       *explorer.Explorer    // native file chooser (set in onWindow)
+	tautGen        int                   // bumps when a (new) plugin runtime attaches
+	tautTabs       []taut.PreferencesTab // plugins' Preferences tabs
+	switchAt       time.Time             // navigation time, for the channel-switch latency log
+	switchTo       Route
+	winLive        atomic.Pointer[app.Window] // a.win once Run made it, for other goroutines
+	inval          chan struct{}              // redraw requests for invalidator (cap 1: they coalesce)
+	update         updateState                // "Update available" banner
+	rtAsk          realtimeState              // first-run "Live updates are off" banner
+	updatesOff     atomic.Bool                // prefs.NoUpdateCheck, for updateLoop
+	updNow         chan struct{}              // Check now → updateLoop (cap 1)
+	updWake        chan struct{}              // focus came back: is a check due? (cap 1)
+	hud            *huddleui.Controller       // the native huddle (huddle_wire.go)
+	hudOrigin      map[string]*originTracker  // headers' huddle buttons by channel (caret menus)
+	skipBody       int                        // tests: frames drawViewBody leaves the body out
+	skipAt         time.Time                  // tests: the frame being skipped
+	noKeepBody     bool                       // tests: no keepBody (KeepFocus alone)
+	body           bodyDraw                   // the primary body's last live draw (keepBody)
+	standIn        bool                       // keepBody's draw is running
+	standIns       int                        // keepBody draws so far
+	standInsLogged int                        // standIns at the last log line
+	standInLogged  time.Time                  // when it was logged
+	panelOrigin    image.Point                // the primary panel's window origin this frame
 
 	swipe         swiper          // trackpad history swipes (swipe.go, nav.go)
 	swipeNow      swipeState      // this frame's swipe progress, for the arrow
@@ -561,6 +571,7 @@ func (a *App) frame(gtx layout.Context) {
 	a.layoutToast(gtx)
 	a.rootPointer(gtx)
 	a.keys.processGlobal(gtx) // last: only the keys no widget took
+	composer.KeepFocus(gtx)   // a focused editor this frame didn't draw stays focused
 }
 
 // ---- primary panel ----
@@ -595,7 +606,9 @@ func (a *App) layoutPrimary(gtx layout.Context) layout.Dimensions {
 			a.chBodyW = mainW
 			defer func() { a.chBodyW = 0 }()
 		}
+		a.panelOrigin = panelOrigin
 		d := slackc.Component(gtx, "ClientPrimaryView", a, (*App).primaryViewProps, (*App).layoutPrimaryView)
+		a.keepBody(gtx) // the body, if this frame's tree left it out (slick_shell.go)
 		a.layoutShellPoints(gtx)
 		return d
 	})
