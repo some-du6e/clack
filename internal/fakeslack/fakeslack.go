@@ -254,6 +254,8 @@ type Server struct {
 	shared  []SharedFiles            // files.share calls
 	nextID  int
 
+	emailTokens []map[string]any // users.emailtoken.* (under prefsMu)
+
 	chans chanState   // conversations.create and friends (channels.go)
 	secs  secState    // sidebar sections, marks, channel notification prefs (sections.go)
 	hud   huddleState // rooms.getLink, huddles.scheduled.new, calendar.* (huddles.go)
@@ -984,6 +986,29 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			}
 		}
 		return ok()
+	case "users.emailtoken.get", "users.emailtoken.create", "users.emailtoken.delete": // Bring emails into Slack
+		s.prefsMu.Lock()
+		defer s.prefsMu.Unlock()
+		switch method {
+		case "users.emailtoken.create":
+			s.emailTokens = append(s.emailTokens, map[string]any{"token_id": 1000 + len(s.emailTokens),
+				"token": "fake", "email_address": "fake-" + strconv.Itoa(len(s.emailTokens)) + "@fake.slack.com"})
+			return ok("token_id", s.emailTokens[len(s.emailTokens)-1]["token_id"], "token", "fake",
+				"email_address", s.emailTokens[len(s.emailTokens)-1]["email_address"])
+		case "users.emailtoken.delete":
+			keep := s.emailTokens[:0]
+			for _, t := range s.emailTokens {
+				if strconv.Itoa(t["token_id"].(int)) != f.Get("email_token_id") {
+					keep = append(keep, t)
+				}
+			}
+			s.emailTokens = keep
+			return ok()
+		}
+		if len(s.emailTokens) == 0 {
+			return map[string]any{"ok": false, "error": "no_emailtoken"}
+		}
+		return ok("email_forwarding_addresses", s.emailTokens)
 	case "users.priority.getRecommendations": // the VIP page's Recommended list
 		var recs []map[string]any
 		reasons := []string{"manager", "frequent_collaborator", "frequently_used", "skip_level"}

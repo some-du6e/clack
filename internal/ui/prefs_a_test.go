@@ -462,3 +462,41 @@ func TestPrefsAuditAppliedRoundTripVIP(t *testing.T) {
 	pageRows(t, a, p, "vip")
 	waitFor(t, a, "searched VIP added", func() bool { return len(ca.VIPs()) == 2 && ca.VIPs()[1] == hit })
 }
+
+// Messages & media > Bring emails into Slack: Get a Forwarding Address is
+// users.emailtoken.create and shows the address; reopening reads it back
+// (users.emailtoken.get); disabling deletes it.
+func TestPrefsEmailForwarding(t *testing.T) {
+	a, ca, _ := fakePrefsApp(t)
+	p := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}}
+	pageRows(t, a, p, "messages_media")
+	waitFor(t, a, "emailtoken.get", func() bool { return p.ra.emailsGot })
+	p.clicks["button.email_forwarding"].Click()
+	pageRows(t, a, p, "messages_media")
+	waitFor(t, a, "an address", func() bool { return len(p.ra.emails) == 1 && strings.HasSuffix(p.ra.emails[0].Address, "@fake.slack.com") })
+	if ts, err := ca.EmailTokens(context.Background()); err != nil || len(ts) != 1 {
+		t.Fatalf("emailtoken.get: %v %v", ts, err)
+	}
+	p2 := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}}
+	pageRows(t, a, p2, "messages_media")
+	waitFor(t, a, "read back", func() bool { return p2.ra.emailsGot && len(p2.ra.emails) == 1 })
+	rows := pageRows(t, a, p2, "messages_media")
+	found := false
+	for _, r := range rows {
+		if r.Kind == "button" && r.Label == "Copy" {
+			found = true
+		}
+		if r.Label == "Get a Forwarding Address" {
+			t.Fatal("the button shows with an address")
+		}
+	}
+	if !found {
+		t.Fatalf("no Copy: %s", dumpRows(rows))
+	}
+	if err := ca.DeleteEmailToken(context.Background(), p2.ra.emails[0].ID.String()); err != nil {
+		t.Fatal(err)
+	}
+	if ts, err := ca.EmailTokens(context.Background()); err != nil || len(ts) != 0 {
+		t.Fatalf("after delete %v %v", ts, err)
+	}
+}

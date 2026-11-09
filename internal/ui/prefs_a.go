@@ -35,6 +35,10 @@ type prefsA struct {
 	vipRecs    []core.VIPRecommendation
 	vipRecsSet bool     // asked users.priority.getRecommendations
 	vipShown   []string // the six recommendations picked when they came (Slack keeps them)
+
+	emails    []core.EmailToken // Messages & media > Bring emails into Slack
+	emailsSet bool              // asked users.emailtoken.get
+	emailsGot bool              // and it answered
 }
 
 // close flushes a keyword edit still waiting on its debounce (Slack's
@@ -589,4 +593,81 @@ func (p *prefsModal) textField(f *prefsForm, key string, ed *widget.Editor, plac
 		return layout.Dimensions{Size: rr.Max}
 	})
 	f.y += bh + gtx.Dp(8)
+}
+
+// emailForwarding is EmailForwardingPref: users.emailtoken.get on open;
+// each address read-only with Copy ("Send to Slack <address>") and
+// "Disable this address" (a confirm, then users.emailtoken.delete); with
+// none, "Get a Forwarding Address" (users.emailtoken.create).
+func (p *prefsModal) emailForwarding(f *prefsForm) {
+	r := &p.ra
+	a := p.a
+	c := a.Core()
+	run := func(do func(ctx context.Context) error) {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			err := do(ctx)
+			a.Post(func() {
+				if err != nil {
+					a.Toast("Hmm, something went wrong. Try again?")
+				}
+				a.Invalidate()
+			})
+		}()
+	}
+	if !r.emailsSet && c != nil {
+		r.emailsSet = true
+		run(func(ctx context.Context) error {
+			ts, err := c.EmailTokens(ctx)
+			a.Post(func() {
+				if r.emails == nil { // a create that landed first wins
+					r.emails = ts
+				}
+				r.emailsGot = true
+			})
+			return err
+		})
+	}
+	if len(r.emails) == 0 {
+		f.button("email_forwarding", "Get a Forwarding Address", c != nil, func() {
+			run(func(ctx context.Context) error {
+				t, err := c.CreateEmailToken(ctx)
+				if err == nil {
+					a.Post(func() { r.emails = []core.EmailToken{t} })
+				}
+				return err
+			})
+		})
+		return
+	}
+	for _, t := range r.emails {
+		t := t
+		f.textBox("email_forwarding_address."+t.ID.String(), t.Address, "")
+		f.button("email_copy."+t.ID.String(), "Copy", true, func() {
+			a.copyText("Send to Slack <" + t.Address + ">")
+			a.Toast("Copied!")
+		})
+		f.linkDo("email_disable."+t.ID.String(), "Disable this address", func() {
+			a.ShowOverlay(popups.Confirm(a, "This address will be permanently deleted",
+				"The address "+t.Address+" will no longer work. If you’d like, you can always request a new forwarding address.",
+				"Disable Address", true, nil, func() {
+					run(func(ctx context.Context) error {
+						err := c.DeleteEmailToken(ctx, t.ID.String())
+						if err == nil {
+							a.Post(func() {
+								var keep []core.EmailToken
+								for _, x := range r.emails {
+									if x.ID != t.ID {
+										keep = append(keep, x)
+									}
+								}
+								r.emails = keep
+							})
+						}
+						return err
+					})
+				}))
+		})
+	}
 }

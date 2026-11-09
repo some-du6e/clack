@@ -490,8 +490,7 @@ func (p *prefsModal) messagesPage(f *prefsForm) {
 	f.hr()
 	f.subheading("Bring emails into Slack")
 	f.para("You can upload any important email to Slack by forwarding it to a unique email address. Slack will deliver the email, and you can keep it private or share it with your team.")
-	f.button("email_forwarding", "Get a Forwarding Address", false, nil)
-	f.na()
+	p.emailForwarding(f) // prefs_a.go
 }
 
 // ---- Language & region ----

@@ -116,7 +116,7 @@ var slackPages = map[string][]want{
 		ck("Show one-click reactions on messages"),
 		lg("Inline media & links"), ck("Show images and files uploaded to Slack"), ck("Show images and files from linked websites"),
 		ck("Even if they’re larger than 20MB"), ck("Show text previews of linked websites"),
-		lg("Bring emails into Slack"), btnOff("Get a Forwarding Address"),
+		lg("Bring emails into Slack"), btn("Get a Forwarding Address"),
 	},
 	"language_region": {
 		lg("Language"), selOff("English (US)"), lg("Time zone"), ck("Set time zone automatically"), selOff("(UTC-08:00) Pacific Time (US and Canada)"),
