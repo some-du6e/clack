@@ -64,6 +64,17 @@ one() { # side run
   kill $apid 2>/dev/null; wait $apid 2>/dev/null
 }
 
+# one throwaway start per side, in a home that's then dropped: the first
+# process on a fresh runner pays for the page cache and Mesa's shader cache,
+# which would land on whichever side's cold run went first. "cold" below
+# means no Clack caches, not a cold machine.
+for s in "${sides[@]}"; do
+  [ -x "$out/$s/clack-perf" ] || continue
+  prime=$(mktemp -d); cp "$credsdir/creds.json" "$prime/creds.json"
+  CLACK_HOME="$prime" "$out/$s/clack-perf" > "$out/$s/process/prime.log" 2>&1 &
+  ppid_=$!; sleep 12; kill $ppid_ 2>/dev/null; wait $ppid_ 2>/dev/null
+done
+
 n=0
 for run in cold warm1 warm2 warm3; do
   order=("${sides[@]}")

@@ -29,7 +29,8 @@ go build -trimpath -o "$dst/clack-unstripped" ./cmd/clack || exit 1
 s=$(stat -c %s "$dst/clack")
 echo "$(awk "BEGIN{printf \"%.1f MB\", $s/1048576}") stripped ($s bytes)" > "$dst/binsize.txt"
 
-# binary size by package (top 40)
+# binary size by package (all of them: the comparison needs packages that
+# fall out of one side's top N)
 go tool nm -size -sort size "$dst/clack-unstripped" | python3 -c '
 import sys, collections
 tot = collections.Counter()
@@ -40,7 +41,7 @@ for l in sys.stdin:
     for p in ("type:", "go:", "go.shape."): name = name.removeprefix(p)
     head, slash, tail = name.rpartition("/")
     tot[head + slash + tail.split(".")[0]] += int(f[1])
-for k, v in tot.most_common(40): print(f"{v/1048576:8.2f} MB  {k}")
+for k, v in tot.most_common(): print(f"{v/1048576:8.2f} MB  {k}")
 ' > "$dst/binsize-packages.txt"
 
 for pkg in ui core; do

@@ -74,7 +74,7 @@ if names:
 pk = [(k, base["packages"].get(k, 0.0), head["packages"].get(k, 0.0)) for k in set(base["packages"]) | set(head["packages"])]
 pk = sorted((x for x in pk if abs(x[2] - x[1]) >= 0.01), key=lambda x: -abs(x[2] - x[1]))[:15]
 if pk:
-    md += ["", "<details><summary>Binary size change by package (top 40 packages of each side)</summary>", "",
+    md += ["", "<details><summary>Binary size change by package (15 largest changes)</summary>", "",
            "| package | base | head | Δ |", "|---|---|---|---|"]
     md += [f"| `{k}` | {b:.2f} MB | {h:.2f} MB | {h - b:+.2f} MB |" for k, b, h in pk]
     md += ["</details>"]

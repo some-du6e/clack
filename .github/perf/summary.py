@@ -146,7 +146,7 @@ def main():
         md += ["", "<details><summary>Idle RSS by mapping (kB)</summary>", "", "```", smaps.strip()[:3000], "```", "</details>"]
     pk = read(out, "binsize-packages.txt")
     if pk:
-        md += ["", "<details><summary>Binary size by package</summary>", "", "```", pk.strip(), "```", "</details>"]
+        md += ["", "<details><summary>Binary size by package (top 30)</summary>", "", "```", "\n".join(pk.strip().splitlines()[:30]), "```", "</details>"]
     open(os.path.join(out, "summary.md"), "w").write("\n".join(md) + "\n")
 
     h = headline(data)
