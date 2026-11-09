@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/store"
 )
@@ -138,7 +139,18 @@ func (a *App) resolveChannels(ctx context.Context, ids []string) []string {
 				continue
 			}
 			a.S.PutName(c.ID, c.Name)
+			acc := richtext.ChannelVisible
+			if c.IsPrivate && !c.IsMPIM {
+				acc = richtext.ChannelPrivate
+			}
+			a.S.SetChannelAccess(c.ID, acc)
 			out = append(out, c.ID)
+		}
+		// failed_ids: channels the viewer can't see (private ones they're
+		// not in, other workspaces'): Slack's "Private channel" chip
+		for _, id := range r.Failed {
+			a.S.SetChannelAccess(id, richtext.ChannelHidden)
+			out = append(out, id)
 		}
 	}
 	return out

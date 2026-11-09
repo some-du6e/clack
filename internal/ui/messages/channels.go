@@ -47,7 +47,10 @@ func channelName(h Host, id string) (string, bool) {
 		d, err := app.ChannelInfo(ctx, id)
 		name := d.Conv.Name
 		if err != nil && strings.Contains(err.Error(), "not_found") {
-			name = "private-channel" // what Slack shows when you can't see it
+			// the viewer can't see it: Slack's "Private channel" chip
+			// (richtext channel.go), not a made-up name
+			app.S.SetChannelAccess(id, richtext.ChannelHidden)
+			name = hiddenChannel
 		}
 		if name == "" {
 			return
@@ -62,6 +65,9 @@ func channelName(h Host, id string) (string, bool) {
 	}()
 	return "", false
 }
+
+// hiddenChannel marks a channel conversations.info doesn't show the viewer.
+const hiddenChannel = "\x00hidden"
 
 func rawChannel(sp *richtext.Span) bool {
 	return sp.Kind == richtext.Channel && sp.ID != "" && (sp.Text == "#"+sp.ID || sp.Text == sp.ID || sp.Text == "")
@@ -108,7 +114,9 @@ func fixChannels(h Host, bs []richtext.Block) []richtext.Block {
 		out := append([]richtext.Span(nil), ss...)
 		for i := range out {
 			if rawChannel(&out[i]) {
-				if n, ok := channelName(h, out[i].ID); ok {
+				if n, ok := channelName(h, out[i].ID); ok && n == hiddenChannel {
+					out[i].Text, out[i].Off, out[i].Lock = richtext.PrivateChannelLabel, true, true
+				} else if ok {
 					out[i].Text = "#" + n
 				}
 			}
