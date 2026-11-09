@@ -2,8 +2,10 @@ package canvas
 
 import (
 	"errors"
+	"fmt"
 	"net/url"
 	"regexp"
+	"runtime/debug"
 	"strconv"
 	"strings"
 
@@ -32,8 +34,24 @@ const (
 	styleImage    = "11"
 )
 
+// PanicError is Parse's error for an export that made the parser panic
+// (a bug): the panic and its stack, for the caller to log. The document's
+// text is in neither.
+type PanicError struct {
+	Value any
+	Stack []byte
+}
+
+func (e *PanicError) Error() string { return fmt.Sprintf("canvas: parser panic: %v", e.Value) }
+
 // Parse reads Quip's HTML export of a canvas (url_private of a quip file).
-func Parse(src string) (Doc, error) {
+// It never panics: a parser bug comes back as a *PanicError.
+func Parse(src string) (d Doc, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			d, err = Doc{}, &PanicError{Value: r, Stack: debug.Stack()}
+		}
+	}()
 	if len(src) > MaxHTML {
 		return Doc{}, ErrTooLarge
 	}

@@ -38,7 +38,7 @@ jobs:
           sudo apt-get install -y -qq xvfb libgl1-mesa-dri libegl-mesa0
           # -p 1: test binaries bringing up Mesa's EGL at once is what made
           # eglInitialize fail (0x3001); pixeltest.NewWindow also retries.
-          xvfb-run -a go test -p 1 -count=1 -run 'TestCodeSpanAfterEmoji|TestInlineCodeDraws|TestEmojiTooltip|TestReactionTooltipDraws|TestSlugPillNotUnderlined' ./internal/ui/richview ./internal/ui/composer ./internal/ui/messages
+          xvfb-run -a go test -p 1 -count=1 -run 'TestCodeSpanAfterEmoji|TestInlineCodeDraws|TestEmojiTooltip|TestReactionTooltipDraws|TestPlaceholderHashMatchesText|TestSlugPillNotUnderlined' ./internal/ui/richview ./internal/ui/composer ./internal/ui/messages
       - name: Gio drawLayers fix (patched passes, stock v0.10.3 panics)
         env:
           CLACK_PIXEL_TESTS: "1"

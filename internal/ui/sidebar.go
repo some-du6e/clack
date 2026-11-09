@@ -11,10 +11,12 @@ import (
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/clip"
 	"gioui.org/unit"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
@@ -59,6 +61,11 @@ type sidebarState struct {
 	hover     bool            // pointer over the sidebar (.p-channel_sidebar:hover)
 	headTags  map[string]*int // section headings' right-click tags (create_channel.go)
 
+	// Drafts & sent's badge list: hovering it shows Slack's tooltip
+	// ("N Drafts" / "N Scheduled", to the right).
+	outboxHover gesture.Hover
+	outboxTip   popups.TipState
+
 	// ChannelSidebar (slick_shell.go)
 	gen       int   // bumped by every rebuild
 	propRows  []any // rows as Slack-shaped props, for gen propsGen
@@ -71,7 +78,7 @@ type sidebarState struct {
 var sbLinks = []sbRow{
 	{kind: sbLink, key: "threads", label: "Threads", icon: "threads"},
 	{kind: sbLink, key: "huddles", label: "Huddles", icon: "huddle"},
-	{kind: sbLink, key: "drafts", label: "Drafts & sent", icon: "drafts"},
+	{kind: sbLink, key: "drafts", label: "Drafts & sent", icon: "paper-plane-alt"}, // Slack's OutboxPageIcon
 	{kind: sbLink, key: "saved", label: "Saved", icon: "saved"},
 	{kind: sbLink, key: "directories", label: "Directories", icon: "directories"},
 }
@@ -79,6 +86,32 @@ var sbLinks = []sbRow{
 // sbViewPref is each link's Preferences > Home pref (off: hidden).
 var sbViewPref = map[string]string{"threads": "enable_threads_view", "huddles": "enable_huddles_home_view",
 	"drafts": "enable_sent_view", "saved": "enable_saved_view", "directories": "enable_unified_directory_view"}
+
+// outboxCount is the drafts count Drafts & sent shows: Slack's
+// OutboxLinkContent renders maxCount 99 and over as "99+".
+func outboxCount(n int) string {
+	if n > 99 {
+		return "99+"
+	}
+	return strconv.Itoa(n)
+}
+
+// outboxTip is the badge list's tooltip: one line per badge, Slack's
+// "{numDrafts, plural, =1 {# Draft} other {# Drafts}}" and
+// "{numScheduled} Scheduled".
+func outboxTip(drafts, sched int) string {
+	var lines []string
+	switch {
+	case drafts == 1:
+		lines = append(lines, "1 Draft")
+	case drafts > 1:
+		lines = append(lines, strconv.Itoa(drafts)+" Drafts")
+	}
+	if sched > 0 {
+		lines = append(lines, strconv.Itoa(sched)+" Scheduled")
+	}
+	return strings.Join(lines, "\n")
+}
 
 // sbViewsKey is the links turned off, for rebuilding when they change.
 func sbViewsKey() string { return strings.Join(uipref.Get().HiddenViews, ",") }
@@ -320,8 +353,13 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 	case sbGap:
 		return layout.Dimensions{Size: image.Pt(w, gtx.Dp(unit.Dp(r.gap)))}
 	case sbDivider:
+		// Slack's pagesDivider under the links (divider__QhKlG): margin
+		// 12px, border-bottom 1px rgba(var(--sk_foreground_low), .13), the
+		// var being 232,232,232 under .sk-client-theme--dark and
+		// --light-inverted-sidebar alike.
 		h := gtx.Dp(unit.Dp(r.gap))
-		theme.Fill(gtx, image.Rect(pad, h/2, w-pad, h/2+gtx.Dp(1)), c.SidebarDivider)
+		m := gtx.Dp(12)
+		theme.Fill(gtx, image.Rect(m, m, w-m, m+gtx.Dp(1)), theme.Over(color.NRGBA{R: 232, G: 232, B: 232, A: 0x21}, a.sbBase))
 		return layout.Dimensions{Size: image.Pt(w, h)}
 	case sbNote:
 		// Slack: 13px note under the empty Starred heading; the row is
@@ -563,9 +601,12 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 			t.Pop()
 			right -= bd.Size.X + gtx.Dp(6)
 		}
-		// unsent drafts: "✎ N" on Drafts & sent (Slack's p-outbox_link__badge,
-		// 13px pencil + 400 13px count, 8px from the edge) and a 13px pencil
-		// on conversations with a draft.
+		// Drafts & sent's badges (Slack's OutboxLinkContent): "✎ N" for
+		// unsent drafts, capped at maxCount 99 ("99+"), then "schedule-send
+		// N" for scheduled messages (uncapped). Each p-outbox_link__badge
+		// is 13px text 8px after the previous, its 13px icon 2px before
+		// the number; the list ends at the row's 8px padding. A 13px
+		// pencil also marks conversations with a draft.
 		if d := a.data; d != nil {
 			pencil := func(x int) {
 				at(gtx, image.Pt(x, (rowH-gtx.Dp(13))/2), image.Pt(gtx.Dp(13), gtx.Dp(13)), func(gtx layout.Context) layout.Dimensions {
@@ -573,18 +614,40 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 				})
 			}
 			switch {
-			case r.kind == sbLink && r.key == "drafts" && d.draftN > 0:
-				num := strconv.Itoa(d.draftN)
-				nw := a.th.Measure(gtx, 13, theme.Regular, num)
-				right = rw - gtx.Dp(8) - nw
-				at(gtx, image.Pt(right, 0), image.Pt(nw+2, rowH), func(gtx layout.Context) layout.Dimensions {
-					return vcenter(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
-						return a.th.Label(gtx, 13, theme.Regular, fg, num)
+			case r.kind == sbLink && r.key == "drafts" && (d.draftN > 0 || d.schedN > 0):
+				right = rw - gtx.Dp(8)
+				badge := func(icon, num string) {
+					nw := a.th.Measure(gtx, 13, theme.Regular, num)
+					right -= nw
+					at(gtx, image.Pt(right, 0), image.Pt(nw+2, rowH), func(gtx layout.Context) layout.Dimensions {
+						return vcenter(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
+							return a.th.Label(gtx, 13, theme.Regular, fg, num)
+						})
 					})
-				})
-				right -= gtx.Dp(3) + gtx.Dp(13)
-				pencil(right)
-				right -= gtx.Dp(6)
+					right -= gtx.Dp(2) + gtx.Dp(13)
+					at(gtx, image.Pt(right, (rowH-gtx.Dp(13))/2), image.Pt(gtx.Dp(13), gtx.Dp(13)), func(gtx layout.Context) layout.Dimensions {
+						return icons.Get(icon)(gtx, 13, fg)
+					})
+					right -= gtx.Dp(8)
+				}
+				// laid out right to left
+				if d.schedN > 0 {
+					badge("schedule-send", strconv.Itoa(d.schedN))
+				}
+				if d.draftN > 0 {
+					badge("edit", outboxCount(d.draftN))
+				}
+				// the p-outbox_link__badge_list span (its first badge's
+				// 8px padding included) carries the tooltip
+				lr := image.Rect(right, 0, rw-gtx.Dp(8), rowH)
+				t := op.Offset(lr.Min).Push(gtx.Ops)
+				pass := pointer.PassOp{}.Push(gtx.Ops)
+				area := clip.Rect(image.Rectangle{Max: lr.Size()}).Push(gtx.Ops)
+				a.sidebar.outboxHover.Add(gtx.Ops)
+				area.Pop()
+				pass.Pop()
+				popups.Tooltip(gtx, a.th, &a.sidebar.outboxTip, a.sidebar.outboxHover.Update(gtx.Source), lr.Size(), popups.Right, outboxTip(d.draftN, d.schedN), "")
+				t.Pop()
 			case conv != nil && rs.mentions == 0 && d.draftChans[conv.ID]:
 				right = rw - gtx.Dp(8) - gtx.Dp(13)
 				pencil(right)

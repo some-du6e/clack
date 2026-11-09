@@ -97,6 +97,10 @@ func main() {
 	// on the log writer's goroutine; no line ever waits for the disk. No
 	// token or cookie reaches either, whatever an error string quotes.
 	logs := applog.Start(os.Stderr)
+	// Go panics nothing recovers and the runtime's fatal errors go to fd 2
+	// only; the runtime also writes them to crash.log next to clack.log,
+	// and the next start copies the trace, redacted, into clack.log.
+	logs.CaptureCrashes(fmt.Sprintf("clack %s %s/%s pid %d, started %s", version, runtime.GOOS, runtime.GOARCH, os.Getpid(), time.Now().Format(time.RFC3339)))
 	// Every request to Slack names this build: "Clack/<version> (+…)".
 	slack.SetVersion(version)
 	// Finder on old macOS versions passes -psn_<n>; the flag package

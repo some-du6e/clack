@@ -41,7 +41,8 @@ type backend struct {
 
 	// unsent drafts (drafts.list, refreshed on "draft" events), UI goroutine
 	// only: Slack's "✎ N" on Drafts & sent and the pencil on channel rows.
-	draftN     int
+	draftN     int // unsent drafts (Drafts & sent's ✎ badge)
+	schedN     int // scheduled messages (its schedule-send badge)
 	draftChans map[string]bool
 	draftSeq   int
 
@@ -146,9 +147,10 @@ func (b *backend) loadDrafts(a *App) {
 		if err != nil {
 			return
 		}
-		n, chans := 0, map[string]bool{}
+		n, sched, chans := 0, 0, map[string]bool{}
 		for _, d := range ds {
 			if d.DateScheduled != 0 {
+				sched++  // Slack's getScheduledDraftsCount: date_scheduled set
 				continue // scheduled messages live in the Scheduled tab
 			}
 			n++
@@ -160,7 +162,7 @@ func (b *backend) loadDrafts(a *App) {
 			if seq != b.draftSeq {
 				return
 			}
-			b.draftN, b.draftChans = n, chans
+			b.draftN, b.schedN, b.draftChans = n, sched, chans
 			a.Invalidate()
 		})
 	}()

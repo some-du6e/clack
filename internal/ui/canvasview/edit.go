@@ -386,8 +386,8 @@ func (v *View) StartNewBlock() {
 
 func (e *editState) dropPlace(v *View, s *session) {
 	for i, b := range v.blocks {
-		if b == s.place {
-			v.blocks = append(v.blocks[:i], v.blocks[i+1:]...)
+		if b == s.place { // a new slice: a list layout in progress keeps its rows
+			v.blocks = append(append([]*blk(nil), v.blocks[:i]...), v.blocks[i+1:]...)
 			return
 		}
 	}
@@ -988,6 +988,7 @@ func (e *editState) layoutFloatingToolbar(gtx layout.Context, v *View) {
 		case "check":
 			on = s.kind == canvas.Check
 		}
+		hit := clk.Clicked(gtx) // before Layout, which drains a Clickable's events
 		at(gtx, image.Pt(tx, r.Min.Y+gtx.Dp(4)), image.Pt(bs, bs), func(gtx layout.Context) layout.Dimensions {
 			return clk.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				s := gtx.Constraints.Max
@@ -1016,7 +1017,7 @@ func (e *editState) layoutFloatingToolbar(gtx layout.Context, v *View) {
 				return layout.Dimensions{Size: s}
 			})
 		})
-		if clk.Clicked(gtx) {
+		if hit {
 			e.apply(gtx, v, t.key, image.Pt(tx, r.Max.Y))
 		}
 		tx += bs + gap
