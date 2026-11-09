@@ -64,7 +64,7 @@ func (e *mkEnv) press(n key.Name, mods key.Modifiers) {
 // menus' actions (mark unread, save, pin) run.
 func mkHost(t *testing.T) *tzHost {
 	t.Helper()
-	h := mkHost(t)
+	h := hcEnv(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	done := make(chan error, 1)
