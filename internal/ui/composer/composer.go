@@ -149,6 +149,7 @@ func NewEdit(h Host, m core.Message, onDone func()) *Composer {
 
 func (c *Composer) init() {
 	c.ed = NewEditor()
+	c.bindSlugs()
 	if c.api.a != nil {
 		warmEmoji()
 		c.ed.emoji = c.lookupEmoji
@@ -234,6 +235,7 @@ func (c *Composer) syncEmojiSet() {
 // formatting the way Slack's send does.
 func (c *Composer) prepareSend(d *Doc) *Doc {
 	doc := d.Clone()
+	c.resolvePendingSlugs(doc)
 	var look emojiLookup
 	if c.api.a != nil {
 		look = c.lookupEmoji

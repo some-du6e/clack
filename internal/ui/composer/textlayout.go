@@ -287,6 +287,7 @@ type tlItem struct {
 	x0     fixed.Int26_6 // start in unwrapped paragraph coordinates
 	w      fixed.Int26_6 // full width, padding included
 	padL   fixed.Int26_6 // left padding (inline code, pills)
+	icon   fixed.Int26_6 // a pill's leading icon with its gap (message slugs)
 	shape  *tlShape      // text, mention label or emoji fallback; may be nil
 	attr   Attr
 	code   bool // inline code look
@@ -611,6 +612,10 @@ func (l *tlLayout) atomItem(a Attr, q int, k tlKey) tlItem {
 	it.shape = l.cache.get(l.sh, tlShapeKey{s: label, font: lato, ppem: m.ppem, loc: k.loc})
 	it.padL = fixed.I(m.pillPadX)
 	it.w = it.shape.width + 2*it.padL
+	if at.Kind == AtomMessage { // the slug's "message" icon, 4px before the label
+		it.icon = m.ppem + fixed.I(max(1, m.pillPadX*2))
+		it.w += it.icon
+	}
 	return it
 }
 
@@ -950,6 +955,9 @@ func (l *tlLayout) paintFG(gtx layout.Context, c tlColors) {
 				}
 				l.paintRun(gtx, li, it, a, b, col)
 				if it.attr.Atom != nil {
+					if it.icon > 0 {
+						l.paintSlugIcon(gtx, li, it, col)
+					}
 					continue
 				}
 				st := it.attr.Style
@@ -991,7 +999,7 @@ func (l *tlLayout) paintRun(gtx layout.Context, li int, it *tlItem, a, b int, co
 	if len(gs) == 0 {
 		return
 	}
-	x := l.vxf(li, it.x0+it.padL+gs[0].X)
+	x := l.vxf(li, it.x0+it.padL+it.icon+gs[0].X)
 	tlPaintGlyphs(gtx, l.sh, gs, f32.Pt(x, float32(l.lines[li].base)), col, l.emb)
 }
 

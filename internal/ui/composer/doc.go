@@ -56,6 +56,11 @@ const (
 	AtomUsergroup
 	AtomBroadcast // ID is here | channel | everyone
 	AtomEmoji     // ID is the emoji name, with ::skin-tone-N
+	// AtomMessage is a Slack message permalink turned into Slack's message
+	// slug (sent as message_mention): ID is the message ts, Text the label
+	// ("karim in #clack"), URL the permalink, Channel/Author/Thread where
+	// the message is and who wrote it.
+	AtomMessage
 )
 
 // ObjRune stands in for an atom in Doc.Runes.
@@ -68,6 +73,8 @@ type Atom struct {
 	Text string // display text: "@karim", "#general", "@here", ":smile:"
 	URL  string // emoji image (custom or CDN); "" for unicode-only emoji
 	Uni  string // emoji: unicode text, if standard
+
+	Channel, Author, Thread string // AtomMessage
 }
 
 // Attr is the formatting of one rune.
