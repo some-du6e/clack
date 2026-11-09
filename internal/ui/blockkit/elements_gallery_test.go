@@ -694,6 +694,9 @@ func TestGalleryElementPayloads(t *testing.T) {
 	if !w.inDialog || len(e.modals) != 1 {
 		t.Fatal("multi-select dialog not open")
 	}
+	if _, r2 := e.widget("bk_multi", "multi_static"); r2 != r {
+		t.Errorf("the message row changed while the dialog is open: %v → %v", r, r2)
+	}
 	openSelect(w, image.Rectangle{Max: image.Pt(400, 36)})
 	e.frame()
 	e.key(key.NameDownArrow) // Banana (Apple is chosen)

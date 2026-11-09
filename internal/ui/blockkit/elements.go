@@ -183,7 +183,9 @@ func (w *ew) disabled(gtx C) bool {
 // dialogMulti: a multi-select drawn as Slack's "Pick your options"
 // button (messages and App Home: shouldRenderMultiSelectsInline is only
 // on in modals).
-func (w *ew) dialogMulti() bool { return isMulti(w.e.Type) && !w.o.modal() && !w.inDialog }
+// The row keeps its button while the dialog is open; the dialog body
+// draws the inline field itself (layoutMulti).
+func (w *ew) dialogMulti() bool { return isMulti(w.e.Type) && !w.o.modal() }
 
 func (w *ew) th() *theme.Theme { return w.o.host().Theme() }
 
