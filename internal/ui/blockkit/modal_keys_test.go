@@ -29,19 +29,30 @@ func (e *bkEnv) gtx() layout.Context { return layout.Context{Source: e.r.Source(
 func TestConfirmObjectKeys(t *testing.T) {
 	e := newBKEnv(t, false, false)
 	e.show("buttons")
+	e.settle(300 * time.Millisecond)
+	var shown *popups.Modal
+	old := modalShown
+	modalShown = func(o popups.Overlay, bs []*popups.ModalButton) {
+		shown, _ = o.(*popups.Modal)
+		old(o, bs)
+	}
+	t.Cleanup(func() { modalShown = old })
 	n := len(e.fs.BlockActionCalls())
 	open := func() *popups.Modal {
 		t.Helper()
-		e.modals = nil
+		shown = nil
 		e.idle("bk_buttons")
+		e.settle(1100 * time.Millisecond) // as TestGalleryElementPayloads waits between clicks on a block
 		e.clickEl("bk_buttons", "btn_confirm")
 		e.frame()
 		e.frame()
-		m, ok := topOverlay[*popups.Modal](e)
-		if !ok || m.Dismissed() {
-			t.Fatal("the confirm dialog didn't open")
+		if shown == nil {
+			t.Fatalf("the confirm dialog didn't open (%d blocks.actions calls, %d before)", len(e.fs.BlockActionCalls()), n)
 		}
-		return m
+		if shown.Dismissed() {
+			t.Fatal("the confirm dialog closed as it opened")
+		}
+		return shown
 	}
 	focus := func(m *popups.Modal, want string, ring bool) {
 		t.Helper()

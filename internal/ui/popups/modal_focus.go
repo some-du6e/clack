@@ -226,7 +226,7 @@ func (m *Modal) overModal() bool {
 		if o == m {
 			continue
 		}
-		if om, ok := o.(*Modal); ok && !om.done {
+		if om, ok := o.(*Modal); ok && !om.done && om.h == m.h {
 			return true
 		}
 	}

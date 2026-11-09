@@ -438,6 +438,8 @@ func (s *Stack) Layout(gtx C) D {
 	}
 	for {
 		e, ok := gtx.Event(key.Filter{Focus: &s.tag, Name: key.NameEscape},
+			key.Filter{Focus: &s.closeTap, Name: key.NameEscape}, key.Filter{Focus: &s.backTap, Name: key.NameEscape},
+			key.Filter{Focus: &s.cancel, Name: key.NameEscape}, key.Filter{Focus: &s.submit, Name: key.NameEscape},
 			key.Filter{Name: key.NameReturn, Required: cmd})
 		if !ok {
 			break
