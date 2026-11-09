@@ -346,36 +346,6 @@ func (a *App) SetPref(ctx context.Context, name string, value any) error {
 
 // ---- search & directory ----
 
-// SearchMessages runs a message search (search.messages, ~0.8 s).
-func (a *App) SearchMessages(ctx context.Context, o SearchOpts) (SearchResult, error) {
-	t0 := time.Now()
-	res, err := a.C.SearchMessages(ctx, o.Query, o.Page, o.Count, o.Sort)
-	if err != nil {
-		return SearchResult{}, err
-	}
-	msgs := make([]slack.Message, 0, len(res.Matches))
-	for _, m := range res.Matches {
-		msgs = append(msgs, m.Message)
-	}
-	a.EnsureUsers(ctx, referencedUsers(msgs))
-	out := SearchResult{Total: res.Total, Page: res.Page, Pages: res.Pages}
-	chans := map[string]bool{}
-	for i := range res.Matches {
-		m := &res.Matches[i]
-		ch := m.ChannelO.ID
-		chans[ch] = true
-		if m.ChannelO.Name != "" && !m.ChannelO.IsIM {
-			a.S.PutName(ch, m.ChannelO.Name) // names of channels we are not in (metadata)
-		}
-		v := a.message(ch, &m.Message)
-		v.Permalink = m.Permalink
-		out.Messages = append(out.Messages, v)
-	}
-	out.Convs = a.convRefs(chans)
-	log.Printf("search: %d results in %s", len(out.Messages), time.Since(t0).Round(time.Millisecond))
-	return out, nil
-}
-
 // SearchUsers queries the org directory (edge users/search, ~80 ms): for
 // @-autocomplete, the DM picker and people search. Deactivated users are
 // left out. Results are cached in memory and subscribed for presence.

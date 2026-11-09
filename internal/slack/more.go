@@ -281,6 +281,71 @@ func (c *Client) SearchUsers(ctx context.Context, query string, count int) ([]Us
 	return r.Results, err
 }
 
+// UserSearchOpts are the omniswitcher's extra users/search args (captured
+// from app.slack.com, 2026-11-08: count 30, search_email, top_users =
+// the frecency list, default_workspace).
+type UserSearchOpts struct {
+	Count            int
+	SearchEmail      bool
+	TopUsers         []string
+	DefaultWorkspace string
+}
+
+// SearchUsersWith is edge users/search with the omniswitcher's args.
+func (c *Client) SearchUsersWith(ctx context.Context, query string, o UserSearchOpts) ([]User, error) {
+	if o.Count <= 0 {
+		o.Count = 30
+	}
+	var r struct {
+		Results []User `json:"results"`
+	}
+	body := map[string]any{
+		"include_profile_only_users": true, "query": query, "count": o.Count, "fuzz": 1,
+		"enable_workspace_ranking": true, "search_email": o.SearchEmail,
+	}
+	if o.TopUsers != nil {
+		body["top_users"] = o.TopUsers
+	}
+	if o.DefaultWorkspace != "" {
+		body["default_workspace"] = o.DefaultWorkspace
+	}
+	err := c.Edge(ctx, "users/search", body, &r)
+	return r.Results, err
+}
+
+// ChannelSearchOpts are the omniswitcher's extra channels/search args
+// (count 30, filter "xws", top_channels, default_workspace).
+type ChannelSearchOpts struct {
+	Count            int
+	Filter           string
+	TopChannels      []string
+	DefaultWorkspace string
+}
+
+// SearchChannelsWith is edge channels/search with the omniswitcher's args.
+func (c *Client) SearchChannelsWith(ctx context.Context, query string, o ChannelSearchOpts) ([]ChannelHit, error) {
+	if o.Count <= 0 {
+		o.Count = 30
+	}
+	var r struct {
+		Results []ChannelHit `json:"results"`
+	}
+	body := map[string]any{
+		"query": query, "count": o.Count, "fuzz": 1, "include_record_channels": true, "check_membership": true,
+	}
+	if o.Filter != "" {
+		body["filter"] = o.Filter
+	}
+	if o.TopChannels != nil {
+		body["top_channels"] = o.TopChannels
+	}
+	if o.DefaultWorkspace != "" {
+		body["default_workspace"] = o.DefaultWorkspace
+	}
+	err := c.Edge(ctx, "channels/search", body, &r)
+	return r.Results, err
+}
+
 // ChannelHit is a channel from the edge channel search / browse.
 type ChannelHit struct {
 	ID          string   `json:"id"`

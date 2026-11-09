@@ -122,6 +122,10 @@ var entMethods = map[string]bool{
 	"subscriptions.thread.add": true, "subscriptions.thread.remove": true, "subscriptions.thread.mark": true,
 	"messages.list": true, "search.modules.people": true, "search.modules.channels": true,
 	"search.modules.messages": true, "search.modules.files": true, "commands.list": true,
+	// the results page's DMs tab and the popover's Recent messages: the
+	// team host answers team_is_restricted for search.inline (verified
+	// 2026-11-08)
+	"search.modules.dms": true, "search.inline": true,
 	"sidebar.dms": true, // team host: team_is_restricted (verified 2026-11-08)
 	"bots.info":   true, // the team host answers bots_not_found for org apps (verified)
 	// the full profile (popups.ProfileView): team host answers

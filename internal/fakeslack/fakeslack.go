@@ -390,6 +390,7 @@ func Serve(ln net.Listener, sz Size) *Server {
 
 // Close stops the server.
 func (s *Server) Close() error {
+	searchLogs.Delete(s)
 	if s.srv == nil {
 		return nil
 	}
@@ -784,6 +785,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return out
 	}
 	if out, handled := s.handleCanvases(method, f); handled { // canvas.go
+		return out
+	}
+	if out, handled := s.handleSearch(method, f); handled { // search.go
 		return out
 	}
 	if out, handled := s.handleSections(method, f); handled { // sections.go

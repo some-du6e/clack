@@ -299,12 +299,22 @@ type SearchOpts struct {
 	Query       string
 	Page, Count int
 	Sort        string // score (default) | timestamp | oldest
+	Module      string // "messages" (default) | "dms"
+	Context     string // search_context ("" = the module's results tab)
+	ExactOnly   bool   // More > Exact matches only
+	Session     SearchSession
+	// InChannel is search in channel (⌘F): the query runs as
+	// "in:<#InChannel> …" with count 10.
+	InChannel      string
+	RecentChannels []string // recent_channels
+	ActiveCID      string   // request_context.active_cid: the open view
 }
 
 type SearchResult struct {
-	Messages           []Message
-	Total, Page, Pages int
-	Convs              map[string]ConvRef
+	Messages             []Message
+	Total, Page, Pages   int
+	Convs                map[string]ConvRef
+	FilterIn, FilterFrom []FilterSuggestion // filter_suggestions
 }
 
 // ChannelHit is a channel search / browse result.
