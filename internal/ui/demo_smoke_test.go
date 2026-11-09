@@ -180,8 +180,12 @@ func TestDemoSmoke(t *testing.T) {
 		Container: core.ActionContainer{Type: "message", ChannelID: demo.LunchID, MessageTS: pollTS}, Action: action}); err != nil {
 		t.Fatalf("blocks.actions: %v", err)
 	}
-	if v := s.World.PollVotes(demo.LunchID, pollTS)[value]; len(v) != 1 || v[0] != demo.SelfID {
-		t.Fatalf("votes for %s: %v", value, v)
+	voted := false // the bots vote too
+	for _, u := range s.World.PollVotes(demo.LunchID, pollTS)[value] {
+		voted = voted || u == demo.SelfID
+	}
+	if !voted {
+		t.Fatalf("your vote for %s isn't counted: %v", value, s.World.PollVotes(demo.LunchID, pollTS))
 	}
 	e.until("the poll rewritten with your vote", 20*time.Second, func() bool {
 		m := e.demoMsg(demo.LunchID, pollTS)
