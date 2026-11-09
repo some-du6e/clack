@@ -337,6 +337,21 @@ func saveDownload(h Host, src, name string, viaCore bool, done func()) {
 	})
 }
 
+// NewCodeMenu is what Slack desktop opens on a right-click on inline code
+// or a code block with nothing selected: BaseCopyCodeBlockContextMenuTrigger
+// (boot-shared StVK) hands the shell one item, "Copy this code" ("Copy
+// this code block" for a block), copying getCodeBlockText of the code run;
+// the shell (app.asar buildMenuForNonText) appends a separator and nothing
+// else outside fullscreen and devtools.
+func NewCodeMenu(h Host, at image.Point, code string, block bool) *Menu {
+	label := "Copy this code"
+	if block {
+		label = "Copy this code block"
+	}
+	items := []MenuItem{{Label: label, DoCtx: func(gtx layout.Context) { copyText(gtx, code) }}}
+	return NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(at), Width: 220})
+}
+
 // NewTextSelectionMenu is Slack's TextSelectionContextMenu: Copy text
 // (⌘C on macOS, Ctrl+C elsewhere) and Search in Slack. text is what Copy
 // puts on the clipboard. ("Explain this" needs Slack AI; the "Switch to

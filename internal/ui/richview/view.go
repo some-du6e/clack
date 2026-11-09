@@ -75,6 +75,15 @@ type View struct {
 	hovMen   mentionKey // the @mention last reported to the hover card
 	hovOn    bool
 
+	// code blocks' copy buttons (codecopy.go): run index+1 under the
+	// press, the run last copied and when, and when the pointer reached a
+	// button (its tooltip's delay)
+	copyPress int
+	copied    int
+	copiedAt  time.Time
+	copyTipAt time.Time
+	copyHot   int
+
 	// Origin, if set by the owner, is added to click anchors so they are in
 	// window coordinates.
 	Origin image.Point
@@ -307,6 +316,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 			}
 		}
 	}
+	v.drawCopyButtons(gtx, st)
 	if v.opts.Dim {
 		opac.Pop()
 	}
@@ -324,6 +334,13 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 		s := clip.Rect(hr.r).Push(gtx.Ops)
 		pointer.CursorPointer.Add(gtx.Ops)
 		s.Pop()
+	}
+	for i := range v.d.codes {
+		if c := &v.d.codes[i]; c.block {
+			s := clip.Rect(v.copyButton(c)).Push(gtx.Ops)
+			pointer.CursorPointer.Add(gtx.Ops)
+			s.Pop()
+		}
 	}
 	for i := range v.d.frags {
 		f := &v.d.frags[i]
@@ -827,6 +844,10 @@ func (v *View) selectWord(off int32) {
 func (v *View) selectLine(off int32) {
 	pl := v.d.plain
 	off = min(max(off, 0), int32(len(pl)))
+	if a, b, ok := v.codeRange(off); ok { // selectContentsOnTripleMouseDown
+		v.selA, v.selB = a, b
+		return
+	}
 	a, b := int(off), int(off)
 	for a > 0 && pl[a-1] != '\n' {
 		a--
@@ -878,6 +899,9 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 				v.hovering = true
 				v.hover = v.targetAt(e.Position)
 				v.ptr = e.Position
+				if b := v.copyButtonAt(e.Position) + 1; b != v.copyHot {
+					v.copyHot, v.copyTipAt = b, gtx.Now
+				}
 				if f := v.emojiAt(e.Position); f != v.tipFrag {
 					v.tipFrag, v.tipAt = f, gtx.Now
 				}
@@ -890,10 +914,15 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 			case pointer.Cancel:
 				v.dragging = false
 				v.press = -1
+				v.copyPress = 0
 			case pointer.Press:
 				if !ctxclick.Primary(e) || v.inSlot(e.Position) {
 					// element widgets take their own presses; a macOS
 					// Ctrl+click opens the owner's context menu instead
+					continue
+				}
+				if b := v.copyButtonAt(e.Position); b >= 0 { // a code block's copy button
+					v.copyPress = b + 1
 					continue
 				}
 				v.press = v.targetAt(e.Position)
@@ -937,6 +966,13 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 					v.selB = v.offsetAt(e.Position)
 				}
 			case pointer.Release:
+				if b := v.copyPress; b != 0 {
+					v.copyPress = 0
+					if v.copyButtonAt(e.Position)+1 == b {
+						v.copyBlock(gtx, b-1)
+					}
+					continue
+				}
 				wasDrag := v.dragging
 				v.dragging = false
 				if !wasDrag {
