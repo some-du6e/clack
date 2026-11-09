@@ -33,6 +33,7 @@ type window struct {
 	vids   videoOps
 	clicks map[string]*widget.Clickable
 	picker bool
+	stick  bool // the sticker picker (hand.go)
 	mic    micBanner
 	notice string
 	noteAt time.Time
@@ -101,7 +102,7 @@ func (w *window) note(s string) {
 
 func (w *window) run() {
 	ww := new(app.Window)
-	ww.Option(app.Title("Huddle - "+AppName), app.Size(unit.Dp(620), unit.Dp(400)), app.MinSize(unit.Dp(440), unit.Dp(300)))
+	ww.Option(app.Title("Huddle - "+AppName), app.Size(unit.Dp(620), unit.Dp(400)), app.MinSize(unit.Dp(520), unit.Dp(300)))
 	main := w.c.h.Theme()
 	th := theme.Bare(true)
 	sh := theme.NewShaper()
@@ -254,6 +255,25 @@ func (w *window) handle(gtx C, s *huddle.Session, st huddle.State) {
 	}
 	if w.click("react").Clicked(gtx) {
 		w.picker = !w.picker
+		w.stick = false
+	}
+	if w.click("hand").Clicked(gtx) { // Raise hand / Lower hand / Remove sticker
+		go func() {
+			if err := w.c.ToggleHand(); err != nil {
+				w.note("Couldn't update your sticker")
+			}
+		}()
+	}
+	if w.click("stickers").Clicked(gtx) { // Choose sticker
+		w.stick = !w.stick
+		w.picker = false
+	}
+	for _, st := range stickers {
+		if w.click("pick:" + st.Emoji).Clicked(gtx) {
+			w.stick = false
+			e := st.Emoji
+			go func() { _ = w.c.PickSticker(e) }()
+		}
 	}
 	if w.click("cc").Clicked(gtx) {
 		s.SetCaptions(!st.CaptionsOn)
@@ -397,12 +417,59 @@ func (w *window) stage(gtx C, s *huddle.Session, st huddle.State, r image.Rectan
 	if w.picker {
 		w.emojiPicker(gtx, r)
 	}
+	if w.stick {
+		w.stickerPicker(gtx, r)
+	}
+}
+
+// stickerPicker is the sticker picker (the emoji picker's stickers tab,
+// onlyShowStickers): Slack's stickers in a row, labelled on hover.
+func (w *window) stickerPicker(gtx C, stage image.Rectangle) {
+	bs := gtx.Dp(36)
+	pad := gtx.Dp(6)
+	wd := len(stickers)*bs + 2*pad
+	r := image.Rect((stage.Min.X+stage.Max.X-wd)/2, stage.Max.Y-bs-2*pad-gtx.Dp(6), (stage.Min.X+stage.Max.X+wd)/2, stage.Max.Y-gtx.Dp(6))
+	theme.RRect(gtx, r, gtx.Dp(10), color.NRGBA{R: 0x1d, G: 0x1c, B: 0x1d, A: 0xf2})
+	mine := ""
+	if s := w.c.Session(); s != nil {
+		mine = stickerBase(s.Sticker())
+	}
+	hover := ""
+	for i, st := range stickers {
+		p := image.Pt(r.Min.X+pad+i*bs, r.Min.Y+pad)
+		txt := w.emojiText(w.c.withSkinTone(st.Emoji))
+		on := mine == st.Emoji
+		cl := w.click("pick:" + st.Emoji)
+		if cl.Hovered() {
+			hover = st.Label
+		}
+		at(gtx, p, image.Pt(bs, bs), func(gtx C) D {
+			return button(gtx, cl, image.Pt(bs, bs), func(gtx C, hov bool) {
+				switch {
+				case on:
+					theme.RRect(gtx, image.Rectangle{Max: image.Pt(bs, bs)}, gtx.Dp(8), hudBtnOn)
+				case hov:
+					theme.RRect(gtx, image.Rectangle{Max: image.Pt(bs, bs)}, gtx.Dp(8), hudBtnHover)
+				}
+			}, func(gtx C) D { centerLabel(gtx, w.th, image.Pt(bs, bs), 20, theme.Regular, hudWhite, txt); return D{} })
+		})
+	}
+	if hover != "" {
+		ls := labelSize(gtx, w.th, 13, theme.Bold, hover)
+		tp := gtx.Dp(8)
+		tr := image.Rect((r.Min.X+r.Max.X-ls.X)/2-tp, r.Min.Y-ls.Y-2*tp-gtx.Dp(4), (r.Min.X+r.Max.X+ls.X)/2+tp, r.Min.Y-gtx.Dp(4))
+		theme.RRect(gtx, tr, gtx.Dp(6), color.NRGBA{R: 0x1d, G: 0x1c, B: 0x1d, A: 0xff})
+		at(gtx, image.Pt(tr.Min.X+tp, tr.Min.Y+tp), ls, func(gtx C) D { return w.th.Label(gtx, 13, theme.Bold, hudWhite, hover) })
+	}
 }
 
 // emojiText turns an emoji name into its character ("+1" → 👍) when Slack
 // knows one, else ":name:".
-func (w *window) emojiText(name string) string {
-	if app := w.c.h.Core(); app != nil {
+func (w *window) emojiText(name string) string { return w.c.emojiText(name) }
+
+// emojiText is the Controller's emoji lookup (the sidebar bar's faces).
+func (c *Controller) emojiText(name string) string {
+	if app := c.h.Core(); app != nil {
 		if _, text, ok := app.Emoji(name); ok && text != "" {
 			return text
 		}
@@ -469,6 +536,8 @@ type ctl struct {
 	warn     bool   // the warning badge (the microphone doesn't work)
 	dim      bool   // unavailable (greyed)
 	tip      string // tooltip on hover
+	emoji    string // an emoji face instead of the icon (the sticker button)
+	narrow   bool   // the 20dp caret half of a segmented button
 }
 
 func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
@@ -481,7 +550,25 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 		deaf = ctl{id: "deafen", icon: "headphones-off", on: true}
 	}
 	cc := ctl{id: "cc", icon: "captions", on: st.CaptionsOn}
-	ctls := []ctl{mic, deaf, w.cameraCtl(st), {id: "screen", icon: "screen-share"},
+	// HuddleToolbarSegmentedStickerPickerButton: your sticker (or the
+	// raised hand) and the picker's caret
+	mine := ""
+	for _, p := range st.Participants {
+		if p.Self {
+			mine = p.Sticker
+		}
+	}
+	face := mine
+	if face == "" {
+		face = w.c.handEmoji()
+	}
+	hand := ctl{id: "hand", emoji: w.emojiText(face), on: mine != "", tip: handTip(mine)}
+	caret := "caret-up"
+	if w.stick {
+		caret = "caret-down"
+	}
+	sticks := ctl{id: "stickers", icon: caret, wide: 20, narrow: true, on: w.stick, tip: "Choose sticker"}
+	ctls := []ctl{mic, deaf, w.cameraCtl(st), {id: "screen", icon: "screen-share"}, hand, sticks,
 		{id: "react", icon: "emoji", on: w.picker}, cc, {id: "thread", icon: "threads"}, {id: "leave", wide: 84, label: "Leave"}}
 	gap := gtx.Dp(8)
 	h := gtx.Dp(40)
@@ -522,9 +609,14 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 				if c.dim {
 					fg.A = 0x66
 				}
-				if c.label != "" {
+				switch {
+				case c.label != "":
 					centerLabel(gtx, w.th, image.Pt(cw, h), 15, theme.Bold, hudWhite, c.label)
-				} else {
+				case c.emoji != "":
+					centerLabel(gtx, w.th, image.Pt(cw, h), 18, theme.Regular, fg, c.emoji)
+				case c.narrow:
+					iconAt(gtx, image.Pt(cw, h), c.icon, 14, fg)
+				default:
 					iconAt(gtx, image.Pt(cw, h), c.icon, 20, fg)
 				}
 				if c.warn {

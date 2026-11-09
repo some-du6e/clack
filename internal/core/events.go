@@ -219,6 +219,9 @@ func (a *App) handle(ev slack.Event) {
 		}
 	case "thread_marked", "update_thread_state", "dnd_updated", "dnd_updated_user", "pref_change", "badge_counts_updated",
 		"channel_sections_upserted", "channel_sections_channels_upserted", "channel_sections_channels_removed", "channel_sections_deleted":
+		if ev.Type == "dnd_updated" {
+			a.onDNDUpdated(ev.Raw) // before the UI hears of it
+		}
 		a.emit(Event{Type: ev.Type, Raw: ev.Raw})
 		switch ev.Type {
 		case "channel_sections_upserted", "channel_sections_channels_upserted", "channel_sections_channels_removed", "channel_sections_deleted":
@@ -270,7 +273,9 @@ func (a *App) handle(ev slack.Event) {
 	case "star_added", "star_removed":
 		a.onStarEvent(ev.Raw, ev.Type == "star_added")
 	default:
-		if strings.HasPrefix(ev.Type, "sh_") || ev.Type == "huddle_invite" {
+		// sh_room_*, huddle_invite, huddle_invite_cancel (Slack's
+		// huddleInviteCancelRtmHandler), huddle_start…
+		if strings.HasPrefix(ev.Type, "sh_") || strings.HasPrefix(ev.Type, "huddle_") {
 			a.emit(Event{Type: "huddle", Name: ev.Type, Channel: ch, Raw: ev.Raw})
 		}
 	}

@@ -80,6 +80,12 @@ func (f fakeCaller) Call(ctx context.Context, method string, p url.Values, out a
 		b, _ := json.Marshal(map[string]any{"ok": true, "link": FakeLinkBase + ch})
 		return json.Unmarshal(b, out)
 	}
+	if method == "rooms.inviteResponse" { // Decline / Be there soon on an incoming invite
+		if p.Get("channel_id") == "" || p.Get("room_id") == "" || p.Get("response") == "" {
+			return errors.New("fake slack: rooms.inviteResponse without channel_id, room_id or response")
+		}
+		return json.Unmarshal([]byte(`{"ok":true}`), out)
+	}
 	if method != "rooms.join" {
 		return errors.New("fake slack: " + method)
 	}
@@ -118,6 +124,22 @@ type fakeChime struct {
 	reacji   atomic.Value // string
 	sending  atomic.Bool
 	cam      fakeCamIn
+	aware    fakeAware
+}
+
+// fakeAware is the awareness traffic: what you sent, and how the fake's
+// other person talks on the topic.
+type fakeAware struct {
+	mu      sync.Mutex
+	send    func(int, func(*pbw)) // the live connection's (nil before JOIN)
+	seen    FakeAwareness
+	sticker string // the other person's
+}
+
+// FakeAwareness is what the fake saw of your awareness messages.
+type FakeAwareness struct {
+	Queries, Broadcasts, Closes int
+	Last                        *Awareness // your last broadcast
 }
 
 // fakeCamIn is what the fake saw of your camera: the SUBSCRIBE send side
@@ -178,6 +200,9 @@ func (f *fakeChime) serve(w http.ResponseWriter, r *http.Request) {
 		switch fr.Type {
 		case ftJoin:
 			f.joined.Store(true)
+			f.aware.mu.Lock()
+			f.aware.send = send
+			f.aware.mu.Unlock()
 			send(ftJoinAck, func(w *pbw) { w.msg(5, func(w *pbw) {}) }) // no TURN: direct on loopback
 			send(ftIndex, func(w *pbw) { f.index(w, nil) })
 		case ftSubscribe:
@@ -232,6 +257,8 @@ func (f *fakeChime) serve(w http.ResponseWriter, r *http.Request) {
 			for _, m := range fr.Data {
 				if pm, err := DecodePeerMessage(m.Data); err == nil && pm.Reacji != nil && m.Topic == TopicData {
 					f.reacji.Store(pm.Reacji.Emoji + "/" + pm.FromPeerIDString)
+				} else if err == nil && m.Topic == TopicAwareness {
+					f.onAwareness(pm)
 				}
 			}
 		case ftLeave:
@@ -725,6 +752,74 @@ func (x *Fake) Close() {
 	}
 	x.f.mu.Unlock()
 	testSettings = nil
+}
+
+func (f *fakeChime) onAwareness(pm *PeerMessage) {
+	f.aware.mu.Lock()
+	answer := false
+	switch {
+	case pm.AwarenessQuery != nil:
+		f.aware.seen.Queries++
+		answer = true // everyone answers a query with a broadcast
+	case pm.AwarenessBroadcast != nil:
+		f.aware.seen.Broadcasts++
+		a := *pm.AwarenessBroadcast
+		a.State = append([]AwarenessPayload(nil), a.State...)
+		f.aware.seen.Last = &a
+	case pm.AwarenessClose != nil:
+		f.aware.seen.Closes++
+	}
+	f.aware.mu.Unlock()
+	if answer {
+		f.remoteAwareness(&PeerMessage{AwarenessBroadcast: f.remoteState()})
+	}
+}
+
+func (f *fakeChime) remoteState() *Awareness {
+	f.aware.mu.Lock()
+	defer f.aware.mu.Unlock()
+	a := &Awareness{Channel: FakeRoomID, User: fakeRemote}
+	if f.aware.sticker != "" {
+		a.State = []AwarenessPayload{{FieldName: AwarenessSticky, FieldValue: f.aware.sticker}}
+	}
+	return a
+}
+
+// remoteAwareness sends m on the awareness topic from the other person.
+func (f *fakeChime) remoteAwareness(m *PeerMessage) error {
+	f.aware.mu.Lock()
+	send := f.aware.send
+	f.aware.mu.Unlock()
+	if send == nil {
+		return errors.New("fake chime: not joined")
+	}
+	b := m.Encode()
+	send(ftDataMessage, func(w *pbw) {
+		w.msg(23, func(w *pbw) {
+			w.msg(1, func(w *pbw) {
+				w.str(1, TopicAwareness)
+				w.bytes(2, b)
+				w.str(4, fakeRemoteAtt)
+			})
+		})
+	})
+	return nil
+}
+
+// Awareness is what the fake saw of your awareness messages so far.
+func (x *Fake) Awareness() FakeAwareness {
+	x.f.aware.mu.Lock()
+	defer x.f.aware.mu.Unlock()
+	return x.f.aware.seen
+}
+
+// RemoteSticker has the other person put emoji on their tile ("" takes
+// it off): their awareness broadcast, as Slack's client sends it.
+func (x *Fake) RemoteSticker(emoji string) error {
+	x.f.aware.mu.Lock()
+	x.f.aware.sticker = emoji
+	x.f.aware.mu.Unlock()
+	return x.f.remoteAwareness(&PeerMessage{AwarenessBroadcast: x.f.remoteState()})
 }
 
 // lastSub is the last SUBSCRIBE the fake got.
