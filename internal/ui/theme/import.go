@@ -62,9 +62,7 @@ func ImportThemeString(cur IATheme, s string) (IATheme, bool) {
 	}
 	if b == 0 {
 		if t.Primary.Custom != "" {
-			if c, ok := parseHex(t.Primary.Custom); ok {
-				b = brightnessFromShade(pltShades[CustomKeyShade(c, false)])
-			}
+			b = BrightnessFromCustomHex(t.Primary.Custom)
 		} else {
 			shade := "50"
 			if _, sh, ok := paletteOfHex(hex[0]); ok {
@@ -129,4 +127,15 @@ func SurpriseTheme(r *rand.Rand) IATheme {
 	b := 1 + r.IntN(6)
 	return IATheme{Primary: pick(), Highlight1: pick(), Highlight2: pick(), Important: pick(),
 		Brightness: b, SidebarInverted: b > 3, UseCustomHex: true}
+}
+
+// BrightnessFromCustomHex is getBrightnessFromCustomHex (t+RV S6) in light
+// mode: the brightness of the custom ramp shade nearest hex's tone (0 for
+// junk). Slack gives a custom primary colour this brightness.
+func BrightnessFromCustomHex(hex string) int {
+	c, ok := parseHex(hex)
+	if !ok {
+		return 0
+	}
+	return brightnessFromShade(pltShades[CustomKeyShade(c, false)])
 }

@@ -2,6 +2,8 @@ package ui
 
 import (
 	"context"
+	"fmt"
+	"image"
 	"reflect"
 	"strings"
 	"sync"
@@ -537,5 +539,47 @@ func TestPrefsAuditAppliedRoundTripThemeButtons(t *testing.T) {
 	waitFor(t, a, "surprise", func() bool {
 		th := iaTheme()
 		return th.UseCustomHex && th.Primary.Custom == "" && th.Primary.Palette != ""
+	})
+}
+
+// Appearance > Custom theme: the pencil opens the colour popover; its
+// square/slider and hex field set the role's colour (a custom primary
+// also gets getBrightnessFromCustomHex's brightness).
+func TestColorPopover(t *testing.T) {
+	for _, hex := range []string{"#611F69", "#FF0000", "#00FF7F", "#123ABC", "#FFFFFF", "#000000"} {
+		h, s, v := hexToHSV(hex)
+		c := hsvToRGB(h, s, v)
+		if got := strings.ToUpper(fmt.Sprintf("#%02X%02X%02X", c.R, c.G, c.B)); got != hex {
+			t.Errorf("%s round-trips to %s", hex, got)
+		}
+	}
+	a, _, fs := fakePrefsApp(t)
+	pm := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}, themeTab: "custom"}
+	var got []string
+	p := newColorPopover(a, image.Pt(10, 10), "#611F69", func(h string) { got = append(got, h) })
+	p.h, p.s, p.v = 0, 1, 1
+	p.apply(p.hex())
+	p.ed.SetText("123abc")
+	p.commitText()
+	p.ed.SetText("nope")
+	p.commitText()
+	if !reflect.DeepEqual(got, []string{"#FF0000", "#123ABC"}) || p.ed.Text() != "123ABC" {
+		t.Fatalf("applied %v, field %q", got, p.ed.Text())
+	}
+	found := false
+	for _, r := range pageRows(t, a, pm, "appearance") {
+		if r.Key == "button.hexedit.primary" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("no colour popover trigger")
+	}
+	pm.setRoleHex(0, "#F2F2F2") // a light primary: low brightness
+	waitFor(t, a, "brightness", func() bool {
+		v, _ := fs.Pref("ia_theme")
+		s, _ := v.(string)
+		th, _ := theme.ParseIATheme(s)
+		return th.Primary.Custom == "#F2F2F2" && th.Brightness == theme.BrightnessFromCustomHex("#F2F2F2") && th.Brightness <= 2
 	})
 }
