@@ -4,7 +4,9 @@ import (
 	"image"
 	"strings"
 
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/shortcut"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
 // Shell actions: menus and commands reachable from the chrome.
@@ -157,6 +159,12 @@ func (a *App) openChannelMenu(ch string, anchor image.Point) {
 
 func (a *App) openNotifPrefs(ch string) {
 	conv := a.model().conv(ch)
+	if conv != nil && (conv.Kind == "channel" || conv.Kind == "private") && a.Core() != nil {
+		// Slack's ChannelNotificationPrefMenu, right-aligned like the ⋮
+		// menu, 3px lower (y 77 vs 74)
+		a.ShowOverlay(popups.NewChannelNotifyMenu(a, a.anchor(image.Pt(a.winSize.X-a.px(int(theme.PanelInset))-a.px(14)-a.px(6), a.px(int(theme.TopNavH))+a.px(37))), ch))
+		return
+	}
 	muted := conv != nil && conv.Muted
 	a.menu(image.Pt(a.px(600), a.px(90)), []MenuItem{
 		{Label: "Notifications", Disabled: true},
@@ -197,12 +205,6 @@ func (a *App) sidebarAction(key string) {
 
 func (a *App) compose() {
 	a.openSwitcher()
-}
-
-func (a *App) toggleStar(ch string) {
-	if a.data != nil {
-		a.data.toggleStar(ch)
-	}
 }
 
 func (a *App) markRead(ch string) {

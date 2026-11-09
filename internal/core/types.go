@@ -89,7 +89,11 @@ type Reaction struct {
 
 // User is a person or bot as the UI shows it.
 type User struct {
-	ID, Name, RealName, Handle       string // Name: display name as Slack shows it
+	ID, Name, RealName, Handle string // Name: display name as Slack shows it
+	// DisplaySet: profile.display_name is set, so Name is it and Slack's
+	// member rows (MediumMemberEntity) show RealName after it as the
+	// secondary name; otherwise Name is the real name and there is none.
+	DisplaySet                       bool
 	Avatar, Avatar192, Avatar512     string
 	Title, Pronouns                  string
 	Email                            string // only when Slack shows it (Hack Club: the viewer's own)
@@ -361,11 +365,14 @@ type ChannelDetails struct {
 	Managers                 []string // channel managers ("Managed by")
 	IsMember                 bool
 	IsOrgShared, IsExtShared bool
-	LastRead                 string
-	TopicSetBy               string
-	TopicSetAt               int64
-	PurposeSetBy             string
-	PurposeSetAt             int64
+	// Teams are the org workspaces with access (internal_team_ids, else
+	// context_team_id), their names and icons loaded (App.Team).
+	Teams        []string
+	LastRead     string
+	TopicSetBy   string
+	TopicSetAt   int64
+	PurposeSetBy string
+	PurposeSetAt int64
 }
 
 type ActivityOpts struct {

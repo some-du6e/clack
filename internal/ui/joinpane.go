@@ -329,7 +329,7 @@ func (a *App) splitJoinButton(gtx layout.Context, jp *joinPane) (layout.Dimensio
 	pad := gtx.Dp(12)
 	tw := th.Measure(gtx, 15, theme.Bold, "Join Channel")
 	mainW := tw + 2*pad
-	caretW := gtx.Dp(32)
+	caretW := gtx.Dp(40) // Slack: the "Join channel temporarily" trigger is 40×36
 	rad := gtx.Dp(8)
 	bg := th.C.Send
 	hover := theme.Mix(bg, color.NRGBA{A: 0xff}, .1)
@@ -359,14 +359,16 @@ func (a *App) splitJoinButton(gtx layout.Context, jp *joinPane) (layout.Dimensio
 	lt.Pop()
 	is := gtx.Dp(16)
 	it := op.Offset(image.Pt(mainW+(caretW-is)/2, (h-is)/2)).Push(gtx.Ops)
-	icons.Get("caret-down")(gtx, unit.Dp(16), th.C.SendText)
+	icons.Get("chevron-down")(gtx, unit.Dp(16), th.C.SendText) // Slack draws a chevron, not a filled caret
 	it.Pop()
 	part(&jp.join, image.Rect(0, 0, mainW, h))
 	part(&jp.caret, image.Rect(mainW, 0, mainW+caretW, h))
 	return layout.Dimensions{Size: whole.Size()}, mainW
 }
 
-// openTempJoinMenu opens UY14's "Join…" menu above the caret, right-aligned.
+// openTempJoinMenu opens UY14's "Join…" menu above the caret, right-aligned:
+// 300px wide, its right edge on the caret's (C08E083LZ9A, 2026-11-08: menu
+// x 738–1038 over a caret at 998–1038).
 func (a *App) openTempJoinMenu(c *convo) {
 	items := []popups.MenuItem{
 		{Header: "Join…"},
@@ -374,7 +376,7 @@ func (a *App) openTempJoinMenu(c *convo) {
 		{Label: "For 48 hours", Do: func() { a.joinPreview(c, core.TempTwoDays) }},
 		{Label: "For 1 week", Do: func() { a.joinPreview(c, core.TempWeek) }},
 	}
-	a.ShowOverlay(popups.NewMenuOpts(a, items, popups.MenuOpts{Width: 220, Anchor: c.jp.caretRect, Side: popups.Above, AlignRight: true}))
+	a.ShowOverlay(popups.NewMenuOpts(a, items, popups.MenuOpts{Width: 300, Anchor: c.jp.caretRect, Side: popups.Above, AlignRight: true}))
 }
 
 // joinPreview joins the previewed channel (d "" = permanently) and focuses

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"strings"
 
 	"gioui.org/layout"
 	"gioui.org/x/explorer"
@@ -69,7 +70,13 @@ func init() {
 		case "threads":
 			return views.NewThreads(a)
 		case "directories":
-			return views.NewDirectories(a)
+			d := views.NewDirectories(a)
+			// "Browse channels" (Add channels, the ⊕ menu) and "Browse all
+			// people" open their tab: directories?tab=channels
+			if i, ok := directoriesTab[routeArg(r, "tab")]; ok {
+				d.ShowTab(i)
+			}
+			return d
 		case "search":
 			return popups.NewSearchView(a, r.Query())
 		case "saved":
@@ -79,6 +86,12 @@ func init() {
 	}
 	openDetails = func(a *App, ch string) bool {
 		a.ShowOverlay(detailsOverlay{views.NewChannelDetails(a, ch)})
+		return true
+	}
+	openDetailsTab = func(a *App, ch, tab string) bool {
+		d := views.NewChannelDetails(a, ch)
+		d.ShowTab(tab)
+		a.ShowOverlay(detailsOverlay{d})
 		return true
 	}
 	mkProfile = func(a *App, user string) View { return popups.NewProfileView(a, user) }
@@ -126,6 +139,10 @@ func init() {
 		popups.OpenFullProfile = func(uid string) { a.OpenUserProfile(uid) }
 		popups.OpenOwnProfile = func() { a.OpenUserProfile(a.model().SelfID) }
 		popups.OpenChannelDetails = func(ch string) { a.OpenDetails(ch) }
+		popups.OpenChannelSettings = func(ch string) { a.OpenDetailsTab(ch, "Settings") }
+		popups.MoveChannel = func(ch string, anchor image.Point) {
+			a.openMoveToMenu(ch, image.Rectangle{Min: anchor, Max: anchor}, true)
+		}
 		popups.OpenPreferences = func() { a.openPrefs() }
 		popups.OpenPreferencesSection = func(sec string) { a.openPrefsSection(sec) }
 		popups.SignOut = func() { a.signOut() }
@@ -167,7 +184,7 @@ func toPopupItems(items []MenuItem) []popups.MenuItem {
 			sub = toPopupItems(it.Sub)
 		}
 		out = append(out, popups.MenuItem{Key: it.Key, Label: it.Label, Icon: it.Icon, Hint: it.Hint, Subtitle: it.Subtitle,
-			Right: it.Right, Danger: it.Danger, Disabled: it.Disabled, Checked: it.Checked, Sub: sub, Do: it.Do})
+			Right: it.Right, Danger: it.Danger, Disabled: it.Disabled, Checked: it.Checked, Radio: it.Radio, Sub: sub, Do: it.Do})
 	}
 	return out
 }
@@ -186,4 +203,22 @@ func (a *App) ThreadPane(ch, ts string) layout.Widget {
 	return func(gtx layout.Context) layout.Dimensions {
 		return a.layoutConvo(gtx, a.convoFor(ch, ts), a.ptrWin)
 	}
+}
+
+// directoriesTab maps directories?tab= to the Directories tab index.
+var directoriesTab = map[string]int{"people": 0, "channels": 1, "groups": 2, "usergroups": 2, "external": 3, "invitations": 4}
+
+// routeArg is a route's name= query value ("" when absent).
+func routeArg(r Route, name string) string {
+	s := string(r)
+	i := strings.IndexByte(s, '?')
+	if i < 0 {
+		return ""
+	}
+	for _, kv := range strings.Split(s[i+1:], "&") {
+		if k, v, ok := strings.Cut(kv, "="); ok && k == name {
+			return v
+		}
+	}
+	return ""
 }

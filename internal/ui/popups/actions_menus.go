@@ -19,6 +19,12 @@ import (
 var (
 	// OpenChannelDetails opens the channel details pane for convID.
 	OpenChannelDetails func(convID string)
+	// OpenChannelSettings opens channel details on its Settings tab (the
+	// channel menu's "Edit settings").
+	OpenChannelSettings func(convID string)
+	// MoveChannel opens the "Move to…" section picker for convID at anchor
+	// (window coordinates; the channel menu's "Move channel").
+	MoveChannel func(convID string, anchor image.Point)
 	// OpenPreferences opens the preferences view.
 	OpenPreferences func()
 	// SignOut signs out (forgets credentials).
@@ -130,13 +136,30 @@ func newChannelMenu(h Host, anchor image.Point, convID string, alignRight bool) 
 			return starLabel
 		}), Do: func() { actToggleStar(h, convID, noun) }},
 	}
-	if !dm {
-		items = append(items, MenuItem{Label: "Move channel", Do: actToast(h, "Moving channels between sections isn't supported yet")})
+	if !dm && !c.Preview {
+		items = append(items, MenuItem{Label: "Move channel", Do: func() {
+			if MoveChannel != nil {
+				MoveChannel(convID, anchor)
+				return
+			}
+			h.Toast("Moving channels between sections isn't supported yet")
+		}})
+	}
+	if c.Preview {
+		// Slack's menu for a channel you aren't in: no Star, Move or Leave
+		// (C08E083LZ9A, 2026-11-08).
+		items = items[:2]
 	}
 	items = append(items,
 		Sep(),
-		MenuItem{Label: "Add a workflow", Do: actToast(h, "Workflows aren't supported in yoloslack")},
-		MenuItem{Label: "Edit settings", Do: actToast(h, "Channel settings aren't supported yet")},
+		MenuItem{Label: "Add a workflow", Do: actToast(h, "Workflows aren't supported in Clack yet")},
+		MenuItem{Label: "Edit settings", Do: func() {
+			if OpenChannelSettings != nil {
+				OpenChannelSettings(convID)
+				return
+			}
+			details()
+		}},
 		Sep(),
 		MenuItem{Label: "Open in split view", Icon: "panel-right", Do: func() {
 			// ui-shell's *ui.App exposes OpenSplit (right-hand pane).
@@ -156,16 +179,13 @@ func newChannelMenu(h Host, anchor image.Point, convID string, alignRight bool) 
 			return muteLabel
 		}), Do: func() { actToggleMute(h, convID, noun) }})
 	}
-	if dm {
+	switch {
+	case c.Preview:
+		items = items[:len(items)-1] // the trailing separator: no Leave
+	case dm:
 		items = append(items, MenuItem{Label: "Close conversation", Do: func() { actLeave(h, convID, "Conversation closed") }})
-	} else {
-		items = append(items, MenuItem{Label: "Leave channel", Danger: true, Do: func() {
-			msg := "You can rejoin this channel at any time."
-			if c.Kind == "private" {
-				msg = "You won't be able to rejoin this private channel unless someone invites you."
-			}
-			Confirm(h, "Leave #"+name+"?", msg, "Leave channel", true, nil, func() { actLeave(h, convID, "You left #"+name) })
-		}})
+	default:
+		items = append(items, MenuItem{Label: "Leave channel", Danger: true, Do: func() { leaveChannel(h, convID, c.Kind, name, c.IsGeneral) }})
 	}
 	m := NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(anchor), AlignRight: alignRight, Wraps: []MenuWrap{
 		// Slack's channel context menu: ChatTabs marks the channel, then
@@ -214,13 +234,7 @@ func ChannelMenuAction(h Host, convID, key string) func() {
 		if name == "" {
 			name = convID
 		}
-		return func() {
-			msg := "You can rejoin this channel at any time."
-			if c.Kind == "private" {
-				msg = "You won't be able to rejoin this private channel unless someone invites you."
-			}
-			Confirm(h, "Leave #"+name+"?", msg, "Leave channel", true, nil, func() { actLeave(h, convID, "You left #"+name) })
-		}
+		return func() { leaveChannel(h, convID, c.Kind, name, c.IsGeneral) }
 	}
 	return nil
 }
@@ -361,6 +375,30 @@ func actLabelRow(h Host, label func() string) func(gtx layout.Context, hl bool) 
 		})
 		return layout.Dimensions{Size: sz}
 	}
+}
+
+// leaveChannel is Slack's maybeLeaveChannel (boot-shared): the workspace's
+// general channel can't be left (LeaveChannelError CANT_LEAVE_GENERAL: an
+// alert, OK only); a public channel is left at once; a private one asks
+// first with LeaveChannel ("Leave <name>", Cancel / Leave Channel).
+func leaveChannel(h Host, convID, kind, name string, general bool) {
+	if general {
+		m := NewModal(h, ModalOpts{Title: "Membership is required in #" + name, EnterSubmits: true,
+			Body: func(gtx layout.Context) layout.Dimensions {
+				th := h.Theme()
+				return para(gtx, th, 15, 22, theme.Regular, colorsOf(th).Fg,
+					"Every workspace has one channel that contains all the members of this workspace — this is that channel for you.", 0)
+			},
+			Buttons: []*ModalButton{{Label: "OK", Kind: BtnPrimary, Do: func() bool { return true }}}})
+		h.ShowOverlay(m)
+		return
+	}
+	if kind != "private" {
+		actLeave(h, convID, "You left #"+name)
+		return
+	}
+	Confirm(h, "Leave "+name, "When you leave a private channel, you’ll no longer be able to see any of its messages. To rejoin this channel later, you’ll need to be invited.",
+		"Leave Channel", true, nil, func() { actLeave(h, convID, "You left "+name) })
 }
 
 func actLeave(h Host, convID, okMsg string) {

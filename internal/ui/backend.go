@@ -580,7 +580,8 @@ func (b *backend) opened(ch string) {
 			if label == "" {
 				continue
 			}
-			tabs = append(tabs, chTab{key: "tab:" + t.ID, label: label, icon: icon, fileID: t.FileID, unread: t.Unread})
+			tabs = append(tabs, chTab{key: "tab:" + t.ID, label: label, icon: icon, fileID: t.FileID, unread: t.Unread,
+				spans: tabLabelSpans(label, b.core.Emoji)})
 			bms = append(bms, t.Bookmarks...)
 		}
 		var members []string
@@ -608,6 +609,13 @@ func (b *backend) opened(ch string) {
 		}
 		if a == nil {
 			return
+		}
+		if ierr == nil && !info.IsMember {
+			// Slack's tab bar marks no canvas unread in a channel you
+			// aren't in (C08E083LZ9A's "Untitled", 2026-11-08).
+			for i := range tabs {
+				tabs[i].unread = false
+			}
 		}
 		a.Post(func() {
 			b.tabCache[ch] = tabs
@@ -674,7 +682,9 @@ func tabIcon(typ string) string {
 		return "canvas"
 	case "list":
 		return "list-tab" // Slack's list tab: a card with checklist rows
-	case "bookmarks", "folder":
+	case "bookmarks": // the Pins tab (Slack 2026: pin icon)
+		return "pin"
+	case "folder":
 		return "bookmark"
 	case "files":
 		return "files"
@@ -691,7 +701,7 @@ func (b *backend) openTab(ch, key string) {
 		if t.key != key {
 			continue
 		}
-		if t.icon == "bookmark" && len(b.bookmarks[ch]) > 0 && b.app != nil {
+		if (t.icon == "bookmark" || t.icon == "pin") && len(b.bookmarks[ch]) > 0 && b.app != nil {
 			var items []MenuItem
 			for _, bm := range b.bookmarks[ch] {
 				bm := bm
@@ -773,12 +783,6 @@ func (b *backend) openBookmark(ch, id string) {
 			openURL(bm.Link)
 			return
 		}
-	}
-}
-
-func (b *backend) toggleStar(ch string) {
-	if b.app != nil {
-		b.app.Toast("Starring from " + AppName + " isn't supported yet")
 	}
 }
 

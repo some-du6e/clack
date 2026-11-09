@@ -824,7 +824,8 @@ func avatarURL(u *slack.User, size int) string {
 func (a *App) userOf(u *slack.User) User {
 	v := User{
 		ID: u.ID, Name: store.DisplayName(u), RealName: strings.TrimSpace(u.Profile.RealName), Handle: u.Name,
-		Avatar: avatarURL(u, 72), Avatar192: avatarURL(u, 192), Avatar512: avatarURL(u, 512),
+		DisplaySet: strings.TrimSpace(u.Profile.DisplayName) != "",
+		Avatar:     avatarURL(u, 72), Avatar192: avatarURL(u, 192), Avatar512: avatarURL(u, 512),
 		Title: u.Profile.Title, Pronouns: u.Profile.Pronouns, Email: u.Profile.Email, StatusText: u.Profile.StatusText,
 		StatusEmoji: u.Profile.StatusEmoji, StatusExp: u.Profile.StatusExpiration, TZ: u.TZ, TZOffset: u.TZOffset,
 		TZLabel: u.TZLabel, IsBot: u.IsBot || u.ID == "USLACKBOT", Deleted: u.Deleted, IsAdmin: u.IsAdmin,

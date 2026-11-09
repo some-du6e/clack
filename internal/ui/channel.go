@@ -83,29 +83,19 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	}
 	h := sz.Y
 	x := gtx.Dp(18) // Slack: 28px star button at +18, title icon at +54
-	if conv != nil && conv.Code != nil {
-		// a code channel: ViewHeaderCodeIcon where the star goes (Slack
-		// shows no star for code channels)
+	// Slack's header has no star (ViewHeaderEntitySectionSelector) and no
+	// notifications bell for a channel the viewer isn't in: the preview's
+	// title sits at +18 (C08E083LZ9A, 2026-11-08). A code channel shows
+	// ViewHeaderCodeIcon where the star goes, member or not (#test).
+	preview := conv != nil && conv.Preview
+	switch {
+	case conv != nil && conv.Code != nil:
 		at(gtx, image.Pt(x, (h-gtx.Dp(28))/2), image.Pt(gtx.Dp(28), gtx.Dp(28)), a.codeHeaderTile)
-	} else {
-		// star
-		starred := conv != nil && conv.Starred
-		star := "star"
-		if starred {
-			star = "star-filled"
-		}
-		at(gtx, image.Pt(x, (h-gtx.Dp(28))/2), image.Pt(gtx.Dp(28), gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
-			col := c.Fg
-			if starred {
-				col = c.Warning
-			}
-			return iconButton(gtx, a.clicks.get("hdr.star"), star, 28, 20, col, c.BgHover, 8)
-		})
-		if clicked(a.clicks.get("hdr.star")) {
-			a.toggleStar(ch)
-		}
+		x += gtx.Dp(34) // title button at +52
+	case !preview:
+		a.layoutHeaderStar(gtx, ch, conv, image.Pt(x, (h-gtx.Dp(28))/2))
+		x += gtx.Dp(34) // title button at +52
 	}
-	x += gtx.Dp(34) // title button at +52
 
 	// right-side controls, laid out right-to-left first so the title can
 	// ellipsize into the remaining space.
@@ -117,8 +107,11 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	// or member count.
 	appDM := conv != nil && conv.Kind == "app"
 	hdrBtns := []string{"kebab", "search", "bell"}
-	if appDM {
+	switch {
+	case appDM:
 		hdrBtns = []string{"kebab", "bell"}
+	case preview:
+		hdrBtns = []string{"kebab", "search"}
 	}
 	for _, k := range hdrBtns {
 		k := k
@@ -392,6 +385,85 @@ type chTab struct {
 	key, label, icon string
 	fileID           string
 	unread           bool // Slack's blue dot on the tab icon (unopened canvas)
+	// spans is the label with its :emoji: codes resolved (Slack draws a
+	// canvas tab's title through its Emoji text renderer), bold; nil for a
+	// label without emoji.
+	spans []richtext.Span
+}
+
+// tabLabelSpans resolves a tab label's :emoji: codes to emoji spans, as
+// Slack's tab label does; nil when the label has none that resolve.
+func tabLabelSpans(label string, emoji func(name string) (url, text string, ok bool)) []richtext.Span {
+	if strings.Count(label, ":") < 2 || emoji == nil {
+		return nil
+	}
+	var out []richtext.Span
+	found := false
+	text := func(t string) {
+		if t == "" {
+			return
+		}
+		if n := len(out); n > 0 && out[n-1].Kind == richtext.Text {
+			out[n-1].Text += t
+			return
+		}
+		out = append(out, richtext.Span{Kind: richtext.Text, Text: t, Style: richtext.Bold})
+	}
+	rest := label
+	for {
+		i := strings.IndexByte(rest, ':')
+		if i < 0 {
+			break
+		}
+		j := strings.IndexByte(rest[i+1:], ':')
+		if j < 0 {
+			break
+		}
+		name := rest[i+1 : i+1+j]
+		if name == "" || strings.ContainsAny(name, " \t") {
+			text(rest[:i+1])
+			rest = rest[i+1:]
+			continue
+		}
+		url, uni, ok := emoji(name)
+		if !ok || (url == "" && uni == "") {
+			text(rest[:i+1])
+			rest = rest[i+1:]
+			continue
+		}
+		text(rest[:i])
+		found = true
+		if url != "" {
+			out = append(out, richtext.Span{Kind: richtext.Emoji, Text: ":" + name + ":", URL: url})
+		} else {
+			text(uni)
+		}
+		rest = rest[i+2+j:]
+	}
+	text(rest)
+	if !found {
+		return nil
+	}
+	return out
+}
+
+// spansWidth is inlineSpans' width for spans at size (emoji at 18/13 of
+// the text size plus a 1px gap).
+func (a *App) spansWidth(gtx layout.Context, spans []richtext.Span, size unit.Sp) int {
+	w := 0
+	es := gtx.Sp(size * 18 / 13)
+	for _, s := range spans {
+		if s.Kind == richtext.Emoji && s.URL != "" {
+			w += es + gtx.Dp(1)
+			continue
+		}
+		wt := theme.Regular
+		if s.Style&richtext.Bold != 0 {
+			wt = theme.Bold
+		}
+		w += a.th.Measure(gtx, size, wt, s.Text)
+	}
+	return w
 }
 
 func (a *App) channelTabs(ch string) []chTab {
@@ -410,6 +482,9 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 	for i, t := range a.channelTabs(ch) {
 		i, t := i, t
 		lw := a.th.Measure(gtx, 13, theme.Bold, t.label)
+		if t.spans != nil {
+			lw = a.spansWidth(gtx, t.spans, 13)
+		}
 		w := gtx.Dp(8) + gtx.Dp(16) + gtx.Dp(4) + lw + gtx.Dp(8)
 		if x+w > sz.X-gtx.Dp(48) {
 			break
@@ -448,6 +523,9 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 					theme.Circle(gtx, ctr, gtx.Dp(8), c.Link)
 				}
 				at(gtx, image.Pt(gtx.Dp(28), 0), image.Pt(lw+2, sz.Y), func(gtx layout.Context) layout.Dimensions {
+					if t.spans != nil {
+						return a.inlineSpans(gtx, t.spans, 13, col, sz.Y)
+					}
 					return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
 						return a.th.Label(gtx, 13, theme.Bold, col, t.label)
 					})
@@ -469,6 +547,9 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 			}
 		}
 		x += w + gtx.Dp(4)
+	}
+	if ci := a.model().conv(ch); ci != nil && ci.Preview {
+		return layout.Dimensions{Size: sz} // Slack: no "+" (add a tab) for a channel you aren't in
 	}
 	at(gtx, image.Pt(x+gtx.Dp(4), (sz.Y-gtx.Dp(28))/2), image.Pt(gtx.Dp(28), gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
 		return iconButton(gtx, a.clicks.get("tab.add"), "plus", 28, 18, c.FgMuted, c.BgHover, 6)

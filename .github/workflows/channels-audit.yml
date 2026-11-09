@@ -1,0 +1,52 @@
+name: channels-audit
+# The channels audit (docs/CHANNELS-AUDIT.md) rendered headlessly at
+# 1440x900 against internal/fakeslack: the header star's Move to… menu,
+# a preview channel's header, the Join… menu, channel details (About,
+# Members, Agents & apps, Settings) and the channel browser. Synthetic
+# only: nothing here talks to Slack.
+on:
+  push:
+    paths:
+      - "internal/ui/channel.go"
+      - "internal/ui/channel_move.go"
+      - "internal/ui/channels_audit_test.go"
+      - "internal/ui/joinpane.go"
+      - "internal/ui/views/details.go"
+      - "internal/ui/views/directories.go"
+      - "internal/ui/views/spanline.go"
+      - "internal/ui/popups/actions_menus.go"
+      - "internal/ui/popups/notify_menu.go"
+      - ".github/workflows/channels-audit.yml"
+  workflow_dispatch:
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb
+
+permissions:
+  contents: read
+
+jobs:
+  channels-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: channels screenshots
+        env:
+          PREVIEW_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$PREVIEW_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -v -run 'TestChannelHeaderMoveTo$|TestChannelPreviewHeaderAndMenu$|TestChannelPreviewJoin$|TestChannelDetailsMembersAndApps$|TestChannelBrowserShot$|TestChannelBellMenu$|TestChannelTopicEditModal$|TestChannelLeaveRejoin$|TestChannelDetailsTabsShot$' ./internal/ui/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: channels-audit-shots
+          path: dist/shots

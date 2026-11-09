@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -228,6 +229,9 @@ type ChannelNotify struct {
 	Muted             bool   `json:"muted,omitempty"`
 	FollowAllThreads  bool   `json:"follow_all_threads,omitempty"`
 	SuppressAtChannel bool   `json:"suppress_at_channel,omitempty"`
+	// TempMuteExp is temp_mute_expiration_ts: muted until then (Slack's
+	// "Temporarily mute…" Until tomorrow / 1 hour), 0 when not.
+	TempMuteExp int64 `json:"temp_mute_expiration_ts,omitempty"`
 }
 
 // parseSectionPrefs reads the channel_sections pref, a JSON object of
@@ -395,6 +399,7 @@ func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
 				Muted             json.RawMessage `json:"muted"`
 				FollowAllThreads  json.RawMessage `json:"follow_all_threads"`
 				SuppressAtChannel json.RawMessage `json:"suppress_at_channel"`
+				TempMuteExp       json.RawMessage `json:"temp_mute_expiration_ts"`
 			} `json:"channels"`
 			Global map[string]json.RawMessage `json:"global"`
 		}
@@ -407,6 +412,9 @@ func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
 			for id, c := range n.Channels {
 				cn := ChannelNotify{Desktop: c.Desktop, Mobile: c.Mobile, Muted: truthy(c.Muted),
 					FollowAllThreads: truthy(c.FollowAllThreads), SuppressAtChannel: truthy(c.SuppressAtChannel)}
+				if v, err := strconv.ParseInt(strings.Trim(string(c.TempMuteExp), `"`), 10, 64); err == nil {
+					cn.TempMuteExp = v
+				}
 				p.ChannelNotify[id] = cn
 				if cn.Muted {
 					muted[id] = true

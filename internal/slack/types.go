@@ -279,6 +279,9 @@ type Conversation struct {
 	Priority      float64         `json:"priority,omitempty"`
 	IsOpen        bool            `json:"is_open,omitempty"`
 	ContextTeamID string          `json:"context_team_id,omitempty"`
+	// InternalTeamIDs are the org's workspaces with access to the channel
+	// (Enterprise Grid; the details "Workspaces with access" field).
+	InternalTeamIDs []string `json:"internal_team_ids,omitempty"`
 
 	// Posting permissions as the server states them; nil when absent, and
 	// then they come from properties.posting_restricted_to /

@@ -2,6 +2,7 @@ package popups
 
 import (
 	"image"
+	"image/color"
 	"time"
 
 	"gioui.org/io/key"
@@ -41,6 +42,10 @@ type MenuItem struct {
 	Danger   bool
 	Disabled bool
 	Checked  bool // draws a check at the right
+	// Radio is Slack's type:"radio" item (ChannelNotificationPrefMenu): the
+	// check sits in a left gutter, a checked row is link blue, the label
+	// is regular and the Subtitle wraps to two lines.
+	Radio    bool
 	External bool // draws an external-link glyph at the right
 
 	Separator bool   // a divider line instead of an item
@@ -213,6 +218,14 @@ func (m *Menu) rowHeight(gtx layout.Context, th *theme.Theme, i, w int) int {
 			return it.Widget(gtx, false)
 		})
 		return d.Size.Y
+	case it.Radio && it.Subtitle != "":
+		// 3px padding, the 15/22 label, the 13/18 description (≤ 2 lines):
+		// Slack's 46 / 63 px rows
+		x := dp(gtx, 60)
+		_, d := record(loose(gtx, image.Pt(max(1, w-x-dp(gtx, 24)), 1<<20)), func(gtx layout.Context) layout.Dimensions {
+			return para(gtx, th, 13, 18, theme.Regular, colorsOf(th).Fg3, it.Subtitle, 2)
+		})
+		return dp(gtx, 6) + dp(gtx, 22) + d.Size.Y
 	case it.Subtitle != "":
 		return dp(gtx, 52)
 	}
@@ -341,6 +354,26 @@ func (m *Menu) keys(gtx layout.Context) {
 			}
 		}
 	}
+}
+
+// Labels lists the menu's rows for tests and diagnostics: each item's
+// label, "---" for a separator, "[header]" for a heading, "*" for a
+// drawn (Widget) row.
+func (m *Menu) Labels() []string {
+	out := make([]string, 0, len(m.items))
+	for _, it := range m.items {
+		switch {
+		case it.Separator:
+			out = append(out, "---")
+		case it.Header != "":
+			out = append(out, "["+it.Header+"]")
+		case it.Label == "" && it.Widget != nil:
+			out = append(out, "*")
+		default:
+			out = append(out, it.Label)
+		}
+	}
+	return out
 }
 
 // Layout draws the menu (and any open submenu).
@@ -578,6 +611,9 @@ func (m *Menu) itemRow(gtx layout.Context, th *theme.Theme, cl *Colors, st slack
 		}
 		fg = st.Color(fg)
 		x := dp(gtx, 24)
+		if it.Radio {
+			return m.radioRow(gtx, th, cl, it, sz, fg, hint, hl)
+		}
 		if it.Icon != "" && it.Subtitle != "" { // Slack's p-more_menu_icon: 20px
 			at(gtx, image.Pt(x, (sz.Y-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions {
 				return icon(gtx, it.Icon, 20, fg)
@@ -658,6 +694,48 @@ func (m *Menu) itemRow(gtx layout.Context, th *theme.Theme, cl *Colors, st slack
 		}
 		return layout.Dimensions{Size: sz}
 	})
+}
+
+// radioRow draws a Radio item: the 16px check at x 8, the 20px icon at
+// x 24, the label at x 60 (one line) and the description under it; a
+// checked row is link blue (Slack's c-menu_item--checked).
+func (m *Menu) radioRow(gtx layout.Context, th *theme.Theme, cl *Colors, it *MenuItem, sz image.Point, fg, sub color.NRGBA, hl bool) layout.Dimensions {
+	if it.Checked && !hl {
+		fg, sub = cl.Link, cl.Link
+	}
+	top := dp(gtx, 3)
+	if it.Subtitle == "" {
+		top = (sz.Y - dp(gtx, 22)) / 2
+	}
+	if it.Checked {
+		at(gtx, image.Pt(dp(gtx, 8), top+dp(gtx, 3)), func(gtx layout.Context) layout.Dimensions {
+			return icon(gtx, "check", 16, fg)
+		})
+	}
+	x := dp(gtx, 24)
+	if it.Icon != "" {
+		at(gtx, image.Pt(x, top+dp(gtx, 1)), func(gtx layout.Context) layout.Dimensions {
+			return icon(gtx, it.Icon, 20, fg)
+		})
+		x += dp(gtx, 36)
+	}
+	lw := max(1, sz.X-x-dp(gtx, 24))
+	at(gtx, image.Pt(x, top), func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Constraints{Max: image.Pt(lw, dp(gtx, 22))}
+		return vcenter(gtx, dp(gtx, 22), func(gtx layout.Context) layout.Dimensions {
+			return text(gtx, th, 15, theme.Regular, fg, it.Label)
+		})
+	})
+	if it.Subtitle != "" {
+		at(gtx, image.Pt(x, top+dp(gtx, 22)), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(lw, 1<<20)}
+			return para(gtx, th, 13, 18, theme.Regular, sub, it.Subtitle, 2)
+		})
+	}
+	if !it.Disabled {
+		pointerCursor(gtx, sz)
+	}
+	return layout.Dimensions{Size: sz}
 }
 
 // macroAt replays call at p.
