@@ -91,6 +91,12 @@ func main() {
 		attachConsole()
 		os.Exit(updateCLI(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 	}
+	// `clack demo`: the built-in fake workspace (demo.go). Also before
+	// everything else: its own config dir, loopback-only network.
+	if wantsDemo(os.Args[1:]) {
+		attachConsole()
+		os.Exit(demoMain(demoArgs(os.Args[1:]), os.Stdout, os.Stderr))
+	}
 	// The log goes to stderr (as before) and, redacted, to a rotating file
 	// in the OS's log folder (applog.Dir: ~/Library/Logs/Clack on macOS),
 	// so a Clack started from the Dock keeps its evidence. The file opens
@@ -127,7 +133,7 @@ func main() {
 	unregURL := flag.Bool("unregister-url-handler", false, "remove Clack's slack:// handler registration (Windows) and exit")
 	noRealtime := flag.Bool("no-realtime", os.Getenv("CLACK_NO_REALTIME") != "", "never open Slack's realtime connection (poll instead), whatever Preferences says; also CLACK_NO_REALTIME=1")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: clack [flags] [slack://link]\n       clack login [slack://…/magic-login/… | workspace]   (sign in with a Slack link, or paste a token and d cookie)\n\n")
+		fmt.Fprintf(os.Stderr, "usage: clack [flags] [slack://link]\n       clack login [slack://…/magic-login/… | workspace]   (sign in with a Slack link, or paste a token and d cookie)\n       clack demo [--speed N] [--reset]   (a built-in fake workspace, offline; clack demo --help)\n\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()

@@ -275,6 +275,9 @@ func (a *App) windowTitle() string {
 			b.WriteString(" new items")
 		}
 	}
+	if a.opts.Demo != "" {
+		b.WriteString(" (Demo)")
+	}
 	b.WriteString(" - " + AppName)
 	return b.String()
 }

@@ -1,0 +1,181 @@
+{
+  "polls": [
+    {
+      "id": "lunch-tuesday",
+      "channel": "lunch",
+      "question": "Where's lunch on Tuesday?",
+      "options": [
+        {"value": "tacos", "emoji": ":taco:", "text": "Taco Tuesday at Casa Verde"},
+        {"value": "pho", "emoji": ":ramen:", "text": "Pho Real (the one by the bank)"},
+        {"value": "chili", "emoji": ":hot_pepper:", "text": "Gordon's chili (he's bringing it either way)"}
+      ],
+      "votes": {
+        "gordon": "chili",
+        "priya": "tacos",
+        "dale": "tacos",
+        "nadia": "pho",
+        "kip": "tacos",
+        "bev": "pho",
+        "wendell": "chili",
+        "ruth": "pho"
+      },
+      "comments": [
+        {"who": "gordon", "text": "voting for my own chili isn't a conflict of interest, it's confidence"},
+        {"who": "wendell", "text": "the chili's good. don't tell him I said that"},
+        {"who": "priya", "text": "tacos are winning. as is tradition. as is me"}
+      ]
+    },
+    {
+      "id": "denise-theme",
+      "channel": "lunch",
+      "question": "Theme for Friday's visit from Regional VP Denise Calloway?",
+      "options": [
+        {"value": "business", "emoji": ":necktie:", "text": "Business casual, but confident"},
+        {"value": "luau", "emoji": ":palm_tree:", "text": "Productivity luau"},
+        {"value": "cardstock", "emoji": ":page_facing_up:", "text": "Paper formal (everything is cardstock)"},
+        {"value": "normal", "emoji": ":neutral_face:", "text": "A completely normal Friday"}
+      ],
+      "votes": {
+        "gordon": "luau",
+        "marisol": "normal",
+        "theo": "normal",
+        "kip": "luau",
+        "ruth": "business",
+        "bev": "normal",
+        "dale": "business",
+        "nadia": "cardstock"
+      },
+      "comments": [
+        {"who": "marisol", "text": "if 'normal' wins I'm framing this poll"},
+        {"who": "gordon", "text": "a luau says 'we're a family'. a leis-urely family"},
+        {"who": "dale", "text": "for the record, tiki torches are a fire hazard and I will not be approving them"}
+      ]
+    },
+    {
+      "id": "name-laminator",
+      "channel": "lunch",
+      "question": "The new laminator arrives Thursday. What do we call it?",
+      "options": [
+        {"value": "lamby2", "emoji": ":two:", "text": "Lamby II: The Resealing"},
+        {"value": "glossy", "emoji": ":sparkles:", "text": "Glossy Ross"},
+        {"value": "sirlam", "emoji": ":crown:", "text": "Sir Laminates-a-Lot"},
+        {"value": "noname", "emoji": ":no_entry_sign:", "text": "No name. Names make it hurt more"}
+      ],
+      "votes": {
+        "marisol": "noname",
+        "theo": "noname",
+        "gordon": "lamby2",
+        "kip": "glossy",
+        "nadia": "lamby2",
+        "bev": "sirlam",
+        "ruth": "glossy"
+      },
+      "comments": [
+        {"who": "theo", "text": "whatever we call it, I'm the one who gets paged when it jams"},
+        {"who": "nadia", "text": "lamby II. honor the legacy"}
+      ]
+    },
+    {
+      "id": "paper-weight",
+      "channel": "lunch",
+      "question": "Best copy paper weight. We're settling this today.",
+      "options": [
+        {"value": "20lb", "emoji": ":page_with_curl:", "text": "20lb, the classic"},
+        {"value": "24lb", "emoji": ":star:", "text": "24lb Ultra Bright"},
+        {"value": "28lb", "emoji": ":muscle:", "text": "28lb, for people who mean it"},
+        {"value": "cardstock", "emoji": ":bricks:", "text": "Cardstock, every time"}
+      ],
+      "votes": {
+        "priya": "24lb",
+        "wendell": "20lb",
+        "dale": "24lb",
+        "theo": "20lb",
+        "kip": "cardstock",
+        "gordon": "28lb",
+        "marisol": "24lb",
+        "nadia": "24lb",
+        "bev": "20lb"
+      },
+      "comments": [
+        {"who": "priya", "text": "24lb Ultra Bright is our top seller. this isn't an opinion, it's a dashboard"},
+        {"who": "wendell", "text": "20lb weighs less. I lift it. I vote 20lb"},
+        {"who": "theo", "text": "Prinny jams on anything heavier than 20lb. she's voting through me"}
+      ]
+    },
+    {
+      "id": "fridge-amnesty",
+      "channel": "lunch",
+      "question": "Break-room fridge amnesty: anything unlabeled goes Friday at 3. No questions asked (except about the yogurt).",
+      "options": [
+        {"value": "yes", "emoji": ":white_check_mark:", "text": "Yes, clean it out"},
+        {"value": "no", "emoji": ":x:", "text": "No, that's my condiment collection"},
+        {"value": "confess", "emoji": ":spoon:", "text": "Yes, but the yogurt thief has to confess first"}
+      ],
+      "votes": {
+        "marisol": "yes",
+        "bev": "confess",
+        "nadia": "confess",
+        "gordon": "yes",
+        "kip": "no",
+        "ruth": "yes",
+        "dale": "confess"
+      },
+      "comments": [
+        {"who": "bev", "text": "amnesty is for the fridge. not for whoever ate my peach yogurt"},
+        {"who": "kip", "text": "the hot sauce in the door is load-bearing, please don't"}
+      ]
+    },
+    {
+      "id": "quillies-category",
+      "channel": "lunch",
+      "question": "Which new Quillies category gets a trophy this year?",
+      "options": [
+        {"value": "replyall", "emoji": ":email:", "text": "Best Use of Reply-All"},
+        {"value": "prinny", "emoji": ":printer:", "text": "Most Patient With Prinny"},
+        {"value": "honey", "emoji": ":honey_pot:", "text": "Most Honey Sold Without Being Asked"},
+        {"value": "calm", "emoji": ":telephone_receiver:", "text": "Calmest Voice on a Furious Call"}
+      ],
+      "votes": {
+        "gordon": "replyall",
+        "theo": "prinny",
+        "priya": "honey",
+        "dale": "calm",
+        "nadia": "replyall",
+        "bev": "honey",
+        "ruth": "calm",
+        "kip": "replyall"
+      },
+      "comments": [
+        {"who": "priya", "text": "voting honey so dale finally wins something"},
+        {"who": "dale", "text": "I don't sell honey 'without being asked'. I sell it after making eye contact"},
+        {"who": "gordon", "text": "every category is a winner. except the losing ones. but they're winners at heart"}
+      ]
+    }
+  ],
+  "standup": {
+    "prompt": "Morning check-in: how's your Monday looking?",
+    "options": [
+      {"value": "great", "emoji": ":sunny:", "text": "Crushing it"},
+      {"value": "coffee", "emoji": ":coffee:", "text": "Ask me after coffee"},
+      {"value": "fine", "emoji": ":ok_hand:", "text": "Fine. Normal. Paper."},
+      {"value": "prinny", "emoji": ":printer:", "text": "Prinny has opinions today"},
+      {"value": "lunch", "emoji": ":hamburger:", "text": "Mostly thinking about lunch"}
+    ],
+    "answers": {
+      "gordon": "great",
+      "priya": "great",
+      "theo": "prinny",
+      "marisol": "coffee",
+      "nadia": "lunch",
+      "wendell": "fine"
+    },
+    "thanks": {
+      "great": "Love that energy. Logged as crushing it :sunny:",
+      "coffee": "Fair. The coffee maker is on the left, and it's been descaled. Logged :coffee:",
+      "fine": "Fine is a perfectly good Monday. Logged :ok_hand:",
+      "prinny": "Sorry to hear it. Theo has been notified, emotionally. Logged :printer:",
+      "lunch": "Relatable. Lunch polls go out in {#lunch} at 11. Logged :hamburger:",
+      "": "Thanks for checking in! Logged."
+    }
+  }
+}

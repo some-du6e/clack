@@ -92,6 +92,33 @@ There are no screenshots in this repo on purpose: any real screenshot would show
 - **Threads and channel details** open in a pane on the right. Ctrl+K, search, the emoji picker, profile cards, menus, the lightbox and Preferences open as popups over the window.
 - **Dark mode** follows Slack's dark theme, including the darker aubergine chrome and the 1 px outline around the workspace.
 
+## Try the demo
+
+No Slack account needed:
+
+```sh
+clack demo              # open Clack on a built-in fake workspace
+clack demo --speed 3    # the bots talk three times as often (0.5 is half)
+clack demo --dark       # start in dark mode
+clack demo --quiet      # no ambient chatter: people only answer you
+clack demo --reset      # forget the demo's saved settings and start fresh
+clack demo --help
+```
+
+`clack --demo` works too. The demo opens the normal Clack window signed in to **Quillfeather Paper Co.**, the Wexley Falls branch of a small paper distributor. You're Jordan, the new hire in week 2. Everyone and everything in it is made up:
+
+- **A dozen coworkers** with drawn avatars, titles, pronouns and statuses, among them a branch manager who invents awards, a top seller and her honey-selling rival, a weary one-person IT department with a moody printer, and an intern with a new startup idea every day.
+- **Channels** #general, #random, #sales-leaderboard, #party-planning-crew, #it-help, #warehouse, #lunch-orders, #kudos, a private #secret-santa-2026 and a code channel. There are also DMs, a group DM, and custom sidebar sections.
+- **A few days of backstory** with threads, reactions, custom emoji, generated images and a PDF, a canvas, a list, pinned messages, a scheduled message and an @channel or two.
+- **Scripted bots**, all local with no AI service involved:
+  - People post on a timer, with banter that runs across channels. They reply in threads when you post or mention them, react to your messages, show "is typing…" and change their statuses.
+  - **Inkwell**, an AI coding agent app, streams its "Thinking…" plan into #inkwell-order-portal, a code channel with a diff and a pull request view.
+  - **Pulse** posts polls whose buttons work.
+  - Now and then someone rings you for a huddle. The demo has no audio, so joining doesn't connect.
+  - Your Activity feed fills up as it all happens.
+
+The demo is offline and can't reach Slack. It runs its own fake Slack server (internal/fakeslack) inside the process on 127.0.0.1. Before anything else starts, the process makes itself loopback-only: every connection to a host other than localhost is refused and proxies are ignored. It keeps its settings in its own folder (`clack-demo` next to Clack's config folder, or `CLACK_DEMO_HOME`), so it never reads or writes your credentials, cache or preferences. A **Demo workspace** banner stays above the workspace, and the window title says (Demo). The bots' scripts and the workspace live in `internal/demo/data`.
+
 ## Sign in
 
 Clack has two ways in. Use the first.

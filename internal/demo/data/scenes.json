@@ -1,0 +1,719 @@
+{
+  "scenes": [
+    {
+      "id": "general-week2-welcome",
+      "channel": "general",
+      "once": true,
+      "steps": [
+        {"who": "gordon", "text": "{channel} quick reminder that {self} is in WEEK 2 and has already survived Prinny. treat them like the VIP they are :tada:"},
+        {"who": "ruth", "react": "tada"},
+        {"who": "ruth", "text": "welcome again {you}! your onboarding checklist is 80% done, which means 20% is waiting for you :blush:", "thread": true},
+        {"who": "marisol", "text": "welcome. the good stapler is still off limits. nothing personal", "thread": true},
+        {"who": "kip", "react": "raised_hands", "to": 0},
+        {"who": "theo", "text": "welcome to week 2, where the printer knows your name", "thread": true}
+      ]
+    },
+    {
+      "id": "general-denise-announce",
+      "channel": "general",
+      "once": true,
+      "weight": 2,
+      "steps": [
+        {"who": "gordon", "text": "{channel} BIG NEWS: Regional VP Denise Calloway is visiting THIS FRIDAY :rotating_light: clean desks, full hearts, big numbers"},
+        {"who": "priya", "react": "eyes"},
+        {"who": "marisol", "text": "who is cleaning the break-room fridge. asking for the fridge", "thread": true},
+        {"who": "dale", "text": "I'll do a walkthrough Thursday with my clipboard. Hazards will be flagged. Kindly.", "thread": true},
+        {"who": "priya", "text": "I'll be at my desk closing deals. she can watch", "thread": true},
+        {"who": "gordon", "text": "this is the energy. a wise man once said 'show up like it's Friday'. and it WILL be Friday", "thread": true},
+        {"who": "nadia", "react": "sweat_smile", "to": 0}
+      ]
+    },
+    {
+      "id": "general-denise-plant",
+      "channel": "general",
+      "steps": [
+        {"who": "gordon", "text": "Denise prep update: I bought a plant :potted_plant: it is very healthy. please don't water it, it's plastic"},
+        {"who": "bev", "text": "receipt please", "thread": true},
+        {"who": "gordon", "text": "it was $40", "thread": true},
+        {"who": "bev", "text": "that's not a receipt gordon, that's a number", "thread": true},
+        {"who": "marisol", "react": "joy", "to": 3},
+        {"who": "theo", "react": "potted_plant", "to": 0}
+      ]
+    },
+    {
+      "id": "general-quillies-open",
+      "channel": "general",
+      "once": true,
+      "weight": 2,
+      "steps": [
+        {"who": "gordon", "text": "{channel} nominations for the 2026 Quillies are OPEN :trophy: categories include Best Reply-All, Most Improved Handwriting and, new this year, Week-2 Rookie of the Year (no pressure {self})"},
+        {"who": "ruth", "react": "quillie"},
+        {"who": "priya", "text": "nominating myself for Top Seller. it's not close", "thread": true},
+        {"who": "dale", "text": "Per the Quillies bylaws, a self-nomination needs a second.", "thread": true},
+        {"who": "kip", "text": "second. no cap", "thread": true},
+        {"who": "dale", "text": "Kip, you can't second Priya and also nominate yourself for 'Most Visionary'.", "thread": true},
+        {"who": "kip", "text": "watch me", "thread": true},
+        {"who": "marisol", "react": "trophy", "to": 0}
+      ]
+    },
+    {
+      "id": "general-yogurt-psa",
+      "channel": "general",
+      "once": true,
+      "steps": [
+        {"who": "marisol", "text": "PSA: someone ate a yogurt labeled BEV from the break-room fridge. the label was in Sharpie. the intent was clear"},
+        {"who": "bev", "text": "it was the peach one. I'm not angry. I'm keeping a file", "thread": true},
+        {"who": "nadia", "text": "third yogurt this month. the vending machine is RIGHT next to the fridge. I'm just saying", "thread": true},
+        {"who": "theo", "text": "the vending machine is not sentient, nadia", "thread": true},
+        {"who": "nadia", "text": "it's sentient enough to eat my dollars", "thread": true},
+        {"who": "kip", "react": "popcorn", "to": 0},
+        {"who": "dale", "text": "I've started a fridge log. Anyone who wants to make a statement can DM me.", "channel": "random"}
+      ]
+    },
+    {
+      "id": "general-rip-lamby",
+      "channel": "general",
+      "once": true,
+      "weight": 2,
+      "steps": [
+        {"who": "marisol", "text": "{here} Lamby has laminated its last menu. RIP Lamby, 2014–2026 :candle:"},
+        {"who": "bev", "react": "rip-lamby"},
+        {"who": "nadia", "react": "pray"},
+        {"who": "gordon", "text": "a wise man once said 'the candle that burns twice as bright'... laminates the takeout menu? I think that's how it goes", "thread": true},
+        {"who": "theo", "text": "I'll take a look. no promises, it smells like a campfire", "thread": true},
+        {"who": "theo", "text": "opened a ticket for Lamby. assigned it to myself. as always", "channel": "it"}
+      ]
+    },
+    {
+      "id": "general-monday-quote",
+      "channel": "general",
+      "steps": [
+        {"who": "gordon", "text": "Monday motivation: 'you miss 100% of the reams you don't ship.' —someone, probably"},
+        {"who": "wendell", "text": "we shipped all of them", "thread": true},
+        {"who": "gordon", "text": "and THAT is the spirit, Wendell :raised_hands:", "thread": true},
+        {"who": "wendell", "text": "it's the job", "thread": true},
+        {"who": "ruth", "react": "sparkles", "to": 0}
+      ]
+    },
+    {
+      "id": "general-denise-arrives",
+      "channel": "general",
+      "once": true,
+      "steps": [
+        {"who": "gordon", "text": "Denise is in the parking lot. everyone act natural. what is natural. how do we normally stand"},
+        {"who": "marisol", "text": "like this. at your desks. typing", "thread": true},
+        {"who": "priya", "text": "already standing like a winner", "thread": true},
+        {"who": "dale", "text": "Please keep the walkways clear. I've moved the plant.", "thread": true},
+        {"who": "gordon", "text": "{self} if Denise asks, you're 'onboarding at a world-class pace'. it's not a lie, I checked", "thread": true},
+        {"who": "nadia", "react": "eyes", "to": 0},
+        {"who": "gordon", "text": "update: Denise said the office 'feels very normal'. best compliment I've ever gotten", "pause": 25}
+      ]
+    },
+    {
+      "id": "random-paper-as-a-service",
+      "channel": "random",
+      "steps": [
+        {"who": "kip", "text": "startup idea of the day: paper as a service. you don't buy a ream. you subscribe to a ream"},
+        {"who": "wendell", "text": "that's just ordering paper", "thread": true},
+        {"who": "kip", "text": "with a subscription though", "thread": true},
+        {"who": "priya", "text": "what's the churn on a ream", "thread": true},
+        {"who": "kip", "text": "500 sheets a month. so like, very high", "thread": true},
+        {"who": "nadia", "react": "joy", "to": 4}
+      ]
+    },
+    {
+      "id": "random-vending-crackers",
+      "channel": "random",
+      "weight": 2,
+      "steps": [
+        {"who": "nadia", "text": "the vending machine gave me TWO bags of cheddar crackers for one dollar. it's buttering me up. why"},
+        {"who": "bev", "text": "maybe it likes you", "thread": true},
+        {"who": "nadia", "text": "nothing likes me that much on a monday", "thread": true},
+        {"who": "kip", "text": "it's an apology for the dollar it ate last week", "thread": true},
+        {"who": "nadia", "text": "so it ADMITS it", "thread": true},
+        {"who": "theo", "react": "thinking_face", "to": 0}
+      ]
+    },
+    {
+      "id": "random-pemberton-invoice",
+      "channel": "random",
+      "steps": [
+        {"who": "bev", "text": "Mr. Pemberton sat on my keyboard during the AP run and paid an invoice twice. we've recovered the money. he has not apologized"},
+        {"who": "nadia", "react": "pemberton"},
+        {"who": "kip", "react": "cat"},
+        {"who": "ruth", "text": "honestly he'd ace Feelings & Forklifts. he's very emotionally regulated", "thread": true},
+        {"who": "bev", "text": "he's regulated by naps. eleven of them", "thread": true},
+        {"who": "gordon", "text": "nominating Mr. Pemberton for a Quillie. Most Hands-On Approach to Accounts Payable", "thread": true},
+        {"who": "bev", "text": "he accepts. he won't attend", "thread": true}
+      ]
+    },
+    {
+      "id": "random-envelope-nfts",
+      "channel": "random",
+      "steps": [
+        {"who": "kip", "text": "pitch: envelope NFTs. you own the envelope on-chain. we ALSO mail you the real envelope. it's phygital"},
+        {"who": "priya", "text": "what's the margin", "thread": true},
+        {"who": "kip", "text": "vibes, mostly", "thread": true},
+        {"who": "priya", "text": "pass", "thread": true},
+        {"who": "marisol", "text": "the envelopes are coming from my supply closet aren't they", "thread": true},
+        {"who": "kip", "text": "...seed round", "thread": true}
+      ]
+    },
+    {
+      "id": "random-honey-batch",
+      "channel": "random",
+      "steps": [
+        {"who": "dale", "text": "Fresh batch of Hurst Family Clover Gold is in :honey_pot: $9 a jar, $8 if you bring the jar back."},
+        {"who": "nadia", "text": "is it the one with the bee on the label", "thread": true},
+        {"who": "dale", "text": "Every jar has a bee on the label. It's a honey label.", "thread": true},
+        {"who": "ruth", "text": "reminder that honey should be labeled for allergens if it's shared at events :blush:", "thread": true},
+        {"who": "dale", "text": "It is labeled. The label is a bee.", "thread": true},
+        {"who": "gordon", "react": "honey", "to": 0},
+        {"who": "bev", "react": "honey_pot", "to": 0}
+      ]
+    },
+    {
+      "id": "random-wifi-password",
+      "channel": "random",
+      "steps": [
+        {"who": "theo", "text": "public service announcement: the wifi password is not 'ask theo'. it's on the fridge"},
+        {"who": "nadia", "text": "the fridge is a crime scene though", "thread": true},
+        {"who": "theo", "text": "then it's on the crime scene", "thread": true},
+        {"who": "bev", "react": "joy", "to": 2},
+        {"who": "gordon", "text": "can the password be something inspiring? like 'soar'", "thread": true},
+        {"who": "theo", "text": "no", "thread": true}
+      ]
+    },
+    {
+      "id": "random-mindful-staples",
+      "channel": "random",
+      "steps": [
+        {"who": "kip", "text": "startup idea: a staple subscription that ships one staple at a time. mindful stapling"},
+        {"who": "marisol", "text": "you will not be using the good stapler for 'market research'", "thread": true},
+        {"who": "kip", "text": "the good stapler would be our flagship product", "thread": true},
+        {"who": "marisol", "text": "the good stapler would be your exit", "thread": true},
+        {"who": "wendell", "react": "skull", "to": 3}
+      ]
+    },
+    {
+      "id": "random-upstairs-thermostat",
+      "channel": "random",
+      "steps": [
+        {"who": "nadia", "text": "theory: the vending machine is how upstairs listens to us"},
+        {"who": "wendell", "text": "upstairs can't work the thermostat", "thread": true},
+        {"who": "gordon", "text": "I can work the thermostat!", "thread": true},
+        {"who": "marisol", "text": "he cannot work the thermostat", "thread": true},
+        {"who": "nadia", "text": "which is EXACTLY what someone who works the vending machine would say", "thread": true},
+        {"who": "kip", "react": "eyes", "to": 0}
+      ]
+    },
+    {
+      "id": "random-sorry-printer",
+      "channel": "random",
+      "steps": [
+        {"who": "kip", "text": "{self} rate my startup from 'no' to 'no cap fire': a printer that apologizes when it jams"},
+        {"who": "theo", "text": "please don't give Prinny ideas", "thread": true},
+        {"who": "nadia", "text": "Prinny would never apologize. she has too much pride", "thread": true},
+        {"who": "kip", "text": "ok pivot: a printer that accepts YOUR apology", "thread": true},
+        {"who": "theo", "react": "printer", "to": 3}
+      ]
+    },
+    {
+      "id": "sales-leaderboard-bet",
+      "channel": "sales",
+      "once": true,
+      "weight": 2,
+      "steps": [
+        {"who": "priya", "text": "weekly leaderboard: me 1st, {@dale} 2nd, everyone else exists. bet stands: loser wears the whistle on Friday"},
+        {"who": "dale", "text": "The whistle is safety equipment, not a punishment.", "thread": true},
+        {"who": "priya", "text": "then you won't mind wearing it", "thread": true},
+        {"who": "dale", "text": "I always wear it.", "thread": true},
+        {"who": "priya", "text": "then wear it AND lose", "thread": true},
+        {"who": "kip", "react": "popcorn", "to": 0},
+        {"who": "gordon", "react": "trophy", "to": 0}
+      ]
+    },
+    {
+      "id": "sales-dental-office",
+      "channel": "sales",
+      "steps": [
+        {"who": "dale", "text": "Closed 40 cases of Ultra Bright 24lb with Maple Street Dental. Dentists respect process."},
+        {"who": "gordon", "react": "fire"},
+        {"who": "priya", "text": "cute. I closed the school district", "thread": true},
+        {"who": "dale", "text": "Which school district.", "thread": true},
+        {"who": "priya", "text": "all of it", "thread": true},
+        {"who": "dale", "react": "whistle", "to": 4},
+        {"who": "dale", "text": "Leaderboard is monthly. It is the 9th. Nobody has won anything.", "thread": true}
+      ]
+    },
+    {
+      "id": "sales-honey-bundle",
+      "channel": "sales",
+      "steps": [
+        {"who": "priya", "text": "{@dale} did you just bundle a jar of honey with a toner order"},
+        {"who": "dale", "text": "It was a value-add.", "thread": true},
+        {"who": "priya", "text": "that's not in the price book", "thread": true},
+        {"who": "dale", "text": "Page 14 allows 'reasonable goodwill gestures'.", "thread": true},
+        {"who": "priya", "text": "the customer reordered. with honey. AGAIN", "thread": true},
+        {"who": "dale", "react": "honey_pot", "to": 4},
+        {"who": "gordon", "text": "this is synergy. this is what synergy looks like", "thread": true}
+      ]
+    },
+    {
+      "id": "sales-pro-tip",
+      "channel": "sales",
+      "steps": [
+        {"who": "priya", "text": "{self} pro tip for week 2: never say 'just checking in'. say 'I have an idea for you'. close rate goes up 18%. I've measured"},
+        {"who": "dale", "text": "She has a spreadsheet of it.", "thread": true},
+        {"who": "priya", "text": "I have a spreadsheet of everything", "thread": true},
+        {"who": "dale", "text": "Does it have a tab for me.", "thread": true},
+        {"who": "priya", "text": "it has three", "thread": true},
+        {"who": "gordon", "react": "100", "to": 0}
+      ]
+    },
+    {
+      "id": "sales-penny-bug",
+      "channel": "sales",
+      "once": true,
+      "steps": [
+        {"who": "priya", "text": "my 10+ ream customers are getting charged a penny extra. a PENNY. it's costing me my dignity"},
+        {"who": "theo", "text": "Inkwell is on it. PR #217, follow along in {#code}", "thread": true},
+        {"who": "priya", "text": "fine. but I'm watching it", "thread": true},
+        {"who": "dale", "text": "A penny is a penny. My grandmother said that. About honey, but it applies.", "thread": true},
+        {"who": "priya", "text": "watching the PR. the bot is very polite. suspicious", "channel": "code"}
+      ]
+    },
+    {
+      "id": "sales-tied",
+      "channel": "sales",
+      "once": true,
+      "steps": [
+        {"who": "gordon", "text": "the leaderboard is TIED?? this is the most exciting thing to happen here since Lamby caught fire"},
+        {"who": "priya", "text": "it's a rounding error", "thread": true},
+        {"who": "dale", "text": "There are no rounding errors anymore. Inkwell fixed them.", "thread": true},
+        {"who": "priya", "react": "melting_face", "to": 2},
+        {"who": "priya", "text": "{you}. sell something. anything. I need you", "channel": "group"}
+      ]
+    },
+    {
+      "id": "party-denise-snacks",
+      "channel": "party",
+      "steps": [
+        {"who": "marisol", "text": "for Denise's visit: cheese plate, fruit, and nothing that requires Gordon to give a speech"},
+        {"who": "gordon", "text": "what if I give a small speech", "thread": true},
+        {"who": "marisol", "text": "define small", "thread": true},
+        {"who": "gordon", "text": "12 minutes", "thread": true},
+        {"who": "marisol", "text": "the cheese will be warm by then, gordon", "thread": true},
+        {"who": "bev", "react": "cheese_wedge", "to": 0}
+      ]
+    },
+    {
+      "id": "party-bev-anniversary",
+      "channel": "party",
+      "steps": [
+        {"who": "ruth", "text": "who's handling cake for Bev's 9-year work anniversary?? :cake:"},
+        {"who": "bev", "text": "please no singing", "thread": true},
+        {"who": "marisol", "text": "noted. there will be aggressive humming", "thread": true},
+        {"who": "bev", "text": "I'll allow humming if I get a corner piece", "thread": true},
+        {"who": "nadia", "react": "tada", "to": 0},
+        {"who": "gordon", "text": "9 YEARS. Bev, a wise man once said 'time flies when you're reconciling'", "thread": true},
+        {"who": "bev", "text": "nobody has ever said that", "thread": true}
+      ]
+    },
+    {
+      "id": "party-quillies-fog",
+      "channel": "party",
+      "steps": [
+        {"who": "gordon", "text": "for the Quillies ceremony I'm thinking fog machine"},
+        {"who": "marisol", "text": "no", "thread": true},
+        {"who": "gordon", "text": "small fog machine", "thread": true},
+        {"who": "dale", "text": "Fog machines set off the smoke detector. I've already filed the form saying no.", "thread": true},
+        {"who": "gordon", "text": "what about a bubble machine", "thread": true},
+        {"who": "marisol", "text": "...the bubble machine is under review", "thread": true},
+        {"who": "gordon", "react": "tada", "to": 5}
+      ]
+    },
+    {
+      "id": "party-lamby-memorial",
+      "channel": "party",
+      "once": true,
+      "steps": [
+        {"who": "marisol", "text": "Lamby's memorial is Thursday at 3 in the break room. bring a laminated thing if you still have one"},
+        {"who": "kip", "text": "I laminated my lanyard in June so I'm basically royalty", "thread": true},
+        {"who": "theo", "text": "I'll say a few words. mostly 'heating roller'", "thread": true},
+        {"who": "nadia", "react": "rip-lamby", "to": 0},
+        {"who": "bev", "text": "the flowers were $12. I have the receipt. I always have the receipt", "thread": true}
+      ]
+    },
+    {
+      "id": "party-napkins",
+      "channel": "party",
+      "steps": [
+        {"who": "marisol", "text": "{self} you're on napkins for Friday. it's a starter role. people work their way up to cups"},
+        {"who": "ruth", "text": "napkins are SO important! everyone needs a napkin :blush:", "thread": true},
+        {"who": "kip", "text": "I've been on napkins since June. I'm basically napkin senior staff", "thread": true},
+        {"who": "marisol", "text": "you're still on napkins because of the confetti incident", "thread": true},
+        {"who": "dale", "react": "whistle", "to": 3}
+      ]
+    },
+    {
+      "id": "party-budget",
+      "channel": "party",
+      "steps": [
+        {"who": "marisol", "text": "party budget update: $38 left for the quarter. bev, before you ask, receipts are in the folder"},
+        {"who": "bev", "text": "I'll be the judge of the folder", "thread": true},
+        {"who": "bev", "text": "the folder is immaculate. I'm almost upset", "thread": true, "pause": 20},
+        {"who": "marisol", "react": "receipt", "to": 2}
+      ]
+    },
+    {
+      "id": "it-prinny-melody",
+      "channel": "it",
+      "weight": 2,
+      "steps": [
+        {"who": "nadia", "text": "Prinny is making the noise again"},
+        {"who": "theo", "text": "the grinding noise or the sad beep", "thread": true},
+        {"who": "nadia", "text": "both. in a rhythm", "thread": true},
+        {"who": "theo", "text": "that's PR-7's distress melody. on my way", "thread": true},
+        {"who": "theo", "text": "fixed. it was a paperclip. it's always a paperclip", "thread": true, "pause": 20},
+        {"who": "nadia", "react": "prinny", "to": 4},
+        {"who": "marisol", "react": "pray", "to": 4}
+      ]
+    },
+    {
+      "id": "it-gordon-password",
+      "channel": "it",
+      "steps": [
+        {"who": "gordon", "text": "theo my password expired again. can it just be 'eagles'"},
+        {"who": "theo", "text": "no", "thread": true},
+        {"who": "gordon", "text": "'eagles2'", "thread": true},
+        {"who": "theo", "text": "Gordon.", "thread": true},
+        {"who": "gordon", "text": "'Eagles2!' with a capital E and an exclamation point for enthusiasm", "thread": true},
+        {"who": "theo", "text": "...that's actually accepted. I hate it", "thread": true},
+        {"who": "kip", "react": "joy", "to": 5}
+      ]
+    },
+    {
+      "id": "it-63-tabs",
+      "channel": "it",
+      "steps": [
+        {"who": "kip", "text": "my laptop is slow"},
+        {"who": "theo", "text": "did you try turning it off and on", "thread": true},
+        {"who": "kip", "text": "I have 63 tabs open. turning it off would be grief", "thread": true},
+        {"who": "theo", "text": "then grieve", "thread": true},
+        {"who": "kip", "text": "ok it's fast now. I lost three startups though", "thread": true}
+      ]
+    },
+    {
+      "id": "it-lamby-part",
+      "channel": "it",
+      "once": true,
+      "steps": [
+        {"who": "theo", "text": "Lamby update: the heating roller is cooked. the replacement part ships from Ohio in 3–5 business weeks"},
+        {"who": "marisol", "text": "weeks??", "thread": true},
+        {"who": "theo", "text": "weeks.", "thread": true},
+        {"who": "gordon", "text": "a wise man once said patience is a... virtue? vitamin? something good for you", "thread": true},
+        {"who": "marisol", "text": "Lamby part is 3–5 weeks out. we're ordering a new laminator. vote on the name in {#lunch}", "channel": "general"}
+      ]
+    },
+    {
+      "id": "it-big-linda-wifi",
+      "channel": "it",
+      "steps": [
+        {"who": "dale", "text": "The warehouse wifi drops every time Big Linda drives past the router."},
+        {"who": "theo", "text": "I've asked Wendell to stop parking her next to it", "thread": true},
+        {"who": "wendell", "text": "she likes it there. it's warm", "thread": true},
+        {"who": "theo", "text": "she's a forklift, Wendell", "thread": true},
+        {"who": "wendell", "text": "she's a forklift who likes it there", "thread": true},
+        {"who": "dale", "react": "big-linda", "to": 4}
+      ]
+    },
+    {
+      "id": "warehouse-big-linda-back",
+      "channel": "warehouse",
+      "weight": 2,
+      "steps": [
+        {"who": "wendell", "text": "Big Linda's back from maintenance. new battery, same attitude"},
+        {"who": "dale", "react": "big-linda"},
+        {"who": "dale", "text": "Please remember the 5 mph limit.", "thread": true},
+        {"who": "wendell", "text": "she doesn't go 5, Dale. she goes 4. she's never gone 5 in her life", "thread": true},
+        {"who": "dale", "text": "Then she's a model employee.", "thread": true},
+        {"who": "kip", "text": "can I sit on her for a photo", "thread": true},
+        {"who": "wendell", "text": "no", "thread": true}
+      ]
+    },
+    {
+      "id": "warehouse-ultra-white",
+      "channel": "warehouse",
+      "steps": [
+        {"who": "wendell", "text": "upstairs ordered 200 reams of Ultra Bright for a client who wanted Ultra White. they're not the same. I'm not mad. I'm shelving"},
+        {"who": "priya", "text": "it was a typo", "thread": true},
+        {"who": "wendell", "text": "it was 200 typos", "thread": true},
+        {"who": "priya", "text": "I sold the Ultra Bright to someone else. you're welcome", "thread": true},
+        {"who": "wendell", "text": "...ok that's fair", "thread": true},
+        {"who": "dale", "react": "eyes", "to": 3}
+      ]
+    },
+    {
+      "id": "warehouse-inventory",
+      "channel": "warehouse",
+      "steps": [
+        {"who": "wendell", "text": "inventory count Thursday. upstairs volunteers get a hard hat and a sense of purpose"},
+        {"who": "kip", "text": "do I get to drive Big Linda", "thread": true},
+        {"who": "wendell", "text": "no", "thread": true},
+        {"who": "dale", "text": "Absolutely not.", "thread": true},
+        {"who": "ruth", "text": "but Kip can absolutely count! counting is a valuable contribution :blush:", "thread": true},
+        {"who": "kip", "text": "counting is just math with walking. I'm in", "thread": true},
+        {"who": "wendell", "react": "+1", "to": 5}
+      ]
+    },
+    {
+      "id": "warehouse-denise-tour",
+      "channel": "warehouse",
+      "steps": [
+        {"who": "gordon", "text": "Denise may want a warehouse tour Friday. can we make it look... inspirational"},
+        {"who": "wendell", "text": "it's a warehouse, Gordon. it has shelves", "thread": true},
+        {"who": "gordon", "text": "inspirational shelves", "thread": true},
+        {"who": "wendell", "text": "I'll dust them", "thread": true},
+        {"who": "gordon", "text": "that's all I ask :pray:", "thread": true}
+      ]
+    },
+    {
+      "id": "warehouse-honey-shelf",
+      "channel": "warehouse",
+      "steps": [
+        {"who": "wendell", "text": "who left 6 cases of honey on shelf C"},
+        {"who": "dale", "text": "That's Hurst Family Clover Gold inventory. Temporarily.", "thread": true},
+        {"who": "wendell", "text": "shelf C is for paper, Dale", "thread": true},
+        {"who": "dale", "text": "Paper and honey are both shelf-stable.", "thread": true},
+        {"who": "wendell", "text": "you've got till Friday", "thread": true},
+        {"who": "priya", "react": "honey_pot", "to": 0}
+      ]
+    },
+    {
+      "id": "lunch-big-burrito",
+      "channel": "lunch",
+      "steps": [
+        {"who": "gordon", "text": "lunch order goes in at 11:45. I'm getting the big burrito. don't let me get the big burrito"},
+        {"who": "nadia", "text": "you're getting the big burrito", "thread": true},
+        {"who": "gordon", "text": "I'm getting the big burrito", "thread": true},
+        {"who": "bev", "text": "itemized receipt please", "thread": true},
+        {"who": "wendell", "react": "burrito", "to": 0}
+      ]
+    },
+    {
+      "id": "lunch-chili-friday",
+      "channel": "lunch",
+      "steps": [
+        {"who": "gordon", "text": "chili friday is BACK :hot_pepper: I've changed one ingredient. I won't say which"},
+        {"who": "bev", "text": "is it the amount of chili powder", "thread": true},
+        {"who": "gordon", "text": "...maybe", "thread": true},
+        {"who": "dale", "text": "Please label the spice level. Last time it was unlabeled and Kip cried.", "thread": true},
+        {"who": "kip", "text": "I was moved. it was emotional chili", "thread": true},
+        {"who": "wendell", "react": "+1", "to": 0}
+      ]
+    },
+    {
+      "id": "lunch-crouton-salad",
+      "channel": "lunch",
+      "steps": [
+        {"who": "nadia", "text": "who ordered a salad with no lettuce"},
+        {"who": "kip", "text": "me. it's just croutons. it's a vibe", "thread": true},
+        {"who": "ruth", "text": "every choice is valid! :blush: is it nutritionally valid? we'll discuss", "thread": true},
+        {"who": "nadia", "text": "the vending machine has better nutrition than this and I don't say that lightly", "thread": true},
+        {"who": "priya", "react": "skull", "to": 1}
+      ]
+    },
+    {
+      "id": "kudos-marisol",
+      "channel": "kudos",
+      "steps": [
+        {"who": "gordon", "text": "kudos to {@marisol} for fixing the thermostat, the coffee maker AND my calendar. a wise woman once said... marisol, what did you say"},
+        {"who": "marisol", "text": "I said 'please stop booking meetings at 7am'", "thread": true},
+        {"who": "gordon", "text": "words to live by", "thread": true},
+        {"who": "ruth", "react": "heart", "to": 0},
+        {"who": "bev", "react": "100", "to": 0}
+      ]
+    },
+    {
+      "id": "kudos-theo-prinny",
+      "channel": "kudos",
+      "steps": [
+        {"who": "ruth", "text": "shout-out to {@theo} for bringing Prinny back to life for the third time this week :pray:"},
+        {"who": "theo", "text": "she'll be back. they always come back", "thread": true},
+        {"who": "nadia", "react": "prinny", "to": 0},
+        {"who": "gordon", "text": "Theo, you're the duct tape holding this branch together. the premium kind", "thread": true}
+      ]
+    },
+    {
+      "id": "kudos-viewer",
+      "channel": "kudos",
+      "steps": [
+        {"who": "priya", "text": "kudos to {self} for not asking me a single unnecessary question this week. that's rare"},
+        {"who": "gordon", "text": "a glowing review from Priya! frame this", "thread": true},
+        {"who": "dale", "text": "I've worked here 6 years. She's never said that to me.", "thread": true},
+        {"who": "priya", "text": "you ask a lot of questions, dale", "thread": true},
+        {"who": "ruth", "react": "sparkles", "to": 0}
+      ]
+    },
+    {
+      "id": "kudos-nadia-calm",
+      "channel": "kudos",
+      "steps": [
+        {"who": "bev", "text": "kudos to {@nadia}, who kept a customer calm for 40 minutes about a missing box of envelopes. it was in their mailroom"},
+        {"who": "nadia", "text": "I used the calm voice. I'm still in the calm voice. I can't get out", "thread": true},
+        {"who": "ruth", "react": "pray", "to": 0},
+        {"who": "marisol", "react": "trophy", "to": 0},
+        {"who": "priya", "text": "she's the only reason my customers come back. don't tell her", "thread": true}
+      ]
+    },
+    {
+      "id": "santa-budget",
+      "channel": "santa",
+      "steps": [
+        {"who": "marisol", "text": "Secret Santa 2026: limit is $25. draws happen Friday. Dale, honey counts as $9, not $25"},
+        {"who": "dale", "text": "It's artisanal.", "thread": true},
+        {"who": "marisol", "text": "it's $9", "thread": true},
+        {"who": "dale", "text": "Three jars, then.", "thread": true},
+        {"who": "bev", "react": "receipt", "to": 0}
+      ]
+    },
+    {
+      "id": "santa-equity",
+      "channel": "santa",
+      "steps": [
+        {"who": "kip", "text": "can I give my secret santa equity in my startup"},
+        {"who": "marisol", "text": "no", "thread": true},
+        {"who": "bev", "text": "what's the valuation", "thread": true},
+        {"who": "kip", "text": "emotionally? huge", "thread": true},
+        {"who": "bev", "text": "I'll need that in writing", "thread": true},
+        {"who": "nadia", "react": "joy", "to": 3}
+      ]
+    },
+    {
+      "id": "group-lunch-bet",
+      "channel": "group",
+      "once": true,
+      "steps": [
+        {"who": "priya", "text": "ok team. {you}, kip: new bet. whoever sells the most reams by Friday picks the lunch spot"},
+        {"who": "dale", "text": "This is gambling."},
+        {"who": "priya", "text": "it's lunch, dale"},
+        {"who": "kip", "text": "im in, no cap"},
+        {"who": "dale", "text": "I'm in. For the record, I'm in under protest."},
+        {"who": "kip", "react": "no-cap", "to": 0}
+      ]
+    },
+    {
+      "id": "group-eleven-rules",
+      "channel": "group",
+      "steps": [
+        {"who": "dale", "text": "I've drafted rules for the bet. There are 11."},
+        {"who": "priya", "text": "there's one rule. sell"},
+        {"who": "kip", "text": "rule 12: a really good pitch counts as half a sale"},
+        {"who": "dale", "text": "Rejected."},
+        {"who": "priya", "react": "joy", "to": 3}
+      ]
+    },
+    {
+      "id": "group-mentorship",
+      "channel": "group",
+      "steps": [
+        {"who": "kip", "text": "{you} you're in week 2 so you're my mentee now. lesson one: always say 'let's circle back'"},
+        {"who": "priya", "text": "lesson two: don't take lessons from Kip"},
+        {"who": "dale", "text": "Lesson three: hydrate."},
+        {"who": "kip", "text": "lesson four: these lessons are free but my startup lessons are $9"},
+        {"who": "dale", "text": "That's my honey price."},
+        {"who": "priya", "react": "skull", "to": 4}
+      ]
+    },
+    {
+      "id": "code-theo-review",
+      "channel": "code",
+      "steps": [
+        {"who": "theo", "text": "reviewed PR #217. the integer-cents fix is clean. one comment about naming"},
+        {"who": "priya", "text": "is my penny fixed or not", "thread": true},
+        {"who": "theo", "text": "pending CI", "thread": true},
+        {"who": "inkwell", "text": "CI is running now. I'll post the result in this channel when it finishes.", "thread": true},
+        {"who": "priya", "react": "eyes", "to": 3}
+      ]
+    },
+    {
+      "id": "code-gordon-proud",
+      "channel": "code",
+      "steps": [
+        {"who": "gordon", "text": "I don't know what floating point is but I'm proud of you {@inkwell}"},
+        {"who": "kip", "text": "the bot is cracked fr", "thread": true},
+        {"who": "inkwell", "text": "Thank you. Floating point is how computers store decimals approximately. Integer cents store money exactly, so a half cent rounds the right way.", "thread": true},
+        {"who": "gordon", "text": "a wise bot once said 'integer cents'. putting it on a poster", "thread": true},
+        {"who": "theo", "react": "joy", "to": 3}
+      ]
+    },
+    {
+      "id": "dm-gordon-week2",
+      "channel": "dm",
+      "once": true,
+      "steps": [
+        {"who": "gordon", "text": "hey {you}! how's week 2 treating you? on a scale of 1 to eagle"},
+        {"who": "gordon", "text": "a wise man once said 'the first week is the hardest'. I've heard the second one's also tough. hang in there :saluting_face:"},
+        {"who": "gordon", "text": "also my door is always open. it's literally stuck open. theo's on it", "pause": 20}
+      ]
+    },
+    {
+      "id": "dm-priya-recruit",
+      "channel": "dm",
+      "once": true,
+      "steps": [
+        {"who": "priya", "text": "{you}. got a sec"},
+        {"who": "priya", "text": "I need a teammate for the leaderboard bet. you don't have to sell anything. just don't sell for Dale"},
+        {"who": "priya", "text": "think about it. you have until 3. it's 2:58 in my heart"}
+      ]
+    },
+    {
+      "id": "dm-marisol-stapler",
+      "channel": "dm",
+      "once": true,
+      "steps": [
+        {"who": "marisol", "text": "friendly heads up {you}: the stapler on my desk is the good stapler. it's not a communal stapler"},
+        {"who": "marisol", "text": "the communal one is by the printer. it's red. it bites"},
+        {"who": "marisol", "text": "this isn't because of anything you did. I tell everyone in week 2. Kip got told twice"}
+      ]
+    },
+    {
+      "id": "dm-theo-restart",
+      "channel": "dm",
+      "steps": [
+        {"who": "theo", "text": "hey {you}, could you restart your laptop when you get a chance? updates have been waiting since Thursday"},
+        {"who": "theo", "text": "no rush. a little rush"},
+        {"who": "theo", "text": "thanks. you're already in the top 3 of people who listen to IT. the list is 3 people", "pause": 20}
+      ]
+    },
+    {
+      "id": "dm-kip-ream-drop",
+      "channel": "dm",
+      "steps": [
+        {"who": "kip", "text": "{you} can I pitch you something real quick"},
+        {"who": "kip", "text": "Ream Drop. limited edition paper drops, like sneakers but for paper. you line up outside the warehouse"},
+        {"who": "kip", "text": "first drop is 24lb Ultra Bright in 'off-white but cooler'. wendell hasn't agreed to any of this"},
+        {"who": "kip", "text": "ok don't answer now. sleep on it. sleep on a ream, ideally"}
+      ]
+    },
+    {
+      "id": "dm-gordon-quillies",
+      "channel": "dm",
+      "steps": [
+        {"who": "gordon", "text": "psst {you}. Quillies are coming up. unofficially... which category do you think I'd win"},
+        {"who": "gordon", "text": "no wrong answers. some better answers. Most Inspirational is just an example"},
+        {"who": "gordon", "text": "ok I nominated myself for Most Humble. is that weird. don't answer that"}
+      ]
+    },
+    {
+      "id": "dm-theo-error51",
+      "channel": "dm",
+      "steps": [
+        {"who": "theo", "text": "quick IT onboarding tip I forgot to give you"},
+        {"who": "theo", "text": "if Prinny ever shows ERROR 51, just walk away. don't make eye contact. come back in five minutes"},
+        {"who": "theo", "text": "if she shows ERROR 52, message me. if she shows ERROR 53, there's no ERROR 53. if you see it, run"}
+      ]
+    }
+  ]
+}

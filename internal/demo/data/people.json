@@ -1,0 +1,154 @@
+[
+  {
+    "id": "U0SELF0001", "handle": "jordan", "name": "Jordan Pike", "title": "Inside Sales Associate", "pronouns": "they/them",
+    "tz": "America/New_York", "self": true,
+    "persona": "The viewer: week two at Quillfeather, still finding the good stapler.",
+    "status": {"emoji": ":wave:", "text": "Week 2! Learning where everything is"},
+    "statuses": [
+      {"emoji": ":telephone_receiver:", "text": "On a call"},
+      {"emoji": ":coffee:", "text": "Coffee run, back in 10"},
+      {"emoji": ":memo:", "text": "Feelings & Forklifts training"}
+    ],
+    "avatar": {"bg": "#4a90d9", "skin": "#e8b48a", "hair": "#3b2a20", "style": "short", "extra": "", "accent": "#ffd166"}
+  },
+  {
+    "id": "U0DEMOGORD", "handle": "gordon", "name": "Gordon Tibbs", "title": "Branch Manager", "pronouns": "he/him",
+    "tz": "America/New_York", "admin": true,
+    "persona": "Wants to be the beloved fun boss. Half-remembered motivational quotes, puns, the Quillies, mandatory fun, the World's Okayest Boss mug.",
+    "status": {"emoji": ":okayest-boss:", "text": "Open door policy (door is stuck open)"},
+    "statuses": [
+      {"emoji": ":quillie:", "text": "Writing Quillies speech. Do not disturb (please disturb)"},
+      {"emoji": ":spiral_calendar_pad:", "text": "Prepping for Denise's visit"},
+      {"emoji": ":rocket:", "text": "Synergizing"},
+      {"emoji": ":sandwich:", "text": "Lunch meeting (with myself)"}
+    ],
+    "avatar": {"bg": "#f4a261", "skin": "#f1c27d", "hair": "#8d6e63", "style": "balding", "extra": "tie", "accent": "#c0392b"}
+  },
+  {
+    "id": "U0DEMOPRIY", "handle": "priya", "name": "Priya Raman", "title": "Senior Account Executive", "pronouns": "she/her",
+    "tz": "America/New_York",
+    "persona": "Top seller, ultra competitive, runs the leaderboard bets, deadpan.",
+    "status": {"emoji": ":trophy:", "text": "#1 on the leaderboard. Still."},
+    "statuses": [
+      {"emoji": ":telephone_receiver:", "text": "Closing. Do not talk to me"},
+      {"emoji": ":stonks-paper:", "text": "Up 3 reams on Dale"},
+      {"emoji": ":car:", "text": "Client visit"},
+      {"emoji": ":headphones:", "text": "Focus mode"}
+    ],
+    "avatar": {"bg": "#7b2cbf", "skin": "#a8754f", "hair": "#1b1b1b", "style": "long", "extra": "earrings", "accent": "#ffd166"}
+  },
+  {
+    "id": "U0DEMODALE", "handle": "dale", "name": "Dale Hurst", "title": "Account Executive & Volunteer Safety Marshal", "pronouns": "he/him",
+    "tz": "America/New_York",
+    "persona": "Rules lawyer and self-appointed safety marshal with a lanyard and whistle. Sells honey from the family apiary. Takes everything literally. Priya's rival.",
+    "status": {"emoji": ":safety-whistle:", "text": "Safety Marshal on duty"},
+    "statuses": [
+      {"emoji": ":honey_pot:", "text": "Honey in stock. $12. Ask me"},
+      {"emoji": ":bee:", "text": "Apiary inspection (lunch)"},
+      {"emoji": ":memo:", "text": "Reviewing leaderboard rules, section 4(b)"},
+      {"emoji": ":warning:", "text": "Wet floor near the breakroom. You've been warned"}
+    ],
+    "avatar": {"bg": "#2a9d8f", "skin": "#f3d2b3", "hair": "#c9a227", "style": "side", "extra": "lanyard", "accent": "#e76f51"}
+  },
+  {
+    "id": "U0DEMOMARI", "handle": "marisol", "name": "Marisol Ortega", "title": "Office Administrator", "pronouns": "she/her",
+    "tz": "America/New_York", "admin": true,
+    "persona": "Dry wit. Actually runs the place. Chairs the party planning crew. Guards the good stapler.",
+    "status": {"emoji": ":paperclip:", "text": "The good stapler is not available"},
+    "statuses": [
+      {"emoji": ":tada:", "text": "Party planning. Send ideas, not karaoke machines"},
+      {"emoji": ":package:", "text": "Restocking the supply closet"},
+      {"emoji": ":lock:", "text": "Supply closet locked. You know why"}
+    ],
+    "avatar": {"bg": "#e76f51", "skin": "#c68642", "hair": "#2b1a12", "style": "bun", "extra": "glasses", "accent": "#264653"}
+  },
+  {
+    "id": "U0DEMOBEVO", "handle": "bev", "name": "Bev Okafor", "title": "Accounts Payable", "pronouns": "she/her",
+    "tz": "America/New_York",
+    "persona": "Receipts or it didn't happen. Cat named Mr. Pemberton. Secretly the funniest person in the building.",
+    "status": {"emoji": ":mr-pemberton:", "text": "Mr. Pemberton says no"},
+    "statuses": [
+      {"emoji": ":memo:", "text": "Month end. Receipts please"},
+      {"emoji": ":moneybag:", "text": "Reconciling"},
+      {"emoji": ":cat:", "text": "Vet appointment (his, not mine)"}
+    ],
+    "avatar": {"bg": "#e9c46a", "skin": "#8d5524", "hair": "#1a1110", "style": "curly", "extra": "glasses", "accent": "#9b2226"}
+  },
+  {
+    "id": "U0DEMOTHEO", "handle": "theo", "name": "Theo Lindqvist", "title": "IT Department (all of it)", "pronouns": "he/him",
+    "tz": "America/New_York",
+    "persona": "Weary one-man IT department. Prinny the printer (PR-7) hates him. Have you tried turning it off and on.",
+    "status": {"emoji": ":prinny:", "text": "Negotiating with Prinny"},
+    "statuses": [
+      {"emoji": ":hammer_and_wrench:", "text": "Turning it off and on again"},
+      {"emoji": ":headphones:", "text": "Headphones on means no"},
+      {"emoji": ":computer:", "text": "Patching things"},
+      {"emoji": ":zzz:", "text": "Out of office in spirit"}
+    ],
+    "avatar": {"bg": "#264653", "skin": "#f1c27d", "hair": "#d9b38c", "style": "messy", "extra": "headset", "accent": "#90be6d"}
+  },
+  {
+    "id": "U0DEMOWEND", "handle": "wendell", "name": "Wendell Price", "title": "Warehouse Foreman", "pronouns": "he/him",
+    "tz": "America/New_York",
+    "persona": "Blunt. Warehouse vs upstairs. His forklift is Big Linda.",
+    "status": {"emoji": ":big-linda:", "text": "On the floor with Big Linda"},
+    "statuses": [
+      {"emoji": ":package:", "text": "Truck's here"},
+      {"emoji": ":warning:", "text": "Aisle 4 closed. Ask why. Don't"},
+      {"emoji": ":coffee:", "text": "Break. Not upstairs"}
+    ],
+    "avatar": {"bg": "#6c757d", "skin": "#5c3a21", "hair": "#2a2a2a", "style": "bald", "extra": "hardhat", "accent": "#ffb703"}
+  },
+  {
+    "id": "U0DEMORUTH", "handle": "ruth", "name": "Ruth Abernathy", "title": "People & Culture", "pronouns": "she/her",
+    "tz": "America/New_York",
+    "persona": "Relentlessly cheerful. Compliance trainings (Feelings & Forklifts). Passive-aggressive reminders.",
+    "status": {"emoji": ":sparkles:", "text": "Feelings & Forklifts due Friday! :)"},
+    "statuses": [
+      {"emoji": ":heart:", "text": "My door is always open (by appointment)"},
+      {"emoji": ":memo:", "text": "Updating the handbook (again)"},
+      {"emoji": ":calendar:", "text": "Booked for check-ins"}
+    ],
+    "avatar": {"bg": "#f7b2c4", "skin": "#ffdbac", "hair": "#b5651d", "style": "bob", "extra": "bow", "accent": "#e63973"}
+  },
+  {
+    "id": "U0DEMOKIPM", "handle": "kip", "name": "Kip Marlowe", "title": "Summer Intern", "pronouns": "they/them",
+    "tz": "America/Los_Angeles",
+    "persona": "Gen Z remote intern (title says Summer, it is November). A new startup idea every day. Says no cap.",
+    "status": {"emoji": ":rocket:", "text": "building in public"},
+    "statuses": [
+      {"emoji": ":bulb:", "text": "idea #47 loading"},
+      {"emoji": ":headphones:", "text": "lofi beats to file invoices to"},
+      {"emoji": ":stonks-paper:", "text": "paper is the new crypto, no cap"}
+    ],
+    "avatar": {"bg": "#06d6a0", "skin": "#e0ac69", "hair": "#ff5d8f", "style": "mohawk", "extra": "hoodie", "accent": "#3a0ca3"}
+  },
+  {
+    "id": "U0DEMONADI", "handle": "nadia", "name": "Nadia Brooks", "title": "Customer Care Lead", "pronouns": "she/her",
+    "tz": "America/Chicago",
+    "persona": "Calm on the phone, chaotic in Slack. Conspiracy theories about the vending machine. Works from the Kansas City care desk.",
+    "status": {"emoji": ":telephone_receiver:", "text": "On the phones. Smiling. Professionally"},
+    "statuses": [
+      {"emoji": ":eyes:", "text": "The vending machine knows"},
+      {"emoji": ":headphones:", "text": "Queue is spicy today"},
+      {"emoji": ":yogurt-alert:", "text": "Still looking for my yogurt"}
+    ],
+    "avatar": {"bg": "#118ab2", "skin": "#c68642", "hair": "#4a2c2a", "style": "afro", "extra": "headset", "accent": "#ef476f"}
+  },
+  {
+    "id": "U0DEMOINKW", "handle": "inkwell", "name": "Inkwell", "title": "AI coding agent", "pronouns": "",
+    "tz": "America/New_York", "bot": true,
+    "persona": "The AI coding agent the branch is trying out. Polite, precise, works in code channels.",
+    "status": {"emoji": "", "text": ""},
+    "statuses": [],
+    "avatar": {"bg": "#1f3a5f", "glyph": "quill", "accent": "#7fdbca"}
+  },
+  {
+    "id": "U0DEMOPULS", "handle": "pulse", "name": "Pulse", "title": "Polls & stand-ups", "pronouns": "",
+    "tz": "America/New_York", "bot": true,
+    "persona": "Runs the lunch polls and the daily stand-up.",
+    "status": {"emoji": "", "text": ""},
+    "statuses": [],
+    "avatar": {"bg": "#ef476f", "glyph": "pulse", "accent": "#ffffff"}
+  }
+]

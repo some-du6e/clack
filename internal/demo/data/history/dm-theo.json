@@ -1,0 +1,10 @@
+[
+  {"at": "-4 15:40", "by": "jordan", "text": "Hi Theo! Sorry to DM, the pinned post said not to, but the VPN says \"certificate expired\" and I didn't want to post my screen in #it-help"},
+  {"at": "-4 15:52", "by": "theo", "text": "That's fair. That's the one good reason. Open the VPN app, Settings, Refresh profile. Then never speak of this."},
+  {"at": "-4 15:55", "by": "jordan", "text": "It worked! Thank you so much :pray:"},
+  {"at": "-4 15:56", "by": "theo", "text": "Of course it worked. Nothing I fix works twice, though, so enjoy it."},
+  {"at": "-2 10:20", "by": "jordan", "text": "Do I need a driver for Prinny? My laptop doesn't see her"},
+  {"at": "-2 10:31", "by": "theo", "text": "She sees you. She's choosing not to be seen. Install `PR7-driver.pkg` from the shared drive and say something nice about her out loud."},
+  {"at": "-2 10:45", "by": "jordan", "text": "I said \"great job printing\" and it showed up. Is that real??", "reactions": ["prinny theo"]},
+  {"at": "-2 10:46", "by": "theo", "text": "I stopped asking years ago."}
+]

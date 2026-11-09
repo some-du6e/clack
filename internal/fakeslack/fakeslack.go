@@ -844,6 +844,9 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	if hook != nil {
 		out, hooked = hook(method, form)
 	}
+	if eh := s.edgeHook(); !hooked && eh != nil && strings.HasPrefix(method, "edge/") { // extend.go
+		out, hooked = eh(method, edge)
+	}
 	if !hooked {
 		out = s.handle(method, form, edge)
 	}
@@ -1228,6 +1231,13 @@ func (s *Server) img(w http.ResponseWriter, r *http.Request) {
 	if len(parts) != 2 {
 		http.NotFound(w, r)
 		return
+	}
+	if f := s.imageHook(); f != nil { // extend.go
+		if b, ct, ok := f(strings.TrimPrefix(r.URL.Path, "/img/")); ok {
+			w.Header().Set("Content-Type", ct)
+			w.Write(b)
+			return
+		}
 	}
 	s.imgMu.Lock()
 	b, okc := s.imgs[r.URL.Path]

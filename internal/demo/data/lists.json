@@ -1,0 +1,13 @@
+[
+  {"id": "F0DEMOLIST1", "title": "Supply Closet Restock", "creator": "marisol", "channel": "general", "age_days": 3, "updated": "5h",
+   "icon": ":package:",
+   "items": [
+     {"task": "Ultra Bright 24 lb copy paper (10 reams, the good kind)", "done": true, "who": "wendell", "due": -1},
+     {"task": "Laminator pouches (pending a laminator)", "done": false, "who": "marisol", "due": 3},
+     {"task": "Toner for Prinny (PR-7), black and her mood", "done": false, "who": "theo", "due": 1},
+     {"task": "Sticky notes, yellow, for fridge-related communication", "done": true, "who": "nadia", "due": -2},
+     {"task": "Whistle lanyard replacement (safety critical)", "done": false, "who": "dale", "due": 2},
+     {"task": "Receipt book for the party budget", "done": false, "who": "bev", "due": 4},
+     {"task": "A second good stapler (so people stop asking)", "done": false, "who": "jordan", "due": 5}
+   ]}
+]

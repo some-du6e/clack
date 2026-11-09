@@ -1,0 +1,44 @@
+[
+  {"at": "-4 09:10", "by": "priya", "text": "Monthly board is live. Current leader: me. Current second place: also me, emotionally.", "reactions": ["stonks-paper priya gordon", "eyes dale"]},
+  {"at": "-4 09:14", "by": "dale", "text": "The month is 40% over. Statistically 60% of the month is undecided.", "reactions": ["nerd_face kip"]},
+  {"at": "-4 11:30", "by": "priya", "text": "Fine. A bet, @dale. Whoever's behind at the end of the month wears the other's choice to the Quillies.", "reactions": ["eyes gordon kip nadia jordan", "fire kip"],
+   "replies": [
+     {"at": "+3m", "by": "dale", "text": "Accepted. If I win you wear a Safety Marshal vest and lanyard. The full kit. Whistle included.", "reactions": ["safety-whistle dale"]},
+     {"at": "+5m", "by": "priya", "text": "If I win you wear your beekeeper veil. All evening. Including the speeches."},
+     {"at": "+6m", "by": "dale", "text": "The veil is protective equipment, Priya, not a costume."},
+     {"at": "+6m", "by": "priya", "text": "Then you'll be very safe."},
+     {"at": "+9m", "by": "gordon", "text": "THIS is the competitive spirit I want to see!! I'm writing it on the Quillies program.", "reactions": ["okayest-boss gordon"]},
+     {"at": "+11m", "by": "ruth", "text": "Just a reminder that friendly competition is healthy and both outfits must be HR appropriate :slightly_smiling_face:"}
+   ]},
+  {"at": "-3 10:45", "by": "dale", "text": "Closed Pinewood Realty: 60 reams of Ultra Bright 24 lb. They said it's \"the brightest paper they've ever seen\". I said that's the point.", "files": [{"image": "ultra-bright", "name": "pinewood_order.png"}],
+   "reactions": ["ultra-bright dale gordon wendell", "stonks-paper dale", "+1 jordan"]},
+  {"at": "-3 10:51", "by": "priya", "text": "Cute.", "reactions": ["joy kip nadia"]},
+  {"at": "-3 14:20", "by": "priya", "text": "Harrow Dental, Linfield Schools, and the Wexley Falls Library. 74 reams. Before lunch.", "reactions": ["fire gordon kip", "stonks-paper priya", "eyes dale"]},
+  {"at": "-2 16:30", "by": "jordan", "text": "Closed my first order! 18 reams for Bright Futures Daycare :tada:", "reactions": ["tada gordon priya dale nadia marisol ruth kip bev", "quillie gordon", "partying_face kip ruth", "stonks-paper priya"],
+   "replies": [
+     {"at": "+2m", "by": "gordon", "text": "FIRST SALE!!! I'm so proud I could laminate this. If we still could. :rip-lamby:"},
+     {"at": "+4m", "by": "priya", "text": "Good. Now do it 400 more times."},
+     {"at": "+5m", "by": "dale", "text": "Congratulations. Did you confirm the delivery dock has a ramp? Daycares often don't."},
+     {"at": "+7m", "by": "jordan", "text": "I… will confirm that now"},
+     {"at": "+12m", "by": "jordan", "text": "They have a ramp!", "reactions": ["safety-whistle dale", "white_check_mark dale"]}
+   ]},
+  {"at": "-1 09:15", "by": "dale", "text": "Per section 4.2 of the Sales Incentive Guidelines, reams returned within 30 days are subtracted from the total. Just flagging. For everyone. Not anyone in particular.", "reactions": ["eyes priya", "nerd_face kip"]},
+  {"at": "-1 09:17", "by": "priya", "text": "I have zero returns, Dale.", "reactions": ["100 gordon"]},
+  {"at": "-1 09:18", "by": "dale", "text": "Noted for the record."},
+  {"at": "-1 11:02", "by": "gordon", "text": "Love this energy, both of you! Priya you're a shark :fire: Dale you're… also a shark. A safer shark.", "reactions": ["okayest-boss priya", "joy marisol"]},
+  {"at": "-1 15:45", "by": "nadia", "text": "Not to brag but 96 reams through phone orders this month and every one of those callers was yelling at me about something else.", "reactions": ["telephone_receiver priya jordan", "muscle gordon", "clap ruth"]},
+  {"at": "2h15m", "by": "priya", "text": "Updated board. Lead: 3 reams.", "files": [{"image": "sales-chart", "name": "leaderboard_this_month.png"}],
+   "reactions": ["stonks-paper priya gordon kip", "chart_with_upwards_trend priya", "eyes dale nadia jordan"],
+   "replies": [
+     {"at": "+2m", "by": "dale", "text": "412 vs 409 is within the margin of error."},
+     {"at": "+3m", "by": "priya", "text": "There is no margin of error. They're reams. You count them."},
+     {"at": "+5m", "by": "dale", "text": "My Pinewood order was 60 reams plus two partial cases. Partial cases round up under the guidelines."},
+     {"at": "+6m", "by": "priya", "text": "Partial cases round to the nearest whole ream, which they already did."},
+     {"at": "+8m", "by": "bev", "text": "I have the invoices. Priya's right. Sorry Dale.", "reactions": ["moneybag priya"]},
+     {"at": "+9m", "by": "dale", "text": "I'd like it noted that I'm disputing this under protest."},
+     {"at": "+10m", "by": "gordon", "text": "Gordon 37 \"does mentoring count\" — yes it does and thank you for including it Priya :pray:"},
+     {"at": "+11m", "by": "priya", "text": "I didn't write that. The chart wrote that.", "reactions": ["joy kip nadia marisol"]}
+   ]},
+  {"at": "1h05m", "by": "dale", "text": "Pinewood just reordered. 4 reams. The gap is now *within one sale*.", "reactions": ["stonks-paper dale", "eyes priya gordon"]},
+  {"at": "1h01m", "by": "priya", "text": "Called Linfield Schools. 10 more.", "reactions": ["fire gordon kip nadia", "stonks-paper priya", "sob dale"]}
+]
