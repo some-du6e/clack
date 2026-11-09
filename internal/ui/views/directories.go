@@ -1183,14 +1183,18 @@ func (d *Directories) chanRow(gtx C, ch core.ChannelHit, first, last bool) D {
 		return row(gtx, layout.Middle,
 			layout.Flexed(1, func(gtx C) D {
 				return dirFill(gtx, func(gtx C) D {
+					// Slack's rows are 75px between hairlines (the browser,
+					// 2026-11-08): a 22px name line, 3px, an 18px meta line
 					return col(gtx,
-						layout.Rigid(func(gtx C) D { return d.chanName(gtx, ch, hover, req) }),
-						vgap(4),
+						layout.Rigid(func(gtx C) D { return dirMinH(gtx, 22, func(gtx C) D { return d.chanName(gtx, ch, hover, req) }) }),
+						vgap(3),
 						layout.Rigid(func(gtx C) D {
-							if confirming {
-								return d.para(gtx, 13, 18, wReg, d.p.Sec, 1, "Leave #"+ch.Name+"? You won’t be able to rejoin unless someone invites you.")
-							}
-							return d.chanMeta(gtx, ch)
+							return dirMinH(gtx, 18, func(gtx C) D {
+								if confirming {
+									return d.para(gtx, 13, 18, wReg, d.p.Sec, 1, "Leave #"+ch.Name+"? You won’t be able to rejoin unless someone invites you.")
+								}
+								return d.chanMeta(gtx, ch)
+							})
 						}),
 					)
 				})
@@ -1335,6 +1339,24 @@ func (d *Directories) joinedColor() color.NRGBA {
 		return d.p.Presence
 	}
 	return d.p.Green
+}
+
+// dirMinH lays w out with at least h (sp) of height, its content
+// centered vertically in the extra space.
+func dirMinH(gtx C, h unit.Sp, w W) D {
+	m := op.Record(gtx.Ops)
+	dims := w(gtx)
+	call := m.Stop()
+	min := gtx.Sp(h)
+	off := 0
+	if dims.Size.Y < min {
+		off = (min - dims.Size.Y) / 2
+		dims.Size.Y = min
+	}
+	t := op.Offset(image.Pt(0, off)).Push(gtx.Ops)
+	call.Add(gtx.Ops)
+	t.Pop()
+	return dims
 }
 
 // purposeSpans is a purpose's first line as rich spans (Slack's browser
