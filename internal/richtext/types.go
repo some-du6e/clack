@@ -65,6 +65,10 @@ const (
 	FileBlock
 	Tombstone
 	Table // Block Kit table: Rows of cells (first row is the header row Slack draws bold)
+	// Unsupported is a block Slack's renderer can't draw (one that doesn't
+	// decode, an image block without an image): Slack's per-block error
+	// fallback, "This content could not be displayed."
+	Unsupported
 )
 
 // Block is one vertical unit of a document.
@@ -82,10 +86,20 @@ type Block struct {
 	Buttons    []Button // Actions block / section button accessory
 	Att        *Attachment
 	File       *File
-	Children   []Block    // nested blocks: attachment files; Section text that has quotes/pre (then Spans is nil)
+	Children   []Block    // nested blocks: attachment files; Section text that has quotes/pre (then Spans is nil); Context elements (Paragraph / ImageBlock each, Spans keeps the joined text)
 	Rows       [][][]Span // Table: rows → cells → inline spans (multi-paragraph cells joined by Break)
 	ColAlign   []string   // Table: per-column "left" | "center" | "right" ("" = left)
 	ColWrap    []bool     // Table: per-column is_wrapped
+	// Kit marks a block made from a Block Kit layout block (section,
+	// context, header, divider, image, actions, table): it gets Slack's
+	// p-*_block margins and chrome. Canvases and attachments reuse the
+	// kinds without it.
+	Kit bool
+	// BlockID is the Block Kit block_id (sections: the key their "Show
+	// more" state is kept under); Expand is a section's "expand": true,
+	// which turns that truncation off.
+	BlockID string
+	Expand  bool
 }
 
 // Image is a remote image reference.
@@ -94,7 +108,8 @@ type Image struct {
 	Alt   string
 	W, H  int
 	Title string
-	Proxy bool // needs the session cookie (files.slack.com)
+	Proxy bool  // needs the session cookie (files.slack.com)
+	Bytes int64 // image block image_bytes (the title row's "(12 kB)")
 }
 
 // Button is a Block Kit button (or a placeholder for another interactive element).

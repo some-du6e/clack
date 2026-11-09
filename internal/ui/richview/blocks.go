@@ -2,6 +2,8 @@ package richview
 
 import (
 	"image"
+	"image/color"
+	"math"
 	"strconv"
 	"strings"
 
@@ -47,7 +49,60 @@ func isTextual(k richtext.BlockKind) bool {
 	return false
 }
 
-// gap is the vertical space between two consecutive blocks.
+// Block Kit margins, from Slack's renderer (client CSS, 2026-11): every
+// top-level block sits in its own .p-block_kit_renderer__block_wrapper
+// (display: flex), so its margins add up with the next block's instead of
+// collapsing.
+//
+//	block         margin              first in the message
+//	section       8px 0 4px           top 0
+//	header        1em(15px) 0 4px     top 4px
+//	divider       8px 0               (1px border, otl-sec)
+//	context       4px 0
+//	image         8px 0               top 0
+//	actions       elements 8px top, block 8px bottom
+//	table         padding 4px 0 (tableMargin)
+//	error         0 0 6px             ("This content could not be displayed.")
+//
+// rich_text has none of its own; its quotes and pre blocks keep their 4px.
+func (l *lay) margins(b *richtext.Block) (top, first, bottom int) {
+	if !b.Kit {
+		switch b.Kind {
+		case richtext.Quote, richtext.Preformatted:
+			return l.dp(4), 0, l.dp(4)
+		case richtext.FileBlock, richtext.AttachmentBlock:
+			return l.dp(4), 0, l.dp(8)
+		}
+		return 0, 0, 0
+	}
+	switch b.Kind {
+	case richtext.Section:
+		return l.dp(8), 0, l.dp(4)
+	case richtext.Header:
+		return l.dp(15), l.dp(4), l.dp(4)
+	case richtext.Divider, richtext.Actions:
+		return l.dp(8), l.dp(8), l.dp(8)
+	case richtext.Context, richtext.Table:
+		return l.dp(4), l.dp(4), l.dp(4)
+	case richtext.ImageBlock:
+		return l.dp(8), 0, l.dp(8)
+	case richtext.Unsupported:
+		return 0, 0, l.dp(6)
+	}
+	return 0, 0, 0
+}
+
+// gapBetween is the vertical space between two consecutive blocks.
+func (l *lay) gapBetween(prev, cur *richtext.Block) int {
+	if prev.Kit || cur.Kit {
+		_, _, b := l.margins(prev)
+		t, _, _ := l.margins(cur)
+		return b + t
+	}
+	return l.gap(prev.Kind, cur.Kind)
+}
+
+// gap is the vertical space between two consecutive non-Block Kit blocks.
 func (l *lay) gap(prev, cur richtext.BlockKind) int {
 	if isTextual(prev) && isTextual(cur) && prev != richtext.Quote && cur != richtext.Quote {
 		return 0
@@ -163,10 +218,14 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 		edited = lastTextual(bs)
 	}
 	var gal []*richtext.File
+	if top && len(bs) > 0 && bs[0].Kit {
+		_, first, _ := l.margins(&bs[0])
+		y += first
+	}
 	for i := 0; i < len(bs); i++ {
 		b := &bs[i]
 		if i > 0 {
-			y += l.gap(bs[i-1].Kind, b.Kind)
+			y += l.gapBetween(&bs[i-1], b)
 			l.plainAdd("\n")
 		}
 		// Gallery: consecutive image files lay out as tiles.
@@ -190,6 +249,10 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 		l.items = l.items[1:]
 		h, _ := l.flow(x, y, w, &fs)
 		y += h
+	}
+	if top && len(bs) > 0 && bs[len(bs)-1].Kit {
+		_, _, bottom := l.margins(&bs[len(bs)-1])
+		y += bottom
 	}
 	return y - y0
 }
@@ -222,7 +285,14 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 		return h
 
 	case richtext.Preformatted:
-		pad := l.dp(8)
+		pad, padL, bar := l.dp(8), l.dp(8), -1
+		if b.Border {
+			// .c-mrkdwn__pre[data-stringify-border="1"]: 13px in, 13px
+			// left padding, and the list/quote border bar 1px left of x
+			bar = len(l.d.boxes)
+			l.d.boxes = append(l.d.boxes, box{kind: bFill, fill: p.QuoteBar, radius: l.dp(8), target: -1})
+			x, w, padL = x+l.dp(13), w-l.dp(13), l.dp(13)
+		}
 		fs := l.bodyStyle()
 		fs.face = font.Font{Typeface: l.st.Mono}
 		fs.size = l.sp(12)
@@ -239,27 +309,40 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 		if edited {
 			l.addEdited()
 		}
-		h, _ := l.flow(x+pad, y+pad, w-2*pad, &fs)
+		h, _ := l.flow(x+padL, y+pad, w-padL-pad, &fs)
 		hh := h + 2*pad
 		l.d.boxes[bi].r = image.Rect(x, y, x+w, y+hh)
+		if bar >= 0 {
+			l.d.boxes[bar].r = image.Rect(x-l.dp(14), y, x-l.dp(10), y+hh)
+		}
 		return hh
 
 	case richtext.Quote:
 		bar := l.dp(4)
+		in := l.dp(16)
 		bi := len(l.d.boxes)
 		l.d.boxes = append(l.d.boxes, box{kind: bFill, fill: p.QuoteBar, radius: l.dp(8), target: -1})
+		if b.Border {
+			// .c-mrkdwn__quote[data-stringify-border="1"]: a second bar at
+			// 15px, the text at 31px
+			l.d.boxes = append(l.d.boxes, box{kind: bFill, fill: p.QuoteBar, radius: l.dp(8), target: -1})
+			in = l.dp(31)
+		}
 		var h int
 		if len(b.Children) > 0 {
-			h = l.blocks(b.Children, x+l.dp(16), y, w-l.dp(16), false)
+			h = l.blocks(b.Children, x+in, y, w-in, false)
 		} else {
 			fs := l.bodyStyle()
 			l.addSpans(b.Spans, &fs)
 			if edited {
 				l.addEdited()
 			}
-			h, _ = l.flow(x+l.dp(16), y, w-l.dp(16), &fs)
+			h, _ = l.flow(x+in, y, w-in, &fs)
 		}
 		l.d.boxes[bi].r = image.Rect(x, y, x+bar, y+h)
+		if b.Border {
+			l.d.boxes[bi+1].r = image.Rect(x+l.dp(15), y, x+l.dp(15)+bar, y+h)
+		}
 		return h
 
 	case richtext.List:
@@ -277,8 +360,21 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 
 	case richtext.Divider:
 		m := l.dp(8)
+		if b.Kit { // the margins are the block's (margins)
+			m = 0
+		}
 		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: image.Rect(x, y+m, x+w, y+m+l.dp(1)), fill: p.Divider, target: -1})
 		return 2*m + l.dp(1)
+
+	case richtext.Unsupported:
+		// Slack's BlockError: <small class="p-block_kit_error_message">,
+		// rgba(foreground_high, .5).
+		fs := l.bodyStyle()
+		fs.size, fs.lineH = l.sp(13), l.dp(18)
+		fs.col = Over(color.NRGBA{R: p.Text.R, G: p.Text.G, B: p.Text.B, A: 128}, p.Panel)
+		l.addSpans(b.Spans, &fs)
+		h, _ := l.flow(x, y, w, &fs)
+		return h
 
 	case richtext.Context:
 		return l.context(b, x, y, w)
@@ -289,6 +385,9 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 	case richtext.ImageBlock:
 		if b.Image == nil {
 			return 0
+		}
+		if b.Kit {
+			return l.kitImage(b.Image, x, y, w)
 		}
 		h := 0
 		if b.Image.Title != "" {
@@ -365,7 +464,7 @@ func (l *lay) list(b *richtext.Block, x, y, w int, edited bool) int {
 	indentW := l.dp(28)
 	cx := x + indentW*(b.Indent+1)
 	if b.Border {
-		cx += l.dp(8)
+		cx += l.dp(11) // .p-rich_text_list[data-border="1"] padding-inline-start
 	}
 	fs := l.bodyStyle()
 	for i, it := range b.Items {
@@ -436,6 +535,9 @@ func (l *lay) list(b *richtext.Block, x, y, w int, edited bool) int {
 // ---------- block kit ----------
 
 func (l *lay) context(b *richtext.Block, x, y, w int) int {
+	if len(b.Children) > 0 {
+		return l.contextRow(b.Children, x, y, w)
+	}
 	p := &l.st.Palette
 	fs := l.bodyStyle()
 	fs.size, fs.lineH, fs.col, fs.emoji = l.sp(13), l.dp(18), p.Text2, l.dp(16)
@@ -460,8 +562,21 @@ func (l *lay) context(b *richtext.Block, x, y, w int) int {
 	return h
 }
 
+// section lays out a section block. In Slack's renderer it is a row
+// (flex-direction: row-reverse) of the text content (flex: 1) and the
+// accessory (margin 0 0 4px 8px; an image is 88×88 with 4px more on its
+// left); with an accessory the block is at most 600 wide. radio_buttons
+// and checkboxes accessories stack under the text instead (margin 4px 0).
 func (l *lay) section(b *richtext.Block, x, y, w int, edited bool) int {
 	y0 := y
+	hasAcc := b.Image != nil || len(b.Buttons) > 0
+	accGap, accBottom := l.dp(12), 0
+	if b.Kit {
+		accGap, accBottom = l.dp(8), l.dp(4)
+		if hasAcc {
+			w = min(w, l.dp(600))
+		}
+	}
 	tw := w
 	accW, accH := 0, 0
 	stacked := false
@@ -473,23 +588,41 @@ func (l *lay) section(b *richtext.Block, x, y, w int, edited bool) int {
 			sz, stack := el.ElementsSize(b.Buttons[:1], w, true, l.metric())
 			if !stack {
 				accW, accH = sz.X, sz.Y
-				tw = w - accW - l.dp(12)
+				tw = w - accW - accGap
 			} else {
 				stacked = true
 			}
 		} else {
 			accW = l.buttonWidth(b.Buttons[0])
-			tw = w - accW - l.dp(12)
+			tw = w - accW - accGap
+		}
+	}
+	spans, children := b.Spans, b.Children
+	key := l.kitTruncKey(b)
+	if key != "" {
+		l.expandKey = key
+		defer func() { l.expandKey = "" }()
+		if len(spans) > 0 || len(children) > 0 {
+			tb := children
+			if len(tb) == 0 {
+				tb = []richtext.Block{{Kind: richtext.Paragraph, Spans: spans}}
+			}
+			tb = kitTruncate(tb, key)
+			if len(tb) == 1 && tb[0].Kind == richtext.Paragraph {
+				spans, children = tb[0].Spans, nil
+			} else {
+				spans, children = nil, tb
+			}
 		}
 	}
 	h := 0
-	if len(b.Children) > 0 {
-		h = l.blocks(b.Children, x, y, tw, false)
-	} else if len(b.Spans) > 0 {
+	if len(children) > 0 {
+		h = l.blocks(children, x, y, tw, false)
+	} else if len(spans) > 0 {
 		fs := l.bodyStyle()
 		st := l.enter(sectionTextClass)
 		l.enter(mrkdwnElemClass)
-		l.addSpans(b.Spans, &fs)
+		l.addSpans(spans, &fs)
 		if edited {
 			l.addEdited()
 		}
@@ -497,39 +630,240 @@ func (l *lay) section(b *richtext.Block, x, y, w int, edited bool) int {
 		l.leave(st)
 	}
 	if len(b.Fields) > 0 {
-		if h > 0 {
-			h += l.dp(4)
+		if b.Kit {
+			if h > 0 {
+				h += l.dp(12) // .p-section_block__fields:not(:first-child)
+			}
+			h += l.kitFields(b.Fields, x, y+h, tw, key)
+		} else {
+			if h > 0 {
+				h += l.dp(4)
+			}
+			h += l.fields(b.Fields, nil, x, y+h, tw)
 		}
-		h += l.fields(b.Fields, nil, x, y+h, tw)
 	}
 	if b.Image != nil {
 		tg := l.d.addTarget(target{kind: tImage, img: b.Image})
-		ih := l.image(b.Image, x+w-accW, y, accW, accW, l.dp(8), tg)
-		_ = ih
-		if accW > h {
-			h = accW
-		}
+		l.image(b.Image, x+w-accW, y, accW, accW, l.dp(8), tg)
+		h = max(h, accW+accBottom)
 	} else if len(b.Buttons) > 0 && l.opts.Elements != nil {
 		if stacked {
-			if h > 0 {
-				h += l.dp(12)
+			gap := l.dp(12)
+			if b.Kit {
+				gap = l.dp(4)
+			}
+			if h > 0 || b.Kit {
+				h += gap
 			}
 			sz, _ := l.opts.Elements.ElementsSize(b.Buttons[:1], w, true, l.metric())
 			l.addSlot(b.Buttons[:1], image.Rect(x, y+h, x+sz.X, y+h+sz.Y), true)
-			h += sz.Y
+			h += sz.Y + accBottom
 		} else {
 			l.addSlot(b.Buttons[:1], image.Rect(x+w-accW, y, x+w, y+accH), true)
-			if accH > h {
-				h = accH
-			}
+			h = max(h, accH+accBottom)
 		}
 	} else if len(b.Buttons) > 0 {
 		bh := l.button(b.Buttons[0], x+w-accW, y)
-		if bh > h {
-			h = bh
-		}
+		h = max(h, bh+accBottom)
 	}
 	return y + h - y0
+}
+
+// kitFields lays out a section's fields: Slack's .p-section_block__fields
+// is a wrapping flex row (at most 600 wide in messages) of
+// .p-field_section boxes calc(50% - 16px) wide, every second one 16px
+// from the first; rows have no gap.
+//
+// With key set each field truncates on its own (kitTruncate).
+func (l *lay) kitFields(fields [][]richtext.Span, x, y, w int, key string) int {
+	w = min(w, l.dp(600))
+	gut := l.dp(16)
+	colW := w/2 - gut
+	fy, rowH := y, 0
+	for i, f := range fields {
+		col := i % 2
+		fs := l.bodyStyle()
+		l.plainAdd("\n")
+		if key != "" {
+			f = flattenBreaks(kitTruncate([]richtext.Block{{Kind: richtext.Paragraph, Spans: f}}, key))
+		}
+		l.addSpans(f, &fs)
+		fh, _ := l.flow(x+col*(colW+gut), fy, colW, &fs)
+		rowH = max(rowH, fh)
+		if col == 1 || i == len(fields)-1 {
+			fy += rowH
+			rowH = 0
+		}
+	}
+	return fy - y
+}
+
+// contextRow lays out a context block's elements like Slack's Context:
+// a wrapping flex row (.p-context_block) of one box per element; a box is
+// its text (13px, rgb(97,96,97), in the message's 15px/22px line box) or a
+// 20×20 image (radius 2), then a spacer before the next element, 16px
+// after text and 4px after an image. A box wider than the row starts a
+// new line and wraps inside the row's width.
+func (l *lay) contextRow(els []richtext.Block, x, y, w int) int {
+	p := &l.st.Palette
+	fs := l.bodyStyle()
+	fs.size, fs.lineH, fs.col, fs.emoji = l.sp(13), l.dp(22), p.Text2, l.dp(16)
+	if l.opts.Muted {
+		fs.col = p.Text3
+	}
+	imgS := l.dp(20)
+	// an inline-block image sits on the 15px/22px strut's baseline:
+	// 20px above it, the strut's 5px below
+	imgH := imgS + l.dp(5)
+	cx, cy, rowH, texts := x, y, 0, 0
+	newLine := func() {
+		cx, cy, rowH = x, cy+rowH, 0
+	}
+	for i := range els {
+		c := &els[i]
+		sp := 0
+		if i < len(els)-1 {
+			sp = l.dp(16)
+			if c.Kind == richtext.ImageBlock {
+				sp = l.dp(4)
+			}
+		}
+		if c.Kind == richtext.ImageBlock {
+			if c.Image == nil {
+				continue
+			}
+			if cx > x && cx+imgS > x+w {
+				newLine()
+			}
+			r := image.Rect(cx, cy, cx+imgS, cy+imgS)
+			rad := l.dp(2)
+			l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: c.Image.URL, radii: [4]int{rad, rad, rad, rad}, target: -1, px: imgS})
+			cx += imgS + sp
+			rowH = max(rowH, imgH)
+			continue
+		}
+		if texts > 0 {
+			l.plainAdd(" ")
+		}
+		texts++
+		l.addSpans(c.Spans, &fs)
+		nat := naturalWidth(l.items)
+		if cx > x && cx+nat > x+w {
+			newLine()
+		}
+		avail := x + w - cx
+		h, _ := l.flow(cx, cy, min(nat+1, avail), &fs)
+		cx += min(nat, avail) + sp
+		rowH = max(rowH, h)
+	}
+	return cy + rowH - y
+}
+
+// flattenBreaks joins paragraphs' spans with hard breaks.
+func flattenBreaks(bs []richtext.Block) []richtext.Span {
+	if len(bs) == 1 {
+		return bs[0].Spans
+	}
+	var out []richtext.Span
+	for i, b := range bs {
+		if i > 0 {
+			out = append(out, richtext.Span{Kind: richtext.Break})
+		}
+		out = append(out, b.Spans...)
+	}
+	return out
+}
+
+// naturalWidth is the max-content width of pending flow items: their
+// widest hard-broken line.
+func naturalWidth(items []item) int {
+	var w, line float32
+	for i := range items {
+		if items[i].kind == itBreak {
+			w, line = max(w, line), 0
+			continue
+		}
+		line += items[i].w
+	}
+	return int(max(w, line) + 0.999)
+}
+
+// kitImage lays out an image block like Slack's Image: a title row
+// (.p-image_block_title: the title in 15px rgb(97,96,97), " (12 kB)" when
+// Slack sent image_bytes, and the hide/show toggle), then 5px down the
+// image, at most 600×400 (scaled by min(600/w, 400/h) and floored, as
+// Slack does) with radius 8 and a 1px inset otl-ter border. The toggle
+// hides the image until it's clicked again.
+func (l *lay) kitImage(img *richtext.Image, x, y, w int) int {
+	p := &l.st.Palette
+	fs := l.bodyStyle()
+	fs.col = p.Text2
+	if l.opts.Muted {
+		fs.col = p.Text3
+	}
+	rowH, endX := fs.lineH, x
+	if img.Title != "" {
+		h, tw := l.plainFlow(img.Title, x, y, max(w-l.dp(24), l.dp(40)), &fs, -1)
+		rowH = max(h, fs.lineH)
+		endX = x + tw
+		if n := len(l.d.lines); n > 0 {
+			ln := l.d.lines[n-1]
+			if ln.f1 > ln.f0 {
+				f := l.d.frags[ln.f1-1]
+				endX = int(f.x + f.w + 0.999)
+			}
+		}
+	}
+	lastTop := y + rowH - fs.lineH
+	if img.Bytes > 0 {
+		cs := fs
+		cs.size = l.sp(13)
+		_, sw := l.plainFlow(" ("+sizeText(img.Bytes)+")", endX, lastTop, l.dp(120), &cs, -1)
+		endX += sw
+	}
+	// the toggle: a small blue caret after a space, centred on the line
+	collapsed := l.collapsed[img]
+	tg := l.d.addTarget(target{kind: tCollapse, img: img})
+	cx := endX + l.dp(4) + l.dp(4)
+	cy := lastTop + fs.lineH/2
+	kind, cr := bCaret, image.Rect(cx-l.dp(4), cy-l.dp(2), cx+l.dp(4), cy+l.dp(3))
+	if collapsed {
+		kind, cr = bCaretRight, image.Rect(cx-l.dp(2), cy-l.dp(4), cx+l.dp(3), cy+l.dp(4))
+	}
+	l.d.boxes = append(l.d.boxes, box{kind: kind, r: cr, fill: p.Link, target: -1})
+	l.d.hits = append(l.d.hits, hit{r: image.Rect(cx-l.dp(8), cy-l.dp(8), cx+l.dp(8), cy+l.dp(8)), t: tg})
+	if collapsed {
+		return rowH
+	}
+	iy := y + rowH + l.dp(5)
+	iw, ih := l.kitImageSize(img, w)
+	r := image.Rect(x, iy, x+iw, iy+ih)
+	rad := l.dp(8)
+	itg := l.d.addTarget(target{kind: tImage, img: img})
+	l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: img.URL, radii: [4]int{rad, rad, rad, rad}, target: itg, px: max(iw, ih)})
+	l.d.hits = append(l.d.hits, hit{r: r, t: itg})
+	l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: r, radius: rad, stroke: p.Border, bw: max(1, l.dp(1)), target: -1, layer: 1})
+	return iy + ih - y
+}
+
+// kitImageSize is an image block's size in px: Slack's min(600/w, 400/h)
+// scale (floored, CSS px) when the image is bigger, then no wider than the
+// pane. Without image_width/height Slack waits for the image; this uses
+// the attachment default box.
+func (l *lay) kitImageSize(img *richtext.Image, w int) (int, int) {
+	if img.W <= 0 || img.H <= 0 {
+		return fitSize(0, 0, w, l.dp(400), l)
+	}
+	cw, ch := float64(img.W), float64(img.H)
+	if img.W > 600 || img.H > 400 {
+		s := math.Min(600/cw, 400/ch)
+		cw, ch = math.Floor(cw*s), math.Floor(ch*s)
+	}
+	pw, ph := cw*float64(l.scale), ch*float64(l.scale)
+	if pw > float64(w) {
+		ph, pw = ph*float64(w)/pw, float64(w)
+	}
+	return max(1, int(pw+0.5)), max(1, int(ph+0.5))
 }
 
 func (l *lay) metric() unit.Metric { return unit.Metric{PxPerDp: l.scale, PxPerSp: l.spx} }
@@ -670,24 +1004,36 @@ func fitSize(iw, ih, maxW, maxH int, l *lay) (int, int) {
 	return int(w + 0.5), int(h + 0.5)
 }
 
-// table lays out a Block Kit table: a rounded bordered grid, header row in
-// bold, content-sized columns shrunk to fit, per-column alignment.
+// table lays out a table: a rounded bordered grid, header row in bold,
+// content-sized columns shrunk to fit, per-column alignment. A Block Kit
+// table (Kit) is Slack's BaseTable: cells padding 2px 12px 0 and at least
+// 28px tall (border included), 1px otl-ter borders, 4px outer radius; with
+// more than 10 rows the message shows the first 10 under a 40px fade to
+// the background (TablePreview; clicking opens the full table).
 func (l *lay) table(b *richtext.Block, x, y, w int) int {
 	p := &l.st.Palette
+	rows := b.Rows
+	preview := b.Kit && len(rows) > 10
+	if preview {
+		rows = rows[:10]
+	}
 	ncol := 0
-	for _, r := range b.Rows {
+	for _, r := range rows {
 		ncol = max(ncol, len(r))
 	}
-	if ncol == 0 || len(b.Rows) == 0 {
+	if ncol == 0 || len(rows) == 0 {
 		return 0
 	}
-	padX, padY := l.dp(12), l.dp(8)
+	padX, padT, padB, radius, minRow := l.dp(12), l.dp(8), l.dp(8), l.dp(8), 0
+	if b.Kit {
+		padT, padB, radius, minRow = l.dp(2), 0, l.dp(4), l.dp(27)
+	}
 	bw := l.dp(1)
 	// natural (single-line) column widths
 	nat := make([]int, ncol)
 	k := l.faceFor(font.Font{Typeface: l.st.Face}, l.sp(l.st.TextSize), 0)
 	kb := l.faceFor(font.Font{Typeface: l.st.Face}, l.sp(l.st.TextSize), richtext.Bold)
-	for ri, r := range b.Rows {
+	for ri, r := range rows {
 		for ci, cell := range r {
 			kk := k
 			if ri == 0 {
@@ -717,9 +1063,9 @@ func (l *lay) table(b *richtext.Block, x, y, w int) int {
 		tw += c
 	}
 	bi := len(l.d.boxes)
-	l.d.boxes = append(l.d.boxes, box{kind: bBorder, fill: p.Panel, stroke: p.Border, bw: bw, radius: l.dp(8), target: -1})
+	l.d.boxes = append(l.d.boxes, box{kind: bBorder, fill: p.Panel, stroke: p.Border, bw: bw, radius: radius, target: -1})
 	cy := y + bw
-	for ri, r := range b.Rows {
+	for ri, r := range rows {
 		if ri > 0 {
 			l.d.boxes = append(l.d.boxes, box{kind: bFill, r: image.Rect(x+bw, cy, x+tw-bw, cy+bw), fill: p.Border, target: -1})
 			cy += bw
@@ -741,7 +1087,7 @@ func (l *lay) table(b *richtext.Block, x, y, w int) int {
 				}
 				f0, b0, h0 := len(l.d.frags), len(l.d.boxes), len(l.d.hits)
 				l.addSpans(r[ci], &fs)
-				h, wd := l.flow(cx+padX, cy+padY, cw-2*padX, &fs)
+				h, wd := l.flow(cx+padX, cy+padT, cw-2*padX, &fs)
 				align := ""
 				if ci < len(b.ColAlign) {
 					align = b.ColAlign[ci]
@@ -756,7 +1102,7 @@ func (l *lay) table(b *richtext.Block, x, y, w int) int {
 			}
 			cx += cw
 		}
-		rowH = max(rowH, l.dp(l.st.LineHeight)) + 2*padY
+		rowH = max(max(rowH, l.dp(l.st.LineHeight))+padT+padB, minRow)
 		// column separators for this row
 		sx := x + bw
 		for ci := 0; ci < ncol-1; ci++ {
@@ -769,6 +1115,17 @@ func (l *lay) table(b *richtext.Block, x, y, w int) int {
 	}
 	cy += bw
 	l.d.boxes[bi].r = image.Rect(x, y, x+tw, cy)
+	if preview {
+		// linear-gradient(to top, background, transparent 40px) in bands
+		const n = 10
+		fh := l.dp(40)
+		for i := 0; i < n; i++ {
+			c := p.Panel
+			c.A = uint8(255 * (float32(i) + 0.5) / n)
+			r := image.Rect(x, cy-fh+fh*i/n, x+tw, cy-fh+fh*(i+1)/n)
+			l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, fill: c, target: -1, layer: 1})
+		}
+	}
 	return cy - y
 }
 

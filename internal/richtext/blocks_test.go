@@ -126,25 +126,27 @@ func TestBlockKit(t *testing.T) {
 		{"type":"markdown","text":"**md bold** and [a link](https://md.test)"}
 	]`)
 	want := []Block{
-		{Kind: Header, Spans: []Span{tx("Weekly "), em("smile"), tx(" & more")}},
-		{Kind: Divider},
-		{Kind: Section, Spans: []Span{st("Hi", Bold), tx(" "), user("U1", "@alice")},
+		{Kind: Header, Kit: true, Spans: []Span{tx("Weekly "), em("smile"), tx(" & more")}},
+		{Kind: Divider, Kit: true},
+		{Kind: Section, Kit: true, BlockID: "b1", Spans: []Span{st("Hi", Bold), tx(" "), user("U1", "@alice")},
 			Fields:     [][]Span{{st("Owner", Bold), br(), tx("alice")}, {tx("Plain")}},
 			FieldShort: []bool{true, true},
 			Image:      &Image{URL: "https://files.slack.com/files-pri/T1-F1/a.png", Alt: "pic", Proxy: true}},
-		{Kind: Section, Children: []Block{quote(tx("quoted")), para(tx("not"))},
+		{Kind: Section, Kit: true, BlockID: "b2", Children: []Block{quote(tx("quoted")), para(tx("not"))},
 			Buttons: []Button{{Kind: "button", Text: "Go", URL: "https://go.test", Style: "primary", ActionID: "a1", Value: "v1", BlockID: "b2"}}},
-		{Kind: Section, Spans: []Span{tx("menu")}, Buttons: []Button{{Kind: "overflow", Text: "⋮", ActionID: "o1"}}},
-		{Kind: Context, Spans: []Span{{Kind: InlineImage, Text: "icon", URL: "https://img.test/i.png"}, tx(" "), tx("by "), st("bot", Bold), tx(" "), tx("ok")}},
-		{Kind: ImageBlock, Image: &Image{URL: "https://img.test/big.png", Alt: "big", Title: "Big pic", W: 640, H: 480}},
-		{Kind: ImageBlock, Image: &Image{URL: "https://files.slack.com/files-pri/T1-F2/b.png", Alt: "sf", Proxy: true}},
-		{Kind: Actions, Buttons: []Button{
+		{Kind: Section, Kit: true, Spans: []Span{tx("menu")}, Buttons: []Button{{Kind: "overflow", Text: "⋮", ActionID: "o1"}}},
+		{Kind: Context, Kit: true, Spans: []Span{{Kind: InlineImage, Text: "icon", URL: "https://img.test/i.png"}, tx(" "), tx("by "), st("bot", Bold), tx(" "), tx("ok")},
+			Children: []Block{{Kind: ImageBlock, Image: &Image{URL: "https://img.test/i.png", Alt: "icon"}}, para(tx("by "), st("bot", Bold)), para(tx("ok"))}},
+		{Kind: ImageBlock, Kit: true, Image: &Image{URL: "https://img.test/big.png", Alt: "big", Title: "Big pic", W: 640, H: 480}},
+		{Kind: Unsupported, Kit: true, Spans: []Span{tx("This content could not be displayed.")}},
+		{Kind: ImageBlock, Kit: true, Image: &Image{URL: "https://files.slack.com/files-pri/T1-F2/b.png", Alt: "sf", Proxy: true}},
+		{Kind: Actions, Kit: true, Buttons: []Button{
 			{Kind: "button", Text: "Delete", Style: "danger", ActionID: "del", Value: "x", BlockID: "b3"},
 			{Kind: "select", Text: "Pick one", ActionID: "sel", BlockID: "b3"},
 			{Kind: "select", Text: "Chosen", BlockID: "b3"},
 			{Kind: "datepicker", Text: "Select a date", ActionID: "dp", BlockID: "b3"},
 		}},
-		{Kind: Section, Spans: []Span{st("Name", Bold)}, Buttons: []Button{{Kind: "input", Text: "Type here"}}},
+		{Kind: Section, Kit: true, Spans: []Span{st("Name", Bold)}, Buttons: []Button{{Kind: "input", Text: "Type here"}}},
 		{Kind: AttachmentBlock, Att: &Attachment{ServiceName: "VidSite", ServiceIcon: "https://v.test/i.png", AuthorName: "Someone",
 			Title: []Span{tx("Demo")}, TitleLink: "https://v.test/w", VideoURL: "https://v.test/embed", IsUnfurl: true,
 			Image: &Image{URL: "https://v.test/t.jpg", Alt: "demo"}, Text: []Block{para(tx("A demo"))}}},
@@ -162,7 +164,7 @@ func TestBlockKit(t *testing.T) {
 }
 
 func (b Block) kindName() string {
-	return [...]string{"Paragraph", "Preformatted", "Quote", "List", "Header", "Divider", "Context", "Section", "ImageBlock", "Actions", "AttachmentBlock", "FileBlock", "Tombstone"}[b.Kind]
+	return [...]string{"Paragraph", "Preformatted", "Quote", "List", "Header", "Divider", "Context", "Section", "ImageBlock", "Actions", "AttachmentBlock", "FileBlock", "Tombstone", "Table", "Unsupported"}[b.Kind]
 }
 
 func TestBlocksFallBackToText(t *testing.T) {
@@ -170,4 +172,26 @@ func TestBlocksFallBackToText(t *testing.T) {
 		d := blocksMsg(t, blocks)
 		eq(t, "fallback "+blocks, d.Blocks, []Block{para(tx("fallback text"))})
 	}
+}
+
+func TestMarkdownBlock(t *testing.T) {
+	d := blocksMsg(t, `[{"type":"markdown","text":"# Title\n**b** *i* __b2__ ~~s~~ `+"`*code*`"+` [l](https://md.test)\n\n- one\n  - two\n3. three\n`+"```"+`\nx *y*\n`+"```"+`"}]`)
+	got := d.Blocks
+	if len(got) != 6 {
+		t.Fatalf("blocks:\n%s", dump(got))
+	}
+	eq(t, "heading", got[0], para(st("Title", Bold)))
+	eq(t, "inline", got[1], para(st("b", Bold), tx(" "), st("i", Italic), tx(" "), st("b2", Bold), tx(" "), st("s", Strike), tx(" "), st("*code*", Code), tx(" "), lk("l", "https://md.test")))
+	if got[2].Kind != List || got[2].Indent != 0 || got[3].Indent != 1 || got[4].Kind != List || !got[4].Ordered || got[4].Offset != 2 {
+		t.Errorf("lists:\n%s", dump(got[2:5]))
+	}
+	if got[5].Kind != Preformatted || PlainText(Doc{Blocks: got[5:]}) != "x *y*" {
+		t.Errorf("fence:\n%s", dump(got[5:]))
+	}
+}
+
+func TestPlainTextEmojiFalse(t *testing.T) {
+	d := blocksMsg(t, `[{"type":"section","text":{"type":"plain_text","text":"hi :smile:","emoji":false}},{"type":"section","text":{"type":"plain_text","text":"hi :smile:"}}]`)
+	eq(t, "emoji false", d.Blocks[0].Spans, []Span{tx("hi :smile:")})
+	eq(t, "emoji unset", d.Blocks[1].Spans, []Span{tx("hi "), em("smile")})
 }

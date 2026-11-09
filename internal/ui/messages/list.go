@@ -755,7 +755,7 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 	}
 	r, ok := s.rows[it.key]
 	if !ok {
-		r = newRow(e)
+		r = newListRow(e, s.thread)
 		s.rows[it.key] = r
 	} else if len(it.group) > 0 && r.rev != e.rev {
 		r.set(e)
@@ -1226,7 +1226,7 @@ func (s *listState) startEdit(h Host, ts string) {
 		if i < 0 {
 			return
 		}
-		r = newRow(&s.snap.msgs[i])
+		r = newListRow(&s.snap.msgs[i], s.thread)
 		s.rows[ts] = r
 	}
 	if r.edit != nil {

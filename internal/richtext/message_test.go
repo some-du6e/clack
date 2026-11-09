@@ -137,7 +137,7 @@ func TestAttachments(t *testing.T) {
 			{Kind: "select", Text: "Pick", ActionID: "2"},
 		}},
 		{Kind: AttachmentBlock, Att: &Attachment{Text: []Block{para(tx("plain *not bold* "), user("U1", "@alice"))}}},
-		{Kind: AttachmentBlock, Att: &Attachment{Title: []Span{tx("App")}, Text: []Block{{Kind: Section, Spans: []Span{tx("app "), st("block", Bold)}}}},
+		{Kind: AttachmentBlock, Att: &Attachment{Title: []Span{tx("App")}, Text: []Block{{Kind: Section, Kit: true, Spans: []Span{tx("app "), st("block", Bold)}}}},
 			Children: []Block{{Kind: FileBlock, File: &File{ID: "F1", Name: "n.txt", Mime: "text/plain", URL: "https://files.slack.com/files-pri/T1-F1/n.txt"}}}},
 	}
 	if len(d.Blocks) != len(want) {
