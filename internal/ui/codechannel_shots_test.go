@@ -159,19 +159,73 @@ func TestCodeChannelShots(t *testing.T) {
 				e.a.Navigate("c/" + c.ID)
 				shot("code-" + f.Statuses[c.ID] + "-" + c.Name)
 			}
-			// archived: it leaves the sidebar; opened, the archived bar
-			// replaces the composer
-			arch := f.Others[0]
-			e.ca.S.PutConv(arch)
-			e.a.Navigate("c/" + arch.ID)
-			e.a.data.apply(e.a, e.ca.Snapshot())
-			shot("code-archived-" + arch.Name)
-			// a code channel the viewer isn't in, while the agent works
-			prev := f.Others[1]
-			e.ca.S.PutConv(prev)
-			e.a.Navigate("c/" + prev.ID)
-			e.a.data.apply(e.a, e.ca.Snapshot())
-			shot("code-preview-" + prev.Name)
 		})
 	}
+}
+
+// Over fakeslack (Size.CodeChannels): the fixtures arrive through
+// users.conversations / conversations.info, a code channel the viewer
+// isn't in opens as a preview with the join pane (its context bar shows
+// while the agent works), and an archived one shows the archived bar.
+func TestCodeChannelsFakeslack(t *testing.T) {
+	sz := fakeslack.Small
+	sz.CodeChannels = true
+	fs, err := fakeslack.Start(sz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { fs.Close() })
+	e := startEnv(t, fs, t.TempDir())
+	dir := os.Getenv("CODE_SHOTS_DIR")
+	if dir != "" && e.gpu == nil {
+		w, err := headless.NewWindow(e.size.X, e.size.Y)
+		if err != nil {
+			t.Fatalf("headless window: %v", err)
+		}
+		e.gpu = w
+	}
+	e.waitReady()
+	shot := func(name string) {
+		e.settle(300 * time.Millisecond)
+		if dir == "" || e.gpu == nil {
+			return
+		}
+		img := image.NewRGBA(image.Rectangle{Max: e.size})
+		if err := e.gpu.Screenshot(img); err != nil {
+			t.Fatalf("screenshot: %v", err)
+		}
+		f, err := os.Create(filepath.Join(dir, name+".png"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if err := png.Encode(f, img); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.until("Code channels section", 20*time.Second, func() bool {
+		ss := e.a.model().Sections
+		return len(ss) > 0 && ss[0].Type == "coding_channels" && len(ss[0].Rows) == 6
+	})
+	e.openChannel(fakeslack.CodeWorkingID)
+	e.until("working status", 10*time.Second, func() bool {
+		ci := e.a.model().conv(fakeslack.CodeWorkingID)
+		return ci != nil && ci.CodeStatus == core.AgentProcessing
+	})
+	shot("code-fakeslack-working")
+
+	prev := e.a.convoFor(fakeslack.CodePreviewID, "")
+	e.openChannel(fakeslack.CodePreviewID)
+	e.until("join pane", 20*time.Second, func() bool { return e.a.footerFor(prev) == footPreview && prev.jp != nil })
+	if ci := e.a.convOf(fakeslack.CodePreviewID); ci == nil || ci.Code == nil || !ci.Preview {
+		t.Errorf("preview code channel %+v", ci)
+	}
+	shot("code-fakeslack-preview")
+
+	arch := e.a.convoFor(fakeslack.CodeArchivedID, "")
+	e.openChannel(fakeslack.CodeArchivedID)
+	e.until("archived bar", 20*time.Second, func() bool { return e.a.footerFor(arch) == footArchived })
+	shot("code-fakeslack-archived")
+	e.openChannel(fakeslack.CodeIdleID)
+	e.until("archived row gone", 10*time.Second, func() bool { return !e.sidebarHas(fakeslack.CodeArchivedID) })
 }
