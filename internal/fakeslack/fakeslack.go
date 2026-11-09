@@ -1083,9 +1083,10 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	}
 	defer c.CloseNow()
 	ctx := r.Context()
-	_ = c.Write(ctx, websocket.MessageText, []byte(`{"type":"hello"}`))
+	// registered before hello: once the client is connected, Push reaches it
 	s.addSocket(c) // Push (canvas.go)
 	defer s.dropSocket(c)
+	_ = c.Write(ctx, websocket.MessageText, []byte(`{"type":"hello"}`))
 	for {
 		if _, _, err := c.Read(ctx); err != nil {
 			return

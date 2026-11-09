@@ -675,7 +675,10 @@ func TestSlickViewMessageLoggerThreads(t *testing.T) {
 		r := cv.s.rows[p2]
 		return r != nil && strings.Contains(rowText(r), "parent to delete") && !r.m.Tombstone
 	})
-	if r := cv.s.rows[p2]; r == nil || r.src.Subtype != "tombstone" || !r.src.Tombstone || r.m.ReplyCount != 1 {
-		t.Errorf("tombstone row: src %+v shown %+v", r.src, r.m)
+	if m, ok := e.app.S.Find(ch, p2); !ok || m.Subtype != "tombstone" || m.User != "USLACKBOT" || m.ReplyCount != 1 {
+		t.Errorf("core's copy of the deleted parent: %+v, want Slack's tombstone with its reply", m)
+	}
+	if r := cv.s.rows[p2]; r == nil || r.m.ReplyCount != 1 {
+		t.Errorf("the kept parent lost its reply bar: %+v", r)
 	}
 }
