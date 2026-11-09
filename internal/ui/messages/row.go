@@ -602,20 +602,6 @@ func (pl *reactPill) buttonProps() slackc.Props {
 
 // ---- natives ----
 
-// The row's parts whose Slack root element is a block <div>: patched, a
-// plugin's <div><Original/></div> (MessageLogger) or bare <Original/>
-// (BetterBlock) must lay them out as blocks, not inline-block on a line
-// box, which left 3.5dp of strut descent under every row.
-// BaseVisuallyHiddenMessageText is Slack's offscreen span (absolutely
-// positioned, no space in the flow): drawn empty, a zero-height block
-// takes none either, where an empty inline-block made an 18dp line.
-func init() {
-	slackc.SetBlockComponents("MessageWrapper", "ThreadRootGeneric", "Message", "ThreadReplyGeneric",
-		"MessageBackground", "ProgressiveDisclosureSuccessCoachmarkWrapper", "MessageKitGutter",
-		"MessageText", "MessageBlocks", "Blocks", "MessageFiles", "MessageKitAttachments",
-		"ReactionBar", "ThreadReplies", "CodeChannelEntityCard", "BaseVisuallyHiddenMessageText")
-}
-
 // layoutWrapper is MessageWrapper / ThreadRootGeneric: a plugin's msg
 // (ShowRealUser) replaces the sender, avatar, badge and blocks drawn.
 func (r *row) layoutWrapper(gtx layout.Context, p slackc.Props) layout.Dimensions {
@@ -1563,10 +1549,19 @@ func (r *row) layoutReactionBar(gtx layout.Context, p slackc.Props) layout.Dimen
 		return layout.Dimensions{}
 	}
 	if e, ok := slackc.PropChildren(p); ok {
-		if st.Active() {
-			return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return slackc.LayoutElement(gtx, e) })
+		// Slack's .c-reaction_bar is a flex-wrap row: the children (the
+		// Reaction and add-button slots a plugin passed on, its own
+		// buttons) are flex items, each placed like a pill
+		items := slackc.Items(e)
+		lay := func(gtx layout.Context) layout.Dimensions {
+			return r.flowPills(gtx, len(items), func(gtx layout.Context, i int) layout.Dimensions {
+				return slackc.LayoutElement(gtx, items[i])
+			}, false)
 		}
-		return slackc.LayoutElement(gtx, e)
+		if st.Active() {
+			return st.Wrap(gtx, lay)
+		}
+		return lay(gtx)
 	}
 	if st.Active() {
 		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return r.reactionPills(gtx) })
@@ -1576,7 +1571,21 @@ func (r *row) layoutReactionBar(gtx layout.Context, p slackc.Props) layout.Dimen
 
 // reactionPills flows the Reaction pills and the add button.
 func (r *row) reactionPills(gtx layout.Context) layout.Dimensions {
-	m := &r.m
+	n := len(r.m.Reactions)
+	return r.flowPills(gtx, n+1, func(gtx layout.Context, i int) layout.Dimensions {
+		if i < n {
+			pl := &r.pills[i]
+			return slackc.Component(gtx, "Reaction", pl, (*reactPill).props, (*reactPill).layout)
+		}
+		// add-reaction button
+		return slackc.Component(gtx, "ReactionAddButton", r, (*row).addButtonProps, (*row).layoutAddButton)
+	}, true)
+}
+
+// flowPills places n items left to right in rows of pill height, wrapping
+// at the bar's width (the reaction bar's flex-wrap); native: the items are
+// the pills then the add button (their rects are kept for overlays).
+func (r *row) flowPills(gtx layout.Context, n int, item func(gtx layout.Context, i int) layout.Dimensions, native bool) layout.Dimensions {
 	w := gtx.Constraints.Max.X
 	ph := dp(gtx, mt.reactH)
 	gap := dp(gtx, mt.reactGap)
@@ -1595,18 +1604,25 @@ func (r *row) reactionPills(gtx layout.Context) layout.Dimensions {
 	}
 	g := gtx
 	g.Constraints.Min = image.Point{}
-	for i := range m.Reactions {
-		pl := &r.pills[i]
+	bottom := 0
+	for i := 0; i < n; i++ {
 		rec := op.Record(gtx.Ops)
-		d := slackc.Component(g, "Reaction", pl, (*reactPill).props, (*reactPill).layout)
-		r.reactRects = append(r.reactRects, place(rec.Stop(), d.Size).Add(r.reactAt))
+		d := item(g, i)
+		call := rec.Stop()
+		if !native && d.Size.X == 0 && d.Size.Y == 0 {
+			continue // a plugin's null child takes no place in the row
+		}
+		rect := place(call, d.Size)
+		bottom = rect.Max.Y
+		switch {
+		case !native:
+		case i < n-1:
+			r.reactRects = append(r.reactRects, rect.Add(r.reactAt))
+		default:
+			r.addRect = rect.Add(r.reactAt)
+		}
 	}
-	// add-reaction button, visible on hover
-	rec := op.Record(gtx.Ops)
-	d := slackc.Component(g, "ReactionAddButton", r, (*row).addButtonProps, (*row).layoutAddButton)
-	ar := place(rec.Stop(), d.Size)
-	r.addRect = ar.Add(r.reactAt)
-	return layout.Dimensions{Size: image.Pt(w, ar.Max.Y)}
+	return layout.Dimensions{Size: image.Pt(w, bottom)}
 }
 
 // layoutAddButton is ReactionAddButton (.c-reaction_add): always drawn

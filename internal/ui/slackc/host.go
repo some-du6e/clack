@@ -3,6 +3,7 @@ package slackc
 import (
 	"image"
 	"log"
+	"strings"
 	"sync"
 
 	"gioui.org/layout"
@@ -23,27 +24,6 @@ var hosts struct {
 	sync.RWMutex
 	m      map[string]HostComponent
 	warned map[string]bool
-}
-
-// blockComps are the Slack components whose own root element is a block
-// box (a <div>, or out of the flow like an offscreen span): an "@" node for one is display: block by default, so a
-// plugin's <div><Original/></div> (or a bare <Original/>) lays the native
-// out as a block, the way Slack's DOM does. Other components default to
-// inline-block, and as inline-level boxes they sit on a line box that adds
-// the strut's descent under them (a message row drawn that way grew 3.5dp).
-var blockComps sync.Map // name → true
-
-// SetBlockComponents marks names as components whose Slack root is a block
-// element (their owners call it from init).
-func SetBlockComponents(names ...string) {
-	for _, n := range names {
-		blockComps.Store(n, true)
-	}
-}
-
-func isBlockComponent(name string) bool {
-	_, ok := blockComps.Load(name)
-	return ok
 }
 
 // RegisterHost registers fn for name and any aliases (e.g. "Avatar" and
@@ -255,6 +235,23 @@ func LayoutElement(gtx layout.Context, e Element) layout.Dimensions {
 		parent = e.Nodes[0].parent
 	}
 	return c.view.layoutNodes(gtx, c.fr, e.Nodes, parent, c.st)
+}
+
+// Items splits children into their flex items, for a native whose Slack
+// element is a flex container (the reaction bar): each element child is
+// laid out on its own (LayoutElement) and placed by the native, rather
+// than all of them flowing as one inline run, whose line box would add
+// the strut's descent under atomic inlines like the reaction pills.
+// Whitespace-only text is dropped, as flex layout does.
+func Items(e Element) []Element {
+	out := make([]Element, 0, len(e.Nodes))
+	for i, n := range e.Nodes {
+		if n.T == "#" && strings.TrimSpace(n.V) == "" {
+			continue
+		}
+		out = append(out, Element{Nodes: e.Nodes[i : i+1 : i+1]})
+	}
+	return out
 }
 
 // curRender is the innermost host-tree render in progress (UI

@@ -21,6 +21,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/store"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
 )
 
@@ -148,9 +149,34 @@ func slickFling(t *testing.T, name string, plugins []string) {
 			}
 		}
 	}
+	// every row as tall as the same row drawn natively: these plugins
+	// change nothing about its height with this workspace (nobody blocked
+	// or deleted, no bots, no time zones), so any difference is layout
+	nativeH := func(when string) {
+		s := v.s
+		names := slackc.PatchedNames()
+		slackc.SetPatched(nil)
+		defer slackc.SetPatched(names)
+		for i := s.visible[0]; i < s.visible[1]; i++ {
+			it := s.items[i]
+			if it.kind != itMsg || len(it.group) > 0 || s.pos[i] < 0 || s.pos[i]+s.heights[i] > size.Y {
+				continue
+			}
+			r := newListRow(&s.snap.msgs[it.idx], s.thread)
+			rc := s.rc
+			rc.header, rc.hovered, rc.highlight, rc.parent = it.header, false, 0, false
+			gtx := layout.Context{Ops: new(op.Ops), Metric: unit.Metric{PxPerDp: 2, PxPerSp: 2}, Constraints: layout.Constraints{Min: image.Pt(size.X, 0), Max: image.Pt(size.X, 1<<20)}, Now: now}
+			if want := r.layout(gtx, &rc).Size.Y; s.heights[i] != want {
+				r0 := s.rows[it.key]
+				t.Errorf("%s: row %s (header %v, %d reactions) is %dpx, %dpx drawn natively; col %v body %v", when, it.key, it.header,
+					len(r0.m.Reactions), s.heights[i], want, r0.col, r0.bodyRect)
+			}
+		}
+	}
 	e.waitFor(t, "the rows", frame, func() bool { return len(v.s.rows) > 5 })
 	settle()
 	slack("opened")
+	nativeH("opened")
 	bottom := heights()
 	g0 := map[string]string{}
 	for k, v := range geom {
@@ -169,6 +195,7 @@ func slickFling(t *testing.T, name string, plugins []string) {
 	}
 	settle()
 	slack("at the top")
+	nativeH("at the top")
 	top := heights()
 	shot("2-top")
 	for f := 0; f < 400 && v.s.list.Position.BeforeEnd; f++ {
@@ -180,6 +207,7 @@ func slickFling(t *testing.T, name string, plugins []string) {
 	}
 	settle()
 	shot("4-bottom-again")
+	nativeH("back at the bottom")
 	for k, h := range heights() {
 		if want, ok := bottom[k]; ok && h != want {
 			t.Errorf("row %s: %d tall after the fling, %d before\n\tbefore %s\n\tafter  %s", k, h, want, g0[k], geom[k])
@@ -192,6 +220,7 @@ func slickFling(t *testing.T, name string, plugins []string) {
 	}
 	settle()
 	shot("5-top-again")
+	nativeH("at the top again")
 	for k, h := range heights() {
 		if want, ok := top[k]; ok && h != want {
 			t.Errorf("row %s: %d tall at the top the second time, %d the first", k, h, want)

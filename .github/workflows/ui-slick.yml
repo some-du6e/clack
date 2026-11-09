@@ -19,6 +19,14 @@ on:
         description: "slick git ref (branch, tag or sha)"
         required: false
         default: "main"
+      run:
+        description: "go test -run pattern (e.g. TestSlickViewFling to repeat one test)"
+        required: false
+        default: "TestSlickView"
+      count:
+        description: "go test -count (repeat runs to shake out flakes)"
+        required: false
+        default: "1"
 
 env:
   GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb
@@ -67,10 +75,12 @@ jobs:
           SLICK_SHOTS_DIR: ${{ github.workspace }}/dist/shots
           CLACK_PIXEL_TESTS: "1"
           LIBGL_ALWAYS_SOFTWARE: "1"
+          TEST_RUN: ${{ inputs.run || 'TestSlickView' }}
+          TEST_COUNT: ${{ inputs.count || '1' }}
         run: |
           set -o pipefail
           mkdir -p dist "$SLICK_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -timeout 20m -v -run 'TestSlickView' \
+          xvfb-run -a go test -count="$TEST_COUNT" -timeout 40m -v -run "$TEST_RUN" \
             ./internal/ui/ ./internal/ui/messages/ ./internal/ui/composer/ ./internal/ui/popups/ ./internal/ui/views/ ./internal/ui/huddleui/ 2>&1 | tee dist/ui-slick.log
       - name: summary
         if: ${{ !cancelled() }}

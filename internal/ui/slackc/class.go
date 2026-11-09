@@ -223,6 +223,9 @@ func resetNativeStyles() {
 // (also on early returns). With no CSS active it costs one atomic load
 // and returns the zero Styled.
 func (d *ClassDef) Enter(gtx layout.Context, st css.State, mods uint64) Styled {
+	if probe.active {
+		probeDisplay(uaDisplay(d.tag, rNone))
+	}
 	if Styles.Empty() {
 		return Styled{}
 	}
@@ -233,6 +236,9 @@ func (d *ClassDef) Enter(gtx layout.Context, st css.State, mods uint64) Styled {
 // the className a plugin passed to <Original className=…> (StreamerMode,
 // IdvStatus, OwlMode). extra is a space-separated list; "" is Enter.
 func (d *ClassDef) EnterClass(gtx layout.Context, st css.State, mods uint64, extra string) Styled {
+	if probe.active {
+		probeDisplay(uaDisplay(d.tag, rNone))
+	}
 	if Styles.Empty() {
 		return Styled{}
 	}
@@ -242,6 +248,9 @@ func (d *ClassDef) EnterClass(gtx layout.Context, st css.State, mods uint64, ext
 // EnterAttr is Enter with one dynamic attribute, e.g.
 // ("data-qa-channel-sidebar-channel-id", "C123").
 func (d *ClassDef) EnterAttr(gtx layout.Context, st css.State, mods uint64, name, value string) Styled {
+	if probe.active {
+		probeDisplay(uaDisplay(d.tag, rNone))
+	}
 	if Styles.Empty() {
 		return Styled{}
 	}
@@ -417,6 +426,9 @@ func (s Styled) Leave() {
 
 // pushHost / popHost let the host-tree layout put its nodes on the stack.
 func pushHost(el css.Element, st *css.Style, set propSet, key uint64) {
+	if probe.active && st != nil {
+		probeDisplay(st.Display)
+	}
 	var inh propSet
 	var deco decoProp
 	if len(stack) > 0 {

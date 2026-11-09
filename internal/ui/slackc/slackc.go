@@ -344,7 +344,7 @@ func renderPatched(gtx layout.Context, name string, props Props, native Native) 
 	}
 	nodes := in.tree.Load()
 	if nodes == nil {
-		return native(gtx, props)
+		return probeNative(name, func() layout.Dimensions { return native(gtx, props) })
 	}
 	return in.view.Layout(gtx, *nodes, name, props, native)
 }

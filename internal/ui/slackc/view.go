@@ -39,6 +39,7 @@ type View struct {
 	topKey    uint64
 	hasTop    bool
 	rootStyle css.Style
+	rootsGen  uint64 // nativeRootsGen the styles were computed with
 	topStyle  *css.Style
 	cenv      css.Env
 
@@ -241,6 +242,10 @@ func (v *View) Layout(gtx layout.Context, nodes []*Node, name string, orig Props
 	v.topEl = el
 	if ver := Styles.Version(); ver != v.styleVer {
 		v.styleVer = ver
+		v.needStyle = true
+	}
+	if g := nativeRootsGen.Load(); g != v.rootsGen {
+		v.rootsGen = g // a native's root became known: "@" displays follow it
 		v.needStyle = true
 	}
 	dark := env().Theme != nil && env().Theme.Dark
@@ -645,19 +650,22 @@ func (s *scope) callNative(gtx layout.Context, b *box) layout.Dimensions {
 	prev := curRender
 	b.rctx = renderCtx{view: v, fr: &v.fr, st: &b.st, n: b.n, depth: len(stack)}
 	curRender = &b.rctx
-	switch slot, isSlot := SlotOf(b.n); {
-	case isSlot:
-		if slot.Native != nil {
-			d = slot.Native(gtx, nativeProps(b))
+	d = probeNative(b.n.N, func() layout.Dimensions {
+		switch slot, isSlot := SlotOf(b.n); {
+		case isSlot:
+			if slot.Native != nil {
+				return slot.Native(gtx, nativeProps(b))
+			}
+		case b.n.N == v.fr.name && v.fr.name != "":
+			if v.fr.native != nil {
+				return v.fr.native(gtx, nativeProps(b))
+			}
+		case b.hostFn != nil:
+			b.host = Host{Node: b.n, Props: b.n.P, Style: &b.st, view: v, fr: &v.fr}
+			return b.hostFn(gtx, &b.host)
 		}
-	case b.n.N == v.fr.name && v.fr.name != "":
-		if v.fr.native != nil {
-			d = v.fr.native(gtx, nativeProps(b))
-		}
-	case b.hostFn != nil:
-		b.host = Host{Node: b.n, Props: b.n.P, Style: &b.st, view: v, fr: &v.fr}
-		d = b.hostFn(gtx, &b.host)
-	}
+		return layout.Dimensions{}
+	})
 	curRender = prev
 	for i := 0; i < n; i++ {
 		popHost()
