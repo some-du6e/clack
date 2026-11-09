@@ -45,6 +45,50 @@ func (a *App) Edit(ctx context.Context, ch, ts, text string, blocks json.RawMess
 // Delete deletes a message.
 func (a *App) Delete(ctx context.Context, ch, ts string) error { return a.C.Delete(ctx, ch, ts) }
 
+// DeleteAttachment removes a link preview from a message, as Slack's
+// removeAttachmentsIncludingChildren: the attachment (and the others
+// unfurled from the same from_url, its children) leave the stored
+// message at once, then chat.deleteAttachment goes out for each.
+func (a *App) DeleteAttachment(ctx context.Context, ch, ts, id string) error {
+	ids := []string{id}
+	if m, ok := a.S.Find(ch, ts); ok {
+		from := ""
+		for _, at := range m.Attachments {
+			if strconv.Itoa(at.ID) == id {
+				from = at.FromURL
+			}
+		}
+		if from != "" {
+			for _, at := range m.Attachments {
+				if s := strconv.Itoa(at.ID); at.FromURL == from && s != id {
+					ids = append(ids, s)
+				}
+			}
+		}
+	}
+	drop := map[string]bool{}
+	for _, s := range ids {
+		drop[s] = true
+	}
+	if upd, ok := a.S.Mutate(ch, ts, func(x *slack.Message) {
+		kept := x.Attachments[:0:0]
+		for _, at := range x.Attachments {
+			if !drop[strconv.Itoa(at.ID)] {
+				kept = append(kept, at)
+			}
+		}
+		x.Attachments = kept
+	}); ok {
+		a.emitUpdate(ch, &upd)
+	}
+	for _, s := range ids {
+		if err := a.C.DeleteAttachment(ctx, ch, ts, s); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Mark moves the read cursor of ch to ts and returns the new unread state.
 // Marking an earlier ts keeps the conversation unread (see MarkUnread).
 func (a *App) Mark(ctx context.Context, ch, ts string) (Count, error) {

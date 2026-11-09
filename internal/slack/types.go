@@ -172,6 +172,13 @@ type Attachment struct {
 	FromURL       string            `json:"from_url"`
 	OriginalURL   string            `json:"original_url"`
 	VideoHTML     string            `json:"video_html"`
+	AudioHTML     string            `json:"audio_html,omitempty"`
+	OtherHTML     string            `json:"other_html,omitempty"`
+	ImageBytes    int64             `json:"image_bytes,omitempty"`
+	ServiceURL    string            `json:"service_url,omitempty"`
+	BotID         string            `json:"bot_id,omitempty"`
+	IsAppUnfurl   bool              `json:"is_app_unfurl,omitempty"`
+	Hidden        bool              `json:"hidden,omitempty"`
 	IsMsgUnfurl   bool              `json:"is_msg_unfurl"`
 	IsShare       bool              `json:"is_share"`
 	ChannelID     string            `json:"channel_id"`

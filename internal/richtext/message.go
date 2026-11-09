@@ -47,11 +47,32 @@ func FromMessage(r Resolver, m *slack.Message) Doc {
 		}
 	}
 	for i := range m.Attachments {
-		if b, ok := c.attachment(&m.Attachments[i]); ok {
+		a := &m.Attachments[i]
+		if b, ok := c.attachment(a); ok {
+			if at := b.Att; at != nil {
+				if a.ID != 0 {
+					at.ID = strconv.Itoa(a.ID)
+				}
+				at.BotID = firstNonEmpty(a.BotID, m.BotID)
+				at.LinkedInText = a.FromURL != "" && linksURL(m, a.FromURL)
+			}
 			d.Blocks = append(d.Blocks, b)
 		}
 	}
 	return d
+}
+
+// linksURL reports whether m's text or rich text links u (Slack's
+// shouldShow, djIX: msg.text includes from_url with & as &amp;, or the
+// blocks' link entities match it).
+func linksURL(m *slack.Message, u string) bool {
+	if m.Text != "" && strings.Contains(m.Text, strings.ReplaceAll(u, "&", "&amp;")) {
+		return true
+	}
+	if len(m.Blocks) == 0 {
+		return false
+	}
+	return blocksLink(parseBlocks(m.Blocks), u)
 }
 
 func tombstone(s string) Block {
@@ -209,6 +230,7 @@ func (c *builder) attachment(a *slack.Attachment) (Block, bool) {
 		AuthorIcon: SafeImage(a.AuthorIcon), AuthorLink: SafeURL(a.AuthorLink),
 		FromURL: SafeURL(firstNonEmpty(a.FromURL, a.OriginalURL)),
 	}
+	att.Legacy = true
 	blk := Block{Kind: AttachmentBlock, Att: att}
 	if a.IsMsgUnfurl {
 		c.msgCard(a, att)
@@ -232,6 +254,10 @@ func (c *builder) attachment(a *slack.Attachment) (Block, bool) {
 		att.FooterIcon = SafeImage(a.FooterIcon)
 	} else {
 		att.IsUnfurl = a.ServiceName != "" || a.FromURL != "" || a.OriginalURL != ""
+		att.OriginalURL = SafeURL(a.OriginalURL)
+		att.ServiceURL = SafeURL(a.ServiceURL)
+		att.VideoHTML, att.AudioHTML, att.OtherHTML = a.VideoHTML != "", a.AudioHTML != "", a.OtherHTML != ""
+		att.ImageBytes, att.IsAppUnfurl, att.Hidden = a.ImageBytes, a.IsAppUnfurl, a.Hidden
 		att.ServiceName = a.ServiceName
 		att.ServiceIcon = SafeImage(a.ServiceIcon)
 		att.Pretext = flatten(FromMrkdwn(c.r, a.Pretext))
@@ -240,7 +266,10 @@ func (c *builder) attachment(a *slack.Attachment) (Block, bool) {
 		}
 		att.TitleLink = SafeURL(a.TitleLink)
 		att.Text = c.attachmentText(a)
-		att.Text = append(att.Text, c.blocks(parseBlocks(a.Blocks))...)
+		if kb := c.blocks(parseBlocks(a.Blocks)); len(kb) > 0 {
+			att.Kit, att.KitFrom = true, len(att.Text)
+			att.Text = append(att.Text, kb...)
+		}
 		for _, f := range a.Fields {
 			var ss []Span
 			if f.Title != "" {
@@ -256,7 +285,7 @@ func (c *builder) attachment(a *slack.Attachment) (Block, bool) {
 			blk.FieldShort = append(blk.FieldShort, f.Short)
 		}
 		att.Image = image(a.ImageURL, "", a.ImageWidth, a.ImageHeight)
-		if att.Image == nil {
+		if att.Image == nil || att.VideoHTML {
 			att.Thumb = image(a.ThumbURL, "", a.ThumbWidth, a.ThumbHeight)
 		}
 		att.Footer = flatten(FromMrkdwn(c.r, a.Footer))
@@ -415,4 +444,19 @@ func duration(sec int64) string {
 		s += " " + strconv.FormatInt(m, 10) + "m"
 	}
 	return s
+}
+
+// blocksLink reports whether a link element in bs (at any depth) points
+// at u (8bIy entityTypes.links.matchUrl).
+func blocksLink(bs []bk, u string) bool {
+	for i := range bs {
+		b := &bs[i]
+		if b.Type == "link" && b.URL == u {
+			return true
+		}
+		if blocksLink(b.Elements, u) {
+			return true
+		}
+	}
+	return false
 }

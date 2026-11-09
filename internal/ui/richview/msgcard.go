@@ -31,6 +31,14 @@ func paintIcon(ops *op.Ops, name string, f *frag) {
 	icons.GetSlack(name)(gtx, unit.Dp(f.size), f.col) // Slack icon names ("message")
 }
 
+// paintIconAt paints icon name (a Slack or Clack name) filling r in col.
+func paintIconAt(ops *op.Ops, name string, r image.Rectangle, col color.NRGBA) {
+	gtx := layout.Context{Ops: ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Exact(r.Size())}
+	defer op.Offset(r.Min).Push(ops).Pop()
+	icons.GetSlack(name)(gtx, unit.Dp(r.Dx()), col)
+}
+
 // addIcon adds an inline icon of px at the flow's position.
 func (l *lay) addIcon(name string, px int, k faceKey, col color.NRGBA, dc, tg int16) {
 	p0, p1 := l.plainAdd("")

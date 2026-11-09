@@ -43,6 +43,13 @@ type Handler interface {
 	Button(b richtext.Button)
 }
 
+// AttachmentRemover is a Handler that can remove a message's link
+// preview (the unfurl's remove button): Slack's "Remove preview?" dialog,
+// then chat.deleteAttachment.
+type AttachmentRemover interface {
+	RemoveAttachment(id string)
+}
+
 // Elements draws Block Kit interactive elements as live widgets
 // (internal/ui/blockkit). With Options.Elements set, every run of
 // elements (an actions block, a section accessory, an attachment's action
@@ -261,6 +268,9 @@ type Options struct {
 	// views (never in a channel). Needs Channel and TS: expanding is kept
 	// for the session under channel/ts/block_id.
 	Truncate bool
+	// Own: the viewer sent the message (and it isn't a pinned_item), so
+	// its link previews get Slack's remove button (canDelete, 4BNQ).
+	Own bool
 }
 
 // lightEmbolden is the extra outline (px) for glyph color c at scale pxPerDp.

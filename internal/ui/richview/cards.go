@@ -86,15 +86,22 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 	if a.MsgCard {
 		return l.msgCard(b, x, y, w)
 	}
-	if a.IsUnfurl && !a.IsShare && len(b.Fields) == 0 && len(b.Buttons) == 0 && len(b.Children) == 0 {
-		pf := uipref.Get()
-		media := a.Image != nil || a.Thumb != nil || isVideoUnfurl(a)
-		// Messages & media > Inline media & links: expand_non_media_attachments
-		// (text previews of linked websites), expand_inline_imgs (their images).
-		if (!media && pf.NoTextPreviews) || (media && pf.NoInlineImgs && pf.NoTextPreviews) {
-			return 0
+	if !shown(a) {
+		return 0
+	}
+	switch kindOf(b) {
+	case akGeneric, akSocial, akVideo, akMusic, akFlickr, akImageCard:
+		return l.v3Group([]*richtext.Block{b}, x, y, w)
+	case akV2:
+		return l.v2Card(b, x, y, w)
+	case akOld:
+		if a.IsUnfurl && !a.IsShare && len(b.Fields) == 0 && len(b.Buttons) == 0 && len(b.Children) == 0 {
+			// video and call blocks
+			if uipref.Get().NoTextPreviews && a.Image == nil && a.Thumb == nil && !isVideoUnfurl(a) {
+				return 0
+			}
+			return l.unfurl(a, x, y, w)
 		}
-		return l.unfurl(a, x, y, w)
 	}
 	p := &l.st.Palette
 	y0 := y
@@ -127,12 +134,32 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 			cy += h
 		}
 	}
-	if a.ServiceName != "" && !a.IsShare {
+	if a.Legacy && !a.IsShare && hasAuthor(a) {
+		// MessageAttachmentGeneric v1's author row: the icon is service_icon
+		// || author_icon, the name service_name || author_name (linked to
+		// service_url || author_link), the subname author_subname, or the
+		// author's name when the service's is shown.
+		name := firstNonEmpty(a.ServiceName, a.AuthorName)
+		sub := a.AuthorSubname
+		if a.ServiceName != "" && a.AuthorName != "" {
+			sub = a.AuthorName
+		}
+		if sub != "" {
+			name += "  " + sub
+		}
+		var tg int16 = -1
+		if u := firstNonEmpty(a.ServiceURL, a.AuthorLink); u != "" {
+			tg = l.d.addTarget(target{kind: tLink, url: u, underline: true})
+		}
+		ct := l.enter(attAuthorClass)
+		row(l.iconRow(firstNonEmpty(a.ServiceIcon, a.AuthorIcon), name, cx, cy, cw, l.dp(16), font.Bold, 15, p.Text, tg))
+		l.leave(ct)
+	} else if a.ServiceName != "" && !a.IsShare {
 		ct := l.enter(attServiceClass)
 		row(l.iconRow(a.ServiceIcon, a.ServiceName, cx, cy, cw, l.dp(16), font.Black, 15, p.Text, l.d.addTarget(target{kind: tLink, url: a.FromURL, underline: true})))
 		l.leave(ct)
 	}
-	if a.AuthorName != "" {
+	if a.AuthorName != "" && !(a.Legacy && !a.IsShare) {
 		var tg int16 = -1
 		if a.AuthorLink != "" {
 			tg = l.d.addTarget(target{kind: tLink, url: a.AuthorLink, underline: true})
@@ -174,6 +201,11 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 		k := a
 		text := a.Text
 		maxC, maxN := attMaxChars, attMaxNewlines
+		if a.Legacy && !a.IsShare {
+			// AttachmentText (gZUk): maxCharacters 700 and maxNewlines 5
+			// when the caller gives none, with Show more / Show less
+			maxC = shareMaxChars
+		}
 		if a.IsShare {
 			maxC, maxN = shareMaxChars, shareMaxNewlines
 		}
@@ -197,10 +229,27 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 		row(l.fields(b.Fields, b.FieldShort, cx, cy, cw))
 		l.leave(ct)
 	}
-	if a.Image != nil {
+	if a.Image != nil && !a.Legacy {
 		cy += l.dp(6)
 		tg := l.d.addTarget(target{kind: tImage, img: a.Image})
 		row(l.image(a.Image, cx, cy, min(cw, l.dp(360)), l.dp(360), l.dp(8), tg))
+	} else if a.Image != nil && mediaExpanded() {
+		// AttachmentMedia (BAnD): getAdjustedImageDimensions at max
+		// 360x360, floored; 5px over the image container
+		cy += l.dp(5)
+		tg := l.d.addTarget(target{kind: tImage, img: a.Image})
+		iw, ih := adjustedDims(a.Image.W, a.Image.H, 360, 360)
+		if a.Image.W <= 0 || a.Image.H <= 0 {
+			row(l.image(a.Image, cx, cy, min(cw, l.dp(360)), l.dp(360), l.dp(8), tg))
+		} else {
+			r := image.Rect(cx, cy, cx+min(cw, l.dp(float32(iw))), cy+l.dp(float32(ih)))
+			if r.Dx() < l.dp(float32(iw)) { // narrower than the image: keep its aspect
+				r.Max.Y = cy + r.Dx()*ih/max(iw, 1)
+			}
+			l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: a.Image.URL, radii: [4]int{l.dp(8), l.dp(8), l.dp(8), l.dp(8)}, target: tg, px: max(r.Dx(), r.Dy())})
+			l.d.hits = append(l.d.hits, hit{r: r, t: tg})
+			row(r.Dy())
+		}
 	}
 	if len(b.Children) > 0 {
 		cy += l.dp(4)
