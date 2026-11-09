@@ -15,7 +15,7 @@ import (
 // With MENU_KEYS_SHOTS_DIR set (the menu-keys workflow, under xvfb) the
 // message context menu is saved with macOS hints (⌘C, ⇧⌘S) and with
 // Windows/Linux ones (Ctrl+C, Ctrl+Shift+S), light and dark, plus the
-// global menus' hints and the text selection menu.
+// text selection menu and the Create menu (⌘N, ⇧⌘N).
 func TestMenuKeysShots(t *testing.T) {
 	dir := os.Getenv("MENU_KEYS_SHOTS_DIR")
 	if dir == "" {
@@ -49,6 +49,7 @@ func TestMenuKeysShots(t *testing.T) {
 		for _, dark := range []bool{false, true} {
 			if a.th.Dark != dark {
 				a.ToggleDark()
+				e.settle(1500 * time.Millisecond) // the theme reaches every pane
 			}
 			mode := "light"
 			if dark {
@@ -67,11 +68,8 @@ func TestMenuKeysShots(t *testing.T) {
 			a.ShowOverlay(popups.NewTextSelectionMenu(a, image.Pt(520, 200), "synthetic words"))
 			shot("2-text-selection-menu")
 			closeAll()
-			a.openTeamMenu(image.Pt(80, 60))
-			shot("3-team-menu")
-			closeAll()
 			a.openCreateMenu(image.Rect(8, 120, 44, 156))
-			shot("4-create-menu")
+			shot("3-create-menu")
 		}
 	}
 	closeAll()
