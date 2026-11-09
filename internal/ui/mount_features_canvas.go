@@ -55,7 +55,7 @@ func (a *App) newCanvasView(id string, mode canvasview.Mode) *canvasview.View {
 		Menu: func(items []canvasview.MenuItem) {
 			var ms []MenuItem
 			for _, it := range items {
-				ms = append(ms, MenuItem{Label: it.Label, Icon: it.Icon, Do: it.Do})
+				ms = append(ms, MenuItem{Label: it.Label, Icon: it.Icon, Divider: it.Divider, Disabled: it.Disabled, Checked: it.Checked, Do: it.Do})
 			}
 			a.menu(a.PointerPos(), ms)
 		},
@@ -79,6 +79,7 @@ func (a *App) newCanvasView(id string, mode canvasview.Mode) *canvasview.View {
 		}
 	case canvasview.Tab:
 		act.FullView = func() { a.OpenCanvasFull(id) }
+		act.SideView = func() { a.OpenCanvas(id) } // "Open in split view"
 	}
 	if canvasShare != nil {
 		act.Share = func(id string) { canvasShare(a, id) }

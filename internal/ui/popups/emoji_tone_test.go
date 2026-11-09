@@ -9,15 +9,14 @@ import (
 // tone in use, like Slack's: toneable emoji come back as
 // "name::skin-tone-N" with that tone's image, others unchanged.
 func TestSearchEmojiSkinTone(t *testing.T) {
-	epFrecMu.Lock()
-	epFrecLoadLocked()
-	was := epFrec.SkinTone
-	epFrec.SkinTone = 3
-	epFrecMu.Unlock()
+	epToneMu.Lock()
+	was := epToneSet
+	epToneSet = 3
+	epToneMu.Unlock()
 	defer func() {
-		epFrecMu.Lock()
-		epFrec.SkinTone = was
-		epFrecMu.Unlock()
+		epToneMu.Lock()
+		epToneSet = was
+		epToneMu.Unlock()
 	}()
 	epSharedMu.Lock()
 	epShared.setFrecency(nil)

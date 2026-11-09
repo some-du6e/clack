@@ -117,6 +117,7 @@ type actDesc struct {
 	foot      string // "Mention in #general"
 	footIcon  string
 	footEmoji string // reaction emoji image (replaces footIcon)
+	footAlt   string // the reaction's ":name:", drawn when footEmoji is ""
 	footBold  bool   // footer is a bold label ("App")
 	reacted   bool   // the pill is "Reacted" followed by the emoji
 	pill      bool   // the row has a context pill (its destination is known)
@@ -1052,6 +1053,7 @@ func (v *Activity) describe(it *core.ActivityItem, refs map[string]core.ConvRef)
 	}
 	if d.reacted && it.Reaction != nil {
 		d.footEmoji = it.Reaction.URL
+		d.footAlt = actEmojiText(it.Reaction.Name)
 	}
 	d.footBold = dest == destApp && d.foot == "App"
 	d.hay = strings.ToLower(d.name + "\n" + d.prev + "\n" + d.title + "\n" + d.foot)
@@ -2402,10 +2404,40 @@ func (v *Activity) actPill(gtx C, d *actDesc, flex bool) D {
 				if d.footEmoji != "" {
 					return v.emojiImg(gtx, d.footEmoji, 16)
 				}
+				if d.footAlt != "" {
+					return v.emojiAlt(gtx, d.footAlt, 16)
+				}
 				return v.icon(gtx, icons.Slack("reaction"), 16, v.p.Muted)
 			})
 		}),
 	)
+}
+
+// actEmojiText is the text aJri gives the reaction's Emoji (":name:"),
+// which vbPY keeps as its displayText (an English name is its own
+// localized one).
+func actEmojiText(name string) string {
+	if name == "" {
+		return ""
+	}
+	return ":" + strings.Trim(name, ":") + ":"
+}
+
+// emojiAlt is vbPY's Emoji with no image URL (a custom emoji the store
+// doesn't have): renderEmojiFallback still draws the <img>, with no src
+// and alt ":name:", and Chrome paints the alt text from the top left of
+// the size x size box (c-emoji__small, overflow hidden), clipped. A
+// ":tada_custom:" reaction reads "Reacted :ta".
+func (v *Activity) emojiAlt(gtx C, alt string, size unit.Dp) D {
+	sz := gtx.Dp(size)
+	lg := gtx
+	lg.Constraints = layout.Constraints{Max: image.Pt(1<<20, 1<<20)}
+	m := op.Record(gtx.Ops)
+	v.label(lg, 13, wReg, v.p.Muted, alt)
+	call := m.Stop()
+	defer clip.Rect{Max: image.Pt(sz, sz)}.Push(gtx.Ops).Pop()
+	call.Add(gtx.Ops)
+	return D{Size: image.Pt(sz, sz)}
 }
 
 // actBody is ActivityRowContentDetails' message: the subtext ("You: ")

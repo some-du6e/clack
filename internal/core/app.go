@@ -65,6 +65,7 @@ type App struct {
 	expGroups  map[string]string // every experiment group (experiments.getByUser)
 	icon       teamIconState     // the rail's workspace icon (team_icon.go)
 	rxn        reactState        // the viewer's reactions in flight (reactions.go)
+	frec       frecencyState     // the frecency pref's save throttle and Frequently Used cache (frecency.go)
 	drafts     draftCache        // the viewer's server drafts (drafts.go), memory only
 	dnd        dndState          // the viewer's Do Not Disturb (dnd.go)
 	selected   string            // the open conversation (SetSelected, preview.go)

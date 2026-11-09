@@ -346,6 +346,9 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 		fs.face = font.Font{Typeface: l.st.Mono}
 		fs.size = l.sp(12)
 		fs.lineH = l.dp(18)
+		if l.st.PreLine > 0 {
+			fs.lineH = l.dp(l.st.PreLine)
+		}
 		fs.pre = true
 		fs.emoji = l.dp(16)
 		fs.col = p.Text

@@ -1,0 +1,67 @@
+name: emoji-picker
+# The emoji picker and Slack's frecency store (internal/frecency, core's
+# Frequently Used, the picker's look): the frecency/Frequently Used tests,
+# the fakeslack round trip (users.prefs.get/set frecency), and screenshots
+# of the whole picker in light and dark, idle and hovering, through Gio's
+# GPU renderer (Mesa llvmpipe) with the emoji images from Slack's public
+# static CDN (a.slack-edge.com, no cookie). Nothing here talks to a real
+# Slack workspace.
+on:
+  push:
+    paths:
+      - "internal/frecency/**"
+      - "internal/core/frecency*.go"
+      - "internal/emoji/**"
+      - "internal/ui/popups/emoji*"
+      - "internal/ui/popups/style.go"
+      - "internal/ui/messages/quickreact*"
+      - "internal/fakeslack/fakeslack.go"
+      - ".github/workflows/emoji-picker.yml"
+  workflow_dispatch:
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb libgl1-mesa-dri libegl-mesa0
+
+permissions:
+  contents: read
+
+jobs:
+  emoji-picker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: frecency, Frequently Used, fakeslack round trip
+        run: |
+          set -o pipefail
+          mkdir -p dist
+          go test -count=1 -v ./internal/frecency 2>&1 | tee dist/emoji-picker-tests.log
+          go test -count=1 -v -run 'TestFrecency|TestEmojiFrecency' ./internal/core 2>&1 | tee -a dist/emoji-picker-tests.log
+          go test -count=1 -v -run 'TestEmoji|TestSearchEmoji' ./internal/ui/popups 2>&1 | tee -a dist/emoji-picker-tests.log
+          go test -count=1 -v -run 'TestQuick' ./internal/ui/messages 2>&1 | tee -a dist/emoji-picker-tests.log
+      - name: picker screenshots (light, dark; idle, hover)
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          CLACK_EMOJI_CDN: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          EMOJI_SHOTS_DIR: ${{ github.workspace }}/dist/emoji-picker-shots
+        run: |
+          set -o pipefail
+          mkdir -p "$EMOJI_SHOTS_DIR"
+          xvfb-run -a go test -p 1 -count=1 -v -run 'TestEmojiPickerShots|TestEmojiTabRow' ./internal/ui/popups 2>&1 | tee dist/emoji-picker-shots.log
+          ls -la "$EMOJI_SHOTS_DIR"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: emoji-picker-shots
+          path: |
+            dist/emoji-picker-shots
+            dist/*.log

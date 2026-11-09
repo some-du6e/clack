@@ -369,11 +369,13 @@ func (a *Async) run(open func() (io.WriteCloser, error), warn func(error)) {
 			}
 		}
 		a.mu.Unlock()
-		for _, c := range acks {
-			close(c)
-		}
+		// Warn before releasing Flush/Close: a Close that has returned
+		// has said why there's no file (Clack may exit right after it).
 		if warn != nil {
 			warn(err)
+		}
+		for _, c := range acks {
+			close(c)
 		}
 		return
 	}

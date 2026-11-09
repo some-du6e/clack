@@ -224,6 +224,10 @@ func (a *App) RefreshPrefs(ctx context.Context) (Prefs, error) {
 
 // installPrefs keeps users.prefs.get's map and its parsed Prefs.
 func (a *App) installPrefs(raw map[string]json.RawMessage) {
+	a.S.RLock()
+	old := a.S.RawPrefs
+	a.S.RUnlock()
+	a.frecencyPrefsChanged(old, raw)
 	a.S.SetRawPrefs(raw)
 	a.S.SetPrefs(store.ParsePrefs(raw))
 }

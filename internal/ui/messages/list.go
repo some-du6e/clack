@@ -712,6 +712,10 @@ func (s *listState) react(h Host, r *row, name string, add bool, self string) {
 				if a.Add != nil {
 					on = *a.Add
 				}
+				if on && !a.SkipFrecencyRecord {
+					// recordEmojiFrecencyEvent {emojiName, text: ""}
+					app.RecordEmojiFrecency(a.Name, "")
+				}
 				return s.submitReaction(ctx, h, app, a.Key, a.Name, on, self)
 			})
 		if err != nil {

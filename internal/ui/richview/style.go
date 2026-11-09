@@ -207,6 +207,14 @@ type Style struct {
 	// browser's heavier text rendering; 0 disables it.
 	Embolden float32
 
+	// BoldWeight is the weight of Bold text (0: font.Bold). Canvas headings
+	// and titles are Black (--doc-theme-header-weight:900 under Slack's
+	// use-slack-font).
+	BoldWeight font.Weight
+	// PreLine is a code block's line height in Dp (0: Slack's message
+	// 18px; canvases use --text-code-line-height, 20px).
+	PreLine float32
+
 	gen   uint32 // from styleGens on SetPalette/Invalidate; Views re-record when it changes
 	words map[wordKey]*shaped
 	prev  map[wordKey]*shaped // previous generation (see word)

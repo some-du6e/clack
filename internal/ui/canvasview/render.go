@@ -6,29 +6,59 @@ import (
 	"net/url"
 	"strings"
 
+	"gioui.org/f32"
+	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/clip"
+	"gioui.org/op/paint"
 	"gioui.org/text"
+	"gioui.org/unit"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/canvas"
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
 
-// Canvas typography (Slack's canvas CSS: 15px body on a 24px line, bold
-// headings at three sizes, a large title).
+// Canvas typography: Slack's canvas-controller CSS (the Quip editor's
+// stylesheet, canvas-controller-d97a8e501e2ab778.css) under
+// body.use-slack-font: Lato 15px on a 22px line; headings
+// (--heading-N-font-size/line-height) and the title section
+// (data-section-style 48) in --doc-theme-header-weight:900.
 const (
-	bodySize, bodyLine   = 15, 24
-	h1Size, h1Line       = 26, 34
-	h2Size, h2Line       = 21, 28
-	h3Size, h3Line       = 17, 24
-	titleSize, titleLine = 32, 40
-	indentDp             = 26 // per list level
+	bodySize, bodyLine   = 15, 22
+	h1Size, h1Line       = 22, 30
+	h2Size, h2Line       = 18, 27
+	h3Size, h3Line       = 15, 22
+	titleSize, titleLine = 28, 34
+	codeLine             = 20 // --text-code-line-height
+	// list items: li[data-indent=N] margin-left 30px per level; the marker
+	// container is a 24px pseudo-before plus 4px padding-right
+	indentDp = 30
+	markerDp = 28
+	itemGap  = 6 // --list-item-bottom-offset between items
 )
+
+// docText is the document's text colour (.document-text-color-default:
+// rgb(var(--quipUserTextPrimary)): #333333 light, #e6e6e6 under
+// body.dark-theme), not Slack's message ink.
+func docText(dark bool) color.NRGBA {
+	if dark {
+		return color.NRGBA{R: 0xe6, G: 0xe6, B: 0xe6, A: 0xff}
+	}
+	return color.NRGBA{R: 0x33, G: 0x33, B: 0x33, A: 0xff}
+}
+
+// placeholderText is .editor-default-section-text-overlay's colour.
+func placeholderText(dark bool) color.NRGBA {
+	if dark {
+		return color.NRGBA{R: 0x9a, G: 0x9b, B: 0x9e, A: 0xff}
+	}
+	return color.NRGBA{R: 0x77, G: 0x75, B: 0x7a, A: 0xff}
+}
 
 // styleSet is one richview.Style per text size, per window shaper.
 type styleSet struct {
@@ -36,6 +66,7 @@ type styleSet struct {
 	dark                        bool
 	gen                         uint64
 	body, h1, h2, h3, title, sm *richview.Style
+	ph                          *richview.Style // the empty canvas's placeholder
 }
 
 func (s *styleSet) sync(th *theme.Theme, h Host) {
@@ -47,27 +78,38 @@ func (s *styleSet) sync(th *theme.Theme, h Host) {
 	if im := h.Images(); im != nil {
 		imgs = im
 	}
-	mk := func(size, line float32) *richview.Style {
+	ink := docText(th.Dark)
+	mk := func(size, line float32, heading bool) *richview.Style {
 		st := richview.NewStyle(th.Shaper, imgs, richview.LightPalette())
 		st.Face = theme.Typeface
 		st.EmojiURL = th.EmojiURL
 		st.TextSize, st.LineHeight = size, line
-		st.Embolden = theme.BodyEmboldenFor(theme.LightPalette.Fg)
+		st.PreLine = codeLine
+		if heading {
+			st.BoldWeight = font.Black
+		}
+		p := richview.LightPalette()
 		if th.Dark {
-			st.SetPalette(richview.DarkPalette())
-			st.Embolden = theme.BodyEmboldenFor(theme.DarkPalette.Fg)
+			p = richview.DarkPalette()
 		}
-		if p, ok := richview.Themed(th); ok { // stylesheet theme tokens
-			st.SetPalette(p)
+		if tp, ok := richview.Themed(th); ok { // stylesheet theme tokens
+			p = tp
 		}
+		p.Text = ink
+		st.SetPalette(p)
+		st.Embolden = theme.BodyEmboldenFor(ink)
 		return st
 	}
-	s.body = mk(bodySize, bodyLine)
-	s.h1 = mk(h1Size, h1Line)
-	s.h2 = mk(h2Size, h2Line)
-	s.h3 = mk(h3Size, h3Line)
-	s.title = mk(titleSize, titleLine)
-	s.sm = mk(13, 18)
+	s.body = mk(bodySize, bodyLine, false)
+	s.h1 = mk(h1Size, h1Line, true)
+	s.h2 = mk(h2Size, h2Line, true)
+	s.h3 = mk(h3Size, h3Line, true)
+	s.title = mk(titleSize, titleLine, true)
+	s.sm = mk(13, 18, false)
+	s.ph = mk(bodySize, bodyLine, false)
+	pp := s.ph.Palette
+	pp.Text = placeholderText(th.Dark)
+	s.ph.SetPalette(pp)
 }
 
 func (s *styleSet) forKind(k canvas.Kind) *richview.Style {
@@ -317,32 +359,66 @@ func (v *View) spans(sp []richtext.Span) []richtext.Span {
 	return out
 }
 
-// space is the gap above a block (Slack's canvas section margins).
-func space(gtx layout.Context, k canvas.Kind, first bool) int {
-	if first {
-		return 0
-	}
+// margins are a block's section margins in Dp (canvas-controller CSS):
+// paragraphs 4/4 (--paragraph-margin-*), headings 28/6, 24/2, 20/2
+// (--heading-N-margin-*), a list section 8/8 (section[data-section-type=1]),
+// a blockquote 4/12 (--blockquote-margin-bottom), and everything else
+// .document-content .section's default 20/20.
+func margins(k canvas.Kind) (top, bottom int) {
 	switch k {
+	case canvas.Paragraph:
+		return 4, 4
 	case canvas.Heading1:
-		return gtx.Dp(22)
+		return 28, 6
 	case canvas.Heading2:
-		return gtx.Dp(18)
+		return 24, 2
 	case canvas.Heading3:
-		return gtx.Dp(14)
+		return 20, 2
 	case canvas.Bullet, canvas.Numbered, canvas.Check:
-		return gtx.Dp(2)
-	case canvas.Code, canvas.Table, canvas.Image, canvas.Quote, canvas.Callout, canvas.Columns, canvas.File, canvas.Embed:
-		return gtx.Dp(10)
-	case canvas.Divider:
-		return gtx.Dp(12)
+		return 8, 8
+	case canvas.Quote:
+		return 4, 12
 	}
-	return gtx.Dp(4)
+	return 20, 20
 }
 
-// layoutBlock draws b in gtx.Constraints.Max.X and returns its height.
-func (v *View) layoutBlock(gtx layout.Context, b *blk, first bool) layout.Dimensions {
+// titleMargin is the title section's margin-bottom (--title-margin-bottom).
+const titleMargin = 20
+
+// gap is the space between prev and b, collapsed as CSS block margins
+// collapse (the larger of prev's bottom and b's top). Items of one list
+// are 6px apart (--list-item-bottom-offset); the first section has no top
+// margin (body:not(.mobile) .document-content>.section[data-section-type=0]).
+// prev nil: b is first; afterTitle: b follows the title section.
+func gap(gtx layout.Context, prev, b *blk, afterTitle bool) int {
+	if b == nil || b.b == nil {
+		return 0
+	}
+	if prev != nil && prev.b == nil {
+		prev = nil
+	}
+	top, _ := margins(b.b.Kind)
+	switch {
+	case prev == nil && afterTitle:
+		return gtx.Dp(unit.Dp(max(top, titleMargin)))
+	case prev == nil:
+		return 0
+	case prev.b.Kind.IsList() && prev.b.Kind == b.b.Kind:
+		return gtx.Dp(itemGap)
+	}
+	_, pb := margins(prev.b.Kind)
+	return gtx.Dp(unit.Dp(max(top, pb)))
+}
+
+// hidden: Slack draws an unedited default-content section transparent
+// (.default-content:not(.customized-default-content)>.content{opacity:0});
+// it keeps its line.
+func hidden(b *blk) bool { return b.b.Kind == canvas.Paragraph && b.b.Default }
+
+// layoutBlock draws b top pixels down in gtx.Constraints.Max.X and
+// returns its height with the gap.
+func (v *View) layoutBlock(gtx layout.Context, b *blk, top int) layout.Dimensions {
 	w := gtx.Constraints.Max.X
-	top := space(gtx, b.b.Kind, first)
 	if v.edit.editing(b) {
 		h := v.edit.layoutEditor(gtx, v, b, top, w)
 		return layout.Dimensions{Size: image.Pt(w, h)}
@@ -353,14 +429,25 @@ func (v *View) layoutBlock(gtx layout.Context, b *blk, first bool) layout.Dimens
 	h := 0
 	switch k := b.b.Kind; {
 	case k == canvas.Divider:
-		theme.Fill(gtx, image.Rect(0, gtx.Dp(8), w, gtx.Dp(9)), c.Border)
-		h = gtx.Dp(17)
+		// hr: 20px tall, its :before a 1px line at 50% in
+		// rgba(var(--quipUiColorGray10), .2)
+		ink := docText(th.Dark)
+		ink.A = 0x33
+		theme.Fill(gtx, image.Rect(0, gtx.Dp(9), w, gtx.Dp(10)), richview.Over(ink, c.Bg))
+		h = gtx.Dp(20)
 	case k.IsList():
 		h = v.layoutItem(gtx, b, w)
 	case k == canvas.Quote:
-		x := gtx.Dp(16)
-		h = v.layoutKids(gtx, b.kids, x, w-x)
-		theme.RRect(gtx, image.Rect(0, 0, gtx.Dp(4), h), gtx.Dp(2), c.QuoteBar)
+		// section[data-section-style=16]>.content: padding 3px 0 3px 18px;
+		// its :before bar 4px wide, radius 3, 4px in from top and bottom
+		x := gtx.Dp(18)
+		func() {
+			defer op.Offset(image.Pt(0, gtx.Dp(3))).Push(gtx.Ops).Pop()
+			h = v.layoutKids(gtx, b.kids, x, w-x) + gtx.Dp(6)
+		}()
+		if h > gtx.Dp(8) {
+			theme.RRect(gtx, image.Rect(0, gtx.Dp(4), gtx.Dp(4), h-gtx.Dp(4)), gtx.Dp(3), c.QuoteBar)
+		}
 	case k == canvas.Callout:
 		pad := gtx.Dp(16)
 		ex := pad
@@ -371,7 +458,7 @@ func (v *View) layoutBlock(gtx layout.Context, b *blk, first bool) layout.Dimens
 		kh := v.layoutKids(gtx, b.kids, ex, w-ex-pad)
 		if b.emoji != nil {
 			func() {
-				defer op.Offset(image.Pt(pad, pad)).Push(gtx.Ops).Pop()
+				defer op.Offset(image.Pt(pad, 0)).Push(gtx.Ops).Pop() // the recording is drawn pad down
 				g := gtx
 				g.Constraints = layout.Constraints{Max: image.Pt(gtx.Dp(40), gtx.Dp(30))}
 				b.emoji.Layout(g, v.styles.body, v.handler)
@@ -386,10 +473,10 @@ func (v *View) layoutBlock(gtx layout.Context, b *blk, first bool) layout.Dimens
 		}()
 	case k == canvas.Columns:
 		n := len(b.cols)
-		gap := gtx.Dp(20)
-		cw := (w - gap*(n-1)) / max(1, n)
+		gp := gtx.Dp(20)
+		cw := (w - gp*(n-1)) / max(1, n)
 		for i, col := range b.cols {
-			hh := v.layoutKids(gtx, col, i*(cw+gap), cw)
+			hh := v.layoutKids(gtx, col, i*(cw+gp), cw)
 			h = max(h, hh)
 		}
 	default:
@@ -402,8 +489,13 @@ func (v *View) layoutBlock(gtx layout.Context, b *blk, first bool) layout.Dimens
 		if k == canvas.Image {
 			g.Constraints.Max.X = min(w, gtx.Dp(720))
 		}
-		d := b.rv.Layout(g, st, v.handler)
-		h = d.Size.Y
+		if hidden(b) {
+			m := op.Record(gtx.Ops) // measured, not drawn
+			h = b.rv.Layout(g, st, v.handler).Size.Y
+			m.Stop()
+		} else {
+			h = b.rv.Layout(g, st, v.handler).Size.Y
+		}
 		if v.edit.canEdit(v) { // other kinds: a click explains they can't be edited yet
 			v.edit.textArea(gtx, v, b, image.Rect(0, 0, w, h))
 		}
@@ -419,7 +511,11 @@ func (v *View) layoutKids(gtx layout.Context, kids []*blk, x, w int) int {
 			defer op.Offset(image.Pt(x, y)).Push(gtx.Ops).Pop()
 			g := gtx
 			g.Constraints = layout.Constraints{Min: image.Pt(w, 0), Max: image.Pt(w, gtx.Constraints.Max.Y)}
-			d := v.layoutBlock(g, k, i == 0)
+			var prev *blk
+			if i > 0 {
+				prev = kids[i-1]
+			}
+			d := v.layoutBlock(g, k, gap(gtx, prev, k, false))
 			y += d.Size.Y
 		}()
 	}
@@ -430,10 +526,8 @@ func (v *View) layoutKids(gtx layout.Context, kids []*blk, x, w int) int {
 // the gutter at its level, then its text.
 func (v *View) layoutItem(gtx layout.Context, b *blk, w int) int {
 	x := gtx.Dp(indentDp) * b.b.Level
-	gut := gtx.Dp(indentDp)
-	tx := x + gut
 	lineH := gtx.Dp(bodyLine)
-	v.drawMarker(gtx, b, x, lineH)
+	tx := x + v.drawMarker(gtx, b, x, lineH)
 	g := gtx
 	g.Constraints = layout.Constraints{Max: image.Pt(max(1, w-tx), gtx.Constraints.Max.Y)}
 	h := lineH
@@ -450,48 +544,57 @@ func (v *View) layoutItem(gtx layout.Context, b *blk, w int) int {
 	return h
 }
 
-// drawMarker draws a list item's bullet, number or checkbox in the gutter
-// at x (one indentDp wide), centred on the first line (lineH).
-func (v *View) drawMarker(gtx layout.Context, b *blk, x, lineH int) {
+// bullets are Quip's markers per level (section[data-section-style=5]
+// li[data-indent=N] .pseudo-before:before: ● ○ ■ □, repeating).
+var bullets = [...]string{"\u25cf", "\u25cb", "\u25a0", "\u25a1"}
+
+// drawMarker draws a list item's bullet, number or checkbox at x and
+// returns the marker container's width: the marker centred in a box at
+// least 24px wide (numbers widen it), plus 4px padding-right. The text
+// colour is the document's (.list-item-marker-container{color:
+// var(--editor-document-text-color)}).
+func (v *View) drawMarker(gtx layout.Context, b *blk, x, lineH int) int {
 	th := v.h.Theme()
 	c := &th.C
-	gut := gtx.Dp(indentDp)
+	ink := docText(th.Dark)
+	box := gtx.Dp(24)
 	switch b.b.Kind {
-	case canvas.Bullet:
-		marks := []string{"•", "◦", "▪"}
-		m := marks[b.b.Level%3]
+	case canvas.Bullet, canvas.Numbered:
+		m := bullets[b.b.Level%len(bullets)]
+		if b.b.Kind == canvas.Numbered {
+			m = ordinal(b.b.Number, b.b.Level) + "."
+		}
 		mw := th.Measure(gtx, bodySize, theme.Regular, m)
-		at(gtx, image.Pt(x+(gut-mw)/2-gtx.Dp(3), 0), image.Pt(mw+2, lineH), func(gtx layout.Context) layout.Dimensions {
+		bw := max(box, mw)
+		at(gtx, image.Pt(x+(bw-mw)/2, 0), image.Pt(mw+2, lineH), func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, lineH, func(gtx layout.Context) layout.Dimensions {
-				return th.Label(gtx, bodySize, theme.Regular, c.Fg, m)
+				return th.Label(gtx, bodySize, theme.Regular, ink, m)
 			})
 		})
-	case canvas.Numbered:
-		m := ordinal(b.b.Number, b.b.Level) + "."
-		mw := th.Measure(gtx, bodySize, theme.Regular, m)
-		at(gtx, image.Pt(x+gut-mw-gtx.Dp(6), 0), image.Pt(mw+2, lineH), func(gtx layout.Context) layout.Dimensions {
-			return vcenter(gtx, lineH, func(gtx layout.Context) layout.Dimensions {
-				return th.Label(gtx, bodySize, theme.Regular, c.FgMuted, m)
-			})
-		})
+		return bw + gtx.Dp(4)
 	case canvas.Check:
-		bs := gtx.Dp(16)
-		r := image.Rect(x+(gut-bs)/2-gtx.Dp(2), (lineH-bs)/2, x+(gut-bs)/2-gtx.Dp(2)+bs, (lineH-bs)/2+bs)
+		// li.slackified-checkbox label: 14px, 5px in, radius 2, a 1px
+		// #7c7a7f border (#bbbabb dark) on --dt_color-base-sec; checked:
+		// --dt_color-base-inv-hgl-2 with a 2px check in --dt_color-base-pry
+		bs := gtx.Dp(14)
+		r := image.Rect(x+gtx.Dp(5), gtx.Dp(5), x+gtx.Dp(5)+bs, gtx.Dp(5)+bs)
 		toggled := b.check.Clicked(gtx) // before Layout, which drains a Clickable's events
 		at(gtx, r.Min, r.Size(), func(gtx layout.Context) layout.Dimensions {
 			s := gtx.Constraints.Max
 			editable := v.edit.canEdit(v)
 			if b.b.Checked {
-				theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(4), c.Accent)
-				at(gtx, image.Pt(gtx.Dp(1), gtx.Dp(1)), image.Pt(s.X-gtx.Dp(2), s.Y-gtx.Dp(2)), func(gtx layout.Context) layout.Dimensions {
-					return icons.Get("check")(gtx, 14, color.NRGBA{R: 255, G: 255, B: 255, A: 255})
-				})
+				theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(2), c.Link)
+				checkMark(gtx, c.Bg)
 			} else {
-				col := c.FgMuted
-				if editable && b.check.Hovered() {
-					col = c.Fg
+				edge := color.NRGBA{R: 0x7c, G: 0x7a, B: 0x7f, A: 0xff}
+				if th.Dark {
+					edge = color.NRGBA{R: 0xbb, G: 0xba, B: 0xbb, A: 0xff}
 				}
-				theme.Border(gtx, image.Rectangle{Max: s}, gtx.Dp(4), gtx.Dp(1)+gtx.Dp(1)/2, col)
+				theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(2), c.BgInset)
+				theme.Border(gtx, image.Rectangle{Max: s}, gtx.Dp(2), gtx.Dp(1), edge)
+				if editable && b.check.Hovered() { // .checkbox:hover+label:after
+					checkMark(gtx, c.BorderStrong)
+				}
 			}
 			if !editable {
 				return layout.Dimensions{Size: s}
@@ -501,7 +604,22 @@ func (v *View) drawMarker(gtx layout.Context, b *blk, x, lineH int) {
 		if toggled {
 			v.edit.toggleCheck(v, b)
 		}
+		return box + gtx.Dp(4)
 	}
+	return 0
+}
+
+// checkMark draws the checkbox's tick (label:after: a 10x6 box's left and
+// bottom 2px borders turned -45deg, 1px left and 2px down in the 14px box).
+func checkMark(gtx layout.Context, col color.NRGBA) {
+	k := float32(gtx.Dp(100)) / 100
+	pt := func(x, y float32) f32.Point { return f32.Pt(x*k, y*k) }
+	var p clip.Path
+	p.Begin(gtx.Ops)
+	p.MoveTo(pt(1.6, 6.1))
+	p.LineTo(pt(4.9, 9.4))
+	p.LineTo(pt(11.6, 2.9))
+	paint.FillShape(gtx.Ops, col, clip.Stroke{Path: p.End(), Width: 2 * k}.Op())
 }
 
 // ordinal numbers an item the way Quip does per level: 1. a. i.
