@@ -2,8 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"hash/fnv"
-	"strconv"
 	"time"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/applog"
@@ -53,10 +51,37 @@ func (a *App) startupMark(name, detail string) {
 	}
 }
 
+// FNV-1a, inline: startupFrame runs every frame until settled and must
+// not allocate (the frame benchmarks count allocations).
+const (
+	fnvOffset = 14695981039346656037
+	fnvPrime  = 1099511628211
+)
+
+func fnvStr(h uint64, s string) uint64 {
+	for i := 0; i < len(s); i++ {
+		h ^= uint64(s[i])
+		h *= fnvPrime
+	}
+	return h
+}
+
+func fnvInt(h uint64, v int) uint64 {
+	for i := 0; i < 8; i++ {
+		h ^= uint64(byte(v >> (8 * i)))
+		h *= fnvPrime
+	}
+	return h
+}
+
 // startupFrame runs at the end of every laid-out frame (UI goroutine).
 func (a *App) startupFrame() {
 	sw := &a.sw
 	if sw.done {
+		return
+	}
+	if applog.Settled() { // another session in this process (tests) ended it
+		sw.done = true
 		return
 	}
 	now := time.Now()
@@ -65,7 +90,9 @@ func (a *App) startupFrame() {
 	}
 	a.startupMark("first-text", "")
 	if sw.themeFinal {
-		a.startupMark("theme", map[bool]string{true: "account", false: "default"}[a.acct.set])
+		if !applog.Marked("theme") {
+			a.startupMark("theme", map[bool]string{true: "account", false: "default"}[a.acct.set])
+		}
 	}
 	warm := a.data != nil && a.data.warm
 	// the sidebar
@@ -75,18 +102,19 @@ func (a *App) startupFrame() {
 		if warm {
 			src = "cached"
 		}
-		a.startupMark("sidebar", fmt.Sprintf("%s, %d rows", src, a.sidebar.rowCount))
+		if !applog.Marked("sidebar") {
+			a.startupMark("sidebar", fmt.Sprintf("%s, %d rows", src, a.sidebar.rowCount))
+		}
 		if a.sidebar.gen != sw.sideGen {
 			sw.sideGen = a.sidebar.gen
-			h := fnv.New64a()
+			h := uint64(fnvOffset)
 			for _, r := range a.sidebar.rows {
-				h.Write([]byte{byte(r.kind)})
-				h.Write([]byte(r.key))
-				h.Write([]byte{0})
-				h.Write([]byte(r.label))
-				h.Write([]byte{0})
+				h = fnvInt(h, int(r.kind))
+				h = fnvStr(h, r.key)
+				h = fnvInt(h, 0)
+				h = fnvStr(h, r.label)
 			}
-			if s := h.Sum64(); s != sw.sideSig {
+			if s := h; s != sw.sideSig {
 				if sw.sideSig != 0 {
 					applog.Relayout("sidebar")
 					a.startupChange(now)
@@ -94,20 +122,20 @@ func (a *App) startupFrame() {
 				sw.sideSig = s
 			}
 		}
-		h := fnv.New64a()
-		var buf []byte
+		h := uint64(fnvOffset)
 		for _, r := range a.sidebar.rows {
 			if r.kind != sbConv {
 				continue
 			}
 			if c := m.Convs[r.key]; c != nil {
-				buf = append(buf[:0], r.key...)
-				buf = strconv.AppendBool(buf, c.Unread)
-				buf = strconv.AppendInt(buf, int64(c.Mentions), 10)
-				h.Write(buf)
+				h = fnvStr(h, r.key)
+				if c.Unread {
+					h = fnvInt(h, 1)
+				}
+				h = fnvInt(h, c.Mentions)
 			}
 		}
-		if s := h.Sum64(); s != sw.unreadSig {
+		if s := h; s != sw.unreadSig {
 			if sw.unreadSig != 0 {
 				applog.Relayout("unreads")
 				a.startupChange(now)
@@ -128,7 +156,9 @@ func (a *App) startupFrame() {
 				if c := a.Core(); c != nil && c.Warm() && !applog.Marked("history-live") {
 					src = "cached"
 				}
-				a.startupMark("messages", fmt.Sprintf("%s, %d msgs", src, n))
+				if !applog.Marked("messages") {
+					a.startupMark("messages", fmt.Sprintf("%s, %d msgs", src, n))
+				}
 				if sig != sw.msgSig {
 					if sw.msgSig != 0 && sw.msgN > 0 {
 						applog.Relayout("messages")

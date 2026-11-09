@@ -1,9 +1,7 @@
 package messages
 
 import (
-	"hash/fnv"
 	"image"
-	"strconv"
 	"time"
 
 	"gioui.org/layout"
@@ -123,16 +121,18 @@ func (v *ChannelView) Refresh() {
 // heights, which changes whenever a painted row moves or resizes.
 func (v *ChannelView) LayoutSig() (msgs int, loaded bool, sig uint64) {
 	s := v.s
-	h := fnv.New64a()
-	var buf []byte
+	h := uint64(14695981039346656037) // FNV-1a, inline: no allocation per frame
+	mix := func(b byte) { h ^= uint64(b); h *= 1099511628211 }
 	for i := s.visible[0]; i < s.visible[1] && i < len(s.items) && i < len(s.pos) && i < len(s.heights); i++ {
-		buf = append(buf[:0], s.items[i].key...)
-		buf = append(buf, '|')
-		buf = strconv.AppendInt(buf, int64(s.pos[i]), 10)
-		buf = append(buf, '|')
-		buf = strconv.AppendInt(buf, int64(s.heights[i]), 10)
-		buf = append(buf, ';')
-		h.Write(buf)
+		k := s.items[i].key
+		for j := 0; j < len(k); j++ {
+			mix(k[j])
+		}
+		for _, v := range [2]int{s.pos[i], s.heights[i]} {
+			for j := 0; j < 8; j++ {
+				mix(byte(v >> (8 * j)))
+			}
+		}
 	}
-	return len(s.snap.msgs), s.snap.loaded, h.Sum64()
+	return len(s.snap.msgs), s.snap.loaded, h
 }

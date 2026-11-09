@@ -31,7 +31,7 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 	// side fetches: the first frame mustn't wait for the network. Boot
 	// refetches it and the UI re-reads it; the header's count comes with
 	// the UI's opened() once core is ready.
-	early := before == "" && !a.booted() && a.S.Timeline(ch) != nil
+	early := before == "" && a.Warm() && !a.booted() && a.S.Timeline(ch) != nil
 	// Fetch the member count (people, like Slack's header) alongside the history.
 	var countDone chan struct{}
 	a.mu.Lock()

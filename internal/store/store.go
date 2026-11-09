@@ -76,7 +76,7 @@ type Store struct {
 	gen       atomic.Uint64
 	saveMu    sync.Mutex
 	dropped   atomic.Bool // DropDisk ran (signed out): never write again
-	emojiFull atomic.Bool // CustomEmoji is the whole map (meta.json, emoji.list)
+	emojiPart atomic.Bool // CustomEmoji is only a boot snapshot's slice (InstallBoot)
 	saved     bool
 	savedGen  uint64
 	savedEmo  uint64
@@ -1163,10 +1163,10 @@ func (s *Store) LoadCache() {
 	s.PutUsers(d.Users)
 	if d.EmojiPacked != "" {
 		s.CustomEmoji.Set(unpackEmoji(d.EmojiPacked))
-		s.emojiFull.Store(true)
+		s.emojiPart.Store(false)
 	} else if len(d.Emoji) > 0 {
 		s.CustomEmoji.Set(d.Emoji)
-		s.emojiFull.Store(true)
+		s.emojiPart.Store(false)
 	}
 	if d.EmojiAt > 0 {
 		s.emojiAtMu.Lock()
@@ -1209,7 +1209,7 @@ func (s *Store) LoadCache() {
 // disk cache stores it (see diskCache.EmojiPacked), and stamps its age.
 func (s *Store) SetEmojiList(m map[string]string) {
 	s.CustomEmoji.Set(unpackEmoji(packEmoji(m)))
-	s.emojiFull.Store(true)
+	s.emojiPart.Store(false)
 	s.emojiAtMu.Lock()
 	s.emojiAt = time.Now()
 	s.emojiAtMu.Unlock()
@@ -1284,7 +1284,7 @@ func (s *Store) SaveCache() error {
 	s.mu.RLock()
 	prefs := s.Prefs
 	packed := ""
-	if s.emojiFull.Load() { // never save a boot snapshot's slice as the whole map
+	if !s.emojiPart.Load() { // never save a boot snapshot's slice as the whole map
 		packed = packEmoji(s.CustomEmoji.Snapshot())
 	}
 	d := diskCache{EmojiPacked: packed, Usergroups: append([]slack.Usergroup(nil), s.Groups...), Prefs: &prefs,

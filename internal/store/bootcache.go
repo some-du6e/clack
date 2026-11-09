@@ -291,6 +291,7 @@ func (s *Store) InstallBoot(d *BootSnapshot, prefs Prefs, muted map[string]bool)
 	s.PutUsers(d.Users)
 	if len(d.Emoji) > 0 && s.CustomEmoji.Len() == 0 {
 		s.CustomEmoji.Set(d.Emoji)
+		s.emojiPart.Store(true)
 	}
 	s.mu.Lock()
 	if s.names == nil {
@@ -441,4 +442,4 @@ func (s *Store) CollectRefs(users, chans, groups, bots, emoji []string) Refs {
 
 // EmojiFull reports whether the custom emoji map is the whole workspace's
 // (meta.json or emoji.list), not just a boot snapshot's slice.
-func (s *Store) EmojiFull() bool { return s.emojiFull.Load() }
+func (s *Store) EmojiFull() bool { return s.CustomEmoji.Len() > 0 && !s.emojiPart.Load() }
