@@ -240,7 +240,8 @@ func (b *backend) apply(a *App, s core.Snapshot) {
 		}
 		ci := &convInfo{ID: c.ID, Name: c.Name, Kind: c.Kind, User: c.User, Topic: c.Topic,
 			NumMembers: c.NumMembers, Members: c.Members, Muted: c.Muted, TopicSpans: firstSpans(c.TopicDoc),
-			Archived: c.IsArchived, Preview: c.Preview, Purpose: c.Purpose}
+			Archived: c.IsArchived, Preview: c.Preview, Purpose: c.Purpose,
+			Code: c.Code, CodeStatus: c.CodeStatus, AgentName: c.AgentName}
 		if old := m.Convs[c.ID]; old != nil {
 			// keep what opened() fetched (count, facepile) across snapshots
 			if ci.NumMembers == 0 {
@@ -650,7 +651,8 @@ func (b *backend) resolved(ch string) *convInfo {
 			return
 		}
 		ci := &convInfo{ID: c.ID, Name: c.Name, Kind: c.Kind, User: c.User, Topic: c.Topic, NumMembers: c.NumMembers,
-			TopicSpans: firstSpans(c.TopicDoc), Archived: c.IsArchived, Preview: c.Preview, Purpose: c.Purpose}
+			TopicSpans: firstSpans(c.TopicDoc), Archived: c.IsArchived, Preview: c.Preview, Purpose: c.Purpose,
+			Code: c.Code, CodeStatus: c.CodeStatus, AgentName: c.AgentName}
 		if c.Kind == "im" {
 			if u, ok := b.core.User(c.User); ok {
 				ci.Name, ci.Avatar, ci.Bot, ci.Active = u.Name, u.Avatar, u.IsBot, u.Presence == "active"

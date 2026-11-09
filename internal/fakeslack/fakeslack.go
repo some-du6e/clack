@@ -58,6 +58,9 @@ type Size struct {
 	// ChannelLinks adds #channel-links and the channels its message
 	// mentions (channel_links.go).
 	ChannelLinks bool
+	// CodeChannels adds the code channel fixtures (codechannels.go): one
+	// per agent status, an archived one and one the viewer isn't in.
+	CodeChannels bool
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -200,6 +203,8 @@ type Server struct {
 
 	histMu sync.Mutex
 	hist   map[string][]slack.Message // channel -> all messages, newest first
+	code   codeCalls                  // code channel API calls (codechannels.go)
+	codeFx *CodeFixtures
 
 	bkMu      sync.Mutex
 	bkActions []BlockActionCall // blocks.actions, in order (bkgallery_elements.go)
@@ -393,6 +398,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.ChannelLinks {
 		s.addChannelLinks() // channel_links.go
+	}
+	if sz.CodeChannels {
+		s.addCodeChannels() // codechannels.go
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", s.api)
@@ -1046,6 +1054,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleHuddles(method, f); handled { // huddles.go
 		return out
 	}
+	if out, handled := s.handleCodeChannels(method, f); handled && s.Size.CodeChannels { // codechannels.go
+		return out
+	}
 	if out, handled := s.handleDrafts(method, f); handled {
 		return out
 	}
@@ -1070,6 +1081,9 @@ func (s *Server) userByID(id string) (slack.User, bool) {
 				return u, true
 			}
 		}
+	}
+	if s.codeFx != nil && id == s.codeFx.Agent.ID {
+		return s.codeFx.Agent, true
 	}
 	if strings.HasPrefix(id, "U0FAKE") {
 		if n, err := strconv.Atoi(id[6:]); err == nil && n < len(s.users) {

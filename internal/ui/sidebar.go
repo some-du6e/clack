@@ -83,6 +83,8 @@ func sectionIcon(typ string) string {
 		return "dms"
 	case "recent_apps", "apps":
 		return "apps"
+	case "coding_channels": // Slack's Code channels heading carries the code glyph
+		return "code"
 	}
 	return "list-view"
 }
