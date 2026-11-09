@@ -373,3 +373,17 @@ func TestChannelLeaveRejoin(t *testing.T) {
 	e.a.joinPreview(c, "")
 	e.until("rejoined", 10*time.Second, func() bool { return len(fs.JoinCalls()) == 2 && e.a.footerFor(c) == footNone })
 }
+
+// The details Tabs tab is Slack's "Manage tabs" card (screenshot set).
+func TestChannelDetailsTabsShot(t *testing.T) {
+	e, _ := previewEnv(t)
+	ch := fakeslackMemberChannel(e)
+	e.openChannel(ch)
+	e.settle(200 * time.Millisecond)
+	e.a.OpenDetailsTab(ch, "Tabs")
+	e.settle(600 * time.Millisecond)
+	if d := topDetails(t, e); d.Tab() != "Tabs" {
+		t.Fatalf("opened on %q", d.Tab())
+	}
+	e.shot("channel-details-tabs")
+}

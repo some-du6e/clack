@@ -15,7 +15,9 @@ Status: **matched** (no change needed), **fixed** (on branch `channels-e2e`), **
 | Feature | Slack | Clack before | Status |
 |---|---|---|---|
 | Star button | `ViewHeaderEntitySectionSelector`: a section picker. Icon is the section's emoji, else `section` (custom section), `star-filled` (starred) or `star`. A click opens `ChannelSectionMoveToMenu` (280px, under the star): "Move to…", Starred plus the custom sections as radios, a divider, then "Create your first section" (no custom sections) or "Create new section" and "Remove from section". | toggle; backend toast "Starring from Clack isn't supported yet" | **fixed**: `channel_move.go`; choosing a section is Slack's `performBulkChannelMove` (in there, out of where it was) |
-| Star icon in a custom section without an emoji | `section` glyph | n/a | **open**: Clack has no `section` icon yet (icons are icons-redraw's). Uses `star-filled` until one exists. |
+| Star icon in a custom section without an emoji | `section` glyph (the one on custom section headings) | n/a | **fixed**: the sidebar's custom-section heading glyph |
+| Move to… position | 8px under the star, left edge 66px left of it | 10px higher | **fixed** (live check) |
+| Radio rows in Move to… and the bell menu | ✓ in a left gutter, checked row link blue, regular labels, descriptions wrap to 2 lines | ✓ at the right, bold labels, one line | **fixed**: `popups.MenuItem.Radio` |
 | Header for a channel you aren't in | no star (title at +18), no bell; facepile, Huddle, search and ⋮ stay | star and bell shown | **fixed** |
 | "+" add-tab button for a channel you aren't in | none | shown | **fixed** |
 | Tab labels | by tab id (boot-shared ChannelTabLabel): `bookmarks` → "Pins" (pin icon), `files` → "Files & links", a folder without a label → "Bookmarks" | "Bookmarks", "Files" | **fixed** (core `builtinTabIDTitles`, pin icon) |
@@ -27,6 +29,9 @@ Status: **matched** (no change needed), **fixed** (on branch `channels-e2e`), **
 | ⋮ "Add a workflow" | Workflow Builder | toast naming "yoloslack" | **open**: no workflows in Clack; toast now says Clack |
 | ⋮ menu (not a member) | Channel details, Copy / Add a workflow, Edit settings / Open in split view | also Star, Move, Leave | **fixed** |
 | Topic | inline after the title; a pencil "Edit channel topic" (22×18) after it | text only | **open**: the hover pencil isn't drawn |
+| Bell | `ChannelNotificationPrefMenu` (300px, right-aligned): "Notify you about…", All new posts / Just mentions / Mute and hide (with descriptions; "Mute channel" without `improve_mute_pref`), More options › Temporarily mute… Until tomorrow / 1 hour, Edit default preferences | a two-row stub at a fixed spot | **fixed**: `popups.NewChannelNotifyMenu`; temporary mute is `temp_mute_expiration_ts` (`core.TempMute`) |
+| More options › Advanced settings | opens the channel notification modal | missing | **open** |
+| Bell icons | "everything" is a ringing bell | plain bell | **open** (icons) |
 | Facepile, Huddle, search | as measured in docs/FIDELITY.md | | **matched** |
 
 ## Not-a-member preview and temporary join
@@ -44,19 +49,22 @@ Status: **matched** (no change needed), **fixed** (on branch `channels-e2e`), **
 | Feature | Slack | Clack before | Status |
 |---|---|---|---|
 | Header: name, star ▾, notifications button ("Just mentions"), Start a Call ▾ | | same | **matched** (caret glyphs are filled triangles in Clack: icons) |
+| Notifications dropdown rows | All new posts, Just mentions, Mute and hide | All new posts, Just mentions, Off, Mute channel | **fixed** |
+| Field row height | 77px (16 + 22 + 22 + 17) | 71–74px (Gio measures a 15/22 line at ~19px) | **fixed**: `cdLine22` |
+| Edit topic / Edit description | stacked 520px modal: title 22/30 Black, input with focus ring, hint ("Let people know what **#clack** is focused on right now (ex. a project milestone). Topics are always visible in the header." / "Let people know what this channel is for."), Cancel / Save 80×36, Enter saves, max 250; a refused topic shows `getChannelTopicError`'s text in place of the hint and stays open | inline editor with raw `<https://…>` markup, closes before Slack answers, toast on error | **fixed** |
 | Tab strip | About, Members 4, Agents & apps 7, Automations, Tabs, Settings | no Agents & apps count | **fixed** (users/counts `apps`) |
 | About: Topic, Description with Edit | | same | **matched** |
 | About: "Workspaces with access to this channel" | `ManageOrgAccess` (on Enterprise Grid, channel not shared outside the org): team icon and name, "Learn more", help icon; greyed (`#1d1c1d@0.7`) when you can't change it | missing | **fixed** (`internal_team_ids`, `App.Team`) |
 | About: Managed by | name plus a blue ⓘ | no ⓘ | **fixed** |
 | About: Created by, Leave channel, Send emails, Channel ID | | same | **matched** |
-| Members list | people only (`MEMBER_LIST` filter `everyone AND NOT bots AND NOT apps`), you first | everyone, bots included; karim first | **fixed** |
+| Members list | people only (`MEMBER_LIST` filter `everyone AND NOT bots AND NOT apps`), you first, then by display name | everyone, bots included; present people first | **fixed** |
 | Member names | `MediumMemberEntity`: bold display name, presence, then the real name | real name first ("karim karim") | **fixed** (`DisplaySet`) |
 | "Channel Manager" tag | pill: 13/18, padding 4×8, radius 16, `#1d1c1d@0.06` | missing | **fixed** |
 | Presence dots in Members | ● / ○ | none with realtime off | **open**: presence only arrives over the socket |
 | Agents & apps tab | card "Agents and apps" + "Add agents and apps"; a row per bot (edge `users/list` `filter:"apps"`, `users_by_realname`), AGENT/APP badge (`agent_status`), tagline (`apps.profile.get`) | static "Bring the tools…" card | **fixed** |
 | Agents & apps: Agentforce promo card | shown | none | **open**: Salesforce ad, not data |
 | Automations tab | "Let workflows take tasks off your plate", Go to Your Workflows, Learn More, illustration | "Workflows / Add a Workflow" | **open** |
-| Tabs tab | "Manage tabs" card: Messages, the canvas, Files & links, Pins, Workflows (Hidden), New Tab | per-type list plus an empty Bookmarks card | **open** |
+| Tabs tab | "Manage tabs" card: Messages, the canvas, Files & links, Pins, Workflows (Hidden), New Tab | per-type list plus an empty Bookmarks card | **fixed** (New Tab itself: open, toasts) |
 | Settings: Channel name (Edit), Posting permissions | hidden from a plain member | shown to everyone | **fixed** (creator, manager or admin) |
 | Settings: AI use, Guest access, Member/Guest permissions, Channel member suggestions, Copy member names/emails | shown | missing | **open**: needs `conversations.permissions.*` reads |
 | Settings: Huddles, tabs permission | | same | **matched** |
@@ -68,9 +76,22 @@ Status: **matched** (no change needed), **fixed** (on branch `channels-e2e`), **
 | Search, Create Channel, All channels, Any channel type, Workspaces, Organizations, Most recommended | | same | **matched** (layout) |
 | Purpose in the rows | rich text: emoji, `#channel` names, links | plain text: raw `:emoji:` and `#C0EA9S0A0` ids | **fixed** (`spanLine`, names resolved by core) |
 | "Reset" | 13px link after the filters, always shown | missing | **fixed** |
+| Row height | 75px between hairlines | 71–73px | **fixed** |
+| "Browse channels" (Add channels, ⊕) | opens the Channels tab | opened People: `directories?tab=channels` was ignored | **fixed** |
 | Workspaces / Organizations filters | menus | toast "isn't supported yet" | **open** |
 | Filter carets | chevrons | filled triangles | **open** (icons) |
 | Tab icons (Channels, External, Invitations) | `#+person`, building, envelope | `#`, globe, send | **open** (icons) |
+
+## Leaving and rejoining
+
+| Feature | Slack | Clack before | Status |
+|---|---|---|---|
+| Leave a public channel (⋮, sidebar, details) | at once, no confirmation (`maybeLeaveChannel`: not private → leave) | "Leave #name? You can rejoin…" confirmation | **fixed** |
+| Leave a private channel | `LeaveChannel`: "Leave <name>", "When you leave a private channel, you’ll no longer be able to see any of its messages. To rejoin this channel later, you’ll need to be invited.", Cancel / Leave Channel | own wording | **fixed** |
+| Leave #general | `LeaveChannelError` CANT_LEAVE_GENERAL: "Membership is required in #general", OK | confirmation, then a server error | **fixed** |
+| Last member leaving | the archive dialog (`confirm_leave_and_archive`) | plain leave | **open** |
+| Rejoin | the channel is a preview again with the join pane; Join brings the composer back | same | **matched** (fake: `TestChannelLeaveRejoin`) |
+| Browser row confirmation for a private channel | the `LeaveChannel` modal | inline "Leave #x? …" | **open** |
 
 ## Sidebar (seen in passing)
 
@@ -81,10 +102,20 @@ Status: **matched** (no change needed), **fixed** (on branch `channels-e2e`), **
 
 ## Code channels (for the code-channels agent)
 
-#test (C0BUVSNLEA3) is a Slack Code channel (`properties.code_channel`, `agent_session`, `record_channel`). Slack's tab label switch has cases Clack doesn't know: a PR-link tab (`prUrl`), "Resources" instead of "Files & links" (record channels), "Summary", "Record details", "Skills". Channel details render `RecordChannelDetails` first on About for record channels and hide "Created by". These belong to the code-channels work.
+#test (C0BUVSNLEA3) is a Slack Code channel (`properties.code_channel`, `agent_session`, `record_channel`). Viewed read-only on 2026-11-08 as a non-member:
 
-## Not compared yet
+- Header: a `</>` tile where the star would be, the name, **no topic, no tab bar, no Huddle, no search**: only the facepile (9) and ⋮. Clack draws the normal channel header (now without star/bell/+ since it's a preview, but still Huddle, search and a Messages tab).
+- Sidebar: a "Code channels" section above Starred with the channel as "— test  Hack Club" (a dash glyph, then the workspace name in grey) while it's previewed. Clack shows no such section.
+- The join pane is the ordinary one (Details, Join Channel ▾).
+- Slack's tab label switch has cases Clack doesn't know: a PR-link tab (`prUrl`), "Resources" instead of "Files & links" (record channels), "Summary", "Record details", "Skills". Channel details render `RecordChannelDetails` first on About for record channels and hide "Created by".
 
-- The notifications button / modal ("Just mentions") field by field.
-- The edit topic / description modals and their validation messages.
-- Leave → rejoin round trip in the UI (covered on the fake by the preview tests; not compared visually).
+## Real-Slack side effects during the audit (meclod)
+
+- My first DOM click looking for the browser's Channels tab hit the sidebar's Channels section heading and collapsed it; I expanded it again at once.
+- A click aimed at the browser's tab bar landed on #clack's "clack testing" canvas tab while the page was still on #clack, which opened the canvas (its unread dot cleared).
+- Nothing else was chosen, typed, joined, starred or saved; every menu and dialog was closed with Cancel/Escape.
+
+## Not compared
+
+- The Automations tab beyond its copy ("Let workflows take tasks off your plate" card: **open**).
+- Settings' AI use / Guest access / Member and Guest permissions / member suggestions / Copy member names (**open**, need the `conversations.permissions.*` reads).

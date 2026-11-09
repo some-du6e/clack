@@ -126,6 +126,7 @@ type ChannelDetails struct {
 	viewProfile, moreMembers        widget.Clickable
 	addApp, addWorkflow             widget.Clickable
 	huddleStart, huddleLink         widget.Clickable
+	newTab                          widget.Clickable // Tabs: "New Tab"
 	orgLearn                        widget.Clickable // "Workspaces with access": Learn more
 
 	editing      bool
@@ -562,7 +563,7 @@ func (d *ChannelDetails) update(gtx C) {
 		}
 	}
 
-	for _, c := range []*widget.Clickable{&d.call, &d.vip, &d.emails, &d.addApp, &d.addWorkflow, &d.huddleStart, &d.huddleLink} {
+	for _, c := range []*widget.Clickable{&d.call, &d.vip, &d.emails, &d.addApp, &d.addWorkflow, &d.huddleStart, &d.huddleLink, &d.newTab} {
 		if c.Clicked(gtx) {
 			d.h.Toast(cdUnsupported)
 		}
@@ -1931,71 +1932,91 @@ type cdTabRow struct{ icon, label, note string }
 
 var cdTabRows = []cdTabRow{
 	{"dms", "Messages", "Always shown"},
-	{"files", "Files", ""},
+	{"files", "Files & links", ""},
 	{"pin", "Pins", ""},
-	{"bookmark", "Bookmarks", ""},
-	{"canvas", "Canvas", ""},
-	{"workflow", "Workflows", ""},
+	{"workflow", "Workflows", "Hidden"},
 }
 
 func (d *ChannelDetails) tabsItems() []W {
-	if !d.bookmarks.started() {
-		d.loadBookmarks()
-	}
 	tabRows := cdTabRows
 	if cdGroup(d.kind) != "im" {
 		if !d.tabList.started() {
 			c, id := d.h.Core(), d.id
 			d.tabList.load(d.h, false, func(ctx context.Context) ([]core.Tab, error) { return c.Tabs(ctx, id) })
 		}
-		if ts, ok, err := d.tabList.get(); ok && err == nil {
+		ts, ok, err := d.tabList.get()
+		switch {
+		case !ok:
+			return []W{cdGap(16), d.cdCard(func(gtx C) D {
+				return layout.Inset{Top: 12, Bottom: 12}.Layout(gtx, func(gtx C) D { return d.skeleton(gtx, 4, 20) })
+			})}
+		case err == nil:
 			tabRows = cdTabsRows(ts)
 		}
 	}
-	rows := make([]W, len(tabRows))
-	for i, t := range tabRows {
-		rows[i] = func(gtx C) D {
-			return layout.Inset{Top: 16, Bottom: 16, Left: 20, Right: 20}.Layout(gtx, func(gtx C) D {
-				return row(gtx, layout.Middle,
-					layout.Rigid(func(gtx C) D { return d.icon(gtx, t.icon, 20, d.p.Sec) }),
-					hgap(8),
-					layout.Flexed(1, func(gtx C) D {
-						return dirFill(gtx, func(gtx C) D { return d.label(gtx, 15, wBold, d.p.Text, t.label) })
-					}),
-					layout.Rigid(func(gtx C) D {
-						if t.note == "" {
-							return D{}
-						}
-						return d.label(gtx, 13, wReg, d.p.Muted, t.note)
-					}),
-				)
+	// Slack's "Manage tabs" card (C0CFT52NEGM, 2026-11-08): title, the
+	// description, a 46px row per tab (16px icon, 15px label, "Hidden" at
+	// the right for a built-in tab that's off), then "+ New Tab".
+	head := func(gtx C) D {
+		return layout.Inset{Top: 16, Left: 20, Right: 20, Bottom: 12}.Layout(gtx, func(gtx C) D {
+			gtx.Constraints.Min.X = gtx.Constraints.Max.X
+			return col(gtx,
+				layout.Rigid(func(gtx C) D {
+					return cdLine22(gtx, func(gtx C) D { return d.para(gtx, 15, 22, wBold, d.p.Text, 1, "Manage tabs") })
+				}),
+				layout.Rigid(func(gtx C) D {
+					return d.para(gtx, 15, 22, wReg, d.p.Text, 0, "Reorder, add, remove, and hide the tabs that everyone sees in this channel.")
+				}),
+			)
+		})
+	}
+	rows := []W{head}
+	for _, t := range tabRows {
+		t := t
+		rows = append(rows, func(gtx C) D {
+			gtx.Constraints.Min.Y = gtx.Dp(46)
+			return layout.Inset{Left: 28, Right: 32}.Layout(gtx, func(gtx C) D {
+				return layout.Center.Layout(gtx, func(gtx C) D {
+					gtx.Constraints.Min.X = gtx.Constraints.Max.X
+					col := d.p.Text
+					if t.note == "Hidden" {
+						col = d.p.Muted
+					}
+					return row(gtx, layout.Middle,
+						layout.Rigid(func(gtx C) D { return d.icon(gtx, t.icon, 16, col) }),
+						hgap(4),
+						layout.Flexed(1, func(gtx C) D {
+							return dirFill(gtx, func(gtx C) D { return d.label(gtx, 15, wReg, col, t.label) })
+						}),
+						layout.Rigid(func(gtx C) D {
+							if t.note == "" || t.note == "Always shown" {
+								return D{}
+							}
+							return d.label(gtx, 15, wReg, d.p.Muted, t.note)
+						}),
+					)
+				})
 			})
-		}
+		})
 	}
-	items := []W{cdGap(16), d.cdCard(rows...), cdGap(16)}
-	bms, loaded, err := d.bookmarks.get()
-	note := func(s string) W {
-		return func(gtx C) D {
-			return layout.Inset{Left: cdPadX + 20, Right: cdPadX}.Layout(gtx, func(gtx C) D { return d.label(gtx, 13, wReg, d.p.Muted, s) })
-		}
+	rows = append(rows, func(gtx C) D {
+		return layout.Inset{Top: 8, Left: 20, Bottom: 16}.Layout(gtx, func(gtx C) D {
+			return cdBtn(&d.base, gtx, &d.newTab, "plus", "New Tab", false, 0)
+		})
+	})
+	card := func(gtx C) D {
+		return layout.Inset{Left: cdPadX, Right: cdPadX}.Layout(gtx, func(gtx C) D {
+			return cdBox(&d.base, gtx, func(gtx C) D {
+				ch := make([]layout.FlexChild, len(rows))
+				for i, r := range rows {
+					r := r
+					ch[i] = layout.Rigid(func(gtx C) D { gtx.Constraints.Min.X = gtx.Constraints.Max.X; return r(gtx) })
+				}
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx, ch...)
+			})
+		})
 	}
-	switch {
-	case !loaded:
-		items = append(items, func(gtx C) D { return d.skeleton(gtx, 2, 20) })
-	case err != nil:
-		items = append(items, note("Couldn’t load bookmarks: "+friendlyErr(err)))
-	case len(bms) == 0:
-		items = append(items, note("No bookmarks yet."))
-	default:
-		bm := make([]W, 0, len(bms)+1)
-		bm = append(bm, func(gtx C) D { return d.cdField(gtx, "Bookmarks", nil, nil) })
-		for i := range bms {
-			b := bms[i]
-			bm = append(bm, func(gtx C) D { return d.bookmarkRow(gtx, b) })
-		}
-		items = append(items, d.cdCard(bm...))
-	}
-	return append(items, cdGap(24))
+	return []W{cdGap(16), card, cdGap(24)}
 }
 
 func (d *ChannelDetails) bookmarkRow(gtx C, b core.Bookmark) D {
@@ -2568,25 +2589,31 @@ func (d *ChannelDetails) inviteRow(gtx C, u core.User, member bool) D {
 // first, then each tab with an icon for its type.
 func cdTabsRows(ts []core.Tab) []cdTabRow {
 	out := []cdTabRow{cdTabRows[0]}
+	workflows := false
 	for _, t := range ts {
 		icon := "link"
 		switch t.Type {
-		case "canvas", "channel_canvas":
+		case "canvas", "channel_canvas", "list":
 			icon = "canvas"
 		case "files":
 			icon = "files"
-		case "folder", "bookmarks":
+		case "bookmarks":
+			icon = "pin"
+		case "folder":
 			icon = "bookmark"
 		case "workflows":
-			icon = "workflow"
-		case "list":
-			icon = "canvas"
+			icon, workflows = "workflow", true
 		}
 		note := ""
 		if t.Deleted {
 			note = "Deleted"
 		}
 		out = append(out, cdTabRow{icon, dirFirst(t.Title, t.Label, t.Type), note})
+	}
+	if !workflows {
+		// Slack lists the built-in Workflows tab even when the channel
+		// doesn't show it
+		out = append(out, cdTabRow{"workflow", "Workflows", "Hidden"})
 	}
 	return out
 }
