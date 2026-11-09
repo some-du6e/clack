@@ -375,8 +375,8 @@ func (c *compRef) layoutSlug(gtx layout.Context, p slackc.Props) layout.Dimensio
 func (c *compRef) channelProps() slackc.Props {
 	sp := &c.box().span
 	name := strings.TrimPrefix(sp.Text, "#")
-	return slackc.Props{"$key": sp.ID, "id": sp.ID, "channelName": name, "isPrivate": false, "isMember": true,
-		"isNonExistent": false, "isUnknown": name == sp.ID}
+	return slackc.Props{"$key": sp.ID, "id": sp.ID, "channelName": name, "isPrivate": sp.Lock && !sp.Off, "isMember": !sp.Off,
+		"isNonExistent": sp.Off, "isUnknown": name == sp.ID}
 }
 
 // layoutChannel is the #channel pill (BaseMrkdwnChannel); a plugin's

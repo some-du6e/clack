@@ -104,6 +104,9 @@ func (s *listState) selPointer(gtx layout.Context, h Host, e pointer.Event, size
 			s.clearSelection()
 			return
 		}
+		if r.rv.OnCopyButton(local) { // the code block's copy button (richview codecopy.go)
+			return
+		}
 		if e.Time-s.sel.lastTap < 400*time.Millisecond {
 			s.sel.taps++
 		} else {

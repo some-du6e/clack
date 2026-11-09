@@ -30,6 +30,9 @@ import (
 //   - an image: Copy Image / Copy Image URL; an emoji: the same for its
 //     image;
 //   - a file (card, gallery image, video): the file menu;
+//   - inline code or a code block: Copy this code / Copy this code block
+//     (the desktop shell's menu with BaseCopyCodeBlockContextMenuTrigger's
+//     item);
 //   - anywhere else on the message, text included: the message actions
 //     menu (More actions with the hover toolbar's group on top).
 //
@@ -91,6 +94,11 @@ func (s *listState) contextMenuFor(h Host, r *row, i int, p f32.Point, at image.
 	local := p.Sub(f32.Pt(float32(r.bodyRect.Min.X), float32(s.pos[i]+r.bodyRect.Min.Y)))
 	if local.X >= 0 && local.Y >= 0 && int(local.X) < r.bodyRect.Dx() && int(local.Y) < r.bodyRect.Dy() {
 		hit := r.rv.HitAt(local)
+		if code, block, ok := r.rv.CodeAt(local); ok && hit.Kind == richview.HitNone && hit.EmojiURL == "" {
+			// BaseCopyCodeBlockContextMenuTrigger: the shell's menu with
+			// Slack's one item (popups.NewCodeMenu)
+			return popups.NewCodeMenu(h, at, code, block)
+		}
 		switch hit.Kind {
 		case richview.HitLink:
 			url := hit.URL

@@ -319,6 +319,7 @@ A context click is a secondary press, a two-finger tap on a Mac trackpad (AppKit
 |---|---|
 | a message (body text, gutter, time, reactions, toolbar) | `popups.NewMessageContextMenu`: Slack's MessageActionsContextMenu > MessageActionsMenu (`menuUsageLocation: "context"`). It has the hover toolbar's group (Add reaction… R, Reply in thread / Reply to thread / View thread T, Forward message… F, Add to-do / Complete to-do A), then More actions |
 | text selected in the list | `NewTextSelectionMenu`: Copy text (⌘C / Ctrl+C), Search in Slack |
+| inline code or a code block (nothing selected) | `NewCodeMenu`: the desktop shell's menu with BaseCopyCodeBlockContextMenuTrigger's one item, **Copy this code** / **Copy this code block** (the code run's or block's text, trailing newlines dropped). Code blocks also have Slack's hover **Copy** button (CopyCodeBlockButton, `richview/codecopy.go`), and a triple-click selects the whole code run or block |
 | a link | `NewLinkMenu`, the desktop shell's link menu: Copy Link (Copy Email Address for `mailto:`), Open Link, plus Copy Image / Copy Image URL when the link holds an image |
 | an image or emoji | `NewImageMenu`: Copy Image, Copy Image URL. `internal/ui/clipimg` writes the image with wl-copy/xclip, NSPasteboard or CF_DIB+PNG |
 | a file card, gallery image or video | `NewFileMenu`, Slack's FileContextMenuTrigger groups (media gallery). Clack has no Save for later, file details, external link, folders, sections, transcripts, edit or delete for files, so those rows are left out |

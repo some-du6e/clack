@@ -139,6 +139,7 @@ type display struct {
 	comps   []compBox // Slack components (see comps.go)
 	slots   []slot    // interactive element runs drawn by Options.Elements
 	tips    []string  // emoji tooltips (":name:"), frag.tip-1
+	codes   []codeRun // inline code runs and code blocks (codecopy.go)
 }
 
 // slot is a run of interactive elements the owner draws (Options.Elements).
@@ -160,6 +161,7 @@ func (d *display) reset() {
 	d.comps = d.comps[:0]
 	d.slots = d.slots[:0]
 	d.tips = d.tips[:0]
+	d.codes = d.codes[:0]
 }
 
 func (d *display) addTarget(t target) int16 {
@@ -420,8 +422,11 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 				l.addText(txt, fs, k, col, st, -1, -1)
 				continue
 			}
+			// the copy text is the image's data-stringify-emoji, the
+			// Emoji's text prop: ":name:" (with ::skin-tone-N), not the
+			// unicode character
 			alt := sp.Text
-			if alt == "" {
+			if sp.ID != "" {
 				alt = ":" + sp.ID + ":"
 			}
 			p0, p1 := l.plainAdd(alt)
@@ -474,7 +479,12 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 				noAt = true
 				break
 			}
-			if sp.Kind != richtext.Broadcast {
+			if sp.Kind == richtext.Channel && sp.Off && sp.Lock {
+				// BaseMissingChannel's Nonexistent chip (richtext channel.go)
+				l.privateChannel(sp, fs, k, pt)
+				continue
+			}
+			if sp.Kind != richtext.Broadcast && !sp.Off { // Off: a channel the viewer can't see, not a link
 				tg = l.d.addTarget(target{kind: kind, id: sp.ID})
 			}
 			bg, fg := p.MentionBg, p.MentionText
@@ -503,7 +513,10 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 				cmp = l.addComp(compBox{kind: kind, span: *sp})
 				l.decos[dc].comp = cmp
 				if n := l.compState(cmp).name; n != "" && kind == compChannel {
-					txt = "#" + n
+					txt = n
+					if !sp.Lock {
+						txt = "#" + n
+					}
 				}
 				if kind == compUser && l.compState(cmp).noAt {
 					noAt = true // MemberSlug supressMentionAtSymbol
@@ -528,6 +541,11 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 		if dc >= 0 && l.decos[dc].padL > 0 {
 			l.addPad(l.decos[dc].padL, dc, k)
 		}
+		if sp.Kind == richtext.Channel && sp.Lock {
+			// a private channel the viewer is in: lock-filled, then its
+			// name without "#"
+			l.addIcon("lock-filled", fs.size, k, col, dc, tg)
+		}
 		if noAt {
 			txt = strings.TrimPrefix(txt, "@")
 		}
@@ -535,7 +553,11 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			// Inline code wraps normally.
 			txt = strings.ReplaceAll(txt, "\n", " ")
 		}
+		c0 := int32(len(l.d.plain))
 		l.addText(txt, fs, k, col, st, dc, tg)
+		if !fs.pre && st&richtext.Code != 0 {
+			l.addCodeRun(c0, int32(len(l.d.plain)))
+		}
 		if dc >= 0 && l.decos[dc].padR > 0 {
 			l.addPad(l.decos[dc].padR, dc, k)
 		}

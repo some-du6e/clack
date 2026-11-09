@@ -226,7 +226,12 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 		b := &bs[i]
 		if i > 0 {
 			y += l.gapBetween(&bs[i-1], b)
-			l.plainAdd("\n")
+			// cleanHTMLForExternal adds a <br> after a section only when
+			// it doesn't already end in one (a trailing "\n" text is a
+			// <br>), so a block break never doubles a newline
+			if n := len(l.d.plain); n == 0 || l.d.plain[n-1] != '\n' {
+				l.plainAdd("\n")
+			}
 		}
 		// Gallery: consecutive image files lay out as tiles.
 		if isImageFile(b) && i+1 < len(bs) && isImageFile(&bs[i+1]) {
@@ -305,13 +310,18 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 		}
 		bi := len(l.d.boxes)
 		l.d.boxes = append(l.d.boxes, box{kind: bBorder, fill: p.PreBg, stroke: p.PreBorder, bw: l.dp(1), radius: l.dp(4), target: -1, part: l.curPart})
+		c0 := int32(len(l.d.plain))
 		l.addSpans(b.Spans, &fs)
+		c1 := int32(len(l.d.plain))
 		if edited {
 			l.addEdited()
 		}
-		h, _ := l.flow(x+padL, y+pad, w-padL-pad, &fs)
+		// .c-mrkdwn__pre[data-copy-code-block]{padding-right:32px}: room
+		// for CopyCodeBlockButton (codecopy.go)
+		h, _ := l.flow(x+padL, y+pad, w-padL-l.dp(copyPadR), &fs)
 		hh := h + 2*pad
 		l.d.boxes[bi].r = image.Rect(x, y, x+w, y+hh)
+		l.d.codes = append(l.d.codes, codeRun{p0: c0, p1: c1, block: true, r: l.d.boxes[bi].r})
 		if bar >= 0 {
 			l.d.boxes[bar].r = image.Rect(x-l.dp(14), y, x-l.dp(10), y+hh)
 		}
