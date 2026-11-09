@@ -81,6 +81,18 @@ const (
 	AdminID       = "U0FAKEADMN" // a workspace admin ("Workspace Admin" banner)
 	DeactivatedID = "U0FAKEGONE" // a deactivated account
 	SlackbotID    = "USLACKBOT"
+
+	// AppUserID is an app's bot user (profile.bot_id AppBotID): Slack
+	// opens AppHoverCard for it. ExternalID is a Slack Connect member of
+	// ExternalTeamID ("Partner Co"), ExternalAppUserID that team's app.
+	AppUserID         = "U0FAKEAPPU"
+	AppBotID          = "B0FAKEAPPB"
+	AppAppID          = "A0FAKEAPPA"
+	ExternalID        = "U0FAKEXTRN"
+	ExternalTeamID    = "T0PARTNER1"
+	ExternalAppUserID = "U0FAKEXAPP"
+	ExternalAppBotID  = "B0FAKEXAPP"
+	ExternalAppAppID  = "A0FAKEXAPP"
 )
 
 // variants are the fixed users above.
@@ -99,13 +111,50 @@ func (s *Server) variants() []slack.User {
 	a := prof("avery.admin", "Avery Admin", "Keeps the lights on", "admn")
 	g := prof("gone.user", "Gone User", "Former fixture", "gone")
 	b := prof("Slackbot", "Slackbot", "", "slackbot")
+	ap := prof("", "Deploy Bot", "", "app")
+	ap.BotID, ap.APIAppID = AppBotID, AppAppID
+	x := prof("sam", "Sam Partner", "Partner Engineer", "xtrn")
+	x.Team = ExternalTeamID
+	xap := prof("", "Partner Bot", "", "xapp")
+	xap.Team, xap.BotID, xap.APIAppID = ExternalTeamID, ExternalAppBotID, ExternalAppAppID
 	return []slack.User{
 		{ID: ProfileID, TeamID: TeamID, Name: "robin", RealName: "Robin Example", TZ: "Europe/Berlin", TZLabel: "Central European Time", TZOffset: 3600, Profile: p, Presence: "active"},
 		{ID: AdminID, TeamID: TeamID, Name: "avery.admin", RealName: "Avery Admin", IsAdmin: true, TZ: "America/Los_Angeles", TZOffset: -28800, Profile: a},
 		{ID: DeactivatedID, TeamID: TeamID, Name: "gone.user", RealName: "Gone User", Deleted: true, TZ: "America/New_York", TZOffset: -18000, Profile: g},
 		// Slack serves Slackbot with is_bot false
 		{ID: SlackbotID, TeamID: TeamID, Name: "slackbot", RealName: "Slackbot", Profile: b, Presence: "active"},
+		{ID: AppUserID, TeamID: TeamID, Name: "deploybot", RealName: "Deploy Bot", IsBot: true, Profile: ap, Presence: "active"},
+		{ID: ExternalID, TeamID: ExternalTeamID, Name: "sam.partner", RealName: "Sam Partner", TZ: "Asia/Tokyo", TZOffset: 32400, Profile: x, Presence: "active"},
+		{ID: ExternalAppUserID, TeamID: ExternalTeamID, Name: "partnerbot", RealName: "Partner Bot", IsBot: true, Profile: xap},
 	}
+}
+
+// appProfile is apps.profile.get's app_profile for the fixed apps (the
+// keys Slack's AppHoverCard reads, as the real method sends them).
+func (s *Server) appProfile(bot, app string) (map[string]any, bool) {
+	icons := func(n string) map[string]any {
+		m := map[string]any{}
+		for _, px := range []int{32, 48, 64, 72, 96, 128, 192, 512} {
+			m["image_"+strconv.Itoa(px)] = s.URL + "img/" + strconv.Itoa(px) + "x" + strconv.Itoa(px) + "/" + n + ".png"
+		}
+		return m
+	}
+	switch {
+	case bot == AppBotID || app == AppAppID:
+		return map[string]any{"id": AppAppID, "name": "Deploy Bot", "desc": "Ships builds and posts release notes",
+			"app_card_color": "1264a3", "app_user_id": AppUserID, "team_id": TeamID, "enterprise_id": EnterpriseID,
+			"is_xoxa_app": false, "is_slack_integration": false, "is_workflow_app": false, "is_directory_published": false,
+			"is_installed": true, "icons": icons("app"), "bot_user": map[string]any{"id": AppUserID, "username": "deploybot"},
+			"auth":     map[string]any{"created_by": AdminID, "date_created": "1700000000"},
+			"commands": map[string]any{"deploy": map[string]any{"desc": "Deploy a branch", "usage": "[branch]"}}}, true
+	case bot == ExternalAppBotID || app == ExternalAppAppID:
+		return map[string]any{"id": ExternalAppAppID, "name": "Partner Bot", "desc": "Partner Co's helpdesk",
+			"app_card_color": "2eb67d", "app_user_id": ExternalAppUserID, "team_id": ExternalTeamID, "enterprise_id": "",
+			"is_directory_published": false, "is_installed": true, "icons": icons("xapp"),
+			"bot_user": map[string]any{"id": ExternalAppUserID, "username": "partnerbot"},
+			"auth":     map[string]any{"created_by": ExternalID}}, true
+	}
+	return nil, false
 }
 
 // Server is a running fake.
@@ -146,6 +195,12 @@ type Server struct {
 	// request without one). nil: every broadcast permission is allowed.
 	// Set it before the calls.
 	Permissions map[string][]string
+	// TeamPrefs is team.prefs.get's prefs (nil: none; Slack's client then
+	// never warns before @channel and has no large-channel limit), and
+	// ChannelPrefs channels.prefs.get's pref_value by channel and pref
+	// name (missing: {}, enabled). Set them before the calls.
+	TeamPrefs    map[string]any
+	ChannelPrefs map[string]map[string]any
 
 	prefsMu sync.Mutex
 	prefs   map[string]any // users.prefs.get; users.prefs.set writes it
@@ -157,7 +212,9 @@ type Server struct {
 	shared  []SharedFiles            // files.completeUploadExternal calls
 	nextID  int
 
-	chans chanState // conversations.create and friends (channels.go)
+	chans chanState   // conversations.create and friends (channels.go)
+	secs  secState    // sidebar sections, marks, channel notification prefs (sections.go)
+	hud   huddleState // rooms.getLink, huddles.scheduled.new, calendar.* (huddles.go)
 }
 
 // DefaultPrefs are the fake account's users.prefs (Slack's defaults for the
@@ -295,6 +352,7 @@ func Serve(ln net.Listener, sz Size) *Server {
 	mux.HandleFunc("/api/", s.api)
 	mux.HandleFunc("/img/", s.img)
 	mux.HandleFunc("/ws", s.ws)
+	mux.HandleFunc("/files-pri/", s.filesPri) // canvas exports (canvas.go)
 	s.srv = &http.Server{Handler: mux}
 	go s.srv.Serve(ln)
 	return s
@@ -690,6 +748,12 @@ func ok(kv ...any) map[string]any {
 }
 
 func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMessage) any {
+	if out, handled := s.handleCanvases(method, f); handled { // canvas.go
+		return out
+	}
+	if out, handled := s.handleSections(method, f); handled { // sections.go
+		return out
+	}
 	switch method {
 	case "auth.test":
 		return ok("url", s.URL, "team", "Fake Club", "user", "self", "team_id", TeamID, "user_id", SelfID, "enterprise_id", EnterpriseID)
@@ -709,6 +773,7 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 					e.MentionCount = 1 + i%4
 				}
 			}
+			e.LastRead, e.HasUnreads, e.MentionCount = s.applyMark(c.ID, e.LastRead, e.Latest, e.HasUnreads, e.MentionCount)
 			if c.IsIM {
 				ims = append(ims, e)
 			} else {
@@ -730,30 +795,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	case "experiments.getByUser": // the sidebar experiments as a real account has them (2026-11-08)
 		g := func(group string) map[string]any { return map[string]any{"group": group} }
 		return ok("assignments", map[string]any{"filter_dormant_channels": g("on"), "improve_mute_pref": g("on"),
-			"dm_recency_sort_rollout": g("without_edu"), "reskin_custom_responses": g("on"), "temp_join_channel": g("on")})
-	case "users.channelSections.list":
-		var secs []map[string]any
-		ids := s.ChannelIDs()
-		per := max(1, len(ids)/6)
-		names := []string{"Starred", "Hack Club", "Projects", "Events", "Random stuff", "Bots"}
-		for i, n := range names {
-			lo, hi := i*per, min(len(ids), (i+1)*per)
-			if i == len(names)-1 {
-				hi = len(ids)
-			}
-			typ := "standard"
-			if i == 0 {
-				typ = "stars"
-			}
-			id := fmt.Sprintf("L0FAKE%02d", i)
-			chs := append(s.SectionInserts(id), ids[lo:hi]...)
-			secs = append(secs, map[string]any{"channel_section_id": id, "name": n, "type": typ,
-				"channel_ids_page": map[string]any{"channel_ids": chs, "count": len(chs)}})
-		}
-		secs = append(secs, map[string]any{"channel_section_id": "L0FAKECH", "name": "", "type": "channels"},
-			map[string]any{"channel_section_id": "L0FAKEDM", "name": "", "type": "direct_messages"},
-			map[string]any{"channel_section_id": "L0FAKETMP", "name": "", "type": "temporary_channels"})
-		return ok("channel_sections", secs)
+			"dm_recency_sort_rollout": g("without_edu"), "reskin_custom_responses": g("on"), "temp_join_channel": g("on"),
+			"sidebar_section_search": g("on"), "add_channels_channel_sections_slackathon": g("on"), "mute_channel_edu": g("on")})
 	case "users.prefs.get":
 		s.prefsMu.Lock()
 		m := make(map[string]any, len(s.prefs))
@@ -806,9 +849,32 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		}
 		s.setVIP(u, method == "users.priority.add")
 		return ok()
+	case "team.prefs.get":
+		prefs := s.TeamPrefs
+		if prefs == nil {
+			prefs = map[string]any{}
+		}
+		return ok("prefs", prefs)
+	case "channels.prefs.get":
+		ch, name := f.Get("channel_id"), f.Get("pref_name")
+		var v any = map[string]any{}
+		if p, found := s.ChannelPrefs[ch][name]; found {
+			v = p
+		}
+		return ok("channel_id", ch, "pref_name", name, "pref_value", v)
 	case "team.info":
+		if f.Get("team") == ExternalTeamID {
+			return ok("team", map[string]any{"id": ExternalTeamID, "name": "Partner Co", "domain": "partnerco",
+				"icon": map[string]any{"image_34": s.URL + "img/34x34/partner.png", "image_44": s.URL + "img/44x44/partner.png",
+					"image_88": s.URL + "img/88x88/partner.png"}})
+		}
 		return ok("team", map[string]any{"id": TeamID, "name": "Fake Club", "domain": "fakeclub",
 			"icon": map[string]any{"image_88": s.URL + "img/88x88/team.png"}})
+	case "apps.profile.get":
+		if p, found := s.appProfile(f.Get("bot"), f.Get("app")); found {
+			return ok("app_profile", p)
+		}
+		return map[string]any{"ok": false, "error": "app_not_found"}
 	case "emoji.list":
 		return ok("emoji", s.emoji)
 	case "usergroups.list":
@@ -827,6 +893,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return ok("messages", []any{}, "has_more", false)
 	case "conversations.info":
 		if c, found := s.conv(f.Get("channel")); found {
+			if f.Get("timezone_count") == "true" || f.Get("display_counts") == "true" {
+				return ok("channel", withCounts(c, f))
+			}
 			return ok("channel", c)
 		}
 		if c, found := s.createdConv(f.Get("channel")); found {
@@ -890,6 +959,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return ok("allowed", allowed, "allowed_per_team", map[string]any{})
 	case "edge/huddles/list":
 		return ok("huddles", []any{})
+	}
+	if out, handled := s.handleHuddles(method, f); handled { // huddles.go
+		return out
 	}
 	if out, handled := s.handleDrafts(method, f); handled {
 		return out
@@ -996,6 +1068,8 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	defer c.CloseNow()
 	ctx := r.Context()
 	_ = c.Write(ctx, websocket.MessageText, []byte(`{"type":"hello"}`))
+	s.addSocket(c) // Push (canvas.go)
+	defer s.dropSocket(c)
 	for {
 		if _, _, err := c.Read(ctx); err != nil {
 			return
@@ -1033,4 +1107,29 @@ func (s *Server) Fetch(ctx context.Context, raw string) ([]byte, error) {
 		return nil, fmt.Errorf("fakeslack: GET %s: %s", raw, resp.Status)
 	}
 	return io.ReadAll(resp.Body)
+}
+
+// withCounts is conversations.info's channel with what the broadcast
+// warning asks for (addCounts).
+func withCounts(c slack.Conversation, f url.Values) map[string]any {
+	b, _ := json.Marshal(c)
+	var m map[string]any
+	_ = json.Unmarshal(b, &m)
+	addCounts(m, c, f)
+	return m
+}
+
+// addCounts adds timezone_count (a stable 1–12 per channel) and
+// display_counts {display_counts, guest_counts} when the request asks.
+func addCounts(m map[string]any, c slack.Conversation, f url.Values) {
+	if f.Get("timezone_count") == "true" {
+		tz := 1
+		for _, r := range c.ID {
+			tz = (tz*31 + int(r)) % 12
+		}
+		m["timezone_count"] = tz + 1
+	}
+	if f.Get("display_counts") == "true" {
+		m["display_counts"] = map[string]int{"display_counts": c.NumMembers, "guest_counts": 0}
+	}
 }

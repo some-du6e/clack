@@ -264,6 +264,24 @@ var hudGreenLight = color.NRGBA{R: 0x5b, G: 0xe0, B: 0x9b, A: 0xff}
 type headerState struct {
 	click, caret  widget.Clickable
 	tip, caretTip popups.TipState
+	caretHit      bool // the caret was clicked (TakeCaret)
+}
+
+// TakeCaret reports (once) whether the live button's caret for ch was
+// clicked; the header then opens MenuItems(ch) under it.
+func (c *Controller) TakeCaret(ch string) bool {
+	hs := c.hdr[ch]
+	if hs == nil || !hs.caretHit {
+		return false
+	}
+	hs.caretHit = false
+	return true
+}
+
+// HeaderCaretX is the caret's x inside the live button (it's hdrCaret dp
+// wide, the button's full height).
+func (c *Controller) HeaderCaretX(gtx C, th *theme.Theme, ch string) int {
+	return c.headerMainWidth(gtx, th, ch)
 }
 
 // HeaderLive reports whether channel's header should show the live
@@ -361,6 +379,9 @@ func (c *Controller) HeaderPill(gtx C, th *theme.Theme, ch string, h int) D {
 	}
 	if hs.click.Clicked(gtx) {
 		c.Toggle(ch)
+	}
+	if hs.caret.Clicked(gtx) {
+		hs.caretHit = true
 	}
 	in := c.In(ch)
 	people := c.headerPeople(ch)

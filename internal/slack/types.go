@@ -190,13 +190,18 @@ type User struct {
 	Presence          string  `json:"presence,omitempty"`
 	// EnterpriseUser lists the Grid workspaces the user belongs to.
 	EnterpriseUser *EnterpriseUser `json:"enterprise_user,omitempty"`
+	// IsStranger: a Slack Connect user from an org the viewer shares no
+	// channel with (users.info is_stranger).
+	IsStranger bool `json:"is_stranger,omitempty"`
 }
 
 type EnterpriseUser struct {
-	ID      string   `json:"id,omitempty"`
-	Teams   []string `json:"teams,omitempty"`
-	IsAdmin bool     `json:"is_admin,omitempty"`
-	IsOwner bool     `json:"is_owner,omitempty"`
+	ID             string   `json:"id,omitempty"`
+	EnterpriseID   string   `json:"enterprise_id,omitempty"`
+	EnterpriseName string   `json:"enterprise_name,omitempty"`
+	Teams          []string `json:"teams,omitempty"`
+	IsAdmin        bool     `json:"is_admin,omitempty"`
+	IsOwner        bool     `json:"is_owner,omitempty"`
 }
 
 type Profile struct {

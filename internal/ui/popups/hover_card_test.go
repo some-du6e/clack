@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"image"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,7 +33,8 @@ func hcEnv(t *testing.T) *tzHost {
 	a := core.New(slack.New(fs.Creds()), store.New(""))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	a.EnsureUsers(ctx, []string{fakeslack.SelfID, fakeslack.ProfileID, fakeslack.AdminID, fakeslack.DeactivatedID, fakeslack.SlackbotID})
+	a.EnsureUsers(ctx, []string{fakeslack.SelfID, fakeslack.ProfileID, fakeslack.AdminID, fakeslack.DeactivatedID, fakeslack.SlackbotID,
+		fakeslack.AppUserID, fakeslack.ExternalID, fakeslack.ExternalAppUserID})
 	if u, ok := a.S.User(fakeslack.SelfID); ok {
 		a.S.Self = *u
 	}
@@ -135,5 +137,127 @@ func TestLocalTimeLabel(t *testing.T) {
 		if got := pfLocalTimeLabel(h, tc.u, at(tc.now)); got != tc.want {
 			t.Errorf("%s at %s: %q, want %q", tc.u.TZ, tc.now, got, tc.want)
 		}
+	}
+}
+
+// hcLoad lays p out until cond (its async loads land through Pump).
+func hcLoad(t *testing.T, p *ProfileCard, what string, cond func() bool) image.Rectangle {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		r := hcLayout(t, p)
+		Pump()
+		if cond() {
+			return hcLayout(t, p)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(10 * time.Millisecond)
+		_ = r
+	}
+}
+
+// An app's bot user gets Slack's AppHoverCard (320 wide, above the
+// trigger) from apps.profile.get: name, tagline, the menu items that
+// apply, Slack's installation summary and Go to App; a message's bot_id
+// alone opens the same card.
+func TestHoverCardApp(t *testing.T) {
+	h := hcEnv(t)
+	anchor := image.Rect(120, 600, 200, 622)
+	p := NewHoverCard(h, anchor, fakeslack.AppUserID, "")
+	r := hcLoad(t, p, "the app card", func() bool { return p.app.card != nil && p.app.team != "" })
+	if !p.IsApp() {
+		t.Fatal("a bot user got the member card")
+	}
+	if r.Dx() != 320 || r.Max.Y != anchor.Min.Y-hovercard.OffsetY || r.Min.X != anchor.Min.X {
+		t.Errorf("app card %v, want 320 wide with its bottom-left 12px above %v", r, anchor)
+	}
+	c := *p.app.card
+	if c.Name != "Deploy Bot" || c.Tagline == "" || c.External {
+		t.Errorf("card %+v", c)
+	}
+	var labels []string
+	for _, it := range p.appMenu(c, h.a.Self()) {
+		labels = append(labels, it.label)
+	}
+	if got := strings.Join(labels, "|"); got != "About this app|Configuration|Add this app to a channel…|Add to VIP" {
+		t.Errorf("menu %q", got)
+	}
+	if !p.appShowDM(c) {
+		t.Error("no Go to App for the app's bot user")
+	}
+	sum := p.appSummary(c, h.a.Self())
+	if len(sum) != 1 || sum[0].s != "Deploy Bot is installed on Fake Club." {
+		t.Errorf("summary %+v", sum)
+	}
+	// installer wording when the home team isn't known
+	p.app.team = ""
+	if sum := p.appSummary(c, h.a.Self()); len(sum) != 2 || !sum[0].mention || sum[0].s != "@avery.admin" || sum[1].s != " added Deploy Bot to this workspace." {
+		t.Errorf("installer summary %+v", sum)
+	}
+
+	b := NewHoverCard(h, anchor, "", fakeslack.AppBotID)
+	hcLoad(t, b, "the bot's app card", func() bool { return b.app.card != nil })
+	if !b.IsApp() || b.app.card.Name != "Deploy Bot" {
+		t.Errorf("bot-only card: app=%v %+v", b.IsApp(), b.app.card)
+	}
+
+	// another org's app: the external banner, no Configuration
+	x := NewHoverCard(h, anchor, fakeslack.ExternalAppUserID, "")
+	xr := hcLoad(t, x, "the external app card", func() bool { return x.app.card != nil && x.app.team != "" })
+	if !x.app.card.External || x.app.team != "Partner Co" {
+		t.Errorf("external app %+v team %q", x.app.card, x.app.team)
+	}
+	for _, it := range x.appMenu(*x.app.card, h.a.Self()) {
+		if it.label == "Configuration" {
+			t.Error("another org's app offers Configuration")
+		}
+	}
+	if xr.Dy() <= r.Dy()-200 {
+		t.Errorf("external card %v suspiciously short next to %v", xr, r)
+	}
+}
+
+// A Slack Connect member's card carries AppExternalTeamBanner with the
+// partner team's name; members of the workspace don't.
+func TestHoverCardExternal(t *testing.T) {
+	h := hcEnv(t)
+	anchor := image.Rect(120, 600, 200, 622)
+	in := NewHoverCard(h, anchor, fakeslack.ProfileID, "")
+	inR := hcLayout(t, in)
+	p := NewHoverCard(h, anchor, fakeslack.ExternalID, "")
+	hcLoad(t, p, "the partner team", func() bool { return p.teamName != "" })
+	if p.IsApp() || p.teamName != "Partner Co" {
+		t.Fatalf("external member: app=%v team %q", p.IsApp(), p.teamName)
+	}
+	if in.teamName != "" || in.teamAsked {
+		t.Error("a workspace member's card looked up a team")
+	}
+	u, _ := lookupUser(h, fakeslack.ExternalID)
+	if !u.External {
+		t.Fatal("fixture not external")
+	}
+	if !pfShowsPresence(u) {
+		t.Error("an external member has no presence")
+	}
+	_ = inR
+}
+
+// Slackbot's card shows its presence (Slack's heart), a deactivated
+// member's none, a bot's none (on the click card).
+func TestHoverCardPresenceRule(t *testing.T) {
+	h := hcEnv(t)
+	sb, _ := lookupUser(h, fakeslack.SlackbotID)
+	gone, _ := lookupUser(h, fakeslack.DeactivatedID)
+	bot, _ := lookupUser(h, fakeslack.AppUserID)
+	if !sb.IsBot || sb.Presence != "active" {
+		t.Fatalf("fixture: Slackbot %+v", sb)
+	}
+	if !pfShowsPresence(sb) {
+		t.Error("Slackbot's card hides its presence")
+	}
+	if pfShowsPresence(gone) || pfShowsPresence(bot) {
+		t.Error("presence on a deactivated member or a bot")
 	}
 }

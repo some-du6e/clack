@@ -116,6 +116,10 @@ type prepareSendArgs struct {
 	// SlashCommandAppID picks the app whose command a plugin turned the
 	// message into (NativeAtChannel: at-channel's /channel).
 	SlashCommandAppID string `json:"slashCommandAppId,omitempty"`
+	// IncludeBroadcastKeywordWarning asks for the "Notify N people?"
+	// dialog first (MessagePaneInput passes it; InputContainer, the
+	// thread composer, doesn't).
+	IncludeBroadcastKeywordWarning bool `json:"includeBroadcastKeywordWarning,omitempty"`
 }
 
 // sendMessageArgs is the chat.postMessage-shaped sendMessage thunk.

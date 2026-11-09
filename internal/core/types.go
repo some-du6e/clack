@@ -92,6 +92,17 @@ type User struct {
 	Color, Presence                  string // Presence: active | away | ""
 	Huddle                           bool
 	Agent                            bool // agent_status consistently_an_agent: Slack labels the sender AGENT, not APP
+
+	// TeamID is the member's team as Slack's computeLocality reads it
+	// (the org on Enterprise Grid for org members, else team_id).
+	// External: a Slack Connect member (neither on the viewer's team nor
+	// in its org); Stranger: users.info is_stranger.
+	TeamID   string
+	External bool
+	Stranger bool
+	// BotID and AppID are a bot user's profile.bot_id and api_app_id
+	// (Slack opens AppHoverCard for them instead of the member card).
+	BotID, AppID string
 }
 
 // Conv is a sidebar conversation.
@@ -139,6 +150,19 @@ type Section struct {
 	CollapsedChannels []string
 	// Collapsed is the user's saved collapsed state (channel_sections pref "c").
 	Collapsed bool
+	// All is every conversation the section holds before its filter
+	// (lJBI channelsAssociatedOrdered), sorted like Channels: "Mark all as
+	// read" and "Mute all conversations" act on it.
+	All []string
+	// Rows the filter hides, by reason (lJBI readHiddenChannelsOrdered,
+	// mutedHiddenChannelsOrdered, dormantHiddenChannelsOrdered,
+	// unreadWithNoMentionsHiddenChannelsOrdered): the heading's right-click
+	// menu lists them.
+	HiddenRead, HiddenMuted, HiddenDormant, HiddenUnread []string
+	// Filter and Sort are the section's effective "sidebar" and "sort"
+	// values (all | active | hid | mentions | today | d7 | d30; default |
+	// recent | priority).
+	Filter, Sort string
 }
 
 // Count is a conversation's unread state. DMs count every unread message

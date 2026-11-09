@@ -154,11 +154,16 @@ func toPopupItems(items []MenuItem) []popups.MenuItem {
 			out = append(out, popups.MenuItem{Separator: true})
 			continue
 		}
-		if it.Disabled && it.Do == nil && i == 0 {
-			out = append(out, popups.MenuItem{Header: it.Label})
+		if it.Header || it.Disabled && it.Do == nil && i == 0 && it.Sub == nil {
+			out = append(out, popups.MenuItem{Key: it.Key, Header: it.Label})
 			continue
 		}
-		out = append(out, popups.MenuItem{Label: it.Label, Icon: it.Icon, Hint: it.Hint, Subtitle: it.Subtitle, Danger: it.Danger, Disabled: it.Disabled, Do: it.Do})
+		var sub []popups.MenuItem
+		if it.Sub != nil {
+			sub = toPopupItems(it.Sub)
+		}
+		out = append(out, popups.MenuItem{Key: it.Key, Label: it.Label, Icon: it.Icon, Hint: it.Hint, Subtitle: it.Subtitle,
+			Right: it.Right, Danger: it.Danger, Disabled: it.Disabled, Checked: it.Checked, Sub: sub, Do: it.Do})
 	}
 	return out
 }

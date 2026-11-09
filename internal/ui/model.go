@@ -36,6 +36,12 @@ type sbSection struct {
 	Collapsed             bool     // saved collapsed state (seeds the sidebar's toggle once)
 	Rows                  []string // conv ids
 	CollapsedRows         []string // what shows while collapsed (unread rows, muted included)
+	// For the heading menus (section_menu.go): every conversation before
+	// the filter, the hidden ones by reason, and the effective filter and
+	// sort (core.Section).
+	All                                                  []string
+	HiddenRead, HiddenMuted, HiddenDormant, HiddenUnread []string
+	Filter, Sort                                         string
 }
 
 type convInfo struct {

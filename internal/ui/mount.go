@@ -164,13 +164,18 @@ var (
 // MenuItem is a generic menu entry the shell builds (team, channel, more,
 // history menus).
 type MenuItem struct {
+	Key      string // Slack's template key / data-qa ("" derives one from the label)
 	Label    string
 	Icon     string
 	Hint     string // shortcut text on the right
 	Subtitle string // second line under the label (the rail's More menu)
+	Right    string // a submenu's current value before its chevron ("A–Z")
 	Danger   bool
 	Divider  bool // draws a separator instead of an item
+	Header   bool // a small non-interactive heading row
 	Disabled bool
+	Checked  bool       // a radio item's check
+	Sub      []MenuItem // a submenu
 	Do       func()
 }
 

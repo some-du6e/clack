@@ -25,6 +25,7 @@ import (
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/ui/hovercard"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
 	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
 )
@@ -133,6 +134,7 @@ type ChannelDetails struct {
 	memFilter dirDropdown
 	tabsPerm  dirDropdown
 	memberClk map[string]*widget.Clickable
+	memberHov map[string]*hovercard.Trigger // Slack's ProfileHoverTrigger on each member's name
 	filtKey   string
 	filt      []core.User
 	rowClk    map[string]*widget.Clickable
@@ -152,6 +154,7 @@ func NewChannelDetails(h Host, channelID string) *ChannelDetails {
 		kind:      "channel",
 		lists:     map[int]*widget.List{},
 		memberClk: map[string]*widget.Clickable{},
+		memberHov: map[string]*hovercard.Trigger{},
 		rowClk:    map[string]*widget.Clickable{},
 		find:      newSearch("Find people or agents"),
 		memFilter: dirDropdown{labels: []string{"All", "People", "Agents"}},
@@ -1353,6 +1356,16 @@ func (d *ChannelDetails) addMembersRow(gtx C) D {
 	})
 }
 
+// memberTrigger is member id's name trigger.
+func (d *ChannelDetails) memberTrigger(id string) *hovercard.Trigger {
+	t, ok := d.memberHov[id]
+	if !ok {
+		t = new(hovercard.Trigger)
+		d.memberHov[id] = t
+	}
+	return t
+}
+
 // memberRow: h 60, padding 12px 28px; 36px avatar, 12px gap; line 1 the
 // bold full name (+ " (you)"), presence, display name and status emoji;
 // line 2 the title in #454447. The text block overhangs the avatar by 4px.
@@ -1381,7 +1394,12 @@ func (d *ChannelDetails) memberRow(gtx C, u core.User, self string) D {
 							return col(gtx,
 								layout.Rigid(func(gtx C) D {
 									return row(gtx, layout.Middle,
-										layout.Rigid(func(gtx C) D { return d.para(gtx, 15, 22, wBold, d.p.Text, 1, full) }),
+										layout.Rigid(func(gtx C) D {
+											// MediumMemberEntity showHoverCard: the trigger wraps the primary name
+											nd := d.para(gtx, 15, 22, wBold, d.p.Text, 1, full)
+											d.memberTrigger(u.ID).Layout(gtx, u.ID, nd.Size)
+											return nd
+										}),
 										layout.Rigid(func(gtx C) D {
 											if u.Presence == "" {
 												return D{}

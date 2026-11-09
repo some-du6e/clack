@@ -743,6 +743,13 @@ func (l *lay) fileIcon(f *richtext.File, x, y, s int) {
 	bg, fg := p.FileIconBg, p.FileIconText
 	label := strings.ToUpper(f.Type)
 	switch strings.ToLower(f.Type) {
+	case "quip", "canvas": // Slack's canvas tile: a white sheet on blue
+		r := image.Rect(x, y, x+s, y+s)
+		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: l.dp(8), fill: rgb(0x1d, 0x9b, 0xd1), target: -1})
+		sw, sh := s*2/5, s/2
+		sr := image.Rect(x+(s-sw)/2, y+(s-sh)/2, x+(s+sw)/2, y+(s+sh)/2)
+		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: sr, radius: l.dp(2), fill: rgb(255, 255, 255), target: -1})
+		return
 	case "pdf":
 		bg, fg = p.FileIconPDF, rgb(255, 255, 255)
 	case "zip", "gzip", "tar", "rar", "7z":

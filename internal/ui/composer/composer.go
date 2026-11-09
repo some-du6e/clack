@@ -659,10 +659,18 @@ func (c *Composer) schedule(t time.Time) {
 	c.clearAfterSend()
 	go func() {
 		ctx := context.Background()
-		// Slack checks the keywords before scheduling too (broadcast.go)
+		// Slack's scheduleMessage goes through prepareAndSendMessage with
+		// includeBroadcastKeywordWarning and dateScheduled: the warning
+		// (its scheduled wording, "Schedule Message"), then the keyword
+		// check (broadcast.go)
 		if used := deltaKeywords(doc.Delta()); len(used) > 0 {
-			j := &sendJob{api: api, ch: ch, ts: ts}
-			if msg, no := j.prohibited(ctx, ch, ts, used); no {
+			j := &sendJob{api: api, ch: ch, ts: ts, confirm: c.confirmBroadcast}
+			enabled := api.broadcastEnabled(ctx, ch)
+			if !j.confirmed(ctx, broadcastAsk{Channel: ch, Used: used, Scheduled: true}, enabled) {
+				c.restore(doc)
+				return
+			}
+			if msg, no := j.prohibited(ctx, ch, ts, used, enabled); no {
 				api.localEphemeral(ch, ts, msg)
 				c.restore(doc)
 				return
@@ -768,14 +776,14 @@ func (c *Composer) send(o *outgoing) {
 		c.att.SetUploading(true)
 	}
 	job := &sendJob{api: c.api, ch: c.ch, ts: c.ts, o: o, prepared: prepared, raw: rawFiles, files: hasFiles,
-		draftID: c.draftID(), view: c.viewContext()}
+		draftID: c.draftID(), view: c.viewContext(), warn: c.ts == "", confirm: c.confirmBroadcast}
 	go func() {
 		err := job.run(context.Background())
 		if hasFiles {
 			c.later(func() {
 				c.att.SetUploading(false)
-				if isProhibitedBroadcast(err) {
-					return // Slackbot said why; the files stay attached
+				if isQuietSendStop(err) {
+					return // Slackbot said why, or the warning was dismissed; the files stay attached
 				}
 				if err != nil {
 					c.h.Toast("Upload failed: " + err.Error())
@@ -783,7 +791,7 @@ func (c *Composer) send(o *outgoing) {
 				}
 				c.att.Clear()
 			})
-		} else if err != nil && !isProhibitedBroadcast(err) { // Slackbot already said why
+		} else if err != nil && !isQuietSendStop(err) { // Slackbot already said why, or the warning was dismissed
 			c.later(func() { c.h.Toast("Message not sent: " + err.Error()) })
 		}
 		if err != nil {
@@ -801,6 +809,11 @@ type sendJob struct {
 	raw           []core.UploadFile
 	files         bool
 	draftID, view string
+	// warn is includeBroadcastKeywordWarning (the channel composer, not
+	// threads); confirm asks the user through the warning dialog and
+	// waits (nil: no dialog, so a due warning stops the send).
+	warn    bool
+	confirm func(ctx context.Context, ask broadcastAsk) bool
 }
 
 func (j *sendJob) run(ctx context.Context) error {
@@ -809,7 +822,8 @@ func (j *sendJob) run(ctx context.Context) error {
 		delta = j.o.doc.Delta()
 	}
 	args := prepareSendArgs{ChannelID: j.ch, ReplyToTs: j.ts, Delta: delta, Text: j.o.text, Blocks: j.o.blocks,
-		ShouldBroadcast: j.o.broadcast, Broadcast: j.o.broadcast, DraftID: j.draftID, ViewContext: j.view}
+		ShouldBroadcast: j.o.broadcast, Broadcast: j.o.broadcast, DraftID: j.draftID, ViewContext: j.view,
+		IncludeBroadcastKeywordWarning: j.warn}
 	if t := currentTaut(); t.ThunkPatched(thPrepareAndSend) {
 		for _, p := range j.prepared {
 			args.FileIDs = append(args.FileIDs, p.ID)

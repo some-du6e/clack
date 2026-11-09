@@ -1,5 +1,5 @@
 name: plugin-library
-# Clack's plugin Library (Preferences > Taut / Slick > Library): builds every
+# Clack's plugin Library (Preferences > Plugins > Browse): builds every
 # official Taut and Slick plugin with upstream's own build (Taut's
 # `build:user-plugin`, Slick's build via internal/slick/build/build.mjs) from
 # upstream main, checks them with Clack's acceptance suites, and publishes the

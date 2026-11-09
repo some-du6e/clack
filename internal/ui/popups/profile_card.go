@@ -3,12 +3,16 @@ package popups
 import (
 	"context"
 	"image"
+	"image/color"
 	"strings"
 	"time"
 
+	"gioui.org/f32"
 	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/clip"
+	"gioui.org/op/paint"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/core"
@@ -51,9 +55,17 @@ type ProfileCard struct {
 	asked   bool // EnsureUsers started
 	missing bool // EnsureUsers finished without the user
 
+	bot string   // a bot with no user (a message's bot_id): AppHoverCard
+	app appState // the app card (app_card.go)
+
+	// Slack Connect: the external member's team (AppExternalTeamBanner)
+	teamAsked          bool
+	teamName, teamIcon string
+
 	avatarBtn, nameBtn                 widget.Clickable
 	msgBtn, huddleBtn, vipBtn, moreBtn widget.Clickable
 	moreLocal                          image.Rectangle // kebab rect, card coords
+	huddleLocal                        image.Rectangle // Huddle button rect, card coords
 	key                                string          // slackc instance key
 }
 
@@ -71,9 +83,52 @@ func NewProfileCard(h Host, anchor image.Point, userID string) *ProfileCard {
 // trigger's top-left, flipped below it when there's no room). The root
 // draws it under the overlays and closes it through hovercard.
 func NewHoverProfileCard(h Host, anchor image.Rectangle, userID string) *ProfileCard {
-	p := &ProfileCard{h: h, id: userID, anchorR: anchor, anchor: anchor.Min, hover: true, key: nextKey("hovercard")}
+	return NewHoverCard(h, anchor, userID, "")
+}
+
+// NewHoverCard is NewHoverProfileCard for a trigger that names a user, a
+// bot (botID: a message's bot_id with no user), or both: an app or bot
+// gets Slack's AppHoverCard (app_card.go), a person the member card.
+func NewHoverCard(h Host, anchor image.Rectangle, userID, botID string) *ProfileCard {
+	p := &ProfileCard{h: h, id: userID, bot: botID, anchorR: anchor, anchor: anchor.Min, hover: true, key: nextKey("hovercard")}
 	pfSubscribe(h, userID)
 	return p
+}
+
+// IsApp reports whether the card shows Slack's AppHoverCard (after a
+// Layout).
+func (p *ProfileCard) IsApp() bool {
+	u, ok := lookupUser(p.h, p.id)
+	return p.isApp(u, ok)
+}
+
+// place is the card's top-left for a card of size sz: hover cards above
+// the trigger (hovercard.Place), click cards at the click.
+func (p *ProfileCard) place(gtx layout.Context, sz, win image.Point) image.Point {
+	if p.hover {
+		return hovercard.Place(p.anchorR, sz, win, dp(gtx, hovercard.OffsetY), dp(gtx, hovercard.AllowanceX), dp(gtx, hovercard.AllowanceY))
+	}
+	return place(pointRect(p.anchor), sz, win, dp(gtx, 8), Below)
+}
+
+// ensureTeam reads an external member's team once (team.info).
+func (p *ProfileCard) ensureTeam(u core.User) {
+	c := p.h.Core()
+	if p.teamAsked || c == nil || !u.External || u.TeamID == "" {
+		return
+	}
+	p.teamAsked = true
+	team := u.TeamID
+	if name, icon, ok := c.Team(team, 20); ok {
+		p.teamName, p.teamIcon = name, icon
+		return
+	}
+	type res struct{ name, icon string }
+	run(p.h, func(ctx context.Context) (res, error) {
+		c.EnsureTeam(ctx, team)
+		name, icon, _ := c.Team(team, 20)
+		return res{name, icon}, nil
+	}, func(r res, _ error) { p.teamName, p.teamIcon = r.name, r.icon })
 }
 
 // Rect is the card's bounds in window coordinates (after a Layout).
@@ -121,7 +176,12 @@ func (p *ProfileCard) Layout(gtx layout.Context) layout.Dimensions {
 		p.asked = true
 		pfEnsure(p.h, p.id, func(found bool) { p.missing = !found })
 	}
+	if p.hover && p.isApp(u, ok) {
+		p.rect = p.layoutApp(gtx, th, cl, win)
+		return layout.Dimensions{Size: win}
+	}
 	if ok {
+		p.ensureTeam(u)
 		p.clicks(gtx, u)
 		if p.done {
 			return layout.Dimensions{}
@@ -157,12 +217,7 @@ func (p *ProfileCard) Layout(gtx layout.Context) layout.Dimensions {
 			return childrenOr(gtx, pp, "MemberProfileHoverCard", hover, content)
 		})
 	})
-	var pos image.Point
-	if p.hover {
-		pos = hovercard.Place(p.anchorR, d.Size, win, dp(gtx, hovercard.OffsetY), dp(gtx, hovercard.AllowanceX), dp(gtx, hovercard.AllowanceY))
-	} else {
-		pos = place(pointRect(p.anchor), d.Size, win, dp(gtx, 8), Below)
-	}
+	pos := p.place(gtx, d.Size, win)
 	p.rect = image.Rectangle{Min: pos, Max: pos.Add(d.Size)}
 	rad := dp(gtx, 8)
 	st := pfCardClass.Enter(gtx, 0, 0)
@@ -201,8 +256,11 @@ func (p *ProfileCard) clicks(gtx layout.Context, u core.User) {
 		}
 		return
 	}
-	if p.huddleBtn.Clicked(gtx) {
-		h.Toast("Huddles aren't supported in yoloslack yet")
+	if p.huddleBtn.Clicked(gtx) && !p.huddleLocal.Empty() {
+		if m := pfHuddleMenuAt(gtx, h, u.ID, p.huddleLocal.Add(p.rect.Min), p.Dismiss); m != nil {
+			p.sub = m
+			h.ShowOverlay(m)
+		}
 	}
 	if p.vipBtn.Clicked(gtx) {
 		h.Toast("VIPs aren't supported yet")
@@ -331,6 +389,9 @@ func (p *ProfileCard) content(gtx layout.Context, th *theme.Theme, cl *Colors, u
 		if !p.moreLocal.Empty() {
 			p.moreLocal = p.moreLocal.Add(image.Pt(pad, y))
 		}
+		if !p.huddleLocal.Empty() {
+			p.huddleLocal = p.huddleLocal.Add(image.Pt(pad, y))
+		}
 		y += d.Size.Y
 	}
 	y += pad
@@ -344,7 +405,15 @@ func (p *ProfileCard) content(gtx layout.Context, th *theme.Theme, cl *Colors, u
 func (p *ProfileCard) header(gtx layout.Context, th *theme.Theme, cl *Colors, u core.User, ok bool, w int) layout.Dimensions {
 	bh := 0
 	if ok {
-		bh = pfBanner(gtx, th, cl, u, w).Size.Y
+		// MemberProfileBaseEntity's banners: AppExternalTeamBanner for a
+		// Slack Connect member, then MemberProfileHoverBanner
+		if u.External {
+			bh = pfExternalBanner(gtx, p.h, th, cl, p.teamName, p.teamIcon, w).Size.Y
+		}
+		func() {
+			defer op.Offset(image.Pt(0, bh)).Push(gtx.Ops).Pop()
+			bh += pfBanner(gtx, th, cl, u, w).Size.Y
+		}()
 	}
 	defer op.Offset(image.Pt(0, bh)).Push(gtx.Ops).Pop()
 	pad := dp(gtx, 16)
@@ -409,6 +478,7 @@ func (p *ProfileCard) column(gtx layout.Context, th *theme.Theme, cl *Colors, u 
 }
 
 func (p *ProfileCard) buttons(gtx layout.Context, th *theme.Theme, u core.User, w int) layout.Dimensions {
+	p.huddleLocal = image.Rectangle{}
 	var specs []pfBtnSpec
 	switch {
 	case u.Deleted:
@@ -421,7 +491,7 @@ func (p *ProfileCard) buttons(gtx layout.Context, th *theme.Theme, u core.User, 
 	default:
 		specs = []pfBtnSpec{
 			{c: &p.msgBtn, label: "Message", lead: "threads"},
-			{c: &p.huddleBtn, label: "Huddle", lead: "headphones", caret: true},
+			{c: &p.huddleBtn, label: "Huddle", lead: "headphones", caret: true, rect: &p.huddleLocal},
 			{c: &p.vipBtn, label: "VIP", lead: "user-plus", vip: true},
 		}
 	}
@@ -480,6 +550,34 @@ func pfBanner(gtx layout.Context, th *theme.Theme, cl *Colors, u core.User, w in
 		return para(gtx, th, 13, 18, theme.Bold, fg, label, 1)
 	})
 	return layout.Dimensions{Size: image.Pt(w, h)}
+}
+
+// pfExternalBanner is AppExternalTeamBanner inside the member card
+// (.p-member_profile_base_entity__primary .p-app_external_team_banner):
+// in the flow, rgba(29,28,29,.04), padding 8, the 20px team icon (radius
+// 3, 2px white ring, 8px each side), the team name 13px bold, one line.
+// Slack renders it only once the team is known (externalTeam && name).
+func pfExternalBanner(gtx layout.Context, h Host, th *theme.Theme, cl *Colors, name, iconURL string, w int) layout.Dimensions {
+	if name == "" {
+		return layout.Dimensions{}
+	}
+	pad, ic := dp(gtx, 8), dp(gtx, 20)
+	hh := pad + ic + pad
+	bg := rgba(0x1d1c1d, 0.04)
+	if th != nil && th.Dark {
+		bg = rgba(0xe8e8e8, 0.06)
+	}
+	fill(gtx, image.Rect(0, 0, w, hh), bg)
+	x := pad + dp(gtx, 8)
+	pfTeamIcon(gtx, h, th, name, iconURL, image.Pt(x, pad), 20, true)
+	x += ic + dp(gtx, 8)
+	at(gtx, image.Pt(x, pad), func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, w-x-pad), ic)}
+		return vcenter(gtx, ic, func(gtx layout.Context) layout.Dimensions {
+			return text(gtx, th, 13, theme.Bold, cl.Fg, name)
+		})
+	})
+	return layout.Dimensions{Size: image.Pt(w, hh)}
 }
 
 // pfCardStatus is the card's custom status (BaseCustomStatus with
@@ -638,7 +736,7 @@ func pfPresenceNative(gtx layout.Context, th *theme.Theme, u core.User, dot floa
 	return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
 		if rowH <= 0 {
 			if !showText {
-				return presenceDot(gtx, th, active, dot)
+				return pfPresenceGlyph(gtx, th, u, active, dot)
 			}
 			rowH = dp(gtx, 22)
 		}
@@ -646,7 +744,7 @@ func pfPresenceNative(gtx layout.Context, th *theme.Theme, u core.User, dot floa
 		col := dp(gtx, 20)
 		d := dp(gtx, dot)
 		at(gtx, image.Pt((col-d)/2, (rowH-d)/2), func(gtx layout.Context) layout.Dimensions {
-			return presenceDot(gtx, th, active, dot)
+			return pfPresenceGlyph(gtx, th, u, active, dot)
 		})
 		if !showText {
 			return layout.Dimensions{Size: image.Pt(col, rowH)}
@@ -664,6 +762,64 @@ func pfPresenceNative(gtx layout.Context, th *theme.Theme, u core.User, dot floa
 		})
 		return layout.Dimensions{Size: image.Pt(x+td.Size.X, rowH)}
 	})
+}
+
+// pfShowsPresence is MemberProfileBaseEntity's presence rule: everyone
+// but a deactivated member. Clack's member card also reaches bots (the
+// click card); they have none, but Slackbot does: core marks it a bot,
+// while Slack's ConnectedPresence draws it (isSystemUser for USLACKBOT:
+// the status-slackbot-filled heart, colored by its presence).
+func pfShowsPresence(u core.User) bool {
+	return !u.Deleted && (!u.IsBot || pfIsSlackbot(u))
+}
+
+// pfPresenceGlyph is BasePresence's icon (getPresenceIconName) at about
+// dot dp: Slackbot's heart (isSystemUser: status-slackbot-filled, drawn
+// whatever its presence), the rounded square of an external member or
+// guest (status-guest / -filled), else the member circle. Active is
+// #2bac76 (c-presence--active), away the hollow gray.
+func pfPresenceGlyph(gtx layout.Context, th *theme.Theme, u core.User, active bool, dot float32) layout.Dimensions {
+	cl := colorsOf(th)
+	col := cl.Away
+	if active {
+		col = cl.Presence
+	}
+	switch {
+	case pfIsSlackbot(u):
+		px := dp(gtx, dot*10/9) // the glyph is 10 wide where the circle is 9
+		pfHeart(gtx, px, col)
+		return layout.Dimensions{Size: image.Pt(px, px)}
+	case u.External || u.Guest:
+		px := dp(gtx, dot*8/9) // an 8-unit square where the circle is 9
+		off := (dp(gtx, dot) - px) / 2
+		r := image.Rect(off, off, off+px, off+px)
+		rad := maxInt(1, px*7/32) // 1.75 of 8
+		if active {
+			rrect(gtx, r, rad, col)
+		} else {
+			stroke(gtx, r, rad, maxInt(1, dp(gtx, dot)/6), col)
+		}
+		return layout.Dimensions{Size: image.Pt(dp(gtx, dot), dp(gtx, dot))}
+	}
+	return presenceDot(gtx, th, active, dot)
+}
+
+// pfHeart fills a heart in a px square (redrawn after Slack's
+// status-slackbot-filled: two round lobes meeting at a point).
+func pfHeart(gtx layout.Context, px int, col color.NRGBA) {
+	s := float32(px)
+	pt := func(x, y float32) f32.Point { return f32.Pt(x*s, y*s) }
+	var pa clip.Path
+	pa.Begin(gtx.Ops)
+	pa.MoveTo(pt(0.5, 0.92))
+	pa.CubeTo(pt(0.2, 0.72), pt(0.0, 0.52), pt(0.0, 0.32))
+	pa.CubeTo(pt(0.0, 0.14), pt(0.12, 0.04), pt(0.27, 0.04))
+	pa.CubeTo(pt(0.38, 0.04), pt(0.46, 0.1), pt(0.5, 0.2))
+	pa.CubeTo(pt(0.54, 0.1), pt(0.62, 0.04), pt(0.73, 0.04))
+	pa.CubeTo(pt(0.88, 0.04), pt(1.0, 0.14), pt(1.0, 0.32))
+	pa.CubeTo(pt(1.0, 0.52), pt(0.8, 0.72), pt(0.5, 0.92))
+	pa.Close()
+	paint.FillShape(gtx.Ops, col, clip.Outline{Path: pa.End()}.Op())
 }
 
 // ---- shared profile helpers (card + full profile) ----
@@ -842,7 +998,7 @@ func pfNameLine(gtx layout.Context, h Host, th *theme.Theme, c *widget.Clickable
 	name := pfName(u)
 	// unknown presence draws the hollow ring, like Slack; a deactivated
 	// member has none (MemberProfileBaseEntity: !isDeactivated)
-	hasDot := !u.IsBot && !u.Deleted
+	hasDot := pfShowsPresence(u)
 	reserve := 0
 	if hasDot {
 		reserve = dp(gtx, dot) + dp(gtx, 6)
@@ -945,9 +1101,10 @@ func pfSkeleton(gtx layout.Context, th *theme.Theme, cl *Colors, missing bool, i
 type pfBtnSpec struct {
 	c     *widget.Clickable
 	label string
-	lead  string // icon before the label
-	caret bool   // chevron-down after the label
-	vip   bool   // the VIP button (its icon is svg[data-qa="vip"])
+	lead  string           // icon before the label
+	caret bool             // chevron-down after the label
+	vip   bool             // the VIP button (its icon is svg[data-qa="vip"])
+	rect  *image.Rectangle // set to the button's rect in the row (pfBtnRow)
 }
 
 type pfBtnMetrics struct {
@@ -1079,6 +1236,9 @@ func pfBtnRow(gtx layout.Context, th *theme.Theme, size BtnSize, specs []pfBtnSp
 		at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
 			return pfBtn(gtx, th, size, s, bw)
 		})
+		if s.rect != nil {
+			*s.rect = image.Rect(x, 0, x+bw, hh)
+		}
 		x += bw + gap
 	}
 	if kebab == nil {

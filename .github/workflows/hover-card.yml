@@ -1,7 +1,9 @@
 name: hover-card
-# The profile hover card: timing/placement unit tests, the router tests,
-# the fixture render test on internal/fakeslack, and screenshots of the
-# card over the whole client (GPU, synthetic fakeslack data only: nothing
+# The profile hover card: timing/placement unit tests, the router tests
+# per trigger location (messages, mentions, search results, channel
+# details members, Activity reactions), the member/app/external fixture
+# render tests on internal/fakeslack, and screenshots of the cards over
+# the whole client (GPU, synthetic fakeslack data only: nothing
 # here talks to Slack).
 on:
   push:
@@ -9,7 +11,15 @@ on:
       - "internal/ui/hovercard/**"
       - "internal/ui/hover_card*.go"
       - "internal/ui/popups/profile_card.go"
-      - "internal/ui/popups/hover_card_test.go"
+      - "internal/ui/popups/app_card.go"
+      - "internal/ui/popups/hover_*test.go"
+      - "internal/ui/popups/search_view.go"
+      - "internal/ui/views/details.go"
+      - "internal/ui/views/activity.go"
+      - "internal/ui/views/hover_triggers_test.go"
+      - "internal/ui/messages/hover_bot_test.go"
+      - "internal/core/app_card*.go"
+      - "internal/core/app.go"
       - "internal/ui/richview/view.go"
       - "internal/ui/messages/row.go"
       - "internal/fakeslack/**"
@@ -43,9 +53,12 @@ jobs:
         run: |
           mkdir -p "$HOVER_SHOTS_DIR"
           go test -count=1 -v ./internal/ui/hovercard
-          go test -count=1 -v -run 'TestHoverCard|TestLocalTimeLabel' ./internal/ui/popups
+          go test -count=1 -v -run 'TestLocality|TestAppCardAndExternal' ./internal/core
+          go test -count=1 -v -run 'TestHoverCard|TestHoverTrigger|TestLocalTimeLabel' ./internal/ui/popups
+          go test -count=1 -v -run 'TestHoverTrigger' ./internal/ui/views
+          go test -count=1 -v -run 'TestRowHoverTarget' ./internal/ui/messages
           go test -count=1 -v -run 'TestMentionHoverCard' ./internal/ui/richview
-          xvfb-run -a go test -count=1 -v -run 'TestHoverCardInChannel' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestHoverCardInChannel|TestHoverCardOverDialog' ./internal/ui/
           ls -la "$HOVER_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

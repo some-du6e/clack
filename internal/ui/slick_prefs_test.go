@@ -20,6 +20,8 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/widget"
+
+	"github.com/some-du6e/yoloslackgoclient/internal/pluginlib"
 )
 
 func TestSlickNoPluginsStartup(t *testing.T) {
@@ -38,8 +40,12 @@ func TestSlickNoPluginsStartup(t *testing.T) {
 	}
 	// every Slick tab draws from the Go model, without JS
 	p := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}}
-	for _, tab := range slickTabs {
-		p.section = tab.id
+	var ids []string // the plugin tabs, both Plugins modes, and the old ids
+	for _, tab := range pluginNav {
+		ids = append(ids, tab.id)
+	}
+	for _, id := range append(ids, libraryTabID, "taut", "slick", "slick_plugins", "slick_install") {
+		p.selectTab(id)
 		gtx := ttContext(new(op.Ops), image.Pt(800, 560))
 		a.slackcFrame(gtx)
 		p.layout(gtx)
@@ -121,25 +127,30 @@ func TestSlickPrefsRender(t *testing.T) {
 		r.win = w
 		defer w.Release()
 	}
-	p := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}, section: "slick"}
+	p := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}, section: pluginsTabID}
 	defer p.close()
 	draw := func(gtx layout.Context) { p.layout(gtx) }
-	// tall draws a Slick tab alone, 600 wide (the dialog's page width).
+	// tall draws a plugin tab's page alone, 600 wide (the dialog's page width).
 	tall := func(tab string) func(gtx layout.Context) {
 		return func(gtx layout.Context) {
 			gtx.Constraints = layout.Exact(image.Pt(600, r.sz.Y))
-			if p.slick == nil {
-				p.slick = newSlickPage(a)
-			}
-			p.slick.layout(gtx, tab)
+			p.section1(gtx, tab, image.Point{})
 		}
 	}
+	// the plugin tabs: Plugins > Installed and > Browse, Themes, Plugin settings
 	shotTabs := func(suffix string) {
-		for _, tab := range slickTabs {
+		for _, tab := range []struct{ id, name, mode string }{
+			{pluginsTabID, "plugins-installed", "installed"}, {pluginsTabID, "plugins-browse", "browse"},
+			{themesTabID, "themes", ""}, {pluginSettingsTabID, "plugin-settings", ""},
+		} {
 			p.section = tab.id
-			r.save("slick-"+tab.id+"-"+suffix, r.settle(draw, 0, nil))
-			r.save("slick-"+tab.id+"-"+suffix+"-full", r.settle(tall(tab.id), 0, nil), r.sz.Y)
+			if tab.mode != "" {
+				p.pluginsPage().setMode(tab.mode)
+			}
+			r.save("slick-"+tab.name+"-"+suffix, r.settle(draw, 0, nil))
+			r.save("slick-"+tab.name+"-"+suffix+"-full", r.settle(tall(tab.id), 0, nil), r.sz.Y)
 		}
+		p.pluginsPage().setMode("installed")
 	}
 	shotTabs("empty-light")
 
@@ -184,7 +195,7 @@ func TestSlickPrefsRender(t *testing.T) {
 		t.Error("JS started with every Slick plugin off")
 	}
 	p.close()
-	p.slick = nil
+	p.slick, p.plugins, p.settings, p.taut = nil, nil, nil, nil
 	shotTabs("off-light")
 
 	t0 = time.Now()
@@ -204,7 +215,8 @@ func TestSlickPrefsRender(t *testing.T) {
 	})
 	kinds := map[string]int{}
 	running := 0
-	p.section = "slick_plugins"
+	p.section = pluginsTabID
+	pp := p.pluginsPage()
 	for _, pl := range s.Settings().Plugins {
 		if pl.Running {
 			running++
@@ -215,8 +227,8 @@ func TestSlickPrefsRender(t *testing.T) {
 		for _, o := range pl.Options {
 			kinds[o.Type]++
 		}
-		p.slick.open = pl.ID
-		r.save("slick-plugin-"+safeName(pl.ID), r.settle(tall("slick_plugins"), time.Second, nil), r.sz.Y)
+		pp.openPlugin(pluginlib.Slick, pl.ID)
+		r.save("slick-plugin-"+safeName(pl.ID), r.settle(tall(pluginsTabID), time.Second, nil), r.sz.Y)
 	}
 	t.Logf("%d/%d running; setting kinds %v", running, len(ids), kinds)
 	// a schedule rule with its days popover open, and a names entry
@@ -235,21 +247,21 @@ func TestSlickPrefsRender(t *testing.T) {
 				if err := s.SetOption(ctx, pl.ID, o.Key, rules); err != nil {
 					t.Errorf("schedule %s: %v", pl.ID, err)
 				}
-				p.slick.open = pl.ID
-				r.settle(tall("slick_plugins"), time.Second, nil)
-				p.slick.daysOpen = pl.ID + "/" + o.Key + ".0"
-				r.save("slick-schedule-"+safeName(pl.ID), r.settle(tall("slick_plugins"), time.Second, nil), r.sz.Y)
-				p.slick.daysOpen = ""
+				pp.openPlugin(pluginlib.Slick, pl.ID)
+				r.settle(tall(pluginsTabID), time.Second, nil)
+				pp.s.daysOpen = pl.ID + "/" + o.Key + ".0"
+				r.save("slick-schedule-"+safeName(pl.ID), r.settle(tall(pluginsTabID), time.Second, nil), r.sz.Y)
+				pp.s.daysOpen = ""
 			case "names":
 				if err := s.SetOption(ctx, pl.ID, o.Key, map[string]any{"UALICE01": "Alice Example", "UBOB0002": "Bobby"}); err != nil {
 					t.Errorf("names %s: %v", pl.ID, err)
 				}
-				p.slick.open = pl.ID
-				r.save("slick-names-"+safeName(pl.ID)+"-"+o.Key, r.settle(tall("slick_plugins"), time.Second, nil), r.sz.Y)
+				pp.openPlugin(pluginlib.Slick, pl.ID)
+				r.save("slick-names-"+safeName(pl.ID)+"-"+o.Key, r.settle(tall(pluginsTabID), time.Second, nil), r.sz.Y)
 			}
 		}
 	}
-	p.slick.open = ""
+	pp.s.open = ""
 	for _, dark := range []bool{false, true} {
 		a.th.SetDark(dark)
 		s.SetDark(dark)
@@ -266,8 +278,8 @@ func TestSlickPrefsRender(t *testing.T) {
 			if err := s.SetTheme("nord"); err != nil {
 				t.Error(err)
 			}
-			p.section = "slick_themes"
-			r.save("slick-themes-nord-selected", r.settle(tall("slick_themes"), 0, nil), 900)
+			p.section = themesTabID
+			r.save("slick-themes-nord-selected", r.settle(tall(themesTabID), 0, nil), 900)
 			_ = s.SetTheme("")
 		}
 	}

@@ -840,7 +840,7 @@ func (r *row) avatarButton(gtx layout.Context, url string, size image.Point) lay
 		return layout.Dimensions{Size: size}
 	})
 	contextArea(gtx, &r.avatarCtx, d.Size)
-	r.avatarHov.Layout(gtx, r.hoverUser(), d.Size)
+	r.avatarHov.LayoutBot(gtx, r.hoverUser(), r.hoverBot(), d.Size)
 	return d
 }
 
@@ -1326,7 +1326,7 @@ func (r *row) nameButton(gtx layout.Context, bs slackc.Styled) layout.Dimensions
 		return d
 	})
 	contextArea(gtx, &r.nameCtx, d.Size)
-	r.nameHov.Layout(gtx, r.hoverUser(), d.Size)
+	r.nameHov.LayoutBot(gtx, r.hoverUser(), r.hoverBot(), d.Size)
 	return d
 }
 
@@ -1337,6 +1337,21 @@ func (r *row) hoverUser() string {
 		return ""
 	}
 	return r.m.User
+}
+
+// hoverBot is the bot a sender with no user opens AppHoverCard for (Slack
+// passes the message's bot_id as ProfileHoverTrigger's serviceId).
+func (r *row) hoverBot() string {
+	if r.custom || r.m.User != "" {
+		return ""
+	}
+	if r.m.BotID != "" {
+		return r.m.BotID
+	}
+	if bp := r.m.BotProfile; bp != nil {
+		return bp.ID
+	}
+	return ""
 }
 
 // layoutTimestamp is the header's Timestamp ("3:04 PM").

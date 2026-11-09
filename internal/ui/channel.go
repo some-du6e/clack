@@ -56,6 +56,10 @@ func (a *App) layoutChannel(gtx layout.Context, ch string) layout.Dimensions {
 		atExact(gtx, body.Min, body.Size(), dm.LayoutBody)
 		return layout.Dimensions{Size: sz}
 	}
+	if v := a.canvasTabView(ch); v != nil { // a canvas tab (mount_features_canvas.go)
+		atExact(gtx, body.Min, body.Size(), v.Layout)
+		return layout.Dimensions{Size: sz}
+	}
 	cv := a.convoFor(ch, "")
 	atExact(gtx, body.Min, body.Size(), func(gtx layout.Context) layout.Dimensions {
 		mp := clsMessagePane.Enter(gtx, 0, 0)
@@ -153,9 +157,22 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 			hw = hud.HeaderPillWidth(gtx, a.th, ch)
 		}
 		right -= hw
+		hudAt := image.Pt(right, y)
+		hudOrg := a.hudOrigin[ch]
+		if hudOrg == nil {
+			if a.hudOrigin == nil {
+				a.hudOrigin = map[string]*originTracker{}
+			}
+			hudOrg = &originTracker{}
+			a.hudOrigin[ch] = hudOrg
+		}
+		caretX := gtx.Dp(74) // the caret's x in the button
 		if live {
+			caretX = hud.HeaderCaretX(gtx, a.th, ch)
 			at(gtx, image.Pt(right, y), image.Pt(hw, btn), func(gtx layout.Context) layout.Dimensions {
-				return hud.HeaderPill(gtx, a.th, ch, btn)
+				d := hud.HeaderPill(gtx, a.th, ch, btn)
+				hudOrg.track(gtx, a)
+				return d
 			})
 		} else {
 			at(gtx, image.Pt(right, y), image.Pt(hw, btn), func(gtx layout.Context) layout.Dimensions {
@@ -185,11 +202,20 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 						return layout.Dimensions{Size: image.Pt(gtx.Dp(20), btn)}
 					})
 				})
+				hudOrg.track(gtx, a)
 				return layout.Dimensions{Size: r.Size()}
 			})
 		}
 		if clicked(a.clicks.get("hdr.huddle")) {
 			hud.Start(ch)
+		}
+		if clicked(a.clicks.get("hdr.huddlemore")) || hud.TakeCaret(ch) {
+			// the pointer is on the caret, so the tracker knows the button's
+			// window position (fallback: where it sits in the main pane)
+			fb := image.Pt(a.winSize.X-gtx.Dp(theme.PanelInset)-(sz.X-hudAt.X), gtx.Dp(theme.TopNavH)+hudAt.Y)
+			org := hudOrg.get(fb)
+			caret := image.Rect(caretX, 0, caretX+gtx.Dp(20), btn).Add(org)
+			a.openHuddleMenu(gtx, ch, caret)
 		}
 		right -= gtx.Dp(6)
 	}
@@ -428,6 +454,8 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 			}
 			if t.key == "messages" {
 				a.chTab[ch] = 0
+			} else if t.icon == "canvas" && t.fileID != "" {
+				a.chTab[ch] = i // the canvas opens in the channel's body
 			} else {
 				a.chTab[ch] = 0
 				a.openTab(ch, t.key)
@@ -439,7 +467,7 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 		return iconButton(gtx, a.clicks.get("tab.add"), "plus", 28, 18, c.FgMuted, c.BgHover, 6)
 	})
 	if clicked(a.clicks.get("tab.add")) {
-		a.Toast("Adding canvases and lists isn't supported yet")
+		a.addTabMenu(ch) // mount_features_canvas.go
 	}
 	return layout.Dimensions{Size: sz}
 }

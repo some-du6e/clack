@@ -43,6 +43,9 @@ type EditorStyle struct {
 	PlaceholderText                                      string
 	MaxHeight                                            unit.Dp
 	EmojiSize                                            unit.Dp
+	// Embolden strokes text glyphs this many pixels wider (0 = off), to
+	// match richview's text where the editor replaces it (canvas blocks).
+	Embolden float32
 	// Images returns an emoji image scaled for px pixels, if loaded.
 	Images func(url string, px int) (paint.ImageOp, bool)
 }

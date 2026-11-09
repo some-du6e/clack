@@ -39,7 +39,19 @@ const (
 
 type fakeCaller struct{ signal string }
 
+// FakeLinkBase is where the fake's rooms.getLink links point:
+// FakeLinkBase + the channel id.
+const FakeLinkBase = "https://app.slack.com/huddle/T0FAKETEAM/"
+
 func (f fakeCaller) Call(ctx context.Context, method string, p url.Values, out any) error {
+	if method == "rooms.getLink" { // the copy huddle link answer
+		ch := p.Get("channel_id")
+		if ch == "" {
+			return errors.New("fake slack: rooms.getLink without channel_id")
+		}
+		b, _ := json.Marshal(map[string]any{"ok": true, "link": FakeLinkBase + ch})
+		return json.Unmarshal(b, out)
+	}
 	if method != "rooms.join" {
 		return errors.New("fake slack: " + method)
 	}

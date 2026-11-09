@@ -87,6 +87,7 @@ func (a *App) defaultShortcuts() *shortcuts {
 	add("Ctrl+Shift+D", "Toggle sidebar", func(a *App) { a.toggleSidebar() })
 	add("Ctrl+Shift+Y", "Toggle dark mode", func(a *App) { a.ToggleDark() })
 	add("Ctrl+N", "Compose", func(a *App) { a.compose() })
+	add("Ctrl+Shift+N", "New canvas", func(a *App) { a.CreateCanvas() }) // the Create menu's Canvas hint
 	add("Ctrl+,", "Preferences", func(a *App) { a.openPrefs() })
 	add("Ctrl+.", "Toggle the right pane", func(a *App) { a.toggleSecondary() })
 	// Slack's zoom (View > Actual Size, Zoom In, Zoom Out): Cmd/Ctrl with
