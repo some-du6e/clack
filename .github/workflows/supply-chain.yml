@@ -40,10 +40,10 @@ jobs:
           awk '/^```npm$/{f=1;next} /^```$/{f=0} f' README.md > /tmp/vendor.npm
           test -s /tmp/vendor.npm
           while read -r pkg ver integrity maps; do
-            reg=$(curl -fsSL --retry 6 --retry-delay 10 --retry-all-errors "https://registry.npmjs.org/$pkg/$ver" | jq -r .dist.integrity)
+            reg=$(curl -fsSL --retry 20 --retry-delay 30 --retry-max-time 900 --retry-all-errors "https://registry.npmjs.org/$pkg/$ver" | jq -r .dist.integrity)
             [ "$reg" = "$integrity" ] || { echo "::error::$pkg@$ver: registry integrity $reg, recorded $integrity"; exit 1; }
             d=$(mktemp -d)
-            curl -fsSL --retry 6 --retry-delay 10 --retry-all-errors -o "$d/pkg.tgz" "https://registry.npmjs.org/$pkg/-/$pkg-$ver.tgz"
+            curl -fsSL --retry 20 --retry-delay 30 --retry-max-time 900 --retry-all-errors -o "$d/pkg.tgz" "https://registry.npmjs.org/$pkg/-/$pkg-$ver.tgz"
             got="sha512-$(openssl dgst -sha512 -binary "$d/pkg.tgz" | base64 -w0)"
             [ "$got" = "$integrity" ] || { echo "::error::$pkg@$ver: tarball $got, expected $integrity"; exit 1; }
             mkdir "$d/x" && tar -xzf "$d/pkg.tgz" -C "$d/x" --no-same-owner
