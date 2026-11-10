@@ -162,3 +162,21 @@ func (s *Server) handleViews(method string, f url.Values) (any, bool) {
 	}
 	return s.handleActivity(method, f)
 }
+
+// DraftElsewhere stores a draft to ViewsChannel as another of the
+// viewer's clients would and pushes its draft_create, as Slack does to
+// every connected client. It returns the draft's id.
+func (s *Server) DraftElsewhere(text string) string {
+	b, _ := json.Marshal([]any{map[string]any{"type": "rich_text", "elements": []any{
+		map[string]any{"type": "rich_text_section", "elements": []any{map[string]any{"type": "text", "text": text}}}}}})
+	dst, _ := json.Marshal([]any{map[string]any{"channel_id": ViewsChannel}})
+	now := time.Now()
+	s.draftMu.Lock()
+	d := &Draft{ID: s.newID("Dr"), Blocks: b, Destinations: dst, DateCreated: now.Unix(), LastUpdatedTS: strconv.FormatInt(now.UnixMilli(), 10)}
+	d.ClientMsgID = d.ID + "-client"
+	s.drafts[d.ID] = d
+	obj := s.draftJSON(d)
+	s.draftMu.Unlock()
+	s.Push(map[string]any{"type": "draft_create", "draft": obj, "event_ts": strconv.FormatInt(now.Unix(), 10) + ".000100"})
+	return d.ID
+}

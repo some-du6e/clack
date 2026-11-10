@@ -174,6 +174,7 @@ type Drafts struct {
 	eduHidden bool
 
 	lists             [3]widget.List
+	kb                [3]*vkList // the Drafts and Scheduled lists' keyboard (vlist_keys.go)
 	rows              map[string]*draftsRow
 	retry             widget.Clickable
 	editBtn, eduClose widget.Clickable
@@ -194,6 +195,7 @@ func NewDrafts(h Host) *Drafts {
 	}
 	for i := range d.lists {
 		d.lists[i].Axis = layout.Vertical
+		d.kb[i] = newVKList(&d.lists[i])
 	}
 	return d
 }
@@ -1342,9 +1344,16 @@ func (d *Drafts) confirmDelete(dr *core.Draft) {
 			}
 			return true
 		}})
+	// DeleteDraftModal is a c-sk-modal--fixed (max-width 520px): title
+	// bar padding 20px 28px, min-height 70px; body section padding 0 28px;
+	// c-sk-modal_footer 84px with padding 24px 28px, actions 12px apart.
+	// The Delete button has autoFocus (no visibleAutoFocus: no ring).
 	ph.ShowOverlay(popups.NewModal(ph, popups.ModalOpts{
-		Title:        title,
-		EnterSubmits: true,
+		Title:      title,
+		Width:      520,
+		FooterPad:  24,
+		AutoFocus:  btns[len(btns)-1],
+		QuietFocus: true,
 		Body: func(gtx C) D {
 			return d.richDoc(gtx, "draft-delete:"+id, title, doc, richview.Options{}, 0)
 		},
@@ -1448,41 +1457,112 @@ func (d *Drafts) layoutList(gtx C) D {
 	}
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 	l := &d.lists[sel]
+	kb := d.keys(gtx, sel)
 	dims := d.scrollList(gtx, l, ne+extra, func(gtx C, i int) D {
 		if i >= ne {
 			return d.skeleton(gtx, 1, draftsTile)
 		}
-		e := d.view[i]
-		switch e.kind {
-		case draftsEntryCard:
-			return d.eduCard(gtx)
-		case draftsEntryGap:
-			return D{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(16))}
-		case draftsEntryEnd:
-			return D{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(draftsMargin))}
-		case draftsEntryDay:
-			return layout.Inset{Top: 24, Bottom: 12, Left: draftsMargin + 16, Right: draftsMargin + 16}.Layout(gtx, func(gtx C) D {
-				return d.para(gtx, 13, 18, wBold, d.p.Text, 1, e.label)
-			})
-		case draftsEntrySent:
-			return d.sentRow(gtx, &d.sentMsgs[e.i], e.first, e.last)
-		default:
-			l, sch := d.drafts, false
-			if sel == draftsTabScheduled {
-				l, sch = d.scheduled, true
-			}
-			if d.edit != nil && d.edit.id == l[e.i].ID {
-				return d.editCard(gtx, &l[e.i])
-			}
-			return d.draftCard(gtx, &l[e.i], sch)
+		if kb == nil {
+			return d.entry(gtx, sel, i)
 		}
+		dd := d.entry(gtx, sel, i)
+		if kb.ringOn(d.entryKey(sel, i)) {
+			if d.view[i].kind == draftsEntryDraft {
+				// .p-drafts_page__draft_list_item:after: radius 12,
+				// inset 16px 0 0 — the card itself
+				m := gtx.Dp(draftsMargin)
+				d.vkRing(gtx, image.Rect(m, 0, dd.Size.X-m, dd.Size.Y-gtx.Dp(8)), gtx.Dp(12))
+			} else { // the education card: the default inset 4px, radius 8
+				in := gtx.Dp(4)
+				d.vkRing(gtx, image.Rect(in, in, dd.Size.X-in, dd.Size.Y-in), gtx.Dp(8))
+			}
+		}
+		return kb.elem(i, dd)
 	})
+	if kb != nil {
+		kb.area(gtx, image.Rectangle{Max: dims.Size})
+		kb.after()
+	}
 	if sel == draftsTabSent {
 		if p := l.Position; p.First+p.Count >= ne-3 {
 			d.loadMoreSent()
 		}
 	}
 	return dims
+}
+
+// entry draws d.view[i].
+func (d *Drafts) entry(gtx C, sel, i int) D {
+	e := d.view[i]
+	switch e.kind {
+	case draftsEntryCard:
+		return d.eduCard(gtx)
+	case draftsEntryGap:
+		return D{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(16))}
+	case draftsEntryEnd:
+		return D{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(draftsMargin))}
+	case draftsEntryDay:
+		return layout.Inset{Top: 24, Bottom: 12, Left: draftsMargin + 16, Right: draftsMargin + 16}.Layout(gtx, func(gtx C) D {
+			return d.para(gtx, 13, 18, wBold, d.p.Text, 1, e.label)
+		})
+	case draftsEntrySent:
+		return d.sentRow(gtx, &d.sentMsgs[e.i], e.first, e.last)
+	default:
+		l, sch := d.drafts, false
+		if sel == draftsTabScheduled {
+			l, sch = d.scheduled, true
+		}
+		if d.edit != nil && d.edit.id == l[e.i].ID {
+			return d.editCard(gtx, &l[e.i])
+		}
+		return d.draftCard(gtx, &l[e.i], sch)
+	}
+}
+
+// entryKey is a view entry's list key (getDraftListKeys): the education
+// card's, a draft's id, "" for Clack's spacers.
+func (d *Drafts) entryKey(sel, i int) string {
+	e := d.view[i]
+	switch e.kind {
+	case draftsEntryCard:
+		return "sent_page_education_card"
+	case draftsEntryDraft:
+		l := d.drafts
+		if sel == draftsTabScheduled {
+			l = d.scheduled
+		}
+		if e.i < len(l) {
+			return "d:" + l[e.i].ID
+		}
+	}
+	return ""
+}
+
+// keys runs the Drafts and Scheduled lists' keyboard (DraftList: FSLM
+// with useGlobalKeyboardShortcuts; every row is focusable, Enter is
+// onItemClick: a draft opens for editing, the education card does
+// nothing). Sent isn't a DraftList: nil.
+func (d *Drafts) keys(gtx C, sel int) *vkList {
+	if sel == draftsTabSent {
+		return nil
+	}
+	kb := d.kb[sel]
+	items := make([]vkItem, 0, len(d.view))
+	for i := range d.view {
+		k := d.entryKey(sel, i)
+		if k == "" {
+			k = "gap:" + strconv.Itoa(i)
+		}
+		items = append(items, vkItem{key: k, elem: i, focusable: !strings.HasPrefix(k, "gap:")})
+	}
+	kb.setItems(items)
+	kb.begin()
+	kb.update(gtx, gtx.Constraints.Max.Y, vkOpts{Click: func(k string) {
+		if strings.HasPrefix(k, "d:") {
+			d.rowState(k).click.Click()
+		}
+	}})
+	return kb
 }
 
 // emptyFor: the spec's copy, with a 64px accent icon instead of Slack's

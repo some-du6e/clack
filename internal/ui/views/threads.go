@@ -15,15 +15,18 @@ package views
 
 import (
 	"context"
+	"encoding/json"
 	"image"
 	"image/color"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"gioui.org/gesture"
 	"gioui.org/io/event"
+	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -128,24 +131,84 @@ type Threads struct {
 	sizes map[int]int // list element heights this frame (composer origins)
 	divAt int         // the item the "You’re up to date" divider sits above (-1: none)
 	notes actNotes
+
+	// kb is the list's keyboard (vlist_keys.go) over Slack's rows:
+	// heading, root, load_older, replies and footer per thread
+	// (get_rows_and_keys); kbRows maps a row key to its thread and ts.
+	kb     *vkList
+	kbRows map[string]thrKBRow
+	keyFs  []key.Filter
+
+	// marks are thread_marked last_reads waiting for the UI goroutine
+	// (threadMarked patches the thread in place: no reload).
+	mu    sync.Mutex
+	marks map[string]string
+}
+
+// thrKBRow is one keyboard row of the Threads list.
+type thrKBRow struct {
+	kind   string // heading, root, load_older, reply, footer
+	key    string // the thread (thrItem.key)
+	ch, ts string
 }
 
 // NewThreads builds the Threads view; it loads on first Layout.
 func NewThreads(h Host) *Threads {
-	v := &Threads{base: newBase(h), cards: map[string]*thrCard{}, read: map[string]string{}, sizes: map[int]int{}}
+	v := &Threads{base: newBase(h), cards: map[string]*thrCard{}, read: map[string]string{}, sizes: map[int]int{},
+		kbRows: map[string]thrKBRow{}, marks: map[string]string{}}
 	v.list.Axis = layout.Vertical
+	v.kb = newVKList(&v.list)
+	v.kb.onFocus = v.kbFocus
 	return v
 }
 
-func thrMatch(ev core.Event) bool {
-	return ev.Type == "message" && ev.Reply || ev.Type == "thread_marked" || ev.Type == "update_thread_state"
+// match runs on the event goroutine. Slack's RTM-THREADS handlers: a new
+// reply (messageReplied → "If all threads is open, maybe update it after a
+// new message arrives") and thread_subscribed (threadSubscribed → the same
+// thunk) fetch the thread into the list, which Clack does with a refresh;
+// thread_marked patches the thread's last read in place; thread_unsubscribed
+// only flips the root's subscribed flag and update_thread_state only the
+// badges, so neither reloads.
+func (v *Threads) match(ev core.Event) bool {
+	switch ev.Type {
+	case "message":
+		return ev.Reply
+	case "thread_subscription":
+		return ev.Name == "follow"
+	case "thread_marked":
+		var e struct {
+			Subscription struct {
+				Channel  string `json:"channel"`
+				ThreadTS string `json:"thread_ts"`
+				LastRead string `json:"last_read"`
+			} `json:"subscription"`
+		}
+		if json.Unmarshal(ev.Raw, &e) == nil && e.Subscription.Channel != "" && e.Subscription.ThreadTS != "" && e.Subscription.LastRead != "" {
+			v.mu.Lock()
+			v.marks[e.Subscription.Channel+"/"+e.Subscription.ThreadTS] = e.Subscription.LastRead
+			v.mu.Unlock()
+			v.h.Invalidate()
+		}
+	}
+	return false
+}
+
+// applyMarks moves thread_marked last reads into the local read state.
+func (v *Threads) applyMarks() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for k, lr := range v.marks {
+		v.read[k] = lr
+		delete(v.marks, k)
+	}
 }
 
 // Layout draws the view.
 func (v *Threads) Layout(gtx C) D {
 	v.frame()
 	v.notes.drain(v.h)
-	v.w.watch(v.h, thrMatch)
+	v.w.watch(v.h, v.match)
+	v.applyMarks()
 	if !v.data.started() {
 		v.load(actFresh)
 	}
@@ -282,15 +345,24 @@ func (t *thrItem) latest() string {
 	return t.Root.TS
 }
 
-// unread is the number of unread replies, after local read marks.
+// unread is the number of unread replies, after local read marks and
+// thread_marked last reads (a mark back before the latest reply makes the
+// replies after it unread again).
 func (v *Threads) unread(t *thrItem) int {
-	if t.UnreadCount <= 0 {
+	r, ok := v.read[t.key]
+	if !ok {
+		return max(t.UnreadCount, 0)
+	}
+	if !actTSLess(r, t.latest()) {
 		return 0
 	}
-	if r, ok := v.read[t.key]; ok && !actTSLess(r, t.latest()) {
-		return 0
+	n := 0
+	for i := range t.Replies {
+		if actTSLess(r, t.Replies[i].TS) {
+			n++
+		}
 	}
-	return t.UnreadCount
+	return max(n, t.UnreadCount)
 }
 
 // markRead marks a thread read up to its latest reply: locally at once,
@@ -335,22 +407,28 @@ func (v *Threads) body(gtx C) D {
 	clear(v.sizes)
 	div := v.firstRead(page.items)
 	v.divAt = div
+	v.kb.setItems(v.kbItems(page.items))
+	v.kb.update(gtx, gtx.Constraints.Max.Y, vkOpts{Click: v.kbClick, Key: func(e key.Event, active string) bool { return v.kbKey(gtx, e, active) }, Extra: v.typeFilters()})
+	v.kb.begin()
 	d := v.scrollList(gtx, &v.list, n+1, func(gtx C, i int) D {
 		if i >= n {
 			return v.footer(gtx, failed)
 		}
 		var d D
 		if i == div {
+			y0 := 0
 			d = layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				layout.Rigid(v.upToDate),
-				layout.Rigid(func(gtx C) D { return v.thread(gtx, &page.items[i], page.convs) }),
+				layout.Rigid(func(gtx C) D { d := v.upToDate(gtx); y0 = d.Size.Y; return d }),
+				layout.Rigid(func(gtx C) D { return v.thread(gtx, &page.items[i], page.convs, y0) }),
 			)
 		} else {
-			d = v.thread(gtx, &page.items[i], page.convs)
+			d = v.thread(gtx, &page.items[i], page.convs, 0)
 		}
 		v.sizes[i] = d.Size.Y
-		return d
+		return v.kb.elem(i, d)
 	})
+	v.kb.area(gtx, image.Rectangle{Max: d.Size})
+	v.kb.after()
 	v.placeComposers(gtx, page.items)
 	if page.hasMore && page.next != "" && !failed && !v.data.busy() &&
 		v.list.Position.First+v.list.Position.Count >= n-2 {
@@ -654,25 +732,18 @@ func (v *Threads) cardFor(t *thrItem, convs map[string]core.ConvRef) *thrCard {
 
 // thread is one block: the header line on the gray background, then the
 // card.
-func (v *Threads) thread(gtx C, t *thrItem, convs map[string]core.ConvRef) D {
+func (v *Threads) thread(gtx C, t *thrItem, convs map[string]core.ConvRef, y0 int) D {
 	c := v.cardFor(t, convs)
 	if c.title.Clicked(gtx) {
 		v.h.Navigate("c/" + t.Channel)
 	}
 	if c.more.Clicked(gtx) {
 		gtx.Execute(op.InvalidateCmd{})
-		v.markRead(t)
-		v.h.OpenThread(t.Channel, t.Root.TS)
+		v.showMore(t)
 	}
 	if c.reply.Clicked(gtx) {
 		gtx.Execute(op.InvalidateCmd{})
-		v.markRead(t)
-		if ch, ok := v.h.(composer.Host); ok && c.comp == nil {
-			c.comp = composer.New(ch, t.Channel, t.Root.TS)
-			c.comp.Focus()
-		} else if !ok {
-			v.h.OpenThread(t.Channel, t.Root.TS)
-		}
+		v.openReply(t, c)
 	}
 	nameW := wBold
 	if v.unread(t) > 0 {
@@ -684,6 +755,7 @@ func (v *Threads) thread(gtx C, t *thrItem, convs map[string]core.ConvRef) D {
 		return D{}
 	}
 	headH, cardTop := 0, 0
+	var subs []thrSub
 	d := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		// Card header: margin 16px 28px 12px 24px, h 40.
 		layout.Rigid(func(gtx C) D {
@@ -711,6 +783,7 @@ func (v *Threads) thread(gtx C, t *thrItem, convs map[string]core.ConvRef) D {
 				)
 			})
 			headH = d.Size.Y
+			subs = append(subs, thrSub{"heading-" + t.key, 0, d.Size.Y})
 			return d
 		}),
 		// Card: margin 0 16px 8px, radius 12, 1px #dddddd.
@@ -718,7 +791,9 @@ func (v *Threads) thread(gtx C, t *thrItem, convs map[string]core.ConvRef) D {
 			return layout.Inset{Left: 16, Right: 16, Bottom: 8}.Layout(gtx, func(gtx C) D {
 				gtx.Constraints.Min.X = gtx.Constraints.Max.X
 				m := op.Record(gtx.Ops)
-				d, compY := v.card(gtx, c, t)
+				d, compY := v.card(gtx, c, t, func(key string, y, h int) {
+					subs = append(subs, thrSub{key, headH + y, h})
+				})
 				cardTop = compY
 				call := m.Stop()
 				r := image.Rectangle{Max: d.Size}
@@ -734,29 +809,73 @@ func (v *Threads) thread(gtx C, t *thrItem, convs map[string]core.ConvRef) D {
 		}),
 	)
 	c.compY = headH + cardTop
+	// Slack's rows are list items of their own: record where each sits and
+	// ring the keyboard's (.p-threads_view .c-virtual_list__item--focus:
+	// focus:after, inset 4px 16px).
+	for _, sb := range subs {
+		v.kb.sub(sb.key, y0+sb.y, sb.h)
+		if v.kb.ringOn(sb.key) {
+			v.vkRing(gtx, image.Rect(gtx.Dp(16), sb.y+gtx.Dp(4), d.Size.X-gtx.Dp(16), sb.y+sb.h-gtx.Dp(4)), gtx.Dp(8))
+		}
+	}
 	return d
+}
+
+// thrSub is a keyboard row's place inside its thread element.
+type thrSub struct {
+	key  string
+	y, h int
+}
+
+// showMore is the "Show N more replies" row (Clack opens the thread).
+func (v *Threads) showMore(t *thrItem) {
+	v.markRead(t)
+	v.h.OpenThread(t.Channel, t.Root.TS)
+}
+
+// openReply swaps in the card's real composer and focuses it.
+func (v *Threads) openReply(t *thrItem, c *thrCard) {
+	v.markRead(t)
+	ch, ok := v.h.(composer.Host)
+	if !ok {
+		v.h.OpenThread(t.Channel, t.Root.TS)
+		return
+	}
+	if c.comp == nil {
+		c.comp = composer.New(ch, t.Channel, t.Root.TS)
+		key := t.key
+		// onUpArrowInEmptyInput: focusItemAboveInput
+		c.comp.OnFocusList = func() { v.focusAboveFooter(key) }
+	}
+	c.comp.Focus()
 }
 
 // card lays out the card's segments and returns its size and the top of
 // the reply box within it.
-func (v *Threads) card(gtx C, c *thrCard, t *thrItem) (D, int) {
+func (v *Threads) card(gtx C, c *thrCard, t *thrItem, row func(key string, y, h int)) (D, int) {
 	unread := v.unread(t)
 	unreadFrom := len(t.Replies) - unread
 	compH, compBottom := 0, 20
 	if c.comp != nil {
 		compBottom = 0 // the real composer ends with its 24px hint bar
 	}
+	y := 0 // the Flex lays its rigid children in order
+	rec := func(key string, d D) D {
+		row(key, y, d.Size.Y)
+		y += d.Size.Y
+		return d
+	}
 	d := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
 			s := c.msg(t.Root.TS)
 			s.v, s.m, s.top = v, &t.Root, 20
-			return slackc.Component(gtx, "ThreadRootGeneric", s, (*thrMsg).rootProps, (*thrMsg).layoutRoot)
+			return rec("root-"+t.key, slackc.Component(gtx, "ThreadRootGeneric", s, (*thrMsg).rootProps, (*thrMsg).layoutRoot))
 		}),
 		layout.Rigid(func(gtx C) D {
 			if c.moreText == "" {
 				return D{}
 			}
-			return layout.Inset{Top: 4, Bottom: 4, Left: thrMsgIndent, Right: thrMsgPad}.Layout(gtx, func(gtx C) D {
+			return rec("load_older-"+t.key, layout.Inset{Top: 4, Bottom: 4, Left: thrMsgIndent, Right: thrMsgPad}.Layout(gtx, func(gtx C) D {
 				gtx.Constraints.Min.X = 0
 				return c.more.Layout(gtx, func(gtx C) D {
 					pointerCursor(gtx)
@@ -766,7 +885,7 @@ func (v *Threads) card(gtx C, c *thrCard, t *thrItem) (D, int) {
 					}
 					return d
 				})
-			})
+			}))
 		}),
 		layout.Rigid(func(gtx C) D {
 			return actStack(gtx, len(t.Replies), func(gtx C, i int) D {
@@ -775,7 +894,7 @@ func (v *Threads) card(gtx C, c *thrCard, t *thrItem) (D, int) {
 				if unread > 0 && i == max(unreadFrom, 0) {
 					v.newLine(gtx, d.Size.X)
 				}
-				return d
+				return rec(t.key+"-"+m.TS, d)
 			})
 		}),
 		// Last segment: padding-top 8px, then the composer (margin 0 20px;
@@ -788,13 +907,13 @@ func (v *Threads) card(gtx C, c *thrCard, t *thrItem) (D, int) {
 					return c.comp.Layout(gtx)
 				})
 				compH = d.Size.Y - gtx.Dp(8)
-				return d
+				return rec("footer-"+t.key, d)
 			}
 			d := layout.Inset{Top: 8, Bottom: 20, Left: 20, Right: 20}.Layout(gtx, func(gtx C) D {
 				return v.replyPicture(gtx, c)
 			})
 			compH = d.Size.Y - gtx.Dp(8+20)
-			return d
+			return rec("footer-"+t.key, d)
 		}),
 	)
 	return d, d.Size.Y - compBottom - compH
@@ -1130,4 +1249,165 @@ func (s *thrMsg) line(gtx C, st slackc.Styled, name, stamp string) D {
 			return v.para(gtx, 12, 17.6, wReg, v.meta(), 1, stamp)
 		}),
 	)
+}
+
+// ---- keyboard (ThreadsView over the virtual list) ----
+
+// kbItems are get_rows_and_keys' rows: per thread heading-, root-, then
+// load_older- when older replies are hidden, a row per reply and the
+// footer- (the reply box, left out of the roving tab index). All of them
+// are focusable (isFocusableItem); the list's own footer isn't a row.
+func (v *Threads) kbItems(items []thrItem) []vkItem {
+	clear(v.kbRows)
+	out := make([]vkItem, 0, len(items)*5)
+	add := func(key string, r thrKBRow, elem int) {
+		v.kbRows[key] = r
+		out = append(out, vkItem{key: key, elem: elem, focusable: true, noInitial: r.kind == "footer"})
+	}
+	for i := range items {
+		t := &items[i]
+		k := t.key
+		add("heading-"+k, thrKBRow{kind: "heading", key: k, ch: t.Channel}, i)
+		add("root-"+k, thrKBRow{kind: "root", key: k, ch: t.Channel, ts: t.Root.TS}, i)
+		if c := v.cards[k]; c != nil && c.moreText != "" {
+			add("load_older-"+k, thrKBRow{kind: "load_older", key: k, ch: t.Channel}, i)
+		}
+		for j := range t.Replies {
+			add(k+"-"+t.Replies[j].TS, thrKBRow{kind: "reply", key: k, ch: t.Channel, ts: t.Replies[j].TS}, i)
+		}
+		add("footer-"+k, thrKBRow{kind: "footer", key: k, ch: t.Channel}, i)
+	}
+	return out
+}
+
+func (v *Threads) item(key string) (*thrItem, *thrCard) {
+	p, _, _ := v.data.get()
+	for i := range p.items {
+		if p.items[i].key == key {
+			return &p.items[i], v.cards[key]
+		}
+	}
+	return nil, nil
+}
+
+// kbClick is onItemClick (Enter, after onItemKeyDown): a load_older row
+// shows the older replies.
+func (v *Threads) kbClick(key string) {
+	if r := v.kbRows[key]; r.kind == "load_older" {
+		if t, _ := v.item(r.key); t != nil {
+			v.showMore(t)
+		}
+	}
+}
+
+// kbFocus is onItemFocusEnter: the footer row hands focus to its reply box.
+func (v *Threads) kbFocus(key string, _ bool) {
+	r := v.kbRows[key]
+	if r.kind != "footer" {
+		return
+	}
+	if t, c := v.item(r.key); t != nil && c != nil {
+		v.openReply(t, c)
+	}
+}
+
+// focusAboveFooter is focusItemAboveInput.
+func (v *Threads) focusAboveFooter(thread string) {
+	for i, it := range v.kb.items {
+		if it.key == "footer-"+thread && i > 0 {
+			v.kb.focusOn(v.kb.items[i-1].key)
+			v.h.Invalidate()
+			return
+		}
+	}
+}
+
+// kbKey handles onItemKeyDown (Enter on a root or reply jumps to the
+// thread's root message in the channel), keyCommands (→ opens the active
+// root's or reply's thread) and the view's onKeyDown: a printable key
+// moves focus to the keyboard thread's reply box, which takes the
+// character.
+func (v *Threads) kbKey(gtx C, e key.Event, active string) bool {
+	r := v.kbRows[active]
+	switch e.Name {
+	case key.NameReturn, key.NameEnter:
+		if (r.kind == "root" || r.kind == "reply") && active != "" {
+			if t, _ := v.item(r.key); t != nil {
+				v.h.Navigate("c/" + t.Channel + "/m/" + t.Root.TS)
+				return true
+			}
+		}
+		return false
+	case key.NameRightArrow:
+		if (r.kind == "root" || r.kind == "reply") && r.ts != "" {
+			if t, _ := v.item(r.key); t != nil {
+				v.h.OpenThread(t.Channel, t.Root.TS)
+			}
+		}
+		return true
+	}
+	ch, ok := thrPrintable(e)
+	if !ok {
+		return false
+	}
+	thread := v.kbRows[v.kb.initial].key
+	if thread == "" {
+		thread = r.key
+	}
+	t, c := v.item(thread)
+	if t == nil || c == nil {
+		return true
+	}
+	v.openReply(t, c)
+	if c.comp != nil && ch != "" {
+		c.comp.InsertText(ch)
+	}
+	v.kb.setActive("footer-"+thread, true)
+	gtx.Execute(op.InvalidateCmd{})
+	return true
+}
+
+// thrPrintable is isPrintableKeyEvent (a one-character key without ⌘ or
+// Ctrl) for the keys Gio names; the text is what the key types when it's
+// known (letters, digits, space, unshifted punctuation).
+func thrPrintable(e key.Event) (string, bool) {
+	if e.Modifiers.Contain(key.ModCtrl) || e.Modifiers.Contain(key.ModCommand) || e.Modifiers.Contain(key.ModSuper) {
+		return "", false
+	}
+	if e.Name == key.NameSpace {
+		return " ", true
+	}
+	n := string(e.Name)
+	if len(n) != 1 {
+		return "", false
+	}
+	c := n[0]
+	shift := e.Modifiers.Contain(key.ModShift)
+	switch {
+	case c >= 'A' && c <= 'Z':
+		if shift {
+			return n, true
+		}
+		return strings.ToLower(n), true
+	case shift:
+		return "", true // the shifted symbol isn't known: focus only
+	}
+	return n, true
+}
+
+// typeFilters are the keys ThreadsView's onKeyDown and keyCommands read
+// while the list is focused.
+func (v *Threads) typeFilters() []key.Filter {
+	if v.keyFs != nil {
+		return v.keyFs
+	}
+	fs := []key.Filter{{Focus: v.kb, Name: key.NameRightArrow}, {Focus: v.kb, Name: key.NameSpace, Optional: key.ModShift}}
+	for c := 'A'; c <= 'Z'; c++ {
+		fs = append(fs, key.Filter{Focus: v.kb, Name: key.Name(string(c)), Optional: key.ModShift})
+	}
+	for _, s := range strings.Split("0 1 2 3 4 5 6 7 8 9 , . / ; ' [ ] \\ - = `", " ") {
+		fs = append(fs, key.Filter{Focus: v.kb, Name: key.Name(s), Optional: key.ModShift})
+	}
+	v.keyFs = fs
+	return fs
 }

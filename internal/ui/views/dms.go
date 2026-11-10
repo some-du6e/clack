@@ -16,11 +16,9 @@ import (
 	"sync"
 	"time"
 
-	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
-	"gioui.org/op/clip"
 	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
@@ -209,6 +207,9 @@ type DMs struct {
 	pview   []dmsEntry
 	pviewOn bool
 
+	kb    *vkList // DmsList's virtual list keyboard (vlist_keys.go)
+	listH int     // the list's height last frame
+
 	w     watcher
 	evMu  sync.Mutex
 	evq   []core.Event
@@ -227,6 +228,7 @@ func NewDMs(h Host) *DMs {
 		dirty:   true,
 	}
 	d.list.Axis = layout.Vertical
+	d.kb = newVKList(&d.list)
 	return d
 }
 
@@ -266,9 +268,6 @@ func (d *DMs) LayoutList(gtx C) D {
 	size := gtx.Constraints.Max
 	gtx.Constraints = layout.Exact(size)
 
-	// The pane is the keyboard focus target for Up/Down.
-	area := clip.Rect(image.Rectangle{Max: size}).Push(gtx.Ops)
-	event.Op(gtx.Ops, d)
 	col(gtx,
 		vgap(9),
 		layout.Rigid(d.layoutHeader),
@@ -281,7 +280,6 @@ func (d *DMs) LayoutList(gtx C) D {
 			return slackc.Component(gtx, "DmsList", d, (*DMs).listProps, (*DMs).layoutRows)
 		}),
 	)
-	area.Pop()
 	return D{Size: size}
 }
 
@@ -473,8 +471,7 @@ func (d *DMs) update(gtx C) {
 			}
 		}
 		if r.click.Clicked(gtx) {
-			d.choose(id)
-			gtx.Execute(key.FocusCmd{Tag: d})
+			d.choose(id) // the press focused the list (vkList)
 		}
 	}
 	for id, c := range d.pclicks {
@@ -803,50 +800,29 @@ func (d *DMs) drainEvents() {
 
 // ---- keyboard ----
 
+// keys is DmsList's virtual list (FSLM, useGlobalKeyboardShortcuts):
+// only DM rows are focusable (isFocusableItem: type "channel"), the
+// selected DM is the initial active item (setInitialActiveItem), and
+// Enter on the active row opens it (onItemClick). The arrows move the
+// focus ring, not the selection.
 func (d *DMs) keys(gtx C) {
-	for {
-		ev, ok := gtx.Event(
-			key.FocusFilter{Target: d},
-			key.Filter{Focus: d, Name: key.NameUpArrow},
-			key.Filter{Focus: d, Name: key.NameDownArrow},
-		)
-		if !ok {
-			return
-		}
-		e, ok := ev.(key.Event)
-		if !ok || e.State != key.Press {
-			continue
-		}
-		delta := 1
-		if e.Name == key.NameUpArrow {
-			delta = -1
-		}
-		d.step(delta)
-	}
-}
-
-func (d *DMs) step(delta int) {
 	view := d.visible()
-	cur := -1
+	items := make([]vkItem, 0, len(view))
 	for i, e := range view {
-		if e.dm >= 0 && d.items[e.dm].Channel == d.sel {
-			cur = i
-			break
+		switch {
+		case e.dm >= 0:
+			items = append(items, vkItem{key: d.items[e.dm].Channel, elem: i, focusable: true})
+		case e.user.ID != "":
+			items = append(items, vkItem{key: "user:" + e.user.ID, elem: i})
+		default:
+			items = append(items, vkItem{key: "head:" + e.head, elem: i})
 		}
 	}
-	for i := cur + delta; i >= 0 && i < len(view); i += delta {
-		if view[i].dm < 0 {
-			continue
-		}
-		d.choose(d.items[view[i].dm].Channel)
-		pos := d.list.Position
-		if i < pos.First {
-			d.list.ScrollTo(i)
-		} else if pos.Count > 0 && i >= pos.First+pos.Count-1 {
-			d.list.ScrollBy(1)
-		}
-		return
+	d.kb.setItems(items)
+	if d.sel != "" && d.kb.validInitial(d.sel) {
+		d.kb.initial = d.sel
 	}
+	d.kb.update(gtx, d.listH, vkOpts{Click: d.choose})
 }
 
 // ---- list ----
@@ -969,6 +945,7 @@ func (d *DMs) layoutRows(gtx C, p slackc.Props) D {
 		extra = 1
 	}
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
+	d.kb.begin()
 	dims := d.scrollList(gtx, &d.list, n+extra, func(gtx C, i int) D {
 		if i >= n {
 			return d.dmsSkeleton(gtx, 1)
@@ -976,17 +953,26 @@ func (d *DMs) layoutRows(gtx C, p slackc.Props) D {
 		e := view[i]
 		switch {
 		case e.dm >= 0:
-			r := d.rowState(d.items[e.dm].Channel)
+			ch := d.items[e.dm].Channel
+			r := d.rowState(ch)
 			r.v, r.dm = d, &d.items[e.dm]
-			return slackc.Component(gtx, "DmsListItem", r, (*dmsRow).itemProps, (*dmsRow).layoutItem)
+			dd := slackc.Component(gtx, "DmsListItem", r, (*dmsRow).itemProps, (*dmsRow).layoutItem)
+			if d.kb.ringOn(ch) { // .c-virtual_list__item--focus:focus:after, inset 4px
+				in := gtx.Dp(4)
+				d.vkRing(gtx, image.Rect(in, in, dd.Size.X-in, dd.Size.Y-in), gtx.Dp(8))
+			}
+			return d.kb.elem(i, dd)
 		case e.head != "":
-			return layout.Inset{Top: 16, Bottom: 4, Left: dmsPad, Right: dmsPad}.Layout(gtx, func(gtx C) D {
+			return d.kb.elem(i, layout.Inset{Top: 16, Bottom: 4, Left: dmsPad, Right: dmsPad}.Layout(gtx, func(gtx C) D {
 				return d.label(gtx, 13, wBold, d.c.soft, e.head)
-			})
+			}))
 		default:
-			return d.personRow(gtx, e.user)
+			return d.kb.elem(i, d.personRow(gtx, e.user))
 		}
 	})
+	d.listH = dims.Size.Y
+	d.kb.area(gtx, image.Rectangle{Max: dims.Size})
+	d.kb.after()
 	if p := d.list.Position; p.First+p.Count >= n-3 {
 		d.loadMore()
 	}
