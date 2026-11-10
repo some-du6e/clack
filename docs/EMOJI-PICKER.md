@@ -69,6 +69,20 @@ item id and by the normalized text typed before the pick. Emoji ids are
   preview is a 32 px image at (12.8, 17.1), the name 14.4/700 at
   (57.2, 13.5) and the aliases 12.8 at y 28.9. The Skin Tone toggle (22 px
   hand, 14.4/700 label) sits at right 19, bottom 14.5, with no hover style.
+- Skin tones (EmojiSkinTonePicker, boot-shared Zu56, build 4d0c78085232;
+  popups/emoji_tone.go): the toggle shows "Skin Tone" only while
+  preferred_skin_tone is unset. It opens a Popover at "top-right" (bottom on
+  the toggle's top, right edges aligned): the radio group on the primary
+  background, 1px base-ter border, radius 10. The hands are eG's order, or
+  with a tone set the other five and then the active one. Without
+  emoji_skin_tone_picker_improvement: padding 4 8, the label "Choose your
+  default skin tone" (.68rem bold, 4 px under it), 22 px hands, and the
+  focused hand gets the focus ring. With it: padding 4, no label, 36×32
+  cells 1 px apart (radius 4) tinted on hover by the tone's color index,
+  the ring on the cell from the keyboard only, the toggle's tooltip "Select
+  default skin tone", and the arrows wrap from the selected tone (Enter or
+  Space picks it). A press picks (setUserPrefByApi preferred_skin_tone) and
+  closes; Escape closes only the popover; Tab stays.
 - Search: "Search all emoji", 15 px, radius 8. On focus the border clears
   and a 1 px ring plus a 5 px ring at 30 % sit outside it.
 - Scrollbar (supports_custom_scrollbar): an 8 px thumb, radius 4, min

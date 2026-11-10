@@ -121,6 +121,30 @@ itself and a Vacationing that doesn't clear becomes a start and end range.
 Clear Status is clearUserStatus (status_text_canonical null, ending a snooze
 that belonged to the status). Like Slack, saving shows no toast.
 
+**Opening it, the tip and the calendar row** (exp-media, CDN build
+4d0c78085232). Mod+Shift+Y is Slack's status shortcut (boot-render PG1Q:
+openCustomStatusDialog with fromKeyboardShortcut); Clack had bound it to an
+invented dark mode toggle, and Slack has no dark mode shortcut. The shortcut
+first saves used_custom_status_kb_shortcut (setUserPrefByApi), and while that
+pref is unset the modal, however it was opened, shows the keyboard hint
+(D72a showKeyboardHint): a .p-pill 50px under the modal's bottom, centred on
+it, "**Tip:** Open this faster with **⌘ + Shift + Y**" (Ctrl elsewhere), for
+as long as the modal is open (Clack showed it only from the user menu, at the
+window's bottom, for 4 s). The "Automatically updates" row was always "In a
+meeting — Based on your Google Calendar" and toasted that calendar sync isn't
+available. Slack builds it from getCurrentCalendarAndUser on mount
+(calendar.getInstalledCalendars {}, then calendar.user.info {app_type} when
+Google or Outlook is installed; the current calendar from mx_calendar_type) and
+getAllCalendarPresets (aq7I), so there's no row without a manageable or
+installed calendar app. The row has the app's logo and "Based on your
+{Google} Calendar" or "{Google} Calendar updates are on". Pressing it swaps
+the body for the calendar step (renderCalendarModalSyncText's line, the status
+sync picture) with "ⓘ Learn more" and Back + Add / Connect / Turn On / Turn
+Off: Add opens slack.com/interop/{gcal,ocal}app/install, Connect the calendar
+user's provider_auth_url, Turn On/Off its turn_on_status_sync_url or
+calendar.user.toggleStatusSync {calapp_user_id, enable} (the store first, back
+on failure), then the modal closes.
+
 **Focus mode** is real in this build: Slack calls it the silent sidebar, and
 it exists under the silent_sidebar experiment (the live dialog's Appearance
 row, which only ThemeColorModeContainer draws under that experiment, shows
@@ -136,10 +160,16 @@ a subtitle, "Notifications paused (until …)", the Duration select and
 "Continue to get notifications from VIPs" (priority_dnd_override). While it
 is on, unread rows aren't bold, mention badges are dots (the count on hover),
 and the theme is the Silent Sidebar Gray theme, whose sidebarInverted is
-focus_mode_force_dark_mode_enabled. Not built: focus music (Slack's Miles
-Davis soundtrack, under focus_mode_music), the Custom date/time duration
-(focus_mode_custom_duration treatment), the calendar-started popover
-(calendar_focus_sync), the first-open Lottie animation and swirling blobs
+focus_mode_force_dark_mode_enabled. Under focus_mode_custom_duration
+"treatment" (exp-media, CDN build 4d0c78085232) the Duration select also has
+Custom: picking it writes today's next half hour an hour on, and the row under
+the select holds the date button ("Nov 11th, 2026", Slack's DatePicker from
+today to a year on) and a 30-minute time select (later than now on today);
+each change writes the pref, and turning focus mode off puts Custom back to
+"Don't turn off". Not built: focus music (Slack's Miles
+Davis soundtrack, under focus_mode_music), the calendar-started popover
+(calendar_focus_sync, which also starts a Custom duration at the event's end),
+the first-open Lottie animation and swirling blobs
 (Clack draws the reduced-motion rendering), the recap
 (focus_mode_recap, an AI summary), the button's glow coachmark, and the
 other silent sidebar themes (only Gray is the default, and Slack's picker for
@@ -604,3 +634,9 @@ dev.
   `TestActStatusModalScheduledSection` (popups, actions_status_api_test.go);
   `TestFocusExpiration`, `TestFocusModeToggle` (ui, focus_mode_test.go). All
   write to fakeslack only.
+- exp-media (2026-11-10): `TestStatusShortcut` (ui), `TestActStatusTipPill`,
+  `TestActTipKeys`, `TestActCalendarRules`, `TestActStatusNoCalendar`,
+  `TestActStatusCalendarStep` (popups, actions_status_calendar_test.go);
+  `TestFocusCustomDuration`, `TestFocusCustomShots` (ui); `TestEmojiToneChoices`,
+  `TestEmojiTonePopover` (popups); `TestDeferStreamingNotification` (ui) and
+  `TestStreamDoneEvent`, `TestOpenStreams` (core).
