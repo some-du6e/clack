@@ -499,3 +499,39 @@ func TestAgentIconPaths(t *testing.T) {
 		t.Errorf("circle and check wind the same way (%v, %v): the check would not cut out", a0, a1)
 	}
 }
+
+// plan_block_coding_enhancements (FiNg.XI): a plan task with hide_title
+// has no title line under the experiment (its content stays, with the
+// no-title spacing); off, or not assigned, it keeps its title.
+func TestAgentPlanHideTitle(t *testing.T) {
+	app := core.New(slack.New(slack.Creds{Token: "xoxc-test", UserID: "U1", Team: "T1"}), store.New(""))
+	h := &agentHost{app: app, th: theme.New(false)}
+	rich := func(s string) map[string]any {
+		return map[string]any{"type": "rich_text", "elements": []any{map[string]any{"type": "rich_text_section",
+			"elements": []any{map[string]any{"type": "text", "text": s}}}}}
+	}
+	plan := []any{map[string]any{"type": "plan", "block_id": "ph", "title": "Coding", "tasks": []any{
+		map[string]any{"task_id": "t1", "title": "Edit redirect.ts", "status": "complete", "hide_title": true, "details": rich("Changed two lines.")},
+		map[string]any{"task_id": "t2", "title": "Run the tests", "status": "complete"},
+	}}}
+	size := func(group string) int {
+		app.SetExperimentGroup("plan_block_coding_enhancements", group)
+		m := agentMsgOf(t, plan, "completed")
+		me := MessageElements(h, &m)
+		me.agentState().open["plan\x00ph"] = true
+		return slotSize(t, me, &m, 480).Y
+	}
+	on, off, unassigned := size("on"), size("off"), size("")
+	if off != unassigned {
+		t.Errorf("off %d and unassigned %d should draw alike", off, unassigned)
+	}
+	// the title line (4+2+19.5+2+4) gives way to the no-title spacing (2+4 above, 2 below)
+	if d := off - on; d < 15 || d > 30 {
+		t.Errorf("hide_title saved %dpx (on %d, off %d), want the title line less the no-title spacing", d, on, off)
+	}
+	// without hide_title the experiment changes nothing
+	plan[0].(map[string]any)["tasks"].([]any)[0].(map[string]any)["hide_title"] = false
+	if a, b := size("on"), size("off"); a != b {
+		t.Errorf("no hide_title: on %d, off %d", a, b)
+	}
+}

@@ -226,8 +226,8 @@ var experimentReads = map[string][]string{
 	"session_channels": on, "session_channels_code_tab_pr": on, "session_channels_gh_wo": on,
 	"session_channels_inline_diff": on, "code_channels_naming": on, "session_channel_views": on,
 	"code_channels_auto_close": on,
-	// agents (agent.go)
-	"agent_member_channel_count": on,
+	// agents (agent.go; plan and task blocks: ui/blockkit/agent.go)
+	"agent_member_channel_count": on, "plan_block_coding_enhancements": on,
 	// huddles
 	"scheduled_huddles": on, "huddles_raised_hand_queue": on,
 }

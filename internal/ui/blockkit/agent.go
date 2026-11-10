@@ -87,6 +87,10 @@ type AgentTask struct {
 	Details json.RawMessage `json:"details"` // rich_text block
 	Output  json.RawMessage `json:"output"`  // rich_text block
 	Sources []AgentSource   `json:"sources"`
+	// HideTitle is hide_title (hideTitle once camel-cased, KjNg): under
+	// plan_block_coding_enhancements a plan task shows its content
+	// without its title line.
+	HideTitle bool `json:"hide_title"`
 }
 
 func (t *AgentTask) hasContent() bool {
@@ -712,9 +716,16 @@ func wrapText(gtx C, th *theme.Theme, size float32, s string, w, reserve int) []
 }
 
 // planTasks is PlanTaskList (PJjx) of slim TaskItems (SkmW): a step
-// timeline, each task collapsible.
+// timeline, each task collapsible. Under plan_block_coding_enhancements
+// (FiNg.XI) a task with hide_title has no title line or caret: its
+// content shows at once (taskExpandedContentNoTitle: margin 2px 0,
+// padding-top 4px).
 func (me *Message) planTasks(gtx C, st *agentState, pal agentPal, b *AgentBlock, w int) int {
 	th := me.h.Theme()
+	enh := false
+	if c := me.h.Core(); c != nil {
+		enh = c.Experiment("plan_block_coding_enhancements") == "on"
+	}
 	gut := dp(gtx, 12)
 	cx := gut + dp(gtx, 8)
 	cw := max(w-cx, 1)
@@ -726,19 +737,26 @@ func (me *Message) planTasks(gtx C, st *agentState, pal agentPal, b *AgentBlock,
 		first, last := i == 0, i == n-1
 		key := "task\x00" + b.BlockID + "\x00" + task.TaskID + "\x00" + itoa(i)
 		has := task.hasContent()
+		noTitle := enh && task.HideTitle
 		open := st.isOpen(key, true)
 		t := st.tap(key)
-		if has && t.clicked(gtx, me.h) {
+		if has && !noTitle && t.clicked(gtx, me.h) {
 			open = !open
 			st.open[key] = open
 			me.changed()
+		}
+		if noTitle {
+			open = true // no header to collapse it from
 		}
 		// content column
 		cy := 0
 		if first {
 			cy = dp(gtx, 6)
 		}
-		{
+		if noTitle && has {
+			cy += dp(gtx, 2) + dp(gtx, 4) // taskExpandedContentNoTitle: margin-top 2px, padding-top 4px
+		}
+		if !noTitle {
 			pad := dp(gtx, 4)
 			mar := dp(gtx, 2)
 			lh := dp(gtx, agentLH)
@@ -777,6 +795,9 @@ func (me *Message) planTasks(gtx C, st *agentState, pal agentPal, b *AgentBlock,
 		if has && open {
 			ch := me.taskContent(gtx, st, pal, key, task, cx, y+cy, cw)
 			cy += ch
+			if noTitle {
+				cy += dp(gtx, 2) // margin-bottom 2px
+			}
 		}
 		itemH := cy
 		// step indicator: line above, dot, line below to the item's end
