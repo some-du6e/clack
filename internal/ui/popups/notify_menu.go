@@ -5,7 +5,8 @@ package popups
 // #clack on 2026-11-08: "Notify you about…", three radios with their
 // descriptions, a separator, and "More options" (MoreOptionsSubmenu:
 // "Temporarily mute…" Until tomorrow / 1 hour, then Edit default
-// preferences).
+// preferences and Advanced settings, the channel notifications modal in
+// channel_notify_modal.go).
 //
 //   - All new posts: desktop everything (mobile follows when it did),
 //     unmuting a muted channel. Checked: desktop everything, not muted.
@@ -29,14 +30,51 @@ func notifyChoice(n core.ChannelNotify, global string, muted bool) string {
 	if muted {
 		return "mute"
 	}
-	v := n.Desktop
+	return calcNotify(n.Desktop, global)
+}
+
+// calcNotify is getCalculatedNotifySetting (client-boot gMhK) folded
+// through pA (boot-shared n9iP): the channel's override, else the global
+// default; an override of "nothing" counts as mentions_dms, and anything
+// unknown as mentions_dms.
+func calcNotify(override, global string) string {
+	v := override
 	if v == "" || v == "default" {
 		v = global
 	}
-	if v == "" {
-		v = "mentions_dms"
+	switch v {
+	case "everything":
+		return v
+	case "nothing":
+		if override == "nothing" {
+			return "mentions_dms"
+		}
+		return v
 	}
-	return v
+	return "mentions_dms"
+}
+
+// NotifyIcon is Slack's notification glyph for a calculated desktop
+// setting (n9iP Km / Nl, the header bell's and the menu rows' icons):
+// muted or "nothing" notifications-off, "everything" the ringing bell
+// notifications-all-new-posts, else notifications.
+func NotifyIcon(setting string, muted bool) string {
+	switch {
+	case muted || setting == "nothing":
+		return "bell-off" // notifications-off
+	case setting == "everything":
+		return "notifications-all-new-posts"
+	}
+	return "bell" // notifications
+}
+
+// ChannelNotifyIcon is the header bell's icon for ch.
+func ChannelNotifyIcon(h Host, ch string, muted bool) string {
+	a := h.Core()
+	if a == nil {
+		return NotifyIcon("", muted)
+	}
+	return NotifyIcon(calcNotify(a.NotifyPrefs(ch).Desktop, a.Prefs().GlobalDesktop), muted)
 }
 
 // tempMuteChoice is calculateTempMuteDuration: "tomorrow" when the mute
@@ -103,24 +141,32 @@ func ChannelNotifyItems(h Host, ch string) []MenuItem {
 				})
 		}
 	}
+	// MoreOptionsSubmenu ends with "Advanced settings" (onOpenAdvancedOptions,
+	// the channel notifications modal) unless this is a group DM without
+	// mpdm_notifications_advanced_option.
+	more := []MenuItem{
+		{Header: "Temporarily mute…"},
+		{Key: "channel_mute_until_tomorrow", Label: "Until tomorrow", Radio: true, Checked: temp == "tomorrow",
+			Do: tempMute(func() time.Time { return tomorrowAt9(time.Now()) })},
+		{Key: "channel_mute_1_hour", Label: "1 hour", Radio: true, Checked: temp == "1hour",
+			Do: tempMute(func() time.Time { return time.Now().Add(time.Hour) })},
+		Sep(),
+		{Key: "channel_ctx_menu_edit_default_prefs", Label: "Edit default preferences", Do: func() { openPreferences(h, "notifications") }},
+	}
+	if c, ok := a.Conv(ch); !ok || c.Kind != "mpim" || a.Experiment("mpdm_notifications_advanced_option") == "on" {
+		more = append(more, MenuItem{Key: "channel_ctx_menu_advanced_options", Label: "Advanced settings",
+			Do: func() { h.ShowOverlay(NewChannelNotifyModal(h, ch)) }})
+	}
 	return []MenuItem{
 		{Header: "Notify you about…"},
-		{Key: "everything", Label: "All new posts", Subtitle: "Messages and threads you follow", Icon: "bell", Radio: true,
+		{Key: "everything", Label: "All new posts", Subtitle: "Messages and threads you follow", Icon: NotifyIcon("everything", false), Radio: true,
 			Checked: cur == "everything", Do: set("everything")},
-		{Key: "mentions_dms", Label: "Just mentions", Subtitle: mentions, Icon: "bell", Radio: true,
+		{Key: "mentions_dms", Label: "Just mentions", Subtitle: mentions, Icon: NotifyIcon("mentions_dms", false), Radio: true,
 			Checked: cur == "mentions_dms", Do: set("mentions_dms")},
-		{Key: "mute", Label: muteLabel, Subtitle: muteDesc, Icon: "bell-off", Radio: true, Checked: muted,
+		{Key: "mute", Label: muteLabel, Subtitle: muteDesc, Icon: NotifyIcon("nothing", true), Radio: true, Checked: muted,
 			Do: func() { actToggleMute(h, ch, "channel") }},
 		Sep(),
-		{Key: "more_options", Label: "More options", Sub: []MenuItem{
-			{Header: "Temporarily mute…"},
-			{Key: "channel_mute_until_tomorrow", Label: "Until tomorrow", Radio: true, Checked: temp == "tomorrow",
-				Do: tempMute(func() time.Time { return tomorrowAt9(time.Now()) })},
-			{Key: "channel_mute_1_hour", Label: "1 hour", Radio: true, Checked: temp == "1hour",
-				Do: tempMute(func() time.Time { return time.Now().Add(time.Hour) })},
-			Sep(),
-			{Key: "channel_ctx_menu_edit_default_prefs", Label: "Edit default preferences", Do: func() { openPreferences(h, "notifications") }},
-		}},
+		{Key: "more_options", Label: "More options", Sub: more},
 	}
 }
 

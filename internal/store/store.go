@@ -235,6 +235,11 @@ type ChannelNotify struct {
 	// TempMuteExp is temp_mute_expiration_ts: muted until then (Slack's
 	// "Temporarily mute…" Until tomorrow / 1 hour), 0 when not.
 	TempMuteExp int64 `json:"temp_mute_expiration_ts,omitempty"`
+	// BadgeAllUnreads is badge_all_unreads ("Badge every new message in
+	// your sidebar"); DesktopPush is desktop_push_enabled, "" when the
+	// channel follows global_desktop_push_enabled, else "true" / "false".
+	BadgeAllUnreads bool   `json:"badge_all_unreads,omitempty"`
+	DesktopPush     string `json:"desktop_push_enabled,omitempty"`
 }
 
 // parseSectionPrefs reads the channel_sections pref, a JSON object of
@@ -407,6 +412,8 @@ func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
 				FollowAllThreads  json.RawMessage `json:"follow_all_threads"`
 				SuppressAtChannel json.RawMessage `json:"suppress_at_channel"`
 				TempMuteExp       json.RawMessage `json:"temp_mute_expiration_ts"`
+				BadgeAllUnreads   json.RawMessage `json:"badge_all_unreads"`
+				DesktopPush       json.RawMessage `json:"desktop_push_enabled"`
 			} `json:"channels"`
 			Global map[string]json.RawMessage `json:"global"`
 		}
@@ -418,7 +425,11 @@ func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
 			p.ChannelNotify = map[string]ChannelNotify{}
 			for id, c := range n.Channels {
 				cn := ChannelNotify{Desktop: c.Desktop, Mobile: c.Mobile, Muted: truthy(c.Muted),
-					FollowAllThreads: truthy(c.FollowAllThreads), SuppressAtChannel: truthy(c.SuppressAtChannel)}
+					FollowAllThreads: truthy(c.FollowAllThreads), SuppressAtChannel: truthy(c.SuppressAtChannel),
+					BadgeAllUnreads: truthy(c.BadgeAllUnreads)}
+				if len(c.DesktopPush) > 0 && string(c.DesktopPush) != "null" {
+					cn.DesktopPush = strconv.FormatBool(truthy(c.DesktopPush))
+				}
 				if v, err := strconv.ParseInt(strings.Trim(string(c.TempMuteExp), `"`), 10, 64); err == nil {
 					cn.TempMuteExp = v
 				}
