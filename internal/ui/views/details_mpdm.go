@@ -46,6 +46,10 @@ func (d *ChannelDetails) mpdmOthers(members []string) (ids, names []string) {
 		if id == self {
 			continue
 		}
+		if _, ok := d.user(id); !ok {
+			d.h.Core().S.UserName(id) // queues the member for the resolve loop
+			continue
+		}
 		ms = append(ms, m{id, d.userName(id)})
 	}
 	sort.SliceStable(ms, func(i, j int) bool { return strings.ToLower(ms[i].name) < strings.ToLower(ms[j].name) })

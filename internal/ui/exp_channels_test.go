@@ -50,6 +50,15 @@ func gdmEnv(t *testing.T, prep func(fs *fakeslack.Server)) (*perfEnv, *fakeslack
 		e.gpu = w
 	}
 	e.waitReady()
+	var ids []string // the group DMs' members, as the resolve loop would fetch them
+	for _, u := range fs.GroupDMUsers() {
+		ids = append(ids, u.ID)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	e.a.Core().EnsureUsers(ctx, ids)
+	e.a.data.resnapshot(e.a)
+	e.settle(50 * time.Millisecond)
 	return e, fs
 }
 

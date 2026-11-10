@@ -124,6 +124,11 @@ func TestSwitcherGroupDMNames(t *testing.T) {
 	if err := a.Boot(ctx); err != nil {
 		t.Fatal(err)
 	}
+	var ids []string // the members, as the sidebar resolves them for its rows
+	for _, u := range fs.GroupDMUsers() {
+		ids = append(ids, u.ID)
+	}
+	a.EnsureUsers(ctx, ids)
 	on := "on"
 	a.SetExperimentGroups(map[string]*string{"mpdm_naming": &on, "sc_mpdm_naming": &on})
 	th := theme.New(false)
@@ -151,7 +156,10 @@ func TestSwitcherGroupDMNames(t *testing.T) {
 	if c, ok := cand("partn", fakeslack.GroupDMConnectID); !ok || c.Name != "Partners" {
 		t.Errorf("the Slack Connect group DM: %+v (%v)", c, ok)
 	}
-	m, _ := a.User(fs.GroupDMUsers()[0].ID)
+	m, ok := a.User(fs.GroupDMUsers()[0].ID)
+	if !ok || userName(m) == "" {
+		t.Fatalf("member %s unknown", fs.GroupDMUsers()[0].ID)
+	}
 	if _, ok := cand(userName(m), fakeslack.GroupDMNamedID); !ok {
 		t.Errorf("a member's name %q doesn't find the named group DM", userName(m))
 	}

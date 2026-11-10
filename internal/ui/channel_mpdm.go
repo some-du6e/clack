@@ -72,11 +72,12 @@ func (a *App) mpdmOthers(conv *convInfo) (ids, names []string) {
 		if id == self {
 			continue
 		}
-		n := id
-		if u, ok := c.User(id); ok && u.Name != "" {
-			n = u.Name
+		u, ok := c.User(id)
+		if !ok || u.Name == "" {
+			c.S.UserName(id) // queues the member for the resolve loop ("names" redraws)
+			continue
 		}
-		ms = append(ms, m{id, n})
+		ms = append(ms, m{id, u.Name})
 	}
 	sort.SliceStable(ms, func(i, j int) bool { return strings.ToLower(ms[i].name) < strings.ToLower(ms[j].name) })
 	for _, x := range ms {
