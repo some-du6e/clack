@@ -35,6 +35,7 @@ type colors struct {
 	Bg, Hover, Text, Text2, Text3                     color.NRGBA
 	Edited, PinIcon, Muted70, TimeSystem              color.NRGBA
 	Pinned, PinnedHover, Highlight                    color.NRGBA
+	CustomTint                                        color.NRGBA // .c-message_kit__background--labels--custom_response
 	BadgeBg, BadgeText                                color.NRGBA
 	ReactBg, ReactHoverBorder                         color.NRGBA
 	ReactSelfBg, ReactSelfHoverBg                     color.NRGBA
@@ -52,7 +53,8 @@ var lightColors = colors{
 	Bg: rgb(0xffffff), Hover: rgb(0xf8f8f8), Text: rgb(0x1d1c1d), Text2: rgb(0x616061), Text3: rgb(0x454447),
 	Edited: rgb(0x868686), PinIcon: rgb(0xe8912d), Muted70: rgba(0x1d1c1d, 0.7), TimeSystem: rgb(0x5e5d60),
 	Pinned: rgba(0xf2c744, 0.1), PinnedHover: rgba(0xf2c744, 0.14), Highlight: rgba(0xf2c744, 0.2),
-	BadgeBg: rgba(0x1d1c1d, 0.06), BadgeText: rgb(0x454447),
+	// CustomTint is #1d9bd11a in both modes
+	CustomTint: rgba(0x1d9bd1, 0x1a/255.0), BadgeBg: rgba(0x1d1c1d, 0.06), BadgeText: rgb(0x454447),
 	ReactBg: rgba(0x1d1c1d, 0.06), ReactHoverBorder: rgb(0x7c7a7f),
 	// .c-reaction--reacted(:hover): base-hgl-1, content-hgl-1 bold and a
 	// 1px base-inv-hgl-1 ring; hover changes nothing
@@ -72,7 +74,7 @@ var darkColors = colors{
 	Text2: rgb(0xababad), Text3: rgb(0xd1d2d3),
 	Edited: rgb(0x868686), PinIcon: rgb(0xe8912d), Muted70: rgba(0xe8e8e8, 0.7), TimeSystem: rgb(0xababad),
 	Pinned: rgba(0xf2c744, 0.1), PinnedHover: rgba(0xf2c744, 0.14), Highlight: rgba(0xf2c744, 0.1),
-	BadgeBg: rgba(0xe8e8e8, 0.13), BadgeText: rgba(0xe8e8e8, 0.7),
+	CustomTint: rgba(0x1d9bd1, 0x1a/255.0), BadgeBg: rgba(0xe8e8e8, 0.13), BadgeText: rgba(0xe8e8e8, 0.7),
 	ReactBg: rgba(0xe8e8e8, 0.06), ReactHoverBorder: rgba(0xe8e8e8, 0.3),
 	// .sk-client-theme--dark .c-reaction--reacted: a solid base-inv-hgl-1
 	// pill, no ring, content-pry text (bold), the same under the pointer
@@ -111,7 +113,7 @@ var (
 // than Slack's.
 func flatten(c colors) colors {
 	bg := c.Bg
-	for _, p := range []*color.NRGBA{&c.Hover, &c.Pinned, &c.PinnedHover, &c.Highlight, &c.Editing,
+	for _, p := range []*color.NRGBA{&c.Hover, &c.Pinned, &c.PinnedHover, &c.Highlight, &c.Editing, &c.CustomTint,
 		&c.BadgeBg, &c.ReactBg, &c.ReactSelfBg, &c.ReactSelfHoverBg, &c.ToolbarHoverBg, &c.CloseHover,
 		&c.DayLine, &c.PillBorder, &c.ThreadBorder, &c.HeaderBorder, &c.BorderStrong, &c.ReactHoverBorder, &c.Muted70} {
 		*p = richview.Over(*p, bg)

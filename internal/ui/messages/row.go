@@ -149,11 +149,12 @@ type row struct {
 	crTipText      string // the badge tooltip's text while hovered
 
 	// what the header drew last frame (CSS may replace both)
-	compactBL int    // the compact time's baseline, gutter-local (tests)
-	nameBL    int    // the sender line's baseline, column-local (tests)
-	nameX     int    // the sender's x, column-local (Compact: -8)
-	avDrawn   string // the avatar's picture: a CSS background-image wins
-	nameShown string // the sender label: ::before + name (unless font-size 0) + ::after
+	compactBL int         // the compact time's baseline, gutter-local (tests)
+	nameBL    int         // the sender line's baseline, column-local (tests)
+	nameX     int         // the sender's x, column-local (Compact: -8)
+	avDrawn   string      // the avatar's picture: a CSS background-image wins
+	bgDrawn   color.NRGBA // MessageBackground's fill (labels' tints, hover)
+	nameShown string      // the sender label: ::before + name (unless font-size 0) + ::after
 }
 
 // chanCard is one CodeChannelEntityCard under a message.
@@ -783,7 +784,9 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 	// then a broadcast, then pinned, then a custom response. Message (the
 	// channel row), ThreadRoot and ThreadReplyGeneric all wrap the row in
 	// it, so the thread pane shows pinned labels too; only
-	// ThreadReplyGeneric passes showBroadcast.
+	// ThreadReplyGeneric passes showBroadcast. A custom response gets no
+	// label line ("custom_response" === primaryLabelType renders none,
+	// whatever reskin_custom_responses says), only the row's tint.
 	eph := ephemeral(rc, m)
 	broadcast := rc.thread && !rc.parent && m.Broadcast
 	switch {
@@ -793,9 +796,6 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 		y += r.broadcastLabel(gtx, rc, y)
 	case m.Pinned:
 		y += r.labelLine(gtx, rc, cx, y, "pin", pinnedLabel(rc, m.PinnedBy))
-	case m.SlackbotCustomResponse() && !r.custom:
-		// MessageLabels' custom_response label (pencil), which the reskin drops
-		y += r.labelLine(gtx, rc, cx, y, "edit", "Custom response")
 	}
 	r.col = image.Pt(cx, y)
 	g := at(gtx, 0, y, func(gtx layout.Context) layout.Dimensions {
@@ -825,11 +825,15 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 		bg = c.PinnedHover
 	case m.Pinned || broadcast:
 		bg = c.Pinned
+	// --labels--custom_response {background:#1d9bd11a} comes after
+	// --hovered in Slack's stylesheet, so the tint stays under the pointer
+	case m.SlackbotCustomResponse() && !eph:
+		bg = c.CustomTint
 	case rc.hovered, eph: // ephemeral: rgba(29,28,29,.04) (c-message_kit__background--labels--ephemeral)
 		bg = c.Hover
 	}
 	bg = st.Background(bg)
-	r.height = h
+	r.height, r.bgDrawn = h, bg
 	if st.Active() {
 		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return r.paintBackground(gtx, content, size, bg) })
 	}

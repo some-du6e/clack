@@ -1031,7 +1031,11 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			"suggested_sections_auto_sort_v2": g("on"),
 			"lists_tabbing_navigation":        g("on"),
 			// focus mode and the Availability section (see core's defaultExperimentGroups)
-			"silent_sidebar": g("on"), "availability_prefs_section": g("on")})
+			"silent_sidebar": g("on"), "availability_prefs_section": g("on"),
+			// message rows (see core's defaultExperimentGroups)
+			"system_messages_redesign_m1": g("on"), "flat_message_heading_scale": g("on"), "portable_content_composer": g("treatment"),
+			"message_actions_truncate": g("on"), "unread_thread_indication_in_replybar": g("on"), "agent_identity_overrides": g("on"),
+			"forward_message_card": g("on"), "giphy_fixed_width": g("on"), "truncated_url_hover_card": g("on")})
 	case "users.prefs.get":
 		s.prefsMu.Lock()
 		m := make(map[string]any, len(s.prefs))

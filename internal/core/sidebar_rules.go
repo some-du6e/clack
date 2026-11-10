@@ -81,6 +81,11 @@ var defaultExperimentGroups = map[string]string{
 	// silent_sidebar (focus mode, ui/focus_mode.go); the Availability page
 	// is availability_prefs_section's (AvailabilitySection)
 	"silent_sidebar": "on", "availability_prefs_section": "on",
+	// message rows (ui/messages; docs/EXPERIMENTS.md, the Messages package),
+	// as experiments.getByUser had them on 2026-11-10
+	"system_messages_redesign_m1": "on", "flat_message_heading_scale": "on", "portable_content_composer": "treatment",
+	"message_actions_truncate": "on", "unread_thread_indication_in_replybar": "on", "agent_identity_overrides": "on",
+	"forward_message_card": "on", "giphy_fixed_width": "on", "truncated_url_hover_card": "on",
 }
 
 func (a *App) sidebarExperiments() sidebarExp {

@@ -23,8 +23,9 @@ import (
 // USLACKBOT, no bot_profile, icons or username, the shape Hack Club's
 // arrive in) is drawn as the team: its name and icon, an info badge with
 // Slack's tooltip, and no profile on click. A plain Slackbot message keeps
-// Slackbot. With reskin_custom_responses off it's Slackbot again, with the
-// "Custom response" label.
+// Slackbot. With reskin_custom_responses off it's Slackbot again. Either
+// way MessageLabels draws no label line for it (meLQ renders none for the
+// custom_response type), only the row's #1d9bd11a tint.
 func TestCustomResponseAsTeam(t *testing.T) {
 	const ch, tsCustom, tsPlain = "C0CRESP", "1700000900.000100", "1700008100.000100" // two hours apart: both headers
 	const teamIcon = "https://avatars.invalid/team-88.png"
@@ -63,6 +64,12 @@ func TestCustomResponseAsTeam(t *testing.T) {
 	}
 	if pr.custom || pr.avDrawn == teamIcon || pr.senderName() == "Synthetic Club" {
 		t.Errorf("plain Slackbot message drawn as the team: custom=%v avatar %q name %q", pr.custom, pr.avDrawn, pr.senderName())
+	}
+	if cr.col.Y != pr.col.Y {
+		t.Errorf("the custom response's body starts at %d, the plain message's at %d: Slack draws no label line", cr.col.Y, pr.col.Y)
+	}
+	if tint := colorsFor(h.th).CustomTint; cr.bgDrawn != tint || pr.bgDrawn == tint {
+		t.Errorf("backgrounds: custom response %v, plain %v; want only the custom response tinted %v", cr.bgDrawn, pr.bgDrawn, tint)
 	}
 
 	// the header line of a row: its list position
@@ -142,6 +149,15 @@ func TestCustomResponseAsTeam(t *testing.T) {
 	until(t, 3*time.Second, "Slackbot's look back", frame, func() bool { return !cr.custom && cr.avDrawn != teamIcon })
 	if strings.Contains(cr.nameShown, "Synthetic Club") {
 		t.Errorf("reskin off: the name is still the team's (%q)", cr.nameShown)
+	}
+	for k := 0; k < 3; k++ {
+		frame()
+	}
+	if cr.col.Y != pr.col.Y {
+		t.Errorf("reskin off: the custom response's body starts at %d, the plain message's at %d: no \"Custom response\" label in Slack", cr.col.Y, pr.col.Y)
+	}
+	if tint := colorsFor(h.th).CustomTint; cr.bgDrawn != tint {
+		t.Errorf("reskin off: the custom response's background is %v, want the tint %v", cr.bgDrawn, tint)
 	}
 }
 

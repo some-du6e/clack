@@ -214,9 +214,20 @@ var experimentReads = map[string][]string{
 	"activity_global_settings": on, "slackbot_unread_v2": on, "unified_files_3p_primary_custom_sections": on,
 	"lists_tabbing_navigation": on, "miles_davis_themes": on, "temp_join_channel": on,
 	"availability_prefs_section": on, "status_improvements": on,
+	"activity_bulk_unread_tool": on,
+	// channel details and settings (views/details_more.go)
+	"enable_new_channel_settings": on, "move_channel_tabs_settings": on, "ai_channel_exclusions": on,
+	"mcp_ai_channel_exclusions": on, "mpdm_default_exclude_history_clients_webapp": on,
+	// lists
+	"lists_grid_todos": on,
+	// drafts (ui/backend.go)
+	"draft_management_in_composer": {"treatment"}, "sidebar_draft_indicator_menu_and_thread_inclusion": on,
 	// messages and senders
 	"reskin_custom_responses": on, "show_as_agent": on, "agent_badge": on, "support_lots_of_agents": on,
+	"system_messages_redesign_m1": on, "flat_message_heading_scale": on, "portable_content_composer": {"treatment"},
+	"message_actions_truncate": on,
 	// composer and autocomplete
+	"rich_text_headers_and_dividers": on, "updated_scheduled_sends_desktop": on,
 	"composer_smart_symbols": on, "slash_command_failed_dedupe": on, "autocomplete_frequently_used_emojis_frecency": on,
 	"autocomplete_flannel_fuzzy_match_passthrough":             {"treatment"},
 	"autocomplete_demote_flannel_passthrough_rltv_exact_match": {"on", "treatment"},

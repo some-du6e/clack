@@ -140,10 +140,13 @@ type listState struct {
 	rc rowCtx // this frame's row inputs (rows keep a pointer to it)
 
 	// hover toolbar state for its natives (MessageActions)
-	tbRow  *row
-	tbSize image.Point
-	tbHov  int      // hovered toolbar button, -1 none
-	quick  quickBar // one-click reactions before the buttons (quickreact.go)
+	tbRow   *row
+	tbSize  image.Point
+	tbHov   int             // hovered toolbar button, -1 none
+	tbBtns  []int           // the buttons tbRow's toolbar has, in order (actions_rules.go)
+	tbLabel [tbCount]string // their labels (aria-label and tooltip) for tbRow
+	tbQAs   [tbCount]string // … and data-qa
+	quick   quickBar        // one-click reactions before the buttons (quickreact.go)
 
 	kb kbNav // keyboard focus and the selected message (kbnav.go)
 }
@@ -1148,6 +1151,16 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 	}
 	s.tbRow, s.tbSize, s.tbHov = r, size, -1
 	s.quick.prepare(h, s.ch, r)
+	s.prepareButtons(h.Core(), r)
+	// message_actions_truncate (L2dv calculateResponsiveActions): the
+	// quick reactions go when the toolbar with them is wider than the
+	// message from its left edge to the toolbar's right edge
+	if app := h.Core(); app != nil && app.Experiment("message_actions_truncate") == "on" && len(s.quick.names) > 0 {
+		bs, pad := dp(gtx, mt.toolbarBtn), dp(gtx, mt.toolbarPad)
+		if pad*2+(len(s.quick.names)+len(s.tbBtns))*bs > size.X-dp(gtx, mt.toolbarRight) {
+			s.quick.names = s.quick.names[:0]
+		}
+	}
 	// Right-aligned: measure first (a plugin may add to the toolbar). The
 	// card is absolutely positioned in Slack, so it shrink-wraps: unbounded
 	// width makes a patched (block-level) root as wide as its content
@@ -1168,13 +1181,44 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 	}
 	if i := s.tbHov; i >= 0 {
 		bs := dp(gtx, mt.toolbarBtn)
-		bx := x + dp(gtx, mt.toolbarPad) + (len(s.quick.names)+i)*bs
-		tip := tbTips[i]
+		slot := 0
+		for k, b := range s.tbBtns {
+			if b == i {
+				slot = k
+			}
+		}
+		bx := x + dp(gtx, mt.toolbarPad) + (len(s.quick.names)+slot)*bs
+		tip := s.tbLabel[i]
 		if i == tbTodo && r.src.Saved {
 			tip = "Remove from to-dos"
 		}
 		s.tip = ""
 		tooltip(gtx, th, c, tip, image.Pt(bx+bs/2, y-dp(gtx, 4)), size)
+	}
+}
+
+// prepareButtons picks r's toolbar buttons and their labels: the thread
+// and share actions follow Slack's rules (actions_rules.go), the rest are
+// always there.
+func (s *listState) prepareButtons(app *core.App, r *row) {
+	s.tbBtns = s.tbBtns[:0]
+	s.tbLabel, s.tbQAs = tbTips, tbQA
+	for i := 0; i < tbCount; i++ {
+		switch i {
+		case tbReply:
+			l := replyLabel(app, &r.src, s.thread)
+			if l == "" {
+				continue
+			}
+			s.tbLabel[i] = l
+		case tbForward:
+			l, qa, ok := shareAction(app, &r.src, s.thread)
+			if !ok {
+				continue
+			}
+			s.tbLabel[i], s.tbQAs[i] = l, qa
+		}
+		s.tbBtns = append(s.tbBtns, i)
 	}
 }
 
@@ -1208,7 +1252,7 @@ func (s *listState) actionsCard(gtx layout.Context, st slackc.Styled) layout.Dim
 	bs := dp(gtx, mt.toolbarBtn)
 	pad := dp(gtx, mt.toolbarPad)
 	nq := len(s.quick.names)
-	size := image.Pt(pad*2+(nq+tbCount)*bs, bs+2*pad)
+	size := image.Pt(pad*2+(nq+len(s.tbBtns))*bs, bs+2*pad)
 	shadowCard(gtx.Ops, image.Rectangle{Max: size}, dp(gtx, 12), dp(gtx, 1), st.Background(c.Bg), c.PillBorder, c.Shadow)
 	s.quick.hov = -1
 	for i := 0; i < nq; i++ {
@@ -1217,8 +1261,8 @@ func (s *listState) actionsCard(gtx layout.Context, st slackc.Styled) layout.Dim
 			return s.quickButton(gtx, i)
 		})
 	}
-	for i := 0; i < tbCount; i++ {
-		at(gtx, pad+(nq+i)*bs, pad, func(gtx layout.Context) layout.Dimensions {
+	for k, i := range s.tbBtns {
+		at(gtx, pad+(nq+k)*bs, pad, func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Exact(image.Pt(bs, bs))
 			if i == tbAddReact {
 				return slackc.Component(gtx, "MessageActionButtonReaction", s, (*listState).reactionButtonProps, (*listState).layoutReactionButton)
@@ -1272,7 +1316,7 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 	if hov {
 		s.tbHov = i
 	}
-	st := actionBtnClass.EnterAttr(gtx, btnState(gtx, btn), 0, "data-qa", tbQA[i])
+	st := actionBtnClass.EnterAttr(gtx, btnState(gtx, btn), 0, "data-qa", s.tbQAs[i])
 	defer st.Leave()
 	bs := gtx.Constraints.Max.X
 	if st.Hidden() {
