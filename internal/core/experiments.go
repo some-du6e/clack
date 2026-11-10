@@ -223,7 +223,7 @@ var experimentReads = map[string][]string{
 	// drafts (ui/backend.go)
 	"draft_management_in_composer": {"treatment"}, "sidebar_draft_indicator_menu_and_thread_inclusion": on,
 	// messages and senders
-	"reskin_custom_responses": on, "show_as_agent": on, "agent_badge": on, "support_lots_of_agents": on,
+	"show_as_agent": on, "agent_badge": on, "support_lots_of_agents": on,
 	"system_messages_redesign_m1": on, "flat_message_heading_scale": on, "portable_content_composer": {"treatment"},
 	"message_actions_truncate": on,
 	// composer and autocomplete

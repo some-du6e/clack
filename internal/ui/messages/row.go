@@ -165,10 +165,12 @@ type chanCard struct {
 
 // replyAv is one ReplyBarAvatar in the reply bar.
 type replyAv struct {
-	r  *row
-	id string
-	sz int
-	w  int // width drawn last frame (0: a plugin hid it)
+	r     *row
+	id    string
+	sz    int
+	w     int    // width drawn last frame (0: a plugin hid it)
+	drawn string // the picture drawn last frame (tests)
+	team  bool   // … the team icon (a Slackbot custom response in the thread)
 }
 
 // reactPill is one reaction's state: Reaction / UnstyledButton natives.
@@ -785,8 +787,8 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 	// channel row), ThreadRoot and ThreadReplyGeneric all wrap the row in
 	// it, so the thread pane shows pinned labels too; only
 	// ThreadReplyGeneric passes showBroadcast. A custom response gets no
-	// label line ("custom_response" === primaryLabelType renders none,
-	// whatever reskin_custom_responses says), only the row's tint.
+	// label line ("custom_response" === primaryLabelType renders none),
+	// only the row's tint.
 	eph := ephemeral(rc, m)
 	broadcast := rc.thread && !rc.parent && m.Broadcast
 	switch {
@@ -1323,6 +1325,24 @@ func (av *replyAv) layout(gtx layout.Context, p slackc.Props) layout.Dimensions 
 	if p != nil {
 		id = p.StrOr("userId", id)
 	}
+	// ReplyBarAvatar (v8ac): Slackbot answering with one of the
+	// workspace's custom responses in this thread (its loaded replies,
+	// hasSlackbotCustomResponseInThread) shows as the team, a 24px TeamIcon
+	// (data-qa reply_bar_team_avatar), like its custom responses do
+	av.team = false
+	if app := rc.h.Core(); app != nil && id == "USLACKBOT" {
+		m := &av.r.m
+		root := m.ThreadTS
+		if root == "" {
+			root = m.TS
+		}
+		if app.SlackbotCustomResponseInThread(m.Channel, root, id) {
+			name, icon := app.CustomResponseTeam(int(mt.threadAvatar))
+			av.drawn, av.team = icon, true
+			drawTeamIcon(gtx, rc.h, icon, name, image.Rect(0, 0, av.sz, av.sz), rc.c)
+			return layout.Dimensions{Size: image.Pt(av.sz, av.sz)}
+		}
+	}
 	url := ""
 	if rc.h.Core() != nil {
 		if u, ok := rc.h.Core().User(id); ok {
@@ -1331,6 +1351,7 @@ func (av *replyAv) layout(gtx layout.Context, p slackc.Props) layout.Dimensions 
 			ensureUser(rc.h, id)
 		}
 	}
+	av.drawn = url
 	drawAvatar(gtx, rc.h, url, image.Rect(0, 0, av.sz, av.sz), rc.c)
 	return layout.Dimensions{Size: image.Pt(av.sz, av.sz)}
 }

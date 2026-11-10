@@ -149,6 +149,14 @@ type listState struct {
 	quick   quickBar        // one-click reactions before the buttons (quickreact.go)
 
 	kb kbNav // keyboard focus and the selected message (kbnav.go)
+
+	// the floating banners and the day pills' menu (banners.go)
+	ub          unreadBannerState
+	pendingDate time.Time                    // jumpToTimestamp's time, paged back to
+	dayReq      *dayMenuReq                  // a day pill clicked this frame
+	dayBtns     map[string]*widget.Clickable // the dividers' pills, by day
+	stickyDay   widget.Clickable             // the sticky pill
+	latestR     image.Rectangle              // the "Latest messages" pill drawn last frame (tests)
 }
 
 var listCache = map[string]*listState{}
@@ -652,6 +660,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 			s.pendingJump = "" // not in this conversation (or too far back)
 		}
 	}
+	s.pendingDateJump(now) // a day pill's "Jump to…" (banners.go)
 	// infinite scroll up
 	if !s.thread && p.First <= 2 && s.snap.hasMore && !s.snap.older && s.snap.loaded && now.Sub(s.lastOlder) > time.Second {
 		s.lastOlder = now
@@ -821,7 +830,7 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 	w := gtx.Constraints.Max.X
 	switch it.kind {
 	case itDay:
-		return s.dayDivider(gtx, h, c, it.day, rc.now, w)
+		return s.dayDivider(gtx, h, c, i, it.day, rc.now, w)
 	case itUnread:
 		// Slack's divider is 0 tall: a 1px line with "New" centered on it at
 		// the right end (padding 0 4, margin-right 15).
@@ -932,20 +941,32 @@ func itoa(n int) string {
 	return string(b[i:])
 }
 
-func (s *listState) dayPill(gtx layout.Context, h Host, c *colors, label string, cx, y int) {
+// dayPill draws a day divider's pill (DayDividerJumper's
+// c-message_list__day_divider__label__pill, a menu trigger: "Jump to
+// date") centred on cx at y; it returns the pill's rect and whether it
+// was clicked.
+func (s *listState) dayPill(gtx layout.Context, h Host, c *colors, btn *widget.Clickable, label string, cx, y int) (image.Rectangle, bool) {
 	th := h.Theme()
 	ts := textStyle{size: 13, weight: theme.Bold, col: c.Text, lineH: 18}
 	sz := measure(gtx, th, ts, label)
 	ph := dp(gtx, mt.dayPillH)
 	pw := dp(gtx, 16) + sz.X + dp(gtx, 4) + dp(gtx, 13) + dp(gtx, 8)
 	r := image.Rect(cx-pw/2, y, cx-pw/2+pw, y+ph)
+	clicked := btn.Clicked(gtx)
 	shadowCard(gtx.Ops, r, ph/2, dp(gtx, 1), c.Bg, c.PillBorder, c.Shadow)
-	at(gtx, r.Min.X+dp(gtx, 16), y+(ph-dp(gtx, 18))/2, func(gtx layout.Context) layout.Dimensions {
-		return labelText(gtx, th, ts, label)
+	at(gtx, r.Min.X, r.Min.Y, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Exact(r.Size())
+		return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			at(gtx, dp(gtx, 16), (ph-dp(gtx, 18))/2, func(gtx layout.Context) layout.Dimensions {
+				return labelText(gtx, th, ts, label)
+			})
+			at(gtx, dp(gtx, 16)+sz.X+dp(gtx, 4), (ph-dp(gtx, 13))/2, func(gtx layout.Context) layout.Dimensions {
+				return icons.Get("chevron-down")(gtx, unit.Dp(13), c.Text)
+			})
+			return layout.Dimensions{Size: r.Size()}
+		})
 	})
-	at(gtx, r.Min.X+dp(gtx, 16)+sz.X+dp(gtx, 4), y+(ph-dp(gtx, 13))/2, func(gtx layout.Context) layout.Dimensions {
-		return icons.Get("chevron-down")(gtx, unit.Dp(13), c.Text)
-	})
+	return r, clicked
 }
 
 // labelText avoids the shadowed name in dayPill.
@@ -953,11 +974,22 @@ func labelText(gtx layout.Context, th *theme.Theme, s textStyle, txt string) lay
 	return label(gtx, th, s, txt)
 }
 
-func (s *listState) dayDivider(gtx layout.Context, h Host, c *colors, day, now time.Time, w int) layout.Dimensions {
+func (s *listState) dayDivider(gtx layout.Context, h Host, c *colors, i int, day, now time.Time, w int) layout.Dimensions {
 	hh := dp(gtx, mt.dayH)
 	ly := dp(gtx, 19)
 	fill(gtx.Ops, image.Rect(0, ly, w, ly+dp(gtx, 1)), c.DayLine)
-	s.dayPill(gtx, h, c, dayLabel(day, now), w/2, (hh-dp(gtx, mt.dayPillH))/2)
+	if s.dayBtns == nil {
+		s.dayBtns = map[string]*widget.Clickable{}
+	}
+	key := day.Format("2006-01-02")
+	btn := s.dayBtns[key]
+	if btn == nil {
+		btn = &widget.Clickable{}
+		s.dayBtns[key] = btn
+	}
+	if pr, clicked := s.dayPill(gtx, h, c, btn, dayLabel(day, now), w/2, (hh-dp(gtx, mt.dayPillH))/2); clicked {
+		s.dayReq = &dayMenuReq{day: day, item: i, r: pr}
+	}
 	return layout.Dimensions{Size: image.Pt(w, hh)}
 }
 
@@ -1044,7 +1076,10 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 						break
 					}
 				}
-				s.dayPill(gtx, h, c, dayLabel(s.items[d].day, rc.now), size.X/2, pillY)
+				day := s.items[d].day
+				if pr, clicked := s.dayPill(gtx, h, c, &s.stickyDay, dayLabel(day, rc.now), size.X/2, pillY); clicked {
+					s.dayReq = &dayMenuReq{day: day, item: -1, r: pr}
+				}
 			}
 		}
 	}
@@ -1071,35 +1106,12 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 		}
 	}
 
-	// jump to recent
-	p := s.list.Position
-	if p.BeforeEnd && s.visible[1] < len(s.items)-2 {
-		ts := textStyle{size: 13, weight: theme.Bold, col: c.JumpText, lineH: 18}
-		txt := "Jump to recent"
-		sz := measure(gtx, th, ts, txt)
-		bh := dp(gtx, 28)
-		bw := dp(gtx, 8) + dp(gtx, 16) + dp(gtx, 4) + sz.X + dp(gtx, 16)
-		r := image.Rect((size.X-bw)/2, size.Y-bh-dp(gtx, 16), (size.X-bw)/2+bw, size.Y-dp(gtx, 16))
-		if s.jump.Clicked(gtx) {
-			s.list.Position = layout.Position{}
-			h.Invalidate()
-		}
-		at(gtx, r.Min.X, r.Min.Y, func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints = layout.Exact(r.Size())
-			return s.jump.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				rr := image.Rectangle{Max: r.Size()}
-				bg := c.JumpBg
-				if s.jump.Hovered() {
-					bg.A = 230
-				}
-				rrect(gtx.Ops, rr, bh/2, bg)
-				at(gtx, dp(gtx, 8), (bh-dp(gtx, 16))/2, func(gtx layout.Context) layout.Dimensions {
-					return icons.Get("arrow-down")(gtx, unit.Dp(16), c.JumpText)
-				})
-				at(gtx, dp(gtx, 28), (bh-dp(gtx, 18))/2, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, ts, txt) })
-				return layout.Dimensions{Size: rr.Size()}
-			})
-		})
+	// ArchivesBanner ("Latest messages") and UnreadBanner (banners.go)
+	s.archivesBanner(gtx, h, size)
+	s.unreadBanner(gtx, h, rc, size)
+	if req := s.dayReq; req != nil {
+		s.dayReq = nil
+		s.openDayMenu(h, *req, rc.now, gtx)
 	}
 }
 
