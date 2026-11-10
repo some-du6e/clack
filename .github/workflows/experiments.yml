@@ -1,0 +1,64 @@
+name: experiments
+# Slack's experiments in Clack (docs/EXPERIMENTS.md): the Library's two
+# Experiments plugins (Taut's and Slick's published bundles, the ones users
+# install) run in the whole client over internal/fakeslack, and an override
+# saved in each must reach core and flip a real Clack behaviour
+# (internal/ui TestExperimentsPluginsDriveClack); plus core's and Taut's
+# experiment tests.
+#
+# The bundles are third-party GPLv3 code run here: read-only token, no Go
+# cache shared with other workflows.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "internal/core/experiments*"
+      - "internal/core/mpdm_name.go"
+      - "internal/core/sidebar_rules*"
+      - "internal/taut/**"
+      - "internal/slick/**"
+      - "internal/ui/experiments_plugins_test.go"
+      - "internal/ui/section_menu.go"
+      - "internal/fakeslack/fakeslack.go"
+      - ".github/workflows/experiments.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: experiments-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb
+
+jobs:
+  plugins:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false # this job runs third-party code; never share its Go cache
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: the published Library (index.json + bundles)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          mkdir -p dist/library
+          .github/scripts/fetch_library.sh dist/library
+          test -s dist/library/index.json
+      - name: core and Taut experiment tests
+        run: go test -count=1 -timeout 15m -v -run 'TestForcedExperiment|TestExperimentReads|TestMpdmCustomName|TestPluginExperimentOverridesReachCore' ./internal/core/ ./internal/taut/
+      - name: the Experiments plugins drive Clack
+        env:
+          PLUGIN_BENCH_LIBRARY: ${{ github.workspace }}/dist/library
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a go test -count=1 -timeout 25m -v -run 'TestExperimentsPluginsDriveClack' ./internal/ui/
