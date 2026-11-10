@@ -81,6 +81,10 @@ var defaultExperimentGroups = map[string]string{
 	// silent_sidebar (focus mode, ui/focus_mode.go); the Availability page
 	// is availability_prefs_section's (AvailabilitySection)
 	"silent_sidebar": "on", "availability_prefs_section": "on",
+	// the sidebar's text filter and its milestones, and temporary mutes
+	// (experiments.getByUser on 2026-11-10: sidebar_filter.go, temp_mute.go);
+	// the input is there from the first frame
+	"sidebar_text_filter": "on", "sidebar_text_filter_m2": "on", "sidebar_text_filter_m3": "on", "temp_mute": "on",
 }
 
 func (a *App) sidebarExperiments() sidebarExp {

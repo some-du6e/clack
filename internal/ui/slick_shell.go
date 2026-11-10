@@ -50,7 +50,7 @@ import (
 func (a *App) sidebarProps() slackc.Props {
 	s := &a.sidebar
 	m := a.model()
-	if s.rows == nil || s.builtFor != m.version || s.viewsFor != sbViewsKey() {
+	if a.sbStale(m) {
 		s.rebuild(m)
 	}
 	if s.propRows == nil || s.propsGen != s.gen {
@@ -82,6 +82,8 @@ func sbPropRows(rows []sbRow) []any {
 			typ, id = "divider", ""
 		case sbNote:
 			typ, id = "empty_section_note", ""
+		case sbNoResults:
+			typ, id = "textFilterNoResults", "" // TextFilterNoResultsRow's type (id null)
 		}
 		p := slackc.Props{"type": typ, "id": id, "key": sbRowKey(r, i)}
 		if r.section != "" {

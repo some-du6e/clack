@@ -177,6 +177,9 @@ func (a *App) activeRail() string {
 func (a *App) railClick(key string, org image.Point) {
 	switch key {
 	case "home":
+		if a.routeTab(a.router.Current()) == "home" { // Home on Home: useHomeTabProps resets the sidebar filter
+			a.ResetSidebarTextFilter()
+		}
 		if a.lastChannel != "" {
 			a.Navigate("c/" + a.lastChannel)
 		} else {

@@ -1002,6 +1002,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			if fx, ok := s.unreadsCount(c.ID); ok { // unreads.go
 				e = fx
 			}
+			if closedDM(c) { // closed_dms.go: read
+				e.HasUnreads, e.MentionCount, e.LastRead = false, 0, e.Latest
+			}
 			e.LastRead, e.HasUnreads, e.MentionCount = s.applyMark(c.ID, e.LastRead, e.Latest, e.HasUnreads, e.MentionCount)
 			if c.IsIM {
 				ims = append(ims, e)
@@ -1010,16 +1013,18 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			}
 		}
 		return ok("channels", chans, "ims", ims, "mpims", []any{}, "threads", map[string]any{"has_unreads": true, "mention_count": 2})
-	case "sidebar.dms": // every generated DM is open
+	case "sidebar.dms": // every generated DM is open; AddClosedDM's aren't
 		var ims, mpdms []map[string]any
+		s.convMu.Lock()
 		for _, c := range s.convs {
 			switch {
 			case c.IsIM:
-				ims = append(ims, map[string]any{"id": c.ID, "user": c.User, "is_open": true, "is_im": true})
+				ims = append(ims, map[string]any{"id": c.ID, "user": c.User, "is_open": !closedDM(c), "is_im": true})
 			case c.IsMPIM:
-				mpdms = append(mpdms, map[string]any{"id": c.ID, "is_open": true, "is_mpim": true})
+				mpdms = append(mpdms, map[string]any{"id": c.ID, "is_open": !closedDM(c), "is_mpim": true})
 			}
 		}
+		s.convMu.Unlock()
 		return ok("ims", ims, "mpdms", mpdms)
 	case "experiments.getByUser": // the sidebar experiments as a real account has them (2026-11-08)
 		g := func(group string) map[string]any { return map[string]any{"group": group} }
@@ -1031,7 +1036,10 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			"suggested_sections_auto_sort_v2": g("on"),
 			"lists_tabbing_navigation":        g("on"),
 			// focus mode and the Availability section (see core's defaultExperimentGroups)
-			"silent_sidebar": g("on"), "availability_prefs_section": g("on")})
+			"silent_sidebar": g("on"), "availability_prefs_section": g("on"),
+			// the sidebar text filter and temporary mutes (core sidebar_filter.go, temp_mute.go)
+			"sidebar_text_filter": g("on"), "sidebar_text_filter_m2": g("on"), "sidebar_text_filter_m3": g("on"),
+			"temp_mute": g("on")})
 	case "users.prefs.get":
 		s.prefsMu.Lock()
 		m := make(map[string]any, len(s.prefs))

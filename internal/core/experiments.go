@@ -34,6 +34,7 @@ func (a *App) setExperimentAssignments(as map[string]slack.ExperimentAssignment)
 	a.recomputeExperimentsLocked()
 	a.mu.Unlock()
 	a.emit(Event{Type: "experiments"})
+	a.refreshTempMutes() // temp_mute decides what a temporary mute does
 }
 
 // setExperiments installs server groups without their records (tests).
@@ -138,6 +139,7 @@ func (a *App) SetExperimentGroups(groups map[string]*string) {
 	a.mu.Unlock()
 	if changed {
 		a.emit(Event{Type: "experiments"})
+		a.refreshTempMutes()
 	}
 }
 
@@ -204,6 +206,7 @@ var experimentReads = map[string][]string{
 	"filter_dormant_channels": on, "improve_mute_pref": on, "dm_recency_sort_rollout": {"without_edu", "with_edu"},
 	"programmable_sidebar_dm_history": on, "vip_section_pref": on, "agents_in_dm_sidebar": on, "agents_in_dm_sidebar_pref": on,
 	"sidebar_section_search": on, "add_channels_channel_sections_slackathon": on, "mute_channel_edu": on,
+	"sidebar_text_filter": on, "sidebar_text_filter_m2": on, "sidebar_text_filter_m3": on, "temp_mute": on,
 	"suggested_sections_auto_sort_v2": on, "suggested_sections_auto_sort_killswitch": on, "meeting_assistant": on,
 	"mpdm_naming": on, "sc_mpdm_naming": on, "mpdm_notifications_advanced_option": on, "silent_sidebar": on,
 	"channel_ia_header_refinements": on,
@@ -227,4 +230,11 @@ var experimentReads = map[string][]string{
 	"session_channels_inline_diff": on,
 	// huddles
 	"scheduled_huddles": on, "huddles_raised_hand_queue": on,
+	// channel details, Activity, Lists and the composer (merged into ui
+	// without a listing; TestExperimentReadsListed)
+	"activity_bulk_unread_tool": on, "ai_channel_exclusions": on, "mcp_ai_channel_exclusions": on,
+	"enable_new_channel_settings": on, "move_channel_tabs_settings": on, "mpdm_default_exclude_history_clients_webapp": on,
+	"lists_grid_todos": on, "rich_text_headers_and_dividers": on, "updated_scheduled_sends_desktop": on,
+	// the sidebar's draft mark (ui/backend.go, sidebar.go)
+	"draft_management_in_composer": {"treatment"}, "sidebar_draft_indicator_menu_and_thread_inclusion": on,
 }

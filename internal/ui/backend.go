@@ -344,6 +344,7 @@ func (b *backend) apply(a *App, s core.Snapshot) {
 		convs[c.ID] = ci
 	}
 	m.Convs = convs
+	m.FilterNames = s.FilterNames
 	m.Sections = m.Sections[:0]
 	for _, sec := range s.Sections {
 		ss := sbSection{ID: sec.ID, Name: sec.Name, Type: sec.Type, Emoji: sec.Emoji, EmojiURL: sec.EmojiURL, Collapsed: sec.Collapsed,

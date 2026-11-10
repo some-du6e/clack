@@ -167,6 +167,7 @@ func init() {
 		popups.SignOut = func() { a.signOut() }
 		popups.CheckForUpdates = a.menuCheckForUpdates()
 		popups.UpdateItemLabel = a.updateMenuItem
+		popups.OnConversationPicked = a.ResetSidebarTextFilter // the switcher clears the sidebar filter (sidebar_filter.go)
 	}
 	mkStatusModal = func(a *App) Overlay { return popups.NewSetStatusModal(a) }
 	mkCreateChannel = func(a *App, section string) Overlay {
