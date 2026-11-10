@@ -396,6 +396,7 @@ func TestActivityKeyboardLikeSlack(t *testing.T) {
 		v.key(layout.Context{}, key.Event{Name: name, Modifiers: mods, State: key.Press})
 		e.frame()
 	}
+	v.kbFocused = true // as the list has the focus when its keys come
 	press(key.NameDownArrow, 0)
 	if v.focusKey != keys[0] || !v.kbMode {
 		t.Fatalf("Down: focus %q, want %q", v.focusKey, keys[0])
@@ -441,7 +442,7 @@ func TestActivityKeyboardLikeSlack(t *testing.T) {
 		t.Errorf("Alt+Down: open %v %q", v.selOK, v.selKey)
 	}
 	// a press on a row focuses the list (the keys' target)
-	v.selOK = false
+	v.selOK, v.kbFocused = false, false
 	e.frame()
 	e.click(image.Pt(300, int(actHeadH+actBarTop+actBarH+16)+60))
 	e.frame()
