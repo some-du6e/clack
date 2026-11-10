@@ -218,6 +218,7 @@ func cxSendGif(ctx context.Context, h Host, ch, threadTS string, g Gif) error {
 // cxPreset is a workspace status preset.
 type cxPreset struct {
 	Emoji, Text string
+	Canonical   string // text_canonical (index 2; Slack's jk80 reads it as canonical)
 	Dur         string // no_expiration | all_day | 30_minutes | 1_hour | 4_hours | this_week | …
 }
 
@@ -240,7 +241,7 @@ func cxStatusPresets(ctx context.Context, h Host) ([]cxPreset, error) {
 		if len(p) < 4 || p[1] == "" {
 			continue
 		}
-		out = append(out, cxPreset{Emoji: strings.Trim(p[0], ":"), Text: p[1], Dur: p[3]})
+		out = append(out, cxPreset{Emoji: strings.Trim(p[0], ":"), Text: p[1], Canonical: p[2], Dur: p[3]})
 	}
 	return out, nil
 }
@@ -317,37 +318,4 @@ func cxSetWorkingHours(ctx context.Context, h Host, hr cxHours) error {
 		"focus_mode_set_status":            strconv.FormatBool(hr.FocusStatus),
 		"outside_working_hours_set_status": strconv.FormatBool(hr.OutsideStatus),
 	})
-}
-
-// ---- scheduled status (Out of office) ----
-
-// cxCanScheduleStatus reports whether core can schedule a status that
-// starts later (the web client's "Schedule for later").
-func cxCanScheduleStatus(h Host) bool {
-	a, err := cxApp(h)
-	if err != nil {
-		return false
-	}
-	_, ok := any(a).(interface {
-		ScheduleStatus(context.Context, string, string, int64, int64) error
-	})
-	return ok
-}
-
-// cxScheduleStatus sets a status from start to end (unix seconds). A start
-// in the past or now is a normal status with an expiration.
-func cxScheduleStatus(ctx context.Context, h Host, text, emoji string, start, end int64, now int64) error {
-	a, err := cxApp(h)
-	if err != nil {
-		return err
-	}
-	if start <= now+60 {
-		return a.SetStatus(ctx, text, emoji, end)
-	}
-	if s, ok := any(a).(interface {
-		ScheduleStatus(context.Context, string, string, int64, int64) error
-	}); ok {
-		return s.ScheduleStatus(ctx, text, emoji, start, end)
-	}
-	return errors.New("scheduling a status for later needs core support")
 }

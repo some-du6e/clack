@@ -67,7 +67,7 @@ func TestActMinutesUntil(t *testing.T) {
 func TestActStatusExpiry(t *testing.T) {
 	now := actAt(2026, time.November, 6, 14, 10) // Friday
 	eod := time.Date(2026, time.November, 6, 23, 59, 59, 0, actTestLoc).Unix()
-	sunday := time.Date(2026, time.November, 8, 23, 59, 59, 0, actTestLoc).Unix()
+	friday := eod // "This week" ends on Friday (getDurationPresetTs WEEK)
 	cases := []struct {
 		d    actDur
 		want int64
@@ -77,7 +77,7 @@ func TestActStatusExpiry(t *testing.T) {
 		{actDur1h, now.Add(time.Hour).Unix()},
 		{actDur4h, now.Add(4 * time.Hour).Unix()},
 		{actDurToday, eod},
-		{actDurWeek, sunday},
+		{actDurWeek, friday},
 		{actDurKeep, 12345},
 	}
 	for _, c := range cases {
@@ -85,10 +85,12 @@ func TestActStatusExpiry(t *testing.T) {
 			t.Errorf("dur %d: got %d want %d", c.d, got, c.want)
 		}
 	}
-	// On Sunday "This week" ends tonight.
-	sun := actAt(2026, time.November, 8, 10, 0)
-	if got := actStatusExpiry(sun, actDurWeek, 0); got != sunday {
-		t.Errorf("sunday week: got %d want %d", got, sunday)
+	// On Saturday and Sunday it is the coming Friday.
+	nextFri := time.Date(2026, time.November, 13, 23, 59, 59, 0, actTestLoc).Unix()
+	for _, d := range []int{7, 8} {
+		if got := actStatusExpiry(actAt(2026, time.November, d, 10, 0), actDurWeek, 0); got != nextFri {
+			t.Errorf("Nov %d week: got %v want %v", d, time.Unix(got, 0), time.Unix(nextFri, 0))
+		}
 	}
 }
 
@@ -153,14 +155,26 @@ func TestDtCeil(t *testing.T) {
 }
 
 func TestActRangeDefaults(t *testing.T) {
+	// getDefaultStartTime is startOf("minute"); the end is 24 h later,
+	// moved up to the next whole hour unless on one.
 	now := time.Date(2026, time.November, 6, 14, 57, 30, 0, actTestLoc)
 	start, end := actRangeDefaults(now)
-	if !start.Equal(actAt(2026, time.November, 6, 14, 58)) || !end.Equal(actAt(2026, time.November, 7, 15, 0)) {
+	if !start.Equal(actAt(2026, time.November, 6, 14, 57)) || !end.Equal(actAt(2026, time.November, 7, 15, 0)) {
 		t.Errorf("2:57:30 PM: start %v end %v", start, end)
 	}
 	_, end = actRangeDefaults(actAt(2026, time.November, 6, 15, 12))
 	if !end.Equal(actAt(2026, time.November, 7, 16, 0)) {
 		t.Errorf("3:12 PM: end %v", end)
+	}
+	_, end = actRangeDefaults(actAt(2026, time.November, 6, 15, 0))
+	if !end.Equal(actAt(2026, time.November, 7, 15, 0)) {
+		t.Errorf("3:00 PM: end %v", end)
+	}
+	// a half-hour zone still lands on its own whole hour
+	ist := time.FixedZone("IST", 5*3600+1800)
+	_, end = actRangeDefaults(time.Date(2026, time.November, 6, 15, 12, 0, 0, ist))
+	if want := time.Date(2026, time.November, 7, 16, 0, 0, 0, ist); !end.Equal(want) {
+		t.Errorf("IST 3:12 PM: end %v want %v", end, want)
 	}
 }
 
@@ -236,7 +250,6 @@ func TestDtDateLabel(t *testing.T) {
 func TestActPresetDur(t *testing.T) {
 	now := actAt(2026, time.November, 6, 14, 10) // Friday
 	eod := time.Date(2026, time.November, 6, 23, 59, 59, 0, actTestLoc).Unix()
-	sunday := time.Date(2026, time.November, 8, 23, 59, 59, 0, actTestLoc).Unix()
 	cases := []struct {
 		code string
 		dur  actDur
@@ -247,7 +260,8 @@ func TestActPresetDur(t *testing.T) {
 		{"30_minutes", actDur30m, now.Add(30 * time.Minute).Unix()},
 		{"1_hour", actDur1h, now.Add(time.Hour).Unix()},
 		{"4_hours", actDur4h, now.Add(4 * time.Hour).Unix()},
-		{"this_week", actDurWeek, sunday},
+		{"this_week", actDurWeek, eod},
+		{"week", actDurWeek, eod},
 		{"something_new", actDurNone, 0},
 	}
 	for _, c := range cases {
@@ -265,9 +279,30 @@ func TestActPresetDur(t *testing.T) {
 }
 
 func TestActOOOReply(t *testing.T) {
-	end := actAt(2026, time.November, 7, 15, 0)
-	if got, want := actOOOReply(end), "I'm out of office until 3:00 PM, Sat, Nov 7."; got != want {
+	now := actAt(2026, time.November, 6, 14, 10) // Friday
+	if got, want := actOOOReply(actAt(2026, time.November, 7, 15, 0), now), "I’m out of office until 3:00 PM, Sat, Nov 7."; got != want {
 		t.Errorf("got %q want %q", got, want)
+	}
+	// v4SM: the time alone today; 11:59 PM ends name the day after; a week
+	// or more away drops the time.
+	cases := []struct {
+		end  time.Time
+		want string
+	}{
+		{actAt(2026, time.November, 6, 17, 30), "5:30 PM"},
+		{actAt(2026, time.November, 6, 23, 59), "tomorrow"},
+		{actAt(2026, time.November, 10, 23, 59), "Wed, Nov 11"},
+		{actAt(2026, time.November, 13, 15, 0), "Fri, Nov 13"},
+		{actAt(2026, time.November, 12, 9, 0), "9:00 AM, Thu, Nov 12"},
+	}
+	for _, c := range cases {
+		if got := actOOODate(c.end, now); got != c.want {
+			t.Errorf("%v: got %q want %q", c.end, got, c.want)
+		}
+	}
+	// on a Wednesday, this Friday's 11:59 PM is "next week"
+	if got := actOOODate(actAt(2026, time.November, 13, 23, 59), actAt(2026, time.November, 11, 9, 0)); got != "next week" {
+		t.Errorf("Friday from Wednesday: %q", got)
 	}
 }
 

@@ -64,17 +64,18 @@ var actDurNotes = func() (n [len(actDurLabels)]string) {
 
 type actPreset struct {
 	emoji, text string
+	canonical   string // text_canonical (the default presets: their text)
 	dur         actDur
 }
 
 // actPresets are Slack's enterprise defaults, used when the workspace has
 // no presets or team.prefs.get fails.
 var actPresets = []actPreset{
-	{"calendar", "In a meeting", actDur1h},
-	{"bus", "Commuting", actDur30m},
-	{"face_with_thermometer", "Out sick", actDurToday},
-	{"palm_tree", "Vacationing", actDurNone},
-	{"house_with_garden", "Working remotely", actDurToday},
+	{"calendar", "In a meeting", "In a meeting", actDur1h},
+	{"bus", "Commuting", "Commuting", actDur30m},
+	{"face_with_thermometer", "Out sick", "Out sick", actDurToday},
+	{"palm_tree", "Vacationing", "Vacationing", actDurNone},
+	{"house_with_garden", "Working remotely", "Working remotely", actDurToday},
 }
 
 // actPresetDur maps a team preset duration code to a duration.
@@ -88,7 +89,7 @@ func actPresetDur(code string) actDur {
 		return actDur4h
 	case "all_day", "today":
 		return actDurToday
-	case "this_week":
+	case "week", "this_week": // Slack's key is "week" (/Ab5 WEEK)
 		return actDurWeek
 	}
 	return actDurNone // no_expiration and anything unknown
@@ -124,7 +125,7 @@ func actFetchPresets(h Host) {
 		}
 		out := make([]actPreset, 0, len(ps))
 		for _, p := range ps {
-			out = append(out, actPreset{emoji: p.Emoji, text: p.Text, dur: actPresetDur(p.Dur)})
+			out = append(out, actPreset{emoji: p.Emoji, text: p.Text, canonical: p.Canonical, dur: actPresetDur(p.Dur)})
 		}
 		actPresetCache = out
 	})
@@ -156,8 +157,12 @@ func actStatusExpiry(now time.Time, d actDur, keep int64) int64 {
 	case actDurToday:
 		return time.Date(y, m, day, 23, 59, 59, 0, loc).Unix()
 	case actDurWeek:
-		// end of Sunday (Slack weeks end on Sunday).
-		days := (7 - int(now.Weekday())) % 7
+		// end of Friday (getDurationPresetTs WEEK: day(getIndexOfNextDayOfWeek(5))):
+		// this week's Friday, next week's on a Saturday.
+		days := 5 - int(now.Weekday())
+		if days < 0 {
+			days += 7
+		}
 		return time.Date(y, m, day+days, 23, 59, 59, 0, loc).Unix()
 	case actDurKeep:
 		return keep
@@ -176,17 +181,76 @@ func actKeepLabel(exp int64, now time.Time) string {
 	return "Until " + t.Format("Jan ") + ordinal(d1) + " at " + clock(t)
 }
 
-// actRangeDefaults are the Start/End defaults Slack shows: start now
-// (rounded up to the minute), end tomorrow at the next whole hour (2:58 PM
-// → tomorrow 3:00 PM, 3:12 PM → tomorrow 4:00 PM, as in ooo/timepick.png).
+// actRangeDefaults are the Start/End defaults Slack shows
+// (CustomStatusScheduledDuration): start now at the start of the minute
+// (getDefaultStartTime), end 24 hours later, moved up to the next whole hour
+// unless it is on one (2:57 PM → tomorrow 3:00 PM, 3:12 PM → tomorrow
+// 4:00 PM).
 func actRangeDefaults(now time.Time) (start, end time.Time) {
-	return dtCeil(now, 1), dtCeil(now, 60).AddDate(0, 0, 1)
+	start = now.Truncate(time.Minute)
+	end = start.Add(24 * time.Hour)
+	if end.Minute() != 0 { // by the wall clock (Truncate would use UTC hours)
+		y, m, d := end.Date()
+		end = time.Date(y, m, d, end.Hour()+1, 0, 0, 0, end.Location())
+	}
+	return start, end
 }
 
 // actOOOReply is the prefilled automatic reply for an out-of-office status
-// ending at end: "I'm out of office until 3:00 PM, Sat, Nov 7."
-func actOOOReply(end time.Time) string {
-	return "I'm out of office until " + clock(end) + ", " + end.Format("Mon, Jan 2") + "."
+// ending at end: "I’m out of office until {date}." (OutOfOfficeMessageContainer).
+func actOOOReply(end, now time.Time) string {
+	return "I’m out of office until " + actOOODate(end, now) + "."
+}
+
+// actOOODate is Slack's v4SM date for the reply (en-US): just the time
+// today; for an end at 11:59 PM the day after ("tomorrow", "next week" for
+// this Friday's, else "Sat, Nov 7"); a week or more away "Sat, Nov 14";
+// otherwise "3:00 PM, Sat, Nov 7".
+func actOOODate(end, now time.Time) string {
+	end = end.In(now.Location())
+	day := func(t time.Time) string { return t.Format("Mon, Jan 2") }
+	if end.Hour() == 23 && end.Minute() == 59 {
+		next := end.AddDate(0, 0, 1)
+		if dtSameDay(end, now) {
+			return "tomorrow"
+		}
+		fri := 5 - int(now.Weekday())
+		if fri < 0 {
+			fri += 7
+		}
+		if dtSameDay(end, now.AddDate(0, 0, fri)) {
+			return "next week"
+		}
+		return day(next)
+	}
+	if dtSameDay(end, now) {
+		return clock(end)
+	}
+	if !end.Before(now.AddDate(0, 0, 7)) {
+		return day(end)
+	}
+	return clock(end) + ", " + day(end)
+}
+
+// actDurKey is the status_duration Slack saves for d ("" leaves it out).
+func actDurKey(d actDur) string {
+	switch d {
+	case actDurNone:
+		return "no_expiration"
+	case actDur30m:
+		return "30_minutes"
+	case actDur1h:
+		return "1_hour"
+	case actDur4h:
+		return "4_hours"
+	case actDurToday:
+		return "all_day"
+	case actDurWeek:
+		return "week"
+	case actDurCustom:
+		return "custom"
+	}
+	return ""
 }
 
 // actBodyMax caps the scrolling body: 534 max modal - 70 header - 85 footer.
@@ -216,8 +280,22 @@ type actStatus struct {
 	reply        widget.Editor
 	replyGen     string // the generated reply (unedited while equal)
 	replyText    string // reply's current text
+	replyInit    string // a saved reply the editor was filled with ("" none)
+	replyFixed   bool   // filled with a saved reply: never regenerated
 	selfName     string
 	selfAv       string
+
+	canonical string // the chosen preset's text_canonical
+	presetDnd bool   // a preset that pauses notifications (Vacationing)
+	picked    bool   // a preset was chosen (its presetDnd replaces the snooze state)
+	oooSaved  string // the saved automatic reply (profile ooo_message), as text
+
+	sched    []actScheduled // future scheduled statuses (users.customStatus.list)
+	schedBtn []widget.Clickable
+	schedDel []widget.Clickable
+	editID   string // the scheduled status being edited
+	editing  *actScheduled
+	saveBtn  *ModalButton // "Save", "Update" while editing a scheduled status
 
 	list layout.List // the scrolling body
 
@@ -235,7 +313,9 @@ func NewSetStatusModal(h Host) *Modal { return actNewStatus(h, false) }
 // pill near the bottom of the window for about 4 s.
 func NewSetStatusModalFromMenu(h Host) *Modal { return actNewStatus(h, true) }
 
-func actNewStatus(h Host, fromMenu bool) *Modal {
+func actNewStatus(h Host, fromMenu bool) *Modal { return actNewStatusState(h, fromMenu).modal }
+
+func actNewStatusState(h Host, fromMenu bool) *actStatus {
 	s := &actStatus{h: h, dur: actDurToday, focus: true, forTeam: "For Hack Club", fromMenu: fromMenu}
 	s.ed.SingleLine = true
 	s.ed.Submit = true
@@ -253,7 +333,12 @@ func actNewStatus(h Host, fromMenu bool) *Modal {
 			} else {
 				s.dur, s.keepExp = actDurKeep, me.StatusExp
 			}
+			if u, ok := a.S.User(me.ID); ok {
+				s.canonical = u.Profile.StatusTextCanonical
+				s.ooo = s.canonical == actOOOCanonical // hasOooSet
+			}
 		}
+		s.load(a)
 	}
 	if s.selfName == "" {
 		s.selfName = "You"
@@ -270,12 +355,106 @@ func actNewStatus(h Host, fromMenu bool) *Modal {
 			return true
 		}})
 	}
-	btns = append(btns,
-		&ModalButton{Label: "Cancel", Kind: BtnOutline},
-		&ModalButton{Label: "Save", Kind: BtnPrimary, Enabled: s.canSave, Do: s.save},
-	)
-	s.modal = NewModal(h, ModalOpts{Title: "Set a status", Body: s.layout, Buttons: btns, Border: true})
-	return s.modal
+	s.saveBtn = &ModalButton{Label: "Save", Kind: BtnPrimary, Enabled: s.canSave, Do: s.save}
+	btns = append(btns, &ModalButton{Label: "Cancel", Kind: BtnOutline}, s.saveBtn)
+	title := func() string {
+		if s.editID != "" {
+			return "Edit status"
+		}
+		return "Set a status"
+	}
+	s.modal = NewModal(h, ModalOpts{TitleFunc: title, Body: s.layout, Buttons: btns, Border: true})
+	if s.ooo {
+		s.fillReply()
+	}
+	return s
+}
+
+// load fetches what the modal shows beyond core's state: the scheduled
+// statuses, the saved automatic reply and whether the current status's
+// expiration matches a notification pause (Slack's
+// doesExpirationMatchDndEnd pre-checks "Pause notifications").
+func (s *actStatus) load(a *core.App) {
+	h := s.h
+	exp := s.keepExp
+	type loaded struct {
+		sched     []actScheduled
+		schedErr  error
+		reply     string
+		canonical string
+		profErr   error
+		paused    bool
+	}
+	run(h, func(ctx context.Context) (loaded, error) {
+		var l loaded
+		l.sched, l.schedErr = actListScheduled(ctx, a, time.Now().Unix())
+		l.reply, l.canonical, l.profErr = actSelfOOO(ctx, a)
+		if exp > 0 {
+			if st, err := actDNDInfo(ctx, a); err == nil {
+				l.paused = actExpMatchesDND(exp, st.SnoozeEnd)
+			}
+		}
+		return l, nil
+	}, func(l loaded, _ error) {
+		defer h.Invalidate()
+		if s.modal.done {
+			return
+		}
+		if l.schedErr == nil {
+			s.setSched(l.sched)
+		}
+		if l.profErr == nil {
+			s.oooSaved = l.reply
+			if s.had && l.canonical != "" {
+				s.canonical = l.canonical
+				s.ooo = l.canonical == actOOOCanonical
+			}
+			if s.ooo && s.editID == "" && !s.replyFixed && s.replyText == s.replyGen { // not typed in yet
+				s.fillReply()
+			}
+		}
+		if l.paused {
+			s.pause = true
+		}
+	})
+}
+
+// reloadSched refetches the scheduled statuses.
+func (s *actStatus) reloadSched(a *core.App) {
+	run(s.h, func(ctx context.Context) ([]actScheduled, error) { return actListScheduled(ctx, a, time.Now().Unix()) }, func(l []actScheduled, err error) {
+		if err == nil {
+			s.setSched(l)
+			s.h.Invalidate()
+		}
+	})
+}
+
+func (s *actStatus) setSched(list []actScheduled) {
+	s.sched = list
+	if len(s.schedBtn) != len(list) {
+		s.schedBtn = make([]widget.Clickable, len(list))
+		s.schedDel = make([]widget.Clickable, len(list))
+	}
+}
+
+// fillReply fills the automatic reply as OutOfOfficeMessageContainer does:
+// the scheduled status's own when editing one, else the saved reply, else
+// the generated "I’m out of office until …" that follows the end time until
+// edited.
+func (s *actStatus) fillReply() {
+	txt := s.oooSaved
+	if s.editing != nil {
+		txt = actOOOPlain(s.editing.OOOMessage)
+	}
+	if txt != "" {
+		s.reply.SetText(txt)
+		s.replyInit, s.replyText, s.replyFixed = txt, txt, true
+		return
+	}
+	s.replyInit, s.replyFixed = "", false
+	s.replyGen, s.replyText = "", ""
+	s.reply.SetText("")
+	s.rangeChanged()
 }
 
 func (s *actStatus) takePresets() {
@@ -330,12 +509,30 @@ func (s *actStatus) setRange(now time.Time) {
 
 // rangeChanged keeps an unedited automatic reply in sync with the end.
 func (s *actStatus) rangeChanged() {
-	if s.replyText != s.replyGen {
+	if s.replyFixed || s.replyText != s.replyGen {
 		return
 	}
-	gen := actOOOReply(s.endTime())
+	gen := ""
+	if end := s.replyEnd(); !end.IsZero() {
+		gen = actOOOReply(end, time.Now())
+	}
 	s.reply.SetText(gen)
 	s.replyGen, s.replyText = gen, gen
+}
+
+// replyEnd is the end the generated reply names (zero: the status doesn't
+// clear, and Slack generates none).
+func (s *actStatus) replyEnd() time.Time {
+	if s.dur == actDurCustom {
+		if !s.rangeInit {
+			return time.Time{}
+		}
+		return s.endTime()
+	}
+	if exp := actStatusExpiry(time.Now(), s.dur, s.keepExp); exp > 0 {
+		return time.Unix(exp, 0)
+	}
+	return time.Time{}
 }
 
 func (s *actStatus) startTime() time.Time { return dtAt(s.sDay.Day, s.sTime.Mins) }
@@ -346,21 +543,37 @@ func (s *actStatus) text() string { return strings.TrimSpace(s.ed.Text()) }
 func (s *actStatus) canSave() bool {
 	filled := s.text() != "" || s.emoji != ""
 	if filled && s.dur == actDurCustom {
-		end := s.endTime()
-		return end.After(s.startTime()) && end.After(time.Now())
+		end, now := s.endTime(), time.Now()
+		if s.editID == "" && len(s.sched) >= actMaxScheduled && s.startTime().Unix() > now.Unix()+30 {
+			return false // the limit alert
+		}
+		return end.After(s.startTime()) && end.After(now)
 	}
 	return filled || s.had
 }
 
+// clearStatus is Slack's clearUserStatus: no toast, and a pause that
+// belonged to the status ends with it.
 func (s *actStatus) clearStatus() {
-	actDo(s.h, "Status cleared", func(ctx context.Context, a *core.App) error { return a.SetStatus(ctx, "", "", 0) })
+	a := s.h.Core()
+	if a == nil {
+		s.h.Toast("Not connected yet")
+		return
+	}
+	canonical, exp := s.canonical, s.keepExp
+	run(s.h, func(ctx context.Context) (bool, error) { return actClearStatus(ctx, a, canonical, exp) }, func(ended bool, err error) {
+		if err == nil && ended {
+			actDNDUntil = time.Time{}
+		}
+	})
 }
 
-// save applies the status; false keeps the modal open.
+// save applies the status (handleSubmit / handleSave); false keeps the
+// modal open.
 func (s *actStatus) save() bool {
 	h := s.h
 	txt, emoji := s.text(), s.emoji
-	if txt == "" && emoji == "" {
+	if txt == "" && emoji == "" && s.editID == "" {
 		s.clearStatus()
 		return true
 	}
@@ -370,76 +583,68 @@ func (s *actStatus) save() bool {
 		return true
 	}
 	now := time.Now()
+	sv := actStatusSave{Emoji: emoji, Text: txt, Canonical: s.canonical, Duration: actDurKey(s.dur), IsDnd: s.pause, EditID: s.editID}
 	if s.dur == actDurCustom {
-		return s.saveRange(a, txt, emoji, now)
+		start, end := s.startTime(), s.endTime()
+		if !end.After(start) || !end.After(now) {
+			return false // "End time must be in the future." is showing
+		}
+		sv.Exp = end.Unix()
+		if start.Unix() > now.Unix()+30 || s.editID != "" { // isScheduledImmediately: within 30 s
+			sv.Start = start.Unix()
+		}
+	} else {
+		sv.Exp = actStatusExpiry(now, s.dur, s.keepExp)
 	}
-	exp := actStatusExpiry(now, s.dur, s.keepExp)
-	pause := s.pause && exp > now.Unix()
-	mins := 0
-	if pause {
-		mins = actMinutesUntil(now, time.Unix(exp, 0))
+	if sv.Start > 0 && s.editID == "" && len(s.sched) >= actMaxScheduled {
+		return false // "You can only have 5 scheduled statuses at a time."
 	}
-	run(h, func(ctx context.Context) (struct{}, error) {
-		if err := a.SetStatus(ctx, txt, emoji, exp); err != nil {
-			return struct{}{}, err
+	// ooo_message: the reply for an Out of office status, else "" (which
+	// clears one); an unedited saved reply is left out and kept.
+	sv.OOOSet = true
+	if s.ooo {
+		reply := strings.TrimSpace(s.replyText)
+		if s.replyInit != "" && reply == strings.TrimSpace(s.replyInit) {
+			sv.OOOSet = false
+		} else {
+			sv.OOO = actOOOBlocks(reply)
 		}
-		if pause {
-			return struct{}{}, a.SetDND(ctx, mins)
-		}
-		return struct{}{}, nil
-	}, func(_ struct{}, err error) {
-		if err != nil {
-			h.Toast("Couldn't do that: " + errText(err))
-			return
-		}
-		if pause {
-			actDNDUntil = time.Unix(exp, 0)
-		}
-		h.Toast("Status updated")
-	})
-	return true
-}
-
-// saveRange saves a status with a start and end (Out of office / Choose a
-// start and end time…) through cxScheduleStatus.
-func (s *actStatus) saveRange(a *core.App, txt, emoji string, now time.Time) bool {
-	h := s.h
-	start, end := s.startTime(), s.endTime()
-	if !end.After(start) || !end.After(now) {
-		h.Toast("Choose an end time after the start time")
-		return false
 	}
-	later := start.Unix() > now.Unix()+60
-	if later && !cxCanScheduleStatus(h) {
-		h.Toast("Couldn't do that: scheduling a status for later isn't supported yet")
-		return false
+	if sv.Start > 0 {
+		toast := "Status scheduled."
+		if s.editID != "" {
+			toast = "Scheduled status updated."
+		}
+		run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, actScheduleStatus(ctx, a, sv) }, func(_ struct{}, err error) {
+			if err != nil {
+				h.Toast("Something went wrong. Please try again later.") // ScheduledStatusToast error
+				return
+			}
+			h.Toast(toast)
+		})
+		return true
 	}
 	pause := s.pause
-	mins := actMinutesUntil(now, end)
-	replied := s.ooo && strings.TrimSpace(s.replyText) != strings.TrimSpace(s.replyGen)
-	run(h, func(ctx context.Context) (struct{}, error) {
-		if err := cxScheduleStatus(ctx, h, txt, emoji, start.Unix(), end.Unix(), now.Unix()); err != nil {
-			return struct{}{}, err
+	dnd := actDNDSave{Pause: pause, PresetDnd: s.presetDnd, Picked: s.picked, Exp: sv.Exp, InitialExp: s.keepExp}
+	run(h, func(ctx context.Context) (bool, error) {
+		if err := actProfileSet(ctx, a, sv); err != nil {
+			return false, err
 		}
-		if pause {
-			return struct{}{}, a.SetDND(ctx, mins)
-		}
-		return struct{}{}, nil
-	}, func(_ struct{}, err error) {
+		st, err := actDNDInfo(ctx, a)
 		if err != nil {
-			h.Toast("Couldn't do that: " + errText(err))
+			st = core.DNDStatus{}
+		}
+		return actApplyDND(ctx, a, st, dnd, time.Now())
+	}, func(snoozed bool, err error) {
+		if err != nil { // updateCustomStatus swallows a failed save (.catch(noop))
 			return
 		}
-		if pause {
-			actDNDUntil = end
-		}
-		switch {
-		case replied:
-			h.Toast("Automatic replies aren't supported yet")
-		case later:
-			h.Toast("Status scheduled")
-		default:
-			h.Toast("Status updated")
+		if snoozed {
+			if sv.Exp > 0 {
+				actDNDUntil = time.Unix(sv.Exp, 0)
+			}
+		} else if !pause {
+			actDNDUntil = time.Time{}
 		}
 	})
 	return true
@@ -489,32 +694,31 @@ func (s *actStatus) events(gtx layout.Context) {
 			h.Invalidate()
 		})
 	}
-	if s.clearBtn.Clicked(gtx) {
+	if s.clearBtn.Clicked(gtx) { // handleReset
 		s.ed.SetText("")
 		s.emoji = ""
 		if s.dur == actDurKeep || s.dur == actDurCustom {
 			s.dur = actDurToday
 		}
-		s.ooo = false
+		s.ooo, s.canonical, s.presetDnd, s.picked = false, "", false, false
+		s.setEditing(nil)
 		s.focus = true
 	}
 	for i := range s.presetBtn {
 		if s.presetBtn[i].Clicked(gtx) {
-			p := s.presets[i]
-			s.ed.SetText(p.text)
-			n := s.ed.Len()
-			s.ed.SetCaret(n, n)
-			s.emoji, s.dur, s.ooo = p.emoji, p.dur, false
-			s.focus = true
+			s.pickPreset(s.presets[i].emoji, s.presets[i].text, s.presets[i].canonical, s.presets[i].dur)
 		}
 	}
 	if s.oooBtn.Clicked(gtx) {
-		s.ed.SetText("Out of office")
-		n := s.ed.Len()
-		s.ed.SetCaret(n, n)
-		s.emoji, s.dur, s.ooo = "no_entry", actDurCustom, true
-		s.setRange(time.Now())
-		s.focus = true
+		s.pickPreset("no_entry", "Out of office", actOOOCanonical, actDurCustom)
+	}
+	for i := range s.schedBtn {
+		if i < len(s.sched) && s.schedDel[i].Clicked(gtx) {
+			s.confirmDeleteScheduled(s.sched[i].ID)
+		}
+		if i < len(s.sched) && s.schedBtn[i].Clicked(gtx) {
+			s.editScheduled(s.sched[i])
+		}
 	}
 	if s.calBtn.Clicked(gtx) {
 		h.Toast("Calendar sync isn't available in yoloslack")
@@ -525,6 +729,107 @@ func (s *actStatus) events(gtx layout.Context) {
 	if s.selBtn.Clicked(gtx) {
 		s.openDurations(gtx)
 	}
+}
+
+// pickPreset fills the form from a preset (handlePresetSelection): Out of
+// office and a Vacationing that doesn't clear become a start and end range;
+// Vacationing pauses notifications by itself.
+func (s *actStatus) pickPreset(emoji, text, canonical string, d actDur) {
+	s.ed.SetText(text)
+	n := s.ed.Len()
+	s.ed.SetCaret(n, n)
+	s.emoji, s.dur, s.canonical = emoji, d, canonical
+	s.setEditing(nil)
+	s.picked, s.presetDnd = true, canonical == "Vacationing"
+	s.ooo = canonical == actOOOCanonical
+	if s.ooo || canonical == "Vacationing" && d == actDurNone {
+		s.dur = actDurCustom
+		s.setRange(time.Now())
+	}
+	if s.ooo {
+		s.fillReply()
+	}
+	if s.presetDnd {
+		s.pause = false
+	}
+	s.focus = true
+}
+
+// editScheduled opens a scheduled status for editing (Slack's "Editing
+// scheduled status"): its emoji, text, start, end and pause.
+func (s *actStatus) editScheduled(st actScheduled) {
+	s.ed.SetText(st.Text)
+	n := s.ed.Len()
+	s.ed.SetCaret(n, n)
+	s.emoji, s.canonical = strings.Trim(st.Emoji, ":"), st.TextCanonical
+	s.dur, s.pause = actDurCustom, st.IsDnd
+	s.picked, s.presetDnd = false, false
+	cp := st
+	s.setEditing(&cp)
+	start, end := time.Unix(st.Scheduled, 0), time.Unix(st.Expire, 0)
+	if st.Expire == 0 {
+		_, end = actRangeDefaults(start)
+	}
+	now := time.Now()
+	s.sDay.Day, s.sTime.Mins = dtDay(start), dtMins(start)
+	s.eDay.Day, s.eTime.Mins = dtDay(end), dtMins(end)
+	s.sDay.Min, s.eDay.Min = dtDay(now), s.sDay.Day
+	s.rangeInit = true
+	s.ooo = st.TextCanonical == actOOOCanonical
+	if s.ooo {
+		s.fillReply()
+	}
+	s.focus = true
+}
+
+// setEditing starts (st) or stops (nil) editing a scheduled status.
+func (s *actStatus) setEditing(st *actScheduled) {
+	s.editing, s.editID = st, ""
+	if st != nil {
+		s.editID = st.ID
+	}
+	if s.saveBtn != nil {
+		s.saveBtn.Label = "Save"
+		if st != nil {
+			s.saveBtn.Label = "Update"
+		}
+	}
+}
+
+// confirmDeleteScheduled asks first, as Slack's speed bump does.
+func (s *actStatus) confirmDeleteScheduled(id string) {
+	h := s.h
+	a := h.Core()
+	if a == nil {
+		return
+	}
+	del := &ModalButton{Label: "Delete Status", Kind: BtnDanger, Do: func() bool {
+		for i := range s.sched { // removeScheduledStatus: drop it right away
+			if s.sched[i].ID == id {
+				s.setSched(append(append([]actScheduled(nil), s.sched[:i]...), s.sched[i+1:]...))
+				break
+			}
+		}
+		run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, actDeleteScheduled(ctx, a, id) }, func(_ struct{}, err error) {
+			if err != nil {
+				h.Toast("Something went wrong. Please try again later.")
+				s.reloadSched(a) // fetchCustomStatuses
+				return
+			}
+			h.Toast("Scheduled status removed.")
+		})
+		return true
+	}}
+	th := h.Theme()
+	m := NewModal(h, ModalOpts{
+		Title:     "Delete this scheduled status?",
+		AutoFocus: del,
+		Body: func(gtx layout.Context) layout.Dimensions {
+			return para(gtx, th, 15, 22, theme.Regular, colorsOf(th).Fg, "Plans change, and that’s okay.", 0)
+		},
+		Buttons: []*ModalButton{{Label: "Keep Status", Kind: BtnOutline}, del},
+	})
+	h.ShowOverlay(m)
 }
 
 func (s *actStatus) openDurations(gtx layout.Context) {
@@ -544,6 +849,9 @@ func (s *actStatus) openDurations(gtx layout.Context) {
 		items = append(items, MenuItem{Label: s.durLabel(actDurKeep), Checked: s.dur == actDurKeep, Do: pick(actDurKeep)})
 	}
 	for d := actDurNone; d <= actDurWeek; d++ {
+		if s.ooo && d != actDurNone && d != actDurToday && d != actDurWeek {
+			continue // CustomStatusDurationDefault: isOutOfOffice keeps these
+		}
 		items = append(items, MenuItem{Label: actDurLabels[d], Checked: s.dur == d, Do: pick(d)})
 	}
 	items = append(items, MenuItem{Label: actDurLabels[actDurCustom], Checked: s.dur == actDurCustom, Do: pick(actDurCustom)})
@@ -607,6 +915,17 @@ func (s *actStatus) layout(gtx layout.Context) layout.Dimensions {
 func (s *actStatus) content(gtx layout.Context, th *theme.Theme, cl *Colors, fw, padX int) layout.Dimensions {
 	cw := fw - 2*padX
 	y := dp(gtx, 4)
+	filled := s.ed.Len() > 0 || s.emoji != ""
+	if filled && s.dur == actDurCustom {
+		// the scheduled-flow alerts above the input, re-checked every second
+		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Truncate(time.Second).Add(time.Second)})
+		if s.editID == "" && len(s.sched) >= actMaxScheduled {
+			y += actAlert(gtx, th, cl, padX, y, cw, "You can only have 5 scheduled statuses at a time.")
+		}
+		if s.rangeInit && !s.endTime().After(time.Now()) {
+			y += actAlert(gtx, th, cl, padX, y, cw, "End time must be in the future.")
+		}
+	}
 	iy := y
 	at(gtx, image.Pt(padX, iy), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(cw, dp(gtx, 42))}
@@ -614,7 +933,17 @@ func (s *actStatus) content(gtx layout.Context, th *theme.Theme, cl *Colors, fw,
 	})
 	s.emojiRect = s.emojiRect.Add(image.Pt(padX, iy))
 	y += dp(gtx, 42)
-	if s.ed.Len() == 0 && s.emoji == "" {
+	if !filled {
+		if len(s.sched) > 0 {
+			y += s.legend(gtx, th, cl, padX, y, "Scheduled")
+			now := time.Now()
+			for i, st := range s.sched {
+				if i >= len(s.schedBtn) {
+					break
+				}
+				y += s.schedRow(gtx, th, cl, fw, padX, y, i, st, now)
+			}
+		}
 		y += s.legend(gtx, th, cl, padX, y, "Schedule for later")
 		y += s.preset(gtx, th, cl, fw, padX, y, &s.oooBtn, "no_entry", "Out of office", " — Set a start and end date")
 		if s.presets != nil {
@@ -668,7 +997,7 @@ func (s *actStatus) content(gtx layout.Context, th *theme.Theme, cl *Colors, fw,
 	if custom {
 		y = s.rangeRows(gtx, th, cl, padX, cw, boxTop)
 	}
-	if s.dur != actDurNone {
+	if s.dur != actDurNone && (!s.presetDnd || s.ooo) { // shouldShowPauseNotificationsOption
 		y += dp(gtx, 12)
 		at(gtx, image.Pt(padX, y), func(gtx layout.Context) layout.Dimensions {
 			return clickBox(gtx, &s.pauseBtn, nil, func(gtx layout.Context) layout.Dimensions {
@@ -951,6 +1280,77 @@ func (s *actStatus) preset(gtx layout.Context, th *theme.Theme, cl *Colors, fw, 
 		})
 	})
 	return rh
+}
+
+// actScheduledRange is formatScheduledDateRange: "Today, 3:00 PM – 5:00 PM",
+// "Tomorrow 9:00 AM – Fri, Nov 14 5:00 PM".
+func actScheduledRange(start, end int64, now time.Time) string {
+	st, en := time.Unix(start, 0).In(now.Location()), time.Unix(end, 0).In(now.Location())
+	sd, ed := dtDateLabel(dtDay(st), now, dtRelative), dtDateLabel(dtDay(en), now, dtRelative)
+	if sd == ed {
+		return sd + ", " + clock(st) + " – " + clock(en)
+	}
+	return sd + " " + clock(st) + " – " + ed + " " + clock(en)
+}
+
+// schedRow draws a "Scheduled" row: emoji, **text** — range, and on hover
+// the Delete (×) control at the right (CustomStatusPresetItem with
+// enableControls).
+func (s *actStatus) schedRow(gtx layout.Context, th *theme.Theme, cl *Colors, fw, padX, y, i int, st actScheduled, now time.Time) int {
+	rh := dp(gtx, 28)
+	note := ""
+	if st.Expire > 0 {
+		note = " — " + actScheduledRange(st.Scheduled, st.Expire, now)
+	}
+	emoji := strings.Trim(st.Emoji, ":")
+	if emoji == "" && st.Text != "" {
+		emoji = "speech_balloon"
+	}
+	h := s.preset(gtx, th, cl, fw, padX, y, &s.schedBtn[i], emoji, st.Text, note)
+	if s.schedBtn[i].Hovered() || s.schedDel[i].Hovered() {
+		bs := dp(gtx, 24)
+		at(gtx, image.Pt(fw-padX-bs, y+(rh-bs)/2), func(gtx layout.Context) layout.Dimensions {
+			return clickBox(gtx, &s.schedDel[i], func(gtx layout.Context, sz image.Point, hovered bool) {
+				if hovered {
+					rrect(gtx, image.Rectangle{Max: sz}, dp(gtx, 4), theme.WithAlpha(cl.HighText, 0x33))
+				}
+			}, func(gtx layout.Context) layout.Dimensions {
+				is := dp(gtx, 16)
+				at(gtx, image.Pt((bs-is)/2, (bs-is)/2), func(gtx layout.Context) layout.Dimensions {
+					return icon(gtx, "close", 16, cl.HighText)
+				})
+				return layout.Dimensions{Size: image.Pt(bs, bs)}
+			})
+		})
+	}
+	return h
+}
+
+// actAlert draws Slack's error Alert (c-alert--level_error, boxed: padding
+// 12 16, radius 8, --dt_color-surf-imp, a warning icon in content-imp, 15px
+// text) w wide at (x, y); returns its height plus the 16px margin below.
+func actAlert(gtx layout.Context, th *theme.Theme, cl *Colors, x, y, w int, msg string) int {
+	bg := rgba(0xff81aa, float32(0x21)/255)
+	if th.Dark {
+		bg = rgba(0xb41541, float32(0x40)/255)
+	}
+	if th.Tokens != nil {
+		if c, own, ok := th.Tokens.Color("var(--dt_color-surf-imp)"); own && ok {
+			bg = c
+		}
+	}
+	px, py := dp(gtx, 16), dp(gtx, 12)
+	tx := px + dp(gtx, 20+12)
+	call, d := record(loose(gtx, image.Pt(maxInt(1, w-tx-px), 1<<20)), func(gtx layout.Context) layout.Dimensions {
+		return para(gtx, th, 15, 22, theme.Regular, cl.Fg, msg, 0)
+	})
+	hh := maxInt(d.Size.Y, dp(gtx, 22)) + 2*py
+	rrect(gtx, image.Rect(x, y, x+w, y+hh), dp(gtx, 8), bg)
+	at(gtx, image.Pt(x+px, y+py+dp(gtx, 1)), func(gtx layout.Context) layout.Dimensions {
+		return icon(gtx, "warning", 20, cl.Danger)
+	})
+	macroAt(gtx, call, image.Pt(x+tx, y+py))
+	return hh + dp(gtx, 16)
 }
 
 // actCheckbox draws a 16px Slack checkbox at p.
