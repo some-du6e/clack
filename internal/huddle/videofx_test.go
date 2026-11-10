@@ -2,8 +2,8 @@ package huddle
 
 import (
 	"context"
-	"image"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -11,12 +11,16 @@ import (
 )
 
 // stillCamera sends one picture over and over, like a webcam pointed at
-// someone sitting still.
+// someone sitting still. After each frame comes back from the session (on
+// the camera goroutine, so without racing the self view's buffers) it
+// records how much the background and the face changed.
 type stillCamera struct {
-	f    *bgblur.Frame
-	fps  int
-	stop chan struct{}
-	once sync.Once
+	f        *bgblur.Frame
+	fps      int
+	stop     chan struct{}
+	once     sync.Once
+	bg, face atomic.Int64
+	n        atomic.Int64
 }
 
 func newStillCamera(w, h int) *stillCamera {
@@ -39,50 +43,43 @@ func (c *stillCamera) Start(onFrame func(*CameraFrame)) error {
 				return
 			case <-t.C:
 			}
-			onFrame(c.frame())
+			fr := c.frame()
+			onFrame(fr)
+			bg, face := c.changed(fr)
+			c.bg.Store(int64(bg))
+			c.face.Store(int64(face))
+			c.n.Add(1)
 		}
 	}()
 	return nil
 }
 
-func (c *stillCamera) Close() { c.once.Do(func() { close(c.stop) }) }
-
-// plainPreview is the self view of the unprocessed picture.
-func (c *stillCamera) plainPreview() *image.RGBA {
-	f := c.frame()
-	img := image.NewRGBA(image.Rect(0, 0, f.W, f.H))
-	nv12ToRGBAMirrored(img, f, 1)
-	return img
-}
-
-// diffAt is the summed RGB difference of a's and b's 8×8 block at (x, y).
-func diffAt(a, b *image.RGBA, x, y int) int {
-	d := 0
-	for dy := 0; dy < 8; dy++ {
-		for dx := 0; dx < 8; dx++ {
-			i := (y+dy)*a.Stride + 4*(x+dx)
-			for c := 0; c < 3; c++ {
-				v := int(a.Pix[i+c]) - int(b.Pix[i+c])
-				if v < 0 {
-					v = -v
-				}
-				d += v
+// changed sums |ΔY| over 8×8 blocks of the shelf (right of the person)
+// and of the face, between fr and the camera's picture.
+func (c *stillCamera) changed(fr *CameraFrame) (bg, face int) {
+	w, h := c.f.W, c.f.H
+	block := func(x, y int) (d int) {
+		for dy := 0; dy < 8; dy++ {
+			for dx := 0; dx < 8; dx++ {
+				i := (y+dy)*c.f.YStride + x + dx
+				v := int(fr.Y[i]) - int(c.f.Y[i])
+				d += max(v, -v)
 			}
 		}
+		return
 	}
-	return d
+	for _, p := range [][2]int{{w * 86 / 100, h * 30 / 100}, {w * 80 / 100, h * 55 / 100}, {w * 90 / 100, h * 80 / 100}} {
+		bg += block(p[0], p[1])
+	}
+	return bg, block(w/2-4, h*44/100)
 }
 
-// blurredView reports whether the self view's background (the shelf, on
-// the left once mirrored) is blurred while the face isn't.
-func blurredView(img, plain *image.RGBA) (bg, face int) {
-	w, h := plain.Rect.Dx(), plain.Rect.Dy()
-	for _, p := range [][2]int{{w * 6 / 100, h * 30 / 100}, {w * 12 / 100, h * 55 / 100}, {w * 18 / 100, h * 80 / 100}} {
-		bg += diffAt(img, plain, p[0], p[1])
-	}
-	face = diffAt(img, plain, w/2-4, h*44/100)
-	return
-}
+// blurred: the last frame's background changed and its face didn't.
+func (c *stillCamera) blurred() bool { return c.bg.Load() > 150 && c.face.Load() < 20 }
+func (c *stillCamera) plain() bool   { return c.n.Load() > 0 && c.bg.Load() == 0 && c.face.Load() == 0 }
+func (c *stillCamera) info() string  { return itoa64(c.bg.Load()) + " / " + itoa64(c.face.Load()) }
+
+func (c *stillCamera) Close() { c.once.Do(func() { close(c.stop) }) }
 
 // TestVideoEffectToggle: with "blur" the camera frames are blurred before
 // the self view and the encoder; switching it off mid-huddle stops it and
@@ -90,7 +87,6 @@ func blurredView(img, plain *image.RGBA) (bg, face int) {
 func TestVideoEffectToggle(t *testing.T) {
 	fk := NewFake(nil, t.Errorf)
 	defer fk.Close()
-	f := fk.f
 	cam := newStillCamera(320, 180)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -108,46 +104,33 @@ func TestVideoEffectToggle(t *testing.T) {
 	waitFor(t, 15*time.Second, "media", func() bool { return s.State().Phase == Connected }, func() string { return s.State().Phase.String() })
 	s.SetCamera(true)
 	fx := &s.cam.fx
-	plain := cam.plainPreview()
-	view := func() *image.RGBA { return s.Frame(SelfVideoKey).Img }
-	waitFor(t, 20*time.Second, "blurred frames at the fake", func() bool {
-		return fx.applied.Load() >= 6 && f.cam.frames.Load() >= 4 && view() != nil
-	}, func() string { return s.State().Camera.State.String() + " " + s.Stats() })
+	waitFor(t, 20*time.Second, "blurred frames sent", func() bool {
+		return fx.applied.Load() >= 6 && s.cam.sent.Load() >= 4 && cam.blurred()
+	}, func() string { return s.State().Camera.State.String() + " " + s.Stats() + "; " + cam.info() })
 	t.Logf("blur: %d frames processed, last %v", fx.applied.Load(), time.Duration(fx.took.Load()))
-	waitFor(t, 5*time.Second, "a blurred self view", func() bool {
-		bg, face := blurredView(view(), plain)
-		return bg > 600 && face < 40
-	}, func() string {
-		bg, face := blurredView(view(), plain)
-		return itoa64(int64(bg)) + " / " + itoa64(int64(face))
-	})
+	if img := s.Frame(SelfVideoKey).Img; img == nil {
+		t.Error("no self view")
+	}
 
 	s.SetVideoEffect(VideoEffectNone)
 	waitFor(t, 5*time.Second, "the plain camera", func() bool {
 		fx.runMu.Lock()
 		freed := fx.fx == nil
 		fx.runMu.Unlock()
-		if view() == nil {
-			return false
-		}
-		bg, _ := blurredView(view(), plain)
-		return freed && bg < 40
-	}, func() string { bg, _ := blurredView(view(), plain); return itoa64(int64(bg)) })
+		return freed && cam.plain()
+	}, cam.info)
 	n := fx.applied.Load()
-	sent := f.cam.frames.Load()
-	waitFor(t, 5*time.Second, "frames still sent", func() bool { return f.cam.frames.Load() >= sent+3 }, func() string { return s.Stats() })
+	sent := s.cam.sent.Load()
+	waitFor(t, 5*time.Second, "frames still sent", func() bool { return s.cam.sent.Load() >= sent+3 }, func() string { return s.Stats() })
 	if fx.applied.Load() != n {
 		t.Errorf("frames processed with the effect off")
 	}
 
 	s.SetVideoEffect(VideoEffectBlur)
-	waitFor(t, 5*time.Second, "blur again", func() bool {
-		bg, _ := blurredView(view(), plain)
-		return fx.applied.Load() > n && bg > 600
-	}, func() string { return itoa64(fx.applied.Load()) })
+	waitFor(t, 5*time.Second, "blur again", func() bool { return fx.applied.Load() > n && cam.blurred() }, cam.info)
 	// a background image isn't implemented: the camera goes out unchanged
 	s.SetVideoEffect(VideoEffectImage)
-	waitFor(t, 5*time.Second, "bg means plain", func() bool { bg, _ := blurredView(view(), plain); return bg < 40 }, func() string { return "" })
+	waitFor(t, 5*time.Second, "bg means plain", cam.plain, cam.info)
 }
 
 // TestVideoEffectPreview: the join preview's camera shows the effect too.
@@ -157,15 +140,7 @@ func TestVideoEffectPreview(t *testing.T) {
 	defer dev.Close()
 	p := StartPreview(Options{Device: dev, VideoEffect: VideoEffectBlur, OpenCamera: func(func(string, ...any)) (Camera, error) { return cam, nil }}, true)
 	defer p.Close()
-	plain := cam.plainPreview()
-	view := func() *image.RGBA { return p.Frame().Img }
-	until(t, "a blurred preview", func() bool {
-		if view() == nil {
-			return false
-		}
-		bg, face := blurredView(view(), plain)
-		return bg > 600 && face < 40
-	})
+	until(t, "a blurred preview", func() bool { return cam.blurred() && p.Frame().Img != nil })
 	p.SetVideoEffect(VideoEffectNone)
-	until(t, "a plain preview", func() bool { bg, _ := blurredView(view(), plain); return bg < 40 })
+	until(t, "a plain preview", cam.plain)
 }

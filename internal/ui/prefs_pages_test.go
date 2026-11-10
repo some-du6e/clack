@@ -145,7 +145,7 @@ var slackPages = map[string][]want{
 		lg("When audio or video is playing…"), ckOff("Automatically dock to corner upon scroll or when navigating away"),
 		lg("When joining a huddle…"), ck("Mute my microphone"), ck("Automatically turn on captions when you’re in a huddle"),
 		ck("Send a warning if you’re starting a huddle in a channel with more than 150 members"),
-		ckOff("Blur your video background when you’re in a huddle with your camera on"), ck("Show audio and video preview"),
+		ck("Blur your video background when you’re in a huddle with your camera on"), ck("Show audio and video preview"),
 		lg("When Slack is in the background:"), ck("Allow keyboard shortcut to mute"),
 		lg("When your screen saver starts or computer locks…"), ck("Automatically leave huddles"),
 		lg("Huddle motion"), ckOff("Allow for reactions & effects"), lg("When alone in a huddle…"), ck("Play music"),
