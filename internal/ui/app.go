@@ -25,6 +25,7 @@ import (
 	"gioui.org/widget"
 	"gioui.org/x/explorer"
 
+	"github.com/some-du6e/clack/internal/applog"
 	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/slick"
@@ -215,6 +216,7 @@ type App struct {
 	standIn          bool                       // keepBody's draw is running
 	standIns         int                        // keepBody draws so far
 	missedFrameLog   focusLog                   // the missed-frame log line (focus_log.go)
+	sw               startupWatch               // the startup timeline (startup.go)
 	panelOrigin      image.Point                // the primary panel's window origin this frame
 
 	swipe         swiper          // trackpad history swipes (swipe.go, nav.go)
@@ -318,6 +320,7 @@ func (a *App) Run() error {
 		app.MinSize(800, 500),
 	)
 	a.winLive.Store(a.win)
+	applog.Mark("window", "")
 	go a.updateLoop(a.updateSchedule(), realUpdateClock())
 	a.watchOSTheme()
 	if a.images != nil {
@@ -385,6 +388,7 @@ func (a *App) Run() error {
 				gtx := app.NewContext(&ops, e)
 				a.grad.layout(gtx, a.th.C.ChromeA, a.th.C.ChromeB)
 				e.Frame(gtx.Ops)
+				applog.Mark("first-frame", "background, fonts loading")
 				break
 			}
 			// patch points (slackc) are shared with the huddle call window
@@ -420,6 +424,7 @@ func (a *App) Run() error {
 				log.Printf("ui: switch to %s: %v to frame submitted (layout %v, gpu %v)", a.switchTo.Page(), time.Since(a.switchAt).Round(10*time.Microsecond), tl.Sub(t0).Round(10*time.Microsecond), time.Since(tl).Round(10*time.Microsecond))
 				a.switchAt = time.Time{}
 			}
+			applog.Mark("first-frame", "")
 			if !a.firstPaint {
 				a.firstPaint = true
 				log.Printf("ui: first frame painted %v after start (%d sidebar rows)", time.Since(a.opts.Started).Round(time.Millisecond), a.sidebar.rowCount)
@@ -492,6 +497,7 @@ func (a *App) frame(gtx layout.Context) {
 		a.layoutLogin(gtx)
 		return
 	}
+	defer a.startupFrame()
 
 	// first: an ancestor of every other input area (popped at the end)
 	navArea := a.navGestures(gtx)

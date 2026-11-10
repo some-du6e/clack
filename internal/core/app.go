@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"slices"
 	"sort"
@@ -11,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/some-du6e/clack/internal/applog"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
@@ -42,6 +44,10 @@ type App struct {
 	cmdFailed   failedCommands // executeCommand's recently failed (command.go)
 
 	files *fileCache
+
+	bcLoad sync.Mutex
+	bcMu   sync.Mutex
+	bc     bootCache // the warm boot's snapshot (bootcache.go)
 
 	// bg scopes all background work (realtime, prefetch, resolvers); it is
 	// cancelled when the session ends.
@@ -405,6 +411,20 @@ func (a *App) once(key string, f func() error) error {
 func (a *App) Boot(ctx context.Context) error {
 	defer close(a.ready)
 	t0 := time.Now()
+	warm := a.LoadBootCache() // a no-op when the UI already read it
+	// The conversation history.json restored: refetch it at once, with
+	// the boot calls, and have the UI re-read it.
+	if ch := a.restoredHistory(); ch != "" {
+		go func() {
+			if err := a.loadLatest(ctx, ch); err != nil {
+				log.Printf("boot: history %s: %v", ch, err)
+				applog.Mark("history-failed", "")
+				return
+			}
+			applog.Mark("history-live", "")
+			a.emit(Event{Type: "poll"})
+		}()
+	}
 	a.S.LoadCache()
 	tCache := time.Since(t0)
 	var (
@@ -417,6 +437,7 @@ func (a *App) Boot(ctx context.Context) error {
 		dms      []slack.SidebarDM
 		errDMs   error
 		errConvs error
+		errSecs  error
 	)
 	step := func(name string, f func() error) {
 		wg.Add(1)
@@ -443,8 +464,8 @@ func (a *App) Boot(ctx context.Context) error {
 		return err
 	})
 	step("sections", func() (err error) {
-		sections, err = a.C.SectionsAll(ctx)
-		return err
+		sections, errSecs = a.C.SectionsAll(ctx)
+		return errSecs
 	})
 	step("experiments", func() error { // the sidebar rules depend on a few (sidebar_rules.go)
 		g, err := a.C.ExperimentGroups(ctx)
@@ -505,7 +526,7 @@ func (a *App) Boot(ctx context.Context) error {
 	// from the disk cache; emoji_changed keeps a running session current.
 	// Refresh them only when stale, and after startup so the parse does
 	// not compete with the first frames.
-	if a.S.CustomEmoji.Len() == 0 {
+	if a.S.CustomEmoji.Len() == 0 || !a.S.EmojiFull() {
 		step("emoji", func() error { return a.loadEmoji(ctx) })
 	} else if a.S.EmojiAge() > EmojiMaxAge {
 		a.later(10*time.Second, func() { _ = a.loadEmoji(a.bg) })
@@ -516,18 +537,27 @@ func (a *App) Boot(ctx context.Context) error {
 		a.bootErr = errConvs
 		return errConvs
 	}
-	for _, c := range convs {
-		a.S.PutConv(c)
+	// Each answer replaces its cached part whole (bootcache.go); a failed
+	// call keeps what the boot snapshot showed.
+	if warm {
+		a.S.ReplaceConvs(convs)
+	} else {
+		for _, c := range convs {
+			a.S.PutConv(c)
+		}
 	}
 	if counts != nil {
 		a.S.SetCounts(counts)
+		a.setCountsLive()
 	}
 	if errDMs == nil {
 		a.setSidebarDMs(dms) // after counts: closed DMs reopen on messages newer than now
 	}
-	a.S.Lock()
-	a.S.Sections = sections
-	a.S.Unlock()
+	if errSecs == nil || !warm {
+		a.S.Lock()
+		a.S.Sections = sections
+		a.S.Unlock()
+	}
 	ids := []string{a.C.Creds.UserID}
 	for _, c := range convs {
 		if c.IsIM {
@@ -545,6 +575,10 @@ func (a *App) Boot(ctx context.Context) error {
 	log.Printf("boot: ready in %s (cache %s, %s, dm-users=%s); %d conversations, %d sections, %d emoji",
 		time.Since(t0).Round(time.Millisecond), tCache.Round(time.Millisecond), strings.Join(timings, " "),
 		time.Since(tu).Round(time.Millisecond), len(convs), len(sections), a.S.CustomEmoji.Len())
+	a.bcMu.Lock()
+	a.bc.booted = true
+	a.bcMu.Unlock()
+	applog.Mark("core-ready", fmt.Sprintf("%d convs, %d sections", len(convs), len(sections)))
 	a.rtMu.Lock()
 	a.rtBooted = true
 	a.rtMu.Unlock()
@@ -555,18 +589,37 @@ func (a *App) Boot(ctx context.Context) error {
 	go a.prefetch(a.bg)
 	go a.loadExtras(a.bg)  // starred + saved sets
 	go a.resolveLoop(a.bg) // unresolved channel/user/bot names
+	// The boot snapshot of this session's fresh state, once startup's
+	// work is done, then with the metadata cache every 5 minutes and at
+	// Close.
+	a.later(20*time.Second, func() { a.saveBoot() })
 	go func() {
 		t := time.NewTicker(5 * time.Minute)
 		defer t.Stop()
-		for range t.C {
+		for {
+			select {
+			case <-a.bg.Done():
+				return
+			case <-t.C:
+			}
 			_ = a.S.SaveCache()
+			a.saveBoot()
 		}
 	}()
 	return nil
 }
 
-// Close saves the metadata cache.
-func (a *App) Close() error { return a.S.SaveCache() }
+func (a *App) saveBoot() {
+	if err := a.SaveBoot(); err != nil {
+		log.Printf("cache: boot snapshot: %v", err)
+	}
+}
+
+// Close saves the metadata cache and the boot snapshot.
+func (a *App) Close() error {
+	a.saveBoot()
+	return a.S.SaveCache()
+}
 
 func (a *App) loadEmoji(ctx context.Context) error {
 	m, err := a.C.EmojiList(ctx)
@@ -707,6 +760,7 @@ func (a *App) loadLatest(ctx context.Context, ch string) error {
 func (a *App) refreshCounts(ctx context.Context) {
 	if c, err := a.C.Counts(ctx); err == nil {
 		a.S.SetCounts(c)
+		a.setCountsLive()
 		a.emit(Event{Type: "counts"})
 		if a.reopenActive() { // a closed DM got a new message
 			a.emit(Event{Type: "sidebar_changed"})
@@ -767,6 +821,11 @@ func (a *App) ThreadsState() ThreadsState {
 // Snapshot returns the sidebar state. It blocks until Boot finished.
 func (a *App) Snapshot() Snapshot {
 	<-a.ready
+	return a.snapshotNow()
+}
+
+// snapshotNow is Snapshot from what the store holds now.
+func (a *App) snapshotNow() Snapshot {
 	a.S.RLock()
 	cs := make([]*slack.Conversation, 0, len(a.S.Convs))
 	for _, c := range a.S.Convs {
@@ -797,6 +856,7 @@ func (a *App) Snapshot() Snapshot {
 		Self: self, Team: team, Convs: convs, Sections: a.sections(convs), Counts: a.Counts(),
 		Threads: a.ThreadsState(), Users: a.users(ids), Connected: connected, Prefs: prefs,
 		EmojiCount: a.S.CustomEmoji.Len(), EnterpriseID: a.C.Creds.EnterpriseID, Rail: a.Rail(),
+		CountsLive: a.CountsLive(),
 	}
 }
 

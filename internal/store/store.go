@@ -1,9 +1,11 @@
 // Package store keeps the client's state in memory.
 //
-// Scraping policy: message contents are only ever held in memory for the
-// lifetime of the process (like any Slack client). Only metadata — the user
-// directory, custom emoji, and channel names — is cached on disk to make
-// startup fast.
+// Disk policy: the account's cache directory (bootcache.go) is the only
+// place Clack writes Slack data. It holds metadata (the user directory,
+// custom emoji, channel names, the sidebar) and, like Slack's own
+// persisted store, the newest messages of the conversation open at the
+// last save (history.json), all 0600, per workspace and per user, and
+// deleted on sign-out. Every other message stays in memory.
 package store
 
 import (
@@ -73,6 +75,8 @@ type Store struct {
 	// or save.
 	gen       atomic.Uint64
 	saveMu    sync.Mutex
+	dropped   atomic.Bool // DropDisk ran (signed out): never write again
+	emojiPart atomic.Bool // CustomEmoji is only a boot snapshot's slice (InstallBoot)
 	saved     bool
 	savedGen  uint64
 	savedEmo  uint64
@@ -1148,7 +1152,7 @@ func (s *Store) SetUsergroups(gs []slack.Usergroup) {
 }
 
 func (s *Store) LoadCache() {
-	if s.cacheDir == "" {
+	if s.cacheDir == "" || s.dropped.Load() {
 		return
 	}
 	b, err := os.ReadFile(filepath.Join(s.cacheDir, "meta.json"))
@@ -1163,8 +1167,10 @@ func (s *Store) LoadCache() {
 	s.PutUsers(d.Users)
 	if d.EmojiPacked != "" {
 		s.CustomEmoji.Set(unpackEmoji(d.EmojiPacked))
+		s.emojiPart.Store(false)
 	} else if len(d.Emoji) > 0 {
 		s.CustomEmoji.Set(d.Emoji)
+		s.emojiPart.Store(false)
 	}
 	if d.EmojiAt > 0 {
 		s.emojiAtMu.Lock()
@@ -1207,6 +1213,7 @@ func (s *Store) LoadCache() {
 // disk cache stores it (see diskCache.EmojiPacked), and stamps its age.
 func (s *Store) SetEmojiList(m map[string]string) {
 	s.CustomEmoji.Set(unpackEmoji(packEmoji(m)))
+	s.emojiPart.Store(false)
 	s.emojiAtMu.Lock()
 	s.emojiAt = time.Now()
 	s.emojiAtMu.Unlock()
@@ -1268,6 +1275,9 @@ func (s *Store) SaveCache() error {
 	}
 	s.saveMu.Lock()
 	defer s.saveMu.Unlock()
+	if s.dropped.Load() {
+		return nil
+	}
 	gen, emo := s.gen.Load(), s.CustomEmoji.Version()
 	if s.saved && gen == s.savedGen && emo == s.savedEmo {
 		return nil // unchanged since the last load or save
@@ -1277,7 +1287,11 @@ func (s *Store) SaveCache() error {
 	s.emojiAtMu.Unlock()
 	s.mu.RLock()
 	prefs := s.Prefs
-	d := diskCache{EmojiPacked: packEmoji(s.CustomEmoji.Snapshot()), Usergroups: append([]slack.Usergroup(nil), s.Groups...), Prefs: &prefs,
+	packed := ""
+	if !s.emojiPart.Load() { // never save a boot snapshot's slice as the whole map
+		packed = packEmoji(s.CustomEmoji.Snapshot())
+	}
+	d := diskCache{EmojiPacked: packed, Usergroups: append([]slack.Usergroup(nil), s.Groups...), Prefs: &prefs,
 		Names: map[string]string{}, Bots: map[string]BotInfo{}}
 	if !emojiAt.IsZero() {
 		d.EmojiAt = emojiAt.Unix()
@@ -1296,14 +1310,7 @@ func (s *Store) SaveCache() error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(s.cacheDir, 0o700); err != nil {
-		return err
-	}
-	tmp := filepath.Join(s.cacheDir, "meta.json.tmp")
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, filepath.Join(s.cacheDir, "meta.json")); err != nil {
+	if err := writeAtomic(s.cacheDir, "meta.json", b); err != nil {
 		return err
 	}
 	s.saved, s.savedGen, s.savedEmo = true, gen, emo

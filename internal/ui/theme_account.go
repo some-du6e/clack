@@ -69,6 +69,7 @@ func (a *App) accountGradients() bool { return !a.acct.set || a.acct.gradients }
 // applyAccountPrefs installs the account theme from core's prefs. UI
 // goroutine.
 func (a *App) applyAccountPrefs(p core.Prefs) {
+	a.sw.themeFinal = true // the account's own prefs are known (startup.go)
 	t, ok := theme.ParseIATheme(p.IATheme)
 	n := acctTheme{set: ok, t: t, gradients: !p.NoWindowGradients}
 	if !ok && p.NoWindowGradients {
@@ -81,6 +82,7 @@ func (a *App) setAcct(n acctTheme) {
 	if n == a.acct {
 		return
 	}
+	a.startupTheme(true)
 	a.acct = n
 	if a.th.Restyle == nil {
 		a.th.Restyle = a.restyle

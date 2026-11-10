@@ -247,8 +247,12 @@ function pluginMeta(Class) {
 }
 
 /** Go → JS: evaluates a plugin bundle (an IIFE giving the class, or a module with it as default), returns its metadata */
-T.load = (code) => {
-  const result = new Function(`return ${code}`)()
+T.load = (code) => register(new Function(`return ${code}`)())
+
+/** Go → JS: T.load with the bundle already compiled (Go's bytecode cache): f is `function () { return <code> }` */
+T.loadFn = (f) => register(f())
+
+const register = (result) => {
   const Class = result?.prototype instanceof TautPlugin ? result : result?.default
   if (typeof Class !== 'function' || !(Class.prototype instanceof TautPlugin)) throw new Error('Plugin class does not extend TautPlugin')
   const id = Class.id

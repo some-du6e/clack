@@ -114,3 +114,25 @@ func (v *ChannelView) Refresh() {
 	v.s.m.mu.Unlock()
 	v.s.hb.ensureLoaded(v.s.m)
 }
+
+// LayoutSig describes what the list drew in its last layout, for the ui
+// root's startup timeline: how many messages it holds, whether the first
+// page arrived, and a hash of the visible rows' keys, positions and
+// heights, which changes whenever a painted row moves or resizes.
+func (v *ChannelView) LayoutSig() (msgs int, loaded bool, sig uint64) {
+	s := v.s
+	h := uint64(14695981039346656037) // FNV-1a, inline: no allocation per frame
+	mix := func(b byte) { h ^= uint64(b); h *= 1099511628211 }
+	for i := s.visible[0]; i < s.visible[1] && i < len(s.items) && i < len(s.pos) && i < len(s.heights); i++ {
+		k := s.items[i].key
+		for j := 0; j < len(k); j++ {
+			mix(k[j])
+		}
+		for _, v := range [2]int{s.pos[i], s.heights[i]} {
+			for j := 0; j < 8; j++ {
+				mix(byte(v >> (8 * j)))
+			}
+		}
+	}
+	return len(s.snap.msgs), s.snap.loaded, h
+}

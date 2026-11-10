@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"sort"
@@ -86,7 +87,8 @@ func (t *Taut) startRuntime() (*runtime, error) {
 	if f := t.opts.UI.OnDocumentProps; f != nil {
 		rt.OnDocumentProps(f)
 	}
-	if _, err := rt.Eval("taut-runtime.js", prelude); err != nil {
+	// through jsrt's bytecode cache: later starts skip parsing ~160 KB
+	if _, err := rt.EvalCached("taut-runtime.js", prelude); err != nil {
 		rt.Close()
 		return nil, fmt.Errorf("taut: load the TautAPI: %w", err)
 	}
@@ -101,6 +103,41 @@ func (t *Taut) startRuntime() (*runtime, error) {
 		return nil, err
 	}
 	return r, nil
+}
+
+// load is __taut.load(code) with the bundle compiled through jsrt's
+// bytecode cache: T.load's `new Function("return " + code)`, as the same
+// function expression, compiled once per bundle (the key hashes the
+// engine and the code) and read back by every later start.
+func (r *runtime) load(ctx context.Context, code string, out any) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	var raw json.RawMessage
+	err := r.rt.Do(func(js *jsrt.Ctx) error {
+		fn, err := js.EvalCached("plugin.js", "(function () { return "+code+"\n})")
+		if err != nil {
+			return err
+		}
+		t := js.Global().Get("__taut")
+		f := t.Get("loadFn")
+		if !f.IsFunction() {
+			return errors.New("taut: __taut.loadFn is not a function")
+		}
+		v, err := f.CallThis(t, fn)
+		if err != nil {
+			return err
+		}
+		raw, err = v.JSON()
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	if out == nil || len(raw) == 0 {
+		return nil
+	}
+	return json.Unmarshal(raw, out)
 }
 
 // call runs __taut.<fn>(args…) and decodes its (awaited) result into out.

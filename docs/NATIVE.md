@@ -5,7 +5,7 @@ The user's requirement (2026-11-06): **no JS, no web UI, no Electron. Native and
 > **Rename (2026-11-07): the app is now Clack.** The binary is `cmd/clack`. CI artifacts are `clack-linux-amd64` (file `clack-linux-amd64`), `clack-windows-amd64` and `clack-darwin-arm64`; `yoloslack-linux-amd64` is no longer built, so update your download scripts. Config lives in `~/.config/clack`, and the first start copies over `~/.config/yoloslack`, which stays in place for older tools. Env vars are `CLACK_HOME`, `CLACK_TIMING`, `CLACK_FRAMELOG`, `CLACK_NOEMBOLDEN` and `CLACK_TYPINGLOG`; the `YOLOSLACK_*` names still work. The window title ends in ` - Clack`. The Go module path is unchanged.
 
 ## Scraping policy (Hack Club), non-negotiable
-Message contents are memory only. Never write message text, files or attachments to disk, logs or fixtures from real messages; test fixtures must be synthetic. Only metadata may be cached on disk: users, channel names, custom emoji map, and avatar/emoji images.
+Message contents are memory only, with one exception: the account's cache directory (`internal/store/bootcache.go`, `<cache root>/v1/<team>-<user>/`, 0600, deleted on sign-out) keeps the boot snapshot and the newest 50 messages of the last open conversation (`history.json`) so a warm start paints before the network answers, as Slack's persisted store does (Karim's call, 2026-11-09). Never write message text, files or attachments anywhere else on disk, to logs, or to fixtures from real messages; test fixtures must be synthetic. Besides that, only metadata is cached: users, channel names, custom emoji, the sidebar, and avatar/emoji/thumbnail images (the same directory).
 
 ## Packages and owners
 | package | owner (branch) | purpose |

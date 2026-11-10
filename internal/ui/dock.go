@@ -39,6 +39,12 @@ func (a *App) updateDock() {
 	if runtime.GOOS != "darwin" && !dockAnyOS {
 		return
 	}
+	if a.data != nil && !a.data.core.CountsLive() {
+		// a warm start's counts are the boot snapshot's: the Dock (seen
+		// outside Clack) waits for client.counts, as Slack's badge waits
+		// for its counts to apply (unreadCounts.countsApplied)
+		return
+	}
 	m := a.model()
 	l := dockBadgeLabel(m.HomeCount, m.HomeUnread || m.DMUnread, !uipref.Get().NoMacBullet)
 	if l == a.dock.label && a.dock.set {

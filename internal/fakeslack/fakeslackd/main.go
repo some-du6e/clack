@@ -21,6 +21,9 @@ func main() {
 	creds := flag.String("creds", "", "write credentials for the fake here")
 	small := flag.Bool("small", false, "small workspace instead of Hack Club sized")
 	gallery := flag.Bool("gallery", false, "add #blockkit-gallery (every Block Kit fixture)")
+	latency := flag.Duration("latency", 0, "added to every API call (a network round trip), e.g. 150ms")
+	imgLatency := flag.Duration("img-latency", 0, "added to every image download")
+	iaTheme := flag.String("ia-theme", "", "the account's users.prefs ia_theme (JSON), instead of Slack's default")
 	flag.Parse()
 	ln, err := net.Listen("tcp", *addr)
 	if err != nil {
@@ -32,12 +35,16 @@ func main() {
 	}
 	sz.Gallery = *gallery
 	s := fakeslack.Serve(ln, sz)
+	s.Latency, s.ImgLatency = *latency, *imgLatency // before the first request
+	if *iaTheme != "" {
+		s.SetPrefs(map[string]any{"ia_theme": *iaTheme})
+	}
 	if *creds != "" {
 		if err := s.WriteCreds(*creds); err != nil {
 			log.Fatal(err)
 		}
 	}
-	log.Printf("fakeslackd: serving %s (%d emoji, %d channels, %d users)", s.URL, sz.Emoji, sz.Channels, sz.Users)
+	log.Printf("fakeslackd: serving %s (%d emoji, %d channels, %d users, latency %v, images %v)", s.URL, sz.Emoji, sz.Channels, sz.Users, *latency, *imgLatency)
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
 	<-c

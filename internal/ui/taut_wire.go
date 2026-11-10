@@ -69,9 +69,15 @@ func (b *backend) startTautAsync(a *App) {
 	b.tautStarting = true
 	dark, team, ch := a.th.Dark, b.teamID, a.router.Current().Channel()
 	go func() {
+		t0 := time.Now()
 		t, s := b.buildTaut(a, dark, team, ch)
 		a.Post(func() {
 			b.tautStarting = false
+			detail := "none"
+			if t != nil && t.Started() {
+				detail = "runtime in " + time.Since(t0).Round(time.Millisecond).String()
+			}
+			a.startupMark("plugins", detail)
 			if a.data != b || b.taut != nil || b.cancel == nil || b.ctx.Err() != nil {
 				go closeTaut(s, t) // stopped (sign-out, quit) meanwhile
 				return

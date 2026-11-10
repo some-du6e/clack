@@ -27,12 +27,17 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 		a.watch(ch, "")
 	}
 	defer func() { log.Printf("history %s: %s (%s)", ch, time.Since(t0).Round(time.Millisecond), source) }()
+	// A warm start's cached page (history.json) answers at once, with no
+	// side fetches: the first frame mustn't wait for the network. Boot
+	// refetches it and the UI re-reads it; the header's count comes with
+	// the UI's opened() once core is ready.
+	early := before == "" && a.Warm() && !a.booted() && a.S.Timeline(ch) != nil
 	// Fetch the member count (people, like Slack's header) alongside the history.
 	var countDone chan struct{}
 	a.mu.Lock()
 	_, haveCount := a.memberN[ch]
 	a.mu.Unlock()
-	if c, ok := a.S.Conv(ch); ok && !haveCount && !c.IsIM && !c.IsMPIM && before == "" {
+	if c, ok := a.S.Conv(ch); ok && !early && !haveCount && !c.IsIM && !c.IsMPIM && before == "" {
 		countDone = make(chan struct{})
 		go func() {
 			defer close(countDone)
@@ -42,7 +47,7 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 	// A conversation outside the sidebar (closed DM, channel from a link or
 	// search): resolve it alongside so the header shows its name.
 	var convDone chan struct{}
-	if _, ok := a.Conv(ch); !ok && before == "" {
+	if _, ok := a.Conv(ch); !ok && !early && before == "" {
 		convDone = make(chan struct{})
 		go func() {
 			defer close(convDone)

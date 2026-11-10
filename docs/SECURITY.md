@@ -127,22 +127,23 @@ MainCtx capabilities:
 
 ## 4. Hack Club scraping policy
 
-Policy (https://news.hackclub.com/news/scraping-use-policy/): Clack never writes message contents to disk. Every disk write in the codebase was audited:
+Policy (https://news.hackclub.com/news/scraping-use-policy/): Clack writes message contents to one place only, the signed-in account's cache directory (`<cache root>/v1/<team>-<user>/`, under the OS's user cache folder; 0700/0600; deleted on sign-out by `core.App.DropCache` and cmd/clack's SignOut), which keeps the last open conversation's newest 50 messages and message thumbnails for a warm start, like Slack's persisted store. Every disk write in the codebase was audited:
 
 | writer | contents | verdict |
 |---|---|---|
 | `internal/slack/creds.go` creds.json | tokens, cookies, team URLs | no messages; owner-only (C-6) |
-| `cmd/clack` `migrateConfig` | copies creds.json, ui.json, sidebar.json, meta.json | no messages |
-| `internal/store` cache/meta.json | users and profiles, custom emoji, usergroups, prefs, channel names, bots | metadata only, 0600 |
-| `internal/ui/backend.go` cache/sidebar.json | team, self, sections; per conversation id, name, kind, user, avatar and flags | no topics, previews or text; 0600 |
+| `cmd/clack` `migrateConfig` | copies creds.json, ui.json | no messages; the old shared `cache/` moves into the account's directory when its sidebar.json was the same user's, else is deleted (`migrateLegacyCache`) |
+| `internal/store` <account>/meta.json | users and profiles, custom emoji, usergroups, prefs, channel names, bots | metadata only, 0600 |
+| `internal/store` <account>/boot.json | team, self, raw prefs, sidebar conversations (names, topics, purposes), sections, unread counts, open DMs, experiments, starred, the users/emoji/usergroups/bots those rows and the cached messages name | no message text; 0600; presence never cached |
+| `internal/store` <account>/history.json | the newest 50 messages of the last open conversation | **message text**, 0600, the only such file; deleted on sign-out |
 | `internal/ui/prefs.go` ui.json | layout, last route (ids only), collapsed sections | search routes are no longer saved (C-12), so search queries don't reach disk |
-| `internal/imgcache` cache/img | avatars (`avatars.slack-edge.com`, `ca.slack-edge.com`, gravatar) and emoji (`emoji.slack-edge.com`, `a.slack-edge.com` emoji paths) | `DiskOK` allow-list; files.slack.com images, Slack's image proxy, unfurl and GIF images stay in memory (tested). Bytes are written only after a successful decode (C-13) |
+| `internal/imgcache` <account>/img | avatars (`avatars.slack-edge.com`, `ca.slack-edge.com`, gravatar), emoji (`emoji.slack-edge.com`, `a.slack-edge.com` emoji paths) and message thumbnails (`files.slack.com/files-tmb/…` without a query) | `DiskOK`/`ThumbOK` allow-lists; full files, Slack's image proxy, unfurl and GIF images stay in memory (tested). Bytes are written only after a successful decode (C-13), 0600 temp files renamed into place; 384 MB, least recently used out; deleted on sign-out |
 | `internal/ui/popups/emoji_frecency.go` | emoji names and use times | no messages |
 | `internal/ui/popups/lightbox.go` Download | a file the user explicitly saves to ~/Downloads | the user's choice; name sanitized (C-10), `O_EXCL` |
-| `internal/jsrt/bytecode.go` | compiled plugin bytecode, keyed by source hash | plugin code, not messages |
+| `internal/jsrt/bytecode.go` | compiled bytecode of the boot scripts, the TautAPI and installed plugin bundles, keyed by engine + source hash, SHA-256 trailer | plugin code, not messages |
 | `internal/taut` taut/storage, secrets, config | plugin data, by design (docs/PLUGINS.md) | see below |
 | `internal/slick` settings.json, plugins/, themes | plugin code, settings and themes | no messages |
-| `internal/core` file fetch cache, history, search, Activity, canvases, lists, drafts | — | memory only; drafts live on Slack's servers |
+| `internal/core` file fetch cache, history (except history.json above), search, Activity, canvases, lists, drafts | — | memory only; drafts live on Slack's servers |
 | logs | ids, counts, timings | no message text; output goes through `RedactWriter` |
 
 | ID | Sev | Finding | Fix | Test |
