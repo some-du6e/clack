@@ -285,6 +285,11 @@ func (a *App) handle(ev slack.Event) {
 		if e.UndoKey != "" {
 			a.emit(Event{Type: "activity", Name: ev.Type, ID: e.UndoKey, Raw: ev.Raw})
 		}
+	case "activity_views_updated":
+		// sD/F activityViewsUpdated: the saved views changed (another
+		// client made, renamed, hid or deleted one); ActivityViewsEvent
+		// reads them
+		a.emit(Event{Type: "activity", Name: ev.Type, Raw: ev.Raw})
 	case "bookmark_added", "bookmark_removed", "channel_updated", "channel_tab_added", "channel_tab_removed":
 		if ev.Type == "channel_updated" { // properties (a code channel's agent session) merge in
 			for _, id := range a.onChannelUpdated(ev.Raw) {

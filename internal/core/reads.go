@@ -699,12 +699,23 @@ func (a *App) Activity(ctx context.Context, o ActivityOpts) (ActivityPage, error
 		limit = 20
 	}
 	// the web client's params (activity inbox, 2026-11-09)
-	p := url.Values{"limit": {strconv.Itoa(limit)}, "types": {types}, "mode": {"chrono_v1"},
-		"archive_only": {strconv.FormatBool(o.Archived)}, "priority_only": {"false"}, "is_activity_inbox": {"true"},
+	mode := o.Mode
+	if mode == "" {
+		mode = "chrono_v1"
+	}
+	p := url.Values{"limit": {strconv.Itoa(limit)}, "types": {types}, "mode": {mode},
+		"archive_only": {strconv.FormatBool(o.Archived)}, "priority_only": {strconv.FormatBool(o.Priority)}, "is_activity_inbox": {"true"},
 		"unread_only": {strconv.FormatBool(o.Unread)}, "only_salesforce_channels": {"false"},
 		"exclude_automations": {"false"}, "automations_only": {"false"}}
 	if o.Cursor != "" {
 		p.Set("cursor", o.Cursor)
+	}
+	// eP2o fetchActivityFeed: a view's channels and sections, when it has any
+	if len(o.ChannelIDs) > 0 {
+		p.Set("channel_ids", strings.Join(o.ChannelIDs, ","))
+	}
+	if len(o.SectionIDs) > 0 {
+		p.Set("channel_section_ids", strings.Join(o.SectionIDs, ","))
 	}
 	var res struct {
 		Items []activityRaw `json:"items"`

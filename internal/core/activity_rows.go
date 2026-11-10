@@ -266,29 +266,20 @@ func (a *App) UndoClearAll(ctx context.Context, undoKey string) error {
 	return a.C.Call(ctx, "activity.clearAll", url.Values{"undo_key": {undoKey}, "reason": {"undo-clear-all"}}, nil)
 }
 
-// ActivityView is one of activity.views' saved views.
+// ActivityView is one of activity.views' saved views: a default one
+// (view_type all, dms, mentions or threads) or a custom one (custom),
+// with its name, emoji (":tada:"), position, sort, density and filters
+// (activity_views.go).
 type ActivityView struct {
 	ID, Type, Sort, Density string
+	Name, Emoji, Position   string
+	Filters                 ActivityViewFilters
 }
 
 // ActivityViews answers activity.views' saved views (fetchActivityViews).
 func (a *App) ActivityViews(ctx context.Context) ([]ActivityView, error) {
-	var res struct {
-		Views []struct {
-			ID       string `json:"id"`
-			ViewType string `json:"view_type"`
-			Sort     string `json:"sort"`
-			Density  string `json:"density"`
-		} `json:"views"`
-	}
-	if err := a.C.Call(ctx, "activity.views", url.Values{}, &res); err != nil {
-		return nil, err
-	}
-	out := make([]ActivityView, 0, len(res.Views))
-	for _, v := range res.Views {
-		out = append(out, ActivityView{ID: v.ID, Type: v.ViewType, Sort: v.Sort, Density: v.Density})
-	}
-	return out, nil
+	st, err := a.ActivityViewsState(ctx)
+	return st.Views, err
 }
 
 // UpdateActivityView is updateActivityViewsByApi for the layout toggle
