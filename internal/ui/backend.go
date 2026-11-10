@@ -507,24 +507,13 @@ func (b *backend) handle(a *App, ev core.Event) {
 		if ev.Count != nil {
 			changed = b.setCount(ev.Channel, *ev.Count)
 		}
-		// (ephemerals, e.g. Slackbot's "you can't @channel here", never notify)
-		if ev.Msg != nil && ev.Msg.User != b.selfID && !ev.Msg.System && !b.core.Interactive().Ephemeral(ev.Channel, ev.TS) {
-			cur := a.router.Current().Channel()
-			c := m.conv(ev.Channel)
-			direct := ev.ConvKind == "im" || ev.ConvKind == "mpim"
-			if b.wantsNotify(ev.Channel, ev.Mention || direct) && (c == nil || !c.Muted) && (cur != ev.Channel || !a.focused) {
-				// through Taut's showNotification thunk: plugins may change or
-				// drop it (native: the desktop notification)
-				title, body := b.notifyTitle(ev, c), richtext.PlainText(ev.Msg.Doc)
-				msg := notificationMessage(a.Taut(), ev)
-				a.dispatch("showNotification", map[string]any{"title": title, "message": msg, "body": body, "channelId": ev.Channel, "ts": ev.TS},
-					func(ctx context.Context, args map[string]any) (any, error) {
-						if t, b, ok := notificationText(args, msg, body); ok {
-							a.notifyMessage(t, b)
-						}
-						return nil, nil
-					})
-			}
+		b.maybeNotify(a, ev)
+	case "update":
+		// messageChanged: under defer_notification_3p_streaming the message
+		// whose chat stream just ended gets the notification it was held
+		// back from (maybeShowNotification for the settled message)
+		if ev.StreamDone && b.core.Experiment("defer_notification_3p_streaming") == "on" {
+			b.maybeNotify(a, ev)
 		}
 	case "marked", "counts":
 		if ev.Count != nil && ev.Channel != "" {
@@ -591,6 +580,37 @@ func (b *backend) handle(a *App, ev core.Event) {
 		b.recount()
 		m.version++
 		a.Invalidate()
+	}
+}
+
+// maybeNotify is maybeShowNotification for a message (or a settled
+// stream's update): ephemerals (Slackbot's "you can't @channel here")
+// never notify, and under defer_notification_3p_streaming neither does a
+// message still streaming ("Skip notification for in-progress streaming
+// message"); the rest follow the viewer's notification prefs.
+func (b *backend) maybeNotify(a *App, ev core.Event) {
+	m := &b.m
+	if ev.Msg == nil || ev.Msg.User == b.selfID || ev.Msg.System || b.core.Interactive().Ephemeral(ev.Channel, ev.TS) {
+		return
+	}
+	if ev.Msg.Streaming() && b.core.Experiment("defer_notification_3p_streaming") == "on" {
+		return
+	}
+	cur := a.router.Current().Channel()
+	c := m.conv(ev.Channel)
+	direct := ev.ConvKind == "im" || ev.ConvKind == "mpim"
+	if b.wantsNotify(ev.Channel, ev.Mention || direct) && (c == nil || !c.Muted) && (cur != ev.Channel || !a.focused) {
+		// through Taut's showNotification thunk: plugins may change or
+		// drop it (native: the desktop notification)
+		title, body := b.notifyTitle(ev, c), richtext.PlainText(ev.Msg.Doc)
+		msg := notificationMessage(a.Taut(), ev)
+		a.dispatch("showNotification", map[string]any{"title": title, "message": msg, "body": body, "channelId": ev.Channel, "ts": ev.TS},
+			func(ctx context.Context, args map[string]any) (any, error) {
+				if t, b, ok := notificationText(args, msg, body); ok {
+					a.notifyMessage(t, b)
+				}
+				return nil, nil
+			})
 	}
 }
 
