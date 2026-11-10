@@ -55,7 +55,8 @@ func cells(rows ...[]string) [][]canvas.Cell {
 }
 
 func addHeadCanvases(fs *fakeslack.Server) {
-	fs.AddCanvas(fakeslack.FakeCanvas{ID: headCanvas, Title: "Plan", Doc: canvas.Doc{Blocks: []canvas.Block{
+	now := time.Now().Unix()
+	fs.AddCanvas(fakeslack.FakeCanvas{ID: headCanvas, Title: "Plan", Created: now - 3*86400, Updated: now - 5*60, Doc: canvas.Doc{Blocks: []canvas.Block{
 		{ID: "temp:C:HEAD00001", Kind: canvas.Heading1, Spans: txt("Plan")},
 		{ID: headH2ID, Kind: canvas.Heading2, Spans: txt(headH2Text)},
 		{ID: "temp:C:HEAD00003", Kind: canvas.Paragraph, Spans: txt(headBodyTxt)},
