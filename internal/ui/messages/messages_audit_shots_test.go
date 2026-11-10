@@ -4,9 +4,10 @@ package messages
 // messages-audit-shots workflow) draws the rows docs/MESSAGES-AUDIT.md
 // changed, on compact_shots_test.go's synthetic #release channel (made-up
 // people and messages, fakeslack's pictures), light and dark: the thread
-// pane with a reply pinned by someone else and the reply also sent to the
-// channel (MessageLabels' pinned and broadcast labels), and the reaction
-// tooltip over the channel's :tada: pill. Nothing talks to Slack.
+// pane with a reply pinned by someone else, the reply also sent to the
+// channel (MessageLabels' pinned and broadcast labels) and a reply with 24
+// reactions (ReactionBar's collapse), and the reaction tooltip over the
+// channel's :tada: pill. Nothing talks to Slack.
 
 import (
 	"image"
@@ -46,9 +47,16 @@ func TestMessagesAuditShots(t *testing.T) {
 		}
 		r1 := reply("r1", "UBEN00001", "Looks good. Can we call out the new filters first?")
 		r1.PinnedTo, r1.PinnedInfo = []string{tShots}, &slack.PinnedInfo{Channel: tShots, PinnedBy: "UANA00001"}
+		// r3 has 24 reactions: more than two lines of the pane's bar, so
+		// ReactionBar's collapse hides the rest behind "N more"
+		r3 := reply("r3", "UCARA0001", "I'll add it now.")
+		for i, e := range []string{"tada", "eyes", "palm_tree", "+1", "heart", "rocket", "fire", "100", "clap", "raised_hands",
+			"white_check_mark", "joy", "sparkles", "pray", "star", "wave", "sunglasses", "thinking_face", "muscle", "ok_hand",
+			"confetti_ball", "heart_eyes", "sob", "grinning"} {
+			r3.Reactions = append(r3.Reactions, slack.Reaction{Name: e, Count: 1 + i%3, Users: []string{"UANA00001", "UBEN00001", "UCARA0001"}[:1+i%3]})
+		}
 		app.S.SetThread(tShots, ts["root"], []slack.Message{root, r1,
-			reply("r2", "UCARA0001", "Agreed, and link the migration guide."),
-			reply("r3", "UCARA0001", "I'll add it now."), bc})
+			reply("r2", "UCARA0001", "Agreed, and link the migration guide."), r3, bc})
 		th := theme.New(dark)
 		host := identityHost{coreHost: coreHost{app: app, th: th}, imgs: imgcache.New(fs.Fetch, "", nil)}
 
@@ -65,6 +73,11 @@ func TestMessagesAuditShots(t *testing.T) {
 		ft()
 		if r := tv.s.rows[ts["bc"]]; r == nil || !r.m.Broadcast {
 			t.Fatalf("the broadcast reply isn't in the thread pane")
+		}
+		if r := tv.s.rows[ts["r3"]]; r == nil || len(r.reactRects) == 0 || len(r.reactRects) >= len(r.m.Reactions) {
+			t.Errorf("r3's 24 reactions didn't collapse behind \"N more\"")
+		} else {
+			t.Logf("r3: %d of %d pills, then \"%d more\"", len(r.reactRects), len(r.m.Reactions), len(r.m.Reactions)-len(r.reactRects))
 		}
 		timg := pixeltest.Render(t, tw, th0, tops)
 		ty0, ty1 := rowsSpan(tv.s)

@@ -104,3 +104,56 @@ func TestReactionTooltipDraws(t *testing.T) {
 		t.Errorf("text spans %d px rows, want 2+ lines", rows)
 	}
 }
+
+// ReactionBar's collapse (Ltiy), worked by hand: twelve one-digit
+// reactions estimate 44px each; at 300px six fit a line (264), the limit is
+// the pills under 264+300-38 = 526 (11) and the target those under 462
+// (10). Twelve collapse to ten and "2 more"; eleven don't.
+func TestReactionBarCollapseLikeSlack(t *testing.T) {
+	bar := func(n int, self int) *row {
+		r := &row{rc: &rowCtx{selfID: "USELF"}}
+		for i := 0; i < n; i++ {
+			re := core.Reaction{Name: "e" + itoa(i), Count: 1 + i%9, Users: []string{"U1"}}
+			if i == self {
+				re.Users, re.Self = []string{"USELF"}, true
+			}
+			r.m.Reactions = append(r.m.Reactions, re)
+		}
+		r.growPills()
+		return r
+	}
+	gtx := layout.Context{Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}}
+	if shown, more, sel := bar(12, -1).reactionCollapse(gtx, 300); shown != 10 || more != reactMore || sel {
+		t.Errorf("12 at 300px: %d shown, button %d, sel %v; want 10, more", shown, more, sel)
+	}
+	if shown, more, _ := bar(11, -1).reactionCollapse(gtx, 300); shown != 11 || more != 0 {
+		t.Errorf("11 at 300px: %d shown, button %d; want all, none", shown, more)
+	}
+	if shown, more, _ := bar(5, -1).reactionCollapse(gtx, 40); shown != 5 || more != 0 {
+		t.Errorf("five never collapse: %d, %d", shown, more)
+	}
+	// your reaction among the hidden ones marks "N more"
+	if _, _, sel := bar(12, 11).reactionCollapse(gtx, 300); !sel {
+		t.Errorf("hidden own reaction: not selected")
+	}
+	// expanded: everything, then "Show less"
+	r := bar(12, -1)
+	r.reactExpanded = true
+	if shown, more, _ := r.reactionCollapse(gtx, 300); shown != 12 || more != reactLess {
+		t.Errorf("expanded: %d shown, button %d", shown, more)
+	}
+	// counts of ten and up estimate 8px wider: 52px each from the 10th
+	r = bar(12, -1)
+	for i := range r.m.Reactions {
+		r.m.Reactions[i].Count = 10
+	}
+	// 52s: line 1 holds 5 (260), limit under 260+262 = 522 is 10, target under 458 is 8
+	if shown, more, _ := r.reactionCollapse(gtx, 300); shown != 8 || more != reactMore {
+		t.Errorf("two-digit counts: %d shown, button %d; want 8, more", shown, more)
+	}
+	// the bar's width is CSS px: at 2x the same 600 device px is 300
+	gtx.Metric = unit.Metric{PxPerDp: 2, PxPerSp: 2}
+	if shown, _, _ := bar(12, -1).reactionCollapse(gtx, 600); shown != 10 {
+		t.Errorf("2x: %d shown, want 10", shown)
+	}
+}

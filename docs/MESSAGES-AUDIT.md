@@ -61,7 +61,7 @@ MessageActionsMenu (2rcC) builds groups in this order: P (context menu only), F 
 | Your reaction, dark | `.sk-client-theme--dark .c-reaction--reacted`: solid base-inv-hgl-1 #0a77a7, no ring, content-pry #f8f8f8 | 20% #1d9bd1 with a #1d9bd1 ring and blue count | **fixed** (themes still recolour the light ring and text through the link token) |
 | Count | `formatNumber`: en-US grouping, 1,234 | 1234 | **fixed** |
 | Add reaction button | ReactionAddButton after the pills when you can react | always drawn | **matched** (FIDELITY #25) |
-| Many reactions | ReactionBar (Ltiy) collapses past 5 reactions that don't fit two lines: the pills that fit, then "N more" (tooltip "Show more reactions", bold when one of the rest is yours); expanded, "Show less" | every pill, wrapping on | **open**: changes the height of busy messages and needs a per-message expand state; not done here |
+| Many reactions | ReactionBar (Ltiy) collapses past five reactions. It estimates each pill at 8px per count digit + 18 + 18, keeps the pills under the first line's sum + width − 38 − 64 once they pass the first line's sum + width − 38, then "{n} more" (`.c-reaction_expand`, 12px bold, tooltip "Show more reactions", your colours when one of the hidden ones is yours); expanded, "Show less" | every pill, wrapping on | **fixed** (`reactionCollapse`; the expanded state is per row). Slack also opens the bar when your own new reaction lands among the hidden ones, through a vendor helper (xhuf) that isn't in the fetched chunks; Clack doesn't |
 | Skin tones | getReactionGroups (hzIJ) puts every skin tone of one emoji in one pill | a pill per name | **open** |
 | Tooltip text | getTip (Qvn6): every reactor by name, joined like listify ("A and B", "A, B, and C"), you as "You" first or "you" after, "others" past 50; only you: "You (click to remove)"; then "reacted with :name:" as a TooltipSubtitle (regular weight, inverse.secondary) | at most three names then "and N others", one bold run | **fixed** |
 | Tooltip box | ReactionTip in a Tooltip: padding 8×12, radius 8, 13px/1.25 bold, centred, max-width 200 (400 past 9 reactions); the emoji LARGER in `.c-reaction__tip--emoji` (64px white tile, radius 4, 56px emoji, margin-bottom 4); 8px over the pill with the arrow (a 9px square turned -45°, 6px of it under the box); delay 300 | 44px tile, radius 8, 36px emoji, max-width 220, no arrow, 6px over the pill | **fixed** |
@@ -127,11 +127,11 @@ docs/EMBEDS.md has the full rules, read from build a84662d2d135. I didn't re-rea
 
 ## Counts
 
-59 rows: 25 matched, 10 fixed, 24 open. The open ones, by reason:
+59 rows: 25 matched, 11 fixed, 23 open. The open ones, by reason:
 
 - Another agent's files (14). list.go and host.go have 7: the reply tooltip, the reply button in the thread pane, the forward label, the day pill menu, the back-to-newest pill, the unread banner and the Block Kit button fallback. popups has 6: report and flag, the workflow rows, the follow label, mark unread in a thread, the broadcast reply items and the DM pin label. custom_response.go has the custom response label.
 - Data Clack doesn't keep (4). Each message's saved metadata is behind Complete to-do, Edit reminder and the saved label, and the editor's id is behind "by {name}".
-- Not built yet (5): the add-to-list picker, collapsing many reactions, skin-tone groups, the member link in "Pinned by", and the theme-wide dark tooltip.
+- Not built yet (4): the add-to-list picker, skin-tone groups, the member link in "Pinned by", and the theme-wide dark tooltip.
 - Not visible to the test account (1): the admin preview options.
 
 ## Tests
@@ -139,5 +139,6 @@ docs/EMBEDS.md has the full rules, read from build a84662d2d135. I didn't re-rea
 - `TestReactionTipText`: Slack's names, serial comma, "others", "You (click to remove)", the aria-label and the grouped count.
 - `TestReactionTooltipDraws`: the 64px tile, the arrow, 8px over the pill, inside the window.
 - `TestCSSReactionTooltip`: row rules don't reach the tooltip, tooltip rules do.
+- `TestReactionBarCollapseLikeSlack`: Slack's estimate worked by hand (12 pills at 300px keep 10 and "2 more", 11 don't collapse, two-digit counts, your hidden reaction, the expanded bar, 2x).
 - `TestEditedTipLikeSlack`, `TestEditedLabelTooltipTarget` (richview): the date rules, and the "(edited)" word as the tooltip's target.
-- `TestMessagesAuditShots`: the screenshots above.
+- `TestMessagesAuditShots`: the screenshots above, including a reply with 24 reactions collapsed in the thread pane.

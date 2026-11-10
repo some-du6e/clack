@@ -13,6 +13,7 @@ on:
       - "internal/ui/messages/messages_audit_shots_test.go"
       - "internal/ui/messages/reaction_tip.go"
       - "internal/ui/messages/pin_icon.go"
+      - "internal/ui/messages/row.go"
       - "internal/ui/richview/tooltip.go"
       - ".github/workflows/messages-audit-shots.yml"
   workflow_dispatch:
@@ -45,7 +46,7 @@ jobs:
         run: |
           mkdir -p "$MESSAGES_AUDIT_SHOTS_DIR"
           go test -count=1 -v -run 'TestEditedTipLikeSlack|TestEditedLabel' ./internal/ui/richview
-          xvfb-run -a go test -count=1 -v -run 'TestReactionTipText|TestReactionTooltipDraws|TestCSSReactionTooltip|TestRowHeightsMatchSlack|TestMessagesAuditShots' ./internal/ui/messages
+          xvfb-run -a go test -count=1 -v -run 'TestReactionTipText|TestReactionTooltipDraws|TestCSSReactionTooltip|TestReactionBarCollapseLikeSlack|TestRowHeightsMatchSlack|TestMessagesAuditShots' ./internal/ui/messages
           ls -la "$MESSAGES_AUDIT_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

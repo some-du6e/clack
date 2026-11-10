@@ -9,6 +9,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"image"
 	"image/color"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -96,6 +97,9 @@ type row struct {
 	labelLink          widget.Clickable // the label's link (broadcastLabel)
 	addReact           widget.Clickable
 	pills              []reactPill
+	reactExpand        widget.Clickable // ReactionBar's "N more" / "Show less"
+	reactExpanded      bool             // the bar's isExpanded (Slack keeps it per message)
+	expandTip          popups.TipState
 
 	// the broadcast's root preview (rootPreview), looked up once per list
 	// snapshot
@@ -1875,7 +1879,7 @@ func (r *row) layoutReactionBar(gtx layout.Context, p slackc.Props) layout.Dimen
 		lay := func(gtx layout.Context) layout.Dimensions {
 			return r.flowPills(gtx, len(items), func(gtx layout.Context, i int) layout.Dimensions {
 				return slackc.LayoutElement(gtx, items[i])
-			}, false)
+			}, nil)
 		}
 		if st.Active() {
 			return st.Wrap(gtx, lay)
@@ -1888,23 +1892,147 @@ func (r *row) layoutReactionBar(gtx layout.Context, p slackc.Props) layout.Dimen
 	return r.reactionPills(gtx)
 }
 
-// reactionPills flows the Reaction pills and the add button.
+// reactionPills flows the Reaction pills, ReactionBar's expand or collapse
+// button (reactionCollapse) and the add button.
 func (r *row) reactionPills(gtx layout.Context) layout.Dimensions {
 	n := len(r.m.Reactions)
-	return r.flowPills(gtx, n+1, func(gtx layout.Context, i int) layout.Dimensions {
-		if i < n {
+	shown, more, sel := r.reactionCollapse(gtx, gtx.Constraints.Max.X)
+	extra := 0
+	if more != 0 {
+		extra = 1
+	}
+	return r.flowPills(gtx, shown+extra+1, func(gtx layout.Context, i int) layout.Dimensions {
+		switch {
+		case i < shown:
 			pl := &r.pills[i]
 			return slackc.Component(gtx, "Reaction", pl, (*reactPill).props, (*reactPill).layout)
+		case i < shown+extra:
+			return r.expandButton(gtx, more, n-shown, sel)
 		}
 		// add-reaction button
 		return slackc.Component(gtx, "ReactionAddButton", r, (*row).addButtonProps, (*row).layoutAddButton)
-	}, true)
+	}, func(i int, rect image.Rectangle) {
+		switch {
+		case i < shown:
+			r.reactRects = append(r.reactRects, rect.Add(r.reactAt))
+		case i >= shown+extra:
+			r.addRect = rect.Add(r.reactAt)
+		}
+	})
+}
+
+// ReactionBar's buttons after the pills (reactionCollapse).
+const (
+	reactMore = 1 // ReactionExpandButton: "{n} more"
+	reactLess = 2 // ReactionCollapseButton: "Show less"
+)
+
+// reactionCollapse is ReactionBar's collapse (boot-shared Ltiy,
+// getDerivedStateFromProps and render). With more than five reactions
+// Slack estimates each pill (8px per digit of its count, 18 per emoji,
+// 18) and, in the bar's width w, takes l = the pills that fit one line,
+// collapseLimit = those that fit within the first line's pills plus w-38,
+// and collapseTarget = the same less 64 more. Past collapseLimit the bar
+// shows collapseTarget pills and "{n} more" until it's expanded, then all
+// of them and "Show less". sel: one of the hidden reactions is the
+// viewer's ("N more" takes the reacted look). Slack also opens the bar
+// when the viewer's own new reaction lands among the hidden ones (a
+// vendor helper this audit couldn't read); Clack doesn't.
+func (r *row) reactionCollapse(gtx layout.Context, w int) (shown, more int, sel bool) {
+	re := r.m.Reactions
+	n := len(re)
+	if n <= 5 || w <= 0 {
+		return n, 0, false
+	}
+	bar := float64(w) / float64(max(gtx.Metric.PxPerDp, 0.01))
+	est := func(i int) float64 {
+		return 8*math.Floor(math.Log10(float64(max(re[i].Count, 1)))+1) + 18 + 18
+	}
+	// fit is lodash sortedIndex over the running estimates: how many sums
+	// stay under limit
+	fit := func(limit float64) int {
+		acc := 0.0
+		for i := range re {
+			if acc += est(i); acc >= limit {
+				return i
+			}
+		}
+		return n
+	}
+	l := fit(bar)
+	if l == 0 {
+		return n, 0, false // r[l-1] is undefined: Slack's limit is NaN and nothing collapses
+	}
+	first := 0.0
+	for i := 0; i < l; i++ {
+		first += est(i)
+	}
+	limit, target := fit(first+bar-38), fit(first+bar-38-64)
+	if n <= limit {
+		return n, 0, false
+	}
+	if r.reactExpanded {
+		return n, reactLess, false
+	}
+	for i := target; i < n; i++ {
+		if (&r.pills[i]).reacted() {
+			sel = true
+			break
+		}
+	}
+	return target, reactMore, sel
+}
+
+// expandButton is ReactionExpandButton ("{n} more", the tooltip "Show
+// more reactions" after 300ms) or ReactionCollapseButton ("Show less"):
+// .c-reaction_expand, the pill's box (24px, padding-inline 8, the 6%
+// fill, the otl-pry ring under the pointer) with its 12px bold
+// __overlay text; --reacted takes your reaction's colours.
+func (r *row) expandButton(gtx layout.Context, kind, hidden int, sel bool) layout.Dimensions {
+	rc := r.rc
+	c := rc.c
+	if r.reactExpand.Clicked(gtx) {
+		r.reactExpanded = kind == reactMore
+		rc.h.Invalidate()
+	}
+	txt := "Show less"
+	if kind == reactMore {
+		txt = strconv.Itoa(hidden) + " more"
+	}
+	ts := textStyle{size: 12, weight: theme.Bold, col: c.Text, lineH: 16}
+	if sel {
+		ts.col = c.ReactSelfText
+	}
+	ph := dp(gtx, mt.reactH)
+	size := image.Pt(dp(gtx, 8)+measure(gtx, rc.th, ts, txt).X+dp(gtx, 8), ph)
+	gtx.Constraints = layout.Exact(size)
+	d := r.reactExpand.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		rr := image.Rectangle{Max: size}
+		rad := ph / 2
+		switch {
+		case sel:
+			rrect(gtx.Ops, rr, rad, c.ReactSelfBg)
+			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
+		case r.reactExpand.Hovered():
+			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactHoverBorder)
+		default:
+			rrect(gtx.Ops, rr, rad, c.ReactBg)
+		}
+		at(gtx, dp(gtx, 8), (ph-dp(gtx, 16))/2, func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, ts, txt) })
+		return layout.Dimensions{Size: size}
+	})
+	if kind == reactMore {
+		r.expandTip.Delay = 300 * time.Millisecond
+		popups.Tooltip(gtx, rc.th, &r.expandTip, r.reactExpand.Hovered(), size, popups.Above, "Show more reactions", "")
+	}
+	return d
 }
 
 // flowPills places n items left to right in rows of pill height, wrapping
-// at the bar's width (the reaction bar's flex-wrap); native: the items are
-// the pills then the add button (their rects are kept for overlays).
-func (r *row) flowPills(gtx layout.Context, n int, item func(gtx layout.Context, i int) layout.Dimensions, native bool) layout.Dimensions {
+// at the bar's width (the reaction bar's flex-wrap). placed, for the
+// native bar, gets each item's rect (kept for overlays).
+func (r *row) flowPills(gtx layout.Context, n int, item func(gtx layout.Context, i int) layout.Dimensions, placed func(i int, rect image.Rectangle)) layout.Dimensions {
+	native := placed != nil
 	w := gtx.Constraints.Max.X
 	ph := dp(gtx, mt.reactH)
 	gap := dp(gtx, mt.reactGap)
@@ -1933,12 +2061,8 @@ func (r *row) flowPills(gtx layout.Context, n int, item func(gtx layout.Context,
 		}
 		rect := place(call, d.Size)
 		bottom = rect.Max.Y
-		switch {
-		case !native:
-		case i < n-1:
-			r.reactRects = append(r.reactRects, rect.Add(r.reactAt))
-		default:
-			r.addRect = rect.Add(r.reactAt)
+		if native {
+			placed(i, rect)
 		}
 	}
 	return layout.Dimensions{Size: image.Pt(w, bottom)}
