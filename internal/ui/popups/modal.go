@@ -28,7 +28,10 @@ type ModalButton struct {
 	Do func() bool
 	// Left puts the button at the footer's left edge, apart from the
 	// others (Slack's delete-scheduled-message "Save as Draft").
-	Left  bool
+	Left bool
+	// Icon goes before the label (the workflow speedbump's ▶ "Start
+	// Workflow").
+	Icon  string
 	click widget.Clickable
 }
 
@@ -363,7 +366,7 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 						}
 						ring := kind != BtnDisabled && m.ringOn(gtx, &b.click)
 						call, d := record(gtx, func(gtx layout.Context) layout.Dimensions {
-							return button(gtx, th, &b.click, kind, BtnMedium, b.Label, "", 80, ring)
+							return button(gtx, th, &b.click, kind, BtnMedium, b.Label, b.Icon, 80, ring)
 						})
 						if b.Left {
 							macroAt(gtx, call, image.Pt(lx, fy+footPad))

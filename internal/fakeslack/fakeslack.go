@@ -81,6 +81,10 @@ type Size struct {
 	// fixtures (unreads.go): unread channels, a muted one, a channel
 	// whose message_input megaphone space holds the join banner.
 	Unreads bool
+	// Workflows adds #workflows-gallery and the Workflow Builder methods
+	// (workflows.go): workflow links, a workflow button, a workflow
+	// step's message, a bookmarked workflow, tripping, triggers.
+	Workflows bool
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -473,6 +477,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.Unreads {
 		s.addUnreads() // unreads.go
+	}
+	if sz.Workflows {
+		s.addWorkflowsChannel() // workflows.go
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", s.api)
@@ -967,6 +974,11 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	}
 	if out, handled := s.handleUnreads(method, f); handled { // unreads.go
 		return out
+	}
+	if s.Size.Workflows {
+		if out, handled := s.handleWorkflows(method, f); handled { // workflows.go
+			return out
+		}
 	}
 	// the bench threads' replies: ahead of the switch, whose
 	// conversations.replies answers every other thread with none

@@ -52,6 +52,9 @@ type Message struct {
 	// appendStream / stopStream): "in_progress" while open, then
 	// "completed" or "errored" (agent.go).
 	StreamingState string
+	// FunctionExecutionID is a workflow step message's
+	// function_execution_id: its block actions send it (workflows.go).
+	FunctionExecutionID string
 }
 
 // SubtypeSlackbotResponse is the subtype of Slackbot's answers to the
@@ -373,6 +376,7 @@ type Pin struct {
 type Bookmark struct {
 	ID, Title, Link, Emoji, EmojiURL, Icon, Type, EntityID, Rank, ParentID string
 	Created                                                                int64
+	ShortcutID                                                             string // a workflow bookmark's trigger (type shortcut)
 }
 
 // ChannelDetails is the channel-details view.

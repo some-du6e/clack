@@ -791,7 +791,11 @@ func (b *backend) openTab(ch, key string) {
 			var items []MenuItem
 			for _, bm := range b.bookmarks[ch] {
 				bm := bm
-				items = append(items, MenuItem{Label: bm.Title, Icon: "link", Do: func() { openURL(bm.Link) }})
+				items = append(items, MenuItem{Label: bm.Title, Icon: "link", Do: func() {
+					if !b.app.tripBookmark(ch, bm) { // a workflow bookmark runs (workflows_wire.go)
+						openURL(bm.Link)
+					}
+				}})
 			}
 			b.app.menu(b.app.PointerPos(), items)
 			return
@@ -865,6 +869,9 @@ func (b *backend) leave(ch string) {
 
 func (b *backend) openBookmark(ch, id string) {
 	for _, bm := range b.bookmarks[ch] {
+		if bm.ID == id && b.app != nil && b.app.tripBookmark(ch, bm) { // workflows_wire.go
+			return
+		}
 		if bm.ID == id && bm.Link != "" {
 			openURL(bm.Link)
 			return
