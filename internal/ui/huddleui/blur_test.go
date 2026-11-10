@@ -98,6 +98,7 @@ func TestHuddleShotsBlur(t *testing.T) {
 		th := theme.New(dark)
 		var cl previewClicks
 		frames := map[string]*image.RGBA{}
+		shots := map[string]*image.RGBA{}
 		for _, fx := range []huddle.VideoEffect{huddle.VideoEffectNone, huddle.VideoEffectBlur} {
 			cam := newPersonCamera(640, 360)
 			p := huddle.StartPreview(huddle.Options{Device: huddle.NewToneDevice(440), VideoEffect: fx,
@@ -121,9 +122,24 @@ func TestHuddleShotsBlur(t *testing.T) {
 				Labels: [3]string{"MacBook Pro Microphone", "MacBook Pro Speakers", "FaceTime HD Camera"}}
 			v.Title, v.Avatars, v.JoinLabel = c.previewTitle(hcChannel)
 			var vid videoOps // its own: the image cache is keyed by frame seq, which both previews share
-			render(t, "blur-self-preview-"+name+"-"+mode, previewW, previewH, func(gtx C) {
+			shots[name] = render(t, "blur-self-preview-"+name+"-"+mode, previewW, previewH, func(gtx C) {
 				layoutPreview(gtx, th, c, v, &cl, &vid)
 			})
+		}
+		// the window shows it: thousands of pixels of the video differ
+		diff := 0
+		for i := 0; i+3 < len(shots["on"].Pix) && i+3 < len(shots["off"].Pix); i += 4 {
+			d := 0
+			for k := 0; k < 3; k++ {
+				v := int(shots["on"].Pix[i+k]) - int(shots["off"].Pix[i+k])
+				d += max(v, -v)
+			}
+			if d > 24 {
+				diff++
+			}
+		}
+		if diff < 5000 {
+			t.Errorf("%s: the blurred and plain previews differ in only %d px", mode, diff)
 		}
 		// the frames themselves: the face is the camera's, the shelf isn't
 		off, on := frames["off"], frames["on"]
