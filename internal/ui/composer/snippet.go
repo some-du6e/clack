@@ -235,11 +235,11 @@ func (d *snippetDialog) closeGuard() bool {
 		d.cancel()
 		return true
 	}
-	d.h.ShowOverlay(popups.Confirm(d.h, i18n.T("snippet-dialog", "Are you sure you want to discard this snippet permanently?"), "",
+	popups.Confirm(d.h, i18n.T("snippet-dialog", "Are you sure you want to discard this snippet permanently?"), "",
 		i18n.T("snippet-dialog", "Delete Snippet"), true, nil, func() {
 			d.cancel()
 			d.m.Close()
-		}))
+		}) // Confirm shows itself
 	return false
 }
 

@@ -18,7 +18,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -627,11 +626,9 @@ type plusMenu struct {
 
 // plusMenuItems is useComposerIAFormatter's rows that Clack draws.
 func (a *attachments) plusMenuItems(pm plusMenu) []popups.MenuItem {
-	mac := runtime.GOOS == "darwin"
-	snippetKey, uploadKey := "Ctrl+Shift+Enter", "Ctrl+O"
-	if mac {
-		snippetKey, uploadKey = "⌘⇧Enter", "⌘O"
-	}
+	// Slack's own labels: "Ctrl+Shift+Enter" / "⌘⇧Enter" and "Ctrl+O" /
+	// "⌘O" (shortcut.Format puts macOS's ⇧ before ⌘)
+	snippetKey, uploadKey := shortcut.Format("Mod+Shift+Enter"), shortcut.Format("Mod+O")
 	var items []popups.MenuItem
 	if pm.snippet != nil {
 		items = append(items, popups.MenuItem{Label: i18n.T("menu_file", "Text snippet"), Icon: "text-snippet", Hint: snippetKey, Do: pm.snippet})
