@@ -23,7 +23,7 @@ jobs:
         run: |
           python3 --version
           python3 -m venv "$RUNNER_TEMP/mp"
-          "$RUNNER_TEMP/mp/bin/pip" install --quiet mediapipe==0.10.21
+          "$RUNNER_TEMP/mp/bin/pip" install --quiet mediapipe==0.10.35
           "$RUNNER_TEMP/mp/bin/python" -I internal/tflite/testdata/mediapipe_ref.py \
             internal/huddle/bgblur/selfie_segmenter_landscape.tflite dist/reference \
             internal/tflite/testdata/ref-person.png internal/tflite/testdata/ref-noise.png
