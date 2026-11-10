@@ -732,6 +732,9 @@ func (v *Activity) suggestions() (activity, sections []actSuggestion) {
 	}
 	have := func(g sug) bool {
 		for slot := 0; slot < actSlotN+len(v.customs); slot++ {
+			if slot > 0 && slot < actSlotN && v.hidden[actTabIDs[slot]] {
+				continue // a hidden view isn't among the saved ones
+			}
 			vw := v.slotView(slot)
 			name := v.slotLabel(slot)
 			if name == g.name {
@@ -966,12 +969,15 @@ func (v *Activity) setDensityPref(dense bool) {
 	was := v.dense
 	v.dense, v.densitySet, v.dirty = dense, true, true
 	v.rows = map[string]*actRow{}
-	for i := range v.viewDense {
-		v.viewDense[i] = dense
-	}
 	d := "compact"
 	if dense {
 		d = "dense"
+	}
+	for i := range v.viewDense {
+		v.viewDense[i] = dense
+	}
+	for k := range v.customs {
+		v.customs[k].Density = d
 	}
 	v.write("Couldn’t save the layout: ", func(ctx context.Context, c *core.App) error { return c.SetActivityPrefs(ctx, "", d) },
 		func() { v.dense, v.dirty = was, true })
@@ -1167,6 +1173,9 @@ func (v *Activity) hasUnsavedChanges() bool {
 // views), in a custom view the "Save as …" dropdown (New view / Current
 // view) and the danger "Delete View".
 func (v *Activity) filterActions(gtx C) D {
+	if v.inHomePrototype() {
+		return D{} // lCwf: !W && ActivityFilterActionButtons
+	}
 	_, custom := v.customView()
 	on := v.hasUnsavedChanges() && v.viewCount() < actMaxViews
 	if v.saveViewBtn.Clicked(gtx) && on {

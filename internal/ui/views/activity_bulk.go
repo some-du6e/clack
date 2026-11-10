@@ -448,7 +448,15 @@ func (v *Activity) clearAllFilters() (core.ActivityClearFilters, bool) {
 	s := v.curState()
 	f := core.ActivityClearFilters{UnreadOnly: s.unread, PriorityOnly: s.vip, ArchiveOnly: s.cleared,
 		SectionIDs: s.sections, ChannelIDs: s.channels, ReadState: "reads_and_unreads"}
-	f.EntryTypes = s.viewFilters().EntryTypes
+	// the types the list shows: the view's (a default tab's own: the DMs
+	// view's dm, mpdm) narrowed by the filter rows
+	types, _ := v.types()
+	if types == "" && v.dmOnly() {
+		types = "dm,mpdm"
+	}
+	if types != "" {
+		f.EntryTypes = strings.Split(types, ",")
+	}
 	if !v.h.Core().GlobalNotifyBool("global_reminders_in_activity", true) {
 		types := f.EntryTypes
 		if types == nil {

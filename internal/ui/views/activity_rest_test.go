@@ -9,6 +9,7 @@ package views
 import (
 	"context"
 	"encoding/json"
+	"image"
 	"net/url"
 	"strings"
 	"testing"
@@ -275,8 +276,6 @@ func TestActivityCustomViewsLikeSlack(t *testing.T) {
 		t.Errorf("after unhiding: %s", actTabsNow(v))
 	}
 	// the filter menu's Create Custom View saves the current filters
-	v.tabs.Sel = 0
-	v.switchView(actSlotN)
 	v.filters[2] = true
 	if !v.hasUnsavedChanges() {
 		t.Fatal("no unsaved changes with Threads on")
@@ -434,9 +433,10 @@ func TestActivityKeyboardLikeSlack(t *testing.T) {
 	if !v.selOK || v.selKey == keys[1] {
 		t.Errorf("Alt+Down: open %v %q", v.selOK, v.selKey)
 	}
-	// the list takes the keys once focused: a press on it, then Down
-	// through Gio's router
-	e.click(e.size.Div(2))
+	// a press on a row focuses the list (the keys' target)
+	v.selOK = false
+	e.frame()
+	e.click(image.Pt(300, int(actHeadH+actBarTop+actBarH+16)+60))
 	e.frame()
 	if !v.kbFocused {
 		t.Fatal("a press on the list didn't focus it")

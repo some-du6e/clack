@@ -76,7 +76,8 @@ func (v *Activity) liveAccepts(it *core.ActivityItem) bool {
 	return true
 }
 
-// liveUpsert applies one realtime entry to the loaded page.
+// liveUpsert applies one realtime entry to the loaded page (a new Items
+// slice: a load in flight may still read the old one).
 func (v *Activity) liveUpsert(p *core.ActivityPage, in core.ActivityItem) {
 	key := actKey(&in)
 	for i := range p.Items {
@@ -86,13 +87,15 @@ func (v *Activity) liveUpsert(p *core.ActivityPage, in core.ActivityItem) {
 		delete(v.override, key)
 		if in.Archived != v.showCleared {
 			// activityUpdatedV2: cleared elsewhere (or restored) leaves the list
-			p.Items = append(p.Items[:i:i], p.Items[i+1:]...)
+			p.Items = slices.Delete(slices.Clone(p.Items), i, i+1)
 			return
 		}
 		if in.Msg == nil {
 			in.Msg, in.Root = p.Items[i].Msg, p.Items[i].Root
 		}
-		p.Items[i] = in
+		items := slices.Clone(p.Items)
+		items[i] = in
+		p.Items = items
 		if r := v.rows[key]; r != nil {
 			r.built = false
 		}
@@ -111,7 +114,7 @@ func (v *Activity) liveUpsert(p *core.ActivityPage, in core.ActivityItem) {
 	if at == len(p.Items) && p.Next != "" {
 		return // older than everything loaded: a later page has it
 	}
-	p.Items = slices.Insert(p.Items, at, in)
+	p.Items = slices.Insert(slices.Clone(p.Items), at, in)
 	if v.serverAll {
 		v.picked[key] = true // eP2o: new rows join select-all
 	}
