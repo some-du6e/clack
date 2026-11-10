@@ -50,6 +50,13 @@ type Panes interface {
 	ThreadPane(channelID, threadTS string) layout.Widget
 }
 
+// PaneChooser is optionally implemented by the Host: a view calls
+// PaneChosen when the user picks something in its own list (a DM, a Files
+// section), so the simplified layout can move on from the list to it.
+type PaneChooser interface {
+	PaneChosen()
+}
+
 // Closer is implemented by views that are modal (ChannelDetails): the Host
 // removes them once Closed reports true.
 type Closer interface {

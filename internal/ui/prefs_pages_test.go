@@ -123,7 +123,7 @@ var slackPages = map[string][]want{
 		lg("Keyboard layout"), selOff("English (US)"), lg("Spellcheck"), ckOff("Enable spellcheck on your messages and canvases"),
 	},
 	"accessibility": {
-		lg("Display"), lg("Simplified layout mode"), btnOff("Turn On"), lg("Alt text reminders"),
+		lg("Display"), lg("Simplified layout mode"), btn("Turn On"), lg("Alt text reminders"),
 		ckOff("Remind me to add an image description on image uploads"), lg("Other display options"),
 		ckOff("Show previews when hovering over tabs"), ck("Underline links to websites"), ck("Allow animations"),
 		lg("Keyboard"), lg("Press ↑ in the empty message field to:"), rd("Move focus to the message list"),

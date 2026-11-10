@@ -213,9 +213,14 @@ func (f *Files) typeCount() int {
 
 func (f *Files) update(gtx C) {
 	for i := range f.navClicks {
-		if f.navClicks[i].Clicked(gtx) && f.nav != i {
-			f.nav, f.reload = i, true
-			f.search.ph = filesNav[i].placeholder
+		if f.navClicks[i].Clicked(gtx) {
+			if f.nav != i {
+				f.nav, f.reload = i, true
+				f.search.ph = filesNav[i].placeholder
+			}
+			if c, ok := f.h.(PaneChooser); ok {
+				c.PaneChosen()
+			}
 		}
 	}
 	for i := range f.segClicks {
@@ -373,6 +378,11 @@ func (f *Files) LayoutNav(gtx C) D {
 	f.update(gtx)
 	return f.nav_(gtx)
 }
+
+// LayoutList and LayoutPane are LayoutNav and LayoutMain under the names
+// the simplified layout asks for (one at a time).
+func (f *Files) LayoutList(gtx C) D { return f.LayoutNav(gtx) }
+func (f *Files) LayoutPane(gtx C) D { return f.LayoutMain(gtx) }
 
 // LayoutMain draws only the primary pane.
 func (f *Files) LayoutMain(gtx C) D {

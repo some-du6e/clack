@@ -29,7 +29,7 @@ real. *Greyed* means the row is drawn the way Slack draws it, disabled, with
 | Appearance | **fixed**, then part A. Font row; Color Mode (Light / Dark / System, desktop) plus the focus-mode dark row; **Slack themes \| Custom theme** tabs. Custom theme has Slack's four hex fields (typed hex, or the pencil's "Pick a color" popover: HSV square, hue slider, hex field), Share, **Import** (Slack's Import theme modal: 4 hexes or a legacy 8/10-colour string, createPayloadFromHexStrings) and **Surprise me** (randomizeTheme). A custom primary sets the brightness (getBrightnessFromCustomHex). The "Celebrate the music of Miles Davis" presets show first under miles_davis_themes | ia_theme (applied), window_background_gradients (applied), colour mode (device). **2026-11-09:** font (device, ui.json `client_typeface`; applied to the whole UI, see "Font" below). Greyed: focus_mode_force_dark_mode_enabled (Clack has no focus mode) |
 | Messages & media | **fixed**, then part A. Default Skin Tone as Slack's six ✋ radios (:wave: on hover), "your profile" link, JUMBOMOJI subtext, legends as Slack's | **newly applied:** preferred_skin_tone, emoji_mode as_text (emoji draw as :name:, no JUMBOMOJI; turning it on writes convert_emoticons 0), convert_emoticons (the composer converts the emoticon before Space/Enter, Slack's dq table), obey_inline_img_limit (linked images over 20MB stay collapsed), one-click reactions (user_customized_quick_reactions_display_feature 1/0, frequent / custom slots; the hover toolbar shows them), Bring emails into Slack (users.emailtoken.get / create / delete, Copy). Applied: display_real_names_override, show_typing, time24, hide_hex_swatch, jumbomoji, expand_internal_inline_imgs, expand_inline_imgs, expand_non_media_attachments. **2026-11-09, newly applied:** messages_theme (Clean writes light_with_avatars, Compact dense; MessageThemePref), with Slack's "Here’s an example:" pillows under Theme and Names (CompactMessageExample / MessageWithAvatarExample); see [Compact](#compact-messages_theme-dense-2026-11-09) |
 | Language & region | **fixed**, then part A. Keyboard layout row, Slack's spellcheck label. The time zone select lists Slack's 124 labelled zones ("(UTC-08:00) Pacific Time (US and Canada)") | **newly applied:** set_tz_automatically (on: the detected zone is written at once and after every sign-in, maybeUpdateTimezone with Slack's zone tables). Server: tz. Greyed: locale (no translated UI), webapp_spellcheck (no spellchecker) |
-| Accessibility | **fixed**. Alt text reminders legend, tab previews, Slack's animations subtext, the three up-arrow options with descriptions and the Ctrl+↑ note, Lists keyboard interactions, Screen reader (Message verbosity, announcements), links to Notifications and Font. Removed invented "Limit message line length". **2026-11-09:** the up-arrow choice is real. Slack keeps it client-side (localStorage composerUpArrowShortcutBehavior, uMEH LIST=1 / LIST_IF_EMPTY=2 / EDIT=3), so Clack keeps it in ui.json, and the composer follows MessageInput.onUpArrow. LIST focuses the message list at the start of the first line, LIST_IF_EMPTY only in an empty field, EDIT (or unset without up_to_browse_kb_shortcut) edits your last message, and Mod+↑ in an empty field always edits. The list then selects its newest message: ↑/↓ move, ↓ past the end or Esc go back, Enter/E edit yours. The Lists and huddle rows now read Slack's real keys (lists_tabbing_navigation_option_type, huddles_reactions_read_out_loud, huddles_reactions_play_sound). **2026-11-09, lists-keyboard:** Lists keyboard interactions is wired. The section shows only with the lists_tabbing_navigation experiment (ListsTabbingPref returns null without it). Data entry is checked while the pref is unset, and a pick writes tab_nav or arrow_nav with setUserPrefByApi. The Lists grid follows it: cell keyboard navigation in both modes (docs/LISTS.md, Keyboard) | applied: underline_links, a11y_animations, composerUpArrowShortcutBehavior (device), lists_tabbing_navigation_option_type. Greyed: Simplified layout mode (a whole second layout), a11y_show_alt_text_reminders (Clack's uploads have no alt text field yet; Slack's reminder opens the edit-file alt text dialog), a11y_peeks_enabled_on_mouse_enter (Clack's rail has no hover peeks), a11y_dm_read_out and huddles_reactions_read_out_loud (screen-reader announcements; Clack has no accessibility bridge), huddles_reactions_play_sound (the sound lives in the huddle chunks, not fetched yet) |
+| Accessibility | **fixed**. Alt text reminders legend, tab previews, Slack's animations subtext, the three up-arrow options with descriptions and the Ctrl+↑ note, Lists keyboard interactions, Screen reader (Message verbosity, announcements), links to Notifications and Font. Removed invented "Limit message line length". **2026-11-09:** the up-arrow choice is real. Slack keeps it client-side (localStorage composerUpArrowShortcutBehavior, uMEH LIST=1 / LIST_IF_EMPTY=2 / EDIT=3), so Clack keeps it in ui.json, and the composer follows MessageInput.onUpArrow. LIST focuses the message list at the start of the first line, LIST_IF_EMPTY only in an empty field, EDIT (or unset without up_to_browse_kb_shortcut) edits your last message, and Mod+↑ in an empty field always edits. The list then selects its newest message: ↑/↓ move, ↓ past the end or Esc go back, Enter/E edit yours. The Lists and huddle rows now read Slack's real keys (lists_tabbing_navigation_option_type, huddles_reactions_read_out_loud, huddles_reactions_play_sound). **2026-11-09, lists-keyboard:** Lists keyboard interactions is wired. The section shows only with the lists_tabbing_navigation experiment (ListsTabbingPref returns null without it). Data entry is checked while the pref is unset, and a pick writes tab_nav or arrow_nav with setUserPrefByApi. The Lists grid follows it: cell keyboard navigation in both modes (docs/LISTS.md, Keyboard) | applied: underline_links, a11y_animations, composerUpArrowShortcutBehavior (device), lists_tabbing_navigation_option_type, Simplified layout mode (device: bbm, bbmSettings; see "Simplified layout mode" below). Greyed: a11y_show_alt_text_reminders (Clack's uploads have no alt text field yet; Slack's reminder opens the edit-file alt text dialog), a11y_peeks_enabled_on_mouse_enter (Clack's rail has no hover peeks), a11y_dm_read_out and huddles_reactions_read_out_loud (screen-reader announcements; Clack has no accessibility bridge), huddles_reactions_play_sound (the sound lives in the huddle chunks, not fetched yet) |
 | Mark as read | **fixed**. Removed the invented hint under Prompt to confirm; added Keyboard shortcuts | applied: mark_msgs_read_immediately + start_scroll_at_oldest (one users.prefs.set), confirm_clear_all_unreads |
 | Audio & video | **fixed**. Camera, Microphone, gain control, noise suppression, auto-dock, 150-member warning, blur, Huddle motion, music delay. Removed "Set my status In a huddle" (Slack shows it under Availability) and "Turn off my video" (gated off in the live dialog) | applied: huddles_mute_by_default, **huddles_cc_by_default** (a joined huddle starts with captions shown), **huddles_show_shouty_rooster** (starting, not joining, a huddle in a channel of more than 150 members asks "Start a huddle in this channel?", HuddleShoutyRoosterModal, with its "Don’t show this message again." box writing the pref). Greyed: video_background_filter (needs person segmentation on camera frames), huddles_show_join_preview (Slack's pre-join preview window), huddles_global_mute (an OS-wide Mod+Shift+Space hotkey), huddles_disconnect_on_lock (screen-lock events per OS), huddles_play_music_when_last (the lounge music and delay), huddles_reactions_effects, clips_pip_auto_dock (Clack has no clip picture-in-picture), agc/ns (Clack's microphone path has no WebRTC audio processing) |
 | Salesforce | **fixed**. Slack's exact copy; removed Clack's invented sentence | none |
@@ -222,6 +222,171 @@ Read from Slack's CSS on the public CDN (bv1-13: `client-boot-styles.cf726c4f2ea
 | Appearance tabs | `.c-tabs__tab` content-sec, active content-pry, underline `--dt_color-theme-base-pry` | the dialog's one account-theme colour |
 
 None of these except the Appearance tab underline is a `--dt_color-theme-*` token, and Slack's theme module (`getThemeVariables`, gantry-v2-vendors) writes only `--dt_color-theme-*` and the palette ramps. So every account theme (Aubergine, a dark sidebar, custom hexes) leaves the dialog in the same blue and grey in Slack. A stylesheet that overrides the base tokens (a Slick theme like Hot Dog Stand, user.css) recolours it, and Clack reads those overrides (`prefsColorsOf`). Clack's Plugins / Themes / Plugin settings rows and pages use the same tokens. Tests: `TestPrefsColorsMatchSlack`, `TestPrefsColorsIgnoreAccountTheme`, `TestPrefsColorsFollowStylesheetTokens`, `TestNativeCheckPixels`; screenshots from `TestPrefsColorShots` (prefs-colors workflow, `prefs-colors-shots` artifact).
+
+## Simplified layout mode (2026-11-10)
+
+Slack calls it "big button mode" (BBM). Everything below is from the web
+client on the public CDN (build a84662d2d135, bv1-13-br): the GantryV2
+chunks `client-boot`, `gantry-v2-async-client-boot-{shared,render}`,
+`gantry-v2-async-prefs-dialog`, the three `gantry-v2-async-client-bbm-*-view`
+chunks and `client-boot-styles`. Module ids are in brackets.
+
+**The pref.** It isn't a users.prefs key, and nothing reaches the API. The
+redux store `bbm` holds `{enabled}`: persisted, client and team stores
+[TNXj]. localConfig keeps `bbmEnabled` per team [nXnr t2]. `bbmSettings`
+[p/nG] holds three localStorage keys: `slack-zoom-bbm-setting`,
+`slack-persistent-actions-bbm-setting` (default true) and
+`slack-onboarded-setting`. `nonBBMSettings` holds the zoom and sidebar
+visibility to restore when the mode ends. `isBBMUnsupported` is the
+`agentic_ia` experiment [I/bR]. Clack keeps the same values in ui.json
+(`bbm`, `bbm_hover_actions`, `bbm_onboarded`, `bbm_zoom`, `non_bbm_zoom`,
+`non_bbm_sidebar_hidden`).
+
+**Preferences** [AM7V AccessibilityBBM]. The section has the legend
+"Simplified layout mode", its description and an outline button, "Turn On"
+or "Turn Off". Clicking the button closes Preferences, then starts the mode
+(step `accessibility_pref`) or stops it. While the mode is on, a fieldset
+"Choose how to display message actions" offers "Always show collapsed menu"
+(subtext "Doesn’t support one click reactions") or "Show full action menu
+on hover only" (subtext "Supports one click reactions"). Under `agentic_ia`
+the section greys, the button is aria-disabled and "Simplified Layout is
+not yet supported in Slack 6" follows. "Show previews when hovering over
+tabs" is disabled while the mode is on.
+
+**Starting and stopping.**
+- startBBM [HnPE]. The first time, it opens the welcome dialog, sets
+  onboarded, and on the desktop app sets the mode's zoom to 3 (150%). Then
+  it enables the store and fullscreen mode, navigates to the BBM tab
+  (BBMMain), and applies setBBMSettings: the mode's zoom, the sidebar shown,
+  tab peeks off.
+- stopBBM [NoNg]. resetBBMSettings puts back the earlier zoom (0 when unset)
+  and sidebar visibility. maybeNavigateAwayFromBBM [RxPj] goes to the
+  latest non-BBM tab in history, else Home. Fullscreen mode is disabled.
+- While the mode is on, a desktop zoom change is stored as the mode's zoom;
+  outside it, as the normal zoom [2bwp updateFromDesktop].
+- A cold boot with the mode on lands on the BBM tab [4P57
+  RedirectColdBootToBBM]. Outside the mode, back/forward skip BBM-tab
+  entries [B69+ getStackWithoutBBMEntries].
+
+**Welcome dialog** [HnPE BBMNuxModal]. It has three panes.
+- Welcome: the GIF `bbm-nux-transition-53381be.gif` above the title
+  "Welcome to Simplified layout mode", the description, and Next.
+- "Let’s set your zoom level: ": Slackbot's "We’re so glad you’re here"
+  pillow, then radios for 70%–200% with "150% Default". A pick zooms at
+  once. Go Back and Next.
+- "Choose how to display message actions": two radio cards with
+  `persistent-hover-actions-f6d14dc.png` and
+  `full-message-actions-on-hover-9281d14.png`. Go Back and Done.
+
+**Layout** [26v2 FullscreenContainer, TopNav; styles].
+- The tab rail, control strip, sidebar popout and banners aren't drawn. The
+  client shows the top bar, the breadcrumbs (on every tab but BBM) and one
+  panel: `.p-ia4_client--fullscreen`, radius 12, inset 40px 4px 4px
+  (72px from the top with breadcrumbs), max-width 1200px, centred.
+- The panel shows one view container, `fullscreen.containers.main` [qIxd],
+  never two side by side.
+- No split view, and no close buttons on views [AaAa, M+MY, eXbF, 1331].
+
+**Top bar.**
+- The wrapper is centred, max 1200px, with 8px side margins below a 1208px
+  window.
+- Left: Back and Forward (16px icons) and History (clock). Each is a
+  `.topNavButton`: 28px tall, padding-inline 8px, radius 4,
+  theme-surf-inv-pry, hover surf-inv.
+- Middle: the search, filling the space, min 192px, 28px tall.
+- Right, 8px apart: the 28px avatar with presence (the user menu), Create
+  (+), Help (16px), and Exit (sign-out, tip "Exit", label "Exit Simplified
+  layout mode").
+- The workspace switcher toggle, megaphone and agent buttons aren't shown.
+
+**Breadcrumbs** [26v2 Breadcrumbs, WOop].
+- The crumbs are the workspace (back to BBMMain, with a mention badge or an
+  unread dot), the tab (its list, if the tab has one), the primary view (a
+  channel's name with its icon and no #, a DM's person, or a page title,
+  semibold when unread), then the secondary view ("Thread").
+- Each crumb shows only up to the container on screen
+  (shouldIncludeBreadcrumb). Labels are underlined, carets are 16px, and
+  the row is max 1200px wide with 12px padding.
+- Clicking a crumb shows that container (navigateToContainerBBM) without
+  closing what's after it.
+
+**Navigation** [zluD getDestinationContainer, updateFullscreenContainer].
+- A tab switch lands on the tab's list if it has one: Home's channel list,
+  the DMs list, the Files nav, or BBMMain. Activity and To-dos are single
+  primary views.
+- Opening a conversation shows its primary view. Opening a thread or other
+  pane shows the secondary view. Closing the pane goes back to the primary.
+- Alt+↑/↓ don't step conversations while the list is on screen [N8Zu].
+  Ctrl+Shift+D (toggle sidebar) is ignored in the mode [PG1Q].
+
+**The BBM tab** [client-bbm-*-view chunks, WOop styles].
+- BBMMain has a header with the workspace switcher button (margin 4px 4px
+  4px 34px, padding 8px, radius 8; 34px team icon, the name at 22px black,
+  a 20px mention badge). Below it, a ListViewer of the tabs the rail would
+  show (useTabRailOrganizer).
+- Each row has a 1px theme-otl-inv-pry border, radius 12, margin 1px 0 8px
+  and padding 12px 16px. It holds the icon on a 36px theme-surf-inv-pry
+  tile (radius 8) and the name at 22px, black with mentions. A badge or
+  dot sits on the tile's corner.
+- More opens BBMMore: its back header (caret-left-full, then "More" at
+  22px, padding 13px 0 13px 38px), the rail's overflow tabs, then
+  Preferences.
+- The switcher opens BBMWorkspaceSwitcher, "Workspaces": the workspace row
+  on base-inv-hgl-1 with a 44px ring around its icon, the name (15/700),
+  the address and "Ctrl 1".
+
+**Sidebar in the mode** [X4Y6, xnuR, Jbto, styles].
+- `--sidebar_item_height` is 44px (space.275), up from 28px (space.175).
+- Conversation and page rows are boxes: 1px theme-otl-inv-pry border,
+  radius 4, theme-surf-ter-pressed fill. They lose the selected style. A
+  12px SpacerRow follows each one.
+
+**Message actions** [zgdY, L2dv MessageActions].
+- With "Always show collapsed menu" (the default), every message shows one
+  28px "Message actions" button. It is the ellipsis, with no quick
+  reactions and no other buttons, at top min(50% − 14px, 12px), right 16px.
+  It opens the context form of the message menu.
+- The body column gives the button room: gutter__right gets padding-right
+  44px (36px more in a channel, 44px in a thread).
+- "On hover only" keeps the normal hover toolbar.
+
+**Shortcuts.** Alt+= / Alt+Plus (start), Alt+− (stop) and Alt+Home (BBM
+list) exist in PG1Q. Their ignoreIf requires `EjMV.Cu()` (env dev) or
+`b3()` (a js_path debug URL), so production Slack has no shortcut for the
+mode, and Clack doesn't either. The KEYBOARD_SHORTCUT step only happens in
+dev.
+
+**What Clack leaves out.**
+- Screen-reader announcements ("Simplified layout mode enabled/disabled"),
+  because Clack has no accessibility bridge.
+- Megaphone clearing, because Clack has no megaphone.
+- Tab peeks, because they're already greyed in Clack.
+- The BBM help path (hW.s): Help opens Clack's help as it does outside the
+  mode.
+- The workspace switcher's "Add Workspace" row, and switching workspaces,
+  because Clack signs in to one workspace.
+- The Admin tab and its divider (Clack has none).
+- Child windows' BBM title bar, because Clack has one window.
+- Large GIFs don't animate in Clack's image cache, so the welcome GIF shows
+  its first frame.
+- Approximations: the row fill token (theme-surf-ter-pressed) has no
+  sidebar-scope value in Clack's token table. It is drawn as the dark
+  ramp's value over the sidebar's lilac (rows) and the hover as Clack's
+  sidebar hover. The Create icon is 16px; Slack's is `size="inherit"`.
+
+**Tests and shots.**
+- `TestBBMPrefRoundTrip`: on and off through the start and stop paths,
+  ui.json across a restart, no API write mentioning the mode, the welcome
+  dialog and zoom 3 the first time only, and the agentic_ia state.
+- `TestBBMLayoutAndNavigation` (light and dark): panel geometry, the BBM
+  list, a real click on Home, 44+12px sidebar rows, the keys, conversation,
+  thread, each breadcrumb, DMs list then conversation, Preferences, the
+  dialog panes, and Exit followed by Back.
+- messages `TestPersistActionsButtons` and `Test{IdleRowsStayPut,FlingScrollNoGaps,FlingPageArrivalEveryFrame}BBM`
+  (plus Compact).
+- The bbm-shots workflow uploads `bbm-*-{light,dark}.png` (main, more,
+  workspaces, home-list, channel, thread, dms-list, dms-conversation,
+  prefs, welcome-1..3).
 
 ## Tests
 

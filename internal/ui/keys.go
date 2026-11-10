@@ -59,7 +59,11 @@ func (a *App) defaultShortcuts() *shortcuts {
 	add("Mod+Shift+S", "Later", func(a *App) { a.Navigate("later") })
 	add("Mod+Shift+E", "People & user groups", func(a *App) { a.Navigate(peopleRoute) })
 	add("Mod+Shift+L", "Channel browser", func(a *App) { a.Navigate(channelsRoute) })
-	add("Mod+Shift+D", "Toggle sidebar", func(a *App) { a.toggleSidebar() })
+	add("Mod+Shift+D", "Toggle sidebar", func(a *App) {
+		if !a.bbmOn() { // PG1Q: menuitem-toggle-sidebar ignored in the simplified layout
+			a.toggleSidebar()
+		}
+	})
 	add("Mod+Shift+Y", "Toggle dark mode", func(a *App) { a.ToggleDark() })
 	// Slack's mod+shift+h (menuitem-huddle-action): "Toggle huddles start / stop"
 	add("Mod+Shift+H", "Toggle huddle", func(a *App) { a.toggleHuddle() })
@@ -206,6 +210,9 @@ func (a *App) copyText(s string) {
 // stepConv moves to the previous/next sidebar conversation (Alt+↑/↓), or
 // unread conversation when unreadOnly.
 func (a *App) stepConv(dir int, unreadOnly bool) {
+	if a.bbmNoListKeys() { // N8Zu: not while the list fills the simplified layout
+		return
+	}
 	cur := a.router.Current().Channel()
 	var ids []string
 	for _, r := range a.sidebar.rows {

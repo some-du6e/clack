@@ -72,6 +72,18 @@ type convInfo struct {
 	AgentName  string
 }
 
+// mentionTotal is the workspace's mention count (unmuted conversations'
+// mentions), the simplified layout's workspace badge.
+func (m *model) mentionTotal() int {
+	n := 0
+	for _, c := range m.Convs {
+		if !c.Muted {
+			n += c.Mentions
+		}
+	}
+	return n
+}
+
 func (m *model) conv(id string) *convInfo {
 	if m == nil || m.Convs == nil {
 		return nil

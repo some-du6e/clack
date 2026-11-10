@@ -32,6 +32,7 @@ import (
 	"github.com/some-du6e/clack/internal/taut"
 	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/huddleui"
+	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uiguard"
@@ -225,6 +226,8 @@ type App struct {
 	navTag        int             // the window-wide scroll handler (navGestures)
 	ptrBtns       pointer.Buttons // mouse buttons held, for back/forward (navButtons)
 	railOverflow  []string        // tabs under the rail's More (layoutRail)
+	bbm           bbmState        // Simplified layout mode's panel (bbm.go)
+	bbmListBase   color.NRGBA     // its list surface, opaque (bbm_views.go)
 	teamIconShown string          // the last workspace icon URL that drew (kept while a new one loads)
 	mbar          menuBar         // the macOS menu bar's state (macmenu.go)
 }
@@ -250,6 +253,7 @@ func New(opts Options, images *imgcache.Cache) *App {
 	a.keys = a.defaultShortcuts()
 	a.loadPrefs()
 	composer.UpArrowShortcut = func() int { return a.prefs.ComposerUpArrow }
+	messages.PersistActions = a.bbmPersistActions // Simplified layout mode (bbm.go)
 	a.settleThemeSync()
 	// The shaper (font parsing + system font index) is the slowest part of
 	// startup; build it while the window and GPU context come up.
@@ -531,6 +535,39 @@ func (a *App) frame(gtx layout.Context) {
 	client := clsClient.Enter(gtx, 0, 0)
 	ia := clsIA.Enter(gtx, 0, 0)
 
+	// the shell: Simplified layout mode's one-container window (bbm.go)
+	// or the rail, sidebar and panels
+	if !a.bbmOn() && isBBMRoute(a.router.Current()) {
+		// the BBM tab outside the mode (it ended, or agentic_ia has no
+		// simplified layout): maybeNavigateAwayFromBBM
+		a.Navigate(string(a.latestNonBBMRoute()))
+	}
+	var primary image.Rectangle
+	if a.bbmOn() {
+		primary = a.layoutBBM(gtx)
+	} else {
+		primary = a.layoutShell(gtx)
+	}
+
+	ia.Leave()
+	client.Leave()
+
+	a.layoutSwipe(gtx, primary)
+	a.layoutHoverCard(gtx) // above the content, under the overlays
+	a.layoutOverlays(gtx)
+	a.layoutHoverCardOver(gtx) // over a dialog whose own list has triggers
+	a.slackcOverlays(gtx)
+	a.layoutToast(gtx)
+	a.rootPointer(gtx)
+	a.keys.processGlobal(gtx) // last: only the keys no widget took
+	composer.KeepFocus(gtx)   // a focused editor this frame didn't draw stays focused
+	a.logMissedFrames(gtx)    // after KeepFocus: what it held this frame
+}
+
+// layoutShell draws the normal window: top nav, rail, banners, the
+// sidebar and the primary panel. It returns the primary panel.
+func (a *App) layoutShell(gtx layout.Context) image.Rectangle {
+	sz := gtx.Constraints.Max
 	navH := gtx.Dp(theme.TopNavH)
 	railW := gtx.Dp(theme.RailW)
 	inset := gtx.Dp(theme.PanelInset)
@@ -610,20 +647,7 @@ func (a *App) frame(gtx layout.Context) {
 			theme.Fill(gtx, image.Rect(primary.Min.X, ws.Min.Y, primary.Min.X+gtx.Dp(1), ws.Max.Y), bc)
 		}
 	}
-
-	ia.Leave()
-	client.Leave()
-
-	a.layoutSwipe(gtx, primary)
-	a.layoutHoverCard(gtx) // above the content, under the overlays
-	a.layoutOverlays(gtx)
-	a.layoutHoverCardOver(gtx) // over a dialog whose own list has triggers
-	a.slackcOverlays(gtx)
-	a.layoutToast(gtx)
-	a.rootPointer(gtx)
-	a.keys.processGlobal(gtx) // last: only the keys no widget took
-	composer.KeepFocus(gtx)   // a focused editor this frame didn't draw stays focused
-	a.logMissedFrames(gtx)    // after KeepFocus: what it held this frame
+	return primary
 }
 
 // ---- primary panel ----
@@ -631,7 +655,7 @@ func (a *App) frame(gtx layout.Context) {
 func (a *App) layoutPrimary(gtx layout.Context) layout.Dimensions {
 	sz := gtx.Constraints.Max
 	secW := 0
-	if a.secondary.open() {
+	if a.secondary.open() && !a.bbmOn() { // the mode shows one container (bbm.go)
 		secW = gtx.Dp(unit.Dp(a.secondary.width))
 		if max := sz.X - gtx.Dp(360); secW > max {
 			secW = max

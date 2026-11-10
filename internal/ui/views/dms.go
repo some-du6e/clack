@@ -285,6 +285,17 @@ func (d *DMs) LayoutList(gtx C) D {
 	return D{Size: size}
 }
 
+// LayoutPane draws only the selected conversation (the simplified
+// layout shows the list and it one at a time).
+func (d *DMs) LayoutPane(gtx C) D {
+	d.frame()
+	d.dmsColors()
+	size := gtx.Constraints.Max
+	gtx.Constraints = layout.Exact(size)
+	fill(gtx, image.Rectangle{Max: size}, d.p.Bg)
+	return d.layoutPane(gtx)
+}
+
 func (d *DMs) layoutPane(gtx C) D {
 	if d.sel != "" {
 		if p, ok := d.h.(Panes); ok {
@@ -577,6 +588,9 @@ func (d *DMs) choose(id string) {
 	}
 	if _, ok := d.h.(Panes); !ok {
 		d.h.Navigate("c/" + id)
+	}
+	if c, ok := d.h.(PaneChooser); ok {
+		c.PaneChosen()
 	}
 	d.h.Invalidate()
 }

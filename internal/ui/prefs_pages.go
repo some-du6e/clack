@@ -504,18 +504,63 @@ func (p *prefsModal) languagePage(f *prefsForm) {
 
 // ---- Accessibility ----
 
+// simplifiedLayoutPref is AccessibilityBBM (prefs AM7V): the legend, its
+// description and an outline button, "Turn On" / "Turn Off"
+// (aria-pressed, data-qa simplified-layout-toggle). The button closes
+// Preferences first (K.O), then starts the mode (step
+// accessibility_pref, the welcome dialog the first time) or stops it.
+// While it's on, "Choose how to display message actions" offers the two
+// a11y_bbm_persist_action radios. Under agentic_ia the legend and text
+// grey, the button is aria-disabled and "Simplified Layout is not yet
+// supported in Slack 6" follows. All of it lives on this device
+// (ui.json), as Slack keeps it in its client store and localStorage.
+func (p *prefsModal) simplifiedLayoutPref(f *prefsForm) {
+	a := p.a
+	f.subheading("Simplified layout mode")
+	desc := "All of Slack’s functionality in a compact, more predictable layout designed to be easier to navigate and promote focus."
+	if a.bbmUnsupported() {
+		f.muted(desc, false)
+		f.button("simplified_layout", "Turn On", false, nil)
+		f.muted("Simplified Layout is not yet supported in Slack 6", false)
+		return
+	}
+	f.para(desc)
+	on := a.bbmOn()
+	label := "Turn On"
+	if on {
+		label = "Turn Off"
+	}
+	f.button("simplified_layout", label, true, func() {
+		a.Post(func() {
+			a.dismissTop() // the Preferences dialog
+			if on {
+				a.stopBBM()
+			} else {
+				a.startBBM("accessibility_pref")
+			}
+		})
+	})
+	if !on {
+		return
+	}
+	f.subheading("Choose how to display message actions")
+	persist := !a.prefs.BBMHoverActions
+	f.option("a11y_bbm_persist_action=persist", "Always show collapsed menu", "Doesn’t support one click reactions", persist, true,
+		func() { a.setBBMPersistActions(true) })
+	f.option("a11y_bbm_persist_action=hover", "Show full action menu on hover only", "Supports one click reactions", !persist, true,
+		func() { a.setBBMPersistActions(false) })
+}
+
 func (p *prefsModal) accessibilityPage(f *prefsForm) {
 	f.subheading("Display")
-	f.subheading("Simplified layout mode")
-	f.para("All of Slack’s functionality in a compact, more predictable layout designed to be easier to navigate and promote focus.")
-	f.button("simplified_layout", "Turn On", false, nil)
+	p.simplifiedLayoutPref(f)
 	f.subheading("Alt text reminders")
 	f.off("a11y_show_alt_text_reminders", "Remind me to add an image description on image uploads", "", p.prefBool("a11y_show_alt_text_reminders", false), false)
 	f.subheading("Other display options")
 	f.off("a11y_peeks_enabled_on_mouse_enter", "Show previews when hovering over tabs", "", p.prefBool("a11y_peeks_enabled_on_mouse_enter", true), false)
 	f.check("underline_links", "Underline links to websites", "", false, false)
 	f.check("a11y_animations", "Allow animations", "Applies to emoji animation, GIFs, and reactions & effects in huddles and across Slack", true, false)
-	f.muted("Simplified layout, alt text reminders and tab previews: "+naNote, false)
+	f.muted("Alt text reminders and tab previews: "+naNote, false)
 	f.hr()
 	f.subheading("Keyboard")
 	f.para("You can improve the way you use Slack by learning our handy keyboard shortcuts.")

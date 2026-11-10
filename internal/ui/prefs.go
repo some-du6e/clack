@@ -52,6 +52,21 @@ type prefs struct {
 	ComposerUpArrow int `json:"composer_up_arrow_shortcut,omitempty"`
 	// Zoom is View > Zoom's level, -3…5 (Slack's zoomLevel; macmenu.go).
 	Zoom int `json:"zoom,omitempty"`
+	// Simplified layout mode (bbm.go). Slack keeps all of it on the
+	// device, none of it in users.prefs: BBM is the client store "bbm"
+	// {enabled} (persisted, plus localConfig bbmEnabled per team);
+	// BBMHoverActions is bbmSettings.persistentActions=false (localStorage
+	// slack-persistent-actions-bbm-setting, true when unset);
+	// BBMOnboarded is slack-onboarded-setting (the welcome dialog was
+	// seen); BBMZoom is slack-zoom-bbm-setting and NonBBMZoom /
+	// NonBBMSidebarHidden are nonBBMSettings' zoom and isSidebarVisible,
+	// put back when the mode ends.
+	BBM                 bool  `json:"bbm,omitempty"`
+	BBMHoverActions     bool  `json:"bbm_hover_actions,omitempty"`
+	BBMOnboarded        bool  `json:"bbm_onboarded,omitempty"`
+	BBMZoom             *int  `json:"bbm_zoom,omitempty"`
+	NonBBMZoom          *int  `json:"non_bbm_zoom,omitempty"`
+	NonBBMSidebarHidden *bool `json:"non_bbm_sidebar_hidden,omitempty"`
 	// ClientTypeface is Appearance > Font: Slack's option object, kept
 	// per device as Slack keeps it in localConfig "client-typeface"
 	// (prefs_font.go). nil is Lato.
@@ -112,7 +127,11 @@ func (a *App) loadPrefs() {
 	if a.prefs.AcctTheme != "" || a.prefs.AcctNoGradients {
 		a.setAcct(acctFromPrefs(a.prefs.AcctTheme, a.prefs.AcctNoGradients))
 	}
-	if a.prefs.Route != "" {
+	if a.prefs.BBM {
+		// Simplified layout mode: a cold boot lands on the BBM tab (4P57
+		// RedirectColdBootToBBM)
+		a.router.Push("bbm")
+	} else if a.prefs.Route != "" && !isBBMRoute(Route(a.prefs.Route)) {
 		a.router.Push(Route(a.prefs.Route))
 	}
 }

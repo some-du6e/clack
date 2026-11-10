@@ -22,9 +22,12 @@ var slackRef = map[string]string{
 	"at":                 "mentions",
 	"attach":             "attachment",
 	"back":               "arrow-left",
-	"bell":               "notifications",
-	"bell-filled":        "notifications-filled",
-	"bell-off":           "notifications-off",
+	// Simplified layout mode (bbm.go)
+	"sign-out":        "sign-out",
+	"caret-left-full": "caret-left-full",
+	"bell":            "notifications",
+	"bell-filled":     "notifications-filled",
+	"bell-off":        "notifications-off",
 
 	"notifications-all-new-posts": "notifications-all-new-posts",
 	"blocks":                      "blocks",

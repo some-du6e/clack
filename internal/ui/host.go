@@ -72,16 +72,34 @@ func (a *App) openDefault() {
 // Back goes back in history.
 func (a *App) Back() {
 	prev := a.router.Current()
-	if r, ok := a.router.Back(); ok {
+	for {
+		r, ok := a.router.Back()
+		if !ok {
+			return
+		}
+		// outside Simplified layout mode the history skips the BBM tab's
+		// entries (B69+ getStackWithoutBBMEntries)
+		if isBBMRoute(r) && !a.bbmOn() && a.router.CanBack() {
+			continue
+		}
 		a.afterRoute(prev, r)
+		return
 	}
 }
 
 // Forward goes forward in history.
 func (a *App) Forward() {
 	prev := a.router.Current()
-	if r, ok := a.router.Forward(); ok {
+	for {
+		r, ok := a.router.Forward()
+		if !ok {
+			return
+		}
+		if isBBMRoute(r) && !a.bbmOn() && a.router.CanForward() {
+			continue
+		}
 		a.afterRoute(prev, r)
+		return
 	}
 }
 
@@ -91,6 +109,7 @@ var onPlace func(id, title, icon string)
 
 func (a *App) afterRoute(prev, r Route) {
 	a.slickRoute(r)
+	a.bbmAfterRoute(prev, r) // Simplified layout mode's container (bbm.go)
 	if onPlace != nil {
 		switch p := r.Page(); {
 		case r.Channel() != "":
