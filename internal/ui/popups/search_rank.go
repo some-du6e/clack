@@ -7,6 +7,7 @@ package popups
 // Scraping policy: recent queries and conversations live in memory only.
 
 import (
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -794,4 +795,70 @@ func srShortDay(t, now time.Time) string {
 		return t.Format("Jan ") + ordinal(d1)
 	}
 	return t.Format("Jan ") + ordinal(d1) + t.Format(", 2006")
+}
+
+// ---- Slack's query tokens (d81O rawTokensFromOps) ----
+
+// srQTokKind is a QuerySuggestionToken type.
+type srQTokKind uint8
+
+const (
+	srQTWord   srQTokKind = iota // STRING: consecutive words merge into one
+	srQTPhrase                   // "quoted" or “smart quoted”
+	srQTFilter                   // modifier:value (filter_modifier_normalized)
+	srQTMember                   // @name or <…>
+)
+
+// srQTok is one raw token.
+type srQTok struct {
+	kind     srQTokKind
+	text     string // the string (words joined by spaces)
+	mod, val string // filters: the normalized modifier ("in", "-from") and its value
+}
+
+// srTokenRe is getTokenRegex: a phrase, a smart-quoted phrase, a
+// modifier:value filter, a member (@x or <…>), else a word; then the rest.
+var srTokenRe = func() *regexp.Regexp {
+	var mods []string
+	for k := range srModKeys {
+		mods = append(mods, "-"+k, k)
+	}
+	sort.Slice(mods, func(i, j int) bool { return len(mods[i]) > len(mods[j]) })
+	f := `(` + strings.Join(mods, "|") + `):\s?((?:[^<>\s]+|<[^>]+>)?)`
+	return regexp.MustCompile(`(?i)^\s*(("([^"]+)")|(“([^“”]+)”)|(` + f + `)|(@[^\s]+|<[^>]+>)|([^\s]+))(.*)$`)
+}()
+
+// srQueryTokens is rawTokensFromOps over the typed text (a plain-text
+// input has no mention or filter pills, so every token comes from the
+// text, as Slack parses pasted or typed text).
+func srQueryTokens(s string) []srQTok {
+	var out []srQTok
+	rest := strings.TrimSpace(s)
+	for rest != "" {
+		m := srTokenRe.FindStringSubmatch(rest)
+		if m == nil {
+			break
+		}
+		switch {
+		case m[3] != "":
+			out = append(out, srQTok{kind: srQTPhrase, text: m[3]})
+		case m[5] != "":
+			out = append(out, srQTok{kind: srQTPhrase, text: m[5]})
+		case m[6] != "":
+			out = append(out, srQTok{kind: srQTFilter, text: m[6], mod: strings.ToLower(m[7]), val: m[8]})
+		case m[9] != "":
+			out = append(out, srQTok{kind: srQTMember, text: m[9]})
+		case m[10] != "":
+			if n := len(out); n > 0 && out[n-1].kind == srQTWord {
+				out[n-1].text += " " + m[10]
+			} else {
+				out = append(out, srQTok{kind: srQTWord, text: m[10]})
+			}
+		}
+		if len(m[11]) == len(rest) {
+			break
+		}
+		rest = strings.TrimSpace(m[11])
+	}
+	return out
 }

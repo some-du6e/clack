@@ -96,10 +96,16 @@ func TestSearchModuleParams(t *testing.T) {
 			"profile_department": "", "profile_celebration": ""}))
 	// the popover's Recent messages
 	now := time.Unix(1794199974, 0)
-	wantForm(t, "inline", inlineParams(InlineOpts{Query: "test", RecentChannels: []string{"C1", "D2"}, Session: s, Now: now}),
+	wantForm(t, "inline", inlineParams(InlineOpts{Query: "test", RecentChannels: []string{"C1", "D2"}, FromMe: true, WithMe: true,
+		Session: s, Now: now}),
 		map[string]string{"search_session_id": s.ID, "client_req_id": s.ReqID, "max_ts": "1794199974", "count": "3",
 			"page": "1", "query": "test", "thread_replies": "", "extract_len": "110", "recent_channels": "C1,D2",
 			"from_me": "true", "with_me": "true"})
+	// omni_quick_message_results off: only the open channel, from/with me false
+	wantForm(t, "inline (off)", inlineParams(InlineOpts{Query: "test", Channel: "C1", Session: s, Now: now}),
+		map[string]string{"search_session_id": s.ID, "client_req_id": s.ReqID, "max_ts": "1794199974", "count": "3",
+			"page": "1", "query": "test", "thread_replies": "", "extract_len": "110", "channel": "C1",
+			"from_me": "false", "with_me": "false"})
 	// search in channel (⌘F): the channel's in: replaces any other
 	wantForm(t, "in channel", messageSearchParams(SearchOpts{Query: "in:<#C9|x> deploy", InChannel: "C1", Sort: "timestamp", Session: s}, true, true),
 		merge(base("messages", "in:<#C1> deploy", "10", "search_in_channel"), map[string]string{

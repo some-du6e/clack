@@ -271,6 +271,14 @@ func TestSearchPopoverBlankSlate(t *testing.T) {
 func TestSearchPopoverRecentsGroups(t *testing.T) {
 	e := srNewEnv(t, false)
 	ctx := context.Background()
+	old := PageInfo // the ui root's page titles
+	PageInfo = func(page string) (string, string) {
+		if page == "saved" {
+			return "Saved", "bookmark"
+		}
+		return "", ""
+	}
+	t.Cleanup(func() { PageInfo = old })
 	a := e.h.a
 	chs := e.fs.ChannelIDs()
 	pref := `{"search":[{"query":"from the pref","type":"SLACK","timestamp":5},{"query":"sf","type":"SALESFORCE","timestamp":9}]}`
@@ -332,6 +340,7 @@ func TestSearchPopoverRecentsGroups(t *testing.T) {
 // "— Open" next to the query for a place.
 func TestSearchPopoverTyping(t *testing.T) {
 	e := srNewEnv(t, false)
+	RecordRecentPlace(e.fs.ChannelIDs()[0], "", "") // where Clack opened: the quick messages' recent channels
 	p := NewSearchPopover(e.h, fakeslack.SearchWord, image.Rectangle{})
 	d := &srDrv{size: image.Pt(1280, 800), w: p}
 	d.until(t, "the message and file suggestions", func() bool {
@@ -342,7 +351,8 @@ func TestSearchPopoverTyping(t *testing.T) {
 		t.Fatal("no search.inline")
 	}
 	last := f[len(f)-1]
-	for k, v := range map[string]string{"query": fakeslack.SearchWord, "count": "3", "extract_len": "110", "from_me": "true", "with_me": "true", "page": "1"} {
+	for k, v := range map[string]string{"query": fakeslack.SearchWord, "count": "3", "extract_len": "110", "from_me": "true", "with_me": "true",
+		"page": "1", "recent_channels": e.fs.ChannelIDs()[0]} {
 		if last.Get(k) != v {
 			t.Errorf("search.inline %s = %q, want %q", k, last.Get(k), v)
 		}
@@ -376,6 +386,162 @@ func TestSearchPopoverTyping(t *testing.T) {
 		// no suggestion matched: Show results is first
 	} else if p.rows[1].kind != srRShow {
 		t.Errorf("Show results isn't right after the top hit: %v", srTitles(p.rows, p.rows[1].kind))
+	}
+}
+
+// omni_quick_message_results (suggestionsQuickMessages): on, the typed
+// words search your recent conversations (from_me, with_me) as cards and
+// the places above are cut to five; an in: filter searches its channel;
+// fewer than three characters, a phrase, or another filter search nothing.
+// Off, only the channel you're in is searched (from_me/with_me false),
+// the rows are the plain ones (text, then "name • date") and the places
+// are cut to eight.
+func TestSearchPopoverQuickMessages(t *testing.T) {
+	e := srNewEnv(t, false)
+	chs := e.fs.ChannelIDs()
+	inline := func() int { return len(e.fs.SearchForms("search.inline")) }
+	open := func(q string) (*SearchPopover, *srDrv) {
+		p := NewSearchPopover(e.h, q, image.Rectangle{})
+		d := &srDrv{size: image.Pt(1280, 900), w: p}
+		d.until(t, "the switcher", func() bool { return p.snapOK })
+		return p, d
+	}
+	settle := func(d *srDrv) {
+		end := time.Now().Add(600 * time.Millisecond) // past the 250 ms debounce
+		for time.Now().Before(end) {
+			d.frame()
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	navRows := func(p *SearchPopover) int {
+		n := 0
+		for _, r := range p.rows {
+			switch r.kind {
+			case srRConv, srRUser, srRChan, srRFile:
+				n++
+			}
+		}
+		return n
+	}
+	if g := e.h.a.Experiment("omni_quick_message_results"); g != "on" {
+		t.Fatalf("the fake account has omni_quick_message_results %q, want on (as the real one)", g)
+	}
+	RecordRecentPlace(chs[0], "", "")
+	RecordRecentPlace(chs[1], "", "")
+
+	// on: recent conversations, cards, five places
+	p, d := open(fakeslack.SearchWord)
+	d.until(t, "quick messages", func() bool { return len(p.msgs) == 3 })
+	f := e.fs.SearchForms("search.inline")
+	last := f[len(f)-1]
+	if last.Get("recent_channels") != chs[1]+","+chs[0] || last.Get("from_me") != "true" || last.Get("with_me") != "true" ||
+		last.Get("channel") != "" {
+		t.Errorf("on: search.inline %v", last)
+	}
+	for _, r := range p.rows {
+		if r.kind == srRMsg && (r.plain || r.heightDp() != 76) {
+			t.Errorf("on: a plain quick message row %+v", r.title)
+		}
+	}
+	if n := navRows(p); n > 5 {
+		t.Errorf("on, with quick messages: %d places, want at most 5", n)
+	}
+
+	// fewer than 3 characters, a phrase, another filter: no search
+	for _, q := range []string{"ze", `"zephyr rollout"`, "from:@nobody zephyr", "@someone"} {
+		n := inline()
+		p, d = open(q)
+		settle(d)
+		if inline() != n || len(p.msgs) != 0 {
+			t.Errorf("%q searched quick messages (%d calls, %d messages)", q, inline()-n, len(p.msgs))
+		}
+	}
+	// no quick messages: up to 15 places
+	p, d = open("e")
+	settle(d)
+	if n := navRows(p); n <= 5 || n > 15 || len(p.msgs) != 0 {
+		t.Errorf("a one-letter query: %d places, %d messages (want 6 to 15 places, no messages)", n, len(p.msgs))
+	}
+
+	// in:#channel: that channel only
+	name := e.h.a.ConvRef(chs[0]).Name
+	p, d = open("in:#" + name + " " + fakeslack.SearchWord)
+	d.until(t, "in: quick messages", func() bool { return p.msgQ != "" })
+	f = e.fs.SearchForms("search.inline")
+	last = f[len(f)-1]
+	if last.Get("channel") != chs[0] || last.Get("with_me") != "true" || last.Get("from_me") != "false" ||
+		!last.Has("recent_channels") || last.Get("query") != fakeslack.SearchWord {
+		t.Errorf("in: search.inline %v", last)
+	}
+	for _, m := range p.msgs {
+		if m.Channel != chs[0] {
+			t.Errorf("in:#%s kept a hit in %s", name, m.Channel)
+		}
+	}
+
+	// off: only the open channel; plain rows; eight places
+	e.h.a.SetExperimentGroup("omni_quick_message_results", "off")
+	RecordRecentPlace("view:activity", "Activity", "activity") // not in a channel: nothing to search
+	n := inline()
+	p, d = open(fakeslack.SearchWord)
+	settle(d)
+	if inline() != n || len(p.msgs) != 0 {
+		t.Errorf("off, on a page: %d search.inline calls", inline()-n)
+	}
+	RecordRecentPlace(chs[2], "", "")
+	p, d = open(fakeslack.SearchWord)
+	d.until(t, "off quick messages", func() bool { return p.msgQ != "" })
+	f = e.fs.SearchForms("search.inline")
+	last = f[len(f)-1]
+	if last.Get("channel") != chs[2] || last.Get("from_me") != "false" || last.Get("with_me") != "false" || last.Has("recent_channels") {
+		t.Errorf("off: search.inline %v", last)
+	}
+	for _, r := range p.rows {
+		if r.kind == srRMsg && (!r.plain || r.heightDp() != 54) {
+			t.Errorf("off: a card quick message row %q", r.title)
+		}
+	}
+	if len(p.msgs) > 0 {
+		if n := navRows(p); n > 8 {
+			t.Errorf("off, with quick messages: %d places, want at most 8", n)
+		}
+		x := d.scan()
+		if !srHas(x, "\u2022") {
+			t.Errorf("off: no metadata bullet in %q", x)
+		}
+	}
+}
+
+// Slack's query tokens (rawTokensFromOps): words merge into one string,
+// quotes are phrases, modifier:value a filter, @x and <…> mentions.
+func TestSearchQueryTokens(t *testing.T) {
+	kinds := func(q string) string {
+		var b strings.Builder
+		for _, tk := range srQueryTokens(q) {
+			b.WriteString([]string{"w", "p", "f", "m"}[tk.kind])
+			if tk.kind == srQTFilter {
+				b.WriteString("(" + tk.mod + "=" + tk.val + ")")
+			}
+			b.WriteString(" ")
+		}
+		return strings.TrimSpace(b.String())
+	}
+	for q, want := range map[string]string{
+		"zephyr rollout":            "w",
+		"in:#general zephyr notes":  "f(in=#general) w",
+		"zephyr in: #general":       "w f(in=#general)",
+		`say "the rollout" twice`:   "w p w",
+		"from:<@U123> hi -in:#rand": "f(from=<@U123>) w f(-in=#rand)",
+		"@karim hello":              "m w",
+		"hasmy::tada: x":            "f(hasmy=:tada:) w",
+		"":                          "",
+	} {
+		if got := kinds(q); got != want {
+			t.Errorf("tokens(%q) = %q, want %q", q, got, want)
+		}
+	}
+	if tk := srQueryTokens("zephyr   rollout  plan"); len(tk) != 1 || tk[0].text != "zephyr rollout plan" {
+		t.Errorf("merged words %+v", tk)
 	}
 }
 
@@ -799,6 +965,7 @@ func TestSearchPopoverGhostText(t *testing.T) {
 // confirmation replaces the dialog.
 func TestSearchFeedbackFromPopover(t *testing.T) {
 	e := srNewEnv(t, false)
+	RecordRecentPlace(e.fs.ChannelIDs()[0], "", "")
 	p := NewSearchPopover(e.h, fakeslack.SearchWord, image.Rectangle{})
 	d := &srDrv{size: image.Pt(1280, 800), w: p}
 	d.until(t, "suggestions", func() bool { return p.snapOK && len(p.msgs) == 3 })
@@ -1034,6 +1201,7 @@ func TestSearchShots(t *testing.T) {
 		d.until(t, "the snapshot", func() bool { return p.snapOK })
 		shot(d, "search-popover-blank-"+mode)
 
+		RecordRecentPlace(chs[0], "", "") // the quick messages' recent channels
 		p2 := NewSearchPopover(e.h, fakeslack.SearchWord, image.Rectangle{})
 		d = &srDrv{size: image.Pt(1280, 800), w: p2, dark: dark}
 		d.until(t, "suggestions", func() bool { return len(p2.msgs) == 3 && len(p2.files) == 1 })

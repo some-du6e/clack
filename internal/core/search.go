@@ -489,11 +489,17 @@ func (a *App) ModuleCount(ctx context.Context, module, query string, s SearchSes
 	return 0, nil
 }
 
-// InlineOpts is a search.inline call (the popover's Recent messages).
+// InlineOpts is a search.inline call (the popover's Recent messages,
+// Slack's searchInline thunk as suggestionsQuickMessages calls it).
 type InlineOpts struct {
-	Query          string
-	Count          int // 3
+	Query string
+	Count int // 3
+	// Channel / User limit the search to a conversation (an in: filter,
+	// or the open channel with omni_quick_message_results off).
+	Channel, User string
+	// RecentChannels is recent_channels (nil: not sent).
 	RecentChannels []string
+	FromMe, WithMe bool
 	Session        SearchSession
 	Now            time.Time
 }
@@ -509,10 +515,20 @@ func inlineParams(o InlineOpts) url.Values {
 	if now.IsZero() {
 		now = time.Now()
 	}
-	return url.Values{"search_session_id": {o.Session.ID}, "client_req_id": {o.Session.ReqID},
+	p := url.Values{"search_session_id": {o.Session.ID}, "client_req_id": {o.Session.ReqID},
 		"max_ts": {strconv.FormatInt(now.Unix(), 10)}, "count": {strconv.Itoa(o.Count)}, "page": {"1"},
 		"query": {o.Query}, "thread_replies": {""}, "extract_len": {"110"},
-		"recent_channels": {strings.Join(o.RecentChannels, ",")}, "from_me": {"true"}, "with_me": {"true"}}
+		"from_me": {boolStr(o.FromMe)}, "with_me": {boolStr(o.WithMe)}}
+	if o.Channel != "" {
+		p.Set("channel", o.Channel)
+	}
+	if o.User != "" {
+		p.Set("user", o.User)
+	}
+	if o.RecentChannels != nil {
+		p.Set("recent_channels", strings.Join(o.RecentChannels, ","))
+	}
+	return p
 }
 
 // SearchInline is the popover's "Recent messages" (search.inline): each

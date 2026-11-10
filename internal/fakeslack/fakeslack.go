@@ -1034,7 +1034,14 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			"suggested_sections_auto_sort_v2": g("on"),
 			"lists_tabbing_navigation":        g("on"),
 			// focus mode and the Availability section (see core's defaultExperimentGroups)
-			"silent_sidebar": g("on"), "availability_prefs_section": g("on")})
+			"silent_sidebar": g("on"), "availability_prefs_section": g("on"),
+			// search and the switcher (2026-11-10). desktop_search_recents_read
+			// and _write (on for the account) stay unassigned here so other
+			// tests' calls don't change; the recents tests force them.
+			"omni_quick_message_results": g("on"), "search_autocomplete_promote_exact_name_matches": g("treatment_5"),
+			"fe_nav_first_apply_post_processing_rules": g("treatment"), "omni_date_quick_filters": g("on"),
+			"srp_card_explore": g("on"), "search_file_channel_messages": g("on"),
+			"work_objects_message_search_xp_v2": g("on")})
 	case "users.prefs.get":
 		s.prefsMu.Lock()
 		m := make(map[string]any, len(s.prefs))

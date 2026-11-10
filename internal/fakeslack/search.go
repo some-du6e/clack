@@ -499,8 +499,16 @@ func (s *Server) handleSearch(method string, f url.Values) (any, bool) {
 		var items []any
 		n := 0
 		cnt, _ := strconv.Atoi(f.Get("count"))
+		dm := ""
+		if u := f.Get("user"); u != "" { // in:@user: the DM with them
+			for _, c := range s.convs {
+				if c.IsIM && c.User == u {
+					dm = c.ID
+				}
+			}
+		}
 		for _, h := range s.searchCorpus(len(s.convs) <= 80) {
-			if !o.match(h) {
+			if !o.match(h) || (f.Get("channel") != "" && h.ch != f.Get("channel")) || (f.Get("user") != "" && h.ch != dm) {
 				continue
 			}
 			n++

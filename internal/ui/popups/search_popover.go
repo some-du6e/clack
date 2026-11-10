@@ -87,6 +87,9 @@ type srRow struct {
 	segs  []srSeg
 	toks  []srTok
 	tokW  int
+	// plain is the quick message row omni_quick_message_results off draws
+	// (the text first, then "name • date"); else the card.
+	plain bool
 }
 
 func (r *srRow) selectable() bool {
@@ -108,6 +111,9 @@ func (r *srRow) heightDp() float32 {
 	case srRDivider:
 		return 17
 	case srRMsg:
+		if r.plain {
+			return 54 // --multiline: padding 4, two 1.5 lines
+		}
 		return 76
 	case srRMore:
 		return 32
@@ -643,8 +649,23 @@ func (p *SearchPopover) recentPlaces(seen map[string]bool, limit int) []srRow {
 	return out
 }
 
+// srQuickOn is omni_quick_message_results "on".
+func (p *SearchPopover) srQuickOn() bool {
+	c := p.h.Core()
+	return c != nil && c.Experiment("omni_quick_message_results") == "on"
+}
+
 func (p *SearchPopover) typingRows(rows []srRow, q string, now time.Time) []srRow {
-	local := srRank(p.cands, q, 8, false)
+	// reorderSuggestionsForActiveQuery: with quick messages the places are
+	// cut to 5 (omni_quick_message_results on) or 8, else to 15
+	total := 15
+	if len(p.msgs) > 0 {
+		total = 8
+		if p.srQuickOn() {
+			total = 5
+		}
+	}
+	local := srRank(p.cands, q, total, false)
 	var remote []srCand
 	if len(p.rUsers) > 0 || len(p.rChans) > 0 {
 		rc := make([]srCand, 0, len(p.rUsers))
@@ -689,7 +710,7 @@ func (p *SearchPopover) typingRows(rows []srRow, q string, now time.Time) []srRo
 	if len(remote) > 0 {
 		sort.SliceStable(remote, func(i, j int) bool { return remote[i].Tier > remote[j].Tier })
 	}
-	sug := srMerge(local, remote, 5, 2) // Slack: top hit, "Show results", then 4
+	sug := srMerge(local, remote, total, 2) // Slack: top hit, "Show results", then the rest
 	show := srRow{kind: srRShow, id: q, title: q, icon: "search"}
 	if len(sug) == 0 {
 		rows = append(rows, show)
@@ -703,18 +724,148 @@ func (p *SearchPopover) typingRows(rows []srRow, q string, now time.Time) []srRo
 	if len(p.msgs) > 0 {
 		rows = append(rows, srRow{kind: srRDivider}, srRow{kind: srRHeader, title: "Recent messages"})
 		terms := srParse(q).Highlights()
+		on := p.srQuickOn()
 		for i := range p.msgs {
 			if i == 3 {
 				break
 			}
 			m := &p.msgs[i]
 			name, av := srAuthor(p.h, m)
-			rows = append(rows, srRow{kind: srRMsg, id: m.Channel + "/" + m.TS, msg: m, name: name, avatar: av,
-				where: srWhereOf(p.h, p.msgConvs, m), when: srShortDay(tsTime(m.TS), now),
-				segs: srHighlight(srFlatten(srBody(m)), terms)})
+			r := srRow{kind: srRMsg, id: m.Channel + "/" + m.TS, msg: m, name: name, avatar: av,
+				when: srShortDay(tsTime(m.TS), now), segs: srHighlight(srFlatten(srBody(m)), terms), plain: !on}
+			if on {
+				r.where = p.srQuickWhere(m)
+			}
+			rows = append(rows, r)
 		}
 	}
 	return rows
+}
+
+// srQuickWhere is the quick message card's location (SuggestionQuickMessage
+// with omni_quick_message_results on): a DM reads "Direct Message with
+// {name}" ("Direct Message with you" in your own; an app's DM message only
+// names the app in a thread), else the conversation.
+func (p *SearchPopover) srQuickWhere(m *core.Message) srWhere {
+	w := srWhereOf(p.h, p.msgConvs, m)
+	ref, ok := p.msgConvs[m.Channel]
+	if c := p.h.Core(); !ok && c != nil {
+		ref = c.ConvRef(m.Channel)
+	}
+	if ref.Kind != "im" {
+		return w
+	}
+	self := ""
+	if c := p.h.Core(); c != nil {
+		self = c.Self().ID
+	}
+	switch {
+	case ref.User == self && self != "":
+		w.name = "Direct Message with you"
+	case m.BotID != "":
+		if w.pre == "" {
+			w.name = "" // no thread: just the sender
+		} else {
+			w.name = " " + w.name
+		}
+	default:
+		w.name = "Direct Message with " + w.name
+	}
+	return w
+}
+
+// srQuickArgs is suggestionsQuickMessages' search.inline call for the
+// typed text, ok=false when Slack shows no quick messages: the text must
+// be words only (one STRING token), or words and one in: filter, and the
+// words at least 3 characters. With omni_quick_message_results on the
+// search covers your recent conversations (from_me, with_me), an in:
+// filter its conversation; off, only the channel you're in.
+func (p *SearchPopover) srQuickArgs(text string) (core.InlineOpts, bool) {
+	toks := srQueryTokens(text)
+	o := core.InlineOpts{Count: 3}
+	on := p.srQuickOn()
+	switch {
+	case len(toks) == 2 && (toks[0].kind == srQTWord) != (toks[1].kind == srQTWord) &&
+		(toks[0].mod == "in" || toks[1].mod == "in"):
+		w, f := toks[0], toks[1]
+		if f.kind == srQTWord {
+			w, f = f, w
+		}
+		o.Query = w.text
+		if ch := p.srInChannel(f.val); ch != "" {
+			if on {
+				o.RecentChannels, o.WithMe = []string{}, true // its recent threads (none kept)
+			}
+			o.Channel = ch
+		} else if u := p.srInMember(f.val); u != "" {
+			if on {
+				o.RecentChannels, o.WithMe = []string{}, true
+			}
+			o.User = u
+		}
+	case len(toks) == 1 && toks[0].kind == srQTWord:
+		if on {
+			o.RecentChannels = srRecentChannels() // recent channels; Clack keeps no thread history
+			if o.RecentChannels == nil {
+				o.RecentChannels = []string{}
+			}
+			o.FromMe, o.WithMe = true, true
+		} else if cur := srCurrentPlace(); srLooksLikeChannelID(cur) {
+			o.Channel = cur
+		}
+		o.Query = toks[0].text
+	default:
+		return o, false
+	}
+	if len([]rune(o.Query)) < 3 || (o.Channel == "" && len(o.RecentChannels) == 0 && o.User == "") {
+		return o, false
+	}
+	return o, true
+}
+
+// srLooksLikeChannelID is looksLikeChannelId.
+func srLooksLikeChannelID(id string) bool {
+	if len(id) < 9 || !strings.ContainsRune("CGDZ", rune(id[0])) {
+		return false
+	}
+	for _, r := range id[1:] {
+		if !(r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// srInChannel resolves an in: value to a conversation (InQuerySuggestionToken:
+// <#C…|name>, #name or name).
+func (p *SearchPopover) srInChannel(v string) string {
+	if id := srRefID(v); id != "" && v[1] == '#' {
+		return id
+	}
+	name := strings.TrimPrefix(v, "#")
+	for _, cd := range p.cands {
+		if cd.Kind == srKConv && (cd.ConvK == "channel" || cd.ConvK == "private") && strings.EqualFold(cd.Name, name) {
+			return cd.ID
+		}
+	}
+	return ""
+}
+
+// srInMember resolves an in: value to a person (<@U…> or @handle).
+func (p *SearchPopover) srInMember(v string) string {
+	if id := srRefID(v); id != "" && v[1] == '@' {
+		return id
+	}
+	h, ok := strings.CutPrefix(v, "@")
+	if !ok {
+		return ""
+	}
+	for _, cd := range p.cands {
+		if cd.Kind == srKUser && (strings.EqualFold(cd.Handle, h) || strings.EqualFold(cd.Name, h)) {
+			return cd.ID
+		}
+	}
+	return ""
 }
 
 // ---- async ----
@@ -727,6 +878,8 @@ func (p *SearchPopover) onQuery(gtx layout.Context) {
 	if q == "" {
 		p.rUsers, p.rChans, p.rUQ, p.rCQ = nil, nil, "", ""
 		p.msgs, p.msgConvs, p.msgQ = nil, nil, ""
+	} else if _, ok := p.srQuickArgs(q); !ok {
+		p.msgs, p.msgConvs, p.msgQ = nil, nil, "" // eZ = []: none for this text
 	} else if p.msgQ != "" && !strings.HasPrefix(strings.ToLower(q), strings.ToLower(p.msgQ)) {
 		p.msgs, p.msgConvs, p.msgQ = nil, nil, ""
 	}
@@ -774,21 +927,34 @@ func (p *SearchPopover) tick(gtx layout.Context) {
 			gtx.Execute(op.InvalidateCmd{At: due})
 		} else {
 			p.msgFired = true
-			sess := p.sess
-			recent := srRecentChannels()
-			run(p.h, func(ctx context.Context) (core.SearchResult, error) {
-				res, err := c.SearchInline(ctx, core.InlineOpts{Query: q, RecentChannels: recent, Session: sess})
-				if err == nil {
-					res.Messages = tautSearchInline(ctx, p.h, q, res.Messages) // free without plugins
-				}
-				return res, err
-			}, func(res core.SearchResult, err error) {
-				if p.done || seq != p.seq || err != nil {
-					return
-				}
-				p.msgs, p.msgConvs, p.msgQ = res.Messages, res.Convs, q
-				p.rebuild(time.Now(), false)
-			})
+			if o, ok := p.srQuickArgs(q); ok {
+				o.Session = p.sess
+				on := p.srQuickOn()
+				dm := p.dmOf[o.User]
+				run(p.h, func(ctx context.Context) (core.SearchResult, error) {
+					res, err := c.SearchInline(ctx, o)
+					if err == nil {
+						res.Messages = tautSearchInline(ctx, p.h, q, res.Messages) // free without plugins
+					}
+					return res, err
+				}, func(res core.SearchResult, err error) {
+					if p.done || seq != p.seq || err != nil {
+						return
+					}
+					if on && (o.Channel != "" || o.User != "") {
+						// the hits in the in: conversation only
+						keep := res.Messages[:0:0]
+						for _, m := range res.Messages {
+							if (o.Channel != "" && m.Channel == o.Channel) || (o.User != "" && dm != "" && m.Channel == dm) {
+								keep = append(keep, m)
+							}
+						}
+						res.Messages = keep
+					}
+					p.msgs, p.msgConvs, p.msgQ = res.Messages, res.Convs, q
+					p.rebuild(time.Now(), false)
+				})
+			}
 			run(p.h, func(ctx context.Context) ([]core.File, error) { return c.AutocompleteFiles(ctx, q) },
 				func(fs []core.File, err error) {
 					if p.done || seq != p.seq || err != nil {
@@ -1659,17 +1825,26 @@ func srBadge(gtx layout.Context, th *theme.Theme, cl *Colors, n, right, h int) i
 
 func (p *SearchPopover) msgRow(gtx layout.Context, th *theme.Theme, cl *Colors, i int, sz image.Point, name, av string, rp slackc.Props) layout.Dimensions {
 	r := &p.rows[i]
+	if r.plain {
+		return p.msgRowPlain(gtx, th, cl, i, sz, name, av, rp)
+	}
+	// the card (--quick_message_item--card: 1px otl-ter, radius 12,
+	// padding 12/14/12/12) turns --selected when picked (#1264a3, white
+	// text); the pseudo-selected row is base-ter around and inside it
 	sel := i == p.sel && p.picked
+	pseudo := i == p.sel && !p.picked && gtx.Focused(&p.ed)
 	gtx.Constraints = layout.Exact(sz)
 	return p.clicks[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min = image.Point{}
 		cr := image.Rect(dp(gtx, 16), dp(gtx, 6), sz.X-dp(gtx, 16), sz.Y-dp(gtx, 6))
-		rad := dp(gtx, 8)
-		bg := cl.Bg
-		if sel {
+		rad := dp(gtx, 12)
+		bg, fg, fg3 := cl.Bg, cl.Fg, cl.Fg3
+		switch {
+		case sel:
+			bg, fg, fg3 = cl.Highlight, cl.HighText, cl.HighText
+		case pseudo:
+			fill(gtx, image.Rectangle{Max: sz}, cl.Selected)
 			bg = cl.Selected
-		} else if p.clicks[i].Hovered() {
-			bg = cl.BgHover
 		}
 		rrect(gtx, cr, rad, cl.Ring)
 		rrect(gtx, cr.Inset(1), rad-1, bg)
@@ -1685,7 +1860,7 @@ func (p *SearchPopover) msgRow(gtx layout.Context, th *theme.Theme, cl *Colors, 
 			ww := textW(gtx, th, 13, theme.Regular, r.when)
 			at(gtx, image.Pt(right-ww, ly), func(gtx layout.Context) layout.Dimensions {
 				return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-					return text(gtx, th, 13, theme.Regular, cl.Fg3, r.when)
+					return text(gtx, th, 13, theme.Regular, fg3, r.when)
 				})
 			})
 			right -= ww + dp(gtx, 12)
@@ -1694,11 +1869,11 @@ func (p *SearchPopover) msgRow(gtx layout.Context, th *theme.Theme, cl *Colors, 
 		d := at(gtx, image.Pt(x, ly), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, right-x), lh)}
 			return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 15, theme.Black, cl.Fg, name)
+				return text(gtx, th, 15, theme.Black, fg, name)
 			})
 		})
 		x += d.Size.X + dp(gtx, 6)
-		srDrawWhere(gtx, p.h, r.where, x, ly, right, lh, bg)
+		srDrawWhereFg(gtx, p.h, r.where, x, ly, right, lh, bg, fg3)
 		bw := cr.Max.X - dp(gtx, 16) - tx
 		if r.tokW != bw {
 			ell := textW(gtx, th, 15, theme.Regular, " …")
@@ -1709,9 +1884,88 @@ func (p *SearchPopover) msgRow(gtx layout.Context, th *theme.Theme, cl *Colors, 
 			r.toks, r.tokW = toks, bw
 		}
 		at(gtx, image.Pt(tx, ly+lh), func(gtx layout.Context) layout.Dimensions {
-			srDrawToks(gtx, th, cl, r.toks, dp(gtx, 22), cl.Fg)
+			srDrawToks(gtx, th, cl, r.toks, dp(gtx, 22), fg)
 			return layout.Dimensions{}
 		})
+		pointerCursor(gtx, sz)
+		return layout.Dimensions{Size: sz}
+	})
+}
+
+// msgRowPlain is SuggestionQuickMessage with omni_quick_message_results
+// off: a --multiline suggestion item (padding 4px 16px, the 36px avatar
+// 12px before the text) with the extract on top (15px, one line, …
+// where Slack cut it) and the metadata under it (13px at 70%: the
+// sender, "• " or "⟳ Reply in a thread • ", the date). The picked row is
+// --selected (#1264a3, white).
+func (p *SearchPopover) msgRowPlain(gtx layout.Context, th *theme.Theme, cl *Colors, i int, sz image.Point, name, av string, rp slackc.Props) layout.Dimensions {
+	r := &p.rows[i]
+	picked := i == p.sel && p.picked
+	pseudo := i == p.sel && !p.picked && gtx.Focused(&p.ed)
+	gtx.Constraints = layout.Exact(sz)
+	return p.clicks[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min = image.Point{}
+		fg, meta := cl.Fg, cl.Fg2
+		switch {
+		case picked:
+			fill(gtx, image.Rectangle{Max: sz}, cl.Highlight)
+			fg, meta = cl.HighText, cl.HighText
+		case pseudo:
+			fill(gtx, image.Rectangle{Max: sz}, cl.Selected)
+		}
+		ax := dp(gtx, 16)
+		at(gtx, image.Pt(ax, (sz.Y-dp(gtx, 36))/2), func(gtx layout.Context) layout.Dimensions {
+			return srAvatar(gtx, p.h, r.msg, av, 36, rp)
+		})
+		tx := ax + dp(gtx, 36) + dp(gtx, 12)
+		right := sz.X - dp(gtx, 16)
+		lh := dp(gtx, 22)
+		y1 := dp(gtx, 2) // padding 4, the top line's margin -2
+		bw := maxInt(1, right-tx)
+		if r.tokW != bw {
+			ell := textW(gtx, th, 15, theme.Regular, "…")
+			toks, _, over := srWrapFit(gtx, th, r.segs, bw, 1, ell)
+			if over {
+				toks = append(toks, srTok{s: "…", x: srEndX(toks, 0), w: ell})
+			}
+			r.toks, r.tokW = toks, bw
+		}
+		at(gtx, image.Pt(tx, y1), func(gtx layout.Context) layout.Dimensions {
+			srDrawToks(gtx, th, cl, r.toks, lh, fg)
+			return layout.Dimensions{}
+		})
+		y2 := y1 + lh + dp(gtx, 2)
+		x := tx
+		put := func(s string) {
+			if x >= right || s == "" {
+				return
+			}
+			d := at(gtx, image.Pt(x, y2), func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints = layout.Constraints{Max: image.Pt(right-x, lh)}
+				return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
+					return text(gtx, th, 13, theme.Regular, meta, s)
+				})
+			})
+			x += d.Size.X
+		}
+		bullet := func() {
+			x += dp(gtx, 6)
+			put("\u2022")
+			x += dp(gtx, 6)
+		}
+		put(name)
+		if r.msg != nil && r.msg.ThreadTS != "" && r.msg.ThreadTS != r.msg.TS {
+			x += dp(gtx, 6)
+			if is := dp(gtx, 13); x+is < right {
+				at(gtx, image.Pt(x, y2+(lh-is)/2), func(gtx layout.Context) layout.Dimensions {
+					return icon(gtx, "threads", 13, meta)
+				})
+				x += is
+			}
+			put(" Reply in a thread")
+		}
+		bullet()
+		put(r.when)
 		pointerCursor(gtx, sz)
 		return layout.Dimensions{Size: sz}
 	})
@@ -1948,8 +2202,14 @@ func srWhereOf(h Host, refs map[string]core.ConvRef, m *core.Message) srWhere {
 // srDrawWhere draws a location label at (x, y) in a band of height h,
 // clipped at right. bg is the background behind it (facepile rings).
 func srDrawWhere(gtx layout.Context, hst Host, w srWhere, x, y, right, h int, bg color.NRGBA) {
+	srDrawWhereFg(gtx, hst, w, x, y, right, h, bg, colorsOf(hst.Theme()).Fg3)
+}
+
+// srDrawWhereFg is srDrawWhere in fg (a picked card's white).
+func srDrawWhereFg(gtx layout.Context, hst Host, w srWhere, x, y, right, h int, bg, fg color.NRGBA) {
 	th := hst.Theme()
 	cl := colorsOf(th)
+	cl.Fg3 = fg
 	if w.pre != "" && x < right {
 		d := at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(right-x, h)}
