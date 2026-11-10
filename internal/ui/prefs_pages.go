@@ -309,8 +309,10 @@ var sidebarViews = []struct{ pref, label string }{
 
 func (p *prefsModal) homePage(f *prefsForm) {
 	f.subheading("Channel organization")
-	f.off("disable_channel_join_banner", "Show suggestions for getting started in new channels", "", !p.prefBool("disable_channel_join_banner", false), false)
-	f.na()
+	// EnableChannelJoinExperiencePref under isAutoSortRolloutActive: the
+	// box is the pref's negation; on, the channel join banner shows over
+	// the composer (joinbanner.go)
+	f.check("disable_channel_join_banner", "Show suggestions for getting started in new channels", "", false, true)
 	// Slack's servers file a joined channel into a section (the client
 	// only reads the placement back): the box is the pref's negation.
 	f.check("disable_auto_channel_sort", "Sort channels into sidebar sections automatically", "", false, true)
@@ -324,13 +326,10 @@ func (p *prefsModal) homePage(f *prefsForm) {
 	f.gap()
 	f.subheading("Always show in the sidebar:")
 	for _, v := range sidebarViews {
-		if v.pref == "enable_unread_view" { // Clack has no Unreads view
-			f.off(v.pref, v.label, "", p.prefBool(v.pref, false), false)
-			continue
-		}
-		f.check(v.pref, v.label, "", true, false)
+		// shouldShowAllUnreadsLink: Unreads shows only when the pref is
+		// true (default off); the others unless false
+		f.check(v.pref, v.label, "", v.pref != "enable_unread_view", false)
 	}
-	f.muted("Unreads: "+naNote, false)
 	f.hr()
 
 	custom := func(key string) int {

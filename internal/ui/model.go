@@ -86,3 +86,15 @@ func (c *convInfo) displayName() string {
 	}
 	return c.Name
 }
+
+// unsuppressedUnreads is Slack's totalUnsuppressedUnreadsInChannels > 0
+// (82Kz f3): a conversation the unread model counts (not muted, a
+// member, not archived) has unreads.
+func (m *model) unsuppressedUnreads() bool {
+	for _, c := range m.Convs {
+		if (c.Unread || c.Mentions > 0) && !c.Muted && !c.Archived && !c.Preview {
+			return true
+		}
+	}
+	return false
+}

@@ -77,6 +77,10 @@ type Size struct {
 	// #plugin-bench (500 messages), #admins-only and a Slackbot DM; the
 	// viewer becomes a workspace admin.
 	PluginBench bool
+	// Unreads adds the Unreads view's and the channel join banner's
+	// fixtures (unreads.go): unread channels, a muted one, a channel
+	// whose message_input megaphone space holds the join banner.
+	Unreads bool
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -464,6 +468,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.PluginBench {
 		s.addPluginBench() // plugin_bench.go
+	}
+	if sz.Unreads {
+		s.addUnreads() // unreads.go
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", s.api)
@@ -956,6 +963,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleThreadHeader(method, f); handled { // threadheader.go
 		return out
 	}
+	if out, handled := s.handleUnreads(method, f); handled { // unreads.go
+		return out
+	}
 	// the bench threads' replies: ahead of the switch, whose
 	// conversations.replies answers every other thread with none
 	if method == "conversations.replies" && s.Size.PluginBench {
@@ -984,6 +994,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 					e.MentionCount = 1 + i%4
 				}
 			}
+			if fx, ok := s.unreadsCount(c.ID); ok { // unreads.go
+				e = fx
+			}
 			e.LastRead, e.HasUnreads, e.MentionCount = s.applyMark(c.ID, e.LastRead, e.Latest, e.HasUnreads, e.MentionCount)
 			if c.IsIM {
 				ims = append(ims, e)
@@ -1009,7 +1022,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			"dm_recency_sort_rollout": g("without_edu"), "reskin_custom_responses": g("on"), "temp_join_channel": g("on"),
 			"sidebar_section_search": g("on"), "add_channels_channel_sections_slackathon": g("on"), "mute_channel_edu": g("on"),
 			"session_channels": g("on"), "session_channel_views": g("on"), "code_channels_naming": g("on"),
-			"composer_smart_symbols": g("on"), "agents_in_dm_sidebar": g("on"), "agents_in_dm_sidebar_pref": g("on")})
+			"composer_smart_symbols": g("on"), "agents_in_dm_sidebar": g("on"), "agents_in_dm_sidebar_pref": g("on"),
+			"suggested_sections_auto_sort_v2": g("on")})
 	case "users.prefs.get":
 		s.prefsMu.Lock()
 		m := make(map[string]any, len(s.prefs))
@@ -1321,6 +1335,23 @@ func (s *Server) historyPage(f url.Values) any {
 		}
 	}
 	end := min(len(msgs), start+limit)
+	if oldest := f.Get("oldest"); oldest != "" {
+		// Slack answers oldest (without latest) with the messages just
+		// after it, newest first; has_more when newer ones remain.
+		incl := f.Get("inclusive") == "true"
+		stop := start
+		for stop < len(msgs) && (slackTSLess(oldest, msgs[stop].TS) || incl && msgs[stop].TS == oldest) {
+			stop++
+		}
+		from := start
+		if latest == "" {
+			from = max(start, stop-limit)
+		}
+		end = min(stop, from+limit)
+		var buf bytes.Buffer
+		_ = json.NewEncoder(&buf).Encode(map[string]any{"ok": true, "messages": msgs[from:end], "has_more": from > start, "pin_count": 0})
+		return buf.Bytes()
+	}
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	_ = enc.Encode(map[string]any{"ok": true, "messages": msgs[start:end], "has_more": end < len(msgs), "pin_count": 0})

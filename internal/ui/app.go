@@ -129,6 +129,7 @@ type App struct {
 
 	router          router
 	clicks          clickables
+	joinBannerCh    string // the channel whose join banner was last laid out (joinbanner.go)
 	grad            gradient
 	sidebar         sidebarState
 	secondary       secondaryState

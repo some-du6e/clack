@@ -18,6 +18,9 @@ const SlackFallback = "dot"
 // settings, warning, eye-closed, glasses, megaphone, plug, bug, …) need no
 // entry: Slack tries the registry first.
 var slackIconNames = map[string]string{
+	// the legacy font Icon type "circle-fill" (the Unreads header's
+	// "New messages" dot): a filled circle
+	"circle-fill": "dot",
 	// catalogue names (docs/PLUGINS-components.md §1.12)
 	"arrow-left":           "back",
 	"eye-open":             "eye",

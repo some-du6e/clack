@@ -352,6 +352,10 @@ func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
 	p.ActivityDMsOptOut = boolean("activity_dms_opt_out", false)
 	p.CompactRail = boolean("ia4_compact_mode", false)
 	p.SendOnModEnter = boolean("msg_input_send_btn", false)
+	// shouldShowAllUnreadsLink: the Unreads link needs enable_unread_view true
+	if !boolean("enable_unread_view", false) {
+		p.HiddenViews = append(p.HiddenViews, "enable_unread_view")
+	}
 	for _, k := range []string{"enable_threads_view", "enable_huddles_home_view", "enable_sent_view", "enable_saved_view", "enable_unified_directory_view"} {
 		if !boolean(k, true) {
 			p.HiddenViews = append(p.HiddenViews, k)
