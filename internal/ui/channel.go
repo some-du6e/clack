@@ -11,6 +11,7 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/unit"
 
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
@@ -192,7 +193,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 						})
 						at(gtx, image.Pt(gtx.Dp(30), 0), image.Pt(gtx.Dp(44), btn), func(gtx layout.Context) layout.Dimensions {
 							return vcenter(gtx, btn, func(gtx layout.Context) layout.Dimensions {
-								return a.th.Label(gtx, 13, theme.Bold, c.FgMuted, "Huddle")
+								return a.th.Label(gtx, 13, theme.Bold, c.FgMuted, i18n.T("huddles", "Huddle"))
 							})
 						})
 						return layout.Dimensions{Size: image.Pt(gtx.Dp(74), btn)}
@@ -485,6 +486,7 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 	cur := a.chTab[ch]
 	for i, t := range a.channelTabs(ch) {
 		i, t := i, t
+		t.label = i18n.T("tabbed-channel", t.label) // the standard tabs are Slack's; a bookmark's own name misses and stays
 		lw := a.th.Measure(gtx, 13, theme.Bold, t.label)
 		if t.spans != nil {
 			lw = a.spansWidth(gtx, t.spans, 13)

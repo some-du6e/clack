@@ -15,6 +15,7 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/slackc"
@@ -43,6 +44,7 @@ type sbRow struct {
 	section string
 	gap     int               // dp, for sbGap
 	itemKey string            // Slack's data-item-key ("" = untagged spacer)
+	tr      i18n.NS           // label is Slack's string in this namespace ("" = data, drawn as is)
 	btn     *widget.Clickable // resolved once per rebuild (no per-frame key strings)
 }
 
@@ -80,12 +82,12 @@ type sidebarState struct {
 // UnreadsSidebarIcon's mark-as-unread, shown only while
 // enable_unread_view is true (shouldShowAllUnreadsLink).
 var sbLinks = []sbRow{
-	{kind: sbLink, key: "unreads", label: "Unreads", icon: "mark-unread"},
-	{kind: sbLink, key: "threads", label: "Threads", icon: "threads"},
-	{kind: sbLink, key: "huddles", label: "Huddles", icon: "huddle"},
-	{kind: sbLink, key: "drafts", label: "Drafts & sent", icon: "paper-plane-alt"}, // Slack's OutboxPageIcon
-	{kind: sbLink, key: "saved", label: "Saved", icon: "saved"},
-	{kind: sbLink, key: "directories", label: "Directories", icon: "directories"},
+	{kind: sbLink, key: "unreads", label: "Unreads", icon: "mark-unread", tr: "all_unreads"},
+	{kind: sbLink, key: "threads", label: "Threads", icon: "threads", tr: "channel_sidebar"},
+	{kind: sbLink, key: "huddles", label: "Huddles", icon: "huddle", tr: "huddles"},
+	{kind: sbLink, key: "drafts", label: "Drafts & sent", icon: "paper-plane-alt", tr: "outbox"}, // Slack's OutboxPageIcon
+	{kind: sbLink, key: "saved", label: "Saved", icon: "saved", tr: "saved_for_later"},
+	{kind: sbLink, key: "directories", label: "Directories", icon: "directories", tr: "channel_sidebar"},
 }
 
 // sbViewPref is each link's Preferences > Home pref (off: hidden).
@@ -165,7 +167,11 @@ func (s *sidebarState) rebuild(m *model) {
 		if i > 0 {
 			rows = append(rows, sbRow{kind: sbGap, gap: 10})
 		}
-		rows = append(rows, sbRow{kind: sbHeading, key: sec.ID, label: sec.Name, icon: sectionIcon(sec.Type), emoji: sec.EmojiURL, section: sec.ID})
+		hr := sbRow{kind: sbHeading, key: sec.ID, label: sec.Name, icon: sectionIcon(sec.Type), emoji: sec.EmojiURL, section: sec.ID}
+		if sec.DefaultName {
+			hr.tr = "channel_sidebar"
+		}
+		rows = append(rows, hr)
 		col, seen := s.collapsed[sec.ID]
 		if !seen { // first sight: Slack's saved state (channel_sections "c")
 			col = sec.Collapsed
@@ -190,11 +196,11 @@ func (s *sidebarState) rebuild(m *model) {
 				rows = append(rows, sbRow{kind: sbNote, label: "Drag and drop important stuff here"})
 			}
 		case "channels":
-			rows = append(rows, sbRow{kind: sbAction, key: "add-channels", label: "Add channels", icon: "channel-plus"})
+			rows = append(rows, sbRow{kind: sbAction, key: "add-channels", label: "Add channels", icon: "channel-plus", tr: "channel_sidebar"})
 		case "direct_messages":
-			rows = append(rows, sbRow{kind: sbAction, key: "browse-people", label: "Browse all people", icon: "contact"})
+			rows = append(rows, sbRow{kind: sbAction, key: "browse-people", label: "Browse all people", icon: "contact", tr: "channel_sidebar"})
 		case "recent_apps", "apps":
-			rows = append(rows, sbRow{kind: sbAction, key: "add-apps", label: "Add apps", icon: "plus-small"})
+			rows = append(rows, sbRow{kind: sbAction, key: "add-apps", label: "Add apps", icon: "plus-small", tr: "channel_sidebar"})
 		}
 	}
 	rows = append(rows, sbRow{kind: sbGap, gap: 16})
@@ -316,7 +322,7 @@ func (a *App) layoutSidebarNative(gtx layout.Context, p slackc.Props) layout.Dim
 			})
 			at(gtx, image.Pt(gtx.Dp(26), 0), image.Pt(w-gtx.Dp(30), fh), func(gtx layout.Context) layout.Dimensions {
 				return vcenter(gtx, fh, func(gtx layout.Context) layout.Dimensions {
-					return a.th.Label(gtx, 13, theme.Regular, c.SidebarTextUnread, "Find a conversation…")
+					return a.th.Label(gtx, 13, theme.Regular, c.SidebarTextUnread, i18n.T("channel_sidebar", "Find a conversation…"))
 				})
 			})
 			return layout.Dimensions{Size: image.Pt(w, fh)}
@@ -408,6 +414,9 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 		conv     *convInfo
 		suffix   string
 	)
+	if r.tr != "" {
+		label = r.tr.T(label)
+	}
 	clickPrefix := "sbr."
 	switch r.kind {
 	case sbLink:

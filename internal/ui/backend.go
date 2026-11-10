@@ -353,7 +353,9 @@ func (b *backend) apply(a *App, s core.Snapshot) {
 			}
 		}
 		if ss.Name == "" {
-			ss.Name = defaultSectionName(sec.Type)
+			ss.Name, ss.DefaultName = defaultSectionName(sec.Type), true
+		} else if ss.Name == defaultSectionName(sec.Type) {
+			ss.DefaultName = true // Slack's standard sections can't be renamed
 		}
 		m.Sections = append(m.Sections, ss)
 	}
