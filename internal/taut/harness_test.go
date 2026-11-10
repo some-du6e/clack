@@ -311,7 +311,7 @@ func (h *harness) render(root uint64, name string, props any) []any {
 	h.ui.mu.Unlock()
 	h.tt.Bridge().Render(root, name, b)
 	var tree []byte
-	eventually(h.t, 5*time.Second, "a tree for "+name, func() bool {
+	eventually(h.t, renderWait(), "a tree for "+name, func() bool {
 		h.ui.mu.Lock()
 		defer h.ui.mu.Unlock()
 		tree = h.ui.trees[root]
@@ -407,4 +407,13 @@ func has(list []string, x string) bool {
 		}
 	}
 	return false
+}
+
+// renderWait is how long a test waits for a plugin's tree: the race
+// detector slows QuickJS and React several times over.
+func renderWait() time.Duration {
+	if raceOn {
+		return 20 * time.Second
+	}
+	return 5 * time.Second
 }

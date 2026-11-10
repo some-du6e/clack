@@ -1,11 +1,10 @@
 // Package store keeps the client's state in memory.
 //
-// Disk policy: the account's cache directory (bootcache.go) is the only
-// place Clack writes Slack data. It holds metadata (the user directory,
-// custom emoji, channel names, the sidebar) and, like Slack's own
-// persisted store, the newest messages of the conversation open at the
-// last save (history.json), all 0600, per workspace and per user, and
-// deleted on sign-out. Every other message stays in memory.
+// Scraping policy: message contents are only ever held in memory for the
+// lifetime of the process (like any Slack client). Only metadata — the user
+// directory, custom emoji, channel names and prefs — is cached on disk, in
+// the account's cache directory (cachedir.go: 0600, per workspace and per
+// user, deleted on sign-out).
 package store
 
 import (
@@ -76,7 +75,6 @@ type Store struct {
 	gen       atomic.Uint64
 	saveMu    sync.Mutex
 	dropped   atomic.Bool // DropDisk ran (signed out): never write again
-	emojiPart atomic.Bool // CustomEmoji is only a boot snapshot's slice (InstallBoot)
 	saved     bool
 	savedGen  uint64
 	savedEmo  uint64
@@ -1177,10 +1175,8 @@ func (s *Store) LoadCache() {
 	s.PutUsers(d.Users)
 	if d.EmojiPacked != "" {
 		s.CustomEmoji.Set(unpackEmoji(d.EmojiPacked))
-		s.emojiPart.Store(false)
 	} else if len(d.Emoji) > 0 {
 		s.CustomEmoji.Set(d.Emoji)
-		s.emojiPart.Store(false)
 	}
 	if d.EmojiAt > 0 {
 		s.emojiAtMu.Lock()
@@ -1223,7 +1219,16 @@ func (s *Store) LoadCache() {
 // disk cache stores it (see diskCache.EmojiPacked), and stamps its age.
 func (s *Store) SetEmojiList(m map[string]string) {
 	s.CustomEmoji.Set(unpackEmoji(packEmoji(m)))
-	s.emojiPart.Store(false)
+	s.emojiAtMu.Lock()
+	s.emojiAt = time.Now()
+	s.emojiAtMu.Unlock()
+}
+
+// SetEmojiPacked installs a fresh emoji.list result already packed as
+// "name\nvalue\n" pairs (slack.PackEmojiJSON): the map's keys and values
+// share the one string.
+func (s *Store) SetEmojiPacked(p string) {
+	s.CustomEmoji.Set(unpackEmoji(p))
 	s.emojiAtMu.Lock()
 	s.emojiAt = time.Now()
 	s.emojiAtMu.Unlock()
@@ -1297,11 +1302,7 @@ func (s *Store) SaveCache() error {
 	s.emojiAtMu.Unlock()
 	s.mu.RLock()
 	prefs := s.Prefs
-	packed := ""
-	if !s.emojiPart.Load() { // never save a boot snapshot's slice as the whole map
-		packed = packEmoji(s.CustomEmoji.Snapshot())
-	}
-	d := diskCache{EmojiPacked: packed, Usergroups: append([]slack.Usergroup(nil), s.Groups...), Prefs: &prefs,
+	d := diskCache{EmojiPacked: packEmoji(s.CustomEmoji.Snapshot()), Usergroups: append([]slack.Usergroup(nil), s.Groups...), Prefs: &prefs,
 		Names: map[string]string{}, Bots: map[string]BotInfo{}}
 	if !emojiAt.IsZero() {
 		d.EmojiAt = emojiAt.Unix()

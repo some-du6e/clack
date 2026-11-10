@@ -136,3 +136,8 @@ func (v *ChannelView) LayoutSig() (msgs int, loaded bool, sig uint64) {
 	}
 	return len(s.snap.msgs), s.snap.loaded, h
 }
+
+// Loading reports whether the list is fetching (its first page, a refresh
+// or an older page it asked for to fill the view): the ui root's reveal
+// waits for it so the first visible frame doesn't move.
+func (v *ChannelView) Loading() bool { return v.s.snap.loading || v.s.snap.older }

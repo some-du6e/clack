@@ -217,6 +217,7 @@ type App struct {
 	standIns         int                        // keepBody draws so far
 	missedFrameLog   focusLog                   // the missed-frame log line (focus_log.go)
 	sw               startupWatch               // the startup timeline (startup.go)
+	rv               revealState                // the cover until the window is ready (reveal.go)
 	panelOrigin      image.Point                // the primary panel's window origin this frame
 
 	swipe         swiper          // trackpad history swipes (swipe.go, nav.go)
@@ -320,6 +321,7 @@ func (a *App) Run() error {
 		app.MinSize(800, 500),
 	)
 	a.winLive.Store(a.win)
+	a.rv.inRun = true // the real window: covered until revealed (reveal.go)
 	applog.Mark("window", "")
 	go a.updateLoop(a.updateSchedule(), realUpdateClock())
 	a.watchOSTheme()
@@ -340,7 +342,7 @@ func (a *App) Run() error {
 	if a.data != nil {
 		a.data.start(a)
 	}
-	var ops op.Ops
+	var ops, coverOps op.Ops
 	uiguard.MarkUI() // this goroutine handles every window event (uiguard)
 	wd := newWatchdog(a.opts.ConfigDir, a.opts.Started)
 	go wd.run()
@@ -386,7 +388,11 @@ func (a *App) Run() error {
 				// waiting here (that would hold the OS's main thread).
 				wd.next(&stageShaper)
 				gtx := app.NewContext(&ops, e)
-				a.grad.layout(gtx, a.th.C.ChromeA, a.th.C.ChromeB)
+				if a.data != nil && a.login == nil && !a.rv.done {
+					a.drawBootPlaceholder(gtx) // Slack's, from the first frame (reveal.go)
+				} else {
+					a.grad.layout(gtx, a.th.C.ChromeA, a.th.C.ChromeB)
+				}
 				e.Frame(gtx.Ops)
 				applog.Mark("first-frame", "background, fonts loading")
 				break
@@ -408,10 +414,22 @@ func (a *App) Run() error {
 				gtx = a.newContext(&ops, e)
 				a.frame(gtx)
 			}
+			covered := a.revealFrame()
 			slackc.UnlockFrame()
 			tl := time.Now()
 			wd.next(&stageSubmit)
-			e.Frame(gtx.Ops)
+			if covered {
+				// Under Slack's boot placeholder the client is laid out (roots
+				// mount, plugins render, images load) but only the placeholder
+				// goes to the GPU: each step of the start-up cascade is a
+				// layout, not a full frame (reveal.go).
+				coverOps.Reset()
+				cg := a.newContext(&coverOps, e)
+				a.drawCover(cg)
+				e.Frame(cg.Ops)
+			} else {
+				e.Frame(gtx.Ops)
+			}
 			if !a.firstPaint {
 				a.timing("first layout", t0)
 				a.timing("first GPU submit", tl)

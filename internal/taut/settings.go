@@ -144,7 +144,7 @@ func (t *Taut) Settings() Settings {
 	sort.Slice(ps, func(i, j int) bool { return strings.ToLower(ps[i].id) < strings.ToLower(ps[j].id) })
 	byCat := map[string][]PluginInfo{}
 	for _, p := range ps {
-		if p.meta != nil && p.meta.HackClubOnly && !hc {
+		if m := t.metaOf(p); m != nil && m.HackClubOnly && !hc {
 			continue
 		}
 		info := t.info(p)
@@ -170,9 +170,11 @@ func (t *Taut) Settings() Settings {
 }
 
 func (t *Taut) info(p *plugin) PluginInfo {
+	t.mu.Lock() // a plugin loading or restarting writes these (manager.go)
 	info := PluginInfo{ID: p.id, Name: p.id, Category: "other", Error: p.err, Running: p.running, RunID: p.runID, IsUser: true, Problems: p.problems}
-	info.HasStorage, info.HasCache = t.HasData(p.id)
 	m := p.meta
+	t.mu.Unlock()
+	info.HasStorage, info.HasCache = t.HasData(p.id)
 	if m == nil {
 		return info
 	}
@@ -274,18 +276,21 @@ func (t *Taut) ReloadConfig(ctx context.Context) error {
 	}
 	for _, id := range ids {
 		p := t.get(id)
-		if p == nil || p.meta == nil {
+		if p == nil || t.metaOf(p) == nil {
 			continue
 		}
 		unlock := t.lock(id)
 		should := t.enabled(p) && t.runsHere(p)
 		cur, _ := json.Marshal(t.cfg.block(id))
-		if should == p.running && jsonEqual(cur, p.block) {
+		t.mu.Lock()
+		running, blk := p.running, p.block
+		t.mu.Unlock()
+		if should == running && jsonEqual(cur, blk) {
 			unlock()
 			continue
 		}
-		if should || p.running {
-			_ = t.applyConfigLocked(ctx, p, p.running)
+		if should || running {
+			_ = t.applyConfigLocked(ctx, p, running)
 		}
 		unlock()
 	}

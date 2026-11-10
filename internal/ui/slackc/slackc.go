@@ -224,7 +224,7 @@ func renderLazySlow(gtx layout.Context, name string, props func() Props, native 
 // props may be nil (no props). native's Props argument is nil when
 // unpatched.
 func Component[T any](gtx layout.Context, name string, recv T, props func(T) Props, native func(T, layout.Context, Props) layout.Dimensions) layout.Dimensions {
-	if patched.Load() == nil { // inlined: the native becomes a direct call
+	if patched.Load() == nil && reserved.Load() == nil { // inlined: the native becomes a direct call
 		return native(recv, gtx, nil)
 	}
 	return componentSlow(gtx, name, recv, props, native)
@@ -232,6 +232,9 @@ func Component[T any](gtx layout.Context, name string, recv T, props func(T) Pro
 
 func componentSlow[T any](gtx layout.Context, name string, recv T, props func(T) Props, native func(T, layout.Context, Props) layout.Dimensions) layout.Dimensions {
 	if m := patched.Load(); m == nil || !(*m)[name] {
+		if ins, ok := reservedFor(name); ok { // a plugin's slot kept free until it renders (reserve.go)
+			return drawReserved(gtx, ins, func(g layout.Context) layout.Dimensions { return native(recv, g, nil) })
+		}
 		return native(recv, gtx, nil)
 	}
 	return componentPatched(gtx, name, recv, props, native)
@@ -346,9 +349,21 @@ func renderPatched(gtx layout.Context, name string, props Props, native Native) 
 	}
 	nodes := in.tree.Load()
 	if nodes == nil {
+		if ins, ok := reservedFor(name); ok { // its slot stays free until the tree arrives (reserve.go)
+			return drawReserved(gtx, ins, func(g layout.Context) layout.Dimensions {
+				return probeNative(name, func() layout.Dimensions { return native(g, props) })
+			})
+		}
 		return probeNative(name, func() layout.Dimensions { return native(gtx, props) })
 	}
-	return in.view.Layout(gtx, *nodes, name, props, native)
+	unreserve(name)
+	learn := in.view.learnPending
+	d := in.view.Layout(gtx, *nodes, name, props, native)
+	if learn {
+		in.view.learnPending = false
+		in.view.learnOriginal(name, d.Size, gtx.Metric.PxPerDp)
+	}
+	return d
 }
 
 // refreshFns points each Go-func slot at this frame's closure.

@@ -20,9 +20,10 @@ import (
 // View lays out one root's host trees and keeps per-node UI state (hover,
 // focus, editors, scroll offsets) keyed by Node.K across trees.
 type View struct {
-	root    uint64
-	overlay bool
-	sheet   string // text of the tree's <style> elements, installed as "root:<id>"
+	learnPending bool // a new tree: learn its original's insets after the next layout (reserve.go)
+	root         uint64
+	overlay      bool
+	sheet        string // text of the tree's <style> elements, installed as "root:<id>"
 
 	fr   frame
 	name string
@@ -295,6 +296,7 @@ func sameNodes(a, b []*Node) bool {
 // setTree installs a new delivered tree.
 func (v *View) setTree(nodes []*Node) {
 	v.nodes = nodes
+	v.learnPending = true // where its original sits (reserve.go)
 	v.syncSheet(nodes)
 	clear(v.byK)
 	v.top = v.buildBoxes(nodes, nil)

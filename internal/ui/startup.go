@@ -94,16 +94,11 @@ func (a *App) startupFrame() {
 			a.startupMark("theme", map[bool]string{true: "account", false: "default"}[a.acct.set])
 		}
 	}
-	warm := a.data != nil && a.data.warm
 	// the sidebar
 	m := a.model()
 	if a.sidebar.rowCount > 0 && len(m.Convs) > 0 {
-		src := "live"
-		if warm {
-			src = "cached"
-		}
 		if !applog.Marked("sidebar") {
-			a.startupMark("sidebar", fmt.Sprintf("%s, %d rows", src, a.sidebar.rowCount))
+			a.startupMark("sidebar", fmt.Sprintf("%d rows", a.sidebar.rowCount))
 		}
 		if a.sidebar.gen != sw.sideGen {
 			sw.sideGen = a.sidebar.gen
@@ -116,7 +111,7 @@ func (a *App) startupFrame() {
 			}
 			if s := h; s != sw.sideSig {
 				if sw.sideSig != 0 {
-					applog.Relayout("sidebar")
+					a.relayout("sidebar")
 					a.startupChange(now)
 				}
 				sw.sideSig = s
@@ -137,7 +132,7 @@ func (a *App) startupFrame() {
 		}
 		if s := h; s != sw.unreadSig {
 			if sw.unreadSig != 0 {
-				applog.Relayout("unreads")
+				a.relayout("unreads")
 				a.startupChange(now)
 			}
 			sw.unreadSig = s
@@ -152,16 +147,12 @@ func (a *App) startupFrame() {
 		if l, ok := cv.list.(interface{ LayoutSig() (int, bool, uint64) }); ok {
 			n, loaded, sig := l.LayoutSig()
 			if n > 0 && loaded {
-				src := "live"
-				if c := a.Core(); c != nil && c.Warm() && !applog.Marked("history-live") {
-					src = "cached"
-				}
 				if !applog.Marked("messages") {
-					a.startupMark("messages", fmt.Sprintf("%s, %d msgs", src, n))
+					a.startupMark("messages", fmt.Sprintf("%d msgs", n))
 				}
 				if sig != sw.msgSig {
 					if sw.msgSig != 0 && sw.msgN > 0 {
-						applog.Relayout("messages")
+						a.relayout("messages")
 						a.startupChange(now)
 					}
 					sw.msgSig, sw.msgN = sig, n
@@ -175,11 +166,11 @@ func (a *App) startupFrame() {
 	sw.painted = true
 	// settled?
 	ready := applog.Marked("sidebar-live") && applog.Marked("images") && (ch == "" || applog.Marked("messages"))
-	if c := a.Core(); ready && c != nil && c.Warm() && c.RestoredHistory() != "" {
-		ready = applog.Marked("history-live") || applog.Marked("history-failed")
-	}
 	if !applog.Marked("plugins") {
 		ready = false // plugins still starting (startTautAsync marks it, with or without any)
+	}
+	if !a.revealed() {
+		ready = false // still under the cover (reveal.go)
 	}
 	started := a.opts.Started
 	switch {
@@ -206,7 +197,15 @@ func (a *App) startupTheme(changed bool) {
 		return
 	}
 	if changed && a.sw.painted {
-		applog.Relayout("theme")
+		a.relayout("theme")
 		a.startupChange(time.Now())
+	}
+}
+
+// relayout counts a visible move: under the reveal cover nothing is
+// visible, so nothing counts.
+func (a *App) relayout(what string) {
+	if a.revealed() {
+		applog.Relayout(what)
 	}
 }

@@ -112,9 +112,26 @@ func (c *Client) SectionsAll(ctx context.Context) ([]Section, error) {
 		}
 		cursor = r.Cursor
 	}
-	// Page through any section whose channel list is truncated.
+	// Page through any section whose channel list is truncated: the
+	// sections at once (each section's own pages follow its cursor).
+	var wg sync.WaitGroup
 	for i := range all {
-		s := &all[i]
+		if all[i].ChannelIDsPage.Cursor == "" {
+			continue
+		}
+		wg.Add(1)
+		go func(s *Section) {
+			defer wg.Done()
+			c.sectionPages(ctx, s)
+		}(&all[i])
+	}
+	wg.Wait()
+	return all, nil
+}
+
+// sectionPages appends the rest of one section's channel list.
+func (c *Client) sectionPages(ctx context.Context, s *Section) {
+	{
 		cur := s.ChannelIDsPage.Cursor
 		for n := 0; cur != "" && n < 50; n++ {
 			var r struct {
@@ -138,7 +155,6 @@ func (c *Client) SectionsAll(ctx context.Context) ([]Section, error) {
 		}
 		s.ChannelIDsPage.ChannelIDs = uniq(s.ChannelIDsPage.ChannelIDs)
 	}
-	return all, nil
 }
 
 func uniq(ids []string) []string {

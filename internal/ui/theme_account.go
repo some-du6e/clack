@@ -70,12 +70,24 @@ func (a *App) accountGradients() bool { return !a.acct.set || a.acct.gradients }
 // goroutine.
 func (a *App) applyAccountPrefs(p core.Prefs) {
 	a.sw.themeFinal = true // the account's own prefs are known (startup.go)
-	t, ok := theme.ParseIATheme(p.IATheme)
-	n := acctTheme{set: ok, t: t, gradients: !p.NoWindowGradients}
-	if !ok && p.NoWindowGradients {
+	a.setAcct(acctFromPrefs(p.IATheme, p.NoWindowGradients))
+	// Kept per device in ui.json, like the theme Slack's desktop keeps in
+	// localStorage for its loading screen: the next start's first frame
+	// (and the reveal cover) has the account's colours before
+	// users.prefs answers.
+	if a.prefs.AcctTheme != p.IATheme || a.prefs.AcctNoGradients != p.NoWindowGradients {
+		a.prefs.AcctTheme, a.prefs.AcctNoGradients = p.IATheme, p.NoWindowGradients
+		a.savePrefsSoon()
+	}
+}
+
+func acctFromPrefs(ia string, noGradients bool) acctTheme {
+	t, ok := theme.ParseIATheme(ia)
+	n := acctTheme{set: ok, t: t, gradients: !noGradients}
+	if !ok && noGradients {
 		n.set, n.t = true, theme.DefaultIATheme
 	}
-	a.setAcct(n)
+	return n
 }
 
 func (a *App) setAcct(n acctTheme) {

@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"image/png"
 	"net/url"
+	"sync"
 	"testing"
 	"time"
 
@@ -70,6 +71,20 @@ func TestImageOnlySendFlow(t *testing.T) {
 	}
 	t.Cleanup(func() { fs.Close() })
 	fs.ProcessDelay = 300 * time.Millisecond
+	// The eager upload's first call waits until the test has seen the tile
+	// uploading: against an in-process fake the whole upload can otherwise
+	// finish before the next frame, and "still uploading" would be a race.
+	uploadGate := make(chan struct{})
+	var gateOnce sync.Once
+	releaseUpload := func() { gateOnce.Do(func() { close(uploadGate) }) }
+	t.Cleanup(releaseUpload)
+	fs.SetHook(func(method string, _ url.Values) (any, bool) {
+		if method == "files.getUploadURL" {
+			<-uploadGate
+		}
+		return nil, false
+	})
+	t.Cleanup(func() { fs.SetHook(nil) })
 	old := draftSyncDelay
 	draftSyncDelay = 30 * time.Millisecond
 	t.Cleanup(func() { draftSyncDelay = old })
@@ -145,6 +160,7 @@ func TestImageOnlySendFlow(t *testing.T) {
 	if st := c.chromeState(gtx); !st.CanSend {
 		t.Error("send button disabled with only a file attached")
 	}
+	releaseUpload() // the upload goes on from here
 	// Slack's eager upload: files.getUploadURL at attach, not at send
 	until("the upload at attach", func() bool { return fs.CallCount("files.getUploadURL") == 1 })
 

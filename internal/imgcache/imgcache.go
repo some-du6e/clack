@@ -1,9 +1,10 @@
 // Package imgcache fetches and decodes images off the UI goroutine and keeps
-// them in a memory LRU. On disk, in the account's cache directory
-// (SetDir: <cache root>/v1/<team>-<user>/img, dropped on sign-out), it
-// keeps avatars and emoji (DiskOK) and message thumbnails (ThumbOK,
-// files.slack.com/files-tmb), at most DiskLimit bytes, least recently used
-// first out. Full files and third-party images stay in memory only.
+// them in a memory LRU. Avatars and emoji (metadata under the Hack Club
+// scraping policy) are also cached on disk, in the account's cache
+// directory (SetDir: <cache root>/v1/<team>-<user>/img, dropped on
+// sign-out), at most DiskLimit bytes, least recently used first out;
+// message files, thumbnails and attachments (files.slack.com and anything
+// else) stay in memory only.
 //
 // Get never blocks: it returns (op, true) when the image is ready and
 // otherwise starts a fetch, returns false, and calls invalidate when the
@@ -442,10 +443,9 @@ func checkSize(data []byte) error {
 	return nil
 }
 
-// raw returns the encoded bytes from disk (DiskOK and ThumbOK URLs only:
-// avatars, emoji, message thumbnails) or the network, plus a func that
-// saves fetched bytes to the disk tier (a no-op for everything else, e.g.
-// full files and third-party images).
+// raw returns the encoded bytes from disk (DiskOK URLs only: avatars and
+// emoji) or the network, plus a func that saves fetched bytes to the disk
+// tier (a no-op for everything else, e.g. message images and files).
 func (c *Cache) raw(u string) ([]byte, func(), error) {
 	nop := func() {}
 	if localimg.Is(u) { // a file the viewer is uploading: memory only
@@ -457,7 +457,7 @@ func (c *Cache) raw(u string) ([]byte, func(), error) {
 	c.mu.Lock()
 	dir := c.dir
 	c.mu.Unlock()
-	disk := dir != "" && (DiskOK(u) || ThumbOK(u))
+	disk := dir != "" && DiskOK(u)
 	var path string
 	if disk {
 		h := sha256.Sum256([]byte(u))
@@ -576,22 +576,6 @@ func DiskOK(raw string) bool {
 	case host == "a.slack-edge.com":
 		// standard emoji sheets/images live under /production-standard-emoji-assets/
 		return strings.Contains(u.Path, "emoji")
-	}
-	return false
-}
-
-// ThumbOK reports whether an image URL is a message file's thumbnail
-// (files.slack.com/files-tmb/…, Slack's own resized copies), which the
-// disk tier keeps in the account's cache directory only. Full files
-// (files-pri, downloads) never reach the disk.
-func ThumbOK(raw string) bool {
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.RawQuery != "" {
-		return false
-	}
-	switch strings.ToLower(u.Hostname()) {
-	case "files.slack.com", "files-edge.slack.com":
-		return strings.HasPrefix(u.Path, "/files-tmb/") && !strings.Contains(u.Path, "..")
 	}
 	return false
 }

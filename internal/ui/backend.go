@@ -27,9 +27,6 @@ type backend struct {
 	slick *slick.Slick // Slick plugins, on Taut's runtime (nil until boot)
 	// tautStarting: startTautAsync is building the runtimes
 	tautStarting bool
-	// warm: the model was painted from core's boot snapshot and the
-	// network snapshot hasn't replaced it yet (bootcache.go)
-	warm bool
 
 	m       model
 	started bool
@@ -49,9 +46,14 @@ type backend struct {
 	draftChans map[string]bool
 	draftSeq   int
 
-	tabCache  map[string][]chTab
-	bookmarks map[string][]core.Bookmark
-	fetched   map[string]time.Time
+	tabCache map[string][]chTab
+	tabsDone map[string]bool // opened() finished for the channel (the header is complete; reveal.go)
+	// pluginsReady closes when the plugins enabled at start have started
+	// (any goroutine may wait on it)
+	pluginsReady chan struct{}
+	pluginsOnce  sync.Once
+	bookmarks    map[string][]core.Bookmark
+	fetched      map[string]time.Time
 
 	avMu    sync.Mutex
 	avatars map[string]string
@@ -65,15 +67,12 @@ type backend struct {
 	app       *App
 }
 
-// NewBackend wraps a core service. The sidebar's first frame comes from
-// core's boot snapshot (core.LoadBootCache, which cmd/clack runs before the
-// window opens; when it hasn't, this reads it). cacheDir is unused: the
-// account's cache directory is the store's.
+// NewBackend wraps a core service. cacheDir is unused: the account's cache
+// directory is the store's.
 func newBackend(c *core.App, cacheDir string) *backend {
-	b := &backend{core: c, tabCache: map[string][]chTab{}, bookmarks: map[string][]core.Bookmark{},
+	b := &backend{core: c, pluginsReady: make(chan struct{}), tabCache: map[string][]chTab{}, bookmarks: map[string][]core.Bookmark{},
 		fetched: map[string]time.Time{}, avatars: map[string]string{}, asked: map[string]bool{}}
 	b.m.Convs = map[string]*convInfo{}
-	c.LoadBootCache()
 	return b
 }
 
@@ -112,43 +111,42 @@ func (b *backend) start(a *App) {
 	// Live updates only when the user opted in (realtime.go); core polls
 	// otherwise. Set before Boot so the socket is never opened unasked.
 	b.core.SetRealtime(a.realtimeOn())
-	// A warm start paints the boot snapshot: the account theme, the
-	// sidebar with its sections and unreads, the last channel (its
-	// messages are in core already). Boot's answers replace it below.
-	if snap, ok := b.core.CachedSnapshot(); ok {
-		b.warm = true
-		b.apply(a, snap)
-		applog.SetWarm(true)
-		applog.Mark("sidebar-model", fmt.Sprintf("cached, %d convs", len(snap.Convs)))
-		if a.router.Current() == "" {
-			a.openDefault()
-		}
-	} else {
-		applog.SetWarm(false)
-		if b.core.S.HasCachedPrefs() { // the cached account theme paints the first frame
-			a.applyAccountPrefs(b.core.Prefs())
-		}
+	if b.core.S.HasCachedPrefs() { // the cached account theme paints the first frame
+		a.applyAccountPrefs(b.core.Prefs())
 	}
+	// Everything the first channel frame shows starts now, in parallel
+	// with core's boot: the plugin runtimes (JS engine, bundles from the
+	// bytecode cache, plugin start; their state mirror re-reads at
+	// "booted"), Block Kit, the restored channel's header (tabs, bookmarks,
+	// member count and facepile) and the drafts' sidebar markers. The
+	// window stays covered until they're in (reveal.go).
+	b.startTautAsync(a)
+	b.startBlockkit(a)
+	go a.settlePluginSlots(b) // release reserved plugin slots, save the learned ones
+	if ch := a.router.Current().Channel(); ch != "" {
+		b.opened(ch)
+	}
+	b.loadDrafts(a)
 	go func() {
 		t0 := time.Now()
 		if err := b.core.Boot(b.ctx); err != nil {
 			log.Printf("ui: boot: %v", err)
 			a.Post(func() { a.Toast("Couldn't connect to Slack: " + err.Error()) })
 		}
-		a.Post(func() { b.startTautAsync(a); b.startBlockkit(a) })
 		snap := b.core.Snapshot()
 		log.Printf("ui: core ready %v after boot start (%d convs)", time.Since(t0).Round(time.Millisecond), len(snap.Convs))
 		a.Post(func() {
-			b.warm = false
 			b.apply(a, snap)
 			applog.Mark("sidebar-live", fmt.Sprintf("%d convs", len(snap.Convs)))
 			b.booted = time.Now()
 			if a.router.Current() == "" {
 				a.openDefault()
 			} else if ch := a.router.Current().Channel(); ch != "" {
-				b.opened(ch) // restored route: fetch tabs + facepile
+				b.opened(ch) // started at once; a no-op unless that failed early
 			}
-			b.loadDrafts(a)
+			if b.slick != nil { // the team id is certain now
+				a.slickRoute(a.router.Current())
+			}
 			b.maybePresencePrompt(a)
 		})
 	}()
@@ -236,7 +234,7 @@ func (b *backend) stop() <-chan struct{} {
 	// Every caller drops this backend: stop core's socket and loops too,
 	// or the old session keeps a second realtime connection open next to
 	// the new one.
-	b.core.Shutdown()
+	b.core.StopTraffic() // Close, below and off this goroutine, waits for disk saves
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -616,7 +614,36 @@ func (b *backend) opened(ch string) {
 		// Slack's tab bar (core.Tabs: canvases, lists, bookmarks, files…).
 		var tabs []chTab
 		var bms []core.Bookmark
-		ts, err := b.core.Tabs(ctx, ch)
+		// The header's three reads at once (they used to go one after
+		// another: three round trips before the header was complete).
+		// Members needs the kind: the sidebar's, else the id's.
+		kind := ""
+		if c, ok := b.core.Conv(ch); ok {
+			kind = c.Kind
+		} else if strings.HasPrefix(ch, "C") {
+			kind = "channel"
+		} else if strings.HasPrefix(ch, "G") {
+			kind = "private"
+		}
+		var (
+			wg    sync.WaitGroup
+			ts    []core.Tab
+			err   error
+			info  core.ChannelDetails
+			ierr  error
+			us    []core.User
+			merr  error
+			tried bool
+		)
+		wg.Add(2)
+		go func() { defer wg.Done(); ts, err = b.core.Tabs(ctx, ch) }()
+		go func() { defer wg.Done(); info, ierr = b.core.ChannelInfo(ctx, ch) }()
+		if kind == "channel" || kind == "private" {
+			tried = true
+			wg.Add(1)
+			go func() { defer wg.Done(); us, _, merr = b.core.Members(ctx, ch, "", true) }()
+		}
+		wg.Wait()
 		if err != nil {
 			log.Printf("ui: tabs %s: %v", ch, err)
 		}
@@ -640,10 +667,7 @@ func (b *backend) opened(ch string) {
 			bms = append(bms, t.Bookmarks...)
 		}
 		var members []string
-		info, ierr := b.core.ChannelInfo(ctx, ch)
-		conv, _ := b.core.Conv(ch)
-		if conv.Kind == "channel" || conv.Kind == "private" {
-			us, _, merr := b.core.Members(ctx, ch, "", true)
+		if tried {
 			log.Printf("ui: members %s: %d err=%v", ch, len(us), merr)
 			if merr == nil {
 				for _, u := range us {
@@ -675,6 +699,10 @@ func (b *backend) opened(ch string) {
 		a.Post(func() {
 			b.tabCache[ch] = tabs
 			b.bookmarks[ch] = bms
+			if b.tabsDone == nil {
+				b.tabsDone = map[string]bool{}
+			}
+			b.tabsDone[ch] = true
 			if c := b.m.conv(ch); c != nil {
 				if ierr == nil && info.Conv.NumMembers > 0 {
 					c.NumMembers = info.Conv.NumMembers

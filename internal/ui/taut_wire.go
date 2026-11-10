@@ -67,10 +67,23 @@ func (b *backend) startTautAsync(a *App) {
 		return
 	}
 	b.tautStarting = true
-	dark, team, ch := a.th.Dark, b.teamID, a.router.Current().Channel()
+	team := b.teamID
+	if team == "" { // a cold start: boot hasn't answered yet
+		team = b.core.C.Creds.Team
+	}
+	dark, ch := a.th.Dark, a.router.Current().Channel()
 	go func() {
 		t0 := time.Now()
 		t, s := b.buildTaut(a, dark, team, ch)
+		go func() { // the plugins enabled at start started (reveal.go's slots)
+			if t != nil {
+				<-t.StartDone()
+			}
+			if s != nil {
+				<-s.StartDone()
+			}
+			b.pluginsOnce.Do(func() { close(b.pluginsReady) })
+		}()
 		a.Post(func() {
 			b.tautStarting = false
 			detail := "none"
@@ -120,6 +133,7 @@ func (b *backend) buildTaut(a *App, dark bool, team, channel string) (*taut.Taut
 				})
 			},
 			Deliver: func(root uint64, tree []byte) {
+				a.noteDelivery(root) // reveal waits for plugin renders to go quiet
 				if f := deliverTap; f != nil {
 					f(root, tree)
 				}

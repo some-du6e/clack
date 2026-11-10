@@ -11,17 +11,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from summary import dur_ms  # noqa: E402
 
 out, base_label, head_label = sys.argv[1], sys.argv[2], sys.argv[3]
-COLS = ["window", "first-frame", "theme", "sidebar", "messages", "core-ready", "sidebar-live", "history-live",
-        "images", "plugins"]
+COLS = ["window", "first-frame", "core-ready", "data-ready", "reveal", "js-runtime", "taut-started", "sidebar-live", "history-live", "messages", "images", "plugins"]
 
 
 def parse(line):
     t = {"marks": {}, "relayouts": None, "kinds": "", "warm": "", "settled": None, "note": ""}
     if not line:
         return t
-    m = re.search(r"settled=(\d+)ms (\w+)", line)
+    m = re.search(r"settled=(\d+)ms(?: (warm|cold)\b)?", line)
     if m:
-        t["settled"], t["warm"] = int(m.group(1)), m.group(2)
+        t["settled"], t["warm"] = int(m.group(1)), m.group(2) or ""
     for k, v in re.findall(r" ([a-z-]+)=(\d+)ms", line):
         if k != "settled":
             t["marks"][k] = int(v)
@@ -60,8 +59,14 @@ md = ["## Startup timeline", "",
       "(applog/startup.go): `sidebar`/`messages` are the first frames showing them (from the boot snapshot on a warm "
       "start), `sidebar-live`/`history-live` when Slack's answers replaced them, `settled` the last change before "
       "1.5 s of quiet. `relayouts` counts frames where something already painted moved: sidebar rows, unread state, "
-      "message rows, the theme. `nocache` is HEAD with `CLACK_NO_BOOT_CACHE=1` (how Clack booted before the boot "
-      "snapshot). The base binary predates the timeline: only its first paint and core ready are known.", ""]
+      "message rows, the theme, counted only once the window is revealed. `reveal` is when the loading cover lifted "
+      "(internal/ui/reveal.go): from then the window shows everything at once; before it, nothing but the cover. "
+      "`cold` starts have nothing on disk (no metadata cache, no compiled JS engine, no saved theme or plugin slots); "
+      "`warm` starts have what a normal start has (meta.json, the engine's compile cache, ui.json). The base still "
+      "has alpha.28's boot snapshot, which HEAD removed (docs/STARTUP.md).", ""]
+pl = os.path.join(out, "startup-plugins.txt")
+if os.path.exists(pl):
+    md += [open(pl).read().strip(), ""]
 hdr = ["side", "run", "first paint", "core ready (boot)"] + COLS + ["**settled**", "relayouts"]
 md += ["| " + " | ".join(hdr) + " |", "|" + "---|" * len(hdr)]
 for side, label in (("base", base_label), ("head", head_label)):
