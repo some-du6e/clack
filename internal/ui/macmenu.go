@@ -7,7 +7,6 @@ import (
 	"gioui.org/io/event"
 
 	"github.com/some-du6e/clack/internal/ui/menubar"
-	"github.com/some-du6e/clack/internal/ui/shortcut"
 )
 
 // The macOS menu bar: Slack desktop's (4.53.276), whose menus come from two
@@ -283,12 +282,8 @@ func (a *App) findInConversation() {
 }
 
 // showShortcutsHelp is the top bar's help button and Help > Keyboard
-// Shortcuts.
-func (a *App) showShortcutsHelp() {
-	f := shortcut.Format
-	a.Toast("Keyboard shortcuts: " + f("Mod+K") + " switch, " + f("Mod+Shift+A") + " unreads, " +
-		f("Alt+Up") + "/" + f("Alt+Down") + " channels, " + f("Mod+.") + " side pane")
-}
+// Shortcuts: Slack's Keyboard Shortcuts pane (shortcuts_pane.go).
+func (a *App) showShortcutsHelp() { a.toggleKeyboardShortcuts() }
 
 // checkUpdatesNotify is Slack's "Check for Updates…" (Clack > on macOS,
 // the workspace menu elsewhere): a check now, answered like Slack's

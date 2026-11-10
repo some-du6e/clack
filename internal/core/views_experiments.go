@@ -60,6 +60,12 @@ func (a *App) ViewHeaderOverflowBorders() bool {
 	return a.experiment("view_header_overflow_borders") == "on"
 }
 
+// SubmitForwardKeybinding is +o0o j (submit_forward_keybinding): the
+// Keyboard Shortcuts pane lists "Submit forward dialog" (⌘Enter).
+func (a *App) SubmitForwardKeybinding() bool {
+	return a.experiment("submit_forward_keybinding") == "on"
+}
+
 // ListsInLater is Hm0j isListsInLaterExperimentEnabled (lists_in_later).
 func (a *App) ListsInLater() bool { return a.experiment("lists_in_later") == "on" }
 
@@ -67,7 +73,7 @@ func (a *App) ListsInLater() bool { return a.experiment("lists_in_later") == "on
 var viewsExperimentReads = map[string][]string{
 	"nested_secondary_view": on, "secondary_view_default_width": on, "smaller_secondary_headers": on,
 	"desktop_history_menu": on, "desktop_history_recents_read": on, "keyboard_shortcuts_search": on,
-	"view_header_overflow_borders": on, "lists_in_later": on,
+	"view_header_overflow_borders": on, "lists_in_later": on, "submit_forward_keybinding": on,
 }
 
 // viewsDefaultGroups are the test account's groups for them

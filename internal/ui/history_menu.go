@@ -154,7 +154,7 @@ func historyPageIcon(r Route) string {
 		case "usergroups":
 			return "user-groups"
 		}
-		return "user-directory" // Pbrowse-people
+		return "contact" // Pbrowse-people: Slack's user-directory, Clack's contact
 	}
 	return routeIconFallback(r)
 }

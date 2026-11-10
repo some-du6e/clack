@@ -71,6 +71,7 @@ func (a *App) defaultShortcuts() *shortcuts {
 	add("Mod+Shift+N", "New canvas", func(a *App) { a.CreateCanvas() }) // the Create menu's Canvas hint
 	add("Mod+,", "Preferences", func(a *App) { a.openPrefs() })
 	add("Mod+.", "Toggle the right pane", func(a *App) { a.toggleSecondary() })
+	add("Mod+/", "Keyboard shortcuts", func(a *App) { a.toggleKeyboardShortcuts() }) // shortcuts_pane.go
 	// Slack's zoom (View > Actual Size, Zoom In, Zoom Out): Cmd/Ctrl with
 	// 0, = or + (shifted or not, by keyboard), -.
 	mod := shortcut.Mod()

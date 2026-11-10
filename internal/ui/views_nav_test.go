@@ -16,7 +16,9 @@ import (
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/views"
 )
 
 func expNavApp(t *testing.T, groups map[string]string) (*App, *core.App) {
@@ -207,5 +209,39 @@ func TestHistoryOSLabels(t *testing.T) {
 	}
 	if got := historyOSLabelText("short"); got != "short" {
 		t.Errorf("label %q", got)
+	}
+}
+
+// ⌘/ (Ctrl+/) toggles Slack's Keyboard Shortcuts pane in the secondary
+// column; a row with an id runs its shortcut (executeKeyboardShortcut).
+func TestKeyboardShortcutsPane(t *testing.T) {
+	a, _ := expNavApp(t, nil)
+	bound := false
+	for _, b := range a.defaultShortcuts().list {
+		if b.name == "/" && b.mods == shortcut.Mod() && b.desc == "Keyboard shortcuts" {
+			bound = true
+		}
+	}
+	if !bound {
+		t.Error("no Mod+/ binding")
+	}
+	a.showShortcutsHelp() // Help > Keyboard Shortcuts
+	if a.secondary.kind != secShortcuts || a.secondary.view == nil {
+		t.Fatalf("secondary %v after Keyboard Shortcuts", a.secondary.kind)
+	}
+	if _, ok := a.secondary.view.(*views.KeyboardShortcuts); !ok {
+		t.Errorf("view %T", a.secondary.view)
+	}
+	a.toggleKeyboardShortcuts()
+	if a.secondary.kind != secNone {
+		t.Errorf("a second toggle left %v", a.secondary.kind)
+	}
+	o := a.shortcutListOpts()
+	if o.ActivityTab == nil || !o.ActivityTab("activity-inbox") || o.UpToEdit {
+		t.Errorf("list opts %+v", o)
+	}
+	a.RunShortcut("open_all_threads", "")
+	if a.router.Current() != "threads" {
+		t.Errorf("open_all_threads went to %q", a.router.Current())
 	}
 }
