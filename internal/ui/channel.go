@@ -127,7 +127,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		hdrBtns = []string{"kebab", "search"}
 	}
 	// a narrow column moves buttons out (useActionsToMoveToMenu, split.go)
-	hdrBtns, hudBtn := a.headerFit(gtx, sz.X, conv, hdrBtns, !appDM)
+	hdrBtns, hudBtn, narrow := a.headerFit(gtx, sz.X, conv, hdrBtns, !appDM)
 	for _, k := range hdrBtns {
 		k := k
 		right -= btn
@@ -265,7 +265,13 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 			icon = "people"
 		}
 	}
-	avail := right - x - gtx.Dp(16)
+	// under 600px Slack hides the topic (@container
+	// .p-view_header__topic_container): the title runs to the actions
+	tgap := gtx.Dp(16)
+	if narrow {
+		tgap = gtx.Dp(4)
+	}
+	avail := right - x - tgap
 	nw := a.th.Measure(gtx, 18, theme.Black, name)
 	// Slack (measured): button padding 2px 4px, 18px icon, name 20px after
 	// it, no chevron, title min-width 88px; the topic starts 16px after.
@@ -315,7 +321,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	x += titleW + gtx.Dp(16)
 
 	// topic (13px muted) in the remaining space.
-	if conv != nil && conv.Topic != "" && right-x > gtx.Dp(40) {
+	if conv != nil && conv.Topic != "" && !narrow && right-x > gtx.Dp(40) {
 		a.layoutHeaderTopic(gtx, ch, conv, image.Rect(x, 0, right-gtx.Dp(12), h))
 	}
 	return layout.Dimensions{Size: sz}

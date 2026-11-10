@@ -11,6 +11,7 @@ package ui
 import (
 	"image"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -23,11 +24,35 @@ import (
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
+
+// splitEnv is previewEnv with the thread fixtures (Size.ThreadHeader): a
+// thread with replies to open in the split view.
+func splitEnv(t *testing.T) *perfEnv {
+	sz := fakeslack.Small
+	sz.ThreadHeader = true
+	fs, err := fakeslack.Start(sz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { fs.Close() })
+	e := startEnv(t, fs, t.TempDir())
+	if os.Getenv("PREVIEW_SHOTS_DIR") != "" && e.gpu == nil {
+		w, err := pixeltest.NewWindow(e.size.X, e.size.Y)
+		if err != nil {
+			t.Fatalf("headless window: %v", err)
+		}
+		e.gpu = w
+	}
+	e.waitReady()
+	return e
+}
 
 // splitChannels are two channels the viewer is in (sidebar order).
 func splitChannels(t *testing.T, e *perfEnv) (string, string) {
@@ -94,7 +119,7 @@ func (e *perfEnv) splitDrag(x int) {
 // focused, with its composer posting to it; a thread opened inside it
 // stays in it with a back button; Escape closes it.
 func TestSplitViewChannelMenu(t *testing.T) {
-	e, _ := previewEnv(t)
+	e := splitEnv(t)
 	chA, chB := splitChannels(t, e)
 	posts := splitPosts(e)
 	e.openChannel(chA)
@@ -150,43 +175,22 @@ func TestSplitViewChannelMenu(t *testing.T) {
 	e.settle(300 * time.Millisecond)
 
 	// a thread opened inside the split view replaces its channel there,
-	// with the channel as its back stack; one from the main view goes to
-	// the main view's thread pane
-	// someone else's root (not the send above), one with replies if any
-	var ts string
-	self := e.a.model().SelfID
-	if tl := e.a.data.core.S.Timeline(chB); tl != nil {
-		for i := len(tl.Msgs) - 1; i >= 0; i-- {
-			m := tl.Msgs[i]
-			if m.User == self || (m.ThreadTS != "" && m.ThreadTS != m.TS) {
-				continue
-			}
-			if ts == "" || m.ReplyCount > 0 {
-				ts = m.TS
-			}
-			if m.ReplyCount > 0 {
-				break
-			}
-		}
-	}
-	if ts == "" {
-		t.Fatal("no message in the split channel")
-	}
-	replies := e.fs.CallCount("conversations.replies")
-	e.a.inPane(paneSplit, func() { e.a.OpenThread(chB, ts) })
+	// with the channel as its back stack (the fixture thread: a root and
+	// two replies); one from the main view goes to the main view's pane
+	thCh, thTS := fakeslack.ThreadPublicID, fakeslack.ThreadRootTS
+	e.a.inPane(paneSplit, func() { e.a.OpenThread(thCh, thTS) })
 	e.settle(300 * time.Millisecond)
-	if got := e.a.splitTop(); got != Route("c/"+chB+"/t/"+ts) || len(e.a.split.stack) != 2 {
+	if got := e.a.splitTop(); got != Route("c/"+thCh+"/t/"+thTS) || len(e.a.split.stack) != 2 {
 		t.Fatalf("thread in the split view: %v", e.a.split.stack)
 	}
-	if e.a.split.pane.convos[chB+"/"+ts] == nil {
+	if e.a.split.pane.convos[thCh+"/"+thTS] == nil {
 		t.Fatal("the thread didn't draw in the split view")
 	}
-	// its replies load (a cached thread wouldn't ask again: no failure)
-	for dl := time.Now().Add(5 * time.Second); time.Now().Before(dl) && e.fs.CallCount("conversations.replies") <= replies; {
-		e.frame()
-		time.Sleep(5 * time.Millisecond)
-	}
-	e.settle(500 * time.Millisecond)
+	e.until("the split view's thread laid out", 10*time.Second, func() bool {
+		h, ok := e.a.split.pane.convos[thCh+"/"+thTS].list.(interface{ ContentHeight() int })
+		return ok && h.ContentHeight() > 0
+	})
+	e.settle(300 * time.Millisecond)
 	if e.a.secondary.kind == secThread {
 		t.Error("the split view's thread opened in the main view's pane")
 	}
@@ -442,9 +446,9 @@ func TestSplitViewHeaderFit(t *testing.T) {
 		{499, bot, "kebab search", true},
 		{520, bot, "kebab search bell", true},
 	} {
-		btns, hud := a.headerFit(gtx, c.w, c.conv, []string{"kebab", "search", "bell"}, true)
-		if got := strings.Join(btns, " "); got != c.btns || hud != c.huddle {
-			t.Errorf("%dpx %s: %q huddle=%v, want %q huddle=%v", c.w, c.conv.Kind, got, hud, c.btns, c.huddle)
+		btns, hud, narrow := a.headerFit(gtx, c.w, c.conv, []string{"kebab", "search", "bell"}, true)
+		if got := strings.Join(btns, " "); got != c.btns || hud != c.huddle || narrow != (c.w < 600) {
+			t.Errorf("%dpx %s: %q huddle=%v narrow=%v, want %q huddle=%v", c.w, c.conv.Kind, got, hud, narrow, c.btns, c.huddle)
 		}
 	}
 }

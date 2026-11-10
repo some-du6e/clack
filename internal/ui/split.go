@@ -643,14 +643,16 @@ func (a *App) headerEnd() int {
 // getOverflowingActions keeps floor((width-340)/30) of the header's other
 // movable actions in Slack's order (agents, huddle): the Huddle button
 // goes once the column is under 370px. btns are layoutChannelHeader's
-// buttons, right to left; it returns the ones that stay, and whether the
-// Huddle button (huddle: the header has one) stays. Slack's ⋮ menu
-// doesn't change for it.
-func (a *App) headerFit(gtx layout.Context, w int, conv *convInfo, btns []string, huddle bool) ([]string, bool) {
+// buttons, right to left; it returns the ones that stay, whether the
+// Huddle button (huddle: the header has one) stays, and whether the
+// column is under 600px (Slack's isColumnNarrow: the topic container
+// hides). Slack's ⋮ menu doesn't change for it.
+func (a *App) headerFit(gtx layout.Context, w int, conv *convInfo, btns []string, huddle bool) ([]string, bool, bool) {
 	col := float32(w) / gtx.Metric.PxPerDp
 	if a.pane == paneSplit && a.split.col.Dx() > 0 {
 		col = float32(a.split.col.Dx()) / gtx.Metric.PxPerDp
 	}
+	narrow := col < 600
 	slackbot := conv != nil && conv.Kind == "im" && conv.User == "USLACKBOT"
 	var moved []string
 	switch {
@@ -666,7 +668,7 @@ func (a *App) headerFit(gtx layout.Context, w int, conv *convInfo, btns []string
 		moved = []string{"search"}
 	}
 	if len(moved) == 0 {
-		return btns, huddle
+		return btns, huddle, narrow
 	}
 	keep := make([]string, 0, len(btns))
 	for _, b := range btns {
@@ -674,7 +676,7 @@ func (a *App) headerFit(gtx layout.Context, w int, conv *convInfo, btns []string
 			keep = append(keep, b)
 		}
 	}
-	return keep, huddle
+	return keep, huddle, narrow
 }
 
 // splitSidebarItem is "Open in split view" for the sidebar's row menu
