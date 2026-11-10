@@ -67,6 +67,7 @@ type styleSet struct {
 	gen                         uint64
 	body, h1, h2, h3, title, sm *richview.Style
 	ph                          *richview.Style // the empty canvas's placeholder
+	titlePh                     *richview.Style // the empty title's placeholder
 }
 
 func (s *styleSet) sync(th *theme.Theme, h Host) {
@@ -110,6 +111,8 @@ func (s *styleSet) sync(th *theme.Theme, h Host) {
 	pp := s.ph.Palette
 	pp.Text = placeholderText(th.Dark)
 	s.ph.SetPalette(pp)
+	s.titlePh = mk(titleSize, titleLine, true)
+	s.titlePh.SetPalette(pp)
 }
 
 func (s *styleSet) forKind(k canvas.Kind) *richview.Style {
@@ -137,7 +140,15 @@ type blk struct {
 	hit   widget.Clickable // click to edit
 	edOK  bool             // canvas.Editable: opens in the editor
 	edWhy string           // else what is in the way
+
+	parent *blk     // the quote or callout holding this block
+	inCell bool     // a table cell's block: drawn, not edited (tables don't open in Clack's editor)
+	cells  [][]cell // Table: the rows' cells
+	tscr   tableScroll
 }
+
+// cell is one table cell's blocks.
+type cell struct{ kids []*blk }
 
 // rebuild makes blocks for a newly fetched doc, keeping the laid-out ones
 // that didn't change (a live update re-fetches the whole export).
@@ -177,7 +188,7 @@ func (v *View) makeBlocks(d *core.CanvasDoc, bs []canvas.Block, old map[string]*
 	for i := range bs {
 		b := &bs[i]
 		key := b.ID + "\x00" + string(rune('A'+b.Kind)) + "\x00" + canvas.Markdown(*b) + fileKey(d, b)
-		if o, ok := old[key]; ok && len(b.Children) == 0 && len(b.Columns) == 0 {
+		if o, ok := old[key]; ok && len(b.Children) == 0 && len(b.Columns) == 0 && b.Kind != canvas.Table {
 			o.b = b
 			o.edOK, o.edWhy = canvas.Editable(*b)
 			out = append(out, o)
@@ -186,8 +197,13 @@ func (v *View) makeBlocks(d *core.CanvasDoc, bs []canvas.Block, old map[string]*
 		x := &blk{b: b, key: key}
 		x.edOK, x.edWhy = canvas.Editable(*b)
 		switch b.Kind {
+		case canvas.Table:
+			x.cells = v.tableCells(d, b)
 		case canvas.Quote, canvas.Callout:
 			x.kids = v.makeBlocks(d, b.Children, old)
+			for _, k := range x.kids {
+				k.parent = x
+			}
 			if b.Kind == canvas.Callout && b.Emoji != "" {
 				x.emoji = richview.New(richtext.Doc{Blocks: []richtext.Block{{Kind: richtext.Paragraph, Spans: []richtext.Span{v.emojiSpan(b.Emoji)}}}}, richview.Options{})
 			}
@@ -250,40 +266,6 @@ func (v *View) richDoc(d *core.CanvasDoc, b *canvas.Block) (richtext.Doc, bool) 
 			}
 		}
 		return one(richtext.Block{Kind: richtext.Preformatted, Spans: sp})
-	case canvas.Table:
-		var rows [][][]richtext.Span
-		for _, r := range b.Rows {
-			var cells [][]richtext.Span
-			for _, c := range r {
-				var sp []richtext.Span
-				for j, cb := range c.Blocks {
-					if j > 0 {
-						sp = append(sp, richtext.Span{Kind: richtext.Break})
-					}
-					switch {
-					case cb.Kind == canvas.Check && cb.Checked:
-						sp = append(sp, richtext.Span{Kind: richtext.Text, Text: "☑ "})
-					case cb.Kind == canvas.Check:
-						sp = append(sp, richtext.Span{Kind: richtext.Text, Text: "☐ "})
-					case cb.Kind == canvas.Bullet:
-						sp = append(sp, richtext.Span{Kind: richtext.Text, Text: "• "})
-					case cb.Kind == canvas.Numbered:
-						sp = append(sp, richtext.Span{Kind: richtext.Text, Text: itoa(max(1, cb.Number)) + ". "})
-					}
-					st := richtext.Style(0)
-					if cb.Kind == canvas.Heading1 || cb.Kind == canvas.Heading2 || cb.Kind == canvas.Heading3 {
-						st = richtext.Bold
-					}
-					sp = append(sp, withStyle(v.spans(cb.Spans), st)...)
-				}
-				cells = append(cells, sp)
-			}
-			rows = append(rows, cells)
-		}
-		if !b.Header && len(rows) > 0 { // richview bolds row 0 as Block Kit does; Quip didn't
-			rows = append([][][]richtext.Span{make([][]richtext.Span, len(rows[0]))}, rows...)
-		}
-		return one(richtext.Block{Kind: richtext.Table, Rows: rows})
 	case canvas.Image:
 		if b.Image == nil {
 			return richtext.Doc{}, false
@@ -297,8 +279,10 @@ func (v *View) richDoc(d *core.CanvasDoc, b *canvas.Block) (richtext.Doc, bool) 
 			if im.Title == "" {
 				im.Title = f.Title
 			}
-		} else if strings.HasPrefix(im.URL, "/") {
-			return richtext.Doc{}, false // Quip's relative blob URL: never fetched
+		} else if strings.HasPrefix(im.URL, "/") || slackPage(im.URL) {
+			// Quip's relative blob URL, or a Slack page (a file's
+			// permalink): never fetched, only the file's own thumbnail
+			return richtext.Doc{}, false
 		}
 		if im.W == 0 {
 			im.W, im.H = 640, 360
@@ -329,6 +313,18 @@ func (v *View) richDoc(d *core.CanvasDoc, b *canvas.Block) (richtext.Doc, bool) 
 		return one(richtext.Block{Kind: richtext.AttachmentBlock, Att: att})
 	}
 	return richtext.Doc{}, false
+}
+
+// slackPage: u is a page on a Slack workspace host (a permalink), not
+// an image: fetching it would load Slack's web app with the session.
+func slackPage(u string) bool {
+	pu, err := url.Parse(u)
+	if err != nil {
+		return true
+	}
+	h := strings.ToLower(pu.Hostname())
+	return h == "slack.com" || strings.HasSuffix(h, ".slack.com") && h != "files.slack.com" ||
+		strings.HasSuffix(h, ".enterprise.slack.com")
 }
 
 // spans fills in what the export leaves out: emoji images from the
@@ -438,16 +434,9 @@ func (v *View) layoutBlock(gtx layout.Context, b *blk, top int) layout.Dimension
 	case k.IsList():
 		h = v.layoutItem(gtx, b, w)
 	case k == canvas.Quote:
-		// section[data-section-style=16]>.content: padding 3px 0 3px 18px;
-		// its :before bar 4px wide, radius 3, 4px in from top and bottom
-		x := gtx.Dp(18)
-		func() {
-			defer op.Offset(image.Pt(0, gtx.Dp(3))).Push(gtx.Ops).Pop()
-			h = v.layoutKids(gtx, b.kids, x, w-x) + gtx.Dp(6)
-		}()
-		if h > gtx.Dp(8) {
-			theme.RRect(gtx, image.Rect(0, gtx.Dp(4), gtx.Dp(4), h-gtx.Dp(4)), gtx.Dp(3), c.QuoteBar)
-		}
+		h = v.layoutQuote(gtx, b, w)
+	case k == canvas.Table:
+		h = v.layoutTable(gtx, b, w)
 	case k == canvas.Callout:
 		pad := gtx.Dp(16)
 		ex := pad
@@ -496,7 +485,7 @@ func (v *View) layoutBlock(gtx layout.Context, b *blk, top int) layout.Dimension
 		} else {
 			h = b.rv.Layout(g, st, v.handler).Size.Y
 		}
-		if v.edit.canEdit(v) { // other kinds: a click explains they can't be edited yet
+		if v.edit.canEdit(v) && !b.inCell { // other kinds: a click explains they can't be edited yet
 			v.edit.textArea(gtx, v, b, image.Rect(0, 0, w, h))
 		}
 	}
@@ -537,11 +526,51 @@ func (v *View) layoutItem(gtx layout.Context, b *blk, w int) int {
 			d := b.rv.Layout(g, v.styles.body, v.handler)
 			h = max(h, d.Size.Y)
 		}
-		if v.edit.canEdit(v) {
+		if v.edit.canEdit(v) && !b.inCell {
 			v.edit.textArea(gtx, v, b, image.Rect(0, 0, w-tx, h))
 		}
 	}()
 	return h
+}
+
+// layoutQuote draws a quote the way Quip does: each of its paragraphs is
+// a section of its own (data-section-style 16, which the export groups
+// into one <blockquote>), and each section draws its own bar
+// (.section[data-section-style="16"]>.content:before: 4px wide, radius 3,
+// 4px in from the section's top and bottom, in --dt_color-otl-pry;
+// --dt_color-content-sec in dark) beside content padded 3px 0 3px 18px.
+// Consecutive sections keep their collapsed margins (4px top, 12px
+// bottom: 12px), so a two-paragraph quote shows two bars with a gap.
+func (v *View) layoutQuote(gtx layout.Context, b *blk, w int) int {
+	th := v.h.Theme()
+	x := gtx.Dp(18)
+	pad := gtx.Dp(3)
+	y := 0
+	for i, k := range b.kids {
+		if i > 0 {
+			y += gtx.Dp(12) // max(margin-bottom 12, margin-top 4)
+		}
+		top := y
+		func() {
+			defer op.Offset(image.Pt(x, y+pad)).Push(gtx.Ops).Pop()
+			g := gtx
+			g.Constraints = layout.Constraints{Min: image.Pt(w-x, 0), Max: image.Pt(w-x, gtx.Constraints.Max.Y)}
+			y += v.layoutBlock(g, k, 0).Size.Y + 2*pad
+		}()
+		if y-top > gtx.Dp(8) {
+			theme.RRect(gtx, image.Rect(0, top+gtx.Dp(4), gtx.Dp(4), y-gtx.Dp(4)), gtx.Dp(3), quoteBar(th))
+		}
+	}
+	return y
+}
+
+// quoteBar is the quote bar's colour: --dt_color-otl-pry, or
+// --dt_color-content-sec in dark (.sk-client-theme--dark … :before).
+func quoteBar(th *theme.Theme) color.NRGBA {
+	if th.Dark {
+		return th.C.FgMuted
+	}
+	return th.C.QuoteBar
 }
 
 // bullets are Quip's markers per level (section[data-section-style=5]
@@ -581,7 +610,7 @@ func (v *View) drawMarker(gtx layout.Context, b *blk, x, lineH int) int {
 		toggled := b.check.Clicked(gtx) // before Layout, which drains a Clickable's events
 		at(gtx, r.Min, r.Size(), func(gtx layout.Context) layout.Dimensions {
 			s := gtx.Constraints.Max
-			editable := v.edit.canEdit(v)
+			editable := v.edit.canEdit(v) && !b.inCell // a table's checklist isn't edited in Clack
 			if b.b.Checked {
 				theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(2), c.Link)
 				checkMark(gtx, c.Bg)

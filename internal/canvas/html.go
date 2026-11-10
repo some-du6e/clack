@@ -140,6 +140,13 @@ func (w *hw) block(b *Block) {
 			h = "true"
 		}
 		w.s.WriteString(`<table data-header="` + h + `">`)
+		if len(b.ColWidths) > 0 {
+			w.s.WriteString("<colgroup>")
+			for _, cw := range b.ColWidths {
+				w.s.WriteString(`<col style="width: ` + strconv.Itoa(cw) + `px">`)
+			}
+			w.s.WriteString("</colgroup>")
+		}
 		for r, row := range b.Rows {
 			w.s.WriteString("<tr>")
 			tag := "td"

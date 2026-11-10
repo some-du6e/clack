@@ -196,9 +196,13 @@ func TestTitleSectionDrawnOnce(t *testing.T) {
 	if titleSection(v2.blocks) || v2.title == nil {
 		t.Error("a canvas without an opening heading lost its title")
 	}
-	// an empty heading isn't a title
-	if titleSection([]*blk{{b: &canvas.Block{Kind: canvas.Heading1, Spans: []richtext.Span{{Kind: richtext.Text, Text: "  "}}}}}) {
-		t.Error("a blank heading counted as the title")
+	// a blank H1 is still the title section (Quip's isTitleSection; its
+	// TitleSectionOverlay shows "Your canvas title"); a blank H2 isn't
+	if !titleSection([]*blk{{b: &canvas.Block{Kind: canvas.Heading1, Spans: []richtext.Span{{Kind: richtext.Text, Text: "  "}}}}}) {
+		t.Error("a blank opening H1 isn't the title section")
+	}
+	if titleSection([]*blk{{b: &canvas.Block{Kind: canvas.Heading2, Spans: []richtext.Span{{Kind: richtext.Text, Text: "  "}}}}}) {
+		t.Error("a blank H2 counted as the title")
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"gioui.org/font"
 	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
@@ -64,6 +65,20 @@ type session struct {
 	focus   bool
 	ver     uint64
 	refused bool // the last save was refused: Escape now discards
+	quoted  bool // a paragraph of a quote: each line saves as a "> " section
+	press   *pressAt
+}
+
+// pressAt is the click that opened the session: where it landed in the
+// block's text (the editor's coordinates), when, and whether its drag
+// is still going (the block keeps the pointer grab until the release).
+type pressAt struct {
+	pt     image.Point
+	at     time.Time
+	placed bool // the caret was put at pt
+	drag   bool
+	anchor int
+	to     *image.Point // a drag that came before the editor's first frame
 }
 
 func newEditState() *editState {
@@ -91,31 +106,129 @@ func (e *editState) editing(b *blk) bool {
 	return e != nil && e.cur != nil && (e.cur.target == b || e.cur.place == b)
 }
 
-// textArea makes a text block's area start editing on click (links,
-// mentions and selection keep working: the click passes through).
+// textArea makes a text block's area editable the way Quip's
+// contenteditable document is: a press anywhere on the block's text
+// (headings, list items, quote and callout paragraphs, code) opens it in
+// the editor with the caret where the press landed (the browser's
+// caretPositionFromPoint, which Quip's editor relies on), a drag selects
+// from there, and a double or triple click selects the word or the line.
+// A press on a link or mention is left to richview, which opens it. A
+// block Clack can't edit keeps richview's selection and explains itself
+// on release. r is the text's area in the editor's coordinates.
 func (e *editState) textArea(gtx layout.Context, v *View, b *blk, r image.Rectangle) {
 	if e == nil {
 		return
 	}
 	for {
-		ev, ok := gtx.Event(pointer.Filter{Target: b, Kinds: pointer.Press | pointer.Release})
+		ev, ok := gtx.Event(pointer.Filter{Target: b, Kinds: pointer.Press | pointer.Drag | pointer.Release})
 		if !ok {
 			break
 		}
 		pe, ok := ev.(pointer.Event)
-		if !ok || pe.Kind != pointer.Release || pe.Buttons != 0 && pe.Buttons != pointer.ButtonPrimary {
+		if !ok {
 			continue
 		}
-		if b.rv != nil && (b.rv.Pointer() || b.rv.HasSelection()) {
-			continue // a link or mention was clicked, or text selected
+		if p := e.pressOn(b); p != nil { // the press that just opened b: its drag and release
+			switch pe.Kind {
+			case pointer.Drag:
+				pt := pe.Position.Round()
+				p.to = &pt
+			case pointer.Release:
+				pt := pe.Position.Round()
+				p.to, p.drag = &pt, false
+			}
+			continue
 		}
-		e.start(v, b)
+		onTarget := b.rv != nil && b.rv.Hovered() // a link or mention under the pointer
+		switch pe.Kind {
+		case pointer.Press:
+			if !primary(pe) || onTarget || !b.edOK {
+				continue
+			}
+			e.startAt(v, b, pe.Position.Round(), gtx.Now)
+		case pointer.Release:
+			if b.edOK || onTarget || b.rv != nil && b.rv.HasSelection() {
+				continue
+			}
+			e.refuse(v, b)
+		}
 	}
 	defer clip.Rect(r).Push(gtx.Ops).Pop()
 	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
 	if b.edOK {
 		pointer.CursorText.Add(gtx.Ops)
 	}
+	event.Op(gtx.Ops, b)
+}
+
+// primary: a left-button mouse press, or a touch.
+func primary(pe pointer.Event) bool {
+	if pe.Source == pointer.Touch {
+		return true
+	}
+	return pe.Buttons == pointer.ButtonPrimary && !pe.Modifiers.Contain(key.ModCtrl|key.ModCommand)
+}
+
+// pressOn is the opening press of b's session while it is held.
+func (e *editState) pressOn(b *blk) *pressAt {
+	if s := e.cur; s != nil && s.target == b && s.press != nil && s.press.drag {
+		return s.press
+	}
+	return nil
+}
+
+// startAt opens b for editing from a press at pt (in the block's text
+// coordinates); the editor puts its caret there on its first frame.
+func (e *editState) startAt(v *View, b *blk, pt image.Point, now time.Time) {
+	e.start(v, b)
+	s := e.cur
+	if s == nil || s.target != b {
+		return
+	}
+	s.press = &pressAt{pt: pt, at: now, drag: true}
+	if b.rv != nil {
+		b.rv.ClearSelection() // the read view took the press too
+	}
+}
+
+// pressEvents follows the opening press's drag in the editor (the block
+// keeps the pointer grab it got with the press): the selection runs from
+// the press to the pointer, clamped to the block, as Clack edits one
+// section at a time. The block's tag stays registered over the editor
+// until the release, or the router would cancel the grab.
+func (e *editState) pressEvents(gtx layout.Context, s *session, b *blk, size image.Point) {
+	p := s.press
+	if p == nil || !p.drag {
+		return
+	}
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: b, Kinds: pointer.Drag | pointer.Release | pointer.Cancel})
+		if !ok {
+			break
+		}
+		pe, ok := ev.(pointer.Event)
+		if !ok {
+			continue
+		}
+		switch pe.Kind {
+		case pointer.Drag:
+			if d := pe.Position.Round().Sub(p.pt); d.X*d.X+d.Y*d.Y > 9 {
+				s.ed.SetSelection(p.anchor, s.ed.HitPos(pe.Position.Round()))
+			}
+		case pointer.Release:
+			if d := pe.Position.Round().Sub(p.pt); d.X*d.X+d.Y*d.Y > 9 {
+				s.ed.SetSelection(p.anchor, s.ed.HitPos(pe.Position.Round()))
+			}
+			p.drag = false
+		case pointer.Cancel:
+			p.drag = false
+		}
+	}
+	if !p.drag {
+		return
+	}
+	defer clip.Rect{Max: size}.Push(gtx.Ops).Pop()
+	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
 	event.Op(gtx.Ops, b)
 }
 
@@ -286,6 +399,12 @@ func (e *editState) start(v *View, b *blk) {
 	}
 	s := &session{target: b, id: b.b.ID, kind: b.b.Kind, level: b.b.Level, checked: b.b.Checked, orig: canvas.Markdown(*b.b),
 		ed: composer.NewEditor(), focus: true}
+	if b.parent != nil && b.parent.b.Kind == canvas.Quote && b.b.Kind == canvas.Paragraph {
+		// a quote's paragraph is a Quip section of its own (style 16):
+		// it saves as "> …" so it stays in the quote
+		s.quoted = true
+		s.orig = canvas.Markdown(canvas.Block{Kind: canvas.Quote, Children: []canvas.Block{*b.b}})
+	}
 	s.ed.SetDoc(toDoc(b.b))
 	s.ver = s.ed.Version()
 	e.cur = s
@@ -301,7 +420,11 @@ func (e *editState) finish(v *View) bool {
 	}
 	s := e.cur
 	bs := fromDoc(s.ed.Doc(), s)
-	for _, b := range bs {
+	check := bs
+	if s.quoted { // "> " around text canvas markdown carries
+		check = unquote(bs)
+	}
+	for _, b := range check {
 		if ok, why := canvas.Editable(b); !ok {
 			if why == "" {
 				why = "this"
@@ -314,6 +437,10 @@ func (e *editState) finish(v *View) bool {
 	}
 	e.cur = nil
 	e.pick = picker{}
+	local := bs
+	if s.quoted { // saved as quote sections; drawn as the quote's paragraphs
+		local = unquote(bs)
+	}
 	md := blocksMarkdown(bs)
 	var ch core.CanvasChange
 	switch {
@@ -330,10 +457,10 @@ func (e *editState) finish(v *View) bool {
 			return true
 		}
 		ch = core.CanvasChange{Operation: "replace", SectionID: s.id, Markdown: md}
-		if len(bs) > 0 {
-			bs[0].ID = s.id
+		if len(local) > 0 {
+			local[0].ID = s.id
 		}
-		e.replaceLocal(v, s.target, bs)
+		e.replaceLocal(v, s.target, local)
 	default: // a new block
 		e.dropPlace(v, s)
 		if md == "" {
@@ -343,7 +470,7 @@ func (e *editState) finish(v *View) bool {
 		if s.afterID == "" {
 			ch.Operation = "insert_at_end"
 		}
-		e.insertLocal(v, s.afterID, bs)
+		e.insertLocal(v, s.afterID, local)
 	}
 	e.save(v, func(ctx context.Context, a *core.App) error { return a.EditCanvas(ctx, v.id, ch) })
 	return true
@@ -400,9 +527,33 @@ func (e *editState) replaceLocal(v *View, b *blk, bs []canvas.Block) {
 		v.blocks = append(out, v.blocks[i+1:]...)
 		return
 	}
-	if len(nb) == 1 { // nested (a quote, a column, a cell): swap in place
+	if p := b.parent; p != nil { // a quote's or callout's paragraph: splice into its kids
+		if i := indexOf(p.kids, b); i >= 0 {
+			for _, k := range nb {
+				k.parent = p
+			}
+			out := append([]*blk(nil), p.kids[:i]...)
+			out = append(out, nb...)
+			p.kids = append(out, p.kids[i+1:]...)
+			return
+		}
+	}
+	if len(nb) == 1 { // nested (a column, a cell): swap in place
 		*b = *nb[0]
 	}
+}
+
+// unquote is a quoted session's blocks as the quote's own paragraphs.
+func unquote(bs []canvas.Block) []canvas.Block {
+	var out []canvas.Block
+	for _, b := range bs {
+		if b.Kind == canvas.Quote {
+			out = append(out, b.Children...)
+			continue
+		}
+		out = append(out, b)
+	}
+	return out
 }
 
 func (e *editState) insertLocal(v *View, after string, bs []canvas.Block) {
@@ -574,6 +725,10 @@ func (e *editState) layoutEditor(gtx layout.Context, v *View, b *blk, top, w int
 	st := editorStyle(th, kind, v.h)
 	if s.target != nil && titleSection(v.blocks) && v.blocks[0] == s.target {
 		st.TextSize, st.LineHeight = titleSize, titleLine // the title section
+		lineH = gtx.Dp(titleLine)
+		st.PlaceholderText = titlePlaceholder // TitleSectionOverlay, until the title has text
+	} else if s.target != nil && s.target == v.placeholderRow() {
+		st.PlaceholderText = placeholderFor(v.id) // TextSectionOverlay
 	}
 	st.Embolden = v.styles.body.Embolden // richview's ink, so the text doesn't go grey while edited
 	g := gtx
@@ -581,6 +736,24 @@ func (e *editState) layoutEditor(gtx layout.Context, v *View, b *blk, top, w int
 	var d layout.Dimensions
 	func() {
 		defer op.Offset(image.Pt(tx, 0)).Push(gtx.Ops).Pop()
+		if p := s.press; p != nil && !p.placed {
+			// the press that opened the editor: lay the text out once
+			// (not drawn) to find the caret position under it, so the
+			// first frame already shows the caret there
+			m := op.Record(gtx.Ops)
+			s.ed.Layout(g, st)
+			m.Stop()
+			pos := s.ed.HitPos(p.pt)
+			p.placed, p.anchor = true, pos
+			s.ed.SetSelection(pos, pos)
+			s.ed.SeedClick(p.at, p.pt)
+			if to := p.to; to != nil {
+				if d := to.Sub(p.pt); d.X*d.X+d.Y*d.Y > 9 {
+					s.ed.SetSelection(pos, s.ed.HitPos(*to))
+				}
+			}
+		}
+		e.pressEvents(gtx, s, b, image.Pt(max(1, w-tx), gtx.Constraints.Max.Y))
 		d = s.ed.Layout(g, st)
 	}()
 	h := max(d.Size.Y, lineH)
@@ -618,6 +791,9 @@ func editorStyle(th *theme.Theme, k canvas.Kind, h Host) composer.EditorStyle {
 		st.TextSize, st.LineHeight = h2Size, h2Line
 	case canvas.Heading3:
 		st.TextSize, st.LineHeight = h3Size, h3Line
+	}
+	if k == canvas.Heading1 || k == canvas.Heading2 || k == canvas.Heading3 {
+		st.Weight = font.Black // as richview draws it, so the text (and a click's caret) stays put
 	}
 	ink := docText(th.Dark)
 	st.Color, st.Placeholder, st.Selection, st.Caret = ink, placeholderText(th.Dark), c.Selection, ink
@@ -809,6 +985,13 @@ func fromDoc(d *composer.Doc, s *session) []canvas.Block {
 	for len(out) > 0 && emptyBlock(out[len(out)-1]) {
 		out = out[:len(out)-1]
 	}
+	if s.quoted { // each line is a quote section of its own
+		for i, b := range out {
+			if b.Kind == canvas.Paragraph {
+				out[i] = canvas.Block{Kind: canvas.Quote, Children: []canvas.Block{b}}
+			}
+		}
+	}
 	return out
 }
 
@@ -996,9 +1179,15 @@ func (e *editState) openFormatMenu(v *View, formats []blockFormat) {
 	v.act.Menu(items)
 }
 
-// insertMenu is the bottom toolbar's insert menu (InsertionToolbarMenu):
-// Divider, then the cards and files Clack can't insert yet, which Slack
-// also shows disabled when they aren't available.
+// openInsertMenu is the bottom toolbar's insert menu
+// (InsertionToolbarMenu): Divider, then Date, Profile, Callout, Canvas,
+// Image and File. What canvases.edit's markdown can make works through
+// it: a divider ("---"), a profile card (a mention alone in its block,
+// "![](@U…)", which Slack unfurls as a card), an image (uploaded, then
+// "![name](permalink)") and a file ("![](permalink)", a file unfurl).
+// Date and Callout have no canvas markdown, and Slack's Canvas item is a
+// canvas search Clack doesn't have yet: those three are drawn in Slack's
+// disabled state (.c-menu_item__button--disabled, opacity .5).
 func (e *editState) openInsertMenu(v *View) {
 	if v.act.Menu == nil {
 		return
@@ -1007,11 +1196,11 @@ func (e *editState) openInsertMenu(v *View) {
 		{Label: "Divider", Icon: "divider", Do: func() { v.post(func() { e.insertDivider(v) }) }},
 		{Divider: true},
 		{Label: "Date", Icon: "calendar", Disabled: true},
-		{Label: "Profile", Icon: "user", Disabled: true},
+		{Label: "Profile", Icon: "user", Do: func() { v.post(func() { e.insertProfile(v) }) }},
 		{Label: "Callout", Icon: "callout", Disabled: true},
 		{Label: "Canvas", Icon: "canvas", Disabled: true},
-		{Label: "Image", Icon: "image", Disabled: true},
-		{Label: "File", Icon: "attach", Disabled: true},
+		{Label: "Image", Icon: "image", Do: func() { v.post(func() { e.insertUpload(v, true) }) }},
+		{Label: "File", Icon: "attach", Do: func() { v.post(func() { e.insertUpload(v, false) }) }},
 	}
 	v.act.Menu(items)
 }
@@ -1019,32 +1208,8 @@ func (e *editState) openInsertMenu(v *View) {
 // insertDivider adds a divider after the block being edited (else at the
 // end): canvases.edit insert_after with canvas markdown's "---".
 func (e *editState) insertDivider(v *View) {
-	after := ""
-	if s := e.cur; s != nil {
-		after = s.id
-		if s.target == nil {
-			after = s.afterID
-		}
-	}
-	if !e.finish(v) {
-		return
-	}
-	if after == "" {
-		for i := len(v.blocks) - 1; i >= 0; i-- {
-			if v.blocks[i].b.ID != "" {
-				after = v.blocks[i].b.ID
-				break
-			}
-		}
-	}
 	div := canvas.Block{Kind: canvas.Divider}
-	ch := core.CanvasChange{Operation: "insert_after", SectionID: after, Markdown: canvas.Markdown(div)}
-	if after == "" {
-		ch.Operation = "insert_at_end"
-	}
-	e.insertLocal(v, after, []canvas.Block{div})
-	e.save(v, func(ctx context.Context, a *core.App) error { return a.EditCanvas(ctx, v.id, ch) })
-	v.h.Invalidate()
+	e.insertBlocks(v, canvas.Markdown(div), []canvas.Block{div})
 }
 
 // insertion toolbar buttons, in Slack's order.
@@ -1059,13 +1224,15 @@ var insButtons = []insButton{
 	{"layouts", "column-two", false},
 }
 
-// insEnabled: what Clack can do from the insertion toolbar. Insert file,
-// Insert table and the layouts menu are drawn disabled, as Slack draws
-// them when they aren't available; formatting needs a block being edited
-// (Slack disables it outside a text section).
+// insEnabled: what Clack can do from the insertion toolbar. Insert file
+// uploads and embeds a file, Insert table adds Quip's new table (3 rows,
+// 2 columns) as a canvas markdown table; the layouts menu (columns) has
+// no canvas markdown, so it is drawn in Slack's disabled state
+// (.c-icon_button.c-button--disabled: opacity .5). Formatting needs a
+// block being edited (Slack disables it outside a text section).
 func (e *editState) insEnabled(k string) bool {
 	switch k {
-	case "file", "table", "layouts":
+	case "layouts":
 		return false
 	case "formatting":
 		return e.cur != nil
@@ -1118,7 +1285,7 @@ func (e *editState) layoutInsertionToolbar(gtx layout.Context, v *View) {
 				theme.RRect(gtx, image.Rectangle{Max: s}, s.Y/2, c.Send)
 				col = c.SendText
 			case !on:
-				col = c.FgSubtle
+				col = theme.WithAlpha(col, col.A/2) // c-button--disabled: opacity .5
 			case clk.Hovered():
 				theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(8), c.BgHover)
 			}
@@ -1150,6 +1317,10 @@ func (e *editState) insertion(v *View, k string, anchor image.Point) {
 		e.openInsertMenu(v)
 	case "formatting":
 		e.openFormatMenu(v, formattingMenu)
+	case "file":
+		e.insertUpload(v, false)
+	case "table":
+		e.insertTable(v)
 	case "emoji", "checklist":
 		if e.cur == nil {
 			v.StartNewBlock() // no caret: Slack inserts at the end

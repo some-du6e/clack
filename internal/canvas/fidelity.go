@@ -55,8 +55,11 @@ func Editable(b Block) (ok bool, why string) {
 			return false, "a link styled as code"
 		}
 	}
-	if b.Kind == Paragraph && len(trimEdges(b.Spans)) == 0 {
-		return true, "" // an empty line
+	if len(trimEdges(b.Spans)) == 0 {
+		switch b.Kind {
+		case Paragraph, Heading1, Heading2, Heading3: // an empty line, an empty title section
+			return true, ""
+		}
 	}
 	got := ParseMarkdown(Markdown(b), nil)
 	if len(got) != 1 {

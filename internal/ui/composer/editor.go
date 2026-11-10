@@ -1,6 +1,7 @@
 package composer
 
 import (
+	"gioui.org/font"
 	"image"
 	"image/color"
 	"io"
@@ -49,6 +50,10 @@ type EditorStyle struct {
 	// Embolden strokes text glyphs this many pixels wider (0 = off), to
 	// match richview's text where the editor replaces it (canvas blocks).
 	Embolden float32
+	// Weight, if set, is the weight of plain text runs (a canvas heading
+	// edited in place is Lato Black, as richview drew it); bold runs keep
+	// at least Bold.
+	Weight font.Weight
 	// Images returns an emoji image scaled for px pixels, if loaded.
 	Images func(url string, px int) (paint.ImageOp, bool)
 }
@@ -171,6 +176,9 @@ type Editor struct {
 	dragMode    edDragMode
 	dragLo      int
 	dragHi      int
+	clickBias   int       // clicks a host counted before the editor existed (SeedClick)
+	seedAt      time.Time // when that click was, zero: none
+	seedPt      image.Point
 	blinkStart  time.Time
 	resetBlink  bool
 	scrollCaret bool
@@ -898,6 +906,7 @@ func (e *Editor) ensureLayout() bool {
 		es:      e.st.EmojiSize,
 		images:  e.st.Images != nil,
 		loc:     e.loc,
+		weight:  e.st.Weight,
 	}
 	if !e.lay.valid || e.lay.key != k || e.lay.sh != e.st.Shaper {
 		e.lay.build(e.doc, &e.st, e.st.Shaper, k)
@@ -967,12 +976,13 @@ func (e *Editor) onClick(gtx layout.Context, ev gesture.ClickEvent) {
 	}
 	pos := e.hitPos(ev.Position)
 	d := e.doc
+	clicks := e.seededClicks(gtx, ev)
 	switch {
-	case ev.NumClicks == 2:
+	case clicks == 2:
 		lo, hi := edWordAt(d, pos)
 		e.anchor, e.caret = lo, hi
 		e.dragMode, e.dragLo, e.dragHi = edDragWord, lo, hi
-	case ev.NumClicks >= 3:
+	case clicks >= 3:
 		l := d.LineOf(pos)
 		lo, hi := d.LineStart(l), d.LineEnd(l)
 		e.anchor, e.caret = lo, hi

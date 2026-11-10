@@ -34,22 +34,23 @@ const (
 // ("temp:C:…"), the section_id canvases.edit takes; blocks that aren't a
 // section of their own (table cells, column wrappers) may have none.
 type Block struct {
-	ID       string
-	Kind     Kind
-	Spans    []richtext.Span // inline content (paragraphs, headings, list items)
-	Level    int             // list nesting depth (0 = top)
-	Number   int             // Numbered: 1-based ordinal at its level
-	Checked  bool            // Check
-	Code     string          // Code
-	Rows     [][]Cell        // Table
-	Header   bool            // Table: the first row is a header row
-	Image    *Img            // Image
-	URL      string          // Embed: the link
-	FileID   string          // File, Image: the Slack file (F…)
-	Title    string          // Embed / File: the text Quip shows
-	Columns  [][]Block       // Columns
-	Children []Block         // Quote, Callout
-	Emoji    string          // Callout
+	ID        string
+	Kind      Kind
+	Spans     []richtext.Span // inline content (paragraphs, headings, list items)
+	Level     int             // list nesting depth (0 = top)
+	Number    int             // Numbered: 1-based ordinal at its level
+	Checked   bool            // Check
+	Code      string          // Code
+	Rows      [][]Cell        // Table
+	Header    bool            // Table: the first row is a header row
+	ColWidths []int           // Table: column widths in px when the export gives them (<col width>); else Quip splits the width evenly
+	Image     *Img            // Image
+	URL       string          // Embed: the link
+	FileID    string          // File, Image: the Slack file (F…)
+	Title     string          // Embed / File: the text Quip shows
+	Columns   [][]Block       // Columns
+	Children  []Block         // Quote, Callout
+	Emoji     string          // Callout
 	// Default: a Paragraph that is Quip's default content (class
 	// default-content, e.g. a new canvas's "Time to document your
 	// genius!") the user never edited. Slack draws such a section

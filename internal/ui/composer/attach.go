@@ -663,6 +663,68 @@ func (a *attachments) Pick() {
 	}()
 }
 
+// ErrPickCancelled: the user closed the file chooser without a file.
+var ErrPickCancelled = errors.New("composer: no file chosen")
+
+// ChooseFile asks for one file with the same native choosers Pick uses
+// (the ui root's explorer, else zenity/kdialog or osascript) and reads it
+// into memory. It blocks; call it off the UI goroutine. Other hosts (a
+// canvas's Insert file) use it to upload what the user picks.
+func ChooseFile(ctx context.Context) (name string, data []byte, err error) {
+	var rc io.ReadCloser
+	e := getExplorer()
+	if e != nil && attExplorerUsable() {
+		rcs, err, timedOut := attChooseFiles(e)
+		switch {
+		case timedOut:
+		case err == nil && len(rcs) > 0:
+			rc = rcs[0]
+			for _, x := range rcs[1:] {
+				x.Close()
+			}
+		case err == nil, errors.Is(err, explorer.ErrUserDecline):
+			return "", nil, ErrPickCancelled
+		case errors.Is(err, explorer.ErrNotAvailable):
+			if r, err := e.ChooseFile(); err == nil {
+				rc = r
+			} else if errors.Is(err, explorer.ErrUserDecline) {
+				return "", nil, ErrPickCancelled
+			}
+		}
+	}
+	if rc == nil {
+		paths, ok, err := attNativePick(ctx)
+		switch {
+		case err != nil:
+			return "", nil, err
+		case !ok:
+			return "", nil, errors.New("there is no file chooser on this system")
+		case len(paths) == 0:
+			return "", nil, ErrPickCancelled
+		}
+		name = filepath.Base(paths[0])
+		st, err := os.Stat(paths[0])
+		if err != nil {
+			return "", nil, err
+		}
+		if st.IsDir() || st.Size() > attMaxFileSize {
+			return "", nil, errors.New(name + " can't be uploaded")
+		}
+		data, err = os.ReadFile(paths[0])
+		return name, data, err
+	}
+	defer rc.Close()
+	name = "file"
+	if n, ok := rc.(interface{ Name() string }); ok && n.Name() != "" {
+		name = filepath.Base(n.Name())
+	}
+	data, err = io.ReadAll(io.LimitReader(rc, attMaxFileSize+1))
+	if err == nil && len(data) > attMaxFileSize {
+		err = errors.New(name + " is over 1 GB")
+	}
+	return name, data, err
+}
+
 // attChooseFiles runs the Gio explorer's multi-file chooser with a watchdog.
 // attExplorerUsable already rules out the common no-portal case; this guards
 // the rarer portal-present-but-wedged setup so the picker can't hang forever.
