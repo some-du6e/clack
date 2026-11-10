@@ -3,6 +3,7 @@ package popups
 import (
 	"image"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 
@@ -230,4 +231,41 @@ func TestActTipKeys(t *testing.T) {
 			t.Errorf("%s: %q, want %q", goos, got, want)
 		}
 	}
+}
+
+// TestStatusCalendarShots saves the modal with the "Automatically updates"
+// row and the Tip pill under it, and the calendar step, light and dark
+// (STATUS_SHOTS_DIR, status-shots.yml).
+func TestStatusCalendarShots(t *testing.T) {
+	dir := os.Getenv("STATUS_SHOTS_DIR")
+	if dir == "" {
+		t.Skip("STATUS_SHOTS_DIR not set")
+	}
+	for _, dark := range []bool{false, true} {
+		mode := map[bool]string{false: "light", true: "dark"}[dark]
+		t.Run(mode, func(t *testing.T) {
+			h, fs := stShotEnv(t, dark)
+			calHook(t, fs, map[string]any{"gcal": calApp(true, true, actGcalAppID), "ocal": calApp(false, false, actOcalAppID)},
+				map[string]any{"id": "CU1", "app_type": "gcal", "is_provider_connected": true, "is_status_sync": false})
+			s := actNewStatusState(h, false)
+			ccUntil(t, s.modal, "the calendar user", func() bool { return actCalUser0 != nil })
+			win := image.Pt(1000*stShotScale, 860*stShotScale)
+			draw := func(gtx layout.Context) {
+				s.modal.Layout(gtx)
+				if s.pill != nil {
+					s.pill.Layout(gtx)
+				}
+			}
+			img := stRender(t, h, win, draw)
+			epSaveShot(t, dir, "status-calendar-row-"+mode, stCrop(img, s.modal.rect.Union(actTipRect(ccGtx(), s.modal.rect, 300*stShotScale)).Inset(-8*stShotScale)))
+			s.cal.on, s.cal.picked = true, actGoogle(actGcalAppID)
+			img = stRender(t, h, win, draw)
+			epSaveShot(t, dir, "status-calendar-step-"+mode, stCrop(img, s.modal.rect.Inset(-8*stShotScale)))
+		})
+	}
+}
+
+// ccGtx is a context at the shots' scale for geometry helpers.
+func ccGtx() layout.Context {
+	return layout.Context{Ops: new(op.Ops), Metric: unit.Metric{PxPerDp: stShotScale, PxPerSp: stShotScale}}
 }
