@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/richtext"
 )
 
 // MediumMemberEntity: bold display name (real name when none is set),
@@ -82,8 +82,8 @@ func TestRichLineCache(t *testing.T) {
 // Slack's editor shows a topic's links as their text.
 func TestEditableText(t *testing.T) {
 	cases := map[string]string{
-		"slack client in go: <https://github.com/some-du6e/yoloslackgoclient>": "slack client in go: https://github.com/some-du6e/yoloslackgoclient",
-		"<https://x.dev|x.dev> and <https://y.dev|docs>":                       "x.dev and <https://y.dev|docs>",
+		"slack client in go: <https://github.com/some-du6e/clack>": "slack client in go: https://github.com/some-du6e/clack",
+		"<https://x.dev|x.dev> and <https://y.dev|docs>":           "x.dev and <https://y.dev|docs>",
 		"see <#C0EA9S0A0|hq>": "see <#C0EA9S0A0|hq>",
 		"no links":            "no links",
 		"<http unterminated":  "<http unterminated",

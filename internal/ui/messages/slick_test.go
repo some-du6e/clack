@@ -14,14 +14,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
-	"github.com/some-du6e/yoloslackgoclient/internal/slick"
-	"github.com/some-du6e/yoloslackgoclient/internal/store"
-	"github.com/some-du6e/yoloslackgoclient/internal/taut"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/slick"
+	"github.com/some-du6e/clack/internal/store"
+	"github.com/some-du6e/clack/internal/taut"
+	"github.com/some-du6e/clack/internal/ui/richview"
+	"github.com/some-du6e/clack/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // Slick plugins through the native message views (the ui-slick workflow

@@ -21,11 +21,11 @@ import (
 	"gioui.org/op"
 	"gioui.org/unit"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
-	"github.com/some-du6e/yoloslackgoclient/internal/store"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/store"
+	"github.com/some-du6e/clack/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
 // actViewsDensity is the layout the fake activity.views answers.

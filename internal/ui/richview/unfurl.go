@@ -11,8 +11,8 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
+	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
 // Link unfurls and legacy attachments the way Slack's web client draws

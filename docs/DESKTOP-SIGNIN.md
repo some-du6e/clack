@@ -429,7 +429,7 @@ Differences from the plan:
   desktop. Every request of a desktop session (the exchange, the token page,
   `auth.test`, the Web API, edgeapi, files, uploads, the realtime handshake
   and credential-free CDN fetches) sends
-  `Clack/<version> (+https://github.com/some-du6e/yoloslackgoclient)`, the
+  `Clack/<version> (+https://github.com/some-du6e/clack)`, the
   same User-Agent a pasted session sends, with no `sec-ch-ua*`,
   `Sec-Fetch-*`, `Origin` or `Referer` and no browser `Accept`. The exchange
   still says `ssb=1`. Sending Slack desktop's Electron User-Agent from Go's

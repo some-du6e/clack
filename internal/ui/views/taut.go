@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/taut"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/taut"
 )
 
 // tautHost is optionally implemented by the Host: the plugin system the ui

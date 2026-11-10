@@ -34,13 +34,13 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/unit"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/blockkit"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/canvasview"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/messages"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/ui/blockkit"
+	"github.com/some-du6e/clack/internal/ui/canvasview"
+	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/messages"
+	"github.com/some-du6e/clack/internal/ui/slackc/css"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // ---- design tokens ----

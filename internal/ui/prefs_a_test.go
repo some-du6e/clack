@@ -12,13 +12,13 @@ import (
 
 	"gioui.org/widget"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/huddleui"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/ui/huddleui"
+	"github.com/some-du6e/clack/internal/ui/richview"
+	"github.com/some-du6e/clack/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
 // soundLog records what huddleui.PlaySlackSound would play.

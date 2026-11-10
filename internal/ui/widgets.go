@@ -11,9 +11,9 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/ctxclick"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/ctxclick"
+	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // clickedSet records clicks seen by clickArea. Gio's Clickable.Layout

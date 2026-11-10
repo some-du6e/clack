@@ -13,7 +13,7 @@ import (
 	gtext "gioui.org/text"
 	"gioui.org/unit"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // ---- Popover ----

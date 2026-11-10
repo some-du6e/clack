@@ -16,9 +16,9 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/widget"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // shortcutsGen bumps when app_actions_updated drops the list.

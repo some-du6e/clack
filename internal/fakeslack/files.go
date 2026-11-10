@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // File fixtures: Size.Files adds #files-gallery, one message per way

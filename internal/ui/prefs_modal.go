@@ -10,11 +10,11 @@ import (
 	"gioui.org/op"
 	"gioui.org/widget"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/pluginlib"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/shortcut"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/pluginlib"
+	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
+	"github.com/some-du6e/clack/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // prefsModal is the one Preferences dialog: Slack's left nav with its

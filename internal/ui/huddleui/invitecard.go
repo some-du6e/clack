@@ -10,8 +10,8 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // The sidebar's invite card: Slack's HuddleInvite (client-boot FAXx), for

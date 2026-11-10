@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // Reactions are optimistic, like Slack's: React changes the stored message

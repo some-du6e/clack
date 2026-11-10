@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // api.cookies matches Electron: the d cookie is scoped to https .slack.com,

@@ -4,7 +4,7 @@ import (
 	"image/color"
 	"sync"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // The message list follows the stylesheets' Slack design tokens (Slick

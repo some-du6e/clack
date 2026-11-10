@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/ui/composer"
+	"github.com/some-du6e/clack/internal/ui/popups"
 )
 
 // UnsendLast is undoSendLastMessageInChannel (Mod+Z in the empty composer

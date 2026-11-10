@@ -7,8 +7,8 @@ package messages
 // eye icon), except in your own DM and Slackbot's.
 
 import (
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/blockkit"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/ui/blockkit"
 )
 
 type bkState struct {

@@ -11,8 +11,8 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/fakeslack"
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // The world against the fake over HTTP and its socket. Speed is high and

@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // All fixtures are synthetic. User ids stay within the ones testApp knows

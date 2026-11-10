@@ -7,7 +7,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/unit"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // The "Demo workspace" banner (`clack demo`, Options.Demo): a strip above

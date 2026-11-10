@@ -3,7 +3,7 @@ package composer
 import (
 	"strings"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/clack/internal/core"
 )
 
 // Smart quotes and symbols, Preferences > Advanced > "Enable smart quotes

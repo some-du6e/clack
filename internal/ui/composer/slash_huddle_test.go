@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/store"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/store"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // huddleHost is a host with the ui root's /huddle.

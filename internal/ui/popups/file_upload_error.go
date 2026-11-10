@@ -3,7 +3,7 @@ package popups
 import (
 	"gioui.org/layout"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // FileUploadError is Slack's FileUploadErrorDialog after a message with

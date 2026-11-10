@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // A plugin's fetch to one of Slack's hosts goes out as Clack: its own

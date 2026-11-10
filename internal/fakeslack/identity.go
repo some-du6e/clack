@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // Sender identity fixtures (Size.Identity): one synthetic message per case

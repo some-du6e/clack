@@ -16,10 +16,10 @@ import (
 
 	"gioui.org/layout"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
-	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/imgcache"
+	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // Overlay is a popup drawn above the shell. It is an alias of an unnamed

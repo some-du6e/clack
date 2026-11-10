@@ -9,10 +9,10 @@ import (
 	"gioui.org/op"
 	"gioui.org/widget"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/huddle"
-	"github.com/some-du6e/yoloslackgoclient/internal/huddle/avperm"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/openurl"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/huddle"
+	"github.com/some-du6e/clack/internal/huddle/avperm"
+	"github.com/some-du6e/clack/internal/ui/openurl"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // micNote is what to tell the user about their microphone, like Slack's

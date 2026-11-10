@@ -13,7 +13,7 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/fakeslack"
 )
 
 func main() {

@@ -3,7 +3,7 @@ package core
 import (
 	"slices"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/store"
+	"github.com/some-du6e/clack/internal/store"
 )
 
 // The left rail (Slack's tab rail), ported from its web client (build

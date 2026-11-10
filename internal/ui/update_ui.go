@@ -9,9 +9,9 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // How Slack desktop (4.53.276) shows an update, and Clack with it. The

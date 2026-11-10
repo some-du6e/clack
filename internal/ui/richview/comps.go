@@ -25,8 +25,8 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
 // layout modes: which kinds lay out as components.

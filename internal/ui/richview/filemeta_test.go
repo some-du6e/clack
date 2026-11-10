@@ -4,9 +4,9 @@ import (
 	"image"
 	"testing"
 
-	rt "github.com/some-du6e/yoloslackgoclient/internal/richtext"
-	"github.com/some-du6e/yoloslackgoclient/internal/store"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
+	rt "github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/store"
+	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
 // Karim's screenshot of Slack: a message with text and an image has

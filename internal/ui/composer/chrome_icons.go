@@ -11,7 +11,7 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // Composer glyphs the shared icon set lacks (the hover emoji, the

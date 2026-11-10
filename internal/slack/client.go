@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack/tlsfp"
+	"github.com/some-du6e/clack/internal/slack/tlsfp"
 )
 
 // Creds is the on-disk credential file (~/.config/clack/creds.json).

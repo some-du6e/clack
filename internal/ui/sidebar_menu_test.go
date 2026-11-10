@@ -3,8 +3,8 @@ package ui
 import (
 	"testing"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/ui/popups"
 )
 
 // The sidebar row menu runs popups' channel-menu actions, as Slack does:

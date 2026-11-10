@@ -3,7 +3,7 @@ package core
 import (
 	"encoding/json"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // Posting permissions, ported from Slack's web client (build a84662d2d135,

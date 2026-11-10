@@ -6,9 +6,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/taut"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/taut"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
 // Slack's autocompleteMembers / autocompleteChannels thunks for plugins

@@ -13,7 +13,7 @@ import (
 	"image"
 	"image/png"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/uiguard"
+	"github.com/some-du6e/clack/internal/ui/uiguard"
 )
 
 // ErrUnsupported means this system has no way to put an image on the

@@ -10,8 +10,8 @@ import (
 	"gioui.org/font"
 	"gioui.org/unit"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
 func (l *lay) bodyStyle() flowStyle {

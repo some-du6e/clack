@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
-	"github.com/some-du6e/yoloslackgoclient/internal/store"
+	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/store"
 )
 
 // Synthetic sender identities, one per case Slack's web client tells

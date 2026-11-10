@@ -11,9 +11,9 @@ import (
 	"gioui.org/layout"
 	"gioui.org/widget"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/openurl"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/ui/openurl"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // The full profile below the buttons: Slack's RimetoProfileSections

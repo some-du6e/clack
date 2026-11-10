@@ -3,8 +3,8 @@ package messages
 import (
 	"image"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/richview"
+	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/richview"
 )
 
 // FileRect is a file's clickable box on screen: a gallery tile (the "+ N"

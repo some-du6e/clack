@@ -14,15 +14,15 @@ import (
 
 	"gioui.org/op"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/fakeslack"
-	"github.com/some-du6e/yoloslackgoclient/internal/huddle"
-	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
-	"github.com/some-du6e/yoloslackgoclient/internal/store"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/huddle"
+	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/store"
+	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
 // The huddle menus against the fake Chime and fakeslack: Slack's

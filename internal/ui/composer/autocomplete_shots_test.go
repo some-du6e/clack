@@ -19,10 +19,10 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/unit"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/imgcache"
+	"github.com/some-du6e/clack/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
 // TestAutocompleteShots draws the four lists ranked by Slack's rules over

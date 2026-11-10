@@ -3,7 +3,7 @@ package richview
 import (
 	"image"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/clack/internal/richtext"
 )
 
 // agent lays out a plan / task_card / context_actions block: a slot the

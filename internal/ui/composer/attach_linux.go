@@ -10,7 +10,7 @@ import (
 
 	"github.com/godbus/dbus/v5"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/uiguard"
+	"github.com/some-du6e/clack/internal/ui/uiguard"
 )
 
 // attExplorerUsable reports whether the xdg-desktop-portal FileChooser is

@@ -8,10 +8,10 @@ import (
 
 	"gioui.org/layout"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slick"
-	"github.com/some-du6e/yoloslackgoclient/internal/taut"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/slick"
+	"github.com/some-du6e/clack/internal/taut"
+	"github.com/some-du6e/clack/internal/ui/composer"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
 // The missed-frame log line: field evidence for "I was getting deselected"

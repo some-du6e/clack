@@ -8,7 +8,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 type secKind uint8

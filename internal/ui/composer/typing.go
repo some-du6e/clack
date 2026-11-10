@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/clack/internal/core"
 )
 
 // The typing hub listens to core's realtime typing events once per

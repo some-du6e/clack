@@ -3,7 +3,7 @@ package demo
 import (
 	"os"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack/tlsfp"
+	"github.com/some-du6e/clack/internal/slack/tlsfp"
 )
 
 // LockNetwork makes the whole process loopback-only, for good

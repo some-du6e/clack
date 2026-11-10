@@ -17,7 +17,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/unit"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
+	"github.com/some-du6e/clack/internal/ui/slackc/css"
 )
 
 // withStyles installs computed styles per node (the CSS engine may be a

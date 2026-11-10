@@ -5,8 +5,8 @@ import (
 
 	"gioui.org/layout"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/huddleui"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/huddleui"
+	"github.com/some-du6e/clack/internal/ui/popups"
 )
 
 // huddles is the native huddle controller (internal/ui/huddleui): the

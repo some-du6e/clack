@@ -41,8 +41,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/jsrt"
-	"github.com/some-du6e/yoloslackgoclient/internal/taut"
+	"github.com/some-du6e/clack/internal/jsrt"
+	"github.com/some-du6e/clack/internal/taut"
 )
 
 //go:embed js/*.js

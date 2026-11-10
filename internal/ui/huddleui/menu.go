@@ -10,10 +10,10 @@ import (
 
 	"gioui.org/unit"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/huddle"
-	"github.com/some-du6e/yoloslackgoclient/internal/taut"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/huddle"
+	"github.com/some-du6e/clack/internal/taut"
+	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // The huddle menus, as Slack's web client builds them (client-boot-shared

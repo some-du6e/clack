@@ -10,12 +10,12 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/widget"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/huddle"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/openurl"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/huddle"
+	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/openurl"
+	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // BarHeight is the sidebar huddle bar's height (0 when you're not in a

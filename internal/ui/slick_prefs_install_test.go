@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slick"
+	"github.com/some-du6e/clack/internal/slick"
 )
 
 // The confirmation shown before a Slick plugin file runs.

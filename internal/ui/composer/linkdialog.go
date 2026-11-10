@@ -12,9 +12,9 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/widget"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // Slack's "Add link" dialog (Ctrl+Shift+U or the link button): a 520 modal

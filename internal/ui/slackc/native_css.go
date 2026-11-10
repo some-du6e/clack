@@ -3,7 +3,7 @@ package slackc
 import (
 	"strings"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
+	"github.com/some-du6e/clack/internal/ui/slackc/css"
 )
 
 // nativeCSS is Slack's own stylesheet, reduced to which native parts keep

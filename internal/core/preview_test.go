@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // previewApp has C1 (member) plus C9, a channel the viewer isn't in, known

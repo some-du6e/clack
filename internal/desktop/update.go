@@ -13,19 +13,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack/tlsfp"
+	"github.com/some-du6e/clack/internal/slack/tlsfp"
 )
 
 // ReleasesURL is the GitHub API for Clack's newest published release
 // (drafts and pre-releases are skipped by GitHub). CLACK_UPDATE_URL
 // overrides it, for testing the banner and the auto-updater: it may serve
 // one release object or a list of them.
-var ReleasesURL = "https://api.github.com/repos/some-du6e/yoloslackgoclient/releases/latest"
+var ReleasesURL = "https://api.github.com/repos/some-du6e/clack/releases/latest"
 
 // ReleaseListURL lists recent releases, pre-releases included. A
 // pre-release build (v0.1.0-alpha.8) follows the pre-release channel:
 // releases/latest never returns a pre-release, so it would never see one.
-var ReleaseListURL = "https://api.github.com/repos/some-du6e/yoloslackgoclient/releases?per_page=20"
+var ReleaseListURL = "https://api.github.com/repos/some-du6e/clack/releases?per_page=20"
 
 func releasesURL(version string) string {
 	if u := os.Getenv("CLACK_UPDATE_URL"); u != "" {
@@ -86,7 +86,7 @@ func LatestRelease(ctx context.Context, version string) (Release, error) {
 		return Release{}, err
 	}
 	if r.URL == "" {
-		r.URL = "https://github.com/some-du6e/yoloslackgoclient/releases/tag/" + r.Tag
+		r.URL = "https://github.com/some-du6e/clack/releases/tag/" + r.Tag
 	}
 	return r, nil
 }

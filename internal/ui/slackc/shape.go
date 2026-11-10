@@ -13,9 +13,9 @@ import (
 	"gioui.org/text"
 	"golang.org/x/image/math/fixed"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/emoji"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/emoji"
+	"github.com/some-du6e/clack/internal/ui/slackc/css"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // Words are shaped once per (shaper, font, size, letter-spacing) and

@@ -23,9 +23,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/canvas"
-	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/canvas"
+	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // CanvasInfo is a canvas's header: what files.info says about the file.

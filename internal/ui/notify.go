@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/huddleui"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
+	"github.com/some-du6e/clack/internal/ui/huddleui"
+	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
 // notifier posts desktop notifications (D-Bus on Linux, no-op elsewhere).

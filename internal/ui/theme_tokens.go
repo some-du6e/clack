@@ -3,9 +3,9 @@ package ui
 import (
 	"image/color"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/slackc/css"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // Native surfaces follow the stylesheets' Slack design tokens (Slick

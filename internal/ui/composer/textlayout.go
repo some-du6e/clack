@@ -19,8 +19,8 @@ import (
 	"gioui.org/unit"
 	"golang.org/x/image/math/fixed"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/emoji"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/emoji"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // textlayout.go shapes and wraps a *Doc for the editor. Every style run is

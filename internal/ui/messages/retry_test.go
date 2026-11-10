@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // historyCalls opens a channel whose history fails with code, draws frames

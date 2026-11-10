@@ -15,7 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/shortcut"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
 )
 
 // Mods are the modifier keys of a key equivalent.

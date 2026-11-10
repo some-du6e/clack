@@ -15,9 +15,9 @@ import (
 	"gioui.org/op"
 	"gioui.org/widget"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/composer"
+	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 const pickMax = 6

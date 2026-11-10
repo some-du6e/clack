@@ -19,7 +19,7 @@
 
 #define AppName "Clack"
 #define AppExe "Clack.exe"
-#define AppURL "https://github.com/some-du6e/yoloslackgoclient"
+#define AppURL "https://github.com/some-du6e/clack"
 
 [Setup]
 ; Never change AppId: upgrades and the uninstaller find the existing install by it.

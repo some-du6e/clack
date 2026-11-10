@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // Pulse's polls and stand-up check-ins: Block Kit messages whose buttons

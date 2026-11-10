@@ -18,12 +18,12 @@ import (
 	"gioui.org/op"
 
 	"gioui.org/gpu/headless"
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/fakeslack"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/slackc/css"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // pcCustomHex is a custom-hex ia_theme (Slack's red/yellow "hot dog"

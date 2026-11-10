@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/clack/internal/richtext"
 )
 
 func tpara(s string) richtext.Block {

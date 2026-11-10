@@ -6,7 +6,7 @@
 // Everything here is pure: no I/O, safe for concurrent use.
 package canvas
 
-import "github.com/some-du6e/yoloslackgoclient/internal/richtext"
+import "github.com/some-du6e/clack/internal/richtext"
 
 // Kind says what a block is.
 type Kind uint8

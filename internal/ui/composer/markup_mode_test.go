@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/store"
+	"github.com/some-du6e/clack/internal/store"
 )
 
 // Live markup and Slack's "Format messages with markup" pref

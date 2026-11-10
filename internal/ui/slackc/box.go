@@ -6,7 +6,7 @@ import (
 
 	"gioui.org/op"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
+	"github.com/some-du6e/clack/internal/ui/slackc/css"
 )
 
 // The box tree mirrors a delivered host tree: one box per node, plus

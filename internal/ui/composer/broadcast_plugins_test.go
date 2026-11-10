@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/jsrt"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/jsrt"
 )
 
 // The @channel relay plugins, unmodified, against Clack's broadcast

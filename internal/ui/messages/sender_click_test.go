@@ -13,8 +13,8 @@ import (
 	"gioui.org/op"
 	"gioui.org/unit"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/taut"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/taut"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
 type profileHost struct {

@@ -9,7 +9,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/unit"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
+	"github.com/some-du6e/clack/internal/ui/slackc/css"
 )
 
 // Styles is the CSS engine for api.setStyle, DOM <style> tags plugins add

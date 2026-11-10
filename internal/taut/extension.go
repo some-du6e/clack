@@ -7,8 +7,8 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/jsrt"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/jsrt"
 )
 
 // Extension lets another plugin system share Taut's runtime: the same JS

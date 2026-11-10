@@ -61,7 +61,7 @@ func TestReleaseCheckFakeServer(t *testing.T) {
 	if err != nil || r.Tag != "v0.1.0-alpha.14" || !Newer(r.Tag, cur) {
 		t.Fatalf("newer pre-release: %+v %v", r, err)
 	}
-	if r.URL != "https://github.com/some-du6e/yoloslackgoclient/releases/tag/v0.1.0-alpha.14" {
+	if r.URL != "https://github.com/some-du6e/clack/releases/tag/v0.1.0-alpha.14" {
 		t.Errorf("release page %q", r.URL)
 	}
 

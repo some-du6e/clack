@@ -22,10 +22,10 @@ import (
 
 	"gioui.org/io/key"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/fakeslack"
-	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
 func sendSynthPNG(t *testing.T, w, h int) []byte {

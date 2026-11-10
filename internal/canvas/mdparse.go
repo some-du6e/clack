@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/clack/internal/richtext"
 )
 
 // Names resolves mention ids while reading markdown (nil: ids only).

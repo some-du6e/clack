@@ -1,8 +1,8 @@
 package ui
 
 import (
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/richtext"
 )
 
 // model is the shell's view of the workspace, rebuilt from core snapshots

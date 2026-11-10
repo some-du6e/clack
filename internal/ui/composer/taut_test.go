@@ -12,10 +12,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
-	"github.com/some-du6e/yoloslackgoclient/internal/store"
-	"github.com/some-du6e/yoloslackgoclient/internal/taut"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/store"
+	"github.com/some-du6e/clack/internal/taut"
 )
 
 // Synthetic state only: a made-up workspace and a fake Slack API that

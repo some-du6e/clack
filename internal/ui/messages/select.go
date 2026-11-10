@@ -12,7 +12,7 @@ import (
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/ctxclick"
+	"github.com/some-du6e/clack/internal/ui/ctxclick"
 )
 
 // Cross-message text selection: the list (an ancestor of every row) owns

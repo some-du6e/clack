@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // MaxFetch bounds a single Fetch (bytes are held in memory).

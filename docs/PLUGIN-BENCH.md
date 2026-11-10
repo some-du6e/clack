@@ -50,7 +50,7 @@ fidelity compares the two variants' screenshots of the same scene with
 each other: **Pixel diff** is the share of the window that differs.
 The screenshots are in the run's `plugin-bench-shots` artifact.
 
-Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this run](https://github.com/some-du6e/yoloslackgoclient/actions/runs/42697545499).
+Bundles: slick 34f2c25, taut 6fe5123. Generated 2026-11-09T21:03:23Z by [this run](https://github.com/some-du6e/clack/actions/runs/42697545499).
 
 ## Host fixes and gaps the bench found
 

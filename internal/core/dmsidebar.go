@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
-	"github.com/some-du6e/yoloslackgoclient/internal/store"
+	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/store"
 )
 
 // Which DMs and group DMs are sidebar candidates (Slack's rule, see

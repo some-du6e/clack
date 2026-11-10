@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/clack/internal/richtext"
 )
 
 // btDoc builds test documents through the public Doc editing methods.

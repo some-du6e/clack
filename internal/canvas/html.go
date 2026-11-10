@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/clack/internal/richtext"
 )
 
 // HTML writes a document in the shape of Quip's export (the vocabulary

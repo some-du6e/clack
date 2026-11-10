@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/taut"
+	"github.com/some-du6e/clack/internal/taut"
 )
 
 // The composer's part of the plugin runtime: a taut extension prelude

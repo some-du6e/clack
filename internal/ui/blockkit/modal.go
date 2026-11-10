@@ -15,11 +15,11 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/unit"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/refocus"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/shortcut"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/refocus"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // Stack is the modal overlay: a stack of views (views.push adds one,

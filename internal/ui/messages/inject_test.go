@@ -3,7 +3,7 @@ package messages
 import (
 	"testing"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/clack/internal/core"
 )
 
 // Messages plugins inject (Message Logger's deleted copies) go to the list

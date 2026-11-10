@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/listview"
+	"github.com/some-du6e/clack/internal/ui/listview"
 )
 
 func init() {

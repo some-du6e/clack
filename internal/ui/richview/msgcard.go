@@ -11,9 +11,9 @@ import (
 	"gioui.org/op"
 	"gioui.org/unit"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
+	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
 // Message permalinks (richtext/msgmention.go has Slack's rules):

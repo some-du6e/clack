@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/taut"
+	"github.com/some-du6e/clack/internal/taut"
 )
 
 // A plugin in exactly the shape Slick's `build:plugin` writes (CommonJS in a

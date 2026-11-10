@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/clack/internal/richtext"
 )
 
 // Markdown is a block as the canvas markdown Slack's canvases.create /

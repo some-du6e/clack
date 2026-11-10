@@ -3,7 +3,7 @@ package richtext
 import (
 	"strings"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // Message permalinks, 1:1 with Slack's web client (gantry-v2, 2026-11):

@@ -5,8 +5,8 @@ import (
 
 	"gioui.org/op"
 
-	rt "github.com/some-du6e/yoloslackgoclient/internal/richtext"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
+	rt "github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
 func compDoc() rt.Doc {

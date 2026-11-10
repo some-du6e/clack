@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/pluginbench"
+	"github.com/some-du6e/clack/internal/pluginbench"
 )
 
 func main() {

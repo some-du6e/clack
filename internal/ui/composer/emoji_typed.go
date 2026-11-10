@@ -5,7 +5,7 @@ import (
 	"sync"
 	"unicode"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/emoji"
+	"github.com/some-du6e/clack/internal/emoji"
 )
 
 // Typed emoji shortcodes, the way Slack's composer handles them: a complete

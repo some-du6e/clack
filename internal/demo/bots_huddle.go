@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // Huddles. Now and then Gordon or Priya rings the viewer from their DM:

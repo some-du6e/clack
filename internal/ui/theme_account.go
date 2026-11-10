@@ -6,8 +6,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // The Slack account's theme. Slack's 2026 client keeps the theme colours

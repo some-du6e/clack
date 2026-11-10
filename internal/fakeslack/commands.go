@@ -24,7 +24,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // CommandApp is what the fake app's /ticket saw (tests).

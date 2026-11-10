@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // Plugin component text (Slack's DOM in slackc) draws a 😱 as Slack's

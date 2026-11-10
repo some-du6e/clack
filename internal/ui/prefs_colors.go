@@ -3,8 +3,8 @@ package ui
 import (
 	"image/color"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // prefsColors are the Preferences dialog's colours, each Slack's token

@@ -6,7 +6,7 @@ import (
 	"gioui.org/app"
 	"gioui.org/io/event"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/menubar"
+	"github.com/some-du6e/clack/internal/ui/menubar"
 )
 
 func init() {

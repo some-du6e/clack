@@ -21,7 +21,7 @@ import (
 	"image"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/clack/internal/core"
 )
 
 // notifyChoice is the menu's checked row.

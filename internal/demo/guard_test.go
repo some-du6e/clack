@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/emoji"
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
-	"github.com/some-du6e/yoloslackgoclient/internal/slack/tlsfp"
+	"github.com/some-du6e/clack/internal/emoji"
+	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/slack/tlsfp"
 )
 
 // A demo session refuses any host that isn't the loopback fake: demo

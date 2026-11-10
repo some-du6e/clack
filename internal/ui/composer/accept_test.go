@@ -5,7 +5,7 @@ import (
 
 	"gioui.org/io/key"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/clack/internal/core"
 )
 
 // These tests cover "accept a suggestion, then keep typing" (the round-4

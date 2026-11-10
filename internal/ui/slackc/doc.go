@@ -4,7 +4,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
+	"github.com/some-du6e/clack/internal/ui/slackc/css"
 )
 
 // The document's <html> and <body> elements as JS sees them: plugins put

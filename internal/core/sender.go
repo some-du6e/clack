@@ -27,7 +27,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // SenderIcons are a message's icons (icon_emoji / icon_url) or a

@@ -23,8 +23,8 @@ import (
 	"gioui.org/text"
 	"gioui.org/unit"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/emoji"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/refocus"
+	"github.com/some-du6e/clack/internal/emoji"
+	"github.com/some-du6e/clack/internal/ui/refocus"
 )
 
 // Editor is the composer's WYSIWYG rich text editor over a *Doc. Input

@@ -6,7 +6,7 @@ import (
 
 	"gioui.org/f32"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/clack/internal/richtext"
 )
 
 // HitKind is what a point of the view is over (context menus).

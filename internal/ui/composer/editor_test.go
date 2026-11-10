@@ -6,8 +6,8 @@ import (
 	"gioui.org/io/key"
 	"gioui.org/layout"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/store"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
+	"github.com/some-du6e/clack/internal/store"
+	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
 // These tests drive the editor's logic without a window: a zero

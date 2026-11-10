@@ -13,8 +13,8 @@ import (
 	"gioui.org/text"
 	"gioui.org/widget"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // loginScreen is the native sign-in card shown when credentials are missing.

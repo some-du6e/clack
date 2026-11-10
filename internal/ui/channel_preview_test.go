@@ -20,8 +20,8 @@ import (
 
 	"gioui.org/io/key"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/fakeslack"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
+	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
 func previewEnv(t *testing.T) (*perfEnv, *fakeslack.Server) {

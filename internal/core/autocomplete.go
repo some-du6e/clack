@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/acrank"
+	"github.com/some-du6e/clack/internal/acrank"
 )
 
 // The composer autocomplete's shared state, as Slack's web client keeps

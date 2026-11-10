@@ -16,8 +16,8 @@ import (
 	"errors"
 	"net/url"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/taut"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/taut"
 )
 
 // sendActionsArgs is Slack's sendActions argument (camelCase; the

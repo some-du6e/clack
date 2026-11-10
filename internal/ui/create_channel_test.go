@@ -12,8 +12,8 @@ import (
 
 	"gioui.org/io/key"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/fakeslack"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/ui/popups"
 )
 
 func menuLabels(items []MenuItem) string {

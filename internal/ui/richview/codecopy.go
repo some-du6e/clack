@@ -15,7 +15,7 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/unit"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/icons"
 )
 
 // Copying code, ported from Slack's web client (build a84662d2d135,

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
-	"github.com/some-du6e/yoloslackgoclient/internal/taut"
+	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/taut"
 )
 
 // Per-plugin behaviour checks for the acceptance suite: each proves the

@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/uiguard"
+	"github.com/some-du6e/clack/internal/ui/uiguard"
 )
 
 // ErrRefused is returned for links Clack won't hand to the OS.

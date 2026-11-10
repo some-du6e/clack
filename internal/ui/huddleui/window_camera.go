@@ -5,10 +5,10 @@ import (
 	"image/color"
 	"runtime"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/huddle"
-	"github.com/some-du6e/yoloslackgoclient/internal/huddle/avperm"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/openurl"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/huddle"
+	"github.com/some-du6e/clack/internal/huddle/avperm"
+	"github.com/some-du6e/clack/internal/ui/openurl"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // camUI is the huddle window's camera state: the denied notice, the

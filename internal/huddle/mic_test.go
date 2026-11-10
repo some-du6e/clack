@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/huddle/avperm"
+	"github.com/some-du6e/clack/internal/huddle/avperm"
 )
 
 func TestMicSilentWatch(t *testing.T) {

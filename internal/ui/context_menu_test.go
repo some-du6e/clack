@@ -12,9 +12,9 @@ import (
 	"gioui.org/io/pointer"
 	"gioui.org/op"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/ctxclick"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/ui/ctxclick"
+	"github.com/some-du6e/clack/internal/ui/popups"
 )
 
 // ctxShell is the whole window over an offline core (no plugins), driven

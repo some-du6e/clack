@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/emoji"
-	"github.com/some-du6e/yoloslackgoclient/internal/frecency"
+	"github.com/some-du6e/clack/internal/emoji"
+	"github.com/some-du6e/clack/internal/frecency"
 )
 
 // Slack's frecency store and the emoji picker's Frequently Used list,

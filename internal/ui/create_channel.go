@@ -8,9 +8,9 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/ctxclick"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/huddleui"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/shortcut"
+	"github.com/some-du6e/clack/internal/ui/ctxclick"
+	"github.com/some-du6e/clack/internal/ui/huddleui"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
 )
 
 // Where Slack's web client (build a84662d2d135, 2026-11-08) opens its

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/menubar"
+	"github.com/some-du6e/clack/internal/ui/menubar"
 )
 
 // AppKit's menus belong to the main thread: TestMain keeps the main

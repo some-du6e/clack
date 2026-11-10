@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // ThreadsIn returns copies of the cached threads of conversation ch, keyed

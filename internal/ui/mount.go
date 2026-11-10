@@ -6,8 +6,8 @@ import (
 	"gioui.org/io/event"
 	"gioui.org/layout"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // Mount points for the feature packages. Each returns a placeholder until the

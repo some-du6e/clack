@@ -10,7 +10,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/widget"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // Preferences modal (workhours.png): 800x700, radius 8, header 76 with a

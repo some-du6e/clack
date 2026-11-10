@@ -7,7 +7,7 @@ import (
 
 	"gioui.org/io/key"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/menubar"
+	"github.com/some-du6e/clack/internal/ui/menubar"
 )
 
 func testMenus() []menubar.Menu {

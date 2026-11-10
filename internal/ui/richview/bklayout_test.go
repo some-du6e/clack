@@ -12,8 +12,8 @@ import (
 
 	"gioui.org/font"
 
-	rt "github.com/some-du6e/yoloslackgoclient/internal/richtext"
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	rt "github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // kitDoc builds the document of a message carrying blocks (JSON).

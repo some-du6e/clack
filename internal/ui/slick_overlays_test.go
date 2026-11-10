@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
+	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
 // svOverlayWant is what a theme's CSS gives the overlays ("" = the theme

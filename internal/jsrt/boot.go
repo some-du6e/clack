@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack/tlsfp"
+	"github.com/some-du6e/clack/internal/slack/tlsfp"
 )
 
 // bootScripts are the browser environment (js/env.js …), vendored React

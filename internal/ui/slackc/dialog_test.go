@@ -13,7 +13,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/widget"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
+	"github.com/some-du6e/clack/internal/ui/slackc/css"
 )
 
 // dialogEnv draws a native button filling a w×h window with the

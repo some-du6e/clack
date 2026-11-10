@@ -31,10 +31,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/canvas"
-	"github.com/some-du6e/yoloslackgoclient/internal/fakeslack"
-	"github.com/some-du6e/yoloslackgoclient/internal/lists"
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/canvas"
+	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/lists"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 //go:embed data/people.json data/channels.json data/sections.json data/emoji.json data/canvases.json data/lists.json data/scheduled.json data/history/*.json data/canvases/*.md

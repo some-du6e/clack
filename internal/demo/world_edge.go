@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // edge is fakeslack's SetEdgeHook: the edge API (users and channels

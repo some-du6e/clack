@@ -10,8 +10,8 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/shortcut"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
 // keyBinding is one global key binding.

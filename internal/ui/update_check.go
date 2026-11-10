@@ -14,8 +14,8 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // Update checks: when they run (a wall-clock schedule), "Check now"

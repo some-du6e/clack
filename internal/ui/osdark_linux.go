@@ -7,7 +7,7 @@ import (
 
 	"github.com/godbus/dbus/v5"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/uiguard"
+	"github.com/some-du6e/clack/internal/ui/uiguard"
 )
 
 // Linux: the XDG settings portal's org.freedesktop.appearance color-scheme

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/dop251/goja"
-	"github.com/some-du6e/yoloslackgoclient/internal/jsrt"
+	"github.com/some-du6e/clack/internal/jsrt"
 )
 
 func vendor(t testing.TB, name string) string {

@@ -3,7 +3,7 @@
 // drafts, typing indicators and edit mode.
 package composer
 
-import "github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
+import "github.com/some-du6e/clack/internal/ui/popups"
 
 // Host is what the composer needs from the app shell. It is popups.Host
 // (the shared names in docs/NATIVE.md), so *ui.App satisfies it without an

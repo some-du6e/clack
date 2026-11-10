@@ -8,7 +8,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack/tlsfp"
+	"github.com/some-du6e/clack/internal/slack/tlsfp"
 )
 
 // Credential-free fetches (PublicHTTP) only dial public addresses: a Slack

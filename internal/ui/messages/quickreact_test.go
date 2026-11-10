@@ -5,9 +5,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/store"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
+	"github.com/some-du6e/clack/internal/store"
+	"github.com/some-du6e/clack/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
 // One-click reactions follow user_customized_quick_reactions_display_feature

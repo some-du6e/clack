@@ -19,14 +19,14 @@ import (
 	"gioui.org/app"
 	"gioui.org/io/event"
 
-	"github.com/some-du6e/yoloslackgoclient/assets/icon"
-	"github.com/some-du6e/yoloslackgoclient/internal/applog"
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/desktop"
-	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
-	"github.com/some-du6e/yoloslackgoclient/internal/store"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui"
+	"github.com/some-du6e/clack/assets/icon"
+	"github.com/some-du6e/clack/internal/applog"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/desktop"
+	"github.com/some-du6e/clack/internal/imgcache"
+	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/store"
+	"github.com/some-du6e/clack/internal/ui"
 )
 
 var started = time.Now()

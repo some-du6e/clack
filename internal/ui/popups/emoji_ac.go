@@ -4,8 +4,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/acrank"
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/clack/internal/acrank"
+	"github.com/some-du6e/clack/internal/core"
 )
 
 // AutocompleteEmoji is the composer's ":" list as Slack builds it

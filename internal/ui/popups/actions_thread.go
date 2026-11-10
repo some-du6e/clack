@@ -5,7 +5,7 @@ import (
 
 	"gioui.org/layout"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/clack/internal/core"
 )
 
 // ThreadFollowLabel is the subscribe action's name for a thread (Slack's

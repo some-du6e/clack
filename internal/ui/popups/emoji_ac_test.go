@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/acrank"
-	"github.com/some-du6e/yoloslackgoclient/internal/frecency"
+	"github.com/some-du6e/clack/internal/acrank"
+	"github.com/some-du6e/clack/internal/frecency"
 )
 
 // The ":" list in Slack's order (scoreEmojiNameAgainstQuery, the model)

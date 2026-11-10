@@ -21,9 +21,9 @@ import (
 	"gioui.org/f32"
 	"gioui.org/io/pointer"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/fakeslack"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/messages"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
+	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/ui/messages"
+	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
 func threadHeaderEnv(t *testing.T, dark bool) *perfEnv {

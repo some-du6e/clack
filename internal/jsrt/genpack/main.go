@@ -6,7 +6,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/jsrt"
+	"github.com/some-du6e/clack/internal/jsrt"
 )
 
 func main() {

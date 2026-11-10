@@ -7,9 +7,9 @@ import (
 
 	"gioui.org/op"
 
-	rt "github.com/some-du6e/yoloslackgoclient/internal/richtext"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
+	rt "github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/slackc/css"
 )
 
 // All documents here are synthetic (docs/NATIVE.md, scraping policy).

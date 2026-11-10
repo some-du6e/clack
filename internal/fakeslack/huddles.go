@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // The huddle menus' API: rooms.getLink (Copy huddle link),

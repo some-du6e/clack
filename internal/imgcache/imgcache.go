@@ -31,7 +31,7 @@ import (
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/localimg"
+	"github.com/some-du6e/clack/internal/localimg"
 )
 
 // Fetcher downloads url. For files.slack.com it must authenticate (core.Fetch).

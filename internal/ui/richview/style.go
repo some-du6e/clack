@@ -19,8 +19,8 @@ import (
 	"gioui.org/text"
 	"gioui.org/unit"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // Images is the subset of imgcache.Cache that richview needs. Get must not

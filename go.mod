@@ -1,4 +1,4 @@
-module github.com/some-du6e/yoloslackgoclient
+module github.com/some-du6e/clack
 
 go 1.24.0
 

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // All fixtures in this package are synthetic (Hack Club scraping policy:

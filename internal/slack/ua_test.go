@@ -16,16 +16,16 @@ import (
 // The one User-Agent names Clack and nothing that looks like a browser.
 func TestUserAgentIsHonest(t *testing.T) {
 	defer SetVersion("dev")
-	const want = "Clack/dev (+https://github.com/some-du6e/yoloslackgoclient)"
+	const want = "Clack/dev (+https://github.com/some-du6e/clack)"
 	if got := UserAgent(); got != want {
 		t.Errorf("UserAgent() = %q, want %q", got, want)
 	}
 	for in, want := range map[string]string{
-		"v0.1.0":          "Clack/0.1.0 (+https://github.com/some-du6e/yoloslackgoclient)",
-		"1.2.3-rc.1+abc":  "Clack/1.2.3-rc.1+abc (+https://github.com/some-du6e/yoloslackgoclient)",
-		"":                "Clack/dev (+https://github.com/some-du6e/yoloslackgoclient)",
-		"1.0 Chrome/157":  "Clack/dev (+https://github.com/some-du6e/yoloslackgoclient)",
-		"v1\r\nX-Evil: 1": "Clack/dev (+https://github.com/some-du6e/yoloslackgoclient)",
+		"v0.1.0":          "Clack/0.1.0 (+https://github.com/some-du6e/clack)",
+		"1.2.3-rc.1+abc":  "Clack/1.2.3-rc.1+abc (+https://github.com/some-du6e/clack)",
+		"":                "Clack/dev (+https://github.com/some-du6e/clack)",
+		"1.0 Chrome/157":  "Clack/dev (+https://github.com/some-du6e/clack)",
+		"v1\r\nX-Evil: 1": "Clack/dev (+https://github.com/some-du6e/clack)",
 	} {
 		SetVersion(in)
 		got := UserAgent()

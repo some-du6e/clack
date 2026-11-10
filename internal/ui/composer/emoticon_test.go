@@ -3,8 +3,8 @@ package composer
 import (
 	"testing"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/store"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
+	"github.com/some-du6e/clack/internal/store"
+	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
 func TestLastEmoticon(t *testing.T) {

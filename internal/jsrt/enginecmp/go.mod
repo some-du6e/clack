@@ -1,13 +1,13 @@
 // Engine comparison (QuickJS-NG on wazero vs goja) for internal/jsrt.
 // A separate module so goja never becomes a Clack dependency. Run in CI by
 // .github/workflows/jsrt.yml (workflow_dispatch, bench=true).
-module github.com/some-du6e/yoloslackgoclient/internal/jsrt/enginecmp
+module github.com/some-du6e/clack/internal/jsrt/enginecmp
 
 go 1.26.0
 
 require (
 	github.com/dop251/goja v0.0.0-20261107161106-d6eaa50db8bc
-	github.com/some-du6e/yoloslackgoclient v0.0.0
+	github.com/some-du6e/clack v0.0.0
 )
 
 require (
@@ -19,4 +19,4 @@ require (
 	golang.org/x/text v0.43.0 // indirect
 )
 
-replace github.com/some-du6e/yoloslackgoclient => ../../..
+replace github.com/some-du6e/clack => ../../..

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/emoji"
+	"github.com/some-du6e/clack/internal/emoji"
 )
 
 // Synthetic emoji data only.

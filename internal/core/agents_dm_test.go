@@ -3,7 +3,7 @@ package core
 import (
 	"testing"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // Navigation > "Show Agents in direct messages": with agents_in_dm_sidebar

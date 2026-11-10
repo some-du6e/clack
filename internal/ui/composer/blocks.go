@@ -10,7 +10,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/clack/internal/richtext"
 )
 
 // blocks.go converts between the composer Doc and Slack's message formats:

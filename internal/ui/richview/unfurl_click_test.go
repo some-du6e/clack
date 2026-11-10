@@ -9,9 +9,9 @@ import (
 
 	"gioui.org/f32"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/fakeslack"
-	rt "github.com/some-du6e/yoloslackgoclient/internal/richtext"
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/fakeslack"
+	rt "github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // What a click on each attachment image does, as in Slack's web client:

@@ -8,10 +8,10 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op/paint"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/blockkit"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/hovercard"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/blockkit"
+	"github.com/some-du6e/clack/internal/ui/hovercard"
+	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
 // profileHover is the profile hover card (Slack's ProfileHoverTrigger):

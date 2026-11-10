@@ -11,7 +11,7 @@ import (
 	"gioui.org/io/transfer"
 	"gioui.org/layout"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
+	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
 // edMaxIndent is the deepest list nesting level (0-based).

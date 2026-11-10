@@ -12,7 +12,7 @@ import (
 
 	"gioui.org/layout"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
+	"github.com/some-du6e/clack/internal/ui/composer"
 )
 
 func TestDiagnosticsText(t *testing.T) {

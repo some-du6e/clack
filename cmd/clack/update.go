@@ -9,8 +9,8 @@ import (
 	"os"
 	"sync"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/desktop"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui"
+	"github.com/some-du6e/clack/internal/desktop"
+	"github.com/some-du6e/clack/internal/ui"
 )
 
 // updates wires the update check, the background download and the

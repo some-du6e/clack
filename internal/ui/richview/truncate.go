@@ -3,7 +3,7 @@ package richview
 import (
 	"sync"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/clack/internal/richtext"
 )
 
 // Attachment text collapses like Slack's (2026-11 client):

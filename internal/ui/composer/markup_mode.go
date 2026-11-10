@@ -1,6 +1,6 @@
 package composer
 
-import "github.com/some-du6e/yoloslackgoclient/internal/richtext"
+import "github.com/some-du6e/clack/internal/richtext"
 
 // parseMarkup is the send side of "Format messages with markup" (Slack's
 // plain_text_mode): the composer kept *bold*, _italic_, ~strike~, `code`,

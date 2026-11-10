@@ -22,10 +22,10 @@ import (
 	"gioui.org/f32"
 	"gioui.org/io/pointer"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/fakeslack"
-	"github.com/some-du6e/yoloslackgoclient/internal/pluginbench"
-	"github.com/some-du6e/yoloslackgoclient/internal/pluginlib"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
+	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/pluginbench"
+	"github.com/some-du6e/clack/internal/pluginlib"
+	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
 // synthTaut is a Taut plugin in build:user-plugin's shape.

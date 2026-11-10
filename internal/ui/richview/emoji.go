@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/emoji"
+	"github.com/some-du6e/clack/internal/emoji"
 )
 
 // Unicode emoji inside plain text (mrkdwn text, button labels, attachment

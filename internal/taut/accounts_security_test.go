@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // A saved account sends d and never its stale d-s (TestCheckAuthStaysOnSlack

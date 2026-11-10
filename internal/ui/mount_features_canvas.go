@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/canvasview"
+	"github.com/some-du6e/clack/internal/ui/canvasview"
 )
 
 func init() {

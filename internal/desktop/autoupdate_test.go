@@ -35,7 +35,7 @@ var alpha8 = []string{
 func release(tag string, names ...string) Release {
 	r := Release{Tag: tag}
 	for _, n := range names {
-		r.Assets = append(r.Assets, Asset{Name: n, URL: "https://github.com/some-du6e/yoloslackgoclient/releases/download/" + tag + "/" + n, Size: 10})
+		r.Assets = append(r.Assets, Asset{Name: n, URL: "https://github.com/some-du6e/clack/releases/download/" + tag + "/" + n, Size: 10})
 	}
 	return r
 }
@@ -442,7 +442,7 @@ func TestDownloadHosts(t *testing.T) {
 		url string
 		ok  bool
 	}{
-		{"https://github.com/some-du6e/yoloslackgoclient/releases/download/v1/x", true},
+		{"https://github.com/some-du6e/clack/releases/download/v1/x", true},
 		{"https://objects.githubusercontent.com/x", true},
 		{"https://release-assets.githubusercontent.com/x", true},
 		{"http://github.com/x", false},

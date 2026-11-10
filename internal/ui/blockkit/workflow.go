@@ -6,7 +6,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/clack/internal/core"
 )
 
 // Workflow links (https://slack.com/shortcuts/Ft…) and workflow_button

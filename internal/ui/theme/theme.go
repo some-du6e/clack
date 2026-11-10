@@ -24,7 +24,7 @@ import (
 	"gioui.org/widget"
 	gtfont "github.com/go-text/typesetting/font"
 
-	"github.com/some-du6e/yoloslackgoclient/assets/fonts"
+	"github.com/some-du6e/clack/assets/fonts"
 )
 
 // Typeface is the font family name registered for the embedded Lato faces.

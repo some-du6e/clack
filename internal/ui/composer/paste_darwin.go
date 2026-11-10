@@ -153,7 +153,7 @@ import (
 	"strings"
 	"unsafe"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/uiguard"
+	"github.com/some-du6e/clack/internal/ui/uiguard"
 )
 
 // macOS: Gio reads only the plain string, so the HTML (public.html from

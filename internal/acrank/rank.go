@@ -7,7 +7,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/frecency"
+	"github.com/some-du6e/clack/internal/frecency"
 )
 
 // Kind is a candidate's entity type.

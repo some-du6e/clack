@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack/tlsfp"
+	"github.com/some-du6e/clack/internal/slack/tlsfp"
 )
 
 // Clack tells Slack what it is. Every request it makes to Slack (Web API,
@@ -33,7 +33,7 @@ import (
 // sees one consistent client.
 const (
 	userAgentProduct = "Clack"
-	userAgentComment = "(+https://github.com/some-du6e/yoloslackgoclient)"
+	userAgentComment = "(+https://github.com/some-du6e/clack)"
 )
 
 var userAgent atomic.Value // string
@@ -54,7 +54,7 @@ func SetVersion(v string) {
 }
 
 // UserAgent is the User-Agent of every request Clack makes to Slack, e.g.
-// "Clack/0.1.0 (+https://github.com/some-du6e/yoloslackgoclient)".
+// "Clack/0.1.0 (+https://github.com/some-du6e/clack)".
 func UserAgent() string { return userAgent.Load().(string) }
 
 // browserUATokens is the deny list of browser identities: none of these

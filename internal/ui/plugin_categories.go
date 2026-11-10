@@ -1,6 +1,6 @@
 package ui
 
-import "github.com/some-du6e/yoloslackgoclient/internal/pluginlib"
+import "github.com/some-du6e/clack/internal/pluginlib"
 
 // One category taxonomy for Taut's and Slick's plugins. Clack shows the two
 // systems as one plugin list, so a category the two name differently

@@ -30,11 +30,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack/tlsfp"
+	"github.com/some-du6e/clack/internal/slack/tlsfp"
 )
 
 // DefaultIndexURL is the published index (the `plugins` release's index.json).
-const DefaultIndexURL = "https://github.com/some-du6e/yoloslackgoclient/releases/download/plugins/index.json"
+const DefaultIndexURL = "https://github.com/some-du6e/clack/releases/download/plugins/index.json"
 
 const (
 	maxIndex  = 4 << 20

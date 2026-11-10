@@ -13,8 +13,8 @@ import (
 
 	"golang.org/x/text/unicode/norm"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // The Redux mirror's Go half. JS reads each slice (or one entry of an

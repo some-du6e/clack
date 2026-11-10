@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // The bots: a scripted, local engine (no LLM, no network). Ambient timers

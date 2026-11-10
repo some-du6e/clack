@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // Plugin bench fixtures (Size.PluginBench): one long channel whose 500

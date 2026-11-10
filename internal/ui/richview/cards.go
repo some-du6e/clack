@@ -12,8 +12,8 @@ import (
 	"gioui.org/font"
 	"golang.org/x/image/math/fixed"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
+	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
 func fixedPx(px int) fixed.Int26_6 { return fixed.I(px) }

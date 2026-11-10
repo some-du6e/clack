@@ -9,7 +9,7 @@ import (
 	"gioui.org/text"
 	"golang.org/x/image/math/fixed"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // faceKey identifies a font at a pixel size.

@@ -15,8 +15,8 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack/tlsfp"
-	"github.com/some-du6e/yoloslackgoclient/internal/slack/tlsfp/tlsfptest"
+	"github.com/some-du6e/clack/internal/slack/tlsfp"
+	"github.com/some-du6e/clack/internal/slack/tlsfp/tlsfptest"
 )
 
 // fpHost is the host the fingerprint tests ask for. .invalid never

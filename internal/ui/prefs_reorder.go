@@ -11,9 +11,9 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // Navigation's tab list is slack-kit's ReorderableOptionsList (OkAw,

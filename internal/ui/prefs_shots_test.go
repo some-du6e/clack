@@ -17,7 +17,7 @@ import (
 
 	"gioui.org/gpu/headless"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/fakeslack"
 )
 
 func TestPrefsAuditShots(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/paint"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
+	"github.com/some-du6e/clack/internal/ui/slackc/css"
 )
 
 // wrapNative draws the CSS box effects a rule set on a native widget

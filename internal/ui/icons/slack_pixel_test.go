@@ -25,7 +25,7 @@ import (
 	"golang.org/x/image/font/basicfont"
 	"golang.org/x/image/math/fixed"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
+	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
 // TestIconsMatchSlack draws Clack's icons through Gio's GPU renderer and

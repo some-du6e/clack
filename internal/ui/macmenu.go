@@ -6,8 +6,8 @@ import (
 
 	"gioui.org/io/event"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/menubar"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/shortcut"
+	"github.com/some-du6e/clack/internal/ui/menubar"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
 )
 
 // The macOS menu bar: Slack desktop's (4.53.276), whose menus come from two
@@ -30,7 +30,7 @@ import (
 // choosing the item with the mouse runs the same action.
 
 // releasesPage is Clack's release notes (Help > Release Notes).
-const releasesPage = "https://github.com/some-du6e/yoloslackgoclient/releases"
+const releasesPage = "https://github.com/some-du6e/clack/releases"
 
 // helpCenter is Slack's Help Center (Help > Open Help Center).
 const helpCenter = "https://slack.com/help"

@@ -8,8 +8,8 @@ import (
 	"gioui.org/f32"
 	"gioui.org/io/pointer"
 
-	rt "github.com/some-du6e/yoloslackgoclient/internal/richtext"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/hovercard"
+	rt "github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/hovercard"
 )
 
 // An @mention is Slack's MemberLink, a ProfileHoverTrigger: resting on it

@@ -20,7 +20,7 @@ import (
 	"gioui.org/unit"
 	"golang.org/x/image/math/fixed"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/emoji"
+	"github.com/some-du6e/clack/internal/emoji"
 )
 
 // Embolden is the outline stroke, in device pixels (not dp), added to dark

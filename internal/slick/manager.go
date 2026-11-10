@@ -19,9 +19,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/jsrt"
+	"github.com/some-du6e/clack/internal/jsrt"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack/tlsfp"
+	"github.com/some-du6e/clack/internal/slack/tlsfp"
 )
 
 // Plugin files, under Dir/plugins:

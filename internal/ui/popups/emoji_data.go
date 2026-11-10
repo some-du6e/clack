@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/emoji"
+	"github.com/some-du6e/clack/internal/emoji"
 )
 
 // Emoji data for the picker and the composer's ":" autocomplete.

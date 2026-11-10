@@ -8,8 +8,8 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
 // The send side of @channel / @here / @everyone, in Slack's

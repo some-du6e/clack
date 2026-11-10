@@ -10,7 +10,7 @@ import (
 
 	"gioui.org/widget"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // The row's line and the menus' title at each stage and size.

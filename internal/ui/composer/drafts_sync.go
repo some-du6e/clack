@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/taut"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/taut"
 )
 
 // Server draft sync, like Slack's composer: a pause in typing saves the

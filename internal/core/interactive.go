@@ -57,7 +57,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // View is a Block Kit surface (modal, home tab) as Slack sends it.

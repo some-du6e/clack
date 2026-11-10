@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/clack/internal/core"
 )
 
 // Synthetic ids; the shapes are Slack's (a live message_mention read

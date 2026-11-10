@@ -12,7 +12,7 @@ section: net
 priority: optional
 maintainer: Clack contributors <noreply@github.com>
 vendor: Clack contributors
-homepage: https://github.com/some-du6e/yoloslackgoclient
+homepage: https://github.com/some-du6e/clack
 description: |-
   Native Slack client.
   Clack is a fast Slack desktop client written in Go with a GPU-rendered

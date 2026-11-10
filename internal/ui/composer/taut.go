@@ -7,8 +7,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/taut"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/taut"
 )
 
 // Taut plugin support for the composer (docs/PLUGINS-taut.md).

@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
+	"github.com/some-du6e/clack/internal/ui/slackc/css"
 )
 
 // Node is one host-tree node from the JS renderer (see docs/PLUGINS.md):

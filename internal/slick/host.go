@@ -24,7 +24,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/jsrt"
+	"github.com/some-du6e/clack/internal/jsrt"
 )
 
 // dataNS is where a Slick blob namespace lives in Taut's data store

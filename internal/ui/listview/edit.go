@@ -12,9 +12,9 @@ import (
 	"gioui.org/layout"
 	"gioui.org/widget"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/lists"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/lists"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // ctl is what the list view and the item pane share: the host, the list,

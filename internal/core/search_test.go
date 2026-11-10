@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/fakeslack"
 )
 
 // wantForm checks p against want; "*" means any non-empty value.

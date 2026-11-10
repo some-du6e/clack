@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
 func TestHideBits(t *testing.T) {

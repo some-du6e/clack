@@ -7,10 +7,10 @@ import (
 
 	"gioui.org/widget"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/pluginlib"
-	"github.com/some-du6e/yoloslackgoclient/internal/slick"
-	"github.com/some-du6e/yoloslackgoclient/internal/taut"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/pluginlib"
+	"github.com/some-du6e/clack/internal/slick"
+	"github.com/some-du6e/clack/internal/taut"
+	"github.com/some-du6e/clack/internal/ui/icons"
 )
 
 // libraryIndexCategories are the (system, category) pairs the published

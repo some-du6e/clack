@@ -1,7 +1,7 @@
 package slackc
 
 import (
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
+	"github.com/some-du6e/clack/internal/ui/slackc/css"
 )
 
 // fitem is one flex item's working state.

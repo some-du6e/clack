@@ -16,8 +16,8 @@ import (
 
 	"github.com/hajimehoshi/go-mp3"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/huddle"
-	"github.com/some-du6e/yoloslackgoclient/internal/slack/tlsfp"
+	"github.com/some-du6e/clack/internal/huddle"
+	"github.com/some-du6e/clack/internal/slack/tlsfp"
 )
 
 // The invite sound. Slack's playHuddleInviteSound (client-boot ws4B) plays

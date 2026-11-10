@@ -24,7 +24,7 @@ import (
 	"encoding/json"
 	"sync"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // Streaming reports an open chat stream (Slack's isMessageStreaming).

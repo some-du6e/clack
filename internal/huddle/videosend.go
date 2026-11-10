@@ -33,7 +33,7 @@ import (
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/huddle/avperm"
+	"github.com/some-du6e/clack/internal/huddle/avperm"
 )
 
 // CameraState is where your camera is.

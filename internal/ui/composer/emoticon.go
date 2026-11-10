@@ -4,7 +4,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
+	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
 // Typed emoticons, the way Slack's composer converts them with

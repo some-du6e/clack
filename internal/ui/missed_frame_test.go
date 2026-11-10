@@ -12,8 +12,8 @@ import (
 	"gioui.org/io/pointer"
 	"gioui.org/widget"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/fakeslack"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // A frame that leaves the conversation out (a plugin's tree re-rendering

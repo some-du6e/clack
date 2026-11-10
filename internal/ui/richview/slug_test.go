@@ -8,10 +8,10 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 
-	rt "github.com/some-du6e/yoloslackgoclient/internal/richtext"
-	"github.com/some-du6e/yoloslackgoclient/internal/store"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
+	rt "github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/store"
+	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
+	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
 // A message_mention pill ("karim in #clack", a link to another message)

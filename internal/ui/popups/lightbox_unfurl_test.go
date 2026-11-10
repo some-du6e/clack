@@ -4,8 +4,8 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/richtext"
 )
 
 // An unfurl's image_url opens in the viewer as Slack's AttachmentImage

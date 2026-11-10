@@ -4,9 +4,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/acrank"
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/frecency"
+	"github.com/some-du6e/clack/internal/acrank"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/frecency"
 )
 
 // The @ # and / lists are ranked by Slack's Searcher, ported in

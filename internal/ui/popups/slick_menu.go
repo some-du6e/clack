@@ -11,7 +11,7 @@ import (
 
 	"gioui.org/layout"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
 // menuProps are Slack's Menu props: its rows are MenuItem children (one

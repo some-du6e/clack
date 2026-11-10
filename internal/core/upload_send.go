@@ -18,8 +18,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/localimg"
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/localimg"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // Sending files, the way Slack's web client does (gantry-v2 build

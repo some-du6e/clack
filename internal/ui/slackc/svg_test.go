@@ -11,7 +11,7 @@ import (
 	"gioui.org/f32"
 	"gioui.org/op"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc/css"
+	"github.com/some-du6e/clack/internal/ui/slackc/css"
 )
 
 func svgTestDoc(t *testing.T, js string) *svgDoc {

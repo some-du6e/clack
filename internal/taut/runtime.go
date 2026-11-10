@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/jsrt"
+	"github.com/some-du6e/clack/internal/jsrt"
 )
 
 // The TautAPI is a JS library (js/*.js, Clack's own implementation of

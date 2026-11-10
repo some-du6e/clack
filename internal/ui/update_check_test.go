@@ -16,9 +16,9 @@ import (
 	"gioui.org/op"
 	"gioui.org/widget"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/menubar"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
+	"github.com/some-du6e/clack/internal/ui/menubar"
+	"github.com/some-du6e/clack/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
 // rateLimited is desktop.RateLimitError's shape.
@@ -456,7 +456,7 @@ func TestUpdateCheckNowStates(t *testing.T) {
 }
 
 // newerInfo is the release Karim's alpha.12 should have been offered.
-var newerInfo = UpdateInfo{Tag: "v0.1.0-alpha.14", URL: "https://github.com/some-du6e/yoloslackgoclient/releases/tag/v0.1.0-alpha.14"}
+var newerInfo = UpdateInfo{Tag: "v0.1.0-alpha.14", URL: "https://github.com/some-du6e/clack/releases/tag/v0.1.0-alpha.14"}
 
 func keysOf(m map[string]*widget.Clickable) []string {
 	var ks []string

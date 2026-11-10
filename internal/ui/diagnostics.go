@@ -10,13 +10,13 @@ import (
 	"time"
 
 	"gioui.org/layout"
-	"github.com/some-du6e/yoloslackgoclient/internal/applog"
-	"github.com/some-du6e/yoloslackgoclient/internal/slick"
-	"github.com/some-du6e/yoloslackgoclient/internal/taut"
+	"github.com/some-du6e/clack/internal/applog"
+	"github.com/some-du6e/clack/internal/slick"
+	"github.com/some-du6e/clack/internal/taut"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/openurl"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/openurl"
+	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
 // Getting the log out: Help > Open Logs Folder and Help > Copy Diagnostics

@@ -158,7 +158,7 @@ Paste that JSON into the Token field. Clack picks out the workspace token, the o
 
 ### Either way
 
-Every connection Clack makes to Slack uses the TLS handshake of OpenSSL 3.0.13 (the one Python sends) over HTTP/1.1, not Go's, which Enterprise Grid signed sessions out for. Every request says what it is: `User-Agent: Clack/<version> (+https://github.com/some-du6e/yoloslackgoclient)`. It sends no browser or Slack desktop User-Agent, no `sec-ch-ua` client hints, no `Sec-Fetch-*` and no `Origin` or `Referer`. Clack doesn't ask for your browser's user agent, and an old `creds.json` that has one is read and the value ignored.
+Every connection Clack makes to Slack uses the TLS handshake of OpenSSL 3.0.13 (the one Python sends) over HTTP/1.1, not Go's, which Enterprise Grid signed sessions out for. Every request says what it is: `User-Agent: Clack/<version> (+https://github.com/some-du6e/clack)`. It sends no browser or Slack desktop User-Agent, no `sec-ch-ua` client hints, no `Sec-Fetch-*` and no `Origin` or `Referer`. Clack doesn't ask for your browser's user agent, and an old `creds.json` that has one is read and the value ignored.
 
 Credentials are saved to `~/.config/clack/creds.json`, readable only by you (mode 600 in a 700 directory; an owner-only ACL on Windows). They only ever go to https slack.com hosts. "Sign out on this device" deletes that file and nothing else.
 

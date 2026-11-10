@@ -23,7 +23,7 @@ import (
 	"gioui.org/text"
 	"gioui.org/unit"
 
-	rt "github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	rt "github.com/some-du6e/clack/internal/richtext"
 )
 
 // All documents in this file are synthetic. Never paste real Slack messages

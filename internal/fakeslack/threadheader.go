@@ -4,7 +4,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // Thread header fixtures (Size.ThreadHeader): one conversation of each

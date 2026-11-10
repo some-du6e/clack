@@ -3,7 +3,7 @@ package canvas
 import (
 	"strings"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/clack/internal/richtext"
 )
 
 // Editable reports whether b can be saved back through canvases.edit

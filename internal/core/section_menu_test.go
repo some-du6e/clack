@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/fakeslack"
 )
 
 func snapSection(a *App, id string) (Section, bool) {

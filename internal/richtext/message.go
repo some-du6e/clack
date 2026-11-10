@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/localimg"
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/localimg"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // FromMessage builds the document for a message: its rich blocks (or the

@@ -3,7 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme/pixeltest"
+	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 	"image"
 	"os"
 	"strings"
@@ -14,8 +14,8 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 type fakeUpdater struct {
@@ -319,7 +319,7 @@ func TestUpdateUIShots(t *testing.T) {
 		defer w.Release()
 	}
 	u := &a.update
-	info := UpdateInfo{Tag: "v0.1.0-alpha.15", URL: "https://github.com/some-du6e/yoloslackgoclient/releases/tag/v0.1.0-alpha.15"}
+	info := UpdateInfo{Tag: "v0.1.0-alpha.15", URL: "https://github.com/some-du6e/clack/releases/tag/v0.1.0-alpha.15"}
 	set := func(p updatePhase, err string) {
 		u.info, u.phase, u.err = info, p, err
 	}
@@ -417,7 +417,7 @@ func TestUpdateAppShots(t *testing.T) {
 	}
 	e.settle(800 * time.Millisecond)
 	u := &a.update
-	u.info = UpdateInfo{Tag: "v0.1.0-alpha.15", URL: "https://github.com/some-du6e/yoloslackgoclient/releases/tag/v0.1.0-alpha.15"}
+	u.info = UpdateInfo{Tag: "v0.1.0-alpha.15", URL: "https://github.com/some-du6e/clack/releases/tag/v0.1.0-alpha.15"}
 	closeAll := func() {
 		for _, o := range a.overlays {
 			if d, ok := o.(dismisser); ok {

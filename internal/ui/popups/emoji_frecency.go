@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/frecency"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/frecency"
 )
 
 // Emoji frecency comes from Slack's own "frecency" and "emoji_use" user

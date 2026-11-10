@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
 func TestMenuKeys(t *testing.T) {

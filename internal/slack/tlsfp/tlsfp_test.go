@@ -22,7 +22,7 @@ import (
 
 	utls "github.com/refraction-networking/utls"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack/tlsfp/tlsfptest"
+	"github.com/some-du6e/clack/internal/slack/tlsfp/tlsfptest"
 )
 
 // helloFor is the ClientHello record uTLS would send for serverName,

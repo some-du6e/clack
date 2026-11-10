@@ -10,8 +10,8 @@ package views
 import (
 	"gioui.org/layout"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
 // ---- Activity: the parts of an ActivityItem ----

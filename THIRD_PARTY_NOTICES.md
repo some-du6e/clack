@@ -25,7 +25,7 @@ Clack is MIT licensed (see `LICENSE`). It includes or links the following third-
 | Go standard library and `golang.org/x/*` | everything | BSD-3-Clause |
 
 ## LGPL-2.1 (goh264)
-goh264 is linked statically. Under LGPL-2.1 §6 you may relink Clack against a modified goh264: Clack's complete source is public at https://github.com/some-du6e/yoloslackgoclient. Replace the module with `go mod edit -replace github.com/thesyncim/goh264=<your copy>` and build with `go build ./cmd/clack`.
+goh264 is linked statically. Under LGPL-2.1 §6 you may relink Clack against a modified goh264: Clack's complete source is public at https://github.com/some-du6e/clack. Replace the module with `go mod edit -replace github.com/thesyncim/goh264=<your copy>` and build with `go build ./cmd/clack`.
 
 ## Taut and Slick plugins
 Clack does **not** include Taut or Slick code. The built-in plugin Library downloads plugins, which are GPL-3.0 and built from the upstream projects ([Taut](https://github.com/jeremy46231/taut), [Slick](https://github.com/3kh0/slick)), at the user's request, from this repository's `plugins` pre-release. That release carries their licenses and the upstream commits each bundle was built from.

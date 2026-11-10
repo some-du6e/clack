@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/frecency"
+	"github.com/some-du6e/clack/internal/frecency"
 )
 
 var t0 = time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)

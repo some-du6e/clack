@@ -3,7 +3,7 @@ package richview
 import (
 	"image/color"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // Message text follows the stylesheets' Slack design tokens (Slick themes,

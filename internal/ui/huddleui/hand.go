@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/huddle"
+	"github.com/some-du6e/clack/internal/huddle"
 )
 
 // Raise hand and the other stickers (bv1-13): the huddle toolbar's

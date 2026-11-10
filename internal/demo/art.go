@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/emoji"
+	"github.com/some-du6e/clack/internal/emoji"
 )
 
 // Image paths (what follows /img/ on the fake).

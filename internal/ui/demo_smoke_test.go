@@ -18,11 +18,11 @@ import (
 
 	"gioui.org/gpu/headless"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/demo"
-	"github.com/some-du6e/yoloslackgoclient/internal/imgcache"
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
-	"github.com/some-du6e/yoloslackgoclient/internal/store"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/demo"
+	"github.com/some-du6e/clack/internal/imgcache"
+	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/store"
 )
 
 const demoTestBanner = "Quillfeather Paper Co. and everyone in it are made up. Nothing here connects to Slack."

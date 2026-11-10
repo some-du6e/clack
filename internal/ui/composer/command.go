@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/clack/internal/core"
 )
 
 // runCommand is Slack's handleSlashCommand around executeCommand: the

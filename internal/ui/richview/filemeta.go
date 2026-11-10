@@ -7,8 +7,8 @@ import (
 
 	"gioui.org/font"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
+	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
 // The line above a message's files in channels and threads: Slack's

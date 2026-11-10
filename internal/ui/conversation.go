@@ -12,8 +12,8 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/clip"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/composer"
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/ui/composer"
 )
 
 // originTracker learns a widget's window position from pointer events:

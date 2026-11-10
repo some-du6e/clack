@@ -28,7 +28,7 @@ import (
 	"gioui.org/op/paint"
 	xdraw "golang.org/x/image/draw"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 const (

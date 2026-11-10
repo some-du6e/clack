@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // Inkwell, the AI coding agent. Its replies stream the way Slack's AI

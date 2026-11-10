@@ -1,5 +1,5 @@
 Clack - a native Slack client
-https://github.com/some-du6e/yoloslackgoclient
+https://github.com/some-du6e/clack
 
 Run Clack.exe. On first start it asks for your workspace, token and cookie;
 see "Sign in" in the project README.

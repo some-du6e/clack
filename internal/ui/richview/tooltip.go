@@ -12,7 +12,7 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
 // tooltipClass is Slack's tooltip box (a portal under <body>).

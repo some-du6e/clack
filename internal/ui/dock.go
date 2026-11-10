@@ -4,8 +4,8 @@ import (
 	"runtime"
 	"strconv"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/desktop"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/uipref"
+	"github.com/some-du6e/clack/internal/desktop"
+	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
 // The macOS Dock icon, as Slack's desktop app drives it from the web

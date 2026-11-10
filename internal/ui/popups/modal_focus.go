@@ -9,8 +9,8 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/refocus"
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/shortcut"
+	"github.com/some-du6e/clack/internal/ui/refocus"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
 )
 
 // Keyboard and focus, as Slack's modals do it (BaseModal/c-sk-modal over

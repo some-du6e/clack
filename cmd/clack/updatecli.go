@@ -10,7 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/desktop"
+	"github.com/some-du6e/clack/internal/desktop"
 )
 
 // wantsUpdateCLI reports whether args ask for `clack --update`.

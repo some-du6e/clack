@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "generated": "2026-11-09T21:03:23Z",
-  "run": "https://github.com/some-du6e/yoloslackgoclient/actions/runs/42697545499",
+  "run": "https://github.com/some-du6e/clack/actions/runs/42697545499",
   "sources": [
     "slick 34f2c25",
     "taut 6fe5123"

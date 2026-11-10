@@ -10,7 +10,7 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/uiguard"
+	"github.com/some-du6e/clack/internal/ui/uiguard"
 )
 
 func write(ctx context.Context, img image.Image) error {

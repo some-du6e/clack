@@ -14,7 +14,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/clip"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/popups"
 )
 
 // Preferences sections Slack has beyond Clack's original five: each row

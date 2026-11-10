@@ -3,7 +3,7 @@ package applog
 import (
 	"regexp"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // Redact is what every line written to the log file goes through:

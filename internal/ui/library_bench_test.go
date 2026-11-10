@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/pluginbench"
-	"github.com/some-du6e/yoloslackgoclient/internal/pluginlib"
+	"github.com/some-du6e/clack/internal/pluginbench"
+	"github.com/some-du6e/clack/internal/pluginlib"
 )
 
 // With plugin bench data for a plugin both systems offer, Install installs

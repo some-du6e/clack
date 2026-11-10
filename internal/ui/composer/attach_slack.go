@@ -8,7 +8,7 @@ import (
 
 	"gioui.org/layout"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
 // attach_slack.go: the attachments' Slack boundaries.

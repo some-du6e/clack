@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"weak"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/taut"
+	"github.com/some-du6e/clack/internal/taut"
 )
 
 // Pending attachments as Slack's pending files, for plugins: taut serves

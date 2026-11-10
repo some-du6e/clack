@@ -4,7 +4,7 @@ import (
 	"image/color"
 	"testing"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 type fakeTokens map[string]color.NRGBA

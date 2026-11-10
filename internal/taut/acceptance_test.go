@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // Acceptance: every plugin in Taut's plugins/, built with Taut's own

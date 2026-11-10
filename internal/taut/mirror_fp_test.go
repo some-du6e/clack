@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/slack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // A channel's messages fingerprint is the same every time while nothing

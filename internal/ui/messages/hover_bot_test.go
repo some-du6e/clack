@@ -3,7 +3,7 @@ package messages
 import (
 	"testing"
 
-	"github.com/some-du6e/yoloslackgoclient/internal/core"
+	"github.com/some-du6e/clack/internal/core"
 )
 
 // A sender with a user opens the user's card; a bot message without one
