@@ -1,10 +1,19 @@
 package popups
 
 import (
+	"context"
+	"errors"
+	"image"
 	"testing"
+	"time"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/imgcache"
+	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/store"
 	"github.com/some-du6e/clack/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // n9iP Xq: the checked radio of the bell menu is "Customized" when the
@@ -96,5 +105,59 @@ func TestRenameMpdmErrorText(t *testing.T) {
 		if got := renameMpdmErrorText(id); got != want {
 			t.Errorf("%q: %q", id, got)
 		}
+	}
+}
+
+// The switcher names a group DM with a custom name by it, and finds it by
+// that name first, then by its members (y+lP filterMpims); with
+// mpdm_naming off it is its member list again.
+func TestSwitcherGroupDMNames(t *testing.T) {
+	fs, err := fakeslack.Start(fakeslack.Size{Emoji: 50, Users: 30, Channels: 8, DMs: 2, Usergroups: 2, History: 5, GroupDMs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { fs.Close() })
+	a := core.New(slack.New(fs.Creds()), store.New(t.TempDir()))
+	t.Cleanup(a.Shutdown)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := a.Boot(ctx); err != nil {
+		t.Fatal(err)
+	}
+	on := "on"
+	a.SetExperimentGroups(map[string]*string{"mpdm_naming": &on, "sc_mpdm_naming": &on})
+	th := theme.New(false)
+	sh := theme.NewShaper()
+	th.SetShapers(sh, sh)
+	srResetRecents()
+	t.Cleanup(srResetRecents)
+	noNet := func(context.Context, string) ([]byte, error) { return nil, errors.New("no network in tests") }
+	h := &tzHost{a: a, th: th, im: imgcache.New(noNet, "", nil)}
+	cand := func(q, id string) (srCand, bool) {
+		p := NewSearchPopover(h, q, image.Rectangle{})
+		d := &srDrv{size: image.Pt(1280, 800), w: p}
+		d.frame()
+		for _, c := range srRank(p.cands, q, 0, false) {
+			if c.ID == id {
+				return c, true
+			}
+		}
+		return srCand{}, false
+	}
+	c, ok := cand("design", fakeslack.GroupDMNamedID)
+	if !ok || c.Name != "Design crew" {
+		t.Fatalf("\"design\" finds %+v (%v)", c, ok)
+	}
+	if c, ok := cand("partn", fakeslack.GroupDMConnectID); !ok || c.Name != "Partners" {
+		t.Errorf("the Slack Connect group DM: %+v (%v)", c, ok)
+	}
+	m, _ := a.User(fs.GroupDMUsers()[0].ID)
+	if _, ok := cand(userName(m), fakeslack.GroupDMNamedID); !ok {
+		t.Errorf("a member's name %q doesn't find the named group DM", userName(m))
+	}
+	off := "off"
+	a.SetExperimentGroup("mpdm_naming", off)
+	if c, ok := cand(userName(m), fakeslack.GroupDMNamedID); !ok || c.Name == "Design crew" {
+		t.Errorf("mpdm_naming off: %+v (%v)", c, ok)
 	}
 }

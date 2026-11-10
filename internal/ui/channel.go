@@ -398,7 +398,7 @@ func (a *App) layoutHeaderTopic(gtx layout.Context, ch string, conv *convInfo, r
 	if tw <= 0 {
 		return
 	}
-	hdrTopicTruncated = truncated
+	hdrTopicTruncated, hdrTopicCardShown = truncated, false
 	hov := a.clicks.get("hdr.topicbox")
 	btn := a.clicks.get("hdr.topic")
 	card := a.clicks.get("hdr.topiccard")
@@ -455,10 +455,12 @@ func (a *App) layoutHeaderTopic(gtx layout.Context, ch string, conv *convInfo, r
 }
 
 // hdrTopicRect is the last header topic box, in the pane's coordinates
-// (tests hover it); hdrTopicTruncated whether that topic was --truncated.
+// (tests hover it); hdrTopicTruncated whether that topic was --truncated
+// and hdrTopicCardShown whether its hover card was drawn.
 var (
 	hdrTopicRect      image.Rectangle
 	hdrTopicTruncated bool
+	hdrTopicCardShown bool
 )
 
 // headerTopicWidth is the topic line's natural width.

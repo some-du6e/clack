@@ -1,0 +1,69 @@
+name: exp-channels
+# The channels experiments (docs/EXPERIMENTS.md, Channels and group DMs):
+# group DM names in the header, details and the switcher with Slack's
+# RenameMpdmDialog, the wide topic's hover card and the topic permission,
+# the bell menu's "Customized" tag, details' agents tabs, list tab view
+# names, each with the experiment groups flipped; rendered headlessly at
+# 1440x900 against internal/fakeslack. Synthetic only: nothing here talks
+# to Slack.
+on:
+  push:
+    paths:
+      - "internal/core/chperms.go"
+      - "internal/core/mpdm_name.go"
+      - "internal/core/enterprise_prefs.go"
+      - "internal/core/browse.go"
+      - "internal/core/experiments.go"
+      - "internal/core/exp_channels_test.go"
+      - "internal/fakeslack/groupdms.go"
+      - "internal/ui/channel.go"
+      - "internal/ui/channel_mpdm.go"
+      - "internal/ui/channel_topic.go"
+      - "internal/ui/exp_channels_test.go"
+      - "internal/ui/popups/menu.go"
+      - "internal/ui/popups/notify_menu.go"
+      - "internal/ui/popups/rename_mpdm_dialog.go"
+      - "internal/ui/popups/mpim_prefix.go"
+      - "internal/ui/popups/search_popover.go"
+      - "internal/ui/popups/exp_channels_test.go"
+      - "internal/ui/views/details.go"
+      - "internal/ui/views/details_mpdm.go"
+      - "internal/ui/views/details_exp_test.go"
+      - ".github/workflows/exp-channels.yml"
+  workflow_dispatch:
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb
+
+permissions:
+  contents: read
+
+jobs:
+  exp-channels:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: core
+        run: go test -count=1 -v -run 'TestTopicPurposeRestrictedToGrants$|TestChannelGrantRequest$|TestCanNameMpdmFollowsExperiments$|TestRenameMpdm$|TestHasMpdmWithDuplicateName$|TestEnterprisePrefs$|TestMpdmCustomName|TestExperimentReadsListed$' ./internal/core/
+      - name: popups and views
+        run: xvfb-run -a go test -count=1 -v -run 'TestNotifyCustomized$|TestMenuTagTemplate$|TestGraphemeLen$|TestRenameMpdmErrorText$|TestSwitcherGroupDMNames$|TestDetailsAddPeopleDefaultHistory$|TestDetailsMpdmTitle$' ./internal/ui/popups/ ./internal/ui/views/
+      - name: client screenshots
+        env:
+          PREVIEW_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$PREVIEW_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -v -run 'TestGroupDMHeaderTitles$|TestGroupDMRename$|TestHeaderTopicHoverCard$|TestTopicRestrictedToManagers$|TestBellMenuCustomizedTag$|TestDetailsGroupDMName$|TestDetailsAgentsAppsTabExperiment$|TestListTabViewName$|TestHeaderTopicEdit$|TestChannelBellMenu$|TestChannelDetailsMembersAndApps$' ./internal/ui/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: exp-channels-shots
+          path: dist/shots

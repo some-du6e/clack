@@ -153,6 +153,8 @@ func (a *App) layoutMpdmTitle(gtx layout.Context, ch string, conv *convInfo, x, 
 		wrapPad = gtx.Dp(8) // the wrapper's padding-right
 	}
 	idle := min(max(btnW+wrapPad, gtx.Dp(88)), avail)
+	hdrMpdmTitleRect = image.Rect(x, (h-gtx.Dp(32))/2, x+idle, (h+gtx.Dp(32))/2)
+	hdrMpdmEditShown = false
 	wrapHov := a.clicks.get("hdr.mpdmwrap")
 	editW := gtx.Dp(4) + gtx.Dp(28)
 	at(gtx, image.Pt(x, (h-gtx.Dp(32))/2), image.Pt(idle, gtx.Dp(32)), func(gtx layout.Context) layout.Dimensions {
@@ -189,6 +191,7 @@ func (a *App) layoutMpdmTitle(gtx layout.Context, ch string, conv *convInfo, x, 
 				})
 			})
 			if showEdit {
+				hdrMpdmEditShown = true
 				bx := room + gtx.Dp(4)
 				at(gtx, image.Pt(bx, (th-gtx.Dp(28))/2), image.Pt(gtx.Dp(28), gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
 					theme.RRect(gtx, image.Rect(0, 0, gtx.Dp(28), gtx.Dp(28)), gtx.Dp(4), c.Bg) // base-pry
@@ -209,6 +212,14 @@ func (a *App) layoutMpdmTitle(gtx layout.Context, ch string, conv *convInfo, x, 
 	}
 	return idle
 }
+
+// hdrMpdmTitleRect is the last group DM title wrapper (header
+// coordinates) and hdrMpdmEditShown whether its edit-name button was
+// drawn (tests).
+var (
+	hdrMpdmTitleRect image.Rectangle
+	hdrMpdmEditShown bool
+)
 
 // openRenameMpdm opens RenameMpdmDialog for ch.
 func (a *App) openRenameMpdm(ch string, conv *convInfo) {

@@ -121,6 +121,7 @@ func (a *App) layoutTopicCard(gtx layout.Context, ch string, conv *convInfo, org
 		return
 	}
 	card := a.clicks.get("hdr.topiccard")
+	hdrTopicCardShown = true
 	m := op.Record(gtx.Ops)
 	func() {
 		defer op.Offset(org).Push(gtx.Ops).Pop()
