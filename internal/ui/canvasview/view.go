@@ -52,6 +52,7 @@ type View struct {
 	phView  *richview.View // the empty canvas's placeholder
 	phText  string
 	tphView *richview.View // the empty title's placeholder
+	toc     *tocState      // the table of contents (toc.go)
 
 	queue []func() // post: run on the UI goroutine at the next frame
 
@@ -62,7 +63,7 @@ type View struct {
 
 // New returns a view of canvas id. It loads on its first frame.
 func New(h Host, id string, mode Mode, act Actions) *View {
-	v := &View{h: h, id: id, mode: mode, act: act, btns: map[string]*widget.Clickable{}, edit: newEditState()}
+	v := &View{h: h, id: id, mode: mode, act: act, btns: map[string]*widget.Clickable{}, edit: newEditState(), toc: newTOC()}
 	v.list.Axis = layout.Vertical
 	v.handler = &handler{v: v}
 	return v
@@ -549,7 +550,7 @@ func (v *View) layoutError(gtx layout.Context, err error) (retried bool) {
 func (v *View) layoutSkeleton(gtx layout.Context) layout.Dimensions {
 	th := v.h.Theme()
 	sz := gtx.Constraints.Max
-	x0, w := v.column(gtx, sz.X)
+	x0, w := columnFor(gtx, sz.X, true) // p-quip_loading_skeleton's 96/94 column
 	y := gtx.Dp(32)
 	theme.RRect(gtx, image.Rect(x0, y, x0+w*55/100, y+gtx.Dp(28)), gtx.Dp(4), th.C.Skeleton)
 	y += gtx.Dp(56)
@@ -568,7 +569,16 @@ func (v *View) layoutSkeleton(gtx layout.Context) layout.Dimensions {
 // 96px/94px side padding: an 800px column (Quip's MAX_DOCUMENT_WIDTH).
 // Narrower panes use Quip's smaller paddings (p-quip_loading_skeleton's
 // breakpoints: under 500 "medium" 51px, under 350 28px, under 200 16px).
+//
+// The fixed padding is 94px a side (horizontalPaddingOverrides: fixed 94,
+// medium 51). With the table of contents on, Quip reserves its 64px
+// gutter (setExternalGutterReservedWidth), and canvasDocumentMargins
+// makes the left margin max(padding, 64+32): 96px, the measured 96/94.
 func (v *View) column(gtx layout.Context, w int) (x, cw int) {
+	return columnFor(gtx, w, v.tocOn())
+}
+
+func columnFor(gtx layout.Context, w int, toc bool) (x, cw int) {
 	pad := 0
 	switch {
 	case w < gtx.Dp(200):
@@ -578,12 +588,18 @@ func (v *View) column(gtx layout.Context, w int) (x, cw int) {
 	case w < gtx.Dp(500):
 		pad = gtx.Dp(51) // --document-padding-medium-horizontal
 	}
-	if pad > 0 {
-		return pad, max(1, w-2*pad)
+	gutter := 0
+	if toc {
+		gutter = gtx.Dp(64) + gtx.Dp(32)
 	}
-	wrap := min(w, gtx.Dp(990))
+	if pad > 0 {
+		left := max(pad, gutter)
+		return left, max(1, w-left-pad)
+	}
+	left, right := max(gtx.Dp(94), gutter), gtx.Dp(94)
+	wrap := min(w, gtx.Dp(800)+left+right) // .parts-screen-children-wrapper's max-width
 	x0 := (w - wrap) / 2
-	return x0 + gtx.Dp(96), max(1, wrap-gtx.Dp(96)-gtx.Dp(94))
+	return x0 + left, max(1, wrap-left-right)
 }
 
 // docTop is the space above the title: the canvas's header-image
@@ -624,15 +640,19 @@ func (v *View) layoutDoc(gtx layout.Context, d *core.CanvasDoc) layout.Dimension
 		title, rows = blocks[0], blocks[1:]
 	}
 	ph := v.placeholder(rows)
-	n := len(rows) + 2 // header, blocks, bottom space
-	return v.list.Layout(gtx, n, func(gtx layout.Context, i int) layout.Dimensions {
+	n := len(rows) + 2     // header, blocks, bottom space
+	defer v.layoutTOC(gtx) // over the blocks, under the toolbars
+	dims := v.list.Layout(gtx, n, func(gtx layout.Context, i int) (dims layout.Dimensions) {
 		gtx.Constraints.Min.X = sz.X
 		switch {
 		case i == 0:
-			return v.layoutHeader(gtx, d, x0, cw, title)
+			dims = v.layoutHeader(gtx, d, x0, cw, title)
+			v.toc.rowLaidOut(i, 0, dims.Size.Y)
+			return dims
 		case i == n-1:
 			below := image.Pt(sz.X, max(gtx.Dp(docBottom), sz.Y/3))
 			v.edit.belowArea(gtx, v, below)
+			v.toc.rowLaidOut(i, 0, below.Y)
 			return layout.Dimensions{Size: below}
 		}
 		b := rows[i-1]
@@ -651,8 +671,11 @@ func (v *View) layoutDoc(gtx layout.Context, d *core.CanvasDoc) layout.Dimension
 			dim = v.layoutBlock(g, b, top)
 		}
 		dim.Size.X = sz.X
+		v.toc.rowLaidOut(i, top, dim.Size.Y)
 		return dim
 	})
+	v.toc.listDone(v.list.Position)
+	return dims
 }
 
 // titlePlaceholder is Slack's title placeholder (titlePlaceholder in
