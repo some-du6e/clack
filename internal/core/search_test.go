@@ -192,3 +192,44 @@ func TestSearchAgainstFake(t *testing.T) {
 		t.Errorf("search.save terms %v", s)
 	}
 }
+
+// Search feedback goes out the way Slack's thunks send it, and only to
+// the fake: CombinedSearchFeedbackModal's feedback.submitEnterpriseSearchFeedback
+// (type feedback, feedback_type, text, contact, category, query, the JSON
+// payload, is_test false) and search in channel's search.feedback
+// (client_token, type search, payload).
+func TestSearchFeedbackCalls(t *testing.T) {
+	a, fs := canvasApp(t)
+	ctx := context.Background()
+	pl := map[string]any{"search_session_id": "S1", "query": "zephyr", "client_version": SearchFeedbackClientVersion}
+	if err := a.SubmitSearchFeedback(ctx, SearchFeedback{FeedbackType: "omniswitcher", Category: "missing_results",
+		Text: "the channel I wanted isn't there", Contact: true, Query: "zephyr", Payload: pl}); err != nil {
+		t.Fatal(err)
+	}
+	forms := fs.SearchForms("feedback.submitEnterpriseSearchFeedback")
+	if len(forms) != 1 {
+		t.Fatalf("%d feedback calls", len(forms))
+	}
+	forms[0].Del("token") // the client's, on every call
+	wantForm(t, "feedback.submitEnterpriseSearchFeedback", forms[0], map[string]string{
+		"type": "feedback", "feedback_type": "omniswitcher", "text": "the channel I wanted isn't there", "contact": "true",
+		"category": "missing_results", "query": "zephyr", "payload": "*", "is_test": "false"})
+	var got map[string]any
+	if err := json.Unmarshal([]byte(forms[0].Get("payload")), &got); err != nil || got["query"] != "zephyr" ||
+		got["client_version"] != "noversion" {
+		t.Errorf("payload %q: %v", forms[0].Get("payload"), err)
+	}
+
+	if err := a.SearchFeedbackDialog(ctx, map[string]any{"module": "inChannel"}); err != nil {
+		t.Fatal(err)
+	}
+	forms = fs.SearchForms("search.feedback")
+	if len(forms) != 1 {
+		t.Fatalf("%d search.feedback calls", len(forms))
+	}
+	forms[0].Del("token")
+	wantForm(t, "search.feedback", forms[0], map[string]string{"client_token": "*", "type": "search", "payload": `{"module":"inChannel"}`})
+	if tok := forms[0].Get("client_token"); !strings.HasPrefix(tok, "web-") || !a.Interactive().ours(tok, 10000) {
+		t.Errorf("client_token %q isn't one Interactive queued", tok)
+	}
+}
