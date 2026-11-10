@@ -100,6 +100,11 @@ type ModalOpts struct {
 	// it.
 	Hero  func(gtx layout.Context) layout.Dimensions
 	HeroH float32
+	// Over draws on top of the whole card, header and footer included,
+	// in card coordinates with gtx.Constraints exactly the card's size
+	// (Slack's c-modal_speed_bump veils the dialog with its sheet; the
+	// list dialogs' footer access select).
+	Over func(gtx layout.Context)
 }
 
 // Modal is a centered dialog over a dimmed backdrop.
@@ -374,6 +379,11 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 						macroAt(gtx, call, image.Pt(x, fy+footPad))
 						x -= dp(gtx, 12)
 					}
+				}
+				if m.o.Over != nil {
+					gtx := gtx
+					gtx.Constraints = layout.Exact(m.rect.Size())
+					m.o.Over(gtx)
 				}
 			}
 		})

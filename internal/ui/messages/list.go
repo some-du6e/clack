@@ -1256,7 +1256,9 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 		case tbTodo:
 			s.toggleSaved(h, app, m)
 		case tbList:
-			h.Toast("Lists aren't supported yet")
+			if la, ok := h.(ListAdder); ok {
+				la.AddMessageToList(m)
+			}
 		case tbMore:
 			mm := m
 			// Slack's menu top sits 32px above the kebab's centre (16 above

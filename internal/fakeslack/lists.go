@@ -433,6 +433,9 @@ func cellField(col *lists.Column, raw map[string]json.RawMessage) (lists.Field, 
 
 // handleLists answers the list methods; handled=false passes on.
 func (s *Server) handleLists(method string, f url.Values) (any, bool) {
+	if out, handled := s.handleListsAdd(method, f); handled { // lists_add.go
+		return out, true
+	}
 	ls := s.listStore()
 	switch method {
 	case "files.info":
@@ -468,6 +471,7 @@ func (s *Server) handleLists(method string, f url.Values) (any, bool) {
 				tabs = append(tabs,
 					map[string]any{"id": "Ct" + ListTodos, "type": "list", "label": "", "data": map[string]any{"file_id": ListTodos}},
 					map[string]any{"id": "Ctfiles", "type": "files", "label": ""})
+				tabs = append(tabs, s.addedTabs(ListTabChan)...) // conversations.addTab (lists_add.go)
 				props["tabs"] = tabs
 				m["properties"] = props
 				addCounts(m, c, f)
@@ -651,13 +655,19 @@ func (s *Server) handleLists(method string, f url.Values) (any, bool) {
 		now := time.Now().Unix()
 		id := fmt.Sprintf("F0LISTNEW%02d", ls.next)
 		l := &FakeList{ID: id, Title: name, Creator: SelfID, Created: now, Updated: now}
-		switch f.Get("template_id") {
-		case "":
-			l.Meta.Schema = []lists.Column{{ID: "Col0NEWNAME", Key: "name", Name: "Name", Type: lists.Text, IsPrimary: true, Options: lists.Options{Format: "text"}}}
-		case "Ttodo":
+		switch tpl := f.Get("template_id"); {
+		case tpl == "blank" && f.Get("todo_mode") == "true": // the channel tab bar's new list (lists_add.go)
 			t := todoList(now)
 			l.Meta.Schema, l.Meta.TodoMode = t.Meta.Schema, true
-		case "Tproject", "Tfeedback":
+		case tpl == "", tpl == "blank":
+			l.Meta.Schema = []lists.Column{{ID: "Col0NEWNAME", Key: "name", Name: "Name", Type: lists.Text, IsPrimary: true, Options: lists.Options{Format: "text"}}}
+		case tpl == "add_to_new_list": // "Add to list…" > Create New List
+			l.Meta.Schema = []lists.Column{{ID: "Col0NEWNAME", Key: "name", Name: "Name", Type: lists.Text, IsPrimary: true, Options: lists.Options{Format: "text"}},
+				{ID: "Col0NEWMSG", Key: "Col0NEWMSG", Name: "Message", Type: lists.Message}}
+		case tpl == "Ttodo":
+			t := todoList(now)
+			l.Meta.Schema, l.Meta.TodoMode = t.Meta.Schema, true
+		case tpl == "Tproject", tpl == "Tfeedback":
 			k := kitchenList(now)
 			l.Meta.Schema = k.Meta.Schema[:5]
 		default:

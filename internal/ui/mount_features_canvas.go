@@ -202,7 +202,7 @@ func (a *App) pendingCanvasTab(ch, id string) {
 func (a *App) addTabMenu(ch string) {
 	a.menu(a.PointerPos(), []MenuItem{
 		{Label: "Canvas", Icon: "canvas", Do: func() { a.newChannelCanvas(ch) }},
-		{Label: "List", Icon: "list-tab", Do: func() { a.Toast("Adding lists isn't supported yet") }},
+		{Label: "List", Icon: "list-tab", Do: func() { a.addListTab(ch) }},
 	})
 }
 
