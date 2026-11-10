@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // The shell's mute (the DM header bell's menu) is Slack's
@@ -90,6 +92,9 @@ func TestBackendSetMutedWritesSlackPref(t *testing.T) {
 	mu.Lock()
 	refuse = false
 	mu.Unlock()
+	// the same request right after it failed waits out the client's
+	// backoff (slack.BackoffBase) without going out
+	e.settle(slack.BackoffBase + 200*time.Millisecond)
 	e.a.data.setMuted(dm, false)
 	for dl := time.Now().Add(10 * time.Second); time.Now().Before(dl); {
 		mu.Lock()
