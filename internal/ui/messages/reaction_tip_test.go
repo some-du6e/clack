@@ -17,14 +17,45 @@ import (
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
+// Slack's getTip (Qvn6): every reactor, the viewer as You/you, listify's
+// serial comma, "others" past 50, "You (click to remove)" alone.
 func TestReactionTipText(t *testing.T) {
-	re := &core.Reaction{Name: "tada", Count: 5, Users: []string{"USELF", "U1", "U2", "U3", "U4"}}
-	got := reactionTip(nilHost{}, re, "USELF")
-	if !strings.HasPrefix(got, "You, U1, U2 and 2 others") || !strings.HasSuffix(got, " reacted with :tada:") {
-		t.Fatalf("%q", got)
+	many := make([]string, 50)
+	for i := range many {
+		many[i] = "U" + itoa(i)
 	}
-	if got := reactionTip(nilHost{}, &core.Reaction{Name: "eyes", Count: 1, Users: []string{"U1"}}, "USELF"); got != "U1 reacted with :eyes:" {
-		t.Fatalf("%q", got)
+	for _, c := range []struct {
+		re   core.Reaction
+		want string
+	}{
+		{core.Reaction{Name: "tada", Count: 5, Users: []string{"USELF", "U1", "U2", "U3", "U4"}}, "You, U1, U2, U3, and U4 reacted with :tada:"},
+		{core.Reaction{Name: "eyes", Count: 1, Users: []string{"U1"}}, "U1 reacted with :eyes:"},
+		{core.Reaction{Name: "eyes", Count: 1, Users: []string{"USELF"}, Self: true}, "You (click to remove) reacted with :eyes:"},
+		{core.Reaction{Name: "eyes", Count: 2, Users: []string{"U1", "USELF"}, Self: true}, "U1 and you reacted with :eyes:"},
+		{core.Reaction{Name: "fire", Count: 73, Users: many}, strings.Join(many, ", ") + ", and others reacted with :fire:"},
+	} {
+		if got := reactionTip(nilHost{}, &c.re, "USELF"); got != c.want {
+			t.Errorf("%v: %q, want %q", c.re.Users, got, c.want)
+		}
+		if tipCountFor(reactionTip(nilHost{}, &c.re, "USELF")) != c.re.Count {
+			t.Errorf("%v: tooltip width from count %d, want %d", c.re.Users, tipCountFor(c.want), c.re.Count)
+		}
+	}
+	names, sub := splitReactionTip("You, U1, and U2 reacted with :tada:")
+	if names != "You, U1, and U2" || sub != "reacted with :tada:" {
+		t.Errorf("split %q / %q", names, sub)
+	}
+	// the pill's aria-label and count (Reaction 9FoR, formatNumber)
+	if got := reactionAria(&core.Reaction{Name: "white_check_mark", Count: 1}); got != "1 reaction, react with white check mark emoji" {
+		t.Errorf("aria %q", got)
+	}
+	if got := reactionAria(&core.Reaction{Name: "tada", Count: 5}); got != "5 reactions, react with tada emoji" {
+		t.Errorf("aria %q", got)
+	}
+	for n, want := range map[int]string{7: "7", 999: "999", 1000: "1,000", 12345: "12,345", 1234567: "1,234,567"} {
+		if got := reactionCount(n); got != want {
+			t.Errorf("count %d: %q, want %q", n, got, want)
+		}
 	}
 }
 
@@ -48,8 +79,16 @@ func TestReactionTooltipDraws(t *testing.T) {
 	if n := pixeltest.Count(img, image.Rect(w-4, 0, w, h), c.Tooltip, 4); n > 0 {
 		t.Errorf("tooltip runs off the window's right edge (%d px)", n)
 	}
-	if n := pixeltest.Count(img, box, rgb(0xffffff), 2); n < 44*44-60 {
-		t.Errorf("no emoji tile (%d white px)", n)
+	if n := pixeltest.Count(img, box, rgb(0xffffff), 2); n < 64*64-80 {
+		t.Errorf("no 64px emoji tile (%d white px)", n)
+	}
+	// margin-bottom 8 over the pill (anchor + 6), the arrow's tip 6px
+	// under the box, at the pill's centre
+	if n := pixeltest.Count(img, image.Rect(anchor.X-2, anchor.Y-1, anchor.X+2, anchor.Y+2), c.Tooltip, 4); n == 0 {
+		t.Errorf("no arrow under the box")
+	}
+	if n := pixeltest.Count(img, image.Rect(0, anchor.Y+5, w, h), c.Tooltip, 4); n > 0 {
+		t.Errorf("tooltip reaches the pill (%d px)", n)
 	}
 	if n := pixeltest.Ink(img, box, c.TooltipText, c.Tooltip); n < 60 {
 		t.Errorf("no text (%d px)", n)
