@@ -72,10 +72,10 @@ func (a *App) addTabWorkflowItems(ch string) []MenuItem {
 }
 
 // addWorkflowBookmark bookmarks t in ch (link: the tab bar's shortcut URL,
-// "" for the channel menu's), then opens the channel with its tabs
-// reloaded (Slack opens the channel's Workflows tab, toChannel with tabId
-// workflows). Slack shows nothing when bookmarks.add fails (the promise
-// has no catch); Clack logs it.
+// "" for the channel menu's), then opens the channel's Workflows tab with
+// the tabs reloaded (Slack's toChannel with tabId workflows). Slack shows
+// nothing when bookmarks.add fails (the promise has no catch); Clack logs
+// it.
 func (a *App) addWorkflowBookmark(ch string, t core.WorkflowTrigger, link string) {
 	if a.data == nil || a.data.core == nil {
 		return
@@ -93,6 +93,7 @@ func (a *App) addWorkflowBookmark(ch string, t core.WorkflowTrigger, link string
 			a.Navigate("c/" + ch)
 			delete(a.data.fetched, ch)
 			a.data.opened(ch)
+			a.openWorkflowsTab(ch) // workflows_tab.go: selected once the tab bar has it
 		})
 	}()
 }

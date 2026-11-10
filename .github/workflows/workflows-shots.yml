@@ -14,6 +14,7 @@ on:
       - "internal/ui/blockkit/workflow*.go"
       - "internal/ui/views/details_automations*.go"
       - "internal/ui/workflows_wire*.go"
+      - "internal/ui/workflows_tab*.go"
       - "internal/ui/popups/workflows.go"
       - ".github/workflows/workflows-shots.yml"
   workflow_dispatch:
@@ -52,6 +53,7 @@ jobs:
           mkdir -p "$WORKFLOWS_SHOTS_DIR"
           xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestWorkflowShots' ./internal/ui/blockkit
           xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestAutomations' ./internal/ui/views
+          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestWorkflowsTab$' ./internal/ui/
           ls -l "$WORKFLOWS_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

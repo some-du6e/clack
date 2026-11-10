@@ -2,6 +2,9 @@ package ui
 
 import (
 	"image"
+	"image/png"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +12,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
 // Workflows through the shell, against internal/fakeslack's
@@ -24,8 +28,35 @@ func workflowsEnv(t *testing.T) (*perfEnv, *fakeslack.Server) {
 	}
 	t.Cleanup(func() { fs.Close() })
 	e := startEnv(t, fs, t.TempDir())
+	if dir := os.Getenv("WORKFLOWS_SHOTS_DIR"); dir != "" && e.gpu == nil {
+		w, err := pixeltest.NewWindow(e.size.X, e.size.Y)
+		if err != nil {
+			t.Fatalf("headless window: %v", err)
+		}
+		e.gpu = w
+	}
 	e.waitReady()
 	return e, fs
+}
+
+// wfShot saves the last frame as name.png (WORKFLOWS_SHOTS_DIR only).
+func (e *perfEnv) wfShot(name string) {
+	dir := os.Getenv("WORKFLOWS_SHOTS_DIR")
+	if dir == "" || e.gpu == nil {
+		return
+	}
+	img := image.NewRGBA(image.Rectangle{Max: e.size})
+	if err := e.gpu.Screenshot(img); err != nil {
+		e.tb.Fatalf("screenshot: %v", err)
+	}
+	f, err := os.Create(filepath.Join(dir, name+".png"))
+	if err != nil {
+		e.tb.Fatal(err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, img); err != nil {
+		e.tb.Fatal(err)
+	}
 }
 
 // TestAddWorkflowChannelMenu: the channel menu has Slack's "Add a
@@ -101,5 +132,41 @@ func TestWorkflowBookmarkTrips(t *testing.T) {
 	}
 	if e.a.tripBookmark(ch, core.Bookmark{ID: "Bk2", Title: "Docs", Type: "link", Link: "https://example.com/docs"}) {
 		t.Error("a plain link bookmark tripped")
+	}
+}
+
+// TestWorkflowsTab: the channel's Workflows tab (Slack's
+// useChannelWorkflowsExplorer) lists the featured workflows (one the
+// viewer may not see as Slack's placeholder) and the bookmarked ones;
+// "Add a workflow" opens it once the tab bar has it.
+func TestWorkflowsTab(t *testing.T) {
+	e, _ := workflowsEnv(t)
+	ch := fakeslack.WorkflowsChannelID
+	e.openChannel(ch)
+	e.until("the gallery's tabs", 10*time.Second, func() bool { return e.a.data.tabsDone[ch] })
+	if e.a.workflowsTabView(ch) != nil {
+		t.Fatal("the Workflows tab is open before it was asked for")
+	}
+	e.a.openWorkflowsTab(ch)
+	e.until("the Workflows tab", 10*time.Second, func() bool { return e.a.workflowsTabView(ch) != nil })
+	st := e.a.wfTab(ch)
+	e.until("its workflows", 10*time.Second, func() bool {
+		st.mu.Lock()
+		defer st.mu.Unlock()
+		return st.loaded && !st.loading
+	})
+	st.mu.Lock()
+	tab := st.tab
+	st.mu.Unlock()
+	if len(tab.Featured) != 2 || tab.Featured[0].Trigger.Title() != "Run deploy" || !tab.Featured[1].Denied ||
+		len(tab.Bookmarked) != 1 || tab.Bookmarked[0].Trigger.Title() != "Request time off" || !tab.CanManage {
+		t.Errorf("tab %+v", tab)
+	}
+	e.settle(300 * time.Millisecond)
+	e.wfShot("workflows-tab-light")
+	// the Messages tab closes it
+	e.a.chTab[ch] = 0
+	if e.a.workflowsTabView(ch) != nil {
+		t.Error("the Workflows tab stayed open on Messages")
 	}
 }

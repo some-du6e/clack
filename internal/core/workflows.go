@@ -583,3 +583,159 @@ func (a *App) AddWorkflowBookmark(ctx context.Context, ch string, t WorkflowTrig
 	return Bookmark{ID: b.ID, Title: b.Title, Link: b.Link, Type: b.Type, Rank: b.Rank, ParentID: b.ParentID,
 		ShortcutID: b.ShortcutID, Created: b.Created}, nil
 }
+
+// ---- a channel's Workflows tab ----
+
+// PermManageChannelWorkflows is the permission behind the Workflows tab's
+// Feature workflow and Add workflow (Slack's MANAGE_CHANNEL_WORKFLOWS).
+const PermManageChannelWorkflows = "MANAGE_CHANNEL_WORKFLOWS"
+
+// WorkflowsTab is a channel's Workflows tab (Slack's
+// useChannelWorkflowsExplorer, boot-render Jf9W): its featured workflows
+// (the channel's properties.channel_workflows, MUnG), its bookmarked ones
+// (the workflow bookmarks, HR6W), and whether the viewer may manage them.
+type WorkflowsTab struct {
+	Featured, Bookmarked []TabWorkflow
+	// CanManage is canUserManageChannelWorkflows (HRod): a member who may
+	// post, isn't a guest, in a channel this org hosts, with the
+	// MANAGE_CHANNEL_WORKFLOWS permission.
+	CanManage bool
+	// FeaturedFull: 15 featured, Feature workflow is disabled (DE+5).
+	FeaturedFull bool
+}
+
+// TabWorkflow is one row: a trigger preview, or (Denied) a workflow the
+// viewer may not see, shown as Slack's AccessDeniedWorkflowItem.
+type TabWorkflow struct {
+	Trigger    WorkflowTrigger
+	Denied     bool
+	BookmarkID string
+}
+
+// isWorkflowBookmark is Slack's isShortcutBookmark (ADp7): the bookmark
+// types that hold a trigger.
+func isWorkflowBookmark(typ string) bool { return typ == "shortcut" || typ == "auto_gen_shortcut" }
+
+// ChannelWorkflowsTab loads the Workflows tab: conversations.info for the
+// featured list (channel_workflows) and the channel, bookmarks.list for
+// the bookmarked ones, workflows.triggers.preview for both (Slack's
+// trigger previews store, EXgk: trigger_ids comma-joined), and edge
+// permissions/info for MANAGE_CHANNEL_WORKFLOWS. Previews with an error
+// other than access_denied are dropped (isTriggerWithNonAccessDeniedError).
+func (ix *Interactive) ChannelWorkflowsTab(ctx context.Context, ch string) (WorkflowsTab, error) {
+	a := ix.a
+	var info struct {
+		Channel struct {
+			IsMember           bool   `json:"is_member"`
+			ConversationHostID string `json:"conversation_host_id"`
+			Properties         struct {
+				ChannelWorkflows []struct {
+					TriggerID string `json:"workflow_trigger_id"`
+					Title     string `json:"title"`
+				} `json:"channel_workflows"`
+			} `json:"properties"`
+		} `json:"channel"`
+	}
+	if err := a.C.Call(ctx, "conversations.info", url.Values{"channel": {ch}}, &info); err != nil {
+		return WorkflowsTab{}, err
+	}
+	bms, err := a.Bookmarks(ctx, ch)
+	if err != nil {
+		return WorkflowsTab{}, err
+	}
+	var ids []string
+	seen := map[string]bool{}
+	add := func(id string) {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	for _, f := range info.Channel.Properties.ChannelWorkflows {
+		add(f.TriggerID)
+	}
+	var marked []Bookmark
+	for _, b := range bms {
+		if isWorkflowBookmark(b.Type) && b.ShortcutID != "" {
+			marked = append(marked, b)
+			add(b.ShortcutID)
+		}
+	}
+	previews := map[string]WorkflowTrigger{}
+	if len(ids) > 0 {
+		var res struct {
+			Triggers []struct {
+				rawTrigger
+				Error string `json:"error"`
+			} `json:"triggers"`
+		}
+		err := ix.call(ctx, "workflows.triggers.preview", url.Values{"trigger_ids": {strings.Join(ids, ",")}}, &res)
+		logCall("workflows.triggers.preview", "n="+strconv.Itoa(len(ids)), err)
+		if err != nil {
+			return WorkflowsTab{}, err
+		}
+		for _, r := range res.Triggers {
+			t := r.rawTrigger.trigger()
+			t.Error = r.Error
+			previews[t.ID] = t
+			if r.Error == "" {
+				ix.putTriggers(t)
+			}
+		}
+	}
+	keep := func(id string) (WorkflowTrigger, bool) {
+		t, ok := previews[id]
+		return t, ok && (t.Error == "" || t.Error == "access_denied")
+	}
+	var tab WorkflowsTab
+	for _, f := range info.Channel.Properties.ChannelWorkflows {
+		t, ok := keep(f.TriggerID)
+		if !ok {
+			continue
+		}
+		denied := t.Error == "access_denied"
+		if denied {
+			t.Name = f.Title // MUnG: an access_denied preview takes the entry's title
+		}
+		tab.Featured = append(tab.Featured, TabWorkflow{Trigger: t, Denied: denied})
+	}
+	done := map[string]bool{}
+	for _, b := range marked {
+		t, ok := keep(b.ShortcutID)
+		if !ok || done[b.ShortcutID] {
+			continue
+		}
+		done[b.ShortcutID] = true
+		tab.Bookmarked = append(tab.Bookmarked, TabWorkflow{Trigger: t, Denied: t.Error == "access_denied", BookmarkID: b.ID})
+	}
+	tab.FeaturedFull = len(info.Channel.Properties.ChannelWorkflows) >= 15
+	self := a.S.SelfID()
+	restricted := false
+	if u, ok := a.S.User(self); ok {
+		restricted = u.IsRestricted
+	}
+	hosted := info.Channel.ConversationHostID == "" || info.Channel.ConversationHostID == a.C.Creds.Team ||
+		info.Channel.ConversationHostID == a.C.Creds.EnterpriseID
+	if info.Channel.IsMember && hosted && !restricted && a.PostingIn(ch).CanPost() {
+		var perms struct {
+			Allowed []string `json:"allowed"`
+		}
+		body := map[string]any{"user_id": self, "permissions": []string{PermManageChannelWorkflows}, "channel_id": ch}
+		if err := a.C.Edge(ctx, "permissions/info", body, &perms); err == nil {
+			for _, p := range perms.Allowed {
+				tab.CanManage = tab.CanManage || p == PermManageChannelWorkflows
+			}
+		}
+	}
+	return tab, nil
+}
+
+// FeatureWorkflow features a workflow in a channel (Slack's
+// setChannelWorkflowActions, uJYJ: workflows.featured.add with the trigger
+// and the channel).
+func (ix *Interactive) FeatureWorkflow(ctx context.Context, ch, triggerID string) error {
+	ids, _ := json.Marshal([]string{triggerID})
+	err := ix.call(ctx, "workflows.featured.add", url.Values{"trigger_ids": {string(ids)}, "channel_id": {ch}}, nil)
+	logCall("workflows.featured.add", "channel="+ch+" trigger="+triggerID, err)
+	return err
+}

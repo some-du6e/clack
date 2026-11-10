@@ -268,3 +268,47 @@ func TestAddWorkflowBookmark(t *testing.T) {
 		t.Errorf("an unnamed trigger is titled by its id; the tab bar's sends the link: %v", p)
 	}
 }
+
+// TestChannelWorkflowsTab: the Workflows tab's featured workflows come
+// from properties.channel_workflows (one the viewer may not see stays as
+// a placeholder with the entry's title), the bookmarked ones from the
+// workflow bookmarks, both through workflows.triggers.preview; the
+// viewer may manage them with MANAGE_CHANNEL_WORKFLOWS.
+func TestChannelWorkflowsTab(t *testing.T) {
+	sz := fakeslack.Small
+	sz.Workflows = true
+	fs, err := fakeslack.Start(sz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { fs.Close() })
+	a := New(slack.New(fs.Creds()), store.New(""))
+	ix := a.Interactive()
+	ctx := context.Background()
+	tab, err := ix.ChannelWorkflowsTab(ctx, fakeslack.WorkflowsChannelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tab.Featured) != 2 || tab.Featured[0].Trigger.ID != fakeslack.TriggerDeploy || tab.Featured[0].Denied ||
+		!tab.Featured[1].Denied || tab.Featured[1].Trigger.Title() != "Payroll export" {
+		t.Errorf("featured %+v", tab.Featured)
+	}
+	if len(tab.Bookmarked) != 1 || tab.Bookmarked[0].Trigger.ID != fakeslack.TriggerTimeOff || tab.Bookmarked[0].BookmarkID != fakeslack.WorkflowsBookmarkID {
+		t.Errorf("bookmarked %+v", tab.Bookmarked)
+	}
+	if !tab.CanManage || tab.FeaturedFull {
+		t.Errorf("can manage %v, full %v", tab.CanManage, tab.FeaturedFull)
+	}
+	if err := ix.FeatureWorkflow(ctx, fakeslack.WorkflowsChannelID, fakeslack.TriggerTimeOff); err != nil {
+		t.Fatal(err)
+	}
+	if adds := fs.FeaturedAdds(); len(adds) != 1 || adds[0].Get("trigger_ids") != `["`+fakeslack.TriggerTimeOff+`"]` ||
+		adds[0].Get("channel_id") != fakeslack.WorkflowsChannelID {
+		t.Errorf("workflows.featured.add %v", adds)
+	}
+	// a channel without the permission or workflows
+	other, err := ix.ChannelWorkflowsTab(ctx, fs.ChannelIDs()[0])
+	if err != nil || len(other.Featured)+len(other.Bookmarked) != 0 || other.CanManage {
+		t.Errorf("other channel %+v %v", other, err)
+	}
+}

@@ -39,6 +39,10 @@ const (
 	TriggerStandup = "Ft0FAKEWF03"
 
 	WorkflowsBookmarkID = "Bk0FAKEWF01" // the folder tab's bookmarked workflow
+
+	// TriggerHidden is a featured workflow the viewer may not see
+	// (workflows.triggers.preview answers access_denied).
+	TriggerHidden = "Ft0FAKEWF99"
 )
 
 // WorkflowLink is a fixture trigger's shortcut URL.
@@ -83,10 +87,19 @@ type TripCall struct {
 }
 
 type wfState struct {
-	mu    sync.Mutex
-	trips []TripCall
-	runs  []url.Values     // apps.actions.run
-	added []map[string]any // bookmarks.add
+	mu       sync.Mutex
+	trips    []TripCall
+	runs     []url.Values     // apps.actions.run
+	added    []map[string]any // bookmarks.add
+	featured []url.Values     // workflows.featured.add
+}
+
+// FeaturedAdds returns the workflows.featured.add calls so far.
+func (s *Server) FeaturedAdds() []url.Values {
+	st := s.wf()
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return append([]url.Values(nil), st.featured...)
 }
 
 // AddedBookmarks returns the bookmarks bookmarks.add created.
@@ -122,6 +135,9 @@ func (s *Server) addWorkflowsChannel() {
 	tabs, _ := json.Marshal(map[string]any{"tabs": []map[string]any{
 		{"id": "Ct0FAKEWFB", "type": "folder", "label": ""},
 		{"id": "workflows", "type": "workflows", "label": ""},
+	}, "channel_workflows": []map[string]any{ // the Workflows tab's featured workflows
+		{"workflow_trigger_id": TriggerDeploy, "title": "Run deploy"},
+		{"workflow_trigger_id": TriggerHidden, "title": "Payroll export"},
 	}})
 	s.convs = append(s.convs, slack.Conversation{ID: WorkflowsChannelID, Name: "workflows-gallery", IsChannel: true, IsMember: true,
 		NumMembers: 5, ContextTeamID: TeamID, Purpose: &slack.Purpose{Value: "Workflow fixtures."}, Properties: tabs})
@@ -231,6 +247,41 @@ func (s *Server) handleWorkflows(method string, f url.Values, edge map[string]js
 		return ok("actions", []map[string]any{{"action_id": LegacyActionID, "name": LegacyActionName, "description": "Pick a slot for this week",
 			"type": "channel_action", "install_team_id": TeamID, "install_team_name": "Fake Club",
 			"app": map[string]any{"app_id": "A0FAKELEG1", "icons": map[string]string{"image_64": s.URL + "img/legacy-64.png"}}}}), true
+	case "workflows.triggers.preview":
+		out := []map[string]any{}
+		for _, id := range strings.Split(f.Get("trigger_ids"), ",") {
+			found := false
+			for _, t := range fakeTriggers {
+				if t.id == id {
+					out, found = append(out, t.json(s.URL)), true
+				}
+			}
+			if !found && id != "" {
+				out = append(out, map[string]any{"id": id, "error": "access_denied"})
+			}
+		}
+		return ok("triggers", out), true
+	case "edge/permissions/info":
+		var perms []string
+		_ = json.Unmarshal(edge["permissions"], &perms)
+		var ch string
+		_ = json.Unmarshal(edge["channel_id"], &ch)
+		for _, p := range perms {
+			if p == "MANAGE_CHANNEL_WORKFLOWS" {
+				allowed := []string{}
+				if ch == WorkflowsChannelID {
+					allowed = append(allowed, p)
+				}
+				return ok("allowed", allowed, "allowed_per_team", map[string]any{}), true
+			}
+		}
+		return nil, false
+	case "workflows.featured.add":
+		st := s.wf()
+		st.mu.Lock()
+		st.featured = append(st.featured, f)
+		st.mu.Unlock()
+		return ok(), true
 	case "bookmarks.add":
 		if f.Get("channel") != WorkflowsChannelID {
 			return nil, false
