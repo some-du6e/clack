@@ -188,13 +188,16 @@ function getRawState() {
 /** Go → JS: [{slice, keys?}] changed */
 T.invalidate = (changes) => {
   spec()
+  let experiments = false
   for (const c of changes || []) {
     const m = lazyMaps.get(c.slice)
     if (m) m.invalidate(c.keys && c.keys.length ? c.keys.map(String) : null)
     else wholeSlices.delete(c.slice)
+    experiments ||= c.slice === 'experiments'
   }
   rawState = null
   notifyStore()
+  if (experiments) tellGoExperiments() // the server's groups moved under the patches
 }
 
 function setLocalSlice(name, value) {
@@ -316,6 +319,30 @@ const tellGoPatches = batcher(() => {
   goOr(null, 'statePatched', { version: patchVersion, all: statePatches.size > (sliceLayers.size ? 1 : 0), slices: [...sliceLayers.keys()] })
 })
 
+// The groups the patches force on Slack's experiments slice (any plugin's:
+// Slick's Experiments patches it, Taut's api.experiments does too). Go
+// forces them in core, so Clack's own experiment checks read them
+// (taut/experiments.go); null = reads as not assigned.
+let sentExperiments = '{}'
+const tellGoExperiments = batcher(() => {
+  const forced = {}
+  if (statePatches.size) {
+    const raw = getRawState()?.experiments ?? {}
+    const view = getState()?.experiments ?? {}
+    if (view !== raw) {
+      for (const name of new Set([...Object.keys(raw), ...Object.keys(view)])) {
+        const was = raw[name]?.group ?? null
+        const now = view[name]?.group ?? null
+        if (was !== now) forced[name] = now
+      }
+    }
+  }
+  const s = JSON.stringify(forced)
+  if (s === sentExperiments) return
+  sentExperiments = s
+  goOr(null, 'experiments', forced)
+})
+
 function refresh() {
   patchVersion++
   try {
@@ -327,6 +354,7 @@ function refresh() {
     } catch {}
   }
   tellGoPatches()
+  tellGoExperiments()
 }
 
 function patchState(patch) {

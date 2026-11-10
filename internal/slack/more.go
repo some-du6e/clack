@@ -14,17 +14,41 @@ import (
 // ExperimentGroups returns the viewer's experiment assignments
 // (experiments.getByUser): experiment name -> group ("on", "without_edu", …).
 func (c *Client) ExperimentGroups(ctx context.Context) (map[string]string, error) {
+	as, err := c.ExperimentAssignments(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(as))
+	for k, v := range as {
+		out[k] = v.Group
+	}
+	return out, nil
+}
+
+// ExperimentAssignment is one experiments.getByUser entry: its group, and
+// the record as Slack sent it ({experiment_id, type, group, trigger,
+// exposure_id, log_exposures, schedule_ts}), which Slack's experiments
+// store keeps whole.
+type ExperimentAssignment struct {
+	Group string
+	Raw   json.RawMessage
+}
+
+// ExperimentAssignments returns the viewer's assignments with their records.
+func (c *Client) ExperimentAssignments(ctx context.Context) (map[string]ExperimentAssignment, error) {
 	var r struct {
-		Assignments map[string]struct {
-			Group string `json:"group"`
-		} `json:"assignments"`
+		Assignments map[string]json.RawMessage `json:"assignments"`
 	}
 	if err := c.Call(ctx, "experiments.getByUser", nil, &r); err != nil {
 		return nil, err
 	}
-	out := make(map[string]string, len(r.Assignments))
-	for k, v := range r.Assignments {
-		out[k] = v.Group
+	out := make(map[string]ExperimentAssignment, len(r.Assignments))
+	for k, raw := range r.Assignments {
+		var a struct {
+			Group string `json:"group"`
+		}
+		_ = json.Unmarshal(raw, &a)
+		out[k] = ExperimentAssignment{Group: a.Group, Raw: raw}
 	}
 	return out, nil
 }
