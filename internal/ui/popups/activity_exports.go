@@ -2,6 +2,7 @@ package popups
 
 import (
 	"context"
+	"image"
 
 	"gioui.org/layout"
 
@@ -55,3 +56,10 @@ func MessageLink(h Host, ch, ts, threadTS, perma string) string {
 // ActDo runs a write off the UI goroutine and toasts ok (or the error),
 // as the menus' actions do.
 func ActDo(h Host, ok string, f func(ctx context.Context, a *core.App) error) { actDo(h, ok, f) }
+
+// ModalBodyPoint turns a point in m's body into window coordinates: the
+// emoji picker's anchor under a body's emoji button (the Activity view's
+// "Create a new view" modal, as the section modals anchor theirs).
+func ModalBodyPoint(gtx layout.Context, m *Modal, p image.Point) image.Point {
+	return dtModalOrigin(gtx, m).Add(p)
+}
