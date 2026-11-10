@@ -70,6 +70,38 @@ jobs:
       - name: module list
         run: go list -m all
 
+  rnnoise:
+    # third_party/rnnoise-go is v0.3.0 from the Go module proxy, file for
+    # file, except go.mod (lowered to Go 1.24) and CLACK_PATCHES.md. The
+    # zip is only hashed against sum.golang.org's go.sum line and diffed.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: vendored rnnoise-go matches the proxy's v0.3.0
+        run: |
+          set -euo pipefail
+          d=$(mktemp -d)
+          cd "$d"
+          go mod init check >/dev/null 2>&1
+          # the zip is fetched and checked against sum.golang.org even though
+          # extracting stops at upstream's go 1.26 line
+          GOFLAGS=-mod=mod GOTOOLCHAIN=local go mod download -json github.com/VoiceBlender/rnnoise-go@v0.3.0 > info.json || true
+          zip=$(jq -r .Zip info.json)
+          test -f "$zip" || { echo "::error::download failed"; cat info.json; exit 1; }
+          mkdir x && unzip -q "$zip" -d x
+          dir=$(echo "$d"/x/github.com/*/rnnoise-go@v0.3.0)
+          cd "$GITHUB_WORKSPACE/third_party/rnnoise-go"
+          find . -type f ! -name go.mod ! -name CLACK_PATCHES.md | sort | while read -r f; do
+            cmp "$f" "$dir/$f"
+          done
+          echo "all vendored files match $(jq -r .Version "$d/info.json") ($(jq -r .Sum "$d/info.json"))"
+
   workflows:
     runs-on: ubuntu-latest
     steps:

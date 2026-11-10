@@ -462,6 +462,9 @@ func (b *backend) handle(a *App, ev core.Event) {
 		if ev.Prefs != nil {
 			a.applyAccountPrefs(*ev.Prefs)
 			uipref.Set(*ev.Prefs)
+			if a.hud != nil {
+				go a.hud.PrefsChanged() // the global mute shortcut, the lounge music
+			}
 			a.updateDock() // mac_ssb_bullet
 		}
 		// core's sidebar rules read sidebar_behavior, channel_sort,

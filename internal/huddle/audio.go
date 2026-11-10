@@ -1,6 +1,7 @@
 package huddle
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"sync"
@@ -88,6 +89,11 @@ type playBuffer struct {
 	buf    []int16
 	muted  bool
 	primed bool
+	// local is a sound mixed into your speakers only (the lounge music):
+	// it never reaches the microphone or the huddle
+	local     []int16
+	localPos  int
+	localLoop bool
 }
 
 func (p *playBuffer) push(pcm []int16) {
@@ -113,13 +119,41 @@ func (p *playBuffer) pull(out []int16) {
 		}
 	}
 	muted := p.muted
-	p.mu.Unlock()
 	if muted {
 		n = 0
 	}
 	for i := n; i < len(out); i++ {
 		out[i] = 0
 	}
+	// the local sound plays even deafened (Slack's lounge music is its own
+	// audio element, not the huddle's)
+	for i := 0; i < len(out) && len(p.local) > 0; i++ {
+		if p.localPos >= len(p.local) {
+			if !p.localLoop {
+				p.local = nil
+				break
+			}
+			p.localPos = 0
+		}
+		v := int32(out[i]) + int32(p.local[p.localPos])
+		out[i] = int16(min(max(v, -32768), 32767))
+		p.localPos++
+	}
+	p.mu.Unlock()
+}
+
+// playLocal mixes pcm (interleaved stereo, 48 kHz) into the speakers,
+// replacing whatever local sound played; nil stops it.
+func (p *playBuffer) playLocal(pcm []int16, loop bool) {
+	p.mu.Lock()
+	p.local, p.localPos, p.localLoop = pcm, 0, loop
+	p.mu.Unlock()
+}
+
+func (p *playBuffer) localPlaying() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.local) > 0
 }
 
 func (p *playBuffer) setMuted(m bool) {
@@ -235,4 +269,46 @@ func (o *opusDec) decode(pkt []byte) (pcm []int16, err error) {
 		return nil, err
 	}
 	return o.pcm[:n*playChannels], nil
+}
+
+// AudioDevice is one microphone or output (the join preview's and
+// Preferences' device pickers).
+type AudioDevice struct {
+	ID, Name string
+	Default  bool
+}
+
+// listAudioDevices lists capture (true) or playback devices; nil without
+// cgo (audio_malgo.go).
+var listAudioDevices func(capture bool) ([]AudioDevice, error)
+
+// ErrNoAudio: this build has no sound card support.
+var ErrNoAudio = errors.New("huddle: this build has no audio support")
+
+// AudioDevices lists the microphones (capture) or outputs.
+func AudioDevices(capture bool) ([]AudioDevice, error) {
+	if listAudioDevices == nil {
+		return nil, ErrNoAudio
+	}
+	return listAudioDevices(capture)
+}
+
+var devSel struct {
+	sync.Mutex
+	mic, speaker string
+}
+
+// SelectAudioDevices picks the microphone and output that sessions and
+// previews open from now on (AudioDevice.ID; "" is the system default).
+func SelectAudioDevices(mic, speaker string) {
+	devSel.Lock()
+	devSel.mic, devSel.speaker = mic, speaker
+	devSel.Unlock()
+}
+
+// SelectedAudioDevices reports them.
+func SelectedAudioDevices() (mic, speaker string) {
+	devSel.Lock()
+	defer devSel.Unlock()
+	return devSel.mic, devSel.speaker
 }

@@ -82,14 +82,18 @@ type Controller struct {
 	gen     uint64 // bumps on every change, for cheap redraw checks
 
 	win  *window
-	inv  *incoming     // the incoming invite (invite.go)
-	iwin *inviteWindow // its window (invitewin.go)
-	card cardState     // its sidebar card (invitecard.go)
-	ring ringState     // the invite sound (ring.go)
-	hand handState     // auto-lowering your raised hand (hand.go)
-	bar  barState
-	hdr  map[string]*headerState
-	last time.Time
+	inv  *incoming      // the incoming invite (invite.go)
+	iwin *inviteWindow  // its window (invitewin.go)
+	pwin *previewWindow // the join preview (preview.go)
+	// pending is the preview's Join: the mic and camera to start with
+	pending *pendingJoin
+	card    cardState // its sidebar card (invitecard.go)
+	ring    ringState // the invite sound (ring.go)
+	hand    handState // auto-lowering your raised hand (hand.go)
+	av      avState   // the lock watcher, global mute and lounge music (avprefs.go)
+	bar     barState
+	hdr     map[string]*headerState
+	last    time.Time
 }
 
 // New builds the controller. Call Handle with core events.
@@ -215,10 +219,21 @@ func (c *Controller) Start(channel string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		var s *huddle.Session
+		o := c.options(app)
+		c.mu.Lock()
+		pj := c.pending
+		c.pending = nil
+		c.mu.Unlock()
+		if pj != nil && pj.channel != channel {
+			pj = nil
+		}
+		if pj != nil { // the join preview's mic toggle
+			o.Muted = pj.muted
+		}
 		_, err := taut.Dispatch(ctx, tt, "startEventLog", huddleArgs{ChannelID: channel},
 			func(ctx context.Context, _ huddleArgs) (any, error) {
 				var err error
-				s, err = huddle.Join(ctx, c.options(app), channel)
+				s, err = huddle.Join(ctx, o, channel)
 				return nil, err
 			})
 		if err == nil && s == nil { // a plugin swallowed the start
@@ -246,6 +261,10 @@ func (c *Controller) Start(channel string) {
 		if tt != nil {
 			tt.SetHuddleReaction(func(emoji, kind, url string) bool { return s.React(emoji, url) == nil })
 			tt.SetActiveHuddle(s.RoomID(), channel, s.SelfAttendee(), c.selfID())
+		}
+		c.sessionStarted(s)
+		if pj != nil && pj.camera { // the preview's camera stays on
+			s.SetCamera(true)
 		}
 		c.changed()
 	}()
@@ -279,10 +298,19 @@ func (c *Controller) Begin(channel, entry string) {
 	if channel == "" {
 		return
 	}
-	if c.shoutyRooster(channel, func() { c.begin(channel, entry) }) {
+	// startHuddleWithShoutyRooster: the warning first, then the join
+	// preview (huddles_show_join_preview), then startHuddle
+	start := func() {
+		if c.shouldPreview(channel, entry) {
+			c.openPreview(channel, entry)
+			return
+		}
+		c.begin(channel, entry)
+	}
+	if c.shoutyRooster(channel, start) {
 		return
 	}
-	c.begin(channel, entry)
+	start()
 }
 
 // shoutyRoosterMembers is the member count over which starting a huddle
@@ -389,6 +417,7 @@ func (c *Controller) options(app *core.App) huddle.Options {
 	if c.Client != nil {
 		client = c.Client
 	}
+	agc, ns := c.audioPrefs()
 	o := huddle.Options{
 		Client: client,
 		SelfID: c.selfID(),
@@ -396,6 +425,8 @@ func (c *Controller) options(app *core.App) huddle.Options {
 		Muted: app.PrefBool("huddles_mute_by_default", false),
 		// "Automatically turn on captions when you’re in a huddle"
 		Captions: app.PrefBool("huddles_cc_by_default", false),
+		// "Enable automatic gain control" / "Enable noise suppression"
+		AGC: agc, NoiseSuppression: ns,
 		Logf:     log.Printf,
 		OnChange: c.onSession,
 		OnPeer: func(ev huddle.PeerEvent) {
@@ -426,6 +457,7 @@ func (c *Controller) onSession() {
 	if s != nil {
 		st := s.State()
 		c.autoLowerHand(s, st)
+		c.musicTick(s, st)
 		if tt := c.taut(); tt != nil {
 			peers := make(map[string]string, len(st.Participants))
 			for _, p := range st.Participants {
@@ -484,6 +516,7 @@ func (c *Controller) ended(err error) {
 	if s == nil {
 		return
 	}
+	c.sessionEnded()
 	if w != nil {
 		w.close()
 	}

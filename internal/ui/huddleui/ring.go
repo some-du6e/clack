@@ -231,7 +231,7 @@ func soundBytes(file string) ([]byte, error) {
 	if res.StatusCode != http.StatusOK {
 		return nil, errors.New("CDN: " + res.Status)
 	}
-	b, err := io.ReadAll(io.LimitReader(res.Body, 4<<20))
+	b, err := io.ReadAll(io.LimitReader(res.Body, 16<<20))
 	if err != nil {
 		return nil, err
 	}

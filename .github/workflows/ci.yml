@@ -100,6 +100,9 @@ jobs:
           cache: true
       - name: applog tests
         run: go test -count=1 -v ./internal/applog
+      - name: huddle OS hooks (WTS lock events, RegisterHotKey Ctrl+Shift+Space)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v ./internal/ui/screenlock ./internal/ui/globalkey
 
   macos:
     runs-on: macos-latest
@@ -119,6 +122,7 @@ jobs:
           go test -count=1 -v -run 'TestSwipe|TestNav|TestNativeMenuBar|TestMacMenu|TestMenuState|TestZoom|TestDiagnosticsText|TestMissedFrameLogLine' ./internal/ui
           go test -count=1 -v ./internal/applog
           go test -count=1 -v ./internal/ui/menubar
+          go test -count=1 -v ./internal/ui/screenlock ./internal/ui/globalkey
       - name: Gio drawLayers fix on Metal (patched passes, stock v0.10.3 panics)
         env:
           CLACK_PIXEL_TESTS: "1"

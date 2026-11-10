@@ -50,6 +50,11 @@ type prefs struct {
 	// field to:" (Slack's localStorage composerUpArrowShortcutBehavior):
 	// 0 unset, 1 focus the message list, 2 only when empty, 3 edit.
 	ComposerUpArrow int `json:"composer_up_arrow_shortcut,omitempty"`
+	// HuddleAGC and HuddleNS are Audio & video's "Enable automatic gain
+	// control" (nil: on) and "Enable noise suppression" (Slack's
+	// localStorage prefs.audio; huddle_av.go).
+	HuddleAGC *bool `json:"huddle_agc,omitempty"`
+	HuddleNS  bool  `json:"huddle_noise_suppression,omitempty"`
 	// Zoom is View > Zoom's level, -3…5 (Slack's zoomLevel; macmenu.go).
 	Zoom int `json:"zoom,omitempty"`
 	// ClientTypeface is Appearance > Font: Slack's option object, kept

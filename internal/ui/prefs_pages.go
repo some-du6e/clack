@@ -606,12 +606,15 @@ func (p *prefsModal) markReadPage(f *prefsForm) {
 func (p *prefsModal) audioVideoPage(f *prefsForm) {
 	f.selectBox("camera", "Camera", "Default", false, nil)
 	f.selectBox("microphone", "Microphone", "Default", false, nil)
-	f.off("agc", "Enable automatic gain control", "", true, false)
-	f.off("ns", "Enable noise suppression", "", true, false)
-	f.na()
+	// Slack's localStorage prefs.audio (ui.json here); the huddle
+	// microphone's processing (huddle/apm.go)
+	agc, ns := p.a.HuddleAudioPrefs()
+	f.option("agc", "Enable automatic gain control", "", agc, false, func() { p.a.setHuddleAudio(!agc, ns) })
+	f.option("ns", "Enable noise suppression", "", ns, false, func() { p.a.setHuddleAudio(agc, !ns) })
 	f.hr()
 	f.subheading("When audio or video is playing…")
 	f.off("clips_pip_auto_dock", "Automatically dock to corner upon scroll or when navigating away", "", p.prefBool("clips_pip_auto_dock", true), false)
+	f.na()
 	f.hr()
 	// Set my status "In a huddle" is on Availability (availability_prefs_section)
 	f.subheading("When joining a huddle…")
@@ -621,19 +624,41 @@ func (p *prefsModal) audioVideoPage(f *prefsForm) {
 	// "Start a huddle in this channel?" over 150 members (huddleui.Controller.shoutyRooster)
 	f.check("huddles_show_shouty_rooster", "Send a warning if you’re starting a huddle in a channel with more than 150 members", "", true, false)
 	f.off("video_background_filter", "Blur your video background when you’re in a huddle with your camera on", "", false, false)
-	f.off("huddles_show_join_preview", "Show audio and video preview", "", p.prefBool("huddles_show_join_preview", true), false)
 	f.na()
+	// HuddleJoinPreviewPref: starting a huddle opens Slack's preview
+	// window first (huddleui/preview.go); unset is off
+	f.check("huddles_show_join_preview", "Show audio and video preview", "", false, false)
 	f.hr()
+	// HuddleBackgroundPref: Mod+Shift+Space while in a huddle
+	// (huddleui/avprefs.go, globalkey)
 	f.subheading("When Slack is in the background:")
-	f.off("huddles_global_mute", "Allow keyboard shortcut to mute", "", p.prefBool("huddles_global_mute", false), false)
+	f.check("huddles_global_mute", "Allow keyboard shortcut to mute", "Use "+shortcut.Format("Mod+Shift+Space")+" to mute or unmute your mic.", false, false)
+	// HuddleLockPref: leave when the screen locks (screenlock)
 	f.subheading("When your screen saver starts or computer locks…")
-	f.off("huddles_disconnect_on_lock", "Automatically leave huddles", "", p.prefBool("huddles_disconnect_on_lock", true), false)
+	f.check("huddles_disconnect_on_lock", "Automatically leave huddles", "", false, false)
 	f.subheading("Huddle motion")
 	f.off("huddles_reactions_effects", "Allow for reactions & effects", "", true, false)
-	f.subheading("When alone in a huddle…")
-	f.off("huddles_play_music_when_last", "Play music", "", p.prefBool("huddles_play_music_when_last", true), false)
-	f.selectBox("huddles_music_delay", "", "After 1 minute", false, nil)
 	f.na()
+	// HuddleLoungeMusicPref: the select shows while Play music is on
+	f.subheading("When alone in a huddle…")
+	music := p.prefBool("huddles_play_music_when_last", false)
+	f.check("huddles_play_music_when_last", "Play music", "", false, false)
+	if music {
+		cur := p.prefInt("huddles_play_music_timeout", 60)
+		label := ""
+		var items []MenuItem
+		for _, o := range []struct {
+			v     int
+			label string
+		}{{1, "Right when I join"}, {30, "After 30 seconds"}, {60, "After 1 minute"}} {
+			v := o.v
+			if v == cur {
+				label = o.label
+			}
+			items = append(items, MenuItem{Label: o.label, Radio: true, Checked: v == cur, Do: func() { p.setPref("huddles_play_music_timeout", v) }})
+		}
+		f.selectBox("music_timeout", "", label, true, items)
+	}
 }
 
 // ---- Salesforce ----
