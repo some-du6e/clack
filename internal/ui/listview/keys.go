@@ -535,6 +535,14 @@ func (v *View) cellKey(gtx layout.Context, d *core.ListDoc, m kbMode, k cellKeyK
 	}
 	// start editing
 	if err := canEdit(d, col, f); err != nil {
+		typed := ""
+		if k == keyChar {
+			typed = ch
+		}
+		if v.startRich(d, rec, col, f, err, typed) { // richedit.go: a formatted text cell
+			v.edit.done = v.editDone(col)
+			return
+		}
 		v.refuse(err)
 		return
 	}

@@ -21,6 +21,10 @@ type Edit struct {
 	Rating int
 	Link   *LinkValue
 	Clear  bool // empty the cell
+	// Rich is a text cell's rich_text blocks as Clack's rich editor wrote
+	// them (formatted cells, listview's richedit.go); they are sent as
+	// they are, and Text is their plain text.
+	Rich json.RawMessage
 }
 
 // TextBlocks is Slack's text-cell value for plain text (AhXZ.u1): a link
@@ -54,9 +58,14 @@ func (e Edit) Typed() (map[string]any, error) {
 	}
 	switch c.Type {
 	case Text, RichText:
-		if e.Clear || e.Text == "" {
+		switch {
+		case e.Clear:
 			out["rich_text"] = []any{}
-		} else {
+		case len(e.Rich) > 0:
+			out["rich_text"] = e.Rich
+		case e.Text == "":
+			out["rich_text"] = []any{}
+		default:
 			out["rich_text"] = TextBlocks(e.Text)
 		}
 	case Number, Currency:
@@ -144,6 +153,9 @@ func (e Edit) Apply(f Field) Field {
 		b, _ := json.Marshal(TextBlocks(t))
 		if t == "" {
 			b = []byte("[]")
+		}
+		if len(e.Rich) > 0 && !e.Clear {
+			b = append(json.RawMessage(nil), e.Rich...)
 		}
 		nf.RichText = b
 	case Number, Currency:
