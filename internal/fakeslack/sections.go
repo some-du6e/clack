@@ -280,7 +280,7 @@ func (s *Server) setChannelNotify(ch, name, value string) {
 	}
 	var v any = value
 	switch name {
-	case "muted", "follow_all_threads", "suppress_at_channel":
+	case "muted", "follow_all_threads", "suppress_at_channel", "badge_all_unreads", "desktop_push_enabled":
 		b, _ := strconv.ParseBool(value)
 		v = b
 	}

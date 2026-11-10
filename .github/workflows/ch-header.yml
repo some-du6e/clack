@@ -1,0 +1,52 @@
+name: ch-header
+# The channel header's topic Edit link and "Edit topic" dialog, the bell's
+# per-setting icon and the bell menu's Advanced settings modal (Slack's
+# ChannelNotificationsPrefsModal), rendered headlessly at 1440x900 against
+# internal/fakeslack, with the pref writes checked there. Synthetic only:
+# nothing here talks to Slack.
+on:
+  push:
+    paths:
+      - "internal/ui/channel.go"
+      - "internal/ui/channel_header_test.go"
+      - "internal/ui/actions.go"
+      - "internal/ui/popups/notify_menu.go"
+      - "internal/ui/popups/channel_notify_modal.go"
+      - "internal/ui/popups/topic_dialog.go"
+      - "internal/core/manage.go"
+      - "internal/store/store.go"
+      - "internal/fakeslack/sections.go"
+      - ".github/workflows/ch-header.yml"
+  workflow_dispatch:
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb
+
+permissions:
+  contents: read
+
+jobs:
+  ch-header:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: channel header screenshots
+        env:
+          PREVIEW_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$PREVIEW_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -v -run 'TestChannelNotifyAdvancedSettings$|TestHeaderBellIcon$|TestHeaderTopicEdit$|TestChannelBellMenu$|TestChannelTopicEditModal$' ./internal/ui/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: ch-header-shots
+          path: dist/shots

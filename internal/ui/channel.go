@@ -126,8 +126,8 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		}
 		at(gtx, image.Pt(right, y), image.Pt(btn, btn), func(gtx layout.Context) layout.Dimensions {
 			name := k
-			if k == "bell" && conv != nil && conv.Muted {
-				name = "bell-off"
+			if k == "bell" {
+				name = a.headerBellIcon(ch, conv)
 			}
 			return iconButton(gtx, a.clicks.get("hdr."+k), name, 28, 20, c.FgMuted, c.BgHover, 8)
 		})
@@ -306,16 +306,148 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 
 	// topic (13px muted) in the remaining space.
 	if conv != nil && conv.Topic != "" && right-x > gtx.Dp(40) {
-		at(gtx, image.Pt(x, 0), image.Pt(right-x-gtx.Dp(12), h), func(gtx layout.Context) layout.Dimensions {
-			if len(conv.TopicSpans) == 0 {
-				return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
-					return a.th.Label(gtx, 13, theme.Regular, c.FgMuted, oneLine(conv.Topic))
-				})
-			}
-			return a.inlineSpans(gtx, conv.TopicSpans, 13, c.FgMuted, h)
-		})
+		a.layoutHeaderTopic(gtx, ch, conv, image.Rect(x, 0, right-gtx.Dp(12), h))
 	}
 	return layout.Dimensions{Size: sz}
+}
+
+// headerBellIcon is the bell's glyph (NotificationsControl, source
+// channel_header, boot-shared vpVS): n9iP Nl of the calculated desktop
+// setting, the ringing bell for All new posts and notifications-off when
+// muted; 1:1 DMs show notifications / notifications-off.
+func (a *App) headerBellIcon(ch string, conv *convInfo) string {
+	muted := conv != nil && conv.Muted
+	if conv != nil && (conv.Kind == "im" || conv.Kind == "app") {
+		return popups.NotifyIcon("", muted)
+	}
+	return popups.ChannelNotifyIcon(a, ch, muted)
+}
+
+// canSetTopic is canUserSetTopicForChannelWithReasonById (boot-shared
+// xjwB) on what Clack knows: not archived, a member, allowed to post, not
+// a guest. (Slack's SET_CHANNEL_TOPIC role grant and the
+// channel_topic_purpose_setting_restrict_to_channel_managers experiment
+// need permission data Clack doesn't load.)
+func (a *App) canSetTopic(ch string, conv *convInfo) bool {
+	if conv == nil || conv.Archived || conv.Preview || conv.Code != nil {
+		return false
+	}
+	c := a.Core()
+	if c == nil {
+		return false
+	}
+	if conv.Kind == "im" || conv.Kind == "mpim" || conv.Kind == "app" {
+		return true
+	}
+	return c.PostingIn(ch).CanPost() && !c.Self().Guest
+}
+
+// layoutHeaderTopic is Slack's ViewHeaderTopic / ModelInfoTopic
+// (view-header chunk W58+): the topic, one 13px line ellipsized in r,
+// is a button that opens openChannelTopicDialog unless the topic is read
+// only, and an "Edit" link (aria-label "Edit channel topic", "Edit topic"
+// in DMs; .p-classic_nav__model__title__info__topic__edit: link blue,
+// 8px after the topic, underlined on its own hover) shows while the
+// pointer is over the topic container. When the topic doesn't fit,
+// Slack caps it at min(70%, 540px) so Edit stays beside it.
+func (a *App) layoutHeaderTopic(gtx layout.Context, ch string, conv *convInfo, r image.Rectangle) {
+	hdrTopicRect = r
+	c := &a.th.C
+	h := r.Dy()
+	editable := a.canSetTopic(ch, conv)
+	editW := 0
+	if editable {
+		editW = a.th.Measure(gtx, 13, theme.Regular, "Edit")
+	}
+	avail := r.Dx()
+	full := a.headerTopicWidth(gtx, conv)
+	tw := min(full, avail)
+	if editable && full+gtx.Dp(8)+editW > avail { // --truncated
+		tw = min(avail*7/10, gtx.Dp(540), avail-gtx.Dp(8)-editW)
+	}
+	if tw <= 0 {
+		return
+	}
+	hov := a.clicks.get("hdr.topicbox")
+	at(gtx, r.Min, r.Size(), func(gtx layout.Context) layout.Dimensions {
+		return hov.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			at(gtx, image.Point{}, image.Pt(tw, h), func(gtx layout.Context) layout.Dimensions {
+				draw := func(gtx layout.Context) layout.Dimensions {
+					if len(conv.TopicSpans) == 0 {
+						return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
+							return a.th.Layout(gtx, theme.TextStyle{Size: 13, Weight: theme.Regular, Color: c.FgMuted, MaxLines: 1}, oneLine(conv.Topic))
+						})
+					}
+					return a.inlineSpans(gtx, conv.TopicSpans, 13, c.FgMuted, h)
+				}
+				if !editable {
+					return draw(gtx)
+				}
+				return clickArea(gtx, a.clicks.get("hdr.topic"), nil, func(gtx layout.Context) layout.Dimensions {
+					draw(gtx)
+					return layout.Dimensions{Size: image.Pt(tw, h)}
+				})
+			})
+			if editable && hov.Hovered() {
+				at(gtx, image.Pt(tw+gtx.Dp(8), 0), image.Pt(editW, h), func(gtx layout.Context) layout.Dimensions {
+					return clickArea(gtx, a.clicks.get("hdr.topicedit"), func(gtx layout.Context, s image.Point, over bool) {
+						if over { // :hover text-decoration underline
+							y := h/2 + gtx.Dp(7)
+							theme.Fill(gtx, image.Rect(0, y, s.X, y+max(1, gtx.Dp(1))), c.Link)
+						}
+					}, func(gtx layout.Context) layout.Dimensions {
+						return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
+							return a.th.Label(gtx, 13, theme.Regular, c.Link, "Edit")
+						})
+					})
+				})
+			}
+			return layout.Dimensions{Size: r.Size()}
+		})
+	})
+	if clicked(a.clicks.get("hdr.topic")) || clicked(a.clicks.get("hdr.topicedit")) {
+		a.openTopicDialog(ch, conv)
+	}
+}
+
+// hdrTopicRect is the last header topic box, in the pane's coordinates
+// (tests hover it).
+var hdrTopicRect image.Rectangle
+
+// headerTopicWidth is the topic line's natural width.
+func (a *App) headerTopicWidth(gtx layout.Context, conv *convInfo) int {
+	if len(conv.TopicSpans) == 0 {
+		return a.th.Measure(gtx, 13, theme.Regular, oneLine(conv.Topic))
+	}
+	w := 0
+	es := gtx.Sp(13 * 18 / 13)
+	for _, s := range conv.TopicSpans {
+		if s.Kind == richtext.Break {
+			break
+		}
+		if s.Kind == richtext.Emoji && s.URL != "" {
+			w += es + gtx.Dp(1)
+			continue
+		}
+		wt := theme.Bold
+		if s.Style&richtext.Bold == 0 {
+			wt = theme.Regular
+		}
+		w += a.th.Measure(gtx, 13, wt, strings.ReplaceAll(s.Text, "\n", " "))
+	}
+	return w
+}
+
+// openTopicDialog is openChannelTopicDialog: Slack's "Edit topic".
+func (a *App) openTopicDialog(ch string, conv *convInfo) {
+	if a.Core() == nil || conv == nil {
+		return
+	}
+	name := a.convTitle(conv, ch)
+	if conv.Kind == "channel" || conv.Kind == "private" {
+		name = "#" + conv.Name
+	}
+	a.ShowOverlay(popups.NewTopicDialog(a, ch, conv.Kind, name, conv.Topic))
 }
 
 // inlineSpans draws rich spans on one line (topic, previews): text, links
