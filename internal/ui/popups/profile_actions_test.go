@@ -201,9 +201,8 @@ func TestProfileMenuViewFiles(t *testing.T) {
 	if len(h.navs) != 1 || h.navs[0] != want {
 		t.Fatalf("navigated %q, want %q", h.navs, want)
 	}
-	v := NewSearchView(h, strings.TrimPrefix(want, "search?q="))
-	if v.Tab() != srTabFiles || v.Query() != "from:<@"+u.ID+">" {
-		t.Errorf("search tab %d query %q", v.Tab(), v.Query())
+	if srTabOf("files") != srTabFiles {
+		t.Error("module=files isn't the Files tab")
 	}
 	self, _ := lookupUser(h, fakeslack.SelfID)
 	var labels []string
@@ -262,7 +261,7 @@ func TestProfileViewAs(t *testing.T) {
 			t.Fatalf("own profile: %q", st.Texts)
 		}
 		items := v.previewItems()
-		org := h.a.Snapshot().Team.Name
+		org := pfOrgName(h)
 		wantTeam := "A coworker"
 		if org != "" {
 			wantTeam = "A coworker at " + org

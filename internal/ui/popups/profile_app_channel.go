@@ -123,7 +123,7 @@ func pfRestriction(h Host, id string) (restricted, ultra bool) {
 // public and private channels, not archived), sorted by name.
 func pfInviteChannels(c *core.App) []core.Conv {
 	var out []core.Conv
-	for _, cv := range c.Snapshot().Convs {
+	for _, cv := range c.SnapshotNow().Convs {
 		if (cv.Kind == "channel" || cv.Kind == "private") && !cv.IsArchived && !cv.Preview && cv.Code == nil {
 			out = append(out, cv)
 		}
@@ -596,7 +596,7 @@ func pfConvLabel(h Host, ch string) (string, bool) {
 	if c == nil {
 		return ch, false
 	}
-	for _, cv := range c.Snapshot().Convs {
+	for _, cv := range c.SnapshotNow().Convs {
 		if cv.ID != ch {
 			continue
 		}

@@ -52,15 +52,21 @@ func pfPreviewLabels(h Host) (teammate, external string) {
 	return teammate, "A contact from other organizations"
 }
 
-// pfOrgName is the viewer's organization (the enterprise's name on a
-// Grid, else the team's).
+// pfOrgName is the viewer's team name and icon (core's store; never
+// waits for boot).
 func pfOrgName(h Host) string {
+	name, _ := pfOwnTeam(h)
+	return name
+}
+
+func pfOwnTeam(h Host) (name, icon string) {
 	c := h.Core()
 	if c == nil {
-		return ""
+		return "", ""
 	}
-	snap := c.Snapshot()
-	return snap.Team.Name
+	c.S.RLock()
+	defer c.S.RUnlock()
+	return c.S.TeamName, c.S.TeamIcon
 }
 
 // previewItems is ProfilePreviewMenu's template.
@@ -100,11 +106,7 @@ func pfPreviewRow(gtx layout.Context, h Host, label string, mode int, checked, h
 	x += dp(gtx, 24)
 	iy := (hh-dp(gtx, 24))/2 + dp(gtx, 1)
 	if mode == pfPreviewInternal {
-		name := pfOrgName(h)
-		url := ""
-		if c := h.Core(); c != nil {
-			url = c.Snapshot().Team.Icon
-		}
+		name, url := pfOwnTeam(h)
 		pfTeamIcon(gtx, h, th, name, url, image.Pt(x, iy), 24, false)
 	} else {
 		// .p-r_member_profile__preview-view-as-icon.external: the text
