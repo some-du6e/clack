@@ -40,6 +40,10 @@ func (a *App) layoutHuddleDock(gtx layout.Context) {
 // Huddles page calls it through its Host).
 func (a *App) StartHuddle(ch string) { a.huddles().Start(ch) }
 
+// HuddleJoinFailed is Slack's HuddleErrorModal for a start or join that
+// can't happen (views' Huddles page).
+func (a *App) HuddleJoinFailed() { a.huddles().JoinFailed(nil) }
+
 // SlashHuddle is the composer's /huddle: start or join the huddle in ch
 // (through Slack's startHuddle thunk, like the header button).
 func (a *App) SlashHuddle(ch string) { a.huddles().Begin(ch, "") }

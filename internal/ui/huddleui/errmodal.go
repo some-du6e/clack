@@ -53,6 +53,11 @@ func endedModal(err error) (errModal, bool) {
 	return errModal{title: "Something went wrong with your huddle", body: "You’ll have to go back and give it another try.", button: "OK"}, true
 }
 
+// JoinFailed shows HuddleErrorModal{isJoinError} for err (nil: Slack's
+// default "You’ll have to go back and give it another try."). Any
+// goroutine.
+func (c *Controller) JoinFailed(err error) { c.showErrModal(joinErrorModal(err)) }
+
 // showErrModal opens m on the main window (any goroutine).
 func (c *Controller) showErrModal(m errModal) {
 	ph, ok := c.h.(popups.Host)
