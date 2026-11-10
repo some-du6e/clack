@@ -63,8 +63,9 @@ var defaultExperimentGroups = map[string]string{
 	// code channels (codechannel.go), as experiments.getByUser had them on 2026-11-08
 	"session_channels": "on", "session_channel_views": "on", "code_channels_naming": "on",
 	// agents and code channels (exp-agents-code, the account on 2026-11-10): the
-	// member count, plan blocks, auto-closing stale code channels
+	// member count, plan and task blocks, auto-closing stale code channels
 	"agent_member_channel_count": "on", "plan_block_coding_enhancements": "on", "code_channels_auto_close": "on",
+	"agent_streaming_slimmer_task_cards": "on",
 	// Advanced > "Enable smart quotes and symbols" shows in the live dialog
 	// (iZ.w gates it), so composer_smart_symbols is on
 	"composer_smart_symbols": "on",

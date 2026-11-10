@@ -12,7 +12,8 @@ package blockkit
 //
 // Slack draws these in "slim" mode when agent_streaming_slimmer_task_cards
 // is on (it is on Hack Club, 2026-11-08: the reference screenshot shows
-// the inline check and caret). Geometry and colours are Slack's CSS
+// the inline check and caret); off, or not assigned, it draws them as
+// cards (agent_card.go). Geometry and colours are Slack's CSS
 // modules kFCn/Dl0Z (modern.vendor css, 2026-11-08):
 //
 //	plan / task_card   .block.blockSlim: no card, margin 8px 0 (0 on top
@@ -469,6 +470,9 @@ func (me *Message) agentRun(gtx C, bt *richtext.Button, maxW int) image.Point {
 	st := me.agentState()
 	switch b.Type {
 	case "plan", "task_card":
+		if !me.slimTaskCards() { // agent_streaming_slimmer_task_cards off: Slack's cards (agent_card.go)
+			return me.layoutTaskCard(gtx, st, b, bt.Style == richtext.AgentFirst, maxW)
+		}
 		return me.layoutTaskBlock(gtx, st, b, bt.Style == richtext.AgentFirst, maxW)
 	case "context_actions":
 		return me.layoutContextActions(gtx, st, b, maxW)

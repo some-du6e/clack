@@ -1031,7 +1031,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			"sidebar_section_search": g("on"), "add_channels_channel_sections_slackathon": g("on"), "mute_channel_edu": g("on"),
 			"session_channels": g("on"), "session_channel_views": g("on"), "code_channels_naming": g("on"),
 			"code_channels_auto_close": g("on"), "agent_member_channel_count": g("on"), "plan_block_coding_enhancements": g("on"),
-			"composer_smart_symbols": g("on"), "agents_in_dm_sidebar": g("on"), "agents_in_dm_sidebar_pref": g("on"),
+			"agent_streaming_slimmer_task_cards": g("on"), "composer_smart_symbols": g("on"),
+			"agents_in_dm_sidebar": g("on"), "agents_in_dm_sidebar_pref": g("on"),
 			"suggested_sections_auto_sort_v2": g("on"),
 			"lists_tabbing_navigation":        g("on"),
 			// focus mode and the Availability section (see core's defaultExperimentGroups)
