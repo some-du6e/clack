@@ -2,6 +2,7 @@ package ui
 
 import (
 	"encoding/json"
+	"github.com/some-du6e/clack/internal/spell"
 	"image"
 	"reflect"
 	"strings"
@@ -120,7 +121,8 @@ var slackPages = map[string][]want{
 	},
 	"language_region": {
 		lg("Language"), selOff("English (US)"), lg("Time zone"), ck("Set time zone automatically"), selOff("(UTC-08:00) Pacific Time (US and Canada)"),
-		lg("Keyboard layout"), selOff("English (US)"), lg("Spellcheck"), ckOff("Enable spellcheck on your messages and canvases"),
+		lg("Keyboard layout"), selOff("English (US)"), lg("Spellcheck"), ck("Enable spellcheck on your messages and canvases"),
+		{"select", spell.Labels[spell.DefaultLanguages()[0]], false}, // the languages (Windows, Linux)
 	},
 	"accessibility": {
 		lg("Display"), lg("Simplified layout mode"), btnOff("Turn On"), lg("Alt text reminders"),

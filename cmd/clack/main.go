@@ -249,7 +249,7 @@ func main() {
 		}
 	}
 	opts := ui.Options{ConfigDir: cfg, Dark: *dark, Started: started, NoRealtime: *noRealtime,
-		LogDir: logs.Dir(), LogTail: logs.Tail,
+		LogDir: logs.Dir(), LogTail: logs.Tail, Spellcheck: true,
 		SignOut: func() {
 			setLive(nil)
 			// the account's images go with its cache (the UI drops the

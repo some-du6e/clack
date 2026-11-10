@@ -330,6 +330,7 @@ A context click is a secondary press, a two-finger tap on a Mac trackpad (AppKit
 | a user group mention | the link menu for `<team>.slack.com/admin/user_groups` (Slack's href) |
 | a sidebar conversation row | the shell's sidebar menu (`openSidebarMenu`) |
 | a Threads view message | `NewMessageContextMenu` with `InThreadsView` |
+| the composer, a message edit, a canvas being edited | the shell's `buildMenuForTextInput` (`composer/spellcheck.go`): spelling suggestions, Add to Dictionary, Search with Google (with a selection), Cut / Copy / Paste (docs/PREFS-AUDIT.md, Spellcheck) |
 
 The message list sees every context press in its ancestor handler. Rows with their own menu (the name and avatar) mark the press taken; otherwise `messages/context.go` opens the menu after the rows lay out, picked from `richview.View.HitAt`. One difference from Slack: Slack's list leaves a click on plain text to the shell, whose menu is empty off macOS (on macOS Chromium selects the word and shows the selection menu), while Clack opens the message's menu.
 

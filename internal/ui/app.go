@@ -104,6 +104,10 @@ type Options struct {
 	// Demo, when set, is the "Demo workspace" banner's text (`clack
 	// demo`): it stays above the workspace and the title says (Demo).
 	Demo string
+	// Spellcheck starts the spell service (cmd/clack): the system's
+	// checker, or Hunspell dictionaries from Slack's dictionary CDN.
+	// Off in tests and the demo, which never fetch anything.
+	Spellcheck bool
 }
 
 // SetLogin shows the sign-in screen, calling login on submit.
@@ -250,6 +254,7 @@ func New(opts Options, images *imgcache.Cache) *App {
 	a.keys = a.defaultShortcuts()
 	a.loadPrefs()
 	composer.UpArrowShortcut = func() int { return a.prefs.ComposerUpArrow }
+	a.startSpell() // spellcheck_wire.go
 	a.settleThemeSync()
 	// The shaper (font parsing + system font index) is the slowest part of
 	// startup; build it while the window and GPU context come up.

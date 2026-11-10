@@ -1,0 +1,95 @@
+name: spellcheck
+# Spellcheck (internal/spell, composer/spellcheck.go) on each OS's own
+# engine: Hunspell with Chromium's en-US dictionary on Linux (the .bdic
+# Slack's desktop app downloads from spellcheck.slack-edge.com, fetched
+# here without any credentials), NSSpellChecker on macOS, the Windows
+# spell checker on Windows (Hunspell for languages Windows lacks). Plus
+# the editor's rules (typing, skipped code and mentions, the menu, no
+# frame blocking) and screenshots of the underline and the menu, light
+# and dark (spellcheck-shots artifact).
+on:
+  push:
+    paths:
+      - "internal/spell/**"
+      - "internal/ui/composer/spellcheck*.go"
+      - "internal/ui/composer/editor.go"
+      - "internal/ui/prefs_spell.go"
+      - "internal/ui/spellcheck_wire.go"
+      - ".github/workflows/spellcheck.yml"
+  workflow_dispatch:
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb libgl1-mesa-dri libegl-mesa0
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: Chromium's en-US dictionary (Slack's dictionary CDN)
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bdic
+          curl -sfL --retry 10 --retry-delay 10 --retry-all-errors -o /tmp/bdic/en-US-10-1.bdic https://spellcheck.slack-edge.com/dictionaries_v2/en-US-10-1.bdic
+          ls -l /tmp/bdic
+      - name: Hunspell backend and the spell service
+        env:
+          CLACK_TEST_BDIC_DIR: /tmp/bdic
+        run: go test -count=1 -v ./internal/spell/...
+      - name: editor rules and screenshots (Mesa llvmpipe)
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          SPELL_SHOTS_DIR: ${{ github.workspace }}/dist/spellcheck-shots
+        run: |
+          set -o pipefail
+          mkdir -p "$SPELL_SHOTS_DIR"
+          xvfb-run -a go test -p 1 -count=1 -v -run 'TestSpell' ./internal/ui/composer 2>&1 | tee dist/spellcheck.log
+          go test -count=1 -run 'TestPrefsPagesMatchSlack' ./internal/ui
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: spellcheck-shots
+          path: |
+            dist/spellcheck-shots
+            dist/spellcheck.log
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: NSSpellChecker backend and the spell service
+        run: go test -count=1 -v ./internal/spell/...
+      - name: editor rules
+        run: go test -count=1 -v -run 'TestSpell' ./internal/ui/composer
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Windows spell checker backend and the spell service
+        run: go test -count=1 -v ./internal/spell/...

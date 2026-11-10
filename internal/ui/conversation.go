@@ -62,6 +62,7 @@ func (a *App) readRootPointer(gtx layout.Context) {
 		if pe, ok := e.(pointer.Event); ok {
 			a.ptrWin = image.Pt(int(pe.Position.X+.5), int(pe.Position.Y+.5))
 			a.ptrOK = true
+			composer.NotePointer(a.ptrWin) // the editors' context menus open here
 			if pe.Kind == pointer.Press {
 				composer.NotePress() // a click may move the focus (editor_focus.go)
 			}

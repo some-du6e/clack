@@ -65,6 +65,10 @@ type prefs struct {
 	// insets by component, slackc/reserve.go): the next start keeps that
 	// space free until the plugin renders, so its first tree moves nothing.
 	PluginSlots map[string]slackc.Insets `json:"plugin_slots,omitempty"`
+	// SpellLanguages are Language & region's spellcheck languages on
+	// Windows and Linux (the desktop app keeps them in Electron's session,
+	// per device): nil is the OS locale's language.
+	SpellLanguages []string `json:"spellcheck_languages,omitempty"`
 }
 
 func (a *App) prefsPath() string {

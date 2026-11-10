@@ -25,6 +25,7 @@ import (
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/emoji"
+	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/refocus"
 )
 
@@ -219,6 +220,8 @@ type Editor struct {
 	// up_to_browse_kb_shortcut, for upArrow.
 	upMode   int
 	upBrowse bool
+
+	spell edSpell // spellcheck.go
 }
 
 // NewEditor returns an empty editor.
@@ -949,6 +952,7 @@ func (e *Editor) processPointer(gtx layout.Context) {
 		}
 		e.onDrag(gtx, ev)
 	}
+	e.spellContextEvents(gtx) // spellcheck.go: the right-click menu
 }
 
 // hitPos maps a point in local (viewport) coordinates to a position.
@@ -964,6 +968,9 @@ func (e *Editor) onClick(gtx layout.Context, ev gesture.ClickEvent) {
 	if !((ev.Kind == gesture.KindPress && ev.Source == pointer.Mouse) ||
 		(ev.Kind == gesture.KindClick && ev.Source != pointer.Mouse)) {
 		return
+	}
+	if ev.Source == pointer.Mouse && ctxclick.Mac && ev.Modifiers.Contain(key.ModCtrl) {
+		return // a macOS context click: spellContextEvents handles it
 	}
 	gtx.Execute(key.FocusCmd{Tag: e})
 	gtx.Execute(key.SoftKeyboardCmd{Show: true})
@@ -1238,6 +1245,7 @@ func (e *Editor) Layout(gtx layout.Context, st EditorStyle) layout.Dimensions {
 	e.scroller.Add(gtx.Ops)
 	e.clicker.Add(gtx.Ops)
 	e.dragger.Add(gtx.Ops)
+	e.spellHandler(gtx)
 	semantic.Editor.Add(gtx.Ops)
 
 	focused := gtx.Focused(e)
@@ -1254,6 +1262,7 @@ func (e *Editor) Layout(gtx layout.Context, st EditorStyle) layout.Dimensions {
 		showCaret = !blinking || dt%timePerBlink < timePerBlink/2
 	}
 
+	e.spellUpdate(gtx, focused)
 	lay.paintStatic(gtx, tlColorsOf(&st))
 	t := op.Offset(image.Pt(0, -e.scrollY)).Push(gtx.Ops)
 	lay.bgCall.Add(gtx.Ops)
@@ -1271,6 +1280,7 @@ func (e *Editor) Layout(gtx layout.Context, st EditorStyle) layout.Dimensions {
 		})
 	}
 	lay.fgCall.Add(gtx.Ops)
+	e.paintSpelling(gtx)
 	lay.paintEmoji(gtx, st.Images, st.Color, e.scrollY, e.scrollY+viewH)
 	if c := e.ime.composition; focused && c.Start >= 0 && c.End > c.Start {
 		lay.forRange(c.Start, c.End, func(li, x0, x1 int, nl bool) {

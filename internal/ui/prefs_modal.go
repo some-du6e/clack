@@ -44,6 +44,7 @@ type prefsModal struct {
 	mobileOvr *bool                     // Notifications > "Set up mobile overrides" (nil: on when the levels differ)
 	nav       reorderList               // Navigation's tab listbox (prefs_reorder.go)
 	picker    channelPicker             // Advanced > Exclude these channels (prefs_picker.go)
+	langs     langPicker                // Language & region > Spellcheck languages (prefs_spell.go)
 	lists     prefsLists                // Connected accounts and Privacy's fetched lists (prefs_lists.go)
 	themeTab  string                    // Appearance: "slack" or "custom" ("": Slack's default for the theme)
 	pcc       prefsColorsCache          // colors()

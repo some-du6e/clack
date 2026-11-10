@@ -70,6 +70,7 @@ func (a *App) accountGradients() bool { return !a.acct.set || a.acct.gradients }
 // goroutine.
 func (a *App) applyAccountPrefs(p core.Prefs) {
 	a.sw.themeFinal = true // the account's own prefs are known (startup.go)
+	a.applySpellPref()     // webapp_spellcheck (spellcheck_wire.go)
 	a.setAcct(acctFromPrefs(p.IATheme, p.NoWindowGradients))
 	// Kept per device in ui.json, like the theme Slack's desktop keeps in
 	// localStorage for its loading screen: the next start's first frame

@@ -497,9 +497,7 @@ func (p *prefsModal) languagePage(f *prefsForm) {
 	f.hr()
 	f.selectBox("keyboard_layout", "Keyboard layout", "English (US)", false, nil)
 	f.hr()
-	f.subheading("Spellcheck")
-	f.off("webapp_spellcheck", "Enable spellcheck on your messages and canvases", "", p.prefBool("webapp_spellcheck", true), false)
-	f.na()
+	p.spellcheckPrefs(f) // prefs_spell.go
 }
 
 // ---- Accessibility ----
