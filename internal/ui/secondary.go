@@ -310,7 +310,9 @@ func (a *App) layoutSecondaryResize(gtx layout.Context, x, h int) {
 			a.savePrefs()
 		}
 	}
-	r := image.Rect(x-gtx.Dp(3), 0, x+gtx.Dp(3), h)
+	// .p-resizer: an 8px strip on the pane's edge (live: 8 wide, 4 into
+	// the pane)
+	r := image.Rect(x-gtx.Dp(4), 0, x+gtx.Dp(4), h)
 	defer op.Offset(r.Min).Push(gtx.Ops).Pop()
 	pointerArea(gtx, &s.drag, image.Rectangle{Max: r.Size()}, pointer.CursorColResize)
 }
