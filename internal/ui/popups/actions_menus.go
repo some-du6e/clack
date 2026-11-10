@@ -698,7 +698,9 @@ func NewUserMenu(h Host, anchor image.Point) *Menu {
 				OpenOwnProfile()
 				return
 			}
-			h.Toast("Profile isn't available yet")
+			// a host without the ui root's hooks (OpenOwnProfile unset):
+			// the same full profile, through the host's pane
+			pfOpenFull(h, actSelfID(h))
 		}},
 		{Label: "Preferences", Do: actPreferences(h)},
 		{Label: "Account settings", External: true, Do: actToast(h, "Account settings live at app.slack.com")},
