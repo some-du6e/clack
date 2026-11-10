@@ -150,15 +150,20 @@ func TestAvPageReadsAndWrites(t *testing.T) {
 	ccUntil(t, o, "the writes", func() bool { mu.Lock(); defer mu.Unlock(); return len(sets) == 2 })
 	mu.Lock()
 	defer mu.Unlock()
+	// the two writes run concurrently: tell them apart by shape
+	multiF, single := sets[0], sets[1]
+	if multiF.Get("prefs") == "" {
+		multiF, single = single, multiF
+	}
 	var multi map[string]any
-	if err := json.Unmarshal([]byte(sets[0].Get("prefs")), &multi); err != nil {
-		t.Fatalf("prefs %q", sets[0].Get("prefs"))
+	if err := json.Unmarshal([]byte(multiF.Get("prefs")), &multi); err != nil {
+		t.Fatalf("prefs %q", multiF.Get("prefs"))
 	}
 	if !reflect.DeepEqual(multi, map[string]any{"dnd_after_monday": "18:00", "dnd_enabled_monday": "partial", "dnd_enabled": true}) {
 		t.Errorf("multi %v", multi)
 	}
-	if sets[1].Get("name") != "focus_mode_status" || sets[1].Get("value") != `{"emoji":":telescope:","show":true}` {
-		t.Errorf("single %v", sets[1])
+	if single.Get("name") != "focus_mode_status" || single.Get("value") != `{"emoji":":telescope:","show":true}` {
+		t.Errorf("single %v", single)
 	}
 	// the VIPs link switches the dialog's section
 	pg.p.toSection("vip")

@@ -582,6 +582,9 @@ func (s *actStatus) save() bool {
 		h.Toast("Not connected yet")
 		return true
 	}
+	if s.editID != "" && s.dur != actDurCustom {
+		return false // editing a scheduled status saves only with a start (handleSubmit)
+	}
 	now := time.Now()
 	sv := actStatusSave{Emoji: emoji, Text: txt, Canonical: s.canonical, Duration: actDurKey(s.dur), IsDnd: s.pause, EditID: s.editID}
 	if s.dur == actDurCustom {
