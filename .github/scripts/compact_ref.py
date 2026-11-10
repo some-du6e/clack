@@ -20,6 +20,13 @@ message components (build a84662d2d135, boot-shared):
   SystemMessage             containerCompact, no <time> under dense
   ThreadReplyGeneric (oDUT) thread replies: no compact slot, never adjacent
                             under dense
+  ThreadBroadcastPreamble   (UsKL) c-message__broadcast_preamble
+                            c-message_kit__broadcast_preamble__inner (margin 0),
+                            in c-message__broadcast_preamble_outer under light;
+                            "replied to a thread:" (…_meta) and the root's
+                            SimpleMessagePreview in the ButtonLink when the
+                            root has previewable text, else "replied to <a>a
+                            thread</a>"
 
 Nothing here talks to Slack beyond fetching that CSS and Slack's icon set. The
 rows are the synthetic channel's (compact-ref-rows.json, written by
@@ -33,7 +40,14 @@ Two substitutions, both because headless Chrome lacks Slack's private fonts:
 the bullet glyph of .p-rich_text_list__bullet (Slack v2 icon font, \\e506) is
 drawn as "•", and Slack-Lato is the system Lato (fonts-lato).
 
-usage: compact_ref.py <shots dir> <slack css> <slackvars.go> <icons.json>
+Row heights: a second Chrome run of each light page (#measure) records every
+row's getBoundingClientRect height into slack-row-heights.json; each is
+compared with the height Clack laid the same row out at (clack-row-heights.json,
+TestCompactShots), and with the checked-in heights TestRowHeightsMatchSlack
+holds Clack to (internal/ui/messages/testdata/slack-row-heights.json). The
+script fails when a row is more than 1px off either.
+
+usage: compact_ref.py <shots dir> <slack css> <slackvars.go> <icons.json> [<checked-in heights>]
 """
 import html
 import json
@@ -45,6 +59,7 @@ import sys
 from PIL import Image, ImageDraw
 
 shots, css_path, vars_path, icons_path = sys.argv[1:5]
+checked_path = sys.argv[5] if len(sys.argv) > 5 else ""
 ref = json.load(open(os.path.join(shots, "compact-ref-rows.json")))
 icons = json.load(open(icons_path))["icons"]
 
@@ -177,9 +192,14 @@ def compact_ts(r, dense, adjacent):
     return '<div class="%s">%s</div>' % (cls, timestamp(t))
 
 
-def wrap(inner, extra=""):
-    return ('<div class="c-virtual_list__item" role="listitem" style="position:relative"><div class="c-message_kit__background p-message_pane_message__message c-message_kit__message%s" data-qa="message_container">'
-            '<div class="c-message_kit__hover"><div class="c-message_kit__actions c-message_kit__actions--default">%s</div></div></div></div>' % (extra, inner))
+def item(r, inner):
+    """A .c-virtual_list__item (data-key: the row, for the height pass)."""
+    return '<div class="c-virtual_list__item" role="listitem" style="position:relative" data-key="%s">%s</div>' % (E(r["Key"]), inner)
+
+
+def wrap(r, inner, extra=""):
+    return item(r, '<div class="c-message_kit__background p-message_pane_message__message c-message_kit__message%s" data-qa="message_container">'
+                '<div class="c-message_kit__hover"><div class="c-message_kit__actions c-message_kit__actions--default">%s</div></div></div>' % (extra, inner))
 
 
 def system_row(r, dense):
@@ -188,11 +208,11 @@ def system_row(r, dense):
     if dense:
         body = ('<div class="c-message__body c-message__body--automated c-message__system_message"><div class="container__OsSxI containerCompact__TswCu">'
                 '<div class="content__ocUJc"><div class="textRow__DEPF9">%s</div></div></div></div>' % text)
-        return wrap(gutter(compact_ts(r, True, False), '<div class="c-message_kit__indent">%s</div>' % body, True))
+        return wrap(r, gutter(compact_ts(r, True, False), '<div class="c-message_kit__indent">%s</div>' % body, True))
     t = '<time class="timestamp__bfLC8">%s</time>' % E(r["Time"])
     body = ('<div class="c-message__body c-message__body--automated c-message__system_message"><div class="container__OsSxI">'
             '<div class="content__ocUJc"><div class="textRow__DEPF9">%s%s</div></div></div></div>' % (text, t))
-    return wrap(gutter('<div class="systemIcon__mZbDL">%s</div>' % svg(icon, 16), body, False))
+    return wrap(r, gutter('<span class="systemIcon__mZbDL">%s</span>' % svg(icon, 16), body, False))
 
 
 def tombstone_row(r, dense):
@@ -200,8 +220,18 @@ def tombstone_row(r, dense):
     right = '<div class="c-message_kit__tombstone__right">%s%s</div>' % (text, reply_bar(r))
     icon = "" if dense else '<div class="c-message_kit__tombstone__icon">%s</div>' % svg("trash", 20)
     cls = "c-message_kit__tombstone" + (" c-message_kit__tombstone--compact" if dense else "")
-    return ('<div class="c-virtual_list__item" role="listitem" style="position:relative"><div class="c-message_kit__background p-message_pane_message__message c-message_kit__message">'
-            '<div class="%s">%s%s</div></div></div>' % (cls, icon, right))
+    return item(r, '<div class="c-message_kit__background p-message_pane_message__message c-message_kit__message">'
+                '<div class="%s">%s%s</div></div>' % (cls, icon, right))
+
+
+def broadcast_inner(r):
+    """ThreadBroadcastPreamble's div (UsKL): the root's preview when it has
+    previewable text (canRenderSimpleMessagePreview), else the link alone."""
+    cls = "c-message__broadcast_preamble c-message_kit__broadcast_preamble__inner"
+    if r.get("RootPreview"):
+        return ('<div class="%s"><span data-qa="thread-broadcast-preamble-with-text" class="c-message__broadcast_preamble_meta">replied to a thread:</span>'
+                '<button type="button" class="c-link--button c-message__broadcast_preamble_link">%s</button></div>' % (cls, E(r["RootPreview"])))
+    return '<div class="%s">replied to <button type="button" class="c-link--button c-message__broadcast_preamble_link">a thread</button></div>' % cls
 
 
 def channel_row(r, dense):
@@ -219,23 +249,22 @@ def channel_row(r, dense):
         pre = ""
         if head:
             if r["Kind"] == "broadcast":
-                pre = ('<div class="c-message_kit__broadcast_preamble c-message_kit__broadcast_preamble--dense">%s&nbsp;'
-                       '<div class="c-message__broadcast_preamble c-message_kit__broadcast_preamble__inner">replied to '
-                       '<a class="c-link c-message__broadcast_preamble_link">a thread</a></div></div>' % sender(r, True, True))
+                pre = ('<div class="c-message_kit__broadcast_preamble c-message_kit__broadcast_preamble--dense">%s&nbsp;%s</div>'
+                       % (sender(r, True, True), broadcast_inner(r)))
                 inline = False
             else:
                 pre = sender(r, True, True) + "&nbsp;"
         right = '<div class="c-message_kit__indent">%s%s%s</div>' % (pre, body(r, inline), tail)
-        return wrap(labels(r, True) + gutter(compact_ts(r, True, not head), right, True), extra)
+        return wrap(r, labels(r, True) + gutter(compact_ts(r, True, not head), right, True), extra)
     if head:
         pre = sender(r, False) + "&nbsp;&nbsp;" + timestamp(r["Time"]) + "<br>"
         if r["Kind"] == "broadcast":
-            pre = ('<div class="c-message_kit__broadcast_preamble">%s<div class="c-message__broadcast_preamble_outer" data-qa="thread-broadcast-preamble">'
-                   '<div class="c-message__broadcast_preamble">replied to <a class="c-link c-message__broadcast_preamble_link">a thread</a></div></div></div>' % pre)
+            pre = ('<div class="c-message_kit__broadcast_preamble">%s<div class="c-message__broadcast_preamble_outer" data-qa="thread-broadcast-preamble">%s</div></div>'
+                   % (pre, broadcast_inner(r)))
         left = avatar(r)
     else:
         pre, left = "", compact_ts(r, False, True)
-    return wrap(labels(r, False) + gutter(left, pre + body(r, False) + tail, False), extra)
+    return wrap(r, labels(r, False) + gutter(left, pre + body(r, False) + tail, False), extra)
 
 
 def thread_row(r, dense, root):
@@ -250,8 +279,8 @@ def thread_row(r, dense, root):
         left = avatar(r) if head else ('<div class="p-thread_compact_gutter_generic p-thread_compact_gutter_generic--adjacent">%s</div>'
                                        % timestamp(r["Time"].split(" ")[0]))
         g = gutter(left, pre + body(r, False) + reactions(r), False)
-    return ('<div class="c-virtual_list__item" role="listitem" style="position:relative"><div class="%s" data-qa="message_container"><div class="c-message_kit__hover">'
-            '<div class="c-message_kit__actions c-message_kit__actions--default">%s</div></div></div></div>' % (cls, g))
+    return item(r, '<div class="%s" data-qa="message_container"><div class="c-message_kit__hover">'
+                '<div class="c-message_kit__actions c-message_kit__actions--default">%s</div></div></div>' % (cls, g))
 
 
 def page(rows, dense, dark, width, thread):
@@ -272,8 +301,22 @@ def page(rows, dense, dark, width, thread):
         "<style>:root{%s;color-scheme:%s}html,body{margin:0;background:var(--dt_color-base-pry);color:var(--dt_color-content-pry);"
         "font-family:Lato,sans-serif;font-size:15px;line-height:1.46668;-webkit-font-smoothing:antialiased}"
         ".p-rich_text_list__bullet li:before{content:'\\2022'!important;font-family:Lato!important}"
-        "*{box-sizing:border-box}</style></head><body class='%s'><div style='width:%dpx'>%s</div></body></html>"
-        % (os.path.abspath(css_path), root, "dark" if dark else "light", "sk-client-theme--dark" if dark else "", width, content))
+        "*{box-sizing:border-box}</style></head><body class='%s'><div style='width:%dpx'>%s</div>%s</body></html>"
+        % (os.path.abspath(css_path), root, "dark" if dark else "light", "sk-client-theme--dark" if dark else "", width, content, MEASURE))
+
+
+# #measure: every row's laid-out height, for --dump-dom
+MEASURE = ("<script>if(location.hash=='#measure'){const o={};"
+           "document.querySelectorAll('[data-key]').forEach(e=>{o[e.dataset.key]=e.getBoundingClientRect().height});"
+           "const p=document.createElement('pre');p.id='heights';p.textContent=JSON.stringify(o);document.body.appendChild(p)}</script>")
+
+
+def measure(hp, width):
+    out = subprocess.run(["google-chrome", "--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars",
+                          "--force-device-scale-factor=1", "--window-size=%d,2000" % width, "--dump-dom",
+                          "file://" + os.path.abspath(hp) + "#measure"], check=True, capture_output=True, text=True).stdout
+    m = re.search(r'<pre id="heights">(.*?)</pre>', out, re.S)
+    return {k: round(v, 2) for k, v in json.loads(html.unescape(m.group(1))).items()}
 
 
 def side(name, clack_png, rows, dense, dark, width, thread):
@@ -296,10 +339,38 @@ def side(name, clack_png, rows, dense, dark, width, thread):
     d.text((clack.width + gap + 8, 8), "Slack markup + shipping CSS (%s)" % what, fill=(255, 255, 255))
     out.save(os.path.join(shots, "side-%s.png" % name))
     print("saved side-%s.png" % name)
+    return hp
 
 
+measured = {}
 for dense in (False, True):
     for dark in (False, True):
         k = "%s-%s" % ("compact" if dense else "clean", "dark" if dark else "light")
-        side("channel-" + k, "clack-%s.png" % k, ref["channel"], dense, dark, 1100, False)
-        side("thread-" + k, "clack-thread-%s.png" % k, ref["thread"], dense, dark, 520, True)
+        ch = side("channel-" + k, "clack-%s.png" % k, ref["channel"], dense, dark, 1100, False)
+        th = side("thread-" + k, "clack-thread-%s.png" % k, ref["thread"], dense, dark, 520, True)
+        if not dark:
+            layout = "compact" if dense else "clean"
+            measured["channel-" + layout] = measure(ch, 1100)
+            measured["thread-" + layout] = measure(th, 520)
+open(os.path.join(shots, "slack-row-heights.json"), "w").write(json.dumps(measured, indent=1, sort_keys=True) + "\n")
+
+# Clack's rows against Slack's, and the checked-in table against this run
+clack = json.load(open(os.path.join(shots, "clack-row-heights.json")))
+checked = json.load(open(checked_path)) if checked_path else {}
+bad = []
+print("%-16s %-6s %8s %8s %8s" % ("list", "row", "Slack", "Clack", "checked"))
+for lst in sorted(measured):
+    for key, want in measured[lst].items():
+        got = clack.get(lst, {}).get(key)
+        chk = checked.get(lst, {}).get(key) if checked_path else None
+        flag = ""
+        if got is None or abs(got - want) > 1:
+            flag += " CLACK"
+        if checked_path and (chk is None or abs(chk - want) > 0.5):
+            flag += " TESTDATA"
+        if flag:
+            bad.append((lst, key))
+        print("%-16s %-6s %8s %8s %8s%s" % (lst, key, want, got, chk, flag))
+if bad:
+    print("row heights off by more than 1px from Slack's markup (CLACK), or the checked-in table is stale (TESTDATA: copy slack-row-heights.json over it):", bad)
+    sys.exit(1)

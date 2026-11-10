@@ -45,7 +45,13 @@ type compactRefRow struct {
 	ReplyAvatars                        []string
 	Status                              string // the sender's status emoji picture
 	LastReply                           string
+	RootPreview                         string // a broadcast's root, as its preamble shows it
 }
+
+var (
+	shotChannelKeys = []string{"a1", "a2", "b1", "b2", "bot", "root", "bc", "join", "pin", "c1", "gone"}
+	shotThreadKeys  = []string{"root", "r1", "r2", "r3"}
+)
 
 type compactRefReact struct {
 	Emoji string
@@ -216,6 +222,7 @@ func TestCompactShots(t *testing.T) {
 	t.Cleanup(uipref.Reset)
 	const w, h, tw, th0 = 1100, 1500, 520, 1100
 	var rows, threadRows []compactRefRow
+	heights := map[string]map[string]float32{}
 	for _, dark := range []bool{false, true} {
 		for _, dense := range []bool{false, true} {
 			p := *uipref.Get()
@@ -256,11 +263,17 @@ func TestCompactShots(t *testing.T) {
 			ty0, ty1 = ty0+tv.s.origin.Y, ty1+tv.s.origin.Y // the list sits under the pane's header
 			savePNG(t, filepath.Join(dir, "clack-thread-"+kind+"-"+mode+".png"), crop(timg, ty0, ty1))
 
-			if dark || dense {
+			if dark {
 				continue
 			}
-			rows = shotRefRows(t, app, v.s, ts, []string{"a1", "a2", "b1", "b2", "bot", "root", "bc", "join", "pin", "c1", "gone"})
-			threadRows = shotRefRows(t, app, tv.s, ts, []string{"root", "r1", "r2", "r3"})
+			for k, hs := range rowHeights(v.s, tv.s, ts, dense) {
+				heights[k] = hs
+			}
+			if dense {
+				continue
+			}
+			rows = shotRefRows(t, app, v.s, ts, shotChannelKeys)
+			threadRows = shotRefRows(t, app, tv.s, ts, shotThreadKeys)
 			for i := range threadRows { // ThreadSenderAndTimestampGeneric's THREAD_DETAIL_VIEW time
 				threadRows[i].Time = threadTime(tsTime(ts[threadRows[i].Key]), time.Now())
 			}
@@ -283,6 +296,10 @@ func TestCompactShots(t *testing.T) {
 	}
 	b, _ := json.MarshalIndent(map[string]any{"channel": rows, "thread": threadRows}, "", " ")
 	if err := os.WriteFile(filepath.Join(dir, "compact-ref-rows.json"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, _ = json.MarshalIndent(heights, "", " ")
+	if err := os.WriteFile(filepath.Join(dir, "clack-row-heights.json"), b, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -329,6 +346,9 @@ func shotRefRows(t *testing.T, app *core.App, s *listState, ts map[string]string
 		}
 		if r.statusURL != "" {
 			row.Status = "emoji-palm_tree.png"
+		}
+		if m.Broadcast {
+			row.RootPreview = r.rootPrev
 		}
 		out = append(out, row)
 	}

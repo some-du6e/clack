@@ -5,7 +5,9 @@ name: compact-shots
 # made-up people and messages, fakeslack's pictures) in Clean and Compact,
 # light and dark, and builds side-by-sides against the same rows in Slack's
 # markup under Slack's shipping CSS (client-boot-styles, the public CDN file)
-# and design tokens (.github/scripts/compact_ref.py). Nothing here talks to
+# and design tokens (.github/scripts/compact_ref.py), then measures every row
+# of Slack's markup in Chrome and fails when Clack's row (or the table
+# TestRowHeightsMatchSlack holds it to) is more than 1px off. Nothing here talks to
 # Slack's API or opens the Slack client.
 on:
   push:
@@ -41,7 +43,7 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS fonts-lato
       - name: Compact and Clean geometry, idle, fling and scroll-gap tests
         run: |
-          go test -count=1 -v -run 'TestCompact|TestMessageGeometry|TestIdle|TestFling|TestPrependKeeps|TestChannelNameArrives|TestRowLayoutAllocs' ./internal/ui/messages
+          go test -count=1 -v -run 'TestCompact|TestRowHeightsMatchSlack|TestMessageGeometry|TestIdle|TestFling|TestPrependKeeps|TestChannelNameArrives|TestRowLayoutAllocs' ./internal/ui/messages
           go test -count=1 -v -run 'TestLeadFirstLine|TestEditedLabel' ./internal/ui/richview
       - name: channel and thread screenshots
         env:
@@ -53,13 +55,13 @@ jobs:
           mkdir -p "$COMPACT_SHOTS_DIR"
           xvfb-run -a go test -count=1 -v -run 'TestCompactShots$' ./internal/ui/messages
           ls "$COMPACT_SHOTS_DIR"
-      - name: side-by-sides with Slack's CSS
+      - name: side-by-sides with Slack's CSS; row heights against Chrome's
         run: |
           python3 -m pip install --quiet pillow
           mkdir -p /tmp/slack-ref
           curl -sfL --compressed --retry 5 -o /tmp/slack-ref/client-boot-styles.css https://a.slack-edge.com/bv1-13-br/client-boot-styles.cf726c4f2eaecc74.min.css
           curl -sfL --retry 5 -o /tmp/slack-ref/icons.json https://raw.githubusercontent.com/IzieStratt/slack-datamine-plus/main/build/icons.json
-          python3 .github/scripts/compact_ref.py dist/shots /tmp/slack-ref/client-boot-styles.css internal/ui/slackc/css/slackvars.go /tmp/slack-ref/icons.json
+          python3 .github/scripts/compact_ref.py dist/shots /tmp/slack-ref/client-boot-styles.css internal/ui/slackc/css/slackvars.go /tmp/slack-ref/icons.json internal/ui/messages/testdata/slack-row-heights.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

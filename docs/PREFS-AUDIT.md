@@ -138,6 +138,26 @@ Activity and Unreads views draw their own rows. The compact-shots workflow
 runs the geometry, idle/fling/scroll-gap and plugin tests in both layouts and
 uploads Clack next to Slack's markup under Slack's CSS.
 
+**Row heights against Chrome (2026-11-10).** compact_ref.py also measures
+every row of Slack's markup in Chrome (light, both layouts, the channel at
+1100px and the thread pane at 520px) and fails when Clack's row is more than
+1px off, or when the checked-in table
+`internal/ui/messages/testdata/slack-row-heights.json` (which
+TestRowHeightsMatchSlack holds Clack to in ci) is stale. Fixed on the way,
+from boot-shared and client-boot-styles:
+
+| Row | Slack | Was | Now |
+| --- | --- | --- | --- |
+| System message (Clean) | SystemMessage I0jQ: .textRow__DEPF9 13px/1.5 in both layouts, the <time> (12px) on its baseline, .systemIcon__mZbDL a 36px box with the 16px glyph centred, padding-top 2 | 15px text, 38px | 13px, 36 (Chrome 35.5) |
+| Tombstone (Clean) | 2X8J: .c-message_kit__tombstone__right margin -4px 0, __text min-height 44px flex align-items center, the reply bar under it (margin -4px 0 4px, 34px) | 80 | 86 |
+| Block Kit section | iGDn adds c-message_kit__blocks--rich_text (margin-bottom 4px) only when the last block is rich_text; the section's own 4px (p-section_block 8px 0 4px, top 0 first) ends the body | 56 in both layouts | 52 |
+| Reactions | ReactionBar Ltiy: div > span > inline-flex pills (24px, margin-bottom 4px, vertical-align top) = 28px lines, then c-message_kit__reaction_bar margin-bottom 4px | 4px short | 32 after the text |
+| Broadcast (Clean) | ThreadBroadcastPreamble UsKL gets className c-message_kit__broadcast_preamble__inner (margin 0, so no 8px 0 -6px); the reference page had left it off, so the 76 it measured was its own | 74 | 74; the preamble now reads "replied to a thread:" and the root's one-line preview in the link when the root has text (canRenderSimpleMessagePreview), "replied to a thread" otherwise |
+
+Activity: Gjwd _F gives invitations `paper-plane`, Slack's outline paper
+plane; Clack aliased that name to its filled `send`, now to `drafts` (the
+glyph TestIconsMatchSlack holds to Slack's paper-plane).
+
 ## Unreads view and channel join banner (2026-11-09)
 
 From Slack's web client on the public CDN (build bv1-13): `page-unreads-view` (LlSi), the shared chunk `…unreads-view_catchup_hooks_use-catchup-activity-feed_ts-js_modern-28a78c` (2cdE UnreadsView / UnreadsList, F9zO Header, Ard6 ShowNewerButton, H6rY footer, JhsS EmptyState, gvf3 collapse, 2cdE sorts), `client-boot-render` (AllUnreadsHeader, the sort and filter menus, RefreshUnreadMessagesButton, the Unreads page's sidebar config), `client-channel-list-view` (bG, the sidebar's page links), `client-boot` (LbeF markLastRead / markManyLastRead, QJKZ fetchHistory, VllE, aK5v, 82Kz, NznF), `modern.vendor` / `gantry-v2-vendors` (megaphone XUhT, the fetchers), `megaphone-message-pane-input-channel-join-banner` (7BTH) with its shared button chunk (mzyA, QwCw) and both chunks' CSS. Nothing was opened in real Slack: opening Unreads marks things read, and the banner needs a fresh join.

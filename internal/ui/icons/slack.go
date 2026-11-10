@@ -42,7 +42,7 @@ var slackIconNames = map[string]string{
 	"cog":                        "settings",
 	"preferences":                "settings",
 	"thread":                     "threads",
-	"paper-plane":                "send",
+	"paper-plane":                "drafts", // Slack's paper-plane (TestIconsMatchSlack holds "drafts" to it)
 	"pencil":                     "edit",
 	"compose-message":            "compose",
 	"new-message":                "compose",

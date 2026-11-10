@@ -9,6 +9,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"image"
 	"image/color"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -93,6 +94,12 @@ type row struct {
 	broadcastBtn       widget.Clickable
 	addReact           widget.Clickable
 	pills              []reactPill
+
+	// the broadcast's root preview (rootPreview), looked up once per list
+	// snapshot
+	rootPrev    string
+	rootRev     uint64
+	rootChecked bool
 
 	// geometry of the last layout (row-local), for overlays
 	reactRects []image.Rectangle
@@ -1152,13 +1159,20 @@ func (r *row) layoutColumn(gtx layout.Context) layout.Dimensions {
 	if body.Size.Y == 0 && !rc.header {
 		y += dp(gtx, mt.nameLine)
 	}
-	y += dp(gtx, mt.bodyMarginBottom)
+	if r.edit != nil || r.textMargin() {
+		y += dp(gtx, mt.bodyMarginBottom)
+	}
 
 	// reactions
 	if len(m.Reactions) > 0 {
+		// ReactionBar (Ltiy): div.c-reaction_bar > span > the pills, each
+		// .c-reaction { display: inline-flex; vertical-align: top;
+		// height 24px; margin-bottom: 4px }, so every line of pills is a
+		// 28px line box; then .c-message_kit__reaction_bar
+		// { margin-bottom: 4px }
 		y += dp(gtx, mt.reactTop) - dp(gtx, 4)
 		y += r.reactionBar(gtx, image.Pt(0, y), r.col, cw)
-		y += dp(gtx, mt.reactBottom)
+		y += dp(gtx, mt.reactGap) + dp(gtx, mt.reactBottom)
 	} else {
 		r.reactRects = r.reactRects[:0]
 		r.addRect = image.Rectangle{}
@@ -1176,6 +1190,17 @@ func (r *row) layoutColumn(gtx layout.Context) layout.Dimensions {
 		y += r.channelCards(gtx, y, cw)
 	}
 	return layout.Dimensions{Size: image.Pt(cw, y)}
+}
+
+// textMargin: the body ends with Slack's 4px. MessageBlocks (iGDn) adds
+// c-message_kit__blocks--rich_text (margin-bottom 4px) only when the
+// message's last block is rich_text, and a message without blocks is
+// .c-message_kit__text (:after, 4px). After a Block Kit block (a section,
+// context, actions…) the body ends at that block's own bottom margin,
+// which richview already adds; .c-message_kit__blocks has none.
+func (r *row) textMargin() bool {
+	bs := r.m.Doc.Blocks
+	return len(bs) == 0 || !bs[len(bs)-1].Kit
 }
 
 // layoutNothing is an empty native: a surface Clack doesn't draw
@@ -1646,9 +1671,15 @@ func (r *row) labelLine(gtx layout.Context, rc *rowCtx, x, y int, icon, txt stri
 	return dp(gtx, 20)
 }
 
-// broadcastLine draws Slack's broadcast preamble under the header line of a
-// thread reply also sent to the channel: "replied to a thread", 15px/22,
-// with "a thread" a bold link that opens the thread.
+// broadcastLine draws Slack's broadcast preamble (ThreadBroadcastPreamble,
+// boot-shared UsKL) for a thread reply also sent to the channel, 15px/22:
+// when the root has previewable text (canRenderSimpleMessagePreview),
+// "replied to a thread:" (.c-message__broadcast_preamble_meta,
+// flex-shrink 0) and the root's SimpleMessagePreview in the bold
+// .c-message__broadcast_preamble_link (margin 0 4px, one line, ellipsis);
+// otherwise "replied to a thread" with "a thread" the link. The link opens
+// the thread. .c-message__broadcast_preamble.c-message_kit__broadcast_preamble__inner
+// has margin 0, so the line is 22px in both layouts.
 func (r *row) broadcastLine(gtx layout.Context, rc *rowCtx, x, y int) int {
 	c := rc.c
 	h := dp(gtx, 22)
@@ -1660,17 +1691,67 @@ func (r *row) broadcastLine(gtx layout.Context, rc *rowCtx, x, y int) int {
 	if ps.Hidden() {
 		return 0
 	}
+	link := func(x int, txt string, maxW int) {
+		ls := preambleLinkClass.Enter(gtx, btnState(gtx, &r.broadcastBtn), 0)
+		defer ls.Leave()
+		at(gtx, x, y, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Max.X = max(maxW, 0)
+			return r.broadcastBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return styledLabel(gtx, rc.th, ls, textStyle{size: 15, weight: theme.Bold, col: c.Link, lineH: 22, maxLines: 1}, txt)
+			})
+		})
+	}
+	right := gtx.Constraints.Max.X
+	if prev := r.rootPreview(rc); prev != "" {
+		pd := at(gtx, x, y, func(gtx layout.Context) layout.Dimensions {
+			return styledLabel(gtx, rc.th, ps, textStyle{size: 15, col: c.Text2, lineH: 22}, "replied to a thread:")
+		})
+		lx := x + pd.Size.X + dp(gtx, 4)
+		link(lx, prev, right-lx-dp(gtx, 4))
+		return h
+	}
 	pd := at(gtx, x, y, func(gtx layout.Context) layout.Dimensions {
 		return styledLabel(gtx, rc.th, ps, textStyle{size: 15, col: c.Text2, lineH: 22}, "replied to ")
 	})
-	ls := preambleLinkClass.Enter(gtx, btnState(gtx, &r.broadcastBtn), 0)
-	defer ls.Leave()
-	at(gtx, x+pd.Size.X, y, func(gtx layout.Context) layout.Dimensions {
-		return r.broadcastBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return styledLabel(gtx, rc.th, ls, textStyle{size: 15, weight: theme.Bold, col: c.Link, lineH: 22}, "a thread")
-		})
-	})
+	link(x+pd.Size.X, "a thread", right-x-pd.Size.X)
 	return h
+}
+
+// rootPreview is the broadcast's root as SimpleMessagePreview shows it
+// (one line: the text with its formatting and line breaks flattened), or
+// "" when Clack has no root with text: the channel's loaded messages
+// first, then the store (threads Clack has open). Slack's preamble reads
+// the root from its store and draws nothing until it's there; Clack keeps
+// "replied to a thread" so the row doesn't change height when the root
+// loads.
+func (r *row) rootPreview(rc *rowCtx) string {
+	var rev uint64
+	if rc.list != nil {
+		rev = rc.list.snap.rev
+	}
+	if r.rootChecked && r.rootRev == rev {
+		return r.rootPrev
+	}
+	r.rootChecked, r.rootRev, r.rootPrev = true, rev, ""
+	ts := r.m.ThreadTS
+	var doc *richtext.Doc
+	if rc.list != nil {
+		ms := rc.list.snap.msgs
+		i := sort.Search(len(ms), func(i int) bool { return !tsLess(ms[i].m.TS, ts) })
+		if i < len(ms) && ms[i].m.TS == ts {
+			doc = &ms[i].m.Doc
+		}
+	}
+	if doc == nil && rc.h.Core() != nil && rc.h.Core().S != nil {
+		if sm, ok := rc.h.Core().S.Find(r.m.Channel, ts); ok {
+			cm := rc.h.Core().MessageFromSlack(r.m.Channel, &sm)
+			doc = &cm.Doc
+		}
+	}
+	if doc != nil {
+		r.rootPrev = strings.Join(strings.Fields(richtext.PlainText(*doc)), " ")
+	}
+	return r.rootPrev
 }
 
 // reactionBar lays out the ReactionBar at pos (origin is pos's frame in
@@ -1999,7 +2080,11 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	if rc.dense {
 		return r.denseSystemLayout(gtx, rc)
 	}
-	r.rv.SetOptions(r.rvOpts()) // back from Compact's 13px
+	// .textRow__DEPF9 / .text__nwvni: 13px, line-height 1.5 in both
+	// layouts (richview's Compact text, 13px/19.5)
+	o := r.rvOpts()
+	o.Compact = true
+	r.rv.SetOptions(o)
 	c := rc.c
 	m := &r.m
 	w := gtx.Constraints.Max.X
@@ -2019,23 +2104,37 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	case "pinned_item":
 		icon = "pin"
 	}
+	// .systemIcon__mZbDL: a 36px box (the avatar's), the 16px glyph
+	// centred, padding-top 2px
 	is := dp(gtx, 16)
-	at(gtx, padX+dp(gtx, mt.avatar)-is, dp(gtx, 10), func(gtx layout.Context) layout.Dimensions {
+	at(gtx, padX+(dp(gtx, mt.avatar)-is)/2, dp(gtx, mt.padTop)+dp(gtx, 2), func(gtx layout.Context) layout.Dimensions {
 		return icons.Get(icon)(gtx, unit.Dp(16), c.Text3)
 	})
 	r.handler.h, r.handler.m, r.handler.anchor = rc.h, m, rc.origin
-	y := dp(gtx, 8)
+	// the column's first line (4px under the row top) and .container__OsSxI
+	// { padding: 4px 20px 4px 0 }
+	y := dp(gtx, mt.padTop) - dp(gtx, 4) + dp(gtx, 4)
 	body := at(gtx, cx, y, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
 		return r.rv.Layout(gtx, rc.st, &r.handler)
 	})
+	r.bodyRect = image.Rectangle{Min: image.Pt(cx, y), Max: image.Pt(cx+body.Size.X, y+body.Size.Y)}
+	// <time class="timestamp__bfLC8">: 12px inline after the text
+	// (margin-inline-end 8px), on its baseline
 	ts := clock(tsTime(m.TS))
 	tst := tsClass.Enter(gtx, 0, 0)
-	tsS := cssText(tst, textStyle{size: 12, col: c.TimeSystem, lineH: 19})
+	tsS := cssText(tst, textStyle{size: 12, col: c.TimeSystem, lineH: 19.5})
 	tsz := measure(gtx, rc.th, tsS, ts)
-	if body.Size.Y <= dp(gtx, 22) && body.Size.X+dp(gtx, 8)+tsz.X <= cw {
-		at(gtx, cx+body.Size.X+dp(gtx, 8), y+dp(gtx, 1), func(gtx layout.Context) layout.Dimensions { return styledLabel(gtx, rc.th, tst, tsS, ts) })
-		y += max(body.Size.Y, dp(gtx, 20))
+	if body.Size.Y <= dp(gtx, 20) && body.Size.X+dp(gtx, 8)+tsz.X <= cw {
+		trec := op.Record(gtx.Ops)
+		td := styledLabel(gtx, rc.th, tst, tsS, ts)
+		call := trec.Stop()
+		ty := y
+		if bl := r.rv.FirstBaseline(); bl >= 0 && td.Size.Y > 0 {
+			ty = y + bl - (td.Size.Y - td.Baseline)
+		}
+		placeCall(gtx, call, cx+body.Size.X+dp(gtx, 8), ty)
+		y += max(body.Size.Y, dp(gtx, 19.5))
 	} else {
 		y += body.Size.Y
 		at(gtx, cx, y, func(gtx layout.Context) layout.Dimensions { return styledLabel(gtx, rc.th, tst, tsS, ts) })
@@ -2153,23 +2252,31 @@ func (r *row) tombstoneLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions 
 		return icons.Get("trash")(gtx, unit.Dp(20), c.Text2)
 	})
 	r.handler.h, r.handler.m, r.handler.anchor = rc.h, m, rc.origin
-	y := top
-	body := at(gtx, cx, y, func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
-		return r.rv.Layout(gtx, rc.st, &r.handler)
-	})
-	r.bodyRect = image.Rectangle{Min: image.Pt(cx, y), Max: image.Pt(cx+body.Size.X, y+body.Size.Y)}
-	y += max(body.Size.Y, dp(gtx, mt.nameLine)) + dp(gtx, mt.bodyMarginBottom)
+	// .c-message_kit__tombstone__right { margin: -4px 0 }; its
+	// .c-message_kit__tombstone__text { min-height: 44px; display: flex;
+	// align-items: center } centres the line in 44px, the reply bar
+	// right under it (margin -4px 0 4px, 34px)
+	y := top - dp(gtx, 4)
+	rec2 := op.Record(gtx.Ops)
+	g := gtx
+	g.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
+	body := r.rv.Layout(g, rc.st, &r.handler)
+	call := rec2.Stop()
+	box := max(body.Size.Y, dp(gtx, 44))
+	ty := y + (box-body.Size.Y)/2
+	placeCall(gtx, call, cx, ty)
+	r.bodyRect = image.Rectangle{Min: image.Pt(cx, ty), Max: image.Pt(cx+body.Size.X, ty+body.Size.Y)}
+	y += box
 	r.reactRects = r.reactRects[:0]
 	r.addRect = image.Rectangle{}
 	if m.ReplyCount > 0 && !rc.thread && (m.ThreadTS == "" || m.ThreadTS == m.TS) {
-		y += dp(gtx, 4)
 		d := at(gtx, cx, y, func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
 			return slackc.Component(gtx, "ThreadReplies", r, (*row).repliesProps, (*row).layoutThreadReplies)
 		})
 		y += d.Size.Y
 	}
+	y -= dp(gtx, 4)
 	h := max(y, top+av) + dp(gtx, mt.padBottom)
 	content := rec.Stop()
 	content.Add(gtx.Ops)

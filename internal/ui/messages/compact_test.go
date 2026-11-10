@@ -19,7 +19,9 @@ package messages
 // A one-line row is 4 + 22 + 4 = 30 whether or not it starts a group.
 
 import (
+	"encoding/json"
 	"image"
+	"os"
 	"testing"
 	"time"
 
@@ -180,32 +182,77 @@ func TestSlickViewIdleRowsStayPutCompact(t *testing.T) {
 	TestSlickViewIdleRowsStayPut(t)
 }
 
-// TestCompactRowHeightsMatchSlack: the synthetic #release channel's rows
-// (compact_shots_test.go) against the heights Chrome lays out for the same
-// rows in Slack's markup under Slack's CSS (.github/scripts/compact_ref.py,
-// 1100px, measured with getBoundingClientRect). The long wrapped message
-// is left out: Chrome and Gio break its lines at slightly different words.
-// So are rows that differ the same way in both layouts, Clean's own
-// differences (not Compact's): the Block Kit section (bot, 56 vs 52 in
-// both), Clean's broadcast (74 vs 76) and tombstone (80 vs 86).
-func TestCompactRowHeightsMatchSlack(t *testing.T) {
-	slack := map[bool]map[string]float32{
-		true:  {"a1": 30, "a2": 30, "b2": 52, "root": 64, "bc": 52, "join": 33.5, "pin": 49.1, "c1": 30, "gone": 90},
-		false: {"a1": 52, "a2": 30, "b2": 52, "root": 86, "pin": 71.1, "c1": 52},
+// TestRowHeightsMatchSlack: every row of the synthetic #release channel
+// and its thread (compact_shots_test.go), in Clean and Compact, against the
+// height Chrome lays the same row out at in Slack's markup under Slack's
+// shipping CSS (.github/scripts/compact_ref.py, getBoundingClientRect at
+// 1100px and the 520px thread pane). The table is
+// testdata/slack-row-heights.json; the compact-shots workflow measures it
+// again on every run and fails when it no longer matches.
+func TestRowHeightsMatchSlack(t *testing.T) {
+	raw, err := os.ReadFile("testdata/slack-row-heights.json")
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, dense := range []bool{true, false} {
-		setDense(t, dense)
-		app, _, ts := shotsApp(t)
-		v := NewChannelView(coreHost{app: app, th: theme.New(false)}, tShots)
-		v.Preview = true
-		f := scaledFrame(v, 1, 1100, 1500)
-		loadList(v, f)
-		until(t, 5*time.Second, "the rows", f, func() bool { return v.s.rows[ts["gone"]] != nil && itemHeight(v.s, ts["gone"]) > 0 })
-		f()
-		for k, want := range slack[dense] {
-			if got := float32(itemHeight(v.s, ts[k])); got-want > 1 || want-got > 1 {
-				t.Errorf("dense=%v %s: %vpx, Slack %vpx", dense, k, got, want)
+	var slack map[string]map[string]float32
+	if err := json.Unmarshal(raw, &slack); err != nil {
+		t.Fatal(err)
+	}
+	for _, dense := range []bool{false, true} {
+		layoutName := map[bool]string{false: "clean", true: "compact"}[dense]
+		got := shotsRowHeights(t, dense)
+		for _, list := range []string{"channel", "thread"} {
+			want := slack[list+"-"+layoutName]
+			if len(want) == 0 {
+				t.Fatalf("no %s-%s heights in the table", list, layoutName)
+			}
+			for k, w := range want {
+				g, ok := got[list+"-"+layoutName][k]
+				if !ok {
+					t.Errorf("%s-%s %s: no row", list, layoutName, k)
+					continue
+				}
+				if g-w > 1 || w-g > 1 {
+					t.Errorf("%s-%s %s: %vpx, Slack %vpx", list, layoutName, k, g, w)
+				}
 			}
 		}
 	}
+}
+
+// shotsRowHeights lays the synthetic channel and thread out at 1x (1100px,
+// the thread pane 520px) and returns each row's height by list and key.
+func shotsRowHeights(t *testing.T, dense bool) map[string]map[string]float32 {
+	t.Helper()
+	setDense(t, dense)
+	app, _, ts := shotsApp(t)
+	host := coreHost{app: app, th: theme.New(false)}
+	v := NewChannelView(host, tShots)
+	v.Preview = true
+	f := scaledFrame(v, 1, 1100, 1500)
+	loadList(v, f)
+	until(t, 5*time.Second, "the rows", f, func() bool { return v.s.rows[ts["gone"]] != nil && itemHeight(v.s, ts["gone"]) > 0 })
+	f()
+	tv := NewThreadView(host, tShots, ts["root"])
+	ft := scaledFrame(tv, 1, 520, 1100)
+	until(t, 5*time.Second, "the replies", ft, func() bool { return tv.s.rows[ts["r3"]] != nil && itemHeight(tv.s, ts["r3"]) > 0 })
+	ft()
+	return rowHeights(v.s, tv.s, ts, dense)
+}
+
+// rowHeights reads the rows' heights back, keyed like compact-ref-rows.json.
+func rowHeights(ch, th *listState, ts map[string]string, dense bool) map[string]map[string]float32 {
+	layoutName := map[bool]string{false: "clean", true: "compact"}[dense]
+	out := map[string]map[string]float32{"channel-" + layoutName: {}, "thread-" + layoutName: {}}
+	for _, k := range shotChannelKeys {
+		if h := itemHeight(ch, ts[k]); h > 0 {
+			out["channel-"+layoutName][k] = float32(h)
+		}
+	}
+	for _, k := range shotThreadKeys {
+		if h := itemHeight(th, ts[k]); h > 0 {
+			out["thread-"+layoutName][k] = float32(h)
+		}
+	}
+	return out
 }
