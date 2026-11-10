@@ -2695,9 +2695,11 @@ func reactionAria(re *core.Reaction) string {
 	if re.Count == 1 {
 		word = "reaction"
 	}
-	phrase := strings.NewReplacer("_", " ", "-", " ").Replace(re.Name)
-	return strconv.Itoa(re.Count) + " " + word + ", react with " + phrase + " emoji"
+	return strconv.Itoa(re.Count) + " " + word + ", react with " + emojiPhrase.Replace(re.Name) + " emoji"
 }
+
+// emojiPhrase reads an emoji name as words (Lf9r: _ and - become spaces).
+var emojiPhrase = strings.NewReplacer("_", " ", "-", " ")
 
 // reactionCount is the pill's count as formatNumber writes it (en-US
 // grouping: 1,234).
