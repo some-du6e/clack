@@ -49,6 +49,7 @@ type App struct {
 	stopBG context.CancelFunc
 
 	pending  map[string]*pendingSend // client_msg_id -> optimistic send
+	fileEvs  *fileEvents             // file_created seen / awaited (upload_send.go)
 	retired  map[string]string       // confirmed sends' local ts -> real ts (send.go LocalTS)
 	retiredQ []string                // retired's insertion order (bounded)
 	saved    map[string]bool         // "channel/ts" of saved / to-do messages

@@ -89,6 +89,7 @@ type imgPrim struct {
 	fit    bool        // contain (letterbox) instead of cover
 	comp   int16       // component tag, 0 = static
 	tint   color.NRGBA // an iconURL image: the icon's color
+	alpha  float32     // < 1: drawn at this opacity (a pending upload, .5)
 }
 
 // removeBtn is an unfurl's remove ("x") button (unfurl.go): drawn while
@@ -168,6 +169,8 @@ type display struct {
 	removes []removeBtn
 	// overlayIcons paint over images (unfurl.go's video buttons)
 	overlayIcons []overlayIcon
+	// spinners are InfiniteSpinners drawn every frame (pending uploads)
+	spinners []spinPrim
 }
 
 // slot is a run of interactive elements the owner draws (Options.Elements).
@@ -192,6 +195,7 @@ func (d *display) reset() {
 	d.codes = d.codes[:0]
 	d.removes = d.removes[:0]
 	d.overlayIcons = d.overlayIcons[:0]
+	d.spinners = d.spinners[:0]
 }
 
 func (d *display) addTarget(t target) int16 {

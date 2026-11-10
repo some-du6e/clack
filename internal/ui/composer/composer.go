@@ -818,26 +818,27 @@ type outgoing struct {
 
 // send posts the message (with any attached files) through Slack's
 // prepareAndSendMessage → sendMessage thunks.
+//
+// Attached files leave the composer at once, as in Slack (the draft is
+// gone and the placeholder message shows them while their uploads
+// finish); a failed send puts them back.
 func (c *Composer) send(o *outgoing) {
-	prepared, rawFiles, hasFiles := c.att.uploadBatch()
-	if hasFiles {
-		c.att.SetUploading(true)
-	}
-	job := &sendJob{api: c.api, ch: c.ch, ts: c.ts, o: o, prepared: prepared, raw: rawFiles, files: hasFiles,
-		draftID: c.draftID(), view: c.viewContext(), warn: c.ts == "", confirm: c.confirmBroadcast}
+	batch := c.att.takeForSend()
+	hasFiles := !batch.empty()
+	job := &sendJob{api: c.api, ch: c.ch, ts: c.ts, o: o, prepared: batch.prepared, pending: batch.pending, raw: batch.raw,
+		files: hasFiles, draftID: c.draftID(), view: c.viewContext(), warn: c.ts == "", confirm: c.confirmBroadcast}
 	go func() {
 		err := job.run(context.Background())
-		if hasFiles {
+		if hasFiles && err != nil {
 			c.later(func() {
-				c.att.SetUploading(false)
-				if isQuietSendStop(err) {
-					return // Slackbot said why, or the warning was dismissed; the files stay attached
+				// the placeholder is gone and nothing was posted: the
+				// message (restore, below) and its files go back into the
+				// draft, and Slack's FileUploadErrorDialog says so (a
+				// dismissed warning or Slackbot's answer needs no dialog)
+				c.att.putBack(batch.chips)
+				if !isQuietSendStop(err) {
+					popups.FileUploadError(c.h, func() { c.h.Navigate("drafts") })
 				}
-				if err != nil {
-					c.h.Toast("Upload failed: " + err.Error())
-					return
-				}
-				c.att.Clear()
 			})
 		} else if err != nil && !isQuietSendStop(err) { // Slackbot already said why, or the warning was dismissed
 			c.later(func() { c.h.Toast("Message not sent: " + err.Error()) })
@@ -890,6 +891,7 @@ type sendJob struct {
 	ch, ts        string
 	o             *outgoing
 	prepared      []core.PreparedUpload
+	pending       []*core.PendingFile // eager uploads still running: the share waits for them
 	raw           []core.UploadFile
 	files         bool
 	draftID, view string
@@ -928,7 +930,7 @@ func (j *sendJob) deliver(ctx context.Context, ch, ts, text string, blocks json.
 		if j.o.doc.Empty() {
 			comment = ""
 		}
-		return sendFiles(ctx, j.api, ch, ts, comment, blocks, broadcast, j.prepared, j.raw)
+		return sendFiles(ctx, j.api, ch, ts, comment, blocks, broadcast, j.prepared, j.pending, j.raw)
 	}
 	return postMessage(ctx, j.api, ch, ts, text, blocks, broadcast)
 }
@@ -1154,3 +1156,10 @@ func (c *Composer) TypingLine() string { return c.ui.cur.Typing }
 
 // DocText is the composer's text as plain characters (tests).
 func (c *Composer) DocText() string { return c.ed.Doc().Text() }
+
+// AttachFile attaches a file held in memory, like a paste or the + menu's
+// picker (its eager upload starts at once). Safe from any goroutine.
+func (c *Composer) AttachFile(name string, data []byte) { c.att.Add(name, data) }
+
+// Attached is the number of files attached now.
+func (c *Composer) Attached() int { return c.att.Len() }

@@ -303,6 +303,8 @@ func TestUploadProgressAndPrepared(t *testing.T) {
 	f.reply["x"] = `ok`
 	f.reply["files.completeUpload"] = `{"ok":true}`
 	f.reply["files.share"] = `{"ok":true}`
+	// processed: PrepareUpload waits for it (file_created, or polling)
+	f.reply["files.info"] = `{"ok":true,"file":{"id":"F9","name":"a.txt","title":"a.txt","mimetype":"text/plain","filetype":"text","url_private":"https://files.slack.com/files-pri/T1-F9/a.txt"}}`
 	var calls int
 	var last, total int64
 	blocks := json.RawMessage(`[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"c"}]}]}]`)

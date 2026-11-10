@@ -290,6 +290,8 @@ func (a *App) handle(ev slack.Event) {
 		a.onStarEvent(ev.Raw, ev.Type == "star_added")
 	case "file_change", "file_shared", "file_public":
 		go a.onFileChange(ev) // files.info off the event pump
+	case "file_created":
+		a.onFileCreated(ev) // an upload in PROCESSING resolves (upload_send.go)
 	default:
 		// sh_room_*, huddle_invite, huddle_invite_cancel (Slack's
 		// huddleInviteCancelRtmHandler), huddle_start…

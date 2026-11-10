@@ -69,6 +69,9 @@ func newFakeSlack(t testing.TB) *fakeSlack {
 				"message": map[string]any{"type": "message", "ts": ts, "user": tSelf, "text": r.Form.Get("text")}}
 		case "files.getUploadURL":
 			rep = map[string]any{"ok": true, "file": "F0TEST", "upload_url": f.srv.URL + "/upload/F0TEST"}
+		case "files.info": // processed at once: the eager upload's PROCESSING wait ends on the first poll
+			rep = map[string]any{"ok": true, "file": map[string]any{"id": r.Form.Get("file"), "name": "upload.png", "title": "upload.png",
+				"mimetype": "image/png", "filetype": "png", "mode": "hosted", "url_private": f.srv.URL + "/files-pri/T0-" + r.Form.Get("file") + "/upload.png"}}
 		case "edge/permissions/info": // a regular member of a small workspace may @channel and @everyone
 			rep = map[string]any{"ok": true, "allowed": []string{"CAN_AT_CHANNEL", "CAN_AT_EVERYONE"}, "allowed_per_team": map[string]any{}}
 		case "drafts.create", "drafts.update":

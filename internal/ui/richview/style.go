@@ -262,6 +262,9 @@ type Options struct {
 	Edited bool // append "(edited)" after the last text block
 	Muted  bool // system message: body in the secondary color
 	Dim    bool // pending/failed: draw at reduced opacity
+	// CompactFiles is MessageFiles' shouldUseCompactStack: the files
+	// without FilesMetaTextWrapper's title line (filemeta.go).
+	CompactFiles bool
 	// Secondary draws the body in the secondary text color (Text3) but
 	// keeps mentions as pills: read Activity rows. Muted is for system
 	// messages, which also turn member mentions into plain names.

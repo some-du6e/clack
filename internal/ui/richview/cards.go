@@ -608,8 +608,9 @@ func (l *lay) file(f *richtext.File, x, y, w int) int {
 
 // mediaFile reports whether f lays out in Slack's media gallery (gallery
 // v3, isMediaGalleryViewContext in channels and threads): images with a
-// thumbnail (unless expand_internal_inline_imgs is off) and playable
-// videos (fileIsImage / fileIsPlayableVideo).
+// thumbnail and playable videos (fileIsImage / fileIsPlayableVideo).
+// expand_internal_inline_imgs off collapses them under their title line
+// instead (filemeta.go).
 func mediaFile(f *richtext.File) bool {
 	if f == nil {
 		return false
@@ -617,7 +618,7 @@ func mediaFile(f *richtext.File) bool {
 	if f.IsVideo {
 		return true
 	}
-	return f.IsImage && f.Thumb != nil && !uipref.Get().NoInternalImgs
+	return f.IsImage && f.Thumb != nil
 }
 
 // galleryCaps is Slack's media-gallery v3 max image height (CSS px) per
@@ -905,6 +906,9 @@ func (l *lay) galleryTile(f *richtext.File, r image.Rectangle, dim [2]float64, n
 			ir = r
 		}
 		l.d.imgs = append(l.d.imgs, imgPrim{r: ir, url: f.Thumb.URL, radii: radii, target: tg, px: max(ir.Dx(), ir.Dy())})
+		l.pendingTile(f, r, len(l.d.imgs)-1)
+	} else {
+		l.pendingTile(f, r, -1)
 	}
 	l.d.hits = append(l.d.hits, hit{r: r, t: tg})
 	l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: r, radius: rad, stroke: p.Border, bw: l.dp(1), target: -1, layer: 1})

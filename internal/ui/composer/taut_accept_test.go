@@ -334,7 +334,7 @@ func TestTautAnonymizeFilenames(t *testing.T) {
 		t.Errorf("prepared %+v", up)
 	}
 	check("attach", 1)
-	err = sendFiles(ctx, api, tChGen, "", "", nil, false, nil, []core.UploadFile{{Name: "vacation-at-home.png", Data: []byte("\x89PNG synthetic")}})
+	err = sendFiles(ctx, api, tChGen, "", "", nil, false, nil, nil, []core.UploadFile{{Name: "vacation-at-home.png", Data: []byte("\x89PNG synthetic")}})
 	if err != nil {
 		t.Fatalf("share: %v", err)
 	}

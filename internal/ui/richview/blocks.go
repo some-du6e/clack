@@ -111,6 +111,9 @@ func (l *lay) gap(prev, cur richtext.BlockKind) int {
 	if prev == richtext.FileBlock || prev == richtext.AttachmentBlock {
 		return l.dp(8)
 	}
+	if prev == richtext.FileStatus { // its own 4px margin, then the gallery
+		return 0
+	}
 	return l.dp(4)
 }
 
@@ -256,6 +259,25 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 			i, prev = j-1, j-1
 			skipGap = true
 			continue
+		}
+		// MessageFiles' FilesMetaTextWrapper (filemeta.go): the title
+		// line over the message's files, unless the placeholder's
+		// PendingFilesAtom line ("Uploading…") is there instead
+		if b.Kind == richtext.FileBlock && top && !l.inAtt && l.mode&modeAtts == 0 && !l.opts.CompactFiles && b.File != nil &&
+			(i == 0 || bs[i-1].Kind != richtext.FileStatus && bs[i-1].Kind != richtext.FileBlock) {
+			var files []*richtext.File
+			j := i
+			for j < len(bs) && bs[j].Kind == richtext.FileBlock && bs[j].File != nil {
+				files = append(files, bs[j].File)
+				j++
+			}
+			mh, shown := l.fileMeta(files, x, y, w)
+			y += mh
+			if !shown {
+				y -= l.dp(4) // collapsed: only the line
+				i, prev = j-1, j-1
+				continue
+			}
 		}
 		// Slack's FileGallery: consecutive visual files (images, videos)
 		// lay out as one media gallery.
@@ -496,7 +518,16 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 		if l.mode&modeAtts != 0 && !l.inAtt {
 			return l.compFile(b, x, y, w)
 		}
+		if b.File.Pending { // c-pending_files__generic_file--pending: the pillow at .5
+			nb, nf := len(l.d.boxes), len(l.d.frags)
+			h := l.file(b.File, x, y, w)
+			l.fade(nb, nf)
+			return h
+		}
 		return l.file(b.File, x, y, w)
+
+	case richtext.FileStatus:
+		return l.fileStatus(b, x, y, w)
 	}
 	// Unknown: lay out whatever text it has.
 	if len(b.Spans) > 0 {

@@ -285,7 +285,7 @@ func TestUploadForInput(t *testing.T) {
 	f.reply["files.getUploadURL"] = `{"ok":true,"file":"F7","upload_url":"` + f.srv.URL + `/upload/x"}`
 	f.reply["x"] = `{"ok":true}`
 	f.reply["files.completeUpload"] = `{"ok":true}`
-	f.reply["files.info"] = `{"ok":true,"file":{"id":"F7","name":"a.txt","title":"a.txt","mimetype":"text/plain"}}`
+	f.reply["files.info"] = `{"ok":true,"file":{"id":"F7","name":"a.txt","title":"a.txt","mimetype":"text/plain","url_private":"https://files.slack.com/files-pri/T1-F7/a.txt"}}`
 	raw, err := a.Interactive().UploadForInput(context.Background(), UploadFile{Name: "a.txt", Data: []byte("hi")}, nil)
 	if err != nil {
 		t.Fatal(err)

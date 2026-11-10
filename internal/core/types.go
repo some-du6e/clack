@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 
 	"github.com/some-du6e/yoloslackgoclient/internal/richtext"
+	"github.com/some-du6e/yoloslackgoclient/internal/slack"
 	"github.com/some-du6e/yoloslackgoclient/internal/store"
 )
 
@@ -296,13 +297,19 @@ type UploadOpts struct {
 	Blocks                     json.RawMessage  // the message's rich_text blocks (Comment is then unused)
 	Files                      []UploadFile     // uploaded now
 	Prepared                   []PreparedUpload // uploaded earlier with PrepareUpload
-	Progress                   func(sent, total int64)
+	// Pending are attached files whose eager upload may still run: the
+	// share waits for them (the placeholder draws them meanwhile).
+	Pending  []*PendingFile
+	Progress func(sent, total int64)
 }
 
 // PreparedUpload is a file uploaded with PrepareUpload but not yet shared.
 type PreparedUpload struct {
 	ID, Name, Title string
 	Size            int64
+	// File is files.info's object once Slack processed the upload (nil
+	// for files restored from a draft).
+	File *slack.File
 }
 
 type UploadFile struct {

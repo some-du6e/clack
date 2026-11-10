@@ -13,6 +13,7 @@ import (
 	_ "image/png"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -111,10 +112,13 @@ type attChip struct {
 	// thumbURL is Slack's thumbnail of a restored file (draft_files.go).
 	thumbURL string
 
+	// pf is the eager upload as Slack's send sees it (its uploadPromise):
+	// the placeholder draws it and the share waits for it. nil for files
+	// restored from a server draft.
+	pf *core.PendingFile
+
 	// Guarded by attachments.mu.
-	sending   bool
-	batch     int   // SetUploading(true) batch that took the file, 0 = none
-	preparing bool  // PrepareUpload (byte upload) in flight
+	preparing bool  // PrepareUpload (bytes, then Slack's processing) in flight
 	sent      int64 // bytes uploaded so far (prepare progress)
 	ptotal    int64 // total bytes to upload (slightly > file size)
 	prepared  *core.PreparedUpload
@@ -139,12 +143,9 @@ type attachments struct {
 
 	onChange func() // guarded by mu: the owning composer's attChanged (draft_files.go)
 
-	mu        sync.Mutex
-	chips     []*attChip
-	total     int64
-	nextBatch int
-	inflight  []int // batches being uploaded, oldest first
-	done      int   // last finished batch (Clear removes it)
+	mu    sync.Mutex
+	chips []*attChip
+	total int64
 
 	picking atomic.Bool
 	pasting atomic.Bool
@@ -157,83 +158,92 @@ func newAttachments(h Host) *attachments {
 	return a
 }
 
-// Len is the number of files that will go with the next send (files of an
-// upload in flight don't count).
+// Len is the number of files that will go with the next send.
 func (a *attachments) Len() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	n := 0
-	for _, c := range a.chips {
-		if !c.sending {
-			n++
-		}
-	}
-	return n
+	return len(a.chips)
 }
 
-// Files snapshots the pending files for core.Upload. The byte slices are
-// shared, never modified.
+// Files snapshots the attached files. The byte slices are shared, never
+// modified.
 func (a *attachments) Files() []core.UploadFile {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	var out []core.UploadFile
 	for _, c := range a.chips {
-		if !c.sending {
-			out = append(out, core.UploadFile{Name: c.name, Title: c.title, Data: c.data})
-		}
+		out = append(out, core.UploadFile{Name: c.name, Title: c.title, Data: c.data})
 	}
 	return out
 }
 
-// SetUploading(true) marks the pending files as uploading (dimmed, with a
-// progress bar; they no longer count in Len/Files). SetUploading(false)
-// ends the oldest upload in flight: its files become pending again (so a
-// failed upload can be retried) until Clear removes them. Files attached
-// while an upload runs stay pending and survive that Clear.
-func (a *attachments) SetUploading(on bool) {
+// sendBatch is what one send takes from the composer.
+type sendBatch struct {
+	chips    []*attChip
+	prepared []core.PreparedUpload // uploaded and processed
+	pending  []*core.PendingFile   // eager uploads still running
+	raw      []core.UploadFile     // no eager upload (it failed): uploaded at send
+}
+
+func (b sendBatch) empty() bool { return len(b.chips) == 0 }
+
+// takeForSend removes every attached file from the composer for a send:
+// Slack's composer empties at once (the draft goes, the pending files are
+// marked isSending) and the placeholder message shows them. Files whose
+// eager upload is done go as prepared, those still uploading as pending
+// (the share waits for them), and those whose upload failed are uploaded
+// again at send.
+func (a *attachments) takeForSend() (b sendBatch) {
 	a.mu.Lock()
-	if on {
-		a.nextBatch++
-		b := a.nextBatch
-		for _, c := range a.chips {
-			if !c.sending {
-				c.sending, c.batch = true, b
-			}
+	for _, c := range a.chips {
+		b.chips = append(b.chips, c)
+		switch {
+		case c.prepared != nil:
+			p := *c.prepared
+			p.Title = c.title // shared under the chip's name
+			b.prepared = append(b.prepared, p)
+		case c.pf != nil && c.prepErr == nil && a.h.Core() != nil:
+			c.pf.Title = c.title
+			b.pending = append(b.pending, c.pf)
+		default:
+			b.raw = append(b.raw, core.UploadFile{Name: c.name, Title: c.title, Data: c.data})
 		}
-		a.inflight = append(a.inflight, b)
-	} else if len(a.inflight) == 0 {
-		for _, c := range a.chips {
-			c.sending = false
-		}
-	} else {
-		b := a.inflight[0]
-		a.inflight = a.inflight[1:]
-		for _, c := range a.chips {
-			if c.batch == b {
-				c.sending = false
-			}
-		}
-		a.done = b
+	}
+	a.chips, a.total = nil, 0
+	a.mu.Unlock()
+	if !b.empty() {
+		a.h.Invalidate()
+		pendingChanged()
+		a.notify()
+	}
+	return b
+}
+
+// putBack returns a failed send's files to the composer, ahead of any
+// attached since (Slack gives them back to the draft).
+func (a *attachments) putBack(chips []*attChip) {
+	if len(chips) == 0 {
+		return
+	}
+	a.mu.Lock()
+	a.chips = append(append([]*attChip(nil), chips...), a.chips...)
+	if len(a.chips) > attMaxFiles {
+		a.chips = a.chips[:attMaxFiles]
+	}
+	a.total = 0
+	for _, c := range a.chips {
+		a.total += int64(len(c.data))
 	}
 	a.mu.Unlock()
 	a.h.Invalidate()
+	pendingChanged()
+	a.notify()
 }
 
-// Clear removes the files of the last finished upload, or every pending
-// file when no upload has finished since the last Clear.
+// Clear removes every attached file.
 func (a *attachments) Clear() {
 	a.mu.Lock()
-	keep := make([]*attChip, 0, len(a.chips))
-	for _, c := range a.chips {
-		drop := !c.sending && (a.done == 0 || c.batch == a.done)
-		if drop {
-			a.total -= int64(len(c.data))
-		} else {
-			keep = append(keep, c)
-		}
-	}
-	a.chips = keep
-	a.done = 0
+	a.chips, a.total = nil, 0
 	a.mu.Unlock()
 	a.h.Invalidate()
 	pendingChanged()
@@ -250,7 +260,8 @@ func (a *attachments) add(name string, data []byte) bool {
 	err := attCheckAdd(a.pendingLocked(), a.total, int64(len(data)))
 	var c *attChip
 	if err == nil {
-		c = &attChip{id: int(attNextID.Add(1)), name: name, title: name, data: data, kind: attKindOf(name, data)}
+		c = &attChip{id: int(attNextID.Add(1)), name: name, title: name, data: data, kind: attKindOf(name, data),
+			pf: core.NewPendingFile(name, name, data)}
 		a.chips = append(a.chips, c)
 		a.total += int64(len(data))
 	}
@@ -267,8 +278,10 @@ func (a *attachments) add(name string, data []byte) bool {
 }
 
 // prepare uploads a chip's bytes to Slack immediately (files.getUploadURL,
-// the multipart POST, files.completeUpload) so sending is instant. Progress drives the chip's bar; a
-// failure falls back to uploading at send time (raw Files).
+// the multipart POST, files.completeUpload) and waits for Slack to process
+// them (core.PrepareUpload), so sending only shares. The tile's spinner
+// runs meanwhile; a failure shows the warning and falls back to uploading
+// at send time (raw Files).
 func (a *attachments) prepare(c *attChip) {
 	if c == nil || a.h.Core() == nil {
 		return
@@ -287,6 +300,9 @@ func (a *attachments) prepare(c *attChip) {
 			c.title = n
 		}
 		c.name = n
+		if c.pf != nil {
+			c.pf.Name = n
+		}
 		a.mu.Unlock()
 		name = n
 		pendingChanged()
@@ -297,6 +313,9 @@ func (a *attachments) prepare(c *attChip) {
 		a.mu.Lock()
 		c.sent, c.ptotal = sent, total
 		a.mu.Unlock()
+		if c.pf != nil {
+			c.pf.Progress(sent, total)
+		}
 		if now := time.Now(); now.Sub(last) > 40*time.Millisecond || sent >= total {
 			last = now
 			a.h.Invalidate()
@@ -306,50 +325,25 @@ func (a *attachments) prepare(c *attChip) {
 	pu, err := prepareFile(context.Background(), coreAPI{a.h.Core()}, name, data, prog)
 	a.mu.Lock()
 	c.preparing = false
+	var p core.PreparedUpload
 	if err != nil {
 		c.prepErr = err
 	} else {
-		p := pu
+		p = pu
 		p.Title = c.title // a rename while the bytes went up
 		c.prepared = &p
 	}
+	pf := c.pf
 	a.mu.Unlock()
+	if pf != nil {
+		pf.Finish(p, err) // a send waiting for it shares it now
+	}
 	a.h.Invalidate()
 	pendingChanged() // its Slack file id (state.files)
 	a.notify()       // … which the draft carries now
 }
 
-// uploadBatch returns the files to share on send: PrepareUpload handles (for
-// files whose byte upload finished) plus raw files (for any still preparing
-// or that failed). hasAny is false when there's nothing to send.
-func (a *attachments) uploadBatch() (prepared []core.PreparedUpload, raw []core.UploadFile, hasAny bool) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	for _, c := range a.chips {
-		if c.sending {
-			continue
-		}
-		hasAny = true
-		if c.prepared != nil {
-			p := *c.prepared
-			p.Title = c.title // shared under the chip's name
-			prepared = append(prepared, p)
-		} else {
-			raw = append(raw, core.UploadFile{Name: c.name, Title: c.title, Data: c.data})
-		}
-	}
-	return
-}
-
-func (a *attachments) pendingLocked() int {
-	n := 0
-	for _, c := range a.chips {
-		if !c.sending {
-			n++
-		}
-	}
-	return n
-}
+func (a *attachments) pendingLocked() int { return len(a.chips) }
 
 // precheck rejects a file by size before it is read into memory.
 func (a *attachments) precheck(name string, size int64) bool {
@@ -949,16 +943,16 @@ type attView struct {
 	title     string // the name the chip shows
 	thumb     paint.ImageOp
 	thumbPx   int
-	sending   bool
 	preparing bool
-	sent      int64
-	ptotal    int64
+	failed    bool
 	asImage   bool
 	size      int64 // bytes (or Slack's size of a restored file)
 }
 
-// Layout draws the chip row (zero size when empty). The constraints carry
-// the composer box's inner width.
+// Layout draws the file gallery (zero size when empty): Slack's
+// p-multi_file_upload__file_gallery in the message input (padding 12px,
+// tiles 12px apart; .p-multi_file_upload__container--medium: 62px tiles).
+// The constraints carry the composer box's inner width.
 func (a *attachments) Layout(gtx layout.Context) layout.Dimensions {
 	px := gtx.Dp(attChipH)
 	a.mu.Lock()
@@ -967,30 +961,25 @@ func (a *attachments) Layout(gtx layout.Context) layout.Dimensions {
 		return layout.Dimensions{}
 	}
 	views := make([]attView, len(a.chips))
-	anySending := false
 	for i, c := range a.chips {
 		if c.kind.Image && !c.thumbBad && c.thumbPx != px && !c.thumbBusy {
 			c.thumbBusy = true
 			go a.makeThumb(c, px)
 		}
-		views[i] = attView{c: c, name: c.name, title: c.title, thumb: c.thumb, thumbPx: c.thumbPx, sending: c.sending,
-			preparing: c.preparing, sent: c.sent, ptotal: c.ptotal,
+		views[i] = attView{c: c, name: c.name, title: c.title, thumb: c.thumb, thumbPx: c.thumbPx,
+			preparing: c.preparing, failed: c.prepErr != nil && c.prepared == nil,
 			asImage: c.kind.Image && !c.thumbBad, size: c.size()}
-		anySending = anySending || c.sending || c.preparing
 	}
 	a.mu.Unlock()
 
 	for _, v := range views {
-		if v.c.remove.Clicked(gtx) && !v.sending {
+		if v.c.remove.Clicked(gtx) {
 			a.remove(v.c)
 		}
 	}
-	if anySending {
-		gtx.Execute(op.InvalidateCmd{})
-	}
 
-	padX, padT, padB, gap := gtx.Dp(12), gtx.Dp(10), gtx.Dp(6), gtx.Dp(8)
-	avail := max(gtx.Constraints.Max.X-2*padX, px)
+	pad, gap := gtx.Dp(12), gtx.Dp(12)
+	avail := max(gtx.Constraints.Max.X-2*pad, px)
 	x, y := 0, 0
 	for _, v := range views {
 		w := px
@@ -1001,25 +990,35 @@ func (a *attachments) Layout(gtx layout.Context) layout.Dimensions {
 			x, y = 0, y+px+gap
 		}
 		sz := image.Pt(w, px)
-		offset(gtx, padX+x, padT+y, func(gtx layout.Context) layout.Dimensions {
+		offset(gtx, pad+x, pad+y, func(gtx layout.Context) layout.Dimensions {
 			// MultiFileUploadItem (attach_slack.go): the chip.
 			return slackc.Component(gtx, "MultiFileUploadItem", attItem{a: a, v: v, sz: sz}, attItem.props, attItem.layout)
 		})
 		x += w + gap
 	}
-	return layout.Dimensions{Size: image.Pt(max(gtx.Constraints.Max.X, gtx.Constraints.Min.X), padT+y+px+padB)}
+	return layout.Dimensions{Size: image.Pt(max(gtx.Constraints.Max.X, gtx.Constraints.Min.X), pad+y+px+pad)}
 }
+
+// attStatusBtn is RemoveFileButton (p-multi_file_upload__file_status_btn):
+// a 22px circle of the primary background 10px past the tile's top-right
+// corner. While the upload runs (IDLE, UPLOADING, PROCESSING) it holds a
+// medium InfiniteSpinner; an ERROR shows warning-filled (20); otherwise,
+// or while the button itself is hovered, the remove icon: a 20px
+// base-inv-pry circle with the content-inv-pry ×, which (--remove) only
+// shows while the tile is hovered.
+const attStatusBtn = 22
 
 func (a *attachments) layoutChip(gtx layout.Context, v attView, sz image.Point) {
 	th := a.h.Theme()
 	c := v.c
 	hovered := c.hover.Update(gtx.Source)
 	rad := gtx.Dp(attRadius)
-	over := gtx.Dp(6) // the remove button overhangs the top-right corner
+	d := gtx.Dp(attStatusBtn)
+	over := gtx.Dp(10) // top:-10px; right:-10px
 	r := image.Rectangle{Max: sz}
 
-	// Hover area: the chip plus the remove button's overhang, so moving onto
-	// the button keeps the chip hovered.
+	// Hover area: the tile plus the status button's overhang, so moving
+	// onto the button keeps the tile hovered.
 	area := clip.Rect(image.Rect(0, -over, sz.X+over, sz.Y)).Push(gtx.Ops)
 	c.hover.Add(gtx.Ops)
 
@@ -1028,47 +1027,116 @@ func (a *attachments) layoutChip(gtx layout.Context, v attView, sz image.Point) 
 	} else {
 		a.drawCard(gtx, th, v, r, rad)
 	}
-	if v.sending {
-		fillRRect(gtx, r, rad, withAlpha(th.C.Bg, 0x80))
-		attProgress(gtx, th, r)
-	} else if v.preparing {
-		// Determinate bar: bytes are uploaded at attach time (upload-at-attach).
-		fillRRect(gtx, r, rad, withAlpha(th.C.Bg, 0x66))
-		frac := float32(0)
-		if v.ptotal > 0 {
-			frac = float32(v.sent) / float32(v.ptotal)
-		}
-		attProgressFrac(gtx, th, r, frac)
+	onBtn := c.remove.Hovered()
+	var mode int // 0 hidden, 1 spinner, 2 warning, 3 remove
+	switch {
+	case onBtn:
+		mode = 3
+	case v.preparing:
+		mode = 1
+	case v.failed:
+		mode = 2
+	case hovered:
+		mode = 3
 	}
-	if hovered && !v.sending {
-		d := gtx.Dp(20)
+	if mode != 0 {
 		offset(gtx, sz.X-d+over, -over, func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Exact(image.Pt(d, d))
 			return c.remove.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				bg := rgb(0x1d1c1d)
-				if th.Dark {
-					fillCircle(gtx, image.Pt(d/2, d/2), d/2, th.C.Border)
-					fillCircle(gtx, image.Pt(d/2, d/2), d/2-1, bg)
-				} else {
-					fillCircle(gtx, image.Pt(d/2, d/2), d/2, bg)
+				ctr := image.Pt(d/2, d/2)
+				switch mode {
+				case 1:
+					fillCircle(gtx, ctr, d/2, th.C.Bg)
+					s := gtx.Dp(16)
+					offset(gtx, (d-s)/2, (d-s)/2, func(gtx layout.Context) layout.Dimensions {
+						attSpinner(gtx, s, th.C.Link, th.C.FgMuted)
+						return layout.Dimensions{Size: image.Pt(s, s)}
+					})
+				case 2:
+					fillCircle(gtx, ctr, d/2, th.C.Bg)
+					ic := gtx.Dp(20)
+					offset(gtx, (d-ic)/2, (d-ic)/2, func(gtx layout.Context) layout.Dimensions {
+						return icons.Get("warning-filled")(gtx, unit.Dp(20), th.C.Danger)
+					})
+				default:
+					fillCircle(gtx, ctr, gtx.Dp(10), th.C.Tooltip)
+					ic := gtx.Dp(14)
+					offset(gtx, (d-ic)/2, (d-ic)/2, func(gtx layout.Context) layout.Dimensions {
+						return icons.Get("close")(gtx, unit.Dp(14), th.C.TooltipText)
+					})
 				}
-				ic := gtx.Dp(14)
-				offset(gtx, (d-ic)/2, (d-ic)/2, func(gtx layout.Context) layout.Dimensions {
-					return icons.Get("close")(gtx, unit.Dp(14), rgb(0xffffff))
-				})
 				pointer.CursorPointer.Add(gtx.Ops)
 				return layout.Dimensions{Size: image.Pt(d, d)}
 			})
 		})
 	}
 	area.Pop()
-	if hovered && !v.sending {
+	if hovered {
 		// FileFieldset > EditFileDialogTitle: Slack's rename dialog, at
 		// the chip's edit spot. Clack has no such dialog; both draw
 		// nothing unless a plugin adds to them.
 		slackc.Component(gtx, "FileFieldset", attItem{a: a, v: v, sz: sz}, attItem.fieldsetProps, attItem.layoutFieldset)
 	}
-	popups.Tooltip(gtx, th, &c.tip, hovered && !c.remove.Hovered(), sz, popups.Above, v.title, "")
+	tip := v.title
+	if onBtn {
+		tip = attRemoveTip(v.name) // RemoveFileButton's tooltip
+	}
+	popups.Tooltip(gtx, th, &c.tip, hovered, sz, popups.Above, tip, "")
+}
+
+// attRemoveTip is RemoveFileButton's tooltip.
+func attRemoveTip(name string) string {
+	m := attMime(name)
+	switch {
+	case strings.HasPrefix(m, "audio/"):
+		return "Remove audio clip"
+	case strings.HasPrefix(m, "video/"):
+		return "Remove video clip"
+	}
+	return "Remove file"
+}
+
+// attSpinner is Slack's InfiniteSpinner (s6So) in a d-pixel box: a
+// stroke-8 (of 100) track at .25 of track, and two 55-unit arcs in col
+// turning once per 1.2s on the ring's and tail's cubic-beziers. It keeps
+// frames coming while drawn.
+func attSpinner(gtx layout.Context, d int, col, track color.NRGBA) {
+	sc := float32(d) / 100
+	r := 35 * sc
+	sw := 8 * sc
+	ctr := f32.Pt(float32(d)/2, float32(d)/2)
+	arc := func(a0, sweep float32, c color.NRGBA) {
+		var p clip.Path
+		p.Begin(gtx.Ops)
+		p.MoveTo(f32.Pt(ctr.X+r*float32(math.Cos(float64(a0))), ctr.Y+r*float32(math.Sin(float64(a0)))))
+		p.ArcTo(ctr, ctr, sweep)
+		paint.FillShape(gtx.Ops, c, clip.Stroke{Path: p.End(), Width: sw}.Op())
+	}
+	track.A = uint8(float32(track.A)*.25 + .5)
+	arc(0, 2*math.Pi-0.001, track)
+	t := float64(gtx.Now.UnixMilli()%1200) / 1200
+	dash := float32(55.0 / 219.9 * 2 * math.Pi)
+	base := float32(-90.0/219.9*2*math.Pi) - float32(math.Pi/4)
+	arc(base+float32(2*math.Pi*attBezier(.25, .29, .54, .86, t)), dash, col)
+	arc(base+float32(2*math.Pi*attBezier(.41, .24, .64, .69, t)), dash, col)
+	gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(33 * time.Millisecond)})
+}
+
+// attBezier is CSS cubic-bezier(x1, y1, x2, y2) at progress x.
+func attBezier(x1, y1, x2, y2, x float64) float64 {
+	lo, hi := 0.0, 1.0
+	t := x
+	for range 30 {
+		t = (lo + hi) / 2
+		mt := 1 - t
+		if 3*mt*mt*t*x1+3*mt*t*t*x2+t*t*t < x {
+			lo = t
+		} else {
+			hi = t
+		}
+	}
+	mt := 1 - t
+	return 3*mt*mt*t*y1 + 3*mt*t*t*y2 + t*t*t
 }
 
 func (a *attachments) drawThumb(gtx layout.Context, th *theme.Theme, v attView, r image.Rectangle, rad int) {
@@ -1112,47 +1180,6 @@ func (a *attachments) drawCard(gtx layout.Context, th *theme.Theme, v attView, r
 		gtx.Constraints = layout.Constraints{Max: image.Pt(tw, gtx.Dp(18))}
 		return label(gtx, sh, textStyle{Size: 13, LineHeight: 18, Color: th.C.FgMuted, MaxLines: 1}, k.Label)
 	})
-}
-
-// attProgressFrac draws a determinate progress bar (0..1) along the chip's
-// bottom, used while the file's bytes upload at attach time.
-func attProgressFrac(gtx layout.Context, th *theme.Theme, r image.Rectangle, frac float32) {
-	in := gtx.Dp(8)
-	h := max(gtx.Dp(4), 2)
-	track := image.Rect(r.Min.X+in, r.Max.Y-in-h, r.Max.X-in, r.Max.Y-in)
-	if track.Dx() <= 0 {
-		return
-	}
-	fillRRect(gtx, track, h/2, withAlpha(th.C.Fg, 0x26))
-	if frac < 0 {
-		frac = 0
-	} else if frac > 1 {
-		frac = 1
-	}
-	w := int(frac * float32(track.Dx()))
-	if w > 0 {
-		fillRRect(gtx, image.Rect(track.Min.X, track.Min.Y, track.Min.X+w, track.Max.Y), h/2, rgb(attBlue))
-	}
-}
-
-// attProgress draws an indeterminate progress bar along the chip's bottom
-// (the final share has no byte progress).
-func attProgress(gtx layout.Context, th *theme.Theme, r image.Rectangle) {
-	in := gtx.Dp(8)
-	h := max(gtx.Dp(4), 2)
-	track := image.Rect(r.Min.X+in, r.Max.Y-in-h, r.Max.X-in, r.Max.Y-in)
-	if track.Dx() <= 0 {
-		return
-	}
-	fillRRect(gtx, track, h/2, withAlpha(th.C.Fg, 0x26))
-	const period = 1400 // ms
-	t := float32(gtx.Now.UnixMilli()%period) / period
-	seg := track.Dx() * 2 / 5
-	x := track.Min.X - seg + int(t*float32(track.Dx()+seg))
-	bar := image.Rect(max(x, track.Min.X), track.Min.Y, min(x+seg, track.Max.X), track.Max.Y)
-	if bar.Dx() > 0 {
-		fillRRect(gtx, bar, h/2, rgb(attBlue))
-	}
 }
 
 // ---- in-app file picker (no native chooser available) ----
