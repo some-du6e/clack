@@ -640,6 +640,11 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 		ix := pad + rs.indent
 		iy := (rowH - gtx.Dp(16)) / 2
 		right := rw - gtx.Dp(6)
+		// BaseChannelSuffix's draft mark (showDraft: a draft here, the
+		// channel not open, and the viewer can post in it) goes just
+		// before the badge
+		draft := conv != nil && !sel && !conv.Archived && !conv.Preview && a.data != nil && a.data.draftChans[conv.ID] &&
+			a.Core() != nil && a.Core().PrefBool("has_drafted_message", true)
 		if rs.mentions > 0 {
 			m := op.Record(gtx.Ops)
 			bd := a.badge(gtx, rs.mentions, c.Badge, c.BadgeText)
@@ -647,20 +652,17 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 			t := op.Offset(image.Pt(right-bd.Size.X, (rowH-bd.Size.Y)/2)).Push(gtx.Ops)
 			call.Add(gtx.Ops)
 			t.Pop()
-			right -= bd.Size.X + gtx.Dp(6)
+			right -= bd.Size.X
+			if !draft {
+				right -= gtx.Dp(6)
+			}
 		}
 		// Drafts & sent's badges (Slack's OutboxLinkContent): "✎ N" for
 		// unsent drafts, capped at maxCount 99 ("99+"), then "schedule-send
 		// N" for scheduled messages (uncapped). Each p-outbox_link__badge
 		// is 13px text 8px after the previous, its 13px icon 2px before
-		// the number; the list ends at the row's 8px padding. A 13px
-		// pencil also marks conversations with a draft.
+		// the number; the list ends at the row's 8px padding.
 		if d := a.data; d != nil {
-			pencil := func(x int) {
-				at(gtx, image.Pt(x, (rowH-gtx.Dp(13))/2), image.Pt(gtx.Dp(13), gtx.Dp(13)), func(gtx layout.Context) layout.Dimensions {
-					return icons.Get("edit")(gtx, 13, fg)
-				})
-			}
 			switch {
 			case r.kind == sbLink && r.key == "drafts" && (d.draftN > 0 || d.schedN > 0):
 				right = rw - gtx.Dp(8)
@@ -696,9 +698,25 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 				pass.Pop()
 				popups.Tooltip(gtx, a.th, &a.sidebar.outboxTip, a.sidebar.outboxHover.Update(gtx.Source), lr.Size(), popups.Right, outboxTip(d.draftN, d.schedN), "")
 				t.Pop()
-			case conv != nil && rs.mentions == 0 && d.draftChans[conv.ID]:
-				right = rw - gtx.Dp(8) - gtx.Dp(13)
-				pencil(right)
+			case draft:
+				// BaseChannelSuffixDraftIcon: the icon font's pencil
+				// (c-icon--pencil, inline, size inherit) in a 20px
+				// p-channel_sidebar__suffix_generic at 14px, the row's
+				// colour (a muted channel's suffix at .64); the suffix ends
+				// at the row's 8px padding (6px with a badge, which it
+				// abuts)
+				if rs.mentions == 0 {
+					right = rw - gtx.Dp(8)
+				}
+				slot, gs := gtx.Dp(20), gtx.Dp(14)
+				right -= slot
+				pc := fg
+				if conv.Muted {
+					pc = theme.WithAlpha(pc, uint8(float32(pc.A)*0.64+0.5))
+				}
+				at(gtx, image.Pt(right+(slot-gs)/2, (rowH-gs)/2), image.Pt(gs, gs), func(gtx layout.Context) layout.Dimensions {
+					return icons.Get("pencil-glyph")(gtx, 14, pc)
+				})
 				right -= gtx.Dp(6)
 			}
 		}

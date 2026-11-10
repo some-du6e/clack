@@ -32,6 +32,7 @@ type draftRaw struct {
 	LastUpdatedTS string          `json:"last_updated_ts"`
 	IsSent        bool            `json:"is_sent"`
 	IsDeleted     bool            `json:"is_deleted"`
+	FromComposer  bool            `json:"is_from_composer"`
 	FileIDs       []string        `json:"file_ids"`
 	Files         []slack.File    `json:"files"` // the file objects behind FileIDs
 }
@@ -45,7 +46,7 @@ type draftDest struct {
 
 func (a *App) draftOf(d *draftRaw) Draft {
 	v := Draft{ID: d.ID, ClientMsgID: d.ClientMsgID, Blocks: d.Blocks, DateCreated: d.DateCreated, DateScheduled: d.DateScheduled,
-		LastUpdated: d.LastUpdatedTS, Files: len(d.FileIDs), FileIDs: d.FileIDs}
+		LastUpdated: d.LastUpdatedTS, Files: len(d.FileIDs), FileIDs: d.FileIDs, FromComposer: d.FromComposer}
 	v.Doc = richtext.FromMessage(a.S, &slack.Message{Blocks: d.Blocks})
 	v.Text = richtext.PlainText(v.Doc)
 	if len(d.Destinations) > 0 {
