@@ -7,6 +7,7 @@ package ui
 // light and dark.
 
 import (
+	"fmt"
 	"image"
 	"os"
 	"slices"
@@ -83,13 +84,33 @@ func (e *perfEnv) rightClickAt(p image.Point, at time.Duration) {
 	}
 }
 
+// topMenu is the topmost open menu (popups' async pump, an invisible
+// overlay, may sit above it).
 func (e *perfEnv) topMenu() *popups.Menu {
-	if n := len(e.a.overlays); n > 0 {
-		if m, ok := e.a.overlays[n-1].(*popups.Menu); ok {
+	for i := len(e.a.overlays) - 1; i >= 0; i-- {
+		if m, ok := e.a.overlays[i].(*popups.Menu); ok && !m.Dismissed() {
 			return m
 		}
 	}
 	return nil
+}
+
+func (e *perfEnv) overlayTypes() []string {
+	var out []string
+	for _, o := range e.a.overlays {
+		out = append(out, fmt.Sprintf("%T dismissed=%v", o, o.Dismissed()))
+	}
+	return out
+}
+
+// closeMenu dismisses the open menu.
+func (e *perfEnv) closeMenu() {
+	if m := e.topMenu(); m != nil {
+		m.Dismiss()
+	}
+	for i := 0; i < 2; i++ {
+		e.frame()
+	}
 }
 
 func attMenuLabels(m *popups.Menu) []string {
@@ -182,7 +203,7 @@ func embedsPreviewHover(t *testing.T, dark bool, mode string) {
 	e.rightClickAt(image.Pt(own.R.Min.X+100, own.R.Min.Y+40), clock)
 	m := e.topMenu()
 	if m == nil {
-		t.Fatal("right-clicking the viewer's preview opened no menu")
+		t.Fatalf("right-clicking the viewer's preview opened no menu (overlays %q)", e.overlayTypes())
 	}
 	if got := attMenuLabels(m); !slices.Equal(got, []string{"Remove preview", "-", "Copy link"}) {
 		t.Errorf("own preview menu %q", got)
@@ -191,18 +212,16 @@ func embedsPreviewHover(t *testing.T, dark bool, mode string) {
 		t.Error("the hover card is open under the context menu")
 	}
 	e.embedsShot("embeds-context-menu-" + mode)
-	e.a.dismissTop()
-	e.frame()
+	e.closeMenu()
 	// someone else's: Copy link only
 	clock += time.Second
 	e.rightClickAt(image.Pt(card.R.Min.X+100, card.R.Min.Y+40), clock)
 	if m := e.topMenu(); m == nil || !slices.Equal(attMenuLabels(m), []string{"Copy link"}) {
-		t.Errorf("another person's preview menu: %v", m)
+		t.Errorf("another person's preview menu: %v (overlays %q)", m, e.overlayTypes())
 	} else {
 		e.embedsShot("embeds-context-menu-other-" + mode)
 	}
-	e.a.dismissTop()
-	e.frame()
+	e.closeMenu()
 
 	// the v1 card's rail: shown while the card is hovered; a click asks
 	// "Remove preview?"

@@ -177,6 +177,9 @@ func (v *View) SetOptions(o Options) {
 	}
 }
 
+// Options returns the current options.
+func (v *View) Options() Options { return v.opts }
+
 // Doc returns the current document.
 func (v *View) Doc() richtext.Doc { return v.doc }
 

@@ -37,6 +37,7 @@ on:
       - "internal/store/store.go"
       - "internal/fakeslack/fakeslack.go"
       - "internal/ui/embeds_hover_test.go"
+      - "internal/ui/messages/unfurl_menu_test.go"
       - "internal/ui/richview/hit.go"
       - "internal/ui/richview/cards.go"
       - "internal/ui/richview/blocks.go"
@@ -76,6 +77,7 @@ jobs:
         run: |
           go test -count=1 -v -run 'TestUnfurlKinds|TestXCard|TestGenericCard|TestVideoServiceCard|TestV1Card|TestNonMediaPref|TestRemoveButton|TestAttachmentImageClicks|TestUnfurlPopoverTrigger|TestUnfurlHoverTiming|TestUnfurlHoverCardLayout|TestAttachmentContextMenu|TestRemoveRail|TestAddedBy|TestMentionHoverCard' ./internal/ui/richview/
           go test -count=1 -v ./internal/ui/hovercard/
+          go test -count=1 -v -run 'TestAttachmentContextMenu' ./internal/ui/messages/
           go test -count=1 -v -run 'TestIconCoverage|TestAllIconsParse' ./internal/ui/icons/
           go test -count=1 -v -run 'TestLightboxUnfurlImage' ./internal/ui/popups/
       - name: render

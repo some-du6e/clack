@@ -90,7 +90,16 @@ func newCtxEnv(t *testing.T) *ctxEnv {
 // newCtxEnvIn shows msgs in channel ch (created unless it is #general).
 func newCtxEnvIn(t *testing.T, ch string, msgs []slack.Message) *ctxEnv {
 	t.Helper()
+	return newCtxEnvSetup(t, ch, msgs, nil)
+}
+
+// newCtxEnvSetup is newCtxEnvIn with setup run on the app first.
+func newCtxEnvSetup(t *testing.T, ch string, msgs []slack.Message, setup func(app *core.App)) *ctxEnv {
+	t.Helper()
 	app, _ := newTestApp(t)
+	if setup != nil {
+		setup(app)
+	}
 	if ch != tGen {
 		app.S.PutConv(slack.Conversation{ID: ch, Name: "ctx", IsChannel: true, IsMember: true, NumMembers: 3})
 	}
