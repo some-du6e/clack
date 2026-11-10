@@ -87,9 +87,20 @@ func TestBackendSetMutedWritesSlackPref(t *testing.T) {
 	refuse = false
 	mu.Unlock()
 	e.a.data.setMuted(dm, false)
-	e.until("the unmute write", 10*time.Second, func() bool { mu.Lock(); defer mu.Unlock(); return len(writes) == 3 })
+	for dl := time.Now().Add(10 * time.Second); time.Now().Before(dl); {
+		mu.Lock()
+		n := len(writes)
+		mu.Unlock()
+		if n == 3 {
+			break
+		}
+		e.settle(20 * time.Millisecond)
+	}
 	mu.Lock()
-	t.Logf("writes %+v", writes)
+	if len(writes) != 3 {
+		c := e.a.model().conv(dm)
+		t.Fatalf("writes %+v (want mute, refused unmute, unmute); row muted %v", writes, c != nil && c.Muted)
+	}
 	mu.Unlock()
 	dl := time.Now().Add(10 * time.Second)
 	for coreMuted() && time.Now().Before(dl) {
