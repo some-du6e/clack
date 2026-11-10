@@ -50,6 +50,12 @@ type ListOpener interface {
 	OpenListLink(url string) bool
 }
 
+// ListAdder is optional: the ui root's "Add to list…" dialog for a
+// message (Slack's createActionAddToList, AddToListDialog).
+type ListAdder interface {
+	AddMessageToList(m core.Message)
+}
+
 // SignInHost is optional: the ui root's sign-in screen, shown by the
 // list's "Sign in again" link once core reports the session ended.
 type SignInHost interface {
@@ -258,10 +264,13 @@ func (r *richHandler) RemoveAttachment(id string) {
 	popups.ConfirmRemovePreview(r.h, m.Channel, m.TS, id)
 }
 
+// Button is a click on a Block Kit element richview drew itself: only a
+// link button does anything. Rows and the Blocks host component draw a
+// message's elements through blockkit's element host (blockkit.go),
+// which sends blocks.actions; richview draws them itself only for a
+// message still being sent, which Slack doesn't act on either.
 func (r *richHandler) Button(b richtext.Button) {
 	if b.URL != "" {
 		openURL(b.URL)
-		return
 	}
-	r.h.Toast("Interactive buttons aren't supported yet")
 }

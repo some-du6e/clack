@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/ui/listview"
 )
 
@@ -262,4 +263,54 @@ func (a *App) NewListMenu() {
 			a.menu(a.PointerPos(), items)
 		})
 	}()
+}
+
+// AddMessageToList is a message's "Add to list…": Slack's
+// createActionAddToList opens AddToListDialog (listview.NewAddToList).
+func (a *App) AddMessageToList(m core.Message) {
+	if a.Core() == nil || m.Channel == "" || m.TS == "" {
+		return
+	}
+	a.ShowOverlay(listview.NewAddToList(a, m.Channel, m.TS, a.listAddOpts("")))
+}
+
+// addListTab is the channel tab bar's "+" > List: Slack's
+// useCreateListTab opens the ListPicker (source "channel-tab").
+func (a *App) addListTab(ch string) {
+	if a.Core() == nil {
+		return
+	}
+	a.ShowOverlay(listview.NewListPicker(a, ch, a.listAddOpts(ch)))
+}
+
+func (a *App) listAddOpts(ch string) listview.AddOpts {
+	o := listview.AddOpts{Post: a.Post, OpenItem: a.OpenListItem, OpenList: a.OpenListFull, Menu: a.listActions().Menu}
+	if ch == "" {
+		return o
+	}
+	tabOf := func(id string) int {
+		for i, t := range a.channelTabs(ch) {
+			if t.fileID == id {
+				return i
+			}
+		}
+		return -1
+	}
+	o.HasTab = func(id string) bool { return tabOf(id) >= 0 }
+	o.ShowTab = func(id string) {
+		if i := tabOf(id); i >= 0 {
+			if a.chTab == nil {
+				a.chTab = map[string]int{}
+			}
+			a.chTab[ch] = i
+			a.Invalidate()
+			return
+		}
+		if a.data != nil { // the new tab: reload the tab bar, then select it
+			delete(a.data.fetched, ch)
+			a.data.opened(ch)
+		}
+		a.pendingCanvasTab(ch, id)
+	}
+	return o
 }
