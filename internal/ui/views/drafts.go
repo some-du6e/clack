@@ -200,6 +200,11 @@ func NewDrafts(h Host) *Drafts {
 	return d
 }
 
+// ShowScheduled opens the view on its Scheduled tab (Slack's
+// navigateToScheduledMessages: the composer's "See all scheduled
+// messages").
+func (d *Drafts) ShowScheduled() { d.tabs.Sel = draftsTabScheduled }
+
 // Layout draws the header, the tabs and the selected tab's content.
 func (d *Drafts) Layout(gtx C) D {
 	d.frame()

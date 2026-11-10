@@ -158,8 +158,14 @@ type richSpan struct {
 // first span's line height, each word in its span's style (a dialog body
 // with a <b> run).
 func richLabel(gtx layout.Context, sh *text.Shaper, spans []richSpan) layout.Dimensions {
+	d, _ := richFlow(gtx, sh, spans)
+	return d
+}
+
+// richFlow is richLabel that also reports where the last line ends.
+func richFlow(gtx layout.Context, sh *text.Shaper, spans []richSpan) (layout.Dimensions, int) {
 	if len(spans) == 0 {
-		return layout.Dimensions{}
+		return layout.Dimensions{}, 0
 	}
 	w := gtx.Constraints.Max.X
 	lh := gtx.Sp(spans[0].st.LineHeight)
@@ -181,7 +187,7 @@ func richLabel(gtx layout.Context, sh *text.Shaper, spans []richSpan) layout.Dim
 			maxX = max(maxX, x)
 		}
 	}
-	return layout.Dimensions{Size: image.Pt(maxX, (line+1)*lh)}
+	return layout.Dimensions{Size: image.Pt(maxX, (line+1)*lh)}, x
 }
 
 // richWords splits s into words that keep the spaces after them.

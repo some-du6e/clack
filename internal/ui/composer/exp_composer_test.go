@@ -18,6 +18,7 @@ import (
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -396,5 +397,62 @@ func TestPlusMenuRows(t *testing.T) {
 	}
 	if runtime.GOOS != "darwin" && (items[0].Hint != "Ctrl+Shift+Enter" || items[1].Hint != "Ctrl+O") {
 		t.Errorf("hints %q %q", items[0].Hint, items[1].Hint)
+	}
+}
+
+// ContextBarScheduledSendContent: scheduling a message here shows "Your
+// message will be sent …" above the composer until the conversation is
+// left; two say "2 messages scheduled to be sent.".
+func TestScheduledSendBar(t *testing.T) {
+	now := time.Date(2026, 11, 10, 14, 0, 0, 0, time.Local)
+	at := func(d, h, m int) []core.ScheduledMessage {
+		return []core.ScheduledMessage{{PostAt: time.Date(2026, 11, d, h, m, 0, 0, time.Local).Unix()}}
+	}
+	if got := scheduledBarText(at(10, 16, 30), now, false); got != "Your message will be sent today at 4:30 PM." {
+		t.Errorf("today %q", got)
+	}
+	if got := scheduledBarText(at(11, 9, 0), now, false); got != "Your message will be sent tomorrow at 9:00 AM." {
+		t.Errorf("tomorrow %q", got)
+	}
+	if got := scheduledBarText(at(18, 9, 0), now, false); got != "Your message will be sent on November 18th at 9:00 AM." {
+		t.Errorf("later %q", got)
+	}
+	two := append(at(11, 9, 0), at(12, 9, 0)...)
+	if got := scheduledBarText(two, now, false); got != "2 messages scheduled to be sent." {
+		t.Errorf("two %q", got)
+	}
+
+	app, fs := fakeslackApp(t)
+	stubTyping(t)
+	ch := fs.ChannelIDs()[1]
+	clearDraft(ch, "")
+	t.Cleanup(func() { clearDraft(ch, "") })
+	h := &ovHost{slickHost: &slickHost{app: app, th: theme.New(false)}}
+	c := New(h, ch, "")
+	t.Cleanup(c.Close)
+	frame := func() int {
+		gtx := gtxForProps()
+		slackc.Frame(gtx)
+		c.Layout(gtx)
+		return c.top
+	}
+	frame()
+	if c.top != 0 {
+		t.Fatalf("a bar before anything was scheduled (%d)", c.top)
+	}
+	d := NewDoc()
+	d.Insert(0, "later please", Attr{})
+	c.ed.SetDoc(d)
+	c.schedule(time.Now().Add(26 * time.Hour))
+	waitUntil(t, "the scheduled draft", func() bool { m, _ := app.ScheduledFor(ch, ""); return len(m) == 1 })
+	if frame() == 0 {
+		t.Fatal("no scheduled-send bar after scheduling")
+	}
+	// leaving the conversation (no layout for a while) and coming back
+	c.sbar.lastLay = time.Now().Add(-time.Minute)
+	m, _ := app.ScheduledFor(ch, "")
+	m[0].DateCreated = time.Now().Add(-time.Minute).Unix()
+	if c.sbar.shown(m, true, time.Now()) {
+		t.Fatal("the bar came back after leaving the conversation")
 	}
 }

@@ -97,6 +97,7 @@ type Composer struct {
 	pending       *outgoing     // the message sendJS is deciding on
 	top           int           // context bar height above the box
 	ctxShowing    bool          // onIsContextBarShowing
+	sbar          scheduledBar  // the scheduled-send context bar (schedule_bar.go)
 	drewInput     bool          // the editor was laid out (no roadblock)
 	roadblock     string        // SetRoadblock: Slack's notice instead of the editor
 	rbLink, rbURL string        // SetRoadblockLink: a link after it ("Learn more")

@@ -62,7 +62,11 @@ func init() {
 		case "dms":
 			return views.NewDMs(a)
 		case "drafts":
-			return views.NewDrafts(a)
+			v := views.NewDrafts(a)
+			if strings.Contains(string(r), "tab=scheduled") { // navigateToScheduledMessages
+				v.ShowScheduled()
+			}
+			return v
 		case "files":
 			return views.NewFiles(a)
 		case "huddles":
