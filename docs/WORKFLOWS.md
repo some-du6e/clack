@@ -39,6 +39,25 @@ A workflow step's message (a form's Continue button, approvals) carries `functio
 
 `useComposerIAFormatter` (boot-render `26v2`) has one workflow row: "Workflow" (`attach-workflow`, the play icon; `bolt` under the composer simplification experiment), hidden in the edit-message composer and without the `hermes__read` feature access. It opens the workflow picker with `source: shortcuts_menu` ("Attach a workflow", Insert). Insert is `attachWorkflowToMessage`: the trigger's name, linked to its `share_url`, at the caret. The menu lists no triggers itself.
 
+## "Add a workflow" and the workflow picker
+
+The channel menu's "Add a workflow" (`getWorkflowTemplate`, boot-render module `w7ek`) doesn't open Workflow Builder. It opens the **workflow picker** (`MUtn` WorkflowPicker): `source: channel_workflows`, `frecency: true`, `includeAutomatedTriggers: true`. The row is missing in DMs and group DMs (`aK5v.JM`), in private channels the viewer isn't in (`Zp && !bl`), and for frontline workers. When a workflow is picked, `onInsertWorkflow` calls `addBookmarkForChannel` (`Tyab.eV`, fetcher `YQEj`): `bookmarks.add {channel, title: trigger name or id, type: shortcut, shortcut_id}`. Then it opens the channel on its Workflows tab (`jpad` toChannel with `tabId: workflows`). A failed add shows nothing: the promise has no catch.
+
+The picker, by source (`shortcuts_menu` from the composer, `channel_workflows`, `channel-primary-action`):
+
+| | title | primary |
+|---|---|---|
+| `shortcuts_menu` | Attach a workflow | Insert |
+| `channel-primary-action` | Feature workflow | Feature |
+| others | Add workflow | Add |
+
+- 650 wide (`p-workflow_picker__modal--new_style`): a 1px rule under the header and over the footer.
+- The search box "Search by workflow name or keyword" (`WorkflowPickerFilter`, 16px margin, search icon, autofocus).
+- A 300px list of `WorkflowListItem` rows (`whkB`): 12px 25px padding, the app icon (36px) 12px before the title (15px) over the description (13px at 70%); the picked row white on #1264a3, a hover row on the min-solid background.
+- The footer: "Create a Workflow" at the left (launchWorkflowBuilder `create_empty`: Workflow Builder in its own 1024×700 window at `/workflow-builder/{team}/workflow/create-empty`, `ThpL`/`CrVT`), Cancel, and the primary button, enabled once a row is picked.
+- The search is the client searcher over `workflowTriggers`. Its remote part is `search.autocomplete.triggers {query, current_channel_id, strict_exposure_rules: true, trigger_types}` (QcwJ fetchAndUpsertTriggersWithQuery, debounced 500 ms leading and trailing): every trigger type with automated triggers, `["shortcut"]` without.
+- With no workflows at all, the empty state: no search box, the illustration (`workflow-picker-empty-state.svg`) or, where templates may be browsed from `channel_workflows`, the workflow templates; "Create From Scratch" in the footer.
+
 ## Channel details > Automations
 
 The tab's body is `AutomationsSettings` (chunk `gantry-v2-async-client-channel-settings-automations-view`, module `2MVc`). For a channel (not a DM: `shvH`, get-integrations-sections) it renders `WorkflowsSettings`, which merges two stores:
@@ -66,12 +85,16 @@ Without rows, the empty state: `/img/ia-details/workflows-empty.png`, the title 
 | workflow step messages | `function_execution_id` in `blocks.actions` / `blocks.suggestions` (`o9iI`, `Em/L`) | dropped: messages never kept it | kept on `slack.Message` / `core.Message` and sent by `MessageContainer` |
 | forms a workflow opens | `view_opened` with the trip's client token | already shown (blockkit's view stack); the token is issued by `Interactive.ClientToken` | unchanged |
 | + menu | "Workflow" opens the picker ("Attach a workflow" / Insert) (`26v2`, `MUtn`) | no row | the row and the picker; Insert puts the name linked to the share URL at the caret |
+| channel ⋮ "Add a workflow" | the workflow picker; the pick is bookmarked (`bookmarks.add` type shortcut) and the channel's Workflows tab opens (`w7ek`, `MUtn`, `Tyab`) | toast "Workflows aren't supported in Clack yet" | the picker (`channel_workflows`, automated triggers), `bookmarks.add` with Slack's arguments, then the channel opens with its tabs reloaded; the row is gone in DMs, group DMs and private channels the viewer isn't in (`popups/workflows.go`, `ui.addWorkflow`) |
 | channel details > Automations | WorkflowsSettings: workflow apps and channel actions as above (`2MVc`, `2Lul`, `ARyf`, `A3kQ`, `s4p6`) | an invented "Workflows / Automate routine tasks… / Add a Workflow" card whose button toasted "Not supported yet" | the same calls and merge, "Published Automations" rows (icon, title, description, WORKFLOW badge, ▶ on hover), a click trips (`channel_details`) or runs the legacy workflow with Slack's toasts, Learn More, Slack's empty state copy (`core.ChannelWorkflowApps`, `core.ChannelActions`, `views/details_automations.go`) |
 
-Tests: `TestTripContexts`, `TestTripTrigger`, `TestTripErrorText`, `TestNeedsSpeedbump`, `TestTriggerInfoAndSearch`, `TestWorkflowStepActions`, `TestChannelWorkflows` (internal/core); `TestTripWorkflow`, `TestWorkflowSpeedbump`, `TestWorkflowPicker`, `TestWorkflowShots` (internal/ui/blockkit); `TestAutomationsTab`, `TestAutomationsEmpty` (internal/ui/views). The `workflows-shots` workflow uploads `workflow-speedbump-scopes-{light,dark}.png`, `workflow-picker-attach-{light,dark}.png`, `automations-tab-{light,dark}.png` and `automations-empty-{light,dark}.png`.
+Tests: `TestTripContexts`, `TestTripTrigger`, `TestTripErrorText`, `TestNeedsSpeedbump`, `TestTriggerInfoAndSearch`, `TestWorkflowStepActions`, `TestChannelWorkflows` (internal/core); `TestTripWorkflow`, `TestWorkflowSpeedbump`, `TestWorkflowPicker`, `TestWorkflowShots` (internal/ui/blockkit); `TestAutomationsTab`, `TestAutomationsEmpty` (internal/ui/views); `TestAddWorkflowChannelMenu`, `TestWorkflowBookmarkTrips` (internal/ui); `TestAddWorkflowBookmark` (internal/core). The `workflows-shots` workflow uploads `workflow-speedbump-scopes-{light,dark}.png`, `workflow-picker-attach-{light,dark}.png`, `automations-tab-{light,dark}.png` and `automations-empty-{light,dark}.png`.
 
 ## Not done
 
+- **Workflow Builder.** "Create a Workflow" opens Slack's Builder page in the browser, the page Slack's own window loads. The Builder's editor (chunk `client-workflow-editor-view`, 13,000 lines beautified) and template gallery (`client-workflow-templates-view`, `workflows.templates.*`) aren't ported: "Add a workflow" doesn't lead to them.
+- **The channel's Workflows tab** (boot-render `Jf9W` useChannelWorkflowsExplorer: "Featured workflows" from `workflows.featured.*`, "Bookmarked workflows", the "Feature a workflow" / "Bookmark a workflow" cards, "Got repetitive tasks? Try workflows."). After "Add a workflow", Slack opens this tab; Clack opens the channel, and its tab bar still says "This tab opens in Slack" for it.
+- **Picker details.** Frecency sorting (Slack's searcher ranks by local frecency; Clack keeps the server's order); the templates list in the empty state; the "Add automation as member" mode.
 - **Third-party auth, missing inputs, AI access and multi-step speedbumps.** These need Slack's OAuth window and its conversation, canvas and user pickers. When Slack would show one, Clack opens the workflow link in the browser, where Slack's web client trips it and shows the speedbump.
 - **Toast styling.** Clack's toast is one bold line with no icon, shown for 3.5 s. Slack's success toast lasts 2 s, and the slow-workflow toast has a rocket icon and a bold first sentence.
 - **The `hermes__read` gate on the + menu row.** Slack reads it from the `featureAccess` store (`X+JB.G2`), which Clack doesn't load (`features.access.policies.list`). Clack always shows the row.

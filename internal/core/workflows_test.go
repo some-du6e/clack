@@ -247,3 +247,24 @@ func TestChannelWorkflows(t *testing.T) {
 		t.Errorf("apps elsewhere %+v", apps)
 	}
 }
+
+// TestAddWorkflowBookmark: the channel menu's "Add a workflow" bookmarks
+// the picked trigger the way Slack's addBookmarkForChannel does.
+func TestAddWorkflowBookmark(t *testing.T) {
+	a, f := testApp(t)
+	f.reply["bookmarks.add"] = `{"ok":true,"bookmark":{"id":"Bk1","title":"Request time off","type":"shortcut","shortcut_id":"Ft2","rank":"b"}}`
+	bm, err := a.AddWorkflowBookmark(context.Background(), "C1", WorkflowTrigger{ID: "Ft2", Name: "Request time off", ShortcutURL: "https://slack.com/shortcuts/Ft2/x"})
+	if err != nil || bm.ID != "Bk1" || bm.ShortcutID != "Ft2" {
+		t.Fatalf("bookmark %+v %v", bm, err)
+	}
+	p := f.last("bookmarks.add")
+	if p.Get("channel") != "C1" || p.Get("type") != "shortcut" || p.Get("shortcut_id") != "Ft2" || p.Get("title") != "Request time off" || p.Has("link") {
+		t.Errorf("params %v", p)
+	}
+	if _, err := a.AddWorkflowBookmark(context.Background(), "C1", WorkflowTrigger{ID: "Ft3"}); err != nil {
+		t.Fatal(err)
+	}
+	if p := f.last("bookmarks.add"); p.Get("title") != "Ft3" {
+		t.Errorf("an unnamed trigger is titled by its id: %v", p)
+	}
+}

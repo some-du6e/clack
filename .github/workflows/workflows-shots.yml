@@ -14,6 +14,7 @@ on:
       - "internal/ui/blockkit/workflow*.go"
       - "internal/ui/views/details_automations*.go"
       - "internal/ui/workflows_wire*.go"
+      - "internal/ui/popups/workflows.go"
       - ".github/workflows/workflows-shots.yml"
   workflow_dispatch:
 
@@ -41,6 +42,7 @@ jobs:
           go test -count=1 -v -run 'TestWorkflow|TestTrip|TestTrigger|TestNeedsSpeedbump|TestChannelWorkflows|TestAddWorkflowBookmark' ./internal/core
           go test -count=1 -v -run 'TestTripWorkflow|TestWorkflowSpeedbump|TestWorkflowPicker' ./internal/ui/blockkit
           go test -count=1 -v -run 'TestAutomations' ./internal/ui/views
+          xvfb-run -a go test -count=1 -v -run 'TestAddWorkflowChannelMenu$|TestWorkflowBookmarkTrips$' ./internal/ui/
       - name: screenshots
         env:
           WORKFLOWS_SHOTS_DIR: ${{ github.workspace }}/dist/shots

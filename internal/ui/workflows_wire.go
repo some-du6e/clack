@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"github.com/some-du6e/clack/internal/core"
@@ -22,6 +23,46 @@ func init() {
 			blockkit.TripWorkflow(bh, link, tc, uiPage)
 		}
 	}
+	popups.AddWorkflow = addWorkflow
+}
+
+// addWorkflow is the channel menu's "Add a workflow" (getWorkflowTemplate,
+// w7ek): the workflow picker with source channel_workflows and automated
+// triggers; the picked one is bookmarked in the channel (bookmarks.add,
+// type shortcut) and the channel opens.
+func addWorkflow(h popups.Host, ch string) {
+	a, _ := h.(*App)
+	blockkit.OpenWorkflowPicker(h, blockkit.WorkflowPickerOpts{Source: blockkit.PickerChannelWorkflows, ChannelID: ch, IncludeAutomated: true,
+		OnInsert: func(t core.WorkflowTrigger) {
+			if a != nil {
+				a.addWorkflowBookmark(ch, t)
+			}
+		}})
+}
+
+// addWorkflowBookmark bookmarks t in ch, then opens the channel with its
+// tabs reloaded (Slack opens the channel's Workflows tab, toChannel with
+// tabId workflows). Slack shows nothing when bookmarks.add fails (the
+// promise has no catch); Clack logs it.
+func (a *App) addWorkflowBookmark(ch string, t core.WorkflowTrigger) {
+	if a.data == nil || a.data.core == nil {
+		return
+	}
+	c := a.data.core
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		_, err := c.AddWorkflowBookmark(ctx, ch, t)
+		a.Post(func() {
+			if err != nil {
+				log.Printf("workflows: add %s to %s: %v", t.ID, ch, err)
+				return
+			}
+			a.Navigate("c/" + ch)
+			delete(a.data.fetched, ch)
+			a.data.opened(ch)
+		})
+	}()
 }
 
 // composerWorkflowItem is the + menu's "Workflow" row (Slack's

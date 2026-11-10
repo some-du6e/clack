@@ -85,7 +85,16 @@ type TripCall struct {
 type wfState struct {
 	mu    sync.Mutex
 	trips []TripCall
-	runs  []url.Values // apps.actions.run
+	runs  []url.Values     // apps.actions.run
+	added []map[string]any // bookmarks.add
+}
+
+// AddedBookmarks returns the bookmarks bookmarks.add created.
+func (s *Server) AddedBookmarks() []map[string]any {
+	st := s.wf()
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return append([]map[string]any(nil), st.added...)
 }
 
 var wfStates sync.Map // *Server -> *wfState
@@ -222,6 +231,18 @@ func (s *Server) handleWorkflows(method string, f url.Values, edge map[string]js
 		return ok("actions", []map[string]any{{"action_id": LegacyActionID, "name": LegacyActionName, "description": "Pick a slot for this week",
 			"type": "channel_action", "install_team_id": TeamID, "install_team_name": "Fake Club",
 			"app": map[string]any{"app_id": "A0FAKELEG1", "icons": map[string]string{"image_64": s.URL + "img/legacy-64.png"}}}}), true
+	case "bookmarks.add":
+		if f.Get("channel") != WorkflowsChannelID {
+			return nil, false
+		}
+		st := s.wf()
+		st.mu.Lock()
+		b := map[string]any{"id": "Bk0FAKEADD" + strconv.Itoa(len(st.added)+1), "channel_id": WorkflowsChannelID, "title": f.Get("title"),
+			"link": f.Get("link"), "type": f.Get("type"), "shortcut_id": f.Get("shortcut_id"), "rank": "z" + strconv.Itoa(len(st.added)),
+			"date_created": workflowsBaseTS + 3600}
+		st.added = append(st.added, b)
+		st.mu.Unlock()
+		return ok("bookmark", b), true
 	case "apps.actions.run":
 		st := s.wf()
 		st.mu.Lock()
@@ -276,9 +297,13 @@ func (s *Server) handleWorkflows(method string, f url.Values, edge map[string]js
 		if f.Get("channel_id") != WorkflowsChannelID && f.Get("channel") != WorkflowsChannelID {
 			return nil, false
 		}
-		return ok("bookmarks", []map[string]any{{"id": WorkflowsBookmarkID, "channel_id": WorkflowsChannelID, "title": "Request time off",
+		st := s.wf()
+		st.mu.Lock()
+		out := append([]map[string]any{{"id": WorkflowsBookmarkID, "channel_id": WorkflowsChannelID, "title": "Request time off",
 			"link": WorkflowLink(TriggerTimeOff), "type": "shortcut", "shortcut_id": TriggerTimeOff, "rank": "a", "parent_id": "Ct0FAKEWFB",
-			"date_created": workflowsBaseTS}}), true
+			"date_created": workflowsBaseTS}}, st.added...)
+		st.mu.Unlock()
+		return ok("bookmarks", out), true
 	}
 	return nil, false
 }
