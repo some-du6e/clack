@@ -294,12 +294,10 @@ func (p *EmojiPicker) layoutTonePopover(gtx layout.Context, th *theme.Theme, cl 
 	pa := clip.Rect(r).Push(gtx.Ops)
 	event.Op(gtx.Ops, &u.tag)
 	pa.Pop()
-	for {
-		e, ok := gtx.Event(pointer.Filter{Target: &u.tag, Kinds: pointer.Press})
-		if !ok {
+	for { // the presses stop here; FocusFilter makes the tag focusable
+		if _, ok := gtx.Event(pointer.Filter{Target: &u.tag, Kinds: pointer.Press}, key.FocusFilter{Target: &u.tag}); !ok {
 			break
 		}
-		_ = e
 	}
 	if !gtx.Focused(&u.tag) {
 		gtx.Execute(key.FocusCmd{Tag: &u.tag})
