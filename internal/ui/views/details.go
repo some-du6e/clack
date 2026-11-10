@@ -2205,7 +2205,17 @@ func (d *ChannelDetails) tabsItems() []W {
 			})
 		})
 	}
-	return []W{cdGap(16), card, cdGap(24)}
+	out := []W{cdGap(16), card, cdGap(24)}
+	// ManageChannelTabs (Wg5J): without move_channel_tabs_settings the
+	// "who can manage tabs" field (ManageChannelTabsPermissions, z92f)
+	// heads the Tabs tab instead of Settings (not for app channels)
+	if cdGroup(d.kind) == "channel" && d.kind != "app" && d.h.Core().Experiment("move_channel_tabs_settings") != "on" {
+		if inf, ok, err := d.info.get(); ok && err == nil {
+			perms := d.cdCard(func(gtx C) D { return d.tabPermsField(gtx, inf) })
+			out = append([]W{cdGap(16), perms}, out...)
+		}
+	}
+	return out
 }
 
 func (d *ChannelDetails) bookmarkRow(gtx C, b core.Bookmark) D {
