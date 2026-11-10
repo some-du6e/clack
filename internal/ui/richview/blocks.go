@@ -226,6 +226,9 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 		_, first, _ := l.margins(&bs[0])
 		y += first
 	}
+	if top && (len(bs) == 0 || bs[0].Kind != richtext.Paragraph) {
+		l.lead = 0 // a list, quote, code block or card starts under the sender
+	}
 	skipGap := false
 	prev := -1
 	for i := 0; i < len(bs); i++ {

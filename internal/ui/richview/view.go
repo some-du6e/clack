@@ -99,6 +99,9 @@ type View struct {
 	collapsed map[*richtext.Image]bool
 	redraw    bool // ask for a frame after this frame's events
 
+	// lead: the first line's start (SetLead)
+	lead int
+
 	// External hands text selection to the owner (cross-message selection
 	// in a list): the View still handles clicks and hover but never changes
 	// its selection or takes focus; the owner calls SetSelection.
@@ -171,6 +174,22 @@ func (v *View) SetOptions(o Options) {
 		v.dirty = true
 	}
 }
+
+// SetLead starts the first line of the doc's first paragraph px in, the
+// rest of it wrapping at the left edge: the message's sender sits inline
+// before it in Compact (Message.getCompactMessageBody: the sender, a
+// no-break space, then .p-rich_text_block--inline). A doc that opens with
+// anything else (a list, a quote, code, a card) ignores it.
+func (v *View) SetLead(px int) {
+	px = max(px, 0)
+	if px != v.lead {
+		v.lead = px
+		v.dirty = true
+	}
+}
+
+// Lead is the first line's start SetLead gave (px).
+func (v *View) Lead() int { return v.lead }
 
 // Doc returns the current document.
 func (v *View) Doc() richtext.Doc { return v.doc }
@@ -452,7 +471,10 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 	if v.collapsed == nil {
 		v.collapsed = map[*richtext.Image]bool{}
 	}
-	l := lay{st: st, d: &v.d, scale: pxdp, spx: pxsp, jumbo: v.doc.Jumbo && uipref.Get().Jumbomoji, opts: v.opts, mode: mode, cs: &v.cs,
+	// JUMBOMOJI is off under Compact (client-boot Y9zX: jumbomoji &&
+	// messages_theme != "dense")
+	pf := uipref.Get()
+	l := lay{st: st, d: &v.d, scale: pxdp, spx: pxsp, jumbo: v.doc.Jumbo && pf.Jumbomoji && !pf.Dense, lead: float32(v.lead), opts: v.opts, mode: mode, cs: &v.cs,
 		expanded: v.expanded, collapsed: v.collapsed}
 	v.css.parts = v.css.parts[:0]
 	if v.css.scope.Active() {
@@ -1185,6 +1207,11 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 		}
 	}
 }
+
+// FirstBaseline is the first line's baseline from the view's top (px),
+// as a browser aligns inline content (firstBaseline); -1 before layout or
+// when the first line holds nothing.
+func (v *View) FirstBaseline() int { return v.d.firstBaseline() }
 
 // Baselines returns the text baseline of each laid-out line, in px from
 // the view's top (tests: row geometry against Slack's line boxes).

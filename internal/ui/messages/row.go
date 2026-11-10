@@ -2,6 +2,7 @@ package messages
 
 import (
 	"context"
+	"encoding/json"
 	"gioui.org/io/event"
 	"gioui.org/io/pointer"
 	"gioui.org/op/clip"
@@ -19,6 +20,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/hovercard"
@@ -80,7 +82,9 @@ type row struct {
 	bot       bool
 	badge     string // the sender's app badge (core.SenderBadge: APP, AGENT, WORKFLOW…; "" for people)
 
-	needChan bool // body mentions channels not resolved yet
+	needChan bool   // body mentions channels not resolved yet
+	allRich  bool   // richRaw's blocks are all rich_text (Compact: the text runs on after the sender)
+	richRaw  []byte // the msg.blocks allRich was read from
 
 	nameBtn, avatarBtn widget.Clickable
 	nameHov, avatarHov hovercard.Trigger // Slack's ProfileHoverTrigger on both
@@ -134,6 +138,7 @@ type row struct {
 	// what the header drew last frame (CSS may replace both)
 	compactBL int    // the compact time's baseline, gutter-local (tests)
 	nameBL    int    // the sender line's baseline, column-local (tests)
+	nameX     int    // the sender's x, column-local (Compact: -8)
 	avDrawn   string // the avatar's picture: a CSS background-image wins
 	nameShown string // the sender label: ::before + name (unless font-size 0) + ::after
 }
@@ -168,6 +173,7 @@ type rowCtx struct {
 	header    bool // first of a group: avatar + name line
 	hovered   bool
 	thread    bool // inside a thread pane (no thread bar, no "replied to")
+	dense     bool // messages_theme "dense" (Messages & media > Theme > Compact)
 	list      *listState
 	parent    bool // the thread parent row
 	now       time.Time
@@ -182,7 +188,11 @@ type rowCtx struct {
 }
 
 // padX is the gutter's side padding: 20 in a channel, 16 in a thread
-// (mt). contentX is where the body column starts: padX + 36 + 8.
+// (mt). contentX is where the body column starts: padX + 36 + 8; under
+// Compact 92 in a channel (the 56px time, its 8px margin and the indent)
+// and padX in a thread, whose gutter has no left side (MessageKitGutter
+// draws only gutter__right for "dense" without a compact slot, and
+// ThreadReply hands one only to the Threads view).
 func (rc *rowCtx) padX() float32 {
 	if rc.thread {
 		return mt.padX
@@ -191,11 +201,22 @@ func (rc *rowCtx) padX() float32 {
 }
 
 func (rc *rowCtx) contentX() float32 {
-	if rc.thread {
+	switch {
+	case rc.dense && rc.thread:
+		return mt.padX
+	case rc.dense:
+		return mt.denseX
+	case rc.thread:
 		return mt.contentX
 	}
 	return mt.chanContentX
 }
+
+// denseChan is a channel row under Compact.
+func (rc *rowCtx) denseChan() bool { return rc.dense && !rc.thread }
+
+// noAvatar: the row has no avatar column (Compact).
+func (rc *rowCtx) noAvatar() bool { return rc.dense }
 
 func newRow(e *entry) *row { return newListRow(e, false) }
 
@@ -437,6 +458,10 @@ func (r *row) backgroundProps() slackc.Props {
 func (r *row) gutterProps() slackc.Props {
 	p := slackc.Props{"$key": r.ts, "msg": r.message()}
 	switch {
+	case r.rc.denseChan():
+		// Message: under Compact every row's gutter is getCompactGutter
+		// (the time; MessageKitGutter shows the compact slot for "dense")
+		p["compact"] = slackc.Child("Timestamp", r.compactProps("c-timestamp p-message_pane_message__compact_timestamp"), r.layoutCompactTS)
 	case r.rc.header:
 		p["light"] = slackc.Child("MessageAvatar", r.avatarSlotProps(), r.layoutMessageAvatar)
 	case r.rc.thread:
@@ -465,7 +490,15 @@ func (r *row) baseAvatarProps() slackc.Props {
 }
 
 func (r *row) compactProps(cls string) slackc.Props {
-	return r.pane(slackc.Props{"$key": r.ts, "className": cls, "timestamp": r.m.TS, "clickable": true, "visible": r.rc.hovered, "msg": r.message()})
+	return r.pane(slackc.Props{"$key": r.ts, "className": cls, "timestamp": r.m.TS, "clickable": true, "visible": r.compactVisible(), "msg": r.message()})
+}
+
+// compactVisible: the gutter's time shows on a grouped row while it's
+// hovered (.p-message_pane_message__compact_timestamp--adjacent is
+// opacity 0 until .c-message_kit__hover--hovered); under Compact a row
+// that starts a group always shows it.
+func (r *row) compactVisible() bool {
+	return r.rc.hovered || (r.rc.denseChan() && r.rc.header)
 }
 
 func (r *row) avatarProps() slackc.Props {
@@ -481,6 +514,11 @@ func (r *row) avatarProps() slackc.Props {
 }
 
 func (r *row) preambleProps() slackc.Props {
+	if r.rc.denseChan() { // getCompactMessageBody: the sender only, the time is the gutter's
+		return r.pane(slackc.Props{"$key": r.ts, "msg": r.message(), "shouldRender": true, "children": []any{
+			slackc.Child("MessageSender", r.senderProps(), r.layoutSender),
+		}})
+	}
 	return r.pane(slackc.Props{"$key": r.ts, "msg": r.message(), "shouldRender": true, "children": []any{
 		slackc.Child("MessageSender", r.senderProps(), r.layoutSender),
 		slackc.Child("Timestamp", r.timestampProps(), r.layoutPreambleTimestamp),
@@ -744,7 +782,7 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 	content := rec.Stop()
 
 	h := y + dp(gtx, mt.padBottom) - dp(gtx, 8)
-	if rc.header {
+	if rc.header && !rc.noAvatar() {
 		if mh := dp(gtx, padTop) + dp(gtx, mt.avatar) + dp(gtx, mt.padBottom); h < mh {
 			h = mh
 		}
@@ -803,10 +841,17 @@ func (r *row) layoutGutter(gtx layout.Context, p slackc.Props) layout.Dimensions
 	if gs.Hidden() {
 		return layout.Dimensions{}
 	}
+	// Compact in a thread: MessageKitGutter has no compact slot there, so
+	// only gutter__right
+	noLeft := r.rc.dense && r.rc.thread
+	lw := dp(gtx, mt.avatar)
+	if r.rc.denseChan() {
+		lw = dp(gtx, mt.denseTS)
+	}
 	left := gutterLeftClass.Enter(gtx, 0, 0)
-	if !left.Hidden() {
+	if !left.Hidden() && !noLeft {
 		at(gtx, padX, 0, func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints = layout.Constraints{Max: image.Pt(dp(gtx, mt.avatar), 1<<20)}
+			gtx.Constraints = layout.Constraints{Max: image.Pt(lw, 1<<20)}
 			if left.Active() {
 				return left.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return r.layoutGutterLeft(gtx, p) })
 			}
@@ -830,7 +875,7 @@ func (r *row) layoutGutter(gtx layout.Context, p slackc.Props) layout.Dimensions
 }
 
 func (r *row) layoutGutterLeft(gtx layout.Context, p slackc.Props) layout.Dimensions {
-	if r.rc.header {
+	if r.rc.header && !r.rc.denseChan() {
 		return at(gtx, 0, dp(gtx, 4), func(gtx layout.Context) layout.Dimensions {
 			if e, ok := p.Elem("light"); ok {
 				return slackc.LayoutElement(gtx, e)
@@ -942,7 +987,10 @@ func contextArea(gtx layout.Context, tag *ctxTag, size image.Point) {
 func (r *row) layoutCompactTS(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	rc := r.rc
 	box := image.Pt(dp(gtx, mt.avatar), dp(gtx, 22))
-	visible := rc.hovered
+	if rc.denseChan() {
+		box.X = dp(gtx, mt.denseTS)
+	}
+	visible := r.compactVisible()
 	if p.Has("visible") {
 		visible = p.Bool("visible")
 	}
@@ -958,7 +1006,12 @@ func (r *row) layoutCompactTS(gtx layout.Context, p slackc.Props) layout.Dimensi
 	if st.Hidden() {
 		return layout.Dimensions{Size: box}
 	}
+	// getCompactGutter: renderTimestamp({meridiem: !(adjacent && light)}):
+	// "3:04" on a grouped Clean row, "3:04 PM" under Compact
 	ts := shortClock(tsTime(r.m.TS))
+	if rc.denseChan() {
+		ts = clock(tsTime(r.m.TS))
+	}
 	s := textStyle{size: float32(st.FontSize(12)), col: st.Color(rc.c.Text2), lineH: 22}
 	sz := measure(gtx, rc.th, s, ts)
 	// The 12px time is inline in a 15px/22px line (the timestamp div
@@ -996,22 +1049,58 @@ func (r *row) layoutColumn(gtx layout.Context) layout.Dimensions {
 	m := &r.m
 	cw := gtx.Constraints.Max.X
 	y := 0
+	broadcast := m.Broadcast && !rc.thread && m.ThreadTS != "" && m.ThreadTS != m.TS
+	// Compact: the sender recorded, put on the body's first line once the
+	// body is laid out (inline), its x and baseline
+	var name op.CallOp
+	nameX, nameTop, inline := 0, 0, false
+	r.nameX = 0
+	lead := 0
 	if rc.header {
 		var d layout.Dimensions
 		// The sender line is the column's first 15px/22px line (inline in
 		// .c-message_kit__gutter__right, 4px below the row top), the body's
 		// first line right under it: baselines at 4+16.8 and 26+16.8.
-		if rc.thread {
+		switch {
+		case rc.thread:
 			d = slackc.Component(gtx, "ThreadSenderAndTimestampGeneric", r, (*row).threadSenderProps, (*row).layoutThreadSender)
-		} else {
+			r.nameBL = d.Size.Y - d.Baseline
+			y += max(d.Size.Y, dp(gtx, mt.nameLine))
+		case rc.dense:
+			// getCompactMessageBody: inside .c-message_kit__indent,
+			// BaseBroadcastPreamble {the sender (margin-left -8px), a
+			// no-break space}, then the text inline (CompactBlocks)
+			rec := op.Record(gtx.Ops)
 			d = slackc.Component(gtx, "BaseBroadcastPreamble", r, (*row).preambleProps, (*row).layoutPreamble)
+			name = rec.Stop()
+			nameX = -dp(gtx, mt.indent)
+			r.nameX = nameX
+			nameTop = d.Size.Y - d.Baseline
+			r.nameBL = nameTop
+			after := nameX + d.Size.X + nbspWidth(gtx, rc.th)
+			switch {
+			case broadcast:
+				// .c-message_kit__broadcast_preamble--dense (display flex):
+				// "replied to a thread" on the sender's line, the text under it
+				placeCall(gtx, name, nameX, 0)
+				r.broadcastLine(gtx, rc, after, 0)
+				y += max(d.Size.Y, dp(gtx, mt.nameLine))
+			case r.edit == nil && r.inlineBody():
+				inline, lead = true, after
+			default:
+				placeCall(gtx, name, nameX, 0)
+				y += max(d.Size.Y, dp(gtx, mt.nameLine))
+			}
+		default:
+			d = slackc.Component(gtx, "BaseBroadcastPreamble", r, (*row).preambleProps, (*row).layoutPreamble)
+			r.nameBL = d.Size.Y - d.Baseline
+			y += max(d.Size.Y, dp(gtx, mt.nameLine))
 		}
-		r.nameBL = d.Size.Y - d.Baseline
-		y += max(d.Size.Y, dp(gtx, mt.nameLine))
 	}
-	if m.Broadcast && !rc.thread && m.ThreadTS != "" && m.ThreadTS != m.TS {
+	if broadcast && !rc.dense {
 		y += r.broadcastLine(gtx, rc, 0, y)
 	}
+	r.rv.SetLead(lead)
 
 	// body (or the inline edit composer)
 	r.handler.h, r.handler.m = rc.h, m
@@ -1043,6 +1132,18 @@ func (r *row) layoutColumn(gtx layout.Context) layout.Dimensions {
 		})
 	}
 	r.bodyRect = image.Rectangle{Min: image.Pt(0, y), Max: image.Pt(body.Size.X, y+body.Size.Y)}.Add(r.col)
+	if inline {
+		// the sender sits on the body's first line, baselines together
+		dy := y
+		if bl := r.rv.FirstBaseline(); bl >= 0 && body.Size.Y > 0 {
+			dy = y + bl - nameTop
+		}
+		placeCall(gtx, name, nameX, dy)
+		r.nameBL = dy + nameTop
+		if body.Size.Y == 0 {
+			y += dp(gtx, mt.nameLine)
+		}
+	}
 	y += body.Size.Y
 	if r.edit == nil && (r.hasFiles || r.hasAtts) {
 		// the files and attachments are drawn in the body; these carry
@@ -1270,7 +1371,7 @@ func (r *row) layoutPreamble(gtx layout.Context, p slackc.Props) layout.Dimensio
 	if e, ok := slackc.PropChildren(p); ok {
 		return slackc.LayoutElement(gtx, e)
 	}
-	return r.nameLine(gtx, true)
+	return r.nameLine(gtx, !r.rc.denseChan()) // Compact: the time is in the gutter
 }
 
 // layoutThreadSender is ThreadSenderAndTimestampGeneric (thread pane).
@@ -1300,6 +1401,9 @@ func (r *row) nameLine(gtx layout.Context, withTS bool) layout.Dimensions {
 		t := op.Offset(image.Pt(nd.Size.X+dp(gtx, mt.tsGap), baseline-(d.Size.Y-d.Baseline))).Push(gtx.Ops)
 		call.Add(gtx.Ops)
 		t.Pop()
+	}
+	if !withTS && r.rc.dense {
+		w = nd.Size.X // inline before the text: its own width
 	}
 	return layout.Dimensions{Size: image.Pt(w, lh), Baseline: lh - baseline}
 }
@@ -1369,6 +1473,10 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 		at(gtx, xx+dp(gtx, 3), top+(bh-sz.Y)/2, func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, s, badge) })
 		xx += bw
 	}
+	// Compact: .c-message_kit__sender--dense .c-custom_status { border:
+	// 1px solid rgba(var(--sk_foreground_low), .13); border-radius: 5px;
+	// padding: 1px 2px } around the huddle icon or status emoji
+	dense := rc.dense && !rc.thread
 	if r.huddle != "" {
 		// BaseHuddleStatus in .c-custom_status (margin-left 4px): the 20px
 		// p-huddle_status_icon (vertical-align top, margin-top 2px) with
@@ -1377,6 +1485,9 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 		xx += dp(gtx, 4)
 		bs := dp(gtx, 20)
 		top := baseline - strutBaseline(gtx) + dp(gtx, 2)
+		if dense {
+			xx += statusBorder(gtx, c, image.Rect(xx, top, xx+bs, top+bs))
+		}
 		if r.huddle != r.m.Channel {
 			bg := color.NRGBA{R: 0x1d, G: 0x1c, B: 0x1d, A: 0x21}
 			if rc.th.Dark {
@@ -1389,12 +1500,21 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 			return icons.Get(icons.Slack("headphones"))(gtx, unit.Dp(16), c.Text)
 		})
 		xx += bs
+		if dense {
+			xx += dp(gtx, 3)
+		}
 	} else if r.statusURL != "" {
 		s := dp(gtx, mt.statusEmoji)
 		xx += dp(gtx, 4)
 		top := baseline - s + dp(gtx, 3)
+		if dense {
+			xx += statusBorder(gtx, c, image.Rect(xx, top, xx+s, top+s))
+		}
 		drawEmoji(gtx, rc.h, r.statusURL, image.Rect(xx, top, xx+s, top+s))
 		xx += s
+		if dense {
+			xx += dp(gtx, 3)
+		}
 	}
 	return layout.Dimensions{Size: image.Pt(xx, nd.Size.Y), Baseline: nd.Baseline}
 }
@@ -1484,19 +1604,31 @@ func (r *row) labelLine(gtx layout.Context, rc *rowCtx, x, y int, icon, txt stri
 	lh := dp(gtx, 19)
 	is := dp(gtx, 14)
 	// icon right-aligned in the 36px gutter box that starts at x=20
+	iconR, textX := dp(gtx, 56), dp(gtx, 64)
+	switch {
+	case rc.denseChan():
+		// .c-message_kit__labels--dense.p-message_pane_message__message_label
+		// .c-message_kit__labels__icon { width: 56px }: under the time
+		iconR, textX = dp(gtx, mt.chanPadX+mt.denseTS), dp(gtx, mt.chanPadX+mt.denseTS+8)
+	case rc.dense:
+		// a thread's dense label has no icon width: the icon, its 8px
+		// margin, the text (padding-left 16)
+		iconR = dp(gtx, mt.padX) + is
+		textX = iconR + dp(gtx, 8)
+	}
 	ls := labelsClass.Enter(gtx, 0, 0)
 	defer ls.Leave()
 	if ls.Hidden() {
 		return 0
 	}
 	if icon != "pin" {
-		at(gtx, dp(gtx, 56)-is, y+(lh-is)/2, func(gtx layout.Context) layout.Dimensions {
+		at(gtx, iconR-is, y+(lh-is)/2, func(gtx layout.Context) layout.Dimensions {
 			return icons.Get(icon)(gtx, unit.Dp(14), ls.Color(c.PinIcon))
 		})
 	}
 	ts := labelsTextClass.Enter(gtx, 0, 0)
 	defer ts.Leave()
-	td := at(gtx, dp(gtx, 64), y, func(gtx layout.Context) layout.Dimensions {
+	td := at(gtx, textX, y, func(gtx layout.Context) layout.Dimensions {
 		return styledLabel(gtx, rc.th, ts, textStyle{size: 13, col: c.Muted70, lineH: 19}, txt)
 	})
 	if icon == "pin" {
@@ -1507,7 +1639,7 @@ func (r *row) labelLine(gtx layout.Context, rc *rowCtx, x, y int, icon, txt stri
 		if td.Size.Y > 0 {
 			base = y + td.Size.Y - td.Baseline
 		}
-		drawPin(gtx, image.Pt(dp(gtx, 56)-em, base-em*glyphAscent/glyphUPM), em, ls.Color(c.PinIcon))
+		drawPin(gtx, image.Pt(iconR-em, base-em*glyphAscent/glyphUPM), em, ls.Color(c.PinIcon))
 	}
 	return dp(gtx, 20)
 }
@@ -1862,6 +1994,9 @@ func (r *row) failedLine(gtx layout.Context, rc *rowCtx, x, y int) int {
 // systemLayout draws join/leave/topic messages: a 16px icon in the
 // avatar column, 13px text and an inline 12px time.
 func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
+	if rc.dense {
+		return r.denseSystemLayout(gtx, rc)
+	}
 	c := rc.c
 	m := &r.m
 	w := gtx.Constraints.Max.X
@@ -1921,6 +2056,64 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	return layout.Dimensions{Size: image.Pt(w, h)}
 }
 
+// denseSystemLayout is a system message under Compact. In a channel,
+// Message's gutter is getCompactGutter for every row, so the time sits
+// in the 56px box where Clean has the icon, and SystemMessage drops its
+// inline time ("dense" → no <time>) and puts its text in
+// containerCompact (margin-top 2px, padding 0 0 4px) instead of
+// container (padding 4px 20px 4px 0), the body's 4px :after under it.
+// In a thread the gutter has no left side; ThreadReplyGeneric keeps the
+// sender and time line over the text (it hides it only for "light").
+func (r *row) denseSystemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
+	c := rc.c
+	m := &r.m
+	w := gtx.Constraints.Max.X
+	padX := dp(gtx, rc.padX())
+	cx := dp(gtx, rc.contentX())
+	cw := w - cx - padX
+	if rc.thread {
+		cw = w - cx - dp(gtx, 16)
+	}
+	cw = max(cw, dp(gtx, 80))
+	rec := op.Record(gtx.Ops)
+	top := dp(gtx, mt.padTop) - dp(gtx, 4) // the gutter's first line
+	y := top
+	if rc.thread {
+		d := at(gtx, cx, y, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
+			return slackc.Component(gtx, "ThreadSenderAndTimestampGeneric", r, (*row).threadSenderProps, (*row).layoutThreadSender)
+		})
+		y += max(d.Size.Y, dp(gtx, mt.nameLine))
+	} else {
+		at(gtx, padX, y, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(dp(gtx, mt.denseTS), 1<<20)}
+			return r.layoutCompactTS(gtx, nil)
+		})
+	}
+	y += dp(gtx, 2)
+	r.handler.h, r.handler.m, r.handler.anchor = rc.h, m, rc.origin
+	body := at(gtx, cx, y, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
+		return r.rv.Layout(gtx, rc.st, &r.handler)
+	})
+	r.bodyRect = image.Rectangle{Min: image.Pt(cx, y), Max: image.Pt(cx+body.Size.X, y+body.Size.Y)}
+	y += max(body.Size.Y, dp(gtx, 20)) + dp(gtx, 4) + dp(gtx, 4)
+	if len(m.Reactions) > 0 {
+		y += r.reactionBar(gtx, image.Pt(cx, y), image.Point{}, cw)
+		y += dp(gtx, 4)
+	} else {
+		r.reactRects = r.reactRects[:0]
+	}
+	content := rec.Stop()
+	h := y
+	if rc.hovered {
+		fill(gtx.Ops, image.Rect(0, 0, w, h), c.Hover)
+	}
+	content.Add(gtx.Ops)
+	r.height = h
+	return layout.Dimensions{Size: image.Pt(w, h)}
+}
+
 // tombstoneLayout is Slack's MessageTombstone (boot-shared 2X8J): a
 // deleted message that still has replies (subtype "tombstone", user
 // USLACKBOT, hidden) draws c-message_kit__tombstone: the 36px placeholder
@@ -1939,6 +2132,9 @@ func (r *row) tombstoneLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions 
 		cw = w - cx - dp(gtx, 24)
 	}
 	cw = max(cw, dp(gtx, 80))
+	if rc.dense {
+		return r.denseTombstoneLayout(gtx, rc)
+	}
 	rec := op.Record(gtx.Ops)
 	top := dp(gtx, mt.padTop)
 	av := dp(gtx, mt.avatar)
@@ -1969,6 +2165,43 @@ func (r *row) tombstoneLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions 
 	h := max(y, top+av) + dp(gtx, mt.padBottom)
 	content := rec.Stop()
 	content.Add(gtx.Ops)
+	r.height = h
+	return layout.Dimensions{Size: image.Pt(w, h)}
+}
+
+// denseTombstoneLayout is MessageTombstone under Compact
+// (c-message_kit__tombstone--compact): no placeholder square ("light"
+// draws it), so the text starts at the row's padding;
+// .c-message_kit__tombstone__right { margin: -4px 0 } puts it 4px below
+// the row top, and .c-message_kit__tombstone__text--compact { height:
+// auto; margin-bottom: 4px } replaces Clean's 44px centred box.
+func (r *row) denseTombstoneLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
+	m := &r.m
+	w := gtx.Constraints.Max.X
+	x := dp(gtx, rc.padX())
+	cw := w - 2*x
+	if rc.thread {
+		cw = w - x - dp(gtx, 24)
+	}
+	cw = max(cw, dp(gtx, 80))
+	r.handler.h, r.handler.m, r.handler.anchor = rc.h, m, rc.origin
+	y := dp(gtx, mt.padTop) - dp(gtx, 4)
+	body := at(gtx, x, y, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
+		return r.rv.Layout(gtx, rc.st, &r.handler)
+	})
+	r.bodyRect = image.Rectangle{Min: image.Pt(x, y), Max: image.Pt(x+body.Size.X, y+body.Size.Y)}
+	y += max(body.Size.Y, dp(gtx, mt.nameLine)) + dp(gtx, mt.bodyMarginBottom)
+	r.reactRects = r.reactRects[:0]
+	r.addRect = image.Rectangle{}
+	if m.ReplyCount > 0 && !rc.thread && (m.ThreadTS == "" || m.ThreadTS == m.TS) {
+		d := at(gtx, x, y, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
+			return slackc.Component(gtx, "ThreadReplies", r, (*row).repliesProps, (*row).layoutThreadReplies)
+		})
+		y += d.Size.Y
+	}
+	h := y + dp(gtx, mt.padBottom) - dp(gtx, 4)
 	r.height = h
 	return layout.Dimensions{Size: image.Pt(w, h)}
 }
@@ -2139,4 +2372,77 @@ func (r *row) coachmarkProps() slackc.Props {
 
 func (r *row) layoutCoachmark(gtx layout.Context, _ slackc.Props) layout.Dimensions {
 	return slackc.Component(gtx, "MessageKitGutter", r, (*row).gutterProps, (*row).layoutGutter)
+}
+
+// placeCall replays a recorded layout at (x, y).
+func placeCall(gtx layout.Context, c op.CallOp, x, y int) {
+	t := op.Offset(image.Pt(x, y)).Push(gtx.Ops)
+	c.Add(gtx.Ops)
+	t.Pop()
+}
+
+// nbsps caches the message font's no-break space advance per scale.
+var nbsps = map[float32]int{}
+
+// nbspWidth is the advance of the " " getCompactMessageBody puts
+// between the sender and the text (the 15px message font).
+func nbspWidth(gtx layout.Context, th *theme.Theme) int {
+	k := gtx.Metric.PxPerSp
+	if w, ok := nbsps[k]; ok {
+		return w
+	}
+	s := textStyle{size: 15}
+	w := measure(gtx, th, s, "x x").X - measure(gtx, th, s, "xx").X
+	nbsps[k] = max(w, 0)
+	return nbsps[k]
+}
+
+// inlineBody reports whether, under Compact, the body's first line flows
+// on from the sender: CompactBlocks renders the blocks inline only when
+// every block is rich_text (a message without blocks is its inline
+// text, MessageText inline), and inside them only the first
+// .p-rich_text_section is inline (.p-rich_text_block--inline); a list, a
+// quote, a code block, a file or a card starts on the next line.
+func (r *row) inlineBody() bool {
+	bs := r.rv.Doc().Blocks
+	if len(bs) == 0 || bs[0].Kind != richtext.Paragraph {
+		return false
+	}
+	raw := r.m.Blocks
+	if len(raw) == 0 {
+		return true
+	}
+	if len(r.richRaw) != len(raw) || &r.richRaw[0] != &raw[0] {
+		r.richRaw, r.allRich = raw, allRichText(raw)
+	}
+	return r.allRich
+}
+
+// allRichText: msg.blocks is empty or only rich_text blocks.
+func allRichText(raw []byte) bool {
+	if len(raw) == 0 {
+		return true
+	}
+	var bs []struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(raw, &bs) != nil {
+		return false
+	}
+	for _, b := range bs {
+		if b.Type != "rich_text" {
+			return false
+		}
+	}
+	return true
+}
+
+// statusBorder strokes Compact's .c-custom_status box around content r
+// (1px border, 1px 2px padding, radius 5) and returns the left inset (3px)
+// content r moves by.
+func statusBorder(gtx layout.Context, c *colors, r image.Rectangle) int {
+	in := dp(gtx, 3)
+	b := image.Rect(r.Min.X, r.Min.Y-dp(gtx, 2), r.Max.X+2*in, r.Max.Y+dp(gtx, 2))
+	border(gtx.Ops, b, dp(gtx, 5), max(dp(gtx, 1), 1), c.HeaderBorder)
+	return in
 }

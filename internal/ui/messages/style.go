@@ -139,6 +139,7 @@ var mt = struct {
 	toolbarBtn, toolbarPad        float32
 	toolbarTop, toolbarRight      float32
 	statusEmoji                   float32
+	denseTS, indent, denseX       float32
 }{
 	padX: 16, avatar: 36, gap: 8, contentX: 60,
 	chanPadX: 20, chanContentX: 64,
@@ -150,6 +151,12 @@ var mt = struct {
 	dayH: 40, dayPillH: 28, unreadH: 20,
 	toolbarBtn: 32, toolbarPad: 4, toolbarTop: -16, toolbarRight: 17,
 	statusEmoji: 16,
+	// Compact (messages_theme dense): the gutter's left side is the
+	// .p-message_pane_message__compact_timestamp box (width 56px, margin
+	// -4px 0, text-align right) and its margin-right 8; the body sits in
+	// .c-message_kit__indent (padding-left 8): 20+56+8+8 = 92, the sender
+	// 8px before it (.p-message_pane_message__sender--compact).
+	denseTS: 56, indent: 8, denseX: 92,
 }
 
 // ---- drawing helpers ----

@@ -274,6 +274,10 @@ type lay struct {
 	scale float32 // px per dp
 	spx   float32 // px per sp
 	jumbo bool
+	// lead is where the first line of the doc's first paragraph starts
+	// (px): Compact's sender sits inline before it (View.SetLead). The
+	// first flow consumes it.
+	lead  float32
 	items []item
 	decos []deco
 	opts  Options
@@ -644,13 +648,18 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 	lineH0 := lineH
 	maxWf := float32(maxW)
 	truncated := false
+	// Compact's inline sender holds the first line's start: that line is
+	// a full line even when its first word wraps to the next.
+	leadLine := l.lead > 0
+	x, l.lead = l.lead, 0
 
 	finishLine := func() {
 		// Compute this line's height: emoji may be taller.
 		lh := lineH0
-		if lineStart == len(d.frags) && !fs.pre {
+		if lineStart == len(d.frags) && !fs.pre && !leadLine {
 			lh = l.dp(8) // an empty line between paragraphs
 		}
+		leadLine = false
 		for i := lineStart; i < len(d.frags); i++ {
 			if f := &d.frags[i]; f.kind == fImage {
 				if h := f.size + l.dp(4); f.size > lineH0 && h > lh && !fs.flatEmoji {

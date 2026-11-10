@@ -23,6 +23,7 @@ import (
 	"github.com/some-du6e/clack/internal/store"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
+	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
 // Flinging through a channel with message-patching Slick plugins running
@@ -125,7 +126,8 @@ func slickFling(t *testing.T, name string, plugins []string) {
 		return out
 	}
 	// plain rows (one short line, no reactions or replies) as Slack draws
-	// them at 2x: a header row 52px, a continuation 30px
+	// them at 2x: a header row 52px, a continuation 30px (Compact: both 30,
+	// the sender inline before the text)
 	slack := func(when string) {
 		s := v.s
 		for i := s.visible[0]; i < s.visible[1]; i++ {
@@ -141,7 +143,7 @@ func slickFling(t *testing.T, name string, plugins []string) {
 				continue
 			}
 			want := 60
-			if it.header {
+			if it.header && !uipref.Get().Dense {
 				want = 104
 			}
 			if s.heights[i] != want {

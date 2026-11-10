@@ -385,11 +385,21 @@ func (p *prefsModal) homePage(f *prefsForm) {
 var skinTones = []string{"No skin tone", "light skin tone", "medium-light skin tone", "medium skin tone", "medium-dark skin tone", "dark skin tone"}
 
 func (p *prefsModal) messagesPage(f *prefsForm) {
+	// MessageThemePref: messages_theme_set radios writing
+	// light_with_avatars or dense (setUserPrefByApi); Clean is checked for
+	// light_with_avatars and the server's "default". The message list
+	// follows it live (uipref Dense: messages row.go, list.go).
 	f.subheading("Theme")
 	mt := p.prefStr("messages_theme")
-	f.off("messages_theme.clean", "Clean", "", mt != "dense", true)
-	f.off("messages_theme.dense", "Compact", "", mt == "dense", true)
-	f.na()
+	if mt == "" {
+		mt = "default"
+	}
+	dense := mt == "dense"
+	f.option("pref.messages_theme=light_with_avatars", "Clean", "", mt == "light_with_avatars" || mt == "default", true,
+		func() { p.setPref("messages_theme", "light_with_avatars") })
+	f.option("pref.messages_theme=dense", "Compact", "", dense, true, func() { p.setPref("messages_theme", "dense") })
+	p.messageExample(f, dense, "Slackbot", exampleSlackbot, []examplePart{{text: "Feeling great!"}})
+	f.y += f.gtx.Dp(14)
 	f.hr()
 	f.subheading("Names")
 	// MessageNamesPref: display_real_names_override is 1/-1 against the
@@ -412,6 +422,15 @@ func (p *prefsModal) messagesPage(f *prefsForm) {
 	}
 	f.option("names.real", "Full & display names", "", full, true, func() { setNames(true) })
 	f.option("names.display", "Just display names", "", !full, true, func() { setNames(false) })
+	// MessageNamesPref's example: "Megan Anne" with full names, else
+	// "Meg"; the mention stays "@Meg" (aE.kz is false without the
+	// mentions_full_names_only_pref experiment)
+	who := "Meg"
+	if full {
+		who = "Megan Anne"
+	}
+	p.messageExample(f, dense, who, exampleMeg, []examplePart{{emoji: "wave"}, {text: " Hi, I’m "}, {text: "@Meg", slug: true}})
+	f.y += f.gtx.Dp(16) // p.margin_top_100
 	f.para("To change your full or display name, head to your profile.")
 	f.linkDo("own_profile", "your profile", func() { p.a.OpenProfile(p.a.PointerPos(), p.a.model().SelfID) })
 	f.hr()

@@ -90,6 +90,15 @@ func TestPrefsAuditShots(t *testing.T) {
 				pm.themeTab, pm.scroll.y = "custom", 0
 				pages("prefs-appearance-custom-" + mode)
 			}
+			if it.id == "messages_media" {
+				// Theme > Compact: the examples turn into CompactMessageExample
+				pm.setPref("messages_theme", "dense")
+				e.until("Compact", 5*time.Second, func() bool { return pm.prefStr("messages_theme") == "dense" })
+				pm.scroll.y = 0
+				shot("prefs-messages_media-compact-" + mode)
+				pm.setPref("messages_theme", "light_with_avatars")
+				e.until("Clean", 5*time.Second, func() bool { return pm.prefStr("messages_theme") == "light_with_avatars" })
+			}
 		}
 		for e.a.dismissTop() {
 		}
