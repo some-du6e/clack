@@ -302,3 +302,28 @@ func TestFilesViewRestore(t *testing.T) {
 		}
 	}
 }
+
+// file_trash_updates: the sidebar's Deleted item shows while
+// files.recentlyDeleted has rows, or always with the experiment on.
+func TestFilesViewDeletedNav(t *testing.T) {
+	v, h, e, _ := filesView(t)
+	a := h.Core()
+	e.until(t, "the sidebar's deleted load", func() bool { _, ok, _ := v.del.data.get(); return ok })
+	a.SetExperimentGroup("file_trash_updates", "")
+	if v.deletedNavShown() {
+		t.Error("Deleted shown with nothing deleted and the experiment unassigned")
+	}
+	a.SetExperimentGroup("file_trash_updates", "on")
+	if !v.deletedNavShown() {
+		t.Error("Deleted hidden with the experiment on")
+	}
+	a.SetExperimentGroup("file_trash_updates", "off")
+	if err := a.DeleteFile(t.Context(), fakeslack.CanvasShared); err != nil {
+		t.Fatal(err)
+	}
+	v.startDeleted()
+	e.until(t, "the deleted canvas", func() bool { r, ok, _ := v.del.rows(); return ok && len(r) == 1 })
+	if !v.deletedNavShown() {
+		t.Error("Deleted hidden with a deleted canvas")
+	}
+}

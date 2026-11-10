@@ -252,6 +252,9 @@ func (f *Files) update(gtx C) {
 		f.starAsked = true
 		f.loadStarred()
 	}
+	if f.h.Core() != nil && !f.del.data.started() { // the sidebar's mount: files.recentlyDeleted
+		f.startDeleted()
+	}
 	for i := range f.navClicks {
 		if f.navClicks[i].Clicked(gtx) {
 			if f.nav != i {
@@ -506,8 +509,14 @@ func (f *Files) nav_(gtx C) D {
 				})
 			}),
 			navItem(0), navItem(1), navItem(2),
-			rule,
-			navItem(3),
+			// the divider and Deleted are visible while there are recently
+			// deleted files or under file_trash_updates
+			layout.Rigid(func(gtx C) D {
+				if !f.deletedNavShown() {
+					return D{}
+				}
+				return col(gtx, rule, navItem(3))
+			}),
 			rule,
 			layout.Rigid(func(gtx C) D {
 				g := gtx

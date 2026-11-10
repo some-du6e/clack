@@ -24,6 +24,9 @@ package views
 //     list); a failure toasts "Oops! We couldn’t restore that canvas".
 //   - Nothing deleted: "Nothing to see here" / "You haven’t deleted any
 //     canvases or lists recently."
+//   - The Files sidebar loads files.recentlyDeleted when it mounts; its
+//     Deleted item shows while that has rows, or always under
+//     file_trash_updates "on".
 
 import (
 	"context"
@@ -72,6 +75,17 @@ func (d *filesDeleted) rows() ([]core.DeletedFile, bool, error) {
 		}
 	}
 	return out, ok, err
+}
+
+// deletedNavShown is the sidebar's Deleted item (and the divider above
+// it): visible while recentlyDeletedFiles has rows, or always under
+// file_trash_updates (client-unified-files-sidebar-view w695).
+func (f *Files) deletedNavShown() bool {
+	if c := f.h.Core(); c != nil && c.Experiment("file_trash_updates") == "on" {
+		return true
+	}
+	rows, _, _ := f.del.rows()
+	return len(rows) > 0
 }
 
 // startDeleted loads files.recentlyDeleted (pageFileType none: both).

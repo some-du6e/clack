@@ -230,4 +230,6 @@ var experimentReads = map[string][]string{
 	// prefs, status, focus, notifications, emoji picker
 	"emoji_skin_tone_picker_improvement": on, "focus_mode_custom_duration": {"treatment"},
 	"defer_notification_3p_streaming": on,
+	// files
+	"file_trash_updates": on,
 }
