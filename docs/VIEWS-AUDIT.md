@@ -62,10 +62,7 @@ Source only (no live session): build `a84662d2`, public CDN chunks fetched witho
 
 ## Not done
 
-- Per-row checkboxes for Custom select, and "Select everything matching these filters." / "{n} items selected on page." (ActivityBulkSelectionBanner).
-- Activity custom views ("Create a custom view", `activity.views` writes) and the VIP filter.
-- The Activity settings menu's Density and Sort sections, which only show behind another flag (not shown on the account).
-- Activity's keyboard and live updates (another branch owns Activity).
+- Activity's per-row checkboxes, ActivityBulkSelectionBanner, custom views, the VIP filter, the settings menu's Sort and Density sections, its keyboard and live updates: done on 2026-11-10 (branch `activity-rest`, docs/ACTIVITY.md "Bulk select, saved views, sort, keys, live updates"); what's left of them is listed there.
 - Threads: ↓ in the reply box's empty field (onDownArrowInEmptyInput) needs a composer hook Clack doesn't have; after Enter Slack also moves keyboard focus into the channel's message list at the root. "Show N more replies" still opens the thread instead of loading older replies inline. A shifted symbol typed on a row opens the reply box without the character (Gio names the key, not the text).
 - Threads, Drafts: Slack adds the thread or draft in place; Clack refreshes the list (the result is the same rows).
 - To-dos: Clack draws one list, not Slack's Overdue / In progress / Completed sections, so the keys run over the whole list; End doesn't first load the remaining pages (onListKeyDownCapture). A tombstoned to-do's Enter opens the item instead of the remove dialog (Kivd).

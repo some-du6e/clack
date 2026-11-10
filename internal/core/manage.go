@@ -614,7 +614,7 @@ func (a *App) SetActivityDensity(ctx context.Context, dense bool) (saved bool, e
 	if dense {
 		d = "dense"
 	}
-	return true, a.C.Call(ctx, "activity.prefs.update", url.Values{"density": {d}}, nil)
+	return true, a.SetActivityPrefs(ctx, "", d)
 }
 
 // MarkAllActivityRead marks every unread item of a view read. It tries

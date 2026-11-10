@@ -78,7 +78,7 @@ var actFilters = [...]actFilter{
 const actFilterReactions = 4
 
 var actExtras = [...]actFilter{
-	{label: "VIP", icon: "vip", off: true},
+	{label: "VIP", icon: "vip"},
 	{label: "Cleared items", icon: "eraser"},
 	{label: "Specific channel or section", icon: "channel", off: true, nocheck: true},
 }
@@ -150,6 +150,7 @@ type actDesc struct {
 
 type actRow struct {
 	click widget.Clickable
+	check widget.Clickable // the triage row's checkbox (RowCheckbox)
 	bar   widget.Clickable // hover area of the action bar
 	btns  [actBtnCount]widget.Clickable
 	ctx   struct{} // the row's context-menu press target
@@ -200,17 +201,54 @@ type Activity struct {
 	dense bool
 	kebab widget.Clickable
 
-	// Bulk selection (ActivityFilterBulkAction): selMode shows the bulk
-	// buttons, picked holds the selected item keys, custom lets a row
-	// click toggle its pick (Custom select).
-	selMode                         bool
-	custom                          bool
+	// Bulk selection (ActivityFilterBulkAction, activity_bulk.go): picked
+	// holds the selected item keys (P0K2 bulkItems), bulkMode is Custom
+	// select's bulk action mode, serverAll server-side select-all, lastBulk
+	// the last row picked (Shift ranges).
+	bulkMode, serverAll             bool
+	lastBulk                        string
 	picked                          map[string]bool
 	selAllBtn, selMenuBtn           widget.Clickable
 	selC                            [4]widget.Clickable
 	bulkRead, bulkClear, bulkUnread widget.Clickable
+	bannerLink                      widget.Clickable
 	setC                            [4]widget.Clickable // Settings menu rows
 	emptyPick                       int                 // which random "all caught up" Unreads empty state
+
+	// Saved views (activity_views.go): the VIP filter and the view's
+	// sections and channels (with filters, unread and showCleared: the
+	// view's actState), the custom views, the hidden default types, each
+	// view's filters by key, the tab strip's slots and their context
+	// targets, the global sort, the header sort and the settings menu's
+	// Sort and Density rows, the filter menu's view buttons; selUnread is
+	// the opened row's unread state when it was opened.
+	vip                        bool
+	sections, channels         []string
+	customs                    []core.ActivityView
+	hidden                     map[string]bool
+	stateOf                    map[string]actState
+	slots                      []int
+	tabCtx                     []actTabCtx
+	viewsLoaded                bool
+	globalSort                 string
+	sortBtn                    widget.Clickable
+	setSortC, setDenseC        [2]widget.Clickable
+	saveViewBtn, deleteViewBtn widget.Clickable
+	selUnread                  bool
+	lastViewModal              *actViewModal // the save-view modal last opened (tests)
+
+	// Keyboard (activity_keys.go): the list's focus target, whether it
+	// has the focus and came by keyboard (the ring), the focused row and
+	// the change ⌘Z undoes.
+	kbTag             actKbTag
+	kbFocused, kbMode bool
+	focusKey          string
+	lastUndo          *actUndo
+
+	// Live updates (activity_live.go): the newest unread entry the
+	// "New activity" banner announces.
+	newUnreadTS string
+	bannerNew   widget.Clickable
 
 	unread    toggle
 	filterBtn widget.Clickable
@@ -227,8 +265,7 @@ type Activity struct {
 	filterC     [len(actFilters)]widget.Clickable
 	extraC      [len(actExtras)]widget.Clickable
 	showCleared bool
-	plusC       [4]widget.Clickable
-	starred     map[string]bool // non-nil: only starred conversations
+	plusC       []widget.Clickable // the "+" menu's rows (plusItems)
 
 	data     async[core.ActivityPage]
 	list     widget.List
@@ -310,6 +347,8 @@ func NewActivity(h Host) *Activity {
 		override: map[string]bool{},
 		cleared:  map[string]bool{},
 		picked:   map[string]bool{},
+		hidden:   map[string]bool{},
+		stateOf:  map[string]actState{},
 
 		saved:      map[string]core.SavedItem{},
 		savedGone:  map[string]bool{},
@@ -320,10 +359,6 @@ func NewActivity(h Host) *Activity {
 	v.list.Axis = layout.Vertical
 	v.prevList.Axis = layout.Vertical
 	return v
-}
-
-func actMatch(ev core.Event) bool {
-	return ev.Type == "message" && (ev.Mention || ev.Reply) || ev.Type == "counts" || ev.Type == "activity"
 }
 
 // watchItems collects realtime "activity" events that carry an item, so
@@ -350,6 +385,16 @@ func (v *Activity) watchItems() {
 			case ev.Name == "activity_clear_all_completed" && ev.ID != "":
 				key := ev.ID
 				v.notes.fns = append(v.notes.fns, func() { v.clearAllCompleted(key) })
+			case ev.Name == "activity_invalidated":
+				// activityInvalidated: fetch the feed again
+				v.notes.fns = append(v.notes.fns, func() {
+					if !(v.data.busy() && v.mode == actFresh) {
+						v.load(actRefresh)
+					}
+				})
+			case ev.Name == "activity_views_updated":
+				raw := ev.Raw
+				v.notes.fns = append(v.notes.fns, func() { v.viewsEvent(raw) })
 			case ev.Activity != nil:
 				v.notes.items = append(v.notes.items, *ev.Activity)
 			}
@@ -384,13 +429,7 @@ func (v *Activity) applyPatches() {
 			p.Items = kept
 		}
 		for _, in := range items {
-			key := actKey(&in)
-			for i := range p.Items {
-				if actKey(&p.Items[i]) == key {
-					p.Items[i].Unread = in.Unread
-					delete(v.override, key)
-				}
-			}
+			v.liveUpsert(p, in) // activity_live.go
 		}
 	})
 	v.dirty = true
@@ -399,7 +438,6 @@ func (v *Activity) applyPatches() {
 // Layout draws the view.
 func (v *Activity) Layout(gtx C) D {
 	v.frame()
-	v.w.watch(v.h, actMatch)
 	v.watchItems()
 	v.loadDensity()
 	if !v.data.started() {
@@ -407,6 +445,11 @@ func (v *Activity) Layout(gtx C) D {
 	}
 	v.notes.drain(v.h)
 	v.applyPatches()
+	if v.viewsLoaded {
+		v.syncTabs()
+	}
+	v.keys(gtx)
+	v.tabMenus(gtx)
 	v.update(gtx)
 	v.settle()
 
@@ -435,15 +478,10 @@ func (v *Activity) update(gtx C) {
 		}
 	}()
 	reload := false
+	prev := v.slot()
 	if v.tabs.update(gtx) {
+		v.switchView(prev) // activity_views.go: each view keeps its filters and layout
 		reload = true
-		if !v.globalSettings() {
-			// each saved view keeps its own layout
-			if d := v.viewDense[v.tabs.Sel]; d != v.dense {
-				v.dense, v.dirty = d, true
-				v.rows = map[string]*actRow{}
-			}
-		}
 	}
 	if v.unread.Update(gtx) {
 		reload = true
@@ -455,57 +493,30 @@ func (v *Activity) update(gtx C) {
 		v.failedCursor = ""
 	}
 	if v.showAll.Clicked(gtx) {
-		v.tabs.Sel, v.unread.Value, v.filters, v.starred, v.showCleared = 0, false, [len(actFilters)]bool{}, nil, false
+		// "Show all activity": the All view, nothing filtered
+		was := v.slot()
+		v.tabs.Sel = 0
+		if was != 0 {
+			v.switchView(was)
+		}
+		v.setState(actState{})
 		v.query.ed.SetText("")
 		reload = true
 	}
 	if v.kebab.Clicked(gtx) {
 		v.menu = actToggleMenu(v.menu, actMenuSettings)
 	}
-	if v.selAllBtn.Clicked(gtx) {
-		// ActivityFilterBulkAction's checkbox: everything shown selected
-		// unselects, anything else selects every item shown.
-		if n := len(v.picked); n > 0 && n == v.shownCount() {
-			v.endSelect()
-		} else {
-			v.pick(func(*core.ActivityItem, bool) bool { return true })
-		}
+	if v.sortBtn.Clicked(gtx) {
+		// the header's ActivityFilterSort (bottom-right of its 28px button)
+		v.sortMenu(image.Pt(gtx.Constraints.Max.X-gtx.Dp(16+28+8), gtx.Dp(14+28+4)))
 	}
-	if v.selMenuBtn.Clicked(gtx) {
-		v.menu = actToggleMenu(v.menu, actMenuSelect)
-	}
-	for i := range v.selC {
-		if !v.selC[i].Clicked(gtx) {
-			continue
-		}
-		v.menu = actMenuNone
-		switch i {
-		case 0:
-			v.pick(func(*core.ActivityItem, bool) bool { return true })
-		case 1:
-			v.pick(func(_ *core.ActivityItem, unread bool) bool { return !unread })
-		case 2:
-			v.pick(func(_ *core.ActivityItem, unread bool) bool { return unread })
-		case 3:
-			clear(v.picked)
-			v.selMode, v.custom = true, true
-		}
-	}
-	if v.bulkRead.Clicked(gtx) {
-		v.bulk(0)
-	}
-	if v.bulkClear.Clicked(gtx) {
-		v.bulk(1)
-	}
-	if v.bulkUnread.Clicked(gtx) {
-		v.bulk(2)
-	}
+	v.bulkClicks(gtx) // activity_bulk.go
 	v.settingsClicks(gtx)
 	if v.filterBtn.Clicked(gtx) {
 		v.menu = actToggleMenu(v.menu, actMenuFilter)
 	}
 	if v.plus.Clicked(gtx) {
-		v.menu = actToggleMenu(v.menu, actMenuPlus)
+		v.plusClick()
 	}
 	if v.scrim.Clicked(gtx) || v.menuClose.Clicked(gtx) {
 		v.menu = actMenuNone
@@ -520,6 +531,10 @@ func (v *Activity) update(gtx C) {
 			}
 		}
 	}
+	if v.extraC[0].Clicked(gtx) {
+		// VIP (filterVipSelected: activity.feed priority_only)
+		v.vip, reload = !v.vip, true
+	}
 	if v.extraC[1].Clicked(gtx) {
 		// "Cleared items" shows the archive (activity.feed archive_only).
 		v.showCleared, reload = !v.showCleared, true
@@ -528,24 +543,8 @@ func (v *Activity) update(gtx C) {
 		v.unclear(&v.undo.item, v.undo.key)
 		v.undo.until = time.Time{}
 	}
-	v.extraC[0].Clicked(gtx)
 	v.extraC[2].Clicked(gtx)
-	switch {
-	case v.plusC[0].Clicked(gtx):
-		v.unread.Value, v.menu, reload = !v.unread.Value, actMenuNone, true
-	case v.plusC[1].Clicked(gtx):
-		on := !v.onlyReactions()
-		v.filters = [len(actFilters)]bool{}
-		v.filters[actFilterReactions] = on
-		v.menu, reload = actMenuNone, true
-	case v.plusC[2].Clicked(gtx):
-		v.toggleStarred()
-		v.menu, v.dirty = actMenuNone, true
-	case v.plusC[3].Clicked(gtx):
-		// "Create a custom view" (a saved activity.views entry) isn't
-		// built; the row closes the menu.
-		v.menu = actMenuNone
-	}
+	v.plusClicks(gtx) // activity_views.go
 	if v.searchBtn.Clicked(gtx) {
 		v.searchOn = !v.searchOn
 		if v.searchOn {
@@ -574,23 +573,21 @@ func (v *Activity) update(gtx C) {
 		v.endSelect()
 		v.emptyPick = int(time.Now().UnixNano() % int64(len(actUnreadsEmpty)))
 		v.load(actFresh)
-	} else if v.w.due(gtx, 5*time.Second) && !(v.data.busy() && v.mode == actFresh) {
-		v.load(actRefresh)
 	}
 }
 
 // actUI is the input-driven view state compared around update.
 type actUI struct {
 	menu                                   actMenu
-	sel, search, allSel, dense, unread, cl bool
+	sel, search, triage, dense, unread, cl bool
 	picked                                 int
 	tab, filters                           int
-	starred                                bool
+	vip, serverAll                         bool
 }
 
 func (v *Activity) uiState() actUI {
-	return actUI{menu: v.menu, sel: v.selOK, search: v.searchOn, allSel: v.selMode, dense: v.dense, picked: len(v.picked),
-		unread: v.unread.Value, cl: v.showCleared, tab: v.tabs.Sel, filters: v.filterCount(), starred: v.starred != nil}
+	return actUI{menu: v.menu, sel: v.selOK, search: v.searchOn, triage: v.triage(), dense: v.dense, picked: len(v.picked),
+		unread: v.unread.Value, cl: v.showCleared, tab: v.tabs.Sel, filters: v.filterCount(), vip: v.vip, serverAll: v.serverAll}
 }
 
 func actToggleMenu(cur, m actMenu) actMenu {
@@ -598,30 +595,6 @@ func actToggleMenu(cur, m actMenu) actMenu {
 		return actMenuNone
 	}
 	return m
-}
-
-func (v *Activity) onlyReactions() bool {
-	for i, on := range v.filters {
-		if on != (i == actFilterReactions) {
-			return false
-		}
-	}
-	return true
-}
-
-func (v *Activity) toggleStarred() {
-	if v.starred != nil {
-		v.starred = nil
-		return
-	}
-	v.starred = map[string]bool{}
-	for _, s := range v.h.Core().Snapshot().Sections {
-		if s.Type == "stars" {
-			for _, ch := range s.Channels {
-				v.starred[ch] = true
-			}
-		}
-	}
 }
 
 // filterCount is the "(N)" shown on the filter menu button.
@@ -635,11 +608,17 @@ func (v *Activity) filterCount() int {
 	if v.showCleared {
 		n++
 	}
+	if v.vip {
+		n++
+	}
+	if _, ok := v.customView(); ok && v.unread.Value {
+		n++ // eZ keeps Unreads in a custom view's count
+	}
 	return n
 }
 
 func (v *Activity) dmOnly() bool {
-	if v.tabs.Sel == 1 {
+	if v.slot() == 1 {
 		return true
 	}
 	for i, f := range actFilters {
@@ -653,7 +632,10 @@ func (v *Activity) dmOnly() bool {
 // types returns the activity.feed types for the tab and filter menu, and
 // whether the combination can't match anything.
 func (v *Activity) types() (string, bool) {
-	tab := actTabTypes[v.tabs.Sel]
+	tab := ""
+	if s := v.slot(); s < len(actTabTypes) {
+		tab = actTabTypes[s]
+	}
 	var fl []string
 	for i, f := range actFilters {
 		if v.filters[i] && f.types != "" {
@@ -709,7 +691,8 @@ func (v *Activity) settle() {
 func (v *Activity) load(mode actLoad) {
 	c := v.h.Core()
 	types, none := v.types()
-	opts := core.ActivityOpts{View: "all", Types: types, Unread: v.unread.Value, Archived: v.showCleared, Limit: actLimit}
+	opts := core.ActivityOpts{View: "all", Types: types, Unread: v.unread.Value, Archived: v.showCleared, Limit: actLimit,
+		Priority: v.vip, SectionIDs: v.sections, ChannelIDs: v.channels, Mode: v.feedMode()}
 	old, _, _ := v.data.get()
 	if mode == actMore {
 		opts.Cursor = old.Next
@@ -1139,7 +1122,7 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 	// plugins' member/channel/message patches land asynchronously: re-derive
 	// row text while any is active (otherwise rows stay cached).
 	patchedViews := v.viewsPatched()
-	dots := v.tabs.Sel == 0 && v.filterCount() == 0
+	dots := v.slot() == 0 && v.filterCount() == 0
 	if dots {
 		v.dots = [4]int{}
 	}
@@ -1148,7 +1131,26 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 	v.ensureLists(page)
 	v.ensureSaved(page)
 	v.ensureFileTitles(page)
-	for i := range page.Items {
+	// VIP unreads on top (activity_views.go actVIPOrder): the unread VIP
+	// items under "VIP unreads", then "Everything else"; no day dividers
+	// in the first group nor on the first row after the second header
+	order, split := []int(nil), -1
+	if v.sortVIP() {
+		order, split = v.actVIPOrder(page)
+	}
+	shown := 0
+	for n := range page.Items {
+		i := n
+		if order != nil {
+			i = order[n]
+			switch {
+			case split > 0 && n == 0:
+				v.vis = append(v.vis, actVisVIP)
+			case split > 0 && n == split:
+				v.vis = append(v.vis, actVisElse)
+			}
+		}
+		inVIP := split > 0 && n < split
 		it := &page.Items[i]
 		key := actKey(it)
 		r := v.rowFor(key)
@@ -1181,24 +1183,35 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 		if dm && !r.d.dm {
 			continue
 		}
-		if v.starred != nil && !v.starred[it.Channel] {
-			continue
-		}
 		if q != "" && !strings.Contains(r.d.hay, q) {
 			continue
 		}
 		// Slack groups the feed by day: no divider for today, then
 		// "Yesterday", "Monday, November 3rd", … before each day's first row.
 		if t := tsTime(it.FeedTS); !t.IsZero() {
-			if !sameDay(t, now) && (lastDay.IsZero() || !sameDay(t, lastDay)) {
+			boundary := split > 0 && n == split
+			if !inVIP && !boundary && !sameDay(t, now) && (lastDay.IsZero() || !sameDay(t, lastDay)) {
 				v.vis = append(v.vis, -1-i)
 			}
-			lastDay = t
+			if !inVIP {
+				lastDay = t
+			}
 		}
 		v.vis = append(v.vis, i)
+		shown++
+	}
+	if split > 0 && shown == 0 {
+		v.vis = v.vis[:0]
 	}
 	v.visN, v.dirty = len(page.Items), false
 }
+
+// actVisVIP and actVisElse mark ActivitySectionHeader's "VIP unreads" and
+// "Everything else" rows in v.vis (below every day divider's -1-i).
+const (
+	actVisVIP  = -1 << 30
+	actVisElse = actVisVIP + 1
+)
 
 // ---- header ----
 
@@ -1212,6 +1225,13 @@ func (v *Activity) head(gtx C) D {
 					}
 					return v.layoutToggle(gtx)
 				}),
+				layout.Rigid(func(gtx C) D {
+					// ActivityFilterSort (HEADER): the 20px sort icon button
+					if !v.headerSort() {
+						return D{}
+					}
+					return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return v.iconButton(gtx, &v.sortBtn, "sort", 28, 20, v.p.Sec) })
+				}),
 				hgap(8),
 				layout.Rigid(func(gtx C) D { return v.iconButton(gtx, &v.kebab, "more", 28, 20, v.p.Sec) }),
 			)
@@ -1220,13 +1240,18 @@ func (v *Activity) head(gtx C) D {
 			return layout.Inset{Left: 16, Right: 16}.Layout(gtx, func(gtx C) D {
 				tg := gtx
 				tg.Constraints.Min.X = 0 // natural width: the "+" sits right after the tabs
-				d := v.tabStripIcons(tg, v.tabs, actTabIcons, v.dots[:])
+				// activity_views.go: the saved views
+				d := v.viewTabs(tg)
 				x := d.Size.X + gtx.Dp(8)
 				bs := gtx.Dp(24)
 				st := op.Offset(image.Pt(x, (d.Size.Y-bs)/2)).Push(gtx.Ops)
 				g := gtx
 				g.Constraints.Min = image.Point{}
-				v.iconButton(g, &v.plus, "plus", 24, 16, v.p.Sec)
+				plusCol := v.p.Sec
+				if v.viewCount() >= actMaxViews {
+					plusCol = v.p.Faint // isAddTabDisabled: 15 views
+				}
+				v.iconButton(g, &v.plus, "plus", 24, 16, plusCol)
 				st.Pop()
 				v.plusX = gtx.Dp(16) + x
 				return D{Size: image.Pt(gtx.Constraints.Max.X, d.Size.Y)}
@@ -1267,12 +1292,25 @@ func (v *Activity) main(gtx C) D {
 }
 
 func (v *Activity) listArea(gtx C) D {
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+	top := 0
+	d := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
 			return layout.Inset{Top: actBarTop, Bottom: 16}.Layout(gtx, v.filterBar)
 		}),
-		layout.Flexed(1, v.items),
+		layout.Rigid(func(gtx C) D {
+			// ActivityBulkSelectionBanner under the bar in triage mode
+			if !v.triage() {
+				return D{}
+			}
+			return v.banner(gtx)
+		}),
+		layout.Flexed(1, func(gtx C) D {
+			top = gtx.Constraints.Max.Y
+			return v.items(gtx)
+		}),
 	)
+	v.newActivityBanner(gtx, d.Size.Y-top)
+	return d
 }
 
 // actAt lays w out at x with loose constraints and returns its size.
@@ -1287,18 +1325,14 @@ func actAt(gtx C, x int, w W) D {
 func (v *Activity) filterBar(gtx C) D {
 	gap := gtx.Dp(8)
 	x := gtx.Dp(16)
-	x += actAt(gtx, x, v.selAllGroup).Size.X + gap
-	if v.selMode {
-		// the bulk buttons follow the select group (margin-left 4px each)
-		on := len(v.picked) > 0
-		for _, b := range []struct {
-			c           *widget.Clickable
-			icon, label string
-		}{{&v.bulkRead, "mark-as-read", "Mark selected as read"}, {&v.bulkClear, "eraser", "Clear selected"}, {&v.bulkUnread, "mark-as-unread", "Mark selected as unread"}} {
-			x += actAt(gtx, x, func(gtx C) D { return v.bulkButton(gtx, b.c, b.icon, b.label, on) }).Size.X + gtx.Dp(4)
-		}
-		x += gap
+	x += actAt(gtx, x, v.selAllGroup).Size.X
+	if v.triage() {
+		// triage mode: ActivityFilterBulkAction alone (the bulk buttons
+		// after the select group, margin-left 8px each)
+		v.bulkRows(gtx, x)
+		return D{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(actBarH))}
 	}
+	x += gap
 	x += actAt(gtx, x, v.unreadsBtn).Size.X + gap
 	v.filterX = x
 	x += actAt(gtx, x, v.filterMenuBtn).Size.X + gap
@@ -1372,7 +1406,13 @@ func (v *Activity) selAllGroup(gtx C) D {
 			}
 			cb := gtx.Dp(16)
 			defer op.Offset(image.Pt(gtx.Dp(6), (sz.Y-cb)/2)).Push(gtx.Ops).Pop()
-			v.actCheck(gtx, 16, len(v.picked) > 0)
+			// checked with anything picked; indeterminate in triage mode
+			// while only some of the rows shown are
+			if n := len(v.picked); v.triage() && n > 0 && n != v.shownCount() {
+				v.actCheckDash(gtx, 16)
+			} else {
+				v.actCheck(gtx, 16, len(v.picked) > 0)
+			}
 			return D{Size: image.Pt(cw, sz.Y)}
 		})
 	}()
@@ -1401,7 +1441,7 @@ func (v *Activity) selAllGroup(gtx C) D {
 func (v *Activity) bulkButton(gtx C, c *widget.Clickable, icon, label string, on bool) D {
 	fg := v.p.Text
 	if !on {
-		fg = v.p.Faint
+		fg = v.p.Sec // c-button--disabled: content-sec on base-ter, no border
 	}
 	return c.Layout(gtx, func(gtx C) D {
 		if on {
@@ -1414,19 +1454,27 @@ func (v *Activity) bulkButton(gtx C, c *widget.Clickable, icon, label string, on
 			return layout.W.Layout(g, func(gtx C) D {
 				return row(gtx, layout.Middle,
 					layout.Rigid(func(gtx C) D { return v.icon(gtx, icon, 16, fg) }),
-					hgap(4),
-					layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wBold, fg, label) }),
+					layout.Rigid(func(gtx C) D {
+						if label == "" {
+							return D{} // isSmallWidth: the icon alone
+						}
+						return layout.Inset{Left: 4}.Layout(gtx, func(gtx C) D { return v.label(gtx, 13, wBold, fg, label) })
+					}),
 				)
 			})
 		})
 		call := m.Stop()
 		r := image.Rectangle{Max: d.Size}
 		rad := gtx.Dp(8)
-		rrect(gtx, r, rad, v.p.Bg)
-		if on && c.Hovered() {
-			rrect(gtx, r, rad, v.p.Hover)
+		if !on {
+			rrect(gtx, r, rad, v.p.Track)
+		} else {
+			rrect(gtx, r, rad, v.p.Bg)
+			if c.Hovered() {
+				rrect(gtx, r, rad, v.p.Hover)
+			}
+			border(gtx, r, rad, max(1, gtx.Dp(1)), v.p.Border)
 		}
-		border(gtx, r, rad, max(1, gtx.Dp(1)), v.p.Border)
 		call.Add(gtx.Ops)
 		return d
 	})
@@ -1442,105 +1490,6 @@ func (v *Activity) shownCount() int {
 		}
 	}
 	return n
-}
-
-// pick selects the items shown that want accepts (Select all / reads /
-// unreads) and turns the bulk buttons on.
-func (v *Activity) pick(want func(it *core.ActivityItem, unread bool) bool) {
-	page, _, _ := v.data.get()
-	clear(v.picked)
-	for _, i := range v.vis {
-		if i < 0 || i >= len(page.Items) {
-			continue
-		}
-		it := &page.Items[i]
-		k := actKey(it)
-		if want(it, v.isUnread(it, k)) {
-			v.picked[k] = true
-		}
-	}
-	v.selMode, v.custom = true, false
-}
-
-// endSelect leaves bulk selection.
-func (v *Activity) endSelect() {
-	clear(v.picked)
-	v.selMode, v.custom = false, false
-}
-
-// bulk runs a bulk action on the picked items: 0 mark read
-// (bulk_mark_read), 1 clear (bulk_archive), 2 mark unread
-// (bulk_mark_unread), with Slack's "{n} items marked as read" / "… cleared"
-// / "… marked as unread" toast. The selection ends right away, as in
-// Slack.
-func (v *Activity) bulk(action int) {
-	page, _, _ := v.data.get()
-	var items []core.ActivityItem
-	var keys []string
-	for i := range page.Items {
-		it := &page.Items[i]
-		if k := actKey(it); v.picked[k] {
-			items, keys = append(items, *it), append(keys, k)
-		}
-	}
-	if len(items) == 0 {
-		return
-	}
-	v.endSelect()
-	n := len(items)
-	noun := "items"
-	if n == 1 {
-		noun = "item"
-	}
-	switch action {
-	case 0, 2:
-		read := action == 0
-		prev := make(map[string]bool, len(keys))
-		for _, k := range keys {
-			if r, ok := v.override[k]; ok {
-				prev[k] = r
-			}
-			v.override[k] = read
-		}
-		v.dirty = true
-		if read {
-			v.h.Toast(strconv.Itoa(n) + " " + noun + " marked as read")
-		} else {
-			v.h.Toast(strconv.Itoa(n) + " " + noun + " marked as unread")
-		}
-		v.write("Couldn’t update the items: ", func(ctx context.Context, c *core.App) error {
-			if read {
-				return c.MarkActivityRead(ctx, items...)
-			}
-			return c.MarkActivityUnread(ctx, items...)
-		}, func() {
-			for _, k := range keys {
-				if r, ok := prev[k]; ok {
-					v.override[k] = r
-				} else {
-					delete(v.override, k)
-				}
-			}
-			v.dirty = true
-		})
-	case 1:
-		for _, k := range keys {
-			v.cleared[k] = true
-			if v.selOK && v.selKey == k {
-				v.selOK = false
-			}
-		}
-		v.dirty = true
-		v.h.Toast(strconv.Itoa(n) + " " + noun + " cleared")
-		v.write("Couldn’t clear the items: ", func(ctx context.Context, c *core.App) error {
-			return c.ClearActivity(ctx, items...)
-		}, func() {
-			for _, k := range keys {
-				delete(v.cleared, k)
-			}
-			v.dirty = true
-		})
-	}
 }
 
 // filterMenuBtn is the filter icon + caret outline button; it grows to
@@ -1611,6 +1560,16 @@ func (b *base) actCheck(gtx C, size unit.Dp, on bool) D {
 	return D{Size: sz}
 }
 
+// actCheckDash is the indeterminate checkbox: link blue under a white
+// 8x2 dash.
+func (b *base) actCheckDash(gtx C, size unit.Dp) D {
+	s := gtx.Dp(size)
+	rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(4), b.p.Link)
+	w, h := gtx.Dp(8), max(1, gtx.Dp(2))
+	fill(gtx, image.Rect((s-w)/2, (s-h)/2, (s+w)/2, (s-h)/2+h), rgb(0xffffff))
+	return D{Size: image.Pt(s, s)}
+}
+
 func (v *Activity) items(gtx C) D {
 	page, loaded, err := v.data.get()
 	if v.dirty || v.visN != len(page.Items) {
@@ -1636,12 +1595,19 @@ func (v *Activity) items(gtx C) D {
 		return v.actEmpty(gtx)
 	}
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
+	// the list is the keyboard's focus target (activity_keys.go), the rows
+	// inside its area
+	v.listFocusEvents(gtx)
+	area := v.listFocusArea(gtx, image.Rectangle{Max: gtx.Constraints.Max})
 	d := v.scrollList(gtx, &v.list, n+1, func(gtx C, i int) D {
 		if i >= n {
 			return v.footer(gtx, failed)
 		}
 		idx := v.vis[i]
-		if idx < 0 {
+		switch {
+		case idx == actVisVIP || idx == actVisElse:
+			return v.sectionHeader(gtx, idx == actVisVIP)
+		case idx < 0:
 			if j := -1 - idx; j < len(page.Items) {
 				return v.dayDivider(gtx, tsTime(page.Items[j].FeedTS))
 			}
@@ -1652,6 +1618,7 @@ func (v *Activity) items(gtx C) D {
 		}
 		return v.row(gtx, &page.Items[idx], i)
 	})
+	area.Pop()
 	if page.Next != "" && !failed && !v.data.busy() && v.list.Position.First+v.list.Position.Count >= n-5 {
 		v.load(actMore)
 	}
@@ -1680,7 +1647,7 @@ func (v *Activity) avSize() unit.Dp {
 }
 
 func (v *Activity) filtered() bool {
-	return v.tabs.Sel != 0 || v.unread.Value || v.filterCount() > 0 || v.starred != nil || (v.searchOn && v.query.text() != "")
+	return v.slot() != 0 || v.unread.Value || v.filterCount() > 0 || (v.searchOn && v.query.text() != "")
 }
 
 // actEmptyState is one of Slack's Activity empty states
@@ -1713,11 +1680,11 @@ var actTabIDs = [...]string{"all", "dms", "mentions", "threads"}
 func (v *Activity) emptyState() actEmptyState {
 	pick := v.emptyPick % len(actUnreadsEmpty)
 	switch {
-	case v.unread.Value && v.tabs.Sel == 0:
+	case v.unread.Value && (v.slot() == 0 || v.slot() >= actSlotN):
 		return actUnreadsEmpty[pick]
 	case v.unread.Value:
 		e := actUnreadsEmpty[pick]
-		e.title = "No unread " + actTabIDs[v.tabs.Sel]
+		e.title = "No unread " + actTabIDs[v.slot()]
 		return e
 	case v.searchOn && v.query.text() != "":
 		return actEmptyState{"thinking_face", "Nothing found", "Filtering from recent notifications.", true}
@@ -1784,14 +1751,10 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 	key := actKey(it)
 	r := v.rowFor(key)
 	if r.click.Clicked(gtx) {
+		// a click opens the row, in triage mode too (its checkbox picks
+		// it); the list's focus moves to it
+		v.focusKey = key
 		switch {
-		case v.selMode:
-			// bulk selection: a click toggles the row's pick
-			if v.picked[key] {
-				delete(v.picked, key)
-			} else {
-				v.picked[key] = true
-			}
 		case v.selOK && v.selKey == key:
 			v.selOK = false
 		default:
@@ -1849,8 +1812,34 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 		gtx.Execute(op.InvalidateCmd{})
 	}
 	sel := v.selOK && v.selKey == key
+	focused := v.kbFocused && v.focusKey == key
 	r.v, r.it, r.key, r.unread = v, it, key, unread
-	d := slackc.Component(gtx, "ActivityItem", r, (*actRow).itemProps, (*actRow).layoutItem)
+	var d D
+	if v.triage() {
+		// activity_multi_line_row_triage_container: 22px, the 16px
+		// checkbox, the card 10px after it, 16px at its right
+		lead, end := gtx.Dp(actTriageLead), gtx.Dp(actTriageEnd)
+		func() {
+			defer op.Offset(image.Pt(lead, 0)).Push(gtx.Ops).Pop()
+			g := gtx
+			g.Constraints.Max.X = max(0, gtx.Constraints.Max.X-lead-end)
+			g.Constraints.Min.X = g.Constraints.Max.X
+			d = slackc.Component(g, "ActivityItem", r, (*actRow).itemProps, (*actRow).layoutItem)
+		}()
+		v.rowCheck(gtx, r, d.Size.Y)
+		if focused && v.kbMode {
+			func() {
+				defer op.Offset(image.Pt(lead, 0)).Push(gtx.Ops).Pop()
+				v.focusRing(gtx, d.Size)
+			}()
+		}
+		d.Size.X = gtx.Constraints.Max.X
+	} else {
+		d = slackc.Component(gtx, "ActivityItem", r, (*actRow).itemProps, (*actRow).layoutItem)
+		if focused && v.kbMode {
+			v.focusRing(gtx, d.Size)
+		}
+	}
 	// Drain the bar's hover events even when it isn't drawn this frame, so
 	// moving from the row onto the bar keeps it up.
 	for {
@@ -1858,7 +1847,7 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 			break
 		}
 	}
-	if sel || r.click.Hovered() || r.bar.Hovered() {
+	if sel || focused || r.click.Hovered() || r.bar.Hovered() {
 		y := -gtx.Dp(25)
 		if v.dense {
 			// activity_single_line_row_content__actions_toggle: centred on
@@ -1868,7 +1857,11 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 			// Keep the first visible row's bar inside the list's clip.
 			y = min(max(y, v.list.Position.Offset), d.Size.Y-gtx.Dp(40))
 		}
-		v.hoverBar(gtx, r, unread, d.Size.X, y)
+		barW := d.Size.X
+		if v.triage() {
+			barW -= gtx.Dp(actTriageEnd) // the card's right edge
+		}
+		v.hoverBar(gtx, r, unread, barW, y)
 	}
 	return d
 }
@@ -1913,7 +1906,7 @@ func (r *actRow) itemProps() slackc.Props {
 func (r *actRow) layoutItem(gtx C, p slackc.Props) D {
 	v, it := r.v, r.it
 	r.cur = &r.d
-	sel := v.selOK && v.selKey == r.key || v.selMode && v.picked[r.key]
+	sel := v.selOK && v.selKey == r.key
 	hov := r.click.Hovered()
 	var mods uint64
 	if p != nil {
@@ -1956,6 +1949,11 @@ func (r *actRow) itemBody(gtx C, st slackc.Styled, sel bool) D {
 		bg := v.p.ReadFill
 		if r.unread {
 			bg = v.p.Bg
+			if v.picked[r.key] {
+				// --bulk-selected (base-hgl-1) beats --unread's base-pry;
+				// a read row's --read-fill wins over it (Slack's cascade)
+				bg = v.p.PillOnBg
+			}
 		}
 		if sel {
 			bg = v.p.SelBg
@@ -2111,7 +2109,9 @@ func (r *actRow) preview(gtx C, lines int) D {
 }
 
 func (v *Activity) choose(it *core.ActivityItem, key string, r *actRow) {
+	v.selUnread = v.isUnread(it, key) // selectedItemUnreadState (the VIP order keeps it)
 	v.sel, v.selKey, v.selOK, v.selDesc = *it, key, true, r.d
+	v.focusKey = key
 	v.markRead(it, key)
 	if it.ListID != "" && it.ListRecord != "" { // a list item opens its pane (mount_features_lists.go)
 		if lo, ok := v.h.(interface{ OpenListItem(listID, recID string) }); ok {
@@ -2261,7 +2261,9 @@ func (v *Activity) write(fail string, f func(context.Context, *core.App) error, 
 		defer cancel()
 		if err := f(ctx, c); err != nil {
 			v.notes.mu.Lock()
-			v.notes.msgs = append(v.notes.msgs, fail+friendlyErr(err))
+			if fail != "" {
+				v.notes.msgs = append(v.notes.msgs, fail+friendlyErr(err))
+			}
 			v.notes.fns = append(v.notes.fns, revert)
 			v.notes.mu.Unlock()
 			v.h.Invalidate()
@@ -3061,19 +3063,11 @@ func (v *Activity) filterMenu(gtx C) D {
 		}),
 		layout.Rigid(func(gtx C) D {
 			return actStack(gtx, len(actExtras), func(gtx C, i int) D {
-				return v.menuRow(gtx, &v.extraC[i], &actExtras[i], i == 1 && v.showCleared)
+				return v.menuRow(gtx, &v.extraC[i], &actExtras[i], i == 0 && v.vip || i == 1 && v.showCleared)
 			})
 		}),
-		layout.Rigid(func(gtx C) D {
-			return layout.Inset{Top: 8, Bottom: 8, Left: 16, Right: 16}.Layout(gtx, func(gtx C) D {
-				sz := image.Pt(gtx.Constraints.Max.X, gtx.Dp(32))
-				rrect(gtx, image.Rectangle{Max: sz}, gtx.Dp(8), v.p.Track)
-				g := gtx
-				g.Constraints = layout.Exact(sz)
-				layout.Center.Layout(g, func(gtx C) D { return v.label(gtx, 13, wBold, v.p.Muted, "Create Custom View") })
-				return D{Size: sz}
-			})
-		}),
+		// ActivityFilterActionButtons (activity_views.go)
+		layout.Rigid(v.filterActions),
 	)
 }
 
@@ -3143,6 +3137,7 @@ func (v *Activity) settingState() (dms, chans, rem bool) {
 }
 
 func (v *Activity) settingsClicks(gtx C) {
+	v.settingsSectionClicks(gtx) // Sort and Density (activity_views.go)
 	dms, chans, rem := v.settingState()
 	c := v.h.Core()
 	set := func(f func(ctx context.Context) error) {
@@ -3177,7 +3172,10 @@ func (v *Activity) settingsMenu(gtx C) D {
 			return v.settingRow(gtx, &v.setC[i], &f, on)
 		})
 	}
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+	// vzfm: [Sort by …] [Density …] (activity_in_home_prototype), then
+	// What to show in Activity
+	rows := v.settingsSections()
+	rows = append(rows,
 		layout.Rigid(func(gtx C) D {
 			return layout.Inset{Top: 4, Bottom: 4, Left: 16, Right: 16}.Layout(gtx, func(gtx C) D {
 				return v.label(gtx, 13, wBold, v.p.Muted, "What to show in Activity")
@@ -3191,6 +3189,7 @@ func (v *Activity) settingsMenu(gtx C) D {
 		}),
 		layout.Rigid(func(gtx C) D { return v.menuItem(gtx, &v.setC[3], "", "See all notification settings", false, false) }),
 	)
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, rows...)
 }
 
 // settingRow is a menuitemcheckbox: a 28px row with the checkbox and the
@@ -3209,55 +3208,6 @@ func (v *Activity) settingRow(gtx C, c *widget.Clickable, f *actFilter, on bool)
 				layout.Rigid(func(gtx C) D { return v.actCheck(gtx, 13, on) }),
 				hgap(12),
 				layout.Flexed(1, func(gtx C) D { return v.label(gtx, 15, wReg, v.p.Text, f.label) }),
-			)
-		})
-		return D{Size: image.Pt(w, h)}
-	})
-}
-
-func (v *Activity) plusMenu(gtx C) D {
-	gtx.Constraints.Min.X = gtx.Constraints.Max.X
-	section := func(s string) layout.FlexChild {
-		return layout.Rigid(func(gtx C) D {
-			return layout.Inset{Top: 4, Bottom: 4, Left: 16, Right: 16}.Layout(gtx, func(gtx C) D {
-				return v.label(gtx, 13, wReg, v.p.Muted, s)
-			})
-		})
-	}
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		section("Default suggestions"),
-		layout.Rigid(func(gtx C) D { return v.plusRow(gtx, &v.plusC[0], "unreads", "Unreads", v.unread.Value) }),
-		layout.Rigid(func(gtx C) D { return v.plusRow(gtx, &v.plusC[1], "emoji", "Reactions", v.filters[actFilterReactions]) }),
-		section("Suggestions from your sidebar"),
-		layout.Rigid(func(gtx C) D { return v.plusRow(gtx, &v.plusC[2], "star", "Starred", v.starred != nil) }),
-		layout.Rigid(func(gtx C) D {
-			return layout.Inset{Top: 8, Bottom: 8}.Layout(gtx, func(gtx C) D { return hline(gtx, v.p.Border) })
-		}),
-		layout.Rigid(func(gtx C) D { return v.plusRow(gtx, &v.plusC[3], "plus", "Create a custom view", false) }),
-	)
-}
-
-// plusRow: 28px, 15px label, 16px icon + 8px gap, a check when active.
-func (v *Activity) plusRow(gtx C, c *widget.Clickable, icon, label string, on bool) D {
-	return c.Layout(gtx, func(gtx C) D {
-		pointerCursor(gtx)
-		w, h := gtx.Constraints.Max.X, gtx.Dp(28)
-		if c.Hovered() {
-			fill(gtx, image.Rect(0, 0, w, h), v.actHover(v.p.Surface))
-		}
-		g := gtx
-		g.Constraints = layout.Exact(image.Pt(w, h))
-		layout.Inset{Left: 16, Right: 16}.Layout(g, func(gtx C) D {
-			return row(gtx, layout.Middle,
-				layout.Rigid(func(gtx C) D { return v.icon(gtx, icon, 16, v.p.Sec) }),
-				hgap(8),
-				layout.Flexed(1, func(gtx C) D { return v.label(gtx, 15, wReg, v.p.Text, label) }),
-				layout.Rigid(func(gtx C) D {
-					if !on {
-						return D{}
-					}
-					return v.icon(gtx, "check", 16, v.p.Link)
-				}),
 			)
 		})
 		return D{Size: image.Pt(w, h)}
@@ -3434,36 +3384,17 @@ func (v *Activity) ensureLists(page *core.ActivityPage) {
 	}
 }
 
-// loadDensity reads the saved layout once (core ActivityDensity: Slack's
-// activity.views prefs / All view density) and applies it unless the
-// toggle was used meanwhile.
+// loadDensity reads the saved views once (fetchActivityViews: the views,
+// their densities and the global prefs, activity_views.go loadViews) and
+// applies the layout unless the toggle was used meanwhile: with
+// activity_global_settings the prefs' density (formatFilterViewState lays
+// it over every view), else the view's own.
 func (v *Activity) loadDensity() {
 	if v.densityReq {
 		return
 	}
 	v.densityReq = true
-	c := v.h.Core()
-	if !v.globalSettings() {
-		v.loadViews()
-		return
-	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		dense, ok, err := c.ActivityDensity(ctx)
-		if err != nil || !ok {
-			return
-		}
-		v.notes.mu.Lock()
-		v.notes.fns = append(v.notes.fns, func() {
-			if !v.densitySet && v.dense != dense {
-				v.dense, v.dirty = dense, true
-				v.rows = map[string]*actRow{}
-			}
-		})
-		v.notes.mu.Unlock()
-		v.h.Invalidate()
-	}()
+	v.loadViews()
 }
 
 // setDense is the layout toggle (ActivityFilterLayoutToggle in the
@@ -3490,52 +3421,30 @@ func (v *Activity) globalSettings() bool {
 	return v.h.Core().Experiment("activity_global_settings") == "on"
 }
 
-// loadViews is fetchActivityViews without the global prefs: each tab's
-// saved view (by view_type) and its density.
-func (v *Activity) loadViews() {
-	c := v.h.Core()
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		views, err := c.ActivityViews(ctx)
-		if err != nil {
-			return
-		}
-		v.notes.mu.Lock()
-		v.notes.fns = append(v.notes.fns, func() {
-			for _, vw := range views {
-				for i, id := range actTabIDs {
-					if vw.Type == id {
-						v.views[i] = vw
-						v.viewDense[i] = vw.Density == "dense" // getDensityFromApiDensity
-					}
-				}
-			}
-			if d := v.viewDense[v.tabs.Sel]; !v.densitySet && d != v.dense {
-				v.dense, v.dirty = d, true
-				v.rows = map[string]*actRow{}
-			}
-		})
-		v.notes.mu.Unlock()
-		v.h.Invalidate()
-	}()
-}
-
 // setViewDense is updateActivityViewsByApi {density, isAutoSave} from the
 // filter bar's toggle: the All view only changes the page; any other
-// saved view writes activity.views.update {view_id, sort, density}.
+// saved view (a custom one too) writes activity.views.update {view_id,
+// sort, density}.
 func (v *Activity) setViewDense(dense, was bool) {
-	tab := v.tabs.Sel
-	v.viewDense[tab] = dense
-	vw := v.views[tab]
-	if tab == 0 || vw.ID == "" {
+	slot := v.slot()
+	vw := v.slotView(slot)
+	if slot < actSlotN {
+		v.viewDense[slot] = dense
+	} else {
+		v.customs[slot-actSlotN].Density = map[bool]string{true: "dense", false: "compact"}[dense]
+	}
+	if slot == 0 || vw.ID == "" {
 		return
 	}
 	v.write("Couldn’t save the layout: ", func(ctx context.Context, c *core.App) error {
 		return c.UpdateActivityView(ctx, vw, dense)
 	}, func() {
-		v.viewDense[tab] = was
-		if v.tabs.Sel == tab {
+		if slot < actSlotN {
+			v.viewDense[slot] = was
+		} else if k := slot - actSlotN; k < len(v.customs) && v.customs[k].ID == vw.ID {
+			v.customs[k].Density = map[bool]string{true: "dense", false: "compact"}[was]
+		}
+		if v.slot() == slot {
 			v.dense, v.dirty = was, true
 		}
 	})
