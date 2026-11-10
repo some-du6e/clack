@@ -402,6 +402,18 @@ func actLabelRow(h Host, label func() string) func(gtx layout.Context, hl bool) 
 // alert, OK only); a public channel is left at once; a private one asks
 // first with LeaveChannel ("Leave <name>", Cancel / Leave Channel).
 func leaveChannel(h Host, convID, kind, name string, general bool) {
+	msg := "You left #" + name
+	if kind == "private" {
+		msg = "You left " + name
+	}
+	MaybeLeaveChannel(h, name, kind, general, func() { actLeave(h, convID, msg) })
+}
+
+// MaybeLeaveChannel is maybeLeaveChannel's asking part: the #general
+// alert, leave (the caller's) at once for a public channel, or the
+// LeaveChannel confirmation for a private one. The channel browser's
+// Leave button runs it too (useChannelExplorer onClickLeave).
+func MaybeLeaveChannel(h Host, name, kind string, general bool, leave func()) {
 	if general {
 		m := NewModal(h, ModalOpts{Title: "Membership is required in #" + name, EnterSubmits: true,
 			Body: func(gtx layout.Context) layout.Dimensions {
@@ -414,11 +426,11 @@ func leaveChannel(h Host, convID, kind, name string, general bool) {
 		return
 	}
 	if kind != "private" {
-		actLeave(h, convID, "You left #"+name)
+		leave()
 		return
 	}
 	Confirm(h, "Leave "+name, "When you leave a private channel, you’ll no longer be able to see any of its messages. To rejoin this channel later, you’ll need to be invited.",
-		"Leave Channel", true, nil, func() { actLeave(h, convID, "You left "+name) })
+		"Leave Channel", true, nil, leave)
 }
 
 func actLeave(h Host, convID, okMsg string) {

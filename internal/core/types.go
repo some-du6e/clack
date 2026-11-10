@@ -533,6 +533,7 @@ type Draft struct {
 	Files                 int
 	FileIDs               []string
 	FileInfo              []DraftFile // the attached files as drafts.list describes them (by FileIDs order when known)
+	FromComposer          bool        // is_from_composer
 }
 
 // DraftFile is a file attached to a draft: uploaded but not shared yet

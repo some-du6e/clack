@@ -93,9 +93,12 @@ Status: **matched** (no change needed), **fixed** (on branch `channels-e2e`), **
 | "Reset" | 13px link after the filters, always shown | missing | **fixed** |
 | Row height | 75px between hairlines | 71–73px | **fixed** |
 | "Browse channels" (Add channels, ⊕) | opens the Channels tab | opened People: `directories?tab=channels` was ignored | **fixed** |
-| Workspaces / Organizations filters | menus | toast "isn't supported yet" | **open** |
-| Filter carets | chevrons | filled triangles | **open** (icons) |
-| Tab icons (Channels, External, Invitations) | `#+person`, building, envelope | `#`, globe, send | **open** (icons) |
+| Workspaces / Organizations filters | `SearchFilterWorkspace` (kGy0): a `SearchFilterSearchSelect` (1Vs3, 280px, search input "Ex. Acme Inc") with "All workspaces", the chosen one, then "Your workspaces" (the org's teams the viewer is in, 6/pc n1); the pill reads "In <team>" with its 16px icon; sends `search_only_team`. `SearchFilterOrgs` (xlY+): multi-select of the orgs `users.slackConnect.orgList` (connection_type member) returns under "Suggestions", "Clear all" after two; "With <org>" / "With N organizations"; sends `external_shared_team_ids` and `channel_type` external_shared(_archived/_private) (XjMX getSearchAPIParams) | toast "isn't supported yet" | **fixed** (`dir_filters.go`, core `browse_filters.go`); the Organizations search filters the connected orgs by name, where Slack runs its team searcher |
+| Filter pill when a filter is set | `c-filter-pill--active`: content-hgl-1 fill, white text | unchanged look | **fixed** |
+| Filter carets | `FilterDropdownIcon` (DDoZ): SvgIcon `caret-down` (a chevron) 16px, 4px after the text, in the text's colour, turned over while the menu is open; the sort select (`SearchFilterSingleSelect`) the same glyph | filled triangles | **fixed** |
+| Tab icons | `UnifiedDirectoryTabs` (unified-directory-view tBgf): `user`, `channel-search`, `user-groups`, `buildings`, `email-invite`; the `-filled` one (`email-filled` for Invitations) on the selected tab | `user`, `#`, `people`, globe, send | **fixed** (`icons/directory.go`: Slack's outlines) |
+| People: Title, Location, Workspaces | `SearchFilterTitle` / `SearchFilterLocation`: multi-selects of `search.modules.people`'s `filter_suggestions` (5 shown, locations by count, kept 4 minutes: ujfX), the typed text echoed as an option; "Title: X" / "Multiple titles"; send `profile_title` / `profile_location`. User Groups' Workspaces sends `usergroups.search` `search_only_team` | toast "isn't supported yet" | **fixed** |
+| External and Invitations tabs | the Slack Connect directory (q2q9) and invitations explorer (ebxv) | "isn't available in yoloslack yet" empty states | **open**: needs the Slack Connect reads |
 
 ## Leaving and rejoining
 
@@ -107,14 +110,14 @@ Status: **matched** (no change needed), **fixed** (on branch `channels-e2e`), **
 | Last member leaving | `maybeLeaveChannel` (boot-shared `Wlp6`): a public channel is left at once. A private one (not archived, not Slack Connect) first reads fresh `users/counts`, and with `people` = 1 opens `BaseArchiveDialog` with `andLeave`: "Leave and archive #x", the archive bullets, "Yes, Leave & Archive the Channel" → `conversations.archive`. With errors it shows `renderError` ("Since you’re the last one here, you’ll need to invite an admin…") | plain leave | **fixed** (details' Leave channel) |
 | Leave a private channel from details | `LeaveChannel` modal | an inline confirmation inside the card | **fixed**: a stacked `LeaveChannel` dialog |
 | Rejoin | the channel is a preview again with the join pane; Join brings the composer back | same | **matched** (fake: `TestChannelLeaveRejoin`) |
-| Browser row confirmation for a private channel | the `LeaveChannel` modal | inline "Leave #x? …" | **open** |
+| Browser row confirmation for a private channel | `onClickLeave` is `maybeLeaveChannel` (Wlp6 B): the `LeaveChannel` modal | inline "Leave #x? …" | **fixed** (`popups.MaybeLeaveChannel`) |
 
 ## Sidebar (seen in passing)
 
 | Feature | Slack | Clack | Status |
 |---|---|---|---|
-| A channel whose name is only an emoji/symbol glyph | shows the glyph (tofu on Linux Chrome) | empty name after "#" | **open**: font fallback, not channel code |
-| Draft pencil on a channel row | pencil before the badge | none | **open** (sidebar) |
+| A channel whose name is only an emoji/symbol glyph | shows the glyph (tofu on Linux Chrome): a name like "ㅤ" (U+3164 HANGUL FILLER, a letter, so allowed) is default-ignorable, but HarfBuzz shapes the four Hangul fillers as spacing glyphs | empty name after "#": `theme.CleanText` dropped the fillers | **fixed**: kept; the system-font fallback draws a font's blank glyph, else Lato's .notdef box |
+| Draft pencil on a channel row | `BaseChannelSuffixDraftIcon` (boot-render PZNh): the icon font's pencil (U+E024) 14px in a 20px `suffix_generic` slot, before the badge, in the row's colour (.64 when muted); shown when the channel has a draft (Ex/u cF), isn't open and can be posted in, with `has_drafted_message`; thread and DM-by-user drafts count only under `draft_management_in_composer` / `sidebar_draft_indicator_menu_and_thread_inclusion` | 13px `edit` SVG, only without a badge, also on the open channel | **fixed**; the experiments' hover menu ("Jump to draft…") is **open** |
 
 ## Code channels (for the code-channels agent)
 
