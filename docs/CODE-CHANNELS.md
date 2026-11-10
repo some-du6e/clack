@@ -80,7 +80,7 @@ Clack ports rules 1, 3 and 4 and the expiry. It has neither live busy signal yet
 
 ## Experiments
 
-`experiments.getByUser` for the test account (2026-11-08), code-channel ones only: `session_channels`, `session_channel_views`, `session_channels_create`, `session_channels_inline_diff`, `session_channels_slug_peek`, `session_channels_translations`, `code_channels_naming`, `code_channels_auto_close`, `code_channels_client_create_api`, `code_channels_ghes_provider`, `code_channels_set_canvas_content`, `agent_channel_header`, `channel_details_agents_apps_tab`, `record_channels` are on. `code_channel_commands` is off. Absent, so off: `session_channels_code_tab_pr` (artifact tabs and PR views), `agent_sessions_synth_view`, `code_channels_browse`, `code_channels_internal`, `session_channels_mute_button`, `agent_multiplayer`, `code_channels_pr_link_tabs`. Clack's offline defaults include the first three.
+`experiments.getByUser` for the test account (2026-11-08), code-channel ones only: `session_channels`, `session_channel_views`, `session_channels_create`, `session_channels_inline_diff`, `session_channels_slug_peek`, `session_channels_translations`, `code_channels_naming`, `code_channels_auto_close`, `code_channels_client_create_api`, `code_channels_ghes_provider`, `code_channels_set_canvas_content`, `agent_channel_header`, `channel_details_agents_apps_tab`, `record_channels` are on. `code_channel_commands` is off. Absent, so off: `session_channels_code_tab_pr` (artifact tabs and PR views), `agent_sessions_synth_view`, `code_channels_browse`, `code_channels_internal`, `session_channels_mute_button`, `agent_multiplayer`, `code_channels_pr_link_tabs`. Clack's offline defaults include the first three and `code_channels_auto_close` (with the agent ones it now reads: `agent_member_channel_count`, `plan_block_coding_enhancements`, `agent_streaming_slimmer_task_cards`).
 
 ## Sidebar
 
@@ -92,7 +92,13 @@ Clack ports rules 1, 3 and 4 and the expiry. It has neither live busy signal yet
 
 **Rows.** `Jbto`: a code channel's `#` becomes `AgentChannelStatusDot` (`p-channel_sidebar__presence_icon`, 16 px, the row's color; table above). Hover shows "Code channel" plus the status label.
 
-Clack ports the section, its position and icon, the membership rule and the dot. It leaves out the "More code channels" overflow row (`iNkd`), the "Mine" filter (behind `agent_sessions_synth_view`), the `code_channels_sidebar_peeks` hover peek and the dot's tooltip.
+**Naming** (`code_channels_naming`, `biaa.Fo`; build `4d0c78085232`). With `session_channels` on, `getChannelSectionNameIfStatic` (`p4Ef`) names the section "Code channels" under the experiment and "Session channels" without it, over any persisted name; with `session_channels` off the section keeps its own name. The same experiment picks "Create a code channel" / "Create a session channel" in the section menu (`getCreateCodeChannelMenuItem`), "More code channels" / "More session channels" for the overflow row (`iNkd`), and "Code Channel Command" / "Session Channel Command" in slash command labels.
+
+**The row's tooltip.** `ConnectedChannel` gives a row whose `properties.code_channel` is set (with `session_channels` on) `codeChannelTooltipText`: "Public code channel" or "Private code channel" ("… session channel" without the naming experiment), and `codeChannelAgentTooltipText`: "@" and the mention name (display name, else real name) of the first `encoded_agent_bot_user_ids` member. `BaseChannelName` shows them over the name (delay 600, top, small): the name first when it's cut off, then the kind, then the agent as a `TooltipSubtitle` (regular weight, `content-inv-sec`).
+
+**Closed code channels** (`lJBI`). A record channel is a sidebar candidate only while it's open (`!!is_open`), unless a section lists it, it's starred or temporary, or it's the selected conversation. See "Closing stale code channels" below.
+
+Clack ports the section, its position, icon and name, the membership rule, the dot, the row's tooltip (`core.CodeChannelRowTooltip`, `ui/codechannel.go` `codeRowTooltip`) and closed rows leaving the sidebar. It leaves out the "More code channels" overflow row (`iNkd`), the "Mine" filter (behind `agent_sessions_synth_view`), the `code_channels_sidebar_peeks` hover peek and the dot's tooltip.
 
 ## Header
 
@@ -128,7 +134,24 @@ Clack ports all of this except the mute, archive and response-mode buttons (off 
 
 No dedicated event exists. Status, title, items and views arrive in `channel_updated {channel | channels, updates}`; the handler merges `updates` into the stored channel. `is_archived` in `updates` routes to `channelArchived`. The only code-channel RTM event is `code_channel_pull_request_updated`, which refreshes PR data. Clack now deep-merges `channel_updated` updates and re-emits the conversation, so dots and the bar change live. `channel_archive` already dropped the row.
 
-Archiving when the work is done is server-side (`code_channels_auto_close`, error key `archive_stale_code_channels`). Workflow Builder has a "When a code channel is archived" trigger (`wfb_code_channel_archived_trigger`).
+Archiving when the work is done is server-side (error key `archive_stale_code_channels`). Workflow Builder has a "When a code channel is archived" trigger (`wfb_code_channel_archived_trigger`).
+
+## Closing stale code channels
+
+`code_channels_auto_close` is also a client-side job (boot-render `zuQH`, build `4d0c78085232`). `checkForOldCodeChannelsToClose` (`et8`) runs two minutes after the client connects (its onConnected side effect, `et7`), closing up to 10, then every 15 minutes from an idle callback (60 s timeout), closing up to 5. A disconnect stops both timers. A code channel qualifies when all of these hold:
+
+- the viewer is a member, it's open (`is_open !== false`) and not archived;
+- it isn't the primary view, it's read, and it has no draft;
+- it wasn't opened this session (only `im_open`/`mpim_open` set that, so never for a code channel);
+- every section it's in is a Code channels section (the sections listing it, else the one `getChannelSectionType` files it in: Starred for a starred one, Code channels for any other code channel, when the sidebar has that section);
+- it isn't starred;
+- the newer of its latest message (`channelLatestMessageTs`: the latest ts, else `updated`, else `created`) and its reopen time is more than 604800 s (7 days) old.
+
+The most idle go first. Each loses its reopen time (`clearCodeChannelReopenedAt`) and goes through `closeChannelApi` (boot-shared `6wqB`): `is_open: false` at once, then `submitClose` (`conversations.close {channel}`, reason `checkForOldCodeChannelsToClose`), and open again if the call fails.
+
+Reopening: `record_channel_open` (`recordChannelOpened`, reason `record-channel-opened-rtm`) and viewing a closed code channel (the channel tab view, reason `viewed-record-channel`) go through `openRecordChannel` (`+Kg2`). Under the experiment it records the reopen time (`setCodeChannelReopenedAt` in the persisted `codeChannelReopen` store, `Uge0`). Then it sets `is_open: true`, calls `recordChannels.open {channel, reason}` and stores the channel it answers, closing it again if the call fails. `record_channel_close` (`channelClosed`) marks it closed and, under the experiment, drops the reopen time.
+
+Clack ports all of it in `internal/core/codechannel_close.go`, with the reopen times in `code_channel_reopen.json` next to the account's cache (sign-out removes it). One difference comes from data Clack doesn't have: `users.conversations` carries no `is_open` for channels (Slack's client reads `client.userBoot`'s), so a code channel counts as open until Clack sees it closed (the event, its own closing). Its conversations don't keep `updated` either, so a channel with no latest ts falls back to `created`. With realtime off, Clack's polling counts as connected.
 
 ## Artifacts
 
@@ -179,6 +202,8 @@ Sources, all in build `a84662d2d135`: `client-code-channel-details-view` (`ECTe`
 - Syntax colours: shiki, one line at a time, the language from the extension (`R` in `Afoo`; js, ts, json, html, css, md and diff are preloaded, the rest load on demand). The theme is "slalabaster" (`OH3S`), which colours only comments (tomato 70), strings (cilantro 70), escapes and punctuation (`content-ter`), constants and numbers (indigo 70) and entity names (aubergine 70). Keywords keep the text colour.
 - The PR layout (`nu`: `session_channels_code_tab_pr` and PR data): state pills (Open success, Draft neutral, Merged indigo, Closed flamingo), "Approved" / "Changes requested", "Merge conflicts". It has the subtabs "Conversation" and "Files Changed {n}" (`.prSubtab__MYTjc`, 26px, radius 5, 13px bold, selected `base-inv-hgl-1`). Conversation holds the description card and the unanchored comments. Files Changed adds a sticky 40px toolbar: "Show/Hide file tree" (`sidebar-left`, only with more than one file and a container ≥ 720px), the commit range picker, "Jump to file", "Conversations", "Diff display options" (`filters`: Layout Unified / Split, then Hide whitespace) and "Find in diff". The file tree (`.fileTreePane__agnE3`, 240px, resizable) compacts single-child folder chains, puts folders first and marks each file with a coloured change dot (green added, red removed, yellow modified) or an arrow for renames. Review comments sit under their line (`anchorGitHubPrComments`: `review_anchor {path, line, side}`; LEFT is the old side). The layout, whitespace and tree choices persist (`code-channels-diff-layout`, `…-hide-whitespace`, `…-file-tree`, `…-file-tree-width`). Outside the PR layout the patch is always unified, with no toolbar or tree.
 
+**The view's label.** `getAriaLabelForViewContent` (`WwBZ`) labels the view "Code channel details" with `session_channel_views` and `code_channels_naming`, else "Session channel details". That's its aria-label, the "{viewName} collapsed" announcement and, since the breadcrumb table (`zuQH` `le`) has no entry for it, its breadcrumb. Clack uses it for the simplified layout's breadcrumb (`ui/bbm.go`; it said "Details" before).
+
 **What Clack builds.** `internal/core/codechannel_views.go` has the gates (`CodeChannelViewsOn`, `CodeChannelPRViewsOn`, `CodeChannelInlineDiffOn`), `CodeChannelViews` (`PntH` with the experiments, plan canvases keyed by their tab), `CodeViewLabel` / `CodeViewIcon`, `CodeViewForTab` (`pX9p`), and the calls `getDiff`, `getPullRequest`, `getView`, `getBlockKitView` with Slack's args. `internal/core/codediff.go` ports the patch model: `ParsePatch`, `HideWhitespace`, `SplitRows`, `FileTree`, `OrderFiles`, `AutoCollapsed`, `CodeLang`. `internal/core/codehighlight.go` is a per-line tokenizer for the slalabaster scopes. Clack has no TextMate engine, so the token rules are its own. `internal/ui/codechannel_pane.go` has the pane (tabs, expand toggle, close), the slug and permalink routes (`OpenChannelTabLink`, `slack://channel?id=…&tab=…`), the Block Kit view (`blockkit.NewCodeChannelSurface`, container `code_channel_view`) and the canvas view (canvasview, Tab mode). `internal/ui/codechannel_diff.go` is `CodeTabView` (summary line, file groups with sticky headers, unified and split, colours, the 100-line page, auto-collapse, the PR pills, subtabs, toolbar, display options menu, file tree, comments). `internal/ui/codechannel_html.go` is the html view.
 
 The html view is the only one Clack can't draw. Clack has no web view, and rendering untrusted HTML in-process is out. It fetches `getView` (keeping only whether there is content) and shows the caption, "Download", and Slack's own state for an agent view it can't sandbox, "View is not available in this environment.", with the file's "Open in browser" (Slack's file action wording; it opens `url_private`).
@@ -204,7 +229,8 @@ Code channels are record channels with `record_type: "agent_channel"`. The other
 
 ## Tests
 
-- `internal/core/codechannel_test.go`: detection, parsing, the status rules (stale, expiry), the status display table, section placement, the `channel_updated` merge, the three API calls' arguments.
+- `internal/core/codechannel_test.go`: detection, parsing, the status rules (stale, expiry), the status display table, section placement, the `channel_updated` merge, the three API calls' arguments, and `TestCodeChannelNaming` (heading, row tooltip and details label in each group of `code_channels_naming`, `session_channel_views`, `session_channels`).
+- `internal/core/codechannel_close_test.go`: `TestStaleCodeChannelRules` (one case per rule, the limit and order, the experiment and `session_channels` groups, closing and a failed close) and `TestCodeChannelsAutoCloseFakeslack` (fakeslack's code channel quiet for nine days closed with `conversations.close`, reopened by viewing it with `recordChannels.open`, the reopen time surviving a restart, `record_channel_close` / `record_channel_open`).
 - `internal/ui/codechannel_shots_test.go`: `TestCodeChannelsShell` (section, statuses, context bar heights, the experiment gate), `TestCodeChannelShots` (screenshots over an offline core), `TestCodeChannelsFakeslack` (the fixtures through fakeslack: the section, the preview's join pane, the archived bar and the row leaving the sidebar).
 - `internal/richtext/blocks_test.go`: the unknown-block card and the block-level `fallback` payload.
 - `internal/core/codediff_test.go`: the patch parser and line keys, split rows, hide whitespace, the file tree, auto-collapse, the highlighter, the view list and its experiments, `CodeViewForTab`, comment anchoring, and the four calls' arguments.
