@@ -265,10 +265,10 @@ func (e *wfEnv) shot(dir, name string) {
 			o.Layout(g)
 		}
 	}
-	// a few frames: images decode off the UI goroutine
-	for i := 0; i < 20; i++ {
+	// frames for up to 3 s: the app icons decode off the UI goroutine
+	for i := 0; i < 100; i++ {
 		frame()
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(30 * time.Millisecond)
 	}
 	if err := w.Frame(&ops); err != nil {
 		e.t.Fatalf("frame: %v", err)

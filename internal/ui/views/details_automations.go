@@ -218,8 +218,14 @@ func (d *ChannelDetails) automationRow(gtx C, st *cdAutos, it cdAutomation) D {
 					return dirFill(gtx, func(gtx C) D {
 						return col(gtx,
 							layout.Rigid(func(gtx C) D {
+								// the badge follows the name (display_flex, margin_left_25)
 								return row(gtx, layout.Middle,
-									layout.Flexed(1, func(gtx C) D { return d.para(gtx, 15, 22, wBold, d.p.Text, 1, title) }),
+									layout.Rigid(func(gtx C) D {
+										if badge {
+											gtx.Constraints.Max.X = max(0, gtx.Constraints.Max.X-gtx.Dp(80))
+										}
+										return d.para(gtx, 15, 22, wBold, d.p.Text, 1, title)
+									}),
 									layout.Rigid(func(gtx C) D {
 										if !badge {
 											return D{}
