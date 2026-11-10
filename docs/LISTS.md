@@ -113,7 +113,9 @@ Every fetcher snake-cases its arguments deeply (`MBHb`, `lpND.snakeCaseDeep`), s
 | delete | `lists.records.delete {list_id, id}`; also `deleteMultiple`, `archive`, `restore`, `reorder`, `updateDeletion` |
 | new list | `lists.create {name, description?, description_blocks?, schema?, icon?, template_id?, todo_mode?, context_channel_id?, include_canvas_inline_view, include_copied_list_records}` → `{list}` (a file). Templates come from `lists.templates` → `{templates, starter_templates}` (`template_files` / `starter_template_files` in some configurations). |
 | schema, views | `lists.columns.create/update/delete/revert`, `lists.views.create/update/delete`, `lists.views.pins.add/remove`, `lists.update`, `lists.setDefaultView` |
-| other | `lists.addToList` (a message into a list), `lists.duplicate`, `lists.history.*`, `lists.edits.*`, `lists.records.subscriptions.*`, `lists.getMyItems`, `lists.setupTodos`, `lists.import` |
+| a message into a list | `lists.addToList {list_id, channel_id, message_ts, reason: "add-to-list"}` → `{record, list}` (`VzJM` addToList). Errors: `list_not_found`, `over_row_maximum`, `permission_denied`, `message_not_found`, `missing_primary_column`, `channel_not_found` (`AF2f`). The item opens with `lists.records.open {list_id, id, reason: "open-record"}` (`RoRD` openRecord). |
+| a list tab | `conversations.addTab {channel_id, type: "list", data: {file_id, lists_channel_tab_default_refine_view_id?, access_level?}, label?, reason: "add-channel-tab"}` → `{tabz}` (`ENxC` addTabToChannel; `too_many_tabs` toasts "Maximum number of tabs added.", anything else "Cannot add tab."). |
+| other | `lists.duplicate`, `lists.history.*`, `lists.edits.*`, `lists.records.subscriptions.*`, `lists.getMyItems`, `lists.setupTodos`, `lists.import` |
 
 The public `slackLists.*` methods aren't what the client uses.
 
@@ -221,11 +223,14 @@ Clack puts each drawn cell in Gio's semantic tree: the label, the description, a
 - "Add item" (table and lanes) creates an item with its name, in the group it was added to.
 - Comments post to the item's thread.
 - Create → List makes an "Untitled list". Files → Lists "+ New List" offers a blank list or a template.
+- A message's "Add to list…" (the hover toolbar) is Slack's `AddToListDialog` (`VzJM`): the list explorer (`i/CI` useListExplorer, "Search by list name or keyword", most recently viewed first, "<creator> · Last viewed …"), with the pref `lists_add_to_list_default_list` picked and listed first (dropped, and the pref cleared, when that list is gone) and view-only lists left out. A list without a message column gets "This list doesn’t have a message field. Continuing will automatically create one." Add closes the dialog and sends `lists.addToList`; on success the pref takes the list and the new item opens in the side panel. Errors are only logged, as in Slack. "Create New List" makes a list from the `add_to_new_list` template (`lists.create {template_id, reason: "create-list-from-add-to-new-list"}`), adds the message to it and opens the list.
+- The channel tab bar's "+" > List is Slack's `ListPicker` (client-boot-shared `kwlN`, source `channel-tab`, title "Add a list", 650 wide): the same explorer, then "Create New List", Cancel and Insert. Picking a list with more than one view (the record view aside) shows Slack's speed bump (`B4EF`, `/DhB`: "Select a view for {listName}", "This will be the default view for anyone who opens the list", the View select with the all-items view first, Back and Insert) over the dialog. Insert opens the list's tab when it is already in the tab bar, adds the tab straight away when the list is already shared with the channel, and otherwise asks "Share this list?" (`kXBb`: "When you share a list here, anyone in #channel can access it.", the Can edit / Can view select, Cancel and Share). "Create New List" makes `lists.create {template_id: "blank", reason: "create-list-from-channel-tabs", todo_mode}` (todo mode when the `lists_grid_todos` experiment is on) and adds its tab.
+- A list shared in a message is Slack's compact list entity (`K8uy` MessageFileListUnfurl, `qIR+`/`iEuI`, `11Ex`): 62px, up to 328 wide, the honeycomb list thumbnail with `lists-filled`, the title and "List". A click opens the list.
 
 **The fidelity guard** (`lists.Editable`, enforced in core before anything is sent):
 - Columns Slack computes (created/edited by and time) are never written.
 - Message, file, canvas and reference cells need pickers Clack doesn't have, so clicking one says "This field can't be edited in Clack yet (it has …)".
-- Text is editable only while its rich text is plain text and bare links. Formatting, mentions, emoji, dates, lists, quotes, code and named links all refuse, and Clack checks that what it would write back reads as the same text.
+- Plain text and bare links edit in the inline editor. Text with formatting, named links, mentions, emoji, lists, quotes or code is Slack's rich text editor (`W077`), so it opens in the composer's rich editor and saves the rich_text the editor writes (`listview/richedit.go`). A cell opens there only when the editor reads it and writes it back the same (`richRoundTrips`: sections, lists, quotes, code and every run's kind, text, target and style). A cell with something the editor can't hold, such as a date, keeps the refusal.
 - Date ranges and cells with several links stay read-only.
 - New items take only the name and a group value.
 
@@ -233,7 +238,10 @@ Clack puts each drawn cell in Gio's semantic tree: the label, the description, a
 - Editing views: saving filters, sorts, groups and columns, plus resizing and reordering.
 - Schema changes, item reordering by drag, and subtasks (loaded but not drawn).
 - Archive, history, CSV export, subscriptions and approvals.
-- `lists.addToList` from a message, adding a list tab to a channel, and timeline, gallery and calendar views (none were found in real lists).
+- Timeline, gallery and calendar views (none were found in real lists).
+- In the list dialogs: Slack's typed-query autocomplete (`autocomplete:lists-browser`, Clack searches `search.modules.files`), the explorer's pagination, and the frontline-worker rule that hides "Create New List".
+- The shared list card's hover state ("Open list" and the actions bar) and the snapshot preview of a list's rows; list item and view links unfurl as Slack's other attachments.
+- @-mention autocomplete in the rich cell editor (typed mentions stay text).
 
 ## Plugins
 
@@ -243,7 +251,9 @@ None of the Taut/Slick library plugins touch list UI.
 
 - `internal/lists`: the model, the rules, cell encoding and the guard.
 - `internal/core/lists.go`: load, cache, live events, and edits (`UpdateListCells`, `CreateListRecord`, `DeleteListRecord`, `CommentOnListRecord`, `CreateList`, `ListTemplates`).
-- `internal/ui/listview`: the view, grid, board, cells, item pane and editing.
-- `internal/ui/mount_features_lists.go`: the route, side panel, item pane, tab body, links and create. Hooks elsewhere: the channel tab body and click (`channel.go`), `messages.ListOpener` (list files and links in messages), Files → Lists (`views/files.go`), Create → List (`create_channel.go`), and Activity's list items (`views/activity.go`, `core/activity_items.go`).
-- `internal/fakeslack/lists.go`: the "Launch tracker" fixture has every column type, a table, a board and a filtered and sorted view. A to-do list is `C0FAKE00001`'s tab. The fake implements the methods above and pushes their realtime events.
+- `internal/core/lists_add.go`: `AddToList`, `OpenListRecord`, `CreateListWith`, `ListHeader`, `AddListTab`, `SearchLists` (the dialogs' explorer).
+- `internal/ui/listview`: the view, grid, board, cells, item pane and editing; `picker.go` is "Add to list", "Add a list" and "Share this list?", `richedit.go` the rich text cells.
+- `internal/ui/richview/listcard.go`: the shared list card in messages.
+- `internal/ui/mount_features_lists.go`: the route, side panel, item pane, tab body, links, create, and the dialogs' wiring (`AddMessageToList`, `addListTab`). Hooks elsewhere: the channel tab body and click (`channel.go`), the tab bar's "+" (`mount_features_canvas.go`), `messages.ListOpener` (list files and links in messages), `messages.ListAdder` (the toolbar's "Add to list…"), Files → Lists (`views/files.go`), Create → List (`create_channel.go`), and Activity's list items (`views/activity.go`, `core/activity_items.go`).
+- `internal/fakeslack/lists.go`: the "Launch tracker" fixture has every column type, a table, a board and a filtered and sorted view. A to-do list is `C0FAKE00001`'s tab. The fake implements the methods above and pushes their realtime events; `lists_add.go` adds `lists.addToList`, `lists.records.open` and `conversations.addTab`.
 - `.github/workflows/lists-shots.yml`: screenshots in light and dark.
