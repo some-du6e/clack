@@ -106,3 +106,56 @@ func (s *listState) linkRects() []LinkRect {
 	}
 	return out
 }
+
+// CardRect is a link preview card's box on screen (window coordinates).
+type CardRect struct {
+	TS string // the message
+	richview.CardRect
+}
+
+// CardRects lists the visible messages' v3 link preview cards as of the
+// last frame, in window coordinates.
+func (v *ChannelView) CardRects() []CardRect {
+	var out []CardRect
+	v.s.eachBody(func(ts string, off image.Point, rv *richview.View) {
+		for _, c := range rv.CardRects() {
+			c.R = c.R.Add(off)
+			out = append(out, CardRect{TS: ts, CardRect: c})
+		}
+	})
+	return out
+}
+
+// RemoveRect is a link preview's remove button on screen.
+type RemoveRect struct {
+	TS string // the message
+	richview.RemoveRect
+}
+
+// RemoveRects lists the visible messages' preview remove buttons as of
+// the last frame, in window coordinates.
+func (v *ChannelView) RemoveRects() []RemoveRect {
+	var out []RemoveRect
+	v.s.eachBody(func(ts string, off image.Point, rv *richview.View) {
+		for _, c := range rv.RemoveRects() {
+			c.R = c.R.Add(off)
+			out = append(out, RemoveRect{TS: ts, RemoveRect: c})
+		}
+	})
+	return out
+}
+
+// eachBody calls f with each visible message's body view and its window
+// offset.
+func (s *listState) eachBody(f func(ts string, off image.Point, rv *richview.View)) {
+	for i := s.visible[0]; i < s.visible[1] && i < len(s.items); i++ {
+		if s.items[i].kind != itMsg || i >= len(s.heights) || s.heights[i] <= 0 {
+			continue
+		}
+		r := s.rows[s.items[i].key]
+		if r == nil || r.rv == nil || r.edit != nil {
+			continue
+		}
+		f(r.src.TS, s.origin.Add(image.Pt(r.bodyRect.Min.X, s.pos[i]+r.bodyRect.Min.Y)), r.rv)
+	}
+}

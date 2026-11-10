@@ -259,7 +259,8 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 		cy += l.dp(8)
 		row(l.buttons(b.Buttons, cx, cy, cw))
 	}
-	if len(a.Footer) > 0 || a.TS > 0 || (a.IsShare && a.ShareChannel != "") {
+	v1 := kindOf(b) == akV1
+	if len(a.Footer) > 0 || a.TS > 0 || (a.IsShare && a.ShareChannel != "") || v1 && a.IsAppUnfurl && a.BotID != "" {
 		cy += l.dp(4)
 		ct := l.enter(attFooterClass)
 		defer l.leave(ct)
@@ -276,12 +277,18 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 			footer = []richtext.Span{{Text: "Posted in "}, {Kind: richtext.Channel, Text: "#" + strings.TrimPrefix(a.ShareChannel, "#")}}
 		}
 		l.addSpansPlain(footer, &fs)
+		k := l.faceFor(fs.face, fs.size, 0)
 		if d := slackDate(a.TS); d != "" {
-			k := l.faceFor(fs.face, fs.size, 0)
 			if len(footer) > 0 {
 				l.addText(" | ", &fs, k, fs.col, 0, -1, -1)
 			}
 			l.addText(d, &fs, k, fs.col, 0, -1, -1)
+		}
+		if v1 && attribution(a) { // AttachmentFooterBotAttribution
+			if len(footer) > 0 || a.TS > 0 {
+				l.addText(" | ", &fs, k, fs.col, 0, -1, -1)
+			}
+			l.addAttribution(a, &fs, k, fs.col, false)
 		}
 		h, _ := l.flow(fx, cy, x+w-fx, &fs)
 		row(max(h, l.dp(18)))
@@ -308,6 +315,9 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 		}
 	}
 	l.d.boxes[bi].r = image.Rect(x, y, x+bar, y+h)
+	if kindOf(b) == akV1 {
+		l.removeRail(a, image.Rect(x, y, x+w, y+h), true)
+	}
 	return y + h - y0
 }
 

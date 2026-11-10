@@ -8,6 +8,7 @@ import (
 	"image"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 
 	"gioui.org/text"
@@ -161,6 +162,16 @@ func (r *richHandler) OpenURL(url string) {
 	if lo, ok := r.h.(ListOpener); ok && lo.OpenListLink(url) {
 		return
 	}
+	if strings.HasPrefix(url, "/services/") {
+		// a footer's "Added by <app>" (AttachmentFooterBotAttribution:
+		// href /services/<bot_id>, target _blank): the workspace's page
+		if c := r.h.Core(); c != nil && c.C != nil {
+			if base := strings.TrimSuffix(c.C.Creds.TeamURL, "/"); base != "" {
+				openURL(base + url)
+			}
+		}
+		return
+	}
 	if ch, ts, ok := slackLink(url); ok {
 		if ts != "" {
 			r.h.Navigate("c/" + ch + "/t/" + ts)
@@ -180,6 +191,15 @@ func (r *richHandler) OpenLink(url, text string) {
 		return
 	}
 	r.OpenURL(url)
+}
+
+// OpenBot is "Added by <app>" under a Block Kit attachment:
+// renderAttributionMaybe's ProfileCardTrigger (serviceId: the bot)
+// opens the bot's profile card, Slack's app card.
+func (r *richHandler) OpenBot(botID string, anchor image.Point) {
+	if ph, ok := r.h.(popups.Host); ok {
+		ph.ShowOverlay(popups.NewBotProfileCard(ph, r.anchor(anchor), botID))
+	}
 }
 
 func (r *richHandler) OpenUser(id string, anchor image.Point) {

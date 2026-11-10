@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/some-du6e/clack/internal/slack"
@@ -19,14 +20,47 @@ import (
 // text-only site, an image-only link, a Block Kit unfurl and a message
 // linking two PNGs (two image-only attachments, Slack's shape for bare
 // image links: from_url = original_url = image_url). The viewer
-// sends the X, small-thumb and text-only ones (their previews get the
-// remove button). Every image is this server's /img gradient; all text is
-// made up. chat.deleteAttachment removes the attachment and is recorded.
+// sends the X, GitHub, small-thumb, text-only and Block Kit ones (their
+// previews get the remove button: the overlay on v3 cards, the rail
+// left of the v1 and v2 cards). bots.info names the two apps' bots
+// (GitHub, Example Tracker: "Added by <app>"). Every image is this
+// server's /img gradient; all text is made up. chat.deleteAttachment
+// removes the attachment and is recorded.
 
 const (
 	EmbedsChannelID = "C0EMBEDS001"
 	embedsBaseTS    = 1762700000
+
+	EmbedsGitHubBotID  = "B0FAKEGH01" // the GitHub app unfurl's bot
+	EmbedsTrackerBotID = "B0FAKETRK1" // the Block Kit unfurl's bot
 )
+
+// embedsBots are bots.info's answers for the fixtures' app bots.
+var embedsBots = []slack.BotProfile{
+	{ID: EmbedsGitHubBotID, Name: "GitHub", AppID: "A0FAKEGH01", TeamID: TeamID},
+	{ID: EmbedsTrackerBotID, Name: "Example Tracker", AppID: "A0FAKETRK1", TeamID: TeamID},
+}
+
+// handleEmbeds answers bots.info for the fixtures' bots.
+func (s *Server) handleEmbeds(method string, f url.Values) (any, bool) {
+	if method != "bots.info" {
+		return nil, false
+	}
+	want := map[string]bool{}
+	for _, id := range strings.Split(f.Get("bots")+","+f.Get("bot"), ",") {
+		want[id] = true
+	}
+	var out []slack.BotProfile
+	for _, b := range embedsBots {
+		if want[b.ID] {
+			out = append(out, b)
+		}
+	}
+	if len(out) == 0 {
+		return nil, false
+	}
+	return map[string]any{"ok": true, "bots": out}, true
+}
 
 // EmbedsCase is one #embeds-gallery message.
 type EmbedsCase struct {
@@ -91,7 +125,7 @@ func EmbedsFixtures(base string) []EmbedsFixture {
 		AuthorLink: "https://github.com/octo-org/clack", Title: "#42 Draw link previews like Slack", TitleLink: ghURL,
 		Text:   "Unfurls now follow the web client's attachment components.\nFixes the oversized X previews.",
 		Fields: []slack.AttachmentField{{Title: "Comments", Value: "3", Short: true}, {Title: "Status", Value: "Open", Short: true}},
-		Footer: "GitHub", FooterIcon: img(32, 32, "gh-footer"), TS: rawTS(embedsBaseTS - 7200), BotID: "B0FAKEGH01",
+		Footer: "GitHub", FooterIcon: img(32, 32, "gh-footer"), TS: rawTS(embedsBaseTS - 7200), BotID: EmbedsGitHubBotID,
 		IsAppUnfurl: true, Fallback: "[octo-org/clack] Pull request #42"}
 	const smallURL = "https://news.example.com/2026/11/native-clients"
 	small := slack.Attachment{ID: 1, FromURL: smallURL, OriginalURL: smallURL, TitleLink: smallURL,
@@ -111,7 +145,7 @@ func EmbedsFixtures(base string) []EmbedsFixture {
 	pic := slack.Attachment{ID: 1, FromURL: picURL, OriginalURL: picURL, ImageURL: img(800, 600, "pic-only"), ImageWidth: 800, ImageHeight: 600,
 		ImageBytes: 120000, Fallback: "800x600px image"}
 	const kitURL = "https://tracker.example.com/issues/77"
-	kit := slack.Attachment{ID: 1, FromURL: kitURL, BotID: "B0FAKETRK1", IsAppUnfurl: true, Color: "#1d9bd1",
+	kit := slack.Attachment{ID: 1, FromURL: kitURL, BotID: EmbedsTrackerBotID, IsAppUnfurl: true, Color: "#1d9bd1",
 		Fallback: "Issue 77: Previews are too large",
 		Blocks: json.RawMessage(`[{"type":"section","block_id":"k1","text":{"type":"mrkdwn","text":"*<` + kitURL + `|Issue 77: Previews are too large>*\nOpened by tracker-bot · Priority high"},` +
 			`"accessory":{"type":"image","image_url":"` + img(96, 96, "kit-acc") + `","alt_text":"tracker"}},` +
@@ -129,12 +163,12 @@ func EmbedsFixtures(base string) []EmbedsFixture {
 	return []EmbedsFixture{
 		{"x post", "<" + xURL + ">", -1, []slack.Attachment{x}},
 		{"youtube", "watch this <" + ytURL + ">", 1, []slack.Attachment{yt}},
-		{"github", "<" + ghURL + ">", 2, []slack.Attachment{gh}},
+		{"github", "<" + ghURL + ">", -1, []slack.Attachment{gh}},
 		{"small thumb", "<" + smallURL + ">", -1, []slack.Attachment{small}},
 		{"large image", "<" + bigURL + ">", 3, []slack.Attachment{big}},
 		{"text only", "see <" + txtURL + ">", -1, []slack.Attachment{txt}},
 		{"image link", "<" + picURL + ">", 4, []slack.Attachment{pic}},
-		{"block kit", "<" + kitURL + ">", 5, []slack.Attachment{kit}},
+		{"block kit", "<" + kitURL + ">", -1, []slack.Attachment{kit}},
 		{"image links", "before <" + shotA.FromURL + "> and after <" + shotB.FromURL + ">", 1, []slack.Attachment{shotA, shotB}},
 	}
 }

@@ -84,6 +84,10 @@ type Request struct {
 	UserID string          // the member to show
 	BotID  string          // a bot with no user (Slack's serviceId): AppHoverCard
 	Anchor image.Rectangle // the trigger's bounds in window coordinates
+	// Preview is a link preview's hover card (MessageAttachmentDefaultV3's
+	// HoverCardTrigger, position "top"): what the trigger hands the root
+	// to draw instead of a profile card (richview.Preview).
+	Preview any
 }
 
 // Controller runs the hover card's timers. It belongs to the UI goroutine.
@@ -149,6 +153,22 @@ func (c *Controller) ReportBot(key any, userID, botID string, local image.Rectan
 		off = c.Pointer().Sub(image.Pt(int(ptr.X+.5), int(ptr.Y+.5)))
 	}
 	c.rep = Request{Key: key, UserID: userID, BotID: botID, Anchor: local.Add(off)}
+	c.hasRep = true
+}
+
+// ReportPreview says the pointer is on a link preview's hover trigger
+// this frame (MessageAttachmentDefaultV3 wraps the row card in
+// HoverCardTrigger: the same 350ms open and 250ms close as the profile
+// card, position "top"). card is what the root draws (Request.Preview).
+func (c *Controller) ReportPreview(key any, card any, local image.Rectangle, ptr f32.Point) {
+	if key == c.spent || card == nil {
+		return
+	}
+	off := image.Point{}
+	if c.Pointer != nil {
+		off = c.Pointer().Sub(image.Pt(int(ptr.X+.5), int(ptr.Y+.5)))
+	}
+	c.rep = Request{Key: key, Preview: card, Anchor: local.Add(off)}
 	c.hasRep = true
 }
 
@@ -233,7 +253,7 @@ func (c *Controller) Frame(now time.Time, blocked, hold bool) time.Time {
 			c.showAt = now.Add(ShowDelay)
 		} else {
 			c.pending.Anchor = rep.Anchor
-			c.pending.UserID, c.pending.BotID = rep.UserID, rep.BotID
+			c.pending.UserID, c.pending.BotID, c.pending.Preview = rep.UserID, rep.BotID, rep.Preview
 		}
 		if c.isOpen && c.hideAt.IsZero() {
 			c.hideAt = now.Add(HideDelay)
@@ -328,6 +348,35 @@ func Place(anchor image.Rectangle, sz, win image.Point, gap, ax, ay int) image.P
 	}
 	if y != y0 {
 		// bottom-left with the offset negated: below the trigger
+		if oy := anchor.Max.Y + gap; oy >= top && oy+sz.Y <= bottom {
+			y = oy
+		}
+	}
+	return image.Pt(x, y)
+}
+
+// PlaceTop is keepInBounds for position "top" (a link preview's hover
+// card): the card centered over the trigger, its bottom offsetY (gap)
+// above the trigger's top; clamped into the window, and when it has to
+// move vertically, "bottom" with the offset negated (gap below the
+// trigger) if that fits entirely.
+func PlaceTop(anchor image.Rectangle, sz, win image.Point, gap, ax, ay int) image.Point {
+	left, right := ax, win.X-ax
+	top, bottom := ay, win.Y-ay
+	x := anchor.Min.X + (anchor.Dx()-sz.X)/2
+	if x < left {
+		x = left
+	} else if x+sz.X > right {
+		x = max(left, right-sz.X)
+	}
+	y0 := anchor.Min.Y - gap - sz.Y
+	y := y0
+	if y < top {
+		y = top
+	} else if y+sz.Y > bottom {
+		y = max(top, bottom-sz.Y)
+	}
+	if y != y0 {
 		if oy := anchor.Max.Y + gap; oy >= top && oy+sz.Y <= bottom {
 			y = oy
 		}

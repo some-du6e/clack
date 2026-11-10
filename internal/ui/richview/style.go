@@ -50,6 +50,14 @@ type AttachmentRemover interface {
 	RemoveAttachment(id string)
 }
 
+// BotOpener is a Handler that opens a bot's profile card: "Added by
+// <app>" under a Block Kit attachment (renderAttributionMaybe wraps the
+// name in ProfileCardTrigger with the bot as serviceId). anchor is the
+// click, View coordinates plus Origin.
+type BotOpener interface {
+	OpenBot(botID string, anchor image.Point)
+}
+
 // LinkTextHandler is a Handler that also wants a link's text when it is
 // clicked (Slack's suspicious-link check compares it with the URL).
 type LinkTextHandler interface {
@@ -98,6 +106,7 @@ type Palette struct {
 	FileIconZip, FileIconText      color.NRGBA
 	PlayBg, PlayFg                 color.NRGBA
 	TooltipBg, TooltipText         color.NRGBA // emoji :name: tooltips
+	FooterSep                      color.NRGBA // content-inv-sec: a v3 footer's own color (its " | ")
 }
 
 func rgb(r, g, b uint8) color.NRGBA { return color.NRGBA{R: r, G: g, B: b, A: 255} }
@@ -149,6 +158,7 @@ func LightPalette() Palette {
 		FileIconBg: rgba(29, 28, 29, 0.04), FileIconPDF: rgb(224, 30, 90), FileIconZip: rgb(97, 96, 97), FileIconText: rgb(97, 96, 97),
 		PlayBg: rgba(0, 0, 0, 0.4), PlayFg: rgb(255, 255, 255),
 		TooltipBg: rgb(29, 28, 29), TooltipText: rgb(255, 255, 255),
+		FooterSep: rgb(0xcb, 0xcc, 0xcf),
 	}.flat()
 }
 
@@ -171,6 +181,7 @@ func DarkPalette() Palette {
 	p.Primary = rgb(0, 122, 90)
 	p.Highlight = rgba(242, 199, 68, 0.3)
 	p.TooltipBg, p.TooltipText = rgb(232, 232, 232), rgb(26, 29, 33)
+	p.FooterSep = rgb(0xb9, 0xba, 0xbd)
 	return p.flat()
 }
 
@@ -288,6 +299,9 @@ type Options struct {
 	// Own: the viewer sent the message (and it isn't a pinned_item), so
 	// its link previews get Slack's remove button (canDelete, 4BNQ).
 	Own bool
+	// HoverCard lays the doc's attachment out as Slack's link preview
+	// hover card (MessageAttachmentDefaultV3HoverCard, unfurl_hover.go).
+	HoverCard bool
 }
 
 // lightEmbolden is the extra outline (px) for glyph color c at scale pxPerDp.

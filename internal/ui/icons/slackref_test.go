@@ -287,6 +287,7 @@ var clackOwn = map[string]string{
 	"reply":           "a reply arrow; Slack's set has no reply glyph",
 	"slick-mark":      "Slick's mark (a plugin system's, not Slack's)",
 	"sticker":         "a peeling sticker (huddle reactions); Slack's set has none",
+	"times-small":     "Slack's icon-font glyph U+E294 (c-icon--times-small, iconfont.go), not an SvgIcon",
 	"unpin":           "Slack's pin with a slash; Slack's set has no unpin",
 	"unreads":         "Slack's set has no unreads glyph",
 }

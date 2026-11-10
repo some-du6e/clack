@@ -1347,6 +1347,12 @@ func (r *row) layoutBlocks(gtx layout.Context, p slackc.Props) layout.Dimensions
 		doc.Blocks = filterTail(doc.Blocks, r.filesOv, r.attsOv)
 		r.rv.Set(doc, r.rvOpts())
 		r.blocksOv, r.tailOv = id, tail
+	} else {
+		// the row is made before its context knows the viewer (Own: the
+		// link previews' remove buttons and "Remove preview")
+		o := r.rvOpts()
+		o.Elements = r.rv.Options().Elements // withElements' (blockkit.go)
+		r.rv.SetOptions(o)
 	}
 	st := blocksClass.Enter(gtx, 0, 0)
 	defer st.Leave()

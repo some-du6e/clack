@@ -79,6 +79,11 @@ type View struct {
 	tipAt    time.Time  // when the pointer reached it (gtx.Now)
 	hovMen   mentionKey // the @mention last reported to the hover card
 	hovOn    bool
+	// the link preview whose hover trigger was last reported, and each
+	// preview's hover card content (unfurl_hover.go)
+	prevKey  previewKey
+	prevOn   bool
+	previews map[*richtext.Attachment]*Preview
 
 	// code blocks' copy buttons (codecopy.go): run index+1 under the
 	// press, the run last copied and when, and when the pointer reached a
@@ -191,6 +196,9 @@ func (v *View) SetLead(px int) {
 // Lead is the first line's start SetLead gave (px).
 func (v *View) Lead() int { return v.lead }
 
+// Options returns the current options.
+func (v *View) Options() Options { return v.opts }
+
 // Doc returns the current document.
 func (v *View) Doc() richtext.Doc { return v.doc }
 
@@ -267,7 +275,7 @@ func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimension
 		v.record(st)
 	}
 	v.events(gtx, st, h)
-	v.hoverCard()
+	v.hoverCard(st, h)
 
 	// Slack's .p-rich_text_block > .p-rich_text_section, for CSS.
 	bs := richBlockClass.Enter(gtx, 0, 0)
@@ -291,6 +299,9 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	if gtx.Constraints.Min.X > size.X {
 		size.X = gtx.Constraints.Min.X
 	}
+	// the v1/v2 remove buttons' rail sits left of the View's box
+	v.drawRails(gtx, st)
+	v.railInput(gtx)
 	defer clip.Rect{Max: size}.Push(gtx.Ops).Pop()
 	var opac paint.OpacityStack
 	if v.opts.Dim {
@@ -487,7 +498,12 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 	if l.spx <= 0 {
 		l.spx = l.scale
 	}
-	h := l.blocks(v.doc.Blocks, 0, 0, w, true)
+	var h int
+	if v.opts.HoverCard {
+		h = l.hoverCardDoc(v.doc.Blocks, w)
+	} else {
+		h = l.blocks(v.doc.Blocks, 0, 0, w, true)
+	}
 	v.d.pillRects()
 	maxX := 0
 	for i := range v.d.frags {
@@ -975,6 +991,7 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 				if c := hovercard.Default(); c != nil && v.isMention(v.press) {
 					c.Pressed(mentionKey{v, v.press}) // Slack's handleClick closes the card
 				}
+				v.pressPreview(e.Position)
 				v.moved = false
 				if v.External {
 					v.dragging = true
@@ -1053,13 +1070,21 @@ func (v *View) isMention(t int16) bool {
 // hoverCard reports the @mention under the pointer to the profile hover
 // card: Slack's MemberLink is a ProfileHoverTrigger, anchored at the
 // mention's bounds (all its line boxes when it wraps).
-func (v *View) hoverCard() {
+func (v *View) hoverCard(st *Style, h Handler) {
 	c := hovercard.Default()
 	if c == nil {
 		return
 	}
+	if v.opts.HoverCard {
+		return // the hover card's own content triggers nothing
+	}
 	t := v.hover
 	on := v.hovering && v.isMention(t)
+	defer func() {
+		if !on {
+			v.reportPreview(c, st, h)
+		}
+	}()
 	k := mentionKey{v, t}
 	if v.hovOn && (!on || k != v.hovMen) {
 		c.Left(v.hovMen)
@@ -1188,6 +1213,10 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 	case tRemove:
 		if rm, ok := h.(AttachmentRemover); ok && tg.id != "" {
 			rm.RemoveAttachment(tg.id)
+		}
+	case tBot:
+		if bo, ok := h.(BotOpener); ok && tg.id != "" {
+			bo.OpenBot(tg.id, anchor)
 		}
 	case tCollapse:
 		if tg.img != nil && v.collapsed != nil {
