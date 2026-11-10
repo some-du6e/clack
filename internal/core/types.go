@@ -392,6 +392,8 @@ type ChannelDetails struct {
 	TopicSetAt   int64
 	PurposeSetBy string
 	PurposeSetAt int64
+	Props        ChannelProps // properties the Settings tab reads (chdetails.go)
+	HostID       string       // conversation_host_id
 }
 
 type ActivityOpts struct {

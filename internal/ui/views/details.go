@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"gioui.org/io/clipboard"
@@ -158,6 +159,13 @@ type ChannelDetails struct {
 	// conversation. refreshDue defers a reload while a write is in flight.
 	evq        dirEvents
 	refreshDue bool
+
+	// presIDs are the loaded members (the watch goroutine redraws on their
+	// presence_change); presN is how many were loaded when it was built.
+	presIDs atomic.Pointer[map[string]bool]
+	presN   int
+
+	x cdExtra // details_more.go: Settings, stacked dialogs, VIP / Hide
 }
 
 // NewChannelDetails opens the details dialog for a conversation.
@@ -247,11 +255,16 @@ func (d *ChannelDetails) setTabs() {
 	var kinds []int
 	switch cdGroup(d.kind) {
 	case "im":
-		kinds = []int{cdAbout, cdTabs, cdSettings}
+		kinds = []int{cdAbout, cdTabs}
 	case "mpim":
-		kinds = []int{cdAbout, cdMembers, cdTabs, cdSettings}
+		kinds = []int{cdAbout, cdMembers, cdTabs}
 	default:
-		kinds = []int{cdAbout, cdMembers, cdApps, cdAutomations, cdTabs, cdSettings}
+		kinds = []int{cdAbout, cdMembers, cdApps, cdAutomations, cdTabs}
+	}
+	// BaseAboutChannelModal shows Settings when the settings sections
+	// (jf5b) aren't empty, never to guests
+	if d.settingsVisible() {
+		kinds = append(kinds, cdSettings)
 	}
 	labels := make([]string, len(kinds))
 	for i, k := range kinds {
@@ -294,13 +307,30 @@ func (d *ChannelDetails) refreshInfo() {
 	})
 }
 
-// watch subscribes to this conversation's conv / conv_removed events.
+// watch subscribes to this conversation's conv / conv_removed events, and
+// to presence_change / user_change for the loaded members (their rows read
+// presence live, so an empty note just redraws).
 func (d *ChannelDetails) watch() {
 	id := d.id
+	shown := &d.presIDs
 	d.evq.start(d.h, func(ev core.Event) (dirMemberNote, bool) {
 		switch {
 		case ev.Type == "resync":
 			return dirMemberNote{id: id, verify: true}, true
+		case ev.Type == "presence" || ev.Type == "user":
+			ids := shown.Load()
+			if ids == nil {
+				return dirMemberNote{}, false
+			}
+			if ev.User != nil && (*ids)[ev.User.ID] || (*ids)[ev.UserID] {
+				return dirMemberNote{}, true
+			}
+			for _, u := range ev.Users {
+				if (*ids)[u] {
+					return dirMemberNote{}, true
+				}
+			}
+			return dirMemberNote{}, false
 		case ev.Channel != id:
 			return dirMemberNote{}, false
 		case ev.Type == "conv":
@@ -375,6 +405,7 @@ func (d *ChannelDetails) Escape() bool {
 	switch {
 	case d.memFilter.open || d.tabsPerm.open || d.notifMenu.open:
 		d.memFilter.open, d.tabsPerm.open, d.notifMenu.open = false, false, false
+	case d.escapeDialog():
 	case d.editing:
 		d.editing, d.editErr = false, ""
 	case d.confirmLeave:
@@ -640,7 +671,6 @@ func (d *ChannelDetails) update(gtx C) {
 		d.memFilter.open, d.tabsPerm.open, d.notifMenu.open = false, false, false
 	}
 	d.memFilter.update(gtx)
-	d.tabsPerm.update(gtx)
 
 	if !d.info.started() {
 		d.loadInfo()
@@ -655,22 +685,20 @@ func (d *ChannelDetails) update(gtx C) {
 		}
 	}
 
-	for _, c := range []*widget.Clickable{&d.call, &d.vip, &d.emails, &d.addApp, &d.addWorkflow, &d.huddleStart, &d.huddleLink, &d.newTab} {
+	for _, c := range []*widget.Clickable{&d.call, &d.emails, &d.addApp, &d.addWorkflow} {
 		if c.Clicked(gtx) {
 			d.h.Toast(cdUnsupported)
 		}
 	}
+	d.updateSlackParts(gtx, inf, loaded)
 	if d.orgLearn.Clicked(gtx) {
 		// Slack's HelpLink articleId 0x1ac69e1923
 		hostHandler{d.h}.OpenURL("https://slack.com/help/articles/115001399587")
 	}
-	if d.addPeople.Clicked(gtx) {
-		// 1:1 and group DMs: like Slack, adding people opens the group DM of
-		// everyone involved (a new conversation, core.AddToDM).
-		d.inviting = !d.inviting
-		if d.inviting {
-			gtx.Execute(key.FocusCmd{Tag: &d.inviteQ.ed})
-		}
+	if d.addPeople.Clicked(gtx) && loaded {
+		// About's "Add people to this conversation" (1:1 DMs): Slack's
+		// openMpdmAddPeopleModal
+		d.openAddPeople(inf)
 	}
 	d.updateWrites(gtx, inf, loaded)
 
@@ -736,25 +764,12 @@ func (d *ChannelDetails) update(gtx C) {
 
 	// Leave / join / hide.
 	name := inf.Conv.Name
-	if d.leaveRow.Clicked(gtx) {
-		// Slack's maybeLeaveChannel: a public channel is left at once, a
-		// private one asks first
+	if d.leaveRow.Clicked(gtx) && loaded {
+		// Slack's maybeLeaveChannel (details_more.go)
 		d.editing = false
-		if inf.Conv.Kind == "private" {
-			d.confirmLeave = true
-		} else if !d.leavePending {
-			d.startLeave()
-		}
+		d.maybeLeave(inf)
 	}
-	if d.leaveNo.Clicked(gtx) {
-		d.confirmLeave = false
-	}
-	if d.leaveYes.Clicked(gtx) && d.confirmLeave && !d.leavePending {
-		d.startLeave()
-	}
-	if d.hide.Clicked(gtx) && !d.leavePending {
-		d.startLeave()
-	}
+	d.updateLeave()
 	if d.leavePending {
 		if _, done, err := d.leaveOp.get(); done {
 			d.leavePending = false
@@ -862,6 +877,10 @@ func (d *ChannelDetails) Layout(gtx C) D {
 	}()
 	if d.editing && (d.editKind == cdEditTopic || d.editKind == cdEditPurpose) {
 		d.editModal(gtx, full)
+	}
+	if d.x.dlg.kind != cdDlgNone {
+		inf, _, _ := d.info.get()
+		d.layoutDialog(gtx, full, inf)
 	}
 	return D{Size: full}
 }
@@ -1081,11 +1100,24 @@ func (d *ChannelDetails) head(gtx C, inf core.ChannelDetails, loaded bool) D {
 					}
 					return cdBtn(&d.base, gtx, &d.notif, "bell", label, false, 0)
 				}),
-				hgap(8),
-				layout.Rigid(func(gtx C) D { return cdBtn(&d.base, gtx, &d.vip, "", "VIP", false, 0) }),
-				hgap(8),
-				layout.Rigid(func(gtx C) D { return cdBtn(&d.base, gtx, &d.hide, "", "Hide", false, 0) }),
 				hgap(8))
+			if u, ok := d.dmPerson(inf); ok {
+				// canToggleVip: "VIP" after user-add (user-hide once a VIP,
+				// a glyph Clack's icon set lacks); canHide: Hide / Unhide
+				vipIcon := "user-add"
+				if d.isVIP(u.ID) {
+					vipIcon = ""
+				}
+				label := "Hide"
+				if d.h.Core().UserHidden(u.ID) {
+					label = "Unhide"
+				}
+				ch = append(ch,
+					layout.Rigid(func(gtx C) D { return d.cdHeaderBtn(gtx, &d.vip, vipIcon, "VIP") }),
+					hgap(8),
+					layout.Rigid(func(gtx C) D { return d.cdHeaderBtn(gtx, &d.hide, "", label) }),
+					hgap(8))
+			}
 		} else {
 			label := d.notifLabel(cv)
 			ch = append(ch,
@@ -1387,11 +1419,7 @@ func (d *ChannelDetails) aboutItems(inf core.ChannelDetails) []W {
 		}
 		items = append(items, cdGap(16), d.cdCard(d.emailsField))
 	case "mpim":
-		items = []W{cdGap(16), d.cdCard(topic), cdGap(16), d.cdCard(d.addPeopleField)}
-		if d.inviting {
-			items = append(items, cdGap(8), func(gtx C) D { return d.invitePanel(gtx, d.dmMembers(cv)) })
-		}
-		items = append(items, cdGap(16), d.cdCard(d.emailsField))
+		items = []W{cdGap(16), d.cdCard(topic), cdGap(16), d.cdCard(d.emailsField)}
 	default:
 		rows := []W{topic, func(gtx C) D { return d.purposeField(gtx, cv) }}
 		if d.showOrgAccess(inf) {
@@ -1470,7 +1498,6 @@ func (d *ChannelDetails) createdField(gtx C, cv core.Conv) D {
 // leaveField is the red "Leave channel" row (h 55), its inline
 // confirmation, or "Join channel" when the viewer isn't a member.
 func (d *ChannelDetails) leaveField(gtx C, inf core.ChannelDetails) D {
-	cv := inf.Conv
 	if !inf.IsMember {
 		label := "Join channel"
 		if d.joinPending {
@@ -1478,36 +1505,16 @@ func (d *ChannelDetails) leaveField(gtx C, inf core.ChannelDetails) D {
 		}
 		return d.cdButtonField(gtx, &d.joinRow, func(gtx C) D { return d.cdField(gtx, label, nil, nil) })
 	}
-	if !d.confirmLeave {
-		return d.cdButtonField(gtx, &d.leaveRow, func(gtx C) D {
-			return layout.Inset{Top: 16, Bottom: 16, Left: 20, Right: 20}.Layout(gtx, func(gtx C) D {
-				return dirFill(gtx, func(gtx C) D {
-					return cdLine22(gtx, func(gtx C) D { return d.para(gtx, 15, 22, wBold, d.p.Red, 1, "Leave channel") })
-				})
+	label := "Leave channel"
+	if d.leavePending || d.x.leaveCount.busy() {
+		label = "Leaving…"
+	}
+	return d.cdButtonField(gtx, &d.leaveRow, func(gtx C) D {
+		return layout.Inset{Top: 16, Bottom: 16, Left: 20, Right: 20}.Layout(gtx, func(gtx C) D {
+			return dirFill(gtx, func(gtx C) D {
+				return cdLine22(gtx, func(gtx C) D { return d.para(gtx, 15, 22, wBold, d.p.Red, 1, label) })
 			})
 		})
-	}
-	// Slack's LeaveChannel text (only private channels ask)
-	note := "When you leave a private channel, you’ll no longer be able to see any of its messages. To rejoin this channel later, you’ll need to be invited."
-	yes := "Leave Channel"
-	if d.leavePending {
-		yes = "Leaving…"
-	}
-	return layout.Inset{Top: 16, Bottom: 16, Left: 20, Right: 20}.Layout(gtx, func(gtx C) D {
-		return row(gtx, layout.Middle,
-			layout.Flexed(1, func(gtx C) D {
-				return dirFill(gtx, func(gtx C) D {
-					return col(gtx,
-						layout.Rigid(func(gtx C) D { return d.para(gtx, 15, 22, wBold, d.p.Text, 1, "Leave "+cv.Name) }),
-						layout.Rigid(func(gtx C) D { return d.para(gtx, 13, 18, wReg, d.p.Muted, 3, note) }),
-					)
-				})
-			}),
-			hgap(12),
-			layout.Rigid(func(gtx C) D { return d.button(gtx, &d.leaveNo, btnOutline, true, "Cancel") }),
-			hgap(8),
-			layout.Rigid(func(gtx C) D { return d.button(gtx, &d.leaveYes, btnDanger, true, yes) }),
-		)
 	})
 }
 
@@ -1660,6 +1667,14 @@ func (d *ChannelDetails) membersTab(gtx C) D {
 	}
 	q, _, _ := d.find.update(gtx)
 	mp, loaded, err := d.members.get()
+	if len(mp.users) != d.presN {
+		ids := make(map[string]bool, len(mp.users))
+		for _, u := range mp.users {
+			ids[u.ID] = true
+		}
+		d.presIDs.Store(&ids)
+		d.presN = len(mp.users)
+	}
 	busy := d.members.busy()
 	users := d.filtered(mp.users, q, d.memFilter.sel)
 	if d.moreMembers.Clicked(gtx) && mp.next != "" && !busy {
@@ -1791,7 +1806,11 @@ func (d *ChannelDetails) filtered(us []core.User, q string, sel int) []core.User
 func (d *ChannelDetails) addMembersRow(gtx C) D {
 	return d.hoverable(gtx, &d.addPeopleRow, false, 0, func(gtx C) D {
 		return layout.Inset{Top: 12, Bottom: 12, Left: cdPadX, Right: cdPadX}.Layout(gtx, func(gtx C) D {
-			return d.cdTileRow(gtx, "user-plus", func(gtx C) D { return d.label(gtx, 15, wBold, d.p.Text, "Add people or agents") })
+			label := "Add people or agents"
+			if cdGroup(d.kind) != "channel" {
+				label = "Add people" // a group DM takes no agents
+			}
+			return d.cdTileRow(gtx, "user-plus", func(gtx C) D { return d.label(gtx, 15, wBold, d.p.Text, label) })
 		})
 	})
 }
@@ -1811,6 +1830,11 @@ func (d *ChannelDetails) memberTrigger(id string) *hovercard.Trigger {
 // line 2 the title in #454447. The text block overhangs the avatar by 4px.
 func (d *ChannelDetails) memberRow(gtx C, u core.User, self string) D {
 	u = d.viewUser(u)
+	// MediumMemberEntity's presence follows presence_change: the loaded
+	// page is a snapshot, the socket's latest is in core
+	if p := d.h.Core().UserPresence(u.ID); p != "" {
+		u.Presence = p
+	}
 	c := dirClick(d.memberClk, u.ID)
 	if c.Clicked(gtx) {
 		d.h.OpenProfile(d.press.at, u.ID)
@@ -2199,82 +2223,16 @@ func (d *ChannelDetails) sectionItems(title, body, btn string, c *widget.Clickab
 // ---- Settings ----
 
 func (d *ChannelDetails) settingsItems() []W {
-	setting := func(title, desc string) W {
-		return func(gtx C) D {
-			c := dirClick(d.rowClk, "set:"+title)
-			if c.Clicked(gtx) {
-				d.h.Toast(cdUnsupported)
-			}
-			return d.cdButtonField(gtx, c, func(gtx C) D {
-				return layout.Inset{Top: 16, Bottom: 16, Left: 20, Right: 20}.Layout(gtx, func(gtx C) D {
-					return row(gtx, layout.Middle,
-						layout.Flexed(1, func(gtx C) D {
-							return dirFill(gtx, func(gtx C) D {
-								return col(gtx,
-									layout.Rigid(func(gtx C) D { return d.para(gtx, 15, 22, wBold, d.p.Text, 1, title) }),
-									layout.Rigid(func(gtx C) D { return d.para(gtx, 15, 22, wReg, d.p.Text, 2, desc) }),
-								)
-							})
-						}),
-						layout.Rigid(func(gtx C) D { return d.icon(gtx, "chevron-right", 16, d.p.Sec) }),
-					)
-				})
-			})
-		}
-	}
-	if cdGroup(d.kind) != "channel" {
-		rows := []W{setting("Notifications", "Choose how you’re notified about this conversation.")}
-		if cdGroup(d.kind) == "mpim" {
-			rows = append(rows, setting("Convert to a private channel", "Keep the history and add more people."))
-		}
-		return []W{cdGap(16), d.cdCard(rows...), cdGap(24)}
-	}
-	huddles := func(gtx C) D {
-		return d.cdField(gtx, "Huddles", nil, func(gtx C) D {
-			return col(gtx,
-				layout.Rigid(func(gtx C) D {
-					return d.para(gtx, 15, 22, wReg, d.p.Text, 0, "Members can start and join huddles in this channel.")
-				}),
-				vgap(12),
-				layout.Rigid(func(gtx C) D {
-					return row(gtx, layout.Middle,
-						layout.Rigid(func(gtx C) D { return cdBtn(&d.base, gtx, &d.huddleStart, "headphones", "Start Huddle", false, 0) }),
-						hgap(8),
-						layout.Rigid(func(gtx C) D { return cdBtn(&d.base, gtx, &d.huddleLink, "link", "Copy Huddle Link", false, 0) }),
-					)
-				}),
-			)
-		})
-	}
-	tabsPerm := func(gtx C) D {
-		return d.cdField(gtx, "Choose who can add, remove, and reorder tabs", nil, func(gtx C) D {
-			return layout.Inset{Top: 8}.Layout(gtx, func(gtx C) D { return d.tabsPerm.layoutSelect(&d.base, gtx, 224) })
-		})
-	}
+	inf, _, _ := d.info.get()
 	name := func(gtx C) D {
 		if d.editing && d.editKind == cdEditName {
 			return d.cdField(gtx, "Channel name", nil, d.topicEditor)
 		}
-		inf, _, _ := d.info.get()
 		return d.cdField(gtx, "Channel name", &d.editName, func(gtx C) D {
 			return d.para(gtx, 15, 22, wReg, d.p.Text, 1, "#"+inf.Conv.Name)
 		})
 	}
-	// Slack shows the rename field (isRenameChannelOptionEnabled) and
-	// Posting permissions (postingPermissions.shouldShow) only to people
-	// who may change them: meclod, a plain member of #clack, sees neither
-	// (2026-11-08). Approximated as creator, channel manager or
-	// workspace admin/owner (rename) and manager or admin (posting).
-	mgr, admin, creator := d.selfRoles()
-	var items []W
-	if mgr || admin || creator {
-		items = append(items, cdGap(16), d.cdCard(name))
-	}
-	rows := []W{huddles, tabsPerm}
-	if mgr || admin {
-		rows = append(rows, setting("Posting permissions", "Choose who can post in this channel."))
-	}
-	return append(items, cdGap(16), d.cdCard(rows...), cdGap(24))
+	return d.slackSettingsItems(inf, name)
 }
 
 // selfRoles: is the viewer one of the channel's managers, a workspace
@@ -2451,8 +2409,9 @@ func (d *ChannelDetails) updateWrites(gtx C, inf core.ChannelDetails, loaded boo
 			if d.inviting {
 				gtx.Execute(key.FocusCmd{Tag: &d.inviteQ.ed})
 			}
-		} else {
-			d.h.Toast("Adding people to a direct message isn’t supported yet")
+		} else if loaded {
+			// openAddPeopleModal: IMs and MPIMs get openMpdmAddPeopleModal
+			d.openAddPeople(inf)
 		}
 	}
 	if d.inviting {
