@@ -17,10 +17,16 @@ jobs:
       fail-fast: false
       matrix:
         mode: [count50, race, gogc1]
+        code: [fix, base]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: code under test (${{ matrix.code }})
+        if: ${{ matrix.code == 'base' }}
+        # base = the regression tests on the unfixed jsrt (17b14b9)
+        run: git checkout 17b14b9 -- internal/ cmd/ go.mod go.sum
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
@@ -36,18 +42,17 @@ jobs:
           mkdir -p dist/library
           .github/scripts/fetch_library.sh dist/library
           test -s dist/library/index.json
-      - name: stress (${{ matrix.mode }})
+      - name: stress (${{ matrix.mode }}, ${{ matrix.code }})
         env:
           PLUGIN_BENCH_LIBRARY: ${{ github.workspace }}/dist/library
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
-          set -u
+          set +e
           case "${{ matrix.mode }}" in
             count50) flags="-count=50" ;;
             race) flags="-race -count=8" ;;
             gogc1) export GOGC=1; flags="-count=20" ;;
           esac
-          set -o pipefail
           xvfb-run -a go test $flags -timeout 45m -v -run 'TestPluginGapStreamerModeRows' ./internal/ui/ > stress.log 2>&1
           rc=$?
           echo "exit $rc"
@@ -59,6 +64,11 @@ jobs:
           grep -n -B2 -A 12 'engine trap' stress.log | head -80 || true
           grep -E -- '^(--- |FAIL|ok|panic)' stress.log | tail -30
           exit $rc
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: stress-${{ matrix.mode }}-${{ matrix.code }}
+          path: stress.log
   jsrt:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -66,19 +76,33 @@ jobs:
       fail-fast: false
       matrix:
         mode: [race, gogc1]
+        code: [fix, base]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: code under test (${{ matrix.code }})
+        if: ${{ matrix.code == 'base' }}
+        run: git checkout 17b14b9 -- internal/ cmd/ go.mod go.sum
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
-      - name: regression tests x50 (${{ matrix.mode }})
+      - name: regression tests x50 (${{ matrix.mode }}, ${{ matrix.code }})
         run: |
+          set +e
           if [ "${{ matrix.mode }}" = race ]; then flags=-race; else export GOGC=1; flags=; fi
-          go test $flags -count=50 -run 'TestRemoteValue|TestPromiseSettleRace|TestFreedValueNotReleasedTwice' ./internal/jsrt/
-      - name: whole package (${{ matrix.mode }})
+          go test $flags -count=50 -run 'TestRemoteValue|TestPromiseSettleRace|TestFreedValueNotReleasedTwice' -v ./internal/jsrt/ > reg.log 2>&1
+          rc=$?
+          for t in TestRemoteValueWaitsForJSThread TestRemoteValueOnJSThread TestRemoteValueAfterClose TestPromiseSettleRace TestFreedValueNotReleasedTwice; do
+            echo "$t: pass $(grep -c -- "^--- PASS: $t " reg.log) fail $(grep -c -- "^--- FAIL: $t " reg.log)"
+          done
+          echo "races: $(grep -c 'WARNING: DATA RACE' reg.log)"
+          grep -n -A 30 'WARNING: DATA RACE' reg.log | head -70
+          grep -E -- '^(FAIL|ok|panic)|thread_test.go' reg.log | sort | uniq -c | head -20
+          exit $rc
+      - name: whole package (${{ matrix.mode }}, ${{ matrix.code }})
         if: ${{ !cancelled() }}
         run: |
           if [ "${{ matrix.mode }}" = race ]; then flags=-race; else export GOGC=1; flags=; fi
