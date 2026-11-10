@@ -87,6 +87,11 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	}
 	h := sz.Y
 	x := gtx.Dp(18) // Slack: 28px star button at +18, title icon at +54
+
+	// FlexpaneBackButton while the split view has a back stack
+	if a.pane == paneSplit {
+		x = a.splitBackButton(gtx, x, h)
+	}
 	// Slack's header has no star (ViewHeaderEntitySectionSelector) and no
 	// notifications bell for a channel the viewer isn't in: the preview's
 	// title sits at +18 (C08E083LZ9A, 2026-11-08). A code channel shows
@@ -104,6 +109,9 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	// right-side controls, laid out right-to-left first so the title can
 	// ellipsize into the remaining space.
 	right := sz.X - gtx.Dp(14)
+	if a.pane == paneSplit { // the split view's close button ends the header
+		right = a.splitCloseButton(gtx, right, h)
+	}
 	btn := gtx.Dp(28)
 	y := (h - btn) / 2
 	kebabX := 0
@@ -138,8 +146,8 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		_ = kebabX
 		// Slack opens it right-aligned 6px inside the kebab's right edge, its
 		// top at y 74 (the header is always 40px down and its kebab sits 14px
-		// from the panel's right inset, here and in a split pane).
-		a.openChannelMenu(ch, image.Pt(a.winSize.X-gtx.Dp(theme.PanelInset)-gtx.Dp(14)-gtx.Dp(6), gtx.Dp(theme.TopNavH)+gtx.Dp(34)))
+		// from the pane's right edge, before the split view's close button).
+		a.openChannelMenu(ch, image.Pt(a.headerEnd()-gtx.Dp(14)-gtx.Dp(6), gtx.Dp(theme.TopNavH)+gtx.Dp(34)))
 	}
 	if clicked(a.clicks.get("hdr.search")) {
 		a.searchInChannel(ch) // Slack's searchInChannel: the ⌘F pane
@@ -216,7 +224,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		if clicked(a.clicks.get("hdr.huddlemore")) || hud.TakeCaret(ch) {
 			// the pointer is on the caret, so the tracker knows the button's
 			// window position (fallback: where it sits in the main pane)
-			fb := image.Pt(a.winSize.X-gtx.Dp(theme.PanelInset)-(sz.X-hudAt.X), gtx.Dp(theme.TopNavH)+hudAt.Y)
+			fb := image.Pt(a.paneRight()-(sz.X-hudAt.X), gtx.Dp(theme.TopNavH)+hudAt.Y)
 			org := hudOrg.get(fb)
 			caret := image.Rect(caretX, 0, caretX+gtx.Dp(20), btn).Add(org)
 			a.openHuddleMenu(gtx, ch, caret)

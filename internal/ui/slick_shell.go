@@ -509,10 +509,11 @@ type sbMenus struct {
 	tags map[string]*int          // UI goroutine
 	gts  map[string]slackc.JSFunc // a plugin's getTemplate per row (UI goroutine)
 
-	mu   sync.Mutex
-	t    *taut.Taut
-	fns  map[string]*taut.GoHandle
-	info map[string]popups.ChannelMenuInfo // a copy: the template is read from JS's goroutine
+	mu    sync.Mutex
+	t     *taut.Taut
+	fns   map[string]*taut.GoHandle
+	info  map[string]popups.ChannelMenuInfo // a copy: the template is read from JS's goroutine
+	split map[string]bool                   // the row's menu has "Open in split view" (split.go)
 }
 
 func (m *sbMenus) tag(id string) *int {
@@ -556,17 +557,23 @@ func (m *sbMenus) handle(a *App, c *convInfo) *taut.GoHandle {
 		for _, h := range m.fns {
 			h.Release()
 		}
-		m.t, m.fns, m.info = t, map[string]*taut.GoHandle{}, map[string]popups.ChannelMenuInfo{}
+		m.t, m.fns, m.info, m.split = t, map[string]*taut.GoHandle{}, map[string]popups.ChannelMenuInfo{}, map[string]bool{}
 	}
 	m.info[c.ID] = menuInfoOf(c)
+	_, m.split[c.ID] = a.splitSidebarItem(c.ID)
 	h := m.fns[c.ID]
 	if h == nil {
 		id := c.ID
 		h = t.Func(func([]json.RawMessage) (any, error) {
 			m.mu.Lock()
-			i := m.info[id]
+			i, split := m.info[id], m.split[id]
 			m.mu.Unlock()
-			return popups.MenuTemplate(popups.ChannelMenuItems(i, nil)), nil
+			items := popups.ChannelMenuItems(i, nil)
+			if split {
+				it, _ := popups.SplitViewItem(nil, "c/"+id, true)
+				items = withSplitItem(items, it)
+			}
+			return popups.MenuTemplate(items), nil
 		})
 		m.fns[c.ID] = h
 	}
@@ -589,6 +596,9 @@ func (a *App) openSidebarMenu(ch string, anchor image.Point, getTemplate slackc.
 		return
 	}
 	items := popups.ChannelMenuItems(menuInfoOf(c), func(key string) func() { return a.sbMenuDo(ch, key) })
+	if it, ok := a.splitSidebarItem(ch); ok { // getTilesTemplate, entry point "sidebar"
+		items = withSplitItem(items, it)
+	}
 	show := func(items []popups.MenuItem) {
 		if f := sbMenuTap; f != nil {
 			f(ch, items)

@@ -101,6 +101,9 @@ func (a *App) defaultShortcuts() *shortcuts {
 		if a.dismissTop() {
 			return
 		}
+		if a.splitEscape() { // the split view has the focus (split.go)
+			return
+		}
 		// the Unreads page's Esc (UnreadsList onMarkReadKeyCommand, a
 		// global key command there)
 		if v, ok := a.views[a.router.Current()].(interface{ MarkActiveRead() bool }); ok && v.MarkActiveRead() {

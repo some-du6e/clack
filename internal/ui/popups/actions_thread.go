@@ -22,9 +22,11 @@ func ThreadFollowLabel(subscribed bool) string {
 // SecondaryHeaderMore for a Thread view, module IO7k): the subscribe
 // toggle (left out while the header shows the bell, as Slack drops it when
 // thread_header_mute_button is on and the root is loaded), then Copy link
-// (L) to the root. Slack's other rows have nothing behind them in Clack
-// (Summarize thread needs Slack AI, Start huddle in thread, Open in split
-// view / new window) and are not shown.
+// (L) to the root, then the surface actions: Open in split view, except in
+// the split view itself (useShouldShowSplitViewButton). Slack's other rows
+// have nothing behind them in Clack (Summarize thread needs Slack AI,
+// Start huddle in thread, Open in new window needs a second window) and
+// are not shown.
 func NewThreadHeaderMenu(h Host, anchor image.Rectangle, root core.Message, subscribed, bell bool, toggle func()) *Menu {
 	var items []MenuItem
 	if !bell && toggle != nil {
@@ -38,5 +40,14 @@ func NewThreadHeaderMenu(h Host, anchor image.Rectangle, root core.Message, subs
 		copyText(gtx, link)
 		h.Toast("Link copied")
 	}})
+	if sv, ok := h.(SplitViewer); ok && !sv.InSplitView() && root.Channel != "" && root.TS != "" {
+		thread := root.TS
+		if root.ThreadTS != "" {
+			thread = root.ThreadTS
+		}
+		if it, ok := SplitViewItem(h, "c/"+root.Channel+"/t/"+thread, false); ok {
+			items = append(items, Sep(), it)
+		}
+	}
 	return NewMenuOpts(h, items, MenuOpts{Anchor: anchor, AlignRight: true})
 }

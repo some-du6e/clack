@@ -50,6 +50,15 @@ type ListOpener interface {
 	OpenListLink(url string) bool
 }
 
+// PaneBack is optional: the back stack of the view container being laid
+// out (Slack's view.prev, which the split view keeps when it navigates in
+// place). While PaneBack reports true the thread header draws Slack's
+// FlexpaneBackButton, and a click calls GoPaneBack.
+type PaneBack interface {
+	PaneBack() bool
+	GoPaneBack()
+}
+
 // SignInHost is optional: the ui root's sign-in screen, shown by the
 // list's "Sign in again" link once core reports the session ended.
 type SignInHost interface {

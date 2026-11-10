@@ -39,6 +39,7 @@ type ThreadView struct {
 	top int // header (+ admin tools) height of the last frame
 
 	bellBtn, moreBtn, nameBtn widget.Clickable
+	backBtn                   widget.Clickable // FlexpaneBackButton (PaneBack)
 	bellTip, moreTip, nameTip popups.TipState
 	nameRect                  image.Rectangle        // the subtitle, view coordinates (last frame)
 	nameSub                   HeaderSubtitle         // what it showed
@@ -60,8 +61,12 @@ func (v *ThreadView) ContentHeight() int {
 }
 
 // NewThreadView returns the thread pane for the thread rooted at ts.
-func NewThreadView(h Host, ch, ts string) *ThreadView {
-	v := &ThreadView{h: h, ch: ch, ts: ts, s: stateFor(h, ch, ts)}
+func NewThreadView(h Host, ch, ts string) *ThreadView { return NewThreadViewIn(h, ch, ts, "") }
+
+// NewThreadViewIn is NewThreadView in view container pane ("split":
+// Slack's split view), with a list state of its own (stateIn).
+func NewThreadViewIn(h Host, ch, ts, pane string) *ThreadView {
+	v := &ThreadView{h: h, ch: ch, ts: ts, s: stateIn(h, ch, ts, pane)}
 	v.s.closeEdits()
 	v.s.hb.ensureLoaded(v.s.m)
 	return v
@@ -345,6 +350,16 @@ func (v *ThreadView) header(gtx layout.Context, th *theme.Theme, c *colors, w, h
 		v.h.Toast(*msg)
 	}
 	px := dp(gtx, 16)
+	// FlexpaneBackButton while the view container has a back stack (the
+	// split view's view.prev): 28px, margin-right 6 plus the header's gap 6.
+	pb, back := v.h.(PaneBack)
+	back = back && pb.PaneBack()
+	if back {
+		px += dp(gtx, 28) + dp(gtx, 12)
+		if v.backBtn.Clicked(gtx) {
+			pb.GoPaneBack()
+		}
+	}
 	// .p-flexpane_header__primary: 18px/24px Black, gap 8 to the subtitle.
 	tsT := textStyle{size: 18, weight: theme.Black, col: c.Text, lineH: 24}
 	ty := (hh - dp(gtx, 24)) / 2
@@ -393,6 +408,21 @@ func (v *ThreadView) header(gtx layout.Context, th *theme.Theme, c *colors, w, h
 	defer st.Leave()
 	if st.Hidden() {
 		return
+	}
+	if back { // no tooltip: Slack's FlexpaneBackButton only has its aria-label "Back"
+		at(gtx, dp(gtx, 16), (hh-bs)/2, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Exact(image.Pt(bs, bs))
+			return v.backBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				if v.backBtn.Hovered() {
+					rrect(gtx.Ops, image.Rectangle{Max: image.Pt(bs, bs)}, dp(gtx, 8), st.Background(c.CloseHover))
+				}
+				is := dp(gtx, 20)
+				at(gtx, (bs-is)/2, (bs-is)/2, func(gtx layout.Context) layout.Dimensions {
+					return icons.Get("caret-left-full")(gtx, unit.Dp(20), st.Color(c.Text3))
+				})
+				return layout.Dimensions{Size: image.Pt(bs, bs)}
+			})
+		})
 	}
 	if bell {
 		icon := "notifications-off"

@@ -360,10 +360,13 @@ open_in_home, open_in_split_view, open_in_new_window. New in Clack:
 - Copy link: in the inbox it's the message's link. Clack showed the DMs
   tab's Copy ▸ Copy name / Copy link submenu; that and its Copy huddle
   link are the DMs tab's, which Clack's Activity isn't.
+- Open in split view (after Open in home, not in Simplified layout
+  mode): the thread or the channel in the split view, with the "Ctrl Alt
+  Click" / "⌘ Opt Click" hint; that modifier click on a row does the same
+  (GMkG maybeOpenInSurface). See docs/SPLIT-VIEW.md.
 - **Left out:** Summarize thread (needs
   `ACCESS_SLACK_AI_CHANNEL_THREAD_SUMMARIES`, Slack AI, which the account
-  lacks); Open in split view and Open in new window (Clack has neither a
-  split view nor a second window).
+  lacks); Open in new window (Clack has no second window).
 
 **Clear all, offline, saved views.** `activity_clear_all_completed` with
 an undo_key raises `ActivityClearAllToast` (bottom right):
@@ -398,7 +401,7 @@ modals and new menu rows.
   importance icon; Block Kit action buttons under app messages.
 - Accept on a Slack Connect channel invite (Slack's multi-step accept
   modal), the trust modal's illustration.
-- Summarize thread, Open in split view, Open in new window (see above);
-  the priority / importance rows.
+- Summarize thread, Open in new window (see above); the priority /
+  importance rows.
 - The subtext is drawn as a column before the message, so a 2-line
   message's second line is indented under it (Slack runs it inline).

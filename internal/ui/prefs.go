@@ -89,6 +89,11 @@ type prefs struct {
 	// Windows and Linux (the desktop app keeps them in Electron's session,
 	// per device): nil is the OS locale's language.
 	SpellLanguages []string `json:"spellcheck_languages,omitempty"`
+	// SplitW and SplitWMode are the split view's width (dp) and Slack's
+	// splitWidthMode ("sticky", "manual", "auto"), kept per device as Slack
+	// keeps viewLayoutSplitWidthIntent / Mode in localStorage (split.go).
+	SplitW     int    `json:"split_w,omitempty"`
+	SplitWMode string `json:"split_w_mode,omitempty"`
 }
 
 func (a *App) prefsPath() string {

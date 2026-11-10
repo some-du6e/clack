@@ -1792,6 +1792,7 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 			} else {
 				v.picked[key] = true
 			}
+		case v.splitOpen(it, key): // a split modifier click (activity_split.go)
 		case v.selOK && v.selKey == key:
 			v.selOK = false
 		default:
