@@ -71,7 +71,7 @@ jobs:
         run: |
           set -eu
           mkdir -p dist/library
-          for i in 1 2 3; do gh release download plugins -D dist/library --clobber -p 'index.json' -p '*.js' && break; sleep 10; done
+          .github/scripts/fetch_library.sh dist/library
           test -s dist/library/index.json
           ls dist/library | wc -l
       - name: bench (shard ${{ matrix.shard }}/5)
@@ -126,7 +126,7 @@ jobs:
         run: |
           set -eu
           mkdir -p dist/library
-          for i in 1 2 3; do gh release download plugins -D dist/library --clobber -p 'index.json' -p '*.js' && break; sleep 10; done
+          .github/scripts/fetch_library.sh dist/library
           test -s dist/library/index.json
       - name: host gap tests
         env:
