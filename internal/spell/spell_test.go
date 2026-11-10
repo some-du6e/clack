@@ -241,13 +241,21 @@ func TestAddToDictionaryPersists(t *testing.T) {
 }
 
 func TestFilterSuggestions(t *testing.T) {
-	bad := ""
-	for w := range func() map[string]bool { isBlocked(""); return blocked }() {
-		if w != "" {
-			bad = w
-			break
+	// A single-word entry, picked deterministically: the "a X" / "x-X"
+	// cases rely on X being one space- and hyphen-free piece (a phrase
+	// like "two words" is only blocked whole, as in Slack's filter).
+	isBlocked("")
+	var words []string
+	for w := range blocked {
+		if w != "" && !strings.ContainsAny(w, " -") {
+			words = append(words, w)
 		}
 	}
+	slices.Sort(words)
+	if len(words) == 0 {
+		t.Fatal("no single-word blocked entries")
+	}
+	bad := words[0]
 	got := FilterSuggestions([]string{"fine", bad, "a " + bad, "x-" + bad, "okay"})
 	if !slices.Equal(got, []string{"fine", "okay"}) {
 		t.Errorf("filter %q", got)
