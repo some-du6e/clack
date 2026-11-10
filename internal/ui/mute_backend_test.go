@@ -74,13 +74,17 @@ func TestBackendSetMutedWritesSlackPref(t *testing.T) {
 	refuse = true
 	mu.Unlock()
 
+	nWrites := func() int { mu.Lock(); defer mu.Unlock(); return len(writes) }
+	e.settle(400 * time.Millisecond) // the backend's snapshot rebuilds (resnapshot, 150 ms) land first
 	e.a.data.setMuted(dm, false)
 	if muted() {
 		t.Fatal("the row didn't unmute at once")
 	}
+	e.until("the refused unmute", 10*time.Second, func() bool { return nWrites() == 2 })
 	e.until("the refused unmute reverts", 10*time.Second, muted)
-	if !coreMuted() {
-		t.Error("core lost the mute after a refused unmute")
+	e.settle(400 * time.Millisecond)
+	if !coreMuted() || !muted() {
+		t.Errorf("after a refused unmute: core muted %v, row muted %v; want both", coreMuted(), muted())
 	}
 
 	mu.Lock()
