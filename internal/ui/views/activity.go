@@ -2446,7 +2446,10 @@ func (v *Activity) detailedContent(gtx C, r *actRow) D {
 							if len(acts) == 0 {
 								return D{}
 							}
-							return v.inviteButtons(gtx, r, acts)
+							// entry_extras is a column flex and the text
+							// actions' ul is align-self: center
+							gtx.Constraints.Min.X = gtx.Constraints.Max.X
+							return layout.N.Layout(gtx, func(gtx C) D { return v.inviteButtons(gtx, r, acts) })
 						}),
 					)
 				})
