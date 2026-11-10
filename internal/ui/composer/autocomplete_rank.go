@@ -47,6 +47,12 @@ type rankCtx struct {
 	displayRealNames    bool
 	passthrough, demote bool
 	beyond, emojiBoost  bool
+
+	// autocomplete_affinity_ml_model on: search.autocomplete.
+	// offlineFeatures' user_affinity and channel_priority_90d, which
+	// prepSuggestions hands the sort as userAffinityScore and
+	// channelPriority90dScore (nil otherwise: the features stay 0)
+	affinity, priority90D map[string]float64
 }
 
 // expOn reads a client experiment the way Slack's gates do.
@@ -78,6 +84,9 @@ func rankCtxFrom(api coreAPI, s core.Snapshot, convKind string) rankCtx {
 	r.demote = expOn(a.Experiment("autocomplete_demote_flannel_passthrough_rltv_exact_match"))
 	r.beyond = expOn(a.Experiment("ml_fuzzy_match_beyond_word_boundaries_v2"))
 	r.emojiBoost = a.Experiment("emoji_exact_match_boost") == "on"
+	if a.Experiment("autocomplete_affinity_ml_model") == "on" {
+		r.affinity, r.priority90D = a.AutocompleteAffinity()
+	}
 	return r
 }
 
@@ -127,6 +136,7 @@ func (r rankCtx) memberCand(u core.User, s memberSources, remote bool) acrank.Ca
 		External: u.External, SameTeam: u.TeamID != "" && u.TeamID == s.selfTeam,
 		HasPresence: u.Presence != "", InChannel: inCh || (u.ID == s.selfID && r.convKind != ""),
 		InThread: r.threadUsers[u.ID], EnterpriseID: u.EnterpriseID, Teams: u.Teams,
+		Affinity: r.affinity[u.ID],
 	}
 	if c.DisplayName == "" && u.DisplaySet {
 		c.DisplayName = u.Name
@@ -269,6 +279,7 @@ func (s channelSources) rankChannels(q string) []acItem {
 			Kind: acrank.Channel, ID: id, Name: name, Remote: remote, Private: kind == "private",
 			IsMember: member, Archived: archived, Starred: r.starred[id], Unread: cnt.Unread,
 			LastRead: tsF(cnt.LastRead), Latest: tsF(cnt.Latest), History: r.history[id],
+			Priority90D: r.priority90D[id],
 		})
 		items = append(items, acItem{
 			Kind: acChannel, ID: id, Name: name, Private: kind == "private", Member: member, Archived: archived,

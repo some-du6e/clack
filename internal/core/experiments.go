@@ -213,7 +213,13 @@ var experimentReads = map[string][]string{
 	// views
 	"activity_global_settings": on, "slackbot_unread_v2": on, "unified_files_3p_primary_custom_sections": on,
 	"lists_tabbing_navigation": on, "miles_davis_themes": on, "temp_join_channel": on,
-	"availability_prefs_section": on, "status_improvements": on,
+	"availability_prefs_section": on, "status_improvements": on, "activity_bulk_unread_tool": on,
+	"lists_grid_todos": on,
+	// channel details and settings
+	"enable_new_channel_settings": on, "move_channel_tabs_settings": on, "ai_channel_exclusions": on,
+	"mcp_ai_channel_exclusions": on, "mpdm_default_exclude_history_clients_webapp": on,
+	// drafts
+	"draft_management_in_composer": {"treatment"}, "sidebar_draft_indicator_menu_and_thread_inclusion": on,
 	// messages and senders
 	"reskin_custom_responses": on, "show_as_agent": on, "agent_badge": on, "support_lots_of_agents": on,
 	// composer and autocomplete
@@ -222,6 +228,10 @@ var experimentReads = map[string][]string{
 	"autocomplete_demote_flannel_passthrough_rltv_exact_match": {"on", "treatment"},
 	"ml_fuzzy_match_beyond_word_boundaries_v2":                 {"on", "treatment"},
 	"emoji_exact_match_boost":                                  on,
+	"rich_text_headers_and_dividers":                           on,
+	"updated_scheduled_sends_desktop":                          on,
+	"autocomplete_affinity_ml_model":                           on,
+	"semantic_emoji_matching":                                  on,
 	// code channels
 	"session_channels": on, "session_channels_code_tab_pr": on, "session_channels_gh_wo": on,
 	"session_channels_inline_diff": on,

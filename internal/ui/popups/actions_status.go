@@ -301,6 +301,13 @@ type actStatus struct {
 
 	emojiBtn, clearBtn, selBtn, pauseBtn, oooBtn, calBtn widget.Clickable
 
+	// semantic_emoji_matching (status_semantic.go): emojiPicked is the
+	// modal's tl ref (an emoji chosen by hand), semAt when the debounced
+	// match runs
+	emojiPicked bool
+	semAt       time.Time
+	semSeen     string // the text a5 last saw (SetText's change isn't typing)
+
 	emojiRect, selRect image.Rectangle // content coords, last layout
 }
 
@@ -328,6 +335,8 @@ func actNewStatusState(h Host, fromMenu bool) *actStatus {
 			s.had = true
 			s.ed.SetText(me.StatusText)
 			s.emoji = strings.Trim(me.StatusEmoji, ":")
+			s.emojiPicked = s.emoji != "" // tl = useRef(!!emoji)
+			s.semSeen = s.ed.Text()
 			if me.StatusExp == 0 {
 				s.dur = actDurNone
 			} else {
@@ -679,7 +688,11 @@ func (s *actStatus) events(gtx layout.Context) {
 			}
 			return
 		}
+		if _, ok := e.(widget.ChangeEvent); ok {
+			s.semanticTyped(gtx.Now)
+		}
 	}
+	s.semanticTick(gtx)
 	for {
 		e, ok := s.reply.Update(gtx)
 		if !ok {
@@ -693,6 +706,7 @@ func (s *actStatus) events(gtx layout.Context) {
 		r := s.emojiRect
 		h.OpenEmojiPicker(s.win(gtx, image.Pt(r.Min.X, r.Max.Y+dp(gtx, 4))), func(name string) {
 			s.emoji = strings.Trim(name, ":")
+			s.emojiPicked, s.semAt = true, time.Time{}
 			s.focus = true
 			h.Invalidate()
 		})
@@ -700,6 +714,7 @@ func (s *actStatus) events(gtx layout.Context) {
 	if s.clearBtn.Clicked(gtx) { // handleReset
 		s.ed.SetText("")
 		s.emoji = ""
+		s.emojiPicked, s.semAt = false, time.Time{}
 		if s.dur == actDurKeep || s.dur == actDurCustom {
 			s.dur = actDurToday
 		}
@@ -742,6 +757,7 @@ func (s *actStatus) pickPreset(emoji, text, canonical string, d actDur) {
 	n := s.ed.Len()
 	s.ed.SetCaret(n, n)
 	s.emoji, s.dur, s.canonical = emoji, d, canonical
+	s.emojiPicked, s.semAt = true, time.Time{}
 	s.setEditing(nil)
 	s.picked, s.presetDnd = true, canonical == "Vacationing"
 	s.ooo = canonical == actOOOCanonical
@@ -765,6 +781,10 @@ func (s *actStatus) editScheduled(st actScheduled) {
 	n := s.ed.Len()
 	s.ed.SetCaret(n, n)
 	s.emoji, s.canonical = strings.Trim(st.Emoji, ":"), st.TextCanonical
+	if s.emoji != "" {
+		s.emojiPicked = true
+	}
+	s.semAt = time.Time{}
 	s.dur, s.pause = actDurCustom, st.IsDnd
 	s.picked, s.presetDnd = false, false
 	cp := st

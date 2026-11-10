@@ -767,7 +767,8 @@ func (c *Composer) scheduleMenu(anchor image.Rectangle) {
 		if r.opt == schedCustom {
 			items = append(items, popups.Sep(), popups.MenuItem{Label: r.label, Do: func() {
 				// openScheduleMessageDialog
-				openSchedulePicker(c.h, schedCustomDefault(time.Now(), c.scheduleMember()), func(t time.Time) {
+				m := c.scheduleMember()
+				openSchedulePicker(c.h, schedCustomDefault(time.Now(), m), m, func(t time.Time) {
 					lastCustomSchedule = t
 					c.schedule(t)
 				})

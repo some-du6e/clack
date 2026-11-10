@@ -159,8 +159,18 @@ func dtModalOrigin(gtx layout.Context, m *Modal) image.Point {
 	if m.o.PadX > 0 {
 		px = m.o.PadX
 	}
-	if m.o.HeadH > 0 {
+	switch {
+	case m.o.HeadH > 0:
 		hh = m.o.HeadH
+	case m.o.Subtitle != "" && m.o.SubtitleCaption:
+		hh = 20 + 24 + 20
+	}
+	if m.o.Subtitle != "" { // the subtitle line under the title (Modal.Layout's subH)
+		if m.o.SubtitleCaption {
+			hh += 18
+		} else {
+			hh += 22
+		}
 	}
 	return m.rect.Min.Add(image.Pt(dp(gtx, px), dp(gtx, hh)-m.list.Position.Offset))
 }
@@ -360,6 +370,7 @@ type dtCalendar struct {
 	month  time.Time // first of the shown month
 	sel    time.Time
 	min    time.Time // zero: none
+	max    time.Time // last pickable day (disableDatesAfter), zero: none
 	cur    time.Time // keyboard cursor
 	kbd    bool
 	onPick func(time.Time)
@@ -380,7 +391,9 @@ func dtNewCalendar(h Host, anchor image.Rectangle, sel, lo time.Time, onPick fun
 	return c
 }
 
-func (c *dtCalendar) disabled(day time.Time) bool { return !c.min.IsZero() && day.Before(c.min) }
+func (c *dtCalendar) disabled(day time.Time) bool {
+	return !c.min.IsZero() && day.Before(c.min) || !c.max.IsZero() && day.After(c.max)
+}
 
 func (c *dtCalendar) dayN(n int) time.Time {
 	return time.Date(c.month.Year(), c.month.Month(), n, 0, 0, 0, 0, c.month.Location())
@@ -400,6 +413,9 @@ func (c *dtCalendar) moveCur(days, months int) {
 	n := c.cur.AddDate(0, months, days)
 	if c.disabled(n) {
 		n = c.min
+		if !c.max.IsZero() && c.cur.AddDate(0, months, days).After(c.max) {
+			n = c.max
+		}
 	}
 	c.cur, c.kbd = n, true
 	c.month = dtMonthStart(n)
