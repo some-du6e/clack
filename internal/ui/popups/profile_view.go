@@ -50,6 +50,14 @@ type ProfileView struct {
 	editUntil time.Time // EditProfileFormPane is mounted until then
 
 	secs pfSecState // users.profile.getSections (profile_sections.go)
+
+	// "View as" (profile_preview.go)
+	preview             int           // pfPreviewNone | Internal | External
+	dim                 *pfPreviewDim // the window's preview-mode overlay
+	viewingBtn, exitBtn widget.Clickable
+	viewingBox          image.Rectangle // the "Viewing As" button, pane coords
+	shieldTag           int
+	lastFrame           time.Time // gtx.Now of the last Layout (the overlay's liveness)
 }
 
 // NewProfileView builds the full profile pane for userID.
@@ -69,6 +77,7 @@ func (v *ProfileView) Layout(gtx layout.Context) layout.Dimensions {
 	cl := colorsOf(th)
 	sz := gtx.Constraints.Max
 	v.paneW = sz.X
+	v.lastFrame = gtx.Now
 	u, ok := lookupUser(v.h, v.id)
 	if !ok && !v.asked && v.h.Core() != nil && v.id != "" {
 		v.asked = true
@@ -116,9 +125,20 @@ func (v *ProfileView) Layout(gtx layout.Context) layout.Dimensions {
 func (v *ProfileView) clicks(gtx layout.Context, u core.User, ok, self bool) {
 	h := v.h
 	if v.closeBtn.Clicked(gtx) {
+		v.setPreview(pfPreviewNone)
 		h.CloseSecondary()
 	}
 	if !ok {
+		return
+	}
+	if v.preview != pfPreviewNone {
+		// PreviewMenu's controls; the profile itself is interaction_disabled
+		if v.viewingBtn.Clicked(gtx) {
+			h.ShowOverlay(&pfPaneMenu{h: h, items: v.previewItems(), box: v.viewingBox, paneW: v.paneW, member: u.ID, width: 320, left: true, plain: true})
+		}
+		if v.exitBtn.Clicked(gtx) {
+			v.setPreview(pfPreviewNone)
+		}
 		return
 	}
 	if v.btn1.Clicked(gtx) {
@@ -128,22 +148,22 @@ func (v *ProfileView) clicks(gtx layout.Context, u core.User, ok, self bool) {
 			pfMessage(h, u.ID)
 		}
 	}
-	if v.btn2.Clicked(gtx) {
-		if self {
-			h.Toast("Viewing your profile as someone else isn't supported yet")
-		} else if !v.hudBox.Empty() {
+	if v.btn2.Clicked(gtx) && !v.hudBox.Empty() {
+		if self { // MemberProfilePreviewButton: ProfilePreviewMenu, bottom-right
+			h.ShowOverlay(&pfPaneMenu{h: h, items: v.previewItems(), box: v.hudBox, paneW: v.paneW, member: u.ID, width: 320, plain: true})
+		} else {
 			h.ShowOverlay(&pfPaneMenu{h: h, box: v.hudBox, paneW: v.paneW, member: u.ID, call: true})
 		}
 	}
 	if v.btn3.Clicked(gtx) {
-		h.Toast("VIPs aren't supported yet")
+		pfToggleVIP(h, u)
 	}
 	if v.editBtn.Clicked(gtx) || v.pronBtn.Clicked(gtx) || v.nameSndBtn.Clicked(gtx) {
 		v.editUntil = gtx.Now.Add(pfEditPaneFor)
 		pfEditProfile(h)
 	}
 	if v.moreBtn.Clicked(gtx) {
-		items := pfMoreItems(h, u, false, nil)
+		items := pfMoreItemsFor(h, u, false, nil, v.preview != pfPreviewNone)
 		h.ShowOverlay(&pfPaneMenu{h: h, items: items, box: v.moreBox, paneW: v.paneW, member: u.ID, app: pfAppID(h, u)})
 	}
 }
@@ -153,7 +173,15 @@ func (v *ProfileView) body(gtx layout.Context, th *theme.Theme, cl *Colors, u co
 	pad := dp(gtx, 16)
 	inner := maxInt(1, w-2*pad)
 	rowH := dp(gtx, 38)
-	y := pad
+	y := 0
+	if ok && v.preview != pfPreviewNone {
+		y += v.previewBar(gtx, th, cl, w, y)
+	}
+	top := y
+	y += pad
+	// edit: your own profile outside a preview (useIsProfilePreview hides
+	// every Edit and add link and gives you the buttons others see)
+	edit := self && v.preview == pfPreviewNone
 
 	// avatar
 	avDp := float32(256)
@@ -181,7 +209,7 @@ func (v *ProfileView) body(gtx layout.Context, th *theme.Theme, cl *Colors, u co
 
 	// name (real_name) and Edit for yourself
 	editW := 0
-	if self { // Name's Edit link: !preview && isSelf
+	if edit { // Name's Edit link: !preview && isSelf
 		editW = textW(gtx, th, 15, theme.Bold, "Edit")
 		at(gtx, image.Pt(w-pad-editW, y), func(gtx layout.Context) layout.Dimensions {
 			return clickBox(gtx, &v.editBtn, nil, func(gtx layout.Context) layout.Dimensions {
@@ -224,7 +252,7 @@ func (v *ProfileView) body(gtx layout.Context, th *theme.Theme, cl *Colors, u co
 	if v.secs.done && v.secs.err != nil {
 		addSound = true // no sections (RimetoProfileLegacyData): offer it
 	}
-	if self && addSound {
+	if edit && addSound {
 		d := at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
 			return pfLinkRow(gtx, th, cl, &v.nameSndBtn, "Add name pronunciation", rowH)
 		})
@@ -245,7 +273,7 @@ func (v *ProfileView) body(gtx layout.Context, th *theme.Theme, cl *Colors, u co
 		})
 		y += rowH
 	}
-	if self && pfBlank(u.Pronouns) {
+	if edit && pfBlank(u.Pronouns) {
 		at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
 			return pfLinkRow(gtx, th, cl, &v.pronBtn, "Add pronouns", rowH)
 		})
@@ -254,9 +282,13 @@ func (v *ProfileView) body(gtx layout.Context, th *theme.Theme, cl *Colors, u co
 
 	// presence, then status (RimetoProfileBio's BioRows)
 	if !u.IsBot { // unknown presence reads as Away, like Slack
+		pu := u
+		if v.preview == pfPreviewExternal { // FakeExternalPreviewPresence: userType external
+			pu.External = true
+		}
 		at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(inner, rowH)}
-			return v.presence(gtx, th, u, rowH)
+			return v.presence(gtx, th, pu, rowH)
 		})
 		y += rowH
 	}
@@ -283,16 +315,18 @@ func (v *ProfileView) body(gtx layout.Context, th *theme.Theme, cl *Colors, u co
 	// buttons
 	y += dp(gtx, 12)
 	var specs []pfBtnSpec
-	if self {
+	if edit {
 		specs = []pfBtnSpec{
 			{c: &v.btn1, label: "Set a status"},
-			{c: &v.btn2, label: "View as", caret: true},
+			{c: &v.btn2, label: "View as", caret: true, rect: &v.hudBox},
 		}
 	} else {
 		specs = []pfBtnSpec{
 			{c: &v.btn1, label: "Message", lead: "threads"},
 			{c: &v.btn2, label: "Huddle", lead: "headphones", caret: true, rect: &v.hudBox},
-			{c: &v.btn3, label: "VIP", lead: "user-plus", vip: true},
+		}
+		if pfCanToggleVIP(v.h, u) { // renderVipButton: canToggleVip
+			specs = append(specs, pfVipSpec(v.h, u, pfBtnSpec{c: &v.btn3}))
 		}
 	}
 	by := y
@@ -311,7 +345,10 @@ func (v *ProfileView) body(gtx layout.Context, th *theme.Theme, cl *Colors, u co
 	if !v.secs.done {
 		y += pad
 	}
-	y = v.sections(gtx, th, cl, u, self, y, w)
+	y = v.sections(gtx, th, cl, u, edit, y, w)
+	if v.preview != pfPreviewNone {
+		v.shield(gtx, image.Rect(0, top, w, y))
+	}
 	return layout.Dimensions{Size: image.Pt(w, y)}
 }
 
@@ -405,6 +442,9 @@ type pfPaneMenu struct {
 	member string          // whose profile (RimetoMemberProfileOverflowMenu)
 	app    string          // the app's id on an app's profile (AppDetailsOverflow)
 	call   bool            // the Huddle button's call menu (pfHuddleMenu)
+	width  float32         // dp; 0 is the menu's default
+	left   bool            // opens bottom-left (PreviewMenu's select)
+	plain  bool            // not RimetoMemberProfileOverflowMenu (ProfilePreviewMenu)
 	menu   *Menu
 	done   bool
 }
@@ -424,10 +464,12 @@ func (p *pfPaneMenu) Layout(gtx layout.Context) layout.Dimensions {
 			}
 			return p.menu.Layout(gtx)
 		}
-		o := MenuOpts{Anchor: a, Side: Below, AlignRight: true}
-		if p.app != "" {
+		o := MenuOpts{Anchor: a, Side: Below, AlignRight: !p.left, Width: p.width}
+		switch {
+		case p.plain:
+		case p.app != "":
 			o = pfAppMenuOpts(p.app, p.member, o)
-		} else {
+		default:
 			o = pfMenuOpts(p.member, o)
 		}
 		p.menu = NewMenuOpts(p.h, p.items, o)

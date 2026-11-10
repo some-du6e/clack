@@ -1,0 +1,51 @@
+name: channel-actions-shots
+# The channel menus' actions rendered headlessly at 1440x900 against
+# internal/fakeslack: the sidebar row menu's section rows (Move channel ▸),
+# a section's Share directly dialog (and its empty state), and the mute
+# write. Synthetic only: nothing here talks to Slack.
+on:
+  push:
+    paths:
+      - "internal/ui/backend.go"
+      - "internal/ui/slick_shell.go"
+      - "internal/ui/section_menu.go"
+      - "internal/ui/share_section_test.go"
+      - "internal/ui/channel_menu_move_test.go"
+      - "internal/ui/mute_backend_test.go"
+      - "internal/ui/popups/share_section.go"
+      - "internal/ui/popups/actions_menus.go"
+      - "internal/core/section_menu.go"
+      - ".github/workflows/channel-actions-shots.yml"
+  workflow_dispatch:
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb
+
+permissions:
+  contents: read
+
+jobs:
+  channel-actions-shots:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: channel actions screenshots
+        env:
+          PREVIEW_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$PREVIEW_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -v -run 'TestShareSectionDirectly$|TestShareSectionLimits$|TestSidebarMenuMoveChannel$|TestSidebarMenuMoveToNewSection$|TestChannelMenuHooksInstalled$|TestBackendSetMutedWritesSlackPref$' ./internal/ui/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: channel-actions-shots
+          path: dist/shots

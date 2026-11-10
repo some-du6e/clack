@@ -77,6 +77,10 @@ type ChannelBrowseOpts struct {
 	Desc       bool   // sort direction for name / created / member_count
 	Type       string // "" (any, non-archived) | "public" | "private" | "archived" | "external"
 	Membership string // "" (all) | "joined" | "other"
+	// Team is the Workspaces filter (search_only_team), Orgs the
+	// Organizations filter's external team ids (external_shared_team_ids).
+	Team string
+	Orgs []string
 }
 
 // PeopleBrowseOpts drives the people directory.
@@ -86,11 +90,28 @@ type PeopleBrowseOpts struct {
 	Sort        string // "" / "recommended" | "name"
 	Desc        bool   // name sort: Z to A
 	AccountType string // "" | "owners" | "admins" | "members" | "guests" | "deactivated"
+	// Team is the Workspaces filter (search_only_team); Titles and
+	// Locations the Title and Location filters (profile_title,
+	// profile_location).
+	Team              string
+	Titles, Locations []string
+	// CustomFields filters by profile field: field id → values (Slack's
+	// profileField.<id> browser filter, sent as custom_fields JSON).
+	CustomFields map[string][]string
 }
 
 type PeoplePage struct {
 	Users              []User
 	Total, Page, Pages int
+	// Titles and Locations are the response's filter_suggestions for the
+	// Title and Location filters (Slack's searchSharedFacets).
+	Titles, Locations []Facet
+}
+
+// Facet is a filter suggestion: a profile value and how many people have it.
+type Facet struct {
+	Value string
+	Count int
 }
 
 // UsergroupOpts drives the user group directory.
@@ -101,6 +122,8 @@ type UsergroupOpts struct {
 	Count int // default 50
 	// ExcludeDisabled leaves out disabled groups (Slack's directory shows them).
 	ExcludeDisabled bool
+	// Team is the Workspaces filter (search_only_team).
+	Team string
 }
 
 // Tab is one entry of a channel's tab bar, in server order. The UI adds
@@ -549,6 +572,24 @@ func channelBrowseParams(o ChannelBrowseOpts) url.Values {
 	case "other":
 		p.Set("exclude_my_channels", "1")
 	}
+	// XjMX getSearchAPIParams: organizations narrow the type to the shared
+	// channels (archived and private ones keep their kind)
+	if len(o.Orgs) > 0 && o.Type != "external" {
+		switch o.Type {
+		case "archived":
+			p.Set("channel_type", "external_shared_archived")
+		case "private":
+			p.Set("channel_type", "external_shared_private")
+		default:
+			p.Set("channel_type", "external_shared")
+		}
+	}
+	if len(o.Orgs) > 0 {
+		p.Set("external_shared_team_ids", strings.Join(o.Orgs, ","))
+	}
+	if o.Team != "" {
+		p.Set("search_only_team", o.Team)
+	}
 	return p
 }
 
@@ -634,6 +675,19 @@ func peopleBrowseParams(o PeopleBrowseOpts) url.Values {
 	if o.AccountType == "deactivated" {
 		p.Set("hide_deactivated_users", "0")
 	}
+	if o.Team != "" {
+		p.Set("search_only_team", o.Team)
+	}
+	if len(o.Locations) > 0 {
+		p.Set("profile_location", strings.Join(o.Locations, ","))
+	}
+	if len(o.Titles) > 0 {
+		p.Set("profile_title", strings.Join(o.Titles, ","))
+	}
+	if len(o.CustomFields) > 0 {
+		j, _ := json.Marshal(o.CustomFields)
+		p.Set("custom_fields", string(j))
+	}
 	return p
 }
 
@@ -642,15 +696,21 @@ func peopleBrowseParams(o PeopleBrowseOpts) url.Values {
 func (a *App) BrowsePeople(ctx context.Context, o PeopleBrowseOpts) (PeoplePage, error) {
 	p := peopleBrowseParams(o)
 	var res struct {
-		Items      []slack.User     `json:"items"`
-		Pagination searchPagination `json:"pagination"`
+		Items       []slack.User     `json:"items"`
+		Pagination  searchPagination `json:"pagination"`
+		Suggestions struct {
+			Title    []facetRaw `json:"title"`
+			Location []facetRaw `json:"location"`
+		} `json:"filter_suggestions"`
 	}
 	if err := a.C.Call(ctx, "search.modules.people", p, &res); err != nil {
 		return PeoplePage{}, err
 	}
 	a.S.PutUsers(res.Items)
 	out := PeoplePage{Users: make([]User, 0, len(res.Items)), Total: res.Pagination.Total, Page: res.Pagination.Page,
-		Pages: res.Pagination.PageCount}
+		Pages: res.Pagination.PageCount, Titles: facets(res.Suggestions.Title), Locations: facets(res.Suggestions.Location)}
+	// hydrateFacetSuggestions (ujfX): locations by count, most first
+	sort.SliceStable(out.Locations, func(i, j int) bool { return out.Locations[i].Count > out.Locations[j].Count })
 	if out.Page == 0 {
 		out.Page, _ = strconv.Atoi(p.Get("page"))
 	}
@@ -678,6 +738,9 @@ func (a *App) SearchUsergroups(ctx context.Context, o UsergroupOpts) ([]Usergrou
 	p := url.Values{"keyword": {strings.TrimPrefix(strings.TrimSpace(o.Query), "@")}, "sort": {sortBy},
 		"sort_dir": {browseSortDir(o.Desc)}, "include_hidden": {"false"}, "include_disabled": {strconv.FormatBool(!o.ExcludeDisabled)},
 		"count": {strconv.Itoa(count)}}
+	if o.Team != "" {
+		p.Set("search_only_team", o.Team)
+	}
 	var res struct {
 		Usergroups []struct {
 			ID          string          `json:"id"`

@@ -140,8 +140,9 @@ func (f *prefsForm) reorderList(opts []reorderOption) {
 	n := len(opts)
 	listH := n*rowH + 2*pad
 	act := p.activeIndex(opts)
-	for _, o := range opts {
-		f.record("check", "rail."+o.id, o.label, o.selected, !o.disabled)
+	for i := range opts {
+		opts[i].label = pt(opts[i].label)
+		f.record("check", "rail."+opts[i].id, opts[i].label, opts[i].selected, !opts[i].disabled)
 	}
 	rowAt := func(y float32) int {
 		i := int(y-float32(pad)) / rowH
@@ -297,8 +298,8 @@ func (f *prefsForm) reorderList(opts []reorderOption) {
 	// ContextualActions: Move up / Move down at the active row
 	up, down := p.btn("button.rail.up"), p.btn("button.rail.down")
 	show := (l.hovered || l.focused || up.Hovered() || down.Hovered()) && act >= 0
-	f.record("button", "button.rail.up", "Move up", false, show && act > 0)
-	f.record("button", "button.rail.down", "Move down", false, show && act < n-1)
+	f.record("button", "button.rail.up", pt("Move up"), false, show && act > 0)
+	f.record("button", "button.rail.down", pt("Move down"), false, show && act < n-1)
 	if show {
 		bs := gtx.Dp(28)
 		y := f.y + pad + act*rowH + (rowH-bs)/2

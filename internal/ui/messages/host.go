@@ -207,7 +207,11 @@ func (r *richHandler) OpenUser(id string, anchor image.Point) {
 }
 func (r *richHandler) OpenChannel(id string) { r.h.Navigate("c/" + id) }
 func (r *richHandler) OpenUsergroup(id string, anchor image.Point) {
-	r.h.Toast("User group")
+	// Slack's UserGroupElement opens the user group profile (the ui
+	// root's App.OpenUserGroup, the same pane views/adapt.go opens)
+	if o, ok := r.h.(interface{ OpenUserGroup(id string) }); ok {
+		o.OpenUserGroup(id)
+	}
 }
 func (r *richHandler) OpenImage(img richtext.Image) {
 	r.h.OpenLightbox(img, *r.m)

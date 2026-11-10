@@ -16,6 +16,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -229,7 +230,7 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 			at(gtx, image.Pt(gtx.Dp(10), (sh-gtx.Dp(16))/2), sz, func(gtx layout.Context) layout.Dimensions {
 				return icons.Search(gtx, 16, c.SearchText)
 			})
-			label := "Search " + a.teamName()
+			label := i18n.T("channel_sidebar", "Search {teamName}", "teamName", a.teamName())
 			if q := a.searchQuery; q != "" {
 				label = q
 			}
@@ -307,8 +308,13 @@ func (a *App) railTabFor(id string) railTab {
 			core.TabActivityInbox: "Activity", core.TabFiles: "Files", core.TabLater: "Later",
 			core.TabPlatform: "Tools", core.TabBrowse: "More"}[id]
 	}
+	rt.label = railNS.T(rt.label)
 	return rt
 }
+
+// railNS: the rail's tab names are the client's ("Home", "DMs",
+// "Activity", "Files"), More and Later the view's.
+var railNS = i18n.NewChain("client", "view", "saved_for_later")
 
 // railLines splits "Agents & tools" onto two lines, as Slack wraps it.
 func railLines(label string) []string {
@@ -405,18 +411,24 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 		y += th
 	}
 
-	// control strip: + (new), theme toggle, avatar with presence.
+	// control strip: + (new), Slack's focus mode button when the account
+	// has it (SilentSidebarTrigger, focus_mode.go), avatar with presence.
 	cs := gtx.Dp(36)
 	by := top + height - gtx.Dp(164) + gtx.Dp(4)
-	for _, k := range []string{"rail.new", "rail.theme"} {
+	if !a.focusModeOn() {
+		by += gtx.Dp(52) // the strip keeps its bottom
+	}
+	newY := by
+	for _, k := range []string{"rail.new", "rail.focus"} {
 		k := k
-		icon := "plus"
-		if k == "rail.theme" {
-			icon = "moon"
-			if a.th.Dark {
-				icon = "sun"
+		if k == "rail.focus" {
+			if a.focusModeOn() {
+				a.focusButton(gtx, image.Pt(x0, by), cs)
+				by += gtx.Dp(52)
 			}
+			continue
 		}
+		icon := "plus"
 		org := image.Pt(x0, by)
 		at(gtx, org, image.Pt(cs, cs), func(gtx layout.Context) layout.Dimensions {
 			btn := a.clicks.get(k)
@@ -438,11 +450,8 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 		by += gtx.Dp(52)
 	}
 	if clicked(a.clicks.get("rail.new")) {
-		org := image.Pt(x0, top+height-gtx.Dp(164)+gtx.Dp(4)) // the + button (first in the strip)
+		org := image.Pt(x0, newY) // the + button (first in the strip)
 		a.openCreateMenu(image.Rectangle{Min: org, Max: org.Add(image.Pt(cs, cs))})
-	}
-	if clicked(a.clicks.get("rail.theme")) {
-		a.ToggleDark()
 	}
 	at(gtx, image.Pt(x0, by), image.Pt(cs+gtx.Dp(8), cs+gtx.Dp(8)), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, a.clicks.get("rail.me"), nil, func(gtx layout.Context) layout.Dimensions {

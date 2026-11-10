@@ -842,10 +842,7 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 		// calc(100% - 22px); the row has margin-bottom -2px: 24 tall.
 		hh := dp(gtx, 24)
 		n := it.idx
-		txt := "1 reply"
-		if n != 1 {
-			txt = itoa(n) + " replies"
-		}
+		txt := repliesLabel(n)
 		st := textStyle{size: 13, col: c.Muted70, lineH: 18}
 		d := at(gtx, dp(gtx, 16), dp(gtx, 4), func(gtx layout.Context) layout.Dimensions {
 			return lineBox(gtx, st, func(gtx layout.Context) layout.Dimensions { return label(gtx, h.Theme(), st, txt) })

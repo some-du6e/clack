@@ -30,11 +30,13 @@ import (
 	"time"
 
 	"gioui.org/layout"
+	"gioui.org/unit"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/hovercard"
+	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -280,6 +282,7 @@ type SearchView struct {
 	sortBtn  widget.Clickable
 	sortR    image.Rectangle
 	feedback widget.Clickable
+	emptyFb  widget.Clickable // the no-results state's "Give feedback"
 
 	started bool
 	seq     int
@@ -640,6 +643,13 @@ func srSourceRow(th *theme.Theme, label, count string, sel bool) func(gtx layout
 // the box at the left, the label after it); on reads the live state so
 // the row updates while the menu stays open.
 func srCheckRow(th *theme.Theme, label string, on func() bool) func(gtx layout.Context, hl bool) layout.Dimensions {
+	return srCheckIconRow(th, label, "", on)
+}
+
+// srCheckIconRow is CheckboxMenuRowComponent with a labelIcon (File type's
+// rows): the 16px icon 8px before the label (checkboxLabelWithIcon). Icons
+// Clack doesn't have are left out rather than drawn as placeholders.
+func srCheckIconRow(th *theme.Theme, label, iconName string, on func() bool) func(gtx layout.Context, hl bool) layout.Dimensions {
 	return func(gtx layout.Context, hl bool) layout.Dimensions {
 		cl := colorsOf(th)
 		sz := image.Pt(gtx.Constraints.Max.X, dp(gtx, 28))
@@ -651,8 +661,15 @@ func srCheckRow(th *theme.Theme, label string, on func() bool) func(gtx layout.C
 		at(gtx, image.Pt(dp(gtx, 24), (sz.Y-dp(gtx, 16))/2), func(gtx layout.Context) layout.Dimensions {
 			return Checkbox(gtx, th, on(), false, false)
 		})
-		at(gtx, image.Pt(dp(gtx, 48), 0), func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, sz.X-dp(gtx, 72)), sz.Y)}
+		lx := dp(gtx, 48)
+		if iconName != "" && icons.HasSlack(iconName) {
+			at(gtx, image.Pt(lx, (sz.Y-dp(gtx, 16))/2), func(gtx layout.Context) layout.Dimensions {
+				return icons.GetSlack(iconName)(gtx, unit.Dp(16), fg)
+			})
+			lx += dp(gtx, 16) + dp(gtx, 8)
+		}
+		at(gtx, image.Pt(lx, 0), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, sz.X-lx-dp(gtx, 24)), sz.Y)}
 			return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
 				return text(gtx, th, 15, theme.Regular, fg, label)
 			})
@@ -768,11 +785,13 @@ func srWithRange(q srQuery, after, before string) srQuery {
 	return q.Set("before", before).Set("after", after)
 }
 
-// srFileTypes are More > File type's rows and their modifiers.
-var srFileTypes = [...]struct{ label, val string }{
-	{"Huddle AI Notes", "huddle_notes"}, {"Lists", "lists"}, {"Canvases & Posts", "canvases"}, {"Documents", "documents"},
-	{"Emails", "emails"}, {"Images", "images"}, {"PDFs", "pdfs"}, {"Presentations", "presentations"},
-	{"Snippets", "snippets"}, {"Spreadsheets", "spreadsheets"}, {"Audio", "audio"}, {"Videos", "videos"},
+// srFileTypes are More > File type's rows, their modifiers and their
+// labelIcons ($.t9).
+var srFileTypes = [...]struct{ label, val, icon string }{
+	{"Huddle AI Notes", "huddle_notes", "canvas"}, {"Lists", "lists", "lists"}, {"Canvases & Posts", "canvases", "canvas"},
+	{"Documents", "documents", "document"}, {"Emails", "emails", "email"}, {"Images", "images", "image"},
+	{"PDFs", "pdfs", "pdf-file"}, {"Presentations", "presentations", "presentation"}, {"Snippets", "snippets", "text-snippet"},
+	{"Spreadsheets", "spreadsheets", "spreadsheet"}, {"Audio", "audio", "sound"}, {"Videos", "videos", "video"},
 }
 
 // srTopReactions are the Reactions submenu's quick picks.
@@ -828,11 +847,11 @@ func (v *SearchView) moreMenu(gtx layout.Context) {
 	}
 
 	now := time.Now()
-	dates := []MenuItem{{Label: "Any time", Checked: v.q.Get("after") == "" && v.q.Get("before") == "" && v.q.Get("on") == "",
+	dates := []MenuItem{{Label: "Any time", Radio: true, Checked: v.q.Get("after") == "" && v.q.Get("before") == "" && v.q.Get("on") == "",
 		Do: func() { v.setQuery(srWithRange(v.q, "", "")) }}}
 	for _, d := range srDateRanges {
 		after, before := srDate(d.from(now)), srDate(d.end(now))
-		dates = append(dates, MenuItem{Label: d.label, Checked: v.q.Get("after") == after && v.q.Get("before") == before,
+		dates = append(dates, MenuItem{Label: d.label, Radio: true, Checked: v.q.Get("after") == after && v.q.Get("before") == before,
 			Do: func() { v.setQuery(srWithRange(v.q, after, before)) }})
 	}
 	pick := func(key string) func() {
@@ -857,7 +876,8 @@ func (v *SearchView) moreMenu(gtx layout.Context) {
 
 	var types []MenuItem
 	for _, ft := range srFileTypes {
-		types = append(types, check(ft.label, has("type", ft.val), toggle("type", ft.val)))
+		types = append(types, MenuItem{Label: ft.label, Widget: srCheckIconRow(th, ft.label, ft.icon, has("type", ft.val)),
+			Do: toggle("type", ft.val), KeepOpen: true})
 	}
 	var reacts []MenuItem
 	for _, r := range srTopReactions {
@@ -881,7 +901,7 @@ func (v *SearchView) moreMenu(gtx layout.Context) {
 		{Header: "Results"},
 		check("Exact matches only", func() bool { return v.exact }, func() { v.exact = !v.exact; v.search(1) }),
 		{Label: "With people", Icon: "user", Sub: with},
-		{Label: "Message has", Icon: "attach", Sub: []MenuItem{
+		{Label: "Message has", Icon: "message", Sub: []MenuItem{
 			check("File", has("has", "file"), toggle("has", "file")),
 			check("Link", has("has", "link"), toggle("has", "link")),
 			check("Action", has("has", "action"), toggle("has", "action")),
@@ -894,11 +914,11 @@ func (v *SearchView) moreMenu(gtx layout.Context) {
 			check("Pinned", has("has", "pin"), toggle("has", "pin")),
 			check("In Activity", has("in", "activity"), toggle("in", "activity")),
 		}},
-		{Label: "Date", Icon: "calendar", Sub: dates},
+		{Label: "Date", Icon: "calendar", Subtitle: srDateLabel(v.q.Get("after"), v.q.Get("before"), v.q.Get("on"), now), Sub: dates},
 		{Label: "File type", Icon: "file", Sub: types},
-		{Label: "Reactions", Icon: "add-reaction", Sub: reacts},
+		{Label: "Reactions", Icon: "emoji", Sub: reacts},
 	}
-	v.openMenu(gtx, v.pillR[srPMore], items, 280)
+	v.openMenu(gtx, v.pillR[srPMore], items, 240) // MoreFiltersMenu width 240
 }
 
 // sortMenu is "Sorted by …" (search-filter-sort MessageEntity): Most
@@ -1060,8 +1080,8 @@ func (v *SearchView) handle(gtx layout.Context) {
 	if v.sortBtn.Clicked(gtx) {
 		v.sortMenu(gtx)
 	}
-	if v.feedback.Clicked(gtx) {
-		v.h.Toast("Feedback isn't supported yet")
+	if v.feedback.Clicked(gtx) || v.emptyFb.Clicked(gtx) {
+		v.openFeedback()
 	}
 	// pagination
 	if v.prevBtn.Clicked(gtx) && v.page > 1 {
@@ -1128,6 +1148,74 @@ func (v *SearchView) handle(gtx layout.Context) {
 			}
 		}
 	}
+}
+
+// openFeedback is the results page's "Give feedback" (and the no-results
+// state's): CombinedSearchFeedbackModal for the active tab's module.
+func (v *SearchView) openFeedback() {
+	q, sess, tab := v.q.String(), v.sess, v.tab
+	sortBy := v.sortBy
+	counts := map[string]int{}
+	for t := 0; t < srTabN; t++ {
+		if v.countOK[t] {
+			counts[srTabModules[t]] = v.counts[t]
+		}
+	}
+	c := v.h.Core()
+	openSearchFeedback(v.h, srFeedbackOpts{feedbackType: "search", query: q, payload: func() any {
+		sort, dir := srActiveSort(tab, sortBy)
+		return srSearchFeedbackPayload{SearchSessionID: sess.ID, QuerySessionID: sess.QueryID, Query: q,
+			Module: srTabModules[tab], ActiveSort: sort, ActiveSortDir: dir, ActiveFilters: srActiveFilters(c, tab),
+			ClientVersion: core.SearchFeedbackClientVersion, ModuleCounts: counts}
+	}})
+}
+
+// srSearchFeedbackPayload is the results page's feedback payload
+// (combinedSearchFeedbackSubmit for feedbackType "search", in Slack's key
+// order). searchFeedbackDialog (search in channel) sends the same keys
+// without client_version and with empty module_counts.
+type srSearchFeedbackPayload struct {
+	SearchSessionID string         `json:"search_session_id"`
+	QuerySessionID  string         `json:"query_session_id"`
+	Query           string         `json:"query"`
+	Module          string         `json:"module"`
+	ActiveSort      string         `json:"active_sort,omitempty"`
+	ActiveSortDir   string         `json:"active_sort_dir,omitempty"`
+	ActiveFilters   map[string]any `json:"active_filters"`
+	ClientVersion   string         `json:"client_version,omitempty"`
+	ModuleCounts    map[string]int `json:"module_counts"`
+}
+
+// srActiveSort is the module request's sort and sort_dir
+// (getActiveSearchFeedbackContext reads them off the last request's args).
+func srActiveSort(tab int, sortBy string) (string, string) {
+	switch tab {
+	case srTabMessages:
+		switch sortBy {
+		case "timestamp":
+			return "timestamp", "desc"
+		case "oldest":
+			return "timestamp", "asc"
+		}
+		return "score", "desc"
+	case srTabFiles, srTabCanvases:
+		return "timestamp", "desc"
+	case srTabChannels, srTabPeople:
+		return "relevant", "desc"
+	}
+	return "", ""
+}
+
+// srActiveFilters is getActiveSearchFeedbackContext's active_filters: the
+// module result's filters (Clack doesn't keep them) and, for messages and
+// files, the exclude_bots / only_my_channels prefs.
+func srActiveFilters(c *core.App, tab int) map[string]any {
+	f := map[string]any{}
+	if c != nil && (tab == srTabMessages || tab == srTabFiles) {
+		f["exclude_bots"] = c.PrefBool("search_exclude_bots", false)
+		f["only_my_channels"] = c.PrefBool("search_only_my_channels", false)
+	}
+	return f
 }
 
 // ---- layout ----
@@ -1337,29 +1425,58 @@ func srResultsLabel(n int) string {
 }
 
 // srNothingTitle and srNothingDesc are Slack's no-results state
-// (SearchEmptyResults: "Nothing turned up").
+// (GenericSearchEmptyState: "Nothing turned up"; with the feedback link
+// allowed, "Not the results you expected? Give feedback." comes first, a
+// line of its own). Slack's Slackbot variant, for teams with AI search,
+// words it "check for typos, or adjust filters. Or try asking Slackbot:".
 const (
 	srNothingTitle = "Nothing turned up"
-	srNothingDesc  = "You may want to try using different keywords, check for typos, or adjust filters."
+	srNothingDesc  = "You may want to try using different keywords, checking for typos, or adjusting filters."
+	srNothingAsk   = "Not the results you expected? "
 )
+
+// srNothing draws GenericSearchEmptyState centred in w at y: the title
+// (18 Black), then the two description lines (15/22 secondary), the first
+// with its "Give feedback" link (fb). It returns the height used.
+func srNothing(gtx layout.Context, th *theme.Theme, cl *Colors, x, y, w int, fb *widget.Clickable) int {
+	tw := textW(gtx, th, 18, theme.Black, srNothingTitle)
+	at(gtx, image.Pt(x+(w-tw)/2, y), func(gtx layout.Context) layout.Dimensions {
+		return text(gtx, th, 18, theme.Black, cl.Fg, srNothingTitle)
+	})
+	y += dp(gtx, 32)
+	lh := dp(gtx, 22)
+	aw := textW(gtx, th, 15, theme.Regular, srNothingAsk)
+	lw := textW(gtx, th, 15, theme.Regular, "Give feedback")
+	dw := textW(gtx, th, 15, theme.Regular, ".")
+	lx := x + (w-aw-lw-dw)/2
+	at(gtx, image.Pt(lx, y), func(gtx layout.Context) layout.Dimensions {
+		return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
+			return text(gtx, th, 15, theme.Regular, cl.Fg2, srNothingAsk)
+		})
+	})
+	at(gtx, image.Pt(lx+aw, y), func(gtx layout.Context) layout.Dimensions {
+		return clickBox(gtx, fb, nil, func(gtx layout.Context) layout.Dimensions {
+			return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
+				return text(gtx, th, 15, theme.Regular, cl.Link, "Give feedback")
+			})
+		})
+	})
+	at(gtx, image.Pt(lx+aw+lw, y), func(gtx layout.Context) layout.Dimensions {
+		return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
+			return text(gtx, th, 15, theme.Regular, cl.Fg2, ".")
+		})
+	})
+	y += lh
+	sw := minInt(w, dp(gtx, 420))
+	d := at(gtx, image.Pt(x+(w-sw)/2, y), func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Constraints{Max: image.Pt(sw, 1<<20)}
+		return paraCentered(gtx, th, 15, 22, cl.Fg2, srNothingDesc, sw)
+	})
+	return y + d.Size.Y
+}
 
 func (v *SearchView) results(gtx layout.Context, th *theme.Theme, cl *Colors, px int, sz image.Point) layout.Dimensions {
 	cw := sz.X - 2*px
-	empty := func(title, sub string) layout.Dimensions {
-		y := dp(gtx, 72)
-		tw := textW(gtx, th, 18, theme.Black, title)
-		at(gtx, image.Pt(px+(cw-tw)/2, y), func(gtx layout.Context) layout.Dimensions {
-			return text(gtx, th, 18, theme.Black, cl.Fg, title)
-		})
-		if sub != "" {
-			sw := minInt(cw, dp(gtx, 420))
-			at(gtx, image.Pt(px+(cw-sw)/2, y+dp(gtx, 32)), func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints = layout.Constraints{Max: image.Pt(sw, sz.Y)}
-				return paraCentered(gtx, th, 15, 22, cl.Fg2, sub, sw)
-			})
-		}
-		return layout.Dimensions{Size: sz}
-	}
 	n := 0
 	switch v.tab {
 	case srTabMessages, srTabDMs:
@@ -1378,7 +1495,8 @@ func (v *SearchView) results(gtx layout.Context, th *theme.Theme, cl *Colors, px
 		if strings.TrimSpace(v.q.String()) == "" {
 			return layout.Dimensions{Size: sz}
 		}
-		return empty(srNothingTitle, srNothingDesc)
+		srNothing(gtx, th, cl, px, dp(gtx, 72), cw, &v.emptyFb)
+		return layout.Dimensions{Size: sz}
 	}
 	pager := v.pages > 1
 	items := n
@@ -1603,23 +1721,28 @@ func (v *SearchView) fileRow(gtx layout.Context, th *theme.Theme, cl *Colors, i,
 // openFile opens a file result like the Files browser does.
 func (v *SearchView) openFile(f core.File) { srOpenFile(v.h, f) }
 
-// srOpenFile opens a file or canvas result: canvases full screen, images
-// in the lightbox, other files in the conversation they were shared in.
+// srOpenFile opens a file or canvas result the way Slack's results do: a
+// canvas in the canvas view (openCanvas; Clack's "docs/<id>"), a list in
+// the list view ("lists/<id>"), anything else through previewFile, whose
+// media viewer is Clack's lightbox for images. Slack shows other files in
+// its file details flexpane, which Clack doesn't have: they open like a
+// message's file card does, at their permalink.
 func srOpenFile(h Host, f core.File) {
+	title := f.Title
+	if title == "" {
+		title = f.Name
+	}
 	switch {
 	case f.IsCanvas && f.ID != "":
-		if co, ok := h.(interface{ OpenCanvasFull(id string) }); ok {
-			co.OpenCanvasFull(f.ID)
-			return
-		}
-		h.Toast("Opening canvases isn't supported yet")
+		h.Navigate("docs/" + f.ID)
+	case f.IsList && f.ID != "":
+		h.Navigate("lists/" + f.ID)
 	case f.IsImage && f.URL != "":
-		h.OpenLightbox(richtext.Image{URL: f.URL, Alt: f.Title, W: f.ThumbW, H: f.ThumbH, Title: f.Title, Proxy: true}, core.Message{})
-	case len(f.Channels) > 0:
-		RecordRecentConversation(f.Channels[0])
-		h.Navigate("c/" + f.Channels[0])
-	default:
-		h.Toast("Opening this file isn't supported yet")
+		h.OpenLightbox(richtext.Image{URL: f.URL, Alt: title, W: f.ThumbW, H: f.ThumbH, Title: title, Proxy: true}, core.Message{})
+	case f.Permalink != "":
+		lbOpen(h, f.Permalink)
+	case f.URL != "":
+		lbOpen(h, f.URL)
 	}
 }
 

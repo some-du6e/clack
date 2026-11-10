@@ -667,6 +667,7 @@ func (a *App) ChannelInfo(ctx context.Context, ch string) (ChannelDetails, error
 	if c.Purpose != nil {
 		d.PurposeSetBy, d.PurposeSetAt = c.Purpose.Creator, c.Purpose.LastSet
 	}
+	d.Props, d.HostID = ParseChannelProps(c.Properties), c.ConversationHostID
 	return d, nil
 }
 

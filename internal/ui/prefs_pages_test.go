@@ -101,7 +101,7 @@ var slackPages = map[string][]want{
 	},
 	"appearance": {
 		lg("Font"), sel("Lato (Default)"), lg("Color Mode"), rd("Light"), rd("Dark"), rd("System"),
-		ckOff("Always use dark color mode when in focus mode."),
+		ck("Always use dark color mode when in focus mode."),
 		{"tab", "Slack themes", false}, {"tab", "Custom theme", false},
 		lg("Single color"), rd("Aubergine"), rd("Clementine"), lg("Vision assistive"), rd("Tritanopia"),
 		lg("Fun and new"), rd("Raspberry Beret"), lg("Updated classics"), rd("Choco Mint"), rd("Sweet Treat"),
@@ -120,7 +120,7 @@ var slackPages = map[string][]want{
 		lg("Bring emails into Slack"), btn("Get a Forwarding Address"),
 	},
 	"language_region": {
-		lg("Language"), selOff("English (US)"), lg("Time zone"), ck("Set time zone automatically"), selOff("(UTC-08:00) Pacific Time (US and Canada)"),
+		lg("Language"), sel("English (US)"), lg("Time zone"), ck("Set time zone automatically"), selOff("(UTC-08:00) Pacific Time (US and Canada)"),
 		lg("Keyboard layout"), selOff("English (US)"), lg("Spellcheck"), ck("Enable spellcheck on your messages and canvases"),
 		{"select", spell.Labels[spell.DefaultLanguages()[0]], false}, // the languages (Windows, Linux)
 	},
@@ -145,7 +145,7 @@ var slackPages = map[string][]want{
 		lg("When audio or video is playing…"), ckOff("Automatically dock to corner upon scroll or when navigating away"),
 		lg("When joining a huddle…"), ck("Mute my microphone"), ck("Automatically turn on captions when you’re in a huddle"),
 		ck("Send a warning if you’re starting a huddle in a channel with more than 150 members"),
-		ckOff("Blur your video background when you’re in a huddle with your camera on"), ck("Show audio and video preview"),
+		ck("Blur your video background when you’re in a huddle with your camera on"), ck("Show audio and video preview"),
 		lg("When Slack is in the background:"), ck("Allow keyboard shortcut to mute"),
 		lg("When your screen saver starts or computer locks…"), ck("Automatically leave huddles"),
 		lg("Huddle motion"), ckOff("Allow for reactions & effects"), lg("When alone in a huddle…"), ck("Play music"),

@@ -85,6 +85,7 @@ type previewWindow struct {
 	vid    videoOps
 	devs   map[string][]huddle.AudioDevice
 	joined bool
+	fx     huddle.VideoEffect // the camera's background effect
 }
 
 type previewClicks struct {
@@ -126,7 +127,7 @@ func (c *Controller) shouldPreview(channel, entry string) bool {
 func (c *Controller) openPreview(channel, entry string) {
 	c.mu.Lock()
 	old := c.pwin
-	w := &previewWindow{c: c, channel: channel, entry: entry}
+	w := &previewWindow{c: c, channel: channel, entry: entry, fx: c.videoEffect()}
 	app := c.h.Core()
 	w.micOn = app == nil || !app.PrefBool("huddles_mute_by_default", false)
 	c.pwin = w
@@ -134,7 +135,7 @@ func (c *Controller) openPreview(channel, entry string) {
 	if old != nil {
 		old.close()
 	}
-	o := huddle.Options{Logf: func(string, ...any) {}, OnChange: w.invalidate}
+	o := huddle.Options{Logf: func(string, ...any) {}, OnChange: w.invalidate, VideoEffect: w.fx}
 	if c.Tweak != nil {
 		c.Tweak(&o)
 	}
@@ -161,6 +162,12 @@ func (w *previewWindow) loadDevices() {
 	w.mu.Lock()
 	w.devs = devs
 	w.mu.Unlock()
+}
+
+func (w *previewWindow) effect() huddle.VideoEffect {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.fx
 }
 
 func (w *previewWindow) invalidate() {
@@ -249,11 +256,14 @@ func (w *previewWindow) view() previewView {
 	c := w.c
 	w.mu.Lock()
 	v := previewView{MicOn: w.micOn, CamOn: w.camOn, Menu: w.menu}
-	devs := w.devs
+	devs, fx := w.devs, w.fx
 	w.mu.Unlock()
 	v.Self = c.selfID()
 	v.Title, v.Avatars, v.JoinLabel = c.previewTitle(w.channel)
 	if p := w.p; p != nil {
+		if p.VideoEffect() != fx {
+			p.SetVideoEffect(fx)
+		}
 		st, _ := p.Mic()
 		v.MicBad = st.Problem()
 		v.Talking = v.MicOn && p.Talking()
@@ -399,7 +409,7 @@ func (w *previewWindow) layout(gtx C) {
 				w.mu.Lock()
 				cam := w.camOn
 				w.mu.Unlock()
-				o := huddle.Options{Logf: func(string, ...any) {}, OnChange: w.invalidate}
+				o := huddle.Options{Logf: func(string, ...any) {}, OnChange: w.invalidate, VideoEffect: w.effect()}
 				if c.Tweak != nil {
 					c.Tweak(&o)
 				}

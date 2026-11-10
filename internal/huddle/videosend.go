@@ -100,6 +100,7 @@ type camPipe struct {
 	remb    atomic.Int64
 	sent    atomic.Int64
 	preview selfPreview
+	fx      videoFX // the background effect, before preview and encoder
 }
 
 // SetCamera turns your camera on or off. It returns at once: asking the OS
@@ -326,6 +327,7 @@ func (s *Session) cameraOff() {
 	}
 	c.encMu.Unlock()
 	c.preview.clear()
+	c.fx.close()
 	if sender != nil && pc != nil {
 		if err := pc.RemoveTrack(sender); err != nil {
 			s.logf("huddle: camera: remove track: %v", err)
@@ -361,6 +363,7 @@ func (s *Session) closeCamera() {
 	}
 	c.encMu.Unlock()
 	c.preview.clear()
+	c.fx.close()
 }
 
 // cameraDesc is SUBSCRIBE's video send stream while the camera is
@@ -396,13 +399,14 @@ func (s *Session) readCameraRTCP(sender *webrtc.RTPSender) {
 	}
 }
 
-// onCameraFrame runs on the camera's goroutine: the preview, then (when
-// published) encode and send.
+// onCameraFrame runs on the camera's goroutine: the background effect,
+// the preview, then (when published) encode and send.
 func (s *Session) onCameraFrame(f *CameraFrame) {
 	c := &s.cam
 	if f == nil || f.W < 16 || f.H < 16 {
 		return
 	}
+	c.fx.apply(f, s.logf)
 	c.preview.offer(f, s.changed)
 	c.mu.Lock()
 	track, sending := c.track, c.sender != nil && c.want

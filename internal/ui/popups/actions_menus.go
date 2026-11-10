@@ -10,12 +10,12 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
-	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
-// Hooks the ui root may set; nil hooks toast instead.
+// Hooks the ui root sets (installHooks, before the window opens; nil
+// only in this package's tests, where the items they back do nothing).
 var (
 	// OpenChannelDetails opens the channel details pane for convID.
 	OpenChannelDetails func(convID string)
@@ -50,9 +50,7 @@ func actPreferences(h Host) func() {
 	return func() {
 		if OpenPreferences != nil {
 			OpenPreferences()
-			return
 		}
-		h.Toast("Preferences aren't available yet")
 	}
 }
 
@@ -98,9 +96,7 @@ func newChannelMenu(h Host, anchor image.Point, convID string, alignRight bool) 
 	details := func() {
 		if OpenChannelDetails != nil {
 			OpenChannelDetails(convID)
-			return
 		}
-		h.Toast("Channel details aren't available yet")
 	}
 	link := "https://" + teamDomain(h) + ".slack.com/archives/" + convID
 
@@ -140,9 +136,7 @@ func newChannelMenu(h Host, anchor image.Point, convID string, alignRight bool) 
 		items = append(items, MenuItem{Label: "Move channel", Do: func() {
 			if MoveChannel != nil {
 				MoveChannel(convID, anchor)
-				return
 			}
-			h.Toast("Moving channels between sections isn't supported yet")
 		}})
 	}
 	if c.Preview {
@@ -241,15 +235,30 @@ func ChannelMenuAction(h Host, convID, key string) func() {
 type ChannelMenuInfo struct {
 	ID, Kind       string // Kind: core's ("channel", "private", "im", "mpim", "app")
 	Muted, Starred bool
+
+	// The section rows (Slack's getChannelSectionsTemplate, sidebar):
+	// NoSections drops them (archived, or not a member); Custom is
+	// whether the viewer has a custom section; MoveToSection is the
+	// channel_ia_header_refinements experiment; Move are the Move to…
+	// rows (the header's section picker) the submenus show.
+	NoSections, Custom, MoveToSection bool
+	Move                              []MenuItem
 }
 
 func (c ChannelMenuInfo) dm() bool { return c.Kind == "im" || c.Kind == "mpim" || c.Kind == "app" }
 
 // ChannelMenuItems are Slack's sidebar conversation menu for c, with
-// stable keys (view_details, copy_link, copy_name, toggle_star,
+// stable keys (view_details, copy_link, copy_name, the section rows,
 // toggle_mute, mark_read, leave or close, and separators). do, when
 // non-nil, gives each key's action. Pure: safe on any goroutine, so a
 // getTemplate JS calls can build its template from it.
+//
+// The section rows are getChannelSectionsTemplate's (boot-render, the
+// sidebar case): with channel_ia_header_refinements, "Move to section" ▸;
+// else without a custom section, toggle_star and "Move to new section"
+// (move_to_new_section: Create a section with the channel); with one,
+// "Move channel" (or "conversation") ▸ instead of the star. The ▸ rows
+// are c.Move.
 func ChannelMenuItems(c ChannelMenuInfo, do func(key string) func()) []MenuItem {
 	noun := "channel"
 	if c.dm() {
@@ -267,11 +276,22 @@ func ChannelMenuItems(c ChannelMenuInfo, do func(key string) func()) []MenuItem 
 		{Key: "copy_link", Label: "Copy link"},
 		{Key: "copy_name", Label: "Copy name"},
 		{Key: "separator_1", Separator: true},
-		{Key: "toggle_star", Label: star},
-		{Key: "toggle_mute", Label: mute},
-		{Key: "mark_read", Label: "Mark as read"},
-		{Key: "separator_2", Separator: true},
 	}
+	switch {
+	case c.NoSections:
+	case c.MoveToSection:
+		items = append(items, MenuItem{Key: "move_to_section", Label: "Move to section", Sub: c.Move})
+	case c.Custom:
+		items = append(items, MenuItem{Key: "move", Label: "Move " + noun, Sub: c.Move})
+	default:
+		items = append(items, MenuItem{Key: "toggle_star", Label: star},
+			MenuItem{Key: "move_to_new_section", Label: "Move to new section"})
+	}
+	items = append(items,
+		MenuItem{Key: "toggle_mute", Label: mute},
+		MenuItem{Key: "mark_read", Label: "Mark as read"},
+		MenuItem{Key: "separator_2", Separator: true},
+	)
 	if c.dm() {
 		items = append(items, MenuItem{Key: "close", Label: "Close conversation"})
 	} else {
@@ -279,7 +299,7 @@ func ChannelMenuItems(c ChannelMenuInfo, do func(key string) func()) []MenuItem 
 	}
 	if do != nil {
 		for i := range items {
-			if !items[i].Separator {
+			if !items[i].Separator && len(items[i].Sub) == 0 {
 				items[i].Do = do(items[i].Key)
 			}
 		}
@@ -381,6 +401,18 @@ func actLabelRow(h Host, label func() string) func(gtx layout.Context, hl bool) 
 // alert, OK only); a public channel is left at once; a private one asks
 // first with LeaveChannel ("Leave <name>", Cancel / Leave Channel).
 func leaveChannel(h Host, convID, kind, name string, general bool) {
+	msg := "You left #" + name
+	if kind == "private" {
+		msg = "You left " + name
+	}
+	MaybeLeaveChannel(h, name, kind, general, func() { actLeave(h, convID, msg) })
+}
+
+// MaybeLeaveChannel is maybeLeaveChannel's asking part: the #general
+// alert, leave (the caller's) at once for a public channel, or the
+// LeaveChannel confirmation for a private one. The channel browser's
+// Leave button runs it too (useChannelExplorer onClickLeave).
+func MaybeLeaveChannel(h Host, name, kind string, general bool, leave func()) {
 	if general {
 		m := NewModal(h, ModalOpts{Title: "Membership is required in #" + name, EnterSubmits: true,
 			Body: func(gtx layout.Context) layout.Dimensions {
@@ -393,11 +425,11 @@ func leaveChannel(h Host, convID, kind, name string, general bool) {
 		return
 	}
 	if kind != "private" {
-		actLeave(h, convID, "You left #"+name)
+		leave()
 		return
 	}
 	Confirm(h, "Leave "+name, "When you leave a private channel, you’ll no longer be able to see any of its messages. To rejoin this channel later, you’ll need to be invited.",
-		"Leave Channel", true, nil, func() { actLeave(h, convID, "You left "+name) })
+		"Leave Channel", true, nil, leave)
 }
 
 func actLeave(h Host, convID, okMsg string) {
@@ -665,7 +697,9 @@ func NewUserMenu(h Host, anchor image.Point) *Menu {
 				OpenOwnProfile()
 				return
 			}
-			h.Toast("Profile isn't available yet")
+			// a host without the ui root's hooks (OpenOwnProfile unset):
+			// the same full profile, through the host's pane
+			pfOpenFull(h, actSelfID(h))
 		}},
 		{Label: "Preferences", Do: actPreferences(h)},
 		{Label: "Account settings", External: true, Do: actToast(h, "Account settings live at app.slack.com")},
@@ -772,28 +806,4 @@ func actRichRow(h Host, plain, bold string) func(gtx layout.Context, hl bool) la
 		})
 		return layout.Dimensions{Size: sz}
 	}
-}
-
-// ---- composer + menu ----
-
-// NewComposerPlusMenu builds the composer's + menu (360 wide, above
-// anchor). onAction receives files | gif | snippet | workflow | upload.
-func NewComposerPlusMenu(h Host, anchor image.Point, onAction func(action string)) *Menu {
-	act := func(name string) func() {
-		return func() {
-			if onAction != nil {
-				onAction(name)
-				return
-			}
-			h.Toast("That isn't supported yet")
-		}
-	}
-	items := []MenuItem{
-		{Label: "File, canvas, or list", Icon: "files", Do: act("files")},
-		{Label: "GIF", Icon: "image", Do: act("gif")},
-		{Label: "Text snippet", Icon: "code-block", Hint: shortcut.Format("Mod+Shift+Enter"), Do: act("snippet")},
-		{Label: "Workflow", Icon: "workflow", Do: act("workflow")},
-		{Label: "Upload from your computer", Icon: "upload", Do: act("upload")},
-	}
-	return NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(anchor), Side: Above, Width: 360})
 }

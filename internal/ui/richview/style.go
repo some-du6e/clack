@@ -302,6 +302,9 @@ type Options struct {
 	// HoverCard lays the doc's attachment out as Slack's link preview
 	// hover card (MessageAttachmentDefaultV3HoverCard, unfurl_hover.go).
 	HoverCard bool
+	// EditedTS is the message's edited.ts: the "(edited)" label's tooltip
+	// (EditedLabel: "{date} at {time}", tooltip.go editedTip).
+	EditedTS string
 }
 
 // lightEmbolden is the extra outline (px) for glyph color c at scale pxPerDp.

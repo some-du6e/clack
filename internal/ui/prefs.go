@@ -55,6 +55,9 @@ type prefs struct {
 	// localStorage prefs.audio; huddle_av.go).
 	HuddleAGC *bool `json:"huddle_agc,omitempty"`
 	HuddleNS  bool  `json:"huddle_noise_suppression,omitempty"`
+	// HuddleVideoEffect is the camera's background effect (Slack's
+	// localStorage prefs.video.effect: "" none, "blur"; huddle_av.go).
+	HuddleVideoEffect string `json:"huddle_video_effect,omitempty"`
 	// Zoom is View > Zoom's level, -3…5 (Slack's zoomLevel; macmenu.go).
 	Zoom int `json:"zoom,omitempty"`
 	// Simplified layout mode (bbm.go). Slack keeps all of it on the
@@ -89,6 +92,10 @@ type prefs struct {
 	// Windows and Linux (the desktop app keeps them in Electron's session,
 	// per device): nil is the OS locale's language.
 	SpellLanguages []string `json:"spellcheck_languages,omitempty"`
+	// Locale is the account's locale as last seen (Slack's localConfig
+	// user_locale): the next start loads that bundle from the cache before
+	// users.prefs answers (locale_wire.go).
+	Locale string `json:"locale,omitempty"`
 }
 
 func (a *App) prefsPath() string {

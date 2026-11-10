@@ -2,13 +2,19 @@ package popups
 
 // Search in channel (⌘F / Ctrl+F in a conversation): Slack's
 // SearchInChannelView, a secondary pane (client-search-in-channel-view
-// chunk). Its header reads "Search in #channel" (with keywords:
-// 'Search "kw" in #channel'); the query runs as search.modules.messages
-// for "in:<#C> query", count 10, search_context search_in_channel, sort
-// relevance or newest. Before a search: "Not searching in this channel?
-// Go to full search (Ctrl G)" and "Nothing to show yet." With results:
-// "**N** results found", "View full search", the result rows, "View all
-// N results" past ten, and "Give feedback".
+// chunk, build 407aff01646b). Its header reads "Search in #channel" (with
+// keywords: 'Search "kw" in #channel'); the query runs as
+// search.modules.messages for "in:<#C> query", count 10, search_context
+// search_in_channel, sort score/desc, timestamp/desc or timestamp/asc.
+// Before a search: "Not searching in this channel? Go to full search
+// (CTRL G)" on one line (p-explorer_section--align) and "Nothing to show
+// yet."; a search with no results: GenericSearchEmptyState (its feedback
+// link is the combined modal, module "inChannel"). With results:
+// "**N** results found" and "View full search" (no separator), the sort
+// select at the right (sort icon + label: Most relevant (default) /
+// Newest / Oldest / Edit default), the result rows, "View all N results"
+// past ten, and the 40px footer with "Give feedback" at its right
+// (searchFeedbackDialog: search.feedback).
 
 import (
 	"context"
@@ -39,10 +45,14 @@ type SearchInChannel struct {
 	allBtn   widget.Clickable // "View all N results"
 	sortBtn  widget.Clickable
 	feedback widget.Clickable
+	emptyFb  widget.Clickable // the no-results state's "Give feedback"
 	sortR    image.Rectangle
-	newest   bool
+	sortBy   string // score | timestamp | oldest
+	origin   image.Point
+	searched bool // a search ran (Slack's eu: the no-results state replaces "Nothing to show yet.")
 
 	query   string // the submitted keywords
+	session core.SearchSession
 	seq     int
 	loading bool
 	err     string
@@ -54,7 +64,7 @@ type SearchInChannel struct {
 
 // NewSearchInChannel opens search in channel ch.
 func NewSearchInChannel(h Host, ch string) *SearchInChannel {
-	v := &SearchInChannel{h: h, ch: ch}
+	v := &SearchInChannel{h: h, ch: ch, sortBy: DefaultSearchSort(h.Core())}
 	v.ed.SingleLine = true
 	v.ed.Submit = true
 	v.list.Axis = layout.Vertical
@@ -74,14 +84,11 @@ func (v *SearchInChannel) Search(q string) {
 	v.list.Position = layout.Position{}
 	c := v.h.Core()
 	if q == "" || c == nil {
-		v.loading = false
+		v.loading, v.searched = false, false
 		return
 	}
-	v.loading = true
-	sort := "score"
-	if v.newest {
-		sort = "timestamp"
-	}
+	v.loading, v.searched = true, true
+	sort := v.sortBy
 	ch := v.ch
 	run(v.h, func(ctx context.Context) (core.SearchResult, error) {
 		return c.SearchMessages(ctx, core.SearchOpts{Query: q, InChannel: ch, Sort: sort})
@@ -129,11 +136,95 @@ func srcTitle(query, channel string) string {
 }
 
 func (v *SearchInChannel) fullSearch() {
+	v.h.Navigate("search?q=" + url.QueryEscape(v.fullQuery()))
+}
+
+// fullQuery is the channel's full-search query ("in:<#C> keywords").
+func (v *SearchInChannel) fullQuery() string {
 	q := "in:<#" + v.ch + ">"
 	if v.query != "" {
 		q += " " + v.query
 	}
-	v.h.Navigate("search?q=" + url.QueryEscape(q))
+	return q
+}
+
+// SetOrigin tells the pane where its top-left corner is in window
+// coordinates (the sort menu opens under its select).
+func (v *SearchInChannel) SetOrigin(p image.Point) { v.origin = p }
+
+// sess is the pane's search session (one per pane).
+func (v *SearchInChannel) sess() core.SearchSession {
+	if v.session.ID == "" {
+		v.session = core.NewSearchSession()
+	}
+	return v.session
+}
+
+// feedbackDialog is the footer's "Give feedback": searchFeedbackDialog
+// {module: messages, feedbackLabelOverride: "inChannel"}, i.e.
+// search.feedback with the payload Slack builds (no client_version, empty
+// module_counts).
+func (v *SearchInChannel) feedbackDialog() {
+	sess := v.sess()
+	sort, dir := srActiveSort(srTabMessages, v.sortBy)
+	srFeedbackDialog(v.h, srSearchFeedbackPayload{SearchSessionID: sess.ID, QuerySessionID: sess.QueryID, Query: v.fullQuery(),
+		Module: "inChannel", ActiveSort: sort, ActiveSortDir: dir, ActiveFilters: srActiveFilters(v.h.Core(), srTabMessages),
+		ModuleCounts: map[string]int{}})
+}
+
+// srcSortLabel is the select's label for a sort (MessageEntity's options;
+// "Most relevant (default)" unless stick_user_sort).
+func srcSortLabel(c *core.App, sortBy string) string {
+	switch sortBy {
+	case "timestamp":
+		return "Newest"
+	case "oldest":
+		return "Oldest"
+	}
+	if c != nil && c.PrefBool("stick_user_sort", false) {
+		return "Most relevant"
+	}
+	return "Most relevant (default)"
+}
+
+// sortMenu is the in-channel MessageEntity select: Most relevant, Newest,
+// Oldest, then Edit default (Preferences > Advanced). A choice reruns the
+// search; with stick_user_sort it is also kept in search_sort.
+func (v *SearchInChannel) sortMenu() {
+	c := v.h.Core()
+	sticky := c != nil && c.PrefBool("stick_user_sort", false)
+	var items []MenuItem
+	for _, o := range [...]string{"score", "timestamp", "oldest"} {
+		val := o
+		items = append(items, MenuItem{Label: srcSortLabel(c, val), Checked: v.sortBy == val, Do: func() {
+			v.sortBy = val
+			v.Search(v.query)
+			if sticky {
+				pref := srSortPref[val]
+				run(v.h, func(ctx context.Context) (struct{}, error) { return struct{}{}, c.SetPref(ctx, "search_sort", pref) },
+					func(struct{}, error) {})
+			}
+		}})
+	}
+	items = append(items, Sep(), MenuItem{Label: "Edit default", Do: func() {
+		if OpenPreferencesSection != nil {
+			OpenPreferencesSection("advanced")
+		}
+	}})
+	v.h.ShowOverlay(NewMenuOpts(v.h, items, MenuOpts{Anchor: srClickAnchor(v.h, &v.sortBtn, v.sortR.Add(v.origin)), Width: 240}))
+}
+
+// srClickAnchor is a clicked widget's window rectangle: the pointer's
+// window position minus the press position inside the widget (the panes
+// don't know where the root put them). fallback when the host can't tell.
+func srClickAnchor(h Host, c *widget.Clickable, fallback image.Rectangle) image.Rectangle {
+	pp, ok := h.(interface{ PointerPos() image.Point })
+	hist := c.History()
+	if !ok || len(hist) == 0 {
+		return fallback
+	}
+	o := pp.PointerPos().Sub(hist[len(hist)-1].Position)
+	return image.Rectangle{Min: o, Max: o.Add(fallback.Size())}
 }
 
 // Layout fills the pane.
@@ -172,14 +263,21 @@ func (v *SearchInChannel) Layout(gtx layout.Context) layout.Dimensions {
 		v.fullSearch()
 	}
 	if v.feedback.Clicked(gtx) {
-		v.h.Toast("Feedback isn't supported yet")
+		v.feedbackDialog()
+	}
+	if v.emptyFb.Clicked(gtx) {
+		// GenericSearchEmptyState{moduleName: messages, feedbackLabelOverride: "inChannel"}
+		q, sess := v.fullQuery(), v.sess()
+		c := v.h.Core()
+		sort, dir := srActiveSort(srTabMessages, v.sortBy)
+		openSearchFeedback(v.h, srFeedbackOpts{feedbackType: "search", query: q, payload: func() any {
+			return srSearchFeedbackPayload{SearchSessionID: sess.ID, QuerySessionID: sess.QueryID, Query: q, Module: "inChannel",
+				ActiveSort: sort, ActiveSortDir: dir, ActiveFilters: srActiveFilters(c, srTabMessages),
+				ClientVersion: core.SearchFeedbackClientVersion, ModuleCounts: map[string]int{}}
+		}})
 	}
 	if v.sortBtn.Clicked(gtx) {
-		items := []MenuItem{
-			{Label: "Most relevant", Checked: !v.newest, Do: func() { v.newest = false; v.Search(v.query) }},
-			{Label: "Newest", Checked: v.newest, Do: func() { v.newest = true; v.Search(v.query) }},
-		}
-		v.h.ShowOverlay(NewMenuOpts(v.h, items, MenuOpts{Anchor: v.sortR, Width: 200}))
+		v.sortMenu()
 	}
 	for i := range v.msgs {
 		if i < len(v.rows) && v.rows[i].Clicked(gtx) {
@@ -264,99 +362,66 @@ func (v *SearchInChannel) body(gtx layout.Context, th *theme.Theme, cl *Colors, 
 		return layout.Dimensions{Size: gtx.Constraints.Max}
 	}
 	if len(v.msgs) == 0 {
-		y := 0
-		if v.query == "" {
-			// "Not searching in this channel? Go to full search (CTRL G)"
-			at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints = layout.Constraints{Max: image.Pt(inner, dp(gtx, 20))}
-				return text(gtx, th, 13, theme.Bold, cl.Fg2, "Not searching in this channel?")
+		if v.searched {
+			// GenericSearchEmptyState (Slack's eu: a search ran)
+			srNothing(gtx, th, cl, pad, dp(gtx, 32), inner, &v.emptyFb)
+			return layout.Dimensions{Size: gtx.Constraints.Max}
+		}
+		// "Not searching in this channel? Go to full search (CTRL G)": a
+		// p-explorer_section--align label, 13px #1d1c1d@.7 regular, the link
+		// 4px after it on the same line
+		lh := dp(gtx, 20)
+		sec := linearAlpha(theme.WithAlpha(cl.Fg, 0xb3), cl.Bg)
+		d := at(gtx, image.Pt(pad, 0), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(inner, lh)}
+			return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
+				return text(gtx, th, 13, theme.Regular, sec, "Not searching in this channel?")
 			})
-			y += dp(gtx, 20)
-			at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
-				return clickBox(gtx, &v.fullBtn, nil, func(gtx layout.Context) layout.Dimensions {
+		})
+		at(gtx, image.Pt(pad+d.Size.X+dp(gtx, 4), 0), func(gtx layout.Context) layout.Dimensions {
+			return clickBox(gtx, &v.fullBtn, nil, func(gtx layout.Context) layout.Dimensions {
+				return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
 					return text(gtx, th, 13, theme.Regular, cl.Link, srcFullLabel())
 				})
 			})
-			y += dp(gtx, 44)
-			title := "Nothing to show yet."
-			tw := textW(gtx, th, 15, theme.Bold, title)
-			at(gtx, image.Pt((w-tw)/2, y), func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 15, theme.Bold, cl.Fg, title)
-			})
-			y += dp(gtx, 26)
-			at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
-				return paraCentered(gtx, th, 13, 18, cl.Fg2,
-					"Type a keyword or from: @name to find that message you’re looking for.", inner)
-			})
-			return layout.Dimensions{Size: gtx.Constraints.Max}
-		}
-		tw := textW(gtx, th, 18, theme.Black, srNothingTitle)
-		at(gtx, image.Pt((w-tw)/2, dp(gtx, 32)), func(gtx layout.Context) layout.Dimensions {
-			return text(gtx, th, 18, theme.Black, cl.Fg, srNothingTitle)
 		})
-		at(gtx, image.Pt(pad, dp(gtx, 64)), func(gtx layout.Context) layout.Dimensions {
-			return paraCentered(gtx, th, 15, 22, cl.Fg2, srNothingDesc, inner)
+		y := lh + dp(gtx, 16) + dp(gtx, 28)
+		title := "Nothing to show yet."
+		tw := textW(gtx, th, 15, theme.Bold, title)
+		at(gtx, image.Pt((w-tw)/2, y), func(gtx layout.Context) layout.Dimensions {
+			return text(gtx, th, 15, theme.Bold, cl.Fg, title)
+		})
+		y += dp(gtx, 26)
+		at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
+			return paraCentered(gtx, th, 13, 18, cl.Fg2,
+				"Type a keyword or from: @name to find that message you’re looking for.", inner)
 		})
 		return layout.Dimensions{Size: gtx.Constraints.Max}
 	}
 
-	// "<strong>N</strong> results found" · View full search, sort at the right
-	lh := dp(gtx, 20)
-	n := 3 + len(v.msgs)
+	// stickyResultHeader: "<strong>N</strong> results found" and "View
+	// full search", the sort select at the right
+	lh := dp(gtx, 28)
+	headH := lh + dp(gtx, 8)
+	v.resultsHeader(gtx, th, cl, w, pad, lh, top)
+	// stickyResultFooter: p-explorer_sections--footer, 40px on ctr-sec,
+	// the unstyled "Give feedback" (content-ter) at its right
+	bodyH := gtx.Constraints.Max.Y
+	fh := dp(gtx, 40)
+	fy := maxInt(headH, bodyH-fh)
+	at(gtx, image.Pt(0, fy), func(gtx layout.Context) layout.Dimensions { return v.footer(gtx, th, cl, w, fh) })
+	n := len(v.msgs)
 	if v.total > 10 {
 		n++
 	}
-	return v.list.Layout(gtx, n, func(gtx layout.Context, i int) layout.Dimensions {
-		switch {
-		case i == 0:
-			x := pad
-			d := at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
-				return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-					return text(gtx, th, 13, theme.Bold, cl.Fg, srCountGrouped(v.total))
-				})
-			})
-			x += d.Size.X
-			unit := " results found · "
-			if v.total == 1 {
-				unit = " result found · "
+	at(gtx, image.Pt(0, headH), func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Exact(image.Pt(w, maxInt(0, fy-headH)))
+		defer clipRRect(gtx, image.Rectangle{Max: gtx.Constraints.Max}, 0).Pop()
+		return v.list.Layout(gtx, n, func(gtx layout.Context, i int) layout.Dimensions {
+			if i < len(v.msgs) {
+				return v.row(gtx, th, cl, i, w)
 			}
-			d = at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
-				return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-					return text(gtx, th, 13, theme.Regular, cl.Fg2, unit)
-				})
-			})
-			x += d.Size.X
-			at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
-				return clickBox(gtx, &v.fullBtn, nil, func(gtx layout.Context) layout.Dimensions {
-					return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-						return text(gtx, th, 13, theme.Regular, cl.Link, "View full search")
-					})
-				})
-			})
-			label := "Most relevant"
-			if v.newest {
-				label = "Newest"
-			}
-			sw := textW(gtx, th, 13, theme.Bold, label) + dp(gtx, 16)
-			sx := w - pad - sw
-			v.sortR = image.Rect(sx, top, sx+sw, top+lh)
-			at(gtx, image.Pt(sx, 0), func(gtx layout.Context) layout.Dimensions {
-				return clickBox(gtx, &v.sortBtn, nil, func(gtx layout.Context) layout.Dimensions {
-					vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-						return text(gtx, th, 13, theme.Bold, cl.Link, label)
-					})
-					at(gtx, image.Pt(sw-dp(gtx, 12), (lh-dp(gtx, 12))/2), func(gtx layout.Context) layout.Dimensions {
-						return icon(gtx, "chevron-down", 12, cl.Link)
-					})
-					return layout.Dimensions{Size: image.Pt(sw, lh)}
-				})
-			})
-			return layout.Dimensions{Size: image.Pt(w, lh+dp(gtx, 12))}
-		case i == 1:
-			return layout.Dimensions{Size: image.Pt(w, 0)}
-		case i-2 < len(v.msgs):
-			return v.row(gtx, th, cl, i-2, w)
-		case v.total > 10 && i-2 == len(v.msgs):
+			// "View all N results" (search-escape-hatch), centred
 			label := "View all " + srCountGrouped(v.total) + " results"
 			lw := textW(gtx, th, 15, theme.Bold, label)
 			bw, bh := lw+dp(gtx, 24), dp(gtx, 36)
@@ -372,16 +437,72 @@ func (v *SearchInChannel) body(gtx layout.Context, th *theme.Theme, cl *Colors, 
 					return layout.Dimensions{Size: image.Pt(bw, bh+dp(gtx, 16))}
 				})
 			})
-		}
-		// footer
-		fw := textW(gtx, th, 13, theme.Regular, "Give feedback")
-		return at(gtx, image.Pt((w-fw)/2, dp(gtx, 12)), func(gtx layout.Context) layout.Dimensions {
-			return clickBox(gtx, &v.feedback, nil, func(gtx layout.Context) layout.Dimensions {
-				d := text(gtx, th, 13, theme.Regular, cl.Link, "Give feedback")
-				return layout.Dimensions{Size: image.Pt(d.Size.X, d.Size.Y+dp(gtx, 24))}
+		})
+	})
+	return layout.Dimensions{Size: gtx.Constraints.Max}
+}
+
+// resultsHeader is the results label row.
+func (v *SearchInChannel) resultsHeader(gtx layout.Context, th *theme.Theme, cl *Colors, w, pad, lh, top int) {
+	sec := linearAlpha(theme.WithAlpha(cl.Fg, 0xb3), cl.Bg)
+	x := pad
+	d := at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
+		return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
+			return text(gtx, th, 13, theme.Bold, sec, srCountGrouped(v.total))
+		})
+	})
+	x += d.Size.X
+	unit := " results found"
+	if v.total == 1 {
+		unit = " result found"
+	}
+	d = at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
+		return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
+			return text(gtx, th, 13, theme.Regular, sec, unit)
+		})
+	})
+	x += d.Size.X + dp(gtx, 6) // title-label margin-right 4 + padding-right 2
+	at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
+		return clickBox(gtx, &v.fullBtn, nil, func(gtx layout.Context) layout.Dimensions {
+			return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
+				return text(gtx, th, 13, theme.Regular, cl.Link, "View full search")
 			})
 		})
 	})
+	// the sort select: the sort icon, and its label when the pane is at
+	// least 350 wide (FilterSortSelectedOptionContent inChannel)
+	label := ""
+	if w >= dp(gtx, 350) {
+		label = srcSortLabel(v.h.Core(), v.sortBy)
+	}
+	call, pd := record(gtx, func(gtx layout.Context) layout.Dimensions {
+		return Pill(gtx, th, &v.sortBtn, "sort", label, true, v.sortBy != "score")
+	})
+	sx := w - pad - pd.Size.X
+	sy := (lh - pd.Size.Y) / 2
+	v.sortR = image.Rectangle{Min: image.Pt(sx, top+sy), Max: image.Pt(sx, top+sy).Add(pd.Size)}
+	at(gtx, image.Pt(sx, sy), func(gtx layout.Context) layout.Dimensions {
+		call.Add(gtx.Ops)
+		return pd
+	})
+}
+
+// footer is the sticky feedback footer.
+func (v *SearchInChannel) footer(gtx layout.Context, th *theme.Theme, cl *Colors, w, fh int) layout.Dimensions {
+	bg := cl.BgAlt
+	if th != nil && th.Dark {
+		bg = rgb(0x212428)
+	}
+	fill(gtx, image.Rect(0, 0, w, fh), bg)
+	fw := textW(gtx, th, 13, theme.Regular, "Give feedback")
+	at(gtx, image.Pt(w-dp(gtx, 16)-fw, 0), func(gtx layout.Context) layout.Dimensions {
+		return clickBox(gtx, &v.feedback, nil, func(gtx layout.Context) layout.Dimensions {
+			return vcenter(gtx, fh, func(gtx layout.Context) layout.Dimensions {
+				return text(gtx, th, 13, theme.Regular, cl.Fg3, "Give feedback")
+			})
+		})
+	})
+	return layout.Dimensions{Size: image.Pt(w, fh)}
 }
 
 // srCountGrouped formats a count with thousands separators.

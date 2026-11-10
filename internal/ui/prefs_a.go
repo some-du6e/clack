@@ -13,6 +13,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -137,7 +138,7 @@ func (p *prefsModal) keywordsField(f *prefsForm) {
 	if r.kwMax {
 		f.record("text", "", "A maximum of 100 keywords are allowed.", false, true)
 		at(gtx, image.Pt(0, f.y), image.Pt(f.w, gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {
-			return a.th.Label(gtx, 13, theme.Regular, c.Danger, "A maximum of 100 keywords are allowed.")
+			return a.th.Label(gtx, 13, theme.Regular, c.Danger, pt("A maximum of 100 keywords are allowed."))
 		})
 		f.y += gtx.Dp(24)
 	}
@@ -215,13 +216,14 @@ func (p *prefsModal) timezonePref(f *prefsForm) {
 		}
 	})
 	tz := p.prefStr("tz")
-	label := core.TimezoneLabel(tz)
+	zones := core.TimezonesFor(i18n.Locale()) // sbu9 getList(locale)
+	label := core.TimezoneLabelIn(i18n.Locale(), tz)
 	if label == "" {
-		label = core.TimezoneLabel(core.DefaultTZ)
+		label = core.TimezoneLabelIn(i18n.Locale(), core.DefaultTZ)
 	}
-	labels := make([]string, len(core.SlackTimezones))
+	labels := make([]string, len(zones))
 	sel := -1
-	for i, z := range core.SlackTimezones {
+	for i, z := range zones {
 		labels[i] = z.Label
 		if z.ID == tz {
 			sel = i
@@ -229,7 +231,7 @@ func (p *prefsModal) timezonePref(f *prefsForm) {
 	}
 	p.selectList(f, "tz", label, !auto, func(anchor image.Rectangle) {
 		p.a.ShowOverlay(popups.NewOptionList(p.a, anchor, labels, sel, func(i int) {
-			p.setPref("tz", core.SlackTimezones[i].ID)
+			p.setPref("tz", zones[i].ID)
 		}))
 	})
 }
@@ -337,6 +339,7 @@ func (p *prefsModal) skinTonePicker(f *prefsForm) {
 	}
 	hover = pc.on(a.th, hover)
 	for i, l := range skinTones {
+		l = pt(l)
 		v := strconv.Itoa(i + 1)
 		key := "pref.preferred_skin_tone=" + v
 		on := tone == v

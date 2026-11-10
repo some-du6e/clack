@@ -427,8 +427,11 @@ func (c *Controller) options(app *core.App) huddle.Options {
 		Captions: app.PrefBool("huddles_cc_by_default", false),
 		// "Enable automatic gain control" / "Enable noise suppression"
 		AGC: agc, NoiseSuppression: ns,
-		Logf:     log.Printf,
-		OnChange: c.onSession,
+		// "Blur your video background when you’re in a huddle with your
+		// camera on" (prefs.video.effect, huddle/videofx.go)
+		VideoEffect: c.videoEffect(),
+		Logf:        log.Printf,
+		OnChange:    c.onSession,
 		OnPeer: func(ev huddle.PeerEvent) {
 			if tt := c.taut(); tt != nil {
 				tt.HuddlePeerMessage(ev)

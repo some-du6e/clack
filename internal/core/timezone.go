@@ -31,6 +31,25 @@ func TimezoneLabel(id string) string {
 	return ""
 }
 
+// TimezonesFor is the time zone select's list in locale loc (sbu9
+// getList): its own list, else the en-US one.
+func TimezonesFor(loc string) []struct{ Label, ID string } {
+	if l := SlackTimezonesByLocale[loc]; l != nil {
+		return l
+	}
+	return SlackTimezones
+}
+
+// TimezoneLabelIn is TimezoneLabel in locale loc.
+func TimezoneLabelIn(loc, id string) string {
+	for _, z := range TimezonesFor(loc) {
+		if z.ID == id {
+			return z.Label
+		}
+	}
+	return ""
+}
+
 // DefaultTZ is Slack's DEFAULT_TZ (the select's fallback and the
 // detector's "gave_up" answer).
 const DefaultTZ = "America/Los_Angeles"

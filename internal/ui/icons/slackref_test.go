@@ -268,6 +268,13 @@ var slackRef = map[string]string{
 	"warning-filled":              "warning-filled",
 	"workflow":                    "ai-workflow",
 	"x-circle":                    "close-circle",
+
+	// the Directories tabs (directory.go)
+	"user-groups-filled":    "user-groups-filled",
+	"channel-search-filled": "channel-search-filled",
+	"buildings":             "buildings",
+	"buildings-filled":      "buildings-filled",
+	"email-invite":          "email-invite",
 }
 
 // clackOwn are the icons Clack draws that Slack's set has no glyph for,
@@ -284,6 +291,7 @@ var clackOwn = map[string]string{
 	"hackclub":             "the Hack Club plugin category's mark",
 	"hand":                 "a raised hand (huddles); Slack's set has none",
 	"hash-small":           "Slack's icon-font glyph U+E125 (c-icon--hash-small, iconfont.go), not an SvgIcon",
+	"pencil-glyph":         "Slack's icon-font glyph U+E024 (c-icon--pencil, directory.go; the sidebar draft mark), not an SvgIcon",
 	"headphones-off":       "Slack's headphones with a slash (huddle deafen); Slack's set has no headphones-off",
 	"history-back":         "a counter-clockwise clock; Slack's history is drawn as history",
 	"missing":              "the crossed box drawn for unknown names",

@@ -344,7 +344,10 @@ func (hh hostHandler) OpenURL(u string) {
 func (hh hostHandler) OpenUser(id string, at image.Point) { hh.h.OpenProfile(at, id) }
 func (hh hostHandler) OpenChannel(id string)              { hh.h.Navigate("c/" + id) }
 func (hh hostHandler) OpenUsergroup(id string, at image.Point) {
-	hh.h.Toast("User group profiles aren't supported yet")
+	// Slack's user group profile (the ui root's App.OpenUserGroup)
+	if o, ok := hh.h.(interface{ OpenUserGroup(id string) }); ok {
+		o.OpenUserGroup(id)
+	}
 }
 func (hh hostHandler) OpenImage(img richtext.Image) { hh.h.OpenLightbox(img, core.Message{}) }
 func (hh hostHandler) OpenFile(f *richtext.File) {
@@ -352,7 +355,9 @@ func (hh hostHandler) OpenFile(f *richtext.File) {
 		hh.h.OpenLightbox(*f.Thumb, core.Message{})
 		return
 	}
-	hh.h.Toast("Opening files isn't supported yet")
+	if f != nil {
+		openFile(hh.h, fileFromRich(f)) // files.go
+	}
 }
 func (hh hostHandler) Button(btn richtext.Button) {
 	if btn.URL != "" {

@@ -156,7 +156,9 @@ func (a *App) shareItem(sec *sbSection) *MenuItem {
 	name, emoji, ids := sec.Name, sec.Emoji, append([]string(nil), sec.All...)
 	return mi(MenuItem{Key: "section_menu_visual_updates_share", Label: "Share", Icon: "share-message", Sub: []MenuItem{
 		{Label: "Share directly", Icon: "share-message", Subtitle: "Invite to public or private channels",
-			Do: func() { a.Toast("Sharing a section directly isn’t available in " + AppName + " yet") }},
+			Do: func() {
+				a.ShowOverlay(popups.NewShareSectionModal(a, popups.ShareSectionOpts{Name: name, Emoji: emoji, Channels: ids}))
+			}},
 		{Label: "Copy section link", Icon: "link", Subtitle: "Private channels won’t be visible to people who aren’t already in them",
 			Do: func() { a.copySectionLink(name, emoji, ids) }},
 	}})

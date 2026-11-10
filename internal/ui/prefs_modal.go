@@ -146,12 +146,15 @@ func (a *App) showPrefs(section string) {
 	}
 	if mkAvailability != nil {
 		p.avail = mkAvailability(a)
+		if n, ok := p.avail.(interface{ SetSectionNav(func(string)) }); ok {
+			n.SetSectionNav(p.selectTab) // the Working hours "VIPs" link
+		}
 	}
 	mk := mkModal
 	if mkPrefsModal != nil {
 		mk = mkPrefsModal
 	}
-	a.ShowOverlay(mk(a, "Preferences", p.layout, p.close))
+	a.ShowOverlay(mk(a, pt("Preferences"), p.layout, p.close))
 }
 
 // close unmounts the JS roots the dialog mounted (Taut editors, data
@@ -404,7 +407,7 @@ func (p *prefsModal) pluginTab(gtx layout.Context, id string) (layout.Dimensions
 		t.Bridge().RenderPreferencesTab(s.Root(), id)
 	}
 	if !s.Ready() {
-		return p.a.th.Label(gtx, 13, theme.Regular, p.a.th.C.FgSubtle, "Loading…"), true
+		return p.a.th.Label(gtx, 13, theme.Regular, p.a.th.C.FgSubtle, pt("Loading…")), true
 	}
 	return s.Layout(gtx), true
 }
@@ -481,6 +484,7 @@ func (p *prefsModal) selectTab(target string) {
 // label element. Reports a click.
 func (p *prefsModal) navItem(gtx layout.Context, y, navW int, id, label string, lel *slackc.Element, icon string, cur bool) bool {
 	a := p.a
+	label = pt(label)
 	b := p.btn("nav." + id)
 	var mods uint64
 	if cur {

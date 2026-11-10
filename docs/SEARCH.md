@@ -23,7 +23,9 @@ calls; no content was kept.
 | Results: Files / Canvases | `search.modules.files` | the base args (count 0 when only counting), the two prefs, search_only_team, facets_result_count, sort timestamp desc, max_filter_suggestions, request_context, search_tab_*; Canvases queries `type:quip <q>` |
 | Results: Channels | `search.modules.channels` | the base args, count 20, search_only_my_channels, channel_type all, external_shared_team_ids, exclude_my_channels 0, request_context, spell_correction, sort relevant desc, search_only_team |
 | Results: People | `search.modules.people` | the base args, count 20, tz, external_shared_team_ids, custom_fields `{}`, hide_deactivated_users 0, request_context, spell_correction, sort relevant desc, search_only_team, profile_* "" |
-| ⌘F search in channel | `search.modules.messages` | query `in:<#C> <q>`, count 10, search_context search_in_channel, search_exclude_bots false, sort score/timestamp |
+| ⌘F search in channel | `search.modules.messages` | query `in:<#C> <q>`, count 10, search_context search_in_channel, search_exclude_bots false, sort score/desc, timestamp/desc or timestamp/asc |
+| Give feedback (popover, results page, no-results state) | `feedback.submitEnterpriseSearchFeedback` | type `feedback`, feedback_type `omniswitcher` or `search`, text, contact, category, query, payload (JSON), is_test false |
+| Give feedback (search in channel) | `search.feedback` | client_token, type `search`, payload (JSON); Slack opens its dialog for the token |
 
 \* module, query, page, client_req_id, search_session_id, extracts 1,
 highlight 1, max_extract_len 200, extra_message_data 1, no_user_profile 1,
@@ -54,7 +56,26 @@ order, the way Slack serializes them. It handles "quoted" words and
 phrases, `-word`, `-"phrase"` and `-from:` style exclusions, and
 in/from/to/with/before/after/on/during/has/is/type/creator.
 
+Build 407aff01646b (2026-11-10) added `hasmy:`, `threads:` and `dm:` to
+the modifiers the parser knows (fsda's list).
+
+## Feedback
+
+The popover's footer, the results page and the no-results state open
+Slack's "Share your feedback on Search" dialog
+(`CombinedSearchFeedbackModal`, popups/search_feedback.go). Its payload is
+JSON: the popover sends search_session_id, query, client_version
+("noversion", Slack's own fallback) and the suggestions on screen; the
+results page sends search_session_id, query_session_id, query, module,
+active_sort, active_sort_dir, active_filters, client_version and
+module_counts. Search in channel calls `search.feedback`, and Slack answers
+by opening its own dialog for the client_token. Tests send feedback to
+internal/fakeslack only.
+
 ## Not done
+
+docs/SEARCH-AUDIT.md lists every element with its status. The open rows
+include:
 
 - The source menu's "Google Drive" row (connected external sources) and
   "Display options: Show as a left sidebar".
@@ -62,4 +83,6 @@ in/from/to/with/before/after/on/during/has/is/type/creator.
 - Help Center rows in the blank slate, and the setup tip card.
 - The Messages pill's four-colour Slack logo (icons are owned elsewhere;
   it uses the monochrome slack-logo).
-- The sort menu's "Edit default" item.
+- Filters and sorts on the Files, Canvases, Channels, People and DMs tabs.
+- The Texty input (from:@ / in:# completion and filter tokens) and the
+  suggestion action toolbar (Tab).

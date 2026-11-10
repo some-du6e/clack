@@ -51,7 +51,9 @@ const (
 
 var (
 	dirTabLabels = []string{"People", "Channels", "User Groups", "External", "Invitations"}
-	dirTabIcons  = []string{"user", "hash", "people", "globe", "send"}
+	// UnifiedDirectoryTabs' svgIcons, and the "-filled" ones while selected
+	dirTabIcons    = []string{"user", "channel-search", "user-groups", "buildings", "email-invite"}
+	dirTabIconsSel = []string{"user-filled", "channel-search-filled", "user-groups-filled", "buildings-filled", "email-filled"}
 
 	dirPlaceholders = [3]string{"Search for people", "Search for channels", "Search by team name, project or department"}
 	dirActions      = [3]string{"Invite People", "Create Channel", "Create user group"}
@@ -176,6 +178,7 @@ type dirPeople struct {
 	list               []core.User
 	total, page, pages int
 	q                  string
+	titles, locs       []core.Facet // the last page's filter suggestions
 }
 
 // Directories is the Directories view.
@@ -215,19 +218,32 @@ type Directories struct {
 	member  map[string]bool
 	opSeq   map[string]int
 	evq     dirEvents
-	confirm string // private channel awaiting the Leave confirmation
-	confYes widget.Clickable
-	confNo  widget.Clickable
 	menuID  string // channel whose Join/Leave caret menu is open
 	rowMenu dirDropdown
 	purp    map[string]string   // plainPurpose cache
 	reset   [3]widget.Clickable // the filter bar's "Reset" (People, Channels)
+	field   dirField            // People: a profile field filter (directories_field.go)
 	// purpSpans caches purposes as rich first-line spans (purposeSpans).
 	purpSpans richLineCache
 	// Channel filters (server-side, core.ChannelBrowseOpts): membership
 	// scope and channel type.
 	chanScope dirDropdown
 	chanType  dirDropdown
+	// The Workspaces filter (each tab's own), Organizations (Channels),
+	// Title and Location (People): dir_filters.go.
+	wsPick    [3]dirPick
+	team      [3]string
+	orgPick   dirPick
+	orgs      []string
+	orgList   async[[]string] // users.slackConnect.orgList
+	titlePick dirPick
+	locPick   dirPick
+	titles    []string
+	locs      []string
+	facetT    []core.Facet // filter suggestions (searchSharedFacets)
+	facetL    []core.Facet
+	facetAt   time.Time
+	teamAsked map[string]bool // EnsureTeam started
 
 	groups  async[[]core.Usergroup]
 	groupsQ string
@@ -255,7 +271,11 @@ func NewDirectories(h Host) *Directories {
 	for i := range d.srch {
 		d.srch[i] = newSearch(dirPlaceholders[i])
 		d.sorts[i].labels = dirSortLabels[i]
+		d.wsPick[i] = newDirPick("Ex. Acme Inc", false)
 	}
+	d.orgPick = newDirPick("Ex. #project-unicorn", true)
+	d.titlePick = newDirPick("Ex. Director", true)
+	d.locPick = newDirPick("Ex. New York", true)
 	return d
 }
 
@@ -277,8 +297,9 @@ func (d *Directories) closeMenus() {
 	for i := range d.sorts {
 		d.sorts[i].open = false
 	}
-	d.menuID, d.rowMenu.open, d.confirm = "", false, ""
+	d.menuID, d.rowMenu.open = "", false
 	d.chanScope.open, d.chanType.open, d.acct.open = false, false, false
+	d.closePicks()
 }
 
 // Layout draws the view, filling the constraints.
@@ -296,7 +317,7 @@ func (d *Directories) Layout(gtx C) D {
 	col(gtx,
 		layout.Rigid(d.titleRow),
 		layout.Rigid(func(gtx C) D {
-			return layout.Inset{Left: 16}.Layout(gtx, func(gtx C) D { return dirTabStrip(&d.base, gtx, d.tab, dirTabIcons, nil) })
+			return layout.Inset{Left: 16}.Layout(gtx, func(gtx C) D { return dirTabStripSel(&d.base, gtx, d.tab, dirTabIcons, dirTabIconsSel, nil) })
 		}),
 		layout.Flexed(1, d.body),
 	)
@@ -374,14 +395,31 @@ func (d *Directories) update(gtx C) {
 		d.sorts[t].sel = 0
 		switch t {
 		case dirTabPeople:
-			changed = changed || d.acct.sel != 0
-			d.acct.sel = 0
+			fieldSet := d.field.clear() // always clear, even if an earlier filter already changed
+			changed = changed || d.acct.sel != 0 || len(d.titles) > 0 || len(d.locs) > 0 || fieldSet
+			d.acct.sel, d.titles, d.locs = 0, nil, nil
 		case dirTabChannels:
-			changed = changed || d.chanScope.sel != 0 || d.chanType.sel != 0
-			d.chanScope.sel, d.chanType.sel = 0, 0
+			changed = changed || d.chanScope.sel != 0 || d.chanType.sel != 0 || len(d.orgs) > 0
+			d.chanScope.sel, d.chanType.sel, d.orgs = 0, 0, nil
 		}
+		changed = changed || d.team[t] != ""
+		d.team[t] = ""
 		if changed {
 			d.load(t, q)
+		}
+	}
+	if d.sorts[t].open || d.acct.open || d.chanScope.open || d.chanType.open {
+		d.closePicks()
+	}
+	switch t {
+	case dirTabPeople:
+		if v, ok, _ := d.people.get(); ok {
+			d.takeFacets(gtx.Now, v.titles, v.locs)
+		}
+	case dirTabChannels:
+		// SearchFilterOrgs reads the connected organizations on mount
+		if c := d.h.Core(); c != nil && !d.orgList.started() {
+			d.orgList.load(d.h, false, func(ctx context.Context) ([]string, error) { return c.ConnectedOrgs(ctx) })
 		}
 	}
 	switch t {
@@ -425,9 +463,9 @@ func (d *Directories) load(tab int, q string) {
 		d.groupsQ = q
 		d.groupL.Position = layout.Position{}
 		gs := dirGroupSorts[min(d.sorts[dirTabGroups].sel, len(dirGroupSorts)-1)]
-		excl := d.exclDisabled
+		excl, team := d.exclDisabled, d.team[dirTabGroups]
 		d.groups.load(d.h, true, func(ctx context.Context) ([]core.Usergroup, error) {
-			out, err := c.SearchUsergroups(ctx, core.UsergroupOpts{Query: q, Sort: gs.sort, Desc: gs.desc, Count: 100, ExcludeDisabled: excl})
+			out, err := c.SearchUsergroups(ctx, core.UsergroupOpts{Query: q, Sort: gs.sort, Desc: gs.desc, Count: 100, ExcludeDisabled: excl, Team: team})
 			if err != nil {
 				// usergroups.search failed: fall back to the cached list.
 				if fb, ferr := c.Usergroups(ctx, q, 100); ferr == nil {
@@ -443,7 +481,9 @@ func (d *Directories) load(tab int, q string) {
 // query browses everyone, sorted and filtered server-side).
 func (d *Directories) loadPeople(q string, page int) {
 	d.peopleQ = q
-	o := core.PeopleBrowseOpts{Query: q, Page: page, AccountType: dirAcctKeys[min(d.acct.sel, len(dirAcctKeys)-1)]}
+	o := core.PeopleBrowseOpts{Query: q, Page: page, AccountType: dirAcctKeys[min(d.acct.sel, len(dirAcctKeys)-1)],
+		Team: d.team[dirTabPeople], Titles: append([]string(nil), d.titles...), Locations: append([]string(nil), d.locs...),
+		CustomFields: d.field.custom()}
 	switch d.sorts[dirTabPeople].sel {
 	case 1:
 		o.Sort = "name"
@@ -459,7 +499,7 @@ func (d *Directories) loadPeople(q string, page int) {
 	d.people.load(d.h, true, func(ctx context.Context) (dirPeople, error) {
 		res, err := c.BrowsePeople(ctx, o)
 		if err != nil {
-			if page > 1 {
+			if page > 1 || o.CustomFields != nil {
 				return dirPeople{}, err
 			}
 			// Browse failed: fall back to the user search / the people
@@ -472,7 +512,8 @@ func (d *Directories) loadPeople(q string, page int) {
 			}
 			return dirPeople{list: us, total: len(us), page: 1, pages: 1, q: q}, err
 		}
-		return dirPeople{list: append(prev, res.Users...), total: res.Total, page: res.Page, pages: res.Pages, q: q}, nil
+		return dirPeople{list: append(prev, res.Users...), total: res.Total, page: res.Page, pages: res.Pages, q: q,
+			titles: res.Titles, locs: res.Locations}, nil
 	})
 }
 
@@ -498,7 +539,8 @@ func (d *Directories) loadChannels(q string, page int) {
 	cs := dirChanSorts[min(d.sorts[dirTabChannels].sel, len(dirChanSorts)-1)]
 	o := core.ChannelBrowseOpts{Query: q, Page: page, Sort: cs.sort, Desc: cs.desc,
 		Type:       dirTypeKeys[min(d.chanType.sel, len(dirTypeKeys)-1)],
-		Membership: dirScopeKeys[min(d.chanScope.sel, len(dirScopeKeys)-1)]}
+		Membership: dirScopeKeys[min(d.chanScope.sel, len(dirScopeKeys)-1)],
+		Team:       d.team[dirTabChannels], Orgs: append([]string(nil), d.orgs...)}
 	var prev []core.ChannelHit
 	if page > 1 {
 		cur, _, _ := d.chans.get()
@@ -512,6 +554,19 @@ func (d *Directories) loadChannels(q string, page int) {
 		}
 		return dirChans{list: append(prev, res.Channels...), total: res.Total, page: res.Page, pages: res.Pages, q: q}, nil
 	})
+}
+
+// leave is the row's Leave (useChannelExplorer onClickLeave: Slack's
+// maybeLeaveChannel): a public channel is left at once, a private one
+// after the LeaveChannel confirmation.
+func (d *Directories) leave(ch core.ChannelHit) {
+	if l, ok := d.h.(interface {
+		MaybeLeaveChannel(name, kind string, general bool, leave func())
+	}); ok {
+		l.MaybeLeaveChannel(ch.Name, ch.Kind, false, func() { d.startJoin(ch, false) })
+		return
+	}
+	d.startJoin(ch, false)
 }
 
 // startJoin joins or leaves optimistically; pollOps reverts on failure.
@@ -746,7 +801,7 @@ func (d *Directories) filterBar(gtx C, t int) D {
 						if dd == &d.acct && dd.sel == 0 {
 							label = f.label
 						}
-						dims := dirFilterBtn(&d.base, gtx, &dd.btn, f.icon, label, f.caret)
+						dims := dirFilterPill(&d.base, gtx, &dd.btn, dirPill{icon: f.icon, label: label, caret: f.caret, open: dd.open, active: dd.sel != 0})
 						if dd.open {
 							dd.menu(&d.base, gtx, dims.Size, false)
 						}
@@ -755,15 +810,33 @@ func (d *Directories) filterBar(gtx C, t int) D {
 					hgap(8))
 				continue
 			}
+			if pk := d.pickFor(t, f.label); pk != nil {
+				ch = append(ch,
+					layout.Rigid(func(gtx C) D {
+						was := pk.open
+						if o, ok := pk.update(gtx); ok && d.applyPick(t, f.label, o) {
+							d.load(t, d.srch[t].text())
+						}
+						if pk.open && !was { // one menu at a time
+							d.closeMenus()
+							pk.open = true
+						}
+						text, team, active := d.pickTrigger(t, f.label)
+						dims := dirFilterPill(&d.base, gtx, &pk.btn, dirPill{icon: f.icon, team: team, label: text, caret: f.caret, open: pk.open, active: active})
+						if pk.open {
+							opts, sel := d.pickOpts(t, f.label)
+							pk.popover(&d.base, gtx, dims.Size, opts, sel, "Nothing found")
+						}
+						return dims
+					}),
+					hgap(8))
+				continue
+			}
 			c := dirClick(d.fclk, dirTabLabels[t]+"/"+f.label)
 			toggle := t == dirTabGroups && f.label == "Exclude deactivated"
-			if c.Clicked(gtx) {
-				if toggle {
-					d.exclDisabled = !d.exclDisabled
-					d.load(dirTabGroups, d.groupsQ)
-				} else {
-					d.h.Toast("Filtering by " + strings.ToLower(f.label) + " isn’t supported yet")
-				}
+			if c.Clicked(gtx) && toggle {
+				d.exclDisabled = !d.exclDisabled
+				d.load(dirTabGroups, d.groupsQ)
 			}
 			icon := f.icon
 			if toggle && d.exclDisabled {
@@ -819,42 +892,89 @@ var (
 // dirFilterBtn: h 28, radius 8, white, 1px hairline, 13px bold label with
 // an optional leading icon and trailing 16px caret.
 func dirFilterBtn(b *base, gtx C, c *widget.Clickable, icon, label string, caret bool) D {
+	return dirFilterPill(b, gtx, c, dirPill{icon: icon, label: label, caret: caret})
+}
+
+// dirPill is a filter pill's content (getFilterTriggerContent).
+type dirPill struct {
+	icon  string // leading icon
+	team  string // leading team icon (16px, 6px before the text)
+	label string
+	caret bool // FilterDropdownIcon
+	open  bool // its menu is open: the caret turns over
+	// active is c-filter-pill--active: content-hgl-1 fill and border,
+	// inverted text
+	active bool
+}
+
+// dirFilterPill is the filter bar's FilterPill (p-explorer_controls__button
+// --next-filters, p-search_filter__block_item): h 28, radius 8, 1px
+// otl-ter, 13px bold, at most 205 wide. Its caret is FilterDropdownIcon
+// (DDoZ): SvgIcon caret-down (Slack's chevron) 16px, 4px after the text,
+// in the text's colour, turned over (rotate 180deg) while the menu is
+// open; p-search_filter__block_item--withCaret pads 4px after it.
+func dirFilterPill(b *base, gtx C, c *widget.Clickable, pl dirPill) D {
 	return c.Layout(gtx, func(gtx C) D {
 		pointerCursor(gtx)
 		h := gtx.Dp(28)
 		padL, padR := gtx.Dp(12), gtx.Dp(12)
-		if icon != "" {
+		if pl.icon != "" {
 			padL = gtx.Dp(8)
 		}
-		if caret {
+		if pl.caret {
 			padR = gtx.Dp(4)
 		}
-		tw := b.th.Measure(gtx, 13, wBold, label)
-		w := padL + tw + padR
-		if icon != "" {
-			w += gtx.Dp(16 + 4)
+		lead := 0
+		if pl.icon != "" {
+			lead = gtx.Dp(16 + 4)
 		}
-		if caret {
-			w += gtx.Dp(16)
+		if pl.team != "" {
+			lead += gtx.Dp(16 + 6)
 		}
+		tail := 0
+		if pl.caret {
+			tail = gtx.Dp(4 + 16)
+		}
+		tw := b.th.Measure(gtx, 13, wBold, pl.label)
+		tw = min(tw, max(0, gtx.Dp(205)-padL-lead-tail-padR))
+		w := padL + lead + tw + tail + padR
 		r := image.Rect(0, 0, w, h)
 		rad := gtx.Dp(8)
-		rrect(gtx, r, rad, b.p.Surface)
-		if c.Hovered() {
-			rrect(gtx, r, rad, b.p.Hover)
+		fg := b.p.Text
+		if pl.active {
+			rrect(gtx, r, rad, b.p.Link)
+			fg = rgb(0xffffff)
+		} else {
+			rrect(gtx, r, rad, b.p.Surface)
+			if c.Hovered() {
+				rrect(gtx, r, rad, b.p.Hover)
+			}
+			border(gtx, r, rad, max(1, gtx.Dp(1)), b.p.Border)
 		}
-		border(gtx, r, rad, max(1, gtx.Dp(1)), b.p.Border)
 		x := padL
-		if icon != "" {
-			dirAt(gtx, image.Pt(x, (h-gtx.Dp(16))/2), func(gtx C) D { return b.icon(gtx, icon, 16, b.p.Sec) })
+		if pl.icon != "" {
+			dirAt(gtx, image.Pt(x, (h-gtx.Dp(16))/2), func(gtx C) D { return b.icon(gtx, pl.icon, 16, b.p.Sec) })
 			x += gtx.Dp(16 + 4)
+		}
+		if pl.team != "" {
+			s := gtx.Dp(16)
+			if cr := b.h.Core(); cr != nil {
+				if _, icon, _ := cr.Team(pl.team, 16); icon != "" {
+					dirAt(gtx, image.Pt(x, (h-s)/2), func(gtx C) D { return dirImage(b, gtx, icon, image.Pt(s, s), gtx.Dp(4)) })
+				}
+			}
+			x += s + gtx.Dp(6)
 		}
 		dirAt(gtx, image.Pt(x, 0), func(gtx C) D {
 			gtx.Constraints = layout.Exact(image.Pt(tw, h))
-			return layout.W.Layout(gtx, func(gtx C) D { return b.label(gtx, 13, wBold, b.p.Text, label) })
+			return layout.W.Layout(gtx, func(gtx C) D { return b.label(gtx, 13, wBold, fg, pl.label) })
 		})
-		if caret {
-			dirAt(gtx, image.Pt(x+tw, (h-gtx.Dp(16))/2), func(gtx C) D { return b.icon(gtx, "caret-down", 16, b.p.Sec) })
+		if pl.caret {
+			ic := "chevron-down"
+			if pl.open {
+				ic = "chevron-up"
+			}
+			dirAt(gtx, image.Pt(x+tw+gtx.Dp(4), (h-gtx.Dp(16))/2), func(gtx C) D { return b.icon(gtx, ic, 16, fg) })
 		}
 		return D{Size: r.Max}
 	})
@@ -1138,30 +1258,20 @@ func (d *Directories) chanRow(gtx C, ch core.ChannelHit, first, last bool) D {
 	rc := dirClick(d.rows, ch.ID)
 	jb := dirClick(d.joinBtn, ch.ID)
 	cb := dirClick(d.caret, ch.ID)
-	confirming := d.confirm == ch.ID
 	if jb.Clicked(gtx) && !ch.IsArchived {
 		switch {
-		case ch.IsMember && ch.Kind == "private":
-			// Leaving a private channel can't be undone without an invite.
-			d.confirm, d.menuID = ch.ID, ""
+		case ch.IsMember:
+			d.menuID = ""
+			d.leave(ch)
 		default:
-			d.startJoin(ch, !ch.IsMember)
-		}
-	}
-	if confirming {
-		if d.confNo.Clicked(gtx) {
-			d.confirm, confirming = "", false
-		}
-		if d.confYes.Clicked(gtx) {
-			d.confirm, confirming = "", false
-			d.startJoin(ch, false)
+			d.startJoin(ch, true)
 		}
 	}
 	if cb.Clicked(gtx) {
 		if d.menuID == ch.ID && d.rowMenu.open {
 			d.menuID, d.rowMenu.open = "", false
 		} else {
-			d.menuID, d.rowMenu.open, d.confirm, confirming = ch.ID, true, "", false
+			d.menuID, d.rowMenu.open = ch.ID, true
 		}
 	}
 	menuOpen := d.menuID == ch.ID && d.rowMenu.open
@@ -1189,26 +1299,12 @@ func (d *Directories) chanRow(gtx C, ch core.ChannelHit, first, last bool) D {
 						layout.Rigid(func(gtx C) D { return dirMinH(gtx, 22, func(gtx C) D { return d.chanName(gtx, ch, hover, req) }) }),
 						vgap(3),
 						layout.Rigid(func(gtx C) D {
-							return dirMinH(gtx, 18, func(gtx C) D {
-								if confirming {
-									return d.para(gtx, 13, 18, wReg, d.p.Sec, 1, "Leave #"+ch.Name+"? You won’t be able to rejoin unless someone invites you.")
-								}
-								return d.chanMeta(gtx, ch)
-							})
+							return dirMinH(gtx, 18, func(gtx C) D { return d.chanMeta(gtx, ch) })
 						}),
 					)
 				})
 			}),
 			layout.Rigid(func(gtx C) D {
-				if confirming {
-					return layout.Inset{Left: 12}.Layout(gtx, func(gtx C) D {
-						return row(gtx, layout.Middle,
-							layout.Rigid(func(gtx C) D { return d.button(gtx, &d.confNo, btnOutline, false, "Cancel") }),
-							hgap(8),
-							layout.Rigid(func(gtx C) D { return d.button(gtx, &d.confYes, btnDanger, false, "Leave") }),
-						)
-					})
-				}
 				if !showBtn {
 					return D{}
 				}
@@ -1651,6 +1747,12 @@ func dirRowShape(b *base, gtx C, sz image.Point, first, last bool) {
 // underline, others #454447; optional 16px icons (gap 4) and counts
 // (13px 400 #454447, margin-left 4).
 func dirTabStrip(b *base, gtx C, t *tabs, icons, counts []string) D {
+	return dirTabStripSel(b, gtx, t, icons, nil, counts)
+}
+
+// dirTabStripSel is dirTabStrip with selIcons drawn for the selected tab
+// (Slack's svgIcon switches to the "-filled" variant).
+func dirTabStripSel(b *base, gtx C, t *tabs, icons, selIcons, counts []string) D {
 	ch := make([]layout.FlexChild, 0, len(t.Labels))
 	for i := range t.Labels {
 		ch = append(ch, layout.Rigid(func(gtx C) D {
@@ -1668,7 +1770,11 @@ func dirTabStrip(b *base, gtx C, t *tabs, icons, counts []string) D {
 								if i >= len(icons) || icons[i] == "" {
 									return D{}
 								}
-								return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return b.icon(gtx, icons[i], 16, fg) })
+								ic := icons[i]
+								if sel && i < len(selIcons) && selIcons[i] != "" {
+									ic = selIcons[i]
+								}
+								return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return b.icon(gtx, ic, 16, fg) })
 							}),
 							layout.Rigid(func(gtx C) D { return b.label(gtx, 13, wBold, fg, t.Labels[i]) }),
 							layout.Rigid(func(gtx C) D {
@@ -1843,7 +1949,13 @@ func (dd *dirDropdown) layoutSort(b *base, gtx C, label string) D {
 			gtx.Constraints = layout.Exact(image.Pt(tw, h))
 			return layout.W.Layout(gtx, func(gtx C) D { return b.label(gtx, 13, wBold, b.p.Text, label) })
 		})
-		dirAt(gtx, image.Pt(pad+tw+gtx.Dp(4), (h-chev)/2), func(gtx C) D { return b.icon(gtx, "caret-down", 16, b.p.Sec) })
+		// SearchFilterSingleSelect's caret: SvgIcon caret-down (Slack's
+		// chevron), turned over while open
+		ic := "chevron-down"
+		if dd.open {
+			ic = "chevron-up"
+		}
+		dirAt(gtx, image.Pt(pad+tw+gtx.Dp(4), (h-chev)/2), func(gtx C) D { return b.icon(gtx, ic, 16, b.p.Sec) })
 		return D{Size: sz}
 	})
 	if dd.open {

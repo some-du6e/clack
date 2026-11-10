@@ -46,13 +46,12 @@ var pushIdleWaits = []string{"-1", "0", "1", "2", "5", "10", "15", "20", "25", "
 func pushIdleLabel(v string) string {
 	switch v {
 	case "-1":
-		return "Immediately, even if I’m active"
+		return pt("Immediately, even if I’m active")
 	case "", "0":
-		return "As soon as I’m inactive"
-	case "1":
-		return "After I’ve been inactive for 1 minute"
+		return pt("As soon as I’m inactive")
 	}
-	return "After I’ve been inactive for " + v + " minutes"
+	n, _ := strconv.Atoi(v)
+	return prefsChain.T("After I’ve been inactive for {value, plural, =1 {# minute} other {# minutes}}", "value", n)
 }
 
 func (p *prefsModal) notificationsPage(f *prefsForm) {
@@ -148,8 +147,10 @@ func (p *prefsModal) notificationsPage(f *prefsForm) {
 	}
 
 	f.subheading("Channel keywords")
-	f.para("These act like mentions but can be set for topics that are important to you.")
-	f.link("keywords_help", "Learn more.", slackHelp("201355156"))
+	// one rt string: "… important to you. <a>Learn more.</a>"
+	kw, kwLink, _ := ptLink("These act like mentions but can be set for topics that are important to you. <a>Learn more.</a>")
+	f.para(kw)
+	f.link("keywords_help", kwLink, slackHelp("201355156"))
 	p.keywordsField(f)
 	f.muted("Use commas to separate each keyword. Keywords are not case sensitive.", false)
 	f.hr()
@@ -200,7 +201,7 @@ func soundItems(ss []huddleui.Sound, set func(string)) []MenuItem {
 	var items []MenuItem
 	for _, s := range ss {
 		s := s
-		items = append(items, MenuItem{Label: s.Label, Do: func() {
+		items = append(items, MenuItem{Label: soundLabel(s.Label), Do: func() {
 			huddleui.PlaySlackSound(s.Value)
 			set(s.Value)
 		}})
@@ -211,14 +212,14 @@ func soundItems(ss []huddleui.Sound, set func(string)) []MenuItem {
 // soundName is Slack's label for a notification sound file (def: none set).
 func soundName(v, def string) string {
 	if l := huddleui.SoundLabel(v); l != "" {
-		return l
+		return soundLabel(l)
 	}
 	v = strings.TrimSuffix(v, ".mp3")
 	switch v {
 	case "":
-		return def
+		return soundLabel(def)
 	case "none":
-		return "None"
+		return soundLabel("None")
 	}
 	w := strings.Fields(strings.ReplaceAll(v, "_", " "))
 	for i := range w {
@@ -425,13 +426,19 @@ func (p *prefsModal) messagesPage(f *prefsForm) {
 	// MessageNamesPref's example: "Megan Anne" with full names, else
 	// "Meg"; the mention stays "@Meg" (aE.kz is false without the
 	// mentions_full_names_only_pref experiment)
-	who := "Meg"
+	who := pt("Meg")
 	if full {
-		who = "Megan Anne"
+		who = pt("Megan Anne")
 	}
-	p.messageExample(f, dense, who, exampleMeg, []examplePart{{emoji: "wave"}, {text: " Hi, I’m "}, {text: "@Meg", slug: true}})
+	// "{wave_emoji} Hi, I’m {name}": the text between the two
+	hi, after := ptBetween("{wave_emoji} Hi, I’m {name}", "wave_emoji", "name")
+	parts := []examplePart{{emoji: "wave"}, {text: hi}, {text: "@" + pt("Meg"), slug: true}}
+	if after != "" {
+		parts = append(parts, examplePart{text: after})
+	}
+	p.messageExample(f, dense, who, exampleMeg, parts)
 	f.y += f.gtx.Dp(16) // p.margin_top_100
-	f.para("To change your full or display name, head to your profile.")
+	f.para(prefsChain.T("To change your full or display name, head to {profileLink}.", "profileLink", pt("your profile")))
 	f.linkDo("own_profile", "your profile", func() { p.a.OpenProfile(p.a.PointerPos(), p.a.model().SelfID) })
 	f.hr()
 	f.subheading("Additional options")
@@ -484,18 +491,13 @@ func (p *prefsModal) messagesPage(f *prefsForm) {
 // ---- Language & region ----
 
 func (p *prefsModal) languagePage(f *prefsForm) {
-	loc := p.prefStr("locale")
-	if loc == "" {
-		loc = "en-US"
-	}
-	f.selectBox("locale", "Language", localeName(loc), false, nil)
-	f.muted("Choose the language you’d like to use with Slack.", false)
+	p.localePref(f) // locale_wire.go
 	f.hr()
 	f.subheading("Time zone")
 	p.timezonePref(f) // prefs_a.go
 	f.muted("Slack uses your time zone to send summary and notification emails, for times in your activity feeds, and for reminders.", false)
 	f.hr()
-	f.selectBox("keyboard_layout", "Keyboard layout", "English (US)", false, nil)
+	f.selectBox("keyboard_layout", "Keyboard layout", pt("English (US)"), false, nil)
 	f.hr()
 	p.spellcheckPrefs(f) // prefs_spell.go
 }
@@ -666,8 +668,8 @@ func (p *prefsModal) audioVideoPage(f *prefsForm) {
 	f.check("huddles_cc_by_default", "Automatically turn on captions when you’re in a huddle", "", false, false)
 	// "Start a huddle in this channel?" over 150 members (huddleui.Controller.shoutyRooster)
 	f.check("huddles_show_shouty_rooster", "Send a warning if you’re starting a huddle in a channel with more than 150 members", "", true, false)
-	f.off("video_background_filter", "Blur your video background when you’re in a huddle with your camera on", "", false, false)
-	f.na()
+	// prefs.video.effect: "blur" or unset (huddle/bgblur, huddle_av.go)
+	f.option("video_background_filter", "Blur your video background when you’re in a huddle with your camera on", "", p.a.huddleBlurOn(), false, p.a.toggleHuddleBlur)
 	// HuddleJoinPreviewPref: starting a huddle opens Slack's preview
 	// window first (huddleui/preview.go); unset is off
 	f.check("huddles_show_join_preview", "Show audio and video preview", "", false, false)

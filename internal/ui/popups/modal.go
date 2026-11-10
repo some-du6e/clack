@@ -47,6 +47,9 @@ type ModalOpts struct {
 	Buttons []*ModalButton
 	// Border draws a footer top border (long, scrolling bodies).
 	Border bool
+	// FooterPad is the footer's vertical padding in dp (default 20, 24
+	// with Border); c-sk-modal_footer is 84px: padding 24px 28px.
+	FooterPad float32
 	// EnterSubmits gives the last enabled button the focus on open when
 	// AutoFocus is nil (Slack's focusOnPrimaryButton), so Enter and Space
 	// press it.
@@ -213,6 +216,9 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 	if m.o.Border {
 		footPad = dp(gtx, 24)
 	}
+	if m.o.FooterPad > 0 {
+		footPad = dp(gtx, m.o.FooterPad)
+	}
 	footH := 0
 	if len(m.o.Buttons) > 0 {
 		footH = 2*footPad + dp(gtx, 36)
@@ -281,6 +287,9 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 					title := m.o.Title
 					if m.o.TitleFunc != nil {
 						title = m.o.TitleFunc()
+					}
+					if title == "" && m.o.TitleIcon == "" && m.o.TitleAfter == "" {
+						return layout.Dimensions{} // a header-less dialog (showHeader false): shape nothing
 					}
 					d := para(gtx, th, 22, 30, theme.Black, cl.Fg, title, 1)
 					if m.o.TitleIcon == "" && m.o.TitleAfter == "" {
