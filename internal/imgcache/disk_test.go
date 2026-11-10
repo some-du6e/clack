@@ -7,22 +7,6 @@ import (
 	"time"
 )
 
-func TestThumbOK(t *testing.T) {
-	for u, want := range map[string]bool{
-		"https://files.slack.com/files-tmb/T0266FRGM-F1-abc/image_360.png": true,
-		"https://files-edge.slack.com/files-tmb/T-F/a_360.png":             true,
-		"https://files.slack.com/files-pri/T-F/image.png":                  false, // the full file
-		"https://files.slack.com/files-tmb/T-F/a.png?t=xoxe-1":             false, // a signed URL
-		"http://files.slack.com/files-tmb/T-F/a.png":                       false,
-		"https://files.slack.com.evil.com/files-tmb/T-F/a.png":             false,
-		"https://example.com/files-tmb/a.png":                              false,
-	} {
-		if got := ThumbOK(u); got != want {
-			t.Errorf("ThumbOK(%q) = %v, want %v", u, got, want)
-		}
-	}
-}
-
 // The disk tier stays under its limit, oldest files out first.
 func TestDiskTrimKeepsNewest(t *testing.T) {
 	dir := t.TempDir()

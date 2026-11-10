@@ -19,7 +19,7 @@ import (
 // The startup timeline is a list of milestones, each logged once with its
 // time since the process started:
 //
-//	debug: startup +412ms sidebar-cached (467 rows)
+//	debug: startup +412ms sidebar (467 rows)
 //
 // Clack's packages Mark what they reach (the window, the first frame, the
 // account theme, the sidebar from the disk cache and from Slack, the open
@@ -28,7 +28,7 @@ import (
 // list's content); once every expected milestone is reached and nothing
 // moved for a while, the UI calls Settle, which logs one summary line:
 //
-//	startup: timeline settled=1830ms warm window=31ms first-frame=118ms … relayouts=2 (sidebar=1 messages=1)
+//	startup: timeline settled=1830ms window=31ms first-frame=118ms … relayouts=2 (sidebar=1 messages=1)
 //
 // The perf workflow reads that line (.github/perf/process.sh).
 
@@ -69,7 +69,6 @@ type Milestone struct {
 type timeline struct {
 	mu        sync.Mutex
 	start     time.Time
-	warm      string // "warm" (a boot snapshot painted), "cold", or "" before it's known
 	marks     []Milestone
 	seen      map[string]bool
 	relayouts map[string]int
@@ -84,7 +83,7 @@ var tl = &timeline{seen: map[string]bool{}, relayouts: map[string]int{}}
 func StartTimeline(start time.Time) {
 	tl.mu.Lock()
 	tl.start = start
-	tl.marks, tl.seen, tl.relayouts, tl.lastMove, tl.settled, tl.warm = nil, map[string]bool{}, map[string]int{}, 0, false, ""
+	tl.marks, tl.seen, tl.relayouts, tl.lastMove, tl.settled = nil, map[string]bool{}, map[string]int{}, 0, false
 	tl.mu.Unlock()
 	dbgMu.Lock()
 	dbgUntil = start.Add(DebugWindow)
@@ -125,15 +124,6 @@ func Marked(name string) bool {
 	tl.mu.Lock()
 	defer tl.mu.Unlock()
 	return tl.seen[name]
-}
-
-// SetWarm records whether this start painted from the boot snapshot.
-func SetWarm(warm bool) {
-	tl.mu.Lock()
-	defer tl.mu.Unlock()
-	if tl.warm == "" {
-		tl.warm = map[bool]string{true: "warm", false: "cold"}[warm]
-	}
 }
 
 // Relayout counts one visible re-layout of what (a frame where something
@@ -183,20 +173,15 @@ func Settle(at time.Time, reason string) string {
 		rl[k] = v
 		total += v
 	}
-	warm := tl.warm
 	tl.mu.Unlock()
-	line := summary(d, warm, reason, marks, rl, total)
+	line := summary(d, reason, marks, rl, total)
 	log.Print(line)
 	return line
 }
 
-func summary(settled time.Duration, warm, reason string, marks []Milestone, rl map[string]int, total int) string {
+func summary(settled time.Duration, reason string, marks []Milestone, rl map[string]int, total int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "startup: timeline settled=%dms", settled.Milliseconds())
-	if warm == "" {
-		warm = "cold"
-	}
-	b.WriteString(" " + warm)
 	sort.SliceStable(marks, func(i, j int) bool { return marks[i].At < marks[j].At })
 	for _, m := range marks {
 		fmt.Fprintf(&b, " %s=%dms", m.Name, m.At.Milliseconds())

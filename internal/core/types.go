@@ -237,9 +237,6 @@ type Snapshot struct {
 	EmojiCount   int
 	EnterpriseID string
 	Rail         RailState // the left rail from Navigation prefs and experiments (rail.go)
-	// CountsLive: Counts came from client.counts in this session, not
-	// from the boot snapshot (bootcache.go).
-	CountsLive bool
 }
 
 // Page is a window of a conversation's history.

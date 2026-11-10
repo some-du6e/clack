@@ -27,9 +27,6 @@ type backend struct {
 	slick *slick.Slick // Slick plugins, on Taut's runtime (nil until boot)
 	// tautStarting: startTautAsync is building the runtimes
 	tautStarting bool
-	// warm: the model was painted from core's boot snapshot and the
-	// network snapshot hasn't replaced it yet (bootcache.go)
-	warm bool
 
 	m       model
 	started bool
@@ -70,15 +67,12 @@ type backend struct {
 	app       *App
 }
 
-// NewBackend wraps a core service. The sidebar's first frame comes from
-// core's boot snapshot (core.LoadBootCache, which cmd/clack runs before the
-// window opens; when it hasn't, this reads it). cacheDir is unused: the
-// account's cache directory is the store's.
+// NewBackend wraps a core service. cacheDir is unused: the account's cache
+// directory is the store's.
 func newBackend(c *core.App, cacheDir string) *backend {
 	b := &backend{core: c, pluginsReady: make(chan struct{}), tabCache: map[string][]chTab{}, bookmarks: map[string][]core.Bookmark{},
 		fetched: map[string]time.Time{}, avatars: map[string]string{}, asked: map[string]bool{}}
 	b.m.Convs = map[string]*convInfo{}
-	c.LoadBootCache()
 	return b
 }
 
@@ -117,22 +111,8 @@ func (b *backend) start(a *App) {
 	// Live updates only when the user opted in (realtime.go); core polls
 	// otherwise. Set before Boot so the socket is never opened unasked.
 	b.core.SetRealtime(a.realtimeOn())
-	// A warm start paints the boot snapshot: the account theme, the
-	// sidebar with its sections and unreads, the last channel (its
-	// messages are in core already). Boot's answers replace it below.
-	if snap, ok := b.core.CachedSnapshot(); ok {
-		b.warm = true
-		b.apply(a, snap)
-		applog.SetWarm(true)
-		applog.Mark("sidebar-model", fmt.Sprintf("cached, %d convs", len(snap.Convs)))
-		if a.router.Current() == "" {
-			a.openDefault()
-		}
-	} else {
-		applog.SetWarm(false)
-		if b.core.S.HasCachedPrefs() { // the cached account theme paints the first frame
-			a.applyAccountPrefs(b.core.Prefs())
-		}
+	if b.core.S.HasCachedPrefs() { // the cached account theme paints the first frame
+		a.applyAccountPrefs(b.core.Prefs())
 	}
 	// Everything the first channel frame shows starts now, in parallel
 	// with core's boot: the plugin runtimes (JS engine, bundles from the
@@ -156,7 +136,6 @@ func (b *backend) start(a *App) {
 		snap := b.core.Snapshot()
 		log.Printf("ui: core ready %v after boot start (%d convs)", time.Since(t0).Round(time.Millisecond), len(snap.Convs))
 		a.Post(func() {
-			b.warm = false
 			b.apply(a, snap)
 			applog.Mark("sidebar-live", fmt.Sprintf("%d convs", len(snap.Convs)))
 			b.booted = time.Now()

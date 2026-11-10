@@ -41,7 +41,7 @@ import (
 // Clack draws that placeholder until its client would render the same way:
 //
 //   - core booted (users.conversations, counts, sections, prefs, stars…:
-//     Slack's boot data), or a boot snapshot painted (a warm boot);
+//     Slack's boot data);
 //   - the restored channel's header (tabs, bookmarks, member count), which
 //     Slack's boot data carries in the channel object;
 //   - the plugins enabled at start registered and their first renders
@@ -87,7 +87,7 @@ func (a *App) revealBlocker(now time.Time) string {
 	if b.core.SignedOut() {
 		return ""
 	}
-	if b.booted.IsZero() && !b.warm {
+	if b.booted.IsZero() {
 		return "boot data"
 	}
 	if ch := a.router.Current().Channel(); ch != "" && !b.tabsDone[ch] {

@@ -295,10 +295,8 @@ func main() {
 	}
 	cacheDir := filepath.Join(cfg, "cache")
 	// build makes the session's client, store and core: it reads the
-	// boot snapshot and the DPoP key, so after sign-in or an account
-	// switch it runs off the UI goroutine and only Attach is posted. At
-	// launch it runs before the window opens, which is what lets the first
-	// frame paint the account's theme and sidebar.
+	// DPoP key, so after sign-in or an account switch it runs off the UI
+	// goroutine and only Attach is posted.
 	build := func(creds slack.Creds) *core.App {
 		c := slack.New(creds)
 		if creds.Desktop() {
@@ -314,6 +312,7 @@ func main() {
 		setLive(c)
 		acct := store.AccountDir(croot, firstNonEmpty(creds.Team, creds.EnterpriseID), creds.UserID)
 		migrateLegacyCache(cfg, acct, creds.UserID)
+		go store.RemoveBootFiles(acct) // alpha.28's boot snapshot (it held message text)
 		st := store.New(acct)
 		svc := core.New(c, st)
 		images.SetDir(filepath.Join(acct, "img"))
@@ -337,7 +336,6 @@ func main() {
 			}
 			return imgcache.PublicFetch(ctx, raw)
 		})
-		svc.LoadBootCache() // the warm first frame (core/bootcache.go)
 		return svc
 	}
 	connect := func(creds slack.Creds) { a.Attach(build(creds), cacheDir) }
