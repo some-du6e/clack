@@ -1,0 +1,85 @@
+name: jsrt-trap-stress
+# TEMPORARY (branch jsrt-trap): reproduce the wasm trap TestPluginGapStreamerModeRows
+# hit in plugin-bench's gaps job, and stress the fix. Removed before merging.
+on:
+  push:
+    branches: [jsrt-trap]
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb
+jobs:
+  gaps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [count50, race, gogc1]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: the published Library
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          mkdir -p dist/library
+          .github/scripts/fetch_library.sh dist/library
+          test -s dist/library/index.json
+      - name: stress (${{ matrix.mode }})
+        env:
+          PLUGIN_BENCH_LIBRARY: ${{ github.workspace }}/dist/library
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set -u
+          case "${{ matrix.mode }}" in
+            count50) flags="-count=50" ;;
+            race) flags="-race -count=8" ;;
+            gogc1) export GOGC=1; flags="-count=20" ;;
+          esac
+          set -o pipefail
+          xvfb-run -a go test $flags -timeout 45m -v -run 'TestPluginGapStreamerModeRows' ./internal/ui/ > stress.log 2>&1
+          rc=$?
+          echo "exit $rc"
+          echo "runs:  $(grep -c -- '^--- PASS: TestPluginGapStreamerModeRows\|^--- FAIL: TestPluginGapStreamerModeRows' stress.log)"
+          echo "fails: $(grep -c -- '^--- FAIL: TestPluginGapStreamerModeRows' stress.log)"
+          echo "traps: $(grep -c 'engine trap' stress.log)"
+          echo "races: $(grep -c 'WARNING: DATA RACE' stress.log)"
+          grep -n -A 40 'WARNING: DATA RACE' stress.log | head -120 || true
+          grep -n -B2 -A 12 'engine trap' stress.log | head -80 || true
+          grep -E -- '^(--- |FAIL|ok|panic)' stress.log | tail -30
+          exit $rc
+  jsrt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [race, gogc1]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: regression tests x50 (${{ matrix.mode }})
+        run: |
+          if [ "${{ matrix.mode }}" = race ]; then flags=-race; else export GOGC=1; flags=; fi
+          go test $flags -count=50 -run 'TestRemoteValue|TestPromiseSettleRace|TestFreedValueNotReleasedTwice' ./internal/jsrt/
+      - name: whole package (${{ matrix.mode }})
+        if: ${{ !cancelled() }}
+        run: |
+          if [ "${{ matrix.mode }}" = race ]; then flags=-race; else export GOGC=1; flags=; fi
+          go test $flags -count=1 ./internal/jsrt/
