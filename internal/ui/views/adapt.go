@@ -352,7 +352,9 @@ func (hh hostHandler) OpenFile(f *richtext.File) {
 		hh.h.OpenLightbox(*f.Thumb, core.Message{})
 		return
 	}
-	hh.h.Toast("Opening files isn't supported yet")
+	if f != nil {
+		openFile(hh.h, fileFromRich(f)) // files.go
+	}
 }
 func (hh hostHandler) Button(btn richtext.Button) {
 	if btn.URL != "" {
