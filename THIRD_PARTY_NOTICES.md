@@ -22,6 +22,7 @@ Clack is MIT licensed (see `LICENSE`). It includes or links the following third-
 | [opus-go](https://github.com/kazzmir/opus-go) (libopus) | Opus audio | BSD-3-Clause |
 | [malgo](https://github.com/gen2brain/malgo) (miniaudio) | audio devices | Unlicense (miniaudio: public domain / MIT-0) |
 | [rnnoise-go](https://github.com/VoiceBlender/rnnoise-go) v0.3.0, a pure-Go port of [RNNoise](https://gitlab.xiph.org/xiph/rnnoise), with its trained weights (`third_party/rnnoise-go`, go.mod lowered to Go 1.24, see its `CLACK_PATCHES.md`) | huddle microphone noise suppression, and the voice detection behind its gain control | BSD-3-Clause (`third_party/rnnoise-go/LICENSE`, `COPYING.rnnoise`; weights: `model/LICENSE.weights`) |
+| [MediaPipe](https://github.com/google-ai-edge/mediapipe) selfie segmenter, landscape (`internal/huddle/bgblur/selfie_segmenter_landscape.tflite`, unmodified from `storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter_landscape/float16/latest/`, sha256 `490e9ea7…6b8e`; the model card says Apache License 2.0) | huddle background blur, run by Clack's own interpreter (`internal/tflite`, new code: no TensorFlow or MediaPipe source) | Apache-2.0 (`internal/huddle/bgblur/LICENSE-mediapipe.txt`) |
 | [godbus/dbus](https://github.com/godbus/dbus) | Linux notifications, screen-lock events | BSD-2-Clause |
 | [wlynxg/anet](https://github.com/wlynxg/anet) | network interfaces | BSD-3-Clause |
 | [google/uuid](https://github.com/google/uuid) | ids | BSD-3-Clause |

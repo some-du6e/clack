@@ -55,6 +55,9 @@ type prefs struct {
 	// localStorage prefs.audio; huddle_av.go).
 	HuddleAGC *bool `json:"huddle_agc,omitempty"`
 	HuddleNS  bool  `json:"huddle_noise_suppression,omitempty"`
+	// HuddleVideoEffect is the camera's background effect (Slack's
+	// localStorage prefs.video.effect: "" none, "blur"; huddle_av.go).
+	HuddleVideoEffect string `json:"huddle_video_effect,omitempty"`
 	// Zoom is View > Zoom's level, -3…5 (Slack's zoomLevel; macmenu.go).
 	Zoom int `json:"zoom,omitempty"`
 	// Simplified layout mode (bbm.go). Slack keeps all of it on the
