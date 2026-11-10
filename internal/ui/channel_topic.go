@@ -136,6 +136,14 @@ func (a *App) layoutTopicCard(gtx layout.Context, ch string, conv *convInfo, org
 		theme.Shadow(gtx, box.Add(image.Pt(0, one)), gtx.Dp(6), gtx.Dp(3), color.NRGBA{A: 0x14})
 		theme.RRect(gtx, box.Inset(-one), gtx.Dp(6)+one, c.Border)
 		theme.RRect(gtx, box, gtx.Dp(6), c.BgInset)
+		bg := gtx
+		bg.Constraints = layout.Exact(box.Size())
+		func() { // the card is opaque: nothing under it takes its clicks
+			defer op.Offset(box.Min).Push(gtx.Ops).Pop()
+			a.clicks.get("hdr.topiccardbg").Layout(bg, func(gtx layout.Context) layout.Dimensions {
+				return layout.Dimensions{Size: box.Size()}
+			})
+		}()
 		func() {
 			defer clip.Rect{Max: td.Size}.Push(gtx.Ops).Pop()
 			text.Add(gtx.Ops)
@@ -143,8 +151,6 @@ func (a *App) layoutTopicCard(gtx layout.Context, ch string, conv *convInfo, org
 		// the button's area on top, passing events through to the text's
 		// links (Slack's onClick skips a click whose target is an <a>)
 		defer op.Offset(box.Min).Push(gtx.Ops).Pop()
-		bg := gtx
-		bg.Constraints = layout.Exact(box.Size())
 		if ctxclick.Clicked(bg, card) { // read before Layout drains them (clickArea)
 			clickedSet[card] = true
 		}
