@@ -135,19 +135,63 @@ func (n NS) A(src string, args Args) string { return lookup(string(n), src, args
 
 // T is NS(ns).T(src, args...).
 func T(ns, src string, args ...any) string {
-	var a Args
-	if len(args) > 0 {
-		a = make(Args, len(args)/2)
-		for i := 0; i+1 < len(args); i += 2 {
-			if k, ok := args[i].(string); ok {
-				a[k] = args[i+1]
-			}
-		}
+	if len(args) == 0 {
+		return lookup(ns, src, nil)
 	}
-	return lookup(ns, src, a)
+	return lookup(ns, src, pairs(args))
 }
 
-func lookup(ns, src string, args Args) string {
+func lookup(ns, src string, args Args) string { return lookupIn(ns, nil, src, args) }
+
+// Chain is several of Slack's I18n instances tried in order: a Clack
+// surface that draws strings from more than one Slack component (the
+// Preferences pages: "prefs", then the sections Slack renders from other
+// components). The first namespace holding src wins.
+type Chain struct {
+	key string
+	nss []string
+}
+
+// NewChain is a Chain over nss.
+func NewChain(nss ...string) *Chain { return &Chain{key: "\x00" + strings.Join(nss, "\x00"), nss: nss} }
+
+// T is NS.T over the chain.
+func (c *Chain) T(src string, args ...any) string {
+	if len(args) == 0 {
+		return lookupIn(c.key, c.nss, src, nil)
+	}
+	return lookupIn(c.key, c.nss, src, pairs(args))
+}
+
+// A is T with an Args map.
+func (c *Chain) A(src string, args Args) string { return lookupIn(c.key, c.nss, src, args) }
+
+// Translated reports whether a namespace of the chain has a translation
+// of src that differs from it.
+func (c *Chain) Translated(src string) bool {
+	for _, ns := range c.nss {
+		if Translated(ns, src) {
+			return true
+		}
+	}
+	return false
+}
+
+func pairs(args []any) Args {
+	a := make(Args, len(args)/2)
+	for i := 0; i+1 < len(args); i += 2 {
+		if k, ok := args[i].(string); ok {
+			a[k] = args[i+1]
+		}
+	}
+	return a
+}
+
+// maxCached bounds a locale's message cache (callers that pass dynamic
+// text, a name, mustn't grow it forever).
+const maxCached = 50000
+
+func lookupIn(ns string, chain []string, src string, args Args) string {
 	s := cur.Load()
 	hasBrace := strings.IndexByte(src, '{') >= 0
 	if s.cat == nil && !hasBrace {
@@ -160,8 +204,16 @@ func lookup(ns, src string, args Args) string {
 	if m == nil {
 		text := src
 		if s.cat != nil {
-			if t, ok := s.cat.Lookup(ns, src); ok && t != "" {
-				text = t
+			if chain == nil {
+				chain = []string{ns}
+			}
+			for _, n := range chain {
+				if t, ok := s.cat.Lookup(n, src); ok {
+					if t != "" {
+						text = t
+					}
+					break
+				}
 			}
 			if IsCJK(s.locale) {
 				text = groupCJK(text)
@@ -169,6 +221,9 @@ func lookup(ns, src string, args Args) string {
 		}
 		m = Parse(text)
 		s.mu.Lock()
+		if len(s.msgs) >= maxCached {
+			s.msgs = map[msgKey]*Message{}
+		}
 		s.msgs[k] = m
 		s.mu.Unlock()
 	}

@@ -38,6 +38,15 @@ func menuKeys(items []MenuItem) []string {
 	return keys
 }
 
+// LabelKey is the key a row with label and no Key gets (callers that
+// translate a label pin the English one's key first).
+func LabelKey(label string) string {
+	if label == "" {
+		return ""
+	}
+	return menuKey(&MenuItem{Label: label}, 0)
+}
+
 func menuKey(it *MenuItem, i int) string {
 	if it.Key != "" {
 		return it.Key
