@@ -753,16 +753,15 @@ func TestSearchFeedbackFromPopover(t *testing.T) {
 	// the confirmation
 	var thanks *Modal
 	e.h.mu.Lock()
-	for _, o := range e.h.shown {
-		if mm, ok := o.(*Modal); ok && mm.o.Title == srFeedbackThanks {
-			thanks = mm
-		}
+	if mm, ok := e.h.shown[len(e.h.shown)-1].(*Modal); ok && !mm.Dismissed() {
+		thanks = mm
 	}
 	e.h.mu.Unlock()
 	if thanks == nil {
 		t.Fatal("no confirmation")
 	}
-	if x := (&srDrv{size: image.Pt(1280, 800), w: thanks}).scan(); !srHas(x, "OK") || !srHasPrefix(x, "Slack is a tool built by people.") {
+	if x := (&srDrv{size: image.Pt(1280, 800), w: thanks}).scan(); !srHas(x, "OK") || !srHasPrefix(x, "Slack is a tool built by people.") ||
+		!srHasPrefix(x, "Thank you!") {
 		t.Errorf("confirmation %q", x)
 	}
 }
@@ -801,7 +800,7 @@ func TestSearchFeedbackFromResults(t *testing.T) {
 	}
 	_, dn := srView(t, e, fakeslack.SearchNothing, false)
 	x := dn.scan()
-	if !srHas(x, srNothingAsk) || !srHas(x, "Give feedback") || !srHasPrefix(x, "You may want to try using different keywords, checking") {
+	if !srHas(x, srNothingAsk) || !srHas(x, "Give feedback") || !strings.Contains(strings.Join(x, " "), "checking for typos") {
 		t.Errorf("no-results state %q", x)
 	}
 }

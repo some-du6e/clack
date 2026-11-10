@@ -100,7 +100,6 @@ type SearchFeedbackModal struct {
 	submit  *ModalButton
 	busy    bool
 	err     string
-	focused bool
 }
 
 // openSearchFeedback shows CombinedSearchFeedbackModal.
@@ -172,10 +171,8 @@ func (m *SearchFeedbackModal) Submit() {
 func (m *SearchFeedbackModal) layout(gtx layout.Context) layout.Dimensions {
 	th := m.h.Theme()
 	cl := colorsOf(th)
-	if !m.focused {
-		m.focused = true
-		gtx.Execute(key.FocusCmd{Tag: &m.selBtn})
-	}
+	// nothing is focused on open: Slack's Modal focuses the dialog itself
+	// (Tab reaches the select first)
 	if m.selBtn.Clicked(gtx) {
 		labels := make([]string, len(srFeedbackCategories))
 		for i, c := range srFeedbackCategories {
@@ -270,7 +267,11 @@ func (m *SearchFeedbackModal) selectBox(gtx layout.Context, th *theme.Theme, cl 
 func srInputBox(gtx layout.Context, cl *Colors, box image.Rectangle, focused bool) {
 	rad := dp(gtx, 8)
 	if focused {
-		focusRing(gtx, cl, box, rad)
+		// box-shadow 0 0 0 1px focus, 0 0 0 5px focus at 30%, as the
+		// text field draws it (fieldNative)
+		ring, one := dp(gtx, 5), maxInt(1, dp(gtx, 1))
+		rrect(gtx, box.Inset(-ring), rad+ring, cl.FocusRing)
+		rrect(gtx, box.Inset(-one), rad+one, cl.Focus)
 		rrect(gtx, box, rad, cl.ModalBg)
 		return
 	}
@@ -329,10 +330,12 @@ func (m *SearchFeedbackModal) privacyLink(gtx layout.Context) {
 
 // newSearchFeedbackThanks is CombinedSearchFeedbackConfirmationModal: the
 // celebration on the theme colour (padding 12), the title, the note and
-// OK; no close button, 525 wide.
+// OK; no close button, 525 wide. The title is two lines at this width:
+// Slack's title bar (padding 20 28) wraps its h1, so the title is drawn in
+// the body under a 20px header rather than as the one-line modal title.
 func newSearchFeedbackThanks(h Host) *Modal {
 	th := h.Theme()
-	return NewModal(h, ModalOpts{Title: srFeedbackThanks, Width: 525, NoClose: true, EnterSubmits: true,
+	return NewModal(h, ModalOpts{Width: 525, NoClose: true, EnterSubmits: true, HeadH: 20,
 		HeroH: 199 + 24,
 		Hero: func(gtx layout.Context) layout.Dimensions {
 			cl := colorsOf(th)
@@ -347,7 +350,17 @@ func newSearchFeedbackThanks(h Host) *Modal {
 			return layout.Dimensions{Size: sz}
 		},
 		Body: func(gtx layout.Context) layout.Dimensions {
-			return para(gtx, th, 15, 22, theme.Regular, colorsOf(th).Fg, srFeedbackThanksTxt, 0)
+			cl := colorsOf(th)
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return para(gtx, th, 22, 30, theme.Black, cl.Fg, srFeedbackThanks, 0)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Top: 20}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return para(gtx, th, 15, 22, theme.Regular, cl.Fg, srFeedbackThanksTxt, 0)
+					})
+				}),
+			)
 		},
 		Buttons: []*ModalButton{{Label: "OK", Kind: BtnPrimary}}})
 }

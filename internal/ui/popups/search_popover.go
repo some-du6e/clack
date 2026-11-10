@@ -390,8 +390,10 @@ func (p *SearchPopover) rebuild(now time.Time, resetSel bool) {
 	for len(p.clicks) < len(p.rows) {
 		p.clicks = append(p.clicks, widget.Clickable{})
 	}
+	// a picked row stays picked while it's still listed; otherwise the
+	// first row is the pseudo-selected one, whatever arrived above it
 	sel := -1
-	if !resetSel && p.lastKey != "" {
+	if !resetSel && p.picked && p.lastKey != "" {
 		for i := range p.rows {
 			if p.rows[i].key() == p.lastKey {
 				sel = i
@@ -405,7 +407,6 @@ func (p *SearchPopover) rebuild(now time.Time, resetSel bool) {
 	}
 	if resetSel {
 		p.list.Position = layout.Position{}
-		p.picked = false
 	}
 	p.setSel(sel)
 }

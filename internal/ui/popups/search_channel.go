@@ -371,7 +371,7 @@ func (v *SearchInChannel) body(gtx layout.Context, th *theme.Theme, cl *Colors, 
 		// p-explorer_section--align label, 13px #1d1c1d@.7 regular, the link
 		// 4px after it on the same line
 		lh := dp(gtx, 20)
-		sec := theme.WithAlpha(cl.Fg, 0xb3)
+		sec := linearAlpha(theme.WithAlpha(cl.Fg, 0xb3), cl.Bg)
 		d := at(gtx, image.Pt(pad, 0), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(inner, lh)}
 			return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
@@ -444,7 +444,7 @@ func (v *SearchInChannel) body(gtx layout.Context, th *theme.Theme, cl *Colors, 
 
 // resultsHeader is the results label row.
 func (v *SearchInChannel) resultsHeader(gtx layout.Context, th *theme.Theme, cl *Colors, w, pad, lh, top int) {
-	sec := theme.WithAlpha(cl.Fg, 0xb3)
+	sec := linearAlpha(theme.WithAlpha(cl.Fg, 0xb3), cl.Bg)
 	x := pad
 	d := at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
