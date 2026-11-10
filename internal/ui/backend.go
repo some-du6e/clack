@@ -390,6 +390,9 @@ func defaultSectionName(t string) string {
 }
 
 func (b *backend) mpimName(c *core.Conv, self string) string {
+	if n, ok := b.core.MpdmCustomName(c.ID); ok { // mpdm_naming (core/mpdm_name.go)
+		return n
+	}
 	var names []string
 	for _, id := range c.Members {
 		if id == self {
@@ -460,6 +463,8 @@ func (b *backend) handle(a *App, ev core.Event) {
 	m := &b.m
 	changed := false
 	switch ev.Type {
+	case "experiments": // a group changed (experiments.getByUser, a plugin's override): the sidebar rules and names read them
+		b.resnapshot(a)
 	case "prefs": // users.prefs changed (Preferences, pref_change)
 		if ev.Prefs != nil {
 			a.applyAccountPrefs(*ev.Prefs)

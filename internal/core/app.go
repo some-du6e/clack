@@ -68,7 +68,7 @@ type App struct {
 	memberG    map[string]int    // conversation -> guests among them (edge users/counts)
 	dms        dmState           // which DMs Slack's sidebar shows (dmsidebar.go)
 	exp        *sidebarExp       // experiments the sidebar rules read (nil: defaults)
-	expGroups  map[string]string // every experiment group (experiments.getByUser)
+	expGroups  map[string]string // the groups every check reads (experiments.go)
 	icon       teamIconState     // the rail's workspace icon (team_icon.go)
 	rxn        reactState        // the viewer's reactions in flight (reactions.go)
 	frec       frecencyState     // the frecency pref's save throttle and Frequently Used cache (frecency.go)
@@ -76,6 +76,11 @@ type App struct {
 	dnd        dndState          // the viewer's Do Not Disturb (dnd.go)
 	selected   string            // the open conversation (SetSelected, preview.go)
 	temp       map[string]int64  // temporary memberships: channel -> expiration_ts (preview.go)
+
+	// experiments.go: experiments.getByUser's records (nil until it
+	// answers) and the forced groups ("" reads as not assigned)
+	expServer map[string]slack.ExperimentAssignment
+	expForced map[string]string
 
 	// Realtime (Slack's websocket gateway) is opt-in; see SetRealtime.
 	rtMu      sync.Mutex
@@ -482,10 +487,10 @@ func (a *App) Boot(ctx context.Context) error {
 		sections, errSecs = a.C.SectionsAll(ctx)
 		return errSecs
 	})
-	step("experiments", func() error { // the sidebar rules depend on a few (sidebar_rules.go)
-		g, err := a.C.ExperimentGroups(ctx)
+	step("experiments", func() error { // every experiment check (experiments.go)
+		g, err := a.C.ExperimentAssignments(ctx)
 		if err == nil {
-			a.setExperiments(g)
+			a.setExperimentAssignments(g)
 		}
 		return err
 	})

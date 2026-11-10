@@ -49,56 +49,6 @@ type sidebarExp struct {
 // account on 2026-11-08, used until (or unless) Clack's own call answers.
 var defaultSidebarExp = sidebarExp{filterDormant: true, improveMute: true, dmRecency: true}
 
-func (a *App) setExperiments(groups map[string]string) {
-	g := groups["dm_recency_sort_rollout"]
-	e := sidebarExp{
-		filterDormant: groups["filter_dormant_channels"] == "on",
-		improveMute:   groups["improve_mute_pref"] == "on",
-		dmRecency:     g == "without_edu" || g == "with_edu",
-		dmHistory:     groups["programmable_sidebar_dm_history"] == "on",
-	}
-	a.mu.Lock()
-	a.exp = &e
-	a.expGroups = groups
-	a.mu.Unlock()
-}
-
-// experiment returns the viewer's group for an experiment; before (or
-// without) experiments.getByUser it falls back to what the test account had
-// on 2026-11-08 (defaultExperimentGroups).
-func (a *App) experiment(name string) string {
-	a.mu.Lock()
-	g := a.expGroups
-	a.mu.Unlock()
-	if g == nil {
-		return defaultExperimentGroups[name]
-	}
-	return g[name]
-}
-
-// Experiment returns the viewer's group for a Slack experiment
-// (experiments.getByUser), or the test account's from 2026-11-08 before
-// that call answers.
-func (a *App) Experiment(name string) string { return a.experiment(name) }
-
-// SetExperimentGroup sets one experiment's group, over what
-// experiments.getByUser answered (or the defaults), as Slack's
-// force_* overrides do.
-func (a *App) SetExperimentGroup(name, group string) {
-	a.mu.Lock()
-	g := make(map[string]string, len(defaultExperimentGroups)+1)
-	src := a.expGroups
-	if src == nil {
-		src = defaultExperimentGroups
-	}
-	for k, v := range src {
-		g[k] = v
-	}
-	g[name] = group
-	a.mu.Unlock()
-	a.setExperiments(g)
-}
-
 // defaultExperimentGroups mirrors defaultSidebarExp for the rail's
 // experiments (rail.go).
 var defaultExperimentGroups = map[string]string{

@@ -124,6 +124,9 @@ func (b *base) refTitle(r core.ConvRef) string {
 		}
 		return r.Name
 	case "mpim":
+		if n, ok := b.h.Core().MpdmCustomName(r.ID); ok { // mpdm_naming
+			return n
+		}
 		if c, ok := b.h.Core().Conv(r.ID); ok && len(c.Members) > 0 {
 			return b.groupNames(c.Members)
 		}

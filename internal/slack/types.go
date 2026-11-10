@@ -348,6 +348,20 @@ func (c *Conversation) Dormant() bool {
 	return p.IsDormant
 }
 
+// HasCustomMpdmName reports a group DM renamed by its members
+// (properties.has_custom_mpdm_name): its name is the custom name, not
+// "mpdm-a--b--c-1".
+func (c *Conversation) HasCustomMpdmName() bool {
+	if len(c.Properties) == 0 {
+		return false
+	}
+	var p struct {
+		HasCustomMpdmName bool `json:"has_custom_mpdm_name"`
+	}
+	_ = json.Unmarshal(c.Properties, &p)
+	return p.HasCustomMpdmName
+}
+
 // Section is a sidebar section from users.channelSections.list.
 type Section struct {
 	ID             string `json:"channel_section_id"`
