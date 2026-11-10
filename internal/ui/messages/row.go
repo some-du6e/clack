@@ -1997,6 +1997,7 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	if rc.dense {
 		return r.denseSystemLayout(gtx, rc)
 	}
+	r.rv.SetOptions(r.rvOpts()) // back from Compact's 13px
 	c := rc.c
 	m := &r.m
 	w := gtx.Constraints.Max.X
@@ -2092,6 +2093,11 @@ func (r *row) denseSystemLayout(gtx layout.Context, rc *rowCtx) layout.Dimension
 	}
 	y += dp(gtx, 2)
 	r.handler.h, r.handler.m, r.handler.anchor = rc.h, m, rc.origin
+	// .textRow__DEPF9 / .text__nwvni: 13px, line-height 1.5 (richview's
+	// Compact text, 13px/19.5)
+	o := r.rvOpts()
+	o.Compact = true
+	r.rv.SetOptions(o)
 	body := at(gtx, cx, y, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
 		return r.rv.Layout(gtx, rc.st, &r.handler)
@@ -2173,8 +2179,9 @@ func (r *row) tombstoneLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions 
 // (c-message_kit__tombstone--compact): no placeholder square ("light"
 // draws it), so the text starts at the row's padding;
 // .c-message_kit__tombstone__right { margin: -4px 0 } puts it 4px below
-// the row top, and .c-message_kit__tombstone__text--compact { height:
-// auto; margin-bottom: 4px } replaces Clean's 44px centred box.
+// the row top. .c-message_kit__tombstone__text--compact { height: auto;
+// margin-bottom: 4px } keeps the base rule's min-height 44px, a flex box
+// with align-items center: the line is centred in 44px, then 4px.
 func (r *row) denseTombstoneLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	m := &r.m
 	w := gtx.Constraints.Max.X
@@ -2186,12 +2193,16 @@ func (r *row) denseTombstoneLayout(gtx layout.Context, rc *rowCtx) layout.Dimens
 	cw = max(cw, dp(gtx, 80))
 	r.handler.h, r.handler.m, r.handler.anchor = rc.h, m, rc.origin
 	y := dp(gtx, mt.padTop) - dp(gtx, 4)
-	body := at(gtx, x, y, func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
-		return r.rv.Layout(gtx, rc.st, &r.handler)
-	})
-	r.bodyRect = image.Rectangle{Min: image.Pt(x, y), Max: image.Pt(x+body.Size.X, y+body.Size.Y)}
-	y += max(body.Size.Y, dp(gtx, mt.nameLine)) + dp(gtx, mt.bodyMarginBottom)
+	rec := op.Record(gtx.Ops)
+	g := gtx
+	g.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
+	body := r.rv.Layout(g, rc.st, &r.handler)
+	call := rec.Stop()
+	box := max(body.Size.Y, dp(gtx, 44))
+	ty := y + (box-body.Size.Y)/2
+	placeCall(gtx, call, x, ty)
+	r.bodyRect = image.Rectangle{Min: image.Pt(x, ty), Max: image.Pt(x+body.Size.X, ty+body.Size.Y)}
+	y += box + dp(gtx, mt.bodyMarginBottom)
 	r.reactRects = r.reactRects[:0]
 	r.addRect = image.Rectangle{}
 	if m.ReplyCount > 0 && !rc.thread && (m.ThreadTS == "" || m.ThreadTS == m.TS) {

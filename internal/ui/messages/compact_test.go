@@ -28,6 +28,7 @@ import (
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/store"
+	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
@@ -177,4 +178,34 @@ func TestSlickViewFlingKeepsRowHeightsCompact(t *testing.T) {
 func TestSlickViewIdleRowsStayPutCompact(t *testing.T) {
 	setDense(t, true)
 	TestSlickViewIdleRowsStayPut(t)
+}
+
+// TestCompactRowHeightsMatchSlack: the synthetic #release channel's rows
+// (compact_shots_test.go) against the heights Chrome lays out for the same
+// rows in Slack's markup under Slack's CSS (.github/scripts/compact_ref.py,
+// 1100px, measured with getBoundingClientRect). The long wrapped message
+// is left out: Chrome and Gio break its lines at slightly different words.
+// So are rows that differ the same way in both layouts, Clean's own
+// differences (not Compact's): the Block Kit section (bot, 56 vs 52 in
+// both), Clean's broadcast (74 vs 76) and tombstone (80 vs 86).
+func TestCompactRowHeightsMatchSlack(t *testing.T) {
+	slack := map[bool]map[string]float32{
+		true:  {"a1": 30, "a2": 30, "b2": 52, "root": 64, "bc": 52, "join": 33.5, "pin": 49.1, "c1": 30, "gone": 90},
+		false: {"a1": 52, "a2": 30, "b2": 52, "root": 86, "pin": 71.1, "c1": 52},
+	}
+	for _, dense := range []bool{true, false} {
+		setDense(t, dense)
+		app, _, ts := shotsApp(t)
+		v := NewChannelView(coreHost{app: app, th: theme.New(false)}, tShots)
+		v.Preview = true
+		f := scaledFrame(v, 1, 1100, 1500)
+		loadList(v, f)
+		until(t, 5*time.Second, "the rows", f, func() bool { return v.s.rows[ts["gone"]] != nil && itemHeight(v.s, ts["gone"]) > 0 })
+		f()
+		for k, want := range slack[dense] {
+			if got := float32(itemHeight(v.s, ts[k])); got-want > 1 || want-got > 1 {
+				t.Errorf("dense=%v %s: %vpx, Slack %vpx", dense, k, got, want)
+			}
+		}
+	}
 }

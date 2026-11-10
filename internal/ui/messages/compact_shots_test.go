@@ -214,7 +214,7 @@ func TestCompactShots(t *testing.T) {
 		t.Skip("COMPACT_SHOTS_DIR not set (the compact-shots workflow)")
 	}
 	t.Cleanup(uipref.Reset)
-	const w, h, tw = 1100, 1500, 520
+	const w, h, tw, th0 = 1100, 1500, 520, 1100
 	var rows, threadRows []compactRefRow
 	for _, dark := range []bool{false, true} {
 		for _, dense := range []bool{false, true} {
@@ -244,15 +244,16 @@ func TestCompactShots(t *testing.T) {
 
 			tv := NewThreadView(host, tShots, ts["root"])
 			tops := new(op.Ops)
-			ft := func() { shotFrame(tv, th, tw, 700, tops) }
+			ft := func() { shotFrame(tv, th, tw, th0, tops) }
 			until(t, 5*time.Second, "the replies", ft, func() bool { return tv.s.rows[ts["r3"]] != nil && itemHeight(tv.s, ts["r3"]) > 0 })
 			for i := 0; i < 40; i++ {
 				ft()
 				time.Sleep(10 * time.Millisecond)
 			}
 			ft()
-			timg := pixeltest.Render(t, tw, 700, tops)
+			timg := pixeltest.Render(t, tw, th0, tops)
 			ty0, ty1 := rowsSpan(tv.s)
+			ty0, ty1 = ty0+tv.s.origin.Y, ty1+tv.s.origin.Y // the list sits under the pane's header
 			savePNG(t, filepath.Join(dir, "clack-thread-"+kind+"-"+mode+".png"), crop(timg, ty0, ty1))
 
 			if dark || dense {

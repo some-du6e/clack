@@ -25,6 +25,10 @@ Nothing here talks to Slack beyond fetching that CSS and Slack's icon set. The
 rows are the synthetic channel's (compact-ref-rows.json, written by
 TestCompactShots), the pictures the ones Clack drew (fakeslack's).
 
+Slack's virtual list positions each .c-virtual_list__item (position:
+absolute) with an inline offset; here they are position: relative, which
+stacks them the same way.
+
 Two substitutions, both because headless Chrome lacks Slack's private fonts:
 the bullet glyph of .p-rich_text_list__bullet (Slack v2 icon font, \\e506) is
 drawn as "•", and Slack-Lato is the system Lato (fonts-lato).
@@ -99,10 +103,10 @@ def rich(r, inline):
     else:
         inner = '<div class="p-rich_text_section">%s%s</div>' % (E(r["Text"]), edited(r))
     il = inline
-    return ('<div class="c-message_kit__blocks c-message_kit__blocks--rich_text%s"><div class="c-message__message_blocks c-message__message_blocks--rich_text" data-qa="message-text">'
+    return ('<div class="c-message_kit__blocks c-message_kit__blocks--rich_text%s"><div class="c-message__message_blocks c-message__message_blocks--rich_text%s" data-qa="message-text">'
             '<div class="p-block_kit_renderer%s" data-qa="block-kit-renderer"><div class="p-block_kit_renderer__block_wrapper p-block_kit_renderer__block_wrapper--first">'
             '<div class="p-rich_text_block%s" dir="auto">%s</div></div></div></div></div>'
-            % (" c-message_kit__blocks--inline" if il else "", " p-block_kit_renderer--inline" if il else "",
+            % (" c-message_kit__blocks--inline" if il else "", " c-message__message_blocks--inline" if il else "", " p-block_kit_renderer--inline" if il else "",
                " p-rich_text_block--inline" if il else "", inner))
 
 
@@ -174,7 +178,7 @@ def compact_ts(r, dense, adjacent):
 
 
 def wrap(inner, extra=""):
-    return ('<div class="c-virtual_list__item" role="listitem"><div class="c-message_kit__background p-message_pane_message__message c-message_kit__message%s" data-qa="message_container">'
+    return ('<div class="c-virtual_list__item" role="listitem" style="position:relative"><div class="c-message_kit__background p-message_pane_message__message c-message_kit__message%s" data-qa="message_container">'
             '<div class="c-message_kit__hover"><div class="c-message_kit__actions c-message_kit__actions--default">%s</div></div></div></div>' % (extra, inner))
 
 
@@ -196,7 +200,7 @@ def tombstone_row(r, dense):
     right = '<div class="c-message_kit__tombstone__right">%s%s</div>' % (text, reply_bar(r))
     icon = "" if dense else '<div class="c-message_kit__tombstone__icon">%s</div>' % svg("trash", 20)
     cls = "c-message_kit__tombstone" + (" c-message_kit__tombstone--compact" if dense else "")
-    return ('<div class="c-virtual_list__item" role="listitem"><div class="c-message_kit__background p-message_pane_message__message c-message_kit__message">'
+    return ('<div class="c-virtual_list__item" role="listitem" style="position:relative"><div class="c-message_kit__background p-message_pane_message__message c-message_kit__message">'
             '<div class="%s">%s%s</div></div></div>' % (cls, icon, right))
 
 
@@ -246,7 +250,7 @@ def thread_row(r, dense, root):
         left = avatar(r) if head else ('<div class="p-thread_compact_gutter_generic p-thread_compact_gutter_generic--adjacent">%s</div>'
                                        % timestamp(r["Time"].split(" ")[0]))
         g = gutter(left, pre + body(r, False) + reactions(r), False)
-    return ('<div class="c-virtual_list__item" role="listitem"><div class="%s" data-qa="message_container"><div class="c-message_kit__hover">'
+    return ('<div class="c-virtual_list__item" role="listitem" style="position:relative"><div class="%s" data-qa="message_container"><div class="c-message_kit__hover">'
             '<div class="c-message_kit__actions c-message_kit__actions--default">%s</div></div></div></div>' % (cls, g))
 
 
@@ -254,7 +258,11 @@ def page(rows, dense, dark, width, thread):
     t = tokens("slackVarsDark" if dark else "slackVarsLight")
     root = ";".join("%s:%s" % kv for kv in t.items())
     if thread:
-        content = "".join(thread_row(r, dense, i == 0) for i, r in enumerate(rows))
+        n = len(rows) - 1
+        sep = ('<div class="c-virtual_list__item" role="listitem" style="position:relative"><div class="p-threads_flexpane__separator">'
+               '<span class="p-threads_flexpane__separator_count">%d %s</span><hr class="p-threads_flexpane__separator_line"></div></div>'
+               % (n, "reply" if n == 1 else "replies"))
+        content = "".join(thread_row(r, dense, i == 0) + (sep if i == 0 else "") for i, r in enumerate(rows))
         content = ('<div class="p-flexpane p-threads_flexpane"><div class="c-message_list c-virtual_list" role="list">%s</div></div>' % content)
     else:
         content = '<div class="p-message_pane"><div class="c-message_list c-virtual_list" role="list">%s</div></div>' % "".join(
