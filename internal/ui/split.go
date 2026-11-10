@@ -634,6 +634,49 @@ func (a *App) headerEnd() int {
 	return r
 }
 
+// headerFit is Slack's useActionsToMoveToMenu (view-header chunk, module
+// 1DLG) for a channel header w px wide, without the
+// channel_ia_header_refinements experiment: the view's column (the split
+// view's whole column, the primary view with its nested pane) under 550px
+// moves the search button out of the header, under 500px the bell too
+// (only the bell for the Slackbot DM), and then
+// getOverflowingActions keeps floor((width-340)/30) of the header's other
+// movable actions in Slack's order (agents, huddle): the Huddle button
+// goes once the column is under 370px. btns are layoutChannelHeader's
+// buttons, right to left; it returns the ones that stay, and whether the
+// Huddle button (huddle: the header has one) stays. Slack's ⋮ menu
+// doesn't change for it.
+func (a *App) headerFit(gtx layout.Context, w int, conv *convInfo, btns []string, huddle bool) ([]string, bool) {
+	col := float32(w) / gtx.Metric.PxPerDp
+	if a.pane == paneSplit && a.split.col.Dx() > 0 {
+		col = float32(a.split.col.Dx()) / gtx.Metric.PxPerDp
+	}
+	slackbot := conv != nil && conv.Kind == "im" && conv.User == "USLACKBOT"
+	var moved []string
+	switch {
+	case col < 500 && slackbot:
+		moved = []string{"bell"}
+	case col < 500:
+		moved = []string{"search", "bell"}
+		// the movable actions left, in Slack's order: only the huddle here
+		if huddle && int((col-340)/30) < 1 {
+			huddle = false
+		}
+	case col < 550 && !slackbot:
+		moved = []string{"search"}
+	}
+	if len(moved) == 0 {
+		return btns, huddle
+	}
+	keep := make([]string, 0, len(btns))
+	for _, b := range btns {
+		if b != moved[0] && (len(moved) < 2 || b != moved[1]) {
+			keep = append(keep, b)
+		}
+	}
+	return keep, huddle
+}
+
 // splitSidebarItem is "Open in split view" for the sidebar's row menu
 // (getTilesTemplate, entry point "sidebar"), or false where Slack has
 // none.

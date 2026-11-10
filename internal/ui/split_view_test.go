@@ -19,6 +19,8 @@ import (
 	"gioui.org/f32"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
+	"gioui.org/layout"
+	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/ui/popups"
@@ -150,18 +152,40 @@ func TestSplitViewChannelMenu(t *testing.T) {
 	// a thread opened inside the split view replaces its channel there,
 	// with the channel as its back stack; one from the main view goes to
 	// the main view's thread pane
+	// a settled root (not the send above), one with replies if there is
 	var ts string
-	if tl := e.a.data.core.S.Timeline(chB); tl != nil && len(tl.Msgs) > 0 {
-		ts = tl.Msgs[len(tl.Msgs)-1].TS
+	if tl := e.a.data.core.S.Timeline(chB); tl != nil {
+		for i := len(tl.Msgs) - 1; i >= 0; i-- {
+			m := tl.Msgs[i]
+			if m.ClientMsgID != "" || (m.ThreadTS != "" && m.ThreadTS != m.TS) {
+				continue
+			}
+			if ts == "" || m.ReplyCount > 0 {
+				ts = m.TS
+			}
+			if m.ReplyCount > 0 {
+				break
+			}
+		}
 	}
 	if ts == "" {
 		t.Fatal("no message in the split channel")
 	}
+	replies := e.fs.CallCount("conversations.replies")
 	e.a.inPane(paneSplit, func() { e.a.OpenThread(chB, ts) })
 	e.settle(300 * time.Millisecond)
 	if got := e.a.splitTop(); got != Route("c/"+chB+"/t/"+ts) || len(e.a.split.stack) != 2 {
 		t.Fatalf("thread in the split view: %v", e.a.split.stack)
 	}
+	if e.a.split.pane.convos[chB+"/"+ts] == nil {
+		t.Fatal("the thread didn't draw in the split view")
+	}
+	// its replies load (a cached thread wouldn't ask again: no failure)
+	for dl := time.Now().Add(5 * time.Second); time.Now().Before(dl) && e.fs.CallCount("conversations.replies") <= replies; {
+		e.frame()
+		time.Sleep(5 * time.Millisecond)
+	}
+	e.settle(500 * time.Millisecond)
 	if e.a.secondary.kind == secThread {
 		t.Error("the split view's thread opened in the main view's pane")
 	}
@@ -390,4 +414,36 @@ func (e *perfEnv) splitRowPos(ch string) (f32.Point, bool) {
 		y += h
 	}
 	return f32.Point{}, false
+}
+
+// A narrow column moves header buttons out as Slack's
+// useActionsToMoveToMenu does (view-header 1DLG): search under 550px, the
+// bell under 500px, the Huddle button once floor((w-340)/30) is 0; the
+// Slackbot DM only ever loses its bell.
+func TestSplitViewHeaderFit(t *testing.T) {
+	a := &App{}
+	gtx := layout.Context{Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}}
+	ch := &convInfo{Kind: "channel"}
+	bot := &convInfo{Kind: "im", User: "USLACKBOT"}
+	for _, c := range []struct {
+		w      int
+		conv   *convInfo
+		btns   string
+		huddle bool
+	}{
+		{1000, ch, "kebab search bell", true},
+		{550, ch, "kebab search bell", true},
+		{549, ch, "kebab bell", true},
+		{500, ch, "kebab bell", true},
+		{499, ch, "kebab", true},
+		{370, ch, "kebab", true},
+		{369, ch, "kebab", false},
+		{499, bot, "kebab search", true},
+		{520, bot, "kebab search bell", true},
+	} {
+		btns, hud := a.headerFit(gtx, c.w, c.conv, []string{"kebab", "search", "bell"}, true)
+		if got := strings.Join(btns, " "); got != c.btns || hud != c.huddle {
+			t.Errorf("%dpx %s: %q huddle=%v, want %q huddle=%v", c.w, c.conv.Kind, got, hud, c.btns, c.huddle)
+		}
+	}
 }

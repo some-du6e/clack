@@ -126,6 +126,8 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	case preview:
 		hdrBtns = []string{"kebab", "search"}
 	}
+	// a narrow column moves buttons out (useActionsToMoveToMenu, split.go)
+	hdrBtns, hudBtn := a.headerFit(gtx, sz.X, conv, hdrBtns, !appDM)
 	for _, k := range hdrBtns {
 		k := k
 		right -= btn
@@ -157,7 +159,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		a.openNotifPrefs(ch)
 	}
 
-	if !appDM {
+	if hudBtn {
 		// Huddle split button (94×28: 74 + 20); Slack 2026's --polish variant
 		// has no outline, only hover fills. While a huddle is on, huddleui
 		// draws Slack's live button: mint with faces, headphones and a bare
