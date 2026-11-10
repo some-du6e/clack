@@ -142,3 +142,26 @@ func (a *App) SuggestedPromptsFor(ch, threadTS string) (SuggestedPrompts, bool) 
 	p, ok := st.prompts[threadKey(ch, threadTS)]
 	return p, ok && len(p.Prompts) > 0
 }
+
+// agentMemberChannelCountOn is agent_member_channel_count (client-boot
+// M/qt.lx): Slack's channel header avatar stack, About modal and member
+// filters count a channel's people only, its apps and agents counted on
+// the Agents & apps tab instead.
+func (a *App) agentMemberChannelCountOn() bool {
+	return a.experiment("agent_member_channel_count") == "on"
+}
+
+// channelMemberCount is the member count Slack shows for a channel from
+// its membership counts (fetchAndUpsertMembershipCountsForChannel maps
+// edge users/counts: member_count = people, app_count = apps). With
+// agent_member_channel_count on it is RW6b.vC, member_count; otherwise
+// RW6b.iz, member_count + app_count (plus one for an active native
+// channel expert, which needs enable_native_channel_expert and the
+// channel's channel_agent_status; Clack keeps neither, so it never adds
+// it).
+func channelMemberCount(people, apps int, peopleOnly bool) int {
+	if peopleOnly {
+		return people
+	}
+	return people + apps
+}

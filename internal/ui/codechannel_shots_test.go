@@ -205,7 +205,7 @@ func TestCodeChannelsFakeslack(t *testing.T) {
 	}
 	e.until("Code channels section", 20*time.Second, func() bool {
 		ss := e.a.model().Sections
-		return len(ss) > 0 && ss[0].Type == "coding_channels" && len(ss[0].Rows) == 6
+		return len(ss) > 0 && ss[0].Type == "coding_channels" && len(ss[0].Rows) == 7
 	})
 	e.openChannel(fakeslack.CodeWorkingID)
 	e.until("working status", 10*time.Second, func() bool {

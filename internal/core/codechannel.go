@@ -349,6 +349,85 @@ func codeChannelOf(c *slack.Conversation) *CodeChannel {
 // the Code channels section, the status dots and the agent context bar.
 func (a *App) sessionChannelsOn() bool { return a.experiment("session_channels") == "on" }
 
+// codeChannelsNamingOn is code_channels_naming (client-boot biaa.Fo):
+// Slack's strings call them "code channels" rather than the older
+// "session channels".
+func (a *App) codeChannelsNamingOn() bool { return a.experiment("code_channels_naming") == "on" }
+
+// CodeChannelsSectionName is the coding_channels section's heading:
+// getChannelSectionNameIfStatic (client-boot p4Ef.je) names it "Code
+// channels" under code_channels_naming, else "Session channels", while
+// session_channels is on; with it off the static name is "" and
+// getChannelSectionNameWithState falls through to the section's own name.
+func (a *App) CodeChannelsSectionName(name string) string {
+	if !a.sessionChannelsOn() {
+		return name
+	}
+	if a.codeChannelsNamingOn() {
+		return "Code channels"
+	}
+	return "Session channels"
+}
+
+// CodeChannelDetailsLabel is the label of Slack's CodeChannelDetails view
+// (getAriaLabelForViewContent, client-boot WwBZ): the view container's
+// aria-label and, when no breadcrumb label is registered for the view
+// (zuQH's le has none for it), its breadcrumb. "Code channel details"
+// needs session_channel_views and code_channels_naming; otherwise it is
+// "Session channel details" (left untranslated without
+// session_channel_views).
+func (a *App) CodeChannelDetailsLabel() string {
+	if a.experiment("session_channel_views") == "on" && a.codeChannelsNamingOn() {
+		return "Code channel details"
+	}
+	return "Session channel details"
+}
+
+// CodeChannelRowTooltip is the tooltip over a code channel's sidebar name
+// (boot-render ConnectedChannel's codeChannelTooltipText and
+// codeChannelAgentTooltipText, drawn by BaseChannelNameTooltipContent):
+// for a channel whose properties carry code_channel, with session_channels
+// on, "Public code channel" / "Private code channel" (or "… session
+// channel" without code_channels_naming), then "@" and the mention name
+// (getMemberMentionName: display_name, else real_name) of the first
+// encoded_agent_bot_user_ids member, when that member is loaded. ok is
+// false for every other row (Slack shows no code tooltip).
+func (a *App) CodeChannelRowTooltip(ch string) (kind, agent string, ok bool) {
+	c, found := a.S.Conv(ch)
+	if !found || !a.sessionChannelsOn() || c.IsIM || c.IsMPIM {
+		return "", "", false
+	}
+	var p struct {
+		CodeChannel  json.RawMessage `json:"code_channel"`
+		AgentSession *struct {
+			Encoded []string `json:"encoded_agent_bot_user_ids"`
+		} `json:"agent_session"`
+	}
+	if json.Unmarshal(c.Properties, &p) != nil || len(p.CodeChannel) == 0 || string(p.CodeChannel) == "null" {
+		return "", "", false
+	}
+	naming := a.codeChannelsNamingOn()
+	private := c.IsPrivate || c.IsGroup // aK5v.Zp isPrivateChannel
+	switch {
+	case private && naming:
+		kind = "Private code channel"
+	case private:
+		kind = "Private session channel"
+	case naming:
+		kind = "Public code channel"
+	default:
+		kind = "Public session channel"
+	}
+	if p.AgentSession != nil && len(p.AgentSession.Encoded) > 0 {
+		if u, ok := a.S.User(p.AgentSession.Encoded[0]); ok {
+			if n := firstNonEmpty(u.Profile.DisplayName, u.Profile.RealName, u.RealName); n != "" {
+				agent = "@" + n
+			}
+		}
+	}
+	return kind, agent, true
+}
+
 // CodeStatus is a code channel's effective agent status now ("" for
 // other channels).
 func (a *App) CodeStatus(ch string) string {

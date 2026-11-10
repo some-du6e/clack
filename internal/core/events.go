@@ -174,6 +174,10 @@ func (a *App) handle(ev slack.Event) {
 			}
 		}
 		a.refreshConv(ctx, id)
+	case "record_channel_close": // channelClosed for a record (code) channel (codechannel_close.go)
+		a.onRecordChannelClose(ch)
+	case "record_channel_open": // recordChannelOpened
+		a.onRecordChannelOpen(ctx, ch)
 	case "im_close", "mpim_close":
 		// Closed from some client: out of the sidebar until a new message,
 		// but still a known conversation (search, switcher, history).

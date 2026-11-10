@@ -102,3 +102,43 @@ func TestAgentStreamEvents(t *testing.T) {
 		}
 	}
 }
+
+// agent_member_channel_count: Slack's channel header counts a channel's
+// people (membership counts' member_count, from edge users/counts'
+// people) with the experiment on; off, or not assigned (Slack's null),
+// it counts people and apps (member_count + app_count).
+func TestAgentMemberChannelCountFollowsExperiment(t *testing.T) {
+	fs, err := fakeslack.Start(fakeslack.Small)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fs.Close()
+	a, ch := fakeBroadcastApp(t, fs, slack.User{})
+	a.loadMemberCount(context.Background(), ch) // fakeslack: 1100 people, 12 apps
+	count := func() int {
+		c, ok := a.Conv(ch)
+		if !ok {
+			t.Fatal("channel lost")
+		}
+		return c.NumMembers
+	}
+	a.setExperiments(map[string]string{"agent_member_channel_count": "on"})
+	if n := count(); n != 1100 {
+		t.Errorf("on: %d members, want the 1100 people", n)
+	}
+	a.SetExperimentGroup("agent_member_channel_count", "off")
+	if n := count(); n != 1112 {
+		t.Errorf("off: %d members, want 1100 people + 12 apps", n)
+	}
+	a.SetExperimentGroup("agent_member_channel_count", "") // unassigned
+	if n := count(); n != 1112 {
+		t.Errorf("unassigned: %d members, want people + apps", n)
+	}
+	a.ClearExperimentGroup("agent_member_channel_count")
+	if n := count(); n != 1100 {
+		t.Errorf("server group back: %d", n)
+	}
+	if apps := a.AppCountCached(ch); apps != 12 {
+		t.Errorf("app_count %d", apps)
+	}
+}
