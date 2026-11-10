@@ -86,6 +86,9 @@ type PeopleBrowseOpts struct {
 	Sort        string // "" / "recommended" | "name"
 	Desc        bool   // name sort: Z to A
 	AccountType string // "" | "owners" | "admins" | "members" | "guests" | "deactivated"
+	// CustomFields filters by profile field: field id → values (Slack's
+	// profileField.<id> browser filter, sent as custom_fields JSON).
+	CustomFields map[string][]string
 }
 
 type PeoplePage struct {
@@ -633,6 +636,10 @@ func peopleBrowseParams(o PeopleBrowseOpts) url.Values {
 	}
 	if o.AccountType == "deactivated" {
 		p.Set("hide_deactivated_users", "0")
+	}
+	if len(o.CustomFields) > 0 {
+		j, _ := json.Marshal(o.CustomFields)
+		p.Set("custom_fields", string(j))
 	}
 	return p
 }

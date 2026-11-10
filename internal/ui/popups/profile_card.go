@@ -4,6 +4,7 @@ import (
 	"context"
 	"image"
 	"image/color"
+	"net/url"
 	"strings"
 	"time"
 
@@ -271,7 +272,7 @@ func (p *ProfileCard) clicks(gtx layout.Context, u core.User) {
 		}
 	}
 	if p.vipBtn.Clicked(gtx) {
-		h.Toast("VIPs aren't supported yet")
+		pfToggleVIP(h, u)
 	}
 	if p.moreBtn.Clicked(gtx) {
 		items := pfMoreItems(h, u, true, p.Dismiss)
@@ -500,7 +501,9 @@ func (p *ProfileCard) buttons(gtx layout.Context, th *theme.Theme, u core.User, 
 		specs = []pfBtnSpec{
 			{c: &p.msgBtn, label: "Message", lead: "threads"},
 			{c: &p.huddleBtn, label: "Huddle", lead: "headphones", caret: true, rect: &p.huddleLocal},
-			{c: &p.vipBtn, label: "VIP", lead: "user-plus", vip: true},
+		}
+		if pfCanToggleVIP(p.h, u) {
+			specs = append(specs, pfVipSpec(p.h, u, pfBtnSpec{c: &p.vipBtn}))
 		}
 	}
 	kebab := &p.moreBtn
@@ -920,13 +923,31 @@ func pfEnsure(h Host, id string, done func(found bool)) {
 	})
 }
 
-// pfOpenFull opens the full profile pane (or toasts while unwired).
+// pfOpenFull opens the full profile pane: Slack's showMemberProfile opens
+// RimetoMemberProfileFlexpane (client-profile-view mE6l ProfileView →
+// boot-shared 9xzW) in the secondary pane. The ui root sets
+// OpenFullProfile; a host without it that has the pane itself (the ui
+// root's App.OpenUserProfile) opens it there.
 func pfOpenFull(h Host, id string) {
+	if id == "" {
+		return
+	}
 	if OpenFullProfile != nil {
 		OpenFullProfile(id)
 		return
 	}
-	h.Toast("Full profiles aren't available yet")
+	if o, ok := h.(interface{ OpenUserProfile(userID string) }); ok {
+		o.OpenUserProfile(id)
+	}
+}
+
+// pfViewFiles is the ⋮ menu's "View files" / "View your files":
+// navigateToCleanFileBrowser({filters: {from: [id]}}) (boot-shared F50I →
+// YLFj), the files browser filtered to what id shared. Clack's files
+// browser has no From filter, so this is its search's Files tab with the
+// same filter (from:<@id>, search.modules files).
+func pfViewFiles(h Host, id string) {
+	h.Navigate("search?q=" + url.QueryEscape("from:<@"+id+">") + "&module=" + core.ModFiles)
 }
 
 // pfMessage opens (or creates) the DM with id and navigates to it.
@@ -966,6 +987,13 @@ func pfSetStatus(h Host) {
 // Share contact, Report to Slack, Hide <name>, the passkey item and Sign
 // out sit behind workspace settings and experiments Clack doesn't have.
 func pfMoreItems(h Host, u core.User, withFull bool, closeCard func()) []MenuItem {
+	return pfMoreItemsFor(h, u, withFull, closeCard, false)
+}
+
+// pfMoreItemsFor is pfMoreItems; preview is the full profile's "View as"
+// (RimetoMemberProfileOverflowMenu: isProfilePreview drops your own
+// items, so your profile gets the menu others see).
+func pfMoreItemsFor(h Host, u core.User, withFull bool, closeCard func(), preview bool) []MenuItem {
 	id := u.ID
 	var items []MenuItem
 	if withFull {
@@ -988,9 +1016,14 @@ func pfMoreItems(h Host, u core.User, withFull bool, closeCard func()) []MenuIte
 		}})
 	}
 	files := func(label string) MenuItem {
-		return MenuItem{Label: label, Do: func() { h.Toast("Searching files isn't supported yet") }}
+		return MenuItem{Label: label, Do: func() {
+			if closeCard != nil {
+				closeCard()
+			}
+			pfViewFiles(h, id)
+		}}
 	}
-	if pfIsSelf(h, id) {
+	if pfIsSelf(h, id) && !preview {
 		sep()
 		items = append(items,
 			MenuItem{Label: "View preferences", Do: actPreferences(h)},
@@ -1166,10 +1199,13 @@ func pfSkeleton(gtx layout.Context, th *theme.Theme, cl *Colors, missing bool, i
 type pfBtnSpec struct {
 	c     *widget.Clickable
 	label string
-	lead  string           // icon before the label
-	caret bool             // chevron-down after the label
-	vip   bool             // the VIP button (its icon is svg[data-qa="vip"])
-	rect  *image.Rectangle // set to the button's rect in the row (pfBtnRow)
+	lead  string // icon before the label
+	caret bool   // chevron-down after the label
+	vip   bool   // the VIP button (its icon is svg[data-qa="vip"])
+	// selected is the VIP button on a VIP
+	// (.p-member_profile_buttons__button--vip_selected: --dt_color-ctr-sec)
+	selected bool
+	rect     *image.Rectangle // set to the button's rect in the row (pfBtnRow)
 }
 
 type pfBtnMetrics struct {
@@ -1216,6 +1252,12 @@ func pfBtn(gtx layout.Context, th *theme.Theme, size BtnSize, s pfBtnSpec, w int
 		bg := cl.BtnBg
 		if s.c.Hovered() {
 			bg = cl.BtnHover
+		}
+		if s.selected {
+			bg = rgb(0xf8f8f8) // --dt_color-ctr-sec
+			if th != nil && th.Dark {
+				bg = rgb(0x212428)
+			}
 		}
 		rrect(gtx, r, rad, cl.BtnBorder)
 		rrect(gtx, r.Inset(1), maxInt(0, rad-1), bg)

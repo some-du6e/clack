@@ -222,6 +222,7 @@ type Directories struct {
 	rowMenu dirDropdown
 	purp    map[string]string   // plainPurpose cache
 	reset   [3]widget.Clickable // the filter bar's "Reset" (People, Channels)
+	field   dirField            // People: a profile field filter (directories_field.go)
 	// purpSpans caches purposes as rich first-line spans (purposeSpans).
 	purpSpans richLineCache
 	// Channel filters (server-side, core.ChannelBrowseOpts): membership
@@ -374,7 +375,7 @@ func (d *Directories) update(gtx C) {
 		d.sorts[t].sel = 0
 		switch t {
 		case dirTabPeople:
-			changed = changed || d.acct.sel != 0
+			changed = changed || d.acct.sel != 0 || d.field.clear()
 			d.acct.sel = 0
 		case dirTabChannels:
 			changed = changed || d.chanScope.sel != 0 || d.chanType.sel != 0
@@ -443,7 +444,8 @@ func (d *Directories) load(tab int, q string) {
 // query browses everyone, sorted and filtered server-side).
 func (d *Directories) loadPeople(q string, page int) {
 	d.peopleQ = q
-	o := core.PeopleBrowseOpts{Query: q, Page: page, AccountType: dirAcctKeys[min(d.acct.sel, len(dirAcctKeys)-1)]}
+	o := core.PeopleBrowseOpts{Query: q, Page: page, AccountType: dirAcctKeys[min(d.acct.sel, len(dirAcctKeys)-1)],
+		CustomFields: d.field.custom()}
 	switch d.sorts[dirTabPeople].sel {
 	case 1:
 		o.Sort = "name"
@@ -459,7 +461,7 @@ func (d *Directories) loadPeople(q string, page int) {
 	d.people.load(d.h, true, func(ctx context.Context) (dirPeople, error) {
 		res, err := c.BrowsePeople(ctx, o)
 		if err != nil {
-			if page > 1 {
+			if page > 1 || o.CustomFields != nil {
 				return dirPeople{}, err
 			}
 			// Browse failed: fall back to the user search / the people
