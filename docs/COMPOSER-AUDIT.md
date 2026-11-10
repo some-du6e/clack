@@ -58,7 +58,7 @@ Status: **matched** (no change needed), **fixed** (on this branch), **open** (st
 
 | Feature | Slack (evidence) | Clack before | Status |
 |---|---|---|---|
-| Order | TextyButtons (Ozua): +, Aa, Emoji, Mention, │, clips, │, Run shortcut … send; without clips one divider before Run shortcut | same, clips included | **matched** |
+| Order | the + in WysiwygContainer's prefix, then TextyButtons (Ozua): Aa, Emoji, Mention, │, clips, │, Run shortcut; the send group last; without clips one divider before Run shortcut | same, clips included | **matched** |
 | Clip buttons | Video and audio need window.MediaRecorder (Jg9Y yD / hP: isStoriesButtonEnabled, isAudioButtonEnabled); without a recorder MessagePaneInput passes them off and the clips group and its divider go | shown; a click toasted "Recording clips isn't available in yoloslack yet" | **fixed** (`crNoRecorder`, the toast is gone) |
 | Recording clips | AudioPopover (waveform, timer, "Stop recording", attaches audio_message.m4a, subtype slack_audio) and the video recorder | none | **open**: Clack has huddle mic capture but no clip recorder, encoder or clip upload |
 | Run shortcut | SlashCommandsButton "Run shortcut", disabled unless the input is empty (`.c-wysiwyg_container__button--workflows.--disabled`: opacity .3, tooltip still shows); a click puts "/" into the empty input | always enabled; mid-text it added " /" | **fixed** |
