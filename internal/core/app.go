@@ -45,6 +45,7 @@ type App struct {
 
 	files *fileCache
 
+	saves  sync.WaitGroup // background disk saves (loadEmoji's meta.json)
 	bcLoad sync.Mutex
 	bcMu   sync.Mutex
 	bc     bootCache // the warm boot's snapshot (bootcache.go)
@@ -320,6 +321,13 @@ func (a *App) onAuthFailed(code string) {
 // timers). The App must not be used afterwards. For tests and benchmarks
 // that start many sessions in one process; the UI simply exits.
 func (a *App) Shutdown() {
+	a.StopTraffic()
+	a.saves.Wait() // a metadata save still writing (loadEmoji)
+}
+
+// StopTraffic is Shutdown without waiting for background disk saves (the
+// UI goroutine calls it; Close, off it, waits).
+func (a *App) StopTraffic() {
 	a.stopBG()
 	a.mu.Lock()
 	if a.countsTimer != nil {
@@ -645,6 +653,7 @@ func (a *App) saveBoot() {
 
 // Close saves the metadata cache and the boot snapshot.
 func (a *App) Close() error {
+	a.saves.Wait()
 	a.saveBoot()
 	return a.S.SaveCache()
 }
@@ -660,7 +669,11 @@ func (a *App) loadEmoji(ctx context.Context) error {
 	a.S.SetEmojiPacked(p)
 	applog.Debugf("emoji.list: %d emoji, fetched+scanned in %s, installed in %s", n,
 		tf.Round(time.Millisecond), (time.Since(t0) - tf).Round(time.Millisecond))
-	go func() { _ = a.S.SaveCache() }() // 7 MB to disk: not on boot's path
+	a.saves.Add(1) // Shutdown waits for it (a test's temp dir, sign-out)
+	go func() {    // 7 MB to disk: not on boot's path
+		defer a.saves.Done()
+		_ = a.S.SaveCache()
+	}()
 	return nil
 }
 

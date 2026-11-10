@@ -250,7 +250,7 @@ func (b *backend) stop() <-chan struct{} {
 	// Every caller drops this backend: stop core's socket and loops too,
 	// or the old session keeps a second realtime connection open next to
 	// the new one.
-	b.core.Shutdown()
+	b.core.StopTraffic() // Close, below and off this goroutine, waits for disk saves
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
