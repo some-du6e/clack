@@ -121,6 +121,7 @@ type picker struct {
 	back     widget.Clickable
 	insert   widget.Clickable
 	veil     int
+	shared   *shareTab // the last "Share this list?" dialog
 }
 
 func newPicker(h popups.Host, kind pickKind, o AddOpts) *picker {
@@ -134,6 +135,10 @@ func newPicker(h popups.Host, kind pickKind, o AddOpts) *picker {
 
 // NewAddToList is Slack's "Add to list" dialog for message ts in channel.
 func NewAddToList(h popups.Host, channel, ts string, o AddOpts) *popups.Modal {
+	return newAddToList(h, channel, ts, o).modal
+}
+
+func newAddToList(h popups.Host, channel, ts string, o AddOpts) *picker {
 	p := newPicker(h, pickAddToList, o)
 	p.channel, p.ts = channel, ts
 	if c := h.Core(); c != nil {
@@ -161,11 +166,15 @@ func NewAddToList(h popups.Host, channel, ts string, o AddOpts) *popups.Modal {
 		FocusStops: func() []event.Tag { return []event.Tag{&p.search} },
 	})
 	p.start()
-	return p.modal
+	return p
 }
 
 // NewListPicker is Slack's "Add a list" picker for channel's tab bar.
 func NewListPicker(h popups.Host, channel string, o AddOpts) *popups.Modal {
+	return newListPicker(h, channel, o).modal
+}
+
+func newListPicker(h popups.Host, channel string, o AddOpts) *picker {
 	p := newPicker(h, pickTab, o)
 	p.channel = channel
 	insert := &popups.ModalButton{Label: "Insert", Kind: popups.BtnPrimary,
@@ -191,7 +200,7 @@ func NewListPicker(h popups.Host, channel string, o AddOpts) *popups.Modal {
 		Over:       p.speedBump,
 	})
 	p.start()
-	return p.modal
+	return p
 }
 
 // post runs f on the UI goroutine at the dialog's next frame.
@@ -452,7 +461,8 @@ func (p *picker) insertTab(id, viewID string) {
 		addTab(p.h, p.o, p.channel, id, viewID, "")
 		return
 	}
-	p.h.ShowOverlay(newShareListTab(p.h, p.o, p.channel, id, viewID, hd))
+	p.shared = newShareListTab(p.h, p.o, p.channel, id, viewID, hd)
+	p.h.ShowOverlay(p.shared.modal)
 }
 
 // newTabList is "Create New List" in the tab bar's picker: a blank list
@@ -995,7 +1005,7 @@ type shareTab struct {
 	modal   *popups.Modal
 }
 
-func newShareListTab(h popups.Host, o AddOpts, ch, id, viewID string, hd *pickHdr) *popups.Modal {
+func newShareListTab(h popups.Host, o AddOpts, ch, id, viewID string, hd *pickHdr) *shareTab {
 	s := &shareTab{h: h, o: o, ch: ch, id: id, viewID: viewID, access: "read"}
 	if hd != nil && hd.err == nil && (hd.info.Access == "owner" || hd.info.Access == "write" || hd.info.Editable) {
 		s.canEdit, s.access = true, "write" // Slack's default: write when the viewer may grant it
@@ -1012,7 +1022,7 @@ func newShareListTab(h popups.Host, o AddOpts, ch, id, viewID string, hd *pickHd
 		AutoFocus: share,
 		Over:      s.footerSelect,
 	})
-	return s.modal
+	return s
 }
 
 func (s *shareTab) channelName() string {
@@ -1072,7 +1082,6 @@ func (s *shareTab) share() {
 	s.busy = true
 	h, o, ch, id, view, access := s.h, s.o, s.ch, s.id, s.viewID, s.access
 	post := o.Post
-	o.Post = nil // addTabNow posts below, once the dialog is settled
 	go func() {
 		ctx, cancel := ctxTimeout(30 * time.Second)
 		defer cancel()

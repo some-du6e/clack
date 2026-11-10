@@ -82,11 +82,20 @@ func (s *Server) addedTabs(ch string) []any {
 	return out
 }
 
-// histText is the text of message ts in ch, if the fake has it.
+// histText is the text of message ts in ch, from the history the fake
+// serves (made on first use, as historyPage does).
 func (s *Server) histText(ch, ts string) (string, bool) {
 	s.histMu.Lock()
 	defer s.histMu.Unlock()
-	for _, m := range s.hist[ch] {
+	msgs, okc := s.hist[ch]
+	if !okc {
+		var gallery bool
+		if msgs, gallery = s.galleryHistoryOf(ch); !gallery {
+			msgs = s.history(ch)
+		}
+		s.hist[ch] = msgs
+	}
+	for _, m := range msgs {
 		if m.TS == ts {
 			return m.Text, true
 		}

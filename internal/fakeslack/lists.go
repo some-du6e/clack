@@ -444,6 +444,9 @@ func (s *Server) handleLists(method string, f url.Values) (any, bool) {
 		if l, okl := ls.byID[f.Get("file")]; okl {
 			return ok("file", s.listFile(l), "comments", []any{}), true
 		}
+		if strings.HasPrefix(f.Get("file"), "F0LIST") { // a list id the fake never had: deleted
+			return map[string]any{"ok": false, "error": "file_not_found"}, true
+		}
 		return nil, false
 	case "conversations.info":
 		if f.Get("channel") != ListTabChan {
