@@ -1,8 +1,10 @@
 package ui
 
 import (
+	"fmt"
 	"image"
 	"image/color"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -61,6 +63,8 @@ type revealState struct {
 	done        bool
 	bootAt      time.Time    // core booted (or the snapshot painted): pluginCap counts from here
 	lastDeliver atomic.Int64 // unix ns of the last plugin tree delivery (taut_wire.go)
+	deliveries  atomic.Int64 // plugin tree deliveries before the reveal
+	roots       sync.Map     // root id -> deliveries (the reveal log line)
 	wake        *time.Timer
 	tag         int
 	blocker     string // what the cover waited for last (the log line)
@@ -132,7 +136,15 @@ func (a *App) revealFrame(gtx layout.Context) {
 		if !a.rv.bootAt.IsZero() && now.Sub(a.rv.bootAt) > pluginCap {
 			why = "cap, was waiting for " + a.rv.blocker
 		}
-		applog.Mark("reveal", why)
+		n, roots, busiest, most := a.rv.deliveries.Load(), 0, uint64(0), int64(0)
+		a.rv.roots.Range(func(k, v any) bool {
+			roots++
+			if c := v.(*atomic.Int64).Load(); c > most {
+				busiest, most = k.(uint64), c
+			}
+			return true
+		})
+		applog.Mark("reveal", fmt.Sprintf("%s; %d plugin deliveries from %d roots (most: root %d, %d)", why, n, roots, busiest, most))
 		a.sw.lastChange = now
 		return
 	}
@@ -207,3 +219,11 @@ func (a *App) drawBootPlaceholder(gtx layout.Context) {
 
 // revealed reports whether the window shows the real UI (always, outside Run).
 func (a *App) revealed() bool { return !a.rv.inRun || a.rv.done }
+
+// noteDelivery counts a plugin tree delivery (any goroutine).
+func (a *App) noteDelivery(root uint64) {
+	a.rv.lastDeliver.Store(time.Now().UnixNano())
+	a.rv.deliveries.Add(1)
+	v, _ := a.rv.roots.LoadOrStore(root, new(atomic.Int64))
+	v.(*atomic.Int64).Add(1)
+}

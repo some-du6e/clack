@@ -124,7 +124,7 @@ func (b *backend) buildTaut(a *App, dark bool, team, channel string) (*taut.Taut
 				})
 			},
 			Deliver: func(root uint64, tree []byte) {
-				a.rv.lastDeliver.Store(time.Now().UnixNano()) // reveal waits for plugin renders to go quiet
+				a.noteDelivery(root) // reveal waits for plugin renders to go quiet
 				if f := deliverTap; f != nil {
 					f(root, tree)
 				}

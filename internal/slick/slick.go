@@ -30,6 +30,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/some-du6e/clack/internal/applog"
 	"io/fs"
 	"log"
 	"os"
@@ -175,7 +176,9 @@ func New(o Options) (*Slick, error) {
 	s.applyStyles()
 	if !o.NoAutoStart {
 		go func() {
+			t0 := time.Now()
 			s.StartEnabled(context.Background())
+			applog.Mark("slick-started", "in "+time.Since(t0).Round(time.Millisecond).String())
 			s.markStartDone()
 		}()
 		if !o.NoUpdates {

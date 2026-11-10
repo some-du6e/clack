@@ -31,6 +31,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/some-du6e/clack/internal/applog"
 	"log"
 	"net/http"
 	"os"
@@ -204,7 +205,9 @@ func New(o Options) (*Taut, error) {
 	t.stopWatch = make(chan struct{})
 	if !o.NoAutoStart {
 		go func() {
+			t0 := time.Now()
 			t.StartEnabled(context.Background())
+			applog.Mark("taut-started", fmt.Sprintf("%d running, in %s", t.running.Load(), time.Since(t0).Round(time.Millisecond)))
 			close(t.startDone)
 		}()
 		if len(t.plugins) > 0 {
@@ -322,7 +325,9 @@ func (t *Taut) ensureRuntimeLocked() (*runtime, error) {
 		return t.ensureRuntimeLocked()
 	}
 	t.mu.Unlock()
+	t0 := time.Now()
 	r, err := t.startRuntime()
+	applog.Mark("js-runtime", fmt.Sprintf("in %s, err=%v", time.Since(t0).Round(time.Millisecond), err))
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if err != nil {
