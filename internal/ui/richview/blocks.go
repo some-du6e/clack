@@ -150,7 +150,12 @@ func (l *lay) addEdited() {
 	}
 	w := l.st.word(k, "(edited)")
 	n := int32(len(l.d.plain))
-	l.items = append(l.items, item{kind: itWord, sh: w, face: k, w: w.adv, col: p.Edited, deco: -1, target: -1, p0: n, p1: n, part: pt})
+	var tip int16
+	if l.opts.EditedTS != "" { // EditedLabel's Tooltip (delay 300): the edit's time
+		l.d.tips = append(l.d.tips, editedTipKey)
+		tip = int16(len(l.d.tips))
+	}
+	l.items = append(l.items, item{kind: itWord, sh: w, face: k, w: w.adv, col: p.Edited, deco: -1, target: -1, p0: n, p1: n, part: pt, tip: tip})
 }
 
 // richBlock enters Slack's .p-rich_text_block (once: blocks nested in a

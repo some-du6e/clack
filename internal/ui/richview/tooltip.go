@@ -3,6 +3,8 @@ package richview
 import (
 	"image"
 	"image/color"
+	"strconv"
+	"strings"
 	"time"
 
 	"gioui.org/f32"
@@ -13,6 +15,7 @@ import (
 	"gioui.org/op/paint"
 
 	"github.com/some-du6e/clack/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
 // tooltipClass is Slack's tooltip box (a portal under <body>).
@@ -22,15 +25,27 @@ var tooltipClass = slackc.Class("c-tooltip__tip c-tooltip__tip--top", "role", "t
 // shows its :name: (the emoji's delay="300" tooltip).
 const EmojiTipDelay = 300 * time.Millisecond
 
-// emojiAt returns the emoji frag under p (view coordinates), or -1.
+// editedTipKey marks the "(edited)" word's entry in display.tips: its
+// text is the edit's time, written when the tooltip shows (editedTip).
+const editedTipKey = "\x00edited"
+
+// emojiAt returns the frag with a tooltip under p (view coordinates): an
+// emoji image, or the "(edited)" label; -1 for none.
 func (v *View) emojiAt(p f32.Point) int {
 	for i := range v.d.frags {
 		f := &v.d.frags[i]
-		if f.kind != fImage || f.tip == 0 {
+		if f.tip == 0 {
 			continue
 		}
-		if p.X >= f.x && p.X < f.x+float32(f.size) && p.Y >= float32(f.y) && p.Y < float32(f.y+f.size) {
-			return i
+		switch f.kind {
+		case fImage:
+			if p.X >= f.x && p.X < f.x+float32(f.size) && p.Y >= float32(f.y) && p.Y < float32(f.y+f.size) {
+				return i
+			}
+		case fText:
+			if p.X >= f.x && p.X < f.x+f.w && p.Y >= float32(f.top) && p.Y < float32(f.bot) {
+				return i
+			}
 		}
 	}
 	return -1
@@ -38,6 +53,15 @@ func (v *View) emojiAt(p f32.Point) int {
 
 // HoveredEmoji is the :name: of the emoji under the pointer, if any.
 func (v *View) HoveredEmoji() (string, bool) {
+	name, ok := v.hoveredTip()
+	if !ok || name == editedTipKey {
+		return "", false
+	}
+	return name, true
+}
+
+// hoveredTip is the display.tips entry of the frag under the pointer.
+func (v *View) hoveredTip() (string, bool) {
 	if v.tipFrag < 0 || v.tipFrag >= len(v.d.frags) {
 		return "", false
 	}
@@ -48,11 +72,44 @@ func (v *View) HoveredEmoji() (string, bool) {
 	return v.d.tips[f.tip-1], true
 }
 
-// emojiTip draws the hovered emoji's :name: in Slack's dark tooltip,
-// centred above it, once the pointer has rested EmojiTipDelay. Deferred,
-// so it sits above the rest of the window and outside every clip.
+// editedTip is EditedLabel's tooltip (boot-shared Y5SQ; MessageText's
+// renderEditedLabel is the same): "{date} at {time}", the date
+// toCalendarDateOrNameDay(edited.ts, {shortenMonth}): "Today",
+// "Yesterday" or "Tomorrow" (maybeGetRelativeDay), else "Nov 7th", with
+// ", 2025" unless shouldExcludeYear (this year, or last year within 31
+// days); the time in the time24 pref's clock.
+func editedTip(ts string, now time.Time) string {
+	sec, _, _ := strings.Cut(ts, ".")
+	n, err := strconv.ParseInt(sec, 10, 64)
+	if err != nil || n <= 0 {
+		return ""
+	}
+	t := time.Unix(n, 0).In(now.Location())
+	day := func(x time.Time) time.Time { y, m, d := x.Date(); return time.Date(y, m, d, 0, 0, 0, 0, x.Location()) }
+	var date string
+	switch day(t).Sub(day(now)).Round(time.Hour) {
+	case 0:
+		date = "Today"
+	case -24 * time.Hour:
+		date = "Yesterday"
+	case 24 * time.Hour:
+		date = "Tomorrow"
+	default:
+		date = t.Format("Jan 2") + ordinal(t.Day())
+		exclude := t.Year() == now.Year() || (t.Year() < now.Year() && now.Sub(t) <= 31*24*time.Hour)
+		if !exclude {
+			date += t.Format(", 2006")
+		}
+	}
+	return date + " at " + uipref.Clock(t)
+}
+
+// emojiTip draws the hovered emoji's :name: (or the "(edited)" label's
+// time) in Slack's dark tooltip, centred above it, once the pointer has
+// rested EmojiTipDelay. Deferred, so it sits above the rest of the window
+// and outside every clip.
 func (v *View) emojiTip(gtx layout.Context, st *Style) {
-	name, ok := v.HoveredEmoji()
+	name, ok := v.hoveredTip()
 	if !ok || !v.hovering {
 		return
 	}
@@ -61,6 +118,20 @@ func (v *View) emojiTip(gtx layout.Context, st *Style) {
 		return
 	}
 	f := &v.d.frags[v.tipFrag]
+	// the trigger's box: an emoji image, or the label's word (its line box)
+	cxf, top := f.x+float32(f.size)/2, f.y
+	if f.kind == fText {
+		cxf, top = f.x+f.w/2, f.top
+	}
+	if name == editedTipKey {
+		now := gtx.Now
+		if now.IsZero() {
+			now = time.Now()
+		}
+		if name = editedTip(v.opts.EditedTS, now); name == "" {
+			return
+		}
+	}
 	l := lay{st: st, d: &v.d, scale: v.laidPx, spx: v.laidSp}
 	if l.scale <= 0 {
 		l.scale, l.spx = 1, 1
@@ -69,9 +140,9 @@ func (v *View) emojiTip(gtx layout.Context, st *Style) {
 	sh := st.word(k, name)
 	padX, padY, lh := l.dp(12), l.dp(8), l.dp(18)
 	bw, bh := int(sh.adv+0.999)+2*padX, lh+2*padY
-	cx := int(f.x + float32(f.size)/2)
+	cx := int(cxf)
 	gap, ar := l.dp(8), l.dp(6)
-	r := image.Rect(cx-bw/2, f.y-gap-bh, cx-bw/2+bw, f.y-gap)
+	r := image.Rect(cx-bw/2, top-gap-bh, cx-bw/2+bw, top-gap)
 	if r.Min.X < 0 {
 		r = r.Add(image.Pt(-r.Min.X, 0))
 	}
@@ -87,7 +158,7 @@ func (v *View) emojiTip(gtx layout.Context, st *Style) {
 	paint.FillShape(gtx.Ops, bg, clip.UniformRRect(r, l.dp(8)).Op(gtx.Ops))
 	var path clip.Path
 	path.Begin(gtx.Ops)
-	ax, ay := float32(cx), float32(f.y-gap)
+	ax, ay := float32(cx), float32(top-gap)
 	path.MoveTo(f32.Pt(ax-float32(ar), ay-float32(ar)))
 	path.LineTo(f32.Pt(ax+float32(ar), ay-float32(ar)))
 	path.LineTo(f32.Pt(ax, ay))
