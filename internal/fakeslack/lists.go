@@ -646,8 +646,11 @@ func (s *Server) handleLists(method string, f url.Values) (any, bool) {
 		return ok("starter_templates", []any{
 			map[string]any{"id": "Ttodo", "name": "To-do list", "description": "Keep track of what needs doing", "icon": ":white_check_mark:"}},
 			"templates", []any{
-				map[string]any{"id": "Tproject", "name": "Project tracker", "description": "Plan and track a project", "icon": ":rocket:"},
-				map[string]any{"id": "Tfeedback", "name": "Feedback tracker", "description": "Collect and triage feedback", "icon": ":speech_balloon:"}}), true
+				// Slack's production template ids (PTs7.op), which the Files
+				// view's Templates strip picks by
+				map[string]any{"id": "F07QP7D3TC5", "name": "Project tracker", "description": "Plan and track a project", "icon": ":rocket:"},
+				map[string]any{"id": "F07QS06GTNX", "name": "Feedback tracker", "description": "Collect and triage feedback", "icon": ":speech_balloon:"},
+				map[string]any{"id": "F07QRV73FNF", "name": "Quarterly plan", "description": "Plan the quarter's projects", "icon": ":calendar:"}}), true
 	case "lists.create":
 		name := f.Get("name")
 		if name == "" {
@@ -670,7 +673,7 @@ func (s *Server) handleLists(method string, f url.Values) (any, bool) {
 		case tpl == "Ttodo":
 			t := todoList(now)
 			l.Meta.Schema, l.Meta.TodoMode = t.Meta.Schema, true
-		case tpl == "Tproject", tpl == "Tfeedback":
+		case tpl == "F07QP7D3TC5", tpl == "F07QS06GTNX", tpl == "F07QRV73FNF":
 			k := kitchenList(now)
 			l.Meta.Schema = k.Meta.Schema[:5]
 		default:

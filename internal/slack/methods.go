@@ -139,6 +139,7 @@ type PostOpts struct {
 	Channel, Text, ThreadTS string
 	Broadcast               bool
 	Blocks                  json.RawMessage
+	Attachments             json.RawMessage // e.g. a shared section's [{blocks: [channel_section]}]
 	ClientMsgID             string
 }
 
@@ -152,6 +153,9 @@ func (c *Client) Post(ctx context.Context, o PostOpts) (*Message, error) {
 	}
 	if len(o.Blocks) > 0 {
 		p.Set("blocks", string(o.Blocks))
+	}
+	if len(o.Attachments) > 0 {
+		p.Set("attachments", string(o.Attachments))
 	}
 	if o.ClientMsgID != "" {
 		p.Set("client_msg_id", o.ClientMsgID)

@@ -32,6 +32,7 @@ type model struct {
 
 type sbSection struct {
 	ID, Name, Type, Emoji string
+	DefaultName           bool     // Name is Slack's default for Type (drawn in the locale)
 	EmojiURL              string   // the section emoji's image ("" = Slack's default icon)
 	Collapsed             bool     // saved collapsed state (seeds the sidebar's toggle once)
 	Rows                  []string // conv ids

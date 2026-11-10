@@ -16,6 +16,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -229,7 +230,7 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 			at(gtx, image.Pt(gtx.Dp(10), (sh-gtx.Dp(16))/2), sz, func(gtx layout.Context) layout.Dimensions {
 				return icons.Search(gtx, 16, c.SearchText)
 			})
-			label := "Search " + a.teamName()
+			label := i18n.T("channel_sidebar", "Search {teamName}", "teamName", a.teamName())
 			if q := a.searchQuery; q != "" {
 				label = q
 			}
@@ -307,8 +308,13 @@ func (a *App) railTabFor(id string) railTab {
 			core.TabActivityInbox: "Activity", core.TabFiles: "Files", core.TabLater: "Later",
 			core.TabPlatform: "Tools", core.TabBrowse: "More"}[id]
 	}
+	rt.label = railNS.T(rt.label)
 	return rt
 }
+
+// railNS: the rail's tab names are the client's ("Home", "DMs",
+// "Activity", "Files"), More and Later the view's.
+var railNS = i18n.NewChain("client", "view", "saved_for_later")
 
 // railLines splits "Agents & tools" onto two lines, as Slack wraps it.
 func railLines(label string) []string {

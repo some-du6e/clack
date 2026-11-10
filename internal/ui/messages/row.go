@@ -2379,10 +2379,7 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 				}
 			}
 			ax += dp(gtx, 3)
-			n := "1 reply"
-			if count != 1 {
-				n = strconv.Itoa(count) + " replies"
-			}
+			n := repliesLabel(count)
 			ty := (bh - dp(gtx, 18)) / 2
 			cs := replyCountClass.Enter(gtx, 0, 0)
 			nd := at(gtx, ax, ty, func(gtx layout.Context) layout.Dimensions {
@@ -2392,9 +2389,9 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 			ax += nd.Size.X + dp(gtx, 8)
 			desc := ""
 			if hov {
-				desc = "View thread"
+				desc = msgNS.T("View thread")
 			} else if latest != "" {
-				desc = "Last reply " + ago(tsTime(latest), rc.now)
+				desc = lastReply(tsTime(latest), rc.now)
 			}
 			ds := replyDescClass.Enter(gtx, 0, 0)
 			at(gtx, ax, ty, func(gtx layout.Context) layout.Dimensions {

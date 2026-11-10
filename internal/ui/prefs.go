@@ -89,6 +89,10 @@ type prefs struct {
 	// Windows and Linux (the desktop app keeps them in Electron's session,
 	// per device): nil is the OS locale's language.
 	SpellLanguages []string `json:"spellcheck_languages,omitempty"`
+	// Locale is the account's locale as last seen (Slack's localConfig
+	// user_locale): the next start loads that bundle from the cache before
+	// users.prefs answers (locale_wire.go).
+	Locale string `json:"locale,omitempty"`
 }
 
 func (a *App) prefsPath() string {

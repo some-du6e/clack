@@ -14,6 +14,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/taut"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/slackc"
@@ -452,7 +453,7 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 		st.Mode = modeThread
 		// Slack's MessageInput: "Reply to thread…" only under the
 		// nested_secondary_view experiment, else "Reply…".
-		st.Placeholder = "Reply…"
+		st.Placeholder = i18n.T("threads", "Reply…")
 	default:
 		st.Mode = modeChannel
 	}

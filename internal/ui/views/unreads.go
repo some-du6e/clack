@@ -128,6 +128,9 @@ type Unreads struct {
 
 	focused bool
 	active  int       // the keyboard's row (index into rows), -1: none
+	kbMode  bool      // the last input was a key: the active row shows the ring
+	listH   int       // the list's height last frame
+	page    int       // a page scroll waiting for the layout: vkPageFirst / vkPageLast
 	top     *unrFrame // the frame whose header is topmost on screen
 	notes   actNotes
 	rng     *rand.Rand
@@ -823,20 +826,26 @@ func (v *Unreads) body(gtx C) D {
 	if v.markAll.Clicked(gtx) {
 		v.markAllRead()
 	}
-	// a click focuses the list (UnreadsList's keyboard)
-	area := clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops)
-	event.Op(gtx.Ops, v)
-	area.Pop()
+	// a press anywhere on the list focuses it (UnreadsList's keyboard);
+	// its area goes over the rows (below), letting presses through
 	for {
 		ev, ok := gtx.Event(pointer.Filter{Target: v, Kinds: pointer.Press})
 		if !ok {
 			break
 		}
 		if _, ok := ev.(pointer.Event); ok {
+			v.kbMode = false
 			gtx.Execute(key.FocusCmd{Tag: v})
 		}
 	}
 	d := v.scrollList(gtx, &v.list, len(v.rows), func(gtx C, i int) D { return v.rowAt(gtx, i) })
+	v.listH = d.Size.Y
+	func() {
+		defer clip.Rect{Max: d.Size}.Push(gtx.Ops).Pop()
+		defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+		event.Op(gtx.Ops, v)
+	}()
+	v.afterPage()
 	// loadPost: the virtual list asks for more once its end is near
 	if n := len(v.rows); n > 0 && v.rows[n-1].kind == unrLoading {
 		if p := v.list.Position; p.First+p.Count >= n-unrLoadAhead {
@@ -869,8 +878,10 @@ func (v *Unreads) rowAt(gtx C, i int) D {
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 	w := gtx.Constraints.Max.X
 	d := v.drawRow(gtx, r, i)
-	if v.focused && i == v.active && r.kind != unrHeader {
-		border(gtx, image.Rectangle{Max: d.Size}, gtx.Dp(4), max(1, gtx.Dp(2)), v.p.Focus)
+	if v.focused && v.kbMode && i == v.active && r.kind != unrHeader {
+		// .c-virtual_list__item--focus:focus:after: inset 4px, radius 8
+		in := gtx.Dp(4)
+		v.vkRing(gtx, image.Rect(in, in, d.Size.X-in, d.Size.Y-in), gtx.Dp(8))
 	}
 	_ = w
 	return d
@@ -1453,8 +1464,10 @@ func (v *Unreads) keys(gtx C) {
 			key.Filter{Focus: v, Name: key.NameDownArrow},
 			key.Filter{Focus: v, Name: key.NameLeftArrow},
 			key.Filter{Focus: v, Name: key.NameRightArrow},
-			key.Filter{Focus: v, Name: key.NamePageUp, Required: key.ModShift},
-			key.Filter{Focus: v, Name: key.NamePageDown, Required: key.ModShift},
+			key.Filter{Focus: v, Name: key.NamePageUp, Optional: key.ModShift},
+			key.Filter{Focus: v, Name: key.NamePageDown, Optional: key.ModShift},
+			key.Filter{Focus: v, Name: key.NameHome},
+			key.Filter{Focus: v, Name: key.NameEnd},
 			key.Filter{Focus: v, Name: "R"},
 			key.Filter{Focus: v, Name: key.NameReturn},
 			key.Filter{Focus: v, Name: key.NameEnter},
@@ -1477,6 +1490,7 @@ func (v *Unreads) keys(gtx C) {
 			if e.State != key.Press && !(e.State == key.Release && (e.Name == key.NameReturn || e.Name == key.NameEnter)) {
 				continue
 			}
+			v.kbMode = true
 			v.key(e)
 		}
 	}
@@ -1546,8 +1560,15 @@ func (v *Unreads) key(e key.Event) {
 			}
 			v.h.OpenThread(cur.msg.Channel, root)
 		}
-	case key.NamePageUp, key.NamePageDown: // previous / next channel
-		if e.State != key.Press || cur.f == nil {
+	case key.NamePageUp, key.NamePageDown:
+		if e.State != key.Press {
+			return
+		}
+		if !e.Modifiers.Contain(key.ModShift) {
+			v.pageKey(e.Name == key.NamePageDown) // the virtual list's own
+			return
+		}
+		if cur.f == nil { // shift: previous / next channel
 			return
 		}
 		at := -1
@@ -1576,10 +1597,90 @@ func (v *Unreads) key(e key.Event) {
 			return
 		}
 		v.focusHeader(target)
+	case key.NameHome, key.NameEnd: // the virtual list's: the first / last row
+		if e.State != key.Press {
+			return
+		}
+		for j := range v.rows {
+			i := j
+			if e.Name == key.NameEnd {
+				i = len(v.rows) - 1 - j
+			}
+			if unrFocusable(v.rows[i].kind) {
+				v.active = i
+				v.list.ScrollTo(i)
+				break
+			}
+		}
 	case key.NameReturn, key.NameEnter: // onEnterKeyCommand, on keyup
 		if e.State == key.Release && cur.kind == unrFooter {
 			v.markAllRead()
 		}
+	}
+	v.h.Invalidate()
+}
+
+// pageKey is BaseKeyboardNavigableList's PageUp/PageDown: scroll a page
+// (the height − 21) and activate the first (up, scrolled to the top) or
+// last focusable row of the new view once the list has moved; at either
+// end, the first or last row in view.
+func (v *Unreads) pageKey(down bool) {
+	p := v.list.Position
+	atTop := p.First == 0 && p.Offset <= 1
+	atBottom := p.First+p.Count >= len(v.rows) && p.OffsetLast >= -1
+	switch {
+	case !down && atTop:
+		v.page = vkPageFirst
+	case down && atBottom:
+		v.page = vkPageLast
+	case down:
+		v.list.Position.Offset += max(0, v.listH-21)
+		v.page = vkPageLast
+	default:
+		v.list.Position.Offset -= max(0, v.listH-21)
+		v.page = -vkPageFirst // scroll the row to the top too
+	}
+	v.list.Position.BeforeEnd = true
+}
+
+// afterPage picks the page key's row from the laid-out list: the rows
+// that are wholly in view (getFocusableItemsInView).
+func (v *Unreads) afterPage() {
+	if v.page == vkNone {
+		return
+	}
+	pg := v.page
+	v.page = vkNone
+	p := v.list.Position
+	first, last := p.First, p.First+p.Count-1
+	if p.Offset > 1 {
+		first++
+	}
+	if p.OffsetLast < -1 {
+		last--
+	}
+	pick := -1
+	if pg == vkPageLast {
+		for i := min(last, len(v.rows)-1); i >= first; i-- {
+			if unrFocusable(v.rows[i].kind) {
+				pick = i
+				break
+			}
+		}
+	} else {
+		for i := max(first, 0); i <= last && i < len(v.rows); i++ {
+			if unrFocusable(v.rows[i].kind) {
+				pick = i
+				break
+			}
+		}
+	}
+	if pick < 0 {
+		return
+	}
+	v.active = pick
+	if pg == -vkPageFirst {
+		v.list.ScrollTo(pick)
 	}
 	v.h.Invalidate()
 }

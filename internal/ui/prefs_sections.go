@@ -304,18 +304,6 @@ func ensureUserAsync(a *App, id string) {
 	}()
 }
 
-// localeName is Slack's language label for a locale code.
-func localeName(code string) string {
-	if n, ok := map[string]string{
-		"en-US": "English (US)", "en-GB": "English (UK)", "en-IN": "English (India)", "de-DE": "Deutsch (Deutschland)",
-		"es-ES": "Español (España)", "es-LA": "Español (Latinoamérica)", "fr-FR": "Français (France)", "it-IT": "Italiano",
-		"ja-JP": "日本語", "ko-KR": "한국어", "pt-BR": "Português (Brasil)", "zh-CN": "简体中文", "zh-TW": "繁體中文",
-	}[code]; ok {
-		return n
-	}
-	return code
-}
-
 // confirmMarkAllRead is Shift+Esc: with confirm_clear_all_unreads (Mark
 // as read > "Prompt to confirm", on by default) it asks first, like Slack.
 func (a *App) confirmMarkAllRead() {

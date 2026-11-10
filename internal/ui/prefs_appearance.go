@@ -73,6 +73,7 @@ func (p *prefsModal) themeTabs(f *prefsForm, cur string) {
 	h := gtx.Dp(32)
 	for _, t := range []struct{ id, label string }{{"slack", "Slack themes"}, {"custom", "Custom theme"}} {
 		t := t
+		t.label = pt(t.label)
 		f.record("tab", "themetab."+t.id, t.label, t.id == cur, true)
 		b := p.btn("themetab." + t.id)
 		w := a.th.Measure(gtx, 13, theme.Bold, t.label) + gtx.Dp(16)
@@ -126,9 +127,10 @@ func (p *prefsModal) slackThemes(f *prefsForm, curID string) {
 				col = 0
 			}
 			group = pr.Group
-			f.record("legend", "", group, false, true)
+			gl := pt(group)
+			f.record("legend", "", gl, false, true)
 			at(gtx, image.Pt(0, f.y), image.Pt(f.w, gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {
-				return a.th.Label(gtx, 13, theme.Bold, a.th.C.Fg, group)
+				return a.th.Label(gtx, 13, theme.Bold, a.th.C.Fg, gl)
 			})
 			f.y += gtx.Dp(24)
 		}

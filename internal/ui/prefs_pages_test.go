@@ -120,7 +120,7 @@ var slackPages = map[string][]want{
 		lg("Bring emails into Slack"), btn("Get a Forwarding Address"),
 	},
 	"language_region": {
-		lg("Language"), selOff("English (US)"), lg("Time zone"), ck("Set time zone automatically"), selOff("(UTC-08:00) Pacific Time (US and Canada)"),
+		lg("Language"), sel("English (US)"), lg("Time zone"), ck("Set time zone automatically"), selOff("(UTC-08:00) Pacific Time (US and Canada)"),
 		lg("Keyboard layout"), selOff("English (US)"), lg("Spellcheck"), ck("Enable spellcheck on your messages and canvases"),
 		{"select", spell.Labels[spell.DefaultLanguages()[0]], false}, // the languages (Windows, Linux)
 	},
