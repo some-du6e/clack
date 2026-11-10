@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -41,6 +42,7 @@ import (
 	_ "golang.org/x/image/webp"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
@@ -584,27 +586,65 @@ func attOneDecimal(f float64) string {
 
 // ---- the + menu ----
 
-// Menu opens the attach (+) menu above the button; anchor is the button in
-// window coordinates.
+// The + menu is Slack's ShortcutsMenu (boot-render, Dv) over
+// useComposerIAFormatter: its rows, in Slack's order, are
+//
+//   - the file rows: with unified_file_picker on, one row ("File, canvas,
+//     or list", canvas-browser) opening the UnifiedFilePicker; off,
+//     buildOriginalItems' Canvas (the canvas picker), List (the list
+//     picker) and Recent file (recently uploaded files);
+//   - New Google Calendar meeting (channel_meeting_invite), GIF
+//     (allow_native_gif_picker: the emoji and GIF picker on its GIFs tab,
+//     the picked GIF added to the draft), Enable GIFs for your team,
+//     Salesforce record;
+//   - Text snippet (text-snippet, ⌘⇧Enter / Ctrl+Shift+Enter): the snippet
+//     dialog;
+//   - Record video clip and Record audio clip (only with a MediaRecorder);
+//   - Workflow (hermes__read: the workflow picker), Email
+//     (productivity_email_in_composer), Poll (polls);
+//   - Upload from your computer (laptop; ⌘O / Ctrl+O in the desktop app).
+//
+// Clack draws the rows it can run Slack's way: Text snippet and Upload
+// from your computer, then the app shortcuts. Not drawn, because the
+// surface they open isn't in Clack: the file rows (UnifiedFilePicker,
+// the canvas picker, the composer's list insert, the recent-files menu),
+// GIF (Clack's GIF picker sends a GIF at once; Slack's adds it to the
+// draft's gifUnfurls), Workflow (no workflow picker), the clip rows (no
+// recorder) and the Calendar, Salesforce, Email and Poll rows (their
+// gates are off for the account). Slack has no "Paste image from
+// clipboard" row (pasting does that).
+
 // ShortcutItems, when set (internal/ui/blockkit), adds the app
 // shortcuts section to the "+" menu for channel ch: recent global
 // shortcuts and "Browse all shortcuts".
 var ShortcutItems func(h popups.Host, ch string, anchor image.Rectangle) []popups.MenuItem
 
-func (a *attachments) Menu(anchor image.Rectangle, ch string) {
-	items := []popups.MenuItem{
-		{Label: "Upload from your computer", Icon: "upload", Do: a.Pick},
+// plusMenu is what the composer hands the + menu.
+type plusMenu struct {
+	ch      string
+	snippet func() // Text snippet: the snippet dialog
+}
+
+// plusMenuItems is useComposerIAFormatter's rows that Clack draws.
+func (a *attachments) plusMenuItems(pm plusMenu) []popups.MenuItem {
+	mac := runtime.GOOS == "darwin"
+	snippetKey, uploadKey := "Ctrl+Shift+Enter", "Ctrl+O"
+	if mac {
+		snippetKey, uploadKey = "⌘⇧Enter", "⌘O"
 	}
-	if attClipboardSupported() {
-		items = append(items, popups.MenuItem{Label: "Paste image from clipboard", Icon: "image", Do: func() { a.pasteImage(true) }})
+	var items []popups.MenuItem
+	if pm.snippet != nil {
+		items = append(items, popups.MenuItem{Label: i18n.T("menu_file", "Text snippet"), Icon: "text-snippet", Hint: snippetKey, Do: pm.snippet})
 	}
-	items = append(items,
-		popups.Sep(),
-		popups.MenuItem{Label: "Text snippet", Icon: "code", Disabled: true},
-		popups.MenuItem{Label: "Canvas", Icon: "canvas", Disabled: true},
-	)
+	return append(items, popups.MenuItem{Label: i18n.T("menu_file", "Upload from your computer"), Icon: "laptop", Hint: uploadKey, Do: a.Pick})
+}
+
+// Menu opens the + menu above the button; anchor is the button in window
+// coordinates.
+func (a *attachments) Menu(anchor image.Rectangle, pm plusMenu) {
+	items := a.plusMenuItems(pm)
 	if ShortcutItems != nil {
-		if more := ShortcutItems(a.h, ch, anchor); len(more) > 0 {
+		if more := ShortcutItems(a.h, pm.ch, anchor); len(more) > 0 {
 			items = append(append(items, popups.Sep()), more...)
 		}
 	}

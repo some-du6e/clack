@@ -3,6 +3,7 @@ package composer
 import (
 	"image"
 	"image/color"
+	"strings"
 
 	"gioui.org/f32"
 	"gioui.org/font"
@@ -145,4 +146,58 @@ func label(gtx layout.Context, sh *text.Shaper, s textStyle, txt string) layout.
 func offset(gtx layout.Context, x, y int, w layout.Widget) layout.Dimensions {
 	defer op.Offset(image.Pt(x, y)).Push(gtx.Ops).Pop()
 	return w(gtx)
+}
+
+// richSpan is a run of text in one style.
+type richSpan struct {
+	text string
+	st   textStyle
+}
+
+// richLabel wraps spans word by word within gtx.Constraints.Max.X on the
+// first span's line height, each word in its span's style (a dialog body
+// with a <b> run).
+func richLabel(gtx layout.Context, sh *text.Shaper, spans []richSpan) layout.Dimensions {
+	if len(spans) == 0 {
+		return layout.Dimensions{}
+	}
+	w := gtx.Constraints.Max.X
+	lh := gtx.Sp(spans[0].st.LineHeight)
+	x, line, maxX := 0, 0, 0
+	for _, sp := range spans {
+		for _, wd := range richWords(sp.text) {
+			m := op.Record(gtx.Ops)
+			g := gtx
+			g.Constraints = layout.Constraints{Max: image.Pt(1<<20, lh)}
+			d := label(g, sh, sp.st, wd)
+			call := m.Stop()
+			if x > 0 && x+d.Size.X > w && strings.TrimSpace(wd) != "" {
+				x, line = 0, line+1
+			}
+			off := op.Offset(image.Pt(x, line*lh)).Push(gtx.Ops)
+			call.Add(gtx.Ops)
+			off.Pop()
+			x += d.Size.X
+			maxX = max(maxX, x)
+		}
+	}
+	return layout.Dimensions{Size: image.Pt(maxX, (line+1)*lh)}
+}
+
+// richWords splits s into words that keep the spaces after them.
+func richWords(s string) []string {
+	var out []string
+	start, inSpace := 0, false
+	for i, r := range s {
+		sp := r == ' '
+		if !sp && inSpace {
+			out = append(out, s[start:i])
+			start = i
+		}
+		inSpace = sp
+	}
+	if start < len(s) {
+		out = append(out, s[start:])
+	}
+	return out
 }

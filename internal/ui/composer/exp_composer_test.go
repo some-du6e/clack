@@ -3,6 +3,9 @@ package composer
 import (
 	"image"
 	"net/url"
+	"runtime"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -157,11 +160,11 @@ func TestScheduleDialogLikeSlack(t *testing.T) {
 	old := core.TestSystemZone
 	core.TestSystemZone = "America/Chicago"
 	t.Cleanup(func() { core.TestSystemZone = old })
-	if got := scheduleZoneLabel(); got != "Central Time (US & Canada)" {
+	if got := scheduleZoneLabel(); got != "Central Time (US and Canada)" {
 		t.Errorf("zone label %q", got)
 	}
 	core.TestSystemZone = "Mars/Olympus_Mons" // not listed: the detector gives up
-	if got := scheduleZoneLabel(); got != "Pacific Time (US & Canada)" {
+	if got := scheduleZoneLabel(); got != "Pacific Time (US and Canada)" {
 		t.Errorf("fallback zone label %q", got)
 	}
 
@@ -211,5 +214,187 @@ func TestScheduleDialogLikeSlack(t *testing.T) {
 	m.sameTZ = true
 	if got := scheduleZoneDetails(at, m, false); got != "" {
 		t.Errorf("same zone details %q", got)
+	}
+}
+
+// uploadLog records files.getUploadURL forms (fakeslack still answers).
+func uploadLog(t *testing.T, fs *fakeslack.Server) func() []url.Values {
+	t.Helper()
+	var mu sync.Mutex
+	var got []url.Values
+	fs.SetHook(func(method string, f url.Values) (any, bool) {
+		if method == "files.getUploadURL" {
+			mu.Lock()
+			got = append(got, f)
+			mu.Unlock()
+		}
+		return nil, false
+	})
+	t.Cleanup(func() { fs.SetHook(nil) })
+	return func() []url.Values {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]url.Values(nil), got...)
+	}
+}
+
+// The snippet dialog (wc+S): Ctrl+Shift+Enter moves the message into it
+// (quotes straightened) and empties the composer; Create Snippet uploads
+// "Untitled" with snippet_type and shares it to the conversation with
+// the message; unshared it is only uploaded.
+func TestSnippetDialogLikeSlack(t *testing.T) {
+	app, fs := fakeslackApp(t)
+	stubTyping(t)
+	uploads := uploadLog(t, fs)
+	ch := fs.ChannelIDs()[0]
+	clearDraft(ch, "")
+	t.Cleanup(func() { clearDraft(ch, "") })
+	h := &ovHost{slickHost: &slickHost{app: app, th: theme.New(false)}}
+	c := New(h, ch, "")
+	t.Cleanup(c.Close)
+	d := NewDoc()
+	d.Insert(0, "say “hi” to ‘everyone’", Attr{})
+	c.ed.SetDoc(d)
+	c.openSnippet(true)
+	sd, _ := h.last().(*popups.Modal)
+	if sd == nil {
+		t.Fatal("no dialog")
+	}
+	if !c.ed.Empty() {
+		t.Fatal("Ctrl+Shift+Enter left the message in the composer")
+	}
+	dlg := lastSnippet
+	if dlg == nil || dlg.code.ed.Text() != `say "hi" to 'everyone'` || dlg.typ != "auto" || !dlg.shareOn || dlg.ch != ch {
+		t.Fatalf("dialog state: %+v", dlg)
+	}
+	layOverlay(dlg.m)
+	if dlg.goDisabled() {
+		t.Fatal("Create Snippet off with content")
+	}
+	dlg.msg.SetText("here it is")
+	if !dlg.submit() {
+		t.Fatal("submit refused")
+	}
+	waitUntil(t, "the share", func() bool { return len(fs.Shared()) > 0 })
+	ups := uploads()
+	if len(ups) != 1 || ups[0].Get("filename") != "Untitled" || ups[0].Get("snippet_type") != "auto" {
+		t.Fatalf("getUploadURL %v", ups)
+	}
+	sh := fs.Shared()[0]
+	if sh.Channel != ch || sh.Comment != "here it is" {
+		t.Fatalf("shared %+v", sh)
+	}
+
+	// named, typed, not shared: uploaded only
+	dlg = openSnippetDialog(c, snippetSpec{text: "fmt.Println(1)", ch: ch})
+	dlg.title.SetText("main.go")
+	dlg.typ = "go"
+	dlg.shareOn = false
+	if !dlg.submit() {
+		t.Fatal("unshared submit refused")
+	}
+	waitUntil(t, "the second upload", func() bool { return len(uploads()) == 2 })
+	time.Sleep(200 * time.Millisecond)
+	if u := uploads()[1]; u.Get("filename") != "main.go" || u.Get("snippet_type") != "go" {
+		t.Fatalf("unshared upload %v", u)
+	}
+	if n := len(fs.Shared()); n != 1 {
+		t.Fatalf("an unshared snippet was shared (%d shares)", n)
+	}
+
+	// isGoButtonDisabled: no content, or a title over 255 characters
+	dlg = openSnippetDialog(c, snippetSpec{ch: ch})
+	if !dlg.goDisabled() {
+		t.Error("Create Snippet on without content")
+	}
+	dlg.code.ed.SetText("x")
+	dlg.title.SetText(strings.Repeat("a", 256))
+	if !dlg.goDisabled() {
+		t.Error("Create Snippet on with a 256-character title")
+	}
+	// the speed bump: changed content asks first
+	n := len(h.overlays)
+	if dlg.closeGuard() || len(h.overlays) != n+1 {
+		t.Error("closing with changed content didn't ask")
+	}
+	dlg = openSnippetDialog(c, snippetSpec{text: "same", ch: ch})
+	if !dlg.closeGuard() {
+		t.Error("closing unchanged content asked")
+	}
+}
+
+// getFileTypeOptions: Auto Detect Type, Plain Text, then the types by
+// label; an externally shared channel isn't offered five of them.
+func TestSnippetTypeOptions(t *testing.T) {
+	opts := snippetTypeOptions(false)
+	if len(opts) != 2+len(snippetTypes) || opts[0].key != "auto" || opts[1].key != "text" {
+		t.Fatalf("head %v (%d)", opts[:2], len(opts))
+	}
+	for i := 3; i < len(opts); i++ {
+		if strings.ToLower(opts[i-1].label) > strings.ToLower(opts[i].label) {
+			t.Fatalf("not sorted: %q before %q", opts[i-1].label, opts[i].label)
+		}
+	}
+	ext := snippetTypeOptions(true)
+	if len(ext) != len(opts)-5 {
+		t.Fatalf("external: %d options, want %d", len(ext), len(opts)-5)
+	}
+	for _, o := range ext {
+		if snippetDisallowedExt[o.key] {
+			t.Errorf("external offers %s", o.key)
+		}
+	}
+	if snippetTypeLabel("javascript") != "JavaScript" || snippetTypeLabel("auto") != "Auto Detect Type" {
+		t.Error("labels")
+	}
+}
+
+// The paste-limit dialog's Create a Snippet takes the refused paste and
+// keeps the composer's text to put back on cancel.
+func TestPasteLimitCreatesSnippet(t *testing.T) {
+	app, _ := syntheticApp(t, func(*store.Store) {})
+	stubTyping(t)
+	h := &ovHost{slickHost: &slickHost{app: app, th: theme.New(false)}}
+	c := freshComposer(t, h)
+	d := NewDoc()
+	d.Insert(0, "draft", Attr{})
+	c.ed.SetDoc(d)
+	c.ed.paste(strings.Repeat("z", pasteMaxLength+1))
+	if c.ed.RefusedPaste() == "" {
+		t.Fatal("the refused paste wasn't kept")
+	}
+	c.pasteLimitDialog(c.ed.RefusedPaste())
+	if _, ok := h.last().(*popups.Modal); !ok {
+		t.Fatal("no paste-limit dialog")
+	}
+	c.openSnippetFromPaste(c.ed.RefusedPaste())
+	dlg := lastSnippet
+	if dlg.code.ed.Text() != strings.Repeat("z", pasteMaxLength+1) || c.ed.Doc().Text() != "draft" {
+		t.Fatal("the paste didn't become the snippet, or the composer changed")
+	}
+	c.ed.SetDoc(NewDoc())
+	dlg.cancel()
+	if c.ed.Doc().Text() != "draft" {
+		t.Fatal("cancel didn't put the composer's text back")
+	}
+}
+
+// useComposerIAFormatter's rows Clack draws, in Slack's order.
+func TestPlusMenuRows(t *testing.T) {
+	app, _ := syntheticApp(t, func(*store.Store) {})
+	h := &ovHost{slickHost: &slickHost{app: app, th: theme.New(false)}}
+	a := newAttachments(h)
+	items := a.plusMenuItems(plusMenu{ch: tChGen, snippet: func() {}})
+	if len(items) != 2 || items[0].Label != "Text snippet" || items[0].Icon != "text-snippet" ||
+		items[1].Label != "Upload from your computer" || items[1].Icon != "laptop" {
+		t.Fatalf("rows %+v", items)
+	}
+	for _, it := range items {
+		if it.Label == "Paste image from clipboard" {
+			t.Error("Slack's + menu has no Paste image from clipboard")
+		}
+	}
+	if runtime.GOOS != "darwin" && (items[0].Hint != "Ctrl+Shift+Enter" || items[1].Hint != "Ctrl+O") {
+		t.Errorf("hints %q %q", items[0].Hint, items[1].Hint)
 	}
 }

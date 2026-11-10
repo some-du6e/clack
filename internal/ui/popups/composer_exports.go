@@ -60,3 +60,10 @@ func ModalBodyOrigin(gtx layout.Context, m *Modal) image.Point { return dtModalO
 
 // CalendarDate is toCalendarDate's default form, "November 12th, 2026".
 func CalendarDate(day time.Time) string { return dtDateLabel(day, day, dtLong) }
+
+// Rect is the modal card's window rectangle at its last layout.
+func (m *Modal) Rect() image.Rectangle { return m.rect }
+
+// ColorsFor is popups' palette for th (input borders, focus rings), for
+// dialogs drawn outside popups.
+func ColorsFor(th *theme.Theme) *Colors { return colorsOf(th) }

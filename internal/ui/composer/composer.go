@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/paint"
@@ -221,6 +222,7 @@ func NewEdit(h Host, m core.Message, onDone func()) *Composer {
 
 func (c *Composer) init() {
 	c.ed = NewEditor()
+	c.ed.Snippets = c.edit == nil // MessageInput's enableSnippetCreation; not the edit composer
 	c.bindSlugs()
 	if c.api.a != nil {
 		warmEmoji()
@@ -589,11 +591,13 @@ func (c *Composer) handleEditor(gtx layout.Context) {
 		case EvPasted:
 			c.att.PasteClipboardImage()
 		case EvPasteLimit:
-			c.pasteLimitDialog()
+			c.pasteLimitDialog(c.ed.RefusedPaste())
+		case EvSnippet:
+			c.openSnippet(true)
 		case EvPlusMenu:
 			// onPlusMenuShortcut: forcePlusMenuOpen, the + menu at its button
 			if c.edit == nil && c.ui.rect[crAttach] != (image.Rectangle{}) && !c.ui.hidden(crAttach) {
-				c.att.Menu(c.ui.rect[crAttach].Add(c.Origin).Add(image.Pt(0, c.top)), c.ch)
+				c.att.Menu(c.ui.rect[crAttach].Add(c.Origin).Add(image.Pt(0, c.top)), c.plusMenu())
 			}
 		case EvNavBack, EvNavForward:
 			if n, ok := c.h.(historyNavigator); ok && c.edit == nil {
@@ -653,7 +657,7 @@ func (c *Composer) handleActions(gtx layout.Context) {
 			c.toggleShowFormatting()
 			c.ed.Focus(gtx)
 		case caAttach:
-			c.att.Menu(a.Anchor, c.ch)
+			c.att.Menu(a.Anchor, c.plusMenu())
 		case caEmoji:
 			c.h.OpenEmojiPicker(image.Pt(a.Anchor.Min.X, a.Anchor.Min.Y), func(name string) { c.InsertEmoji(name) })
 		case caMention:
@@ -685,6 +689,13 @@ func (c *Composer) handleActions(gtx layout.Context) {
 		}
 		c.h.Invalidate()
 	}
+}
+
+// plusMenu is the + menu's composer side: the conversation and the
+// Text snippet row's snippet dialog (create-text-snippet, the same dialog
+// Ctrl+Shift+Enter opens with the message).
+func (c *Composer) plusMenu() plusMenu {
+	return plusMenu{ch: c.ch, snippet: func() { c.openSnippet(false) }}
 }
 
 // mentionTrigger is the @ button's maybeTriggerMentionAutocomplete: it
@@ -853,17 +864,27 @@ func (c *Composer) schedule(t time.Time) {
 
 // ---- sending ----
 
-// pasteLimitDialog is PasteLimitDialog: the title, the limit's
-// explanation and OK.
-func (c *Composer) pasteLimitDialog() {
+// pasteLimitDialog is renderPasteLimitDialog: the title, the limit's
+// explanation, "Create a Snippet" (the snippet dialog with the refused
+// paste) and OK.
+func (c *Composer) pasteLimitDialog(pasted string) {
 	th := c.h.Theme()
 	m := popups.NewModal(c.h, popups.ModalOpts{
-		Title:        pasteLimitTitle,
+		Title:        i18n.T("msg_input", pasteLimitTitle),
 		EnterSubmits: true,
 		Body: func(gtx layout.Context) layout.Dimensions {
-			return label(gtx, th.Shaper, textStyle{Size: 15, LineHeight: 22, Color: th.C.Fg}, pasteLimitText)
+			st := textStyle{Size: 15, LineHeight: 22, Color: th.C.Fg}
+			b := st
+			b.Weight = font.Bold
+			return richLabel(gtx, th.Shaper, []richSpan{{pasteLimitText, st}, {pasteLimitBold, b}, {pasteLimitAfter, st}})
 		},
-		Buttons: []*popups.ModalButton{{Label: "OK", Kind: popups.BtnPrimary, Do: func() bool { return true }}},
+		Buttons: []*popups.ModalButton{
+			{Label: i18n.T("msg_input", "Create a Snippet"), Kind: popups.BtnOutline, Do: func() bool {
+				c.openSnippetFromPaste(pasted)
+				return true
+			}},
+			{Label: i18n.T("msg_input", "OK"), Kind: popups.BtnPrimary, Do: func() bool { return true }},
+		},
 	}).OldDialog()
 	c.h.ShowOverlay(m)
 }

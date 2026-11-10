@@ -74,6 +74,11 @@ type ModalOpts struct {
 	// submit).
 	OnCmdEnter func()
 	OnClose    func()
+	// CloseGuard, when set, is asked before the user closes the modal
+	// (the close button, Escape, a click outside): false keeps it open,
+	// and the owner shows its speed bump (Slack's getShouldShowSpeedBump).
+	// A button whose Do returns true closes it without asking.
+	CloseGuard func() bool
 	// NoClose hides the header close button.
 	NoClose bool
 	// PadX and HeadH override the side padding (default 28) and header
@@ -102,6 +107,10 @@ type ModalOpts struct {
 	SubtitleCaption bool
 	// FooterNote sits at the footer's left ("Step 1 of 2").
 	FooterNote string
+	// FooterLeft draws at the footer's left, vertically centred on the
+	// buttons, with gtx.Constraints.Max the room left of them (Slack's
+	// c-dialog__footer_text: the snippet dialog's share inputs).
+	FooterLeft func(gtx layout.Context) layout.Dimensions
 	// Hero is a full-width strip HeroH dp tall above the header, in the
 	// card's rounded top (the broadcast warning's illustration header,
 	// a c-sk-modal_header before the title bar); the close button sits on
@@ -155,9 +164,21 @@ func (m *Modal) press(b *ModalButton) {
 		return
 	}
 	if b.Do == nil || b.Do() {
-		m.Dismiss()
+		m.base.Dismiss()
 	}
 }
+
+// Dismiss closes the modal, unless CloseGuard keeps it open.
+func (m *Modal) Dismiss() {
+	if m.o.CloseGuard != nil && !m.done && !m.o.CloseGuard() {
+		return
+	}
+	m.base.Dismiss()
+}
+
+// Close closes the modal without asking CloseGuard (the owner's own
+// close: the speed bump's discard).
+func (m *Modal) Close() { m.base.Dismiss() }
 
 // Layout draws the modal.
 func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
@@ -402,6 +423,13 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 						x -= d.Size.X
 						macroAt(gtx, call, image.Pt(x, fy+footPad))
 						x -= dp(gtx, 12)
+					}
+					if m.o.FooterLeft != nil {
+						call, d := record(gtx, func(gtx layout.Context) layout.Dimensions {
+							gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, x-lx), dp(gtx, 120))}
+							return m.o.FooterLeft(gtx)
+						})
+						macroAt(gtx, call, image.Pt(lx, fy+footPad+(dp(gtx, 36)-d.Size.Y)/2))
 					}
 				}
 				if m.o.Over != nil {
