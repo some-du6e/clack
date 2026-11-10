@@ -70,6 +70,8 @@ func init() {
 			return views.NewLater(a)
 		case "threads":
 			return views.NewThreads(a)
+		case "unreads":
+			return views.NewUnreads(a)
 		case "directories":
 			d := views.NewDirectories(a)
 			// "Browse channels" (Add channels, the ⊕ menu) and "Browse all

@@ -89,9 +89,9 @@ var slackPages = map[string][]want{
 		lg("App agents & assistants"), ckOff("Show AI Agents in top bar"), ck("Show Agents in direct messages"),
 	},
 	"sidebar": {
-		lg("Channel organization"), ckOff("Show suggestions for getting started in new channels"), ck("Sort channels into sidebar sections automatically"),
+		lg("Channel organization"), ck("Show suggestions for getting started in new channels"), ck("Sort channels into sidebar sections automatically"),
 		lg("Show activity"), ck("Show a dot on the Home icon when there is unread activity"),
-		lg("Always show in the sidebar:"), ckOff("Unreads"), ck("Huddles"), ck("Threads"), ck("Saved"), ck("Drafts & sent"), ck("Directories"),
+		lg("Always show in the sidebar:"), ck("Unreads"), ck("Huddles"), ck("Threads"), ck("Saved"), ck("Drafts & sent"), ck("Directories"),
 		lg("Filter conversations by:"), rd("Active only"), rd("Unreads"), rd("Mentions"), rd("All"),
 		lg("Sort conversations by:"), rd("A–Z"), rd("Most recent"), rd("Priority"),
 		lg("Sidebar Organization"), ck("Show profile photos next to DMs"), ck("Separate private channels from public ones in sidebar"),
@@ -284,7 +284,7 @@ func TestPrefsAuditAppliedRoundTrip(t *testing.T) {
 	p.setPref("enable_threads_view", false)
 	waitFor(t, a, "enable_threads_view", func() bool {
 		v, _ := fs.Pref("enable_threads_view")
-		return v == false && reflect.DeepEqual(ca.Prefs().HiddenViews, []string{"enable_threads_view"})
+		return v == false && reflect.DeepEqual(ca.Prefs().HiddenViews, []string{"enable_unread_view", "enable_threads_view"})
 	})
 	snap()
 	a.sidebar.rebuild(a.model())

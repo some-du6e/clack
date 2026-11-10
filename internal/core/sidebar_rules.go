@@ -118,6 +118,10 @@ var defaultExperimentGroups = map[string]string{
 	// Navigation > "Show Agents in direct messages" shows in the live
 	// dialog (TabRail: Mq && n7)
 	"agents_in_dm_sidebar": "on", "agents_in_dm_sidebar_pref": "on",
+	// Home > "Show suggestions for getting started in new channels" shows
+	// in the live dialog, and EnableChannelJoinExperiencePref draws it only
+	// under isAutoSortRolloutActive: suggested_sections_auto_sort_v2 is on
+	"suggested_sections_auto_sort_v2": "on",
 }
 
 func (a *App) sidebarExperiments() sidebarExp {

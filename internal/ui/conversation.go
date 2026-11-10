@@ -120,6 +120,8 @@ type convo struct {
 	fitH     int             // thread content height the composer was placed under (0: bottom)
 	compRect image.Rectangle // window coords (emoji picker anchor)
 	jp       *joinPane       // the join pane / archived bar in place of the composer (joinpane.go)
+	banner   *joinBanner     // the channel join banner over the composer (joinbanner.go)
+	bannerH  int             // its height last frame
 	post     core.Posting    // posting restrictions, cached at postAt
 	postAt   time.Time
 }
@@ -235,6 +237,25 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 		}
 		top := origin.Add(image.Pt(0, compY))
 		c.compRect = image.Rectangle{Min: top, Max: top.Add(image.Pt(sz.X, compH))}
+		// the channel join banner sits over the composer (message pane
+		// input chrome); the list gives up its height
+		bm := op.Record(gtx.Ops)
+		bd := a.layoutJoinBanner(gtx, c, origin.Add(image.Pt(0, compY-c.bannerH)))
+		bcall := bm.Stop()
+		if bd.Size.Y > 0 {
+			inner := call
+			m := op.Record(gtx.Ops)
+			bcall.Add(gtx.Ops)
+			t := op.Offset(image.Pt(0, bd.Size.Y)).Push(gtx.Ops)
+			inner.Add(gtx.Ops)
+			t.Pop()
+			call = m.Stop()
+			compH += bd.Size.Y
+		}
+		if c.bannerH != bd.Size.Y {
+			c.bannerH = bd.Size.Y
+			a.Invalidate()
+		}
 	}
 	listH := sz.Y - compH
 	if fit > 0 && fit < listH {

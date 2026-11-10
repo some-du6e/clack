@@ -75,7 +75,12 @@ type sidebarState struct {
 	shownGen  int
 }
 
+// sbLinks are the page links in Slack's order (client-channel-list-view
+// bG: Unreads, Threads, Huddles, Drafts & sent, Saved). Unreads is
+// UnreadsSidebarIcon's mark-as-unread, shown only while
+// enable_unread_view is true (shouldShowAllUnreadsLink).
 var sbLinks = []sbRow{
+	{kind: sbLink, key: "unreads", label: "Unreads", icon: "mark-unread"},
 	{kind: sbLink, key: "threads", label: "Threads", icon: "threads"},
 	{kind: sbLink, key: "huddles", label: "Huddles", icon: "huddle"},
 	{kind: sbLink, key: "drafts", label: "Drafts & sent", icon: "paper-plane-alt"}, // Slack's OutboxPageIcon
@@ -84,7 +89,7 @@ var sbLinks = []sbRow{
 }
 
 // sbViewPref is each link's Preferences > Home pref (off: hidden).
-var sbViewPref = map[string]string{"threads": "enable_threads_view", "huddles": "enable_huddles_home_view",
+var sbViewPref = map[string]string{"unreads": "enable_unread_view", "threads": "enable_threads_view", "huddles": "enable_huddles_home_view",
 	"drafts": "enable_sent_view", "saved": "enable_saved_view", "directories": "enable_unified_directory_view"}
 
 // outboxCount is the drafts count Drafts & sent shows: Slack's
@@ -391,6 +396,12 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 	switch r.kind {
 	case sbLink:
 		sel = string(route) == r.key
+		// the Unreads page's sidebar.hasUnreads (hasUnreadsPageUnreads:
+		// totalUnsuppressedUnreadsInChannels > 0) makes the link bold
+		if r.key == "unreads" && a.model().unsuppressedUnreads() {
+			weight = theme.Black
+			col = c.SidebarTextUnread
+		}
 	case sbHeading:
 		clickPrefix = "sbh."
 		if a.sidebar.collapsed[r.key] {

@@ -97,6 +97,11 @@ func (a *App) defaultShortcuts() *shortcuts {
 		if a.dismissTop() {
 			return
 		}
+		// the Unreads page's Esc (UnreadsList onMarkReadKeyCommand, a
+		// global key command there)
+		if v, ok := a.views[a.router.Current()].(interface{ MarkActiveRead() bool }); ok && v.MarkActiveRead() {
+			return
+		}
 		if ch := a.router.Current().Channel(); ch != "" {
 			a.markRead(ch)
 		}
