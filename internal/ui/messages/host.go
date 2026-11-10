@@ -102,6 +102,7 @@ var (
 func styleFor(h Host) *richview.Style { return styleForTheme(h.Theme(), h.Images()) }
 
 func styleForTheme(th *theme.Theme, images *imgcache.Cache) *richview.Style {
+	uiExt = theme.UIExtents(th.Shaper)
 	stylesMu.Lock()
 	e, ok := styles[th.Shaper]
 	if !ok {

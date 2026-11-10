@@ -23,9 +23,11 @@ import (
 func (p *prefsModal) appearancePage(gtx layout.Context) layout.Dimensions {
 	a := p.a
 	f := p.form(gtx)
+	// ThemeFontTypefaceContainer: the "Font" header and a 250px select
+	// of Slack's options, each drawn in its own font (prefs_font.go)
+	cur := a.currentFont()
 	f.subheading("Font")
-	f.selectBox("font", "", "Lato (Default)", false, nil)
-	f.na()
+	f.selectBoxW("font", "", cur.Label, true, a.fontItems(cur), 250, a.loadFontPreviews)
 	f.hr()
 
 	sync := a.themeSyncOn()
@@ -44,18 +46,18 @@ func (p *prefsModal) appearancePage(gtx layout.Context) layout.Dimensions {
 	}
 	f.gap()
 
-	cur := a.accountTheme()
-	curID := cur.PresetID()
+	acct := a.accountTheme()
+	curID := acct.PresetID()
 	tab := p.themeTab
 	if tab == "" { // Slack's Container: Custom theme for a custom-hex theme that is no preset
 		tab = "slack"
-		if cur.UseCustomHex && curID == "" {
+		if acct.UseCustomHex && curID == "" {
 			tab = "custom"
 		}
 	}
 	p.themeTabs(f, tab)
 	if tab == "custom" {
-		p.customTheme(f, cur)
+		p.customTheme(f, acct)
 	} else {
 		p.slackThemes(f, curID)
 	}

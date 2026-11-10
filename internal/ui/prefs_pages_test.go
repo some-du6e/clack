@@ -99,7 +99,7 @@ var slackPages = map[string][]want{
 		ck("Organize external conversations into the External Connections section"), ck("Hide muted channels from your sidebar"),
 	},
 	"appearance": {
-		lg("Font"), selOff("Lato (Default)"), lg("Color Mode"), rd("Light"), rd("Dark"), rd("System"),
+		lg("Font"), sel("Lato (Default)"), lg("Color Mode"), rd("Light"), rd("Dark"), rd("System"),
 		ckOff("Always use dark color mode when in focus mode."),
 		{"tab", "Slack themes", false}, {"tab", "Custom theme", false},
 		lg("Single color"), rd("Aubergine"), rd("Clementine"), lg("Vision assistive"), rd("Tritanopia"),

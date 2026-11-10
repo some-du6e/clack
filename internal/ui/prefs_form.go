@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"gioui.org/layout"
+	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -203,6 +204,11 @@ func (f *prefsForm) off(key, label, hint string, on, radio bool) {
 // selectBox is Slack's select (a 36px box with the value and a caret);
 // enabled, a click opens items as a menu at the pointer.
 func (f *prefsForm) selectBox(key, label, value string, enabled bool, items []MenuItem) {
+	f.selectBoxW(key, label, value, enabled, items, 300, nil)
+}
+
+// selectBoxW is selectBox wd dp wide; onOpen runs as the menu opens.
+func (f *prefsForm) selectBoxW(key, label, value string, enabled bool, items []MenuItem, wd int, onOpen func()) {
 	gtx, a := f.gtx, f.p.a
 	pc := f.p.colors()
 	if label != "" {
@@ -210,7 +216,7 @@ func (f *prefsForm) selectBox(key, label, value string, enabled bool, items []Me
 	}
 	f.record("select", "sel."+key, value, false, enabled)
 	b := f.p.btn("sel." + key)
-	bw, bh := min(f.w, gtx.Dp(300)), gtx.Dp(36)
+	bw, bh := min(f.w, gtx.Dp(unit.Dp(wd))), gtx.Dp(36)
 	// .c-select_button: base-pry over a 1px otl-pry border (no hover
 	// change), its text the body colour, the caret content-pry
 	fg, ic := pc.text, pc.fieldFg
@@ -235,6 +241,9 @@ func (f *prefsForm) selectBox(key, label, value string, enabled bool, items []Me
 		})
 	})
 	if clicked(b) && enabled && len(items) > 0 {
+		if onOpen != nil {
+			onOpen()
+		}
 		a.menu(a.anchor(image.Point{}), items)
 	}
 	f.y += bh + gtx.Dp(12)

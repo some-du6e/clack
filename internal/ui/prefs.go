@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/ui/composer"
+	"github.com/some-du6e/clack/internal/ui/uifont"
 	"github.com/some-du6e/clack/internal/ui/uiguard"
 )
 
@@ -50,6 +51,10 @@ type prefs struct {
 	ComposerUpArrow int `json:"composer_up_arrow_shortcut,omitempty"`
 	// Zoom is View > Zoom's level, -3…5 (Slack's zoomLevel; macmenu.go).
 	Zoom int `json:"zoom,omitempty"`
+	// ClientTypeface is Appearance > Font: Slack's option object, kept
+	// per device as Slack keeps it in localConfig "client-typeface"
+	// (prefs_font.go). nil is Lato.
+	ClientTypeface *uifont.Option `json:"client_typeface,omitempty"`
 }
 
 func (a *App) prefsPath() string {

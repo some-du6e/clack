@@ -188,6 +188,7 @@ type App struct {
 	styleVer         uint64    // slackc.Styles.Version the palette was derived at
 	acct             acctTheme // the Slack account's theme (theme_account.go)
 	shaperCh         chan [2]*text.Shaper
+	font             fontState             // Appearance > Font (prefs_font.go)
 	explorer         *explorer.Explorer    // native file chooser (set in onWindow)
 	tautGen          int                   // bumps when a (new) plugin runtime attaches
 	tautTabs         []taut.PreferencesTab // plugins' Preferences tabs
@@ -249,12 +250,20 @@ func New(opts Options, images *imgcache.Cache) *App {
 	// The shaper (font parsing + system font index) is the slowest part of
 	// startup; build it while the window and GPU context come up.
 	a.shaperCh = make(chan [2]*text.Shaper, 1)
+	stored := a.prefs.ClientTypeface
 	go func() {
 		t := time.Now()
-		sh := theme.NewShaper() // one collection serves both modes
+		// one collection serves both modes; the UI font when its files
+		// are on this computer, else Lato until it has loaded
+		sh, o, pending := startupShaper(stored)
 		a.shaperCh <- [2]*text.Shaper{sh, sh}
 		a.timing("shapers ready", t)
 		a.Invalidate() // the first frames painted the background only
+		if pending {
+			a.Post(func() { a.loadUIFont(o) })
+		} else {
+			a.Post(func() { a.font.applied = o.Value })
+		}
 	}()
 	if opts.Login != nil {
 		a.login = newLoginScreen()

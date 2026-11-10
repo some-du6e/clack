@@ -9,6 +9,8 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // Slack's overlay scrollbar: a thin rounded thumb over the right edge that
@@ -17,6 +19,7 @@ import (
 
 type scrollbar struct {
 	known      map[string]int // item key -> last measured height
+	knownFG    uint32         // theme.FontGen known was measured at
 	lastPos    layout.Position
 	lastScroll time.Time
 	dragging   bool
@@ -27,8 +30,10 @@ type scrollbar struct {
 
 func (s *listState) layoutScrollbar(gtx layout.Context, c *colors, size image.Point, now time.Time) {
 	sb := &s.sb
-	if sb.known == nil {
-		sb.known = map[string]int{}
+	if sb.known == nil || sb.knownFG != theme.FontGen() {
+		// a new UI font: every row's height is new (the ones on screen
+		// were just measured with it)
+		sb.known, sb.knownFG = map[string]int{}, theme.FontGen()
 	}
 	total, before, n := 0, 0, 0
 	p := s.list.Position

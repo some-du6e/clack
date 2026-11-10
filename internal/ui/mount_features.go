@@ -197,7 +197,8 @@ func toPopupItems(items []MenuItem) []popups.MenuItem {
 			sub = toPopupItems(it.Sub)
 		}
 		out = append(out, popups.MenuItem{Key: it.Key, Label: it.Label, Icon: it.Icon, Hint: it.Hint, Subtitle: it.Subtitle,
-			Right: it.Right, Danger: it.Danger, Disabled: it.Disabled, Checked: it.Checked, Radio: it.Radio, Sub: sub, Do: it.Do})
+			Right: it.Right, Danger: it.Danger, Disabled: it.Disabled, Checked: it.Checked, Radio: it.Radio, Sub: sub, Do: it.Do,
+			LabelText: it.LabelText})
 	}
 	return out
 }

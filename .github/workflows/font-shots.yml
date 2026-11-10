@@ -1,0 +1,61 @@
+name: font-shots
+# Preferences > Appearance > Font: the woff2 decoder, Slack's option list
+# and fallbacks, the ui.json round trip and the re-layout after a switch,
+# then a channel screenshotted in every font option (light mode) and the
+# open font menu, rendered headlessly over an offline core. The web fonts
+# come from Slack's public CDN without a cookie; Arial, Georgia, Verdana
+# and Comic Sans MS are installed from Debian's msttcorefonts so the
+# system-font options show the real fonts (fonts.txt in the artifact says
+# what each option resolved to). Nothing here talks to Slack's API.
+on:
+  push:
+    paths:
+      - "internal/woff2/**"
+      - "internal/ui/uifont/**"
+      - "internal/ui/theme/uifont.go"
+      - "internal/ui/prefs_font*.go"
+      - "internal/ui/font_shots_test.go"
+      - "internal/ui/messages/font_switch_test.go"
+      - ".github/workflows/font-shots.yml"
+  workflow_dispatch:
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb
+
+permissions:
+  contents: read
+
+jobs:
+  font-shots:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps and fonts
+        run: |
+          echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | sudo debconf-set-selections
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq $GIO_DEPS fonts-liberation ttf-mscorefonts-installer
+          fc-list : family | sort -u | head -80
+      - name: tests
+        run: |
+          go test -count=1 -v ./internal/woff2 ./internal/ui/uifont
+          go test -count=1 -v -run 'TestFontPrefRoundTrip|TestFontPickLatestWins' ./internal/ui/
+          go test -count=1 -v -run 'TestFontSwitchRelayout|TestIdle|TestFling' ./internal/ui/messages/
+      - name: screenshots
+        env:
+          FONT_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$FONT_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -timeout 15m -v -run 'TestFontShots$' ./internal/ui/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: font-shots
+          path: dist/shots

@@ -34,6 +34,7 @@ type textView struct {
 	lastW  int
 	lastH  int
 	lastPx float32
+	lastFG uint32 // theme.FontGen of lastH
 }
 
 func docOfText(h Host, t Text) richtext.Doc {
@@ -73,7 +74,7 @@ func (tv *textView) style() *richview.Style { return styleFor(tv.h.Theme(), tv.h
 
 // height measures the text at width tw (laying it out off-screen).
 func (tv *textView) height(gtx C, tw int) int {
-	if tw == tv.lastW && gtx.Metric.PxPerDp == tv.lastPx && tv.lastH > 0 {
+	if tw == tv.lastW && gtx.Metric.PxPerDp == tv.lastPx && tv.lastH > 0 && tv.lastFG == theme.FontGen() {
 		return tv.lastH
 	}
 	m := op.Record(gtx.Ops)
@@ -81,7 +82,7 @@ func (tv *textView) height(gtx C, tw int) int {
 	g.Constraints = layout.Constraints{Max: image.Pt(max(tw, 1), 1<<20)}
 	d := tv.v.Layout(g, tv.style(), &tv.hand)
 	m.Stop()
-	tv.lastW, tv.lastH, tv.lastPx = tw, d.Size.Y, gtx.Metric.PxPerDp
+	tv.lastW, tv.lastH, tv.lastPx, tv.lastFG = tw, d.Size.Y, gtx.Metric.PxPerDp, theme.FontGen()
 	return d.Size.Y
 }
 
@@ -91,7 +92,7 @@ func (tv *textView) layout(gtx C, tw int, col color.NRGBA) int {
 	g := gtx
 	g.Constraints = layout.Constraints{Max: image.Pt(max(tw, 1), 1<<20)}
 	d := tv.v.Layout(g, tv.style(), &tv.hand)
-	tv.lastW, tv.lastH, tv.lastPx = tw, d.Size.Y, gtx.Metric.PxPerDp
+	tv.lastW, tv.lastH, tv.lastPx, tv.lastFG = tw, d.Size.Y, gtx.Metric.PxPerDp, theme.FontGen()
 	return d.Size.Y
 }
 

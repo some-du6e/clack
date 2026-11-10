@@ -46,6 +46,9 @@ func (p *tautPage) textStyle(col color.NRGBA) *richview.Style {
 		t.styles = map[color.NRGBA]*prefsTextStyle{}
 	}
 	ps := t.styles[col]
+	if ps != nil && ps.st.Shaper != th.Shaper { // a new UI font
+		ps = nil
+	}
 	if ps == nil {
 		var imgs richview.Images // emoji in descriptions
 		if p.a.images != nil {

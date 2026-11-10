@@ -981,10 +981,6 @@ func (r *row) layoutCompactTS(gtx layout.Context, p slackc.Props) layout.Dimensi
 	return layout.Dimensions{Size: box}
 }
 
-// Lato's vertical metrics (hhea 1974/-426 per 2000 em; Slack's Slack-Lato
-// woff2 has the same hhea, which is what Chrome lays out with on macOS).
-const latoAsc, latoDesc = 0.987, 0.213
-
 // strutBaseline is the baseline of a 15px/22px line (the message font)
 // from its top.
 func strutBaseline(gtx layout.Context) int { return cssBaseline(gtx, 15, 22) }

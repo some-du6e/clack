@@ -220,11 +220,17 @@ func label(gtx layout.Context, th *theme.Theme, s textStyle, txt string) layout.
 
 // cssBaseline is where Chrome puts a size/lineH line's baseline from the
 // line box top: half the leading above the glyphs ((lineH - content)/2,
-// content = Lato's hhea ascent + descent), then the ascent.
+// content = the UI font's hhea ascent + descent, Lato's 0.987 + 0.213),
+// then the ascent.
 func cssBaseline(gtx layout.Context, size, lineH float32) int {
 	sp := gtx.Metric.PxPerSp
-	return int((lineH*sp-(latoAsc+latoDesc)*size*sp)/2 + latoAsc*size*sp + 0.5)
+	asc, desc := uiExt.Ascent, uiExt.Descent
+	return int((lineH*sp-(asc+desc)*size*sp)/2 + asc*size*sp + 0.5)
 }
+
+// uiExt is the UI font's extents for cssBaseline, taken from the host's
+// shaper each frame (styleForTheme): Lato's until a font is chosen.
+var uiExt = theme.LatoExtents
 
 // lineBox draws a one-line label (w, in style s) as a CSS line box lineH
 // tall. Gio starts the first line at the font's ascent and puts all of

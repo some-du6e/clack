@@ -403,6 +403,9 @@ func (l *tlLayout) build(d *Doc, st *EditorStyle, sh *text.Shaper, k tlKey) {
 	l.key = k
 	l.valid = true
 	l.gen++
+	if l.sh != sh { // a new UI font: glyph ids of the old shaper mean nothing here
+		l.cache = tlCache{}
+	}
 	l.sh = sh
 	l.width = k.width
 	l.cache.begin()

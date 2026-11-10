@@ -22,17 +22,18 @@ import (
 	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
-	gtfont "github.com/go-text/typesetting/font"
 
 	"github.com/some-du6e/clack/assets/fonts"
 )
 
-// Typeface is the font family name registered for the embedded Lato faces.
-// It is not "Lato" so that a system-installed Lato (Ubuntu's fonts-lato, a
-// different build) can never win the family match: Gio's font map lists
-// system fonts before the embedded collection, so with the plain name every
-// label rendered with the system files (and parsed them into the heap).
-const Typeface font.Typeface = "Clack Lato"
+// Typeface is the UI font: Family (the embedded Lato, or the font chosen
+// in Preferences > Appearance, uifont.go), then ExtFamily for the glyphs
+// only its unicode-range companions have. Family is not "Lato" so that a
+// system-installed Lato (Ubuntu's fonts-lato, a different build) can never
+// win the family match: Gio's font map lists system fonts before the
+// embedded collection, so with the plain name every label rendered with
+// the system files (and parsed them into the heap).
+const Typeface font.Typeface = Family + ", " + ExtFamily + ", " + ExtFamily + "2"
 
 // Font weights in Gio units (CSS weight minus 400).
 const (
@@ -105,6 +106,16 @@ func parseFace(b []byte) font.Face {
 // FacesFor returns the Lato collection (the same for both modes; text
 // weight is matched to Chrome with the Embolden stroke instead).
 func FacesFor(dark bool) []font.FontFace {
+	out := latoFaces()
+	// after Lato: the first face is the shaper's default. The emoji slot
+	// face goes last (slotIndex reads its index from the collection).
+	out = append(out, MonoFaces()...)
+	return append(out, font.FontFace{Font: font.Font{Typeface: EmojiSlotTypeface}, Face: parseFace(emojiSlotTTF)})
+}
+
+// latoFaces are the embedded Lato's eight faces under Family, in Slots
+// order.
+func latoFaces() []font.FontFace {
 	type src struct {
 		b []byte
 		w font.Weight
@@ -130,12 +141,9 @@ func FacesFor(dark bool) []font.FontFace {
 	wg.Wait()
 	out := make([]font.FontFace, 0, len(srcs))
 	for _, f := range srcs {
-		out = append(out, font.FontFace{Font: font.Font{Typeface: Typeface, Weight: f.w, Style: f.s}, Face: parseFace(f.b)})
+		out = append(out, font.FontFace{Font: font.Font{Typeface: Family, Weight: f.w, Style: f.s}, Face: parseFace(f.b)})
 	}
-	// after Lato: the first face is the shaper's default. The emoji slot
-	// face goes last (slotIndex reads its index from the collection).
-	out = append(out, MonoFaces()...)
-	return append(out, font.FontFace{Font: font.Font{Typeface: EmojiSlotTypeface}, Face: parseFace(emojiSlotTTF)})
+	return out
 }
 
 // Faces returns the light-mode collection (compatibility).
@@ -159,14 +167,12 @@ func Bare(dark bool) *Theme {
 // NewShaperFor builds a mode's shaper (Lato + the system font index as a
 // fallback for scripts Lato lacks). Safe to call from any goroutine.
 func NewShaperFor(dark bool) *text.Shaper {
-	coll := FacesFor(dark)
-	sh := text.NewShaper(text.WithCollection(coll))
-	faces := make([]*gtfont.Face, len(coll))
-	for i, f := range coll {
-		faces[i] = f.Face.Face()
+	if u := defaultUI.Load(); u != nil {
+		if coll, err := facesWith(u, nil); err == nil {
+			return newShaper(coll)
+		}
 	}
-	registerShaperFaces(sh, faces) // Gio indexes collection faces in order
-	return sh
+	return newShaper(FacesFor(dark))
 }
 
 // NewShaper is the light-mode shaper (compatibility).

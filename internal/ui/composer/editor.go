@@ -899,7 +899,7 @@ func (e *Editor) ensureLayout() bool {
 		images:  e.st.Images != nil,
 		loc:     e.loc,
 	}
-	if !e.lay.valid || e.lay.key != k {
+	if !e.lay.valid || e.lay.key != k || e.lay.sh != e.st.Shaper {
 		e.lay.build(e.doc, &e.st, e.st.Shaper, k)
 	}
 	return true

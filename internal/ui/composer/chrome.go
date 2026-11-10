@@ -306,7 +306,8 @@ type chrome struct {
 	palBg, palFg   color.NRGBA
 
 	spKey float32
-	spW   [3]int // space advance at crSpaceSizes
+	spSh  *text.Shaper // the shaper spW was measured with
+	spW   [3]int       // space advance at crSpaceSizes
 
 	// Per-frame state for the Slack boundary natives (chrome_slack.go).
 	cur     chromeState
@@ -352,8 +353,8 @@ func (c *chrome) palette(th *theme.Theme) *crPal {
 // space returns the width of a space at crSpaceSizes[i] (Lato regular),
 // measured once per scale: labels don't reliably include trailing spaces.
 func (c *chrome) space(gtx layout.Context, sh *text.Shaper, i int) int {
-	if c.spKey != gtx.Metric.PxPerSp {
-		c.spKey = gtx.Metric.PxPerSp
+	if c.spKey != gtx.Metric.PxPerSp || c.spSh != sh {
+		c.spKey, c.spSh = gtx.Metric.PxPerSp, sh
 		for j, sz := range crSpaceSizes {
 			s := textStyle{Size: sz}
 			_, a := crRec(gtx, sh, 1<<16, s, "x x")

@@ -58,6 +58,10 @@ type MenuItem struct {
 
 	Sub []MenuItem // submenu
 
+	// LabelText, when set, draws the label (one line) in place of the
+	// menu's 15px text: the font select's options in their own fonts.
+	LabelText func(gtx layout.Context, c color.NRGBA) layout.Dimensions
+
 	Do       func()
 	DoCtx    func(gtx layout.Context) // like Do, with the frame context (clipboard)
 	KeepOpen bool                     // don't close the menu after Do
@@ -685,6 +689,9 @@ func (m *Menu) itemRow(gtx layout.Context, th *theme.Theme, cl *Colors, st slack
 			at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
 				gtx.Constraints = layout.Constraints{Max: image.Pt(lw, sz.Y)}
 				return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
+					if it.LabelText != nil {
+						return it.LabelText(gtx, fg)
+					}
 					return text(gtx, th, 15, theme.Regular, fg, it.Label)
 				})
 			})

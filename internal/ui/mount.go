@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"image/color"
 
 	"gioui.org/io/event"
 	"gioui.org/layout"
@@ -178,6 +179,10 @@ type MenuItem struct {
 	Radio    bool       // Slack's radio row: the check in a left gutter, blue when checked (popups.MenuItem.Radio)
 	Sub      []MenuItem // a submenu
 	Do       func()
+	// LabelText draws the label in place of the menu's own text (the
+	// font select draws each option in its font); Label stays the row's
+	// name.
+	LabelText func(gtx layout.Context, c color.NRGBA) layout.Dimensions
 }
 
 func (a *App) menu(anchor image.Point, items []MenuItem) {

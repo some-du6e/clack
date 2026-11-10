@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"math"
 	"sync"
+	"sync/atomic"
 
 	"gioui.org/f32"
 	"gioui.org/op"
@@ -36,7 +37,8 @@ var shaperFaces sync.Map // *text.Shaper -> *emboldener
 
 type emboldener struct {
 	faces []*gtfont.Face
-	slot  int // index of the emoji slot face (emojislot.go), -1 if absent
+	slot  int                     // index of the emoji slot face (emojislot.go), -1 if absent
+	ext   atomic.Pointer[Extents] // UIExtents, once read
 
 	mu    sync.Mutex
 	runs  map[runKey]*list.Element
