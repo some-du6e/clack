@@ -169,6 +169,7 @@ func embedsPreviewHover(t *testing.T, dark bool, mode string) {
 		t.Error("the hover card closed with the pointer on it")
 	}
 	e.move(f32.Pt(float32(e.size.X-30), 140))
+	e.frame() // the card area sees the Leave after this frame's timers ran
 	time.Sleep(hovercard.HideDelay + 100*time.Millisecond)
 	e.frame()
 	if e.a.hover.prev != nil {
