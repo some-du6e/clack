@@ -16,6 +16,22 @@ import (
 	"github.com/some-du6e/clack/internal/ui/richview"
 )
 
+// liveEl is a message's element host for one revision of its blocks.
+type liveEl struct {
+	sig uint64
+	el  richview.Elements
+}
+
+// liveKey is a message of one host.
+type liveKey struct {
+	h      blockkit.Host
+	ch, ts string
+}
+
+// liveEls caches liveElements per message (UI goroutine only), so a frame
+// doesn't make blockkit copy every visible message's blocks again.
+var liveEls = map[liveKey]liveEl{}
+
 // liveElements is m's Block Kit element host: nil when the Host can't run
 // blockkit or m has nothing interactive.
 func (b *base) liveElements(m *core.Message) richview.Elements {
@@ -23,8 +39,31 @@ func (b *base) liveElements(m *core.Message) richview.Elements {
 	if !ok || m == nil {
 		return nil
 	}
-	if el := blockkit.MessageElements(h, m); el != nil {
-		return el
+	k := liveKey{h: h, ch: m.Channel, ts: m.TS}
+	sig := blocksSig(m)
+	if e, ok := liveEls[k]; ok && e.sig == sig {
+		return e.el
 	}
-	return nil
+	var el richview.Elements
+	if me := blockkit.MessageElements(h, m); me != nil {
+		el = me
+	}
+	if len(liveEls) > 2000 {
+		clear(liveEls)
+	}
+	liveEls[k] = liveEl{sig: sig, el: el}
+	return el
+}
+
+// blocksSig is FNV-1a over m's blocks and attachments (what the element
+// host is made from).
+func blocksSig(m *core.Message) uint64 {
+	h := uint64(14695981039346656037)
+	for _, bs := range [][]byte{m.Blocks, {0}, m.Attachments} {
+		for _, c := range bs {
+			h ^= uint64(c)
+			h *= 1099511628211
+		}
+	}
+	return h
 }

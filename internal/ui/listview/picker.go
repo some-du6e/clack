@@ -178,7 +178,8 @@ func newListPicker(h popups.Host, channel string, o AddOpts) *picker {
 	p := newPicker(h, pickTab, o)
 	p.channel = channel
 	insert := &popups.ModalButton{Label: "Insert", Kind: popups.BtnPrimary,
-		Enabled: func() bool { return p.sel != "" && !p.bump },
+		// the list's header decides the tab's view and the share step
+		Enabled: func() bool { return p.sel != "" && !p.bump && p.hdrs[p.sel] != nil },
 		Do: func() bool {
 			p.insertTab(p.sel, p.defaultView(p.sel))
 			return true
@@ -499,6 +500,9 @@ func addTab(h popups.Host, o AddOpts, ch, id, viewID, access string) {
 // Failures get addTabToChannel's toasts.
 func addTabNow(ctx context.Context, h popups.Host, o AddOpts, ch, id, viewID, access string) bool {
 	c := h.Core()
+	if c == nil {
+		return false
+	}
 	err := c.AddListTab(ctx, ch, id, viewID, access, "")
 	if o.Post == nil {
 		return err == nil
@@ -1079,13 +1083,17 @@ func (s *shareTab) share() {
 	if s.busy {
 		return
 	}
+	c := s.h.Core()
+	if c == nil {
+		return
+	}
 	s.busy = true
 	h, o, ch, id, view, access := s.h, s.o, s.ch, s.id, s.viewID, s.access
 	post := o.Post
 	go func() {
 		ctx, cancel := ctxTimeout(30 * time.Second)
 		defer cancel()
-		err := h.Core().AddListTab(ctx, ch, id, view, access, "")
+		err := c.AddListTab(ctx, ch, id, view, access, "")
 		if post == nil {
 			return
 		}
