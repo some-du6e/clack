@@ -24,7 +24,7 @@ import (
 
 // Fixture list ids.
 const (
-	ListKitchen = "F0LIST00001" // every column type, three views (table, board, filtered table)
+	ListKitchen = "F0LIST00001" // every column type, four views (table, board, filtered table, grouped table)
 	ListTodos   = "F0LIST00002" // a to-do list, C0FAKE00001's list tab
 	ListTabChan = "C0FAKE00001" // the channel whose tab bar has ListTodos
 )
@@ -151,6 +151,9 @@ func kitchenList(now int64) *FakeList {
 		{ID: "View0MINE01", Name: "My open items", Type: lists.ViewTable, Position: "0003", Columns: vcols,
 			Sorts:   []lists.Sort{{Key: "Col0DUE0001", ColumnID: "Col0DUE0001", Ascending: true}},
 			Filters: []lists.Filter{{Key: "Col0OWNER01", ColumnID: "Col0OWNER01", Operator: lists.OpContains, RawValues: mine}, {Key: "Col0STATUS1", ColumnID: "Col0STATUS1", Operator: lists.OpDoesNotContain, RawValues: notDone}}},
+		// a table grouped by status (the Lists keyboard tests: group edges)
+		{ID: "View0GRP001", Name: "By status", Type: lists.ViewTable, Position: "0004", Columns: vcols,
+			Sorts: []lists.Sort{}, Filters: []lists.Filter{}, Grouping: &lists.Grouping{GroupBy: "Col0STATUS1", GroupByColumnID: "Col0STATUS1"}},
 		{ID: "View0REC001", Name: "", Type: lists.ViewRecord, Position: "0009", Columns: vcols},
 	}
 	desc, _ := json.Marshal([]any{map[string]any{"type": "rich_text", "block_id": "desc1", "elements": []any{

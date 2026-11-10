@@ -144,6 +144,8 @@ func TestPrefsRoundTrip(t *testing.T) {
 		user("priority_dnd_override", true, func() bool { return ca.PrefBool("priority_dnd_override", false) }),
 		user("huddles_mute_by_default", true, func() bool { return ca.PrefBool("huddles_mute_by_default", false) }),
 		user("huddles_set_status", false, func() bool { return !ca.PrefBool("huddles_set_status", true) }),
+		// Accessibility > Lists keyboard interactions (ListsTabbingPref)
+		user("lists_tabbing_navigation_option_type", "arrow_nav", func() bool { return ca.PrefString("lists_tabbing_navigation_option_type") == "arrow_nav" }),
 		notif("no_text_in_notifications", true, func() bool {
 			return ca.GlobalNotifyBool("no_text_in_notifications", false) && ca.Prefs().NoTextInNotifications
 		}),

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/some-du6e/clack/internal/ui/huddleui"
+	"github.com/some-du6e/clack/internal/ui/listview"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 )
 
@@ -517,12 +518,19 @@ func (p *prefsModal) accessibilityPage(f *prefsForm) {
 		f.option("up."+strconv.Itoa(v), o.label, o.hint, up == v, true, func() { p.a.setComposerUpArrow(v) })
 	}
 	f.muted("Note: You can always press "+shortcut.Format("Mod+Up")+" to edit your last message.", false)
-	f.subheading("Lists keyboard interactions")
-	f.para("Choose how you want to use your keyboard with lists.")
-	lk := p.prefStr("lists_tabbing_navigation_option_type")
-	f.off("lists.tab_nav", "Data entry mode (default)", "Use Tab to move horizontally, Enter to move vertically between cells", lk != "arrow_nav", true)
-	f.off("lists.arrow_nav", "Full keyboard mode (best for assistive technology)", "Use Tab to move between interactive elements, Enter to edit", lk == "arrow_nav", true)
-	f.na()
+	// ListsTabbingPref (prefs-dialog chunk): shown only with the
+	// lists_tabbing_navigation experiment; Data entry is checked while the
+	// pref is unset; a pick writes the pref with setUserPrefByApi. The
+	// grid reads it (listview/keys.go kbMode).
+	if c := p.a.Core(); c == nil || c.Experiment(listview.ExpListsTabbing) == "on" {
+		f.subheading("Lists keyboard interactions")
+		f.para("Choose how you want to use your keyboard with lists.")
+		lk := p.prefStr(listview.PrefListsTabbing)
+		f.option("pref.lists_tab_nav", "Data entry mode (default)", "Use Tab to move horizontally, Enter to move vertically between cells", lk == "" || lk == "tab_nav", true,
+			func() { p.setPref(listview.PrefListsTabbing, "tab_nav") })
+		f.option("pref.lists_arrow_nav", "Full keyboard mode (best for assistive technology)", "Use Tab to move between interactive elements, Enter to edit", lk == "arrow_nav", true,
+			func() { p.setPref(listview.PrefListsTabbing, "arrow_nav") })
+	}
 	f.hr()
 	f.subheading("Screen reader")
 	f.para("Customize your screen reader experience")

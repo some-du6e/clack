@@ -2,6 +2,7 @@ package listview
 
 import (
 	"image"
+	"image/color"
 
 	"gioui.org/f32"
 	"gioui.org/io/event"
@@ -29,6 +30,26 @@ type gridState struct {
 	lines            []gridLine // last frame's lines (hit testing)
 	cols             []gridCol
 	headH, x0        int
+
+	// the keyboard (keys.go)
+	nav       []int   // indexes in lines of the record rows, in order
+	grouped   bool    // the view groups its rows
+	focused   bool    // the grid has the key focus
+	active    cellRef // the focused cell (Slack's activeCell)
+	prev      cellRef // the last active cell (previousActiveCell)
+	selA      cellRef // the selection's anchor (selection.min)
+	selB      cellRef // its other corner (selection.max; none: one cell)
+	menuOpen  bool    // a cell's menu editor is open
+	refocus   bool    // take the key focus back at the next frame
+	reveal    bool    // scroll the active cell into view
+	rate      rateEdit
+	eatSpace  bool // the Space key started an action: drop its " " text
+	say       string
+	announced []string // what the announcer would have said (tests)
+	lastCopy  string   // the last block Clack copied (Slack's slack/texty)
+	copied    string   // tests: what went to the clipboard
+	origin    image.Point
+	originOK  bool
 }
 
 type lineKind uint8
@@ -114,10 +135,22 @@ func (v *View) layoutGrid(gtx layout.Context, d *core.ListDoc, lv *lists.View, r
 		addRows(rows, "")
 	}
 	totalH := y + gtx.Dp(24)
+	g.nav = g.nav[:0]
+	for i, ln := range g.lines {
+		if ln.kind == lineRow {
+			g.nav = append(g.nav, i)
+		}
+	}
+	g.grouped = groupCol != nil
 	// scrolling
 	maxY := max(0, totalH-sz.Y)
 	maxX := max(0, g.x0+totalW+gtx.Dp(32)-sz.X)
 	v.gridEvents(gtx, d, maxX, maxY)
+	v.gridKeys(gtx, d, sz.Y)
+	if g.reveal {
+		g.reveal = false
+		v.revealActive(sz.X, sz.Y)
+	}
 	g.scrollY = min(max(0, g.scrollY), maxY)
 	g.scrollX = min(max(0, g.scrollX), maxX)
 
@@ -271,9 +304,15 @@ func (v *View) layoutLine(gtx layout.Context, d *core.ListDoc, lv *lists.View, l
 		self = a.Self().ID
 	}
 	var rec *lists.Record
+	ni := -1
 	if ln.kind == lineRow {
 		rec = ln.row.Rec
+		ni = g.navRow(rec.ID)
 	}
+	hgl := hglColor(th)
+	ring := shade(th, "lagoon-50")
+	var ringRect image.Rectangle // the active cell, drawn over its neighbours
+	r0, r1, c0, c1, multi, _ := g.selection()
 	for i := len(g.cols) - 1; i >= 0; i-- { // the sticky first column draws last
 		gc := g.cols[i]
 		gx := g.x0 + gc.x
@@ -308,6 +347,50 @@ func (v *View) layoutLine(gtx layout.Context, d *core.ListDoc, lv *lists.View, l
 				})
 				return
 			}
+			here := cellRef{rec: rec.ID, col: gc.c.Key}
+			vis := image.Rect(cl.Min.X, 0, gx+gc.w, ln.h)
+			if i == 0 {
+				vis.Min.X = gx + gtx.Dp(4)
+			}
+			isActive := g.active == here
+			f := rec.Field(gc.c.Key)
+			if g.rate.active && g.rate.at == here { // the rating editor (b2eO)
+				r := image.Rect(gx, 0, gx+gc.w, ln.h)
+				theme.Fill(gtx, r, c.Bg)
+				rf := &lists.Field{Key: gc.c.Key, Rating: []float64{float64(g.rate.val)}}
+				at(gtx, image.Pt(gx+px, 0), image.Pt(max(0, gc.w-px-gtx.Dp(8)), ln.h), func(gtx layout.Context) layout.Dimensions {
+					v.drawCell(gtx, gc.c, rf, gtx.Constraints.Max.X, ln.h, cellOpts{self: self})
+					return layout.Dimensions{Size: gtx.Constraints.Max}
+				})
+				theme.Border(gtx, r, 0, gtx.Dp(2), ring)
+				v.cellSemantics(gtx, vis, gc.c, rf, true)
+				return
+			}
+			// p-grid_cell--cell_focus and p-grid_multi_cell--selected:
+			// base-hgl-1 behind the value
+			sel := multi && ni >= r0 && ni <= r1 && i >= c0 && i <= c1
+			if isActive || sel {
+				theme.Fill(gtx, image.Rect(gx, gtx.Dp(1), gx+gc.w, ln.h), hgl)
+			}
+			if isActive {
+				ringRect = vis
+			}
+			if sel { // the selection's outer edges, 2px lagoon-50
+				bw := gtx.Dp(2)
+				if ni == r0 {
+					theme.Fill(gtx, image.Rect(vis.Min.X, 0, vis.Max.X, bw), ring)
+				}
+				if ni == r1 {
+					theme.Fill(gtx, image.Rect(vis.Min.X, ln.h-bw, vis.Max.X, ln.h), ring)
+				}
+				if i == c0 {
+					theme.Fill(gtx, image.Rect(gx, 0, gx+bw, ln.h), ring)
+				}
+				if i == c1 {
+					theme.Fill(gtx, image.Rect(gx+gc.w-bw, 0, gx+gc.w, ln.h), ring)
+				}
+			}
+			defer v.cellSemantics(gtx, vis, gc.c, f, isActive)
 			cw := gc.w - px - gtx.Dp(8)
 			if gc.c.Type == lists.TodoCompleted { // a centred circle (p-grid_cell--completed)
 				px, cw = (gc.w-gtx.Dp(20))/2, gtx.Dp(20)
@@ -316,7 +399,7 @@ func (v *View) layoutLine(gtx layout.Context, d *core.ListDoc, lv *lists.View, l
 				cw -= gtx.Dp(60) // room for "Open"
 			}
 			at(gtx, image.Pt(gx+px, 0), image.Pt(max(0, cw), ln.h), func(gtx layout.Context) layout.Dimensions {
-				v.drawCell(gtx, gc.c, rec.Field(gc.c.Key), max(0, cw), ln.h, cellOpts{primary: i == 0 && gc.c.IsPrimary, wrap: lists.Wraps(lv, gc.c), self: self})
+				v.drawCell(gtx, gc.c, f, max(0, cw), ln.h, cellOpts{primary: i == 0 && gc.c.IsPrimary, wrap: lists.Wraps(lv, gc.c), self: self})
 				return layout.Dimensions{Size: gtx.Constraints.Max}
 			})
 			if i == 0 && g.hover == idx && !v.edit.active {
@@ -330,6 +413,20 @@ func (v *View) layoutLine(gtx layout.Context, d *core.ListDoc, lv *lists.View, l
 	if g.scrollX > 0 && len(g.cols) > 1 { // the sticky column's right edge
 		theme.Fill(gtx, image.Rect(g.x0+firstW-gtx.Dp(1), 0, g.x0+firstW, ln.h), line)
 	}
+	if !ringRect.Empty() { // 2px lagoon-50 (a menu editor open: the select input's border)
+		theme.Border(gtx, ringRect, 0, gtx.Dp(2), ring)
+	}
+}
+
+// hglColor is --dt_color-base-hgl-1 (#e3f8ff light, #001a2d dark in
+// Slack's default themes; a theme's own wins).
+func hglColor(th *theme.Theme) color.NRGBA {
+	c := color.NRGBA{0xe3, 0xf8, 0xff, 0xff}
+	if th.Dark {
+		c = color.NRGBA{0x00, 0x1a, 0x2d, 0xff}
+	}
+	theme.SetColor(th.Tokens, &c, "var(--dt_color-base-hgl-1)")
+	return c
 }
 
 // openButton is the primary cell's hover action (p-list_primary_column_actions).
@@ -400,10 +497,12 @@ func (v *View) gridEvents(gtx layout.Context, d *core.ListDoc, maxX, maxY int) {
 		case pointer.Move:
 			g.hover = v.lineAt(int(pe.Position.Y))
 			g.hoverX = int(pe.Position.X)
+			v.learnOrigin(pe.Position)
 		case pointer.Leave:
 			g.hover = -1
 		case pointer.Press:
 			g.press, g.pressed = pe.Position, true
+			v.learnOrigin(pe.Position)
 		case pointer.Release:
 			if !g.pressed || pe.Position.Sub(g.press).X*pe.Position.Sub(g.press).X+pe.Position.Sub(g.press).Y*pe.Position.Sub(g.press).Y > 36 {
 				g.pressed = false
@@ -449,7 +548,15 @@ func (v *View) gridClick(gtx layout.Context, d *core.ListDoc, x, y int) {
 		return
 	}
 	if v.edit.active {
+		done := v.edit.done
+		v.edit.done = nil
 		v.commit(d)
+		if done != nil {
+			done(doneBlur)
+		}
+	}
+	if g.rate.active {
+		v.rateDone(d, true)
 	}
 	firstW := 0
 	if len(g.cols) > 0 {
@@ -476,7 +583,27 @@ func (v *View) gridClick(gtx layout.Context, d *core.ListDoc, x, y int) {
 		if ci == 0 {
 			px = gtx.Dp(12)
 		}
-		v.cellClick(d, ln.row.Rec, gc.c, x-gx-px, gtx)
+		// GridField onClick: the cell becomes the active one, then edits
+		// (or does its custom action)
+		here := cellRef{rec: ln.row.Rec.ID, col: gc.c.Key}
+		g.active, g.selA, g.selB = here, here, cellRef{}
+		g.say = ""
+		v.cellClickWith(d, ln.row.Rec, gc.c, x-gx-px, gtx, v.gridMenu)
+		if v.edit.editing(ln.row.Rec.ID, gc.c) {
+			v.edit.done = v.editDone(gc.c)
+		} else if !g.menuOpen {
+			g.refocus = true
+		}
 		return
+	}
+}
+
+// learnOrigin pairs a local pointer position with the shell's window
+// position of the same event (the shell's origin trackers do the same),
+// so keyboard-opened menus can sit at their cell.
+func (v *View) learnOrigin(p f32.Point) {
+	if pp, ok := v.h.(interface{ PointerPos() image.Point }); ok {
+		v.grid.origin = pp.PointerPos().Sub(image.Pt(int(p.X+.5), int(p.Y+.5)))
+		v.grid.originOK = true
 	}
 }

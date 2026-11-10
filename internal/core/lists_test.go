@@ -36,7 +36,7 @@ func TestListLoad(t *testing.T) {
 	if len(d.Records) != 6 {
 		t.Fatalf("records = %d", len(d.Records))
 	}
-	if tabs := d.Meta.TabViews(); len(tabs) != 3 || tabs[1].Type != lists.ViewBoard || tabs[1].GroupBy() != "Col0STATUS1" {
+	if tabs := d.Meta.TabViews(); len(tabs) != 4 || tabs[1].Type != lists.ViewBoard || tabs[1].GroupBy() != "Col0STATUS1" {
 		t.Errorf("tabs %+v", tabs)
 	}
 	if v := d.Meta.DefaultTab(); v == nil || v.ID != "View0ALL001" {

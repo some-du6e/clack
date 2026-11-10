@@ -118,6 +118,10 @@ var defaultExperimentGroups = map[string]string{
 	// Navigation > "Show Agents in direct messages" shows in the live
 	// dialog (TabRail: Mq && n7)
 	"agents_in_dm_sidebar": "on", "agents_in_dm_sidebar_pref": "on",
+	// Accessibility > "Lists keyboard interactions" shows in the live
+	// dialog (ListsTabbingPref returns null without it), and the Lists
+	// grid's Tab navigation follows it (listview/keys.go)
+	"lists_tabbing_navigation": "on",
 }
 
 func (a *App) sidebarExperiments() sidebarExp {

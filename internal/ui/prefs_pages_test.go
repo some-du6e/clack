@@ -128,7 +128,7 @@ var slackPages = map[string][]want{
 		ckOff("Show previews when hovering over tabs"), ck("Underline links to websites"), ck("Allow animations"),
 		lg("Keyboard"), lg("Press ↑ in the empty message field to:"), rd("Move focus to the message list"),
 		rd("Move focus to the message list, only if the message field is empty"), rd("Edit your last message"),
-		lg("Lists keyboard interactions"), rdOff("Data entry mode (default)"), rdOff("Full keyboard mode (best for assistive technology)"),
+		lg("Lists keyboard interactions"), rd("Data entry mode (default)"), rd("Full keyboard mode (best for assistive technology)"),
 		lg("Screen reader"), lg("Message verbosity"), lg("Screen reader announcements"),
 		ckOff("Automatically read new messages in the current conversation"), ckOff("Read emoji reactions received in a huddle"),
 		ckOff("Play a sound when an emoji is sent or received in a huddle"),
@@ -361,4 +361,39 @@ func TestPrefsMobileOverrides(t *testing.T) {
 	p.clicks["mobile_overrides"].Click()
 	pageRows(t, a, p, "notifications")
 	waitFor(t, a, "mobile back in sync", func() bool { return fakeNotify(fs, "global_mobile") == "mentions_dms" })
+}
+
+// Lists keyboard interactions: Data entry is checked while the pref is
+// unset, a pick writes lists_tabbing_navigation_option_type, and the
+// section is only there with the lists_tabbing_navigation experiment
+// (ListsTabbingPref returns null without it).
+func TestPrefsListsKeyboard(t *testing.T) {
+	a, ca, fs := fakePrefsApp(t)
+	p := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}}
+	state := func() (tab, arrow, shown bool) {
+		for _, r := range pageRows(t, a, p, "accessibility") {
+			switch r.Key {
+			case "pref.lists_tab_nav":
+				tab, shown = r.On && r.Enabled, true
+			case "pref.lists_arrow_nav":
+				arrow = r.On && r.Enabled
+			}
+		}
+		return
+	}
+	if tab, arrow, shown := state(); !shown || !tab || arrow {
+		t.Fatalf("unset: data entry %v, full keyboard %v, shown %v", tab, arrow, shown)
+	}
+	p.setPref("lists_tabbing_navigation_option_type", "arrow_nav")
+	waitFor(t, a, "arrow_nav", func() bool {
+		v, _ := fs.Pref("lists_tabbing_navigation_option_type")
+		return v == "arrow_nav" && ca.PrefString("lists_tabbing_navigation_option_type") == "arrow_nav"
+	})
+	if tab, arrow, _ := state(); tab || !arrow {
+		t.Fatalf("arrow_nav: data entry %v, full keyboard %v", tab, arrow)
+	}
+	ca.SetExperimentGroup("lists_tabbing_navigation", "off")
+	if _, _, shown := state(); shown {
+		t.Fatal("the section shows without the experiment")
+	}
 }

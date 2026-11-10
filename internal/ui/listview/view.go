@@ -33,6 +33,7 @@ import (
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/richview"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -66,6 +67,7 @@ type Actions struct {
 	Canvas    func(id string)                    // a canvas cell or link
 	OpenItem  func(listID, recordID string)      // an item's pane (the secondary view)
 	Menu      func(m []MenuItem)                 // menus: the shell's menu at the pointer
+	MenuAt    func(p image.Point, m []MenuItem)  // a menu at a window position (a cell's editor opened by keyboard)
 	Copy      func(s string)                     // clipboard
 	People    func() []string                    // people to offer in a person field (besides the list's)
 	OpenFile  func(id string)                    // an attachment
@@ -103,6 +105,8 @@ type View struct {
 	grid     gridState
 	board    boardState
 	rows     rowCache
+	bodyTop  int         // the body's top in the view (below the bar)
+	gridAt   image.Point // the table's origin in the view (tests click cells)
 
 	live     atomic.Bool
 	lastSeen atomic.Int64
@@ -311,6 +315,7 @@ func (v *View) Layout(gtx layout.Context) layout.Dimensions {
 		}
 		v.layoutBar(gtx, d, image.Pt(sz.X, top))
 	}
+	v.bodyTop = top
 	body := image.Rect(0, top, sz.X, sz.Y)
 	defer op.Offset(body.Min).Push(gtx.Ops).Pop()
 	gtx.Constraints = layout.Exact(body.Size())
@@ -453,6 +458,7 @@ func (v *View) layoutList(gtx layout.Context, d *core.ListDoc) layout.Dimensions
 	y := v.layoutTitle(gtx, d, sz.X)
 	y += v.layoutToolbar(gtx, d, lv, y, sz.X)
 	area := image.Rect(0, y, sz.X, sz.Y)
+	v.gridAt = image.Pt(0, v.bodyTop).Add(area.Min)
 	rows := v.rowsFor(d, lv)
 	at(gtx, area.Min, area.Size(), func(gtx layout.Context) layout.Dimensions {
 		defer clip.Rect{Max: area.Size()}.Push(gtx.Ops).Pop()
@@ -598,6 +604,7 @@ func (v *View) layoutToolbar(gtx layout.Context, d *core.ListDoc, lv *lists.View
 				return th.Editor(gtx, &v.search, 13, c.Fg, c.Selection)
 			})
 		})
+		shortcut.OwnEscape(&v.search)
 		for {
 			ev, ok := gtx.Event(key.Filter{Focus: &v.search, Name: key.NameEscape})
 			if !ok {
