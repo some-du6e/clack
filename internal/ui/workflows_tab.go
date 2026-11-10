@@ -553,6 +553,7 @@ func (a *App) workflowBuilderEnabled() bool {
 // buttonWidth measures popups.Button without drawing it (a discarded
 // macro).
 func buttonWidth(gtx layout.Context, th *theme.Theme, kind popups.BtnKind, size popups.BtnSize, label string) int {
+	gtx.Constraints = layout.Constraints{Max: gtx.Constraints.Max} // the row's Min.X would stretch it
 	m := op.Record(gtx.Ops)
 	var c widget.Clickable
 	d := popups.Button(gtx, th, &c, kind, size, label, "", 0)

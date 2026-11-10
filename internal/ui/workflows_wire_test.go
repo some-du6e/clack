@@ -9,9 +9,15 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/unit"
+	"gioui.org/widget"
+
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
@@ -168,5 +174,25 @@ func TestWorkflowsTab(t *testing.T) {
 	e.a.chTab[ch] = 0
 	if e.a.workflowsTabView(ch) != nil {
 		t.Error("the Workflows tab stayed open on Messages")
+	}
+}
+
+// TestWorkflowsTabSectionLayout: a section heading inside a full-width
+// list row keeps its button at the right and room for the title (the
+// button was once measured with the row's minimum width, which pushed it
+// left and left the title no space).
+func TestWorkflowsTabSectionLayout(t *testing.T) {
+	a := &App{th: theme.New(false)}
+	var ops op.Ops
+	w := 900
+	gtx := layout.Context{Ops: &ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{Min: image.Pt(w, 0), Max: image.Pt(w, 400)}, Now: time.Now()}
+	if bw := buttonWidth(gtx, a.th, popups.BtnOutline, popups.BtnSmall, "Feature workflow"); bw <= 0 || bw > 300 {
+		t.Fatalf("button width %d in a %d-wide row", bw, w)
+	}
+	var act widget.Clickable
+	d := a.wfSection("Featured workflows", "Feature up to 15 workflows, so people can use them instead of sending a message.", &act, "Feature workflow", true)(gtx)
+	if d.Size.X != w || d.Size.Y < 24+18+2+16 {
+		t.Errorf("section %v: the title and subtitle need their lines", d.Size)
 	}
 }
