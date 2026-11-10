@@ -288,6 +288,9 @@ type SendOpts struct {
 	Channel, Text, ThreadTS string
 	Broadcast               bool
 	Blocks                  json.RawMessage
+	// Attachments go out as chat.postMessage attachments (prepareAndSendMessage's
+	// channelSectionBlocks: [{blocks: [channel_section]}]).
+	Attachments json.RawMessage
 }
 
 // UploadOpts share one or more files (held in memory, never spooled to disk).

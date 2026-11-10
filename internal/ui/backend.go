@@ -851,10 +851,32 @@ func (b *backend) togglePresence() {
 	go func() { _ = b.core.SetPresence(b.ctx, p) }()
 }
 
+// setMuted is Slack's muteChannelById / unmuteChannelById (boot-shared
+// IDOy): the row goes muted (or not) at once, the "muted" channel pref is
+// written (users.prefs.setNotifications, core.Mute), and a failed write
+// quietly puts the row back. Muting a muted channel (or unmuting an
+// unmuted one) does nothing, and there is no toast.
 func (b *backend) setMuted(ch string, muted bool) {
-	if b.app != nil {
-		b.app.Toast("Muting from " + AppName + " isn't supported yet")
+	c := b.m.conv(ch)
+	if c == nil || c.Muted == muted || b.core == nil {
+		return
 	}
+	c.Muted = muted
+	b.m.version++
+	ctx, a := b.ctx, b.app
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	go func() {
+		if err := b.core.Mute(ctx, ch, muted); err != nil && a != nil {
+			a.Post(func() {
+				if c := b.m.conv(ch); c != nil && c.Muted == muted {
+					c.Muted = !muted
+					b.m.version++
+				}
+			})
+		}
+	}()
 }
 
 func (b *backend) leave(ch string) {

@@ -23,6 +23,8 @@ import (
 //     section_not_found.
 //   - users.channelSections.createLink {section_name, emoji, channels} →
 //     {url}.
+//   - users.channelSections.validateShare {channels, target_channel} →
+//     {validation_errors: [{channel_id, error}]} (none here).
 //   - users.prefs.setNotifications global=false {channel_ids, name, value}
 //     or {channel_ids, prefs}: all_notifications_prefs.channels.
 //   - conversations.mark {channel, ts}: client.counts reads it back.
@@ -222,6 +224,12 @@ func (s *Server) handleSections(method string, f url.Values) (any, bool) {
 		n := len(s.secs.links)
 		s.secs.mu.Unlock()
 		return ok("url", fmt.Sprintf("%s/section/fake%04d", strings.TrimSuffix(s.URL, "/"), n)), true
+	case "users.channelSections.validateShare":
+		// every channel shares (tests refuse some with SetHook)
+		if f.Get("target_channel") == "" {
+			return fail("invalid_arguments"), true
+		}
+		return ok("validation_errors", []any{}), true
 	case "conversations.mark":
 		s.secs.mu.Lock()
 		if s.secs.marks == nil {
