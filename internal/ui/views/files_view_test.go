@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"gioui.org/layout"
 
@@ -23,6 +24,7 @@ import (
 type filesHost struct {
 	*vaHost
 	opened []string
+	action func() // the last ToastAction's
 }
 
 func (h *filesHost) OpenCanvasFull(id string) { h.opened = append(h.opened, "canvas:"+id) }
@@ -210,7 +212,7 @@ func TestFilesViewShots(t *testing.T) {
 		e.until(t, "the star", func() bool { return len(fs.StarredFiles()) == 1 })
 		e.frame()
 		vaShot(t, e, "files-starred", dark)
-		v.openMenu(it)
+		v.openMenu(it, image.Rect(1086, 316, 1114, 344)) // the ⋯ under the pointer
 		e.frame()
 		vaShot(t, e, "files-menu", dark)
 		dismissAll(h)
@@ -229,6 +231,74 @@ func dismissAll(h *filesHost) {
 	for _, o := range h.open() {
 		if d, ok := o.(interface{ Dismiss() }); ok {
 			d.Dismiss()
+		}
+	}
+}
+
+// ToastAction records the restored toast and keeps its action (tests).
+func (h *filesHost) ToastAction(text, label string, do func()) {
+	h.Toast(text + " [" + label + "]")
+	h.action = do
+}
+
+// Deleted: DeletedFilesList's rows from files.recentlyDeleted ("Deleted
+// {ago}", the Restore button), UndeleteFileDialog, files.undelete, the
+// row gone and "{title} restored." with View opening the canvas.
+func TestFilesViewRestore(t *testing.T) {
+	v, h, e, fs := filesView(t)
+	ctx := t.Context()
+	if err := h.Core().DeleteFile(ctx, fakeslack.CanvasShared); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Core().DeleteFile(ctx, fakeslack.ListKitchen); err != nil {
+		t.Fatal(err)
+	}
+	v.nav, v.reload = 3, true
+	e.until(t, "the deleted rows", func() bool { r, ok, _ := v.del.rows(); return ok && len(r) == 2 })
+	rows, _, _ := v.del.rows()
+	byID := map[string]core.DeletedFile{}
+	for _, r := range rows {
+		byID[r.ID] = r
+	}
+	c, ok := byID[fakeslack.CanvasShared]
+	if !ok || c.FileType != "quip" || c.Title != "Weekly sync notes" || byID[fakeslack.ListKitchen].FileType != "list" {
+		t.Fatalf("rows %+v", rows)
+	}
+	if got := "Deleted " + deletedAgo(time.Unix(c.DateDelete, 0), time.Now()); got != "Deleted < 1 minute ago" {
+		t.Errorf("meta %q", got)
+	}
+	e.frame()
+	btn, _ := v.del.btn(fakeslack.CanvasShared)
+	btn.Click()
+	e.frame()
+	if len(h.open()) != 1 {
+		t.Fatalf("overlays = %d, want UndeleteFileDialog", len(h.open()))
+	}
+	v.restoreFile(c)
+	e.until(t, "files.undelete", func() bool {
+		r, _, _ := v.del.rows()
+		return len(r) == 1 && r[0].ID == fakeslack.ListKitchen
+	})
+	calls := fs.FilesViewCalls()
+	if last := calls[len(calls)-1]; last.Method != "files.undelete" || last.Args.Get("file_id") != fakeslack.CanvasShared {
+		t.Errorf("last call %+v", last)
+	}
+	ts := h.toasts()
+	if len(ts) == 0 || ts[len(ts)-1] != "Weekly sync notes restored. [View]" {
+		t.Fatalf("toasts %q", ts)
+	}
+	h.action()
+	if h.last() != "canvas:"+fakeslack.CanvasShared {
+		t.Errorf("View opened %q", h.last())
+	}
+	for _, c := range []struct {
+		d    time.Duration
+		want string
+	}{{30 * time.Second, "< 1 minute ago"}, {80 * time.Second, "1 minute ago"}, {150 * time.Second, "3 minutes ago"},
+		{50 * time.Minute, "1 hour ago"}, {5 * time.Hour, "5 hours ago"}, {30 * time.Hour, "1 day ago"}} {
+		now := time.Unix(1900000000, 0)
+		if got := deletedAgo(now.Add(-c.d), now); got != c.want {
+			t.Errorf("%v: %q, want %q", c.d, got, c.want)
 		}
 	}
 }
