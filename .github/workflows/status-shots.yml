@@ -1,0 +1,62 @@
+name: status-shots
+# The Set a status modal (scheduled statuses, the Out of office automatic
+# reply), Preferences > Availability's custom working days and focus mode:
+# their fakeslack tests, and screenshots of the modal and the page in light
+# and dark through Gio's GPU renderer (Mesa llvmpipe), with emoji from
+# Slack's public static CDN (a.slack-edge.com, no cookie). Nothing here
+# talks to a real Slack workspace.
+on:
+  push:
+    paths:
+      - "internal/ui/popups/actions_status*"
+      - "internal/ui/popups/prefs_availability*"
+      - "internal/ui/popups/status_shots_test.go"
+      - "internal/ui/focus_mode*"
+      - ".github/workflows/status-shots.yml"
+  workflow_dispatch:
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb libgl1-mesa-dri libegl-mesa0
+
+permissions:
+  contents: read
+
+jobs:
+  status-shots:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: status, availability and focus mode tests
+        run: |
+          set -o pipefail
+          mkdir -p dist
+          go test -count=1 -v -run 'TestAct|TestAv' ./internal/ui/popups 2>&1 | tee dist/status-tests.log
+          go test -count=1 -v -run 'TestFocus|TestPrefsPagesMatchSlack' ./internal/ui 2>&1 | tee -a dist/status-tests.log
+      - name: screenshots (light, dark)
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          CLACK_EMOJI_CDN: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          STATUS_SHOTS_DIR: ${{ github.workspace }}/dist/status-shots
+        run: |
+          set -o pipefail
+          mkdir -p "$STATUS_SHOTS_DIR"
+          xvfb-run -a go test -p 1 -count=1 -v -run 'TestStatusShots|TestAvailabilityCustomDaysShots' ./internal/ui/popups 2>&1 | tee dist/status-shots.log
+          xvfb-run -a go test -p 1 -count=1 -v -run 'TestFocusPopoverShots' ./internal/ui 2>&1 | tee -a dist/status-shots.log
+          ls -la "$STATUS_SHOTS_DIR"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: status-shots
+          path: |
+            dist/status-shots
+            dist/*.log

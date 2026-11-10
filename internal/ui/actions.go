@@ -221,7 +221,7 @@ func (a *App) setStatusPrompt() {
 		a.ShowOverlay(mkStatusModal(a))
 		return
 	}
-	a.Toast("Status editing isn't available yet")
+	a.ShowOverlay(popups.NewSetStatusModalFromMenu(a)) // the user menu's "Update your status"
 }
 
 func (a *App) signOut() {
