@@ -181,6 +181,7 @@ type rowCtx struct {
 	hovered   bool
 	thread    bool // inside a thread pane (no thread bar, no "replied to")
 	dense     bool // messages_theme "dense" (Messages & media > Theme > Compact)
+	persist   bool // Simplified layout mode's persistent message actions (persist.go)
 	list      *listState
 	parent    bool // the thread parent row
 	now       time.Time
@@ -840,6 +841,7 @@ func (r *row) layoutGutter(gtx layout.Context, p slackc.Props) layout.Dimensions
 	if r.rc.thread {
 		cw = w - cx - dp(gtx, 16)
 	}
+	cw -= r.rc.actionsPad(gtx)
 	if cw < dp(gtx, 80) {
 		cw = dp(gtx, 80)
 	}
@@ -2090,7 +2092,7 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	w := gtx.Constraints.Max.X
 	padX := dp(gtx, rc.padX())
 	cx := dp(gtx, rc.contentX())
-	cw := w - cx - padX - dp(gtx, 20)
+	cw := w - cx - padX - dp(gtx, 20) - rc.actionsPad(gtx)
 	rec := op.Record(gtx.Ops)
 	icon := "info"
 	switch m.Subtype {
@@ -2176,7 +2178,7 @@ func (r *row) denseSystemLayout(gtx layout.Context, rc *rowCtx) layout.Dimension
 	if rc.thread {
 		cw = w - cx - dp(gtx, 16)
 	}
-	cw = max(cw, dp(gtx, 80))
+	cw = max(cw-rc.actionsPad(gtx), dp(gtx, 80))
 	rec := op.Record(gtx.Ops)
 	top := dp(gtx, mt.padTop) - dp(gtx, 4) // the gutter's first line
 	y := top

@@ -291,6 +291,7 @@ func (a *App) zoom(d int) {
 		return
 	}
 	a.prefs.Zoom = z
+	a.noteZoom() // the mode's or the normal zoom (bbm.go)
 	a.savePrefs()
 	a.Invalidate()
 }

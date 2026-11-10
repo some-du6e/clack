@@ -125,7 +125,7 @@ var slackPages = map[string][]want{
 		{"select", spell.Labels[spell.DefaultLanguages()[0]], false}, // the languages (Windows, Linux)
 	},
 	"accessibility": {
-		lg("Display"), lg("Simplified layout mode"), btnOff("Turn On"), lg("Alt text reminders"),
+		lg("Display"), lg("Simplified layout mode"), btn("Turn On"), lg("Alt text reminders"),
 		ckOff("Remind me to add an image description on image uploads"), lg("Other display options"),
 		ckOff("Show previews when hovering over tabs"), ck("Underline links to websites"), ck("Allow animations"),
 		lg("Keyboard"), lg("Press ↑ in the empty message field to:"), rd("Move focus to the message list"),

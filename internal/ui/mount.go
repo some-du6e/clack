@@ -87,7 +87,22 @@ func (a *App) layoutPage(gtx layout.Context, r Route) layout.Dimensions {
 		}
 		return &paneStub{a: a, title: pageTitle(r), text: "(ui-views)"}
 	})
+	if s, ok := v.(bbmSplitView); ok && a.bbmOn() {
+		// Simplified layout mode: the tab's list (Slack's sidebar view) or
+		// what was picked in it, one at a time (bbm.go)
+		if a.bbm.cont == bbmSidebar {
+			return s.LayoutList(gtx)
+		}
+		return s.LayoutPane(gtx)
+	}
 	return v.Layout(gtx)
+}
+
+// bbmSplitView is a page that draws a list beside a pane (DMs, Files):
+// the simplified layout draws them one at a time.
+type bbmSplitView interface {
+	LayoutList(gtx layout.Context) layout.Dimensions
+	LayoutPane(gtx layout.Context) layout.Dimensions
 }
 
 // ---- placeholders ----

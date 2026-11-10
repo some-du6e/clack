@@ -100,6 +100,7 @@ type listState struct {
 	hoverIdx  int
 
 	tb       [tbCount]widget.Clickable
+	pbtn     map[string]*widget.Clickable // persistent "Message actions" buttons (persist.go)
 	tbRect   image.Rectangle
 	tbFor    int
 	jump     widget.Clickable
@@ -574,7 +575,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	}
 	urev := s.hb.usersRev()
 	chanFrame = urev // channel names the rows may show this frame (channels.go)
-	s.rc = rowCtx{h: h, th: th, st: st, c: c, now: now, thread: s.thread, dense: uipref.Get().Dense, list: s, selfID: selfID, usersRev: urev + 1,
+	s.rc = rowCtx{h: h, th: th, st: st, c: c, now: now, thread: s.thread, dense: uipref.Get().Dense, persist: PersistActions(), list: s, selfID: selfID, usersRev: urev + 1,
 		origin:    func(p image.Point) image.Point { return s.anchor(h, origin, p) },
 		onReact:   func(r *row, name string, add bool) { s.react(h, r, name, add, selfID) },
 		onRetry:   func(r *row) { s.retry(h, r) },
@@ -1048,9 +1049,11 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 		}
 	}
 
-	// hover toolbar
+	// hover toolbar (the simplified layout's persistent menu instead)
 	s.tbFor = -1
-	if s.hoverIdx >= 0 && s.hoverIdx < len(s.items) && s.items[s.hoverIdx].kind == itMsg {
+	if rc.persist {
+		s.persistentActions(gtx, h, rc, size)
+	} else if s.hoverIdx >= 0 && s.hoverIdx < len(s.items) && s.items[s.hoverIdx].kind == itMsg {
 		if r := s.rows[s.items[s.hoverIdx].key]; r != nil && !s.sel.dragging && r.edit == nil && len(s.items[s.hoverIdx].group) == 0 && !r.m.Pending && !r.m.Failed && !r.m.Tombstone {
 			s.toolbar(gtx, h, rc, r, s.hoverIdx, size)
 		}

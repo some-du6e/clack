@@ -351,10 +351,26 @@ func (a *App) layoutSidebarNative(gtx layout.Context, p slackc.Props) layout.Dim
 	return layout.Dimensions{Size: sz}
 }
 
+// sbRowH is --sidebar_item_height (X4Y6 getSidebarItemHeight):
+// space.175 (28px), space.275 (44px) in Simplified layout mode.
+func (a *App) sbRowH(gtx layout.Context) int {
+	if a.bbmOn() {
+		return gtx.Dp(44)
+	}
+	return gtx.Dp(theme.SidebarRowH)
+}
+
+// sbBBMBox: in the simplified layout conversation and page rows are boxes
+// (.p-channel_sidebar__channel--bbm, …__link--page--bbm) with a 12px
+// spacer after each (xnuR pushBBMChannelSpacer, BBMPagesLinkSpacer).
+func (a *App) sbBBMBox(r *sbRow) bool {
+	return a.bbmOn() && (r.kind == sbConv || r.kind == sbLink)
+}
+
 func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 	c := &a.sbPal
 	w := gtx.Constraints.Max.X
-	rowH := gtx.Dp(theme.SidebarRowH)
+	rowH := a.sbRowH(gtx)
 	pad := gtx.Dp(8)
 	switch r.kind {
 	case sbGap:
@@ -429,6 +445,9 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 	case sbAction:
 		indent = gtx.Dp(16)
 	}
+	if a.sbBBMBox(r) {
+		sel = false // "--selected" is only added outside the mode (Jbto: n&&!w)
+	}
 	btn := r.btn
 	if btn == nil {
 		btn = a.clicks.get(clickPrefix + r.key)
@@ -497,6 +516,9 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 		case sbAction:
 			a.sidebarAction(r.key)
 		}
+	}
+	if a.sbBBMBox(r) {
+		return layout.Dimensions{Size: image.Pt(w, d.Size.Y+gtx.Dp(12))} // SpacerRow (height 12)
 	}
 	return layout.Dimensions{Size: image.Pt(w, d.Size.Y)}
 }
@@ -583,11 +605,24 @@ type sbRowState struct {
 func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable, rs sbRowState, p slackc.Props) layout.Dimensions {
 	c := &a.sbPal
 	rw := gtx.Constraints.Max.X
-	rowH := gtx.Dp(theme.SidebarRowH)
+	rowH := a.sbRowH(gtx)
 	pad := gtx.Dp(8)
 	sel, conv := rs.sel, rs.conv
+	box := a.sbBBMBox(r)
 	return clickArea(gtx, btn, func(gtx layout.Context, s image.Point, hovered bool) {
 		switch {
+		case box:
+			// border 1px theme-otl-inv-pry, radius 4, the
+			// theme-surf-ter-pressed fill (drawn as the sidebar's lilac at
+			// .22, its dark-ramp value), theme-surf-ter on hover (drawn as
+			// the sidebar hover over it)
+			rr := image.Rectangle{Max: s}
+			bg := theme.Over(theme.WithAlpha(a.th.C.ChromeHover, 0x38), a.sbBase)
+			if hovered {
+				bg = theme.Over(a.th.C.SidebarHover, bg)
+			}
+			theme.RRect(gtx, rr, gtx.Dp(4), bg)
+			theme.Border(gtx, rr, gtx.Dp(4), max(1, gtx.Dp(1)), c.SidebarDivider)
 		case sel:
 			theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(6), c.SidebarActive)
 		case hovered && r.kind != sbHeading:
