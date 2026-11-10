@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/store"
 )
 
@@ -48,7 +49,8 @@ func Get() *store.Prefs {
 
 // Gen is the layout generation: it changes when a pref that changes laid
 // out text (jumbomoji, swatches, link underlines, inline media) does.
-func Gen() uint32 { return gen.Load() }
+// The locale counts too: a new catalog changes every label's width.
+func Gen() uint32 { return gen.Load() + uint32(i18n.Gen()) }
 
 type lkey struct {
 	jumbo, underline, swatch, noInt, noImg, noText, real, t24 bool
@@ -63,6 +65,9 @@ func layoutKey(p *store.Prefs) lkey {
 // Clock is a message time the way Slack shows it: "3:04 PM", or "15:04"
 // with time24 (Messages & media > "Show times with 24-hour clock").
 func Clock(t time.Time) string {
+	if l := i18n.Locale(); l != i18n.EnUS {
+		return i18n.Time(l, t, Get().Time24, false) // toTime: "15:04 Uhr", "下午 3:04"
+	}
 	if Get().Time24 {
 		return t.Format("15:04")
 	}
@@ -71,6 +76,9 @@ func Clock(t time.Time) string {
 
 // ShortClock is the hover time of a grouped row: "3:04", or "15:04".
 func ShortClock(t time.Time) string {
+	if l := i18n.Locale(); l != i18n.EnUS {
+		return i18n.ShortTime(l, t, Get().Time24)
+	}
 	if Get().Time24 {
 		return t.Format("15:04")
 	}
