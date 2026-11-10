@@ -110,11 +110,11 @@ func TestChannelMenuTemplateRoundTrip(t *testing.T) {
 			t.Errorf("template item %s carries a click", keys[i])
 		}
 	}
-	want := []string{"view_details", "copy_link", "copy_name", "separator_1", "toggle_star", "toggle_mute", "mark_read", "separator_2", "leave"}
+	want := []string{"view_details", "copy_link", "copy_name", "separator_1", "toggle_star", "move_to_new_section", "toggle_mute", "mark_read", "separator_2", "leave"}
 	if strings.Join(keys, ",") != strings.Join(want, ",") {
 		t.Fatalf("keys %v, want %v", keys, want)
 	}
-	if tpl[4]["label"] != "Unstar channel" || tpl[8]["danger"] != true || tpl[3]["type"] != "separator" {
+	if tpl[4]["label"] != "Unstar channel" || tpl[9]["danger"] != true || tpl[3]["type"] != "separator" {
 		t.Fatalf("template %v", tpl)
 	}
 	if _, err := json.Marshal(tpl); err != nil {
@@ -136,23 +136,77 @@ func TestChannelMenuTemplateRoundTrip(t *testing.T) {
 	for _, it := range got {
 		gk = append(gk, it.Key)
 	}
-	want = []string{"view_details", "copy_link", "separator_1", "toggle_star", "toggle_mute", "mark_read", "separator_2", "slick-chat-tabs-open", "leave"}
+	want = []string{"view_details", "copy_link", "separator_1", "toggle_star", "move_to_new_section", "toggle_mute", "mark_read", "separator_2", "slick-chat-tabs-open", "leave"}
 	if strings.Join(gk, ",") != strings.Join(want, ",") {
 		t.Fatalf("items %v, want %v", gk, want)
 	}
-	if got[7].Label != "Open in new Slick tab" || got[7].Do == nil {
-		t.Fatalf("plugin row %+v", got[7])
+	if got[8].Label != "Open in new Slick tab" || got[8].Do == nil {
+		t.Fatalf("plugin row %+v", got[8])
 	}
-	if !got[8].Danger || got[8].Do == nil {
-		t.Fatalf("leave row %+v", got[8])
+	if !got[9].Danger || got[9].Do == nil {
+		t.Fatalf("leave row %+v", got[9])
 	}
-	got[8].Do()
+	got[9].Do()
 	if ran != "leave" {
 		t.Fatalf("leave ran %q", ran)
 	}
 	dm := ChannelMenuItems(ChannelMenuInfo{ID: "D1", Kind: "im", Muted: true}, nil)
-	if l := dm[len(dm)-1]; l.Key != "close" || l.Label != "Close conversation" || dm[5].Label != "Unmute conversation" || l.Do != nil {
+	if l := dm[len(dm)-1]; l.Key != "close" || l.Label != "Close conversation" || dm[6].Label != "Unmute conversation" || l.Do != nil {
 		t.Fatalf("DM items %+v", dm)
+	}
+}
+
+// The sidebar menu's section rows are getChannelSectionsTemplate's
+// (boot-render, sidebar): Star and "Move to new section" without a custom
+// section; "Move channel" ▸ (no Star) with one; "Move to section" ▸ under
+// channel_ia_header_refinements; nothing for an archived channel or one
+// you aren't in. The ▸ rows are the section picker's, with its actions.
+func TestChannelMenuSectionRows(t *testing.T) {
+	picked := ""
+	move := []MenuItem{{Header: "Move to…"}, {Label: "Starred", Do: func() { picked = "Starred" }}, {Label: "Projects", Do: func() { picked = "Projects" }}}
+	do := func(key string) func() { return func() {} }
+	rows := func(c ChannelMenuInfo) (labels []string, items []MenuItem) {
+		items = ChannelMenuItems(c, do)
+		for _, it := range items[4:] { // after details, copy link, copy name, separator
+			if it.Key == "toggle_mute" {
+				break
+			}
+			labels = append(labels, it.Label)
+		}
+		return labels, items
+	}
+	cases := []struct {
+		name string
+		c    ChannelMenuInfo
+		want string
+	}{
+		{"no custom section", ChannelMenuInfo{ID: "C1", Kind: "channel"}, "Star channel,Move to new section"},
+		{"DM, no custom section", ChannelMenuInfo{ID: "D1", Kind: "im", Starred: true}, "Unstar conversation,Move to new section"},
+		{"custom section", ChannelMenuInfo{ID: "C1", Kind: "channel", Custom: true, Move: move}, "Move channel"},
+		{"DM, custom section", ChannelMenuInfo{ID: "D1", Kind: "im", Custom: true, Move: move}, "Move conversation"},
+		{"refinements", ChannelMenuInfo{ID: "C1", Kind: "channel", MoveToSection: true, Move: move}, "Move to section"},
+		{"archived", ChannelMenuInfo{ID: "C1", Kind: "channel", NoSections: true, Custom: true, Move: move}, ""},
+	}
+	for _, tc := range cases {
+		labels, items := rows(tc.c)
+		if got := strings.Join(labels, ","); got != tc.want {
+			t.Errorf("%s: section rows %q, want %q", tc.name, got, tc.want)
+			continue
+		}
+		for _, it := range items {
+			if it.Key != "move" && it.Key != "move_to_section" {
+				continue
+			}
+			if len(it.Sub) != len(move) || it.Do != nil {
+				t.Errorf("%s: %s has %d sub rows (want %d) and Do %v", tc.name, it.Label, len(it.Sub), len(move), it.Do != nil)
+				continue
+			}
+			picked = ""
+			it.Sub[2].Do()
+			if picked != "Projects" {
+				t.Errorf("%s: the submenu's Projects ran %q", tc.name, picked)
+			}
+		}
 	}
 }
 
