@@ -308,9 +308,10 @@ func TestListPickerTab(t *testing.T) {
 	if len(nc) != 2 {
 		t.Fatalf("conversations.addTab %v", nc)
 	}
-	_ = json.Unmarshal([]byte(nc[1].Get("data")), &data)
-	if data["file_id"] != e.shown[2] || data["access_level"] != "" {
-		t.Errorf("new list tab data %v (shown %v)", data, e.shown)
+	var nd map[string]string
+	_ = json.Unmarshal([]byte(nc[1].Get("data")), &nd)
+	if nd["file_id"] != e.shown[2] || nd["access_level"] != "" || len(nd) != 1 {
+		t.Errorf("new list tab data %v (shown %v)", nd, e.shown)
 	}
 	if _, ok := e.fs.List(e.shown[2]); !ok {
 		t.Errorf("no list %s", e.shown[2])
