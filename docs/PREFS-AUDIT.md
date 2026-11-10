@@ -333,7 +333,7 @@ tabs" is disabled while the mode is on.
   Preferences.
 - The switcher opens BBMWorkspaceSwitcher, "Workspaces": the workspace row
   on base-inv-hgl-1 with a 44px ring around its icon, the name (15/700),
-  the address and "Ctrl 1".
+  the address and the ⌘1 shortcut (Slack writes "Ctrl 1" off macOS; Clack uses its own formatter, "Ctrl+1").
 
 **Sidebar in the mode** [X4Y6, xnuR, Jbto, styles].
 - `--sidebar_item_height` is 44px (space.275), up from 28px (space.175).

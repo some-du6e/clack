@@ -262,11 +262,9 @@ func (a *App) bbmRowLayout(gtx layout.Context, row bbmRow) layout.Dimensions {
 						return a.th.Label(gtx, 13, theme.Regular, text, u)
 					})
 				}
-				// AccountSwitcherRowShortcut: ⌘1 / "Ctrl 1" at 13px (color: inherit)
-				sc := "Ctrl 1"
-				if shortcut.Mac() {
-					sc = "⌘1"
-				}
+				// AccountSwitcherRowShortcut: the workspace's index after ⌘ (Slack
+				// writes "Ctrl 1" off macOS) at 13px, color inherit
+				sc := shortcut.Format("Mod+1")
 				sw := a.th.Measure(gtx, 13, theme.Regular, sc)
 				at(gtx, image.Pt(rw-in-padX-sw, cy), image.Pt(sw+2, ch), func(gtx layout.Context) layout.Dimensions {
 					return vcenter(gtx, ch, func(gtx layout.Context) layout.Dimensions {
