@@ -420,7 +420,11 @@ func (e *editState) finish(v *View) bool {
 	}
 	s := e.cur
 	bs := fromDoc(s.ed.Doc(), s)
-	for _, b := range bs {
+	check := bs
+	if s.quoted { // "> " around text canvas markdown carries
+		check = unquote(bs)
+	}
+	for _, b := range check {
 		if ok, why := canvas.Editable(b); !ok {
 			if why == "" {
 				why = "this"

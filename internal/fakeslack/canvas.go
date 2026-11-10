@@ -456,6 +456,8 @@ func (cs *canvasStore) apply(s *Server, c *FakeCanvas, op, sec, md, title string
 		c.Title = strings.TrimSpace(title)
 		return ""
 	}
+	// uploads' permalinks are this server's http URLs; Slack's are https
+	md = strings.ReplaceAll(md, "]("+s.URL+"files/", "](https://fake.slack.com/files/")
 	nb := s.embedUploads(canvas.ParseMarkdown(md, s.names()))
 	switch op {
 	case "insert_at_start":
@@ -494,12 +496,12 @@ func (s *Server) embedUploads(bs []canvas.Block) []canvas.Block {
 		if b.Kind != canvas.Image || b.Image == nil {
 			continue
 		}
+		const host = "https://fake.slack.com/files/"
 		u := b.Image.URL
-		k := strings.Index(u, "/files/")
-		if !strings.HasPrefix(u, s.URL) || k < 0 {
+		if !strings.HasPrefix(u, host) {
 			continue
 		}
-		parts := strings.Split(u[k+len("/files/"):], "/") // U…/F…/name
+		parts := strings.Split(u[len(host):], "/") // U…/F…/name
 		if len(parts) < 2 {
 			continue
 		}
