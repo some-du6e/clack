@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -424,4 +425,47 @@ func (a *App) SectionLink(ctx context.Context, name, emoji string, channels []st
 		return "", errors.New("core: no link")
 	}
 	return r.URL, nil
+}
+
+// ValidateShareSection is users.channelSections.validateShare (Slack's
+// usersChannelSectionsValidateShareFetcher, share-dialog-channel-section):
+// which of channels can't be shared into target, each with its errors
+// (target_user_not_in_workspace, actor_cannot_invite_member, …). Empty:
+// all of them can.
+func (a *App) ValidateShareSection(ctx context.Context, target string, channels []string) (map[string][]string, error) {
+	var r struct {
+		Errors []struct {
+			Channel string `json:"channel_id"`
+			Error   string `json:"error"`
+		} `json:"validation_errors"`
+	}
+	p := url.Values{"channels": {strings.Join(channels, ",")}, "target_channel": {target}}
+	if err := a.C.Call(ctx, "users.channelSections.validateShare", p, &r); err != nil {
+		return nil, err
+	}
+	out := map[string][]string{}
+	for _, e := range r.Errors {
+		if e.Channel != "" && !slices.Contains(out[e.Channel], e.Error) {
+			out[e.Channel] = append(out[e.Channel], e.Error)
+		}
+	}
+	return out, nil
+}
+
+// ShareSection is Slack's shareChannelSection: a message into ch with
+// the note (text, as rich_text) and the section as an attachment block
+// {type: channel_section, channel_set_name, channel_ids, emoji}. It
+// returns the sent message.
+func (a *App) ShareSection(ctx context.Context, ch, name, emoji string, channels []string, note string) (Message, error) {
+	att, err := json.Marshal([]map[string]any{{"blocks": []map[string]any{{
+		"type": "channel_section", "channel_set_name": name, "channel_ids": channels, "emoji": emoji}}}})
+	if err != nil {
+		return Message{}, err
+	}
+	o := SendOpts{Channel: ch, Text: note, Attachments: att}
+	if note != "" {
+		o.Blocks, _ = json.Marshal([]map[string]any{{"type": "rich_text", "elements": []map[string]any{{
+			"type": "rich_text_section", "elements": []map[string]any{{"type": "text", "text": note}}}}}})
+	}
+	return a.Send(ctx, o)
 }

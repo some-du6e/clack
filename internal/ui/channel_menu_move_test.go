@@ -41,6 +41,8 @@ func TestSidebarMenuMoveChannel(t *testing.T) {
 	if got == nil {
 		t.Fatal("the row menu didn't open")
 	}
+	e.settle(150 * time.Millisecond)
+	e.shot("sidebar-row-menu-move")
 	if _, ok := findItem(got, "Star channel"); ok {
 		t.Error("a channel with custom sections still offers Star (Slack moves it to Starred instead)")
 	}
