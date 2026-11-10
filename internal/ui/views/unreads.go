@@ -42,6 +42,7 @@ import (
 	"image"
 	"image/color"
 	"math/rand"
+	"strings"
 	"sync"
 	"time"
 
@@ -207,7 +208,13 @@ func (v *Unreads) build() {
 		if latest == "" || latest == "0000000000.000000" {
 			latest = actTS(time.Now().Unix())
 		}
-		cands = append(cands, unrCand{id: id, name: v.convTitle(id, nil), kind: cv.Kind, lastRead: cnt.LastRead, latest: latest,
+		// displayName without the hash (publicChannelIncludeHashSign: false);
+		// the header draws the channel icon
+		name := v.convTitle(id, nil)
+		if cv.Kind == "channel" || cv.Kind == "private" {
+			name = strings.TrimPrefix(name, "#")
+		}
+		cands = append(cands, unrCand{id: id, name: name, kind: cv.Kind, lastRead: cnt.LastRead, latest: latest,
 			starred: cv.Starred, priority: cv.Priority, mentions: cnt.Mentions, created: cv.Created})
 	}
 	// a stable base order before Slack's sorts (Counts is a map)
@@ -986,8 +993,9 @@ func (v *Unreads) header(gtx C, f *unrFrame, count int) D {
 					})
 				})
 			}),
-			layout.Flexed(1, func(gtx C) D {
+			layout.Rigid(func(gtx C) D {
 				gtx.Constraints.Min.X = 0
+				gtx.Constraints.Max.X = max(0, gtx.Constraints.Max.X-gtx.Dp(260)) // leave the controls room
 				return f.nameLink.Layout(gtx, func(gtx C) D {
 					pointerCursor(gtx)
 					d := row(gtx, layout.Middle,
@@ -1006,6 +1014,8 @@ func (v *Unreads) header(gtx C, f *unrFrame, count int) D {
 					return d
 				})
 			}),
+			// the count's margin-left: auto pushes the rest to the right
+			layout.Flexed(1, func(gtx C) D { return D{Size: image.Pt(gtx.Constraints.Max.X, 0)} }),
 			layout.Rigid(func(gtx C) D {
 				switch st {
 				case 2:
