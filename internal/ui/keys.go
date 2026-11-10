@@ -120,8 +120,19 @@ func (s *shortcuts) process(gtx layout.Context, a *App) {
 	event.Op(gtx.Ops, &s.tag)
 	area.Pop()
 	filters := make([]event.Filter, 0, len(s.list))
+	// a focused widget that handles plain Escape itself (shortcut.OwnEscape)
+	// keeps it from "Close / mark as read"
+	escOwned := false
+	for _, t := range shortcut.TakeEscapeOwners() {
+		if gtx.Focused(t) {
+			escOwned = true
+		}
+	}
 	if !slackc.ModalOpen() { // a modal dialog makes the page inert: its keys go to it
 		for _, sc := range s.list {
+			if escOwned && sc.name == key.NameEscape && sc.mods == 0 {
+				continue
+			}
 			filters = append(filters, key.Filter{Name: sc.name, Required: sc.mods, Optional: 0})
 		}
 	}

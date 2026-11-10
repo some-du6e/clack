@@ -8,6 +8,7 @@ package ui
 
 import (
 	"context"
+	"image"
 	"net/url"
 	"strings"
 	"sync"
@@ -106,6 +107,13 @@ func (a *App) listActions() listview.Actions {
 				ms = append(ms, MenuItem{Label: it.Label, Icon: it.Icon, Disabled: it.Disabled, Do: it.Do})
 			}
 			a.menu(a.PointerPos(), ms)
+		},
+		MenuAt: func(p image.Point, items []listview.MenuItem) {
+			var ms []MenuItem
+			for _, it := range items {
+				ms = append(ms, MenuItem{Label: it.Label, Icon: it.Icon, Disabled: it.Disabled, Do: it.Do})
+			}
+			a.menu(p, ms)
 		},
 		People: a.listPeople,
 	}

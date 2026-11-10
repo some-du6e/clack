@@ -2,7 +2,8 @@ name: lists-shots
 # Renders lists from the fake server headlessly (table, board and a
 # filtered view in full view, a channel's list tab, the side panel, an
 # item's pane with comments; light and dark; a live update; an editing
-# round trip) and uploads the screenshots. Synthetic only: nothing here
+# round trip; the keyboard's focus ring, selection and edit states) and
+# uploads the screenshots. Synthetic only: nothing here
 # talks to Slack.
 on:
   push:
@@ -11,6 +12,7 @@ on:
       - "internal/ui/listview/**"
       - "internal/fakeslack/lists*"
       - "internal/core/lists*.go"
+      - "internal/ui/shortcut/**"
       - ".github/workflows/lists-shots.yml"
   workflow_dispatch:
 
@@ -40,7 +42,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$LISTS_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestRender|TestLiveUpdate|TestEdit' ./internal/ui/listview/
+          xvfb-run -a go test -count=1 -v -run 'TestRender|TestLiveUpdate|TestEdit|TestListKeys' ./internal/ui/listview/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

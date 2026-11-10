@@ -14,6 +14,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/lists"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -24,6 +25,9 @@ type ctl struct {
 	id   string
 	act  Actions
 	edit cellEdit
+	// lastNewText is the name the last new item was given ("" when its
+	// editor closed empty).
+	lastNewText string
 }
 
 // cellEdit is the inline editor (text, number, email, phone, link, date).
@@ -37,6 +41,9 @@ type cellEdit struct {
 	groupCol *lists.Column // a new item's group (board lane / table group)
 	group    string
 	original string
+	// done hears how the editor closed (doneEnter, doneEscape, doneBlur);
+	// the grid moves its active cell with it.
+	done func(how int)
 }
 
 // errViewOnly is the reason an edit is refused when the viewer can't edit.
@@ -65,6 +72,20 @@ func (k *ctl) refuse(err error) {
 // editor for typed values, a direct pick for ratings (x is the click's
 // offset in the cell).
 func (k *ctl) cellClick(d *core.ListDoc, rec *lists.Record, c *lists.Column, x int, gtx layout.Context) {
+	k.cellClickWith(d, rec, c, x, gtx, nil)
+}
+
+// cellClickWith is cellClick with the menus shown by show (nil: the
+// shell's menu at the pointer); nextRow tells show whether a pick saves
+// with nextRowOnSave (single selects).
+func (k *ctl) cellClickWith(d *core.ListDoc, rec *lists.Record, c *lists.Column, x int, gtx layout.Context, show func(items []MenuItem, nextRow bool)) {
+	if show == nil {
+		show = func(items []MenuItem, _ bool) {
+			if k.act.Menu != nil {
+				k.act.Menu(items)
+			}
+		}
+	}
 	if rec == nil || c == nil {
 		return
 	}
@@ -111,11 +132,15 @@ func (k *ctl) cellClick(d *core.ListDoc, rec *lists.Record, c *lists.Column, x i
 		}
 		k.save(e)
 	case lists.Select, lists.MultiSelect:
-		k.selectMenu(rec, c, f)
+		show(k.selectItems(rec, c, f), !c.Multi())
 	case lists.User, lists.Assignee, lists.TodoAssignee:
-		k.peopleMenu(d, rec, c, f)
+		if items := k.peopleItems(d, rec, c, f); items != nil {
+			show(items, false)
+		}
 	case lists.Channel:
-		k.channelMenu(d, rec, c, f)
+		if items := k.channelItems(d, rec, c, f); items != nil {
+			show(items, false)
+		}
 	default:
 		k.edit.start(rec.ID, c, editText(k.h, c, f))
 	}
@@ -154,6 +179,7 @@ func (e *cellEdit) start(rec string, c *lists.Column, text string) {
 	e.ed.SetCaret(len([]rune(text)), len([]rune(text)))
 	e.original = text
 	e.groupCol, e.group = nil, ""
+	e.done = nil
 }
 
 // startNew opens the editor on a new item's primary field.
@@ -181,14 +207,27 @@ func (k *ctl) layoutEditor(gtx layout.Context, d *core.ListDoc, w, h int) layout
 	e := &k.edit
 	th := k.h.Theme()
 	c := &th.C
+	shortcut.OwnEscape(&e.ed)
+	finish := func(how int) layout.Dimensions {
+		done := e.done
+		e.done = nil
+		if how == doneEscape {
+			e.active = false
+		} else {
+			k.commit(d)
+		}
+		if done != nil {
+			done(how)
+		}
+		return layout.Dimensions{Size: image.Pt(w, h)}
+	}
 	for {
 		ev, ok := e.ed.Update(gtx)
 		if !ok {
 			break
 		}
 		if _, ok := ev.(widget.SubmitEvent); ok {
-			k.commit(d)
-			return layout.Dimensions{Size: image.Pt(w, h)}
+			return finish(doneEnter)
 		}
 	}
 	for {
@@ -197,8 +236,7 @@ func (k *ctl) layoutEditor(gtx layout.Context, d *core.ListDoc, w, h int) layout
 			break
 		}
 		if kv, ok := ev.(key.Event); ok && kv.State == key.Press {
-			e.active = false
-			return layout.Dimensions{Size: image.Pt(w, h)}
+			return finish(doneEscape)
 		}
 	}
 	if e.focus {
@@ -207,8 +245,7 @@ func (k *ctl) layoutEditor(gtx layout.Context, d *core.ListDoc, w, h int) layout
 	} else if gtx.Focused(&e.ed) {
 		e.focused = true
 	} else if e.focused {
-		k.commit(d) // clicked elsewhere
-		return layout.Dimensions{Size: image.Pt(w, h)}
+		return finish(doneBlur) // clicked elsewhere
 	}
 	r := image.Rect(0, 0, w, h)
 	theme.Fill(gtx, r, c.Bg)
@@ -249,6 +286,7 @@ func (k *ctl) commit(d *core.ListDoc) {
 	txt := strings.TrimSpace(e.ed.Text())
 	c := e.col
 	if e.rec == "" { // a new item
+		k.lastNewText = txt
 		if txt == "" {
 			return
 		}
@@ -357,11 +395,8 @@ func (k *ctl) create(fields []lists.Edit) {
 	}()
 }
 
-// selectMenu is a select field's options; multi-selects toggle.
-func (k *ctl) selectMenu(rec *lists.Record, c *lists.Column, f *lists.Field) {
-	if k.act.Menu == nil {
-		return
-	}
+// selectItems is a select field's options; multi-selects toggle.
+func (k *ctl) selectItems(rec *lists.Record, c *lists.Column, f *lists.Field) []MenuItem {
 	cur := map[string]bool{}
 	var vals []string
 	if f != nil {
@@ -401,15 +436,15 @@ func (k *ctl) selectMenu(rec *lists.Record, c *lists.Column, f *lists.Field) {
 	if len(vals) > 0 {
 		items = append(items, MenuItem{Label: "Clear", Icon: "close", Do: func() { k.save(lists.Edit{RowID: rec.ID, Column: c, Clear: true}) }})
 	}
-	k.act.Menu(items)
+	return items
 }
 
-// peopleMenu offers the viewer, the people already in the list and the
+// peopleItems offers the viewer, the people already in the list and the
 // shell's suggestions; multi-person fields toggle.
-func (k *ctl) peopleMenu(d *core.ListDoc, rec *lists.Record, c *lists.Column, f *lists.Field) {
+func (k *ctl) peopleItems(d *core.ListDoc, rec *lists.Record, c *lists.Column, f *lists.Field) []MenuItem {
 	a := k.h.Core()
-	if k.act.Menu == nil || a == nil {
-		return
+	if a == nil {
+		return nil
 	}
 	cur := map[string]bool{}
 	var vals []string
@@ -487,14 +522,14 @@ func (k *ctl) peopleMenu(d *core.ListDoc, rec *lists.Record, c *lists.Column, f 
 	if len(vals) > 0 {
 		items = append(items, MenuItem{Label: "Remove", Icon: "close", Do: func() { k.save(lists.Edit{RowID: rec.ID, Column: c, Clear: true}) }})
 	}
-	k.act.Menu(items)
+	return items
 }
 
-// channelMenu offers the channels the list already mentions.
-func (k *ctl) channelMenu(d *core.ListDoc, rec *lists.Record, c *lists.Column, f *lists.Field) {
+// channelItems offers the channels the list already mentions.
+func (k *ctl) channelItems(d *core.ListDoc, rec *lists.Record, c *lists.Column, f *lists.Field) []MenuItem {
 	a := k.h.Core()
-	if k.act.Menu == nil || a == nil {
-		return
+	if a == nil {
+		return nil
 	}
 	cur := map[string]bool{}
 	if f != nil {
@@ -532,5 +567,5 @@ func (k *ctl) channelMenu(d *core.ListDoc, rec *lists.Record, c *lists.Column, f
 	if len(items) == 0 {
 		items = append(items, MenuItem{Label: "No channels to pick from", Disabled: true})
 	}
-	k.act.Menu(items)
+	return items
 }

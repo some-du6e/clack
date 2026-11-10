@@ -122,6 +122,10 @@ var defaultExperimentGroups = map[string]string{
 	// in the live dialog, and EnableChannelJoinExperiencePref draws it only
 	// under isAutoSortRolloutActive: suggested_sections_auto_sort_v2 is on
 	"suggested_sections_auto_sort_v2": "on",
+	// Accessibility > "Lists keyboard interactions" shows in the live
+	// dialog (ListsTabbingPref returns null without it), and the Lists
+	// grid's Tab navigation follows it (listview/keys.go)
+	"lists_tabbing_navigation": "on",
 }
 
 func (a *App) sidebarExperiments() sidebarExp {
