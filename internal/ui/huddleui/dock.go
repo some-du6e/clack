@@ -172,7 +172,7 @@ func (c *Controller) layoutDock(gtx C, th *theme.Theme, sz image.Point) D {
 			}
 			theme.RRect(gtx, image.Rectangle{Max: image.Pt(lw, btnH)}, gtx.Dp(8), bg)
 		}, func(gtx C) D { centerLabel(gtx, th, image.Pt(lw, btnH), 15, theme.Bold, hudWhite, "Leave"); return D{} })
-		popups.Tooltip(gtx, th, d.tip("leave"), d.leave.Hovered(), image.Pt(lw, btnH), popups.Above, "Leave Huddle  "+leaveShortcut(), "")
+		popups.Tooltip(gtx, th, d.tip("leave"), d.leave.Hovered(), image.Pt(lw, btnH), popups.Above, "Leave Huddle", leaveShortcut())
 		return dd
 	})
 	ow := gtx.Dp(40)

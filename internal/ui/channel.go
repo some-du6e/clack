@@ -198,6 +198,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 						return layout.Dimensions{Size: image.Pt(gtx.Dp(74), btn)}
 					})
 				})
+				hud.StartTip(gtx, a.th, ch, a.clicks.get("hdr.huddle").Hovered(), image.Pt(gtx.Dp(74), btn))
 				at(gtx, image.Pt(gtx.Dp(74), 0), image.Pt(gtx.Dp(20), btn), func(gtx layout.Context) layout.Dimensions {
 					return clickArea(gtx, a.clicks.get("hdr.huddlemore"), nil, func(gtx layout.Context) layout.Dimensions {
 						at(gtx, image.Pt(gtx.Dp(1), (btn-gtx.Dp(14))/2), image.Pt(gtx.Dp(14), gtx.Dp(14)), func(gtx layout.Context) layout.Dimensions {
@@ -205,6 +206,10 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 						})
 						return layout.Dimensions{Size: image.Pt(gtx.Dp(20), btn)}
 					})
+				})
+				at(gtx, image.Pt(gtx.Dp(74), 0), image.Pt(gtx.Dp(20), btn), func(gtx layout.Context) layout.Dimensions {
+					hud.CaretTip(gtx, a.th, ch, a.clicks.get("hdr.huddlemore").Hovered(), image.Pt(gtx.Dp(20), btn))
+					return layout.Dimensions{}
 				})
 				hudOrg.track(gtx, a)
 				return layout.Dimensions{Size: r.Size()}

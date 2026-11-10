@@ -3,7 +3,6 @@ package huddleui
 import (
 	"image"
 	"image/color"
-	"runtime"
 	"sync"
 	"time"
 
@@ -18,6 +17,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/huddle"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -672,13 +672,13 @@ func segFill(gtx C, r image.Rectangle, seg, rad int, bg color.NRGBA) {
 // segDivider is .segmentedButtonMain:after's otl-inv-pry.
 var segDivider = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x33}
 
-// leaveShortcut is the leave button's shortcut hint (Cmd+Shift+H on
-// macOS, Ctrl+Alt+Shift+H elsewhere).
+// leaveShortcut is addJoinLeaveKeyboardShortcuts' hint: Mod+Shift+H on
+// macOS, Mod+Alt+Shift+H elsewhere.
 func leaveShortcut() string {
-	if runtime.GOOS == "darwin" {
-		return "⌘⇧H"
+	if shortcut.GOOS == "darwin" {
+		return shortcut.Format("Mod+Shift+H")
 	}
-	return "Ctrl+Alt+Shift+H"
+	return shortcut.Format("Mod+Alt+Shift+H")
 }
 
 func (w *window) ctlW(gtx C, c ctl) int {

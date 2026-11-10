@@ -3,10 +3,12 @@ package huddleui
 import (
 	"image"
 	"image/color"
+	"strings"
 
 	"gioui.org/op/clip"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/clack/internal/huddle"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -157,6 +159,41 @@ func (c *Controller) headerTip(ch string, in bool, people []string) string {
 	return "Join huddle " + where + "\n" + itoa(len(people)) + " in the huddle"
 }
 
+// StartTip is the idle Huddle button's tooltip (getStartHuddleTip): "Start
+// huddle with {name}" in a DM, else "Start huddle in #channel", with
+// addJoinLeaveKeyboardShortcuts' hint. sz is the button.
+func (c *Controller) StartTip(gtx C, th *theme.Theme, ch string, hovered bool, sz image.Point) {
+	hs := c.hdrState(ch)
+	tip := "Start huddle"
+	if app := c.h.Core(); app != nil {
+		if conv, ok := app.Conv(ch); ok {
+			switch {
+			case conv.Kind == "im" || conv.Kind == "mpim":
+				if t, _ := c.windowTitle(huddle.State{Channel: ch}); strings.HasPrefix(t, "Huddle with ") {
+					tip = "Start huddle with " + strings.TrimPrefix(t, "Huddle with ")
+				}
+			case conv.Name != "":
+				tip = "Start huddle in #" + conv.Name
+			}
+		}
+	}
+	popups.Tooltip(gtx, th, &hs.tip, hovered, sz, popups.Below, tip, leaveShortcut())
+}
+
+// CaretTip is the idle button's caret tooltip ("More Huddles options").
+func (c *Controller) CaretTip(gtx C, th *theme.Theme, ch string, hovered bool, sz image.Point) {
+	popups.Tooltip(gtx, th, &c.hdrState(ch).caretTip, hovered, sz, popups.Below, "More Huddles options", "")
+}
+
+func (c *Controller) hdrState(ch string) *headerState {
+	hs := c.hdr[ch]
+	if hs == nil {
+		hs = &headerState{}
+		c.hdr[ch] = hs
+	}
+	return hs
+}
+
 // HeaderPill draws the live huddle button (see headerState). A click on
 // the main part joins, or leaves when you're in it.
 func (c *Controller) HeaderPill(gtx C, th *theme.Theme, ch string, h int) D {
@@ -236,7 +273,7 @@ func (c *Controller) HeaderPill(gtx C, th *theme.Theme, ch string, h int) D {
 		}
 		return D{}
 	})
-	popups.Tooltip(gtx, th, &hs.tip, hs.click.Hovered(), image.Pt(mw, h), popups.Below, c.headerTip(ch, in, people), "")
+	popups.Tooltip(gtx, th, &hs.tip, hs.click.Hovered(), image.Pt(mw, h), popups.Below, c.headerTip(ch, in, people), leaveShortcut())
 
 	cw := gtx.Dp(hdrCaret)
 	at(gtx, image.Pt(mw, 0), image.Pt(cw, h), func(gtx C) D {
