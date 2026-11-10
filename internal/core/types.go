@@ -52,6 +52,14 @@ type Message struct {
 	// appendStream / stopStream): "in_progress" while open, then
 	// "completed" or "errored" (agent.go).
 	StreamingState string
+	// ThreadLastRead is a followed thread's last read reply (root
+	// messages; the subscription's last_read from conversations.replies,
+	// thread_marked and subscriptions.thread.mark): Slack's
+	// use_thread_subscription lastRead.
+	ThreadLastRead string
+	// ReplyUsersN is reply_users_count: how many people replied (the
+	// reply bar's "+N" when ReplyUsers holds more than five).
+	ReplyUsersN int
 }
 
 // SubtypeSlackbotResponse is the subtype of Slackbot's answers to the

@@ -1118,7 +1118,7 @@ func (a *App) message(ch string, m *slack.Message) Message {
 		v.PinnedBy = m.PinnedInfo.PinnedBy
 		v.Pinned = true
 	}
-	v.FollowingThread = m.Subscribed
+	v.FollowingThread, v.ThreadLastRead, v.ReplyUsersN = m.Subscribed, m.LastRead, m.ReplyUsersN
 	a.mu.Lock()
 	v.Saved = a.saved[v.Channel+"/"+m.TS]
 	a.mu.Unlock()

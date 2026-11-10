@@ -49,6 +49,7 @@ type item struct {
 	header bool
 	key    string
 	group  []int // join/leave summary: indices into snap.msgs
+	mark   uint8 // thread: the separator's type, the "New" divider's ghost (thread_unread.go)
 }
 
 // toolbar buttons, in the real 2026 order for this account.
@@ -90,6 +91,7 @@ type listState struct {
 
 	openLastRead string // the "New" line position, fixed while open
 	opened       bool
+	thr          threadRead // the thread pane's read state (thread_unread.go)
 	positioned   bool
 	markedTS     string
 	lastMark     time.Time
@@ -393,6 +395,9 @@ func (s *listState) build(h Host, now time.Time) {
 	var prev *core.Message
 	var prevT time.Time
 	unreadPlaced := false
+	if s.thread {
+		s.decideThreadRead()
+	}
 	for i := 0; i < len(msgs); i++ {
 		m := &msgs[i].m
 		t := tsTime(m.TS)
@@ -400,12 +405,21 @@ func (s *listState) build(h Host, now time.Time) {
 		if s.thread {
 			if i == 0 && m.TS == s.ts {
 				s.items = append(s.items, item{kind: itMsg, idx: i, header: true, key: m.TS})
-				// Slack shows no "N replies" divider until there is a reply.
+				// Slack shows no "N replies" divider until there is a
+				// reply; when every reply is unread it carries the marker.
 				if n := len(msgs) - 1; n > 0 {
-					s.items = append(s.items, item{kind: itReplies, idx: n, key: "replies"})
+					sep := s.threadSeparatorMark(self)
+					unreadPlaced = sep != thrMarkNone
+					s.items = append(s.items, item{kind: itReplies, idx: n, key: "replies", mark: sep})
 				}
 				prev, prevT = nil, t
 				continue
+			}
+			// the "New" divider before the first unread reply (a thread
+			// reply keeps its group across it: ThreadReply's prevTs)
+			if !unreadPlaced && s.takesThreadMarker(m, self) {
+				unreadPlaced = true
+				s.items = append(s.items, item{kind: itUnread, key: "unread", mark: s.threadMarkKind()})
 			}
 		} else if prev == nil || !sameDay(t, prevT) {
 			s.items = append(s.items, item{kind: itDay, day: t, key: "d" + m.TS})
@@ -526,10 +540,17 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		return layout.Dimensions{Size: size}
 	}
 
+	if s.thread {
+		s.checkThreadUnreads(gtx, h, now) // thread_unread.go
+	}
 	// first positioning: at the unread line if there are many unread
 	if !s.positioned && s.snap.loaded {
 		s.positioned = true
-		if u := s.unreadIndex(); u >= 0 && len(s.items)-u > 12 {
+		if s.thread {
+			// getThreadStartPosition: the first unread reply, the reply
+			// last read to, or the root (thread_unread.go)
+			s.list.Position = s.threadStartPosition(gtx, "")
+		} else if u := s.unreadIndex(); u >= 0 && len(s.items)-u > 12 {
 			s.list.Position = layout.Position{BeforeEnd: true, First: max(0, u-1)}
 		} else {
 			s.list.Position = layout.Position{}
@@ -820,6 +841,9 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 	case itDay:
 		return s.dayDivider(gtx, h, c, it.day, rc.now, w)
 	case itUnread:
+		if s.thread {
+			return s.threadDivider(gtx, h, c, it, w, rc.now)
+		}
 		// Slack's divider is 0 tall: a 1px line with "New" centered on it at
 		// the right end (padding 0 4, margin-right 15).
 		hh := dp(gtx, 1)
@@ -836,20 +860,7 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 	case itIntro:
 		return s.intro(gtx, h, c, w)
 	case itReplies:
-		// ThreadSeparatorRowGeneric: .p-threads_flexpane__separator is a
-		// 13px/18px count (margin-right 12) and a 1px rule (margin-top 1,
-		// centred: y 13), margin 4px 0, padding-left 16, width
-		// calc(100% - 22px); the row has margin-bottom -2px: 24 tall.
-		hh := dp(gtx, 24)
-		n := it.idx
-		txt := repliesLabel(n)
-		st := textStyle{size: 13, col: c.Muted70, lineH: 18}
-		d := at(gtx, dp(gtx, 16), dp(gtx, 4), func(gtx layout.Context) layout.Dimensions {
-			return lineBox(gtx, st, func(gtx layout.Context) layout.Dimensions { return label(gtx, h.Theme(), st, txt) })
-		})
-		lx := dp(gtx, 16) + d.Size.X + dp(gtx, 12)
-		fill(gtx.Ops, image.Rect(lx, dp(gtx, 13), w-dp(gtx, 22), dp(gtx, 13)+max(dp(gtx, 1), 1)), c.PillBorder)
-		return layout.Dimensions{Size: image.Pt(w, hh)}
+		return s.threadSeparator(gtx, h, c, it, w, rc.now)
 	}
 	e := &s.snap.msgs[it.idx]
 	if len(it.group) > 0 {

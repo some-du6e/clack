@@ -73,6 +73,9 @@ type Size struct {
 	// ThreadHeader adds one thread in a conversation of each kind the
 	// thread pane's header names differently (threadheader.go).
 	ThreadHeader bool
+	// ThreadsAudit adds #th-audit: one thread per way the thread pane
+	// marks unread replies, opens and counts (threads_audit.go).
+	ThreadsAudit bool
 	// PluginBench adds the plugin bench's channels (plugin_bench.go):
 	// #plugin-bench (500 messages), #admins-only and a Slackbot DM; the
 	// viewer becomes a workspace admin.
@@ -468,6 +471,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	if sz.ThreadHeader {
 		s.addThreadHeader() // threadheader.go
 	}
+	if sz.ThreadsAudit {
+		s.addThreadsAudit() // threads_audit.go
+	}
 	if sz.PluginBench {
 		s.addPluginBench() // plugin_bench.go
 	}
@@ -488,6 +494,7 @@ func Serve(ln net.Listener, sz Size) *Server {
 func (s *Server) Close() error {
 	searchLogs.Delete(s)
 	viewsStates.Delete(s)
+	threadsAuditStates.Delete(s)
 	if s.srv == nil {
 		return nil
 	}
@@ -966,6 +973,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return out
 	}
 	if out, handled := s.handleThreadHeader(method, f); handled { // threadheader.go
+		return out
+	}
+	if out, handled := s.handleThreadsAudit(method, f); handled { // threads_audit.go
 		return out
 	}
 	if out, handled := s.handleUnreads(method, f); handled { // unreads.go

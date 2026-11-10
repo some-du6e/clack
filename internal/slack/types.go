@@ -16,8 +16,10 @@ type Message struct {
 	ParentUser     string          `json:"parent_user_id,omitempty"`
 	ReplyCount     int             `json:"reply_count,omitempty"`
 	ReplyUsers     []string        `json:"reply_users,omitempty"`
+	ReplyUsersN    int             `json:"reply_users_count,omitempty"`
 	LatestReply    string          `json:"latest_reply,omitempty"`
 	Subscribed     bool            `json:"subscribed,omitempty"`
+	LastRead       string          `json:"last_read,omitempty"` // a followed thread's root (conversations.replies): the viewer's last read reply
 	Edited         *Edited         `json:"edited,omitempty"`
 	Reactions      []Reaction      `json:"reactions,omitempty"`
 	Files          []File          `json:"files,omitempty"`
