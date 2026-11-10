@@ -260,11 +260,14 @@ func TestHeaderTopicEdit(t *testing.T) {
 		t.Errorf("after too_long: error %q, dismissed %v", d.Error(), d.Dismissed())
 	}
 	e.shot("channel-topic-dialog-error")
+	// (an identical retry would hit slack.Client's backoff for a request
+	// that just failed)
+	d.SetText("Release notes go here, again")
 	d.Save()
 	e.until("saved", 10*time.Second, func() bool { return d.Dismissed() })
 	mu.Lock()
 	defer mu.Unlock()
-	if len(topics) != 2 || topics[1] != ch+" Release notes go here" {
+	if len(topics) != 2 || topics[1] != ch+" Release notes go here, again" {
 		t.Errorf("setTopic calls %q", topics)
 	}
 
