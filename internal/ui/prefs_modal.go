@@ -146,6 +146,9 @@ func (a *App) showPrefs(section string) {
 	}
 	if mkAvailability != nil {
 		p.avail = mkAvailability(a)
+		if n, ok := p.avail.(interface{ SetSectionNav(func(string)) }); ok {
+			n.SetSectionNav(p.selectTab) // the Working hours "VIPs" link
+		}
 	}
 	mk := mkModal
 	if mkPrefsModal != nil {
