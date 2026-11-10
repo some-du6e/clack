@@ -14,6 +14,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/taut"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/slackc"
@@ -887,6 +888,17 @@ func (c *Composer) deleteEmptiedEdit() {
 	popups.ConfirmDelete(c.h, *c.edit)
 }
 
+// editHasFiles reports whether the message being edited shares files
+// (maybeSave keeps them and saves an empty comment).
+func editHasFiles(m *core.Message) bool {
+	for _, b := range m.Doc.Blocks {
+		if b.Kind == richtext.FileBlock {
+			return true
+		}
+	}
+	return false
+}
+
 // overLimit is how far the message is past the 12,000-character limit
 // (charlimit.go), counted once per document change.
 func (c *Composer) overLimit() int {
@@ -905,10 +917,15 @@ func (c *Composer) submit() {
 		return
 	}
 	if d.Empty() && c.att.Len() == 0 {
-		if c.edit != nil {
-			c.deleteEmptiedEdit()
+		if c.edit == nil {
+			return
 		}
-		return
+		if !editHasFiles(c.edit) {
+			c.deleteEmptiedEdit()
+			return
+		}
+		// cjbg: a message with files (fileIdsToSave) saves the emptied
+		// comment instead of offering to delete
 	}
 	doc := c.prepareSend(d)
 	text := doc.Mrkdwn()
