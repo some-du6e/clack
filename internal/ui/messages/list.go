@@ -80,6 +80,7 @@ type listState struct {
 	items  []item
 	built  uint64 // snap.rev items were built from
 	dayKey int    // date the items were built on, yyyymmdd (Today/Yesterday rollover)
+	dense  bool   // messages_theme the items were built under (thread grouping)
 
 	list     layout.List
 	contentH int // total item height when all items fit (see layoutList)
@@ -266,7 +267,8 @@ func (s *listState) sync(h Host, now time.Time) {
 	}
 	y, mo, d := now.Date() // not Format: this runs every frame
 	dk := y*10000 + int(mo)*100 + d
-	if !changed && s.built == s.snap.rev && dk == s.dayKey && s.items != nil {
+	dense := uipref.Get().Dense
+	if !changed && s.built == s.snap.rev && dk == s.dayKey && s.dense == dense && s.items != nil {
 		return
 	}
 	// Scroll anchoring: remember the first visible message and its y.
@@ -284,6 +286,7 @@ func (s *listState) sync(h Host, now time.Time) {
 	s.rebuildKeyIdx()
 	s.built = s.snap.rev
 	s.dayKey = dk
+	s.dense = dense
 	if i := s.anchorItem(anchorTS); i >= 0 {
 		s.list.Position.First = i
 		s.list.Position.Offset = -anchorY
@@ -421,6 +424,11 @@ func (s *listState) build(h Host, now time.Time) {
 			}
 		}
 		if !header && prev != nil && !groupable(prev, m, prevT, t) {
+			header = true
+		}
+		// Compact never groups thread replies (ThreadReply passes
+		// adjacent only under "light"): each draws its sender and time.
+		if s.thread && uipref.Get().Dense {
 			header = true
 		}
 		// Consecutive joins (or leaves) collapse into one summary row.
@@ -566,7 +574,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	}
 	urev := s.hb.usersRev()
 	chanFrame = urev // channel names the rows may show this frame (channels.go)
-	s.rc = rowCtx{h: h, th: th, st: st, c: c, now: now, thread: s.thread, list: s, selfID: selfID, usersRev: urev + 1,
+	s.rc = rowCtx{h: h, th: th, st: st, c: c, now: now, thread: s.thread, dense: uipref.Get().Dense, list: s, selfID: selfID, usersRev: urev + 1,
 		origin:    func(p image.Point) image.Point { return s.anchor(h, origin, p) },
 		onReact:   func(r *row, name string, add bool) { s.react(h, r, name, add, selfID) },
 		onRetry:   func(r *row) { s.retry(h, r) },
@@ -1125,8 +1133,13 @@ func tooltip(gtx layout.Context, th *theme.Theme, c *colors, txt string, anchor 
 func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx int, size image.Point) {
 	c := rc.c
 	th := h.Theme()
+	// MessageActions' position: "above" (top -28) for a grouped row, and
+	// for every channel row under Compact (Message: w||a ? "above" :
+	// "default"); a thread reply's is above only when grouped
+	// (ThreadReplyGeneric: isCompact||adjacent, isCompact being the
+	// Threads view's).
 	top := mt.toolbarTop
-	if !s.items[idx].header {
+	if !s.items[idx].header || (rc.dense && !s.thread) {
 		top = -28
 	}
 	y := s.pos[idx] + dp(gtx, top)

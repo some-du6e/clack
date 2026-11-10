@@ -106,8 +106,8 @@ var slackPages = map[string][]want{
 		lg("Fun and new"), rd("Raspberry Beret"), lg("Updated classics"), rd("Choco Mint"), rd("Sweet Treat"),
 	},
 	"messages_media": {
-		lg("Theme"), rdOff("Clean"), rdOff("Compact"),
-		lg("Names"), rd("Full & display names"), rd("Just display names"), {"link", "your profile", false},
+		lg("Theme"), rd("Clean"), rd("Compact"), {"example-clean", "Slackbot", false},
+		lg("Names"), rd("Full & display names"), rd("Just display names"), {"example-clean", "Meg", false}, {"link", "your profile", false},
 		lg("Additional options"), ck("Display information about who is currently typing a message"), ck("Show times with 24-hour clock"),
 		ck("Display color swatches next to hexadecimal values"),
 		lg("Emoji"), lg("Default Skin Tone"), rd("No skin tone"), rd("light skin tone"), rd("medium-light skin tone"), rd("medium skin tone"),
@@ -319,6 +319,21 @@ func TestPrefsAuditAppliedRoundTrip(t *testing.T) {
 	})
 	p.setPref("ia4_compact_mode", true)
 	waitFor(t, a, "compact", func() bool { return ca.Rail().Compact })
+
+	// Messages & media > Theme: Compact writes messages_theme dense, Clean
+	// light_with_avatars (MessageThemePref), and the list reads it
+	p.setPref("messages_theme", "dense")
+	waitFor(t, a, "Compact", func() bool { v, _ := fs.Pref("messages_theme"); return v == "dense" && ca.Prefs().Dense })
+	snap()
+	if !uipref.Get().Dense {
+		t.Fatal("uipref doesn't see Compact")
+	}
+	p.setPref("messages_theme", "light_with_avatars")
+	waitFor(t, a, "Clean", func() bool {
+		v, _ := fs.Pref("messages_theme")
+		return v == "light_with_avatars" && !ca.Prefs().Dense
+	})
+	snap()
 
 	// Messages & media > Default Skin Tone
 	p.setPref("preferred_skin_tone", "3")
