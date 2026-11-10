@@ -254,7 +254,7 @@ func (c *Controller) Start(channel string) {
 				w.close()
 			}
 			log.Printf("huddle: join %s: %v", channel, err)
-			c.toast("Couldn't join the huddle: "+errText(err), "headphones")
+			c.showErrModal(joinErrorModal(err)) // HuddleErrorModal{isJoinError}
 			c.changed()
 			return
 		}
@@ -374,7 +374,7 @@ func (c *Controller) begin(channel, entry string) {
 			})
 		if err != nil {
 			log.Printf("huddle: startHuddle %s: %v", channel, err)
-			c.toast("Couldn't start the huddle: "+errText(err), "headphones")
+			c.showErrModal(joinErrorModal(err))
 		}
 	}()
 }
@@ -434,13 +434,8 @@ func (c *Controller) options(app *core.App) huddle.Options {
 				tt.HuddlePeerMessage(ev)
 			}
 			if ev.Message != nil && ev.Message.MuteRequest != nil && ev.Message.MuteRequest.PeerID == ev.SelfAttendeeID {
-				name := "Someone"
-				if s := c.Session(); s != nil {
-					if u := c.userName(s.UserOf(ev.SenderAttendeeID)); u != "" {
-						name = u
-					}
-				}
-				c.toast(name+" muted you", "microphone-off")
+				// HuddlesInformationalBanner "user_was_muted" (microphone-slash)
+				c.showBanner("Someone muted you.", "mic-off")
 			}
 		},
 		OnEnd: func(err error) { go c.ended(err) },
@@ -529,11 +524,8 @@ func (c *Controller) ended(err error) {
 		tt.SetActiveHuddle("", "", "", "")
 		tt.SetHuddleReaction(nil)
 	}
-	switch {
-	case errors.Is(err, huddle.ErrEnded):
-		c.toast("The huddle ended", "headphones")
-	case err != nil:
-		c.toast("You were disconnected from the huddle", "headphones")
+	if m, ok := endedModal(err); ok {
+		c.showErrModal(m)
 	}
 	c.changed()
 }
