@@ -136,7 +136,7 @@ func TestEmbedsPreviewHover(t *testing.T) {
 }
 
 func embedsPreviewHover(t *testing.T, dark bool, mode string) {
-	e := embedsEnv(t, image.Pt(1440, 1500), dark)
+	e := embedsEnv(t, image.Pt(1440, 2600), dark) // every card on screen
 	defer e.shutdown()
 	ctl := &e.a.hover.ctl
 	var clock time.Duration
@@ -198,7 +198,7 @@ func embedsPreviewHover(t *testing.T, dark bool, mode string) {
 	}
 
 	// right-click on the viewer's own row card: Remove preview, Copy link
-	own := e.embedsCard("small thumb")
+	own := e.embedsCard("text only") // below the header (the small thumb's card is under it)
 	clock += time.Second
 	e.rightClickAt(image.Pt(own.R.Min.X+100, own.R.Min.Y+40), clock)
 	m := e.topMenu()
