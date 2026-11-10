@@ -13,11 +13,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"image"
 	"log"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/some-du6e/clack/internal/core"
@@ -92,8 +94,12 @@ type Controller struct {
 	hand    handState // auto-lowering your raised hand (hand.go)
 	av      avState   // the lock watcher, global mute and lounge music (avprefs.go)
 	bar     barState
+	dock    dockState // the docked bar (dock.go)
 	hdr     map[string]*headerState
 	last    time.Time
+
+	dockOrigin image.Point // the dock's window position (menus anchor to it)
+	hideSelf   atomic.Bool // the ⋯ menu's "Hide self-view" (isHidingSelf)
 }
 
 // New builds the controller. Call Handle with core events.

@@ -54,9 +54,9 @@ func (h winHost) OpenMessageMenu(image.Point, core.Message) {}
 func (h winHost) OpenLightbox(richtext.Image, core.Message) {}
 func (h winHost) Toast(text string)                         { h.w.c.h.Toast(text) }
 
-// moreItems is the ⋯ menu for the huddle you're in.
-func (w *window) moreItems(s *huddle.Session, st huddle.State) []popups.MenuItem {
-	c := w.c
+// moreMenu is the ⋯ menu for the huddle you're in; w is the huddle
+// window when the menu opens there (nil: the docked bar).
+func (c *Controller) moreMenu(s *huddle.Session, st huddle.State, w *window) []popups.MenuItem {
 	ch := st.Channel
 	items := []popups.MenuItem{
 		{Key: "copy-huddle-link", Label: "Copy huddle link", Do: func() { c.CopyLink(ch) }},
@@ -76,16 +76,15 @@ func (w *window) moreItems(s *huddle.Session, st huddle.State) []popups.MenuItem
 	}})
 	// useHideSelfMenuItem: only with someone else in the huddle
 	if len(st.Participants) > 1 {
-		hide := w.hideSelf
+		hide := c.hideSelf.Load()
 		items = append(items, popups.MenuItem{Key: "hidingSelf", Label: "Hide self-view", Checked: hide, Do: func() {
-			w.hideSelf = !hide
+			c.hideSelf.Store(!hide)
 			if !hide { // "user_self_view_is_hidden": Self-view is hidden. Undo
-				c.showBannerLink("Self-view is hidden.", "eye-off", "Undo", func() { w.hideSelf = false })
+				c.showBannerLink("Self-view is hidden.", "eye-off", "Undo", func() { c.hideSelf.Store(false) })
 			} else {
-				w.mu.Lock()
-				w.banner = banner{}
-				w.mu.Unlock()
+				c.showBanner("", "")
 			}
+			c.changed()
 		}})
 	}
 	// useAVPreferencesSettingsMenuItem("Huddle preferences", open-in-window)
@@ -127,7 +126,7 @@ func (w *window) toggleMore(s *huddle.Session, st huddle.State) {
 	}
 	w.picker, w.stick = false, false
 	anchor := w.moreBtn.Add(image.Pt(0, w.barTop))
-	w.more = popups.NewMenuOpts(winHost{w}, w.moreItems(s, st), popups.MenuOpts{Anchor: anchor, Side: popups.Above,
+	w.more = popups.NewMenuOpts(winHost{w}, w.c.moreMenu(s, st, w), popups.MenuOpts{Anchor: anchor, Side: popups.Above,
 		MenuClass: "p-huddle_more_actions_menu"})
 }
 

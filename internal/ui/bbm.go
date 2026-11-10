@@ -277,7 +277,7 @@ func (a *App) layoutBBM(gtx layout.Context) image.Rectangle {
 	a.bbmSyncSecondary()
 	a.grad.draw(gtx, sz, image.Point{}, clip.Rect{Max: sz}.Op(), a.th.C.ChromeA, a.th.C.ChromeB)
 	crumbs := !isBBMRoute(r)
-	panel := bbmPanel(gtx, sz, crumbs)
+	panel := bbmPanel(gtx, image.Pt(sz.X, sz.Y-a.huddles().DockHeight(gtx)), crumbs) // the huddle bar's row
 	a.th.Chrome = true
 	a.layoutBBMTopNav(gtx, sz.X)
 	if crumbs {

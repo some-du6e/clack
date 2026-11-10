@@ -42,13 +42,12 @@ type window struct {
 	cam    camUI        // window_camera.go
 	phase  huddle.Phase // this frame's (tiles: your spinner until connected)
 
-	more     *popups.Menu    // the ⋯ More actions menu (window_menu.go)
-	moreBtn  image.Rectangle // its button, in the toolbar
-	barTop   int             // the toolbar's top in the window
-	hideSelf bool            // "Hide self-view" (isHidingSelf)
-	cc       ccState         // the closed captions' fade (captions.go)
-	banner   banner          // HuddlesInformationalBanner (captions.go)
-	tips     map[string]*popups.TipState
+	more    *popups.Menu    // the ⋯ More actions menu (window_menu.go)
+	moreBtn image.Rectangle // its button, in the toolbar
+	barTop  int             // the toolbar's top in the window
+	cc      ccState         // the closed captions' fade (captions.go)
+	banner  banner          // HuddlesInformationalBanner (captions.go)
+	tips    map[string]*popups.TipState
 }
 
 // OpenWindow shows the huddle window (creating it), when you're in a huddle.
@@ -334,7 +333,7 @@ var quickEmoji = []string{"+1", "heart", "joy", "tada", "wave", "clap", "raised_
 func (w *window) stage(gtx C, s *huddle.Session, st huddle.State, r image.Rectangle, now time.Time) {
 	gradient(gtx, r, gtx.Dp(10), hudStageA, hudStageB)
 	ps := orderedParticipants(st)
-	if w.hideSelf && len(ps) > 1 { // "Hide self-view": your tile leaves the gallery
+	if w.c.hideSelf.Load() && len(ps) > 1 { // "Hide self-view": your tile leaves the gallery
 		ps = withoutSelf(ps)
 	}
 	cams := map[string]string{} // attendee -> video key
