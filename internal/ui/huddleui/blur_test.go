@@ -97,7 +97,6 @@ func TestHuddleShotsBlur(t *testing.T) {
 		c := e.c
 		th := theme.New(dark)
 		var cl previewClicks
-		var vid videoOps
 		frames := map[string]*image.RGBA{}
 		for _, fx := range []huddle.VideoEffect{huddle.VideoEffectNone, huddle.VideoEffectBlur} {
 			cam := newPersonCamera(640, 360)
@@ -121,6 +120,7 @@ func TestHuddleShotsBlur(t *testing.T) {
 			v := previewView{Self: huddle.FakeSelfUser, MicOn: true, CamOn: true, Frame: f.Img, FrameSeq: f.Seq,
 				Labels: [3]string{"MacBook Pro Microphone", "MacBook Pro Speakers", "FaceTime HD Camera"}}
 			v.Title, v.Avatars, v.JoinLabel = c.previewTitle(hcChannel)
+			var vid videoOps // its own: the image cache is keyed by frame seq, which both previews share
 			render(t, "blur-self-preview-"+name+"-"+mode, previewW, previewH, func(gtx C) {
 				layoutPreview(gtx, th, c, v, &cl, &vid)
 			})
