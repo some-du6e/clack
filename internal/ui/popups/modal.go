@@ -279,6 +279,9 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 					if m.o.TitleFunc != nil {
 						title = m.o.TitleFunc()
 					}
+					if title == "" && m.o.TitleIcon == "" && m.o.TitleAfter == "" {
+						return layout.Dimensions{} // a header-less dialog (showHeader false): shape nothing
+					}
 					d := para(gtx, th, 22, 30, theme.Black, cl.Fg, title, 1)
 					if m.o.TitleIcon == "" && m.o.TitleAfter == "" {
 						return d
