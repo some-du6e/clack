@@ -688,7 +688,7 @@ func NewUserMenu(h Host, anchor image.Point) *Menu {
 				}
 				return
 			}
-			h.ShowOverlay(NewSetStatusModalFromMenu(h))
+			h.ShowOverlay(NewSetStatusModal(h))
 		}},
 		presence,
 		{Label: "Notifications", Right: notifState, Sub: notif},

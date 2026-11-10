@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"image"
 	"strings"
 
@@ -26,7 +27,7 @@ func (a *App) openTeamMenu(anchor image.Point) {
 		items = append(items, MenuItem{Label: label, Disabled: !ok, Do: f})
 	}
 	a.menu(anchor, append(items, []MenuItem{
-		{Label: "Toggle dark mode", Icon: "moon", Hint: shortcut.Format("Mod+Shift+Y"), Do: a.ToggleDark},
+		{Label: "Toggle dark mode", Icon: "moon", Do: a.ToggleDark},
 		{Divider: true},
 		{Label: "All unreads", Icon: "unreads", Hint: shortcut.Format("Mod+Shift+A"), Do: func() { a.Navigate("unreads") }},
 		{Label: "Browse channels", Icon: "hash", Do: func() { a.Navigate("directories?tab=channels") }},
@@ -218,10 +219,26 @@ func (a *App) copyChannelLink(ch string) {
 
 func (a *App) setStatusPrompt() {
 	if mkStatusModal != nil {
-		a.ShowOverlay(mkStatusModal(a))
+		a.ShowOverlay(mkStatusModal(a, false))
 		return
 	}
-	a.ShowOverlay(popups.NewSetStatusModalFromMenu(a)) // the user menu's "Update your status"
+	a.ShowOverlay(popups.NewSetStatusModal(a)) // the user menu's "Update your status"
+}
+
+// openStatusFromShortcut is Slack's mod+shift+y (PG1Q):
+// openCustomStatusDialog({fromKeyboardShortcut: true}) first saves
+// used_custom_status_kb_shortcut (setUserPrefByApi, which updates the
+// local pref before the call, so the dialog it opens has no "Tip:" pill),
+// unless it's set, then opens "Set a status".
+func (a *App) openStatusFromShortcut() {
+	if c := a.Core(); c != nil && !c.PrefBool("used_custom_status_kb_shortcut", false) {
+		go func() { _ = a.writePref(context.Background(), "used_custom_status_kb_shortcut", true) }()
+	}
+	if mkStatusModal != nil {
+		a.ShowOverlay(mkStatusModal(a, true))
+		return
+	}
+	a.ShowOverlay(popups.NewSetStatusModalFromShortcut(a))
 }
 
 func (a *App) signOut() {

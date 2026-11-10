@@ -273,7 +273,7 @@ func TestThemeSyncSurvivesSaves(t *testing.T) {
 			t.Errorf("%s: after a save and a restart sync %v dark %v", c.name, b.themeSyncOn(), b.th.Dark)
 		}
 	}
-	// Ctrl+Shift+Y is a choice, like Appearance's Light/Dark: sync ends.
+	// Toggling dark mode is a choice, like Appearance's Light/Dark: sync ends.
 	a := open(t.TempDir())
 	a.ToggleDark()
 	if a.themeSyncOn() {
