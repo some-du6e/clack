@@ -34,8 +34,12 @@ type acctTheme struct {
 // goroutine (a custom-hex theme is ~250 HCT solves). A theme that isn't
 // ready within acctThemeWait applies on a later frame instead.
 func (a *App) restyle(t *theme.Theme, p *theme.Palette) {
-	if a.acct.set {
-		if f, ok := theme.FieldsAsync(a.acct.t, t.Dark, a.acct.gradients, acctThemeWait, a.refreshTheme); ok {
+	ia, set := a.acct.t, a.acct.set
+	if ft, ok := a.focusTheme(); ok { // focus mode's silent sidebar theme (focus_mode.go)
+		ia, set = ft, true
+	}
+	if set {
+		if f, ok := theme.FieldsAsync(ia, t.Dark, a.accountGradients(), acctThemeWait, a.refreshTheme); ok {
 			theme.ApplyIAFields(p, f, t.Dark)
 		}
 	}

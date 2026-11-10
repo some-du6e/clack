@@ -218,6 +218,7 @@ func cxSendGif(ctx context.Context, h Host, ch, threadTS string, g Gif) error {
 // cxPreset is a workspace status preset.
 type cxPreset struct {
 	Emoji, Text string
+	Canonical   string // text_canonical (index 2; Slack's jk80 reads it as canonical)
 	Dur         string // no_expiration | all_day | 30_minutes | 1_hour | 4_hours | this_week | …
 }
 
@@ -240,114 +241,7 @@ func cxStatusPresets(ctx context.Context, h Host) ([]cxPreset, error) {
 		if len(p) < 4 || p[1] == "" {
 			continue
 		}
-		out = append(out, cxPreset{Emoji: strings.Trim(p[0], ":"), Text: p[1], Dur: p[3]})
+		out = append(out, cxPreset{Emoji: strings.Trim(p[0], ":"), Text: p[1], Canonical: p[2], Dur: p[3]})
 	}
 	return out, nil
-}
-
-// ---- working hours (users.prefs dnd_*) ----
-
-// cxHours are notification working hours: notifications are allowed from
-// Start to End (Slack stores the inverse, dnd_end_hour → dnd_start_hour).
-type cxHours struct {
-	Enabled    bool
-	Days       string // every_day | weekdays | custom
-	Start, End string // "H:MM" 24h
-	// automatic statuses
-	HuddleStatus, FocusStatus, OutsideStatus bool
-}
-
-// cxWorkingHours reads the working-hours prefs.
-func cxWorkingHours(ctx context.Context, h Host) (cxHours, error) {
-	a, err := cxApp(h)
-	if err != nil {
-		return cxHours{}, err
-	}
-	raw, err := a.C.Prefs(ctx)
-	if err != nil {
-		return cxHours{}, err
-	}
-	str := func(k string) string {
-		var s string
-		_ = json.Unmarshal(raw[k], &s)
-		return s
-	}
-	boolean := func(k string, def bool) bool {
-		var b bool
-		if v, ok := raw[k]; ok && json.Unmarshal(v, &b) == nil {
-			return b
-		}
-		return def
-	}
-	hr := cxHours{
-		Enabled: boolean("dnd_enabled", true), Days: str("dnd_days"),
-		Start: str("dnd_end_hour"), End: str("dnd_start_hour"),
-		HuddleStatus: boolean("huddles_set_status", true), FocusStatus: boolean("focus_mode_set_status", true),
-		OutsideStatus: boolean("outside_working_hours_set_status", false),
-	}
-	if hr.Days == "" {
-		hr.Days = "every_day"
-	}
-	return hr, nil
-}
-
-// cxSetPrefs writes user prefs (users.prefs.set). Prefers core.SetPrefs.
-func cxSetPrefs(ctx context.Context, h Host, prefs map[string]string) error {
-	a, err := cxApp(h)
-	if err != nil {
-		return err
-	}
-	if s, ok := any(a).(interface {
-		SetPrefs(context.Context, map[string]string) error
-	}); ok {
-		return s.SetPrefs(ctx, prefs)
-	}
-	b, _ := json.Marshal(prefs)
-	return a.C.Call(ctx, "users.prefs.set", url.Values{"prefs": {string(b)}}, nil)
-}
-
-// cxSetWorkingHours saves working hours and the automatic-status toggles.
-func cxSetWorkingHours(ctx context.Context, h Host, hr cxHours) error {
-	return cxSetPrefs(ctx, h, map[string]string{
-		"dnd_enabled":                      strconv.FormatBool(hr.Enabled),
-		"dnd_days":                         hr.Days,
-		"dnd_end_hour":                     hr.Start,
-		"dnd_start_hour":                   hr.End,
-		"huddles_set_status":               strconv.FormatBool(hr.HuddleStatus),
-		"focus_mode_set_status":            strconv.FormatBool(hr.FocusStatus),
-		"outside_working_hours_set_status": strconv.FormatBool(hr.OutsideStatus),
-	})
-}
-
-// ---- scheduled status (Out of office) ----
-
-// cxCanScheduleStatus reports whether core can schedule a status that
-// starts later (the web client's "Schedule for later").
-func cxCanScheduleStatus(h Host) bool {
-	a, err := cxApp(h)
-	if err != nil {
-		return false
-	}
-	_, ok := any(a).(interface {
-		ScheduleStatus(context.Context, string, string, int64, int64) error
-	})
-	return ok
-}
-
-// cxScheduleStatus sets a status from start to end (unix seconds). A start
-// in the past or now is a normal status with an expiration.
-func cxScheduleStatus(ctx context.Context, h Host, text, emoji string, start, end int64, now int64) error {
-	a, err := cxApp(h)
-	if err != nil {
-		return err
-	}
-	if start <= now+60 {
-		return a.SetStatus(ctx, text, emoji, end)
-	}
-	if s, ok := any(a).(interface {
-		ScheduleStatus(context.Context, string, string, int64, int64) error
-	}); ok {
-		return s.ScheduleStatus(ctx, text, emoji, start, end)
-	}
-	return errors.New("scheduling a status for later needs core support")
 }

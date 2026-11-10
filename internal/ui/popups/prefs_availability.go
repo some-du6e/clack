@@ -24,8 +24,11 @@ import (
 // [Every day ▾ 160] [12:30 AM ▾ 130] to [12:00 AM ▾ 130] (36px); divider
 // #dddddd; "Automatic statuses" (three 16px checkboxes with emoji);
 // divider; "Additional options" with a disabled calendar checkbox. Values
-// load from corex cxWorkingHours and save on every change through
-// cxSetWorkingHours (Slack applies preferences immediately).
+// load through avReadHours and each change writes what it changed, as
+// Slack does (prefs_availability_hours.go). Custom days add a row per day
+// (p-dnd_preferences__custom_day_section: 36 tall, 16 apart, a 120px day
+// label), Weekdays a 13px subtext, and "VIPs" in the paragraph is a link to
+// the VIP section.
 
 type avNavItem struct{ id, label, icon string }
 
@@ -121,47 +124,63 @@ func avParseHM(s string) (int, bool) {
 	return (hh*60 + mm) % (24 * 60), true
 }
 
-// avFormatHM formats minutes after midnight as Slack's "H:MM".
-func avFormatHM(m int) string {
-	m = ((m % 1440) + 1440) % 1440
-	mm := m % 60
-	s := strconv.Itoa(m/60) + ":"
-	if mm < 10 {
-		s += "0"
-	}
-	return s + strconv.Itoa(mm)
-}
-
-// avFromDND maps Slack's stored do-not-disturb window (dnd_start_hour →
-// dnd_end_hour) to the "Allow notifications" window the page shows:
-// notifications start when DND ends and end when it starts. Unparsable
-// values fall back to 9:00 AM – 5:00 PM.
-func avFromDND(dndStart, dndEnd string) (from, to int) {
-	from, ok1 := avParseHM(dndEnd)
-	to, ok2 := avParseHM(dndStart)
-	if !ok1 || !ok2 {
-		return 9 * 60, 17 * 60
-	}
-	return from, to
-}
-
-// avToDND is the inverse of avFromDND.
-func avToDND(from, to int) (dndStart, dndEnd string) {
-	return avFormatHM(to), avFormatHM(from)
-}
-
 // ---- modal ----
 
 type avPrefs struct {
 	h       Host
 	modal   *Modal
 	nav     [len(avNav)]widget.Clickable
-	hr      cxHours
-	from    dtTime // Allow notifications from…
-	to      dtTime // …to
+	hr      avHours
+	from    avSelect // Allow notifications from… (dnd_end_hour)
+	to      avSelect // …to (dnd_start_hour)
+	dayFrom [7]avSelect
+	dayTo   [7]avSelect
 	loaded  bool
 	daysBtn widget.Clickable
 	checks  [3]widget.Clickable
+	vipBtn  widget.Clickable
+	// toSection switches the Preferences dialog to another section (the
+	// "VIPs" link: setActiveSection vip); nil opens Preferences there.
+	toSection func(id string)
+}
+
+// avSelect is one of the page's time selects (Slack's Select, 130 wide):
+// a field and, open, its option list.
+type avSelect struct {
+	btn  widget.Clickable
+	list Overlay
+}
+
+func (s *avSelect) open() bool { return s.list != nil && !s.list.Dismissed() }
+
+// layout draws the select at (x, y) showing value; a click opens opts and
+// pick gets the chosen value.
+func (s *avSelect) layout(gtx layout.Context, p *avPrefs, org image.Point, x, y int, value string, opts []string, pick func(string)) {
+	th := p.h.Theme()
+	pl := prefsLookOf(th)
+	look := dtLook{bg: pl.surface, border: pl.fieldBorder}
+	w := dp(gtx, 130)
+	if s.btn.Clicked(gtx) && !s.open() && p.loaded {
+		labels := make([]string, len(opts))
+		sel := 0
+		for i, o := range opts {
+			labels[i] = avLabel(o)
+			if o == value {
+				sel = i
+			}
+		}
+		r := image.Rectangle{Min: org.Add(image.Pt(x, y)), Max: org.Add(image.Pt(x+w, y+dtHeight(gtx, dtLarge)))}
+		s.list = NewOptionList(p.h, r, labels, sel, func(i int) {
+			if i >= 0 && i < len(opts) && opts[i] != value {
+				pick(opts[i])
+			}
+			p.h.Invalidate()
+		})
+		p.h.ShowOverlay(s.list)
+	}
+	at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
+		return dtFieldIn(gtx, th, look, &s.btn, w, dtLarge, "", avLabel(value), true, s.open(), !p.loaded)
+	})
 }
 
 // NewPreferencesModal builds the Preferences dialog opened on section
@@ -176,51 +195,50 @@ func NewPreferencesModal(h Host, section string) *Modal {
 }
 
 func newAvPrefs(h Host) *avPrefs {
-	p := &avPrefs{h: h, hr: cxHours{Enabled: true, Days: "every_day", HuddleStatus: true, FocusStatus: true}}
-	p.from.Mins, p.to.Mins = 9*60, 17*60
-	p.from.NoIcon, p.to.NoIcon = true, true
-	p.from.Disabled, p.to.Disabled = true, true
-	p.from.OnChange = p.hoursChanged
-	p.to.OnChange = p.hoursChanged
+	p := &avPrefs{h: h, hr: avHours{Enabled: true, Days: "every_day", Start: "17:00", End: "09:00", Huddle: true}}
 	p.load()
 	return p
 }
 
 func (p *avPrefs) load() {
 	h := p.h
-	if h.Core() == nil {
+	a := h.Core()
+	if a == nil {
 		h.Toast("Not connected yet")
 		return
 	}
-	run(h, func(ctx context.Context) (cxHours, error) { return cxWorkingHours(ctx, h) }, func(hr cxHours, err error) {
+	run(h, func(ctx context.Context) (avHours, error) { return avReadHours(ctx, a) }, func(hr avHours, err error) {
 		if err != nil {
 			h.Toast("Couldn't load your working hours: " + errText(err))
 			return
 		}
 		p.hr = hr
-		// cxHours.End is dnd_start_hour and Start is dnd_end_hour.
-		p.from.Mins, p.to.Mins = avFromDND(hr.End, hr.Start)
-		p.from.Disabled, p.to.Disabled = false, false
 		p.loaded = true
 		h.Invalidate()
 	})
 }
 
-func (p *avPrefs) hoursChanged() {
-	p.hr.Enabled = true
-	p.save()
-}
-
-// save writes the current state (async; toasts on error).
-func (p *avPrefs) save() {
+// write sends a change's prefs (async; toasts on error).
+func (p *avPrefs) write(prefs map[string]any) {
 	if !p.loaded {
 		return
 	}
-	hr := p.hr
-	hr.End, hr.Start = avToDND(p.from.Mins, p.to.Mins)
-	p.hr = hr
-	h := p.h
-	do(h, "", func(ctx context.Context) error { return cxSetWorkingHours(ctx, h, hr) })
+	a := p.h.Core()
+	if a == nil {
+		return
+	}
+	do(p.h, "", func(ctx context.Context) error { return avWritePrefs(ctx, a, prefs) })
+	p.h.Invalidate()
+}
+
+// setPref writes one pref (setUserPrefByApi).
+func (p *avPrefs) setPref(name string, value any) {
+	a := p.h.Core()
+	if a == nil || !p.loaded {
+		return
+	}
+	do(p.h, "", func(ctx context.Context) error { return a.SetPref(ctx, name, value) })
+	p.h.Invalidate()
 }
 
 func (p *avPrefs) events(gtx layout.Context, org image.Point, cx int) {
@@ -248,29 +266,36 @@ func (p *avPrefs) events(gtx layout.Context, org image.Point, cx int) {
 		}
 		switch i {
 		case 0:
-			p.hr.HuddleStatus = !p.hr.HuddleStatus
+			p.hr.Huddle = !p.hr.Huddle
+			p.setPref("huddles_set_status", p.hr.Huddle)
 		case 1:
-			p.hr.FocusStatus = !p.hr.FocusStatus
+			p.hr.Focus = avToggleShow(p.hr.Focus, p.hr.FocusShown())
+			p.setPref("focus_mode_status", p.hr.Focus)
 		default:
-			p.hr.OutsideStatus = !p.hr.OutsideStatus
+			p.hr.Outside = avToggleShow(p.hr.Outside, p.hr.OutsideShown())
+			p.setPref("scheduled_dnd_status", p.hr.Outside)
 		}
-		p.save()
+	}
+	if p.vipBtn.Clicked(gtx) {
+		if p.toSection != nil {
+			p.toSection("vip")
+		} else {
+			if p.modal != nil {
+				p.modal.Dismiss()
+			}
+			openPreferences(h, "vip")
+		}
+		return
 	}
 	if p.daysBtn.Clicked(gtx) {
 		items := make([]MenuItem, 0, len(avDays))
 		for _, d := range avDays {
 			code := d.code
-			items = append(items, MenuItem{Label: d.label, Checked: p.hr.Days == code, Do: func() {
-				if code == p.hr.Days {
+			items = append(items, MenuItem{Label: d.label, Checked: p.hr.shownDays() == code, Do: func() {
+				if code == p.hr.shownDays() {
 					return
 				}
-				if code == "custom" {
-					h.Toast("Custom working days aren't supported yet")
-					return
-				}
-				p.hr.Days, p.hr.Enabled = code, true
-				p.save()
-				h.Invalidate()
+				p.write(p.hr.avSetDays(code))
 			}})
 		}
 		r := image.Rectangle{Min: org.Add(image.Pt(cx, dp(gtx, 185))), Max: org.Add(image.Pt(cx+dp(gtx, 160), dp(gtx, 221)))}
@@ -356,7 +381,6 @@ func (p *avPrefs) page(gtx layout.Context, org image.Point, cx, bw int) int {
 	cl := colorsOf(th)
 	pl := prefsLookOf(th)
 	look := dtLook{bg: pl.surface, border: pl.fieldBorder}
-	p.from.look, p.to.look = look, look
 	cw := maxInt(1, bw-cx)
 	at(gtx, image.Pt(cx, dp(gtx, 32)-dp(gtx, 14)), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, dp(gtx, 28), func(gtx layout.Context) layout.Dimensions {
@@ -364,39 +388,84 @@ func (p *avPrefs) page(gtx layout.Context, org image.Point, cx, bw int) int {
 		})
 	})
 	avText(gtx, th, cx, dp(gtx, 87), 15, cw, "Working hours", true)
-	p.para(gtx, th, pl.para, cx, dp(gtx, 102), cw, "You’ll only receive notifications in the hours you choose. Outside of those times, notifications will be paused except for VIPs.")
+	p.vipPara(gtx, th, cl, pl.para, cx, dp(gtx, 102), cw)
 	avText(gtx, th, cx, dp(gtx, 165), 15, cw, "Allow notifications:", true)
 
 	sy := dp(gtx, 185)
+	days := p.hr.shownDays()
 	at(gtx, image.Pt(cx, sy), func(gtx layout.Context) layout.Dimensions {
-		return dtFieldIn(gtx, th, look, &p.daysBtn, dp(gtx, 160), dtLarge, "", avDaysLabel(p.hr.Days), true, false, !p.loaded)
+		return dtFieldIn(gtx, th, look, &p.daysBtn, dp(gtx, 160), dtLarge, "", avDaysLabel(days), true, false, !p.loaded)
 	})
-	tx := cx + dp(gtx, 160+16)
-	at(gtx, image.Pt(tx, sy), func(gtx layout.Context) layout.Dimensions {
-		return p.from.Layout(gtx, p.h, org.Add(image.Pt(tx, sy)), dp(gtx, 130), dtLarge)
-	})
-	tx += dp(gtx, 130+8)
 	toW := textW(gtx, th, 15, theme.Regular, "to")
-	avText(gtx, th, tx, sy+dp(gtx, 18), 15, toW+1, "to", false)
-	tx += toW + dp(gtx, 8)
-	at(gtx, image.Pt(tx, sy), func(gtx layout.Context) layout.Dimensions {
-		return p.to.Layout(gtx, p.h, org.Add(image.Pt(tx, sy)), dp(gtx, 130), dtLarge)
-	})
-	fill(gtx, image.Rect(cx, dp(gtx, 236), bw, dp(gtx, 236)+maxInt(1, dp(gtx, 1))), pl.hr)
+	// the two selects and "to" between them (p-dnd_preferences__time_select_to: margin 0 8)
+	pair := func(x, y int, from string, fromOpts []string, pickFrom func(string), to string, toOpts []string, pickTo func(string), fromSel, toSel *avSelect, hideTo bool) {
+		fromSel.layout(gtx, p, org, x, y, from, fromOpts, pickFrom)
+		if hideTo {
+			return
+		}
+		x += dp(gtx, 130+8)
+		avText(gtx, th, x, y+dp(gtx, 18), 15, toW+1, "to", false)
+		x += toW + dp(gtx, 8)
+		toSel.layout(gtx, p, org, x, y, to, toOpts, pickTo)
+	}
+	hrY := dp(gtx, 236)
+	if days == "custom" {
+		// DndCustomPreferences: a 36px row per day, 16 apart, below the
+		// "Allow notifications:" line; the selects keep their wrapper's
+		// 16px bottom margin, so they sit 8px above the row's center
+		y := dp(gtx, 237)
+		none := p.hr.avNoneCount()
+		for i, d := range avWeek {
+			i := i
+			before, after := p.hr.dayShown(i)
+			allDay := p.hr.Week[i].Enabled == avAllDay
+			first := before
+			if allDay {
+				first = avAllDay
+			}
+			avText(gtx, th, cx, y+dp(gtx, 18)+dp(gtx, 1), 15, dp(gtx, 120), d.label, false)
+			pair(cx+dp(gtx, 120), y-dp(gtx, 8),
+				first, avStartOpts(before, allDay || none != 6), func(v string) { p.write(p.hr.avSetDayFrom(i, v)) },
+				after, avEndOpts(before, after, false), func(v string) { p.write(p.hr.avSetDayTo(i, v)) },
+				&p.dayFrom[i], &p.dayTo[i], allDay)
+			y += dp(gtx, 36+16)
+		}
+		hrY = y
+	} else {
+		from, to := p.hr.shownFrom(), p.hr.shownTo()
+		pair(cx+dp(gtx, 160+16), sy,
+			from, avStartOpts(from, false), func(v string) { p.write(p.hr.avSetFrom(v)) },
+			to, avEndOpts(from, to, true), func(v string) { p.write(p.hr.avSetTo(v)) },
+			&p.from, &p.to, false)
+		if days == "weekdays" {
+			// p-dnd_preferences__subtext: 13px at 70%, margin-top -8 (and a
+			// p's 1em below)
+			sub := dp(gtx, 229)
+			at(gtx, image.Pt(cx, sub), func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints = layout.Constraints{Max: image.Pt(cw, dp(gtx, 19))}
+				return vcenter(gtx, dp(gtx, 19), func(gtx layout.Context) layout.Dimensions {
+					return text(gtx, th, 13, theme.Regular, theme.WithAlpha(cl.Fg, 0xb3), "You won’t receive notifications on Saturday or Sunday.")
+				})
+			})
+			hrY = sub + dp(gtx, 19+13)
+		}
+	}
+	fill(gtx, image.Rect(cx, hrY, bw, hrY+maxInt(1, dp(gtx, 1))), pl.hr)
+	off := hrY - dp(gtx, 236) // what follows moves down with the rows
 
-	avText(gtx, th, cx, dp(gtx, 268), 15, cw, "Automatic statuses", true)
-	p.para(gtx, th, pl.para, cx, dp(gtx, 283), cw, "Let people know when responses might be delayed. If you already have a status set, Slack won’t change it.")
-	avText(gtx, th, cx, dp(gtx, 346), 15, cw, "Set status to:", true)
+	avText(gtx, th, cx, off+dp(gtx, 268), 15, cw, "Automatic statuses", true)
+	p.para(gtx, th, pl.para, cx, off+dp(gtx, 283), cw, "Let people know when responses might be delayed. If you already have a status set, Slack won’t change it.")
+	avText(gtx, th, cx, off+dp(gtx, 346), 15, cw, "Set status to:", true)
 	rows := [3]struct {
 		emoji, bold, rest string
 		on                bool
 	}{
-		{"headphones", "In a huddle", " for huddles", p.hr.HuddleStatus},
-		{"telescope", "In focus mode", " for focus mode", p.hr.FocusStatus},
-		{"mantelpiece_clock", "Outside work hours", " for outside working hours", p.hr.OutsideStatus},
+		{"headphones", "In a huddle", " for huddles", p.hr.Huddle},
+		{"telescope", "In focus mode", " for focus mode", p.hr.FocusShown()},
+		{"mantelpiece_clock", "Outside work hours", " for outside working hours", p.hr.OutsideShown()},
 	}
 	for i, r := range rows {
-		cy := dp(gtx, 375) + i*dp(gtx, 26)
+		cy := off + dp(gtx, 375) + i*dp(gtx, 26)
 		rh := dp(gtx, 26)
 		at(gtx, image.Pt(cx, cy-rh/2), func(gtx layout.Context) layout.Dimensions {
 			draw := func(gtx layout.Context) layout.Dimensions {
@@ -420,14 +489,14 @@ func (p *avPrefs) page(gtx layout.Context, org image.Point, cx, bw int) int {
 			return clickBox(gtx, &p.checks[i], nil, draw)
 		})
 	}
-	fill(gtx, image.Rect(cx, dp(gtx, 463), bw, dp(gtx, 463)+maxInt(1, dp(gtx, 1))), pl.hr)
+	fill(gtx, image.Rect(cx, off+dp(gtx, 463), bw, off+dp(gtx, 463)+maxInt(1, dp(gtx, 1))), pl.hr)
 
-	avText(gtx, th, cx, dp(gtx, 495), 15, cw, "Additional options", true)
-	avText(gtx, th, cx, dp(gtx, 529), 15, cw, "Turn on focus mode when:", true)
+	avText(gtx, th, cx, off+dp(gtx, 495), 15, cw, "Additional options", true)
+	avText(gtx, th, cx, off+dp(gtx, 529), 15, cw, "Turn on focus mode when:", true)
 	{
 		// .c-input_checkbox--disabled: the native box at opacity .38, its
 		// .c-label--disabled label in --dt_color-content-sec
-		cy := dp(gtx, 558)
+		cy := off + dp(gtx, 558)
 		sz := dp(gtx, theme.NativeCheckSize)
 		at(gtx, image.Pt(cx, cy-sz/2), func(gtx layout.Context) layout.Dimensions {
 			return theme.NativeCheck(gtx, pl.dark, theme.NativeCheckState{Opacity: .38})
@@ -438,7 +507,84 @@ func (p *avPrefs) page(gtx layout.Context, org image.Point, cx, bw int) int {
 			})
 		})
 	}
-	return dp(gtx, 580)
+	return off + dp(gtx, 580)
+}
+
+// avWorkingPara is the Working hours paragraph; its last word, "VIPs", is
+// the link (LegendSubtext with vipsLink).
+const avWorkingPara = "You’ll only receive notifications in the hours you choose. Outside of those times, notifications will be paused except for "
+
+// avWrap breaks words greedily into lines no wider than w (fits measures).
+func avWrap(words []string, w int, fits func(s string) int) []string {
+	var lines []string
+	cur := ""
+	for _, wd := range words {
+		try := wd
+		if cur != "" {
+			try = cur + " " + wd
+		}
+		if cur != "" && fits(try) > w {
+			lines = append(lines, cur)
+			cur = wd
+			continue
+		}
+		cur = try
+	}
+	if cur != "" {
+		lines = append(lines, cur)
+	}
+	return lines
+}
+
+// vipPara draws the paragraph (15/22) with "VIPs" as a link to the VIP
+// section: link colour, underlined on hover.
+func (p *avPrefs) vipPara(gtx layout.Context, th *theme.Theme, cl *Colors, col color.NRGBA, x, y, w int) {
+	words := append(strings.Fields(avWorkingPara), "VIPs.")
+	measure := func(s string) int { return textW(gtx, th, 15, theme.Regular, s) }
+	lines := avWrap(words, w, measure)
+	lh := dp(gtx, 22)
+	for i, ln := range lines {
+		ly := y + i*lh
+		last := i == len(lines)-1
+		body := ln
+		if last {
+			body = strings.TrimSuffix(strings.TrimSuffix(ln, "VIPs."), " ")
+		}
+		if body != "" {
+			at(gtx, image.Pt(x, ly), func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints = layout.Constraints{Max: image.Pt(w, lh)}
+				return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
+					return text(gtx, th, 15, theme.Regular, col, body)
+				})
+			})
+		}
+		if !last {
+			continue
+		}
+		lx := x
+		if body != "" {
+			lx += measure(body + " ")
+		}
+		lw := measure("VIPs")
+		at(gtx, image.Pt(lx, ly), func(gtx layout.Context) layout.Dimensions {
+			return clickBox(gtx, &p.vipBtn, nil, func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints = layout.Constraints{Max: image.Pt(lw+1, lh)}
+				vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
+					return text(gtx, th, 15, theme.Regular, cl.Link, "VIPs")
+				})
+				if p.vipBtn.Hovered() {
+					fill(gtx, image.Rect(0, lh-dp(gtx, 5), lw, lh-dp(gtx, 5)+maxInt(1, dp(gtx, 1))), cl.Link)
+				}
+				return layout.Dimensions{Size: image.Pt(lw, lh)}
+			})
+		})
+		at(gtx, image.Pt(lx+lw, ly), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(measure(".")+1, lh)}
+			return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
+				return text(gtx, th, 15, theme.Regular, col, ".")
+			})
+		})
+	}
 }
 
 // ---- the page as a widget (ui-shell's single Preferences modal) ----
@@ -463,6 +609,10 @@ func NewAvailabilityPage(h Host) *AvailabilityPage {
 
 // SetOrigin sets the page's top-left corner in window coordinates.
 func (a *AvailabilityPage) SetOrigin(pt image.Point) { a.origin = pt }
+
+// SetSectionNav gives the page the dialog's section switch, which the
+// "VIPs" link calls with "vip" (Slack's setActiveSection).
+func (a *AvailabilityPage) SetSectionNav(f func(id string)) { a.p.toSection = f }
 
 // Layout draws the page body using the constraint width.
 func (a *AvailabilityPage) Layout(gtx layout.Context) layout.Dimensions {

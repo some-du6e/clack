@@ -101,7 +101,7 @@ var slackPages = map[string][]want{
 	},
 	"appearance": {
 		lg("Font"), sel("Lato (Default)"), lg("Color Mode"), rd("Light"), rd("Dark"), rd("System"),
-		ckOff("Always use dark color mode when in focus mode."),
+		ck("Always use dark color mode when in focus mode."),
 		{"tab", "Slack themes", false}, {"tab", "Custom theme", false},
 		lg("Single color"), rd("Aubergine"), rd("Clementine"), lg("Vision assistive"), rd("Tritanopia"),
 		lg("Fun and new"), rd("Raspberry Beret"), lg("Updated classics"), rd("Choco Mint"), rd("Sweet Treat"),

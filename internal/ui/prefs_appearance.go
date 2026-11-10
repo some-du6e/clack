@@ -41,8 +41,8 @@ func (p *prefsModal) appearancePage(gtx layout.Context) layout.Dimensions {
 		hint = "Your desktop doesn't report a colour scheme, so this stays light"
 	}
 	f.option("mode.os", "System", hint, sync, true, func() { a.setThemeSync(true) })
-	if !a.th.Dark { // focus_mode_force_dark_mode_enabled (Clack has no focus mode)
-		f.off("focus_mode_force_dark_mode_enabled", "Always use dark color mode when in focus mode.", "", p.prefBool("focus_mode_force_dark_mode_enabled", true), false)
+	if !a.th.Dark && a.focusModeOn() { // ThemeColorModeContainer: silent_sidebar, light mode (focus_mode.go)
+		f.check("focus_mode_force_dark_mode_enabled", "Always use dark color mode when in focus mode.", "", true, false)
 	}
 	f.gap()
 
