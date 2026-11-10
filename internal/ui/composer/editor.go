@@ -105,6 +105,7 @@ const (
 	EvPlusMenu   // Mod+O in the desktop app: open the + menu (onPlusMenuShortcut)
 	EvNavBack    // Mod+Left in an empty editor: back in history (onCmdLeftWhenEmpty)
 	EvNavForward // Mod+Right in an empty editor: forward (onCmdRightWhenEmpty)
+	EvPasteLimit // a paste over 50,000 characters was refused (onPasteLimit)
 )
 
 // EditorEvent is reported by Editor.Update.
@@ -880,6 +881,13 @@ func (e *Editor) pasteHTML(s, html string) {
 	e.plainPaste = false
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	if s == "" {
+		return
+	}
+	if jsLen(s) > pasteMaxLength {
+		// TextyInput's onPasteLimit: pasted contents over 5e4 are refused
+		// and the composer says so (the pasted text's length stands in
+		// for the converted delta's)
+		e.emit(EvPasteLimit)
 		return
 	}
 	d := e.doc

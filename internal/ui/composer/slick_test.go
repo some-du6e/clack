@@ -326,8 +326,9 @@ func TestSlickViewCharacterCounter(t *testing.T) {
 	e.patched("WysiwygContainer", "SendButton", "TextyInput")
 	c, frame := e.composer(tChGen)
 	edType(c.ed, "hello")
-	count := regexp.MustCompile(`(^|\D)5/40,?000`)
-	e.until(8*time.Second, "the count 5/40,000 in the composer footer", frame, func() bool {
+	// the plugin reads TextyInput's maxLength: Slack's 12e3
+	count := regexp.MustCompile(`(^|\D)5/12,?000`)
+	e.until(8*time.Second, "the count 5/12,000 in the composer footer", frame, func() bool {
 		txt, ok := e.treeWith("slick-char-counter")
 		return ok && count.MatchString(txt)
 	})

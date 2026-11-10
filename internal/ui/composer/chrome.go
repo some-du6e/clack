@@ -23,6 +23,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/slackc/css"
 	"github.com/some-du6e/clack/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
 // The composer's chrome: the bordered box with the formatting bar, the text
@@ -1194,6 +1195,22 @@ func (c *chrome) layoutSend(gtx layout.Context, p *crPal, st *chromeState) layou
 	c.hit(gtx, crSend, rs, en)
 	if sched {
 		c.hit(gtx, crSchedule, rc, en)
+	}
+	if en { // disabled, the halves take no pointer (pointer-events: none)
+		// SendButton's tooltips: "Send now" with its key (Return, or
+		// CmdOrCtrl+Return under "Enter starts a new line") and "Schedule
+		// for later" on the chevron
+		th := c.f.h.Theme()
+		keys := "Enter"
+		if uipref.Get().SendOnModEnter {
+			keys = "Mod+Enter"
+		}
+		popups.Tooltip(gtx, th, &c.tip[crSend], hs, rs.Size(), popups.Above, "Send now", keys)
+		if sched {
+			t := op.Offset(rc.Min).Push(gtx.Ops)
+			popups.Tooltip(gtx, th, &c.tip[crSchedule], hc, rc.Size(), popups.Above, "Schedule for later", "")
+			t.Pop()
+		}
 	}
 	return layout.Dimensions{Size: r.Size()}
 }

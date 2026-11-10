@@ -200,6 +200,7 @@ func schedAfterWeekend(t time.Time) bool {
 
 // schedMemberLabel is getLabelForSchedulingOptionThunk's member row.
 func schedMemberLabel(at, now time.Time, m *schedMemberInfo, h24 bool) string {
+	at = at.In(now.Location()) // the viewer's clock and day (moment's local time)
 	ts := schedClock(at, h24)
 	if schedAfterWeekend(now.In(m.loc)) {
 		day := "Sunday"
@@ -216,6 +217,7 @@ func schedMemberLabel(at, now time.Time, m *schedMemberInfo, h24 bool) string {
 
 // schedPreviousLabel is the "previously scheduled" row's label.
 func schedPreviousLabel(at, now time.Time, h24 bool) string {
+	at = at.In(now.Location())
 	ts := schedClock(at, h24)
 	same := func(a, b time.Time) bool { return a.Year() == b.Year() && a.YearDay() == b.YearDay() }
 	switch {

@@ -17,6 +17,19 @@ import "unicode/utf16"
 // composerMaxLength is the composers' maxLength.
 const composerMaxLength = 12000
 
+// pasteMaxLength is TextyInput's paste limit (onPasteLimit: a pasted
+// delta longer than 5e4 is refused).
+const pasteMaxLength = 50000
+
+// pasteLimitTitle and pasteLimitText are PasteLimitDialog's (boot-shared;
+// msg_input): MessageInput's own variant adds "If you’d like you could
+// create a snippet instead." and a "Create a Snippet" button, which opens
+// the snippet dialog Clack doesn't have, so the composer shows this one.
+const (
+	pasteLimitTitle = "That’s a bit too long to paste"
+	pasteLimitText  = "To keep things running smoothly, there’s a limit on the number of characters you can paste into Slack."
+)
+
 // slackLength is getMessageLengthForDelta over the document's delta, in
 // JavaScript string units (UTF-16): text counts as typed, a link whose
 // text isn't its URL counts both, an emoji its ":name:" text, a user,

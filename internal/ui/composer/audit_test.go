@@ -23,6 +23,17 @@ import (
 // The composer audit's fixes (docs/COMPOSER-AUDIT.md), each against the
 // Slack code it ports. Synthetic data only.
 
+// freshComposer is New for #general without a draft left by another
+// test (Close keeps the composer's text as the in-memory draft).
+func freshComposer(t *testing.T, h Host) *Composer {
+	t.Helper()
+	clearDraft(tChGen, "")
+	t.Cleanup(func() { clearDraft(tChGen, "") })
+	c := New(h, tChGen, "")
+	t.Cleanup(c.Close)
+	return c
+}
+
 // getMessageLengthForDelta (9ysi): text in UTF-16 units, an emoji its
 // ":name:" text, a mention its id, a broadcast its label, a link whose
 // text isn't its URL both; the final newline doesn't count.
@@ -51,8 +62,7 @@ func TestOverLimitBlocksSend(t *testing.T) {
 	app, fs := syntheticApp(t, func(*store.Store) {})
 	stubTyping(t)
 	h := &slickHost{app: app, th: theme.New(false)}
-	c := New(h, tChGen, "")
-	t.Cleanup(c.Close)
+	c := freshComposer(t, h)
 	d := NewDoc()
 	d.Insert(0, strings.Repeat("a", composerMaxLength+1), Attr{})
 	c.ed.SetDoc(d)
@@ -87,8 +97,7 @@ func TestOverLimitBlocksSend(t *testing.T) {
 func TestClipButtonsNeedARecorder(t *testing.T) {
 	app, _ := syntheticApp(t, func(*store.Store) {})
 	stubTyping(t)
-	c := New(&slickHost{app: app, th: theme.New(false)}, tChGen, "")
-	t.Cleanup(c.Close)
+	c := freshComposer(t, &slickHost{app: app, th: theme.New(false)})
 	p := c.inputProps()
 	if p.Bool("enableStoryButton") || p.Bool("enableAudioButton") {
 		t.Fatalf("clip buttons enabled: story %v audio %v", p.Bool("enableStoryButton"), p.Bool("enableAudioButton"))
@@ -109,8 +118,7 @@ func TestClipButtonsNeedARecorder(t *testing.T) {
 func TestShortcutAndMentionButtons(t *testing.T) {
 	app, _ := syntheticApp(t, func(*store.Store) {})
 	stubTyping(t)
-	c := New(&slickHost{app: app, th: theme.New(false)}, tChGen, "")
-	t.Cleanup(c.Close)
+	c := freshComposer(t, &slickHost{app: app, th: theme.New(false)})
 	var ch chrome
 	st := c.chromeState(gtxForProps())
 	if !st.InputEmpty || ch.disabled(&st, crShortcut) {
@@ -416,4 +424,19 @@ func prefIsTrue(v any) bool {
 		return x == "true" || x == "1"
 	}
 	return false
+}
+
+// TextyInput's onPasteLimit: a paste over 50,000 characters is refused
+// and the composer shows PasteLimitDialog.
+func TestPasteLimit(t *testing.T) {
+	e := NewEditor()
+	e.paste(strings.Repeat("a", pasteMaxLength+1))
+	if e.doc.Len() != 0 || !edHas(e, EvPasteLimit) {
+		t.Fatalf("over the limit: len %d, refused %v", e.doc.Len(), edHas(e, EvPasteLimit))
+	}
+	e.events = nil
+	e.paste(strings.Repeat("a", 100))
+	if e.doc.Len() != 100 || edHas(e, EvPasteLimit) {
+		t.Fatalf("a short paste: len %d", e.doc.Len())
+	}
 }

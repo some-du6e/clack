@@ -586,6 +586,8 @@ func (c *Composer) handleEditor(gtx layout.Context) {
 			c.openLink()
 		case EvPasted:
 			c.att.PasteClipboardImage()
+		case EvPasteLimit:
+			c.pasteLimitDialog()
 		case EvPlusMenu:
 			// onPlusMenuShortcut: forcePlusMenuOpen, the + menu at its button
 			if c.edit == nil && c.ui.rect[crAttach] != (image.Rectangle{}) && !c.ui.hidden(crAttach) {
@@ -847,6 +849,21 @@ func (c *Composer) schedule(t time.Time) {
 }
 
 // ---- sending ----
+
+// pasteLimitDialog is PasteLimitDialog: the title, the limit's
+// explanation and OK.
+func (c *Composer) pasteLimitDialog() {
+	th := c.h.Theme()
+	m := popups.NewModal(c.h, popups.ModalOpts{
+		Title:        pasteLimitTitle,
+		EnterSubmits: true,
+		Body: func(gtx layout.Context) layout.Dimensions {
+			return label(gtx, th.Shaper, textStyle{Size: 15, LineHeight: 22, Color: th.C.Fg}, pasteLimitText)
+		},
+		Buttons: []*popups.ModalButton{{Label: "OK", Kind: popups.BtnPrimary, Do: func() bool { return true }}},
+	}).OldDialog()
+	c.h.ShowOverlay(m)
+}
 
 // historyNavigator is the ui root's history (triggerNavigateBack /
 // triggerNavigateForward): Mod+Left / Mod+Right in an empty composer.

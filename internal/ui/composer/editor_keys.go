@@ -227,7 +227,7 @@ func (e *Editor) shortcut(gtx layout.Context, name key.Name, shift, alt bool) bo
 		switch {
 		case shift:
 			e.Redo()
-		case e.doc.Empty():
+		case e.doc.Len() == 0: // quill.getLength() === 1: nothing at all
 			e.emit(EvUndoEmpty) // Slack's onCmdZWhenEmpty: unsend the message just sent
 		default:
 			e.Undo()
@@ -754,7 +754,12 @@ func edNextStop(d *Doc, pos int) int {
 // up_to_browse; Mod+Up in an empty field always does. It reports whether
 // it handled the key.
 func (e *Editor) upArrow(cmd bool) bool {
-	empty := e.doc.Empty()
+	// Slack's Up binding skips code blocks (format: {"code-block": false})
+	// and "empty" is texty.isEmpty: nothing at all, spaces count
+	if e.doc.Lines[e.doc.LineOf(e.caret)].Kind == CodeBlock {
+		return false
+	}
+	empty := e.doc.Len() == 0
 	start := e.caret == 0 && e.anchor == 0
 	var list bool
 	switch e.upMode {

@@ -63,6 +63,8 @@ func TestComposerAuditShots(t *testing.T) {
 				const scale = 2
 				w, h := 760*scale, 220*scale
 				th := theme.New(dark)
+				clearDraft(tChGen, "")
+				t.Cleanup(func() { clearDraft(tChGen, "") })
 				c := New(&slickHost{app: app, th: th}, tChGen, "")
 				t.Cleanup(c.Close)
 				c.ed.SetDoc(s.doc())
