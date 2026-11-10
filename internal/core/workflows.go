@@ -551,12 +551,17 @@ func (ix *Interactive) ChannelWorkflowApps(ctx context.Context, ch string) ([]Wo
 
 // ---- adding a workflow to a channel ----
 
-// AddWorkflowBookmark bookmarks a workflow in a channel, as the channel
-// menu's "Add a workflow" does (Slack's addBookmarkForChannel, Tyab eV;
-// the fetcher YQEj): bookmarks.add with type shortcut, the trigger as
-// shortcut_id and its name as the title (the id without one).
-func (a *App) AddWorkflowBookmark(ctx context.Context, ch string, t WorkflowTrigger) (Bookmark, error) {
+// AddWorkflowBookmark bookmarks a workflow in a channel (Slack's
+// addBookmarkForChannel, Tyab; the fetcher YQEj): bookmarks.add with type
+// shortcut, the trigger as shortcut_id and its name as the title (the id
+// without one). The channel menu's "Add a workflow" sends no link; the
+// tab bar's "Workflow" (addWorkflowBookmarkForChannel) sends the trigger's
+// shortcut URL as link.
+func (a *App) AddWorkflowBookmark(ctx context.Context, ch string, t WorkflowTrigger, link string) (Bookmark, error) {
 	p := url.Values{"channel": {ch}, "title": {firstNonEmpty(t.Name, t.ID)}, "type": {"shortcut"}, "shortcut_id": {t.ID}}
+	if link != "" {
+		p.Set("link", link)
+	}
 	var res struct {
 		Bookmark struct {
 			ID         string `json:"id"`

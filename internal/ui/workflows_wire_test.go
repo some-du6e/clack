@@ -56,13 +56,23 @@ func TestAddWorkflowChannelMenu(t *testing.T) {
 	if _, ok := e.a.overlays[len(e.a.overlays)-1].(*popups.Modal); !ok {
 		t.Errorf("top overlay %T, want the picker's modal", e.a.overlays[len(e.a.overlays)-1])
 	}
-	e.a.addWorkflowBookmark(ch, core.WorkflowTrigger{ID: fakeslack.TriggerDeploy, Name: "Run deploy"})
+	e.a.addWorkflowBookmark(ch, core.WorkflowTrigger{ID: fakeslack.TriggerDeploy, Name: "Run deploy"}, "")
 	e.until("the bookmark", 10*time.Second, func() bool { return len(fs.AddedBookmarks()) == 1 })
 	b := fs.AddedBookmarks()[0]
 	if b["type"] != "shortcut" || b["shortcut_id"] != fakeslack.TriggerDeploy || b["title"] != "Run deploy" || b["link"] != "" {
 		t.Errorf("bookmark %v", b)
 	}
 	e.until("the channel", 10*time.Second, func() bool { return e.a.router.Current().Channel() == ch })
+
+	// the tab bar's "+": "Workflow" only while the channel has no
+	// Workflows tab (the gallery has one)
+	e.until("the gallery's tabs", 10*time.Second, func() bool { return e.a.data.tabsDone[ch] })
+	if items := e.a.addTabWorkflowItems(ch); len(items) != 0 {
+		t.Errorf("a channel with a Workflows tab lists Workflow in +: %v", items)
+	}
+	if items := e.a.addTabWorkflowItems(fs.ChannelIDs()[0]); len(items) != 1 || items[0].Label != "Workflow" || items[0].Icon != "lightning" {
+		t.Errorf("tab bar + Workflow: %+v", items)
+	}
 }
 
 // TestWorkflowBookmarkTrips: a bookmarked workflow in the folder tab trips

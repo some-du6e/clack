@@ -253,7 +253,7 @@ func TestChannelWorkflows(t *testing.T) {
 func TestAddWorkflowBookmark(t *testing.T) {
 	a, f := testApp(t)
 	f.reply["bookmarks.add"] = `{"ok":true,"bookmark":{"id":"Bk1","title":"Request time off","type":"shortcut","shortcut_id":"Ft2","rank":"b"}}`
-	bm, err := a.AddWorkflowBookmark(context.Background(), "C1", WorkflowTrigger{ID: "Ft2", Name: "Request time off", ShortcutURL: "https://slack.com/shortcuts/Ft2/x"})
+	bm, err := a.AddWorkflowBookmark(context.Background(), "C1", WorkflowTrigger{ID: "Ft2", Name: "Request time off", ShortcutURL: "https://slack.com/shortcuts/Ft2/x"}, "")
 	if err != nil || bm.ID != "Bk1" || bm.ShortcutID != "Ft2" {
 		t.Fatalf("bookmark %+v %v", bm, err)
 	}
@@ -261,10 +261,10 @@ func TestAddWorkflowBookmark(t *testing.T) {
 	if p.Get("channel") != "C1" || p.Get("type") != "shortcut" || p.Get("shortcut_id") != "Ft2" || p.Get("title") != "Request time off" || p.Has("link") {
 		t.Errorf("params %v", p)
 	}
-	if _, err := a.AddWorkflowBookmark(context.Background(), "C1", WorkflowTrigger{ID: "Ft3"}); err != nil {
+	if _, err := a.AddWorkflowBookmark(context.Background(), "C1", WorkflowTrigger{ID: "Ft3"}, "https://slack.com/shortcuts/Ft3/y"); err != nil {
 		t.Fatal(err)
 	}
-	if p := f.last("bookmarks.add"); p.Get("title") != "Ft3" {
-		t.Errorf("an unnamed trigger is titled by its id: %v", p)
+	if p := f.last("bookmarks.add"); p.Get("title") != "Ft3" || p.Get("link") != "https://slack.com/shortcuts/Ft3/y" {
+		t.Errorf("an unnamed trigger is titled by its id; the tab bar's sends the link: %v", p)
 	}
 }

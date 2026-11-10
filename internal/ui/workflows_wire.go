@@ -35,16 +35,48 @@ func addWorkflow(h popups.Host, ch string) {
 	blockkit.OpenWorkflowPicker(h, blockkit.WorkflowPickerOpts{Source: blockkit.PickerChannelWorkflows, ChannelID: ch, IncludeAutomated: true,
 		OnInsert: func(t core.WorkflowTrigger) {
 			if a != nil {
-				a.addWorkflowBookmark(ch, t)
+				a.addWorkflowBookmark(ch, t, "")
 			}
 		}})
 }
 
-// addWorkflowBookmark bookmarks t in ch, then opens the channel with its
-// tabs reloaded (Slack opens the channel's Workflows tab, toChannel with
-// tabId workflows). Slack shows nothing when bookmarks.add fails (the
-// promise has no catch); Clack logs it.
-func (a *App) addWorkflowBookmark(ch string, t core.WorkflowTrigger) {
+// addTabWorkflowItems is the tab bar "+" menu's "Workflow" (Slack's
+// AddTabMenu, boot-shared /wV5: the bolt icon), listed while the channel
+// has no Workflows tab and the viewer may post in it. Its picker is
+// useCreateWorkflow's (OAZD): the same as the channel menu's, but the
+// bookmark carries the trigger's shortcut URL and a workflow already
+// bookmarked isn't added again (addWorkflowBookmarkForChannel).
+func (a *App) addTabWorkflowItems(ch string) []MenuItem {
+	c := a.Core()
+	if c == nil || !c.PostingIn(ch).CanPost() {
+		return nil
+	}
+	for _, t := range a.channelTabs(ch) {
+		if t.icon == "workflow" {
+			return nil
+		}
+	}
+	return []MenuItem{{Label: "Workflow", Icon: "lightning", Do: func() {
+		blockkit.OpenWorkflowPicker(a, blockkit.WorkflowPickerOpts{Source: blockkit.PickerChannelWorkflows, ChannelID: ch, IncludeAutomated: true,
+			OnInsert: func(t core.WorkflowTrigger) {
+				if a.data != nil {
+					for _, bm := range a.data.bookmarks[ch] {
+						if bm.ShortcutID == t.ID {
+							return // "Cannot add already bookmarked workflow to bookmarks"
+						}
+					}
+				}
+				a.addWorkflowBookmark(ch, t, t.ShortcutURL)
+			}})
+	}}}
+}
+
+// addWorkflowBookmark bookmarks t in ch (link: the tab bar's shortcut URL,
+// "" for the channel menu's), then opens the channel with its tabs
+// reloaded (Slack opens the channel's Workflows tab, toChannel with tabId
+// workflows). Slack shows nothing when bookmarks.add fails (the promise
+// has no catch); Clack logs it.
+func (a *App) addWorkflowBookmark(ch string, t core.WorkflowTrigger, link string) {
 	if a.data == nil || a.data.core == nil {
 		return
 	}
@@ -52,7 +84,7 @@ func (a *App) addWorkflowBookmark(ch string, t core.WorkflowTrigger) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		_, err := c.AddWorkflowBookmark(ctx, ch, t)
+		_, err := c.AddWorkflowBookmark(ctx, ch, t, link)
 		a.Post(func() {
 			if err != nil {
 				log.Printf("workflows: add %s to %s: %v", t.ID, ch, err)
