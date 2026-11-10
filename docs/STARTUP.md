@@ -26,11 +26,27 @@ startup: timeline settled=1830ms warm cache-read=14ms window=41ms first-frame=11
 | `history-live` | the cached page of the last channel was refetched |
 | `images` | no image fetch or decode left after messages and sidebar were shown |
 | `plugins` | the plugin runtimes attached (`none` without plugins) |
+| `reveal` | Slack's boot placeholder gave way to the client (see below) |
 | `settled` | the last change before 1.5 s with nothing new (or `[timeout]` at 60 s) |
 
 `relayouts` counts frames where something already painted moved, by kind: `sidebar` (rows added, removed, reordered or relabelled), `unreads` (a row's unread or mention state), `messages` (a visible message row moved or resized), `theme` (the account theme changed after the first frame, the default-theme flash of a cold start).
 
 The perf workflow (`.github/perf/startup.sh`) runs cold and warm starts of the base and HEAD against a Hack Club-sized fakeslackd answering every API call after 150 ms and every image after 40 ms, with a non-default account theme. It also runs HEAD with `CLACK_NO_BOOT_CACHE=1`, the same binary booting without the snapshot, so before/after compare with the same instrumentation. The table is on the run page ("Startup timeline").
+
+## The cold path
+
+Everything a start needs goes out at once (core.Boot and backend.start):
+
+- **Boot batch:** users.conversations (then, straight away, users.info for the DM rows' people), client.counts, users.channelSections.list (truncated sections page in parallel), experiments, sidebar.dms, users.prefs, team.prefs, team.info, stars.list, saved, self + the rail icon, emoji.list. meta.json (users, emoji, groups) decodes alongside instead of before them. emoji.list (~7 MB, 65k entries on Hack Club) is scanned straight into the store's packed form (`slack.PackEmojiJSON`; encoding/json took ~300 ms) and written to disk off the critical path. Up to 16 calls are in flight (`slack.MaxConcurrent`).
+- **The restored channel** (ui.json's route): its history and header (conversations.info tabs, bookmarks, member count and facepile: three reads at once in `backend.opened`), and the drafts' sidebar markers, start at t=0, not after boot.
+- **Plugins:** the JS runtime, the bundles (QuickJS bytecode from the cache) and the enabled plugins start at t=0 too. Taut's `StartEnabled` no longer waits for core; the redux mirror reads `core.SnapshotNow` (never blocking the JS thread) and re-reads everything at the `booted` event.
+- `{"ok":true` bodies skip the extra full parse that only read `ok`.
+
+## Boot placeholder
+
+Slack's page holds `div.p-client_container_placeholder` (a theme background, a sidebar block and a content panel) under `div.p-client_container`. client-boot's "Render Placeholder" hook (`renderBootPlaceholder`) colours it from what the last session stored for the team at renderComplete ("Save channel sidebar and team switcher colors"): the stored iaTheming's window gradient (the flat primary without window gradients), the sidebar block `rgba(255,255,255,.9)` (`.11` for an inverted light sidebar, `rgba(16,18,20,.6)` dark) as wide as the last sidebar, the content panel `#fff` (`rgb(26,29,33)` dark). With nothing stored it is page.html's `#bbbabb` (`#282828` dark). React mounts the client over it in renderApp ("Render React"), after bootDataFinished ("Finish waiting for boot data"), or from the persisted store on a warm boot; the channel then shows its own loading state until its history arrives.
+
+Clack draws exactly that placeholder (`internal/ui/reveal.go`, from the first frame, before fonts are loaded) and keeps the account theme in ui.json (`acct_theme`) the way Slack keeps its colours per device. It renders the client once core booted (or a boot snapshot painted), the restored channel's header is in (Slack's boot data carries it in the channel object), and the plugins enabled at start registered and delivered their first renders (Taut's patches render synchronously with Slack's React; Clack's plugins render on their own thread, so it waits for their deliveries to go quiet, at most 2 s after boot). Messages and images don't hold it. Re-layouts are counted only after it.
 
 ## What is cached
 

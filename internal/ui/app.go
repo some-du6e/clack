@@ -388,7 +388,11 @@ func (a *App) Run() error {
 				// waiting here (that would hold the OS's main thread).
 				wd.next(&stageShaper)
 				gtx := app.NewContext(&ops, e)
-				a.grad.layout(gtx, a.th.C.ChromeA, a.th.C.ChromeB)
+				if a.data != nil && a.login == nil && !a.rv.done {
+					a.drawBootPlaceholder(gtx) // Slack's, from the first frame (reveal.go)
+				} else {
+					a.grad.layout(gtx, a.th.C.ChromeA, a.th.C.ChromeB)
+				}
 				e.Frame(gtx.Ops)
 				applog.Mark("first-frame", "background, fonts loading")
 				break
