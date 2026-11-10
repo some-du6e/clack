@@ -53,6 +53,7 @@ type View struct {
 	phText  string
 	tphView *richview.View // the empty title's placeholder
 	toc     *tocState      // the table of contents (toc.go)
+	access  accessState    // the View only / Comment only pill (access.go)
 
 	queue []func() // post: run on the UI goroutine at the next frame
 
@@ -317,6 +318,7 @@ func (v *View) layout(gtx layout.Context) layout.Dimensions {
 		top = gtx.Dp(theme.HeaderH)
 		v.layoutBar(gtx, d, image.Pt(sz.X, top))
 	}
+	defer v.layoutAccessPopover(gtx, d) // over everything, in the view's coordinates
 	body := image.Rect(0, top, sz.X, sz.Y)
 	defer op.Offset(body.Min).Push(gtx.Ops).Pop()
 	gtx.Constraints = layout.Exact(body.Size())
@@ -398,6 +400,13 @@ func (v *View) layoutBar(gtx layout.Context, d *core.CanvasDoc, size image.Point
 		if share {
 			v.act.Share(v.id)
 		}
+		x -= gap
+	}
+	if v.showsAccess(d) { // renderViewOnlyButton: QuipAccessIndicator
+		pw := v.accessPillWidth(gtx, v.accessLabel(d.Info))
+		x -= pw
+		ph := gtx.Dp(28)
+		v.layoutAccessPill(gtx, d, image.Rect(x, (size.Y-ph)/2, x+pw, (size.Y-ph)/2+ph), true, image.Point{})
 		x -= gap
 	}
 	if w := v.layoutViewers(gtx, image.Pt(x, (size.Y-gtx.Dp(24))/2), gtx.Dp(24)); w > 0 {
@@ -878,13 +887,23 @@ func (v *View) layoutFloatingActions(gtx layout.Context) {
 	c := &th.C
 	sz := gtx.Constraints.Max
 	tile := gtx.Dp(32)
-	r := image.Rect(sz.X-gtx.Dp(24)-tile, gtx.Dp(24), sz.X-gtx.Dp(24), gtx.Dp(24)+tile)
+	// the access indicator (borderless) shares the tile, before More options
+	d := v.Doc()
+	pill := 0
+	if v.showsAccess(d) {
+		pill = v.accessPillWidth(gtx, v.accessLabel(d.Info))
+	}
+	r := image.Rect(sz.X-gtx.Dp(24)-tile-pill, gtx.Dp(24), sz.X-gtx.Dp(24), gtx.Dp(24)+tile)
 	theme.Shadow(gtx, r.Add(image.Pt(0, gtx.Dp(1))), gtx.Dp(8), gtx.Dp(3), theme.WithAlpha(c.PanelShadow, 0x14))
 	theme.RRect(gtx, r, gtx.Dp(8), c.Bg)
 	theme.Border(gtx, r, gtx.Dp(8), gtx.Dp(1), theme.WithAlpha(c.Fg, 0x21))
+	if pill > 0 {
+		p := r.Min.Add(image.Pt(gtx.Dp(2), gtx.Dp(2)))
+		v.layoutAccessPill(gtx, d, image.Rectangle{Min: p, Max: p.Add(image.Pt(pill, gtx.Dp(28)))}, false, image.Point{})
+	}
 	clk := v.btn("float.more")
 	hit := clk.Clicked(gtx) // before Layout, which drains a Clickable's events
-	at(gtx, r.Min.Add(image.Pt(gtx.Dp(2), gtx.Dp(2))), image.Pt(gtx.Dp(28), gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
+	at(gtx, image.Pt(r.Max.X-gtx.Dp(2)-gtx.Dp(28), r.Min.Y+gtx.Dp(2)), image.Pt(gtx.Dp(28), gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
 		return iconButton(gtx, th, clk, "kebab", 20)
 	})
 	if hit {

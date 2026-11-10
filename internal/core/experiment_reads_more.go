@@ -11,8 +11,11 @@ func init() {
 		"canvas_table_of_contents": on, // TableOfContentsDrawer and Quip's 64px outline gutter
 		"canvas_blockquote_layout": on, // the toolbars' blockquote layout (M6vS zk, foOi)
 		"slackified_checkbox":      on, // Quip's useSlackCheckboxes
+		"canvas_comment_only_mode": on, // QuipAccessIndicator's "Comment only" (CQK3)
 		// lists (core/lists.go, ui/listview)
-		"lists_grid_todos": on, // to-do lists from the dialogs (fuYI, wr4u)
+		"lists_file_backed_templates": on, // lists.templates' template_files (o9il fetchTemplates)
+		"lists_export_enrichment":     on, // More actions' Download modal (57SI MoreActionsMenu)
+		"lists_grid_todos":            on, // to-do lists from the dialogs (fuYI, wr4u)
 		// checks merged into ui (3a5a0373) without a listing
 		"activity_bulk_unread_tool":                         on,
 		"ai_channel_exclusions":                             on,

@@ -13,6 +13,7 @@ package canvasview
 //     toolbars' blockquote layout (client-boot M6vS zk, foOi
 //     InsertionToolbarFormattingMenu / InsertionToolbarMenu), edit.go.
 //   - slackified_checkbox: Quip's useSlackCheckboxes (178), render.go.
+//   - canvas_comment_only_mode: QuipAccessIndicator (CQK3), access.go.
 
 // exp: the viewer is in the experiment's "on" group.
 func (v *View) exp(name string) bool {

@@ -366,3 +366,98 @@ func TestRenderSlackifiedCheckbox(t *testing.T) {
 		}
 	}
 }
+
+const (
+	readCanvas    = "F0CANVREAD1" // the viewer can only read it
+	commentCanvas = "F0CANVCMNT1" // the viewer can comment
+	askedCanvas   = "F0CANVASKD1" // read only, access already requested
+)
+
+func addAccessCanvases(fs *fakeslack.Server) {
+	doc := canvas.Doc{Blocks: []canvas.Block{
+		{ID: "temp:C:ACC00001", Kind: canvas.Heading1, Spans: txtSpans("Team handbook")},
+		{ID: "temp:C:ACC00002", Kind: canvas.Paragraph, Spans: txtSpans("How we work.")},
+	}}
+	fs.AddCanvas(fakeslack.FakeCanvas{ID: readCanvas, Title: "Team handbook", Doc: doc, ViewerAccess: "read"})
+	fs.AddCanvas(fakeslack.FakeCanvas{ID: commentCanvas, Title: "Team handbook", Doc: doc, ViewerAccess: "comment"})
+	fs.AddCanvas(fakeslack.FakeCanvas{ID: askedCanvas, Title: "Team handbook", Doc: doc, ViewerAccess: "read", AccessRequested: true})
+}
+
+// QuipAccessIndicator: "View only" / "Comment only" (canvas_comment_only_mode)
+// and its request popover.
+func TestRenderAccessIndicator(t *testing.T) {
+	h, fs := newEnv(t, false)
+	addAccessCanvases(fs)
+	sz := image.Pt(1038, 717)
+	open := func(id string, m Mode) (*View, *shooter) {
+		v := New(h, id, m, Actions{Close: func() {}, FullView: func() {}, SideView: func() {}})
+		s := newShooter(t, sz)
+		settle(t, s, v, "the canvas", func() bool { return v.Doc() != nil })
+		frames(s, v, 5)
+		return v, s
+	}
+
+	// an editable canvas has none
+	ed, _ := open(fakeslack.CanvasShared, Tab)
+	if ed.showsAccess(ed.Doc()) {
+		t.Error("an editable canvas shows the access indicator")
+	}
+
+	// read only: View only, Request Edit Access and (under the experiment)
+	// Request Comment Access
+	v, s := open(readCanvas, Tab)
+	d := v.Doc()
+	if !v.showsAccess(d) || v.accessLabel(d.Info) != "View only" {
+		t.Fatalf("read only: shows %v, label %q", v.showsAccess(d), v.accessLabel(d.Info))
+	}
+	title, _, buttons := v.accessCopy(d.Info)
+	if title != "You only have permission to view." || strings.Join(buttons, ",") != "Request Edit Access,Request Comment Access" {
+		t.Errorf("read only, on: %q %v", title, buttons)
+	}
+	s.shot("access-view-only-tab-light", frames(s, v, 3))
+	v.access.open = true
+	s.shot("access-view-only-popover-tab-light", frames(s, v, 3))
+	v.requestAccess("IndicatorRequestCommentAccessButton", "comment_upgrade")
+	settle(t, s, v, "files.requestPermission", func() bool { return v.access.status == askSent })
+	asks := fs.AccessRequests()
+	if len(asks) != 1 || asks[0].Get("file_id") != readCanvas || asks[0].Get("request_type") != "comment_upgrade" ||
+		asks[0].Get("reason") != "IndicatorRequestCommentAccessButton" {
+		t.Errorf("requests %v", asks)
+	}
+	if title, _, buttons := v.accessCopy(d.Info); title != "Request sent" || len(buttons) != 0 {
+		t.Errorf("after the request: %q %v", title, buttons)
+	}
+	h.a.SetExperimentGroup("canvas_comment_only_mode", "off")
+	v.access.status = askNone
+	if _, _, buttons := v.accessCopy(d.Info); strings.Join(buttons, ",") != "Request Edit Access" {
+		t.Errorf("read only, off: %v", buttons)
+	}
+	h.a.ClearExperimentGroup("canvas_comment_only_mode")
+
+	// comment access: Comment only under the experiment, View only without
+	c, cs := open(commentCanvas, Side)
+	cd := c.Doc()
+	if c.accessLabel(cd.Info) != "Comment only" {
+		t.Errorf("comment access, on: %q", c.accessLabel(cd.Info))
+	}
+	if title, _, buttons := c.accessCopy(cd.Info); title != "You only have permission to comment." || strings.Join(buttons, ",") != "Request Edit Access" {
+		t.Errorf("comment access, on: %q %v", title, buttons)
+	}
+	cs.shot("access-comment-only-side-light", frames(cs, c, 3))
+	h.a.SetExperimentGroup("canvas_comment_only_mode", "off")
+	frames(cs, c, 2)
+	if c.accessLabel(cd.Info) != "View only" {
+		t.Errorf("comment access, off: %q", c.accessLabel(cd.Info))
+	}
+	if title, _, _ := c.accessCopy(cd.Info); title != "You only have permission to view." {
+		t.Errorf("comment access, off: %q", title)
+	}
+	h.a.ClearExperimentGroup("canvas_comment_only_mode")
+
+	// asked before: Remind The Owner
+	a, as := open(askedCanvas, Full)
+	as.shot("access-asked-full-light", frames(as, a, 3))
+	if title, _, buttons := a.accessCopy(a.Doc().Info); title != "You’ve already asked for access" || strings.Join(buttons, ",") != "Remind The Owner" {
+		t.Errorf("asked before: %q %v", title, buttons)
+	}
+}

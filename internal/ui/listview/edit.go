@@ -22,6 +22,13 @@ import (
 
 // ctl is what the list view and the item pane share: the host, the list,
 // the shell's actions and the cell being edited.
+// exp: the viewer is in the experiment's "on" group (getGroupForUser;
+// docs/EXPERIMENTS.md, Lists).
+func (c *ctl) exp(name string) bool {
+	a := c.h.Core()
+	return a != nil && a.Experiment(name) == "on"
+}
+
 type ctl struct {
 	h    Host
 	id   string

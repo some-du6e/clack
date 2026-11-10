@@ -45,6 +45,9 @@ type CanvasInfo struct {
 	CommentsN   int
 	ShowBadge   bool // never opened by the viewer (Slack's blue dot)
 	TemplateMod bool
+	// AccessRequested: the viewer already asked for more access
+	// (most_recent_access_request_ts; QuipAccessIndicator's "already asked")
+	AccessRequested bool
 }
 
 // CanvasFile is an embedded Slack file's display data (images, file cards).
@@ -101,6 +104,7 @@ type canvasFileJSON struct {
 	Thumb480H       int             `json:"thumb_480_h"`
 	OriginalW       int             `json:"original_w"`
 	OriginalH       int             `json:"original_h"`
+	AccessRequestTS json.RawMessage `json:"most_recent_access_request_ts"`
 }
 
 // IsCanvasFile reports whether a file (filetype/mode/pretty_type) is a canvas.
@@ -149,6 +153,11 @@ func (a *App) canvasInfo(f *canvasFileJSON) CanvasInfo {
 	}
 	if ci.Updated == 0 {
 		ci.Updated = f.Created
+	}
+	switch t := strings.Trim(string(f.AccessRequestTS), `"`); t {
+	case "", "null", "0", "false":
+	default:
+		ci.AccessRequested = true
 	}
 	ci.Channels = append(append(append([]string(nil), f.Channels...), f.Groups...), f.IMs...)
 	if len(f.TitleBlocks) > 0 && string(f.TitleBlocks) != "null" {
@@ -591,6 +600,14 @@ func (a *App) EditCanvas(ctx context.Context, id string, changes ...CanvasChange
 		a.canvasChanged(id) // without realtime there is no echo
 	}
 	return nil
+}
+
+// RequestFileAccess asks a file's owner for more access
+// (files.requestPermission {file_id, reason, request_type}, Slack's
+// useQuipAccess): requestType "upgrade" asks to edit, "comment_upgrade"
+// to comment.
+func (a *App) RequestFileAccess(ctx context.Context, id, reason, requestType string) error {
+	return a.C.Call(ctx, "files.requestPermission", url.Values{"file_id": {id}, "reason": {reason}, "request_type": {requestType}}, nil)
 }
 
 // RenameCanvas sets a canvas's title.

@@ -78,6 +78,9 @@ type Actions struct {
 type MenuItem struct {
 	Label, Icon string
 	Disabled    bool
+	Divider     bool       // a separator instead of a row
+	Danger      bool       // a destructive row ("Delete list")
+	Sub         []MenuItem // a submenu ("Download CSV" ▸)
 	Do          func()
 }
 
@@ -420,35 +423,6 @@ func (v *View) barAction(key string) {
 	case "more":
 		v.openMore()
 	}
-}
-
-func (v *View) openMore() {
-	if v.act.Menu == nil {
-		return
-	}
-	d := v.Doc()
-	var items []MenuItem
-	if d != nil && d.Info.Permalink != "" {
-		link := d.Info.Permalink
-		items = append(items, MenuItem{Label: "Copy link to list", Icon: "link", Do: func() {
-			if v.act.Copy != nil {
-				v.act.Copy(link)
-			}
-		}})
-		items = append(items, MenuItem{Label: "Open in browser", Icon: "external", Do: func() {
-			if v.act.OpenURL != nil {
-				v.act.OpenURL(link)
-			}
-		}})
-	}
-	if v.mode == Side && v.act.FullView != nil {
-		items = append(items, MenuItem{Label: "Open in full view", Icon: "expand", Do: v.act.FullView})
-	}
-	if v.mode == Full && v.act.SideView != nil {
-		items = append(items, MenuItem{Label: "Open in side panel", Icon: "panel-right", Do: v.act.SideView})
-	}
-	items = append(items, MenuItem{Label: "Refresh", Icon: "refresh", Do: v.Reload})
-	v.act.Menu(items)
 }
 
 // layoutList is the loaded list: title header, toolbar, then the view.

@@ -103,21 +103,24 @@ func (a *App) listActions() listview.Actions {
 			a.Toast("Link copied to clipboard")
 		},
 		Menu: func(items []listview.MenuItem) {
-			var ms []MenuItem
-			for _, it := range items {
-				ms = append(ms, MenuItem{Label: it.Label, Icon: it.Icon, Disabled: it.Disabled, Do: it.Do})
-			}
-			a.menu(a.PointerPos(), ms)
+			a.menu(a.PointerPos(), listMenuItems(items))
 		},
 		MenuAt: func(p image.Point, items []listview.MenuItem) {
-			var ms []MenuItem
-			for _, it := range items {
-				ms = append(ms, MenuItem{Label: it.Label, Icon: it.Icon, Disabled: it.Disabled, Do: it.Do})
-			}
-			a.menu(p, ms)
+			a.menu(p, listMenuItems(items))
 		},
 		People: a.listPeople,
 	}
+}
+
+// listMenuItems is a list menu as the shell's menu rows (separators,
+// danger rows and submenus included).
+func listMenuItems(items []listview.MenuItem) []MenuItem {
+	var ms []MenuItem
+	for _, it := range items {
+		ms = append(ms, MenuItem{Label: it.Label, Icon: it.Icon, Disabled: it.Disabled, Divider: it.Divider,
+			Danger: it.Danger, Sub: listMenuItems(it.Sub), Do: it.Do})
+	}
+	return ms
 }
 
 // listPeople are the people a person field offers besides the list's own:
