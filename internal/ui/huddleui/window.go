@@ -11,6 +11,8 @@ import (
 	"gioui.org/io/system"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/clip"
+	"gioui.org/op/paint"
 	"gioui.org/unit"
 	"gioui.org/widget"
 
@@ -596,17 +598,7 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 				if c.on {
 					bg = hudBtnOn
 				}
-				rr := image.Rectangle{Max: image.Pt(cw, h)}
-				switch c.seg {
-				case segMain: // border-radius 8px 0 0 8px
-					theme.RRect(gtx, rr, gtx.Dp(8), bg)
-					theme.Fill(gtx, image.Rect(cw-gtx.Dp(8), 0, cw, h), bg)
-				case segCaret: // 0 8px 8px 0
-					theme.RRect(gtx, rr, gtx.Dp(8), bg)
-					theme.Fill(gtx, image.Rect(0, 0, gtx.Dp(8), h), bg)
-				default:
-					theme.RRect(gtx, rr, gtx.Dp(8), bg)
-				}
+				segFill(gtx, image.Rectangle{Max: image.Pt(cw, h)}, c.seg, gtx.Dp(8), bg)
 			}, func(gtx C) D {
 				fg := hudWhite
 				if c.on {
@@ -659,6 +651,22 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 			return D{}
 		})
 	})
+}
+
+// segFill paints a toolbar button's background: radius 8, or a
+// segmented half's (8px 0 0 8px for the main part, 0 8px 8px 0 for the
+// caret).
+func segFill(gtx C, r image.Rectangle, seg, rad int, bg color.NRGBA) {
+	rr := clip.RRect{Rect: r, NW: rad, SW: rad, NE: rad, SE: rad}
+	switch seg {
+	case segMain:
+		rr.NE, rr.SE = 0, 0
+	case segCaret:
+		rr.NW, rr.SW = 0, 0
+	}
+	defer rr.Push(gtx.Ops).Pop()
+	paint.ColorOp{Color: bg}.Add(gtx.Ops)
+	paint.PaintOp{}.Add(gtx.Ops)
 }
 
 // segDivider is .segmentedButtonMain:after's otl-inv-pry.

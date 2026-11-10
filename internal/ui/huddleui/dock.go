@@ -245,14 +245,7 @@ func (c *Controller) layoutDock(gtx C, th *theme.Theme, sz image.Point) D {
 				if k.on {
 					bg = hudBtnOn
 				}
-				rr := image.Rectangle{Max: image.Pt(cw, h)}
-				theme.RRect(gtx, rr, gtx.Dp(8), bg)
-				switch k.seg {
-				case segMain:
-					theme.Fill(gtx, image.Rect(cw-gtx.Dp(8), 0, cw, h), bg)
-				case segCaret:
-					theme.Fill(gtx, image.Rect(0, 0, gtx.Dp(8), h), bg)
-				}
+				segFill(gtx, image.Rectangle{Max: image.Pt(cw, h)}, k.seg, gtx.Dp(8), bg)
 			}, func(gtx C) D {
 				fg := ink.text
 				if k.on {
