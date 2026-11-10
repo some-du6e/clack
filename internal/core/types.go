@@ -599,8 +599,9 @@ type DMPage struct {
 
 type Command struct {
 	Name, Desc, Usage, Type, AppID string
-	AppName                        string // app commands: the app's display name
-	IconURL                        string // app commands: the app's icon (Slack CDN)
+	AppName                        string   // app commands: the app's display name
+	IconURL                        string   // app commands: the app's icon (Slack CDN)
+	Teams                          []string // the workspaces it is installed in
 }
 
 type CommandOpts struct {

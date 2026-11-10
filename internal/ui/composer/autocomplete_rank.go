@@ -53,6 +53,10 @@ type rankCtx struct {
 	// prepSuggestions hands the sort as userAffinityScore and
 	// channelPriority90dScore (nil otherwise: the features stay 0)
 	affinity, priority90D map[string]float64
+
+	// ia4_slash_command_fe on: bulkAddServerCommands keys commands by
+	// app and name, so two apps' /deploy are both listed
+	ia4 bool
 }
 
 // expOn reads a client experiment the way Slack's gates do.
@@ -87,6 +91,7 @@ func rankCtxFrom(api coreAPI, s core.Snapshot, convKind string) rankCtx {
 	if a.Experiment("autocomplete_affinity_ml_model") == "on" {
 		r.affinity, r.priority90D = a.AutocompleteAffinity()
 	}
+	r.ia4 = a.Experiment("ia4_slash_command_fe") == "on"
 	return r
 }
 
@@ -301,21 +306,34 @@ func (s channelSources) rankChannels(q string) []acItem {
 }
 
 // rankCommands ranks the / list (source slash-command-menu: the common
-// features only). Names are stored without the leading "/".
+// features only). Names are stored without the leading "/". The list is
+// the slash command store as bulkAddServerCommands fills it (kW4s): keyed
+// by name, a later command replacing an earlier one of the same name, or
+// with ia4_slash_command_fe by app and name (a built-in command, which
+// has no app, by name).
 func rankCommands(q string, cmds []core.Command, r rankCtx) []acItem {
 	cands := make([]acrank.Cand, 0, len(cmds))
 	items := make([]acItem, 0, len(cmds))
-	seen := map[string]bool{}
+	at := map[string]int{}
 	for i := range cmds {
 		c := cmds[i]
 		name := strings.TrimPrefix(c.Name, "/")
-		n := strings.ToLower(name)
-		if name == "" || seen[n] {
+		if name == "" {
 			continue
 		}
-		seen[n] = true
-		cands = append(cands, acrank.Cand{Kind: acrank.Command, ID: "/" + name, Name: "/" + name, Desc: c.Desc, AppName: c.AppName})
-		items = append(items, acItem{Kind: acCommand, ID: name, Name: name, Secondary: c.Desc, Command: &c})
+		key := strings.ToLower(name)
+		if r.ia4 && c.AppID != "" {
+			key = c.AppID + "-" + key
+		}
+		cand := acrank.Cand{Kind: acrank.Command, ID: "/" + name, Name: "/" + name, Desc: c.Desc, AppName: c.AppName}
+		item := acItem{Kind: acCommand, ID: name, Name: name, Secondary: c.Desc, Command: &c}
+		if j, ok := at[key]; ok { // the key keeps its place, the later command its data
+			cands[j], items[j] = cand, item
+			continue
+		}
+		at[key] = len(items)
+		cands = append(cands, cand)
+		items = append(items, item)
 	}
 	rs := acrank.Rank(q, cands, r.opts(acrank.SourceSlash))
 	out := make([]acItem, len(rs))

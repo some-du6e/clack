@@ -232,6 +232,8 @@ var experimentReads = map[string][]string{
 	"updated_scheduled_sends_desktop":                          on,
 	"autocomplete_affinity_ml_model":                           on,
 	"semantic_emoji_matching":                                  on,
+	"invite_slash_command_in_threads":                          on,
+	"ia4_slash_command_fe":                                     on,
 	// code channels
 	"session_channels": on, "session_channels_code_tab_pr": on, "session_channels_gh_wo": on,
 	"session_channels_inline_diff": on,

@@ -456,3 +456,25 @@ func TestScheduledSendBar(t *testing.T) {
 		t.Fatal("the bar came back after leaving the conversation")
 	}
 }
+
+// bulkAddServerCommands (kW4s): two apps' /deploy are one row by name
+// (the later's data) and two rows under ia4_slash_command_fe.
+func TestSlashListKeysByApp(t *testing.T) {
+	cmds := []core.Command{
+		{Name: "/deploy", AppID: "A1", AppName: "First", Desc: "first"},
+		{Name: "/deploy", AppID: "A2", AppName: "Second", Desc: "second"},
+		{Name: "/remind", Desc: "built in"},
+	}
+	off := rankCommands("dep", cmds, rankCtx{})
+	if len(off) != 1 || off[0].Command.AppID != "A2" {
+		t.Fatalf("off: %d rows, first %+v", len(off), off[0].Command)
+	}
+	on := rankCommands("dep", cmds, rankCtx{ia4: true})
+	if len(on) != 2 {
+		t.Fatalf("on: %d rows", len(on))
+	}
+	apps := map[string]bool{on[0].Command.AppID: true, on[1].Command.AppID: true}
+	if !apps["A1"] || !apps["A2"] {
+		t.Fatalf("on: apps %v", apps)
+	}
+}

@@ -940,7 +940,7 @@ func (a *App) Commands(ctx context.Context, query string) ([]Command, error) {
 	for _, c := range cmds {
 		if needle == "" || strings.Contains(strings.ToLower(c.Name), needle) {
 			out = append(out, Command{Name: c.Name, Desc: c.Desc, Usage: c.Usage, Type: c.Type, AppID: c.AppID,
-				AppName: c.AppName, IconURL: c.IconURL()})
+				AppName: c.AppName, IconURL: c.IconURL(), Teams: c.Teams})
 		}
 	}
 	return out, nil

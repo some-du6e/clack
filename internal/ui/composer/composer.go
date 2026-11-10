@@ -98,6 +98,7 @@ type Composer struct {
 	top           int           // context bar height above the box
 	ctxShowing    bool          // onIsContextBarShowing
 	sbar          scheduledBar  // the scheduled-send context bar (schedule_bar.go)
+	cmdPick       core.Command  // the command last picked from the / list
 	drewInput     bool          // the editor was laid out (no roadblock)
 	roadblock     string        // SetRoadblock: Slack's notice instead of the editor
 	rbLink, rbURL string        // SetRoadblockLink: a link after it ("Learn more")
@@ -232,6 +233,13 @@ func (c *Composer) init() {
 	}
 	c.ac = newAutocomplete(c.h, c.ch)
 	bindAutocomplete(c.ed, c.ac, c.h.Invalidate)
+	accept := c.ac.OnAccept
+	c.ac.OnAccept = func(it acItem, start, end int) {
+		if it.Kind == acCommand && it.Command != nil {
+			c.cmdPick = *it.Command // the picked command's app: slashCommandAppId
+		}
+		accept(it, start, end)
+	}
 	c.ac.later, c.ac.thread, c.ac.threadTS = c.later, c.ts != "", c.ts
 	if c.edit == nil { // the conversation's files, kept across composers
 		c.att = attachmentsFor(draftKey(c.ch, c.ts), c.h)
@@ -989,12 +997,19 @@ func (c *Composer) submit() {
 				hs.SlashHuddle(ch)
 				return
 			}
+			// slashCommandAppId: the app of the command picked from the
+			// list, while the message still runs it
+			app := ""
+			if p := c.cmdPick; p.AppID != "" && strings.EqualFold(strings.TrimPrefix(p.Name, "/"), strings.TrimPrefix(cmd, "/")) {
+				app = p.AppID
+			}
+			c.cmdPick = core.Command{}
 			c.clearAfterSend()
 			go func() {
 				// handleSlashCommand: the reply or the failure is
 				// Slackbot's ephemeral; the app's modal arrives as
 				// view_opened for the command's client_token
-				res, err := runCommand(context.Background(), api, core.CommandOpts{Channel: ch, Command: cmd, Text: strings.TrimSpace(rest), ThreadTS: ts})
+				res, err := runCommand(context.Background(), api, core.CommandOpts{Channel: ch, Command: cmd, Text: strings.TrimSpace(rest), ThreadTS: ts, AppID: app})
 				if err == nil && res.KeepInput {
 					c.restore(doc)
 				}
