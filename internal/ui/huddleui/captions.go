@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"gioui.org/font"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -114,20 +115,10 @@ func (w *window) captions(gtx C, st huddle.State, stage image.Rectangle, now tim
 		if alpha > 0 {
 			visible = true
 		}
-		name := w.c.displayName(e.user) + ":"
 		m := op.Record(gtx.Ops)
-		g := gtx
-		g.Constraints = layout.Constraints{Max: image.Pt(max(0, maxW-2*pad), stage.Dy()/2)}
-		nd := w.th.Label(g, 15, theme.Bold, hudWhite, name)
-		// the words follow the name on its line and wrap under it
-		tx := nd.Size.X + gtx.Dp(8)
-		tg := g
-		tg.Constraints.Max.X = max(0, g.Constraints.Max.X-tx)
-		to := op.Offset(image.Pt(tx, 0)).Push(gtx.Ops)
-		td := w.th.Para(tg, 15, 22, theme.Regular, hudWhite, e.text)
-		to.Pop()
+		sz := w.ccEvent(gtx, w.c.displayName(e.user)+":", e.text, max(0, maxW-2*pad))
 		call := m.Stop()
-		boxes = append(boxes, box{call: call, sz: image.Pt(tx+td.Size.X+2*pad, max(nd.Size.Y, td.Size.Y)+2*padY), alpha: alpha})
+		boxes = append(boxes, box{call: call, sz: sz.Add(image.Pt(2*pad, 2*padY)), alpha: alpha})
 	}
 	w.cc.seen = keep
 	if !visible && !w.cc.hovered {
@@ -155,6 +146,51 @@ func (w *window) captions(gtx C, st huddle.State, stage image.Rectangle, now tim
 	hv := w.click("cc-hover")
 	w.cc.hovered = hv.Hovered()
 	at(gtx, area.Min, area.Size(), func(gtx C) D { return passHover(gtx, hv, area.Size()) })
+}
+
+// ccEvent draws one caption event's text at the origin and returns its
+// size: the bold name with its colon, 8px (padding-right), then the words.
+// Both are inline spans, so the words wrap back to the left edge, at most
+// maxW wide, on 22px lines.
+func (w *window) ccEvent(gtx C, name, text string, maxW int) image.Point {
+	th := w.th
+	lineH := gtx.Sp(22)
+	free := layout.Constraints{Max: image.Pt(1<<20, lineH)}
+	put := func(x, y int, wt font.Weight, s string) int {
+		defer op.Offset(image.Pt(x, y)).Push(gtx.Ops).Pop()
+		g := gtx
+		g.Constraints = free
+		d := th.Label(g, 15, wt, hudWhite, s)
+		return d.Size.X
+	}
+	lh := labelSize(gtx, th, 15, theme.Regular, "Hg").Y
+	dy := (lineH - lh) / 2
+	x := put(0, dy, theme.Bold, name) + gtx.Dp(8)
+	width := x
+	space := th.Measure(gtx, 15, theme.Regular, " ")
+	var line []string
+	lx, y := x, 0
+	flush := func() {
+		if len(line) > 0 {
+			width = max(width, lx+put(lx, y+dy, theme.Regular, strings.Join(line, " ")))
+		}
+	}
+	cur := 0 // the line's width so far
+	for _, word := range strings.Fields(text) {
+		ww := th.Measure(gtx, 15, theme.Regular, word)
+		add := ww
+		if len(line) > 0 {
+			add += space
+		}
+		if (len(line) > 0 || lx > 0) && lx+cur+add > maxW { // wrap to the box's left edge
+			flush()
+			line, lx, y, cur, add = nil, 0, y+lineH, 0, ww
+		}
+		line = append(line, word)
+		cur += add
+	}
+	flush()
+	return image.Pt(min(width, max(maxW, x)), y+lineH)
 }
 
 // passHover tracks the pointer over sz with cl without taking clicks
