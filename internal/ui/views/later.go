@@ -21,14 +21,17 @@ import (
 	"context"
 	"image"
 	"image/color"
+	"runtime"
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gioui.org/font"
 	"gioui.org/gesture"
 	"gioui.org/io/event"
+	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -424,22 +427,8 @@ func (s *savedBase) rowActions(gtx C) {
 		switch {
 		case click:
 			s.open(&it)
-		case done && laterCompleted(&it):
-			f.items[i].TodoState, f.items[i].DateCompleted, s.dirty = "to_do", 0, true
-			s.write1(it, false, "Moved back to in progress", func(ctx context.Context, c *core.App) error {
-				// MoveToTodos alone leaves the item completed (it sends no
-				// mark=uncompleted), so un-complete it first.
-				no := false
-				if err := c.UpdateSaved(ctx, ch, ts, core.SavedUpdate{Completed: &no}); err != nil {
-					return err
-				}
-				return c.MoveToTodos(ctx, ch, ts, 0)
-			})
 		case done:
-			f.items[i].TodoState, f.items[i].DateCompleted, s.dirty = "completed", time.Now().Unix(), true
-			s.write1(it, false, "Marked as complete", func(ctx context.Context, c *core.App) error {
-				return c.CompleteTodo(ctx, ch, ts)
-			})
+			s.toggleDone(f, i)
 		case remind:
 			r.pin = !r.pin
 		case toSaved:
@@ -476,6 +465,29 @@ func (s *savedBase) rowActions(gtx C) {
 			})
 		}
 	}
+}
+
+// toggleDone marks f.items[i] complete, or back in progress when it is.
+func (s *savedBase) toggleDone(f *savedFeed, i int) {
+	it := f.items[i]
+	ch, ts := it.Channel, it.TS
+	if laterCompleted(&it) {
+		f.items[i].TodoState, f.items[i].DateCompleted, s.dirty = "to_do", 0, true
+		s.write1(it, false, "Moved back to in progress", func(ctx context.Context, c *core.App) error {
+			// MoveToTodos alone leaves the item completed (it sends no
+			// mark=uncompleted), so un-complete it first.
+			no := false
+			if err := c.UpdateSaved(ctx, ch, ts, core.SavedUpdate{Completed: &no}); err != nil {
+				return err
+			}
+			return c.MoveToTodos(ctx, ch, ts, 0)
+		})
+		return
+	}
+	f.items[i].TodoState, f.items[i].DateCompleted, s.dirty = "completed", time.Now().Unix(), true
+	s.write1(it, false, "Marked as complete", func(ctx context.Context, c *core.App) error {
+		return c.CompleteTodo(ctx, ch, ts)
+	})
 }
 
 // write1 runs one item's write; remove hides it from this page at once.
@@ -771,6 +783,8 @@ type Later struct {
 	cclicks                                        [len(todoCleanLabels)]widget.Clickable
 	scrim                                          widget.Clickable
 	popTag                                         int
+
+	kb *vkList // TodosPage's InteractiveList keyboard (todoKey)
 }
 
 // NewLater builds the To-dos page.
@@ -780,6 +794,7 @@ func NewLater(h Host) *Later {
 	l.feed.filter = core.SavedFilterTodos
 	l.feeds = []*savedFeed{&l.feed}
 	l.list.Axis = layout.Vertical
+	l.kb = newVKList(&l.list)
 	return l
 }
 
@@ -1252,12 +1267,30 @@ func (l *Later) layoutList(gtx C) D {
 		extra = 1
 	}
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
+	items := make([]vkItem, n)
+	for i := range l.view {
+		items[i] = vkItem{key: laterKey(&l.view[i]), elem: i, focusable: true}
+	}
+	l.kb.setItems(items)
+	if l.kb.initial == "" && n > 0 { // InteractiveList: the first row
+		l.kb.initial = items[0].key
+	}
+	l.kb.update(gtx, gtx.Constraints.Max.Y, vkOpts{Key: l.todoKey, Extra: todoKeyFilters(l.kb), NoGlobal: true})
+	l.kb.begin()
 	dims := l.scrollList(gtx, &l.list, n+extra, func(gtx C, i int) D {
 		if i >= n {
 			return l.skeleton(gtx, 1, laterAvatar)
 		}
-		return l.itemRow(gtx, &l.view[i], true)
+		d := l.itemRow(gtx, &l.view[i], true)
+		if l.kb.ringOn(items[i].key) {
+			// .todoRow[role=listitem]:focus-visible:after: inset 5px,
+			// radius 8
+			in := gtx.Dp(5)
+			l.vkRing(gtx, image.Rect(in, in, d.Size.X-in, d.Size.Y-in), gtx.Dp(8))
+		}
+		return l.kb.elem(i, d)
 	})
+	l.kb.area(gtx, image.Rectangle{Max: dims.Size})
 	if p := l.list.Position; p.First+p.Count >= n-3 {
 		for _, f := range feeds {
 			l.loadMore(f)
@@ -1671,3 +1704,168 @@ func (b *base) dlActionBar(gtx C, btns ...layout.FlexChild) D {
 	call.Add(gtx.Ops)
 	return d
 }
+
+// ---- keyboard (TodosPage) ----
+
+// todoKeyFilters are the InteractiveList keys besides ↑/↓, PageUp/Down,
+// Home/End and Enter, and the row keys (Delete, ⌫ on a Mac, E, W).
+func todoKeyFilters(tag *vkList) []key.Filter {
+	fs := []key.Filter{
+		{Focus: tag, Name: key.NameLeftArrow}, {Focus: tag, Name: key.NameRightArrow},
+		{Focus: tag, Name: key.NameDeleteForward}, {Focus: tag, Name: "E"}, {Focus: tag, Name: "W"},
+	}
+	if runtime.GOOS == "darwin" {
+		fs = append(fs, key.Filter{Focus: tag, Name: key.NameDeleteBackward})
+	}
+	return fs
+}
+
+// todoKey is InteractiveList's onKeyDown (shared-js later-todos-ui
+// todos-page, DERT): ↑/← and ↓/→ step without wrapping, PageUp/PageDown
+// jump by pages of 10 rows, Home/End go to either end; a key first brings
+// focus back to the initial row when another one is active. Moving
+// focuses the row, which the browser scrolls into view. Then the row's
+// onKeyDown (rT, no modifiers): Enter opens the item, Delete (⌫ on a Mac)
+// clears it with an undoable "To-do cleared" toast, E toggles it complete
+// and W archived.
+func (l *Later) todoKey(e key.Event, active string) bool {
+	k := l.kb
+	plain := e.Modifiers == 0
+	ids := make([]string, len(k.items))
+	for i, it := range k.items {
+		ids[i] = it.key
+	}
+	at := -1
+	for i, id := range ids {
+		if id == k.initial {
+			at = i
+		}
+	}
+	set := func(i int) {
+		if i >= 0 && i < len(ids) {
+			k.setActive(ids[i], true)
+			k.reveal(ids[i])
+		}
+	}
+	back := func() bool { // z(): refocus the initial row
+		if k.initial != k.active {
+			set(at)
+			return true
+		}
+		return false
+	}
+	const page = 10
+	switch e.Name {
+	case key.NameUpArrow, key.NameLeftArrow:
+		if plain && !back() && at > 0 {
+			set(at - 1)
+		}
+		return true
+	case key.NameDownArrow, key.NameRightArrow:
+		if plain && !back() && at < len(ids)-1 {
+			set(at + 1)
+		}
+		return true
+	case key.NamePageUp:
+		if !back() {
+			p := 0
+			if at > 0 {
+				p = at / page
+			}
+			if p > 1 {
+				set((p - 1) * page)
+			} else {
+				set(0)
+			}
+		}
+		return true
+	case key.NamePageDown:
+		if !back() {
+			n := len(ids)
+			pages := (n + page - 1) / page
+			p := 0
+			if at > 0 {
+				p = at / page
+			}
+			if p == pages-1 {
+				set(n - 1)
+			} else {
+				set((p + 1) * page)
+			}
+		}
+		return true
+	case key.NameHome:
+		if !back() {
+			set(0)
+		}
+		return true
+	case key.NameEnd:
+		if !back() {
+			set(len(ids) - 1)
+		}
+		return true
+	}
+	if !plain || active == "" {
+		return true
+	}
+	f, i := l.find(active)
+	if f == nil {
+		return true
+	}
+	it := f.items[i]
+	switch e.Name {
+	case key.NameReturn, key.NameEnter:
+		l.open(&it)
+	case key.NameDeleteForward, key.NameDeleteBackward:
+		l.clearTodo(it)
+	case "E":
+		l.toggleDone(f, i)
+	case "W":
+		if it.ItemType == "reminder" {
+			return true
+		}
+		on := !it.Archived
+		ch, ts := it.Channel, it.TS
+		l.write1(it, true, "", func(ctx context.Context, c *core.App) error {
+			return c.UpdateSaved(ctx, ch, ts, core.SavedUpdate{Archived: &on})
+		})
+	}
+	return true
+}
+
+// clearTodo is "Clear a saved item with a deferred, undoable toast"
+// (WHky): the row goes at once, "To-do cleared" offers Undo, and the
+// clear is sent once the toast is gone.
+func (l *Later) clearTodo(it core.SavedItem) {
+	if it.Channel == "" || it.TS == "" {
+		return
+	}
+	k := laterKey(&it)
+	ch, ts := it.Channel, it.TS
+	l.remove(k)
+	send := func() {
+		l.write(k, "", true, func(ctx context.Context, c *core.App) error { return c.Unsave(ctx, ch, ts) })
+	}
+	tu, ok := l.h.(interface{ ToastUndo(string, func()) })
+	if !ok {
+		l.h.Toast("To-do cleared")
+		send()
+		return
+	}
+	var undone atomic.Bool
+	tu.ToastUndo("To-do cleared", func() {
+		undone.Store(true)
+		delete(l.gone, k)
+		for _, f := range l.feeds {
+			l.reload(f)
+		}
+	})
+	time.AfterFunc(todoUndoFor, func() {
+		if !undone.Load() {
+			send()
+		}
+	})
+}
+
+// todoUndoFor is how long the Undo toast stays (App.ToastUndo).
+var todoUndoFor = 6 * time.Second
