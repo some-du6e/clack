@@ -1412,13 +1412,12 @@ type actTipSeg struct {
 	w font.Weight
 }
 
-// actTipSegs is the tip's text: bold, regular, bold.
+// actTipSegs is the tip's text: bold, regular, bold. The keys are the
+// shortcut's chips joined by " + " (commandKey: ⌘ on macOS, Ctrl
+// elsewhere).
 func actTipSegs() [3]actTipSeg {
-	key := "Ctrl"
-	if shortcut.Mac() {
-		key = "⌘"
-	}
-	return [3]actTipSeg{{"Tip:", theme.Bold}, {"Open this faster with", theme.Regular}, {key + " + Shift + Y", theme.Bold}}
+	keys := strings.Join(shortcut.Chips("Mod+Shift+Y"), " + ")
+	return [3]actTipSeg{{"Tip:", theme.Bold}, {"Open this faster with", theme.Regular}, {keys, theme.Bold}}
 }
 
 type actTipPill struct {

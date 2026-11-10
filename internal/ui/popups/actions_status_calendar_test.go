@@ -3,6 +3,7 @@ package popups
 import (
 	"image"
 	"net/url"
+	"strings"
 	"testing"
 
 	"gioui.org/layout"
@@ -10,6 +11,7 @@ import (
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
 )
 
 // calHook answers the calendar methods (fakeslack has no calendar apps)
@@ -218,5 +220,14 @@ func TestActStatusTipPill(t *testing.T) {
 	r := actTipRect(gtx, mr, 300)
 	if r.Max.Y != 767 || r.Dy() != 34 || r.Min.X+r.Dx()/2 != 720 {
 		t.Errorf("pill at %v", r)
+	}
+}
+
+// The tip's keys are Slack's "{commandKey} + Shift + Y".
+func TestActTipKeys(t *testing.T) {
+	for goos, want := range map[string]string{"darwin": "⌘ + Shift + Y", "linux": "Ctrl + Shift + Y", "windows": "Ctrl + Shift + Y"} {
+		if got := strings.Join(shortcut.ChipsFor(goos, "Mod+Shift+Y"), " + "); got != want {
+			t.Errorf("%s: %q, want %q", goos, got, want)
+		}
 	}
 }
