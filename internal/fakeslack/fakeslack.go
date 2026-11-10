@@ -938,6 +938,9 @@ func ok(kv ...any) map[string]any {
 }
 
 func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMessage) any {
+	if out, handled := s.handleFilesView(method, f); handled { // files_view.go
+		return out
+	}
 	if out, handled := s.handleGallery(method, f); handled { // bkgallery*.go
 		return out
 	}
