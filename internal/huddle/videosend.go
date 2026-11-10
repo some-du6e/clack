@@ -22,6 +22,7 @@ package huddle
 // browsers without simulcast, and is all Clack sends.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"image"
@@ -211,9 +212,13 @@ func (s *Session) cameraOn(gen uint64) error {
 // openCamera asks for access (the macOS prompt, without blocking any UI)
 // and opens the camera: Options.OpenCamera, the test pattern
 // (CLACK_HUDDLE_TESTCAM), or the system default.
-func (s *Session) openCamera() (Camera, error) {
-	if s.o.OpenCamera != nil {
-		return s.o.OpenCamera(s.logf)
+func (s *Session) openCamera() (Camera, error) { return openCameraWith(s.ctx, s.o, s.logf) }
+
+// openCameraWith is openCamera for a session's options or the join
+// preview's.
+func openCameraWith(ctx context.Context, o Options, logf func(string, ...any)) (Camera, error) {
+	if o.OpenCamera != nil {
+		return o.OpenCamera(logf)
 	}
 	if testCamEnv() {
 		w, h := testCamSize()
@@ -226,8 +231,8 @@ func (s *Session) openCamera() (Camera, error) {
 	if st == avperm.NotDetermined {
 		select {
 		case st = <-avperm.Request(avperm.Camera):
-		case <-s.ctx.Done():
-			return nil, s.ctx.Err()
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
 	}
 	switch st {
@@ -237,7 +242,7 @@ func (s *Session) openCamera() (Camera, error) {
 	default:
 		return nil, fmt.Errorf("can't ask for camera access: %s", st)
 	}
-	return openDefaultCamera(s.logf)
+	return openDefaultCamera(logf)
 }
 
 // cameraAttach is setupMedia's hook for each new peer connection: t is the

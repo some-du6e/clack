@@ -3,7 +3,7 @@ name: huddle
 # tool; not shipped). The app itself builds in ci.yml.
 on:
   push:
-    paths: ['internal/huddle/**', 'internal/ui/huddleui/**', 'internal/core/dnd*.go', 'internal/fakeslack/huddles.go', 'internal/ui/notify*.go', 'internal/ui/openurl/**', 'cmd/huddle-demo/**', 'packaging/macos/**', 'go.mod', 'go.sum', '.github/workflows/huddle.yml']
+    paths: ['internal/huddle/**', 'internal/ui/huddleui/**', 'internal/core/dnd*.go', 'internal/fakeslack/huddles.go', 'internal/ui/notify*.go', 'internal/ui/openurl/**', 'cmd/huddle-demo/**', 'packaging/macos/**', 'internal/ui/screenlock/**', 'internal/ui/globalkey/**', 'third_party/rnnoise-go/**', 'internal/ui/prefs_pages.go', 'internal/ui/huddle_av.go', 'go.mod', 'go.sum', '.github/workflows/huddle.yml']
   workflow_dispatch:
 jobs:
   huddle:
@@ -42,6 +42,14 @@ jobs:
         run: go vet ./internal/ui/huddleui/... ./cmd/huddle-demo/...
       - name: test
         run: go test -count=1 ./internal/ui/huddleui/... ./internal/ui/openurl/...
+      - name: audio & video prefs (fake Chime only) and the OS hooks
+        # the join preview, AGC/NS options, Mod+Shift+Space, leave on lock,
+        # the lounge music; then the X11 grab typed at with xdotool under
+        # Xvfb and the logind/ScreenSaver signals on a private dbus-daemon
+        run: |
+          sudo apt-get install -y -qq xvfb xdotool dbus
+          go test -count=1 -v -run 'TestJoinPreviewFlow|TestHuddleMicProcessingPrefs|TestHuddleGlobalMute|TestHuddleLeaveOnLock|TestHuddleLoungeMusic' ./internal/ui/huddleui
+          xvfb-run -a go test -count=1 -v ./internal/ui/globalkey ./internal/ui/screenlock
       - name: incoming invites and raise hand (race)
         # against fakeslack and the fake Chime only: nothing rings anyone
         run: go test -race -gcflags=all=-d=checkptr=0 -count=1 -v -run 'TestIncomingInvite|TestRaiseHand|TestPendingStatus' ./internal/ui/huddleui
@@ -54,6 +62,7 @@ jobs:
         run: |
           sudo apt-get install -y -qq xvfb libgl1-mesa-dri libegl-mesa0
           # TestHuddleShotsInvite: invite-window-*, invite-card-*, invite-tiles-*, invite-toolbar-hand, invite-sticker-picker
+          # TestHuddleShotsJoinPreview: join-preview-{start,camera-talking,mic-menu,no-devices,join,dm}-{light,dark}
           xvfb-run -a go test -count=1 -v -run 'TestHuddleShots|TestMicNoteFor|TestHeader' ./internal/ui/huddleui
           ls -la dist/shots
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -89,13 +98,13 @@ jobs:
       - name: vet
         run: go vet ./internal/huddle/... ./internal/ui/huddleui/... ./internal/ui/openurl/...
       - name: opus on arm64 (the transpiled libopus was generated on linux/amd64)
-        run: go test -count=1 -v -run 'TestOpus' ./internal/huddle
+        run: go test -count=1 -v -run 'TestOpus|TestMic(AGC|NoiseSuppression)' ./internal/huddle
       - name: VideoToolbox + camera publish
         if: ${{ !cancelled() }}
         run: go test -count=1 -v -run 'TestVTEncode|TestFakeCamera|TestPCMEncoderRoundTrip' ./internal/huddle
       - name: test
         if: ${{ !cancelled() }}
-        run: go test -count=1 -v ./internal/huddle/... ./internal/ui/huddleui/... ./internal/ui/openurl/... 2>&1 | tee test.log | grep -E '^(=== RUN|--- |ok|FAIL|panic)|opus' ; test "${PIPESTATUS[0]}" = 0
+        run: go test -count=1 -v ./internal/huddle/... ./internal/ui/huddleui/... ./internal/ui/openurl/... ./internal/ui/screenlock/... ./internal/ui/globalkey/... 2>&1 | tee test.log | grep -E '^(=== RUN|--- |ok|FAIL|panic)|opus' ; test "${PIPESTATUS[0]}" = 0
       - name: permission checks from inside an .app bundle
         if: ${{ !cancelled() }}
         run: |
@@ -116,3 +125,22 @@ jobs:
       - name: build the demo
         if: ${{ !cancelled() }}
         run: CGO_ENABLED=1 go build -trimpath -o dist/huddle-demo ./cmd/huddle-demo
+
+  windows:
+    # the Windows sides: WTS lock events, RegisterHotKey, and the
+    # microphone processing (RNNoise's amd64 kernels) and join preview
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: vet
+        run: go vet ./internal/ui/screenlock/... ./internal/ui/globalkey/...
+      - name: test
+        run: |
+          go test -count=1 -v ./internal/ui/screenlock/... ./internal/ui/globalkey/...
+          go test -count=1 -v -run 'TestMic|TestPreview' ./internal/huddle

@@ -46,6 +46,7 @@ require (
 require (
 	gioui.org/shader v1.0.9 // indirect
 	git.wow.st/gmp/jni v0.0.0-20210610011705-34026c7e22d0 // indirect
+	github.com/VoiceBlender/rnnoise-go v0.3.0
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/go-text/typesetting v0.3.5
 	github.com/tetratelabs/wazero v1.11.0
@@ -57,3 +58,8 @@ require (
 // Gio v0.10.3 with a fix for an index-out-of-range panic in gpu.drawLayers
 // (third_party/gioui.org/CLACK_PATCHES.md). Drop when upstream has it.
 replace gioui.org => ./third_party/gioui.org
+
+// RNNoise for the huddle microphone's noise suppression (pure Go, BSD-3).
+// Upstream v0.3.0 declares go 1.26; third_party/rnnoise-go is that release
+// with go.mod lowered to 1.24 (third_party/rnnoise-go/CLACK_PATCHES.md).
+replace github.com/VoiceBlender/rnnoise-go => ./third_party/rnnoise-go

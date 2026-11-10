@@ -132,6 +132,10 @@ type Options struct {
 	Muted     bool
 	// Captions starts with live captions shown (huddles_cc_by_default).
 	Captions bool
+	// AGC and NoiseSuppression are Audio & video's "Enable automatic gain
+	// control" and "Enable noise suppression" (apm.go); SetMicProcessing
+	// changes them mid-huddle.
+	AGC, NoiseSuppression bool
 	// OpenCamera replaces the system camera for SetCamera (tests, the demo:
 	// NewTestCamera); nil = the default camera behind the OS permission.
 	OpenCamera func(logf func(string, ...any)) (Camera, error)
@@ -154,6 +158,7 @@ type Session struct {
 	micDev Device // the default microphone, once the OS allowed it
 	play   playBuffer
 	mic    *micFramer
+	apm    *micProcessor // the microphone's AGC and noise suppression (apm.go)
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -236,7 +241,8 @@ func Join(ctx context.Context, o Options, channel string) (*Session, error) {
 	}
 	s := &Session{o: o, join: ji, muted: o.Muted, captions: o.Captions, people: map[string]*Participant{}, byAtt: map[string]string{},
 		streamAt: map[uint32]string{}, sources: map[uint32]streamDesc{}, sinks: map[string]*videoSink{},
-		waiters: map[int][]chan *signalFrame{}, doneCh: make(chan struct{}), mic: newMicFramer()}
+		waiters: map[int][]chan *signalFrame{}, doneCh: make(chan struct{}), mic: newMicFramer(),
+		apm: newMicProcessor(o.AGC, o.NoiseSuppression)}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	if o.SelfID != "" {
 		s.person(o.SelfID).Self = true
@@ -446,6 +452,21 @@ func (s *Session) SetMuted(m bool) {
 	s.send(encodeMute(m))
 	s.changed()
 }
+
+// SetMicProcessing turns the microphone's automatic gain control and
+// noise suppression on or off (the Audio & video prefs changed).
+func (s *Session) SetMicProcessing(agc, ns bool) { s.apm.set(agc, ns) }
+
+// MicProcessing reports them.
+func (s *Session) MicProcessing() (agc, ns bool) { return s.apm.enabled() }
+
+// PlayLocal plays pcm (interleaved stereo, 48 kHz) on your speakers
+// only, mixed over the huddle (Slack's lounge music when you're alone);
+// loop repeats it. Nil stops it.
+func (s *Session) PlayLocal(pcm []int16, loop bool) { s.play.playLocal(pcm, loop) }
+
+// LocalPlaying reports whether a PlayLocal sound is still playing.
+func (s *Session) LocalPlaying() bool { return s.play.localPlaying() }
 
 // SetDeafened stops (or resumes) playing the huddle's audio. Deafening
 // also mutes you, like Slack.
@@ -973,6 +994,9 @@ func (s *Session) sendAudio(done <-chan struct{}) {
 			for len(s.mic.out) > 3 { // drift: stay near real time
 				pcm = <-s.mic.out
 			}
+			// gain control and noise suppression run on every captured
+			// frame, muted or not, so their state is warm on unmute
+			s.apm.process(pcm)
 		default:
 		}
 		s.mu.Lock()
