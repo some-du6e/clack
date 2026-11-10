@@ -234,8 +234,14 @@ func (d *ChannelDetails) loadSettings(inf core.ChannelDetails) {
 			})
 		}
 	}
+	// CopyMembers reads the members only for channels of up to 1,000
+	// (past that the rows are disabled), so wait for the count
 	if !d.x.emails.started() {
-		d.x.emails.load(d.h, false, func(ctx context.Context) (cdMemberList, error) { return cdFetchMembers(ctx, c, id) })
+		mc, counted, err := d.counts.get()
+		small := cdGroup(d.kind) == "mpim" || counted && err == nil && mc.People <= cdCopyMembersMax
+		if small {
+			d.x.emails.load(d.h, false, func(ctx context.Context) (cdMemberList, error) { return cdFetchMembers(ctx, c, id) })
+		}
 	}
 }
 
