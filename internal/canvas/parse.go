@@ -346,11 +346,45 @@ func (p *parser) table(t *html.Node, depth int) Block {
 				b.Rows = append(b.Rows, row)
 			case atom.Thead, atom.Tbody, atom.Tfoot:
 				rows(c, d+1)
+			case atom.Colgroup:
+				for col := c.FirstChild; col != nil; col = col.NextSibling {
+					if col.Type == html.ElementNode && col.DataAtom == atom.Col {
+						b.ColWidths = append(b.ColWidths, colWidth(col))
+					}
+				}
 			}
 		}
 	}
 	rows(t, depth)
+	if len(b.ColWidths) > 0 {
+		cols := 0
+		for _, r := range b.Rows {
+			cols = max(cols, len(r))
+		}
+		ok := len(b.ColWidths) == cols
+		for _, w := range b.ColWidths {
+			ok = ok && w > 0
+		}
+		if !ok { // partial widths: Quip's even split
+			b.ColWidths = nil
+		}
+	}
 	return b
+}
+
+var widthRE = regexp.MustCompile(`(?:^|;)\s*width:\s*(\d+)(?:\.\d+)?px`)
+
+// colWidth is a <col>'s width in px (its width attribute or its style's
+// width), 0 if it has none. Capped so a bad export can't make a table
+// miles wide.
+func colWidth(n *html.Node) int {
+	w, _ := strconv.Atoi(strings.TrimSuffix(attr(n, "width"), "px"))
+	if w <= 0 {
+		if m := widthRE.FindStringSubmatch(attr(n, "style")); m != nil {
+			w, _ = strconv.Atoi(m[1])
+		}
+	}
+	return min(max(w, 0), 4000)
 }
 
 var blobRE = regexp.MustCompile(`^/collab-slack-blob/[^/]+/(F[A-Z0-9]{4,24})`)

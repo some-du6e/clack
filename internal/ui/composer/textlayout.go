@@ -350,6 +350,7 @@ type tlKey struct {
 	es      unit.Dp
 	images  bool
 	loc     system.Locale
+	weight  font.Weight // EditorStyle.Weight
 }
 
 // tlColors is the paint state baked into the cached macros.
@@ -517,6 +518,9 @@ func (l *tlLayout) buildPara(d *Doc, p *tlPara, pi int, k tlKey) {
 		code := !mono && !head && a.Style&Code != 0
 		ppem := m.ppem
 		fnt := tlFont(a.Style, mono || code)
+		if w := k.weight; w != 0 && !mono && !code && !head && fnt.Weight < w {
+			fnt.Weight = w
+		}
 		switch {
 		case head:
 			ppem = headPpem(m, p.kind)

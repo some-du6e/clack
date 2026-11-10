@@ -51,6 +51,7 @@ type View struct {
 	edit    *editState
 	phView  *richview.View // the empty canvas's placeholder
 	phText  string
+	tphView *richview.View // the empty title's placeholder
 
 	queue []func() // post: run on the UI goroutine at the next frame
 
@@ -330,61 +331,62 @@ func (v *View) layout(gtx layout.Context) layout.Dimensions {
 	return v.layoutDoc(gtx, d)
 }
 
-// layoutBar is the side panel's / full view's top bar.
+// layoutBar is the side panel's / full view's header, Slack's canvas
+// flexpane: a .p-view_header (49px, padding 0 16px 0 18px, the title in
+// 18px Lato Black, ellipsized; .p-quip_flexpane .p-view_header has no
+// bottom shadow) with CanvasActionItems on the right, 6px apart
+// (.p-quip_flexpane__action_items--gap). In the full view (the primary
+// container) they are the "Edited …" reminder (QuipLastUpdatedReminder,
+// once the canvas was edited), the viewers' facepile, the outline Share
+// button (CanvasSharePrimaryButton) and More actions (the 28px
+// .p-quip_flexpane__menu_trigger). In the side panel (the secondary
+// container) Slack drops the reminder and Share; Clack's "Open in full
+// view" stands where Slack's "Open in new window" is, and the panel's
+// close button ends the row.
 func (v *View) layoutBar(gtx layout.Context, d *core.CanvasDoc, size image.Point) {
 	th := v.h.Theme()
 	c := &th.C
-	theme.Fill(gtx, image.Rect(0, size.Y-gtx.Dp(1), size.X, size.Y), c.Border)
+	theme.Fill(gtx, image.Rectangle{Max: size}, c.Bg)
 	title := "Canvas"
 	if d != nil {
 		title = d.Info.Title
 	}
-	type b struct{ key, icon, tip string }
-	var bs []b
-	switch v.mode {
-	case Side:
-		if v.act.FullView != nil {
-			bs = append(bs, b{"full", "expand", "Open in full view"})
-		}
-		bs = append(bs, b{"more", "more", "More actions"})
-		if v.act.Close != nil {
-			bs = append(bs, b{"close", "close", "Close"})
-		}
-	case Full:
-		if v.act.SideView != nil {
-			bs = append(bs, b{"side", "panel-right", "Open in side panel"})
-		}
-		bs = append(bs, b{"more", "more", "More actions"})
-	}
-	x := size.X - gtx.Dp(12)
-	for i := len(bs) - 1; i >= 0; i-- {
-		bb := bs[i]
+	gap := gtx.Dp(6)
+	x := size.X - gtx.Dp(16)
+	icon := func(key, name, tip string) {
 		w := gtx.Dp(28)
 		x -= w
-		clk := v.btn("bar." + bb.key)
+		clk := v.btn("bar." + key)
 		hit := clk.Clicked(gtx) // before Layout, which drains a Clickable's events
 		at(gtx, image.Pt(x, (size.Y-w)/2), image.Pt(w, w), func(gtx layout.Context) layout.Dimensions {
-			return iconButton(gtx, th, clk, bb.icon, 18)
+			return iconButton(gtx, th, clk, name, 18)
 		})
 		if hit {
-			v.barAction(bb.key)
+			v.barAction(key)
 		}
-		x -= gtx.Dp(4)
+		x -= gap
+	}
+	if v.mode == Side && v.act.Close != nil {
+		icon("close", "close", "Close")
+	}
+	icon("more", "more", "More actions")
+	if v.mode == Side && v.act.FullView != nil {
+		icon("full", "expand", "Open in full view")
 	}
 	if v.mode == Full && v.act.Share != nil {
 		lw := th.Measure(gtx, 13, theme.Bold, "Share")
-		w := lw + gtx.Dp(24)
-		x -= w + gtx.Dp(4)
+		w := lw + 2*gtx.Dp(12)
+		x -= w
 		clk := v.btn("bar.share")
 		share := clk.Clicked(gtx)
 		at(gtx, image.Pt(x, (size.Y-gtx.Dp(28))/2), image.Pt(w, gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
 			s := gtx.Constraints.Max
-			bg := c.Bg
 			if clk.Hovered() {
-				bg = c.BgHover
+				theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(8), c.BgHover)
 			}
-			theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(6), bg)
-			theme.Border(gtx, image.Rectangle{Max: s}, gtx.Dp(6), gtx.Dp(1), c.BorderStrong)
+			// c-button--outline, small: 28px, radius 8, 13px bold;
+			// its border fg at .13 in the action items
+			theme.Border(gtx, image.Rectangle{Max: s}, gtx.Dp(8), gtx.Dp(1), theme.WithAlpha(c.Fg, 0x21))
 			at(gtx, image.Pt(gtx.Dp(12), 0), image.Pt(lw+2, s.Y), func(gtx layout.Context) layout.Dimensions {
 				return vcenter(gtx, s.Y, func(gtx layout.Context) layout.Dimensions {
 					return th.Label(gtx, 13, theme.Bold, c.Fg, "Share")
@@ -395,23 +397,56 @@ func (v *View) layoutBar(gtx layout.Context, d *core.CanvasDoc, size image.Point
 		if share {
 			v.act.Share(v.id)
 		}
+		x -= gap
 	}
-	// icon + title
-	ix := gtx.Dp(16)
-	isz := gtx.Dp(18)
-	at(gtx, image.Pt(ix, (size.Y-isz)/2), image.Pt(isz, isz), func(gtx layout.Context) layout.Dimensions {
-		return icons.Get("canvas")(gtx, 18, c.Fg)
-	})
-	tx := ix + isz + gtx.Dp(8)
-	tsize := unit.Sp(18)
-	if v.mode == Side {
-		tsize = 16
+	if w := v.layoutViewers(gtx, image.Pt(x, (size.Y-gtx.Dp(24))/2), gtx.Dp(24)); w > 0 {
+		x -= w - gtx.Dp(12) + gap
 	}
-	at(gtx, image.Pt(tx, 0), image.Pt(max(0, x-tx-gtx.Dp(8)), size.Y), func(gtx layout.Context) layout.Dimensions {
+	if v.mode == Full && d != nil && d.Info.Updated > d.Info.Created && d.Info.Updated > 0 {
+		txt := "Edited " + editedAgo(time.Unix(d.Info.Updated, 0))
+		tw := th.Measure(gtx, 13, theme.Regular, txt)
+		if tw < x/2 { // the title keeps the room first
+			x -= tw
+			muted := theme.WithAlpha(c.Fg, 0xb3) // --sk_foreground_max at .7
+			at(gtx, image.Pt(x, 0), image.Pt(tw+2, size.Y), func(gtx layout.Context) layout.Dimensions {
+				return vcenter(gtx, size.Y, func(gtx layout.Context) layout.Dimensions {
+					return th.Label(gtx, 13, theme.Regular, muted, txt)
+				})
+			})
+			x -= gap
+		}
+	}
+	tx := gtx.Dp(18)
+	at(gtx, image.Pt(tx, 0), image.Pt(max(0, x-tx-gtx.Dp(4)), size.Y), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, size.Y, func(gtx layout.Context) layout.Dimensions {
-			return th.Text(gtx, theme.LabelOpts{Font: theme.Font(theme.Black), Size: tsize, Color: c.Fg, MaxLines: 1}, title)
+			return th.Text(gtx, theme.LabelOpts{Font: theme.Font(theme.Black), Size: 18, Color: c.Fg, MaxLines: 1}, title)
 		})
 	})
+}
+
+// editedAgo is QuipLastUpdatedReminder's time: always relative
+// (alwaysAgo), "just now" under a minute, "minutes" shortened to "min".
+func editedAgo(t time.Time) string {
+	d := time.Since(t)
+	plural := func(n int, unit string) string {
+		if n == 1 {
+			return "1 " + unit + " ago"
+		}
+		return itoa(n) + " " + unit + "s ago"
+	}
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return itoa(int(d/time.Minute)) + " min ago"
+	case d < 24*time.Hour:
+		return plural(int(d/time.Hour), "hour")
+	case d < 30*24*time.Hour:
+		return plural(int(d/(24*time.Hour)), "day")
+	case d < 365*24*time.Hour:
+		return plural(int(d/(30*24*time.Hour)), "month")
+	}
+	return plural(int(d/(365*24*time.Hour)), "year")
 }
 
 func (v *View) barAction(key string) {
@@ -620,6 +655,24 @@ func (v *View) layoutDoc(gtx layout.Context, d *core.CanvasDoc) layout.Dimension
 	})
 }
 
+// titlePlaceholder is Slack's title placeholder (titlePlaceholder in
+// client-boot-shared's canvas options), which Quip's TitleSectionOverlay
+// draws over an empty title section.
+const titlePlaceholder = "Your canvas title"
+
+// placeholderRow is the block the empty-canvas placeholder is drawn on,
+// or nil.
+func (v *View) placeholderRow() *blk {
+	rows := v.blocks
+	if titleSection(rows) {
+		rows = rows[1:]
+	}
+	if v.placeholder(rows) == "" {
+		return nil
+	}
+	return rows[0]
+}
+
 // textPlaceholders are Slack's empty-canvas placeholders; a canvas gets
 // the one its file id picks (getIndexFromFileId in client-boot-shared).
 var textPlaceholders = [...]string{
@@ -676,16 +729,21 @@ func (v *View) layoutPlaceholder(gtx layout.Context, b *blk, top int, text strin
 }
 
 // titleSection reports whether the document opens with its title
-// section: a heading with text. Quip names a canvas after its first
-// heading (else the start of its first paragraph), and Slack draws that
-// heading where it is, once; the export has no separate title.
+// section: a heading with text, or an H1 at all. Quip names a canvas
+// after its first heading (else the start of its first paragraph), and
+// Slack draws that heading where it is, once; the export has no separate
+// title. Quip's isTitleSection takes the first section when it is the
+// title style or, in a document with a title, an H1, even an empty one
+// (TitleSectionOverlay then shows "Your canvas title" over it).
 func titleSection(bs []*blk) bool {
 	if len(bs) == 0 || bs[0].b == nil {
 		return false
 	}
 	b := bs[0].b
 	switch b.Kind {
-	case canvas.Heading1, canvas.Heading2, canvas.Heading3:
+	case canvas.Heading1:
+		return true
+	case canvas.Heading2, canvas.Heading3:
 	default:
 		return false
 	}
@@ -744,16 +802,44 @@ func (v *View) layoutTitleBlock(gtx layout.Context, b *blk) int {
 	if v.edit.editing(b) {
 		return v.edit.layoutEditor(gtx, v, b, 0, w)
 	}
-	if b.rv == nil {
-		return 0
-	}
 	g := gtx
 	g.Constraints = layout.Constraints{Max: image.Pt(w, gtx.Constraints.Max.Y)}
-	h := b.rv.Layout(g, v.styles.title, v.handler).Size.Y
+	h := gtx.Dp(titleLine)
+	switch {
+	case emptyTitle(b):
+		// Quip's TitleSectionOverlay: the placeholder in the title
+		// section's own type (.editor-default-section-text-overlay's
+		// colour), for editors; an empty line for everyone else
+		if v.edit.canEdit(v) {
+			if v.tphView == nil {
+				v.tphView = richview.New(richtext.Doc{Blocks: []richtext.Block{{Kind: richtext.Paragraph,
+					Spans: []richtext.Span{{Kind: richtext.Text, Text: titlePlaceholder, Style: richtext.Bold}}}}}, richview.Options{})
+			}
+			h = max(h, v.tphView.Layout(g, v.styles.titlePh, v.handler).Size.Y)
+		}
+	case b.rv != nil:
+		h = b.rv.Layout(g, v.styles.title, v.handler).Size.Y
+	default:
+		return 0
+	}
 	if v.edit.canEdit(v) {
 		v.edit.textArea(gtx, v, b, image.Rect(0, 0, w, h))
 	}
 	return h
+}
+
+// emptyTitle: the title section has no text (whitespace counts as
+// empty, as isEmpty({checkForWhitespace: true}) does).
+func emptyTitle(b *blk) bool {
+	if b == nil || b.b == nil {
+		return false
+	}
+	for _, s := range b.b.Spans {
+		if s.Kind != richtext.Text || strings.TrimSpace(s.Text) != "" {
+			return false
+		}
+	}
+	return true
 }
 
 // layoutFloatingActions is the channel tab's floating More options (⋮)

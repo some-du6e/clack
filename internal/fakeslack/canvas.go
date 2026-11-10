@@ -456,7 +456,7 @@ func (cs *canvasStore) apply(s *Server, c *FakeCanvas, op, sec, md, title string
 		c.Title = strings.TrimSpace(title)
 		return ""
 	}
-	nb := canvas.ParseMarkdown(md, s.names())
+	nb := s.embedUploads(canvas.ParseMarkdown(md, s.names()))
 	switch op {
 	case "insert_at_start":
 		c.Doc.Blocks = append(nb, c.Doc.Blocks...)
@@ -484,6 +484,46 @@ func (cs *canvasStore) apply(s *Server, c *FakeCanvas, op, sec, md, title string
 	return ""
 }
 
+// embedUploads turns "![…](permalink)" of a file uploaded to this server
+// into what Quip's export holds for it: an image section pointing at the
+// file's blob (Clack resolves it with files.info), or an embedded file.
+// Called with cs.mu held; takes draftMu for the uploads.
+func (s *Server) embedUploads(bs []canvas.Block) []canvas.Block {
+	for i := range bs {
+		b := &bs[i]
+		if b.Kind != canvas.Image || b.Image == nil {
+			continue
+		}
+		u := b.Image.URL
+		k := strings.Index(u, "/files/")
+		if !strings.HasPrefix(u, s.URL) || k < 0 {
+			continue
+		}
+		parts := strings.Split(u[k+len("/files/"):], "/") // U…/F…/name
+		if len(parts) < 2 {
+			continue
+		}
+		s.draftMu.Lock()
+		up := s.files[parts[1]]
+		var name string
+		var w, h int
+		if up != nil {
+			name, w, h = up.Title, up.W, up.H
+		}
+		s.draftMu.Unlock()
+		if up == nil {
+			continue
+		}
+		if strings.HasPrefix(mimeOf(name), "image/") {
+			*b = canvas.Block{Kind: canvas.Image, FileID: up.ID, Image: &canvas.Img{Alt: b.Image.Alt, W: w, H: h,
+				URL: "/collab-slack-blob/FAKE/" + up.ID + "?size_name=original", FileID: up.ID}}
+			continue
+		}
+		*b = canvas.Block{Kind: canvas.File, FileID: up.ID, Title: name}
+	}
+	return bs
+}
+
 // editIn finds section sec in bs (or nested containers) and edits there.
 func editIn(bs *[]canvas.Block, op, sec string, nb []canvas.Block) bool {
 	for i := range *bs {
@@ -504,7 +544,11 @@ func editIn(bs *[]canvas.Block, op, sec string, nb []canvas.Block) bool {
 			*bs = append(out, (*bs)[i+1:]...)
 			return true
 		}
-		if editIn(&b.Children, op, sec, nb) {
+		kids := nb
+		if b.Kind == canvas.Quote { // a quote's paragraphs are Quip sections of style 16: "> …" lands as one
+			kids = unquote(nb)
+		}
+		if editIn(&b.Children, op, sec, kids) {
 			return true
 		}
 		for j := range b.Columns {
@@ -521,6 +565,25 @@ func editIn(bs *[]canvas.Block, op, sec string, nb []canvas.Block) bool {
 		}
 	}
 	return false
+}
+
+// unquote is quote blocks as their paragraphs (the first keeps the
+// quote's section id).
+func unquote(bs []canvas.Block) []canvas.Block {
+	var out []canvas.Block
+	for _, b := range bs {
+		if b.Kind != canvas.Quote {
+			out = append(out, b)
+			continue
+		}
+		for i, c := range b.Children {
+			if i == 0 && c.ID == "" {
+				c.ID = b.ID
+			}
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // seedCanvasShare puts a message sharing CanvasShared at the top of

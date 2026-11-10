@@ -84,7 +84,8 @@ The `id` attributes (`temp:C:…`) are Quip section ids. They are the same ids `
 Canvas markdown (`internal/canvas/markdown.go`): `#`/`##`/`###`, `- `, `1. `, `- [ ] `/`- [x] `, two spaces per nesting level, `> `, fenced code, `---`, pipe tables, `**bold**`, `_italic_`, `~~strike~~`, `` `code` ``, `[text](url)`, `![](@U…)` / `![](#C…)` mentions, `:emoji:`, `@here`.
 
 **Editing in the UI** (`internal/ui/canvasview/edit.go`, `picker.go`). Only canvases whose `files.info` says `editable` can be edited.
-- **Opening a block for editing:** clicking a paragraph, heading, list item or code block (not on a link or mention) turns it into the composer's rich editor. A list item keeps its gutter marker at its level.
+- **Opening a block for editing:** Quip's document is one contenteditable, so a press anywhere on a block's text puts the caret where the browser's `caretPositionFromPoint` would (Quip's `caretRangeFromPoint` helper in `quip-collab-webapp`). Clack does the same: pressing on a paragraph, heading, the title, a list item, a quote's or callout's paragraph or a code block (not on a link or mention) opens that block in the composer's rich editor with the caret at the nearest character boundary under the pointer. The editor lays the text out once before its first frame, so the caret is never drawn anywhere else first. Dragging selects from the press, and a double or triple click selects the word or the line (the opening click is passed to the editor with `SeedClick`). A drag can't run across blocks the way Quip's can, because Clack edits one section at a time (one `canvases.edit` replace each), so it is clamped to the block. Headings are edited in Lato Black (`EditorStyle.Weight`), as they are drawn, so the text doesn't shift under the caret. A list item keeps its gutter marker at its level. Table cells don't open in the editor.
+- **Quote paragraphs:** each paragraph of a quote is a Quip section of style 16. Editing one saves it as `> …`, so it stays in the quote, and Enter adds another quote paragraph.
 - **Toolbars:** as in Slack, there is no bar while a block is merely being edited. Anyone who can edit gets the bottom insertion toolbar, and selecting text shows the floating formatting bar over the selection. Both are described under "How it looks".
 - **Enter** adds a line below in the same editor; a list stays a list, a checklist adds an unticked item.
 - **Saving:** Escape, Ctrl/Cmd+Enter, or a click elsewhere saves the whole edit as one `canvases.edit`. That is a `replace` of the section with the lines' markdown, or a `delete` if the block was emptied; an unchanged block sends nothing. The view updates at once, and a failed save shows a toast and reloads.
@@ -105,7 +106,7 @@ Canvas markdown (`internal/canvas/markdown.go`): `#`/`##`/`###`, `- `, `1. `, `-
 
 The editor draws its text with richview's 0.45px embolden (`composer.EditorStyle.Embolden`), so a block doesn't look lighter while it's being edited.
 
-**Not supported yet:** editing tables, images, columns, callouts and embeds (they render, but don't open in the editor), inserting images or files, comments, version history, templates, deleting a canvas, Lists, and sending cursors (`document_change`). The link button only links selected text that is itself an address (there's no link dialog yet).
+**Not supported yet:** editing tables, images, columns and embeds (they render, but don't open in the editor), a drag selection across blocks, Insert > Date / Callout / Canvas, layouts, comments, version history, templates, deleting a canvas, Lists, and sending cursors (`document_change`). The link button only links selected text that is itself an address (there's no link dialog yet).
 
 ## How it looks
 
@@ -119,29 +120,38 @@ Slack's evidence: the Quip editor's stylesheet `canvas-controller-d97a8e501e2ab7
 - **Headings:** H1 22/30, H2 18/27, H3 15/22, all weight 900. Their margins are 28/6, 24/2 and 20/2. Margins collapse, and the first section has no top margin.
 - **Lists:** a list section has 8px margins, with 6px between items and 30px of indent per level. The marker sits in a box at least 24px wide plus 4px padding, so the text starts 28px in. Bullets go ● ○ ■ □ by level; numbers go 1. a. i.
 - **Checklists:** a 14px box 5px in, radius 2, with a 1px #7c7a7f border (#bbbabb in dark) on `--dt_color-base-sec`. Checked boxes are `--dt_color-base-inv-hgl-2` with a 2px tick.
-- **Quote:** padding `3px 0 3px 18px` and a 4px bar (radius 3, inset 4px top and bottom) in `--dt_color-otl-pry` (`--dt_color-content-sec` in dark). Margins are 4/12.
+- **Quote:** each quote paragraph is its own section (`data-section-style="16"`), and the bar is that section's `.content:before`. So Slack draws one bar per paragraph, not one per quote: padding `3px 0 3px 18px`, a 4px bar (radius 3, inset 4px top and bottom) in `--dt_color-otl-pry` (`--dt_color-content-sec` in dark). Section margins are 4/12, so two paragraphs are 12px apart, each with its own bar.
+- **Tables:** Quip's `TableContainer` (`quip-collab-editor`) and the `.table-container` CSS. `.table-element` is `table-layout: fixed` with collapsed borders. A column is as wide as the table stores it (`<col style="width:…">`, parsed into `Block.ColWidths`), else `containerWidth / numColumns`, so a plain table fills the column evenly. Cells have a 1px `--dt_color-otl-sec` border, padding 8px 16px, a 46px minimum height, and 4px before the first section and after the last. The header row is `--dt_color-surf-pry` at weight 700. `.table-scroller` scrolls sideways when stored widths overflow the page; its 16px padding is cancelled by -16px margins, and a 20px gradient from the background marks a side that can scroll.
 - **Code block:** 12px monospace on a 20px line, padding 8, a 1px `--dt_color-otl-ter` border on `--dt_color-base-sec`, radius 4.
 - **Divider:** a 20px `hr` with a 1px line in `rgba(var(--quipUiColorGray10), .2)`.
 - **Other blocks** take the default 20/20 section margins.
+
+**Title placeholder.** Quip's `TitleSectionOverlay` (`quip-collab-editor`) draws `titlePlaceholder`, "Your canvas title" (`client-boot-shared`), over the title section while it is empty, even when unfocused. Its `isTitleSection` takes the first section when it is an H1, so an empty opening `<h1>` is the title, not the file name. The placeholder is in the title's own type (28/34, 900) in the overlay colour (#77757a, #9a9b9e in dark). Viewers who can't edit see an empty title line.
 
 **Placeholder.** Slack fills the empty canvas with an overlay (Quip's `TextSectionOverlay`), never with document text. The overlay is shown to editors only, when the document is its title plus one plain paragraph that is empty or holds unedited default content. Its text is `textPlaceholder`, picked by `getIndexFromFileId` from "Go ahead, start writing!", "What's on the docket for today?", "Once upon a time…", "Time to document your genius!" and "Words go here " (`client-boot-shared`; with AI access a random AI prompt is used instead). It is 15px in #77757a (#9a9b9e in dark). Once the canvas has other text, default content is invisible.
 
 **Header.**
 - **Channel tab:** no bar. The More options ⋮ floats at the top right in a 32px tile (radius 8, a 1px ring, a 1px/3px shadow), 24px in. Its menu starts with Copy link and Share this canvas and ends with Open in split view. Clack shows only those three; Slack's other items (View file details, Add to saved, cover image, version history, templates, print, …) aren't implemented.
-- **Side panel and full view:** these keep Clack's bar.
+- **Side panel and full view:** Slack's canvas flexpane header. It is a `.p-view_header` (49px, padding `0 16px 0 18px`, the title in 18px Lato Black, one line), with no bottom shadow (`.p-quip_flexpane .p-view_header{box-shadow:none}`). `CanvasActionItems` (`client-boot-shared`) sits on the right, 6px apart (`--gap`). In the full view (the primary container) these are the `QuipLastUpdatedReminder` ("Edited {time}", always relative, "minutes" shortened to "min", 13px at foreground .7, once the canvas was edited), the facepile, the outline small Share button (`CanvasSharePrimaryButton`), and More actions (the 28px `.p-quip_flexpane__menu_trigger`). In the side panel (the secondary container) Slack hides the reminder, Share and the star. Clack draws the facepile, its Open in full view where Slack's Open in new window is, More actions, and the panel's close. Open in side panel lives in More actions, as in Slack. Add to starred isn't implemented.
 
 **Bottom insertion toolbar** (`.p-quip_insertion_toolbar`, `InsertionToolbarButtons`).
 - **Shape:** centred, 18px up from the bottom (24px in the side panel), on the primary background with `0 0 0 1px` foreground at .13 and `0 4px 12px #0000001a`, radius 8, padding 2. Buttons are 30px with 20px icons, with 5px around the first and 2px around the rest.
 - **Buttons, in order:** the green `+` (Insert), `Aa` (Formatting), emoji, Insert file, Insert checklist, Insert table, Layouts.
-- **Insert menu:** Divider, then Date, Profile, Callout, Canvas, Image and File, which Clack draws disabled.
+- **Insert menu:** Divider, then Date, Profile, Callout, Canvas, Image and File. These go through `canvases.edit`'s documented markdown:
+  - Divider is `---`.
+  - Profile opens a new line with the @ picker. The person saves as `![](@U…)` alone in its block, which Slack unfurls as a profile card.
+  - Image uploads the picked file (`files.getUploadURL`, the bytes, `files.completeUpload`, shared nowhere) and inserts `![name](permalink)`, the form docs.slack.dev gives for images.
+  - File does the same with `![](permalink)`, a file unfurl.
+  - Date and Callout have no canvas markdown. Canvas needs Slack's canvas search, which Clack doesn't have yet. Those three are drawn in Slack's disabled state (`.c-menu_item__button--disabled`, opacity .5).
 - **Formatting menu:** Blockquote, Code block, ─, Bulleted list, Ordered list, Check list, ─, Small heading, Medium heading, Big heading, Paragraph. It is disabled until a block is being edited.
-- **Disabled in Clack:** Insert file, table and layouts aren't implemented, so they are drawn in Slack's disabled state.
+- **Insert file** is the menu's File. **Insert table** is Quip's new table (`TableLayout.initializeContent`: `insertRows({count: 3})`, `insertColumns({count: 2})`) as a canvas markdown table, inserted after the block being edited, else at the end. **Layouts** (columns) has no canvas markdown, so it is drawn disabled: `.c-icon_button.c-button--disabled`, the icon at opacity .5.
+- **Inserts never fetch a page:** an image block whose URL is a Slack page (a permalink) is only drawn from its file's thumbnail. Clack never loads `*.slack.com` pages as images.
 
 **Floating formatting bar** (`QuipFloatingFormattingBar`).
 - **When:** only while a non-empty range is selected.
 - **Shape:** #1a1d21 in both themes, radius 8, padding 2, a `#e8e8e840` ring. Buttons are 28px with radius 4 and white icons, hover `#ffffff13`, pressed `#e8e8e821`. Separators are 1px `#ffffff40` lines, 20px tall.
 - **Buttons, from `zk`:** the block-style menu (the current format's icon and a caret: Paragraph, Big/Medium/Small heading, ─, Check list, Ordered list, Bulleted list, ─, Code block, Blockquote) | bold, italic, underline, strike | code | link, callout. The comment button is left out because Clack has no comments, which is Slack's own `quipThreadButtonType: "NONE"`.
-- **Disabled:** underline (canvas markdown has none) and callout.
+- **Disabled:** underline (canvas markdown has none) and callout (no canvas markdown either), in the floating bar's disabled colour (`#ffffff4d`).
 
 ## Plugins
 
