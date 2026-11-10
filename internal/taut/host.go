@@ -81,7 +81,14 @@ func (t *Taut) installHost(r *runtime) {
 		return nil, nil
 	})
 	sync("injecting", func(a []json.RawMessage) (any, error) { return nil, nil })
-	sync("experiments", func(a []json.RawMessage) (any, error) { return nil, nil })
+	// the groups the plugins' patches of the experiments slice force (experiments.go)
+	sync("experiments", func(a []json.RawMessage) (any, error) {
+		var forced map[string]*string
+		jsonArg(a, 0, &forced)
+		t.setPluginExperiments(forced)
+		return nil, nil
+	})
+	sync("experimentReads", func(a []json.RawMessage) (any, error) { return experimentReadsSource(), nil })
 	sync("rtmTypes", func(a []json.RawMessage) (any, error) {
 		var types []string
 		jsonArg(a, 0, &types)

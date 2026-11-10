@@ -124,6 +124,7 @@ type Taut struct {
 
 	data   *dataStore
 	mirror *mirror
+	exp    pluginExperiments // experiments.go
 	thunks *thunkTable
 	ui     *uiState
 	fns    *goFns
@@ -258,6 +259,7 @@ func (t *Taut) Close() error {
 			}
 		}
 	}
+	t.setPluginExperiments(nil) // no runtime, no patches: core reads the server's groups again
 	return t.data.flush()
 }
 
@@ -368,6 +370,7 @@ func (t *Taut) restartAfterCrash(dead *runtime) {
 	t.ui.setComposerHooks(composerHooks{})
 	t.ui.setStatePatched(statePatchInfo{})
 	t.ui.setOverlays(nil)
+	t.setPluginExperiments(nil) // the dead runtime's patches are gone
 	t.mu.Lock()
 	now := time.Now()
 	recent := t.crashes[:0]

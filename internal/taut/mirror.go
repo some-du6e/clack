@@ -318,6 +318,8 @@ func (m *mirror) onEvent(ev core.Event) {
 	case "sidebar_changed", "channel_sections_upserted", "channel_sections_channels_upserted", "channel_sections_channels_removed", "channel_sections_deleted":
 		m.invalidate("channelSections")
 		m.invalidate("starredChannels")
+	case "experiments":
+		m.invalidate("experiments")
 	case "prefs", "pref_change":
 		m.invalidate("prefs")
 		m.invalidate("userPrefs")
@@ -751,7 +753,10 @@ func (m *mirror) get(slice, key string) any {
 		return map[string]any{"unifiedDrafts": m.drafts, "channelIds": ids, "withheldDraftIds": []string{}, "isEditingDraftPage": false, "selectedDraftIds": []string{}}
 	case "slashCommand":
 		return m.slashCommands()
-	case "experiments":
+	case "experiments": // Slack's store: experiments.getByUser's records (forced groups are patches over it)
+		if as := m.t.app.ExperimentAssignments(); as != nil {
+			return as
+		}
 		return map[string]any{}
 	case "huddleEvents":
 		return m.t.huddleEventsSlice()
