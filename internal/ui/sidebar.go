@@ -737,22 +737,9 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 			}
 		}
 		if conv != nil {
-			// a huddle is on here: Slack's headphones + head count
-			if n := a.huddles().LiveCount(conv.ID); n > 0 {
-				num := strconv.Itoa(n)
-				nw := a.th.Measure(gtx, 13, theme.Bold, num)
-				right -= nw
-				at(gtx, image.Pt(right, 0), image.Pt(nw, rowH), func(gtx layout.Context) layout.Dimensions {
-					return vcenter(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
-						return a.th.Label(gtx, 13, theme.Bold, fg, num)
-					})
-				})
-				right -= gtx.Dp(17)
-				at(gtx, image.Pt(right, (rowH-gtx.Dp(15))/2), image.Pt(gtx.Dp(15), gtx.Dp(15)), func(gtx layout.Context) layout.Dimensions {
-					return icons.Get("headphones")(gtx, 15, fg)
-				})
-				right -= gtx.Dp(6)
-			}
+			// a huddle is on here: Slack's BaseChannelSuffixHuddleIcon
+			// (the faces and the headphones badge, huddleui)
+			right = a.huddles().SidebarSuffix(gtx, a.th, conv.ID, right, rowH, sel)
 			rs.fg = fg
 			a.layoutConvBody(gtx, sbConvRow{a: a, r: r, btn: btn, rs: rs}, p, ix, right)
 			return layout.Dimensions{Size: image.Pt(rw, rowH)}

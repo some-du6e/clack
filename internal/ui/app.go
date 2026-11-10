@@ -554,6 +554,7 @@ func (a *App) frame(gtx layout.Context) {
 	} else {
 		primary = a.layoutShell(gtx)
 	}
+	a.layoutHuddleDock(gtx) // Slack's huddle bottom bar, under the rail and workspace
 
 	ia.Leave()
 	client.Leave()
@@ -584,7 +585,8 @@ func (a *App) layoutShell(gtx layout.Context) image.Rectangle {
 	bannerH := a.realtimeAskH(gtx)   // the workspace starts below the live-updates question
 	demoH := a.demoBannerHeight(gtx) // `clack demo` (demo_banner.go)
 	bannerH += demoH
-	ws := image.Rect(railW, navH+bannerH, sz.X-inset, sz.Y-inset)
+	dockH := a.huddles().DockHeight(gtx) // the huddle bar's row (huddle_wire.go)
+	ws := image.Rect(railW, navH+bannerH, sz.X-inset, sz.Y-inset-dockH)
 	primary := image.Rect(ws.Min.X+sbW, ws.Min.Y, ws.Max.X, ws.Max.Y)
 	a.primaryOrigin = primary.Min
 
@@ -609,7 +611,7 @@ func (a *App) layoutShell(gtx layout.Context) image.Rectangle {
 	}
 	a.th.Chrome = true // light-on-aubergine text fade (theme.lightTextColor)
 	a.layoutTopNav(gtx, navX, sz.X)
-	a.layoutRail(gtx, navH, sz.Y-navH)
+	a.layoutRail(gtx, navH, sz.Y-navH-dockH)
 	a.th.Chrome = false
 	if demoH > 0 {
 		a.layoutDemoBanner(gtx, image.Rect(ws.Min.X, navH, ws.Max.X, navH+demoH-gtx.Dp(bannerGap)))

@@ -170,7 +170,7 @@ func (e *hcEnv) join() *huddle.Fake {
 }
 
 // frame draws the huddle window (its own frame, as run does) and the main
-// window's sidebar bar.
+// window's docked huddle bar.
 func (e *hcEnv) frame() {
 	e.ops.Reset()
 	gtx := layout.Context{Ops: &e.ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(image.Pt(960, 640)), Now: time.Now()}
@@ -180,8 +180,8 @@ func (e *hcEnv) frame() {
 	restore()
 	slackc.Frame(gtx)
 	bar := gtx
-	bar.Constraints = layout.Constraints{Max: image.Pt(260, 200)}
-	e.c.LayoutBar(bar, e.h.th)
+	bar.Constraints = layout.Constraints{Max: image.Pt(960, 200)}
+	e.c.LayoutDock(bar, e.h.th)
 	slackc.UnlockFrame()
 }
 
@@ -245,7 +245,7 @@ func TestSlickViewCallTimer(t *testing.T) {
 	})
 }
 
-// LetMeSee: its anchor follows the sidebar's huddle bar (HuddleMiniPanel),
+// LetMeSee: its anchor follows the docked huddle bar (HuddleMiniPanel),
 // and the drawing layer over the other person's shared screen
 // (BaseDrawRenderer) is wrapped so drawings can be hidden.
 func TestSlickViewLetMeSee(t *testing.T) {
@@ -255,7 +255,7 @@ func TestSlickViewLetMeSee(t *testing.T) {
 		return slackc.Patched("HuddleMiniPanel") && slackc.Patched("BaseDrawRenderer")
 	})
 	e.join()
-	e.until("the anchor after the sidebar huddle bar", 15*time.Second, func() bool {
+	e.until("the anchor after the docked huddle bar", 15*time.Second, func() bool {
 		return e.tree(`"n":"HuddleMiniPanel"`, `"display":"none"`)
 	})
 	e.until("the drawing layer over the shared screen, shown", 25*time.Second, func() bool {

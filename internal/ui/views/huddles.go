@@ -57,16 +57,11 @@ func roomFromEvent(raw json.RawMessage) (huddleRoom, bool) {
 		Active: r.DateEnd == 0 && !r.HasEnded && len(r.Participants) > 0, DM: r.IsDMCall}, true
 }
 
-// joinUnsupported is shown when the user tries to start or join a huddle:
-// huddle audio/video runs on Amazon Chime media servers that yoloslack
-// doesn't implement.
-const joinUnsupported = "Huddles need Slack's audio/video stack (Amazon Chime), which yoloslack doesn't support yet"
-
 // Huddles is the Home-sidebar Huddles page: header, the mint hero banner,
 // live huddles (from realtime sh_room_* events), recent huddles
 // (huddles.history), then "Direct messages" suggestion tiles and
-// "Channels" suggestion rows. Every start/join button explains that
-// huddle media isn't supported.
+// "Channels" suggestion rows. Start and join run the native huddle
+// (huddleui, through the ui root's StartHuddle).
 type Huddles struct {
 	base
 
