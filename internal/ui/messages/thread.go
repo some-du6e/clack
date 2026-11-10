@@ -339,11 +339,21 @@ func (v *ThreadView) subscribed(m core.Message) bool {
 	return m.FollowingThread
 }
 
-// bellShown mirrors module 5mp4's null cases: the root is loaded, and the
-// subscribe action exists (ojBT returns null for a channel the viewer
-// isn't in unless they already follow the thread).
+// threadExperiment reports whether one of the thread pane's Slack
+// experiments is on for the account (core.App.Experiment; its defaults
+// are the account's, docs/THREADS-AUDIT.md).
+func (v *ThreadView) threadExperiment(name string) bool {
+	app := v.h.Core()
+	return app != nil && app.Experiment(name) == "on"
+}
+
+// bellShown is the flexpane header's eX (client-boot-shared XVla): the
+// bell only under thread_header_mute_button (off for the account: Follow
+// is in the ⋮ menu) once the root is loaded, then module 5mp4's null
+// cases (ojBT returns null for a channel the viewer isn't in unless they
+// already follow the thread).
 func (v *ThreadView) bellShown(m core.Message, ok bool) bool {
-	if !ok || v.h.Core() == nil {
+	if !ok || v.h.Core() == nil || !v.threadExperiment("thread_header_mute_button") {
 		return false
 	}
 	if cv, found := v.h.Core().Conv(v.ch); found && cv.Preview && !v.subscribed(m) {
@@ -379,18 +389,25 @@ func (v *ThreadView) header(gtx layout.Context, th *theme.Theme, c *colors, w, h
 		v.h.Toast(*msg)
 	}
 	px := dp(gtx, 16)
-	// .p-flexpane_header__primary: 18px/24px Black, gap 8 to the subtitle.
+	// .p-flexpane__title_container: 18px/24px Black, the subtitle 8px
+	// after it (margin 0 8px); p-flexpane_header--smaller
+	// (smaller_secondary_headers) makes the title 15px/22px Black and the
+	// controls 4px apart (gap 4 over --gap's 6).
+	smaller := v.threadExperiment("smaller_secondary_headers")
 	tsT := textStyle{size: 18, weight: theme.Black, col: c.Text, lineH: 24}
-	ty := (hh - dp(gtx, 24)) / 2
+	gap := dp(gtx, 6)
+	if smaller {
+		tsT.size, tsT.lineH, gap = 15, 22, dp(gtx, 4)
+	}
+	ty := (hh - gtx.Sp(unit.Sp(tsT.lineH))) / 2
 	d := at(gtx, px, ty, func(gtx layout.Context) layout.Dimensions {
 		return lineBox(gtx, tsT, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, tsT, "Thread") })
 	})
-	// header controls, right to left 6px apart (p-flexpane_header__primary
-	// --gap): close, ⋮ (SecondaryHeaderMore), the bell
-	// (thread-mute-button), then plugin content in ThreadSearchButton.
-	// Slack's viewHeaderActionButton is 28×28, radius 8.
+	// header controls, right to left gap apart: close, ⋮
+	// (SecondaryHeaderMore), the bell (thread-mute-button), then plugin
+	// content in ThreadSearchButton. Slack's viewHeaderActionButton is
+	// 28×28, radius 8, the close 12px from the edge.
 	bs := dp(gtx, 28)
-	gap := dp(gtx, 6)
 	cx := w - dp(gtx, 12) - bs
 	root, rootOK := v.root()
 	sub := v.subscribed(root)

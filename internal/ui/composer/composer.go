@@ -515,11 +515,12 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 	case c.ts != "":
 		st.Mode = modeThread
 		// Slack's MessageInput: "Reply to thread…" under the
-		// nested_secondary_view experiment (isNestedSecondaryViewEnabled),
-		// else "Reply…". The account has it: the pane is nested below the
-		// channel header and tabs at its 40% default width
-		// (docs/THREADS-AUDIT.md).
-		st.Placeholder = i18n.T("threads", "Reply to thread…")
+		// nested_secondary_view experiment (isNestedSecondaryViewEnabled,
+		// on for the account: docs/THREADS-AUDIT.md), else "Reply…".
+		st.Placeholder = i18n.T("threads", "Reply…")
+		if a := c.api.a; a != nil && a.Experiment("nested_secondary_view") == "on" {
+			st.Placeholder = i18n.T("threads", "Reply to thread…")
+		}
 	default:
 		st.Mode = modeChannel
 	}

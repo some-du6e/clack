@@ -244,7 +244,7 @@ func (a *App) layoutSecondary(gtx layout.Context) layout.Dimensions {
 // the dragged width once resized ("manual"), never under 300 and leaving
 // the primary view its 300 (secondary maxWidth: region - 300).
 func (a *App) secondaryWidth(gtx layout.Context, panel int) int {
-	w := a.secondaryDefault(panel)
+	w := a.secondaryDefault(gtx, panel)
 	if a.secondary.width > 0 {
 		w = gtx.Dp(unit.Dp(a.secondary.width))
 	}
@@ -254,9 +254,20 @@ func (a *App) secondaryWidth(gtx layout.Context, panel int) int {
 	return max(w, gtx.Dp(theme.SecondaryMin))
 }
 
-// secondaryDefault is getIdealSecondaryWidth: (region - sidebar) * .4,
-// the region being the primary panel the pane shares.
-func (a *App) secondaryDefault(panel int) int { return int(float32(panel)*.4 + .5) }
+// secondaryDefault is getIdealSecondaryWidth: (region - sidebar) * .4
+// under secondary_view_default_width (on for the account), the region
+// minus the sidebar being the primary panel the pane shares; without it
+// .3 of the region, the sidebar included.
+func (a *App) secondaryDefault(gtx layout.Context, panel int) int {
+	if c := a.Core(); c != nil && c.Experiment("secondary_view_default_width") != "on" {
+		sb := 0
+		if !a.sidebar.hidden {
+			sb = gtx.Dp(unit.Dp(a.sidebar.width))
+		}
+		return int(float32(panel+sb)*.3 + .5)
+	}
+	return int(float32(panel)*.4 + .5)
+}
 
 // layoutSecondaryResize is the pane's BaseResizer (client-boot-shared
 // 7M48): dragging its left edge sets a manual width within 300 and the
@@ -268,7 +279,7 @@ func (a *App) layoutSecondaryResize(gtx layout.Context, x, h int) {
 	panel := gtx.Constraints.Max.X
 	px := gtx.Metric.PxPerDp
 	cur := float32(panel-x) / px // the width drawn, dp
-	def := float32(a.secondaryDefault(panel)) / px
+	def := float32(a.secondaryDefault(gtx, panel)) / px
 	hi := float32(panel)/px - 300
 	for {
 		e, ok := s.drag.Update(gtx.Metric, gtx.Source, gesture.Horizontal)

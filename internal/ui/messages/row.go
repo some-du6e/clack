@@ -2603,12 +2603,22 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 			})
 			cs.Leave()
 			ax += nd.Size.X + dp(gtx, 8)
-			desc := threadsNS.T("View thread") // ReplyBar's (the threads I18n)
-			if !hov {
-				desc = ""
-				if latest != "" {
-					desc = lastReply(tsTime(latest), rc.now, count) // getThreadLatestReplyText (util.go)
+			// ReplyBar's description: under
+			// unread_thread_indication_in_replybar (on for the account) only
+			// the last reply (getThreadLatestReplyText, util.go), in the
+			// span that shows on hover (reply_bar_hover_last_reply); without
+			// it the last reply at rest and "View thread" on hover. (Its
+			// "Unread" mark needs Activity's channel lists: not drawn.)
+			desc := ""
+			switch app := rc.h.Core(); {
+			case app != nil && app.Experiment("unread_thread_indication_in_replybar") == "on":
+				if hov && latest != "" {
+					desc = lastReply(tsTime(latest), rc.now, count)
 				}
+			case hov:
+				desc = threadsNS.T("View thread") // the threads I18n
+			case latest != "":
+				desc = lastReply(tsTime(latest), rc.now, count)
 			}
 			ds := replyDescClass.Enter(gtx, 0, 0)
 			at(gtx, ax, ty, func(gtx layout.Context) layout.Dimensions {

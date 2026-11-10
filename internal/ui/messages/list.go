@@ -1079,9 +1079,10 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 		}
 	}
 
-	// jump to recent
+	// jump to recent: the message pane's (a thread pane has none; its
+	// own banners are ThreadFloatingBanners, thread_banner.go)
 	p := s.list.Position
-	if p.BeforeEnd && s.visible[1] < len(s.items)-2 {
+	if !s.thread && p.BeforeEnd && s.visible[1] < len(s.items)-2 {
 		ts := textStyle{size: 13, weight: theme.Bold, col: c.JumpText, lineH: 18}
 		txt := "Jump to recent"
 		sz := measure(gtx, th, ts, txt)

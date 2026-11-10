@@ -340,7 +340,9 @@ func (s *listState) threadSeparator(gtx layout.Context, h Host, c *colors, it it
 		red := threadNewColor(th, c)
 		ls := textStyle{size: 12, weight: theme.Bold, col: red}
 		m := op.Record(gtx.Ops)
-		ld := label(gtx, th, ls, threadsNS.T("New"))
+		lg := gtx
+		lg.Constraints = layout.Constraints{Max: image.Pt(w, 1<<20)} // its own width (the row's Min is the row's)
+		ld := label(lg, th, ls, threadsNS.T("New"))
 		call := m.Stop()
 		b, padX, padT, padB, lh := dp(gtx, 1), dp(gtx, 4), dp(gtx, 2), dp(gtx, 4), dp(gtx, 8)
 		bw, bh := 2*b+2*padX+ld.Size.X, 2*b+padT+lh+padB

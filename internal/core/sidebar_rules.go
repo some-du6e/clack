@@ -131,6 +131,12 @@ var defaultExperimentGroups = map[string]string{
 	// silent_sidebar (focus mode, ui/focus_mode.go); the Availability page
 	// is availability_prefs_section's (AvailabilitySection)
 	"silent_sidebar": "on", "availability_prefs_section": "on",
+	// the thread pane (docs/THREADS-AUDIT.md, live 2026-11-10): nested below
+	// the channel header at the 40% default width, the smaller header (15px
+	// title, controls 4px apart), the reply bar's hover-only last reply; no
+	// thread_header_mute_button (no bell in the header)
+	"nested_secondary_view": "on", "secondary_view_default_width": "on", "smaller_secondary_headers": "on",
+	"unread_thread_indication_in_replybar": "on",
 }
 
 func (a *App) sidebarExperiments() sidebarExp {
