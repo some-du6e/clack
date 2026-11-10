@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"gioui.org/font"
+	"gioui.org/gesture"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
@@ -132,11 +133,14 @@ type SearchPopover struct {
 
 	rows    []srRow
 	clicks  []widget.Clickable
-	sel     int
+	sel     int  // the row Enter opens: the picked row, else the first one
+	picked  bool // a row is selected (Slack's selectedIndex isn't null)
 	hover   int
 	ensure  bool
 	query   string
 	lastKey string
+	listHov gesture.Hover // the list (onMouseLeave resets the selection)
+	inList  bool
 
 	// local data (snapshot taken once when core is ready)
 	snapOK  bool
@@ -386,8 +390,10 @@ func (p *SearchPopover) rebuild(now time.Time, resetSel bool) {
 	for len(p.clicks) < len(p.rows) {
 		p.clicks = append(p.clicks, widget.Clickable{})
 	}
+	// a picked row stays picked while it's still listed; otherwise the
+	// first row is the pseudo-selected one, whatever arrived above it
 	sel := -1
-	if !resetSel && p.lastKey != "" {
+	if !resetSel && p.picked && p.lastKey != "" {
 		for i := range p.rows {
 			if p.rows[i].key() == p.lastKey {
 				sel = i
@@ -396,17 +402,47 @@ func (p *SearchPopover) rebuild(now time.Time, resetSel bool) {
 		}
 	}
 	if sel < 0 {
-		for i := range p.rows {
-			if p.rows[i].selectable() {
-				sel = i
-				break
-			}
-		}
+		sel = p.firstRow()
+		p.picked = false
 	}
 	if resetSel {
 		p.list.Position = layout.Position{}
 	}
 	p.setSel(sel)
+}
+
+// firstRow is the first selectable row (Slack's pseudo-selected
+// suggestion 0), -1 when there is none.
+func (p *SearchPopover) firstRow() int {
+	for i := range p.rows {
+		if p.rows[i].selectable() {
+			return i
+		}
+	}
+	return -1
+}
+
+// lastRow is the last selectable row.
+func (p *SearchPopover) lastRow() int {
+	for i := len(p.rows) - 1; i >= 0; i-- {
+		if p.rows[i].selectable() {
+			return i
+		}
+	}
+	return -1
+}
+
+// pick selects row i (a keyboard or mouse selection).
+func (p *SearchPopover) pick(i int) {
+	p.setSel(i)
+	p.picked = true
+}
+
+// unpick is selectedIndex null: nothing selected, Enter opens the first
+// row (pseudo-selected).
+func (p *SearchPopover) unpick() {
+	p.picked = false
+	p.setSel(p.firstRow())
 }
 
 func (p *SearchPopover) setSel(i int) {
@@ -695,6 +731,65 @@ func (p *SearchPopover) submit(q string) {
 	p.h.Navigate("search?q=" + url.QueryEscape(q))
 }
 
+// openFeedback is the footer's "Give feedback" (Footer's feedbackLinkProps:
+// CombinedSearchFeedbackModal with feedbackType "omniswitcher", the query
+// and the suggestions on screen). The popover closes under it.
+func (p *SearchPopover) openFeedback() {
+	q, sess := strings.TrimSpace(p.query), p.sess
+	sugg := srFeedbackSuggestions(p.rows)
+	p.Dismiss()
+	openSearchFeedback(p.h, srFeedbackOpts{feedbackType: "omniswitcher", query: q, payload: func() any {
+		return srOmniFeedbackPayload{SearchSessionID: sess.ID, Query: q, ClientVersion: core.SearchFeedbackClientVersion,
+			Suggestions: sugg}
+	}})
+}
+
+// srOmniFeedbackPayload is combinedSearchFeedbackSubmit's omniswitcher
+// payload, in Slack's key order. Slack's suggestions are its full
+// suggestion objects (cleanSuggestions drops modelScore, frecencyScore,
+// type and featureVector); Clack sends what its rows hold: the id, the
+// name and Slack's is_type_* flag.
+type srOmniFeedbackPayload struct {
+	SearchSessionID string           `json:"search_session_id"`
+	Query           string           `json:"query"`
+	ClientVersion   string           `json:"client_version"`
+	Suggestions     []map[string]any `json:"suggestions"`
+}
+
+// srFeedbackSuggestions are the rows as feedback suggestions.
+func srFeedbackSuggestions(rows []srRow) []map[string]any {
+	out := []map[string]any{}
+	for i := range rows {
+		r := &rows[i]
+		var flag string
+		switch r.kind {
+		case srRConv:
+			flag = "is_type_channel"
+			if r.mpim {
+				flag = "is_type_mpim"
+			}
+		case srRChan:
+			flag = "is_type_channel"
+		case srRUser:
+			flag = "is_type_user"
+		case srRPlace:
+			flag = "is_type_view"
+		case srRShow:
+			flag = "is_type_query"
+		case srRQuery:
+			flag = "is_type_query_history"
+		case srRMsg:
+			flag = "is_type_quick_message"
+		case srRFile:
+			flag = "is_type_file"
+		default:
+			continue
+		}
+		out = append(out, map[string]any{"id": r.id, "name": r.title, flag: true})
+	}
+	return out
+}
+
 func (p *SearchPopover) activate(i int) {
 	if i < 0 || i >= len(p.rows) || !p.rows[i].selectable() {
 		return
@@ -744,27 +839,32 @@ func (p *SearchPopover) activate(i int) {
 	}
 }
 
+// move is SearchAutocomplete's increment/decrementSelectedIndex: from
+// nothing selected, Down picks the first row and Up the last; past either
+// end the selection goes back to none (restoreUserQuery).
 func (p *SearchPopover) move(d int) {
-	n := len(p.rows)
-	if n == 0 {
+	first, last := p.firstRow(), p.lastRow()
+	if first < 0 {
 		return
 	}
-	i := p.sel
-	for k := 0; k < n; k++ {
-		if i < 0 {
-			i = 0
-			if d < 0 {
-				i = n - 1
-			}
-		} else {
-			i = (i + d + n) % n
+	switch {
+	case !p.picked && d > 0:
+		p.pick(first)
+	case !p.picked:
+		p.pick(last)
+	case d > 0 && p.sel >= last, d < 0 && p.sel <= first:
+		p.unpick()
+	default:
+		i := p.sel
+		for i += d; i >= 0 && i < len(p.rows) && !p.rows[i].selectable(); i += d {
 		}
-		if p.rows[i].selectable() {
-			p.setSel(i)
-			p.ensure = true
-			return
+		if i < 0 || i >= len(p.rows) {
+			p.unpick()
+		} else {
+			p.pick(i)
 		}
 	}
+	p.ensure = true
 }
 
 func (p *SearchPopover) keys(gtx layout.Context) {
@@ -839,6 +939,12 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 			}
 		case widget.SubmitEvent:
 			p.enter()
+		case widget.SelectEvent:
+			// ArrowLeft/Right, Home, End, ⌘A move the caret: Slack's
+			// onKeydown resets the selection (selectedIndex null)
+			if p.picked {
+				p.unpick()
+			}
 		}
 		if p.done {
 			return layout.Dimensions{}
@@ -865,7 +971,8 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 		p.rebuild(gtx.Now, true)
 	}
 	if p.feedback.Clicked(gtx) {
-		p.h.Toast("Feedback isn't supported yet")
+		p.openFeedback()
+		return layout.Dimensions{}
 	}
 	for i := range p.rows {
 		if p.clicks[i].Clicked(gtx) {
@@ -875,6 +982,8 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 			}
 		}
 	}
+	// onMouseMove picks the row under the pointer; leaving the list
+	// (onMouseLeaveList) goes back to nothing selected.
 	hov := -1
 	for i := range p.rows {
 		if p.rows[i].selectable() && p.clicks[i].Hovered() {
@@ -883,9 +992,15 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 	}
 	if hov != p.hover {
 		if hov >= 0 {
-			p.setSel(hov)
+			p.pick(hov)
 		}
 		p.hover = hov
+	}
+	if in := p.listHov.Update(gtx.Source); in != p.inList {
+		p.inList = in
+		if !in && p.picked {
+			p.unpick()
+		}
 	}
 	p.tick(gtx)
 	if p.scrim.Layout(gtx) {
@@ -948,6 +1063,7 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 		return slackc.RenderLazy(gtx, "SearchAutocomplete", p.autocompleteProps, func(gtx layout.Context, pp slackc.Props) layout.Dimensions {
 			p.applySuggestions(pp)
 			defer clip.Rect{Max: image.Pt(w, listH)}.Push(gtx.Ops).Pop()
+			p.listHov.Add(gtx.Ops)
 			return p.list.Layout(gtx, len(p.rows), func(gtx layout.Context, i int) layout.Dimensions {
 				return p.row(gtx, th, cl, i, w)
 			})
@@ -1041,26 +1157,23 @@ func (p *SearchPopover) inputRow(gtx layout.Context, th *theme.Theme, cl *Colors
 	at(gtx, image.Pt(tx, 0), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, rh, func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Min: image.Pt(tw, 0), Max: image.Pt(tw, rh)}
-			if p.ed.Len() == 0 {
+			if p.ed.Len() == 0 && p.ghostText() == "" {
 				call, _ := record(gtx, func(gtx layout.Context) layout.Dimensions {
 					gtx.Constraints.Min = image.Point{}
 					return text(gtx, th, 15, theme.Regular, cl.Placeholder, "Search across people, channels, files, workflows, and more")
 				})
 				call.Add(gtx.Ops)
-			} else if p.sel >= 0 && p.sel < len(p.rows) && gtx.Focused(&p.ed) {
-				switch p.rows[p.sel].kind {
-				case srRConv, srRUser, srRChan, srRFile:
-					qw := textW(gtx, th, 15, theme.Regular, p.query)
-					hint := "— Open"
-					if hw := textW(gtx, th, 15, theme.Regular, hint); qw+dp(gtx, 4)+hw <= tw {
-						call, _ := record(gtx, func(gtx layout.Context) layout.Dimensions {
-							gtx.Constraints.Min = image.Point{}
-							return text(gtx, th, 15, theme.Regular, cl.Fg3, hint)
-						})
-						t := op.Offset(image.Pt(qw+dp(gtx, 4), 0)).Push(gtx.Ops)
-						call.Add(gtx.Ops)
-						t.Pop()
-					}
+			}
+			if ghost := p.ghostText(); ghost != "" && gtx.Focused(&p.ed) {
+				qw := textW(gtx, th, 15, theme.Regular, p.query)
+				if gw := textW(gtx, th, 15, theme.Regular, ghost); qw+gw <= tw {
+					call, _ := record(gtx, func(gtx layout.Context) layout.Dimensions {
+						gtx.Constraints.Min = image.Point{}
+						return text(gtx, th, 15, theme.Regular, cl.Fg3, ghost)
+					})
+					t := op.Offset(image.Pt(qw, 0)).Push(gtx.Ops)
+					call.Add(gtx.Ops)
+					t.Pop()
 				}
 			}
 			return th.Editor(gtx, &p.ed, unit.Sp(15), cl.Fg, theme.WithAlpha(cl.Focus, 0x55))
@@ -1072,10 +1185,69 @@ func (p *SearchPopover) inputRow(gtx layout.Context, th *theme.Theme, cl *Colors
 	st.Pop()
 }
 
+// ghostText is SearchInputBox's getGhostTextForSelectedSuggestion: the
+// rest of the selected (else the first) suggestion's name when it starts
+// with the query, then " — Open"; " — Search" for a recent search or the
+// "Show results for" row. With an empty box only a picked row has one
+// ("<name> — Open", "<query> — Search"). Typing a space hides it
+// (hasTypedSpace).
+func (p *SearchPopover) ghostText() string {
+	if p.sel < 0 || p.sel >= len(p.rows) || strings.HasSuffix(p.query, " ") {
+		return ""
+	}
+	r := &p.rows[p.sel]
+	nav := false
+	switch r.kind {
+	case srRConv, srRUser, srRChan, srRFile, srRPlace:
+		nav = true
+	}
+	if p.query == "" {
+		switch {
+		case !p.picked:
+			return ""
+		case r.kind == srRQuery:
+			return r.title + " — Search"
+		case nav && r.title != "":
+			return r.title + " — Open"
+		}
+		return ""
+	}
+	switch {
+	case r.kind == srRQuery, r.kind == srRShow:
+		return " — Search"
+	case !nav:
+		return ""
+	}
+	name, q := []rune(r.title), []rune(p.query)
+	if len(q) > len(name) || !strings.EqualFold(string(name[:len(q)]), string(q)) {
+		return ""
+	}
+	return string(name[len(q):]) + " — Open"
+}
+
 func (p *SearchPopover) footer(gtx layout.Context, th *theme.Theme, cl *Colors, sz image.Point) layout.Dimensions {
 	ch := dp(gtx, 20)
 	cy := (sz.Y - ch) / 2
 	x := dp(gtx, 16)
+	if p.picked {
+		// a row is selected: [Enter] Open (Slack adds [Tab] Actions, the
+		// row's action toolbar, which Clack doesn't have)
+		ew := textW(gtx, th, 13, theme.Regular, "Enter") + dp(gtx, 12)
+		rrect(gtx, image.Rect(x, cy, x+ew, cy+ch), dp(gtx, 4), cl.KbdLight)
+		at(gtx, image.Pt(x+dp(gtx, 6), cy), func(gtx layout.Context) layout.Dimensions {
+			return vcenter(gtx, ch, func(gtx layout.Context) layout.Dimensions {
+				return text(gtx, th, 13, theme.Regular, cl.Fg, "Enter")
+			})
+		})
+		x += ew + dp(gtx, 6)
+		at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
+			return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
+				return text(gtx, th, 13, theme.Regular, cl.Fg2, "Open")
+			})
+		})
+		p.feedbackLink(gtx, th, cl, sz)
+		return layout.Dimensions{Size: sz}
+	}
 	for _, name := range [...]string{"caret-up", "caret-down"} {
 		rrect(gtx, image.Rect(x, cy, x+ch, cy+ch), dp(gtx, 4), cl.KbdLight)
 		is := dp(gtx, 12)
@@ -1090,6 +1262,13 @@ func (p *SearchPopover) footer(gtx layout.Context, th *theme.Theme, cl *Colors, 
 			return text(gtx, th, 13, theme.Regular, cl.Fg2, "Select")
 		})
 	})
+	p.feedbackLink(gtx, th, cl, sz)
+	return layout.Dimensions{Size: sz}
+}
+
+// feedbackLink is the footer's FeedbackLink (experimentOmniPolish: just
+// "Give feedback").
+func (p *SearchPopover) feedbackLink(gtx layout.Context, th *theme.Theme, cl *Colors, sz image.Point) {
 	fw := textW(gtx, th, 13, theme.Regular, "Give feedback")
 	at(gtx, image.Pt(sz.X-dp(gtx, 16)-fw, 0), func(gtx layout.Context) layout.Dimensions {
 		return clickBox(gtx, &p.feedback, nil, func(gtx layout.Context) layout.Dimensions {
@@ -1098,7 +1277,6 @@ func (p *SearchPopover) footer(gtx layout.Context, th *theme.Theme, cl *Colors, 
 			})
 		})
 	})
-	return layout.Dimensions{Size: sz}
 }
 
 func (p *SearchPopover) row(gtx layout.Context, th *theme.Theme, cl *Colors, i, w int) layout.Dimensions {
@@ -1129,23 +1307,28 @@ func (p *SearchPopover) row(gtx layout.Context, th *theme.Theme, cl *Colors, i, 
 			})
 		})
 		return layout.Dimensions{Size: sz}
-	case srRMore: // c-search_autocomplete__see_more
-		sel := i == p.sel
+	case srRMore: // c-search_autocomplete__see_more (--selected: base-ter, underlined; :hover underlined)
+		sel := i == p.sel && p.picked
+		under := sel || p.clicks[i].Hovered()
 		return p.clicks[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			if sel {
 				fill(gtx, image.Rectangle{Max: sz}, cl.Selected)
 			}
-			at(gtx, image.Pt(dp(gtx, 52), 0), func(gtx layout.Context) layout.Dimensions {
+			d := at(gtx, image.Pt(dp(gtx, 52), 0), func(gtx layout.Context) layout.Dimensions {
 				gtx.Constraints = layout.Constraints{Max: image.Pt(w-dp(gtx, 68), sz.Y)}
 				return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
 					return text(gtx, th, 13, theme.Regular, cl.Link, r.title)
 				})
 			})
+			if under {
+				uy := (sz.Y+dp(gtx, 13))/2 + dp(gtx, 1)
+				fill(gtx, image.Rect(dp(gtx, 52), uy, dp(gtx, 52)+d.Size.X, uy+maxInt(1, dp(gtx, 1))), cl.Link)
+			}
 			pointerCursor(gtx, sz)
 			return layout.Dimensions{Size: sz}
 		})
 	}
-	sel := i == p.sel
+	sel := i == p.sel && p.picked
 	var state css.State
 	if sel || p.clicks[i].Hovered() {
 		state = css.StateHover
@@ -1167,30 +1350,39 @@ func (p *SearchPopover) row(gtx layout.Context, th *theme.Theme, cl *Colors, i, 
 // suggestion draws a non-message row (Slack's
 // .c-search_autocomplete__suggestion_item; icon and title are its
 // __suggestion_item_left, which StreamerMode blurs).
+//
+// A picked row is .c-search_autocomplete__suggestion_item--selected:
+// #1264a3 with white text and icons, no badge. Nothing picked, the first
+// row is --pseudo-selected while the input has the focus: base-ter and the
+// Enter key (suggestion_item_shortcut, 16px from the content).
 func (p *SearchPopover) suggestion(gtx layout.Context, th *theme.Theme, cl *Colors, rst slackc.Styled, i int, sz image.Point) layout.Dimensions {
 	r := &p.rows[i]
-	sel := i == p.sel
+	picked := i == p.sel && p.picked
+	pseudo := i == p.sel && !p.picked && gtx.Focused(&p.ed)
 	return p.clicks[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min = image.Point{}
-		if sel {
+		switch {
+		case picked:
+			fill(gtx, image.Rectangle{Max: sz}, rst.Background(cl.Highlight))
+		case pseudo:
 			fill(gtx, image.Rectangle{Max: sz}, rst.Background(cl.Selected))
-		} else if rst.Has("background-color") {
+		case rst.Has("background-color"):
 			fill(gtx, image.Rectangle{Max: sz}, rst.Background(cl.Bg))
 		}
 		// right side
 		right := sz.X - dp(gtx, 16)
-		if sel {
+		if pseudo {
 			right -= srEnterChip(gtx, th, cl, right, sz.Y)
-			right -= dp(gtx, 20)
+			right -= dp(gtx, 16)
 		}
-		if r.badge > 0 {
+		if r.badge > 0 && !picked {
 			right -= srBadge(gtx, th, cl, r.badge, right, sz.Y)
 			right -= dp(gtx, 12)
 		}
 		lst := srSuggLeftClass.Enter(gtx, 0, 0)
 		if !lst.Hidden() {
 			lst.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
-				p.suggestionLeft(gtx, th, cl, r, sel, sz, right)
+				p.suggestionLeft(gtx, th, cl, r, picked, pseudo, sz, right)
 				return layout.Dimensions{Size: image.Pt(right, sz.Y)}
 			})
 		}
@@ -1202,17 +1394,22 @@ func (p *SearchPopover) suggestion(gtx layout.Context, th *theme.Theme, cl *Colo
 
 // suggestionLeft draws the row's icon, title and secondary text left of
 // right.
-func (p *SearchPopover) suggestionLeft(gtx layout.Context, th *theme.Theme, cl *Colors, r *srRow, sel bool, sz image.Point, right int) {
+func (p *SearchPopover) suggestionLeft(gtx layout.Context, th *theme.Theme, cl *Colors, r *srRow, picked, pseudo bool, sz image.Point, right int) {
 	box := dp(gtx, 24)
 	lx, ly := dp(gtx, 16), (sz.Y-box)/2
+	rowBg := cl.Bg
+	fg, fg2, fg3 := cl.Fg, cl.Fg2, cl.Fg3
+	switch {
+	case picked:
+		rowBg = cl.Highlight
+		fg, fg2, fg3 = cl.HighText, cl.HighText, cl.HighText
+	case pseudo:
+		rowBg = cl.Selected
+	}
 	switch {
 	case r.mpim:
-		rowBg := cl.Bg
-		if sel {
-			rowBg = cl.Selected
-		}
 		at(gtx, image.Pt(lx, ly), func(gtx layout.Context) layout.Dimensions {
-			return mpimTile(gtx, p.h, r.members, 24, rowBg, sel)
+			return mpimTile(gtx, p.h, r.members, 24, rowBg, picked || pseudo)
 		})
 	case r.isAvatar:
 		at(gtx, image.Pt(lx, ly), func(gtx layout.Context) layout.Dimensions {
@@ -1221,13 +1418,14 @@ func (p *SearchPopover) suggestionLeft(gtx layout.Context, th *theme.Theme, cl *
 		if r.presence != "" {
 			d := dp(gtx, 10)
 			c := image.Pt(lx+box-d/2+dp(gtx, 1), ly+box-d/2+dp(gtx, 1))
-			bg := cl.Bg
-			if sel {
-				bg = cl.Selected
-			}
-			theme.Circle(gtx, c, d, bg)
+			theme.Circle(gtx, c, d, rowBg)
 			dd := dp(gtx, 7)
 			at(gtx, c.Sub(image.Pt(dd/2, dd/2)), func(gtx layout.Context) layout.Dimensions {
+				if picked && r.presence != "active" {
+					// the --selected row whitens a non-active presence ring
+					stroke(gtx, image.Rect(0, 0, dd, dd), dd/2, maxInt(1, dp(gtx, 1)), fg)
+					return layout.Dimensions{Size: image.Pt(dd, dd)}
+				}
 				return presenceDot(gtx, th, r.presence == "active", 7)
 			})
 		}
@@ -1236,23 +1434,23 @@ func (p *SearchPopover) suggestionLeft(gtx layout.Context, th *theme.Theme, cl *
 		stroke(gtx, rb, dp(gtx, 6), maxInt(1, dp(gtx, 1)), cl.BtnBorder)
 		is := dp(gtx, 16)
 		at(gtx, image.Pt(lx+(box-is)/2, ly+(box-is)/2), func(gtx layout.Context) layout.Dimensions {
-			return icon(gtx, r.icon, 16, cl.Fg)
+			return icon(gtx, r.icon, 16, fg)
 		})
 	case r.icon != "":
 		is := dp(gtx, 20)
 		at(gtx, image.Pt(lx+(box-is)/2, ly+(box-is)/2), func(gtx layout.Context) layout.Dimensions {
-			return icon(gtx, r.icon, 20, cl.Fg2)
+			return icon(gtx, r.icon, 20, fg2)
 		})
 	}
 	x := dp(gtx, 52)
 	maxX := right
-	x = p.drawTitle(gtx, th, cl, r, x, maxX, sz.Y)
+	x = p.drawTitle(gtx, th, fg, r, x, maxX, sz.Y)
 	if r.alt != "" && x < maxX {
 		s := " · " + r.alt
 		at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(maxX-x, sz.Y)}
 			return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 13, theme.Regular, cl.Fg3, s)
+				return text(gtx, th, 13, theme.Regular, fg3, s)
 			})
 		})
 	}
@@ -1260,7 +1458,7 @@ func (p *SearchPopover) suggestionLeft(gtx layout.Context, th *theme.Theme, cl *
 
 // drawTitle draws the row's primary text (match in bold) and returns the x
 // after it.
-func (p *SearchPopover) drawTitle(gtx layout.Context, th *theme.Theme, cl *Colors, r *srRow, x, maxX, h int) int {
+func (p *SearchPopover) drawTitle(gtx layout.Context, th *theme.Theme, fg color.NRGBA, r *srRow, x, maxX, h int) int {
 	type piece struct {
 		s  string
 		wt font.Weight
@@ -1295,7 +1493,7 @@ func (p *SearchPopover) drawTitle(gtx layout.Context, th *theme.Theme, cl *Color
 		d := at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(maxX-x, h)}
 			return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 15, pc.wt, cl.Fg, pc.s)
+				return text(gtx, th, 15, pc.wt, fg, pc.s)
 			})
 		})
 		x += d.Size.X
@@ -1336,7 +1534,7 @@ func srBadge(gtx layout.Context, th *theme.Theme, cl *Colors, n, right, h int) i
 
 func (p *SearchPopover) msgRow(gtx layout.Context, th *theme.Theme, cl *Colors, i int, sz image.Point, name, av string, rp slackc.Props) layout.Dimensions {
 	r := &p.rows[i]
-	sel := i == p.sel
+	sel := i == p.sel && p.picked
 	gtx.Constraints = layout.Exact(sz)
 	return p.clicks[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min = image.Point{}

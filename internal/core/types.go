@@ -288,6 +288,9 @@ type SendOpts struct {
 	Channel, Text, ThreadTS string
 	Broadcast               bool
 	Blocks                  json.RawMessage
+	// Attachments go out as chat.postMessage attachments (prepareAndSendMessage's
+	// channelSectionBlocks: [{blocks: [channel_section]}]).
+	Attachments json.RawMessage
 }
 
 // UploadOpts share one or more files (held in memory, never spooled to disk).
@@ -389,6 +392,8 @@ type ChannelDetails struct {
 	TopicSetAt   int64
 	PurposeSetBy string
 	PurposeSetAt int64
+	Props        ChannelProps // properties the Settings tab reads (chdetails.go)
+	HostID       string       // conversation_host_id
 }
 
 type ActivityOpts struct {
@@ -528,6 +533,7 @@ type Draft struct {
 	Files                 int
 	FileIDs               []string
 	FileInfo              []DraftFile // the attached files as drafts.list describes them (by FileIDs order when known)
+	FromComposer          bool        // is_from_composer
 }
 
 // DraftFile is a file attached to a draft: uploaded but not shared yet

@@ -5,11 +5,16 @@ import (
 	"html"
 	"image"
 	"image/color"
+	"io"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
+	"gioui.org/io/clipboard"
+	"gioui.org/io/event"
+	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -18,6 +23,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -52,7 +58,6 @@ type Files struct {
 	base
 	nav       int // filesNav index
 	navClicks [len(filesNav)]widget.Clickable
-	gear      widget.Clickable
 	plus      widget.Clickable
 	newBtn    widget.Clickable
 	emptyNew  widget.Clickable
@@ -64,8 +69,10 @@ type Files struct {
 	tplOpen   bool
 	tplToggle widget.Clickable
 	seeAll    widget.Clickable
-	tplClicks [len(fileTemplates)]widget.Clickable
+	tplClicks []widget.Clickable
 	tplList   widget.List
+	tpls      async[[]core.ListTemplate] // lists.templates, for the strip's list templates
+	tplsAsked bool
 
 	seg       int
 	segClicks [3]widget.Clickable
@@ -92,6 +99,19 @@ type Files struct {
 	list   widget.List
 	clicks map[string]*fileClicks
 	reload bool
+
+	// the sidebar's Starred section: files.favorites.list, then files.info
+	// for the files the browser hasn't loaded
+	starred    async[[]core.File]
+	starAsked  bool
+	starClicks map[string]*widget.Clickable
+
+	// results of writes (star, rename, delete, create from a template),
+	// run on the UI goroutine by update
+	doneMu sync.Mutex
+	done   []func()
+
+	editName widget.Editor // Edit file details' File name
 }
 
 type fileClicks struct {
@@ -105,18 +125,24 @@ var filesNav = [...]struct{ label, icon, kind, title, placeholder string }{
 	{"Deleted", "trash", "deleted", "Deleted", "Search deleted files"},
 }
 
-// Template tiles: UI strings from Slack's Files page (canvas and list
-// templates). Creating from a template isn't supported.
-var fileTemplates = [...]struct {
-	title, desc string
-	list        bool
-}{
-	{"Employee Onboarding", "Welcome new people.", false},
-	{"Project tracker", "Manage and monitor tasks as a team", true},
-	{"Monthly Newsletter", "Broadcast your announcements.", false},
-	{"Feedback tracker", "A streamlined approach to keeping track of feedback from coworkers", true},
-	{"Out of Office Coverage Plan", "Share how your work will be covered.", false},
-	{"Quarterly plan", "A simple format for planning which projects to tackle", false},
+// fileListTemplates are the Templates strip's list templates, in Slack's
+// order (ExplorerActionsTemplates: ProjectTracker, FeedbackTracker,
+// QuarterlyPlan by their production template file ids, PTs7.op), picked
+// from lists.templates (fetchTemplates).
+//
+// Slack's strip also has canvas templates (search.modules.files
+// "type:canvas_template from:<@USLACKBOT>", the ones named
+// EmployeeOnboardingTemplate, MonthlyNewsletterTemplate, WeeklySyncTemplate
+// and OOOCoveragePlan), and a tile opens the canvas template gallery
+// (openCanvasTemplateGalleryModal) on it. Clack has no template gallery and
+// the gallery's create call is in a chunk not ported, so it draws only the
+// list templates.
+var fileListTemplates = [...]string{"F07QP7D3TC5", "F07QS06GTNX", "F07QRV73FNF"}
+
+// fileTemplate is one Templates tile.
+type fileTemplate struct {
+	id, title, desc string
+	list            bool
 }
 
 // The Types menu (All files). The first six are on by default, like Slack.
@@ -141,7 +167,9 @@ var fileSorts = [2]string{"Recently viewed", "Last updated"}
 
 // NewFiles builds the Files view (route "files").
 func NewFiles(h Host) *Files {
-	f := &Files{base: newBase(h), search: newSearch(filesNav[0].placeholder), clicks: map[string]*fileClicks{}, reload: true, tplOpen: true}
+	f := &Files{base: newBase(h), search: newSearch(filesNav[0].placeholder), clicks: map[string]*fileClicks{}, reload: true, tplOpen: true,
+		starClicks: map[string]*widget.Clickable{}}
+	f.editName.SingleLine, f.editName.Submit = true, true
 	for i := 0; i < 6; i++ {
 		f.typeOn[i] = true
 	}
@@ -212,6 +240,15 @@ func (f *Files) typeCount() int {
 }
 
 func (f *Files) update(gtx C) {
+	f.drainDone()
+	if a := f.h.Core(); a != nil && !f.tplsAsked {
+		f.tplsAsked = true
+		f.tpls.load(f.h, false, func(ctx context.Context) ([]core.ListTemplate, error) { return a.ListTemplates(ctx) })
+	}
+	if f.h.Core() != nil && !f.starAsked {
+		f.starAsked = true
+		f.loadStarred()
+	}
 	for i := range f.navClicks {
 		if f.navClicks[i].Clicked(gtx) {
 			if f.nav != i {
@@ -228,9 +265,6 @@ func (f *Files) update(gtx C) {
 			f.seg, f.reload = i, true
 		}
 	}
-	if f.gear.Clicked(gtx) {
-		f.h.Toast("File settings aren't supported yet")
-	}
 	if f.plus.Clicked(gtx) || f.newBtn.Clicked(gtx) || f.emptyNew.Clicked(gtx) {
 		if cc, ok := f.h.(interface{ CreateCanvas() }); ok && filesNav[f.nav].kind != "lists" {
 			cc.CreateCanvas()
@@ -241,12 +275,17 @@ func (f *Files) update(gtx C) {
 	if f.tplToggle.Clicked(gtx) {
 		f.tplOpen = !f.tplOpen
 	}
-	if f.seeAll.Clicked(gtx) {
-		f.h.Toast("Templates aren't supported yet")
+	// "See all" (Lists only here, see templatesHead): Slack's list
+	// templates modal; Clack's lists.templates menu.
+	if f.seeAll.Clicked(gtx) && f.kind() == "lists" {
+		if cl, ok := f.h.(interface{ NewListMenu() }); ok {
+			cl.NewListMenu() // mount_features_lists.go
+		}
 	}
+	tpls := f.templateItems()
 	for i := range f.tplClicks {
-		if f.tplClicks[i].Clicked(gtx) {
-			f.h.Toast("Creating from a template isn't supported yet")
+		if f.tplClicks[i].Clicked(gtx) && i < len(tpls) {
+			f.createFromTemplate(tpls[i])
 		}
 	}
 	if f.typesBtn.Clicked(gtx) {
@@ -305,13 +344,20 @@ func (f *Files) update(gtx C) {
 			f.open(*it)
 		}
 		if c.star.Clicked(gtx) {
-			f.h.Toast("Starring files isn't supported yet")
+			f.toggleStar(it.File)
 		}
 		if c.menu.Clicked(gtx) {
-			f.h.Toast("File actions aren't supported yet")
+			f.openMenu(*it)
 		}
 		if c.owner.Clicked(gtx) && it.User != "" {
 			f.h.OpenProfile(image.Point{}, it.User)
+		}
+	}
+	if st, ok, _ := f.starred.get(); ok {
+		for _, sf := range st {
+			if c := f.starClicks[sf.ID]; c != nil && c.Clicked(gtx) {
+				openFile(f.h, fileItem{sf})
+			}
 		}
 	}
 }
@@ -333,30 +379,7 @@ func fileUpdated(it *fileItem) int64 {
 	return it.Created
 }
 
-func (f *Files) open(it fileItem) {
-	switch {
-	case it.isCanvas() && it.ID != "":
-		if co, ok := f.h.(interface{ OpenCanvasFull(id string) }); ok {
-			co.OpenCanvasFull(it.ID)
-			return
-		}
-		f.h.Toast("Opening canvases isn't supported yet")
-	case it.isList() && it.ID != "":
-		if lo, ok := f.h.(interface{ OpenListFull(id string) }); ok {
-			lo.OpenListFull(it.ID) // mount_features_lists.go
-			return
-		}
-		f.h.Toast("Opening lists isn't supported yet")
-	case it.isImage() && it.URL != "":
-		f.h.OpenLightbox(richtext.Image{URL: it.URL, Alt: it.title(), W: it.ThumbW, H: it.ThumbH, Title: it.title(), Proxy: true}, core.Message{})
-	case len(it.Channels) > 0:
-		f.h.Navigate("c/" + it.Channels[0])
-	case it.isCanvas():
-		f.h.Toast("Opening canvases isn't supported yet")
-	default:
-		f.h.Toast("Opening this file isn't supported yet")
-	}
-}
+func (f *Files) open(it fileItem) { openFile(f.h, it) }
 
 // Layout draws the Files sidebar and the primary pane side by side.
 func (f *Files) Layout(gtx C) D {
@@ -465,9 +488,13 @@ func (f *Files) nav_(gtx C) D {
 				g.Constraints.Min.Y = gtx.Dp(52)
 				return layout.Inset{Top: 12, Bottom: 12, Left: 8}.Layout(g, func(gtx C) D {
 					return row(gtx, layout.Middle,
+						// Slack's settings button ("More options",
+						// unified-files-sidebar-settings-menu) renders only
+						// when its menu has items, and its one item, "Bulk
+						// manage files", needs custom_file_sections (file
+						// sections Clack doesn't have): without them there's
+						// no gear.
 						layout.Flexed(1, func(gtx C) D { return f.label(gtx, 18, wBlack, rgb(0xffffff), "Files") }),
-						layout.Rigid(func(gtx C) D { return f.iconButton(gtx, &f.gear, "settings", 28, 20, navText) }),
-						hgap(4),
 						layout.Rigid(func(gtx C) D { return f.iconButton(gtx, &f.plus, "plus", 28, 20, navText) }),
 					)
 				})
@@ -490,10 +517,58 @@ func (f *Files) nav_(gtx C) D {
 				})
 			}),
 			layout.Rigid(func(gtx C) D {
+				st, ok, _ := f.starred.get()
+				if ok && len(st) > 0 {
+					return f.starredRows(gtx, st, navText, navHover)
+				}
 				return layout.Inset{Left: 32, Right: 8, Top: 2}.Layout(gtx, f.starHint)
 			}),
 		)
 	})
+}
+
+// starredRows lists the starred files under Starred (Slack's
+// browse-sidebar-item rows: the file's type icon and title, 28px).
+func (f *Files) starredRows(gtx C, st []core.File, fg, hover color.NRGBA) D {
+	ch := make([]layout.FlexChild, 0, len(st))
+	for i := range st {
+		sf := st[i]
+		c := f.starClicks[sf.ID]
+		if c == nil {
+			c = new(widget.Clickable)
+			f.starClicks[sf.ID] = c
+		}
+		ch = append(ch, layout.Rigid(func(gtx C) D {
+			return c.Layout(gtx, func(gtx C) D {
+				pointerCursor(gtx)
+				w, h := gtx.Constraints.Max.X, gtx.Dp(28)
+				if c.Hovered() {
+					rrect(gtx, image.Rect(0, 0, w, h), gtx.Dp(4), hover)
+				}
+				g := gtx
+				g.Constraints = layout.Exact(image.Pt(w, h))
+				it := fileItem{sf}
+				icon := "files"
+				switch {
+				case it.isCanvas():
+					icon = "canvas"
+				case it.isList():
+					icon = "list-view"
+				}
+				layout.Inset{Left: 8, Right: 8}.Layout(g, func(gtx C) D {
+					return layout.W.Layout(gtx, func(gtx C) D {
+						return row(gtx, layout.Middle,
+							layout.Rigid(func(gtx C) D { return f.icon(gtx, icon, 16, fg) }),
+							hgap(8),
+							layout.Flexed(1, func(gtx C) D { return f.label(gtx, 15, wReg, fg, it.title()) }),
+						)
+					})
+				})
+				return D{Size: image.Pt(w, h)}
+			})
+		}))
+	}
+	return col(gtx, ch...)
 }
 
 // ---- primary pane ----
@@ -562,7 +637,7 @@ func (f *Files) body(gtx C) D {
 	if loaded && len(vis) < 12 && f.page < f.pages && f.page < 8 {
 		f.loadMore()
 	}
-	showTpl := f.kind() != "deleted" && f.query == ""
+	showTpl := f.kind() != "deleted" && f.query == "" && len(f.templateItems()) > 0
 	const (
 		rSearch = iota
 		rTplHead
@@ -705,7 +780,10 @@ func (f *Files) templatesHead(gtx C) D {
 		}),
 		layout.Flexed(1, func(gtx C) D { return D{Size: image.Pt(gtx.Constraints.Min.X, 0)} }),
 		layout.Rigid(func(gtx C) D {
-			if f.nav == 0 {
+			// ExplorerActionsTemplates: no "See all" on All files; on
+			// Canvases it opens the canvas template gallery, which Clack
+			// doesn't have
+			if f.kind() != "lists" {
 				return D{}
 			}
 			return f.linkButton(gtx, &f.seeAll, 15, "See all")
@@ -713,46 +791,60 @@ func (f *Files) templatesHead(gtx C) D {
 	)
 }
 
+// templateItems are the strip's tiles for the current section, from
+// lists.templates (see fileListTemplates): All files and Lists show the
+// list templates, Canvases none.
+func (f *Files) templateItems() []fileTemplate {
+	if f.kind() != "" && f.kind() != "lists" {
+		return nil
+	}
+	got, ok, err := f.tpls.get()
+	if !ok || err != nil {
+		return nil
+	}
+	out := make([]fileTemplate, 0, len(fileListTemplates))
+	for _, id := range fileListTemplates {
+		for _, t := range got {
+			if t.ID == id {
+				out = append(out, fileTemplate{id: t.ID, title: t.Name, desc: t.Description, list: true})
+			}
+		}
+	}
+	if n := len(out); len(f.tplClicks) < n {
+		f.tplClicks = append(f.tplClicks, make([]widget.Clickable, n-len(f.tplClicks))...)
+	}
+	return out
+}
+
 // templates: tiles h 227, radius 12, 8px gap; All files scrolls a strip of
 // 266px tiles, Canvases/Lists fill the width with 3 tiles.
 func (f *Files) templates(gtx C) D {
-	idx := make([]int, 0, len(fileTemplates))
-	for i, t := range fileTemplates {
-		switch {
-		case f.nav == 1 && t.list, f.nav == 2 && !t.list:
-			continue
-		}
-		idx = append(idx, i)
-	}
+	tpls := f.templateItems()
 	gap := gtx.Dp(8)
 	h := gtx.Dp(227)
 	if f.nav != 0 {
-		if len(idx) > 3 {
-			idx = idx[:3]
-		}
+		n := min(len(tpls), 3)
 		w := (gtx.Constraints.Max.X - gap*2) / 3
 		ch := make([]layout.FlexChild, 0, 6)
-		for k, i := range idx {
+		for i := 0; i < n; i++ {
 			i := i
-			if k > 0 {
+			if i > 0 {
 				ch = append(ch, layout.Rigid(func(gtx C) D { return D{Size: image.Pt(gap, 0)} }))
 			}
-			ch = append(ch, layout.Rigid(func(gtx C) D { return f.tile(gtx, i, image.Pt(w, h)) }))
+			ch = append(ch, layout.Rigid(func(gtx C) D { return f.tile(gtx, tpls[i], &f.tplClicks[i], image.Pt(w, h)) }))
 		}
 		return row(gtx, layout.Start, ch...)
 	}
 	w := gtx.Dp(266)
 	g := gtx
 	g.Constraints = layout.Exact(image.Pt(gtx.Constraints.Max.X, h+gtx.Dp(2)))
-	f.tplList.Layout(g, len(idx), func(gtx C, k int) D {
-		return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, func(gtx C) D { return f.tile(gtx, idx[k], image.Pt(w, h)) })
+	f.tplList.Layout(g, len(tpls), func(gtx C, k int) D {
+		return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, func(gtx C) D { return f.tile(gtx, tpls[k], &f.tplClicks[k], image.Pt(w, h)) })
 	})
 	return D{Size: image.Pt(gtx.Constraints.Max.X, h+gtx.Dp(2))}
 }
 
-func (f *Files) tile(gtx C, i int, sz image.Point) D {
-	t := fileTemplates[i]
-	c := &f.tplClicks[i]
+func (f *Files) tile(gtx C, t fileTemplate, c *widget.Clickable, sz image.Point) D {
 	return c.Layout(gtx, func(gtx C) D {
 		pointerCursor(gtx)
 		rad := gtx.Dp(12)
@@ -1000,8 +1092,20 @@ func (f *Files) card(gtx C, it *fileItem, first, last bool) D {
 					return c.owner.Layout(gtx, func(gtx C) D { return f.avatar(gtx, u.Avatar, 20) })
 				}),
 				hgap(4),
-				layout.Rigid(func(gtx C) D { return f.iconButton(gtx, &c.star, "star", 28, 18, f.p.Meta) }),
-				layout.Rigid(func(gtx C) D { return f.iconButton(gtx, &c.menu, "kebab", 28, 18, f.p.Meta) }),
+				layout.Rigid(func(gtx C) D {
+					// FileActions' renderFavoriteCanvas / renderFavoriteList:
+					// the star is on canvases and lists only
+					if f.kind() == "deleted" || !it.isCanvas() && !it.isList() {
+						return D{}
+					}
+					return f.starButton(gtx, &c.star, f.h.Core().FileStarred(it.ID))
+				}),
+				layout.Rigid(func(gtx C) D {
+					if f.kind() == "deleted" {
+						return D{}
+					}
+					return f.iconButton(gtx, &c.menu, "kebab", 28, 18, f.p.Meta)
+				}),
 			)
 		})
 		call := m.Stop()
@@ -1187,14 +1291,20 @@ func (f *Files) cleanTitles(in []core.File) []fileItem {
 	return out
 }
 
-// starHint is "Click the ⭐ star on any file to add it here for later.",
-// with the star drawn as Slack's emoji image (Lato has no emoji glyphs).
+// starHint is Starred's empty row: "Click the ⭐ star on any canvas or
+// list to add it here for later." ("on any file" with
+// unified_files_3p_primary_custom_sections), the star drawn as Slack's
+// emoji image (Lato has no emoji glyphs).
 func (f *Files) starHint(gtx C) D {
 	const lead = "Click the "
+	tail := "star on any canvas or list to add it here for later."
+	if f.h.Core().Experiment("unified_files_3p_primary_custom_sections") == "on" {
+		tail = "star on any file to add it here for later."
+	}
 	w := f.th.Measure(gtx, 15, wReg, lead)
 	url, _, ok := f.h.Core().Emoji("star")
 	if !ok {
-		return f.para(gtx, 15, 22, wReg, filesNavText, 0, "Click the star on any file to add it here for later.")
+		return f.para(gtx, 15, 22, wReg, filesNavText, 0, "Click the "+tail)
 	}
 	// Lay the sentence with spaces reserving the emoji's width, then draw
 	// the emoji over the gap (it sits on the first line).
@@ -1203,10 +1313,492 @@ func (f *Files) starHint(gtx C) D {
 	if sp > 0 {
 		n = (gtx.Dp(18) + sp - 1) / sp
 	}
-	d := f.para(gtx, 15, 22, wReg, filesNavText, 0, lead+strings.Repeat(" ", n)+"star on any file to add it here for later.")
+	d := f.para(gtx, 15, 22, wReg, filesNavText, 0, lead+strings.Repeat(" ", n)+tail)
 	func() {
 		defer opOffset(gtx, image.Pt(w+gtx.Dp(1), gtx.Dp(3))).Pop()
 		f.emojiImg(gtx, url, 16)
 	}()
 	return d
+}
+
+// ---- file actions ----
+
+// post queues fn for the UI goroutine (drainDone) and wakes the window.
+func (f *Files) post(fn func()) {
+	f.doneMu.Lock()
+	f.done = append(f.done, fn)
+	f.doneMu.Unlock()
+	f.h.Invalidate()
+}
+
+func (f *Files) drainDone() {
+	f.doneMu.Lock()
+	ds := f.done
+	f.done = nil
+	f.doneMu.Unlock()
+	for _, fn := range ds {
+		fn()
+	}
+}
+
+// write runs work off the UI goroutine, then then(err) on it.
+func (f *Files) write(work func(ctx context.Context, a *core.App) error, then func(err error)) {
+	a := f.h.Core()
+	if a == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		err := work(ctx, a)
+		f.post(func() { then(err) })
+	}()
+}
+
+// loadStarred fills Starred: files.favorites.list, each file from the
+// loaded pages or files.info (Slack reads them from its file store).
+func (f *Files) loadStarred() {
+	a := f.h.Core()
+	known := map[string]core.File{}
+	for _, it := range f.items {
+		known[it.ID] = it.File
+	}
+	if st, ok, _ := f.starred.get(); ok {
+		for _, sf := range st {
+			known[sf.ID] = sf
+		}
+	}
+	f.starred.load(f.h, true, func(ctx context.Context) ([]core.File, error) {
+		ids, err := a.StarredFiles(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]core.File, 0, len(ids))
+		for _, id := range ids {
+			sf, ok := known[id]
+			if !ok {
+				if sf, err = a.FileInfo(ctx, id); err != nil {
+					continue // deleted or no longer visible: Slack filters those out too
+				}
+			}
+			out = append(out, sf)
+		}
+		return out, nil
+	})
+}
+
+// starButton is FileActions' star (c-file__star_button): "star", or
+// "star-filled" on c-file__unstar_button's sunflower-0 fill with
+// sunflower-60 (hover sunflower-5 / -70).
+func (f *Files) starButton(gtx C, c *widget.Clickable, on bool) D {
+	if !on {
+		return f.iconButton(gtx, c, "star", 28, 18, f.p.Meta)
+	}
+	return c.Layout(gtx, func(gtx C) D {
+		pointerCursor(gtx)
+		sz := gtx.Dp(28)
+		bg, fg := rgb(0xfff4d9), rgb(0x9a6500) // plt-sunflower-0 / -60
+		if c.Hovered() {
+			bg, fg = rgb(0xffe7a8), rgb(0x7a4f00) // plt-sunflower-5 / -70
+		}
+		rrect(gtx, image.Rect(0, 0, sz, sz), gtx.Dp(8), bg)
+		g := gtx
+		g.Constraints = layout.Exact(image.Pt(sz, sz))
+		layout.Center.Layout(g, func(gtx C) D { return f.icon(gtx, "star-filled", 18, fg) })
+		return D{Size: image.Pt(sz, sz)}
+	})
+}
+
+// toggleStar is the star button and the menu's "Add to starred" /
+// "Unstar canvas" / "Unstar list" (makeCanvasCollection,
+// removeListCollection, …): the file joins or leaves Starred at once,
+// files.favorites.add/remove goes out, and a failure puts it back. The
+// Files view shows no toast (addCanvasToFavorites toasts only outside the
+// unified files tab).
+func (f *Files) toggleStar(file core.File) {
+	a := f.h.Core()
+	if a == nil {
+		return
+	}
+	on := !a.FileStarred(file.ID)
+	a.SetFileStarred(file.ID, on)
+	f.setStarredRow(file, on)
+	f.write(func(ctx context.Context, a *core.App) error {
+		a.SetFileStarred(file.ID, on) // StarFile sets it again and reverts on failure
+		return a.StarFile(ctx, file.ID, on)
+	}, func(err error) {
+		if err != nil {
+			f.setStarredRow(file, !on)
+		}
+	})
+}
+
+func (f *Files) setStarredRow(file core.File, on bool) {
+	st, _, _ := f.starred.get()
+	out := make([]core.File, 0, len(st)+1)
+	if on {
+		out = append(out, file)
+	}
+	for _, x := range st {
+		if x.ID != file.ID {
+			out = append(out, x)
+		}
+	}
+	f.starred.mu.Lock()
+	f.starred.val, f.starred.loaded = out, true
+	f.starred.mu.Unlock()
+}
+
+// createFromTemplate is a list template tile: Slack opens the template's
+// preview (ListTemplatePreviewModal) and its "Use template" makes the list
+// with lists.create {template_id}; Clack has no preview, so the tile makes
+// the list and opens it in full view.
+func (f *Files) createFromTemplate(t fileTemplate) {
+	var id string
+	f.write(func(ctx context.Context, a *core.App) error {
+		var err error
+		id, err = a.CreateList(ctx, "", t.id)
+		return err
+	}, func(err error) {
+		if err != nil {
+			f.h.Toast("Couldn't create the list: " + friendlyErr(err))
+			return
+		}
+		if lo, ok := f.h.(interface{ OpenListFull(id string) }); ok {
+			lo.OpenListFull(id)
+		}
+	})
+}
+
+// copyLinkLabel is getCopyLinkLabel.
+func copyLinkLabel(it *fileItem) string {
+	switch {
+	case it.isList():
+		return "Copy link to list"
+	case it.isCanvas():
+		return "Copy link to canvas"
+	}
+	return "Copy link to file"
+}
+
+// fileMenuItems is getFileActionsMenuItems as the Files view's results
+// call it (unified-file-result: FileActions with isUnifiedFiles,
+// showMoreListBrowserActions, includeExternalLinkAction off, the root
+// download button on so no overflow Download, and custom_file_sections
+// off), keeping the items Clack can do:
+//
+//	Add to saved / Remove from Saved (Save for later / Remove from Later
+//	without later_todos) · Add to starred / Unstar canvas / Unstar list ·
+//	Copy link to … | Edit file details (your hosted files) | Open in split
+//	view (canvases, lists) | Delete canvas / list / file (your own)
+//
+// Left out, since Clack has no screen for them: Ask Slackbot, Add to-do,
+// Share canvas / Share list, View file details, Open in new window,
+// Report to Slack.
+func (f *Files) fileMenuItems(it fileItem) []popups.MenuItem {
+	a := f.h.Core()
+	if a == nil {
+		return nil
+	}
+	self := a.Self().ID
+	own := it.User != "" && it.User == self
+	var groups [][]popups.MenuItem
+	var g []popups.MenuItem
+	// save_file
+	id := it.ID
+	saved := a.FileSaved(id)
+	todos := a.Experiment("later_todos") == "on"
+	label, icon := "Save for later", "bookmark"
+	switch {
+	case todos && saved:
+		label, icon = "Remove from Saved", "bookmark-filled"
+	case todos:
+		label = "Add to saved"
+	case saved:
+		label, icon = "Remove from Later", "bookmark-filled"
+	}
+	g = append(g, popups.MenuItem{Label: label, Icon: icon, Do: func() {
+		f.write(func(ctx context.Context, a *core.App) error {
+			if saved {
+				return a.UnsaveFile(ctx, id)
+			}
+			return a.SaveFile(ctx, id)
+		}, func(err error) {
+			if err != nil {
+				f.h.Toast("Couldn’t update your saved items: " + friendlyErr(err))
+			}
+		})
+	}})
+	if it.isCanvas() || it.isList() {
+		label := "Add to starred"
+		if a.FileStarred(id) {
+			label = "Unstar canvas"
+			if it.isList() {
+				label = "Unstar list"
+			}
+		}
+		file := it.File
+		g = append(g, popups.MenuItem{Label: label, Do: func() { f.toggleStar(file) }})
+	}
+	if link := it.Permalink; link != "" {
+		g = append(g, popups.MenuItem{Label: copyLinkLabel(&it), DoCtx: func(gtx layout.Context) {
+			gtx.Execute(clipboard.WriteCmd{Type: "application/text", Data: io.NopCloser(strings.NewReader(link))})
+			f.h.Toast("Link copied to clipboard")
+		}})
+	}
+	groups = append(groups, g)
+	// edit_file: the uploader's hosted (or email) files
+	if own && (it.Mode == "hosted" || it.Mode == "email") {
+		label := "Edit file details"
+		if it.isImage() {
+			label = "Edit image details"
+		}
+		groups = append(groups, []popups.MenuItem{{Label: label, Do: func() { f.editDetails(it, label) }}})
+	}
+	// Open in split view: canvases and lists, with Slack's
+	// move-to-split-view icon; keyed popups.SplitKey, so the shell drops it
+	// in the simplified layout (isBBModeEnabled) as Slack does.
+	if it.isCanvas() || it.isList() {
+		if it.isCanvas() {
+			if co, ok := f.h.(interface{ OpenCanvas(id string) }); ok {
+				groups = append(groups, []popups.MenuItem{{Key: popups.SplitKey, Label: "Open in split view", Icon: "move-to-split-view", Do: func() { co.OpenCanvas(id) }}})
+			}
+		} else if lo, ok := f.h.(interface{ OpenList(id string) }); ok {
+			groups = append(groups, []popups.MenuItem{{Key: popups.SplitKey, Label: "Open in split view", Icon: "move-to-split-view", Do: func() { lo.OpenList(id) }}})
+		}
+	}
+	// delete_file: your own files
+	if own && it.Mode != "tombstone" {
+		label := "Delete file"
+		switch {
+		case it.isCanvas():
+			label = "Delete canvas"
+		case it.isList():
+			label = "Delete list"
+		}
+		groups = append(groups, []popups.MenuItem{{Label: label, Danger: true, Do: func() { f.confirmDelete(it) }}})
+	}
+	var items []popups.MenuItem
+	for _, g := range groups {
+		if len(g) == 0 {
+			continue
+		}
+		if len(items) > 0 {
+			items = append(items, popups.Sep())
+		}
+		items = append(items, g...)
+	}
+	return items
+}
+
+// openMenu is the row's ⋯ ("More actions", more_file_actions): Slack's
+// menu opens beside the button (right-bottom); Clack anchors it at the
+// pointer, which is on the button.
+func (f *Files) openMenu(it fileItem) {
+	ph, ok := f.h.(popups.Host)
+	if !ok {
+		return
+	}
+	items := f.fileMenuItems(it)
+	if len(items) == 0 {
+		return
+	}
+	var at image.Point
+	if pp, ok := f.h.(interface{ PointerPos() image.Point }); ok {
+		at = pp.PointerPos()
+	}
+	ph.ShowOverlay(popups.NewMenuOpts(ph, items, popups.MenuOpts{Anchor: image.Rectangle{Min: at, Max: at}, Width: 240}))
+}
+
+// confirmDelete is DeleteFileDialog: "Delete canvas" / "Are you sure you
+// want to delete this canvas?" / "Delete canvas" (lists alike; other files
+// "Delete file" / "… delete this file permanently?" / "Yes, Delete This
+// File"), the file under the text, then files.delete. On success the row
+// goes (tombstoneFiles); a failure toasts "Oops! We couldn’t delete that
+// file". Lists leave at once (shouldOptimisticallyDeleteFile).
+func (f *Files) confirmDelete(it fileItem) {
+	ph, ok := f.h.(popups.Host)
+	if !ok {
+		return
+	}
+	title, text, action := "Delete file", "Are you sure you want to delete this file permanently?", "Yes, Delete This File"
+	switch {
+	case it.isCanvas():
+		title, text, action = "Delete canvas", "Are you sure you want to delete this canvas?", "Delete canvas"
+	case it.isList():
+		title, text, action = "Delete list", "Are you sure you want to delete this list?", "Delete list"
+	}
+	popups.Confirm(ph, title, text, action, true, func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{Top: 4}.Layout(gtx, func(gtx C) D { return f.deletePreview(gtx, &it) })
+	}, func() { f.deleteFile(it) }).OldDialog() // DeleteFileDialog: DeprecatedBaseDialog, focusOnPrimaryButton
+}
+
+// deleteFile is DeleteFileDialog's onGo: files.delete {file}.
+func (f *Files) deleteFile(it fileItem) {
+	id := it.ID
+	if it.isList() {
+		f.dropItem(id)
+	}
+	f.write(func(ctx context.Context, a *core.App) error { return a.DeleteFile(ctx, id) }, func(err error) {
+		if err != nil {
+			f.h.Toast("Oops! We couldn’t delete that file")
+			f.reload = true
+			return
+		}
+		f.dropItem(id)
+		if a := f.h.Core(); a != nil && a.FileStarred(id) {
+			a.SetFileStarred(id, false)
+			f.setStarredRow(it.File, false)
+		}
+	})
+}
+
+// deletePreview is the dialog's file (FilePreview with "You • time").
+func (f *Files) deletePreview(gtx C, it *fileItem) D {
+	meta := "You"
+	if t := unixTime(it.Created); !t.IsZero() {
+		meta += " • " + listTime(t)
+	}
+	return row(gtx, layout.Middle,
+		layout.Rigid(func(gtx C) D { return f.fileTile(gtx, it, 36) }),
+		hgap(12),
+		layout.Flexed(1, func(gtx C) D {
+			return col(gtx,
+				layout.Rigid(func(gtx C) D { return f.label(gtx, 15, wBold, f.p.Text, it.title()) }),
+				layout.Rigid(func(gtx C) D { return f.label(gtx, 13, wReg, f.p.Meta, meta) }),
+			)
+		}),
+	)
+}
+
+func (f *Files) dropItem(id string) {
+	out := f.items[:0]
+	for _, x := range f.items {
+		if x.ID != id {
+			out = append(out, x)
+		}
+	}
+	f.items = out
+}
+
+// editDetails is EditFileDialog for one file: "Edit file details", the
+// "File name" field (required, at most 255 characters; placeholder
+// "big-sur-trip-aerial.png") and Done, which runs editFileApi: the title
+// changes at once, files.edit goes out, and a failure puts it back.
+// Slack's image variant adds a preview and an alt text field; Clack edits
+// the name only.
+func (f *Files) editDetails(it fileItem, title string) {
+	ph, ok := f.h.(popups.Host)
+	if !ok {
+		return
+	}
+	f.editName.SetText(it.title())
+	f.editName.SetCaret(f.editName.Len(), 0)
+	valid := func() bool {
+		t := strings.TrimSpace(f.editName.Text())
+		return t != "" && len([]rune(t)) <= 255
+	}
+	focused := false
+	submit := func() { f.rename(it, strings.TrimSpace(f.editName.Text())) }
+	th := f.h.Theme()
+	ph.ShowOverlay(popups.NewModal(ph, popups.ModalOpts{
+		Title: title,
+		Body: func(gtx layout.Context) layout.Dimensions {
+			if !focused {
+				focused = true
+				gtx.Execute(key.FocusCmd{Tag: &f.editName})
+			}
+			return col(gtx,
+				layout.Rigid(func(gtx C) D { return f.label(gtx, 15, wBold, f.p.Text, "File name") }),
+				layout.Rigid(func(gtx C) D { return D{Size: image.Pt(0, gtx.Dp(8))} }),
+				layout.Rigid(func(gtx C) D {
+					return popups.Field(gtx, th, &f.editName, "big-sur-trip-aerial.png", "", 40, 15)
+				}),
+			)
+		},
+		FocusStops: func() []event.Tag { return []event.Tag{&f.editName} },
+		Buttons: []*popups.ModalButton{{Label: "Done", Kind: popups.BtnPrimary, Enabled: valid, Do: func() bool {
+			if !valid() {
+				return false
+			}
+			submit()
+			return true
+		}}},
+	}))
+}
+
+// rename is editFileApi: the new title shows at once, files.edit goes
+// out, and a failure puts the old one back.
+func (f *Files) rename(it fileItem, name string) {
+	old := it.title()
+	if name == old || name == "" {
+		return
+	}
+	id := it.ID
+	f.setTitle(id, name)
+	f.write(func(ctx context.Context, a *core.App) error { return a.RenameFile(ctx, id, name) }, func(err error) {
+		if err != nil {
+			f.setTitle(id, old) // editFileApi's catch: no toast
+		}
+	})
+}
+
+func (f *Files) setTitle(id, title string) {
+	for i := range f.items {
+		if f.items[i].ID == id {
+			f.items[i].Title = title
+		}
+	}
+}
+
+// openFile is Slack's handleFileContainerClick from the Files view
+// (source UNIFIED_FILES_EXPLORER_RESULTS) and from file attachments, by
+// getMainFileAction:
+//
+//   - open: canvases in the main view (openCanvas), lists in full view
+//     (openList);
+//   - view: images in the media viewer (Clack's lightbox);
+//   - remote / external: the file's link in the browser;
+//   - view for PDFs, videos and audio, detail (snippets, posts, emails) and
+//     download: Slack's viewer, file details view or a download. Clack's
+//     viewer shows images only and it has no file details view, so these
+//     open the file's page in the browser (its permalink), as message
+//     files do.
+func openFile(h Host, it fileItem) {
+	switch {
+	case it.isCanvas() && it.ID != "":
+		if co, ok := h.(interface{ OpenCanvasFull(id string) }); ok {
+			co.OpenCanvasFull(it.ID)
+			return
+		}
+	case it.isList() && it.ID != "":
+		if lo, ok := h.(interface{ OpenListFull(id string) }); ok {
+			lo.OpenListFull(it.ID) // mount_features_lists.go
+			return
+		}
+	case it.isImage() && it.URL != "":
+		h.OpenLightbox(richtext.Image{URL: it.URL, Alt: it.title(), W: it.ThumbW, H: it.ThumbH, Title: it.title(), Proxy: true}, core.Message{})
+		return
+	}
+	u := it.Permalink
+	if u == "" {
+		u = it.URL
+	}
+	if u == "" {
+		return
+	}
+	if o, ok := h.(interface{ OpenURL(string) }); ok {
+		o.OpenURL(u)
+	}
+}
+
+// fileFromRich is a message attachment as a Files item, for openFile.
+func fileFromRich(f *richtext.File) fileItem {
+	it := fileItem{core.File{ID: f.ID, Name: f.Name, Title: f.Title, Filetype: f.Type, PrettyType: f.PrettyType,
+		Mime: f.Mime, User: f.User, URL: f.URL, Permalink: f.Permalink, Size: f.Size, Created: f.Created,
+		IsCanvas: core.IsCanvasFile(f.Type, "", f.PrettyType), IsList: core.IsListFile(f.Type, "", f.PrettyType), IsImage: f.IsImage}}
+	if f.Thumb != nil {
+		it.ThumbW, it.ThumbH = f.Thumb.W, f.Thumb.H
+	}
+	return it
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
@@ -69,6 +70,9 @@ func sameDay(a, b time.Time) bool {
 // dayLabel is the day divider text: Today, Yesterday, "Monday, November
 // 3rd", or "Wednesday, December 31st, 2025" for other years.
 func dayLabel(t, now time.Time) string {
+	if l := i18n.Locale(); l != i18n.EnUS {
+		return i18n.DayDivider(l, t, now, false) // formatDateDayDivider
+	}
 	if sameDay(t, now) {
 		return "Today"
 	}
@@ -94,6 +98,9 @@ func threadTime(t, now time.Time) string {
 		s = -s
 	}
 	m := s / 60
+	if l := i18n.Locale(); l != i18n.EnUS {
+		return threadTimeIn(l, t, now, s, m)
+	}
 	switch {
 	case s < 60:
 		return "Just now"
@@ -117,6 +124,53 @@ func threadTime(t, now time.Time) string {
 		d += t.Format(", 2006")
 	}
 	return d + " at " + clock(t)
+}
+
+// msgNS is Slack's "message" I18n (the timestamp helpers, the reply bar).
+var msgNS = i18n.NS("message")
+
+// threadTimeIn is threadTime's Slack strings in a locale.
+func threadTimeIn(l string, t, now time.Time, s, m float64) string {
+	tm := clock(t)
+	switch {
+	case s < 60:
+		return msgNS.T("Just now")
+	case m < 60:
+		return i18n.TimeAgo(l, t, now, false, true)
+	case sameDay(t, now):
+		return msgNS.T("Today at {time}", "time", tm)
+	case sameDay(t, now.AddDate(0, 0, -1)):
+		return msgNS.T("Yesterday at {time}", "time", tm)
+	case m/60/24 < 7:
+		return msgNS.T("{dayOfTheWeek} at {time}", "dayOfTheWeek", i18n.Weekday(l, t, false), "time", tm)
+	}
+	d := i18n.CalendarDate(l, t, i18n.CalendarOpts{ShortenMonth: true, ExcludeYear: t.Year() == now.Year()})
+	return msgNS.T("{calendarDate} at {time}", "calendarDate", d, "time", tm)
+}
+
+// lastReply is the reply bar's "Last reply today at 3:23 PM" / "Last
+// reply 3 days ago" (getThreadLastReplyText, message namespace).
+func lastReply(t, now time.Time) string {
+	l := i18n.Locale()
+	if l == i18n.EnUS {
+		return "Last reply " + ago(t, now)
+	}
+	if sameDay(t, now) || t.After(now) {
+		return msgNS.T("Last reply today at {time}", "time", clock(t))
+	}
+	return msgNS.T("Last reply {time_ago}", "time_ago", i18n.TimeAgo(l, t, now, false, true))
+}
+
+// repliesLabel is the reply count, Slack's threads string
+// "{count, plural, =1 {# reply} other {# replies}}".
+func repliesLabel(n int) string {
+	if i18n.Locale() == i18n.EnUS {
+		if n == 1 {
+			return "1 reply"
+		}
+		return strconv.Itoa(n) + " replies"
+	}
+	return i18n.T("threads", "{count, plural, =1 {# reply} other {# replies}}", "count", n)
 }
 
 // ago is the "Last reply …" text, as Slack writes it (measured live):

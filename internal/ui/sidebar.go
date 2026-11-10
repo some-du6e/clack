@@ -15,6 +15,7 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/slackc"
@@ -43,6 +44,7 @@ type sbRow struct {
 	section string
 	gap     int               // dp, for sbGap
 	itemKey string            // Slack's data-item-key ("" = untagged spacer)
+	tr      i18n.NS           // label is Slack's string in this namespace ("" = data, drawn as is)
 	btn     *widget.Clickable // resolved once per rebuild (no per-frame key strings)
 }
 
@@ -80,12 +82,12 @@ type sidebarState struct {
 // UnreadsSidebarIcon's mark-as-unread, shown only while
 // enable_unread_view is true (shouldShowAllUnreadsLink).
 var sbLinks = []sbRow{
-	{kind: sbLink, key: "unreads", label: "Unreads", icon: "mark-unread"},
-	{kind: sbLink, key: "threads", label: "Threads", icon: "threads"},
-	{kind: sbLink, key: "huddles", label: "Huddles", icon: "huddle"},
-	{kind: sbLink, key: "drafts", label: "Drafts & sent", icon: "paper-plane-alt"}, // Slack's OutboxPageIcon
-	{kind: sbLink, key: "saved", label: "Saved", icon: "saved"},
-	{kind: sbLink, key: "directories", label: "Directories", icon: "directories"},
+	{kind: sbLink, key: "unreads", label: "Unreads", icon: "mark-unread", tr: "all_unreads"},
+	{kind: sbLink, key: "threads", label: "Threads", icon: "threads", tr: "channel_sidebar"},
+	{kind: sbLink, key: "huddles", label: "Huddles", icon: "huddle", tr: "huddles"},
+	{kind: sbLink, key: "drafts", label: "Drafts & sent", icon: "paper-plane-alt", tr: "outbox"}, // Slack's OutboxPageIcon
+	{kind: sbLink, key: "saved", label: "Saved", icon: "saved", tr: "saved_for_later"},
+	{kind: sbLink, key: "directories", label: "Directories", icon: "directories", tr: "channel_sidebar"},
 }
 
 // sbViewPref is each link's Preferences > Home pref (off: hidden).
@@ -165,7 +167,11 @@ func (s *sidebarState) rebuild(m *model) {
 		if i > 0 {
 			rows = append(rows, sbRow{kind: sbGap, gap: 10})
 		}
-		rows = append(rows, sbRow{kind: sbHeading, key: sec.ID, label: sec.Name, icon: sectionIcon(sec.Type), emoji: sec.EmojiURL, section: sec.ID})
+		hr := sbRow{kind: sbHeading, key: sec.ID, label: sec.Name, icon: sectionIcon(sec.Type), emoji: sec.EmojiURL, section: sec.ID}
+		if sec.DefaultName {
+			hr.tr = "channel_sidebar"
+		}
+		rows = append(rows, hr)
 		col, seen := s.collapsed[sec.ID]
 		if !seen { // first sight: Slack's saved state (channel_sections "c")
 			col = sec.Collapsed
@@ -190,11 +196,11 @@ func (s *sidebarState) rebuild(m *model) {
 				rows = append(rows, sbRow{kind: sbNote, label: "Drag and drop important stuff here"})
 			}
 		case "channels":
-			rows = append(rows, sbRow{kind: sbAction, key: "add-channels", label: "Add channels", icon: "channel-plus"})
+			rows = append(rows, sbRow{kind: sbAction, key: "add-channels", label: "Add channels", icon: "channel-plus", tr: "channel_sidebar"})
 		case "direct_messages":
-			rows = append(rows, sbRow{kind: sbAction, key: "browse-people", label: "Browse all people", icon: "contact"})
+			rows = append(rows, sbRow{kind: sbAction, key: "browse-people", label: "Browse all people", icon: "contact", tr: "channel_sidebar"})
 		case "recent_apps", "apps":
-			rows = append(rows, sbRow{kind: sbAction, key: "add-apps", label: "Add apps", icon: "plus-small"})
+			rows = append(rows, sbRow{kind: sbAction, key: "add-apps", label: "Add apps", icon: "plus-small", tr: "channel_sidebar"})
 		}
 	}
 	rows = append(rows, sbRow{kind: sbGap, gap: 16})
@@ -316,7 +322,7 @@ func (a *App) layoutSidebarNative(gtx layout.Context, p slackc.Props) layout.Dim
 			})
 			at(gtx, image.Pt(gtx.Dp(26), 0), image.Pt(w-gtx.Dp(30), fh), func(gtx layout.Context) layout.Dimensions {
 				return vcenter(gtx, fh, func(gtx layout.Context) layout.Dimensions {
-					return a.th.Label(gtx, 13, theme.Regular, c.SidebarTextUnread, "Find a conversation…")
+					return a.th.Label(gtx, 13, theme.Regular, c.SidebarTextUnread, i18n.T("channel_sidebar", "Find a conversation…"))
 				})
 			})
 			return layout.Dimensions{Size: image.Pt(w, fh)}
@@ -408,6 +414,9 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 		conv     *convInfo
 		suffix   string
 	)
+	if r.tr != "" {
+		label = r.tr.T(label)
+	}
 	clickPrefix := "sbr."
 	switch r.kind {
 	case sbLink:
@@ -431,7 +440,7 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 		indent = gtx.Dp(16)
 		label = conv.displayName()
 		sel = route.Channel() == conv.ID
-		if conv.Unread && !conv.Muted {
+		if conv.Unread && !conv.Muted && !a.focusQuiet() { // focus mode: no bolding (focus_mode.go)
 			weight = theme.Black
 			col = c.SidebarTextUnread
 		}
@@ -462,7 +471,7 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 	switch {
 	case conv != nil:
 		var mods uint64
-		if conv.Unread {
+		if conv.Unread && !a.focusQuiet() {
 			mods |= 1
 		}
 		if conv.Muted {
@@ -640,27 +649,36 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 		ix := pad + rs.indent
 		iy := (rowH - gtx.Dp(16)) / 2
 		right := rw - gtx.Dp(6)
+		// BaseChannelSuffix's draft mark (showDraft: a draft here, the
+		// channel not open, and the viewer can post in it) goes just
+		// before the badge
+		draft := conv != nil && !sel && !conv.Archived && !conv.Preview && a.data != nil && a.data.draftChans[conv.ID] &&
+			a.Core() != nil && a.Core().PrefBool("has_drafted_message", true)
 		if rs.mentions > 0 {
 			m := op.Record(gtx.Ops)
 			bd := a.badge(gtx, rs.mentions, c.Badge, c.BadgeText)
 			call := m.Stop()
-			t := op.Offset(image.Pt(right-bd.Size.X, (rowH-bd.Size.Y)/2)).Push(gtx.Ops)
-			call.Add(gtx.Ops)
-			t.Pop()
-			right -= bd.Size.X + gtx.Dp(6)
+			if a.focusQuiet() && !btn.Hovered() {
+				// focus mode: c-badge--dot, the pill clipped to a 16px circle
+				// at scale .4445 (the count shows again on hover)
+				ctr := image.Pt(right-bd.Size.X/2, rowH/2)
+				theme.Circle(gtx, ctr, gtx.Dp(16)*4445/10000, c.Badge)
+			} else {
+				t := op.Offset(image.Pt(right-bd.Size.X, (rowH-bd.Size.Y)/2)).Push(gtx.Ops)
+				call.Add(gtx.Ops)
+				t.Pop()
+			}
+			right -= bd.Size.X
+			if !draft {
+				right -= gtx.Dp(6)
+			}
 		}
 		// Drafts & sent's badges (Slack's OutboxLinkContent): "✎ N" for
 		// unsent drafts, capped at maxCount 99 ("99+"), then "schedule-send
 		// N" for scheduled messages (uncapped). Each p-outbox_link__badge
 		// is 13px text 8px after the previous, its 13px icon 2px before
-		// the number; the list ends at the row's 8px padding. A 13px
-		// pencil also marks conversations with a draft.
+		// the number; the list ends at the row's 8px padding.
 		if d := a.data; d != nil {
-			pencil := func(x int) {
-				at(gtx, image.Pt(x, (rowH-gtx.Dp(13))/2), image.Pt(gtx.Dp(13), gtx.Dp(13)), func(gtx layout.Context) layout.Dimensions {
-					return icons.Get("edit")(gtx, 13, fg)
-				})
-			}
 			switch {
 			case r.kind == sbLink && r.key == "drafts" && (d.draftN > 0 || d.schedN > 0):
 				right = rw - gtx.Dp(8)
@@ -696,9 +714,25 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 				pass.Pop()
 				popups.Tooltip(gtx, a.th, &a.sidebar.outboxTip, a.sidebar.outboxHover.Update(gtx.Source), lr.Size(), popups.Right, outboxTip(d.draftN, d.schedN), "")
 				t.Pop()
-			case conv != nil && rs.mentions == 0 && d.draftChans[conv.ID]:
-				right = rw - gtx.Dp(8) - gtx.Dp(13)
-				pencil(right)
+			case draft:
+				// BaseChannelSuffixDraftIcon: the icon font's pencil
+				// (c-icon--pencil, inline, size inherit) in a 20px
+				// p-channel_sidebar__suffix_generic at 14px, the row's
+				// colour (a muted channel's suffix at .64); the suffix ends
+				// at the row's 8px padding (6px with a badge, which it
+				// abuts)
+				if rs.mentions == 0 {
+					right = rw - gtx.Dp(8)
+				}
+				slot, gs := gtx.Dp(20), gtx.Dp(14)
+				right -= slot
+				pc := fg
+				if conv.Muted {
+					pc = theme.WithAlpha(pc, uint8(float32(pc.A)*0.64+0.5))
+				}
+				at(gtx, image.Pt(right+(slot-gs)/2, (rowH-gs)/2), image.Pt(gs, gs), func(gtx layout.Context) layout.Dimensions {
+					return icons.Get("pencil-glyph")(gtx, 14, pc)
+				})
 				right -= gtx.Dp(6)
 			}
 		}

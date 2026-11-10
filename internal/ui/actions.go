@@ -159,22 +159,17 @@ func (a *App) openChannelMenu(ch string, anchor image.Point) {
 
 func (a *App) openNotifPrefs(ch string) {
 	conv := a.model().conv(ch)
-	if conv != nil && (conv.Kind == "channel" || conv.Kind == "private") && a.Core() != nil {
+	if conv != nil && (conv.Kind == "channel" || conv.Kind == "private" || conv.Kind == "mpim") && a.Core() != nil {
 		// Slack's ChannelNotificationPrefMenu, right-aligned like the ⋮
 		// menu, 3px lower (y 77 vs 74)
 		a.ShowOverlay(popups.NewChannelNotifyMenu(a, a.anchor(image.Pt(a.headerEnd()-a.px(14)-a.px(6), a.px(int(theme.TopNavH))+a.px(37))), ch))
 		return
 	}
-	muted := conv != nil && conv.Muted
-	a.menu(image.Pt(a.px(600), a.px(90)), []MenuItem{
-		{Label: "Notifications", Disabled: true},
-		{Divider: true},
-		{Label: map[bool]string{true: "✓ Muted", false: "Mute channel"}[muted], Icon: "bell-off", Do: func() {
-			if a.data != nil {
-				a.data.setMuted(ch, !muted)
-			}
-		}},
-	})
+	// 1:1 DMs: the header's NotificationsControl is a plain mute toggle
+	// ("Mute conversation" / "Unmute conversation", boot-shared vpVS).
+	if conv != nil && a.data != nil {
+		a.data.setMuted(ch, !conv.Muted)
+	}
 }
 
 func (a *App) openTab(ch, key string) {
@@ -226,7 +221,7 @@ func (a *App) setStatusPrompt() {
 		a.ShowOverlay(mkStatusModal(a))
 		return
 	}
-	a.Toast("Status editing isn't available yet")
+	a.ShowOverlay(popups.NewSetStatusModalFromMenu(a)) // the user menu's "Update your status"
 }
 
 func (a *App) signOut() {

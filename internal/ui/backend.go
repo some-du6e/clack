@@ -195,20 +195,40 @@ func (b *backend) loadDrafts(a *App) {
 		if err != nil {
 			return
 		}
+		// the drafts a sidebar row counts (Ex/u cF): its own unsent
+		// drafts; with draft_management_in_composer also the composer's
+		// and a DM's drafts addressed by user, and with
+		// sidebar_draft_indicator_menu_and_thread_inclusion its threads'
+		inComposer := b.core.Experiment("draft_management_in_composer") == "treatment"
+		threads := inComposer && b.core.Experiment("sidebar_draft_indicator_menu_and_thread_inclusion") == "on"
 		n, sched, chans := 0, 0, map[string]bool{}
+		var dmUsers []string
 		for _, d := range ds {
 			if d.DateScheduled != 0 {
 				sched++  // Slack's getScheduledDraftsCount: date_scheduled set
 				continue // scheduled messages live in the Scheduled tab
 			}
 			n++
-			if d.Channel != "" && d.ThreadTS == "" {
+			switch {
+			case d.Channel == "":
+				if inComposer && len(d.Users) == 1 {
+					dmUsers = append(dmUsers, d.Users[0])
+				}
+			case d.ThreadTS != "" && !threads, d.FromComposer && !inComposer:
+			default:
 				chans[d.Channel] = true
 			}
 		}
 		a.Post(func() {
 			if seq != b.draftSeq {
 				return
+			}
+			for _, u := range dmUsers {
+				for id, c := range b.m.Convs {
+					if (c.Kind == "im" || c.Kind == "app") && c.User == u {
+						chans[id] = true
+					}
+				}
 			}
 			b.draftN, b.schedN, b.draftChans = n, sched, chans
 			a.Invalidate()
@@ -353,7 +373,9 @@ func (b *backend) apply(a *App, s core.Snapshot) {
 			}
 		}
 		if ss.Name == "" {
-			ss.Name = defaultSectionName(sec.Type)
+			ss.Name, ss.DefaultName = defaultSectionName(sec.Type), true
+		} else if ss.Name == defaultSectionName(sec.Type) {
+			ss.DefaultName = true // Slack's standard sections can't be renamed
 		}
 		m.Sections = append(m.Sections, ss)
 	}
@@ -849,10 +871,32 @@ func (b *backend) togglePresence() {
 	go func() { _ = b.core.SetPresence(b.ctx, p) }()
 }
 
+// setMuted is Slack's muteChannelById / unmuteChannelById (boot-shared
+// IDOy): the row goes muted (or not) at once, the "muted" channel pref is
+// written (users.prefs.setNotifications, core.Mute), and a failed write
+// quietly puts the row back. Muting a muted channel (or unmuting an
+// unmuted one) does nothing, and there is no toast.
 func (b *backend) setMuted(ch string, muted bool) {
-	if b.app != nil {
-		b.app.Toast("Muting from " + AppName + " isn't supported yet")
+	c := b.m.conv(ch)
+	if c == nil || c.Muted == muted || b.core == nil {
+		return
 	}
+	c.Muted = muted
+	b.m.version++
+	ctx, a := b.ctx, b.app
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	go func() {
+		if err := b.core.Mute(ctx, ch, muted); err != nil && a != nil {
+			a.Post(func() {
+				if c := b.m.conv(ch); c != nil && c.Muted == muted {
+					c.Muted = !muted
+					b.m.version++
+				}
+			})
+		}
+	}()
 }
 
 func (b *backend) leave(ch string) {

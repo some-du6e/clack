@@ -8,6 +8,7 @@ import (
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -49,6 +50,7 @@ func (f *prefsForm) dims() layout.Dimensions {
 
 // heading is a section title (Slack's h2: 700 18px/24, 30px stride).
 func (f *prefsForm) heading(t string) {
+	t = pt(t)
 	gtx, a := f.gtx, f.p.a
 	f.record("h2", "", t, false, true)
 	at(gtx, image.Pt(0, f.y), image.Pt(f.w, gtx.Dp(24)), func(gtx layout.Context) layout.Dimensions {
@@ -62,6 +64,7 @@ func (f *prefsForm) gap() { f.y += f.gtx.Dp(14) }
 
 // note is muted 13px text, wrapped to lines (indent: under a row's label).
 func (f *prefsForm) note(text string, indent bool, lines int) {
+	text = pt(text)
 	gtx, a := f.gtx, f.p.a
 	x := 0
 	if indent {
@@ -87,6 +90,7 @@ func (f *prefsForm) option(key, label, hint string, on, radio bool, do func()) {
 // optionAt is option; enabled=false greys the row and ignores clicks
 // (settings Clack shows the way Slack does but can't change yet).
 func (f *prefsForm) optionAt(key, label, hint string, on, radio, enabled bool, do func()) {
+	label, hint = pt(label), pt(hint)
 	gtx, a := f.gtx, f.p.a
 	pc := f.p.colors()
 	b := f.p.btn(key)
@@ -145,6 +149,7 @@ const naNote = "Not available in Clack yet"
 
 // subheading is a group legend (Slack's fieldset legend: 700 15px/22).
 func (f *prefsForm) subheading(t string) {
+	t = pt(t)
 	gtx, a := f.gtx, f.p.a
 	f.record("legend", "", t, false, true)
 	at(gtx, image.Pt(0, f.y), image.Pt(f.w, gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
@@ -155,6 +160,7 @@ func (f *prefsForm) subheading(t string) {
 
 // para is body text (15px/22), wrapped to the page width.
 func (f *prefsForm) para(t string) {
+	t = pt(t)
 	gtx, a := f.gtx, f.p.a
 	f.record("text", "", t, false, true)
 	d := at(gtx, image.Pt(0, f.y), image.Pt(f.w, gtx.Dp(400)), func(gtx layout.Context) layout.Dimensions {
@@ -166,6 +172,7 @@ func (f *prefsForm) para(t string) {
 // muted is muted 13px text wrapped to the page width (indent: under a
 // row's label).
 func (f *prefsForm) muted(t string, indent bool) {
+	t = pt(t)
 	gtx, a := f.gtx, f.p.a
 	f.record("text", "", t, false, true)
 	x := 0
@@ -210,6 +217,7 @@ func (f *prefsForm) selectBox(key, label, value string, enabled bool, items []Me
 // selectBoxW is selectBox wd dp wide; onOpen runs as the menu opens.
 func (f *prefsForm) selectBoxW(key, label, value string, enabled bool, items []MenuItem, wd int, onOpen func()) {
 	gtx, a := f.gtx, f.p.a
+	value = pt(value)
 	pc := f.p.colors()
 	if label != "" {
 		f.subheading(label)
@@ -244,7 +252,15 @@ func (f *prefsForm) selectBoxW(key, label, value string, enabled bool, items []M
 		if onOpen != nil {
 			onOpen()
 		}
-		a.menu(a.anchor(image.Point{}), items)
+		tr := make([]MenuItem, len(items))
+		for i, it := range items {
+			if it.Key == "" {
+				it.Key = popups.LabelKey(it.Label)
+			}
+			it.Label = pt(it.Label)
+			tr[i] = it
+		}
+		a.menu(a.anchor(image.Point{}), tr)
 	}
 	f.y += bh + gtx.Dp(12)
 }
@@ -252,6 +268,7 @@ func (f *prefsForm) selectBoxW(key, label, value string, enabled bool, items []M
 // listRow is a 36px row: an avatar, a name and an action link on the
 // right (VIP list "Remove").
 func (f *prefsForm) listRow(key, avatar, name, action string, do func()) {
+	action = pt(action)
 	gtx, a := f.gtx, f.p.a
 	c := &a.th.C
 	pc := f.p.colors()
@@ -301,6 +318,7 @@ func (f *prefsForm) listRow(key, avatar, name, action string, do func()) {
 // Slack's times-circle icon button at the right (aria-label label):
 // Privacy & visibility's blocked invitations and hidden people.
 func (f *prefsForm) listRowIcon(key, avatar, name, label string, do func()) {
+	label = pt(label)
 	gtx, a := f.gtx, f.p.a
 	c := &a.th.C
 	f.record("list", "row."+key, name+" · "+label, false, true)
@@ -354,6 +372,7 @@ func slackHelp(id string) string { return "https://slack.com/help/articles/" + i
 
 // link is a 15px link on its own line (Slack's "Learn more", "Get help").
 func (f *prefsForm) link(key, label, url string) {
+	label = pt(label)
 	gtx, a := f.gtx, f.p.a
 	f.record("link", "link."+key, label, false, true)
 	b := f.p.btn("link." + key)
@@ -373,12 +392,14 @@ func (f *prefsForm) link(key, label, url string) {
 // "Messaging defaults" … "About notifications").
 func (f *prefsForm) headingLink(t, label, url string) {
 	gtx, a := f.gtx, f.p.a
+	key := label
+	t, label = pt(t), pt(label)
 	f.record("h2", "", t, false, true)
 	at(gtx, image.Pt(0, f.y), image.Pt(f.w, gtx.Dp(24)), func(gtx layout.Context) layout.Dimensions {
 		return a.th.Label(gtx, 18, theme.Bold, a.th.C.Fg, t)
 	})
-	f.record("link", "link."+label, label, false, true)
-	b := f.p.btn("link." + label)
+	f.record("link", "link."+key, label, false, true)
+	b := f.p.btn("link." + key)
 	w := a.th.Measure(gtx, 15, theme.Regular, label)
 	at(gtx, image.Pt(f.w-w, f.y+gtx.Dp(2)), image.Pt(w, gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, b, nil, func(gtx layout.Context) layout.Dimensions {
@@ -413,6 +434,7 @@ func (f *prefsForm) buttons(bs ...prefsButton) {
 	x := 0
 	for _, pb := range bs {
 		pb := pb
+		pb.label = pt(pb.label)
 		f.record("button", "button."+pb.key, pb.label, false, pb.enabled)
 		b := f.p.btn("button." + pb.key)
 		bw := a.th.Measure(gtx, 15, theme.Bold, pb.label) + gtx.Dp(32)
@@ -448,6 +470,7 @@ func (f *prefsForm) buttons(bs ...prefsButton) {
 // textBox is a read-only stand-in for one of Slack's text fields (Channel
 // keywords): the value in a bordered box, greyed.
 func (f *prefsForm) textBox(key, value, placeholder string) {
+	placeholder = pt(placeholder)
 	gtx, a := f.gtx, f.p.a
 	pc := f.p.colors()
 	f.record("select", "text."+key, value, false, false)
@@ -472,6 +495,7 @@ func (f *prefsForm) textBox(key, value, placeholder string) {
 
 // linkDo is link with an action in Clack (another tab, a dialog).
 func (f *prefsForm) linkDo(key, label string, do func()) {
+	label = pt(label)
 	gtx, a := f.gtx, f.p.a
 	f.record("link", "link."+key, label, false, true)
 	b := f.p.btn("link." + key)

@@ -10,6 +10,7 @@ import (
 	"gioui.org/font"
 	"gioui.org/unit"
 
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 )
@@ -148,7 +149,7 @@ func (l *lay) addEdited() {
 		pt = l.partFor(&pp)
 		k = l.partFace(k, pt)
 	}
-	w := l.st.word(k, "(edited)")
+	w := l.st.word(k, i18n.T("message_kit", "(edited)"))
 	n := int32(len(l.d.plain))
 	l.items = append(l.items, item{kind: itWord, sh: w, face: k, w: w.adv, col: p.Edited, deco: -1, target: -1, p0: n, p1: n, part: pt})
 }

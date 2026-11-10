@@ -89,6 +89,10 @@ type prefs struct {
 	// Windows and Linux (the desktop app keeps them in Electron's session,
 	// per device): nil is the OS locale's language.
 	SpellLanguages []string `json:"spellcheck_languages,omitempty"`
+	// Locale is the account's locale as last seen (Slack's localConfig
+	// user_locale): the next start loads that bundle from the cache before
+	// users.prefs answers (locale_wire.go).
+	Locale string `json:"locale,omitempty"`
 	// SplitW and SplitWMode are the split view's width (dp) and Slack's
 	// splitWidthMode ("sticky", "manual", "auto"), kept per device as Slack
 	// keeps viewLayoutSplitWidthIntent / Mode in localStorage (split.go).

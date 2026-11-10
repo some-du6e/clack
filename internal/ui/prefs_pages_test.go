@@ -101,7 +101,7 @@ var slackPages = map[string][]want{
 	},
 	"appearance": {
 		lg("Font"), sel("Lato (Default)"), lg("Color Mode"), rd("Light"), rd("Dark"), rd("System"),
-		ckOff("Always use dark color mode when in focus mode."),
+		ck("Always use dark color mode when in focus mode."),
 		{"tab", "Slack themes", false}, {"tab", "Custom theme", false},
 		lg("Single color"), rd("Aubergine"), rd("Clementine"), lg("Vision assistive"), rd("Tritanopia"),
 		lg("Fun and new"), rd("Raspberry Beret"), lg("Updated classics"), rd("Choco Mint"), rd("Sweet Treat"),
@@ -120,7 +120,7 @@ var slackPages = map[string][]want{
 		lg("Bring emails into Slack"), btn("Get a Forwarding Address"),
 	},
 	"language_region": {
-		lg("Language"), selOff("English (US)"), lg("Time zone"), ck("Set time zone automatically"), selOff("(UTC-08:00) Pacific Time (US and Canada)"),
+		lg("Language"), sel("English (US)"), lg("Time zone"), ck("Set time zone automatically"), selOff("(UTC-08:00) Pacific Time (US and Canada)"),
 		lg("Keyboard layout"), selOff("English (US)"), lg("Spellcheck"), ck("Enable spellcheck on your messages and canvases"),
 		{"select", spell.Labels[spell.DefaultLanguages()[0]], false}, // the languages (Windows, Linux)
 	},

@@ -202,8 +202,15 @@ func DrawText(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string) layo
 // relying on a color font: single lines through textWithEmoji, wrapping
 // text through placeholder glyphs (emojislot.go).
 func (t *Theme) Text(gtx layout.Context, o LabelOpts, txt string) layout.Dimensions {
+	if DrawHook != nil {
+		DrawHook(txt)
+	}
 	return t.text(gtx, o, txt, true)
 }
+
+// DrawHook, when set (tests: the "no English left" checks), sees every
+// string Text draws.
+var DrawHook func(txt string)
 
 // text is Text; scan says whether a tofu scan records txt as drawn
 // (Measure's layouts aren't).
@@ -472,8 +479,14 @@ func (it *glyphIter) paint(gtx layout.Context, sh *text.Shaper, g text.Glyph, li
 // ---- unicode cleanup and emoji segmentation ----
 
 // CleanText drops default-ignorable code points that fonts draw as tofu
-// (Hangul fillers used for "blank" channel names, zero-width spaces, BOM),
-// keeping ZWJ/VS16 which emoji sequences need.
+// (zero-width spaces, BOM), keeping ZWJ/VS16 which emoji sequences need.
+// The Hangul fillers (U+115F, U+1160, U+3164, U+FFA0) stay: they are
+// default-ignorable too, but HarfBuzz (Chrome's shaper and go-text's,
+// harfbuzz/unicode.go) shapes them as ordinary spacing glyphs, so Slack
+// draws a channel named only "ㅤ" as the fallback font's blank glyph, or
+// as tofu where no font has one (Linux Chrome). Gio's system-font
+// fallback does the same (Lato's .notdef box as the last resort); dropping
+// them left the name empty.
 func CleanText(s string) string {
 	fast := true
 	for i := 0; i < len(s); i++ {
@@ -487,7 +500,7 @@ func CleanText(s string) string {
 	}
 	drop := func(r rune) bool {
 		switch r {
-		case 0x115F, 0x1160, 0x3164, 0xFFA0, 0x200B, 0x200C, 0x200E, 0x200F, 0x2060, 0xFEFF, 0x180E, 0x17B4, 0x17B5:
+		case 0x200B, 0x200C, 0x200E, 0x200F, 0x2060, 0xFEFF, 0x180E, 0x17B4, 0x17B5:
 			return true
 		}
 		return false

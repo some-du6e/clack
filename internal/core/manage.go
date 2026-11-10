@@ -133,7 +133,13 @@ func (a *App) setNotifications(ctx context.Context, ch string, prefs []notifyPre
 	if err != nil {
 		return err
 	}
-	// pref_change follows; refresh now so callers see the result at once.
+	a.notifyRefresh(ctx, ch)
+	return nil
+}
+
+// notifyRefresh rereads the prefs after a notification write: pref_change
+// follows, but callers should see the result at once.
+func (a *App) notifyRefresh(ctx context.Context, ch string) {
 	if _, err := a.RefreshPrefs(ctx); err == nil {
 		p := a.Prefs()
 		a.emit(Event{Type: "prefs", Prefs: &p})
@@ -141,6 +147,22 @@ func (a *App) setNotifications(ctx context.Context, ch string, prefs []notifyPre
 			a.emit(Event{Type: "conv", Channel: ch, Conv: &c})
 		}
 	}
+}
+
+// SetChannelNotifyPref writes one notification override for ch the way
+// Slack's channel notifications modal does (boot-shared AvPY
+// setChannelNotificationOverrideAndCallApi -> client-boot nfg+
+// setNotificationsChannelOverride): users.prefs.setNotifications with
+// name, value, channel_id, global=false and sync=false. name is one of
+// desktop_push_enabled, mobile, badge_all_unreads, follow_all_threads,
+// suppress_at_channel (and the others Slack's 1pDi o7 names).
+func (a *App) SetChannelNotifyPref(ctx context.Context, ch, name, value string) error {
+	err := a.C.Call(ctx, "users.prefs.setNotifications", url.Values{"name": {name}, "value": {value},
+		"channel_id": {ch}, "global": {"false"}, "sync": {"false"}}, nil)
+	if err != nil {
+		return err
+	}
+	a.notifyRefresh(ctx, ch)
 	return nil
 }
 

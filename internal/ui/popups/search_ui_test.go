@@ -9,6 +9,7 @@ package popups
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"image"
 	"image/png"
@@ -281,8 +282,12 @@ func TestSearchPopoverTyping(t *testing.T) {
 	}
 }
 
-// Keys: ↓/↑ skip headers and dividers and wrap; Enter on the top hit
-// opens it (Slack's Enter takes the top suggestion); Enter on "Show
+// Keys, as SearchAutocomplete's increment/decrementSelectedIndex: nothing
+// is selected at first (the top hit is pseudo-selected, Enter opens it);
+// ↓ picks the first row, then the next, skipping headers and dividers;
+// past the last row nothing is selected again, and ↑ from there picks the
+// last row; moving the caret clears the selection. The footer says "▲▼
+// Select" until a row is picked, then "Enter Open". Enter on "Show
 // results for:" opens the results page and remembers the query with
 // search.save.
 func TestSearchPopoverKeys(t *testing.T) {
@@ -293,25 +298,50 @@ func TestSearchPopoverKeys(t *testing.T) {
 	d := &srDrv{size: image.Pt(1280, 800), w: p}
 	d.until(t, "the switcher", func() bool { return p.snapOK && len(p.rows) > 2 })
 	d.frame()
-	if p.sel != 0 || p.rows[0].id != ch {
-		t.Fatalf("top hit %+v selected %d, want %s first and selected", p.rows[0], p.sel, ch)
+	if p.sel != 0 || p.picked || p.rows[0].id != ch {
+		t.Fatalf("top hit %+v sel %d picked %v, want %s first, pseudo-selected", p.rows[0], p.sel, p.picked, ch)
+	}
+	if x := d.scan(); !srHas(x, "Select") || srHas(x, "Open") || !srHas(x, "Enter") {
+		t.Errorf("footer / Enter chip before a pick: %q", x)
 	}
 	d.press(key.NameDownArrow)
-	if p.sel != 1 || p.rows[1].kind != srRShow {
+	if p.sel != 0 || !p.picked {
+		t.Fatalf("↓ from nothing: sel %d picked %v, want the first row picked", p.sel, p.picked)
+	}
+	if x := d.scan(); !srHas(x, "Open") || srHas(x, "Select") {
+		t.Errorf("footer with a pick: %q", x)
+	}
+	d.press(key.NameDownArrow)
+	if p.sel != 1 || p.rows[1].kind != srRShow || !p.picked {
 		t.Fatalf("↓ selected %d (%v)", p.sel, p.rows[p.sel].kind)
 	}
+	wrapped := false
 	for i := 0; i < len(p.rows)+2; i++ {
 		d.press(key.NameDownArrow)
 		if !p.rows[p.sel].selectable() {
 			t.Fatalf("↓ landed on a %v row", p.rows[p.sel].kind)
 		}
+		if !p.picked {
+			wrapped = true
+			if p.sel != p.firstRow() {
+				t.Fatalf("past the end: sel %d, want the first row (pseudo)", p.sel)
+			}
+			break
+		}
+	}
+	if !wrapped {
+		t.Fatal("↓ never went past the last row")
 	}
 	d.press(key.NameUpArrow)
-	if !p.rows[p.sel].selectable() {
-		t.Fatal("↑ landed on a header")
+	if p.sel != p.lastRow() || !p.picked {
+		t.Fatalf("↑ from nothing: sel %d (last %d) picked %v", p.sel, p.lastRow(), p.picked)
 	}
-	// back to the top: Enter opens it
-	p.setSel(0)
+	// moving the caret clears the selection
+	d.press(key.NameLeftArrow)
+	if p.picked {
+		t.Error("← kept the selection")
+	}
+	// nothing picked: Enter opens the top hit
 	d.press(key.NameReturn)
 	if !p.Dismissed() || len(e.h.navs) == 0 || e.h.navs[len(e.h.navs)-1] != "c/"+ch {
 		t.Fatalf("Enter on the top hit: dismissed %v navs %q", p.Dismissed(), e.h.navs)
@@ -615,6 +645,252 @@ func TestSearchInChannel(t *testing.T) {
 	}
 }
 
+// srFeedbackModal returns the last SearchFeedbackModal the host showed.
+func srFeedbackModal(h *tzHost) *SearchFeedbackModal {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i := len(h.shown) - 1; i >= 0; i-- {
+		if m, ok := h.shown[i].(*SearchFeedbackModal); ok {
+			return m
+		}
+	}
+	return nil
+}
+
+// Ghost text is getGhostTextForSelectedSuggestion: the rest of the top
+// hit's name and " — Open", " — Search" on the Show results row, nothing
+// once a space was typed.
+func TestSearchPopoverGhostText(t *testing.T) {
+	e := srNewEnv(t, false)
+	ch := e.fs.ChannelIDs()[3]
+	name := e.h.a.ConvRef(ch).Name
+	if len(name) < 4 {
+		t.Skipf("channel name %q too short", name)
+	}
+	p := NewSearchPopover(e.h, name[:3], image.Rectangle{})
+	d := &srDrv{size: image.Pt(1280, 800), w: p}
+	d.until(t, "the switcher", func() bool { return p.snapOK && len(p.rows) > 2 })
+	d.frame()
+	top := p.rows[p.sel]
+	if !strings.HasPrefix(strings.ToLower(top.title), strings.ToLower(name[:3])) {
+		t.Skipf("top hit %q doesn't start with the query", top.title)
+	}
+	if got, want := p.ghostText(), top.title[3:]+" — Open"; got != want {
+		t.Errorf("ghost %q, want %q", got, want)
+	}
+	if x := d.scan(); !srHas(x, top.title[3:]+" — Open") {
+		t.Errorf("ghost text not drawn: %q", x)
+	}
+	for i := range p.rows {
+		if p.rows[i].kind == srRShow {
+			p.pick(i)
+		}
+	}
+	if got := p.ghostText(); got != " — Search" {
+		t.Errorf("Show results ghost %q", got)
+	}
+	p.query += " "
+	if got := p.ghostText(); got != "" {
+		t.Errorf("ghost after a space %q", got)
+	}
+}
+
+// The popover's "Give feedback" is CombinedSearchFeedbackModal with
+// feedbackType omniswitcher: Submit stays disabled until a category and
+// text are in, then feedback.submitEnterpriseSearchFeedback goes to the
+// fake (never to Slack) with the query and the payload, and the
+// confirmation replaces the dialog.
+func TestSearchFeedbackFromPopover(t *testing.T) {
+	e := srNewEnv(t, false)
+	p := NewSearchPopover(e.h, fakeslack.SearchWord, image.Rectangle{})
+	d := &srDrv{size: image.Pt(1280, 800), w: p}
+	d.until(t, "suggestions", func() bool { return p.snapOK && len(p.msgs) == 3 })
+	p.feedback.Click()
+	d.frame()
+	m := srFeedbackModal(e.h)
+	if m == nil || !p.Dismissed() {
+		t.Fatalf("feedback modal %v, popover dismissed %v", m, p.Dismissed())
+	}
+	dm := &srDrv{size: image.Pt(1280, 800), w: m}
+	x := dm.scan()
+	for _, want := range []string{srFeedbackTitle, srFeedbackAsk, srFeedbackPick, srFeedbackDetails, srFeedbackHint, srFeedbackContact,
+		"Privacy Policy", "Cancel", "Submit", "contact", srFeedbackAddress} {
+		if !srHas(x, want) {
+			t.Errorf("%q not drawn", want)
+		}
+	}
+	if m.submit.enabled() {
+		t.Error("Submit enabled with nothing filled in")
+	}
+	m.Pick(1)
+	m.SetText("the channel I wanted isn't there")
+	if !m.submit.enabled() {
+		t.Fatal("Submit still disabled")
+	}
+	m.box.Click()
+	dm.frame()
+	m.Submit()
+	slUntil(t, 10*time.Second, "the submission", dm.frame, func() bool {
+		return len(e.fs.SearchForms("feedback.submitEnterpriseSearchFeedback")) == 1 && m.Dismissed()
+	})
+	f := e.fs.SearchForms("feedback.submitEnterpriseSearchFeedback")[0]
+	for k, v := range map[string]string{"type": "feedback", "feedback_type": "omniswitcher", "category": "missing_results",
+		"text": "the channel I wanted isn't there", "contact": "true", "query": fakeslack.SearchWord, "is_test": "false"} {
+		if f.Get(k) != v {
+			t.Errorf("%s = %q, want %q", k, f.Get(k), v)
+		}
+	}
+	var pl map[string]any
+	if err := json.Unmarshal([]byte(f.Get("payload")), &pl); err != nil {
+		t.Fatal(err)
+	}
+	if pl["query"] != fakeslack.SearchWord || pl["client_version"] != "noversion" || pl["search_session_id"] == "" {
+		t.Errorf("payload %v", pl)
+	}
+	if sg, _ := pl["suggestions"].([]any); len(sg) == 0 {
+		t.Errorf("payload without suggestions: %v", pl)
+	}
+	// the confirmation
+	var thanks *Modal
+	e.h.mu.Lock()
+	if mm, ok := e.h.shown[len(e.h.shown)-1].(*Modal); ok && !mm.Dismissed() {
+		thanks = mm
+	}
+	e.h.mu.Unlock()
+	if thanks == nil {
+		t.Fatal("no confirmation")
+	}
+	if x := (&srDrv{size: image.Pt(1280, 800), w: thanks}).scan(); !srHas(x, "OK") || !srHasPrefix(x, "Slack is a tool built by people.") ||
+		!srHasPrefix(x, "Thank you!") {
+		t.Errorf("confirmation %q", x)
+	}
+}
+
+// The results page's "Give feedback" sends feedback_type "search" with the
+// module, the session and the source menu's counts; the no-results
+// state has the same link ("Not the results you expected?").
+func TestSearchFeedbackFromResults(t *testing.T) {
+	e := srNewEnv(t, false)
+	v, d := srView(t, e, fakeslack.SearchWord, false)
+	d.until(t, "counts", func() bool { return v.countOK[srTabDMs] && v.countOK[srTabFiles] })
+	v.feedback.Click()
+	d.frame()
+	m := srFeedbackModal(e.h)
+	if m == nil {
+		t.Fatal("no feedback modal")
+	}
+	m.Pick(0)
+	m.SetText("good")
+	m.Submit()
+	slUntil(t, 10*time.Second, "the submission", d.frame, func() bool {
+		return len(e.fs.SearchForms("feedback.submitEnterpriseSearchFeedback")) == 1
+	})
+	f := e.fs.SearchForms("feedback.submitEnterpriseSearchFeedback")[0]
+	if f.Get("feedback_type") != "search" || f.Get("category") != "helpful" || f.Get("contact") != "false" {
+		t.Errorf("form %v", f)
+	}
+	var pl map[string]any
+	if err := json.Unmarshal([]byte(f.Get("payload")), &pl); err != nil {
+		t.Fatal(err)
+	}
+	mc, _ := pl["module_counts"].(map[string]any)
+	if pl["module"] != "messages" || pl["active_sort"] != "score" || pl["active_sort_dir"] != "desc" ||
+		pl["query_session_id"] == "" || mc["messages"] != float64(fakeslack.SearchFixtureCount) {
+		t.Errorf("payload %v", pl)
+	}
+	_, dn := srView(t, e, fakeslack.SearchNothing, false)
+	x := dn.scan()
+	if !srHas(x, srNothingAsk) || !srHas(x, "Give feedback") || !strings.Contains(strings.Join(x, " "), "checking for typos") {
+		t.Errorf("no-results state %q", x)
+	}
+}
+
+// Search in channel's footer is searchFeedbackDialog: search.feedback with
+// a client_token, type search and the in-channel payload, to the fake.
+// Its sort select offers Most relevant, Newest, Oldest and Edit default;
+// Oldest asks for timestamp asc.
+func TestSearchInChannelFeedbackAndSort(t *testing.T) {
+	e := srNewEnv(t, false)
+	ch := e.fs.ChannelIDs()[0]
+	v := NewSearchInChannel(e.h, ch)
+	d := &srDrv{size: image.Pt(420, 800), w: v}
+	d.frame()
+	v.Search(fakeslack.SearchWord)
+	d.until(t, "results", func() bool { return !v.loading && len(v.msgs) > 0 })
+	x := d.scan()
+	if !srHas(x, "Give feedback") || !srHas(x, "Most relevant (default)") || !srHas(x, "View full search") {
+		t.Errorf("results header / footer %q", x)
+	}
+	v.feedback.Click()
+	d.frame()
+	slUntil(t, 10*time.Second, "search.feedback", d.frame, func() bool { return len(e.fs.SearchForms("search.feedback")) == 1 })
+	f := e.fs.SearchForms("search.feedback")[0]
+	if !strings.HasPrefix(f.Get("client_token"), "web-") || f.Get("type") != "search" {
+		t.Errorf("search.feedback %v", f)
+	}
+	var pl map[string]any
+	if err := json.Unmarshal([]byte(f.Get("payload")), &pl); err != nil || pl["module"] != "inChannel" || pl["client_version"] != nil {
+		t.Errorf("payload %q: %v", f.Get("payload"), err)
+	}
+	v.sortBtn.Click()
+	d.frame()
+	m := srMenu(e.h)
+	if m == nil {
+		t.Fatal("no sort menu")
+	}
+	if got := srLabels(m.items); !slices.Equal(got, []string{"Most relevant (default)", "Newest", "Oldest", "--", "Edit default"}) {
+		t.Errorf("sort menu %q", got)
+	}
+	m.items[2].Do()
+	d.until(t, "the oldest-first search", func() bool { return !v.loading })
+	forms := e.fs.SearchForms("search.modules.messages")
+	if last := forms[len(forms)-1]; last.Get("sort") != "timestamp" || last.Get("sort_dir") != "asc" {
+		t.Errorf("Oldest sent sort %q dir %q", last.Get("sort"), last.Get("sort_dir"))
+	}
+	v.Search(fakeslack.SearchNothing)
+	d.until(t, "no results", func() bool { return !v.loading })
+	if x := d.scan(); !srHas(x, srNothingTitle) || !srHas(x, srNothingAsk) || srHas(x, "Nothing to show yet.") {
+		t.Errorf("in-channel no-results state %q", x)
+	}
+}
+
+// Opening a file result: canvases in the canvas view, lists in the list
+// view, nothing toasts "isn't supported".
+func TestSearchOpenFile(t *testing.T) {
+	e := srNewEnv(t, false)
+	srOpenFile(e.h, core.File{ID: "F0CANVAS", IsCanvas: true, Title: "Plan"})
+	srOpenFile(e.h, core.File{ID: "F0LIST", IsList: true, Title: "Tasks"})
+	srOpenFile(e.h, core.File{ID: "F0IMG", IsImage: true, URL: "https://files.example/x.png"})
+	if !slices.Equal(e.h.navs, []string{"docs/F0CANVAS", "lists/F0LIST"}) {
+		t.Errorf("navs %q", e.h.navs)
+	}
+	for _, s := range e.h.toastList() {
+		if strings.Contains(s, "supported") {
+			t.Errorf("toast %q", s)
+		}
+	}
+}
+
+// More: Slack's icons (message, emoji), the Date row's description, File
+// type's rows.
+func TestSearchMoreMenuDetails(t *testing.T) {
+	e := srNewEnv(t, false)
+	v, _ := srView(t, e, fakeslack.SearchWord+" after:2026-11-02 before:2026-11-10", false)
+	v.moreMenu(layout.Context{Ops: new(op.Ops), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}})
+	m := srMenu(e.h)
+	icons := map[string]string{}
+	sub := map[string]string{}
+	for _, it := range m.items {
+		icons[it.Label], sub[it.Label] = it.Icon, it.Subtitle
+	}
+	if icons["Message has"] != "message" || icons["Reactions"] != "emoji" {
+		t.Errorf("icons %v", icons)
+	}
+	if !strings.HasPrefix(sub["Date"], "Nov 3") {
+		t.Errorf("Date description %q", sub["Date"])
+	}
+}
+
 // Screenshots for CI (SEARCH_SHOTS_DIR): the popover blank and typing,
 // the results page, its source and More menus, no results, the Files
 // tab and search in channel, light and dark.
@@ -665,6 +941,16 @@ func TestSearchShots(t *testing.T) {
 		d = &srDrv{size: image.Pt(1280, 800), w: p2, dark: dark}
 		d.until(t, "suggestions", func() bool { return len(p2.msgs) == 3 && len(p2.files) == 1 })
 		shot(d, "search-popover-typing-"+mode)
+		d.press(key.NameDownArrow) // picks the first row: #1264a3, "Enter Open"
+		shot(d, "search-popover-picked-"+mode)
+
+		fm := openSearchFeedback(e.h, srFeedbackOpts{feedbackType: "omniswitcher", query: fakeslack.SearchWord})
+		fm.Pick(1)
+		fm.SetText("The channel I was looking for didn't come up.")
+		shot(&srDrv{size: image.Pt(1280, 800), w: fm, dark: dark}, "search-feedback-modal-"+mode)
+		fm.err = srFeedbackFailed
+		shot(&srDrv{size: image.Pt(1280, 800), w: fm, dark: dark}, "search-feedback-failed-"+mode)
+		shot(&srDrv{size: image.Pt(1280, 800), w: newSearchFeedbackThanks(e.h), dark: dark}, "search-feedback-thanks-"+mode)
 
 		v, dv := srView(t, e, fakeslack.SearchWord, dark)
 		dv.until(t, "counts", func() bool { return v.countOK[srTabDMs] && v.countOK[srTabFiles] })
@@ -695,5 +981,8 @@ func TestSearchShots(t *testing.T) {
 		sc.Search(fakeslack.SearchWord)
 		ds.until(t, "in-channel results", func() bool { return !sc.loading && len(sc.msgs) > 0 })
 		shot(ds, "search-in-channel-results-"+mode)
+		sc.Search(fakeslack.SearchNothing)
+		ds.until(t, "in-channel no results", func() bool { return !sc.loading })
+		shot(ds, "search-in-channel-nothing-"+mode)
 	}
 }

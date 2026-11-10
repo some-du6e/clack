@@ -265,6 +265,7 @@ func New(opts Options, images *imgcache.Cache) *App {
 	a.loadSplitWidth()
 	composer.UpArrowShortcut = func() int { return a.prefs.ComposerUpArrow }
 	a.startSpell()                                // spellcheck_wire.go
+	a.startLocale()                               // locale_wire.go
 	messages.PersistActions = a.bbmPersistActions // Simplified layout mode (bbm.go)
 	a.settleThemeSync()
 	// The shaper (font parsing + system font index) is the slowest part of

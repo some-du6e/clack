@@ -540,8 +540,22 @@ func (m *sbMenus) setTemplateFn(id string, f slackc.JSFunc) {
 	m.gts[id] = f
 }
 
-func menuInfoOf(c *convInfo) popups.ChannelMenuInfo {
-	return popups.ChannelMenuInfo{ID: c.ID, Kind: c.Kind, Muted: c.Muted, Starred: c.Starred}
+// sbMenuInfo is what row c's menu depends on. move adds the Move to…
+// rows (the header's section picker, moveToItems) the section submenus
+// show; the template a plugin reads without them gets the rows alone.
+func (a *App) sbMenuInfo(c *convInfo, move bool) popups.ChannelMenuInfo {
+	i := popups.ChannelMenuInfo{ID: c.ID, Kind: c.Kind, Muted: c.Muted, Starred: c.Starred,
+		// getChannelSectionsTemplate's guard: a member, not archived
+		NoSections:    c.Archived || c.Preview,
+		MoveToSection: a.exp("channel_ia_header_refinements") == "on"}
+	secs := a.model().Sections
+	for k := range secs {
+		i.Custom = i.Custom || custom(&secs[k])
+	}
+	if move && !i.NoSections && (i.Custom || i.MoveToSection) {
+		i.Move = toPopupItems(a.moveToItems(c.ID, a.channelSections(c.ID)))
+	}
+	return i
 }
 
 // handle returns the row's getTemplate (nil without a plugin runtime).
@@ -559,7 +573,7 @@ func (m *sbMenus) handle(a *App, c *convInfo) *taut.GoHandle {
 		}
 		m.t, m.fns, m.info, m.split = t, map[string]*taut.GoHandle{}, map[string]popups.ChannelMenuInfo{}, map[string]bool{}
 	}
-	m.info[c.ID] = menuInfoOf(c)
+	m.info[c.ID] = a.sbMenuInfo(c, false)
 	_, m.split[c.ID] = a.splitSidebarItem(c.ID)
 	h := m.fns[c.ID]
 	if h == nil {
@@ -595,7 +609,7 @@ func (a *App) openSidebarMenu(ch string, anchor image.Point, getTemplate slackc.
 	if c == nil {
 		return
 	}
-	items := popups.ChannelMenuItems(menuInfoOf(c), func(key string) func() { return a.sbMenuDo(ch, key) })
+	items := popups.ChannelMenuItems(a.sbMenuInfo(c, true), func(key string) func() { return a.sbMenuDo(ch, key) })
 	if it, ok := a.splitSidebarItem(ch); ok { // getTilesTemplate, entry point "sidebar"
 		items = withSplitItem(items, it)
 	}
@@ -640,6 +654,9 @@ func (a *App) sbMenuDo(ch, key string) func() {
 		}
 	case "mark_read":
 		return func() { a.markRead(ch) }
+	case "move_to_new_section":
+		// openCreateChannelSectionModal({channelIds: [ch]})
+		return func() { a.openCreateSectionWith(ch) }
 	}
 	return nil
 }

@@ -60,10 +60,10 @@ type examplePart struct {
 func (p *prefsModal) messageExample(f *prefsForm, dense bool, name, avatar string, msg []examplePart) {
 	gtx, a := f.gtx, p.a
 	pc := p.colors()
-	f.record("text", "", "Here’s an example:", false, true)
+	f.record("text", "", pt("Here’s an example:"), false, true)
 	f.y += gtx.Dp(16)
 	at(gtx, image.Pt(0, f.y), image.Pt(f.w, gtx.Dp(18)+gtx.Dp(2)), func(gtx layout.Context) layout.Dimensions {
-		return a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: pc.on(a.th, pc.note), MaxLines: 1}, "Here’s an example:")
+		return a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: pc.on(a.th, pc.note), MaxLines: 1}, pt("Here’s an example:"))
 	})
 	f.y += gtx.Dp(18) + gtx.Dp(12)
 	kind := "example-clean"

@@ -21,14 +21,14 @@ real. *Greyed* means the row is drawn the way Slack draws it, disabled, with
 
 | Page | Result | Prefs (users.prefs / all_notifications_prefs.global) |
 | --- | --- | --- |
-| Availability | matched (no change). Still different: "VIPs" in the Working hours paragraph is plain text, not a link to the VIP tab | dnd_* / working hours (applied, popups) |
+| Availability | matched, then **fixed** 2026-11-10 (see "Availability, status and focus mode" below): "VIPs" in the Working hours paragraph is a link that switches the dialog to the VIP section; Custom shows Slack's row per day; Weekdays shows its subtext; the selects have Slack's options (None, Midnight, wrap-around) and bump an end at or before its start | dnd_* / working hours (server; each change writes only what changed plus dnd_enabled), **dnd_before_/dnd_after_/dnd_enabled_&lt;day&gt;** (server), automatic statuses **huddles_set_status, focus_mode_status{show}, scheduled_dnd_status{show}** (server; Clack wrote focus_mode_set_status and outside_working_hours_set_status, which Slack doesn't read) |
 | Notifications | **fixed**, then made real (part A, 2026-11-09). Slack's order: Messaging defaults + About notifications · How to notify you (Desktop / Mobile) · What to notify you about (Everything / Mentions and direct messages, mobile follows unless overridden) · Also notify you about (Thread replies, VIPs, New huddles, Set up mobile overrides → mobile select) · What to show in Activity (activity_inbox only) · Channel keywords · Reminders · When you're not active on desktop · Sounds & appearance (macOS dock badge / bounce). Removed Clack's invented "On this computer" switch | **newly applied:** global_desktop_push_enabled; global_keywords (an editable field, 1 s debounce, max 100; keywords count as mentions and are highlighted, lxEU port); desktop_sound + mute_sounds (a message notification plays Slack's sound unless muted or DND; picking one previews it); huddle_invite_sound_v2 + mute_huddle_sounds (the invite ring); mac_ssb_bullet / mac_ssb_bounce (Dock badge • and bounce). Applied: global_desktop, no_text_in_notifications. Server: global_mobile, push_idle_wait, threads_everything, priority_dnd_override, huddles_allow_smart_notif, inactive_user_summary_notification, activity_dms_opt_out, global_channels_in_activity, global_reminders_in_activity, reminder_notification_time (half-hour TimePicker, "H:mm"; Slack's servers send day-only reminders at it). Greyed: none |
 | VIP | **fixed** labels, subtexts and order; then made real (part A) | priority_dnd_override (server), vip_users + users.priority.add/remove (applied: the member search adds, Remove removes), Recommended (users.priority.getRecommendations, up to six with Slack's reason lines), priority_sidebar_section (the row shows under vip_section_pref; core makes Slack's client-local "VIP unreads" section first, holding DMs/group DMs with a VIP that have unread mentions). Greyed: none |
 | Navigation | **fixed**. Replaced Clack's invented "Show the sidebar" / "Reset sidebar width" with Slack's tab checkboxes, Icons & text / Icons only, and App agents & assistants. **2026-11-09:** the tab list is slack-kit's ReorderableOptionsList (OkAw, `reorderable-options-list` chunk): the active option follows the pointer and ↑/↓/Home/End, a click or Space/Enter toggles it, the Move up / Move down arrows float at the active row (and Alt+↑/↓), and a row dragged onto another takes its index with Slack's drop line. Still different: show_ai_apps (below) | **newly written** (the rail already applied them): tab_rail_customization + tab_rail_customization_reasons (setTabRailCustomizationByTabName), tab_rail_customization_order (setTabRailCustomizationOrder with the listbox's ids, after a move or a drop), ia4_compact_mode. **Newly applied:** hide_agents_in_dm_list (the row shows under agents_in_dm_sidebar and agents_in_dm_sidebar_pref, TabRail's Mq && n7; with agents_in_dm_sidebar an agent's DM is filed under Direct messages, uXg5 oK / isAgentInDmSidebar in getDefaultSectionType, and the pref puts it back under Apps). Greyed: show_ai_apps (Clack has no AI agents entry in the top bar to hide) |
 | Home | **fixed**. Added Channel organization and Show activity; views in Slack's order (Unreads, Huddles, Threads, Saved, Drafts & sent, Directories) with Slack's defaults (on); custom filter/sort hints; External Connections row; "Hide muted channels from your sidebar" (improve_mute_pref: the box is the pref's negation) with its helper text | **newly applied:** enable_threads_view, enable_huddles_home_view, enable_sent_view, enable_saved_view, enable_unified_directory_view hide the sidebar links; home_unread_dot (Slack's real key; its input is named enable_home_unread_dot): off, the Home tab has no dot or badge; show_sidebar_avatars: off, DM rows show the presence badge; should_show_connect_section: externally shared conversations go to the slack_connect section. Server: disable_auto_channel_sort (the server files joined channels; the client only reads auto_sort upserts). Applied: sidebar_behavior, channel_sort, separate_private_channels, undo_channel_intermix, boost_mentions, show_muted_items_outside_sidebar_menus. **2026-11-09, newly applied:** enable_unread_view (true shows Slack's Unreads link first in the sidebar and the Unreads page, see below), disable_channel_join_banner (the box is its negation; on, the channel join banner shows over the composer, see below). Greyed: none |
-| Appearance | **fixed**, then part A. Font row; Color Mode (Light / Dark / System, desktop) plus the focus-mode dark row; **Slack themes \| Custom theme** tabs. Custom theme has Slack's four hex fields (typed hex, or the pencil's "Pick a color" popover: HSV square, hue slider, hex field), Share, **Import** (Slack's Import theme modal: 4 hexes or a legacy 8/10-colour string, createPayloadFromHexStrings) and **Surprise me** (randomizeTheme). A custom primary sets the brightness (getBrightnessFromCustomHex). The "Celebrate the music of Miles Davis" presets show first under miles_davis_themes | ia_theme (applied), window_background_gradients (applied), colour mode (device). **2026-11-09:** font (device, ui.json `client_typeface`; applied to the whole UI, see "Font" below). Greyed: focus_mode_force_dark_mode_enabled (Clack has no focus mode) |
+| Appearance | **fixed**, then part A. Font row; Color Mode (Light / Dark / System, desktop) plus the focus-mode dark row; **Slack themes \| Custom theme** tabs. Custom theme has Slack's four hex fields (typed hex, or the pencil's "Pick a color" popover: HSV square, hue slider, hex field), Share, **Import** (Slack's Import theme modal: 4 hexes or a legacy 8/10-colour string, createPayloadFromHexStrings) and **Surprise me** (randomizeTheme). A custom primary sets the brightness (getBrightnessFromCustomHex). The "Celebrate the music of Miles Davis" presets show first under miles_davis_themes | ia_theme (applied), window_background_gradients (applied), colour mode (device). **2026-11-09:** font (device, ui.json `client_typeface`; applied to the whole UI, see "Font" below). **2026-11-10:** focus_mode_force_dark_mode_enabled (applied: the silent sidebar theme's sidebarInverted while focus mode is on; shown only under silent_sidebar in light mode, like ThemeColorModeContainer), see "Availability, status and focus mode" below |
 | Messages & media | **fixed**, then part A. Default Skin Tone as Slack's six ✋ radios (:wave: on hover), "your profile" link, JUMBOMOJI subtext, legends as Slack's | **newly applied:** preferred_skin_tone, emoji_mode as_text (emoji draw as :name:, no JUMBOMOJI; turning it on writes convert_emoticons 0), convert_emoticons (the composer converts the emoticon before Space/Enter, Slack's dq table), obey_inline_img_limit (linked images over 20MB stay collapsed), one-click reactions (user_customized_quick_reactions_display_feature 1/0, frequent / custom slots; the hover toolbar shows them), Bring emails into Slack (users.emailtoken.get / create / delete, Copy). Applied: display_real_names_override, show_typing, time24, hide_hex_swatch, jumbomoji, expand_internal_inline_imgs, expand_inline_imgs, expand_non_media_attachments. **2026-11-09, newly applied:** messages_theme (Clean writes light_with_avatars, Compact dense; MessageThemePref), with Slack's "Here’s an example:" pillows under Theme and Names (CompactMessageExample / MessageWithAvatarExample); see [Compact](#compact-messages_theme-dense-2026-11-09) |
-| Language & region | **fixed**, then part A. Keyboard layout row, Slack's spellcheck label. The time zone select lists Slack's 124 labelled zones ("(UTC-08:00) Pacific Time (US and Canada)") | **newly applied:** set_tz_automatically (on: the detected zone is written at once and after every sign-in, maybeUpdateTimezone with Slack's zone tables). Server: tz. **2026-11-10, newly applied:** webapp_spellcheck (the composer, thread replies, message edits, canvases and drafts are spellchecked; on Windows and Linux Slack's language multi-select follows, on macOS its "System Preferences > Keyboard > Text" hint; see [Spellcheck](#spellcheck-webapp_spellcheck-2026-11-10)). Greyed: locale (no translated UI) |
+| Language & region | **fixed**, then part A. Keyboard layout row, Slack's spellcheck label. The time zone select lists Slack's 124 labelled zones ("(UTC-08:00) Pacific Time (US and Canada)") | **newly applied:** set_tz_automatically (on: the detected zone is written at once and after every sign-in, maybeUpdateTimezone with Slack's zone tables). Server: tz. **2026-11-10, newly applied:** webapp_spellcheck (the composer, thread replies, message edits, canvases and drafts are spellchecked; on Windows and Linux Slack's language multi-select follows, on macOS its "System Preferences > Keyboard > Text" hint; see [Spellcheck](#spellcheck-webapp_spellcheck-2026-11-10)). **2026-11-10, newly applied:** locale (see [Language](#language-locale-2026-11-10)) |
 | Accessibility | **fixed**. Alt text reminders legend, tab previews, Slack's animations subtext, the three up-arrow options with descriptions and the Ctrl+↑ note, Lists keyboard interactions, Screen reader (Message verbosity, announcements), links to Notifications and Font. Removed invented "Limit message line length". **2026-11-09:** the up-arrow choice is real. Slack keeps it client-side (localStorage composerUpArrowShortcutBehavior, uMEH LIST=1 / LIST_IF_EMPTY=2 / EDIT=3), so Clack keeps it in ui.json, and the composer follows MessageInput.onUpArrow. LIST focuses the message list at the start of the first line, LIST_IF_EMPTY only in an empty field, EDIT (or unset without up_to_browse_kb_shortcut) edits your last message, and Mod+↑ in an empty field always edits. The list then selects its newest message: ↑/↓ move, ↓ past the end or Esc go back, Enter/E edit yours. The Lists and huddle rows now read Slack's real keys (lists_tabbing_navigation_option_type, huddles_reactions_read_out_loud, huddles_reactions_play_sound). **2026-11-09, lists-keyboard:** Lists keyboard interactions is wired. The section shows only with the lists_tabbing_navigation experiment (ListsTabbingPref returns null without it). Data entry is checked while the pref is unset, and a pick writes tab_nav or arrow_nav with setUserPrefByApi. The Lists grid follows it: cell keyboard navigation in both modes (docs/LISTS.md, Keyboard) | applied: underline_links, a11y_animations, composerUpArrowShortcutBehavior (device), lists_tabbing_navigation_option_type, Simplified layout mode (device: bbm, bbmSettings; see "Simplified layout mode" below). Greyed: a11y_show_alt_text_reminders (Clack's uploads have no alt text field yet; Slack's reminder opens the edit-file alt text dialog), a11y_peeks_enabled_on_mouse_enter (Clack's rail has no hover peeks), a11y_dm_read_out and huddles_reactions_read_out_loud (screen-reader announcements; Clack has no accessibility bridge), huddles_reactions_play_sound (the sound lives in the huddle chunks, not fetched yet) |
 | Mark as read | **fixed**. Removed the invented hint under Prompt to confirm; added Keyboard shortcuts | applied: mark_msgs_read_immediately + start_scroll_at_oldest (one users.prefs.set), confirm_clear_all_unreads |
 | Audio & video | **fixed**. Camera, Microphone, gain control, noise suppression, auto-dock, 150-member warning, blur, Huddle motion, music delay. Removed "Set my status In a huddle" (Slack shows it under Availability) and "Turn off my video" (gated off in the live dialog) | applied: huddles_mute_by_default, **huddles_cc_by_default** (a joined huddle starts with captions shown), **huddles_show_shouty_rooster** (starting, not joining, a huddle in a channel of more than 150 members asks "Start a huddle in this channel?", HuddleShoutyRoosterModal, with its "Don’t show this message again." box writing the pref). **2026-11-10, huddle-audio, newly applied:** agc and ns (device prefs in ui.json, like Slack's localStorage prefs.audio: gain control and RNNoise noise suppression before the Opus encoder), huddles_show_join_preview (the join preview window), huddles_global_mute (Mod+Shift+Space while in a huddle), huddles_disconnect_on_lock (leave when the screen locks), huddles_play_music_when_last and huddles_play_music_timeout (the lounge music); see "Audio & video (2026-11-10)" below. Greyed: video_background_filter (needs a person-segmentation runtime, see below), huddles_reactions_effects, clips_pip_auto_dock (Clack has no clip picture-in-picture) |
@@ -43,12 +43,107 @@ enable_unread_view and disable_channel_join_banner are done: see "Unreads view a
 
 - ~~**messages_theme** (Messages & media)~~: done 2026-11-09, see "Compact" below.
 - ~~**font** (Appearance)~~: done 2026-11-09, see "Font" below.
-- **focus_mode_force_dark_mode_enabled** (Appearance): only means something
-  once Clack has Slack's focus mode.
-- **locale** (Language & region): the whole UI's strings through a catalog
-  for Slack's 12 locales (Slack's i18n bundles are per-locale chunks), plus
-  the localized time zone and sound lists Slack already ships (sbu9 has 11).
+- ~~**focus_mode_force_dark_mode_enabled** (Appearance)~~: done 2026-11-10,
+  see "Availability, status and focus mode" below.
+- **locale** (Language & region): applied 2026-11-10, in part. See
+  "Language" below and docs/I18N.md.
 - ~~**webapp_spellcheck**~~: done 2026-11-10, see "Spellcheck" below.
+
+## Language (locale, 2026-11-10)
+
+Slack's model, with the evidence, is in docs/I18N.md. In short: per-locale
+JSON bundles on the CDN, keyed by namespace and a SHA-1 prefix of the
+English source, formatted with format-message, falling back to the source.
+
+| What | Slack | Clack |
+|---|---|---|
+| Row | `LocalePref`: a large full-width select of the 12 locales, each label in its own language, sorted by label. Disabled offline with "Go online to change your language."; otherwise "Choose the language you’d like to use with Slack." | `localePref` (locale_wire.go), the same |
+| Writing | `setLocaleForTeam`: setLocale (localConfig user_locale, ensure the bundle, `<html lang>`, re-render), then setUserPrefByApi `locale`, then refetchLocalizedApis. The desktop app does it all live | `i18n.SetLocale` loads the bundle on a goroutine (the cache, else the CDN), then Invalidate; users.prefs.set `locale`; ui.json `locale`, so the next start loads the bundle before users.prefs answers. Live |
+| Time zones | `sbu9 getList(locale)`: 11 localized lists of 124 zones | `core.TimezonesFor` (tz_slack_locales.go, generated from sbu9) |
+| Sounds | The sound map's labels in the `sounds` namespace ("Knock Brush" is "Pincelada") | `soundLabel` |
+| Dates, times | dayjs locales, Azem tables, toTime, formatDateDayDivider | `i18n.DayDivider`, `Time`, `TimeAgo`… (uipref.Clock follows the locale) |
+
+What's wired and what's left: see "Wiring" in docs/I18N.md.
+
+## Availability, status and focus mode (2026-11-10)
+
+Read from Slack's web client, build a84662d2d135 on the public CDN (no
+cookie): `gantry-v2-async-prefs-dialog` (AvailabilitySection, DndPreferences,
+DndSchedule, DndCustomPreferences, BaseDndTimeSelect, ThemeColorModeContainer),
+`gantry-v2-async-client-boot-shared` (jDuV dnd constants, 06oL time options,
+QBEZ pause labels), `gantry-v2-async-client-boot-render` (SilentSidebarTrigger,
+FocusModePopoverContent, GTtr toggleFocusMode, the Vjk7 popover CSS, the
+keymap) and `modern.vendor` (tHjK CustomStatusModal, 7Nma, OwtR, KQp3, /Ab5,
+v4SM, OmIz, 1Hmm, T80I, Pm/a). Nothing was written to the real account; the
+tests run against fakeslack.
+
+**Working hours.** The first select is dnd_end_hour (notifications start when
+DND ends), the second dnd_start_hour; with dnd_enabled off the page shows Every
+day, 12:00 AM to Midnight. Options are the 48 half hours plus Midnight (23:59);
+the second select only lists times after the first, wrapping past midnight on
+Every day / Weekdays (never 00:00). Choosing a first time at or after the second
+moves the second to the next half hour. Weekdays adds "You won't receive
+notifications on Saturday or Sunday." Custom adds a row per day, Monday first
+(36px, 16 apart, a 120px day label): the first select (dnd_before_&lt;day&gt;)
+has a "None" option (dnd_enabled_&lt;day&gt; all_day, hiding the second
+select) while fewer than six other days are None; a "disabled" day shows 12:00
+AM to Midnight; picking a time makes the day "partial". Every change sends only
+the prefs it changed plus dnd_enabled: true, as setMultiplePrefsByApi does
+(users.prefs.set prefs=JSON). The automatic statuses write huddles_set_status
+and the focus_mode_status / scheduled_dnd_status objects with show flipped
+(users.prefs.set name/value). "VIPs" calls the dialog's section switch with
+"vip" (Slack's setActiveSection).
+
+**Set a status.** A status starting now goes through users.profile.set with
+Slack's profile: status_emoji (`:speech_balloon:` for text only),
+status_text, status_text_canonical (resolveTextCanonicalToSave: a preset's
+canonical while its text is unchanged, Out of office always),
+status_expiration, status_duration (30_minutes, all_day, week, custom…),
+ooo_message, and status_is_dnd under the status_improvements experiment. A start
+more than 30 s ahead (isScheduledImmediately) goes through
+users.customStatus.schedule (emoji, text, text_canonical, date_scheduled,
+date_expire, is_dnd, ooo_message, duration custom); "Status scheduled." The
+modal lists users.customStatus.list's future statuses under "Scheduled"
+(emoji, text, "Today, 3:00 PM – 5:00 PM"); a row edits it ("Edit status",
+"Update", custom_status_id; "Scheduled status updated.") and its × asks
+"Delete this scheduled status?" (Keep Status / Delete Status, then
+users.customStatus.deleteScheduled, "Scheduled status removed."). Five
+scheduled statuses block a sixth ("You can only have 5 scheduled statuses at
+a time."), and an end in the past shows "End time must be in the future."
+The automatic reply is sent as JSON rich_text blocks; it is prefilled from
+the saved ooo_message (users.profile.get), else "I'm out of office until
+{date}." in v4SM's wording (a time today; "tomorrow" / "next week" / a day
+for an end at 11:59 PM; a date a week or more out), which follows the end
+until edited; an unedited saved reply is left out so the server keeps it,
+and any other status sends "" to clear it. "This week" ends Friday 11:59 PM,
+Start defaults to the current minute, Vacationing pauses notifications by
+itself and a Vacationing that doesn't clear becomes a start and end range.
+Clear Status is clearUserStatus (status_text_canonical null, ending a snooze
+that belonged to the status). Like Slack, saving shows no toast.
+
+**Focus mode** is real in this build: Slack calls it the silent sidebar, and
+it exists under the silent_sidebar experiment (the live dialog's Appearance
+row, which only ThemeColorModeContainer draws under that experiment, shows
+the test account has it). It is not a DND preset or a status: turning it on
+writes focus_mode_expiration_ts (now + 30 min / 1 h / 2 h, or 9999999999 for
+"Don't turn off"); the server then pauses notifications and, with
+Availability's "In focus mode" checked, sets that status. The control strip's
+moon button toggles it (Clack had an invented light/dark toggle in that
+slot); off, its tooltip is "Turn on focus mode / Pause notifications and
+reduce badging and bolding."; on, hovering opens "You're in focus mode" with
+the Availability gear, Slack's telescope (focus-d8ca34d.svg drawn natively),
+a subtitle, "Notifications paused (until …)", the Duration select and
+"Continue to get notifications from VIPs" (priority_dnd_override). While it
+is on, unread rows aren't bold, mention badges are dots (the count on hover),
+and the theme is the Silent Sidebar Gray theme, whose sidebarInverted is
+focus_mode_force_dark_mode_enabled. Not built: focus music (Slack's Miles
+Davis soundtrack, under focus_mode_music), the Custom date/time duration
+(focus_mode_custom_duration treatment), the calendar-started popover
+(calendar_focus_sync), the first-open Lottie animation and swirling blobs
+(Clack draws the reduced-motion rendering), the recap
+(focus_mode_recap, an AI summary), the button's glow coachmark, and the
+other silent sidebar themes (only Gray is the default, and Slack's picker for
+them isn't in the prefs dialog).
 
 ## Spellcheck (webapp_spellcheck, 2026-11-10)
 
@@ -475,3 +570,11 @@ dev.
 - `TestPrefsAuditShots` with the `prefs-audit-shots` workflow: every page,
   one shot per screenful, light and dark, uploaded as the `prefs-audit-shots`
   artifact.
+- Availability, status and focus mode (2026-11-10): `TestAvTimeOptions`,
+  `TestAvChangesWriteWhatSlackWrites`, `TestAvPageReadsAndWrites` (popups,
+  prefs_availability_test.go); `TestActProfileSetFields`,
+  `TestActScheduleStatusCall`, `TestActListAndDeleteScheduled`,
+  `TestActClearStatusCall`, `TestActApplyDND`, `TestActStatusModalSaves`,
+  `TestActStatusModalScheduledSection` (popups, actions_status_api_test.go);
+  `TestFocusExpiration`, `TestFocusModeToggle` (ui, focus_mode_test.go). All
+  write to fakeslack only.
