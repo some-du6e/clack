@@ -953,6 +953,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleSearch(method, f); handled { // search.go
 		return out
 	}
+	if out, handled := s.handleVisits(method, f); handled { // visits.go
+		return out
+	}
 	if out, handled := s.handleSections(method, f); handled { // sections.go
 		return out
 	}

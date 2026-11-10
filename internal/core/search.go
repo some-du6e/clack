@@ -596,13 +596,16 @@ func (a *App) AutocompleteFiles(ctx context.Context, query string) ([]File, erro
 	return out, nil
 }
 
-// SaveSearch remembers a submitted query the way Slack does (search.save
-// with type default).
+// SaveSearch remembers a submitted query the way Slack does (searchSave:
+// search.save {terms, type}; the switcher's type is its searchy mode,
+// "default"). The search history cache is dropped after it, as Slack's
+// QueryHistoryCache.flushAll does.
 func (a *App) SaveSearch(ctx context.Context, terms string) error {
 	terms = strings.TrimSpace(terms)
 	if terms == "" {
 		return nil
 	}
+	defer a.flushQueryHistory()
 	return a.C.Call(ctx, "search.save", url.Values{"terms": {terms}, "type": {"default"}}, nil)
 }
 

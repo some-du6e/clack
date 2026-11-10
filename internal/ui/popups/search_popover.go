@@ -167,6 +167,9 @@ type SearchPopover struct {
 	histMode    bool // the clock button: the list shows Recent searches
 	unreadsOpen bool // "Show N more" expanded the unreads
 	sess        core.SearchSession
+	recVer      uint64 // core.RecentsVersion the rows were built with
+	recRead     string // desktop_search_recents_read's group the rows were built with
+	histLoading bool   // Recent searches are being fetched (search.autocomplete)
 
 	// Slick boundaries (slick_search.go)
 	full     []srRow         // every row; rows are full minus plugin-hidden ones
@@ -453,25 +456,20 @@ func (p *SearchPopover) setSel(i int) {
 	}
 }
 
-// srUnreadsShown is how many unreads show before "Show N more".
-const srUnreadsShown = 5
+// srUnreadsShown is how many unreads show before "Show N more" (the
+// zero state's unreads.slice(0, 10), with "Show {count} more" for the
+// rest).
+const srUnreadsShown = 10
 
-// emptyRows is Slack's blank slate (renderBlankSlateSuggestions):
-// "Unreads & drafts" (with Show N more / Show fewer), a divider, then
-// "Recent places": the last five places you went (conversations and
-// pages), without the one you're on. The clock button switches the list
-// to Recent searches.
+// emptyRows is Slack's blank slate (the omniswitcher's merged zero state,
+// rendered by renderBlankSlateSuggestions): "Unreads & drafts" (ten, then
+// Show N more / Show fewer), a divider, then "Recent places": three when
+// there are unreads, else five, without the one you're on and without the
+// conversations already listed as unreads. The clock button switches the
+// list to Recent searches.
 func (p *SearchPopover) emptyRows(rows []srRow) []srRow {
 	if p.histMode {
-		_, queries := srRecents()
-		if len(queries) == 0 {
-			return append(rows, srRow{kind: srRNote, title: "Your recent searches will show up here."})
-		}
-		rows = append(rows, srRow{kind: srRHeader, title: "Recent searches"})
-		for _, q := range queries {
-			rows = append(rows, srRow{kind: srRQuery, id: q, title: q, icon: "clock"})
-		}
-		return rows
+		return p.historyRows(rows)
 	}
 	unreads := p.unreads
 	if len(unreads) > 24 {
@@ -493,31 +491,19 @@ func (p *SearchPopover) emptyRows(rows []srRow) []srRow {
 			rows = append(rows, srRow{kind: srRMore, id: "unreads-toggle", title: t})
 		}
 	}
-	places, _ := srRecents()
-	cur := srCurrentPlace()
-	var recent []srRow
-	for _, id := range places {
-		if len(recent) == 5 {
-			break
-		}
-		if id == cur {
-			continue
-		}
-		if pl, ok := srPlaceOf(id); ok {
-			recent = append(recent, srRow{kind: srRPlace, id: strings.TrimPrefix(id, "view:"), title: pl.title, icon: pl.icon, boxed: true})
-			continue
-		}
+	// excludeIds: the unreads' conversations (and a DM's person)
+	seen := map[string]bool{}
+	for _, id := range p.unreads {
+		seen[id] = true
 		if i, ok := p.byConv[id]; ok {
-			recent = append(recent, p.candRow(p.cands[i], false))
-			continue
-		}
-		if c := p.h.Core(); c != nil && p.snapOK {
-			ref := c.ConvRef(id)
-			if ref.Name != "" && ref.Kind != "im" && ref.Kind != "mpim" {
-				recent = append(recent, srRow{kind: srRConv, id: id, title: ref.Name, icon: convIcon(ref.Kind)})
-			}
+			seen[p.cands[i].ID] = true
 		}
 	}
+	limit := 5
+	if len(unreads) > 0 {
+		limit = 3
+	}
+	recent := p.recentPlaces(seen, limit)
 	if len(recent) > 0 {
 		if len(unreads) > 0 {
 			rows = append(rows, srRow{kind: srRDivider})
@@ -526,6 +512,135 @@ func (p *SearchPopover) emptyRows(rows []srRow) []srRow {
 		rows = append(rows, recent...)
 	}
 	return rows
+}
+
+// historyRows is history mode's Recent searches
+// (suggestionsBlankSlateQueryHistory, ten): Slack's server history
+// (core.RecentSearches: the recents pref with desktop_search_recents_read
+// on, else search.autocomplete), fetched once and redrawn when it lands.
+// Slackbot conversations are left out: Clack has no Slackbot to reopen
+// them in.
+func (p *SearchPopover) historyRows(rows []srRow) []srRow {
+	var queries []string
+	if c := p.h.Core(); c != nil {
+		items, ok := c.CachedRecentSearches(10)
+		if !ok && !p.histLoading {
+			p.histLoading = true
+			run(p.h, func(ctx context.Context) ([]core.QueryHistoryItem, error) { return c.RecentSearches(ctx, 10) },
+				func(_ []core.QueryHistoryItem, _ error) {
+					p.histLoading = false
+					if !p.done && p.histMode {
+						p.rebuild(time.Now(), false)
+					}
+				})
+		}
+		for _, it := range items {
+			if !it.Slackbot {
+				queries = append(queries, it.Query)
+			}
+		}
+	}
+	if len(queries) == 0 {
+		return append(rows, srRow{kind: srRNote, title: "Your recent searches will show up here."})
+	}
+	rows = append(rows, srRow{kind: srRHeader, title: "Recent searches"})
+	for _, q := range queries {
+		rows = append(rows, srRow{kind: srRQuery, id: q, title: q, icon: "clock"})
+	}
+	return rows
+}
+
+// PageInfo, set by the ui root, is a page route's title and icon (the
+// rows Recent places shows for pages Slack's visits.list returns).
+var PageInfo func(page string) (title, icon string)
+
+// srPageRow is a Recent places page row ("" title: Clack doesn't have it).
+func srPageRow(page string) (srRow, bool) {
+	if pl, ok := srPlaceOf("view:" + page); ok && pl.title != "" {
+		return srRow{kind: srRPlace, id: page, title: pl.title, icon: pl.icon, boxed: true}, true
+	}
+	if PageInfo != nil {
+		if t, ic := PageInfo(page); t != "" {
+			return srRow{kind: srRPlace, id: page, title: t, icon: ic, boxed: true}, true
+		}
+	}
+	return srRow{}, false
+}
+
+// recentPlaces is the zero state's Recent places: with
+// desktop_search_recents_read on, navigationEventsToSuggestions over
+// Slack's visits (visits.list, else the recents pref, with this session's
+// navigation merged in); else historyEntriesToSuggestions over this
+// session's history. seen holds the ids already listed (the unreads).
+func (p *SearchPopover) recentPlaces(seen map[string]bool, limit int) []srRow {
+	c := p.h.Core()
+	cur := srCurrentPlace()
+	var out []srRow
+	conv := func(id string) {
+		if i, ok := p.byConv[id]; ok {
+			cd := p.cands[i]
+			if seen[id] || seen[cd.ID] {
+				return
+			}
+			seen[id], seen[cd.ID] = true, true
+			out = append(out, p.candRow(cd, false))
+			return
+		}
+		if c != nil && p.snapOK && !seen[id] {
+			ref := c.ConvRef(id)
+			if ref.Name != "" && ref.Kind != "im" && ref.Kind != "mpim" {
+				seen[id] = true
+				out = append(out, srRow{kind: srRConv, id: id, title: ref.Name, icon: convIcon(ref.Kind)})
+			}
+		}
+	}
+	if c != nil {
+		if evs, ok := c.RecentPlacesEvents(); ok {
+			curPage := core.SlackPageIDs[strings.TrimPrefix(cur, "view:")]
+			for _, ev := range evs {
+				if len(out) >= limit {
+					break
+				}
+				switch ev.ObjectType {
+				case core.NavChannel, core.NavDM:
+					if ev.ID != cur {
+						conv(ev.ID)
+					}
+				case core.NavPage:
+					// canvases and lists (FILE) show only when their file is
+					// loaded in Slack; Clack's popover has no file store, and
+					// record channels don't exist on Hack Club
+					page := core.SlackPageRoute(ev.ID)
+					if page == "" || ev.ID == curPage || seen["view:"+page] {
+						continue
+					}
+					if r, ok := srPageRow(page); ok {
+						seen["view:"+page] = true
+						out = append(out, r)
+					}
+				}
+			}
+			return out
+		}
+	}
+	places, _ := srRecents()
+	for _, id := range places {
+		if len(out) >= limit {
+			break
+		}
+		if id == cur {
+			continue
+		}
+		if page, ok := strings.CutPrefix(id, "view:"); ok {
+			if r, ok := srPageRow(page); ok && !seen[id] {
+				seen[id] = true
+				out = append(out, r)
+			}
+			continue
+		}
+		conv(id)
+	}
+	return out
 }
 
 func (p *SearchPopover) typingRows(rows []srRow, q string, now time.Time) []srRow {
@@ -724,6 +839,7 @@ func (p *SearchPopover) submit(q string) {
 	q = strings.TrimSpace(q)
 	srRecordQuery(q)
 	if c := p.h.Core(); c != nil && q != "" {
+		c.RecordRecentSearch(q, core.RecentSearchSlack) // maybeRecordRecentSearchEvent
 		run(p.h, func(ctx context.Context) (struct{}, error) { return struct{}{}, c.SaveSearch(ctx, q) },
 			func(struct{}, error) {})
 	}
@@ -915,6 +1031,15 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 	win := gtx.Constraints.Max
 	gtx.Constraints.Min = image.Point{}
 	p.loadSnap(gtx.Now)
+	if c := p.h.Core(); c != nil && strings.TrimSpace(p.query) == "" {
+		// the history and Recent places follow the recents' arrival and
+		// the read experiment's group (an Experiments plugin flips it live)
+		v, g := c.RecentsVersion(), c.Experiment("desktop_search_recents_read")
+		if v != p.recVer || g != p.recRead {
+			p.recVer, p.recRead = v, g
+			p.rebuild(gtx.Now, false)
+		}
+	}
 	if !p.focus || p.refocus {
 		gtx.Execute(key.FocusCmd{Tag: &p.ed})
 		p.focus, p.refocus = true, false

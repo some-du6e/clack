@@ -138,6 +138,7 @@ func (a *App) SetExperimentGroups(groups map[string]*string) {
 	a.mu.Unlock()
 	if changed {
 		a.emit(Event{Type: "experiments"})
+		a.recentsAfterExperiments()
 	}
 }
 
@@ -227,4 +228,12 @@ var experimentReads = map[string][]string{
 	"session_channels_inline_diff": on,
 	// huddles
 	"scheduled_huddles": on, "huddles_raised_hand_queue": on,
+	// search and the switcher (search*.go, popups/search_*)
+	"desktop_search_recents_read": on, "desktop_search_recents_write": on,
+	// read by branches merged into ui without listing them here
+	"activity_bulk_unread_tool": on, "ai_channel_exclusions": on, "mcp_ai_channel_exclusions": on,
+	"enable_new_channel_settings": on, "move_channel_tabs_settings": on, "lists_grid_todos": on,
+	"mpdm_default_exclude_history_clients_webapp": on, "rich_text_headers_and_dividers": on,
+	"updated_scheduled_sends_desktop": on, "draft_management_in_composer": {"treatment"},
+	"sidebar_draft_indicator_menu_and_thread_inclusion": on,
 }

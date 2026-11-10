@@ -106,6 +106,7 @@ func init() {
 	}
 	mkProfile = func(a *App, user string) View { return popups.NewProfileView(a, user) }
 	onPlace = popups.RecordRecentPlace
+	popups.PageInfo = func(page string) (string, string) { return pageTitle(Route(page)), pageIcon(page) }
 	mkSearchInChannel = func(a *App, ch string) View { return popups.NewSearchInChannel(a, ch) }
 	mkSwitcher = func(a *App) Overlay { return popups.NewQuickSwitcher(a) }
 	mkSearch = func(a *App, q string) Overlay { return popups.NewSearchPopover(a, q, a.searchPill) }

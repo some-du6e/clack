@@ -139,39 +139,59 @@ func srTitles(rows []srRow, k srRowKind) []string {
 	return out
 }
 
-// The blank slate is Slack's renderBlankSlateSuggestions: Unreads &
-// drafts (five, then "Show N more" / "Show fewer"), Recent places from
-// where you went (pages too) without where you are, and no Recent
-// searches; the clock button switches the list to Recent searches.
+// The blank slate is Slack's merged zero state (renderBlankSlateSuggestions):
+// Unreads & drafts (ten, then "Show N more" / "Show fewer"), Recent places
+// from where you went (pages too) without where you are and without the
+// unreads (three when there are unreads, else five), and no Recent
+// searches; the clock button switches the list to Recent searches, Slack's
+// server history (search.autocomplete).
 func TestSearchPopoverBlankSlate(t *testing.T) {
 	e := srNewEnv(t, false)
-	chs := e.fs.ChannelIDs()
-	RecordRecentPlace(chs[1], "", "")
-	RecordRecentPlace("view:later", "To-dos", "todos")
-	RecordRecentPlace(chs[2], "", "")
-	RecordRecentPlace("view:activity", "Activity", "activity") // where you are now
 	p := NewQuickSwitcher(e.h)
 	d := &srDrv{size: image.Pt(1280, 800), w: p}
 	d.until(t, "the snapshot", func() bool { return p.snapOK })
+	unread := map[string]bool{}
+	for _, id := range p.unreads {
+		unread[id] = true
+	}
+	var read []string // channels that aren't unreads
+	for _, id := range e.fs.ChannelIDs() {
+		if !unread[id] && e.h.a.ConvRef(id).Name != "" {
+			read = append(read, id)
+		}
+	}
+	if len(read) < 3 || len(p.unreads) == 0 {
+		t.Fatalf("fixture: %d read channels, %d unreads", len(read), len(p.unreads))
+	}
+	RecordRecentPlace(read[0], "", "")
+	RecordRecentPlace("view:later", "To-dos", "todos")
+	RecordRecentPlace(p.unreads[0], "", "") // an unread: listed there, not here
+	RecordRecentPlace(read[1], "", "")
+	RecordRecentPlace(read[2], "", "")
+	RecordRecentPlace("view:activity", "Activity", "activity") // where you are now
+	p.rebuild(time.Now(), true)
 
-	places := []string{}
-	in := false
-	for _, r := range p.rows {
-		if r.kind == srRHeader {
-			in = r.title == "Recent places"
-			continue
+	places := func() []string {
+		out := []string{}
+		in := false
+		for _, r := range p.rows {
+			if r.kind == srRHeader {
+				in = r.title == "Recent places"
+				continue
+			}
+			if in && r.selectable() {
+				out = append(out, r.title)
+			}
 		}
-		if in && r.selectable() {
-			places = append(places, r.title)
-		}
+		return out
 	}
-	c2, c1 := e.h.a.ConvRef(chs[2]).Name, e.h.a.ConvRef(chs[1]).Name
-	if !slices.Equal(places, []string{c2, "To-dos", c1}) {
-		t.Errorf("Recent places %q, want [%s To-dos %s] (newest first, the open page left out)", places, c2, c1)
+	n2, n1 := e.h.a.ConvRef(read[2]).Name, e.h.a.ConvRef(read[1]).Name
+	if got := places(); !slices.Equal(got, []string{n2, n1, "To-dos"}) {
+		t.Errorf("Recent places %q, want [%s %s To-dos] (three with unreads, newest first, no unread, the open page left out)", got, n2, n1)
 	}
-	for _, bad := range []string{"Saved", "Threads", "Activity"} {
-		if slices.Contains(places, bad) {
-			t.Errorf("Recent places has %q, a page you didn't visit (or the one you're on)", bad)
+	for _, bad := range []string{"Saved", "Threads", "Activity", e.h.a.ConvRef(p.unreads[0]).Name} {
+		if slices.Contains(places(), bad) {
+			t.Errorf("Recent places has %q (not visited, the open page, or an unread)", bad)
 		}
 	}
 	if slices.Contains(srTitles(p.rows, srRHeader), "Recent searches") {
@@ -182,14 +202,22 @@ func TestSearchPopoverBlankSlate(t *testing.T) {
 			t.Errorf("page row data-type %q", srDataType(&r))
 		}
 	}
+	// no unreads: five places
+	keep := p.unreads
+	p.unreads = nil
+	p.rebuild(time.Now(), true)
+	if got := places(); len(got) != 5 {
+		t.Errorf("without unreads %d Recent places %q, want 5", len(got), got)
+	}
+	p.unreads = keep
 
-	// Unreads & drafts: five, then Show N more
+	// Unreads & drafts: ten, then Show N more
 	var ids []string
 	for id := range p.byConv {
 		ids = append(ids, id)
 	}
 	slices.Sort(ids)
-	p.unreads = ids[:8]
+	p.unreads = ids[:13]
 	p.rebuild(time.Now(), true)
 	if got := srTitles(p.rows, srRMore); !slices.Equal(got, []string{"Show 3 more"}) {
 		t.Fatalf("more row %q", got)
@@ -203,8 +231,8 @@ func TestSearchPopoverBlankSlate(t *testing.T) {
 			n++
 		}
 	}
-	if n != srUnreadsShown {
-		t.Errorf("%d unreads before Show more, want %d", n, srUnreadsShown)
+	if n != srUnreadsShown || srUnreadsShown != 10 {
+		t.Errorf("%d unreads before Show more, want 10", n)
 	}
 	for i := range p.rows {
 		if p.rows[i].kind == srRMore {
@@ -216,17 +244,86 @@ func TestSearchPopoverBlankSlate(t *testing.T) {
 		t.Errorf("after Show more: %q", got)
 	}
 
-	// history mode
+	// history mode: Slack's server history, fetched when the list opens
 	p.history.Click()
 	d.frame()
+	d.until(t, "the history fetch", func() bool { return !p.histLoading })
 	if got := srTitles(p.rows, srRNote); !slices.Equal(got, []string{"Your recent searches will show up here."}) {
 		t.Errorf("empty history %q", got)
 	}
-	srRecordQuery("zephyr notes")
-	p.rebuild(time.Now(), true)
-	if !slices.Contains(srTitles(p.rows, srRHeader), "Recent searches") || !slices.Contains(srTitles(p.rows, srRQuery), "zephyr notes") {
+	if err := e.h.a.SaveSearch(context.Background(), "zephyr notes"); err != nil { // drops the cached history
+		t.Fatal(err)
+	}
+	d.until(t, "the saved search in history", func() bool { return slices.Contains(srTitles(p.rows, srRQuery), "zephyr notes") })
+	if !slices.Contains(srTitles(p.rows, srRHeader), "Recent searches") {
 		t.Errorf("history rows %+v", srTitles(p.rows, srRQuery))
 	}
+	if f := e.fs.SearchForms("search.autocomplete"); len(f) == 0 || f[0].Get("use_hash") != "true" || f[0].Get("limit") != "100" {
+		t.Errorf("search.autocomplete %v", f)
+	}
+}
+
+// desktop_search_recents_read on: Recent places come from Slack's
+// visits.list and Recent searches from the recents pref; forced off they
+// come from this session's history and search.autocomplete again. With
+// desktop_search_recents_write on, a search run from the switcher is
+// recorded (and, with read on, shows in history at once).
+func TestSearchPopoverRecentsGroups(t *testing.T) {
+	e := srNewEnv(t, false)
+	ctx := context.Background()
+	a := e.h.a
+	chs := e.fs.ChannelIDs()
+	pref := `{"search":[{"query":"from the pref","type":"SLACK","timestamp":5},{"query":"sf","type":"SALESFORCE","timestamp":9}]}`
+	if err := a.C.SetPref(ctx, "recents", pref); err != nil {
+		t.Fatal(err)
+	}
+	e.fs.SetVisits(fakeslack.Visit{EntityID: chs[3], EntityType: "channel", LastMS: 300},
+		fakeslack.Visit{EntityID: "Psaved", EntityType: "view", LastMS: 200})
+	e.fs.SetSearchHistory("from search.autocomplete")
+	a.SetExperimentGroup("desktop_search_recents_read", "on")
+	a.MaybeLoadRecents(ctx)
+
+	p := NewQuickSwitcher(e.h)
+	d := &srDrv{size: image.Pt(1280, 800), w: p}
+	d.until(t, "the snapshot", func() bool { return p.snapOK })
+	p.unreads = nil // five places, none excluded
+	p.rebuild(time.Now(), true)
+	var places []string
+	in := false
+	for _, r := range p.rows {
+		if r.kind == srRHeader {
+			in = r.title == "Recent places"
+			continue
+		}
+		if in && r.selectable() {
+			places = append(places, r.title)
+		}
+	}
+	if want := []string{a.ConvRef(chs[3]).Name, "Saved"}; !slices.Equal(places, want) {
+		t.Errorf("Recent places from visits.list %q, want %q", places, want)
+	}
+	p.history.Click()
+	d.frame()
+	if got := srTitles(p.rows, srRQuery); !slices.Equal(got, []string{"from the pref"}) {
+		t.Errorf("history from the recents pref %q (no Salesforce rows)", got)
+	}
+
+	a.SetExperimentGroup("desktop_search_recents_read", "off")
+	d.frame()
+	d.until(t, "search.autocomplete history", func() bool {
+		return slices.Equal(srTitles(p.rows, srRQuery), []string{"from search.autocomplete"})
+	})
+
+	a.SetExperimentGroup("desktop_search_recents_read", "on")
+	a.SetExperimentGroup("desktop_search_recents_write", "on")
+	p.submit("fresh search")
+	a.FlushRecents()
+	q := NewQuickSwitcher(e.h)
+	q.histMode = true
+	d2 := &srDrv{size: image.Pt(1280, 800), w: q}
+	d2.until(t, "the recorded search", func() bool {
+		return slices.Contains(srTitles(q.rows, srRQuery), "fresh search")
+	})
 }
 
 // Typing: users/channels from the edge search, Recent messages from

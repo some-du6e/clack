@@ -39,6 +39,38 @@ type searchLog struct {
 	mu    sync.Mutex
 	forms map[string][]url.Values
 	saved []string
+	// hist is the search history search.autocomplete answers: search.save
+	// adds to it (or bumps a query's count), search.delete drops a query.
+	hist []savedSearch
+}
+
+// savedSearch is one search history entry.
+type savedSearch struct {
+	terms, typ string
+	ts         float64
+	count      int
+}
+
+// searchHash is the history entry's hash (search.autocomplete use_hash).
+func searchHash(terms string) string {
+	h := uint32(2166136261)
+	for i := 0; i < len(terms); i++ {
+		h = (h ^ uint32(terms[i])) * 16777619
+	}
+	return fmt.Sprintf("%08x", h)
+}
+
+// SetSearchHistory replaces the search history (oldest first); every
+// entry is type "default".
+func (s *Server) SetSearchHistory(terms ...string) {
+	l := s.slog()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.hist = nil
+	base := float64(time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC).Unix())
+	for i, t := range terms {
+		l.hist = append(l.hist, savedSearch{terms: t, typ: "default", ts: base + float64(i)*60, count: 1})
+	}
 }
 
 var searchLogs sync.Map // *Server -> *searchLog
@@ -503,9 +535,62 @@ func (s *Server) handleSearch(method string, f url.Values) (any, bool) {
 		return ok("files", append([]any{}, files...)), true
 	case "search.save":
 		l.mu.Lock()
-		l.saved = append(l.saved, f.Get("terms"))
+		t := f.Get("terms")
+		l.saved = append(l.saved, t)
+		at := -1
+		for i, h := range l.hist {
+			if h.terms == t {
+				at = i
+			}
+		}
+		now := float64(time.Now().Unix())
+		if at >= 0 {
+			h := l.hist[at]
+			h.count++
+			h.ts = now
+			l.hist = append(append(l.hist[:at:at], l.hist[at+1:]...), h)
+		} else {
+			l.hist = append(l.hist, savedSearch{terms: t, typ: f.Get("type"), ts: now, count: 1})
+		}
 		l.mu.Unlock()
 		return ok(), true
+	case "search.delete":
+		l.mu.Lock()
+		keep := l.hist[:0:0]
+		for _, h := range l.hist {
+			if (f.Get("hash") != "" && searchHash(h.terms) == f.Get("hash")) || (f.Get("terms") != "" && h.terms == f.Get("terms")) {
+				continue
+			}
+			keep = append(keep, h)
+		}
+		l.hist = keep
+		l.mu.Unlock()
+		return ok(), true
+	case "search.autocomplete": // the search history (Slack's searchAutocomplete fetcher)
+		lim, _ := strconv.Atoi(f.Get("limit"))
+		if lim <= 0 {
+			lim = 10
+		}
+		q := strings.ToLower(f.Get("query"))
+		l.mu.Lock()
+		sugg := []any{}
+		for i := len(l.hist) - 1; i >= 0 && len(sugg) < lim; i-- {
+			h := l.hist[i]
+			if q != "" && !strings.HasPrefix(strings.ToLower(h.terms), q) {
+				continue
+			}
+			typ := h.typ
+			if typ == "" {
+				typ = "default"
+			}
+			e := map[string]any{"text": h.terms, "count": h.count, "ts": h.ts, "type": typ}
+			if f.Get("use_hash") == "true" {
+				e["hash"] = searchHash(h.terms)
+			}
+			sugg = append(sugg, e)
+		}
+		l.mu.Unlock()
+		return ok("suggestions", sugg), true
 	case "search.autocomplete.triggers":
 		return ok("triggers", []any{}), true
 	case "feedback.submitEnterpriseSearchFeedback", "search.feedback":

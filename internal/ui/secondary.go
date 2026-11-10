@@ -51,6 +51,9 @@ func (a *App) OpenThread(channel, ts string) {
 	}
 	a.secondary = secondaryState{kind: secThread, channel: channel, ts: ts, width: a.secondary.width}
 	a.secondary.view = a.mountThread(channel, ts)
+	if a.data != nil && a.data.core != nil {
+		a.data.core.RecordRecentNavigation(channel, ts) // a thread visit (desktop_search_recents_write)
+	}
 	if a.router.Current().Channel() == channel {
 		a.router.Replace(Route("c/" + channel + "/t/" + ts))
 	}
