@@ -56,6 +56,7 @@ var slackRef = map[string]string{
 	"caret-up":                    "caret-up-filled",
 	"caret-up-down":               "caret-up-down",
 	"channel":                     "channel",
+	"clear":                       "clear", // the History dialog's Clear history (history.go)
 	"channel-add":                 "channel-add",
 	"channel-plus":                "channel-add",
 	"channel-search":              "channel-search",

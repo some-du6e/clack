@@ -139,6 +139,7 @@ type App struct {
 	grad            gradient
 	sidebar         sidebarState
 	secondary       secondaryState
+	secCol          secondaryColumn // Slack's secondary column width and mode (secondary_width.go)
 	searchQuery     string
 	searchPill      image.Rectangle // window coords, for anchoring the search popover
 	primaryOrigin   image.Point     // window position of the primary panel
@@ -664,22 +665,18 @@ func (a *App) layoutPrimary(gtx layout.Context) layout.Dimensions {
 	sz := gtx.Constraints.Max
 	secW := 0
 	if a.secondary.open() && !a.bbmOn() { // the mode shows one container (bbm.go)
-		secW = gtx.Dp(unit.Dp(a.secondary.width))
-		if max := sz.X - gtx.Dp(360); secW > max {
-			secW = max
-		}
-		if secW < gtx.Dp(theme.SecondaryMin) {
-			secW = gtx.Dp(theme.SecondaryMin)
-		}
+		// Slack's column width (aTtQ hW and the squish xeD9; secondary_width.go)
+		secW = a.secondaryColumnWidth(gtx, sz.X, a.primaryOrigin.X-gtx.Dp(theme.RailW))
 		if a.secondary.expanded && a.secondary.kind == secCode {
 			secW = sz.X // the code channel pane's single-column mode
 		}
 	}
 	mainW := sz.X - secW
-	// Slack 2026 nests a channel's thread/profile pane inside the channel
-	// view, below its header and tabs (p-ia4_client--nested-secondary-view):
-	// the header and tabs keep the full width.
-	nested := secW > 0 && secW < sz.X && a.router.Current().Page() == "c" && (a.secondary.kind == secThread || a.secondary.kind == secProfile || a.secondary.kind == secSearch || a.secondary.kind == secCode)
+	// With nested_secondary_view (kl02 W7), Slack nests a channel's
+	// thread/profile pane inside the channel view, below its header and
+	// tabs (p-ia4_client--nested-secondary-view): the header and tabs keep
+	// the full width. Without it the pane is a full-height column.
+	nested := secW > 0 && secW < sz.X && a.nestedSecondary() && a.router.Current().Page() == "c" && (a.secondary.kind == secThread || a.secondary.kind == secProfile || a.secondary.kind == secSearch || a.secondary.kind == secCode)
 	primW, secTop := mainW, 0
 	if nested {
 		primW, secTop = sz.X, gtx.Dp(theme.HeaderH)+gtx.Dp(theme.TabsH)

@@ -1031,7 +1031,11 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			"suggested_sections_auto_sort_v2": g("on"),
 			"lists_tabbing_navigation":        g("on"),
 			// focus mode and the Availability section (see core's defaultExperimentGroups)
-			"silent_sidebar": g("on"), "availability_prefs_section": g("on")})
+			"silent_sidebar": g("on"), "availability_prefs_section": g("on"),
+			// views and navigation (core/views_experiments.go), as the account had them on 2026-11-10
+			"nested_secondary_view": g("on"), "secondary_view_default_width": g("on"), "smaller_secondary_headers": g("on"),
+			"desktop_history_menu": g("on"), "desktop_history_recents_read": g("on"), "keyboard_shortcuts_search": g("on"),
+			"view_header_overflow_borders": g("on"), "lists_in_later": g("on")})
 	case "users.prefs.get":
 		s.prefsMu.Lock()
 		m := make(map[string]any, len(s.prefs))

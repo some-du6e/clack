@@ -183,13 +183,21 @@ func (a *App) layoutSecondaryResize(gtx layout.Context, x, h int) {
 		switch e.Kind {
 		case pointer.Press:
 			s.dragX = e.Position.X
+			if a.secondaryResizePress(gtx, gtx.Now) { // a double press: the default width
+				a.savePrefs()
+			}
+			base = float32(s.width) // from the width on screen (secondary_width.go)
 		case pointer.Drag:
+			if !a.secCol.dragging { // the press was a reset
+				break
+			}
 			s.dragW = base - (e.Position.X-s.dragX)/gtx.Metric.PxPerDp
 			if s.dragW < theme.SecondaryMin {
 				s.dragW = theme.SecondaryMin
 			}
 			s.width = int(s.dragW + .5)
 		case pointer.Release, pointer.Cancel:
+			a.secondaryResizeEnd(gtx) // auto within 15dp of the default, else manual
 			a.savePrefs()
 		}
 	}

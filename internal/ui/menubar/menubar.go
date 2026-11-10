@@ -114,6 +114,10 @@ type State struct {
 	Disabled map[string]bool   // by Item.ID
 	Titles   map[string]string // overrides Item.Title, by Item.ID
 	Recent   []Recent          // History's recent views, most recent first
+	// Hidden are the items (separators too, by Item.ID) of the menu that
+	// holds the recent views which don't show right now: History's "Show
+	// full history" and its separator.
+	Hidden map[string]bool
 }
 
 // Recent is one entry of History's recent views.
@@ -127,8 +131,14 @@ func (s *State) Equal(o *State) bool {
 	if s == nil || o == nil {
 		return s == o
 	}
-	if len(s.Disabled) != len(o.Disabled) || len(s.Titles) != len(o.Titles) || len(s.Recent) != len(o.Recent) {
+	if len(s.Disabled) != len(o.Disabled) || len(s.Titles) != len(o.Titles) || len(s.Recent) != len(o.Recent) ||
+		len(s.Hidden) != len(o.Hidden) {
 		return false
+	}
+	for k, v := range s.Hidden {
+		if o.Hidden[k] != v {
+			return false
+		}
 	}
 	for k, v := range s.Disabled {
 		if o.Disabled[k] != v {
@@ -215,6 +225,16 @@ func enabled(tag int) bool {
 	}
 	s := state.Load()
 	return s == nil || !s.Disabled[it.ID]
+}
+
+// hidden reports whether tag is hidden (State.Hidden).
+func hidden(tag int) bool {
+	it := item(tag)
+	if it == nil || it.ID == "" {
+		return false
+	}
+	s := state.Load()
+	return s != nil && s.Hidden[it.ID]
 }
 
 // title is tag's current title, "" to keep Item.Title.

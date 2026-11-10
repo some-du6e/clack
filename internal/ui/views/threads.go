@@ -227,26 +227,69 @@ func (v *Threads) Layout(gtx C) D {
 	defer st.Leave()
 	size := gtx.Constraints.Max
 	fill(gtx, image.Rectangle{Max: size}, st.Background(v.p.Page))
+	border := v.headBorder(gtx) // from the list's last position
 	layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(v.head),
 		layout.Flexed(1, v.body),
 	)
+	if border == thrBorderBelow { // .p-view_header's box-shadow 0 1px 0 0, over the list (z-index 202)
+		h, hl := gtx.Dp(thrHeadH), max(1, gtx.Dp(1))
+		fill(gtx, image.Rect(0, h, size.X, h+hl), v.p.Border)
+	}
 	return D{Size: size}
 }
 
-// head is p-view_header: h 49, padding 0 12px 0 18px, white, 18px/24px
-// 900 #1d1c1d title, a 1px bottom hairline inside the 49px.
+// The Threads header's bottom line (thrBorder*).
+const (
+	thrBorderNone  = iota // .p-view_header--without-bottom-border
+	thrBorderInset        // .p-view_header--inset-box-shadow: inside the 49px
+	thrBorderBelow        // the base box-shadow 0 1px 0 0: under the header
+)
+
+// headBorder is ThreadsViewHeader's (client-threads-view auBp): with
+// nested_secondary_view the header always has its line, an inset one
+// (ViewHeader W58+ --inset-box-shadow). Without it, hideBorder is
+// !isScrolled: no line until, with view_header_overflow_borders, the list
+// has scrolled more than 15px under the header (maybeSetIsScrolled);
+// without that experiment isScrolled never turns true. (hideBorder also
+// holds while the VIP tabs show; Clack's Threads view has none.)
+func (v *Threads) headBorder(gtx C) int {
+	if nestedSecondary(v.h) {
+		return thrBorderInset
+	}
+	c := v.h.Core()
+	if c == nil || !c.ViewHeaderOverflowBorders() {
+		return thrBorderNone
+	}
+	if p := v.list.Position; p.First > 0 || p.Offset > gtx.Dp(15) {
+		return thrBorderBelow
+	}
+	return thrBorderNone
+}
+
+// head is p-view_header: h 49, padding 0 12px 0 18px, 18px/24px 900 title.
+// With nested_secondary_view it has the primary background
+// (--primary-background: allThreads under W7) and a 1px line inside the
+// 49px; without it the secondary background (base-sec, the page's) and
+// the line headBorder gives.
 func (v *Threads) head(gtx C) D {
-	w, h := gtx.Constraints.Max.X, gtx.Dp(49)
+	w, h := gtx.Constraints.Max.X, gtx.Dp(thrHeadH)
 	r := image.Rect(0, 0, w, h)
-	fill(gtx, r, v.p.Bg)
+	border := v.headBorder(gtx)
+	bg := v.p.Page
+	if border == thrBorderInset {
+		bg = v.p.Bg
+	}
+	fill(gtx, r, bg)
 	g := gtx
 	g.Constraints = layout.Exact(image.Pt(w, h))
 	layout.Inset{Left: 18, Right: 12}.Layout(g, func(gtx C) D {
 		return layout.W.Layout(gtx, func(gtx C) D { return v.para(gtx, 18, 24, wBlack, v.p.Text, 1, "Threads") })
 	})
-	hl := max(1, gtx.Dp(1))
-	fill(gtx, image.Rect(0, h-hl, w, h), v.p.Border)
+	if border == thrBorderInset {
+		hl := max(1, gtx.Dp(1))
+		fill(gtx, image.Rect(0, h-hl, w, h), v.p.Border)
+	}
 	return D{Size: image.Pt(w, h)}
 }
 
