@@ -274,6 +274,17 @@ func (a *App) handle(ev slack.Event) {
 		a.onDraftEvent(ev.Type, ev.Raw)
 	case "activity":
 		a.onActivityEvent(ctx, ev.Raw)
+	case "activity_clear_all_completed":
+		// handleActivityRTMEvent's sibling (client-boot-render
+		// activityClearAllCompleted): with an undo_key, the clear-all
+		// toast and its Undo (activity.clearAll).
+		var e struct {
+			UndoKey string `json:"undo_key"`
+		}
+		_ = json.Unmarshal(ev.Raw, &e)
+		if e.UndoKey != "" {
+			a.emit(Event{Type: "activity", Name: ev.Type, ID: e.UndoKey, Raw: ev.Raw})
+		}
 	case "bookmark_added", "bookmark_removed", "channel_updated", "channel_tab_added", "channel_tab_removed":
 		if ev.Type == "channel_updated" { // properties (a code channel's agent session) merge in
 			for _, id := range a.onChannelUpdated(ev.Raw) {

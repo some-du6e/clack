@@ -146,6 +146,15 @@ func init() {
 		popups.MoveChannel = func(ch string, anchor image.Point) {
 			a.openMoveToMenu(ch, image.Rectangle{Min: anchor, Max: anchor}, true)
 		}
+		popups.MoveChannelItems = func(ch string) ([]popups.MenuItem, bool) {
+			st := a.channelSections(ch)
+			custom := false
+			for _, s := range st.sections {
+				custom = custom || s.Type == "standard"
+			}
+			return toPopupItems(a.moveToItems(ch, st)), custom
+		}
+		popups.CreateSectionWith = func(ch string) { a.openCreateSectionWith(ch) }
 		popups.OpenPreferences = func() { a.openPrefs() }
 		popups.OpenPreferencesSection = func(sec string) { a.openPrefsSection(sec) }
 		popups.SignOut = func() { a.signOut() }

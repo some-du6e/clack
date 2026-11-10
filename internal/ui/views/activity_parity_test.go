@@ -102,8 +102,10 @@ func TestActivityHoverButtonsLikeSlack(t *testing.T) {
 // getActivityItemMenuTemplate's rows for the activity inbox.
 func TestActivityItemMenuLikeSlack(t *testing.T) {
 	v, h, _, _ := vaActivity(t, false)
-	remind := "Remind me about this[In 20 minutes,In 1 hour,In 3 hours,Tomorrow,Next week]"
-	copyRow := "Copy[Copy name,Copy link]"
+	remind := "Remind me about this[In 20 minutes,In 1 hour,In 3 hours,Tomorrow,Next week,Custom…]"
+	// the inbox's copy_link is the message's Copy link (the Copy ▸ name /
+	// link / huddle link submenu is the DMs tab's)
+	copyRow := "Copy link"
 	cases := []struct {
 		key    string
 		unread bool
@@ -112,7 +114,7 @@ func TestActivityItemMenuLikeSlack(t *testing.T) {
 		{"k-at-user", true, "Mark as read;Add to-do;|;" + remind + ";Mute channel;" + copyRow + ";|;Clear all before…;|;Open in home"},
 		{"k-thread-many", false, "Mark as unread;Add to-do;|;" + remind + ";Get notified about new replies;" + copyRow + ";|;Clear all before…;|;Open in home"},
 		{"k-reaction", false, "Add to-do;|;" + remind + ";" + copyRow + ";|;Clear all before…;|;Open in home"},
-		{"k-at-channel", true, "Mark as read;Add to-do;|;" + remind + ";" + copyRow + ";|;Clear all before…;|;Open in home"},
+		{"k-at-channel", true, "Mark as read;Add to-do;|;" + remind + ";Don’t notify for @here and @channel;" + copyRow + ";|;Clear all before…;|;Open in home"},
 		{"k-reminder-plain", true, "Mark as read;|;Clear all before…"},
 	}
 	for _, c := range cases {
@@ -307,6 +309,41 @@ type actRefRow struct {
 	FootPre, FootName, FootPost, FootNameIcon                           string
 	FootText, LocOn, Unread, React                                      bool
 	Count                                                               int
+	// the rows' marks and buttons (activity_rows.go): the read row's mark
+	// icon, the inviter's team (name, icon), the invite's buttons, the
+	// Detailed reminder's Mark Complete
+	Mark, Team string
+	TeamIcon   bool
+	Invite     []string
+	Complete   bool
+}
+
+// actRowKeys are the fakeslack rows the second side-by-side compares: the
+// marks, the invite buttons and team icon, Mark Complete, the Slackbot
+// and file footers.
+var actRowKeys = []string{"fa-ext-dm-invite", "fa-ext-invite", "fa-slackbot", "fa-reminder-file", "fa-reminder", "fa-reminder-done",
+	"fa-at-channel", "fa-dm-reacted", "fa-channel"}
+
+// actRefOf is a row's text for the reference page.
+func actRefOf(v *Activity, it *core.ActivityItem, key string) actRefRow {
+	r := v.rowFor(actKey(it))
+	d := r.d
+	out := actRefRow{Key: key, Name: d.name, Body: firstNonEmpty(d.body, d.prev), Sub: d.subtext, Time: d.when,
+		Loc: d.loc, LocIcon: d.locIcon, LocOn: d.locOn, FootIcon: d.footIcon, TypeIcon: d.typeIcon, FootText: d.footText,
+		FootPre: d.ft.pre, FootName: d.ft.name, FootPost: d.ft.post, FootNameIcon: d.ft.nameIcon,
+		Unread: v.isUnread(it, actKey(it)), Count: actUnreadCount(it), React: d.subReact, Emoji: d.footAlt,
+		Team: d.team, TeamIcon: d.teamIcon != ""}
+	if !out.Unread && r.markOK {
+		out.Mark = r.mark.icon
+	}
+	for _, a := range v.inviteActions(it) {
+		out.Invite = append(out.Invite, map[string]string{core.InviteActIgnore: "Ignore", core.InviteActAcceptDM: "Accept"}[a])
+	}
+	out.Complete = it.Type == "saved_reminder" && (it.ReminderItem == "message" || it.ReminderItem == "reminder") && v.reminderIncomplete(it)
+	if it.Type == "saved_reminder" && it.Msg != nil {
+		out.Body = v.preview(it.Msg)
+	}
+	return out
 }
 
 // TestActivitySideBySide (ACTIVITY_SHOTS_DIR) saves Clack's rows for
@@ -338,11 +375,7 @@ func TestActivitySideBySide(t *testing.T) {
 				if dark || dense {
 					continue
 				}
-				d := v.rowFor(actKey(it)).d
-				rows = append(rows, actRefRow{Key: key, Name: d.name, Body: firstNonEmpty(d.body, d.prev), Sub: d.subtext, Time: d.when,
-					Loc: d.loc, LocIcon: d.locIcon, LocOn: d.locOn, FootIcon: d.footIcon, TypeIcon: d.typeIcon, FootText: d.footText,
-					FootPre: d.ft.pre, FootName: d.ft.name, FootPost: d.ft.post, FootNameIcon: d.ft.nameIcon,
-					Unread: v.isUnread(it, actKey(it)), Count: actUnreadCount(it), React: d.subReact, Emoji: d.footAlt})
+				rows = append(rows, actRefOf(v, it, key))
 			}
 			win, err := pixeltest.NewWindow(w, y)
 			if err != nil {
@@ -369,6 +402,64 @@ func TestActivitySideBySide(t *testing.T) {
 	}
 	b, _ := json.MarshalIndent(rows, "", " ")
 	if err := os.WriteFile(filepath.Join(dir, "activity-ref-rows.json"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// the rows' marks and buttons, on fakeslack's feed
+	rows = nil
+	for _, dark := range []bool{false, true} {
+		for _, dense := range []bool{false, true} {
+			v, _, _, _ := vaFakeActivity(t, dark)
+			if dense {
+				v.dense, v.rows, v.dirty = true, map[string]*actRow{}, true
+			}
+			var ops op.Ops
+			gtx := actFrame(&ops, image.Pt(w, 4000))
+			v.Layout(gtx) // rebuild the rows (marks, descriptions) for this density
+			ops.Reset()
+			gtx = actFrame(&ops, image.Pt(w, 4000))
+			y := 0
+			for i, key := range actRowKeys {
+				it := actItem(t, v, key)
+				func() {
+					defer op.Offset(image.Pt(0, y)).Push(gtx.Ops).Pop()
+					g := gtx
+					g.Constraints = layout.Constraints{Min: image.Pt(w, 0), Max: image.Pt(w, 400)}
+					y += v.row(g, it, i+3).Size.Y
+				}()
+				if !dark && !dense {
+					rows = append(rows, actRefOf(v, it, key))
+				}
+			}
+			actSaveOps(t, &ops, w, y, filepath.Join(dir, "clack-rows-"+map[bool]string{false: "detailed", true: "dense"}[dense]+"-"+map[bool]string{false: "light", true: "dark"}[dark]+".png"))
+		}
+	}
+	b, _ = json.MarshalIndent(rows, "", " ")
+	if err := os.WriteFile(filepath.Join(dir, "activity-ref-rows-actions.json"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// actSaveOps renders ops headlessly (w x h) to path.
+func actSaveOps(t *testing.T, ops *op.Ops, w, h int, path string) {
+	t.Helper()
+	win, err := pixeltest.NewWindow(w, h)
+	if err != nil {
+		t.Fatalf("headless window: %v", err)
+	}
+	defer win.Release()
+	if err := win.Frame(ops); err != nil {
+		t.Fatalf("frame: %v", err)
+	}
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	if err := win.Screenshot(img); err != nil {
+		t.Fatalf("screenshot: %v", err)
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, img); err != nil {
 		t.Fatal(err)
 	}
 }

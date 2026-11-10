@@ -24,7 +24,15 @@ import (
 //     recorded (ActivityWrites).
 //   - activity.views answers the default saved views and the global prefs
 //     ({sort, density}); activity.prefs.update {density, sort} changes
-//     them (recorded too).
+//     them, activity.views.update {view_id, density} one view (recorded
+//     too).
+//   - The rows' own actions (docs/ACTIVITY.md "Row actions"): saved.get
+//     answers the reminder rows' saved items and saved.update changes them
+//     (Mark Complete, Reschedule); files.info names the file reminder's
+//     file; the Slack Connect invites' sharedInvites.canAccept / accept /
+//     ignoreInvite / ignoreUser and conversations.ignoreInvite /
+//     ignoreUser; activity.clearAll {undo_key} (the clear-all toast's
+//     Undo). Every one is recorded (ActivityWrites).
 
 // The Activity fixture's messages, in ViewsChannel and the first DM.
 var activityMsgs = []slack.Message{
@@ -35,21 +43,48 @@ var activityMsgs = []slack.Message{
 	viewsMsg(ViewsChannel, "1762700500.000100", "", SelfID, "a synthetic message people liked"),
 	viewsMsg(ViewsChannel, "1762700600.000100", "", "U0FAKE00002", "a synthetic post in a channel set to all new posts"),
 	viewsMsg("D0FAKE00000", "1762700700.000100", "", "U0FAKE00001", "a synthetic direct message"),
+	viewsMsg("D0FAKE00000", "1762700750.000100", "", "U0FAKE00001", "a synthetic direct message you reacted to"),
+	viewsMsg(ActivitySlackbotDM, "1762701900.000100", "", "USLACKBOT", "a synthetic note from Slackbot"),
 }
+
+// The Activity fixture's extra conversations and ids.
+const (
+	ActivitySlackbotDM   = "D0FAKESLKBT" // your DM with Slackbot
+	ActivityReminderFile = "F0FAKEREM1"  // the file a reminder is about
+	ActivityInviteDM     = "I0FAKE2"     // the Slack Connect DM invite
+	ActivityInviteSig    = "sig-fake-dm"
+)
 
 func init() {
 	activityMsgs[4].Reactions = []slack.Reaction{{Name: "tada", Count: 2, Users: []string{"U0FAKE00001", "U0FAKE00002"}}}
+	activityMsgs[7].Reactions = []slack.Reaction{{Name: "eyes", Count: 1, Users: []string{SelfID}}}
 }
 
-// activityEntries is the feed, newest first.
-func activityEntries() []map[string]any {
+// activityEntries is the feed, newest first; base is the server's URL
+// (the inviting organisations' icons).
+func activityEntries(base string) []map[string]any {
 	msg := func(ts, user string) map[string]any {
 		return map[string]any{"ts": ts, "channel": ViewsChannel, "author_user_id": user}
 	}
 	e := func(key, feedTS string, unread bool, item map[string]any) map[string]any {
 		return map[string]any{"key": key, "feed_ts": feedTS, "is_unread": unread, "item": item}
 	}
+	team := func(id, name string, verified bool) map[string]any {
+		return map[string]any{"id": id, "name": name, "is_verified": verified, "date_created": 1546300800,
+			"icon": map[string]any{"image_34": base + "img/34x34/partner.png", "image_44": base + "img/44x44/partner.png"}}
+	}
 	return []map[string]any{
+		e("fa-ext-dm-invite", "1762702000.000100", true, map[string]any{"type": "external_dm_invite",
+			"invite": map[string]any{"id": ActivityInviteDM, "sig": ActivityInviteSig, "invite_type": "im", "direction": "incoming", "status": "sent",
+				"inviting_team": team(ExternalTeamID, "Partner Co", false),
+				"inviting_user": map[string]any{"id": "U0PARTNER1", "name": "pat",
+					"profile": map[string]any{"real_name": "Pat Partner", "display_name": "pat", "email": "pat@partner.example"}}}}),
+		e("fa-slackbot", "1762701900.000100", false, map[string]any{"type": "dm", "bundle_info": map[string]any{"unread_count": 0,
+			"payload": map[string]any{"dm_entry": map[string]any{"latest_message": map[string]any{"ts": "1762701900.000100", "channel": ActivitySlackbotDM}}}}}),
+		e("fa-reminder-file", "1762701800.000100", false, map[string]any{"type": "saved_reminder",
+			"saved_reminder_payload": map[string]any{"item_type": "file", "item_id": ActivityReminderFile}}),
+		e("fa-reminder-done", "1762701700.000100", false, map[string]any{"type": "saved_reminder",
+			"saved_reminder_payload": map[string]any{"item_type": "reminder", "item_id": "Rm0FAKE2", "item_detail": "send the synthetic report"}}),
 		e("fa-alert", "1762701400.000100", true, map[string]any{"type": "generic_system_alert",
 			"generic_system_alert_payload": map[string]any{"category": "CHANNEL", "click_target_id": ViewsChannel,
 				"blocks": []any{map[string]any{"type": "section", "text": map[string]any{"type": "mrkdwn", "text": "A synthetic channel was archived."}}}}}),
@@ -60,10 +95,14 @@ func activityEntries() []map[string]any {
 		e("fa-joiner", "1762701100.000100", true, map[string]any{"type": "team_joiner_invite",
 			"team_joiner_invite_payload": map[string]any{"channel_id": ViewsChannel, "user_id": "U0FAKE00002", "is_reminder": false}}),
 		e("fa-ext-invite", "1762701000.000100", true, map[string]any{"type": "external_channel_invite",
-			"invite": map[string]any{"id": "I0FAKE1", "invite_type": "channel", "channel": map[string]any{"id": "C0PARTNER1", "name": "synthetic-partners"},
+			"invite": map[string]any{"id": "I0FAKE1", "sig": "sig-fake-channel", "invite_type": "channel", "direction": "incoming", "status": "sent",
+				"channel":       map[string]any{"id": "C0PARTNER1", "name": "synthetic-partners"},
 				"team":          map[string]any{"id": ExternalTeamID, "name": "Partner Co"},
+				"inviting_team": team(ExternalTeamID, "Partner Co", true),
 				"inviting_user": map[string]any{"id": "U0PARTNER1", "name": "pat", "profile": map[string]any{"real_name": "Pat Partner", "display_name": "pat"}}}}),
 		e("fa-invite", "1762700900.000100", true, map[string]any{"type": "internal_channel_invite", "message": msg("1762700100.000100", "U0FAKE00001")}),
+		e("fa-dm-reacted", "1762700750.000100", false, map[string]any{"type": "dm", "bundle_info": map[string]any{"unread_count": 0,
+			"payload": map[string]any{"dm_entry": map[string]any{"latest_message": map[string]any{"ts": "1762700750.000100", "channel": "D0FAKE00000"}}}}}),
 		e("fa-dm", "1762700700.000100", true, map[string]any{"type": "dm", "bundle_info": map[string]any{"unread_count": 1,
 			"payload": map[string]any{"dm_entry": map[string]any{"latest_message": map[string]any{"ts": "1762700700.000100", "channel": "D0FAKE00000"}}}}}),
 		e("fa-channel", "1762700600.000100", false, map[string]any{"type": "channel", "bundle_info": map[string]any{"unread_count": 1,
@@ -83,23 +122,50 @@ func activityEntries() []map[string]any {
 // ActivityKeys is every key in the fixture feed, newest first.
 func ActivityKeys() []string {
 	var out []string
-	for _, e := range activityEntries() {
+	for _, e := range activityEntries("") {
 		out = append(out, e["key"].(string))
 	}
 	return out
 }
 
 type activityState struct {
-	read     map[string]bool // true read, false unread (overrides the fixture)
-	archived map[string]bool
-	density  string // activity.prefs.update's density ("" = "compact")
+	read      map[string]bool // true read, false unread (overrides the fixture)
+	archived  map[string]bool
+	density   string            // activity.prefs.update's density ("" = "compact")
+	viewDense map[string]string // activity.views.update's density by view id
+	saved     map[string]map[string]any
+	ignored   map[string]bool // invites ignored or accepted
 }
 
 func (v *viewsState) act() *activityState {
 	if v.activity == nil {
-		v.activity = &activityState{read: map[string]bool{}, archived: map[string]bool{}}
+		v.activity = &activityState{read: map[string]bool{}, archived: map[string]bool{}, viewDense: map[string]string{}, ignored: map[string]bool{}}
+		v.activity.saved = activitySaved()
 	}
 	return v.activity
+}
+
+// activitySaved is the reminder rows' saved items, by item id (and ts for
+// messages): the message reminder is a to-do due in 2030, the file
+// reminder and the plain reminder are overdue to-dos, Rm0FAKE2 is done.
+func activitySaved() map[string]map[string]any {
+	item := func(id, typ, ts, state string, due, done int64) map[string]any {
+		return map[string]any{"item_id": id, "item_type": typ, "ts": ts, "state": "in_progress", "todo_state": state,
+			"date_created": int64(1762600000), "date_due": due, "date_completed": done}
+	}
+	return map[string]map[string]any{
+		ViewsChannel + "/1762700100.000100": item(ViewsChannel, "message", "1762700100.000100", "to_do", 1893456000, 0), // due 2030
+		ActivityReminderFile:                item(ActivityReminderFile, "file", "", "to_do", 1762790000, 0),
+		"Rm0FAKE1":                          item("Rm0FAKE1", "reminder", "", "to_do", 1762701300, 0),
+		"Rm0FAKE2":                          item("Rm0FAKE2", "reminder", "", "completed", 0, 1762701750),
+	}
+}
+
+func savedID(f url.Values) string {
+	if f.Get("item_type") == "message" {
+		return f.Get("item_id") + "/" + f.Get("ts")
+	}
+	return f.Get("item_id")
 }
 
 // handleActivity answers the Activity fixture's methods.
@@ -117,7 +183,7 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 		v.mu.Lock()
 		st := v.act()
 		var items []map[string]any
-		for _, e := range activityEntries() {
+		for _, e := range activityEntries(s.URL) {
 			key := e["key"].(string)
 			typ := e["item"].(map[string]any)["type"].(string)
 			if len(types) > 0 && !types[typ] {
@@ -126,7 +192,7 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 			if r, ok := st.read[key]; ok {
 				e["is_unread"] = !r
 			}
-			if st.archived[key] != archiveOnly {
+			if st.archived[key] != archiveOnly || st.ignored[key] {
 				continue
 			}
 			if unreadOnly && e["is_unread"] != true {
@@ -159,13 +225,21 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 	case "activity.views":
 		v.mu.Lock()
 		d := v.act().density
+		per := map[string]string{}
+		for k, x := range v.act().viewDense {
+			per[k] = x
+		}
 		v.mu.Unlock()
 		if d == "" {
 			d = "compact"
 		}
 		var views []map[string]any
 		for i, t := range []string{"all", "dms", "mentions", "threads"} {
-			views = append(views, map[string]any{"id": "Vw0FAKE" + strconv.Itoa(i), "view_type": t, "position": i, "density": d, "sort": "newest"})
+			id, vd := "Vw0FAKE"+strconv.Itoa(i), d
+			if x := per[id]; x != "" {
+				vd = x
+			}
+			views = append(views, map[string]any{"id": id, "view_type": t, "position": i, "density": vd, "sort": "newest"})
 		}
 		return ok("views", views, "prefs", map[string]any{"sort": "newest", "density": d}), true
 	case "activity.prefs.update":
@@ -173,6 +247,86 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 		v.writes = append(v.writes, ActivityWrite{Method: method, Form: f})
 		if d := f.Get("density"); d != "" {
 			v.act().density = d
+		}
+		v.mu.Unlock()
+		return ok(), true
+	case "activity.views.update":
+		v.mu.Lock()
+		v.writes = append(v.writes, ActivityWrite{Method: method, Form: f})
+		v.act().viewDense[f.Get("view_id")] = f.Get("density")
+		v.mu.Unlock()
+		return ok("view", map[string]any{"id": f.Get("view_id"), "density": f.Get("density"), "sort": f.Get("sort")}), true
+	case "saved.get":
+		var want []struct {
+			ItemID   string `json:"item_id"`
+			ItemType string `json:"item_type"`
+			TS       string `json:"ts"`
+		}
+		_ = json.Unmarshal([]byte(f.Get("items")), &want)
+		v.mu.Lock()
+		st := v.act()
+		var items []map[string]any
+		for _, w := range want {
+			id := w.ItemID
+			if w.ItemType == "message" {
+				id += "/" + w.TS
+			}
+			if it, found := st.saved[id]; found {
+				items = append(items, it)
+			}
+		}
+		v.mu.Unlock()
+		return ok("saved_items", items), true
+	case "saved.update":
+		v.mu.Lock()
+		st := v.act()
+		it, found := st.saved[savedID(f)]
+		if !found {
+			v.mu.Unlock()
+			return nil, false // the saved fixture's own items
+		}
+		v.writes = append(v.writes, ActivityWrite{Method: method, Form: f})
+		if ts := f.Get("todo_state"); ts != "" {
+			it["todo_state"] = ts
+		}
+		if f.Get("mark") == "completed" {
+			it["date_completed"] = int64(1762702100)
+		}
+		if d := f.Get("date_due"); d != "" {
+			n, _ := strconv.ParseInt(d, 10, 64)
+			it["date_due"] = n
+		}
+		v.mu.Unlock()
+		return ok(), true
+	case "files.info":
+		if f.Get("file") != ActivityReminderFile {
+			return nil, false
+		}
+		return ok("file", map[string]any{"id": ActivityReminderFile, "name": "synthetic-notes.txt", "title": "synthetic-notes.txt",
+			"mimetype": "text/plain", "filetype": "text", "pretty_type": "Plain Text", "mode": "hosted", "user": "U0FAKE00001"}), true
+	case "sharedInvites.canAccept":
+		v.mu.Lock()
+		v.writes = append(v.writes, ActivityWrite{Method: method, Form: f})
+		v.mu.Unlock()
+		return ok("is_eligible", f.Get("sig") == ActivityInviteSig), true
+	case "sharedInvites.accept", "sharedInvites.ignoreInvite", "sharedInvites.ignoreUser", "conversations.ignoreInvite", "conversations.ignoreUser":
+		v.mu.Lock()
+		v.writes = append(v.writes, ActivityWrite{Method: method, Form: f})
+		for _, e := range activityEntries("") {
+			if inv, _ := e["item"].(map[string]any)["invite"].(map[string]any); inv != nil && inv["id"] == f.Get("invite") {
+				v.act().ignored[e["key"].(string)] = true
+			}
+		}
+		v.mu.Unlock()
+		if method == "sharedInvites.accept" {
+			return ok("channel", "D0PARTNER1"), true
+		}
+		return ok(), true
+	case "activity.clearAll":
+		v.mu.Lock()
+		v.writes = append(v.writes, ActivityWrite{Method: method, Form: f})
+		if f.Get("undo_key") != "" {
+			v.act().archived = map[string]bool{}
 		}
 		v.mu.Unlock()
 		return ok(), true
@@ -201,7 +355,7 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 			}
 		case "activity.clearBefore":
 			before := f.Get("before_ts")
-			for _, e := range activityEntries() {
+			for _, e := range activityEntries(s.URL) {
 				if ts := e["feed_ts"].(string); before != "" && ts < before {
 					st.archived[e["key"].(string)] = true
 				}

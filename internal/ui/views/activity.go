@@ -21,6 +21,7 @@ import (
 
 	"gioui.org/f32"
 	"gioui.org/font"
+	"gioui.org/gesture"
 	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
@@ -36,6 +37,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/hovercard"
 	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -130,6 +132,7 @@ type actDesc struct {
 	list      *actListBody
 	nameDense string // the sender in Dense rows ("Ana +2")
 	team      string // a Slack Connect inviter's organisation, after the name
+	teamIcon  string // its icon (TeamIcon, 16px), in both densities
 	subtext   string // before the message body ("You: ", "Ana Example: ")
 	lines     int    // the body's line cap (0: the density's)
 	subReact  bool   // ReactionContent's "Reacted {emoji} to:" / "Reacted to:"
@@ -148,7 +151,7 @@ type actDesc struct {
 type actRow struct {
 	click widget.Clickable
 	bar   widget.Clickable // hover area of the action bar
-	btns  [actBtnMore + 1]widget.Clickable
+	btns  [actBtnCount]widget.Clickable
 	ctx   struct{} // the row's context-menu press target
 	d     actDesc
 	built bool
@@ -174,6 +177,15 @@ type actRow struct {
 	// nameHov is Slack's ProfileHoverTrigger on a reaction row's reactor
 	// (ActivityItemMember in "X reacted to your message").
 	nameHov hovercard.Trigger
+
+	// The read row's mark (actMark) and its tooltip; the Detailed
+	// reminder's Mark Complete button; the invite's text actions.
+	mark         actMark
+	markOK       bool
+	markHov      gesture.Hover
+	markTipState popups.TipState
+	complete     widget.Clickable
+	invC         [3]widget.Clickable
 }
 
 // Activity is the Activity view.
@@ -235,6 +247,27 @@ type Activity struct {
 	// densityReq: the saved layout was asked for (activity.views);
 	// densitySet: the user picked one since, which wins over the answer.
 	densityReq, densitySet bool
+	// With activity_global_settings off each tab is a saved view with its
+	// own density (activity.views; updateActivityViewsByApi saves it with
+	// activity.views.update, except for All): views by tab, their density.
+	views     [len(actTabIDs)]core.ActivityView
+	viewDense [len(actTabIDs)]bool
+
+	// Reminder rows' saved items (saved.get), by compound key: known,
+	// non-existent, asked for; the files reminder footers name.
+	saved      map[string]core.SavedItem
+	savedGone  map[string]bool
+	savedReq   map[string]bool
+	fileReq    map[string]bool
+	fileTitles map[string]string
+	// clearAll is the "Notifications cleared." toast (realtime
+	// activity_clear_all_completed); offline: the last page failed for
+	// want of a network (ActivityRowLoader's offline indicator).
+	clearAll actClearToast
+	offline  bool
+	// forked is the open IgnoreForkedModal's two choices (tests press
+	// them; the modal's rows call them).
+	forked [2]func()
 
 	// undo is the "cleared" snackbar after Clear, with its Undo link.
 	undo struct {
@@ -277,6 +310,12 @@ func NewActivity(h Host) *Activity {
 		override: map[string]bool{},
 		cleared:  map[string]bool{},
 		picked:   map[string]bool{},
+
+		saved:      map[string]core.SavedItem{},
+		savedGone:  map[string]bool{},
+		savedReq:   map[string]bool{},
+		fileReq:    map[string]bool{},
+		fileTitles: map[string]string{},
 	}
 	v.list.Axis = layout.Vertical
 	v.prevList.Axis = layout.Vertical
@@ -308,6 +347,9 @@ func (v *Activity) watchItems() {
 			switch {
 			case ev.Name == "activity_deleted" && ev.ID != "":
 				v.notes.gone = append(v.notes.gone, ev.ID)
+			case ev.Name == "activity_clear_all_completed" && ev.ID != "":
+				key := ev.ID
+				v.notes.fns = append(v.notes.fns, func() { v.clearAllCompleted(key) })
 			case ev.Activity != nil:
 				v.notes.items = append(v.notes.items, *ev.Activity)
 			}
@@ -377,6 +419,7 @@ func (v *Activity) Layout(gtx C) D {
 		layout.Flexed(1, v.main),
 	)
 	v.undoBar(gtx)
+	v.clearAllToast(gtx)
 	v.menus(gtx)
 	return D{Size: size}
 }
@@ -394,6 +437,13 @@ func (v *Activity) update(gtx C) {
 	reload := false
 	if v.tabs.update(gtx) {
 		reload = true
+		if !v.globalSettings() {
+			// each saved view keeps its own layout
+			if d := v.viewDense[v.tabs.Sel]; d != v.dense {
+				v.dense, v.dirty = d, true
+				v.rows = map[string]*actRow{}
+			}
+		}
 	}
 	if v.unread.Update(gtx) {
 		reload = true
@@ -646,9 +696,11 @@ func (v *Activity) settle() {
 		r.built = false
 	}
 	v.dirty = true
+	_, _, err := v.data.get()
+	v.offline = err != nil && actOffline(err)
 	if v.paging {
 		v.paging = false
-		if _, _, err := v.data.get(); err != nil {
+		if err != nil {
 			v.failedCursor = v.pageCursor
 		}
 	}
@@ -989,6 +1041,9 @@ func (v *Activity) describe(it *core.ActivityItem, refs map[string]core.ConvRef)
 		d.name, d.avatar = firstNonEmpty(actor, "Slack Connect Invitation"), actorAv
 		if actor != "" {
 			d.team = it.Team
+			if it.Invite != nil {
+				d.teamIcon = it.Invite.TeamIcon
+			}
 		}
 		switch {
 		case it.InviteStatus == "revoked" || it.InviteStatus == "expired" || actor == "":
@@ -1091,6 +1146,8 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 	var lastDay time.Time
 	now := time.Now()
 	v.ensureLists(page)
+	v.ensureSaved(page)
+	v.ensureFileTitles(page)
 	for i := range page.Items {
 		it := &page.Items[i]
 		key := actKey(it)
@@ -1098,6 +1155,9 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 		if !r.built || patchedViews {
 			r.d, r.built = v.describe(it, page.Convs), true
 		}
+		// the store-backed marks (drafts, your replies and reactions,
+		// the reminder's saved item) follow every rebuild
+		r.mark, r.markOK = v.readMark(it)
 		// cleared: true = cleared here (hide from the inbox), false =
 		// restored here (hide from the archive).
 		if c, ok := v.cleared[key]; ok && c != v.showCleared {
@@ -1147,15 +1207,10 @@ func (v *Activity) head(gtx C) D {
 		layout.Rigid(func(gtx C) D {
 			return v.header(gtx, "Activity",
 				layout.Rigid(func(gtx C) D {
-					sel := 0
-					if v.dense {
-						sel = 1
+					if !v.globalSettings() {
+						return D{} // ActivityFilterLayoutToggle sits in the filter bar
 					}
-					d, c := v.segmented(gtx, v.seg[:], actSegIcons, sel)
-					if c >= 0 && v.dense != (c == 1) {
-						v.setDense(c == 1)
-					}
-					return d
+					return v.layoutToggle(gtx)
 				}),
 				hgap(8),
 				layout.Rigid(func(gtx C) D { return v.iconButton(gtx, &v.kebab, "more", 28, 20, v.p.Sec) }),
@@ -1254,7 +1309,34 @@ func (v *Activity) filterBar(gtx C) D {
 			return v.searchBox(gtx, v.query, actBarH)
 		}).Size.X + gap
 	}
+	if !v.globalSettings() {
+		// p-activity_ia4_page__filter_bar_right: the layout toggle
+		// (entry point FILTER_BAR) at the bar's end, 16px in.
+		m := op.Record(gtx.Ops)
+		g := gtx
+		g.Constraints.Min = image.Point{}
+		d := v.layoutToggle(g)
+		call := m.Stop()
+		at := image.Pt(max(x, gtx.Constraints.Max.X-gtx.Dp(16)-d.Size.X), (gtx.Dp(actBarH)-d.Size.Y)/2)
+		st := op.Offset(at).Push(gtx.Ops)
+		call.Add(gtx.Ops)
+		st.Pop()
+	}
 	return D{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(actBarH))}
+}
+
+// layoutToggle is ActivityFilterLayoutToggle: Detailed (table) and Dense
+// (menu).
+func (v *Activity) layoutToggle(gtx C) D {
+	sel := 0
+	if v.dense {
+		sel = 1
+	}
+	d, c := v.segmented(gtx, v.seg[:], actSegIcons, sel)
+	if c >= 0 && v.dense != (c == 1) {
+		v.setDense(c == 1)
+	}
+	return d
 }
 
 // unreadsBtn is the Unreads quick filter ("Filter unreads"); pressed (aria-pressed) it also
@@ -1683,6 +1765,9 @@ func (v *Activity) footer(gtx C, failed bool) D {
 		return layout.Inset{Top: 12, Bottom: 16}.Layout(gtx, func(gtx C) D {
 			return layout.Center.Layout(gtx, func(gtx C) D { return actSpinner(gtx, gtx.Dp(20), v.p.Muted) })
 		})
+	case failed && v.offline:
+		// ActivityRowLoader without a connection: InlineOfflineIndicator
+		return v.offlineFooter(gtx)
 	case failed:
 		return layout.Inset{Top: 12, Bottom: 16}.Layout(gtx, func(gtx C) D {
 			return layout.Center.Layout(gtx, func(gtx C) D {
@@ -1731,6 +1816,22 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 			v.unclear(it, key)
 		case actBtnMore:
 			v.actMenuOpen(v.pointerAt(), *it, key, unread)
+		case actBtnComplete:
+			v.markComplete(it)
+		case actBtnReschedule:
+			if ph, ok := v.h.(popups.Host); ok {
+				if items := v.rescheduleMenu(ph, it); len(items) > 0 {
+					ph.ShowOverlay(popups.NewMenuOpts(ph, items, popups.MenuOpts{Anchor: image.Rectangle{Min: v.pointerAt(), Max: v.pointerAt()}, Width: 240}))
+				}
+			}
+		}
+	}
+	if r.complete.Clicked(gtx) {
+		v.markComplete(it)
+	}
+	for i, a := range v.inviteActions(it) {
+		if i < len(r.invC) && r.invC[i].Clicked(gtx) {
+			v.inviteClicked(it, a)
 		}
 	}
 	for {
@@ -2306,6 +2407,7 @@ func (v *Activity) detailedContent(gtx C, r *actRow) D {
 											gtx.Constraints.Max.X = max(0, gtx.Constraints.Max.X-gtx.Dp(62))
 											return slackc.Component(gtx, "ActivityPrivacyBlurredName", r, (*actRow).nameProps, (*actRow).layoutName)
 										}),
+										layout.Rigid(func(gtx C) D { return v.teamIcon(gtx, d) }),
 										layout.Rigid(func(gtx C) D {
 											if d.team == "" { // InviteSenderName: the inviter's organisation (Detailed)
 												return D{}
@@ -2323,20 +2425,41 @@ func (v *Activity) detailedContent(gtx C, r *actRow) D {
 						}),
 						layout.Rigid(func(gtx C) D { return v.actBody(gtx, r, 2, bodyCol) }),
 						layout.Rigid(func(gtx C) D {
+							// ReminderMessage / ReminderText: Mark Complete
+							// under the body while the to-do is incomplete
+							// (cZ "detailed" "details")
+							if r.it.Type != "saved_reminder" || r.it.ReminderItem != "message" && r.it.ReminderItem != "reminder" || !v.reminderIncomplete(r.it) {
+								return D{}
+							}
+							return v.markCompleteButton(gtx, r)
+						}),
+						layout.Rigid(func(gtx C) D {
 							if !d.pill {
 								return D{}
 							}
 							return layout.Inset{Top: 8}.Layout(gtx, func(gtx C) D { return v.actFooter(gtx, d, unread) })
+						}),
+						layout.Rigid(func(gtx C) D {
+							// entry_extras: the Slack Connect invite's
+							// text actions (ActivityRowContentInviteActions)
+							acts := v.inviteActions(r.it)
+							if len(acts) == 0 {
+								return D{}
+							}
+							return v.inviteButtons(gtx, r, acts)
 						}),
 					)
 				})
 			}),
 			hgap(8),
 			layout.Rigid(func(gtx C) D {
-				if !unread { // read rows: the replied / reacted marks, else nothing
-					return D{}
+				switch {
+				case unread:
+					return layout.Inset{Top: 5, Bottom: 2}.Layout(gtx, func(gtx C) D { return v.actStatus(gtx, r.count, unread) })
+				case r.markOK: // read rows: the completed to-do, Draft, replied, reacted
+					return layout.Inset{Top: 5, Bottom: 2}.Layout(gtx, func(gtx C) D { return v.markIcon(gtx, r) })
 				}
-				return layout.Inset{Top: 5, Bottom: 2}.Layout(gtx, func(gtx C) D { return v.actStatus(gtx, r.count, unread) })
+				return D{}
 			}),
 		)
 	})
@@ -2390,15 +2513,26 @@ func (v *Activity) denseContent(gtx C, r *actRow) D {
 								layout.Flexed(1, func(gtx C) D {
 									gtx.Constraints.Min.X = 0
 									r.nameMax = gtx.Constraints.Max.X
-									return slackc.Component(gtx, "ActivityPrivacyBlurredName", r, (*actRow).nameProps, (*actRow).layoutName)
+									if d.teamIcon != "" {
+										r.nameMax = max(0, r.nameMax-gtx.Dp(20))
+									}
+									return row(gtx, layout.Middle,
+										layout.Rigid(func(gtx C) D {
+											return slackc.Component(gtx, "ActivityPrivacyBlurredName", r, (*actRow).nameProps, (*actRow).layoutName)
+										}),
+										layout.Rigid(func(gtx C) D { return v.teamIcon(gtx, d) }),
+									)
 								}),
 							)
 						}),
 						layout.Rigid(func(gtx C) D {
-							if !unread {
-								return D{}
+							switch {
+							case unread:
+								return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return v.actStatus(gtx, r.count, unread) })
+							case r.markOK:
+								return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return v.markIcon(gtx, r) })
 							}
-							return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return v.actStatus(gtx, r.count, unread) })
+							return D{}
 						}),
 						layout.Rigid(func(gtx C) D {
 							if d.typeIcon == "" {
@@ -2656,6 +2790,9 @@ func (v *Activity) hoverBar(gtx C, r *actRow, unread bool, rowW, y int) {
 		return
 	}
 	bw, bh := gtx.Dp(8)+len(btns)*gtx.Dp(32), gtx.Dp(40)
+	if len(btns) > 0 && btns[0] == actBtnComplete {
+		bw += gtx.Dp(12) // markCompleteIconButton: margin-right 12px
+	}
 	x := max(0, rowW-bw-gtx.Dp(16))
 	defer op.Offset(image.Pt(x, y)).Push(gtx.Ops).Pop()
 	g := gtx
@@ -2675,6 +2812,24 @@ func (v *Activity) hoverBar(gtx C, r *actRow, unread bool, rowW, y int) {
 				b := b
 				icon, _ := actBtnIcon(b)
 				ch = append(ch, layout.Rigid(func(gtx C) D {
+					switch b {
+					case actBtnComplete:
+						// markCompleteIconButton: base-inv-hgl-2 under
+						// content-inv-pry, then 12px and the bar's 2px rule
+						bg, fg := rgb(0x007a5a), rgb(0xffffff)
+						if v.th.Dark {
+							bg, fg = rgb(0x177e56), rgb(0xf8f8f8)
+						}
+						s := gtx.Dp(32)
+						rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(8), bg)
+						d := v.iconButton(gtx, &r.btns[b], icons.Slack(icon), 32, 18, fg)
+						rrect(gtx, image.Rect(s+gtx.Dp(5), (s-gtx.Dp(22))/2, s+gtx.Dp(7), (s+gtx.Dp(22))/2), 0, v.p.Border)
+						return D{Size: image.Pt(d.Size.X+gtx.Dp(12), d.Size.Y)}
+					case actBtnReschedule:
+						if _, loading, _ := v.reminderSaved(r.it); loading {
+							return v.iconButton(gtx, &r.btns[b], icons.Slack(icon), 32, 18, v.p.Muted) // isDisabled
+						}
+					}
 					return v.iconButton(gtx, &r.btns[b], icons.Slack(icon), 32, 18, v.p.Text)
 				}))
 			}
@@ -3285,6 +3440,10 @@ func (v *Activity) loadDensity() {
 	}
 	v.densityReq = true
 	c := v.h.Core()
+	if !v.globalSettings() {
+		v.loadViews()
+		return
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
@@ -3311,10 +3470,72 @@ func (v *Activity) loadDensity() {
 func (v *Activity) setDense(dense bool) {
 	was := v.dense
 	v.dense, v.densitySet, v.dirty = dense, true, true
+	if !v.globalSettings() {
+		v.setViewDense(dense, was)
+		return
+	}
 	v.write("Couldn’t save the layout: ", func(ctx context.Context, c *core.App) error {
 		_, err := c.SetActivityDensity(ctx, dense)
 		return err
 	}, func() { v.dense, v.dirty = was, true })
+}
+
+// globalSettings is activity_global_settings (5Ns/ XW): one layout for
+// every view, its toggle in the page header. Off, each saved view has its
+// own and the toggle sits in the filter bar.
+func (v *Activity) globalSettings() bool {
+	return v.h.Core().Experiment("activity_global_settings") == "on"
+}
+
+// loadViews is fetchActivityViews without the global prefs: each tab's
+// saved view (by view_type) and its density.
+func (v *Activity) loadViews() {
+	c := v.h.Core()
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		views, err := c.ActivityViews(ctx)
+		if err != nil {
+			return
+		}
+		v.notes.mu.Lock()
+		v.notes.fns = append(v.notes.fns, func() {
+			for _, vw := range views {
+				for i, id := range actTabIDs {
+					if vw.Type == id {
+						v.views[i] = vw
+						v.viewDense[i] = vw.Density == "dense" // getDensityFromApiDensity
+					}
+				}
+			}
+			if d := v.viewDense[v.tabs.Sel]; !v.densitySet && d != v.dense {
+				v.dense, v.dirty = d, true
+				v.rows = map[string]*actRow{}
+			}
+		})
+		v.notes.mu.Unlock()
+		v.h.Invalidate()
+	}()
+}
+
+// setViewDense is updateActivityViewsByApi {density, isAutoSave} from the
+// filter bar's toggle: the All view only changes the page; any other
+// saved view writes activity.views.update {view_id, sort, density}.
+func (v *Activity) setViewDense(dense, was bool) {
+	tab := v.tabs.Sel
+	v.viewDense[tab] = dense
+	vw := v.views[tab]
+	if tab == 0 || vw.ID == "" {
+		return
+	}
+	v.write("Couldn’t save the layout: ", func(ctx context.Context, c *core.App) error {
+		return c.UpdateActivityView(ctx, vw, dense)
+	}, func() {
+		v.viewDense[tab] = was
+		if v.tabs.Sel == tab {
+			v.dense, v.dirty = was, true
+		}
+	})
 }
 
 // actTime is the rows' 54px timestamp column (white-space: nowrap, no

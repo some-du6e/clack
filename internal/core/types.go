@@ -429,6 +429,41 @@ type ActivityItem struct {
 	JoinerReminder bool   // team_joiner_invite_payload.is_reminder
 	InviteStatus   string // Slack Connect invite: "revoked", "expired", ...
 	ReminderItem   string // saved_reminder_payload.item_type: message, file, list_record, canvas_section, reminder
+	// saved_reminder_payload item_id, item_id_2 and item_id_3: the saved
+	// item Gjwd qy keys the reminder by (a message's channel and ts, a
+	// file's or reminder's id, a canvas section's id).
+	ReminderID, ReminderTS, ReminderDetail string
+	// LatestTS is a bundle's latest message (thread_entry.latest_ts, a DM's
+	// or channel's latest_message.ts): Slack's latestTs.
+	LatestTS string
+
+	// Invite is a Slack Connect invitation's connect invite (nil for
+	// anything else, or a feed entry without one).
+	Invite *ActivityInvite
+}
+
+// ActivityInvite is the part of a Slack Connect invite the Activity row
+// reads (v+N2): what the Accept / Ignore buttons need and the inviting
+// organisation's icon.
+type ActivityInvite struct {
+	ID, Sig      string
+	Kind         string // "channel" | "im"
+	Direction    string // "incoming" | "outgoing"
+	Status       string // "sent", "revoked", "expired", "requested", ...
+	DateInvalid  int64
+	Acceptances  []InviteAcceptance
+	TeamID       string
+	TeamIcon     string // the inviting organisation's icon (image_34)
+	TeamVerified bool
+	TeamCreated  int64
+	InviterName  string // real name, for the Ignore modals
+	InviterEmail string
+}
+
+// InviteAcceptance is one of a connect invite's acceptances.
+type InviteAcceptance struct {
+	User   string // accepting_user.id
+	Status string // approval_status: pending_approval, approved, rejected, expired
 }
 
 type ActivityReaction struct {
