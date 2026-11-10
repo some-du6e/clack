@@ -225,6 +225,12 @@ var experimentReads = map[string][]string{
 	// code channels
 	"session_channels": on, "session_channels_code_tab_pr": on, "session_channels_gh_wo": on,
 	"session_channels_inline_diff": on,
+	// read by other areas' code since the list was last updated (views,
+	// lists, composer, drafts)
+	"activity_bulk_unread_tool": on, "ai_channel_exclusions": on, "mcp_ai_channel_exclusions": on,
+	"enable_new_channel_settings": on, "move_channel_tabs_settings": on, "mpdm_default_exclude_history_clients_webapp": on,
+	"lists_grid_todos": on, "rich_text_headers_and_dividers": on, "updated_scheduled_sends_desktop": on,
+	"draft_management_in_composer": {"treatment"}, "sidebar_draft_indicator_menu_and_thread_inclusion": on,
 	// huddles (ui/huddleui/experiments.go)
 	"scheduled_huddles": on, "huddles_raised_hand_queue": on,
 	"huddle_join_from_preview": on, "huddles_preview_v2": on, "huddles_alone_timeout": on, "huddles_alone_timeout_shortened": on,

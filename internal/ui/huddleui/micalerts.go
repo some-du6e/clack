@@ -157,13 +157,14 @@ func trimLead(s string) string {
 // startMicChecks starts the no-audio check's 1 s interval for s.
 func (c *Controller) startMicChecks(s *huddle.Session) {
 	m := &c.mic
+	mic, _ := huddle.SelectedAudioDevices()
+	stop := make(chan struct{})
 	m.mu.Lock()
 	if m.stop != nil {
 		close(m.stop)
 	}
-	stop := make(chan struct{})
-	mic, _ := huddle.SelectedAudioDevices()
-	*m = micAlerts{s: s, stop: stop, device: mic, canShowMuted: true}
+	m.reset()
+	m.s, m.stop, m.device, m.canShowMuted = s, stop, mic, true
 	m.mu.Unlock()
 	c.listMics()
 	go func() {
@@ -197,8 +198,15 @@ func (c *Controller) stopMicChecks() {
 	if m.stop != nil {
 		close(m.stop)
 	}
-	*m = micAlerts{}
+	m.reset()
 	m.mu.Unlock()
+}
+
+// reset clears everything but the mutex (callers hold mu).
+func (m *micAlerts) reset() {
+	m.s, m.stop, m.mics = nil, nil, 0
+	m.device, m.performed, m.count, m.alert, m.closed = "", false, 0, false, false
+	m.mutedShown, m.canShowMuted, m.dismissedCall = time.Time{}, false, ""
 }
 
 // listMics counts the microphones (the devices' microphone list).
