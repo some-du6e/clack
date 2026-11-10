@@ -1,0 +1,69 @@
+name: bgblur
+# The huddle background blur: internal/tflite (the pure-Go TFLite
+# interpreter) and internal/huddle/bgblur (Slack's mask and blur passes),
+# on all three OSes, with the interpreter's speed asserted on each runner.
+# "reference" regenerates the MediaPipe outputs TestMediaPipeReference
+# compares against (committed under internal/tflite/testdata).
+on:
+  push:
+    paths: ['internal/tflite/**', 'internal/huddle/bgblur/**', 'internal/huddle/videofx*.go', '.github/workflows/bgblur.yml', 'go.mod']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reference:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: MediaPipe (the official runtime) on the fixed inputs
+        run: |
+          python3 --version
+          python3 -m venv "$RUNNER_TEMP/mp"
+          "$RUNNER_TEMP/mp/bin/pip" install --quiet mediapipe==0.10.21
+          "$RUNNER_TEMP/mp/bin/python" -I internal/tflite/testdata/mediapipe_ref.py \
+            internal/huddle/bgblur/selfie_segmenter_landscape.tflite dist/reference \
+            internal/tflite/testdata/ref-person.png internal/tflite/testdata/ref-noise.png
+          ls -la dist/reference
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bgblur-reference
+          path: dist/reference
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: vet
+        run: go vet ./internal/tflite/... ./internal/huddle/bgblur/...
+      - name: test
+        shell: bash
+        env:
+          CLACK_SHOTS: ${{ github.workspace }}/dist/shots
+        run: |
+          mkdir -p dist/shots
+          go test -count=1 -v ./internal/tflite/... ./internal/huddle/bgblur/...
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: bgblur-shots-${{ matrix.os }}
+          path: dist/shots
+      - name: speed (asserted on this runner)
+        env:
+          CLACK_PERF_ASSERT: "1"
+        run: go test -count=1 -v -run 'TestInvokeSpeed|TestApplySpeed' ./internal/tflite ./internal/huddle/bgblur
+      - name: benchmarks
+        run: go test -run '^$' -bench . -benchtime 60x ./internal/tflite ./internal/huddle/bgblur
