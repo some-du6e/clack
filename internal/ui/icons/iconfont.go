@@ -25,7 +25,11 @@ func init() {
 	// U+E254 icon_chevron_medium_right
 	reg("chevron-medium-right", f("M8.53 4.72C8.39 4.58 8.19 4.5 8 4.5C7.81 4.5 7.62 4.58 7.47 4.72C7.32 4.86 7.25 5.06 7.25 5.25C7.25 5.44 7.33 5.64 7.47 5.78L11.69 10L7.47 14.22C7.32 14.37 7.25 14.56 7.25 14.75C7.25 14.94 7.33 15.14 7.47 15.28C7.62 15.43 7.81 15.5 8 15.5C8.19 15.5 8.39 15.43 8.53 15.28L13.25 10.56L13.28 10.53C13.42 10.38 13.5 10.19 13.5 10C13.5 9.81 13.43 9.62 13.28 9.47Z"))
 	// Slack's cloud-offline SvgIcon (InlineOfflineIndicator: Activity's
-	// "No connection. Go online to load more activity."), its own path:
-	// three filled outlines, so nonzero and evenodd fill alike.
-	reg("cloud-offline", f("m15.982 7.907 1.236-1.39c.212.647.31 1.34.273 2.05A5.25 5.25 0 0 1 13.75 17.5H7.455L8.788 16h4.962a3.75 3.75 0 0 0 2.469-6.573.75.75 0 0 1-.25-.655 4 4 0 0 0 .013-.865M1 13.75c0 1.12.49 2.125 1.27 2.812l.048-.057.947-1.065a2.25 2.25 0 0 1 .54-3.733.75.75 0 0 0 .383-.954c-.722-1.843.877-3.966 2.882-3.735a.75.75 0 0 0 .775-.448A4.25 4.25 0 0 1 11.75 4c.509 0 .997.094 1.45.264l1.047-1.179A5.6 5.6 0 0 0 11.75 2.5a5.75 5.75 0 0 0-5.051 3c-2.654.04-4.647 2.64-4.096 5.176A3.75 3.75 0 0 0 1 13.75M17.501 2.941a.75.75 0 0 0-1.06.058l-13 14.5a.75.75 0 0 0 1.118 1.002l13-14.5a.75.75 0 0 0-.058-1.06"))
+	// "No connection. Go online to load more activity."), on the
+	// centrelines of its outlines: the left lobe (r 3 about 4.75,13.75),
+	// the bump, the top arc (r 5 about 11.75,8.25), the right side (r 4.5
+	// about 13.75,12.25) to the base, and the slash between its cap centres.
+	reg("cloud-offline", s("M2.75 16.05 A3 3 0 0 1 3.55 11 C2.8 8.6 4.56 6.16 6.88 6.26 A5 5 0 0 1 13.7 3.65"),
+		s("M16.6 7.2 C16.95 8.05 17.05 8.85 16.95 9.55 A4.5 4.5 0 0 1 13.75 16.75 H8.1"),
+		s("M17 3.5 L4 18"))
 }

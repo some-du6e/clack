@@ -161,8 +161,12 @@ func (v *Activity) ensureFileTitles(page *core.ActivityPage) {
 			for id, t := range titles {
 				v.fileTitles[id] = t
 			}
+			// the footers name the files now: re-describe the rows,
+			// keeping their widgets (a press in flight stays theirs)
+			for _, r := range v.rows {
+				r.built = false
+			}
 			v.dirty = true
-			v.rows = map[string]*actRow{} // the footers name the files now
 		})
 		v.notes.mu.Unlock()
 		v.h.Invalidate()
