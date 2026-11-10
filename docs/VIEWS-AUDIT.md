@@ -39,9 +39,7 @@ How it was checked:
 
 ## Not done
 
-- Per-row checkboxes for Custom select, and "Select everything matching these filters." / "{n} items selected on page." (ActivityBulkSelectionBanner).
-- Activity custom views ("Create a custom view", `activity.views` writes) and the VIP filter.
-- The Activity settings menu's Density and Sort sections, which only show behind another flag (not shown on the account).
+- Activity's per-row checkboxes, ActivityBulkSelectionBanner, custom views, the VIP filter, the settings menu's Sort and Density sections, its keyboard and live updates: done on 2026-11-10 (branch `activity-rest`, docs/ACTIVITY.md "Bulk select, saved views, sort, keys, live updates"); what's left of them is listed there.
 - The delete dialog's width and padding weren't measured (no dialog was opened in Slack). It uses popups' default modal (520 wide).
-- Keyboard navigation: not changed. Slack's list views use its virtual list's arrow keys. Clack's DMs view steps with the arrows already, the others don't.
-- Live updates: unchanged. Activity and Threads reload on realtime `activity` / `thread_subscription` events, Drafts on `draft` events.
+- Keyboard navigation: Activity has Slack's (docs/ACTIVITY.md); Clack's DMs view steps with the arrows already, the other views don't.
+- Live updates: Activity takes realtime `activity` events as Slack does (docs/ACTIVITY.md); Threads reloads on `thread_subscription` events, Drafts on `draft` events.
