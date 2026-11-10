@@ -127,6 +127,7 @@ func TestChannelNotifyAdvancedSettings(t *testing.T) {
 	if !m.OverridesShown() {
 		t.Error("the mobile overrides didn't unfold")
 	}
+	e.settle(100 * time.Millisecond)
 	e.shot("channel-notify-modal-overrides")
 	m.SetMobile("everything")
 	check("mobile everything", "mobile", "everything", func(c map[string]any) bool { return c["mobile"] == "everything" })
