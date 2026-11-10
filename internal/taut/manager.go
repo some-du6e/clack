@@ -157,6 +157,37 @@ func (t *Taut) lock(id string) func() {
 	return q.Unlock
 }
 
+// A plugin's state fields (meta, inJS, running, err, problems, runID) are
+// written under t.mu, as well as id's lock where the writer holds it:
+// Settings (info) reads them with t.mu alone while a plugin is loading,
+// and restartAfterCrash resets them with t.mu while a restart registers.
+// with runs f under t.mu; the getters below read under it.
+func (t *Taut) with(f func()) {
+	t.mu.Lock()
+	f()
+	t.mu.Unlock()
+}
+
+func (t *Taut) metaOf(p *plugin) *Meta {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return p.meta
+}
+
+func (t *Taut) isRunning(p *plugin) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return p.running
+}
+
+func (t *Taut) errOf(p *plugin) string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return p.err
+}
+
+func (t *Taut) setErr(p *plugin, e string) { t.with(func() { p.err = e }) }
+
 func (t *Taut) get(id string) *plugin {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -173,11 +204,13 @@ func (t *Taut) enabled(p *plugin) bool {
 			}
 		}
 	}
-	return p.meta != nil && p.meta.defaultEnabled()
+	m := t.metaOf(p)
+	return m != nil && m.defaultEnabled()
 }
 
 func (t *Taut) runsHere(p *plugin) bool {
-	return p.meta == nil || !p.meta.HackClubOnly || t.IsHackClub()
+	m := t.metaOf(p)
+	return m == nil || !m.HackClubOnly || t.IsHackClub()
 }
 
 // StartEnabled starts every enabled plugin that runs in this workspace.
@@ -203,7 +236,7 @@ func (t *Taut) StartEnabled(ctx context.Context) {
 		if p == nil || p.code == "" {
 			continue
 		}
-		if p.meta == nil || (t.enabled(p) && t.runsHere(p)) {
+		if t.metaOf(p) == nil || (t.enabled(p) && t.runsHere(p)) {
 			if err := t.register(ctx, id); err != nil {
 				t.logf("taut: %s: %v", id, err)
 			}
@@ -225,18 +258,21 @@ func (t *Taut) registerLocked(ctx context.Context, id string) error {
 	if p == nil {
 		return fmt.Errorf("plugin %s isn't installed", id)
 	}
-	if p.running {
+	if t.isRunning(p) {
 		t.stopLocked(ctx, p)
 	}
-	if !p.inJS || p.meta == nil {
+	t.mu.Lock()
+	loaded := p.inJS && p.meta != nil
+	t.mu.Unlock()
+	if !loaded {
 		if err := t.loadInJS(ctx, p); err != nil {
-			p.err = err.Error()
+			t.setErr(p, err.Error())
 			t.changed()
 			return err
 		}
 	}
 	runs := t.runsHere(p)
-	if runs && p.meta.HasMigrate {
+	if runs && t.metaOf(p).HasMigrate {
 		t.migrate(ctx, p)
 	}
 	secrets := t.readSecrets(p, runs)
@@ -249,14 +285,13 @@ func (t *Taut) registerLocked(ctx context.Context, id string) error {
 		return err
 	}
 	if err := rt.call(ctx, "resolve", &resolved, id, t.cfg.block(id)); err != nil {
-		p.err = "couldn't read its config: " + err.Error()
+		t.setErr(p, "couldn't read its config: "+err.Error())
 		t.changed()
 		return err
 	}
-	p.config = resolved.Config
-	p.problems = resolved.Problems
-	p.block, _ = json.Marshal(t.cfg.block(id))
-	for k, v := range p.problems {
+	blk, _ := json.Marshal(t.cfg.block(id))
+	t.with(func() { p.config, p.problems, p.block = resolved.Config, resolved.Problems, blk })
+	for k, v := range resolved.Problems {
 		t.logf("taut: %s.%s: %s, using the default", id, k, v)
 	}
 	p.applied, _ = json.Marshal(resolved.Config)
@@ -269,7 +304,7 @@ func (t *Taut) registerLocked(ctx context.Context, id string) error {
 	}
 	var on bool
 	_ = json.Unmarshal(full["enabled"], &on)
-	p.err = ""
+	t.setErr(p, "")
 	if on && runs {
 		sctx, cancel := context.WithTimeout(ctx, t.opts.LifecycleTimeout+2*time.Second)
 		var startErr *string
@@ -277,24 +312,25 @@ func (t *Taut) registerLocked(ctx context.Context, id string) error {
 		cancel()
 		switch {
 		case err != nil:
-			p.err = "Failed to start: " + err.Error()
+			t.setErr(p, "Failed to start: "+err.Error())
 			// make sure nothing it registered lingers
 			stctx, c2 := context.WithTimeout(context.Background(), t.opts.LifecycleTimeout+time.Second)
 			_ = rt.call(stctx, "stop", nil, id)
 			c2()
 		case startErr != nil:
-			p.err = *startErr
+			t.setErr(p, *startErr)
 		default:
-			p.running = true
+			t.with(func() { p.running = true })
 			t.running.Add(1)
 		}
 	}
 	t.mu.Lock()
 	p.runID++
+	e := p.err
 	t.mu.Unlock()
 	t.changed()
-	if p.err != "" {
-		return errors.New(p.err)
+	if e != "" {
+		return errors.New(e)
 	}
 	return nil
 }
@@ -312,8 +348,7 @@ func (t *Taut) loadInJS(ctx context.Context, p *plugin) error {
 	if m.ID != p.id {
 		return fmt.Errorf("stored as %q but declares the id %q", p.id, m.ID)
 	}
-	p.meta = &m
-	p.inJS = true
+	t.with(func() { p.meta, p.inJS = &m, true })
 	if err := writeMeta(t.dir, p.id, p.hash, &m); err != nil {
 		t.logf("taut: %s: caching its metadata: %v", p.id, err)
 	}
@@ -395,10 +430,13 @@ func (t *Taut) stopPlugin(ctx context.Context, id string) error {
 // stopLocked aborts and stops a running plugin (bounded by the 5 s stop
 // timeout in JS); everything it registered through TautAPI is undone.
 func (t *Taut) stopLocked(ctx context.Context, p *plugin) {
-	if !p.running {
+	t.mu.Lock()
+	was := p.running
+	p.running = false
+	t.mu.Unlock()
+	if !was {
 		return
 	}
-	p.running = false
 	t.running.Add(-1)
 	t.mu.Lock()
 	rt := t.rt
@@ -492,7 +530,7 @@ func (t *Taut) SetSecret(ctx context.Context, id, key, value string) error {
 
 func (t *Taut) setSecretLocked(ctx context.Context, p *plugin, key, value string) error {
 	t.data.writeSecret(secretName(p.id, key), value)
-	if p.running || (t.enabled(p) && t.runsHere(p)) {
+	if t.isRunning(p) || (t.enabled(p) && t.runsHere(p)) {
 		return t.registerLocked(ctx, p.id)
 	}
 	t.changed()
@@ -510,7 +548,7 @@ func (t *Taut) Secret(id, key string) string {
 func (t *Taut) applyConfigLocked(ctx context.Context, p *plugin, wasRunning bool) error {
 	on := t.enabled(p) && t.runsHere(p)
 	if !wasRunning && !on {
-		p.err = ""
+		t.setErr(p, "")
 		t.changed()
 		return nil
 	}
@@ -633,7 +671,7 @@ func (t *Taut) Import(ctx context.Context, code []byte, replacing string) (strin
 		unlock := t.lock(old.id)
 		defer unlock()
 		if p := t.get(old.id); p != nil {
-			p.inJS = false
+			t.with(func() { p.inJS = false })
 		}
 		_ = t.registerLocked(ctx, old.id)
 	}

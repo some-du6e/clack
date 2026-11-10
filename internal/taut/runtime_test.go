@@ -222,7 +222,11 @@ func TestLifecycleTimeoutAndErrors(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "timed out after 5 seconds") {
 		t.Fatalf("slow start: %v", err)
 	}
-	if d := time.Since(start); d < 4*time.Second || d > 9*time.Second {
+	hi := 9 * time.Second
+	if raceOn {
+		hi = 20 * time.Second
+	}
+	if d := time.Since(start); d < 4*time.Second || d > hi {
 		t.Errorf("timeout took %s", d)
 	}
 	// a plugin that fails to start isn't installed (Taut rolls back)
