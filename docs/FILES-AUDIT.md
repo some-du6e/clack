@@ -102,4 +102,5 @@ Not done, and why:
 - **Image alt text:** Slack's image dialog adds a preview and an alt text field. Clack edits the name only.
 - **PDFs, video, audio, snippets, posts:** Slack opens these in its viewer or the file details view. Clack's viewer shows images only, so they open in the browser.
 - **Deleted rows:** Slack's deleted view has its own rows with "Restore canvas/list". Clack shows the rows without the star or ⋯ and has no Restore yet.
+- **Split view icon:** Slack draws `move-to-split-view` before "Open in split view". That glyph isn't in Clack's icon set, so the row has no icon.
 - **Menu position:** Slack opens the menu beside the button (right-bottom). Clack anchors it at the pointer.
