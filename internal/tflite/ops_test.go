@@ -267,7 +267,7 @@ func TestFloat16(t *testing.T) {
 
 func TestGemvTail(t *testing.T) {
 	r := rand.New(rand.NewSource(5))
-	for _, co := range []int{1, 7, 8, 13, 24} {
+	for _, co := range []int{1, 7, 8, 13, 24, 32, 40, 128} {
 		a := randVec(r, 11)
 		w := randVec(r, 11*co)
 		b := randVec(r, co)

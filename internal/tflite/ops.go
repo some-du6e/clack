@@ -227,10 +227,22 @@ func (it *Interpreter) conv2D(c convParams, x []float32, xs []int, w []float32, 
 }
 
 // gemv sets dst = bias + a·w, where w is len(a) rows of len(dst) output
-// channels. Eight output channels stay in registers while a streams past.
+// channels. Eight output channels stay in registers while a streams past;
+// on amd64 with AVX2 and FMA the 8-channel blocks run in assembly
+// (gemv_amd64.s), four YMM accumulators at a time.
 func gemv(dst, a, w, bias []float32) {
 	co := len(dst)
 	cb := 0
+	if useAVX2 && co >= 8 && len(a) > 0 {
+		nb := co / 8
+		var bp *float32
+		if bias != nil {
+			bp = &bias[0]
+		}
+		_ = w[(len(a)-1)*co+nb*8-1] // the last element the kernel reads
+		gemvAVX2(&dst[0], &a[0], &w[0], bp, len(a), co, nb)
+		cb = nb * 8
+	}
 	for ; cb+8 <= co; cb += 8 {
 		var s0, s1, s2, s3, s4, s5, s6, s7 float32
 		if bias != nil {
@@ -311,11 +323,17 @@ func (it *Interpreter) depthwise(c convParams, x []float32, xs []int, w []float3
 	}, nil
 }
 
-// madd sets acc[i] += a[i]*b[i].
+// madd sets acc[i] += a[i]*b[i] (AVX2+FMA on amd64 for whole 8s).
 func madd(acc, a, b []float32) {
 	a = a[:len(acc)]
 	b = b[:len(acc)]
-	for i := range acc {
+	i0 := 0
+	if useAVX2 && len(acc) >= 8 {
+		n := len(acc) / 8
+		maddAVX2(&acc[0], &a[0], &b[0], n)
+		i0 = n * 8
+	}
+	for i := i0; i < len(acc); i++ {
 		acc[i] += a[i] * b[i]
 	}
 }
