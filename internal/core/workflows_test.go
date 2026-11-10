@@ -7,7 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/store"
 )
 
 // Synthetic fixtures only (scraping policy).
@@ -189,5 +191,59 @@ func TestWorkflowStepActions(t *testing.T) {
 	}
 	if p := f.last("blocks.actions"); p.Get("function_execution_id") != "Fx0STEP1" {
 		t.Errorf("blocks.actions without function_execution_id: %v", p)
+	}
+}
+
+// TestChannelWorkflows: channel details > Automations reads Slack's two
+// stores against fakeslack's #workflows-gallery: the workflow bots among
+// the members (edge users/list with Slack's filter), their workflows and
+// each share URL's trigger, and the legacy channel actions.
+func TestChannelWorkflows(t *testing.T) {
+	sz := fakeslack.Small
+	sz.Workflows = true
+	fs, err := fakeslack.Start(sz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { fs.Close() })
+	a := New(slack.New(fs.Creds()), store.New(""))
+	ix := a.Interactive()
+	ctx := context.Background()
+	apps, err := ix.ChannelWorkflowApps(ctx, fakeslack.WorkflowsChannelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(apps) != 2 || apps[0].Title() != "Run deploy" || apps[1].Title() != "Request time off" ||
+		apps[1].Desc() != "Ask your lead for days off" || apps[1].Trigger.ShortcutURL != fakeslack.WorkflowLink(fakeslack.TriggerTimeOff) ||
+		apps[0].Icon == "" || apps[0].WorkflowTitle != "Deploy" {
+		t.Errorf("workflow apps %+v", apps)
+	}
+	found := false
+	for _, f := range fs.UserListFilters() {
+		found = found || f == "workflows NOT deactivated"
+	}
+	if !found {
+		t.Errorf("no users/list with Slack's workflow filter: %v", fs.UserListFilters())
+	}
+	acts, err := ix.ChannelActions(ctx, fakeslack.WorkflowsChannelID)
+	if err != nil || len(acts) != 1 || acts[0].Name != fakeslack.LegacyActionName || acts[0].AppID != "A0FAKELEG1" || acts[0].Icon == "" {
+		t.Fatalf("channel actions %+v %v", acts, err)
+	}
+	if err := ix.RunChannelAction(ctx, acts[0], fakeslack.WorkflowsChannelID); err != nil {
+		t.Fatal(err)
+	}
+	runs := fs.ActionRuns()
+	if len(runs) != 1 || runs[0].Get("action_id") != fakeslack.LegacyActionID || runs[0].Get("type") != "channel_action" ||
+		runs[0].Get("channel") != fakeslack.WorkflowsChannelID || !strings.HasPrefix(runs[0].Get("client_token"), "web-") {
+		t.Errorf("apps.actions.run %v", runs)
+	}
+	// the picker's search reaches the workflow fixtures (not search.go's
+	// empty answer for the search popover)
+	if ts, err := ix.SearchTriggers(ctx, "", fakeslack.WorkflowsChannelID, false); err != nil || len(ts) != 3 {
+		t.Errorf("search: %d triggers, %v", len(ts), err)
+	}
+	// another channel: nothing
+	if apps, _ := ix.ChannelWorkflowApps(ctx, "C0NOTHERE1"); len(apps) != 0 {
+		t.Errorf("apps elsewhere %+v", apps)
 	}
 }

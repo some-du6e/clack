@@ -945,6 +945,11 @@ func ok(kv ...any) map[string]any {
 }
 
 func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMessage) any {
+	if s.Size.Workflows { // first: search.go answers search.autocomplete.triggers with none
+		if out, handled := s.handleWorkflows(method, f, edge); handled { // workflows.go
+			return out
+		}
+	}
 	if out, handled := s.handleGallery(method, f); handled { // bkgallery*.go
 		return out
 	}
@@ -974,11 +979,6 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	}
 	if out, handled := s.handleUnreads(method, f); handled { // unreads.go
 		return out
-	}
-	if s.Size.Workflows {
-		if out, handled := s.handleWorkflows(method, f); handled { // workflows.go
-			return out
-		}
 	}
 	// the bench threads' replies: ahead of the switch, whose
 	// conversations.replies answers every other thread with none

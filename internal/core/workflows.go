@@ -398,3 +398,153 @@ func ErrCode(err error) string {
 	}
 	return ""
 }
+
+// ---- a channel's workflows (channel details > Automations) ----
+
+// ChannelAction is a channel's legacy workflow (Slack's channelActions
+// store: apps.actions.listForResource for the channel), drawn with its
+// app's icon and the WORKFLOW badge.
+type ChannelAction struct {
+	ID, AppID, Name, Description, Type string
+	Icon                               string // the app's image_64
+	InstallTeamID, InstallTeamName     string
+}
+
+// ChannelActions lists a channel's legacy workflows (Slack's channel
+// actions refetcher s4p6: apps.actions.listForResource with
+// resource_type channel).
+func (ix *Interactive) ChannelActions(ctx context.Context, ch string) ([]ChannelAction, error) {
+	var res struct {
+		Actions []struct {
+			ActionID        string `json:"action_id"`
+			Name            string `json:"name"`
+			Description     string `json:"description"`
+			Type            string `json:"type"`
+			InstallTeamID   string `json:"install_team_id"`
+			InstallTeamName string `json:"install_team_name"`
+			App             struct {
+				AppID string            `json:"app_id"`
+				Icons map[string]string `json:"icons"`
+			} `json:"app"`
+		} `json:"actions"`
+	}
+	err := ix.call(ctx, "apps.actions.listForResource", url.Values{"resource_type": {"channel"}, "resource_id": {ch}}, &res)
+	logCall("apps.actions.listForResource", "channel="+ch, err)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ChannelAction, 0, len(res.Actions))
+	for _, r := range res.Actions {
+		out = append(out, ChannelAction{ID: r.ActionID, AppID: r.App.AppID, Name: r.Name, Description: r.Description, Type: r.Type,
+			Icon:          firstNonEmpty(r.App.Icons["image_64"], r.App.Icons["image_72"], r.App.Icons["image_48"], r.App.Icons["image_36"]),
+			InstallTeamID: r.InstallTeamID, InstallTeamName: r.InstallTeamName})
+	}
+	return out, nil
+}
+
+// RunChannelAction runs a legacy workflow (Slack's runChannelAction:
+// apps.actions.run with type channel_action and a client_token this
+// client issued, for the form it may open).
+func (ix *Interactive) RunChannelAction(ctx context.Context, a ChannelAction, ch string) error {
+	p := url.Values{"action_id": {a.ID}, "type": {"channel_action"}, "app_id": {a.AppID}, "channel": {ch}, "client_token": {ix.ClientToken()}}
+	err := ix.call(ctx, "apps.actions.run", p, nil)
+	logCall("apps.actions.run", "channel="+ch+" action="+a.ID, err)
+	return err
+}
+
+// WorkflowApp is a workflow whose bot is a member of the channel (Slack's
+// workflowApps store): its app, its share URL's trigger and its icon.
+type WorkflowApp struct {
+	AppID, WorkflowID, ShareURL, Icon string
+	Trigger                           WorkflowTrigger // looked up from the share URL; zero until found
+	// WorkflowTitle / WorkflowDescription come from functions.workflows.list.
+	WorkflowTitle, WorkflowDescription string
+}
+
+// Title and Desc are the row's text (createShortcutFromTriggerAndWorkflow:
+// the trigger's, else the workflow's).
+func (w WorkflowApp) Title() string { return firstNonEmpty(w.Trigger.Title(), w.WorkflowTitle) }
+func (w WorkflowApp) Desc() string  { return firstNonEmpty(w.Trigger.Desc(), w.WorkflowDescription) }
+
+// ChannelWorkflowApps finds the workflows in a channel the way Slack's
+// fetchAndUpsertFirstNWorkflowAppsForChannel (A3kQ) does: the first 100
+// workflow bots among the channel's members (edge users/list, filter
+// "workflows NOT deactivated", present first), their workflows
+// (functions.workflows.findWorkflowForBotUsers), those workflows'
+// details (functions.workflows.list, access level all) and each share
+// URL's trigger (workflows.triggers.info).
+func (ix *Interactive) ChannelWorkflowApps(ctx context.Context, ch string) ([]WorkflowApp, error) {
+	var members struct {
+		Results []struct {
+			ID string `json:"id"`
+		} `json:"results"`
+	}
+	body := map[string]any{"channels": []string{ch}, "present_first": true, "filter": "workflows NOT deactivated", "count": 100}
+	if err := ix.a.C.Edge(ctx, "users/list", body, &members); err != nil {
+		logCall("edge users/list", "workflows channel="+ch, err)
+		return nil, err
+	}
+	ids := make([]string, 0, len(members.Results))
+	for _, m := range members.Results {
+		ids = append(ids, m.ID)
+	}
+	var found struct {
+		WorkflowApps []struct {
+			AppID      string `json:"app_id"`
+			WorkflowID string `json:"workflow_id"`
+			ShareURL   string `json:"share_url"`
+			AppDetails struct {
+				Icons map[string]string `json:"icons"`
+			} `json:"app_details"`
+		} `json:"workflow_apps"`
+	}
+	err := ix.call(ctx, "functions.workflows.findWorkflowForBotUsers", url.Values{"user_ids": {strings.Join(ids, ",")}, "channel_id": {ch}}, &found)
+	logCall("functions.workflows.findWorkflowForBotUsers", "channel="+ch+" bots="+strconv.Itoa(len(ids)), err)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]WorkflowApp, 0, len(found.WorkflowApps))
+	var wfIDs []string
+	for _, w := range found.WorkflowApps {
+		ic := w.AppDetails.Icons
+		out = append(out, WorkflowApp{AppID: w.AppID, WorkflowID: w.WorkflowID, ShareURL: w.ShareURL,
+			Icon: firstNonEmpty(ic["image_36"], ic["image_48"], ic["image_72"])})
+		if w.WorkflowID != "" {
+			wfIDs = append(wfIDs, w.WorkflowID)
+		}
+	}
+	if len(wfIDs) > 0 {
+		wb, _ := json.Marshal(wfIDs)
+		var wfs struct {
+			Workflows []struct {
+				ID          string `json:"id"`
+				Title       string `json:"title"`
+				Description string `json:"description"`
+			} `json:"workflows"`
+		}
+		p := url.Values{"workflow_ids": {string(wb)}, "access_level": {"all"}, "limit": {strconv.Itoa(len(wfIDs))}}
+		if err := ix.call(ctx, "functions.workflows.list", p, &wfs); err == nil { // Slack ignores a failure here
+			for _, w := range wfs.Workflows {
+				for i := range out {
+					if out[i].WorkflowID == w.ID {
+						out[i].WorkflowTitle, out[i].WorkflowDescription = w.Title, w.Description
+					}
+				}
+			}
+		} else {
+			logCall("functions.workflows.list", "n="+strconv.Itoa(len(wfIDs)), err)
+		}
+	}
+	for i := range out {
+		id := WorkflowTriggerID(out[i].ShareURL)
+		if id == "" {
+			continue
+		}
+		t, ok := ix.Trigger(id)
+		if !ok {
+			t, _ = ix.TriggerInfo(ctx, id)
+		}
+		out[i].Trigger = t
+	}
+	return out, nil
+}

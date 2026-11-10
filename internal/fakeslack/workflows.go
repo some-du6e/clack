@@ -85,6 +85,7 @@ type TripCall struct {
 type wfState struct {
 	mu    sync.Mutex
 	trips []TripCall
+	runs  []url.Values // apps.actions.run
 }
 
 var wfStates sync.Map // *Server -> *wfState
@@ -147,9 +148,86 @@ func (s *Server) addWorkflowsChannel() {
 	s.hist[WorkflowsChannelID] = msgs
 }
 
+// The channel's automations (channel details > Automations): two
+// workflows whose bots are members (Run deploy, Request time off) and a
+// legacy workflow (a channel action).
+const (
+	LegacyActionID   = "Ac0FAKELEG1"
+	LegacyActionName = "Office hours sign-up"
+)
+
+// workflowBots are the gallery channel's workflow bot members, with their
+// workflow apps (functions.workflows.findWorkflowForBotUsers).
+var workflowBots = []struct{ user, app, workflow, trigger string }{
+	{"U0FAKE01", "A0FAKE01", "Wf0FAKE01", TriggerDeploy},
+	{"U0FAKE02", "A0FAKE02", "Wf0FAKE02", TriggerTimeOff},
+}
+
+// ActionRuns returns the apps.actions.run calls so far.
+func (s *Server) ActionRuns() []url.Values {
+	st := s.wf()
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return append([]url.Values(nil), st.runs...)
+}
+
 // handleWorkflows answers the Workflow Builder methods.
-func (s *Server) handleWorkflows(method string, f url.Values) (any, bool) {
+func (s *Server) handleWorkflows(method string, f url.Values, edge map[string]json.RawMessage) (any, bool) {
 	switch method {
+	case "edge/users/list":
+		var filter string
+		_ = json.Unmarshal(edge["filter"], &filter)
+		var chans []string
+		_ = json.Unmarshal(edge["channels"], &chans)
+		if filter != "workflows NOT deactivated" {
+			return nil, false
+		}
+		s.convMu.Lock()
+		s.listFilters = append(s.listFilters, filter) // UserListFilters
+		s.convMu.Unlock()
+		out := []map[string]any{}
+		if len(chans) == 1 && chans[0] == WorkflowsChannelID {
+			for _, b := range workflowBots {
+				out = append(out, map[string]any{"id": b.user, "team_id": TeamID, "is_bot": true, "is_workflow_bot": true})
+			}
+		}
+		return ok("results", out, "next_marker", ""), true
+	case "functions.workflows.findWorkflowForBotUsers":
+		apps := []map[string]any{}
+		if f.Get("channel_id") == WorkflowsChannelID {
+			for _, b := range workflowBots {
+				if strings.Contains(","+f.Get("user_ids")+",", ","+b.user+",") {
+					apps = append(apps, map[string]any{"app_id": b.app, "workflow_id": b.workflow, "share_url": WorkflowShareURL(b.trigger),
+						"app_details": map[string]any{"icons": map[string]string{"image_36": s.URL + "img/wfapp-" + b.app + "-36.png"}}})
+				}
+			}
+		}
+		return ok("workflow_apps", apps), true
+	case "functions.workflows.list":
+		var ids []string
+		_ = json.Unmarshal([]byte(f.Get("workflow_ids")), &ids)
+		out := []map[string]any{}
+		for _, t := range fakeTriggers {
+			for _, id := range ids {
+				if id == t.wf {
+					out = append(out, map[string]any{"id": t.wf, "title": t.title, "description": t.desc, "is_published": true})
+				}
+			}
+		}
+		return ok("workflows", out), true
+	case "apps.actions.listForResource":
+		if f.Get("resource_type") != "channel" || f.Get("resource_id") != WorkflowsChannelID {
+			return ok("actions", []any{}), true
+		}
+		return ok("actions", []map[string]any{{"action_id": LegacyActionID, "name": LegacyActionName, "description": "Pick a slot for this week",
+			"type": "channel_action", "install_team_id": TeamID, "install_team_name": "Fake Club",
+			"app": map[string]any{"app_id": "A0FAKELEG1", "icons": map[string]string{"image_64": s.URL + "img/legacy-64.png"}}}}), true
+	case "apps.actions.run":
+		st := s.wf()
+		st.mu.Lock()
+		st.runs = append(st.runs, f)
+		st.mu.Unlock()
+		return ok(), true
 	case "workflows.triggers.trip":
 		c := TripCall{URL: f.Get("url"), ClientToken: f.Get("client_token"), Precheck: f.Get("run_precheck")}
 		_ = json.Unmarshal([]byte(f.Get("context")), &c.Context)

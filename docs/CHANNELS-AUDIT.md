@@ -63,7 +63,7 @@ Status: **matched** (no change needed), **fixed** (on branch `channels-e2e`), **
 | Presence dots in Members | ● / ○ | none with realtime off | **open**: presence only arrives over the socket |
 | Agents & apps tab | card "Agents and apps" + "Add agents and apps"; a row per bot (edge `users/list` `filter:"apps"`, `users_by_realname`), AGENT/APP badge (`agent_status`), tagline (`apps.profile.get`) | static "Bring the tools…" card | **fixed** |
 | Agents & apps: Agentforce promo card | shown | none | **open**: Salesforce ad, not data |
-| Automations tab | "Let workflows take tasks off your plate", Go to Your Workflows, Learn More, illustration | "Workflows / Add a Workflow" | **open** |
+| Automations tab | "Let workflows take tasks off your plate", Go to Your Workflows, Learn More, illustration | "Workflows / Add a Workflow" | **fixed**: Slack's WorkflowsSettings (the channel's workflow apps and legacy workflows, "Published Automations", the empty state's copy, Learn More). Go to Your Workflows and the illustration: open (docs/WORKFLOWS.md) |
 | Tabs tab | "Manage tabs" card: Messages, the canvas, Files & links, Pins, Workflows (Hidden), New Tab | per-type list plus an empty Bookmarks card | **fixed** (New Tab itself: open, toasts) |
 | Settings: Channel name (Edit), Posting permissions | hidden from a plain member | shown to everyone | **fixed** (creator, manager or admin) |
 | Settings: AI use, Guest access, Member/Guest permissions, Channel member suggestions, Copy member names/emails | shown | missing | **open**: needs `conversations.permissions.*` reads |
@@ -117,5 +117,5 @@ Status: **matched** (no change needed), **fixed** (on branch `channels-e2e`), **
 
 ## Not compared
 
-- The Automations tab beyond its copy ("Let workflows take tasks off your plate" card: **open**).
+- The Automations tab beyond its copy: the tab now follows Slack's source (WorkflowsSettings; docs/WORKFLOWS.md), checked against fakeslack only. Its list wasn't compared live: no workflow was run or added on the account.
 - Settings' AI use / Guest access / Member and Guest permissions / member suggestions / Copy member names (**open**, need the `conversations.permissions.*` reads).

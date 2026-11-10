@@ -8,6 +8,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/blockkit"
 	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/views"
 )
 
 // Workflow wiring (docs/WORKFLOWS.md). Running a workflow is blockkit's
@@ -16,6 +17,11 @@ import (
 
 func init() {
 	composer.WorkflowItem = composerWorkflowItem
+	views.TripWorkflow = func(h views.Host, link string, tc core.TripContext, uiPage string) {
+		if bh, ok := h.(blockkit.Host); ok { // channel details > Automations
+			blockkit.TripWorkflow(bh, link, tc, uiPage)
+		}
+	}
 }
 
 // composerWorkflowItem is the + menu's "Workflow" row (Slack's

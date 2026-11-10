@@ -39,6 +39,22 @@ A workflow step's message (a form's Continue button, approvals) carries `functio
 
 `useComposerIAFormatter` (boot-render `26v2`) has one workflow row: "Workflow" (`attach-workflow`, the play icon; `bolt` under the composer simplification experiment), hidden in the edit-message composer and without the `hermes__read` feature access. It opens the workflow picker with `source: shortcuts_menu` ("Attach a workflow", Insert). Insert is `attachWorkflowToMessage`: the trigger's name, linked to its `share_url`, at the caret. The menu lists no triggers itself.
 
+## Channel details > Automations
+
+The tab's body is `AutomationsSettings` (chunk `gantry-v2-async-client-channel-settings-automations-view`, module `2MVc`). For a channel (not a DM: `shvH`, get-integrations-sections) it renders `WorkflowsSettings`, which merges two stores:
+
+1. **workflowApps** (`A3kQ` fetchAndUpsertFirstNWorkflowAppsForChannel, `FQkZ` selectors): edge `users/list {channels: [C], present_first: true, filter: "workflows NOT deactivated", count: 100}` finds the channel's workflow bots. `functions.workflows.findWorkflowForBotUsers {user_ids, channel_id}` returns their `workflow_apps` (`app_id`, `workflow_id`, `share_url`, `app_details.icons`), and `functions.workflows.list {workflow_ids, access_level: all, limit}` upserts those workflows. Each row's title and description come from the share URL's trigger (`workflows.triggers.info {trigger_id, include_workflow_details}`), else the workflow's (`jsMl` createShortcutFromTriggerAndWorkflow).
+2. **channelActions** (`s4p6`, `TtuD`): `apps.actions.listForResource {resource_type: channel, resource_id}`, the channel's legacy workflows.
+
+The list is the workflow apps, then the channel actions sorted by name, at most 100. With rows: a ListField (`Z8ln`, `p-field--list`) titled "Published Automations". Its title link "Manage" shows when there are channel actions and the viewer is a member. Rows (`2Lul` WorkflowsSectionItemV2) are:
+
+- WorkflowAppItem → `ARyf` WorkflowItem: 18px top and bottom padding, the app icon (36px), the bold title over the description (13px, tertiary). A row without both draws nothing. Clicking a link trigger trips it with `{location: channel_details, channel_id}` (reason `trip-trigger-from-channel-details-integrations-click`); other triggers open the workflow details modal. On hover: a ▶ "Start workflow" icon button and a ⋮ menu (View details, Copy workflow link, Forward workflow, Edit workflow for collaborators).
+- AppActionItem: the app's `image_64`, the bold name with the WORKFLOW badge (`2C9J` BaseAppBadge `isWorkflow`), the description, and ▶ "Start workflow", which runs `runChannelAction` (`4c9s`): `apps.actions.run {action_id, type: channel_action, app_id, channel, client_token}`, then "You used the workflow **{name}**", or "Sorry, that didn’t work. Try again?" on failure.
+
+The sectioned footer holds the members-only "Add Automation" (it opens Workflows › Managed by you), "Add Automation as Member" (with `wfb_add_workflow_to_channel_via_channel_details_modal`) and Learn More (help article 16583775096083).
+
+Without rows, the empty state: `/img/ia-details/workflows-empty.png`, the title and description, then the same buttons with "Go to Your Workflows" in place of "Add Automation". The `channel_details_agents_apps_tab` experiment picks the copy: "Let workflows take tasks off your plate" / "Workflow Builder lets you automate your team’s daily routines and everyday processes, all without writing a single line of code." Without it: "Supercharge your channel" / "There’s a few automations that will make your life easier. Set them up in a flash." A team below Workflow Builder's plan sees an upsell instead.
+
 ## What Clack does
 
 | | Slack (evidence) | Clack before | Clack now |
@@ -50,8 +66,9 @@ A workflow step's message (a form's Continue button, approvals) carries `functio
 | workflow step messages | `function_execution_id` in `blocks.actions` / `blocks.suggestions` (`o9iI`, `Em/L`) | dropped: messages never kept it | kept on `slack.Message` / `core.Message` and sent by `MessageContainer` |
 | forms a workflow opens | `view_opened` with the trip's client token | already shown (blockkit's view stack); the token is issued by `Interactive.ClientToken` | unchanged |
 | + menu | "Workflow" opens the picker ("Attach a workflow" / Insert) (`26v2`, `MUtn`) | no row | the row and the picker; Insert puts the name linked to the share URL at the caret |
+| channel details > Automations | WorkflowsSettings: workflow apps and channel actions as above (`2MVc`, `2Lul`, `ARyf`, `A3kQ`, `s4p6`) | an invented "Workflows / Automate routine tasks… / Add a Workflow" card whose button toasted "Not supported yet" | the same calls and merge, "Published Automations" rows (icon, title, description, WORKFLOW badge, ▶ on hover), a click trips (`channel_details`) or runs the legacy workflow with Slack's toasts, Learn More, Slack's empty state copy (`core.ChannelWorkflowApps`, `core.ChannelActions`, `views/details_automations.go`) |
 
-Tests: `TestTripContexts`, `TestTripTrigger`, `TestTripErrorText`, `TestNeedsSpeedbump`, `TestTriggerInfoAndSearch`, `TestWorkflowStepActions` (internal/core); `TestTripWorkflow`, `TestWorkflowSpeedbump`, `TestWorkflowPicker`, `TestWorkflowShots` (internal/ui/blockkit). The `workflows-shots` workflow uploads `workflow-speedbump-scopes-{light,dark}.png` and `workflow-picker-attach-{light,dark}.png`.
+Tests: `TestTripContexts`, `TestTripTrigger`, `TestTripErrorText`, `TestNeedsSpeedbump`, `TestTriggerInfoAndSearch`, `TestWorkflowStepActions`, `TestChannelWorkflows` (internal/core); `TestTripWorkflow`, `TestWorkflowSpeedbump`, `TestWorkflowPicker`, `TestWorkflowShots` (internal/ui/blockkit); `TestAutomationsTab`, `TestAutomationsEmpty` (internal/ui/views). The `workflows-shots` workflow uploads `workflow-speedbump-scopes-{light,dark}.png`, `workflow-picker-attach-{light,dark}.png`, `automations-tab-{light,dark}.png` and `automations-empty-{light,dark}.png`.
 
 ## Not done
 
@@ -60,4 +77,5 @@ Tests: `TestTripContexts`, `TestTripTrigger`, `TestTripErrorText`, `TestNeedsSpe
 - **The `hermes__read` gate on the + menu row.** Slack reads it from the `featureAccess` store (`X+JB.G2`), which Clack doesn't load (`features.access.policies.list`). Clack always shows the row.
 - **The `/` menu's workflow triggers** (`autocompleteCommands` in `26v2` searches `workflowTriggers` and trips with `location: slash_command`) belong to the composer's autocomplete, which doesn't list them yet (docs/AUTOCOMPLETE-RULES.md).
 - **The workflow execution window and status toasts** ("Running workflow step 1 of 3: …", `WorkflowStatusToast` / `WorkflowOutcomeToast` in `Izws`), which follow a run's progress when `workflow_execution_window` is on.
+- **Automations: the buttons and menus that lead to views Clack lacks.** These are "Go to Your Workflows" / "Add Automation" / "Manage" (Slack's Workflows › Managed by you view), the ⋮ menu's View details / Forward workflow / Edit workflow, a non-link trigger's click (the workflow details modal), "Add Automation as Member" (a second picker mode, `searchWorkflowsToAddAsChannelMember` / `addWorkflowAsChannelMember`, behind `wfb_add_workflow_to_channel_via_channel_details_modal`), and the empty state's illustration (served from app.slack.com only, which Clack doesn't fetch with the session). The free-plan upsell isn't drawn either: Clack doesn't know the team's plan.
 - **Workflow mentions** (rich text `workflow_mention`, `jp/6`: clicking one opens the workflow details view) and **workflow unfurl cards** (`NLQV` WorkflowEntity). Clack has no workflow details view.
