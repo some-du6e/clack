@@ -145,11 +145,13 @@ func (c *Ctx) EvalCached(name, src string) (Value, error) {
 	return c.r.wrap(h), err
 }
 
-// EvalCached is Ctx.EvalCached from any goroutine.
+// EvalCached is Ctx.EvalCached from any goroutine; the Value is remote
+// (usable from any goroutine, see Value).
 func (r *Runtime) EvalCached(name, src string) (Value, error) {
 	var v Value
 	err := r.Do(func(js *Ctx) (err error) {
 		v, err = js.EvalCached(name, src)
+		v = v.asRemote()
 		return err
 	})
 	return v, err

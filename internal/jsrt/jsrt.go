@@ -116,7 +116,8 @@ func (r *Runtime) Module(name, src string) {
 }
 
 // Import imports a registered module (or anything the loader resolves) and
-// returns its namespace object, after top-level await settles. Any goroutine.
+// returns its namespace object, after top-level await settles. Any
+// goroutine; off the JS thread the namespace is remote (see Value).
 func (r *Runtime) Import(name string) (Value, error) {
 	if r.onJSThread() {
 		return r.js.Import(name)
@@ -131,7 +132,7 @@ func (r *Runtime) Import(name string) (Value, error) {
 		if err != nil {
 			return err
 		}
-		p.Then(func(v Value, err error) { ch <- res{v, err} })
+		p.Then(func(v Value, err error) { ch <- res{v.asRemote(), err} })
 		return nil
 	})
 	if err != nil {
@@ -148,11 +149,13 @@ func (r *Runtime) Import(name string) (Value, error) {
 // Eval runs a classic script (sloppy mode, like a <script> or new Function
 // body) and returns its completion value. Taut's user plugin format is an
 // IIFE expression returning the plugin class, so Eval(name, code) yields the
-// class. name is used in stack traces. Any goroutine.
+// class. name is used in stack traces. Any goroutine; the Value is remote
+// (usable from any goroutine, see Value).
 func (r *Runtime) Eval(name, src string) (Value, error) {
 	var v Value
 	err := r.Do(func(js *Ctx) (err error) {
 		v, err = js.Eval(name, src)
+		v = v.asRemote()
 		return err
 	})
 	return v, err

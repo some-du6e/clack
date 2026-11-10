@@ -6,17 +6,24 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
+	"sync/atomic"
 )
 
 // Value is a reference to a JS value. The zero Value is undefined. Values
 // may be stored anywhere (a Value keeps its JS value alive until Free or
-// until the Go value is garbage collected), but their methods must be
-// called on the JS thread: inside Do, Post, a HostFunc or a Root callback.
+// until the Go value is garbage collected). A Value made on the JS thread
+// (inside Do, Post, a HostFunc or a Root callback) must only be used
+// there. A Value Runtime.Eval, EvalCached or Import returns to the
+// caller's goroutine is remote: it, and every Value its methods return,
+// may be used from any goroutine; off the JS thread each method waits for
+// the JS thread (through Do), so the engine is never entered from two
+// goroutines at once.
 type Value struct{ ref *ref }
 
 type ref struct {
 	r       *Runtime
 	h       uint32 // engine handle; 0 = undefined
+	remote  bool   // usable off the JS thread (set before the Value leaves it)
 	cleanup runtime.Cleanup
 }
 
@@ -46,6 +53,24 @@ func (r *Runtime) releaseLater(h uint32) {
 	})
 }
 
+// asRemote marks v, on the JS thread and about to be handed to another
+// goroutine, as usable from any goroutine.
+func (v Value) asRemote() Value {
+	if v.ref != nil {
+		v.ref.remote = true
+	}
+	return v
+}
+
+// derive wraps a handle a method of v returned: remote if v is.
+func (v Value) derive(h uint32) Value {
+	w := v.ref.r.wrap(h)
+	if w.ref != nil && v.ref.remote {
+		w.ref.remote = true
+	}
+	return w
+}
+
 func (v Value) h() uint32 {
 	if v.ref == nil {
 		return 0
@@ -60,32 +85,81 @@ func (v Value) eng() *engine {
 	return v.ref.r.eng
 }
 
+// on runs f with the engine and returns its result; ok is false when v is
+// undefined or its runtime is gone. A JS-thread Value runs f directly (no
+// thread check: the hot path). A remote Value runs f directly on the JS
+// thread and through Do anywhere else.
+func on[T any](v Value, f func(e *engine) T) (out T, ok bool) {
+	if v.ref == nil {
+		return out, false
+	}
+	r := v.ref.r
+	if !v.ref.remote || r.onJSThread() {
+		if e := r.eng; e != nil {
+			return f(e), true
+		}
+		return out, false
+	}
+	err := r.Do(func(*Ctx) error {
+		if e := r.eng; e != nil {
+			out, ok = f(e), true
+		}
+		return nil
+	})
+	if err != nil {
+		var zero T
+		return zero, false
+	}
+	return out, ok
+}
+
+// result is a Value or error pair through on.
+type result struct {
+	v   Value
+	err error
+}
+
+func (v Value) onResult(f func(e *engine) (Value, error)) (Value, error) {
+	x, ok := on(v, func(e *engine) result {
+		w, err := f(e)
+		return result{w, err}
+	})
+	if !ok {
+		return Value{}, errNoValue
+	}
+	return x.v, x.err
+}
+
 // Free releases the JS value now instead of waiting for Go's GC. The Value
 // (and copies of it) must not be used afterwards.
 func (v Value) Free() {
 	if v.ref == nil || v.ref.h == 0 {
 		return
 	}
-	// The GC cleanup holds the handle number: left armed, it would release
-	// it again later, when the engine has given the number to another
-	// value (handles are reused, last freed first), and that value's slot
-	// would then hold whatever comes next: a props object turning into
-	// __clack, a function into a non-function.
-	v.ref.cleanup.Stop()
-	if e := v.eng(); e != nil {
+	on(v, func(e *engine) bool {
+		if v.ref.h == 0 {
+			return false
+		}
+		// The GC cleanup holds the handle number: left armed, it would
+		// release it again later, when the engine has given the number to
+		// another value (handles are reused, last freed first), and that
+		// value's slot would then hold whatever comes next: a props object
+		// turning into __clack, a function into a non-function.
+		v.ref.cleanup.Stop()
 		e.release(v.ref.h)
-	}
-	v.ref.h = 0
+		v.ref.h = 0
+		return true
+	})
 }
 
 // Type returns typeof v ("undefined", "object", "function", …; null is
 // "null", arrays are "object").
 func (v Value) Type() string {
-	e := v.eng()
-	if e == nil {
+	t, ok := on(v, func(e *engine) string { return e.typeOf(v.h()) })
+	if !ok {
 		return "undefined"
 	}
-	return e.typeOf(v.h())
+	return t
 }
 
 func (v Value) IsUndefined() bool { return v.Type() == "undefined" }
@@ -96,20 +170,28 @@ func (v Value) IsNumber() bool    { return v.Type() == "number" }
 func (v Value) IsString() bool    { return v.Type() == "string" }
 func (v Value) IsFunction() bool  { return v.Type() == "function" }
 func (v Value) IsObject() bool    { t := v.Type(); return t == "object" || t == "function" }
-func (v Value) IsArray() bool     { e := v.eng(); return e != nil && e.is(v.h(), isArray) }
-func (v Value) IsPromise() bool   { e := v.eng(); return e != nil && e.is(v.h(), isPromise) }
-func (v Value) IsError() bool     { e := v.eng(); return e != nil && e.is(v.h(), isError) }
+func (v Value) IsArray() bool     { return v.is(isArray) }
+func (v Value) IsPromise() bool   { return v.is(isPromise) }
+func (v Value) IsError() bool     { return v.is(isError) }
+
+func (v Value) is(what int) bool {
+	b, _ := on(v, func(e *engine) bool { return e.is(v.h(), what) })
+	return b
+}
 
 // Bool is JS truthiness.
-func (v Value) Bool() bool { e := v.eng(); return e != nil && e.truthy(v.h()) }
+func (v Value) Bool() bool {
+	b, _ := on(v, func(e *engine) bool { return e.truthy(v.h()) })
+	return b
+}
 
 // Float is Number(v).
 func (v Value) Float() float64 {
-	e := v.eng()
-	if e == nil {
+	f, ok := on(v, func(e *engine) float64 { return e.toFloat(v.h()) })
+	if !ok {
 		return nan()
 	}
-	return e.toFloat(v.h())
+	return f
 }
 
 // Int is Number(v) truncated.
@@ -123,31 +205,29 @@ func (v Value) Int() int {
 
 // String is String(v).
 func (v Value) String() string {
-	e := v.eng()
-	if e == nil {
+	s, ok := on(v, func(e *engine) string { return e.toString(v.h()) })
+	if !ok {
 		return "undefined"
 	}
-	return e.toString(v.h())
+	return s
 }
 
 // Get reads v[key].
 func (v Value) Get(key string) Value {
-	e := v.eng()
-	if e == nil {
-		return Value{}
-	}
-	h, _ := e.get(v.h(), key)
-	return v.ref.r.wrap(h)
+	w, _ := on(v, func(e *engine) Value {
+		h, _ := e.get(v.h(), key)
+		return v.derive(h)
+	})
+	return w
 }
 
 // Index reads v[i].
 func (v Value) Index(i int) Value {
-	e := v.eng()
-	if e == nil {
-		return Value{}
-	}
-	h, _ := e.getIndex(v.h(), uint32(i))
-	return v.ref.r.wrap(h)
+	w, _ := on(v, func(e *engine) Value {
+		h, _ := e.getIndex(v.h(), uint32(i))
+		return v.derive(h)
+	})
+	return w
 }
 
 // Len is v.length as an int.
@@ -155,49 +235,57 @@ func (v Value) Len() int { return v.Get("length").Int() }
 
 // Set writes v[key] = x (x converted with Ctx.Value).
 func (v Value) Set(key string, x any) error {
-	e := v.eng()
-	if e == nil {
+	err, ok := on(v, func(e *engine) error {
+		xv, err := v.ref.r.js.Value(x)
+		if err != nil {
+			return err
+		}
+		err = e.set(v.h(), key, xv.h())
+		runtime.KeepAlive(xv.ref)
+		return err
+	})
+	if !ok {
 		return errNoValue
 	}
-	xv, err := v.ref.r.js.Value(x)
-	if err != nil {
-		return err
-	}
-	return e.set(v.h(), key, xv.h())
+	return err
 }
 
 // SetIndex writes v[i] = x.
 func (v Value) SetIndex(i int, x any) error {
-	e := v.eng()
-	if e == nil {
+	err, ok := on(v, func(e *engine) error {
+		xv, err := v.ref.r.js.Value(x)
+		if err != nil {
+			return err
+		}
+		err = e.setIndex(v.h(), uint32(i), xv.h())
+		runtime.KeepAlive(xv.ref)
+		return err
+	})
+	if !ok {
 		return errNoValue
 	}
-	xv, err := v.ref.r.js.Value(x)
-	if err != nil {
-		return err
-	}
-	return e.setIndex(v.h(), uint32(i), xv.h())
+	return err
 }
 
 // Delete removes v[key].
 func (v Value) Delete(key string) error {
-	e := v.eng()
-	if e == nil {
+	err, ok := on(v, func(e *engine) error { return e.del(v.h(), key) })
+	if !ok {
 		return errNoValue
 	}
-	return e.del(v.h(), key)
+	return err
 }
 
 // Has is `key in v`.
-func (v Value) Has(key string) bool { e := v.eng(); return e != nil && e.has(v.h(), key) }
+func (v Value) Has(key string) bool {
+	b, _ := on(v, func(e *engine) bool { return e.has(v.h(), key) })
+	return b
+}
 
 // Keys is Object.keys(v).
 func (v Value) Keys() []string {
-	e := v.eng()
-	if e == nil {
-		return nil
-	}
-	return e.keys(v.h())
+	ks, _ := on(v, func(e *engine) []string { return e.keys(v.h()) })
+	return ks
 }
 
 // Call calls v with this = undefined. Arguments are converted with
@@ -206,19 +294,17 @@ func (v Value) Call(args ...any) (Value, error) { return v.CallThis(Value{}, arg
 
 // CallThis calls v with an explicit this.
 func (v Value) CallThis(this Value, args ...any) (Value, error) {
-	e := v.eng()
-	if e == nil {
-		return Value{}, errNoValue
-	}
-	hs, keep, err := v.ref.r.js.handles(args)
-	if err != nil {
-		return Value{}, err
-	}
-	h, err := e.callFn(v.h(), this.h(), hs)
-	runtime.KeepAlive(keep)
-	runtime.KeepAlive(v.ref)
-	runtime.KeepAlive(this.ref)
-	return v.ref.r.wrap(h), err
+	return v.onResult(func(e *engine) (Value, error) {
+		hs, keep, err := v.ref.r.js.handles(args)
+		if err != nil {
+			return Value{}, err
+		}
+		h, err := e.callFn(v.h(), this.h(), hs)
+		runtime.KeepAlive(keep)
+		runtime.KeepAlive(v.ref)
+		runtime.KeepAlive(this.ref)
+		return v.derive(h), err
+	})
 }
 
 // Method calls v[name](args...) with this = v.
@@ -232,27 +318,32 @@ func (v Value) Method(name string, args ...any) (Value, error) {
 
 // New is `new v(...args)`.
 func (v Value) New(args ...any) (Value, error) {
-	e := v.eng()
-	if e == nil {
-		return Value{}, errNoValue
-	}
-	hs, keep, err := v.ref.r.js.handles(args)
-	if err != nil {
-		return Value{}, err
-	}
-	h, err := e.construct(v.h(), hs)
-	runtime.KeepAlive(keep)
-	runtime.KeepAlive(v.ref)
-	return v.ref.r.wrap(h), err
+	return v.onResult(func(e *engine) (Value, error) {
+		hs, keep, err := v.ref.r.js.handles(args)
+		if err != nil {
+			return Value{}, err
+		}
+		h, err := e.construct(v.h(), hs)
+		runtime.KeepAlive(keep)
+		runtime.KeepAlive(v.ref)
+		return v.derive(h), err
+	})
 }
 
 // JSON is JSON.stringify(v); undefined (and functions) give "null".
 func (v Value) JSON() (json.RawMessage, error) {
-	e := v.eng()
-	if e == nil {
+	type js struct {
+		b   json.RawMessage
+		err error
+	}
+	x, ok := on(v, func(e *engine) js {
+		b, err := e.stringify(v.h())
+		return js{b, err}
+	})
+	if !ok {
 		return json.RawMessage("null"), nil
 	}
-	return e.stringify(v.h())
+	return x.b, x.err
 }
 
 func (v Value) jsonOrNull() json.RawMessage {
@@ -282,30 +373,34 @@ func (v Value) Export() any {
 
 // Bytes copies the contents of an ArrayBuffer, TypedArray or DataView.
 func (v Value) Bytes() []byte {
-	e := v.eng()
-	if e == nil {
-		return nil
-	}
-	return e.bytes(v.h())
+	b, _ := on(v, func(e *engine) []byte { return e.bytes(v.h()) })
+	return b
 }
 
 // Then calls f once the Promise (or thenable, or plain value) v settles, on
 // the JS thread. A rejection arrives as err (*JSError for Error objects).
+// A remote v used off the JS thread queues the subscription (it returns
+// before f is called); f's Value is a JS-thread Value either way.
 func (v Value) Then(f func(v Value, err error)) {
 	if v.ref == nil {
 		f(Value{}, nil)
 		return
 	}
-	v.ref.r.js.then(v, f)
+	r := v.ref.r
+	if v.ref.remote && !r.onJSThread() {
+		r.Post(func(js *Ctx) { js.then(v, f) })
+		return
+	}
+	r.js.then(v, f)
 }
 
 // StrictEquals is v === w.
 func (v Value) StrictEquals(w Value) bool {
-	e := v.eng()
-	if e == nil {
+	b, ok := on(v, func(e *engine) bool { return e.strictEq(v.h(), w.h()) })
+	if !ok {
 		return w.IsUndefined()
 	}
-	return e.strictEq(v.h(), w.h())
+	return b
 }
 
 // Ctx is the JS-thread context handed to Do, Post and HostFuncs.
@@ -526,15 +621,11 @@ func (c *Ctx) then(v Value, f func(Value, error)) {
 	_, _ = p.Method("then", onOK, onErr)
 }
 
-type onceFlag struct{ done uint32 }
+// onceFlag lets the first of several goroutines through (NewPromise's
+// resolve and reject may race).
+type onceFlag struct{ done atomic.Bool }
 
-func (o *onceFlag) take() bool {
-	if o.done != 0 {
-		return false
-	}
-	o.done = 1
-	return true
-}
+func (o *onceFlag) take() bool { return o.done.CompareAndSwap(false, true) }
 
 var errNoValue = errors.New("jsrt: value has no runtime")
 
