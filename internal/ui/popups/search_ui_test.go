@@ -559,8 +559,12 @@ func TestSearchPopoverKeys(t *testing.T) {
 	name := e.h.a.ConvRef(ch).Name
 	p := NewSearchPopover(e.h, name, image.Rectangle{})
 	d := &srDrv{size: image.Pt(1280, 800), w: p}
-	d.until(t, "the switcher", func() bool { return p.snapOK && len(p.rows) > 2 })
-	d.frame()
+	// the channel and "Show results for:" (no quick messages: nothing was
+	// visited, so there are no recent conversations to search)
+	d.until(t, "the switcher", func() bool { return p.snapOK && len(p.rows) >= 2 && p.dirFired })
+	for end := time.Now().Add(400 * time.Millisecond); time.Now().Before(end); time.Sleep(20 * time.Millisecond) {
+		d.frame() // the directory searches answer
+	}
 	if p.sel != 0 || p.picked || p.rows[0].id != ch {
 		t.Fatalf("top hit %+v sel %d picked %v, want %s first, pseudo-selected", p.rows[0], p.sel, p.picked, ch)
 	}
@@ -932,7 +936,7 @@ func TestSearchPopoverGhostText(t *testing.T) {
 	}
 	p := NewSearchPopover(e.h, name[:3], image.Rectangle{})
 	d := &srDrv{size: image.Pt(1280, 800), w: p}
-	d.until(t, "the switcher", func() bool { return p.snapOK && len(p.rows) > 2 })
+	d.until(t, "the switcher", func() bool { return p.snapOK && len(p.rows) >= 2 })
 	d.frame()
 	top := p.rows[p.sel]
 	if !strings.HasPrefix(strings.ToLower(top.title), strings.ToLower(name[:3])) {
