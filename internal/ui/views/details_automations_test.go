@@ -102,11 +102,12 @@ func TestAutomationsTab(t *testing.T) {
 // state, worded by the channel_details_agents_apps_tab experiment.
 func TestAutomationsEmpty(t *testing.T) {
 	for _, dark := range []bool{false, true} {
-		app, _ := autosFake(t)
+		app, fs := autosFake(t)
 		app.SetExperimentGroup("channel_details_agents_apps_tab", "on")
-		app.S.PutConv(slack.Conversation{ID: "C0EMPTYWF01", Name: "no-workflows", IsChannel: true, IsMember: true, NumMembers: 2})
+		ch := fs.ChannelIDs()[0] // a generated channel: conversations.info knows it, it has no workflows
+		app.S.PutConv(slack.Conversation{ID: ch, Name: "no-workflows", IsChannel: true, IsMember: true, NumMembers: 2})
 		h := &slickHost{app: app, th: theme.New(dark)}
-		d := NewChannelDetails(h, "C0EMPTYWF01")
+		d := NewChannelDetails(h, ch)
 		d.ShowTab("Automations")
 		e := &vaEnv{size: image.Pt(1000, 760)}
 		e.draw = func(gtx layout.Context) { d.Layout(gtx) }
