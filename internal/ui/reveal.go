@@ -16,6 +16,7 @@ import (
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/applog"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -54,14 +55,18 @@ import (
 // window (Run) draws it; tests drive App.frame directly.
 
 const (
-	pluginQuiet = 150 * time.Millisecond
-	pluginCap   = 2 * time.Second
+	pluginQuiet = 60 * time.Millisecond
+	// pluginCap is how long after the data is ready (boot data and the
+	// channel header) the placeholder may wait for plugins: past it the
+	// client renders and late plugin output takes the slot reserved for it
+	// (pluginslots.go), so nothing shifts.
+	pluginCap = 100 * time.Millisecond
 )
 
 type revealState struct {
 	inRun       bool
 	done        bool
-	bootAt      time.Time    // core booted (or the snapshot painted): pluginCap counts from here
+	dataAt      time.Time    // boot data and the channel header in: pluginCap counts from here
 	lastDeliver atomic.Int64 // unix ns of the last plugin tree delivery (taut_wire.go)
 	deliveries  atomic.Int64 // plugin tree deliveries before the reveal
 	roots       sync.Map     // root id -> deliveries (the reveal log line)
@@ -85,14 +90,15 @@ func (a *App) revealBlocker(now time.Time) string {
 	if b.booted.IsZero() && !b.warm {
 		return "boot data"
 	}
-	if a.rv.bootAt.IsZero() {
-		a.rv.bootAt = now
-	}
-	if now.Sub(a.rv.bootAt) > pluginCap {
-		return ""
-	}
 	if ch := a.router.Current().Channel(); ch != "" && !b.tabsDone[ch] {
 		return "channel header"
+	}
+	if a.rv.dataAt.IsZero() {
+		a.rv.dataAt = now
+		applog.Mark("data-ready", "")
+	}
+	if now.Sub(a.rv.dataAt) > pluginCap {
+		return ""
 	}
 	if b.tautStarting {
 		return "plugins"
@@ -121,19 +127,19 @@ func closed(c <-chan struct{}) bool {
 	}
 }
 
-// revealFrame runs after Run laid out the frame: it renders the client
-// when nothing blocks, else draws Slack's boot placeholder over it and
-// looks again soon. UI goroutine.
-func (a *App) revealFrame(gtx layout.Context) {
+// revealFrame runs after Run laid out the frame and reports whether the
+// placeholder still covers it (then Run submits drawCover instead of the
+// laid-out client). UI goroutine.
+func (a *App) revealFrame() bool {
 	if a.rv.done {
-		return
+		return false
 	}
 	now := time.Now()
 	blk := a.revealBlocker(now)
 	if blk == "" {
 		a.rv.done = true
 		why := "ready"
-		if !a.rv.bootAt.IsZero() && now.Sub(a.rv.bootAt) > pluginCap {
+		if !a.rv.dataAt.IsZero() && now.Sub(a.rv.dataAt) > pluginCap {
 			why = "cap, was waiting for " + a.rv.blocker
 		}
 		n, roots, busiest, most := a.rv.deliveries.Load(), 0, uint64(0), int64(0)
@@ -146,26 +152,32 @@ func (a *App) revealFrame(gtx layout.Context) {
 		})
 		applog.Mark("reveal", fmt.Sprintf("%s; %d plugin deliveries from %d roots (most: root %d, %d)", why, n, roots, busiest, most))
 		a.sw.lastChange = now
-		return
+		return false
 	}
 	if blk != a.rv.blocker {
 		applog.Debugf("startup: boot placeholder, waiting for %s", blk)
 		a.rv.blocker = blk
 	}
+	if a.rv.wake == nil { // quiet periods end without an event: look again
+		a.rv.wake = time.AfterFunc(20*time.Millisecond, func() {
+			a.Post(func() { a.rv.wake = nil })
+		})
+	}
+	return true
+}
+
+// drawCover is the frame submitted while the placeholder is up: the
+// placeholder alone, taking the pointer.
+func (a *App) drawCover(gtx layout.Context) {
 	sz := gtx.Constraints.Max
 	area := clip.Rect(image.Rectangle{Max: sz}).Push(gtx.Ops)
-	event.Op(gtx.Ops, &a.rv.tag) // the client under it takes no pointer input
+	event.Op(gtx.Ops, &a.rv.tag)
 	a.drawBootPlaceholder(gtx)
 	area.Pop()
 	for {
 		if _, ok := gtx.Event(pointer.Filter{Target: &a.rv.tag, Kinds: pointer.Press | pointer.Release | pointer.Move | pointer.Drag | pointer.Enter | pointer.Leave}); !ok {
 			break
 		}
-	}
-	if a.rv.wake == nil { // quiet periods end without an event: look again
-		a.rv.wake = time.AfterFunc(40*time.Millisecond, func() {
-			a.Post(func() { a.rv.wake = nil })
-		})
 	}
 }
 
@@ -226,4 +238,67 @@ func (a *App) noteDelivery(root uint64) {
 	a.rv.deliveries.Add(1)
 	v, _ := a.rv.roots.LoadOrStore(root, new(atomic.Int64))
 	v.(*atomic.Int64).Add(1)
+}
+
+// settlePluginSlots runs once plugins started: when their renders have been
+// quiet for a second (at most 10 s after start), the slots kept for
+// components no plugin drew are released, and the slots learned this
+// session are saved for the next start (then every 30 s, as plugins are
+// turned on or off). Off the UI goroutine; UI work is posted.
+func (a *App) settlePluginSlots(b *backend) {
+	deadline := time.Now().Add(10 * time.Second)
+	select {
+	case <-b.pluginsReady:
+	case <-b.ctx.Done():
+		return
+	case <-time.After(time.Until(deadline)):
+	}
+	for time.Now().Before(deadline) {
+		if b.ctx.Err() != nil {
+			return
+		}
+		if last := a.rv.lastDeliver.Load(); last == 0 || time.Since(time.Unix(0, last)) > time.Second {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	var ver uint64
+	save := func() {
+		a.Post(func() {
+			slackc.UnreserveAll()
+			m, v := slackc.Learned()
+			if v == ver && v != 0 {
+				return
+			}
+			ver = v
+			if !sameSlots(a.prefs.PluginSlots, m) {
+				a.prefs.PluginSlots = m
+				a.savePrefsSoon()
+			}
+			a.Invalidate()
+		})
+	}
+	save()
+	t := time.NewTicker(30 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-b.ctx.Done():
+			return
+		case <-t.C:
+			save()
+		}
+	}
+}
+
+func sameSlots(a, b map[string]slackc.Insets) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
 }

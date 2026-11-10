@@ -49,10 +49,14 @@ type backend struct {
 	draftChans map[string]bool
 	draftSeq   int
 
-	tabCache  map[string][]chTab
-	tabsDone  map[string]bool // opened() finished for the channel (the header is complete; reveal.go)
-	bookmarks map[string][]core.Bookmark
-	fetched   map[string]time.Time
+	tabCache map[string][]chTab
+	tabsDone map[string]bool // opened() finished for the channel (the header is complete; reveal.go)
+	// pluginsReady closes when the plugins enabled at start have started
+	// (any goroutine may wait on it)
+	pluginsReady chan struct{}
+	pluginsOnce  sync.Once
+	bookmarks    map[string][]core.Bookmark
+	fetched      map[string]time.Time
 
 	avMu    sync.Mutex
 	avatars map[string]string
@@ -71,7 +75,7 @@ type backend struct {
 // window opens; when it hasn't, this reads it). cacheDir is unused: the
 // account's cache directory is the store's.
 func newBackend(c *core.App, cacheDir string) *backend {
-	b := &backend{core: c, tabCache: map[string][]chTab{}, bookmarks: map[string][]core.Bookmark{},
+	b := &backend{core: c, pluginsReady: make(chan struct{}), tabCache: map[string][]chTab{}, bookmarks: map[string][]core.Bookmark{},
 		fetched: map[string]time.Time{}, avatars: map[string]string{}, asked: map[string]bool{}}
 	b.m.Convs = map[string]*convInfo{}
 	c.LoadBootCache()
@@ -138,6 +142,7 @@ func (b *backend) start(a *App) {
 	// window stays covered until they're in (reveal.go).
 	b.startTautAsync(a)
 	b.startBlockkit(a)
+	go a.settlePluginSlots(b) // release reserved plugin slots, save the learned ones
 	if ch := a.router.Current().Channel(); ch != "" {
 		b.opened(ch)
 	}

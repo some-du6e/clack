@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"os"
 	"path/filepath"
 	"sync"
@@ -60,6 +61,10 @@ type prefs struct {
 	// for the first frame of the next start.
 	AcctTheme       string `json:"acct_theme,omitempty"`
 	AcctNoGradients bool   `json:"acct_no_gradients,omitempty"`
+	// PluginSlots are where plugins put the components they wrap (dp
+	// insets by component, slackc/reserve.go): the next start keeps that
+	// space free until the plugin renders, so its first tree moves nothing.
+	PluginSlots map[string]slackc.Insets `json:"plugin_slots,omitempty"`
 }
 
 func (a *App) prefsPath() string {
@@ -103,6 +108,7 @@ func (a *App) loadPrefs() {
 		composer.SetPlainTextMode(*a.prefs.PlainText)
 	}
 	a.sidebar.hidden = a.prefs.SidebarHidden
+	slackc.SetReserved(a.prefs.PluginSlots)
 	if a.prefs.AcctTheme != "" || a.prefs.AcctNoGradients {
 		a.setAcct(acctFromPrefs(a.prefs.AcctTheme, a.prefs.AcctNoGradients))
 	}

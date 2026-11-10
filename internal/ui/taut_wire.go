@@ -75,6 +75,15 @@ func (b *backend) startTautAsync(a *App) {
 	go func() {
 		t0 := time.Now()
 		t, s := b.buildTaut(a, dark, team, ch)
+		go func() { // the plugins enabled at start started (reveal.go's slots)
+			if t != nil {
+				<-t.StartDone()
+			}
+			if s != nil {
+				<-s.StartDone()
+			}
+			b.pluginsOnce.Do(func() { close(b.pluginsReady) })
+		}()
 		a.Post(func() {
 			b.tautStarting = false
 			detail := "none"

@@ -342,7 +342,7 @@ func (a *App) Run() error {
 	if a.data != nil {
 		a.data.start(a)
 	}
-	var ops op.Ops
+	var ops, coverOps op.Ops
 	uiguard.MarkUI() // this goroutine handles every window event (uiguard)
 	wd := newWatchdog(a.opts.ConfigDir, a.opts.Started)
 	go wd.run()
@@ -414,11 +414,22 @@ func (a *App) Run() error {
 				gtx = a.newContext(&ops, e)
 				a.frame(gtx)
 			}
-			a.revealFrame(gtx)
+			covered := a.revealFrame()
 			slackc.UnlockFrame()
 			tl := time.Now()
 			wd.next(&stageSubmit)
-			e.Frame(gtx.Ops)
+			if covered {
+				// Under Slack's boot placeholder the client is laid out (roots
+				// mount, plugins render, images load) but only the placeholder
+				// goes to the GPU: each step of the start-up cascade is a
+				// layout, not a full frame (reveal.go).
+				coverOps.Reset()
+				cg := a.newContext(&coverOps, e)
+				a.drawCover(cg)
+				e.Frame(cg.Ops)
+			} else {
+				e.Frame(gtx.Ops)
+			}
 			if !a.firstPaint {
 				a.timing("first layout", t0)
 				a.timing("first GPU submit", tl)
