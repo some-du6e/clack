@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -231,6 +232,14 @@ func slackRaster(t *testing.T, body string, px int, fg, bg color.NRGBA) *image.R
 		if attrs["d"] == "" {
 			continue
 		}
+		if attrs["stroke"] != "" && attrs["stroke"] != "none" { // a stroked path (round caps and joins)
+			sw, _ := strconv.ParseFloat(attrs["stroke-width"], 64)
+			if sw == 0 {
+				sw = 1
+			}
+			addStroke(cov, px, parsePath(attrs["d"]), float64(px)/view, sw*float64(px)/view)
+			continue
+		}
 		evenOdd := attrs["fill-rule"] == "evenodd" || attrs["fill-rule"] == "" && svgGEvenRe.MatchString(body)
 		addCoverage(cov, px, flatten(parsePath(attrs["d"]), float64(px)/view), evenOdd)
 	}
@@ -285,6 +294,83 @@ func flatten(segs []seg, k float64) []edge {
 	}
 	closeC()
 	return out
+}
+
+// addStroke accumulates the coverage of a stroked path of width w (px)
+// with round caps and joins: 8x8 samples per pixel within w/2 of the
+// flattened, unclosed polylines.
+func addStroke(cov []float64, px int, segs []seg, k, w float64) {
+	type pt struct{ x, y float64 }
+	var lines [][]pt
+	var cur, start f32.Point
+	add := func(p f32.Point) {
+		if n := len(lines); n > 0 {
+			lines[n-1] = append(lines[n-1], pt{float64(p.X) * k, float64(p.Y) * k})
+		}
+	}
+	for _, sg := range segs {
+		switch sg.op {
+		case 'M':
+			cur, start = sg.p[0], sg.p[0]
+			lines = append(lines, nil)
+			add(cur)
+		case 'L':
+			cur = sg.p[0]
+			add(cur)
+		case 'C':
+			const n = 16
+			p0, p1, p2, p3 := cur, sg.p[0], sg.p[1], sg.p[2]
+			for i := 1; i <= n; i++ {
+				u := float32(i) / n
+				v := 1 - u
+				add(p0.Mul(v * v * v).Add(p1.Mul(3 * v * v * u)).Add(p2.Mul(3 * v * u * u)).Add(p3.Mul(u * u * u)))
+			}
+			cur = p3
+		case 'Z':
+			cur = start
+			add(cur)
+		}
+	}
+	r2 := w * w / 4
+	near := func(x, y float64) bool {
+		for _, l := range lines {
+			for i := range l {
+				a := l[i]
+				if (x-a.x)*(x-a.x)+(y-a.y)*(y-a.y) <= r2 {
+					return true
+				}
+				if i == 0 {
+					continue
+				}
+				b := l[i-1]
+				dx, dy := a.x-b.x, a.y-b.y
+				if L := dx*dx + dy*dy; L > 0 {
+					t := ((x-b.x)*dx + (y-b.y)*dy) / L
+					if t > 0 && t < 1 {
+						qx, qy := b.x+t*dx-x, b.y+t*dy-y
+						if qx*qx+qy*qy <= r2 {
+							return true
+						}
+					}
+				}
+			}
+		}
+		return false
+	}
+	const n = 8
+	for py := 0; py < px; py++ {
+		for pxx := 0; pxx < px; pxx++ {
+			hit := 0
+			for sy := 0; sy < n; sy++ {
+				for sx := 0; sx < n; sx++ {
+					if near(float64(pxx)+(float64(sx)+0.5)/n, float64(py)+(float64(sy)+0.5)/n) {
+						hit++
+					}
+				}
+			}
+			cov[py*px+pxx] += float64(hit) / (n * n)
+		}
+	}
 }
 
 // addCoverage accumulates the area coverage of a filled contour set:
