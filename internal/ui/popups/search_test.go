@@ -483,3 +483,47 @@ func TestSearchDatePresetsAndCounts(t *testing.T) {
 		}
 	}
 }
+
+// Slack's modifier vocabulary (fsda wd) includes hasmy:, threads: and dm:
+// besides the ones the filters write; each parses as a modifier, negated
+// ones too.
+func TestSearchParseSlackModifiers(t *testing.T) {
+	q := srParse(`lunch hasmy::tada: threads:replies dm:<@U1> -dm:<@U2>`)
+	want := []srMod{{Key: "hasmy", Val: ":tada:"}, {Key: "threads", Val: "replies"}, {Key: "dm", Val: "<@U1>"},
+		{Key: "dm", Val: "<@U2>", Neg: true}}
+	if !reflect.DeepEqual(q.Terms, []string{"lunch"}) || !reflect.DeepEqual(q.Mods, want) {
+		t.Errorf("terms %q mods %+v", q.Terms, q.Mods)
+	}
+	if q.Text() != "lunch" {
+		t.Errorf("Text %q", q.Text())
+	}
+}
+
+// More > Date's description is Slack's /upd S label.
+func TestSearchDateLabel(t *testing.T) {
+	now := time.Date(2026, 11, 10, 15, 0, 0, 0, time.UTC)
+	for _, c := range []struct{ after, before, on, want string }{
+		{"", "", "", ""},
+		{"2026-11-03", "", "", "After Nov 3, 2026"},
+		{"", "2026-11-05", "", "Before Nov 5, 2026"},
+		{"", "2026-11-11", "", "Any time"},
+		{"2026-11-09", "2026-11-11", "", "Today"},
+		{"2026-11-08", "2026-11-10", "", "Yesterday"},
+		{"2026-11-01", "2026-11-03", "", "On Nov 2, 2026"},
+		{"", "", "2026-11-10", "Today"},
+		{"", "", "2026-10-31", "On Oct 31, 2026"},
+		{"2026-11-03", "2026-11-11", "", "Last 7 days"},
+		{"2026-10-11", "2026-11-11", "", "Last 30 days"},
+		{"2026-08-10", "2026-11-11", "", "Last 3 months"},
+		{"2025-11-10", "2026-11-11", "", "Last 12 months"},
+		{"2023-11-10", "2026-11-11", "", "Last 3 years"},
+		{"2026-11-02", "2026-11-10", "", "Nov 3 - Nov 9"},
+		{"2025-12-30", "2026-01-05", "", "Dec 31, 2025 - Jan 4"},
+		{"2024-03-01", "2024-03-10", "", "Mar 2 - Mar 9, 2024"},
+		{"bad", "2026-11-10", "", "Invalid date"},
+	} {
+		if got := srDateLabel(c.after, c.before, c.on, now); got != c.want {
+			t.Errorf("srDateLabel(%q, %q, %q) = %q, want %q", c.after, c.before, c.on, got, c.want)
+		}
+	}
+}

@@ -287,12 +287,14 @@ func srMerge(local, remote []srCand, total, reserve int) []srCand {
 
 // ---- query parsing ----
 
-// srModKeys are the modifiers Slack's search understands (the filters
-// menus write in:, from:, with:, has:, is:, type:, before:, after:,
-// on:; people type to:, during: and creator: too).
+// srModKeys are the modifiers Slack's search understands (fsda's wd: the
+// filters menus write in:, from:, with:, has:, is:, type:, before:,
+// after:, on:; people type to:, during:, creator:, hasmy: (a reaction of
+// yours), threads: (all / replies) and dm: too, each also negated with -).
 var srModKeys = map[string]bool{
 	"in": true, "from": true, "to": true, "with": true, "before": true, "after": true,
 	"on": true, "during": true, "has": true, "is": true, "type": true, "creator": true,
+	"hasmy": true, "threads": true, "dm": true,
 }
 
 // srMod is one key:value modifier; Neg is the "-" exclusion
@@ -502,6 +504,80 @@ func srDate(t time.Time) string { return t.Format("2006-01-02") }
 // srLast7 is the after: value meaning "the last 7 days" (today and the six
 // days before; after: is exclusive).
 func srLast7(now time.Time) string { return srDate(now.AddDate(0, 0, -7)) }
+
+// srDateLabel is More > Date's description (search-filters' /upd S):
+// "After Nov 3, 2026", "Before Nov 10, 2026" ("Any time" when before is
+// tomorrow), "Today", "Yesterday", "On Nov 5, 2026" for one day, a
+// preset's name, else "Nov 3 - Nov 10" (the start's year when the years
+// differ, the end's when it isn't this year). after: and before: are
+// exclusive; on: is one day. "" when no date is set.
+func srDateLabel(after, before, on string, now time.Time) string {
+	day := func(s string) (time.Time, bool) {
+		t, err := time.ParseInLocation("2006-01-02", s, now.Location())
+		return t, err == nil
+	}
+	show := func(t time.Time, year bool) string {
+		if year {
+			return t.Format("Jan 2, 2006")
+		}
+		return t.Format("Jan 2")
+	}
+	one := func(d time.Time) string {
+		switch srDate(d) {
+		case srDate(now):
+			return "Today"
+		case srDate(now.AddDate(0, 0, -1)):
+			return "Yesterday"
+		}
+		return "On " + show(d, true)
+	}
+	if on != "" {
+		if d, ok := day(on); ok {
+			return one(d)
+		}
+		return "Invalid date"
+	}
+	a, aok := day(after)
+	b, bok := day(before)
+	switch {
+	case after == "" && before == "":
+		return ""
+	case before == "":
+		if !aok {
+			return "Invalid date"
+		}
+		return "After " + show(a, true)
+	case after == "":
+		if !bok {
+			return "Invalid date"
+		}
+		if before == srDate(now.AddDate(0, 0, 1)) {
+			return "Any time"
+		}
+		return "Before " + show(b, true)
+	case !aok || !bok:
+		return "Invalid date"
+	}
+	first, last := a.AddDate(0, 0, 1), b.AddDate(0, 0, -1)
+	if srDate(first) == srDate(last) {
+		return one(last)
+	}
+	if before == srDate(now.AddDate(0, 0, 1)) {
+		switch after {
+		case srDate(now.AddDate(0, 0, -7)):
+			return "Last 7 days"
+		case srDate(now.AddDate(0, 0, -30)):
+			return "Last 30 days"
+		case srDate(now.AddDate(0, -3, 0)):
+			return "Last 3 months"
+		case srDate(now.AddDate(-1, 0, 0)):
+			return "Last 12 months"
+		case srDate(now.AddDate(-3, 0, 0)):
+			return "Last 3 years"
+		}
+	}
+	return show(first, first.Year() != last.Year()) + " - " + show(last, last.Year() != now.Year())
+}
 
 // ---- highlighting ----
 

@@ -36,12 +36,15 @@ import (
 	"github.com/some-du6e/clack/internal/slack"
 )
 
-// SearchSession is one search's ids: Slack's search_session_id and the
-// client_req_id every module call of one query shares.
-type SearchSession struct{ ID, ReqID string }
+// SearchSession is one search's ids: Slack's search_session_id, the
+// client_req_id every module call of one query shares, and the
+// query_session_id search feedback reports (getQuerySessionId).
+type SearchSession struct{ ID, ReqID, QueryID string }
 
 // NewSearchSession starts a search session.
-func NewSearchSession() SearchSession { return SearchSession{ID: clientMsgID(), ReqID: clientMsgID()} }
+func NewSearchSession() SearchSession {
+	return SearchSession{ID: clientMsgID(), ReqID: clientMsgID(), QueryID: clientMsgID()}
+}
 
 // SearchModule names (Slack's eG.Qt / MT).
 const (
@@ -641,4 +644,64 @@ func (a *App) OmniSearchChannels(ctx context.Context, query string, top []string
 		return nil, err
 	}
 	return a.channelHits(hs), nil
+}
+
+// ---- search feedback ----
+//
+// Slack's three "Give feedback" links (CDN build 407aff01646b, 2026-11-10):
+//
+//   - the search popover's footer (Footer, boot-shared) and the results
+//     page (CombinedViewFeedbackLink, search-view; also
+//     GenericSearchEmptyState's "Not the results you expected?") open
+//     CombinedSearchFeedbackModal (q9NO). Its Submit is
+//     combinedSearchFeedbackSubmit, which calls
+//     feedback.submitEnterpriseSearchFeedback through a generated fetcher
+//     (camelCase args snake-cased): type "feedback", feedback_type
+//     "omniswitcher" or "search", text, contact, category, query, the
+//     JSON payload and is_test.
+//   - search in channel's footer dispatches searchFeedbackDialog: the
+//     searchFeedbackApi fetcher calls search.feedback with a client_token
+//     (generateAndEnqueue), type "search" and the JSON payload; Slack opens
+//     its dialog for that token over the socket.
+
+// SearchFeedbackClientVersion is the payload's client_version: Slack's
+// getVersion is the web build's data-version-ts, or "noversion" when the
+// page has none. Clack isn't a web build, so it sends Slack's fallback.
+const SearchFeedbackClientVersion = "noversion"
+
+// SearchFeedback is one CombinedSearchFeedbackModal submission.
+type SearchFeedback struct {
+	FeedbackType string // "omniswitcher" (the popover) or "search" (the results page)
+	Category     string // the select's value (helpful, missing_results, …)
+	Text         string
+	Contact      bool // "I’m okay with being contacted by Slack about my feedback"
+	Query        string
+	Payload      any // JSON-encoded into payload
+}
+
+// SubmitSearchFeedback sends a CombinedSearchFeedbackModal submission
+// (feedback.submitEnterpriseSearchFeedback). is_test is Slack's internal
+// test flag (only Slack employees see that checkbox), so it is false.
+func (a *App) SubmitSearchFeedback(ctx context.Context, f SearchFeedback) error {
+	payload, err := json.Marshal(f.Payload)
+	if err != nil {
+		return err
+	}
+	p := url.Values{"type": {"feedback"}, "feedback_type": {f.FeedbackType}, "text": {f.Text},
+		"contact": {boolStr(f.Contact)}, "category": {f.Category}, "query": {f.Query},
+		"payload": {string(payload)}, "is_test": {"false"}}
+	return a.C.Call(ctx, "feedback.submitEnterpriseSearchFeedback", p, nil)
+}
+
+// SearchFeedbackDialog is searchFeedbackDialog (search in channel's "Give
+// feedback"): search.feedback {client_token, type "search", payload}.
+// Slack answers by opening its feedback dialog for the client_token on the
+// socket, which Interactive shows like any app dialog.
+func (a *App) SearchFeedbackDialog(ctx context.Context, payload any) error {
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	p := url.Values{"client_token": {a.Interactive().ClientToken()}, "type": {"search"}, "payload": {string(b)}}
+	return a.C.Call(ctx, "search.feedback", p, nil)
 }
