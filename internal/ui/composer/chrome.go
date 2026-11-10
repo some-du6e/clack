@@ -3,6 +3,7 @@ package composer
 import (
 	"image"
 	"image/color"
+	"strconv"
 	"strings"
 
 	"gioui.org/f32"
@@ -22,6 +23,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/slackc/css"
 	"github.com/some-du6e/clack/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
 // The composer's chrome: the bordered box with the formatting bar, the text
@@ -110,8 +112,17 @@ type chromeState struct {
 	NoBroadcast bool
 	SquareTop   bool
 	Count       int // characters in the message (CharacterCount)
-	SelLo       int // selection start (TextyInput's quill.getSelection)
-	SelN        int // selected characters
+	// HeadingFormats is the rich_text_headers_and_dividers experiment:
+	// italic, underline, strike and code stay on in headings.
+	HeadingFormats bool
+	// InputEmpty is MessageInput's isTextyInputEmpty (empty of text and
+	// block formats): Run shortcut is disabled once anything is typed.
+	InputEmpty bool
+	// OverLimit is how many characters the message is past the 12,000
+	// limit (TextyLengthWarning's numCharsOverLimit; charlimit.go).
+	OverLimit int
+	SelLo     int // selection start (TextyInput's quill.getSelection)
+	SelN      int // selected characters
 	// TypingIDs / TypingNames: who Typing names, sorted by name.
 	TypingIDs, TypingNames []string
 	// TypingStatus is an app's assistant status (Typing is then
@@ -119,6 +130,10 @@ type chromeState struct {
 	// app's name (bold).
 	TypingStatus, TypingAgent string
 }
+
+// sendOff is isSendingDisabledForTextState: nothing to send, or the
+// message is over the 12,000-character limit (isOverMaxLength).
+func (st *chromeState) sendOff() bool { return !st.CanSend || st.OverLimit > 0 }
 
 // crBtn names every clickable in the chrome.
 type crBtn uint8
@@ -194,6 +209,23 @@ var crInfo = [crNumBtn]crBtnInfo{
 }
 
 var crIcChevron, crIcPara, crIcAa = icons.Get("chevron-down"), icons.Get("paragraph"), icons.Get("format")
+
+// crIcHeading is the ¶ trigger's icon in a heading: ComposerMenuTrigger
+// shows the active menu item's IconForFormat (heading-1/2/3).
+var crIcHeading = [3]icons.Icon{icons.Get("heading-1"), icons.Get("heading-2"), icons.Get("heading-3")}
+
+// crParaIcon is the ¶ trigger's icon for the caret's line kind.
+func crParaIcon(k BlockKind) icons.Icon {
+	switch k {
+	case Header1:
+		return crIcHeading[0]
+	case Header2:
+		return crIcHeading[1]
+	case Header3:
+		return crIcHeading[2]
+	}
+	return crIcPara
+}
 
 // crFmtOrder is the formatting bar left to right; crFmtSep marks the
 // buttons preceded by a separator.
@@ -301,6 +333,10 @@ type chrome struct {
 	inputOff    image.Point
 	fmtHidden   int // trailing formatting buttons folded into ⋯
 
+	// TextyLengthWarning's hover (its tooltip) while over the limit.
+	warn    widget.Clickable
+	warnTip popups.TipState
+
 	pal            crPal
 	palOK, palDark bool
 	palBg, palFg   color.NRGBA
@@ -369,10 +405,24 @@ func (c *chrome) space(gtx layout.Context, sh *text.Shaper, i int) int {
 
 func (c *chrome) disabled(st *chromeState, id crBtn) bool {
 	switch id {
-	case crBold, crItalic, crUnderline, crStrike, crLink, crCode, crDivider:
+	case crBold:
+		// shouldDisableButton: no bold in a heading
+		return st.InCode || isHeading(st.Block)
+	case crItalic, crUnderline, crStrike, crCode:
+		// TextyFormattingBar's disabledFormats: in a heading the other
+		// emphasis formats too, unless rich_text_headers_and_dividers
+		return st.InCode || isHeading(st.Block) && !st.HeadingFormats
+	case crLink, crDivider, crPara:
+		// in a code block only the lists, quote and code block stay
+		// ("menu", the ¶ trigger, included)
 		return st.InCode
 	case crSend, crSchedule:
-		return !st.CanSend
+		// isSendingDisabledForTextState: nothing to send, or over the
+		// 12,000 limit (isOverMaxLength)
+		return st.sendOff()
+	case crShortcut:
+		// SlashCommandsButton isDisabled: !isTextyInputEmpty
+		return !st.InputEmpty
 	}
 	return false
 }
@@ -483,8 +533,21 @@ func (c *chrome) Layout(gtx layout.Context, h Host, st chromeState, input, attac
 		margin = gtx.Dp(16)
 	}
 	hintH := 0
-	if !edit {
+	var editWarn op.CallOp
+	var editWarnD layout.Dimensions
+	switch {
+	case !edit:
 		hintH = gtx.Dp(24)
+	case st.OverLimit > 0:
+		// the edit's .c-message__editor__footer: "text is too long!"
+		// (.c-message__editor__warning: --dt_color-content-imp, .8rem,
+		// margin-top 8px, right-aligned in __messages)
+		col, ok := cssVarColor(css.SlackVars(th.Dark), "--dt_color-content-imp")
+		if !ok {
+			col = rgb(0xc01343)
+		}
+		editWarn, editWarnD = crRec(gtx, th.Shaper, W, textStyle{Size: 12.8, Color: col, MaxLines: 1}, "text is too long!")
+		hintH = gtx.Dp(8) + editWarnD.Size.Y
 	}
 	c.f.W, c.f.maxY, c.f.margin, c.f.hintH = W, gtx.Constraints.Max.Y, margin, hintH
 
@@ -524,7 +587,12 @@ func (c *chrome) Layout(gtx layout.Context, h Host, st chromeState, input, attac
 	if c.f.boxOK {
 		box.Min.X, box.Max.X = c.f.box.Min.X, c.f.box.Max.X
 	}
-	if hintH > 0 {
+	switch {
+	case edit && hintH > 0:
+		t := op.Offset(image.Pt(box.Max.X-editWarnD.Size.X, box.Max.Y+gtx.Dp(8))).Push(gtx.Ops)
+		editWarn.Add(gtx.Ops)
+		t.Pop()
+	case hintH > 0:
 		c.layoutHint(gtx, th, &c.fpal, &c.cur, box)
 	}
 
@@ -702,7 +770,63 @@ func (c *chrome) layoutBox(gtx layout.Context) layout.Dimensions {
 		c.layoutFooter(gtx, x0, x1, footTop)
 		fs.Leave()
 	}
+	if st.OverLimit > 0 {
+		c.lengthWarning(gtx, th, st, image.Pt(x1, box.Max.Y-bw))
+	}
 	return layout.Dimensions{Size: image.Pt(box.Dx(), box.Max.Y)}
+}
+
+// lengthWarning draws TextyLengthWarning: "-N" in .c-texty_input_unstyled
+// __warning (12px/18px, padding 0 4px, radius 2px, background
+// --dt_color-base-inv-imp, text --sk_inverted_foreground), placed by
+// `.c-wysiwyg_container .c-texty_input_unstyled__warning {bottom: 44px;
+// right: 4px}` against the box's inner bottom-right corner (br), with
+// its tooltip "Your message is N characters too long".
+func (c *chrome) lengthWarning(gtx layout.Context, th *theme.Theme, st *chromeState, br image.Point) {
+	vars := css.SlackVars(th.Dark)
+	bg, ok := cssVarColor(vars, "--dt_color-base-inv-imp")
+	if !ok {
+		bg = rgb(0xe01e5a)
+	}
+	fg := rgb(0xffffff)
+	if v, ok := vars["--sk_inverted_foreground"]; ok {
+		if col, ok := crRGBTriple(v); ok {
+			fg = col
+		}
+	}
+	s := textStyle{Size: 12, LineHeight: 18, Color: fg, MaxLines: 1}
+	call, d := crRec(gtx, th.Shaper, 1<<16, s, lengthWarningText(st.OverLimit))
+	padX := gtx.Dp(4)
+	sz := image.Pt(d.Size.X+2*padX, max(d.Size.Y, gtx.Dp(18)))
+	r := image.Rectangle{Min: image.Pt(br.X-gtx.Dp(4)-sz.X, br.Y-gtx.Dp(44)-sz.Y)}
+	r.Max = r.Min.Add(sz)
+	fillRRect(gtx, r, gtx.Dp(2), bg)
+	t := op.Offset(image.Pt(r.Min.X+padX, r.Min.Y+(sz.Y-d.Size.Y)/2)).Push(gtx.Ops)
+	call.Add(gtx.Ops)
+	t.Pop()
+	t = op.Offset(r.Min).Push(gtx.Ops)
+	g := gtx
+	g.Constraints = layout.Exact(sz)
+	c.warn.Layout(g, crPlainArea) // cursor: default
+	popups.Tooltip(gtx, th, &c.warnTip, c.warn.Hovered(), sz, popups.Above, lengthWarningTip(st.OverLimit), "")
+	t.Pop()
+}
+
+// crRGBTriple parses a Slack "r, g, b" custom property value.
+func crRGBTriple(v string) (color.NRGBA, bool) {
+	parts := strings.Split(v, ",")
+	if len(parts) != 3 {
+		return color.NRGBA{}, false
+	}
+	var rgbv [3]uint8
+	for i, p := range parts {
+		n, err := strconv.Atoi(strings.TrimSpace(p))
+		if err != nil || n < 0 || n > 255 {
+			return color.NRGBA{}, false
+		}
+		rgbv[i] = uint8(n)
+	}
+	return color.NRGBA{R: rgbv[0], G: rgbv[1], B: rgbv[2], A: 0xff}, true
 }
 
 // crShadow paints a small drop shadow (0 1px 3px) around r, as opaque rings
@@ -764,7 +888,7 @@ func (c *chrome) icon(gtx layout.Context, st *chromeState, id crBtn, r image.Rec
 		// ¶ (18) at padding 4, then the 20px c-menu_item__icon at
 		// margin-left -2 (x 20, y 4), its caret-down svg 20px too.
 		t := op.Offset(r.Min.Add(image.Pt(gtx.Dp(4), (r.Dy()-is)/2))).Push(gtx.Ops)
-		crIcPara(gtx, 18, col)
+		crParaIcon(st.Block)(gtx, 18, col)
 		t.Pop()
 		cs := gtx.Dp(20)
 		t = op.Offset(r.Min.Add(image.Pt(gtx.Dp(20), (r.Dy()-cs)/2))).Push(gtx.Ops)
@@ -966,8 +1090,15 @@ func (c *chrome) layoutFooter(gtx layout.Context, x0, x1, top int) {
 // The emoji button swaps to the yellow-disc face on hover.
 func (c *chrome) footButton(gtx layout.Context, th *theme.Theme, p *crPal, st *chromeState, id crBtn, r image.Rectangle) {
 	hov := c.btn[id].Hovered()
+	dis := c.disabled(st, id)
 	ic := p.icon
-	if hov {
+	switch {
+	case dis:
+		// .c-wysiwyg_container__button--workflows.…--disabled: no hover
+		// tile, rgba(sk_foreground_max, .7) at opacity .3, default
+		// cursor; the tooltip still shows (pointer-events: auto)
+		ic = crFade(p.fg, p.bg, .7*.3)
+	case hov:
 		fillRRect(gtx, r, gtx.Dp(4), c.f.btn.Background(p.footHover))
 		ic = p.fg
 	}
@@ -980,7 +1111,7 @@ func (c *chrome) footButton(gtx layout.Context, th *theme.Theme, p *crPal, st *c
 	} else {
 		c.icon(gtx, st, id, r, ic)
 	}
-	c.hit(gtx, id, r, true)
+	c.hit(gtx, id, r, !dis)
 	c.tooltip(gtx, th, st, id, r)
 }
 
@@ -1012,7 +1143,7 @@ func (c *chrome) layoutSend(gtx layout.Context, p *crPal, st *chromeState) layou
 	if !sched {
 		cw = 0
 	}
-	en := st.CanSend
+	en := !st.sendOff()
 	hs, hc := c.btn[crSend].Hovered(), sched && c.btn[crSchedule].Hovered()
 	var cs css.State
 	if !en {
@@ -1064,6 +1195,22 @@ func (c *chrome) layoutSend(gtx layout.Context, p *crPal, st *chromeState) layou
 	c.hit(gtx, crSend, rs, en)
 	if sched {
 		c.hit(gtx, crSchedule, rc, en)
+	}
+	if en { // disabled, the halves take no pointer (pointer-events: none)
+		// SendButton's tooltips: "Send now" with its key (Return, or
+		// CmdOrCtrl+Return under "Enter starts a new line") and "Schedule
+		// for later" on the chevron
+		th := c.f.h.Theme()
+		keys := "Enter"
+		if uipref.Get().SendOnModEnter {
+			keys = "Mod+Enter"
+		}
+		popups.Tooltip(gtx, th, &c.tip[crSend], hs, rs.Size(), popups.Above, "Send now", keys)
+		if sched {
+			t := op.Offset(rc.Min).Push(gtx.Ops)
+			popups.Tooltip(gtx, th, &c.tip[crSchedule], hc, rc.Size(), popups.Above, "Schedule for later", "")
+			t.Pop()
+		}
 	}
 	return layout.Dimensions{Size: r.Size()}
 }

@@ -1,0 +1,54 @@
+name: composer-audit-shots
+# The message composer against Slack (docs/COMPOSER-AUDIT.md): runs the
+# audit's tests (the 12,000-character limit and its warning, the clip
+# buttons Slack leaves out without a recorder, Run shortcut's disabled
+# state, the @ button, an emptied edit asking to delete, Slack's live
+# markdown, the composer keys, the schedule menu's rows, the formatting
+# toggle's msg_input_sticky_composer pref) on the synthetic workspace
+# and internal/fakeslack, then draws the composer headlessly through
+# Gio's GPU renderer (Mesa llvmpipe) in light and dark and uploads the
+# screenshots (composer-audit-shots). Nothing here talks to Slack.
+on:
+  push:
+    paths:
+      - "internal/ui/composer/**"
+      - ".github/workflows/composer-audit-shots.yml"
+  workflow_dispatch:
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb libgl1-mesa-dri libegl-mesa0
+
+permissions:
+  contents: read
+
+jobs:
+  composer-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: composer audit tests
+        run: |
+          go test -count=1 -v -run 'TestSlackLength|TestOverLimitBlocksSend|TestClipButtonsNeedARecorder|TestShortcutAndMentionButtons|TestEmptyEditAsksToDelete|TestMarkdownShortcutsLikeSlack|TestComposerKeysLikeSlack|TestComposerEditingKeysLikeSlack|TestScheduleMenuRows|TestFormattingTogglePref|TestPasteLimit|TestAutoformat|TestLiveMarkup|TestEnter|TestBackspace' ./internal/ui/composer
+      - name: screenshots (Mesa llvmpipe)
+        env:
+          COMPOSER_AUDIT_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$COMPOSER_AUDIT_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -v -run 'TestComposerAuditShots' ./internal/ui/composer
+          ls -la "$COMPOSER_AUDIT_SHOTS_DIR"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: composer-audit-shots
+          path: dist/shots

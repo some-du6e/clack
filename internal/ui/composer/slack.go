@@ -259,6 +259,14 @@ var crEnableFlags = [...]struct {
 	{"enableSubmitButton", crSend},
 }
 
+// crNoRecorder is the clip buttons Slack leaves out of a client that
+// can't record: MessagePaneInput's isStoriesButtonEnabled and
+// isAudioButtonEnabled (boot-shared Jg9Y yD / hP) need window.MediaRecorder,
+// and Clack has no clip recorder, so enableStoryButton and
+// enableAudioButton are false and TextyButtons drops the clips group and
+// its divider.
+const crNoRecorder = 1<<crVideo | 1<<crAudio
+
 // hideBits returns the buttons a plugin turned off (enable…: false).
 func hideBits(p slackc.Props) uint32 {
 	var h uint32
@@ -525,7 +533,7 @@ func (c *Composer) drawRoadblock(gtx layout.Context, p slackc.Props) layout.Dime
 // composer.addButton infra's broadcast context).
 func (c *Composer) inputProps() slackc.Props {
 	p := c.convProps()
-	putEnableFlags(p, 0)
+	putEnableFlags(p, crNoRecorder)
 	p["enableGifPicker"] = true
 	if c.edit != nil {
 		p["enableScheduleSendButton"] = false
@@ -574,9 +582,9 @@ func (c *Composer) onBroadcastChange(e slackc.Props) {
 }
 
 func (c *Composer) layoutInput(gtx layout.Context, p slackc.Props) layout.Dimensions {
-	c.cs.Hide = 0
+	c.cs.Hide = crNoRecorder
 	if p != nil {
-		c.cs.Hide = hideBits(p)
+		c.cs.Hide |= hideBits(p)
 	}
 	c.cs.Origin = c.Origin.Add(image.Pt(0, c.top))
 	s := crInputClass[c.cs.Mode].Enter(gtx, 0, 0)
