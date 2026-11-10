@@ -152,12 +152,13 @@ func TestSplitViewChannelMenu(t *testing.T) {
 	// a thread opened inside the split view replaces its channel there,
 	// with the channel as its back stack; one from the main view goes to
 	// the main view's thread pane
-	// a settled root (not the send above), one with replies if there is
+	// someone else's root (not the send above), one with replies if any
 	var ts string
+	self := e.a.model().SelfID
 	if tl := e.a.data.core.S.Timeline(chB); tl != nil {
 		for i := len(tl.Msgs) - 1; i >= 0; i-- {
 			m := tl.Msgs[i]
-			if m.ClientMsgID != "" || (m.ThreadTS != "" && m.ThreadTS != m.TS) {
+			if m.User == self || (m.ThreadTS != "" && m.ThreadTS != m.TS) {
 				continue
 			}
 			if ts == "" || m.ReplyCount > 0 {
