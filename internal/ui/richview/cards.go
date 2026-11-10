@@ -606,6 +606,8 @@ func fileName(f *richtext.File) string {
 
 func (l *lay) file(f *richtext.File, x, y, w int) int {
 	switch {
+	case isListFile(f):
+		return l.listFile(f, x, y, w, false) // listcard.go
 	case mediaFile(f):
 		return l.mediaGallery([]*richtext.File{f}, x, y, w)
 	case f.IsAudio:
@@ -1197,7 +1199,12 @@ func (l *lay) pillowGrid(files []*richtext.File, x, y, w int) int {
 			l.plainAdd(" ")
 		}
 		cx := x + col*(cell+gap)
-		h := l.genericFile(f, cx, y, min(cell, x+w-cx))
+		var h int
+		if isListFile(f) {
+			h = l.listFile(f, cx, y, min(cell, x+w-cx), true) // listcard.go
+		} else {
+			h = l.genericFile(f, cx, y, min(cell, x+w-cx))
+		}
 		rowH = max(rowH, h)
 	}
 	return y + rowH - y0
