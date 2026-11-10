@@ -36,6 +36,7 @@ func (e *Editor) keyFilters() []event.Filter {
 		key.Filter{Focus: e, Name: "B", Required: sc},
 		key.Filter{Focus: e, Name: "C", Required: sc, Optional: key.ModShift | key.ModAlt},
 		key.Filter{Focus: e, Name: "I", Required: sc},
+		key.Filter{Focus: e, Name: "O", Required: sc},
 		key.Filter{Focus: e, Name: "U", Required: sc, Optional: key.ModShift},
 		key.Filter{Focus: e, Name: "V", Required: sc, Optional: key.ModShift | key.ModAlt},
 		key.Filter{Focus: e, Name: "X", Required: sc, Optional: key.ModShift},
@@ -53,7 +54,9 @@ func (e *Editor) keyFilters() []event.Filter {
 		key.Filter{Focus: e, Name: key.NameUpArrow, Optional: move},
 		key.Filter{Focus: e, Name: key.NameDownArrow, Optional: move},
 	}
-	for _, n := range []key.Name{"7", "8", "9", "&", "*", "("} {
+	// Mod+Shift+. is the keyboard module's "blockquote-alt" (keyCode
+	// 190): "." or, shifted on X11, ">".
+	for _, n := range []key.Name{"7", "8", "9", "&", "*", "(", ".", ">"} {
 		fs = append(fs, key.Filter{Focus: e, Name: n, Required: sc | key.ModShift})
 	}
 	return fs
@@ -110,6 +113,13 @@ func (e *Editor) command(gtx layout.Context, k key.Event) {
 		}
 		e.enter(mods != 0)
 	case key.NameEscape:
+		if mods == 0 && e.escapeClearsFormat() {
+			// the keyboard module's Escape: an empty quote line, or a code
+			// block line that is empty or has the caret at its start,
+			// loses its block format (removeFormat) instead of going on
+			e.clearLineFormat()
+			return
+		}
 		e.emit(EvCancel)
 	case key.NameTab:
 		e.tab(shift)
@@ -118,8 +128,16 @@ func (e *Editor) command(gtx layout.Context, k key.Event) {
 	case key.NameDeleteForward:
 		e.deleteForward(word, toLine)
 	case key.NameLeftArrow:
+		if mods == key.ModShortcut && e.doc.Len() == 0 {
+			e.emit(EvNavBack) // onCmdLeftWhenEmpty: triggerNavigateBack
+			return
+		}
 		e.moveH(-1, word, toLine, shift)
 	case key.NameRightArrow:
+		if mods == key.ModShortcut && e.doc.Len() == 0 {
+			e.emit(EvNavForward) // onCmdRightWhenEmpty: triggerNavigateForward
+			return
+		}
 		e.moveH(1, word, toLine, shift)
 	case key.NameUpArrow:
 		if (mods == 0 || mods == key.ModShortcut) && e.upArrow(mods == key.ModShortcut) {
@@ -170,6 +188,11 @@ func (e *Editor) shortcut(gtx layout.Context, name key.Name, shift, alt bool) bo
 		e.ToggleStyle(Bold)
 	case "I":
 		e.ToggleStyle(Italic)
+	case "O":
+		if shift || alt {
+			return false
+		}
+		e.emit(EvPlusMenu) // "file upload": onPlusMenuShortcut (isDesktopApp)
 	case "U":
 		if shift {
 			e.emit(EvLinkDialog)
@@ -221,11 +244,11 @@ func (e *Editor) shortcut(gtx layout.Context, name key.Name, shift, alt bool) bo
 			return false
 		}
 		e.ToggleBlock(Bullet)
-	case "9", "(":
+	case "9", "(", ".", ">":
 		if !shift {
 			return false
 		}
-		e.ToggleBlock(Quote)
+		e.ToggleBlock(Quote) // "blockquote", and "blockquote-alt" on Mod+Shift+.
 	default:
 		return false
 	}
@@ -273,6 +296,35 @@ func (e *Editor) inCode() bool {
 	return strings.Count(d.String(0, e.caret), "```")%2 == 1
 }
 
+// escapeClearsFormat is the keyboard module's Escape condition (Escape
+// binding, useWysiwyg): a collapsed caret on an empty quote line, or on a
+// code block line that is empty or has the caret at its start after the
+// block's first line.
+func (e *Editor) escapeClearsFormat() bool {
+	if e.plainText || e.anchor != e.caret {
+		return false
+	}
+	d := e.doc
+	line := d.LineOf(e.caret)
+	ls, le := d.LineStart(line), d.LineEnd(line)
+	switch d.Lines[line].Kind {
+	case Quote:
+		return ls == le
+	case CodeBlock:
+		return ls == le || e.caret == ls && line > 0 && d.Lines[line-1].Kind == CodeBlock
+	}
+	return false
+}
+
+// clearLineFormat is removeFormat at the caret: the line goes back to a
+// paragraph.
+func (e *Editor) clearLineFormat() {
+	line := e.doc.LineOf(e.caret)
+	e.begin(edOther, true)
+	e.doc.Lines[line] = Line{}
+	e.commit()
+}
+
 // newline splits the line at the caret; the new line keeps the block
 // kind. On an empty list item or quote line it leaves the block instead
 // (a nested list item outdents first).
@@ -291,6 +343,9 @@ func (e *Editor) newline() {
 		}
 		e.anchor, e.caret = lo, lo
 	} else {
+		if !e.plainText && lo == hi {
+			autoLinkBefore(d, lo) // SlackLinkModule.onEnter: maybeLinkify
+		}
 		pos := d.Insert(lo, "\n", Attr{})
 		// Headings and dividers don't continue: the new line is a paragraph.
 		if k := d.Lines[line].Kind; isHeading(k) || k == Divider {
@@ -303,7 +358,9 @@ func (e *Editor) newline() {
 }
 
 // tab indents (or with shift outdents) the selected list lines; in a code
-// block it types a tab.
+// block it types a tab. Slack's "indent"/"outdent" bindings only act on a
+// selection or with the caret at the start of the item (a collapsed
+// caret elsewhere falls through to the browser).
 func (e *Editor) tab(shift bool) {
 	d := e.doc
 	l0, l1 := e.selLines()
@@ -313,6 +370,9 @@ func (e *Editor) tab(shift bool) {
 			list = false
 			break
 		}
+	}
+	if lo, hi := e.sel(); list && lo == hi && lo != d.LineStart(d.LineOf(lo)) {
+		return
 	}
 	if list {
 		e.begin(edOther, true)

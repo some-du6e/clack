@@ -27,6 +27,7 @@ import (
 	"github.com/some-du6e/clack/internal/emoji"
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/refocus"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
 )
 
 // Editor is the composer's WYSIWYG rich text editor over a *Doc. Input
@@ -100,6 +101,10 @@ const (
 	EvBlur                              // lost keyboard focus
 	EvUndoEmpty                         // Mod+Z in an empty editor: unsend, else undo (the composer decides)
 	EvFocusList                         // Up: move focus to the message list (UpArrowShortcut)
+	// Appended so the earlier kinds keep their values.
+	EvPlusMenu   // Mod+O in the desktop app: open the + menu (onPlusMenuShortcut)
+	EvNavBack    // Mod+Left in an empty editor: back in history (onCmdLeftWhenEmpty)
+	EvNavForward // Mod+Right in an empty editor: forward (onCmdRightWhenEmpty)
 )
 
 // EditorEvent is reported by Editor.Update.
@@ -781,10 +786,48 @@ func (e *Editor) autoformat() {
 		return // "Format messages with markup": markup stays as typed
 	}
 	custom := InlineMarkup != nil
-	if r != ' ' && r != '`' && r != '*' && r != '_' && r != '~' && !(custom && markupTrigger(r)) {
+	if r != ' ' && r != '`' && r != '*' && r != '_' && r != '~' && r != '>' && r != '＞' && !(custom && markupTrigger(r)) {
 		return
 	}
 	literal := e.snap()
+	done := func(nc int) {
+		e.pushUndo(literal)
+		e.anchor, e.caret = nc, nc
+		e.lastKind = edOther
+		e.commit()
+	}
+	if r == '>' || r == '＞' {
+		// SlackMarkdown's blockquote: ">" at a line start quotes it at once
+		if nc, ok := autoformatQuote(e.doc, c); ok {
+			done(nc)
+			return
+		}
+	}
+	if r == ' ' {
+		if afHorizontalRule(e.doc, c) {
+			// formatHorizontalRule: "--- " becomes a divider; what
+			// followed moves to a paragraph below, the caret with it
+			d := e.doc
+			line := d.LineOf(c)
+			ls := d.LineStart(line)
+			d.Delete(ls, c)
+			pos := d.Insert(ls, "\n", Attr{})
+			d.Lines[line] = Line{Kind: Divider}
+			d.Lines[line+1] = Line{}
+			d.SetStyle(pos, d.LineEnd(line+1), Bold|Italic|Underline|Strike|Code, false)
+			done(pos)
+			e.setPending(0)
+			return
+		}
+		if nc, _, ok := autoformatHeading(e.doc, c); ok {
+			done(nc)
+			return
+		}
+		if autoLinkBefore(e.doc, c-1) {
+			done(c) // maybeLinkify: the URL before the space is a link now
+			return
+		}
+	}
 	if r == ' ' || r == '`' {
 		if nc, _, ok := autoformatBlock(e.doc, c); ok {
 			e.pushUndo(literal)
@@ -1197,6 +1240,11 @@ func (e *Editor) Layout(gtx layout.Context, st EditorStyle) layout.Dimensions {
 		if _, ok := e.Update(gtx); !ok {
 			break
 		}
+	}
+	if e.escapeClearsFormat() {
+		// Escape clears this line's quote or code block (editor_keys.go):
+		// the key is the editor's, not the shell's "Close / mark as read"
+		shortcut.OwnEscape(e)
 	}
 	if !e.ensureLayout() {
 		return layout.Dimensions{Size: gtx.Constraints.Min}

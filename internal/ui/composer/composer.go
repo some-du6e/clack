@@ -67,6 +67,10 @@ type Composer struct {
 	typingOn   bool // typing reported since the composer was last empty
 	lastVer    uint64
 	emojiVer   uint64 // custom emoji set version the doc was last scanned at
+	// charsOverLimit at limitVer (overLimit: counted once per change)
+	limitVer  uint64
+	limitOver int
+	limitOK   bool
 
 	// Server draft sync (syncDraftCreate / syncDraftUpdates /
 	// deleteDraftApi): see drafts_sync.go.
@@ -120,8 +124,58 @@ func PlainTextMode(a *core.App) bool {
 }
 
 // showFormatting is Slack's "Show formatting" (Aa) toggle; one setting for
-// every composer, like Slack's pref.
+// every composer, like Slack's pref: the account pref
+// msg_input_sticky_composer (boot-shared Ex/u kx reads it; ComposerButton's
+// click writes it with setUserPrefByApi, WysiwygContainer). Without a
+// signed-in core (tests) it is this package value alone.
 var showFormatting = true
+
+// formattingWrite is the Aa value on its way to users.prefs.set: until
+// the write lands (or fails) it stands in for the pref.
+var formattingWrite struct {
+	sync.Mutex
+	pending int
+	on      bool
+}
+
+// syncShowFormatting reads msg_input_sticky_composer (shown when Slack
+// sends no value: the toolbar is on by default).
+func syncShowFormatting(api coreAPI) {
+	if api.a == nil {
+		return
+	}
+	formattingWrite.Lock()
+	pending, on := formattingWrite.pending, formattingWrite.on
+	formattingWrite.Unlock()
+	if pending > 0 {
+		showFormatting = on
+		return
+	}
+	showFormatting = api.a.PrefBool("msg_input_sticky_composer", true)
+}
+
+// toggleShowFormatting is ComposerButton's click: flip the toolbar and
+// store the choice in msg_input_sticky_composer, off the UI goroutine.
+func (c *Composer) toggleShowFormatting() {
+	showFormatting = !showFormatting
+	if c.api.a == nil {
+		return
+	}
+	on, api := showFormatting, c.api
+	formattingWrite.Lock()
+	formattingWrite.pending++
+	formattingWrite.on = on
+	formattingWrite.Unlock()
+	go func() {
+		err := api.a.SetPref(context.Background(), "msg_input_sticky_composer", on)
+		formattingWrite.Lock()
+		formattingWrite.pending--
+		formattingWrite.Unlock()
+		if err != nil {
+			c.later(func() {}) // redraw with the pref Slack kept
+		}
+	}()
+}
 
 // UpArrowShortcut is Accessibility > "Press ↑ in the empty message field
 // to:" (Slack's client-side composerUpArrowShortcutBehavior, uMEH): 0
@@ -289,6 +343,7 @@ func (c *Composer) Layout(gtx layout.Context) layout.Dimensions {
 	}
 	c.ed.plainText = PlainTextMode(c.api.a)
 	c.ed.smart = SmartSymbols(c.api.a)
+	syncShowFormatting(c.api)
 	c.ed.upMode, c.ed.upBrowse = UpArrowShortcut(), c.edit == nil && c.api.a != nil && c.api.upToBrowse()
 	c.syncEmojiSet()
 	c.handleEditor(gtx)
@@ -436,6 +491,13 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 		DraftID:        c.draftID(),
 		ViewContext:    c.viewContext(),
 		Count:          c.ed.Doc().Len(),
+		OverLimit:      c.overLimit(),
+	}
+	if isHeading(st.Block) && c.api.a != nil {
+		st.HeadingFormats = c.api.a.Experiment("rich_text_headers_and_dividers") == "on"
+	}
+	if d := c.ed.Doc(); d.Len() == 0 && (len(d.Lines) == 0 || d.Lines[0].Kind == Para) {
+		st.InputEmpty = true // checkIfTextyIsEmptyOfTextOrFormats
 	}
 	if lo, hi := c.ed.Selection(); lo <= hi {
 		st.SelLo, st.SelN = lo, hi-lo
@@ -524,6 +586,19 @@ func (c *Composer) handleEditor(gtx layout.Context) {
 			c.openLink()
 		case EvPasted:
 			c.att.PasteClipboardImage()
+		case EvPlusMenu:
+			// onPlusMenuShortcut: forcePlusMenuOpen, the + menu at its button
+			if c.edit == nil && c.ui.rect[crAttach] != (image.Rectangle{}) && !c.ui.hidden(crAttach) {
+				c.att.Menu(c.ui.rect[crAttach].Add(c.Origin).Add(image.Pt(0, c.top)), c.ch)
+			}
+		case EvNavBack, EvNavForward:
+			if n, ok := c.h.(historyNavigator); ok && c.edit == nil {
+				if ev.Kind == EvNavBack {
+					n.Back()
+				} else {
+					n.Forward()
+				}
+			}
 		case EvFocus:
 			c.focused = true
 		case EvBlur:
@@ -571,25 +646,23 @@ func (c *Composer) handleActions(gtx layout.Context) {
 		case caLink:
 			c.openLink()
 		case caFormatting:
-			showFormatting = !showFormatting
+			c.toggleShowFormatting()
 			c.ed.Focus(gtx)
 		case caAttach:
 			c.att.Menu(a.Anchor, c.ch)
 		case caEmoji:
 			c.h.OpenEmojiPicker(image.Pt(a.Anchor.Min.X, a.Anchor.Min.Y), func(name string) { c.InsertEmoji(name) })
 		case caMention:
-			c.insertTrigger("@")
+			c.mentionTrigger()
 			c.ed.Focus(gtx)
 		case caShortcut:
-			if c.ed.Empty() {
-				c.ed.SetDoc(NewDoc())
+			// maybeTriggerSlashCommandsAutocomplete: only into an empty
+			// input without a block format (the button is disabled
+			// otherwise)
+			if d := c.ed.Doc(); d.Len() == 0 && d.Lines[0].Kind == Para {
 				c.ed.InsertText("/")
-			} else {
-				c.insertTrigger("/")
 			}
 			c.ed.Focus(gtx)
-		case caVideo, caAudio:
-			c.h.Toast("Recording clips isn't available in yoloslack yet")
 		case caSend:
 			c.submit()
 		case caSchedule:
@@ -610,15 +683,30 @@ func (c *Composer) handleActions(gtx layout.Context) {
 	}
 }
 
-// insertTrigger types s at the caret, with a space first if the caret
-// follows a word (so @ and / open autocomplete).
-func (c *Composer) insertTrigger(s string) {
-	_, car := c.ed.Selection()
-	d := c.ed.Doc()
-	if car > 0 && d.Runes[car-1] != ' ' && d.Runes[car-1] != '\n' {
-		s = " " + s
+// mentionTrigger is the @ button's maybeTriggerMentionAutocomplete: it
+// replaces the selection with "@" (an "@" right before the caret is
+// replaced, not doubled) with a space first when the character before
+// the caret is text other than a space (getText(index-1, 1): a newline
+// counts as text, an emoji or mention pill has none), and leaves the
+// caret after it so the member autocomplete opens. Nothing happens with
+// the caret between two characters of one mention.
+func (c *Composer) mentionTrigger() {
+	lo, hi := c.ed.Selection()
+	if lo > hi {
+		lo, hi = hi, lo
 	}
-	c.ed.InsertText(s)
+	d := c.ed.Doc()
+	start, s := lo, "@"
+	if lo > 0 && d.Attrs[lo-1].Atom == nil {
+		switch d.Runes[lo-1] {
+		case '@':
+			start = lo - 1
+		case ' ':
+		default:
+			s = " @"
+		}
+	}
+	c.ed.Replace(start, hi, s)
 }
 
 func (c *Composer) openLink() {
@@ -639,62 +727,93 @@ func (c *Composer) openLink() {
 func (c *Composer) paragraphMenu(anchor image.Rectangle) {
 	// Slack's ¶ menu: Paragraph and Big/Medium/Small heading, the caret's
 	// current kind checked. Picking one sets the selected lines to it.
+	// (ComposerMenuTrigger: radio items with IconForFormat, the caret's
+	// kind checked, paragraph for anything that isn't a heading)
 	cur := c.ed.ActiveBlock()
-	item := func(label string, k BlockKind) popups.MenuItem {
-		return popups.MenuItem{Label: label, Checked: cur == k, Do: func() {
+	if !isHeading(cur) {
+		cur = Para
+	}
+	item := func(label, icon string, k BlockKind) popups.MenuItem {
+		return popups.MenuItem{Label: label, Icon: icon, Radio: true, Checked: cur == k, Do: func() {
 			c.ed.SetBlock(k)
 			c.Focus()
 		}}
 	}
 	items := []popups.MenuItem{
-		item("Paragraph", Para),
-		item("Big heading", Header1),
-		item("Medium heading", Header2),
-		item("Small heading", Header3),
+		item("Paragraph", "paragraph", Para),
+		item("Big heading", "heading-1", Header1),
+		item("Medium heading", "heading-2", Header2),
+		item("Small heading", "heading-3", Header3),
 	}
 	c.h.ShowOverlay(popups.NewMenuOpts(c.h, items, popups.MenuOpts{Width: 248, Anchor: anchor, Side: popups.Above}))
 }
 
 func (c *Composer) scheduleMenu(anchor image.Rectangle) {
-	if !c.ed.Empty() || c.att.Len() > 0 {
-		now := time.Now()
-		tomorrow := time.Date(now.Year(), now.Month(), now.Day()+1, 9, 0, 0, 0, now.Location())
-		monday := tomorrow
-		for monday.Weekday() != time.Monday {
-			monday = monday.AddDate(0, 0, 1)
-		}
-		sched := func(t time.Time) func() {
-			return func() { c.schedule(t) }
-		}
-		items := []popups.MenuItem{
-			{Header: "Schedule message"},
-			{Label: "Tomorrow at 9:00 AM", Do: sched(tomorrow)},
-			{Label: "Monday at 9:00 AM", Do: sched(monday)},
-			popups.Sep(),
-			{Label: "Custom time…", Do: func() {
-				openSchedulePicker(c.h, func(t time.Time) { c.schedule(t) })
-			}},
-		}
-		c.h.ShowOverlay(popups.NewMenuOpts(c.h, items, popups.MenuOpts{Width: 260, Anchor: anchor, Side: popups.Above, AlignRight: true}))
+	if c.overLimit() > 0 || c.ed.Empty() && c.att.Len() == 0 {
+		return
 	}
+	// ScheduleSendMenu (schedule_menu.go): the rows for now, the Custom
+	// time dialog last
+	now, m := time.Now(), c.scheduleMember()
+	h24 := uipref.Get().Time24
+	exp := c.api.a != nil && c.api.a.Experiment("updated_scheduled_sends_desktop") == "on"
+	items := []popups.MenuItem{{Header: "Schedule message"}}
+	for _, r := range scheduleRows(now, h24, exp, m) {
+		r := r
+		if r.opt == schedCustom {
+			items = append(items, popups.Sep(), popups.MenuItem{Label: r.label, Do: func() {
+				// openScheduleMessageDialog
+				openSchedulePicker(c.h, schedCustomDefault(time.Now(), c.scheduleMember()), func(t time.Time) {
+					lastCustomSchedule = t
+					c.schedule(t)
+				})
+			}})
+			continue
+		}
+		items = append(items, popups.MenuItem{Label: r.label, Subtitle: r.desc, Do: func() {
+			at := r.at
+			if r.opt < schedMember { // the time for the option when it is picked
+				at = schedStandardTime(r.opt, time.Now())
+			}
+			c.schedule(at)
+		}})
+	}
+	c.h.ShowOverlay(popups.NewMenuOpts(c.h, items, popups.MenuOpts{Width: 260, Anchor: anchor, Side: popups.Above, AlignRight: true}))
 }
+
+// scheduleMember is the DM's other member for the schedule menu's time
+// zone rows (getMemberFromDraftForTimeZoneDetails: exactly one member).
+func (c *Composer) scheduleMember() *schedMemberInfo {
+	if c.api.a == nil {
+		return nil
+	}
+	cv, ok := c.api.conv(c.ch)
+	if !ok || cv.Kind != "im" || cv.User == "" {
+		return nil
+	}
+	u, ok := c.api.user(cv.User)
+	if !ok || u.TZ == "" && u.TZOffset == 0 {
+		return nil
+	}
+	me := c.api.self()
+	return &schedMemberInfo{name: u.Name, loc: schedMemberLoc(u), sameTZ: u.TZ == "" || u.TZ == me.TZ, offset: u.TZOffset != 0}
+}
+
+// scheduleFailedText is scheduleSendMessage's ephemeral when the
+// schedule fails.
+const scheduleFailedText = "We’re not sure what happened, but your message couldn’t be scheduled. It’s been saved in your Drafts so you can try again."
 
 // schedule posts the current message at time t via core (chat scheduling
 // goes through drafts in core). Files aren't scheduled (Slack schedules
 // text/blocks only); a scheduled message clears the composer like a send.
 func (c *Composer) schedule(t time.Time) {
-	if c.edit != nil || c.ed.Empty() {
-		return
-	}
-	if !t.After(time.Now()) {
-		c.h.Toast("Pick a time in the future")
-		return
+	if c.edit != nil || c.ed.Empty() || !t.After(time.Now()) {
+		return // the menu's times are ahead; the dialog only takes 5 min to 120 days out
 	}
 	doc := c.prepareSend(c.ed.Doc())
 	text, blocks := doc.Mrkdwn(), doc.RichTextBlocks()
 	api, ch, ts := c.api, c.ch, c.ts
 	broadcast := c.broadcast && ts != ""
-	when := t.Format(uipref.Layout("Mon Jan 2 at 3:04 PM"))
 	c.clearAfterSend()
 	go func() {
 		ctx := context.Background()
@@ -718,26 +837,59 @@ func (c *Composer) schedule(t time.Time) {
 		text, blocks := transformBlocks(ctx, text, blocks)
 		_, err := api.scheduleMessage(ctx, ch, ts, text, blocks, broadcast, t.Unix())
 		if err != nil {
-			c.later(func() { c.h.Toast("Couldn't schedule: " + err.Error()) })
+			// scheduleSendMessage's failure: a local ephemeral
+			// (scheduleSendError); the message stays a draft
+			api.localEphemeral(ch, ts, scheduleFailedText)
 			c.restore(doc)
-			return
 		}
-		c.later(func() { c.h.Toast("Message scheduled for " + when) })
+		// success says nothing: Slack's context bar shows the schedule
 	}()
 }
 
 // ---- sending ----
 
+// historyNavigator is the ui root's history (triggerNavigateBack /
+// triggerNavigateForward): Mod+Left / Mod+Right in an empty composer.
+type historyNavigator interface {
+	Back()
+	Forward()
+}
+
 // slashHuddler is the ui root's /huddle: start or join the huddle in a
 // conversation (internal/ui/huddleui through ui/huddle_wire.go).
 type slashHuddler interface{ SlashHuddle(channel string) }
 
+// deleteEmptiedEdit is the edit composer's startDelete (boot-shared cjbg
+// maybeSave): saving an edit with nothing left in it (whitespace aside,
+// no files) opens Slack's delete-message dialog for the message instead
+// of saving; the editor stays open behind it.
+func (c *Composer) deleteEmptiedEdit() {
+	if c.edit == nil {
+		return
+	}
+	popups.ConfirmDelete(c.h, *c.edit)
+}
+
+// overLimit is how far the message is past the 12,000-character limit
+// (charlimit.go), counted once per document change.
+func (c *Composer) overLimit() int {
+	if v := c.ed.Version(); !c.limitOK || v != c.limitVer {
+		c.limitVer, c.limitOver, c.limitOK = v, charsOverLimit(c.ed.Doc()), true
+	}
+	return c.limitOver
+}
+
 func (c *Composer) submit() {
 	d := c.ed.Doc()
+	if c.overLimit() > 0 {
+		// isSendingDisabled (isOverMaxLength): Enter does nothing and the
+		// send button is disabled; an edit can't be saved (cjbg maybeSave
+		// returns while textyExceedsMaxLength)
+		return
+	}
 	if d.Empty() && c.att.Len() == 0 {
 		if c.edit != nil {
-			// Slack asks to delete when an edit is emptied; keep it simple.
-			c.h.Toast("A message can't be empty")
+			c.deleteEmptiedEdit()
 		}
 		return
 	}

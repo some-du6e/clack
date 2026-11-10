@@ -30,14 +30,11 @@ type schedulePicker struct {
 	ampm    widget.Clickable
 }
 
-// openSchedulePicker shows the custom-time modal, defaulting to the next
-// round half hour at least a few minutes out. onPick gets the chosen time.
-func openSchedulePicker(h Host, onPick func(time.Time)) {
-	now := time.Now()
-	start := now.Add(30 * time.Minute).Truncate(30 * time.Minute)
-	if !start.After(now) {
-		start = start.Add(30 * time.Minute)
-	}
+// openSchedulePicker shows the custom-time modal (Slack's
+// ScheduleMessageDialog: "Schedule message", Cancel and "Schedule
+// Message", which is disabled outside 5 minutes to 120 days from now),
+// starting at start (getDefaultCustomTime). onPick gets the chosen time.
+func openSchedulePicker(h Host, start time.Time, onPick func(time.Time)) {
 	p := &schedulePicker{h: h, sel: start, onPick: onPick}
 	p.view = time.Date(start.Year(), start.Month(), 1, 0, 0, 0, 0, start.Location())
 	m := popups.NewModal(h, popups.ModalOpts{
@@ -46,7 +43,7 @@ func openSchedulePicker(h Host, onPick func(time.Time)) {
 		Body:  p.body,
 		Buttons: []*popups.ModalButton{
 			{Label: "Cancel", Kind: popups.BtnOutline},
-			{Label: "Schedule", Kind: popups.BtnPrimary, Enabled: p.valid, Do: func() bool {
+			{Label: "Schedule Message", Kind: popups.BtnPrimary, Enabled: p.valid, Do: func() bool {
 				if p.onPick != nil && p.valid() {
 					p.onPick(p.sel)
 				}
@@ -57,7 +54,12 @@ func openSchedulePicker(h Host, onPick func(time.Time)) {
 	h.ShowOverlay(m)
 }
 
-func (p *schedulePicker) valid() bool { return p.sel.After(time.Now()) }
+// valid is the dialog's submit rule: getMinimumCustomTime to
+// getMaximumCustomTime.
+func (p *schedulePicker) valid() bool {
+	now := time.Now()
+	return !p.sel.Before(schedMinTime(now)) && !p.sel.After(schedMaxTime(now))
+}
 
 func (p *schedulePicker) body(gtx layout.Context) layout.Dimensions {
 	p.handle(gtx)

@@ -263,7 +263,7 @@ func (c *chrome) layoutTextyAC(gtx layout.Context, p slackc.Props) layout.Dimens
 // CharacterCounter counts with it).
 func (c *chrome) textyInputProps() slackc.Props {
 	p := c.props()
-	p["maxLength"] = MaxMessageLength
+	p["maxLength"] = composerMaxLength // MessagePaneInput / InputContainer: maxLength 12e3
 	p["placeholder"] = c.cur.Placeholder
 	p["$texty"] = slackc.Props{"length": c.cur.Count, "index": c.cur.SelLo, "selected": c.cur.SelN}
 	return p
@@ -344,7 +344,7 @@ func (c *chrome) overflowProps() slackc.Props {
 		}))
 	}
 	if c.cur.Hide&(1<<crSend) == 0 || c.cur.Mode == modeEdit {
-		sp := slackc.Props{"isDisabled": !c.cur.CanSend, "isEditing": c.cur.Mode == modeEdit}
+		sp := slackc.Props{"isDisabled": c.cur.sendOff(), "isEditing": c.cur.Mode == modeEdit}
 		if c.cur.Mode != modeEdit && c.cur.Hide&(1<<crSend) == 0 {
 			sp["children"] = []any{slackc.Child("SendButton", c.sendButtonProps(), c.layoutSendButton)}
 		}
@@ -648,7 +648,7 @@ func (c *chrome) layoutSubmit(gtx layout.Context, p slackc.Props) layout.Dimensi
 // (layoutInline), as in Slack's flex footer.
 func (c *chrome) sendButtonProps() slackc.Props {
 	p := c.props()
-	p["isDisabled"] = !c.cur.CanSend
+	p["isDisabled"] = c.cur.sendOff()
 	p["type"] = "primary"
 	return p
 }
