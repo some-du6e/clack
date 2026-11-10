@@ -586,6 +586,8 @@ func (b *backend) handle(a *App, ev core.Event) {
 	case "connection":
 		m.Connected = ev.Connected
 		changed = true
+	case "permissions": // permissions/info answered (core.ChannelGrant): the topic's Edit reads it
+		a.Invalidate()
 	}
 	if changed {
 		b.recount()

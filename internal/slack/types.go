@@ -243,6 +243,10 @@ type User struct {
 	// IsStranger: a Slack Connect user from an org the viewer shares no
 	// channel with (users.info is_stranger).
 	IsStranger bool `json:"is_stranger,omitempty"`
+
+	// RestrictedUserType is "frontline_worker" for a frontline worker
+	// (Slack's u+N9 W), else empty.
+	RestrictedUserType string `json:"restricted_user_type,omitempty"`
 }
 
 type EnterpriseUser struct {

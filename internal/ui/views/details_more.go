@@ -82,6 +82,7 @@ type cdExtra struct {
 	memPermRow, guestPermRow      widget.Clickable
 	suggest, huddleLearn, aiLearn widget.Clickable
 	copyNames, copyEmails         widget.Clickable
+	mpdmName                      widget.Clickable // About's "Conversation name" Edit (details_mpdm.go)
 	helpTips                      map[string]*cdTip
 
 	suggestOp      async[bool]
@@ -1572,8 +1573,8 @@ func (d *ChannelDetails) openAddPeople(inf core.ChannelDetails) {
 		a.members[uid] = true
 	}
 	c := d.h.Core()
-	a.hist = cdHistToday // useDefaultExcludeHistory
-	if c.Experiment("mpdm_default_exclude_history_clients_webapp") == "on" && c.PrefBool("mpdm_add_people_default_exclude_history", false) {
+	a.hist = cdHistToday // useDefaultExcludeHistory (boot-shared J1Xx): the org pref, under the experiment
+	if c.Experiment("mpdm_default_exclude_history_clients_webapp") == "on" && c.EnterpriseOrgPrefTrue("mpdm_add_people_default_exclude_history") {
 		a.hist = cdHistNone
 	}
 	d.x.dlg.add = a

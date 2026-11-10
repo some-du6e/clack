@@ -1030,6 +1030,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			"composer_smart_symbols": g("on"), "agents_in_dm_sidebar": g("on"), "agents_in_dm_sidebar_pref": g("on"),
 			"suggested_sections_auto_sort_v2": g("on"),
 			"lists_tabbing_navigation":        g("on"),
+			// channel details' Agents & apps / Automations tabs (views/details.go)
+			"channel_details_agents_apps_tab": g("on"),
 			// focus mode and the Availability section (see core's defaultExperimentGroups)
 			"silent_sidebar": g("on"), "availability_prefs_section": g("on")})
 	case "users.prefs.get":
