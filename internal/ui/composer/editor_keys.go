@@ -2,6 +2,7 @@ package composer
 
 import (
 	"io"
+	"runtime"
 	"strings"
 	"unicode"
 
@@ -138,6 +139,9 @@ func (e *Editor) command(gtx layout.Context, k key.Event) {
 			e.emit(EvNavForward) // onCmdRightWhenEmpty: triggerNavigateForward
 			return
 		}
+		if mods == 0 && e.leaveInlineCode() {
+			return
+		}
 		e.moveH(1, word, toLine, shift)
 	case key.NameUpArrow:
 		if (mods == 0 || mods == key.ModShortcut) && e.upArrow(mods == key.ModShortcut) {
@@ -150,6 +154,9 @@ func (e *Editor) command(gtx layout.Context, k key.Event) {
 		e.moveV(-1, shift)
 		keepX = true
 	case key.NameDownArrow:
+		if mods == 0 && e.leaveCodeBlockDown() {
+			return
+		}
 		if toLine {
 			e.moveTo(e.doc.Len(), shift)
 			return
@@ -163,13 +170,15 @@ func (e *Editor) command(gtx layout.Context, k key.Event) {
 		e.movePage(1, shift)
 		keepX = true
 	case key.NameHome:
-		if short {
+		// onHome / onEnd: on macOS Home and End go to the start and end
+		// of the whole message; elsewhere the browser's line motion
+		if short || edMacHomeEnd {
 			e.moveTo(0, shift)
 		} else {
 			e.moveTo(e.visualLineStart(e.caret), shift)
 		}
 	case key.NameEnd:
-		if short {
+		if short || edMacHomeEnd {
 			e.moveTo(e.doc.Len(), shift)
 		} else {
 			e.moveTo(e.visualLineEnd(e.caret), shift)
@@ -296,6 +305,55 @@ func (e *Editor) inCode() bool {
 	return strings.Count(d.String(0, e.caret), "```")%2 == 1
 }
 
+// edMacHomeEnd is onHome/onEnd's isMac: Home and End go to the start and
+// end of the message.
+var edMacHomeEnd = runtime.GOOS == "darwin"
+
+// leaveInlineCode is "inline code right arrow": Right with the caret at
+// the end of a line that ends in inline code types a space without the
+// code format (keeping the run's other formats) and steps past it.
+func (e *Editor) leaveInlineCode() bool {
+	d := e.doc
+	c := e.caret
+	if e.anchor != c || c == 0 {
+		return false
+	}
+	line := d.LineOf(c)
+	if c != d.LineEnd(line) || c == d.LineStart(line) || d.Lines[line].Kind == CodeBlock {
+		return false
+	}
+	prev := d.Attrs[c-1]
+	if prev.Atom != nil || prev.Style&Code == 0 {
+		return false
+	}
+	e.begin(edOther, true)
+	pos := d.Insert(c, " ", Attr{Style: prev.Style &^ Code})
+	e.anchor, e.caret = pos, pos
+	e.commit()
+	return true
+}
+
+// leaveCodeBlockDown is "block code down arrow": Down at the very end of
+// the message, on a code block line with text, adds a plain line below
+// and moves onto it.
+func (e *Editor) leaveCodeBlockDown() bool {
+	d := e.doc
+	c := e.caret
+	if e.anchor != c || c != d.Len() {
+		return false
+	}
+	line := d.LineOf(c)
+	if d.Lines[line].Kind != CodeBlock || d.LineStart(line) == c {
+		return false
+	}
+	e.begin(edOther, true)
+	pos := d.Insert(c, "\n", Attr{})
+	d.Lines[line+1] = Line{}
+	e.anchor, e.caret = pos, pos
+	e.commit()
+	return true
+}
+
 // escapeClearsFormat is the keyboard module's Escape condition (Escape
 // binding, useWysiwyg): a collapsed caret on an empty quote line, or on a
 // code block line that is empty or has the caret at its start after the
@@ -415,11 +473,23 @@ func (e *Editor) deleteBackward(word, toLine bool) {
 	c := e.caret
 	line := d.LineOf(c)
 	ls := d.LineStart(line)
-	if c == ls && d.Lines[line].Kind != Para {
-		e.begin(edOther, true)
-		d.Lines[line] = Line{}
-		e.commit()
-		return
+	if ln := &d.Lines[line]; c == ls && ln.Kind != Para {
+		switch {
+		case (ln.Kind == Bullet || ln.Kind == Ordered) && ln.Indent > 0:
+			// "outdent backspace": a nested item outdents a level first
+			e.begin(edOther, true)
+			ln.Indent--
+			e.commit()
+			return
+		case ln.Kind == CodeBlock && ls != d.LineEnd(line):
+			// a code line with text: "backspace empty code block" only
+			// takes empty ones; this one joins the line above
+		default:
+			e.begin(edOther, true)
+			d.Lines[line] = Line{}
+			e.commit()
+			return
+		}
 	}
 	if c == 0 {
 		return

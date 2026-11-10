@@ -440,3 +440,48 @@ func TestPasteLimit(t *testing.T) {
 		t.Fatalf("a short paste: len %d", e.doc.Len())
 	}
 }
+
+// More of the keyboard module: "outdent backspace", a code line with
+// text joining the line above, "inline code right arrow" and "block code
+// down arrow".
+func TestComposerEditingKeysLikeSlack(t *testing.T) {
+	e := NewEditor()
+	edType(e, "- item")
+	e.SetSelection(0, 0)
+	edPress(e, key.NameTab, 0)
+	edPress(e, key.NameDeleteBackward, 0)
+	if l := e.doc.Lines[0]; l.Kind != Bullet || l.Indent != 0 {
+		t.Fatalf("Backspace on a nested item: %+v", l)
+	}
+	edPress(e, key.NameDeleteBackward, 0)
+	if l := e.doc.Lines[0]; l.Kind != Para {
+		t.Fatalf("Backspace on a top-level item: %+v", l)
+	}
+
+	e = NewEditor()
+	edType(e, "a\n```b")
+	if e.doc.Lines[1].Kind != CodeBlock {
+		t.Fatalf("no code line: %+v", e.doc.Lines)
+	}
+	e.SetSelection(2, 2)
+	edPress(e, key.NameDeleteBackward, 0)
+	if e.doc.Text() != "ab" || len(e.doc.Lines) != 1 {
+		t.Fatalf("Backspace at a code line's start: %q %+v", e.doc.Text(), e.doc.Lines)
+	}
+
+	e = NewEditor()
+	edType(e, "run `ls`")
+	edPress(e, key.NameRightArrow, 0)
+	edType(e, "x")
+	if e.doc.Text() != "run ls x" || e.doc.Attrs[6].Style&Code != 0 || e.doc.Attrs[7].Style&Code != 0 {
+		t.Fatalf("Right out of inline code: %q %v", e.doc.Text(), edStyles(e.doc))
+	}
+
+	e = NewEditor()
+	edType(e, "```code")
+	edPress(e, key.NameDownArrow, 0)
+	edType(e, "after")
+	if len(e.doc.Lines) != 2 || e.doc.Lines[0].Kind != CodeBlock || e.doc.Lines[1].Kind != Para || e.doc.Text() != "code\nafter" {
+		t.Fatalf("Down out of a trailing code block: %q %+v", e.doc.Text(), e.doc.Lines)
+	}
+}

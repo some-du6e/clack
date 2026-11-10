@@ -12,7 +12,7 @@ import (
 // "Schedule message" whose rows depend on when you open it
 // (getCurrentScheduledSendTimeBlock), then a separator and "Custom time".
 // In a DM whose other member keeps another time zone each row says when
-// that is for them ("3:00 AM for Karim", Mluw
+// that is for them ("3:00 AM for Alice", Mluw
 // getScheduledDraftTimeZoneDetails), and while it is night there (22:00
 // to 08:00) a row for 9:00 their time leads (MemberSpecificSchedulingTime).
 // With the updated_scheduled_sends_desktop experiment "Tomorrow at 9:00
