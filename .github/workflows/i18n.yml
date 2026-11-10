@@ -1,0 +1,61 @@
+name: i18n
+# Slack's string catalog (internal/i18n, docs/I18N.md): the package tests,
+# then the wired surfaces against Slack's real es-ES and ja-JP bundles
+# (fetched from the public CDN without cookies, cached between runs),
+# the "no English left" checks, the Language pref, and screenshots of the
+# client and Preferences in es-ES and ja-JP (Noto CJK for the Japanese
+# fallback). Synthetic account only (internal/fakeslack): nothing here
+# talks to Slack's API.
+on:
+  push:
+    paths:
+      - "internal/i18n/**"
+      - "internal/ui/**"
+      - "internal/core/timezone.go"
+      - "internal/core/tz_slack*.go"
+      - ".github/workflows/i18n.yml"
+  workflow_dispatch:
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb
+
+permissions:
+  contents: read
+
+jobs:
+  i18n:
+    runs-on: ubuntu-latest
+    env:
+      CLACK_I18N_NET: "1"
+      CLACK_I18N_CACHE: ${{ github.workspace }}/.i18n-cache
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: .i18n-cache
+          key: i18n-bundles-${{ hashFiles('internal/i18n/bundles.go') }}
+      - name: gio deps and fonts
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS fonts-lato fonts-noto-cjk
+      - name: catalog
+        run: go test -count=1 -v ./internal/i18n
+      - name: no English left, the Language pref
+        run: go test -count=1 -v -run 'TestLocalePref$|TestPrefsNoEnglishLeft|TestMainNoEnglishLeft|TestPrefsPagesMatchSlack' ./internal/ui
+      - name: screenshots (es-ES, ja-JP)
+        env:
+          I18N_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$I18N_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestLocaleShots$' ./internal/ui/
+          ls "$I18N_SHOTS_DIR"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: i18n-shots
+          path: dist/shots

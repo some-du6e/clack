@@ -202,8 +202,15 @@ func DrawText(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string) layo
 // relying on a color font: single lines through textWithEmoji, wrapping
 // text through placeholder glyphs (emojislot.go).
 func (t *Theme) Text(gtx layout.Context, o LabelOpts, txt string) layout.Dimensions {
+	if DrawHook != nil {
+		DrawHook(txt)
+	}
 	return t.text(gtx, o, txt, true)
 }
+
+// DrawHook, when set (tests: the "no English left" checks), sees every
+// string Text draws.
+var DrawHook func(txt string)
 
 // text is Text; scan says whether a tofu scan records txt as drawn
 // (Measure's layouts aren't).
