@@ -9,6 +9,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"image"
 	"image/color"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,6 +29,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/slackc/css"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
@@ -92,8 +94,12 @@ type row struct {
 	nameCtx, avatarCtx ctxTag            // right-click → the member context menu
 	threadBtn          widget.Clickable
 	broadcastBtn       widget.Clickable
+	labelLink          widget.Clickable // the label's link (broadcastLabel)
 	addReact           widget.Clickable
 	pills              []reactPill
+	reactExpand        widget.Clickable // ReactionBar's "N more" / "Show less"
+	reactExpanded      bool             // the bar's isExpanded (Slack keeps it per message)
+	expandTip          popups.TipState
 
 	// the broadcast's root preview (rootPreview), looked up once per list
 	// snapshot
@@ -264,7 +270,11 @@ func (r *row) setDoc() {
 // rvOpts are the body's richview options.
 func (r *row) rvOpts() richview.Options {
 	own := r.rc != nil && r.rc.selfID != "" && r.m.User == r.rc.selfID && r.m.Subtype != "pinned_item" && !r.m.Pending
-	return richview.Options{Edited: r.m.Edited, Muted: r.m.System, Dim: r.dimPending(), Channel: r.m.Channel, TS: r.m.TS, Truncate: r.truncate, Own: own}
+	o := richview.Options{Edited: r.m.Edited, Muted: r.m.System, Dim: r.dimPending(), Channel: r.m.Channel, TS: r.m.TS, Truncate: r.truncate, Own: own}
+	if r.m.Edited {
+		o.EditedTS = r.m.EditedTS // the "(edited)" label's tooltip: the edit's time
+	}
+	return o
 }
 
 // dimPending reports whether a pending row is drawn at .5. Slack's
@@ -653,7 +663,7 @@ func (pl *reactPill) buttonProps() slackc.Props {
 		cls += " c-reaction--reacted"
 	}
 	return pl.r.pane(slackc.Props{"$key": r.ts + ":" + re.Name, "data-qa": "reactji", "className": cls, "aria-pressed": re.Self,
-		"aria-label": reactionTip(r.rc.h, re, r.rc.selfID), "children": []any{
+		"aria-label": reactionAria(re), "children": []any{
 			slackc.Child("Emoji", slackc.Props{"emoji": re.Name, "size": mt.reactEmoji}, pl.layoutEmoji),
 			slackc.Child("ReactionCount", slackc.Props{"count": re.Count}, pl.layoutCount),
 		}})
@@ -769,13 +779,21 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 	}
 	y := dp(gtx, padTop) - dp(gtx, 4)
 
-	if m.Pinned && !rc.thread {
-		y += r.labelLine(gtx, rc, cx, y, "pin", pinnedLabel(rc, m.PinnedBy))
-	}
+	// MessageLabels (boot-shared meLQ) draws one primary label: ephemeral,
+	// then a broadcast, then pinned, then a custom response. Message (the
+	// channel row), ThreadRoot and ThreadReplyGeneric all wrap the row in
+	// it, so the thread pane shows pinned labels too; only
+	// ThreadReplyGeneric passes showBroadcast.
 	eph := ephemeral(rc, m)
-	if eph {
+	broadcast := rc.thread && !rc.parent && m.Broadcast
+	switch {
+	case eph:
 		y += r.labelLine(gtx, rc, cx, y, "eye", "Only visible to you")
-	} else if m.SlackbotCustomResponse() && !r.custom && !(m.Pinned && !rc.thread) {
+	case broadcast:
+		y += r.broadcastLabel(gtx, rc, y)
+	case m.Pinned:
+		y += r.labelLine(gtx, rc, cx, y, "pin", pinnedLabel(rc, m.PinnedBy))
+	case m.SlackbotCustomResponse() && !r.custom:
 		// MessageLabels' custom_response label (pencil), which the reskin drops
 		y += r.labelLine(gtx, rc, cx, y, "edit", "Custom response")
 	}
@@ -801,9 +819,11 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 	switch {
 	case r.edit != nil:
 		bg = c.Editing
-	case m.Pinned && rc.hovered:
+	// c-message_kit__background--labels: any primary label but ephemeral
+	// and custom_response (which have their own) tints the row
+	case (m.Pinned || broadcast) && rc.hovered:
 		bg = c.PinnedHover
-	case m.Pinned:
+	case m.Pinned || broadcast:
 		bg = c.Pinned
 	case rc.hovered, eph: // ephemeral: rgba(29,28,29,.04) (c-message_kit__background--labels--ephemeral)
 		bg = c.Hover
@@ -1629,11 +1649,30 @@ func (r *row) layoutTimestamp(gtx layout.Context, p slackc.Props) layout.Dimensi
 
 // labelLine draws a small gray label with an icon above the name ("Pinned").
 func (r *row) labelLine(gtx layout.Context, rc *rowCtx, x, y int, icon, txt string) int {
+	return r.labelWith(gtx, rc, y, icon, "", txt)
+}
+
+// labelGlyphs are the labels whose icon is a glyph of Slack's icon font
+// (MessageLabels' legacy Icon, size "inherit": the label's 13px), drawn on
+// the text's baseline (pin_icon.go), with the icon's CSS colour: pinned
+// #e8912d, broadcast sk_highlight, ephemeral the label's own colour.
+var labelGlyphs = map[string]func(gtx layout.Context, origin image.Point, em int, col color.NRGBA){
+	"pin":  drawPin,
+	"jump": drawJump,
+	"eye":  drawEye,
+}
+
+// labelWith is labelLine with a link leading the text: Slack's
+// ButtonLink (.c-message_kit__labels__link: the label's colour,
+// underlined under the pointer), clicked through r.labelLink.
+func (r *row) labelWith(gtx layout.Context, rc *rowCtx, y int, icon, link, txt string) int {
 	c := rc.c
 	lh := dp(gtx, 19)
 	is := dp(gtx, 14)
-	// icon right-aligned in the 36px gutter box that starts at x=20
-	iconR, textX := dp(gtx, 56), dp(gtx, 64)
+	// icon right-aligned in the 36px box after the label's padding-left
+	// (20 in a channel, .p-message_pane_message__message_label; 16 in the
+	// thread pane, .c-message_kit__thread_message), 8px before the text
+	iconR, textX := dp(gtx, rc.padX()+36), dp(gtx, rc.padX()+44)
 	switch {
 	case rc.denseChan():
 		// .c-message_kit__labels--dense.p-message_pane_message__message_label
@@ -1650,27 +1689,80 @@ func (r *row) labelLine(gtx layout.Context, rc *rowCtx, x, y int, icon, txt stri
 	if ls.Hidden() {
 		return 0
 	}
-	if icon != "pin" {
+	glyph, isGlyph := labelGlyphs[icon]
+	if !isGlyph {
 		at(gtx, iconR-is, y+(lh-is)/2, func(gtx layout.Context) layout.Dimensions {
 			return icons.Get(icon)(gtx, unit.Dp(14), ls.Color(c.PinIcon))
 		})
 	}
 	ts := labelsTextClass.Enter(gtx, 0, 0)
 	defer ts.Leave()
-	td := at(gtx, textX, y, func(gtx layout.Context) layout.Dimensions {
-		return styledLabel(gtx, rc.th, ts, textStyle{size: 13, col: c.Muted70, lineH: 19}, txt)
-	})
-	if icon == "pin" {
-		// Slack's thumb-tack-filled glyph at the label's 13px, on the
-		// text's baseline, right-aligned 8px before it (pin_icon.go)
+	st := textStyle{size: 13, col: c.Muted70, lineH: 19}
+	var td layout.Dimensions
+	tx := textX
+	if link != "" {
+		td = at(gtx, tx, y, func(gtx layout.Context) layout.Dimensions {
+			return r.labelLink.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				d := styledLabel(gtx, rc.th, ts, st, link)
+				if r.labelLink.Hovered() && d.Size.X > 0 {
+					slackc.DrawDecoration(gtx.Ops, css.DecoUnderline, cssText(ts, st).col, 0, float32(d.Size.Y-d.Baseline), float32(d.Size.X), 13*gtx.Metric.PxPerSp)
+				}
+				return d
+			})
+		})
+		tx += td.Size.X
+	}
+	if txt != "" {
+		td = at(gtx, tx, y, func(gtx layout.Context) layout.Dimensions {
+			return styledLabel(gtx, rc.th, ts, st, txt)
+		})
+	}
+	if isGlyph {
+		// right-aligned 8px before the text, on its baseline (pin_icon.go)
 		em := dp(gtx, 13)
 		base := y + lh*3/4
 		if td.Size.Y > 0 {
 			base = y + td.Size.Y - td.Baseline
 		}
-		drawPin(gtx, image.Pt(iconR-em, base-em*glyphAscent/glyphUPM), em, ls.Color(c.PinIcon))
+		col := c.PinIcon
+		switch icon {
+		case "jump":
+			col = c.Link
+		case "eye":
+			col = cssText(ts, st).col
+		}
+		glyph(gtx, image.Pt(iconR-em, base-em*glyphAscent/glyphUPM), em, ls.Color(col))
 	}
 	return dp(gtx, 20)
+}
+
+// broadcastLabel is MessageLabels' broadcast label, which only
+// ThreadReplyGeneric asks for (showBroadcast): a thread reply also sent to
+// the conversation. 2D+h's text is the link ("Also sent to the channel",
+// "Also sent as direct message" in a DM, "Also sent to the group" in a
+// group DM); onBroadcastClick opens the message in the conversation. A
+// pinned broadcast reads "{broadcast} ∙ {pinned}".
+func (r *row) broadcastLabel(gtx layout.Context, rc *rowCtx, y int) int {
+	m := &r.m
+	if r.labelLink.Clicked(gtx) {
+		rc.h.Navigate("c/" + m.Channel + "/m/" + m.TS)
+	}
+	link := "Also sent to the channel"
+	if app := rc.h.Core(); app != nil {
+		if cv, ok := app.Conv(m.Channel); ok {
+			switch cv.Kind {
+			case "im":
+				link = "Also sent as direct message"
+			case "mpim":
+				link = "Also sent to the group"
+			}
+		}
+	}
+	txt := ""
+	if m.Pinned {
+		txt = " \u2219 " + pinnedLabel(rc, m.PinnedBy)
+	}
+	return r.labelWith(gtx, rc, y, "jump", link, txt)
 }
 
 // broadcastLine draws Slack's broadcast preamble (ThreadBroadcastPreamble,
@@ -1787,7 +1879,7 @@ func (r *row) layoutReactionBar(gtx layout.Context, p slackc.Props) layout.Dimen
 		lay := func(gtx layout.Context) layout.Dimensions {
 			return r.flowPills(gtx, len(items), func(gtx layout.Context, i int) layout.Dimensions {
 				return slackc.LayoutElement(gtx, items[i])
-			}, false)
+			}, nil)
 		}
 		if st.Active() {
 			return st.Wrap(gtx, lay)
@@ -1800,23 +1892,147 @@ func (r *row) layoutReactionBar(gtx layout.Context, p slackc.Props) layout.Dimen
 	return r.reactionPills(gtx)
 }
 
-// reactionPills flows the Reaction pills and the add button.
+// reactionPills flows the Reaction pills, ReactionBar's expand or collapse
+// button (reactionCollapse) and the add button.
 func (r *row) reactionPills(gtx layout.Context) layout.Dimensions {
 	n := len(r.m.Reactions)
-	return r.flowPills(gtx, n+1, func(gtx layout.Context, i int) layout.Dimensions {
-		if i < n {
+	shown, more, sel := r.reactionCollapse(gtx, gtx.Constraints.Max.X)
+	extra := 0
+	if more != 0 {
+		extra = 1
+	}
+	return r.flowPills(gtx, shown+extra+1, func(gtx layout.Context, i int) layout.Dimensions {
+		switch {
+		case i < shown:
 			pl := &r.pills[i]
 			return slackc.Component(gtx, "Reaction", pl, (*reactPill).props, (*reactPill).layout)
+		case i < shown+extra:
+			return r.expandButton(gtx, more, n-shown, sel)
 		}
 		// add-reaction button
 		return slackc.Component(gtx, "ReactionAddButton", r, (*row).addButtonProps, (*row).layoutAddButton)
-	}, true)
+	}, func(i int, rect image.Rectangle) {
+		switch {
+		case i < shown:
+			r.reactRects = append(r.reactRects, rect.Add(r.reactAt))
+		case i >= shown+extra:
+			r.addRect = rect.Add(r.reactAt)
+		}
+	})
+}
+
+// ReactionBar's buttons after the pills (reactionCollapse).
+const (
+	reactMore = 1 // ReactionExpandButton: "{n} more"
+	reactLess = 2 // ReactionCollapseButton: "Show less"
+)
+
+// reactionCollapse is ReactionBar's collapse (boot-shared Ltiy,
+// getDerivedStateFromProps and render). With more than five reactions
+// Slack estimates each pill (8px per digit of its count, 18 per emoji,
+// 18) and, in the bar's width w, takes l = the pills that fit one line,
+// collapseLimit = those that fit within the first line's pills plus w-38,
+// and collapseTarget = the same less 64 more. Past collapseLimit the bar
+// shows collapseTarget pills and "{n} more" until it's expanded, then all
+// of them and "Show less". sel: one of the hidden reactions is the
+// viewer's ("N more" takes the reacted look). Slack also opens the bar
+// when the viewer's own new reaction lands among the hidden ones (a
+// vendor helper this audit couldn't read); Clack doesn't.
+func (r *row) reactionCollapse(gtx layout.Context, w int) (shown, more int, sel bool) {
+	re := r.m.Reactions
+	n := len(re)
+	if n <= 5 || w <= 0 {
+		return n, 0, false
+	}
+	bar := float64(w) / float64(max(gtx.Metric.PxPerDp, 0.01))
+	est := func(i int) float64 {
+		return 8*math.Floor(math.Log10(float64(max(re[i].Count, 1)))+1) + 18 + 18
+	}
+	// fit is lodash sortedIndex over the running estimates: how many sums
+	// stay under limit
+	fit := func(limit float64) int {
+		acc := 0.0
+		for i := range re {
+			if acc += est(i); acc >= limit {
+				return i
+			}
+		}
+		return n
+	}
+	l := fit(bar)
+	if l == 0 {
+		return n, 0, false // r[l-1] is undefined: Slack's limit is NaN and nothing collapses
+	}
+	first := 0.0
+	for i := 0; i < l; i++ {
+		first += est(i)
+	}
+	limit, target := fit(first+bar-38), fit(first+bar-38-64)
+	if n <= limit {
+		return n, 0, false
+	}
+	if r.reactExpanded {
+		return n, reactLess, false
+	}
+	for i := target; i < n; i++ {
+		if (&r.pills[i]).reacted() {
+			sel = true
+			break
+		}
+	}
+	return target, reactMore, sel
+}
+
+// expandButton is ReactionExpandButton ("{n} more", the tooltip "Show
+// more reactions" after 300ms) or ReactionCollapseButton ("Show less"):
+// .c-reaction_expand, the pill's box (24px, padding-inline 8, the 6%
+// fill, the otl-pry ring under the pointer) with its 12px bold
+// __overlay text; --reacted takes your reaction's colours.
+func (r *row) expandButton(gtx layout.Context, kind, hidden int, sel bool) layout.Dimensions {
+	rc := r.rc
+	c := rc.c
+	if r.reactExpand.Clicked(gtx) {
+		r.reactExpanded = kind == reactMore
+		rc.h.Invalidate()
+	}
+	txt := "Show less"
+	if kind == reactMore {
+		txt = strconv.Itoa(hidden) + " more"
+	}
+	ts := textStyle{size: 12, weight: theme.Bold, col: c.Text, lineH: 16}
+	if sel {
+		ts.col = c.ReactSelfText
+	}
+	ph := dp(gtx, mt.reactH)
+	size := image.Pt(dp(gtx, 8)+measure(gtx, rc.th, ts, txt).X+dp(gtx, 8), ph)
+	gtx.Constraints = layout.Exact(size)
+	d := r.reactExpand.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		rr := image.Rectangle{Max: size}
+		rad := ph / 2
+		switch {
+		case sel:
+			rrect(gtx.Ops, rr, rad, c.ReactSelfBg)
+			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
+		case r.reactExpand.Hovered():
+			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactHoverBorder)
+		default:
+			rrect(gtx.Ops, rr, rad, c.ReactBg)
+		}
+		at(gtx, dp(gtx, 8), (ph-dp(gtx, 16))/2, func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, ts, txt) })
+		return layout.Dimensions{Size: size}
+	})
+	if kind == reactMore {
+		r.expandTip.Delay = 300 * time.Millisecond
+		popups.Tooltip(gtx, rc.th, &r.expandTip, r.reactExpand.Hovered(), size, popups.Above, "Show more reactions", "")
+	}
+	return d
 }
 
 // flowPills places n items left to right in rows of pill height, wrapping
-// at the bar's width (the reaction bar's flex-wrap); native: the items are
-// the pills then the add button (their rects are kept for overlays).
-func (r *row) flowPills(gtx layout.Context, n int, item func(gtx layout.Context, i int) layout.Dimensions, native bool) layout.Dimensions {
+// at the bar's width (the reaction bar's flex-wrap). placed, for the
+// native bar, gets each item's rect (kept for overlays).
+func (r *row) flowPills(gtx layout.Context, n int, item func(gtx layout.Context, i int) layout.Dimensions, placed func(i int, rect image.Rectangle)) layout.Dimensions {
+	native := placed != nil
 	w := gtx.Constraints.Max.X
 	ph := dp(gtx, mt.reactH)
 	gap := dp(gtx, mt.reactGap)
@@ -1845,12 +2061,8 @@ func (r *row) flowPills(gtx layout.Context, n int, item func(gtx layout.Context,
 		}
 		rect := place(call, d.Size)
 		bottom = rect.Max.Y
-		switch {
-		case !native:
-		case i < n-1:
-			r.reactRects = append(r.reactRects, rect.Add(r.reactAt))
-		default:
-			r.addRect = rect.Add(r.reactAt)
+		if native {
+			placed(i, rect)
 		}
 	}
 	return layout.Dimensions{Size: image.Pt(w, bottom)}
@@ -2033,7 +2245,7 @@ func (pl *reactPill) count(gtx layout.Context, st slackc.Styled) layout.Dimensio
 		cs.col, cs.weight = rc.c.ReactSelfText, theme.Bold
 	}
 	cs.col = st.Color(cs.col)
-	return label(gtx, rc.th, cs, strconv.Itoa(re.Count))
+	return label(gtx, rc.th, cs, reactionCount(re.Count))
 }
 
 // failedLine is "Message failed to send. Retry · Delete" under a failed
@@ -2412,40 +2624,100 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 }
 
 // reactionTip is the tooltip text for a reaction pill.
+// reactionTip is the reaction tooltip's text, Slack's getTip (boot-shared
+// Qvn6): every reactor by name, the viewer as "You" first or "you" after,
+// joined like listify ("A and B", "A, B, and C"), and "others" at the end
+// once the count passes 50 (the API stops listing reactors); then
+// "reacted with :name:", which the tooltip sets in the regular-weight
+// subtitle (reactionTipSubtitle). The viewer alone reads "You (click to
+// remove)" (showClickToRemove).
 func reactionTip(h Host, re *core.Reaction, selfID string) string {
-	names := make([]string, 0, 4)
+	sub := reactionTipSubtitle + " :" + re.Name + ":"
+	if len(re.Users) == 1 && re.Users[0] == selfID {
+		lastTip.txt, lastTip.count = "You (click to remove) "+sub, re.Count
+		return lastTip.txt
+	}
+	names := make([]string, 0, len(re.Users)+1)
 	for i, id := range re.Users {
-		if i >= 3 {
-			break
-		}
 		if id == selfID {
-			names = append(names, "you")
+			if i == 0 {
+				names = append(names, "You")
+			} else {
+				names = append(names, "you")
+			}
 			continue
 		}
 		n := id
-		if h.Core() != nil {
-			if u, ok := h.Core().User(id); ok && u.Name != "" {
+		if app := h.Core(); app != nil {
+			if u, ok := app.User(id); ok && u.Name != "" {
 				n = u.Name
+			} else {
+				ensureUser(h, id)
 			}
 		}
 		names = append(names, n)
 	}
-	others := re.Count - len(names)
-	var who string
-	switch {
-	case len(names) == 0:
-		who = strconv.Itoa(re.Count) + " people"
-	case others > 0:
-		who = strings.Join(names, ", ") + " and " + strconv.Itoa(others) + " others"
-	case len(names) == 1:
-		who = names[0]
-	default:
-		who = strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
+	if len(names) > 1 && re.Count > 50 {
+		names = append(names, "others")
 	}
-	if len(names) > 0 && names[0] == "you" {
-		who = "You" + who[3:]
+	txt := sub
+	if len(names) > 0 {
+		txt = listify(names) + " " + sub
 	}
-	return who + " reacted with :" + re.Name + ":"
+	lastTip.txt, lastTip.count = txt, re.Count
+	return txt
+}
+
+// reactionTipSubtitle starts the tooltip's TooltipSubtitle run.
+const reactionTipSubtitle = "reacted with"
+
+// listify joins names as Slack's listify does in en-US: "A", "A and B",
+// "A, B, and C" (the serial comma from three on).
+func listify(names []string) string {
+	switch len(names) {
+	case 0:
+		return ""
+	case 1:
+		return names[0]
+	case 2:
+		return names[0] + " and " + names[1]
+	}
+	return strings.Join(names[:len(names)-1], ", ") + ", and " + names[len(names)-1]
+}
+
+// reactionAria is the pill's aria-label (Reaction 9FoR): "{count}
+// reaction(s), react with {name} emoji", the name's _ and - read as spaces.
+func reactionAria(re *core.Reaction) string {
+	word := "reactions"
+	if re.Count == 1 {
+		word = "reaction"
+	}
+	return strconv.Itoa(re.Count) + " " + word + ", react with " + emojiPhrase.Replace(re.Name) + " emoji"
+}
+
+// emojiPhrase reads an emoji name as words (Lf9r: _ and - become spaces).
+var emojiPhrase = strings.NewReplacer("_", " ", "-", " ")
+
+// reactionCount is the pill's count as formatNumber writes it (en-US
+// grouping: 1,234).
+func reactionCount(n int) string {
+	s := strconv.Itoa(n)
+	if n < 1000 && n > -1000 {
+		return s
+	}
+	neg := strings.HasPrefix(s, "-")
+	s = strings.TrimPrefix(s, "-")
+	var b strings.Builder
+	if neg {
+		b.WriteByte('-')
+	}
+	for i, ch := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			b.WriteByte(',')
+		}
+		b.WriteRune(ch)
+	}
+	return b.String()
 }
 
 // skeleton draws a loading placeholder row.

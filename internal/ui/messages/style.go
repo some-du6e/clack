@@ -54,7 +54,9 @@ var lightColors = colors{
 	Pinned: rgba(0xf2c744, 0.1), PinnedHover: rgba(0xf2c744, 0.14), Highlight: rgba(0xf2c744, 0.2),
 	BadgeBg: rgba(0x1d1c1d, 0.06), BadgeText: rgb(0x454447),
 	ReactBg: rgba(0x1d1c1d, 0.06), ReactHoverBorder: rgb(0x7c7a7f),
-	ReactSelfBg: rgb(0xe3f8ff), ReactSelfHoverBg: rgb(0xd5f3ff),
+	// .c-reaction--reacted(:hover): base-hgl-1, content-hgl-1 bold and a
+	// 1px base-inv-hgl-1 ring; hover changes nothing
+	ReactSelfBg: rgb(0xe3f8ff), ReactSelfHoverBg: rgb(0xe3f8ff),
 	ReactSelfBorder: rgb(0x1264a3), ReactSelfText: rgb(0x1264a3),
 	Link: rgb(0x1264a3), NewLine: rgb(0xe01e5a), DayLine: rgb(0xdddddd), PillBorder: rgba(0x1d1c1d, 0.13),
 	Shadow: rgba(0x000000, 0.08), ToolbarIcon: rgb(0x616061), ToolbarHoverBg: rgba(0x1d1c1d, 0.04),
@@ -72,8 +74,10 @@ var darkColors = colors{
 	Pinned: rgba(0xf2c744, 0.1), PinnedHover: rgba(0xf2c744, 0.14), Highlight: rgba(0xf2c744, 0.1),
 	BadgeBg: rgba(0xe8e8e8, 0.13), BadgeText: rgba(0xe8e8e8, 0.7),
 	ReactBg: rgba(0xe8e8e8, 0.06), ReactHoverBorder: rgba(0xe8e8e8, 0.3),
-	ReactSelfBg: rgba(0x1d9bd1, 0.2), ReactSelfHoverBg: rgba(0x1d9bd1, 0.3),
-	ReactSelfBorder: rgb(0x1d9bd1), ReactSelfText: rgb(0x1d9bd1),
+	// .sk-client-theme--dark .c-reaction--reacted: a solid base-inv-hgl-1
+	// pill, no ring, content-pry text (bold), the same under the pointer
+	ReactSelfBg: rgb(0x0a77a7), ReactSelfHoverBg: rgb(0x0a77a7),
+	ReactSelfBorder: color.NRGBA{}, ReactSelfText: rgb(0xf8f8f8),
 	Link: rgb(0x1d9bd1), NewLine: rgb(0xe01e5a), DayLine: rgba(0xe8e8e8, 0.13), PillBorder: rgba(0xe8e8e8, 0.13),
 	Shadow: rgba(0x000000, 0.3), ToolbarIcon: rgb(0xababad), ToolbarHoverBg: rgb(0x222529),
 	Tooltip: rgb(0xe8e8e8), TooltipText: rgb(0x1a1d21), Skeleton: rgb(0x2c2d30),

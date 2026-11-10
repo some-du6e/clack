@@ -1,0 +1,55 @@
+name: messages-audit-shots
+# Message rows against Slack (docs/MESSAGES-AUDIT.md): runs the audit's
+# tests (labels, the reaction tooltip, the (edited) tooltip) and draws the
+# rows it changed on the synthetic #release channel of
+# internal/ui/messages/compact_shots_test.go (made-up people and messages,
+# fakeslack's pictures), light and dark, headlessly through Gio's GPU
+# renderer (Mesa llvmpipe): the thread pane with a pinned reply and a reply
+# also sent to the channel, and the reaction tooltip
+# (messages-audit-shots artifact). Nothing here talks to Slack.
+on:
+  push:
+    paths:
+      - "internal/ui/messages/messages_audit_shots_test.go"
+      - "internal/ui/messages/reaction_tip.go"
+      - "internal/ui/messages/pin_icon.go"
+      - "internal/ui/messages/row.go"
+      - "internal/ui/richview/tooltip.go"
+      - ".github/workflows/messages-audit-shots.yml"
+  workflow_dispatch:
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb libgl1-mesa-dri libegl-mesa0
+
+permissions:
+  contents: read
+
+jobs:
+  messages-audit-shots:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS fonts-lato
+      - name: audit tests and screenshots
+        env:
+          MESSAGES_AUDIT_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          CLACK_PIXEL_TESTS: "1"
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          GALLIUM_DRIVER: llvmpipe
+        run: |
+          mkdir -p "$MESSAGES_AUDIT_SHOTS_DIR"
+          go test -count=1 -v -run 'TestEditedTipLikeSlack|TestEditedLabel' ./internal/ui/richview
+          xvfb-run -a go test -count=1 -v -run 'TestReactionTipText|TestReactionTooltipDraws|TestCSSReactionTooltip|TestReactionBarCollapseLikeSlack|TestRowHeightsMatchSlack|TestMessagesAuditShots' ./internal/ui/messages
+          ls -la "$MESSAGES_AUDIT_SHOTS_DIR"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: messages-audit-shots
+          path: dist/shots
