@@ -405,18 +405,24 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 		y += th
 	}
 
-	// control strip: + (new), theme toggle, avatar with presence.
+	// control strip: + (new), Slack's focus mode button when the account
+	// has it (SilentSidebarTrigger, focus_mode.go), avatar with presence.
 	cs := gtx.Dp(36)
 	by := top + height - gtx.Dp(164) + gtx.Dp(4)
-	for _, k := range []string{"rail.new", "rail.theme"} {
+	if !a.focusModeOn() {
+		by += gtx.Dp(52) // the strip keeps its bottom
+	}
+	newY := by
+	for _, k := range []string{"rail.new", "rail.focus"} {
 		k := k
-		icon := "plus"
-		if k == "rail.theme" {
-			icon = "moon"
-			if a.th.Dark {
-				icon = "sun"
+		if k == "rail.focus" {
+			if a.focusModeOn() {
+				a.focusButton(gtx, image.Pt(x0, by), cs)
+				by += gtx.Dp(52)
 			}
+			continue
 		}
+		icon := "plus"
 		org := image.Pt(x0, by)
 		at(gtx, org, image.Pt(cs, cs), func(gtx layout.Context) layout.Dimensions {
 			btn := a.clicks.get(k)
@@ -438,11 +444,8 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 		by += gtx.Dp(52)
 	}
 	if clicked(a.clicks.get("rail.new")) {
-		org := image.Pt(x0, top+height-gtx.Dp(164)+gtx.Dp(4)) // the + button (first in the strip)
+		org := image.Pt(x0, newY) // the + button (first in the strip)
 		a.openCreateMenu(image.Rectangle{Min: org, Max: org.Add(image.Pt(cs, cs))})
-	}
-	if clicked(a.clicks.get("rail.theme")) {
-		a.ToggleDark()
 	}
 	at(gtx, image.Pt(x0, by), image.Pt(cs+gtx.Dp(8), cs+gtx.Dp(8)), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, a.clicks.get("rail.me"), nil, func(gtx layout.Context) layout.Dimensions {

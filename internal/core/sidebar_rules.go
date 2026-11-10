@@ -126,6 +126,11 @@ var defaultExperimentGroups = map[string]string{
 	// dialog (ListsTabbingPref returns null without it), and the Lists
 	// grid's Tab navigation follows it (listview/keys.go)
 	"lists_tabbing_navigation": "on",
+	// Appearance > "Always use dark color mode when in focus mode." shows in
+	// the live dialog, which ThemeColorModeContainer draws only under
+	// silent_sidebar (focus mode, ui/focus_mode.go); the Availability page
+	// is availability_prefs_section's (AvailabilitySection)
+	"silent_sidebar": "on", "availability_prefs_section": "on",
 }
 
 func (a *App) sidebarExperiments() sidebarExp {

@@ -431,7 +431,7 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 		indent = gtx.Dp(16)
 		label = conv.displayName()
 		sel = route.Channel() == conv.ID
-		if conv.Unread && !conv.Muted {
+		if conv.Unread && !conv.Muted && !a.focusQuiet() { // focus mode: no bolding (focus_mode.go)
 			weight = theme.Black
 			col = c.SidebarTextUnread
 		}
@@ -462,7 +462,7 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 	switch {
 	case conv != nil:
 		var mods uint64
-		if conv.Unread {
+		if conv.Unread && !a.focusQuiet() {
 			mods |= 1
 		}
 		if conv.Muted {
@@ -644,9 +644,16 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 			m := op.Record(gtx.Ops)
 			bd := a.badge(gtx, rs.mentions, c.Badge, c.BadgeText)
 			call := m.Stop()
-			t := op.Offset(image.Pt(right-bd.Size.X, (rowH-bd.Size.Y)/2)).Push(gtx.Ops)
-			call.Add(gtx.Ops)
-			t.Pop()
+			if a.focusQuiet() && !btn.Hovered() {
+				// focus mode: c-badge--dot, the pill clipped to a 16px circle
+				// at scale .4445 (the count shows again on hover)
+				ctr := image.Pt(right-bd.Size.X/2, rowH/2)
+				theme.Circle(gtx, ctr, gtx.Dp(16)*4445/10000, c.Badge)
+			} else {
+				t := op.Offset(image.Pt(right-bd.Size.X, (rowH-bd.Size.Y)/2)).Push(gtx.Ops)
+				call.Add(gtx.Ops)
+				t.Pop()
+			}
 			right -= bd.Size.X + gtx.Dp(6)
 		}
 		// Drafts & sent's badges (Slack's OutboxLinkContent): "✎ N" for
