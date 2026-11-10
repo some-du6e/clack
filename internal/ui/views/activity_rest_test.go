@@ -157,6 +157,11 @@ func TestActivityCustomViewsLikeSlack(t *testing.T) {
 	if got := actTabsNow(v); got != "All,DMs,Mentions,Threads" {
 		t.Fatalf("tabs %s", got)
 	}
+	// the sidebar's Starred and a custom section (fakeslack's ids)
+	st := v.h.Core().S
+	st.Lock()
+	st.Sections = []slack.Section{{ID: "L0FAKE00", Name: "Starred", Type: "stars"}, {ID: "L0FAKE01", Name: "Synthetic projects", Type: "standard"}}
+	st.Unlock()
 	acts, secs := v.suggestions()
 	var names []string
 	for _, g := range acts {
@@ -165,7 +170,8 @@ func TestActivityCustomViewsLikeSlack(t *testing.T) {
 	if strings.Join(names, ",") != "Unreads,Reactions" {
 		t.Errorf("default suggestions %v", names)
 	}
-	if len(secs) == 0 || secs[0].name != "Starred" || secs[0].icon != "star" {
+	if len(secs) != 2 || secs[0].name != "Starred" || secs[0].icon != "star" || secs[1].name != "Synthetic projects" ||
+		secs[1].icon != "section" || len(secs[1].st.sections) != 1 || secs[1].st.sections[0] != "L0FAKE01" {
 		t.Errorf("sidebar suggestions %+v", secs)
 	}
 	v.plus.Click()
@@ -180,6 +186,7 @@ func TestActivityCustomViewsLikeSlack(t *testing.T) {
 			reactions = it.do
 		}
 	}
+	v.menu = actMenuNone // as the row's click does
 	reactions()
 	e.until(t, "the Reactions view", func() bool { return actTabsNow(v) == "All,DMs,Mentions,Threads,Reactions" })
 	if !actFakeWrite(fs, "activity.views.create", func(f url.Values) bool {
