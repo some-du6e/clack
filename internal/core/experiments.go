@@ -225,6 +225,10 @@ var experimentReads = map[string][]string{
 	// code channels
 	"session_channels": on, "session_channels_code_tab_pr": on, "session_channels_gh_wo": on,
 	"session_channels_inline_diff": on,
-	// huddles
+	// huddles (ui/huddleui/experiments.go)
 	"scheduled_huddles": on, "huddles_raised_hand_queue": on,
+	"huddle_join_from_preview": on, "huddles_preview_v2": on, "huddles_alone_timeout": on, "huddles_alone_timeout_shortened": on,
+	"huddles_av_button_permission_handling": on, "huddles_awareness_timestamp": on, "huddles_miles_davis": on,
+	"huddles_missed_notification": on, "huddles_multi_device": {"treatment"}, "huddles_screenshare_popout": on,
+	"huddles_switch_microphone_helper": on, "huddles_noise_suppression_awareness": on,
 }

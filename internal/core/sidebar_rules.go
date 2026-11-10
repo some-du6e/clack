@@ -81,6 +81,13 @@ var defaultExperimentGroups = map[string]string{
 	// silent_sidebar (focus mode, ui/focus_mode.go); the Availability page
 	// is availability_prefs_section's (AvailabilitySection)
 	"silent_sidebar": "on", "availability_prefs_section": "on",
+	// huddles (ui/huddleui/experiments.go), as experiments.getByUser had
+	// them on 2026-11-10
+	"huddle_join_from_preview": "on", "huddles_link_v2": "on", "huddles_preview_v2": "on", "huddles_alone_timeout": "on",
+	"huddles_av_button_permission_handling": "on", "huddles_awareness_timestamp": "on", "huddles_discovery_calls": "treatment",
+	"huddles_miles_davis": "on", "huddles_missed_notification": "on", "huddles_multi_device": "treatment",
+	"huddles_mva_window": "on", "huddles_screenshare_popout": "on", "huddles_screenshare_share_audio": "on",
+	"huddles_switch_microphone_helper": "on",
 }
 
 func (a *App) sidebarExperiments() sidebarExp {

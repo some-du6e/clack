@@ -42,15 +42,36 @@ func (s *Session) Sticker() string {
 
 // SetSticker puts emoji on your tile for everyone ("" takes it off):
 // Slack's sendStickyReaction, an awareness broadcast with stickyEmoji.
+// Like Slack's sticky reducer it stamps the entry with the time
+// (fieldTimestampMs: Date.now()); the stamp goes out only under
+// huddles_awareness_timestamp.
 func (s *Session) SetSticker(emoji string) error {
+	now := time.Now()
 	s.mu.Lock()
 	s.sticker = emoji
+	s.stickerTS = 0
+	if emoji != "" {
+		s.stickerTS = now.UnixMilli()
+	}
 	if p := s.people[s.o.SelfID]; p != nil {
-		p.Sticker, p.StickerAt = emoji, time.Now()
+		p.Sticker, p.StickerAt, p.StickerTS = emoji, now, s.stickerTS
 	}
 	s.mu.Unlock()
 	s.changed()
 	return s.broadcastAwareness()
+}
+
+// SetExperiments changes the experiments the session follows (the
+// Experiments plugins flip them live): the next broadcast carries
+// timestamps or not, the next message is keyed per device or per person.
+func (s *Session) SetExperiments(e Experiments) {
+	s.mu.Lock()
+	changed := s.exp != e
+	s.exp = e
+	s.mu.Unlock()
+	if changed {
+		s.changed()
+	}
 }
 
 // ToggleSticker is a click on a sticker: on, or off when it's the one you
@@ -62,14 +83,20 @@ func (s *Session) ToggleSticker(emoji string) error {
 	return s.SetSticker(emoji)
 }
 
-// awarenessState is your entries as Slack broadcasts them.
+// awarenessState is your entries as Slack broadcasts them: with
+// huddles_awareness_timestamp, each with its field_timestamp_ms.
 func (s *Session) awarenessState() []AwarenessPayload {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.sticker == "" {
 		return nil
 	}
-	return []AwarenessPayload{{FieldName: AwarenessSticky, FieldValue: s.sticker}}
+	e := AwarenessPayload{FieldName: AwarenessSticky, FieldValue: s.sticker}
+	if s.exp.AwarenessTimestamp && s.stickerTS != 0 {
+		ts := s.stickerTS
+		e.FieldTimestampMS = &ts
+	}
+	return []AwarenessPayload{e}
 }
 
 // sendAware sends an awareness message as Slack's broadcaster does (no
@@ -113,6 +140,10 @@ func (s *Session) awarenessClose() {
 }
 
 // onAwareness applies someone's awareness message (ChimeChannelListener).
+// Under huddles_multi_device a person's entries are kept per device (the
+// sender's attendee: uniqueId), so each of their tiles shows its own
+// sticker; otherwise per person, and a broadcast from either device
+// replaces what both of their tiles show.
 func (s *Session) onAwareness(pm *PeerMessage, senderAtt string) {
 	switch {
 	case pm.AwarenessQuery != nil && pm.AwarenessQuery.Channel == s.join.RoomID:
@@ -122,19 +153,30 @@ func (s *Session) onAwareness(pm *PeerMessage, senderAtt string) {
 		if a.User == "" || a.Channel != s.join.RoomID || a.User == s.o.SelfID {
 			return
 		}
-		sticker := ""
+		sticker, ts := "", int64(0)
 		for _, e := range a.State {
 			if e.FieldName == AwarenessSticky {
 				sticker = e.FieldValue
+				if e.FieldTimestampMS != nil {
+					ts = *e.FieldTimestampMS
+				}
 			}
 		}
+		now := time.Now()
 		s.mu.Lock()
 		key := s.keyFor(senderAtt, a.User)
 		if key == "" {
 			key = a.User
 		}
 		p := s.personKey(key, a.User)
-		p.Sticker, p.StickerAt = sticker, time.Now()
+		p.Sticker, p.StickerAt, p.StickerTS = sticker, now, ts
+		if !s.exp.MultiDevice { // one set of entries per person
+			for _, q := range s.people {
+				if q.UserID == a.User {
+					q.Sticker, q.StickerAt, q.StickerTS = sticker, now, ts
+				}
+			}
+		}
 		s.mu.Unlock()
 		s.changed()
 	case pm.AwarenessClose != nil:
@@ -143,9 +185,10 @@ func (s *Session) onAwareness(pm *PeerMessage, senderAtt string) {
 			return
 		}
 		s.mu.Lock()
+		multi := s.exp.MultiDevice
 		for _, p := range s.people {
-			if p.UserID == a.User && (senderAtt == "" || p.AttendeeID == "" || p.AttendeeID == senderAtt) {
-				p.Sticker, p.StickerAt = "", time.Time{}
+			if p.UserID == a.User && (!multi || senderAtt == "" || p.AttendeeID == "" || p.AttendeeID == senderAtt) {
+				p.Sticker, p.StickerAt, p.StickerTS = "", time.Time{}, 0
 			}
 		}
 		s.mu.Unlock()

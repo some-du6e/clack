@@ -105,7 +105,9 @@ func main() {
 				time.Sleep(50 * time.Millisecond)
 			}
 			s := ctl.Session()
-			s.SetCaptions(*captions)
+			if *captions { // ⋯ › Show captions › Closed captions
+				ctl.ToggleClosedCaptions(s)
+			}
 			if *muted {
 				s.SetMuted(true)
 			}

@@ -230,8 +230,10 @@ func (c *Controller) onScreenLock(locked bool) {
 
 // The songs (HuddleLoungeMusicManager's getSongsMetadata, IeZG, and their
 // BLe4 CDN files); the huddles_music_player_song_key pref picks one,
-// "jazz" by default. The Miles Davis three play only where Slack enables
-// them (isMilesDavisEnabled); Clack falls back to "jazz" for them.
+// "jazz" by default. The Miles Davis three are enabled only under
+// huddles_miles_davis (isMilesDavisEnabled; without it they're disabled
+// and HuddleLoungeMusicMenuTrigger plays "jazz" for them: !_ &&
+// U1.has(f) ? "jazz" : f).
 var loungeSongs = map[string]string{
 	"jazz":    "waiting_muzak-9187b04.mp3",     // Smooth Jazz
 	"subway":  "subway_music-ff03dfb.mp3",      // Subway Music
@@ -244,6 +246,14 @@ var loungeSongs = map[string]string{
 	"piano":   "piano_concerto-d00d84e.mp3",    // Piano Concerto
 }
 
+// milesDavisSongs are So What, Freddie Freeloader and All Blues by Miles
+// Davis (IeZG's so_what, freddie_freeloader, all_blues; BLe4 Hr, tx, Dz).
+var milesDavisSongs = map[string]string{
+	"so_what":            "so_what-a599bd1.mp3",
+	"freddie_freeloader": "freddie_freeloader-ecebb1a.mp3",
+	"all_blues":          "all_blues-c6271f3.mp3",
+}
+
 // loungeSong is the CDN file for the user's song pref.
 func (c *Controller) loungeSong() string {
 	key := "jazz"
@@ -251,6 +261,12 @@ func (c *Controller) loungeSong() string {
 		if k := app.PrefString("huddles_music_player_song_key"); k != "" {
 			key = k
 		}
+	}
+	if f, ok := milesDavisSongs[key]; ok {
+		if c.on(ExpMilesDavis) {
+			return f
+		}
+		key = "jazz"
 	}
 	if f, ok := loungeSongs[key]; ok {
 		return f

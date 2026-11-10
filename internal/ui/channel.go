@@ -149,12 +149,13 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		a.openNotifPrefs(ch)
 	}
 
-	if !appDM {
+	// doesChannelSupportHuddles: no button in a channel you're previewing
+	// without huddle_join_from_preview (huddleui.SupportsHuddles)
+	if hud := a.huddles(); !appDM && hud.SupportsHuddles(ch) {
 		// Huddle split button (94×28: 74 + 20); Slack 2026's --polish variant
 		// has no outline, only hover fills. While a huddle is on, huddleui
 		// draws Slack's live button: mint with faces, headphones and a bare
 		// count, or solid jade with the leave headphones when you're in it.
-		hud := a.huddles()
 		hud.Seed()
 		hw := gtx.Dp(94)
 		live := hud.HeaderLive(ch)

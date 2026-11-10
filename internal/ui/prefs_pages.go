@@ -671,8 +671,11 @@ func (p *prefsModal) audioVideoPage(f *prefsForm) {
 	// prefs.video.effect: "blur" or unset (huddle/bgblur, huddle_av.go)
 	f.option("video_background_filter", "Blur your video background when you’re in a huddle with your camera on", "", p.a.huddleBlurOn(), false, p.a.toggleHuddleBlur)
 	// HuddleJoinPreviewPref: starting a huddle opens Slack's preview
-	// window first (huddleui/preview.go); unset is off
-	f.check("huddles_show_join_preview", "Show audio and video preview", "", false, false)
+	// window first (huddleui/preview.go); unset is off. It renders only
+	// under huddles_preview_v2 (aa02: t ? the row : null)
+	if c := p.a.Core(); c == nil || c.Experiment(huddleui.ExpPreviewV2) == "on" {
+		f.check("huddles_show_join_preview", "Show audio and video preview", "", false, false)
+	}
 	f.hr()
 	// HuddleBackgroundPref: Mod+Shift+Space while in a huddle
 	// (huddleui/avprefs.go, globalkey)
