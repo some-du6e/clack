@@ -337,7 +337,7 @@ func TestSlickViewCharacterCounter(t *testing.T) {
 		return c.ui.shown&(1<<crSend) != 0
 	})
 	edType(c.ed, " world")
-	count = regexp.MustCompile(`(^|\D)11/40,?000`)
+	count = regexp.MustCompile(`(^|\D)11/12,?000`)
 	e.until(5*time.Second, "the count following the text (11)", frame, func() bool {
 		txt, ok := e.treeWith("slick-char-counter")
 		return ok && count.MatchString(txt)
