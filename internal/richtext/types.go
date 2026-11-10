@@ -192,16 +192,21 @@ type Attachment struct {
 	// Hidden is attachment.hidden.
 	// Legacy: made from a message's attachments array (not a video or
 	// call block, a huddle card or a file).
-	Legacy       bool
-	ID           string
-	OriginalURL  string
-	ServiceURL   string
-	VideoHTML    bool
-	AudioHTML    bool
-	OtherHTML    bool
-	ImageBytes   int64
-	BotID        string
-	IsAppUnfurl  bool
+	Legacy      bool
+	ID          string
+	OriginalURL string
+	ServiceURL  string
+	VideoHTML   bool
+	AudioHTML   bool
+	OtherHTML   bool
+	ImageBytes  int64
+	BotID       string
+	IsAppUnfurl bool
+	// BotName is BotID's bot name as Slack's getBotById reads it (the
+	// bots store: bots.info, or the message's bot_profile for the same
+	// bot), "" while it is unknown: the "Added by" attribution then says
+	// "a bot" (AttachmentFooterBotAttribution, renderAttributionMaybe).
+	BotName      string
 	LinkedInText bool
 	Hidden       bool
 	// Kit: the attachment has Block Kit blocks (Slack draws it as
@@ -245,6 +250,13 @@ type File struct {
 type Doc struct {
 	Blocks []Block
 	Jumbo  bool // emoji-only, render emoji 32px
+}
+
+// BotNamer is an optional Resolver extension: a bot's name from the
+// bots cache (bots.info), "" when it isn't cached yet (the resolver then
+// asks for it and the Doc is rebuilt when it arrives).
+type BotNamer interface {
+	BotName(id string) string
 }
 
 // Resolver supplies names and emoji while building a Doc.

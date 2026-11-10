@@ -30,6 +30,8 @@ import (
 //   - an image: Copy Image / Copy Image URL; an emoji: the same for its
 //     image;
 //   - a file (card, gallery image, video): the file menu;
+//   - a v3 link preview (row, social, video, music, image cards): the
+//     attachment's menu (Remove preview for the sender, Copy link);
 //   - inline code or a code block: Copy this code / Copy this code block
 //     (the desktop shell's menu with BaseCopyCodeBlockContextMenuTrigger's
 //     item);
@@ -93,6 +95,12 @@ func (s *listState) contextMenuFor(h Host, r *row, i int, p f32.Point, at image.
 	}
 	local := p.Sub(f32.Pt(float32(r.bodyRect.Min.X), float32(s.pos[i]+r.bodyRect.Min.Y)))
 	if local.X >= 0 && local.Y >= 0 && int(local.X) < r.bodyRect.Dx() && int(local.Y) < r.bodyRect.Dy() {
+		if ah, ok := r.rv.AttachmentAt(local); ok && ah.Att != nil {
+			// renderV3Attachment's onContextMenu: the attachment's own
+			// menu, wherever in the card (popups.NewAttachmentMenu)
+			return popups.NewAttachmentMenu(h, at, popups.AttachmentMenu{CanRemove: ah.CanRemove,
+				Channel: m.Channel, TS: m.TS, ID: ah.Att.ID, CopyURL: ah.CopyURL})
+		}
 		hit := r.rv.HitAt(local)
 		if code, block, ok := r.rv.CodeAt(local); ok && hit.Kind == richview.HitNone && hit.EmojiURL == "" {
 			// BaseCopyCodeBlockContextMenuTrigger: the shell's menu with

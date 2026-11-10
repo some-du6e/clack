@@ -260,3 +260,23 @@ func TestTriggerRouter(t *testing.T) {
 		t.Fatal("no card after coming back")
 	}
 }
+
+// PlaceTop is keepInBounds for "top" (a link preview's hover card),
+// measured live (2026-11-09): a 716x114 wrapper at (458,361) puts the
+// 340x299 card at (646,50), centered, 12px above. With no room above it
+// flips below; it stays 16px from the window's sides.
+func TestPlaceTop(t *testing.T) {
+	win := image.Pt(1440, 900)
+	wrap := image.Rect(458, 361, 458+716, 361+114)
+	if p := PlaceTop(wrap, image.Pt(340, 299), win, 12, 16, 10); p != image.Pt(646, 50) {
+		t.Errorf("above: %v, want (646,50)", p)
+	}
+	low := image.Rect(458, 100, 458+716, 214)
+	if p := PlaceTop(low, image.Pt(340, 299), win, 12, 16, 10); p != image.Pt(646, 214+12) {
+		t.Errorf("no room above: %v, want below at y %d", p, 214+12)
+	}
+	edge := image.Rect(0, 500, 100, 614)
+	if p := PlaceTop(edge, image.Pt(340, 299), win, 12, 16, 10); p.X != 16 {
+		t.Errorf("at the left edge: x %d, want 16", p.X)
+	}
+}

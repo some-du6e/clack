@@ -60,6 +60,7 @@ func FromMessage(r Resolver, m *slack.Message) Doc {
 					at.ID = strconv.Itoa(a.ID)
 				}
 				at.BotID = firstNonEmpty(a.BotID, m.BotID)
+				at.BotName = botName(r, m, at.BotID)
 				at.LinkedInText = a.FromURL != "" && linksURL(m, a.FromURL)
 			}
 			d.Blocks = append(d.Blocks, b)
@@ -73,6 +74,23 @@ func FromMessage(r Resolver, m *slack.Message) Doc {
 		HighlightDoc(d.Blocks, h.HighlightWords())
 	}
 	return d
+}
+
+// botName is getBotById's name for id: the resolver's bots cache, else
+// the message's bot_profile when it is the same bot ("" unknown).
+func botName(r Resolver, m *slack.Message, id string) string {
+	if id == "" {
+		return ""
+	}
+	if bn, ok := r.(BotNamer); ok {
+		if n := bn.BotName(id); n != "" {
+			return n
+		}
+	}
+	if bp := m.BotProfile; bp != nil && bp.ID == id {
+		return bp.Name
+	}
+	return ""
 }
 
 // linksURL reports whether m's text or rich text links u (Slack's

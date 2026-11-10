@@ -78,6 +78,13 @@ func NewProfileCard(h Host, anchor image.Point, userID string) *ProfileCard {
 	return p
 }
 
+// NewBotProfileCard is ProfileCardTrigger's click card for a bot with no
+// member (serviceId): Slack's app card at anchor, as "Added by <app>"
+// under a Block Kit attachment opens it.
+func NewBotProfileCard(h Host, anchor image.Point, botID string) *ProfileCard {
+	return &ProfileCard{h: h, bot: botID, anchor: anchor, key: nextKey("card")}
+}
+
 // NewHoverProfileCard is the card the ui root draws while the pointer
 // rests on a profile trigger whose window bounds are anchor (Slack's
 // ProfileHoverTrigger: the card's bottom-left corner 12px above the

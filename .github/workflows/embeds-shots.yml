@@ -7,7 +7,10 @@ name: embeds-shots
 # or the link), the #embeds-gallery render test with chat.deleteAttachment,
 # a click on a bare image link's unfurl opening the viewer, and screenshots
 # of each card (light, dark, the X post hovered), the whole channel, the
-# "Remove preview?" dialog and the viewer open on an unfurl image, rendered
+# "Remove preview?" dialog and the viewer open on an unfurl image, the
+# hover card over a row card, the attachment context menu (own and
+# another person's), the rail remove button of the classic and Block Kit
+# cards and "Added by <app>", rendered
 # headlessly against internal/fakeslack. Synthetic only: nothing here
 # talks to Slack.
 on:
@@ -22,6 +25,18 @@ on:
       - "internal/ui/richview/unfurl.go"
       - "internal/ui/richview/unfurl_test.go"
       - "internal/ui/richview/unfurl_click_test.go"
+      - "internal/ui/richview/unfurl_hover.go"
+      - "internal/ui/richview/unfurl_hover_test.go"
+      - "internal/ui/richview/style.go"
+      - "internal/ui/hovercard/**"
+      - "internal/ui/hover_card.go"
+      - "internal/ui/popups/unfurl_preview.go"
+      - "internal/ui/popups/profile_card.go"
+      - "internal/ui/messages/context.go"
+      - "internal/ui/icons/iconfont.go"
+      - "internal/store/store.go"
+      - "internal/fakeslack/fakeslack.go"
+      - "internal/ui/embeds_hover_test.go"
       - "internal/ui/richview/hit.go"
       - "internal/ui/richview/cards.go"
       - "internal/ui/richview/blocks.go"
@@ -59,10 +74,12 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
       - name: layout
         run: |
-          go test -count=1 -v -run 'TestUnfurlKinds|TestXCard|TestGenericCard|TestVideoServiceCard|TestV1Card|TestNonMediaPref|TestRemoveButton|TestAttachmentImageClicks' ./internal/ui/richview/
+          go test -count=1 -v -run 'TestUnfurlKinds|TestXCard|TestGenericCard|TestVideoServiceCard|TestV1Card|TestNonMediaPref|TestRemoveButton|TestAttachmentImageClicks|TestUnfurlPopoverTrigger|TestUnfurlHoverTiming|TestUnfurlHoverCardLayout|TestAttachmentContextMenu|TestRemoveRail|TestAddedBy|TestMentionHoverCard' ./internal/ui/richview/
+          go test -count=1 -v ./internal/ui/hovercard/
+          go test -count=1 -v -run 'TestIconCoverage|TestAllIconsParse' ./internal/ui/icons/
           go test -count=1 -v -run 'TestLightboxUnfurlImage' ./internal/ui/popups/
       - name: render
-        run: xvfb-run -a go test -count=1 -v -run 'TestEmbedsChannel$|TestEmbedsImageViewer$' ./internal/ui/
+        run: xvfb-run -a go test -count=1 -v -run 'TestEmbedsChannel$|TestEmbedsImageViewer$|TestEmbedsPreviewHover$|TestHoverCardInChannel$' ./internal/ui/
       - name: screenshots
         env:
           EMBEDS_SHOTS_DIR: ${{ github.workspace }}/dist/shots
@@ -72,7 +89,7 @@ jobs:
         run: |
           mkdir -p "$EMBEDS_SHOTS_DIR"
           xvfb-run -a go test -count=1 -v -run 'TestEmbedsCardShots$' ./internal/ui/richview/
-          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestEmbedsShots$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestEmbedsShots$|TestEmbedsPreviewHover$' ./internal/ui/
           ls -la "$EMBEDS_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

@@ -20,6 +20,7 @@ import (
 type profileHover struct {
 	ctl  hovercard.Controller
 	card *popups.ProfileCard
+	prev *popups.PreviewCard // a link preview's hover card (Request.Preview)
 	gen  int
 	over bool // drawn above the overlays (the top one hosts the trigger)
 }
@@ -131,10 +132,33 @@ func (a *App) hoverCardFrame(gtx layout.Context) {
 	next := h.ctl.Frame(gtx.Now, a.hoverBlocked(), hold)
 	req, gen, open := h.ctl.Open()
 	if !open {
-		h.card = nil
+		h.card, h.prev = nil, nil
 		hovercard.Invalidate(gtx, next)
 		return
 	}
+	if pc, ok := req.Preview.(popups.PreviewContent); ok {
+		// MessageAttachmentDefaultV3's HoverCardTrigger: the preview's
+		// card in popups' frame, position "top"
+		h.card = nil
+		if h.prev == nil || h.gen != gen {
+			h.prev = popups.NewPreviewCard(a, req.Anchor, pc)
+			h.gen = gen
+		}
+		g := gtx
+		g.Constraints = layout.Constraints{Max: gtx.Constraints.Max}
+		func() {
+			if o := h.ctl.Opacity(gtx.Now); o < 1 {
+				defer paint.PushOpacity(g.Ops, o).Pop()
+			}
+			h.prev.Layout(g)
+		}()
+		h.ctl.CardArea(g, h.prev.Rect())
+		if !next.IsZero() && !next.After(gtx.Now.Add(time.Minute)) {
+			hovercard.Invalidate(gtx, next)
+		}
+		return
+	}
+	h.prev = nil
 	if h.card == nil || h.gen != gen {
 		h.card = popups.NewHoverCard(a, req.Anchor, req.UserID, req.BotID)
 		h.gen = gen

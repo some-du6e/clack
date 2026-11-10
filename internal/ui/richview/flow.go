@@ -98,6 +98,11 @@ type removeBtn struct {
 	r         image.Rectangle
 	card, del int16
 	cardTo    int16 // last target made inside the card
+	// rail: the v1/v2 style left of the card (unfurl_hover.go); col is
+	// its 20px column, area the box whose hover shows it (empty: only
+	// the button's own hover, v2).
+	rail      bool
+	col, area image.Rectangle
 }
 
 // overlayIcon is a vector icon painted over images (video play buttons).
@@ -121,6 +126,7 @@ const (
 	tExpand   // attachment "Show more" / "Show less" (id: attachment number)
 	tCollapse // image block's hide / show toggle (img: the image)
 	tRemove   // an unfurl's remove button (id: the attachment id)
+	tBot      // "Added by <app>" under Block Kit blocks (id: the bot id): its profile card
 )
 
 type target struct {
@@ -167,6 +173,7 @@ type display struct {
 	tips    []string  // emoji tooltips (":name:"), frag.tip-1
 	codes   []codeRun // inline code runs and code blocks (codecopy.go)
 	removes []removeBtn
+	cards   []v3Card // v3 cards: context menu, hover card (unfurl_hover.go)
 	// overlayIcons paint over images (unfurl.go's video buttons)
 	overlayIcons []overlayIcon
 	// spinners are InfiniteSpinners drawn every frame (pending uploads)
@@ -194,6 +201,7 @@ func (d *display) reset() {
 	d.tips = d.tips[:0]
 	d.codes = d.codes[:0]
 	d.removes = d.removes[:0]
+	d.cards = d.cards[:0]
 	d.overlayIcons = d.overlayIcons[:0]
 	d.spinners = d.spinners[:0]
 }

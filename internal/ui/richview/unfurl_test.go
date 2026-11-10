@@ -288,7 +288,7 @@ func TestEmbedsCardShots(t *testing.T) {
 		}
 		for _, f := range fakeslack.EmbedsFixtures("http://img.test/") {
 			for _, hover := range []bool{false, true} {
-				if hover && f.Name != "x post" {
+				if hover && f.Name != "x post" && f.Name != "github" && f.Name != "block kit" {
 					continue
 				}
 				st := NewStyle(themeShaper(), &gradImages{cache: map[string]paint.ImageOp{}}, pal)
@@ -308,7 +308,19 @@ func TestEmbedsCardShots(t *testing.T) {
 				}
 				frame()
 				name := "embeds-" + strings.ReplaceAll(f.Name, " ", "-") + "-" + mode
-				if hover {
+				if hover && f.Name != "x post" {
+					// the rail remove button left of the v1 / v2 card, under the pointer
+					var rb image.Rectangle
+					for _, rm := range v.d.removes {
+						if rm.rail {
+							rb = rm.r
+						}
+					}
+					r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(float32(pad+rb.Min.X+10), float32(pad+rb.Min.Y+10))})
+					frame()
+					frame()
+					name += "-hover"
+				} else if hover {
 					c := cardBox(t, v)
 					r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(float32(pad+c.Min.X+40), float32(pad+c.Min.Y+40))})
 					frame()

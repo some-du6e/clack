@@ -283,6 +283,7 @@ func (l *lay) v3Close(a *richtext.Attachment, bi, hi int, cardT int16, r image.R
 	l.d.boxes[bi].r = r
 	l.d.boxes[bi].tgTo = int16(len(l.d.targets) - 1)
 	l.d.hits[hi].r = r
+	l.d.cards = append(l.d.cards, v3Card{r: r, wrap: r, att: a, card: cardT, last: int16(len(l.d.targets) - 1), del: -1})
 	l.removeButton(a, cardT, r)
 }
 
@@ -324,6 +325,9 @@ func (l *lay) removeButton(a *richtext.Attachment, cardT int16, r image.Rectangl
 	t := l.d.addTarget(target{kind: tRemove, id: a.ID})
 	l.d.hits = append(l.d.hits, hit{r: br, t: t})
 	l.d.removes = append(l.d.removes, removeBtn{r: br, card: cardT, del: t, cardTo: t - 1})
+	if n := len(l.d.cards); n > 0 && l.d.cards[n-1].card == cardT {
+		l.d.cards[n-1].del = t
+	}
 }
 
 // ---------- shared rows ----------
@@ -527,11 +531,11 @@ func (l *lay) v3Generic(b *richtext.Block, x, y, w int, narrow bool) int {
 	}
 	ft := firstNonEmpty(richtext.SpansText(a.Footer), a.ServiceName, a.AuthorName)
 	fi := firstNonEmpty(a.FooterIcon, a.AuthorIcon, a.ServiceIcon)
-	if ft != "" || fi != "" {
+	if ft != "" || fi != "" || a.IsAppUnfurl {
 		if textShown {
 			cy += l.dp(4)
 		}
-		cy += l.v3Footer(fi, ft, cx, cy, cw)
+		cy += l.footerRow(a, fi, ft, cx, cy, cw, false)
 	}
 	used := cy - (y + bw + pad)
 	if dy := (side - 2*pad - used) / 2; dy != 0 {
@@ -543,10 +547,17 @@ func (l *lay) v3Generic(b *richtext.Block, x, y, w int, narrow bool) int {
 	rb := image.Rect(x+bw+leftW, y+bw, x+bw+leftW+side, y+bw+side)
 	l.v3Side(a, rb, [4]int{0, rr, rr, 0}, cardT)
 	l.v3Close(a, bi, hi, cardT, image.Rect(x, y, x+w, y+h))
+	wh := min(h+l.dp(8), l.dp(114))
 	if short {
-		return min(h+l.dp(8), l.dp(88))
+		wh = min(h+l.dp(8), l.dp(88))
 	}
-	return min(h+l.dp(8), l.dp(114))
+	// MessageAttachmentDefaultV3's tO: HoverCardTrigger wraps the row card
+	// when it has text, a thumb alone, media or fields (unfurl_hover.go)
+	if c := &l.d.cards[len(l.d.cards)-1]; c.card == cardT {
+		c.blk, c.wrap = b, image.Rect(x, y, x+w, y+wh)
+		c.popover = !blocksBlank(v3Text(a)) || thumbOnly(a) || media || len(b.Fields) > 0
+	}
+	return wh
 }
 
 // v3Side fills the generic card's right box.
@@ -879,8 +890,10 @@ func (l *lay) v2Card(b *richtext.Block, x, y, w int) int {
 	if len(b.Children) > 0 {
 		h += l.dp(4) + l.blocks(b.Children, cx, cy+h+l.dp(4), x+w-cx, false)
 	}
+	h += l.v2Attribution(a, cx, cy+h, x+w-cx) // renderAttributionMaybe
 	total := l.dp(2) + h
 	l.d.boxes[bi].r = image.Rect(x, y, x+bar, y+total)
+	l.removeRail(a, image.Rect(x, y, x+w, y+total), false)
 	return total
 }
 
@@ -891,6 +904,9 @@ func (v *View) drawRemoves(gtx layout.Context, st *Style) {
 	}
 	for i := range v.d.removes {
 		rm := &v.d.removes[i]
+		if rm.rail {
+			continue // drawRails (unfurl_hover.go)
+		}
 		if v.hover != rm.del && (v.hover < rm.card || v.hover > rm.cardTo) {
 			continue
 		}

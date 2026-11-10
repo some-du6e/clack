@@ -1250,6 +1250,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleIdentity(method, f); handled && s.Size.Identity { // identity.go
 		return out
 	}
+	if out, handled := s.handleEmbeds(method, f); handled && s.Size.Embeds { // embeds.go
+		return out
+	}
 	if out, handled := s.handleHuddles(method, f); handled { // huddles.go
 		return out
 	}

@@ -709,6 +709,16 @@ func (s *Store) PutBot(id string, b BotInfo) {
 	s.gen.Add(1)
 }
 
+// BotName is richtext.BotNamer: the cached bot's name, or "" after
+// asking for it (bots.info in the background; a names event follows).
+func (s *Store) BotName(id string) string {
+	if b, ok := s.Bot(id); ok && b.Name != "" {
+		return b.Name
+	}
+	s.NoteMissingBot(id)
+	return ""
+}
+
 func (s *Store) Bot(id string) (BotInfo, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
