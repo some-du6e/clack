@@ -826,10 +826,8 @@ func (v *Unreads) body(gtx C) D {
 	if v.markAll.Clicked(gtx) {
 		v.markAllRead()
 	}
-	// a click focuses the list (UnreadsList's keyboard)
-	area := clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops)
-	event.Op(gtx.Ops, v)
-	area.Pop()
+	// a press anywhere on the list focuses it (UnreadsList's keyboard);
+	// its area goes over the rows (below), letting presses through
 	for {
 		ev, ok := gtx.Event(pointer.Filter{Target: v, Kinds: pointer.Press})
 		if !ok {
@@ -842,6 +840,11 @@ func (v *Unreads) body(gtx C) D {
 	}
 	d := v.scrollList(gtx, &v.list, len(v.rows), func(gtx C, i int) D { return v.rowAt(gtx, i) })
 	v.listH = d.Size.Y
+	func() {
+		defer clip.Rect{Max: d.Size}.Push(gtx.Ops).Pop()
+		defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+		event.Op(gtx.Ops, v)
+	}()
 	v.afterPage()
 	// loadPost: the virtual list asks for more once its end is near
 	if n := len(v.rows); n > 0 && v.rows[n-1].kind == unrLoading {

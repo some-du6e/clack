@@ -1558,8 +1558,16 @@ func (d *Drafts) keys(gtx C, sel int) *vkList {
 	kb.setItems(items)
 	kb.begin()
 	kb.update(gtx, gtx.Constraints.Max.Y, vkOpts{Click: func(k string) {
-		if strings.HasPrefix(k, "d:") {
-			d.rowState(k).click.Click()
+		// the row's click (not Clickable.Click: the row's Layout this
+		// frame would swallow it)
+		id, ok := strings.CutPrefix(k, "d:")
+		dr := d.findDraft(id)
+		switch {
+		case !ok || dr == nil:
+		case d.selecting:
+			d.selected[id] = !d.selected[id]
+		case d.edit == nil || d.edit.id != id:
+			d.openDraft(dr)
 		}
 	}})
 	return kb

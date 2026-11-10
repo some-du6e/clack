@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"image"
 	"net/url"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -172,17 +171,36 @@ func TestThreadsKeysLikeSlack(t *testing.T) {
 		if nav, _ := h.last(); nav != "c/"+fakeslack.ViewsChannel+"/m/"+fakeslack.ViewsThreadUnread {
 			t.Errorf("Enter on the root went to %q", nav)
 		}
-		// the second thread's heading, then Home
-		for i := 0; i < 4 && v.kb.active != "heading-"+p.items[1].key; i++ {
+		// ↓ onto the footer: its reply box takes the focus (onItemFocusEnter)
+		for i := 0; i < 4 && (v.cards[k0] == nil || v.cards[k0].comp == nil); i++ {
 			kbPress(e, key.NameDownArrow, 0)
-			if strings.HasPrefix(v.kb.active, "footer-") {
-				kbPress(e, key.NameDownArrow, 0)
-			}
+		}
+		c := v.cards[k0]
+		if c == nil || c.comp == nil {
+			t.Fatalf("↓ to the footer didn't open the reply box (active %q)", v.kb.active)
+		}
+		e.frame()
+		if v.kb.focused {
+			t.Error("the list kept the focus after the footer opened its reply box")
+		}
+		// ↑ in the empty reply box: focusItemAboveInput
+		c.comp.OnFocusList()
+		e.frame()
+		e.frame()
+		last := p.items[0].Replies[len(p.items[0].Replies)-1].TS
+		if v.kb.active != k0+"-"+last || !v.kb.focused || !v.kb.ring {
+			t.Fatalf("↑ in the reply box: active %q focused %v", v.kb.active, v.kb.focused)
 		}
 		kbPress(e, key.NameHome, 0)
 		if v.kb.active != "heading-"+k0 {
 			t.Errorf("Home: active %q", v.kb.active)
 		}
+		// a printable key on a row: the reply box takes it
+		kbPress(e, "A", 0)
+		if got := c.comp.DocText(); got != "a" {
+			t.Errorf("typing on a row put %q in the reply box", got)
+		}
+		c.comp.Close()
 	}
 }
 

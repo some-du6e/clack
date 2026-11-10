@@ -427,22 +427,8 @@ func (s *savedBase) rowActions(gtx C) {
 		switch {
 		case click:
 			s.open(&it)
-		case done && laterCompleted(&it):
-			f.items[i].TodoState, f.items[i].DateCompleted, s.dirty = "to_do", 0, true
-			s.write1(it, false, "Moved back to in progress", func(ctx context.Context, c *core.App) error {
-				// MoveToTodos alone leaves the item completed (it sends no
-				// mark=uncompleted), so un-complete it first.
-				no := false
-				if err := c.UpdateSaved(ctx, ch, ts, core.SavedUpdate{Completed: &no}); err != nil {
-					return err
-				}
-				return c.MoveToTodos(ctx, ch, ts, 0)
-			})
 		case done:
-			f.items[i].TodoState, f.items[i].DateCompleted, s.dirty = "completed", time.Now().Unix(), true
-			s.write1(it, false, "Marked as complete", func(ctx context.Context, c *core.App) error {
-				return c.CompleteTodo(ctx, ch, ts)
-			})
+			s.toggleDone(f, i)
 		case remind:
 			r.pin = !r.pin
 		case toSaved:
@@ -479,6 +465,29 @@ func (s *savedBase) rowActions(gtx C) {
 			})
 		}
 	}
+}
+
+// toggleDone marks f.items[i] complete, or back in progress when it is.
+func (s *savedBase) toggleDone(f *savedFeed, i int) {
+	it := f.items[i]
+	ch, ts := it.Channel, it.TS
+	if laterCompleted(&it) {
+		f.items[i].TodoState, f.items[i].DateCompleted, s.dirty = "to_do", 0, true
+		s.write1(it, false, "Moved back to in progress", func(ctx context.Context, c *core.App) error {
+			// MoveToTodos alone leaves the item completed (it sends no
+			// mark=uncompleted), so un-complete it first.
+			no := false
+			if err := c.UpdateSaved(ctx, ch, ts, core.SavedUpdate{Completed: &no}); err != nil {
+				return err
+			}
+			return c.MoveToTodos(ctx, ch, ts, 0)
+		})
+		return
+	}
+	f.items[i].TodoState, f.items[i].DateCompleted, s.dirty = "completed", time.Now().Unix(), true
+	s.write1(it, false, "Marked as complete", func(ctx context.Context, c *core.App) error {
+		return c.CompleteTodo(ctx, ch, ts)
+	})
 }
 
 // write1 runs one item's write; remove hides it from this page at once.
@@ -1810,7 +1819,7 @@ func (l *Later) todoKey(e key.Event, active string) bool {
 	case key.NameDeleteForward, key.NameDeleteBackward:
 		l.clearTodo(it)
 	case "E":
-		l.rowState(active).done.Click()
+		l.toggleDone(f, i)
 	case "W":
 		if it.ItemType == "reminder" {
 			return true
