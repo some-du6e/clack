@@ -229,7 +229,8 @@ var experimentReads = map[string][]string{
 	// huddles
 	"scheduled_huddles": on, "huddles_raised_hand_queue": on,
 	// search and the switcher (search*.go, popups/search_*)
-	"desktop_search_recents_read": on, "desktop_search_recents_write": on,
+	"desktop_search_recents_read": on, "desktop_search_recents_write": on, "omni_quick_message_results": on,
+	"search_autocomplete_promote_exact_name_matches": {"treatment_3", "treatment_5"},
 	// read by branches merged into ui without listing them here
 	"activity_bulk_unread_tool": on, "ai_channel_exclusions": on, "mcp_ai_channel_exclusions": on,
 	"enable_new_channel_settings": on, "move_channel_tabs_settings": on, "lists_grid_todos": on,

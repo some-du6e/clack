@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 	"unicode"
+
+	"github.com/some-du6e/clack/internal/acrank"
 )
 
 // ---- fuzzy matching ----
@@ -861,4 +863,33 @@ func srQueryTokens(s string) []srQTok {
 		rest = strings.TrimSpace(m[11])
 	}
 	return out
+}
+
+// ---- search_autocomplete_promote_exact_name_matches (J3WV, y+lP) ----
+
+// The switcher's suggestions take Slack's exact name sort rules
+// (internal/acrank/sortrules.go): in a treatment group exact name matches
+// are kept past the candidate cut and lifted among the people.
+
+// srExactFacts are the rules' predicates for one candidate.
+type srExactFacts struct {
+	user      bool // isUser: a member result
+	eligible  bool // isEligibleExactMatch
+	inContext bool // … and a member of the open channel
+}
+
+func (f srExactFacts) acrank() acrank.ExactFacts {
+	return acrank.ExactFacts{User: f.user, Eligible: f.eligible, InContext: f.inContext}
+}
+
+// srApplyExactNameRules runs the group's rules over cands.
+func srApplyExactNameRules(cands []srCand, group string, facts func(srCand) srExactFacts) []srCand {
+	return acrank.ApplyExactNameRules(cands, group, func(c srCand) acrank.ExactFacts { return facts(c).acrank() })
+}
+
+// srRetainExactNames keeps the first five exact name matches of pool in
+// kept (a DM's person is the same result as the person).
+func srRetainExactNames(kept, pool []srCand, group string, limit int, facts func(srCand) srExactFacts) []srCand {
+	return acrank.RetainExactNames(kept, pool, group, limit, func(c srCand) acrank.ExactFacts { return facts(c).acrank() },
+		func(a, b srCand) bool { return a.ID == b.ID || (a.Conv != "" && a.Conv == b.Conv) })
 }

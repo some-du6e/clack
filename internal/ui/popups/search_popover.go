@@ -36,6 +36,7 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/clack/internal/acrank"
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/slackc"
@@ -649,6 +650,47 @@ func (p *SearchPopover) recentPlaces(seen map[string]bool, limit int) []srRow {
 	return out
 }
 
+// srExactGroup is search_autocomplete_promote_exact_name_matches' group
+// ("" when not assigned).
+func (p *SearchPopover) srExactGroup() string {
+	if c := p.h.Core(); c != nil {
+		return c.Experiment("search_autocomplete_promote_exact_name_matches")
+	}
+	return ""
+}
+
+// srExactFactsFor is the exact name rules' predicates for the query q:
+// isUser (a person), isEligibleExactMatch (an active human of the org,
+// not a bot, app, Slackbot, deleted or external member, whose real or
+// display name normalized is the normalized query) and in context (a
+// member of the open conversation).
+func (p *SearchPopover) srExactFactsFor(q string) func(srCand) srExactFacts {
+	nq := acrank.Normalize(acrank.FormatQuery(q))
+	in := map[string]bool{}
+	if c := p.h.Core(); c != nil {
+		if cv, ok := c.Conv(srCurrentPlace()); ok {
+			for _, m := range cv.Members {
+				in[m] = true
+			}
+		}
+	}
+	return func(cd srCand) srExactFacts {
+		if cd.Kind != srKUser || cd.ID == "" || (cd.ID[0] != 'U' && cd.ID[0] != 'W') {
+			return srExactFacts{}
+		}
+		f := srExactFacts{user: true}
+		u, ok := lookupUser(p.h, cd.ID)
+		if !ok || nq == "" {
+			return f
+		}
+		human := !u.Deleted && !u.IsBot && !u.AppUser && !u.Workflow && !u.External && u.ID != "USLACKBOT"
+		exact := acrank.Normalize(u.RealName) == nq || (u.DisplayName != "" && acrank.Normalize(u.DisplayName) == nq)
+		f.eligible = human && exact
+		f.inContext = f.eligible && in[cd.ID]
+		return f
+	}
+}
+
 // srQuickOn is omni_quick_message_results "on".
 func (p *SearchPopover) srQuickOn() bool {
 	c := p.h.Core()
@@ -665,7 +707,11 @@ func (p *SearchPopover) typingRows(rows []srRow, q string, now time.Time) []srRo
 			total = 5
 		}
 	}
-	local := srRank(p.cands, q, total, false)
+	all := srRank(p.cands, q, 0, false)
+	local := all
+	if len(local) > total {
+		local = local[:total]
+	}
 	var remote []srCand
 	if len(p.rUsers) > 0 || len(p.rChans) > 0 {
 		rc := make([]srCand, 0, len(p.rUsers))
@@ -711,6 +757,13 @@ func (p *SearchPopover) typingRows(rows []srRow, q string, now time.Time) []srRo
 		sort.SliceStable(remote, func(i, j int) bool { return remote[i].Tier > remote[j].Tier })
 	}
 	sug := srMerge(local, remote, total, 2) // Slack: top hit, "Show results", then the rest
+	if g := p.srExactGroup(); g != "" {
+		// search_autocomplete_promote_exact_name_matches: exact name
+		// matches kept past the cut, then lifted among the people
+		facts := p.srExactFactsFor(q)
+		pool := append(append([]srCand(nil), all...), remote...)
+		sug = srApplyExactNameRules(srRetainExactNames(sug, pool, g, total, facts), g, facts)
+	}
 	show := srRow{kind: srRShow, id: q, title: q, icon: "search"}
 	if len(sug) == 0 {
 		rows = append(rows, show)
