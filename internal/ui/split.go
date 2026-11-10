@@ -57,6 +57,23 @@ import (
 // paneSplit names the split view's view container (App.pane).
 const paneSplit = "split"
 
+// After mount_features.go's installHooks (file order): the secondary
+// pane's menus anchor left of an open split view.
+func init() {
+	prev := installHooks
+	installHooks = func(a *App) {
+		if prev != nil {
+			prev(a)
+		}
+		popups.SecondaryRight = func() int {
+			if a.splitOpen() && a.split.col.Min.X > 0 {
+				return a.split.col.Min.X
+			}
+			return a.winSize.X - a.px(int(theme.PanelInset))
+		}
+	}
+}
+
 // clsSplitView is the split view's element (RenderedViewContents in the
 // Split container, with ClientSplitView's card class), for plugin CSS.
 var clsSplitView = slackc.Class("p-view_contents p-view_contents--split p-view_contents--split--card")

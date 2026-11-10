@@ -75,9 +75,10 @@ func (e *perfEnv) splitDrag(x int) {
 		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: from},
 	)
 	e.frame()
+	// a move with the button held is a drag (Gio's router makes the Drag)
 	e.r.Queue(
-		pointer.Event{Kind: pointer.Drag, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: from.Add(f32.Pt((to.X-from.X)/2, 0))},
-		pointer.Event{Kind: pointer.Drag, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: to},
+		pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: from.Add(f32.Pt((to.X-from.X)/2, 0))},
+		pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: to},
 	)
 	e.frame()
 	e.r.Queue(pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: to})

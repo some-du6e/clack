@@ -23,6 +23,11 @@ type SplitViewer interface {
 	InSplitView() bool
 }
 
+// SecondaryRight, set by the ui root, is the window x where the secondary
+// pane ends: the window's right inset, or the split view's column while
+// one shows. Nil: the right inset.
+var SecondaryRight func() int
+
 // SplitKey is the "Open in split view" rows' key (Slack's dataQa
 // channel_ctx_open_split). A row keyed SplitKey+":hidden" is one Slack
 // leaves out; StripSplitView drops it.
@@ -33,12 +38,7 @@ const SplitKey = "channel_ctx_open_split"
 // the platform's Cmd key with Alt), "⌘ Opt Click" on macOS and
 // "Ctrl Alt Click" elsewhere (getTilesTemplate,
 // get-activity-item-menu-template).
-func SplitHint() string {
-	if shortcut.Mac() {
-		return "⌘ Opt Click"
-	}
-	return "Ctrl Alt Click"
-}
+func SplitHint() string { return shortcut.ClickHint("Mod+Alt") }
 
 // SplitViewItem is Slack's "Open in split view" row for route: the
 // move-to-split-view icon, the modifier-click hint when hint is set, and
