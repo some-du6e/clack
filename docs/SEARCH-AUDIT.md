@@ -40,7 +40,7 @@ Status: **matched** (no change needed), **fixed** (on this branch), **open** (st
 | Enter | accepts the selected row, else the pseudo-selected top suggestion | same | **matched** |
 | Escape | closes | same | **matched** |
 | Tab | focuses the selected row's action toolbar (`getSuggestionSecondaryActions`: View profile, Search in channel, Open in new window…) | nothing | **open**: Clack has no suggestion toolbar |
-| Text while navigating | `setText: true` shows a picked query suggestion in the box | the typed text stays | **open** |
+| Text while navigating | `setText: true` shows a picked query suggestion in the box | the typed text stays | **open**: swapping the box's text without starting a new search isn't built |
 | Ghost text | `getGhostTextForSelectedSuggestion`: for the selected (else first) suggestion, the rest of its name after the typed text, then " — Open"; " — Search" for a recent search or a query row; with an empty box only a picked row ("name — Open"); typing a space hides it (`hasTypedSpace`) | "— Open" after any query on conversation, person or file rows, prefix or not | **fixed** |
 | Footer keys | `Footer`: "▲ ▼ Select" while nothing is selected; with a selection "Enter Open" and "Tab Actions" | always "▲▼ Select" | **fixed**. "Tab Actions" is left out because Clack has no toolbar (above). |
 | Offline notice | "No connection. Search is not available while offline, and navigating to conversations may be limited." | none | **open**: the popover doesn't track the connection |
@@ -58,14 +58,14 @@ Status: **matched** (no change needed), **fixed** (on this branch), **open** (st
 | Title, pills row, "Sorted by", result count | measured on app.slack.com in the 2026-11-08 search audit (docs/SEARCH.md) | same | **matched** |
 | Sources | `UnifiedSearchRefinement`: Messages (Slack icon), then DMs, Files, People, Channels, Canvases as sub-items, each with its count; no Lists source (lists are File type → Lists) | same six with counts | **matched** |
 | Messages source icon | `SlackIcon`, the four-colour logo image | monochrome slack-logo glyph | **open**: icons are owned elsewhere |
-| "Display options: Show as a left sidebar" | source menu footer | none | **open** (see SEARCH.md) |
+| "Display options: Show as a left sidebar" | source menu footer | none | **open**: not built (see SEARCH.md) |
 | Messages pills | `_p` messages: From, In, With ("Includes me"), Has a link, Threads only, Last 7 days, then More | same | **matched** |
-| Pills that don't fit | `useSearchFiltersResponsive` measures each `${filter}-button` and moves the rest into More | a fixed set | **open** |
+| Pills that don't fit | `useSearchFiltersResponsive` measures each `${filter}-button` and moves the rest into More | a fixed set | **open**: not built; the fixed set is what fits at 1440 px |
 | Files pills | From, In, File type, Date, Only my channels (With in More) | the source pill only | **open**: not built; modifiers typed into the query do work |
 | Canvases pills | Creator, From, In, Date (With in More) | the source pill only | **open**: not built |
 | Channels pills | All channels, Channel type (Any / Public / Private / Archived / External), Workspace, Org | the source pill only | **open**: core has no channel_type / exclude_my_channels options |
 | People pills | Title, Location, Workspace, Department (Account type, Org, Celebration, Division in More) | the source pill only | **open**: core has no profile_* options |
-| DMs pills | With | the source pill only | **open** |
+| DMs pills | With | the source pill only | **open**: not built |
 | More: rows | Saved preferences (Exclude bot messages, Only my channels), Results (Exact matches only), With people, Message has, Message is, Date, File type, Reactions | same rows | **matched** |
 | More: Exclude archived | under Results, only when the menu's `e` prop is set and the tab isn't excluded | none | **open**: the gate wasn't resolved |
 | More: width | `e5`: width 240 | 280 | **fixed** |
@@ -95,11 +95,11 @@ Status: **matched** (no change needed), **fixed** (on this branch), **open** (st
 | Feature | Slack (evidence) | Clack before | Status |
 |---|---|---|---|
 | Header | `SearchInChannelView`: "Search in #channel", 'Search "kw" in #channel'; "Search in channel" without a conversation | same text | **matched** |
-| Header for a DM | the avatar (xx_small) before the name | text only | **open** |
+| Header for a DM | the avatar (xx_small) before the name | text only | **open**: the pane's header draws text only |
 | Before a search | "Not searching in this channel?" and "Go to full search (⌘G / CTRL G)" on one line (`p-explorer_section--align`: 13px, regular, #1d1c1d at 70%, link 4px after) | bold title, link on the next line | **fixed** |
 | "Nothing to show yet." | the empty state with "Type a keyword or **from: @name** …" and the empty-search illustration | plain text, no illustration | **open**: the image asset isn't drawn, and "from: @name" isn't bold (no rich text in that paragraph) |
 | Request | `search.modules.messages`: "in:<#C> q", count 10, search_context search_in_channel, search_exclude_bots false, sort score/desc, timestamp/desc or timestamp/asc | same, without Oldest | **fixed** (Oldest) |
-| `disable_sort_override` | sent when Most relevant is picked | not sent | **open** |
+| `disable_sort_override` | sent when Most relevant is picked | not sent | **open**: core's SearchOpts has no field for it, and it pairs with the response's `sort_forced_to_recent`, which core doesn't read |
 | Loading | seven skeleton cards | nothing | **open**: no skeleton component |
 | Results label | "**N** results found", "View full search" 6px after it, no separator | "N results found · View full search" | **fixed** |
 | Sticky header and footer | `stickyResultHeader`, `stickyResultFooter` | scrolled with the rows | **fixed** |
