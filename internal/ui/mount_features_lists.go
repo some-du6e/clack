@@ -212,6 +212,12 @@ func (a *App) listTabView(ch string) View {
 	v := views[key]
 	if v == nil {
 		v = a.newListView(tabs[i].fileID, listview.Tab)
+		// lists_channel_tabs_default_view (mwX5 Wy): a list opened from its
+		// channel tab starts on the tab's default view (K7k9's initial view,
+		// listsChannelTabDefaultRefineViewId)
+		if c := a.Core(); c != nil && tabs[i].defaultView != "" && c.Experiment("lists_channel_tabs_default_view") == "on" {
+			v.SelectView(tabs[i].defaultView)
+		}
 		views[key] = v
 	}
 	return v

@@ -81,6 +81,9 @@ type Size struct {
 	// fixtures (unreads.go): unread channels, a muted one, a channel
 	// whose message_input megaphone space holds the join banner.
 	Unreads bool
+	// GroupDMs adds the group DM naming fixtures (groupdms.go) and
+	// answers conversations.rename for them.
+	GroupDMs bool
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -473,6 +476,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.Unreads {
 		s.addUnreads() // unreads.go
+	}
+	if sz.GroupDMs {
+		s.addGroupDMs() // groupdms.go
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", s.api)
@@ -969,6 +975,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return out
 	}
 	if out, handled := s.handleUnreads(method, f); handled { // unreads.go
+		return out
+	}
+	if out, handled := s.handleGroupDMs(method, f); handled { // groupdms.go
 		return out
 	}
 	// the bench threads' replies: ahead of the switch, whose

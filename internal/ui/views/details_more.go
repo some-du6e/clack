@@ -2024,12 +2024,14 @@ func (d *ChannelDetails) updateSlackParts(gtx C, inf core.ChannelDetails, loaded
 
 // Press clicks a control by name: leave, add-people (About in a DM, the
 // Members row in a group DM), vip, hide, ai-use, guests, member-perms,
-// suggest, new-tab, ok, cancel, back.
+// suggest, new-tab, ok, cancel, back, conversation-name (a group DM's
+// "Conversation name" Edit).
 func (d *ChannelDetails) Press(name string) {
 	cs := map[string]*widget.Clickable{
 		"leave": &d.leaveRow, "vip": &d.vip, "hide": &d.hide, "ai-use": &d.x.aiRow, "guests": &d.x.guestRow,
 		"member-perms": &d.x.memPermRow, "suggest": &d.x.suggest, "new-tab": &d.newTab,
 		"ok": &d.x.dlg.ok, "cancel": &d.x.dlg.cancel, "back": &d.x.dlg.back,
+		"conversation-name": &d.x.mpdmName,
 	}
 	if name == "add-people" {
 		if cdGroup(d.kind) == "im" {

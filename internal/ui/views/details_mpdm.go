@@ -135,3 +135,37 @@ func (d *ChannelDetails) cdFieldDisabled(gtx C, label string, value W) D {
 	defer paint.PushOpacity(gtx.Ops, 0.7).Pop()
 	return d.cdField(gtx, label, nil, value)
 }
+
+// ---- test hooks ----
+
+// TabLabels are the tab strip's labels, in order.
+func (d *ChannelDetails) TabLabels() []string {
+	out := make([]string, len(d.tabKinds))
+	for i := range d.tabKinds {
+		out[i] = d.tab.Labels[i]
+	}
+	return out
+}
+
+// AboutFields are the About tab's editable-field titles for the loaded
+// conversation (Conversation name, Topic, Description), each with whether
+// it offers Edit.
+func (d *ChannelDetails) AboutFields() map[string]bool {
+	out := map[string]bool{}
+	c := d.h.Core()
+	if cdGroup(d.kind) == "mpim" && c.CanNameMpdm(d.id) {
+		out["Conversation name"] = true
+	}
+	out["Topic"] = c.CanSetTopic(d.id)
+	if g := cdGroup(d.kind); g != "im" && g != "mpim" {
+		out["Description"] = c.CanSetPurpose(d.id)
+	}
+	return out
+}
+
+// Title is the header's title text.
+func (d *ChannelDetails) Title() string {
+	inf, _, _ := d.info.get()
+	t, _ := d.title(d.conv(inf, true))
+	return t
+}

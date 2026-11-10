@@ -569,10 +569,31 @@ type chTab struct {
 	key, label, icon string
 	fileID           string
 	unread           bool // Slack's blue dot on the tab icon (unopened canvas)
+	// a list tab's default view (core.Tab DefaultView) and its name;
+	// labeled when the tab has a label of its own (useTabLabel then shows
+	// it, no view name)
+	defaultView, viewName string
+	labeled               bool
 	// spans is the label with its :emoji: codes resolved (Slack draws a
 	// canvas tab's title through its Emoji text renderer), bold; nil for a
 	// label without emoji.
 	spans []richtext.Span
+}
+
+// withListViewName is useTabLabel (boot-shared 83sY) under
+// list_channel_tab_show_view_name_fe: a list tab without a label of its
+// own whose default view (listsChannelTabDefaultRefineViewId) is one of
+// the list's views reads "<list title>: <view name>".
+func withListViewName(t chTab) chTab {
+	if t.icon != "list-tab" || t.labeled || t.viewName == "" {
+		return t
+	}
+	suffix := ": " + t.viewName
+	t.label += suffix
+	if t.spans != nil {
+		t.spans = append(append([]richtext.Span(nil), t.spans...), richtext.Span{Text: suffix, Style: richtext.Bold})
+	}
+	return t
 }
 
 // tabLabelSpans resolves a tab label's :emoji: codes to emoji spans, as
@@ -663,9 +684,13 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 	c := &a.th.C
 	x := gtx.Dp(16)
 	cur := a.chTab[ch]
+	viewNames := a.Core() != nil && a.Core().Experiment("list_channel_tab_show_view_name_fe") == "on"
 	for i, t := range a.channelTabs(ch) {
 		i, t := i, t
 		t.label = i18n.T("tabbed-channel", t.label) // the standard tabs are Slack's; a bookmark's own name misses and stays
+		if viewNames {
+			t = withListViewName(t)
+		}
 		lw := a.th.Measure(gtx, 13, theme.Bold, t.label)
 		if t.spans != nil {
 			lw = a.spansWidth(gtx, t.spans, 13)

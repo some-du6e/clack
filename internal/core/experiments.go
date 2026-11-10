@@ -219,9 +219,7 @@ var experimentReads = map[string][]string{
 	"ai_channel_exclusions": on, "mcp_ai_channel_exclusions": on, "enable_new_channel_settings": on,
 	"move_channel_tabs_settings": on, "mpdm_default_exclude_history_clients_webapp": on,
 	"channel_topic_purpose_setting_restrict_to_channel_managers": on, "channel_details_agents_apps_tab": on,
-	"channel_tab_overflow_right_click": {"treatment"}, "list_channel_tab_show_view_name_fe": on,
-	"lists_channel_tabs_default_view": on, "unified_file_picker": on, "tab_3p_files_fe_allow_add": on,
-	"app_channel_tabs": on,
+	"list_channel_tab_show_view_name_fe": on, "lists_channel_tabs_default_view": on,
 	// drafts (backend.go: the sidebar's draft pencil)
 	"draft_management_in_composer": {"treatment"}, "sidebar_draft_indicator_menu_and_thread_inclusion": on,
 	// messages and senders
