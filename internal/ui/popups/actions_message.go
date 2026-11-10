@@ -314,6 +314,14 @@ func actMsgPreview(gtx layout.Context, h Host, m core.Message, boxed bool) layou
 // "When" (15/700) + a 256x36 date select, "Time" + a 200x36 time select,
 // Cancel / Save. Save → core.Save(ch, ts, due).
 func actNewReminderModal(h Host, ch, ts string) *Modal {
+	return actReminderModal(h, func(dueAt int64) {
+		actDo(h, "Reminder set", func(ctx context.Context, a *core.App) error { return a.Save(ctx, ch, ts, dueAt) })
+	})
+}
+
+// actReminderModal is the Reminder dialog; save gets the chosen time
+// (unix s) once it's in the future.
+func actReminderModal(h Host, save func(dueAt int64)) *Modal {
 	now := time.Now()
 	start := dtCeil(now, 30)
 	day := &dtDate{Day: dtDay(start), Min: dtDay(now)}
@@ -359,8 +367,7 @@ func actNewReminderModal(h Host, ch, ts string) *Modal {
 				h.Toast("Choose a time in the future")
 				return false
 			}
-			dueAt := due.Unix()
-			actDo(h, "Reminder set", func(ctx context.Context, a *core.App) error { return a.Save(ctx, ch, ts, dueAt) })
+			save(due.Unix())
 			return true
 		}},
 	}})

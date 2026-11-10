@@ -14,4 +14,22 @@ func init() {
 	// U+E294 icon_times_small (c-icon--times-small): AttachmentDeleteButton's
 	// rail-style remove button left of classic and Block Kit unfurls.
 	reg("times-small", f("M7.25 13.5C7.44 13.5 7.64 13.42 7.78 13.28L10 11.06L12.22 13.28C12.37 13.43 12.56 13.5 12.75 13.5C13.13 13.5 13.5 13.19 13.5 12.75C13.5 12.56 13.43 12.37 13.28 12.22L11.06 10L13.28 7.78C13.43 7.63 13.5 7.44 13.5 7.25C13.5 6.83 13.17 6.5 12.75 6.5C12.56 6.5 12.37 6.57 12.22 6.72L10 8.94L7.78 6.72C7.63 6.57 7.44 6.5 7.25 6.5C6.83 6.5 6.5 6.84 6.5 7.25C6.5 7.44 6.57 7.63 6.72 7.78L8.94 10L6.72 12.22C6.58 12.36 6.5 12.56 6.5 12.75C6.5 13.16 6.84 13.5 7.25 13.5Z"))
+
+	// The Activity rows' Slack Connect Ignore flow (rPCk IgnoreForkedModal,
+	// IgnoreForkedModalButton: the y8g2 font icons times-circle-medium,
+	// disable and chevron-medium-right).
+	// U+E229 icon_times_circle_medium
+	reg("times-circle-medium", f("M10 18C14.42 18 18 14.42 18 10C18 5.58 14.42 2 10 2C5.58 2 2 5.58 2 10C2 14.42 5.58 18 10 18ZM10 3.5C13.59 3.5 16.5 6.41 16.5 10C16.5 13.59 13.59 16.5 10 16.5C6.41 16.5 3.5 13.59 3.5 10C3.5 6.41 6.41 3.5 10 3.5ZM13.01 7C12.72 6.71 12.24 6.71 11.95 7L10 8.94L8.06 7C7.77 6.71 7.29 6.71 7 7C6.71 7.29 6.71 7.77 7 8.06L8.94 10L7 11.95C6.71 12.24 6.71 12.72 7 13.01C7.29 13.3 7.77 13.3 8.06 13.01L10 11.06L11.95 13.01C12.24 13.3 12.72 13.3 13.01 13.01C13.3 12.72 13.3 12.24 13.01 11.95L11.06 10L13.01 8.06C13.3 7.77 13.3 7.29 13.01 7Z"))
+	// U+E149 icon_disable
+	reg("disable-font", f("M10 2C5.58 2 2 5.58 2 10C2 14.42 5.58 18 10 18C14.42 18 18 14.42 18 10C18 5.58 14.42 2 10 2ZM5.96 4.9C7.07 4.03 8.48 3.5 10 3.5C13.59 3.5 16.5 6.41 16.5 10C16.5 11.52 15.97 12.93 15.1 14.04ZM3.5 10C3.5 8.48 4.03 7.07 4.9 5.96L14.04 15.1C12.93 15.97 11.52 16.5 10 16.5C6.41 16.5 3.5 13.59 3.5 10Z"))
+	// U+E254 icon_chevron_medium_right
+	reg("chevron-medium-right", f("M8.53 4.72C8.39 4.58 8.19 4.5 8 4.5C7.81 4.5 7.62 4.58 7.47 4.72C7.32 4.86 7.25 5.06 7.25 5.25C7.25 5.44 7.33 5.64 7.47 5.78L11.69 10L7.47 14.22C7.32 14.37 7.25 14.56 7.25 14.75C7.25 14.94 7.33 15.14 7.47 15.28C7.62 15.43 7.81 15.5 8 15.5C8.19 15.5 8.39 15.43 8.53 15.28L13.25 10.56L13.28 10.53C13.42 10.38 13.5 10.19 13.5 10C13.5 9.81 13.43 9.62 13.28 9.47Z"))
+	// Slack's cloud-offline SvgIcon (InlineOfflineIndicator: Activity's
+	// "No connection. Go online to load more activity."), on the
+	// centrelines of its outlines: the left lobe (r 3 about 4.75,13.75),
+	// the bump, the top arc (r 5 about 11.75,8.25), the right side (r 4.5
+	// about 13.75,12.25) to the base, and the slash between its cap centres.
+	reg("cloud-offline", s("M2.75 16.05 A3 3 0 0 1 3.55 11 C2.8 8.6 4.56 6.16 6.88 6.26 A5 5 0 0 1 13.7 3.65"),
+		s("M16.6 7.2 C16.95 8.05 17.05 8.85 16.95 9.55 A4.5 4.5 0 0 1 13.75 16.75 H8.1"),
+		s("M17 3.5 L4 18"))
 }

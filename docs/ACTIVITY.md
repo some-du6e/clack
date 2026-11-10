@@ -168,7 +168,8 @@ More actions and the row's context menu): Mark as read / Mark as unread
 `later_todos`); Remind me about this ▸ In 20 minutes, In 1 hour, In 3 hours,
 Tomorrow, Next week; Get notified about new replies / Turn off notifications
 for replies (threads); Mute channel / Mute conversation (at_user,
-at_user_group, channel invites); Copy ▸ Copy name, Copy link; Clear all
+at_user_group, channel invites); Copy link (the message's; see "Row
+actions" for the rows added since); Clear all
 before… (`ClearAllBeforeDialog`: "Clear all before this?", "This will clear
 all notifications older than this one from your activity feed." or "…
 matching your current filters …", Cancel / Clear); Open in home.
@@ -249,24 +250,155 @@ from the web client): `base-pry` #fff / #1a1d21, `base-sec` #f8f8f8 /
   `activity.prefs.update`), `TestActivityDensityPersists`,
   `TestActivityDenseRowLikeSlack` (views).
 
+## Row actions (2026-11-10, branch `activity-rows`)
+
+Read from the same gantry build (`client-boot-render.777e711847af270a`,
+`client-boot-shared.4f8632cd9602d1fa`, `client-boot.bac7c893b49156a7`,
+`modern.vendor.99445d7c5cf41877`; public CDN, no cookie). Nothing was
+opened in a live Slack client and no write reached the real account: every
+call below is tested against internal/fakeslack (`ActivityWrites`).
+
+**Read rows' marks** (U5s4 `ActivityRowContentStatusIndicatorWithResolvedReply`,
+inline, as both shipping rows use it). After the unread badge, in order:
+the completed to-do (a saved reminder whose saved item isn't incomplete,
+rZx3 E8: `check-filled`, "You completed this to-do" + "On {date_slash}"),
+Draft (a draft in the conversation or thread, for thread_v2 / dm / channel
+/ bot_dm_bundle: `edit-filled`, 'Draft: "{60 chars}"'), You replied (rZx3
+`getYouRepliedMessageTs`: a thread whose latest_ts isn't the feed_ts; a
+mention whose thread or channel's latest message is yours and newer; a DM,
+group DM, app DM or channel post whose latest message is yours and newer
+than the entry; svza `RepliedBadge` compact, `check-filled`), You reacted
+(rZx3 jW: your reactions on the feed_ts message, svza `ReactedBadge`
+compact, `check-filled`, "You reacted: :a: :b: :c: +n more"); none
+otherwise. All are `status_icon --circle --compact`: a 20px `plt-gray-10`
+circle, the 12px glyph in `content-pry`, in the 24px status slot, the
+tooltip below. Typing and agent status aren't in Clack's Activity.
+
+**Badges.** The text badges (Draft `lagoon`, Replied `grass`, Incomplete
+`honeycomb` / Completed `lagoon`) are Pck2
+`ActivityRowContentTimestampAndActionsWithResolvedReply`'s, drawn only
+with `activity_inbox` off (`!A &&`) and only by the old
+`ActivityRowContentDense` / `ActivityRowContentDetailed`; the shipping
+multi-line and single-line rows pass `hideTimestamp` and
+`hideStatusIndicator`, so they never show. Clack draws the inbox rows, so
+they're left out. There is no "Needs reply" string anywhere in the build,
+and no VIP badge on a row (VIP is a filter view, `filterVipSelected`).
+
+**Reminders.** Mark Complete (xSv9 `ActivityItemMarkCompleteButton`,
+shown while E8 says incomplete): in Detailed a small button (28px,
+`margin-top: 12px`, the `check` icon then "Mark Complete") under
+ReminderMessage / ReminderText's body (not under the file reminder's "You
+set a reminder about this file"); in Dense the hover bar's first button
+(`markCompleteIconButton`: `base-inv-hgl-2` under `content-inv-pry`, 12px
+and a rule after). It calls CCch `onToggleComplete` →
+`saved.update {item_type, item_id, [ts], mark: completed, todo_state:
+completed, date_due: 0}` (mheF toggle*Complete). Reschedule (Pck2
+`ActivityItemRescheduleButton`, `clock`, after Mark Complete; hidden when
+the saved item doesn't exist or is completed, disabled while it loads)
+opens SP97 `RemindMenu` / ccoC `ReminderTimeMenu` (240px): In 30 mins, In
+1 hour, In 3 hours (under "Snooze…" as "30 mins"… when overdue), Tomorrow
+at {reminder_notification_time}, Monday at {…} (2a23 calculateDueDateTs:
+9:00, the DND end when later, the pref), Custom… (the Reminder dialog),
+then Clear reminder with a due date; each `saved.update {date_due}` (mheF
+updateSavedMessage / File / Reminder). The saved items come from
+`saved.get {items: [{item_id, item_type, ts, item_detail}]}` (YeRq
+`getMaybeUnknownSavedItemById` → 2ar2, modern.vendor `savedGetFetcher`),
+keyed by Gjwd qy. Not in Clack: the "{date} at {time}" recent custom time
+(`lastSavedCustomDateReminderTs`, Later's store).
+
+**Slack Connect invites** (Qt0R `ActivityRowContentInviteActions`, Detailed
+only, in `entry_extras`; only external invites, Gjwd bL: an internal
+channel invite has no buttons). 3Oc+ `SlackConnectInviteActions` lists
+v+N2 FI's text actions for a received invite: Ignore (small outline) then
+Accept (small primary), `margin-left: 4px`, 4px apart. Ignore opens rPCk
+`IgnoreForkedModal` ("What would you like to do?": "Ignore this
+invitation" and "Block invitations from this person", the icon font's
+times-circle-medium / disable / chevron-medium-right, extracted into
+iconfont.go); the first opens `IgnoreThisModal` (Cancel / Ignore
+Invitation, danger) → `conversations.ignoreInvite {invite}` (channel) or
+`sharedInvites.ignoreInvite` (DM); the second hCGE `IgnoreAllModal`
+(Cancel / Block Invitations) → `conversations.ignoreUser` /
+`sharedInvites.ignoreUser`, then "You won’t hear from {name} again".
+Accept on a DM invite (`SlackConnectAcceptDmInviteAction`):
+`sharedInvites.canAccept {sig}`; eligible and from a verified organisation
+(Cfiv), `sharedInvites.accept {sig, invite}` and the DM opens; eligible
+otherwise, `SlackConnectConfirmTrustModal` ("Before you accept this
+invitation…", the inviter, "{name} from {team}.", the email, "This
+organization has used Slack since {MMM YYYY}", Ignore / Accept
+Invitation). **Left out:** Accept on a channel invite: it opens Slack's
+multi-step accept modal (workspace, channel name, privacy, "Accept and
+Join Channel"), which Clack doesn't have; the trust modal's 48px header
+illustration (a CDN image Clack doesn't carry) and its "new account"
+variant (the invite's trust level isn't in the feed).
+
+**Sender, footer.** laKt `BaseInviteSenderName`: the inviter, the
+inviting organisation's TeamIcon (16px, `margin_right_25`; the invite's
+`inviting_team.icon`), and in Detailed the team's name. VeYL: an app
+destination that's your Slackbot DM reads "Slackbot" when
+`slackbot_unread_v2` is on (rZx3 AN), else "App"; a file destination is
+`FileName` (the `file` icon and the file's title from files.info; nothing
+until it loads), so a file reminder's footer is "Reminder from [file]
+**title**".
+
+**Item menu** (gantry wrqs `getActivityItemMenuTemplate`, activity inbox,
+not the DMs tab): mark_as_read / mark_as_unread, save_for_later,
+change_notifications | remind_submenu, notify_broadcast_mentions,
+toggle_notifications_replies, mute_conversation, move_to_section,
+toggle_vip_user, copy_link | summarize_thread | clear_all_before |
+open_in_home, open_in_split_view, open_in_new_window. New in Clack:
+- Remind ▸ Custom… (`onAddReminder` "Custom" → the Reminder dialog).
+- Edit notifications (channel posts and channel invites): the
+  ChannelNotificationPrefMenu as its submenu, its description the channel's
+  setting ("Muted", "All new posts", "Just mentions", "Nothing").
+- Move channel ▸ the sections (with a custom section), else "Move to new
+  section" (Create a section with the channel).
+- "Don’t notify for @here and @channel" / "Notify for @here and
+  @channel" (at_channel, not muted): the channel's `suppress_at_channel`
+  through `users.prefs.setNotifications`.
+- Add to VIP / Remove from VIP (a DM with someone who can be one, on a
+  paid team): `users.priority.add` / `remove`, "Added {name} to VIPs".
+- Copy link: in the inbox it's the message's link. Clack showed the DMs
+  tab's Copy ▸ Copy name / Copy link submenu; that and its Copy huddle
+  link are the DMs tab's, which Clack's Activity isn't.
+- **Left out:** Summarize thread (needs
+  `ACCESS_SLACK_AI_CHANNEL_THREAD_SUMMARIES`, Slack AI, which the account
+  lacks); Open in split view and Open in new window (Clack has neither a
+  split view nor a second window).
+
+**Clear all, offline, saved views.** `activity_clear_all_completed` with
+an undo_key raises `ActivityClearAllToast` (bottom right):
+"Notifications cleared. Undo"; Undo calls `activity.clearAll {undo_key}`
+(Wy3r) and says "We brought back your notifications", or "There was an
+issue clearing some notifications". `ActivityRowLoader` offline shows DXqe
+`InlineOfflineIndicator` (96px, 13px: `cloud-offline`, **No
+connection.** "Go online to load more activity."); Slack's signal is
+`connectivity.clientOnline`, Clack's a next page that failed for want of
+a network. With `activity_global_settings` off the layout toggle sits in
+the filter bar and each tab is its saved view with its own density
+(`activity.views`); 9Gp `updateActivityViewsByApi {density, isAutoSave}`
+writes `activity.views.update {view_id, sort, density}` for any view but
+All, which only changes the page.
+
+**Tests and screenshots.** `TestActivityInviteActionsLikeSlack`,
+`TestActivityInviteWrites`, `TestActivityReminderWrites`,
+`TestActivityClearAllViewsAndSuppress`, `TestActivityRepliedReacted`
+(core, fakeslack); `TestActivityReadMarksLikeSlack`,
+`TestActivityReminderActionsLikeSlack`, `TestActivityInviteButtonsLikeSlack`,
+`TestActivityFooterLabelsLikeSlack`, `TestActivityItemMenuNewRows`,
+`TestActivityClearAllToast`, `TestActivityOfflineFooter`,
+`TestActivitySavedViewDensity` (views). The activity-shots artifact adds
+`side-rows-{detailed,dense}-{light,dark}.png` (these rows next to Slack's
+markup under its shipping CSS) and the toast, offline footer, invite
+modals and new menu rows.
+
 ## Not done
 
-- The menu rows Clack can't carry out yet are left out rather than stubbed:
-  Remind ▸ Custom…, Edit notifications ▸ (channel posts and invites), Move
-  channel / Move to new section, Don't notify for @here and @channel, VIP
-  toggle, Summarize thread, Open in split view, Open in new window, Copy
-  huddle link, and the priority / importance rows.
-- Reminder rows' Mark Complete (Dense) and Reschedule hover buttons, and the
-  reminder state badges (Incomplete / Completed).
 - Reaction bundles ("reaction_bundle" rows), behind an experiment.
-- The MultiLine (layout revisions) row and its ActivityEntryTypePill.
-- The "Needs reply" / "Replied" / Draft badges, typing indicator, VIP badge
-  and importance icon in the row.
-- Invite rows' Accept / Decline buttons (`ActivityRowContentInviteActions`)
-  and Block Kit action buttons under app messages.
-- The external inviter's team icon; file names in "Reminder from {file}".
-- `activity_clear_all_completed`'s undo toast; saved views
-  (`activity.views`) and their realtime updates.
-- The offline "Go online to load more activity." footer.
+- The typing indicator and agent status in the status column; the
+  importance icon; Block Kit action buttons under app messages.
+- Accept on a Slack Connect channel invite (Slack's multi-step accept
+  modal), the trust modal's illustration.
+- Summarize thread, Open in split view, Open in new window (see above);
+  the priority / importance rows.
 - The subtext is drawn as a column before the message, so a 2-line
   message's second line is indented under it (Slack runs it inline).

@@ -261,6 +261,10 @@ func (v *Activity) destName(it *core.ActivityItem, dest actDest, title string) s
 	case destDM:
 		return "Direct message"
 	case destApp:
+		// rZx3 AN: a Slackbot DM, with slackbot_unread_v2 on
+		if v.slackbotDM(it.Channel) && v.h.Core().Experiment("slackbot_unread_v2") == "on" {
+			return "Slackbot"
+		}
 		return "App"
 	case destInvite:
 		return "Invitation"
@@ -275,6 +279,10 @@ func (v *Activity) destName(it *core.ActivityItem, dest actDest, title string) s
 		return title
 	case destList:
 		return v.actListTitle(it.ListID)
+	case destFile:
+		// FileName: the file's title from the files store (nothing until
+		// it's known)
+		return v.fileTitles[it.ReminderID]
 	case destSystem:
 		return actAlertLabel(it.Title)
 	}
@@ -302,12 +310,17 @@ func (v *Activity) footerText(it *core.ActivityItem, dest actDest, title string)
 	}
 	g := v.destName(it, dest, title)
 	var icon string
-	if dest == destList {
+	switch dest {
+	case destList:
 		list, row, _ := actListRow(it)
 		if list == "" || row == "" {
 			return actFoot{}, false // getFooterContent: a list entry without an item says nothing
 		}
 		icon = "lists"
+	case destFile:
+		if g != "" {
+			icon = "file" // FileName: the file icon, inline, before the title
+		}
 	}
 	f := actFoot{name: g, nameIcon: icon}
 	switch {
@@ -346,7 +359,11 @@ func (v *Activity) location(it *core.ActivityItem, dest actDest, title string) (
 		}
 		icon = "lists"
 	}
-	return v.destName(it, dest, title), icon, true
+	name := v.destName(it, dest, title)
+	if dest == destFile && name != "" {
+		icon = "file"
+	}
+	return name, icon, true
 }
 
 // actListTitle is a loaded list's name ("" until it's loaded).
@@ -508,6 +525,9 @@ const (
 	actBtnClear
 	actBtnRestore
 	actBtnMore
+	actBtnComplete   // xSv9 ActivityItemMarkCompleteButton (Dense)
+	actBtnReschedule // Pck2 ActivityItemRescheduleButton
+	actBtnCount
 )
 
 // actBtnIcon is the button's Slack icon and label (its tooltip and
@@ -522,16 +542,39 @@ func actBtnIcon(b actBtn) (icon, label string) {
 		return "eraser", "Clear"
 	case actBtnRestore:
 		return "eraser-filled", "Restore notification"
+	case actBtnComplete:
+		return "check", "Mark Complete"
+	case actBtnReschedule:
+		return "clock", "Reschedule"
 	}
 	return "ellipsis-vertical-filled", "More actions"
 }
 
-// hoverButtons is ActivityRowContentActions for an item: Mark as read
+// hoverButtons is ActivityRowContentActions for an item: Mark Complete
+// (Dense, an incomplete reminder: cZ "dense" "actions"), Reschedule (a
+// reminder whose saved item exists and isn't completed), Mark as read
 // while unread, Mark as unread once read (not for reactions), Clear (or,
 // in Cleared items, Restore notification) when it has a key, More actions
-// when it has a ts.
+// when it has a ts. A reminder about a deleted message has Clear alone
+// (isReminderMessageDeleted).
 func (v *Activity) hoverButtons(it *core.ActivityItem, unread bool) []actBtn {
 	var out []actBtn
+	if it.Type == "saved_reminder" {
+		if it.ReminderItem == "message" && it.Msg != nil && it.Msg.Tombstone {
+			if it.Key != "" {
+				return []actBtn{actBtnClear}
+			}
+			return nil
+		}
+		if v.dense && v.reminderIncomplete(it) {
+			out = append(out, actBtnComplete)
+		}
+		if _, ok := core.ReminderKey(it); ok {
+			if s, _, gone := v.reminderSaved(it); !gone && (s == nil || !s.Completed()) {
+				out = append(out, actBtnReschedule)
+			}
+		}
+	}
 	switch {
 	case unread:
 		out = append(out, actBtnMarkRead)
@@ -569,14 +612,21 @@ func (v *Activity) actMenuOpen(at image.Point, it core.ActivityItem, key string,
 }
 
 // itemMenu builds getActivityItemMenuTemplate's rows for the activity
-// inbox (not the DMs tab), in Slack's groups:
+// inbox (not the DMs tab; activity_inbox on), in Slack's groups (gantry
+// boot-render wrqs, renderMenuPlaceholderItem):
 //
-//	mark_as_read / mark_as_unread, save_for_later
-//	remind_submenu, toggle_notifications_replies, mute_conversation, copy_link
+//	mark_as_read / mark_as_unread, save_for_later, change_notifications
+//	remind_submenu, notify_broadcast_mentions, toggle_notifications_replies,
+//	  mute_conversation, move_to_section, toggle_vip_user, copy_link
+//	summarize_thread
 //	clear_all_before
-//	open_in_home
+//	open_in_home, open_in_split_view, open_in_new_window
 //
-// Rows Clack can't carry out are left out (see docs/ACTIVITY.md).
+// Left out because Clack can't carry them out (docs/ACTIVITY.md):
+// summarize_thread (ACCESS_SLACK_AI_CHANNEL_THREAD_SUMMARIES, Slack AI),
+// open_in_split_view and open_in_new_window (no split view or second
+// window). The Copy ▸ submenu with Copy huddle link is the DMs tab's;
+// the inbox has the message's Copy link.
 func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, unread bool) []popups.MenuItem {
 	c := v.h.Core()
 	m := it.Msg
@@ -584,6 +634,9 @@ func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, un
 	if m != nil {
 		ch, ts = firstNonEmpty(m.Channel, ch), m.TS
 	}
+	conv, _ := c.Conv(it.Channel)
+	isDM := conv.Kind == "im" || strings.HasPrefix(it.Channel, "D") && conv.Kind == ""
+	muted := it.Channel != "" && popups.IsMuted(ph, it.Channel)
 	var groups [][]popups.MenuItem
 
 	var g1 []popups.MenuItem
@@ -626,6 +679,14 @@ func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, un
 				}})
 		}
 	}
+	// change_notifications: channel posts and channel invites (ex), the
+	// ChannelNotificationPrefMenu as a 320px submenu, its description the
+	// channel's setting (getNotificationPrefDescription)
+	chanItem := (it.Type == "internal_channel_invite" || it.Type == "external_channel_invite" || it.Type == "channel") && it.Channel != "" && !isDM
+	if chanItem {
+		g1 = append(g1, popups.MenuItem{Key: "change_notifications", Label: "Edit notifications", Icon: "notifications",
+			Subtitle: v.notifyDescription(it.Channel, muted), Sub: popups.ChannelNotifyItems(ph, it.Channel)})
+	}
 	groups = append(groups, g1)
 
 	var g2 []popups.MenuItem
@@ -640,7 +701,23 @@ func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, un
 				}, func() {})
 			}})
 		}
+		// onAddReminder "Custom": the custom reminder dialog
+		sub = append(sub, popups.MenuItem{Label: "Custom…", Do: func() { ph.ShowOverlay(popups.NewReminderModal(ph, ch, ts)) }})
 		g2 = append(g2, popups.MenuItem{Key: "remind_submenu", Label: "Remind me about this", Sub: sub})
+	}
+	if it.Type == "at_channel" && it.Channel != "" && !muted {
+		// notify_broadcast_mentions: the channel's suppress_at_channel
+		suppressed := c.NotifyPrefs(it.Channel).SuppressAtChannel
+		lbl := "Don\u2019t notify for @here and @channel"
+		if suppressed {
+			lbl = "Notify for @here and @channel"
+		}
+		chID := it.Channel
+		g2 = append(g2, popups.MenuItem{Key: "notify_broadcast_mentions", Label: lbl, Do: func() {
+			v.write("Couldn’t change notifications: ", func(ctx context.Context, c *core.App) error {
+				return c.SetSuppressAtChannel(ctx, chID, !suppressed)
+			}, func() {})
+		}})
 	}
 	if it.Type == "thread_v2" && it.ThreadTS != "" && ch != "" {
 		sub := it.Root != nil && it.Root.FollowingThread
@@ -661,20 +738,35 @@ func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, un
 			noun = "conversation"
 		}
 		lbl := "Mute " + noun
-		if popups.IsMuted(ph, it.Channel) {
+		if muted {
 			lbl = "Unmute " + noun
 		}
 		g2 = append(g2, popups.MenuItem{Key: "mute_conversation", Label: lbl, Do: popups.ChannelMenuAction(ph, it.Channel, "toggle_mute")})
 	}
-	if m != nil && it.Channel != "" {
-		g2 = append(g2, popups.MenuItem{Key: "copy_link", Label: "Copy", Sub: []popups.MenuItem{
-			{Key: "copy_name", Label: "Copy name", DoCtx: func(gtx C) { popups.CopyText(gtx, v.copyName(it.Channel)) }},
-			{Key: "copy_link", Label: "Copy link", DoCtx: func(gtx C) { popups.CopyText(gtx, popups.ChannelLink(ph, it.Channel)) }},
-		}})
+	if chanItem && popups.MoveChannelItems != nil {
+		// move_to_section: "Move channel" ▸ the sections with a custom
+		// section, else "Move to new section" (Create a section)
+		chID := it.Channel
+		if items, custom := popups.MoveChannelItems(chID); custom {
+			g2 = append(g2, popups.MenuItem{Key: "move_to_section", Label: "Move channel", Sub: items})
+		} else if popups.CreateSectionWith != nil {
+			g2 = append(g2, popups.MenuItem{Key: "move_to_section", Label: "Move to new section", Do: func() { popups.CreateSectionWith(chID) }})
+		}
+	}
+	if vip, ok := v.vipItem(ph, it.Channel); ok {
+		g2 = append(g2, vip)
+	}
+	if m != nil && ch != "" && ts != "" {
+		thread := ""
+		if m.ThreadTS != "" && m.ThreadTS != ts {
+			thread = m.ThreadTS
+		}
+		link := popups.MessageLink(ph, ch, ts, thread, m.Permalink)
+		g2 = append(g2, popups.MenuItem{Key: "copy_link", Label: "Copy link", DoCtx: func(gtx C) { popups.CopyText(gtx, link) }})
 	}
 	groups = append(groups, g2)
 
-	if it.FeedTS != "" && !v.showCleared {
+	if it.FeedTS != "" && !v.showCleared && !(v.searchOn && strings.TrimSpace(v.query.text()) != "") {
 		before := it.FeedTS
 		groups = append(groups, []popups.MenuItem{{Key: "clear_all_before", Label: "Clear all before…", Icon: "eraser",
 			Do: func() { v.clearAllBefore(ph, before) }}})
@@ -701,6 +793,61 @@ func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, un
 		out = append(out, g...)
 	}
 	return out
+}
+
+// notifyDescription is getNotificationPrefDescription (forceShowText):
+// "Muted", else the channel's desktop setting ("All new posts", "Just
+// mentions", "Nothing"); "" for the default.
+func (v *Activity) notifyDescription(ch string, muted bool) string {
+	if muted {
+		return "Muted"
+	}
+	c := v.h.Core()
+	d := c.NotifyPrefs(ch).Desktop
+	if d == "" || d == "default" {
+		d = c.Prefs().GlobalDesktop // getCalculatedDesktopNotifySetting
+	}
+	switch d {
+	case "everything":
+		return "All new posts"
+	case "mentions_dms":
+		return "Just mentions"
+	case "nothing":
+		return "Nothing"
+	}
+	return ""
+}
+
+// vipItem is toggle_vip_user (isU+ getToggleVipActionMaybe) for a DM: on
+// a paid team, the DM's person when they can be a VIP (not a bot, not
+// you, not deactivated): "Add to VIP" / "Remove from VIP" → users.priority
+// add / remove, then "Added {name} to VIPs" / "Removed {name} from VIPs".
+func (v *Activity) vipItem(ph popups.Host, ch string) (popups.MenuItem, bool) {
+	c := v.h.Core()
+	if !c.PaidTeam() || ch == "" {
+		return popups.MenuItem{}, false
+	}
+	conv, ok := c.Conv(ch)
+	if !ok || conv.Kind != "im" || conv.User == "" || conv.User == v.selfID() || conv.User == "USLACKBOT" {
+		return popups.MenuItem{}, false
+	}
+	u, ok := v.user(conv.User)
+	if !ok || u.IsBot || u.Deleted {
+		return popups.MenuItem{}, false
+	}
+	uid, name := conv.User, firstNonEmpty(u.RealName, displayName(u))
+	isVIP := false
+	for _, id := range c.VIPs() {
+		isVIP = isVIP || id == uid
+	}
+	if isVIP {
+		return popups.MenuItem{Key: "toggle_vip_user", Label: "Remove from VIP", Do: func() {
+			popups.ActDo(ph, "Removed "+name+" from VIPs", func(ctx context.Context, a *core.App) error { return a.RemoveVIP(ctx, uid) })
+		}}, true
+	}
+	return popups.MenuItem{Key: "toggle_vip_user", Label: "Add to VIP", Do: func() {
+		popups.ActDo(ph, "Added "+name+" to VIPs", func(ctx context.Context, a *core.App) error { return a.AddVIP(ctx, uid) })
+	}}, true
 }
 
 // copyName is the conversation's name as Slack's Copy name copies it.
@@ -750,4 +897,13 @@ func (v *Activity) clearFilters() (*core.ActivityFilters, bool) {
 		return nil, false
 	}
 	return &f, true
+}
+
+// slackbotDM is s0AY D: the conversation is your DM with Slackbot.
+func (v *Activity) slackbotDM(ch string) bool {
+	if ch == "" {
+		return false
+	}
+	c, ok := v.h.Core().Conv(ch)
+	return ok && c.User == "USLACKBOT"
 }

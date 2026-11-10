@@ -73,17 +73,48 @@ type actNamed struct {
 	Name string `json:"name"`
 }
 
+// actTeam is a Slack Connect invite's organisation (getInvitingTeam):
+// its name, icon (TeamIcon, image_34 for the 16px icon at 2x) and
+// is_verified (Cfiv isVerified: a verified org skips the trust modal).
+type actTeam struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	IsVerified bool   `json:"is_verified"`
+	Icon       struct {
+		Image34 string `json:"image_34"`
+		Image44 string `json:"image_44"`
+		Image68 string `json:"image_68"`
+	} `json:"icon"`
+	DateCreated int64 `json:"date_created"`
+}
+
+// actInvite is the connect invite the feed carries (v+N2's accessors:
+// id, sig, invite_type, direction, status, date_invalid, acceptances,
+// inviting_user, inviting_team).
 type actInvite struct {
+	ID           string    `json:"id"`
+	Sig          string    `json:"sig"`
+	InviteType   string    `json:"invite_type"` // "channel" | "im" (CDZM k)
+	Direction    string    `json:"direction"`   // "incoming" | "outgoing" (x4VY D)
+	DateInvalid  int64     `json:"date_invalid"`
 	Channel      *actNamed `json:"channel"`
-	Team         *actNamed `json:"team"`
+	Team         *actTeam  `json:"team"`
+	InvitingTeam *actTeam  `json:"inviting_team"`
 	Message      string    `json:"message"`
 	Status       string    `json:"status"` // "revoked", "expired", ...
+	Acceptances  []struct {
+		ApprovalStatus string `json:"approval_status"`
+		AcceptingUser  struct {
+			ID string `json:"id"`
+		} `json:"accepting_user"`
+	} `json:"acceptances"`
 	InvitingUser *struct {
 		ID      string `json:"id"`
 		Name    string `json:"name"`
 		Profile struct {
 			RealName    string `json:"real_name"`
 			DisplayName string `json:"display_name"`
+			Email       string `json:"email"`
 		} `json:"profile"`
 	} `json:"inviting_user"`
 }
@@ -130,6 +161,7 @@ type activityRaw struct {
 			ItemType string `json:"item_type"`
 			ItemID   string `json:"item_id"`
 			ItemID2  string `json:"item_id_2"`
+			ItemID3  string `json:"item_id_3"`
 			Detail   string `json:"item_detail"`
 		} `json:"saved_reminder_payload"`
 		Calendar *struct {
@@ -186,11 +218,15 @@ func activityItem(raw *activityRaw) (ActivityItem, *msgRef) {
 			ref = pl.Message
 		}
 		for _, e := range []*actEntry{pl.DMEntry, pl.ChannelEntry} {
-			if ref == nil && e != nil && e.LatestMessage != nil {
-				ref = e.LatestMessage
+			if e != nil && e.LatestMessage != nil {
+				it.LatestTS = firstNonEmpty(it.LatestTS, e.LatestMessage.TS)
+				if ref == nil {
+					ref = e.LatestMessage
+				}
 			}
 		}
 		if te := pl.ThreadEntry; te != nil {
+			it.LatestTS = te.LatestTS
 			ref = &msgRef{Channel: te.ChannelID, TS: firstNonEmpty(te.LatestTS, te.MinUnreadTS), ThreadTS: te.ThreadTS}
 			if te.UnreadMsgCount > 0 {
 				it.Count = te.UnreadMsgCount
@@ -217,13 +253,29 @@ func activityItem(raw *activityRaw) (ActivityItem, *msgRef) {
 		if inv.Channel != nil {
 			it.Title = inv.Channel.Name
 		}
-		if inv.Team != nil {
-			it.Team = inv.Team.Name
+		team := inv.InvitingTeam
+		if team == nil {
+			team = inv.Team
+		}
+		ci := &ActivityInvite{ID: inv.ID, Sig: inv.Sig, Kind: inv.InviteType, Direction: inv.Direction,
+			Status: inv.Status, DateInvalid: inv.DateInvalid}
+		if team != nil {
+			it.Team = team.Name
+			ci.TeamID, ci.TeamVerified, ci.TeamCreated = team.ID, team.IsVerified, team.DateCreated
+			ci.TeamIcon = firstNonEmpty(team.Icon.Image34, team.Icon.Image44, team.Icon.Image68)
+		}
+		for _, ac := range inv.Acceptances {
+			ci.Acceptances = append(ci.Acceptances, InviteAcceptance{User: ac.AcceptingUser.ID, Status: ac.ApprovalStatus})
 		}
 		it.Text, it.InviteStatus = inv.Message, inv.Status
 		if u := inv.InvitingUser; u != nil {
 			it.Actor = firstNonEmpty(it.Actor, u.ID)
 			it.ActorName = firstNonEmpty(u.Profile.DisplayName, u.Profile.RealName, u.Name)
+			ci.InviterEmail = u.Profile.Email
+			ci.InviterName = firstNonEmpty(u.Profile.RealName, u.Profile.DisplayName, u.Name)
+		}
+		if ci.ID != "" {
+			it.Invite = ci
 		}
 	}
 	for _, l := range []*actListPayload{in.List, in.ListEdit, in.ListMention, in.ListTodo, in.ListApproval} {
@@ -236,6 +288,7 @@ func activityItem(raw *activityRaw) (ActivityItem, *msgRef) {
 	}
 	if sr := in.SavedReminder; sr != nil {
 		it.Text, it.ReminderItem = sr.Detail, sr.ItemType
+		it.ReminderID, it.ReminderTS, it.ReminderDetail = sr.ItemID, sr.ItemID2, sr.ItemID3
 		if sr.ItemType == "list_record" || sr.ItemType == "list_record_field" {
 			it.ListID, it.ListRecord = sr.ItemID, sr.ItemID2
 		}

@@ -9,7 +9,10 @@ ActivityRowContentSingleLine (Dense) with their hashed class names
 (client-boot-render U5s4 / 6gcG / tPE3 / q1Zr). Nothing here talks to
 Slack beyond fetching that CSS and Slack's icon set; the rows are the
 synthetic feed's (activity-ref-rows.json, written by
-TestActivitySideBySide).
+TestActivitySideBySide), and a second set on internal/fakeslack's feed
+(activity-ref-rows-actions.json, clack-rows-*.png: the read rows' marks,
+the Slack Connect invite buttons and the inviter's team icon, Mark
+Complete, the Slackbot and file footers) saved as side-rows-*.png.
 
 usage: activity_ref.py <shots dir> <slack css> <slackvars.go> <icons.json>
 """
@@ -23,7 +26,7 @@ import sys
 from PIL import Image, ImageDraw
 
 shots, css_path, vars_path, icons_path = sys.argv[1:5]
-rows = json.load(open(os.path.join(shots, "activity-ref-rows.json")))
+rows = []
 icons = json.load(open(icons_path))["icons"]
 
 
@@ -46,6 +49,13 @@ READ_FILL = "activity_row_content_container--read-fill__y1Gcy"
 
 def badge(r):
     if not r["Unread"]:
+        if r.get("Mark"):
+            # StatusIcon: status_icon --circle --compact (--neutral), the
+            # engagement badges alike
+            return ('<div class="activity_row_content__status_indicators__aLkYD activity_row_content__inline_status__Nu_EY '
+                    'activity_row_content__inline_statusStandalone__CfEER"><div class="activity_row_content__status_icon__aom2I '
+                    'activity_row_content__status_icon--circle__iH3ok activity_row_content__status_icon--compact__VBEFh '
+                    'activity_row_content__status_icon--neutral__eCITz">%s</div></div>' % svg(r["Mark"], 12))
         return ""
     return ('<div class="activity_row_content__status_indicators__aLkYD activity_row_content__inline_status__Nu_EY '
             'activity_row_content__inline_statusStandalone__CfEER"><span class="c-badge c-badge--themed c-badge--circle '
@@ -65,7 +75,36 @@ def body(r, dense):
         sub = '<span class="margin_right_25">%s</span> ' % sub
     elif r["Sub"]:
         sub = html.escape(r["Sub"])
-    return sub + html.escape(r["Body"])
+    out = sub + html.escape(r["Body"])
+    if r.get("Complete") and not dense:
+        # xSv9 ActivityItemMarkCompleteButton (Detailed): a small button
+        # under the reminder, the check then "Mark Complete"
+        out = ('<div>%s</div><button class="c-button c-button--outline c-button--small markCompleteButton__ob4yw" '
+               'style="display:inline-flex;align-items:center"><span class="margin_right_25">%s</span>Mark Complete</button>'
+               % (out, svg("check", 16)))
+    return out
+
+
+def sender(r, dense):
+    name = html.escape(r["Name"])
+    if r.get("TeamIcon"):
+        # BaseInviteSenderName: the name, TeamIcon (16px, margin_right_25),
+        # the team in Detailed
+        name += ('<span style="display:inline-block;width:16px;height:16px;border-radius:4px;vertical-align:-3px;'
+                 'margin:0 4px;background:var(--dt_color-base-ter)"></span>')
+        if not dense and r.get("Team"):
+            name += html.escape(r["Team"])
+    return name
+
+
+def extras(r):
+    if not r.get("Invite"):
+        return ""
+    btn = {"Ignore": "c-button--outline", "Accept": "c-button--primary"}
+    li = "".join('<li class="p-slack_connect_invite_actions__text_action"><button class="c-button %s c-button--small">%s</button></li>'
+                 % (btn[b], b) for b in r["Invite"])
+    return ('<div class="activity_multi_line_row_content__entry_extras___Ee3R"><ul class="p-slack_connect_invite_actions__text_actions">'
+            '%s</ul></div>' % li)
 
 
 def footer(r):
@@ -97,10 +136,10 @@ def detailed(r):
         '<div class="activity_multi_line_row_content__entry_stack__kQwdx">'
         '<div class="activity_multi_line_row_content__entry_name__tnAap"><span class="activity_multi_line_row_content__entry_sender__wEdr_">%s</span>'
         '<span class="activity_multi_line_row_content__entry_name_timestamp__KEPR0">%s</span></div>'
-        '<div class="activity_multi_line_row_content__entry_body__ei5MV">%s</div>%s</div>'
+        '<div class="activity_multi_line_row_content__entry_body__ei5MV">%s</div>%s%s</div>'
         '<div class="activity_multi_line_row_content__status__anisk">%s</div>'
         "</div></div></div>"
-        % (C, GROUPED, state, inner, avatar(28, 6), html.escape(r["Name"]), html.escape(r["Time"]), body(r, False), footer(r), badge(r)))
+        % (C, GROUPED, state, inner, avatar(28, 6), sender(r, False), html.escape(r["Time"]), body(r, False), footer(r), extras(r), badge(r)))
 
 
 def dense(r):
@@ -124,7 +163,7 @@ def dense(r):
         '<div class="activity_single_line_row_content__center__WBCP5"><div class="activity_single_line_row_content__message__HXQKj">%s</div>'
         '<div class="activity_single_line_row_content__meta__MHnKl"><span class="activity_single_line_row_content__timestamp__CNEsv">%s</span>%s</div></div>'
         "</div></div></div>"
-        % (C, GROUPED, state, inner, avatar(20, 4), html.escape(r["Name"]), badge(r), icon, body(r, True), html.escape(r["Time"]), loc))
+        % (C, GROUPED, state, inner, avatar(20, 4), sender(r, True), badge(r), icon, body(r, True), html.escape(r["Time"]), loc))
 
 
 def page(kind, dark):
@@ -141,12 +180,16 @@ def page(kind, dark):
            "".join(rowfn(r) for r in rows)))
 
 
-for kind in ("detailed", "dense"):
+for prefix, data in (("", "activity-ref-rows.json"), ("rows-", "activity-ref-rows-actions.json")):
+  if not os.path.exists(os.path.join(shots, data)):
+    continue
+  rows = json.load(open(os.path.join(shots, data)))
+  for kind in ("detailed", "dense"):
     for mode in ("light", "dark"):
-        clack = Image.open(os.path.join(shots, "clack-%s-%s.png" % (kind, mode))).convert("RGB")
-        hp = os.path.join(shots, "slack-%s-%s.html" % (kind, mode))
+        clack = Image.open(os.path.join(shots, "clack-%s%s-%s.png" % (prefix, kind, mode))).convert("RGB")
+        hp = os.path.join(shots, "slack-%s%s-%s.html" % (prefix, kind, mode))
         open(hp, "w").write(page(kind, mode == "dark"))
-        sp = os.path.join(shots, "slack-%s-%s.png" % (kind, mode))
+        sp = os.path.join(shots, "slack-%s%s-%s.png" % (prefix, kind, mode))
         subprocess.run(["google-chrome", "--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars",
                         "--force-device-scale-factor=1", "--window-size=1100,%d" % clack.height,
                         "--screenshot=" + sp, "file://" + os.path.abspath(hp)], check=True,
@@ -159,5 +202,5 @@ for kind in ("detailed", "dense"):
         d = ImageDraw.Draw(out)
         d.text((8, 8), "Clack (%s, %s)" % (kind, mode), fill=(255, 255, 255))
         d.text((clack.width + gap + 8, 8), "Slack markup + shipping CSS (%s, %s)" % (kind, mode), fill=(255, 255, 255))
-        out.save(os.path.join(shots, "side-%s-%s.png" % (kind, mode)))
-        print("saved side-%s-%s.png" % (kind, mode))
+        out.save(os.path.join(shots, "side-%s%s-%s.png" % (prefix, kind, mode)))
+        print("saved side-%s%s-%s.png" % (prefix, kind, mode))
