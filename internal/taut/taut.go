@@ -107,9 +107,10 @@ type Options struct {
 
 // Taut is the plugin system. All methods are safe for concurrent use.
 type Taut struct {
-	opts Options
-	app  *core.App
-	dir  string
+	startDone chan struct{} // closed when the start-up StartEnabled returned (StartDone)
+	opts      Options
+	app       *core.App
+	dir       string
 
 	mu      sync.Mutex
 	startMu sync.Mutex // held while a runtime starts (ensureRuntime)
@@ -175,7 +176,7 @@ func New(o Options) (*Taut, error) {
 	// plugin code, storage and secrets: the user's only (older builds or a
 	// hand-made Dir may have left it group/world readable)
 	_ = os.Chmod(o.Dir, 0o700)
-	t := &Taut{
+	t := &Taut{startDone: make(chan struct{}),
 		opts:     o,
 		app:      o.App,
 		dir:      o.Dir,
@@ -202,13 +203,22 @@ func New(o Options) (*Taut, error) {
 	}
 	t.stopWatch = make(chan struct{})
 	if !o.NoAutoStart {
-		go t.StartEnabled(context.Background())
+		go func() {
+			t.StartEnabled(context.Background())
+			close(t.startDone)
+		}()
 		if len(t.plugins) > 0 {
 			t.startWatch()
 		}
+	} else {
+		close(t.startDone)
 	}
 	return t, nil
 }
+
+// StartDone is closed once the plugins enabled at start have started (or
+// failed to): the UI's reveal waits for it (internal/ui/reveal.go).
+func (t *Taut) StartDone() <-chan struct{} { return t.startDone }
 
 // Close stops every plugin (each bounded by the stop timeout) and the
 // runtime, and flushes plugin storage.

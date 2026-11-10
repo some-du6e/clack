@@ -133,8 +133,10 @@ var entMethods = map[string]bool{
 	"users.profile.getSections": true,
 }
 
-// MaxConcurrent bounds in-flight Web API requests (be gentle with rate limits).
-const MaxConcurrent = 12
+// MaxConcurrent bounds in-flight Web API requests (be gentle with rate
+// limits, which Slack counts per method per minute, not in flight). A cold
+// start sends ~14 boot calls plus the open channel's 3–4 at once.
+const MaxConcurrent = 16
 
 // Client talks to Slack. It is safe for concurrent use.
 type Client struct {
@@ -536,15 +538,19 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 		if resp.StatusCode >= 400 && resp.StatusCode != 200 {
 			return fmt.Errorf("slack %s: http %d", method, resp.StatusCode)
 		}
-		var head struct {
-			OK    *bool  `json:"ok"`
-			Error string `json:"error"`
-		}
-		if err := json.Unmarshal(data, &head); err != nil {
-			return fmt.Errorf("slack %s: bad json: %w", method, err)
-		}
-		if head.OK != nil && !*head.OK {
-			return &Error{Method: method, Code: head.Error, Body: data}
+		// {"ok":true…: no need to parse the whole body (7 MB for
+		// emoji.list) just to read "ok"; the decode below validates it
+		if !okFast(data) {
+			var head struct {
+				OK    *bool  `json:"ok"`
+				Error string `json:"error"`
+			}
+			if err := json.Unmarshal(data, &head); err != nil {
+				return fmt.Errorf("slack %s: bad json: %w", method, err)
+			}
+			if head.OK != nil && !*head.OK {
+				return &Error{Method: method, Code: head.Error, Body: data}
+			}
 		}
 		if out == nil {
 			return nil

@@ -50,6 +50,7 @@ type backend struct {
 	draftSeq   int
 
 	tabCache  map[string][]chTab
+	tabsDone  map[string]bool // opened() finished for the channel (the header is complete; reveal.go)
 	bookmarks map[string][]core.Bookmark
 	fetched   map[string]time.Time
 
@@ -129,13 +130,24 @@ func (b *backend) start(a *App) {
 			a.applyAccountPrefs(b.core.Prefs())
 		}
 	}
+	// Everything the first channel frame shows starts now, in parallel
+	// with core's boot: the plugin runtimes (JS engine, bundles from the
+	// bytecode cache, plugin start; their state mirror re-reads at
+	// "booted"), Block Kit, the restored channel's header (tabs, bookmarks,
+	// member count and facepile) and the drafts' sidebar markers. The
+	// window stays covered until they're in (reveal.go).
+	b.startTautAsync(a)
+	b.startBlockkit(a)
+	if ch := a.router.Current().Channel(); ch != "" {
+		b.opened(ch)
+	}
+	b.loadDrafts(a)
 	go func() {
 		t0 := time.Now()
 		if err := b.core.Boot(b.ctx); err != nil {
 			log.Printf("ui: boot: %v", err)
 			a.Post(func() { a.Toast("Couldn't connect to Slack: " + err.Error()) })
 		}
-		a.Post(func() { b.startTautAsync(a); b.startBlockkit(a) })
 		snap := b.core.Snapshot()
 		log.Printf("ui: core ready %v after boot start (%d convs)", time.Since(t0).Round(time.Millisecond), len(snap.Convs))
 		a.Post(func() {
@@ -146,9 +158,11 @@ func (b *backend) start(a *App) {
 			if a.router.Current() == "" {
 				a.openDefault()
 			} else if ch := a.router.Current().Channel(); ch != "" {
-				b.opened(ch) // restored route: fetch tabs + facepile
+				b.opened(ch) // started at once; a no-op unless that failed early
 			}
-			b.loadDrafts(a)
+			if b.slick != nil { // the team id is certain now
+				a.slickRoute(a.router.Current())
+			}
 			b.maybePresencePrompt(a)
 		})
 	}()
@@ -616,7 +630,36 @@ func (b *backend) opened(ch string) {
 		// Slack's tab bar (core.Tabs: canvases, lists, bookmarks, files…).
 		var tabs []chTab
 		var bms []core.Bookmark
-		ts, err := b.core.Tabs(ctx, ch)
+		// The header's three reads at once (they used to go one after
+		// another: three round trips before the header was complete).
+		// Members needs the kind: the sidebar's, else the id's.
+		kind := ""
+		if c, ok := b.core.Conv(ch); ok {
+			kind = c.Kind
+		} else if strings.HasPrefix(ch, "C") {
+			kind = "channel"
+		} else if strings.HasPrefix(ch, "G") {
+			kind = "private"
+		}
+		var (
+			wg    sync.WaitGroup
+			ts    []core.Tab
+			err   error
+			info  core.ChannelDetails
+			ierr  error
+			us    []core.User
+			merr  error
+			tried bool
+		)
+		wg.Add(2)
+		go func() { defer wg.Done(); ts, err = b.core.Tabs(ctx, ch) }()
+		go func() { defer wg.Done(); info, ierr = b.core.ChannelInfo(ctx, ch) }()
+		if kind == "channel" || kind == "private" {
+			tried = true
+			wg.Add(1)
+			go func() { defer wg.Done(); us, _, merr = b.core.Members(ctx, ch, "", true) }()
+		}
+		wg.Wait()
 		if err != nil {
 			log.Printf("ui: tabs %s: %v", ch, err)
 		}
@@ -640,10 +683,7 @@ func (b *backend) opened(ch string) {
 			bms = append(bms, t.Bookmarks...)
 		}
 		var members []string
-		info, ierr := b.core.ChannelInfo(ctx, ch)
-		conv, _ := b.core.Conv(ch)
-		if conv.Kind == "channel" || conv.Kind == "private" {
-			us, _, merr := b.core.Members(ctx, ch, "", true)
+		if tried {
 			log.Printf("ui: members %s: %d err=%v", ch, len(us), merr)
 			if merr == nil {
 				for _, u := range us {
@@ -675,6 +715,10 @@ func (b *backend) opened(ch string) {
 		a.Post(func() {
 			b.tabCache[ch] = tabs
 			b.bookmarks[ch] = bms
+			if b.tabsDone == nil {
+				b.tabsDone = map[string]bool{}
+			}
+			b.tabsDone[ch] = true
 			if c := b.m.conv(ch); c != nil {
 				if ierr == nil && info.Conv.NumMembers > 0 {
 					c.NumMembers = info.Conv.NumMembers

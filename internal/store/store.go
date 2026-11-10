@@ -1229,6 +1229,17 @@ func (s *Store) SetEmojiList(m map[string]string) {
 	s.emojiAtMu.Unlock()
 }
 
+// SetEmojiPacked installs a fresh emoji.list result already packed as
+// "name\nvalue\n" pairs (slack.PackEmojiJSON): the map's keys and values
+// share the one string.
+func (s *Store) SetEmojiPacked(p string) {
+	s.CustomEmoji.Set(unpackEmoji(p))
+	s.emojiPart.Store(false)
+	s.emojiAtMu.Lock()
+	s.emojiAt = time.Now()
+	s.emojiAtMu.Unlock()
+}
+
 // EmojiAge is how old the custom emoji map is (a large value when unknown).
 func (s *Store) EmojiAge() time.Duration {
 	s.emojiAtMu.Lock()

@@ -329,8 +329,8 @@ func (m *mirror) onEvent(ev core.Event) {
 	case "dnd_updated", "dnd_updated_user":
 		m.invalidate("dndV2")
 	case "emoji_changed":
-	case "resync", "connection":
-		if ev.Type == "resync" {
+	case "resync", "connection", "booted":
+		if ev.Type != "connection" { // booted: everything boot fetched is in
 			for _, s := range mapSlices {
 				m.invalidate(s)
 			}
@@ -1133,7 +1133,7 @@ func (m *mirror) userPrefs() map[string]any {
 }
 
 func (m *mirror) sections() map[string]any {
-	snap := m.t.app.Snapshot()
+	snap := m.t.app.SnapshotNow() // never wait for boot on the JS thread
 	byID := map[string]any{}
 	ids := map[string][]string{}
 	byChannel := map[string][]string{}

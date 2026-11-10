@@ -180,13 +180,15 @@ func (t *Taut) runsHere(p *plugin) bool {
 	return p.meta == nil || !p.meta.HackClubOnly || t.IsHackClub()
 }
 
-// StartEnabled starts every enabled plugin that runs in this workspace,
-// after core has booted (the workspace decides Hack Club–only plugins).
+// StartEnabled starts every enabled plugin that runs in this workspace.
+// It no longer waits for core's boot: the workspace (Hack Club–only
+// plugins) comes from the credentials, and the state mirror answers with
+// what core holds so far and re-reads everything at "booted", so plugins
+// start in parallel with the network and draw with the first channel frame
+// (Slack runs its plugins' page scripts before boot data arrives too).
 // Plugins whose metadata isn't cached are read first, which needs JS.
 func (t *Taut) StartEnabled(ctx context.Context) {
-	select {
-	case <-t.app.Ready():
-	case <-ctx.Done():
+	if ctx.Err() != nil {
 		return
 	}
 	t.mu.Lock()

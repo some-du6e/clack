@@ -47,6 +47,10 @@ jobs:
         run: .github/scripts/gio-layer-fix.sh xvfb-run -a
       - name: sign-out stops all traffic (50 runs, race detector)
         run: go test -race -count=50 -run 'TestAuthFailedStopsCore$' ./internal/core
+      - name: plugins start in parallel with boot (race detector; the JS engine is one wasm instance)
+        run: |
+          go test -race -count=1 -timeout 30m ./internal/taut ./internal/slick
+          go test -race -count=20 -run 'TestPluginsStartBeforeBoot$' ./internal/taut
       - name: build
         if: ${{ !cancelled() }}
         run: |

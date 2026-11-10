@@ -217,6 +217,7 @@ type App struct {
 	standIns         int                        // keepBody draws so far
 	missedFrameLog   focusLog                   // the missed-frame log line (focus_log.go)
 	sw               startupWatch               // the startup timeline (startup.go)
+	rv               revealState                // the cover until the window is ready (reveal.go)
 	panelOrigin      image.Point                // the primary panel's window origin this frame
 
 	swipe         swiper          // trackpad history swipes (swipe.go, nav.go)
@@ -320,6 +321,7 @@ func (a *App) Run() error {
 		app.MinSize(800, 500),
 	)
 	a.winLive.Store(a.win)
+	a.rv.inRun = true // the real window: covered until revealed (reveal.go)
 	applog.Mark("window", "")
 	go a.updateLoop(a.updateSchedule(), realUpdateClock())
 	a.watchOSTheme()
@@ -408,6 +410,7 @@ func (a *App) Run() error {
 				gtx = a.newContext(&ops, e)
 				a.frame(gtx)
 			}
+			a.revealFrame(gtx)
 			slackc.UnlockFrame()
 			tl := time.Now()
 			wd.next(&stageSubmit)

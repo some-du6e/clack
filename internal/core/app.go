@@ -425,8 +425,17 @@ func (a *App) Boot(ctx context.Context) error {
 			a.emit(Event{Type: "poll"})
 		}()
 	}
-	a.S.LoadCache()
-	tCache := time.Since(t0)
+	// meta.json (the user directory, 65k emoji, usergroups) decodes
+	// alongside the calls instead of before them; the steps that depend
+	// on it wait for cacheDone.
+	cacheDone := make(chan struct{})
+	var tCache time.Duration
+	go func() {
+		s := time.Now()
+		a.S.LoadCache()
+		tCache = time.Since(s)
+		close(cacheDone)
+	}()
 	var (
 		wg       sync.WaitGroup
 		tmu      sync.Mutex
@@ -455,9 +464,24 @@ func (a *App) Boot(ctx context.Context) error {
 			tmu.Unlock()
 		}()
 	}
+	var tDMUsers time.Duration
 	step("conversations", func() error {
 		convs, errConvs = a.C.Conversations(ctx)
-		return errConvs
+		if errConvs != nil {
+			return errConvs
+		}
+		// the DM rows' people, straight away (not after every other step)
+		ids := []string{a.C.Creds.UserID}
+		for _, c := range convs {
+			if c.IsIM {
+				ids = append(ids, c.User)
+			}
+		}
+		<-cacheDone
+		tu := time.Now()
+		a.EnsureUsers(ctx, ids)
+		tDMUsers = time.Since(tu)
+		return nil
 	})
 	step("counts", func() (err error) {
 		counts, err = a.C.Counts(ctx)
@@ -491,11 +515,16 @@ func (a *App) Boot(ctx context.Context) error {
 		}
 		return err
 	}
-	if a.S.HasCachedPrefs() {
-		go func() { _ = loadPrefs() }() // cached prefs render the first frame
+	if warm {
+		go func() { _ = loadPrefs() }() // the boot snapshot's prefs render the first frame
 	} else {
 		step("prefs", loadPrefs)
 	}
+	// What the sidebar shows besides sections: starred conversations
+	// (stars.list), and the saved set; in the batch, so the first sidebar
+	// is complete instead of the Starred section filling in afterwards.
+	step("stars", func() error { return a.loadStars(ctx) })
+	step("saved", func() error { return a.loadSaved(ctx) })
 	step("team.prefs", func() error { return a.LoadTeamPrefs(ctx) }) // teamprefs.go
 	step("team", func() error {
 		var r struct {
@@ -516,21 +545,28 @@ func (a *App) Boot(ctx context.Context) error {
 		}
 		return err
 	})
-	if _, ok := a.S.User(a.C.Creds.UserID); !ok {
-		step("self", func() error {
-			a.EnsureUsers(ctx, []string{a.C.Creds.UserID})
-			return nil
-		})
-	}
-	// Custom emoji (65k on Hack Club, ~7 MB of JSON) and usergroups come
-	// from the disk cache; emoji_changed keeps a running session current.
-	// Refresh them only when stale, and after startup so the parse does
-	// not compete with the first frames.
-	if a.S.CustomEmoji.Len() == 0 || !a.S.EmojiFull() {
-		step("emoji", func() error { return a.loadEmoji(ctx) })
-	} else if a.S.EmojiAge() > EmojiMaxAge {
-		a.later(10*time.Second, func() { _ = a.loadEmoji(a.bg) })
-	}
+	// self, then the rail's workspace icon (which on Grid depends on the
+	// viewer's workspaces): in the batch, so the icon doesn't change later
+	step("self", func() error {
+		<-cacheDone
+		a.EnsureUsers(ctx, []string{a.C.Creds.UserID})
+		a.refreshTeamIcon(ctx)
+		return nil
+	})
+	// Custom emoji (65k on Hack Club, ~7 MB of JSON): from meta.json when
+	// it has them (emoji_changed keeps a running session current, and a
+	// stale map refreshes after startup), else fetched in the batch:
+	// messages draw them as images from their first frame.
+	step("emoji", func() error {
+		<-cacheDone
+		if a.S.CustomEmoji.Len() == 0 || !a.S.EmojiFull() {
+			return a.loadEmoji(ctx)
+		}
+		if a.S.EmojiAge() > EmojiMaxAge {
+			a.later(10*time.Second, func() { _ = a.loadEmoji(a.bg) })
+		}
+		return nil
+	})
 	a.later(5*time.Second, func() { _ = a.loadUsergroups(a.bg) }) // cosmetic; cached on disk after the first run
 	wg.Wait()
 	if errConvs != nil {
@@ -558,14 +594,6 @@ func (a *App) Boot(ctx context.Context) error {
 		a.S.Sections = sections
 		a.S.Unlock()
 	}
-	ids := []string{a.C.Creds.UserID}
-	for _, c := range convs {
-		if c.IsIM {
-			ids = append(ids, c.User)
-		}
-	}
-	tu := time.Now()
-	a.EnsureUsers(ctx, ids)
 	if u, ok := a.S.User(a.C.Creds.UserID); ok {
 		a.S.Lock()
 		a.S.Self = *u
@@ -574,7 +602,7 @@ func (a *App) Boot(ctx context.Context) error {
 	sort.Strings(timings)
 	log.Printf("boot: ready in %s (cache %s, %s, dm-users=%s); %d conversations, %d sections, %d emoji",
 		time.Since(t0).Round(time.Millisecond), tCache.Round(time.Millisecond), strings.Join(timings, " "),
-		time.Since(tu).Round(time.Millisecond), len(convs), len(sections), a.S.CustomEmoji.Len())
+		tDMUsers.Round(time.Millisecond), len(convs), len(sections), a.S.CustomEmoji.Len())
 	a.bcMu.Lock()
 	a.bc.booted = true
 	a.bcMu.Unlock()
@@ -584,11 +612,11 @@ func (a *App) Boot(ctx context.Context) error {
 	a.rtMu.Unlock()
 	a.startRealtime()
 	go a.pollLoop(a.bg)
-	go a.refreshTeamIcon(a.bg) // Grid: the icon Slack's rail shows (team_icon.go), fresh
 	go a.pump()
 	go a.prefetch(a.bg)
-	go a.loadExtras(a.bg)  // starred + saved sets
 	go a.resolveLoop(a.bg) // unresolved channel/user/bot names
+	// everything boot fetched is in: plugins' state mirror re-reads it
+	a.emit(Event{Type: "booted"})
 	// The boot snapshot of this session's fresh state, once startup's
 	// work is done, then with the metadata cache every 5 minutes and at
 	// Close.
@@ -622,13 +650,17 @@ func (a *App) Close() error {
 }
 
 func (a *App) loadEmoji(ctx context.Context) error {
-	m, err := a.C.EmojiList(ctx)
+	t0 := time.Now()
+	p, n, err := a.C.EmojiListPacked(ctx)
 	if err != nil {
 		log.Printf("emoji.list: %v", err)
 		return err
 	}
-	a.S.SetEmojiList(m)
-	_ = a.S.SaveCache()
+	tf := time.Since(t0)
+	a.S.SetEmojiPacked(p)
+	applog.Debugf("emoji.list: %d emoji, fetched+scanned in %s, installed in %s", n,
+		tf.Round(time.Millisecond), (time.Since(t0) - tf).Round(time.Millisecond))
+	go func() { _ = a.S.SaveCache() }() // 7 MB to disk: not on boot's path
 	return nil
 }
 
@@ -823,6 +855,12 @@ func (a *App) Snapshot() Snapshot {
 	<-a.ready
 	return a.snapshotNow()
 }
+
+// SnapshotNow is Snapshot without waiting for Boot: what core holds now
+// (empty sections and conversations early in a cold start). For callers
+// that must never block, like the plugins' state mirror on the JS thread;
+// core emits "booted" when Boot's data is in.
+func (a *App) SnapshotNow() Snapshot { return a.snapshotNow() }
 
 // snapshotNow is Snapshot from what the store holds now.
 func (a *App) snapshotNow() Snapshot {

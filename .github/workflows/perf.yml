@@ -98,6 +98,14 @@ jobs:
         run: .github/perf/build.sh base "$RUNNER_TEMP/base-tree" perf-out . || echo "::warning::base client didn't build; the report has head numbers only"
       - name: real process (Xvfb, cold + warm starts, idle RSS), interleaved
         run: .github/perf/process.sh perf-out/fakeslackd perf-out base head
+      - name: the published plugin Library (ChatTabs and Taut plugins for the startup timeline)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p perf-out/library
+          for i in 1 2 3; do gh release download plugins -R "$GITHUB_REPOSITORY" -D perf-out/library --clobber -p 'index.json' -p 'taut-*.js' -p 'slick-ChatTabs*.js' && break; sleep 20; done
+          ls perf-out/library | wc -l
       - name: startup timeline (150 ms per API call, cold + warm), interleaved
         env:
           LATENCY: 150ms
@@ -151,6 +159,7 @@ jobs:
             !perf-out/*/*.test
             !perf-out/*/clack*
             !perf-out/fakeslackd
+            !perf-out/library
       - name: append to perf-history
         if: github.event_name == 'push'
         run: |

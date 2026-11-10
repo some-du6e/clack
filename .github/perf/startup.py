@@ -11,8 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from summary import dur_ms  # noqa: E402
 
 out, base_label, head_label = sys.argv[1], sys.argv[2], sys.argv[3]
-COLS = ["window", "first-frame", "theme", "sidebar", "messages", "core-ready", "sidebar-live", "history-live",
-        "images", "plugins"]
+COLS = ["window", "first-frame", "reveal", "core-ready", "sidebar-live", "history-live", "messages", "images", "plugins"]
 
 
 def parse(line):
@@ -60,8 +59,13 @@ md = ["## Startup timeline", "",
       "(applog/startup.go): `sidebar`/`messages` are the first frames showing them (from the boot snapshot on a warm "
       "start), `sidebar-live`/`history-live` when Slack's answers replaced them, `settled` the last change before "
       "1.5 s of quiet. `relayouts` counts frames where something already painted moved: sidebar rows, unread state, "
-      "message rows, the theme. `nocache` is HEAD with `CLACK_NO_BOOT_CACHE=1` (how Clack booted before the boot "
+      "message rows, the theme, counted only once the window is revealed. `reveal` is when the loading cover lifted "
+      "(internal/ui/reveal.go): from then the window shows everything at once; before it, nothing but the cover. "
+      "`nocache` is HEAD with `CLACK_NO_BOOT_CACHE=1` (how Clack booted before the boot "
       "snapshot). The base binary predates the timeline: only its first paint and core ready are known.", ""]
+pl = os.path.join(out, "startup-plugins.txt")
+if os.path.exists(pl):
+    md += [open(pl).read().strip(), ""]
 hdr = ["side", "run", "first paint", "core ready (boot)"] + COLS + ["**settled**", "relayouts"]
 md += ["| " + " | ".join(hdr) + " |", "|" + "---|" * len(hdr)]
 for side, label in (("base", base_label), ("head", head_label)):

@@ -116,7 +116,7 @@ func (a *App) startupFrame() {
 			}
 			if s := h; s != sw.sideSig {
 				if sw.sideSig != 0 {
-					applog.Relayout("sidebar")
+					a.relayout("sidebar")
 					a.startupChange(now)
 				}
 				sw.sideSig = s
@@ -137,7 +137,7 @@ func (a *App) startupFrame() {
 		}
 		if s := h; s != sw.unreadSig {
 			if sw.unreadSig != 0 {
-				applog.Relayout("unreads")
+				a.relayout("unreads")
 				a.startupChange(now)
 			}
 			sw.unreadSig = s
@@ -161,7 +161,7 @@ func (a *App) startupFrame() {
 				}
 				if sig != sw.msgSig {
 					if sw.msgSig != 0 && sw.msgN > 0 {
-						applog.Relayout("messages")
+						a.relayout("messages")
 						a.startupChange(now)
 					}
 					sw.msgSig, sw.msgN = sig, n
@@ -180,6 +180,9 @@ func (a *App) startupFrame() {
 	}
 	if !applog.Marked("plugins") {
 		ready = false // plugins still starting (startTautAsync marks it, with or without any)
+	}
+	if !a.revealed() {
+		ready = false // still under the cover (reveal.go)
 	}
 	started := a.opts.Started
 	switch {
@@ -206,7 +209,15 @@ func (a *App) startupTheme(changed bool) {
 		return
 	}
 	if changed && a.sw.painted {
-		applog.Relayout("theme")
+		a.relayout("theme")
 		a.startupChange(time.Now())
+	}
+}
+
+// relayout counts a visible move: under the reveal cover nothing is
+// visible, so nothing counts.
+func (a *App) relayout(what string) {
+	if a.revealed() {
+		applog.Relayout(what)
 	}
 }

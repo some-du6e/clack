@@ -11,6 +11,12 @@
 # Each start runs RUN_SECS (past core's boot snapshot save, 20 s after
 # boot) and is then killed.
 #
+# Every home opens on the same channel (ui.json route, like a returning
+# user; C0FAKE00000 has a canvas tab and a Files tab) with live updates
+# answered (no first-run banner), and, when <outdir>/library holds the
+# published plugin Library (perf.yml downloads it), with Karim-like plugins
+# on: Slick's ChatTabs (a tab bar over the channel) and five Taut plugins.
+#
 # usage: startup.sh <fakeslackd> <outdir> <side>...
 #   each side's binary is <outdir>/<side>/clack-perf; results go to
 #   <outdir>/<side>/startup/ (startup.tsv: run, then the timeline line)
@@ -32,15 +38,41 @@ trap 'kill $fpid $xpid 2>/dev/null' EXIT
 export DISPLAY=:98
 for i in $(seq 1 100); do [ -s "$credsdir/creds.json" ] && [ -e /tmp/.X11-unix/X98 ] && break; sleep 0.1; done
 
+ROUTE=${ROUTE:-C0FAKE00000}
+lib="$out/library"
+plugins=none
+seed() { # home: ui.json and the plugins
+  local h=$1
+  printf '{"route":"c/%s","last_channel":"%s","realtime":false}\n' "$ROUTE" "$ROUTE" > "$h/ui.json"
+  [ -s "$lib/index.json" ] || return 0
+  mkdir -p "$h/taut/plugins" "$h/slick/plugins"
+  local tauts=(HumanCount LastSeen WhoReacted NoTrack ShutUpSlackbot) id cfg=""
+  for id in "${tauts[@]}"; do
+    [ -f "$lib/taut-$id.js" ] || continue
+    cp "$lib/taut-$id.js" "$h/taut/plugins/$id.js"
+    cfg="$cfg${cfg:+,}\"$id\":{\"enabled\":true}"
+  done
+  printf '{"plugins":{%s}}\n' "$cfg" > "$h/taut/config.json"
+  if [ -f "$lib/slick-ChatTabs.js" ]; then
+    cp "$lib/slick-ChatTabs.js" "$h/slick/plugins/ChatTabs.js"
+    [ -f "$lib/slick-ChatTabs.main.js" ] && cp "$lib/slick-ChatTabs.main.js" "$h/slick/plugins/ChatTabs.main.js"
+    printf '{"enabled":true,"plugins":{"ChatTabs":{"enabled":true}}}\n' > "$h/slick/settings.json"
+  fi
+  plugins="ChatTabs + ${tauts[*]}"
+}
+
 declare -A home
 for s in "${sides[@]}"; do
   mkdir -p "$out/$s/startup"
   : > "$out/$s/startup/startup.tsv"
   home[$s]=$(mktemp -d)
   cp "$credsdir/creds.json" "${home[$s]}/creds.json"
+  seed "${home[$s]}"
 done
 nchome=$(mktemp -d) # HEAD without the boot snapshot (its own caches)
 cp "$credsdir/creds.json" "$nchome/creds.json"
+seed "$nchome"
+echo "plugins: $plugins" | tee "$out/startup-plugins.txt"
 
 one() { # side run home [env...]
   local s=$1 run=$2 h=$3; shift 3
@@ -66,10 +98,13 @@ for run in cold warm1 warm2 warm3; do
   for s in "${order[@]}"; do one "$s" "$run" "${home[$s]}"; done
   n=$((n + 1))
 done
-# HEAD's "before": the same binary with the boot snapshot off
+# HEAD with the boot snapshot off (meta.json only after its first run),
+# and a second cold start in a fresh home
 for s in "${sides[@]}"; do
   [ "$s" = head ] || continue
   for run in cold warm1 warm2; do one head "nocache-$run" "$nchome" CLACK_NO_BOOT_CACHE=1; done
+  c2=$(mktemp -d); cp "$credsdir/creds.json" "$c2/creds.json"; seed "$c2"
+  one head cold2 "$c2"
 done
 # what the warm starts read: every file 0600, every directory 0700
 for s in "${sides[@]}"; do

@@ -89,9 +89,11 @@ type Options struct {
 
 // Slick is the plugin system. All methods are safe for concurrent use.
 type Slick struct {
-	opts Options
-	t    *taut.Taut
-	dir  string
+	startDone     chan struct{} // closed when the start-up StartEnabled returned (StartDone)
+	startDoneOnce sync.Once
+	opts          Options
+	t             *taut.Taut
+	dir           string
 
 	mu      sync.Mutex
 	cfg     *storedConfig
@@ -136,7 +138,7 @@ func New(o Options) (*Slick, error) {
 	if err := os.MkdirAll(filepath.Join(o.Dir, "plugins"), 0o700); err != nil {
 		return nil, fmt.Errorf("slick: %w", err)
 	}
-	s := &Slick{
+	s := &Slick{startDone: make(chan struct{}),
 		opts:      o,
 		t:         o.Taut,
 		dir:       o.Dir,
@@ -172,13 +174,27 @@ func New(o Options) (*Slick, error) {
 	}
 	s.applyStyles()
 	if !o.NoAutoStart {
-		go s.StartEnabled(context.Background())
+		go func() {
+			s.StartEnabled(context.Background())
+			s.markStartDone()
+		}()
 		if !o.NoUpdates {
 			go s.autoUpdate()
 		}
 	}
+	if o.NoAutoStart {
+		s.markStartDone()
+	}
 	return s, nil
 }
+
+func (s *Slick) markStartDone() {
+	s.startDoneOnce.Do(func() { close(s.startDone) })
+}
+
+// StartDone is closed once the plugins enabled at start have started (or
+// failed to): the UI's reveal waits for it (internal/ui/reveal.go).
+func (s *Slick) StartDone() <-chan struct{} { return s.startDone }
 
 // Close stops every plugin (each bounded by the stop timeout). Taut keeps
 // the runtime; close Slick before Taut.
