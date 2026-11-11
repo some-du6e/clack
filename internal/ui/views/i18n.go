@@ -37,10 +37,6 @@ var (
 	nsHuddles       = i18n.NS("huddles")                // the Huddles page
 )
 
-// localized reports whether Slack's strings differ from the English
-// sources Clack's en-US code paths write out (any locale but en-US).
-func localized() bool { return i18n.Locale() != i18n.EnUS }
-
 // listify is Slack's listify (client-boot nTGe) as plain text: "A and B",
 // "A, B, and C" (the serial comma in en-US only), "A、B、C" in ja-JP (no
 // conjunction), "A、B y C" … with the general namespace's "and" (or "or"
