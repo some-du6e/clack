@@ -104,5 +104,29 @@ func TestPrefsAuditShots(t *testing.T) {
 		}
 		for e.a.dismissTop() {
 		}
+		// Linux and Windows: the app menu from the top nav's button
+		// (appmenu.go), with Help's Troubleshooting submenu
+		e.a.menu(image.Pt(e.a.px(8), e.a.px(38)), e.a.appMenuItems())
+		shot("appmenu-" + mode)
+		var help []MenuItem
+		for _, it := range e.a.appMenuItems() {
+			if it.Label == "Help" {
+				help = it.Sub
+			}
+		}
+		for e.a.dismissTop() {
+		}
+		e.a.menu(image.Pt(e.a.px(8), e.a.px(38)), help)
+		shot("appmenu-help-" + mode)
+		for e.a.dismissTop() {
+		}
+		for _, it := range help {
+			if it.Label == "Troubleshooting" {
+				e.a.menu(image.Pt(e.a.px(8), e.a.px(38)), it.Sub)
+			}
+		}
+		shot("appmenu-troubleshooting-" + mode)
+		for e.a.dismissTop() {
+		}
 	}
 }

@@ -7,7 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
+	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 
 	"github.com/some-du6e/clack/internal/core"
@@ -108,6 +110,7 @@ func (w *ew) layoutRich(gtx C, sz image.Point) {
 	r := image.Rectangle{Max: sz}
 	rad := dp(gtx, 8)
 	bw := max(1, dp(gtx, 1))
+	w.focusedD, w.box = ed.Focused(gtx), sz
 	switch {
 	case ed.Focused(gtx):
 		ring := dp(gtx, 4)
@@ -118,9 +121,23 @@ func (w *ew) layoutRich(gtx C, sz image.Point) {
 	default:
 		outline(gtx, r, rad, bw, cl.SelectBorder, cl.Bg)
 	}
+	// a click anywhere in the box focuses the field, as Slack's (the
+	// editor fills the inner box and places the caret itself; this
+	// covers the padding around it)
+	if w.main.clicked(gtx, w.o.host()) {
+		ed.Focus(gtx)
+	}
+	func() {
+		defer clip.Rect(r).Push(gtx.Ops).Pop()
+		w.main.g.Add(gtx.Ops)
+		pointer.CursorText.Add(gtx.Ops)
+	}()
 	padX, padY := dp(gtx, 12), dp(gtx, 8)
+	inner := image.Pt(sz.X-2*padX, sz.Y-2*padY)
 	at(gtx, image.Pt(padX, padY), func(gtx C) D {
-		gtx.Constraints = layout.Constraints{Min: image.Pt(sz.X-2*padX, 0), Max: image.Pt(sz.X-2*padX, sz.Y-2*padY)}
+		// Min fills the box: the editor's input area was its text's
+		// height, so a click under the first line did nothing
+		gtx.Constraints = layout.Constraints{Min: inner, Max: inner}
 		return ed.Layout(gtx, editorStyle(th, w.o.host(), textOf(w.e.Placeholder)))
 	})
 }

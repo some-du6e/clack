@@ -36,6 +36,12 @@ var colorTokens = []struct {
 	{func(c *colors) *color.NRGBA { return &c.ReactBg }, theme.Both("rgba(var(--sk_foreground_min),0.06)")},
 	{func(c *colors) *color.NRGBA { return &c.ToolbarHoverBg }, theme.TokMsgHover},
 	{func(c *colors) *color.NRGBA { return &c.Important }, theme.Both("var(--dt_color-content-imp)")},
+	{func(c *colors) *color.NRGBA { return &c.HuddleLive }, theme.Both("var(--dt_color-content-hgl-2)")},
+	{func(c *colors) *color.NRGBA { return &c.HuddleJoin }, theme.Both("var(--dt_color-base-inv-hgl-2)")},
+	{func(c *colors) *color.NRGBA { return &c.HuddleTileLive }, theme.Both("rgb(var(--dt_color-plt-jade-60))")},
+	{func(c *colors) *color.NRGBA { return &c.HuddleMissedBg }, theme.Both("var(--dt_color-base-imp)")},
+	{func(c *colors) *color.NRGBA { return &c.HuddleLiveBadge }, theme.Tok{Light: "rgb(var(--dt_color-plt-jade-90))", Dark: "rgb(var(--dt_color-plt-jade-80))"}},
+	{func(c *colors) *color.NRGBA { return &c.HuddleLiveBadgeText }, theme.Tok{Light: "var(--dt_color-content-inv-pry)", Dark: "rgb(var(--dt_color-plt-jade-0))"}},
 }
 
 var (

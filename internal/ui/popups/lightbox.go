@@ -865,14 +865,38 @@ func lbGet(ctx context.Context, raw string) ([]byte, error) {
 	return imgcache.PublicFetchLimit(ctx, raw, core.MaxFetch)
 }
 
-// lbSave writes data to the Downloads folder under a unique name and
-// returns the path.
+// Download location (Preferences > Advanced, the ui root sets these):
+// DownloadDir is the folder downloads go to ("" for ~/Downloads), and
+// AskDownload, when set and on, saves through the system's save dialog
+// instead (Slack's "Choose location for each download"). Both run off
+// the UI goroutine.
+var (
+	DownloadDir func() string
+	AskDownload func(name string, data []byte) (path string, asked bool, err error)
+)
+
+// ErrDownloadCanceled is a save dialog the user closed: no toast.
+var ErrDownloadCanceled = errors.New("download canceled")
+
+// lbSave writes data to the download folder under a unique name (or
+// where the save dialog says) and returns the path.
 func lbSave(name, src string, data []byte) (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
+	if AskDownload != nil {
+		if p, asked, err := AskDownload(lbFileName(name, src, data), data); asked {
+			return p, err
+		}
 	}
-	dir := filepath.Join(home, "Downloads")
+	dir := ""
+	if DownloadDir != nil {
+		dir = DownloadDir()
+	}
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		dir = filepath.Join(home, "Downloads")
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
@@ -884,29 +908,8 @@ func lbSave(name, src string, data []byte) (string, error) {
 // Windows device names), and O_EXCL means an existing file or symlink is
 // never overwritten or followed.
 func lbSaveIn(dir, name, src string, data []byte) (string, error) {
-	name = lbCleanName(name)
-	if name == "" {
-		if u, err := url.Parse(src); err == nil {
-			name = lbCleanName(path.Base(u.Path))
-		}
-	}
-	if name == "" {
-		name = "image"
-	}
+	name = lbFileName(name, src, data)
 	ext := filepath.Ext(name)
-	if ext == "" {
-		switch http.DetectContentType(data) {
-		case "image/png":
-			ext = ".png"
-		case "image/jpeg":
-			ext = ".jpg"
-		case "image/gif":
-			ext = ".gif"
-		case "image/webp":
-			ext = ".webp"
-		}
-		name += ext
-	}
 	stem := strings.TrimSuffix(name, ext)
 	for i := 0; i < 1000; i++ {
 		fn := name
@@ -932,6 +935,37 @@ func lbSaveIn(dir, name, src string, data []byte) (string, error) {
 		return p, nil
 	}
 	return "", errors.New("no free file name")
+}
+
+// lbFileName is the name a download saves as: the Slack-supplied name
+// reduced to one plain file name (lbCleanName), else the URL's last
+// segment, else "image", with an extension from the bytes when it has
+// none.
+func lbFileName(name, src string, data []byte) string {
+	name = lbCleanName(name)
+	if name == "" {
+		if u, err := url.Parse(src); err == nil {
+			name = lbCleanName(path.Base(u.Path))
+		}
+	}
+	if name == "" {
+		name = "image"
+	}
+	ext := filepath.Ext(name)
+	if ext == "" {
+		switch http.DetectContentType(data) {
+		case "image/png":
+			ext = ".png"
+		case "image/jpeg":
+			ext = ".jpg"
+		case "image/gif":
+			ext = ".gif"
+		case "image/webp":
+			ext = ".webp"
+		}
+		name += ext
+	}
+	return name
 }
 
 // lbCleanName makes name safe as a single file name.

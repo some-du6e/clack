@@ -41,7 +41,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$CLACK_SHOTS"
-          xvfb-run -a go test -count=1 -v -run 'TestHuddleShotsAudit$|TestHeaderShots$|TestHuddleShotsInvite|TestHuddleShotsMic' ./internal/ui/huddleui
+          xvfb-run -a go test -count=1 -v -run 'TestHuddleShotsAudit$|TestHeaderShots$|TestHuddleShotsInvite|TestHuddleShotsMic|TestSidebarSuffixFaces$|TestSidebarFaceSteps$' ./internal/ui/huddleui
           ls -la "$CLACK_SHOTS"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

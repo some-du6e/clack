@@ -586,7 +586,19 @@ func usergroupSpan(r Resolver, id, label string) Span {
 	if name == "" {
 		name = id
 	}
-	return Span{Kind: Usergroup, Text: "@" + strings.TrimPrefix(name, "@"), ID: id}
+	// UserGroup (boot-shared fg3x): c-mrkdwn__user_group--mention, the
+	// self highlight, when the viewer is in the group
+	self := false
+	if m, ok := r.(UsergroupMember); ok && id != "" {
+		self = m.InUsergroup(id)
+	}
+	return Span{Kind: Usergroup, Text: "@" + strings.TrimPrefix(name, "@"), ID: id, Self: self}
+}
+
+// UsergroupMember is an optional Resolver method: whether the viewer is in
+// user group id (Slack's isUserInGroup over userGroupMembership).
+type UsergroupMember interface {
+	InUsergroup(id string) bool
 }
 
 func broadcastSpan(name string) Span {

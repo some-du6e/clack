@@ -20,7 +20,7 @@ import (
 // Preferences sections Slack has beyond Clack's original five: each row
 // either reads and writes the users.prefs key Slack's dialog uses (and
 // drives Clack's behaviour where Clack has it), or shows the way Slack
-// does, disabled, with naNote. Keys and calls are from Slack's
+// shows a disabled row. Keys and calls are from Slack's
 // gantry-v2-async-prefs-dialog chunk (2026-11).
 
 var errNoCore = errors.New("not signed in")

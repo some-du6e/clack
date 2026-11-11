@@ -8,6 +8,9 @@ import (
 	"testing"
 
 	"gioui.org/layout"
+
+	"github.com/some-du6e/clack/internal/store"
+	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
 func TestAvTimeOptions(t *testing.T) {
@@ -178,3 +181,34 @@ type avPageOverlay struct{ p *AvailabilityPage }
 func (o avPageOverlay) Layout(gtx layout.Context) layout.Dimensions { return o.p.Layout(gtx) }
 func (o avPageOverlay) Dismissed() bool                             { return false }
 func (o avPageOverlay) Dismiss()                                    {}
+
+// Working hours' times as Slack shows them: unpadded "H:MM" prefs pad to
+// the options' "HH:MM" and read "8:00 AM" ("08:00" with time24); an unset
+// hour shows BaseDndTimeSelect's "--:--" placeholder and adds no option
+// (the fakeslack shots had "00000": padStart's padding of "", shown as a
+// label and inserted as an option).
+func TestAvailabilityTimesShown(t *testing.T) {
+	t.Cleanup(uipref.Reset)
+	hr := avHours{Enabled: true, Days: "every_day", Start: "22:00", End: "8:00"}
+	if f, to := hr.shownFrom(), hr.shownTo(); f != "08:00" || to != "22:00" || avLabel(f) != "8:00 AM" || avLabel(to) != "10:00 PM" {
+		t.Errorf("8:00–22:00: %q %q, %q %q", f, to, avLabel(f), avLabel(to))
+	}
+	uipref.Set(store.Prefs{Time24: true})
+	if got := avLabel(hr.shownFrom()); got != "08:00" {
+		t.Errorf("time24: %q", got)
+	}
+	uipref.Reset()
+	unset := avHours{Enabled: true, Days: "every_day"}
+	from, to := unset.shownFrom(), unset.shownTo()
+	if from != "" || to != "" || avLabel(from) != "--:--" || avLabel(to) != "--:--" {
+		t.Errorf("unset: %q %q, %q %q", from, to, avLabel(from), avLabel(to))
+	}
+	for _, o := range append(avStartOpts(from, false), avEndOpts(from, to, true)...) {
+		if _, ok := avParseHM(o); !ok {
+			t.Errorf("unset hours added option %q", o)
+		}
+	}
+	if b, a := (avHours{Enabled: true, Days: "custom"}).dayShown(2); b != "" || a != "" {
+		t.Errorf("unset custom day %q %q", b, a)
+	}
+}

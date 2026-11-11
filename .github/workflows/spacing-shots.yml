@@ -1,7 +1,8 @@
 name: spacing-shots
 # Message list spacing against Slack's CSS: the row/baseline geometry tests
-# (internal/ui/messages/spacing_test.go), the composer's formatting-bar
-# overflow rule, and screenshots of three consecutive messages in a channel
+# (internal/ui/messages/spacing_test.go), the list's bottom spacer above the
+# composer and the thread reply box's top margin, the composer's
+# formatting-bar overflow rule, and screenshots of three consecutive messages in a channel
 # and in a thread pane, light and dark, rendered headlessly over an offline
 # core. Synthetic only: nothing here talks to Slack.
 on:
@@ -11,6 +12,8 @@ on:
       - "internal/ui/messages/**"
       - "internal/ui/composer/chrome*.go"
       - "internal/ui/composer/composer.go"
+      - "internal/ui/composer/slack.go"
+      - "internal/ui/composer/thread_margin_test.go"
       - "internal/ui/richview/**"
       - "internal/ui/spacing_shots_test.go"
       - ".github/workflows/spacing-shots.yml"
@@ -37,8 +40,8 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
       - name: geometry
         run: |
-          go test -count=1 -v -run 'TestMessageGeometry|TestThreadTime' ./internal/ui/messages/
-          go test -count=1 -v -run 'TestChromeBarWidth' ./internal/ui/composer/
+          go test -count=1 -v -run 'TestMessageGeometry|TestThreadTime|TestChannelListBottomSpacer|TestThreadListNoBottomSpacer' ./internal/ui/messages/
+          go test -count=1 -v -run 'TestChromeBarWidth|TestThreadComposerTopMargin' ./internal/ui/composer/
       - name: screenshots
         env:
           SPACING_SHOTS_DIR: ${{ github.workspace }}/dist/shots

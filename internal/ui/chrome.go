@@ -174,6 +174,7 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 		return
 	}
 	left := clsTopNavLeft.Enter(gtx, 0, 0)
+	a.appMenuButton(gtx, h) // appmenu.go: Linux and Windows
 	// history buttons: 26×26, 6px gaps, right-aligned 9px before the search.
 	b := gtx.Dp(26)
 	gap := gtx.Dp(6)
@@ -376,13 +377,21 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 			th = gtx.Dp(80) // Slack wraps "Agents & tools" onto two lines
 		}
 		org := image.Pt(gtx.Dp(9), y)
+		// More is a PeekTrigger: hovering opens its menu (rail_peek.go),
+		// and it keeps the hover tile while the menu shows
+		// (.p-peek_trigger--is-peek-visible)
+		peek := false
+		if t.key == "browse" {
+			a.railMoreFrame(gtx, image.Rectangle{Min: org, Max: org.Add(image.Pt(gtx.Dp(52), th))}, btn.Hovered())
+			peek = a.railPeekOpen()
+		}
 		at(gtx, org, image.Pt(gtx.Dp(52), th), func(gtx layout.Context) layout.Dimensions {
 			return clickArea(gtx, btn, nil, func(gtx layout.Context) layout.Dimensions {
 				sel := active == t.key
 				tile := image.Rect(gtx.Dp(8), gtx.Dp(8), gtx.Dp(44), gtx.Dp(44))
 				if sel {
 					a.chrome(gtx, org, tile, gtx.Dp(8), c.ChromeActive)
-				} else if btn.Hovered() {
+				} else if btn.Hovered() || peek {
 					a.chrome(gtx, org, tile, gtx.Dp(8), c.ChromeHover)
 				}
 				name := t.icon
@@ -412,7 +421,11 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 			})
 		})
 		if clicked(btn) {
-			a.railClick(t.key, org)
+			if t.key == "browse" {
+				a.railMoreClick() // forceOpenOnClick
+			} else {
+				a.railClick(t.key, org)
+			}
 		}
 		y += th
 	}

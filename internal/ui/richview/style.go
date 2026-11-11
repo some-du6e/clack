@@ -90,25 +90,29 @@ type Palette struct {
 	MentionHoverBg                 color.NRGBA
 	SlugHoverText                  color.NRGBA // a hovered message_mention pill's text (0: unchanged)
 	SelfMentionText, SelfMentionBg color.NRGBA
-	CodeText, CodeBg, CodeBorder   color.NRGBA
-	PreBg, PreBorder               color.NRGBA
-	QuoteBar                       color.NRGBA
-	Border, BorderHover            color.NRGBA // cards
-	Panel                          color.NRGBA // card background
-	Placeholder                    color.NRGBA // image loading background
-	Selection                      color.NRGBA
-	Highlight                      color.NRGBA // Style Highlight
-	Divider                        color.NRGBA
-	ButtonBorder, ButtonHoverBg    color.NRGBA
-	Primary, PrimaryText           color.NRGBA
-	Danger, DangerText             color.NRGBA
-	FileIconBg, FileIconPDF        color.NRGBA
-	FileIconZip, FileIconText      color.NRGBA
-	PlayBg, PlayFg                 color.NRGBA
-	TooltipBg, TooltipText         color.NRGBA // emoji :name: tooltips (theme/tooltip.go)
-	TooltipGlow                    color.NRGBA // the dark mode tooltip outline (none in light)
-	FooterSep                      color.NRGBA // content-inv-sec: a v3 footer's own color (its " | ")
-	HuddleJoinBorder               color.NRGBA // plt-jade-20: a huddle message's Join Huddle border (huddle.go)
+	// SelfLinkText is a mention of the viewer or of a group they're in
+	// (c-member_slug--link / c-mrkdwn__user_group--link with --mention):
+	// the link's content-hgl-1, content-hgl-3 in dark
+	SelfLinkText                 color.NRGBA
+	CodeText, CodeBg, CodeBorder color.NRGBA
+	PreBg, PreBorder             color.NRGBA
+	QuoteBar                     color.NRGBA
+	Border, BorderHover          color.NRGBA // cards
+	Panel                        color.NRGBA // card background
+	Placeholder                  color.NRGBA // image loading background
+	Selection                    color.NRGBA
+	Highlight                    color.NRGBA // Style Highlight
+	Divider                      color.NRGBA
+	ButtonBorder, ButtonHoverBg  color.NRGBA
+	Primary, PrimaryText         color.NRGBA
+	Danger, DangerText           color.NRGBA
+	FileIconBg, FileIconPDF      color.NRGBA
+	FileIconZip, FileIconText    color.NRGBA
+	PlayBg, PlayFg               color.NRGBA
+	TooltipBg, TooltipText       color.NRGBA // emoji :name: tooltips (theme/tooltip.go)
+	TooltipGlow                  color.NRGBA // the dark mode tooltip outline (none in light)
+	FooterSep                    color.NRGBA // content-inv-sec: a v3 footer's own color (its " | ")
+	HuddleJoinBorder             color.NRGBA // plt-jade-20: a huddle message's Join Huddle border (huddle.go)
 }
 
 func rgb(r, g, b uint8) color.NRGBA { return color.NRGBA{R: r, G: g, B: b, A: 255} }
@@ -146,7 +150,7 @@ func LightPalette() Palette {
 		Edited: rgb(134, 134, 134), CardText: rgb(69, 68, 71), CardFooter: rgb(94, 93, 96),
 		MentionText: rgb(18, 100, 163), MentionBg: rgba(54, 197, 240, 0.13), MentionHoverBg: rgba(29, 155, 209, 0.2),
 		SlugHoverText:   rgb(0x0b, 0x4c, 0x8c), // .p-rich_text_slug:hover
-		SelfMentionText: rgb(29, 28, 29), SelfMentionBg: rgba(255, 198, 0, 0.18),
+		SelfMentionText: rgb(29, 28, 29), SelfMentionBg: rgba(255, 198, 0, 0.18), SelfLinkText: rgb(18, 100, 163),
 		CodeText: rgb(192, 19, 67), CodeBg: rgba(29, 28, 29, 0.04), CodeBorder: rgba(29, 28, 29, 0.13),
 		PreBg: rgba(29, 28, 29, 0.04), PreBorder: rgba(29, 28, 29, 0.13),
 		QuoteBar: rgb(221, 221, 221),
@@ -171,9 +175,12 @@ func DarkPalette() Palette {
 	p.Text, p.Text2, p.Text3, p.Link = rgb(185, 186, 189), rgb(171, 171, 173), rgb(209, 210, 211), rgb(29, 155, 209)
 	p.Edited, p.CardText, p.CardFooter = rgb(134, 134, 134), rgb(209, 210, 211), rgb(171, 171, 173)
 	p.FileIconBg, p.FileIconText = rgba(232, 232, 232, 0.06), rgb(171, 171, 173)
-	p.MentionText, p.MentionBg, p.MentionHoverBg = rgb(29, 155, 209), rgba(29, 155, 209, 0.1), rgba(29, 155, 209, 0.2)
+	// the 2026 dark tokens (slack-kit-gantry-v2-styles .sk-client-theme--dark):
+	// content-hgl-1 #2ba5ce on surf-hgl-1 #03669640; a mention of you
+	// content-hgl-3 #dea700 on surf-hgl-3 #a073002e
+	p.MentionText, p.MentionBg, p.MentionHoverBg = rgb(43, 165, 206), rgba(3, 102, 150, 0x40/255.0), rgba(29, 155, 209, 0.2)
 	p.SlugHoverText = color.NRGBA{} // the dark theme's hover color isn't in the async CSS chunks: keep the pill's own
-	p.SelfMentionText, p.SelfMentionBg = rgb(232, 232, 232), rgba(242, 199, 68, 0.3)
+	p.SelfMentionText, p.SelfMentionBg, p.SelfLinkText = rgb(222, 167, 0), rgba(160, 115, 0, 0x2e/255.0), rgb(222, 167, 0)
 	p.CodeText, p.CodeBg, p.CodeBorder = rgb(232, 145, 45), rgba(232, 232, 232, 0.04), rgba(232, 232, 232, 0.13)
 	p.PreBg, p.PreBorder = rgba(232, 232, 232, 0.04), rgba(232, 232, 232, 0.13)
 	p.QuoteBar = rgba(232, 232, 232, 0.2)

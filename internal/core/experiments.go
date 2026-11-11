@@ -280,4 +280,5 @@ var experimentReads = map[string][]string{
 	"slack_kit_v2_button":                        on,
 	"a11y_no_auto_highlight_search_multi_select": {"on", "treatment"},
 	"basic_select_placeholder_option":            {"on", "treatment"},
+	"custom_file_sections":                       on, // the Files sidebar's starred file collection (views/files.go)
 }

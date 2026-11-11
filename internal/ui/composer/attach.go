@@ -42,6 +42,8 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/localimg"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
@@ -129,10 +131,57 @@ type attChip struct {
 	thumbBusy bool
 	thumbBad  bool // not decodable: drawn as a file card
 
+	// preview is data's local image URL while the image viewer may show
+	// it (guarded by attachments.mu; dropped with the chip)
+	preview string
+
 	// UI goroutine only.
 	hover  gesture.Hover
 	remove widget.Clickable
+	open   gesture.Click // the image tile (PendingImageFile's onClick)
 	tip    popups.TipState
+}
+
+// openPreview is PendingImageFile's onClick (boot-shared SYnk:
+// openPendingFileViewerDispatch with the file and its size): the attached
+// image in the image viewer, from its bytes (localimg, memory only). A file
+// restored from a server draft shows Slack's thumbnail.
+func (a *attachments) openPreview(c *attChip) {
+	a.mu.Lock()
+	data, thumb, title := c.data, c.thumbURL, c.title
+	if c.preview == "" && len(data) > 0 {
+		c.preview = localimg.Put(data)
+	}
+	u := c.preview
+	a.mu.Unlock()
+	img := richtext.Image{URL: u, Title: title, Alt: title}
+	switch {
+	case u != "":
+		if cfg, _, err := image.DecodeConfig(bytes.NewReader(data)); err == nil {
+			img.W, img.H = cfg.Width, cfg.Height
+		}
+	case thumb != "":
+		img.URL, img.Proxy = thumb, true
+	default:
+		return
+	}
+	a.h.OpenLightbox(img, core.Message{})
+}
+
+// dropPreviews forgets the chips' local image URLs (removed or sent).
+func (a *attachments) dropPreviews(chips ...*attChip) {
+	a.mu.Lock()
+	var us []string
+	for _, c := range chips {
+		if c.preview != "" {
+			us = append(us, c.preview)
+			c.preview = ""
+		}
+	}
+	a.mu.Unlock()
+	for _, u := range us {
+		localimg.Drop(u)
+	}
 }
 
 // attachments is the composer's pending file list. Every method is safe to
@@ -248,8 +297,10 @@ func (a *attachments) putBack(chips []*attChip) {
 // Clear removes every attached file.
 func (a *attachments) Clear() {
 	a.mu.Lock()
+	gone := a.chips
 	a.chips, a.total = nil, 0
 	a.mu.Unlock()
+	a.dropPreviews(gone...)
 	a.h.Invalidate()
 	pendingChanged()
 	a.notify()
@@ -372,6 +423,7 @@ func (a *attachments) remove(c *attChip) {
 		}
 	}
 	a.mu.Unlock()
+	a.dropPreviews(c)
 	a.h.Invalidate()
 	pendingChanged()
 	a.notify()
@@ -1139,6 +1191,22 @@ func (a *attachments) layoutChip(gtx layout.Context, v attView, sz image.Point) 
 
 	if v.asImage {
 		a.drawThumb(gtx, th, v, r, rad)
+		// PendingImageFile is a button: a click opens the image viewer
+		// (the remove button, drawn after, takes its own clicks)
+		for {
+			e, ok := c.open.Update(gtx.Source)
+			if !ok {
+				break
+			}
+			if e.Kind == gesture.KindClick {
+				a.openPreview(c)
+			}
+		}
+		func() {
+			defer clip.Rect(r).Push(gtx.Ops).Pop()
+			c.open.Add(gtx.Ops)
+			pointer.CursorPointer.Add(gtx.Ops)
+		}()
 	} else {
 		a.drawCard(gtx, th, v, r, rad)
 	}

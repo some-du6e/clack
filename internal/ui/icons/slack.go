@@ -239,6 +239,13 @@ func init() {
 	reg("menu", s("M1.75 5.25 H18.25 M1.75 10 H18.25 M1.75 15 H18.25"))
 	reg("lists", s(rrect(2.25, 2.25, 15.5, 15.5, 3)), s("M4.88 12.78 L6.06 13.92 L8.38 11.67 M10.62 6.36 H15.12 M10.62 10.05 H15.12 M10.62 13.74 H15.12"),
 		f("M6.53 8.83 C6.73 8.83 6.93 8.72 7.27 8.49 C8.12 7.9 8.78 7.17 8.78 6.4 C8.78 5.81 8.3 5.33 7.61 5.33 C6.78 5.33 6.53 6.09 6.53 6.09 C6.53 6.09 6.27 5.33 5.45 5.33 C4.77 5.33 4.28 5.81 4.28 6.4 C4.28 7.17 4.94 7.9 5.79 8.48 C6.13 8.71 6.33 8.83 6.53 8.83 Z"))
+	// Slack's caret-down-filled / caret-right-filled (icons.json): each a
+	// triangle rounded by 0.75 (its arcs' centres are the corners below),
+	// drawn as fl parts on that triangle, 0.72 inside the edge, so the ink
+	// matches in dark mode too. The Files sidebar's file collection header
+	// shows them on hover.
+	reg("caret-down-filled", fl("M6.25 8 H13.75 L10 12.5 Z"))
+	reg("caret-right-filled", fl("M8.25 6.25 L12.74 10 L8.25 13.75 Z"))
 	reg("add-channel-canvas", s("M8.25 2.25 H14.75 A3 3 0 0 1 17.75 5.25 V11.5 L11.5 17.75 H5.25 A3 3 0 0 1 2.25 14.75 V9.25 M11.5 17.75 V12.25 A.75 .75 0 0 1 12.25 11.5 H17.75 M4 1.75 V6.25 M1.75 4 H6.25"))
 
 	reg("eye-off", s("M2.5 10 C4.4 6.4 7 4.75 10 4.75 C13 4.75 15.6 6.4 17.5 10 C15.6 13.6 13 15.25 10 15.25 C7 15.25 4.4 13.6 2.5 10 Z"), s(circle(10, 10, 2.5)), s("M3.5 3.5 L16.5 16.5"))

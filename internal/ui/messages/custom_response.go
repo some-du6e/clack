@@ -174,9 +174,13 @@ func (r *row) nameSpan(gtx layout.Context, bs slackc.Styled) layout.Dimensions {
 	if nameS.size <= 0 {
 		return layout.Dimensions{Size: image.Pt(0, dp(gtx, nameS.lineH)), Baseline: dp(gtx, 5)}
 	}
-	r.nameShown = before + r.crName + after
+	name := r.crName
+	if r.hmName { // a huddle message's status line (huddle_msg.go)
+		name = r.name
+	}
+	r.nameShown = before + name + after
 	r.noMenuOn(gtx, &r.nameCtx) // a right-click on the name opens nothing
-	d := lineBox(gtx, nameS, func(gtx layout.Context) layout.Dimensions { return label(gtx, r.rc.th, nameS, r.crName) })
+	d := lineBox(gtx, nameS, func(gtx layout.Context) layout.Dimensions { return label(gtx, r.rc.th, nameS, name) })
 	contextArea(gtx, &r.nameCtx, d.Size)
 	return d
 }

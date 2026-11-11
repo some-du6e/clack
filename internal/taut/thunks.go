@@ -64,6 +64,7 @@ var ThunkCatalogue = []ThunkSpec{
 	{"getChannelMembershipInfoForUsers", "{channelId, userIds}", "taut", "who is in a channel; fills membership"},
 	{"ensureMembersArePresent", "{memberIds}", "taut", "loading users (core.EnsureUsers)"},
 	{"fetchRawChannelsById", "{ids}", "taut", "loading conversations (core.ChannelInfo); returns {missing}"},
+	{"fetchAndUpsertChannelsById", "{ids, reason?}", "taut", "loading conversations through fetchRawChannelsById, as Slack's; returns {channels, resolved, missing, failedIds}"},
 	{"joinChannel", "{channelId}", "ui (join button)", "joining (core.Join)"},
 	{"openPrefsModal", "{activeSection?}", "ui (shell)", "opening Preferences"},
 	{"enqueueHuddleToast", "{content, svgIconProps, duration}", "ui (toasts)", "a huddle toast"},
@@ -365,21 +366,38 @@ func (tt *thunkTable) installDefaults() {
 			t.app.EnsureUsers(ctx, argObj(a).strs("memberIds"))
 			return nil, nil
 		},
-		"fetchRawChannelsById": func(ctx context.Context, a []json.RawMessage) (any, error) {
+		"fetchRawChannelsById": t.fetchRawChannels,
+		// Slack's dispatches fetchRawChannelsById (PrivateChannel patches that
+		// one to name what's missing), then upserts what came back
+		"fetchAndUpsertChannelsById": func(ctx context.Context, a []json.RawMessage) (any, error) {
 			o := argObj(a)
 			ids := o.strs("ids")
-			if len(ids) == 0 {
-				ids = o.strs("channelIds")
+			reason := o.str("reason")
+			if reason == "" {
+				reason = "fetchAndUpsertChannelsById"
 			}
-			missing := []string{}
+			raw, err := t.DispatchJSON(ctx, "fetchRawChannelsById", []any{map[string]any{"ids": ids, "fetchConditionally": true, "reason": reason}}, t.fetchRawChannels)
+			if err != nil {
+				return nil, err
+			}
+			var res struct {
+				Missing []string `json:"missing"`
+			}
+			_ = json.Unmarshal(raw, &res)
+			gone := map[string]bool{}
+			for _, id := range res.Missing {
+				gone[id] = true
+			}
+			resolved := []string{}
 			for _, id := range ids {
-				if _, err := t.app.ChannelInfo(ctx, id); err != nil {
-					missing = append(missing, id)
-					continue
+				if !gone[id] {
+					resolved = append(resolved, id)
 				}
-				t.mirror.invalidate("channels", id)
 			}
-			return map[string]any{"missing": missing}, nil
+			if res.Missing == nil {
+				res.Missing = []string{}
+			}
+			return map[string]any{"channels": []any{}, "resolved": resolved, "missing": res.Missing, "failedIds": []string{}}, nil
 		},
 		"commitMessageEdit": func(ctx context.Context, a []json.RawMessage) (any, error) {
 			if len(a) == 0 {
@@ -523,4 +541,23 @@ func (r *appRef) apiCall(ctx context.Context, a []json.RawMessage) (any, error) 
 		return nil, err
 	}
 	return json.RawMessage(raw), nil
+}
+
+// fetchRawChannels is fetchRawChannelsById's native: core loads each
+// conversation (conversations.info); what it can't is missing.
+func (t *Taut) fetchRawChannels(ctx context.Context, a []json.RawMessage) (any, error) {
+	o := argObj(a)
+	ids := o.strs("ids")
+	if len(ids) == 0 {
+		ids = o.strs("channelIds")
+	}
+	missing := []string{}
+	for _, id := range ids {
+		if _, err := t.app.ChannelInfo(ctx, id); err != nil {
+			missing = append(missing, id)
+			continue
+		}
+		t.mirror.invalidate("channels", id)
+	}
+	return map[string]any{"missing": missing}, nil
 }

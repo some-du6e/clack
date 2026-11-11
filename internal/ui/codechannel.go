@@ -172,6 +172,20 @@ func init() {
 	}
 }
 
+// ContextBarShowing is messages.ContextBarShower: the conversation's
+// composer drew a context bar, so its list ends with Slack's shorter
+// bottom spacer (space.100 instead of space.150).
+func (a *App) ContextBarShowing(ch string) bool {
+	c := a.convos[ch+"/"]
+	if c == nil || c.comp == nil {
+		return false
+	}
+	if s, ok := c.comp.(interface{ ContextBarShown() bool }); ok {
+		return s.ContextBarShown()
+	}
+	return false
+}
+
 // codeContextBarShown is shouldDisplayAgentChannelBanner: session_channels
 // on and a code channel (Slack also leaves out the share dialog and code
 // channels it presents as Slackbot threads).

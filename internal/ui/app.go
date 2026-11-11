@@ -91,6 +91,11 @@ type Options struct {
 	// update helper starts the new version; ErrUpdateManual: the system
 	// installer opened instead.
 	InstallUpdate func(u UpdateInfo) error
+	// LaunchOnLogin and SetLaunchOnLogin are Preferences > Advanced >
+	// "Launch app on login" (Slack's DesktopPref launchOnStartup; cmd/clack:
+	// desktop's autostart entry or Run key). nil: the row is greyed.
+	LaunchOnLogin    func() bool
+	SetLaunchOnLogin func(on bool) error
 	// OnWindowEvent sees every window event before the UI (cmd/clack:
 	// window icons from the platform view events).
 	OnWindowEvent func(e event.Event)
@@ -98,7 +103,7 @@ type Options struct {
 	// saved preference says (cmd/clack -no-realtime, CLACK_NO_REALTIME=1).
 	NoRealtime bool
 	// LogDir is the folder of Clack's log file (cmd/clack: applog.Dir),
-	// for Help > Open Logs Folder. "": no log file.
+	// for Help > Troubleshooting > Show Logs in File Manager. "": no log file.
 	LogDir string
 	// LogTail returns up to n of the newest redacted log lines, for Copy
 	// Diagnostics. Called off the UI goroutine. Nil: none.
@@ -156,6 +161,7 @@ type App struct {
 	convoOrder      []string
 	ptrTag          int
 	ptrWin          image.Point
+	peek            railPeek // the rail's More PeekTrigger (rail_peek.go)
 	ptrOK           bool
 	hover           profileHover // the profile hover card (hover_card.go)
 	overlays        []Overlay
@@ -201,6 +207,7 @@ type App struct {
 	shaperCh         chan [2]*text.Shaper
 	font             fontState             // Appearance > Font (prefs_font.go)
 	explorer         *explorer.Explorer    // native file chooser (set in onWindow)
+	dl               downloadPrefs         // Download location, for the savers' goroutines (downloads.go)
 	tautGen          int                   // bumps when a (new) plugin runtime attaches
 	tautTabs         []taut.PreferencesTab // plugins' Preferences tabs
 	switchAt         time.Time             // navigation time, for the channel-switch latency log
@@ -265,6 +272,7 @@ func New(opts Options, images *imgcache.Cache) *App {
 	a.secondary.width = 0 // auto: Slack's default secondary width (secondaryWidth)
 	a.keys = a.defaultShortcuts()
 	a.loadPrefs()
+	a.startDownloads() // downloads.go
 	a.loadSplitWidth()
 	composer.UpArrowShortcut = func() int { return a.prefs.ComposerUpArrow }
 	a.startSpell()                                // spellcheck_wire.go
