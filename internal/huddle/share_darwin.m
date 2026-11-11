@@ -248,14 +248,14 @@ API_AVAILABLE(macos(12.3))
 		if (att == NULL || CFArrayGetCount(att) == 0) {
 			return;
 		}
-		static NSString **statusKey;
+		static CFStringRef *statusKey; // SCStreamFrameInfoStatus, looked up (the framework isn't linked)
 		static dispatch_once_t once;
 		dispatch_once(&once, ^{
-			statusKey = (NSString **)dlsym(RTLD_DEFAULT, "SCStreamFrameInfoStatus");
+			statusKey = (CFStringRef *)dlsym(RTLD_DEFAULT, "SCStreamFrameInfoStatus");
 		});
-		if (statusKey != NULL && *statusKey != nil) {
+		if (statusKey != NULL && *statusKey != NULL) {
 			NSDictionary *d = (__bridge NSDictionary *)CFArrayGetValueAtIndex(att, 0);
-			NSNumber *st = d[*statusKey];
+			NSNumber *st = d[(__bridge NSString *)*statusKey];
 			if (st == nil || st.integerValue != 0) { // SCFrameStatusComplete
 				return;
 			}
@@ -563,9 +563,9 @@ static BOOL borderTarget(NSRect *out) {
 	if (info != NULL && CFArrayGetCount(info) > 0) {
 		NSDictionary *d = (__bridge NSDictionary *)CFArrayGetValueAtIndex(info, 0);
 		CGRect r;
-		if (CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)d[(id)kCGWindowBounds], &r)) {
+		if (CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)d[(__bridge id)kCGWindowBounds], &r)) {
 			*out = cocoaRect(r);
-			ok = [d[(id)kCGWindowIsOnscreen] boolValue];
+			ok = [d[(__bridge id)kCGWindowIsOnscreen] boolValue];
 		}
 	}
 	if (info != NULL) {
