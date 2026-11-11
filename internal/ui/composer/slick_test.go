@@ -661,6 +661,9 @@ func TestSlickViewSlimMessageBoxOneLine(t *testing.T) {
 		f, send := &c.ui.f, c.ui.rect[crSend]
 		return f.oneLine && !send.Empty() && f.rowH < f.textH+30 && send.Min.Y >= f.box.Max.Y-f.rowH-1
 	})
+	for i := 0; i < 3; i++ { // the buttons' hit rects settle a frame later
+		frame()
+	}
 	f, send := &c.ui.f, c.ui.rect[crSend]
 	box := f.box
 	if send.Max.Y > box.Max.Y || send.Max.X > box.Max.X || send.Min.X < box.Max.X-80 {

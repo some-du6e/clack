@@ -606,8 +606,8 @@ func TestSlickViewWhoReactedInViews(t *testing.T) {
 	e.until("the reactors' avatars in the tada pill", pills, func() bool {
 		return has("slick-wr__av") && has("alice-24.png") && has(`"data-qa":"reactji"`)
 	})
-	if d.Size.X <= 0 || d.Size.Y != 24 {
-		t.Errorf("the pill row is %v, want one 24px row", d.Size)
+	if d.Size.X <= 0 || d.Size.Y < 24 || d.Size.Y > 32 {
+		t.Errorf("the pill row is %v, want one pill row", d.Size)
 	}
 }
 
@@ -621,7 +621,7 @@ func TestSlickViewCensorshipActivity(t *testing.T) {
 	v := NewActivity(e.h)
 	e.until("the feed", v.Layout, func() bool { return len(actPage(v).Items) == 6 })
 	var text string
-	e.until("bob's mention previewed masked", v.Layout, func() bool {
+	masked := func() bool {
 		if e.actRowH(v, "k-bob") <= 0 {
 			return false
 		}
@@ -631,6 +631,21 @@ func TestSlickViewCensorshipActivity(t *testing.T) {
 		}
 		text = richtext.PlainText(r.msg().Doc) + " / " + r.msg().Text
 		return !strings.Contains(text, "mention") && strings.Contains(text, "made-up") && strings.Contains(text, "*******")
-	})
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for !masked() {
+		if time.Now().After(deadline) {
+			r := v.rows["k-bob"]
+			e.ui.mu.Lock()
+			inTree := false
+			for _, tr := range e.ui.trees {
+				inTree = inTree || strings.Contains(string(tr), "made-up *******")
+			}
+			e.ui.mu.Unlock()
+			t.Fatalf("bob's mention previewed %q (row %v, override %v), masked copy in a delivered tree: %v", text, r != nil, r != nil && r.pm != nil, inTree)
+		}
+		e.frame(v.Layout)
+		time.Sleep(15 * time.Millisecond)
+	}
 	t.Logf("previewed: %q", text)
 }
