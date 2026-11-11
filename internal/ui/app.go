@@ -142,6 +142,7 @@ type App struct {
 	sidebar         sidebarState
 	secondary       secondaryState
 	searchQuery     string
+	searchBox       searchBoxState  // the top bar's search box: press-open, clear (search_topbar.go)
 	searchPill      image.Rectangle // window coords, for anchoring the search popover
 	primaryOrigin   image.Point     // window position of the primary panel
 	pvOrigin        originTracker   // ClientPrimaryView's origin under a patch

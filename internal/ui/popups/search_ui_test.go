@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -937,9 +938,21 @@ func TestSearchViewTabSorts(t *testing.T) {
 	e := srNewEnv(t, false)
 	gtx := layout.Context{Ops: new(op.Ops), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}}
 	// the tab's own call (not another tab's count-only one, which Slack
-	// sends newest first)
+	// sends newest first). The fake answers canvases (type:quip) in its
+	// canvas handler, so every call is read off a hook.
+	var mu sync.Mutex
+	calls := map[string][]url.Values{}
+	e.fs.SetHook(func(method string, f url.Values) (any, bool) {
+		mu.Lock()
+		calls[method] = append(calls[method], f)
+		mu.Unlock()
+		return nil, false
+	})
+	t.Cleanup(func() { e.fs.SetHook(nil) })
 	tabCall := func(method, sctx string) url.Values {
-		f := e.fs.SearchForms(method)
+		mu.Lock()
+		defer mu.Unlock()
+		f := calls[method]
 		for i := len(f) - 1; i >= 0; i-- {
 			if f[i].Get("search_context") == sctx && f[i].Get("count") != "0" {
 				return f[i]
