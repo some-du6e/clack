@@ -212,18 +212,20 @@ func (a *App) railClick(key string, org image.Point) {
 		}
 	case "platform": // Agents & tools: Clack's tools menu stands in for Slack's page
 		a.openMoreMenu(image.Pt(a.px(70), org.Y))
-	case "browse":
-		a.openRailMore(image.Pt(a.px(70), org.Y))
+	case "browse": // the More button itself peeks (rail_peek.go); this is Ctrl+number
+		a.openRailMorePeek(true)
 	default:
 		a.Navigate(key)
 	}
 }
 
-// openRailMore is Slack's More menu (BrowsePeekMenu): the tabs that are not
-// in the rail, with their subtitles and tab-number shortcuts, then
-// "Customize navigation bar".
-func (a *App) openRailMore(anchor image.Point) {
+// railMoreItems is Slack's More menu (BrowsePeekMenu): the tabs that are
+// not in the rail, with their subtitles and tab-number shortcuts, then
+// "Customize navigation bar". It opens from the More button's peek
+// (rail_peek.go).
+func (a *App) railMoreItems() []MenuItem {
 	r := a.model().Rail
+	anchor := a.peek.trig.Min
 	items := []MenuItem{{Label: "More", Disabled: true}}
 	for _, id := range a.railOverflow {
 		t := a.railTabFor(id)
@@ -243,7 +245,7 @@ func (a *App) openRailMore(anchor image.Point) {
 	}
 	items = append(items, MenuItem{Divider: true},
 		MenuItem{Label: "Customize navigation bar", Do: func() { a.openPrefsSection("navigation") }})
-	a.menu(anchor, items)
+	return items
 }
 
 func indexOf(list []string, s string) int {

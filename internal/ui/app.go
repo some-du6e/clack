@@ -155,6 +155,7 @@ type App struct {
 	convoOrder      []string
 	ptrTag          int
 	ptrWin          image.Point
+	peek            railPeek // the rail's More PeekTrigger (rail_peek.go)
 	ptrOK           bool
 	hover           profileHover // the profile hover card (hover_card.go)
 	overlays        []Overlay
