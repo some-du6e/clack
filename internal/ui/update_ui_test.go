@@ -113,10 +113,11 @@ func TestUpdatePhasesPresentation(t *testing.T) {
 	if a.update.phase != updAvailable || a.updatePending() || menu() != "An Update Is Available" {
 		t.Fatalf("available: phase %d, pending %v, menu %q", a.update.phase, a.updatePending(), menu())
 	}
-	a.helpClick() // no dot: Help is the keyboard shortcuts as before
-	if a.secondary.kind == secHelp || !strings.HasPrefix(a.toast.text, "Keyboard shortcuts") {
+	a.helpClick() // no dot: Help is the Keyboard Shortcuts pane (shortcuts_pane.go)
+	if a.secondary.kind != secShortcuts {
 		t.Errorf("Help without an update: pane %d, toast %q", a.secondary.kind, a.toast.text)
 	}
+	a.CloseSecondary()
 	a.updateMenuClick() // An Update Is Available: Preferences > Advanced (openPrefsModal)
 	waitUpd(t, a, "Preferences", func() bool { return len(a.overlays) > 0 })
 	if len(a.overlays) != 1 {

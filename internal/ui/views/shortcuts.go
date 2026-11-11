@@ -251,20 +251,17 @@ func (v *KeyboardShortcuts) rowAt(gtx C, i int) D {
 	return v.shortcutRow(gtx, i, r.sc)
 }
 
-// subtitle is "⌘/ to toggle this panel".
+// subtitle is "{⌘ or Ctrl}{/} to toggle this panel": the slim chips are
+// shortcut.Chips' (⌘ on macOS, Ctrl elsewhere, as Slack's isMac picks).
 func (v *KeyboardShortcuts) subtitle(gtx C) D {
-	mod := "Ctrl"
-	if shortcut.Mac() {
-		mod = "⌘"
-	}
 	muted := theme.WithAlpha(v.p.Text, 0xb3) // rgba(sk_foreground_max, .7)
-	return layout.Inset{Left: 12}.Layout(gtx, func(gtx C) D {
-		return row(gtx, layout.Middle,
-			layout.Rigid(func(gtx C) D { return v.keyChip(gtx, mod, true) }),
-			layout.Rigid(func(gtx C) D { return v.keyChip(gtx, "/", true) }),
-			layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wReg, muted, " to toggle this panel") }),
-		)
-	})
+	var ch []layout.FlexChild
+	for _, k := range shortcut.Chips("Mod+/") {
+		k := k
+		ch = append(ch, layout.Rigid(func(gtx C) D { return v.keyChip(gtx, k, true) }))
+	}
+	ch = append(ch, layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wReg, muted, " to toggle this panel") }))
+	return layout.Inset{Left: 12}.Layout(gtx, func(gtx C) D { return row(gtx, layout.Middle, ch...) })
 }
 
 // shortcutRow is Shortcut: the title (a button when the row runs a
