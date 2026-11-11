@@ -35,6 +35,10 @@ var (
 	nsComposer      = i18n.NS("composer")               // DeleteDraftModal
 	nsSearch        = i18n.NS("search")                 // the browsers' filters, sorts and rows (search's components)
 	nsHuddles       = i18n.NS("huddles")                // the Huddles page
+	nsFileColl      = i18n.NS("file-collection")        // the Files sidebar's sections (FileCollectionHeaderRow, useFileCollectionMenuTemplate, DeleteFileCollectionModal)
+	nsMenu          = i18n.NS("menu")                   // useDocumentMoveToSectionMenuItems
+	nsLists         = i18n.NS("lists")                  // ListSidebarContextMenu
+	nsDialog        = i18n.NS("generic_dialog")         // the confirm dialog's default buttons
 )
 
 // listify is Slack's listify (client-boot nTGe) as plain text: "A and B",

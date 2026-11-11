@@ -157,6 +157,7 @@ func (a *App) OpenList(id string) {
 	}
 	a.secondary = secondaryState{kind: secDetails, channel: a.router.Current().Channel(), width: w}
 	a.secondary.view = a.newListView(id, listview.Side)
+	a.fileOpenedSide(id) // files_open.go
 	a.Invalidate()
 }
 

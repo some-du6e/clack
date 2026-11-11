@@ -119,6 +119,10 @@ type prefs struct {
 	// (or was skipped there), so later launches go straight to sign-in.
 	// Preferences > Clack > Replay introduction plays it again.
 	IntroSeen bool `json:"intro_seen,omitempty"`
+	// OpenFiles is the Files sidebar's Recently viewed by team: Slack's
+	// filesOpenInSessionStore in local storage (file ids only;
+	// files_open.go).
+	OpenFiles map[string]openFilesPrefs `json:"open_files,omitempty"`
 }
 
 func (a *App) prefsPath() string {
