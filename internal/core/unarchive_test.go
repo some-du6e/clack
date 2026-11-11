@@ -27,4 +27,13 @@ func TestCanUnarchive(t *testing.T) {
 	if a.CanUnarchive("C1") || a.CanUnarchive("D1") {
 		t.Error("an unarchived channel or a DM can be unarchived")
 	}
+	// an archived channel the viewer isn't in (the store's ext list)
+	a.S.PutExtConv(slack.Conversation{ID: "C8", Name: "older", IsChannel: true, IsArchived: true})
+	deadline = time.Now().Add(5 * time.Second)
+	for !a.CanUnarchive("C8") {
+		if time.Now().After(deadline) {
+			t.Fatal("an ext archived channel never became unarchivable")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }

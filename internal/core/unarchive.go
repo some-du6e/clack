@@ -44,6 +44,9 @@ func (a *App) unarchivePerms() *unarchivePerms {
 // the broadcast permissions) it reads false and a load starts.
 func (a *App) CanUnarchive(ch string) bool {
 	c, ok := a.S.Conv(ch)
+	if !ok {
+		c, ok = a.S.ExtConv(ch) // an archived channel outside the sidebar
+	}
 	if !ok || c.IsIM || c.IsMPIM || !c.IsArchived {
 		return false
 	}
