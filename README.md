@@ -166,7 +166,7 @@ Every connection Clack makes to Slack uses the TLS handshake of OpenSSL 3.0.13 (
 
 Credentials are saved to `~/.config/clack/creds.json`, readable only by you (mode 600 in a 700 directory; an owner-only ACL on Windows). They only ever go to https slack.com hosts. "Sign out on this device" deletes that file and nothing else.
 
-**Live updates are off until you turn them on.** On first run a banner asks. You can also switch them in Preferences > Clack. While they're off, Clack never opens Slack's realtime websocket. It refreshes unread counts and the open conversation and threads over the Web API every 20 seconds instead. You can read and send, but there's no typing indicator, presence, instant delivery, desktop notifications, huddle events or slash-command modals. `clack -no-realtime` (or `CLACK_NO_REALTIME=1`) keeps the socket closed whatever the setting says.
+**Live updates are on**, as in Slack desktop: Clack opens Slack's realtime websocket after it signs in, over the same OpenSSL handshake as every other connection. You can turn them off in Preferences > Clack, and a saved "off" stays off. While they're off, Clack never opens the websocket. It refreshes unread counts and the open conversation and threads over the Web API every 20 seconds instead. You can read and send, but there's no typing indicator, presence, instant delivery, desktop notifications, huddle events or slash-command modals. `clack -no-realtime` (or `CLACK_NO_REALTIME=1`) keeps the socket closed whatever the setting says.
 
 Clack never calls Slack's sign-out or token-revoke methods. "Sign out on this device" only deletes `creds.json`; your Slack session in the browser and other apps is not affected.
 

@@ -228,7 +228,6 @@ type App struct {
 	winLive          atomic.Pointer[app.Window] // a.win once Run made it, for other goroutines
 	inval            chan struct{}              // redraw requests for invalidator (cap 1: they coalesce)
 	update           updateState                // "Update available" banner
-	rtAsk            realtimeState              // first-run "Live updates are off" banner
 	updatesOff       atomic.Bool                // prefs.NoUpdateCheck, for updateLoop
 	updNow           chan struct{}              // Check now → updateLoop (cap 1)
 	updWake          chan struct{}              // focus came back: is a check due? (cap 1)
@@ -627,11 +626,9 @@ func (a *App) layoutShell(gtx layout.Context) image.Rectangle {
 	if a.sidebar.hidden || pageOwnsWorkspace(a.router.Current()) {
 		sbW = 0
 	}
-	bannerH := a.realtimeAskH(gtx)   // the workspace starts below the live-updates question
 	demoH := a.demoBannerHeight(gtx) // `clack demo` (demo_banner.go)
-	bannerH += demoH
 	dockH := a.huddles().DockHeight(gtx) // the huddle bar's row (huddle_wire.go)
-	ws := image.Rect(railW, navH+bannerH, sz.X-inset, sz.Y-inset-dockH)
+	ws := image.Rect(railW, navH+demoH, sz.X-inset, sz.Y-inset-dockH)
 	wsFull := ws
 	// Slack's split view takes the workspace's right end (split.go)
 	splitW, sbSplit := a.splitColumn(gtx, ws.Dx(), sbW)
@@ -674,9 +671,6 @@ func (a *App) layoutShell(gtx layout.Context) image.Rectangle {
 	a.th.Chrome = false
 	if demoH > 0 {
 		a.layoutDemoBanner(gtx, image.Rect(wsFull.Min.X, navH, wsFull.Max.X, navH+demoH-gtx.Dp(bannerGap)))
-	}
-	if bannerH > demoH {
-		a.layoutRealtimeBanner(gtx, image.Rect(wsFull.Min.X, navH+demoH, wsFull.Max.X, ws.Min.Y-gtx.Dp(bannerGap)))
 	}
 
 	// workspace: sidebar (translucent) + primary panel, one rounded unit
