@@ -102,3 +102,102 @@ func TestAgentStreamEvents(t *testing.T) {
 		}
 	}
 }
+
+// agent_member_channel_count: Slack's channel header counts a channel's
+// people (membership counts' member_count, from edge users/counts'
+// people) with the experiment on; off, or not assigned (Slack's null),
+// it counts people and apps (member_count + app_count).
+func TestAgentMemberChannelCountFollowsExperiment(t *testing.T) {
+	fs, err := fakeslack.Start(fakeslack.Small)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fs.Close()
+	a, ch := fakeBroadcastApp(t, fs, slack.User{})
+	a.loadMemberCount(context.Background(), ch) // fakeslack: 1100 people, 12 apps
+	count := func() int {
+		c, ok := a.Conv(ch)
+		if !ok {
+			t.Fatal("channel lost")
+		}
+		return c.NumMembers
+	}
+	a.setExperiments(map[string]string{"agent_member_channel_count": "on"})
+	if n := count(); n != 1100 {
+		t.Errorf("on: %d members, want the 1100 people", n)
+	}
+	a.SetExperimentGroup("agent_member_channel_count", "off")
+	if n := count(); n != 1112 {
+		t.Errorf("off: %d members, want 1100 people + 12 apps", n)
+	}
+	a.SetExperimentGroup("agent_member_channel_count", "") // unassigned
+	if n := count(); n != 1112 {
+		t.Errorf("unassigned: %d members, want people + apps", n)
+	}
+	a.ClearExperimentGroup("agent_member_channel_count")
+	if n := count(); n != 1100 {
+		t.Errorf("server group back: %d", n)
+	}
+	if apps := a.AppCountCached(ch); apps != 12 {
+		t.Errorf("app_count %d", apps)
+	}
+}
+
+// app_thread_nugget_fe / app_nugget_refinement (boot-shared 352G, G2VO):
+// an app's status in a thread is the footer's nugget, and the composer
+// leaves the app out of its typing line (suppressBotTyping); a message in
+// the thread ends it; Slackbot threads get none; without the experiment
+// (off or not assigned) there is no nugget and no suppression.
+func TestAppThreadNugget(t *testing.T) {
+	a, _ := testApp(t)
+	a.S.PutUsers([]slack.User{{ID: "UAPP", Name: "kyto", IsBot: true, RealName: "Kyto Agent",
+		Profile: slack.Profile{RealName: "Kyto Agent", DisplayName: "kyto"}}})
+	status := func(bot, st, username string) {
+		a.handle(slack.Event{Type: "ai_assistant_status", Raw: raw(map[string]any{"channel_id": "D1", "thread_ts": "1.0",
+			"bot_user_id": bot, "status": st, "username": username, "loading_messages": []string{"Reading the thread…", "Writing…"}})})
+	}
+	a.setExperiments(map[string]string{"app_thread_nugget_fe": "on", "app_nugget_refinement": "on"})
+	status("UAPP", "is thinking…", "")
+	n, ok := a.AppThreadNugget("D1", "1.0")
+	if !ok || n.Name != "Kyto Agent" || !n.Chip || len(n.LoadingMessages) != 2 || n.BotUserID != "UAPP" {
+		t.Fatalf("nugget %+v %v", n, ok)
+	}
+	if bot, ok := a.SuppressBotTyping("D1", "1.0"); !ok || bot != "UAPP" {
+		t.Errorf("suppressBotTyping %q %v", bot, ok)
+	}
+	if _, ok := a.AppThreadNugget("D1", "2.0"); ok {
+		t.Error("a nugget in a thread without a status")
+	}
+	a.SetExperimentGroup("app_nugget_refinement", "off")
+	if n, _ := a.AppThreadNugget("D1", "1.0"); n.Chip {
+		t.Error("app_nugget_refinement off still draws the chip")
+	}
+	for _, g := range []string{"off", ""} {
+		a.SetExperimentGroup("app_thread_nugget_fe", g)
+		if _, ok := a.AppThreadNugget("D1", "1.0"); ok {
+			t.Errorf("app_thread_nugget_fe %q: nugget shown", g)
+		}
+		if _, ok := a.SuppressBotTyping("D1", "1.0"); ok {
+			t.Errorf("app_thread_nugget_fe %q: typing suppressed", g)
+		}
+	}
+	a.ClearExperimentGroup("app_thread_nugget_fe")
+	a.ClearExperimentGroup("app_nugget_refinement")
+	status("UAPP", "is thinking…", "Kyto (beta)") // a username wins
+	if n, _ := a.AppThreadNugget("D1", "1.0"); n.Name != "Kyto (beta)" {
+		t.Errorf("name %q, want the status's username", n.Name)
+	}
+	// the app's reply (any message in the thread) ends the status
+	a.handle(rtm("message", map[string]any{"channel": "D1", "ts": "3.0", "thread_ts": "1.0", "user": "UAPP", "text": "done"}))
+	if _, ok := a.AppThreadNugget("D1", "1.0"); ok {
+		t.Error("the nugget outlived the app's reply")
+	}
+	if _, ok := a.AssistantStatusFor("D1", "1.0"); ok {
+		t.Error("the status outlived the app's reply")
+	}
+	// Slackbot's own agent threads have none (isSlackbotAgentThread)
+	status("USLACKBOT", "is thinking…", "")
+	if _, ok := a.AppThreadNugget("D1", "1.0"); ok {
+		t.Error("a nugget for Slackbot")
+	}
+}

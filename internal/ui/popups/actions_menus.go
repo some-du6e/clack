@@ -154,14 +154,7 @@ func newChannelMenu(h Host, anchor image.Point, convID string, alignRight bool) 
 			details()
 		}},
 		Sep(),
-		MenuItem{Label: "Open in split view", Icon: "panel-right", Do: func() {
-			// ui-shell's *ui.App exposes OpenSplit (right-hand pane).
-			if s, ok := h.(interface{ OpenSplit(route string) }); ok {
-				s.OpenSplit("c/" + convID)
-				return
-			}
-			h.Toast("Split view isn't supported yet")
-		}},
+		channelSplitItem(h, convID, c.Kind), // getTilesTemplate (split.go)
 		Sep(),
 	)
 	if dm { // Slack's channel menu has no mute row (that's the header bell)

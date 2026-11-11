@@ -175,6 +175,10 @@ func (a *App) handle(ev slack.Event) {
 			}
 		}
 		a.refreshConv(ctx, id)
+	case "record_channel_close": // channelClosed for a record (code) channel (codechannel_close.go)
+		a.onRecordChannelClose(ch)
+	case "record_channel_open": // recordChannelOpened
+		a.onRecordChannelOpen(ctx, ch)
 	case "im_close", "mpim_close":
 		// Closed from some client: out of the sidebar until a new message,
 		// but still a known conversation (search, switcher, history).
@@ -516,6 +520,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 			a.emit(Event{Type: "sidebar_changed"})
 		}
 	}
+	a.clearAssistantStatusOnMessage(ch, m.ThreadTS) // agent.go
 	v := a.message(ch, &m)
 	cv := a.Count(ch)
 	ev2 := Event{Type: "message", Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, UserID: m.User, Msg: &v, Count: &cv,

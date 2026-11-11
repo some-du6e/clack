@@ -120,6 +120,9 @@ func (m *Menu) menuTemplate(items []MenuItem) []any {
 			if it.Disabled {
 				e["disabled"] = true
 			}
+			if it.Tag != "" { // MenuTemplateItem tag {label, style}
+				e["tag"] = slackc.Props{"label": it.Tag, "style": "informative"}
+			}
 			if it.Checked {
 				e["type"] = "checkbox"
 				e["checked"] = true
@@ -204,6 +207,12 @@ func menuFromTemplate(th *theme.Theme, list []any, base []MenuItem) []MenuItem {
 		}
 		if e.Has("disabled") {
 			it.Disabled = e.Bool("disabled")
+		}
+		if e.Has("tag") {
+			it.Tag = ""
+			if t := asProps(e["tag"]); t != nil {
+				it.Tag = t.StrOr("label", "")
+			}
 		}
 		if typ == "checkbox" || typ == "radio" || e.Has("checked") {
 			it.Checked = e.Bool("checked")

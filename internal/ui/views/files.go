@@ -1573,16 +1573,16 @@ func (f *Files) fileMenuItems(it fileItem) []popups.MenuItem {
 		}
 		groups = append(groups, []popups.MenuItem{{Label: label, Do: func() { f.editDetails(it, label) }}})
 	}
-	// Open in split view: canvases and lists (Slack hides it in the
-	// simplified layout, isBBModeEnabled; the Host doesn't expose that).
-	// Slack's move-to-split-view glyph isn't in Clack's icon set.
+	// Open in split view: canvases and lists, with Slack's
+	// move-to-split-view icon; keyed popups.SplitKey, so the shell drops it
+	// in the simplified layout (isBBModeEnabled) as Slack does.
 	if it.isCanvas() || it.isList() {
 		if it.isCanvas() {
 			if co, ok := f.h.(interface{ OpenCanvas(id string) }); ok {
-				groups = append(groups, []popups.MenuItem{{Label: "Open in split view", Do: func() { co.OpenCanvas(id) }}})
+				groups = append(groups, []popups.MenuItem{{Key: popups.SplitKey, Label: "Open in split view", Icon: "move-to-split-view", Do: func() { co.OpenCanvas(id) }}})
 			}
 		} else if lo, ok := f.h.(interface{ OpenList(id string) }); ok {
-			groups = append(groups, []popups.MenuItem{{Label: "Open in split view", Do: func() { lo.OpenList(id) }}})
+			groups = append(groups, []popups.MenuItem{{Key: popups.SplitKey, Label: "Open in split view", Icon: "move-to-split-view", Do: func() { lo.OpenList(id) }}})
 		}
 	}
 	// delete_file: your own files

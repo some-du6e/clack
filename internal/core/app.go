@@ -68,6 +68,7 @@ type App struct {
 	savedEdits map[string]bool
 	memberN    map[string]int    // conversation -> people count (edge users/counts)
 	memberG    map[string]int    // conversation -> guests among them (edge users/counts)
+	memberA    map[string]int    // conversation -> apps among its members (edge users/counts)
 	dms        dmState           // which DMs Slack's sidebar shows (dmsidebar.go)
 	exp        *sidebarExp       // experiments the sidebar rules read (nil: defaults)
 	expGroups  map[string]string // the groups every check reads (experiments.go)
@@ -110,7 +111,7 @@ type call struct {
 func New(c *slack.Client, s *store.Store) *App {
 	a := &App{C: c, S: s, ready: make(chan struct{}), inflight: map[string]*call{}, subs: map[*sub]struct{}{},
 		presSeen: map[string]time.Time{}, files: newFileCache(fileCacheBytes), pending: map[string]*pendingSend{},
-		saved: map[string]bool{}, starred: map[string]bool{}, memberN: map[string]int{}, memberG: map[string]int{}}
+		saved: map[string]bool{}, starred: map[string]bool{}, memberN: map[string]int{}, memberG: map[string]int{}, memberA: map[string]int{}}
 	if s.SelfID() == "" {
 		s.Lock()
 		s.Self.ID = c.Creds.UserID
@@ -124,6 +125,7 @@ func New(c *slack.Client, s *store.Store) *App {
 		a.connected = up
 		a.mu.Unlock()
 		a.emit(Event{Type: "connection", Connected: up})
+		a.codeChannelsConnection(up) // the stale code channel closer's timers (codechannel_close.go)
 		if up {
 			go a.refreshCounts(a.bg)
 		}
@@ -594,9 +596,13 @@ func (a *App) Boot(ctx context.Context) error {
 	a.rtMu.Unlock()
 	a.startRealtime()
 	go a.pollLoop(a.bg)
+	go a.codeChannelCloserLoop(a.bg) // code_channels_auto_close (codechannel_close.go)
 	go a.pump()
 	go a.prefetch(a.bg)
 	go a.resolveLoop(a.bg) // unresolved channel/user/bot names
+	if a.C.Creds.EnterpriseID != "" {
+		go func() { _ = a.LoadEnterprisePrefs(a.bg) }() // enterprise_prefs.go
+	}
 	// everything boot fetched is in: plugins' state mirror re-reads it
 	a.emit(Event{Type: "booted"})
 	go func() {
@@ -1031,9 +1037,10 @@ func (a *App) conv(c *slack.Conversation) Conv {
 	a.S.RLock()
 	v.Muted = a.S.Muted[c.ID]
 	a.S.RUnlock()
+	peopleOnly := a.agentMemberChannelCountOn()
 	a.mu.Lock()
 	if n, ok := a.memberN[c.ID]; ok {
-		v.NumMembers = n // people, as Slack's header counts them (no bots/apps)
+		v.NumMembers = channelMemberCount(n, a.memberA[c.ID], peopleOnly) // agent.go
 	}
 	v.Starred = a.starred[c.ID]
 	v.TempUntil = a.temp[c.ID]
@@ -1400,9 +1407,7 @@ func (a *App) sections(convs []Conv) []Section {
 			if codeIdx < 0 {
 				codeIdx = len(out)
 			}
-			if sv.Name == "" {
-				sv.Name = "Code channels"
-			}
+			sv.Name = a.CodeChannelsSectionName(sv.Name) // a static name (p4Ef), code_channels_naming
 		}
 		out = append(out, sv)
 	}
@@ -1422,6 +1427,9 @@ func (a *App) sections(convs []Conv) []Section {
 	for _, c := range convs {
 		if assigned[c.ID] {
 			continue
+		}
+		if c.Code != nil && c.ID != sel && a.codeChannelClosed(c.ID) {
+			continue // lJBI keeps a closed record channel only when a section lists it, or starred or temporary (codechannel_close.go)
 		}
 		if c.Code != nil && codeIdx >= 0 { // getDefaultSectionType: code channels before any other bucket
 			out[codeIdx].Channels = append(out[codeIdx].Channels, c.ID)
