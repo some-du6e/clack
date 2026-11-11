@@ -1246,6 +1246,16 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 // when the first line holds nothing.
 func (v *View) FirstBaseline() int { return v.d.firstBaseline() }
 
+// ElementSlots are the boxes Options.Elements drew its element runs in
+// (actions blocks, accessories), view-local, as of the last layout.
+func (v *View) ElementSlots() []image.Rectangle {
+	out := make([]image.Rectangle, len(v.d.slots))
+	for i := range v.d.slots {
+		out[i] = v.d.slots[i].r
+	}
+	return out
+}
+
 // Baselines returns the text baseline of each laid-out line, in px from
 // the view's top (tests: row geometry against Slack's line boxes).
 func (v *View) Baselines() []int {

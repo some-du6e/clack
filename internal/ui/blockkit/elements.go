@@ -264,8 +264,10 @@ func (w *ew) size(gtx C, maxW int, accessory bool) image.Point {
 	}
 	switch w.e.Type {
 	case "button", "workflow_button":
-		tw := measure(gtx, th, 13, theme.Bold, textOf(w.e.Text))
-		bw := tw + 2*dp(gtx, 8)
+		// .p-block_kit_button_element { padding: 0 8px 1px } in a
+		// c-button--small (min-width 56px); the label's emoji are 16px
+		tw := runsWidth(gtx, th, 13, buttonRuns(w.o.host(), w.e.Text))
+		bw := max(tw+2*dp(gtx, 8), dp(gtx, 56))
 		if accessory && w.o.modal() {
 			bw = max(bw, dp(gtx, 120))
 		}
@@ -409,7 +411,7 @@ func (w *ew) layoutButton(gtx C, sz image.Point) {
 		w.press()
 		off = w.disabled(gtx)
 	}
-	drawButton(gtx, w.th(), sz, w.e.Style, textOf(w.e.Text), 4, 13, w.main.g.Hovered(), false, off)
+	drawButtonRuns(gtx, w.th(), h, sz, w.e.Style, buttonRuns(h, w.e.Text), 4, 13, w.main.g.Hovered(), false, off)
 	w.main.add(gtx, sz)
 }
 
