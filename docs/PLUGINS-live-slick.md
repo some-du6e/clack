@@ -39,7 +39,7 @@ Legend: ✅ works as in Slick · ⚠️ partly (what's missing is listed) · ❌
 | ChatTabs | ✅ | CI (`TestSlickViewChatTabs`, `TestSlickViewHaikuWarningWithChatTabs`, `TestSlickViewMissedFrameChatTabs`) | Its tab bar inside the primary view, "Open in new Slick tab" in the channel menu, Ctrl+W through its main half. The send it blocked with HaikuWarning on is fixed (`815933f`). |
 | ClearURLs | ⚠️ | CI (acceptance check) | Tracking parameters go on send (its main half fetches the rules). Its paste-time cleaning patches Quill's Clipboard module, which Clack's native composer doesn't have. |
 | Click2Load | ❌ | — | It gates iframes; Clack never creates any. |
-| CopyReacted | ⚠️ | CI (acceptance registers `ReactionBar`, `ReactionAddButton`) | In channels both boundaries exist (messages/row.go), with no view test yet. The Threads, Unreads and Activity views have Slack's Reaction boundary now but no ReactionBar or ReactionAddButton, so its button isn't there. |
+| CopyReacted | ⚠️ | CI (`TestSlickViewCopyReacted`) | In channels its copy button follows the add-reaction button (ReactionAddButton inside ReactionBar's tree). The Threads, Unreads and Activity views have Slack's Reaction boundary now but no ReactionBar or add-reaction button, so its button isn't there. |
 | CustomFonts | ❌ | — | Its stylesheet installs, but Clack draws its bundled Lato and doesn't load `@font-face` fonts. |
 | CustomNameRecording | ⚠️ | — | Its button shows on your own profile; `decodeAudioData` isn't supported, so nothing uploads. |
 | CustomSlackbot | ✅ | CI (`TestSlickViewCustomSlackbot`) | Its avatar and name on Slackbot's custom responses (`subtype: slackbot_response`) and in the reply bar. Clack draws no custom-response label, so its rule hiding that badge has nothing to hide. |
@@ -138,4 +138,14 @@ Related theme fixes: importing selects the theme (`fcc7ac9`); pausing Slick keep
 | `815933f`, `da3c2d4`, `4e3fca4`, `aafbd3e` | ui, slackc, jsrt, taut | fix-dialog: plugin window key listeners swallowed the composer's Enter (ChatTabs); modal `<dialog>`; a send check whose task the watchdog killed can't hold a message forever (ignored after 10 s with nothing open for the user) |
 | `slick-chattabs` | ui, slackc, taut | Slick ChatTabs' `f52f03a` tab bar never showed: no `RenderedViewContents` in Clack's tree, the primary view wasn't a host element (`:has(> .slick-chat-tabs)` can't match natives), and a `display: contents` element at a tree's top broke percentage heights below it |
 
-Still open: the *pending live* rows, the Plugin Library's Slick entries, and origin/taut-ui's patch points, once the session issue is resolved.
+## Fixed in plugins-slick-pass (2026-11-11, CI only)
+
+| Commit | Package | What |
+|---|---|---|
+| `97e33367`, `d27aac7d` | css, slackc, messages, ui, blockkit, jsrt, slick, cmd/clack, gioui.org/app | Snappy did nothing in Clack: transitions computed by the CSS engine and the natives' own transitions read from the cascade; Slack's stylesheet and shell mirrors in the page with a real CSSOM; Electron's session spellchecker drives the composer spellcheck; main halves' switches kept for the next start (crash capture, X11 Vulkan); `deferResizeWork` holds ResizeObservers; Preferences notes per setting |
+| `8c2f7943` | composer | SlimMessageBox's one-line layout: a row-flex `.c-basic_container__body` puts the footer beside the editor |
+| `ecb7940b` | views | Reaction pills in Threads, Unreads and Activity at Slack's Reaction / UnstyledButton boundaries (WhoReacted) |
+| `76205972`, `e375e310` | views, popups | A plugin's copy of a message's text is what Activity rows and search cards show (Censorship) |
+| `c7d05fe4` | messages | A multi-message copy leaves times out when the timestamp label is unselectable (IgnoreTime) |
+
+Still open: StreamerMode's blur and HcaStatus's underline on natives have no view test; CopyReacted in the views (no ReactionBar or ReactionAddButton there); SlimMessageBox's `:has()`/`@container` cases; ClearURLs' paste-time cleaning (Quill's Clipboard); CustomFonts, CustomSounds, oneko's sprite, OnlineCount, PrivateChannelMapper's pill, ShowRealUser's forwarded copies; huddle media (out of scope); and every *CI*-only row's live re-check.
