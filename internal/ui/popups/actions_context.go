@@ -51,6 +51,7 @@ const (
 // More actions menu (MessageActionsMenu, so plugins that patch it still
 // reach it) under the hover toolbar's group.
 func NewMessageContextMenu(h Host, at image.Point, m core.Message, where MessageContext, o MessageMenuOpts) *Menu {
+	o.Where = where
 	items := append(ctxHoverItems(h, at, m, where, o), Sep())
 	items = append(items, actMessageItems(h, m, o)...)
 	a := pointRect(at)

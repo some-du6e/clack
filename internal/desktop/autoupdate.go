@@ -581,8 +581,17 @@ func (u *Updater) fetchTo(ctx context.Context, raw, part string, limit int64, ex
 	}
 	body := &progressReader{r: io.LimitReader(resp.Body, limit-offset+1), rep: rep, stage: StageDownloading, done: offset, total: size}
 	body.flush()
-	n, err := io.Copy(f, body)
+	// one stream, as fast as it arrives: a 1 MiB buffer so the disk gets
+	// large writes rather than one per TLS record. On an error what got
+	// here is still written, so the next try resumes after it.
+	// (struct{io.Writer} hides File.ReadFrom, which bufio would hand the
+	// copy to unbuffered)
+	w := bufio.NewWriterSize(struct{ io.Writer }{f}, 1<<20)
+	n, err := io.Copy(w, body)
 	body.flush()
+	if ferr := w.Flush(); err == nil {
+		err = ferr
+	}
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}

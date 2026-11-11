@@ -1,12 +1,18 @@
 package popups
 
 // The channel header bell: Slack's ChannelNotificationPrefMenu (boot-shared
-// 4f8632cd9602d1fa, source "channel_header"), as it opens for a member of
-// #clack on 2026-11-08: "Notify you about…", three radios with their
-// descriptions, a separator, and "More options" (MoreOptionsSubmenu:
-// "Temporarily mute…" Until tomorrow / 1 hour, then Edit default
-// preferences and Advanced settings, the channel notifications modal in
-// channel_notify_modal.go).
+// 4f8632cd9602d1fa, source "channel_header"; PND5 in build 4d0c78085232),
+// as it opens for a member of #clack on 2026-11-08: "Notify you about…",
+// three radios with their descriptions, then what temp_mute (O2By VJ)
+// picks:
+//
+//   - on: a separator and "More options" (MoreOptionsSubmenu, laNq:
+//     "Temporarily mute…" Until tomorrow / 1 hour, a separator, Edit
+//     default preferences and Advanced settings, the channel notifications
+//     modal in channel_notify_modal.go);
+//   - off: a separator and "Advanced options" (the filters glyph, with the
+//     push status as its description: getChannelPushNotificationStatus),
+//     then a separator and "Edit default preferences".
 //
 //   - All new posts: desktop everything (mobile follows when it did),
 //     unmuting a muted channel. Checked: desktop everything, not muted.
@@ -17,8 +23,12 @@ package popups
 //   - The checked All new posts / Just mentions row carries a
 //     "Customized" tag when the channel's advanced settings differ from
 //     that choice's defaults (notifyCustomized).
-//   - Until tomorrow / 1 hour: temp_mute_expiration_ts at 09:00 tomorrow
-//     (the default work start) or an hour from now, unsynced.
+//   - Until tomorrow / 1 hour (useTempMute, RUvF): temp_mute_expiration_ts
+//     at tomorrow's notification-schedule end (getDayOfWeekDndEndTime, 09:00
+//     when unset) or an hour from now, unsynced; when that changed the
+//     expiration, enqueueMuteChannelToast (vA1n): "#x muted for 1 hour." /
+//     "#x muted until tomorrow." with Undo (muted false, unsynced), or
+//     Slack's "Something went wrong." after a refused write.
 
 import (
 	"context"
@@ -79,12 +89,13 @@ func notifyCustomized(n core.ChannelNotify, desktop string, muted bool, setting 
 		(mobile != "" && mobile != desktop)
 }
 
-// customizedTag is the radio's tag label.
-func customizedTag(n core.ChannelNotify, desktop string, muted bool, setting string) string {
+// customizedTag is the radio's tag: PND5's {label "Customized", style
+// "informative"} (the menu rows' tag slot, menu_badge.go), or none.
+func customizedTag(n core.ChannelNotify, desktop string, muted bool, setting string) *MenuTag {
 	if notifyCustomized(n, desktop, muted, setting) {
-		return "Customized"
+		return &MenuTag{Label: "Customized", Style: "informative"}
 	}
-	return ""
+	return nil
 }
 
 // NotifyIcon is Slack's notification glyph for a calculated desktop
@@ -111,21 +122,49 @@ func ChannelNotifyIcon(h Host, ch string, muted bool) string {
 }
 
 // tempMuteChoice is calculateTempMuteDuration: "tomorrow" when the mute
-// ends within 5 minutes of 09:00 tomorrow, "1hour" for another future
-// end, "" for none.
-func tempMuteChoice(muted bool, exp int64, now time.Time) string {
+// ends within 5 minutes of tomorrow at hhmm (the day's notification
+// schedule end, "" for 09:00), "1hour" for another future end, "" for
+// none.
+func tempMuteChoice(muted bool, exp int64, now time.Time, hhmm string) string {
 	if !muted || exp == 0 || exp <= now.Unix() {
 		return ""
 	}
-	if d := exp - tomorrowAt9(now).Unix(); d > -300 && d < 300 {
+	if d := exp - tomorrowAt(now, hhmm).Unix(); d > -300 && d < 300 {
 		return "tomorrow"
 	}
 	return "1hour"
 }
 
-func tomorrowAt9(now time.Time) time.Time {
+// tomorrowAt is tomorrow at hhmm ("HH:MM"; 09:00 when it doesn't parse).
+func tomorrowAt(now time.Time, hhmm string) time.Time {
 	t := now.AddDate(0, 0, 1)
-	return time.Date(t.Year(), t.Month(), t.Day(), 9, 0, 0, 0, now.Location())
+	h, m := 9, 0
+	if pt, err := time.Parse("15:04", hhmm); err == nil {
+		h, m = pt.Hour(), pt.Minute()
+	}
+	return time.Date(t.Year(), t.Month(), t.Day(), h, m, 0, 0, now.Location())
+}
+
+// untilTomorrow is muteUntilTomorrow's value: now plus calculateSnoozeDurationInMinutes
+// (whole minutes, rounded up) to tomorrow at hhmm.
+func untilTomorrow(now time.Time, hhmm string) int64 {
+	mins := (tomorrowAt(now, hhmm).Unix() - now.Unix() + 59) / 60
+	return now.Unix() + 60*mins
+}
+
+// pushStatus is getChannelPushNotificationStatus: the "Advanced options"
+// description when the channel's desktop push or mobile override is off.
+func pushStatus(n core.ChannelNotify) string {
+	desktopOff, mobileOff := n.DesktopPush == "false", n.Mobile == "nothing"
+	switch {
+	case desktopOff && mobileOff:
+		return "Push notifications are off"
+	case desktopOff:
+		return "Desktop push notifications are off"
+	case mobileOff:
+		return "Mobile push notifications are off"
+	}
+	return ""
 }
 
 // ChannelNotifyItems are the bell menu's rows for ch.
@@ -163,35 +202,57 @@ func ChannelNotifyItems(h Host, ch string) []MenuItem {
 	if a.Experiment("improve_mute_pref") == "on" {
 		muteLabel, muteDesc = "Mute and hide", "Only badge the channel when someone @mentions you"
 	}
-	temp := tempMuteChoice(muted, n.TempMuteExp, time.Now())
-	tempMute := func(until func() time.Time) func() {
+	tomorrowEnd := a.DNDEndHour(time.Now().AddDate(0, 0, 1).Weekday())
+	temp := tempMuteChoice(muted, n.TempMuteExp, time.Now(), tomorrowEnd)
+	tempMute := func(until func() int64, duration string) func() {
 		return func() {
-			ts := until().Unix()
+			ts := until()
+			changed := n.TempMuteExp != ts
 			run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.TempMute(ctx, ch, ts) },
 				func(_ struct{}, err error) {
-					if err != nil {
-						h.Toast("Couldn’t mute this channel: " + errText(err))
+					if err == nil {
+						delete(actMuteSet, ch) // muted now comes from the prefs (core temp_mute.go), not the last toggle
+					}
+					if changed {
+						tempMuteToast(h, ch, duration, err)
 					}
 				})
 		}
 	}
-	// MoreOptionsSubmenu ends with "Advanced settings" (onOpenAdvancedOptions,
-	// the channel notifications modal) unless this is a group DM without
+	// "Advanced settings" / "Advanced options" (onOpenAdvancedOptions, the
+	// channel notifications modal) aren't offered in a group DM without
 	// mpdm_notifications_advanced_option.
-	more := []MenuItem{
-		{Header: "Temporarily mute…"},
-		{Key: "channel_mute_until_tomorrow", Label: "Until tomorrow", Radio: true, Checked: temp == "tomorrow",
-			Do: tempMute(func() time.Time { return tomorrowAt9(time.Now()) })},
-		{Key: "channel_mute_1_hour", Label: "1 hour", Radio: true, Checked: temp == "1hour",
-			Do: tempMute(func() time.Time { return time.Now().Add(time.Hour) })},
-		Sep(),
-		{Key: "channel_ctx_menu_edit_default_prefs", Label: "Edit default preferences", Do: func() { openPreferences(h, "notifications") }},
+	advanced := true
+	if c, ok := a.Conv(ch); ok && c.Kind == "mpim" && a.Experiment("mpdm_notifications_advanced_option") != "on" {
+		advanced = false
 	}
-	if c, ok := a.Conv(ch); !ok || c.Kind != "mpim" || a.Experiment("mpdm_notifications_advanced_option") == "on" {
-		more = append(more, MenuItem{Key: "channel_ctx_menu_advanced_options", Label: "Advanced settings",
-			Do: func() { h.ShowOverlay(NewChannelNotifyModal(h, ch)) }})
+	openAdvanced := func() { h.ShowOverlay(NewChannelNotifyModal(h, ch)) }
+	editDefaults := MenuItem{Key: "channel_ctx_menu_edit_default_prefs", Label: "Edit default preferences", Do: func() { openPreferences(h, "notifications") }}
+	var tail []MenuItem
+	if a.TempMuteOn() {
+		more := []MenuItem{
+			{Header: "Temporarily mute…"},
+			{Key: "channel_mute_until_tomorrow", Label: "Until tomorrow", Radio: true, Checked: temp == "tomorrow",
+				Do: tempMute(func() int64 {
+					return untilTomorrow(time.Now(), a.DNDEndHour(time.Now().AddDate(0, 0, 1).Weekday()))
+				}, "until_tomorrow")},
+			{Key: "channel_mute_1_hour", Label: "1 hour", Radio: true, Checked: temp == "1hour",
+				Do: tempMute(func() int64 { return time.Now().Add(time.Hour).Unix() }, "one_hour")},
+			Sep(),
+			editDefaults,
+		}
+		if advanced {
+			more = append(more, MenuItem{Key: "channel_ctx_menu_advanced_options", Label: "Advanced settings", Do: openAdvanced})
+		}
+		tail = []MenuItem{Sep(), {Key: "more_options", Label: "More options", Sub: more}}
+	} else {
+		if advanced {
+			tail = append(tail, Sep(), MenuItem{Key: "more_options", Label: "Advanced options", Icon: "filter-sliders",
+				Subtitle: pushStatus(n), Do: openAdvanced})
+		}
+		tail = append(tail, Sep(), editDefaults)
 	}
-	return []MenuItem{
+	return append([]MenuItem{
 		{Header: "Notify you about…"},
 		{Key: "everything", Label: "All new posts", Subtitle: "Messages and threads you follow", Icon: NotifyIcon("everything", false), Radio: true,
 			Checked: cur == "everything", Tag: customizedTag(n, desktop, muted, "everything"), Do: set("everything")},
@@ -199,9 +260,57 @@ func ChannelNotifyItems(h Host, ch string) []MenuItem {
 			Checked: cur == "mentions_dms", Tag: customizedTag(n, desktop, muted, "mentions_dms"), Do: set("mentions_dms")},
 		{Key: "mute", Label: muteLabel, Subtitle: muteDesc, Icon: NotifyIcon("nothing", true), Radio: true, Checked: muted,
 			Do: func() { actToggleMute(h, ch, "channel") }},
-		Sep(),
-		{Key: "more_options", Label: "More options", Sub: more},
+	}, tail...)
+}
+
+// tempMuteToast is enqueueMuteChannelToast (vA1n): the bold "<channel>
+// muted for 1 hour." / "… until tomorrow." with Undo, which unmutes
+// (muted false, unsynced); a refused write is Slack's generic error.
+func tempMuteToast(h Host, ch, duration string, err error) {
+	a := h.Core()
+	if a == nil || !a.TempMuteOn() {
+		return
 	}
+	if err != nil {
+		h.Toast("Something went wrong. Reloading Slack might clear things up. If it doesn’t, drop us a line.")
+		return
+	}
+	name := ch
+	if c, ok := a.Conv(ch); ok {
+		name = channelEntityName(c)
+	}
+	msg := name + " muted."
+	switch duration {
+	case "one_hour":
+		msg = name + " muted for 1 hour."
+	case "until_tomorrow":
+		msg = name + " muted until tomorrow."
+	}
+	undo := func() {
+		run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.Mute(ctx, ch, false) },
+			func(_ struct{}, err error) {
+				if err != nil {
+					h.Toast("Something went wrong. Reloading Slack might clear things up. If it doesn’t, drop us a line.")
+					return
+				}
+				delete(actMuteSet, ch)
+			})
+	}
+	if u, ok := h.(interface{ ToastUndo(string, func()) }); ok {
+		u.ToastUndo(msg, undo)
+		return
+	}
+	h.Toast(msg)
+}
+
+// channelEntityName is the toast's ChannelEntity (X3qV): "#name" for a
+// channel, the conversation's name otherwise.
+func channelEntityName(c core.Conv) string {
+	switch c.Kind {
+	case "channel", "private":
+		return "#" + c.Name
+	}
+	return c.Name
 }
 
 // NewChannelNotifyMenu is the bell menu, 300px, right-aligned to anchor

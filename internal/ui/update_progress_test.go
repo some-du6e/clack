@@ -13,7 +13,8 @@ import (
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
-// The row's line and the menus' title at each stage and size.
+// The Downloading Update row's description and the menus' title at each
+// stage and size.
 func TestUpdateProgressText(t *testing.T) {
 	const tag = "v0.1.0-alpha.26"
 	const mib = 1 << 20
@@ -22,20 +23,20 @@ func TestUpdateProgressText(t *testing.T) {
 		want, menu string
 		frac       float32
 	}{
-		{UpdateProgress{}, "Downloading Clack v0.1.0-alpha.26…", "Downloading Update", -1},
-		{UpdateProgress{Total: 37_330_000}, "Downloading Clack v0.1.0-alpha.26… 0% (0.0 of 35.6 MB)", "Downloading Update… 0%", 0},
-		{UpdateProgress{Done: 12_700_000, Total: 37_330_000}, "Downloading Clack v0.1.0-alpha.26… 34% (12.1 of 35.6 MB)", "Downloading Update… 34%", 0.3402},
-		{UpdateProgress{Done: 37_329_999, Total: 37_330_000}, "Downloading Clack v0.1.0-alpha.26… 99% (35.6 of 35.6 MB)", "Downloading Update… 99%", 1},
-		{UpdateProgress{Done: 37_330_000, Total: 37_330_000}, "Downloading Clack v0.1.0-alpha.26… 100% (35.6 of 35.6 MB)", "Downloading Update… 100%", 1},
-		{UpdateProgress{Done: 300 << 10, Total: 900 << 10}, "Downloading Clack v0.1.0-alpha.26… 33% (300 of 900 KB)", "Downloading Update… 33%", 0.3333},
-		{UpdateProgress{Done: 40 * mib, Total: 30 * mib}, "Downloading Clack v0.1.0-alpha.26… 100% (30.0 of 30.0 MB)", "Downloading Update… 100%", 1},
+		{UpdateProgress{}, "Clack v0.1.0-alpha.26 · Starting…", "Downloading Update", -1},
+		{UpdateProgress{Total: 37_330_000}, "Clack v0.1.0-alpha.26 · 0.0 of 35.6 MB (0%)", "Downloading Update… 0%", 0},
+		{UpdateProgress{Done: 12_700_000, Total: 37_330_000}, "Clack v0.1.0-alpha.26 · 12.1 of 35.6 MB (34%)", "Downloading Update… 34%", 0.3402},
+		{UpdateProgress{Done: 37_329_999, Total: 37_330_000}, "Clack v0.1.0-alpha.26 · 35.6 of 35.6 MB (99%)", "Downloading Update… 99%", 1},
+		{UpdateProgress{Done: 37_330_000, Total: 37_330_000}, "Clack v0.1.0-alpha.26 · 35.6 of 35.6 MB (100%)", "Downloading Update… 100%", 1},
+		{UpdateProgress{Done: 300 << 10, Total: 900 << 10}, "Clack v0.1.0-alpha.26 · 300 of 900 KB (33%)", "Downloading Update… 33%", 0.3333},
+		{UpdateProgress{Done: 40 * mib, Total: 30 * mib}, "Clack v0.1.0-alpha.26 · 30.0 of 30.0 MB (100%)", "Downloading Update… 100%", 1},
 		// size unknown: what's in so far, an indeterminate bar
-		{UpdateProgress{Done: 512 << 10}, "Downloading Clack v0.1.0-alpha.26… 512 KB", "Downloading Update", -1},
-		{UpdateProgress{Done: 12*mib + mib/10}, "Downloading Clack v0.1.0-alpha.26… 12.1 MB", "Downloading Update", -1},
-		{UpdateProgress{Stage: UpdateVerifying, Done: 9 * mib, Total: 36 * mib}, "Verifying Clack v0.1.0-alpha.26 against SHA256SUMS… 25%", "Downloading Update", 0.25},
-		{UpdateProgress{Stage: UpdateVerifying}, "Verifying Clack v0.1.0-alpha.26 against SHA256SUMS…", "Downloading Update", -1},
-		{UpdateProgress{Stage: UpdateStaging, Done: mib, Total: mib}, "Preparing Clack v0.1.0-alpha.26…", "Downloading Update", -1},
-		{UpdateProgress{Stage: UpdateStaged, Done: mib, Total: mib}, "Preparing Clack v0.1.0-alpha.26…", "Downloading Update", -1},
+		{UpdateProgress{Done: 512 << 10}, "Clack v0.1.0-alpha.26 · 512 KB", "Downloading Update", -1},
+		{UpdateProgress{Done: 12*mib + mib/10}, "Clack v0.1.0-alpha.26 · 12.1 MB", "Downloading Update", -1},
+		{UpdateProgress{Stage: UpdateVerifying, Done: 9 * mib, Total: 36 * mib}, "Clack v0.1.0-alpha.26 · Checking it against SHA256SUMS… 25%", "Downloading Update", 0.25},
+		{UpdateProgress{Stage: UpdateVerifying}, "Clack v0.1.0-alpha.26 · Checking it against SHA256SUMS…", "Downloading Update", -1},
+		{UpdateProgress{Stage: UpdateStaging, Done: mib, Total: mib}, "Clack v0.1.0-alpha.26 · Preparing…", "Downloading Update", -1},
+		{UpdateProgress{Stage: UpdateStaged, Done: mib, Total: mib}, "Clack v0.1.0-alpha.26 · Preparing…", "Downloading Update", -1},
 	} {
 		if got := updateProgressText(tag, c.p); got != c.want {
 			t.Errorf("%+v: %q, want %q", c.p, got, c.want)
@@ -130,23 +131,15 @@ func pendingPosts(a *App) int {
 // The Preferences row and the menus follow a download's progress; a
 // storm of reports is a handful of redraws; Cancel stops the download
 // (the hourly check doesn't restart it, Download does); a failure offers
-// Retry.
+// Try Again.
 func TestUpdateProgressRowCancelRetry(t *testing.T) {
 	SetVersion("v0.1.0-alpha.25")
 	t.Cleanup(func() { SetVersion("") })
 	f := &progressFake{progress: make(chan func(UpdateProgress), 1), release: make(chan error, 1)}
 	a := progressApp(t, f)
 	a.updProgressEvery = 40 * time.Millisecond
-	p := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}, section: "advanced"}
-	click := func(key string) updateStatus {
-		t.Helper()
-		b, ok := p.clicks[key]
-		if !ok {
-			t.Fatalf("no %s button (have %v)", key, keysOf(p.clicks))
-		}
-		b.Click()
-		return prefsRow(a, p)
-	}
+	p := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}, section: clackTabID}
+	click := func(label string) updateStatus { t.Helper(); return rowClick(t, a, p, label) }
 	info := UpdateInfo{Tag: "v0.1.0-alpha.26", URL: "https://github.com/x"}
 	a.updateFound(info, false)
 	if a.update.phase != updDownloading {
@@ -166,24 +159,24 @@ func TestUpdateProgressRowCancelRetry(t *testing.T) {
 	report(UpdateProgress{Done: 12_700_000, Total: 37_330_000})
 	waitUpd(t, a, "34%", func() bool { return a.update.prog.Done == 12_700_000 })
 	st := prefsRow(a, p)
-	if st.msg != "Downloading Clack v0.1.0-alpha.26… 34% (12.1 of 35.6 MB)" || !st.bar || st.frac < 0.33 || st.frac > 0.35 {
+	if st.title != "Downloading Update" || st.desc != "Clack v0.1.0-alpha.26 · 12.1 of 35.6 MB (34%)" || !st.bar || st.frac < 0.33 || st.frac > 0.35 {
 		t.Fatalf("mid-download row: %+v", st)
 	}
-	if strings.Join(st.buttons, "|") != "Cancel" || !st.quiet {
-		t.Errorf("mid-download buttons %q (quiet %v)", st.buttons, st.quiet)
+	if st.button != "Cancel" || st.primary || !st.enabled {
+		t.Errorf("mid-download button %q (primary %v, enabled %v)", st.button, st.primary, st.enabled)
 	}
 	if title, ok := a.updateMenuItem(); title != "Downloading Update… 34%" || ok {
 		t.Errorf("menu item %q (enabled %v)", title, ok)
 	}
 	report(UpdateProgress{Stage: UpdateVerifying, Done: 1, Total: 4})
 	waitUpd(t, a, "verifying", func() bool { return a.update.prog.Stage == UpdateVerifying })
-	if st := prefsRow(a, p); st.msg != "Verifying Clack v0.1.0-alpha.26 against SHA256SUMS… 25%" {
-		t.Errorf("verifying row: %q", st.msg)
+	if st := prefsRow(a, p); st.desc != "Clack v0.1.0-alpha.26 · Checking it against SHA256SUMS… 25%" {
+		t.Errorf("verifying row: %q", st.desc)
 	}
 
 	// Cancel: stopped, back to Download; late reports don't come back
-	st = click("update_action.Cancel")
-	if a.update.phase != updAvailable || st.msg != "Clack v0.1.0-alpha.26 is available" || strings.Join(st.buttons, "|") != "Download|View release" || st.bar {
+	st = click("Cancel")
+	if a.update.phase != updAvailable || st.title != "An Update Is Available" || st.button != "Download" || !st.primary || st.bar {
 		t.Fatalf("after Cancel: phase %d, %+v", a.update.phase, st)
 	}
 	waitUpd(t, a, "the download to see the cancel", func() bool { return f.cancels.Load() == 1 })
@@ -199,9 +192,9 @@ func TestUpdateProgressRowCancelRetry(t *testing.T) {
 		t.Fatalf("the hourly check restarted a cancelled download (phase %d, %d starts)", a.update.phase, f.starts.Load())
 	}
 
-	// Download again: it fails, Retry, it finishes
+	// Download again: it fails, Try Again, it finishes
 	prefsRow(a, p) // lays out the Download button
-	if st := click("update_action.Download"); !strings.HasPrefix(st.msg, "Downloading Clack v0.1.0-alpha.26…") {
+	if st := click("Download"); st.title != "Downloading Update" {
 		t.Fatalf("Download again: %+v", st)
 	}
 	<-f.progress
@@ -209,19 +202,19 @@ func TestUpdateProgressRowCancelRetry(t *testing.T) {
 	waitUpd(t, a, "the failure", func() bool { return a.update.phase == updAvailable })
 	prefsRow(a, p)
 	st = prefsRow(a, p)
-	if st.msg != "Couldn’t download Clack v0.1.0-alpha.26" || !strings.Contains(st.detail, "deadline exceeded") || strings.Join(st.buttons, "|") != "Retry|View release" || st.quiet {
+	if st.title != "Couldn’t update Clack" || !strings.Contains(st.desc, "deadline exceeded") || st.button != "Try Again" || !st.primary {
 		t.Fatalf("failed: %+v", st)
 	}
-	click("update_action.Retry")
+	click("Try Again")
 	report = <-f.progress
 	report(UpdateProgress{Stage: UpdateStaging, Done: 4, Total: 4})
 	waitUpd(t, a, "staging", func() bool { return a.update.prog.Stage == UpdateStaging })
-	if st := prefsRow(a, p); st.msg != "Preparing Clack v0.1.0-alpha.26…" || !st.bar || st.frac >= 0 {
+	if st := prefsRow(a, p); st.desc != "Clack v0.1.0-alpha.26 · Preparing…" || !st.bar || st.frac >= 0 {
 		t.Errorf("staging row: %+v", st)
 	}
 	f.release <- nil
 	waitUpd(t, a, "ready", func() bool { return a.update.phase == updReady })
-	if st := prefsRow(a, p); st.msg != "Clack v0.1.0-alpha.26 is ready to install" || st.bar {
+	if st := prefsRow(a, p); st.title != "Restart to Apply Update" || st.button != "Restart Clack" || st.bar {
 		t.Errorf("ready row: %+v", st)
 	}
 	if n := f.starts.Load(); n != 3 {

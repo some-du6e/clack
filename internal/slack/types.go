@@ -49,6 +49,8 @@ type Message struct {
 	OldName        string `json:"old_name,omitempty"`
 	NewName        string `json:"name,omitempty"`
 	StreamingState string `json:"streaming_state,omitempty"` // chat.startStream: in_progress | completed | errored
+	WorkflowID     string `json:"workflow_id,omitempty"`     // a workflow's message (the menu's Copy workflow ID)
+	TriggerID      string `json:"trigger_id,omitempty"`      // the workflow trigger that posted it
 	// AgentSession is a thread session's state on its root message
 	// (Slack's iR00 getMessageByTimestamp(…)?.agent_session).
 	AgentSession *MessageAgentSession `json:"agent_session,omitempty"`

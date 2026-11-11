@@ -104,6 +104,12 @@ var defaultExperimentGroups = map[string]string{
 	"system_messages_redesign_m1": "on", "flat_message_heading_scale": "on", "portable_content_composer": "treatment",
 	"message_actions_truncate": "on", "unread_thread_indication_in_replybar": "on", "agent_identity_overrides": "on",
 	"forward_message_card": "on", "giphy_fixed_width": "on", "truncated_url_hover_card": "on",
+	// the sidebar's text filter and its milestones, and temporary mutes
+	// (experiments.getByUser on 2026-11-10: sidebar_filter.go, temp_mute.go);
+	// the input is there from the first frame
+	"sidebar_text_filter": "on", "sidebar_text_filter_m2": "on", "sidebar_text_filter_m3": "on", "temp_mute": "on",
+	"manage_conversations_strings": "on", // the section move toast's wording (ui/section_menu.go)
+	"thread_root_selected_state":   "on", // the selected thread root (ui/messages/active_thread.go)
 	// the thread pane (docs/THREADS-AUDIT.md, live 2026-11-10): nested below
 	// the channel header at the 40% default width, the smaller header (15px
 	// title, controls 4px apart), the reply bar's hover-only last reply; no
