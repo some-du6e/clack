@@ -71,21 +71,24 @@ func (e *svEnv) smThread() *messages.ThreadView {
 	return tv
 }
 
-// smInk counts the strong text pixels in r: those far (luma) from the
-// region's dominant colour. A 4px blur leaves almost none.
+// smInk measures how sharp the text in r is: the neighbouring pixel
+// pairs (across and down) whose luma differs by more than 64. Crisp 15px
+// text has hundreds; a 4px blur leaves its strokes' edges a few levels
+// apart, so almost none.
 func smInk(img *image.RGBA, r image.Rectangle) int {
 	r = r.Intersect(img.Bounds())
-	bg, _ := svDominant(img, r)
-	lb := svLuma(bg)
+	luma := func(x, y int) int {
+		p := img.RGBAAt(x, y)
+		return svLuma(color.NRGBA{p.R, p.G, p.B, 0xff})
+	}
 	n := 0
-	for y := r.Min.Y; y < r.Max.Y; y++ {
-		for x := r.Min.X; x < r.Max.X; x++ {
-			p := img.RGBAAt(x, y)
-			d := svLuma(color.NRGBA{p.R, p.G, p.B, 0xff}) - lb
-			if d < 0 {
-				d = -d
+	for y := r.Min.Y; y < r.Max.Y-1; y++ {
+		for x := r.Min.X; x < r.Max.X-1; x++ {
+			l := luma(x, y)
+			if d := luma(x+1, y) - l; d > 64 || d < -64 {
+				n++
 			}
-			if d > 80 {
+			if d := luma(x, y+1) - l; d > 64 || d < -64 {
 				n++
 			}
 		}
@@ -123,7 +126,7 @@ func smCheck(t *testing.T, e *svEnv, sh *svShooter, prefix string, on func()) {
 	before := map[string]int{}
 	for name, r := range regions {
 		if before[name] = smInk(off, r); before[name] < 15 {
-			t.Fatalf("%s: only %d text pixels in %v before the mode is on", name, before[name], r)
+			t.Fatalf("%s: only %d sharp text edges in %v before the mode is on", name, before[name], r)
 		}
 	}
 	pubBefore := smInk(off, public)
@@ -154,9 +157,9 @@ func smCheck(t *testing.T, e *svEnv, sh *svShooter, prefix string, on func()) {
 	}
 	for name, r := range regions {
 		if got := smInk(img, r); got*3 > before[name] {
-			t.Errorf("%s isn't blurred: %d of %d text pixels left", name, got, before[name])
+			t.Errorf("%s isn't blurred: %d of %d sharp text edges left", name, got, before[name])
 		} else {
-			t.Logf("%s blurred: %d → %d text pixels", name, before[name], got)
+			t.Logf("%s blurred: %d → %d sharp text edges", name, before[name], got)
 		}
 	}
 	if got := smInk(img, public); got*3 < pubBefore*2 {
