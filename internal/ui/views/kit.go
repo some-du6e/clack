@@ -1269,6 +1269,18 @@ func listTime(t time.Time) string {
 		return ""
 	}
 	now := time.Now()
+	if l := i18n.Locale(); l != i18n.EnUS {
+		// the same steps in the locale's dayjs formats
+		switch {
+		case sameDay(t, now):
+			return clock(t)
+		case sameDay(t, now.AddDate(0, 0, -1)):
+			return i18n.RelativeDay(l, t, now, false)
+		case now.Sub(t) < 6*24*time.Hour && t.Before(now):
+			return i18n.Weekday(l, t, false)
+		}
+		return i18n.CalendarDate(l, t, i18n.CalendarOpts{ShortenMonth: true, ShortenDay: true, ExcludeYear: t.Year() == now.Year()})
+	}
 	switch {
 	case sameDay(t, now):
 		return clock(t)

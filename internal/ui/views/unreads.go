@@ -58,6 +58,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
@@ -134,6 +135,8 @@ type Unreads struct {
 	top     *unrFrame // the frame whose header is topmost on screen
 	notes   actNotes
 	rng     *rand.Rand
+
+	emptyLoc string // the locale empty was picked from
 }
 
 // NewUnreads builds the Unreads view.
@@ -141,8 +144,18 @@ func NewUnreads(h Host) *Unreads {
 	v := &Unreads{base: newBase(h), newCount: map[string]int{}, msgs: map[string]*unrMsg{}, active: -1,
 		rng: rand.New(rand.NewSource(time.Now().UnixNano()))}
 	v.list.Axis = layout.Vertical
-	v.empty = unrEmptyMsgs[v.rng.Intn(len(unrEmptyMsgs))]
+	v.pickEmpty()
 	return v
+}
+
+// pickEmpty is getRandomMessageForLocale: a random entry of the active
+// locale's list (JhsS C, unreads_empty_locales.go).
+func (v *Unreads) pickEmpty() {
+	t := unrEmptyByLocale[i18n.Locale()]
+	if len(t) == 0 {
+		t = unrEmptyMsgs
+	}
+	v.empty, v.emptyLoc = t[v.rng.Intn(len(t))], i18n.Locale()
 }
 
 // ---- state ----
@@ -328,7 +341,7 @@ func (v *Unreads) drain() {
 		f := r.f
 		f.loading = false
 		if r.err != nil {
-			v.notes.add(v.h, unrErrText)
+			v.notes.add(v.h, nsUnreads.T(unrErrText))
 			f.reachedEnd = true // keep what loaded; Slack's fetchPost retries on scroll
 			continue
 		}
@@ -655,7 +668,7 @@ func (v *Unreads) head(gtx C) D {
 	g.Constraints = layout.Exact(image.Pt(w, h))
 	layout.Inset{Left: 18, Right: 12}.Layout(g, func(gtx C) D {
 		return row(gtx, layout.Middle,
-			layout.Rigid(func(gtx C) D { return v.para(gtx, 18, 24, wBlack, v.p.Text, 1, unrTitle) }),
+			layout.Rigid(func(gtx C) D { return v.para(gtx, 18, 24, wBlack, v.p.Text, 1, nsUnreads.T(unrTitle)) }),
 			hgap(8),
 			layout.Rigid(func(gtx C) D { return v.control(gtx, &v.filterBtn, v.filterLabel(), true) }),
 			hgap(4),
@@ -673,7 +686,7 @@ func (v *Unreads) sortLabel() string {
 	o := v.sortOrder()
 	for _, s := range unrSortLabels {
 		if s.key == o {
-			return s.label
+			return nsUnreads.T(s.label)
 		}
 	}
 	return ""
@@ -694,9 +707,9 @@ func (v *Unreads) filterLabel() string {
 func (v *Unreads) allLabel() string {
 	snap := v.h.Core().Snapshot()
 	if n := snap.Team.Name; n != "" {
-		return "All of " + n
+		return nsUnreads.T("All of {workspace}", "workspace", n)
 	}
-	return "All conversations"
+	return nsUnreads.T("All conversations")
 }
 
 // control is .p-unreads_view__list_control_button: 13px content-sec text
@@ -727,7 +740,7 @@ func (v *Unreads) refreshButton(gtx C) D {
 	if n < 1 {
 		return D{}
 	}
-	label := plural(n, "new message")
+	label := nsUnreads.T("{newUnreadMsgCount, plural, =1 {# new message} other {# new messages}}", "newUnreadMsgCount", n)
 	wide := gtx.Constraints.Max.X > gtx.Dp(1070)
 	return v.refreshBtn.Layout(gtx, func(gtx C) D {
 		pointerCursor(gtx)
@@ -800,7 +813,7 @@ func (v *Unreads) openSortMenu() {
 	var items []popups.MenuItem
 	for _, s := range unrSortLabels {
 		key := s.key
-		items = append(items, popups.MenuItem{Key: key, Label: s.label, Checked: cur == key, Do: func() {
+		items = append(items, popups.MenuItem{Key: key, Label: nsUnreads.T(s.label), Checked: cur == key, Do: func() {
 			v.run("Couldn’t change the sort", func(ctx context.Context, c *core.App) error {
 				return c.SetPref(ctx, "all_unreads_sort_order", key)
 			})
@@ -812,13 +825,16 @@ func (v *Unreads) openSortMenu() {
 // body is renderChannelContent.
 func (v *Unreads) body(gtx C) D {
 	if !v.built {
-		return layout.Center.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wReg, v.p.Muted, unrLoadingText) })
+		return layout.Center.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wReg, v.p.Muted, nsUnreads.T(unrLoadingText)) })
 	}
 	v.rows = unrRows(v.frames, gtx.Now, v.lastRead)
 	if !unrAnyUnread(v.frames) {
 		if !v.wasEmpty {
 			v.wasEmpty, v.emptyAt = true, gtx.Now
-			v.empty = unrEmptyMsgs[v.rng.Intn(len(unrEmptyMsgs))]
+			v.pickEmpty()
+		}
+		if v.emptyLoc != i18n.Locale() {
+			v.pickEmpty() // the new locale's list
 		}
 		return v.emptyState(gtx)
 	}
@@ -913,7 +929,7 @@ func (v *Unreads) drawRow(gtx C, r unrRow, i int) D {
 		h := gtx.Dp(80)
 		g := gtx
 		g.Constraints = layout.Exact(image.Pt(w, h))
-		layout.Center.Layout(g, func(gtx C) D { return v.label(gtx, 15, wReg, v.p.Muted, unrLoadingMore) })
+		layout.Center.Layout(g, func(gtx C) D { return v.label(gtx, 15, wReg, v.p.Muted, nsUnreads.T(unrLoadingMore)) })
 		return D{Size: image.Pt(w, h)}
 	case unrShowNewer:
 		f := r.f
@@ -924,7 +940,7 @@ func (v *Unreads) drawRow(gtx C, r unrRow, i int) D {
 			pointerCursor(gtx)
 			d := layout.Inset{Top: 8, Bottom: 8, Left: 20, Right: 20}.Layout(gtx, func(gtx C) D {
 				gtx.Constraints.Min.X = gtx.Constraints.Max.X
-				return v.para(gtx, 15, 22, wReg, v.p.Link, 1, plural(r.count, "new message"))
+				return v.para(gtx, 15, 22, wReg, v.p.Link, 1, nsUnreads.T("{count, plural, =1 {# new message} other {# new messages}}", "count", r.count)) // ShowNewerButton
 			})
 			hl := max(1, gtx.Dp(1))
 			fill(gtx, image.Rect(0, d.Size.Y, w, d.Size.Y+hl), v.line())
@@ -935,7 +951,7 @@ func (v *Unreads) drawRow(gtx C, r unrRow, i int) D {
 			return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx C) D {
 					gtx.Constraints.Min.X = 0
-					return v.button(gtx, &v.markAll, btnOutline, false, unrMarkAll)
+					return v.button(gtx, &v.markAll, btnOutline, false, nsUnreads.T(unrMarkAll))
 				}),
 				layout.Rigid(func(gtx C) D { return v.jumpButton(gtx, 12) }),
 			)
@@ -1033,36 +1049,42 @@ func (v *Unreads) header(gtx C, f *unrFrame, count int) D {
 					return row(gtx, layout.Middle,
 						layout.Rigid(func(gtx C) D {
 							return layout.Inset{Left: 4, Right: 8}.Layout(gtx, func(gtx C) D {
-								return v.label(gtx, 13, wReg, fg, plural(f.marked, "message")+" marked read")
+								return v.label(gtx, 13, wReg, fg, nsUnreads.T("{messageCount, plural, =1 {# message} other {# messages}} marked read", "messageCount", f.marked))
 							})
 						}),
-						layout.Rigid(func(gtx C) D { return v.linkButton(gtx, &f.undo, 13, "Undo") }),
+						layout.Rigid(func(gtx C) D { return v.linkButton(gtx, &f.undo, 13, nsUnreads.T("Undo")) }),
 					)
 				case 1, 3:
 					return v.newMsgsButton(gtx, f, count+after)
 				}
-				return row(gtx, layout.Middle,
-					layout.Rigid(func(gtx C) D {
-						return layout.Inset{Left: 4, Right: 8}.Layout(gtx, func(gtx C) D {
-							return v.label(gtx, 13, wReg, fg, unrMsgCount(count, f.reachedEnd))
-						})
-					}),
-					layout.Rigid(func(gtx C) D {
-						if !selected {
-							return D{}
+				// HeaderDefault: "<span …>Press <key>Esc</key> to </span>
+				// <button>Mark as Read</button>", its parts where the
+				// locale puts them (the span only while selected)
+				ch := []layout.FlexChild{layout.Rigid(func(gtx C) D {
+					return layout.Inset{Left: 4, Right: 8}.Layout(gtx, func(gtx C) D {
+						return v.label(gtx, 13, wReg, fg, unrMsgCount(count, f.reachedEnd))
+					})
+				})}
+				for _, sg := range tagSegs(nsUnreads.T(`<span className="p-unreads_view__header__kb_instructions">Press <key>Esc</key> to </span><button>Mark as Read</button>`)) {
+					sg := sg
+					switch sg.tag {
+					case "button":
+						ch = append(ch, layout.Rigid(func(gtx C) D {
+							return layout.Inset{Left: 4}.Layout(gtx, func(gtx C) D {
+								return v.button(gtx, &f.markBtn, btnOutline, true, sg.text)
+							})
+						}))
+					case "key":
+						if selected {
+							ch = append(ch, layout.Rigid(func(gtx C) D { return v.keycap(gtx, sg.text) }))
 						}
-						return row(gtx, layout.Middle,
-							layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wReg, fg, "Press ") }),
-							layout.Rigid(func(gtx C) D { return v.keycap(gtx, "Esc") }),
-							layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wReg, fg, " to ") }),
-						)
-					}),
-					layout.Rigid(func(gtx C) D {
-						return layout.Inset{Left: 4}.Layout(gtx, func(gtx C) D {
-							return v.button(gtx, &f.markBtn, btnOutline, true, "Mark as Read")
-						})
-					}),
-				)
+					default:
+						if selected && sg.text != "" {
+							ch = append(ch, layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wReg, fg, sg.text) }))
+						}
+					}
+				}
+				return row(gtx, layout.Middle, ch...)
 			}),
 		)
 	})
@@ -1142,6 +1164,9 @@ func (v *Unreads) dayDivider(gtx C, day time.Time, unread bool) D {
 // unrDayLabel is the day divider's text: Today, Yesterday, "Friday,
 // November 6th", with the year when it isn't this year.
 func unrDayLabel(t, now time.Time) string {
+	if l := i18n.Locale(); l != i18n.EnUS {
+		return i18n.DayDivider(l, t, now, false) // formatDateDayDivider
+	}
 	if sameDay(t, now) {
 		return "Today"
 	}
@@ -1159,13 +1184,14 @@ func unrDayLabel(t, now time.Time) string {
 // a bold 13px "New" at its right end.
 func (v *Unreads) newLine(gtx C, w int) {
 	red := v.th.C.NewLine
-	tw := v.th.Measure(gtx, 13, wBold, "New")
+	newTxt := nsMessages.T("New") // UnreadDivider's
+	tw := v.th.Measure(gtx, 13, wBold, newTxt)
 	lx := w - gtx.Dp(15) - gtx.Dp(4) - tw
 	fill(gtx, image.Rect(0, 0, lx-gtx.Dp(4), max(1, gtx.Dp(1))), red)
 	defer op.Offset(image.Pt(lx, -gtx.Dp(9))).Push(gtx.Ops).Pop()
 	g := gtx
 	g.Constraints.Min = image.Point{}
-	v.para(g, 13, 19.5, wBold, red, 1, "New")
+	v.para(g, 13, 19.5, wBold, red, 1, newTxt)
 }
 
 // message is a channel message row: a sender row (36px avatar at 20,8,
@@ -1294,7 +1320,7 @@ func (v *Unreads) jumpButton(gtx C, top unit.Dp) D {
 		})
 	}
 	return layout.Inset{Top: top}.Layout(gtx, func(gtx C) D {
-		return v.linkButton(gtx, &v.jump, 14, "Jump to the "+next.Name+" section")
+		return v.linkButton(gtx, &v.jump, 14, nsUnreads.T("Jump to the {section} section", "section", next.Name))
 	})
 }
 
@@ -1351,7 +1377,7 @@ func (v *Unreads) emptyState(gtx C) D {
 					return D{}
 				}
 				return layout.Inset{Top: 16}.Layout(gtx, func(gtx C) D {
-					return v.button(gtx, &v.showAll, btnOutline, false, "Show All Unreads")
+					return v.button(gtx, &v.showAll, btnOutline, false, nsUnreads.T("Show All Unreads"))
 				})
 			}),
 			layout.Rigid(func(gtx C) D {
@@ -1364,30 +1390,33 @@ func (v *Unreads) emptyState(gtx C) D {
 				if !showNew {
 					return D{}
 				}
-				label := formatInt(int64(n)) + " New Message"
-				if n != 1 {
-					label += "s"
-				}
+				label := strings.TrimSpace(nsUnreads.T("{totalUnreads, plural, =1 {# New Message} other {# New Messages} }", "totalUnreads", n))
 				return layout.Inset{Top: 20}.Layout(gtx, func(gtx C) D { return v.button(gtx, &v.emptyNew, btnPrimary, false, label) })
 			}),
 			layout.Rigid(func(gtx C) D {
 				if !showNew {
 					return D{}
 				}
-				enter := "Enter"
+				src := "<b>Enter</b> <enter-icon></enter-icon> to show"
 				if shortcut.GOOS == "darwin" {
-					enter = "Return"
+					src = "<b>Return</b> <enter-icon></enter-icon> to show"
 				}
 				caption := rgb(0x868686)
-				return layout.Inset{Top: 8}.Layout(gtx, func(gtx C) D {
-					return row(gtx, layout.Middle,
-						layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wBold, caption, enter) }),
-						layout.Rigid(func(gtx C) D {
+				var ch []layout.FlexChild
+				for _, sg := range tagSegs(nsUnreads.T(src)) {
+					sg := sg
+					switch {
+					case sg.tag == "enter-icon":
+						ch = append(ch, layout.Rigid(func(gtx C) D {
 							return layout.Inset{Left: 4, Right: 4}.Layout(gtx, func(gtx C) D { return v.icon(gtx, "enter", 13, caption) })
-						}),
-						layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wReg, caption, "to show") }),
-					)
-				})
+						}))
+					case sg.tag == "b":
+						ch = append(ch, layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wBold, caption, sg.text) }))
+					case strings.TrimSpace(sg.text) != "":
+						ch = append(ch, layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wReg, caption, strings.TrimSpace(sg.text)) }))
+					}
+				}
+				return layout.Inset{Top: 8}.Layout(gtx, func(gtx C) D { return row(gtx, layout.Middle, ch...) })
 			}),
 		)
 	})
@@ -1397,9 +1426,9 @@ func (v *Unreads) emptyState(gtx C) D {
 		g.Constraints.Min = image.Point{}
 		d := layout.UniformInset(10).Layout(g, func(gtx C) D {
 			return row(gtx, layout.Middle,
-				layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wReg, v.p.Muted, unrMarkedAll) }),
+				layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wReg, v.p.Muted, nsUnreads.T(unrMarkedAll)) }),
 				hgap(8),
-				layout.Rigid(func(gtx C) D { return v.underlined(gtx, &v.undoAll, "Undo") }),
+				layout.Rigid(func(gtx C) D { return v.underlined(gtx, &v.undoAll, nsUnreads.T("Undo")) }),
 			)
 		})
 		call := m.Stop()
@@ -1433,7 +1462,7 @@ func (v *Unreads) emptyEmoji(gtx C) D {
 		}
 	}
 	draw := func(gtx C) D {
-		if unrSkinToned[name] {
+		if unrSkinToned[name] || i18n.Locale() != i18n.EnUS { // the locale lists' own emoji: the tone a variant exists for
 			if t := c.PrefString("preferred_skin_tone"); t != "" && t != "1" {
 				if u, _, ok := c.Emoji(name + "::skin-tone-" + t); ok && u != "" {
 					return v.emojiImg(gtx, u, 32)

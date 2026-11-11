@@ -22,6 +22,8 @@ var (
 	nsIntro         = i18n.NS("introductions")   // the Slack Connect invitation Ignore modals
 	nsSlackConnect  = i18n.NS("slack_connect")
 	nsSharedInvites = i18n.NS("shared_channel_invites") // SlackConnectConfirmTrustModal
+	nsUnreads       = i18n.NS("all_unreads")            // the Unreads view
+	nsRecent        = i18n.NS("recent_page")            // the DMs view (DmsPage, DmsChannel)
 )
 
 // localized reports whether Slack's strings differ from the English
@@ -151,4 +153,54 @@ func weekday(t time.Time) string {
 		return i18n.Weekday(l, t, false)
 	}
 	return t.Format("Monday")
+}
+
+// tagSeg is one run of a Slack rt() string: its text and the innermost
+// tag around it ("" for none); an empty element (<enter-icon></enter-icon>)
+// is a run with no text.
+type tagSeg struct{ tag, text string }
+
+// tagSegs splits a formatted rt() string at its tags, so Clack can draw
+// each part the way Slack's callback renders it, in the locale's order:
+// "<span …>Press <key>Esc</key> to </span><button>Mark as Read</button>"
+// is span "Press ", key "Esc", span " to ", button "Mark as Read".
+func tagSegs(s string) []tagSeg {
+	var out []tagSeg
+	var stack []string
+	top := func() string {
+		if len(stack) == 0 {
+			return ""
+		}
+		return stack[len(stack)-1]
+	}
+	for len(s) > 0 {
+		i := strings.IndexByte(s, '<')
+		if i < 0 {
+			out = append(out, tagSeg{top(), s})
+			break
+		}
+		j := strings.IndexByte(s[i:], '>')
+		if j < 0 {
+			out = append(out, tagSeg{top(), s})
+			break
+		}
+		if i > 0 {
+			out = append(out, tagSeg{top(), s[:i]})
+		}
+		t := s[i+1 : i+j]
+		s = s[i+j+1:]
+		if strings.HasPrefix(t, "/") {
+			name := t[1:]
+			if top() == name && len(out) > 0 && out[len(out)-1].tag != name {
+				out = append(out, tagSeg{name, ""}) // an empty element
+			}
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
+			}
+			continue
+		}
+		name, _, _ := strings.Cut(t, " ")
+		stack = append(stack, name)
+	}
+	return out
 }

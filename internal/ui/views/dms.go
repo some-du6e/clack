@@ -24,6 +24,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -223,7 +224,7 @@ func NewDMs(h Host) *DMs {
 		index:   map[string]int{},
 		rows:    map[string]*dmsRow{},
 		pclicks: map[string]*widget.Clickable{},
-		find:    newSearch("Find a DM…"),
+		find:    newSearchIn(nsRecent, "Find a DM…"), // DmsHeaderSearchBarSearcher
 		known:   map[string]bool{},
 		dirty:   true,
 	}
@@ -327,7 +328,7 @@ func (d *DMs) layoutHeader(gtx C) D {
 				layout.Flexed(1, func(gtx C) D {
 					return layout.Inset{Left: 8, Right: 8, Top: 4, Bottom: 4}.Layout(gtx, func(gtx C) D {
 						return row(gtx, layout.Middle,
-							layout.Rigid(func(gtx C) D { return d.label(gtx, 18, wBlack, d.c.white, "Direct messages") }),
+							layout.Rigid(func(gtx C) D { return d.label(gtx, 18, wBlack, d.c.white, nsRecent.T("Direct messages")) }),
 							hgap(4),
 							layout.Rigid(func(gtx C) D { return d.icon(gtx, "caret-down", 16, d.c.white) }),
 						)
@@ -359,7 +360,7 @@ func (d *DMs) layoutUnreads(gtx C) D {
 	return d.unreads.Layout(gtx, func(gtx C) D {
 		pointerCursor(gtx)
 		return row(gtx, layout.Middle,
-			layout.Rigid(func(gtx C) D { return d.label(gtx, 12, wBold, d.c.soft, "Unreads") }),
+			layout.Rigid(func(gtx C) D { return d.label(gtx, 12, wBold, d.c.soft, nsMentions.T("Unreads")) }), // DMsUnreadsToggleButton
 			hgap(8),
 			layout.Rigid(func(gtx C) D {
 				w, h := gtx.Dp(28), gtx.Dp(18)
@@ -409,7 +410,7 @@ func (d *DMs) layoutFind(gtx C) D {
 						if s.ed.Len() > 0 {
 							return D{}
 						}
-						return d.label(gtx, 13, wReg, d.c.soft, s.ph)
+						return d.label(gtx, 13, wReg, d.c.soft, s.placeholder())
 					}),
 					layout.Stacked(func(gtx C) D {
 						// Stack resets Min; an empty editor would be only
@@ -612,7 +613,7 @@ func (d *DMs) apply() {
 		if v.err != nil {
 			d.h.Toast("Couldn’t add a to-do: " + friendlyErr(v.err))
 		} else {
-			d.h.Toast("Added to your to-dos")
+			d.h.Toast(nsLater.T("To-do added")) // LaterTodoToast
 		}
 	}
 	if v, ok, err := d.open.get(); ok && v.seq != 0 && v.seq != d.openApplied {
@@ -888,7 +889,7 @@ func (d *DMs) rebuild() {
 			continue
 		}
 		if !head {
-			d.view = append(d.view, dmsEntry{dm: -1, head: "People"})
+			d.view = append(d.view, dmsEntry{dm: -1, head: i18n.T("search", "People")})
 			head = true
 		}
 		d.view = append(d.view, dmsEntry{dm: -1, user: u})
@@ -1001,7 +1002,7 @@ func (d *DMs) dmRow(gtx C, dm *core.DM) D {
 		when = listTime(tsTime(dm.Latest.TS))
 		txt = d.preview(dm.Latest)
 		if dm.Latest.User != "" && dm.Latest.User == self {
-			txt = "You: " + txt
+			txt = nsRecent.T("You: ") + txt // ActivityMessage
 		}
 	}
 	prevC := d.c.preview
@@ -1092,8 +1093,9 @@ func (d *DMs) dmRow(gtx C, dm *core.DM) D {
 func (d *DMs) nameLine(gtx C, name string, isSelf bool, statusURL, when string) D {
 	gtx.Constraints.Min.Y = 0
 	youW := 0
+	you := " " + nsRecent.T("(you)") // DmsChannel
 	if isSelf {
-		youW = d.th.Measure(gtx, dmsNameSize, wReg, " (you)")
+		youW = d.th.Measure(gtx, dmsNameSize, wReg, you)
 	}
 	emW := 0
 	if statusURL != "" {
@@ -1121,7 +1123,7 @@ func (d *DMs) nameLine(gtx C, name string, isSelf bool, statusURL, when string) 
 					if !isSelf {
 						return D{}
 					}
-					return d.para(gtx, dmsNameSize, dmsLine, wReg, d.c.white, 1, " (you)")
+					return d.para(gtx, dmsNameSize, dmsLine, wReg, d.c.white, 1, you)
 				}),
 				layout.Rigid(func(gtx C) D {
 					if statusURL == "" {
