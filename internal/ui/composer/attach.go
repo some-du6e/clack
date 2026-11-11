@@ -150,6 +150,10 @@ type attachments struct {
 	picking atomic.Bool
 	pasting atomic.Bool
 	browser *attBrowser // UI goroutine only
+
+	// insertLink puts text linked to url at the owning composer's caret
+	// (the + menu's Workflow row, WorkflowItem)
+	insertLink func(text, url string)
 }
 
 func newAttachments(h Host) *attachments {
@@ -591,6 +595,11 @@ func attOneDecimal(f float64) string {
 // shortcuts and "Browse all shortcuts".
 var ShortcutItems func(h popups.Host, ch string, anchor image.Rectangle) []popups.MenuItem
 
+// WorkflowItem, when set (internal/ui/workflows_wire.go), is the + menu's
+// "Workflow" row (Slack's attach-workflow option): the workflow picker,
+// whose Insert puts the workflow's name, linked, at the caret (insert).
+var WorkflowItem func(h popups.Host, ch string, insert func(text, url string)) *popups.MenuItem
+
 func (a *attachments) Menu(anchor image.Rectangle, ch string) {
 	items := []popups.MenuItem{
 		{Label: "Upload from your computer", Icon: "upload", Do: a.Pick},
@@ -603,6 +612,11 @@ func (a *attachments) Menu(anchor image.Rectangle, ch string) {
 		popups.MenuItem{Label: "Text snippet", Icon: "code", Disabled: true},
 		popups.MenuItem{Label: "Canvas", Icon: "canvas", Disabled: true},
 	)
+	if WorkflowItem != nil && a.insertLink != nil {
+		if it := WorkflowItem(a.h, ch, a.insertLink); it != nil {
+			items = append(items, *it)
+		}
+	}
 	if ShortcutItems != nil {
 		if more := ShortcutItems(a.h, ch, anchor); len(more) > 0 {
 			items = append(append(items, popups.Sep()), more...)

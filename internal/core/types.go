@@ -55,6 +55,17 @@ type Message struct {
 	// AgentSession is the message's agent_session: a thread session's
 	// state on its root message (nil for other messages).
 	AgentSession *slack.MessageAgentSession
+	// ThreadLastRead is a followed thread's last read reply (root
+	// messages; the subscription's last_read from conversations.replies,
+	// thread_marked and subscriptions.thread.mark): Slack's
+	// use_thread_subscription lastRead.
+	ThreadLastRead string
+	// ReplyUsersN is reply_users_count: how many people replied (the
+	// reply bar's "+N" when ReplyUsers holds more than five).
+	ReplyUsersN int
+	// FunctionExecutionID is a workflow step message's
+	// function_execution_id: its block actions send it (workflows.go).
+	FunctionExecutionID string
 }
 
 // SubtypeSlackbotResponse is the subtype of Slackbot's answers to the
@@ -379,6 +390,7 @@ type Pin struct {
 type Bookmark struct {
 	ID, Title, Link, Emoji, EmojiURL, Icon, Type, EntityID, Rank, ParentID string
 	Created                                                                int64
+	ShortcutID                                                             string // a workflow bookmark's trigger (type shortcut)
 }
 
 // ChannelDetails is the channel-details view.
