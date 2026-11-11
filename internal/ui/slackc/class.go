@@ -68,6 +68,7 @@ type nativeStyle struct {
 	set    propSet // properties a rule set on this element
 	inh    propSet // inherited properties some rule set on it or an ancestor
 	native propSet // properties Slack's own rule (base sheet) keeps native here
+	trans  bool    // some transition-* declaration applies (transitions.go)
 	deco   decoProp
 	key    uint64
 	before *css.Style
@@ -382,6 +383,7 @@ func lookupNative(k nsKey, parent *stackEntry) *nativeStyle {
 	c := Styles.Cascade(&ns.el, css.PseudoNone, nil, e)
 	ns.style = css.Compute(&c, ps, e)
 	ns.set, ns.native = propsOf(&c), nativesOf(&c)
+	ns.trans = hasTransition(&c)
 	// An inherited property Slack's own rule gives the widget (its link
 	// color, its bold name) stops an ancestor's value here, for its
 	// descendants too.
