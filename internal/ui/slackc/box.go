@@ -287,6 +287,11 @@ func (b *box) TypeIndex() (int, int) {
 
 func (b *box) State() css.State { return b.state }
 
+// HostNode marks a plugin's own elements for the host base sheet
+// (Slack's rules for the classes plugins put on them, pluginElementCSS);
+// a Slack component ("@") in the tree draws its own look.
+func (b *box) HostNode() bool { return b.kind == kElem }
+
 // Modal reports an open <dialog> JS showed with showModal() (:modal).
 func (b *box) Modal() bool {
 	if b.kind != kElem || b.n == nil || !b.n.Modal || b.n.T != "dialog" {
@@ -542,7 +547,7 @@ func (v *View) computeStyle(b *box, parent *css.Style, e *css.Env) {
 			return
 		}
 	}
-	if Styles.Empty() && len(n.Style) == 0 {
+	if Styles.Empty() && len(n.Style) == 0 && !Styles.HostStyled(b) {
 		// No CSS anywhere: the UA style alone.
 		b.st = inheritOnly(parent, e.Fg)
 		b.set = 0

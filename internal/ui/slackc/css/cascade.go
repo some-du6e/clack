@@ -10,10 +10,11 @@ import (
 // engineImpl holds the sheets (insertion order) and the compiled,
 // immutable snapshot that Cascade reads without locking.
 type engineImpl struct {
-	mu     sync.Mutex // serializes Set/Remove
-	sheets []keyedSheet
-	base   *sheet // SetBase: first in the cascade, never makes the engine non-empty
-	snap   atomic.Pointer[snapshot]
+	mu       sync.Mutex // serializes Set/Remove
+	sheets   []keyedSheet
+	base     *sheet // SetBase: first in the cascade, never makes the engine non-empty
+	hostBase *sheet // SetHostBase: after base; its rules match host-tree nodes only
+	snap     atomic.Pointer[snapshot]
 }
 
 type keyedSheet struct {
@@ -30,6 +31,7 @@ type entry struct {
 	multi bool   // indexed under several keys (dedupe on match)
 	imp   bool   // the rule has !important declarations
 	norm  bool   // the rule has normal declarations
+	host  bool   // from the host base sheet: the subject must be a HostElement
 }
 
 // ruleIndex buckets entries by the subject compound's most selective
@@ -46,6 +48,10 @@ type ruleIndex struct {
 type snapshot struct {
 	idx     [PseudoBackdrop + 1]ruleIndex // per Pseudo
 	layered bool                          // some rule is in a layer (important order differs)
+	// the host base sheet's subject classes (HostStyled); hostAll: some
+	// subject isn't keyed by a class, so any host node may match
+	hostClasses map[string]bool
+	hostAll     bool
 }
 
 // NewEngine returns an empty engine.
@@ -92,6 +98,57 @@ func (e *Engine) SetBase(src string) {
 	e.rebuild()
 }
 
+// SetHostBase installs the host base sheet: Slack's own rules for the
+// Slack classes plugins put on elements they render themselves (a
+// plugin's button with c-reaction_add, a header button with
+// p-top_nav__button). It comes after the base sheet in source order and
+// competes like it, but its rules match only host-tree nodes (elements
+// whose HostNode reports true): a native widget with the same class
+// draws its own look, and the rule would style it twice. It doesn't
+// count for Empty either.
+func (e *Engine) SetHostBase(src string) {
+	sh := parseSheet(src)
+	im := &e.impl
+	im.mu.Lock()
+	defer im.mu.Unlock()
+	im.hostBase = sh
+	e.rebuild()
+}
+
+// HostElement is implemented by host-tree nodes, the elements a plugin's
+// React tree renders; the host base sheet's rules match only them.
+type HostElement interface {
+	HostNode() bool
+}
+
+func isHost(el Element) bool {
+	h, ok := el.(HostElement)
+	return ok && h.HostNode()
+}
+
+// HostStyled reports whether a host base rule may apply to el (a host
+// node): one of its classes is a host rule's subject class. A host node
+// cascades then even while Empty, so a plugin's Slack-classed element
+// looks like Slack's with no other CSS installed.
+func (e *Engine) HostStyled(el Element) bool {
+	if e == nil {
+		return false
+	}
+	s := e.impl.snap.Load()
+	if s == nil || s.hostClasses == nil && !s.hostAll {
+		return false
+	}
+	if s.hostAll {
+		return true
+	}
+	for _, c := range el.Classes() {
+		if s.hostClasses[c] {
+			return true
+		}
+	}
+	return false
+}
+
 // NativeValue is a base-sheet value meaning "the native widget's own
 // value": the widget keeps its built-in look for the property, and its
 // descendants don't inherit an ancestor's CSS value through it. It is
@@ -120,8 +177,21 @@ func (e *Engine) rebuild() {
 	type lnode struct {
 		kids []string
 	}
+	all := im.sheets
+	if im.base != nil || im.hostBase != nil {
+		all = make([]keyedSheet, 0, len(im.sheets)+2)
+		if im.base != nil {
+			all = append(all, keyedSheet{key: "\x00base", sh: im.base})
+		}
+		if im.hostBase != nil {
+			all = append(all, keyedSheet{key: "\x00host", sh: im.hostBase})
+		}
+		all = append(all, im.sheets...)
+	}
+	// the base sheets' layers (Slack's sk.*) come first, as Slack's own
+	// stylesheet declares them before any plugin's
 	tree := map[string]*lnode{"": {}}
-	for _, ks := range im.sheets {
+	for _, ks := range all {
 		for _, path := range ks.sh.layers {
 			if _, ok := tree[path]; ok {
 				continue
@@ -156,10 +226,6 @@ func (e *Engine) rebuild() {
 	}
 	var order uint64
 	total := 0
-	all := im.sheets
-	if im.base != nil {
-		all = append([]keyedSheet{{key: "\x00base", sh: im.base}}, im.sheets...)
-	}
 	for _, ks := range all {
 		for _, r := range ks.sh.rules {
 			order++
@@ -183,11 +249,23 @@ func (e *Engine) rebuild() {
 					continue
 				}
 				ord := min(order, 1<<24-1)
-				en := &entry{sel: sel, r: r, imp: hasImp, norm: hasNorm,
+				en := &entry{sel: sel, r: r, imp: hasImp, norm: hasNorm, host: ks.sh == im.hostBase,
 					key:  lr<<48 | uint64(sel.spec)<<24 | ord,
 					ikey: (maxRank-lr)<<48 | uint64(sel.spec)<<24 | ord}
 				s.idx[sel.pseudo].add(en)
-				if ks.sh != im.base {
+				if en.host {
+					if k, keys := bucketKeys(&sel.comps[0]); k == 'c' {
+						if s.hostClasses == nil {
+							s.hostClasses = map[string]bool{}
+						}
+						for _, c := range keys {
+							s.hostClasses[c] = true
+						}
+					} else {
+						s.hostAll = true
+					}
+				}
+				if ks.sh != im.base && ks.sh != im.hostBase {
 					total++
 				}
 			}
@@ -409,7 +487,7 @@ func (ix *ruleIndex) collect(el Element, env Env, ms []match) []match {
 					continue
 				}
 			}
-			if !matchSel(en.sel, el, nil) {
+			if en.host && !isHost(el) || !matchSel(en.sel, el, nil) {
 				continue
 			}
 			ok := true

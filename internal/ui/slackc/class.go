@@ -40,6 +40,7 @@ type ClassDef struct {
 	classes []string
 	attrs   []string // name, value pairs
 	mods    []string
+	kids    []*ClassDef // Kids: elements the native draws inside itself
 }
 
 // Class declares a native widget class. classes is a space-separated
@@ -54,6 +55,17 @@ func (d *ClassDef) Tag(tag string) *ClassDef { d.tag = tag; return d }
 // Mods declares optional modifier classes; Enter's mods bit i adds mods[i].
 func (d *ClassDef) Mods(classes ...string) *ClassDef { d.mods = classes; return d }
 
+// Kids declares the elements Slack's DOM has inside the widget that the
+// native draws itself without entering them (an icon, a name), each with
+// its own declared kids, so :has() and :empty see them: a private
+// channel's InlineChannelEntity holds span.c-inline_channel_icon
+// [data-inline-channel-type-icon=lock], which StreamerMode's
+// .c-inline_channel_entity:has([data-inline-channel-type-icon^="lock"])
+// looks for. A widget whose children differ by state (a private or a
+// public channel) declares one ClassDef per shape. Natives without
+// declared kids still answer :has() with false and :empty with no.
+func (d *ClassDef) Kids(kids ...*ClassDef) *ClassDef { d.kids = kids; return d }
+
 // Styled is the style a native widget gets from CSS. The zero value (no
 // CSS active, or nothing matched in the chain) answers every query with
 // the widget's own default.
@@ -64,6 +76,7 @@ type Styled struct {
 // nativeStyle is one cached element: cascade + computed style.
 type nativeStyle struct {
 	el     nativeEl
+	kel    *kidsEl // el with its declared kids (ClassDef.Kids), nil without
 	style  css.Style
 	set    propSet // properties a rule set on this element
 	inh    propSet // inherited properties some rule set on it or an ancestor
@@ -182,6 +195,85 @@ func (e *nativeEl) Index() (int, int)     { return 0, 0 }
 func (e *nativeEl) TypeIndex() (int, int) { return 0, 0 }
 func (e *nativeEl) State() css.State      { return e.st }
 
+// kidsEl is a native with declared kids: a css.KidsElement over them.
+type kidsEl struct {
+	*nativeEl
+	kids []css.Element
+}
+
+func (k *kidsEl) Kids() []css.Element { return k.kids }
+
+// declEl is a declared kid (ClassDef.Kids): its def's tag, classes and
+// static attributes under its parent, and its own declared kids.
+type declEl struct {
+	def    *ClassDef
+	parent css.Element
+	kids   []css.Element
+	index  int
+	n      int
+}
+
+func (e *declEl) Tag() string { return e.def.tag }
+func (e *declEl) ID() string  { v, _ := e.Attr("id"); return v }
+func (e *declEl) HasClass(c string) bool {
+	for _, x := range e.def.classes {
+		if x == c {
+			return true
+		}
+	}
+	return false
+}
+func (e *declEl) Classes() []string { return e.def.classes }
+func (e *declEl) Attr(name string) (string, bool) {
+	if name == "class" {
+		return strings.Join(e.def.classes, " "), true
+	}
+	for i := 0; i+1 < len(e.def.attrs); i += 2 {
+		if e.def.attrs[i] == name {
+			return e.def.attrs[i+1], true
+		}
+	}
+	return "", false
+}
+func (e *declEl) Parent() css.Element { return e.parent }
+func (e *declEl) Prev() css.Element {
+	if k, ok := e.parent.(css.KidsElement); ok && e.index > 0 {
+		return k.Kids()[e.index-1]
+	}
+	return nil
+}
+func (e *declEl) Index() (int, int)     { return e.index, e.n }
+func (e *declEl) TypeIndex() (int, int) { return 0, 0 }
+func (e *declEl) State() css.State {
+	if len(e.kids) == 0 {
+		return css.StateEmpty
+	}
+	return 0
+}
+func (e *declEl) Kids() []css.Element { return e.kids }
+
+// declKids builds the declared kids of def under parent.
+func declKids(def *ClassDef, parent css.Element) []css.Element {
+	if len(def.kids) == 0 {
+		return nil
+	}
+	out := make([]css.Element, len(def.kids))
+	for i, kd := range def.kids {
+		k := &declEl{def: kd, parent: parent, index: i, n: len(def.kids)}
+		k.kids = declKids(kd, k)
+		out[i] = k
+	}
+	return out
+}
+
+// element is the cached native as selectors see it.
+func (ns *nativeStyle) element() css.Element {
+	if ns.kel != nil {
+		return ns.kel
+	}
+	return &ns.el
+}
+
 // The element stack (UI goroutine): natives and host-tree nodes push
 // themselves so selectors see the real ancestry.
 type stackEntry struct {
@@ -277,7 +369,7 @@ func (d *ClassDef) enterX(st css.State, mods uint64, ak, av, extra string) Style
 }
 
 func (ns *nativeStyle) entry() stackEntry {
-	return stackEntry{el: &ns.el, style: &ns.style, inh: ns.inh, deco: ns.deco, key: ns.key}
+	return stackEntry{el: ns.element(), style: &ns.style, inh: ns.inh, deco: ns.deco, key: ns.key}
 }
 
 // Child is the style of a native part drawn inside s that isn't pushed on
@@ -370,6 +462,10 @@ func lookupNative(k nsKey, parent *stackEntry) *nativeStyle {
 		return ns
 	}
 	ns = &nativeStyle{el: nativeEl{def: k.def, mods: k.mods, st: k.st, attrK: k.attrK, attrV: k.attrV, extra: strings.Fields(k.extra)}}
+	if len(k.def.kids) > 0 {
+		ns.kel = &kidsEl{nativeEl: &ns.el}
+		ns.kel.kids = declKids(k.def, ns.kel)
+	}
 	var ps *css.Style
 	var pinh propSet
 	var pdeco decoProp
@@ -380,7 +476,8 @@ func lookupNative(k nsKey, parent *stackEntry) *nativeStyle {
 		pdeco = parent.deco
 	}
 	e := cssEnv()
-	c := Styles.Cascade(&ns.el, css.PseudoNone, nil, e)
+	el := ns.element()
+	c := Styles.Cascade(el, css.PseudoNone, nil, e)
 	ns.style = css.Compute(&c, ps, e)
 	ns.set, ns.native = propsOf(&c), nativesOf(&c)
 	ns.trans = hasTransition(&c)
@@ -392,13 +489,13 @@ func lookupNative(k nsKey, parent *stackEntry) *nativeStyle {
 		pdeco = decoProp{}
 	}
 	ns.deco = pdeco.merge(ownDeco(&ns.style, ns.set&propBits["color"] != 0))
-	if b := Styles.Cascade(&ns.el, css.PseudoBefore, nil, e); len(b.Decls) > 0 {
+	if b := Styles.Cascade(el, css.PseudoBefore, nil, e); len(b.Decls) > 0 {
 		s := css.Compute(&b, &ns.style, e)
 		if s.HasContent {
 			ns.before = &s
 		}
 	}
-	if a := Styles.Cascade(&ns.el, css.PseudoAfter, nil, e); len(a.Decls) > 0 {
+	if a := Styles.Cascade(el, css.PseudoAfter, nil, e); len(a.Decls) > 0 {
 		s := css.Compute(&a, &ns.style, e)
 		if s.HasContent {
 			ns.after = &s
