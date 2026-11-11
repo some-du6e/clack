@@ -146,7 +146,7 @@ type recentsState struct {
 	visits         []RecentNavigation
 	visitsLoaded   bool
 	visitsChecksum string
-	loadTried      bool // MaybeLoadRecents ran with recents read on
+	loadTried      bool // a load was claimed with recents read on (claimRecentsLoad)
 
 	// search.autocomplete's QueryHistoryCache (CZjT)
 	hist   []QueryHistoryItem
@@ -510,33 +510,51 @@ func (a *App) LoadVisits(ctx context.Context) error {
 	return nil
 }
 
-// MaybeLoadRecents is maybeLoadRecentsPrefs: with recents read on, the
-// pref and visits.list (at boot and when Slack says the pref changed).
+// MaybeLoadRecents is maybeLoadRecentsPrefs at boot: with recents read
+// on, the pref and visits.list, unless a forced group's load claimed them
+// first (boot runs it on a goroutine, which can start after a group set
+// right after boot). Slack's "the pref changed" reload is the
+// search_recents event's LoadRecentsPrefs (events.go).
 func (a *App) MaybeLoadRecents(ctx context.Context) {
+	if a.claimRecentsLoad() {
+		a.loadRecents(ctx)
+	}
+}
+
+// claimRecentsLoad reports whether the caller loads the recents: recents
+// read is on and no load claimed them yet. The check and the claim are one
+// step under the lock, so boot's trigger and a forced group's arriving
+// together load them once.
+func (a *App) claimRecentsLoad() bool {
 	if !a.RecentsReadEnabled() {
-		return
+		return false
 	}
 	a.rec.mu.Lock()
+	defer a.rec.mu.Unlock()
+	if a.rec.loadTried {
+		return false
+	}
 	a.rec.loadTried = true
-	a.rec.mu.Unlock()
+	return true
+}
+
+func (a *App) loadRecents(ctx context.Context) {
 	_ = a.LoadRecentsPrefs(ctx)
 	_ = a.LoadVisits(ctx)
 }
 
 // recentsAfterExperiments loads the recents when a forced group turned
 // recents read on after boot (Slack reads them at its next load; forced
-// groups apply live in Clack).
+// groups apply live in Clack). The load is claimed before its goroutine
+// starts. Before boot is done, boot's own trigger loads them.
 func (a *App) recentsAfterExperiments() {
 	select {
 	case <-a.ready:
 	default:
 		return
 	}
-	a.rec.mu.Lock()
-	tried := a.rec.loadTried
-	a.rec.mu.Unlock()
-	if !tried && a.RecentsReadEnabled() {
-		go a.MaybeLoadRecents(a.bg)
+	if a.claimRecentsLoad() {
+		go a.loadRecents(a.bg)
 	}
 }
 
