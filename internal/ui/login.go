@@ -396,7 +396,8 @@ func (a *App) signInWithLinkNow(link string) {
 	l.advanced, l.focused, l.trouble = false, false, false
 	l.link.SetText(link)
 	l.linkLen = l.link.Len() // set here: not a paste to sign in with again
-	a.introToSignIn()        // the introduction steps aside for the card
+	l.link.SetCaret(l.linkLen, l.linkLen)
+	a.introToSignIn() // the introduction steps aside for the card
 	a.startLogin(slack.SignInInput{Link: link})
 }
 

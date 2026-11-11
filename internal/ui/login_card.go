@@ -499,9 +499,12 @@ func (l *loginScreen) fadeLine(f *introFrame, c *loginFade, x, y, w int, size, l
 		}
 		return alphaMul(col, a)
 	}
+	// The old words are gone before the new ones show (alphas squared:
+	// Gio's linear-light blend makes faint text look much stronger).
 	if !c.at.IsZero() && c.prev.s != "" {
-		e := l.mc.spring(springSmooth, c.at)
-		if pa := float32(1 - clamp01(e*1.7)); pa > 0.004 {
+		e := l.mc.spring(springSnappy, c.at)
+		if pa := float32(1 - clamp01(e*1.6)); pa > 0.004 {
+			pa *= pa
 			dy := 0
 			if !l.reduced {
 				dy = -int(math.Round(float64(f.df(6)) * e))
@@ -514,8 +517,9 @@ func (l *loginScreen) fadeLine(f *introFrame, c *loginFade, x, y, w int, size, l
 	}
 	na, dy := float32(1), 0
 	if !c.at.IsZero() {
-		e := l.mc.spring(springSmooth, c.at.Add(70*time.Millisecond))
+		e := l.mc.spring(springSmooth, c.at.Add(90*time.Millisecond))
 		na = float32(clamp01(e))
+		na *= na
 		if !l.reduced {
 			dy = int(math.Round(float64(f.df(8)) * (1 - e)))
 		}
@@ -555,10 +559,10 @@ func (l *loginScreen) badge(f *introFrame, c f32.Point, d float32) {
 	theme.Circle(gtx, c.Round(), int(d-f.df(4)), alphaMul(theme.Mix(loginViolet, loginRose, ev*0.6), 0.18))
 	kv := float32(clamp01(l.follow(&l.keyV, springSnappy, l.busy)))
 	if l.busy {
-		ringAt(f, c, d/2, alphaMul(ring, 0.22), f.df(2.2))
+		loginCircle(gtx, c, d/2, alphaMul(ring, 0.22), f.df(2.2))
 		l.badgeArc(f, c, d/2, ring)
 	} else {
-		ringAt(f, c, d/2, alphaMul(ring, 0.85*breath), f.df(2.2))
+		loginCircle(gtx, c, d/2, alphaMul(ring, 0.85*breath), f.df(2.2))
 	}
 	gs := float32(26)
 	gp := image.Pt(int(c.X)-f.d(gs)/2, int(c.Y)-f.d(gs)/2)
@@ -568,6 +572,21 @@ func (l *loginScreen) badge(f *introFrame, c f32.Point, d float32) {
 	if kv > 0.004 {
 		f.icon("key", gp, gs, alphaMul(introWhite, 0.92*kv))
 	}
+}
+
+// loginCircle strokes a circle of radius r around c, w wide (device px).
+// The path is clip.Ellipse's (closed without a seam: an ArcTo of 2π can
+// end a hair off its start, and the stroke's join there spikes), drawn
+// from a 1000-unit circle and scaled, so the radius moves smoothly.
+func loginCircle(gtx layout.Context, c f32.Point, r float32, col color.NRGBA, w float32) {
+	if r <= 0 || col.A == 0 {
+		return
+	}
+	const u = 1000
+	k := r / u
+	defer op.Affine(f32.Affine2D{}.Scale(f32.Point{}, f32.Pt(k, k)).Offset(c)).Push(gtx.Ops).Pop()
+	path := clip.Ellipse(image.Rect(-u, -u, u, u)).Path(gtx.Ops)
+	paint.FillShape(gtx.Ops, col, clip.Stroke{Path: path, Width: w / k}.Op())
 }
 
 // sonar is the waiting badge's light: a ring leaves it every 1.3 s,
@@ -584,7 +603,7 @@ func (l *loginScreen) sonar(f *introFrame, c f32.Point, r0 float32, t float64) {
 		a := 0.5 * math.Pow(1-p, 1.8)
 		// at most 20 units out: clear of the card's top (the badge sits 38
 		// under it) and of the title under the badge
-		ringAt(f, c, r0+f.df(20)*float32(e), alphaMul(loginGlow, float32(a)), f.df(1.6))
+		loginCircle(f.gtx, c, r0+f.df(20)*float32(e), alphaMul(loginGlow, float32(a)), f.df(1.6))
 	}
 }
 
@@ -594,7 +613,7 @@ func (l *loginScreen) badgeArc(f *introFrame, c f32.Point, r float32, col color.
 	t := l.now.Sub(l.busyAt).Seconds()
 	l.mc.moving = true
 	if l.reduced {
-		ringAt(f, c, r, alphaMul(col, float32(0.45+0.4*(0.5+0.5*math.Sin(t*3)))), f.df(2.4))
+		loginCircle(f.gtx, c, r, alphaMul(col, float32(0.45+0.4*(0.5+0.5*math.Sin(t*3)))), f.df(2.4))
 		return
 	}
 	a0 := t * 2 * math.Pi * 0.85
@@ -795,14 +814,16 @@ func (a *App) loginSnippet(gtx layout.Context, f *introFrame, x, y, w int) int {
 
 // ---- controls ----
 
-// loginFocusRing is the card's keyboard focus ring around r: lilac,
-// growing up to 4 units outside the control on its spring.
+// loginFocusRing is the card's focus ring around r: a lilac band growing
+// up to 3.5 units outside the control on its spring. A band, not a fill
+// under the control: the card's fields and quiet buttons are translucent.
 func loginFocusRing(gtx layout.Context, f *introFrame, r image.Rectangle, rad int, v float32) {
 	if v <= 0.01 {
 		return
 	}
-	g := int(math.Round(float64(f.df(4) * v)))
-	theme.RRect(gtx, r.Inset(-g), rad+g, alphaMul(loginLilac, 0.42*v))
+	g := max(1, int(math.Round(float64(f.df(3.5)*v))))
+	h := (g + 1) / 2 // the band is stroked on the line h outside r
+	theme.Border(gtx, r.Inset(-h), rad+h, g, loginOn(alphaMul(loginLilac, 0.5*v)))
 }
 
 // loginPill is the card's primary button: the introduction's white pill
