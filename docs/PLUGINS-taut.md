@@ -57,6 +57,7 @@ When no plugin patches the name, this is just `native(ctx, args)`. When a plugin
 | getChannelMembershipInfoForUsers | `{channelId, userIds}` | taut | default: conversations.members, fills `membership` |
 | ensureMembersArePresent | `{memberIds}` | taut | default: core.EnsureUsers |
 | fetchRawChannelsById | `{ids}` → `{missing}` | taut | default: core.ChannelInfo |
+| fetchAndUpsertChannelsById | `{ids, reason?}` → `{channels, resolved, missing, failedIds}` | taut | default: dispatches fetchRawChannelsById (patchable), as Slack's |
 | joinChannel | `{channelId}` | ui (join button) | default: core.Join |
 | openPrefsModal | `{activeSection?}` | ui shell | default: UIHooks.OpenPreferences |
 | enqueueHuddleToast | `{content, svgIconProps, duration}` | ui toasts | default: UIHooks.Toast |
@@ -67,7 +68,7 @@ When no plugin patches the name, this is just `native(ctx, args)`. When a plugin
 | handleDeepLink | `{uri}` (slack:// links) | ui shell | default: `UIHooks.DeepLink(uri) bool` (false when unset) |
 | currentUserEndedTyping, startHuddle | Slack's | ui/composer, ui/views | no-op defaults |
 | openEditProfileModal, showSavedItemNotification | Slack's | ui/popups, ui notifications | UI must dispatch |
-| sendActions, executeAppAction, submitView | Slack's (`{serviceId, appId, serviceTeamId, container, actions}`, `{appId, actionId, channelId, messageTs, applicableTeamId}`, `{viewId, viewState: {values}}` → `{updatedView, responseAction, toastMessage}`) | ui/blockkit (block actions, shortcuts, modals) | dispatched by blockkit; natives registered (blocks.actions, apps.actions.v2.execute, views.submit) |
+| sendActions, executeAppAction, submitView | Slack's (`{serviceId, appId, serviceTeamId, container, actions}`, `{appId, actionId, channelId, messageTs, applicableTeamId, clientToken}`, `{viewId, viewState: {values}}` → `{updatedView, responseAction, toastMessage}`) | ui/blockkit (block actions, shortcuts, modals) | dispatched by blockkit; natives registered (blocks.actions, apps.actions.v2.execute, views.submit). A plugin's own executeAppAction sends its clientToken as is (core `RunShortcutAs`), so the modal comes back to it in `view_opened` instead of opening |
 | blocksFormatFetcher | `{blocks, reason}` | ui/composer markdown mode | native registered by blockkit (blocks.format) |
 
 ## Composer, messages and members
@@ -79,6 +80,7 @@ When no plugin patches the name, this is just `native(ctx, args)`. When a plugin
 - `t.HasInlineMarkup()` / `ParseInlineMarkup` (offsets in runes), `SerializeInlineMarkup`, `EscapeInlineMarkup`: replace the composer's `*bold*` shortcuts (RealMarkdown). viewContext values are Slack's names: `MESSAGE_PANE`, `THREADS_FLEXPANE`, …
 - Pending files (files.go): set `taut.PendingFiles` (list), `taut.RenamePendingFile` (the `updatePendingFile` action), `taut.PersistPendingFile` (maybePersistPendingFileData) and `taut.EditFile` (editFileApi) once, before the runtime starts, and call `t.PendingFilesChanged()` when attachments change. They serve `pendingFileUploads` and `files`. Unset, plugins see no pending files.
 - Shaped natives: some Slack components have a JS shape beyond their name (04_react.js `SHAPES`). TextyInput is `memo(class TextyInput)` with Slack's `{instance: {quill}}` on its ref. Its owner feeds the Quill with `__taut.feedNative('TextyInput', props => ({state: {length, index, selected}, props: rest}))` from a prelude (ui/composer does).
+- `t.SetComposerDraft(taut.ComposerDraft{DraftID, Channel, ThreadTs, Broadcast, Ops, FileIDs, Cursor})` while you type (Slack's fastLaneDraftUpdate: 150 ms debounce, leading and trailing) and `t.ClearComposerDraft(draftID)` on send: the composer's live draft in `drafts.unifiedDrafts[draftId]` (HaikuWarning's banner reads its ops). No-ops until the runtime runs.
 - `t.RegisterInput(where, true/false)`: register composers with Slack's `{viewContext, channelId}`. Answer `UIHooks.Input` ops `isEmpty`, `getContents`, `setContents`, `focus` and `insertText` (`getInputProxy`).
 - `t.SetEditing(windowID, ch, ts, open)`: call when an editor opens or closes. `patchMessageText` leaves the message being edited unchanged.
 - `t.SlicePatched("messages")` → `t.MessageView(ch, ts)` (core.Message, ok) and `t.InjectedMessages(ch)`. `t.SlicePatched("members")` → `t.MemberView(id)`. `t.SlicePatched("channels")` → `t.ChannelView(id)`. `t.ChannelRestriction(ch)` → read-only / thread-only. These never block: they return ok=false until the patched value is computed, then `Invalidate` fires.

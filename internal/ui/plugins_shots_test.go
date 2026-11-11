@@ -1,8 +1,9 @@
 package ui
 
-// Preferences > Plugins (Installed, Browse with a plugin both systems have
-// and Install's system choice), the "Install from file or URL" dialog and
-// Plugin settings, drawn over the whole client signed in to
+// Preferences > Plugins (Taut's main screen over both systems, the plugin
+// library with a plugin both systems have and Install's system choice, and
+// Taut's Advanced, Appearance and About screens), drawn over the whole
+// client signed in to
 // internal/fakeslack, with synthetic Taut and Slick plugins and a local
 // synthetic plugin library (plugins-shots workflow). PLUGINS_SHOTS_DIR
 // gets the PNGs, light and dark. Synthetic data only: nothing reaches
@@ -195,6 +196,16 @@ func TestPluginsPrefsShots(t *testing.T) {
 		}
 		shot("plugins-installed-" + mode)
 
+		// a search nothing installed matches suggests the library's plugins
+		// that do (Clear URLs and Message Links mention links), each with
+		// its Install action
+		pp.s.query.SetText("links")
+		e.until("library suggestions", 30*time.Second, func() bool {
+			return pp.lib.ix != nil && len(pp.lib.suggest([]string{"links"})) == 2
+		})
+		shot("plugins-search-suggestions-" + mode)
+		pp.s.query.SetText("")
+
 		// Browse: one row per plugin name
 		pp.setMode("browse")
 		e.until("the library", 30*time.Second, func() bool { return pp.lib.ix != nil && !pp.lib.loading })
@@ -290,13 +301,6 @@ func TestPluginsPrefsShots(t *testing.T) {
 		e.settle(50 * time.Millisecond)
 		pp.setMode("installed")
 
-		// the install dialog
-		before = len(e.a.overlays)
-		pp.openInstaller()
-		e.until("the install dialog", 5*time.Second, func() bool { return len(e.a.overlays) > before })
-		shot("plugins-install-modal-" + mode)
-		e.a.dismissTop()
-
 		// a plugin's own page from Installed, one per system
 		if !dark {
 			pp.openPlugin(pluginlib.Taut, "UserPronouns")
@@ -307,13 +311,23 @@ func TestPluginsPrefsShots(t *testing.T) {
 			pp.s.open = ""
 		}
 
-		// Plugin settings
-		pm.section = pluginSettingsTabID
+		// Taut's other screens: Advanced (installing, the config folders,
+		// Slick's switch and URL updates, config.json), Appearance, About;
+		// the old Plugin settings tab opens Advanced
+		pm.selectTab(pluginSettingsTabID)
 		e.settle(50 * time.Millisecond)
+		if pm.section != pluginsTabID || pp.taut.screen != "advanced" {
+			t.Errorf("Plugin settings opened %q / %q, want Plugins > Advanced", pm.section, pp.taut.screen)
+		}
 		if !strings.Contains(tt.Dir(), home) {
 			t.Errorf("Taut dir %q isn't under the test home", tt.Dir())
 		}
-		shot("plugin-settings-" + mode)
+		shot("plugins-advanced-" + mode)
+		pp.openScreen("appearance")
+		shot("plugins-appearance-" + mode)
+		pp.openScreen("about")
+		shot("plugins-about-" + mode)
+		pp.taut.go_("main", "")
 		for e.a.dismissTop() {
 		}
 		pm = nil

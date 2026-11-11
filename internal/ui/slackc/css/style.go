@@ -416,6 +416,7 @@ type Style struct {
 	Cursor        Cursor
 	PointerEvents bool // false = pointer-events: none (inherited)
 	UserSelect    bool // false = user-select: none
+	Pixelated     bool // image-rendering: pixelated / crisp-edges: images scale nearest-neighbour (inherited)
 
 	// Generated content for ::before/::after styles ("" = none).
 	Content    string

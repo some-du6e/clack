@@ -206,6 +206,7 @@ type AppHome struct {
 // AppShortcut is one app shortcut (global or message action).
 type AppShortcut struct {
 	ActionID, AppID, AppName, TeamID string
+	Teams                            []string // the workspaces the app is installed in (the list's teams)
 	Name, Desc, CallbackID           string
 	Type                             string // global_action | message_action | workflow_step_edit
 	Icon                             string // app icon (image_32/48)
@@ -887,21 +888,23 @@ func (ix *Interactive) Shortcuts(ctx context.Context) ([]AppShortcut, error) {
 	ix.mu.Unlock()
 	var res struct {
 		AppActions []struct {
-			AppID   string `json:"app_id"`
-			AppName string `json:"app_name"`
-			TeamID  string `json:"team_id"`
+			AppID   string          `json:"app_id"`
+			AppName string          `json:"app_name"`
+			TeamID  string          `json:"team_id"`
+			Teams   json.RawMessage `json:"teams"`
 			Icons   struct {
 				Image32 string `json:"image_32"`
 				Image48 string `json:"image_48"`
 				Image64 string `json:"image_64"`
 			} `json:"icons"`
 			Actions []struct {
-				ActionID   string `json:"action_id"`
-				AppID      string `json:"app_id"`
-				Name       string `json:"name"`
-				Desc       string `json:"desc"`
-				CallbackID string `json:"callback_id"`
-				Type       string `json:"type"`
+				ActionID    string `json:"action_id"`
+				AppID       string `json:"app_id"`
+				Name        string `json:"name"`
+				Desc        string `json:"desc"`
+				Description string `json:"description"`
+				CallbackID  string `json:"callback_id"`
+				Type        string `json:"type"`
 			} `json:"actions"`
 		} `json:"app_actions"`
 	}
@@ -911,9 +914,11 @@ func (ix *Interactive) Shortcuts(ctx context.Context) ([]AppShortcut, error) {
 	var out []AppShortcut
 	for _, a := range res.AppActions {
 		icon := firstNonEmpty(a.Icons.Image64, a.Icons.Image48, a.Icons.Image32)
+		var teams []string
+		_ = json.Unmarshal(a.Teams, &teams) // team ids; anything else reads as none
 		for _, x := range a.Actions {
 			out = append(out, AppShortcut{ActionID: x.ActionID, AppID: firstNonEmpty(x.AppID, a.AppID), AppName: a.AppName,
-				TeamID: a.TeamID, Name: x.Name, Desc: x.Desc, CallbackID: x.CallbackID, Type: x.Type, Icon: icon})
+				TeamID: a.TeamID, Teams: teams, Name: x.Name, Desc: firstNonEmpty(x.Desc, x.Description), CallbackID: x.CallbackID, Type: x.Type, Icon: icon})
 		}
 	}
 	if out == nil {
@@ -943,6 +948,28 @@ func (ix *Interactive) RunShortcut(ctx context.Context, s AppShortcut, channelID
 	err := actionErr(ix.call(ctx, "apps.actions.v2.execute", p, nil))
 	logCall("apps.actions.v2.execute", "app="+s.AppID+" action="+s.ActionID, err)
 	return tok, err
+}
+
+// RunShortcutAs runs an app shortcut with the caller's client_token, as
+// Slack's executeAppAction fetcher does (client_token: args.clientToken,
+// omitted when there is none). The token isn't one of Clack's, so the
+// modal the app opens isn't shown: it comes back in view_opened for the
+// caller (a plugin's own shortcut run: OwlMode, NativeAtChannel), as in
+// Slack, where only tokens in the client's ClientTokenStore open modals.
+func (ix *Interactive) RunShortcutAs(ctx context.Context, s AppShortcut, channelID, messageTS, token string) error {
+	c := map[string]string{"channel_id": channelID}
+	if messageTS != "" {
+		c["message_ts"] = messageTS
+	}
+	cb, _ := json.Marshal(c)
+	p := url.Values{"action_id": {s.ActionID}, "app_id": {s.AppID}, "context": {string(cb)},
+		"team_id": {firstNonEmpty(s.TeamID, ix.teamID())}}
+	if token != "" {
+		p.Set("client_token", token)
+	}
+	err := actionErr(ix.call(ctx, "apps.actions.v2.execute", p, nil))
+	logCall("apps.actions.v2.execute", "app="+s.AppID+" action="+s.ActionID, err)
+	return err
 }
 
 // ---- App Home ----
