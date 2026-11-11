@@ -85,8 +85,37 @@ func moduleParams(module, query string, page, count int, sctx string, s SearchSe
 		"query_rewrite_disabled": {"false"}, "include_files_shares": {"1"}, "search_context": {sctx}}
 }
 
-// searchSortParams is getSortParams: relevance is score/desc, newest
-// timestamp/desc, oldest timestamp/asc.
+// SearchSortParams is getSortParams (rZ6M) for the other tabs' sort
+// values (cX/T: files and canvases score, timestamp, timestamp_asc,
+// created, name, name_desc; channels relevant, created, created_asc,
+// member_count, member_count_asc, name, name_desc; people relevant, name,
+// name_desc): its sort and sort_dir.
+func SearchSortParams(v string) (sort, dir string) {
+	switch v {
+	case "recentMessages", "timestamp", "newestTopResults":
+		return "timestamp", "desc"
+	case "relevantMessages", "relevantTopResults", "score":
+		return "score", "desc"
+	case "timestamp_asc", "oldestTopResults":
+		return "timestamp", "asc"
+	case "created":
+		return "created", "desc"
+	case "created_asc":
+		return "created", "asc"
+	case "name":
+		return "name", "asc"
+	case "name_desc":
+		return "name", "desc"
+	case "member_count":
+		return "member_count", "desc"
+	case "member_count_asc":
+		return "member_count", "asc"
+	}
+	return v, "desc"
+}
+
+// searchSortParams is getSortParams for the messages tab's sorts:
+// relevance is score/desc, newest timestamp/desc, oldest timestamp/asc.
 func searchSortParams(p url.Values, sort string) {
 	switch sort {
 	case "timestamp", "newest":
@@ -159,6 +188,9 @@ func messageSearchParams(o SearchOpts, excludeBots, onlyMine bool) url.Values {
 	if o.ExactOnly {
 		p.Set("search_exact_matches_only", "true")
 		p.Set("query_rewrite_disabled", "false")
+	}
+	if o.ExcludeArchived {
+		p.Set("channel_type", "exclude_archived")
 	}
 	p.Set("max_filter_suggestions", "10")
 	p.Set("request_context", requestContext(o.ActiveCID))
@@ -260,12 +292,17 @@ func (a *App) SearchMessages(ctx context.Context, o SearchOpts) (SearchResult, e
 			In   []filterSuggestionRaw `json:"in"`
 			From []filterSuggestionRaw `json:"from"`
 		} `json:"filter_suggestions"`
+		Unfiltered       int                        `json:"unfiltered_result_count"`
+		UnfilteredFilter map[string]json.RawMessage `json:"unfiltered_result_filter"`
 	}
 	if err := json.Unmarshal(stripHighlightJSON(raw), &res); err != nil {
 		return SearchResult{}, err
 	}
 	out := SearchResult{Total: res.Pagination.Total, Page: res.Pagination.Page, Pages: res.Pagination.PageCount,
 		FilterIn: a.withoutExcluded(filterSuggestions(res.Filters.In)), FilterFrom: filterSuggestions(res.Filters.From)}
+	if res.Unfiltered > 0 && res.UnfilteredFilter != nil { // the relaxation selector's count && filter
+		out.Unfiltered, out.UnfilteredFilter = res.Unfiltered, res.UnfilteredFilter
+	}
 	if out.Page == 0 {
 		out.Page, _ = strconv.Atoi(p.Get("page"))
 	}
@@ -339,13 +376,19 @@ func fileSearchParams(o FileSearchOpts, excludeBots, onlyMine bool) url.Values {
 	p.Set("search_only_my_channels", boolStr(onlyMine))
 	p.Set("search_only_team", "")
 	p.Set("facets_result_count", "5")
-	switch o.Sort {
-	case "", "timestamp", "newest":
-		p.Set("sort", "timestamp")
-		p.Set("sort_dir", "desc")
-	default:
-		searchSortParams(p, o.Sort)
+	// getAdditionalFileSearchApiArguments: a count-only call is forced to
+	// the newest first; the tab's own sort is the Sort select's (kwsV r:
+	// Most relevant, score, unless chosen)
+	sortBy, dir := "timestamp", "desc"
+	if !o.CountOnly {
+		v := o.Sort
+		if v == "" {
+			v = "score"
+		}
+		sortBy, dir = SearchSortParams(v)
 	}
+	p.Set("sort", sortBy)
+	p.Set("sort_dir", dir)
 	p.Set("max_filter_suggestions", "10")
 	p.Set("request_context", requestContext(""))
 	p.Set("search_tab_filter", ModMessages)
@@ -377,8 +420,14 @@ func (a *App) SearchFiles(ctx context.Context, o FileSearchOpts) (FilePage, erro
 }
 
 // channelSearchParams is getChannelSearchApiArguments for the results
-// page's Channels tab.
+// page's Channels tab (Most relevant).
 func channelSearchParams(query string, page int, s SearchSession, onlyMine bool) url.Values {
+	return channelSearchParamsSort(query, "relevant", page, s, onlyMine)
+}
+
+// channelSearchParamsSort is channelSearchParams with the Sort select's
+// value (SearchSortParams).
+func channelSearchParamsSort(query, sortBy string, page int, s SearchSession, onlyMine bool) url.Values {
 	p := moduleParams(ModChannels, query, page, 20, moduleContext[ModChannels], s)
 	p.Set("search_only_my_channels", boolStr(onlyMine))
 	p.Set("channel_type", "all")
@@ -386,16 +435,27 @@ func channelSearchParams(query string, page int, s SearchSession, onlyMine bool)
 	p.Set("exclude_my_channels", "0")
 	p.Set("request_context", requestContext(""))
 	p.Set("spell_correction", "FUZZY_MATCH")
-	p.Set("sort", "relevant")
-	p.Set("sort_dir", "desc")
+	if sortBy == "" {
+		sortBy = "relevant"
+	}
+	sb, dir := SearchSortParams(sortBy)
+	p.Set("sort", sb)
+	p.Set("sort_dir", dir)
 	p.Set("search_only_team", "")
 	return p
 }
 
 // SearchChannelsTab is the results page's Channels tab
-// (search.modules.channels).
+// (search.modules.channels), Most relevant.
 func (a *App) SearchChannelsTab(ctx context.Context, query string, page int, s SearchSession) (ChannelPage, error) {
-	p := channelSearchParams(query, page, s, a.PrefBool("search_only_my_channels", false))
+	return a.SearchChannelsTabSort(ctx, query, "relevant", page, s)
+}
+
+// SearchChannelsTabSort is SearchChannelsTab with a Sort select value
+// (relevant, created, created_asc, member_count, member_count_asc, name,
+// name_desc).
+func (a *App) SearchChannelsTabSort(ctx context.Context, query, sortBy string, page int, s SearchSession) (ChannelPage, error) {
+	p := channelSearchParamsSort(query, sortBy, page, s, a.PrefBool("search_only_my_channels", false))
 	var raw json.RawMessage
 	if err := a.C.Call(ctx, "search.modules.channels", p, &raw); err != nil {
 		return ChannelPage{}, err
@@ -419,8 +479,15 @@ func (a *App) SearchChannelsTab(ctx context.Context, query string, page int, s S
 	return out, nil
 }
 
-// peopleSearchParams is the results page's People tab args.
+// peopleSearchParams is the results page's People tab args (Most
+// relevant).
 func peopleSearchParams(query string, page int, s SearchSession) url.Values {
+	return peopleSearchParamsSort(query, "relevant", page, s)
+}
+
+// peopleSearchParamsSort is peopleSearchParams with the Sort select's
+// value (relevant, name, name_desc).
+func peopleSearchParamsSort(query, sortBy string, page int, s SearchSession) url.Values {
 	p := moduleParams(ModPeople, query, page, 20, moduleContext[ModPeople], s)
 	for _, k := range []string{"tz", "external_shared_team_ids", "search_only_team", "profile_location", "profile_title",
 		"profile_division", "profile_department", "profile_celebration"} {
@@ -430,15 +497,24 @@ func peopleSearchParams(query string, page int, s SearchSession) url.Values {
 	p.Set("hide_deactivated_users", "0")
 	p.Set("request_context", requestContext(""))
 	p.Set("spell_correction", "FUZZY_MATCH")
-	p.Set("sort", "relevant")
-	p.Set("sort_dir", "desc")
+	if sortBy == "" {
+		sortBy = "relevant"
+	}
+	sb, dir := SearchSortParams(sortBy)
+	p.Set("sort", sb)
+	p.Set("sort_dir", dir)
 	return p
 }
 
 // SearchPeopleTab is the results page's People tab
-// (search.modules.people).
+// (search.modules.people), Most relevant.
 func (a *App) SearchPeopleTab(ctx context.Context, query string, page int, s SearchSession) (PeoplePage, error) {
-	p := peopleSearchParams(query, page, s)
+	return a.SearchPeopleTabSort(ctx, query, "relevant", page, s)
+}
+
+// SearchPeopleTabSort is SearchPeopleTab with a Sort select value.
+func (a *App) SearchPeopleTabSort(ctx context.Context, query, sortBy string, page int, s SearchSession) (PeoplePage, error) {
+	p := peopleSearchParamsSort(query, sortBy, page, s)
 	var raw json.RawMessage
 	if err := a.C.Call(ctx, "search.modules.people", p, &raw); err != nil {
 		return PeoplePage{}, err

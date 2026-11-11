@@ -226,16 +226,21 @@ func srCountShort(n int) string {
 	return strings.TrimSuffix(s, ".0") + "M"
 }
 
-// filter pills
+// filter pills (search_view_filters.go maps Slack's filter ids to them)
 const (
-	srPType = iota
+	srPType = iota // the source ([Messages ▾])
 	srPFrom
 	srPIn
-	srPMe
+	srPMe // With: Includes me (with:me), or the With menu on DMs
 	srPLink
 	srPThread
 	srPWeek
+	srPDate
+	srPFileType
+	srPOnlyMine
+	srPCreator
 	srPMore
+	srPReset
 	srPN
 )
 
@@ -290,6 +295,10 @@ type SearchView struct {
 	err     string
 	sess    core.SearchSession // one per query: every module call shares it
 	exact   bool               // More > Exact matches only (search_exact_matches_only)
+	// exclArch is More > Exclude archived (channel_type exclude_archived),
+	// shown with search_explore_freshness_signals on
+	exclArch bool
+	visible  []string // the filters the row shows as pills (srFSources first), last frame
 
 	// the source menu's per-tab totals for the query in countQ
 	counts  [srTabN]int
@@ -695,73 +704,49 @@ func (v *SearchView) typeMenu(gtx layout.Context) {
 	v.openMenu(gtx, v.pillR[srPType], items, 280)
 }
 
-func (v *SearchView) fromMenu(gtx layout.Context) {
-	cur := v.q.Get("from")
-	items := []MenuItem{{Label: "Anyone", Checked: cur == "", Do: func() { v.setQuery(v.q.Set("from", "")) }}, Sep()}
-	snap, ok := v.snapshot()
-	if ok {
-		type person struct{ id, name string }
-		var ps []person
-		self := snap.Self.ID
-		for id, u := range snap.Users {
-			if u.Deleted || id == self {
-				continue
-			}
-			ps = append(ps, person{id, userName(u)})
-		}
-		sort.Slice(ps, func(i, j int) bool { return strings.ToLower(ps[i].name) < strings.ToLower(ps[j].name) })
-		if len(ps) > 15 {
-			ps = ps[:15]
-		}
-		if self != "" {
-			val := "<@" + self + ">"
-			items = append(items, MenuItem{Label: userName(snap.Self) + " (you)", Icon: "user",
-				Checked: cur == val || strings.EqualFold(cur, "me"), Do: func() { v.setQuery(v.q.Set("from", val)) }})
-		}
-		for _, p := range ps {
-			val := "<@" + p.id + ">"
-			items = append(items, MenuItem{Label: p.name, Icon: "user", Checked: cur == val, Do: func() { v.setQuery(v.q.Set("from", val)) }})
-		}
-	}
-	v.openMenu(gtx, v.pillR[srPFrom], items, 260)
-}
-
 func (v *SearchView) inMenu(gtx layout.Context) {
 	cur := v.q.Get("in")
 	items := []MenuItem{{Label: "Anywhere", Checked: cur == "", Do: func() { v.setQuery(v.q.Set("in", "")) }}, Sep()}
-	snap, ok := v.snapshot()
-	if ok {
-		recents, _ := srRecents()
-		rank := map[string]int{}
-		for i, id := range recents {
-			rank[id] = i + 1
-		}
-		var cs []core.Conv
-		for _, c := range snap.Convs {
-			if (c.Kind == "channel" || c.Kind == "private") && !c.IsArchived {
-				cs = append(cs, c)
-			}
-		}
-		sort.SliceStable(cs, func(i, j int) bool {
-			ri, rj := rank[cs[i].ID], rank[cs[j].ID]
-			if (ri > 0) != (rj > 0) {
-				return ri > 0
-			}
-			if ri != rj {
-				return ri < rj
-			}
-			return cs[i].Name < cs[j].Name
-		})
-		if len(cs) > 15 {
-			cs = cs[:15]
-		}
-		for _, c := range cs {
-			val := "<#" + c.ID + ">"
-			items = append(items, MenuItem{Label: c.Name, Icon: convIcon(c.Kind), Checked: srRefID(cur) == c.ID,
-				Do: func() { v.setQuery(v.q.Set("in", val)) }})
-		}
+	for _, c := range v.inChannels() {
+		val := "<#" + c.ID + ">"
+		items = append(items, MenuItem{Label: c.Name, Icon: convIcon(c.Kind), Checked: srRefID(cur) == c.ID,
+			Do: func() { v.setQuery(v.q.Set("in", val)) }})
 	}
 	v.openMenu(gtx, v.pillR[srPIn], items, 260)
+}
+
+// inChannels are the In menus' channels: the recently opened first, then
+// by name, fifteen at most.
+func (v *SearchView) inChannels() []core.Conv {
+	snap, ok := v.snapshot()
+	if !ok {
+		return nil
+	}
+	recents, _ := srRecents()
+	rank := map[string]int{}
+	for i, id := range recents {
+		rank[id] = i + 1
+	}
+	var cs []core.Conv
+	for _, c := range snap.Convs {
+		if (c.Kind == "channel" || c.Kind == "private") && !c.IsArchived {
+			cs = append(cs, c)
+		}
+	}
+	sort.SliceStable(cs, func(i, j int) bool {
+		ri, rj := rank[cs[i].ID], rank[cs[j].ID]
+		if (ri > 0) != (rj > 0) {
+			return ri > 0
+		}
+		if ri != rj {
+			return ri < rj
+		}
+		return cs[i].Name < cs[j].Name
+	})
+	if len(cs) > 15 {
+		cs = cs[:15]
+	}
+	return cs
 }
 
 // srDateRanges are the Date submenu's presets (search-filters: each is
@@ -796,130 +781,6 @@ var srFileTypes = [...]struct{ label, val, icon string }{
 
 // srTopReactions are the Reactions submenu's quick picks.
 var srTopReactions = [...]string{"thumbs-up", "slightly_smiling_face", "heart"}
-
-// moreMenu is Slack's More filters menu (search-filters' e8 template):
-// Saved preferences (the search_exclude_bots / search_only_my_channels
-// prefs), then Results: Exact matches only, With people, Message has,
-// Message is, Date, File type, Reactions. Every row maps to the modifier
-// app.slack.com adds (captured 2026-11-08).
-func (v *SearchView) moreMenu(gtx layout.Context) {
-	th := v.h.Theme()
-	c := v.h.Core()
-	pref := func(name string) bool { return c != nil && c.PrefBool(name, false) }
-	setPref := func(name string) func() {
-		return func() {
-			if c == nil {
-				return
-			}
-			val := !pref(name)
-			run(v.h, func(ctx context.Context) (struct{}, error) { return struct{}{}, c.SetPref(ctx, name, val) },
-				func(_ struct{}, err error) {
-					if err != nil {
-						v.h.Toast("Couldn't save that preference: " + errText(err))
-						return
-					}
-					v.search(1)
-				})
-		}
-	}
-	toggle := func(key, val string) func() { return func() { v.setQuery(v.q.Toggle(key, val)) } }
-	check := func(label string, on func() bool, do func()) MenuItem {
-		return MenuItem{Label: label, Widget: srCheckRow(th, label, on), Do: do, KeepOpen: true}
-	}
-	has := func(key, val string) func() bool { return func() bool { return v.q.Has(key, val) } }
-
-	// With people: you, then the people the results came from
-	var with []MenuItem
-	if snap, ok := v.snapshot(); ok && snap.Self.ID != "" {
-		val := "<@" + snap.Self.ID + ">"
-		with = append(with, check(userName(snap.Self)+" (you)", has("with", val), toggle("with", val)))
-		for _, f := range v.fromSugg {
-			if f.ID == snap.Self.ID || len(with) == 8 {
-				continue
-			}
-			name := f.ID
-			if u, ok := lookupUser(v.h, f.ID); ok {
-				name = userName(u)
-			}
-			val := "<@" + f.ID + ">"
-			with = append(with, check(name, has("with", val), toggle("with", val)))
-		}
-	}
-
-	now := time.Now()
-	dates := []MenuItem{{Label: "Any time", Radio: true, Checked: v.q.Get("after") == "" && v.q.Get("before") == "" && v.q.Get("on") == "",
-		Do: func() { v.setQuery(srWithRange(v.q, "", "")) }}}
-	for _, d := range srDateRanges {
-		after, before := srDate(d.from(now)), srDate(d.end(now))
-		dates = append(dates, MenuItem{Label: d.label, Radio: true, Checked: v.q.Get("after") == after && v.q.Get("before") == before,
-			Do: func() { v.setQuery(srWithRange(v.q, after, before)) }})
-	}
-	pick := func(key string) func() {
-		return func() {
-			anchor := v.win(gtx, v.pillR[srPMore])
-			v.h.ShowOverlay(NewDatePicker(v.h, anchor, now, time.Time{}, func(day time.Time) {
-				q := v.q.Set("on", "").Set("during", "")
-				switch key {
-				case "on":
-					q = q.Set("before", "").Set("after", "").Set("on", srDate(day))
-				case "range":
-					q = q.Set("after", srDate(day.AddDate(0, 0, -1))) // the range's first day; Before… ends it
-				default:
-					q = q.Set(key, srDate(day))
-				}
-				v.setQuery(q)
-			}))
-		}
-	}
-	dates = append(dates, Sep(), MenuItem{Label: "On…", Do: pick("on")}, MenuItem{Label: "Before…", Do: pick("before")},
-		MenuItem{Label: "After…", Do: pick("after")}, MenuItem{Label: "Range…", Do: pick("range")})
-
-	var types []MenuItem
-	for _, ft := range srFileTypes {
-		types = append(types, MenuItem{Label: ft.label, Widget: srCheckIconRow(th, ft.label, ft.icon, has("type", ft.val)),
-			Do: toggle("type", ft.val), KeepOpen: true})
-	}
-	var reacts []MenuItem
-	for _, r := range srTopReactions {
-		val := ":" + r + ":"
-		reacts = append(reacts, check(val, has("has", val), toggle("has", val)))
-	}
-	reacts = append(reacts, MenuItem{Label: "More reactions", Do: func() {
-		anchor := v.win(gtx, v.pillR[srPMore])
-		v.h.OpenEmojiPicker(image.Pt(anchor.Min.X, anchor.Max.Y+dp(gtx, 4)), func(name string) {
-			if name = strings.Trim(name, ":"); name != "" {
-				v.setQuery(v.q.Toggle("has", ":"+name+":"))
-			}
-		})
-	}})
-
-	items := []MenuItem{
-		{Header: "Saved preferences"},
-		check("Exclude bot messages", func() bool { return pref("search_exclude_bots") }, setPref("search_exclude_bots")),
-		check("Only my channels", func() bool { return pref("search_only_my_channels") }, setPref("search_only_my_channels")),
-		Sep(),
-		{Header: "Results"},
-		check("Exact matches only", func() bool { return v.exact }, func() { v.exact = !v.exact; v.search(1) }),
-		{Label: "With people", Icon: "user", Sub: with},
-		{Label: "Message has", Icon: "message", Sub: []MenuItem{
-			check("File", has("has", "file"), toggle("has", "file")),
-			check("Link", has("has", "link"), toggle("has", "link")),
-			check("Action", has("has", "action"), toggle("has", "action")),
-		}},
-		{Label: "Message is", Icon: "message", Sub: []MenuItem{
-			check("A direct message", has("is", "dm"), toggle("is", "dm")),
-			check("In a thread", has("is", "thread"), toggle("is", "thread")),
-			check("Saved", has("is", "saved"), toggle("is", "saved")),
-			check("To-dos", has("is", "todos"), toggle("is", "todos")),
-			check("Pinned", has("has", "pin"), toggle("has", "pin")),
-			check("In Activity", has("in", "activity"), toggle("in", "activity")),
-		}},
-		{Label: "Date", Icon: "calendar", Subtitle: srDateLabel(v.q.Get("after"), v.q.Get("before"), v.q.Get("on"), now), Sub: dates},
-		{Label: "File type", Icon: "file", Sub: types},
-		{Label: "Reactions", Icon: "emoji", Sub: reacts},
-	}
-	v.openMenu(gtx, v.pillR[srPMore], items, 240) // MoreFiltersMenu width 240
-}
 
 // sortMenu is "Sorted by …" (search-filter-sort MessageEntity): Most
 // relevant ("(default)" unless stick_user_sort), Newest, Oldest, then
@@ -1048,33 +909,8 @@ func (v *SearchView) refName(key, val string) string {
 
 func (v *SearchView) handle(gtx layout.Context) {
 	for i := range v.pills {
-		if !v.pills[i].Clicked(gtx) {
-			continue
-		}
-		switch i {
-		case srPType:
-			v.typeMenu(gtx)
-		case srPFrom:
-			v.fromMenu(gtx)
-		case srPIn:
-			v.inMenu(gtx)
-		case srPMe: // Includes me: with:<@self>
-			if snap, ok := v.snapshot(); ok && snap.Self.ID != "" {
-				v.setQuery(v.q.Toggle("with", "<@"+snap.Self.ID+">"))
-			}
-		case srPLink:
-			v.setQuery(v.q.Toggle("has", "link"))
-		case srPThread:
-			v.setQuery(v.q.Toggle("is", "thread"))
-		case srPWeek: // the Date menu's Last 7 days
-			now := time.Now()
-			if v.q.Has("after", srLast7(now)) {
-				v.setQuery(srWithRange(v.q, "", ""))
-			} else {
-				v.setQuery(srWithRange(v.q, srLast7(now), srDate(now.AddDate(0, 0, 1))))
-			}
-		case srPMore:
-			v.moreMenu(gtx)
+		if v.pills[i].Clicked(gtx) {
+			v.pillClicked(gtx, i)
 		}
 	}
 	if v.sortBtn.Clicked(gtx) {
@@ -1360,41 +1196,6 @@ func (v *SearchView) title(gtx layout.Context, th *theme.Theme, cl *Colors) layo
 		})
 	})
 	return layout.Dimensions{Size: image.Pt(d.Size.X+d2.Size.X, h)}
-}
-
-// pillRow lays out the filter pills starting at (x, y).
-func (v *SearchView) pillRow(gtx layout.Context, th *theme.Theme, cl *Colors, x, y, right int) {
-	gap := dp(gtx, 8)
-	x += v.pill(gtx, th, cl, srPType, x, y, srTabIcons[v.tab], srTabNames[v.tab], true, false) + gap
-	if v.tab != srTabMessages {
-		for i := srPFrom; i < srPN; i++ {
-			v.pillR[i] = image.Rectangle{}
-		}
-		return
-	}
-	from := "From"
-	if f := v.q.Get("from"); f != "" {
-		from = "From: " + v.refName("from", f)
-	}
-	in := "In"
-	if f := v.q.Get("in"); f != "" {
-		in = "In: " + v.refName("in", f)
-	}
-	x += v.pill(gtx, th, cl, srPFrom, x, y, "user", from, true, v.q.Get("from") != "") + gap
-	x += v.pill(gtx, th, cl, srPIn, x, y, "hash", in, true, v.q.Get("in") != "")
-	x += dp(gtx, 12)
-	ph := dp(gtx, 28)
-	fill(gtx, image.Rect(x, y+dp(gtx, 4), x+maxInt(1, dp(gtx, 1)), y+ph-dp(gtx, 4)), cl.Divider)
-	x += dp(gtx, 13)
-	self := ""
-	if snap, ok := v.snapshot(); ok {
-		self = "<@" + snap.Self.ID + ">"
-	}
-	x += v.pill(gtx, th, cl, srPMe, x, y, "user", "Includes me", false, self != "<@>" && v.q.Has("with", self)) + gap
-	x += v.pill(gtx, th, cl, srPLink, x, y, "link", "Has a link", false, v.q.Has("has", "link")) + gap
-	x += v.pill(gtx, th, cl, srPThread, x, y, "threads", "Threads only", false, v.q.Has("is", "thread")) + gap
-	x += v.pill(gtx, th, cl, srPWeek, x, y, "calendar", "Last 7 days", false, v.q.Has("after", srLast7(time.Now()))) + gap
-	v.pill(gtx, th, cl, srPMore, x, y, "filter", "More", true, v.moreActive())
 }
 
 // pill draws one filter pill at (x, y) and returns its width.

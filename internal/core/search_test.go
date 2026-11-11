@@ -239,3 +239,68 @@ func TestSearchFeedbackCalls(t *testing.T) {
 		t.Errorf("client_token %q isn't one Interactive queued", tok)
 	}
 }
+
+// The other tabs' Sort selects are getSortParams': files and canvases
+// default to Most relevant (score) and only count-only calls are forced
+// to the newest first; channels and people send their choice; Exclude
+// archived is channel_type exclude_archived.
+func TestSearchTabSorts(t *testing.T) {
+	for v, want := range map[string][2]string{"score": {"score", "desc"}, "timestamp": {"timestamp", "desc"},
+		"timestamp_asc": {"timestamp", "asc"}, "created": {"created", "desc"}, "created_asc": {"created", "asc"},
+		"name": {"name", "asc"}, "name_desc": {"name", "desc"}, "member_count": {"member_count", "desc"},
+		"member_count_asc": {"member_count", "asc"}, "relevant": {"relevant", "desc"},
+		"recentMessages": {"timestamp", "desc"}, "relevantMessages": {"score", "desc"}} {
+		if s, d := SearchSortParams(v); s != want[0] || d != want[1] {
+			t.Errorf("SearchSortParams(%q) = %s %s, want %s %s", v, s, d, want[0], want[1])
+		}
+	}
+	s := NewSearchSession()
+	for _, c := range []struct {
+		o         FileSearchOpts
+		sort, dir string
+	}{
+		{FileSearchOpts{Query: "x"}, "score", "desc"},
+		{FileSearchOpts{Query: "x", Sort: "name"}, "name", "asc"},
+		{FileSearchOpts{Query: "x", Sort: "timestamp_asc", Canvases: true}, "timestamp", "asc"},
+		{FileSearchOpts{Query: "x", Sort: "name", CountOnly: true}, "timestamp", "desc"},
+	} {
+		c.o.Session = s
+		p := fileSearchParams(c.o, false, false)
+		if p.Get("sort") != c.sort || p.Get("sort_dir") != c.dir {
+			t.Errorf("files %+v: sort %s %s, want %s %s", c.o, p.Get("sort"), p.Get("sort_dir"), c.sort, c.dir)
+		}
+	}
+	if p := channelSearchParamsSort("x", "member_count_asc", 1, s, false); p.Get("sort") != "member_count" || p.Get("sort_dir") != "asc" {
+		t.Errorf("channels Fewest members: %v", p)
+	}
+	if p := peopleSearchParamsSort("x", "name_desc", 1, s); p.Get("sort") != "name" || p.Get("sort_dir") != "desc" {
+		t.Errorf("people Z to A: %v", p)
+	}
+	if p := messageSearchParams(SearchOpts{Query: "x", ExcludeArchived: true, Session: s}, false, false); p.Get("channel_type") != "exclude_archived" {
+		t.Errorf("Exclude archived: %v", p.Get("channel_type"))
+	}
+}
+
+// A filtered search that finds nothing gets Slack's relaxation fields
+// when the words alone find something (RelaxationSuggestion).
+func TestSearchRelaxation(t *testing.T) {
+	a, fs := canvasApp(t)
+	ctx := context.Background()
+	empty := ""
+	for _, id := range fs.ChannelIDs() {
+		r, err := a.SearchMessages(ctx, SearchOpts{Query: fakeslack.SearchWord + " in:<#" + id + ">"})
+		if err == nil && r.Total == 0 {
+			empty = id
+			if r.Unfiltered != fakeslack.SearchFixtureCount || r.UnfilteredFilter["in"] == nil {
+				t.Errorf("relaxation: %d unfiltered, filter %v", r.Unfiltered, r.UnfilteredFilter)
+			}
+			break
+		}
+	}
+	if empty == "" {
+		t.Fatal("no channel without the fixture word")
+	}
+	if r, _ := a.SearchMessages(ctx, SearchOpts{Query: fakeslack.SearchWord}); r.Unfiltered != 0 {
+		t.Errorf("an unfiltered search has relaxation %d", r.Unfiltered)
+	}
+}

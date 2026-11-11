@@ -414,9 +414,52 @@ func (s *Server) searchMessages(f url.Values, dms bool) any {
 	if dms {
 		module = "dms"
 	}
-	return ok("query", f.Get("query"), "module", module, "filters", map[string]any{}, "items", items,
+	out := ok("query", f.Get("query"), "module", module, "filters", map[string]any{}, "items", items,
 		"pagination", pagination(len(hits), page, pages, per, start, end),
 		"filter_suggestions", map[string]any{"in": sugg(inN, o.in), "from": sugg(fromN, o.from)})
+	// nothing with the in:/from: filters, something without them: Slack's
+	// relaxation (unfiltered_result_count, unfiltered_result_filter)
+	if len(hits) == 0 && !dms && (len(o.in) > 0 || len(o.from) > 0) {
+		bare := o
+		bare.in, bare.from = nil, nil
+		n := 0
+		for _, h := range s.searchCorpus(len(s.convs) <= 80) {
+			if len(bare.terms) > 0 && bare.match(h) {
+				n++
+			}
+		}
+		if n > 0 {
+			out["unfiltered_result_count"] = n
+			out["unfiltered_result_filter"] = map[string]any{"in": append([]string{}, o.in...), "from": append([]string{}, o.from...)}
+		}
+	}
+	return out
+}
+
+// sortItems orders the Channels and People tabs' items the way their
+// Sort select asks (name, member_count; asc or desc); relevance keeps
+// the fake's order.
+func sortItems(items []any, by, dir string, key func(any) (string, int)) {
+	less := func(i, j int) bool {
+		ni, ci := key(items[i])
+		nj, cj := key(items[j])
+		switch by {
+		case "name":
+			return ni < nj
+		case "member_count":
+			return ci < cj
+		}
+		return false
+	}
+	if by != "name" && by != "member_count" {
+		return
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if dir == "desc" {
+			return less(j, i)
+		}
+		return less(i, j)
+	})
 }
 
 // searchFile is the file fixture.
@@ -477,6 +520,10 @@ func (s *Server) handleSearch(method string, f url.Values) (any, bool) {
 					"purpose": map[string]any{"value": c.Purpose.Value, "creator": "", "last_set": 0}, "timestamp": c.Created})
 			}
 		}
+		sortItems(items, f.Get("sort"), f.Get("sort_dir"), func(x any) (string, int) {
+			m := x.(map[string]any)
+			return m["name"].(string), m["member_count"].(int)
+		})
 		page, pages, start, end := pageOf(f, len(items), 20)
 		return ok("module", "channels", "items", append([]any{}, items[start:end]...),
 			"pagination", pagination(len(items), page, pages, 20, start, end)), true
@@ -491,6 +538,7 @@ func (s *Server) handleSearch(method string, f url.Values) (any, bool) {
 				items = append(items, u)
 			}
 		}
+		sortItems(items, f.Get("sort"), f.Get("sort_dir"), func(x any) (string, int) { return x.(slack.User).Name, 0 })
 		page, pages, start, end := pageOf(f, len(items), 20)
 		return ok("module", "people", "items", append([]any{}, items[start:end]...),
 			"pagination", pagination(len(items), page, pages, 20, start, end)), true
