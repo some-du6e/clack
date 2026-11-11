@@ -10,7 +10,8 @@ package ui
 //     placeholder, a tag or a link. Each of those is a wiring TODO
 //     (docs/I18N.md).
 var prefsUnkeyed = map[string]bool{
-	"Aubergine": true, "Gray": true, "Jade": true, "Lagoon": true, "System": true, "Troubleshooting": true,
+	"~/Downloads": true, // the default download folder (a path, Slack shows it untranslated too)
+	"Aubergine":   true, "Gray": true, "Jade": true, "Lagoon": true, "System": true, "Troubleshooting": true,
 	"And that’s just the beginning. To view the full list of keyboard shortcuts, just press Ctrl+/": true,
 	"Anyone with your email address": true,
 	"Banana":                         true,
