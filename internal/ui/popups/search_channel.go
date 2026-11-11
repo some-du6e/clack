@@ -323,7 +323,7 @@ func (v *SearchInChannel) Layout(gtx layout.Context) layout.Dimensions {
 			if v.ed.Len() == 0 {
 				call, _ := record(gtx, func(gtx layout.Context) layout.Dimensions {
 					gtx.Constraints.Min = image.Point{}
-					return text(gtx, th, 15, theme.Regular, cl.Placeholder, "Search in channel")
+					return text(gtx, th, 15, theme.Regular, cl.Placeholder, nsSearch.T("Search in channel"))
 				})
 				call.Add(gtx.Ops)
 			}
