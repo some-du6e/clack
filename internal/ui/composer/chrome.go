@@ -351,6 +351,7 @@ type chrome struct {
 	f       crFrame
 	fpal    crPal       // this frame's colors: pal with CSS overrides
 	base    image.Point // composer-local position of the current gtx origin
+	footNat int         // the footer row's own width as last laid out (a row-flex body, layoutBox)
 	pxPerDp float32
 	wBox    layout.Widget
 	wFoot   [crNumBtn]layout.Widget
@@ -662,9 +663,42 @@ func (c *chrome) layoutBox(gtx layout.Context) layout.Dimensions {
 	}
 	hintH := c.f.hintH
 
+	// A row-flex body (SlimMessageBox's Discord-style layout:
+	// .c-basic_container__body {display: flex; flex-direction: row;
+	// flex-wrap: wrap; align-items: flex-end; column-gap: 6px}) puts the
+	// footer, at its own width (flex: 1 1 auto), beside the editor
+	// (min-width: min(450px, 100%)) when both fit, bottom-aligned with it;
+	// else the footer wraps to its own row as without it, and so does a
+	// footer whose flex-basis is 100%. The formatting bar, attachments and
+	// broadcast controls keep their rows. The footer's width is the one it
+	// had last frame (footNat). Clack's natives answer :has() with false and
+	// @container queries always apply, so attachments don't put the footer
+	// back on its own row as they do in Slack, and only the editor's
+	// min-width decides when it wraps.
+	oneLine, gap, footW := false, 0, 0
+	if bst := body.Style(); footH > 0 && body.Active() && bst != nil && bst.Display == css.DisplayFlex && (bst.FlexDirection == css.Row || bst.FlexDirection == css.RowReverse) {
+		px := max(gtx.Metric.PxPerDp, 0.01)
+		base, vw, vh := float32(innerW)/px, float32(gtx.Constraints.Max.X)/px, float32(gtx.Constraints.Max.Y)/px
+		gap = int(bst.ColGap.Resolve(base, vw, vh, 0) * px)
+		ownRow := false
+		if fst := body.Child(crFootClass, fmods).Style(); fst != nil {
+			ownRow = fst.FlexBasis.Kind == css.LenFixed && fst.FlexBasis.Pct >= 100
+		}
+		minEd := 0
+		if tst := body.Child(crTextyClass, 0).Style(); tst != nil {
+			minEd = int(tst.MinWidth.Resolve(base, vw, vh, 0) * px)
+		}
+		footW = min(c.footNat, innerW)
+		oneLine = !ownRow && footW > 0 && innerW-gap-footW >= max(minEd, 2*padX+1)
+	}
+
 	// The editor first (recorded) to know the box height.
 	tw := max(innerW-2*padX, 1)
 	fixed := 2*bw + barH + 2*padY + bcH + footH + hintH
+	if oneLine {
+		tw = max(innerW-gap-footW-2*padX, 1)
+		fixed -= footH
+	}
 	ig := gtx
 	ig.Constraints = layout.Constraints{Max: image.Pt(tw, max(c.f.maxY-fixed, gtx.Dp(22)))}
 	rec := op.Record(gtx.Ops)
@@ -677,8 +711,12 @@ func (c *chrome) layoutBox(gtx layout.Context) layout.Dimensions {
 	inCall := rec.Stop()
 	textTop := bw + barH
 	textH := max(ed.Size.Y+2*padY, gtx.Dp(38))
+	rowH, edX1 := textH, x1
+	if oneLine {
+		rowH, edX1 = max(textH, footH), x1-gap-footW
+	}
 
-	attTop := textTop + textH
+	attTop := textTop + rowH
 	ah := 0
 	var attCall op.CallOp
 	if c.f.att != nil {
@@ -694,6 +732,10 @@ func (c *chrome) layoutBox(gtx layout.Context) layout.Dimensions {
 	bcTop := attTop + ah
 	footTop := bcTop + bcH
 	box.Max.Y = footTop + footH + bw
+	if oneLine {
+		footTop = textTop + rowH - footH // align-items: flex-end
+		box.Max.Y = bcTop + bcH + bw
+	}
 	c.f.box, c.f.boxOK = box, true
 
 	// Box: shadow, border, fill, formatting bar background. Under a
@@ -726,13 +768,13 @@ func (c *chrome) layoutBox(gtx layout.Context) layout.Dimensions {
 	// focuses the editor; the text area padding gets the text cursor.
 	area := clip.Rect(box).Push(gtx.Ops)
 	c.bg.Add(gtx.Ops)
-	ta := clip.Rect(image.Rect(x0, textTop, x1, attTop)).Push(gtx.Ops)
+	ta := clip.Rect(image.Rect(x0, textTop, edX1, attTop)).Push(gtx.Ops)
 	pointer.CursorText.Add(gtx.Ops)
 	ta.Pop()
 	area.Pop()
 
-	// Text area.
-	org := image.Pt(x0+padX, textTop+padY)
+	// Text area (at the bottom of a taller one-line row: flex-end).
+	org := image.Pt(x0+padX, textTop+rowH-textH+padY)
 	c.inputOff = org
 	if st.ShowPlaceholder && st.Placeholder != "" {
 		c.placeholder(gtx, th, p, st, org, tw)
@@ -753,7 +795,11 @@ func (c *chrome) layoutBox(gtx layout.Context) layout.Dimensions {
 		if st.Focused {
 			col = p.lineFocus
 		}
-		fillRect(gtx, image.Rect(x0, footTop-bw, x1, footTop), col)
+		if oneLine {
+			fillRect(gtx, image.Rect(x0, attTop-bw, edX1, attTop), col)
+		} else {
+			fillRect(gtx, image.Rect(x0, footTop-bw, x1, footTop), col)
+		}
 	}
 
 	if barH > 0 {
@@ -768,7 +814,12 @@ func (c *chrome) layoutBox(gtx layout.Context) layout.Dimensions {
 	}
 	if footH > 0 {
 		fs := crFootClass.Enter(gtx, 0, fmods)
-		c.layoutFooter(gtx, x0, x1, footTop)
+		c.f.oneLine = oneLine
+		if oneLine {
+			c.layoutFooter(gtx, x1-footW, x1, footTop)
+		} else {
+			c.layoutFooter(gtx, x0, x1, footTop)
+		}
 		fs.Leave()
 	}
 	if st.OverLimit > 0 {
@@ -1056,7 +1107,10 @@ func (c *chrome) layoutFooter(gtx layout.Context, x0, x1, top int) {
 	bs := gtx.Dp(28)
 	y := top + (gtx.Dp(40)-bs)/2
 	c.f.x0, c.f.x1 = x0, x1
-	c.f.narrow = x1-x0+2*gtx.Dp(1) < gtx.Dp(crFootCollapseW)
+	// beside the editor the footer is as wide as its buttons: Slack's
+	// overflow test sees the display: contents toolbar as 0 wide there
+	// and folds nothing
+	c.f.narrow = !c.f.oneLine && x1-x0+2*gtx.Dp(1) < gtx.Dp(crFootCollapseW)
 	c.f.fold = c.foldFooter()
 	c.f.sufX = x1 - gtx.Dp(6)
 	org := image.Pt(x0, y)

@@ -641,6 +641,45 @@ func TestSlickViewSilentTyping(t *testing.T) {
 // TestSlickViewSlimMessageBoxHidesEmoji: hideEmoji hides Slack's
 // [data-qa=emoji_toolbar_button] by CSS (it stays mounted for /gif); live,
 // Clack tagged the button texty_emoji_button and it stayed visible.
+// SlimMessageBox's Discord-style one-line layout (discordLayout, on by
+// default): its CSS makes .c-basic_container__body a wrapping row flex, so
+// the footer (the buttons and send) sits beside the editor, bottom-aligned,
+// and the box is one row tall instead of two. A composer too narrow for
+// the editor's min-width (min(450px, 100%)) beside the buttons keeps the
+// footer on its own row.
+func TestSlickViewSlimMessageBoxOneLine(t *testing.T) {
+	e := startSlick(t, "SlimMessageBox", nil, nil)
+	e.patched("TextyButtons")
+	c, frame := e.composer(tChGen)
+	e.why = func() string {
+		return fmt.Sprintf("oneLine %v box %v send %v footNat %d", c.ui.f.oneLine, c.ui.f.box, c.ui.rect[crSend], c.ui.footNat)
+	}
+	e.until(8*time.Second, "the footer beside the editor, one row tall", frame, func() bool {
+		box, send := c.ui.f.box, c.ui.rect[crSend]
+		return c.ui.f.oneLine && !send.Empty() && box.Dy() < 60
+	})
+	box, send := c.ui.f.box, c.ui.rect[crSend]
+	if send.Min.Y < box.Min.Y || send.Max.Y > box.Max.Y || send.Max.X > box.Max.X || send.Min.X < box.Max.X-80 {
+		t.Errorf("send %v isn't at the right end of the one-line box %v", send, box)
+	}
+	if em := c.ui.rect[crEmoji]; em.Empty() || em.Min.X < box.Min.X+box.Dx()/3 {
+		t.Errorf("the emoji button %v isn't in the footer beside the editor (box %v)", em, box)
+	}
+
+	// 500px: the editor's 450px leaves no room, so the footer wraps
+	ops := new(op.Ops)
+	narrow := func() {
+		ops.Reset()
+		gtx := layout.Context{Ops: ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Constraints{Max: image.Pt(500, 600)}, Now: time.Now()}
+		slackc.Frame(gtx)
+		c.Layout(gtx)
+	}
+	e.until(5*time.Second, "the footer on its own row in a narrow composer", narrow, func() bool {
+		return !c.ui.f.oneLine && c.ui.f.box.Dy() >= 78
+	})
+}
+
 func TestSlickViewSlimMessageBoxHidesEmoji(t *testing.T) {
 	e := startSlick(t, "SlimMessageBox", map[string]any{"hideEmoji": true, "hideMention": true}, nil)
 	e.patched("TextyButtons")
