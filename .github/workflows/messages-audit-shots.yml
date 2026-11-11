@@ -9,6 +9,7 @@ name: messages-audit-shots
 # (messages-audit-shots artifact). Nothing here talks to Slack.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run messages-audit-shots.yml --ref <branch>)
     paths:
       - "internal/ui/messages/messages_audit_shots_test.go"
       - "internal/ui/messages/reaction_tip.go"

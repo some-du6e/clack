@@ -11,6 +11,7 @@ on:
   # dispatching needs the file on the default branch; until then it runs
   # when it changes (rerun the run for fresh numbers)
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run bench-compare.yml --ref <branch>)
     paths:
       - ".github/workflows/bench-compare.yml"
   workflow_dispatch:
