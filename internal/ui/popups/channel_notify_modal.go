@@ -487,13 +487,15 @@ func (m *ChannelNotifyModal) layout(gtx layout.Context) layout.Dimensions {
 			return m.switchRow(gtx, th, cl, "follow", nsPrefs.T("Follow every thread"), []cnRun{{s: nsPrefs.T("Get notified about every new thread and its replies.")}}, w)
 		})
 		if s.Desktop == "mentions_dms" {
-			who := "@channel"
+			// "@" and getBroadcastKeywordName (F1pD, the broadcast_keywords
+			// I18n: es-ES "@canal", "@todos", "@aquí")
+			who := "@" + nsBroadcast.T("channel")
 			if s.General {
-				who = "@everyone"
+				who = "@" + nsBroadcast.T("everyone")
 			}
 			place(func(gtx layout.Context) int {
 				return m.switchRow(gtx, th, cl, "broadcast", nsPrefs.T("Get broadcast messages"),
-					rtRuns(nsPrefs.RT("Be notified anytime someone uses {atChannel} or {atHere}.", "atChannel", who, "atHere", "@here"), ""), w)
+					rtRuns(nsPrefs.RT("Be notified anytime someone uses {atChannel} or {atHere}.", "atChannel", who, "atHere", "@"+nsBroadcast.T("here")), ""), w)
 			})
 		}
 	}

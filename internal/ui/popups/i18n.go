@@ -45,9 +45,10 @@ var (
 	// the bell menu: n9iP's option labels, MoreOptionsSubmenu (laNq) and
 	// enqueueMuteChannelToast (vA1n) are channel_sidebar's;
 	// ChannelNotificationsPrefsModal (RemI) is the prefs I18n's
-	nsSidebar = i18n.NS("channel_sidebar")
-	nsPrefs   = i18n.NS("prefs")
-	nsShare   = i18n.NS("share-dialog") // the share/forward dialogs (jdUv, Zp0h, IEmj, e9lq)
+	nsSidebar   = i18n.NS("channel_sidebar")
+	nsPrefs     = i18n.NS("prefs")
+	nsBroadcast = i18n.NS("broadcast_keywords") // getBroadcastKeywordName: channel, everyone, here
+	nsShare     = i18n.NS("share-dialog")       // the share/forward dialogs (jdUv, Zp0h, IEmj, e9lq)
 	// the emoji picker (Zu56, Pz3S), its categories (bEcp) and the GIF
 	// picker (DMNm)
 	nsEmojiPicker = i18n.NS("emoji_picker")

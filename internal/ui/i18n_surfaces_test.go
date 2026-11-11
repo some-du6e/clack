@@ -26,9 +26,20 @@ type i18nSurface struct {
 }
 
 // surfacesUnkeyed are strings these surfaces draw unchanged that are fine
-// that way (data, or Clack's own UI that a Slack namespace happens to
-// have too): none yet.
-var surfacesUnkeyed = map[string]bool{}
+// that way:
+//   - words of the fake account's messages, which search results draw one
+//     by one (Slack keys too: emoji keywords and the like);
+//   - "banner", a word of Slack's own es-ES "Verás un banner…" (the
+//     Advanced settings modal draws its descriptions word by word);
+//   - "Enter", the switcher footer's key chip: search's t("Enter") has no
+//     entry in the pinned bundles, so Slack shows the source too.
+//
+// mainUnkeyed (the account's custom section names) counts as well.
+var surfacesUnkeyed = map[string]bool{
+	"build": true, "everyone": true, "from": true, "has": true, "new": true, "notes": true, "sync": true, "thanks": true,
+	"banner": true,
+	"Enter":  true,
+}
 
 // surfaceMessage is ch's first loaded message (the menus and dialogs
 // that act on one).
@@ -88,6 +99,12 @@ func closeSurface(e *perfEnv, ch string) {
 // (TestMainNoEnglishLeft).
 func checkSurfaces(t *testing.T, e *perfEnv, cats map[string]*i18n.Catalog, ch string) {
 	t.Helper()
+	extra := map[string]bool{}
+	for _, m := range []map[string]bool{mainUnkeyed, surfacesUnkeyed} {
+		for k := range m {
+			extra[k] = true
+		}
+	}
 	for _, s := range i18nSurfaces(t, e, ch) {
 		draw := func() []string {
 			s.open(e)
@@ -100,7 +117,7 @@ func checkSurfaces(t *testing.T, e *perfEnv, cats map[string]*i18n.Catalog, ch s
 		for _, loc := range []string{"es-ES", "ja-JP"} {
 			i18n.Use(loc, cats[loc])
 			got := draw()
-			if u, _ := englishLeft(cats[loc], en, got, surfacesUnkeyed); len(u) > 0 {
+			if u, _ := englishLeft(cats[loc], en, got, extra); len(u) > 0 {
 				reportLeft(t, loc+" "+s.name, u, nil)
 			}
 		}

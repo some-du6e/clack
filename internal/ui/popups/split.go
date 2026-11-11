@@ -45,9 +45,11 @@ func SplitHint() string { return shortcut.ClickHint("Mod+Alt") }
 // openInSplitView. ok is false when h has no split view (the row then
 // does nothing) or Slack wouldn't offer one (Simplified layout mode).
 func SplitViewItem(h Host, route string, hint bool) (MenuItem, bool) {
-	it := MenuItem{Key: SplitKey, Label: "Open in split view", Icon: "move-to-split-view"}
+	// getTilesTemplate's label and hint (the menu I18n: "Ctrl Alt Click"
+	// is "Ctrl + Alt + clic" in es-ES); the key is SplitKey
+	it := MenuItem{Key: SplitKey, Label: nsMenu.T("Open in split view"), Icon: "move-to-split-view"}
 	if hint {
-		it.Hint = SplitHint()
+		it.Hint = nsMenu.T(SplitHint())
 	}
 	sv, ok := h.(SplitViewer)
 	if !ok {
@@ -65,7 +67,6 @@ func SplitViewItem(h Host, route string, hint bool) (MenuItem, bool) {
 // (looksLikeChannelId, jh4t) and never in Simplified layout mode.
 func channelSplitItem(h Host, convID, kind string) MenuItem {
 	it, _ := SplitViewItem(h, "c/"+convID, true)
-	it.Label = nsMenu.T(it.Label) // getTilesTemplate's (the menu I18n); the key is SplitKey
 	if !looksLikeChannelID(convID) {
 		it.Key = SplitKey + ":hidden"
 		return it
