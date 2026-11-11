@@ -1056,7 +1056,8 @@ func (f *Files) deleteSection(id string) {
 				layout.Rigid(func(gtx C) D { return f.label(gtx, 15, wReg, f.p.Text, "Are you sure you want to delete ") }),
 				layout.Rigid(func(gtx C) D { return f.collectionIcon(gtx, c, false, 16, f.p.Text) }),
 				hgap(4),
-				layout.Flexed(1, func(gtx C) D { return f.label(gtx, 15, wBold, f.p.Text, c.Name+"?") }),
+				layout.Rigid(func(gtx C) D { return f.label(gtx, 15, wBold, f.p.Text, c.Name) }),
+				layout.Flexed(1, func(gtx C) D { return f.label(gtx, 15, wReg, f.p.Text, "?") }), // <strong>{name}</strong>?
 			)
 		},
 		Buttons: []*popups.ModalButton{{Label: "Cancel", Kind: popups.BtnOutline}, confirm},
@@ -1169,7 +1170,7 @@ func (f *Files) sectionModalBody(gtx C, ph popups.Host, m **popups.Modal, st *se
 			st.picked = make(chan string, 1)
 		}
 		ch := st.picked
-		at := popups.ModalBodyPoint(gtx, *m, image.Pt(0, gtx.Dp(25+22+8+36)))
+		at := popups.ModalBodyPoint(gtx, *m, image.Pt(0, gtx.Dp(4+22+8+36)))
 		ph.OpenEmojiPicker(at, func(name string) {
 			select {
 			case ch <- name:
@@ -1183,7 +1184,7 @@ func (f *Files) sectionModalBody(gtx C, ph popups.Host, m **popups.Modal, st *se
 		st.emoji = ""
 		gtx.Execute(key.FocusCmd{Tag: &st.ed})
 	}
-	return layout.Inset{Top: 25}.Layout(gtx, func(gtx C) D {
+	return layout.Inset{Top: 4}.Layout(gtx, func(gtx C) D { // margin_top_25
 		return col(gtx,
 			layout.Rigid(func(gtx C) D { return f.label(gtx, 15, wBold, f.p.Text, "Name your section") }),
 			layout.Rigid(func(gtx C) D { return D{Size: image.Pt(0, gtx.Dp(8))} }),

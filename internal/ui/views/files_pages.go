@@ -9,8 +9,9 @@ package views
 //
 //   - centred, the items 4px apart with 8px around them, caption text
 //     (13px/1.25, 400);
-//   - the back and forward buttons are circle IconButtons (caret-left /
-//     caret-right) in the medium 20px box, aria-disabled at the ends;
+//   - the back and forward buttons are circle IconButtons (Slack's
+//     caret-left / caret-right chevrons) in the medium 20px box,
+//     aria-disabled at the ends;
 //   - up to five page numbers (getCurrentPageRange: the page in the
 //     middle where it can be), each min 20px wide, 20px tall, 6px side
 //     padding, radius 4; the current page in base-inv-hgl-2 with
@@ -80,8 +81,11 @@ func (f *Files) pagination(gtx C) D {
 	return layout.Inset{Top: 8, Bottom: 8}.Layout(gtx, func(gtx C) D {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 		return layout.N.Layout(gtx, func(gtx C) D {
+			gtx.Constraints.Min.X = 0 // N keeps the full width as the minimum: the row would stretch and pack left
 			return layout.UniformInset(8).Layout(gtx, func(gtx C) D {
-				ch := []layout.FlexChild{layout.Rigid(func(gtx C) D { return f.pageArrow(gtx, &f.prevPage, "caret-left", f.page > 1) })}
+				// Slack's caret-left / caret-right are chevrons: Clack's
+				// chevron-left / chevron-right (its caret-* are the filled ones)
+				ch := []layout.FlexChild{layout.Rigid(func(gtx C) D { return f.pageArrow(gtx, &f.prevPage, "chevron-left", f.page > 1) })}
 				for _, p := range pageRange(f.page, f.pages) {
 					p := p
 					c := f.pageClicks[p]
@@ -91,7 +95,7 @@ func (f *Files) pagination(gtx C) D {
 					}
 					ch = append(ch, hgap(4), layout.Rigid(func(gtx C) D { return f.pageNumber(gtx, c, p, p == f.page) }))
 				}
-				ch = append(ch, hgap(4), layout.Rigid(func(gtx C) D { return f.pageArrow(gtx, &f.nextPage, "caret-right", f.page < f.pages) }))
+				ch = append(ch, hgap(4), layout.Rigid(func(gtx C) D { return f.pageArrow(gtx, &f.nextPage, "chevron-right", f.page < f.pages) }))
 				return row(gtx, layout.Middle, ch...)
 			})
 		})
