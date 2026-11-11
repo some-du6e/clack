@@ -26,6 +26,7 @@ func loginApp(t *testing.T, login func(slack.SignInInput) error) *App {
 	sh := theme.NewShaper()
 	a.th.SetShapers(sh, sh)
 	a.SetLogin(login)
+	a.intro = nil // the card itself (intro_test.go has the introduction)
 	return a
 }
 
@@ -45,10 +46,16 @@ func TestLoginCardFits(t *testing.T) {
 		win = w
 		defer w.Release()
 	}
+	clock := time.Now()
 	frame := func() *image.RGBA {
 		ops := new(op.Ops)
 		a.drain()
-		a.frame(ttContext(ops, sz))
+		// two seconds a frame: every spring (the error's shake and fade)
+		// has settled, so the shots are stills
+		clock = clock.Add(2 * time.Second)
+		g := ttContext(ops, sz)
+		g.Now = clock
+		a.frame(g)
 		if win == nil {
 			return nil
 		}

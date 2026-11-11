@@ -117,10 +117,12 @@ type Options struct {
 	Spellcheck bool
 }
 
-// SetLogin shows the sign-in screen, calling login on submit.
+// SetLogin shows the sign-in screen, calling login on submit. On the
+// first launch the introduction plays in front of it (intro.go).
 func (a *App) SetLogin(login func(in slack.SignInInput) error) {
 	a.opts.Login = login
 	a.login = newLoginScreen()
+	a.startFirstRunIntro()
 }
 
 // SetLoginHandler sets the sign-in function used after "Sign out" without
@@ -169,6 +171,9 @@ type App struct {
 	toast           toastState
 	keys            *shortcuts
 	login           *loginScreen
+	intro           *intro // the introduction: first launch, or replayed (intro.go)
+	welcome         *intro // the sign-in backdrop's state when no introduction runs
+	motionOverride  int    // tests: 1 reduced motion, -1 full motion, 0 the OS and Slack's setting
 
 	views     map[Route]View // cached primary views (instant switch)
 	viewOrder []Route
@@ -299,6 +304,7 @@ func New(opts Options, images *imgcache.Cache) *App {
 	}()
 	if opts.Login != nil {
 		a.login = newLoginScreen()
+		a.startFirstRunIntro()
 	}
 	return a
 }
@@ -416,9 +422,14 @@ func (a *App) Run() error {
 				// waiting here (that would hold the OS's main thread).
 				wd.next(&stageShaper)
 				gtx := app.NewContext(&ops, e)
-				if a.data != nil && a.login == nil && !a.rv.done {
+				switch {
+				case a.data != nil && a.login == nil && !a.rv.done:
 					a.drawBootPlaceholder(gtx) // Slack's, from the first frame (reveal.go)
-				} else {
+				case a.login != nil:
+					// the welcome backdrop's ink: the introduction and the
+					// sign-in card start from it (intro.go)
+					theme.Fill(gtx, image.Rectangle{Max: gtx.Constraints.Max}, introBase)
+				default:
 					a.grad.layout(gtx, a.th.C.ChromeA, a.th.C.ChromeB)
 				}
 				e.Frame(gtx.Ops)
@@ -539,8 +550,7 @@ func (a *App) frame(gtx layout.Context) {
 	a.syncMenuBar()
 
 	if a.login != nil {
-		a.grad.layout(gtx, a.th.C.ChromeA, a.th.C.ChromeB)
-		a.layoutLogin(gtx)
+		a.layoutWelcome(gtx) // the introduction, then the sign-in card (intro.go)
 		return
 	}
 	defer a.startupFrame()
@@ -549,6 +559,7 @@ func (a *App) frame(gtx layout.Context) {
 	navArea := a.navGestures(gtx)
 	defer navArea.Pop()
 	a.readRootPointer(gtx)
+	a.introInput(gtx) // a replayed introduction's keys come before every shortcut
 	a.hoverBegin(gtx) // before any widget reads keys (Escape)
 	a.slackcFrame(gtx)
 	a.keys.process(gtx, a)
@@ -584,6 +595,7 @@ func (a *App) frame(gtx layout.Context) {
 	a.layoutHoverCardOver(gtx) // over a dialog whose own list has triggers
 	a.slackcOverlays(gtx)
 	a.layoutToast(gtx)
+	a.layoutIntroOverlay(gtx) // Replay introduction, over everything
 	a.rootPointer(gtx)
 	a.keys.processGlobal(gtx) // last: only the keys no widget took
 	composer.KeepFocus(gtx)   // a focused editor this frame didn't draw stays focused
