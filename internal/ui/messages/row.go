@@ -149,12 +149,13 @@ type row struct {
 	crTipText      string // the badge tooltip's text while hovered
 
 	// what the header drew last frame (CSS may replace both)
-	compactBL int         // the compact time's baseline, gutter-local (tests)
-	nameBL    int         // the sender line's baseline, column-local (tests)
-	nameX     int         // the sender's x, column-local (Compact: -8)
-	avDrawn   string      // the avatar's picture: a CSS background-image wins
-	bgDrawn   color.NRGBA // MessageBackground's fill (labels' tints, hover)
-	nameShown string      // the sender label: ::before + name (unless font-size 0) + ::after
+	compactBL  int         // the compact time's baseline, gutter-local (tests)
+	nameBL     int         // the sender line's baseline, column-local (tests)
+	nameX      int         // the sender's x, column-local (Compact: -8)
+	unreadMark bool        // the reply bar drew the "Unread" mark (tests)
+	avDrawn    string      // the avatar's picture: a CSS background-image wins
+	bgDrawn    color.NRGBA // MessageBackground's fill (labels' tints, hover)
+	nameShown  string      // the sender label: ::before + name (unless font-size 0) + ::after
 }
 
 // chanCard is one CodeChannelEntityCard under a message.
@@ -2631,14 +2632,18 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 			// ReplyBar's description: under
 			// unread_thread_indication_in_replybar (on for the account) only
 			// the last reply (getThreadLatestReplyText, util.go), in the
-			// span that shows on hover (reply_bar_hover_last_reply); without
-			// it the last reply at rest and "View thread" on hover. (Its
-			// "Unread" mark needs Activity's channel lists: not drawn.)
+			// span that shows on hover (reply_bar_hover_last_reply), and at
+			// rest the "Unread" mark while the thread has unread replies
+			// (renderUnreadThreadsIndicator, unread_threads.go); without it
+			// the last reply at rest and "View thread" on hover.
 			desc := ""
+			unread := 0
 			switch app := rc.h.Core(); {
 			case app != nil && app.Experiment("unread_thread_indication_in_replybar") == "on":
 				if hov && latest != "" {
 					desc = lastReply(tsTime(latest), rc.now, count)
+				} else if !hov && rc.list != nil && !rc.thread {
+					unread = rc.list.unreadThreadsFor(m.TS)
 				}
 			case hov:
 				desc = threadsNS.T("View thread") // the threads I18n
@@ -2646,10 +2651,25 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 				desc = lastReply(tsTime(latest), rc.now, count)
 			}
 			ds := replyDescClass.Enter(gtx, 0, 0)
-			at(gtx, ax, ty, func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints.Max.X = bw - ax - dp(gtx, 28)
-				return styledLabel(gtx, rc.th, ds, textStyle{size: 13, col: c.Text2, lineH: 18}, desc)
-			})
+			r.unreadMark = unread > 0
+			if unread > 0 {
+				// .c-message__reply_bar_unread_thread: the 8px dot
+				// (icon-placeholder-filled, a circle of r 9 in 20), 4px,
+				// "Unread", in content-imp
+				col := ds.Color(c.Important)
+				d := dp(gtx, 8)
+				rad := float32(d) * 9 / 20
+				cx, cy := float32(ax)+float32(d)/2, float32(ty)+float32(dp(gtx, 18))/2
+				paint.FillShape(gtx.Ops, col, clip.Ellipse{Min: image.Pt(int(cx-rad+0.5), int(cy-rad+0.5)), Max: image.Pt(int(cx+rad+0.5), int(cy+rad+0.5))}.Op(gtx.Ops))
+				at(gtx, ax+d+dp(gtx, 4), ty, func(gtx layout.Context) layout.Dimensions {
+					return styledLabel(gtx, rc.th, ds, textStyle{size: 13, col: col, lineH: 18}, threadsNS.T("Unread")) // ReplyBar's (the threads I18n)
+				})
+			} else {
+				at(gtx, ax, ty, func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints.Max.X = bw - ax - dp(gtx, 28)
+					return styledLabel(gtx, rc.th, ds, textStyle{size: 13, col: c.Text2, lineH: 18}, desc)
+				})
+			}
 			ds.Leave()
 			if hov {
 				is := dp(gtx, 18)

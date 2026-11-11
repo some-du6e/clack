@@ -59,9 +59,11 @@ type Store struct {
 	// RawPrefs is users.prefs.get's whole map (memory only: Preferences
 	// reads the keys it shows from it; Prefs is what the disk cache keeps).
 	RawPrefs map[string]json.RawMessage
-	// ThreadsUnread / ThreadMentions mirror client.counts "threads".
-	ThreadsUnread  bool
-	ThreadMentions int
+	// ThreadsUnread / ThreadMentions mirror client.counts "threads", and
+	// ThreadsUnreadByChannel its unread_count_by_channel.
+	ThreadsUnread          bool
+	ThreadMentions         int
+	ThreadsUnreadByChannel map[string]int
 	// names of conversations we are not a member of (from search/browse)
 	names       map[string]string
 	prefsCached bool
@@ -1045,6 +1047,7 @@ func (s *Store) SetCounts(c *slack.Counts) {
 	}
 	s.ThreadsUnread = c.Threads.HasUnreads
 	s.ThreadMentions = c.Threads.MentionCount
+	s.ThreadsUnreadByChannel = c.Threads.UnreadCountByChannel
 }
 
 // Count returns a copy of a conversation's unread state.

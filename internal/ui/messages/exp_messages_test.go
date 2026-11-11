@@ -3,7 +3,9 @@ package messages
 import (
 	"context"
 	"image"
+	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -505,5 +507,57 @@ func TestDayPillMenu(t *testing.T) {
 	rt.frame()
 	if v.s.list.Position.BeforeEnd {
 		t.Errorf("Most recent left the list at %+v", v.s.list.Position)
+	}
+}
+
+// unread_thread_indication_in_replybar: with the channel's unread threads
+// in client.counts (threads.unread_count_by_channel) the pane fetches the
+// channel's unread thread activity (activity.feed for it: thread_v2,
+// unread only, chrono_unreads) and the root's reply bar draws "Unread" at
+// rest. Off: no fetch, no mark.
+func TestReplyBarUnreadMark(t *testing.T) {
+	for _, group := range []string{"on", "off"} {
+		app, fs := expApp(t, nil)
+		app.SetExperimentGroup("unread_thread_indication_in_replybar", group)
+		var feeds atomic.Int32
+		fs.SetHook(func(method string, f url.Values) (any, bool) {
+			switch method {
+			case "activity.feed":
+				if f.Get("channel_ids") != tExp || f.Get("types") != "thread_v2" || f.Get("unread_only") != "true" || f.Get("mode") != "chrono_unreads" {
+					return nil, false
+				}
+				feeds.Add(1)
+				entry := map[string]any{"channel_id": tExp, "thread_ts": expTS["root"], "latest_ts": expTS["r2"], "unread_msg_count": 1}
+				item := map[string]any{"key": "thread-1", "feed_ts": "1700000100.000000", "is_unread": true,
+					"item": map[string]any{"type": "thread_v2", "bundle_info": map[string]any{"payload": map[string]any{"thread_entry": entry}}}}
+				return map[string]any{"ok": true, "items": []any{item}, "response_metadata": map[string]any{"next_cursor": ""}}, true
+			case "messages.list":
+				return map[string]any{"ok": true, "messages": map[string]any{}}, true
+			}
+			return nil, false
+		})
+		c := &slack.Counts{}
+		c.Threads.UnreadCountByChannel = map[string]int{tExp: 1}
+		app.S.SetCounts(c)
+		v := NewChannelView(coreHost{app: app, th: theme.New(false)}, tExp)
+		v.Preview = true
+		f := expFrame(v, 900)
+		if group == "on" {
+			until(t, 5*time.Second, "the Unread mark", f, func() bool {
+				r := v.s.rows[expTS["root"]]
+				return r != nil && r.unreadMark
+			})
+			if n := feeds.Load(); n != 1 {
+				t.Errorf("activity.feed for the channel called %d times, want once", n)
+			}
+			continue
+		}
+		until(t, 5*time.Second, "the reply bar", f, func() bool { r := v.s.rows[expTS["root"]]; return r != nil && r.replyN > 0 })
+		for k := 0; k < 5; k++ {
+			f()
+		}
+		if r := v.s.rows[expTS["root"]]; r.unreadMark || feeds.Load() != 0 {
+			t.Errorf("experiment off: mark %v, %d activity.feed calls; want neither", r.unreadMark, feeds.Load())
+		}
 	}
 }

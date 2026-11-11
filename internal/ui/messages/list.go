@@ -159,6 +159,7 @@ type listState struct {
 	dayBtns     map[string]*widget.Clickable // the dividers' pills, by day
 	stickyDay   widget.Clickable             // the sticky pill
 	latestR     image.Rectangle              // the "Latest messages" pill drawn last frame (tests)
+	unreadTh    unreadThreads                // the reply bars' "Unread" marks (unread_threads.go)
 }
 
 var listCache = map[string]*listState{}
@@ -665,6 +666,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		s.unreadSeen = ui < 0 || (ui >= s.visible[0] && ui < s.visible[1])
 	}
 
+	s.updateUnreadThreads(h)
 	s.contextMenu(h, origin)
 	s.overlays(gtx, h, rc, size)
 	s.layoutScrollbar(gtx, c, size, now)

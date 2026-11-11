@@ -396,6 +396,9 @@ type Counts struct {
 	Threads struct {
 		HasUnreads   bool `json:"has_unreads"`
 		MentionCount int  `json:"mention_count"`
+		// UnreadCountByChannel is unread_count_by_channel: unread threads
+		// per conversation (Slack's threadsUnreadCountByChannel).
+		UnreadCountByChannel map[string]int `json:"unread_count_by_channel,omitempty"`
 	} `json:"threads"`
 	Channels      []CountEntry    `json:"channels"`
 	MPIMs         []CountEntry    `json:"mpims"`
