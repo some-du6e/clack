@@ -200,6 +200,23 @@ func (m *mirror) send() {
 	m.t.mu.Unlock()
 	if rt != nil {
 		rt.post("invalidate", out)
+		// A view the UI read between invalidate and this post holds JS's
+		// old value: invalidate marked it stale before JS knew of the
+		// change, and its fetch could run first. Mark it stale again now
+		// that the change is queued ahead of any later read (the runtime
+		// runs posts and calls in order), and redraw so the UI asks.
+		marked := false
+		for _, c := range out {
+			if len(c.Keys) == 0 {
+				marked = m.t.ui.views.stale(c.Slice, "") || marked
+			}
+			for _, k := range c.Keys {
+				marked = m.t.ui.views.stale(c.Slice, k) || marked
+			}
+		}
+		if f := m.t.opts.UI.Invalidate; marked && f != nil {
+			f()
+		}
 	}
 }
 
