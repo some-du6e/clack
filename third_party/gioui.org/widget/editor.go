@@ -383,8 +383,9 @@ func (e *Editor) processKey(gtx layout.Context) (EditorEvent, bool) {
 		key.Filter{Focus: e, Name: "X", Required: key.ModShortcut},
 		key.Filter{Focus: e, Name: "A", Required: key.ModShortcut},
 
-		key.Filter{Focus: e, Name: key.NameDeleteBackward, Optional: key.ModShortcutAlt | key.ModShift},
-		key.Filter{Focus: e, Name: key.NameDeleteForward, Optional: key.ModShortcutAlt | key.ModShift},
+		// Clack: ModShortcut too (Cmd+Backspace on macOS, CLACK_PATCHES.md 4)
+		key.Filter{Focus: e, Name: key.NameDeleteBackward, Optional: key.ModShortcutAlt | key.ModShift | key.ModShortcut},
+		key.Filter{Focus: e, Name: key.NameDeleteForward, Optional: key.ModShortcutAlt | key.ModShift | key.ModShortcut},
 
 		key.Filter{Focus: e, Name: key.NameHome, Optional: key.ModShortcut | key.ModShift},
 		key.Filter{Focus: e, Name: key.NameEnd, Optional: key.ModShortcut | key.ModShift},
@@ -515,6 +516,32 @@ func (e *Editor) command(gtx layout.Context, k key.Event) (EditorEvent, bool) {
 			}
 			e.text.MoveWord(1*direction, selAct)
 		}
+	}
+	// Clack (CLACK_PATCHES.md 4): Mod+Backspace and Mod+Delete. Elsewhere
+	// than macOS ModShortcut is Ctrl, the same key as ModShortcutAlt, so
+	// the ModShortcut branch below took Ctrl+Backspace and the word
+	// deletion further down never ran. On macOS ModShortcut is Cmd, which
+	// deletes to the start or end of the line, as Cocoa's and the
+	// browser's text fields do (deleteToBeginningOfLine:,
+	// deleteToEndOfLine:); with Option it is a word again.
+	if (k.Name == key.NameDeleteBackward || k.Name == key.NameDeleteForward) && k.Modifiers.Contain(key.ModShortcut) {
+		if e.ReadOnly {
+			return nil, false
+		}
+		dir := -1
+		if k.Name == key.NameDeleteForward {
+			dir = 1
+		}
+		var n int
+		if moveByWord {
+			n = e.deleteWord(dir)
+		} else {
+			n = e.deleteToLineEdge(dir)
+		}
+		if n != 0 {
+			return ChangeEvent{}, true
+		}
+		return nil, false
 	}
 	if k.Modifiers.Contain(key.ModShortcut) {
 		switch k.Name {
@@ -1071,6 +1098,25 @@ func (e *Editor) MoveCaret(startDelta, endDelta int) {
 // Positive is forward, negative is backward.
 // Absolute values greater than one will delete that many words.
 // The selection counts as a single word.
+// deleteToLineEdge deletes from the caret to the start (dir < 0) or end
+// of its line, or the selection when there is one. At the edge it deletes
+// one grapheme cluster, joining the lines (Clack, CLACK_PATCHES.md 4).
+func (e *Editor) deleteToLineEdge(dir int) (deletedRunes int) {
+	e.initBuffer()
+	if start, end := e.text.Selection(); start != end {
+		return e.Delete(1)
+	}
+	if dir < 0 {
+		e.text.MoveLineStart(selectionExtend)
+	} else {
+		e.text.MoveLineEnd(selectionExtend)
+	}
+	if start, end := e.text.Selection(); start == end {
+		return e.Delete(dir)
+	}
+	return e.Delete(1)
+}
+
 func (e *Editor) deleteWord(distance int) (deletedRunes int) {
 	if distance == 0 {
 		return

@@ -205,7 +205,24 @@ func (s *Surface) set(v *core.View, keep bool) {
 		s.applyState(v.State)
 	}
 	s.initial = string(s.vals.JSON(false))
+	// a views.update keeps the widgets of elements still there (same
+	// block_id, action_id and type) whose values it kept: a focused input
+	// keeps the focus and what was typed, as in Slack, where React
+	// reconciles the input by its key
+	oldWS := s.ws
 	s.ws = map[string]*ew{}
+	if keep {
+		for i := range s.blocks {
+			b := &s.blocks[i]
+			for _, e := range elementsOf(b) {
+				k := b.BlockID + "\x00" + e.ActionID + "\x00" + e.Type
+				if w := oldWS[k]; w != nil && s.vals.get(b.BlockID, e.ActionID) == old.get(b.BlockID, e.ActionID) {
+					w.rebind(b, e)
+					s.ws[k] = w
+				}
+			}
+		}
+	}
 	s.texts = map[string]*richview.View{}
 	s.errs = map[string]string{}
 	s.blkErr = map[string]string{}

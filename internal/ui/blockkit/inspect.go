@@ -61,6 +61,13 @@ func ModalFields(h Host) []FieldInfo {
 	if s == nil {
 		return nil
 	}
+	return s.fields()
+}
+
+func (s *Stack) fields() []FieldInfo {
+	if len(s.views) == 0 {
+		return nil
+	}
 	sf := s.top()
 	var out []FieldInfo
 	for i := range sf.blocks {

@@ -123,6 +123,9 @@ jobs:
           go test -count=1 -v ./internal/applog
           go test -count=1 -v ./internal/ui/menubar
           go test -count=1 -v ./internal/ui/screenlock ./internal/ui/globalkey
+          # Cmd+Backspace / Cmd+Delete / Option+Backspace in Block Kit text inputs (Gio editor patch 4)
+          go test -count=1 -v -run 'TestModalTextInputsEdit$' ./internal/ui/blockkit
+          go test -count=1 -v -run 'TestBlockKitModalFieldsEdit$' ./internal/ui
       - name: Gio drawLayers fix on Metal (patched passes, stock v0.10.3 panics)
         env:
           CLACK_PIXEL_TESTS: "1"

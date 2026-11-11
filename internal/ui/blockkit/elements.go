@@ -152,20 +152,38 @@ type ew struct {
 func newEW(o owner, b *Block, e *Element, input bool) *ew {
 	w := &ew{o: o, bid: b.BlockID, b: b, e: e, input: input}
 	if isTextInput(e.Type) && e.Type != "rich_text_input" {
-		// Enter dispatches in a dispatch_action block even when multiline
-		// (PlainTextInputElement.handleKeyDown prevents the newline).
-		w.ed = &widget.Editor{SingleLine: !e.Multiline, Submit: !e.Multiline || b.DispatchAction}
-		if e.Type == "number_input" {
-			w.ed.Filter = "0123456789-"
-			if e.IsDecimalAllowed {
-				w.ed.Filter += ".,"
-			}
-		}
-		if e.MaxLength > 0 {
-			w.ed.MaxLen = e.MaxLength
+		w.ed = new(widget.Editor)
+	}
+	w.configure()
+	return w
+}
+
+// rebind points a widget kept across a views.update at the new view's
+// block and element (same block_id, action_id and type), the way React
+// keeps Slack's input mounted: its editor, focus and typed text stay.
+func (w *ew) rebind(b *Block, e *Element) {
+	w.b, w.e, w.bid = b, e, b.BlockID
+	w.views = nil // option labels of the new element
+	w.configure()
+}
+
+// configure sets the text editor up for the element.
+func (w *ew) configure() {
+	if w.ed == nil {
+		return
+	}
+	e := w.e
+	// Enter dispatches in a dispatch_action block even when multiline
+	// (PlainTextInputElement.handleKeyDown prevents the newline).
+	w.ed.SingleLine, w.ed.Submit = !e.Multiline, !e.Multiline || w.b.DispatchAction
+	w.ed.Filter = ""
+	if e.Type == "number_input" {
+		w.ed.Filter = "0123456789-"
+		if e.IsDecimalAllowed {
+			w.ed.Filter += ".,"
 		}
 	}
-	return w
+	w.ed.MaxLen = max(e.MaxLength, 0)
 }
 
 func (w *ew) value() *Value {

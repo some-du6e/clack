@@ -10,8 +10,8 @@ To see the whole diff against the release:
     go mod download gioui.org@v0.10.3
     diff -ru "$(go env GOMODCACHE)/gioui.org@v0.10.3" third_party/gioui.org
 
-It should show only `gpu/gpu.go`, `widget/index.go`, `op/op.go`,
-`internal/ops/ops.go` and these two files
+It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
+`op/op.go`, `internal/ops/ops.go` and these two files
 (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -94,3 +94,28 @@ in place.
 Test: `internal/ui/canvasview` `TestLayoutPanicRecovered` (a panic with
 pushed transforms, clips and an open macro inside a recording parent; the
 parent then pops and stops cleanly).
+
+## 4. widget: Mod+Backspace and Mod+Delete in Editor
+
+`widget/editor.go`, `Editor.processKey`'s delete filters and
+`Editor.command` (plus `deleteToLineEdge`).
+
+`command` checks `ModShortcut` before the delete keys. Outside macOS
+`ModShortcut` and `ModShortcutAlt` are both Ctrl, so Ctrl+Backspace and
+Ctrl+Delete landed in the shortcut branch, which has no case for them,
+and the word deletion meant for them never ran. On macOS the delete
+filters didn't list `ModShortcut` (Cmd), so Cmd+Backspace never reached
+the editor and AppKit beeped. Karim hit it in a Block Kit modal's
+`plain_text_input` on 2026-11-10 ("u cant delete the modal editable
+field?"); every `widget.Editor` in Clack had it (search fields, dialogs,
+Block Kit inputs).
+
+Fix: with `ModShortcutAlt` held (Ctrl elsewhere, Option on macOS) the
+delete keys remove a word; with Cmd alone on macOS they delete to the
+start or end of the line, or the selection, and at the line's edge one
+grapheme cluster, which joins the lines. That is what browser text fields
+do, so Slack's inputs behave the same.
+
+Test: `internal/ui/blockkit` `TestModalTextInputsEdit` (every Block Kit
+text input in a modal; ci runs it on Linux and macOS). Not in
+`UPSTREAM.patch`.
