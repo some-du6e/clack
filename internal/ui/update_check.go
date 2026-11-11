@@ -526,6 +526,9 @@ func (p *prefsModal) updateRow(f *prefsForm, st updateStatus) {
 			kind = popups.BtnPrimary
 		}
 		bcall, bd = measured(gtx, func(gtx layout.Context) layout.Dimensions {
+			// as wide as its label: the page may come with exact
+			// constraints, which would stretch it over the text
+			gtx.Constraints = layout.Constraints{Max: image.Pt(f.w/2, gtx.Dp(36))}
 			return popups.Button(gtx, a.th, b, kind, popups.BtnMedium, pt(st.button), "", 0)
 		})
 	}

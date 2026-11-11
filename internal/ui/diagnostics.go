@@ -2,27 +2,22 @@ package ui
 
 import (
 	"fmt"
-	"image"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
 
-	"gioui.org/layout"
 	"github.com/some-du6e/clack/internal/applog"
 	"github.com/some-du6e/clack/internal/slick"
 	"github.com/some-du6e/clack/internal/taut"
 
 	"github.com/some-du6e/clack/internal/ui/openurl"
-	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/slackc"
-	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // Getting the log out: Help > Open Logs Folder and Help > Copy Diagnostics
-// (macOS menu bar), and the same two buttons in Preferences > Clack >
-// Troubleshooting, next to Show freeze reports.
+// (macOS menu bar), next to Show Freeze Reports.
 
 // diagLogLines is how many log lines Copy Diagnostics includes.
 const diagLogLines = 200
@@ -40,46 +35,6 @@ func (a *App) showLogs() {
 		return
 	}
 	_ = openurl.OpenFolder(dir)
-}
-
-// troubleshootingRow is Preferences > Clack's last row: "Troubleshooting"
-// with Open logs folder and Copy diagnostics on the right, side by side
-// (every OS; macOS also has them in the Help menu, with Show Freeze
-// Reports). Copy diagnostics names the freeze reports too.
-func (p *prefsModal) troubleshootingRow(f *prefsForm) {
-	a, gtx := p.a, f.gtx
-	pc := p.colors()
-	bh := gtx.Dp(36)
-	items := []struct {
-		key, label string
-		do         func()
-	}{
-		{"diag_logs", "Open logs folder", func() { go a.showLogs() }},
-		{"diag_copy", "Copy diagnostics", a.copyDiagnostics},
-	}
-	f.record("legend", "", pt("Troubleshooting"), false, true)
-	x := f.w
-	for i := len(items) - 1; i >= 0; i-- {
-		it := items[i]
-		f.record("button", it.key, pt(it.label), false, true)
-		b := p.btn(it.key)
-		hit := b.Clicked(gtx) // popups.Button lays the clickable out: read it first
-		call, d := measured(gtx, func(gtx layout.Context) layout.Dimensions {
-			return popups.Button(gtx, a.th, b, popups.BtnOutline, popups.BtnMedium, pt(it.label), "", 0)
-		})
-		x -= d.Size.X
-		place(gtx, call, image.Pt(x, f.y))
-		x -= gtx.Dp(8)
-		if hit {
-			it.do()
-		}
-	}
-	at(gtx, image.Pt(0, f.y), image.Pt(max(0, x), bh), func(gtx layout.Context) layout.Dimensions {
-		return vcenter(gtx, bh, func(gtx layout.Context) layout.Dimensions {
-			return a.th.Label(gtx, 15, theme.Regular, pc.text, pt("Troubleshooting"))
-		})
-	})
-	f.y += bh + gtx.Dp(12)
 }
 
 // copyDiagnostics puts a short summary for a bug report on the clipboard:
@@ -165,8 +120,7 @@ func (in diagInfo) text(now time.Time) string {
 }
 
 // freezeSummary is the diagnostics' freeze reports line: "none", or
-// "3 in ~/.config/clack/freeze-reports, newest freeze-….txt" (the
-// Preferences row has no Show freeze reports button of its own).
+// "3 in ~/.config/clack/freeze-reports, newest freeze-….txt".
 func freezeSummary(configDir string) string {
 	if configDir == "" {
 		return ""

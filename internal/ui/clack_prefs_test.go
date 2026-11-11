@@ -25,8 +25,9 @@ func TestClackPrefsTab(t *testing.T) {
 			t.Errorf("Advanced still has Clack's %s %q", r.Kind, r.Label)
 		}
 	}
-	// three rows, no headings or notes: updates (the box, its step as
-	// the subtext, one button), live updates, troubleshooting
+	// three rows at most, no headings or notes: updates (the box, its
+	// step as the subtext, one button), Replay introduction (intro-motion's
+	// row, through clackIntroRow), live updates
 	a.opts.CheckUpdate = func(context.Context) (UpdateInfo, bool, error) { return UpdateInfo{}, false, nil }
 	rows := pageRows(t, a, p, clackTabID)
 	var got []string
@@ -40,7 +41,7 @@ func TestClackPrefsTab(t *testing.T) {
 			}
 		}
 	}
-	if w := "check Download updates automatically|check Live updates (typing, presence, instant messages)|legend Troubleshooting"; strings.Join(got, "|") != w {
+	if w := "check Download updates automatically|check Live updates (typing, presence, instant messages)"; strings.Join(got, "|") != w {
 		t.Errorf("Clack tab rows %q, want %q", got, w)
 	}
 	var buttons []string
@@ -49,9 +50,24 @@ func TestClackPrefsTab(t *testing.T) {
 			buttons = append(buttons, r.Label)
 		}
 	}
-	if w := "Check for Updates|Copy diagnostics|Open logs folder"; strings.Join(buttons, "|") != w {
+	if w := "Check for Updates"; strings.Join(buttons, "|") != w {
 		t.Errorf("buttons %q, want %q", buttons, w)
 	}
+	// the Replay introduction slot: second, and the tab stays at three
+	clackIntroRow = func(p *prefsModal, f *prefsForm) {
+		f.option("replay_intro", "Replay introduction", "", false, false, func() {})
+	}
+	t.Cleanup(func() { clackIntroRow = nil })
+	got = got[:0]
+	for _, r := range pageRows(t, a, p, clackTabID) {
+		if r.Kind == "check" || r.Kind == "legend" || r.Kind == "h2" {
+			got = append(got, r.Label)
+		}
+	}
+	if w := "Download updates automatically|Replay introduction|Live updates (typing, presence, instant messages)"; strings.Join(got, "|") != w {
+		t.Errorf("with the intro row: %q, want %q", got, w)
+	}
+	clackIntroRow = nil
 	// the box is both settings: off stops the checks and the downloads
 	if !a.autoUpdatesOn() {
 		t.Fatal("automatic updates off by default")

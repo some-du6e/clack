@@ -417,6 +417,8 @@ func TestUpdateAppShots(t *testing.T) {
 		a.Navigate("c/" + s.Rows[0])
 	}
 	e.settle(800 * time.Millisecond)
+	// a release build's checker, so Preferences > Clack has its update row
+	a.opts.CheckUpdate = func(context.Context) (UpdateInfo, bool, error) { return UpdateInfo{}, false, nil }
 	u := &a.update
 	u.info = UpdateInfo{Tag: "v0.1.0-alpha.15", URL: "https://github.com/some-du6e/clack/releases/tag/v0.1.0-alpha.15"}
 	closeAll := func() {
