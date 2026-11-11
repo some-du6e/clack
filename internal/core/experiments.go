@@ -248,4 +248,9 @@ var experimentReads = map[string][]string{
 	"desktop_search_recents_read": on, "desktop_search_recents_write": on, "omni_quick_message_results": on,
 	"search_autocomplete_promote_exact_name_matches": {"treatment_3", "treatment_5"},
 	"search_explore_freshness_signals":               on,
+	// prefs, status, focus, notifications, emoji picker
+	"emoji_skin_tone_picker_improvement": on, "focus_mode_custom_duration": {"treatment"},
+	"defer_notification_3p_streaming": on,
+	// files
+	"file_trash_updates": on,
 }

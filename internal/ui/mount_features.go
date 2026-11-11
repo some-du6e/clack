@@ -170,7 +170,12 @@ func init() {
 		popups.CheckForUpdates = a.menuCheckForUpdates()
 		popups.UpdateItemLabel = a.updateMenuItem
 	}
-	mkStatusModal = func(a *App) Overlay { return popups.NewSetStatusModal(a) }
+	mkStatusModal = func(a *App, fromShortcut bool) Overlay {
+		if fromShortcut {
+			return popups.NewSetStatusModalFromShortcut(a)
+		}
+		return popups.NewSetStatusModal(a)
+	}
 	mkCreateChannel = func(a *App, section string) Overlay {
 		return popups.NewCreateChannelModal(a, popups.CreateChannelOpts{Section: section})
 	}

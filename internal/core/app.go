@@ -45,6 +45,8 @@ type App struct {
 
 	files *fileCache
 
+	streams openStreams // chat streams seen in progress (events.go emitStreamDone)
+
 	saves sync.WaitGroup // background disk saves (loadEmoji's meta.json)
 
 	// bg scopes all background work (realtime, prefetch, resolvers); it is

@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/some-du6e/clack/internal/richtext"
@@ -325,6 +326,10 @@ func (a *App) handle(ev slack.Event) {
 		a.onStarEvent(ev.Raw, ev.Type == "star_added")
 	case "file_change", "file_shared", "file_public":
 		go a.onFileChange(ev) // files.info off the event pump
+	case "file_deleted", "file_undeleted":
+		// filesDeleted / filesUndeleted: the Files view's deleted list
+		// follows them (under file_trash_updates); Raw has file_id(s)
+		a.emit(Event{Type: "file_trash", Name: ev.Type, Raw: ev.Raw})
 	case "file_created":
 		a.onFileCreated(ev) // an upload in PROCESSING resolves (upload_send.go)
 	default:
@@ -339,6 +344,55 @@ func (a *App) handle(ev slack.Event) {
 func (a *App) emitUpdate(ch string, m *slack.Message) {
 	v := a.message(ch, m)
 	a.emit(Event{Type: "update", Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, Msg: &v})
+}
+
+// openStreams remembers the messages last seen with streaming_state
+// in_progress (bounded: a stream that never settles is dropped after
+// maxOpenStreams others).
+type openStreams struct {
+	mu   sync.Mutex
+	open map[string]bool
+	q    []string
+}
+
+const maxOpenStreams = 256
+
+// seen records ch/ts's state and reports whether it was open before.
+func (o *openStreams) seen(ch, ts string, open bool) bool {
+	k := ch + "/" + ts
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	was := o.open[k]
+	switch {
+	case open && !was:
+		if o.open == nil {
+			o.open = map[string]bool{}
+		}
+		o.open[k] = true
+		o.q = append(o.q, k)
+		if len(o.q) > maxOpenStreams {
+			delete(o.open, o.q[0])
+			o.q = o.q[1:]
+		}
+	case !open && was:
+		delete(o.open, k)
+	}
+	return was
+}
+
+// emitStreamDone is emitUpdate for the message_changed that ends a chat
+// stream, with what a message event carries for its notification.
+func (a *App) emitStreamDone(ch string, m *slack.Message) {
+	v := a.message(ch, m)
+	self := a.S.SelfID()
+	ev := Event{Type: "update", Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, UserID: m.User, Msg: &v, StreamDone: true,
+		Reply:    m.ThreadTS != "" && m.ThreadTS != m.TS,
+		Mention:  mentionsSelf(m, self) || (m.User != self && keywordMention(m, a.S.HighlightWords())),
+		ConvKind: a.kindOf(ch)}
+	if u, ok := a.User(m.User); ok {
+		ev.User = &u
+	}
+	a.emit(ev)
 }
 
 func (a *App) refreshConv(ctx context.Context, id string) {
@@ -380,14 +434,23 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		// last reply is deleted the parent's message_changed has no
 		// reply_count, and the reply bar goes; a deleted parent with
 		// replies arrives here as subtype "tombstone".
+		// the earlier copy was an open chat stream: the stored one, or one
+		// seen in a thread that isn't cached (Slack's store keeps every
+		// message the socket brings)
+		streamed := a.streams.seen(ch, m.TS, m.StreamingState == "in_progress")
 		if old, ok := a.S.Find(ch, m.TS); ok {
 			keepFiles(&m, &old)
+			streamed = streamed || old.StreamingState == "in_progress"
 		}
 		if _, found := a.S.Mutate(ch, m.TS, func(x *slack.Message) { *x = m }); !found {
 			a.putLocal(ch, m) // a reply goes to its (cached) thread, never the channel
 		}
 		if needsFileInfo(&m) {
 			go a.fillFiles(ch, m.TS)
+		}
+		if streamed && m.StreamingState != "in_progress" {
+			a.emitStreamDone(ch, &m)
+			return
 		}
 		a.emitUpdate(ch, &m)
 		return
@@ -423,6 +486,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	if json.Unmarshal(ev.Raw, &m) != nil || m.TS == "" {
 		return
 	}
+	a.streams.seen(ch, m.TS, m.StreamingState == "in_progress")
 	a.EnsureUsers(ctx, referencedUsers([]slack.Message{m}))
 	if needsFileInfo(&m) { // the echo of the viewer's own upload too
 		go a.fillFiles(ch, m.TS)

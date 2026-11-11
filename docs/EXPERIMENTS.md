@@ -128,15 +128,15 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `omni_date_quick_filters` | `on` | client-boot `3D8U` export `ZP`; boot-shared `oMYD` QuickFilterRow, `rs63` OmniswitcherContent (date pickers `Fc3Y`, `agO0`), `dG9z` | on: the switcher's quick filter menu has Date as a submenu (On, Before, After, Range) instead of during:, and a date modifier being typed gets a date picker | missing: Clack's switcher has no quick filter row or filter tokens (its filter button opens the results page; Slack's QuickFilterMenu toggles the row) |
 | `omni_quick_message_results` | `on` | gantry-v2-async-client-boot-shared `4l6z` suggestionsQuickMessages, `jAWM` reorderSuggestionsForActiveQuery, `rs63` SuggestionQuickMessage | on: Recent messages search your recent conversations (from_me, with_me) or an in: filter's, drawn as cards, and the places above are cut to five; off: only the open channel, the plain rows, eight places | reads it: `ui/popups/search_popover.go` |
 | `availability_prefs_section` | `on` | client-boot `fOS2` | Preferences has the Availability section | reads it: `ui/focus_mode.go:366` |
-| `emoji_skin_tone_picker_improvement` | `on` | gantry-v2-async-client-boot-shared `Zu56` | the emoji picker footer skin-tone picker improvement | missing |
-| `focus_mode_custom_duration` | `treatment` | gantry-v2-async-client-boot-render `zuQH` | treatment: focus mode takes a custom duration | missing |
+| `emoji_skin_tone_picker_improvement` | `on` | gantry-v2-async-client-boot-shared `Zu56` EmojiPickerFooter → EmojiSkinTonePicker | the skin tone popover loses its label, gets 36×32 cells tinted on hover, a tooltip on the toggle and arrow keys that move from the selected tone | reads it: `ui/popups/emoji_tone.go:98` (EmojiSkinTonePicker ported for both groups) |
+| `focus_mode_custom_duration` | `treatment` | gantry-v2-async-client-boot-render `zuQH` FocusModePopoverContent | treatment: the Duration select adds Custom, with a date button and a 30-minute time select | reads it: `ui/focus_mode.go:89` (not ported: the calendar sync start, which needs calendar_focus_sync) |
 | `miles_davis_themes` | `on` | gantry-v2-async-client-boot-shared `TU6L` export `Z` | Miles Davis themes first in Appearance | reads it: `ui/prefs_appearance.go:120` |
 | `status_improvements` | `on` | gantry-v2-async-client-boot-render `8jHN` | custom status menu improvements | reads it: `ui/popups/actions_status_api.go:113` |
-| `third_party_integrations_video_previews` | `on` | client-boot `2HRR` fileIsMeeting | third-party video files get inline previews | missing |
-| `work_objects_embedded_preview` | `on` | client-boot `hZia` isCommentSyncEnabled | work object unfurls show an embedded preview | missing |
-| `work_objects_rearrangement` | `on` | gantry-v2-async-client-boot-shared `cAEk` export `U` | work object unfurl cards use the rearranged layout | missing |
-| `custom_file_sections` | `on` | application `Uk9p` | Files has custom file sections | missing |
-| `file_trash_updates` | `on` | application `Uk9p` FileTrashNotificationButtons | file trash notification buttons | missing |
+| `third_party_integrations_video_previews` | `on` | client-boot `2HRR` isThirdPartyIntegrationsVideoPreviewsEnabled | third-party (work object) video files get previews in the file actions, the external file tab and the PDF/file viewer | missing: Clack draws no work objects and has no video player |
+| `work_objects_embedded_preview` | `on` | client-boot `hZia` isWorkObjectsEmbeddedPreviewEnabled (`ll`) | work object unfurls can open an embedded preview (iframe) flexpane | missing: Clack draws no work object unfurls |
+| `work_objects_rearrangement` | `on` | gantry-v2-async-client-boot-shared `cAEk` export `U` | work object unfurl cards use the rearranged layout | missing: Clack draws no work object unfurls |
+| `custom_file_sections` | `on` | application `Uk9p` | Files has custom file sections | missing: file sections (collections), their sidebar, Move to section and Bulk manage files aren't ported; Clack follows the off path |
+| `file_trash_updates` | `on` | client-unified-files-sidebar-view `w695` UnifiedFilesSidebarView; boot-render `zuQH` FileTrashNotificationButtons, filesDeleted | the Files sidebar always shows Deleted; Slackbot's trash notification buttons and the deleted list follow file_deleted / file_undeleted | reads it: `ui/views/files_deleted.go:99`, `ui/views/files_deleted.go:140` (the Deleted item, the file_deleted / file_undeleted refetch; not ported: FileTrashNotificationButtons) |
 | `unified_files_3p_primary_custom_sections` | `on` | client-external-file-view `baaj` PreviewUnavailable | third-party files in custom sections | reads it: `ui/views/files.go:1301` |
 | `canvas_table_of_contents` | `on` | gantry-v2-async-client-boot-shared `65wK` createInitConfig (Quip feature 188, allowSlackOutline), `tshn` TableOfContentsDrawer, `foOi` QuipEmbed | canvases have Slack's table of contents at the left (two or more entries) and Quip reserves its 64px outline gutter | reads it: `ui/canvasview/toc.go:95` |
 | `lists_tabbing_navigation` | `on` | client-boot `Hm0j` isListsInLaterExperimentEnabled | Tab moves between list cells; the Accessibility pref | reads it: `ui/listview/keys.go:76` |
@@ -176,21 +176,21 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `search_file_channel_messages` | `on` | gantry-v2-async-client-boot-shared `lH2I` BaseMrkdwnChannel mapStateToProps, render `zuQH` renderFileChannelSlug | on: a conversation that is a canvas's or list's file channel reads as that canvas or list, when the file is loaded | missing: needs Slack's file store; Clack keeps no file metadata, so it draws the channel name, as Slack does for a file it hasn't loaded |
 | `srp_card_explore` | `on` | gantry-v2-async-client-boot-shared `+zqw` `Ui`, `Wzwx` SearchResult (SearchMessageClampedBody, SearchReactionsTooltip); search-view `UK4f` SearchResultsCardDensitySwitcher (employees only) | on: the results card's density design: the body up to 132px with a fade and Show more, at most two attachments, reactions on the card | missing: Clack's card is the one-line card measured 2026-11-08; the density card needs the card's block renderer |
 | `work_objects_message_search_xp_v2` | `on` | client-boot `PEUt` `YR`; `rZ6M` (search.modules.workObjects), `6/pc`; search-view `UK4f` UnifiedSearchRefinementWorkObject, WorkObjectResults, WorkObjectLayoutToggle | on: a message search also asks search.modules.workObjects, and each app whose work objects matched gets a source with its results (dense/detailed toggle; Most relevant, Newest, Oldest) | missing: needs work object result cards; Clack draws no work object unfurls yet |
-| `defer_notification_3p_streaming` | `on` | gantry-v2-async-client-boot-render `zuQH` | notifications for streaming agent messages wait until done | missing |
+| `defer_notification_3p_streaming` | `on` | gantry-v2-async-client-boot-render `zuQH` maybeShowNotification, messageChanged | notifications for streaming app messages wait until the stream ends | reads it: `ui/backend.go:515`, `ui/backend.go:598` (core marks the settling update StreamDone) |
 | `focus_mode_music` | `control` | client-boot `O2By` export `GM` | control: no focus music | default: in `control` Slack keeps its default, as Clack does |
 | `force_native_notifications` | `off` | gantry-v2-async-prefs-dialog `AM7V` WindowsAppearancePref | off: no forced native notifications (Windows appearance) | default: in `off` Slack keeps its default, as Clack does |
-| `limit_user_profile_characters` | `on` | gantry-v2-async-shared-js_modern_compone `oA8O` limitUserProfileCharactersIsOn | profile fields are length-limited | missing |
-| `profile_photo_comp` | `on` | gantry-v2-async-client-boot-shared `eNqz` | profile photo crop pane | missing |
+| `limit_user_profile_characters` | `on` | gantry-v2-async-shared-js_modern_compone `oA8O` limitUserProfileCharactersIsOn | profile fields are length-limited | missing: it limits Slack's Edit profile form (EditMemberProfile), which Clack doesn't have (Edit profile is a stand-in) |
+| `profile_photo_comp` | `on` | gantry-v2-async-client-boot-shared `eNqz` | profile photo crop pane | missing: Clack has no Edit profile photo panes (EditProfileUploadPane / CropPane) |
 | `animate_images_on_window_focus` | `off` | gantry-v2-async-client-boot-shared `iJ/l` | off: animated images keep the default animation rules | default: in `off` Slack keeps its default, as Clack does |
-| `looping_video_option` | `on` | gantry-v2-async-client-boot-shared `fIJO` isLoopingVideoOptionEnabled | video players offer a Loop option | missing |
-| `media_playback_speed_1_75x` | `on` | gantry-v2-async-client-boot-shared `W4bO` export `q` | media players offer 1.75x playback speed | missing |
+| `looping_video_option` | `on` | gantry-v2-async-client-boot-shared `fIJO` isLoopingVideoOptionEnabled | video players offer a Loop option | missing: Clack has no video player |
+| `media_playback_speed_1_75x` | `on` | gantry-v2-async-client-boot-shared `W4bO` export `q` | media players offer 1.75x playback speed | missing: Clack has no audio or video player |
 | `third_party_videos_inline_player` | `off` | client-boot `2HRR` isThirdPartyIntegrationsVideoPreviewsEnabled | off: third-party videos open outside, no inline player | default: in `off` Slack keeps its default, as Clack does |
-| `wo_comment_sync_client_xp` | `on` | client-boot `hZia` isWorkObjectsFileSummaryRecyclingEnabled | comments on work objects sync into the unfurl | missing |
-| `work_objects_refresh_timestamp` | `on` | client-boot `hZia` isWorkObjectBrowserPdfViewerEnabled | work object unfurls show when they were refreshed | missing |
-| `native_html_rendering` | `on` | client-boot `Ezxw` isNativeHtmlRenderingEnabled | HTML files render natively | missing |
-| `native_markdown_rendering` | `on` | client-boot `ry7y` isNativeMarkdownRenderingEnabled | Markdown files render natively | missing |
-| `serverside_markdown_rendering` | `on` | gantry-v2-async-client-boot-shared `v75j` isServersideMarkdownRenderingEnabled | Markdown rendered server-side | missing |
-| `spreadsheet_xml_rendering` | `on` | gantry-v2-async-client-boot-shared `GpJR` isSpreadsheetXmlRenderingEnabled | spreadsheet XML renders | missing |
+| `wo_comment_sync_client_xp` | `on` | client-boot `hZia` isCommentSyncEnabled (`Y`) | comments on work objects sync into the card and its flexpane (work_object_comments events) | missing: Clack draws no work object unfurls |
+| `work_objects_refresh_timestamp` | `on` | client-boot `hZia` isWorkObjectsRefreshTimestampEnabled (`Ym`) | work object cards show when they were last refreshed | missing: Clack draws no work object unfurls |
+| `native_html_rendering` | `on` | client-boot `Ezxw` isNativeHtmlRenderingEnabled | HTML files render natively | missing: Slack renders HTML files in a sandboxed iframe (HtmlFileViewer); Clack never renders untrusted HTML in-process |
+| `native_markdown_rendering` | `on` | client-boot `ry7y` isNativeMarkdownRenderingEnabled | Markdown files render natively | missing: the MarkdownViewer draws into the same HTML surface iframe, and Clack has no document file viewer |
+| `serverside_markdown_rendering` | `on` | gantry-v2-async-client-boot-shared `v75j` isServersideMarkdownRenderingEnabled | Markdown rendered server-side | missing: it changes where the MarkdownViewer's HTML comes from (see native_markdown_rendering) |
+| `spreadsheet_xml_rendering` | `on` | gantry-v2-async-client-boot-shared `GpJR` isSpreadsheetXmlRenderingEnabled | spreadsheet XML renders | missing: Clack has no spreadsheet viewer (Slack opens it in a new window) |
 | `canvas_blockquote_layout` | `on` | client-boot `M6vS` zk, gantry-v2-async-client-boot-shared `foOi` InsertionToolbarFormattingMenu / InsertionToolbarMenu, `c9bJ` QuipFloatingFormattingBar (Quip feature 197) | the blockquote is a layout: its own floating-bar button, out of the block-style and Aa menus, into Insert | reads it: `ui/canvasview/edit.go:1224`, `ui/canvasview/edit.go:1346`, `ui/canvasview/edit.go:1417` |
 | `canvas_comment_only_comment_history` | `on` | gantry-v2-async-client-canvas-activity-history-view `76nt` QuipActivityHistoryVersionRow | comment rows in a canvas's version history | B: Clack has no canvas version history or comments |
 | `canvas_comment_only_mode` | `on` | gantry-v2-async-client-boot-shared `CQK3` QuipAccessIndicator, `OJGk` useGetAccessOptions, `c9bJ`, application `Uk9p`, client-boot `2m30` canAddReaction | canvases can be comment-only: "Comment only" and Request Comment Access, a Can comment access level, a comment toolbar | reads it: `ui/canvasview/access.go:82` (the indicator and its popover). Can comment isn't offered: canvases.access.set takes read, write and owner only; the comment toolbar needs comments |
@@ -315,19 +315,19 @@ Each package is one area, for one agent. "Files" are where the work lands; sever
 ### Preferences, status and focus (10)
 
 - Files: internal/ui/prefs_*.go, internal/ui/popups/actions_status*.go, internal/ui/focus_mode.go, the emoji picker
-- To do (5): `emoji_skin_tone_picker_improvement`, `focus_mode_custom_duration`, `defer_notification_3p_streaming`, `limit_user_profile_characters`, `profile_photo_comp`
-- Clack reads already (3): `availability_prefs_section`, `miles_davis_themes`, `status_improvements`
+- To do (2): `limit_user_profile_characters`, `profile_photo_comp` (both need Slack's Edit profile form)
+- Clack reads already (6): `availability_prefs_section`, `miles_davis_themes`, `status_improvements`, `emoji_skin_tone_picker_improvement`, `focus_mode_custom_duration`, `defer_notification_3p_streaming`
 
 ### Unfurls, work objects and media (9)
 
 - Files: internal/ui/messages/ (attachments, unfurls), internal/core/preview.go, internal/ui/hovercard/
-- To do (7): `third_party_integrations_video_previews`, `work_objects_embedded_preview`, `work_objects_rearrangement`, `looping_video_option`, `media_playback_speed_1_75x`, `wo_comment_sync_client_xp`, `work_objects_refresh_timestamp`
+- To do (7): `third_party_integrations_video_previews`, `work_objects_embedded_preview`, `work_objects_rearrangement`, `looping_video_option`, `media_playback_speed_1_75x`, `wo_comment_sync_client_xp`, `work_objects_refresh_timestamp`. They wait on two things Clack lacks: work object unfurls (entity cards and their flexpane) and an audio/video player.
 
 ### Files (7)
 
 - Files: internal/ui/views/files.go, internal/core/files_view.go
-- To do (6): `custom_file_sections`, `file_trash_updates`, `native_html_rendering`, `native_markdown_rendering`, `serverside_markdown_rendering`, `spreadsheet_xml_rendering`
-- Clack reads already (1): `unified_files_3p_primary_custom_sections`
+- To do (5): `custom_file_sections`, `native_html_rendering`, `native_markdown_rendering`, `serverside_markdown_rendering`, `spreadsheet_xml_rendering` (the four viewers need a document file viewer; HTML also a sandboxed web view)
+- Clack reads already (2): `unified_files_3p_primary_custom_sections`, `file_trash_updates`
 
 ### Canvases (11)
 

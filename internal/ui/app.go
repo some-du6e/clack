@@ -865,6 +865,7 @@ type toastState struct {
 	until time.Time
 	undo  func()            // ToastUndo's action ("" button when nil)
 	btn   *widget.Clickable // its "Undo"
+	label string            // the button's label ("" is "Undo")
 }
 
 // Toast shows a short message at the bottom of the window.
@@ -877,6 +878,13 @@ func (a *App) Toast(text string) {
 // conversations muted or marked read); undo runs once, on click.
 func (a *App) ToastUndo(text string, undo func()) {
 	a.toast = toastState{text: text, until: time.Now().Add(6 * time.Second), undo: undo, btn: new(widget.Clickable)}
+	a.Invalidate()
+}
+
+// ToastAction is a toast with an action button labelled label (Slack's
+// "{title} restored." with View); do runs once, on click.
+func (a *App) ToastAction(text, label string, do func()) {
+	a.toast = toastState{text: text, until: time.Now().Add(6 * time.Second), undo: do, btn: new(widget.Clickable), label: label}
 	a.Invalidate()
 }
 
@@ -906,8 +914,12 @@ func (a *App) layoutToast(gtx layout.Context) {
 	c := &a.th.C
 	tw := a.th.Measure(gtx, 15, theme.Bold, a.toast.text)
 	uw := 0
+	label := a.toast.label
+	if label == "" {
+		label = "Undo"
+	}
 	if a.toast.undo != nil {
-		uw = a.th.Measure(gtx, 15, theme.Bold, "Undo") + gtx.Dp(16)
+		uw = a.th.Measure(gtx, 15, theme.Bold, label) + gtx.Dp(16)
 	}
 	if max := sz.X - gtx.Dp(80) - uw; tw > max {
 		tw = max
@@ -925,7 +937,7 @@ func (a *App) layoutToast(gtx layout.Context) {
 		at(gtx, image.Pt(r.Max.X-gtx.Dp(16)-uw+gtx.Dp(16), r.Min.Y), image.Pt(uw-gtx.Dp(16), h), func(gtx layout.Context) layout.Dimensions {
 			return a.toast.btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
-					return a.th.Label(gtx, 15, theme.Bold, c.Link, "Undo")
+					return a.th.Label(gtx, 15, theme.Bold, c.Link, label)
 				})
 			})
 		})
