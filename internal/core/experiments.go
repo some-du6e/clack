@@ -232,4 +232,15 @@ var experimentReads = map[string][]string{
 	"slack_kit_v2_button":                        on,
 	"a11y_no_auto_highlight_search_multi_select": {"on", "treatment"},
 	"basic_select_placeholder_option":            {"on", "treatment"},
+	// read by code merged without a line here (TestExperimentReadsListed):
+	// views (activity, channel details), composer, listview, blockkit's
+	// workflows, the secondary view, the reply bar and the drafts count
+	"activity_bulk_unread_tool": on, "ai_channel_exclusions": on, "channel_details_agents_apps_tab": on,
+	"enable_new_channel_settings": on, "mcp_ai_channel_exclusions": on, "move_channel_tabs_settings": on,
+	"mpdm_default_exclude_history_clients_webapp": on, "lists_grid_todos": on,
+	"enable_wfb_ai_answer_step": on, "workflow_execution_window": on,
+	"nested_secondary_view": on, "secondary_view_default_width": on, "rich_text_headers_and_dividers": on,
+	"updated_scheduled_sends_desktop": on, "unread_thread_indication_in_replybar": on,
+	"draft_management_in_composer":                      {"treatment"},
+	"sidebar_draft_indicator_menu_and_thread_inclusion": on,
 }
