@@ -21,6 +21,7 @@ import (
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
 	"github.com/some-du6e/clack/internal/taut"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
 // The harness: a core.App over a synthetic store (made-up people,
@@ -187,6 +188,22 @@ type harness struct {
 	fetches map[string]string // URL prefix → JSON body
 	fetched []string
 	cookied []string // fetched URLs that carried a Cookie header
+
+	spellMu sync.Mutex
+	spell   []bool // Options.SpellChecker calls (Electron's session spellchecker)
+}
+
+func (h *harness) spellChecker(on bool) {
+	h.spellMu.Lock()
+	h.spell = append(h.spell, on)
+	h.spellMu.Unlock()
+}
+
+// spellOn is the session spellchecker's last state (true: never set).
+func (h *harness) spellOn() bool {
+	h.spellMu.Lock()
+	defer h.spellMu.Unlock()
+	return len(h.spell) == 0 || h.spell[len(h.spell)-1]
 }
 
 func newHarness(t *testing.T) *harness {
@@ -216,7 +233,8 @@ func newHarness(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 	h.tt = tt
-	s, err := New(Options{Taut: tt, Dir: filepath.Join(h.dir, "slick"), NoAutoStart: true, NoUpdates: true})
+	s, err := New(Options{Taut: tt, Dir: filepath.Join(h.dir, "slick"), NoAutoStart: true, NoUpdates: true,
+		SlackCSS: slackc.NativeTransitionsCSS, SlackCSSHref: slackc.SlackCSSHref, SpellChecker: h.spellChecker})
 	if err != nil {
 		t.Fatal(err)
 	}

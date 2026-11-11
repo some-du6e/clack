@@ -272,3 +272,61 @@ test('src and media members live on the classes browsers put them on', async () 
   await a.play().catch(() => { rejected = true; });
   assert(rejected, 'play() rejects without media playback');
 });
+
+// CSSOM: Slick Snappy's transitions scan reads every style rule of
+// document.styleSheets (CSSStyleRule, its transition longhands) and keeps
+// maps keyed by the rule objects
+test('CSSOM: rules, transition longhands, stable objects', () => {
+  const st = document.createElement('style');
+  st.textContent = '.a, .b { color: red; transition: opacity .1s 3s } @media (min-width: 1px) { .c { transition-duration: 80ms !important } } @keyframes k { from { opacity: 0 } to { opacity: 1 } } .v { transition: opacity var(--d) }';
+  document.head.appendChild(st);
+  const sheet = st.sheet;
+  assert(document.styleSheets.includes(sheet), 'style sheet listed');
+  const rules = sheet.cssRules;
+  assertEq(rules.length, 4);
+  assert(rules[0] instanceof CSSStyleRule && rules[1] instanceof CSSMediaRule && rules[1] instanceof CSSGroupingRule && rules[2] instanceof CSSKeyframesRule);
+  assert(sheet.cssRules[0] === rules[0], 'the same rule objects on every read');
+  assertEq(rules[0].selectorText, '.a, .b');
+  assertEq(rules[0].style.getPropertyValue('transition-duration'), '.1s');
+  assertEq(rules[0].style.getPropertyValue('transition-delay'), '3s');
+  assertEq(rules[0].style.getPropertyValue('transition-property'), 'opacity');
+  assertEq(rules[0].style.getPropertyValue('transition'), 'opacity .1s 3s');
+  assertEq(rules[0].style.getPropertyValue('color'), 'red');
+  assertEq(rules[1].conditionText, '(min-width: 1px)');
+  assertEq(rules[1].cssRules[0].style.getPropertyValue('transition-duration'), '80ms');
+  assertEq(rules[1].cssRules[0].style.getPropertyPriority('transition-duration'), 'important');
+  assertEq(rules[2].cssRules.length, 2);
+  assertEq(rules[3].style.getPropertyValue('transition-duration'), '', 'var() leaves the longhands pending');
+  assert(rules[3].style.getPropertyValue('transition').includes('var('));
+  // CSSOM edits write the sheet back and keep the other rule objects
+  const keep = rules[1];
+  rules[0].selectorText = '.a';
+  assert(st.textContent.startsWith('.a {'), st.textContent);
+  assert(sheet.cssRules[1] === keep, 'other rules kept');
+  sheet.insertRule('.d { transition: none }', 0);
+  assertEq(sheet.cssRules[0].selectorText, '.d');
+  assert(sheet.cssRules[2] === keep);
+  st.remove();
+  assert(!document.styleSheets.includes(sheet));
+});
+
+test('CSSOM: <link> sheets whose text the host supplies; native mirrors', () => {
+  const l = document.createElement('link');
+  l.rel = 'stylesheet';
+  l.setAttribute('href', 'https://a.slack-edge.com/x.css');
+  assertEq(l.sheet, null, 'no text: no sheet, like a cross-origin one');
+  __clack.setSheetText(l, '.block__G68co { transition: height .25s }');
+  document.head.appendChild(l);
+  const sheet = document.styleSheets.find((s) => s.ownerNode === l);
+  assert(sheet, 'listed in document.styleSheets');
+  assertEq(sheet.href, 'https://a.slack-edge.com/x.css');
+  assertEq(sheet.cssRules[0].style.getPropertyValue('transition-duration'), '.25s');
+  l.remove();
+  // a native mirror is in the document for queries, never drawn
+  const ws = document.createElement('div');
+  ws.className = 'p-client_workspace';
+  __clack.markNative(ws);
+  document.body.appendChild(ws);
+  assert(document.querySelector('.p-client_workspace') === ws);
+  ws.remove();
+});

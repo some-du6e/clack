@@ -60,6 +60,7 @@ import (
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -558,18 +559,24 @@ func (me *Message) animated(gtx C, st *agentState, key string, min0, target int)
 	if a.to != target {
 		a.to = target
 	}
-	el := gtx.Now.Sub(a.start)
-	const dur = 250 * time.Millisecond
-	if el >= dur || a.from == 0 || gtx.Now.IsZero() {
+	// .block's transition: height .25s (slackc.NativeTransitionsCSS),
+	// through the cascade: a rule over it (Slick's Snappy) shortens it
+	dur, delay := slackc.CurrentScope().Child(clsAgentBlock, 0).Transition("height", 250*time.Millisecond, 0)
+	p, done := slackc.TransitionProgress(a.start, gtx.Now, dur, delay)
+	if done || a.from == 0 || gtx.Now.IsZero() {
 		delete(st.anim, key)
 		return target
 	}
-	f := easeCSS(float64(el) / float64(dur))
+	f := easeCSS(float64(p))
 	h := a.from + int(math.Round(float64(target-a.from)*f))
 	me.ver.Add(1) // size changes: relayout next frame
 	gtx.Execute(op.InvalidateCmd{})
 	return max(h, min0)
 }
+
+// clsAgentBlock is the plan / task_card block's element (CSS module
+// kFCn's .block; slim mode adds .blockSlim).
+var clsAgentBlock = slackc.Class("block__G68co")
 
 // easeCSS is CSS's default "ease" (cubic-bezier(.25,.1,.25,1)).
 func easeCSS(x float64) float64 { return cubicBezier(0.25, 0.1, 0.25, 1, x) }

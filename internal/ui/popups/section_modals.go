@@ -254,6 +254,10 @@ type CreateSectionOpts struct {
 	// Done runs after the section exists and its conversations moved
 	// (id, name; added is how many conversations went in).
 	Done func(id, name string, added int)
+	// Moved runs after conversations moved in or out
+	// (performMoveManyChannelsToSection: the shell's performBulkChannelMove
+	// toast with Undo, ui/section_menu.go).
+	Moved func(m core.SectionMove)
 }
 
 // CreateSectionModal is Slack's two-step "Create a section".
@@ -451,13 +455,13 @@ func (m *CreateSectionModal) move() {
 	}
 	m.pending = true
 	id := m.id
-	run(m.h, func(ctx context.Context) (struct{}, error) {
+	run(m.h, func(ctx context.Context) (core.SectionMove, error) {
 		a := m.h.Core()
 		if a == nil {
-			return struct{}{}, context.Canceled
+			return core.SectionMove{}, context.Canceled
 		}
-		return struct{}{}, a.MoveToSection(ctx, id, ins, rem)
-	}, func(_ struct{}, err error) {
+		return a.MoveToSectionRecord(ctx, id, ins, rem)
+	}, func(mv core.SectionMove, err error) {
 		m.pending = false
 		if err != nil {
 			m.h.Toast("Something went wrong. Reloading Slack might clear things up.")
@@ -465,6 +469,9 @@ func (m *CreateSectionModal) move() {
 		}
 		m.modal.Dismiss()
 		m.finish(len(ins))
+		if m.o.Moved != nil {
+			m.o.Moved(mv)
+		}
 	})
 }
 

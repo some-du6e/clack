@@ -129,6 +129,7 @@ func (a *App) Forward() {
 var onPlace func(id, title, icon string)
 
 func (a *App) afterRoute(prev, r Route) {
+	a.leaveJoinBanner(prev, r) // maybeHideChannelJoinBanner (joinbanner.go)
 	a.slickRoute(r)
 	a.bbmAfterRoute(prev, r) // Simplified layout mode's container (bbm.go)
 	if onPlace != nil {
@@ -205,6 +206,9 @@ func (a *App) activeRail() string {
 func (a *App) railClick(key string, org image.Point) {
 	switch key {
 	case "home":
+		if a.routeTab(a.router.Current()) == "home" { // Home on Home: useHomeTabProps resets the sidebar filter
+			a.ResetSidebarTextFilter()
+		}
 		if a.lastChannel != "" {
 			a.Navigate("c/" + a.lastChannel)
 		} else {

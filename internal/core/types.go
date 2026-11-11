@@ -259,6 +259,8 @@ type Snapshot struct {
 	EmojiCount   int
 	EnterpriseID string
 	Rail         RailState // the left rail from Navigation prefs and experiments (rail.go)
+	// FilterNames is what the sidebar text filter matches (sidebar_filter.go).
+	FilterNames FilterNames
 }
 
 // Page is a window of a conversation's history.

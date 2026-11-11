@@ -34,6 +34,7 @@ func (a *App) setExperimentAssignments(as map[string]slack.ExperimentAssignment)
 	a.recomputeExperimentsLocked()
 	a.mu.Unlock()
 	a.emit(Event{Type: "experiments"})
+	a.refreshTempMutes() // temp_mute decides what a temporary mute does
 }
 
 // setExperiments installs server groups without their records (tests).
@@ -139,6 +140,7 @@ func (a *App) SetExperimentGroups(groups map[string]*string) {
 	if changed {
 		a.emit(Event{Type: "experiments"})
 		a.recentsAfterExperiments()
+		a.refreshTempMutes()
 	}
 }
 
@@ -205,7 +207,8 @@ var experimentReads = map[string][]string{
 	"filter_dormant_channels": on, "improve_mute_pref": on, "dm_recency_sort_rollout": {"without_edu", "with_edu"},
 	"programmable_sidebar_dm_history": on, "vip_section_pref": on, "agents_in_dm_sidebar": on, "agents_in_dm_sidebar_pref": on,
 	"sidebar_section_search": on, "add_channels_channel_sections_slackathon": on, "mute_channel_edu": on,
-	"suggested_sections_auto_sort_v2": on, "suggested_sections_auto_sort_killswitch": on, "meeting_assistant": on,
+	"sidebar_text_filter": on, "sidebar_text_filter_m2": on, "sidebar_text_filter_m3": on, "temp_mute": on, "manage_conversations_strings": on,
+	"thread_root_selected_state": on, "suggested_sections_auto_sort_v2": on, "suggested_sections_auto_sort_killswitch": on, "meeting_assistant": on,
 	"mpdm_naming": on, "sc_mpdm_naming": on, "mpdm_notifications_advanced_option": on, "silent_sidebar": on,
 	"channel_ia_header_refinements": on,
 	// rail (rail.go)
@@ -264,6 +267,9 @@ var experimentReads = map[string][]string{
 	"desktop_search_recents_read": on, "desktop_search_recents_write": on, "omni_quick_message_results": on,
 	"search_autocomplete_promote_exact_name_matches": {"treatment_3", "treatment_5"},
 	"search_explore_freshness_signals":               on,
+	// the search box's completers (popups/search_filter_*): the date
+	// modifiers go to the date picker; type: lists Surfaces
+	"omni_date_quick_filters": on, "surfaces_synth_view": on,
 	// prefs, status, focus, notifications, emoji picker
 	"emoji_skin_tone_picker_improvement": on, "focus_mode_custom_duration": {"treatment"},
 	"defer_notification_3p_streaming": on,

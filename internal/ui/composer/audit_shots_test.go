@@ -47,6 +47,16 @@ func TestComposerAuditShots(t *testing.T) {
 		{"typed", func() *Doc { d := NewDoc(); d.Insert(0, "Ship it", Attr{}); return d }},
 		{"empty", NewDoc},
 		{"heading", func() *Doc { d := NewDoc(); d.Insert(0, "Release notes", Attr{}); d.Lines[0].Kind = Header1; return d }},
+		// Karim: "a quote overlaps with the thingy": an empty quote line
+		// (no placeholder, the caret past the bar), then a quote of three
+		// lines and a paragraph after it
+		{"quote-empty", func() *Doc { d := NewDoc(); d.Lines[0].Kind = Quote; return d }},
+		{"quote-lines", func() *Doc {
+			d := NewDoc()
+			d.Insert(0, "first quoted line\nsecond quoted line\n\nafter the quote", Attr{})
+			d.SetLineKind(0, 2, Quote)
+			return d
+		}},
 		{"overlimit", func() *Doc {
 			d := NewDoc()
 			d.Insert(0, strings.Repeat("lorem ipsum ", (composerMaxLength+1234)/12)+strings.Repeat("x", (composerMaxLength+1234)%12), Attr{})

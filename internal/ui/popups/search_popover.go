@@ -28,6 +28,7 @@ import (
 
 	"gioui.org/font"
 	"gioui.org/gesture"
+	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
@@ -186,6 +187,13 @@ type SearchPopover struct {
 	inputPP  slackc.Props // SearchInputBox props a plugin passed (onEnter)
 	clearReq bool         // BaseSearch.clearSearchInput
 	advReq   bool         // BaseSearch.openAdvancedSearchModal
+
+	// the box's completers and tokens (search_filter_ac.go,
+	// search_filter_menu.go)
+	ac      srACState
+	tokens  []srToken
+	edX     int  // the editor's x in the card
+	acArmed bool // the user edited the box: Texty's completers follow its text
 }
 
 // NewQuickSwitcher opens the Ctrl+K switcher: empty query, centered at the
@@ -202,10 +210,12 @@ func NewSearchPopover(h Host, query string, pill image.Rectangle) *SearchPopover
 	p.ed.Submit = true
 	p.list.Axis = layout.Vertical
 	if query != "" {
-		p.ed.SetText(query)
-		n := len([]rune(query))
+		// the display query: refs as their tokens
+		text, toks := srDisplayQuery(h, query)
+		p.ed.SetText(text)
+		n := len([]rune(text))
 		p.ed.SetCaret(n, n)
-		p.query = query
+		p.query, p.tokens = text, toks
 	}
 	p.changed = time.Now()
 	p.rebuild(time.Now(), true)
@@ -561,7 +571,7 @@ func (p *SearchPopover) historyRows(rows []srRow) []srRow {
 	}
 	rows = append(rows, srRow{kind: srRHeader, title: "Recent searches"})
 	for _, q := range queries {
-		rows = append(rows, srRow{kind: srRQuery, id: q, title: q, icon: "clock"})
+		rows = append(rows, srRow{kind: srRQuery, id: q, title: SearchDisplayText(p.h, q), icon: "clock"})
 	}
 	return rows
 }
@@ -722,7 +732,12 @@ func (p *SearchPopover) typingRows(rows []srRow, q string, now time.Time) []srRo
 			total = 5
 		}
 	}
-	all := srRank(p.cands, q, 0, false)
+	// the Searcher matches formatQuery's text: a leading @, # or / dropped
+	rq := q
+	if t := acrank.SearcherQuery(q); t != "" {
+		rq = t
+	}
+	all := srRank(p.cands, rq, 0, false)
 	local := all
 	if len(local) > total {
 		local = local[:total]
@@ -739,7 +754,7 @@ func (p *SearchPopover) typingRows(rows []srRow, q string, now time.Time) []srRo
 		}
 		// server hits that don't match locally are kept only when they
 		// answer the current query (stale ones must match to stay).
-		remote = srRank(rc, q, 8, p.rUQ == q)
+		remote = srRank(rc, rq, 8, p.rUQ == q)
 		rc = make([]srCand, 0, len(p.rChans))
 		for _, ch := range p.rChans {
 			if ch.IsArchived {
@@ -751,7 +766,7 @@ func (p *SearchPopover) typingRows(rows []srRow, q string, now time.Time) []srRo
 			}
 			rc = append(rc, srCand{Kind: srKChan, ID: ch.ID, Name: ch.Name, ConvK: ch.Kind, Note: note, Remote: true})
 		}
-		remote = append(remote, srRank(rc, q, 8, p.rCQ == q)...)
+		remote = append(remote, srRank(rc, rq, 8, p.rCQ == q)...)
 	}
 	if len(p.files) > 0 {
 		fc := make([]srCand, 0, len(p.files))
@@ -775,7 +790,7 @@ func (p *SearchPopover) typingRows(rows []srRow, q string, now time.Time) []srRo
 	if g := p.srExactGroup(); g != "" {
 		// search_autocomplete_promote_exact_name_matches: exact name
 		// matches kept past the cut, then lifted among the people
-		facts := p.srExactFactsFor(q)
+		facts := p.srExactFactsFor(rq)
 		pool := append(append([]srCand(nil), all...), remote...)
 		sug = srApplyExactNameRules(srRetainExactNames(sug, pool, g, total, facts), g, facts)
 	}
@@ -938,9 +953,12 @@ func (p *SearchPopover) srInMember(v string) string {
 
 // ---- async ----
 
-func (p *SearchPopover) onQuery(gtx layout.Context) {
+func (p *SearchPopover) onQuery(gtx layout.Context) { p.queryChanged(gtx.Now) }
+
+// queryChanged restarts the searches for the box's new text.
+func (p *SearchPopover) queryChanged(now time.Time) {
 	p.seq++
-	p.changed = gtx.Now
+	p.changed = now
 	p.dirFired, p.msgFired = false, false
 	q := strings.TrimSpace(p.query)
 	if q == "" {
@@ -954,7 +972,7 @@ func (p *SearchPopover) onQuery(gtx layout.Context) {
 	if q == "" || (p.fileQ != "" && !strings.HasPrefix(strings.ToLower(q), strings.ToLower(p.fileQ))) {
 		p.files, p.fileQ = nil, ""
 	}
-	p.rebuild(gtx.Now, true)
+	p.rebuild(now, true)
 }
 
 func (p *SearchPopover) tick(gtx layout.Context) {
@@ -971,7 +989,11 @@ func (p *SearchPopover) tick(gtx layout.Context) {
 		} else {
 			p.dirFired = true
 			topU, topC := srTop(p)
-			run(p.h, func(ctx context.Context) ([]core.User, error) { return c.OmniSearchUsers(ctx, q, topU) },
+			sq := q
+			if t := acrank.SearcherQuery(q); t != "" {
+				sq = t
+			}
+			run(p.h, func(ctx context.Context) ([]core.User, error) { return c.OmniSearchUsers(ctx, sq, topU) },
 				func(us []core.User, err error) {
 					if p.done || seq != p.seq || err != nil {
 						return
@@ -979,7 +1001,7 @@ func (p *SearchPopover) tick(gtx layout.Context) {
 					p.rUsers, p.rUQ = us, q
 					p.rebuild(time.Now(), false)
 				})
-			run(p.h, func(ctx context.Context) ([]core.ChannelHit, error) { return c.OmniSearchChannels(ctx, q, topC) },
+			run(p.h, func(ctx context.Context) ([]core.ChannelHit, error) { return c.OmniSearchChannels(ctx, sq, topC) },
 				func(hs []core.ChannelHit, err error) {
 					if p.done || seq != p.seq || err != nil {
 						return
@@ -1064,6 +1086,7 @@ func srTop(p *SearchPopover) (users, chans []string) {
 // ---- actions ----
 
 func (p *SearchPopover) open(route, conv string) {
+	pickedConversation()
 	RecordRecentConversation(conv)
 	p.Dismiss()
 	p.h.Navigate(route)
@@ -1159,6 +1182,7 @@ func (p *SearchPopover) activate(i int) {
 		}
 		uid := r.id
 		h := p.h
+		pickedConversation()
 		p.Dismiss()
 		run(h, func(ctx context.Context) (core.Conv, error) { return c.OpenDM(ctx, uid) }, func(cv core.Conv, err error) {
 			if err != nil {
@@ -1172,7 +1196,7 @@ func (p *SearchPopover) activate(i int) {
 		p.Dismiss()
 		p.h.Navigate(r.id)
 	case srRShow:
-		p.submit(p.query)
+		p.submit(p.reqQuery(p.query))
 	case srRQuery:
 		p.submit(r.id)
 	case srRMsg:
@@ -1218,19 +1242,44 @@ func (p *SearchPopover) move(d int) {
 }
 
 func (p *SearchPopover) keys(gtx layout.Context) {
+	fs := []event.Filter{
+		key.Filter{Focus: &p.ed, Name: key.NameUpArrow},
+		key.Filter{Focus: &p.ed, Name: key.NameDownArrow},
+		key.Filter{Focus: &p.ed, Name: key.NameReturn},
+		key.Filter{Focus: &p.ed, Name: key.NameEnter},
+		key.Filter{Focus: &p.ed, Name: key.NameEscape},
+	}
+	if p.ac.open {
+		fs = append(fs, key.Filter{Focus: &p.ed, Name: key.NameTab, Optional: key.ModShift})
+	}
 	for {
-		e, ok := gtx.Event(
-			key.Filter{Focus: &p.ed, Name: key.NameUpArrow},
-			key.Filter{Focus: &p.ed, Name: key.NameDownArrow},
-			key.Filter{Focus: &p.ed, Name: key.NameReturn},
-			key.Filter{Focus: &p.ed, Name: key.NameEnter},
-			key.Filter{Focus: &p.ed, Name: key.NameEscape},
-		)
+		e, ok := gtx.Event(fs...)
 		if !ok {
 			break
 		}
 		ke, ok := e.(key.Event)
 		if !ok || ke.State != key.Press {
+			continue
+		}
+		if p.ac.open {
+			// the completer's menu takes the keys (TextyAutocomplete)
+			switch ke.Name {
+			case key.NameUpArrow:
+				p.acMove(-1)
+			case key.NameDownArrow:
+				p.acMove(1)
+			case key.NameTab:
+				if ke.Modifiers.Contain(key.ModShift) {
+					p.acMove(-1)
+				} else {
+					p.acAccept(p.ac.sel)
+				}
+			case key.NameReturn, key.NameEnter:
+				p.acAccept(p.ac.sel)
+			case key.NameEscape:
+				p.acDismiss()
+			}
+			p.h.Invalidate()
 			continue
 		}
 		switch ke.Name {
@@ -1290,7 +1339,8 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 		switch e.(type) {
 		case widget.ChangeEvent:
 			if t := p.ed.Text(); t != p.query {
-				p.query = t
+				p.tokens = srShiftTokens(p.tokens, p.query, t)
+				p.query, p.acArmed = t, true
 				if strings.TrimSpace(t) != "" {
 					p.histMode = false
 				}
@@ -1313,12 +1363,12 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 	if p.clear.Clicked(gtx) || p.clearReq {
 		p.clearReq = false
 		p.ed.SetText("")
-		p.query = ""
+		p.query, p.tokens = "", nil
 		p.refocus = true
 		p.onQuery(gtx)
 	}
 	if p.filter.Clicked(gtx) || p.advReq {
-		q := strings.TrimSpace(p.query)
+		q := strings.TrimSpace(p.reqQuery(p.query))
 		srRecordQuery(q)
 		p.Dismiss()
 		p.h.Navigate("search?q=" + url.QueryEscape(q))
@@ -1333,6 +1383,7 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 		p.openFeedback()
 		return layout.Dimensions{}
 	}
+	p.acUpdate()
 	for i := range p.rows {
 		if p.clicks[i].Clicked(gtx) {
 			p.activate(i)
@@ -1398,6 +1449,11 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 	if maxH := win.Y - y - dp(gtx, 8); h > maxH {
 		h = maxH
 	}
+	acOpen := p.ac.open
+	if acOpen {
+		// isTextyAutocompleteOpen: the suggestions and the footer hide
+		h = inputH
+	}
 	listH := h - inputH - padT - padB - footH
 	if listH < 0 {
 		listH = 0
@@ -1406,11 +1462,24 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 	rad := dp(gtx, 8)
 	card(gtx, cl, p.rect, rad)
 	p.block.Layout(gtx, p.rect)
+	p.layoutCard(gtx, th, cl, w, h, inputH, padT, footH, listH, rad, acOpen)
+	if acOpen {
+		p.acLayout(gtx, th, cl, win, inputH)
+	}
+	return layout.Dimensions{Size: win}
+}
+
+// layoutCard draws the input row and, unless a completer's menu is open,
+// the list and the footer, inside the card.
+func (p *SearchPopover) layoutCard(gtx layout.Context, th *theme.Theme, cl *Colors, w, h, inputH, padT, footH, listH, rad int, acOpen bool) {
 	cs := clipRRect(gtx, p.rect, rad)
 	defer cs.Pop()
 	defer op.Offset(p.rect.Min).Push(gtx.Ops).Pop()
 
 	p.layoutInput(gtx, th, cl, w, inputH)
+	if acOpen {
+		return
+	}
 
 	// list
 	if p.ensure {
@@ -1435,7 +1504,6 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 	at(gtx, image.Pt(0, fy), func(gtx layout.Context) layout.Dimensions {
 		return p.footer(gtx, th, cl, image.Pt(w, footH))
 	})
-	return layout.Dimensions{Size: win}
 }
 
 // srLineColor is the input row's bottom border (#dddddd in light mode).
@@ -1535,13 +1603,33 @@ func (p *SearchPopover) inputRow(gtx layout.Context, th *theme.Theme, cl *Colors
 					t.Pop()
 				}
 			}
-			return th.Editor(gtx, &p.ed, unit.Sp(15), cl.Fg, theme.WithAlpha(cl.Focus, 0x55))
+			return p.layoutEditor(gtx, th, cl)
 		})
 	})
+	p.edX = tx
 	r := image.Rect(tx, 0, tx+tw, rh)
 	st := clip.Rect(r).Push(gtx.Ops)
 	pointer.CursorText.Add(gtx.Ops)
 	st.Pop()
+}
+
+// layoutEditor draws the box's editor with its tokens: the pills under
+// the text, then the tokens' text again in content-hgl-1 (the editor
+// paints one color).
+func (p *SearchPopover) layoutEditor(gtx layout.Context, th *theme.Theme, cl *Colors) layout.Dimensions {
+	sel := theme.WithAlpha(cl.Focus, 0x55)
+	if len(p.tokens) == 0 {
+		return th.Editor(gtx, &p.ed, unit.Sp(15), cl.Fg, sel)
+	}
+	d := th.Editor(gtx, &p.ed, unit.Sp(15), cl.Fg, sel)
+	for _, pl := range p.acPills(gtx, th, cl) { // after the layout: this frame's regions
+		func() {
+			defer clip.UniformRRect(pl.r, dp(gtx, 3)).Push(gtx.Ops).Pop()
+			fill(gtx, pl.r, pl.bg)
+			th.Editor(gtx, &p.ed, unit.Sp(15), th.C.Mention, sel)
+		}()
+	}
+	return d
 }
 
 // ghostText is SearchInputBox's getGhostTextForSelectedSuggestion: the

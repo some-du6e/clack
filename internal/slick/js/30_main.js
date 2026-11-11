@@ -138,7 +138,23 @@ const osShim = {
 }
 const electronShim = {
   app: { isReady: () => true, whenReady: () => Promise.resolve(), getPath: (name) => go('os', name === 'home' ? 'home' : 'tmp'), getVersion: () => '0.0.0' },
-  session: { defaultSession: { setSpellCheckerEnabled() {}, setSpellCheckerLanguages() {}, webRequest: { onBeforeRequest() {} } } },
+  // the session's spellchecker is Clack's composer spellcheck: off here
+  // turns it off whatever webapp_spellcheck says (Snappy's "Disable
+  // composer spellcheck"), on leaves it to the pref
+  session: {
+    defaultSession: {
+      setSpellCheckerEnabled: (on) => void go('spellchecker', !!on),
+      isSpellCheckerEnabled: () => go('spellchecker') === true,
+      get spellCheckerEnabled() {
+        return go('spellchecker') === true
+      },
+      set spellCheckerEnabled(on) {
+        go('spellchecker', !!on)
+      },
+      setSpellCheckerLanguages() {},
+      webRequest: { onBeforeRequest() {} },
+    },
+  },
   shell: { openExternal: async (url) => void go('openURL', new URL(String(url)).href) },
   webContents: { getAllWebContents: () => [] },
   BrowserWindow: { getAllWindows: () => [] },
@@ -758,6 +774,33 @@ function mainSettingsChanged(id, settings) {
   }
 }
 S.mainSettings = (id, settings) => mainSettingsChanged(id, settings)
+
+/**
+ * Go → JS: the switches a main half's boot appends with these settings
+ * (switches.go: Slick appends them at process start, Clack applies them at
+ * the next start). boot runs again against a context where only settings,
+ * log and switches do anything; the half's own state isn't touched.
+ */
+S.previewSwitches = (id, settings) => {
+  const main = plugins.get(id)?.main
+  if (!main || !main.allowed.has('switches') || typeof main.plugin.boot !== 'function') return []
+  const out = []
+  const inert = new Proxy(function () {}, { get: (_t, k) => (k === 'then' || typeof k === 'symbol' ? undefined : inert), apply: () => inert })
+  const ctx = new Proxy(
+    {
+      settings: { ...settings },
+      log: () => {},
+      switches: { append: (name, value) => void out.push(value === undefined ? String(name) : `${name}=${value}`) },
+    },
+    { get: (t, k) => (k in t ? t[k] : inert) }
+  )
+  try {
+    main.plugin.boot(ctx)
+  } catch (err) {
+    console.warn(`[slick] ${id}: boot (for its switches) threw:`, err)
+  }
+  return out
+}
 S.hasMain = (id) => !!plugins.get(id)?.main
 S.callMain = callMain
 S.onMain = onMainEvent

@@ -175,6 +175,13 @@ type actRow struct {
 	tm    *core.Message // the last thread message pm was looked up as
 	count int
 
+	// a plugin's text for the item's message (ActivityItem's msg,
+	// textOverride), parsed: the preview after pm
+	om     *core.Message
+	ovSrc  *core.Message
+	ovText string
+	ovMsg  core.Message
+
 	// nameHov is Slack's ProfileHoverTrigger on a reaction row's reactor
 	// (ActivityItemMember in "X reacted to your message").
 	nameHov hovercard.Trigger
@@ -1983,9 +1990,14 @@ func (r *actRow) layoutItem(gtx C, p slackc.Props) D {
 	sel := v.selOK && v.selKey == r.key
 	hov := r.click.Hovered()
 	var mods uint64
+	if !slackc.Patched("ActivityItem") {
+		r.om = nil
+	}
 	if p != nil {
 		mods = classMods(p.StrOr("className", ""), actItemMods)
+		r.om = nil
 		if mp := p.Map("msg"); mp != nil && it.Msg != nil && !r.d.invite && it.Reaction == nil {
+			r.om = r.textOverride(it.Msg, mp)
 			om := msgOverride(it.Msg, mp)
 			r.pd = r.d
 			if n, av := v.authorOf(&om); n != "" {
@@ -3277,7 +3289,7 @@ func (b *base) actMsg(gtx C, m *core.Message, bg color.NRGBA, padX unit.Dp) D {
 							if len(m.Reactions) == 0 {
 								return D{}
 							}
-							return layout.Inset{Top: 4}.Layout(gtx, func(gtx C) D { return b.actReactions(gtx, m.Reactions) })
+							return layout.Inset{Top: 4}.Layout(gtx, func(gtx C) D { return b.actReactions(gtx, m) })
 						}),
 					)
 				}),
@@ -3299,8 +3311,10 @@ func (b *base) actPaneBody(gtx C, m *core.Message) D {
 	return b.richDoc(gtx, "pane:"+m.Channel+"/"+m.TS, ver, m.Doc, richview.Options{Edited: m.Edited, Muted: m.System}, 0)
 }
 
-// actReactions lays reaction pills out left to right, wrapping.
-func (b *base) actReactions(gtx C, rs []core.Reaction) D {
+// actReactions lays msg's reaction pills out left to right, wrapping
+// (each at Slack's Reaction boundary: reactions_slack.go).
+func (b *base) actReactions(gtx C, msg *core.Message) D {
+	rs := msg.Reactions
 	maxW := gtx.Constraints.Max.X
 	gap := gtx.Dp(4)
 	x, y, lineH := 0, 0, 0
@@ -3308,7 +3322,7 @@ func (b *base) actReactions(gtx C, rs []core.Reaction) D {
 		m := op.Record(gtx.Ops)
 		cg := gtx
 		cg.Constraints.Min = image.Point{}
-		d := b.actPill(cg, &rs[i])
+		d := b.actReaction(cg, msg, &rs[i])
 		call := m.Stop()
 		if x > 0 && x+d.Size.X > maxW {
 			x, y, lineH = 0, y+lineH+gap, 0
@@ -3331,15 +3345,8 @@ func (b *base) actPill(gtx C, r *core.Reaction) D {
 	es := gtx.Dp(16)
 	padL, gap, padR := gtx.Dp(6), gtx.Dp(4), gtx.Dp(8)
 	w := padL + es + gap + tw + padR
-	rect := image.Rect(0, 0, w, h)
-	bg, fg := b.p.Chip, b.p.Muted
-	if r.Self {
-		bg, fg = argb(0x1a1d9bd1), b.p.Link
-	}
-	rrect(gtx, rect, h/2, bg)
-	if r.Self {
-		border(gtx, rect, h/2, max(1, gtx.Dp(1)), rgb(0x1d9bd1))
-	}
+	_, fg := b.actPillColors(r)
+	b.actPillBox(gtx, r, image.Pt(w, h))
 	st := op.Offset(image.Pt(padL, (h-es)/2)).Push(gtx.Ops)
 	b.emojiImg(gtx, r.URL, 16)
 	st.Pop()
@@ -3349,6 +3356,24 @@ func (b *base) actPill(gtx C, r *core.Reaction) D {
 	layout.W.Layout(g, func(gtx C) D { return b.label(gtx, 11, wBold, fg, cnt) })
 	st.Pop()
 	return D{Size: image.Pt(w, h)}
+}
+
+// actPillColors are a pill's fill and text: blue when the viewer reacted.
+func (b *base) actPillColors(r *core.Reaction) (bg, fg color.NRGBA) {
+	if r.Self {
+		return argb(0x1a1d9bd1), b.p.Link
+	}
+	return b.p.Chip, b.p.Muted
+}
+
+// actPillBox draws a pill's rounded fill (and the reacted border) at size.
+func (b *base) actPillBox(gtx C, r *core.Reaction, size image.Point) {
+	rect := image.Rectangle{Max: size}
+	bg, _ := b.actPillColors(r)
+	rrect(gtx, rect, size.Y/2, bg)
+	if r.Self {
+		border(gtx, rect, size.Y/2, max(1, gtx.Dp(1)), rgb(0x1d9bd1))
+	}
 }
 
 // actSpinner is Slack's loading ring (a 3/4 arc turning once a second) in

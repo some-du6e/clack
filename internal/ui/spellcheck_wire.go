@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"sync/atomic"
+
 	"github.com/some-du6e/clack/internal/spell"
 	"github.com/some-du6e/clack/internal/ui/composer"
 )
@@ -23,12 +25,32 @@ func (a *App) startSpell() {
 	s.Start()
 }
 
-// spellcheckOn is webapp_spellcheck (Slack's default: on).
+// spellcheckOn is webapp_spellcheck (Slack's default: on), unless a Slick
+// main half turned the session's spellchecker off (Electron's
+// session.setSpellCheckerEnabled(false): Snappy's "Disable composer
+// spellcheck").
 func (a *App) spellcheckOn() bool {
+	if spellSessionOff.Load() {
+		return false
+	}
 	if c := a.Core(); c != nil {
 		return c.PrefBool("webapp_spellcheck", true)
 	}
 	return true
+}
+
+// spellSessionOff is the session's spellchecker turned off by a plugin.
+var spellSessionOff atomic.Bool
+
+// setSessionSpellChecker is slick.Options.SpellChecker (any goroutine).
+func (a *App) setSessionSpellChecker(on bool) {
+	if spellSessionOff.Swap(!on) == !on {
+		return
+	}
+	a.Post(func() {
+		a.applySpellPref()
+		a.Invalidate()
+	})
 }
 
 // applySpellPref follows the pref (applyAccountPrefs calls it).

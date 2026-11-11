@@ -167,6 +167,9 @@ type listState struct {
 	// system messages under system_messages_redesign_m1 (system.go)
 	sysOn, sysInit, sysMissing bool
 	sysUsers                   uint64
+	// activeTS is the root of the thread open in the side pane, this frame
+	// (active_thread.go)
+	activeTS string
 }
 
 var listCache = map[string]*listState{}
@@ -658,6 +661,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		onDiscard: func(r *row) { s.discard(h, r) },
 	}
 	rc := &s.rc
+	s.activeTS = activeThreadIn(h, s.ch, s.thread)
 	s.origin = origin
 	s.tip = ""
 	ls := listClass.Enter(gtx, 0, 0)
@@ -942,6 +946,7 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 	rc.hovered = i == s.hoverIdx && r.edit == nil
 	rc.winOrigin = s.origin.Add(image.Pt(0, s.pos[i]))
 	rc.parent = s.thread && e.m.TS == s.ts
+	rc.activeThread = s.activeTS != "" && e.m.TS == s.activeTS
 	rc.highlight = 0
 	if s.highlight == e.m.TS {
 		if el := rc.now.Sub(s.highlightAt); el < 4*time.Second {

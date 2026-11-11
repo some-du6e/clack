@@ -397,7 +397,7 @@ function createScopedAPI(entry, id, scope) {
     isActive: () => !scope.signal.aborted && plugins.get(id)?.scope === scope,
     patchComponent: tracked(T.patchComponent),
     onDocument: tracked(onDocument),
-    deferResizeWork: tracked(TA.deferResizeWork),
+    deferResizeWork: tracked(deferResizeWork),
     setStyle: tracked((css, key = 'default') => TA.setStyle(css, `plugin:${id}:${key}`)),
     storage,
     storedFileUrl: async (setting) => {
@@ -426,6 +426,75 @@ function createScopedAPI(entry, id, scope) {
     Object.defineProperty(api, name, { enumerable: true, get: () => integration(name) })
   }
   return api
+}
+
+// ---- deferResizeWork (src/app/api/resize.ts) ----
+// Taut's gate holds the window's resize events while a window edge is
+// dragged and replays one when it has been still for quietMs. Slick's also
+// holds ResizeObserver callbacks over the same hold: the latest entry per
+// target is kept and delivered when it ends (a delivered notification is
+// never sent again). Observers made after the prelude get the hold, as on
+// Slack's page, where Slick installs it before Slack's bundle.
+let resizeHolding = false
+const heldObservers = new Set()
+function releaseObservers() {
+  const pending = [...heldObservers]
+  heldObservers.clear()
+  for (const held of pending) {
+    const entries = [...held.entries.values()]
+    held.entries.clear()
+    if (!entries.length) continue
+    try {
+      held.callback(entries, held.observer)
+    } catch (err) {
+      console.error('[slick] held ResizeObserver callback threw:', err)
+    }
+  }
+}
+if (typeof G.ResizeObserver === 'function') {
+  const Native = G.ResizeObserver
+  class SlickResizeObserver extends Native {
+    constructor(callback) {
+      let held
+      super((entries, observer) => {
+        if (!resizeHolding) return callback(entries, observer)
+        held ??= { callback, observer, entries: new Map() }
+        for (const e of entries) held.entries.set(e.target, e)
+        heldObservers.add(held)
+      })
+      const disconnect = this.disconnect.bind(this)
+      this.disconnect = () => {
+        if (held) {
+          heldObservers.delete(held)
+          held.entries.clear()
+        }
+        disconnect()
+      }
+      const unobserve = this.unobserve.bind(this)
+      this.unobserve = (target) => {
+        held?.entries.delete(target)
+        unobserve(target)
+      }
+    }
+  }
+  Object.defineProperty(SlickResizeObserver, 'name', { value: 'ResizeObserver' })
+  G.ResizeObserver = SlickResizeObserver
+}
+const holdingRegs = new Set() // registrations Taut's gate is holding for
+function deferResizeWork({ quietMs, onHoldChange } = {}) {
+  const reg = {}
+  return TA.deferResizeWork({
+    quietMs,
+    onHoldChange: (holding) => {
+      const was = resizeHolding
+      if (holding) holdingRegs.add(reg)
+      else holdingRegs.delete(reg)
+      resizeHolding = holdingRegs.size > 0
+      // after the flag flips, so a callback that resizes something observes live
+      if (was && !resizeHolding) releaseObservers()
+      onHoldChange?.(holding)
+    },
+  })
 }
 
 Object.assign(S, { blobStore, ScopedStorage, Cache, readStoredFile, STORED_PREFIX })

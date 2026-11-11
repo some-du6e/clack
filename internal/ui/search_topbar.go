@@ -43,7 +43,7 @@ type searchBoxState struct {
 // searchBoxText is BaseSearch.getSearchText.
 func (a *App) searchBoxText() string {
 	if q := a.searchQuery; q != "" {
-		return i18n.T("classic_nav", "Search: {plainTextQuery}", "plainTextQuery", q)
+		return i18n.T("classic_nav", "Search: {plainTextQuery}", "plainTextQuery", popups.SearchDisplayText(a, q))
 	}
 	return i18n.T("channel_sidebar", "Search {teamName}", "teamName", a.teamName())
 }

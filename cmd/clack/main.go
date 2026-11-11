@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/some-du6e/clack/internal/desktop"
 	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/slick"
 	"github.com/some-du6e/clack/internal/store"
 	"github.com/some-du6e/clack/internal/ui"
 )
@@ -164,7 +166,20 @@ func main() {
 	// Go panics nothing recovers and the runtime's fatal errors go to fd 2
 	// only; the runtime also writes them to crash.log next to clack.log,
 	// and the next start copies the trace, redacted, into clack.log.
-	logs.CaptureCrashes(fmt.Sprintf("clack %s %s/%s pid %d, started %s", version, runtime.GOOS, runtime.GOARCH, os.Getpid(), time.Now().Format(time.RFC3339)))
+	//
+	// Slick main halves' Chromium switches for this start work Clack's own
+	// knobs (internal/slick/switches.go): Snappy's "Disable crash reporter"
+	// turns that crash capture off, its "Ignore GPU blocklist" lets an X11
+	// window use Vulkan.
+	sw := slick.StartupSwitches("")
+	if slices.Contains(sw, slick.SwitchDisableCrashpad) || slices.Contains(sw, slick.SwitchDisableCrashReporter) {
+		log.Printf("slick: crash reporter disabled by a plugin's switches (%s): no crash.log this run", strings.Join(sw, " "))
+	} else {
+		logs.CaptureCrashes(fmt.Sprintf("clack %s %s/%s pid %d, started %s", version, runtime.GOOS, runtime.GOARCH, os.Getpid(), time.Now().Format(time.RFC3339)))
+	}
+	if slices.Contains(sw, slick.SwitchIgnoreGPUBlocklist) {
+		app.IgnoreGPUBlocklist()
+	}
 	// Every request to Slack names this build: "Clack/<version> (+…)".
 	slack.SetVersion(version)
 	// Finder on old macOS versions passes -psn_<n>; the flag package

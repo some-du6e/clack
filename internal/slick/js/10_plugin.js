@@ -283,6 +283,45 @@ S.live = async (id, settings, changed) => {
 
 S.running = () => [...plugins].filter(([, p]) => p.instance).map(([id]) => id)
 
+/**
+ * Go → JS, once per runtime: Slack's page around the plugins. Slack's
+ * linked stylesheet holds the rules Clack's natives follow (slackc's
+ * NativeTransitionsCSS: Snappy collapses the transitions it finds there),
+ * and the client's shell elements Clack draws natively are mirrored for
+ * DOM queries (Snappy waits for .p-client_workspace before it reads
+ * styles). The mirrors draw nothing; what a plugin puts in them is drawn
+ * in their place.
+ */
+let slackSheet = null
+S.setPage = (href, css) => {
+  const d = G.document
+  if (!d?.head || !d.body) return
+  if (css) {
+    if (!slackSheet) {
+      slackSheet = d.createElement('link')
+      slackSheet.setAttribute('rel', 'stylesheet')
+    }
+    host.setSheetText?.(slackSheet, css)
+    if (href) slackSheet.setAttribute('href', href)
+    if (!slackSheet.isConnected) d.head.insertBefore(slackSheet, d.head.firstChild) // before plugins' styles
+  }
+  if (!d.querySelector('.p-client_workspace')) {
+    const mirror = (cls) => {
+      const e = d.createElement('div')
+      e.className = cls
+      host.markNative?.(e)
+      return e
+    }
+    const client = mirror('p-client_container')
+    const ia = mirror('p-ia4_client_container p-ia4_client p-ia')
+    const wrap = mirror('p-client_workspace_wrapper')
+    wrap.appendChild(mirror('p-client_workspace'))
+    ia.appendChild(wrap)
+    client.appendChild(ia)
+    d.body.insertBefore(client, d.body.firstChild)
+  }
+}
+
 /** Go → JS: route the UI shows, for location-based lookups (getCurrentChannelId, the active team) */
 S.setRoute = (team, channel) => {
   const path = team ? `/client/${team}${channel ? '/' + channel : ''}` : '/client'
