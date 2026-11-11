@@ -1,6 +1,11 @@
 package core
 
-import "context"
+import (
+	"context"
+	"strings"
+
+	"github.com/some-du6e/clack/internal/slack"
+)
 
 // Unread threads per conversation, which the reply bar's "Unread" mark
 // reads under unread_thread_indication_in_replybar, as Slack's client
@@ -48,4 +53,74 @@ func (a *App) ChannelUnreadThreads(ctx context.Context, ch string) (map[string]i
 // unreadThreadReply is 3x6A isUnreadThreadReply.
 func unreadThreadReply(it *ActivityItem) bool {
 	return it.ThreadTS != "" && it.Unread && it.Type != "message_reaction" && (it.Type == "thread_v2" || it.TS != it.ThreadTS)
+}
+
+// LooksLikeBotID is Slack's looksLikeBotId (2jcO): a bot id, not a member.
+func LooksLikeBotID(id string) bool {
+	id = strings.TrimPrefix(id, "@")
+	if len(id) < 9 || id[0] != 'B' {
+		return false
+	}
+	for _, r := range id[1:] {
+		if (r < 'A' || r > 'Z') && (r < '0' || r > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// ReplyBarBotAvatar is the reply bar's picture of a bot replier
+// (ReplyBarAvatar with botId, client-boot iR00 oV and ewDY): the root's
+// reply_user_icons entry for it; under agent_identity_overrides, the
+// latest reply's icons when that reply is the bot's (icons.emoji, else
+// image_48, image_72, image_36), read from the loaded thread; else the
+// bot's own icon (bots.info), else Slack's default bot avatar. An emoji
+// only counts when the workspace has it.
+func (a *App) ReplyBarBotAvatar(m *Message, botID string, px int) string {
+	emoji := func(name string) string {
+		if name == "" {
+			return ""
+		}
+		return a.emojiURL(name)
+	}
+	for _, ic := range m.ReplyUserIcons {
+		if ic.ID != botID {
+			continue
+		}
+		if u := emoji(ic.IconEmoji); u != "" {
+			return u
+		}
+		if ic.IconURL != "" {
+			return ic.IconURL
+		}
+	}
+	if a.experiment("agent_identity_overrides") == "on" && m.LatestReply != "" {
+		root := m.ThreadTS
+		if root == "" {
+			root = m.TS
+		}
+		var icons *slack.Icons
+		a.S.ThreadHas(m.Channel, root, func(r *slack.Message) bool {
+			if r.TS != m.LatestReply {
+				return false
+			}
+			if r.BotID == botID {
+				icons = r.Icons
+			}
+			return true
+		})
+		if icons != nil {
+			if u := emoji(icons.Emoji); u != "" {
+				return u
+			}
+			if u := firstNonEmpty(icons.Image48, icons.Image72, icons.Image36); u != "" {
+				return u
+			}
+		}
+	}
+	if b, ok := a.S.Bot(botID); ok && b.Icon != "" {
+		return b.Icon
+	}
+	a.S.NoteMissingBot(botID)
+	return defaultBotAvatarAt(px)
 }

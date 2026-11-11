@@ -634,3 +634,33 @@ func TestSystemMessagesRedesign(t *testing.T) {
 	}
 	check("unassigned", off)
 }
+
+// agent_identity_overrides: a bot replier's reply-bar avatar is the latest
+// reply's icon when that reply is the bot's (iR00 oV); off, the bot's own
+// icon. Bot ids never go to users.info.
+func TestReplyBarBotIdentity(t *testing.T) {
+	const ch, bot, root, reply = "C0EXPBOTS", "B0EXPBOT01", "1700005001.000100", "1700005001.000200"
+	const agent48, bot72 = "https://avatars.invalid/agent-48.png", "https://avatars.invalid/bot-72.png"
+	app, fs := expApp(t, nil)
+	app.S.PutBot(bot, store.BotInfo{Name: "Deploy Bot", Icon: bot72})
+	app.S.PutConv(slack.Conversation{ID: ch, Name: "bots", IsChannel: true, IsMember: true, NumMembers: 3})
+	app.S.SetLatest(ch, []slack.Message{{Type: "message", TS: root, User: "UEXPALICE", Text: "a synthetic question", ThreadTS: root,
+		ReplyCount: 1, ReplyUsers: []string{bot}, LatestReply: reply}}, false)
+	app.S.SetThread(ch, root, []slack.Message{
+		{Type: "message", TS: root, User: "UEXPALICE", Text: "a synthetic question", ThreadTS: root, ReplyCount: 1},
+		{Type: "message", TS: reply, BotID: bot, Text: "a synthetic agent answer", ThreadTS: root, Icons: &slack.Icons{Image48: agent48}},
+	})
+	for _, c := range []struct{ group, want string }{{"on", agent48}, {"off", bot72}} {
+		app.SetExperimentGroup("agent_identity_overrides", c.group)
+		v := NewChannelView(coreHost{app: app, th: theme.New(false)}, ch)
+		v.Preview = true
+		f := expFrame(v, 900)
+		until(t, 5*time.Second, "the bot's reply-bar avatar ("+c.group+")", f, func() bool {
+			r := v.s.rows[root]
+			return r != nil && r.replyN > 0 && r.replyAvs[0].drawn == c.want
+		})
+	}
+	if n := fs.CallCount("users.info") + fs.CallCount("edge/users/info"); n != 0 {
+		t.Errorf("%d users.info calls; a bot id isn't a member", n)
+	}
+}

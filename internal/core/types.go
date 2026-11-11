@@ -43,6 +43,7 @@ type Message struct {
 	FollowingThread bool // the viewer follows this thread (root messages)
 	ReplyCount      int
 	ReplyUsers      []string
+	ReplyUserIcons  []slack.ReplyUserIcon // reply_user_icons (bot repliers' pictures)
 	Reactions       []Reaction
 	Huddle          json.RawMessage
 	Doc             richtext.Doc

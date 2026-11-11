@@ -1345,10 +1345,13 @@ func (av *replyAv) layout(gtx layout.Context, p slackc.Props) layout.Dimensions 
 		}
 	}
 	url := ""
-	if rc.h.Core() != nil {
-		if u, ok := rc.h.Core().User(id); ok {
+	if app := rc.h.Core(); app != nil {
+		switch u, ok := app.User(id); {
+		case core.LooksLikeBotID(id): // ReplyBarAvatar's botId: reply_user_icons, agent_identity_overrides, the bot's icon
+			url = app.ReplyBarBotAvatar(&av.r.m, id, 2*int(mt.threadAvatar))
+		case ok:
 			url = u.Avatar
-		} else {
+		default:
 			ensureUser(rc.h, id)
 		}
 	}

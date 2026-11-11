@@ -16,6 +16,7 @@ type Message struct {
 	ParentUser     string          `json:"parent_user_id,omitempty"`
 	ReplyCount     int             `json:"reply_count,omitempty"`
 	ReplyUsers     []string        `json:"reply_users,omitempty"`
+	ReplyUserIcons []ReplyUserIcon `json:"reply_user_icons,omitempty"` // a bot replier's identity in the reply bar
 	ReplyUsersN    int             `json:"reply_users_count,omitempty"`
 	LatestReply    string          `json:"latest_reply,omitempty"`
 	Subscribed     bool            `json:"subscribed,omitempty"`
@@ -74,6 +75,14 @@ type Reaction struct {
 	Count int      `json:"count"`
 	Users []string `json:"users"`
 	URL   string   `json:"url,omitempty"`
+}
+
+// ReplyUserIcon is one reply_user_icons entry: the picture the reply bar
+// shows for a bot replier (an emoji or an image).
+type ReplyUserIcon struct {
+	ID        string `json:"id"`
+	IconEmoji string `json:"icon_emoji,omitempty"`
+	IconURL   string `json:"icon_url,omitempty"`
 }
 
 type Icons struct {
