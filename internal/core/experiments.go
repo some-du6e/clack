@@ -237,4 +237,7 @@ var experimentReads = map[string][]string{
 	"move_channel_tabs_settings": on, "mpdm_default_exclude_history_clients_webapp": on,
 	"draft_management_in_composer": {"treatment"}, "sidebar_draft_indicator_menu_and_thread_inclusion": on,
 	"lists_grid_todos": on, "rich_text_headers_and_dividers": on, "updated_scheduled_sends_desktop": on,
+	// (ui dc7566fd: the thread pane, workflows, channel details)
+	"secondary_view_default_width": on, "unread_thread_indication_in_replybar": on, "channel_details_agents_apps_tab": on,
+	"enable_wfb_ai_answer_step": on, "workflow_execution_window": on,
 }

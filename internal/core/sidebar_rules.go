@@ -59,7 +59,9 @@ var defaultExperimentGroups = map[string]string{
 	"activity_global_settings": "on",
 	// the Activity experiments as experiments.getByUser had them on
 	// 2026-11-10 (activity_agent.go, docs/ACTIVITY.md "Experiments")
-	"activity_entry_layout_revisions_2": "on", "activity_inbox_remove_persistent_detail_panel": "on", "nested_secondary_view": "on",
+	// (nested_secondary_view, which the detail panel's needs, is the
+	// thread pane's below)
+	"activity_entry_layout_revisions_2": "on", "activity_inbox_remove_persistent_detail_panel": "on",
 	"activity_bot_item_type_reads": "on", "activity_automations_only": "on", "exclude_automations_filter": "on",
 	"agent_status_in_activity": "on",
 	"reskin_custom_responses":  "on", // Slackbot custom responses as the team (CustomResponseReskin)
