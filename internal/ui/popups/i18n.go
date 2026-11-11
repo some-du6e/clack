@@ -55,6 +55,17 @@ var (
 	nsGifPicker   = i18n.NS("gif-picker")
 	nsStatus      = i18n.NS("current_status") // the status modal (D72a), its expiration (yU++)
 	nsSearch      = i18n.NS("search")         // the search switcher (rs63, SidebarSearchCmdKResults), the results page and its filters
+	nsAttachments = i18n.NS("attachments")    // an unfurl's ⋮ menu
+	nsFileUpload  = i18n.NS("file-upload")    // the upload failure dialog
+	// the section modals: BaseChannelSectionModalInput and the create
+	// modal's first step are current_status's, the conversation picker
+	// plug_and_play_sections', the move speed bump create_section_modal's;
+	// the delete confirmation is channel_browser_coachmark's
+	nsSection    = i18n.NewChain("current_status", "plug_and_play_sections", "create_section_modal", "channel_sidebar")
+	nsDelSection = i18n.NewChain("channel_browser_coachmark", "generic_dialog")
+	// CreateChannelModal (create_channel_modal, its name field
+	// channel_modal's) and the invite step (channel_invite)
+	nsCreateCh = i18n.NewChain("create_channel_modal", "channel_modal", "channel_invite")
 )
 
 // In is it as a row of Slack's own text in the I18n namespace ns: the
