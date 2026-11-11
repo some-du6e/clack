@@ -137,12 +137,18 @@ func TestShareFlow(t *testing.T) {
 	e.c.share.mu.Lock()
 	p = e.c.share.picker
 	e.c.share.mu.Unlock()
-	for p != nil {
+	if p == nil {
+		t.Fatal("no picker after the second click")
+	}
+	for deadline := time.Now().Add(10 * time.Second); ; {
 		p.mu.Lock()
 		done := p.loaded
 		p.mu.Unlock()
 		if done {
 			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the second picker's sources didn't load")
 		}
 		time.Sleep(20 * time.Millisecond)
 	}

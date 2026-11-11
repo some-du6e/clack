@@ -4,6 +4,7 @@ import (
 	"errors"
 	"image"
 	"image/color"
+	"log"
 	"sync"
 
 	"gioui.org/io/pointer"
@@ -169,8 +170,11 @@ func (p *screenPicker) share() bool {
 // load lists the screens, then the windows (ScreenPicker's effect).
 func (p *screenPicker) load() {
 	screens, err := huddle.ListShareSources(huddle.ShareScreen)
-	if errors.Is(err, huddle.ErrShareDenied) || err == nil && len(screens) == 0 || errors.Is(err, huddle.ErrShareUnsupported) {
-		p.c.setShareAlert(alertNoScreenShare) // onNoScreensDetected
+	if err != nil || len(screens) == 0 { // onNoScreensDetected: the permission alert, and close
+		if err != nil && !errors.Is(err, huddle.ErrShareDenied) {
+			log.Printf("huddle: screen picker: %v", err)
+		}
+		p.c.setShareAlert(alertNoScreenShare)
 		p.close()
 		return
 	}
