@@ -1363,6 +1363,19 @@ func (c *Composer) TypingLine() string { return c.ui.cur.Typing }
 // DocText is the composer's text as plain characters (tests).
 func (c *Composer) DocText() string { return c.ed.Doc().Text() }
 
+// SendRect and ScheduleRect are the send split button's two halves in
+// window coordinates as of the last frame, empty when not drawn (tests
+// click them like a user).
+func (c *Composer) SendRect() image.Rectangle     { return c.winRect(crSend) }
+func (c *Composer) ScheduleRect() image.Rectangle { return c.winRect(crSchedule) }
+
+func (c *Composer) winRect(id crBtn) image.Rectangle {
+	if c.ui.shown&(1<<id) == 0 {
+		return image.Rectangle{}
+	}
+	return c.ui.rect[id].Add(c.Origin).Add(image.Pt(0, c.top))
+}
+
 // AttachFile attaches a file held in memory, like a paste or the + menu's
 // picker (its eager upload starts at once). Safe from any goroutine.
 func (c *Composer) AttachFile(name string, data []byte) { c.att.Add(name, data) }

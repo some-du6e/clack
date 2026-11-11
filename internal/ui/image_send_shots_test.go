@@ -12,15 +12,21 @@ package ui
 
 import (
 	"bytes"
+	"encoding/json"
 	"image"
 	"image/color"
 	"image/png"
+	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
@@ -227,4 +233,144 @@ func TestImageSendShots(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Karim (alpha.32, 2026-11-10) on the send button: "you cant make this
+// shit up this doesnt work". A mouse click on its send half sends
+// (MessageInput's SendButton onClick → sendMessage → chat.postMessage)
+// plain text and an ordered list, and the chevron opens the schedule
+// menu (ScheduledSendButton), both through the window's input router
+// like a real click: move, press, a frame, release. In the channel
+// composer, then in #new-joiners under the channel join banner (the
+// state Karim's channel was in).
+func TestSendButtonClicks(t *testing.T) {
+	sz := fakeslack.Small
+	sz.Unreads = true // #new-joiners and its join banner
+	fs, err := fakeslack.Start(sz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { fs.Close() })
+	var mu sync.Mutex
+	var posts []url.Values
+	fs.OnPost = func(f url.Values, _ map[string]any) {
+		mu.Lock()
+		posts = append(posts, f)
+		mu.Unlock()
+	}
+	pe := startEnv(t, fs, t.TempDir())
+	pe.waitReady()
+	run := func(t *testing.T, ch string, banner bool) {
+		pe.openChannel(ch)
+		pe.until("history", 10*time.Second, func() bool { return pe.loadedMessages(ch) > 0 })
+		pe.settle(300 * time.Millisecond)
+		if banner {
+			cv := pe.a.convoFor(ch, "")
+			pe.until("the join banner", 20*time.Second, func() bool { return cv.bannerH > 0 })
+		}
+		e := &mfEnv{t: t, a: pe.a, rt: &pe.r, frame: pe.frame, ch: ch, size: pe.size}
+		cb := e.focusComposer()
+		mu.Lock()
+		n0 := len(posts)
+		mu.Unlock()
+		click := func(what string, r image.Rectangle) {
+			t.Helper()
+			if r.Empty() {
+				t.Fatalf("no %s drawn", what)
+			}
+			p := r.Min.Add(r.Size().Div(2))
+			e.ptr(pointer.Move, p)
+			e.frames(2)
+			e.clock += time.Second // not a double click
+			e.ptr(pointer.Press, p)
+			e.frame()
+			e.ptr(pointer.Release, p)
+			e.frames(3)
+		}
+		posted := func(n int, what string) url.Values {
+			t.Helper()
+			deadline := time.Now().Add(8 * time.Second)
+			for time.Now().Before(deadline) {
+				mu.Lock()
+				if len(posts) >= n0+n {
+					f := posts[n0+n-1]
+					mu.Unlock()
+					return f
+				}
+				mu.Unlock()
+				e.frame()
+				time.Sleep(5 * time.Millisecond)
+			}
+			t.Fatalf("%s: no chat.postMessage (composer holds %q, send %v)", what, cb.DocText(), cb.SendRect())
+			return nil
+		}
+		// 1. plain text
+		e.typeIn(cb, "plain send")
+		click("send button", cb.SendRect())
+		if f := posted(1, "plain text"); f.Get("channel") != ch || !strings.Contains(f.Get("text"), "plain send") {
+			t.Errorf("posted %v", f)
+		}
+		e.frames(3)
+		if got := cb.DocText(); got != "" {
+			t.Errorf("after the send the composer holds %q", got)
+		}
+		// 2. Karim's list: two items and an empty third (Shift+Enter makes
+		// the next item, as in Slack); Slack's send keeps the empty item
+		e.typeIn(cb, "goofy looking alignment")
+		e.rt.Queue(key.Event{Name: "7", Modifiers: key.ModShortcut | key.ModShift, State: key.Press}, key.Event{Name: "7", Modifiers: key.ModShortcut | key.ModShift, State: key.Release})
+		e.frames(2)
+		shiftEnter := func() {
+			e.rt.Queue(key.Event{Name: key.NameReturn, Modifiers: key.ModShift, State: key.Press}, key.Event{Name: key.NameReturn, Modifiers: key.ModShift, State: key.Release})
+			e.frames(2)
+		}
+		shiftEnter()
+		e.typeIn(cb, "why is the welcome there")
+		shiftEnter()
+		click("send button", cb.SendRect())
+		f := posted(2, "the list")
+		var blocks []struct {
+			Elements []struct {
+				Type     string            `json:"type"`
+				Style    string            `json:"style"`
+				Elements []json.RawMessage `json:"elements"`
+			} `json:"elements"`
+		}
+		if err := json.Unmarshal([]byte(f.Get("blocks")), &blocks); err != nil || len(blocks) != 1 || len(blocks[0].Elements) != 1 {
+			t.Fatalf("list blocks %s (%v)", f.Get("blocks"), err)
+		}
+		if l := blocks[0].Elements[0]; l.Type != "rich_text_list" || l.Style != "ordered" || len(l.Elements) != 3 ||
+			string(l.Elements[2]) != `{"type":"rich_text_section","elements":[]}` {
+			t.Errorf("list %s, want ordered with the two items and the empty third", f.Get("blocks"))
+		}
+		// 3. Enter in a list item sends (MessageInput.onEnter; Slack's
+		// shouldInsertNewline has no list case)
+		e.typeIn(cb, "enter sends")
+		e.rt.Queue(key.Event{Name: "7", Modifiers: key.ModShortcut | key.ModShift, State: key.Press}, key.Event{Name: "7", Modifiers: key.ModShortcut | key.ModShift, State: key.Release})
+		e.frames(2)
+		e.rt.Queue(key.Event{Name: key.NameReturn, State: key.Press}, key.Event{Name: key.NameReturn, State: key.Release})
+		e.frames(2)
+		if f := posted(3, "Enter in a list item"); !strings.Contains(f.Get("blocks"), `"rich_text_list"`) {
+			t.Errorf("Enter posted %v", f)
+		}
+		// 4. the chevron opens the schedule menu and sends nothing
+		e.typeIn(cb, "for later")
+		click("schedule chevron", cb.ScheduleRect())
+		m := pe.topMenu()
+		if m == nil {
+			t.Fatalf("the chevron opened no menu (overlays %v)", pe.overlayTypes())
+		}
+		if l := attMenuLabels(m); !slices.Contains(l, "Custom time") {
+			t.Errorf("schedule menu %v", l)
+		}
+		pe.closeMenu()
+		mu.Lock()
+		extra := len(posts) - n0 - 3
+		mu.Unlock()
+		if extra != 0 || !strings.Contains(cb.DocText(), "for later") {
+			t.Errorf("the chevron sent %d messages; the composer holds %q", extra, cb.DocText())
+		}
+		e.clearComposer(cb)
+	}
+	t.Run("channel", func(t *testing.T) { run(t, fs.ChannelIDs()[1], false) })
+	t.Run("under the join banner", func(t *testing.T) { run(t, fakeslack.JoinBannerID, true) })
 }
