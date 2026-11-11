@@ -1083,7 +1083,8 @@ func (in *intro) drawBar(f *introFrame) {
 	var e fx
 	switch {
 	case show && in.prev < 0 && in.cur == beatLogo:
-		e = f.enter(in.t0.Add(msec(1500)), f.df(10), springSmooth, false)
+		// right after the mark lands: Skip is there almost from the start
+		e = f.enter(in.t0.Add(msec(900)), f.df(10), springSmooth, false)
 	case show:
 		e = fxOn
 	default:

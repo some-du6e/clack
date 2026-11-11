@@ -80,7 +80,8 @@ jobs:
             # four frames a second, eight across: the whole motion at a glance
             ffmpeg -y -loglevel error -i "$v.mp4" -vf "fps=4,scale=360:-1,tile=8x8" -frames:v 1 "$v-contact.png"
           done
-          ffmpeg -y -loglevel error -i intro.mp4 -vf "fps=24,scale=720:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=200:stats_mode=diff[p];[b][p]paletteuse=dither=sierra2_4a" intro.gif
+          # a GIF small enough to share: 15 fps, 640 wide
+          ffmpeg -y -loglevel error -i intro.mp4 -vf "fps=15,scale=640:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle" intro.gif
           ls -la
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

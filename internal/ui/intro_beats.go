@@ -239,14 +239,21 @@ func (in *intro) drawNativeStage(f *introFrame, g introGeom, start time.Time, st
 	for i, ch := range nativeChannels {
 		e := f.slideX(start.Add(msec(120+40*float64(i))), -f.df(18)).fade(A)
 		y := rowY(float64(i))
-		active := math.Abs(pos-float64(i)) < 0.5
+		// the row's text turns dark as the pill passes under it
+		prox := float32(clamp01(1 - math.Abs(pos-float64(i))*1.6))
+		if f.reduced {
+			prox = 0
+		}
 		f.with("native-row", e, f32.Point{}, func() {
 			c, w := alphaMul(introWhite, 0.78), theme.Regular
 			if i == 0 {
 				c, w = introWhite, theme.Black // unread
 			}
-			if active && !f.reduced {
-				c, w = miniActiveT, theme.Black
+			if prox > 0 {
+				c = theme.Mix(c, miniActiveT, prox)
+				if prox > 0.5 {
+					w = theme.Black
+				}
 			}
 			at(f.gtx, k.pt(sx+14, y+1.5), image.Pt(f.d(12), f.d(12)), func(gtx layout.Context) layout.Dimensions {
 				return icons.Get("hash")(gtx, f.idp(12), c)
@@ -267,8 +274,11 @@ func (in *intro) drawNativeStage(f *introFrame, g introGeom, start time.Time, st
 	f.with("native-pane", pe, f32.Point{}, func() {
 		theme.RRect(f.gtx, pane, f.d(9), introWhite)
 	})
-	// its content: one channel, then the next, swapped in a blink
-	ws := [3]float64{1 - clamp01(f.mc.spring(springSnappy, t1)), clamp01(f.mc.spring(springSnappy, t1)) - clamp01(f.mc.spring(springSnappy, t2)), clamp01(f.mc.spring(springSnappy, t2))}
+	// its content: one channel, then the next, swapped in a blink: the
+	// old one is gone before the new one comes in (no double image)
+	out := func(t time.Time) float64 { return 1 - clamp01(2.4*f.mc.spring(springSnappy, t)) }
+	in1, in2 := t1.Add(msec(70)), t2.Add(msec(70))
+	ws := [3]float64{out(t1), clamp01(f.mc.spring(springSnappy, in1)) * out(t2), clamp01(f.mc.spring(springSnappy, in2))}
 	for c := 0; c < 3; c++ {
 		if ws[c] <= 0.004 {
 			continue
@@ -276,9 +286,9 @@ func (in *intro) drawNativeStage(f *introFrame, g introGeom, start time.Time, st
 		base := start.Add(msec(170))
 		switch c {
 		case 1:
-			base = t1
+			base = in1
 		case 2:
-			base = t2
+			base = in2
 		}
 		name := nativeChannels[c+1]
 		he := f.enter(base, f.df(6), springSmooth, false).fade(A * float32(ws[c]))

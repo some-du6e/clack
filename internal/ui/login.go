@@ -259,8 +259,11 @@ func (a *App) layoutLogin(gtx layout.Context, enter time.Time, mc *motionClock) 
 		// the link field its focus) from the first frame
 		defer paint.PushOpacity(gtx.Ops, alpha).Pop()
 	}
-	// on the dark backdrop: a deep shadow, and a hairline of light on top
-	theme.Shadow(gtx, r.Add(image.Pt(0, gtx.Dp(16))), gtx.Dp(16), gtx.Dp(36), theme.WithAlpha(color.NRGBA{}, 0x70))
+	// on the dark backdrop: a deep, soft shadow below the card (filled under
+	// it too, so it has no hard edge)
+	sh, shc := r.Add(image.Pt(0, gtx.Dp(10))), theme.WithAlpha(color.NRGBA{}, 0x5c)
+	theme.RRect(gtx, sh, gtx.Dp(16), shc)
+	theme.Shadow(gtx, sh, gtx.Dp(16), gtx.Dp(36), shc)
 	theme.RRect(gtx, r, gtx.Dp(16), lc.Bg)
 	off := op.Offset(r.Min).Push(gtx.Ops)
 	content.Add(gtx.Ops)
