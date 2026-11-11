@@ -85,6 +85,13 @@ var defaultExperimentGroups = map[string]string{
 	// (experiments.getByUser on 2026-11-10: sidebar_filter.go, temp_mute.go);
 	// the input is there from the first frame
 	"sidebar_text_filter": "on", "sidebar_text_filter_m2": "on", "sidebar_text_filter_m3": "on", "temp_mute": "on",
+	"manage_conversations_strings": "on", // the section move toast's wording (ui/section_menu.go)
+	// the thread pane (docs/THREADS-AUDIT.md, live 2026-11-10): nested below
+	// the channel header at the 40% default width, the smaller header (15px
+	// title, controls 4px apart), the reply bar's hover-only last reply; no
+	// thread_header_mute_button (no bell in the header)
+	"nested_secondary_view": "on", "secondary_view_default_width": "on", "smaller_secondary_headers": "on",
+	"unread_thread_indication_in_replybar": "on",
 }
 
 func (a *App) sidebarExperiments() sidebarExp {

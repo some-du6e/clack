@@ -72,6 +72,11 @@ func TestTempMuteFollowsExperiment(t *testing.T) {
 	if got, want := notifyLabels(items), "[Notify you about…] | All new posts | Just mentions | Mute and hide | --- | More options"; got != want {
 		t.Errorf("temp_mute on:\n got %s\nwant %s", got, want)
 	}
+	a.openNotifPrefs(ch)
+	e.settle(150 * time.Millisecond)
+	e.shot("bell-temp-mute-on")
+	a.dismissTop()
+	e.frame()
 	more := notifyPick(t, items, "More options")
 	if got, want := notifyLabels(more.Sub), "[Temporarily mute…] | Until tomorrow | 1 hour | --- | Edit default preferences | Advanced settings"; got != want {
 		t.Errorf("More options:\n got %s\nwant %s", got, want)
@@ -127,6 +132,11 @@ func TestTempMuteFollowsExperiment(t *testing.T) {
 	if got, want := notifyLabels(items), "[Notify you about…] | All new posts | Just mentions | Mute and hide | --- | Advanced options | --- | Edit default preferences"; got != want {
 		t.Errorf("temp_mute off:\n got %s\nwant %s", got, want)
 	}
+	a.openNotifPrefs(ch)
+	e.settle(150 * time.Millisecond)
+	e.shot("bell-temp-mute-off")
+	a.dismissTop()
+	e.frame()
 	adv := notifyPick(t, items, "Advanced options")
 	if adv.Icon != "filter-sliders" {
 		t.Errorf("Advanced options icon %q, want Slack's filters glyph", adv.Icon)

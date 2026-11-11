@@ -5,6 +5,7 @@ name: unreads-shots
 # screenshots of each state (unreads-shots). Nothing here talks to Slack.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run unreads-shots.yml --ref <branch>)
     paths:
       - "internal/ui/views/unreads*.go"
       - "internal/ui/joinbanner.go"

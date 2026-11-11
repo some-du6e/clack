@@ -617,6 +617,7 @@ func (a *App) Bookmarks(ctx context.Context, ch string) ([]Bookmark, error) {
 			DateCreated int64  `json:"date_created"`
 			Rank        string `json:"rank"`
 			ParentID    string `json:"parent_id"`
+			ShortcutID  string `json:"shortcut_id"`
 		} `json:"bookmarks"`
 	}
 	if err := a.C.Call(ctx, "bookmarks.list", url.Values{"channel_id": {ch}, "channel": {ch}, "include_folders": {"true"}}, &res); err != nil {
@@ -625,7 +626,7 @@ func (a *App) Bookmarks(ctx context.Context, ch string) ([]Bookmark, error) {
 	out := make([]Bookmark, 0, len(res.Bookmarks))
 	for _, b := range res.Bookmarks {
 		v := Bookmark{ID: b.ID, Title: b.Title, Link: b.Link, Emoji: b.Emoji, Icon: b.IconURL, Type: b.Type,
-			EntityID: b.EntityID, Created: b.DateCreated, Rank: b.Rank, ParentID: b.ParentID}
+			EntityID: b.EntityID, Created: b.DateCreated, Rank: b.Rank, ParentID: b.ParentID, ShortcutID: b.ShortcutID}
 		if b.Emoji != "" {
 			v.EmojiURL, _, _ = a.S.Emoji(strings.Trim(b.Emoji, ":"))
 		}

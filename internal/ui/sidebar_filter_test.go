@@ -3,6 +3,7 @@ package ui
 import (
 	"image"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
 // filterEnv boots Clack over a small fake; setup runs on the fake first.
@@ -27,6 +29,13 @@ func filterEnv(t *testing.T, setup func(fs *fakeslack.Server)) (*perfEnv, *fakes
 		setup(fs)
 	}
 	e := startEnv(t, fs, t.TempDir())
+	if dir := os.Getenv("PREVIEW_SHOTS_DIR"); dir != "" && e.gpu == nil { // screenshots (sidebar-experiments.yml)
+		w, err := pixeltest.NewWindow(e.size.X, e.size.Y)
+		if err != nil {
+			t.Fatalf("headless window: %v", err)
+		}
+		e.gpu = w
+	}
 	e.waitReady()
 	e.settle(300 * time.Millisecond)
 	return e, fs
@@ -130,6 +139,7 @@ func TestSidebarTextFilter(t *testing.T) {
 		t.Error("the rows followed the text before the 150 ms debounce")
 	}
 	e.until("debounced filter", 3*time.Second, func() bool { return a.sidebar.fq == q })
+	e.shot("sidebar-filter-typed")
 	got, want := filterRows(a), wantFilterRows(a, q, true, true)
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("filtered rows:\n got %v\nwant %v", got, want)
@@ -161,6 +171,7 @@ func TestSidebarTextFilter(t *testing.T) {
 	if got := filterRows(a); strings.Join(got, " ") != "noresults" {
 		t.Fatalf("no-match rows %v", got)
 	}
+	e.shot("sidebar-filter-no-results")
 	top := int(theme.TopNavH) + 49 + 28 + 10
 	btn := image.Pt(int(theme.RailW)+a.sidebar.width/2, top+(130-23-16-28)/2+23+16+14)
 	e.click(btn)
@@ -214,6 +225,7 @@ func TestSidebarTextFilterFollowsExperiment(t *testing.T) {
 	if len(rows) == 0 || !strings.HasPrefix(rows[0], "link:") {
 		t.Fatalf("rows without the filter: %v", rows)
 	}
+	e.shot("sidebar-filter-off")
 	// the input's spot is the list's first row now (the list starts 6px
 	// under the header): a click there opens that page
 	e.click(filterPoint())

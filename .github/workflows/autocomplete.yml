@@ -7,6 +7,7 @@ name: autocomplete
 # Slack's API.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run autocomplete.yml --ref <branch>)
     paths:
       - "internal/acrank/**"
       - "internal/frecency/**"

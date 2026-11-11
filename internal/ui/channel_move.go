@@ -187,9 +187,11 @@ func (a *App) moveToItems(ch string, st chSectionState) []MenuItem {
 		id := st.custom.ID
 		items = append(items, MenuItem{Key: "channel_section_select_menu_remove_from_section", Label: "Remove from section",
 			Do: func() {
-				a.sectionRun("Couldn’t move the channel", func(ctx context.Context, c *core.App) error {
-					return c.MoveToSection(ctx, id, nil, []string{ch})
-				}, nil)
+				var mv core.SectionMove
+				a.sectionRun("Couldn’t move the channel", func(ctx context.Context, c *core.App) (err error) {
+					mv, err = c.MoveToSectionRecord(ctx, id, nil, []string{ch})
+					return err
+				}, func() { a.bulkMoveToast(mv) })
 			}})
 	}
 	return items
@@ -238,32 +240,49 @@ func (a *App) moveChannelTo(ch string, to *sbSection, st chSectionState) {
 		customID = st.custom.ID
 	}
 	wasStarred := st.starred
+	var mv core.SectionMove // the whole move, for performBulkChannelMove's toast and Undo
+	step := func(ctx context.Context, c *core.App, id string, ins, rem []string) error {
+		r, err := c.MoveToSectionRecord(ctx, id, ins, rem)
+		mv = mv.Merge(r)
+		return err
+	}
+	star := func(ctx context.Context, c *core.App, on bool) error {
+		if err := c.Star(ctx, ch, on); err != nil {
+			return err
+		}
+		if on {
+			mv = mv.Merge(core.SectionMove{Starred: []string{ch}})
+		} else {
+			mv = mv.Merge(core.SectionMove{Unstarred: []string{ch}})
+		}
+		return nil
+	}
 	a.sectionRun("Couldn’t move the channel", func(ctx context.Context, c *core.App) error {
 		if toStars {
 			if toID == "" {
-				if err := c.Star(ctx, ch, true); err != nil {
+				if err := star(ctx, c, true); err != nil {
 					return err
 				}
-			} else if err := c.MoveToSection(ctx, toID, []string{ch}, nil); err != nil {
+			} else if err := step(ctx, c, toID, []string{ch}, nil); err != nil {
 				return err
 			}
 			if customID != "" {
-				return c.MoveToSection(ctx, customID, nil, []string{ch})
+				return step(ctx, c, customID, nil, []string{ch})
 			}
 			return nil
 		}
 		// into a custom section (core drops it from the other custom ones)
-		if err := c.MoveToSection(ctx, toID, []string{ch}, nil); err != nil {
+		if err := step(ctx, c, toID, []string{ch}, nil); err != nil {
 			return err
 		}
 		if wasStarred {
 			if starsID != "" {
-				return c.MoveToSection(ctx, starsID, nil, []string{ch})
+				return step(ctx, c, starsID, nil, []string{ch})
 			}
-			return c.Star(ctx, ch, false)
+			return star(ctx, c, false)
 		}
 		return nil
-	}, nil)
+	}, func() { a.bulkMoveToast(mv) })
 }
 
 // openCreateSectionWith is openCreateChannelSectionModal({channelIds:
@@ -273,7 +292,7 @@ func (a *App) openCreateSectionWith(ch string) {
 		a.Toast("Sign in first")
 		return
 	}
-	o := popups.CreateSectionOpts{Candidates: a.sidebarConvs(), Preselect: []string{ch}}
+	o := popups.CreateSectionOpts{Candidates: a.sidebarConvs(), Preselect: []string{ch}, Moved: a.bulkMoveToast}
 	switch s := a.Core().Prefs().ChannelSort; s {
 	case "recent", "priority":
 		o.DefaultSort = s
