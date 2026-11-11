@@ -34,6 +34,7 @@ var (
 	nsDrafts        = i18n.NS("drafts")                 // the drafts list, the schedule menu, DraftDateScheduled
 	nsComposer      = i18n.NS("composer")               // DeleteDraftModal
 	nsSearch        = i18n.NS("search")                 // the browsers' filters, sorts and rows (search's components)
+	nsHuddles       = i18n.NS("huddles")                // the Huddles page
 )
 
 // localized reports whether Slack's strings differ from the English

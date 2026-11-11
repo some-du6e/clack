@@ -61,6 +61,7 @@ func TestMainNoEnglishLeft(t *testing.T) {
 			reportLeft(t, loc, u, nil)
 		}
 	}
+	viewsNoEnglishLeft(t, cats) // the views, huddles, canvases and lists (i18n_views_test.go)
 }
 
 // TestLocaleShots: the client and Preferences > Language & region in
@@ -101,6 +102,9 @@ func TestLocaleShots(t *testing.T) {
 			e.a.showPrefs("notifications")
 			e.settle(500 * time.Millisecond)
 			e.shotTo(t, dir, "i18n-"+loc+"-prefs-notifications")
+			for e.a.dismissTop() {
+			}
+			viewsLocaleShots(t, dir, loc, cat) // i18n_views_test.go
 		})
 	}
 }
