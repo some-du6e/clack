@@ -221,10 +221,21 @@ func TestHeaderTopicHoverCard(t *testing.T) {
 	if !ok {
 		t.Fatal("no member channel")
 	}
-	long := *sc
-	long.Topic = &slack.Purpose{Value: strings.Repeat("A long topic that keeps going past the header's edge, ", 6) + "the end."}
-	c.S.PutConv(long)
-	e.a.data.resnapshot(e.a)
+	// setTopic stores a topic and waits for the header's model to have it
+	// (resnapshot is debounced and coalesces with a pending one)
+	setTopic := func(topic string) {
+		t.Helper()
+		cv := *sc
+		cv.Topic = &slack.Purpose{Value: topic}
+		c.S.PutConv(cv)
+		e.until("the topic "+topic[:min(len(topic), 12)], 10*time.Second, func() bool {
+			e.a.data.resnapshot(e.a)
+			ci := e.a.model().conv(ch)
+			return ci != nil && ci.Topic == topic
+		})
+		e.settle(50 * time.Millisecond)
+	}
+	setTopic(strings.Repeat("A long topic that keeps going past the header's edge, ", 6) + "the end.")
 	e.openChannel(ch)
 	e.settle(200 * time.Millisecond)
 	if !hdrTopicTruncated {
@@ -250,11 +261,7 @@ func TestHeaderTopicHoverCard(t *testing.T) {
 	}
 
 	// a short topic isn't truncated and has no card
-	short := *sc
-	short.Topic = &slack.Purpose{Value: "Short"}
-	c.S.PutConv(short)
-	e.a.data.resnapshot(e.a)
-	e.settle(100 * time.Millisecond)
+	setTopic("Short")
 	e.move(f32.Pt(float32(r.Min.X+6), float32(r.Min.Y+r.Dy()/2)))
 	e.settle(50 * time.Millisecond)
 	if hdrTopicTruncated || hdrTopicCardShown {
