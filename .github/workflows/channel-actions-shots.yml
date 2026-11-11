@@ -5,6 +5,7 @@ name: channel-actions-shots
 # write. Synthetic only: nothing here talks to Slack.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run channel-actions-shots.yml --ref <branch>)
     paths:
       - "internal/ui/backend.go"
       - "internal/ui/slick_shell.go"

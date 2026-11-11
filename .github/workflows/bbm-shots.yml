@@ -5,6 +5,7 @@ name: bbm-shots
 # and dark screenshots of each surface in the mode (bbm-shots).
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run bbm-shots.yml --ref <branch>)
     paths:
       - "internal/ui/bbm*.go"
       - "internal/ui/sidebar.go"

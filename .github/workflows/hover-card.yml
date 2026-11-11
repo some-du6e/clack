@@ -7,6 +7,7 @@ name: hover-card
 # here talks to Slack).
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run hover-card.yml --ref <branch>)
     paths:
       - "internal/ui/hovercard/**"
       - "internal/ui/hover_card*.go"

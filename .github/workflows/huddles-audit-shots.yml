@@ -7,6 +7,7 @@ name: huddles-audit-shots
 # card. Synthetic only: nothing here joins, starts or rings a real huddle.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run huddles-audit-shots.yml --ref <branch>)
     paths:
       - "internal/ui/huddleui/**"
       - "internal/ui/huddle_wire.go"

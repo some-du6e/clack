@@ -192,6 +192,8 @@ func Tooltip(gtx layout.Context, th *theme.Theme, st *TipState, hovered bool, sz
 		p = image.Pt(sz.X+gap, (sz.Y-d.Size.Y)/2)
 	case Left:
 		p = image.Pt(-gap-d.Size.X, (sz.Y-d.Size.Y)/2)
+	case BelowRight:
+		p = image.Pt(sz.X-d.Size.X, sz.Y+gap)
 	default:
 		p = image.Pt((sz.X-d.Size.X)/2, sz.Y+gap)
 	}

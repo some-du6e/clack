@@ -6,6 +6,7 @@ name: channels-audit
 # only: nothing here talks to Slack.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run channels-audit.yml --ref <branch>)
     paths:
       - "internal/ui/channel.go"
       - "internal/ui/channel_move.go"
