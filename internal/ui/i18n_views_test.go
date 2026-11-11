@@ -16,25 +16,33 @@ import (
 // canvas and list fixtures. The huddle UI has its own checks
 // (internal/ui/huddleui TestHuddleNoEnglishLeft).
 
-// i18nView is one view, by route.
-type i18nView struct{ name, route string }
+// i18nView is one view, by route, and the strings of the fake's data it
+// draws that happen to be Slack keys (drawn as the account wrote them in
+// every locale, as Slack does).
+type i18nView struct {
+	name, route string
+	data        []string
+}
 
 var i18nViews = []i18nView{
-	{"threads", "threads"},
-	{"activity", "activity"},
-	{"unreads", "unreads"},
-	{"dms", "dms"},
-	{"files", "files"},
-	{"todos", "later"},
-	{"saved", "saved"},
-	{"drafts", "drafts"},
-	{"drafts-scheduled", "drafts?tab=scheduled"},
-	{"directories-people", "directories"},
-	{"directories-channels", "directories?tab=channels"},
-	{"directories-groups", "directories?tab=groups"},
-	{"huddles", "huddles"},
-	{"canvas", "docs/" + fakeslack.CanvasChannel},
-	{"list", "lists/" + fakeslack.ListKitchen},
+	{"threads", "threads", nil},
+	{"activity", "activity", nil},
+	{"unreads", "unreads", nil},
+	{"dms", "dms", nil},
+	{"files", "files", nil},
+	{"todos", "later", nil},
+	{"saved", "saved", nil},
+	{"drafts", "drafts", nil},
+	{"drafts-scheduled", "drafts?tab=scheduled", nil},
+	{"directories-people", "directories", nil},
+	{"directories-channels", "directories?tab=channels", nil},
+	{"directories-groups", "directories?tab=groups", nil},
+	{"huddles", "huddles", nil},
+	{"canvas", "docs/" + fakeslack.CanvasChannel, nil},
+	{"list", "lists/" + fakeslack.ListKitchen, []string{ // the kitchen-sink list's columns, options and view
+		"All items", "Blocked", "Channel", "Contact", "Created by", "Docs", "Due date", "Engineering", "Files",
+		"In progress", "Item", "Last edited", "Last edited by", "Link", "Owner", "Phone", "Status", "Tags", "Thread",
+	}},
 }
 
 // i18nViewsSize is Small with the views' fixtures: followed threads,
@@ -80,8 +88,12 @@ func viewsNoEnglishLeft(t *testing.T, cats map[string]*i18n.Catalog) {
 	fs.SetPrefs(map[string]any{"locale": ""})
 	e := startEnv(t, fs, t.TempDir())
 	e.waitReady()
-	allow := unkeyedWith(mainUnkeyed, viewsUnkeyed)
 	for _, v := range i18nViews {
+		data := map[string]bool{}
+		for _, s := range v.data {
+			data[s] = true
+		}
+		allow := unkeyedWith(mainUnkeyed, viewsUnkeyed, data)
 		i18n.Use(i18n.EnUS, nil)
 		e.a.Navigate(v.route)
 		e.settle(1500 * time.Millisecond) // the view's loads

@@ -48,17 +48,22 @@ jobs:
         run: go test -count=1 -v ./internal/i18n
       - name: no English left, the Language pref
         run: |
-          go test -count=1 -v -timeout 15m -run 'TestLocalePref$|TestPrefsNoEnglishLeft|TestMainNoEnglishLeft|TestPrefsPagesMatchSlack' ./internal/ui
-          go test -count=1 -v -run 'TestHuddleNoEnglishLeft$' ./internal/ui/huddleui
+          status=0 # both packages report, whichever fails
+          go test -count=1 -v -timeout 15m -run 'TestLocalePref$|TestPrefsNoEnglishLeft|TestMainNoEnglishLeft|TestPrefsPagesMatchSlack' ./internal/ui || status=1
+          go test -count=1 -v -run 'TestHuddleNoEnglishLeft$' ./internal/ui/huddleui || status=1
+          exit $status
       - name: screenshots (es-ES, ja-JP)
+        if: ${{ !cancelled() }} # the pictures help most when a check above failed
         env:
           I18N_SHOTS_DIR: ${{ github.workspace }}/dist/shots
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$I18N_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestLocaleShots$' ./internal/ui/
-          CLACK_PIXEL_TESTS=1 xvfb-run -a go test -count=1 -v -run 'TestHuddleLocaleShots$' ./internal/ui/huddleui/
+          status=0
+          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestLocaleShots$' ./internal/ui/ || status=1
+          CLACK_PIXEL_TESTS=1 xvfb-run -a go test -count=1 -v -run 'TestHuddleLocaleShots$' ./internal/ui/huddleui/ || status=1
           ls "$I18N_SHOTS_DIR"
+          exit $status
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

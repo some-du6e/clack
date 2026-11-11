@@ -269,7 +269,7 @@ func NewDirectories(h Host) *Directories {
 		wantFocus: 3,
 	}
 	d.rowMenu.sel = -1
-	d.chanScope.labels = dirScopeLabels
+	d.chanScope.labels, d.chanScope.ns = dirScopeLabels, nsSearch
 	d.chanType.labels, d.chanType.ns = dirTypeLabels, nsSearch
 	d.acct.labels, d.acct.ns = dirAcctLabels, nsSearch
 	for i := range d.srch {
@@ -1043,7 +1043,7 @@ func (d *Directories) peopleGrid(gtx C, p slackc.Props) D {
 		case len(us) == 0:
 			if d.peopleQ == "" {
 				return dirListState(gtx, func(gtx C) D {
-					return d.emptyState(gtx, "people", "Find people", "Search by name or title to find anyone in Hack Club.", nil, "")
+					return d.emptyState(gtx, "people", i18n.T("channel_details", "Find people"), "Search by name or title to find anyone in Hack Club.", nil, "")
 				})
 			}
 			return dirListState(gtx, func(gtx C) D {
@@ -1241,7 +1241,7 @@ func (d *Directories) chansTab(gtx C) D {
 			}
 			if st.q == "" {
 				return dirListState(gtx, func(gtx C) D {
-					return d.emptyState(gtx, "hash", "No channels", "There aren’t any channels to browse yet.", nil, "")
+					return d.emptyState(gtx, "hash", i18n.T("lists", "No channels"), "There aren’t any channels to browse yet.", nil, "")
 				})
 			}
 			return dirListState(gtx, func(gtx C) D {
