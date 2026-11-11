@@ -40,8 +40,8 @@ jobs:
       - name: gio deps and fonts
         run: |
           echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | sudo debconf-set-selections
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq $GIO_DEPS fonts-liberation ttf-mscorefonts-installer
+          sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq
+          sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS fonts-liberation ttf-mscorefonts-installer
           fc-list : family | sort -u | head -80
       - name: tests
         run: |

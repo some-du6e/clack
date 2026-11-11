@@ -33,7 +33,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: gio deps
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: sign-in card screenshots
         env:
           LOGIN_SHOTS_DIR: ${{ github.workspace }}/dist/shots
@@ -59,7 +59,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: gio deps, Mesa, ffmpeg
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS libgl1-mesa-dri libegl-mesa0 ffmpeg
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS libgl1-mesa-dri libegl-mesa0 ffmpeg
       - name: render the introduction (headless, 60 fps)
         env:
           INTRO_VIDEO_DIR: ${{ github.workspace }}/dist/intro
