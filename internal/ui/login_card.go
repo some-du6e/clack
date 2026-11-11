@@ -466,6 +466,11 @@ func (l *loginScreen) subLine() loginLine {
 		return loginLine{s: "Checking your token with Slack."}
 	case l.waiting && l.sso:
 		return loginLine{s: "Finish single sign-on in your browser."}
+	case l.waiting && loginOS == "windows":
+		// Windows asks which app opens a slack:// link when more than one
+		// is registered (Slack desktop, Clack) and none was picked with
+		// Always; one line on the card (385 of its 440 units)
+		return loginLine{s: "Continue in your browser. If Windows asks, pick Clack."}
 	case l.waiting:
 		return loginLine{s: "Continue in your browser."}
 	}
@@ -639,19 +644,26 @@ type loginTip struct {
 }
 
 func (l *loginScreen) tips() []loginTip {
-	handler := "To let your browser open Clack, run clack --register-url-handler once. If Slack’s own app opens instead, run it again."
-	switch loginOS {
-	case "windows":
-		handler = "To let your browser open Clack, run Clack.exe -register-url-handler once. If Slack’s own app opens instead, run it again."
-	case "darwin":
-		handler = "Your browser opens Clack when Slack hands over the link, unless Slack’s own app takes it."
-	}
 	copyLabel := "Copy page link"
 	if l.pageCopied {
 		copyLabel = "Copied"
 	}
+	page := loginTip{icon: "external", text: "Browser didn’t open?", btn: &l.copyPage, label: copyLabel}
+	if loginOS == "windows" {
+		// Only what is known to work on Windows. Clack registers itself
+		// for slack:// at every start, so Windows' "Select an app to open
+		// this 'slack' link" box lists it. Slack's page never shows the
+		// link, so no tip about copying it.
+		return []loginTip{page, {icon: "link", text: "If Windows asks for an app, pick Clack, then Just once or Always."}}
+	}
+	// Linux: clack.desktop lists Clack for x-scheme-handler/slack; Clack
+	// becomes the default only when asked
+	handler := "If your browser asks which app opens the link, choose Clack. To make Clack the default, run clack --register-url-handler."
+	if loginOS == "darwin" {
+		handler = "Your browser opens Clack when Slack hands over the link, unless Slack’s own app takes it."
+	}
 	return []loginTip{
-		{icon: "external", text: "Browser didn’t open?", btn: &l.copyPage, label: copyLabel},
+		page,
 		{icon: "link", text: handler},
 		{icon: "copy", text: "Copied the slack:// link? Switch back to Clack and it signs in."},
 		{icon: "clock", text: "Links work once, for a few minutes. Single sign-on may reopen your browser to finish."},
