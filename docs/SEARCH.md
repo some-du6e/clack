@@ -89,5 +89,15 @@ include:
 - Filters on the Channels and People tabs (channel_type, profile fields);
   Files, Canvases and DMs have Slack's pills since exp-search, and every
   tab but DMs its Sort select.
-- The Texty input (from:@ / in:# completion and filter tokens) and the
-  suggestion action toolbar (Tab).
+- The suggestion action toolbar (Tab), the date picker that
+  `omni_date_quick_filters` opens for before:/after:/on:, the filter
+  pills' icons, and in:'s group DMs, sections and workspaces.
+
+## The box's completers
+
+`popups/search_filter_ac.go` ports ltuT's search-filter completer
+(getMatch, the value lists, getInsertData) and Texty's @ and #
+completers; `search_filter_menu.go` draws the menu and keeps the tokens.
+A pick puts a token's label in the box ("from:@Karim") and the search
+gets its request form ("from:<@U…>"); queries with refs open as tokens
+(`SearchDisplayText` is the top bar's plainTextQuery).
