@@ -158,3 +158,17 @@ func mustJSON(v any) json.RawMessage {
 	b, _ := json.Marshal(v)
 	return b
 }
+
+// A link cell edits like Slack's LinkColumn: its first link, even when it
+// holds several; a date range still can't be edited.
+func TestEditableLinkAndRangeCells(t *testing.T) {
+	link := &Column{ID: "ColL", Key: "ColL", Type: Link}
+	two := &Field{Key: "ColL", Link: []LinkValue{{OriginalURL: "https://a.example"}, {OriginalURL: "https://b.example"}}}
+	if err := Editable(link, two); err != nil {
+		t.Errorf("a cell with two links: %v", err)
+	}
+	date := &Column{ID: "ColD", Key: "ColD", Type: Date, Options: Options{Format: "range"}}
+	if err := Editable(date, &Field{Key: "ColD", Date: []string{"2026-11-01", "2026-11-05"}}); err == nil {
+		t.Error("a date range is editable")
+	}
+}

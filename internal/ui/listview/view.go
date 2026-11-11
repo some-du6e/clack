@@ -78,6 +78,9 @@ type Actions struct {
 type MenuItem struct {
 	Label, Icon string
 	Disabled    bool
+	Divider     bool       // a separator instead of a row
+	Danger      bool       // a destructive row ("Delete list")
+	Sub         []MenuItem // a submenu ("Download CSV" ▸)
 	Do          func()
 }
 
@@ -422,35 +425,6 @@ func (v *View) barAction(key string) {
 	}
 }
 
-func (v *View) openMore() {
-	if v.act.Menu == nil {
-		return
-	}
-	d := v.Doc()
-	var items []MenuItem
-	if d != nil && d.Info.Permalink != "" {
-		link := d.Info.Permalink
-		items = append(items, MenuItem{Label: "Copy link to list", Icon: "link", Do: func() {
-			if v.act.Copy != nil {
-				v.act.Copy(link)
-			}
-		}})
-		items = append(items, MenuItem{Label: "Open in browser", Icon: "external", Do: func() {
-			if v.act.OpenURL != nil {
-				v.act.OpenURL(link)
-			}
-		}})
-	}
-	if v.mode == Side && v.act.FullView != nil {
-		items = append(items, MenuItem{Label: "Open in full view", Icon: "expand", Do: v.act.FullView})
-	}
-	if v.mode == Full && v.act.SideView != nil {
-		items = append(items, MenuItem{Label: "Open in side panel", Icon: "panel-right", Do: v.act.SideView})
-	}
-	items = append(items, MenuItem{Label: "Refresh", Icon: "refresh", Do: v.Reload})
-	v.act.Menu(items)
-}
-
 // layoutList is the loaded list: title header, toolbar, then the view.
 func (v *View) layoutList(gtx layout.Context, d *core.ListDoc) layout.Dimensions {
 	sz := gtx.Constraints.Max
@@ -792,12 +766,31 @@ func (v *View) refineMenu(d *core.ListDoc, lv *lists.View, which string) {
 	v.act.Menu(items)
 }
 
-// rowCache keeps the view's rows until the list, view or search changes.
+// rowCache keeps the view's rows until the list, view, search or the
+// to-dos experiment changes.
 type rowCache struct {
-	doc    *core.ListDoc
-	view   string
-	search string
-	rows   []lists.Row
+	doc       *core.ListDoc
+	view      string
+	search    string
+	gridTodos bool
+	rows      []lists.Row
+}
+
+// gridTodos is isListsGridTodosEnabledForList (client-boot Hm0j vc):
+// lists_grid_todos on and the list is a to-do list. With it, a view
+// hides the completed items unless it shows them (show_completed_items;
+// useGetRecordIdsForViews: u && !showCompletedItems, given a to-do
+// completed column).
+func (v *View) gridTodos(d *core.ListDoc) bool {
+	if !d.Meta.TodoMode || !v.exp("lists_grid_todos") {
+		return false
+	}
+	for _, c := range d.Meta.Schema {
+		if c.Type == lists.TodoCompleted {
+			return true
+		}
+	}
+	return false
 }
 
 func (v *View) rowsFor(d *core.ListDoc, lv *lists.View) []lists.Row {
@@ -806,7 +799,8 @@ func (v *View) rowsFor(d *core.ListDoc, lv *lists.View) []lists.Row {
 		vid = lv.ID
 	}
 	q := strings.TrimSpace(v.search.Text())
-	if v.rows.doc == d && v.rows.view == vid && v.rows.search == q {
+	todos := v.gridTodos(d)
+	if v.rows.doc == d && v.rows.view == vid && v.rows.search == q && v.rows.gridTodos == todos {
 		return v.rows.rows
 	}
 	var top []lists.Record
@@ -819,7 +813,7 @@ func (v *View) rowsFor(d *core.ListDoc, lv *lists.View) []lists.Row {
 	lists.DefaultOrder(rows, vid)
 	env := v.env(d)
 	rows = lists.Apply(&d.Meta, lv, rows, q, env)
-	if d.Meta.TodoMode && lv != nil && lv.ShowCompleted != nil && !*lv.ShowCompleted {
+	if todos && lv != nil && (lv.ShowCompleted == nil || !*lv.ShowCompleted) {
 		var keep []lists.Row
 		for _, r := range rows {
 			if !r.Flat[lists.TodoCompleted].B {
@@ -828,7 +822,7 @@ func (v *View) rowsFor(d *core.ListDoc, lv *lists.View) []lists.Row {
 		}
 		rows = keep
 	}
-	v.rows = rowCache{doc: d, view: vid, search: q, rows: rows}
+	v.rows = rowCache{doc: d, view: vid, search: q, gridTodos: todos, rows: rows}
 	return rows
 }
 

@@ -138,7 +138,7 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `custom_file_sections` | `on` | application `Uk9p` | Files has custom file sections | missing |
 | `file_trash_updates` | `on` | application `Uk9p` FileTrashNotificationButtons | file trash notification buttons | missing |
 | `unified_files_3p_primary_custom_sections` | `on` | client-external-file-view `baaj` PreviewUnavailable | third-party files in custom sections | reads it: `ui/views/files.go:1301` |
-| `canvas_table_of_contents` | `on` | gantry-v2-async-client-boot-shared `65wK` | canvases show a table of contents | missing |
+| `canvas_table_of_contents` | `on` | gantry-v2-async-client-boot-shared `65wK` createInitConfig (Quip feature 188, allowSlackOutline), `tshn` TableOfContentsDrawer, `foOi` QuipEmbed | canvases have Slack's table of contents at the left (two or more entries) and Quip reserves its 64px outline gutter | reads it: `ui/canvasview/toc.go:95` |
 | `lists_tabbing_navigation` | `on` | client-boot `Hm0j` isListsInLaterExperimentEnabled | Tab moves between list cells; the Accessibility pref | reads it: `ui/listview/keys.go:76` |
 | `huddle_join_from_preview` | `on` | client-boot `pSxm` export `M1` | join a huddle from its preview | missing |
 | `huddles_link_v2` | `on` | client-boot `pSxm` export `$A` | huddle links v2 | missing |
@@ -191,22 +191,22 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `native_markdown_rendering` | `on` | client-boot `ry7y` isNativeMarkdownRenderingEnabled | Markdown files render natively | missing |
 | `serverside_markdown_rendering` | `on` | gantry-v2-async-client-boot-shared `v75j` isServersideMarkdownRenderingEnabled | Markdown rendered server-side | missing |
 | `spreadsheet_xml_rendering` | `on` | gantry-v2-async-client-boot-shared `GpJR` isSpreadsheetXmlRenderingEnabled | spreadsheet XML renders | missing |
-| `canvas_blockquote_layout` | `on` | client-boot `XPo1` formatShortcut | canvas blockquote layout | missing |
-| `canvas_comment_only_comment_history` | `on` | gantry-v2-async-client-canvas-activity-h `76nt` | comment history in comment-only canvases | missing |
-| `canvas_comment_only_mode` | `on` | application `Uk9p` | canvases can be comment-only | missing |
-| `canvas_copy_section` | `on` | gantry-v2-async-client-boot-shared `UyiO` isCanvasSmartCardsEnabled | canvas sections can be copied | missing |
-| `canvas_focus_keep_caret` | `on` | gantry-v2-async-client-boot-shared `65wK` | focus keeps the caret | missing |
-| `canvas_self_lockout_speedbump` | `on` | gantry-v2-async-shared-js_modern_compone `mavC` CanvasSelfLockoutSpeedBump | warn before removing your own canvas access | missing |
-| `canvas_shared_link_detection` | `on` | gantry-v2-async-client-boot-shared `65wK` | shared link detection while editing | missing |
-| `canvas_size_limit_save_banner` | `on` | gantry-v2-async-client-boot-shared `foOi` isCanvasSizeLimitSaveBannerEnabled | size-limit save banner | missing |
-| `canvas_version_document_mismatch` | `treatment` | gantry-v2-async-client-boot-shared `vGW/` useShouldShowCanvasVersionHistory | version history mismatch handling | missing |
-| `slackified_checkbox` | `on` | gantry-v2-async-client-boot-shared `65wK` | Slack-styled checkboxes in canvases | missing |
+| `canvas_blockquote_layout` | `on` | client-boot `M6vS` zk, gantry-v2-async-client-boot-shared `foOi` InsertionToolbarFormattingMenu / InsertionToolbarMenu, `c9bJ` QuipFloatingFormattingBar (Quip feature 197) | the blockquote is a layout: its own floating-bar button, out of the block-style and Aa menus, into Insert | reads it: `ui/canvasview/edit.go:1224`, `ui/canvasview/edit.go:1346`, `ui/canvasview/edit.go:1417` |
+| `canvas_comment_only_comment_history` | `on` | gantry-v2-async-client-canvas-activity-history-view `76nt` QuipActivityHistoryVersionRow | comment rows in a canvas's version history | B: Clack has no canvas version history or comments |
+| `canvas_comment_only_mode` | `on` | gantry-v2-async-client-boot-shared `CQK3` QuipAccessIndicator, `OJGk` useGetAccessOptions, `c9bJ`, application `Uk9p`, client-boot `2m30` canAddReaction | canvases can be comment-only: "Comment only" and Request Comment Access, a Can comment access level, a comment toolbar | reads it: `ui/canvasview/access.go:82` (the indicator and its popover). Can comment isn't offered: canvases.access.set takes read, write and owner only; the comment toolbar needs comments |
+| `canvas_copy_section` | `on` | gantry-v2-async-client-boot-shared `UyiO` isCanvasCopySectionGroupOn, `HHTx` getCopyObjectMenuItemTemplate | Copy section in every section's gutter menu (off: only an embedded object's) | B: Clack has no section gutter menu |
+| `canvas_focus_keep_caret` | `on` | gantry-v2-async-client-boot-shared `65wK` createInitConfig (Quip feature 9210, restoreCaretOnFocus) | the canvas's caret comes back where it was when the document regains focus | B: Clack edits one block in its own editor, which keeps its caret; there is no document-wide contenteditable to lose it |
+| `canvas_self_lockout_speedbump` | `on` | gantry-v2-async-shared-js_modern_components_share-dialogs_canvas_canvas-share-dialog_tsx `mavC` CanvasSelfLockoutSpeedBump | warn before a share-dialog change removes or lowers your own access | B: Clack's share menu only adds access; there is no access management to lock yourself out with |
+| `canvas_shared_link_detection` | `on` | gantry-v2-async-client-boot-shared `65wK` createInitConfig (Quip feature 9212, useSharedLinkDetection) | Quip linkifies typed URLs with the shared link detector | B: Quip's own linkifier; Clack's canvas editor is the composer's, and canvases.edit's markdown makes the links |
+| `canvas_size_limit_save_banner` | `on` | gantry-v2-async-client-boot-shared `foOi` isCanvasSizeLimitSaveBannerEnabled, OfflineSystemMessage | a save Quip rejects as "Document too large" gets the sticky size-limit banner (off: "We’re experiencing issues saving edits") | missing: canvases.edit's error for an oversized canvas isn't documented, and Clack has no QuipSystemMessage banner (failed saves toast) |
+| `canvas_version_document_mismatch` | `treatment` | gantry-v2-async-client-boot-shared `vGW/` useShouldShowCanvasVersionHistory | version history shows only for the canvas the window's version belongs to | B: Clack has no canvas version history |
+| `slackified_checkbox` | `on` | gantry-v2-async-client-boot-shared `65wK` createInitConfig (Quip feature 178, useSlackCheckboxes), canvas-controller CSS `li.slackified-checkbox` | Slack's checklist checkboxes (off: the browser's own) | reads it: `ui/canvasview/render.go:610`, `ui/canvasview/render.go:666` |
 | `list_full_version_restore` | `off` | client-boot `Hm0j` isListVersionRestoreEnabled | off: no full version restore | default: in `off` Slack keeps its default, as Clack does |
-| `list_template_conversions` | `on` | client-boot `Hm0j` isListsSupervisorEnabledForList | list template conversions | missing |
-| `lists_export_enrichment` | `on` | gantry-v2-async-client-boot-shared `57SI` | richer list export | missing |
-| `lists_file_backed_templates` | `on` | client-boot `Hm0j` isListTemplateConversionsEnabled | file-backed list templates | missing |
-| `lists_grid_todos` | `on` | client-boot `Hm0j` isListsAutomationsEntrypointsEnabled | grid to-dos | missing |
-| `lists_sub_tasks` | `on` | client-boot `Hm0j` isListsNewTodoWorkflowsEnabled | list sub-tasks | missing |
+| `list_template_conversions` | `on` | client-boot `Hm0j` isListTemplateConversionsEnabled / isListTemplateCreationPermitted, gantry-v2-async-client-boot-shared `57SI` MoreActionsMenu | More actions has Convert to a template / Revert template to a list | missing: also needs the CREATE_LIST_TEMPLATE feature permission, which Clack doesn't load |
+| `lists_export_enrichment` | `on` | gantry-v2-async-client-boot-shared `57SI` MoreActionsMenu, DownloadModal | More actions' Download opens a modal (CSV or JSON; archived items, threads, attachments); off: Download CSV ▸ with or without archived items | reads it: `ui/listview/more.go:101` |
+| `lists_file_backed_templates` | `on` | client-boot `Hm0j` isListsFileBackedTemplatesEnabled, gantry-v2-async-client-boot-shared `o9il` fetchTemplates | list templates come from template_files / starter_template_files (the sales tracker replaces the contact trackers) | reads it: `core/lists.go:794` |
+| `lists_grid_todos` | `on` | client-boot `Hm0j` isListsGridTodosEnabled / isListsGridTodosEnabledForList, gantry-v2-async-client-boot-shared `K7k9` (the grid), `fuYI` / `wr4u` (new lists), `KXel` DateToken, `vhOn` column editors | to-do lists in the grid: completed items hidden per view, new lists in to-do mode, due-date tokens | reads it: `ui/listview/view.go:785` (completed items), `ui/listview/picker.go:481` (a tab's new list); the due-date tokens, column editors and Edit view switch aren't drawn |
+| `lists_sub_tasks` | `on` | client-boot `Hm0j` isListsSubTasksEnabled, gantry-v2-async-client-boot-shared `K7k9` ThreadIndicator / ListPrimaryColumnActions / BoardLaneFooter, client-list-record-details `2kGA` | subtasks: their rows and counts, the new thread indicator | missing: Clack loads subtasks but doesn't draw them |
 | `huddles_alone_timeout` | `on` | client-boot `pSxm` export `JQ` | leave a huddle after being alone | missing |
 | `huddles_av_button_permission_handling` | `on` | client-boot `pSxm` export `yc` | A/V buttons handle OS permissions | missing |
 | `huddles_awareness_timestamp` | `on` | client-boot `pSxm` export `gG` | huddle awareness shows a timestamp | missing |
@@ -332,13 +332,15 @@ Each package is one area, for one agent. "Files" are where the work lands; sever
 ### Canvases (11)
 
 - Files: internal/ui/canvasview/, internal/canvas/
-- To do (11): `canvas_table_of_contents`, `canvas_blockquote_layout`, `canvas_comment_only_comment_history`, `canvas_comment_only_mode`, `canvas_copy_section`, `canvas_focus_keep_caret`, `canvas_self_lockout_speedbump`, `canvas_shared_link_detection`, `canvas_size_limit_save_banner`, `canvas_version_document_mismatch`, `slackified_checkbox`
+- Clack reads (4): `canvas_table_of_contents`, `canvas_blockquote_layout`, `canvas_comment_only_mode`, `slackified_checkbox` (branch exp-canvas-lists)
+- To do (1): `canvas_size_limit_save_banner` (needs canvases.edit's too-large error and the QuipSystemMessage banner)
+- Read, but they gate Quip editor or canvas surfaces Clack doesn't have (6): `canvas_comment_only_comment_history`, `canvas_copy_section`, `canvas_focus_keep_caret`, `canvas_self_lockout_speedbump`, `canvas_shared_link_detection`, `canvas_version_document_mismatch`
 
 ### Lists (7)
 
 - Files: internal/ui/listview/, internal/lists/
-- To do (5): `list_template_conversions`, `lists_export_enrichment`, `lists_file_backed_templates`, `lists_grid_todos`, `lists_sub_tasks`
-- Clack reads already (1): `lists_tabbing_navigation`
+- To do (2): `list_template_conversions` (the CREATE_LIST_TEMPLATE permission), `lists_sub_tasks` (subtask rows)
+- Clack reads already (4): `lists_tabbing_navigation`, `lists_export_enrichment`, `lists_file_backed_templates`, `lists_grid_todos` (the last three: branch exp-canvas-lists; `lists_grid_todos` in part)
 
 ### Huddles (17)
 

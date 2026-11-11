@@ -934,6 +934,9 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	}
 	if !hooked {
 		out = s.handle(method, form, edge)
+		if method == "experiments.getByUser" {
+			out = withAccountExperiments(out) // experiments.go
+		}
 	}
 	if out == nil {
 		out = map[string]any{"ok": true}
