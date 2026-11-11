@@ -8,6 +8,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -61,6 +62,7 @@ func newActShell(t *testing.T) *actShellEnv {
 		{ID: fakeslack.SelfID, Name: "self", RealName: "Test Self"},
 		{ID: "U0FAKE00001", Name: "ada", RealName: "Ada Example"},
 		{ID: "U0FAKE00002", Name: "grace", RealName: "Grace Example"},
+		{ID: "USLACKBOT", Name: "slackbot", RealName: "Slackbot", IsBot: true},
 	})
 	s.PutConv(slack.Conversation{ID: fakeslack.ViewsChannel, Name: "views-fixtures", IsChannel: true, IsMember: true, NumMembers: 3})
 	s.PutConv(slack.Conversation{ID: "D0FAKE00000", IsIM: true, User: "U0FAKE00001", IsMember: true})
@@ -145,18 +147,30 @@ func (e *actShellEnv) activity() *views.Activity {
 	return v
 }
 
+// actItemKinds are the column's kinds for an opened Activity item: its
+// conversation, its thread, or its own detail.
+var actItemKinds = []secKind{secChannel, secThread, secActivity}
+
 // openRow clicks down the list until a row opens beside the inbox in the
-// app's secondary column.
-func (e *actShellEnv) openRow() {
+// app's secondary column as one of kinds (any item's when none).
+func (e *actShellEnv) openRow(kinds ...secKind) {
 	e.t.Helper()
+	if len(kinds) == 0 {
+		kinds = actItemKinds
+	}
 	x := e.sz.X / 3
 	for y := 200; y < e.sz.Y-40; y += 30 {
 		e.click(image.Pt(x, y))
-		if e.a.secondary.open() && (e.a.secondary.kind == secChannel || e.a.secondary.kind == secThread) {
+		if e.a.secondary.open() && slices.Contains(kinds, e.a.secondary.kind) {
 			return
 		}
 	}
-	e.t.Fatalf("no row opened in the secondary column (secondary %+v)", e.a.secondary.kind)
+	e.t.Fatalf("no row opened in the secondary column as %v (secondary %v)", kinds, e.a.secondary.kind)
+}
+
+// itemOpen reports whether the column shows an Activity item.
+func (e *actShellEnv) itemOpen() bool {
+	return e.a.secondary.open() && slices.Contains(actItemKinds, e.a.secondary.kind)
 }
 
 // GMkG with activity_inbox_remove_persistent_detail_panel: an item opens
@@ -169,7 +183,7 @@ func TestActivityItemOpensBesideTheInbox(t *testing.T) {
 	e.until("the activity view", func() bool { return e.activity() != nil })
 	e.until("the activity feed", func() bool { return e.fs.CallCount("activity.feed") > 0 })
 	e.frames(20)
-	e.openRow()
+	e.openRow(secChannel, secThread)
 	panel := e.sz.X
 	if w := e.a.secondary.drawnW; w < panel/4 || w > panel*3/5 {
 		t.Errorf("the column is %d px of a %d px window, want about half the region", w, panel)
@@ -186,6 +200,16 @@ func TestActivityItemOpensBesideTheInbox(t *testing.T) {
 	if e.a.secondary.open() {
 		t.Error("⌘. didn't close the item beside the inbox")
 	}
+	// an item without a conversation (a reminder, a system notification)
+	// opens its own detail there too, never in half of the inbox
+	e.openRow(secActivity)
+	if w := e.a.secondary.drawnW; w < panel/4 || w > panel*3/5 {
+		t.Errorf("the detail's column is %d px of a %d px window", w, panel)
+	}
+	e.key(".", key.ModShortcut)
+	if e.a.secondary.open() {
+		t.Error("⌘. didn't close the detail beside the inbox")
+	}
 	// every window width: the column never covers the inbox
 	for _, w := range []int{900, 1100, 1347, 1700, 2200} {
 		e.sz = image.Pt(w, 853)
@@ -195,6 +219,16 @@ func TestActivityItemOpensBesideTheInbox(t *testing.T) {
 			t.Errorf("window %d: column %d px leaves the inbox under 300", w, dw)
 		}
 		e.key(".", key.ModShortcut)
+	}
+	// the column is the Activity tab's: leaving the tab closes a
+	// conversation or a detail opened there (forceTab ActivityInbox)
+	e.sz = image.Pt(1347, 853)
+	e.frames(3)
+	e.openRow(secChannel, secActivity)
+	e.a.Navigate("c/" + fakeslack.ViewsChannel)
+	e.frames(3)
+	if k := e.a.secondary.kind; k == secChannel || k == secActivity {
+		t.Errorf("the Activity item (%v) stayed open on %s", k, e.a.router.Current())
 	}
 }
 
@@ -210,6 +244,13 @@ func TestActivityGlobalShortcutsLikeSlack(t *testing.T) {
 	e.until("the activity view", func() bool { return e.activity() != nil })
 	e.until("the activity feed", func() bool { return e.fs.CallCount("activity.feed") > 0 })
 	e.frames(20)
+	// ⌥↓ with nothing focused: N8Zu binds it for the whole tab, opening
+	// the first item when none is
+	e.key(key.NameDownArrow, key.ModAlt)
+	if !e.itemOpen() || e.a.router.Current().Page() != "activity" {
+		t.Errorf("⌥↓ on Activity, nothing focused: secondary %v, route %s", e.a.secondary.kind, e.a.router.Current())
+	}
+	e.key(".", key.ModShortcut)
 	e.openRow() // the press on a row also focuses the list
 	n := len(e.a.overlays)
 	e.key("K", key.ModShortcut)
@@ -249,6 +290,9 @@ func TestActivityGlobalShortcutsLikeSlack(t *testing.T) {
 	e.key(key.NameDownArrow, key.ModAlt)
 	if e.a.router.Current() != route {
 		t.Errorf("⌥↓ on Activity left for %s (the shell's next conversation)", e.a.router.Current())
+	}
+	if !e.itemOpen() {
+		t.Errorf("⌥↓ on Activity didn't open the next item beside the inbox (secondary %v)", e.a.secondary.kind)
 	}
 	// ⌘[ goes back to the channel Activity was opened from
 	e.key("[", key.ModShortcut)

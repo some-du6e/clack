@@ -163,7 +163,7 @@ def dense(r):
         '<div class="activity_single_line_row_content__center__WBCP5"><div class="activity_single_line_row_content__message__HXQKj">%s</div>'
         '<div class="activity_single_line_row_content__meta__MHnKl"><span class="activity_single_line_row_content__timestamp__CNEsv">%s</span>%s</div></div>'
         "</div></div></div>"
-        % (C, GROUPED, state, inner, avatar(20, 4), sender(r, True), badge(r), icon, body(r, True), html.escape(r["Time"]), loc))
+        % (C, GROUPED, state, inner, avatar(20, 4), sender(r, True), badge(r), icon, body(r, True), html.escape(r.get("TimeNarrow") or r["Time"]), loc))
 
 
 def page(kind, dark):

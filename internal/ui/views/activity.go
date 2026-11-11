@@ -139,13 +139,16 @@ type actDesc struct {
 	avatar    string
 	tile      bool // channel tile instead of an avatar
 	at        time.Time
-	when      string // non-relative timestamp
-	title     string // conversation title
-	topic     string
-	thread    string // thread ts the item opens into
-	invite    bool
-	dm        bool
-	hay       string // lower-cased search haystack
+	when      string // non-relative timestamp (timestamp_variant_wide)
+	// whenNarrow is when's narrow variant (timestamp_variant_narrow: a
+	// container 285px or narrower, the Dense timestamp)
+	whenNarrow string
+	title      string // conversation title
+	topic      string
+	thread     string // thread ts the item opens into
+	invite     bool
+	dm         bool
+	hay        string // lower-cased search haystack
 }
 
 type actRow struct {
@@ -592,6 +595,7 @@ func (v *Activity) update(gtx C) {
 		}
 	}
 	if v.closeBtn.Clicked(gtx) {
+		v.closeSecondary() // the detail's close, drawn in the app's column
 		v.selOK = false
 	}
 	v.followSecondary() // activity_panel.go
@@ -937,20 +941,6 @@ func actReplies(n int, adj string) string {
 	return s + w
 }
 
-// actRel is Slack's relative row time for items under an hour old, and
-// how long until it changes.
-func actRel(age time.Duration) (string, time.Duration) {
-	if age < time.Minute {
-		return "Just now", time.Minute - age
-	}
-	m := int(age / time.Minute)
-	left := time.Minute - age%time.Minute
-	if m == 1 {
-		return "1 min", left
-	}
-	return strconv.Itoa(m) + " mins", left
-}
-
 // actStamp is the message timestamp next to a name: "3:04 PM" today, else
 // "Nov 4th at 3:04 PM" (with the year when it differs).
 func actStamp(t time.Time) string {
@@ -986,7 +976,7 @@ func (v *Activity) isUnread(it *core.ActivityItem, key string) bool {
 
 func (v *Activity) describe(it *core.ActivityItem, refs map[string]core.ConvRef) actDesc {
 	d := actDesc{at: tsTime(it.FeedTS), thread: actThread(it)}
-	d.when = listTime(d.at)
+	d.when, d.whenNarrow = actWhen(time.Now(), d.at, false), actWhen(time.Now(), d.at, true) // activity_time.go
 	kind := ""
 	if it.Channel != "" {
 		d.title = v.convTitle(it.Channel, refs)
@@ -2435,14 +2425,17 @@ func (n *actNotes) drain(h Host) {
 	}
 }
 
-func (v *Activity) rowWhen(gtx C, d *actDesc) string {
+func (v *Activity) rowWhen(gtx C, d *actDesc, narrow bool) string {
 	if d.at.IsZero() {
 		return ""
 	}
-	if age := gtx.Now.Sub(d.at); age >= 0 && age < time.Hour {
+	if age := gtx.Now.Sub(d.at); age < time.Hour { // rK: "Just now" from the future too
 		s, left := actRel(age)
 		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(left)})
 		return s
+	}
+	if narrow {
+		return d.whenNarrow
 	}
 	return d.when
 }
@@ -2474,7 +2467,8 @@ func (v *Activity) rowContent(gtx C, r *actRow) D {
 // column (padding 5px 0 2px), 8px from the stack.
 func (v *Activity) detailedContent(gtx C, r *actRow) D {
 	d, unread := r.cur, r.unread
-	bodyCol, when := r.bodyCol, v.rowWhen(gtx, d)
+	// the row is the timestamp's container (activity_multi_line_row_content)
+	bodyCol, when := r.bodyCol, v.rowWhen(gtx, d, gtx.Constraints.Max.X <= gtx.Dp(actNarrowW))
 	return layout.Inset{Top: 12, Bottom: 12, Left: 16, Right: 20}.Layout(gtx, func(gtx C) D {
 		return row(gtx, layout.Start,
 			layout.Rigid(func(gtx C) D {
@@ -2575,7 +2569,8 @@ const actDenseH unit.Dp = 50
 // hidden while the row is hovered).
 func (v *Activity) denseContent(gtx C, r *actRow) D {
 	d, unread := r.cur, r.unread
-	bodyCol, when := r.bodyCol, v.rowWhen(gtx, d)
+	// the 54px timestamp is its own container: the narrow variant
+	bodyCol, when := r.bodyCol, v.rowWhen(gtx, d, true)
 	hov := r.click.Hovered() || r.bar.Hovered()
 	g := gtx
 	g.Constraints = layout.Exact(image.Pt(gtx.Constraints.Max.X, gtx.Dp(actDenseH))) // the bottom border is drawn inside

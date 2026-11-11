@@ -18,6 +18,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/views"
 )
@@ -59,6 +60,48 @@ func (a *App) OpenChannelSecondary(ch string) {
 	a.secondary = secondaryState{kind: secChannel, channel: ch, width: s.width}
 	a.secondary.view = &secConvPane{a: a, ch: ch}
 	a.Invalidate()
+}
+
+// secActivity is the column's kind for an Activity item without a
+// conversation (a reminder, a system notification).
+const secActivity secKind = 66
+
+// secDetailPane draws an Activity item's own detail in the column: Slack
+// opens those there too (ActivityLaterReminderDetailsView,
+// ActivitySystemNotificationView, with forceRenderInSecondary).
+type secDetailPane struct {
+	key  string
+	draw layout.Widget
+}
+
+func (p *secDetailPane) Layout(gtx layout.Context) layout.Dimensions { return p.draw(gtx) }
+
+// OpenDetailSecondary shows draw, the Activity view's detail for item
+// key, in the secondary column (views.ActivitySecondary).
+func (a *App) OpenDetailSecondary(key string, draw layout.Widget) {
+	if key == "" || draw == nil {
+		return
+	}
+	a.secondary = secondaryState{kind: secActivity, width: a.secondary.width}
+	a.secondary.view = &secDetailPane{key: key, draw: draw}
+	a.Invalidate()
+}
+
+// SecondaryShowsDetail reports whether the column shows item key's detail
+// (views.ActivitySecondary).
+func (a *App) SecondaryShowsDetail(key string) bool {
+	p, ok := a.secondary.view.(*secDetailPane)
+	return ok && a.secondary.kind == secActivity && a.secondary.open() && p.key == key
+}
+
+// leaveActivitySecondary closes what the Activity tab opened beside the
+// inbox when the route leaves the tab (GMkG opens it with forceTab
+// ActivityInbox: it is the tab's, not the next page's). A thread stays as
+// any thread pane does (afterRoute).
+func (a *App) leaveActivitySecondary(r Route) {
+	if k := a.secondary.kind; (k == secChannel || k == secActivity) && r.Page() != "activity" {
+		a.secondary = secondaryState{width: a.secondary.width}
+	}
 }
 
 // SecondaryShows reports whether the secondary column shows conversation
@@ -121,5 +164,61 @@ func (a *App) secChannelFocused(gtx layout.Context) bool {
 // activityTab reports whether the Activity tab is shown (Slack's
 // ClientKeyboardShortcutsActivity keymap).
 func (a *App) activityTab() bool { return a.router.Current().Page() == "activity" }
+
+// activityStep is the Activity tab's option+up/down (N8Zu
+// ClientKeyboardShortcutsActivity; Slack's global keymap PG1Q has none):
+// the inbox's previous / next item, unread with shift, wherever the focus
+// is in the tab. It reports whether the tab is shown.
+func (a *App) activityStep(dir int, unread bool) bool {
+	if !a.activityTab() {
+		return false
+	}
+	if v, ok := a.views[a.router.Current()].(interface{ StepItem(dir int, unread bool) }); ok {
+		v.StepItem(dir, unread)
+	}
+	return true
+}
+
+// secComposerEd is the editor of the secondary column's conversation or
+// thread composer when it has the key focus, else nil.
+func (a *App) secComposerEd(gtx layout.Context) *composer.Editor {
+	s := &a.secondary
+	if !s.open() || (s.kind != secThread && s.kind != secChannel) {
+		return nil
+	}
+	k := s.channel + "/"
+	if s.kind == secThread {
+		k += s.ts
+	}
+	c := a.convos[k]
+	if c == nil {
+		return nil
+	}
+	for _, cv := range []composerView{c.edit, c.comp} {
+		if cv == nil {
+			continue
+		}
+		if ft, ok := cv.(interface{ FocusTag() any }); ok {
+			if ed, ok := ft.FocusTag().(*composer.Editor); ok && gtx.Focused(ed) {
+				return ed
+			}
+		}
+	}
+	return nil
+}
+
+// composerEdgeOK is ddmY's rule for the Activity tab's option+up/down over
+// a focused composer: through an empty one, over one with text only from
+// its start (up) or its end (down).
+func composerEdgeOK(ed *composer.Editor, up bool) bool {
+	if ed == nil || ed.Empty() {
+		return true
+	}
+	_, caret := ed.Selection()
+	if up {
+		return caret == 0
+	}
+	return caret >= ed.Doc().Len()
+}
 
 var _ views.ActivitySecondary = (*App)(nil)

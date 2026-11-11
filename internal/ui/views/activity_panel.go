@@ -39,6 +39,12 @@ import (
 type ActivitySecondary interface {
 	OpenChannelSecondary(ch string)
 	SecondaryShows(ch, ts string) bool
+	// OpenDetailSecondary shows draw, the view's own detail for item key
+	// (one without a conversation: a reminder, a system notification), in
+	// the column, as Slack opens those (ActivityLaterReminderDetailsView,
+	// ActivitySystemNotificationView).
+	OpenDetailSecondary(key string, draw layout.Widget)
+	SecondaryShowsDetail(key string) bool
 }
 
 // openSecondary opens the chosen item in the app's secondary column
@@ -46,18 +52,29 @@ type ActivitySecondary interface {
 func (v *Activity) openSecondary() {
 	v.selSec, v.selOut = false, false
 	sh, ok := v.h.(ActivitySecondary)
-	if !ok || !v.selOK || v.sel.Channel == "" || !v.h.Core().ActivityRemovePersistentDetailPanel() {
+	if !ok || !v.selOK || !v.h.Core().ActivityRemovePersistentDetailPanel() {
 		return
 	}
-	if t := v.selDesc.thread; t != "" {
-		v.h.OpenThread(v.sel.Channel, t)
-	} else {
+	switch {
+	case v.sel.Channel == "":
+		sh.OpenDetailSecondary(v.selKey, v.pane)
+	case v.selDesc.thread != "":
+		v.h.OpenThread(v.sel.Channel, v.selDesc.thread)
+	default:
 		sh.OpenChannelSecondary(v.sel.Channel)
 	}
 	// the app shows it: in the column beside the inbox, or in the split
 	// view (opened from there, or with the split modifier click)
 	v.selOut = true
-	v.selSec = sh.SecondaryShows(v.sel.Channel, v.selDesc.thread)
+	v.selSec = v.secondaryShows(sh)
+}
+
+// secondaryShows reports whether the app's column shows the chosen item.
+func (v *Activity) secondaryShows(sh ActivitySecondary) bool {
+	if v.sel.Channel == "" {
+		return sh.SecondaryShowsDetail(v.selKey)
+	}
+	return sh.SecondaryShows(v.sel.Channel, v.selDesc.thread)
 }
 
 // closeSecondary closes the item's secondary view (the selected row
@@ -75,15 +92,15 @@ func (v *Activity) followSecondary() {
 	if !v.selOK || !v.selSec {
 		return
 	}
-	if sh, ok := v.h.(ActivitySecondary); !ok || !sh.SecondaryShows(v.sel.Channel, v.selDesc.thread) {
+	if sh, ok := v.h.(ActivitySecondary); !ok || !v.secondaryShows(sh) {
 		v.selOK, v.selSec = false, false
 	}
 }
 
 // paneInView reports whether the opened item shows in the view's own
-// pane beside the list: with the inbox full width, only when the app
-// didn't take it (no conversation, or a Host without a secondary column).
-// An item the app opened elsewhere never halves the inbox.
+// pane beside the list: only when the app didn't take it (a Host without
+// a secondary column, or the experiment off). An item the app opened
+// never halves the inbox.
 func (v *Activity) paneInView() bool { return v.selOK && !v.selOut }
 
 // pageWidth is the Activity page's width: the view's, or its sidebar
