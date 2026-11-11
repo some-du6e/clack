@@ -8,7 +8,7 @@ Every Taut plugin (https://github.com/jeremy46231/taut at `6fe5123`, which is up
 - **CI.** `taut` (every plugin built with Taut's `build:user-plugin`, imported unmodified, started, its hooks checked, `behaviour` checks for most), `composer-taut`, `popups-taut`, `messages-taut` and `ui-taut` (the real call sites), and the plugin bench (`docs/PLUGIN-BENCH.md`: each plugin both systems ship, run in the whole client over `internal/fakeslack`).
 - **No live Slack runs** (policy for this pass). Nothing below was seen on real Slack.
 
-Legend: ✅ does what it does in Slack · ⚠️ partly (what's missing is listed) · ❌ no visible effect in Clack (why) · — not applicable.
+Legend: ✅ does what it does in Slack · ⚠️ partly (what's missing is listed) · ❌ no visible effect in Clack (why) · n/a: not applicable.
 
 ## Plugins
 
@@ -28,7 +28,7 @@ Legend: ✅ does what it does in Slack · ⚠️ partly (what's missing is liste
 | Experiments | ✅ | A Preferences tab with every experiment assignment and overrides (`Experiments.tsx:147`) | The tab lists the account's assignments; an override reaches core and changes Clack at once | TestExperimentsPluginsDriveClack. |
 | FasterSlack | ✅ | Pauses Slack's top-nav layout work while the window resizes (`FasterSlack.ts:27`, `:36`) | Nothing to pause: Clack's layout is native and has no lag; the plugin finds no `.p-ia4_top_nav__left_container` in the JS document and stands down | Nothing visible by design. |
 | HaikuWarning | ✅ (fixed) | A yellow banner over the composer while your draft is a haiku Orpheus would repeat; or a pop-up when you send (`HaikuWarning.tsx:89`, `:146`) | Both: the banner over the composer (BaseContextBarV2), styled with Slack's context bar rules, and the send check | Was ❌: the drafts slice was keyed by server draft id and only updated after a sync, so the banner never saw your text. `taut` HaikuWarning/behaviour. |
-| HuddleActivity | — | Logs who did what in a huddle (joins, mutes, settings) and toasts it (`HuddleActivity.tsx:108-563`) | Out of scope (huddle media): Clack's huddle has no event log or captions menus to patch | |
+| HuddleActivity | n/a | Logs who did what in a huddle (joins, mutes, settings) and toasts it (`HuddleActivity.tsx:108-563`) | Out of scope (huddle media): Clack's huddle has no event log or captions menus to patch | |
 | HumanCount | ✅ | The header's member count leaves apps (and optionally guests) out (`HumanCount.tsx:24`) | Same (BaseAvatarStack memberCount from `membershipCounts`) | `taut` HumanCount/behaviour, bench. |
 | IdvStatus | ✅ | Wavy red/orange underline under people who aren't IDV-eligible / are over 18 (`IdvStatus.tsx:43`, `:88`) | The class reaches the sender and the wavy underline is painted | `messages-taut` TestPluginIdvStatusSenderClick; asks identity.hackclub.com. |
 | InvisibleForward | ✅ | Slack links at the start of a message are sent invisible (`InvisibleForward.tsx:19`) | Same, on every send | `composer-taut`, `taut`. |
@@ -43,7 +43,7 @@ Legend: ✅ does what it does in Slack · ⚠️ partly (what's missing is liste
 | QuickJoin | ✅ | "Join channel" in the right-click menu of channels you're not in (`QuickJoin.tsx:29`) | Same, in the channel menus (a channel link's right-click menu among them) | `popups-taut` QuickJoin, bench. |
 | RealMarkdown | ✅ | Standard Markdown as you type (`RealMarkdown.ts:17`) | Same | `composer-taut` TestTautRealMarkdown. |
 | RestrictedChannelWarning | ✅ | Admins see the "Only certain people can post" box, with Post anyway (`RestrictedChannelWarning.tsx:51-88`) | Same | Bench pass. |
-| ShinigamiEyes | — | Disabled upstream (`.disabled.tsx`): broken since the Hackatime API changed | Loads and does nothing without an API token, as in Taut | |
+| ShinigamiEyes | n/a | Disabled upstream (`.disabled.tsx`): broken since the Hackatime API changed | Loads and does nothing without an API token, as in Taut | |
 | ShowRealUser | ✅ | Messages a relay bot posted for someone show that person (`ShowRealUser.tsx:175-212`) | Same, from the message's metadata | Bench: "a relay bot's message credits the person". |
 | ShowSendingBot | ✅ | The bot that sent a person's message, as a badge on their avatar (`ShowSendingBot.tsx:256-444`) | Same, on rows and grouped rows | `messages-taut` TestPluginShowSendingBot, bench. |
 | ShutUpSlackbot | ✅ | Marks Slackbot's "an app took over your slash command" DMs read and silences them (`ShutUpSlackbot.ts:32-78`) | Same | `messages-taut`, `taut`, bench. |
