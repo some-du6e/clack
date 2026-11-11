@@ -44,8 +44,12 @@ func TestThreadsAuditBlockKit(t *testing.T) {
 		app.S.PutConv(slack.Conversation{ID: ch, Name: "meta", IsChannel: true, IsMember: true, NumMembers: 40})
 		app.S.PutBot("B0VOTE0001", store.BotInfo{Name: "Vote Bot", Icon: shotAvatar("B0VOTE0001")})
 		day := time.Now()
+		hour := 10
+		if dark { // blockkit keeps a message's element host by channel/ts across hosts: a ts of its own per theme
+			hour = 11
+		}
 		at := func(h, m int) string {
-			return fmt.Sprintf("%d.000100", time.Date(day.Year(), day.Month(), day.Day(), h, m, 0, 0, time.Local).Unix())
+			return fmt.Sprintf("%d.000100", time.Date(day.Year(), day.Month(), day.Day(), h-10+hour, m, 0, 0, time.Local).Unix())
 		}
 		root := slack.Message{Type: "message", TS: at(10, 0), User: "UANA00001", Text: "Proposal: move standup to 10am",
 			Blocks: shotRich(shotSection("Proposal: move standup to 10am"))}
