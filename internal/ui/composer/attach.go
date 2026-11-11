@@ -196,6 +196,7 @@ type attachments struct {
 	mu    sync.Mutex
 	chips []*attChip
 	total int64
+	gifs  []*draftGif // the draft's GIFs (gifs.go)
 
 	picking atomic.Bool
 	pasting atomic.Bool
@@ -298,7 +299,7 @@ func (a *attachments) putBack(chips []*attChip) {
 func (a *attachments) Clear() {
 	a.mu.Lock()
 	gone := a.chips
-	a.chips, a.total = nil, 0
+	a.chips, a.total, a.gifs = nil, 0, nil
 	a.mu.Unlock()
 	a.dropPreviews(gone...)
 	a.h.Invalidate()
@@ -670,15 +671,15 @@ func attOneDecimal(f float64) string {
 //     (productivity_email_in_composer), Poll (polls);
 //   - Upload from your computer (laptop; ⌘O / Ctrl+O in the desktop app).
 //
-// Clack draws the rows it can run Slack's way: Text snippet and Upload
-// from your computer, then the app shortcuts. Not drawn, because the
-// surface they open isn't in Clack: the file rows (UnifiedFilePicker,
-// the canvas picker, the composer's list insert, the recent-files menu),
-// GIF (Clack's GIF picker sends a GIF at once; Slack's adds it to the
-// draft's gifUnfurls), Workflow (no workflow picker), the clip rows (no
-// recorder) and the Calendar, Salesforce, Email and Poll rows (their
-// gates are off for the account). Slack has no "Paste image from
-// clipboard" row (pasting does that).
+// Clack draws the rows it can run Slack's way: GIF (with the GIF
+// picker: its GIFs tab, the picked GIF added to the draft, gifs.go),
+// Text snippet, Workflow and Upload from your computer, then the app
+// shortcuts. Not drawn, because the surface they open isn't in Clack: the
+// file rows (UnifiedFilePicker, the canvas picker, the composer's list
+// insert, the recent-files menu), Enable GIFs for your team (admins and
+// owners only), the clip rows (no recorder) and the Calendar,
+// Salesforce, Email and Poll rows (their gates are off for the account).
+// Slack has no "Paste image from clipboard" row (pasting does that).
 
 // ShortcutItems, when set (internal/ui/blockkit), adds the app
 // shortcuts section to the "+" menu for channel ch: recent global
@@ -693,17 +694,32 @@ var WorkflowItem func(h popups.Host, ch string, insert func(text, url string)) *
 // plusMenu is what the composer hands the + menu.
 type plusMenu struct {
 	ch      string
-	snippet func() // Text snippet: the snippet dialog
+	snippet func()                // Text snippet: the snippet dialog
+	gif     func(image.Rectangle) // GIF: the GIF picker at the menu's target (nil: no GIF picker)
+	anchor  image.Rectangle       // the + button, window coordinates (Menu sets it)
 }
 
+// gifNewBadge is how often the GIF row shows its "New" tag
+// (seen_gif_new_badge < 3).
+const gifNewBadge = 3
+
 // plusMenuItems is useComposerIAFormatter's rows that Clack draws, in
-// Slack's order: Text snippet, Workflow, Upload from your computer.
+// Slack's order: GIF, Text snippet, Workflow, Upload from your computer.
 func (a *attachments) plusMenuItems(pm plusMenu) []popups.MenuItem {
 	// Slack's own labels: "Ctrl+Shift+Enter" / "⌘⇧Enter" (a literal,
 	// ⌘ before ⇧, unlike AppKit's order that shortcut.Format follows) and
 	// "Ctrl+O" / "⌘O"
 	snippetKey, uploadKey := shortcut.FormatAsWritten("Mod+Shift+Enter"), shortcut.Format("Mod+O")
 	var items []popups.MenuItem
+	if pm.gif != nil {
+		// nativeGifPickerEnabled: "GIF" (svgIcon gif) with EducationTag's
+		// micro "New" until seen_gif_new_badge reaches 3
+		it := popups.MenuItem{Label: i18n.T("menu_file", "GIF"), Icon: "gif", Do: func() { pm.gif(pm.anchor) }}
+		if a.core != nil && a.core.PrefInt("seen_gif_new_badge", 0) < gifNewBadge {
+			it.Tag = &popups.MenuTag{Label: i18n.T("education", "New"), Style: "education"}
+		}
+		items = append(items, it)
+	}
 	if pm.snippet != nil {
 		items = append(items, popups.MenuItem{Label: i18n.T("menu_file", "Text snippet"), Icon: "text-snippet", Hint: snippetKey, Do: pm.snippet})
 	}
@@ -718,7 +734,16 @@ func (a *attachments) plusMenuItems(pm plusMenu) []popups.MenuItem {
 // Menu opens the + menu above the button; anchor is the button in window
 // coordinates.
 func (a *attachments) Menu(anchor image.Rectangle, pm plusMenu) {
+	pm.anchor = anchor
 	items := a.plusMenuItems(pm)
+	if pm.gif != nil && a.core != nil {
+		// the shortcuts menu's useEffect: seenGifPickerNewBadge (nxbn)
+		// while the GIF row's tag shows
+		if n := a.core.PrefInt("seen_gif_new_badge", 0); n < gifNewBadge {
+			app := a.core
+			go func() { _ = app.SetPref(context.Background(), "seen_gif_new_badge", n+1) }()
+		}
+	}
 	if ShortcutItems != nil {
 		if more := ShortcutItems(a.h, pm.ch, anchor); len(more) > 0 {
 			items = append(append(items, popups.Sep()), more...)
@@ -1135,10 +1160,11 @@ type attView struct {
 func (a *attachments) Layout(gtx layout.Context) layout.Dimensions {
 	px := gtx.Dp(attChipH)
 	a.mu.Lock()
-	if len(a.chips) == 0 {
+	if len(a.chips) == 0 && len(a.gifs) == 0 {
 		a.mu.Unlock()
 		return layout.Dimensions{}
 	}
+	gifs := append([]*draftGif(nil), a.gifs...)
 	views := make([]attView, len(a.chips))
 	for i, c := range a.chips {
 		if c.kind.Image && !c.thumbBad && c.thumbPx != px && !c.thumbBusy {
@@ -1174,6 +1200,10 @@ func (a *attachments) Layout(gtx layout.Context) layout.Dimensions {
 			return slackc.Component(gtx, "MultiFileUploadItem", attItem{a: a, v: v, sz: sz}, attItem.props, attItem.layout)
 		})
 		x += w + gap
+	}
+	if len(gifs) > 0 {
+		// ComposerAttachments: the draft's GIFs after the files (gifs.go)
+		x, y = a.layoutGifTiles(gtx, gifs, x, y, px, gap, pad, avail, len(views) > 0)
 	}
 	return layout.Dimensions{Size: image.Pt(max(gtx.Constraints.Max.X, gtx.Constraints.Min.X), pad+y+px+pad)}
 }

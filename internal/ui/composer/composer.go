@@ -529,7 +529,7 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 		Active:         c.ed.ActiveStyle(),
 		Block:          c.ed.ActiveBlock(),
 		Link:           c.ed.ActiveLink(),
-		CanSend:        !c.ed.Empty() || c.att.Len() > 0,
+		CanSend:        !c.ed.Empty() || c.att.Len() > 0 || c.att.gifCount() > 0,
 		Broadcast:      c.broadcast,
 		SetBroadcast:   c.setBroadcastFn,
 		Origin:         c.Origin,
@@ -724,7 +724,7 @@ func (c *Composer) handleActions(gtx layout.Context) {
 		case caAttach:
 			c.att.Menu(a.Anchor, c.plusMenu())
 		case caEmoji:
-			c.h.OpenEmojiPicker(image.Pt(a.Anchor.Min.X, a.Anchor.Min.Y), func(name string) { c.InsertEmoji(name) })
+			c.openEmojiPicker(a.Anchor) // gifs.go: picked GIFs go into the draft
 		case caMention:
 			c.mentionTrigger()
 			c.ed.Focus(gtx)
@@ -760,7 +760,11 @@ func (c *Composer) handleActions(gtx layout.Context) {
 // Text snippet row's snippet dialog (create-text-snippet, the same dialog
 // Ctrl+Shift+Enter opens with the message).
 func (c *Composer) plusMenu() plusMenu {
-	return plusMenu{ch: c.ch, snippet: func() { c.openSnippet(false) }}
+	pm := plusMenu{ch: c.ch, snippet: func() { c.openSnippet(false) }}
+	if _, ok := c.h.(gifHost); ok && gifPickerOn(c.api.a) && c.edit == nil {
+		pm.gif = c.openGifPicker
+	}
+	return pm
 }
 
 // mentionTrigger is the @ button's maybeTriggerMentionAutocomplete: it
@@ -829,7 +833,7 @@ func (c *Composer) paragraphMenu(anchor image.Rectangle) {
 }
 
 func (c *Composer) scheduleMenu(anchor image.Rectangle) {
-	if c.overLimit() > 0 || c.ed.Empty() && c.att.Len() == 0 {
+	if c.overLimit() > 0 || c.ed.Empty() && c.att.Len() == 0 && c.att.gifCount() == 0 {
 		return
 	}
 	// ScheduleSendMenu (schedule_menu.go): the rows for now, the Custom
@@ -1004,7 +1008,7 @@ func (c *Composer) submit() {
 		// returns while textyExceedsMaxLength)
 		return
 	}
-	if d.Empty() && c.att.Len() == 0 {
+	if d.Empty() && c.att.Len() == 0 && (c.edit != nil || c.att.gifCount() == 0) {
 		if c.edit == nil {
 			return
 		}
@@ -1075,6 +1079,13 @@ func (c *Composer) submit() {
 	}
 
 	o := &outgoing{doc: doc, text: text, blocks: blocks, broadcast: c.broadcast && ts != ""}
+	if c.att.Len() == 0 {
+		// prepareAndSendMessage: the draft's GIFs as EwsX attachments.
+		// With files they wait in the draft: Clack shares files with
+		// files.share, which takes no attachments.
+		o.gifs = c.att.takeGifs()
+		o.attachments = gifAttachments(o.gifs, gifPickerOn(c.api.a))
+	}
 	c.clearAfterSend()
 	switch {
 	case c.sendJS.ID != 0:
@@ -1092,6 +1103,10 @@ type outgoing struct {
 	text      string
 	blocks    json.RawMessage
 	broadcast bool
+	// gifs are the draft's GIFs going with it (gifs.go) and attachments
+	// their chat.postMessage attachments
+	gifs        []*draftGif
+	attachments json.RawMessage
 	// delta is the delta a plugin handed back to the composer's
 	// prepareAndSendMessage (bChannel's "/bchannel …"); nil: doc's
 	delta map[string]any
@@ -1126,6 +1141,7 @@ func (c *Composer) send(o *outgoing) {
 		}
 		if err != nil {
 			c.restore(o.doc)
+			c.later(func() { c.att.putBackGifs(o.gifs) })
 			return
 		}
 		c.later(func() {
@@ -1216,7 +1232,7 @@ func (j *sendJob) deliver(ctx context.Context, ch, ts, text string, blocks json.
 		}
 		return sendFiles(ctx, j.api, ch, ts, comment, blocks, broadcast, j.prepared, j.pending, j.raw)
 	}
-	return postMessage(ctx, j.api, ch, ts, text, blocks, broadcast)
+	return postMessage(ctx, j.api, ch, ts, text, blocks, broadcast, j.o.attachments)
 }
 
 // checkThenSend runs the SendChecks hook (composer.addSendCheck) and

@@ -145,11 +145,12 @@ func (c *Composer) syncDraftNow() {
 	}
 	c.dsync.synced, c.dsync.syncedAtt = v, c.attVer
 	files := c.att.draftFileIDs()
-	if c.ed.Empty() && c.att.Len() == 0 {
+	gifs := c.att.gifCount()
+	if c.ed.Empty() && c.att.Len() == 0 && gifs == 0 {
 		c.deleteServerDraft("composer_cleared")
 		return
 	}
-	if c.ed.Empty() && len(files) == 0 {
+	if c.ed.Empty() && len(files) == 0 && gifs == 0 {
 		return // only files still uploading: saved once they have ids
 	}
 	d := c.ed.Doc()
@@ -161,6 +162,8 @@ func (c *Composer) syncDraftNow() {
 		Blocks:    d.RichTextBlocks(),
 		Text:      d.Mrkdwn(),
 		FileIDs:   files,
+		// 53Wp / iLF4: the GIFs go with the draft as its attachments
+		Attachments: c.att.draftGifAttachments(gifPickerOn(c.api.a)),
 	}
 	if ops, ok := d.Delta()["ops"].([]any); ok {
 		args.Ops = ops
@@ -201,7 +204,7 @@ func syncDraft(ctx context.Context, api coreAPI, args draftSyncArgs) (string, er
 
 func saveDraftNative(ctx context.Context, api coreAPI, a draftSyncArgs) (string, error) {
 	d, err := api.saveDraft(ctx, core.DraftOpts{ID: a.ID, Channel: a.ChannelID, ThreadTS: a.ThreadTs, Broadcast: a.Broadcast,
-		Text: a.Text, Blocks: a.Blocks, FileIDs: a.FileIDs})
+		Text: a.Text, Blocks: a.Blocks, FileIDs: a.FileIDs, Attachments: a.Attachments})
 	if err != nil {
 		return "", err
 	}

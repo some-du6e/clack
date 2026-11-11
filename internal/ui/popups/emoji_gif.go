@@ -67,6 +67,10 @@ type gifResult struct {
 // of sending it.
 func (p *EmojiPicker) SetGifHandler(f func(g Gif)) { p.onGif = f }
 
+// ShowGifs opens the picker on its GIFs tab (EmojiAndGIFPickerPopover's
+// selectedTabId GIFS: the composer's + menu GIF row).
+func (p *EmojiPicker) ShowGifs() { p.setGifMode(true) }
+
 // SetGifTarget makes picking a GIF send it to channel (in threadTS's thread
 // when set) when no GIF handler is set.
 func (p *EmojiPicker) SetGifTarget(channel, threadTS string) {
@@ -407,6 +411,8 @@ func (p *EmojiPicker) gifPickerProps() slackc.Props {
 				return
 			}
 			g.Still = g.Preview
+			g.Picked = &GifSelection{OriginalGifURL: g.URL, PreviewURL: g.Preview, Name: g.Title, Width: g.W, Height: g.H,
+				Bytes: int64(pl.IntOr("bytes", 0)), PreviewBytes: int64(pl.IntOr("previewBytes", 0))}
 			p.pickGif(g)
 		},
 	}
