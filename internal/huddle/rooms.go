@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -127,7 +128,7 @@ func (r roomJSON) invites() map[string]string {
 }
 
 // roomsJoin starts or joins the huddle in channel (rooms.join).
-func roomsJoin(ctx context.Context, c Caller, channel, region string) (*joinInfo, error) {
+func roomsJoin(ctx context.Context, c Caller, channel, region string, multi bool) (*joinInfo, error) {
 	if region == "" {
 		region = "us-east-2"
 	}
@@ -150,7 +151,7 @@ func roomsJoin(ctx context.Context, c Caller, channel, region string) (*joinInfo
 	// multidevice}. There's no ring call: for a DM the server rings the
 	// other member itself (the callee gets huddle_invite, and the room's
 	// last_invite_status_by_user says "pending").
-	p := url.Values{"channel_id": {channel}, "regions": {region}, "multidevice": {"false"}}
+	p := url.Values{"channel_id": {channel}, "regions": {region}, "multidevice": {strconv.FormatBool(multi)}}
 	if err := c.Call(ctx, "rooms.join", p, &res); err != nil {
 		return nil, err
 	}

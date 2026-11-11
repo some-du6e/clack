@@ -58,6 +58,9 @@ type Participant struct {
 	// their hand is up, coffee for Be right back, speaker for Audio-only.
 	Sticker   string
 	StickerAt time.Time // their last awareness broadcast
+	// StickerTS is the sticker's field_timestamp_ms (when it was put on;
+	// 0 = not sent: huddles_awareness_timestamp is off on their side).
+	StickerTS int64
 	Self      bool
 }
 
@@ -75,13 +78,15 @@ type Video struct {
 	W, H       int
 }
 
-// Caption is one live-caption line.
+// Caption is one live-caption line, or (Start) the event log's
+// START_TRANSCRIPTION: "Captions have been turned on." (transcribe.go).
 type Caption struct {
 	ID      string
 	UserID  string
 	Text    string
 	Partial bool
 	At      time.Time
+	Start   bool
 }
 
 // State is a snapshot of the session.
@@ -152,6 +157,24 @@ type Options struct {
 	OnPeer func(PeerEvent)
 	// OnEnd is called once when the session ends (err nil = you left).
 	OnEnd func(err error)
+	// Experiments are the Slack experiments the session follows
+	// (SetExperiments changes them mid-huddle).
+	Experiments Experiments
+	// MultiDevice is startHuddle's isMultiDevice: rooms.join's multidevice
+	// (the multi-device modal's "Use both devices").
+	MultiDevice bool
+}
+
+// Experiments are the Slack experiments the media layer reads (the UI
+// takes them from core: huddleui's experiments).
+type Experiments struct {
+	// AwarenessTimestamp is huddles_awareness_timestamp ("on"): your
+	// awareness broadcasts carry each entry's field_timestamp_ms
+	// (ChimeChannelBroadcaster's isHuddlesAwarenessTimestampEnabled).
+	AwarenessTimestamp bool
+	// MultiDevice is huddles_multi_device ("treatment"): awareness is kept
+	// per device (the sender's attendee, uniqueId), not per person.
+	MultiDevice bool
 }
 
 // Session is a joined huddle. Its methods are safe for concurrent use.
@@ -167,27 +190,34 @@ type Session struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	mu        sync.Mutex
-	phase     Phase
-	err       error
-	muted     bool
-	deafened  bool
-	captions  bool
-	sticker   string // yours (awareness.go)
-	micStatus MicStatus
-	micErr    string
-	people    map[string]*Participant // by user id
-	order     []string
-	invites   map[string]string // user -> invite status (Invite)
-	inviteOrd []string
-	byAtt     map[string]string // attendee id -> people key (user id, or "U…/<attendee>" for a second device)
-	streamAt  map[uint32]string // audio stream id -> attendee id
-	sources   map[uint32]streamDesc
-	lines     []Caption
-	sinks     map[string]*videoSink // by video key
-	cam       camPipe               // your camera (videosend.go)
-	ended     bool
-	leaving   bool // LEAVE sent: a closing socket is expected, not a drop
+	mu            sync.Mutex
+	phase         Phase
+	err           error
+	muted         bool
+	deafened      bool
+	captions      bool
+	sticker       string // yours (awareness.go)
+	stickerTS     int64  // when you put it on (ms)
+	mutedTalk     bool   // SpeakingWhenMuted (devices.go)
+	mutedTrack    speakingMuted
+	selfAudio     bool // hasSelfAudioBeenDetected
+	exp           Experiments
+	micStatus     MicStatus
+	micErr        string
+	people        map[string]*Participant // by user id
+	order         []string
+	invites       map[string]string // user -> invite status (Invite)
+	inviteOrd     []string
+	byAtt         map[string]string // attendee id -> people key (user id, or "U…/<attendee>" for a second device)
+	streamAt      map[uint32]string // audio stream id -> attendee id
+	sources       map[uint32]streamDesc
+	lines         []Caption // the event log's events (transcribe.go)
+	events        bool      // the event log is on (startEventLog)
+	eventsLoading bool
+	sinks         map[string]*videoSink // by video key
+	cam           camPipe               // your camera (videosend.go)
+	ended         bool
+	leaving       bool // LEAVE sent: a closing socket is expected, not a drop
 
 	// connection (replaced on reconnect)
 	conn     *websocket.Conn
@@ -239,11 +269,11 @@ func Join(ctx context.Context, o Options, channel string) (*Session, error) {
 	if o.Logf == nil {
 		o.Logf = log.Printf
 	}
-	ji, err := roomsJoin(ctx, o.Client, channel, o.Region)
+	ji, err := roomsJoin(ctx, o.Client, channel, o.Region, o.MultiDevice)
 	if err != nil {
 		return nil, err
 	}
-	s := &Session{o: o, join: ji, muted: o.Muted, captions: o.Captions, people: map[string]*Participant{}, byAtt: map[string]string{},
+	s := &Session{o: o, join: ji, muted: o.Muted, captions: o.Captions, exp: o.Experiments, people: map[string]*Participant{}, byAtt: map[string]string{},
 		streamAt: map[uint32]string{}, sources: map[uint32]streamDesc{}, sinks: map[string]*videoSink{},
 		waiters: map[int][]chan *signalFrame{}, doneCh: make(chan struct{}), mic: newMicFramer(),
 		apm: newMicProcessor(o.AGC, o.NoiseSuppression)}
@@ -358,9 +388,12 @@ func (s *Session) State() State {
 		if p.Self {
 			p.Muted = s.muted
 			p.Camera = cam.State == CameraOn
-			p.Sticker = s.sticker
+			p.Sticker, p.StickerTS = s.sticker, s.stickerTS
 		}
 		p.Sticker = stickerAt(p, now)
+		if p.Sticker == "" {
+			p.StickerTS = 0
+		}
 		st.Participants = append(st.Participants, p)
 	}
 	for k, v := range s.sinks {
@@ -449,10 +482,15 @@ func (s *Session) changed() {
 	})
 }
 
-// SetMuted mutes or unmutes your microphone.
+// SetMuted mutes or unmutes your microphone. Unmuting drops the
+// SpeakingWhenMuted alert, as Slack's setMuted does.
 func (s *Session) SetMuted(m bool) {
 	s.mu.Lock()
 	s.muted = m
+	if !m {
+		s.mutedTalk = false
+		s.mutedTrack = speakingMuted{}
+	}
 	s.mu.Unlock()
 	s.send(encodeMute(m))
 	s.changed()
@@ -568,7 +606,10 @@ func (s *Session) finish(err error) {
 	mic := s.micDev
 	s.micDev = nil
 	s.mu.Unlock()
-	for _, d := range []Device{s.dev, mic} {
+	s.mu.Lock()
+	spk := s.dev
+	s.mu.Unlock()
+	for _, d := range []Device{spk, mic} {
 		if d != nil {
 			d.Close()
 		}
@@ -985,14 +1026,17 @@ func (s *Session) sendAudio(done <-chan struct{}) {
 	t := time.NewTicker(20 * time.Millisecond)
 	defer t.Stop()
 	var lvlAt time.Time
+	var win levelWindow // Slack's 300 ms level updates (devices.go)
 	for {
+		var now time.Time
 		select {
 		case <-done:
 			return
-		case now := <-t.C:
+		case now = <-t.C:
 			s.checkMic(now)
 		}
 		pcm := silence
+		captured := false
 		select {
 		case f := <-s.mic.out:
 			pcm = f
@@ -1002,11 +1046,17 @@ func (s *Session) sendAudio(done <-chan struct{}) {
 			// gain control and noise suppression run on every captured
 			// frame, muted or not, so their state is warm on unmute
 			s.apm.process(pcm)
+			captured = true
 		default:
 		}
 		s.mu.Lock()
 		muted := s.muted
 		s.mu.Unlock()
+		if captured { // the level runs muted too (the speaking-while-muted check)
+			if lv, ok := win.add(pcm, now); ok {
+				s.noteLevel(lv, muted)
+			}
+		}
 		if muted {
 			pcm = silence
 		} else if lv := level(pcm); lv > 0.02 && time.Since(lvlAt) > 100*time.Millisecond {
@@ -1408,6 +1458,10 @@ func (s *Session) onTranscript(b []byte) {
 	}
 	now := time.Now()
 	s.mu.Lock()
+	if !s.events { // updateTranscriptions keeps nothing while the log is off
+		s.mu.Unlock()
+		return
+	}
 	for _, r := range res {
 		if r.Text == "" {
 			continue
@@ -1428,12 +1482,16 @@ func (s *Session) onTranscript(b []byte) {
 			s.lines = append(s.lines, c)
 		}
 	}
-	if len(s.lines) > 6 {
-		s.lines = append(s.lines[:0], s.lines[len(s.lines)-6:]...)
+	if len(s.lines) > maxEventLines {
+		s.lines = append(s.lines[:0], s.lines[len(s.lines)-maxEventLines:]...)
 	}
 	s.mu.Unlock()
 	s.changed()
 }
+
+// maxEventLines bounds the event log in memory (Slack keeps the whole
+// huddle's; HuddleClosedCaptions shows the last 5 grouped events).
+const maxEventLines = 200
 
 // ---- Slack room events ----
 

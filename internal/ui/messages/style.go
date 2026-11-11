@@ -34,7 +34,9 @@ func rgba(v uint32, a float32) color.NRGBA {
 type colors struct {
 	Bg, Hover, Text, Text2, Text3                     color.NRGBA
 	Edited, PinIcon, Muted70, TimeSystem              color.NRGBA
-	Pinned, PinnedHover, Highlight                    color.NRGBA
+	Pinned, PinnedHover, Highlight, ActiveThread      color.NRGBA
+	CustomTint                                        color.NRGBA // .c-message_kit__background--labels--custom_response
+	Important                                         color.NRGBA // --dt_color-content-imp (the reply bar's Unread)
 	BadgeBg, BadgeText                                color.NRGBA
 	ReactBg, ReactHoverBorder                         color.NRGBA
 	ReactSelfBg, ReactSelfHoverBg                     color.NRGBA
@@ -52,7 +54,8 @@ var lightColors = colors{
 	Bg: rgb(0xffffff), Hover: rgb(0xf8f8f8), Text: rgb(0x1d1c1d), Text2: rgb(0x616061), Text3: rgb(0x454447),
 	Edited: rgb(0x868686), PinIcon: rgb(0xe8912d), Muted70: rgba(0x1d1c1d, 0.7), TimeSystem: rgb(0x5e5d60),
 	Pinned: rgba(0xf2c744, 0.1), PinnedHover: rgba(0xf2c744, 0.14), Highlight: rgba(0xf2c744, 0.2),
-	BadgeBg: rgba(0x1d1c1d, 0.06), BadgeText: rgb(0x454447),
+	// CustomTint is #1d9bd11a in both modes
+	CustomTint: rgba(0x1d9bd1, 0x1a/255.0), BadgeBg: rgba(0x1d1c1d, 0.06), BadgeText: rgb(0x454447), Important: rgb(0xc01343),
 	ReactBg: rgba(0x1d1c1d, 0.06), ReactHoverBorder: rgb(0x7c7a7f),
 	// .c-reaction--reacted(:hover): base-hgl-1, content-hgl-1 bold and a
 	// 1px base-inv-hgl-1 ring; hover changes nothing
@@ -60,11 +63,14 @@ var lightColors = colors{
 	ReactSelfBorder: rgb(0x1264a3), ReactSelfText: rgb(0x1264a3),
 	Link: rgb(0x1264a3), NewLine: rgb(0xe01e5a), DayLine: rgb(0xdddddd), PillBorder: rgba(0x1d1c1d, 0.13),
 	Shadow: rgba(0x000000, 0.08), ToolbarIcon: rgb(0x616061), ToolbarHoverBg: rgba(0x1d1c1d, 0.04),
-	Tooltip: rgb(0x1d1c1d), TooltipText: rgb(0xffffff), Skeleton: rgb(0xeaeaea),
+	Tooltip: theme.LightPalette.Tooltip, TooltipText: theme.LightPalette.TooltipText, Skeleton: rgb(0xeaeaea), // theme/tooltip.go
 	ThreadBorder: rgba(0x1d1c1d, 0.13), ThreadBg: rgb(0xffffff), JumpBg: rgb(0x1264a3),
 	JumpText: rgb(0xffffff), FailedText: rgb(0xe01e5a), BorderStrong: rgba(0x1d1c1d, 0.3),
 	Editing: rgba(0xf2c744, 0.2), ScrollThumb: rgba(0x1d1c1d, 0.3), ScrollThumbHover: rgba(0x1d1c1d, 0.5), Selection: rgba(0x1d9bd1, 0.3),
 	SystemText: rgb(0x454447), HeaderBorder: rgba(0x1d1c1d, 0.13), CloseHover: rgba(0x1d1c1d, 0.06),
+
+	// --dt_color-base-hgl-3 (slack-kit-gantry-v2-styles): the selected thread root (active_thread.go)
+	ActiveThread: rgb(0xfffae0),
 }
 
 var darkColors = colors{
@@ -72,7 +78,7 @@ var darkColors = colors{
 	Text2: rgb(0xababad), Text3: rgb(0xd1d2d3),
 	Edited: rgb(0x868686), PinIcon: rgb(0xe8912d), Muted70: rgba(0xe8e8e8, 0.7), TimeSystem: rgb(0xababad),
 	Pinned: rgba(0xf2c744, 0.1), PinnedHover: rgba(0xf2c744, 0.14), Highlight: rgba(0xf2c744, 0.1),
-	BadgeBg: rgba(0xe8e8e8, 0.13), BadgeText: rgba(0xe8e8e8, 0.7),
+	CustomTint: rgba(0x1d9bd1, 0x1a/255.0), BadgeBg: rgba(0xe8e8e8, 0.13), BadgeText: rgba(0xe8e8e8, 0.7), Important: rgb(0xde678a),
 	ReactBg: rgba(0xe8e8e8, 0.06), ReactHoverBorder: rgba(0xe8e8e8, 0.3),
 	// .sk-client-theme--dark .c-reaction--reacted: a solid base-inv-hgl-1
 	// pill, no ring, content-pry text (bold), the same under the pointer
@@ -80,11 +86,14 @@ var darkColors = colors{
 	ReactSelfBorder: color.NRGBA{}, ReactSelfText: rgb(0xf8f8f8),
 	Link: rgb(0x1d9bd1), NewLine: rgb(0xe01e5a), DayLine: rgba(0xe8e8e8, 0.13), PillBorder: rgba(0xe8e8e8, 0.13),
 	Shadow: rgba(0x000000, 0.3), ToolbarIcon: rgb(0xababad), ToolbarHoverBg: rgb(0x222529),
-	Tooltip: rgb(0xe8e8e8), TooltipText: rgb(0x1a1d21), Skeleton: rgb(0x2c2d30),
+	Tooltip: theme.DarkPalette.Tooltip, TooltipText: theme.DarkPalette.TooltipText, Skeleton: rgb(0x2c2d30), // theme/tooltip.go
 	ThreadBorder: rgba(0xe8e8e8, 0.13), ThreadBg: rgb(0x1a1d21), JumpBg: rgb(0x1d9bd1),
 	JumpText: rgb(0xffffff), FailedText: rgb(0xe01e5a), BorderStrong: rgba(0xe8e8e8, 0.3),
 	Editing: rgba(0xf2c744, 0.14), ScrollThumb: rgba(0xe8e8e8, 0.3), ScrollThumbHover: rgba(0xe8e8e8, 0.5), Selection: rgba(0x1d9bd1, 0.4),
 	SystemText: rgb(0xababad), HeaderBorder: rgba(0xe8e8e8, 0.13), CloseHover: rgba(0xe8e8e8, 0.06),
+
+	// --dt_color-base-hgl-3, dark
+	ActiveThread: rgb(0x2f1e00),
 }
 
 func colorsFor(th *theme.Theme) *colors {
@@ -111,7 +120,7 @@ var (
 // than Slack's.
 func flatten(c colors) colors {
 	bg := c.Bg
-	for _, p := range []*color.NRGBA{&c.Hover, &c.Pinned, &c.PinnedHover, &c.Highlight, &c.Editing,
+	for _, p := range []*color.NRGBA{&c.Hover, &c.Pinned, &c.PinnedHover, &c.Highlight, &c.Editing, &c.CustomTint,
 		&c.BadgeBg, &c.ReactBg, &c.ReactSelfBg, &c.ReactSelfHoverBg, &c.ToolbarHoverBg, &c.CloseHover,
 		&c.DayLine, &c.PillBorder, &c.ThreadBorder, &c.HeaderBorder, &c.BorderStrong, &c.ReactHoverBorder, &c.Muted70} {
 		*p = richview.Over(*p, bg)

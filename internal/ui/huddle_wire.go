@@ -44,6 +44,10 @@ func (a *App) StartHuddle(ch string) { a.huddles().Start(ch) }
 // can't happen (views' Huddles page).
 func (a *App) HuddleJoinFailed() { a.huddles().JoinFailed(nil) }
 
+// JoinHuddleFrom starts or joins the huddle in ch from one of Slack's
+// entry points (a huddle message's Join Huddle: huddle_message_button).
+func (a *App) JoinHuddleFrom(ch, entry string) { a.huddles().Begin(ch, entry) }
+
 // SlashHuddle is the composer's /huddle: start or join the huddle in ch
 // (through Slack's startHuddle thunk, like the header button).
 func (a *App) SlashHuddle(ch string) { a.huddles().Begin(ch, "") }

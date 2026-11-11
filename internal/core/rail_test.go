@@ -165,7 +165,7 @@ func TestGridWorkspaceIconAndRotation(t *testing.T) {
 	}
 }
 
-// A Slackbot custom response's sender, as Slack's reskin draws it: the org
+// A Slackbot custom response's sender, as Slack draws it: the org
 // on Enterprise Grid (selfTeamIds.enterpriseId || teamId), with its name and
 // the icon for a 36px avatar; the workspace's until the org has been read.
 func TestCustomResponseTeam(t *testing.T) {
@@ -189,13 +189,15 @@ func TestCustomResponseTeam(t *testing.T) {
 	if name, ic := a.CustomResponseTeam(36); name != "Synthetic Org" || ic != "https://img.example/org-88.png" {
 		t.Errorf("custom response sender %q %q, want the org's", name, ic)
 	}
-	// the experiment gates it; Slack's force overrides (and BringBackSlackbot) turn it off
-	if !a.CustomResponseReskin() {
-		t.Error("reskin_custom_responses should default to on (Hack Club has it)")
-	}
+	// a forced group (Slack's overrides, BringBackSlackbot's patch) reads
+	// back and keeps the other defaults; Slack's client no longer reads
+	// reskin_custom_responses, so the sender above stays the team
 	a.SetExperimentGroup("reskin_custom_responses", "off")
-	if a.CustomResponseReskin() || a.Experiment("filter_dormant_channels") != "on" {
+	if a.Experiment("reskin_custom_responses") != "off" || a.Experiment("filter_dormant_channels") != "on" {
 		t.Error("SetExperimentGroup: the group didn't change, or the other defaults were lost")
+	}
+	if name, _ := a.CustomResponseTeam(36); name != "Synthetic Org" {
+		t.Errorf("custom response sender %q after forcing the old experiment off, want the org's", name)
 	}
 	// isCustomResponse needs Slackbot as the author, not just the subtype
 	if m := a.message("C1", &slack.Message{TS: "1.1", User: "USLACKBOT", Subtype: SubtypeSlackbotResponse}); !m.CustomResponse() {

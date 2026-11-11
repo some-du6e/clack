@@ -6,10 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"gioui.org/f32"
 	"gioui.org/layout"
 	"gioui.org/op"
-	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/unit"
 
@@ -77,19 +75,13 @@ func reactionTooltip(gtx layout.Context, h Host, th *theme.Theme, c *colors, txt
 		defer paint.PushOpacity(gtx.Ops, max(o, 0)).Pop()
 	}
 	bg := tip.Background(c.Tooltip)
-	rrect(gtx.Ops, r, dp(gtx, 8), bg)
+	var arrow theme.TooltipArrow
 	if !flip {
 		// the arrow's visible half: 6px under the box at the pill's centre
-		ar := float32(dp(gtx, 6))
-		ax, ay := float32(anchor.X), float32(r.Max.Y)
-		var path clip.Path
-		path.Begin(gtx.Ops)
-		path.MoveTo(f32.Pt(ax-ar, ay))
-		path.LineTo(f32.Pt(ax+ar, ay))
-		path.LineTo(f32.Pt(ax, ay+ar))
-		path.Close()
-		paint.FillShape(gtx.Ops, bg, clip.Outline{Path: path.End()}.Op())
+		arrow = theme.TooltipArrow{C: image.Pt(anchor.X, r.Max.Y), Half: dp(gtx, 6)}
 	}
+	// box and arrow, outlined together in dark mode (theme/tooltip.go)
+	theme.TooltipShape(gtx, r, dp(gtx, 8), arrow, bg, tipGlow(th))
 	tr := image.Rect(x+(w-tile)/2, y+padY, x+(w-tile)/2+tile, y+padY+tile)
 	rrect(gtx.Ops, tr, dp(gtx, 4), rgb(0xffffff))
 	drawEmoji(gtx, h, url, image.Rect(tr.Min.X+(tile-es)/2, tr.Min.Y+(tile-es)/2, tr.Min.X+(tile-es)/2+es, tr.Min.Y+(tile-es)/2+es))
@@ -125,20 +117,26 @@ func splitReactionTip(txt string) (names, sub string) {
 	return txt, ""
 }
 
-// tooltipSubtitle is TooltipSubtitle's colour, inverse.secondary
-// (--dt_color-content-inv-sec, #cbcccf on the light theme's dark tip).
-// Clack's dark-theme tooltips are still light (theme.Palette, popups and
-// this package draw #e8e8e8; Slack's dark base-inv-pry is #212428), so
-// there the subtitle keeps the tip's text colour rather than go grey on
-// grey.
-func tooltipSubtitle(th *theme.Theme, c *colors, text color.NRGBA) color.NRGBA {
-	if th != nil && th.Dark {
-		return text
+// tipGlow is the dark mode tooltip outline (theme's TooltipGlow; none in
+// light mode or without a theme).
+func tipGlow(th *theme.Theme) color.NRGBA {
+	if th == nil {
+		return color.NRGBA{}
 	}
+	return th.C.TooltipGlow
+}
+
+// tooltipSubtitle is TooltipSubtitle's colour, inverse.secondary
+// (--dt_color-content-inv-sec: #cbcccf on the light tip, #b9babd on the
+// dark one; theme's TooltipSub).
+func tooltipSubtitle(th *theme.Theme, c *colors, text color.NRGBA) color.NRGBA {
 	if text != c.TooltipText {
 		return text // a plugin's tooltip colour: the subtitle follows it
 	}
-	return rgb(0xcbcccf)
+	if th == nil {
+		return theme.LightPalette.TooltipSub
+	}
+	return th.C.TooltipSub
 }
 
 // tipRun is one styled run of tooltip text.

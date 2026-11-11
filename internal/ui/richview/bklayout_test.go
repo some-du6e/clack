@@ -393,3 +393,44 @@ func TestKitSectionShowMore(t *testing.T) {
 		}
 	}
 }
+
+// Header levels (Slack's /WQN Header: p-header_block--level_N) and the
+// flat scale (p-header_block--flat_scale): level 1 22px/30 black, 2
+// 18px/24 black, 3 15px/22 black; flat 1 18px/24, 2 15px/22 black, 3
+// 15px/22 bold. The 1em top margin is the block's 15px either way.
+func TestKitHeaderLevels(t *testing.T) {
+	st := newTestStyle()
+	doc := kitDoc(t, `[{"type":"header","text":{"type":"plain_text","text":"One"},"level":1},
+		{"type":"header","text":{"type":"plain_text","text":"Two"},"level":2},
+		{"type":"header","text":{"type":"plain_text","text":"Three"},"level":3},
+		{"type":"header","text":{"type":"plain_text","text":"None"}}]`)
+	type want struct {
+		size, lineH int
+		w           font.Weight
+	}
+	for _, tc := range []struct {
+		flat bool
+		w    map[string]want
+	}{
+		{false, map[string]want{"One": {22, 30, font.Black}, "Two": {18, 24, font.Black}, "Three": {15, 22, font.Black}, "None": {15, 22, font.Black}}},
+		{true, map[string]want{"One": {18, 24, font.Black}, "Two": {15, 22, font.Black}, "Three": {15, 22, font.Bold}, "None": {15, 22, font.Black}}},
+	} {
+		gen := st.gen
+		st.SetFlatHeadings(tc.flat)
+		if tc.flat && st.gen == gen {
+			t.Fatal("SetFlatHeadings didn't start a new style generation (views wouldn't re-lay out)")
+		}
+		v := layoutAt(st, doc, Options{}, 600)
+		for word, w := range tc.w {
+			f := findFrag(t, &v.d, word)
+			if f.size != w.size || f.bot-f.top != w.lineH || f.weight != w.w {
+				t.Errorf("flat %v, %s: %dpx, line %d, weight %d; want %dpx, line %d, weight %d", tc.flat, word, f.size, f.bot-f.top, f.weight, w.size, w.lineH, w.w)
+			}
+		}
+		// first header 4px from the top, each later one 4px + 15px under the last
+		one, two := findFrag(t, &v.d, "One"), findFrag(t, &v.d, "Two")
+		if one.top != 4 || two.top != one.bot+4+15 {
+			t.Errorf("flat %v: header tops %d and %d (first bottom %d), want 4 and 19 under", tc.flat, one.top, two.top, one.bot)
+		}
+	}
+}

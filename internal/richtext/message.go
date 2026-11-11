@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/some-du6e/clack/internal/localimg"
 	"github.com/some-du6e/clack/internal/slack"
@@ -38,7 +39,11 @@ func FromMessage(r Resolver, m *slack.Message) Doc {
 		d.Jumbo = onlyEmoji(r, m.Text)
 	}
 	if m.Subtype == "huddle_thread" || len(m.Room) > 2 {
-		if b, ok := huddleBlock(r, m.Room); ok {
+		if b, ok := huddleBlock(r, m.Room, m.Channel); ok {
+			if m.Subtype == "huddle_thread" {
+				// TestableAutomatedSubtype: the body is HuddleMsgText, not the text
+				d.Blocks, d.Jumbo = nil, false
+			}
 			d.Blocks = append(d.Blocks, b)
 		}
 	}
@@ -127,6 +132,7 @@ func convertFile(f *slack.File) *File {
 		Size: f.Size, URL: SafeURL(f.URLPrivate), Download: SafeURL(f.URLPrivateDownload), Permalink: SafeURL(f.Permalink),
 		Lines: f.Lines, DurationMS: f.DurationMS, OrigW: f.OriginalW, OrigH: f.OriginalH,
 		Subtype: f.Subtype, Waveform: f.AudioWaveSamples, User: f.User, Created: f.Created, IsExternal: f.IsExternal,
+		Mode: f.Mode,
 	}
 	if out.Title == out.Name {
 		out.Title = ""
@@ -423,51 +429,34 @@ func legacyActions(raw json.RawMessage) []Button {
 	return out
 }
 
-// huddleBlock renders the card for a huddle_thread message.
-func huddleBlock(r Resolver, raw json.RawMessage) (Block, bool) {
-	var room struct {
-		Name               string   `json:"name"`
-		DateStart          int64    `json:"date_start"`
-		DateEnd            int64    `json:"date_end"`
-		HasEnded           bool     `json:"has_ended"`
-		Participants       []string `json:"participants"`
-		ParticipantHistory []string `json:"participant_history"`
-	}
-	if len(raw) <= 2 || json.Unmarshal(raw, &room) != nil {
+// huddleBlock is a huddle_thread message's HuddleMsgText (huddle.go):
+// the automated sentence, with the room for the Join Huddle button.
+func huddleBlock(r Resolver, raw json.RawMessage, channel string) (Block, bool) {
+	h, ok := ParseHuddleRoom(raw)
+	if !ok {
 		return Block{}, false
 	}
-	a := &Attachment{ServiceName: "Huddle", TS: room.DateStart}
-	people := room.Participants
-	title := "Huddle in progress"
-	if room.HasEnded || room.DateEnd > 0 {
-		title = "A huddle happened"
-		people = firstNonEmptySlice(room.ParticipantHistory, room.Participants)
+	if channel != "" {
+		h.Channel = channel
 	}
-	if room.Name != "" {
-		title = room.Name
+	var o HuddleTextOpts
+	if hr, ok := r.(HuddleResolver); ok {
+		o = hr.HuddleTextOpts(h.Channel)
 	}
-	a.Title = []Span{{Kind: Text, Text: title}}
-	var info string
-	if room.DateEnd > room.DateStart && room.DateStart > 0 {
-		info = "Lasted " + duration(room.DateEnd-room.DateStart)
-	}
-	if n := len(people); n > 0 {
-		if info != "" {
-			info += " · "
-		}
-		info += strconv.Itoa(n) + " participant"
-		if n != 1 {
-			info += "s"
+	h.Joinable = h.Live && !in(h.Active, r.SelfID()) // shouldAddJoinButton
+	if ar, ok := r.(AvatarResolver); ok && h.Joinable {
+		for _, u := range h.Active {
+			if len(h.Faces) == 3 {
+				break
+			}
+			if url := ar.UserAvatar(u); url != "" {
+				h.Faces = append(h.Faces, url)
+			}
 		}
 	}
-	if info != "" {
-		a.Text = []Block{{Kind: Paragraph, Spans: []Span{{Kind: Text, Text: info}}}}
-	}
-	for i, id := range people {
-		if i > 0 {
-			a.Footer = append(a.Footer, Span{Kind: Text, Text: ", "})
-		}
-		a.Footer = append(a.Footer, userSpan(r, id, ""))
+	a := &Attachment{ServiceName: "Huddle", TS: h.DateStart, Huddle: h}
+	if sp := HuddleMsgText(r, h, o, time.Now()); len(sp) > 0 {
+		a.Text = []Block{{Kind: Paragraph, Spans: sp}}
 	}
 	return Block{Kind: AttachmentBlock, Att: a}, true
 }
@@ -477,20 +466,6 @@ func firstNonEmptySlice(a, b []string) []string {
 		return a
 	}
 	return b
-}
-
-func duration(sec int64) string {
-	switch {
-	case sec < 60:
-		return strconv.FormatInt(sec, 10) + "s"
-	case sec < 3600:
-		return strconv.FormatInt(sec/60, 10) + "m"
-	}
-	s := strconv.FormatInt(sec/3600, 10) + "h"
-	if m := sec % 3600 / 60; m > 0 {
-		s += " " + strconv.FormatInt(m, 10) + "m"
-	}
-	return s
 }
 
 // blocksLink reports whether a link element in bs (at any depth) points

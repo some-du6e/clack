@@ -2,26 +2,22 @@ package ui
 
 import (
 	"fmt"
-	"image"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
 
-	"gioui.org/layout"
 	"github.com/some-du6e/clack/internal/applog"
 	"github.com/some-du6e/clack/internal/slick"
 	"github.com/some-du6e/clack/internal/taut"
 
 	"github.com/some-du6e/clack/internal/ui/openurl"
-	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
 // Getting the log out: Help > Open Logs Folder and Help > Copy Diagnostics
-// (macOS menu bar), and the same two buttons in Preferences > Advanced >
-// Troubleshooting, next to Show freeze reports.
+// (macOS menu bar), next to Show Freeze Reports.
 
 // diagLogLines is how many log lines Copy Diagnostics includes.
 const diagLogLines = 200
@@ -41,37 +37,6 @@ func (a *App) showLogs() {
 	_ = openurl.OpenFolder(dir)
 }
 
-// troubleshootingSection is Preferences > Advanced > Troubleshooting: the
-// log, the freeze reports, Copy diagnostics (every OS; macOS also has
-// them in the Help menu).
-func (p *prefsModal) troubleshootingSection(f *prefsForm) {
-	a, gtx := p.a, f.gtx
-	f.subheading("Troubleshooting")
-	if a.opts.LogDir != "" {
-		f.note("Clack keeps a log in "+homeTilde(a.opts.LogDir)+", without message text, tokens or cookies.", true, 2)
-	}
-	x, bh := gtx.Dp(28), gtx.Dp(28)
-	for _, it := range []struct {
-		key, label string
-		do         func()
-	}{
-		{"diag_logs", "Open logs folder", func() { go a.showLogs() }},
-		{"diag_freeze", "Show freeze reports", func() { go a.showFreezeReports() }},
-		{"diag_copy", "Copy diagnostics", a.copyDiagnostics},
-	} {
-		b := p.btn(it.key)
-		hit := b.Clicked(gtx) // popups.Button lays the clickable out: read it first
-		d := at(gtx, image.Pt(x, f.y), image.Pt(max(0, f.w-x), bh), func(gtx layout.Context) layout.Dimensions {
-			return popups.Button(gtx, a.th, b, popups.BtnOutline, popups.BtnSmall, it.label, "", 0)
-		})
-		if hit {
-			it.do()
-		}
-		x += d.Size.X + gtx.Dp(8)
-	}
-	f.y += bh + gtx.Dp(8)
-}
-
 // copyDiagnostics puts a short summary for a bug report on the clipboard:
 // version, OS, plugin ids and the newest log lines, redacted. UI goroutine;
 // the log is read and the summary built off it.
@@ -85,7 +50,9 @@ func (a *App) copyDiagnostics() {
 		route:    a.router.Current().logString(),
 	}
 	t, s, tail := a.Taut(), a.Slick(), a.opts.LogTail
+	cfg := a.opts.ConfigDir
 	go func() {
+		in.freeze = freezeSummary(cfg)
 		in.plugins = pluginStates(t, s)
 		if tail != nil {
 			in.log = tail(diagLogLines)
@@ -102,6 +69,7 @@ type diagInfo struct {
 	version  string
 	started  time.Time
 	logDir   string
+	freeze   string // the freeze reports: how many, where, the newest
 	realtime bool
 	patched  []string
 	route    string
@@ -128,6 +96,9 @@ func (in diagInfo) text(now time.Time) string {
 	if in.logDir != "" {
 		fmt.Fprintf(&b, "log file: %s\n", homeTilde(filepath.Join(in.logDir, applog.FileName)))
 	}
+	if in.freeze != "" {
+		fmt.Fprintf(&b, "freeze reports: %s\n", in.freeze)
+	}
 	fmt.Fprintf(&b, "live updates: %v\n", onOff(in.realtime))
 	fmt.Fprintf(&b, "page: %s\n", in.route)
 	plugins := in.plugins
@@ -146,6 +117,27 @@ func (in diagInfo) text(now time.Time) string {
 		b.WriteByte('\n')
 	}
 	return applog.Redact(b.String())
+}
+
+// freezeSummary is the diagnostics' freeze reports line: "none", or
+// "3 in ~/.config/clack/freeze-reports, newest freeze-….txt".
+func freezeSummary(configDir string) string {
+	if configDir == "" {
+		return ""
+	}
+	dir := filepath.Join(configDir, "freeze-reports")
+	ents, _ := os.ReadDir(dir)
+	n, newest := 0, ""
+	for _, e := range ents {
+		if name := e.Name(); !e.IsDir() && strings.HasPrefix(name, "freeze-") && strings.HasSuffix(name, ".txt") {
+			n++
+			newest = max(newest, name) // freeze-<date>-<time>: names sort by time
+		}
+	}
+	if n == 0 {
+		return "none"
+	}
+	return fmt.Sprintf("%d in %s, newest %s", n, homeTilde(dir), newest)
 }
 
 func onOff(on bool) string {

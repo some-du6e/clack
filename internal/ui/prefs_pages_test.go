@@ -160,7 +160,7 @@ var slackPages = map[string][]want{
 	},
 	"advanced": {
 		lg("Input options"), ck("Enable smart quotes and symbols"), ck("When typing code with ```, Enter should not send the message."),
-		ck("Format messages with markup"), ckOff("Shorten external links"),
+		ck("Format messages with markup"), ck("Shorten external links"),
 		lg("When writing a message, press Enter to…"), rd("Send the message"), rd("Start a new line (use *"),
 		lg("Search options"), lg("Exclude these channels from search results:"), {"select", "", false},
 		lg("Sort option default:"), rd("Most relevant"), rd("Last used:"),

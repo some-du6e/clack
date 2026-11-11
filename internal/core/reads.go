@@ -229,7 +229,8 @@ func (a *App) installPrefs(raw map[string]json.RawMessage) {
 	a.S.RUnlock()
 	a.frecencyPrefsChanged(old, raw)
 	a.S.SetRawPrefs(raw)
-	a.S.SetPrefs(store.ParsePrefs(raw))
+	p, muted := store.ParsePrefs(raw)
+	a.S.SetPrefs(p, a.withTempMutes(p, muted)) // temp_mute's muted-until (temp_mute.go)
 }
 
 // Pref returns one users.prefs.get value as Slack sent it (ok: present).
@@ -708,7 +709,7 @@ func (a *App) Activity(ctx context.Context, o ActivityOpts) (ActivityPage, error
 	p := url.Values{"limit": {strconv.Itoa(limit)}, "types": {types}, "mode": {mode},
 		"archive_only": {strconv.FormatBool(o.Archived)}, "priority_only": {strconv.FormatBool(o.Priority)}, "is_activity_inbox": {"true"},
 		"unread_only": {strconv.FormatBool(o.Unread)}, "only_salesforce_channels": {"false"},
-		"exclude_automations": {"false"}, "automations_only": {"false"}}
+		"exclude_automations": {strconv.FormatBool(o.ExcludeAutomations)}, "automations_only": {strconv.FormatBool(o.AutomationsOnly)}}
 	if o.Cursor != "" {
 		p.Set("cursor", o.Cursor)
 	}
@@ -941,7 +942,7 @@ func (a *App) Commands(ctx context.Context, query string) ([]Command, error) {
 	for _, c := range cmds {
 		if needle == "" || strings.Contains(strings.ToLower(c.Name), needle) {
 			out = append(out, Command{Name: c.Name, Desc: c.Desc, Usage: c.Usage, Type: c.Type, AppID: c.AppID,
-				AppName: c.AppName, IconURL: c.IconURL()})
+				AppName: c.AppName, IconURL: c.IconURL(), Teams: c.Teams})
 		}
 	}
 	return out, nil

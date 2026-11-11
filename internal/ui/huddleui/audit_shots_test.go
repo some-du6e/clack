@@ -20,9 +20,12 @@ import (
 func TestHuddleShotsAudit(t *testing.T) {
 	e := newShotEnv(t, false)
 	s := e.join(nil, nil)
-	s.SetCaptions(true)
+	// ⋯ › Show captions › Closed captions: startEventLog (the fake's
+	// rooms.startTranscription), "Captions have been turned on.", then
+	// the transcript
+	e.c.ToggleClosedCaptions(s)
 	st := waitState(t, s, "connected with a caption", func(st huddle.State) bool {
-		return st.Phase == huddle.Connected && len(st.Captions) > 0 && len(st.Participants) > 1
+		return st.Phase == huddle.Connected && len(st.Captions) > 1 && st.Captions[0].Start && len(st.Participants) > 1
 	})
 	if title, sub := e.c.windowTitle(st); title != "Huddle in huddle-test" || sub != "2 people" {
 		t.Fatalf("title %q / %q", title, sub)
@@ -51,7 +54,7 @@ func TestHuddleShotsAudit(t *testing.T) {
 			labels = append(labels, it.Label)
 		}
 	}
-	want := []string{"Copy huddle link", "Go to #huddle-test", "Show captions", "Hide self-view", "Huddle preferences"}
+	want := []string{"Copy huddle link", "Go to #huddle-test", "Add topic", "Show captions", "Hide self-view", "Huddle preferences"}
 	if len(labels) != len(want) {
 		t.Fatalf("⋯ menu %q, want %q", labels, want)
 	}

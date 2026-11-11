@@ -321,12 +321,19 @@ func TestBellMenuCustomizedTag(t *testing.T) {
 	ch := fakeslackMemberChannel(e)
 	e.openChannel(ch)
 	e.settle(200 * time.Millisecond)
-	// checked is the checked radio's key and every radio's tag
+	// checked is the checked radio's key and every radio's tag label (a
+	// tag is always PND5's informative one)
 	checked := func() (string, map[string]string) {
 		on, tags := "", map[string]string{}
 		for _, it := range popups.ChannelNotifyItems(e.a, ch) {
 			if it.Radio {
-				tags[it.Key] = it.Tag
+				tags[it.Key] = ""
+				if it.Tag != nil {
+					tags[it.Key] = it.Tag.Label
+					if it.Tag.Style != "informative" {
+						t.Errorf("%s: tag style %q", it.Key, it.Tag.Style)
+					}
+				}
 				if it.Checked {
 					on = it.Key
 				}

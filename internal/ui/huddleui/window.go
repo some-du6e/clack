@@ -44,12 +44,21 @@ type window struct {
 	cam    camUI        // window_camera.go
 	phase  huddle.Phase // this frame's (tiles: your spinner until connected)
 
-	more    *popups.Menu    // the ⋯ More actions menu (window_menu.go)
-	moreBtn image.Rectangle // its button, in the toolbar
-	barTop  int             // the toolbar's top in the window
-	cc      ccState         // the closed captions' fade (captions.go)
-	banner  banner          // HuddlesInformationalBanner (captions.go)
-	tips    map[string]*popups.TipState
+	more     *popups.Menu    // the ⋯ More actions menu (window_menu.go)
+	moreBtn  image.Rectangle // its button, in the toolbar
+	audio    *popups.Menu    // the mic's Audio settings menu (audiomenu.go)
+	audioBtn image.Rectangle // its caret, in the toolbar
+	barTop   int             // the toolbar's top in the window
+	cc       ccState         // the closed captions' fade (captions.go)
+	banner   banner          // HuddlesInformationalBanner (captions.go)
+	tips     map[string]*popups.TipState
+
+	overlays []popups.Overlay // modals over the window (winHost.ShowOverlay; under mu)
+	posts    []func()         // winHost.post (under mu)
+
+	// popout is the video key of the screen share this window pops out
+	// ("" = the huddle window; popout.go), popoutUser its presenter.
+	popout, popoutUser string
 }
 
 // OpenWindow shows the huddle window (creating it), when you're in a huddle.
@@ -112,7 +121,11 @@ func (w *window) note(s string) {
 
 func (w *window) run() {
 	ww := new(app.Window)
-	ww.Option(app.Title("Huddle - "+AppName), app.Size(unit.Dp(620), unit.Dp(400)), app.MinSize(unit.Dp(520), unit.Dp(300)))
+	if w.popout != "" {
+		ww.Option(app.Title("Huddle - "+AppName), app.Size(unit.Dp(960), unit.Dp(600)), app.MinSize(unit.Dp(480), unit.Dp(320)))
+	} else {
+		ww.Option(app.Title("Huddle - "+AppName), app.Size(unit.Dp(620), unit.Dp(400)), app.MinSize(unit.Dp(520), unit.Dp(300)))
+	}
 	main := w.c.h.Theme()
 	th := theme.Bare(true)
 	sh := theme.NewShaper()
@@ -144,6 +157,10 @@ func (w *window) run() {
 		case app.DestroyEvent:
 			tick.Stop()
 			close(done)
+			if w.popout != "" {
+				w.c.popoutGone(w)
+				return
+			}
 			w.c.mu.Lock()
 			if w.c.win == w {
 				w.c.win = nil
@@ -169,16 +186,22 @@ func (w *window) run() {
 var AppName = "Clack"
 
 func (w *window) layout(gtx C) {
+	w.runPosts()
 	sz := gtx.Constraints.Max
 	theme.Fill(gtx, image.Rectangle{Max: sz}, hudFrame)
 	s := w.c.Session()
 	if s == nil {
 		huddleLoading(gtx, w.th, sz)
+		w.layoutOverlays(gtx)
 		return
 	}
 	st := s.State()
 	now := time.Now()
 	w.handle(gtx, s, st)
+	if w.popout != "" {
+		w.layoutPopout(gtx, s, st)
+		return
+	}
 	w.cameraWatch(st)
 
 	// the title is Slack's HuddleMvaWindowTitle (CallTimer adds its timer
@@ -232,7 +255,13 @@ func (w *window) layout(gtx C) {
 	}
 	w.barTop = sz.Y - barH
 	w.bottomBar(gtx, s, st, image.Rect(0, sz.Y-barH, sz.X, sz.Y))
-	w.layoutBanner(gtx, stage, now)
+	w.layoutBanner(gtx, s, stage, now)
+	if _, bad := w.mic.visible(st); !bad && w.c.noAudioAlert() && stage.Dx() > gtx.Dp(40) {
+		bw := min(stage.Dx()-gtx.Dp(24), gtx.Dp(480))
+		at(gtx, image.Pt((sz.X-bw)/2, stage.Min.Y+gtx.Dp(12)), image.Pt(bw, stage.Dy()), func(gtx C) D {
+			return w.layoutNoAudio(gtx, s, bw)
+		})
+	}
 	if n, ok := w.mic.visible(st); ok && stage.Dx() > gtx.Dp(40) {
 		w.mic.handle(gtx, s, st, n)
 		bw := min(stage.Dx()-gtx.Dp(24), gtx.Dp(480))
@@ -252,12 +281,16 @@ func (w *window) layout(gtx C) {
 	w.cameraNotice(gtx, st, stage)
 	w.toolbarTip(gtx, image.Rect(0, sz.Y-barH, sz.X, sz.Y))
 	w.layoutMore(gtx)
+	w.layoutOverlays(gtx)
 }
 
 func (w *window) handle(gtx C, s *huddle.Session, st huddle.State) {
 	if w.click("mic").Clicked(gtx) {
-		s.SetMuted(!st.Muted)
+		w.c.micClick(s, st, winHost{w})
 		w.mic.dismissed = huddle.MicOK // a broken mic: show why again
+	}
+	if w.click("micmenu").Clicked(gtx) {
+		w.toggleAudio(s)
 	}
 	if w.click("camera").Clicked(gtx) {
 		w.cameraClick(s, st)
@@ -334,7 +367,7 @@ var quickEmoji = []string{"+1", "heart", "joy", "tada", "wave", "clap", "raised_
 // stage draws the participants (and the screen share, when there is one).
 func (w *window) stage(gtx C, s *huddle.Session, st huddle.State, r image.Rectangle, now time.Time) {
 	gradient(gtx, r, gtx.Dp(10), hudStageA, hudStageB)
-	ps := orderedParticipants(st)
+	ps := galleryOrder(st, w.c.handQueue())
 	if w.c.hideSelf.Load() && len(ps) > 1 { // "Hide self-view": your tile leaves the gallery
 		ps = withoutSelf(ps)
 	}
@@ -343,7 +376,9 @@ func (w *window) stage(gtx C, s *huddle.Session, st huddle.State, r image.Rectan
 	for i := range st.Videos {
 		v := st.Videos[i]
 		if v.Content {
-			if share == nil {
+			// a popped-out share leaves the stage (the self content view
+			// "none"): the people show instead
+			if share == nil && !w.c.popped(v.Key) {
 				share = &st.Videos[i]
 			}
 		} else {
@@ -371,6 +406,7 @@ func (w *window) stage(gtx C, s *huddle.Session, st huddle.State, r image.Rectan
 		drawP := slackc.Props{"$key": "huddle-draw-" + share.Key, "huddleId": s.RoomID(), "screenShareId": share.Key,
 			"isScreenSharing": true, "width": sr.Dx(), "height": sr.Dy()}
 		at(gtx, sr.Min, sr.Size(), func(gtx C) D { return slackc.Render(gtx, "BaseDrawRenderer", drawP, noNative) })
+		w.popoutButton(gtx, share, sr)
 		// no presenter label on the shared screen: Slack names the presenter
 		// only on a screen share tile's footer in the grid
 		n := len(ps) + len(st.Invites)
@@ -528,14 +564,8 @@ const (
 // what Clack doesn't have (a screen capture, huddle canvases, Slack AI),
 // so they aren't drawn; the device carets are open (docs/HUDDLES-AUDIT.md).
 func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
-	// useMicrophoneButton: "Mute mic" while it's live, else "Unmute mic"
-	mic := ctl{id: "mic", icon: "mic", on: true, tip: "Mute mic"}
-	if st.Muted || st.Mic.Problem() {
-		mic = ctl{id: "mic", icon: "mic-off", warn: st.Mic.Problem(), tip: "Unmute mic"}
-	}
-	if st.Mic == huddle.MicDenied {
-		mic.tip = "Microphone permission denied"
-	}
+	// HuddleToolbarMuteButton, segmented in the window (audiomenu.go)
+	mics := w.c.micCtls(st, w.audio != nil)
 	// HuddleToolbarSegmentedStickerPickerButton: your sticker (or the
 	// raised hand) and the picker's caret
 	mine := ""
@@ -557,7 +587,7 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 	react := ctl{id: "react", icon: "emoji", hover: "emoji-filled", on: w.picker, tip: "Add reaction"}
 	thread := ctl{id: "thread", icon: "threads", tip: "Open thread"}
 	more := ctl{id: "more", icon: "ellipsis-vertical-filled", on: w.more != nil, tip: "More actions"}
-	ctls := []ctl{mic, w.cameraCtl(st), hand, sticks, react, thread, more}
+	ctls := append(mics, w.cameraCtl(st), hand, sticks, react, thread, more)
 
 	h := gtx.Dp(40)
 	m := gtx.Dp(4) // each button's margin
@@ -588,6 +618,9 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 		}
 		if c.id == "more" {
 			w.moreBtn = image.Rect(x, y, x+cw, y+h)
+		}
+		if c.id == "micmenu" {
+			w.audioBtn = image.Rect(x, y, x+cw, y+h)
 		}
 		at(gtx, image.Pt(x, y), image.Pt(cw, h), func(gtx C) D {
 			return button(gtx, cl, image.Pt(cw, h), func(gtx C, hov bool) {

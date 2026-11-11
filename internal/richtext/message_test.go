@@ -1,7 +1,10 @@
 package richtext
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
+	"time"
 )
 
 func doc(t *testing.T, js string) Doc {
@@ -71,7 +74,7 @@ func TestFiles(t *testing.T) {
 			Thumb: &Image{URL: "https://files.slack.com/files-tmb/T1-F4-x/v_thumb.jpg", Alt: "v.mp4", W: 1280, H: 720, Proxy: true}}},
 		{Kind: FileBlock, File: &File{ID: "F5", Name: "clip", Mime: "audio/webm", URL: "https://files.slack.com/files-pri/T1-F5/clip", IsAudio: true, DurationMS: 5000, Subtype: "slack_audio"}},
 		{Kind: FileBlock, File: &File{ID: "F6", Name: "s.txt", Title: "Snippet", Mime: "text/plain", Type: "text", URL: "https://files.slack.com/files-pri/T1-F6/s.txt",
-			IsSnippet: true, Preview: "line1\nline2", Lines: 2}},
+			IsSnippet: true, Preview: "line1\nline2", Lines: 2, Mode: "snippet"}},
 		{Kind: FileBlock, File: &File{ID: "F7", Name: "doc.pdf", Mime: "application/pdf", Type: "pdf", PrettyType: "PDF", Size: 2048, URL: "https://files.slack.com/files-pri/T1-F7/doc.pdf"}},
 		tombstone("This file was deleted."),
 		tombstone("This file is hidden because it is older than the workspace's visible history."),
@@ -172,18 +175,68 @@ func TestSharedMessage(t *testing.T) {
 	eq(t, "share plain", PlainText(d), "look\nalice\nshared text\nbob\nunfurled msg\nThis file was deleted.")
 }
 
+// huddle_thread messages are HuddleMsgText: getHuddleMsgText's sentence
+// (dbqw) in place of the text, the room for the Join Huddle button.
 func TestHuddle(t *testing.T) {
-	d := doc(t, `{"ts":"1.0","subtype":"huddle_thread","text":"","room":{"id":"R1","date_start":1700000000,"date_end":1700000600,
-		"has_ended":true,"participants":[],"participant_history":["U1","USELF"]}}`)
-	want := []Block{{Kind: AttachmentBlock, Att: &Attachment{ServiceName: "Huddle", TS: 1700000000,
-		Title:  []Span{tx("A huddle happened")},
-		Text:   []Block{para(tx("Lasted 10m · 2 participants"))},
-		Footer: []Span{user("U1", "@alice"), tx(", "), user("USELF", "@me")}}}}
-	eq(t, "huddle", d.Blocks, want)
+	d := doc(t, `{"ts":"1.0","subtype":"huddle_thread","text":"A huddle happened","room":{"id":"R1","date_start":1700000000,"date_end":1700000600,
+		"has_ended":true,"participants":[],"participant_history":["U1","USELF"],"channels":["C1"]}}`)
+	if len(d.Blocks) != 1 || d.Blocks[0].Att == nil || d.Blocks[0].Att.Huddle == nil {
+		t.Fatalf("blocks %+v", d.Blocks)
+	}
+	a := d.Blocks[0].Att
+	eq(t, "ended, you were in it", a.Text, []Block{para(tx("You and alice were in the huddle for 10m."))})
+	if h := a.Huddle; h.Live || h.Joinable || h.ID != "R1" || h.Channel != "C1" {
+		t.Fatalf("room %+v", h)
+	}
 
-	live := doc(t, `{"ts":"1.0","subtype":"huddle_thread","text":"","room":{"id":"R1","date_start":1700000000,"participants":["U1"]}}`)
-	eq(t, "live huddle", live.Blocks[0].Att.Title, []Span{tx("Huddle in progress")})
-	eq(t, "live huddle text", live.Blocks[0].Att.Text, []Block{para(tx("1 participant"))})
+	live := doc(t, `{"ts":"1.0","subtype":"huddle_thread","text":"","room":{"id":"R1","date_start":1700000000,"participants":["U1"],"participant_history":["U1"]}}`)
+	eq(t, "live, not in it", live.Blocks[0].Att.Text, []Block{para(tx("alice is already there."))})
+	if h := live.Blocks[0].Att.Huddle; !h.Live || !h.Joinable {
+		t.Fatalf("live room %+v", h)
+	}
+}
+
+// The sentence for each of getHuddleMsgText's cases, and both groups of
+// system_messages_redesign_m1.
+func TestHuddleMsgTextCases(t *testing.T) {
+	now := time.Unix(1700003900, 0)
+	room := func(js string) *HuddleRoom {
+		h, ok := ParseHuddleRoom(json.RawMessage(js))
+		if !ok {
+			t.Fatalf("parse %s", js)
+		}
+		return h
+	}
+	text := func(h *HuddleRoom, o HuddleTextOpts) string {
+		var b strings.Builder
+		for _, s := range HuddleMsgText(R, h, o, now) {
+			b.WriteString(s.Text)
+		}
+		return b.String()
+	}
+	five := room(`{"id":"R","date_start":1700000000,"participants":["U1","U2","U3","U4","U5"],"participant_history":["U1","U2","U3","U4","U5"]}`)
+	for _, c := range []struct {
+		h    *HuddleRoom
+		o    HuddleTextOpts
+		want string
+	}{
+		{five, HuddleTextOpts{}, "alice and 4 others are already there."},
+		{five, HuddleTextOpts{Redesign: true}, "alice, bob, and 3 others are already there."},
+		{room(`{"id":"R","participants":["U1","U2"],"participant_history":["U1","U2"]}`), HuddleTextOpts{}, "alice and bob are already there."},
+		{room(`{"id":"R","participants":["U1"]}`), HuddleTextOpts{IM: true}, ""}, // a DM: no "already there"
+		{room(`{"id":"R","participants":["USELF"],"participant_history":["USELF"]}`), HuddleTextOpts{}, "You’re the only one here. Enjoy the tranquility, or invite someone."},
+		{room(`{"id":"R","participants":["USELF"],"participant_history":["USELF"]}`), HuddleTextOpts{Redesign: true}, "Enjoy the tranquility, or invite someone."},
+		{room(`{"id":"R","participants":["USELF"],"participant_history":["USELF"]}`), HuddleTextOpts{IM: true, Partner: "U1"}, "alice has received a notification to join"},
+		{room(`{"id":"R","participants":["USELF","U1"],"participant_history":["USELF","U1"]}`), HuddleTextOpts{}, "alice is here too."},
+		{room(`{"id":"R","date_start":1700000000,"date_end":1700003900,"has_ended":true,"participant_history":["USELF"]}`), HuddleTextOpts{}, "You were in the huddle by yourself for 1h 5m. A nice, meditative session :tea:"},
+		{room(`{"id":"R","date_start":1700000000,"date_end":1700000120,"has_ended":true,"participant_history":["USELF","U1","U2","U3"]}`), HuddleTextOpts{}, "You, alice, and 2 others were in the huddle for 2m."},
+		{room(`{"id":"R","date_start":1700000000,"date_end":1700000120,"has_ended":true,"participant_history":["USELF","U1","U2","U3"]}`), HuddleTextOpts{Redesign: true}, "You, alice, bob, and 1 other were in the huddle for 2m."},
+		{room(`{"id":"R","date_start":1700000000,"date_end":1700000060,"has_ended":true,"participant_history":["U1","U2"]}`), HuddleTextOpts{}, "alice and bob were in the huddle for 1m."},
+	} {
+		if got := text(c.h, c.o); got != c.want {
+			t.Errorf("%+v %+v:\n got %q\nwant %q", c.h, c.o, got, c.want)
+		}
+	}
 }
 
 func TestPlainText(t *testing.T) {

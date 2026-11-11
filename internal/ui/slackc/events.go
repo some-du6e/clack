@@ -1094,6 +1094,11 @@ func (v *View) drawTip(gtx layout.Context) {
 	}
 	p := painter{v: v, ops: gtx.Ops, clip: noClip}
 	rad := float32(gtx.Dp(6))
+	if g := th.C.TooltipGlow; g.A != 0 {
+		// the dark mode outline (theme/tooltip.go) under the box
+		ri := image.Rect(int(x), int(y), int(x+w+0.5), int(y+h+0.5))
+		theme.TooltipShape(gtx, ri, int(rad), theme.TooltipArrow{}, th.C.Tooltip, g)
+	}
 	p.fillRR(rectF{x, y, x + w, y + h}, [4]float32{rad, rad, rad, rad}, th.C.Tooltip)
 	t := op.Offset(image.Pt(int(x+padX), int(y+padY))).Push(gtx.Ops)
 	call.Add(gtx.Ops)

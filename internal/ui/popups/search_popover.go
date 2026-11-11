@@ -1086,6 +1086,7 @@ func srTop(p *SearchPopover) (users, chans []string) {
 // ---- actions ----
 
 func (p *SearchPopover) open(route, conv string) {
+	pickedConversation()
 	RecordRecentConversation(conv)
 	p.Dismiss()
 	p.h.Navigate(route)
@@ -1181,6 +1182,7 @@ func (p *SearchPopover) activate(i int) {
 		}
 		uid := r.id
 		h := p.h
+		pickedConversation()
 		p.Dismiss()
 		run(h, func(ctx context.Context) (core.Conv, error) { return c.OpenDM(ctx, uid) }, func(cv core.Conv, err error) {
 			if err != nil {

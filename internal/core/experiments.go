@@ -34,6 +34,7 @@ func (a *App) setExperimentAssignments(as map[string]slack.ExperimentAssignment)
 	a.recomputeExperimentsLocked()
 	a.mu.Unlock()
 	a.emit(Event{Type: "experiments"})
+	a.refreshTempMutes() // temp_mute decides what a temporary mute does
 }
 
 // setExperiments installs server groups without their records (tests).
@@ -139,6 +140,7 @@ func (a *App) SetExperimentGroups(groups map[string]*string) {
 	if changed {
 		a.emit(Event{Type: "experiments"})
 		a.recentsAfterExperiments()
+		a.refreshTempMutes()
 	}
 }
 
@@ -205,12 +207,18 @@ var experimentReads = map[string][]string{
 	"filter_dormant_channels": on, "improve_mute_pref": on, "dm_recency_sort_rollout": {"without_edu", "with_edu"},
 	"programmable_sidebar_dm_history": on, "vip_section_pref": on, "agents_in_dm_sidebar": on, "agents_in_dm_sidebar_pref": on,
 	"sidebar_section_search": on, "add_channels_channel_sections_slackathon": on, "mute_channel_edu": on,
-	"suggested_sections_auto_sort_v2": on, "suggested_sections_auto_sort_killswitch": on, "meeting_assistant": on,
+	"sidebar_text_filter": on, "sidebar_text_filter_m2": on, "sidebar_text_filter_m3": on, "temp_mute": on, "manage_conversations_strings": on,
+	"thread_root_selected_state": on, "suggested_sections_auto_sort_v2": on, "suggested_sections_auto_sort_killswitch": on, "meeting_assistant": on,
 	"mpdm_naming": on, "sc_mpdm_naming": on, "mpdm_notifications_advanced_option": on, "silent_sidebar": on,
 	"channel_ia_header_refinements": on,
 	// rail (rail.go)
 	"unified_global_triage": on, "activity_in_home_prototype": on, "activity_inbox": on, "activity_with_sidebar": on,
 	"agentforce_deprecation": on, "agent_tasks": on, "later_todos": on, "agents_landing_page": on, "agentic_ia": on,
+	// activity (activity_agent.go: 5Ns/, M/qt ji; nested_secondary_view is
+	// the secondary views' below)
+	"activity_entry_layout_revisions_2": on, "activity_inbox_remove_persistent_detail_panel": on,
+	"activity_bot_item_type_reads": on, "activity_automations_only": on, "exclude_automations_filter": on,
+	"agent_status_in_activity": on,
 	// views
 	"activity_global_settings": on, "slackbot_unread_v2": on, "unified_files_3p_primary_custom_sections": on,
 	"lists_tabbing_navigation": on, "miles_davis_themes": on, "temp_join_channel": on,
@@ -227,7 +235,9 @@ var experimentReads = map[string][]string{
 	// drafts (backend.go: the sidebar's draft pencil)
 	"draft_management_in_composer": {"treatment"}, "sidebar_draft_indicator_menu_and_thread_inclusion": on,
 	// messages and senders
-	"reskin_custom_responses": on, "show_as_agent": on, "agent_badge": on, "support_lots_of_agents": on,
+	"show_as_agent": on, "agent_badge": on, "support_lots_of_agents": on,
+	"system_messages_redesign_m1": on, "flat_message_heading_scale": on, "portable_content_composer": {"treatment"},
+	"message_actions_truncate": on, "agent_identity_overrides": on,
 	// composer and autocomplete
 	"composer_smart_symbols": on, "slash_command_failed_dedupe": on, "autocomplete_frequently_used_emojis_frecency": on,
 	"rich_text_headers_and_dividers": on, "updated_scheduled_sends_desktop": on,
@@ -235,6 +245,11 @@ var experimentReads = map[string][]string{
 	"autocomplete_demote_flannel_passthrough_rltv_exact_match": {"on", "treatment"},
 	"ml_fuzzy_match_beyond_word_boundaries_v2":                 {"on", "treatment"},
 	"emoji_exact_match_boost":                                  on,
+	"autocomplete_affinity_ml_model":                           on,
+	"semantic_emoji_matching":                                  on,
+	"invite_slash_command_in_threads":                          on,
+	"ia4_slash_command_fe":                                     on,
+	"unarchive_channel_banner_polish":                          on,
 	// code channels
 	"session_channels": on, "session_channels_code_tab_pr": on, "session_channels_gh_wo": on,
 	"session_channels_inline_diff": on, "code_channels_naming": on, "session_channel_views": on,
@@ -242,8 +257,12 @@ var experimentReads = map[string][]string{
 	// agents (agent.go; plan and task blocks: ui/blockkit/agent.go)
 	"agent_member_channel_count": on, "plan_block_coding_enhancements": on, "agent_streaming_slimmer_task_cards": on,
 	"app_thread_nugget_fe": on, "app_nugget_refinement": on,
-	// huddles
+	// huddles (ui/huddleui/experiments.go)
 	"scheduled_huddles": on, "huddles_raised_hand_queue": on,
+	"huddle_join_from_preview": on, "huddles_preview_v2": on, "huddles_alone_timeout": on, "huddles_alone_timeout_shortened": on,
+	"huddles_av_button_permission_handling": on, "huddles_awareness_timestamp": on, "huddles_miles_davis": on,
+	"huddles_missed_notification": on, "huddles_multi_device": {"treatment"}, "huddles_screenshare_popout": on,
+	"huddles_switch_microphone_helper": on, "huddles_noise_suppression_awareness": on,
 	// search and the switcher (search*.go, popups/search_*)
 	"desktop_search_recents_read": on, "desktop_search_recents_write": on, "omni_quick_message_results": on,
 	"search_autocomplete_promote_exact_name_matches": {"treatment_3", "treatment_5"},
@@ -256,4 +275,9 @@ var experimentReads = map[string][]string{
 	"defer_notification_3p_streaming": on,
 	// files
 	"file_trash_updates": on,
+	// menus, selects and buttons (ui/popups/experiments.go): the v2 Button,
+	// and two session toggles (enabled for treatment or on)
+	"slack_kit_v2_button":                        on,
+	"a11y_no_auto_highlight_search_multi_select": {"on", "treatment"},
+	"basic_select_placeholder_option":            {"on", "treatment"},
 }

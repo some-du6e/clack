@@ -222,9 +222,9 @@ func (a *App) customResponseTeam() string {
 }
 
 // CustomResponseTeam is who Slack shows as the sender of a Slackbot
-// custom response (Message.CustomResponse) while reskin_custom_responses
-// is on (CustomResponseReskin): the team's name and its icon for an
-// avatar of px pixels (BaseTeamIcon: the image_N for 2*px; "" for the
+// custom response (Message.CustomResponse; Slack's client stopped reading
+// reskin_custom_responses and always draws the team): the team's name and
+// its icon for an avatar of px pixels (BaseTeamIcon: the image_N for 2*px; "" for the
 // default icon, which Slack draws as initials). Until the org has been
 // read it answers with the workspace's.
 func (a *App) CustomResponseTeam(px int) (name, icon string) {
@@ -247,12 +247,6 @@ func (a *App) CustomResponseTeam(px int) (name, icon string) {
 	}
 	return name, icon
 }
-
-// CustomResponseReskin reports Slack's reskin_custom_responses experiment
-// (xT5u ZV). On, a Slackbot custom response shows the team as its sender
-// (CustomResponseTeam) with the custom_response_info_badge; off, Slackbot
-// with a "Custom response" label (MessageLabels).
-func (a *App) CustomResponseReskin() bool { return a.experiment("reskin_custom_responses") == "on" }
 
 // teamIconDue reports whether the poll loop should re-read the icon.
 func (a *App) teamIconDue() bool {

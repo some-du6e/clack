@@ -149,11 +149,13 @@ type row struct {
 	crTipText      string // the badge tooltip's text while hovered
 
 	// what the header drew last frame (CSS may replace both)
-	compactBL int    // the compact time's baseline, gutter-local (tests)
-	nameBL    int    // the sender line's baseline, column-local (tests)
-	nameX     int    // the sender's x, column-local (Compact: -8)
-	avDrawn   string // the avatar's picture: a CSS background-image wins
-	nameShown string // the sender label: ::before + name (unless font-size 0) + ::after
+	compactBL  int         // the compact time's baseline, gutter-local (tests)
+	nameBL     int         // the sender line's baseline, column-local (tests)
+	nameX      int         // the sender's x, column-local (Compact: -8)
+	unreadMark bool        // the reply bar drew the "Unread" mark (tests)
+	avDrawn    string      // the avatar's picture: a CSS background-image wins
+	bgDrawn    color.NRGBA // MessageBackground's fill (labels' tints, hover)
+	nameShown  string      // the sender label: ::before + name (unless font-size 0) + ::after
 }
 
 // chanCard is one CodeChannelEntityCard under a message.
@@ -164,10 +166,12 @@ type chanCard struct {
 
 // replyAv is one ReplyBarAvatar in the reply bar.
 type replyAv struct {
-	r  *row
-	id string
-	sz int
-	w  int // width drawn last frame (0: a plugin hid it)
+	r     *row
+	id    string
+	sz    int
+	w     int    // width drawn last frame (0: a plugin hid it)
+	drawn string // the picture drawn last frame (tests)
+	team  bool   // … the team icon (a Slackbot custom response in the thread)
 }
 
 // reactPill is one reaction's state: Reaction / UnstyledButton natives.
@@ -199,6 +203,9 @@ type rowCtx struct {
 	onDiscard func(r *row)
 	highlight float32 // 0..1 flash for jump targets
 	onReact   func(r *row, name string, add bool)
+	// activeThread: the row is the root of the thread open in the side pane
+	// (thread_root_selected_state, active_thread.go)
+	activeThread bool
 }
 
 // padX is the gutter's side padding: 20 in a channel, 16 in a thread
@@ -783,7 +790,9 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 	// then a broadcast, then pinned, then a custom response. Message (the
 	// channel row), ThreadRoot and ThreadReplyGeneric all wrap the row in
 	// it, so the thread pane shows pinned labels too; only
-	// ThreadReplyGeneric passes showBroadcast.
+	// ThreadReplyGeneric passes showBroadcast. A custom response gets no
+	// label line ("custom_response" === primaryLabelType renders none),
+	// only the row's tint.
 	eph := ephemeral(rc, m)
 	broadcast := rc.thread && !rc.parent && m.Broadcast
 	switch {
@@ -793,9 +802,6 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 		y += r.broadcastLabel(gtx, rc, y)
 	case m.Pinned:
 		y += r.labelLine(gtx, rc, cx, y, "pin", pinnedLabel(rc, m.PinnedBy))
-	case m.SlackbotCustomResponse() && !r.custom:
-		// MessageLabels' custom_response label (pencil), which the reskin drops
-		y += r.labelLine(gtx, rc, cx, y, "edit", "Custom response")
 	}
 	r.col = image.Pt(cx, y)
 	g := at(gtx, 0, y, func(gtx layout.Context) layout.Dimensions {
@@ -819,17 +825,23 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 	switch {
 	case r.edit != nil:
 		bg = c.Editing
+	case rc.activeThread: // .p-message_pane_message__active_thread, after the hover and label rules
+		bg = c.ActiveThread
 	// c-message_kit__background--labels: any primary label but ephemeral
 	// and custom_response (which have their own) tints the row
 	case (m.Pinned || broadcast) && rc.hovered:
 		bg = c.PinnedHover
 	case m.Pinned || broadcast:
 		bg = c.Pinned
+	// --labels--custom_response {background:#1d9bd11a} comes after
+	// --hovered in Slack's stylesheet, so the tint stays under the pointer
+	case m.SlackbotCustomResponse() && !eph:
+		bg = c.CustomTint
 	case rc.hovered, eph: // ephemeral: rgba(29,28,29,.04) (c-message_kit__background--labels--ephemeral)
 		bg = c.Hover
 	}
 	bg = st.Background(bg)
-	r.height = h
+	r.height, r.bgDrawn = h, bg
 	if st.Active() {
 		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return r.paintBackground(gtx, content, size, bg) })
 	}
@@ -1319,14 +1331,36 @@ func (av *replyAv) layout(gtx layout.Context, p slackc.Props) layout.Dimensions 
 	if p != nil {
 		id = p.StrOr("userId", id)
 	}
+	// ReplyBarAvatar (v8ac): Slackbot answering with one of the
+	// workspace's custom responses in this thread (its loaded replies,
+	// hasSlackbotCustomResponseInThread) shows as the team, a 24px TeamIcon
+	// (data-qa reply_bar_team_avatar), like its custom responses do
+	av.team = false
+	if app := rc.h.Core(); app != nil && id == "USLACKBOT" {
+		m := &av.r.m
+		root := m.ThreadTS
+		if root == "" {
+			root = m.TS
+		}
+		if app.SlackbotCustomResponseInThread(m.Channel, root, id) {
+			name, icon := app.CustomResponseTeam(int(mt.threadAvatar))
+			av.drawn, av.team = icon, true
+			drawTeamIcon(gtx, rc.h, icon, name, image.Rect(0, 0, av.sz, av.sz), rc.c)
+			return layout.Dimensions{Size: image.Pt(av.sz, av.sz)}
+		}
+	}
 	url := ""
-	if rc.h.Core() != nil {
-		if u, ok := rc.h.Core().User(id); ok {
+	if app := rc.h.Core(); app != nil {
+		switch u, ok := app.User(id); {
+		case core.LooksLikeBotID(id): // ReplyBarAvatar's botId: reply_user_icons, agent_identity_overrides, the bot's icon
+			url = app.ReplyBarBotAvatar(&av.r.m, id, 2*int(mt.threadAvatar))
+		case ok:
 			url = u.Avatar
-		} else {
+		default:
 			ensureUser(rc.h, id)
 		}
 	}
+	av.drawn = url
 	drawAvatar(gtx, rc.h, url, image.Rect(0, 0, av.sz, av.sz), rc.c)
 	return layout.Dimensions{Size: image.Pt(av.sz, av.sz)}
 }
@@ -2306,18 +2340,7 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	cx := dp(gtx, rc.contentX())
 	cw := w - cx - padX - dp(gtx, 20) - rc.actionsPad(gtx)
 	rec := op.Record(gtx.Ops)
-	icon := "info"
-	switch m.Subtype {
-	case "channel_join", "group_join":
-		icon = "user-plus"
-	case "channel_leave", "group_leave":
-		icon = "user"
-	case "channel_topic", "channel_purpose", "group_topic", "group_purpose", "channel_name",
-		"channel_archive", "channel_unarchive", "channel_convert_to_private", "channel_convert_to_public":
-		icon = "hash" // Slack's channel-event glyph
-	case "pinned_item":
-		icon = "pin"
-	}
+	icon := redesignedIcon(rc.h.Core(), m) // getRedesignedSystemMessageIcon (system.go)
 	// .systemIcon__mZbDL: a 36px box (the avatar's), the 16px glyph
 	// centred, padding-top 2px
 	is := dp(gtx, 16)
@@ -2606,14 +2629,18 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 			// ReplyBar's description: under
 			// unread_thread_indication_in_replybar (on for the account) only
 			// the last reply (getThreadLatestReplyText, util.go), in the
-			// span that shows on hover (reply_bar_hover_last_reply); without
-			// it the last reply at rest and "View thread" on hover. (Its
-			// "Unread" mark needs Activity's channel lists: not drawn.)
+			// span that shows on hover (reply_bar_hover_last_reply), and at
+			// rest the "Unread" mark while the thread has unread replies
+			// (renderUnreadThreadsIndicator, unread_threads.go); without it
+			// the last reply at rest and "View thread" on hover.
 			desc := ""
+			unread := 0
 			switch app := rc.h.Core(); {
 			case app != nil && app.Experiment("unread_thread_indication_in_replybar") == "on":
 				if hov && latest != "" {
 					desc = lastReply(tsTime(latest), rc.now, count)
+				} else if !hov && rc.list != nil && !rc.thread {
+					unread = rc.list.unreadThreadsFor(m.TS)
 				}
 			case hov:
 				desc = threadsNS.T("View thread") // the threads I18n
@@ -2621,10 +2648,25 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 				desc = lastReply(tsTime(latest), rc.now, count)
 			}
 			ds := replyDescClass.Enter(gtx, 0, 0)
-			at(gtx, ax, ty, func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints.Max.X = bw - ax - dp(gtx, 28)
-				return styledLabel(gtx, rc.th, ds, textStyle{size: 13, col: c.Text2, lineH: 18}, desc)
-			})
+			r.unreadMark = unread > 0
+			if unread > 0 {
+				// .c-message__reply_bar_unread_thread: the 8px dot
+				// (icon-placeholder-filled, a circle of r 9 in 20), 4px,
+				// "Unread", in content-imp
+				col := ds.Color(c.Important)
+				d := dp(gtx, 8)
+				rad := float32(d) * 9 / 20
+				cx, cy := float32(ax)+float32(d)/2, float32(ty)+float32(dp(gtx, 18))/2
+				paint.FillShape(gtx.Ops, col, clip.Ellipse{Min: image.Pt(int(cx-rad+0.5), int(cy-rad+0.5)), Max: image.Pt(int(cx+rad+0.5), int(cy+rad+0.5))}.Op(gtx.Ops))
+				at(gtx, ax+d+dp(gtx, 4), ty, func(gtx layout.Context) layout.Dimensions {
+					return styledLabel(gtx, rc.th, ds, textStyle{size: 13, col: col, lineH: 18}, threadsNS.T("Unread")) // ReplyBar's (the threads I18n)
+				})
+			} else {
+				at(gtx, ax, ty, func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints.Max.X = bw - ax - dp(gtx, 28)
+					return styledLabel(gtx, rc.th, ds, textStyle{size: 13, col: c.Text2, lineH: 18}, desc)
+				})
+			}
 			ds.Leave()
 			if hov {
 				is := dp(gtx, 18)

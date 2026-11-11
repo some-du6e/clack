@@ -29,10 +29,22 @@ type ModalButton struct {
 	// Left puts the button at the footer's left edge, apart from the
 	// others (Slack's delete-scheduled-message "Save as Draft").
 	Left bool
+	// V2, when it says so, draws Slack Kit's v2 Button instead of the
+	// legacy c-button (the share dialog under slack_kit_v2_button).
+	V2 func() bool
 	// Icon goes before the label (the workflow speedbump's ▶ "Start
 	// Workflow").
 	Icon  string
 	click widget.Clickable
+}
+
+// draw lays the footer button out as kind (BtnDisabled when it can't be
+// pressed), with the keyboard focus ring when ring is set.
+func (b *ModalButton) draw(gtx layout.Context, th *theme.Theme, kind BtnKind, ring bool) layout.Dimensions {
+	if b.V2 != nil && b.V2() {
+		return buttonV2(gtx, th, &b.click, kind, theme.ButtonV2Medium, b.Label, b.Icon, ring)
+	}
+	return button(gtx, th, &b.click, kind, BtnMedium, b.Label, b.Icon, 80, ring)
 }
 
 // ModalOpts configure a modal.
@@ -77,6 +89,11 @@ type ModalOpts struct {
 	// submit).
 	OnCmdEnter func()
 	OnClose    func()
+	// CloseGuard, when set, is asked before the user closes the modal
+	// (the close button, Escape, a click outside): false keeps it open,
+	// and the owner shows its speed bump (Slack's getShouldShowSpeedBump).
+	// A button whose Do returns true closes it without asking.
+	CloseGuard func() bool
 	// NoClose hides the header close button.
 	NoClose bool
 	// PadX and HeadH override the side padding (default 28) and header
@@ -98,8 +115,17 @@ type ModalOpts struct {
 	// Subtitle is a 15px line under the title, after SubtitleIcon (the
 	// create-channel modal's "# name" on its visibility step).
 	Subtitle, SubtitleIcon string
+	// SubtitleCaption is Slack's p-schedule_message__header: an 18/24
+	// title with Subtitle as a 13/18 caption right under it (the
+	// schedule dialog's p-schedule_message__time_zone_label), in a
+	// header padded 20px top and bottom.
+	SubtitleCaption bool
 	// FooterNote sits at the footer's left ("Step 1 of 2").
 	FooterNote string
+	// FooterLeft draws at the footer's left, vertically centred on the
+	// buttons, with gtx.Constraints.Max the room left of them (Slack's
+	// c-dialog__footer_text: the snippet dialog's share inputs).
+	FooterLeft func(gtx layout.Context) layout.Dimensions
 	// Hero is a full-width strip HeroH dp tall above the header, in the
 	// card's rounded top (the broadcast warning's illustration header,
 	// a c-sk-modal_header before the title bar); the close button sits on
@@ -153,9 +179,21 @@ func (m *Modal) press(b *ModalButton) {
 		return
 	}
 	if b.Do == nil || b.Do() {
-		m.Dismiss()
+		m.base.Dismiss()
 	}
 }
+
+// Dismiss closes the modal, unless CloseGuard keeps it open.
+func (m *Modal) Dismiss() {
+	if m.o.CloseGuard != nil && !m.done && !m.o.CloseGuard() {
+		return
+	}
+	m.base.Dismiss()
+}
+
+// Close closes the modal without asking CloseGuard (the owner's own
+// close: the speed bump's discard).
+func (m *Modal) Close() { m.base.Dismiss() }
 
 // Layout draws the modal.
 func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
@@ -209,8 +247,15 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 		headH = dp(gtx, m.o.HeadH)
 	}
 	subH := 0
+	titleSz, titleLH := float32(22), float32(30)
 	if m.o.Subtitle != "" {
 		subH = dp(gtx, 22)
+		if m.o.SubtitleCaption {
+			subH, titleSz, titleLH = dp(gtx, 18), 18, 24
+			if m.o.HeadH == 0 {
+				headH = dp(gtx, 20+24+20)
+			}
+		}
 		headH += subH
 	}
 	heroH := 0
@@ -285,10 +330,10 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 				}
 
 				// header
-				ty := (headH - subH - dp(gtx, 30)) / 2
+				ty := (headH - subH - dp(gtx, titleLH)) / 2
 				at(gtx, pos.Add(image.Pt(padX, ty)), func(gtx layout.Context) layout.Dimensions {
 					maxW := w - padX - dp(gtx, 64)
-					gtx.Constraints = layout.Constraints{Max: image.Pt(maxW, dp(gtx, 30))}
+					gtx.Constraints = layout.Constraints{Max: image.Pt(maxW, dp(gtx, titleLH))}
 					title := m.o.Title
 					if m.o.TitleFunc != nil {
 						title = m.o.TitleFunc()
@@ -296,7 +341,7 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 					if title == "" && m.o.TitleIcon == "" && m.o.TitleAfter == "" {
 						return layout.Dimensions{} // a header-less dialog (showHeader false): shape nothing
 					}
-					d := para(gtx, th, 22, 30, theme.Black, cl.Fg, title, 1)
+					d := para(gtx, th, titleSz, titleLH, theme.Black, cl.Fg, title, 1)
 					if m.o.TitleIcon == "" && m.o.TitleAfter == "" {
 						return d
 					}
@@ -314,7 +359,7 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 					return d
 				})
 				if m.o.Subtitle != "" {
-					at(gtx, pos.Add(image.Pt(padX, ty+dp(gtx, 30))), func(gtx layout.Context) layout.Dimensions {
+					at(gtx, pos.Add(image.Pt(padX, ty+dp(gtx, titleLH))), func(gtx layout.Context) layout.Dimensions {
 						x := 0
 						if m.o.SubtitleIcon != "" {
 							at(gtx, image.Pt(0, (subH-dp(gtx, 15))/2), func(gtx layout.Context) layout.Dimensions {
@@ -324,6 +369,9 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 						}
 						return at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
 							gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, w-2*padX-x), subH)}
+							if m.o.SubtitleCaption {
+								return para(gtx, th, 13, 18, theme.Regular, cl.Fg2, m.o.Subtitle, 1)
+							}
 							return para(gtx, th, 15, 22, theme.Regular, cl.Fg2, m.o.Subtitle, 1)
 						})
 					})
@@ -380,7 +428,7 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 						}
 						ring := kind != BtnDisabled && m.ringOn(gtx, &b.click)
 						call, d := record(gtx, func(gtx layout.Context) layout.Dimensions {
-							return button(gtx, th, &b.click, kind, BtnMedium, b.Label, b.Icon, 80, ring)
+							return b.draw(gtx, th, kind, ring)
 						})
 						if b.Left {
 							macroAt(gtx, call, image.Pt(lx, fy+footPad))
@@ -390,6 +438,13 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 						x -= d.Size.X
 						macroAt(gtx, call, image.Pt(x, fy+footPad))
 						x -= dp(gtx, 12)
+					}
+					if m.o.FooterLeft != nil {
+						call, d := record(gtx, func(gtx layout.Context) layout.Dimensions {
+							gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, x-lx), dp(gtx, 120))}
+							return m.o.FooterLeft(gtx)
+						})
+						macroAt(gtx, call, image.Pt(lx, fy+footPad+(dp(gtx, 36)-d.Size.Y)/2))
 					}
 				}
 				if m.o.Over != nil {

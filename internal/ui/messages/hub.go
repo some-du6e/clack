@@ -43,6 +43,8 @@ type model struct {
 	refreshQ bool
 	renames  [][2]string // pending ts -> confirmed ts, consumed by views
 	jump     string      // a reply to scroll to (taut jumpToReply), consumed by views
+	// newestMissing: the window misses the newest page (snap.newestMissing)
+	newestMissing bool
 
 	// failed loads back off (see backoff); no retries at all after auth fails
 	fails, olderFails     int
@@ -365,6 +367,9 @@ func (m *model) find(ts string) int {
 
 func (m *model) upsert(msg core.Message) {
 	if !m.visible(&msg) {
+		// a reply taken back from the conversation (removeBroadcast) leaves
+		// its list; its thread keeps it
+		m.remove(msg.TS)
 		return
 	}
 	if i := m.find(msg.TS); i >= 0 {
@@ -587,6 +592,11 @@ type snap struct {
 	refresh  bool
 	renames  [][2]string
 	jump     string
+	// newestMissing is Slack's reachedEnd === false: the loaded window
+	// stops short of the newest message (ArchivesBanner's "Latest
+	// messages"). Clack loads history newest first and every refresh
+	// merges the newest page (mergeNewest), so nothing sets it yet.
+	newestMissing bool
 }
 
 func (m *model) snapshot(dst *snap) bool {
@@ -597,6 +607,7 @@ func (m *model) snapshot(dst *snap) bool {
 	}
 	dst.msgs = append(dst.msgs[:0], m.msgs...)
 	dst.hasMore, dst.lastRead, dst.loaded, dst.loading, dst.older, dst.err = m.hasMore, m.lastRead, m.loaded, m.loading, m.older, m.err
+	dst.newestMissing = m.newestMissing
 	dst.typing = dst.typing[:0]
 	now := time.Now()
 	for id, t := range m.typing {

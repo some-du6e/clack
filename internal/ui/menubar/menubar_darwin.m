@@ -123,6 +123,12 @@ static ClackMenuTarget *clackTarget;
 		it.tag = kRecentTag + i;
 		[menu insertItem:it atIndex:at + 1 + i];
 	}
+	// the menu's own items that State.Hidden hides (Show full history)
+	for (NSMenuItem *it in menu.itemArray) {
+		if (it.tag < kRecentPlaceholder && [it.identifier isEqualToString:kClackItem]) {
+			it.hidden = clackMenuHidden((int)it.tag) != 0;
+		}
+	}
 }
 @end
 
@@ -238,6 +244,8 @@ CFTypeRef clack_menubar_build(CFTypeRef specRef) {
 			if (flags & CLACK_MI_RECENT) {
 				it.tag = kRecentPlaceholder;
 				it.hidden = YES;
+			} else {
+				it.tag = [d[@"tag"] intValue]; // State.Hidden can hide it
 			}
 		} else {
 			it = [[NSMenuItem alloc] initWithTitle:title action:nil keyEquivalent:d[@"key"]];

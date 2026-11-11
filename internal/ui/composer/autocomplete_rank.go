@@ -48,6 +48,16 @@ type rankCtx struct {
 	passthrough, demote bool
 	beyond, emojiBoost  bool
 	exactNames          string // search_autocomplete_promote_exact_name_matches' group
+
+	// autocomplete_affinity_ml_model on: search.autocomplete.
+	// offlineFeatures' user_affinity and channel_priority_90d, which
+	// prepSuggestions hands the sort as userAffinityScore and
+	// channelPriority90dScore (nil otherwise: the features stay 0)
+	affinity, priority90D map[string]float64
+
+	// ia4_slash_command_fe on: bulkAddServerCommands keys commands by
+	// app and name, so two apps' /deploy are both listed
+	ia4 bool
 }
 
 // expOn reads a client experiment the way Slack's gates do.
@@ -80,6 +90,10 @@ func rankCtxFrom(api coreAPI, s core.Snapshot, convKind string) rankCtx {
 	r.beyond = expOn(a.Experiment("ml_fuzzy_match_beyond_word_boundaries_v2"))
 	r.emojiBoost = a.Experiment("emoji_exact_match_boost") == "on"
 	r.exactNames = a.Experiment("search_autocomplete_promote_exact_name_matches")
+	if a.Experiment("autocomplete_affinity_ml_model") == "on" {
+		r.affinity, r.priority90D = a.AutocompleteAffinity()
+	}
+	r.ia4 = a.Experiment("ia4_slash_command_fe") == "on"
 	return r
 }
 
@@ -129,6 +143,7 @@ func (r rankCtx) memberCand(u core.User, s memberSources, remote bool) acrank.Ca
 		External: u.External, SameTeam: u.TeamID != "" && u.TeamID == s.selfTeam,
 		HasPresence: u.Presence != "", InChannel: inCh || (u.ID == s.selfID && r.convKind != ""),
 		InThread: r.threadUsers[u.ID], EnterpriseID: u.EnterpriseID, Teams: u.Teams,
+		Affinity: r.affinity[u.ID],
 	}
 	if c.DisplayName == "" && u.DisplaySet {
 		c.DisplayName = u.Name
@@ -271,6 +286,7 @@ func (s channelSources) rankChannels(q string) []acItem {
 			Kind: acrank.Channel, ID: id, Name: name, Remote: remote, Private: kind == "private",
 			IsMember: member, Archived: archived, Starred: r.starred[id], Unread: cnt.Unread,
 			LastRead: tsF(cnt.LastRead), Latest: tsF(cnt.Latest), History: r.history[id],
+			Priority90D: r.priority90D[id],
 		})
 		items = append(items, acItem{
 			Kind: acChannel, ID: id, Name: name, Private: kind == "private", Member: member, Archived: archived,
@@ -292,21 +308,34 @@ func (s channelSources) rankChannels(q string) []acItem {
 }
 
 // rankCommands ranks the / list (source slash-command-menu: the common
-// features only). Names are stored without the leading "/".
+// features only). Names are stored without the leading "/". The list is
+// the slash command store as bulkAddServerCommands fills it (kW4s): keyed
+// by name, a later command replacing an earlier one of the same name, or
+// with ia4_slash_command_fe by app and name (a built-in command, which
+// has no app, by name).
 func rankCommands(q string, cmds []core.Command, r rankCtx) []acItem {
 	cands := make([]acrank.Cand, 0, len(cmds))
 	items := make([]acItem, 0, len(cmds))
-	seen := map[string]bool{}
+	at := map[string]int{}
 	for i := range cmds {
 		c := cmds[i]
 		name := strings.TrimPrefix(c.Name, "/")
-		n := strings.ToLower(name)
-		if name == "" || seen[n] {
+		if name == "" {
 			continue
 		}
-		seen[n] = true
-		cands = append(cands, acrank.Cand{Kind: acrank.Command, ID: "/" + name, Name: "/" + name, Desc: c.Desc, AppName: c.AppName})
-		items = append(items, acItem{Kind: acCommand, ID: name, Name: name, Secondary: c.Desc, Command: &c})
+		key := strings.ToLower(name)
+		if r.ia4 && c.AppID != "" {
+			key = c.AppID + "-" + key
+		}
+		cand := acrank.Cand{Kind: acrank.Command, ID: "/" + name, Name: "/" + name, Desc: c.Desc, AppName: c.AppName}
+		item := acItem{Kind: acCommand, ID: name, Name: name, Secondary: c.Desc, Command: &c}
+		if j, ok := at[key]; ok { // the key keeps its place, the later command its data
+			cands[j], items[j] = cand, item
+			continue
+		}
+		at[key] = len(items)
+		cands = append(cands, cand)
+		items = append(items, item)
 	}
 	rs := acrank.Rank(q, cands, r.opts(acrank.SourceSlash))
 	out := make([]acItem, len(rs))

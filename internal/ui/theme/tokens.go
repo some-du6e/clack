@@ -153,6 +153,9 @@ var paletteTokens = []struct {
 	// .c-tooltip__tip: --sk_tooltip-background: var(--dt_color-base-inv-pry)
 	{func(p *Palette) *color.NRGBA { return &p.Tooltip }, Both("var(--dt_color-base-inv-pry)")},
 	{func(p *Palette) *color.NRGBA { return &p.TooltipText }, Both("var(--dt_color-content-inv-pry)")},
+	{func(p *Palette) *color.NRGBA { return &p.TooltipSub }, Both("var(--dt_color-content-inv-sec)")},
+	// .sk-client-theme--dark .c-tooltip__tip: drop-shadow(0 0 1px var(--dt_color-otl-pry))
+	{func(p *Palette) *color.NRGBA { return &p.TooltipGlow }, Tok{"", "var(--dt_color-otl-pry)"}},
 }
 
 // ApplyTokens lays the overridden tokens over p (an unflattened
