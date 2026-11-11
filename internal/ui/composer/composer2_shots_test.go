@@ -28,14 +28,14 @@ import (
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
-// shotHost is the GIF test host with a real image cache (the fake's
+// c2ShotHost is the GIF test host with a real image cache (the fake's
 // images; the attached files' own bytes through localimg).
-type shotHost struct {
+type c2ShotHost struct {
 	*gifTestHost
 	img *imgcache.Cache
 }
 
-func (h shotHost) Images() *imgcache.Cache { return h.img }
+func (h c2ShotHost) Images() *imgcache.Cache { return h.img }
 
 // TestComposer2Shots draws the composer-2 branch's ports, light and dark
 // at 2x, into COMPOSER_AUDIT_SHOTS_DIR (the composer-audit-shots
@@ -123,7 +123,7 @@ func TestComposer2Shots(t *testing.T) {
 		mode := map[bool]string{false: "light", true: "dark"}[dark]
 		th := theme.New(dark)
 		gh := &gifTestHost{ovHost: &ovHost{slickHost: &slickHost{app: app, th: th}}}
-		h := shotHost{gifTestHost: gh, img: images}
+		h := c2ShotHost{gifTestHost: gh, img: images}
 
 		t.Run("gif-tiles-"+mode, func(t *testing.T) {
 			c := New(h, ch, "")
