@@ -117,8 +117,7 @@ func (a *App) changeDownloadDir() {
 // field) with Change… beside it (greyed while the box is on), and Slack's
 // note under them.
 func (p *prefsModal) downloadLocationRows(f *prefsForm) {
-	a := p.a
-	f.subheading("Download location")
+	a := p.a // under the page's own "Download location" legend
 	f.option("download_ask", "Choose location for each download", "", a.prefs.DownloadAsk, false, a.toggleDownloadAsk)
 	f.fieldButton("download_dir", a.downloadDirShown(), prefsButton{"download_change", "Change…", !a.prefs.DownloadAsk, a.changeDownloadDir})
 	f.muted("Note: this setting is for this computer only and affects all workspaces you are signed in to.", false)
