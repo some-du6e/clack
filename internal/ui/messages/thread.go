@@ -40,6 +40,7 @@ type ThreadView struct {
 	top int // header (+ admin tools) height of the last frame
 
 	bellBtn, moreBtn, nameBtn widget.Clickable
+	backBtn                   widget.Clickable // FlexpaneBackButton (PaneBack)
 	bellTip, moreTip, nameTip popups.TipState
 	closeTip                  popups.TipState
 	banner                    threadBanner           // jump to unread (thread_banner.go)
@@ -63,8 +64,12 @@ func (v *ThreadView) ContentHeight() int {
 }
 
 // NewThreadView returns the thread pane for the thread rooted at ts.
-func NewThreadView(h Host, ch, ts string) *ThreadView {
-	v := &ThreadView{h: h, ch: ch, ts: ts, s: stateFor(h, ch, ts)}
+func NewThreadView(h Host, ch, ts string) *ThreadView { return NewThreadViewIn(h, ch, ts, "") }
+
+// NewThreadViewIn is NewThreadView in view container pane ("split":
+// Slack's split view), with a list state of its own (stateIn).
+func NewThreadViewIn(h Host, ch, ts, pane string) *ThreadView {
+	v := &ThreadView{h: h, ch: ch, ts: ts, s: stateIn(h, ch, ts, pane)}
 	v.s.closeEdits()
 	v.Reopen()
 	v.s.hb.ensureLoaded(v.s.m)
@@ -399,6 +404,16 @@ func (v *ThreadView) header(gtx layout.Context, th *theme.Theme, c *colors, w, h
 	if smaller {
 		tsT.size, tsT.lineH, gap = 15, 22, dp(gtx, 4)
 	}
+	// FlexpaneBackButton while the view container has a back stack (the
+	// split view's view.prev): 28px, margin-right 6 plus the header's gap.
+	pb, back := v.h.(PaneBack)
+	back = back && pb.PaneBack()
+	if back {
+		px += dp(gtx, 28) + dp(gtx, 6) + gap
+		if v.backBtn.Clicked(gtx) {
+			pb.GoPaneBack()
+		}
+	}
 	ty := (hh - gtx.Sp(unit.Sp(tsT.lineH))) / 2
 	d := at(gtx, px, ty, func(gtx layout.Context) layout.Dimensions {
 		return lineBox(gtx, tsT, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, tsT, "Thread") })
@@ -448,6 +463,21 @@ func (v *ThreadView) header(gtx layout.Context, th *theme.Theme, c *colors, w, h
 	// tooltip delays: the bell's 300, More actions' BaseTooltip default
 	// 150, Close 300 (the header has additional buttons)
 	v.bellTip.Delay, v.moreTip.Delay, v.closeTip.Delay = 300*time.Millisecond, 150*time.Millisecond, 300*time.Millisecond
+	if back { // no tooltip: Slack's FlexpaneBackButton only has its aria-label "Back"
+		at(gtx, dp(gtx, 16), (hh-bs)/2, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Exact(image.Pt(bs, bs))
+			return v.backBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				if v.backBtn.Hovered() {
+					rrect(gtx.Ops, image.Rectangle{Max: image.Pt(bs, bs)}, dp(gtx, 8), st.Background(c.CloseHover))
+				}
+				is := dp(gtx, 20)
+				at(gtx, (bs-is)/2, (bs-is)/2, func(gtx layout.Context) layout.Dimensions {
+					return icons.Get("caret-left-full")(gtx, unit.Dp(20), st.Color(c.Text3))
+				})
+				return layout.Dimensions{Size: image.Pt(bs, bs)}
+			})
+		})
+	}
 	if bell {
 		icon := "notifications-off"
 		if sub {
