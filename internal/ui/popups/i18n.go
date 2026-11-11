@@ -2,7 +2,6 @@ package popups
 
 import (
 	"strings"
-	"unicode"
 
 	"github.com/some-du6e/clack/internal/i18n"
 )
@@ -124,44 +123,4 @@ func linkSplit(parts []i18n.Part, tag string) (text, link string) {
 		b = append(b, p.Text)
 	}
 	return strings.TrimSpace(strings.Join(b, "")), link
-}
-
-// cjkChunks cuts a word where a line may break inside it: between CJK
-// characters (each its own chunk), not before closing punctuation or a
-// small kana and not after opening punctuation (kinsoku). Other text
-// stays whole. Hand-flowed rich text (cnRuns) wraps Japanese with it.
-func cjkChunks(word string) []string {
-	var out []string
-	cur := ""
-	glue := false // the chunk so far ends in opening punctuation
-	prevCJK := false
-	for _, r := range word {
-		cjk := isCJKRune(r)
-		switch {
-		case cur == "":
-			cur = string(r)
-		case glue || strings.ContainsRune(cjkNoBreakBefore, r) || !cjk && !prevCJK:
-			cur += string(r)
-		default:
-			out = append(out, cur)
-			cur = string(r)
-		}
-		glue = strings.ContainsRune(cjkNoBreakAfter, r)
-		prevCJK = cjk
-	}
-	if cur != "" {
-		out = append(out, cur)
-	}
-	return out
-}
-
-const (
-	cjkNoBreakBefore = "、。，．・：；？！ー）」』】〕〉》］｝ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ々"
-	cjkNoBreakAfter  = "（「『【〔〈《［｛"
-)
-
-// isCJKRune: ideographs, kana, hangul and CJK punctuation.
-func isCJKRune(r rune) bool {
-	return unicode.In(r, unicode.Han, unicode.Hiragana, unicode.Katakana, unicode.Hangul) ||
-		r >= 0x3000 && r <= 0x303f || r >= 0xff00 && r <= 0xffef || r == 0x30fc
 }

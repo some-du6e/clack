@@ -45,8 +45,8 @@ jobs:
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS fonts-lato fonts-noto-cjk
       - name: catalog
         run: go test -count=1 -v ./internal/i18n
-      - name: no English left, the Language pref
-        run: go test -count=1 -v -run 'TestLocalePref$|TestPrefsNoEnglishLeft|TestMainNoEnglishLeft|TestPrefsPagesMatchSlack' ./internal/ui
+      - name: no English left, the Language pref, the rail's wrapped labels
+        run: go test -count=1 -v -run 'TestLocalePref$|TestPrefsNoEnglishLeft|TestMainNoEnglishLeft|TestPrefsPagesMatchSlack|TestRailLabelLines' ./internal/ui
       - name: screenshots (es-ES, ja-JP)
         env:
           I18N_SHOTS_DIR: ${{ github.workspace }}/dist/shots

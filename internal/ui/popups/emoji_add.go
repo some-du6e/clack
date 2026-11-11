@@ -30,6 +30,7 @@ import (
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uiguard"
 )
@@ -158,7 +159,7 @@ func emojiAddWords(team string, bold bool) []emojiAddWord {
 			return
 		}
 		// a word that runs on into the next part (no space between, as
-		// in ja-JP) and a CJK word's characters (cjkChunks) are glued:
+		// in ja-JP) and a CJK word's characters (i18n.LineChunks) are glued:
 		// no space after them, though a line may break there
 		if n := len(out); n > 0 && !spaceAfter && !unicode.IsSpace([]rune(txt)[0]) {
 			out[n-1].glue = true
@@ -166,7 +167,7 @@ func emojiAddWords(team string, bold bool) []emojiAddWord {
 		r := []rune(txt)
 		spaceAfter = unicode.IsSpace(r[len(r)-1])
 		for _, f := range strings.Fields(txt) {
-			cs := cjkChunks(f)
+			cs := i18n.LineChunks(f)
 			for i, c := range cs {
 				out = append(out, emojiAddWord{s: c, bold: b, glue: i < len(cs)-1})
 			}

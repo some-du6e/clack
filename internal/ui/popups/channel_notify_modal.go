@@ -350,8 +350,8 @@ func cnRuns(gtx layout.Context, th *theme.Theme, cl *Colors, runs []cnRun, size,
 			if wd == "" {
 				continue
 			}
-			// a CJK run breaks between its characters (cjkChunks)
-			for _, word := range cjkChunks(strings.TrimRight(wd, " ")) {
+			// a CJK run breaks between its characters (i18n.LineChunks)
+			for _, word := range i18n.LineChunks(strings.TrimRight(wd, " ")) {
 				ww := textW(gtx, th, size, wt, word)
 				if x > 0 && x+ww > w {
 					x, y = 0, y+lh

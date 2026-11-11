@@ -168,13 +168,21 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	}
 
 	if hudBtn {
-		// Huddle split button (94×28: 74 + 20); Slack 2026's --polish variant
-		// has no outline, only hover fills. While a huddle is on, huddleui
-		// draws Slack's live button: mint with faces, headphones and a bare
-		// count, or solid jade with the leave headphones when you're in it.
+		// Huddle split button (94×28 in en-US: 74 + 20); Slack 2026's
+		// --polish variant has no outline, only hover fills. The start
+		// button is width auto with its label unclipped
+		// (.p-huddle_channel_header_button__start_button: width auto;
+		// __label: 13px/18px bold), so it fits the locale's label: ja-JP's
+		// ハドルミーティング widens it, es-ES's Junta narrows it. While a
+		// huddle is on, huddleui draws Slack's live button: mint with
+		// faces, headphones and a bare count, or solid jade with the leave
+		// headphones when you're in it.
 		hud := a.huddles()
 		hud.Seed()
-		hw := gtx.Dp(94)
+		label := i18n.T("huddles", "Huddle")
+		lw := a.th.Measure(gtx, 13, theme.Bold, label)
+		sw := gtx.Dp(74) - a.th.Measure(gtx, 13, theme.Bold, "Huddle") + lw // the start button
+		hw := sw + gtx.Dp(20)
 		live := hud.HeaderLive(ch)
 		if live {
 			hw = hud.HeaderPillWidth(gtx, a.th, ch)
@@ -189,7 +197,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 			hudOrg = &originTracker{}
 			a.hudOrigin[ch] = hudOrg
 		}
-		caretX := gtx.Dp(74) // the caret's x in the button
+		caretX := sw // the caret's x in the button
 		if live {
 			caretX = hud.HeaderCaretX(gtx, a.th, ch)
 			at(gtx, image.Pt(right, y), image.Pt(hw, btn), func(gtx layout.Context) layout.Dimensions {
@@ -200,7 +208,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		} else {
 			at(gtx, image.Pt(right, y), image.Pt(hw, btn), func(gtx layout.Context) layout.Dimensions {
 				r := image.Rect(0, 0, hw, btn)
-				at(gtx, image.Pt(0, 0), image.Pt(gtx.Dp(74), btn), func(gtx layout.Context) layout.Dimensions {
+				at(gtx, image.Pt(0, 0), image.Pt(sw, btn), func(gtx layout.Context) layout.Dimensions {
 					return clickArea(gtx, a.clicks.get("hdr.huddle"), func(gtx layout.Context, s image.Point, hov bool) {
 						if hov {
 							theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(8), c.BgHover)
@@ -209,16 +217,16 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 						at(gtx, image.Pt(gtx.Dp(8), (btn-gtx.Dp(18))/2), image.Pt(gtx.Dp(18), gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {
 							return icons.Get("huddle")(gtx, 18, c.FgMuted)
 						})
-						at(gtx, image.Pt(gtx.Dp(30), 0), image.Pt(gtx.Dp(44), btn), func(gtx layout.Context) layout.Dimensions {
+						at(gtx, image.Pt(gtx.Dp(30), 0), image.Pt(lw+gtx.Dp(2), btn), func(gtx layout.Context) layout.Dimensions {
 							return vcenter(gtx, btn, func(gtx layout.Context) layout.Dimensions {
-								return a.th.Label(gtx, 13, theme.Bold, c.FgMuted, i18n.T("huddles", "Huddle"))
+								return a.th.Label(gtx, 13, theme.Bold, c.FgMuted, label)
 							})
 						})
-						return layout.Dimensions{Size: image.Pt(gtx.Dp(74), btn)}
+						return layout.Dimensions{Size: image.Pt(sw, btn)}
 					})
 				})
-				hud.StartTip(gtx, a.th, ch, a.clicks.get("hdr.huddle").Hovered(), image.Pt(gtx.Dp(74), btn))
-				at(gtx, image.Pt(gtx.Dp(74), 0), image.Pt(gtx.Dp(20), btn), func(gtx layout.Context) layout.Dimensions {
+				hud.StartTip(gtx, a.th, ch, a.clicks.get("hdr.huddle").Hovered(), image.Pt(sw, btn))
+				at(gtx, image.Pt(sw, 0), image.Pt(gtx.Dp(20), btn), func(gtx layout.Context) layout.Dimensions {
 					return clickArea(gtx, a.clicks.get("hdr.huddlemore"), nil, func(gtx layout.Context) layout.Dimensions {
 						at(gtx, image.Pt(gtx.Dp(1), (btn-gtx.Dp(14))/2), image.Pt(gtx.Dp(14), gtx.Dp(14)), func(gtx layout.Context) layout.Dimensions {
 							return icons.Get("chevron-down")(gtx, 14, c.FgMuted)
@@ -226,7 +234,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 						return layout.Dimensions{Size: image.Pt(gtx.Dp(20), btn)}
 					})
 				})
-				at(gtx, image.Pt(gtx.Dp(74), 0), image.Pt(gtx.Dp(20), btn), func(gtx layout.Context) layout.Dimensions {
+				at(gtx, image.Pt(sw, 0), image.Pt(gtx.Dp(20), btn), func(gtx layout.Context) layout.Dimensions {
 					hud.CaretTip(gtx, a.th, ch, a.clicks.get("hdr.huddlemore").Hovered(), image.Pt(gtx.Dp(20), btn))
 					return layout.Dimensions{}
 				})

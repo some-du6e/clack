@@ -86,3 +86,17 @@ func TestListify(t *testing.T) {
 		}
 	}
 }
+
+func TestLineChunks(t *testing.T) {
+	for in, want := range map[string][]string{
+		"Mensajes": {"Mensajes"},
+		"アクティビティ":  {"ア", "ク", "ティ", "ビ", "ティ"}, // no line starts with a small kana
+		"「設定」を開く":  {"「設", "定」", "を", "開", "く"}, // nor after 「 or before 」
+		"Slackの設定": {"Slack", "の", "設", "定"},
+		"ツール":      {"ツー", "ル"}, // nor with ー
+	} {
+		if got := LineChunks(in); fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("LineChunks(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
