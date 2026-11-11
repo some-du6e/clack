@@ -779,10 +779,10 @@ func NewFake(clip []byte, errf func(string, ...any)) *Fake {
 	f := &fakeChime{errf: errf, clip: splitAU(clip)}
 	srv := httptest.NewServer(http.HandlerFunc(f.serve))
 	// ICE on loopback for the client side too
-	testSettings = func(se *webrtc.SettingEngine) {
+	setTestSettings(func(se *webrtc.SettingEngine) {
 		se.SetIncludeLoopbackCandidate(true)
 		se.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4})
-	}
+	})
 	return &Fake{f: f, srv: srv}
 }
 
@@ -809,7 +809,7 @@ func (x *Fake) Close() {
 		_ = x.f.content.pc.Close()
 	}
 	x.f.content.mu.Unlock()
-	testSettings = nil
+	setTestSettings(nil)
 }
 
 func (f *fakeChime) onAwareness(pm *PeerMessage) {

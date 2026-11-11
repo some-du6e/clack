@@ -875,8 +875,19 @@ func (s *Session) handle(f *signalFrame) {
 
 // ---- media ----
 
-// testSettings lets tests adjust the ICE setup (loopback candidates).
-var testSettings func(*webrtc.SettingEngine)
+// testSettings lets tests adjust the ICE setup (loopback candidates). The
+// fake sets and clears it while sessions (and content attendees) may still
+// be connecting, hence the lock.
+var (
+	testSettingsMu sync.Mutex
+	testSettings   func(*webrtc.SettingEngine)
+)
+
+func setTestSettings(f func(*webrtc.SettingEngine)) {
+	testSettingsMu.Lock()
+	testSettings = f
+	testSettingsMu.Unlock()
+}
 
 var h264Fmtp = []struct {
 	pt   uint8
@@ -911,8 +922,11 @@ func newAPI() (*webrtc.API, error) {
 	se := webrtc.SettingEngine{}
 	// Chime's audio server only speaks AES-CM: with GCM it drops you.
 	se.SetSRTPProtectionProfiles(dtls.SRTP_AES128_CM_HMAC_SHA1_80)
-	if testSettings != nil {
-		testSettings(&se)
+	testSettingsMu.Lock()
+	ts := testSettings
+	testSettingsMu.Unlock()
+	if ts != nil {
+		ts(&se)
 	}
 	return webrtc.NewAPI(webrtc.WithMediaEngine(me), webrtc.WithInterceptorRegistry(ir), webrtc.WithSettingEngine(se)), nil
 }

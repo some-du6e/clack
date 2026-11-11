@@ -123,6 +123,7 @@ func (c *Controller) openScreenPicker(s *huddle.Session, ph popups.Host) {
 		Width:   800,
 		HeadH:   70,
 		Flush:   true,
+		BasePry: true, // .c-sk-modal: base-pry, which the tabs' base-sec matches in dark mode
 		Header:  p.header,
 		Body:    p.body,
 		Buttons: []*popups.ModalButton{cancel, share},
@@ -379,9 +380,11 @@ func (p *screenPicker) tile(gtx C, th *theme.Theme, ink pickerInk, t *pickTile, 
 		}, func(gtx C) D {
 			inner := sz.X - 2 - 2*gtx.Dp(4)
 			if t.have {
-				is := t.img.Size()
-				s := min(1, min(float32(inner)/float32(max(1, is.X)), float32(thumbH)/float32(max(1, is.Y))))
-				dw, dh := int(float32(is.X)*s), int(float32(is.Y)*s)
+				// the thumbnail's natural size is in CSS px (dp): max-width and
+				// max-height 100% shrink it, nothing grows it
+				is := layout.FPt(t.img.Size()).Mul(gtx.Metric.PxPerDp)
+				s := min(1, min(float32(inner)/max(1, is.X), float32(thumbH)/max(1, is.Y)))
+				dw, dh := int(is.X*s), int(is.Y*s)
 				ox, oy := 1+gtx.Dp(4)+(inner-dw)/2, 1+gtx.Dp(4)+(thumbH-dh)/2
 				at(gtx, image.Pt(ox, oy), image.Pt(dw, dh), func(gtx C) D {
 					fit(gtx, t.img, image.Pt(dw, dh), gtx.Dp(8))
