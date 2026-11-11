@@ -65,7 +65,7 @@ func hcEnvOn(t *testing.T, fs *fakeslack.Server) *tzHost {
 	a := core.New(slack.New(fs.Creds()), store.New(""))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	a.EnsureUsers(ctx, []string{fakeslack.SelfID, fakeslack.ProfileID, fakeslack.IdentityWorkflowID})
+	a.EnsureUsers(ctx, []string{fakeslack.SelfID, fakeslack.ProfileID})
 	if u, ok := a.S.User(fakeslack.SelfID); ok {
 		a.S.Self = *u
 	}
@@ -245,7 +245,10 @@ func TestMessageMenuSlackRows(t *testing.T) {
 
 	// q: a workflow bot's message with its workflow_id
 	wf := core.Message{Channel: emCh, TS: "1700000000.000600", User: fakeslack.IdentityWorkflowID, WorkflowID: "Wf0FAKE0001"}
-	h.a.EnsureUsers(context.Background(), []string{fakeslack.IdentityWorkflowID})
+	// Workflow Builder's bot user (fakeslack serves it only with
+	// Size.Identity): straight into the store
+	h.a.S.PutUsers([]slack.User{{ID: fakeslack.IdentityWorkflowID, TeamID: fakeslack.TeamID, Name: "standup",
+		RealName: "Standup Workflow", IsBot: true, IsWorkflowBot: true}})
 	if it := emItem(t, items(wf, InChannel), "Copy workflow ID"); emClip(it) != "Wf0FAKE0001" {
 		t.Errorf("copied %q", emClip(it))
 	}
