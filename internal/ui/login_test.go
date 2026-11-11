@@ -59,7 +59,7 @@ func newSignInEnv(t *testing.T, login func(slack.SignInInput) error, sz image.Po
 	loginOS = "linux"
 	t.Cleanup(func() { loginOS = prevOS })
 	a.login.rec = &s.strs
-	s.run(300 * time.Millisecond) // the field takes the focus, everything settles
+	s.run(time.Second) // the field takes the focus and its ring settles (springSnappy: ~0.35 s)
 	return s
 }
 
@@ -85,14 +85,16 @@ func (s *signInEnv) drew(sub string) bool {
 	return false
 }
 
-// wake is how soon after the last frame the window was asked for the
-// next one (ok false: never).
-func (s *signInEnv) wake() (time.Duration, bool) {
-	at, ok := s.r.WakeupTime()
-	if !ok {
-		return 0, false
+// motion is what the card's last frame asked for: frames at once
+// (moving), or one later (wake after the frame; 0: none). It is the
+// welcome screen's own motion clock, so the field's caret blink isn't in
+// it.
+func (s *signInEnv) motion() (moving bool, wake time.Duration) {
+	m := s.a.welcome.mc
+	if m.wake.IsZero() {
+		return m.moving, 0
 	}
-	return at.Sub(s.now), true
+	return m.moving, m.wake.Sub(m.now)
 }
 
 // typeIn types s into the focused editor the way Gio's window does: the
@@ -207,9 +209,9 @@ func TestSignInDefaultIsShort(t *testing.T) {
 			t.Errorf("%q shows by default", hidden)
 		}
 	}
-	// and at rest it asks for no frames (the caret's blink at most)
-	if d, ok := s.wake(); ok && d < 100*time.Millisecond {
-		t.Errorf("the default card asks for a frame in %v", d)
+	// and at rest it asks for no frames
+	if mv, wk := s.motion(); mv || wk != 0 {
+		t.Errorf("the default card at rest: moving %v, next frame in %v", mv, wk)
 	}
 }
 
@@ -234,11 +236,12 @@ func TestSignInOpenAndWait(t *testing.T) {
 	if s.drew("Open Slack sign-in") {
 		t.Error("Open Slack sign-in is still drawn after it gave way")
 	}
-	if d, ok := s.wake(); !ok || d > 40*time.Millisecond || d < 10*time.Millisecond {
-		t.Errorf("waiting: the next frame in %v (%v), want a calm ~30 fps", d, ok)
-	}
-	if w := s.idleWakes(20); w > 1 {
-		t.Errorf("waiting: %d of 20 frames asked for another at once", w)
+	// a calm loop: every frame asks for the next in ~33 ms, none at once
+	for i := 0; i < 20; i++ {
+		s.frame(50 * time.Millisecond)
+		if mv, wk := s.motion(); mv || wk <= 0 || wk > 40*time.Millisecond {
+			t.Fatalf("waiting, frame %d: moving %v, next frame in %v; want ~30 fps", i, mv, wk)
+		}
 	}
 	s.key(key.NameEscape)
 	s.run(time.Second)
@@ -278,8 +281,8 @@ func TestSignInAdvancesWhenLinkArrives(t *testing.T) {
 	if !l.busy || !s.drew("Signing in…") || !s.drew("Slack is giving Clack its own session.") {
 		t.Fatalf("busy %v: %q", l.busy, s.strs)
 	}
-	if d, ok := s.wake(); !ok || d > 5*time.Millisecond {
-		t.Errorf("signing in: the badge's spinner asked for the next frame in %v (%v)", d, ok)
+	if mv, _ := s.motion(); !mv {
+		t.Error("signing in: the badge's spinner doesn't ask for frames")
 	}
 	// the controls are inert meanwhile
 	l.openSignIn.Click()
@@ -457,7 +460,7 @@ func TestSignInErrorShortCopy(t *testing.T) {
 			if l.card.Min.X != x0 {
 				t.Fatalf("the card's box moved (the shake is a transform): %v", l.card)
 			}
-			if d, ok := s.wake(); ok && d <= 5*time.Millisecond {
+			if mv, _ := s.motion(); mv {
 				moved = true
 			}
 		}
@@ -468,8 +471,8 @@ func TestSignInErrorShortCopy(t *testing.T) {
 			t.Errorf("reduced %v: the error came in without motion", reduced)
 		}
 		s.run(2 * time.Second)
-		if d, ok := s.wake(); ok && d < 100*time.Millisecond {
-			t.Errorf("reduced %v: still asking for frames (%v) after the shake", reduced, d)
+		if mv, wk := s.motion(); mv || wk != 0 {
+			t.Errorf("reduced %v: after the shake, moving %v, next frame in %v", reduced, mv, wk)
 		}
 	}
 }
@@ -560,8 +563,8 @@ func TestSignInDisclosures(t *testing.T) {
 	if !s.r.Source().Focused(&l.link) {
 		t.Error("back from Advanced, the link field doesn't have the focus")
 	}
-	if w := s.idleWakes(20); w > 1 {
-		t.Errorf("after the disclosures %d of 20 frames asked for another at once", w)
+	if mv, wk := s.motion(); mv || wk != 0 {
+		t.Errorf("after the disclosures: moving %v, next frame in %v", mv, wk)
 	}
 }
 
