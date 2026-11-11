@@ -1108,7 +1108,9 @@ func (b *base) skeleton(gtx C, rows int, avatar unit.Dp) D {
 
 // errorLine draws a muted error with a retry button.
 func (b *base) errorState(gtx C, err error, retry *widget.Clickable) D {
-	return b.emptyState(gtx, "", "Something went wrong", friendlyErr(err), retry, "Try again")
+	// the views' shared error state: the files namespace's words, which
+	// Slack's own views use for theirs
+	return b.emptyState(gtx, "", i18n.T("files", "Something went wrong"), friendlyErr(err), retry, i18n.T("files", "Try again"))
 }
 
 func friendlyErr(err error) string {
