@@ -357,7 +357,7 @@ Ctrl/Cmd+V keeps formatting like Slack's composer. Gio v0.10.3's `clipboard.Read
 | close (live) | `views.close {view_id, client_token, root_view_id?}` | footer Close / Escape pop one view (root_view_id with clear_on_close); × closes the stack |
 | shortcuts (live) | `apps.actions.v2.list {resource_id: team, resource_type: team}`; `apps.actions.v2.execute {action_id, app_id, team_id: current workspace, context: {channel_id, message_ts?}, client_token}` | the list's per-app `team_id` gets `internal_error`; message shortcuts in the message menu's Connect to apps, global ones in the composer's + menu |
 | App Home (live) | `conversations.info {channel, return_app_home}` → `app_home` + `home_view`; `apps.home.dispatchOpenEvent {id, type: home/messages}`; RTM `view_opened/updated` type home; About: `apps.profile.get {bot, app}` | |
-| workflow links | `workflows.triggers.trip {url, context: {location: message, channel_id, message_ts}, client_token, run_precheck}` | `pretrip_ack_required` → "Start workflow?" confirm, trip again without precheck (not live-tested: workflows can post) |
+| workflow links | `workflows.triggers.trip {url, context, client_token, run_precheck}` with Slack's context per caller (message, button, bookmark, channel details) | `pretrip_ack_required` → Slack's speedbump, trip again without `run_precheck`; Slack's toasts. See [WORKFLOWS.md](WORKFLOWS.md) (fakeslack only: workflows can post) |
 | legacy dialogs | RTM `dialog_opened` → `dialog.get`, `dialog.submit {dialog_id, submission}`, `dialog.notifyCancel` | |
 | ephemerals (live) | RTM `message` with `is_ephemeral` | `Interactive().Ephemeral(ch, ts)`; rows get "Only visible to you" + Slack's .04 background |
 

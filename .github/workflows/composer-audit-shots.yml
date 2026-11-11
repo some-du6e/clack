@@ -10,6 +10,7 @@ name: composer-audit-shots
 # screenshots (composer-audit-shots). Nothing here talks to Slack.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run composer-audit-shots.yml --ref <branch>)
     paths:
       - "internal/ui/composer/**"
       - ".github/workflows/composer-audit-shots.yml"

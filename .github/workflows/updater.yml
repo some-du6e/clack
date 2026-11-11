@@ -10,6 +10,7 @@ name: updater
 # the whole window against the fake Slack.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run updater.yml --ref <branch>)
     paths:
       - 'internal/desktop/**'
       - 'internal/ui/desktop.go'

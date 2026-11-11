@@ -8,6 +8,7 @@ name: command-modals
 # command-modals-shots artifact.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run command-modals.yml --ref <branch>)
     paths:
       - "internal/core/command*.go"
       - "internal/core/interactive*.go"

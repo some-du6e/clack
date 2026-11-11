@@ -231,10 +231,13 @@ var experimentReads = map[string][]string{
 	// search and the switcher (search*.go, popups/search_*)
 	"desktop_search_recents_read": on, "desktop_search_recents_write": on, "omni_quick_message_results": on,
 	"search_autocomplete_promote_exact_name_matches": {"treatment_3", "treatment_5"},
+	"search_explore_freshness_signals":               on,
 	// read by branches merged into ui without listing them here
 	"activity_bulk_unread_tool": on, "ai_channel_exclusions": on, "mcp_ai_channel_exclusions": on,
 	"enable_new_channel_settings": on, "move_channel_tabs_settings": on, "lists_grid_todos": on,
 	"mpdm_default_exclude_history_clients_webapp": on, "rich_text_headers_and_dividers": on,
 	"updated_scheduled_sends_desktop": on, "draft_management_in_composer": {"treatment"},
-	"sidebar_draft_indicator_menu_and_thread_inclusion": on,
+	"sidebar_draft_indicator_menu_and_thread_inclusion": on, "channel_details_agents_apps_tab": on,
+	"enable_wfb_ai_answer_step": on, "workflow_execution_window": on, "nested_secondary_view": on,
+	"secondary_view_default_width": on, "unread_thread_indication_in_replybar": on,
 }

@@ -7,6 +7,7 @@ name: bk-elements
 # here talks to Slack.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run bk-elements.yml --ref <branch>)
     paths:
       - "internal/ui/blockkit/**"
       - "internal/fakeslack/bkgallery*.go"

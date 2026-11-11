@@ -6,6 +6,7 @@ name: ch-details-shots
 # only: nothing here talks to Slack.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run ch-details-shots.yml --ref <branch>)
     paths:
       - "internal/ui/views/details.go"
       - "internal/ui/views/details_more.go"
