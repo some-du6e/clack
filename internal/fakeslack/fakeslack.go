@@ -1024,6 +1024,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			if fx, ok := s.unreadsCount(c.ID); ok { // unreads.go
 				e = fx
 			}
+			if l, ok := s.codeLatest(c.ID); ok { // codechannels.go: read, at its fixture's latest message
+				e = slack.CountEntry{ID: c.ID, LastRead: l, Latest: l}
+			}
 			e.LastRead, e.HasUnreads, e.MentionCount = s.applyMark(c.ID, e.LastRead, e.Latest, e.HasUnreads, e.MentionCount)
 			if c.IsIM {
 				ims = append(ims, e)
@@ -1049,7 +1052,10 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			"dm_recency_sort_rollout": g("without_edu"), "reskin_custom_responses": g("on"), "temp_join_channel": g("on"),
 			"sidebar_section_search": g("on"), "add_channels_channel_sections_slackathon": g("on"), "mute_channel_edu": g("on"),
 			"session_channels": g("on"), "session_channel_views": g("on"), "code_channels_naming": g("on"),
-			"composer_smart_symbols": g("on"), "agents_in_dm_sidebar": g("on"), "agents_in_dm_sidebar_pref": g("on"),
+			"code_channels_auto_close": g("on"), "agent_member_channel_count": g("on"), "plan_block_coding_enhancements": g("on"),
+			"agent_streaming_slimmer_task_cards": g("on"), "composer_smart_symbols": g("on"),
+			"app_thread_nugget_fe": g("on"), "app_nugget_refinement": g("on"),
+			"agents_in_dm_sidebar": g("on"), "agents_in_dm_sidebar_pref": g("on"),
 			"suggested_sections_auto_sort_v2": g("on"),
 			"lists_tabbing_navigation":        g("on"),
 			// focus mode and the Availability section (see core's defaultExperimentGroups)

@@ -606,9 +606,9 @@ func (m *mirror) get(slice, key string) any {
 		return pruneEmpty(bot, false)
 	case "membershipCounts":
 		n, ok := a.MemberCountCached(key)
-		guests := 0
+		guests, apps := 0, 0
 		if ok {
-			guests = a.GuestCountCached(key)
+			guests, apps = a.GuestCountCached(key), a.AppCountCached(key)
 		}
 		if !ok {
 			c, have := a.S.Conv(key)
@@ -621,7 +621,7 @@ func (m *mirror) get(slice, key string) any {
 		if team == "" {
 			team = a.C.Creds.Team
 		}
-		return map[string]any{"counts": map[string]any{"member_count": n, "current_team_member_count": n, "restricted_member_count": guests, "member_count_by_team": map[string]int{team: n}}}
+		return map[string]any{"counts": map[string]any{"member_count": n, "current_team_member_count": n, "restricted_member_count": guests, "app_count": apps, "member_count_by_team": map[string]int{team: n}}}
 	case "membership":
 		out := map[string]membershipRec{}
 		if c, ok := a.S.Conv(key); ok {
