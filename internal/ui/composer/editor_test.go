@@ -1,12 +1,17 @@
 package composer
 
 import (
+	"image"
+	"strings"
 	"testing"
 
 	"gioui.org/io/key"
 	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/store"
+	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
@@ -283,20 +288,30 @@ func TestUndoCoalescing(t *testing.T) {
 	}
 }
 
+// Enter in lists, quotes and code, as Slack's composer takes it (Texty's
+// keyboard module: Quill's "list empty enter" binding first, then Slack's
+// enter bindings, on_enter_onEnter with shouldInsertNewline, xrjr, and
+// MessageInput.onEnter): Enter in a list item with text sends, Enter on an
+// empty item leaves the list without sending, Shift+Enter makes the next
+// item and on an empty one leaves the list, indent and all. Enter on an
+// empty quote line sends; Shift+Enter adds quote (or code) lines until
+// the second empty one in a row, where the two become a plain line.
 func TestEnterInLists(t *testing.T) {
 	e := NewEditor()
 	edType(e, "- a")
 	e.events = nil
 	edPress(e, key.NameReturn, 0)
-	if edHas(e, EvSubmit) {
-		t.Fatal("Enter in a list submitted")
+	if !edHas(e, EvSubmit) || e.doc.Text() != "a" || len(e.doc.Lines) != 1 {
+		t.Fatalf("Enter in a list item: submit %v, %q %+v", edHas(e, EvSubmit), e.doc.Text(), e.doc.Lines)
 	}
-	if e.doc.Text() != "a\n" || len(e.doc.Lines) != 2 || e.doc.Lines[1].Kind != Bullet {
-		t.Fatalf("new item: %q %+v", e.doc.Text(), e.doc.Lines)
+	e.events = nil
+	edPress(e, key.NameReturn, key.ModShift)
+	if edHas(e, EvSubmit) || e.doc.Text() != "a\n" || len(e.doc.Lines) != 2 || e.doc.Lines[1].Kind != Bullet {
+		t.Fatalf("Shift+Enter, the next item: %q %+v", e.doc.Text(), e.doc.Lines)
 	}
-	edPress(e, key.NameReturn, 0) // empty item: leave the list
-	if e.doc.Text() != "a\n" || e.doc.Lines[1].Kind != Para || e.doc.Lines[0].Kind != Bullet {
-		t.Fatalf("leave list: %q %+v", e.doc.Text(), e.doc.Lines)
+	edPress(e, key.NameReturn, 0) // empty item: leave the list, no send
+	if edHas(e, EvSubmit) || e.doc.Text() != "a\n" || e.doc.Lines[1].Kind != Para || e.doc.Lines[0].Kind != Bullet {
+		t.Fatalf("Enter on an empty item: %q %+v %v", e.doc.Text(), e.doc.Lines, e.events)
 	}
 	edType(e, "b")
 	edPress(e, key.NameReturn, 0)
@@ -304,27 +319,31 @@ func TestEnterInLists(t *testing.T) {
 		t.Fatal("Enter in a paragraph did not submit")
 	}
 
-	// Nested empty item outdents first.
-	e = NewEditor()
-	edType(e, "- a")
-	e.SetSelection(0, 0) // Slack's "indent" takes a collapsed caret at the item's start
-	edPress(e, key.NameTab, 0)
-	if e.doc.Lines[0].Indent != 1 {
-		t.Fatalf("tab indent %+v", e.doc.Lines)
-	}
-	e.SetSelection(e.doc.Len(), e.doc.Len())
-	edPress(e, key.NameReturn, 0)
-	edPress(e, key.NameReturn, 0)
-	if l := e.doc.Lines[1]; l.Kind != Bullet || l.Indent != 0 {
-		t.Fatalf("outdent %+v", e.doc.Lines)
-	}
-	edPress(e, key.NameTab, key.ModShift)
-	edPress(e, key.NameReturn, 0)
-	if e.doc.Lines[1].Kind != Para {
-		t.Fatalf("leave %+v", e.doc.Lines)
+	// a nested empty item leaves the list at once: "list empty enter"
+	// formats list and indent off, the newline branch formatLine({list:
+	// false, indent: 0})
+	for _, mods := range []key.Modifiers{0, key.ModShift} {
+		e = NewEditor()
+		edType(e, "- a")
+		e.SetSelection(0, 0) // Slack's "indent" takes a collapsed caret at the item's start
+		edPress(e, key.NameTab, 0)
+		if e.doc.Lines[0].Indent != 1 {
+			t.Fatalf("tab indent %+v", e.doc.Lines)
+		}
+		e.SetSelection(e.doc.Len(), e.doc.Len())
+		edPress(e, key.NameReturn, key.ModShift)
+		if l := e.doc.Lines[1]; l.Kind != Bullet || l.Indent != 1 {
+			t.Fatalf("the next nested item %+v", e.doc.Lines)
+		}
+		e.events = nil
+		edPress(e, key.NameReturn, mods)
+		if l := e.doc.Lines[1]; l.Kind != Para || l.Indent != 0 || edHas(e, EvSubmit) {
+			t.Fatalf("mods %v on the empty nested item: %+v %v", mods, e.doc.Lines, e.events)
+		}
 	}
 
-	// Shift+Enter in a code block adds a code line; Enter still submits.
+	// Shift+Enter in a code block adds code lines and leaves on the second
+	// empty one; Enter submits.
 	e = NewEditor()
 	edType(e, "```x")
 	e.events = nil
@@ -332,19 +351,121 @@ func TestEnterInLists(t *testing.T) {
 	if len(e.doc.Lines) != 2 || e.doc.Lines[1].Kind != CodeBlock {
 		t.Fatalf("code line %+v", e.doc.Lines)
 	}
+	edPress(e, key.NameReturn, key.ModShift)
+	if len(e.doc.Lines) != 3 || e.doc.Lines[2].Kind != CodeBlock {
+		t.Fatalf("second empty code line %+v", e.doc.Lines)
+	}
+	edPress(e, key.NameReturn, key.ModShift)
+	if e.doc.Text() != "x\n" || len(e.doc.Lines) != 2 || e.doc.Lines[0].Kind != CodeBlock || e.doc.Lines[1].Kind != Para {
+		t.Fatalf("leaving the code block: %q %+v", e.doc.Text(), e.doc.Lines)
+	}
+	e = NewEditor()
+	edType(e, "```x")
 	edPress(e, key.NameReturn, 0)
 	if !edHas(e, EvSubmit) {
 		t.Fatal("Enter in a code block did not submit")
 	}
 
-	// Enter on an empty quote line leaves the quote.
+	// quotes: Enter sends, an empty quote line included
 	e = NewEditor()
 	edType(e, ">q")
 	edPress(e, key.NameReturn, key.ModShift)
 	e.events = nil
 	edPress(e, key.NameReturn, 0)
-	if edHas(e, EvSubmit) || e.doc.Lines[1].Kind != Para {
-		t.Fatalf("empty quote: %+v %v", e.doc.Lines, e.events)
+	if !edHas(e, EvSubmit) || len(e.doc.Lines) != 2 || e.doc.Lines[1].Kind != Quote {
+		t.Fatalf("Enter on an empty quote line: %+v %v", e.doc.Lines, e.events)
+	}
+	edPress(e, key.NameReturn, key.ModShift) // a second empty quote line
+	if len(e.doc.Lines) != 3 || e.doc.Lines[2].Kind != Quote {
+		t.Fatalf("second empty quote line %+v", e.doc.Lines)
+	}
+	edPress(e, key.NameReturn, key.ModShift)
+	if e.doc.Text() != "q\n" || len(e.doc.Lines) != 2 || e.doc.Lines[0].Kind != Quote || e.doc.Lines[1].Kind != Para {
+		t.Fatalf("leaving the quote: %q %+v", e.doc.Text(), e.doc.Lines)
+	}
+
+	// Slack's shouldInsertNewline table (xrjr): meta never, Ctrl on macOS
+	// always, Ctrl elsewhere unless Shift or "Start a new line"; with that
+	// pref anything; in code under enter_is_special_in_tbt all but Shift;
+	// else Shift or Alt
+	cases := []struct {
+		meta, ctrl, shift, alt, mac, pref, pre, in, want bool
+	}{
+		{want: false},
+		{shift: true, want: true},
+		{alt: true, want: true},
+		{meta: true, shift: true, want: false},
+		{ctrl: true, want: true},
+		{ctrl: true, shift: true, want: false},
+		{ctrl: true, pref: true, want: false},
+		{ctrl: true, pref: true, mac: true, want: true},
+		{pref: true, want: true},
+		{pre: true, in: true, want: true},
+		{pre: true, in: true, shift: true, want: false},
+		{pre: true, want: false},
+	}
+	for _, c := range cases {
+		if got := insertsNewline(c.meta, c.ctrl, c.shift, c.alt, c.mac, c.pref, c.pre, c.in); got != c.want {
+			t.Errorf("insertsNewline%+v = %v", c, got)
+		}
+	}
+}
+
+// Karim (2026-11-10): "a quote overlaps with the thingy". Slack's composer
+// quote: each quote line a blockquote with padding-left 16px and the 4px
+// bar (radius clamped to 2) at its left, 4px margins around a quote run,
+// consecutive lines joined (margin-top -3px collapsing to 1px, padding-top
+// 3px, the bar carried over the gap), and no placeholder once the line
+// has a block format (Quill's isBlank).
+func TestQuoteLayoutLikeSlack(t *testing.T) {
+	st := DefaultEditorStyle(theme.NewShaper())
+	lay := func(d *Doc) *Editor {
+		e := NewEditor()
+		e.SetDoc(d)
+		var ops op.Ops
+		gtx := layout.Context{Ops: &ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(image.Pt(400, 200))}
+		e.Layout(gtx, st)
+		return e
+	}
+	quote := func(lines ...string) *Doc {
+		d := NewDoc()
+		d.Insert(0, strings.Join(lines, "\n"), Attr{})
+		d.SetLineKind(0, len(d.Lines)-1, Quote)
+		return d
+	}
+	para := lay(NewDoc())
+	if para.lay.height != 22 || !quillBlank(NewDoc()) {
+		t.Fatalf("an empty paragraph: height %d, blank %v", para.lay.height, quillBlank(NewDoc()))
+	}
+	e := lay(quote(""))
+	if quillBlank(quote("")) {
+		t.Error("the placeholder shows on an empty quote line")
+	}
+	p := e.lay.paras[0]
+	if p.top != 4 || p.bot != 26 || e.lay.height != 30 {
+		t.Errorf("an empty quote line: top %d bot %d height %d, want 4 26 30", p.top, p.bot, e.lay.height)
+	}
+	if x, _, _, _, _ := e.lay.caretInfo(0); x != 16 {
+		t.Errorf("the caret on an empty quote line at x %d, want 16 (padding-left)", x)
+	}
+	e = lay(quote("first", "second"))
+	p0, p1 := e.lay.paras[0], e.lay.paras[1]
+	if p0.top != 4 || p0.bot != 26 || p1.top != 30 || p1.bot != 52 || e.lay.height != 56 {
+		t.Errorf("two quote lines: %d-%d, %d-%d, height %d; want 4-26, 30-52, 56", p0.top, p0.bot, p1.top, p1.bot, e.lay.height)
+	}
+	d := quote("q")
+	d.Insert(d.Len(), "\nafter", Attr{})
+	d.SetLineKind(1, 1, Para)
+	e = lay(d)
+	if q, a := e.lay.paras[0], e.lay.paras[1]; q.bot != 26 || a.top != 30 {
+		t.Errorf("a paragraph after a quote: quote ends %d, paragraph starts %d; want 26, 30", q.bot, a.top)
+	}
+	for _, k := range []BlockKind{Bullet, Ordered, CodeBlock, Header1} {
+		d := NewDoc()
+		d.SetLineKind(0, 0, k)
+		if quillBlank(d) {
+			t.Errorf("the placeholder shows on an empty %v line", k)
+		}
 	}
 }
 

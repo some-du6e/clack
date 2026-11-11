@@ -31,7 +31,7 @@ plumbing that lets Clack and its plugins follow them, and the work left, by area
 | C: not read by the client | 1000 |
 | **All assignments** | **1,609** |
 
-609 of the account's experiments are read by Slack's client. Of the 197 A experiments, Clack reads 75 today (the Clack column cites where).
+609 of the account's experiments are read by Slack's client. Of the 197 A experiments, Clack reads 95 today (the Clack column cites where).
 
 ## How Clack follows them
 
@@ -58,7 +58,7 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `mpdm_naming` | `on` | client-boot `tpcx` isMpdmNamingEnabled | group DMs can carry a custom name, shown instead of the member list; the header's EditMpdmNameButton and details' Conversation name open RenameMpdmDialog | reads it: `core/mpdm_name.go` (sidebar, header `ui/channel_mpdm.go`, details `ui/views/details_mpdm.go`, switcher, `popups/rename_mpdm_dialog.go`) |
 | `dm_recency_sort_rollout` | `without_edu` | application `WaW2` isDmRecencyDefaultSortEnabled | without_edu: DM sections default to recent-activity sort | reads it: `ui/section_menu.go:303` |
 | `filter_dormant_channels` | `on` | gantry-v2-async-client-boot-shared `pDWx` export `K` | "active" section filters hide dormant channels | reads it: `ui/section_menu.go:254`, `ui/section_menu.go:302` |
-| `sidebar_text_filter` | `on` | client-boot `O2By` isVipSectionPrefEnabled | the sidebar has a text filter for conversations | missing |
+| `sidebar_text_filter` | `on` | client-boot `O2By` isSidebarTextFilterEnabled (export `ZN`); client-channel-list-view `SYcU` SidebarTextFilterInput; boot-render `Yuqx` (150 ms debounce), `B7kx` (the filtered rows), `JS+i` TextFilterNoResultsRowElement | the sidebar's "Find a conversation…" input filters the sidebar in place: matching sections expanded, no links or footers, "No conversations to show…" with Search {team}; the Home header has no divider. Off: no input | reads it: `core/sidebar_filter.go`, `ui/sidebar_filter.go` |
 | `activity_inbox` | `on` | client-boot `5Ns/` isActivityInboxEnabled | Activity is the activity inbox | reads it: `core/rail.go:82`, `core/rail.go:183` |
 | `block_kit_revamp_blocks` | `on` | boot-shared `A6yj` GalleryScrollerArrow (aria-label translated); prototype-block `rso/` PrototypeImpl | the prototype block's `alert` and `card_v2` candidates draw only when on | missing: Clack has no prototype block (it's an unsupported block type) |
 | `forward_message_card` | `on` | boot-render `zuQH` (message unfurls: `tx = ti && !hideCardLayout`), boot-shared `6YU6` ThreadShareEntity | on: a forwarded message's v1 attachment drops the colour bar and gets c-message_attachment--full_card (max-width 716px); shared-thread cards go full width up to 716px. Off: the bar and the 600px attachment | on matches: richview `msgCard` (MessageAttachmentSlackMessageCard) has no bar and the 716px cap; the off look isn't drawn (its inner RB layout isn't read yet) |
@@ -67,15 +67,15 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `sc_mpdm_naming` | `on` | client-boot `tpcx` isMpdmNamingEnabled | custom group DM names also for Slack Connect group DMs | reads it: `core/mpdm_name.go` |
 | `agents_in_dm_sidebar` | `on` | client-boot `O2By` export `Mq` | agents are listed among direct messages | reads it: `core/app.go:1491`, `ui/prefs_pages.go:278` |
 | `improve_mute_pref` | `on` | client-boot `yqzr` | muted channels: the improved mute pref and its menu | reads it: `ui/views/details.go:2400`, `ui/popups/notify_menu.go:129` |
-| `sidebar_text_filter_m2` | `on` | client-boot `O2By` export `sO` | sidebar text filter, milestone 2 | missing |
-| `sidebar_text_filter_m3` | `on` | client-boot `O2By` export `Nv` | sidebar text filter, milestone 3 | missing |
-| `temp_mute` | `on` | client-boot `O2By` export `VJ` | channels can be muted for a limited time | missing |
+| `sidebar_text_filter_m2` | `on` | client-boot `O2By` export `sO`; boot-render `/HdK` useClosedDmFilterMatches; client-channel-list-view `SYcU` createThunkFetchSidebarDms | closed DMs and group DMs whose people match join Direct messages, ordered by read cursor; focusing the input loads sidebar.dms when it hasn't answered | reads it: `core/sidebar_filter.go`, `ui/sidebar_filter.go` |
+| `sidebar_text_filter_m3` | `on` | client-boot `O2By` export `Nv`; boot-render `Fyfu` createSidebarFuzzyFilter | the filter matches with the FuzzyMatcher (limit 3) or dashed words, and group DMs when every word matches a member | reads it: `core/sidebar_filter.go` |
+| `temp_mute` | `on` | client-boot `O2By` export `VJ`; boot-shared `PND5` ChannelNotificationPrefMenu, `laNq` MoreOptionsSubmenu, `RUvF` useTempMute, `vA1n` enqueueMuteChannelToast; boot-render `zuQH` (muted channels, kickOffTempMuteTimer) | a temp_mute_expiration_ts still ahead mutes the channel (re-checked 15 s to 5 min later); the bell's More options › Temporarily mute… (Until tomorrow at the DND end hour, 1 hour) toasts "#x muted for 1 hour." with Undo. Off: Advanced options and Edit default preferences instead, and expirations mute nothing | reads it: `core/temp_mute.go`, `ui/popups/notify_menu.go` |
 | `vip_section_pref` | `on` | client-boot `O2By` isSidebarVisualUpdatesNuxEnabled | the VIP section pref shows | reads it: `core/prefs_a.go:90`, `ui/prefs_pages.go:249` |
-| `desktop_history_menu` | `on` | gantry-v2-async-client-boot-shared `Fpm/` export `Ti` | the history (back/forward) menu merges visits | missing |
-| `nested_secondary_view` | `on` | client-boot `kl02` isNestedSecondaryViewEnabled | secondary views (right pane) can nest | missing |
-| `secondary_view_default_width` | `on` | client-boot `kl02` export `k5` | the secondary view opens at the new default width | missing |
-| `smaller_secondary_headers` | `on` | client-boot `kl02` export `I$` | secondary view headers are smaller | missing |
-| `today_v2` | `on` | client-boot `/Qva` isTodayV2Provisioned | the Today tab (v2) when provisioned | missing |
+| `desktop_history_menu` | `on` | gantry-v2-async-client-boot-shared `Fpm/` export `Ti`; boot-render `tLXx` HistoryButtons, `a6xy` gJ | the clock button's history menu lists 25 places instead of 15; the desktop app gets the top-level History menu (Back, Forward, up to 15 places, Show full history ⌘Y) | reads it: `core/views_experiments.go`, `ui/history_menu.go` (menu and History dialog), `ui/macmenu.go` |
+| `nested_secondary_view` | `on` | client-boot `kl02` isNestedSecondaryViewEnabled (!BBM, !agentic_ia, !tbd client) | a channel's thread and profile panes nest below the channel header; the column may grow to fill the region (aTtQ wE); the Threads view header keeps its line (auBp, W58+) | reads it: `core/views_experiments.go`, `ui/app.go` layoutPrimary, `ui/secondary.go`, `ui/views/threads.go` |
+| `secondary_view_default_width` | `on` | client-boot `kl02` export `k5` (nested only); boot-render `aTtQ` getIdealSecondaryWidth | the secondary column's default is 40% of the region beside the sidebar instead of 30% of the space beside the rail | reads it: `ui/secondary.go` secondaryDefault (under the nested view) |
+| `smaller_secondary_headers` | `on` | client-boot `kl02` export `I$` (nested only); boot-shared `JvjC`, `XVla` p-flexpane_header--smaller | secondary flexpane headers of the nhyY views (thread, profile, search in channel, canvas, code channel details…) get a 15px title and 4px gaps | reads it: `core/views_experiments.go`; the thread pane follows it (`ui/messages/thread.go`); the profile, search-in-channel and code channel panes don't yet |
+| `today_v2` | `on` | client-boot `/Qva` isTodayV2Provisioned | the Today tab (v2) when provisioned | not applicable: Today needs ACCESS_SLACK_AI_TODAY (Slack AI; permissions/info: not allowed for the account), so Slack shows no Today in any group |
 | `activity_entry_layout_revisions_2` | `on` | client-boot `5Ns/` export `xi` (gantry boot-render Eojr, GuYW, FgHy, svza, oDbF, WbG1; boot-shared QTZf, /ad9, PcpC) | the multi-line and single-line rows with their status slot (off: Pck2's older rows); the All tab's dot badge (off: All's count pill, the default tabs' counts, the icon-only strip when narrow); no day divider over the first row; a 16px spacer between the VIP sections; "Multi-line view" / "Single-line view" tooltips; "Reacted {emoji} to:" (off: "You:"); two-line messages (off: one) | reads it: `core/activity_agent.go:21`; tabs, dividers, tooltips, reactions, lines: `ui/views/activity_tabs.go`, `ui/views/activity.go` (off: Pck2's rows not ported) |
 | `activity_inbox_remove_persistent_detail_panel` | `on` | client-boot `5Ns/` isActivityInboxRemovePersistentDetailPanelEnabled (Bb; VlLO, L1Ms, gantry GMkG, Ezzs) | with nested secondary views: the inbox is the Primary view at the full width and an opened item a secondary view beside it; off: the inbox in the sidebar column and Primary always showing the item or "Select a notification to view the details." | reads it: `core/activity_agent.go:30`, `ui/views/activity_panel.go` |
 | `later_todos` | `on` | client-boot `6owI` isLaterTodosEnabled | Later is Later + to-dos | reads it: `core/rail.go:191`, `ui/views/activity_slack.go:274` |
@@ -95,21 +95,21 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `message_actions_truncate` | `on` | boot-shared `L2dv` MessageActions calculateResponsiveActions | the one-click reactions leave a hover toolbar that would be wider than the message | reads it: `ui/messages/list.go` toolbar |
 | `add_channels_channel_sections_slackathon` | `on` | client-boot `O2By` export `Cx` | section menus can add channels to custom sections | reads it: `ui/section_menu.go:198` |
 | `agents_in_dm_sidebar_pref` | `on` | client-boot `O2By` hasAutoSortPermission | Navigation > Show Agents in direct messages pref | reads it: `core/app.go:1507`, `ui/prefs_pages.go:278` |
-| `bulk_leave_channels_from_sidebar` | `on` | gantry-v2-async-client-channel-list-view `SYcU` OrganizeModeMenu | the sidebar organize mode can leave several channels at once | missing |
+| `bulk_leave_channels_from_sidebar` | `on` | client-channel-list-view `SYcU` OrganizeModeMenu, ConfirmLeaveChannelsModal | the sidebar's organize (edit) mode bar gets Leave for the selected channels, with outline Move to… / New Section and a check-icon Done | missing: Clack has no organize mode to put it in |
 | `mpdm_notifications_advanced_option` | `on` | client-boot `O2By` export `PW` | group DMs get the advanced notification option | reads it: `ui/popups/notify_menu.go:156` |
 | `sidebar_section_search` | `on` | gantry-v2-async-client-boot-render `B7kx` | section menus have Search in this section | reads it: `ui/section_menu.go:106` |
 | `silent_sidebar` | `on` | client-boot `O2By` export `Pn` | focus mode can silence the sidebar (SilentSidebarTriggerButton) | reads it: `ui/focus_mode.go:119` |
 | `suggested_sections_auto_sort_v2` | `on` | client-boot `O2By` isAutoSortExperimentOn | auto-sorted suggested sections and their Home pref | reads it: `ui/joinbanner.go:87` |
-| `thread_root_selected_state` | `on` | client-boot `O2By` export `Gl` | the selected thread root keeps a selected state | missing |
-| `desktop_history_recents_read` | `on` | gantry-v2-async-client-boot-shared `Fpm/` isDesktopHistoryRecentsReadEnabled | the history menu reads recents | missing |
-| `keyboard_shortcuts_search` | `on` | client-boot `odUS` | the keyboard shortcuts pane has a search box | missing |
-| `today_todos` | `on` | client-boot `/Qva` isTodayTodosEnabled | Today shows to-dos | missing |
+| `thread_root_selected_state` | `on` | client-boot `O2By` export `Gl`; boot-shared `EXGU` MessageWrapper | the message whose thread the side pane shows gets p-message_pane_message__active_thread (background base-hgl-3), in the channel's pane | reads it: `ui/messages/active_thread.go` |
+| `desktop_history_recents_read` | `on` | gantry-v2-async-client-boot-shared `Fpm/` isDesktopHistoryRecentsReadEnabled (shouldMergeHistoryVisits `Q`; boot-render `WAHR`, boot-shared `jtFG`, `qsEE` B7) | the history menu and the History dialog merge the server's visits.list into the client's recents | missing: Clack keeps its own recents and doesn't call visits.list |
+| `keyboard_shortcuts_search` | `on` | client-boot `odUS`; keyboard-shortcuts-view `u1zV` KeyboardShortcutsSearch, EmptyState | the Keyboard Shortcuts pane has a search field that filters the rows by title, with three random empty states, and takes the focus when the pane opens | reads it: `core/views_experiments.go`, `ui/views/shortcuts.go` (the pane itself is new: `ui/shortcuts_pane.go`, `ui/shortcut/sections.go`) |
+| `today_todos` | `on` | client-boot `/Qva` isTodayTodosEnabled | Today shows to-dos | not applicable: Today needs ACCESS_SLACK_AI_TODAY (Slack AI; permissions/info: not allowed for the account), so Slack shows no Today in any group |
 | `activity_automations_only` | `on` | client-boot `5Ns/` export `LS` (gantry vQqF, g7lN, sD/F) | the filter menu's "Automations only" (unless exclude_automations_filter turns both automation rows into its select): activity.feed automations_only; people's live entries skip such a view | reads it: `core/activity_agent.go:48`, `ui/views/activity_filters.go`, `ui/views/activity_live.go` |
 | `activity_bot_item_type_reads` | `on` | client-boot `5Ns/` export `zK` (gantry vQqF, g7lN, sD/F) | the filter menu's "Exclude automations" (unless exclude_automations_filter): activity.feed exclude_automations; the automations' live entries (entry.is_bot) skip such a view | reads it: `core/activity_agent.go:41`, `ui/views/activity_filters.go`, `ui/views/activity_live.go` |
 | `activity_global_settings` | `on` | client-boot `5Ns/` export `XW` | Activity settings are global (layout toggle in header) | reads it: `core/manage.go:592`, `core/manage.go:610` |
 | `exclude_automations_filter` | `on` | client-boot `5Ns/` export `UK` (gantry vQqF, lCwf, m+ho, fNIs) | the filter menu and the new view get "Notifications from": People, apps, and agents / People only / Apps and agents only (exclude_automations / automations_only; People only disables Apps, Apps and agents only DMs and Reminders and closes the mention sub-filters); Unreads moves to the additional filters | reads it: `core/activity_agent.go:56`, `ui/views/activity_filters.go`, `ui/views/activity_views.go` |
 | `slackbot_unread_v2` | `on` | client-boot `I87A` export `m0` | Slackbot DM unreads v2 in Activity | reads it: `ui/views/activity_slack.go:265` |
-| `lists_in_later` | `on` | client-boot `Hm0j` isListsMarkAsDoneForCheckboxEnabled | list items assigned to you appear in Later | missing |
+| `lists_in_later` | `on` | client-boot `Hm0j` isListsInLaterExperimentEnabled (export `v`); boot-shared `Jf4A` RemindMeAboutThisMenuItem, boot-render `nckZ` ListRecord | list records' menus (grid row, record details) get "Remind me about this" / "Edit reminder", which puts the record in Later; Later's ListRecord row only translates its "List item" label | missing: the record menus are the Lists code's (listview); Clack's Later has no ListRecord row yet |
 | `autocomplete_demote_flannel_passthrough_rltv_exact_match` | `on` | client-boot `LRGb` | passthrough results demoted below exact matches | reads it: `ui/composer/autocomplete_rank.go:78` |
 | `autocomplete_frequently_used_emojis_frecency` | `on` | gantry-v2-async-client-boot-render `zuQH` | frequently used emoji by frecency | reads it: `core/frecency.go:273` |
 | `composer_smart_symbols` | `on` | gantry-v2-async-client-boot-shared `YGxP` isComposerSmartSymbolsOn | smart quotes and symbols, and its Advanced pref | reads it: `ui/prefs_pages.go:780`, `ui/composer/coreapi.go:54` |
@@ -151,18 +151,18 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `agent_tasks` | `on` | client-boot `HLQ9` export `rh` | agent tasks (rail More menu) | reads it: `core/rail.go:122` |
 | `agents_landing_page` | `on` | client-boot `M/qt` export `Wp` | Agents landing page | reads it: `core/rail.go:195` |
 | `show_as_agent` | `on` | client-boot `HLQ9` export `ej` | agent apps are labelled as agents | reads it: `core/badge.go:73` |
-| `slack_kit_v2_button` | `on` | gantry-v2-async-message-share-dialog `jdUv` isSlackKitV2ButtonEnabled | Slack Kit v2 buttons | missing |
+| `slack_kit_v2_button` | `on` | gantry-v2-async-message-share-dialog `jdUv` isSlackKitV2ButtonEnabled | the share (forward) dialog's Forward button is Slack Kit's v2 Button (no 80px minimum, no hover shadow, a 4px focus halo, `content-inv-pry` text); Save Draft turns secondary, and the schedule caret joins Forward in a ButtonGroup | reads it: `ui/popups/actions_forward.go:81` (`theme/button.go`) |
 | `expand_flag_message_to_private_threads_v2` | `on` | modern.vendor `tZyZ` canAccessRoute | the admin dashboard's ROUTE_SECURITY_FLAGGED_CONTENT_THREAD | not in the desktop client (B): the admin dashboard |
 | `mpdm_default_exclude_history_clients_webapp` | `on` | gantry-v2-async-client-boot-shared `J1Xx` useDefaultExcludeHistory | with the org pref `mpdm_add_people_default_exclude_history` (enterprise.prefs.get), adding people to a DM starts on "Don’t include" history; otherwise "From today" | reads it: `ui/views/details_more.go` (org prefs: `core/enterprise_prefs.go`) |
 | `prefill_dm_canvas_removal` | `treatment` | client-boot `Rc9k` prefillDmCanvasRemovalMaybeLogExposure | only the exposure logger reads it; whether a DM's canvas is prefilled is the server's | nothing to do: no client behaviour (Clack logs no exposures) |
-| `manage_conversations_strings` | `on` | client-boot `O2By` export `Z4` | updated strings in the manage-conversations menus | missing |
+| `manage_conversations_strings` | `on` | client-boot `O2By` export `Z4`; boot-shared `eq1K` performBulkChannelMove | the section move toast for several conversations (or a DM) into a custom section or Starred reads "Updated conversations in <section>." instead of "Moved N conversations to <section>." | reads it: `ui/section_menu.go` (the toast: Manage conversations, Move to…, Remove from section) |
 | `mute_channel_edu` | `on` | gantry-v2-async-client-boot-shared `3njJ` export `D` | section menus explain muting | reads it: `ui/section_menu.go:255` |
-| `today_calendar_watchdog` | `on` | client-boot `vQYI` export `EV` | Today watches calendar staleness | missing |
-| `today_hide_agenda_or_connect_buttons` | `on` | client-boot `/Qva` isEmailInComposerEnabled | Today hides agenda/connect buttons | missing |
-| `today_outlook_cal_integration` | `on` | client-boot `/Qva` isTodayOutlookCalIntegrationEnabled | Today reads Outlook calendars | missing |
-| `today_pause` | `on` | client-boot `/Qva` isTodayPauseEnabled | Today can be paused | missing |
-| `today_request_calendar_rtm_updates` | `on` | client-boot `vQYI` export `$7` | Today asks for calendar realtime updates | missing |
-| `view_header_overflow_borders` | `on` | client-list-record-details `Y95U` | view headers draw overflow borders | missing |
+| `today_calendar_watchdog` | `on` | client-boot `vQYI` export `EV` | Today watches calendar staleness | not applicable: Today needs ACCESS_SLACK_AI_TODAY (Slack AI; permissions/info: not allowed for the account), so Slack shows no Today in any group |
+| `today_hide_agenda_or_connect_buttons` | `on` | client-boot `/Qva` isEmailInComposerEnabled | Today hides agenda/connect buttons | not applicable: Today needs ACCESS_SLACK_AI_TODAY (Slack AI; permissions/info: not allowed for the account), so Slack shows no Today in any group |
+| `today_outlook_cal_integration` | `on` | client-boot `/Qva` isTodayOutlookCalIntegrationEnabled | Today reads Outlook calendars | not applicable: Today needs ACCESS_SLACK_AI_TODAY (Slack AI; permissions/info: not allowed for the account), so Slack shows no Today in any group |
+| `today_pause` | `on` | client-boot `/Qva` isTodayPauseEnabled | Today can be paused | not applicable: Today needs ACCESS_SLACK_AI_TODAY (Slack AI; permissions/info: not allowed for the account), so Slack shows no Today in any group |
+| `today_request_calendar_rtm_updates` | `on` | client-boot `vQYI` export `$7` | Today asks for calendar realtime updates | not applicable: Today needs ACCESS_SLACK_AI_TODAY (Slack AI; permissions/info: not allowed for the account), so Slack shows no Today in any group |
+| `view_header_overflow_borders` | `on` | client-threads-view `auBp` maybeSetIsScrolled; boot-shared `XVla` (--no-bottom-border), `+E9o` SidebarHeader, `Y95U`, `utL9`, `9xzW`, `f9u9` | a header without its bottom line gets one once its list scrolls more than 15px under it (without nested_secondary_view in the Threads view) | reads it: `ui/views/threads.go` headBorder; the thread pane, sidebar, list record and profile headers don't yet |
 | `agent_status_in_activity` | `on` | client-boot `M/qt` export `ji` (gantry aEhj useAgentActivityStatus, BZ5B, j9ba) | channel posts, threads, DMs and app DMs of an agent session show its status before the unread badge: Processing the spinner ("Working"), Suspended needs-attention ("Needs attention") | reads it: `core/activity_agent.go:61`, `ui/views/activity_rows.go` |
 | `invite_slash_command_in_threads` | `on` | gantry-v2-async-client-boot-shared `7R+y` isInviteSlashCommandInThreadsEnabled, read by `yX/v` isSlashCommandEnabled | `on`: /invite runs in a thread; off it fails there with "*/invite* is not supported in threads. Sorry!" before the API (the thread rule: the allowed commands, the channel ones outside DMs, is_runnable_from_thread) | reads it: `core/command.go` threadCommandOK (`TestCommandsInThreads`) |
 | `invite_slash_command_multi` | `off` | gantry-v2-async-client-boot-shared `7R+y` export `w` | off: /invite takes one person | default: in `off` Slack keeps its default, as Clack does |
@@ -247,8 +247,8 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `app_thread_nugget_fe` | `on` | gantry-v2-async-client-boot-shared `CLuG` export `r`; `352G` AppThreadNugget, `G2VO` Ss / ZL, `v8ac` AppSessionReplyNugget | while an app has a status in a thread, a nugget above the thread composer says it's working, and the composer leaves the app out of its typing line; processing agent sessions get one with Stop, also in the reply bar | reads it: `core/agent.go:191` (the status nugget and the typing line; agent-session nuggets and Stop need agent_session on messages, which Clack doesn't keep) |
 | `flexpane_content_parity` | `on` | client-boot `HLQ9` export `X7`; app-details `Qsn3`, client-boot `aXqJ`, boot-shared `+/mf`, `L9wq` | App details flexpane parity: bot DMs open their About tab, the header layout, an agent DM's default tab | missing: Clack has no App details flexpane |
 | `revamp_agent_app_profile` | `on` | client-boot `HLQ9` export `sD`; app-details, about-ai-app, agent browser | the revamped agent and app profile (App details) | missing: as flexpane_content_parity |
-| `a11y_no_auto_highlight_search_multi_select` | `on` | client-boot `MrD9` | search multi-selects do not auto-highlight | missing |
-| `basic_select_placeholder_option` | `on` | client-boot `MrD9` | basic selects show a placeholder option | missing |
+| `a11y_no_auto_highlight_search_multi_select` | `on` | client-boot `MrD9` Hk, read by `Fd8o` SelectOptionsList and `ivsZ` | options lists open with no active row; the first row is pseudo-active (`surf-pry` with an Enter key) and Enter picks it | reads it: `ui/popups/experiments.go:62` (the forward picker, basic select lists) |
+| `basic_select_placeholder_option` | `on` | client-boot `MrD9` tS, read by `Fd8o` and `zDm3` BasicSelect | a basic select that opened empty lists "--Select an option--" first (picking it clears), and its closed button shows that text in its own colour | reads it: `ui/popups/experiments.go:68` (`optionlist.go`, Search feedback's select) |
 
 ## Work packages
 
@@ -271,13 +271,16 @@ Each package is one area, for one agent. "Files" are where the work lands; sever
 ### Sidebar (19)
 
 - Files: internal/core/sidebar_rules.go, internal/ui/sidebar.go and the sidebar rows, internal/ui/section_menu.go, internal/ui/popups/notify_menu.go, internal/ui/focus_mode.go
-- To do (7): `sidebar_text_filter`, `sidebar_text_filter_m2`, `sidebar_text_filter_m3`, `temp_mute`, `bulk_leave_channels_from_sidebar`, `thread_root_selected_state`, `manage_conversations_strings`
-- Clack reads already (12): `dm_recency_sort_rollout`, `filter_dormant_channels`, `agents_in_dm_sidebar`, `improve_mute_pref`, `vip_section_pref`, `add_channels_channel_sections_slackathon`, `agents_in_dm_sidebar_pref`, `mpdm_notifications_advanced_option`, `sidebar_section_search`, `silent_sidebar`, `suggested_sections_auto_sort_v2`, `mute_channel_edu`
+- To do (1): `bulk_leave_channels_from_sidebar` (needs Slack's organize mode, which Clack doesn't have)
+- Clack reads already (18): `dm_recency_sort_rollout`, `filter_dormant_channels`, `agents_in_dm_sidebar`, `improve_mute_pref`, `vip_section_pref`, `add_channels_channel_sections_slackathon`, `agents_in_dm_sidebar_pref`, `mpdm_notifications_advanced_option`, `sidebar_section_search`, `silent_sidebar`, `suggested_sections_auto_sort_v2`, `mute_channel_edu`, `sidebar_text_filter`, `sidebar_text_filter_m2`, `sidebar_text_filter_m3`, `temp_mute`, `thread_root_selected_state`, `manage_conversations_strings` (branch `exp-sidebar`, 2026-11-10; tests flip every group: `internal/ui/sidebar_filter_test.go`, `temp_mute_test.go`, `section_move_toast_test.go`, `sidebar_draft_test.go`, `internal/ui/messages/active_thread_test.go`, `internal/core/sidebar_filter_test.go`, `temp_mute_test.go`)
+- Also read, though the account isn't assigned (Slack's null, so off): `draft_management_in_composer` (`treatment`) and `sidebar_draft_indicator_menu_and_thread_inclusion` (`on`), which together turn the sidebar draft pencil into Slack's "Jump to draft…" menu and count thread drafts (`ui/sidebar_draft.go`, `ui/backend.go`); the pencil's tooltip shows in every group
 
 ### Views, rail and navigation (14)
 
 - Files: internal/ui/views/, internal/ui/nav.go, internal/ui/bbm*.go, internal/core/rail.go, internal/ui/shortcut/
-- To do (14): `desktop_history_menu`, `nested_secondary_view`, `secondary_view_default_width`, `smaller_secondary_headers`, `today_v2`, `desktop_history_recents_read`, `keyboard_shortcuts_search`, `today_todos`, `today_calendar_watchdog`, `today_hide_agenda_or_connect_buttons`, `today_outlook_cal_integration`, `today_pause`, `today_request_calendar_rtm_updates`, `view_header_overflow_borders`
+- Clack reads (6, branch `exp-views`): `desktop_history_menu`, `nested_secondary_view`, `secondary_view_default_width`, `smaller_secondary_headers` (thread pane only), `keyboard_shortcuts_search`, `view_header_overflow_borders` (Threads view only)
+- To do (1): `desktop_history_recents_read` (visits.list)
+- Not applicable (7): `today_v2`, `today_todos`, `today_calendar_watchdog`, `today_hide_agenda_or_connect_buttons`, `today_outlook_cal_integration`, `today_pause`, `today_request_calendar_rtm_updates`. Slack's Today tab (client-boot `/Qva` isTodayTabVisible) needs `today_v2` and the ACCESS_SLACK_AI_TODAY permission (Slack AI). permissions/info (edge, read only, 2026-11-10) doesn't allow it for the test account, so Slack's client shows no Today in any group. The calendar experiments only reach Today, Slackbot's big mode agenda (boot-render `LfV6`) and the calendar link attachment's Connect buttons (`eKpe`, `tiDf`). The Today view's AI recap, agenda and action items come from Slack AI and calendar endpoints Clack can't use without that permission.
 
 ### Activity (9)
 
@@ -288,8 +291,8 @@ Each package is one area, for one agent. "Files" are where the work lands; sever
 ### Later (2)
 
 - Files: internal/ui/views/ (Later), internal/core/rail.go, internal/lists/
-- To do (1): `lists_in_later`
-- Clack reads already (1): `later_todos`
+- To do (1): `lists_in_later` (the record menus' "Remind me about this" lives in the Lists code; Later's ListRecord row)
+- Clack reads already (1): `later_todos` (and To-dos' sections, `ui/views/later_sections.go`)
 
 ### Composer and autocomplete (14)
 
@@ -365,7 +368,9 @@ Each package is one area, for one agent. "Files" are where the work lands; sever
 ### Menus, selects and buttons (3)
 
 - Files: internal/ui/popups/ (menu and select components), internal/ui/theme/ (buttons)
-- To do (3): `slack_kit_v2_button`, `a11y_no_auto_highlight_search_multi_select`, `basic_select_placeholder_option`
+- Clack reads already (3): `slack_kit_v2_button`, `a11y_no_auto_highlight_search_multi_select`, `basic_select_placeholder_option` (branch exp-menus; `TestSlackKitV2ButtonFollowsExperiment`, `TestForwardPickerAutoHighlight`, `TestSelectListToggles`, `TestSessionToggleGroups`)
+- The two `MrD9` names are session toggles: on for `treatment` or `on` (V1z/'s default treatment groups), off for any other group or none. Slack latches the group for the next session; Clack applies it at once, like every forced group.
+- Left: the share dialog's schedule caret (`schedule_send_forwards`, on for the account) and Save Draft (`forwarding_save_as_draft`, not assigned) need a scheduled or drafted forward, which Clack doesn't have, so their v2 forms aren't drawn either.
 
 ## B: read by the client, not applicable
 

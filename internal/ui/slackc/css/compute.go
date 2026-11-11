@@ -608,6 +608,12 @@ func copyProp(prop string, cx *cctx, src *Style) {
 		st.StrokeWidth = src.StrokeWidth
 	case "object-fit":
 		st.ObjectFit = src.ObjectFit
+	case "transition-property":
+		st.TransitionProperty = src.TransitionProperty
+	case "transition-duration":
+		st.TransitionDuration = src.TransitionDuration
+	case "transition-delay":
+		st.TransitionDelay = src.TransitionDelay
 	}
 }
 
@@ -1531,6 +1537,22 @@ func (cx *cctx) apply(prop, v string) bool {
 			st.ObjectFit = FitScaleDown
 		default:
 			return false
+		}
+	case "transition-property":
+		p, ok := transitionProps(cs)
+		if !ok {
+			return false
+		}
+		st.TransitionProperty = p
+	case "transition-duration", "transition-delay":
+		ts, ok := timeList(cs, prop == "transition-duration")
+		if !ok {
+			return false
+		}
+		if prop == "transition-duration" {
+			st.TransitionDuration = ts
+		} else {
+			st.TransitionDelay = ts
 		}
 	default:
 		return acceptedProps[prop] || inheritedProps[prop]
@@ -2737,7 +2759,7 @@ var acceptedProps = map[string]bool{}
 
 func init() {
 	for _, p := range strings.Fields(`
-transition transition-property transition-duration transition-timing-function transition-delay transition-behavior
+transition-timing-function transition-behavior
 animation animation-name animation-duration animation-timing-function animation-delay animation-iteration-count
 animation-direction animation-fill-mode animation-play-state animation-composition animation-timeline animation-range
 will-change contain content-visibility contain-intrinsic-size contain-intrinsic-width contain-intrinsic-height

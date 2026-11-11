@@ -38,6 +38,8 @@ jobs:
       - name: composer audit tests
         run: |
           go test -count=1 -v -run 'TestSlackLength|TestOverLimitBlocksSend|TestClipButtonsNeedARecorder|TestShortcutAndMentionButtons|TestEmptyEditAsksToDelete|TestMarkdownShortcutsLikeSlack|TestComposerKeysLikeSlack|TestComposerEditingKeysLikeSlack|TestScheduleMenuRows|TestFormattingTogglePref|TestPasteLimit|TestAutoformat|TestLiveMarkup|TestEnter|TestBackspace|TestAffinityFeaturesFollowExperiment|TestScheduleDialogLikeSlack|TestSnippetDialogLikeSlack|TestSnippetTypeOptions|TestPasteLimitCreatesSnippet|TestPlusMenuRows|TestScheduledSendBar|TestSlashListKeysByApp|TestFloatBarPosition|TestFloatBarShowsLikeSlack' ./internal/ui/composer
+      - name: the send button and Enter through the window (whole app on fakeslack)
+        run: go test -count=1 -v -run 'TestSendButtonClicks' ./internal/ui
       - name: screenshots (Mesa llvmpipe)
         env:
           COMPOSER_AUDIT_SHOTS_DIR: ${{ github.workspace }}/dist/shots

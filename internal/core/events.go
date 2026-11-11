@@ -341,6 +341,9 @@ func (a *App) handle(ev slack.Event) {
 		a.emit(Event{Type: "file_trash", Name: ev.Type, Raw: ev.Raw})
 	case "file_created":
 		a.onFileCreated(ev) // an upload in PROCESSING resolves (upload_send.go)
+	case "megaphone_delayed_notification_ready", "clear_megaphone_notification",
+		"megaphone_notifications_user_refresh", "megaphone_notifications_team_refresh":
+		a.onMegaphoneEvent(ev.Type, ev.Raw) // megaphone.go
 	default:
 		// sh_room_*, huddle_invite, huddle_invite_cancel (Slack's
 		// huddleInviteCancelRtmHandler), huddle_start…

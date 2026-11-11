@@ -13,6 +13,7 @@ import (
 	"gioui.org/layout"
 
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
 // Cross-message text selection: the list (an ancestor of every row) owns
@@ -231,13 +232,28 @@ func (s *listState) selectedText(h Host) string {
 		}
 		if it.header && (i > i0 || a == 0) {
 			b.WriteString(r.senderName())
-			b.WriteString("  ")
-			b.WriteString(clock(tsTime(r.m.TS)))
+			if timeSelectable() {
+				b.WriteString("  ")
+				b.WriteString(clock(tsTime(r.m.TS)))
+			}
 			b.WriteByte('\n')
 		}
 		b.WriteString(r.rv.TextRange(a, z))
 	}
 	return b.String()
+}
+
+// tsLabelClass is the timestamp's text (Timestamp's
+// span.c-timestamp__label inside a.c-timestamp).
+var tsLabelClass = slackc.Class("c-timestamp__label").Tag("span")
+
+// timeSelectable reports whether a header's time is copied: the copy is
+// the selected text, and a rule that makes the timestamp's label
+// unselectable (Slick IgnoreTime: .c-timestamp__label {user-select: none})
+// leaves it out, as the browser's copy does.
+func timeSelectable() bool {
+	st := slackc.CurrentScope().Child(tsClass, 0).Child(tsLabelClass, 0).Style()
+	return st == nil || st.UserSelect
 }
 
 func (s *listState) selKeys(gtx layout.Context, h Host) {

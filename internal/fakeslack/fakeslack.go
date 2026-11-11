@@ -81,8 +81,9 @@ type Size struct {
 	// viewer becomes a workspace admin.
 	PluginBench bool
 	// Unreads adds the Unreads view's and the channel join banner's
-	// fixtures (unreads.go): unread channels, a muted one, a channel
-	// whose message_input megaphone space holds the join banner.
+	// fixtures (unreads.go): unread channels, a muted one, a channel just
+	// joined whose banner the megaphone boot load queues, and a
+	// long-standing one.
 	Unreads bool
 	// GroupDMs adds the group DM naming fixtures (groupdms.go) and
 	// answers conversations.rename for them.
@@ -1042,6 +1043,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			if l, ok := s.codeLatest(c.ID); ok { // codechannels.go: read, at its fixture's latest message
 				e = slack.CountEntry{ID: c.ID, LastRead: l, Latest: l}
 			}
+			if closedDM(c) { // closed_dms.go: read
+				e.HasUnreads, e.MentionCount, e.LastRead = false, 0, e.Latest
+			}
 			e.LastRead, e.HasUnreads, e.MentionCount = s.applyMark(c.ID, e.LastRead, e.Latest, e.HasUnreads, e.MentionCount)
 			if c.IsIM {
 				ims = append(ims, e)
@@ -1050,16 +1054,18 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			}
 		}
 		return ok("channels", chans, "ims", ims, "mpims", []any{}, "threads", map[string]any{"has_unreads": true, "mention_count": 2})
-	case "sidebar.dms": // every generated DM is open
+	case "sidebar.dms": // every generated DM is open; AddClosedDM's aren't
 		var ims, mpdms []map[string]any
+		s.convMu.Lock()
 		for _, c := range s.convs {
 			switch {
 			case c.IsIM:
-				ims = append(ims, map[string]any{"id": c.ID, "user": c.User, "is_open": true, "is_im": true})
+				ims = append(ims, map[string]any{"id": c.ID, "user": c.User, "is_open": !closedDM(c), "is_im": true})
 			case c.IsMPIM:
-				mpdms = append(mpdms, map[string]any{"id": c.ID, "is_open": true, "is_mpim": true})
+				mpdms = append(mpdms, map[string]any{"id": c.ID, "is_open": !closedDM(c), "is_mpim": true})
 			}
 		}
+		s.convMu.Unlock()
 		return ok("ims", ims, "mpdms", mpdms)
 	case "experiments.getByUser": // the sidebar experiments as a real account has them (2026-11-08)
 		g := func(group string) map[string]any { return map[string]any{"group": group} }
@@ -1089,8 +1095,14 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			"system_messages_redesign_m1": g("on"), "flat_message_heading_scale": g("on"), "portable_content_composer": g("treatment"),
 			"message_actions_truncate": g("on"), "unread_thread_indication_in_replybar": g("on"), "agent_identity_overrides": g("on"),
 			"forward_message_card": g("on"), "giphy_fixed_width": g("on"), "truncated_url_hover_card": g("on"),
+			// the sidebar text filter and temporary mutes (core sidebar_filter.go, temp_mute.go)
+			"sidebar_text_filter": g("on"), "sidebar_text_filter_m2": g("on"), "sidebar_text_filter_m3": g("on"),
+			"temp_mute": g("on"), "manage_conversations_strings": g("on"), "thread_root_selected_state": g("on"),
 			// the thread pane (core's defaultExperimentGroups, live 2026-11-10)
-			"nested_secondary_view": g("on"), "secondary_view_default_width": g("on"), "smaller_secondary_headers": g("on")})
+			"nested_secondary_view": g("on"), "secondary_view_default_width": g("on"), "smaller_secondary_headers": g("on"),
+			// views and navigation (core/views_experiments.go), as the account had them on 2026-11-10
+			"desktop_history_menu": g("on"), "desktop_history_recents_read": g("on"), "keyboard_shortcuts_search": g("on"),
+			"view_header_overflow_borders": g("on"), "lists_in_later": g("on")})
 	case "users.prefs.get":
 		s.prefsMu.Lock()
 		m := make(map[string]any, len(s.prefs))

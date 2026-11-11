@@ -398,7 +398,7 @@ func (v *ThreadView) header(gtx layout.Context, th *theme.Theme, c *colors, w, h
 	// after it (margin 0 8px); p-flexpane_header--smaller
 	// (smaller_secondary_headers) makes the title 15px/22px Black and the
 	// controls 4px apart (gap 4 over --gap's 6).
-	smaller := v.threadExperiment("smaller_secondary_headers")
+	smaller := v.h.Core() != nil && v.h.Core().SmallerSecondaryHeaders() // kl02 I$: only under the nested view
 	tsT := textStyle{size: 18, weight: theme.Black, col: c.Text, lineH: 24}
 	gap := dp(gtx, 6)
 	if smaller {

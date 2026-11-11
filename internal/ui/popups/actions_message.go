@@ -4,6 +4,7 @@ import (
 	"context"
 	"image"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,17 +12,21 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
-// Message "More actions" menu (msgmenu.png / ownmenu.png / submenu.png):
-// Edit message E (own) | sep | Mark unread U | Add to saved ⇧⌘S | Add a
-// reminder M ▸ | reply notifications | sep | Copy link L | Copy message ⌘C
-// sep | Organize ▸ | Forward | Reply in thread | Connect to apps ▸
-// | sep | Delete message… (own, danger). Icons only on the first groups,
-// like Slack.
+// Message "More actions" menu, Slack's MessageActionsMenu (gantry-v2-
+// async-client-boot-shared 2rcC, build 4d0c78085232), its groups in
+// Slack's order: Edit message E (own, 5Ech) | Mark unread U (jFAp in the
+// conversation, JsXu in a thread), Add to saved ⇧⌘S, Add a reminder M ▸,
+// the follow row (ojBT) | Copy link L, Copy message ⌘C | Organize ▸ (the
+// pin row, loUg), Connect to apps ▸ | Send reply to this channel (T),
+// Remove reply from channel… (removeBroadcast), Copy workflow ID (q) |
+// Report to Slack (tH), Delete message… (own, danger, 3eXV). Icons only on
+// the first groups, like Slack.
 
 // MessageMenuOpts lets the caller take over actions it handles inline.
 type MessageMenuOpts struct {
@@ -32,6 +37,11 @@ type MessageMenuOpts struct {
 	// it through Taut's chatDeleteFetcher); else DeleteMessage, else
 	// popups dispatches chatDeleteFetcher over core.Delete.
 	Delete func(ctx context.Context, ch, ts string) error
+	// Where is the message's container (Slack's messageContainerType):
+	// a thread's "Mark unread" marks the thread, the conversation's the
+	// conversation, and "Send reply to this channel" is only in threads.
+	// NewMessageContextMenu sets it from its MessageContext.
+	Where MessageContext
 }
 
 // NewMessageMenu builds the More actions menu for m. The menu's right edge
@@ -43,8 +53,12 @@ func NewMessageMenu(h Host, anchor image.Point, m core.Message) *Menu {
 // NewMessageMenuOpts is NewMessageMenu with caller hooks.
 func NewMessageMenuOpts(h Host, anchor image.Point, m core.Message, o MessageMenuOpts) *Menu {
 	a := pointRect(anchor)
+	p := actMenuProps(m, a)
+	if o.Where != InChannel {
+		p["messageContainerType"] = ctxContainer(o.Where)
+	}
 	return NewMenuOpts(h, actMessageItems(h, m, o), MenuOpts{Anchor: a, AlignRight: true,
-		Within: "MessageActionsMenu", WithinProps: actMenuProps(m, a)})
+		Within: "MessageActionsMenu", WithinProps: p})
 }
 
 // actMenuProps are Slack's MessageActionsMenu props for m's ⋮ menu
@@ -74,7 +88,19 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	if root == "" {
 		root = ts
 	}
-	own := m.User != "" && m.User == actSelfID(h)
+	self := actSelfID(h)
+	own := m.User != "" && m.User == self
+	isReply := m.ThreadTS != "" && m.ThreadTS != m.TS
+	inThread := o.Where == InThread || o.Where == InThreadsView
+	var conv core.Conv
+	if a := h.Core(); a != nil {
+		conv, _ = a.Conv(ch)
+	}
+	if conv.Kind == "" {
+		conv.Kind = actKindOf(ch)
+	}
+	channel := conv.Kind == "channel" || conv.Kind == "private" // gXDR V: a public or private channel
+	dm := conv.Kind == "im" || conv.Kind == "mpim"              // aK5v JM
 	link := func() string {
 		if m.Permalink != "" {
 			return m.Permalink
@@ -99,25 +125,25 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 			actDo(h, "Reminder set", func(ctx context.Context, a *core.App) error { return a.Save(ctx, ch, ts, due) })
 		}
 	}
-	follow := MenuItem{Label: "Get notified about new replies", Icon: "bell", Do: func() {
-		actDo(h, "You'll be notified about new replies", func(ctx context.Context, a *core.App) error {
-			return a.SubscribeThread(ctx, ch, root, true)
+	// Mark unread: in the conversation (jFAp, messageActionsMarkUnreadAction)
+	// the conversation from this message; in a thread or the Threads view
+	// (JsXu, messageActionsMarkThreadUnreadAction) the thread. Slack only
+	// announces "Conversation marked as unread from this message" to
+	// screen readers: no toast.
+	markUnread := MenuItem{Label: "Mark unread", Icon: "mark-unread", Hint: "U", Keys: KeyMarkUnread, Do: func() {
+		actDo(h, "", func(ctx context.Context, a *core.App) error {
+			if inThread {
+				return a.MarkThreadUnread(ctx, ch, root, ts)
+			}
+			_, err := a.MarkUnread(ctx, ch, ts)
+			return err
 		})
 	}}
-	if own {
-		follow = MenuItem{Label: "Turn off notifications for replies", Icon: "bell-off", Do: func() {
-			actDo(h, "You won't be notified about new replies", func(ctx context.Context, a *core.App) error {
-				return a.SubscribeThread(ctx, ch, root, false)
-			})
-		}}
+	if inThread {
+		markUnread.Key = "mark_thread_unread" // Slack's action ids (lq1n)
 	}
 	items = append(items,
-		MenuItem{Label: "Mark unread", Icon: "mark-unread", Hint: "U", Keys: KeyMarkUnread, Do: func() {
-			actDo(h, "Marked unread", func(ctx context.Context, a *core.App) error {
-				_, err := a.MarkUnread(ctx, ch, ts)
-				return err
-			})
-		}},
+		markUnread,
 		MenuItem{Label: "Add to saved", Icon: "bookmark-add", Hint: shortcut.Format("Mod+Shift+S"), Keys: KeySaveTodos, Do: func() {
 			actDo(h, "Saved for later", func(ctx context.Context, a *core.App) error { return a.Save(ctx, ch, ts, 0) })
 		}},
@@ -129,11 +155,14 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 			{Label: "Monday at 9:00 AM", Do: remind(actRemMonday)},
 			{Label: "Custom…", Do: func() { h.ShowOverlay(actNewReminderModal(h, ch, ts)) }},
 		}},
-		follow,
+	)
+	if f, ok := actFollowItem(h, m, conv, root); ok {
+		items = append(items, f)
+	}
+	items = append(items,
 		Sep(),
 		MenuItem{Label: "Copy link", Icon: "link", Hint: "L", Keys: KeyCopyLink, DoCtx: func(gtx layout.Context) {
-			copyText(gtx, link())
-			h.Toast("Link copied")
+			copyText(gtx, link()) // copyLink (5FS0): the clipboard only, no toast
 		}},
 		MenuItem{Label: "Copy message", Icon: "text-format", Hint: shortcut.Format("Mod+C"), Keys: KeyCopyText, DoCtx: func(gtx layout.Context) {
 			copyText(gtx, actMsgText(m))
@@ -141,11 +170,17 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 		Sep(),
 	)
 
-	pin := MenuItem{Label: "Pin to channel", Icon: "pin", Hint: "P", Keys: KeyPin, Do: func() {
+	// getPinActionLabel (loUg): "…channel" in public and private channels,
+	// "…this conversation" in DMs and group DMs
+	pinLabel, unpinLabel := "Pin to this conversation", "Un-pin from this conversation"
+	if channel {
+		pinLabel, unpinLabel = "Pin to channel", "Un-pin from channel"
+	}
+	pin := MenuItem{Label: pinLabel, Icon: "pin", Hint: "P", Keys: KeyPin, Do: func() {
 		actDo(h, "Message pinned", func(ctx context.Context, a *core.App) error { return a.Pin(ctx, ch, ts) })
 	}}
 	if m.Pinned {
-		pin = MenuItem{Label: "Un-pin from channel", Icon: "unpin", Hint: "P", Keys: KeyPin, Do: func() {
+		pin = MenuItem{Label: unpinLabel, Icon: "unpin", Hint: "P", Keys: KeyPin, Do: func() {
 			actDo(h, "Message unpinned", func(ctx context.Context, a *core.App) error { return a.Unpin(ctx, ch, ts) })
 		}}
 	}
@@ -154,10 +189,194 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 		// no "Forward message…" here: Slack keeps it on the hover toolbar
 		MenuItem{Label: "Connect to apps", Sub: connectToApps(h, m)},
 	)
+
+	// the broadcast and workflow group: [send reply, remove reply, view
+	// workflow details, copy workflow ID]
+	var bw []MenuItem
+	// T: a thread container's own reply, not yet sent to the
+	// conversation (nor a pending send), where the viewer is a member and
+	// may post (canUserPostInChannel)
+	if inThread && isReply && own && !m.Broadcast && !m.Pending && !m.Failed && !conv.Preview && !conv.IsArchived && actCanPost(h, ch) {
+		label := "Send reply to this channel"
+		if dm {
+			label = "Send reply to this conversation"
+		}
+		bw = append(bw, MenuItem{Key: "broadcast_message", Label: label, Do: func() {
+			actDo(h, "", func(ctx context.Context, a *core.App) error { return a.BroadcastReply(ctx, ch, ts) })
+		}})
+	}
+	// removeBroadcast: a reply sent to the conversation that the viewer
+	// may delete (canRemoveBroadcast: thread_broadcast and
+	// canDeleteMessageHelper; Clack deletes its own messages only)
+	if m.Broadcast && isReply && own {
+		label := "Remove reply from conversation…"
+		if channel {
+			label = "Remove reply from channel…"
+		}
+		bw = append(bw, MenuItem{Key: "remove_broadcast", Label: label, Do: func() { confirmRemoveBroadcast(h, m, channel) }})
+	}
+	// q: a workflow bot's message with its workflow_id. "View workflow
+	// details" (t7, a trigger_id) opens Slack's workflow details modal,
+	// which Clack doesn't have, and a message with only a trigger_id
+	// copies the trigger's workflow from the trigger previews store
+	// (workflows.triggers.preview), which Clack doesn't keep: neither is
+	// shown.
+	if m.WorkflowID != "" && actWorkflowBot(h, m) {
+		id := m.WorkflowID
+		bw = append(bw, MenuItem{Key: "copy_workflow_id", Label: "Copy workflow ID", DoCtx: func(gtx layout.Context) {
+			copyText(gtx, id) // copyWorkflowId (aO): the clipboard only
+		}})
+	}
+	if len(bw) > 0 {
+		items = append(append(items, Sep()), bw...)
+	}
+
+	// the last group: [flag, report, remove response, delete]
+	var last []MenuItem
+	// tH: isReportToSlackEnabled (client.extras), someone else's message,
+	// not a tombstone; Slack opens the help center's report form
+	if !own && !m.Tombstone && m.TS != "" && actReporting(h) {
+		last = append(last, MenuItem{Key: "report_message", Label: "Report to Slack", Do: func() { reportMessage(h, link()) }})
+	}
 	if own {
-		items = append(items, Sep(), MenuItem{Label: "Delete message…", Hint: "delete", Keys: KeyDelete(), Danger: true, Do: func() { confirmDelete(h, m, o.Delete) }})
+		last = append(last, MenuItem{Label: "Delete message…", Hint: "delete", Keys: KeyDelete(), Danger: true, Do: func() { confirmDelete(h, m, o.Delete) }})
+	}
+	if len(last) > 0 {
+		items = append(append(items, Sep()), last...)
 	}
 	return items
+}
+
+// actFollowItem is the follow row (ojBT): its label from the thread's
+// subscription (the root's subscribed flag), "Turn off notifications for
+// replies" with notifications-off when subscribed, else "Get notified
+// about new replies"; none when the viewer is neither a member of the
+// conversation nor subscribed.
+func actFollowItem(h Host, m core.Message, conv core.Conv, root string) (MenuItem, bool) {
+	ch := m.Channel
+	subscribed := m.FollowingThread
+	if m.ThreadTS != "" && m.ThreadTS != m.TS {
+		subscribed = actThreadSubscribed(h, ch, root)
+	}
+	if conv.Preview && !subscribed {
+		return MenuItem{}, false
+	}
+	if subscribed {
+		return MenuItem{Key: "subscribe", Label: "Turn off notifications for replies", Icon: "bell-off", Do: func() {
+			actDo(h, "You won't be notified about new replies", func(ctx context.Context, a *core.App) error {
+				return a.SubscribeThread(ctx, ch, root, false)
+			})
+		}}, true
+	}
+	return MenuItem{Key: "subscribe", Label: "Get notified about new replies", Icon: "bell", Do: func() {
+		actDo(h, "You'll be notified about new replies", func(ctx context.Context, a *core.App) error {
+			return a.SubscribeThread(ctx, ch, root, true)
+		})
+	}}, true
+}
+
+// actThreadSubscribed is the thread root's subscribed flag (the thread
+// subscription Slack's 8l6l nq reads), from the store.
+func actThreadSubscribed(h Host, ch, root string) bool {
+	a := h.Core()
+	if a == nil || a.S == nil {
+		return false
+	}
+	if r, ok := a.S.Find(ch, root); ok {
+		return r.Subscribed
+	}
+	return false
+}
+
+// actKindOf guesses a conversation's kind from its id when core doesn't
+// know it yet.
+func actKindOf(ch string) string {
+	switch {
+	case strings.HasPrefix(ch, "D"):
+		return "im"
+	case strings.HasPrefix(ch, "G"):
+		return "private"
+	}
+	return "channel"
+}
+
+// actCanPost is canUserPostInChannel for a top-level post.
+func actCanPost(h Host, ch string) bool {
+	a := h.Core()
+	return a != nil && a.PostingIn(ch).CanPost()
+}
+
+// actWorkflowBot is q's isWorkflowBot(member) || isWorkflowBot(bot): the
+// sender is Workflow Builder's bot user.
+func actWorkflowBot(h Host, m core.Message) bool {
+	if u, ok := lookupUser(h, m.User); ok && u.Workflow {
+		return true
+	}
+	if m.BotProfile != nil && m.BotProfile.UserID != "" {
+		if u, ok := lookupUser(h, m.BotProfile.UserID); ok && u.Workflow {
+			return true
+		}
+	}
+	return false
+}
+
+// actReporting is isReportToSlackEnabled.
+func actReporting(h Host) bool {
+	a := h.Core()
+	return a != nil && a.ContentReportingEnabled()
+}
+
+// openReport opens a URL in the browser (a var for tests).
+var openReport = openurl.Open
+
+// reportMessage is reportMessage (ceUl): openAuthenticatedUrlInBrowser
+// (mAu1) on the team's /help/requests/report-content?u=<the permalink,
+// encodeURI'd>&type=message.
+func reportMessage(h Host, link string) {
+	base := "https://" + teamDomain(h) + ".slack.com/"
+	if a := h.Core(); a != nil && a.TeamURL() != "" {
+		base = a.TeamURL()
+	}
+	if !strings.HasSuffix(base, "/") {
+		base += "/"
+	}
+	if err := openReport(base + "help/requests/report-content?u=" + jsEncodeURI(link) + "&type=message"); err != nil {
+		h.Toast("Couldn't open the link: " + errText(err))
+	}
+}
+
+// jsEncodeURI is JavaScript's encodeURI: everything but the URI's
+// reserved and unreserved characters is percent-encoded (so a
+// permalink's ?thread_ts=…&cid=… stays as it is, as in Slack).
+func jsEncodeURI(s string) string {
+	const keep = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789;,/?:@&=+$-_.!~*'()#"
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if strings.IndexByte(keep, c) >= 0 {
+			b.WriteByte(c)
+			continue
+		}
+		b.WriteString("%" + strings.ToUpper(strconv.FormatInt(int64(c)>>4, 16)) + strings.ToUpper(strconv.FormatInt(int64(c)&15, 16)))
+	}
+	return b.String()
+}
+
+// confirmRemoveBroadcast is BaseRemoveBroadcastDialog (L16H): "Remove from
+// channel" (or "…conversation"), the question, the message, and "Remove
+// message", which calls core.RemoveBroadcast (chat.delete with
+// broadcast_delete). The dialog focuses its primary button.
+func confirmRemoveBroadcast(h Host, m core.Message, channel bool) {
+	title, ask := "Remove from conversation", "Are you sure you want to remove this message from the conversation?"
+	if channel {
+		title, ask = "Remove from channel", "Are you sure you want to remove this message from the channel?"
+	}
+	ch, ts := m.Channel, m.TS
+	Confirm(h, title, ask+" The original reply will still be visible in its thread.", "Remove message", false,
+		func(gtx layout.Context) layout.Dimensions { return actMsgPreview(gtx, h, m, true) },
+		func() {
+			actDo(h, "", func(ctx context.Context, a *core.App) error { return a.RemoveBroadcast(ctx, ch, ts) })
+		}).OldDialog() // a DeprecatedBaseDialog with focusOnPrimaryButton
 }
 
 // ConfirmDelete asks before deleting m (delmodal.png) and deletes it on

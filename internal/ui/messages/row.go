@@ -212,6 +212,9 @@ type rowCtx struct {
 	onDiscard func(r *row)
 	highlight float32 // 0..1 flash for jump targets
 	onReact   func(r *row, name string, add bool)
+	// activeThread: the row is the root of the thread open in the side pane
+	// (thread_root_selected_state, active_thread.go)
+	activeThread bool
 }
 
 // padX is the gutter's side padding: 20 in a channel, 16 in a thread
@@ -853,6 +856,8 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 	switch {
 	case r.edit != nil:
 		bg = c.Editing
+	case rc.activeThread: // .p-message_pane_message__active_thread, after the hover and label rules
+		bg = c.ActiveThread
 	// c-message_kit__background--labels: any primary label but ephemeral
 	// and custom_response (which have their own) tints the row
 	case (m.Pinned || broadcast) && rc.hovered:

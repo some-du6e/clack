@@ -383,7 +383,7 @@ func (e *Editor) processKey(gtx layout.Context) (EditorEvent, bool) {
 		key.Filter{Focus: e, Name: "X", Required: key.ModShortcut},
 		key.Filter{Focus: e, Name: "A", Required: key.ModShortcut},
 
-		// Clack: ModShortcut too (Cmd+Backspace on macOS, CLACK_PATCHES.md 4)
+		// Clack: ModShortcut too (Cmd+Backspace on macOS, CLACK_PATCHES.md 5)
 		key.Filter{Focus: e, Name: key.NameDeleteBackward, Optional: key.ModShortcutAlt | key.ModShift | key.ModShortcut},
 		key.Filter{Focus: e, Name: key.NameDeleteForward, Optional: key.ModShortcutAlt | key.ModShift | key.ModShortcut},
 
@@ -517,7 +517,7 @@ func (e *Editor) command(gtx layout.Context, k key.Event) (EditorEvent, bool) {
 			e.text.MoveWord(1*direction, selAct)
 		}
 	}
-	// Clack (CLACK_PATCHES.md 4): Mod+Backspace and Mod+Delete. Elsewhere
+	// Clack (CLACK_PATCHES.md 5): Mod+Backspace and Mod+Delete. Elsewhere
 	// than macOS ModShortcut is Ctrl, the same key as ModShortcutAlt, so
 	// the ModShortcut branch below took Ctrl+Backspace and the word
 	// deletion further down never ran. On macOS ModShortcut is Cmd, which
@@ -1100,7 +1100,7 @@ func (e *Editor) MoveCaret(startDelta, endDelta int) {
 // The selection counts as a single word.
 // deleteToLineEdge deletes from the caret to the start (dir < 0) or end
 // of its line, or the selection when there is one. At the edge it deletes
-// one grapheme cluster, joining the lines (Clack, CLACK_PATCHES.md 4).
+// one grapheme cluster, joining the lines (Clack, CLACK_PATCHES.md 5).
 func (e *Editor) deleteToLineEdge(dir int) (deletedRunes int) {
 	e.initBuffer()
 	if start, end := e.text.Selection(); start != end {

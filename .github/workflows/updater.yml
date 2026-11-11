@@ -6,7 +6,7 @@ name: updater
 # The UI side (when checks run, Check now, the menus' update item, the
 # Help dot, Help's Take action card and the restart dialog, Slack
 # desktop's presentation) runs on each OS, and prefs-shots renders
-# Preferences > Advanced > Updates and the update UI in each state, plus
+# Preferences > Clack > Updates and the update UI in each state, plus
 # the whole window against the fake Slack.
 on:
   push:
@@ -22,6 +22,8 @@ on:
       - 'internal/ui/macmenu*.go'
       - 'internal/ui/actions.go'
       - 'internal/ui/prefs_sections.go'
+      - 'internal/ui/clack_prefs*.go'
+      - 'internal/ui/prefs_form.go'
       - 'internal/ui/popups/actions_menus.go'
       - 'README.md'
       - 'cmd/clack/**'
@@ -58,7 +60,7 @@ jobs:
         run: go test -count=1 -v -run 'TestUpdate|TestCheckForUpdatesMenus|TestMacMenu' ./internal/ui
 
   prefs-shots:
-    # Preferences > Advanced > Updates and the update UI (Help dot, Take
+    # Preferences > Clack > Updates and the update UI (Help dot, Take
     # action card, restart dialog, message boxes) in each state, light and
     # dark; then the whole window against the fake Slack
     runs-on: ubuntu-latest

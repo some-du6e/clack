@@ -128,6 +128,14 @@ func clackMenuTitle(tag C.int) *C.char {
 	return nil
 }
 
+//export clackMenuHidden
+func clackMenuHidden(tag C.int) C.int {
+	if hidden(int(tag)) {
+		return 1
+	}
+	return 0
+}
+
 //export clackMenuRecentBegin
 func clackMenuRecentBegin() C.int { return C.int(len(recentShown())) }
 

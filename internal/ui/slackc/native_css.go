@@ -50,7 +50,7 @@ const nativeCSS = `
 `
 
 func init() {
-	Styles.SetBase(strings.ReplaceAll(nativeCSS, ": N", ": "+css.NativeValue))
+	Styles.SetBase(strings.ReplaceAll(nativeCSS, ": N", ": "+css.NativeValue) + NativeTransitionsCSS)
 }
 
 // stripNative drops the base sheet's NativeValue winners from a host

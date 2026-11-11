@@ -12,6 +12,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/taut"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -293,24 +294,60 @@ func threadNewColor(th *theme.Theme, c *colors) color.NRGBA {
 }
 
 // ghostLine is the marked-as-read line: opacity .5 after a 3 s delay
-// (transition: opacity .1s 3s).
-func (s *listState) ghostLine(gtx layout.Context, col color.NRGBA, now time.Time) color.NRGBA {
+// (transition: opacity .1s 3s, slackc.NativeTransitionsCSS). tr is the
+// line's style, so a rule over Slack's transition (Slick's Snappy:
+// .01ms, no delay) changes when and how fast it dims.
+func (s *listState) ghostLine(gtx layout.Context, col color.NRGBA, now time.Time, tr slackc.Styled) color.NRGBA {
 	if s.thr.ghostAt.IsZero() {
 		s.thr.ghostAt = now
 	}
-	at := s.thr.ghostAt.Add(3 * time.Second)
-	if now.Before(at) {
-		gtx.Execute(op.InvalidateCmd{At: at})
+	dur, delay := tr.Transition("opacity", 100*time.Millisecond, 3*time.Second)
+	f, done := slackc.TransitionProgress(s.thr.ghostAt, now, dur, delay)
+	switch {
+	case f == 0 && !done:
+		gtx.Execute(op.InvalidateCmd{At: s.thr.ghostAt.Add(delay)})
 		return col
-	}
-	f := float32(now.Sub(at)) / float32(100*time.Millisecond)
-	if f > 1 {
-		f = 1
-	} else {
+	case !done:
 		gtx.Execute(op.InvalidateCmd{})
 	}
 	col.A = uint8(float32(col.A) * (1 - 0.5*f))
 	return col
+}
+
+// The ghost lines' Slack elements, for their transition: the separator
+// row's read line (ThreadSeparatorRowGeneric, EWXh: div.p-thread_separator_
+// row_generic--ghost > div.p-threads_flexpane__separator >
+// hr.p-threads_flexpane__separator_line__read) and the marked-read
+// UnreadDivider's (div.c-message_list__unread_divider--ghost >
+// hr.c-message_list__unread_divider__separator).
+var (
+	clsSepRow     = slackc.Class("p-thread_separator_row_generic").Mods("p-thread_separator_row_generic--ghost", "p-thread_separator_row_generic--dark")
+	clsSepInner   = slackc.Class("p-threads_flexpane__separator")
+	clsSepLine    = slackc.Class("p-threads_flexpane__separator_line p-threads_flexpane__separator_line__read").Tag("hr")
+	clsDivider    = slackc.Class("c-message_list__unread_divider c-message_list__unread_divider--unread_threads p-threads_flexpane__unread_divider p-threads_flexpane__marked_as_read_divider").Mods("c-message_list__unread_divider--ghost")
+	clsDividerSep = slackc.Class("c-message_list__unread_divider__separator").Tag("hr")
+)
+
+// ghostSepLine and ghostDividerLine are those lines' styles (zero, and
+// free, with no CSS).
+func ghostSepLine(dark bool) slackc.Styled {
+	sc := slackc.CurrentScope()
+	if !sc.Active() {
+		return slackc.Styled{}
+	}
+	mods := uint64(1)
+	if dark {
+		mods |= 2
+	}
+	return sc.Child(clsSepRow, mods).Child(clsSepInner, 0).Child(clsSepLine, 0)
+}
+
+func ghostDividerLine() slackc.Styled {
+	sc := slackc.CurrentScope()
+	if !sc.Active() {
+		return slackc.Styled{}
+	}
+	return sc.Child(clsDivider, 1).Child(clsDividerSep, 0)
 }
 
 // threadSeparator is ThreadSeparatorRowGeneric (EWXh): the root's reply
@@ -357,7 +394,7 @@ func (s *listState) threadSeparator(gtx layout.Context, h Host, c *colors, it it
 		end = bx
 		line = red
 		if it.mark == thrMarkGhost {
-			line = s.ghostLine(gtx, red, now)
+			line = s.ghostLine(gtx, red, now, ghostSepLine(th.Dark))
 		}
 	}
 	if end > lx {
@@ -380,7 +417,7 @@ func (s *listState) threadDivider(gtx layout.Context, h Host, c *colors, it item
 	lx := w - dp(gtx, 15) - dp(gtx, 4) - tw
 	line := red
 	if it.mark == thrMarkGhost {
-		line = s.ghostLine(gtx, red, now)
+		line = s.ghostLine(gtx, red, now, ghostDividerLine())
 	}
 	fill(gtx.Ops, image.Rect(0, 0, lx-dp(gtx, 4), max(dp(gtx, 1), 1)), line)
 	at(gtx, lx, -dp(gtx, 10), func(gtx layout.Context) layout.Dimensions {

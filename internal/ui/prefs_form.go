@@ -2,9 +2,11 @@ package ui
 
 import (
 	"image"
+	"image/color"
 	"strconv"
 
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/ui/icons"
@@ -62,7 +64,8 @@ func (f *prefsForm) heading(t string) {
 // gap is the space between sections.
 func (f *prefsForm) gap() { f.y += f.gtx.Dp(14) }
 
-// note is muted 13px text, wrapped to lines (indent: under a row's label).
+// note is muted 13px text, wrapped to the page width and as tall as it
+// wraps (indent: under a row's label). lines is the most it shows.
 func (f *prefsForm) note(text string, indent bool, lines int) {
 	text = pt(text)
 	gtx, a := f.gtx, f.p.a
@@ -70,16 +73,12 @@ func (f *prefsForm) note(text string, indent bool, lines int) {
 	if indent {
 		x = gtx.Dp(28)
 	}
-	if lines < 1 {
-		lines = 1
-	}
 	f.record("text", "", text, false, true)
-	h := gtx.Dp(18) * lines
 	pc := f.p.colors()
-	at(gtx, image.Pt(x, f.y), image.Pt(f.w-x, h+gtx.Dp(2)), func(gtx layout.Context) layout.Dimensions {
+	d := at(gtx, image.Pt(x, f.y), image.Pt(max(0, f.w-x), 1<<20), func(gtx layout.Context) layout.Dimensions {
 		return a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: pc.on(a.th, pc.note), MaxLines: lines}, text)
 	})
-	f.y += h + gtx.Dp(10)
+	f.y += max(d.Size.Y, gtx.Dp(18)) + gtx.Dp(10)
 }
 
 // option is a checkbox (square) or radio (round) row; do runs on click.
@@ -104,35 +103,47 @@ func (f *prefsForm) optionAt(key, label, hint string, on, radio, enabled bool, d
 	// .c-input_checkbox's margin-right 12px before the label
 	lx := gtx.Dp(theme.NativeCheckSize + 12)
 	textW := max(1, w-lx)
-	labelLines := 1 + a.th.Measure(gtx, 15, theme.Regular, label)/textW // long labels wrap, like Slack's
-	rowH := gtx.Dp(6) + labelLines*gtx.Dp(22)
-	hintLines := 0
-	if hint != "" { // Slack's c-label__subtext: 15/22 under the label, wrapped
-		hintLines = 1 + a.th.Measure(gtx, 15, theme.Regular, hint)/textW
-		rowH += gtx.Dp(2) + hintLines*gtx.Dp(22)
+	fg, sub := pc.text, pc.subtext
+	if !enabled { // Slack's .c-label--disabled
+		fg = pc.disText
+	}
+	// the label and Slack's c-label__subtext (15/22 under it) wrap to the
+	// text column; the row is as tall as they shape, so a long hint never
+	// runs into the next row
+	txt := func(s string, col color.NRGBA) (op.CallOp, int) {
+		call, d := measured(gtx, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(textW, 1<<20)}
+			return a.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Color: col}, s)
+		})
+		return call, max(d.Size.Y, gtx.Dp(22))
+	}
+	labelCall, labelH := txt(label, fg)
+	if labelH <= gtx.Dp(22) { // one line: drawn as before, at the top
+		labelCall, _ = measured(gtx, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(textW, gtx.Dp(24))}
+			return a.th.Label(gtx, 15, theme.Regular, fg, label)
+		})
+	}
+	rowH := gtx.Dp(6) + labelH
+	var hintCall op.CallOp
+	if hint != "" {
+		var hintH int
+		hintCall, hintH = txt(hint, sub)
+		rowH += gtx.Dp(2) + hintH
 	}
 	at(gtx, image.Pt(0, f.y), image.Pt(w, rowH), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, b, nil, func(gtx layout.Context) layout.Dimensions {
-			fg, sub := pc.text, pc.subtext
 			st := theme.NativeCheckState{Radio: radio, On: on, Hover: enabled && b.Hovered()}
-			if !enabled { // Slack's .c-input_checkbox--disabled and .c-label--disabled
+			if !enabled { // Slack's .c-input_checkbox--disabled
 				st.Opacity = .38
-				fg = pc.disText
 			}
 			// baseline-aligned with the label's first line (.c-label--inline)
 			at(gtx, image.Pt(0, gtx.Dp(4)), image.Pt(gtx.Dp(theme.NativeCheckSize), gtx.Dp(theme.NativeCheckSize)), func(gtx layout.Context) layout.Dimensions {
 				return theme.NativeCheck(gtx, pc.dark, st)
 			})
-			at(gtx, image.Pt(lx, 0), image.Pt(w-lx, labelLines*gtx.Dp(22)+gtx.Dp(2)), func(gtx layout.Context) layout.Dimensions {
-				if labelLines == 1 {
-					return a.th.Label(gtx, 15, theme.Regular, fg, label)
-				}
-				return a.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Color: fg, MaxLines: labelLines + 1}, label)
-			})
+			place(gtx, labelCall, image.Pt(lx, 0))
 			if hint != "" {
-				at(gtx, image.Pt(lx, labelLines*gtx.Dp(22)+gtx.Dp(2)), image.Pt(w-lx, hintLines*gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
-					return a.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Color: sub, MaxLines: hintLines + 1}, hint)
-				})
+				place(gtx, hintCall, image.Pt(lx, labelH+gtx.Dp(2)))
 			}
 			return layout.Dimensions{Size: image.Pt(w, rowH)}
 		})

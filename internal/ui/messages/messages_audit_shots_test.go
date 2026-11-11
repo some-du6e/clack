@@ -121,5 +121,37 @@ func TestMessagesAuditShots(t *testing.T) {
 		f()
 		img := pixeltest.Render(t, w, h, ops)
 		savePNG(t, filepath.Join(dir, "audit-reaction-tip-"+mode+".png"), crop(img, max(tipAt.Min.Y-170, 0), min(tipAt.Max.Y+16, h)))
+
+		// Karim's numbered list (2026-11-10): an ordered rich_text_list
+		// with an empty third item (Slack's send keeps it) and a nested
+		// level; Slack's ::marker "N. " ends 8px before the text
+		const tList = "C0LISTS01"
+		app.S.PutConv(slack.Conversation{ID: tList, Name: "lists", IsChannel: true, IsMember: true, NumMembers: 3})
+		empty := map[string]any{"type": "rich_text_section", "elements": []any{}}
+		ol := map[string]any{"type": "rich_text_list", "style": "ordered", "indent": 0,
+			"elements": []any{shotSection("goofy looking alignment"), shotSection("why is the welcome there"), empty}}
+		sub := map[string]any{"type": "rich_text_list", "style": "ordered", "indent": 1,
+			"elements": []any{shotSection("a nested item"), shotSection("and another")}}
+		ten := map[string]any{"type": "rich_text_list", "style": "ordered", "indent": 0, "offset": 8,
+			"elements": []any{shotSection("ninth"), shotSection("tenth")}}
+		lt := ts["c1"]
+		app.S.SetLatest(tList, []slack.Message{{Type: "message", TS: lt, User: "UBEN00001", Text: "1. goofy looking alignment",
+			Blocks: shotRich(ol, sub, ten)}}, false)
+		lv := NewChannelView(host, tList)
+		lv.Preview = true
+		const lw, lh = 900, 700
+		lops := new(op.Ops)
+		fl := func() { shotFrame(lv, th, lw, lh, lops) }
+		loadList(lv, fl)
+		until(t, 5*time.Second, "the list row", fl, func() bool { return lv.s.rows[lt] != nil && itemHeight(lv.s, lt) > 0 })
+		for i := 0; i < 40; i++ {
+			fl()
+			time.Sleep(10 * time.Millisecond)
+		}
+		fl()
+		limg := pixeltest.Render(t, lw, lh, lops)
+		ly0, ly1 := rowsSpan(lv.s)
+		ly0, ly1 = ly0+lv.s.origin.Y, ly1+lv.s.origin.Y
+		savePNG(t, filepath.Join(dir, "audit-ordered-list-"+mode+".png"), crop(limg, max(ly0-8, 0), min(ly1+8, lh)))
 	}
 }

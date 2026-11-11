@@ -20,6 +20,7 @@ import (
 	"github.com/some-du6e/clack/internal/taut"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/slackc/css"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
@@ -401,6 +402,15 @@ func (c *Composer) Layout(gtx layout.Context) layout.Dimensions {
 
 func caretOf(e *Editor) int { _, car := e.Selection(); return car }
 
+// quillBlank is Quill's editor.isBlank(), which puts ql-blank on the
+// editor and so shows Texty's .ql-placeholder (.ql-blank~.ql-placeholder
+// display block): one empty line that is a plain block. A quote, list,
+// code block or heading line is another blot, so a format toggled on in
+// an empty composer hides the placeholder.
+func quillBlank(d *Doc) bool {
+	return d.Len() == 0 && len(d.Lines) <= 1 && (len(d.Lines) == 0 || d.Lines[0].Kind == Para)
+}
+
 func (c *Composer) editorStyle() EditorStyle {
 	th := c.h.Theme()
 	st := DefaultEditorStyle(th.Shaper)
@@ -417,7 +427,18 @@ func (c *Composer) editorStyle() EditorStyle {
 	st.CodeBorder = p.CodeBorder
 	st.PreBg = p.PreBg
 	st.PreBorder = p.CodeBorder
-	st.QuoteBar = p.QuoteBar
+	// the composer's quote bar (.c-texty_input_unstyled__container
+	// .ql-editor blockquote:before): Slack Kit's sk_foreground_low_solid,
+	// content-sec under the dark theme
+	st.QuoteBar = rgb(0xdddddd)
+	if th.Dark {
+		st.QuoteBar = rgb(0xb9babd)
+		if v, ok := css.SlackVars(true)["--dt_color-content-sec"]; ok {
+			if col, ok := parseCSSColor(v); ok {
+				st.QuoteBar = col
+			}
+		}
+	}
 	st.Selection = p.Selection
 	st.Placeholder = p.FgSubtle
 	st.MaxHeight = 460 - 16
@@ -525,7 +546,7 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 		st.SelLo, st.SelN = hi, lo-hi
 	}
 	st.InCode = st.Block == CodeBlock
-	st.ShowPlaceholder = c.ed.Empty() && c.ed.Doc().Len() == 0
+	st.ShowPlaceholder = quillBlank(c.ed.Doc())
 	switch {
 	case c.edit != nil:
 		st.Mode = modeEdit
@@ -1410,6 +1431,19 @@ func (c *Composer) TypingLine() string { return c.ui.cur.Typing }
 
 // DocText is the composer's text as plain characters (tests).
 func (c *Composer) DocText() string { return c.ed.Doc().Text() }
+
+// SendRect and ScheduleRect are the send split button's two halves in
+// window coordinates as of the last frame, empty when not drawn (tests
+// click them like a user).
+func (c *Composer) SendRect() image.Rectangle     { return c.winRect(crSend) }
+func (c *Composer) ScheduleRect() image.Rectangle { return c.winRect(crSchedule) }
+
+func (c *Composer) winRect(id crBtn) image.Rectangle {
+	if c.ui.shown&(1<<id) == 0 {
+		return image.Rectangle{}
+	}
+	return c.ui.rect[id].Add(c.Origin).Add(image.Pt(0, c.top))
+}
 
 // AttachFile attaches a file held in memory, like a paste or the + menu's
 // picker (its eager upload starts at once). Safe from any goroutine.

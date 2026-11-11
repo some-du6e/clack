@@ -302,7 +302,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	// the v1/v2 remove buttons' rail sits left of the View's box
 	v.drawRails(gtx, st)
 	v.railInput(gtx)
-	defer clip.Rect{Max: size}.Push(gtx.Ops).Pop()
+	defer clip.Rect{Min: image.Pt(-v.d.overhang, 0), Max: size}.Push(gtx.Ops).Pop()
 	var opac paint.OpacityStack
 	if v.opts.Dim {
 		opac = paint.PushOpacity(gtx.Ops, 0.5)

@@ -34,7 +34,7 @@ func rgba(v uint32, a float32) color.NRGBA {
 type colors struct {
 	Bg, Hover, Text, Text2, Text3                     color.NRGBA
 	Edited, PinIcon, Muted70, TimeSystem              color.NRGBA
-	Pinned, PinnedHover, Highlight                    color.NRGBA
+	Pinned, PinnedHover, Highlight, ActiveThread      color.NRGBA
 	CustomTint                                        color.NRGBA // .c-message_kit__background--labels--custom_response
 	Important                                         color.NRGBA // --dt_color-content-imp (the reply bar's Unread)
 	BadgeBg, BadgeText                                color.NRGBA
@@ -71,14 +71,20 @@ var lightColors = colors{
 	ReactSelfBorder: rgb(0x1264a3), ReactSelfText: rgb(0x1264a3),
 	Link: rgb(0x1264a3), NewLine: rgb(0xe01e5a), DayLine: rgb(0xdddddd), PillBorder: rgba(0x1d1c1d, 0.13),
 	Shadow: rgba(0x000000, 0.08), ToolbarIcon: rgb(0x616061), ToolbarHoverBg: rgba(0x1d1c1d, 0.04),
-	Tooltip: rgb(0x1d1c1d), TooltipText: rgb(0xffffff), Skeleton: rgb(0xeaeaea),
+	Tooltip: theme.LightPalette.Tooltip, TooltipText: theme.LightPalette.TooltipText, Skeleton: rgb(0xeaeaea), // theme/tooltip.go
 	ThreadBorder: rgba(0x1d1c1d, 0.13), ThreadBg: rgb(0xffffff), JumpBg: rgb(0x1264a3),
 	JumpText: rgb(0xffffff), FailedText: rgb(0xe01e5a), BorderStrong: rgba(0x1d1c1d, 0.3),
 	Editing: rgba(0xf2c744, 0.2), ScrollThumb: rgba(0x1d1c1d, 0.3), ScrollThumbHover: rgba(0x1d1c1d, 0.5), Selection: rgba(0x1d9bd1, 0.3),
 	SystemText: rgb(0x454447), HeaderBorder: rgba(0x1d1c1d, 0.13), CloseHover: rgba(0x1d1c1d, 0.06),
+<<<<<<< HEAD
 	HuddleLive: rgb(0x007a5a), HuddleJoin: rgb(0x007a5a), HuddleJoinHover: rgba(0x0a4032, 0x21/255.0),
 	HuddleTile: rgba(0x1d1c1d, 0.13), HuddleTileLive: rgb(0x178f65), HuddleMissedBg: rgb(0xffe8ef),
 	HuddleLiveBadge: rgb(0x0c5340), HuddleLiveBadgeText: rgb(0xffffff),
+=======
+
+	// --dt_color-base-hgl-3 (slack-kit-gantry-v2-styles): the selected thread root (active_thread.go)
+	ActiveThread: rgb(0xfffae0),
+>>>>>>> origin/ui
 }
 
 var darkColors = colors{
@@ -94,14 +100,20 @@ var darkColors = colors{
 	ReactSelfBorder: color.NRGBA{}, ReactSelfText: rgb(0xf8f8f8),
 	Link: rgb(0x1d9bd1), NewLine: rgb(0xe01e5a), DayLine: rgba(0xe8e8e8, 0.13), PillBorder: rgba(0xe8e8e8, 0.13),
 	Shadow: rgba(0x000000, 0.3), ToolbarIcon: rgb(0xababad), ToolbarHoverBg: rgb(0x222529),
-	Tooltip: rgb(0xe8e8e8), TooltipText: rgb(0x1a1d21), Skeleton: rgb(0x2c2d30),
+	Tooltip: theme.DarkPalette.Tooltip, TooltipText: theme.DarkPalette.TooltipText, Skeleton: rgb(0x2c2d30), // theme/tooltip.go
 	ThreadBorder: rgba(0xe8e8e8, 0.13), ThreadBg: rgb(0x1a1d21), JumpBg: rgb(0x1d9bd1),
 	JumpText: rgb(0xffffff), FailedText: rgb(0xe01e5a), BorderStrong: rgba(0xe8e8e8, 0.3),
 	Editing: rgba(0xf2c744, 0.14), ScrollThumb: rgba(0xe8e8e8, 0.3), ScrollThumbHover: rgba(0xe8e8e8, 0.5), Selection: rgba(0x1d9bd1, 0.4),
 	SystemText: rgb(0xababad), HeaderBorder: rgba(0xe8e8e8, 0.13), CloseHover: rgba(0xe8e8e8, 0.06),
+<<<<<<< HEAD
 	HuddleLive: rgb(0x3daa7c), HuddleJoin: rgb(0x177e56), HuddleJoinHover: rgba(0xd8f5e9, 0x14/255.0),
 	HuddleTile: rgba(0xe8e8e8, 0.13), HuddleTileLive: rgb(0x3daa7c), HuddleMissedBg: rgb(0x300005),
 	HuddleLiveBadge: rgb(0x8dd2b5), HuddleLiveBadgeText: rgb(0x05241b),
+=======
+
+	// --dt_color-base-hgl-3, dark
+	ActiveThread: rgb(0x2f1e00),
+>>>>>>> origin/ui
 }
 
 func colorsFor(th *theme.Theme) *colors {

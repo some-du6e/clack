@@ -11,8 +11,8 @@ To see the whole diff against the release:
     diff -ru "$(go env GOMODCACHE)/gioui.org@v0.10.3" third_party/gioui.org
 
 It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
-`op/op.go`, `internal/ops/ops.go` and these two files
-(`CLACK_PATCHES.md`, `UPSTREAM.patch`).
+`op/op.go`, `internal/ops/ops.go`, `app/os_x11.go`, `app/clack_gpu.go` and
+these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
 
@@ -95,7 +95,21 @@ Test: `internal/ui/canvasview` `TestLayoutPanicRecovered` (a panic with
 pushed transforms, clips and an open macro inside a recording parent; the
 parent then pops and stops cleanly).
 
-## 4. widget: Mod+Backspace and Mod+Delete in Editor
+## 4. app: IgnoreGPUBlocklist
+
+`app/os_x11.go` (`x11Window.NewContext`) and `app/clack_gpu.go`. An
+addition: nothing changes unless Clack calls it.
+
+Gio never uses Vulkan on X11 (`vulkanBuggy`: it doesn't work reliably on
+NVIDIA systems, gioui.org/issue/347). That is Gio's one GPU blocklist, the
+counterpart of Chromium's: Slick's Snappy plugin appends Chromium's
+`ignore-gpu-blocklist` switch when "Ignore GPU blocklist" is on, and Clack
+maps the switch to `app.IgnoreGPUBlocklist()` at the next start
+(internal/slick/switches.go, cmd/clack). An X11 window then tries Vulkan
+first and falls back to OpenGL ES, as before, when Vulkan fails. Wayland,
+macOS and Windows have no blocklist; it changes nothing there.
+
+## 5. widget: Mod+Backspace and Mod+Delete in Editor
 
 `widget/editor.go`, `Editor.processKey`'s delete filters and
 `Editor.command` (plus `deleteToLineEdge`).

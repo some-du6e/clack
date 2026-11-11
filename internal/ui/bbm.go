@@ -379,6 +379,7 @@ func (a *App) layoutBBMTopNav(gtx layout.Context, width int) {
 	}
 	x += -gtx.Dp(4) - gtx.Dp(1) + gtx.Dp(8) - gtx.Dp(4) + gtx.Dp(1)
 	hd := a.bbmNavButton(gtx, image.Pt(x, y), "nav.history", "clock", false)
+	histBtn := image.Rectangle{Min: image.Pt(x, y), Max: image.Pt(x, y).Add(hd)}
 	x += hd.X + gtx.Dp(1)
 	if clicked(a.clicks.get("nav.back")) {
 		a.Back()
@@ -387,7 +388,7 @@ func (a *App) layoutBBMTopNav(gtx layout.Context, width int) {
 		a.Forward()
 	}
 	if clicked(a.clicks.get("nav.history")) {
-		a.openHistoryMenu()
+		a.openHistoryMenu(histBtn)
 	}
 
 	// right, from the right edge (margin-right 4px): Exit, Help, Create,

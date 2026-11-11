@@ -138,6 +138,7 @@ type App struct {
 	clicks          clickables
 	hdrx            *headerExtra // the channel header's topic card and edit-name tooltip (channel_mpdm.go)
 	joinBannerCh    string       // the channel whose join banner was last laid out (joinbanner.go)
+	megaBooted      bool         // the megaphone boot load went out (joinbanner.go)
 	grad            gradient
 	sidebar         sidebarState
 	secondary       secondaryState
@@ -701,10 +702,11 @@ func (a *App) layoutPrimary(gtx layout.Context) layout.Dimensions {
 		}
 	}
 	mainW := sz.X - secW
-	// Slack 2026 nests a channel's thread/profile pane inside the channel
-	// view, below its header and tabs (p-ia4_client--nested-secondary-view):
-	// the header and tabs keep the full width.
-	nested := secW > 0 && secW < sz.X && a.router.Current().Page() == "c" && (a.secondary.kind == secThread || a.secondary.kind == secProfile || a.secondary.kind == secSearch || a.secondary.kind == secCode)
+	// With nested_secondary_view (kl02 W7), Slack nests a channel's
+	// thread/profile pane inside the channel view, below its header and
+	// tabs (p-ia4_client--nested-secondary-view): the header and tabs keep
+	// the full width. Without it the pane is a full-height column.
+	nested := secW > 0 && secW < sz.X && a.nestedSecondary() && a.router.Current().Page() == "c" && (a.secondary.kind == secThread || a.secondary.kind == secProfile || a.secondary.kind == secSearch || a.secondary.kind == secCode)
 	primW, secTop := mainW, 0
 	if nested {
 		primW, secTop = sz.X, gtx.Dp(theme.HeaderH)+gtx.Dp(theme.TabsH)

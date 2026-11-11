@@ -536,3 +536,32 @@ func TestSlickViewShowSendingBot(t *testing.T) {
 		t.Errorf("sidebar rows %v", got)
 	}
 }
+
+// Snappy through the shell: its transitions scan finds Slack's stylesheet
+// in the page (buildSlick passes slackc.NativeTransitionsCSS) and its
+// override reaches the CSS engine, so the natives that draw Slack's
+// transitions change at once (the join banner's slide-down here); its
+// main half turns the composer spellcheck off. Turning it off gives both
+// back.
+func TestSlickViewSnappy(t *testing.T) {
+	e := newSV(t)
+	slide := func() time.Duration {
+		d, _ := slackc.CurrentScope().Child(clsJoinBanner, 1).Transition("transform", jbSlide, 0)
+		return d
+	}
+	near := func(d time.Duration) bool { return d > jbSlide-time.Millisecond && d < jbSlide+time.Millisecond }
+	if d := slide(); !near(d) {
+		t.Fatalf("before Snappy the join banner slides in %v, want Slack's %v", d, jbSlide)
+	}
+	e.install("Snappy", map[string]any{"disableSpellcheck": true})
+	e.until(15*time.Second, "the join banner's transition collapsed", func() bool { return slide() < time.Millisecond })
+	e.until(5*time.Second, "the composer spellcheck off", func() bool { return !e.a.spellcheckOn() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := e.s.SetEnabled(ctx, "Snappy", false); err != nil {
+		t.Fatal(err)
+	}
+	e.until(5*time.Second, "the composer spellcheck back on", e.a.spellcheckOn)
+	e.until(5*time.Second, "the join banner's own transition back", func() bool { return near(slide()) })
+}

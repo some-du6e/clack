@@ -90,6 +90,7 @@ type Palette struct {
 	MentionHoverBg                 color.NRGBA
 	SlugHoverText                  color.NRGBA // a hovered message_mention pill's text (0: unchanged)
 	SelfMentionText, SelfMentionBg color.NRGBA
+<<<<<<< HEAD
 	// SelfLinkText is a mention of the viewer or of a group they're in
 	// (c-member_slug--link / c-mrkdwn__user_group--link with --mention):
 	// the link's content-hgl-1, content-hgl-3 in dark
@@ -112,6 +113,27 @@ type Palette struct {
 	TooltipBg, TooltipText       color.NRGBA // emoji :name: tooltips
 	FooterSep                    color.NRGBA // content-inv-sec: a v3 footer's own color (its " | ")
 	HuddleJoinBorder             color.NRGBA // plt-jade-20: a huddle message's Join Huddle border (huddle.go)
+=======
+	CodeText, CodeBg, CodeBorder   color.NRGBA
+	PreBg, PreBorder               color.NRGBA
+	QuoteBar                       color.NRGBA
+	Border, BorderHover            color.NRGBA // cards
+	Panel                          color.NRGBA // card background
+	Placeholder                    color.NRGBA // image loading background
+	Selection                      color.NRGBA
+	Highlight                      color.NRGBA // Style Highlight
+	Divider                        color.NRGBA
+	ButtonBorder, ButtonHoverBg    color.NRGBA
+	Primary, PrimaryText           color.NRGBA
+	Danger, DangerText             color.NRGBA
+	FileIconBg, FileIconPDF        color.NRGBA
+	FileIconZip, FileIconText      color.NRGBA
+	PlayBg, PlayFg                 color.NRGBA
+	TooltipBg, TooltipText         color.NRGBA // emoji :name: tooltips (theme/tooltip.go)
+	TooltipGlow                    color.NRGBA // the dark mode tooltip outline (none in light)
+	FooterSep                      color.NRGBA // content-inv-sec: a v3 footer's own color (its " | ")
+	HuddleJoinBorder               color.NRGBA // plt-jade-20: a huddle message's Join Huddle border (huddle.go)
+>>>>>>> origin/ui
 }
 
 func rgb(r, g, b uint8) color.NRGBA { return color.NRGBA{R: r, G: g, B: b, A: 255} }
@@ -162,7 +184,7 @@ func LightPalette() Palette {
 		Danger: rgb(224, 30, 90), DangerText: rgb(255, 255, 255),
 		FileIconBg: rgba(29, 28, 29, 0.04), FileIconPDF: rgb(224, 30, 90), FileIconZip: rgb(97, 96, 97), FileIconText: rgb(97, 96, 97),
 		PlayBg: rgba(0, 0, 0, 0.4), PlayFg: rgb(255, 255, 255),
-		TooltipBg: rgb(29, 28, 29), TooltipText: rgb(255, 255, 255),
+		TooltipBg: theme.LightPalette.Tooltip, TooltipText: theme.LightPalette.TooltipText,
 		FooterSep:        rgb(0xcb, 0xcc, 0xcf),
 		HuddleJoinBorder: rgb(116, 219, 175),
 	}.flat()
@@ -189,7 +211,7 @@ func DarkPalette() Palette {
 	p.ButtonBorder, p.ButtonHoverBg = rgba(232, 232, 232, 0.3), rgb(34, 37, 41)
 	p.Primary = rgb(0, 122, 90)
 	p.Highlight = rgba(242, 199, 68, 0.3)
-	p.TooltipBg, p.TooltipText = rgb(232, 232, 232), rgb(26, 29, 33)
+	p.TooltipBg, p.TooltipText, p.TooltipGlow = theme.DarkPalette.Tooltip, theme.DarkPalette.TooltipText, theme.DarkPalette.TooltipGlow
 	p.FooterSep = rgb(0xb9, 0xba, 0xbd)
 	p.HuddleJoinBorder = rgb(0, 85, 61)
 	return p.flat()

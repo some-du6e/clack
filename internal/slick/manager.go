@@ -300,10 +300,14 @@ func (s *Slick) reconcileLocked(ctx context.Context, id string) {
 	}
 	wanted := s.activeLocked(p)
 	running := p.running || p.mainRunning
+	switches := hasSwitches(p)
 	s.mu.Unlock()
 	if !wanted {
 		if running {
 			s.stopLocked(ctx, p)
+		}
+		if switches {
+			s.dropSwitches(id)
 		}
 		s.mu.Lock()
 		hadErr := p.startError != ""
@@ -359,6 +363,7 @@ func (s *Slick) reconcileLocked(ctx context.Context, id string) {
 	s.mu.Unlock()
 	if allLive {
 		_ = s.call(ctx, rt, "live", nil, id, next, changed)
+		s.refreshSwitches(ctx, rt, p, next)
 		return
 	}
 	// a restart: the renderer only; the main half hears the change
@@ -432,6 +437,7 @@ func (s *Slick) startLocked(ctx context.Context, p *plugin, settings map[string]
 			p.mainRunning = true
 			s.mu.Unlock()
 		}
+		s.refreshSwitches(ctx, rt, p, settings)
 	}
 	var problem *string
 	if err := s.call(ctx, rt, "start", &problem, p.id, settings); err != nil {
@@ -939,6 +945,7 @@ func (s *Slick) Remove(ctx context.Context, id string) error {
 	for _, f := range []string{id + ".js", id + ".main.js", id + ".meta.json"} {
 		_ = os.Remove(s.path("plugins", f))
 	}
+	s.dropSwitches(id)
 	s.clearData(id, true)
 	s.mu.Lock()
 	if _, ok := s.prefs[keepOnDiskPref+id]; ok {
