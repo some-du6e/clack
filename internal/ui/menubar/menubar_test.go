@@ -129,7 +129,7 @@ func TestCallbacksOnlyHandOff(t *testing.T) {
 		t.Fatal(err)
 	}
 	allowed := map[string]bool{
-		"choose": true, "enabled": true, "title": true, "recentShown": true, "chooseRecent": true,
+		"choose": true, "enabled": true, "title": true, "hidden": true, "recentShown": true, "chooseRecent": true,
 		"C.CString": true, "C.int": true, "int": true, "len": true, "shown.Load": true,
 	}
 	exported := 0

@@ -1,6 +1,9 @@
 package ui
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 // Route strings (see docs/NATIVE.md): "c/<id>", "c/<id>/t/<ts>", "c/<id>/m/<ts>",
 // "activity", "dms", "later", "files", "threads", "huddles", "drafts",
@@ -57,11 +60,42 @@ func (r Route) Query() string {
 	return ""
 }
 
-// router keeps a browser-style back/forward history.
+// router keeps a browser-style back/forward history, and Slack's recents
+// (the client store's "recents", which the history menus list): every
+// place shown, most recent first, with when it was shown.
 type router struct {
-	stack []Route
-	pos   int
+	stack   []Route
+	pos     int
+	recents []visit
 }
+
+// visit is one entry of the recents.
+type visit struct {
+	Route Route
+	At    time.Time
+}
+
+// maxRecents caps the recents (the history menus dedupe them by place).
+const maxRecents = 200
+
+// note records r as just shown.
+func (h *router) note(r Route) {
+	if r == "" {
+		return
+	}
+	h.recents = append(h.recents, visit{})
+	copy(h.recents[1:], h.recents)
+	h.recents[0] = visit{Route: r, At: time.Now()}
+	if len(h.recents) > maxRecents {
+		h.recents = h.recents[:maxRecents]
+	}
+}
+
+// Recents returns the recents, most recent first (shared: don't modify).
+func (h *router) Recents() []visit { return h.recents }
+
+// ClearRecents is the History dialog's Clear history.
+func (h *router) ClearRecents() { h.recents = nil }
 
 func (h *router) Current() Route {
 	if len(h.stack) == 0 {
@@ -71,6 +105,7 @@ func (h *router) Current() Route {
 }
 
 func (h *router) Push(r Route) {
+	h.note(r)
 	if len(h.stack) > 0 && h.stack[h.pos] == r {
 		return
 	}
@@ -91,6 +126,7 @@ func (h *router) Replace(r Route) {
 		return
 	}
 	h.stack[h.pos] = r
+	h.note(r)
 }
 
 func (h *router) CanBack() bool    { return h.pos > 0 }
@@ -101,6 +137,7 @@ func (h *router) Back() (Route, bool) {
 		return "", false
 	}
 	h.pos--
+	h.note(h.stack[h.pos])
 	return h.stack[h.pos], true
 }
 
@@ -109,6 +146,7 @@ func (h *router) Forward() (Route, bool) {
 		return "", false
 	}
 	h.pos++
+	h.note(h.stack[h.pos])
 	return h.stack[h.pos], true
 }
 

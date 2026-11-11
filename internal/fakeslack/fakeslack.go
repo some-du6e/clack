@@ -1090,7 +1090,10 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			"message_actions_truncate": g("on"), "unread_thread_indication_in_replybar": g("on"), "agent_identity_overrides": g("on"),
 			"forward_message_card": g("on"), "giphy_fixed_width": g("on"), "truncated_url_hover_card": g("on"),
 			// the thread pane (core's defaultExperimentGroups, live 2026-11-10)
-			"nested_secondary_view": g("on"), "secondary_view_default_width": g("on"), "smaller_secondary_headers": g("on")})
+			"nested_secondary_view": g("on"), "secondary_view_default_width": g("on"), "smaller_secondary_headers": g("on"),
+			// views and navigation (core/views_experiments.go), as the account had them on 2026-11-10
+			"desktop_history_menu": g("on"), "desktop_history_recents_read": g("on"), "keyboard_shortcuts_search": g("on"),
+			"view_header_overflow_borders": g("on"), "lists_in_later": g("on")})
 	case "users.prefs.get":
 		s.prefsMu.Lock()
 		m := make(map[string]any, len(s.prefs))

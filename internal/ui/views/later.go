@@ -129,9 +129,10 @@ type savedFeed struct {
 	firstApplied, moreApplied int
 	moreTried                 string
 
-	items []core.SavedItem
-	next  string
-	pages int
+	items  []core.SavedItem
+	next   string
+	pages  int
+	counts []byte // the first page's saved.list counts (later_sections.go)
 }
 
 type laterRow struct {
@@ -265,6 +266,7 @@ func (s *savedBase) applyFeed(f *savedFeed) bool {
 			f.next, f.pages, f.moreTried = v.page.Next, 1, ""
 		}
 		f.items = out
+		f.counts = []byte(v.page.Counts)
 		for id, r := range v.page.Convs {
 			s.convs[id] = r
 		}
@@ -785,6 +787,10 @@ type Later struct {
 	popTag                                         int
 
 	kb *vkList // TodosPage's InteractiveList keyboard (todoKey)
+
+	// the sections' collapsed state and dividers (later_sections.go)
+	secCollapsed [3]bool
+	secClick     [3]widget.Clickable
 }
 
 // NewLater builds the To-dos page.
@@ -1151,6 +1157,8 @@ func (l *Later) rebuild() {
 			return v[i].DateCreated > v[j].DateCreated
 		})
 	}
+	// W9x8 n: the in-progress to-dos, then the completed ones
+	sort.SliceStable(v, func(i, j int) bool { return !laterCompleted(&v[i]) && laterCompleted(&v[j]) })
 }
 
 // Layout draws the header, the toolbar, the list and any open menu.
@@ -1267,12 +1275,17 @@ func (l *Later) layoutList(gtx C) D {
 		extra = 1
 	}
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
-	items := make([]vkItem, n)
-	for i := range l.view {
-		items[i] = vkItem{key: laterKey(&l.view[i]), elem: i, focusable: true}
+	// the rows: section dividers and to-dos (later_sections.go)
+	rows := l.todoRows(todoNow())
+	n = len(rows)
+	items := make([]vkItem, 0, len(l.view))
+	for ri, r := range rows {
+		if r.kind == tdItem {
+			items = append(items, vkItem{key: laterKey(&l.view[r.item]), elem: ri, focusable: true})
+		}
 	}
 	l.kb.setItems(items)
-	if l.kb.initial == "" && n > 0 { // InteractiveList: the first row
+	if l.kb.initial == "" && len(items) > 0 { // InteractiveList: the first row
 		l.kb.initial = items[0].key
 	}
 	l.kb.update(gtx, gtx.Constraints.Max.Y, vkOpts{Key: l.todoKey, Extra: todoKeyFilters(l.kb), NoGlobal: true})
@@ -1281,8 +1294,13 @@ func (l *Later) layoutList(gtx C) D {
 		if i >= n {
 			return l.skeleton(gtx, 1, laterAvatar)
 		}
-		d := l.itemRow(gtx, &l.view[i], true)
-		if l.kb.ringOn(items[i].key) {
+		r := rows[i]
+		if r.kind != tdItem {
+			return l.kb.elem(i, l.todoSectionRow(gtx, r))
+		}
+		it := &l.view[r.item]
+		d := l.itemRow(gtx, it, true)
+		if l.kb.ringOn(laterKey(it)) {
 			// .todoRow[role=listitem]:focus-visible:after: inset 5px,
 			// radius 8
 			in := gtx.Dp(5)
