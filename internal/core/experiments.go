@@ -221,7 +221,7 @@ var experimentReads = map[string][]string{
 	"agent_status_in_activity": on,
 	// views
 	"activity_global_settings": on, "slackbot_unread_v2": on, "unified_files_3p_primary_custom_sections": on,
-	"lists_tabbing_navigation": on, "miles_davis_themes": on, "temp_join_channel": on,
+	"lists_tabbing_navigation": on, "miles_davis_themes": on,
 	"availability_prefs_section": on, "status_improvements": on, "activity_bulk_unread_tool": on,
 	"lists_grid_todos": on,
 	// channel header, tabs and details (channel.go, views/details*.go)
@@ -229,6 +229,7 @@ var experimentReads = map[string][]string{
 	"move_channel_tabs_settings": on, "mpdm_default_exclude_history_clients_webapp": on,
 	"channel_topic_purpose_setting_restrict_to_channel_managers": on, "channel_details_agents_apps_tab": on,
 	"list_channel_tab_show_view_name_fe": on, "lists_channel_tabs_default_view": on,
+	ExpChannelJoinWithAgents: on, ExpChannelHeaderWithAgents: on, ExpAgentsInChannelsImprovements: on, // the join card and header count (channel_agents.go)
 	// secondary views, messages and workflows (merged from their branches)
 	"nested_secondary_view": on, "secondary_view_default_width": on, "unread_thread_indication_in_replybar": on,
 	"workflow_execution_window": on, "enable_wfb_ai_answer_step": on,

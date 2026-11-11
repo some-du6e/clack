@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/slackc"
@@ -82,6 +83,25 @@ func i18nSurfaces(t *testing.T, e *perfEnv, ch string) []i18nSurface {
 		{"user-menu", func(e *perfEnv) { e.a.ShowOverlay(popups.NewUserMenu(e.a, image.Pt(20, 860))) }},
 		{"switcher", func(e *perfEnv) { e.a.openSwitcher() }},
 		{"search-page", func(e *perfEnv) { e.a.Navigate("search?q=" + url.QueryEscape("the")) }},
+		// JoinChannelPane (archives): the classic pane, the revamped card
+		// (channel_join_experience_with_agents) and the caret's "Join…"
+		{"join-pane", func(e *perfEnv) {
+			e.a.Core().SetExperimentGroup(core.ExpChannelJoinWithAgents, "")
+			e.openChannel(fakeslack.PreviewChannelID)
+		}},
+		{"join-card", func(e *perfEnv) {
+			e.a.Core().SetExperimentGroup(core.ExpChannelJoinWithAgents, "on")
+			e.openChannel(fakeslack.PreviewChannelID)
+		}},
+		{"join-menu", func(e *perfEnv) {
+			e.a.Core().SetExperimentGroup(core.ExpChannelJoinWithAgents, "on")
+			e.openChannel(fakeslack.PreviewChannelID)
+			c := e.a.convoFor(fakeslack.PreviewChannelID, "")
+			if c.jp == nil {
+				c.jp = &joinPane{}
+			}
+			e.a.openTempJoinMenu(c)
+		}},
 	}
 }
 

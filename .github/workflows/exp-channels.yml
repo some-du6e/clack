@@ -3,7 +3,10 @@ name: exp-channels
 # group DM names in the header, details and the switcher with Slack's
 # RenameMpdmDialog, the wide topic's hover card and the topic permission,
 # the bell menu's "Customized" tag, details' agents tabs, list tab view
-# names, each with the experiment groups flipped; rendered headlessly at
+# names, the preview's join card and the header's agent count with a
+# channel's agents and apps (channel_join_experience_with_agents,
+# channel_header_with_agents), each with the experiment groups flipped;
+# rendered headlessly at
 # 1440x900 against internal/fakeslack. Synthetic only: nothing here talks
 # to Slack.
 on:
@@ -15,6 +18,14 @@ on:
       - "internal/core/enterprise_prefs.go"
       - "internal/core/browse.go"
       - "internal/core/experiments.go"
+      - "internal/core/channel_agents.go"
+      - "internal/core/preview.go"
+      - "internal/core/preview_test.go"
+      - "internal/fakeslack/preview_agents.go"
+      - "internal/ui/joinpane.go"
+      - "internal/ui/joincard.go"
+      - "internal/ui/agent_count.go"
+      - "internal/ui/channel_agents_test.go"
       - "internal/core/exp_channels_test.go"
       - "internal/fakeslack/groupdms.go"
       - "internal/ui/channel.go"
@@ -53,7 +64,7 @@ jobs:
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: core
-        run: go test -count=1 -v -run 'TestTopicPurposeRestrictedToGrants$|TestChannelGrantRequest$|TestCanNameMpdmFollowsExperiments$|TestRenameMpdm$|TestHasMpdmWithDuplicateName$|TestEnterprisePrefs$|TestMpdmCustomName|TestExperimentReadsListed$' ./internal/core/
+        run: go test -count=1 -v -run 'TestTopicPurposeRestrictedToGrants$|TestChannelGrantRequest$|TestCanNameMpdmFollowsExperiments$|TestRenameMpdm$|TestHasMpdmWithDuplicateName$|TestEnterprisePrefs$|TestMpdmCustomName|TestExperimentReadsListed$|TestCanTempJoin$|TestMembersSeenActive$|TestJoinForSendsExpirationAndFilesTemporary$|TestTempSectionHiddenWithoutTempChannels$' ./internal/core/
       - name: popups and views
         run: xvfb-run -a go test -count=1 -v -run 'TestNotifyCustomized$|TestMenuTagTemplate$|TestGraphemeLen$|TestRenameMpdmErrorText$|TestSwitcherGroupDMNames$|TestDetailsAddPeopleDefaultHistory$|TestDetailsMpdmTitle$' ./internal/ui/popups/ ./internal/ui/views/
       - name: client screenshots
@@ -62,7 +73,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$PREVIEW_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestGroupDMHeaderTitles$|TestGroupDMRename$|TestHeaderTopicHoverCard$|TestTopicRestrictedToManagers$|TestBellMenuCustomizedTag$|TestDetailsGroupDMName$|TestDetailsAgentsAppsTabExperiment$|TestListTabViewName$|TestHeaderTopicEdit$|TestChannelBellMenu$|TestChannelDetailsMembersAndApps$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestGroupDMHeaderTitles$|TestGroupDMRename$|TestHeaderTopicHoverCard$|TestTopicRestrictedToManagers$|TestBellMenuCustomizedTag$|TestDetailsGroupDMName$|TestDetailsAgentsAppsTabExperiment$|TestListTabViewName$|TestHeaderTopicEdit$|TestChannelBellMenu$|TestChannelDetailsMembersAndApps$|TestJoinCardWithAgents$|TestHeaderAgentCount$|TestChannelPreviewJoin$|TestChannelPreviewTempJoin$' ./internal/ui/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

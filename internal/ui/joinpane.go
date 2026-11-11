@@ -17,6 +17,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -31,11 +32,15 @@ import (
 //     (boot-shared UY14). Classic layout (channel_join_experience_with_agents
 //     off, as on the test account), centered: the bold channel name
 //     (thread: "To reply to this thread, join #name"), the purpose (2
-//     lines), then [Details] [Join Channel]. Under temp_join_channel the
-//     Join button is a split button whose caret ("Join channel
-//     temporarily") opens "Join…": Just for today / For 48 hours / For 1
-//     week (conversations.join expiration_ts). Opened from the channel
-//     browser, a "Back to All channels" link follows.
+//     lines), then [Details] [Join Channel]. For a public channel that
+//     isn't shared or #general (OtvL Y, core.CanTempJoin) the Join button
+//     is a split button whose caret ("Join channel temporarily") opens
+//     "Join…": Just for today / For 48 hours / For 1 week
+//     (conversations.join expiration_ts); temp_join_channel no longer
+//     gates it (build 274f7c7f1b69). Opened from the channel browser, a
+//     "Back to All channels" link follows. With the experiment on, the
+//     revamped card with the channel's people and agents (joincard.go).
+//     The strings are the archives namespace's, as in UY14 and cRQG.
 //   - an archived channel: MessagePaneInputDisabled (boot-render) with
 //     "You are viewing #name, an archived channel" and a small outline
 //     "Close Channel" button that goes back to the previous conversation.
@@ -50,10 +55,13 @@ import (
 //     message, so Taut's RestrictedChannelWarning still patches it
 //     (composerRoadblock below).
 //
-// Not ported: the revamped layout's facepile and member captions, the
-// code-channel summary, Slack Connect's connection info line, the offline
-// tooltip ("Go online to join this channel"), the suggested-channel
-// prefix.
+// Not ported: the code-channel summary, Slack Connect's connection info
+// line, the offline tooltip ("Go online to join this channel"), the
+// suggested-channel prefix and its "Not Now".
+
+// nsArchives is JoinChannelPane's and MessagePaneInputPreview's I18n
+// namespace.
+var nsArchives = i18n.NS("archives")
 
 type footerKind uint8
 
@@ -150,22 +158,9 @@ func (a *App) layoutJoinPane(gtx layout.Context, c *convo, ci *convInfo, org ima
 	W := gtx.Constraints.Max.X
 	padX, padY := gtx.Dp(20), gtx.Dp(20)
 	cw := max(W-2*padX, 1)
-	temp := a.data != nil && a.data.core.TempJoinEnabled() && ci.Kind == "channel"
-
-	// actions (read before drawing, Gio style)
-	if clicked(&jp.details) {
-		a.OpenDetails(c.ch)
-	}
-	if clicked(&jp.join) {
-		a.joinPreview(c, "")
-	}
-	if clicked(&jp.caret) && temp {
-		a.openTempJoinMenu(c)
-	}
-	if clicked(&jp.back) {
-		if r := a.previewBack(c.ch); r != "" {
-			a.Navigate(string(r))
-		}
+	temp := a.joinPaneActions(c)
+	if svc := a.Core(); svc != nil && svc.ChannelJoinWithAgents() {
+		return a.layoutJoinCard(gtx, c, ci, org, temp)
 	}
 
 	var rows []op.CallOp
@@ -196,7 +191,7 @@ func (a *App) layoutJoinPane(gtx layout.Context, c *convo, ci *convInfo, org ima
 		gap := gtx.Dp(8)
 		top := gtx.Dp(16)
 		mDet := op.Record(gtx.Ops)
-		dd := popups.Button(gtx, th, &jp.details, popups.BtnOutline, popups.BtnMedium, "Details", "", 0)
+		dd := popups.Button(gtx, th, &jp.details, popups.BtnOutline, popups.BtnMedium, nsArchives.T("Details"), "", 0)
 		cDet := mDet.Stop()
 		mJoin := op.Record(gtx.Ops)
 		var dj layout.Dimensions
@@ -204,7 +199,7 @@ func (a *App) layoutJoinPane(gtx layout.Context, c *convo, ci *convInfo, org ima
 		if temp {
 			dj, caretX = a.splitJoinButton(gtx, jp)
 		} else {
-			dj = popups.Button(gtx, th, &jp.join, popups.BtnPrimary, popups.BtnMedium, "Join Channel", "", 0)
+			dj = popups.Button(gtx, th, &jp.join, popups.BtnPrimary, popups.BtnMedium, nsArchives.T("Join Channel"), "", 0)
 		}
 		cJoin := mJoin.Stop()
 		w := dd.Size.X + gap + dj.Size.X
@@ -228,21 +223,7 @@ func (a *App) layoutJoinPane(gtx layout.Context, c *convo, ci *convInfo, org ima
 	})
 	// "Back to All channels" (opened from the channel browser)
 	if a.previewBack(c.ch) != "" {
-		add(func(gtx layout.Context) layout.Dimensions {
-			top := gtx.Dp(12)
-			lw := th.Measure(gtx, 15, theme.Regular, "Back to All channels")
-			x := max((gtx.Constraints.Max.X-lw)/2, 0)
-			t := op.Offset(image.Pt(x, top)).Push(gtx.Ops)
-			d := clickArea(gtx, &jp.back, nil, func(gtx layout.Context) layout.Dimensions {
-				col := th.C.Link
-				if jp.back.Hovered() {
-					col = theme.Mix(col, th.C.Fg, .2)
-				}
-				return th.Label(gtx, 15, theme.Regular, col, "Back to All channels")
-			})
-			t.Pop()
-			return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, top+d.Size.Y)}
-		})
+		add(func(gtx layout.Context) layout.Dimensions { return a.previewBackLink(gtx, jp, true) })
 	}
 	descGap := 0
 	if ci.Purpose != "" {
@@ -270,47 +251,133 @@ func (a *App) layoutJoinPane(gtx layout.Context, c *convo, ci *convInfo, org ima
 		}
 		y += hs[i]
 	}
-	if jp.caret.Hovered() && temp {
-		r := jp.caretRect
-		t := op.Offset(r.Min.Sub(org)).Push(gtx.Ops)
-		popups.Tooltip(gtx, th, &jp.caretTip, true, r.Size(), popups.Above, "Join channel temporarily", "")
-		t.Pop()
-	} else {
-		popups.Tooltip(gtx, th, &jp.caretTip, false, image.Point{}, popups.Above, "", "")
-	}
+	a.caretTooltip(gtx, jp, org, temp)
 	return layout.Dimensions{Size: image.Pt(W, h)}
 }
 
-// joinTitle draws the subtitle: the bold channel name with its icon, or
-// "To reply to this thread, join #name" in a thread.
+// joinPaneActions handles the pane's clicks (read before drawing, Gio
+// style) and says whether Join is the split button (OtvL Y).
+func (a *App) joinPaneActions(c *convo) (temp bool) {
+	jp := c.jp
+	temp = a.data != nil && a.data.core.CanTempJoin(c.ch)
+	if clicked(&jp.details) {
+		a.OpenDetails(c.ch)
+	}
+	if clicked(&jp.join) {
+		a.joinPreview(c, "")
+	}
+	if clicked(&jp.caret) && temp {
+		a.openTempJoinMenu(c)
+	}
+	if clicked(&jp.back) {
+		if r := a.previewBack(c.ch); r != "" {
+			a.Navigate(string(r))
+		}
+	}
+	return temp
+}
+
+// caretTooltip is the caret's "Join channel temporarily" tooltip; org is
+// the pane's window origin (caretRect is in window coordinates).
+func (a *App) caretTooltip(gtx layout.Context, jp *joinPane, org image.Point, temp bool) {
+	if jp.caret.Hovered() && temp {
+		r := jp.caretRect
+		t := op.Offset(r.Min.Sub(org)).Push(gtx.Ops)
+		popups.Tooltip(gtx, a.th, &jp.caretTip, true, r.Size(), popups.Above, nsArchives.T("Join channel temporarily"), "")
+		t.Pop()
+	} else {
+		popups.Tooltip(gtx, a.th, &jp.caretTip, false, image.Point{}, popups.Above, "", "")
+	}
+}
+
+// previewBackLink is MessagePaneInputPreview's "Back to All channels",
+// centered in the classic pane, at the start in the revamped card.
+func (a *App) previewBackLink(gtx layout.Context, jp *joinPane, center bool) layout.Dimensions {
+	th := a.th
+	label := nsArchives.T("Back to All channels")
+	top := gtx.Dp(12)
+	x := 0
+	if center {
+		x = max((gtx.Constraints.Max.X-th.Measure(gtx, 15, theme.Regular, label))/2, 0)
+	}
+	t := op.Offset(image.Pt(x, top)).Push(gtx.Ops)
+	d := clickArea(gtx, &jp.back, nil, func(gtx layout.Context) layout.Dimensions {
+		col := th.C.Link
+		if jp.back.Hovered() {
+			col = theme.Mix(col, th.C.Fg, .2)
+		}
+		return th.Label(gtx, 15, theme.Regular, col, label)
+	})
+	t.Pop()
+	return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, top+d.Size.Y)}
+}
+
+// joinTitle draws the subtitle: the bold channel name with its icon (18px
+// black), or rt("To reply to this thread, join <title>channel name</title>")
+// at 15px with the channel in the tag's place.
 func (a *App) joinTitle(gtx layout.Context, c *convo, ci *convInfo) layout.Widget {
+	if c.ts == "" {
+		return func(gtx layout.Context) layout.Dimensions {
+			return a.joinHeadline(gtx, []i18n.Part{{Arg: "channel"}}, ci, 18, theme.Black, 26, "channel")
+		}
+	}
+	parts := nsArchives.RT("To reply to this thread, join <title>channel name</title>")
+	for i := range parts {
+		if parts[i].Tag == "title" {
+			parts[i].Arg = "title"
+		}
+	}
+	return func(gtx layout.Context) layout.Dimensions {
+		return a.joinHeadline(gtx, parts, ci, 15, theme.Regular, 22, "title")
+	}
+}
+
+// joinHeadline draws parts on one line at size: plain runs in weight, and
+// the part whose Arg is chanArg as the channel entity (ChannelEntity with
+// boldIcon: the hash or lock glyph at the text's size, 2px, the bold name;
+// black at 18px), ellipsized to the space left.
+func (a *App) joinHeadline(gtx layout.Context, parts []i18n.Part, ci *convInfo, size unit.Sp, weight font.Weight, lineH int, chanArg string) layout.Dimensions {
 	th := a.th
 	icon := "hash"
 	if ci.Kind == "private" {
 		icon = "lock"
 	}
-	name := ci.Name
-	return func(gtx layout.Context) layout.Dimensions {
-		size, weight := unit.Sp(18), theme.Black
-		x := 0
-		lh := gtx.Sp(26)
-		if c.ts != "" {
-			size, weight, lh = 15, theme.Bold, gtx.Sp(22)
-			d := th.Label(gtx, 15, theme.Regular, th.C.Fg, "To reply to this thread, join ")
-			x = d.Size.X
+	nameW := theme.Bold
+	if size >= 18 {
+		nameW = theme.Black
+	}
+	lh := gtx.Sp(unit.Sp(lineH))
+	maxW := gtx.Constraints.Max.X
+	// the plain runs' width first: the channel name gets what's left
+	fixedW := 0
+	for _, p := range parts {
+		if p.Arg != chanArg {
+			fixedW += th.Measure(gtx, size, weight, p.Text)
 		}
-		is := gtx.Sp(size)
+	}
+	is := gtx.Sp(size)
+	x := 0
+	for _, p := range parts {
+		if p.Arg != chanArg {
+			t := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
+			d := th.Layout(gtx, theme.TextStyle{Size: size, Weight: weight, Color: th.C.Fg, MaxLines: 1, LineHeight: unit.Sp(lineH)}, p.Text)
+			t.Pop()
+			x += d.Size.X
+			continue
+		}
 		t := op.Offset(image.Pt(x, (lh-is)/2)).Push(gtx.Ops)
 		icons.Get(icon)(gtx, unit.Dp(float32(size)), th.C.Fg)
 		t.Pop()
 		x += is + gtx.Dp(2)
 		g := gtx
-		g.Constraints.Max.X = max(gtx.Constraints.Max.X-x, 1)
+		g.Constraints.Min = image.Point{}
+		g.Constraints.Max.X = max(maxW-fixedW-is-gtx.Dp(2), 1)
 		t = op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
-		d := th.Layout(g, theme.TextStyle{Size: size, Weight: weight, Color: th.C.Fg, MaxLines: 1, LineHeight: unit.Sp(float32(lh) / gtx.Metric.PxPerSp)}, name)
+		d := th.Layout(g, theme.TextStyle{Size: size, Weight: nameW, Color: th.C.Fg, MaxLines: 1, LineHeight: unit.Sp(lineH)}, ci.Name)
 		t.Pop()
-		return layout.Dimensions{Size: image.Pt(x+d.Size.X, max(lh, d.Size.Y))}
+		x += d.Size.X
 	}
+	return layout.Dimensions{Size: image.Pt(min(x, maxW), lh)}
 }
 
 // centerRow centers w horizontally in the constraints.
@@ -335,7 +402,8 @@ func (a *App) splitJoinButton(gtx layout.Context, jp *joinPane) (layout.Dimensio
 	th := a.th
 	h := gtx.Dp(36)
 	pad := gtx.Dp(12)
-	tw := th.Measure(gtx, 15, theme.Bold, "Join Channel")
+	label := nsArchives.T("Join Channel")
+	tw := th.Measure(gtx, 15, theme.Bold, label)
 	mainW := tw + 2*pad
 	caretW := gtx.Dp(40) // Slack: the "Join channel temporarily" trigger is 40×36
 	rad := gtx.Dp(8)
@@ -363,7 +431,7 @@ func (a *App) splitJoinButton(gtx layout.Context, jp *joinPane) (layout.Dimensio
 	st.Pop()
 	theme.Fill(gtx, image.Rect(mainW-gtx.Dp(1), gtx.Dp(8), mainW, h-gtx.Dp(8)), color.NRGBA{R: 255, G: 255, B: 255, A: 0x66})
 	lt := op.Offset(image.Pt(pad, (h-gtx.Sp(22))/2)).Push(gtx.Ops)
-	th.Layout(gtx, theme.TextStyle{Size: 15, Weight: theme.Bold, Color: th.C.SendText, MaxLines: 1, LineHeight: 22}, "Join Channel")
+	th.Layout(gtx, theme.TextStyle{Size: 15, Weight: theme.Bold, Color: th.C.SendText, MaxLines: 1, LineHeight: 22}, label)
 	lt.Pop()
 	is := gtx.Dp(16)
 	it := op.Offset(image.Pt(mainW+(caretW-is)/2, (h-is)/2)).Push(gtx.Ops)
@@ -379,10 +447,10 @@ func (a *App) splitJoinButton(gtx layout.Context, jp *joinPane) (layout.Dimensio
 // x 738–1038 over a caret at 998–1038).
 func (a *App) openTempJoinMenu(c *convo) {
 	items := []popups.MenuItem{
-		{Header: "Join…"},
-		{Label: "Just for today", Do: func() { a.joinPreview(c, core.TempToday) }},
-		{Label: "For 48 hours", Do: func() { a.joinPreview(c, core.TempTwoDays) }},
-		{Label: "For 1 week", Do: func() { a.joinPreview(c, core.TempWeek) }},
+		{Header: nsArchives.T("Join\u2026")},
+		{Label: nsArchives.T("Just for today"), Do: func() { a.joinPreview(c, core.TempToday) }},
+		{Label: nsArchives.T("For 48 hours"), Do: func() { a.joinPreview(c, core.TempTwoDays) }},
+		{Label: nsArchives.T("For 1 week"), Do: func() { a.joinPreview(c, core.TempWeek) }},
 	}
 	a.ShowOverlay(popups.NewMenuOpts(a, items, popups.MenuOpts{Width: 300, Anchor: c.jp.caretRect, Side: popups.Above, AlignRight: true}))
 }

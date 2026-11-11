@@ -128,11 +128,18 @@ func splitArgs(out []Part, p Part, args Args) []Part {
 // three on); es-ES "A y B", "A, B y C"; ja-JP "A、 B、 C" (no
 // conjunction for "and"); zh "、"; ko-KR's serial comma only for "or".
 // "and" and "or" are the general namespace's.
-func Listify(items []string, or bool) string {
+func Listify(items []string, or bool) string { return listify(items, or, false) }
+
+// ListifyNoConj is listify with noConj: every item joined by the
+// locale's separator ("A, B"; ja-JP "A、 B"), for messages that bring
+// their own "and" (JoinChannelPane's "{namedMembers}, and …").
+func ListifyNoConj(items []string) string { return listify(items, false, true) }
+
+func listify(items []string, or, noConj bool) string {
 	if len(items) == 0 {
 		return ""
 	}
-	sep, serial, conj := ",", false, true
+	sep, serial, conj := ",", false, !noConj
 	var word string
 	if or {
 		word = T("general", "or")
