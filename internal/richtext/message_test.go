@@ -165,6 +165,7 @@ func TestSharedMessage(t *testing.T) {
 		para(tx("look")),
 		{Kind: AttachmentBlock, Att: &Attachment{Legacy: true, IsShare: true, AuthorName: "alice", AuthorIcon: "https://i.test/al.png", AuthorLink: "https://ws.slack.com/team/U1",
 			ShareChannel: "general", ShareChannelID: "C1", FromURL: "https://ws.slack.com/archives/C1/p1700000000000100", TS: 1700000000,
+			MsgTS: "1700000000.000100", // the shared message's ts as sent (plugins key on it)
 			Text: []Block{para(tx("shared text"))}}},
 		{Kind: AttachmentBlock, Att: &Attachment{Legacy: true, IsShare: true, MsgCard: true, AuthorName: "bob", ShareChannel: "random", ShareChannelID: "C2",
 			Text:    []Block{para(tx("unfurled "), st("msg", Bold))},
