@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -44,28 +45,34 @@ func TestFilesEmptyCopy(t *testing.T) {
 
 // The sidebar's Starred part follows custom_file_sections (the account's
 // team has it on): the starred file collection's header row, which a click
-// collapses, or the plain "Starred" sub-header with no collapse.
+// collapses (the client store's toggleCollectionCollapse), or the plain
+// "Starred" sub-header with no collapse.
 func TestFilesSidebarStarred(t *testing.T) {
 	v, h, e, _ := filesView(t)
 	app := h.Core()
 	app.SetExperimentGroup("custom_file_sections", "off")
 	e.frame()
-	if v.fileCollections() {
-		t.Fatal("custom_file_sections off, yet file collections")
+	if v.fileCollections() || !hasRow(v, "starred-canvas-header") {
+		t.Fatalf("custom_file_sections off: rows %s", rowKeys(v))
 	}
 	app.SetExperimentGroup("custom_file_sections", "on")
+	e.until(t, "files.collections.list", func() bool { _, ok := app.FileCollections(); return ok })
 	e.frame()
-	if !v.fileCollections() {
-		t.Fatal("custom_file_sections on, yet no file collections")
+	if !v.fileCollections() || hasRow(v, "starred-canvas-header") {
+		t.Fatalf("custom_file_sections on: rows %s", rowKeys(v))
 	}
-	v.starHead.Click()
+	key := "coll:" + fakeslack.StarredCollectionID
+	if !hasRow(v, key) {
+		t.Fatalf("no starred collection header: %s", rowKeys(v))
+	}
+	v.rowState(key).row.Click()
 	e.frame()
-	if !v.starCollapsed {
+	if !app.FileCollectionCollapsed(fakeslack.StarredCollectionID) || hasRow(v, "empty-collection-"+fakeslack.StarredCollectionID) {
 		t.Error("clicking the starred collection's header didn't collapse it")
 	}
-	v.starHead.Click()
+	v.rowState(key).row.Click()
 	e.frame()
-	if v.starCollapsed {
+	if app.FileCollectionCollapsed(fakeslack.StarredCollectionID) {
 		t.Error("a second click didn't open it again")
 	}
 }
@@ -83,7 +90,7 @@ func TestFilesEmptyShots(t *testing.T) {
 		app := h.Core()
 		app.SetExperimentGroup("unified_files_3p_primary_custom_sections", "on")
 		app.SetExperimentGroup("custom_file_sections", "on")
-		e.until(t, "the starred list", func() bool { _, ok, _ := v.starred.get(); return ok })
+		e.until(t, "files.collections.list", func() bool { _, ok := app.FileCollections(); return ok })
 		e.frame()
 		vaShot(t, e, "files-sidebar-collections", dark)
 		app.SetExperimentGroup("custom_file_sections", "off")

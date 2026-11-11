@@ -120,6 +120,7 @@ func (b *backend) start(a *App) {
 	// Live updates only when the user opted in (realtime.go); core polls
 	// otherwise. Set before Boot so the socket is never opened unasked.
 	b.core.SetRealtime(a.realtimeOn())
+	a.attachOpenFiles(b.core)      // the Files sidebar's Recently viewed (files_open.go)
 	if b.core.S.HasCachedPrefs() { // the cached account theme paints the first frame
 		a.applyAccountPrefs(b.core.Prefs())
 	}

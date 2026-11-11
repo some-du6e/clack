@@ -3,7 +3,6 @@ package views
 import (
 	"context"
 	"image"
-	"strconv"
 	"time"
 
 	"gioui.org/layout"
@@ -63,10 +62,7 @@ func thrMoreText(t *thrItem, c *thrCard) string {
 	if n == 0 {
 		return ""
 	}
-	if n == 1 {
-		return "Show 1 more reply"
-	}
-	return "Show " + strconv.Itoa(n) + " more replies"
+	return nsThreads.T("Show {showPrevCount, plural, =1 {# more reply} other {# more replies}}", "showPrevCount", n)
 }
 
 // loadOlder is loadOlderReplies.

@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/ui/popups"
 )
 
 // The send button's "Schedule for later" menu, as Slack builds it
@@ -143,6 +145,7 @@ type schedRow struct {
 	opt         schedOpt
 	at          time.Time // zero for Custom time
 	label, desc string
+	key         string // the row's menu key: its English label's (the label is the locale's)
 }
 
 // schedMemberInfo is the one other member of a DM, for the member rows.
@@ -203,16 +206,24 @@ func schedMemberLabel(at, now time.Time, m *schedMemberInfo, h24 bool) string {
 	at = at.In(now.Location()) // the viewer's clock and day (moment's local time)
 	ts := schedClock(at, h24)
 	if schedAfterWeekend(now.In(m.loc)) {
-		day := "Sunday"
-		if at.Weekday() == time.Monday {
-			day = "Monday"
-		}
-		return day + " at " + ts
+		return draftsNS.T("{dayName} at {timeString}", "dayName", schedDayName(at), "timeString", ts)
 	}
 	if at.YearDay() == now.YearDay() && at.Year() == now.Year() {
-		return "Later today at " + ts
+		return draftsNS.T("Later today at {timeString}", "timeString", ts)
 	}
-	return "Tomorrow at " + ts
+	return draftsNS.T("Tomorrow at {timeString}", "timeString", ts)
+}
+
+// draftsNS is the scheduling menu's I18n (getLabelForSchedulingOptionThunk,
+// 82ZP).
+var draftsNS = i18n.NS("drafts")
+
+// schedDayName is moment's "dddd" in the locale.
+func schedDayName(t time.Time) string {
+	if l := i18n.Locale(); l != i18n.EnUS {
+		return i18n.Weekday(l, t, false)
+	}
+	return t.Format("Monday")
 }
 
 // schedPreviousLabel is the "previously scheduled" row's label.
@@ -222,19 +233,23 @@ func schedPreviousLabel(at, now time.Time, h24 bool) string {
 	same := func(a, b time.Time) bool { return a.Year() == b.Year() && a.YearDay() == b.YearDay() }
 	switch {
 	case same(at, now):
-		return "Later today at " + ts
+		return draftsNS.T("Later today at {timeString}", "timeString", ts)
 	case same(at, now.AddDate(0, 0, 1)):
-		return "Tomorrow at " + ts
+		return draftsNS.T("Tomorrow at {timeString}", "timeString", ts)
 	}
 	end := time.Date(now.Year(), now.Month(), now.Day()+7, 23, 59, 59, 0, now.Location())
 	if at.After(end) {
 		// toCalendarDate excludeYear: MMMMDo ("November 18th")
-		return at.Format("January 2") + schedOrdinal(at.Day()) + " at " + ts
+		full := at.Format("January 2") + schedOrdinal(at.Day())
+		if l := i18n.Locale(); l != i18n.EnUS {
+			full = i18n.CalendarDate(l, at, i18n.CalendarOpts{ExcludeYear: true})
+		}
+		return draftsNS.T("{fullDate} at {timeString}", "fullDate", full, "timeString", ts)
 	}
 	if at.Weekday() == now.Weekday() {
-		return "Next " + at.Format("Monday") + " at " + ts
+		return draftsNS.T("Next {dayName} at {timeString}", "dayName", schedDayName(at), "timeString", ts)
 	}
-	return at.Format("Monday") + " at " + ts
+	return draftsNS.T("{dayName} at {timeString}", "dayName", schedDayName(at), "timeString", ts)
 }
 
 // schedOrdinal is moment's English ordinal suffix ("st", "nd", "th").
@@ -254,6 +269,9 @@ func schedOrdinal(d int) string {
 }
 
 func schedClock(t time.Time, h24 bool) string {
+	if l := i18n.Locale(); l != i18n.EnUS {
+		return i18n.Time(l, t, h24, false) // toTime
+	}
 	if h24 {
 		return t.Format("15:04")
 	}
@@ -271,15 +289,16 @@ func scheduleRows(now time.Time, h24, experiment bool, m *schedMemberInfo) []sch
 	std := schedStandardOptions(now, experiment)
 	var extra []schedRow
 	if at, ok := schedMemberTime(m, now); ok {
-		extra = append(extra, schedRow{opt: schedMember, at: at, label: schedMemberLabel(at, now, m, h24)})
+		extra = append(extra, schedRow{opt: schedMember, at: at, label: schedMemberLabel(at, now, m, h24), key: "schedule_member_time"})
 	}
 	if experiment && lastCustomSchedule.After(now) {
-		extra = append(extra, schedRow{opt: schedPrevious, at: lastCustomSchedule, label: schedPreviousLabel(lastCustomSchedule, now, h24)})
+		extra = append(extra, schedRow{opt: schedPrevious, at: lastCustomSchedule, label: schedPreviousLabel(lastCustomSchedule, now, h24), key: "schedule_previous_time"})
 	}
 	var rows []schedRow
 	for _, o := range std {
 		if o != schedCustom {
-			rows = append(rows, schedRow{opt: o, at: schedStandardTime(o, now), label: schedStandardLabel(o, h24)})
+			en := schedStandardLabel(o, h24)
+			rows = append(rows, schedRow{opt: o, at: schedStandardTime(o, now), label: draftsNS.T(en), key: popups.LabelKey(en)})
 		}
 	}
 	if len(extra) > 0 {
@@ -296,11 +315,11 @@ func scheduleRows(now time.Time, h24, experiment bool, m *schedMemberInfo) []sch
 	}
 	if m != nil && !m.sameTZ {
 		for i := range rows {
-			// "{memberTime} for {memberName}"
-			rows[i].desc = schedClock(rows[i].at.In(m.loc), h24) + " for " + m.name
+			rows[i].desc = draftsNS.T("{memberTime} for {memberName}", "memberTime", schedClock(rows[i].at.In(m.loc), h24), "memberName", m.name)
 		}
 	}
-	return append(rows, schedRow{opt: schedCustom, label: schedStandardLabel(schedCustom, h24)})
+	en := schedStandardLabel(schedCustom, h24)
+	return append(rows, schedRow{opt: schedCustom, label: draftsNS.T(en), key: popups.LabelKey(en)})
 }
 
 // schedCustomDefault is getDefaultCustomTime: the next hour, or the one

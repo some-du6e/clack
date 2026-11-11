@@ -310,7 +310,7 @@ func (p *EmojiPicker) setQuery(gtx layout.Context, q string) {
 		if len(p.lists[epGroupSearch]) > 0 {
 			p.sel = epCell{1, 0}
 		}
-		p.emptyMsg = "No emoji found for “" + q + "”"
+		p.emptyMsg = nsEmojiPicker.T("No emoji to show") // the picker's empty search (Zu56)
 	}
 	p.rowsDirty = true
 	p.ensureRows(gtx)
@@ -746,7 +746,7 @@ func (p *EmojiPicker) layoutBody(gtx layout.Context, th *theme.Theme, cl *Colors
 	at(gtx, image.Pt(dp(gtx, epInputX), dp(gtx, epInputY)), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Exact(image.Pt(sz.X-2*dp(gtx, epInputX), dp(gtx, epInputH)))
 		// c-input_text on --dt_color-base-pry (the card's primary background)
-		return fieldOn(gtx, th, &p.ed, "Search all emoji", "", epInputH, 15, cl.EmojiBg)
+		return fieldOn(gtx, th, &p.ed, nsEmojiPicker.T("Search all emoji"), "", epInputH, 15, cl.EmojiBg)
 	})
 	foot := dp(gtx, epFootH)
 	p.layoutList(gtx, th, cl, image.Rect(0, dp(gtx, epListY), sz.X, sz.Y-foot))
@@ -775,9 +775,9 @@ func (p *EmojiPicker) layoutTop(gtx layout.Context, th *theme.Theme, cl *Colors,
 		}
 		active := (i == 1) == p.gifMode
 		hov := p.topTabs[i].Hovered()
-		label, col := "Emoji", cl.TabFg2
+		label, col := nsEmojiPicker.T("Emoji"), cl.TabFg2
 		if i == 1 {
-			label = "GIFs"
+			label = nsEmojiPicker.T("GIFs")
 		}
 		if active || hov {
 			col = cl.TabFg
@@ -845,7 +845,7 @@ func (p *EmojiPicker) layoutCats(gtx layout.Context, th *theme.Theme, cl *Colors
 				})
 				return layout.Dimensions{Size: sz}
 			})
-			Tooltip(gtx, th, &p.catTips[i], p.cats[i].Hovered(), d.Size, Below, epTabNames[i], "")
+			Tooltip(gtx, th, &p.catTips[i], p.cats[i].Hovered(), d.Size, Below, epGroupLabel(epTabNames[i]), "")
 			return d
 		})
 	}
@@ -1004,7 +1004,7 @@ func (p *EmojiPicker) layoutList(gtx layout.Context, th *theme.Theme, cl *Colors
 func (p *EmojiPicker) headingText(gtx layout.Context, th *theme.Theme, cl *Colors, list, x, y, hb, w int) {
 	at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(loose(gtx, image.Pt(w-dp(gtx, 40), hb)), hb, func(gtx layout.Context) layout.Dimensions {
-			return text(gtx, th, 13, theme.Bold, cl.Fg, epGroupNames[list])
+			return text(gtx, th, 13, theme.Bold, cl.Fg, epGroupLabel(epGroupNames[list]))
 		})
 	})
 }
@@ -1102,7 +1102,7 @@ func (p *EmojiPicker) layoutFooter(gtx layout.Context, th *theme.Theme, cl *Colo
 		}
 		// .p-emoji_picker__add_custom_emoji: bottom 14.5px, left 14px
 		at(gtx, image.Pt(dp(gtx, 14), h-dp(gtx, 14.5)-dp(gtx, 28)), func(gtx layout.Context) layout.Dimensions {
-			return Button(gtx, th, &p.addBtn, BtnOutline, BtnSmall, "Add Emoji", "", 85)
+			return Button(gtx, th, &p.addBtn, BtnOutline, BtnSmall, nsEmojiPicker.T("Add Emoji"), "", 85)
 		})
 		return
 	}

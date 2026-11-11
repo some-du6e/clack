@@ -744,28 +744,28 @@ func (lb *Lightbox) footer(gtx layout.Context, th *theme.Theme, panel image.Rect
 		// MediaViewerActions without a file: the thread toggle (only
 		// with a conversation: toggleThread needs the channel and
 		// thread), then Open in new window.
-		btn(x, &lb.winBtn, "external", &lb.tips[5], "Open in new window", "")
+		btn(x, &lb.winBtn, "external", &lb.tips[5], nsViewer.T("Open in new window"), "")
 		if lb.m.Channel != "" && lb.m.TS != "" {
 			x -= dp(gtx, 48)
-			btn(x, &lb.threadBtn, "panel-right", &lb.tips[6], "Show thread", "")
+			btn(x, &lb.threadBtn, "panel-right", &lb.tips[6], nsViewer.T("Show thread"), "")
 		}
 		return
 	}
-	lb.moreRect = btn(x, &lb.moreBtn, "more", &lb.tips[4], "More actions", "")
+	lb.moreRect = btn(x, &lb.moreBtn, "more", &lb.tips[4], nsViewer.T("More actions"), "")
 	x -= dp(gtx, 48)
-	btn(x, &lb.winBtn, "external", &lb.tips[5], "Open in new window", "")
+	btn(x, &lb.winBtn, "external", &lb.tips[5], nsViewer.T("Open in new window"), "")
 	x -= dp(gtx, 48)
-	btn(x, &lb.threadBtn, "panel-right", &lb.tips[6], "Show thread", "")
+	btn(x, &lb.threadBtn, "panel-right", &lb.tips[6], nsViewer.T("Show thread"), "")
 	x -= dp(gtx, 48)
-	btn(x, &lb.dlBtn, "download", &lb.tips[7], "Download", "")
+	btn(x, &lb.dlBtn, "download", &lb.tips[7], nsViewer.T("Download"), "")
 }
 
 // zoomControls draws Rotate and [− slider +] (and Reset zoom once
 // changed) from x on the footer row y.
 func (lb *Lightbox) zoomControls(gtx layout.Context, btn func(int, *widget.Clickable, string, *TipState, string, string) image.Rectangle, x, y int) {
-	btn(x, &lb.rotBtn, "refresh", &lb.tips[0], "Rotate", "")
+	btn(x, &lb.rotBtn, "refresh", &lb.tips[0], nsViewer.T("Rotate"), "")
 	x += dp(gtx, 44)
-	btn(x, &lb.outBtn, "minus", &lb.tips[1], "Zoom out", "-")
+	btn(x, &lb.outBtn, "minus", &lb.tips[1], nsViewer.T("Zoom out"), "-")
 	x += dp(gtx, 36)
 	// slider
 	sw := dp(gtx, lbSlideW)
@@ -784,10 +784,10 @@ func (lb *Lightbox) zoomControls(gtx layout.Context, btn func(int, *widget.Click
 		lbArea(gtx, image.Rectangle{Max: sr.Size()}, &lb.sliderTag, pointer.CursorPointer)
 	}()
 	x += sw
-	btn(x, &lb.inBtn, "plus", &lb.tips[2], "Zoom in", "+")
+	btn(x, &lb.inBtn, "plus", &lb.tips[2], nsViewer.T("Zoom in"), "+")
 	x += dp(gtx, 44)
 	if lb.zoom != 1 || lb.rot != 0 {
-		btn(x, &lb.resetBtn, "collapse", &lb.tips[3], "Reset zoom", "0")
+		btn(x, &lb.resetBtn, "collapse", &lb.tips[3], nsViewer.T("Reset zoom"), "0")
 	}
 }
 

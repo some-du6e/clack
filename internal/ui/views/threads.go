@@ -37,6 +37,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/openurl"
@@ -82,6 +83,7 @@ type thrCard struct {
 	name, people, moreText string
 	also                   string // "Also send to #general"
 	built                  bool
+	gen                    uint64 // i18n.Gen the strings were made in
 	// icon is getChannelIconType's name for a channel's header
 	// (InlineChannelEntity), "" for a DM or group DM
 	icon string
@@ -296,7 +298,7 @@ func (v *Threads) head(gtx C) D {
 	g := gtx
 	g.Constraints = layout.Exact(image.Pt(w, h))
 	layout.Inset{Left: 18, Right: 12}.Layout(g, func(gtx C) D {
-		return layout.W.Layout(gtx, func(gtx C) D { return v.para(gtx, 18, 24, wBlack, v.p.Text, 1, "Threads") })
+		return layout.W.Layout(gtx, func(gtx C) D { return v.para(gtx, 18, 24, wBlack, v.p.Text, 1, nsThreads.T("Threads")) })
 	})
 	if border == thrBorderInset {
 		hl := max(1, gtx.Dp(1))
@@ -453,7 +455,7 @@ func (v *Threads) body(gtx C) D {
 	case !loaded && n == 0:
 		return layout.Inset{Top: 16}.Layout(gtx, func(gtx C) D { return v.skeleton(gtx, 5, 36) })
 	case err != nil && n == 0:
-		return v.emptyState(gtx, "", thrErrText, friendlyErr(err), &v.retry, "Try again")
+		return v.emptyState(gtx, "", nsThreads.T(thrErrText), friendlyErr(err), &v.retry, nsThreads.T("Try Again")) // MessageContainerError
 	case n == 0:
 		return v.empty(gtx)
 	}
@@ -540,15 +542,15 @@ func (v *Threads) empty(gtx C) D {
 			}),
 			layout.Rigid(func(gtx C) D {
 				return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D {
-					return v.th.Layout(gtx, theme.TextStyle{Size: 18, LineHeight: 24, Weight: wBlack, Color: v.p.Text, Align: text.Middle}, thrEmptyTitle)
+					return v.th.Layout(gtx, theme.TextStyle{Size: 18, LineHeight: 24, Weight: wBlack, Color: v.p.Text, Align: text.Middle}, nsThreads.T(thrEmptyTitle))
 				})
 			}),
 			layout.Rigid(func(gtx C) D {
 				return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D {
-					return v.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Color: v.p.Sec, Align: text.Middle}, thrEmptyBody)
+					return v.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Color: v.p.Sec, Align: text.Middle}, nsThreads.T(thrEmptyBody))
 				})
 			}),
-			layout.Rigid(func(gtx C) D { return v.linkButton(gtx, &v.learn, 15, "Learn about threads") }),
+			layout.Rigid(func(gtx C) D { return v.linkButton(gtx, &v.learn, 15, nsThreads.T("Learn about threads")) }),
 		)
 	})
 }
@@ -573,7 +575,8 @@ const (
 func (v *Threads) upToDate(gtx C) D {
 	w := gtx.Constraints.Max.X
 	top, bottom := gtx.Dp(32), gtx.Dp(20)
-	lw := v.th.Measure(gtx, 15, wBold, thrUpToDate)
+	label := nsThreads.T(thrUpToDate)
+	lw := v.th.Measure(gtx, 15, wBold, label)
 	pw, ph := lw+gtx.Dp(24), gtx.Dp(22+8)
 	y := top
 	fill(gtx, image.Rect(gtx.Dp(16), y, w-gtx.Dp(16), y+max(1, gtx.Dp(1))), v.p.Border)
@@ -583,7 +586,7 @@ func (v *Threads) upToDate(gtx C) D {
 		defer op.Offset(image.Pt(x+gtx.Dp(12), y-ph/2+gtx.Dp(4))).Push(gtx.Ops).Pop()
 		g := gtx
 		g.Constraints = layout.Constraints{Max: image.Pt(lw+1, gtx.Dp(22))}
-		v.para(g, 15, 22, wBold, v.meta(), 1, thrUpToDate)
+		v.para(g, 15, 22, wBold, v.meta(), 1, label)
 	}()
 	return D{Size: image.Pt(w, top+bottom)}
 }
@@ -662,24 +665,34 @@ func (v *Threads) people(root *core.Message, replies []core.Message) string {
 	for i := range replies {
 		add(replies[i].User)
 	}
+	return thrParticipants(names, hasSelf)
+}
+
+// thrParticipants is Slack's ThreadParticipantList (client-boot-shared
+// oYYP) over getThreadRepliersNamesFromState's names (the viewer last, as
+// "you"): up to three people, getSimpleNameList ("Just you", "{userName}
+// and you", "{userName1}, {userName2}, and you", else listify's "Ada and
+// Grace"); past three, getOverflowNameList ("{userName1}, {userName2},
+// and # others", the count being everyone but the two named).
+func thrParticipants(names []string, hasSelf bool) string {
+	n := len(names)
 	if hasSelf {
-		if len(names) == 0 {
-			return "Just you"
-		}
-		names = append(names, "you")
+		n++
 	}
 	switch {
-	case len(names) == 0:
+	case n == 0:
 		return ""
-	case len(names) == 1:
-		return names[0]
-	case len(names) > 4:
-		return strings.Join(names[:3], ", ") + ", and " + strconv.Itoa(len(names)-3) + " others"
-	case len(names) == 2:
-		return names[0] + " and " + names[1]
+	case n > 3:
+		return i18n.StripTags(nsThreads.T("{userName1}, {userName2}, and <span>{numOthers,plural,=1{# other}other{# others}}</span>",
+			"userName1", names[0], "userName2", names[1], "numOthers", n-2))
+	case !hasSelf:
+		return listify(names, false)
+	case n == 1:
+		return nsThreads.T("Just you")
+	case n == 2:
+		return nsThreads.T("{userName} and you", "userName", names[0])
 	}
-	// Slack (en-US list format): "Shroud, Lachlan, and you".
-	return strings.Join(names[:len(names)-1], ", ") + ", and " + names[len(names)-1]
+	return nsThreads.T("{userName1}, {userName2}, and you", "userName1", names[0], "userName2", names[1])
 }
 
 // thrTime is the message timestamp, Slack's message formatter (client-boot
@@ -697,6 +710,11 @@ func thrTime(t, now time.Time) (s string, next time.Duration) {
 	if age < 0 {
 		age = -age
 	}
+	defer func() {
+		if l := i18n.Locale(); l != i18n.EnUS {
+			s = msgTimeIn(l, t, now) // the same formatter's strings
+		}
+	}()
 	switch {
 	case age < time.Minute:
 		return "Just now", time.Minute - age
@@ -755,9 +773,10 @@ func (v *Threads) cardFor(t *thrItem, convs map[string]core.ConvRef) *thrCard {
 			c.built = false
 		}
 	}
-	if !c.built || v.viewsPatched() {
+	if !c.built || c.gen != i18n.Gen() || v.viewsPatched() {
+		c.gen = i18n.Gen()
 		c.name = v.convTitle(t.Channel, convs)
-		if strings.HasPrefix(t.Channel, "D") && (c.name == t.Channel || c.name == "Direct message") {
+		if strings.HasPrefix(t.Channel, "D") && (c.name == t.Channel || c.name == dmFallbackName()) {
 			// a DM core doesn't know yet: name it after the other person
 			c.name = v.dmPartner(&t.Root, t.Replies)
 		}
@@ -769,9 +788,11 @@ func (v *Threads) cardFor(t *thrItem, convs map[string]core.ConvRef) *thrCard {
 		} else {
 			kind = v.h.Core().ConvRef(t.Channel).Kind
 		}
-		c.also = "Also send to " + c.name
+		// BroadcastControls: a DM "Also send as direct message", a
+		// channel "Also send to <span>#name</span>"
+		c.also = i18n.StripTags(tagged(nsThreads.T("Also send to <span></span>"), "span", c.name))
 		if isDMKind(kind) {
-			c.also = "Also send as direct message"
+			c.also = nsThreads.T("Also send as direct message")
 		}
 		c.icon = channelIcon(v.h.Core(), t.Channel, kind)
 		c.built = true
@@ -979,13 +1000,14 @@ func (v *Threads) card(gtx C, c *thrCard, t *thrItem, row func(key string, y, h 
 // end (padding 0 4px, 15px from the edge), as in the channel view.
 func (v *Threads) newLine(gtx C, w int) {
 	red := v.th.C.NewLine
-	tw := v.th.Measure(gtx, 13, wBold, "New")
+	newTxt := nsMessages.T("New") // UnreadDivider's
+	tw := v.th.Measure(gtx, 13, wBold, newTxt)
 	lx := w - gtx.Dp(15) - gtx.Dp(4) - tw
 	fill(gtx, image.Rect(0, 0, lx-gtx.Dp(4), max(1, gtx.Dp(1))), red)
 	defer op.Offset(image.Pt(lx, -gtx.Dp(9))).Push(gtx.Ops).Pop()
 	g := gtx
 	g.Constraints.Min = image.Point{}
-	v.para(g, 13, 19.5, wBold, red, 1, "New")
+	v.para(g, 13, 19.5, wBold, red, 1, newTxt)
 }
 
 // msg is c-message_kit__thread_message: padding top/20px/8px/20px, avatar
@@ -1104,7 +1126,7 @@ func (v *Threads) replyPicture(gtx C, c *thrCard) D {
 			defer op.Offset(image.Pt(gtx.Dp(12), gtx.Dp(38+8))).Push(gtx.Ops).Pop()
 			g := gtx
 			g.Constraints = layout.Constraints{Max: image.Pt(max(0, w-gtx.Dp(24)), gtx.Dp(22))}
-			v.para(g, 15, 22, wReg, soft, 1, "Reply…")
+			v.para(g, 15, 22, wReg, soft, 1, nsThreads.T("Reply…"))
 		}()
 
 		// "Also send to #channel": 13px checkbox (12px right margin), 12px/18px label.
@@ -1216,7 +1238,7 @@ func (v *Threads) dmPartner(root *core.Message, replies []core.Message) string {
 			return v.userName(replies[i].User)
 		}
 	}
-	return "Direct message"
+	return dmFallbackName()
 }
 
 // botName finds a bot's display name on one of the thread's messages.

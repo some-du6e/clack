@@ -36,13 +36,13 @@ func NewAttachmentMenu(h Host, at image.Point, m AttachmentMenu) *Menu {
 	var items []MenuItem
 	if m.CanRemove {
 		ch, ts, id := m.Channel, m.TS, m.ID
-		items = append(items, MenuItem{Label: "Remove preview", Do: func() { ConfirmRemovePreview(h, ch, ts, id) }}, Sep())
+		items = append(items, MenuItem{Label: "Remove preview", Do: func() { ConfirmRemovePreview(h, ch, ts, id) }}.In(nsAttachments), Sep())
 	}
 	u := m.CopyURL
 	items = append(items, MenuItem{Label: "Copy link", DoCtx: func(gtx layout.Context) {
 		copyText(gtx, u)
-		h.Toast("Link copied to clipboard")
-	}})
+		h.Toast(nsAttachments.T("Link copied to clipboard"))
+	}}.In(nsAttachments))
 	return NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(at), Width: 200})
 }
 

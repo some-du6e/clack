@@ -84,9 +84,9 @@ func ctxHoverItems(h Host, at image.Point, m core.Message, where MessageContext,
 	var items []MenuItem
 	ch, ts := m.Channel, m.TS
 	if !m.System {
-		items = append(items, MenuItem{Label: "Add reaction…", Icon: "add-reaction", Hint: "R", Keys: KeyReact, Do: func() {
+		items = append(items, MenuItem{Label: "Add reaction…", Icon: "add-reaction", Hint: nsMessage.T("R"), Keys: KeyReact, Do: func() {
 			h.ShowOverlay(NewReactionPicker(h, at, ch, ts, m.ThreadTS, nil))
-		}})
+		}}.In(nsMessage))
 	}
 	if where != InThread {
 		isReply := m.ThreadTS != "" && m.ThreadTS != m.TS
@@ -97,7 +97,7 @@ func ctxHoverItems(h Host, at image.Point, m core.Message, where MessageContext,
 		case m.ReplyCount > 0 || isReply:
 			label = "Reply to thread"
 		}
-		items = append(items, MenuItem{Label: label, Icon: "threads", Hint: "T", Keys: KeyComment, Do: func() {
+		items = append(items, MenuItem{Label: label, Icon: "threads", Hint: nsMessage.T("T"), Keys: KeyComment, Do: func() {
 			if o.OnReply != nil {
 				o.OnReply()
 				return
@@ -107,15 +107,16 @@ func ctxHoverItems(h Host, at image.Point, m core.Message, where MessageContext,
 				root = ts
 			}
 			h.OpenThread(ch, root)
-		}})
+		}}.In(nsMessage))
 	}
-	items = append(items, MenuItem{Label: "Forward message…", Icon: "forward-msg", Hint: "F", Keys: KeyShare, Do: func() {
+	items = append(items, MenuItem{Label: "Forward message…", Icon: "forward-msg", Hint: nsMessage.T("F"), Keys: KeyShare, Do: func() {
 		h.ShowOverlay(NewForwardModal(h, m))
-	}})
-	todo := MenuItem{Label: "Add to-do", Icon: "todo-add", Hint: "A", Keys: KeyLaterTodos}
+	}}.In(nsMessage))
+	todo := MenuItem{Label: "Add to-do", Icon: "todo-add", Hint: nsSaved.T("A"), Keys: KeyLaterTodos}
 	if m.Saved {
 		todo.Label, todo.Icon = "Complete to-do", "check"
 	}
+	todo = todo.In(nsSaved) // the to-do action (LaZW)
 	todo.Do = func() {
 		if o.OnTodo != nil {
 			o.OnTodo()
@@ -239,39 +240,40 @@ func fetchBytes(ctx context.Context, h Host, src string, viaCore bool) ([]byte, 
 // Delete file shows for the uploader's own files (fileActions.delete_file)
 // and asks first (DeleteFileDialog).
 func NewFileMenu(h Host, at image.Point, m core.Message, f *richtext.File) *Menu {
-	share := MenuItem{Label: "Share file…", Do: func() { h.ShowOverlay(NewForwardModal(h, m)) }}
+	share := MenuItem{Label: "Share file…", Do: func() { h.ShowOverlay(NewForwardModal(h, m)) }}.In(nsFile)
 	link := f.Permalink
 	copyLink := MenuItem{Label: "Copy link", DoCtx: func(gtx layout.Context) {
 		copyText(gtx, link)
-		h.Toast("Link copied")
-	}}
-	download := MenuItem{Label: "Download", Do: func() { DownloadFile(h, f) }}
+		h.Toast(nsFile.T("Link copied to clipboard")) // enqueueCopyLinkSuccessToast (Bwpd)
+	}}.In(nsFile)
+	download := MenuItem{Label: "Download", Do: func() { DownloadFile(h, f) }}.In(nsFile)
 	var openIn []MenuItem
 	if f.Permalink != "" {
-		openIn = append(openIn, MenuItem{Label: "Open in browser", Do: func() { lbOpen(h, f.Permalink) }})
+		openIn = append(openIn, MenuItem{Label: "Open in browser", Do: func() { lbOpen(h, f.Permalink) }}.In(nsFile))
 	}
 	if m.Channel != "" && m.TS != "" && f.IsVideo {
 		root := m.ThreadTS
 		if root == "" {
 			root = m.TS
 		}
-		openIn = append(openIn, MenuItem{Label: "Open in thread", Do: func() { h.OpenThread(m.Channel, root) }})
+		openIn = append(openIn, MenuItem{Label: "Open in thread", Do: func() { h.OpenThread(m.Channel, root) }}.In(nsFile))
 	}
 	if f.URL != "" {
 		label := "Open in new tab"
 		if f.IsVideo {
 			label = "Open in new window"
 		}
-		openIn = append(openIn, MenuItem{Label: label, Do: func() { lbOpen(h, f.URL) }})
+		openIn = append(openIn, MenuItem{Label: label, Do: func() { lbOpen(h, f.URL) }}.In(nsFile))
 	}
 	var items []MenuItem
 	group := func(g ...MenuItem) {
 		var keep []MenuItem
 		for _, it := range g {
-			if it.Label == "" || it.Label == "Copy link" && link == "" {
+			// by key: the labels are in the viewer's locale
+			if it.Label == "" || it.Key == LabelKey("Copy link") && link == "" {
 				continue
 			}
-			if it.Label == "Open in" && len(it.Sub) == 0 {
+			if it.Key == LabelKey("Open in") && len(it.Sub) == 0 {
 				continue
 			}
 			keep = append(keep, it)
@@ -284,7 +286,7 @@ func NewFileMenu(h Host, at image.Point, m core.Message, f *richtext.File) *Menu
 		}
 		items = append(items, keep...)
 	}
-	open := MenuItem{Label: "Open in", Sub: openIn}
+	open := MenuItem{Label: "Open in", Sub: openIn}.In(nsFile)
 	later := fileLaterItem(h, f)
 	del := fileDeleteItem(h, m, f)
 	switch {
@@ -293,7 +295,7 @@ func NewFileMenu(h Host, at image.Point, m core.Message, f *richtext.File) *Menu
 		if src == "" && f.Thumb != nil {
 			src = f.Thumb.URL
 		}
-		cp := MenuItem{Label: "Copy image", Do: func() { CopyImage(h, src, true, "Image copied to clipboard") }}
+		cp := MenuItem{Label: "Copy image", Do: func() { CopyImage(h, src, true, nsFile.T("Image copied to clipboard")) }}.In(nsFile)
 		group(download)
 		if src != "" {
 			group(share, copyLink, cp, later)
@@ -323,11 +325,11 @@ func fileLaterItem(h Host, f *richtext.File) MenuItem {
 	if a.FileSaved(id) {
 		return MenuItem{Label: "Remove from Later", Do: func() {
 			actDo(h, "", func(ctx context.Context, a *core.App) error { return a.UnsaveFile(ctx, id) })
-		}}
+		}}.In(nsFile)
 	}
 	return MenuItem{Label: "Save for later", Do: func() {
 		actDo(h, "", func(ctx context.Context, a *core.App) error { return a.SaveFile(ctx, id) })
-	}}
+	}}.In(nsFile)
 }
 
 // fileDeleteItem is delete_file for the uploader's own files: Slack's
@@ -342,13 +344,13 @@ func fileDeleteItem(h Host, m core.Message, f *richtext.File) MenuItem {
 	if self == "" || owner != self || f.ID == "" {
 		return MenuItem{}
 	}
-	return MenuItem{Label: "Delete file", Danger: true, Do: func() { ConfirmDeleteFile(h, f) }}
+	return MenuItem{Label: "Delete file", Danger: true, Do: func() { ConfirmDeleteFile(h, f) }}.In(nsFile)
 }
 
 // ConfirmDeleteFile is DeleteFileDialog for f.
 func ConfirmDeleteFile(h Host, f *richtext.File) {
 	id := f.ID
-	Confirm(h, "Delete file", "Are you sure you want to delete this file permanently?", "Yes, Delete This File", true,
+	Confirm(h, nsFiles.T("Delete file"), nsFiles.T("Are you sure you want to delete this file permanently?"), nsFiles.T("Yes, Delete This File"), true,
 		func(gtx layout.Context) layout.Dimensions { return filePillowPreview(gtx, h, f) },
 		func() {
 			actDo(h, "", func(ctx context.Context, a *core.App) error { return a.DeleteFile(ctx, id) })
@@ -408,7 +410,7 @@ func NewCodeMenu(h Host, at image.Point, code string, block bool) *Menu {
 	if block {
 		label = "Copy this code block"
 	}
-	items := []MenuItem{{Label: label, DoCtx: func(gtx layout.Context) { copyText(gtx, code) }}}
+	items := []MenuItem{MenuItem{Label: label, DoCtx: func(gtx layout.Context) { copyText(gtx, code) }}.In(nsMessage)}
 	return NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(at), Width: 220})
 }
 
@@ -417,14 +419,14 @@ func NewCodeMenu(h Host, at image.Point, code string, block bool) *Menu {
 // puts on the clipboard. ("Explain this" needs Slack AI; the "Switch to
 // default menu" hint points at a preference Clack doesn't have.)
 func NewTextSelectionMenu(h Host, at image.Point, text string) *Menu {
-	items := []MenuItem{
+	items := inAll(nsMessage, []MenuItem{
 		{Label: "Copy text", Icon: "text-format", Hint: shortcut.Format("Mod+C"), Keys: KeyCopyText, DoCtx: func(gtx layout.Context) { copyText(gtx, text) }},
 		{Label: "Search in Slack", Icon: "search", Do: func() {
 			if q := ctxSearchQuery(text); q != "" {
 				h.Navigate("search?q=" + url.QueryEscape(q))
 			}
 		}},
-	}
+	})
 	return NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(at), Width: 240})
 }
 

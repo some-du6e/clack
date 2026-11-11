@@ -3,7 +3,6 @@ package huddleui
 import (
 	"image"
 	"image/color"
-	"strconv"
 	"time"
 
 	"gioui.org/io/system"
@@ -162,7 +161,7 @@ func (c *Controller) layoutDock(gtx C, th *theme.Theme, sz image.Point) D {
 	if collapsed {
 		btnH = gtx.Dp(32)
 	}
-	lw := max(gtx.Dp(80), labelSize(gtx, th, 15, theme.Bold, "Leave").X+2*gtx.Dp(12))
+	lw := max(gtx.Dp(80), labelSize(gtx, th, 15, theme.Bold, nsHuddles.T("Leave")).X+2*gtx.Dp(12))
 	lx := inner.Max.X - gtx.Dp(4) - lw
 	by := inner.Min.Y + (inner.Dy()-btnH)/2
 	at(gtx, image.Pt(lx, by), image.Pt(lw, btnH), func(gtx C) D {
@@ -172,8 +171,11 @@ func (c *Controller) layoutDock(gtx C, th *theme.Theme, sz image.Point) D {
 				bg = hudLeaveHov
 			}
 			theme.RRect(gtx, image.Rectangle{Max: image.Pt(lw, btnH)}, gtx.Dp(8), bg)
-		}, func(gtx C) D { centerLabel(gtx, th, image.Pt(lw, btnH), 15, theme.Bold, hudWhite, "Leave"); return D{} })
-		popups.Tooltip(gtx, th, d.tip("leave"), d.leave.Hovered(), image.Pt(lw, btnH), popups.Above, "Leave Huddle", leaveShortcut())
+		}, func(gtx C) D {
+			centerLabel(gtx, th, image.Pt(lw, btnH), 15, theme.Bold, hudWhite, nsHuddles.T("Leave"))
+			return D{}
+		})
+		popups.Tooltip(gtx, th, d.tip("leave"), d.leave.Hovered(), image.Pt(lw, btnH), popups.Above, nsHuddles.T("Leave Huddle"), leaveShortcut())
 		return dd
 	})
 	ow := gtx.Dp(40)
@@ -181,9 +183,9 @@ func (c *Controller) layoutDock(gtx C, th *theme.Theme, sz image.Point) D {
 		ow = gtx.Dp(32)
 	}
 	ox := lx - gtx.Dp(8) - ow
-	openTip := "Open Huddle in new window"
+	openTip := nsHuddles.T("Open Huddle in new window")
 	if collapsed {
-		openTip = "Bring huddle to front"
+		openTip = nsHuddles.T("Bring huddle to front")
 	}
 	at(gtx, image.Pt(ox, by), image.Pt(ow, btnH), func(gtx C) D {
 		dd := button(gtx, &d.open, image.Pt(ow, btnH), func(gtx C, hov bool) {
@@ -347,11 +349,11 @@ func dockInks(th *theme.Theme) dockInk {
 func (c *Controller) dockTitle(ch string) string {
 	app := c.h.Core()
 	if app == nil {
-		return "Huddle"
+		return nsHuddles.T("Huddle")
 	}
 	conv, ok := app.Conv(ch)
 	if !ok {
-		return "Huddle"
+		return nsHuddles.T("Huddle")
 	}
 	switch conv.Kind {
 	case "im", "mpim":
@@ -359,9 +361,9 @@ func (c *Controller) dockTitle(ch string) string {
 		return t
 	}
 	if conv.Name == "" {
-		return "Huddle"
+		return nsHuddles.T("Huddle")
 	}
-	return "Huddle in #" + conv.Name
+	return nsHuddles.T("Huddle in {channelDisplayName}", "channelDisplayName", "#"+conv.Name) // HuddleBottomBarContent
 }
 
 // dockSubtitle is the bar's subtitle: who's sharing, else who's speaking,
@@ -376,13 +378,13 @@ func (c *Controller) dockSubtitle(st huddle.State, now time.Time) string {
 	}
 	switch {
 	case len(sharers) >= 2:
-		return sharers[0] + " and " + sharers[1] + " are screensharing"
+		return nsHuddles.T("{screenshareUser1} and {screenshareUser2} are screensharing", "screenshareUser1", sharers[0], "screenshareUser2", sharers[1])
 	case len(sharers) == 1:
-		return sharers[0] + " is screensharing"
+		return nsHuddles.T("{screenshareUser} is screensharing", "screenshareUser", sharers[0])
 	}
 	for _, p := range st.Participants {
 		if !p.Self && p.Speaking(now) {
-			return c.displayName(p.UserID) + " is speaking"
+			return nsHuddles.T("{activeSpeakerName} is speaking", "activeSpeakerName", c.displayName(p.UserID))
 		}
 	}
 	if app := c.h.Core(); app != nil {
@@ -391,9 +393,9 @@ func (c *Controller) dockSubtitle(st huddle.State, now time.Time) string {
 		}
 	}
 	if n := len(st.Participants); n > 1 {
-		return strconv.Itoa(n) + " people here"
+		return nsHuddles.T("{numberOfPeople} people here", "numberOfPeople", n)
 	}
-	return "You’re the only one here"
+	return nsHuddles.T("You’re the only one here")
 }
 
 // dockTiles is your tile and, beside it, the sharer's or the active
@@ -424,12 +426,12 @@ func (c *Controller) dockTiles(st huddle.State, now time.Time) []huddle.Particip
 func (c *Controller) dockCtls(st huddle.State) []ctl {
 	// HuddleToolbarMuteButton inBottomBar: segmented, like the window's
 	mics := c.micCtls(st, c.dock.audio != nil && !c.dock.audio.Dismissed())
-	cam := ctl{id: "camera", icon: "video-off", tip: "Turn on camera"}
+	cam := ctl{id: "camera", icon: "video-off", tip: nsHuddles.T("Turn on camera")}
 	switch st.Camera.State {
 	case huddle.CameraOn:
-		cam = ctl{id: "camera", icon: "video", on: true, tip: "Turn off camera"}
+		cam = ctl{id: "camera", icon: "video", on: true, tip: nsHuddles.T("Turn off camera")}
 	case huddle.CameraStarting:
-		cam = ctl{id: "camera", icon: "video", tip: "Turn off camera"}
+		cam = ctl{id: "camera", icon: "video", tip: nsHuddles.T("Turn off camera")}
 	}
 	if !cameraSupported() && st.Camera.State != huddle.CameraOn {
 		cam.dim = true
@@ -451,10 +453,10 @@ func (c *Controller) dockCtls(st huddle.State) []ctl {
 	}
 	return append(mics, cam,
 		ctl{id: "hand", emoji: c.emojiText(face), on: mine != "", tip: handTip(mine), seg: segMain},
-		ctl{id: "stickers", icon: caret, on: stick, tip: "Choose sticker", seg: segCaret},
-		ctl{id: "react", icon: "emoji", hover: "emoji-filled", tip: "Add reaction"},
-		ctl{id: "thread", icon: "threads", tip: "Open thread"},
-		ctl{id: "more", icon: "ellipsis-vertical-filled", tip: "More actions"},
+		ctl{id: "stickers", icon: caret, on: stick, tip: nsHuddles.T("Choose sticker"), seg: segCaret},
+		ctl{id: "react", icon: "emoji", hover: "emoji-filled", tip: nsHuddles.T("Add reaction")},
+		ctl{id: "thread", icon: "threads", tip: nsHuddles.T("Open thread")},
+		ctl{id: "more", icon: "ellipsis-vertical-filled", tip: nsHuddles.T("More actions")},
 	)
 }
 
@@ -506,7 +508,7 @@ func (c *Controller) dockClick(gtx C, id string, s *huddle.Session, st huddle.St
 		var items []popups.MenuItem
 		for _, k := range stickers {
 			e := k.Emoji
-			label := c.emojiText(c.withSkinTone(e)) + "  " + k.Label
+			label := c.emojiText(c.withSkinTone(e)) + "  " + nsHuddles.T(k.Label)
 			items = append(items, popups.MenuItem{Key: "sticker-" + e, Label: label, Do: func() { go func() { _ = c.PickSticker(e) }() }})
 		}
 		c.dock.stick = popups.NewMenuOpts(ph, items, popups.MenuOpts{Width: 240, Anchor: r, Side: popups.Above})
@@ -557,9 +559,9 @@ func (c *Controller) openOrRaise() {
 func (c *Controller) dockMicAlert(gtx C, th *theme.Theme, r image.Rectangle, st huddle.State, note micNote) {
 	d := &c.dock
 	theme.RRect(gtx, r, gtx.Dp(12), hudWarnBg)
-	fix := "Settings"
+	fix := nsHuddles.T("Settings")
 	if note.settings == "" {
-		fix = "Retry"
+		fix = nsHuddles.T("Retry")
 	}
 	rh := r.Dy() - gtx.Dp(8)
 	fw := labelSize(gtx, th, 12, theme.Bold, fix).X + gtx.Dp(14)

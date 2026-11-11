@@ -47,6 +47,17 @@ var epGroupNames = [epNumGroups + 1]string{
 	"Activities", "Objects", "Symbols", "Flags", "Custom", "Search results",
 }
 
+// epGroupLabel is a group's name in the locale: the categories are the
+// emoji I18n's (getUsedEmojiFromPref), Search, Custom and Search results
+// the picker's (emoji_picker).
+func epGroupLabel(name string) string {
+	switch name {
+	case "Search", "Custom", "Search results":
+		return nsEmojiPicker.T(name)
+	}
+	return nsEmoji.T(name)
+}
+
 // epTabNames are the category tab tooltips (tab i scrolls to group i;
 // tab 0 is Search, whose group is Frequently Used).
 var epTabNames = [epNumGroups]string{

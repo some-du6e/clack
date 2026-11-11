@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"gioui.org/io/key"
@@ -29,6 +30,7 @@ import (
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uiguard"
 )
@@ -64,6 +66,7 @@ var emojiAddErrNoChooser = errors.New("no file chooser")
 type emojiAddWord struct {
 	s    string
 	bold bool
+	glue bool // no space after it (it runs on into the next word)
 	w    int
 }
 
@@ -134,11 +137,11 @@ func NewAddEmojiModal(h Host) *Modal {
 	// answers, "Upload Image" shows (the usual case) and pick waits for it.
 	s.chooser, s.hasChooser = emojiChooserCached()
 	s.modal = NewModal(h, ModalOpts{
-		Title: "Add emoji",
+		Title: nsEmojiList.T("Add emoji"),
 		Body:  s.layout,
 		Buttons: []*ModalButton{
-			{Label: "Cancel", Kind: BtnOutline},
-			{Label: "Save", Kind: BtnPrimary, Enabled: s.canSave, Do: func() bool {
+			{Label: nsEmojiList.T("Cancel"), Kind: BtnOutline},
+			{Label: nsEmojiList.T("Save"), Kind: BtnPrimary, Enabled: s.canSave, Do: func() bool {
 				s.save()
 				return true
 			}},
@@ -150,14 +153,32 @@ func NewAddEmojiModal(h Host) *Modal {
 
 func emojiAddWords(team string, bold bool) []emojiAddWord {
 	var out []emojiAddWord
+	spaceAfter := true // the text so far ends in whitespace
 	add := func(txt string, b bool) {
+		if txt == "" {
+			return
+		}
+		// a word that runs on into the next part (no space between, as
+		// in ja-JP) and a CJK word's characters (i18n.LineChunks) are glued:
+		// no space after them, though a line may break there
+		if n := len(out); n > 0 && !spaceAfter && !unicode.IsSpace([]rune(txt)[0]) {
+			out[n-1].glue = true
+		}
+		r := []rune(txt)
+		spaceAfter = unicode.IsSpace(r[len(r)-1])
 		for _, f := range strings.Fields(txt) {
-			out = append(out, emojiAddWord{s: f, bold: b})
+			cs := i18n.LineChunks(f)
+			for i, c := range cs {
+				out = append(out, emojiAddWord{s: c, bold: b, glue: i < len(cs)-1})
+			}
 		}
 	}
-	add("Your custom emoji will be available in every", false)
-	add(team, bold)
-	add("workspace. You’ll find it in the custom tab of the emoji picker. (Hint: it’s the one with the Slack icon!)", false)
+	// "Your custom emoji will be available in every <b>{orgName}</b>
+	// workspace. …" (custom_emoji_list): the org name bold, wherever the
+	// locale puts it
+	for _, p := range nsEmojiList.RT("Your custom emoji will be available in every <b>{orgName}</b> workspace. You’ll find it in the custom tab of the emoji picker. (Hint: it’s the one with the Slack icon!)", "orgName", team) {
+		add(p.Text, bold && p.Tag == "b")
+	}
 	return out
 }
 
@@ -556,9 +577,9 @@ func (s *emojiAddModal) layout(gtx layout.Context) layout.Dimensions {
 	}
 
 	// 1. Upload an image
-	heading(y, "1. Upload an image")
+	heading(y, "1. "+nsEmojiList.T("Upload an image"))
 	y += lh
-	y += help(y, "Square images under 128KB and with transparent backgrounds work best. If your image is too large, we’ll try to resize it for you.")
+	y += help(y, nsEmojiList.T("Square images under 128KB and with transparent backgrounds work best. If your image is too large, we’ll try to resize it for you."))
 	y += dp(gtx, 16)
 	s.uploadRow(gtx, th, cl, w, y)
 	y += dp(gtx, 64)
@@ -575,9 +596,9 @@ func (s *emojiAddModal) layout(gtx layout.Context) layout.Dimensions {
 	y += 1 + dp(gtx, 16)
 
 	// 2. Give it a name
-	heading(y, "2. Give it a name")
+	heading(y, "2. "+nsEmojiList.T("Give it a name"))
 	y += lh
-	y += help(y, "This is also what you’ll type to add this emoji to your messages.")
+	y += help(y, nsEmojiList.T("This is also what you’ll type to add this emoji to your messages."))
 	y += dp(gtx, 16)
 	at(gtx, image.Pt(ind, y), func(gtx layout.Context) layout.Dimensions {
 		return s.nameField(gtx, th, cl, w-ind)
@@ -598,7 +619,7 @@ func (s *emojiAddModal) tabs(gtx layout.Context, th *theme.Theme, cl *Colors, w 
 	fill(gtx, image.Rect(-padX, dp(gtx, 19), w+padX, dp(gtx, 19)+1), cl.Divider)
 	bandH := dp(gtx, 32)
 	x := dp(gtx, 4)
-	for i, label := range [2]string{"Custom emoji", "Emoji packs"} {
+	for i, label := range [2]string{nsEmojiList.T("Custom emoji"), nsEmojiList.T("Emoji packs")} {
 		tw := textW(gtx, th, 13, theme.Bold, label)
 		active := s.tab == i
 		col := cl.Fg2
@@ -654,7 +675,10 @@ func (s *emojiAddModal) intro(gtx layout.Context, th *theme.Theme, cl *Colors, w
 				return text(gtx, th, 15, wt, cl.Fg, word)
 			})
 		})
-		x += wd.w + s.spaceW
+		x += wd.w
+		if !wd.glue {
+			x += s.spaceW
+		}
 	}
 	if len(s.words) == 0 {
 		return 0
@@ -695,10 +719,10 @@ func (s *emojiAddModal) uploadRow(gtx layout.Context, th *theme.Theme, cl *Color
 		colW = dp(gtx, 120)
 	}
 	lh := dp(gtx, 22)
-	label := "Select an image"
+	label := nsEmojiList.T("Select an image")
 	switch {
 	case s.busy:
-		label = "Loading…"
+		label = nsEmojiList.T("Loading…")
 	case s.file != "":
 		label = s.file
 	}
@@ -712,7 +736,7 @@ func (s *emojiAddModal) uploadRow(gtx layout.Context, th *theme.Theme, cl *Color
 	if s.hasChooser {
 		at(gtx, image.Pt(cx, by), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(colW, dp(gtx, 36))}
-			return Button(gtx, th, &s.upload, BtnOutline, BtnMedium, "Upload Image", "", 0)
+			return Button(gtx, th, &s.upload, BtnOutline, BtnMedium, nsEmojiList.T("Upload Image"), "", 0)
 		})
 		return
 	}

@@ -27,6 +27,7 @@ import (
 	"gioui.org/x/explorer"
 
 	"github.com/some-du6e/clack/internal/applog"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/slick"
@@ -412,7 +413,8 @@ func (a *App) Run() error {
 			return e.Err
 		case app.ConfigEvent:
 			if e.Config.Focused && !a.focused {
-				a.nudgeUpdates() // back from sleep, often: is a check due?
+				a.nudgeUpdates()       // back from sleep, often: is a check due?
+				a.loginWindowFocused() // a sign-in link copied in the browser (login.go)
 			}
 			a.focused = e.Config.Focused
 		case app.FrameEvent:
@@ -942,7 +944,7 @@ func (a *App) layoutToast(gtx layout.Context) {
 	uw := 0
 	label := a.toast.label
 	if label == "" {
-		label = "Undo"
+		label = i18n.T("channel_sidebar", "Undo") // the sidebar's toasts' (ToastUndo's callers)
 	}
 	if a.toast.undo != nil {
 		uw = a.th.Measure(gtx, 15, theme.Bold, label) + gtx.Dp(16)

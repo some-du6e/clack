@@ -16,5 +16,5 @@ func addWorkflowItems(h Host, convID string, dm, private, preview bool) []MenuIt
 	if dm || private && preview || AddWorkflow == nil {
 		return nil
 	}
-	return []MenuItem{{Label: "Add a workflow", Do: func() { AddWorkflow(h, convID) }}}
+	return []MenuItem{MenuItem{Label: "Add a workflow", Do: func() { AddWorkflow(h, convID) }}.In(nsMenu)} // getWorkflowTemplate
 }

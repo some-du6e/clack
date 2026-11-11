@@ -24,11 +24,11 @@ Priorities: **P1** visible at a glance on the main screen, **P2** visible when y
 | 9 | P1 | broadcast reply ("also sent to channel") | layout | under the header line: "replied to " 400 15px/22 #616061 + "a thread" 700 15px #1264a3, then the body | above the header: "replied to a thread: View thread" 13px | line moved, text and size differ (+2px font) | messages | fixed bf4d3bd |
 | 10 | P2 | top nav search pill | width | `min(1000, ⅔·(W − 4 − sidebarEdge − 88))` → **633** at 1440 | `min(680, …)` → **680** | +47px | ui (root) | fixed ae92fb0 |
 | 11 | P2 | sticky day divider pill | top | header bottom + 6 → y=**133** | y=**141** | +8px | messages | fixed bf4d3bd |
-| 12 | P2 | channel tab icons | glyphs | Messages: filled bubble when active; list: checklist card; canvas: rounded sheet with folded corner | outline bubble; bullets; plain document | glyph | icons + ui (root) | Messages + list fixed (ae92fb0); unread dot on tabs open |
+| 12 | P2 | channel tab icons | glyphs | Messages: filled bubble when active; list: checklist card; canvas: rounded sheet with folded corner | outline bubble; bullets; plain document | glyph | icons + ui (root) | Messages + list fixed (ae92fb0); unread dot on tabs fixed ed1a27bb (round 2, row 37) |
 | 13 | P2 | sidebar icons | glyphs | Directories: contact card with lines on the left; Add channels: "#" plus a small person in a rounded tile; DM section: two round bubbles (as the rail) | people icon; "#+"; square bubbles | glyph | icons | fixed ac4c59a |
 | 14 | P2 | channel tab labels | weight/ink | 700 13px/16.25, active #1D1C1D (dark **#F8F8F8**), inactive #454447 | same spec; ink −9% with embolden; dark active #D1D2D3 | ink, colour | theme + ui (root) | fixed 52b26ed (weight), 2b1831c (dark colour) |
 | 15 | P3 | rail labels | y | label box top = tile top + 40 (Home label y=149) | 1px lower | 1px | ui (root) | no change: same math as Slack (button 101 + 48); 1px is glyph placement |
-| 16 | P3 | message header | name y vs avatar | name ink top = avatar top − 4 | −6 | 2px | messages | open |
+| 16 | P3 | message header | name y vs avatar | name ink top = avatar top − 4 | −6 | 2px | messages | fixed (round 2, row 38: name ink 4px above the avatar) |
 | 17 | P1 | dark message text | colour | names `--dt_color-content-pry` **#F8F8F8**, bodies `--dt_color-content-sec` **#B9BABD** | names #D1D2D3, bodies #D1D2D3 (with a 0.235 fade compensating) | +39 / +24 per channel | messages, richview | fixed 2b1831c, 2230420 |
 | 18 | P1 | text weight (embedded Lato, outline embolden) | ink vs Chrome | see the next section | bodies +7–14%, 900 names −9%, grey 12px +11%, light chrome rows +8% | up to ±14% ink | theme, richview | fixed 52b26ed…c7daf40 |
 

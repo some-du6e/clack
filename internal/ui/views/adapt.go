@@ -120,7 +120,7 @@ func (b *base) refTitle(r core.ConvRef) string {
 			return b.userName(r.User)
 		}
 		if r.Name == "" || r.Name == r.ID {
-			return "Direct message"
+			return dmFallbackName()
 		}
 		return r.Name
 	case "mpim":

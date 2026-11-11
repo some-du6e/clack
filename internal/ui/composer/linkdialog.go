@@ -49,9 +49,11 @@ func openLinkDialog(h Host, text, url string, onSave func(text, url string), onC
 		n := d.link.Len()
 		d.link.SetCaret(n, n)
 	}
-	title := "Add link"
+	// ComposerLinkModal (+Hdp, the message-input I18n): initialUrl ? "Edit
+	// link" : "Add link"
+	title := messageInputNS.T("Add link")
 	if url != "" {
-		title = "Edit link" // ComposerLinkModal: initialUrl ? "Edit link" : "Add link"
+		title = messageInputNS.T("Edit link")
 	}
 	d.modal = popups.NewModal(h, popups.ModalOpts{
 		Title:        title,
@@ -61,8 +63,8 @@ func openLinkDialog(h Host, text, url string, onSave func(text, url string), onC
 		EnterSubmits: true,
 		FocusStops:   func() []event.Tag { return []event.Tag{&d.text, &d.link} },
 		Buttons: []*popups.ModalButton{
-			{Label: "Cancel", Kind: popups.BtnOutline},
-			{Label: "Save", Kind: popups.BtnPrimary, Enabled: d.canSave, Do: func() bool { d.save(); return true }},
+			{Label: messageInputNS.T("Cancel"), Kind: popups.BtnOutline},
+			{Label: messageInputNS.T("Save"), Kind: popups.BtnPrimary, Enabled: d.canSave, Do: func() bool { d.save(); return true }},
 		},
 		OnClose: func() {
 			if !d.saved && onCancel != nil {
@@ -165,7 +167,7 @@ func (d *crLinkDlg) body(gtx layout.Context) layout.Dimensions {
 	for _, f := range [...]struct {
 		label string
 		ed    *widget.Editor
-	}{{"Text", &d.text}, {"Link", &d.link}} {
+	}{{messageInputNS.T("Text"), &d.text}, {messageInputNS.T("Link"), &d.link}} {
 		crText(gtx, th.Shaper, 0, y, w, textStyle{Size: 15, LineHeight: 22, Weight: theme.Bold, Color: th.C.Fg, MaxLines: 1}, f.label)
 		y += gtx.Dp(22 + 8)
 		t := op.Offset(image.Pt(0, y)).Push(gtx.Ops)

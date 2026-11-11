@@ -105,11 +105,11 @@ type SearchFeedbackModal struct {
 // openSearchFeedback shows CombinedSearchFeedbackModal.
 func openSearchFeedback(h Host, o srFeedbackOpts) *SearchFeedbackModal {
 	m := &SearchFeedbackModal{h: h, o: o, cat: -1}
-	m.submit = &ModalButton{Label: "Submit", Kind: BtnPrimary, Enabled: func() bool { return m.valid() && !m.busy },
+	m.submit = &ModalButton{Label: nsClassicNav.T("Submit"), Kind: BtnPrimary, Enabled: func() bool { return m.valid() && !m.busy },
 		Do: func() bool { m.Submit(); return false }}
-	m.modal = NewModal(h, ModalOpts{Title: srFeedbackTitle, Body: m.layout, Class: "p-feedback_modal",
+	m.modal = NewModal(h, ModalOpts{Title: nsClassicNav.T(srFeedbackTitle), Body: m.layout, Class: "p-feedback_modal",
 		FocusStops: func() []event.Tag { return []event.Tag{&m.selBtn, &m.ed, &m.box} },
-		Buttons:    []*ModalButton{{Label: "Cancel", Kind: BtnOutline}, m.submit}})
+		Buttons:    []*ModalButton{{Label: nsClassicNav.T("Cancel"), Kind: BtnOutline}, m.submit}})
 	h.ShowOverlay(m)
 	return m
 }
@@ -160,7 +160,7 @@ func (m *SearchFeedbackModal) Submit() {
 		func(_ struct{}, err error) {
 			m.busy = false
 			if err != nil {
-				m.err = srFeedbackFailed
+				m.err = nsClassicNav.T(srFeedbackFailed)
 				return
 			}
 			m.modal.Dismiss()
@@ -176,12 +176,12 @@ func (m *SearchFeedbackModal) layout(gtx layout.Context) layout.Dimensions {
 	if m.selBtn.Clicked(gtx) {
 		labels := make([]string, len(srFeedbackCategories))
 		for i, c := range srFeedbackCategories {
-			labels[i] = c.label
+			labels[i] = nsClassicNav.T(c.label)
 		}
 		// BasicSelect (zDm3) with placeholderText "Select an option", empty
 		// at first: the placeholder row under basic_select_placeholder_option
 		// clears the choice (onPick -1)
-		m.h.ShowOverlay(NewSelectList(m.h, m.selR, labels, m.cat, SelectListOpts{Placeholder: srFeedbackPick}, func(i int) { m.cat = i }))
+		m.h.ShowOverlay(NewSelectList(m.h, m.selR, labels, m.cat, SelectListOpts{Placeholder: nsClassicNav.T(srFeedbackPick)}, func(i int) { m.cat = i }))
 	}
 	if m.edArea.Clicked(gtx) {
 		gtx.Execute(key.FocusCmd{Tag: &m.ed})
@@ -215,22 +215,33 @@ func (m *SearchFeedbackModal) layout(gtx layout.Context) layout.Dimensions {
 		})
 		y += d.Size.Y + dp(gtx, 8) // .c-label__text padding-bottom 8
 	}
-	label(srFeedbackAsk)
+	label(nsClassicNav.T(srFeedbackAsk))
 	m.selectBox(gtx, th, cl, y, w)
 	y += dp(gtx, 36) + dp(gtx, 20) // margin_top_125
-	label(srFeedbackDetails)
+	label(nsClassicNav.T(srFeedbackDetails))
 	m.textarea(gtx, th, cl, y, w)
 	y += dp(gtx, 104) + dp(gtx, 20)
-	note := []srLinkSeg{
-		{text: "Note: some extra information will be included, including your search query and the results it brought up. If you’re looking to send feedback unrelated to search, "},
-		{text: "contact our Support team", link: &m.support},
-		{text: " or write in to "},
-		{text: srFeedbackAddress, link: &m.mail},
-		{text: "."},
+	// 1z6E's "… <contact>contact our Support team</contact> or write in to
+	// <email>feedback@{rootDomain}</email>." (classic_nav): the tags are
+	// the links
+	var note []srLinkSeg
+	for _, p := range nsClassicNav.RT("Note: some extra information will be included, including your search query and the results it brought up. If you’re looking to send feedback unrelated to search, <contact>contact our Support team</contact> or write in to <email>feedback@{rootDomain}</email>.", "rootDomain", "slack.com") {
+		sg := srLinkSeg{text: p.Text}
+		switch p.Tag {
+		case "contact":
+			sg.link = &m.support
+		case "email":
+			sg.link = &m.mail
+		}
+		if n := len(note); n > 0 && sg.link != nil && note[n-1].link == sg.link {
+			note[n-1].text += sg.text // a placeholder inside a link joins it
+			continue
+		}
+		note = append(note, sg)
 	}
 	d := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions { return srLinkPara(gtx, th, cl, note, w) })
 	y += d.Size.Y + dp(gtx, 16)
-	d = at(gtx, image.Pt(0, y), prefCheckRow(m.h, &m.box, srFeedbackContact, func() bool { return m.contact }))
+	d = at(gtx, image.Pt(0, y), prefCheckRow(m.h, &m.box, nsClassicNav.T(srFeedbackContact), func() bool { return m.contact }))
 	y += d.Size.Y
 	return layout.Dimensions{Size: image.Pt(w, y)}
 }
@@ -247,12 +258,12 @@ func (m *SearchFeedbackModal) selectBox(gtx layout.Context, th *theme.Theme, cl 
 			// renderContent: the placeholder in .c-select_button__placeholder,
 			// or under basic_select_placeholder_option "--Select an option--"
 			// in the button's own colour
-			s, fg := srFeedbackPick, cl.Placeholder
+			s, fg := nsClassicNav.T(srFeedbackPick), cl.Placeholder
 			if placeholderOption(m.h) {
-				s, fg = formatPlaceholderText(srFeedbackPick), cl.Fg
+				s, fg = formatPlaceholderText(nsClassicNav.T(srFeedbackPick)), cl.Fg
 			}
 			if m.cat >= 0 {
-				s, fg = srFeedbackCategories[m.cat].label, cl.Fg
+				s, fg = nsClassicNav.T(srFeedbackCategories[m.cat].label), cl.Fg
 			}
 			at(gtx, image.Pt(dp(gtx, 12), 0), func(gtx layout.Context) layout.Dimensions {
 				gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, w-dp(gtx, 44)), bh)}
@@ -304,7 +315,7 @@ func (m *SearchFeedbackModal) textarea(gtx layout.Context, th *theme.Theme, cl *
 			if m.ed.Len() == 0 {
 				call, _ := record(gtx, func(gtx layout.Context) layout.Dimensions {
 					gtx.Constraints.Min = image.Point{}
-					return para(gtx, th, 15, 22, theme.Regular, cl.Placeholder, srFeedbackHint, 1)
+					return para(gtx, th, 15, 22, theme.Regular, cl.Placeholder, nsClassicNav.T(srFeedbackHint), 1)
 				})
 				call.Add(gtx.Ops)
 			}
@@ -331,7 +342,7 @@ func (m *SearchFeedbackModal) privacyLink(gtx layout.Context) {
 	at(gtx, image.Pt(r.Min.X+dp(gtx, 28), y), func(gtx layout.Context) layout.Dimensions {
 		return clickBox(gtx, &m.privacy, nil, func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, bh, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 15, theme.Regular, cl.Link, "Privacy Policy")
+				return text(gtx, th, 15, theme.Regular, cl.Link, nsClassicNav.T("Privacy Policy"))
 			})
 		})
 	})
@@ -362,11 +373,11 @@ func newSearchFeedbackThanks(h Host) *Modal {
 			cl := colorsOf(th)
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return para(gtx, th, 22, 30, theme.Black, cl.Fg, srFeedbackThanks, 0)
+					return para(gtx, th, 22, 30, theme.Black, cl.Fg, nsClassicNav.T(srFeedbackThanks), 0)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.Inset{Top: 20}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						return para(gtx, th, 15, 22, theme.Regular, cl.Fg, srFeedbackThanksTxt, 0)
+						return para(gtx, th, 15, 22, theme.Regular, cl.Fg, nsClassicNav.T(srFeedbackThanksTxt), 0)
 					})
 				}),
 			)

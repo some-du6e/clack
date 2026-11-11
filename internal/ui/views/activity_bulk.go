@@ -33,7 +33,6 @@ import (
 	"context"
 	"image"
 	"image/color"
-	"strconv"
 	"strings"
 	"time"
 
@@ -43,6 +42,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/popups"
 )
 
@@ -134,24 +134,31 @@ func (v *Activity) filtersChanged() bool {
 // bannerTexts is i9bp's text and link (link "" when it doesn't show) and
 // whether the view's name is bold in them.
 func (v *Activity) bannerTexts() (text, link string) {
+	text, link = v.bannerTagged()
+	return i18n.StripTags(text), i18n.StripTags(link)
+}
+
+// bannerTagged is ActivityBulkSelectionBanner's strings with their
+// <strong>{viewName}</strong> tags (boldName draws them).
+func (v *Activity) bannerTagged() (text, link string) {
 	n := len(v.picked)
-	name := v.slotLabel(v.slot())
+	name := v.tabTr(v.tabs.Sel, v.slotLabel(v.slot()))
 	changed := v.filtersChanged()
 	switch {
 	case v.serverAll && changed:
-		text = "Everything matching these filters is selected."
+		text = nsActivity.T("Everything matching these filters is selected.")
 	case v.serverAll:
-		text = "Everything in " + name + " is selected."
+		text = nsActivity.T("Everything in <strong>{viewName}</strong> is selected.", "viewName", name)
 	default:
-		text = strconv.Itoa(n) + " " + map[bool]string{true: "item", false: "items"}[n == 1] + " selected on page."
+		text = nsActivity.T("{numItems} {numItems, plural, =1 {item} other {items}} selected on page.", "numItems", n)
 	}
 	page, _, _ := v.data.get()
 	search := v.searchOn && strings.TrimSpace(v.query.text()) != ""
 	if !v.serverAll && !search && n >= 1 && (page.Next != "" || n < len(v.listKeys())) {
 		if changed {
-			link = "Select everything matching these filters."
+			link = nsActivity.T("Select everything matching these filters.")
 		} else {
-			link = "Select everything in " + name
+			link = nsActivity.T("Select everything in <strong>{viewName}</strong>", "viewName", name)
 		}
 	}
 	return text, link
@@ -173,8 +180,7 @@ func (v *Activity) banner(gtx C) D {
 	if v.bannerLink.Clicked(gtx) {
 		v.selectEverything()
 	}
-	text, link := v.bannerTexts()
-	name := v.slotLabel(v.slot())
+	text, link := v.bannerTagged()
 	bg := v.p.ReadFill
 	if v.th.Dark {
 		bg = v.p.Track // base-ter
@@ -184,7 +190,7 @@ func (v *Activity) banner(gtx C) D {
 		d := layout.UniformInset(8).Layout(gtx, func(gtx C) D {
 			gtx.Constraints.Min.X = gtx.Constraints.Max.X
 			return row(gtx, layout.Middle,
-				layout.Rigid(func(gtx C) D { return v.boldName(gtx, text, name, v.p.Text, false) }),
+				layout.Rigid(func(gtx C) D { return v.boldName(gtx, text, v.p.Text, false) }),
 				layout.Rigid(func(gtx C) D {
 					if link == "" {
 						return D{}
@@ -192,7 +198,7 @@ func (v *Activity) banner(gtx C) D {
 					return layout.Inset{Left: 4}.Layout(gtx, func(gtx C) D {
 						return v.bannerLink.Layout(gtx, func(gtx C) D {
 							pointerCursor(gtx)
-							return v.boldName(gtx, link, name, v.p.Link, v.bannerLink.Hovered())
+							return v.boldName(gtx, link, v.p.Link, v.bannerLink.Hovered())
 						})
 					})
 				}),
@@ -205,12 +211,15 @@ func (v *Activity) banner(gtx C) D {
 	})
 }
 
-// boldName draws s (13px/22px) with the view's name in it bold (i9bp's
-// <strong>{viewName}</strong>), underlined while hovered for links.
-func (v *Activity) boldName(gtx C, s, name string, col color.NRGBA, under bool) D {
-	pre, post, found := "", "", false
-	if i := strings.LastIndex(s, name); name != "" && i >= 0 && (strings.HasPrefix(s, "Everything in ") || strings.HasPrefix(s, "Select everything in ")) {
-		pre, post, found = s[:i], s[i+len(name):], true
+// boldName draws s (13px/22px) with the part i9bp tags
+// <strong>{viewName}</strong> bold (where the locale puts it), underlined
+// while hovered for links.
+func (v *Activity) boldName(gtx C, s string, col color.NRGBA, under bool) D {
+	pre, name, post, found := "", "", "", false
+	if i := strings.Index(s, "<strong>"); i >= 0 {
+		if j := strings.Index(s[i:], "</strong>"); j >= 0 {
+			pre, name, post, found = s[:i], s[i+len("<strong>"):i+j], s[i+j+len("</strong>"):], true
+		}
 	}
 	if !found {
 		d := v.para(gtx, 13, 22, wReg, col, 1, s)
@@ -259,17 +268,17 @@ func (v *Activity) bulkRows(gtx C, x int) int {
 	}
 	var bs []b
 	if !v.serverAll {
-		bs = append(bs, b{&v.bulkRead, "mark-as-read", "Mark selected as read"})
+		bs = append(bs, b{&v.bulkRead, "mark-as-read", nsActivity.T("Mark selected as read")})
 	}
 	if !v.showCleared {
-		label := "Clear selected"
+		label := nsActivity.T("Clear selected")
 		if v.serverAll {
-			label = "Clear everything"
+			label = nsActivity.T("Clear everything")
 		}
 		bs = append(bs, b{&v.bulkClear, "eraser", label})
 	}
 	if !v.serverAll && v.bulkUnreadTool() {
-		bs = append(bs, b{&v.bulkUnread, "mark-as-unread", "Mark selected as unread"})
+		bs = append(bs, b{&v.bulkUnread, "mark-as-unread", nsActivity.T("Mark selected as unread")})
 	}
 	for _, bt := range bs {
 		label := bt.label
@@ -374,10 +383,6 @@ func (v *Activity) bulk(action int) {
 	}
 	v.endSelect()
 	n := len(items)
-	noun := "items"
-	if n == 1 {
-		noun = "item"
-	}
 	switch action {
 	case 0, 2:
 		read := action == 0
@@ -390,9 +395,9 @@ func (v *Activity) bulk(action int) {
 		}
 		v.dirty = true
 		if read {
-			v.h.Toast(strconv.Itoa(n) + " " + noun + " marked as read")
+			v.h.Toast(nsActivity.T("{numItems} {numItems, plural, =1 {item} other {items}} marked as read", "numItems", n))
 		} else {
-			v.h.Toast(strconv.Itoa(n) + " " + noun + " marked as unread")
+			v.h.Toast(nsActivity.T("{numItems} {numItems, plural, =1 {item} other {items}} marked as unread", "numItems", n))
 		}
 		v.write("Couldn’t update the items: ", func(ctx context.Context, c *core.App) error {
 			if read {
@@ -493,14 +498,14 @@ func (v *Activity) clearEverything() {
 	}
 	failed, pending := false, false
 	body := func(gtx C) D {
-		s := `Use the "Cleared items" filter to access these once cleared.`
+		s := nsActivity.T(`Use the "Cleared items" filter to access these once cleared.`)
 		if failed {
-			s = "Something went wrong. Please try again."
+			s = nsActivity.T("Something went wrong. Please try again.")
 		}
 		return v.para(gtx, 15, 22, wReg, v.p.Text, 0, s)
 	}
 	var m *popups.Modal
-	yes := &popups.ModalButton{Label: "Yes", Kind: popups.BtnPrimary, Enabled: func() bool { return !pending }, Do: func() bool {
+	yes := &popups.ModalButton{Label: nsActivity.T("Yes"), Kind: popups.BtnPrimary, Enabled: func() bool { return !pending }, Do: func() bool {
 		pending, failed = true, false
 		_, keys := v.pickedItems()
 		c := v.h.Core()
@@ -527,8 +532,8 @@ func (v *Activity) clearEverything() {
 		}()
 		return false
 	}}
-	m = popups.NewModal(ph, popups.ModalOpts{Title: "Are you sure you want to clear everything matching this filter?", Body: body,
-		Buttons: []*popups.ModalButton{{Label: "Cancel", Kind: popups.BtnOutline}, yes}, AutoFocus: yes})
+	m = popups.NewModal(ph, popups.ModalOpts{Title: nsActivity.T("Are you sure you want to clear everything matching this filter?"), Body: body,
+		Buttons: []*popups.ModalButton{{Label: nsActivity.T("Cancel"), Kind: popups.BtnOutline}, yes}, AutoFocus: yes})
 	ph.ShowOverlay(m)
 }
 

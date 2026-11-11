@@ -125,11 +125,11 @@ func NewCreateChannelModal(h Host, o CreateChannelOpts) *CreateChannelModal {
 		default:
 		}
 	}
-	c.next = &ModalButton{Label: "Next", Kind: BtnPrimary, Enabled: c.canNext, Do: func() bool { c.Next(); return false }}
-	c.back = &ModalButton{Label: "Back", Kind: BtnOutline, Do: func() bool { c.Back(); return false }}
-	c.create = &ModalButton{Label: "Create", Kind: BtnPrimary, Enabled: func() bool { return !c.creating }, Do: func() bool { c.Create(); return false }}
-	c.okay = &ModalButton{Label: "Okay", Kind: BtnPrimary}
-	c.modal = NewModal(h, ModalOpts{Title: ccTitle, Body: c.layout, FocusStops: func() []event.Tag {
+	c.next = &ModalButton{Label: nsCreateCh.T("Next"), Kind: BtnPrimary, Enabled: c.canNext, Do: func() bool { c.Next(); return false }}
+	c.back = &ModalButton{Label: nsCreateCh.T("Back"), Kind: BtnOutline, Do: func() bool { c.Back(); return false }}
+	c.create = &ModalButton{Label: nsCreateCh.T("Create"), Kind: BtnPrimary, Enabled: func() bool { return !c.creating }, Do: func() bool { c.Create(); return false }}
+	c.okay = &ModalButton{Label: nsCreateCh.T("Okay"), Kind: BtnPrimary}
+	c.modal = NewModal(h, ModalOpts{Title: nsCreateCh.T(ccTitle), Body: c.layout, FocusStops: func() []event.Tag {
 		if c.step == 0 {
 			return []event.Tag{&c.ed}
 		}
@@ -256,9 +256,9 @@ func (c *CreateChannelModal) sync() {
 	case c.createErr != "":
 		o.Buttons, o.FooterNote = []*ModalButton{c.okay}, ""
 	case c.step == 0:
-		o.Buttons, o.FooterNote = []*ModalButton{c.next}, "Step 1 of 2"
+		o.Buttons, o.FooterNote = []*ModalButton{c.next}, nsCreateCh.T("Step {currentStepIndex} of {totalSteps}", "currentStepIndex", 1, "totalSteps", 2)
 	default:
-		o.Buttons, o.FooterNote = []*ModalButton{c.back, c.create}, "Step 2 of 2"
+		o.Buttons, o.FooterNote = []*ModalButton{c.back, c.create}, nsCreateCh.T("Step {currentStepIndex} of {totalSteps}", "currentStepIndex", 2, "totalSteps", 2)
 		o.Subtitle, o.SubtitleIcon = c.name, "hash"
 		if c.private {
 			o.SubtitleIcon = "lock"
@@ -366,7 +366,7 @@ func (c *CreateChannelModal) layoutName(gtx layout.Context, th *theme.Theme, cl 
 	at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(w, lh)}
 		return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-			return text(gtx, th, 15, theme.Bold, cl.Fg, ccNameLabel)
+			return text(gtx, th, 15, theme.Bold, cl.Fg, nsCreateCh.T(ccNameLabel))
 		})
 	})
 	y += lh + dp(gtx, 8) // .p-channel_name_input__input margin-top 8
@@ -374,7 +374,7 @@ func (c *CreateChannelModal) layoutName(gtx layout.Context, th *theme.Theme, cl 
 	errText := c.NameError()
 	at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Exact(image.Pt(w, ih))
-		d := field(gtx, th, &c.ed, ccPlaceholder, "hash", 44, 18)
+		d := field(gtx, th, &c.ed, nsCreateCh.T(ccPlaceholder), "hash", 44, 18)
 		if errText != "" {
 			stroke(gtx, image.Rect(0, 0, w, ih), dp(gtx, 8), maxInt(1, dp(gtx, 1)), ccErrColor(th, cl))
 		}
@@ -417,7 +417,7 @@ func (c *CreateChannelModal) layoutName(gtx layout.Context, th *theme.Theme, cl 
 		y += dp(gtx, 4)
 		d := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(w, 1<<20)}
-			return para(gtx, th, 13, 18, theme.Regular, cl.Fg2, ccHint, 0)
+			return para(gtx, th, 13, 18, theme.Regular, cl.Fg2, nsCreateCh.T(ccHint), 0)
 		})
 		y += d.Size.Y
 	}
@@ -445,7 +445,7 @@ func (c *CreateChannelModal) layoutVisibility(gtx layout.Context, th *theme.Them
 	at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(w, lh)}
 		return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-			return text(gtx, th, 15, theme.Bold, cl.Fg, ccVisibility)
+			return text(gtx, th, 15, theme.Bold, cl.Fg, nsCreateCh.T(ccVisibility))
 		})
 	})
 	y += lh + dp(gtx, 8)
@@ -470,25 +470,32 @@ func (c *CreateChannelModal) layoutVisibility(gtx layout.Context, th *theme.Them
 		y += d.Size.Y + dp(gtx, 12)
 	}
 	row(&c.pubBtn, !c.private, func(gtx layout.Context) layout.Dimensions {
-		pw := textW(gtx, th, 15, theme.Regular, ccPublicPre)
+		// "Public — anyone in <b>{workspace}</b>" (create_channel_modal),
+		// its parts in the locale's order
 		gtx.Constraints = layout.Constraints{Max: image.Pt(w, lh)}
-		vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-			return text(gtx, th, 15, theme.Regular, cl.Fg, ccPublicPre)
-		})
-		at(gtx, image.Pt(pw, 0), func(gtx layout.Context) layout.Dimensions {
-			return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 15, theme.Bold, cl.Fg, c.workspace)
+		px := 0
+		for _, p := range nsCreateCh.RT("Public — anyone in <b>{workspace}</b>", "workspace", c.workspace) {
+			wt := theme.Regular
+			if p.Tag == "b" {
+				wt = theme.Bold
+			}
+			txt := p.Text
+			at(gtx, image.Pt(px, 0), func(gtx layout.Context) layout.Dimensions {
+				return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
+					return text(gtx, th, 15, wt, cl.Fg, txt)
+				})
 			})
-		})
+			px += textW(gtx, th, 15, wt, txt)
+		}
 		return layout.Dimensions{Size: image.Pt(w, lh)}
 	}, "")
 	row(&c.privBtn, c.private, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(w, lh)}
 		vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-			return text(gtx, th, 15, theme.Regular, cl.Fg, ccPrivate)
+			return text(gtx, th, 15, theme.Regular, cl.Fg, nsCreateCh.T(ccPrivate))
 		})
 		return layout.Dimensions{Size: image.Pt(w, lh)}
-	}, ccPrivateSub)
+	}, nsCreateCh.T(ccPrivateSub))
 	y += dp(gtx, 8)
 	return layout.Dimensions{Size: image.Pt(w, y)}
 }
@@ -522,9 +529,23 @@ func NewAddPeopleModal(h Host, ch core.Conv) *AddPeopleModal {
 	if ch.Kind == "private" {
 		ic = "lock"
 	}
-	p.skip = &ModalButton{Label: ccSkip, Kind: BtnOutline}
-	p.add = &ModalButton{Label: ccAdd, Kind: BtnPrimary, Enabled: func() bool { return !p.adding }, Do: func() bool { p.Add(); return false }}
-	p.modal = NewModal(h, ModalOpts{Title: ccInviteTitle, TitleIcon: ic, TitleAfter: ch.Name, Body: p.layout,
+	p.skip = &ModalButton{Label: nsCreateCh.T(ccSkip), Kind: BtnOutline}
+	p.add = &ModalButton{Label: nsCreateCh.T(ccAdd), Kind: BtnPrimary, Enabled: func() bool { return !p.adding }, Do: func() bool { p.Add(); return false }}
+	// "Add people to {channelName}" (channel_invite): the text around the
+	// channel entity (icon and name)
+	pre, post := "", ""
+	seen := false
+	for _, part := range nsCreateCh.RT("Add people to {channelName}", "channelName", "#") {
+		switch {
+		case part.Arg == "channelName":
+			seen = true
+		case seen:
+			post += part.Text
+		default:
+			pre += part.Text
+		}
+	}
+	p.modal = NewModal(h, ModalOpts{Title: pre, TitleIcon: ic, TitleAfter: ch.Name + post, Body: p.layout,
 		Buttons: []*ModalButton{p.skip}, FocusStops: func() []event.Tag { return []event.Tag{&p.ed} }})
 	return p
 }
@@ -725,7 +746,7 @@ func (p *AddPeopleModal) layout(gtx layout.Context) layout.Dimensions {
 	ih := dp(gtx, 44)
 	at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Exact(image.Pt(w, ih))
-		return field(gtx, th, &p.ed, ccInviteSearch, "", 44, 18)
+		return field(gtx, th, &p.ed, nsCreateCh.T(ccInviteSearch), "", 44, 18)
 	})
 	y += ih
 	if len(p.results) > 0 {
