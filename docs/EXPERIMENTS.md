@@ -31,7 +31,7 @@ plumbing that lets Clack and its plugins follow them, and the work left, by area
 | C: not read by the client | 1000 |
 | **All assignments** | **1,609** |
 
-609 of the account's experiments are read by Slack's client. Of the 197 A experiments, Clack reads 46 today (the Clack column cites where).
+609 of the account's experiments are read by Slack's client. Of the 197 A experiments, Clack reads 85 today (the Clack column cites where).
 
 ## How Clack follows them
 
@@ -43,7 +43,7 @@ plumbing that lets Clack and its plugins follow them, and the work left, by area
 ### Notes
 
 - Clack checks 15 experiments the account is **not assigned to**, so Slack reads null for them and so does Clack (none are in its defaults): `activity_in_home_prototype`, `activity_with_sidebar`, `agentic_ia`, `channel_ia_header_refinements`, `huddles_raised_hand_queue`, `meeting_assistant`, `ml_fuzzy_match_beyond_word_boundaries_v2`, `programmable_sidebar_dm_history`, `scheduled_huddles`, `session_channels_code_tab_pr`, `session_channels_gh_wo`, `slash_command_failed_dedupe`, `suggested_sections_auto_sort_killswitch`, `support_lots_of_agents`, `unified_global_triage`.
-- `reskin_custom_responses` is assigned (`on`) but **no longer read** by this build: Slack draws the custom-response badge without asking (`customResponseInfoBadgeIcon__mN56C`). Clack still gates the reskin on it (internal/core/team_icon.go `CustomResponseReskin`), which keeps BringBackSlackbot's override working in Clack while it no longer works in Slack. Dropping the gate matches Slack; it's a messages-package call.
+- `reskin_custom_responses` is assigned (`on`) but **no longer read** by this build: Slack draws every custom response the reskinned way without asking (BaseMessageAvatar's TeamIcon, ffJE's `isCustomResponse` for the team's name, t6PO's `customResponseInfoBadgeIcon__mN56C` badge, MessageLabels' tint with no label line, ReplyBarAvatar's team icon). Clack dropped its gate too (2026-11-10, Karim's call; core's `CustomResponseReskin` is gone): custom responses always draw that way (ui/messages/custom_response.go), and BringBackSlackbot's override of the experiment no longer changes them, in Clack as in Slack.
 - `agentforce_deprecation` is read by Clack's rail (internal/core/rail.go) only to hide an Agents tab that needs Agentforce access, which Hack Club doesn't have; it's B.
 
 ## A experiments, by visible impact
@@ -52,17 +52,17 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 
 | Experiment | Group | Slack evidence | Effect in this group | Clack |
 |---|---|---|---|---|
-| `system_messages_redesign_m1` | `on` | client-boot `biaa` export `Ox` | join/leave and other system messages drawn in the redesigned compact style (BaseMessageAvatar, hidden counts) | missing |
-| `flat_message_heading_scale` | `on` | client-boot `cQrd` export `WZ` | rich-text headings in messages use the flat heading scale | missing |
-| `unread_thread_indication_in_replybar` | `on` | client-boot `O2By` export `vg` | the reply bar under a thread root marks unread replies | missing |
+| `system_messages_redesign_m1` | `on` | boot-shared `kA8d` TestableAutomatedSubtype, `BBB3` registry, `vXN3` BaseMessageAvatar, `I0jQ` SystemMessage; texts `OuZx` `EFF2` `DeME` `/EW+` `a1i9`; old texts `NaeI` | on: registered subtypes (joins, leaves, topics, descriptions, renames, archives, canvas and folder updates, app joins, conversions…) draw as SystemMessage with the actor first and the registry's glyph; off/unassigned: every automated subtype is an ordinary row with getMessageAutomatedSubtypeText; 6bWJ also drops their share button | reads it: `ui/messages/system.go` (texts, glyphs, which rows), `ui/messages/actions_rules.go` (share); rollups keep Clack's text; no canvas-content/ai-huddle-summary/hourglass glyphs yet |
+| `flat_message_heading_scale` | `on` | client-boot `cQrd` export `WZ` (or `portable_content_composer` treatment), read by boot-shared `/WQN` Header | header blocks' levels one step down (p-header_block--flat_scale: level_1 18px, level_2 15px black, level_3 15px bold; without it 22/18/15) | reads it: `ui/messages/host.go` → richview `Style.SetFlatHeadings`; richtext keeps `level` |
+| `unread_thread_indication_in_replybar` | `on` | client-boot `O2By` export `vg`; boot-shared `v8ac` ReplyBar, `EXGU` MessageWrapper; boot-render `bU1n` maybeFetchUnreadThreadActivity; client-boot `3x6A` | the reply bar shows only the last reply, on hover; at rest a dot and "Unread" while the channel's unread thread activity (activity.feed for the channel, thread_v2, unread only) has the thread | reads it: `ui/messages/row.go`, `ui/messages/unread_threads.go`; `core/thread_unreads.go` (client.counts' threads.unread_count_by_channel); no focus check for the open thread |
 | `mpdm_naming` | `on` | client-boot `tpcx` isMpdmNamingEnabled | group DMs can carry a custom name, shown instead of the member list; the header's EditMpdmNameButton and details' Conversation name open RenameMpdmDialog | reads it: `core/mpdm_name.go` (sidebar, header `ui/channel_mpdm.go`, details `ui/views/details_mpdm.go`, switcher, `popups/rename_mpdm_dialog.go`) |
 | `dm_recency_sort_rollout` | `without_edu` | application `WaW2` isDmRecencyDefaultSortEnabled | without_edu: DM sections default to recent-activity sort | reads it: `ui/section_menu.go:303` |
 | `filter_dormant_channels` | `on` | gantry-v2-async-client-boot-shared `pDWx` export `K` | "active" section filters hide dormant channels | reads it: `ui/section_menu.go:254`, `ui/section_menu.go:302` |
 | `sidebar_text_filter` | `on` | client-boot `O2By` isVipSectionPrefEnabled | the sidebar has a text filter for conversations | missing |
 | `activity_inbox` | `on` | client-boot `5Ns/` isActivityInboxEnabled | Activity is the activity inbox | reads it: `core/rail.go:82`, `core/rail.go:183` |
-| `block_kit_revamp_blocks` | `on` | gantry-v2-async-client-boot-shared `A6yj` | revamped Block Kit block rendering (gallery scroller, prototype blocks) | missing |
-| `forward_message_card` | `on` | gantry-v2-async-client-boot-render `zuQH` | forwarded/shared messages render as the new message card | missing |
-| `truncated_url_hover_card` | `on` | gantry-v2-async-client-boot-shared `kQRT` | hovering a truncated URL shows a hover card with the full link | missing |
+| `block_kit_revamp_blocks` | `on` | boot-shared `A6yj` GalleryScrollerArrow (aria-label translated); prototype-block `rso/` PrototypeImpl | the prototype block's `alert` and `card_v2` candidates draw only when on | missing: Clack has no prototype block (it's an unsupported block type) |
+| `forward_message_card` | `on` | boot-render `zuQH` (message unfurls: `tx = ti && !hideCardLayout`), boot-shared `6YU6` ThreadShareEntity | on: a forwarded message's v1 attachment drops the colour bar and gets c-message_attachment--full_card (max-width 716px); shared-thread cards go full width up to 716px. Off: the bar and the 600px attachment | on matches: richview `msgCard` (MessageAttachmentSlackMessageCard) has no bar and the 716px cap; the off look isn't drawn (its inner RB layout isn't read yet) |
+| `truncated_url_hover_card` | `on` | boot-shared `kQRT` renderDefaultLink, `cXYm` UrlHoverCard, `+W5o` rich_text links | a link's hover shows UrlHoverCard (🔗 Link, Open in new tab, Copy link, the URL in 5 lines) instead of the URL tooltip | missing: Clack has neither the tooltip nor the card on links |
 | `flag_custom_mpdm_names` | `on` | gantry-v2-async-client-boot-shared `cPB6` isExperimentFlagCustomMpdmNamesGroupOn | with the org's content review (locked pref content_review_enabled), flagging a named group DM reports its "Conversation name" (mpdm_name) | missing: Clack has no content review flags (FlagChannelDetailsDialog, FlagMessageDialog) |
 | `sc_mpdm_naming` | `on` | client-boot `tpcx` isMpdmNamingEnabled | custom group DM names also for Slack Connect group DMs | reads it: `core/mpdm_name.go` |
 | `agents_in_dm_sidebar` | `on` | client-boot `O2By` export `Mq` | agents are listed among direct messages | reads it: `core/app.go:1491`, `ui/prefs_pages.go:278` |
@@ -76,23 +76,23 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `secondary_view_default_width` | `on` | client-boot `kl02` export `k5` | the secondary view opens at the new default width | missing |
 | `smaller_secondary_headers` | `on` | client-boot `kl02` export `I$` | secondary view headers are smaller | missing |
 | `today_v2` | `on` | client-boot `/Qva` isTodayV2Provisioned | the Today tab (v2) when provisioned | missing |
-| `activity_entry_layout_revisions_2` | `on` | client-boot `5Ns/` export `xi` | activity rows use layout revisions 2 | missing |
-| `activity_inbox_remove_persistent_detail_panel` | `on` | client-boot `5Ns/` isActivityInboxRemovePersistentDetailPanelEnabled | the inbox has no persistent detail panel | missing |
+| `activity_entry_layout_revisions_2` | `on` | client-boot `5Ns/` export `xi` (gantry boot-render Eojr, GuYW, FgHy, svza, oDbF, WbG1; boot-shared QTZf, /ad9, PcpC) | the multi-line and single-line rows with their status slot (off: Pck2's older rows); the All tab's dot badge (off: All's count pill, the default tabs' counts, the icon-only strip when narrow); no day divider over the first row; a 16px spacer between the VIP sections; "Multi-line view" / "Single-line view" tooltips; "Reacted {emoji} to:" (off: "You:"); two-line messages (off: one) | reads it: `core/activity_agent.go:21`; tabs, dividers, tooltips, reactions, lines: `ui/views/activity_tabs.go`, `ui/views/activity.go` (off: Pck2's rows not ported) |
+| `activity_inbox_remove_persistent_detail_panel` | `on` | client-boot `5Ns/` isActivityInboxRemovePersistentDetailPanelEnabled (Bb; VlLO, L1Ms, gantry GMkG, Ezzs) | with nested secondary views: the inbox is the Primary view at the full width and an opened item a secondary view beside it; off: the inbox in the sidebar column and Primary always showing the item or "Select a notification to view the details." | reads it: `core/activity_agent.go:30`, `ui/views/activity_panel.go` |
 | `later_todos` | `on` | client-boot `6owI` isLaterTodosEnabled | Later is Later + to-dos | reads it: `core/rail.go:191`, `ui/views/activity_slack.go:274` |
-| `autocomplete_affinity_ml_model` | `on` | client-boot `y+lP` | autocomplete ranks with the affinity ML model features | missing |
+| `autocomplete_affinity_ml_model` | `on` | client-boot `y+lP` Sorter.prepSuggestions; features from `1Fxd` AutocompleteFeaturesCache (search.autocomplete.offlineFeatures, 28 h) | `on`: members get userAffinityScore (user_affinity), channels channelPriority90dScore (channel_priority_90d); otherwise both 0 (the USER_AFFINITY_SCORE / CHANNEL_PRIORITY_90D_SCORE features and the +50 bonus stay off) | reads it: `ui/composer/autocomplete_rank.go` (core `AutocompleteAffinity`); `TestAffinityFeaturesFollowExperiment` flips on/off/unassigned |
 | `autocomplete_flannel_fuzzy_match_passthrough` | `treatment` | client-boot `nIFn` makeResultsMatcher | treatment: fuzzy-match passthrough of server (flannel) results | reads it: `ui/composer/autocomplete_rank.go:77` |
-| `updated_scheduled_sends_desktop` | `on` | gantry-v2-async-client-boot-shared `BQDv` getScheduledSendMenuOptions | the updated scheduled-send menu options | missing |
+| `updated_scheduled_sends_desktop` | `on` | gantry-v2-async-client-boot-shared `BQDv` getScheduledSendMenuOptions, `BYKP` ScheduleSendMenu, message-share-dialog `jdUv` | `on`: "Tomorrow at 9:00 AM" always offered, the last custom time comes back while ahead, a channel's member time descriptions in the forward dialog's menu, the custom-time dialog stacks over the forward dialog | reads it: `ui/composer/composer.go` scheduleMenu (`TestScheduleMenuRows`); the forward dialog's parts wait for `schedule_send_forwards` |
 | `thread_header_mute_button` | `on` | gantry-v2-async-client-boot-shared `w5Tk` export `g` | the thread pane header has a mute button | missing |
 | `app_channel_tabs` | `on` | client-boot `mwX5` isAppChannelTabsEnabled; `ygKH` getAppChannelTabsState, `VlLO` EnsureAppViewType, `iJ` canSeeChannelTabsSettings | app DMs open as tabbed channels (Home / Messages / About as channel tabs); without it they open the app space view (`BKNN` AppView) and details have no Tabs tab for an app | not read: Clack's app DMs are always the tabbed channel (this group); the off group's app space view isn't drawn |
 | `enable_new_channel_settings` | `on` | admin-channel-modal `oWlM` GuestRestrictionsField, MessageAndFileSharingRestrictionsField; boot-shared `8d5P`, `mlo3`, `Qb6n`, `OTup`, `6bWJ`, `GUK3`, `L3vL` | Settings has Guest access and Sharing & file downloads (conversations.canSetProperties / setProperties); restricted channels also hide Share and Create canvas from a message, check file downloads, let channel managers remove members, and the invite modals warn about guests | reads it: `ui/views/details_more.go` (Guest access, Sharing & file downloads); the message, file and invite parts belong to those areas |
 | `temp_join_channel` | `on` | client-boot `+7BQ` isTemporaryJoinChannelsEnabled | previewed channels can be joined temporarily | reads it: `core/preview.go:57` |
-| `search_autocomplete_promote_exact_name_matches` | `treatment_5` | client-boot `J3WV` | treatment_5: exact name matches promoted in search autocomplete | missing |
+| `search_autocomplete_promote_exact_name_matches` | `treatment_5` | client-boot `J3WV` (rules `QT`, `yg`; `ed` exposeAndRetainExactNameMatches), run by `y+lP` applySortRules for texty-autocomplete and the switcher's searcher | treatment_5: exact name matches (active humans of the org whose real or display name is the query) stay in the model's input; up to two who are in the open conversation go to the first people slots, other ones to people slot 4; treatment_3 lifts to slot 2 | reads it: `ui/popups/search_popover.go` (switcher), `ui/composer/autocomplete_rank.go` (composer); the rules are `acrank/sortrules.go` |
 | `session_channels` | `on` | client-boot `/HhV` | code (session) channels | reads it: `core/codechannel.go:350`, `ui/codechannel.go:170` |
-| `a11y_underline_button_link` | `on` | client-boot `CX15` export `bF` | with the underline_links pref, button-styled links are underlined too | missing |
-| `agent_identity_overrides` | `on` | client-boot `iR00` | thread reply avatars use the bot identity overrides of the latest reply | missing |
-| `bk_table_action_cells` | `on` | gantry-v2-async-client-boot-shared `Eua+` | Block Kit data tables can have action cells | missing |
-| `giphy_fixed_width` | `on` | gantry-v2-async-client-boot-render `zuQH` | Giphy attachments render at their fixed-width size | missing |
-| `message_actions_truncate` | `on` | gantry-v2-async-client-boot-shared `L2dv` | the message actions menu truncates long item labels | missing |
+| `a11y_underline_button_link` | `on` | client-boot `CX15` export `bF` (with the underline_links pref), read by boot-shared `rs63` and `N0zR` | the search modal footer's "Learn more" and the Hide user dialog's "preferences" help links are underlined | not messages: search and profile popups |
+| `agent_identity_overrides` | `on` | client-boot `iR00` export `oV`, `2jcO` looksLikeBotId, `ewDY` useAgentIconOverride; boot-shared `v8ac` ReplyBarAvatar | a bot replier's reply-bar avatar: reply_user_icons first; with it, the latest reply's icons (emoji, else image_48/72/36) when that reply is the bot's; else the bot's own | reads it: `core/thread_unreads.go` ReplyBarBotAvatar, drawn by `ui/messages/row.go` (bot ids no longer go to users.info) |
+| `bk_table_action_cells` | `on` | boot-shared `Eua+` DataTableBlock | copying or sharing a data table with action cells first asks "Heads up" | missing: Clack has no data_table block |
+| `giphy_fixed_width` | `on` | boot-shared `8/+W` image block, `6Xj2`; boot-render `zuQH` v2 attachments; `xVsA` GIF picker | Giphy/Tenor GIFs in image blocks and Block Kit attachments may shrink to the pane (p-image_block--gif, --gif body) | Clack shrinks every image block to the pane already; other images keep Slack's size there (open) |
+| `message_actions_truncate` | `on` | boot-shared `L2dv` MessageActions calculateResponsiveActions | the one-click reactions leave a hover toolbar that would be wider than the message | reads it: `ui/messages/list.go` toolbar |
 | `add_channels_channel_sections_slackathon` | `on` | client-boot `O2By` export `Cx` | section menus can add channels to custom sections | reads it: `ui/section_menu.go:198` |
 | `agents_in_dm_sidebar_pref` | `on` | client-boot `O2By` hasAutoSortPermission | Navigation > Show Agents in direct messages pref | reads it: `core/app.go:1507`, `ui/prefs_pages.go:278` |
 | `bulk_leave_channels_from_sidebar` | `on` | gantry-v2-async-client-channel-list-view `SYcU` OrganizeModeMenu | the sidebar organize mode can leave several channels at once | missing |
@@ -104,41 +104,41 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `desktop_history_recents_read` | `on` | gantry-v2-async-client-boot-shared `Fpm/` isDesktopHistoryRecentsReadEnabled | the history menu reads recents | missing |
 | `keyboard_shortcuts_search` | `on` | client-boot `odUS` | the keyboard shortcuts pane has a search box | missing |
 | `today_todos` | `on` | client-boot `/Qva` isTodayTodosEnabled | Today shows to-dos | missing |
-| `activity_automations_only` | `on` | client-boot `5Ns/` export `LS` | an Automations-only filter | missing |
-| `activity_bot_item_type_reads` | `on` | client-boot `5Ns/` export `zK` | bot items get their own read state | missing |
+| `activity_automations_only` | `on` | client-boot `5Ns/` export `LS` (gantry vQqF, g7lN, sD/F) | the filter menu's "Automations only" (unless exclude_automations_filter turns both automation rows into its select): activity.feed automations_only; people's live entries skip such a view | reads it: `core/activity_agent.go:48`, `ui/views/activity_filters.go`, `ui/views/activity_live.go` |
+| `activity_bot_item_type_reads` | `on` | client-boot `5Ns/` export `zK` (gantry vQqF, g7lN, sD/F) | the filter menu's "Exclude automations" (unless exclude_automations_filter): activity.feed exclude_automations; the automations' live entries (entry.is_bot) skip such a view | reads it: `core/activity_agent.go:41`, `ui/views/activity_filters.go`, `ui/views/activity_live.go` |
 | `activity_global_settings` | `on` | client-boot `5Ns/` export `XW` | Activity settings are global (layout toggle in header) | reads it: `core/manage.go:592`, `core/manage.go:610` |
-| `exclude_automations_filter` | `on` | client-boot `5Ns/` export `UK` | a filter that excludes automations | missing |
+| `exclude_automations_filter` | `on` | client-boot `5Ns/` export `UK` (gantry vQqF, lCwf, m+ho, fNIs) | the filter menu and the new view get "Notifications from": People, apps, and agents / People only / Apps and agents only (exclude_automations / automations_only; People only disables Apps, Apps and agents only DMs and Reminders and closes the mention sub-filters); Unreads moves to the additional filters | reads it: `core/activity_agent.go:56`, `ui/views/activity_filters.go`, `ui/views/activity_views.go` |
 | `slackbot_unread_v2` | `on` | client-boot `I87A` export `m0` | Slackbot DM unreads v2 in Activity | reads it: `ui/views/activity_slack.go:265` |
 | `lists_in_later` | `on` | client-boot `Hm0j` isListsMarkAsDoneForCheckboxEnabled | list items assigned to you appear in Later | missing |
 | `autocomplete_demote_flannel_passthrough_rltv_exact_match` | `on` | client-boot `LRGb` | passthrough results demoted below exact matches | reads it: `ui/composer/autocomplete_rank.go:78` |
 | `autocomplete_frequently_used_emojis_frecency` | `on` | gantry-v2-async-client-boot-render `zuQH` | frequently used emoji by frecency | reads it: `core/frecency.go:273` |
 | `composer_smart_symbols` | `on` | gantry-v2-async-client-boot-shared `YGxP` isComposerSmartSymbolsOn | smart quotes and symbols, and its Advanced pref | reads it: `ui/prefs_pages.go:780`, `ui/composer/coreapi.go:54` |
 | `emoji_exact_match_boost` | `on` | client-boot `j8FV` | exact emoji name matches rank first | reads it: `ui/composer/autocomplete_rank.go:80` |
-| `ia4_slash_command_fe` | `on` | client-boot `lJzt` | slash commands use the ia4 front end | missing |
-| `portable_content_composer` | `treatment` | client-boot `cQrd` isPortableContentComposerEnabled | treatment: the portable content composer | missing |
-| `schedule_send_forwards` | `on` | gantry-v2-async-message-share-dialog `jdUv` | forwards can be scheduled | missing |
-| `semantic_emoji_matching` | `on` | client-boot `O2By` export `RY` | emoji autocomplete matches by meaning | missing |
+| `ia4_slash_command_fe` | `on` | client-boot `lJzt` loadClientAppCommands → `kW4s` bulkAddServerCommands; boot-render `5dbN` executeCommand; boot-shared `kKbo`, `jV+F` | `on`: the slash command store keys commands by app and name (two apps' /deploy both listed), executeCommand checks the picked app's command and sends its single workspace as team_id; off: one command per name (the later wins) | reads it: `ui/composer/autocomplete_rank.go`, `core/command.go` (`TestSlashListKeysByApp`, `TestIA4CommandTeam`); the multi-workspace picker speed bump isn't in Clack |
+| `portable_content_composer` | `treatment` | client-boot `cQrd` isPortableContentComposerEnabled (`Wt`), read by fffk TextyInput, S14j/HV5D send, nnhg drafts, cjbg edit, edXr, SC+N, zuQH | treatment: Block Kit blocks travel through the composer as opaque block embeds (sent as their own blocks, kept in drafts and edits), the markdown paste toast's text, copy as markdown, the flat heading scale (`WZ`), edits of messages with non-rich-text blocks | missing: Clack's composer can't hold Block Kit blocks, so none of the composer half applies yet; the message-side reads belong to the messages package |
+| `schedule_send_forwards` | `on` | gantry-v2-async-message-share-dialog `jdUv` (is_schedule_send_forwards_enabled, scheduleForwardMessage, ScheduleForwardToast) | `on`: the forward dialog's Forward is a split button whose caret ("Schedule for later") opens ScheduleSendMenu; a pick saves the forward as a scheduled draft and toasts "Message scheduled" | missing: the forward dialog (popups/actions_forward.go) has no split button or scheduled draft path yet |
+| `semantic_emoji_matching` | `on` | client-boot `O2By` export `RY`, read only by boot-shared `D72a` CustomStatusModal | `on`: in Set a status, typing picks the emoji by meaning (word runs of 4 to 1 against a 77-emoji keyword table, earliest emoji wins, 250 ms debounce, skin tone applied) until an emoji is chosen by hand; not an autocomplete change | reads it: `ui/popups/status_semantic.go` (`acrank.StatusEmoji`; `TestStatusEmoji`, `TestStatusSemanticEmoji` flips on/off/unassigned) |
 | `channel_details_agents_apps_tab` | `on` | client-boot `M/qt` export `_2`; about-channel-modal `vWNA` | on: details has "Agents & apps" and, after it, "Automations"; otherwise "Agents" only with Agentforce, channel experts or Slackbot in channels, and "Integrations" after Tabs | reads it: `ui/views/details.go` setTabs |
 | `channel_tab_overflow_right_click` | `treatment` | client-boot `mwX5` export `yG`; boot-render `E/Yw` useTabsOverflowMenuRenderer | treatment: a right-click on a row of the tab bar's overflow menu opens that tab's context menu | missing: Clack's tab bar has no overflow menu and no tab context menus |
 | `move_channel_tabs_settings` | `on` | channel settings `jf5b`; manage-channel-tabs `Wg5J` ManageChannelTabs | on: who can manage tabs is Settings' tab-permissions section; otherwise the same field heads the details Tabs tab | reads it: `ui/views/details_more.go` (Settings), `ui/views/details.go` (Tabs) |
 | `unified_file_picker` | `on` | client-boot `mwX5` export `Qk`; boot-shared `/wV5` AddTabMenu; about-channel-modal `zJdS` | with `tab_3p_files_fe_allow_add` too (not assigned here), the add-tab menu's Canvas and List become one file item opening the unified file picker (with its New badge) | not read: `tab_3p_files_fe_allow_add` is unassigned, so Slack's add-tab menu has Canvas and List, as Clack's does; Clack has no unified file picker |
-| `desktop_search_recents_read` | `on` | client-boot `PEUt` isDesktopSearchRecentsWriteEnabled | search reads recent searches | missing |
-| `desktop_search_recents_write` | `on` | client-boot `PEUt` isEnterpriseSearchMultiauthUiEnabled | search writes recent searches | missing |
-| `fe_nav_first_apply_post_processing_rules` | `treatment` | gantry-v2-async-client-boot-shared `OXCx` | treatment: the quick switcher applies post-processing rules | missing |
-| `omni_date_quick_filters` | `on` | client-boot `3D8U` export `ZP` | date quick filters | missing |
-| `omni_quick_message_results` | `on` | gantry-v2-async-client-boot-shared `OXCx` | quick message results in suggestions | missing |
+| `desktop_search_recents_read` | `on` | client-boot `PEUt` isDesktopSearchRecentsReadEnabled (`OP`), read by boot-shared `4l6z` suggestionsBlankSlateQueryHistory, `OXCx` navigationEventsToSuggestions, `jtFG` visits.list, render `zuQH` maybeLoadRecentsPrefs | on: Recent searches are the recents pref's (users.prefs.get prefs=recents, Salesforce ones left out) and Recent places are Slack's visits (visits.list, else the pref) with the session's navigation merged in; off: search.autocomplete's history and the local history | reads it: `core/search_recents.go`, `ui/popups/search_popover.go` |
+| `desktop_search_recents_write` | `on` | client-boot `PEUt` isDesktopSearchRecentsWriteEnabled (`Hp`), `lwKM` maybeRecordRecentNavigationEvent / maybeRecordRecentSearchEvent, `XtzY` recordVisitsByApi | on: places visited and searches run from the switcher are buffered and synced at most once a minute: the navigation as visits.record, the searches as users.prefs.set recents (the whole record when visits.record can't take it) | reads it: `core/search_recents.go` (hooks: `ui/host.go`, `ui/secondary.go`) |
+| `fe_nav_first_apply_post_processing_rules` | `treatment` | gantry-v2-async-client-boot-shared `1hsh` evaluateNavigationIntent, called by `jAWM` reorderSuggestionsForActiveQuery and `OXCx` | treatment: once the nav-first intent model predicts navigation, a channel you're not in (unless exact), an unfamiliar file, a help article or a workflow without frecency counts as not navigation | missing: the intent model scores Slack's Sorter feature vectors, which Clack's switcher doesn't compute; without them Slack's code answers "indeterminate" and keeps the order Clack draws |
+| `omni_date_quick_filters` | `on` | client-boot `3D8U` export `ZP`; boot-shared `oMYD` QuickFilterRow, `rs63` OmniswitcherContent (date pickers `Fc3Y`, `agO0`), `dG9z` | on: the switcher's quick filter menu has Date as a submenu (On, Before, After, Range) instead of during:, and a date modifier being typed gets a date picker | missing: Clack's switcher has no quick filter row or filter tokens (its filter button opens the results page; Slack's QuickFilterMenu toggles the row) |
+| `omni_quick_message_results` | `on` | gantry-v2-async-client-boot-shared `4l6z` suggestionsQuickMessages, `jAWM` reorderSuggestionsForActiveQuery, `rs63` SuggestionQuickMessage | on: Recent messages search your recent conversations (from_me, with_me) or an in: filter's, drawn as cards, and the places above are cut to five; off: only the open channel, the plain rows, eight places | reads it: `ui/popups/search_popover.go` |
 | `availability_prefs_section` | `on` | client-boot `fOS2` | Preferences has the Availability section | reads it: `ui/focus_mode.go:366` |
-| `emoji_skin_tone_picker_improvement` | `on` | gantry-v2-async-client-boot-shared `Zu56` | the emoji picker footer skin-tone picker improvement | missing |
-| `focus_mode_custom_duration` | `treatment` | gantry-v2-async-client-boot-render `zuQH` | treatment: focus mode takes a custom duration | missing |
+| `emoji_skin_tone_picker_improvement` | `on` | gantry-v2-async-client-boot-shared `Zu56` EmojiPickerFooter → EmojiSkinTonePicker | the skin tone popover loses its label, gets 36×32 cells tinted on hover, a tooltip on the toggle and arrow keys that move from the selected tone | reads it: `ui/popups/emoji_tone.go:98` (EmojiSkinTonePicker ported for both groups) |
+| `focus_mode_custom_duration` | `treatment` | gantry-v2-async-client-boot-render `zuQH` FocusModePopoverContent | treatment: the Duration select adds Custom, with a date button and a 30-minute time select | reads it: `ui/focus_mode.go:89` (not ported: the calendar sync start, which needs calendar_focus_sync) |
 | `miles_davis_themes` | `on` | gantry-v2-async-client-boot-shared `TU6L` export `Z` | Miles Davis themes first in Appearance | reads it: `ui/prefs_appearance.go:120` |
 | `status_improvements` | `on` | gantry-v2-async-client-boot-render `8jHN` | custom status menu improvements | reads it: `ui/popups/actions_status_api.go:113` |
-| `third_party_integrations_video_previews` | `on` | client-boot `2HRR` fileIsMeeting | third-party video files get inline previews | missing |
-| `work_objects_embedded_preview` | `on` | client-boot `hZia` isCommentSyncEnabled | work object unfurls show an embedded preview | missing |
-| `work_objects_rearrangement` | `on` | gantry-v2-async-client-boot-shared `cAEk` export `U` | work object unfurl cards use the rearranged layout | missing |
-| `custom_file_sections` | `on` | application `Uk9p` | Files has custom file sections | missing |
-| `file_trash_updates` | `on` | application `Uk9p` FileTrashNotificationButtons | file trash notification buttons | missing |
+| `third_party_integrations_video_previews` | `on` | client-boot `2HRR` isThirdPartyIntegrationsVideoPreviewsEnabled | third-party (work object) video files get previews in the file actions, the external file tab and the PDF/file viewer | missing: Clack draws no work objects and has no video player |
+| `work_objects_embedded_preview` | `on` | client-boot `hZia` isWorkObjectsEmbeddedPreviewEnabled (`ll`) | work object unfurls can open an embedded preview (iframe) flexpane | missing: Clack draws no work object unfurls |
+| `work_objects_rearrangement` | `on` | gantry-v2-async-client-boot-shared `cAEk` export `U` | work object unfurl cards use the rearranged layout | missing: Clack draws no work object unfurls |
+| `custom_file_sections` | `on` | application `Uk9p` | Files has custom file sections | missing: file sections (collections), their sidebar, Move to section and Bulk manage files aren't ported; Clack follows the off path |
+| `file_trash_updates` | `on` | client-unified-files-sidebar-view `w695` UnifiedFilesSidebarView; boot-render `zuQH` FileTrashNotificationButtons, filesDeleted | the Files sidebar always shows Deleted; Slackbot's trash notification buttons and the deleted list follow file_deleted / file_undeleted | reads it: `ui/views/files_deleted.go:99`, `ui/views/files_deleted.go:140` (the Deleted item, the file_deleted / file_undeleted refetch; not ported: FileTrashNotificationButtons) |
 | `unified_files_3p_primary_custom_sections` | `on` | client-external-file-view `baaj` PreviewUnavailable | third-party files in custom sections | reads it: `ui/views/files.go:1301` |
-| `canvas_table_of_contents` | `on` | gantry-v2-async-client-boot-shared `65wK` | canvases show a table of contents | missing |
+| `canvas_table_of_contents` | `on` | gantry-v2-async-client-boot-shared `65wK` createInitConfig (Quip feature 188, allowSlackOutline), `tshn` TableOfContentsDrawer, `foOi` QuipEmbed | canvases have Slack's table of contents at the left (two or more entries) and Quip reserves its 64px outline gutter | reads it: `ui/canvasview/toc.go:95` |
 | `lists_tabbing_navigation` | `on` | client-boot `Hm0j` isListsInLaterExperimentEnabled | Tab moves between list cells; the Accessibility pref | reads it: `ui/listview/keys.go:76` |
 | `huddle_join_from_preview` | `on` | client-boot `pSxm` export `M1` | join a huddle from its preview | missing |
 | `huddles_link_v2` | `on` | client-boot `pSxm` export `$A` | huddle links v2 | missing |
@@ -152,7 +152,7 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `agents_landing_page` | `on` | client-boot `M/qt` export `Wp` | Agents landing page | reads it: `core/rail.go:195` |
 | `show_as_agent` | `on` | client-boot `HLQ9` export `ej` | agent apps are labelled as agents | reads it: `core/badge.go:73` |
 | `slack_kit_v2_button` | `on` | gantry-v2-async-message-share-dialog `jdUv` isSlackKitV2ButtonEnabled | the share (forward) dialog's Forward button is Slack Kit's v2 Button (no 80px minimum, no hover shadow, a 4px focus halo, `content-inv-pry` text); Save Draft turns secondary, and the schedule caret joins Forward in a ButtonGroup | reads it: `ui/popups/actions_forward.go:81` (`theme/button.go`) |
-| `expand_flag_message_to_private_threads_v2` | `on` | modern.vendor `tZyZ` | "Flag message" reaches messages in private threads | missing |
+| `expand_flag_message_to_private_threads_v2` | `on` | modern.vendor `tZyZ` canAccessRoute | the admin dashboard's ROUTE_SECURITY_FLAGGED_CONTENT_THREAD | not in the desktop client (B): the admin dashboard |
 | `mpdm_default_exclude_history_clients_webapp` | `on` | gantry-v2-async-client-boot-shared `J1Xx` useDefaultExcludeHistory | with the org pref `mpdm_add_people_default_exclude_history` (enterprise.prefs.get), adding people to a DM starts on "Don’t include" history; otherwise "From today" | reads it: `ui/views/details_more.go` (org prefs: `core/enterprise_prefs.go`) |
 | `prefill_dm_canvas_removal` | `treatment` | client-boot `Rc9k` prefillDmCanvasRemovalMaybeLogExposure | only the exposure logger reads it; whether a DM's canvas is prefilled is the server's | nothing to do: no client behaviour (Clack logs no exposures) |
 | `manage_conversations_strings` | `on` | client-boot `O2By` export `Z4` | updated strings in the manage-conversations menus | missing |
@@ -163,50 +163,50 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `today_pause` | `on` | client-boot `/Qva` isTodayPauseEnabled | Today can be paused | missing |
 | `today_request_calendar_rtm_updates` | `on` | client-boot `vQYI` export `$7` | Today asks for calendar realtime updates | missing |
 | `view_header_overflow_borders` | `on` | client-list-record-details `Y95U` | view headers draw overflow borders | missing |
-| `agent_status_in_activity` | `on` | client-boot `M/qt` export `ji` | agent status in activity rows | missing |
-| `invite_slash_command_in_threads` | `on` | gantry-v2-async-client-boot-shared `7R+y` isInviteSlashCommandInThreadsEnabled | /invite works in threads | missing |
+| `agent_status_in_activity` | `on` | client-boot `M/qt` export `ji` (gantry aEhj useAgentActivityStatus, BZ5B, j9ba) | channel posts, threads, DMs and app DMs of an agent session show its status before the unread badge: Processing the spinner ("Working"), Suspended needs-attention ("Needs attention") | reads it: `core/activity_agent.go:61`, `ui/views/activity_rows.go` |
+| `invite_slash_command_in_threads` | `on` | gantry-v2-async-client-boot-shared `7R+y` isInviteSlashCommandInThreadsEnabled, read by `yX/v` isSlashCommandEnabled | `on`: /invite runs in a thread; off it fails there with "*/invite* is not supported in threads. Sorry!" before the API (the thread rule: the allowed commands, the channel ones outside DMs, is_runnable_from_thread) | reads it: `core/command.go` threadCommandOK (`TestCommandsInThreads`) |
 | `invite_slash_command_multi` | `off` | gantry-v2-async-client-boot-shared `7R+y` export `w` | off: /invite takes one person | default: in `off` Slack keeps its default, as Clack does |
-| `unarchive_channel_banner_polish` | `on` | gantry-v2-async-client-boot-render `bgYM` | the archived-channel input bar polish | missing |
+| `unarchive_channel_banner_polish` | `on` | gantry-v2-async-client-boot-render `bgYM` MessagePaneInputDisabled, `Tq8O` canUserUnarchiveChannel, `6ndL` submitUnarchive | `on`, for a viewer with UNARCHIVE_CHANNEL: "You are viewing #name, an archived channel. Unarchive it to continue the discussion." with an Unarchive link (conversations.unarchive) and no Close Channel button | reads it: `ui/joinpane.go` (core `CanUnarchive`, `Unarchive`; `TestArchivedFooterUnarchive`, `TestCanUnarchive`) |
 | `channel_topic_purpose_setting_restrict_to_channel_managers` | `on` | gantry-v2-async-client-boot-shared `xjwB` canUserSetTopicForChannelWithReasonById, `uJL7` canUserSetPurpose | topic and description edits need the SET_CHANNEL_TOPIC / SET_CHANNEL_PURPOSE grants (permissions/info), except a 1:1 DM's topic; otherwise members who can post edit them | reads it: `core/chperms.go` (the header topic's Edit, details' Topic and Description) |
 | `fe_private_public_channel_management` | `on` | gantry-v2-async-client-boot-shared `8d5P` isPrivateToPublicChannelManagementEnabled | private channels can be made public from Settings' managing-this-channel, for those allowed | missing: Clack draws no managing-this-channel section (docs/CHANNELS-AUDIT.md) |
 | `fe_private_to_public_slack_connect_and_visual_updates` | `on` | gantry-v2-async-client-boot-shared `fNVg`; archive-channel-modal `ZnI0` | the convert-to-public modal's Slack Connect copy and visual updates | missing: Clack has no convert-to-public modal |
 | `list_channel_tab_show_view_name_fe` | `on` | client-boot `mwX5` export `uT`; boot-shared `83sY` useTabLabel | a list tab without its own label reads "<list>: <default view>" | reads it: `ui/channel.go` withListViewName (the view's name: `core/browse.go` Tabs) |
 | `lists_channel_tabs_default_view` | `on` | client-boot `mwX5` export `Wy`; boot-shared `kXBb`, `K7k9` | a list opened from its channel tab starts on the tab's default view (listsChannelTabDefaultRefineViewId) | reads it: `ui/mount_features_lists.go` listTabView |
 | `omni_merged_follow_ups` | `control` | client-boot `3D8U` export `$z` | control: follow-ups not merged | default: in `control` Slack keeps its default, as Clack does |
-| `search_file_channel_messages` | `on` | gantry-v2-async-client-boot-shared `lH2I` mapStateToProps | search covers file channel messages | missing |
-| `srp_card_explore` | `on` | gantry-v2-async-client-boot-shared `+zqw` isSrpCardExploreExperimentEnabled | search results page explore cards | missing |
-| `work_objects_message_search_xp_v2` | `on` | client-boot `PEUt` isWorkObjectsMessageSearchXpV2Enabled | work objects in message search | missing |
-| `defer_notification_3p_streaming` | `on` | gantry-v2-async-client-boot-render `zuQH` | notifications for streaming agent messages wait until done | missing |
+| `search_file_channel_messages` | `on` | gantry-v2-async-client-boot-shared `lH2I` BaseMrkdwnChannel mapStateToProps, render `zuQH` renderFileChannelSlug | on: a conversation that is a canvas's or list's file channel reads as that canvas or list, when the file is loaded | missing: needs Slack's file store; Clack keeps no file metadata, so it draws the channel name, as Slack does for a file it hasn't loaded |
+| `srp_card_explore` | `on` | gantry-v2-async-client-boot-shared `+zqw` `Ui`, `Wzwx` SearchResult (SearchMessageClampedBody, SearchReactionsTooltip); search-view `UK4f` SearchResultsCardDensitySwitcher (employees only) | on: the results card's density design: the body up to 132px with a fade and Show more, at most two attachments, reactions on the card | missing: Clack's card is the one-line card measured 2026-11-08; the density card needs the card's block renderer |
+| `work_objects_message_search_xp_v2` | `on` | client-boot `PEUt` `YR`; `rZ6M` (search.modules.workObjects), `6/pc`; search-view `UK4f` UnifiedSearchRefinementWorkObject, WorkObjectResults, WorkObjectLayoutToggle | on: a message search also asks search.modules.workObjects, and each app whose work objects matched gets a source with its results (dense/detailed toggle; Most relevant, Newest, Oldest) | missing: needs work object result cards; Clack draws no work object unfurls yet |
+| `defer_notification_3p_streaming` | `on` | gantry-v2-async-client-boot-render `zuQH` maybeShowNotification, messageChanged | notifications for streaming app messages wait until the stream ends | reads it: `ui/backend.go:515`, `ui/backend.go:598` (core marks the settling update StreamDone) |
 | `focus_mode_music` | `control` | client-boot `O2By` export `GM` | control: no focus music | default: in `control` Slack keeps its default, as Clack does |
 | `force_native_notifications` | `off` | gantry-v2-async-prefs-dialog `AM7V` WindowsAppearancePref | off: no forced native notifications (Windows appearance) | default: in `off` Slack keeps its default, as Clack does |
-| `limit_user_profile_characters` | `on` | gantry-v2-async-shared-js_modern_compone `oA8O` limitUserProfileCharactersIsOn | profile fields are length-limited | missing |
-| `profile_photo_comp` | `on` | gantry-v2-async-client-boot-shared `eNqz` | profile photo crop pane | missing |
+| `limit_user_profile_characters` | `on` | gantry-v2-async-shared-js_modern_compone `oA8O` limitUserProfileCharactersIsOn | profile fields are length-limited | missing: it limits Slack's Edit profile form (EditMemberProfile), which Clack doesn't have (Edit profile is a stand-in) |
+| `profile_photo_comp` | `on` | gantry-v2-async-client-boot-shared `eNqz` | profile photo crop pane | missing: Clack has no Edit profile photo panes (EditProfileUploadPane / CropPane) |
 | `animate_images_on_window_focus` | `off` | gantry-v2-async-client-boot-shared `iJ/l` | off: animated images keep the default animation rules | default: in `off` Slack keeps its default, as Clack does |
-| `looping_video_option` | `on` | gantry-v2-async-client-boot-shared `fIJO` isLoopingVideoOptionEnabled | video players offer a Loop option | missing |
-| `media_playback_speed_1_75x` | `on` | gantry-v2-async-client-boot-shared `W4bO` export `q` | media players offer 1.75x playback speed | missing |
+| `looping_video_option` | `on` | gantry-v2-async-client-boot-shared `fIJO` isLoopingVideoOptionEnabled | video players offer a Loop option | missing: Clack has no video player |
+| `media_playback_speed_1_75x` | `on` | gantry-v2-async-client-boot-shared `W4bO` export `q` | media players offer 1.75x playback speed | missing: Clack has no audio or video player |
 | `third_party_videos_inline_player` | `off` | client-boot `2HRR` isThirdPartyIntegrationsVideoPreviewsEnabled | off: third-party videos open outside, no inline player | default: in `off` Slack keeps its default, as Clack does |
-| `wo_comment_sync_client_xp` | `on` | client-boot `hZia` isWorkObjectsFileSummaryRecyclingEnabled | comments on work objects sync into the unfurl | missing |
-| `work_objects_refresh_timestamp` | `on` | client-boot `hZia` isWorkObjectBrowserPdfViewerEnabled | work object unfurls show when they were refreshed | missing |
-| `native_html_rendering` | `on` | client-boot `Ezxw` isNativeHtmlRenderingEnabled | HTML files render natively | missing |
-| `native_markdown_rendering` | `on` | client-boot `ry7y` isNativeMarkdownRenderingEnabled | Markdown files render natively | missing |
-| `serverside_markdown_rendering` | `on` | gantry-v2-async-client-boot-shared `v75j` isServersideMarkdownRenderingEnabled | Markdown rendered server-side | missing |
-| `spreadsheet_xml_rendering` | `on` | gantry-v2-async-client-boot-shared `GpJR` isSpreadsheetXmlRenderingEnabled | spreadsheet XML renders | missing |
-| `canvas_blockquote_layout` | `on` | client-boot `XPo1` formatShortcut | canvas blockquote layout | missing |
-| `canvas_comment_only_comment_history` | `on` | gantry-v2-async-client-canvas-activity-h `76nt` | comment history in comment-only canvases | missing |
-| `canvas_comment_only_mode` | `on` | application `Uk9p` | canvases can be comment-only | missing |
-| `canvas_copy_section` | `on` | gantry-v2-async-client-boot-shared `UyiO` isCanvasSmartCardsEnabled | canvas sections can be copied | missing |
-| `canvas_focus_keep_caret` | `on` | gantry-v2-async-client-boot-shared `65wK` | focus keeps the caret | missing |
-| `canvas_self_lockout_speedbump` | `on` | gantry-v2-async-shared-js_modern_compone `mavC` CanvasSelfLockoutSpeedBump | warn before removing your own canvas access | missing |
-| `canvas_shared_link_detection` | `on` | gantry-v2-async-client-boot-shared `65wK` | shared link detection while editing | missing |
-| `canvas_size_limit_save_banner` | `on` | gantry-v2-async-client-boot-shared `foOi` isCanvasSizeLimitSaveBannerEnabled | size-limit save banner | missing |
-| `canvas_version_document_mismatch` | `treatment` | gantry-v2-async-client-boot-shared `vGW/` useShouldShowCanvasVersionHistory | version history mismatch handling | missing |
-| `slackified_checkbox` | `on` | gantry-v2-async-client-boot-shared `65wK` | Slack-styled checkboxes in canvases | missing |
+| `wo_comment_sync_client_xp` | `on` | client-boot `hZia` isCommentSyncEnabled (`Y`) | comments on work objects sync into the card and its flexpane (work_object_comments events) | missing: Clack draws no work object unfurls |
+| `work_objects_refresh_timestamp` | `on` | client-boot `hZia` isWorkObjectsRefreshTimestampEnabled (`Ym`) | work object cards show when they were last refreshed | missing: Clack draws no work object unfurls |
+| `native_html_rendering` | `on` | client-boot `Ezxw` isNativeHtmlRenderingEnabled | HTML files render natively | missing: Slack renders HTML files in a sandboxed iframe (HtmlFileViewer); Clack never renders untrusted HTML in-process |
+| `native_markdown_rendering` | `on` | client-boot `ry7y` isNativeMarkdownRenderingEnabled | Markdown files render natively | missing: the MarkdownViewer draws into the same HTML surface iframe, and Clack has no document file viewer |
+| `serverside_markdown_rendering` | `on` | gantry-v2-async-client-boot-shared `v75j` isServersideMarkdownRenderingEnabled | Markdown rendered server-side | missing: it changes where the MarkdownViewer's HTML comes from (see native_markdown_rendering) |
+| `spreadsheet_xml_rendering` | `on` | gantry-v2-async-client-boot-shared `GpJR` isSpreadsheetXmlRenderingEnabled | spreadsheet XML renders | missing: Clack has no spreadsheet viewer (Slack opens it in a new window) |
+| `canvas_blockquote_layout` | `on` | client-boot `M6vS` zk, gantry-v2-async-client-boot-shared `foOi` InsertionToolbarFormattingMenu / InsertionToolbarMenu, `c9bJ` QuipFloatingFormattingBar (Quip feature 197) | the blockquote is a layout: its own floating-bar button, out of the block-style and Aa menus, into Insert | reads it: `ui/canvasview/edit.go:1224`, `ui/canvasview/edit.go:1346`, `ui/canvasview/edit.go:1417` |
+| `canvas_comment_only_comment_history` | `on` | gantry-v2-async-client-canvas-activity-history-view `76nt` QuipActivityHistoryVersionRow | comment rows in a canvas's version history | B: Clack has no canvas version history or comments |
+| `canvas_comment_only_mode` | `on` | gantry-v2-async-client-boot-shared `CQK3` QuipAccessIndicator, `OJGk` useGetAccessOptions, `c9bJ`, application `Uk9p`, client-boot `2m30` canAddReaction | canvases can be comment-only: "Comment only" and Request Comment Access, a Can comment access level, a comment toolbar | reads it: `ui/canvasview/access.go:82` (the indicator and its popover). Can comment isn't offered: canvases.access.set takes read, write and owner only; the comment toolbar needs comments |
+| `canvas_copy_section` | `on` | gantry-v2-async-client-boot-shared `UyiO` isCanvasCopySectionGroupOn, `HHTx` getCopyObjectMenuItemTemplate | Copy section in every section's gutter menu (off: only an embedded object's) | B: Clack has no section gutter menu |
+| `canvas_focus_keep_caret` | `on` | gantry-v2-async-client-boot-shared `65wK` createInitConfig (Quip feature 9210, restoreCaretOnFocus) | the canvas's caret comes back where it was when the document regains focus | B: Clack edits one block in its own editor, which keeps its caret; there is no document-wide contenteditable to lose it |
+| `canvas_self_lockout_speedbump` | `on` | gantry-v2-async-shared-js_modern_components_share-dialogs_canvas_canvas-share-dialog_tsx `mavC` CanvasSelfLockoutSpeedBump | warn before a share-dialog change removes or lowers your own access | B: Clack's share menu only adds access; there is no access management to lock yourself out with |
+| `canvas_shared_link_detection` | `on` | gantry-v2-async-client-boot-shared `65wK` createInitConfig (Quip feature 9212, useSharedLinkDetection) | Quip linkifies typed URLs with the shared link detector | B: Quip's own linkifier; Clack's canvas editor is the composer's, and canvases.edit's markdown makes the links |
+| `canvas_size_limit_save_banner` | `on` | gantry-v2-async-client-boot-shared `foOi` isCanvasSizeLimitSaveBannerEnabled, OfflineSystemMessage | a save Quip rejects as "Document too large" gets the sticky size-limit banner (off: "We’re experiencing issues saving edits") | missing: canvases.edit's error for an oversized canvas isn't documented, and Clack has no QuipSystemMessage banner (failed saves toast) |
+| `canvas_version_document_mismatch` | `treatment` | gantry-v2-async-client-boot-shared `vGW/` useShouldShowCanvasVersionHistory | version history shows only for the canvas the window's version belongs to | B: Clack has no canvas version history |
+| `slackified_checkbox` | `on` | gantry-v2-async-client-boot-shared `65wK` createInitConfig (Quip feature 178, useSlackCheckboxes), canvas-controller CSS `li.slackified-checkbox` | Slack's checklist checkboxes (off: the browser's own) | reads it: `ui/canvasview/render.go:610`, `ui/canvasview/render.go:666` |
 | `list_full_version_restore` | `off` | client-boot `Hm0j` isListVersionRestoreEnabled | off: no full version restore | default: in `off` Slack keeps its default, as Clack does |
-| `list_template_conversions` | `on` | client-boot `Hm0j` isListsSupervisorEnabledForList | list template conversions | missing |
-| `lists_export_enrichment` | `on` | gantry-v2-async-client-boot-shared `57SI` | richer list export | missing |
-| `lists_file_backed_templates` | `on` | client-boot `Hm0j` isListTemplateConversionsEnabled | file-backed list templates | missing |
-| `lists_grid_todos` | `on` | client-boot `Hm0j` isListsAutomationsEntrypointsEnabled | grid to-dos | missing |
-| `lists_sub_tasks` | `on` | client-boot `Hm0j` isListsNewTodoWorkflowsEnabled | list sub-tasks | missing |
+| `list_template_conversions` | `on` | client-boot `Hm0j` isListTemplateConversionsEnabled / isListTemplateCreationPermitted, gantry-v2-async-client-boot-shared `57SI` MoreActionsMenu | More actions has Convert to a template / Revert template to a list | missing: also needs the CREATE_LIST_TEMPLATE feature permission, which Clack doesn't load |
+| `lists_export_enrichment` | `on` | gantry-v2-async-client-boot-shared `57SI` MoreActionsMenu, DownloadModal | More actions' Download opens a modal (CSV or JSON; archived items, threads, attachments); off: Download CSV ▸ with or without archived items | reads it: `ui/listview/more.go:101` |
+| `lists_file_backed_templates` | `on` | client-boot `Hm0j` isListsFileBackedTemplatesEnabled, gantry-v2-async-client-boot-shared `o9il` fetchTemplates | list templates come from template_files / starter_template_files (the sales tracker replaces the contact trackers) | reads it: `core/lists.go:794` |
+| `lists_grid_todos` | `on` | client-boot `Hm0j` isListsGridTodosEnabled / isListsGridTodosEnabledForList, gantry-v2-async-client-boot-shared `K7k9` (the grid), `fuYI` / `wr4u` (new lists), `KXel` DateToken, `vhOn` column editors | to-do lists in the grid: completed items hidden per view, new lists in to-do mode, due-date tokens | reads it: `ui/listview/view.go:785` (completed items), `ui/listview/picker.go:481` (a tab's new list); the due-date tokens, column editors and Edit view switch aren't drawn |
+| `lists_sub_tasks` | `on` | client-boot `Hm0j` isListsSubTasksEnabled, gantry-v2-async-client-boot-shared `K7k9` ThreadIndicator / ListPrimaryColumnActions / BoardLaneFooter, client-list-record-details `2kGA` | subtasks: their rows and counts, the new thread indicator | missing: Clack loads subtasks but doesn't draw them |
 | `huddles_alone_timeout` | `on` | client-boot `pSxm` export `JQ` | leave a huddle after being alone | missing |
 | `huddles_av_button_permission_handling` | `on` | client-boot `pSxm` export `yc` | A/V buttons handle OS permissions | missing |
 | `huddles_awareness_timestamp` | `on` | client-boot `pSxm` export `gG` | huddle awareness shows a timestamp | missing |
@@ -257,7 +257,9 @@ Each package is one area, for one agent. "Files" are where the work lands; sever
 ### Messages (12)
 
 - Files: internal/ui/messages/, internal/ui/richview/, internal/richtext/, internal/ui/blockkit/
-- To do (12): `system_messages_redesign_m1`, `flat_message_heading_scale`, `unread_thread_indication_in_replybar`, `block_kit_revamp_blocks`, `forward_message_card`, `truncated_url_hover_card`, `a11y_underline_button_link`, `agent_identity_overrides`, `bk_table_action_cells`, `giphy_fixed_width`, `message_actions_truncate`, `expand_flag_message_to_private_threads_v2`
+- Done (branch exp-messages, 2026-11-10): `system_messages_redesign_m1`, `flat_message_heading_scale`, `unread_thread_indication_in_replybar`, `message_actions_truncate`, `agent_identity_overrides`; `reskin_custom_responses`'s gate dropped (Slack no longer reads it).
+- To do (4): `forward_message_card` (the off look), `truncated_url_hover_card` (needs the links' URL tooltip first), `block_kit_revamp_blocks` (needs the prototype block), `bk_table_action_cells` (needs the data_table block); `giphy_fixed_width` matches for GIFs only because Clack shrinks every image.
+- Not messages: `a11y_underline_button_link` (search and profile popups), `expand_flag_message_to_private_threads_v2` (the admin dashboard, B).
 
 ### Direct messages and group DMs (5)
 
@@ -280,8 +282,8 @@ Each package is one area, for one agent. "Files" are where the work lands; sever
 ### Activity (9)
 
 - Files: internal/ui/views/activity*.go, internal/core/activity_*.go
-- To do (6): `activity_entry_layout_revisions_2`, `activity_inbox_remove_persistent_detail_panel`, `activity_automations_only`, `activity_bot_item_type_reads`, `exclude_automations_filter`, `agent_status_in_activity`
-- Clack reads already (3): `activity_inbox`, `activity_global_settings`, `slackbot_unread_v2`
+- To do (0); left: the pre-revision rows (Pck2 `ActivityRowContentDense` / `ActivityRowContentDetailed`) for `activity_entry_layout_revisions_2` off (docs/ACTIVITY.md "Experiments")
+- Clack reads already (9): `activity_inbox`, `activity_global_settings`, `slackbot_unread_v2`, `activity_entry_layout_revisions_2`, `activity_inbox_remove_persistent_detail_panel`, `activity_automations_only`, `activity_bot_item_type_reads`, `exclude_automations_filter`, `agent_status_in_activity` (branch exp-activity)
 
 ### Later (2)
 
@@ -292,8 +294,8 @@ Each package is one area, for one agent. "Files" are where the work lands; sever
 ### Composer and autocomplete (14)
 
 - Files: internal/ui/composer/, internal/acrank/, internal/core/command.go, internal/core/frecency.go
-- To do (8): `autocomplete_affinity_ml_model`, `updated_scheduled_sends_desktop`, `ia4_slash_command_fe`, `portable_content_composer`, `schedule_send_forwards`, `semantic_emoji_matching`, `invite_slash_command_in_threads`, `unarchive_channel_banner_polish`
-- Clack reads already (5): `autocomplete_flannel_fuzzy_match_passthrough`, `autocomplete_demote_flannel_passthrough_rltv_exact_match`, `autocomplete_frequently_used_emojis_frecency`, `composer_smart_symbols`, `emoji_exact_match_boost`
+- To do (2): `portable_content_composer` (needs Block Kit blocks inside the composer), `schedule_send_forwards` (the forward dialog's schedule button)
+- Clack reads already (11): `autocomplete_flannel_fuzzy_match_passthrough`, `autocomplete_demote_flannel_passthrough_rltv_exact_match`, `autocomplete_frequently_used_emojis_frecency`, `composer_smart_symbols`, `emoji_exact_match_boost`, `autocomplete_affinity_ml_model`, `updated_scheduled_sends_desktop`, `ia4_slash_command_fe`, `semantic_emoji_matching` (the status modal), `invite_slash_command_in_threads`, `unarchive_channel_banner_polish` (the archived footer)
 
 ### Threads (1)
 
@@ -309,35 +311,38 @@ Each package is one area, for one agent. "Files" are where the work lands; sever
 ### Search and the switcher (10)
 
 - Files: internal/ui/popups/search_*, internal/core/search*.go
-- To do (9): `search_autocomplete_promote_exact_name_matches`, `desktop_search_recents_read`, `desktop_search_recents_write`, `fe_nav_first_apply_post_processing_rules`, `omni_date_quick_filters`, `omni_quick_message_results`, `search_file_channel_messages`, `srp_card_explore`, `work_objects_message_search_xp_v2`
+- To do (5): `fe_nav_first_apply_post_processing_rules`, `omni_date_quick_filters`, `search_file_channel_messages`, `srp_card_explore`, `work_objects_message_search_xp_v2`
+- Clack reads already (4): `search_autocomplete_promote_exact_name_matches`, `desktop_search_recents_read`, `desktop_search_recents_write`, `omni_quick_message_results`. It also reads `search_explore_freshness_signals` (not assigned, so More's Exclude archived stays hidden, as in Slack).
 
 ### Preferences, status and focus (10)
 
 - Files: internal/ui/prefs_*.go, internal/ui/popups/actions_status*.go, internal/ui/focus_mode.go, the emoji picker
-- To do (5): `emoji_skin_tone_picker_improvement`, `focus_mode_custom_duration`, `defer_notification_3p_streaming`, `limit_user_profile_characters`, `profile_photo_comp`
-- Clack reads already (3): `availability_prefs_section`, `miles_davis_themes`, `status_improvements`
+- To do (2): `limit_user_profile_characters`, `profile_photo_comp` (both need Slack's Edit profile form)
+- Clack reads already (6): `availability_prefs_section`, `miles_davis_themes`, `status_improvements`, `emoji_skin_tone_picker_improvement`, `focus_mode_custom_duration`, `defer_notification_3p_streaming`
 
 ### Unfurls, work objects and media (9)
 
 - Files: internal/ui/messages/ (attachments, unfurls), internal/core/preview.go, internal/ui/hovercard/
-- To do (7): `third_party_integrations_video_previews`, `work_objects_embedded_preview`, `work_objects_rearrangement`, `looping_video_option`, `media_playback_speed_1_75x`, `wo_comment_sync_client_xp`, `work_objects_refresh_timestamp`
+- To do (7): `third_party_integrations_video_previews`, `work_objects_embedded_preview`, `work_objects_rearrangement`, `looping_video_option`, `media_playback_speed_1_75x`, `wo_comment_sync_client_xp`, `work_objects_refresh_timestamp`. They wait on two things Clack lacks: work object unfurls (entity cards and their flexpane) and an audio/video player.
 
 ### Files (7)
 
 - Files: internal/ui/views/files.go, internal/core/files_view.go
-- To do (6): `custom_file_sections`, `file_trash_updates`, `native_html_rendering`, `native_markdown_rendering`, `serverside_markdown_rendering`, `spreadsheet_xml_rendering`
-- Clack reads already (1): `unified_files_3p_primary_custom_sections`
+- To do (5): `custom_file_sections`, `native_html_rendering`, `native_markdown_rendering`, `serverside_markdown_rendering`, `spreadsheet_xml_rendering` (the four viewers need a document file viewer; HTML also a sandboxed web view)
+- Clack reads already (2): `unified_files_3p_primary_custom_sections`, `file_trash_updates`
 
 ### Canvases (11)
 
 - Files: internal/ui/canvasview/, internal/canvas/
-- To do (11): `canvas_table_of_contents`, `canvas_blockquote_layout`, `canvas_comment_only_comment_history`, `canvas_comment_only_mode`, `canvas_copy_section`, `canvas_focus_keep_caret`, `canvas_self_lockout_speedbump`, `canvas_shared_link_detection`, `canvas_size_limit_save_banner`, `canvas_version_document_mismatch`, `slackified_checkbox`
+- Clack reads (4): `canvas_table_of_contents`, `canvas_blockquote_layout`, `canvas_comment_only_mode`, `slackified_checkbox` (branch exp-canvas-lists)
+- To do (1): `canvas_size_limit_save_banner` (needs canvases.edit's too-large error and the QuipSystemMessage banner)
+- Read, but they gate Quip editor or canvas surfaces Clack doesn't have (6): `canvas_comment_only_comment_history`, `canvas_copy_section`, `canvas_focus_keep_caret`, `canvas_self_lockout_speedbump`, `canvas_shared_link_detection`, `canvas_version_document_mismatch`
 
 ### Lists (7)
 
 - Files: internal/ui/listview/, internal/lists/
-- To do (5): `list_template_conversions`, `lists_export_enrichment`, `lists_file_backed_templates`, `lists_grid_todos`, `lists_sub_tasks`
-- Clack reads already (1): `lists_tabbing_navigation`
+- To do (2): `list_template_conversions` (the CREATE_LIST_TEMPLATE permission), `lists_sub_tasks` (subtask rows)
+- Clack reads already (4): `lists_tabbing_navigation`, `lists_export_enrichment`, `lists_file_backed_templates`, `lists_grid_todos` (the last three: branch exp-canvas-lists; `lists_grid_todos` in part)
 
 ### Huddles (17)
 

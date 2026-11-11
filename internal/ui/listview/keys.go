@@ -509,7 +509,7 @@ func (v *View) cellKey(gtx layout.Context, d *core.ListDoc, m kbMode, k cellKeyK
 		return
 	}
 	if k == keyMetaEnter {
-		if col.Type == lists.Link && f != nil && len(f.Link) == 1 && v.act.OpenURL != nil {
+		if col.Type == lists.Link && f != nil && len(f.Link) > 0 && v.act.OpenURL != nil {
 			v.act.OpenURL(f.Link[0].OriginalURL)
 		}
 		return
@@ -1285,7 +1285,7 @@ func pasteEdit(rec string, c *lists.Column, s string) (lists.Edit, bool) {
 			e.Clear = true
 			break
 		}
-		e.Link = &lists.LinkValue{OriginalURL: t, DisplayAsURL: true}
+		e.Link = &lists.LinkValue{OriginalURL: t} // I6yI d: display_as_url false
 	default:
 		return e, false
 	}

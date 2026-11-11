@@ -87,6 +87,12 @@ func (e *Editor) command(gtx layout.Context, k key.Event) {
 	if short && e.shortcut(gtx, k.Name, shift, mods.Contain(key.ModAlt)) {
 		return
 	}
+	if (k.Name == key.NameReturn || k.Name == key.NameEnter) && short && shift && e.Snippets {
+		// MessageInput.onEnter: ⌘⇧Enter (Ctrl+Shift+Enter) with
+		// enableSnippetCreation opens the snippet dialog with the message
+		e.emit(EvSnippet)
+		return
+	}
 	switch k.Name {
 	case key.NameReturn, key.NameEnter:
 		if e.anchor == e.caret {

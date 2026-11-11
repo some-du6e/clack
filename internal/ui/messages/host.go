@@ -50,6 +50,15 @@ type ListOpener interface {
 	OpenListLink(url string) bool
 }
 
+// PaneBack is optional: the back stack of the view container being laid
+// out (Slack's view.prev, which the split view keeps when it navigates in
+// place). While PaneBack reports true the thread header draws Slack's
+// FlexpaneBackButton, and a click calls GoPaneBack.
+type PaneBack interface {
+	PaneBack() bool
+	GoPaneBack()
+}
+
 // ListAdder is optional: the ui root's "Add to list…" dialog for a
 // message (Slack's createActionAddToList, AddToListDialog).
 type ListAdder interface {
@@ -106,7 +115,20 @@ var (
 	styles   = map[*text.Shaper]*styleEntry{}
 )
 
-func styleFor(h Host) *richview.Style { return styleForTheme(h.Theme(), h.Images()) }
+func styleFor(h Host) *richview.Style {
+	st := styleForTheme(h.Theme(), h.Images())
+	if app := h.Core(); app != nil {
+		st.SetFlatHeadings(flatHeadings(app))
+	}
+	return st
+}
+
+// flatHeadings is Slack's cQrd WZ, which Header (/WQN) reads for
+// p-header_block--flat_scale: flat_message_heading_scale on, or
+// portable_content_composer's treatment.
+func flatHeadings(app *core.App) bool {
+	return app.Experiment("flat_message_heading_scale") == "on" || app.Experiment("portable_content_composer") == "treatment"
+}
 
 func styleForTheme(th *theme.Theme, images *imgcache.Cache) *richview.Style {
 	uiExt = theme.UIExtents(th.Shaper)

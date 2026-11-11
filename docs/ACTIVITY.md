@@ -360,10 +360,13 @@ open_in_home, open_in_split_view, open_in_new_window. New in Clack:
 - Copy link: in the inbox it's the message's link. Clack showed the DMs
   tab's Copy ▸ Copy name / Copy link submenu; that and its Copy huddle
   link are the DMs tab's, which Clack's Activity isn't.
+- Open in split view (after Open in home, not in Simplified layout
+  mode): the thread or the channel in the split view, with the "Ctrl Alt
+  Click" / "⌘ Opt Click" hint; that modifier click on a row does the same
+  (GMkG maybeOpenInSurface). See docs/SPLIT-VIEW.md.
 - **Left out:** Summarize thread (needs
   `ACCESS_SLACK_AI_CHANNEL_THREAD_SUMMARIES`, Slack AI, which the account
-  lacks); Open in split view and Open in new window (Clack has neither a
-  split view nor a second window).
+  lacks); Open in new window (Clack has no second window).
 
 **Clear all, offline, saved views.** `activity_clear_all_completed` with
 an undo_key raises `ActivityClearAllToast` (bottom right):
@@ -524,25 +527,167 @@ activity-vip-sort, activity-keyboard-focus and activity-new-activity.
 The `section` and `mark-as-important-filled` glyphs are Slack's own paths
 (internal/ui/icons/activity.go).
 
+## Experiments, filters and tabs (2026-11-10, branch `exp-activity`)
+
+Read from Slack's public CDN build `4d0c78085232` (the experiments
+inventory's: `client-boot.cfcc6393f5167d58`, `gantry-v2-async-client-boot-render.8874b058602593e9`,
+`gantry-v2-async-client-boot-shared.0af4dc31fb50c53b`, the inbox and empty
+view chunks, `client-boot-styles`), no cookie. Nothing was opened in a
+live Slack client and no experiment was overridden on the account; every
+group below is tested by forcing it in core over internal/fakeslack.
+The account has all six `on` (experiments.getByUser, 2026-11-10), which
+are Clack's defaults too (core/sidebar_rules.go).
+
+**The getters** (client-boot 5Ns/, core/activity_agent.go). Every one is
+behind `activity_inbox`; unassigned reads as off (getGroupForUser null):
+`xi` activity_entry_layout_revisions_2, `Bb`
+activity_inbox_remove_persistent_detail_panel (also needs kl02 W7
+isNestedSecondaryViewEnabled: nested_secondary_view on, agentic_ia off,
+not the BBM mode), `zK` activity_bot_item_type_reads, `LS`
+activity_automations_only, `UK` exclude_automations_filter;
+agent_status_in_activity is M/qt `ji`, not behind the inbox.
+
+**Filter menu** (vQqF useActivityFilterOptions, lCwf ActivityFilterByMenu,
+g7lN labels, sTqq lists, /7yB icons). The types are Unreads, DMs (while
+DMs show in Activity), Mentions, Threads, Channels set to "all new posts",
+Reactions, Invitations, Apps, Reminders (while reminders do); the
+additional filters VIP, Cleared items, "Exclude automations" (`apps`, with
+zK), "Automations only" (`apps`, with LS), "Specific channel or section".
+With UK the two automation rows go and Unreads leads the additional
+filters. On the All tab and the default views (their bar has the Unreads
+button) Unreads isn't listed. Rules: after Unreads and before the
+additional filters (with UK only between the types and the additional
+filters); "Filter by entry type" over the first type when Unreads is in
+the list (13px content-ter, 16px in, 8px under), "Additional Filters" under
+the last rule. The list is ceil((entries + 1, or 1.85 with Unreads) ×
+28)px, clipping. With UK the menu's top has "Notifications from" (13px
+content-ter) over a BasicSelect (medium, the menu's width): People, apps,
+and agents / People only / Apps and agents only (lCwf ep, m+ho
+onSourceChange): filterExcludeAutomationsSelected /
+filterAutomationsOnlySelected, so activity.feed gets exclude_automations /
+automations_only (eP2o); People only disables Apps, Apps and agents only
+DMs and Reminders (sTqq pP / Fe: content-ter, the checkbox base-ter, no
+clicks), and choosing one drops those types and widens a partial mention
+pick to all four. The 2026-11-09 live audit (docs/VIEWS-AUDIT.md) didn't
+record the select; the current build draws it in the account's group.
+
+**Mention sub-filters** (sTqq o$). Mentions' caret ("Toggle mention
+sub-filters", 2px padding, the 20px caret turned over while open) lists
+@{your name}, @channel, @user-group, keyword under it, 44px in, without an
+icon; not under Apps and agents only (eI). Mentions checks all four (or
+none), a sub-filter flips alone, Mentions shows the dash while some are
+on; the "Filters (n)" count counts each (3x6A ug). The feed's types are
+Ku1y's: at_user and unjoined_channel_mention, at_channel and at_everyone,
+at_user_group, keyword; a saved view keeps RmAw's entry types (at_user;
+at_channel, at_everyone; at_user_group; keyword) and comes back through
+sTqq G$ as sub-filters. A suggested Mentions view stores the whole type
+(the list mentions too) until a reload maps it.
+
+**"In" picker** (IKpm ActivityFilterBySpecific, ActivityFilterSearchSelect;
+m+ho tn / ts). "Specific channel or section" turns on the view's
+showFilterIn: the In pill after the filter button (p-refine_button
+c-filter-pill: 32px, 8px in, up to 109px, 13px bold, a caret) opens at
+once. It reads "In", "In: {section}" after the section's emoji or icon,
+"In: {conversation}", or "In {n} places"; pressed on the All tab while it
+names any. Its popover (280px, the "Ex. #project-unicorn" search, 32px rows
+with checkboxes, 25px headings) lists what's picked, "Clear all" past one,
+"Recent" (the conversation last open and its section, wv6G PA / YE) and,
+for a query, the matching sections and conversations (up to 150). A pick
+toggles channel_ids / channel_section_ids; closing it with nothing picked
+turns the picker off. A saved view naming channels or sections starts
+with it on (RY04). In "Create a new view" it is the full-width "Channel or
+section…" field under "In" (fNIs).
+
+**Create a new view** (fNIs ActivityAddTabContent, lCwf ADD_TAB). With UK
+"Notifications from" and the select over "Filter by"; the grid lists the
+sub-filters after Mentions (29px in, no icon) unless Apps and agents only;
+rows the source disables are content-ter.
+
+**Tabs** (GuYW, E/Yw DraggableDroppableTabs, 4gYA, P0K2's reducer).
+Every view, the default ones too, sorts by position as strings (All
+first; ties in activity.views' order). Badges are the tabs' unread counts
+(3x6A cR) from client.counts' and badge_counts_updated's activity_v2
+(core/activity_badges.go): with xi only All, a themed dot (the 16px circle
+scaled to .4445, 8px after); without, All's themed pill (18px, 0 9px, 12px
+bold) and the default views' counts (13px content-ter). Without xi the
+DMs, Mentions and Threads tabs turn to their icons below 60 + 90 per
+default view shown + 80 with any custom one + 36px (20px more to return),
+the name or "{n} unread DMs" in their tooltips. Every tab but All drags:
+half opacity, a copy at the pointer (1px otl-ter, radius 6, base-pry, 0 4px
+12px theme-surf-sec), a 2px base-inv-hgl-1 bar on the left of the tab it
+goes before (the last tab: its right over its right 40%). The drop is
+calculateDropIndex and 4gYA R on the views list (the tabs' indexes applied
+to it, as Slack does), every position numbered again, then
+activity.views.update {view_id, sort, density, next_view_id} (+9Gp
+isAutoSave; "" when it went last).
+
+**Layout revisions** (xi). On: the multi-line and single-line rows and
+their status slot (ActivityRowContentStatusIndicatorWithResolvedReply), no
+day divider over the first row (Eojr eX v), the VIP boundary's divider
+gone, a 16px spacer before "Everything else" (e0), the toggle's tooltips
+"Multi-line view" / "Single-line view" above it (FgHy; with
+activity_global_settings off and xi off "View as detailed / dense", with
+it "Detailed / Dense view", below), ReactionContent "Reacted {emoji} to:" /
+"Reacted to:". Off: "You:" before a reacted message (QTZf), one-line
+messages (/ad9), a divider over a first row from another day and at the
+VIP boundary (unless today), the tab badges and icon-only strip above.
+
+**Detail panel** (Bb; ui/views/activity_panel.go). On: the inbox is Primary at
+the full width and an opened item a secondary view beside it. Off: the
+whole page sits in the Sidebar container (the DMs tab's column: 38%, 300
+to 640px) with its own colours, and Primary always shows something: the
+item, or ActivityEmptyView "Select a notification to view the details."
+(15px/22px content-ter, centred, up to 320px).
+
+**Agent status** (aEhj useAgentActivityStatus, j9ba, Opxd, j9If, BZ5B).
+Channel posts, threads, DMs and app DMs of a conversation with an
+agent_session or code_channel, or of a thread, show the session's status
+ahead of everything in the status slot: Processing is the 16px spinner
+("Working"), Suspended needs-attention ("Needs attention"). A thread's is
+its root message's agent_session, a conversation's its properties'; Processing
+lapses at date_status_processing_expire. Slack's live busy signals
+(assistant status, streaming messages) and the Slackbot DM's sessions
+aren't in Clack.
+
+**Live updates** (sD/F activityUpdatedV2): with zK an automation's entry
+(entry.is_bot) doesn't join a view that excludes automations; with LS a
+person's doesn't join one limited to automations.
+
+**Tests.** Core: TestActivityAutomationFilters, TestActivityExperimentGroups,
+TestActivityAgentStatusLikeSlack, TestActivityMoveView. Views:
+TestActivityFilterMenuGroups, TestActivityFilterSourceLikeSlack,
+TestActivityMentionSubFiltersLikeSlack, TestActivityInPickerLikeSlack,
+TestActivityTabsLikeSlack, TestActivityDetailPanelGroups,
+TestActivityAgentStatusRowsLikeSlack, TestActivityLiveAutomationFilters,
+TestActivityAddTabRowsLikeSlack, TestActivityDayDividersGroups. The
+activity-shots artifact adds activity-filter-source, -people-only,
+-mentions, activity-in-open / -picked, activity-tabs-badges /
+-icon-only, activity-tab-drag, activity-detail-panel-empty / -item,
+activity-agent-status, activity-create-view-source, activity-no-revisions.
+
 ## Not done
 
 - Reaction bundles ("reaction_bundle" rows), behind an experiment.
-- The typing indicator and agent status in the status column; the
-  importance icon; Block Kit action buttons under app messages.
+- The typing indicator in the status column (agent status is done, see
+  "Experiments"); the importance icon; Block Kit action buttons under app
+  messages.
 - Accept on a Slack Connect channel invite (Slack's multi-step accept
   modal), the trust modal's illustration.
-- Summarize thread, Open in split view, Open in new window (see above);
-  the priority / importance rows.
+- Summarize thread, Open in new window (see above); the priority /
+  importance rows.
 - The subtext is drawn as a column before the message, so a 2-line
   message's second line is indented under it (Slack runs it inline).
-- Specific channel or section ("In" in Create a new view, the filter
-  menu's row): Slack's channel and section picker (IKpm) isn't in Clack;
-  saved views that name sections or channels are applied, not edited.
-- The mention sub-filters (@you, @channel, @user-group, keyword) in the
-  filter menu and the new view's rows; "Discard changes?" when closing
-  Create a new view with changes; dragging tabs to reorder
-  (`next_view_id`); the tab strip's icon-only mode when narrow; the
-  sort button's "new" badge; tooltips on the bulk buttons and the "+".
+- With activity_entry_layout_revisions_2 off Slack draws its older rows
+  (Pck2 ActivityRowContentDense / ActivityRowContentDetailed, with
+  ActivityRowContentTimestampAndActionsWithResolvedReply's text badges);
+  Clack keeps the revised rows in that group (the tabs, dividers,
+  tooltips, reactions and line caps do follow it). The sticky section
+  headers the revisions add (Eojr e5) aren't in Clack either.
+- The In picker's "Suggestions" without a query (the last search's "in"
+  suggestions: Clack's search keeps them per search view).
+- "Discard changes?" when closing Create a new view with changes; the
+  sort button's "new" badge; tooltips on the bulk buttons and the "+";
+  the tab strip's overflow ("More") when the tabs don't fit.
 - `s` (snooze) and the other keys that act on snoozable items: Clack has
   no snooze.
 - The rest of activity_in_home_prototype (Activity moved into Home, the

@@ -3,7 +3,6 @@ package messages
 import (
 	"encoding/json"
 	"image"
-	"strings"
 	"testing"
 	"time"
 
@@ -23,17 +22,34 @@ import (
 // USLACKBOT, no bot_profile, icons or username, the shape Hack Club's
 // arrive in) is drawn as the team: its name and icon, an info badge with
 // Slack's tooltip, and no profile on click. A plain Slackbot message keeps
-// Slackbot. With reskin_custom_responses off it's Slackbot again, with the
-// "Custom response" label.
+// Slackbot. MessageLabels draws no label line for it (meLQ renders none
+// for the custom_response type), only the row's #1d9bd11a tint. In the
+// reply bar Slackbot is the team in a thread holding one of its custom
+// responses (ReplyBarAvatar, hasSlackbotCustomResponseInThread). Slack's
+// client no longer reads reskin_custom_responses, so forcing it off (as
+// BringBackSlackbot does) changes none of this.
 func TestCustomResponseAsTeam(t *testing.T) {
 	const ch, tsCustom, tsPlain = "C0CRESP", "1700000900.000100", "1700008100.000100" // two hours apart: both headers
+	const tsAsk, tsAskPlain = "1700015300.000100", "1700022500.000100"                // threads Slackbot answered
 	const teamIcon = "https://avatars.invalid/team-88.png"
 	app, _ := newTestApp(t)
 	app.S.PutConv(slack.Conversation{ID: ch, Name: "faq", IsChannel: true, IsMember: true, NumMembers: 3})
 	app.S.SetLatest(ch, []slack.Message{
 		{Type: "message", TS: tsCustom, User: tBot, Subtype: core.SubtypeSlackbotResponse, Text: "a synthetic automated answer"},
 		{Type: "message", TS: tsPlain, User: tBot, Text: "a plain synthetic Slackbot note"},
+		{Type: "message", TS: tsAsk, User: "UALICE", Text: "where is the synthetic wiki?", ThreadTS: tsAsk, ReplyCount: 1,
+			ReplyUsers: []string{tBot}, LatestReply: "1700015300.000200"},
+		{Type: "message", TS: tsAskPlain, User: "UALICE", Text: "and the synthetic lunch menu?", ThreadTS: tsAskPlain, ReplyCount: 1,
+			ReplyUsers: []string{tBot}, LatestReply: "1700022500.000200"},
 	}, false)
+	app.S.SetThread(ch, tsAsk, []slack.Message{
+		{Type: "message", TS: tsAsk, User: "UALICE", Text: "where is the synthetic wiki?", ThreadTS: tsAsk, ReplyCount: 1},
+		{Type: "message", TS: "1700015300.000200", User: tBot, Subtype: core.SubtypeSlackbotResponse, Text: "a synthetic custom response", ThreadTS: tsAsk},
+	})
+	app.S.SetThread(ch, tsAskPlain, []slack.Message{
+		{Type: "message", TS: tsAskPlain, User: "UALICE", Text: "and the synthetic lunch menu?", ThreadTS: tsAskPlain, ReplyCount: 1},
+		{Type: "message", TS: "1700022500.000200", User: tBot, Text: "a plain synthetic Slackbot reply", ThreadTS: tsAskPlain},
+	})
 	icon, _ := json.Marshal(map[string]any{"type": "team_icon_change", "team_id": "E09V59WQY1E",
 		"icon": map[string]any{"image_34": "https://avatars.invalid/team-34.png", "image_88": teamIcon, "image_132": "https://avatars.invalid/team-132.png"}})
 	app.Inject(slack.Event{Type: "team_icon_change", Raw: icon})
@@ -63,6 +79,12 @@ func TestCustomResponseAsTeam(t *testing.T) {
 	}
 	if pr.custom || pr.avDrawn == teamIcon || pr.senderName() == "Synthetic Club" {
 		t.Errorf("plain Slackbot message drawn as the team: custom=%v avatar %q name %q", pr.custom, pr.avDrawn, pr.senderName())
+	}
+	if cr.col.Y != pr.col.Y {
+		t.Errorf("the custom response's body starts at %d, the plain message's at %d: Slack draws no label line", cr.col.Y, pr.col.Y)
+	}
+	if tint := colorsFor(h.th).CustomTint; cr.bgDrawn != tint || pr.bgDrawn == tint {
+		t.Errorf("backgrounds: custom response %v, plain %v; want only the custom response tinted %v", cr.bgDrawn, pr.bgDrawn, tint)
 	}
 
 	// the header line of a row: its list position
@@ -137,11 +159,32 @@ func TestCustomResponseAsTeam(t *testing.T) {
 		t.Errorf("tooltip %q, want %q", cr.crTipText, want)
 	}
 
-	// reskin off: Slackbot again (BringBackSlackbot forces this)
+	// the reply bars: the team for the custom-response thread, Slackbot's
+	// own picture for the plain one
+	_, wantIcon := app.CustomResponseTeam(int(mt.threadAvatar))
+	until(t, 3*time.Second, "the reply bars", frame, func() bool {
+		a, b := v.s.rows[tsAsk], v.s.rows[tsAskPlain]
+		return a != nil && b != nil && a.replyN > 0 && b.replyN > 0
+	})
+	if av := v.s.rows[tsAsk].replyAvs[0]; av.id != tBot || !av.team || av.drawn != wantIcon {
+		t.Errorf("custom-response thread: reply bar avatar %s team=%v %q, want the team icon %q", av.id, av.team, av.drawn, wantIcon)
+	}
+	if av := v.s.rows[tsAskPlain].replyAvs[0]; av.id != tBot || av.team {
+		t.Errorf("plain Slackbot thread: reply bar avatar %s drawn as the team", av.id)
+	}
+
+	// reskin_custom_responses forced off (BringBackSlackbot's patch): Slack
+	// no longer reads it, so nothing changes
 	app.SetExperimentGroup("reskin_custom_responses", "off")
-	until(t, 3*time.Second, "Slackbot's look back", frame, func() bool { return !cr.custom && cr.avDrawn != teamIcon })
-	if strings.Contains(cr.nameShown, "Synthetic Club") {
-		t.Errorf("reskin off: the name is still the team's (%q)", cr.nameShown)
+	for k := 0; k < 5; k++ {
+		frame()
+	}
+	if !cr.custom || cr.avDrawn != teamIcon || cr.nameShown != "Synthetic Club" || cr.col.Y != pr.col.Y || cr.bgDrawn != colorsFor(h.th).CustomTint {
+		t.Errorf("forced off: custom=%v avatar %q name %q body y %d (plain %d) background %v; want Slack's look unchanged",
+			cr.custom, cr.avDrawn, cr.nameShown, cr.col.Y, pr.col.Y, cr.bgDrawn)
+	}
+	if av := v.s.rows[tsAsk].replyAvs[0]; !av.team {
+		t.Error("forced off: the custom-response thread's reply bar lost the team icon")
 	}
 }
 

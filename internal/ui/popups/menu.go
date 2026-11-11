@@ -87,6 +87,12 @@ type MenuOpts struct {
 	Width  float32         // dp; default 300
 	Anchor image.Rectangle // the element the menu belongs to (flips around it)
 	Side   Side            // Below (default), Above, Right, Left
+	// Popover places the menu as Slack's Popover does at that position
+	// ("right-bottom", "bottom-right", …; slack_place.go) with OffsetX /
+	// OffsetY (dp) and TryOpposite (tryOppositePosition), instead of Side.
+	Popover          string
+	OffsetX, OffsetY float32
+	TryOpposite      bool
 	// AlignRight right-aligns the menu with the anchor's right edge
 	// (header kebab menus).
 	AlignRight bool
@@ -461,7 +467,11 @@ func (m *Menu) layoutCard(gtx layout.Context, win image.Point) {
 		if m.opts.AlignRight {
 			a.Min.X = a.Max.X - w
 		}
-		pos = place(a, sz, win, dp(gtx, 8), m.opts.Side)
+		if m.opts.Popover != "" {
+			pos = slackPlace(m.opts.Anchor, sz, win, m.opts.Popover, dp(gtx, m.opts.OffsetX), dp(gtx, m.opts.OffsetY), dp(gtx, 16), dp(gtx, 10), m.opts.TryOpposite)
+		} else {
+			pos = place(a, sz, win, dp(gtx, 8), m.opts.Side)
+		}
 	}
 	m.rect = image.Rectangle{Min: pos, Max: pos.Add(sz)}
 	if len(m.rows) != len(m.items) {

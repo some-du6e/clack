@@ -97,6 +97,11 @@ type prefs struct {
 	// user_locale): the next start loads that bundle from the cache before
 	// users.prefs answers (locale_wire.go).
 	Locale string `json:"locale,omitempty"`
+	// SplitW and SplitWMode are the split view's width (dp) and Slack's
+	// splitWidthMode ("sticky", "manual", "auto"), kept per device as Slack
+	// keeps viewLayoutSplitWidthIntent / Mode in localStorage (split.go).
+	SplitW     int    `json:"split_w,omitempty"`
+	SplitWMode string `json:"split_w_mode,omitempty"`
 }
 
 func (a *App) prefsPath() string {
