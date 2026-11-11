@@ -213,7 +213,7 @@ var lightColors = colors{
 	BtnBorder: rgba(0x5e5d60, .45), BtnBg: rgb(0xffffff), BtnHover: rgb(0xf8f8f8),
 	GhostHover: rgba(0x1d1c1d, .06),
 	Disabled:   rgb(0xeaeaea), DisText: rgb(0x868686),
-	Tooltip: rgb(0x1d1c1d), TooltipText: rgb(0xffffff),
+	Tooltip: theme.LightPalette.Tooltip, TooltipText: theme.LightPalette.TooltipText, // theme/tooltip.go
 	Focus: rgb(0x1264a3), FocusRing: rgba(0x1264a3, .3),
 	InputBorder: rgba(0x1d1c1d, .3), InputBorderHover: rgba(0x1d1c1d, .5),
 	Placeholder: rgb(0x868686),
@@ -238,7 +238,7 @@ var darkColors = colors{
 	BtnBorder: rgba(0xd1d2d3, .3), BtnBg: rgb(0x222529), BtnHover: rgb(0x2c2d30),
 	GhostHover: rgba(0xd1d2d3, .08),
 	Disabled:   rgb(0x2c2d30), DisText: rgb(0x9a9b9e),
-	Tooltip: rgb(0xf8f8f8), TooltipText: rgb(0x1d1c1d),
+	Tooltip: theme.DarkPalette.Tooltip, TooltipText: theme.DarkPalette.TooltipText, // theme/tooltip.go
 	Focus: rgb(0x1d9bd1), FocusRing: rgba(0x1d9bd1, .3),
 	InputBorder: rgba(0xd1d2d3, .3), InputBorderHover: rgba(0xd1d2d3, .5),
 	Placeholder: rgb(0x9a9b9e),

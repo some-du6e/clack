@@ -137,7 +137,8 @@ func TestMenuKeyCopyLink(t *testing.T) {
 			if !e.m.Dismissed() {
 				t.Error("menu still open after L")
 			}
-			if ts := h.toastList(); !slices.Contains(ts, "Link copied") {
+			// Slack's copyLink (5FS0) only writes the clipboard
+			if ts := h.toastList(); slices.Contains(ts, "Link copied") {
 				t.Errorf("toasts %q", ts)
 			}
 		})
@@ -192,6 +193,20 @@ func TestMenuKeysMessageActions(t *testing.T) {
 			t.Error("no toast: the action didn't run")
 		}
 	}
+	// Mark unread toasts nothing in Slack (a screen-reader announcement):
+	// the read cursor moves just before the message
+	markedUnread := func(t *testing.T, h *tzHost, e *mkEnv, _ *mkHooks) {
+		const want = "1700000000.000099"
+		end := time.Now().Add(10 * time.Second)
+		for time.Now().Before(end) {
+			e.frame()
+			if h.a.Count("C0FAKE00001").LastRead == want {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Errorf("read cursor %q, want %s: Mark unread didn't run", h.a.Count("C0FAKE00001").LastRead, want)
+	}
 	copied := func(t *testing.T, _ *tzHost, e *mkEnv, _ *mkHooks) {
 		if e.clip != "synthetic menu keys" {
 			t.Errorf("clipboard %q", e.clip)
@@ -212,8 +227,8 @@ func TestMenuKeysMessageActions(t *testing.T) {
 		{"linux", "context", false, "A", 0, hook("todo")},
 		{"linux", "context", true, "E", 0, hook("edit")},
 		{"linux", "more", true, "E", 0, hook("edit")},
-		{"linux", "context", false, "U", 0, toasted},
-		{"linux", "more", false, "U", 0, toasted},
+		{"linux", "context", false, "U", 0, markedUnread},
+		{"linux", "more", false, "U", 0, markedUnread},
 		{"linux", "context", false, "C", key.ModCtrl, copied},
 		{"darwin", "context", false, "C", key.ModCommand, copied},
 		{"linux", "context", false, "S", key.ModCtrl | key.ModShift, toasted},    // Add to saved

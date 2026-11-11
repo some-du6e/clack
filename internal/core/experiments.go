@@ -269,4 +269,9 @@ var experimentReads = map[string][]string{
 	"defer_notification_3p_streaming": on,
 	// files
 	"file_trash_updates": on,
+	// menus, selects and buttons (ui/popups/experiments.go): the v2 Button,
+	// and two session toggles (enabled for treatment or on)
+	"slack_kit_v2_button":                        on,
+	"a11y_no_auto_highlight_search_multi_select": {"on", "treatment"},
+	"basic_select_placeholder_option":            {"on", "treatment"},
 }

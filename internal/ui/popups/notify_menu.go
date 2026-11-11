@@ -79,12 +79,13 @@ func notifyCustomized(n core.ChannelNotify, desktop string, muted bool, setting 
 		(mobile != "" && mobile != desktop)
 }
 
-// customizedTag is the radio's tag label.
-func customizedTag(n core.ChannelNotify, desktop string, muted bool, setting string) string {
+// customizedTag is the radio's tag: PND5's {label "Customized", style
+// "informative"} (the menu rows' tag slot, menu_badge.go), or none.
+func customizedTag(n core.ChannelNotify, desktop string, muted bool, setting string) *MenuTag {
 	if notifyCustomized(n, desktop, muted, setting) {
-		return "Customized"
+		return &MenuTag{Label: "Customized", Style: "informative"}
 	}
-	return ""
+	return nil
 }
 
 // NotifyIcon is Slack's notification glyph for a calculated desktop
