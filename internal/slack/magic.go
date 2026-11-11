@@ -431,9 +431,16 @@ func magicError(code string) error {
 type magicSession struct {
 	hc   *http.Client
 	dpop *dpopKey
+	// cookie, when set, is the only cookie sent (as "d=…"), for a client
+	// with no jar: the cookie-only sign-in (cookie_signin.go) sends the
+	// pasted d and nothing else, and keeps nothing Slack sets
+	cookie string
 }
 
 func (s *magicSession) do(req *http.Request) (*http.Response, error) {
+	if s.cookie != "" {
+		req.Header.Set("Cookie", "d="+s.cookie)
+	}
 	if s.dpop != nil && dpopApplies(req) {
 		p, err := s.dpop.proof(req.Method, req.URL, false)
 		if err != nil {
@@ -465,13 +472,25 @@ func authPage(teamID string) string {
 // incomingConfigRe finds the start of the config object on authPage.
 var incomingConfigRe = regexp.MustCompile(`incomingConfig\s*=\s*JSON\.stringify\(`)
 
-// bootTokens loads authPage with this session's own, freshly vended cookie
-// and Clack's own User-Agent, and returns the xoxc tokens it hands out:
-// teamID's workspace token first, then the org (E) token. It is the one
-// Slack web page Clack loads with a session cookie, and never with a cookie
-// copied from the browser. No other page is tried, in particular never
-// <team>/ssb/redirect (docs/SIGNOUT-AUDIT.md).
+// bootTokens loads authPage with this session's cookie and Clack's own
+// User-Agent, over the API transport (tlsfp's recorded OpenSSL
+// ClientHello: never Go's crypto/tls hello, the real sign-out cause,
+// docs/SIGNOUT-AUDIT.md), and returns the xoxc tokens it hands out:
+// teamID's workspace token first (or, teamID empty, the one on host, the
+// workspace the user named), then the org (E) token. The cookie is the
+// freshly vended one after a magic link, or the d cookie pasted under
+// Advanced (cookie_signin.go). It is the one Slack web page Clack loads
+// with a session cookie. No other page is tried, in particular never
+// <team>/ssb/redirect (bannedPage).
 func (s *magicSession) bootTokens(ctx context.Context, teamID string) (pageTokens, error) {
+	return s.bootTokensFor(ctx, teamID, "")
+}
+
+// errNoPageTokens: the token page answered without a token (a cookie
+// Slack doesn't take gets its sign-in page instead).
+var errNoPageTokens = errors.New("Slack's token page had no tokens")
+
+func (s *magicSession) bootTokensFor(ctx context.Context, teamID, host string) (pageTokens, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, authPage(teamID), nil)
 	if err != nil {
 		return pageTokens{}, scrubErr(err)
@@ -479,17 +498,17 @@ func (s *magicSession) bootTokens(ctx context.Context, teamID string) (pageToken
 	HonestHeaders(req.Header)
 	resp, err := s.do(req)
 	if err != nil {
-		return pageTokens{}, fmt.Errorf("Clack has its own session now but couldn't load Slack's token page (app.slack.com/auth): %w", scrubErr(err))
+		return pageTokens{}, &kindError{fmt.Errorf("Clack has a session cookie but couldn't load Slack's token page (app.slack.com/auth): %w", scrubErr(err)), ErrSlackUnreachable}
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	resp.Body.Close()
 	if err != nil {
 		return pageTokens{}, scrubErr(err)
 	}
-	toks := parseIncomingConfig(b, teamID)
+	toks := parseIncomingConfigFor(b, teamID, host)
 	if len(toks.Team) == 0 {
-		return pageTokens{}, fmt.Errorf("Slack gave Clack its own session cookie, but its token page (app.slack.com/auth, HTTP %d) had no tokens in it, so Clack has no token to call Slack with. "+
-			"Clack doesn't try any other page. Use Advanced (paste a token) for now", resp.StatusCode)
+		return pageTokens{}, &kindError{fmt.Errorf("Slack's token page (app.slack.com/auth, HTTP %d) had no tokens for this session cookie, so Clack has no token to call Slack with. "+
+			"Clack doesn't try any other page", resp.StatusCode), errNoPageTokens}
 	}
 	return toks, nil
 }
@@ -497,16 +516,24 @@ func (s *magicSession) bootTokens(ctx context.Context, teamID string) (pageToken
 // pageTokens is what the token page hands a session: workspace token(s),
 // teamID's first, and the org's token and address on Grid.
 type pageTokens struct {
-	Team   []string
-	Org    string
-	OrgURL string
+	Team    []string
+	TeamURL string // Team[0]'s address, when the page gave an https slack.com one
+	Org     string
+	OrgURL  string
 }
 
 // parseIncomingConfig reads the teams map from authPage's
 // "incomingConfig = JSON.stringify({...})". Only xoxc- tokens count, and an
 // org address only on an https enterprise.slack.com host.
 func parseIncomingConfig(page []byte, teamID string) pageTokens {
+	return parseIncomingConfigFor(page, teamID, "")
+}
+
+// parseIncomingConfigFor is parseIncomingConfig, with the workspace on
+// host first when teamID is empty.
+func parseIncomingConfigFor(page []byte, teamID, host string) pageTokens {
 	var out pageTokens
+	var firstURL, otherURL string
 	loc := incomingConfigRe.FindIndex(page)
 	if loc == nil {
 		return out
@@ -544,9 +571,19 @@ func parseIncomingConfig(page []byte, teamID string) pageTokens {
 			continue
 		}
 		if strings.HasPrefix(t.Token, "xoxc-") {
-			if strings.EqualFold(id, teamID) {
+			u := ""
+			if slackURL(t.URL, "https") {
+				u = strings.TrimSuffix(t.URL, "/") + "/"
+			}
+			if teamID != "" && strings.EqualFold(id, teamID) || teamID == "" && host != "" && u != "" && strings.EqualFold(urlHost(u), host) {
+				if len(first) == 0 {
+					firstURL = u
+				}
 				first = append(first, t.Token)
 			} else {
+				if len(first) == 0 && len(others) == 0 {
+					otherURL = u
+				}
 				others = append(others, t.Token)
 			}
 		}
@@ -555,7 +592,20 @@ func parseIncomingConfig(page []byte, teamID string) pageTokens {
 		}
 	}
 	out.Team = append(first, others...)
+	out.TeamURL = otherURL
+	if len(first) > 0 {
+		out.TeamURL = firstURL
+	}
 	return out
+}
+
+// urlHost is u's host name, lower-cased ("" if u doesn't parse).
+func urlHost(u string) string {
+	p, err := url.Parse(u)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(p.Hostname())
 }
 
 // fillFromAuthTest checks the workspace token with one auth.test on the team

@@ -33,9 +33,10 @@ type SignInInput struct {
 	Link string
 }
 
-// SignIn validates pasted credentials with auth.test only. It never loads
-// web pages and never calls any sign-out method, so the browser session the
-// values came from is left alone.
+// SignIn validates pasted credentials with auth.test only, and never calls
+// any sign-out method. With a token it loads no web page. With only the d
+// cookie it first loads Slack's token page for that cookie (signInCookie),
+// the one page Clack loads with a cookie, as the desktop sign-in does.
 func SignIn(ctx context.Context, in SignInInput) (Creds, error) {
 	if err := expandPastedTeams(&in); err != nil {
 		return Creds{}, err
@@ -56,12 +57,16 @@ func SignIn(ctx context.Context, in SignInInput) (Creds, error) {
 		return Creds{}, errors.New("the workspace should be a slack.com address, e.g. hackclub or hackclub.slack.com")
 	}
 	tok := strings.TrimSpace(in.Token)
-	if !strings.HasPrefix(tok, "xoxc-") {
-		return Creds{}, errors.New("the token should start with xoxc-")
-	}
 	ck := cleanCookie(in.Cookie, "d")
 	if !strings.HasPrefix(ck, "xoxd-") && !strings.HasPrefix(ck, "xoxd%") {
 		return Creds{}, errors.New("the d cookie should start with xoxd-")
+	}
+	if tok == "" && strings.TrimSpace(in.OrgToken) == "" {
+		// the d cookie alone: Clack asks Slack for the tokens (cookie_signin.go)
+		return signInCookie(ctx, ws, ck)
+	}
+	if !strings.HasPrefix(tok, "xoxc-") {
+		return Creds{}, errors.New("the token should start with xoxc-")
 	}
 	c := Creds{Token: tok, Cookie: ck, TeamURL: "https://" + ws + "/"} // d-s is never kept or sent (Client.cookieHeader)
 	a, err := New(c).AuthTest(ctx)

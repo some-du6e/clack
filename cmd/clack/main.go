@@ -508,9 +508,11 @@ func loginCLI(path, workspace string) error {
 	fmt.Println("These come from your own signed-in Slack session, the same values other third-party Slack clients use.")
 	si := slack.SignInInput{Workspace: workspace}
 	fmt.Println("(What you paste isn't shown.)")
-	si.Token = askSecret("Token (xoxc-…): ")
-	si.OrgToken = askSecret("Org token (xoxc-…, optional, Enterprise Grid only): ")
 	si.Cookie = askSecret("d cookie (xoxd-…): ")
+	si.Token = askSecret("Token (xoxc-…, optional: leave it empty and Clack gets it from Slack's token page): ")
+	if si.Token != "" {
+		si.OrgToken = askSecret("Org token (xoxc-…, optional, Enterprise Grid only): ")
+	}
 	creds, err := slack.SignIn(context.Background(), si)
 	if err != nil {
 		return err

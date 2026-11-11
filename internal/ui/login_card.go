@@ -45,6 +45,9 @@ const (
 	loginRefH     = 470 // about the default card's height: where its top sits
 )
 
+// loginCookieWhere is where the d cookie is, in one line.
+const loginCookieWhere = "d cookie: F12 › Application › Cookies › https://app.slack.com › d"
+
 // signInTitle is the card's first line (its words blur in after the
 // introduction; intro.prefetch asks for their blurred copies).
 const signInTitle = "Sign in to Slack"
@@ -59,6 +62,7 @@ var (
 	loginRose     = hexc(0xff8f9c) // errors on the dark card
 	loginAmber    = hexc(0xffc56b) // Advanced's warning
 	loginCode     = hexc(0xd4c9ff)
+	loginMint     = hexc(0x5fd3a3) // a field a paste filled: its tick and the line saying so
 )
 
 // The controls' translucent fills go through loginOn: Gio blends in
@@ -702,9 +706,11 @@ func (a *App) loginTips(gtx layout.Context, f *introFrame, x0, y, cw int, tr flo
 
 // ---- Advanced: the token form ----
 
-// loginAdvView lays out Advanced: back, the session warning, the console
-// snippet, the four fields and Sign in. It returns the recording and its
-// height; x runs from the (wider) card's left edge.
+// loginAdvView lays out Advanced: back, the session warning, the d cookie
+// field and where to find d, Sign in, and "Use a token instead", which
+// opens the console snippet and the Workspace, Token and Org token fields
+// under it. It returns the recording and its height; x runs from the
+// (wider) card's left edge.
 func (a *App) loginAdvView(gtx layout.Context, f *introFrame) (op.CallOp, int) {
 	l := a.login
 	m := op.Record(gtx.Ops)
@@ -716,7 +722,7 @@ func (a *App) loginAdvView(gtx layout.Context, f *introFrame) (op.CallOp, int) {
 	// back, and the title
 	bs := f.d(36)
 	a.loginCircleButton(ctl, f, &l.advBack, image.Rect(x0-f.d(8), y, x0-f.d(8)+bs, y+bs), "chevron-left")
-	tt := "Paste a token"
+	tt := "Sign in with a cookie"
 	tw := f.measure(22, theme.Black, tt)
 	l.text(f, image.Pt(cx-tw/2, y+(bs-f.d(22*1.25))/2), 22, theme.Black, introWhite, tt)
 	y += bs + f.d(18)
@@ -727,47 +733,88 @@ func (a *App) loginAdvView(gtx layout.Context, f *introFrame) (op.CallOp, int) {
 	// at once
 	y += a.loginWarn(gtx, f, x0, y, cw, "Clack shares your browser’s session this way, and Slack can end that session everywhere, browser included.") + f.d(18)
 
-	y += l.block(f, image.Pt(x0, y), cw, 14, 20, theme.Regular, alphaMul(introWhite, 0.80), text.Start, "In Slack in your browser, press F12 and run this in the Console:") + f.d(10)
-	y += a.loginSnippet(ctl, f, x0, y, cw) + f.d(20)
+	// the d cookie: the one thing to paste
+	fh := f.d(46)
+	l.text(f, image.Pt(x0+f.d(2), y), 12.5, theme.Bold, alphaMul(introWhite, 0.62), "d cookie")
+	a.loginField(ctl, f, image.Rect(x0, y+f.d(22), x1, y+f.d(22)+fh), &l.cookie, "", "xoxd-…", nil, 0, f.d(12), 14.5)
+	y += f.d(22) + fh + f.d(12)
 
-	// the fields, two by two
-	gap := f.d(14)
-	colW := (cw - gap) / 2
-	fh := f.d(42)
-	rowH := f.d(22) + fh + gap
-	for i, fd := range []struct {
-		label string
-		ed    *widget.Editor
-		hint  string
-	}{
-		{"Workspace", &l.workspace, "hackclub"},
-		{"Token", &l.token, "xoxc-… or the copied JSON"},
-		{"Org token", &l.orgToken, "optional"},
-		{"d cookie", &l.cookie, "xoxd-…"},
-	} {
-		colX := x0 + (i%2)*(colW+gap)
-		colY := y + (i/2)*rowH
-		l.text(f, image.Pt(colX+f.d(2), colY), 12.5, theme.Bold, alphaMul(introWhite, 0.62), fd.label)
-		a.loginField(ctl, f, image.Rect(colX, colY+f.d(22), colX+colW, colY+f.d(22)+fh), fd.ed, "", fd.hint, nil, 0, f.d(12), 14)
-	}
-	y += 2*rowH + f.d(2)
-
-	// how to get d, or the error
-	if l.err != "" {
+	// what a paste filled, the error, and where the d cookie is (it is
+	// HttpOnly, so no snippet can copy it: Chrome's and Edge's DevTools
+	// show it under Application › Storage › Cookies › the page's origin,
+	// developer.chrome.com/docs/devtools/application/cookies,
+	// learn.microsoft.com/microsoft-edge/devtools/storage/cookies)
+	switch {
+	case l.err != "":
 		ea := float32(clamp01(l.mc.spring(springSmooth, l.errAt)))
-		y += l.block(f, image.Pt(x0, y), cw, 13, 19, theme.Regular, alphaMul(loginRose, ea), text.Start, l.err)
-	} else {
-		y += l.block(f, image.Pt(x0, y), cw, 13, 19, theme.Regular, alphaMul(introWhite, 0.50), text.Start, "d is HttpOnly, so copy it from DevTools → Application → Cookies. Leave d-s out.")
+		y += l.block(f, image.Pt(x0, y), cw, 13, 19, theme.Regular, alphaMul(loginRose, ea), text.Start, l.err) + f.d(4)
+	case l.pasteNote != "":
+		na := float32(1)
+		if !l.pasteAt.IsZero() {
+			na = float32(clamp01(l.mc.spring(springSmooth, l.pasteAt)))
+		}
+		y += l.block(f, image.Pt(x0, y), cw, 13, 19, theme.Bold, alphaMul(loginMint, na), text.Start, l.pasteNote) + f.d(4)
 	}
-	y += f.d(18)
+	y += l.block(f, image.Pt(x0, y), cw, 13, 19, theme.Regular, alphaMul(introWhite, 0.50), text.Start, loginCookieWhere)
+	y += f.d(20)
 
 	txt, kc := "Sign in", "↵"
 	if l.busy {
 		txt, kc = "Signing in…", ""
 	}
 	a.loginPill(ctl, f, &l.submit, image.Rect(x0, y, x1, y+f.d(loginCtlH)), txt, kc, 1, l.busy)
-	y += f.d(loginCtlH) + f.d(30)
+	y += f.d(loginCtlH) + f.d(20)
+
+	// the fallback: a token of the browser's session instead of Clack
+	// fetching one
+	tv := clamp01(l.follow(&l.tokenV, springSmooth, l.tokenForm))
+	tl := "Use a token instead"
+	a.loginTextButton(ctl, f, &l.tokenBtn, image.Pt(cx-a.loginTextButtonW(f, tl)/2, y), tl, "chevron-down", float32(tv)*math.Pi)
+	y += f.d(20)
+	if l.tokenForm || tv > 0.004 {
+		y0 := y
+		tg := ctl
+		if !l.tokenForm {
+			tg = gtx.Disabled() // closing: no clicks, no typing
+		}
+		tc, th := recordOps(gtx, func() int { return a.loginTokenForm(tg, f, x0, y+f.d(20), cw) })
+		l.put(f, "signin-tokens", fx{a: float32(clamp01((tv - 0.3) / 0.7)), s: 1}, f32.Point{}, image.Point{}, tc)
+		y = y0 + int(math.Round(float64(f.d(20)+th)*tv))
+	}
+	y += f.d(28)
 	return m.Stop(), y
+}
+
+// loginTokenForm is "Use a token instead": the console snippet and the
+// Workspace, Token and Org token fields, at y; it returns its height.
+func (a *App) loginTokenForm(gtx layout.Context, f *introFrame, x0, y, cw int) int {
+	l := a.login
+	y0 := y
+	pasteKey := "Ctrl+V"
+	if loginOS == "darwin" {
+		pasteKey = "Cmd+V"
+	}
+	y += l.block(f, image.Pt(x0, y), cw, 14, 20, theme.Regular, alphaMul(introWhite, 0.80), text.Start, "In Slack in your browser, press F12 and run this in the Console. Then press "+pasteKey+" here.") + f.d(10)
+	y += a.loginSnippet(gtx, f, x0, y, cw) + f.d(20)
+	// the fields, side by side
+	gap := f.d(12)
+	colW := (cw - 2*gap) / 3
+	fh := f.d(42)
+	for i, fd := range []struct {
+		label string
+		ed    *widget.Editor
+		hint  string
+	}{
+		{"Workspace", &l.workspace, "hackclub"},
+		{"Token", &l.token, "xoxc-… or JSON"},
+		{"Org token", &l.orgToken, "optional"},
+	} {
+		colX := x0 + i*(colW+gap)
+		l.text(f, image.Pt(colX+f.d(2), y), 12.5, theme.Bold, alphaMul(introWhite, 0.62), fd.label)
+		a.loginField(gtx, f, image.Rect(colX, y+f.d(22), colX+colW, y+f.d(22)+fh), fd.ed, "", fd.hint, nil, 0, f.d(12), 14)
+	}
+	y += f.d(22) + fh
+	return y - y0
 }
 
 // loginWarn is Advanced's warning in an amber-tinted box; it returns the
@@ -941,9 +988,11 @@ func (a *App) loginField(gtx layout.Context, f *introFrame, r image.Rectangle, e
 	l := a.login
 	th := a.th
 	v := l.ring(ed, gtx.Focused(ed))
+	tp, ta := l.loginTick(ed) // a paste just filled it (login_paste.go)
 	loginFocusRing(gtx, f, r, rad, v)
 	theme.RRect(gtx, r, rad, loginOn(alphaMul(introWhite, 0.06+0.03*v)))
-	theme.Border(gtx, r, rad, max(1, f.d(1)), theme.Mix(loginOn(alphaMul(introWhite, 0.18)), alphaMul(loginLilac, 0.9), v))
+	rim := theme.Mix(loginOn(alphaMul(introWhite, 0.18)), alphaMul(loginLilac, 0.9), v)
+	theme.Border(gtx, r, rad, max(1, f.d(1)), theme.Mix(rim, loginMint, 0.7*ta))
 	x := r.Min.X + f.d(16)
 	if icon != "" {
 		x = r.Min.X + f.d(18)
@@ -952,6 +1001,16 @@ func (a *App) loginField(gtx layout.Context, f *introFrame, r image.Rectangle, e
 		x += is + f.d(12)
 	}
 	right := r.Max.X - f.d(16)
+	if ta > 0.004 {
+		// the tick: pops in at the field's end, fades after a moment
+		is := f.d(16)
+		tr := image.Rect(right-is, r.Min.Y+(r.Dy()-is)/2, right, r.Min.Y+(r.Dy()-is)/2+is)
+		sc := max(tp, 0)
+		t := op.Affine(f32.Affine2D{}.Scale(center(tr), f32.Pt(sc, sc))).Push(gtx.Ops)
+		f.icon("check", tr.Min, 16, alphaMul(loginMint, ta))
+		t.Pop()
+		right = tr.Min.X - f.d(8)
+	}
 	if send != nil {
 		d := r.Dy() - f.d(14)
 		sr := image.Rect(r.Max.X-f.d(7)-d, r.Min.Y+f.d(7), r.Max.X-f.d(7), r.Min.Y+f.d(7)+d)

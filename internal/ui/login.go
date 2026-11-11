@@ -32,9 +32,11 @@ import (
 // comes to the front (loginClipboard), or it is pasted into the field.
 // slack.LoginMagic trades it for a session of Clack's own.
 //
-// Advanced is the older path: paste the token and cookie of the browser's
-// own session. slack.SignIn only checks them with auth.test (no page
-// loads, no sign-out), but Clack then shares the browser's session.
+// Advanced is the older path, on the browser's own session: paste its d
+// cookie, and slack.SignIn fetches the session's tokens from Slack's
+// token page (the desktop sign-in's own step) and checks the workspace
+// token with auth.test; or, behind "Use a token instead", paste the token
+// too. Either way Clack then shares the browser's session.
 type loginScreen struct {
 	link       widget.Editor
 	linkSubmit widget.Clickable // the field's ↵ button
@@ -53,6 +55,8 @@ type loginScreen struct {
 	submit    widget.Clickable
 	copy      widget.Clickable // the console snippet
 	copied    bool
+	tokenBtn  widget.Clickable // Advanced's "Use a token instead"
+	tokenForm bool             // it is open: the snippet and the token fields
 
 	advanced bool // the token form
 	trouble  bool // "Having trouble?" is open
@@ -66,6 +70,15 @@ type loginScreen struct {
 	clipAsk bool // look at the clipboard at the next frame (the window came to the front)
 	clipTag int
 	linkLen int // the link field's length after the last frame
+
+	// smart paste (login_paste.go)
+	pasteTag  int                          // Ctrl/⌘+V on the card: its clipboard read
+	prevText  map[*widget.Editor]string    // each field's text after its last change
+	filled    map[*widget.Editor]time.Time // fields a paste filled: their ticks
+	orgURL    string                       // the org's address, from a pasted teams JSON
+	pasteNote string                       // what the last paste filled, said under the fields
+	pasteAt   time.Time
+	focusTo   *widget.Editor // the field to focus next (nil: the view's first)
 
 	card image.Rectangle // where the card was last drawn (tests)
 
@@ -89,6 +102,7 @@ type loginScreen struct {
 	errV     springVal // the badge's rose while an error shows
 	sendV    springVal // the field's ↵ button popping in (springPop: it overshoots)
 	waitV    springVal // Open Slack sign-in giving way to "Open the page again"
+	tokenV   springVal // Advanced's token fields opening
 	dimV     springVal // the controls dimming while Clack signs in
 	keyV     springVal // the badge's globe turning into a key while it does
 	subH     springVal // the height of the line under the title
@@ -117,10 +131,6 @@ var loginOpenURL = openURL
 // loginOS picks the link-handler tip under Having trouble? (tests set it).
 var loginOS = runtime.GOOS
 
-// maxClipLink is the longest clipboard text read as a sign-in link (a
-// login-v2 link for every workspace of an org is far shorter).
-const maxClipLink = 16 << 10
-
 func newLoginScreen() *loginScreen {
 	l := &loginScreen{}
 	l.link.SingleLine = true
@@ -145,11 +155,16 @@ func (a *App) updateLogin(gtx layout.Context) {
 	if !l.focused {
 		var tag any = &l.link
 		if l.advanced {
-			tag = &l.token
+			tag = &l.cookie // the d cookie is all Advanced needs
+			if l.focusTo != nil {
+				tag = l.focusTo
+			}
 		}
+		l.focusTo = nil
 		gtx.Execute(key.FocusCmd{Tag: tag})
 		l.focused = true
 	}
+	a.loginPasteKeys(gtx)
 	open := l.openSignIn.Clicked(gtx)
 	if l.reopen.Clicked(gtx) {
 		open = true
@@ -159,6 +174,13 @@ func (a *App) updateLogin(gtx layout.Context) {
 	}
 	if (l.advToggle.Clicked(gtx) || l.advBack.Clicked(gtx)) && !l.busy {
 		l.advanced, l.focused, l.err, l.trouble = !l.advanced, false, "", false
+		l.tokenForm, l.pasteNote = false, ""
+	}
+	if l.tokenBtn.Clicked(gtx) && !l.busy {
+		l.tokenForm = !l.tokenForm
+		if l.tokenForm {
+			l.focusTo, l.focused = &l.token, false
+		}
 	}
 	if l.copyPage.Clicked(gtx) {
 		loginWriteClipboard(gtx, desktopSignInURL)
@@ -176,6 +198,9 @@ func (a *App) updateLogin(gtx layout.Context) {
 		e, ok := l.link.Update(gtx)
 		if !ok {
 			break
+		}
+		if _, ok := e.(widget.ChangeEvent); ok {
+			a.loginFieldPaste(gtx, &l.link) // a token or the JSON pasted here moves to Advanced
 		}
 		if _, ok := e.(widget.SubmitEvent); ok {
 			if strings.TrimSpace(l.link.Text()) == "" {
@@ -198,6 +223,9 @@ func (a *App) updateLogin(gtx layout.Context) {
 			e, ok := ed.Update(gtx)
 			if !ok {
 				break
+			}
+			if _, ok := e.(widget.ChangeEvent); ok && !l.busy {
+				a.loginFieldPaste(gtx, ed) // a paste that belongs elsewhere moves there
 			}
 			if _, ok := e.(widget.SubmitEvent); ok {
 				submit = true
@@ -223,6 +251,7 @@ func (a *App) updateLogin(gtx layout.Context) {
 			l.trouble = false
 		case l.advanced:
 			l.advanced, l.focused, l.err = false, false, ""
+			l.tokenForm, l.pasteNote = false, ""
 		case l.waiting:
 			l.waiting, l.sso = false, false
 		}
@@ -238,17 +267,7 @@ func (a *App) updateLogin(gtx layout.Context) {
 			a.startLogin(slack.SignInInput{Link: link})
 		}
 	case submit && l.advanced:
-		in := slack.SignInInput{
-			Workspace: strings.TrimSpace(l.workspace.Text()),
-			Token:     strings.TrimSpace(l.token.Text()),
-			OrgToken:  strings.TrimSpace(l.orgToken.Text()),
-			Cookie:    strings.TrimSpace(l.cookie.Text()),
-		}
-		if in.Token == "" || in.Cookie == "" {
-			l.err = "Paste your token and d cookie first."
-		} else {
-			a.startLogin(in)
-		}
+		a.loginSubmitTokens()
 	}
 	if l.err != l.shownErr {
 		// a new error fades in, and the card shakes its head once; one it
@@ -287,11 +306,13 @@ func (a *App) loginWindowFocused() {
 
 // loginClipboard asks for the clipboard once the window has come to the
 // front and signs in with a sign-in link it finds there. As in Slack
-// desktop (c4/c7, c8 @935978), only clipboard text that is a whole
-// magic-login or login-v2 link counts, and the clipboard is cleared once
-// the link is taken: it is a one-time secret. Anything else is left on
-// the clipboard, and nothing read is kept. It runs every frame while the
-// sign-in screen is up, the introduction included.
+// desktop (c4/c7, c8 @935978), clipboard text that is a whole
+// magic-login or login-v2 link signs in, and the clipboard is cleared once
+// the link is taken: it is a one-time secret. Smart paste
+// (login_paste.go) takes the token form's credentials the same way.
+// Anything else is left on the clipboard, and nothing read is kept. It
+// runs every frame while the sign-in screen is up, the introduction
+// included.
 func (a *App) loginClipboard(gtx layout.Context) {
 	l := a.login
 	if l == nil {
@@ -302,22 +323,11 @@ func (a *App) loginClipboard(gtx layout.Context) {
 		if !ok {
 			break
 		}
-		de, ok := e.(transfer.DataEvent)
-		if !ok {
+		s, ok := readPaste(e)
+		if !ok || l.busy {
 			continue
 		}
-		rc := de.Open()
-		b, err := io.ReadAll(io.LimitReader(rc, maxClipLink+1))
-		rc.Close()
-		if err != nil || len(b) > maxClipLink || l.busy {
-			continue
-		}
-		link := strings.TrimSpace(string(b))
-		if !slack.IsMagicLink(link) {
-			continue
-		}
-		loginWriteClipboard(gtx, "")
-		a.signInWithLinkNow(link)
+		a.loginTake(gtx, slack.ClassifyPaste(s, strings.TrimSpace(l.workspace.Text())), nil)
 	}
 	if l.clipAsk {
 		l.clipAsk = false
@@ -356,6 +366,7 @@ func (a *App) startLogin(in slack.SignInInput) {
 			for _, ed := range []*widget.Editor{&l.link, &l.token, &l.orgToken, &l.cookie} {
 				ed.SetText("")
 			}
+			l.orgURL, l.prevText, l.pasteNote = "", nil, ""
 			if a.login == l {
 				a.login = nil
 			}
@@ -412,6 +423,8 @@ func signInErrorText(err error) string {
 		return "That link has expired. Open Slack sign-in again."
 	case errors.Is(err, slack.ErrSlackUnreachable):
 		return "Couldn’t reach Slack. Check your connection."
+	case errors.Is(err, slack.ErrCookieRejected):
+		return "Slack didn’t accept that d cookie."
 	case errors.Is(err, slack.ErrSessionRejected):
 		return "Slack didn’t accept that token and cookie."
 	case errors.As(err, &re):
