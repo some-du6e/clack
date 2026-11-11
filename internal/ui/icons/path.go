@@ -3,8 +3,11 @@ package icons
 import (
 	"math"
 	"strconv"
+	"sync"
 
 	"gioui.org/f32"
+	"gioui.org/layout"
+	"gioui.org/op/clip"
 )
 
 // seg is one absolute path segment in viewbox units.
@@ -269,3 +272,23 @@ func (t *tokenizer) num() float32 {
 	}
 	return float32(v)
 }
+
+// ClipPath is SVG path data d as a clip path, scaled by sc (px per path
+// unit), for shapes Slack draws as inline SVG rather than icons: the huddle
+// facepile's mask (clipPathUnits objectBoundingBox, so sc is the avatar's
+// size) and the fake mask sliver. The parse is cached per d.
+func ClipPath(gtx layout.Context, d string, sc float32) clip.PathSpec {
+	clipMu.Lock()
+	segs, ok := clipSegs[d]
+	if !ok {
+		segs = parsePath(d)
+		clipSegs[d] = segs
+	}
+	clipMu.Unlock()
+	return pathSpec(gtx, segs, sc)
+}
+
+var (
+	clipMu   sync.Mutex
+	clipSegs = map[string][]seg{}
+)

@@ -883,6 +883,7 @@ func (v *Threads) openReply(t *thrItem, c *thrCard) {
 	}
 	if c.comp == nil {
 		c.comp = composer.New(ch, t.Channel, t.Root.TS)
+		c.comp.InThreadsView = true // .p-threads_view: no 12px over the box
 		key := t.key
 		// onUpArrowInEmptyInput: focusItemAboveInput
 		c.comp.OnFocusList = func() { v.focusAboveFooter(key) }

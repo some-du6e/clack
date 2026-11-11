@@ -67,7 +67,8 @@ func (a *App) readRootPointer(gtx layout.Context) {
 				composer.NotePress() // a click may move the focus (editor_focus.go)
 			}
 			a.navButtons(pe)
-			a.splitPointer(pe) // click modifiers, the split view's focus (split.go)
+			a.railPeekPointer(pe) // the More peek's safe area (rail_peek.go)
+			a.splitPointer(pe)    // click modifiers, the split view's focus (split.go)
 			a.globalPointer(gtx, pe)
 		}
 	}

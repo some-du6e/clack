@@ -149,3 +149,57 @@ Not done: Slackbot's trash notification (attachment type
 ("Restore file" through files.undelete, "View all deleted files",
 "Restored"). Those buttons live in the legacy attachment renderer, which is
 the messages area's, so they aren't ported here.
+
+## Empty states, the sidebar's Starred part and the controls (karim-bugs-2-chrome, 2026-11-10)
+
+Karim: the Files page is "so half-assed" (the Starred empty row had the ⭐
+crammed against "star"). Sources: CDN build 4d0c78085232 without a cookie:
+`gantry-v2-async-client-unified-files-sidebar-view` (cNNe
+UnifiedFilesSidebarView), `…find-tab_browse-sidebar` (tpiL BrowseSidebar),
+`gantry-v2-async-client-boot-render` (Fl3U BrowseSidebarItem,
+FileCollectionHeaderRow), `gantry-v2-async-client-boot-shared` (gkKy
+EmptyState, 31Gm explorer rows and ExplorerControls, b2qR the lists NUX
+header), `gantry-v2-async-client-browse-unified-files-view`
+(useUnifiedFilesExplorer), `…explorer_hooks_use-hosted-browser…` (jnm4
+useUnifiedFilesFilters) and `client-boot-styles.css`. The account's team
+has `custom_file_sections`, `unified_files_3p_primary_custom_sections` and
+`file_trash_updates` on.
+
+| Area | Slack (source) | Clack before | Clack now |
+|---|---|---|---|
+| Starred's empty row | an `empty` browse-sidebar-item: EmptyState (isExtended) in the 8px item container with `padding_left_150 padding_right_50 margin_0 align_left padding_top_0`, so the text starts 32px from the list's edge and has 8 + 20px under it; the description is `eD.t("Click the ⭐ star on any file …")`, the ⭐ a character with a space on each side | the star image laid over spaces with no space after it, 40px in | Slack's sentence through the theme's emoji slot (the image 1.2em in its own 1.27em slot, the spaces kept), 32px in, 28px under |
+| Starred, `custom_file_sections` on | "file-collections-divider", then the starred collection's FileCollectionHeaderRow: 28px, padding 0 8px, 15px, the star that becomes caret-down-filled / caret-right-filled on hover, the theme-surf-inv-ter hover fill; a click collapses it (the client store: `custom_file_sections_collapsed_persist` is off) | a divider and a plain "Starred" label | the same, minus the row's ⋮ (below) |
+| Starred, `custom_file_sections` off | spacer-2 (12px), then the `sub-header` (padding 0 8px 0 20px, `.p-browse_sidebar` makes it 15px weight 400) | a divider | the spacer and the sub-header, 20px in |
+| Starred files | type canvas / list rows: `p-browse_sidebar__item--collection_indent`, 24px left padding | 8px | 24px |
+| While files.favorites.list is out | five `shimmer` rows (list / canvas icon, a bar of random width) | nothing | five shimmer rows |
+| Dividers | `.p-browse_sidebar__divider`: margin 12px all round | 8px from the edges | 12px |
+| Empty list, All files | every file type on (isAllFileTypesSelected): "No files yet" / "Your recently viewed or updated files will be shown here." (with a search: "No results", same line); fewer types: "No files found" / "It may be that you don’t have any files yet, or that there aren’t any that fit your current filters." (with a search: "No results" / "You may want to try adjusting your filters."), both with an outline "Clear Filters" that turns every type back on | "No files yet" / "Files you share or view will show up here."; "No results" / "Try different keywords or remove filters." | Slack's four states and Clear Filters |
+| Empty list, Canvases and Lists | "No canvases yet" / "Your recently viewed or updated canvases will show up here." and the lists NUX "No lists yet" / "Your recently viewed or updated lists will be shown here.", each with an outline + New Canvas / New List; with a search "No results" / "You may want to try adjusting your filters." | a link "+ New Canvas"; "… will show up here." for lists | the same copy and outline buttons with the plus icon |
+| Empty state layout | `.p-unified_files_browser_empty_state` / `large-top-padding`: padding-top 16vh; EmptyState centred, max-width 380, the title 18px/24 Black, 8px, the description 15px/22, 8px, then the action 8px down | a 32px icon, a 16px Bold title, centred in a 300px box | Slack's |
+| Types control | `filter_file_types_recents`: "{n} Types" (the selected count) with the refine icon, active (content-hgl-1 fill) only off the default selection | "All types" when all were on; always the active fill | "{n} Types"; active only off the default six |
+| Sort control | active only off its default (Recently viewed) | always the active fill | active only when Last updated is picked |
+
+Not done, and why:
+
+- **Recently viewed** (the section above Starred whenever
+  `filesOpenInSessionStore` has files): Clack keeps no record of the files
+  opened in the session, so the section never shows.
+- **The collection header's ⋮** (Create… New canvas / New list / Sidebar
+  section, Sort by Last viewed / Last updated / A-Z / Date added, Rename /
+  Delete section) and the other collections: they read and write
+  `files.collections.*`, which Clack doesn't have; the starred files still
+  come from `files.favorites.list`, and the star button stays on canvases
+  and lists (with `custom_file_sections` Slack offers its section picker
+  instead).
+- **The sidebar's settings gear** ("More options" › Bulk manage files, shown
+  with `custom_file_sections`), **"Assigned to you"** (lists_grid_todos with
+  assigned items) and the **"+" and "New" menus** (Canvas / List rows with
+  their subtitles, templates, Import CSV, Add existing, Connect cloud app):
+  not ported; "+" and "New" still create a canvas (or open the list menu)
+  directly.
+- **canvas-browser / canvas-content icons** (All files, Canvases): Clack's
+  icon set doesn't have Slack's glyphs yet and draws files / canvas.
+- **Pagination**: Slack pages the results (`pagination` row, pageCount);
+  Clack keeps loading pages as the list scrolls.
+- **Search sorts**: with a search Slack's sort offers Most relevant / Last
+  updated; Clack keeps Recently viewed / Last updated.

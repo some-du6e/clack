@@ -64,8 +64,8 @@ func TestJoinRollup(t *testing.T) {
 			kinds = append(kinds, "other")
 		}
 	}
-	// intro, day, msg, [4 joins], leave (single), msg
-	want := "other other msg group msg msg"
+	// intro, day, msg, [4 joins], leave (single), msg, the bottom spacer
+	want := "other other msg group msg msg other"
 	if got := strings.Join(kinds, " "); got != want {
 		t.Fatalf("items %q, want %q", got, want)
 	}

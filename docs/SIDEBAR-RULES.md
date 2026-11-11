@@ -54,6 +54,15 @@ Clack ports these rules from Slack's own web client, not from guesses. The imple
   - A "Join…" membership (conversations.join `expiration_ts`, or `channel_joined.temp_membership_expiration_ts`) goes to the Temporary channels section, after Starred, or to the default bucket when there is no such section.
   - The section shows only while the viewer has a temporary channel.
 
+## The DMs tab (karim-bugs-2-chrome, 2026-11-10)
+
+- **Fetch** (gantry dms-list-view `eLDn` DmsListAll): `client.dms {count: 250, include_closed, include_channel, exclude_bots: !agents_in_dm_sidebar}`.
+- **Rows** (`uV3r` useChannelIds, `DUy0` isBotDm, `upCu` useSortedChannels), `core.DMs` / `dmsTabShows`:
+  - An IM goes when its member is deleted, when it is frozen or a pending Slack Connect IM, when the member is `USLACKSECURITY`, `USEARCH` or `UCHANNELEXPERT`, and when it is a bot DM: Slackbot's IM, `USLACK`, or a member with `is_bot` / `is_slackbot` (`is_app_user` alone isn't a bot there), unless the bot is an agent shown with the DMs (`uXg5` isAgentInDmSidebar, by member).
+  - A DM without a latest message goes, except the self-DM and while onboarding isn't complete (shouldShowAllDms).
+  - Newest first.
+- The sidebar's Direct messages already sends app DMs to Apps (`uSoP` getDefaultSectionType with `qSRE` isAppOrBot). Slack also drops the Slackbot DM from the sidebar while its Slackbot link shows (`OpEF` shouldHideSlackbotDmFromSidebar); Clack has no Slackbot link, so it stays.
+
 ## Not ported
 
 - Drafts and huddles keeping a row visible (core has no such state).
