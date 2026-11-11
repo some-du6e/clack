@@ -237,6 +237,11 @@ var experimentReads = map[string][]string{
 	"autocomplete_demote_flannel_passthrough_rltv_exact_match": {"on", "treatment"},
 	"ml_fuzzy_match_beyond_word_boundaries_v2":                 {"on", "treatment"},
 	"emoji_exact_match_boost":                                  on,
+	"autocomplete_affinity_ml_model":                           on,
+	"semantic_emoji_matching":                                  on,
+	"invite_slash_command_in_threads":                          on,
+	"ia4_slash_command_fe":                                     on,
+	"unarchive_channel_banner_polish":                          on,
 	// code channels
 	"session_channels": on, "session_channels_code_tab_pr": on, "session_channels_gh_wo": on,
 	"session_channels_inline_diff": on, "code_channels_naming": on, "session_channel_views": on,

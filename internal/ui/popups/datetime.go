@@ -159,8 +159,18 @@ func dtModalOrigin(gtx layout.Context, m *Modal) image.Point {
 	if m.o.PadX > 0 {
 		px = m.o.PadX
 	}
-	if m.o.HeadH > 0 {
+	switch {
+	case m.o.HeadH > 0:
 		hh = m.o.HeadH
+	case m.o.Subtitle != "" && m.o.SubtitleCaption:
+		hh = 20 + 24 + 20
+	}
+	if m.o.Subtitle != "" { // the subtitle line under the title (Modal.Layout's subH)
+		if m.o.SubtitleCaption {
+			hh += 18
+		} else {
+			hh += 22
+		}
 	}
 	return m.rect.Min.Add(image.Pt(dp(gtx, px), dp(gtx, hh)-m.list.Position.Offset))
 }

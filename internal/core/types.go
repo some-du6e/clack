@@ -340,6 +340,13 @@ type PreparedUpload struct {
 type UploadFile struct {
 	Name, Title string
 	Data        []byte
+	// SnippetType is a snippet's type (the snippet dialog's Type: "auto",
+	// "text" or a SnippetFileTypes key), files.getUploadURL's
+	// snippet_type; "" for an ordinary file.
+	SnippetType string
+	// AltText is an image's alt text (the Edit file dialog),
+	// files.getUploadURL's alt_txt.
+	AltText string
 }
 
 type UploadedFile struct {
@@ -624,8 +631,9 @@ type DMPage struct {
 
 type Command struct {
 	Name, Desc, Usage, Type, AppID string
-	AppName                        string // app commands: the app's display name
-	IconURL                        string // app commands: the app's icon (Slack CDN)
+	AppName                        string   // app commands: the app's display name
+	IconURL                        string   // app commands: the app's icon (Slack CDN)
+	Teams                          []string // the workspaces it is installed in
 }
 
 type CommandOpts struct {

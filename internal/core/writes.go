@@ -310,7 +310,9 @@ func (a *App) PrepareUpload(ctx context.Context, f UploadFile, progress func(sen
 }
 
 // uploadOnce is one eager upload attempt: files.getUploadURL {filename,
-// length}, the multipart POST to upload_url, files.completeUpload.
+// length, snippet_type, alt_txt} (Slack's getUploadURL fetcher sends the
+// last two for snippets and for images with alt text), the multipart POST
+// to upload_url, files.completeUpload.
 func (a *App) uploadOnce(ctx context.Context, f UploadFile, progress func(sent, total int64)) (string, error) {
 	t0 := time.Now()
 	var r struct {
@@ -319,7 +321,14 @@ func (a *App) uploadOnce(ctx context.Context, f UploadFile, progress func(sent, 
 		UploadURL string `json:"upload_url"`
 	}
 	n := len(f.Data)
-	if err := a.C.Call(ctx, "files.getUploadURL", url.Values{"filename": {f.Name}, "length": {strconv.Itoa(n)}}, &r); err != nil {
+	args := url.Values{"filename": {f.Name}, "length": {strconv.Itoa(n)}}
+	if f.SnippetType != "" {
+		args.Set("snippet_type", f.SnippetType)
+	}
+	if f.AltText != "" {
+		args.Set("alt_txt", f.AltText)
+	}
+	if err := a.C.Call(ctx, "files.getUploadURL", args, &r); err != nil {
 		return "", err
 	}
 	id := firstNonEmpty(r.File, r.FileID)
