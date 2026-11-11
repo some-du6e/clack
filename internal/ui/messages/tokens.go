@@ -35,6 +35,7 @@ var colorTokens = []struct {
 	{func(c *colors) *color.NRGBA { return &c.HeaderBorder }, theme.Tok{Light: "var(--dt_color-otl-sec)", Dark: "rgba(var(--sk_foreground_low),0.13)"}},
 	{func(c *colors) *color.NRGBA { return &c.ReactBg }, theme.Both("rgba(var(--sk_foreground_min),0.06)")},
 	{func(c *colors) *color.NRGBA { return &c.ToolbarHoverBg }, theme.TokMsgHover},
+	{func(c *colors) *color.NRGBA { return &c.Important }, theme.Both("var(--dt_color-content-imp)")},
 }
 
 var (

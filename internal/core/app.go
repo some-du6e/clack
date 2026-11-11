@@ -39,6 +39,7 @@ type App struct {
 	presSeen    map[string]time.Time
 	presWaiters []chan struct{}
 	countsTimer *time.Timer
+	actBadges   map[string]int // client.counts activity_v2 (activity_badges.go)
 	cmdCache    []slack.Command
 	cmdAt       time.Time
 	cmdFailed   failedCommands // executeCommand's recently failed (command.go)
@@ -575,6 +576,7 @@ func (a *App) Boot(ctx context.Context) error {
 	}
 	if counts != nil {
 		a.S.SetCounts(counts)
+		a.setActivityBadges(counts.ActivityV2)
 	}
 	if errDMs == nil {
 		a.setSidebarDMs(dms) // after counts: closed DMs reopen on messages newer than now
@@ -776,6 +778,7 @@ func (a *App) loadLatest(ctx context.Context, ch string) error {
 func (a *App) refreshCounts(ctx context.Context) {
 	if c, err := a.C.Counts(ctx); err == nil {
 		a.S.SetCounts(c)
+		a.setActivityBadges(c.ActivityV2)
 		a.emit(Event{Type: "counts"})
 		if a.reopenActive() { // a closed DM got a new message
 			a.emit(Event{Type: "sidebar_changed"})
@@ -1119,9 +1122,12 @@ func (a *App) message(ch string, m *slack.Message) Message {
 	if m.Edited != nil {
 		v.EditedTS = m.Edited.TS
 	}
+	v.Inviter, v.Topic, v.Purpose, v.OldName, v.NewName = m.Inviter, m.Topic, m.Purpose, m.OldName, m.NewName
+	v.ReplyUserIcons = m.ReplyUserIcons
 	v.ClientMsgID = m.ClientMsgID
 	v.Blocks, v.Attachments, v.Metadata = m.Blocks, m.RawAttachments, m.Metadata
 	v.StreamingState = m.StreamingState
+	v.AgentSession = m.AgentSession
 	v.FunctionExecutionID = m.FunctionExecutionID
 	if v.Attachments == nil && len(m.Attachments) > 0 { // built in memory (not decoded from Slack)
 		v.Attachments, _ = json.Marshal(m.Attachments)

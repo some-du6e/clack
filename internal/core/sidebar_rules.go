@@ -61,7 +61,13 @@ var defaultExperimentGroups = map[string]string{
 	// the Activity page's layout toggle sits in its header (5Ns/ XW; the
 	// live audit, docs/VIEWS-AUDIT.md): its density is the global pref
 	"activity_global_settings": "on",
-	"reskin_custom_responses":  "on", // Slackbot custom responses as the team (CustomResponseReskin)
+	// the Activity experiments as experiments.getByUser had them on
+	// 2026-11-10 (activity_agent.go, docs/ACTIVITY.md "Experiments")
+	// (nested_secondary_view, which the detail panel's needs, is the
+	// thread pane's below)
+	"activity_entry_layout_revisions_2": "on", "activity_inbox_remove_persistent_detail_panel": "on",
+	"activity_bot_item_type_reads": "on", "activity_automations_only": "on", "exclude_automations_filter": "on",
+	"agent_status_in_activity": "on",
 	// the section menus (ui/section_menu.go)
 	"sidebar_section_search": "on", "add_channels_channel_sections_slackathon": "on", "mute_channel_edu": "on",
 	// code channels (codechannel.go), as experiments.getByUser had them on 2026-11-08
@@ -93,12 +99,16 @@ var defaultExperimentGroups = map[string]string{
 	// silent_sidebar (focus mode, ui/focus_mode.go); the Availability page
 	// is availability_prefs_section's (AvailabilitySection)
 	"silent_sidebar": "on", "availability_prefs_section": "on",
+	// message rows (ui/messages; docs/EXPERIMENTS.md, the Messages package),
+	// as experiments.getByUser had them on 2026-11-10
+	"system_messages_redesign_m1": "on", "flat_message_heading_scale": "on", "portable_content_composer": "treatment",
+	"message_actions_truncate": "on", "unread_thread_indication_in_replybar": "on", "agent_identity_overrides": "on",
+	"forward_message_card": "on", "giphy_fixed_width": "on", "truncated_url_hover_card": "on",
 	// the thread pane (docs/THREADS-AUDIT.md, live 2026-11-10): nested below
 	// the channel header at the 40% default width, the smaller header (15px
 	// title, controls 4px apart), the reply bar's hover-only last reply; no
 	// thread_header_mute_button (no bell in the header)
 	"nested_secondary_view": "on", "secondary_view_default_width": "on", "smaller_secondary_headers": "on",
-	"unread_thread_indication_in_replybar": "on",
 }
 
 func (a *App) sidebarExperiments() sidebarExp {

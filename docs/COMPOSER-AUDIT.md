@@ -22,7 +22,7 @@ Status: **matched** (no change needed), **fixed** (on this branch), **open** (st
 | Buttons off in a heading | bold always (shouldDisableButton); italic, underline, strike and code too unless `rich_text_headers_and_dividers` (ZGif disabledFormats) | nothing turned off | **fixed** (`HeadingFormats`) |
 | Aa (Show formatting) | ComposerButton: "Show formatting" / "Hide formatting", pressed while shown; the state is the account pref `msg_input_sticky_composer` (Ex/u kx) and the click writes it (WysiwygContainer, setUserPrefByApi) | a process variable, never read from or written to Slack | **fixed** (`syncShowFormatting`, `toggleShowFormatting`; TestFormattingTogglePref) |
 | No toolbar under "Format messages with markup" | Texty isn't WYSIWYG with `plain_text_mode` | same | **matched** |
-| Floating bar | TextyFloatingFormattingBar: with the toolbar hidden, selecting text shows the same buttons above the selection (shouldToolbarShow, cj0/ calculateToolbarPosition) | none | **open**: a new overlay with its own placement; not built |
+| Floating bar | TextyFloatingFormattingBar (ZGif): with the toolbar hidden, selecting text shows the same buttons above the selection (shouldToolbarShow, cj0/ calculateToolbarPosition) | none | **fixed** (exp-composer, floatbar.go: the toolbar's buttons in Slack's dark floating bar 5px above the selection, placed by calculateToolbarPosition; Escape hides it until the selection changes) |
 | Simplified composer | the `composer_control_simplifications_*` experiments (47WU) fold Aa into an expanding strip, change the send button, the + and @ menus | not built | **open**: experiment-only, groups not known for the account |
 
 ## Live formatting (markdown shortcuts), links, lists, code, quotes
@@ -65,7 +65,7 @@ Status: **matched** (no change needed), **fixed** (on this branch), **open** (st
 | Mention | MentionButton "Mention someone"; maybeTriggerMentionAutocomplete replaces the selection with "@", " @" after any character but a space (a newline counts), a "@" before the caret is replaced, not doubled | " @" after anything but a space or newline | **fixed** (`mentionTrigger`) |
 | Emoji | EmojiButton "Emoji" ("Add emoji and GIFs" with the GIF picker) | "Emoji" | **matched**; the GIF picker is **open** (Clack has none) |
 | + button | ShortcutsMenuTriggerButton, round 28px | same | **matched** |
-| + menu rows | useComposerIAFormatter: Canvas, List, Recent file, (GIF, Salesforce record), Text snippet ⌃⇧Enter, (Workflow, Email, Poll), Upload from your computer (laptop icon, Ctrl+O); clips there only under the plus-menu experiment | Upload from your computer first (upload icon), "Paste image from clipboard" (not Slack's), disabled Text snippet and Canvas, then shortcuts | **open**: attach.go belongs to the attach agent |
+| + menu rows | useComposerIAFormatter (boot-render zuQH, the ShortcutsMenu over it): the file rows first (unified_file_picker on, the account's group: one "File, canvas, or list" row with canvas-browser opening the UnifiedFilePicker; off: Canvas, List, Recent file), then New Google Calendar meeting, GIF, Enable GIFs, Salesforce record, Text snippet (text-snippet, ⌘⇧Enter / Ctrl+Shift+Enter), the clip rows, Workflow, Email, Poll, Upload from your computer (laptop, ⌘O / Ctrl+O) | Upload from your computer first (upload icon), "Paste image from clipboard" (not Slack's), disabled Text snippet and Canvas, then shortcuts | **fixed** (exp-composer): Text snippet (the snippet dialog) then Upload from your computer, Slack's icons and keys, then the app shortcuts; Paste image from clipboard is gone. **open**: the file rows (Clack has no UnifiedFilePicker, canvas picker, composer list insert or recent-files menu), GIF (Clack's GIF picker sends at once; Slack's adds the GIF to the draft) and Workflow (no workflow picker); Calendar, Salesforce, Email and Poll are off for the account |
 | Ctrl+O | keyboard module "file upload" (isDesktopApp): onPlusMenuShortcut opens the + menu | nothing | **fixed** (`EvPlusMenu`) |
 | Send button | SendButton: send-filled 16 + caret-down split; tooltips "Send now" with Return (CmdOrCtrl+Return when Enter adds a line) and "Schedule for later" | no tooltips | **fixed** |
 | Narrow footer | TextyButtonOverflow folds into "More options" when the button row's own width is under 220 + (children − 5) × 36 = 580 (15 children, counting the empty slots) | folds below a 600px box (live earlier: folded at 582 and 383, not at 998) | **open**: the crossover depends on the row's measured width inside the footer grid; not measured |
@@ -82,15 +82,16 @@ Status: **matched** (no change needed), **fixed** (on this branch), **open** (st
 | 24-hour labels | `time24`: "Later today at 09:00", "Tomorrow  at 09:00" (Slack's double space), "Monday at 09:00" | 12-hour only | **fixed** |
 | A DM in another time zone | each row says "3:00 AM for Alice" (Mluw); at night for them (22:00 to 08:00, cCED) a row for their 9:00 leads (MemberSpecificSchedulingTime) | none | **fixed**; Slack also uses their Do Not Disturb, which Clack can't read for others: **open** |
 | `updated_scheduled_sends_desktop` | "Tomorrow at 9:00 AM" always offered; the last custom time comes back while ahead | none | **fixed** |
-| Custom time dialog | ScheduleMessageDialog (z1vG): "Schedule message", "Time zone: …", a date and time picker in 15-minute steps, 5 minutes to 120 days ahead, default the next hour; "Schedule Message" | calendar and steppers, next half hour, any future time, "Schedule" | **fixed**: default, limits, button; **open**: Slack's date/time picker and the "Time zone:" line aren't drawn |
-| After scheduling | no toast; the context bar says "Your message will be sent tomorrow at 9:00 AM. See all scheduled messages" (ContextBarScheduledSendContent, 07q3) | toast "Message scheduled for …" | **fixed** (toast gone); the context bar is **open**: it needs the conversation's scheduled drafts from core, which isn't the composer's |
+| Custom time dialog | ScheduleMessageDialog (z1vG): "Schedule message" (18/24) over "Time zone: …" (getTimezoneLocationLabel of the detected zone), a DateTimePicker (SzUY: the date field 60%, "Today" / "Tomorrow" / "November 12th, 2026", days outside the range off; the time select 40% after 12px, 15-minute options within the range), "{memberTime} for {memberName}" in a DM across time zones, 5 minutes to 120 days ahead, default the next hour; Cancel / "Schedule Message" | calendar and steppers, next half hour, any future time, "Schedule" | **fixed** (default, limits, button; on exp-composer the DateTimePicker with popups' calendar and time list, the time zone line and the member line) |
+| After scheduling | no toast; the context bar says "Your message will be sent tomorrow at 9:00 AM. See all scheduled messages" (ContextBarScheduledSendContent, 07q3; useContextBarOverride shows it while there are more scheduled messages than when the conversation opened, or the soonest is under 5 s old; "{N} messages scheduled to be sent." for several) | toast "Message scheduled for …" | **fixed** (toast gone; on exp-composer the bar, from core's new `ScheduledFor`; the link opens Drafts & sent's Scheduled tab) |
 | Scheduling fails | a local ephemeral: "We’re not sure what happened, but your message couldn’t be scheduled. It’s been saved in your Drafts so you can try again." | toast "Couldn't schedule: …" | **fixed** |
 | Edit last message (↑) | shouldUpArrowTriggerEdit / shouldUpArrowMoveFocusToList with the Accessibility choice; the Up binding skips code blocks; "empty" is texty.isEmpty | same rules, but spaces counted as empty and code blocks not skipped | **fixed** |
 | Saving an emptied edit | cjbg maybeSave → startDelete: the delete-message dialog (else unbroadcast, else the original struck through); a message with files (fileIdsToSave) saves the empty comment instead | toast "A message can't be empty" | **fixed** (`popups.ConfirmDelete`, files excepted); the other two branches are for messages you can't delete, which Clack doesn't edit |
 | Unsend (Mod+Z) | onCmdZWhenEmpty within 15 s of sending | same, spaces counted as empty | **fixed** (empty rule) |
 | Rich paste | Texty clipboard: HTML to delta (cleanStyleFromHtmlDelta) | paste_html.go | **matched** (earlier work, not re-audited) |
 | Pasting files and images | onFilesSelected, pasted image | attach.go | **matched** (attach agent's) |
-| Long paste | onPasteLimit: more than 5e4 refused; MessageInput's dialog "That’s a bit too long to paste" with "If you’d like you could create a snippet instead.", "Create a Snippet" and OK | pasted anything (rich pastes over 40,000 went in as plain text) | **fixed**: refused, with Slack's PasteLimitDialog (title, "To keep things running smoothly…", OK); "Create a Snippet" is **open**: Clack has no snippet dialog |
+| Edit file details (a pending file) | EditFileDialog (boot-shared e4hN): "Edit file details" ("Edit alt text" in the alt-text variant), the image preview, "File name" (required, 255) and for images "Description" (alt text, 10,000), Done / Next, "Would you like to save your work?"; reached from the pending image's file viewer (openPendingFileViewer) and the alt-text reminder speed bump; editFileApi sends files.edit {file, title, alt_txt, is_canvas_template} | none | **open**: Clack has neither the pending-file viewer nor the alt-text speed bump that open it; core now sends `alt_txt` with files.getUploadURL when a file has alt text, ready for it |
+| Long paste | onPasteLimit: more than 5e4 refused; MessageInput's renderPasteLimitDialog "That’s a bit too long to paste" with "If you’d like you could **create a snippet** instead.", "Create a Snippet" (the snippet dialog with the paste) and OK | pasted anything (rich pastes over 40,000 went in as plain text) | **fixed**: refused, with Slack's dialog; on exp-composer its text and "Create a Snippet" too |
 | Markdown paste toasts | MarkdownPasteToast / MarkdownModePasteToast | none | **open**: not compared |
 
 ## Character limit
@@ -108,13 +109,13 @@ Status: **matched** (no change needed), **fixed** (on this branch), **open** (st
 | Shortcut | Slack (evidence: fffk SlackKeyboard and the formatting bindings) | Clack before | Status |
 |---|---|---|---|
 | Enter / Shift+Enter | send; Shift+Enter, lists and an empty quote line add lines; "Enter starts a new line" swaps in Mod+Enter | same | **matched** |
-| Ctrl+Shift+Enter (⌘⇧Enter) | MessageInput.onEnter opens the snippet dialog with the message | a new line | **open**: no snippet dialog |
+| Ctrl+Shift+Enter (⌘⇧Enter) | MessageInput.onEnter (enableSnippetCreation) opens the snippet dialog (wc+S SnippetDialog, lYxy editor) with the message and empties the composer | a new line | **fixed** (exp-composer: the dialog with Title (optional), Type, Content with line numbers, Wrap, Share this file and the conversation select, the message, Create Snippet; uploads with snippet_type) |
 | Mod+B, I, U | bold, italic, underline | same | **matched** |
 | Mod+Shift+X, C, U | strikethrough, code, link dialog | same | **matched** |
 | Mod+Shift+7, 8, 9 | ordered list, bulleted list, quote | same | **matched** |
 | Mod+Shift+. | "blockquote-alt" | nothing | **fixed** |
 | Mod+Alt+Shift+C | code block | same | **matched** |
-| Mod+Shift+F | "convert markdown": typed markdown in the message (or selection) becomes formatting (nTS+ buildMarkdownChangeDelta) | nothing | **open**: Slack's converter not ported; Clack's mrkdwn round trip would lose list structure |
+| Mod+Shift+F | "convert markdown": typed markdown in the message (or selection) becomes formatting (nTS+ buildMarkdownChangeDelta: lists, then code blocks, then quotes and inline marks, three Quill delta passes over OF9+/XmNU patterns) | nothing | **open**: Slack's converter not ported (it is three delta passes; Clack's mrkdwn round trip would lose list structure) |
 | Mod+O | the + menu (desktop) | nothing | **fixed** |
 | Mod+Z, Mod+Shift+Z | undo, redo; in an empty composer Mod+Z unsends | same | **matched** |
 | Mod+A | select all | same | **matched** |
@@ -132,7 +133,7 @@ Status: **matched** (no change needed), **fixed** (on this branch), **open** (st
 
 ## Counts
 
-86 rows: 27 matched, 42 fixed, 24 open. Seven rows are partly matched or fixed and partly open; they count under both.
+87 rows: 27 matched, 45 fixed, 20 open (after exp-composer). Five rows are partly matched or fixed and partly open; they count under both.
 
 ## Effects outside the composer
 

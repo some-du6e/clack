@@ -547,6 +547,11 @@ type Command struct {
 	AppID   string         `json:"app,omitempty"`
 	AppName string         `json:"app_name,omitempty"`
 	Icons   map[string]any `json:"icons,omitempty"` // image_32 … image_512 (+ non-string flags)
+	// RunnableFromThread is is_runnable_from_thread: the command may run
+	// in a thread (isSlashCommandEnabled's Lf).
+	RunnableFromThread bool `json:"is_runnable_from_thread,omitempty"`
+	// Teams are the workspaces the command is installed in (Grid).
+	Teams []string `json:"teams,omitempty"`
 }
 
 // IconURL picks the best icon for a ~20-36 px command row.

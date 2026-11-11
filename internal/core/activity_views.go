@@ -237,6 +237,17 @@ func (a *App) SaveActivityViewFilters(ctx context.Context, v ActivityView) (Acti
 	return a.viewCall(ctx, "activity.views.update", p)
 }
 
+// MoveActivityView is a tab dropped in a new place (GuYW onTabDragEnd →
+// 4gYA R → updateActivityViewsByApi {nextViewId, isAutoSave}):
+// activity.views.update {view_id, sort, density, next_view_id} for the
+// dragged view v (its sort and density as the page shows them); next is
+// the view now after it, "" when it went last.
+func (a *App) MoveActivityView(ctx context.Context, v ActivityView, next string) (ActivityView, error) {
+	p := url.Values{"view_id": {v.ID}, "sort": {actViewSort(v.Sort)}, "density": {actViewDensity(v.Density)},
+		"next_view_id": {next}, "reason": {"[Activity Views] Update views by API"}}
+	return a.viewCall(ctx, "activity.views.update", p)
+}
+
 func (a *App) viewCall(ctx context.Context, method string, p url.Values) (ActivityView, error) {
 	var res struct {
 		View *actViewRaw `json:"view"`

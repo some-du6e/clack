@@ -226,6 +226,9 @@ type Style struct {
 	// 18px; canvases use --text-code-line-height, 20px).
 	PreLine float32
 
+	// flatHeadings is Slack's p-header_block--flat_scale (SetFlatHeadings).
+	flatHeadings bool
+
 	gen   uint32 // from styleGens on SetPalette/Invalidate; Views re-record when it changes
 	words map[wordKey]*shaped
 	prev  map[wordKey]*shaped // previous generation (see word)
@@ -249,6 +252,17 @@ func NewStyle(sh *text.Shaper, imgs Images, p Palette) *Style {
 func (s *Style) SetPalette(p Palette) {
 	s.Palette = p
 	s.gen = styleGens.Add(1)
+}
+
+// SetFlatHeadings switches header blocks to Slack's flat heading scale
+// (Header, boot-shared /WQN: p-header_block--flat_scale under cQrd WZ,
+// flat_message_heading_scale on or portable_content_composer treatment);
+// a change re-lays every View out.
+func (s *Style) SetFlatHeadings(on bool) {
+	if s.flatHeadings != on {
+		s.flatHeadings = on
+		s.gen = styleGens.Add(1)
+	}
 }
 
 // styleGens numbers style generations across every Style: Views compare
