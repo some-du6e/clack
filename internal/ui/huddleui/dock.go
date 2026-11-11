@@ -50,6 +50,7 @@ type dockState struct {
 	tips              map[string]*popups.TipState
 	stick             *popups.Menu
 	audio             *popups.Menu // the mic's Audio settings menu
+	shareAlert        alertState   // the screen share alert above the card (share.go)
 }
 
 func (d *dockState) click(id string) *widget.Clickable {
@@ -88,6 +89,9 @@ func (c *Controller) DockHeight(gtx C) int {
 	}
 	if s := c.Session(); s != nil && s.State().Mic.Problem() {
 		h += gtx.Dp(barMicRow) + gtx.Dp(4)
+	}
+	if a := c.shareAlertHeight(gtx, c.h.Theme(), gtx.Constraints.Max.X-2*gtx.Dp(dockPad)); a > 0 {
+		h += a + gtx.Dp(4) // the bottom_bar alert, 4px above the card
 	}
 	return h + gtx.Dp(dockPad)
 }
@@ -143,6 +147,15 @@ func (c *Controller) layoutDock(gtx C, th *theme.Theme, sz image.Point) D {
 		r := image.Rect(gtx.Dp(dockPad), 0, sz.X-gtx.Dp(dockPad), gtx.Dp(barMicRow))
 		c.dockMicAlert(gtx, th, r, st, note)
 		y = r.Max.Y + gtx.Dp(4)
+	}
+	if c.shareAlert() != "" { // HuddlesAlertBanner, entryPoint bottom_bar
+		aw := sz.X - 2*gtx.Dp(dockPad)
+		d := at(gtx, image.Pt(gtx.Dp(dockPad), y), image.Pt(aw, sz.Y), func(gtx C) D {
+			return c.layoutShareAlert(gtx, th, &c.dock.shareAlert, aw)
+		})
+		if d.Size.Y > 0 {
+			y += d.Size.Y + gtx.Dp(4)
+		}
 	}
 	bh := gtx.Dp(dockBar)
 	if collapsed {
@@ -422,7 +435,8 @@ func (c *Controller) dockTiles(st huddle.State, now time.Time) []huddle.Particip
 }
 
 // dockCtls is HuddleToolbarCenterButtons with the bar's state (the mute
-// button, the camera, the sticker pair, reactions, the thread and ⋯).
+// button, the camera, screen share, the sticker pair, reactions, the
+// thread and ⋯).
 func (c *Controller) dockCtls(st huddle.State) []ctl {
 	// HuddleToolbarMuteButton inBottomBar: segmented, like the window's
 	mics := c.micCtls(st, c.dock.audio != nil && !c.dock.audio.Dismissed())
@@ -451,7 +465,7 @@ func (c *Controller) dockCtls(st huddle.State) []ctl {
 	if stick {
 		caret = "caret-down"
 	}
-	return append(mics, cam,
+	return append(mics, cam, c.shareCtl(st),
 		ctl{id: "hand", emoji: c.emojiText(face), on: mine != "", tip: handTip(mine), seg: segMain},
 		ctl{id: "stickers", icon: caret, on: stick, tip: nsHuddles.T("Choose sticker"), seg: segCaret},
 		ctl{id: "react", icon: "emoji", hover: "emoji-filled", tip: nsHuddles.T("Add reaction")},
@@ -499,6 +513,8 @@ func (c *Controller) dockClick(gtx C, id string, s *huddle.Session, st huddle.St
 		} else if cameraSupported() {
 			s.SetCamera(true)
 		}
+	case "share": // HuddleToolbarScreenshareButton: the picker opens over the main window
+		c.shareClick(s, st, ph, c.post)
 	case "hand":
 		go func() { _ = c.ToggleHand() }()
 	case "stickers": // the sticker grid's stickers, above the caret

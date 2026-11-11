@@ -4,7 +4,9 @@ name: huddles-audit-shots
 # title, toolbar, closed captions, ⋯ menu, banners and hidden self-view;
 # the docked bar with the window closed and open; the sidebar row's
 # huddle badge; the header button, its menu and the invite window and
-# card. Synthetic only: nothing here joins, starts or rings a real huddle.
+# card; sharing your screen (the picker, the presenter's mini panel, the
+# alerts) with the synthetic test screen. Synthetic only: nothing here
+# joins, starts or rings a real huddle, and no screen is captured.
 on:
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run huddles-audit-shots.yml --ref <branch>)
@@ -41,7 +43,8 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$CLACK_SHOTS"
-          xvfb-run -a go test -count=1 -v -run 'TestHuddleShotsAudit$|TestHeaderShots$|TestHuddleShotsInvite|TestHuddleShotsMic|TestSidebarSuffixFaces$|TestSidebarFaceSteps$' ./internal/ui/huddleui
+          # TestShareFlow: share-picker-*, share-window-*, share-mini-panel, share-alert-* (the test screen, CLACK_HUDDLE_TESTSCREEN)
+          xvfb-run -a go test -count=1 -v -run 'TestHuddleShotsAudit$|TestHeaderShots$|TestHuddleShotsInvite|TestHuddleShotsMic|TestSidebarSuffixFaces$|TestSidebarFaceSteps$|TestShareFlow$|TestShareButtonStates$' ./internal/ui/huddleui
           ls -la "$CLACK_SHOTS"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 
+	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/widget"
 
@@ -156,6 +157,41 @@ func hudSurfaces(t *testing.T) []hudSurface {
 		}},
 		{name: "invite-card", w: 260, h: 240, draw: func(gtx C) {
 			layoutCard(gtx, th, c, c.view(ch), &card, gtx.Constraints.Max.X, false)
+		}},
+		{name: "share-picker", w: 900, h: 560, draw: func(gtx C) {
+			// ScreenPickerModal's header, grid and footer, sources already listed
+			p := &screenPicker{c: c, s: s, ph: winHost{e.w}, kind: huddle.ShareScreen, loaded: true,
+				screens: []*pickTile{{src: huddle.ShareSource{ID: "screen:1:0", Name: "Screen 1"}}},
+				windows: []*pickTile{{src: huddle.ShareSource{ID: "window:9:0", Name: "zsh"}}}}
+			hg := gtx
+			hg.Constraints = layout.Exact(image.Pt(gtx.Constraints.Max.X, gtx.Dp(70)))
+			p.header(hg)
+			bg := gtx
+			bg.Constraints = layout.Exact(image.Pt(gtx.Constraints.Max.X, gtx.Dp(400)))
+			stk := op.Offset(image.Pt(0, gtx.Dp(70))).Push(gtx.Ops)
+			p.body(bg)
+			stk.Pop()
+			fg := gtx
+			fg.Constraints = layout.Exact(image.Pt(gtx.Constraints.Max.X/2, gtx.Dp(36)))
+			stk = op.Offset(image.Pt(0, gtx.Dp(480))).Push(gtx.Ops)
+			p.audioBox(fg)
+			stk.Pop()
+		}, labels: func() []string {
+			out := []string{nsHuddles.T("Cancel"), nsHuddles.T("Share")}
+			for _, a := range []string{alertNoScreenShare, alertShareBusy} {
+				parts, _ := alertParts(a)
+				for _, p := range parts {
+					out = append(out, p.Text)
+				}
+			}
+			for _, st := range []huddle.State{{}, {Share: huddle.ShareStatus{State: huddle.ShareOn}},
+				{Participants: []huddle.Participant{{Sharing: true}, {Sharing: true}}}} {
+				out = append(out, c.shareCtl(st).tip)
+			}
+			return out
+		}},
+		{name: "share-mini-panel", w: panelW, h: panelH, draw: func(gtx C) {
+			(&miniPanel{c: c}).layout(gtx, th)
 		}},
 		{name: "dialogs", labels: func() []string {
 			// the dialogs' and notices' text
