@@ -6,6 +6,7 @@ name: thread-header
 # dark, rendered headlessly. Synthetic only: nothing here talks to Slack.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run thread-header.yml --ref <branch>)
     paths:
       - "internal/ui/messages/thread*.go"
       - "internal/ui/thread_header_test.go"

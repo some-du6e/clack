@@ -22,6 +22,7 @@ on:
   schedule:
     - cron: "41 9 * * 1" # after plugin-library's weekly rebuild
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run plugin-bench.yml --ref <branch>)
     paths:
       - "internal/pluginbench/**"
       - "internal/ui/plugin_bench*"

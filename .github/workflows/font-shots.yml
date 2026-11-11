@@ -9,6 +9,7 @@ name: font-shots
 # what each option resolved to). Nothing here talks to Slack's API.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run font-shots.yml --ref <branch>)
     paths:
       - "internal/woff2/**"
       - "internal/ui/uifont/**"

@@ -6,6 +6,7 @@ name: popups-taut
 # as an artifact and never committed.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run popups-taut.yml --ref <branch>)
     paths:
       - "internal/ui/popups/**"
       - "internal/ui/slackc/**"
