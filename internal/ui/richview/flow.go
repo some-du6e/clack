@@ -199,6 +199,9 @@ type display struct {
 	overlayIcons []overlayIcon
 	// spinners are InfiniteSpinners drawn every frame (pending uploads)
 	spinners []spinPrim
+	// names are the user mentions laid out and the plugin labels they
+	// used (members.go)
+	names []nameUse
 }
 
 // slot is a run of interactive elements the owner draws (Options.Elements).
@@ -226,6 +229,7 @@ func (d *display) reset() {
 	d.cards = d.cards[:0]
 	d.overlayIcons = d.overlayIcons[:0]
 	d.spinners = d.spinners[:0]
+	d.names = d.names[:0]
 }
 
 func (d *display) addTarget(t target) int16 {
@@ -549,6 +553,9 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 				kind = tChannel
 			case richtext.Usergroup:
 				kind = tUsergroup
+			case richtext.User:
+				// the member as plugins present it (Nicknames)
+				txt = l.mentionText(sp.ID, txt)
 			}
 			if l.opts.Muted && sp.Kind == richtext.User {
 				// System messages show member names as plain text that
